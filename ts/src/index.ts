@@ -22,6 +22,7 @@ import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
 import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
+import { installProcessGuards } from '../capabilities/incident-log.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -81,6 +82,12 @@ export function apply(ctx: Context, config: Config): void {
     const weekdays = ['日', '一', '二', '三', '四', '五', '六']
     return `${ymd} 周${weekdays[d.getDay()]}`
   })
+
+  // D-NEW 进程护栏(Z3 WASM crash 教训):dsh 0.1.1-rc.1 缺 uncaughtException
+  // handler,插件异常穿透即杀进程。我们在 gotry 侧挂护栏:同步 fsync 写事故证据
+  // (gotry-state/incidents.jsonl),handler 自身不再抛,不阻塞后续控制流。
+  // 不调 process.exit——让 dsh/上级容器决定生死,我们只留现场。
+  installProcessGuards(config.stateRoot ?? '.', { uncaughtException: 'gotry-tools', unhandledRejection: 'gotry-tools' })
 
   ctx.tools.register(defineTool({
     name: 'gotry_feasibility_check',

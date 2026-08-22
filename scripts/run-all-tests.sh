@@ -42,7 +42,11 @@ echo "=== 8. hbcli 能力层(hotelbyte-cli 调用 + 降级封装,4 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
 
 echo
-echo "=== 9. 双实现差分(洱海,TS vs Python oracle) ==="
+echo "=== 9. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 2 断言) ==="
+(cd ts && npx tsx scripts/incident-tests.ts) || FAIL=1
+
+echo
+echo "=== 10. 双实现差分(洱海,TS vs Python oracle) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
 echo
