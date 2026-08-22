@@ -7,7 +7,10 @@ cd "$(dirname "$0")/ts/dsh-runtime"
 source ~/.nvm/nvm.sh 2>/dev/null || true
 set -a; source ../../.env 2>/dev/null || true; set +a
 export DEEPSEEK_API_KEY="${LLM_API_KEY:?需要 .env 里的 LLM_API_KEY}"
-if [ $# -eq 0 ]; then
+if [ "$1" = "shell" ]; then
+  # GoTry 薄壳(自有品牌界面,零依赖)
+  cd "$(dirname "$0")/ts" && exec npx tsx ../shell/server.mts
+elif [ $# -eq 0 ]; then
   exec node node_modules/@deepseek-ai/dsh/lib/bin.js web --patch ../cordis.gotry-patch.yml
 else
   exec node node_modules/@deepseek-ai/dsh/lib/bin.js --profile headless --patch ../cordis.gotry-patch.yml "$*"

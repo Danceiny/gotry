@@ -38,7 +38,8 @@ export function newState(year = 2026): TripState {
 export function interviewNext(state: TripState): { questions: InterviewQuestion[]; missing: string[] } {
   const p = state.profile
   const questions: InterviewQuestion[] = []
-  if (!p.workWindow) {
+  const ww = p.workWindow as unknown as { vacation?: boolean } | undefined
+  if (!p.workWindow && !ww?.vacation) {
     questions.push({
       key: 'workWindow',
       text: '你这两周要远程办公——工作时间是几点到几点、按哪个时区?这决定每天的可玩时段。',

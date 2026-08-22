@@ -50,7 +50,8 @@ const FACTS_SYSTEM = `你是旅行规划的事实抽取器。从对话中抽取�
  "profile": {"workWindow": {"homeTzOffsetMin": 数字, "startMin": 数字, "endMin": 数字, "workdays": [0,1,2,3,4], "evidence": "用户原话"},
               "companions": ["..."], "budgetTier": "economy|comfort|convenience",
               "bookedResources": [{"kind": "flight|hotel", "ref": "...", "window": "..."}]}}
-只放用户明确说过的事实;没有的字段省略。分钟数从 HH:MM 换算;UTC+4 → homeTzOffsetMin=240。只输出 JSON。`
+只放用户明确说过的事实;没有的字段省略。分钟数从 HH:MM 换算;UTC+4 → homeTzOffsetMin=240。
+**休假语义(关键)**:用户说「请假/年假/不用办公/休假」→ workWindow 输出 {"vacation": true}(不是省略!省略会触发重复追问);只有用户明确给了工作时间才输出完整 workWindow 对象。只输出 JSON。`
 
 const SKELETON_SYSTEM = `你是行程骨架抽取器。从对话中抽取行程的**骨架**——段(移动)与锚点,不包含任何班次数据(班次来自数据层,你不要编造时刻/价格/航班号)。
 输出 JSON:{"segments":[{"id":"f1","role":"choice|fixed","route":"HKG->HKT","dateHint":"2026-07-18","anchors":{"arriveByMin":885}}]}
