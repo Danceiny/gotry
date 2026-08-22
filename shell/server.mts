@@ -24,8 +24,24 @@ const { solveUnified } = await import(join(import.meta.dirname, '..', 'ts', 'src
 const { join: j } = await import('node:path')
 
 const llm = createOpenAICompatLlm(j(import.meta.dirname, '..', 'data', 'flights_2026.json'))
-const state = newState()
-const history: Array<{ role: 'user' | 'assistant'; text: string }> = []
+// 会话持久化(段4):TripState+history 落盘,重启恢复(用户数据红线:可见可删)
+const STATE_FILE = join(import.meta.dirname, 'gotry-state', 'session.json')
+async function loadSession(): Promise<{ state: ReturnType<typeof newState>; history: Array<{ role: 'user' | 'assistant'; text: string }> }> {
+  try {
+    const raw = JSON.parse(await readFile(STATE_FILE, 'utf-8'))
+    return { state: raw.state as never, history: raw.history ?? [] }
+  } catch {
+    return { state: newState(), history: [] }
+  }
+}
+async function saveSession(): Promise<void> {
+  const { mkdir, writeFile: wf } = await import('node:fs/promises')
+  await mkdir(join(import.meta.dirname, 'gotry-state'), { recursive: true })
+  await wf(STATE_FILE, JSON.stringify({ state, history, savedAt: new Date().toISOString() }, null, 2))
+}
+const restored = await loadSession()
+const state = restored.state
+const history = restored.history
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   // CORS + JSON 工具
@@ -41,7 +57,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
   }
 
   if (req.method === 'GET' && req.url === '/state') {
-    return json(200, { profile: state.profile, wishes: state.wishes, gates: state.gates, calendar: state.calendar })
+    return json(200, { profile: state.profile, wishes: state.wishes, gates: state.gates, calendar: state.calendar, session: { historyTurns: Math.floor(history.length / 2), lastAt: history.length ? history[history.length - 1].text.slice(0, 80) : null } })
   }
 
   if (req.method === 'POST' && req.url === '/chat') {
@@ -52,6 +68,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     try {
       const { reply } = await runTurn(state, message, llm, [...history], solveUnified as never)
       history.push({ role: 'user', text: message }, { role: 'assistant', text: reply })
+      await saveSession()
       return json(200, { reply })
     } catch (e) {
       return json(500, { reply: `引擎错误:${(e as Error).message.slice(0, 200)}` })
