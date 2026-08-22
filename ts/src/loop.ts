@@ -204,3 +204,39 @@ export async function runTurn(
   }
   return { reply: parts.join('\n\n'), state }
 }
+
+// ---- 异步工单持久化(S5 编排半段):真正的「一小时后」必须跨进程存续 ----
+// 请求时落盘(ticket+state 快照);任意后续进程(如 loopx 驱动的 tick)执行
+// async-collect 加载、求解、写回交付物。状态目录属用户数据(红线 6)。
+
+import { join } from 'node:path'
+import { mkdir } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
+
+const ASYNC_DIR = 'gotry-state/async'
+
+async function asyncPath(name: string): Promise<string> {
+  await mkdir(ASYNC_DIR, { recursive: true })
+  return join(ASYNC_DIR, name)
+}
+
+export async function persistAsyncTicket(ticket: AsyncTicket, state: TripState): Promise<string> {
+  const p = await asyncPath(`${ticket.id}.json`)
+  await writeFile(p, JSON.stringify({ ticket, state }, null, 2), 'utf-8')
+  return p
+}
+
+export async function loadAsyncTicket(ticketId: string): Promise<{ ticket: AsyncTicket; state: TripState } | null> {
+  try {
+    const p = await asyncPath(`${ticketId}.json`)
+    return JSON.parse(await readFile(p, 'utf-8')) as { ticket: AsyncTicket; state: TripState }
+  } catch {
+    return null
+  }
+}
+
+export async function settleAsyncTicket(ticketId: string, reply: string): Promise<string> {
+  const p = await asyncPath(`${ticketId}.deliverable.md`)
+  await writeFile(p, reply, 'utf-8')
+  return p
+}

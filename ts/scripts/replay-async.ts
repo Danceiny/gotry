@@ -6,7 +6,7 @@
 
 import { join } from 'node:path'
 import { createMockLlm } from '../src/mock-llm.ts'
-import { collectDeepPlanning, isComplex, newState, requestDeepPlanning, runTurn } from '../src/loop.ts'
+import { collectDeepPlanning, isComplex, newState, persistAsyncTicket, requestDeepPlanning, runTurn } from '../src/loop.ts'
 import { solveUnified } from '../src/unified.ts'
 
 const llm = createMockLlm(join('..', 'data', 'flights_2026.json'))
@@ -26,13 +26,16 @@ for (const t of turns) {
   lastReply = reply
 }
 
-// 第 4 轮:复杂度命中 → 切深度规划模式
+// 第 4 轮:复杂度命中 → 切深度规划模式;工单持久化(跨进程存续,S5 编排半段)
 if (!isComplex(state)) throw new Error('复杂度判据未命中,重放脚本与判据不一致')
 const { reply: asyncReply, ticket } = await requestDeepPlanning(state)
+const saved = await persistAsyncTicket(ticket, state)
 console.log('用户> (约束齐备,行程复杂)\n')
 console.log(`GoTry> ${asyncReply}\n`)
+console.log(`(工单已持久化:${saved}——任意后续进程可执行回收)\n`)
 
-// 模拟一小时(mock 期秒级)——真实化后此处是 loopx tick 驱动的后台工作
-console.log('……(一小时后,用户回来)……\n')
+// 模拟一小时(mock 期秒级)——真实形态:另一个进程/loopx tick 执行 async-collect
+console.log('……(一小时后,另一个进程执行回收)……\n')
 const { reply: deliverable } = await collectDeepPlanning(state, ticket, solveUnified as never)
 console.log(`GoTry> ${deliverable}`)
+console.log(`\n(真实形态命令:npx tsx scripts/async-collect.ts ${ticket.id})`)
