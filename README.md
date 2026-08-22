@@ -39,20 +39,23 @@ LLM_API_KEY=你的key
 LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
 EOF
+
+# 4.(可选)dsh 运行时——仅方式二/三需要;dsh 处于 rc 期,版本以 ts/cordis.gotry-patch.yml 对齐为准
+mkdir -p ts/dsh-runtime && cd ts/dsh-runtime
+printf '{"name":"gotry-dsh-runtime","private":true,"dependencies":{"@deepseek-ai/dsh":"0.1.1-rc.1"}}\n' > package.json
+pnpm install && cd ../..
 ```
 
 ### 使用
 
 ```bash
-# 方式一:浏览器界面(推荐)
-./gotry shell
-# 自动打开 http://127.0.0.1:4080,三个页面:对话 / 下一次出发 / 动机画像
+# 方式一:浏览器界面(推荐;薄壳零依赖,只需第 2 步的 ts 依赖)
+./gotry            # 等价于 ./gotry shell
+# 打开 http://127.0.0.1:4080,三个页面:对话 / 下一次出发 / 动机画像
 
-# 方式二:命令行一问一答
-./gotry "我想去洱海边发呆,这周末,上海,预算3000"
-
-# 方式三:dsh 运行时(DeepSeek Harness 生态,更强大的 agent 能力)
-./gotry web
+# 方式二/三:dsh 运行时(DeepSeek Harness 生态,更强大的 agent 能力;需第 4 步)
+./gotry web                                    # dsh Web 界面
+./gotry "我想去洱海边发呆,这周末,上海,预算3000"   # 命令行一问一答
 ```
 
 ### 试一试
@@ -99,7 +102,7 @@ GoTry 会:
 ./scripts/run-all-tests.sh
 ```
 
-包含:Python 单元测试(20 例)+ TS 三套件 + 双实现差分 + 对话循环重放 + 骨架集成验证。
+覆盖:Python 单元 + TS 三套件(engine/journey/unified)+ 对话循环重放(带终态断言)+ 异步工单跨进程闭环 + 插件 smoke + 双实现差分;逐节清单见脚本头部注释。
 
 ## 项目文档
 
