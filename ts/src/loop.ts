@@ -67,6 +67,25 @@ export function interviewNext(state: TripState): { questions: InterviewQuestion[
   return { questions, missing: questions.map(q => q.key) }
 }
 
+/** spec 校验闸:LLM 翻译产物进求解器前的确定性形状检查(责任边界的执行点)。 */
+export function validateSpec(spec: JourneySpecTS): string | null {
+  if (!Array.isArray(spec.segments) || spec.segments.length === 0) return '没有段(segments)'
+  for (const seg of spec.segments) {
+    if (!seg.id) return '存在缺少 id 的段'
+    if (!Array.isArray(seg.options) || seg.options.length === 0) return `段 ${seg.id} 没有可选方案`
+    for (const opt of seg.options) {
+      const svcs = opt.move?.services
+      if (!Array.isArray(svcs) || svcs.length === 0) return `段 ${seg.id} 的方案 ${opt.id} 缺少班次(services)`
+      for (const s of svcs) {
+        if (typeof s.depMin !== 'number' || typeof s.arrMin !== 'number') {
+          return `段 ${seg.id}/${opt.id} 的班次 ${s.id ?? '?'} 缺少时刻(depMin/arrMin)`
+        }
+      }
+    }
+  }
+  return null
+}
+
 /** 求解端口:S3 起由 unified 求解器实现;循环只认此签名(确定性责任)。 */
 export type SolvePort = (spec: JourneySpecTS) => Promise<SolveResult>
 
@@ -191,13 +210,16 @@ export async function runTurn(
   if (conflicts.length) parts.push(`⚠️ 日历冲突:\n${conflicts.map(c => `- ${c}`).join('\n')}`)
   for (const q of blocking) parts.push(await llm.polishQuestion(q))
 
-  // 约束齐备(无阻塞问题)→ 翻译 spec → 求解 → 渲染
+  // 约束齐备(无阻塞问题)→ 翻译 spec → **校验闸** → 求解 → 渲染
   if (blocking.length === 0 && solve) {
     const spec = await llm.extractSpec([...history, { role: 'user', text: userMsg }], state)
-    if (spec) {
+    const invalid = spec ? validateSpec(spec) : '翻译器未产出 spec'
+    if (spec && !invalid) {
       state.spec = spec
       state.solve = await solve(spec)
       parts.push(llm.render ? await llm.render(state) : renderSolve(state))
+    } else if (blocking.length === 0 && invalid) {
+      parts.push(`(行程骨架还不完整:${invalid}——请补充对应信息,我不猜)`)
     }
   } else if (blocking.length === 0) {
     parts.push('(约束齐备——进入规划,S3 接线后此处产出方案与选择题)')

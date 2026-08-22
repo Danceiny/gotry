@@ -5,15 +5,24 @@
  */
 
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+
+// 仓根 .env(gitignored):每行 KEY=VALUE,不覆盖已有环境变量
+try {
+  for (const line of readFileSync(join('..', '.env'), 'utf-8').split('\n')) {
+    const m = line.match(/^([A-Z_]+)=(.*)$/)
+    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim()
+  }
+} catch { /* .env 可选 */ }
 import { createMockLlm } from '../src/mock-llm.ts'
 import { createDeepSeekLlm } from '../src/dsh-llm.ts'
 import { newState, runTurn } from '../src/loop.ts'
 import { solveUnified } from '../src/unified.ts'
 import type { LlmPort } from '../src/loop.ts'
 
-const useReal = Boolean(process.env['DEEPSEEK_API_KEY'])
-const llm: LlmPort = useReal ? createDeepSeekLlm() : createMockLlm(join('..', 'data', 'flights_2026.json'))
-console.log(useReal ? '=== 真 LLM 模式(DeepSeek)===' : '=== 无 DEEPSEEK_API_KEY,回退 mock(ADR-8)===\n')
+const useReal = Boolean(process.env['LLM_API_KEY'] ?? process.env['DEEPSEEK_API_KEY'])
+const llm: LlmPort = useReal ? createDeepSeekLlm(join('..', 'data', 'flights_2026.json')) : createMockLlm(join('..', 'data', 'flights_2026.json'))
+console.log(useReal ? `=== 真 LLM 模式(${process.env['LLM_MODEL'] ?? 'MiniMax-M2'})===` : '=== 无 LLM_API_KEY,回退 mock(ADR-8)===\n')
 
 const state = newState()
 const history: Array<{ role: 'user' | 'assistant'; text: string }> = []

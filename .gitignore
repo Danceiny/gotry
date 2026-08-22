@@ -9,3 +9,5 @@ async_result.json
 .loopx/
 .codex/
 .venv-loopx/
+
+.env
