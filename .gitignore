@@ -5,3 +5,7 @@ gotry-state/
 __pycache__
 .DS_Store
 async_result.json
+
+.loopx/
+.codex/
+.venv-loopx/
