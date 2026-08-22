@@ -23,7 +23,7 @@ import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
 
 export const name = 'gotry-tools'
-export const inject = ['tools']
+export const inject = ['tools', 'systemPrompt']
 
 export interface Config {
   /** Python 解释器(仓库 .venv 内)——桥接回退用 */
@@ -69,6 +69,18 @@ type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
 
 export function apply(ctx: Context, config: Config): void {
+  // 时间感知:注册动态变量,persona 里用 {{current_date}} 引用。
+  // 每次 assemble 时取系统时钟——LLM 始终知道「今天是几号」。
+  const sp = (ctx as unknown as Record<string, unknown>)['systemPrompt'] as {
+    variable?: (name: string, provider: () => string) => void
+  } | undefined
+  sp?.variable?.('current_date', () => {
+    const d = new Date()
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const weekdays = ['日', '一', '二', '三', '四', '五', '六']
+    return `${ymd} 周${weekdays[d.getDay()]}`
+  })
+
   ctx.tools.register(defineTool({
     name: 'gotry_feasibility_check',
     description:

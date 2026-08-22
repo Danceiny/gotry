@@ -88,13 +88,15 @@ export function createOpenAICompatLlm(flightPackPath?: string): LlmPort {
       const { readFile } = await import('node:fs/promises')
       const scenario = String(skeleton['scenario'] ?? 'generic')
       // 场景→数据包路由(薄壳段3:意图决定装哪个包,而非永远装通用包)
+      // generic 不装包——意图不明确时不进求解,让循环继续访谈(ADR-10:翻译不造数)
+      if (scenario === 'generic') return null
       const packByScenario: Record<string, string> = {
         erhai: pack.replace('flights_2026.json', 'golden_erhai.json'),
         workation: pack, // 五段链
         yunnan: pack.replace('flights_2026.json', 'yunnan-pack.json'),
-        generic: pack,
       }
-      const packPath = packByScenario[scenario] ?? pack
+      const packPath = packByScenario[scenario]
+      if (!packPath) return null
       let packSpec: JourneySpecTS
       try {
         if (scenario === 'erhai') {
