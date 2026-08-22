@@ -1,166 +1,231 @@
 # GoTry
 
-> 身体和灵魂,更多旅行,更少旅游。
+> **身体和灵魂，更多旅行，更少旅游。**
+> *Body and soul — more travel, less tourism.*
 
-**GoTry 是一个 AI 旅行规划助手**:你用一句话说想去哪、为什么想出发,它先问清楚你的工作时间和已订资源,然后给出**经过引擎验证**的行程方案——不是「AI 觉得不错」,是数学求解器算过「可行」的。
+**GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**：你用一句话说想去哪、为什么想出发；它先问清楚你的工作时间和已订资源，再用**数学求解器**给你一份经过验证的行程方案。
 
-## 用什么版本
+**GoTry is an AI travel agent for departure-to-next-departure.** Tell it where you want to go and why. It asks what's missing, then hands you a **formally verified itinerary** — not vibes.
 
-仓库目前是 **v0.0.1-rc.1**(首个点式发布候选,旧 RC1/RC2 已被本版吸收)。
-clone 这个 tag 拿到 RC.1:
-
-```bash
-git clone --branch v0.0.1-rc.1 <本仓库地址>
-cd gotry
-```
-
-**tag 历史**:
-- `v0.0.1-rc1` / `v0.0.1-rc2` — 历史 RC(无点,薄壳/UX 阶段)
-- `v0.0.1-rc.1` — **当前 RC**(点式:对齐 dsh `X.Y.Z-rc.W` 体例):
-  - §10 D-7 大部赎回(plugins/cli.py/diff-test 全切轨 unified),
-  - 5 个产品级 bug 修复(dsh web WASM 崩溃/时间感知/路由污染/工具链稳定性),
-  - hbcli 能力层接入(进程 + 降级 + 证据链),
-  - 进程护栏(uncaughtException/unhandledRejection → gotry-state/incidents.jsonl)
-- `main` — 开发分支
-
-## 直接用(服务已在跑)
-
-→ **http://127.0.0.1:3080**(GoTry dsh 运行时,**唯一推荐面**;薄壳已废弃)
-→ `./gotry` 一键启动(shell/cli/headless 三模式)
-
-完整指南: [docs/user-guide.md](docs/user-guide.md) — 三个试一试场景/数字解读/FAQ
-
-## 它能做什么
-
-| 你说 | GoTry 做 |
+| | |
 |---|---|
-| 「我想去洱海边发呆,这周末,上海,预算 3000」 | 先问你是否已订航班/酒店;然后判定:洱海 2 天装不下(进「下一次出发」清单),推荐千岛湖(06:35 起/84% 精力/¥1002)或太湖(¥755),给你选择题 |
-| 「带爸妈去云南 5 天,爸爸有高血压」 | 引擎感知同伴约束:不上 4506m 雪山、海拔递减结构(丽江 2400m→大理 1976m)、每日步行 ≤4h,输出验证过的四段行程 |
-| 「我在海外远程办公,下周想去普吉岛两周」 | 工作窗口(UTC+4 10:00-19:00=当地 13:00-22:00)成为硬约束——周五晚班机被排除,只推周六早班 |
+| **Version** | [`v0.0.1-rc.1`](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.1) (Pre-release) |
+| **Status** | M3 closed · waiting on private seed users · License TBD |
+| **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
+| **Runtime** | [DeepSeek Harness 0.1.1-rc.1](https://github.com/deepseek-ai/DeepSeek-Harness) · [LoopX](https://github.com/loopx) · [Z3](https://github.com/Z3Prover/z3) |
+| **License** | TBD (MIT / Apache-2.0 pending founder decision — see [License](#license)) |
 
-## 五分钟跑起来
 
-### 前提
-- macOS 或 Linux
-- Python ≥3.9
-- Node.js ≥22(推荐用 [nvm](https://github.com/nvm-sh/nvm) 安装)
-- 一个 LLM API key(推荐 [DeepSeek](https://platform.deepseek.com),也兼容任何 OpenAI 兼容端点)
+---
 
-### 安装
+## ✨ 它做什么 — What it does
+
+GoTry 把「想去哪」变成「能不能、怎么去」：
+
+| 阶段 | AI/Engine | 输什么 |
+|---|---|---|
+| **动机访谈** | LLM | 必问项：工作窗口 / 已订资源 / 出发城市 |
+| **事实抽取** | LLM | 工作窗口生效 + 休假语义识别 |
+| **可行性判定** | **Z3** | 哪些候选目的地**可行**、哪些**不可行**、为什么、**如何最小化改动让它变可行** |
+| **门到门全成本** | 求解器 | 真实飞行时长（含时差）+ 醒来起夜惩罚 + 接驳代价 + 到达精力 % |
+| **证据链** | 渲染层 | 每个数字标 `[骨架:openflights]`、`[实时API:hbcli]`、`[静态包:估算]` |
+
+**不像普通 AI 聊天**——LLM 只做理解和解释，**判定与算术是数学求解器**算的。
+
+> **Unlike a regular AI chat**, the LLM only translates and explains. **Decisions and arithmetic are computed by a Z3 solver**, not guessed.
+
+---
+
+## 🚀 快速开始 — Quick start
+
+### 1. Clone
 
 ```bash
-git clone <本仓库地址>
+git clone https://github.com/Danceiny/gotry
 cd gotry
-
-# 1. Python 依赖
-python3 -m venv .venv
-.venv/bin/pip install -e .
-
-# 2. Node 依赖
-cd ts && npm install && cd ..
-
-# 3. 配置你的 API key
-cat > .env <<'EOF'
-LLM_API_KEY=你的key
-LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL=deepseek-chat
-EOF
-
-# 4.(可选)dsh 运行时——仅方式二/三需要;dsh 处于 rc 期,版本以 ts/cordis.gotry-patch.yml 对齐为准
-mkdir -p ts/dsh-runtime && cd ts/dsh-runtime
-printf '{"name":"gotry-dsh-runtime","private":true,"dependencies":{"@deepseek-ai/dsh":"0.1.1-rc.1"}}\n' > package.json
-pnpm install && cd ../..
+git checkout v0.0.1-rc.1
 ```
 
-### 使用
+### 2. 环境前置 — Prerequisites
+
+- **Node 22+**（`nvm install 22` 或更高）
+- **bun**（hbcli 调用需要）：`curl -fsSL https://bun.sh/install | bash`
+- **Python 3.11+**（oracle 实现）：`python -m venv .venv && source .venv/bin/activate && pip install z3-solver`
+- 一个 LLM API key（默认走 DeepSeek，也支持 OpenAI 兼容协议）
+
+### 3. 配 — Configure
 
 ```bash
-# 方式一:浏览器界面(推荐;薄壳零依赖,只需第 2 步的 ts 依赖)
-./gotry            # 等价于 ./gotry shell
-# 打开 http://127.0.0.1:4080,三个页面:对话 / 下一次出发 / 动机画像
-
-# 方式二/三:dsh 运行时(DeepSeek Harness 生态,更强大的 agent 能力;需第 4 步)
-./gotry web                                    # dsh Web 界面
-./gotry "我想去洱海边发呆,这周末,上海,预算3000"   # 命令行一问一答
+cp .env.example .env
+# 填 LLM_API_KEY（deepseek: sk-...；也兼容 OpenAI/Anthropic 兼容协议）
 ```
 
-### 试一试
+### 4. 跑 — Run（**仅一种正确方式**）
 
-启动 `./gotry shell` 后,在对话框输入:
-
-```
-我想去洱海边发呆,就这周末,我在上海,预算3000,别让我早起。年假了不用办公,还没订任何东西。
-```
-
-GoTry 会:
-1. 先问你一两个关键问题(如果信息不全)
-2. 然后给出**引擎判定**的方案:哪个目的地可行/不可行/为什么/多少钱/几点起床/到达精力百分比
-3. 不可行的目的地不会消失——进「下一次出发」页面,带成行条件
-
-## 它怎么做到的
-
-```
-你的话 → LLM(翻译:抽事实、提骨架) → Z3 求解器(判定:可行性/全成本)
-                                              ↓
-                                    证据链标注的结果 ← 你看到的每个数字
+```bash
+./gotry web                              # 把 dsh Web 启起来，http://127.0.0.1:3080
+./gotry "我想从深圳休整两天，预算 3000"   # 命令行一问一答（headless）
+./gotry                                  # 默认 = help（薄壳已废弃——见 Known limitations）
 ```
 
-**核心原则**:LLM 负责理解和解释,**判定与算术由确定性引擎完成**——这是 GoTry 和普通 AI 聊天的本质区别。
+> ⚠️ **`./gotry shell` 已废弃**。在 v0.0.1-rc.1，dsh 运行时是唯一推荐面（因为 shell 没法处理任意自然语言输入）。详见 [`docs/architecture.md` §1](docs/architecture.md)。
+>
+> *The shell frontend is **deprecated**. In v0.0.1-rc.1, the dsh runtime is the only recommended surface. See [known limitations](#-known-limitations).*
 
-### 门到门全成本
 
-不是「飞行 3 小时」,而是从「闹钟响起」到「住处放下行李」的全程:
-- 凌晨起床的生物钟代价
-- 家到机场的时间 + 提前值机
-- **真实飞行时长**(含时差:深圳→迪拜 7h35m,不是表观的 3h35m)
-- 落地后的接驳与精力消耗
+---
 
-### 证据链
+## 🎬 一段对话 — Demo
 
-每个推荐都标注数据来源:
-- `[骨架:openflights]` — 航线通航性验证(OpenFlights 数据库)
-- `[实时API:hbcli]` — 酒店/航班实时数据(hotelbyte-cli)
-- `[静态包:估算]` — 估算值,预订前需核实
+输入 → 引擎判定 → 输出（真实截图，monospace 保留原味）：
 
-## 跑测试
+```
+> 我想去洱海边发呆两三天，上海出发，预算 3000，年假别让我办公。
+
+GoTry: 收到。先把约束记下来——
+  • 窗口: 2 天(2026 年窗口)
+  • 出发: 上海
+  • 预算: ¥3000 全含
+  • 动机: 休整 / [escape_rest: 0.7]
+  • 不要求工作窗口(年假)
+  • 还没订任何东西
+
+引擎判定:
+
+  **大理·洱海: 现在不行** —— 冲突约束: duration。
+    你的 2 天窗口装不下「至少 5 天的洱海休整」(你之前的画像也有此约)。
+    放宽方案: 把行程延长到 5 天,约 ¥4950。
+  ★已放入「下一次出发」清单: 需 5 天起,3-5 / 9-11 月最佳。
+
+  **千岛湖: 可行** (G7315 06:35 出发,bus 接驳,
+   ¥996,起床 06:35,到达精力 84%,门到门 5h20m,
+   有效休整 4.4h)
+  **太湖: 可行** (G101 09:00 出发,
+   ¥716,起床 07:12,到达精力 84%,
+   有效休整 4.6h)
+
+  建议: 千岛湖(意象匹配 80%)。
+  备选: 太湖(¥716,匹配 60%)。
+
+**待你决定**:
+  1. 千岛湖还是太湖?(前者更贴意象,后者更省)
+  2. 出发班次选 G7315(06:35)还是更晚的?
+
+[骨架:openflights] ✓ SZX↔PVG 已校验 [实时API:hbcli] 上海机场在跑
+[静态包:估算] G7315/G7316 价格按 7-8 月淡季估算
+```
+
+> **Brief English summary**: input → engine verdicts (feasibility + whole-cost) → recommendation + wish-pool entry for infeasible candidates. Every numeric carries an evidence tag.
+
+---
+
+## 🏛️ 架构 — Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ L1  对话即界面  chat-as-UI; gates 是消息内选择题                 │
+│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);5 个工具             │
+│ L3  领域  统一行程模型 + Z3 可行性引擎(枚举/Z3 双形态)        │
+│ L4  数据  静态数据包 + hotelbyte-cli 实时桥 + OpenFlights 骨架 │
+│ L5  治理  LoopX(objective / gates / evidence / quota)         │
+└──────────────────────────────────────────────────────────────┘
+```
+
+| 层 | 模块 | 角色 |
+|---|---|---|
+| L2 | `ts/src/index.ts` (dsh 插件) | 注册 5 个工具,挂 `{{current_date}}` 时间感知变量,挂 uncaughtException 护栏 |
+| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/unified.py` | 唯一求解入口(候选枚举 + 航班链 Z3) |
+| L4 | `ts/capabilities/hbcli.ts` | hotelbyte-cli 进程封装 + 降级到 `data/hotels_2026.json` |
+| L4 | `ts/scripts/skeleton-check.ts` | OpenFlights 168 对枢纽,三值语义(阳性/枢纽对否定≠证伪/枢纽外=无结论) |
+
+> 📖 完整 ADR / 演进阶段 / 债务清单见 [`docs/architecture.md`](docs/architecture.md)。
+
+
+---
+
+## ⚠️ Known limitations · 已知限制
+
+- **License 未决** — 见 [License](#license)
+- **zh-CN 体验** — 当前面向中国出境首发(你的账号语言习惯)。英文界面/wider 国际化未做,等 M4 校准输入落定。
+- **机票实时数据** — 静态包(`data/flights_2026.json`)作为降级。实时票价接入留到 v0.1.x。
+- **Z3 WASM race** — 连续跑多个测试套件时偶发 `memory access out of bounds`(已规避回滚)。M3 早期处理。
+- **薄壳已废弃** — `./gotry shell` 不再推荐;dsh web 是唯一面。本版 README 仍保留旧命令行做迁移证据。
+
+
+---
+
+## 📚 文档 — Docs
+
+| 文档 | 适合谁 |
+|---|---|
+| [本 README](README.md) | **所有人**:是什么 · 怎么用 · 限制 |
+| [`docs/architecture.md`](docs/architecture.md) | 工程师:分层 · ADR · 演进 · 债务 |
+| [`docs/roadmap.md`](docs/roadmap.md) | 项目管理:M0–M6 与当前位置 |
+| [`docs/user-guide.md`](docs/user-guide.md) | 终端用户:详细使用文档 |
+| [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | 产品:主循环 · 透明机制 · 全成本模型 |
+| [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md) | 决策者:工作分解 · 复用矩阵 |
+| [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md) | 所有人:真实 AI 旅行规划失败复盘(反面教材) |
+| [`docs/release-notes.md`](docs/release-notes.md) | 历史:每个 tag 的发布闸勾稽 |
+
+
+---
+
+## 🧪 跑测试 — Verify
 
 ```bash
 ./scripts/run-all-tests.sh
 ```
 
-覆盖:Python 单元 + TS 三套件(engine/journey/unified)+ 对话循环重放(带终态断言)+ 异步工单跨进程闭环 + 插件 smoke + 双实现差分;逐节清单见脚本头部注释。
+10 套测试,一次性绿:
 
-## 项目文档
-
-| 文档 | 给谁看 |
+| 节 | 内容 |
 |---|---|
-| 本 README | 所有人:是什么/怎么用 |
-| `docs/architecture.md` | 工程师:系统架构/统一模型/ADR/债务 |
-| `docs/roadmap.md` | 项目管理:里程碑(M0-M6)与当前位置 |
-| `docs/gotry-product-design.md` | 产品:主循环/透明机制/全成本模型 |
-| `docs/gotry-master-outline.md` | 项目管理:工作分解/复用矩阵 |
-| `docs/tech-strategy.md` | 技术决策者:选型/评测/分工 |
-| `docs/kimi-postmortem.md` | 所有人:一个真实 AI 旅行规划的失败复盘 |
+| 1 | Python 单元 |
+| 2–4 | TS engine · journey · unified 金标准断言 |
+| 5 | 对话循环重放(mock,行为级回归) |
+| 6 | 异步工单跨进程闭环 |
+| 7 | 插件 smoke |
+| 8 | hbcli 能力封装(4 断言) |
+| 9 | 进程护栏(2 断言,fsync) |
+| 10 | 双实现差分(TS vs Python oracle) |
 
-## 参与开发
+---
+
+## 🤝 参与开发 — Contributing
+
+仓库内 branch 模型:`main` 是唯一分支(没有 dev/staging)。所有迭代在 main 直接推(每次提交需全栈绿)。
 
 ```bash
-# 全栈回归
-./scripts/run-all-tests.sh
+./scripts/run-all-tests.sh   # 提交前必跑
 
-# 对话循环重放(不需要 API key,mock 模式)
-cd ts && npx tsx scripts/replay.ts
-
-# 真 LLM 重放(需要 .env)
-cd ts && npx tsx scripts/replay-real.ts
-
-# 异步深度规划演示(跨进程工单闭环)
-cd ts && npx tsx scripts/replay-async.ts --request-only
-cd ts && npx tsx scripts/async-collect.ts <工单id>
+# 单独跑某个套件
+cd ts && npx tsx scripts/replay.ts          # 对话重放(mock,不需要 key)
+cd ts && npx tsx scripts/hbcli-tests.ts     # 能力封装
+cd ts && npx tsx scripts/incident-tests.ts  # 进程护栏
 ```
 
-架构决策(ADR)和技术债见 `docs/architecture.md` §8/§10。Agent 协作契约见 `AGENTS.md`。
+ADR 与技术债见 [`docs/architecture.md` §8 / §10](docs/architecture.md)。Agent 协作契约见 [`AGENTS.md`](AGENTS.md)。
 
-## License
+---
 
-TBD(正式发布前确定)
+## 📜 License
+
+**TBD**。仓库处于 private 预 release 期,License 文件尚未放入。
+
+候选:[MIT](https://opensource.org/licenses/MIT)(宽松,跟上游 dsh/loopx 一致)/ [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)(专利友好)/ 私有。
+
+由创始人(GoTry 的唯一 owner)按 M4 校准节奏拍板。选定后即放入 `LICENSE` 文件 + 打 tag。
+
+---
+
+## 🌐 中英版 — Locales
+
+- **English section summaries** are inline above (italic blockquotes).
+- 本 README 主语言是中文,因为 v0.0.1-rc.1 面向中国出境首发种子用户群。
+- 完整英文版 README 计划在 v0.1.0 同步([issue 路线](#-known-limitations))。
+
+---
+
+**Built with**: DeepSeek Harness 0.1.1-rc.1 · Cordis · Z3 4.x · loopx · hotelbyte-cli · OpenFlights · TypeScript · Bun
+
+**Last verified against `v0.0.1-rc.1` @ `bf8b65e`** (2026-08-22) — 10/10 suites green.
