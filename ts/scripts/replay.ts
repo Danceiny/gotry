@@ -36,3 +36,11 @@ console.log('workWindow:', state.profile.workWindow
 console.log('bookedResources:', state.profile.bookedResources?.map(b => b.ref).join('; ') ?? '缺失')
 const { missing } = interviewNext(state)
 console.log('剩余待问:', missing.length === 0 ? '无(除预算档未答,见下)' : missing.join(','))
+
+// 终态断言——进 CI 的硬门槛:日历零反复、首轮问出工作窗口与已订资源、访谈收敛到只剩预算档
+const weekday = state.calendar.assertedWeekdays['2026-07-17']
+if (weekday !== 'fri') throw new Error(`FAIL: 2026-07-17 应为 fri,实为 ${weekday}`)
+if (!state.profile.workWindow?.evidence) throw new Error('FAIL: workWindow 缺失或无证据')
+if (!state.profile.bookedResources?.length) throw new Error('FAIL: bookedResources 缺失')
+if (!(missing.length === 1 && missing[0] === 'budgetTier')) throw new Error(`FAIL: 剩余待问应为 [budgetTier],实为 [${missing.join(',')}]`)
+console.log('REPLAY ASSERTS OK')
