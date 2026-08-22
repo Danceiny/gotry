@@ -7,8 +7,10 @@
 
 import { createMockLlm } from '../src/mock-llm.ts'
 import { interviewNext, newState, runTurn } from '../src/loop.ts'
+import { solveUnified } from '../src/unified.ts'
+import { join } from 'node:path'
 
-const llm = createMockLlm()
+const llm = createMockLlm(join('..', 'data', 'flights_2026.json'))
 let state = newState()
 
 const userTurns = [
@@ -19,10 +21,10 @@ const userTurns = [
 
 const history: Array<{ role: 'user' | 'assistant'; text: string }> = []
 for (const turn of userTurns) {
-  const { reply } = await runTurn(state, turn, llm, [...history])
+  const { reply } = await runTurn(state, turn, llm, [...history], solveUnified as never)
   history.push({ role: 'user', text: turn }, { role: 'assistant', text: reply })
   console.log(`\n用户> ${turn.slice(0, 50)}…`)
-  console.log(`GoTry> ${reply.slice(0, 400)}`)
+  console.log(`GoTry> ${reply}`)
 }
 
 console.log('\n===== 终态校验 =====')
