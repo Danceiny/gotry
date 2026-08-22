@@ -16,7 +16,7 @@ const BASE = (process.env['LLM_BASE_URL'] ?? process.env['DEEPSEEK_BASE_URL'] ??
 
 async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, json: boolean): Promise<string> {
   const key = process.env['LLM_API_KEY'] ?? process.env['DEEPSEEK_API_KEY']
-  if (!key) throw new Error('DEEPSEEK_API_KEY 未设置——真 LLM 路径不可用,请回退 mock(ADR-8)')
+  if (!key) throw new Error('LLM_API_KEY 未设置(兼容 DEEPSEEK_API_KEY 别名)——真 LLM 路径不可用,请回退 mock(ADR-8)')
   const res = await fetch(`${BASE}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
@@ -27,7 +27,7 @@ async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; con
       temperature: json ? 0 : 0.7,
     }),
   })
-  if (!res.ok) throw new Error(`deepseek ${res.status}: ${(await res.text()).slice(0, 300)}`)
+  if (!res.ok) throw new Error(`llm ${res.status}: ${(await res.text()).slice(0, 300)}`)
   const data = await res.json() as { choices: Array<{ message: { content: string } }> }
   const raw = data.choices[0]?.message?.content ?? ''
   // 推理模型(MiniMax-M2 等):剥 <think> 块,只留正文;未闭合时留全文由上层容错
@@ -56,15 +56,7 @@ const SKELETON_SYSTEM = `你是行程骨架抽取器。从对话中抽取行程�
 输出 JSON:{"segments":[{"id":"f1","role":"choice|fixed","route":"HKG->HKT","dateHint":"2026-07-18","anchors":{"arriveByMin":885}}]}
 规则:每个跨城移动一段;锚点只放用户明说或必然的(如"当天到"→arriveByMin 23:59=1439);时刻用当日分钟。只输出 JSON。`
 
-const SPEC_SYSTEM = `你是行程翻译器。把对话中的行程诉求翻译为统一行程模型 JSON(JourneySpec):
-{"segments": [{"id": "f1", "role": "choice|fixed", "date": "说明", "anchors": {"arriveByMin": 数字或省略},
-  "options": [{"id": "班次或方案", "move": {"hub": "", "services": [{"id": "", "depMin": 数字, "arrMin": 数字, "priceCny": 数字}],
-   "bufferMin": 90, "originTransferMin": 60, "destTransferMin": 60, "tzOffsetMin": 0, "originTzOffsetMin": 480,
-   "redEye": false, "redEyeDurationMin": 0}}]}]}
-规则:时间用当日分钟(HH:MM 换算);信息不足宁可省略字段也不要编造;
-已订资源是 fixed 段;日期星期若与 calendar 断言冲突,输出 "calendarConflicts"。只输出 JSON。`
-
-export function createDeepSeekLlm(flightPackPath?: string): LlmPort {
+export function createOpenAICompatLlm(flightPackPath?: string): LlmPort {
   const pack = flightPackPath
   const historyText = (h: Turn[]) => h.map(t => `${t.role === 'user' ? '用户' : '助手'}: ${t.text}`).join('\n')
   return {

@@ -1,5 +1,5 @@
 /**
- * 真实重放(S4 验收入口):有 DEEPSEEK_API_KEY 走真 LLM,无则明确回退 mock。
+ * 真实重放(S4 验收入口):有 LLM_API_KEY(或旧别名 DEEPSEEK_API_KEY)走真 LLM,无则明确回退 mock。
  * 运行(在 ts/ 下):npx tsx scripts/replay-real.ts
  * S4 验收:同一开场白,真实对话质量 ≥ mock 重放(Kimi 复盘的验收标准)。
  */
@@ -15,13 +15,13 @@ try {
   }
 } catch { /* .env 可选 */ }
 import { createMockLlm } from '../src/mock-llm.ts'
-import { createDeepSeekLlm } from '../src/dsh-llm.ts'
+import { createOpenAICompatLlm } from '../src/dsh-llm.ts'
 import { newState, runTurn } from '../src/loop.ts'
 import { solveUnified } from '../src/unified.ts'
 import type { LlmPort } from '../src/loop.ts'
 
 const useReal = Boolean(process.env['LLM_API_KEY'] ?? process.env['DEEPSEEK_API_KEY'])
-const llm: LlmPort = useReal ? createDeepSeekLlm(join('..', 'data', 'flights_2026.json')) : createMockLlm(join('..', 'data', 'flights_2026.json'))
+const llm: LlmPort = useReal ? createOpenAICompatLlm(join('..', 'data', 'flights_2026.json')) : createMockLlm(join('..', 'data', 'flights_2026.json'))
 console.log(useReal ? `=== 真 LLM 模式(${process.env['LLM_MODEL'] ?? 'MiniMax-M2'})===` : '=== 无 LLM_API_KEY,回退 mock(ADR-8)===\n')
 
 const state = newState()
