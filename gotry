@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# GoTry 一键启动(dsh 成品入口)——第二个用户的全部操作就是这一条命令
+# 用法: ./gotry          → 打开浏览器聊天界面
+#       ./gotry "帮我规划..." → 一问一答模式
+set -euo pipefail
+cd "$(dirname "$0")/ts/dsh-runtime"
+source ~/.nvm/nvm.sh 2>/dev/null || true
+set -a; source ../../.env 2>/dev/null || true; set +a
+export DEEPSEEK_API_KEY="${LLM_API_KEY:?需要 .env 里的 LLM_API_KEY}"
+if [ $# -eq 0 ]; then
+  exec node node_modules/@deepseek-ai/dsh/lib/bin.js web --patch ../cordis.gotry-patch.yml
+else
+  exec node node_modules/@deepseek-ai/dsh/lib/bin.js --profile headless --patch ../cordis.gotry-patch.yml "$*"
+fi
