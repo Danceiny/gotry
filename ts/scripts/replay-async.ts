@@ -42,5 +42,7 @@ if (process.argv.includes('--request-only')) {
   console.log('……(一小时后,另一个进程执行回收)……\n')
   const { reply: deliverable } = await collectDeepPlanning(state, ticket, solveUnified as never)
   console.log(`GoTry> ${deliverable}`)
+  // 不失望四条是交付物的自检契约,未全过即重放失败
+  if (!deliverable.includes('4/4')) throw new Error('FAIL: 不失望四条未全过')
   console.log(`\n(真实形态命令:npx tsx scripts/async-collect.ts ${ticket.id})`)
 }

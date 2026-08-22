@@ -15,7 +15,7 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 # TS 侧(需 node ≥22;本机经 nvm)
 cd ts && npm install && cd ..
 
-# 全栈回归(Python 20/20 + TS engine/journey/unified + 双实现差分)
+# 全栈回归(单测/差分/重放/冒烟,清单见脚本)
 ./scripts/run-all-tests.sh
 
 # 对话循环重放(3 轮走完 Kimi 的 13 轮)

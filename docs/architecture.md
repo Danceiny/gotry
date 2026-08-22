@@ -128,7 +128,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-4 gate/卡片无承载界面 | 最小 Web 面(M3) |
 | D-6 红眼睡眠模型未校准 | 对账 Q10 |
 | D-7 deprecated 层仍承重 | dsh 插件进程内路径调 `engine.ts`、`cli.py` 桥路由 `engine.solve`、`build_plan.py` 调 `journey.solve_journey`;TS unified 缺候选形态求解(文件头自认「下一迁移段」)。赎回:TS 候选形态迁移 → 插件/CLI 切 unified → engine/journey 退纯 oracle(M2 W2,ADR-5 兑现日) |
-| D-8 对话循环不进 CI | replay 三件套与 smoke 只有手动夹具,中枢 `loop.ts` 无自动化回归。赎回:replay+smoke 进 `run-all-tests.sh`(批 0) |
+| D-8 对话循环不进 CI | **已清偿**(replay 带终态断言 + 异步工单跨进程闭环 + smoke 进 `run-all-tests.sh` §5-7) |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
