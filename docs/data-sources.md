@@ -12,7 +12,7 @@
 ## 1. 设计原则(为什么这样分)
 
 1. **LLM 永不造数**(ADR-10):班次/价格/坐标/天气只来自能力层;LLM 只产骨架与锚点。
-2. **免费层打底,付费层按需**:静态骨架(离线可用) → 免费实时(Open-Meteo/OpenSky/OSM) → 复用 hotel-be(供应链已有) → 付费(暂无)。
+2. **免费层打底,付费层按需**:静态骨架(离线可用) → 免费实时(Open-Meteo/OpenSky) → **复用 hotel-be Anything 主路径**(企业级 POI 缓存/ranking,无 key,免费) → M4 scale-up Google Place(地理评分/照片;按次收费) → 付费(暂无)。
 3. **复用不重写**(总纲复用矩阵):hotel-be 已接的能力(Google Place/酒店库存)通过 hbcli 桥复用,GoTry 不直连。
 4. **降级不阻塞**:任何实时源失败都降级到静态包/骨架并标注,规划不中断(能力层契约:永远返回一种结果)。
 5. **每域至少一个免费源**:种子用户期不因配额/凭证卡死。
@@ -27,8 +27,8 @@
 | **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`(公开渠道调研,5 段链) | 静态(2026-07 调研) | `[静态包:估算]` | M4:aviationstack 校验层(§7-1 已批三层组合);票价 M5 |
 | **航班实时观测** | ✅ OpenSky 已接(`capabilities/opensky.ts` + `gotry_flight_verify` 工具;`/api/states/all` 当前 ADS-B 全球观测,~400 credits/天) | 实时 | `[实时API:opensky]` | ✅ 已落地(2026-08-22) |
 | **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退 | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
-| **酒店点评/评分** | ❌ 无 | — | — | **复用 hotel-be**:geography `GetPlaceReviews`(Google Places v1)——链路见 §4 |
-| **POI/地点搜索** | ❌ 无(候选目的地硬编码在金标准包) | — | — | **双轨**:① 复用 hotel-be Google Place(富数据,收费) ② OSM Nominatim/Overpass(免费兜底,TREK 模式) |
+| **酒店点评/评分** | ✅ **复用 hotel-be Anything**(内含酒店 + 城市/区域混合 candidate)+ M4 scale-up:Google Place 评分/照片 | Any(hit/miss),M4:geography | `hbcli-anything` | M3:DONE(founder 校准 Anything 复用);M4:Google Place scale-up 路径(geography GetPlaceReviews) |
+| **POI/地点搜索** | ✅ Anything(混合 城市+酒店+place 候选) + OSM Nominatim 兜底 | Any | `hbcli-anything` / M4 `osm-nominatim` | M3:DONE;TREK 同款,免费兜底 |
 | **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`) | 实时 | `[实时API:open-meteo@ts]` | 保持;WMO 码已映射中文 |
 | **地面交通(接驳/铁路)** | ⚠️ 段内 transfer 硬编码在数据包(minutes/priceCny) | 静态 | `[静态包:估算]` | M4:OSRM 免费自托管(路线/时长);12306 无开放 API 不接 |
 | **地理/行政区划** | ❌ 无 | — | — | TREK 模式:bundled GeoJSON atlas(脚本构建,离线) |
@@ -55,7 +55,7 @@
                     │ L3 能力层封装(ts/capabilities/)               │
                     │   hbcli.ts(进程桥+降级+证据链)                │
                     │   incident-log.ts(护栏)                      │
-                    │   [待建] place.ts / weather.ts / opensky.ts   │
+                    │   [已建] weather.ts / opensky.ts / anything.ts│
                     └──────────────┬───────────────────────────────┘
                                    │
         ┌──────────────┬───────────┼──────────────┬─────────────────┐
@@ -80,19 +80,47 @@
 
 ---
 
-## 4. Google Place 链路(founder 定案,2026-08-22)
+## 4. POI 通用搜索 — Anything 复用优先(founder 校准,2026-08-23)
 
-**决策**:GoTry 的 POI/地点/点评数据**不直连 Google**,复用 hotel-be 已接入的 Google Places v1。
-
-**链路**(四段,前两段在 hotel-be 侧):
+**当前决策(M3 主路径)**:GoTry 的 POI / 地点 / 酒店搜索**走 hotel-be Anything 函数**——已存在(search/service/geography.go:232),不新增 Places service。Anything 是企业级 FuzzySearch + 混合 城市/酒店 ranking,质量远超 LLM 常识(ADR-10 翻译≠造数禁止)。
 
 ```
-gotry 插件(gotry_place_search 工具)
-  → ts/capabilities/hbcli.ts(进程桥,spawn hbcli search place --json)
-    → hbcli(external/hotelbyte-cli,新增 search place 命令)
-      → hotel-be search 模块(新增 OpenAPI endpoint: place 搜索/点评)
-        → geography 模块(内网服务,已接 Google Places v1:
-          SearchPlace / GetPlaceReviews,google_service.go)
+gotry 插件(gotry_anything_search)
+  → ts/capabilities/anything.ts(spawn hbcli search anything)
+    → hbcli(external/hotelbyte-cli/src/commands/search.ts:search anything)
+      → hotel-be /api/search/anything(公开面,go-zero dispatcher 反射)
+        → search/service.Anything 函数(SearchReq{keyword, contentType?, parentDestinationId?})
+          → 混合 candidates[city|hotel|place] 返回
+            证据链:[实时API:hbcli-anything@ts](hit/miss/error 三值)
+```
+
+**Anything 不够时 — Google Place scale-up 路径(M4 后)**:
+
+```
+gotry(gotry_place_search 工具, 拟新增)
+  → hbcli search place-search "<query>" (拟新增)
+    → hotel-be /api/search/googlePlaces/search (拟新增 — geography /SearchPlace 暴露)
+      → geography/service/google_service.go:SearchPlace
+        → Google Places v1(geography 仓已接个人 API key,按次收费)
+```
+
+**Anything vs Google Place 决策矩阵**(M4 决策点 D-4a):
+
+| 选 | Anything | Google Place Scale-up |
+|---|---|---|
+| 质量 | 企业级 FuzzySearch(ranking 算法 + 缓存) | 评分 / 照片 / 营业时间 |
+| 配额 | 无(走酒店-be 内部) | 按次计费(geography 个人 key) |
+| 数据更新 | 酒店-be 主仓更新即生效 | Google 实时 |
+| 何时选 | 种子用户期 / 任何地方+酒店混合查 | M4 校准数据后升级 |
+
+**当前 Anything 降级链**(L4 不变量,降级不阻塞):
+- hbcli 不可达 → verdict=`unavailable` + 证据链 `[实时API:hbcli-anything@error@ts]`
+- Anything miss(0 候选) → verdict=`miss` 让 LLM 换搜索词
+- agent-reach 是 Anything 再下一级的最后兜底(.shared/skills/,D-4a 决定用不用)
+
+**变更历史**:
+- 2026-08-22 段:Google Place 链路定案为唯一路径
+- **2026-08-23 段**:founder 锐评「anything 就是 hotel-be 的接口啊」+「hotelbyte-cli / hotel-be 是你的 workspace 范围」,**Anything 复用作主路径**,Google Place scale-up 后置。三仓 commit 闭环 (gotry `244a0ae` + hbcli `43236a0` + hotel-be `c38ff65d1`)。
           → Google(出站 gRPC)
 ```
 
@@ -119,7 +147,7 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 | 域 | TREK 的做法 | GoTry 采纳 |
 |---|---|---|
-| POI 搜索 | 双 provider:Google Places(有 key)/ Nominatim+Overpass(免费);地图探索 OSM-only by design | ✅ 双轨同构(§4);探索类需求 OSM 优先省配额 |
+| POI 搜索 | M3 用 hotel-be Anything(企业级);M4 scale-up Google Places(有 key)+ OSM 兜底;地图探索 OSM-only by design | ✅ M3:DONE(Anything 主路径,OSM 仅作 M4 兑底的兑底);设计原则与 TREK 一致 |
 | 天气 | Open-Meteo(免费无 key,16 天预报 + 历史气候回退),WMO 码映射 | ✅ M3 末接同款;历史气候做季节性推荐的数据底座(替 LLM 常识) |
 | 地理 | bundled GeoJSON atlas(admin0/admin1 脚本构建,离线可用) | ✅ M4:「去过的地方」地图页复用此模式 |
 | 预订导入 | KDE Itinerary(邮件/PDF 解析航班酒店确认单) | ⏸ M5(交易后才有导入需求);gotry 的 bookedResources 锚点可吃这个 |

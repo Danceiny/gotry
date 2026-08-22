@@ -4,6 +4,12 @@
 > 各项独立——你可以按优先级逐条回;我按你的回执推进。
 > 写完后由 gotry-builder-01 推进并归档,或回滚。
 
+## 已落地(D-4 通用搜索接入)
+
+| 项 | commit | 状态 |
+|---|---|---|
+| **D-4 Anything 通用搜索** | gotry `244a0ae` + hotel-be `c38ff65d1` + hbcli `43236a0` | ✅ 2026-08-23 三仓 commit 闭环;全栈 11 套 exit=0;等 founder merge hotel-be `tmp/m1-rebase` 分支 |
+
 ---
 
 ## D-1:License 选定(v0.0.1-rc.2 已占位)
@@ -163,3 +169,4 @@ dsh LLM
 | 日期 | 变更 |
 |---|---|
 | 2026-08-23 | 立 v1:6 条决策项汇编,按优先级 D-1 ~ D-6 |
+| 2026-08-23 | v2: D-4 状态变更(DONE 三仓 commit) + 已落地表迁移首位; 待 founder merge hotel-be/tmp/m1-rebase |

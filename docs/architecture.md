@@ -10,7 +10,7 @@
 
 **GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:动机访谈进、已验证的行程方案与选择题出;LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 
-**当前形态(诚实定位,2026-08-22 `v0.0.1-rc.3` @ `3e7791a`)**:dsh 成品可用(`./gotry`,DeepSeek 原生)——人格(八条行为契约,新增时间感知)+ 八工具(可行性/骨架/酒店/天气/航班/Anything/动机/愿望池);机票数据三层组合全链(骨架 168 对+校验桥+锚点),酒店 hbcli 桥(实时/静态降级+证据标注);证据链从工具到用户渲染面贯穿。**v0.0.1-rc.3 收口**: 去掉 Python oracle(cli.py / bridge.callFeasibilityEngine / loop.ts erhai-python-bridge / diff-test ts-vs-python)——**纯 TS unified 求解**(`solveChoiceSegment` 枚举,~6ms/次);npm 一键启动骨架(根 package.json + bin/gotry.js + vendored dsh 0.1.1-rc.2 pnpm install);headless 路径实测 ✓(gotry 默认 mode 解析 fix);D-NEW 进程护栏(incident-log fsync 兜底 dsh 异常退出);README '一行安装' 5 步段;engine/journey 退纯 oracle;run-all-tests 9 套,不再依赖 Python 运行时。M3 最小可用产品。
+**当前形态(诚实定位,2026-08-23 `v0.0.1-rc.3-dev` @ `244a0ae`)**:dsh 成品可用(`./gotry`,DeepSeek 原生)——人格(八条行为契约,新增时间感知)+ 八工具(**可行性/骨架/酒店/天气/航班/Anything/动机/愿望池**);机票三层(骨架 168 对+校验桥+锚点)+ 酒店 hbcli 桥(实时/静态降级+证据标注)+ **Anything 通用搜索**(gotry `capabilities/anything.ts` → hbcli `search anything [keywords...]` → hotel-be `/api/search/anything`;三仓 commit 244a0ae/c38ff65d1/43236a0);OpenSky 实时 ADS-B + Open-Meteo 天气免费接入;证据链从工具到用户渲染面贯穿。**v0.0.1-rc.3 收口**: 去掉 Python oracle(cli.py / bridge.callFeasibilityEngine / loop.ts erhai-python-bridge / diff-test ts-vs-python)——**纯 TS unified 求解**(`solveChoiceSegment` 枚举,~6ms/次);npm 一键启动骨架(根 package.json + bin/gotry.js + vendored dsh 0.1.1-rc.2 pnpm install);headless 路径实测 ✓;D-NEW 进程护栏(incident-log fsync 兜底 dsh 异常退出);README '一行安装' 5 步段;engine/journey 退纯 oracle;run-all-tests **11 套 exit=0 ALL SUITES GREEN**(weather + opensky + anything 三新能力层均纳入)。M3 最小可用产品。
 
 ## 2. 总体架构:五层与现状
 
@@ -115,7 +115,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 原则:**不跳阶段,不提前优化下阶段的事**;每阶段 Entry/Exit/gate 见 roadmap。旧 Stage 0-4 与总纲 Phase、产品 M1-M3 已归并映射到 M0-M6(映射表在 roadmap)。
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
-- **当前 = M3(工程面完成,tag `v0.0.1-rc.3` @ `3e7791a`)**:薄壳七段 ✅(三页/路由/休假/持久化/云南包/Markdown/UX);三场景全验(洱海/云南/普吉);D-4 大部赎回(地图位/预算条待)。**v0.0.1-rc.3 收口**:完全去 Python(cli.py / bridge.callFeasibilityEngine / loop erhai-python-bridge / diff-test ts-vs-python / gotry bash 全部下线);npm 一键启动骨架(根 package.json + bin/gotry.js + vendored dsh 0.1.1-rc.2 + workspaced @gotry/plugin);headless 实测 ✓(fix 默认 mode + argv 解析);D-NEW 进程护栏(incident-log fsync);README '一行安装' 5 步段(从 4 步扩到 5:加 vendored dsh runtime pnpm install)。**M3 剩余=种子用户启动(等 remote 与 License 决策)**。此后 M4 记忆 → M5 交易 → M6 B2B。不跳阶段。
+- **当前 = M3(工程面完成,tag `v0.0.1-rc.3` @ `3e7791a`,HEAD `v0.0.1-rc.3-dev` @ `244a0ae`)**:薄壳七段 ✅(三页/路由/休假/持久化/云南包/Markdown/UX);三场景全验(洱海/云南/普吉)。**v0.0.1-rc.3 收口**:完全去 Python(cli.py / bridge.callFeasibilityEngine / loop erhai-python-bridge / diff-test ts-vs-python / gotry bash 全部下线);npm 一键启动骨架(根 package.json + bin/gotry.js + vendored dsh 0.1.1-rc.2);headless 实测 ✓(fix 默认 mode + argv 解析);D-NEW 进程护栏(incident-log fsync);**D-4 DONE** (Anything 通用搜索:gotry capabilities/anything.ts + hbcli `search anything` 子命令 + hotel-be `/api/search/anything` @path 注解;三仓 commit 闭环);天气 / OpenSky / Anything 三能力层实测 11 套 exit=0;README '一行安装' 5 步段(从 4 步扩到 5:加 vendored dsh runtime pnpm install)。**M3 剩余=种子用户启动(等 remote 与 License 决策)**。此后 M4 记忆 → M5 交易 → M6 B2B。不跳阶段。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
@@ -126,6 +126,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-3 LLM 未进环 | **已清偿**(S4 由 MiniMax-M2 完成,`bb880f3`;mock 留作回归夹具,ADR-8 兑现) |
 | D-5 时区语义 | **已清偿**(EK329 官网逐分一致) |
 | D-4 gate/卡片无承载界面 | **大部赎回**(薄壳三页,v0.0.1-rc;地图位/预算条待) |
+| D-4'(Anything 数据接入) | **已完成 2026-08-23**: gotry capabilities/anything.ts 11 套实测 5/5 + hbcli `search anything` 子命令 + hotel-be `/api/search/anything` `@path` 注解;三仓 commit 闭环(244a0ae/c38ff65d1/43236a0) |
 | D-6 红眼睡眠模型未校准 | 对账 Q10 |
 | D-7 deprecated 层仍承重 | **大部赎回**:dsh 插件进程内路径切轨 solveChoiceSegment(枚举,~0ms)、cli.py 桥切轨 solve_choice_segment、diff-test 切轨统一模型对统一模型;engine/journey 退纯 oracle(保留为金标准对照)。build_plan.py(demo 离线工具)仍调 journey.solve_journey,属剩余尾债 |
 | D-8 对话循环不进 CI | **已清偿**(replay 带终态断言 + 异步工单跨进程闭环 + smoke 进 `run-all-tests.sh` §5-7) |
