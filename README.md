@@ -6,23 +6,27 @@
 
 ## 用什么版本
 
-仓库目前是 **v0.0.1-rc2**(首个发布候选,无人工测试,见 [Known limitations](#known-limitations))。
-clone 这个 tag 拿到 RC2:
+仓库目前是 **v0.0.1-rc.1**(首个点式发布候选,旧 RC1/RC2 已被本版吸收)。
+clone 这个 tag 拿到 RC.1:
 
 ```bash
-git clone --branch v0.0.1-rc2 <本仓库地址>
+git clone --branch v0.0.1-rc.1 <本仓库地址>
 cd gotry
 ```
 
 **tag 历史**:
-- `v0.0.1-rc1` — 薄壳前版本(架构+引擎+dsh 运行时,但只有 dsh web UI)
-- `v0.0.1-rc2` — **当前 RC**:加薄壳 `./gotry shell`、Markdown 渲染、UX 补齐
-- `main` — 开发分支(本仓库只有一个主分支,没有 dev/staging)
+- `v0.0.1-rc1` / `v0.0.1-rc2` — 历史 RC(无点,薄壳/UX 阶段)
+- `v0.0.1-rc.1` — **当前 RC**(点式:对齐 dsh `X.Y.Z-rc.W` 体例):
+  - §10 D-7 大部赎回(plugins/cli.py/diff-test 全切轨 unified),
+  - 5 个产品级 bug 修复(dsh web WASM 崩溃/时间感知/路由污染/工具链稳定性),
+  - hbcli 能力层接入(进程 + 降级 + 证据链),
+  - 进程护栏(uncaughtException/unhandledRejection → gotry-state/incidents.jsonl)
+- `main` — 开发分支
 
 ## 直接用(服务已在跑)
 
-→ **http://127.0.0.1:4080**(GoTry 薄壳,推荐)
-→ http://127.0.0.1:3080(dsh 运行时,进阶)
+→ **http://127.0.0.1:3080**(GoTry dsh 运行时,**唯一推荐面**;薄壳已废弃)
+→ `./gotry` 一键启动(shell/cli/headless 三模式)
 
 完整指南: [docs/user-guide.md](docs/user-guide.md) — 三个试一试场景/数字解读/FAQ
 
