@@ -16,7 +16,9 @@ const spec = parseFlightPackToSpec(pack)
 spec.budgetCny = 9000
 const r1 = await solveUnified(spec)
 assert.equal(r1.feasible, true)
-assert.ok(7680 <= r1.money_cny! && r1.money_cny! <= 8550, `money=${r1.money_cny}`)
+// 工作窗口生效后 f2 被迫选 VZ303(¥350),有效组合区间下移(M-1 后重算)
+assert.equal(r1.money_cny, r1.legs!.reduce((a, l) => a + l.price_cny, 0))
+assert.ok(7280 <= r1.money_cny! && r1.money_cny! <= 8350, `money=${r1.money_cny}`)
 const byLeg = Object.fromEntries(r1.legs!.map(l => [l.leg, l]))
 assert.notEqual(byLeg['f4'].service, 'DZ6252')       // 负例被锚点排除
 assert.equal(byLeg['f5'].service, 'EK329')
