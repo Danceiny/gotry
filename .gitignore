@@ -13,3 +13,4 @@ async_result.json
 .env
 .zcode/
 ts/dsh-runtime/
+py/gotry.egg-info/
