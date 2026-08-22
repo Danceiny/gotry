@@ -4,7 +4,7 @@
 > 「从出发到下一次出发」的 AI 旅行 Agent:动机访谈进、已验证的行程方案与选择题出;
 > LLM 负责理解与解释,确定性组件负责判定与算术。
 
-**当前形态(Stage 1 工程面完成,LLM 为 mock)**:对话循环(日历一次断言/增量访谈/求解挂载/gates 选择题)+ 统一行程模型(时区感知全成本/工作窗口/红眼睡眠模型)+ 异步深度规划(工单跨进程持久化,「一小时后回来」)+ dsh 插件 + 真 LLM 适配器(等 DEEPSEEK_API_KEY 即插即用)。经真实行程重放验证:**Kimi 的 13 轮失败 = GoTry 3 轮**。
+**当前形态(M1 已退出,真 LLM 在环)**:对话循环(日历一次断言/增量访谈/求解挂载/gates 选择题)+ 统一行程模型(时区感知全成本/工作窗口/红眼睡眠模型)+ 异步深度规划(工单跨进程持久化,「一小时后回来」)+ dsh 插件 + provider-neutral 真 LLM 适配器(env 三件套,默认 MiniMax-M2)。经真实行程重放验收:**Kimi 的 13 轮失败 = GoTry 3 轮**(mock 与真 LLM 双重验证)。当前里程碑 = M2 实时数据,见 `docs/roadmap.md`。
 
 ## 快速开始
 
@@ -25,7 +25,7 @@ cd ts && npx tsx scripts/replay.ts
 cd ts && npx tsx scripts/replay-async.ts --request-only
 cd ts && npx tsx scripts/async-collect.ts <工单id>   # 见 gotry-state/async/
 
-# 真 LLM 重放(需 DEEPSEEK_API_KEY;无则回退 mock)
+# 真 LLM 重放(仓根 .env 配 LLM_API_KEY/LLM_BASE_URL/LLM_MODEL;无则回退 mock)
 cd ts && npx tsx scripts/replay-real.ts
 ```
 
@@ -34,7 +34,7 @@ cd ts && npx tsx scripts/replay-real.ts
 | 文档 | 关注点 |
 |---|---|
 | `docs/roadmap.md` | **时间线唯一来源**:M0-M6 里程碑与当前位置 |
-| `docs/architecture.md` | **技术权威面**:系统/五层/代码地图/统一模型/循环/数据/ADR×9/演进/债务 |
+| `docs/architecture.md` | **技术权威面**:系统/五层/代码地图/统一模型/循环/数据/ADR(§8)/演进/债务 |
 | `docs/gotry-master-outline.md` | 总纲:工作分解/复用矩阵/决策门 |
 | `docs/gotry-product-design.md` | 产品:主循环/透明机制/全成本/共享经验层 |
 | `docs/stage1-top-down-design.md` | Stage 1 详细设计与实现序(mock 先行) |
