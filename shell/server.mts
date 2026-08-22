@@ -44,9 +44,9 @@ const state = restored.state
 const history = restored.history
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-  // CORS + JSON 工具
+  // JSON 工具。界面由本服务同源托管,不需要 CORS;CORS * 会让任意网页读取本机会话(画像/key 消费)
   const json = (code: number, body: unknown) => {
-    res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' })
+    res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify(body))
   }
 
@@ -89,6 +89,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 })
 
 const PORT = Number(process.env['GOTRY_PORT'] ?? 4080)
-server.listen(PORT, () => {
+// 只绑回环:/state 暴露画像与历史、/chat 消费用户 key,种子用户期不应对局域网可见
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`GoTry 薄壳: http://127.0.0.1:${PORT}(对话/下一次出发/动机画像三页;Ctrl+C 退出)`)
 })

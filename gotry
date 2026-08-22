@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# GoTry 一键启动(dsh 成品入口)——第二个用户的全部操作就是这一条命令
-# 用法: ./gotry          → 打开浏览器聊天界面
-#       ./gotry "帮我规划..." → 一问一答模式
+# GoTry 一键启动——第二个用户的全部操作就是这一条命令
+# 用法: ./gotry [shell]   → 浏览器界面(薄壳,零依赖,默认;只需 ts/node_modules)
+#       ./gotry web       → dsh Web 界面(需 dsh 运行时,安装见 README)
+#       ./gotry "帮我规划…" → 一问一答(dsh headless,需 dsh 运行时)
 set -euo pipefail
-cd "$(dirname "$0")/ts/dsh-runtime"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 source ~/.nvm/nvm.sh 2>/dev/null || true
-set -a; source ../../.env 2>/dev/null || true; set +a
-export DEEPSEEK_API_KEY="${LLM_API_KEY:?需要 .env 里的 LLM_API_KEY}"
-if [ "$1" = "shell" ]; then
-  # GoTry 薄壳(自有品牌界面,零依赖)
-  cd "$(dirname "$0")/ts" && exec npx tsx ../shell/server.mts
-elif [ $# -eq 0 ]; then
-  exec node node_modules/@deepseek-ai/dsh/lib/bin.js web --patch ../cordis.gotry-patch.yml
-else
-  exec node node_modules/@deepseek-ai/dsh/lib/bin.js --profile headless --patch ../cordis.gotry-patch.yml "$*"
+set -a; source "$ROOT/.env" 2>/dev/null || true; set +a
+
+MODE="${1:-shell}"
+if [ "$MODE" = "shell" ]; then
+  # 薄壳(自有品牌界面,零依赖)——不经过 dsh 运行时
+  cd "$ROOT/ts" && exec npx tsx ../shell/server.mts
 fi
+
+# dsh 双模式:先把 provider-neutral 三件套映射为 dsh 读的 DEEPSEEK_*
+: "${LLM_API_KEY:?需要 .env 里的 LLM_API_KEY}"
+export DEEPSEEK_API_KEY="$LLM_API_KEY"
+cd "$ROOT/ts/dsh-runtime"
+if [ "$MODE" = "web" ]; then
+  exec node node_modules/@deepseek-ai/dsh/lib/bin.js web --patch ../cordis.gotry-patch.yml
+fi
+exec node node_modules/@deepseek-ai/dsh/lib/bin.js --profile headless --patch ../cordis.gotry-patch.yml "$@"
