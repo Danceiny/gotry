@@ -5,7 +5,6 @@
  * 候选形态 TS 求解(枚举过滤)与 engine 等价对账在下一迁移段。
  */
 
-import { init } from 'z3-solver'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import type { Candidate, Choice, MotivationProfile, Service, TransferMode, TravelRequest, TrueCost } from './model.ts'
 import { evaluateChoice, minToHhmm, hhmmToMin, requiredUsableHours, trueCostToDict, LATEST_ARRIVE_STAY_MIN } from './model.ts'
@@ -88,7 +87,12 @@ export interface JourneySpecTS {
 let z3Promise: Promise<any> | null = null
 
 async function getZ3(): Promise<any> {
-  if (!z3Promise) z3Promise = (async () => (await init()).Context('main'))()
+  // 延迟到首次实际调用 solveUnified 才加载:避免 dsh 加载 GoTry 模块时启动
+  // WASM worker,引起 worker 线程内存冲突(z3-built.wasm 多线程 unsafe)。
+  if (!z3Promise) {
+    const { init } = await import('z3-solver')
+    z3Promise = (async () => (await init()).Context('main'))()
+  }
   return z3Promise
 }
 
@@ -247,6 +251,26 @@ function evaluateOptionMove(segId: string, mv: MoveSpecTS): LegReport & { d2d_mi
 
 /** 航班链形态求解:按 Option 选择,锚点命名约束,core 剥竖线(D-2 修复) */
 export async function solveUnified(spec: JourneySpecTS): Promise<{
+  feasible: boolean
+  money_cny?: number
+  legs?: Array<LegReport & { leg: string }>
+  red_flags?: string[]
+  unsat_core?: string[]
+  suggestions?: Array<{ relax: string; money_cny: number }>
+  work_window_exclusions?: Array<{ segment: string; option: string; reason: string }>
+  skeleton_notes?: string[]
+}> {
+  // WASM 防护:如果 z3-solver 加载或求解触发 memory access 错误,不让异常穿透到进程层把 dsh 杀掉。
+  // 候选形态走 solveChoiceSegment 不经过这里——这里是显式航班链路径,用户量较少。
+  try {
+    return await solveUnifiedInner(spec)
+  } catch (e) {
+    console.error('[gotry] solveUnified failed (likely wasm thread race):', (e as Error).message?.slice(0, 200))
+    return { feasible: false, unsat_core: ['wasm_runtime_error'], red_flags: ['WASM 求解器异常,建议下次用候选形态(枚举)重试'] }
+  }
+}
+
+async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
   feasible: boolean
   money_cny?: number
   legs?: Array<LegReport & { leg: string }>
