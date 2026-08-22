@@ -1,12 +1,10 @@
-# GoTry 工具叠加层:官方 headless profile 之上插入 gotry-tools,并把 llm 指向 MiniMax
+# GoTry × dsh 成品组合(DeepSeek 原生——创始人官方 key)
 # 用法(在 ts/dsh-runtime 下):
-#   MINIMAX_API_KEY=<key> node node_modules/@deepseek-ai/dsh/lib/bin.js \
+#   DEEPSEEK_API_KEY=<key> node node_modules/@deepseek-ai/dsh/lib/bin.js \
 #     --profile headless --patch ../cordis.gotry-patch.yml "<任务>"
-# 语义备忘:insert=新增行;顶层行(同 id)=整行 config 覆盖(改不了 name);
-# disabled: true=禁用 base 行;settings.yaml 的 agent-default-model 是已存选择,优先级高于 patch——需同步改。
+#   (web 界面: 把 --profile headless 换成 web)
 - insert:
     - id: gotry-tools
-      # 官方要求本地插件绝对路径
       name: '/Users/bytedance/work/gotry/ts/src/index.ts'
       config:
         pythonBin: '../../.venv/bin/python'
@@ -14,33 +12,9 @@
         stateRoot: '.'
         timeoutMs: 30000
         preferInProcess: true
+        hbcliBin: 'hbcli'
 
-# headless profile 自带 llm-pi-ai 行(空 providers)——按 id 覆盖 config,目录路由 openai + baseURL 指向 MiniMax
-- id: llm-pi-ai
-  config:
-    providers:
-      openai:
-        apiKeyEnv: MINIMAX_API_KEY
-        baseURL: https://api.minimax.io/v1
-        models:
-          - id: MiniMax-M2
-            name: MiniMax M2
-            contextWindow: 196608
-            maxTokens: 131072
-            reasoningEfforts:
-              off:
-              high: high
-
-# base 的 deepseek 行禁用(行覆盖改不了 name,只能 disable+insert 换插件)
-- id: llm-deepseek
-  disabled: true
-
-# base bundle 的 agent-default-model 行(dsh-base cordis.patch.yml:63)——路由到 pi-ai 的 openai
-- id: agent-default-model
-  config:
-    provider: openai
-    model: MiniMax-M2
-# GoTry 成品人格(dsh system-prompt 行):行为契约=产品语义
+# GoTry 成品人格:行为契约=产品语义
 - id: system-prompt
   config:
     persona: >-
