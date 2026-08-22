@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { callFeasibilityEngine, ensureStateDir, readJson, recordLatency, writeJson } from './bridge.ts'
+import { ensureStateDir, readJson, recordLatency, writeJson } from './bridge.ts'
 import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
@@ -28,27 +28,18 @@ export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
 
 export interface Config {
-  /** Python 解释器(仓库 .venv 内)——桥接回退用 */
-  pythonBin: string
-  /** 仓库 py/ 目录(作为 PYTHONPATH) */
-  pythonPath: string
   /** 状态根目录(动机画像、wish pool、延迟日志) */
   stateRoot: string
   /** 引擎调用超时(ms) */
   timeoutMs: number
   /** hbcli 二进制路径(hotelbyte-cli;空=禁用实时酒店,回退数据包) */
   hbcliBin: string
-  /** 优先使用进程内 TS 引擎(WASM,~6ms/次);false 或失败时回退 Python CLI(oracle,~240ms/次) */
-  preferInProcess: boolean
 }
 
 export const Config: z<Config> = z.object({
-  pythonBin: z.string().default('.venv/bin/python'),
-  pythonPath: z.string().default('py'),
   stateRoot: z.string().default('.'),
   timeoutMs: z.number().default(30_000),
   hbcliBin: z.string().default('hbcli'),
-  preferInProcess: z.boolean().default(true),
 })
 
 interface FeasibilityResult {
@@ -113,32 +104,17 @@ export function apply(ctx: Context, config: Config): void {
       }],
     },
     async execute(args: { payload: unknown }, _exec: unknown) {
+      // 纯 TS 路径:D-7 后 unified solveChoiceSegment 是唯一求解入口(无 Python 桥、无 z3 WASM
+      // 路径——候选形态枚举求解,~6ms/次)。unified 内部有 try-catch 护栏覆盖 wasm 异常。
       const started = Date.now()
-      let result: Record<string, unknown>
-      let via = 'in-process-wasm'
       const payload = args.payload as Record<string, unknown>
-      if (config.preferInProcess) {
-        try {
-          const req = parseRequest(payload['request'] as Record<string, unknown>)
-          const cands = (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate)
-          const spec = segmentsFromCandidate(req, cands)
-          result = solveChoiceSegment(spec, req) as Record<string, unknown>
-          via = 'in-process-unified'
-        } catch (e) {
-          via = `python-bridge-fallback(${(e as Error).message.slice(0, 80)})`
-          result = (await callFeasibilityEngine(payload, {
-            pythonBin: config.pythonBin, pythonPath: config.pythonPath, timeoutMs: config.timeoutMs,
-          })).result as Record<string, unknown>
-        }
-      } else {
-        via = 'python-bridge'
-        result = (await callFeasibilityEngine(payload, {
-          pythonBin: config.pythonBin, pythonPath: config.pythonPath, timeoutMs: config.timeoutMs,
-        })).result as Record<string, unknown>
-      }
+      const req = parseRequest(payload['request'] as Record<string, unknown>)
+      const cands = (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate)
+      const spec = segmentsFromCandidate(req, cands)
+      const result = solveChoiceSegment(spec, req) as Record<string, unknown>
       const dir = await ensureStateDir(config.stateRoot)
-      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `feasibility_check:${via}`).catch(() => {})
-      return { ...result, latency_ms: Date.now() - started, via }
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'feasibility_check:in-process-unified').catch(() => {})
+      return { ...result, latency_ms: Date.now() - started, via: 'in-process-unified' }
     },
     presentCall: args => ({ card: 'generic', title: 'GoTry 可行性检查(门到门全成本)', kind: 'other', rawInput: args.payload }),
   }))

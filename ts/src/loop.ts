@@ -215,19 +215,18 @@ export async function runTurn(
   // 约束齐备(无阻塞问题)→ 翻译 spec → **校验闸** → 求解 → 渲染
   if (blocking.length === 0 && solve) {
     const spec = await llm.extractSpec([...history, { role: 'user', text: userMsg }], state)
-    // 场景路由:erhai 候选标记 → 候选求解(洱海金标准的引擎判定)
+    // 场景路由:erhai 候选标记 → 候选求解(洱海金标准的引擎判定)——纯 TS unify 路径
     if (spec && (spec as unknown as { note?: string }).note === 'erhai-candidates') {
       const { readFile } = await import('node:fs/promises')
       const { join } = await import('node:path')
       try {
         const raw = JSON.parse(await readFile(join(import.meta.dirname, '..', '..', 'data', 'golden_erhai.json'), 'utf-8'))
-        const { callFeasibilityEngine } = await import('./bridge.ts')
-        const r = await callFeasibilityEngine(raw, {
-          pythonBin: process.env['GOTRY_PYTHON'] ?? join(import.meta.dirname, '..', '..', '.venv', 'bin', 'python'),
-          pythonPath: process.env['GOTRY_PYPATH'] ?? join(import.meta.dirname, '..', '..', 'py'),
-          timeoutMs: 30_000,
-        })
-        const result = r.result as { answer_md?: string; recommended?: string }
+        const { parseCandidate, parseRequest } = await import('./model.ts')
+        const { segmentsFromCandidate, solveChoiceSegment } = await import('./unified.ts')
+        const req = parseRequest(raw['request'] as Record<string, unknown>)
+        const cands = (raw['candidates'] as Record<string, unknown>[]).map(parseCandidate)
+        const erhaiSpec = segmentsFromCandidate(req, cands)
+        const result = solveChoiceSegment(erhaiSpec, req) as { answer_md?: string; recommended?: string }
         state.solve = result as never
         parts.push(result.answer_md ?? '(候选求解完成)')
       } catch {

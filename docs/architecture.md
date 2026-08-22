@@ -10,7 +10,7 @@
 
 **GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:动机访谈进、已验证的行程方案与选择题出;LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 
-**当前形态(诚实定位,2026-08-22 `v0.0.1-rc.1`)**:dsh 成品可用(`./gotry`,DeepSeek 原生)——人格(八条行为契约,新增时间感知)+ 五工具(可行性/骨架/酒店/动机/愿望池);机票数据三层组合全链(骨架 168 对+校验桥+锚点),酒店 hbcli 桥(实时/静态降级+证据标注);证据链从工具到用户渲染面贯穿。**架构 D-7 大部赎回**: plugins/process/cli/diff-test 全部从 deprecated 引擎切到 unified solveChoiceSegment;engine/journey 退纯 oracle。M1/M2/M3 已退出;**当前 = M3 最小可用产品**,点式 RC.1 发布。
+**当前形态(诚实定位,2026-08-22 `v0.0.1-rc.2`)**:dsh 成品可用(`./gotry`,DeepSeek 原生)——人格(八条行为契约,新增时间感知)+ 五工具(可行性/骨架/酒店/动机/愿望池);机票数据三层组合全链(骨架 168 对+校验桥+锚点),酒店 hbcli 桥(实时/静态降级+证据标注);证据链从工具到用户渲染面贯穿。**v0.0.1-rc.2 收口**: 去掉 Python oracle (cli.py / bridge.callFeasibilityEngine / loop.ts erhai-python-bridge / diff-test.ts ts-vs-python)——**纯 TS unified 求解**(`solveChoiceSegment` 枚举,~6ms/次),为 npm 一键分发铺路;engine/journey 已是 deprecated oracle(python 包保留为历史对照,不再被产品运行时引用);run-all-tests 从 10 套降到 9 套,不再依赖 Python 运行时。M1/M2/M3 已退出;**当前 = M3 最小可用产品**,`v0.0.1-rc.2` 发布。
 
 ## 2. 总体架构:五层与现状
 
@@ -51,12 +51,11 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/src/unified.ts` | **统一行程模型 TS 版(唯一求解入口)**:Segment/Option/时区/工作窗口+Z3 求解(航班链)+枚举求解(候选形态) | ✅ 4/4+候选对账 |
 | `ts/src/model.ts` | 门到门全成本算术(纯函数,单候选形态) | ✅ |
 | `ts/src/engine.ts` `journey.ts` | 旧两套求解面(纯 oracle,金标准对照) | **deprecated** |
-| `ts/src/index.ts` `bridge.ts` | dsh 插件(3 工具+进程内优先+Python 桥回退,延迟计量) | ✅ smoke |
-| `py/gotry_feasibility/unified.py` | Python oracle(候选形态枚举+航班链 Z3,与 TS 全量等价) | ✅ |
-| `py/gotry_feasibility/{model,engine,journey}.py` | 算术 oracle 与旧求解面 | engine/journey deprecated |
+| `ts/src/index.ts` `bridge.ts` | dsh 插件(纯 TS unified 求解 + hbcli 桥 + 进程护栏,延迟计量) | ✅ smoke |
+| `py/gotry_feasibility/unified.py` | Python oracle(v0.0.1-rc.2 后**仅历史对照**,不再被产品运行时引用) | 保留 |
 | `py/gotry_demo/build_plan.py` | demo 规划书生成器 | ✅ |
 | `ts/scripts/replay.ts` `replay-async.ts` | **验收夹具**:真实对话重放(13 轮→3 轮)与异步形态 | ✅ |
-| `ts/scripts/{engine,journey,unified,diff}-tests.ts` | 套件(8/5/4 断言+双实现差分) | ✅(diff-test 顺序偶发为已知问题) |
+| `ts/scripts/{engine,journey,unified,diff}-tests.ts` | 套件(8/5/4 断言+TS-vs-TS 同 spec 稳定性) | ✅(diff-test 顺序偶发为已知问题,v0.0.1-rc.2 后不再依赖 Python) |
 | `data/golden_erhai.json` `flights_2026.json` `hotels_2026.json` `golden_trip_2026.json` `行程细化计划.docx` | 金标准用例/班期/住宿/完整任务/Kimi 对话原件 | — |
 
 ## 4. 统一行程模型(领域核心,唯一求解入口)
@@ -82,13 +81,13 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 ## 6. 数据与运行时
 
 - 静态数据包:真实班期(附来源)价格显式标「估算」;金标准用例两枚(洱海=单候选选择,普吉 workation=五段链+工作窗口)。
-- 运行时:三条已实证路径——①TS 进程内(自研循环,~6ms/解);②真实 dsh headless+cordis 组合(pi-ai→MiniMax,`ts/cordis.gotry-patch.yml`,68ea364);③Python CLI 桥(oracle 回退,~240ms)。环境三件套 `LLM_API_KEY/LLM_BASE_URL/LLM_MODEL`(兼容旧 DEEPSEEK_*)。
+- 运行时:三条已实证路径——①TS 进程内(自研循环,~6ms/解);②真实 dsh headless+cordis 组合(pi-ai→MiniMax,`ts/cordis.gotry-patch.yml`,68ea364);**(v0.0.1-rc.2 起第三条** Python CLI 桥下线,纯 TS)。环境三件套 `LLM_API_KEY/LLM_BASE_URL/LLM_MODEL`(兼容旧 DEEPSEEK_*)。
 - 复用落地:dsh(import,rc 已对齐)/loopx(import,0.5.1 运行中)/Z3(import,双绑定)/hotelbyte-cli(import+extend,⏳T3)/travel_agent·ai-agent-book·TREK(reference,零代码)。
 
 ## 7. 测试与验证策略
 
 **评测三层(ADR-11)**:
-- **回归层(防退化)**:双实现差分(TS 生产 vs Python oracle,同输入判定一致)+ 金标准断言(洱海 8+5、普吉链 4、统一模型 20/20)+ **重放夹具**(mock 重放即行为级回归,Kimi 对话是失败基线)。全栈入口:`scripts/run-all-tests.sh`。
+- **回归层(防退化)**:TS-vs-TS 双路径稳定性(同 spec 不同 module instance)+ 金标准断言(洱海 8+5、普吉链 4、统一模型 20/20)+ **重放夹具**(mock 重放即行为级回归,Kimi 对话是失败基线)。**v0.0.1-rc.2 起:** 不再依赖 Python oracle 差分;run-all-tests 9 套一次性绿,无需 Python 运行时。全栈入口:`scripts/run-all-tests.sh`。
 - **质量层(防漂移)**:评测集+指标面板——POI 幻觉率、定稿率、不失望四条、NPS;M3 上线(见 `tech-strategy.md` §4),此前以 replay 终态断言兜底。
 - **巡检层(防「mock 绿而真智能烂」)**:真 LLM 重放(`replay-real.ts`)转 nightly,带预算闸;ADR-10 正是 mock 绿而真 LLM 烂出来的,教训制度化。
 
@@ -99,8 +98,8 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | # | 决策 | 备选与取舍 | 淘汰/复审条件 | 锚点 |
 |---|---|---|---|---|
 | 1 | Z3 作判定层 | 规则引擎/OR-Tools/纯 LLM(4.4%) | 求解 >500ms 或变量 >10³ 评估 OR-Tools;unsat core 不可让渡 | `unified.ts`/`unified.py` 求解层;双侧套件 |
-| 2 | 双实现 TS 生产+Python oracle | 单实现(无对账) | 差分 20 次无分歧后 Python 降为用例库 | `ts/scripts/diff-test.ts`;`run-all-tests.sh` |
-| 3 | 桥接收敛:进程内优先 | 全 TS/全 Python | 每桥 ≤2;>500ms 才考虑常驻 | `ts/src/bridge.ts`;`gotry-state/bridge-latency.jsonl` |
+| 2 | 双实现 TS 生产+Python oracle | 单实现(无对账) | **2026-08-22 v0.0.1-rc.2:** Python oracle 路径下线(diff-test 改为 TS-vs-TS,run-all-tests 不再依赖 Python 运行时);py/ 保留为历史对照(不删),**不再被产品运行时引用**——npm 一键分发前提 |
+| 3 | 桥接收敛:进程内优先 | 全 TS/全 Python | **2026-08-22 v0.0.1-rc.2:** Python 桥下线,仅剩 hbcli 桥(vs hbcli & hbcli fallback);每桥 ≤2 不变 | `ts/capabilities/hbcli.ts`;`bridge.latency.jsonl` |
 | 4 | loopx 为控制平面 | 自研状态机 | 概念冲突且无法适配时 | 流程级(`.loopx/` 治理状态) |
 | 5 | 统一行程模型 | 维持双引擎 | 已清偿(engine/journey 退役日=迁移完成日,D-7 跟踪) | `unified.ts`/`unified.py` |
 | 6 | 静态数据包(demo 期) | 直接接 API | M2 退役为夹具 | `data/*.json`;金标准用例 |
