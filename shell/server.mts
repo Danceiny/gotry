@@ -60,6 +60,15 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     return json(200, { profile: state.profile, wishes: state.wishes, gates: state.gates, calendar: state.calendar, session: { historyTurns: Math.floor(history.length / 2), lastAt: history.length ? history[history.length - 1].text.slice(0, 80) : null } })
   }
 
+  if (req.method === 'POST' && req.url === '/reset') {
+    const fresh = newState()
+    Object.assign(state, fresh)
+    state.wishes = [] // 清画像但不删愿望文件(用户数据红线:愿望池跨行程保留)
+    history.length = 0
+    await saveSession()
+    return json(200, { ok: true })
+  }
+
   if (req.method === 'POST' && req.url === '/chat') {
     let body = ''
     for await (const chunk of req) body += chunk
