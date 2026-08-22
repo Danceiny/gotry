@@ -21,6 +21,7 @@ import { callFeasibilityEngine, ensureStateDir, readJson, recordLatency, writeJs
 import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
+import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -244,38 +245,28 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { destination?: string }
+      const q = (args.query ?? {}) as { destination?: string; checkIn?: string; checkOut?: string; adults?: number }
       if (!q.destination) throw new Error('gotry_hotel_search requires destination')
       const started = Date.now()
-      let result: Record<string, unknown>
-      let via: string
-      try {
-        const { execFile } = await import('node:child_process')
-        const { promisify } = await import('node:util')
-        const exec = promisify(execFile)
-        const { stdout } = await exec(config.hbcliBin,
-          ['search', 'hotel-list', '--destination', q.destination, '--json'],
-          { timeout: config.timeoutMs, cwd: process.cwd() })
-        const jsonStart = stdout.indexOf('{') >= 0 ? stdout.indexOf('{') : stdout.indexOf('[')
-        if (jsonStart < 0) throw new Error(`hbcli output not JSON: ${stdout.slice(0, 120)}`)
-        result = {
-          hotels: JSON.parse(stdout.slice(jsonStart)),
-          evidence: `[实时API:hbcli@${new Date().toISOString()}]`,
-          destination: q.destination,
-        }
-        via = 'hbcli'
-      } catch (e) {
-        // 无凭证/CLI 不存在 → 数据包回退,证据链显式标注
-        const hotels = (await readJson(join(config.stateRoot, 'gotry-state', 'hotel-fallback.json'), null)) as unknown
-        if (!hotels) {
-          return JSON.parse(JSON.stringify({ summary: `酒店搜索暂不可用(${(e as Error).message.slice(0, 80)})——hbcli 未配置且无数据包回退`, available: false })) as Record<string, never>
-        }
-        result = { hotels, evidence: '[静态包:估算]', destination: q.destination }
-        via = 'static-fallback'
-      }
+      const fallbackPath = join(import.meta.dirname, '..', '..', 'data', 'hotels_2026.json')
+      const resp = await hbcliSearchHotels(
+        { destination: q.destination, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults },
+        { hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs, fallbackPath },
+      )
       const dir = await ensureStateDir(config.stateRoot)
-      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `hotel_search:${via}`).catch(() => {})
-      return JSON.parse(JSON.stringify({ ...result, via, latency_ms: Date.now() - started, summary: `${q.destination}:酒店搜索(${via})完成` })) as Record<string, never>
+      const isLive = resp.via === 'hbcli-realtime'
+      const evidence = isLive ? resp.evidence : '[静态包:估算]'
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `hotel_search:${resp.via}`).catch(() => {})
+      const payload = {
+        hotels: resp.hotels ?? null,
+        evidence,
+        destination: q.destination,
+        via: resp.via,
+        latency_ms: Date.now() - started,
+        summary: resp.summary,
+        error: resp.error,
+      }
+      return JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
     },
     presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'other', rawInput: args.query }),
   }))

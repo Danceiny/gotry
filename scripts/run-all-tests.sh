@@ -38,7 +38,11 @@ echo "=== 7. 插件 smoke(注册/execute/红线断言/桥接) ==="
 (cd ts && npx tsx scripts/smoke.ts | tail -2) || FAIL=1
 
 echo
-echo "=== 8. 双实现差分(洱海,TS vs Python oracle) ==="
+echo "=== 8. hbcli 能力层(hotelbyte-cli 调用 + 降级封装,4 断言) ==="
+(cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
+
+echo
+echo "=== 9. 双实现差分(洱海,TS vs Python oracle) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
 echo
