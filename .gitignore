@@ -1,0 +1,7 @@
+.venv/
+node_modules/
+gotry-state/
+*.pyc
+__pycache__
+.DS_Store
+async_result.json
