@@ -242,6 +242,34 @@ ADR 与技术债见 [`docs/architecture.md` §8 / §10](docs/architecture.md)。
 
 ---
 
+## 📦 发布到 npm — For founder
+
+仓库已有 `package.json`(v0.0.1-rc.3,files 白名单 19 个文件,42KB)——发 npm 需**一枚 publish token + 一行命令**:
+
+```bash
+# 1. 写入 token(一次性;不要在 git 里跟踪;请去 npmjs.com/settings/tokens 新建)
+npm config set //registry.npmjs.org/:_authToken npm_xxxxxx
+
+# 2. 验证
+npm whoami --registry=https://registry.npmjs.org/   # 应输出:danceiny
+
+# 3. Dry-run 确认 tarball
+npm pack --dry-run --registry=https://registry.npmjs.org/
+
+# 4. 发布到 npm(--access public 让 gotry 名公开)
+npm publish --access public --registry=https://registry.npmjs.org/
+
+# 5. 发布成功后任何用户:
+npx gotry web          # 一行启动
+```
+
+> ⚠️ **注意**: publish 后**不可逆**（30 天内可 `npm unpublish` 但会污染历史）。建议先在 main 打 `v0.0.1-rc.3` tag + GitHub release,再 publish,保证 npm 包与仓库 tag 同步。
+
+> 💡 **名可用性**: `gotry` 名在 npm 上未被占(2026-08-22)。检查可用性: `npm view gotry --registry=https://registry.npmjs.org/` (404 即未被占)。
+> ⚠️ **Token 安全**: 任何接触过 `.npmrc` 的会话都可能持久保存 token,记得 publish 完 `npm config delete //registry.npmjs.org/:_authToken`。
+
+---
+
 ## 📜 License
 
 **TBD**。仓库处于 private 预 release 期,License 文件尚未放入。
