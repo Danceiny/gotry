@@ -25,7 +25,7 @@
 |---|---|---|---|---|
 | **航线通航性** | ✅ OpenFlights 骨架 168 枢纽对(ODbL,`data/openflights-skeleton.json`) | 静态(月级) | `[骨架:openflights]` | 保持;扩枢纽集;Amadeus 已关停不回 |
 | **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`(公开渠道调研,5 段链) | 静态(2026-07 调研) | `[静态包:估算]` | M4:aviationstack 校验层(§7-1 已批三层组合);票价 M5 |
-| **航班真实执飞** | ⚠️ OpenSky 匿名桥已写(`ts/scripts/opensky-check.ts`,400 credits/天) | 近 7 天 | `[实时API:opensky]` | 接进插件工具(现为脚本,未挂 dsh 工具面) |
+| **航班实时观测** | ✅ OpenSky 已接(`capabilities/opensky.ts` + `gotry_flight_verify` 工具;`/api/states/all` 当前 ADS-B 全球观测,~400 credits/天) | 实时 | `[实时API:opensky]` | ✅ 已落地(2026-08-22) |
 | **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退 | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
 | **酒店点评/评分** | ❌ 无 | — | — | **复用 hotel-be**:geography `GetPlaceReviews`(Google Places v1)——链路见 §4 |
 | **POI/地点搜索** | ❌ 无(候选目的地硬编码在金标准包) | — | — | **双轨**:① 复用 hotel-be Google Place(富数据,收费) ② OSM Nominatim/Overpass(免费兜底,TREK 模式) |
@@ -137,7 +137,7 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 | `[实时API:hbcli@<ISO ts>]` | hotel-be 实时(酒店库存;未来含 place) | hbcli 退码 0 |
 | `[实时API:hbcli-place@<ts>]` | Google Place 经 hbcli(收费源,带配额) | place 查询成功 |
 | `[实时API:osm-nominatim@<ts>]` | OSM 免费兜底 | hbcli 失败/超配额 |
-| `[实时API:opensky@<ts>]` | 航班真实执飞校验(ADS-B,近 7 天) | OpenSky 命中 |
+| `[实时API:opensky@<ts>]` | 航班实时观测(ADS-B 当前快照;OpenSky 匿名路径只支持实时,历史查需鉴权) | OpenSky 命中 |
 | `[实时API:open-meteo@<ts>]` | 天气预报(M3 末) | 天气查询成功 |
 | `[骨架:openflights]` | 通航性三值(肯定/枢纽对否定≠证伪/枢纽外无结论) | 求解预过滤 |
 | `[静态包:估算]` | 公开渠道调研估算,预订前需核实 | 一切降级回退 |
@@ -148,7 +148,7 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 ## 7. 演进(与 roadmap 对齐,本文只列数据侧)
 
-- **M3 末(当前)**:~~Open-Meteo 接入~~ ✅ 已完成(2026-08-22,`capabilities/weather.ts` + `gotry_weather_check` 工具,5 断言实测);OpenSky 从脚本挂到插件工具面。
+- **M3 末(当前)**:~~Open-Meteo 接入~~ ✅ 已完成(`capabilities/weather.ts` + `gotry_weather_check` 工具,5 断言实测);~~OpenSky 从脚本挂到插件工具面~~ ✅ 已完成(`capabilities/opensky.ts` + `gotry_flight_verify` 工具,3 断言实测)。M3 末数据增量两条全闭环。
 - **M4**:`capabilities/place.ts` 双轨(hbcli-place + OSM 兜底);OSRM 时长估算进 transfer;时区库替代手写;汇率免费层。
 - **hotel-be 侧依赖(gate)**:search 模块 place OpenAPI + geography 白名单 + `hbcli search place`——三段都在 hotel-be 仓,由该仓 lane 推进;gotry 侧等 `hbcli search place --json` 可用即零改动接上(能力层已留降级位)。
 - **M5**:票价(aviationstack 校验层升级);KDE Itinerary 式预订导入(bookedResources 数据源)。
