@@ -44,7 +44,11 @@ echo "=== 8. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 2 断言
 (cd ts && npx tsx scripts/incident-tests.ts) || FAIL=1
 
 echo
-echo "=== 9. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
+echo "=== 9. 天气能力层(Open-Meteo 免费无 key,5 断言:地理/预报/气候/降级/WMO) ==="
+(cd ts && npx tsx scripts/weather-tests.ts) || FAIL=1
+
+echo
+echo "=== 10. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
 echo
@@ -52,4 +56,4 @@ if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
 fi
-echo "ALL SUITES GREEN(TS engine/journey/unified + 重放 + 异步 + smoke + hbcli + incident + diff;明细见各节)"
+echo "ALL SUITES GREEN(TS engine/journey/unified + 重放 + 异步 + smoke + hbcli + incident + weather + diff;明细见各节)"
