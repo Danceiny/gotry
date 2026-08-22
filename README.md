@@ -9,8 +9,8 @@
 ## 快速开始
 
 ```sh
-# Python 侧(≥3.9)
-python3 -m venv .venv && .venv/bin/pip install z3-solver
+# Python 侧(≥3.9;依赖清单见仓根 pyproject.toml)
+python3 -m venv .venv && .venv/bin/pip install -e .
 
 # TS 侧(需 node ≥22;本机经 nvm)
 cd ts && npm install && cd ..

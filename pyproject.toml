@@ -1,0 +1,20 @@
+# GoTry Python 侧依赖清单(唯一清单;此前只有 README 一句话,属工程债)
+# 版本历史归 git,本文件不设版本号语义,version 仅为 PEP 621 占位。
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gotry"
+version = "0.0.0"
+description = "GoTry Python 侧:可行性 oracle(unified/engine/journey)与 TS↔Python CLI 桥"
+requires-python = ">=3.9"
+# z3-solver 锁 PyPI 最新;npm 侧(5.2.x)与 PyPI(5.1.x)版本号不同轨,
+# 若 diff-test 出现分歧,先比对双侧 Z3 内核版本再怀疑代码
+dependencies = ["z3-solver==5.1.0.0"]
+
+[tool.setuptools]
+package-dir = { "" = "py" }
+
+[tool.setuptools.packages.find]
+where = ["py"]
