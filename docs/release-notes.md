@@ -3,6 +3,54 @@
 > 每个 tag 一条:内容、证据、闸勾稽。发布闸(AGENTS.md):① 全栈回归绿 ② §11 六状态面同步 ③ README 用法逐条实测 ④ License 明确 ⑤ 版本号在 tag 与全部文档间一致。
 > **v0.0.1-rc.1 起**:remote = github.com/Danceiny/gotry(private);License 沿用 rc 历史「未决」,本 tick 未变更。
 
+## v0.0.1-rc.2(annotated tag,2026-08-22)
+
+**产品面收口:完全去掉 Python 依赖。** 这是 npm-pack 一键分发的前提。
+
+### 移除路径
+
+| 模块 | 改动 |
+|---|---|
+| `ts/src/index.ts` | `Config` 砍 `pythonBin / pythonPath / preferInProcess`;execute 内 try-catch fallback 路径删除,只走 `solveChoiceSegment`(纯 TS,枚举) |
+| `ts/src/bridge.ts` | 移除 `callFeasibilityEngine`(spawn Python 子进程);保留 `ensureStateDir / recordLatency / readJson / writeJson` |
+| `ts/src/loop.ts` | erhai 路由改 `callFeasibilityEngine` → 直接调 `segmentsFromCandidate + solveChoiceSegment` |
+| `ts/scripts/diff-test.ts` | TS-vs-Python oracle → **TS-vs-TS 自对比**(同 spec, 不同 module instance) |
+| `py/gotry_feasibility/cli.py` | **删除** |
+| `gotry` (bash) | `MODE=${1:-shell}` → `MODE=${1:-web}`,薄壳分支删除;无需 Python venv 激活 |
+| `scripts/run-all-tests.sh` | 砍 Python 单元测试节;10 套 → 9 套;不再 require `.venv/bin/python` |
+
+### 保留路径(参考)
+
+- `py/gotry_feasibility/{model,engine,journey,unified}.py` **不删**——历史对照实现;不被产品运行时引用;不参与 `run-all-tests`。ADR-2 标注"历史对照(不再被产品运行时引用)"。
+
+### 文档同步
+
+- README §2 去掉 `Python 3.11+ / oracle 实现` 一行;新增 banner "**v0.0.1-rc.2 起无需 Python**"
+- README §测试 9 套表(去掉 Python 单元;差分改成"TS 双路径稳定性")
+- architecture.md §1 当前形态 / ADR-2 / ADR-3 / §7 测试 / §10 同步
+- roadmap.md 当前位置段替换为 rc.1 → rc.2 表
+
+### 验证(发布闸五项勾稽)
+
+| 项 | 结果 |
+|---|---|
+| ① 全栈回归绿 | ✅ 9 套测试 exit=0 + ALL SUITES GREEN(TS engine/journey/unified + 重放 + 异步 + smoke + hbcli + incident + diff)|
+| ② §11 六状态面同步 | ✅ architecture.md / roadmap.md / README.md / release-notes.md 已同步 |
+| ③ README 用法逐条实测 | ✅ `./gotry web` + `./gotry "..."` 二入口;dsh web :3080 启动+进程保活 |
+| ④ License 明确 | ⏸️ 沿用未决——`LICENSE` 占位文件已有,选定即换文本 |
+| ⑤ 版本号一致 | ✅ 全文档 v0.0.1-rc.2 |
+
+### 已知留账
+
+- npm-pack 一键分发(`npx gotry`)——下一个 tick。**这一步真正给用户"一行安装"体验**
+- License 选定——待创始人按 M4 节奏定
+- Z3 WASM race(连续多套件时偶发 memory access)——仍债,GitHub rc.1 已知
+- M4 校准输入等待
+
+---
+
+## v0.0.1-rc.1(annotated tag,2026-08-22)
+
 ## v0.0.1-rc.1(annotated tag,2026-08-22)
 
 **点式体例首发**(对齐 dsh `X.Y.Z-rc.W`)。5 个新提交吸收 + 文档同步;无功能删除,无 API 变更。

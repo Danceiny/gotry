@@ -8,17 +8,23 @@
 
 ## 当前位置(2026-08-22)
 
-**v0.0.1-rc.1 已发布**(tag,点式对齐 dsh `X.Y.Z-rc.W` 体例):在 v0.0.1-rc2 基础上吸收 5 个新提交(`bdcd630`/`85a07d6`/`8e0509c`/`d83c5be`/`df4c111`)+ 1 个文档释放。
+**`v0.0.1-rc.2` 已发布**(tag, npm 一键分发前提):在 v0.0.1-rc.1 基础上做产品面收口——**完全去掉 Python 依赖**:
 
-```
-bdcd630 D-7 大部赎回: deprecated 层切轨统一模型
-85a07d6 fix: 时间感知 + generic 路由污染(2 个产品级 bug)
-8e0509c fix: z3-solver 静态 init 引发 wasm 多线程崩溃——动态加载 + try-catch
-d83c5be feat: hotelbyte-cli 能力层接入(hbcli 调用 + 降级 + 证据链)
-df4c111 feat: gotry 侧进程护栏(uncaughtException → fsync 落盘)
-```
+- bridge.callFeasibilityEngine / loop.ts erhai-python-bridge / diff-test.ts ts-vs-python / py/gotry_feasibility/cli.py / gotry bash 脚本里的 `.venv` 全部删除
+- run-all-tests 从 10 套降到 9 套,无需 Python 运行时
+- 求解路径仅剩纯 TS unified solveChoiceSegment(枚举,~6ms/次,uniform stable)
 
-变更总览:plugins/cli.py/diff-test 全部从 engine/journey 切轨到 unified solveChoiceSegment;engine/journey 退纯 oracle;DSH 的人格式增加第 8 条「时间感知」(日期动态变量);酒店能力层走 hbcli 进程调用 + 4 断言测试覆盖;进程护栏不依赖 dsh 修复。**M3 剩余:种子用户 50-200 人(发起人即首个用户;`./gotry` 即入口;等 remote 与 License 决策)**。
+反映在架构文档:architecture.md §1「当前形态」、ADR-2「双实现」、ADR-3「桥接」、§7 测试、§10 同步。
+
+rc.1 → rc.2 总览:
+
+| RC | 状态 | 范围 |
+|---|---|---|
+| v0.0.1-rc.1 | 已推 | D-7 + 5 commit + LICENSE 占位;**仍要求**用户 clone + pnpm install + Python venv + 配 .env |
+| **v0.0.1-rc.2** | 当前 | 在 rc.1 基础上去 Python;run-all-tests 不再依赖 Python;gotry 入口简化 |
+| 后续 | 待规划 | npm-pack 分发 + Docker 备选;License 落定;种子用户启动 |
+
+**M3 剩余:种子用户 50-200 人(发起人即首个用户;`./gotry` 即入口;npm-pack + License 决策)**。
 
 (历史)**M2 已退出**(b0cfd97):§7-1 三层组合全链落地——OpenFlights 骨架(168 枢纽对,三值语义,求解消费+用户渲染双层)+ OpenSky 校验桥 + bookedResources 锚点 + hbcli 酒店桥(gotry_hotel_search,实时/静态降级);dsh 运行时端到端(DeepSeek 原生,人格+五工具);一键成品入口 `./gotry` 经全新场景验收(带爸妈云南行:人格问对问题→引擎三候选判决→证据链→三道选择题)。G1 已决(中国出境首发)、S1 已冻结、§7-1 已批——均由创始人「按推荐方案执行」指令结算。**当前 = M3 最小可用产品**:最小 Web 面(D-4)+ 种子用户 50-200 人(发起人即首个用户,`./gotry` 即入口)。
 

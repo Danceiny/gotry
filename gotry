@@ -1,24 +1,45 @@
 #!/usr/bin/env bash
-# GoTry 一键启动——第二个用户的全部操作就是这一条命令
-# 用法: ./gotry [shell]   → 浏览器界面(薄壳,零依赖,默认;只需 ts/node_modules)
-#       ./gotry web       → dsh Web 界面(需 dsh 运行时,安装见 README)
-#       ./gotry "帮我规划…" → 一问一答(dsh headless,需 dsh 运行时)
+# GoTry 入口(纯 Node,无 Python 依赖;v0.0.1-rc.2 起):
+#   ./gotry web                         启 dsh Web 浏览器界面
+#   ./gotry "一句完整任务..."           一问一答,stdout markdown
+#   ./gotry                             = 默认 web
+# 前置:源仓库已经 `pnpm install`,dsh runtime 在 ts/dsh-runtime/ 内 vendored。
+
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 source ~/.nvm/nvm.sh 2>/dev/null || true
 set -a; source "$ROOT/.env" 2>/dev/null || true; set +a
 
-MODE="${1:-shell}"
-if [ "$MODE" = "shell" ]; then
-  # 薄壳(自有品牌界面,零依赖)——不经过 dsh 运行时
-  cd "$ROOT/ts" && exec npx tsx ../shell/server.mts
-fi
+MODE="${1:-web}"
 
-# dsh 双模式:先把 provider-neutral 三件套映射为 dsh 读的 DEEPSEEK_*
-: "${LLM_API_KEY:?需要 .env 里的 LLM_API_KEY}"
-export DEEPSEEK_API_KEY="$LLM_API_KEY"
-cd "$ROOT/ts/dsh-runtime"
-if [ "$MODE" = "web" ]; then
-  exec node node_modules/@deepseek-ai/dsh/lib/bin.js web --patch ../cordis.gotry-patch.yml
-fi
-exec node node_modules/@deepseek-ai/dsh/lib/bin.js --profile headless --patch ../cordis.gotry-patch.yml "$@"
+case "$MODE" in
+  web|"")
+    : "${LLM_API_KEY:?需要 .env 里的 LLM_API_KEY}"
+    export DEEPSEEK_API_KEY="$LLM_API_KEY"
+    cd "$ROOT/ts/dsh-runtime"
+    exec node node_modules/@deepseek-ai/dsh/lib/bin.js web --patch ../cordis.gotry-patch.yml
+    ;;
+  -h|--help|help)
+    cat <<EOF
+GoTry —— dsh 运行时驱动
+
+用法:
+  ./gotry web                          # dsh Web 浏览器界面 (默认)
+  ./gotry "一句完整任务..."            # headless 一问一答
+  ./gotry help                         # 此帮助
+
+环境前置:
+  • Node 22+
+  • 已 pnpm install(ts/dsh-runtime/)
+  • .env 中 LLM_API_KEY (DeepSeek / OpenAI 兼容均可)
+
+详细文档: README.md
+EOF
+    ;;
+  *)
+    : "${LLM_API_KEY:?需要 .env 里的 LLM_API_KEY}"
+    export DEEPSEEK_API_KEY="$LLM_API_KEY"
+    cd "$ROOT/ts/dsh-runtime"
+    exec node node_modules/@deepseek-ai/dsh/lib/bin.js --profile headless --patch ../cordis.gotry-patch.yml "$@"
+    ;;
+esac

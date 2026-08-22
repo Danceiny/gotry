@@ -48,9 +48,9 @@ git checkout v0.0.1-rc.1
 
 ### 2. 环境前置 — Prerequisites
 
+> **v0.0.1-rc.2 起无需 Python**。所有依赖走 npm，1 个 Node 命令即可启动。
+
 - **Node 22+**（`nvm install 22` 或更高）
-- **bun**（hbcli 调用需要）：`curl -fsSL https://bun.sh/install | bash`
-- **Python 3.11+**（oracle 实现）：`python -m venv .venv && source .venv/bin/activate && pip install z3-solver`
 - 一个 LLM API key（默认走 DeepSeek，也支持 OpenAI 兼容协议）
 
 ### 3. 配 — Configure
@@ -197,18 +197,17 @@ GoTry: 收到。先把约束记下来——
 ./scripts/run-all-tests.sh
 ```
 
-10 套测试,一次性绿:
+9 套测试,一次性绿(**v0.0.1-rc.2 起去 Python**):
 
 | 节 | 内容 |
 |---|---|
-| 1 | Python 单元 |
-| 2–4 | TS engine · journey · unified 金标准断言 |
-| 5 | 对话循环重放(mock,行为级回归) |
-| 6 | 异步工单跨进程闭环 |
-| 7 | 插件 smoke |
-| 8 | hbcli 能力封装(4 断言) |
-| 9 | 进程护栏(2 断言,fsync) |
-| 10 | 双实现差分(TS vs Python oracle) |
+| 1–3 | TS engine · journey · unified 金标准断言 |
+| 4 | 对话循环重放(mock,行为级回归) |
+| 5 | 异步工单跨进程闭环 |
+| 6 | 插件 smoke |
+| 7 | hbcli 能力封装(4 断言) |
+| 8 | 进程护栏(2 断言,fsync) |
+| 9 | 双路径稳定性(unified vs unified 同 spec) |
 
 ---
 
