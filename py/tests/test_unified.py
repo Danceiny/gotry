@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from gotry_feasibility.model import Candidate
-from gotry_feasibility.unified import segments_from_candidate, segments_from_flight_pack
+from gotry_feasibility.unified import segments_from_candidate, segments_from_flight_pack, solve_unified
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -57,6 +57,35 @@ class TestAdapters(unittest.TestCase):
         total_options = sum(len(s.options) for s in spec.segments)
         total_services = sum(len(l["services"]) for l in self.pack["legs"])
         self.assertEqual(total_options, total_services)
+
+    def test_unified_solver_flight_pack(self):
+        """统一求解器(步2骨架)吃航班包:可行、锚点过、DZ6252 被排除、与旧 journey 同构。"""
+        spec = segments_from_flight_pack(self.pack)
+        spec.budget_cny = 9000
+        r = solve_unified(spec)
+        self.assertTrue(r["feasible"])
+        # 有效解区间:各段合法班次的组合(HX741 组合 ¥7,680 ~ 全 CX/ZH 组合 ¥8,550),
+        # 求解器在等价解间任取;区间端点来自数据包逐段核验
+        self.assertTrue(7680 <= r["money_cny"] <= 8550, f"money={r['money_cny']}")
+        chosen_ids = {lg["leg"]: lg["service"] for lg in r["legs"]}
+        self.assertNotIn("DZ6252", chosen_ids.values())  # 负例被 arrive_by 锚点排除
+        self.assertIn(chosen_ids["f1"], {"CX773", "HX741"})
+        self.assertEqual(chosen_ids["f5"], "EK329")
+
+    def test_unified_solver_anchor_and_budget_cores(self):
+        """锚点冲突与预算冲突的 core 命名,与旧 journey 行为一致。"""
+        spec = segments_from_flight_pack(self.pack)
+        spec.segments[0].anchors.arrive_by_min = 15 * 60  # f1 收紧到不可能
+        r = solve_unified(spec)
+        self.assertFalse(r["feasible"])
+        self.assertIn("f1:arrive_by", r["unsat_core"])
+        self.assertTrue(any(sg["relax"] == "f1:arrive_by" for sg in r["suggestions"]))
+
+        spec2 = segments_from_flight_pack(self.pack)
+        spec2.budget_cny = 1000
+        r2 = solve_unified(spec2)
+        self.assertFalse(r2["feasible"])
+        self.assertIn("total:budget", r2["unsat_core"])
 
 
 if __name__ == "__main__":
