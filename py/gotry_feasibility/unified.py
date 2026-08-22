@@ -14,6 +14,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from z3 import Bool, If, Int, Solver, Sum, And, unsat
+
+from .journey import JourneyLeg, evaluate_leg
 from .model import Candidate, Service, TransferMode, hhmm_to_min
 
 
@@ -141,3 +144,106 @@ def segments_from_flight_pack(pack: dict) -> JourneySpec:
             anchors=anchors, options=options,
         ))
     return JourneySpec(note=pack.get("meta", {}).get("note", ""), segments=segments)
+
+
+# ---- 统一求解器(迁移步 2,骨架:先吃「每 Option 单班次」形态) -------------------------
+# 选择变量按 Option 而非班次——这是与旧 journey 求解器的本质区别:
+# 统一模型里「选项」就是选择单元(候选目的地或具体班次组合)。
+# 候选形态(洱海:Option 含 stay/多班次)的核算泛化是步 2 的下半段。
+
+
+def _option_service(option: SegmentOption) -> Service:
+    assert option.move and len(option.move.services) == 1, \
+        f"步2骨架仅支持单班次 Option(每 Option 一个服务),{option.id} 违反"
+    return option.move.services[0]
+
+
+def _option_as_leg(seg: Segment, option: SegmentOption) -> JourneyLeg:
+    mv = option.move
+    return JourneyLeg(
+        id=seg.id, note=seg.note, services=mv.services,
+        buffer_min=mv.buffer_min, origin_transfer_min=mv.origin_transfer_min,
+        dest_transfer_min=mv.dest_transfer_min,
+        arrive_by_min=seg.anchors.arrive_by_min,
+        depart_after_min=seg.anchors.depart_after_min,
+        red_eye=mv.red_eye, red_eye_duration_min=mv.red_eye_duration_min,
+    )
+
+
+def _exactly_one(sels):
+    return Sum([If(s, 1, 0) for s in sels]) == 1
+
+
+def solve_unified(spec: JourneySpec) -> dict:
+    """按 Option 选择求解段链;锚点命名约束;无解读 core 给逐锚点放宽建议。"""
+    all_sels: dict = {}
+    assertions: dict = {}
+
+    for seg in spec.segments:
+        sels = [Bool(f"{seg.id}_o{i}") for i in range(len(seg.options))]
+        all_sels[seg.id] = sels
+        svc_of = [_option_service(o) for o in seg.options]
+
+        def pick(attr):
+            return Sum([If(s, getattr(sv, attr), 0) for s, sv in zip(sels, svc_of)])
+
+        dep, arr = pick("dep_min"), pick("arr_min")
+        o0 = seg.options[0]
+        wake = dep - o0.move.buffer_min - o0.move.origin_transfer_min
+        arrive_stay = arr + o0.move.dest_transfer_min
+
+        if seg.anchors.arrive_by_min is not None:
+            assertions[f"{seg.id}:arrive_by"] = arrive_stay <= seg.anchors.arrive_by_min
+        if seg.anchors.depart_after_min is not None:
+            assertions[f"{seg.id}:depart_after"] = dep >= seg.anchors.depart_after_min
+        wake_floor = seg.anchors.wake_floor_min or spec.default_wake_floor_min
+        if not any(o.move.red_eye for o in seg.options):
+            assertions[f"{seg.id}:wake_floor"] = wake >= wake_floor
+
+    total = Sum([If(s, _option_service(o).price_cny, 0)
+                 for seg in spec.segments for s, o in zip(all_sels[seg.id], seg.options)])
+    if spec.budget_cny is not None:
+        assertions["total:budget"] = total <= spec.budget_cny
+
+    s = Solver()
+    for sel in all_sels.values():
+        s.add(_exactly_one(sel))
+    for name, expr in assertions.items():
+        s.assert_and_track(expr, name)
+
+    def _report(model):
+        chosen = {}
+        for seg in spec.segments:
+            for b, o in zip(all_sels[seg.id], seg.options):
+                from z3 import is_true
+                if is_true(model.eval(b, model_completion=True)):
+                    chosen[seg.id] = o
+        reports = []
+        for seg in spec.segments:
+            leg = _option_as_leg(seg, chosen[seg.id])
+            reports.append({"leg": seg.id, **evaluate_leg(leg, _option_service(chosen[seg.id]))})
+        return chosen, reports
+
+    if s.check() != unsat:
+        chosen, reports = _report(s.model())
+        money = sum(r["price_cny"] for r in reports)
+        red_flags = [
+            f"{r['leg']} 落地精力仅 {r['energy_pct']}%(红眼后直奔事务,当日不宜安排重要会议)"
+            for r in reports if any(o.move.red_eye for o in next(sg for sg in spec.segments if sg.id == r["leg"]).options)
+            and r["energy_pct"] < 50
+        ]
+        return {"feasible": True, "money_cny": money, "legs": reports, "red_flags": red_flags}
+
+    core = sorted(str(c) for c in s.unsat_core())
+    suggestions = []
+    for name in core:
+        s2 = Solver()
+        for sel in all_sels.values():
+            s2.add(_exactly_one(sel))
+        for n2, expr in assertions.items():
+            if n2 != name:
+                s2.assert_and_track(expr, n2)
+        if s2.check() != unsat:
+            _, reports = _report(s2.model())
+            suggestions.append({"relax": name, "money_cny": sum(r["price_cny"] for r in reports), "legs": reports})
+    return {"feasible": False, "unsat_core": core, "suggestions": suggestions}
