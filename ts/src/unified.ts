@@ -93,6 +93,13 @@ async function getZ3(): Promise<any> {
 }
 
 /** 航班数据包(data/flights_2026.json 形态)→ 段链 */
+const SEGMENT_ROUTES: Record<string, string> = {
+  f1: 'HKG->HKT', f2: 'HKT->BKK', f3: 'BKK->KMG', f4: 'KMG->SZX', f5: 'SZX->DXB',
+}
+function routeHint(id: string): string | undefined {
+  return SEGMENT_ROUTES[id]
+}
+
 export function parseFlightPackToSpec(pack: Record<string, unknown>): JourneySpecTS {
   const legs = (pack['legs'] as Array<Record<string, unknown>>).map(l => ({
     id: String(l['id']),
@@ -100,6 +107,7 @@ export function parseFlightPackToSpec(pack: Record<string, unknown>): JourneySpe
     note: l['note'] ? String(l['note']) : undefined,
     date: l['date'] ? String(l['date']) : undefined,
     anchors: { arriveByMin: l['arrive_by'] ? hhmmToMin(String(l['arrive_by'])) : undefined },
+    route: routeHint(l['id'] as string),
     options: (l['services'] as Array<Record<string, unknown>>).map(sv => ({
       id: String(sv['id']),
       label: `${String(sv['id'])} ${String(l['note'] ?? '').slice(0, 18)}`,

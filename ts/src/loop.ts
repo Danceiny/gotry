@@ -157,6 +157,7 @@ export function renderSolve(state: TripState): string {
     for (const e of s.work_window_exclusions ?? []) {
       lines.push(`- 已排除 ${e.option}(工作窗口):${e.reason}`)
     }
+    for (const n of s.skeleton_notes ?? []) lines.push(`- ${n}`)
     for (const f of s.red_flags ?? []) lines.push(`- ⚠️ ${f}`)
   } else {
     lines.push(`**当前约束下不可行——冲突:${(s.unsat_core ?? []).join('、')}`)
