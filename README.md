@@ -9,11 +9,11 @@
 
 | | |
 |---|---|
-| **Version** | [`v0.0.1-rc.1`](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.1) (Pre-release) |
-| **Status** | M3 closed · waiting on private seed users · License TBD |
+| **Version** | `v0.0.1-rc.3-dev` (最新 commit `270678b`; 历史 tags: [rc.1](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.1) · [rc.2](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.2)) |
+| **Status** | M3 closed · npm 一键启动骨架就绪 · 等待 License + 种子用户启动 |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
-| **Runtime** | [DeepSeek Harness 0.1.1-rc.1](https://github.com/deepseek-ai/DeepSeek-Harness) (vendored `ts/dsh-runtime/`) · LoopX (vendored at `.venv-loopx/`) · Z3 (npm `z3-solver`) |
-| **License** | TBD (MIT / Apache-2.0 pending founder decision — see [License](#license)) |
+| **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · LoopX (vendored at `.venv-loopx/`) · Z3 (npm `z3-solver`) |
+| **License** | TBD (MIT / Apache-2.0 pending founder decision — see [License](#-license)) |
 
 
 ---
@@ -43,34 +43,44 @@ GoTry 把「想去哪」变成「能不能、怎么去」：
 ```bash
 git clone https://github.com/Danceiny/gotry
 cd gotry
-git checkout v0.0.1-rc.1
+git checkout v0.0.1-rc.3-dev   # 当前的 dev 分支挂在 main 上
 ```
 
-### 2. 环境前置 — Prerequisites
+### 2. 装 vendored dsh runtime(一次性,约 1 分钟)
 
-> **v0.0.1-rc.2 起无需 Python**。所有依赖走 npm，1 个 Node 命令即可启动。
+```bash
+cd ts/dsh-runtime
+pnpm install    # 拉 @deepseek-ai/dsh 0.1.1-rc.2 + 依赖(实测 51 秒)
+cd ../..
+```
 
-- **Node 22+**（`nvm install 22` 或更高）
-- 一个 LLM API key（默认走 DeepSeek，也支持 OpenAI 兼容协议）
+> 为什么这一步:dsh runtime 是 vendored 的(`ts/dsh-runtime/`)——
+> 避免 npm 一键分发时把整个 dsh 也打包进去。
+> 之后可以重复使用,无需重装。
 
-### 3. 配 — Configure
+### 3. 环境前置 — Prerequisites
+
+- **Node 22+**(`nvm install 22` 或更高)
+- 一个 LLM API key(默认走 DeepSeek,也支持 OpenAI 兼容协议)
+
+### 4. 配 — Configure
 
 ```bash
 cp .env.example .env
-# 填 LLM_API_KEY（deepseek: sk-...；也兼容 OpenAI/Anthropic 兼容协议）
+# 填 LLM_API_KEY(deepseek: sk-...; 也兼容 OpenAI/Anthropic 兼容协议)
 ```
 
-### 4. 跑 — Run
+### 5. 跑 — Run
 
-v0.0.1-rc.1 把 **DeepSeek Harness (dsh) 运行时**作为唯一推荐面——任何自然语言输入在那里面都能跟 GoTry 正常对话（自动调用引擎、追问缺失字段、给出证据链）。薄壳 `./gotry shell` 已废弃：它对模糊输入处理弱，遇到「IRW」这种缩写就崩。
+v0.0.1-rc.3-dev 把 **DeepSeek Harness (dsh) 运行时**作为唯一推荐面——任何自然语言输入在那里面都能跟 GoTry 正常对话(自动调用引擎、追问缺失字段、给出证据链)。
 
-启动方式有三种，对应三种使用场景：
+启动方式有三种,对应三种使用场景:
 
 | 入口 | 命令 | 什么时候用 | 给你什么 |
 |---|---|---|---|
-| **① dsh Web 对话框**（默认推荐） | `./gotry web` | 第一天上手；持续多轮规划；想看推理过程可视化 | `http://127.0.0.1:3080` 浏览器界面；带 GoTry 人格的对话框 |
-| **② headless 一次性问答** | `./gotry "一句完整任务"` | 写脚本、CI 自动化、定向 LLM 调试 | stdout 输出 markdown 回答 |
-| **③ 薄壳**（已废弃） | `./gotry shell` | **别用**——保留仅为迁移证据 | 简化的三页（不推荐） |
+| **① dsh Web 对话框**(推荐) | `./gotry web` | 第一天上手;持续多轮规划;想看推理过程可视化 | `http://127.0.0.1:3080` 浏览器界面;带 GoTry 人格的对话框 |
+| **② headless 一次性问答** | `./gotry "一句完整任务..."` | 写脚本、CI 自动化、定向 LLM 调试 | stdout 输出 markdown 回答 |
+| **③ help** | `./gotry help` | 不知道用法 | 三行帮助 |
 
 ```bash
 # 推荐:打开对话框,正常打「我想去大理三天」,看引擎回答
@@ -78,20 +88,24 @@ v0.0.1-rc.1 把 **DeepSeek Harness (dsh) 运行时**作为唯一推荐面——�
 #   → http://127.0.0.1:3080,在输入框里像跟 DeepSeek 对话一样打字
 
 # 调试/自动化:直接一问一答,无浏览器
-./gotry "我想从深圳休整两天,预算 3000,年假不办公"
+./gotry "我想从深圳休整两天,预算 3000"
 #   → stdout 拿到引擎判定 + 证据链 + 候选 gate
 
-# (deprecated,见 Known limitations)
-./gotry shell
+# 不知道用法
+./gotry help
 ```
 
 > ⚠️ **dsh 运行时端口冲突**:如果你之前已经手动 `node ...dsh web` 跑过,而后再 `./gotry web`,会因 `:3080` 占用启动失败。要么先 `kill <PID>`,要么直接用已经在跑的那个。
 >
-> **dsh 启动耗时**:第一次 cold start 6–15 秒（cordis 组合 + plugin 加载 + LLM 准备）；之后热启动 < 2 秒。
+> **dsh 启动耗时**:第一次 cold start 6–15 秒(cordis 组合 + plugin 加载 + LLM 准备);之后热启动 < 2 秒。
+>
+> **headless 报错兜底**:意外退出(exit ≠ 0 / signal)会 fsync 一条记录到 `gotry-state/incidents.jsonl`,作为事故证据而不是沉默(D-NEW 进程护栏)。
 
 <br>
->
-> *The shell frontend is **deprecated**. In v0.0.1-rc.1, the dsh runtime is the only recommended surface. See [known limitations](#-known-limitations).*
+
+*Single one-liner mental model: clone + pnpm install once + 配置 key + `./gotry web` — done. *The shell frontend is **deprecated**. In v0.0.1-rc.3-dev, the dsh runtime is the only recommended surface.*
+
+> 一行安装的关键点: `./gotry web`(终端粘贴即用),或 `./gotry "任务"`(一句问答)。**任何自然语言都能用**(这是 dsh runtime 投资的最大价值)。详见 [known limitations](#-known-limitations)。
 
 
 ---
@@ -241,11 +255,11 @@ ADR 与技术债见 [`docs/architecture.md` §8 / §10](docs/architecture.md)。
 ## 🌐 中英版 — Locales
 
 - **English section summaries** are inline above (italic blockquotes).
-- 本 README 主语言是中文,因为 v0.0.1-rc.1 面向中国出境首发种子用户群。
+- 本 README 主语言是中文,因为 v0.0.1-rc.3-dev 面向中国出境首发种子用户群。
 - 完整英文版 README 计划在 v0.1.0 同步([issue 路线](#-known-limitations))。
 
 ---
 
-**Built with**: DeepSeek Harness 0.1.1-rc.1 · Cordis · Z3 4.x · loopx · hotelbyte-cli · OpenFlights · TypeScript · Bun
+**Built with**: DeepSeek Harness 0.1.1-rc.2 · Cordis · Z3 (WASM) · loopx · hotelbyte-cli · OpenFlights · TypeScript · Bun
 
-**Last verified against `v0.0.1-rc.1` @ `bf8b65e`** (2026-08-22) — 10/10 suites green.
+**Last verified against `v0.0.1-rc.3-dev` @ `270678b`** (2026-08-22) — 9/9 suites green (Python-free).
