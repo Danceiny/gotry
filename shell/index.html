@@ -17,6 +17,11 @@ main{flex:1;display:flex;flex-direction:column}
 .msg.user{background:#1b4332;margin-left:auto;color:#d8f3dc}
 .msg.bot{background:#1a2639;color:#e0e6ed}
 .msg.bot .evidence{color:#4cc9f0;font-size:13px}
+.msg table{border-collapse:collapse;margin:8px 0;width:100%;font-size:13px}
+.msg th,.msg td{border:1px solid #2a3f5f;padding:6px 10px;text-align:left}
+.msg th{background:#1a2639;color:#4cc9f0;font-weight:600}
+.msg ul{margin:4px 0 4px 18px;padding:0}
+.msg li{margin:2px 0}
 #input{display:flex;padding:16px 40px;background:#081221}
 #input textarea{flex:1;background:#13273f;border:1px solid #2a3f5f;color:#fff;padding:12px;border-radius:10px;font-size:14.5px;resize:none;height:52px;font-family:inherit}
 #input button{background:#4cc9f0;color:#081221;border:none;padding:0 26px;margin-left:12px;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer}
@@ -58,10 +63,48 @@ addMsg(d.reply,'bot');history.push({role:'user',text:t},{role:'assistant',text:d
 }catch(e){addMsg('连接失败:'+e.message,'bot')}
 document.getElementById('btn').disabled=false;
 }
+function esc(t){return t.replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function md(t){
+if(t.startsWith('('))return '<i style="color:#8d99ae">'+esc(t)+'</i>';
+let lines=t.split('\n');let out=[];let inList=false;let inTable=false;let tableRows=[];
+for(const line of lines){
+const l=line.trim();
+if(l.startsWith('|')&&l.endsWith('|')){
+const cells=l.slice(1,-1).split('|').map(c=>c.trim());
+if(cells.every(c=>/^[-: ]+$/.test(c)))continue;
+if(!inTable){inTable=true;tableRows=[]}
+tableRows.push(cells);continue;
+}else if(inTable){
+out.push('<table>'+tableRows.map((r,i)=>'<tr>'+r.map(c=>'<'+(i===0?'th':'td')+'>'+mdInline(c)+'</'+(i===0?'th':'td')+'>').join('')+'</tr>').join('')+'</table>');
+inTable=false;tableRows=[];
+}
+if(l.startsWith('- ')||l.startsWith('* ')){
+if(!inList){out.push('<ul>');inList=true}
+out.push('<li>'+mdInline(l.slice(2))+'</li>');continue;
+}else if(inList){out.push('</ul>');inList=false}
+if(l.startsWith('## ')){out.push('<h3 style="color:#4cc9f0;margin:10px 0 4px;font-size:15px">'+mdInline(l.slice(3))+'</h3>')}
+else if(l.startsWith('> ')){out.push('<blockquote style="border-left:3px solid #4cc9f0;padding:4px 12px;margin:6px 0;color:#8d99ae">'+mdInline(l.slice(2))+'</blockquote>')}
+else if(l===''){out.push('<br>')}
+else{out.push('<p style="margin:4px 0">'+mdInline(l)+'</p>')}
+}
+if(inList)out.push('</ul>');
+if(inTable)out.push('<table>'+tableRows.map((r,i)=>'<tr>'+r.map(c=>'<'+(i===0?'th':'td')+'>'+mdInline(c)+'</'+(i===0?'th':'td')+'>').join('')+'</tr>').join('')+'</table>');
+return out.join('');
+}
+function mdInline(t){
+return esc(t)
+.replace(/\*\*([^*]+)\*\*/g,'<strong style="color:#fff">$1</strong>')
+.replace(/\[([^\]]+)\]/g,'<span class="evidence">[$1]</span>')
+.replace(/⚠️/g,'<span style="color:#f77f00">⚠️</span>')
+.replace(/✅/g,'<span style="color:#4cc9f0">✅</span>')
+.replace(/❌/g,'<span style="color:#e63946">❌</span>')
+.replace(/○/g,'<span style="color:#8d99ae">○</span>')
+.replace(/📍/g,'<span style="color:#4cc9f0">📍</span>')
+}
 function addMsg(t,cls){
 const c=document.getElementById('chat');
 const d=document.createElement('div');d.className='msg '+cls;
-d.innerHTML=t.replace(/</g,'&lt;').replace(/\[([^\]]+)\]/g,'<span class="evidence">[$1]</span>');
+d.innerHTML=cls==='user'?esc(t).replace(/\n/g,'<br>'):md(t);
 c.appendChild(d);c.scrollTop=c.scrollHeight;
 }
 function show(p){
