@@ -103,7 +103,9 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 8 | mock-LLM 先行 | 等 API key(伪阻塞) | S4 完成后 mock 留作回归夹具 |
 | 9 | 访谈确定性(缺失字段驱动) | LLM 即兴(Kimi 病根) | 永不复审 |
 
-## 9. 演进(当前位置:Stage 1 后段)
+## 9. 演进(时间线唯一来源= `roadmap.md` 的 M0-M6;此处只保留原则与现状)
+
+原则:**不跳阶段,不提前优化下阶段的事**;每阶段 Entry/Exit/gate 见 roadmap。旧 Stage 0-4 与总纲 Phase、产品 M1-M3 已归并映射到 M0-M6(映射表在 roadmap)。
 
 - **Stage 0 确定性管道 ✅**;**Stage 1 LLM 进环**:S2 mock 切片 ✅、S3 求解挂载 ✅、S5 架构段(异步会话形态)✅;余 S1 契约走查(等创始人)、S4 真 LLM(等 DEEPSEEK_API_KEY)、S5 后半(loopx tick 驱动)。Exit:一句自然语言进、对话级规划出,全程无人代劳。
 - Stage 2 实时数据(静态包退役)→ Stage 3 记忆与「下一次出发」(对账十题为首批校准样本)→ Stage 4 B2B 包裹(principal/sponsor,99% 复用实测)。不跳阶段。
@@ -123,6 +125,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 | 文档 | 关注点 |
 |---|---|
+| `roadmap.md` | **时间线唯一来源**:M0-M6 里程碑三线视图与旧模型归并 |
 | 本文 | 技术:系统/模块/模型/循环/数据/ADR/演进/债务 |
 | `gotry-master-outline.md` | 程序:工作分解/复用矩阵/决策门(总纲) |
 | `gotry-product-design.md` | 产品:主循环/透明机制/全成本/共享经验 |
