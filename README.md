@@ -12,7 +12,7 @@
 | **Version** | [`v0.0.1-rc.1`](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.1) (Pre-release) |
 | **Status** | M3 closed · waiting on private seed users · License TBD |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
-| **Runtime** | [DeepSeek Harness 0.1.1-rc.1](https://github.com/deepseek-ai/DeepSeek-Harness) · [LoopX](https://github.com/loopx) · [Z3](https://github.com/Z3Prover/z3) |
+| **Runtime** | [DeepSeek Harness 0.1.1-rc.1](https://github.com/deepseek-ai/DeepSeek-Harness) (vendored `ts/dsh-runtime/`) · LoopX (vendored at `.venv-loopx/`) · Z3 (npm `z3-solver`) |
 | **License** | TBD (MIT / Apache-2.0 pending founder decision — see [License](#license)) |
 
 
