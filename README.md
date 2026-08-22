@@ -4,6 +4,21 @@
 
 **GoTry 是一个 AI 旅行规划助手**:你用一句话说想去哪、为什么想出发,它先问清楚你的工作时间和已订资源,然后给出**经过引擎验证**的行程方案——不是「AI 觉得不错」,是数学求解器算过「可行」的。
 
+## 用什么版本
+
+仓库目前是 **v0.0.1-rc2**(首个发布候选,无人工测试,见 [Known limitations](#known-limitations))。
+clone 这个 tag 拿到 RC2:
+
+```bash
+git clone --branch v0.0.1-rc2 <本仓库地址>
+cd gotry
+```
+
+**tag 历史**:
+- `v0.0.1-rc1` — 薄壳前版本(架构+引擎+dsh 运行时,但只有 dsh web UI)
+- `v0.0.1-rc2` — **当前 RC**:加薄壳 `./gotry shell`、Markdown 渲染、UX 补齐
+- `main` — 开发分支(本仓库只有一个主分支,没有 dev/staging)
+
 ## 它能做什么
 
 | 你说 | GoTry 做 |
