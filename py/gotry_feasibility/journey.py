@@ -47,6 +47,7 @@ class JourneyRequest:
 def evaluate_leg(leg: JourneyLeg, svc: Service) -> dict:
     """单 leg 门到门算术(与 model.evaluate_choice 同源的惩罚体系)。"""
     wake = svc.dep_min - leg.buffer_min - leg.origin_transfer_min
+    wake_display = f"{min_to_hhmm(wake + 1440)}(前一日)" if wake < 0 else min_to_hhmm(wake)
     arrive_stay = svc.arr_min + leg.dest_transfer_min
     d2d = arrive_stay - wake
     if leg.red_eye and leg.red_eye_duration_min > 0:
@@ -66,7 +67,8 @@ def evaluate_leg(leg: JourneyLeg, svc: Service) -> dict:
     return {
         "service": svc.id,
         "dep": min_to_hhmm(svc.dep_min),
-        "wake": min_to_hhmm(wake),
+        "wake": wake_display,
+        "wake_min": wake,
         "arrive_stay": min_to_hhmm(arrive_stay),
         "door_to_door": f"{d2d // 60}h{d2d % 60:02d}m",
         "energy_pct": round(energy),
@@ -125,7 +127,7 @@ def solve_journey(req: JourneyRequest) -> dict:
         ] + [
             f"{leg.id} 起床 {r['wake']}(早于 6:00,生物钟代价)"
             for leg, r in zip(req.legs, leg_reports)
-            if not leg.red_eye and hhmm_to_min(r["wake"]) < 6 * 60
+            if not leg.red_eye and 0 <= r.get("wake_min", 12 * 60) < 6 * 60
         ]
         return {"feasible": True, "money_cny": money, "legs": leg_reports, "red_flags": red_flags}
 
