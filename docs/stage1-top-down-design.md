@@ -1,0 +1,91 @@
+# Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
+
+> 创始人指令(第三次纠偏):自顶向下实现,不要自底向上打磨细节。
+> 本文档是 Stage 1 的**唯一权威设计**;一切实现工作从这里派生,叶子(求解器/引擎)已就位,缺的是树干。
+> 关键架构判断先行:**对话循环的架构验证不需要 DEEPSEEK_API_KEY——用 mock LLM 先行,API key 只解锁智能质量,不阻塞架构。** 此前「Stage 1 全阻塞在 key」是误判。
+
+## 1. 顶层黑盒:一次会话的系统行为
+
+输入(用户第一句,真实案例):
+> 7.17周五22:40落地深圳,7.18早上去香港办银行开户&保险签约;……8.10周一凌晨从深圳起飞,周一上班前到迪拜。请给我做机票和酒店的行程规划和推荐。
+
+系统必须在一轮内完成(Kimi 用 13 轮搞砸的事):
+
+```
+用户消息 ──► ① 日历/事实断言(2026 年历,星期映射只算一次,永久进状态)
+          ──► ② 访谈补全(缺什么问什么:工作时间?已订资源?同行人?预算档?)
+          ──► ③ JourneySpec 抽取(自然语言 → 统一模型,LLM 的翻译责任)
+          ──► ④ 求解(unified 引擎,确定性责任:锚点/工作窗口/全成本/wish pool)
+          ──► ⑤ 渲染(透明卡片+全成本表+gates 选择题,LLM 解释+模板)
+          ──► ⑥ 复杂时:异步(「一小时后回来看看」,loopx tick)
+```
+
+②是增量追问而非重来;③④⑤每轮可重入(用户改一个答案,只重跑受影响的段)。**状态在,人不充当系统部件。**
+
+## 2. 第一层分解:组件契约
+
+### 2.1 会话状态 TripState(顶层数据契约,一切组件围绕它读写)
+
+```ts
+TripState = {
+  calendar: { year: 2026, assertedWeekdays: {...} }        // ① 的产物,一次断言终身使用
+  profile: { workWindow?, companions?, budgetTier?, ... }  // ② 的产物(Kimi 复盘:这两个曾最晚出现)
+  spec?: JourneySpec                                       // ③ 的产物(统一模型,已存在)
+  solve?: SolveResult                                      // ④ 的产物(已存在:verdicts/exclusions/red_flags)
+  gates: Gate[]                                            // ⑤ 的待决问题(选择题)
+  wishes: WishEntry[]                                      // 「下一次出发」
+}
+```
+
+### 2.2 工具面(L2 契约;dsh 插件注册,已有 3 个,补 2 个)
+
+| 工具 | 责任归属 | 状态 |
+|---|---|---|
+| `gotry_interview_next(TripState) → Question[]` | 确定性(缺失字段驱动,非 LLM 即兴) | **待定义** |
+| `gotry_spec_extract(对话历史) → JourneySpec` | LLM(翻译) | **待定义**(dsh 运行时内) |
+| `gotry_solve(JourneySpec) → SolveResult` | 确定性(已实现:unified) | ✅ |
+| `gotry_render(SolveResult) → 卡片/表格/gates` | 模板+LLM 润色 | 部分(answer_md 已有) |
+| `gotry_wish_pool_add` / `gotry_motivation_save` | 确定性 | ✅(插件已有) |
+
+责任铁律不变:LLM 只做 ②的问句组织、③的翻译、⑤的解释;**判定与算术永远是确定性组件**。
+
+### 2.3 对话循环(L2 编排契约)
+
+```
+loop:
+  msg ← user
+  state ← TripState.load(session)
+  ①若新事实与 calendar/profile 冲突 → 指出并确认(不静默重排)
+  ②qs = interview_next(state);若 qs 非空且 msg 未回答 → 追问(增量)
+  ③spec = spec_extract(history + state)     // LLM
+  ④state.solve = solve(spec)                // 确定性
+  ⑤reply = render(state.solve) + gates      // LLM+模板
+  TripState.save(state); → reply
+```
+
+## 3. 自顶向下实现顺序(每步有独立验收,叶子最后才动)
+
+| 步 | 做什么 | 验收 | 依赖 |
+|---|---|---|---|
+| S1 | **契约冻结**:TripState 与 5 工具的 schema(TS 类型 + JSON Schema)落 `ts/src/contracts.ts` | 契约走查通过(创始人评审一次) | 无 |
+| S2 | **mock 垂直切片**:mock-LLM(确定性脚本:读剧本回放 Kimi 对话的用户侧输入)+ 真工具面 → 跑通 §2.3 循环 | 用你的原始开场白重放:系统主动问出工作窗口与已订酒店,日历一次断言,产出规划与 gates——**全程零 API key** | S1 |
+| S3 | 求解器挂载(把已完成的 unified 作为 gotry_solve 的实现接入循环) | 重放输出与当前 demo 规划书等价 | S2 |
+| S4 | 真 LLM 接入(dsh 运行时 + DEEPSEEK_API_KEY) | 同一开场白,真实对话质量 ≥ mock 重放(Kimi 复盘的验收标准) | S2+key |
+| S5 | 异步模式真实化(loopx tick 驱动「一小时后」) | 不失望四条在真对话里成立 | S4 |
+
+**这个顺序把「等 key」从架构阻塞降级为 S4 的质量变量:S1-S3 全部可以现在做。**
+
+## 4. 新增 ADR
+
+- **ADR-8(mock-LLM 先行)**:对话循环的架构验证用确定性剧本 LLM,不依赖真实模型;智能质量与架构正确性解耦。淘汰条件:S4 完成后 mock 保留为回归夹具。
+- **ADR-9(访谈确定性)**:`interview_next` 由缺失字段驱动(配置化问题库),LLM 只润色问句——Kimi 的「从不访谈」病根是即兴,确定性驱动是解药。
+
+## 5. 与债务/阶段的关系
+
+- D-3(LLM 未进环)分解为:S1-S3(架构,可动)+ S4(智能,等 key)——债务的「架构一半」不再阻塞。
+- D-4(界面)维持 Stage 1 后;本设计的 L1 就是「对话即界面」, gates 以消息内选择题呈现。
+- 现有 unified 求解器/数据包/插件 = 本设计的叶子,零返工。
+
+## 修订史
+
+| v1.0 | 2026-08-22 | 创始人三次纠偏(架构优先→自顶向下)后立项:黑盒行为/契约/mock 先行/五步实现序/ADR-8/9 |
