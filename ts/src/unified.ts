@@ -29,6 +29,16 @@ export interface MoveSpecTS {
   redEyeDurationMin?: number
   /** D-5:目的地相对出发地的时差(KMG-BKK=+60,DXB-SZX=-240) */
   tzOffsetMin?: number
+  /** M-1:出发地 UTC 偏移(工作窗口换算用) */
+  originTzOffsetMin?: number
+}
+
+/** M-1:旅行者工作窗口(家时区) */
+export interface WorkWindowSpec {
+  homeTzOffsetMin: number
+  startMin: number
+  endMin: number
+  workdays?: number[]
 }
 
 export interface StaySpecTS {
@@ -47,6 +57,8 @@ export interface SegmentOptionTS {
   score?: number
   bestMonths?: number[]
   minDays?: number
+  /** M-1:班次星期标注(mon/tue/.../sun),工作窗口过滤用 */
+  depWeekday?: string
 }
 
 export interface SegmentTS {
@@ -63,6 +75,7 @@ export interface JourneySpecTS {
   segments: SegmentTS[]
   budgetCny?: number
   defaultWakeFloorMin?: number
+  workWindow?: WorkWindowSpec
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -93,10 +106,50 @@ export function parseFlightPackToSpec(pack: Record<string, unknown>): JourneySpe
         redEye: Boolean(l['red_eye']),
         redEyeDurationMin: Number(l['red_eye_duration_min'] ?? 0),
         tzOffsetMin: Number(l['tz_offset_min'] ?? 0),
+        originTzOffsetMin: Number(l['origin_tz_offset_min'] ?? 480),
       },
     })),
   }))
-  return { segments: legs }
+  const meta = (pack['meta'] ?? {}) as Record<string, unknown>
+  const ww = meta['work_window'] as Record<string, unknown> | undefined
+  const spec: JourneySpecTS = {
+    segments: legs,
+    workWindow: ww ? {
+      homeTzOffsetMin: Number(ww['home_tz_offset_min']),
+      startMin: Number(ww['start_min']),
+      endMin: Number(ww['end_min']),
+      workdays: (ww['workdays'] as number[] | undefined) ?? [0, 1, 2, 3, 4],
+    } : undefined,
+  }
+  // M-1:班次的星期标注挂到 Option(缺省=不受工作窗口约束)
+  for (const l of pack['legs'] as Array<Record<string, unknown>>) {
+    const seg = spec.segments.find(s => s.id === l['id'])!
+    for (const svc of l['services'] as Array<Record<string, unknown>>) {
+      if (svc['weekday']) {
+        const opt = seg.options.find(o => o.id === svc['id'])
+        if (opt) opt.depWeekday = String(svc['weekday'])
+      }
+    }
+  }
+  return spec
+}
+
+const WEEKDAY_IDX: Record<string, number> = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 }
+const WEEKDAY_CN: Record<string, string> = { mon: '一', tue: '二', wed: '三', thu: '四', fri: '五', sat: '六', sun: '日' }
+
+/** M-1:工作日的工作窗口内起飞 → 排除理由;否则 null(与 py _work_window_blocks 对齐)。 */
+function workWindowBlocks(spec: JourneySpecTS, option: SegmentOptionTS): string | null {
+  const ww = spec.workWindow
+  if (!ww || !option.move || !option.depWeekday) return null
+  if (!((ww.workdays ?? [0, 1, 2, 3, 4]).includes(WEEKDAY_IDX[option.depWeekday]))) return null
+  const dep = option.move.services[0].depMin
+  const shift = (option.move.originTzOffsetMin ?? 480) - ww.homeTzOffsetMin
+  const start = ww.startMin + shift, end = ww.endMin + shift
+  if (start <= dep && dep <= end) {
+    const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+    return `周${WEEKDAY_CN[option.depWeekday]} ${hhmm(dep)} 起飞落在工作窗口(当地 ${hhmm(start)}-${hhmm(end)})内`
+  }
+  return null
 }
 
 /** D-5:时区感知的段核算(与 py unified._evaluate_option_move 对齐)。 */
@@ -142,7 +195,22 @@ export async function solveUnified(spec: JourneySpecTS): Promise<{
   red_flags?: string[]
   unsat_core?: string[]
   suggestions?: Array<{ relax: string; money_cny: number }>
+  work_window_exclusions?: Array<{ segment: string; option: string; reason: string }>
 }> {
+  // M-1:求解前的工作窗口确定性预过滤(与 py 对齐),排除理由入记录
+  const exclusions: Array<{ segment: string; option: string; reason: string }> = []
+  for (const seg of spec.segments) {
+    const kept = seg.options.filter(o => {
+      const reason = workWindowBlocks(spec, o)
+      if (reason) exclusions.push({ segment: seg.id, option: o.id, reason })
+      return !reason
+    })
+    seg.options = kept
+    if (kept.length === 0) {
+      return { feasible: false, unsat_core: [`${seg.id}:work_window`], work_window_exclusions: exclusions }
+    }
+  }
+
   const z3 = await getZ3()
   const { Bool, If, Int, Solver, Sum } = z3
   const wakeFloor = spec.defaultWakeFloorMin ?? hhmmToMin('06:00')
@@ -208,7 +276,7 @@ export async function solveUnified(spec: JourneySpecTS): Promise<{
     const redFlags = legs
       .filter(l => spec.segments.find(sg => sg.id === l.leg)?.options.some(o => o.move?.redEye) && l.energy_pct < 50)
       .map(l => `${l.leg} 落地精力仅 ${l.energy_pct}%(红眼后直奔事务,当日不宜安排重要会议)`)
-    return { feasible: true, money_cny: money, legs, red_flags: redFlags }
+    return { feasible: true, money_cny: money, legs, red_flags: redFlags, work_window_exclusions: exclusions }
   }
 
   const core = coreOf(s).sort()

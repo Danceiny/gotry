@@ -45,4 +45,15 @@ const r3 = await solveUnified(poor)
 assert.equal(r3.feasible, false)
 assert.ok(r3.unsat_core!.includes('total:budget'))
 
-console.log(`TS UNIFIED TESTS: 3/3 OK(航班链 ¥${r1.money_cny},D-2 竖线修复生效)`)
+// 4. M-1:工作窗口排除周五晚班,gate q3 被确定性回答(与 Python oracle 同款)
+const excluded = r1.work_window_exclusions ?? []
+assert.ok(excluded.some(e => e.segment === 'f2' && e.option === 'TG216'), JSON.stringify(excluded))
+assert.ok(excluded.some(e => e.segment === 'f2' && e.option === 'TG218'))
+assert.equal(byLeg['f2'].service, 'VZ303')  // 只剩周六早班——与真实选择一致
+const off = parseFlightPackToSpec(pack)
+off.budgetCny = 9000
+off.workWindow = undefined
+const r4 = await solveUnified(off)
+assert.deepEqual(r4.work_window_exclusions, [])  // 关掉窗口,周五班恢复可选
+
+console.log(`TS UNIFIED TESTS: 4/4 OK(工作窗口生效,f2=VZ303,¥${r1.money_cny})`)
