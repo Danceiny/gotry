@@ -10,7 +10,7 @@
 
 **GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:动机访谈进、已验证的行程方案与选择题出;LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 
-**当前形态(诚实定位,2026-08-22 `v0.0.1-rc.2`)**:dsh 成品可用(`./gotry`,DeepSeek 原生)——人格(八条行为契约,新增时间感知)+ 五工具(可行性/骨架/酒店/动机/愿望池);机票数据三层组合全链(骨架 168 对+校验桥+锚点),酒店 hbcli 桥(实时/静态降级+证据标注);证据链从工具到用户渲染面贯穿。**v0.0.1-rc.2 收口**: 去掉 Python oracle (cli.py / bridge.callFeasibilityEngine / loop.ts erhai-python-bridge / diff-test.ts ts-vs-python)——**纯 TS unified 求解**(`solveChoiceSegment` 枚举,~6ms/次),为 npm 一键分发铺路;engine/journey 已是 deprecated oracle(python 包保留为历史对照,不再被产品运行时引用);run-all-tests 从 10 套降到 9 套,不再依赖 Python 运行时。M1/M2/M3 已退出;**当前 = M3 最小可用产品**,`v0.0.1-rc.2` 发布。
+**当前形态(诚实定位,2026-08-22 `v0.0.1-rc.3-dev`)**:dsh 成品可用(`./gotry`,DeepSeek 原生)——人格(八条行为契约,新增时间感知)+ 五工具(可行性/骨架/酒店/动机/愿望池);机票数据三层组合全链(骨架 168 对+校验桥+锚点),酒店 hbcli 桥(实时/静态降级+证据标注);证据链从工具到用户渲染面贯穿。**v0.0.1-rc.2 → dev**: 仓库根加 `package.json` + `bin/gotry.js`(dsh-runtime vendored 路径,web 模式已绿);headless 模式在 dsh 0.1.1-rc.1 vendored argv 解析 bug 下卡住,等 dsh 上游修(headless form: `dsh --profile headless "task"` 当前报「a task is required」)。**v0.0.1-rc.2 收口**: 去掉 Python oracle (cli.py / bridge.callFeasibilityEngine / loop.ts erhai-python-bridge / diff-test.ts ts-vs-python)——**纯 TS unified 求解**(`solveChoiceSegment` 枚举,~6ms/次);engine/journey 已是 deprecated oracle;run-all-tests 9 套,不再依赖 Python 运行时。M3 最小可用产品。
 
 ## 2. 总体架构:五层与现状
 
