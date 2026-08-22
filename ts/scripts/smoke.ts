@@ -24,6 +24,7 @@ async function main() {
     pythonPath: '../py',
     stateRoot: '.',
     timeoutMs: 30_000,
+    preferInProcess: true,
   })
 
   console.log(`registered tools: ${registered.map(t => t.name).join(', ')}`)
@@ -58,8 +59,9 @@ async function main() {
     recommended: string | null
     answer_md: string
     latency_ms: number
+    via: string
   }
-  console.log(`\nfeasibility: recommended=${result.recommended}, bridge latency=${result.latency_ms}ms\n`)
+  console.log(`\nfeasibility: recommended=${result.recommended}, via=${result.via}, latency=${result.latency_ms}ms\n`)
   console.log(result.answer_md)
 
   // 3) wish pool:把不可行的憧憬连同成行条件放入「下一次出发」
