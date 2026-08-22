@@ -1,0 +1,20 @@
+# GoTry 组合示例:gotry-tools 插件接入 dsh 运行时(总纲 3.2/3.3)。
+# 实际使用时按 dsh 官方 headless 示例补齐 llm/credentials/session 等基础插件,
+# 本文件只展示 GoTry 侧的增量。
+
+- id: gotry-tools
+  # 本地路径加载(MIT 自有插件);发布后可换 npm 包名
+  name: '@gotry/plugin'
+  config:
+    pythonBin: ../.venv/bin/python   # 仓库 venv 里的 Python
+    pythonPath: ../py                # PYTHONPATH 根(gotry_feasibility 包)
+    stateRoot: .                     # 动机画像/wish pool/延迟日志落盘目录
+    timeoutMs: 30000                 # 引擎单次调用超时
+
+# 说明:
+# - gotry_feasibility_check 工具每次调用都记录桥接延迟(bridge-latency.jsonl),
+#   这是「TS↔Python 桥接面收敛为两个插件」决策的成本证据(T5 度量数据源)。
+# - gotry_motivation_save 强制 evidence 字段(P0 反幻觉):没有用户原话依据的
+#   动机画像拒绝落盘。
+# - dsh 升级跟 main(创始人决策 G2):本插件只依赖 ctx.tools.register + defineTool
+#   这一最窄接口面,升级时优先回归 ts/scripts/smoke.ts。

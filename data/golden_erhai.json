@@ -1,0 +1,92 @@
+{
+  "request": {
+    "note": "想去这儿(素材:一张大理洱海的照片,湖边什么都不干的感觉)",
+    "home": {
+      "city": "上海",
+      "hubs": {
+        "PVG": { "to_hub_min": 90 },
+        "Hongqiao": { "to_hub_min": 40 }
+      }
+    },
+    "motivation": {
+      "weights": { "escape_rest": 0.7, "curiosity": 0.3 },
+      "hard": { "wake_not_before": "06:30", "min_arrival_energy_pct": 40 }
+    },
+    "window_days": 2,
+    "budget_cny": 3000
+  },
+  "candidates": [
+    {
+      "id": "dali",
+      "name": "大理·洱海",
+      "hub": "PVG",
+      "buffer_out_min": 90,
+      "buffer_ret_min": 90,
+      "services_out": [
+        { "id": "MU9712", "dep": "07:50", "arr": "12:20", "price_cny": 980 },
+        { "id": "MU9714", "dep": "11:30", "arr": "16:05", "price_cny": 1180 }
+      ],
+      "services_ret": [
+        { "id": "MU9713", "dep": "13:40", "arr": "17:10", "price_cny": 890 },
+        { "id": "MU9715", "dep": "17:20", "arr": "20:45", "price_cny": 950 }
+      ],
+      "dest_transfers": [
+        { "mode": "taxi", "min": 75, "price_cny": 120 },
+        { "mode": "bus_plus_taxi", "min": 105, "price_cny": 40 }
+      ],
+      "stay_cny_per_night": 450,
+      "local_daily_cny": 200,
+      "min_days_for_purpose": 5,
+      "imagery_match": 0.95,
+      "best_months": [3, 4, 5, 9, 10, 11]
+    },
+    {
+      "id": "qiandao",
+      "name": "千岛湖",
+      "hub": "Hongqiao",
+      "buffer_out_min": 20,
+      "buffer_ret_min": 20,
+      "services_out": [
+        { "id": "G7315", "dep": "07:35", "arr": "09:47", "price_cny": 120 },
+        { "id": "G7481", "dep": "08:53", "arr": "11:02", "price_cny": 126 }
+      ],
+      "services_ret": [
+        { "id": "G7482", "dep": "16:36", "arr": "18:52", "price_cny": 126 },
+        { "id": "G7316", "dep": "18:40", "arr": "20:58", "price_cny": 120 }
+      ],
+      "dest_transfers": [
+        { "mode": "taxi", "min": 25, "price_cny": 30 },
+        { "mode": "bus", "min": 40, "price_cny": 8 }
+      ],
+      "stay_cny_per_night": 380,
+      "local_daily_cny": 180,
+      "min_days_for_purpose": 2,
+      "imagery_match": 0.8,
+      "best_months": [4, 5, 9, 10]
+    },
+    {
+      "id": "taihu",
+      "name": "苏州·太湖",
+      "hub": "Hongqiao",
+      "buffer_out_min": 20,
+      "buffer_ret_min": 20,
+      "services_out": [
+        { "id": "G101", "dep": "08:12", "arr": "08:47", "price_cny": 42 },
+        { "id": "G103", "dep": "09:05", "arr": "09:41", "price_cny": 42 }
+      ],
+      "services_ret": [
+        { "id": "G110", "dep": "17:22", "arr": "18:05", "price_cny": 42 },
+        { "id": "G112", "dep": "19:10", "arr": "19:55", "price_cny": 42 }
+      ],
+      "dest_transfers": [
+        { "mode": "taxi", "min": 35, "price_cny": 45 },
+        { "mode": "bus", "min": 55, "price_cny": 6 }
+      ],
+      "stay_cny_per_night": 320,
+      "local_daily_cny": 150,
+      "min_days_for_purpose": 2,
+      "imagery_match": 0.6,
+      "best_months": [4, 5, 9, 10]
+    }
+  ]
+}
