@@ -33,6 +33,8 @@ export interface Config {
   stateRoot: string
   /** 引擎调用超时(ms) */
   timeoutMs: number
+  /** hbcli 二进制路径(hotelbyte-cli;空=禁用实时酒店,回退数据包) */
+  hbcliBin: string
   /** 优先使用进程内 TS 引擎(WASM,~6ms/次);false 或失败时回退 Python CLI(oracle,~240ms/次) */
   preferInProcess: boolean
 }
@@ -42,6 +44,7 @@ export const Config: z<Config> = z.object({
   pythonPath: z.string().default('py'),
   stateRoot: z.string().default('.'),
   timeoutMs: z.number().default(30_000),
+  hbcliBin: z.string().default('hbcli'),
   preferInProcess: z.boolean().default(true),
 })
 
@@ -207,5 +210,59 @@ export function apply(ctx: Context, config: Config): void {
       return { added: true, total: pool.length, path }
     },
     presentCall: args => ({ card: 'generic', title: '加入「下一次出发」清单', kind: 'other', rawInput: args.entry }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'gotry_hotel_search',
+    description:
+      'Search hotels via hotelbyte-cli (real-time when hbcli credentials exist, falls back to the static pack with explicit evidence tagging). '
+      + 'Input: destination city name + optional dates/occupancy. Output: hotel list with evidence chain ([realtime-API:hbcli] + fetch timestamp, '
+      + 'or [static-pack:estimate]) per the L4 invariant.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ destination: "普吉", checkIn?: "2026-07-18", checkOut?: "2026-07-23", occupancy?: { adults: 2 } }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = (args.query ?? {}) as { destination?: string }
+      if (!q.destination) throw new Error('gotry_hotel_search requires destination')
+      const started = Date.now()
+      let result: Record<string, unknown>
+      let via: string
+      try {
+        const { execFile } = await import('node:child_process')
+        const { promisify } = await import('node:util')
+        const exec = promisify(execFile)
+        const { stdout } = await exec(config.hbcliBin,
+          ['search', 'hotel-list', '--destination', q.destination, '--json'],
+          { timeout: config.timeoutMs, cwd: process.cwd() })
+        const jsonStart = stdout.indexOf('{') >= 0 ? stdout.indexOf('{') : stdout.indexOf('[')
+        if (jsonStart < 0) throw new Error(`hbcli output not JSON: ${stdout.slice(0, 120)}`)
+        result = {
+          hotels: JSON.parse(stdout.slice(jsonStart)),
+          evidence: `[实时API:hbcli@${new Date().toISOString()}]`,
+          destination: q.destination,
+        }
+        via = 'hbcli'
+      } catch (e) {
+        // 无凭证/CLI 不存在 → 数据包回退,证据链显式标注
+        const hotels = (await readJson(join(config.stateRoot, 'gotry-state', 'hotel-fallback.json'), null)) as unknown
+        if (!hotels) {
+          return JSON.parse(JSON.stringify({ summary: `酒店搜索暂不可用(${(e as Error).message.slice(0, 80)})——hbcli 未配置且无数据包回退`, available: false })) as Record<string, never>
+        }
+        result = { hotels, evidence: '[静态包:估算]', destination: q.destination }
+        via = 'static-fallback'
+      }
+      const dir = await ensureStateDir(config.stateRoot)
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `hotel_search:${via}`).catch(() => {})
+      return JSON.parse(JSON.stringify({ ...result, via, latency_ms: Date.now() - started, summary: `${q.destination}:酒店搜索(${via})完成` })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 }
