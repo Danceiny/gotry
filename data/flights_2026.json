@@ -14,8 +14,20 @@
       "note": "7.18 香港办证后飞普吉,当天与女朋友会合",
       "date": "2026-07-18",
       "services": [
-        { "id": "CX773", "dep": "14:45", "arr": "17:20", "price_cny": 2300, "price_note": "7 月旺季经济舱估算" },
-        { "id": "HX741", "dep": "20:20", "arr": "23:05", "price_cny": 1600, "price_note": "低价备选;准点率弱于国泰" }
+        {
+          "id": "CX773",
+          "dep": "14:45",
+          "arr": "17:20",
+          "price_cny": 2300,
+          "price_note": "7 月旺季经济舱估算"
+        },
+        {
+          "id": "HX741",
+          "dep": "20:20",
+          "arr": "23:05",
+          "price_cny": 1600,
+          "price_note": "低价备选;准点率弱于国泰"
+        }
       ],
       "buffer_min": 90,
       "origin_transfer_min": 60,
@@ -28,7 +40,13 @@
       "note": "8.10 凌晨红眼回迪拜,落地直奔办公室(真实锚点)",
       "date": "2026-08-10",
       "services": [
-        { "id": "EK329", "dep": "00:45", "arr": "04:20", "price_cny": 3400, "price_note": "单程估算;往返约 ¥3825 起" }
+        {
+          "id": "EK329",
+          "dep": "00:45",
+          "arr": "04:20",
+          "price_cny": 3400,
+          "price_note": "单程估算;往返约 ¥3825 起"
+        }
       ],
       "buffer_min": 120,
       "origin_transfer_min": 60,
@@ -36,16 +54,35 @@
       "arrive_by": "08:30",
       "red_eye": true,
       "red_eye_duration_min": 455,
-      "anchors_note": "8.9 22:45 离开住处即可;DXB 04:20 落地,09:00 上班前余量 4.5h;时差迪拜 -4h"
+      "anchors_note": "8.9 22:45 离开住处即可;DXB 04:20 落地,09:00 上班前余量 4.5h;时差迪拜 -4h",
+      "tz_offset_min": -240
     },
     {
       "id": "f2",
       "note": "普吉→曼谷度周末(gate q3:7.31 周五晚 vs 8.1 周六早,引擎双选项都保留)",
       "date": "2026-07-31 或 08-01",
       "services": [
-        { "id": "VZ303", "dep": "09:00", "arr": "10:30", "price_cny": 350, "price_note": "泰越捷,行李另购" },
-        { "id": "TG216", "dep": "16:55", "arr": "18:25", "price_cny": 750, "price_note": "周五晚班,最大化周末" },
-        { "id": "TG218", "dep": "19:15", "arr": "20:50", "price_cny": 800, "price_note": "周五最晚班" }
+        {
+          "id": "VZ303",
+          "dep": "09:00",
+          "arr": "10:30",
+          "price_cny": 350,
+          "price_note": "泰越捷,行李另购"
+        },
+        {
+          "id": "TG216",
+          "dep": "16:55",
+          "arr": "18:25",
+          "price_cny": 750,
+          "price_note": "周五晚班,最大化周末"
+        },
+        {
+          "id": "TG218",
+          "dep": "19:15",
+          "arr": "20:50",
+          "price_cny": 800,
+          "price_note": "周五最晚班"
+        }
       ],
       "buffer_min": 75,
       "origin_transfer_min": 45,
@@ -58,23 +95,54 @@
       "note": "曼谷→昆明,云南一周开始(8.2 周日或 8.3 周一)",
       "date": "2026-08-02 或 08-03",
       "services": [
-        { "id": "MU9622", "dep": "07:50", "arr": "11:15", "price_cny": 1100, "price_note": "到达为北京时间(泰国慢 1h)" },
-        { "id": "MU6088", "dep": "13:20", "arr": "16:50", "price_cny": 950, "price_note": "午后班,周末收尾从容" }
+        {
+          "id": "MU9622",
+          "dep": "07:50",
+          "arr": "11:15",
+          "price_cny": 1100,
+          "price_note": "到达为北京时间(泰国慢 1h)"
+        },
+        {
+          "id": "MU6088",
+          "dep": "13:20",
+          "arr": "16:50",
+          "price_cny": 950,
+          "price_note": "午后班,周末收尾从容"
+        }
       ],
       "buffer_min": 120,
       "origin_transfer_min": 60,
       "dest_transfer_min": 45,
       "arrive_by": "18:00",
-      "anchors_note": "BKK→KMG 每天约 6 班,飞行约 2h25m + 时差 1h"
+      "anchors_note": "BKK→KMG 每天约 6 班,飞行约 2h25m + 时差 1h",
+      "tz_offset_min": 60
     },
     {
       "id": "f4",
       "note": "昆明→深圳,衔接 8.10 凌晨红眼(EK329 需 ~22:45 前到 SZX 值机)",
       "date": "2026-08-09",
       "services": [
-        { "id": "ZH9108", "dep": "09:05", "arr": "11:20", "price_cny": 1150, "price_note": "早班,深圳白天还能休整" },
-        { "id": "MU5233", "dep": "16:20", "arr": "18:35", "price_cny": 980, "price_note": "午后班" },
-        { "id": "DZ6252", "dep": "22:40", "arr": "01:20", "price_cny": 700, "price_note": "深夜班——到达晚于红眼值机截止,应被引擎的 arrive_by 锚点排除" }
+        {
+          "id": "ZH9108",
+          "dep": "09:05",
+          "arr": "11:20",
+          "price_cny": 1150,
+          "price_note": "早班,深圳白天还能休整"
+        },
+        {
+          "id": "MU5233",
+          "dep": "16:20",
+          "arr": "18:35",
+          "price_cny": 980,
+          "price_note": "午后班"
+        },
+        {
+          "id": "DZ6252",
+          "dep": "22:40",
+          "arr": "01:20",
+          "price_cny": 700,
+          "price_note": "深夜班——到达晚于红眼值机截止,应被引擎的 arrive_by 锚点排除"
+        }
       ],
       "buffer_min": 90,
       "origin_transfer_min": 60,

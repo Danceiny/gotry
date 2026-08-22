@@ -79,6 +79,12 @@ class TestAdapters(unittest.TestCase):
         self.assertIn(chosen_ids["f1"], {"CX773", "HX741"})
         self.assertEqual(chosen_ids["f5"], "EK329")
 
+        # D-5 时区感知核算:真实飞行时长 = (到达−出发) − 时差
+        d2d = {lg["leg"]: lg["door_to_door"] for lg in r["legs"]}
+        self.assertEqual(d2d["f5"], "11h20m")  # 3h 前置 + 7h35m 真实飞行(EK329) + 45m 接驳
+        if chosen_ids.get("f3") == "MU6088":
+            self.assertEqual(d2d["f3"], "6h15m")  # 3h 前置 + 2h30m 真实飞行(曼谷→昆明 +1h) + 45m
+
     def test_unified_solver_anchor_and_budget_cores(self):
         """锚点冲突与预算冲突的 core 命名,与旧 journey 行为一致。"""
         spec = segments_from_flight_pack(self.pack)

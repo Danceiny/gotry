@@ -51,6 +51,7 @@ class MoveSpec:
     dest_transfer_min: int = 60
     red_eye: bool = False
     red_eye_duration_min: int = 0
+    tz_offset_min: int = 0  # D-5:目的地相对出发地的时差(如 KMG-BKK=+60,DXB-SZX=-240)
 
 
 @dataclass
@@ -150,6 +151,7 @@ def segments_from_flight_pack(pack: dict) -> JourneySpec:
                 dest_transfer_min=l["dest_transfer_min"],
                 red_eye=bool(l.get("red_eye", False)),
                 red_eye_duration_min=int(l.get("red_eye_duration_min", 0)),
+                tz_offset_min=int(l.get("tz_offset_min", 0)),
             ),
         ) for s in services]
         # 每个 Option 携带自身 min_days(候选形态的 Option 级差异,统一表达)
@@ -238,8 +240,7 @@ def solve_unified(spec: JourneySpec) -> dict:
                     chosen[seg.id] = o
         reports = []
         for seg in spec.segments:
-            leg = _option_as_leg(seg, chosen[seg.id])
-            reports.append({"leg": seg.id, **evaluate_leg(leg, _option_service(chosen[seg.id]))})
+            reports.append({"leg": seg.id, **_evaluate_option_move(seg, chosen[seg.id])})
         return chosen, reports
 
     if s.check() != unsat:
@@ -375,3 +376,43 @@ def solve_choice_segment(spec: JourneySpec) -> dict:
 
 def _checks_t(t, spec):
     return _checks(t, spec)
+
+
+def _evaluate_option_move(seg: Segment, option: SegmentOption) -> dict:
+    """D-5:时区感知的段核算(取代对 deprecated evaluate_leg 的委托)。
+
+    语义:wake 与 arrive_stay 保持**各自当地时刻**(呈现正确);
+    door_to_door = 出发侧前置(值机+接驳) + **真实飞行时长**(含时差) + 到达侧接驳。
+    """
+    mv = option.move
+    svc = mv.services[0]
+    wake = svc.dep_min - mv.buffer_min - mv.origin_transfer_min
+    # 真实时长 = 到达(当地) − 出发(当地) − 时差(dest−origin);EK329: 215−(−240)=455min=7h35m ✓
+    true_flight = (svc.arr_min - svc.dep_min) - mv.tz_offset_min
+    d2d = mv.buffer_min + mv.origin_transfer_min + true_flight + mv.dest_transfer_min
+    wake_display = f"{(wake + 1440) // 60 % 24:02d}:{(wake + 1440) % 60:02d}(前一日)" if wake < 0 \
+        else f"{wake // 60:02d}:{wake % 60:02d}"
+    arrive_stay = svc.arr_min + mv.dest_transfer_min
+
+    if mv.red_eye and mv.red_eye_duration_min > 0:
+        sleep_h = (mv.red_eye_duration_min - 60) / 60.0
+        energy = max(30, min(75, 30 + 8 * sleep_h))
+    else:
+        energy = 100 - 2 * 8
+        if wake < 5 * 60:
+            energy -= 30
+        elif wake < 6 * 60:
+            energy -= 25
+        if arrive_stay > 21 * 60:
+            energy -= 10
+        if d2d > 6 * 60:
+            energy -= 10
+        energy = max(0, energy)
+
+    return {
+        "service": svc.id, "dep": f"{svc.dep_min // 60:02d}:{svc.dep_min % 60:02d}",
+        "wake": wake_display, "wake_min": wake,
+        "arrive_stay": f"{arrive_stay // 60:02d}:{arrive_stay % 60:02d}",
+        "door_to_door": f"{d2d // 60}h{d2d % 60:02d}m", "d2d_min": d2d,
+        "energy_pct": round(energy), "price_cny": svc.price_cny,
+    }
