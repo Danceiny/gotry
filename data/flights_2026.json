@@ -6,7 +6,20 @@
       "新华网 2025-07-01:阿联酋航空开通深圳直飞迪拜(开航时刻 23:55→03:40,后调整为 00:45→04:20)",
       "携程/国泰时刻表: CX771 HKG 08:05→HKT 10:50;CX773 HKG 14:45→HKT 17:20;香港航空 HX741 约 20:20→23:05(有取消记录,出行前需确认)"
     ],
-    "roundtrip_note": "7.17 22:40 落地深圳与 EK328(DXB 11:00→SZX 22:40)完全吻合——发起人入境段即该航线,demo 与真实对账的第一处交叉验证"
+    "roundtrip_note": "7.17 22:40 落地深圳与 EK328(DXB 11:00→SZX 22:40)完全吻合——发起人入境段即该航线,demo 与真实对账的第一处交叉验证",
+    "work_window": {
+      "note": "M-1:发起人工作时间(家=迪拜 UTC+4)10:00-19:00,周一至周五",
+      "home_tz_offset_min": 240,
+      "start_min": 600,
+      "end_min": 1140,
+      "workdays": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    }
   },
   "legs": [
     {
@@ -33,7 +46,8 @@
       "origin_transfer_min": 60,
       "dest_transfer_min": 45,
       "arrive_by": "23:59",
-      "anchors_note": "办证预计 12:00 前完成:CX773 需 12:15 离开港岛(满打满算);HX741 需 18:50 前"
+      "anchors_note": "办证预计 12:00 前完成:CX773 需 12:15 离开港岛(满打满算);HX741 需 18:50 前",
+      "origin_tz_offset_min": 480
     },
     {
       "id": "f5",
@@ -55,7 +69,8 @@
       "red_eye": true,
       "red_eye_duration_min": 455,
       "anchors_note": "8.9 22:45 离开住处即可;DXB 04:20 落地,09:00 上班前余量 4.5h;时差迪拜 -4h",
-      "tz_offset_min": -240
+      "tz_offset_min": -240,
+      "origin_tz_offset_min": 480
     },
     {
       "id": "f2",
@@ -67,28 +82,32 @@
           "dep": "09:00",
           "arr": "10:30",
           "price_cny": 350,
-          "price_note": "泰越捷,行李另购"
+          "price_note": "泰越捷,行李另购",
+          "weekday": "sat"
         },
         {
           "id": "TG216",
           "dep": "16:55",
           "arr": "18:25",
           "price_cny": 750,
-          "price_note": "周五晚班,最大化周末"
+          "price_note": "周五晚班,最大化周末",
+          "weekday": "fri"
         },
         {
           "id": "TG218",
           "dep": "19:15",
           "arr": "20:50",
           "price_cny": 800,
-          "price_note": "周五最晚班"
+          "price_note": "周五最晚班",
+          "weekday": "fri"
         }
       ],
       "buffer_min": 75,
       "origin_transfer_min": 45,
       "dest_transfer_min": 60,
       "arrive_by": "21:30",
-      "anchors_note": "HKT→BKK 每天约 15 班(泰航 5-7 + 泰越捷 8 + 曼航/亚航),频次极高;此处只列代表性班次"
+      "anchors_note": "HKT→BKK 每天约 15 班(泰航 5-7 + 泰越捷 8 + 曼航/亚航),频次极高;此处只列代表性班次",
+      "origin_tz_offset_min": 420
     },
     {
       "id": "f3",
@@ -115,7 +134,8 @@
       "dest_transfer_min": 45,
       "arrive_by": "18:00",
       "anchors_note": "BKK→KMG 每天约 6 班,飞行约 2h25m + 时差 1h",
-      "tz_offset_min": 60
+      "tz_offset_min": 60,
+      "origin_tz_offset_min": 420
     },
     {
       "id": "f4",
@@ -148,7 +168,8 @@
       "origin_transfer_min": 60,
       "dest_transfer_min": 0,
       "arrive_by": "21:00",
-      "anchors_note": "KMG→SZX 每天约 16 班(06:55-23:00),约 2h15m;深夜班是负例,验证锚点排除能力"
+      "anchors_note": "KMG→SZX 每天约 16 班(06:55-23:00),约 2h15m;深夜班是负例,验证锚点排除能力",
+      "origin_tz_offset_min": 480
     }
   ]
 }

@@ -52,6 +52,7 @@ class MoveSpec:
     red_eye: bool = False
     red_eye_duration_min: int = 0
     tz_offset_min: int = 0  # D-5:目的地相对出发地的时差(如 KMG-BKK=+60,DXB-SZX=-240)
+    origin_tz_offset_min: int = 480  # 出发地 UTC 偏移(M-1 工作窗口换算用)
 
 
 @dataclass
@@ -100,6 +101,8 @@ class JourneySpec:
     min_arrival_energy_pct: int = 40
     required_usable_hours: float = 5.4
     latest_arrive_stay_min: int = 18 * 60
+    # M-1:旅行者工作窗口(家时区),如 {home_tz_offset_min:240, start_min:600, end_min:1140, workdays:[0..4]}
+    work_window: Optional[dict] = None
 
 
 # ---- 适配器 1:旧候选用例(洱海形态:request + candidates)→ 单 choice 段 ------------
@@ -152,6 +155,7 @@ def segments_from_flight_pack(pack: dict) -> JourneySpec:
                 red_eye=bool(l.get("red_eye", False)),
                 red_eye_duration_min=int(l.get("red_eye_duration_min", 0)),
                 tz_offset_min=int(l.get("tz_offset_min", 0)),
+                origin_tz_offset_min=int(l.get("origin_tz_offset_min", 480)),
             ),
         ) for s in services]
         # 每个 Option 携带自身 min_days(候选形态的 Option 级差异,统一表达)
@@ -163,7 +167,14 @@ def segments_from_flight_pack(pack: dict) -> JourneySpec:
             note=l.get("note", ""), date=l.get("date"),
             anchors=anchors, options=options,
         ))
-    return JourneySpec(note=pack.get("meta", {}).get("note", ""), segments=segments)
+    spec = JourneySpec(note=pack.get("meta", {}).get("note", ""), segments=segments,
+                       work_window=pack.get("meta", {}).get("work_window"))
+    # M-1:班次的星期标注挂到 Option 上(缺省视为不受工作窗口约束的未知日)
+    for leg, seg in zip(pack.get("legs", []), spec.segments):
+        for svc, opt in zip(leg["services"], seg.options):
+            if svc.get("weekday"):
+                opt.__dict__["dep_weekday"] = svc["weekday"]
+    return spec
 
 
 # ---- 统一求解器(迁移步 2,骨架:先吃「每 Option 单班次」形态) -------------------------
@@ -195,7 +206,25 @@ def _exactly_one(sels):
 
 
 def solve_unified(spec: JourneySpec) -> dict:
-    """按 Option 选择求解段链;锚点命名约束;无解读 core 给逐锚点放宽建议。"""
+    """按 Option 选择求解段链;锚点命名约束;无解读 core 给逐锚点放宽建议。
+
+    M-1:求解前先做工作窗口过滤——工作日窗口内起飞的 Option 直接排除
+    (带理由记录),这是 Z3 之外的确定性预过滤,语义上是「工作窗口硬约束」。
+    """
+    exclusions = []
+    for seg in spec.segments:
+        kept = []
+        for opt in seg.options:
+            reason = _work_window_blocks(spec, opt)
+            if reason:
+                exclusions.append({"segment": seg.id, "option": opt.id, "reason": reason})
+            else:
+                kept.append(opt)
+        seg.options = kept
+        if not kept:
+            return {"feasible": False, "unsat_core": [f"{seg.id}:work_window"],
+                    "work_window_exclusions": exclusions}
+
     all_sels: dict = {}
     assertions: dict = {}
 
@@ -251,7 +280,8 @@ def solve_unified(spec: JourneySpec) -> dict:
             for r in reports if any(o.move.red_eye for o in next(sg for sg in spec.segments if sg.id == r["leg"]).options)
             and r["energy_pct"] < 50
         ]
-        return {"feasible": True, "money_cny": money, "legs": reports, "red_flags": red_flags}
+        return {"feasible": True, "money_cny": money, "legs": reports, "red_flags": red_flags,
+                "work_window_exclusions": exclusions}
 
     core = sorted(str(c) for c in s.unsat_core())
     suggestions = []
@@ -416,3 +446,31 @@ def _evaluate_option_move(seg: Segment, option: SegmentOption) -> dict:
         "door_to_door": f"{d2d // 60}h{d2d % 60:02d}m", "d2d_min": d2d,
         "energy_pct": round(energy), "price_cny": svc.price_cny,
     }
+
+
+_WEEKDAY_IDX = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+def _work_window_local(spec: JourneySpec, mv: MoveSpec) -> tuple:
+    """工作窗口换算到出发地当地时刻(M-1):start/end + (origin_tz − home_tz)。"""
+    ww = spec.work_window
+    shift = mv.origin_tz_offset_min - ww["home_tz_offset_min"]
+    return ww["start_min"] + shift, ww["end_min"] + shift
+
+
+def _work_window_blocks(spec: JourneySpec, option: SegmentOption) -> Optional[str]:
+    """若该 Option 在工作日的工作窗口内起飞,返回排除理由;否则 None。
+
+    这是 gate q3 的确定性回答:普吉工作窗口=当地 13:00-22:00,
+    周五 16:55 的 TG216 落在窗口内 → 排除,只剩周六早班——与真实选择一致。
+    """
+    if not spec.work_window or not option.move:
+        return None
+    weekday = option.__dict__.get("dep_weekday")
+    if weekday is None or _WEEKDAY_IDX[weekday] not in spec.work_window.get("workdays", []):
+        return None
+    dep = option.move.services[0].dep_min
+    start, end = _work_window_local(spec, option.move)
+    if start <= dep <= end:
+        return f"周{ {'mon':'一','tue':'二','wed':'三','thu':'四','fri':'五','sat':'六','sun':'日'}[weekday] } {option.move.services[0].dep_min // 60:02d}:{option.move.services[0].dep_min % 60:02d} 起飞落在工作窗口(当地 {start // 60:02d}:{start % 60:02d}-{end // 60:02d}:{end % 60:02d})内"
+    return None
