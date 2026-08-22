@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseCandidate, parseRequest } from '../src/model.ts'
-import { solve } from '../src/engine.ts'
+import { segmentsFromCandidate, solveChoiceSegment } from '../src/unified.ts'
 import { callFeasibilityEngine } from '../src/bridge.ts'
 
 const payload = JSON.parse(await readFile(join('..', 'data', 'golden_erhai.json'), 'utf-8'))
@@ -22,8 +22,10 @@ const payload = JSON.parse(await readFile(join('..', 'data', 'golden_erhai.json'
 const req = parseRequest(payload['request'])
 const candidates = (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate)
 
+const spec = segmentsFromCandidate(req, candidates)
+
 const [tsResult, pyCall] = await Promise.all([
-  solve(req, candidates),
+  Promise.resolve(solveChoiceSegment(spec, req)),
   callFeasibilityEngine(payload, {
     pythonBin: '../.venv/bin/python',
     pythonPath: '../py',

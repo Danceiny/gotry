@@ -18,7 +18,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { callFeasibilityEngine, ensureStateDir, readJson, recordLatency, writeJson } from './bridge.ts'
-import { solve as solveInProcess } from './engine.ts'
+import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
 
@@ -99,10 +99,11 @@ export function apply(ctx: Context, config: Config): void {
       const payload = args.payload as Record<string, unknown>
       if (config.preferInProcess) {
         try {
-          result = await solveInProcess(
-            parseRequest(payload['request'] as Record<string, unknown>),
-            (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate),
-          ) as Record<string, unknown>
+          const req = parseRequest(payload['request'] as Record<string, unknown>)
+          const cands = (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate)
+          const spec = segmentsFromCandidate(req, cands)
+          result = solveChoiceSegment(spec, req) as Record<string, unknown>
+          via = 'in-process-unified'
         } catch (e) {
           via = `python-bridge-fallback(${(e as Error).message.slice(0, 80)})`
           result = (await callFeasibilityEngine(payload, {
