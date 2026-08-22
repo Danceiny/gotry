@@ -6,7 +6,8 @@
  * 日历断言 + 访谈补全启动(问出工作窗口与已订资源——Kimi 第 6 轮才问的事)。
  */
 
-import type { InterviewQuestion, TripState, TravelerProfile, Turn, CalendarState } from './contracts.ts'
+import type { InterviewQuestion, TripState, TravelerProfile, Turn, CalendarState, SolveResult } from './contracts.ts'
+import type { JourneySpecTS } from './unified.ts'
 
 /** LLM 端口:S2 mock(确定性剧本) / S4 真(dsh 运行时)。循环不感知差异。 */
 export interface LlmPort {
@@ -16,6 +17,8 @@ export interface LlmPort {
     profile?: Partial<TravelerProfile>
     assumptions: Array<{ field: string; source: 'user-verbatim' | 'inferred' | 'default' }>
   }>
+  /** 翻译:对话历史 → 统一模型 spec;约束未齐时返回 null(循环继续访谈) */
+  extractSpec(history: Turn[], state: TripState): Promise<JourneySpecTS | null>
   /** 问句润色(ADR-9:确定性驱动,LLM 只管语气) */
   polishQuestion(q: InterviewQuestion): Promise<string>
   /** 结果解释(S3 接 solve 后启用) */
@@ -64,12 +67,45 @@ export function interviewNext(state: TripState): { questions: InterviewQuestion[
   return { questions, missing: questions.map(q => q.key) }
 }
 
-/** 一次对话回合:抽取事实(冲突即指出)→ 增量访谈 → 回复。 */
+/** 求解端口:S3 起由 unified 求解器实现;循环只认此签名(确定性责任)。 */
+export type SolvePort = (spec: JourneySpecTS) => Promise<SolveResult>
+
+/** 求解结果 → 人话(模板;S4 可由 LLM 润色,数字与判定不可改) */
+export function renderSolve(state: TripState): string {
+  const s = state.solve
+  if (!s) return '(无求解结果)'
+  const lines: string[] = []
+  if (s.feasible) {
+    lines.push(`**方案可行,机票合计 ¥${s.money_cny}**`)
+    for (const lg of s.legs ?? []) {
+      const l = lg as Record<string, string | number>
+      lines.push(`- ${l['leg']} ${l['service']}:${l['dep']} 起飞,${l['wake']} 出发,${l['arrive_stay']} 到,`
+        + `门到门 ${l['door_to_door']},落地精力 ${l['energy_pct']}%,¥${l['price_cny']}`)
+    }
+    for (const e of s.work_window_exclusions ?? []) {
+      lines.push(`- 已排除 ${e.option}(工作窗口):${e.reason}`)
+    }
+    for (const f of s.red_flags ?? []) lines.push(`- ⚠️ ${f}`)
+  } else {
+    lines.push(`**当前约束下不可行——冲突:${(s.unsat_core ?? []).join('、')}`)
+    for (const sg of s.suggestions ?? []) lines.push(`- 放宽「${sg.relax}」可解(约 ¥${sg.money_cny})`)
+  }
+  if (state.gates.length) {
+    lines.push('', '**待你决定(选择题)**')
+    for (const g of state.gates) {
+      lines.push(`- ${g.question} → ${g.options.map(o => o.label + (o.tradeOff ? `(${o.tradeOff})` : '')).join(' / ')}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+/** 一次对话回合:抽取事实(冲突即指出)→ 增量访谈 → 约束齐备则求解+渲染。 */
 export async function runTurn(
   state: TripState,
   userMsg: string,
   llm: LlmPort,
   history: Turn[] = [],
+  solve: SolvePort | null = null,
 ): Promise<{ reply: string; state: TripState }> {
   const facts = await llm.extractFacts([...history, { role: 'user', text: userMsg }], state)
 
@@ -86,13 +122,31 @@ export async function runTurn(
   }
   Object.assign(state.profile, facts.profile ?? {})
 
+  // 访谈:workWindow/bookedResources 是求解前置;budgetTier 转为 gate(不阻塞规划)
   const { questions } = interviewNext(state)
+  const blocking = questions.filter(q => q.key !== 'budgetTier')
+  const budgetQ = questions.find(q => q.key === 'budgetTier')
+  if (budgetQ && !state.gates.some(g => g.id === 'budget')) {
+    state.gates.push({
+      id: 'budget',
+      question: budgetQ.text,
+      options: budgetQ.options ?? [{ label: '经济' }, { label: '舒适' }, { label: '便利优先' }],
+    })
+  }
+
   const parts: string[] = []
   if (conflicts.length) parts.push(`⚠️ 日历冲突:\n${conflicts.map(c => `- ${c}`).join('\n')}`)
-  for (const q of questions) {
-    parts.push(await llm.polishQuestion(q))
-  }
-  if (!questions.length && !conflicts.length) {
+  for (const q of blocking) parts.push(await llm.polishQuestion(q))
+
+  // 约束齐备(无阻塞问题)→ 翻译 spec → 求解 → 渲染
+  if (blocking.length === 0 && solve) {
+    const spec = await llm.extractSpec([...history, { role: 'user', text: userMsg }], state)
+    if (spec) {
+      state.spec = spec
+      state.solve = await solve(spec)
+      parts.push(llm.render ? await llm.render(state) : renderSolve(state))
+    }
+  } else if (blocking.length === 0) {
     parts.push('(约束齐备——进入规划,S3 接线后此处产出方案与选择题)')
   }
   return { reply: parts.join('\n\n'), state }

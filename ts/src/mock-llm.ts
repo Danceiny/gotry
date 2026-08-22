@@ -6,6 +6,8 @@
 
 import type { LlmPort } from './loop.ts'
 import type { InterviewQuestion, TravelerProfile, TripState, Turn, CalendarState } from './contracts.ts'
+import type { JourneySpecTS } from './unified.ts'
+import { parseFlightPackToSpec } from './unified.ts'
 
 interface ScriptStep {
   /** 命中条件:用户消息包含此关键词(第一条匹配生效) */
@@ -46,7 +48,7 @@ const SCRIPT: ScriptStep[] = [
   },
 ]
 
-export function createMockLlm(): LlmPort {
+export function createMockLlm(flightPackPath?: string): LlmPort {
   let stepIdx = 0
   return {
     async extractFacts(history: Turn[], _state: TripState) {
@@ -62,6 +64,22 @@ export function createMockLlm(): LlmPort {
         }
       }
       return { assumptions: [] }
+    },
+    async extractSpec(history: Turn[], state: TripState): Promise<JourneySpecTS | null> {
+      // mock 翻译:工作窗口与已订资源齐备后,「翻译」= 装载航班包并挂上真实工作窗口
+      if (!state.profile.workWindow || !state.profile.bookedResources) return null
+      if (!flightPackPath) return null
+      const { readFile } = await import('node:fs/promises')
+      const pack = JSON.parse(await readFile(flightPackPath, 'utf-8'))
+      const spec = parseFlightPackToSpec(pack)
+      spec.workWindow = {
+        homeTzOffsetMin: state.profile.workWindow.homeTzOffsetMin,
+        startMin: state.profile.workWindow.startMin,
+        endMin: state.profile.workWindow.endMin,
+        workdays: state.profile.workWindow.workdays,
+      }
+      spec.budgetCny = 9000
+      return spec
     },
     async polishQuestion(q: InterviewQuestion) {
       return `【${q.key}】${q.text}\n(为什么问:${q.why})`
