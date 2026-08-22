@@ -73,6 +73,7 @@ export interface SolveResult {
   unsat_core?: string[]
   suggestions?: Array<{ relax: string; money_cny?: number }>
   work_window_exclusions?: Array<{ segment: string; option: string; reason: string }>
+  skeleton_notes?: string[]
   verdicts?: Array<Record<string, unknown>>
   recommended?: string | null
 }

@@ -21,7 +21,7 @@ const userTurns = [
 
 const history: Array<{ role: 'user' | 'assistant'; text: string }> = []
 for (const turn of userTurns) {
-  const { reply } = await runTurn(state, turn, llm, [...history], solveUnified as never)
+  const { reply } = await runTurn(state, turn, llm, [...history], (spec => { spec.skeletonHub = true; return solveUnified(spec) }) as never)
   history.push({ role: 'user', text: turn }, { role: 'assistant', text: reply })
   console.log(`\n用户> ${turn.slice(0, 50)}…`)
   console.log(`GoTry> ${reply}`)
