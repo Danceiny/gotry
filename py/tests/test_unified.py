@@ -7,7 +7,14 @@ import unittest
 from pathlib import Path
 
 from gotry_feasibility.model import Candidate
-from gotry_feasibility.unified import segments_from_candidate, segments_from_flight_pack, solve_unified
+from gotry_feasibility.unified import (
+    segments_from_candidate,
+    segments_from_flight_pack,
+    solve_choice_segment,
+    solve_unified,
+)
+from gotry_feasibility import solve as legacy_solve
+from gotry_feasibility.model import TravelRequest
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -86,6 +93,26 @@ class TestAdapters(unittest.TestCase):
         r2 = solve_unified(spec2)
         self.assertFalse(r2["feasible"])
         self.assertIn("total:budget", r2["unsat_core"])
+
+    def test_candidate_shape_equivalence_with_legacy_engine(self):
+        """步2b 对账:洱海经统一模型 vs 旧 engine——判定集合、推荐、wish 条件一致。"""
+        candidates = [Candidate.from_dict(c) for c in self.erhai["candidates"]]
+        spec = segments_from_candidate(self.erhai["request"], candidates)
+        unified = solve_choice_segment(spec)
+
+        legacy = legacy_solve(TravelRequest.from_dict(self.erhai["request"]), candidates)
+
+        self.assertEqual(unified["recommended"], legacy["recommended"])  # qiandao
+        u = {v["candidate_id"]: v for v in unified["verdicts"]}
+        l = {v["candidate_id"]: v for v in legacy["verdicts"]}
+        self.assertEqual({k: v["feasible"] for k, v in u.items()},
+                         {k: v["feasible"] for k, v in l.items()})  # dali✗/qiandao✓/taihu✓
+        self.assertIn("duration", u["dali"]["unsat_core"])
+        self.assertEqual(u["dali"]["wish_pool"]["conditions"]["days"],
+                         l["dali"]["wish_pool"]["conditions"]["days"])
+        self.assertEqual(u["dali"]["wish_pool"]["conditions"]["budget_cny"],
+                         l["dali"]["wish_pool"]["conditions"]["budget_cny"])  # 最优值一致
+        self.assertLessEqual(u["qiandao"]["true_cost"]["money_cny"], 3000)
 
 
 if __name__ == "__main__":
