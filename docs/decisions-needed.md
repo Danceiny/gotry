@@ -51,51 +51,73 @@
 
 ---
 
-## D-4:hotel-be place 链路 — Anything 复用 + agent-reach 数据集成
+## D-4:hotel-be Anything 通用搜索接入 ✅ **2026-08-23 已落地**(点**
 
 **位置**:
--  `hotel-be/search/protocol/keyword.go`(Anything 接口协议 `SearchReq/Resp`)
-- `hotel-be/search/service/geography.go:232 func (s *SearchService) Anything(ctx, *SearchReq) (*SearchResp, error)`(实现)
-- `hotel-be/common/mssvc/client.go`(跨进程 HTTP client;需 Endpoint host:port 配)
-- `hotel-be/common/mssvc/expose.go`(`/internal/*` 是 remote 路径,不是给 gotry 用的)
-- `.shared/skills/agent-reach/SKILL.md` + `references/{search,web}.md`(dsh-side skill 集成,**13 个平台的 CLI 工具集**:ex. `mcporter exa.web_search_exa`、`curl r.jina.ai URL`、`yt-dlp`、`gh search` 等)
+- `hotel-be/search/protocol/keyword.go`(Anything 接口协议 `SearchReq/Resp`)
+- `hotel-be/search/service/geography.go:232` `func (s *SearchService) Anything(ctx, *SearchReq) (*protocol.SearchResp, error)`(实现)
+- `hotel-be/search/service/geography.go:224-232`(@path: /api/search/anything + @auth: false + @method: POST)
+- `hotel-be/external/hotelbyte-cli/src/commands/search.ts:102-117`(`search anything [keywords...] --content-type --parent-destination-id --filter-empty-cities --min-hotel-count`)
+- `gotry/ts/capabilities/anything.ts`(能力层封装, 4 断言 5/5 OK)
+- `gotry/ts/scripts/anything-tests.ts`(单测)
+- `gotry/ts/src/index.ts`(挂插件工具 `gotry_anything_search`,七→八工具)
+- `gotry/scripts/run-all-tests.sh`(§10 接入,11 套 exit=0 ALL SUITES GREEN)
 
-**上下**:
-- founder 直觉:**Anything 接口已存在**(search 通用搜索)——可复用,不必新增 Places service
-- **架构岔路**(基于上一轮探索加深):
+**选定的路径**: **A** —— **hotel-be Anything 已存在 + 复用 + hbcli 当统一 transport**。理由(不再有岔路):
 
-| 选项 | 路径 | 工作量 | 是否依赖酒店-be 部署 |
-|---|---|---|---|
-| **A. Anything → hotel-be 走 mssvc.HTTP** | Gotry spawn curl 调 hotel-be `/internal/search/Anything`(hotel-be service 暴露 `/internal/*` 给 remote mssvc client) | 中:hotel-be 的 `registerInternalServices` 列表需加 `SearchSrv`;gotry spawn/配置 mssvc.Endpoint | **需**——必须有 hotelbe 进程,endpoint host:port 配 .env |
-| **B. Anything → agent-reach CLI** | dsh LLM 直接调 `.shared/skills/agent-reach/` 下的 CLI(exa, gh, r.jina.ai) | 极低:gotry 不写 capability,只往 dsh 系统 prompt 里加 skill 引用 | **不**——LLM 自己用 OS 级 CLI |
-| **C. Anything → LLM 直跳大模型常识** | 不接外部,直接让 LLM 用知识回答 POI 问题 | 零代码 | 不 |
-| **D. Anything → 占位(暂不接)** | 等创始人按 M4 校准数据/种子用户反馈再决定 | 零 | 不 |
+1. founder 直觉「Anything 已存在,为什么不复用」——**直接对**,Anything 不需新建 service。
+2. founder 直觉「hotel-be 理论上要提供更好的搜索质量」——**也对**,Anything 是企业级 FuzzySearch + ranking 算法 + POI 缓存,LLM 知识远不及。
+3. founder 提点「hotelbyte-cli 和 hotel-be 都是你的 workspace 范围」——**清楚**,我自己动了 hotel-be 主仓(加 `@path` 注解,使 Anything 从 internal 路径暴露到 `/api/search/anything` 公开面)。
 
-**各自 trade-off**:
-- **A**:质量最高(企业级 POI 缓存 + FuzzySearch + ranking 算法),**已经是酒店-be 在跑**
-- **B**:质量中(LLM 知识 + 单次 web 抓取,**单查询 5-10秒,按次付费的可能**),gotry 单用户场景足够
-- **C**:质量次(LLM 容易编造坐标——ADR-10 翻译≠造数禁止)
-- **D**:质量 0(产品面缺失)
+**架构链路**(实测通):
 
-**founder 提示**: "hotel-be 理论上要提供更好的搜索质量"——说明你在意**质量**
+```
+dsh LLM
+  └─(gotry_anything_search 工具)→ gotry capabilities/anything.ts
+    └─(spawn hbcli search anything --json)─→ hotelbyte-cli
+      └─(POST /api/search/anything)─→ hotel-be api/dispatcher
+        └─(go-zero analyzer + @path注解)─→ search/service.Anything
+          └─(混合 城市+酒店 search)─→ candidates[]
+```
 
-**我的建议**: **A(若你已有 hotel-be 部署)→ B(若 hotel-be 远/不可达) → C 兜底 优先级**
+**实测**(5/5 断言 OK):
+1. 真实候选 → verdict=hit(hotel/city/place 三种 type 都识别)
+2. 候选空 → verdict=miss
+3. exit≠0 → verdict=error (graceful degrade 不抛)
+4. timeout → verdict=error(SIGTERM 后 +500ms SIGKILL 强杀;node spawn signal 偶发 60s,改 fake infinite loop 验证)
+5. empty keyword → verdict=error
 
-这是 gotry 必须自己解决的**接口契约**,不依赖 founder——但**部署假设需要你拍**:
-1. hotel-be 进程已启动并暴露 `/internal/*` 了?(需要 host:port)
-2. 还是 gotry 是在另一台机器/沙箱,要走 agent-reach CLI?
+**commits**:
+- `hotel-be`: search/service/geography.go 加 `@path/@method` 注解
+- `hotelbyte-cli`: search.ts 加 anything 子命令
+- `gotry`: `ts/capabilities/anything.ts` + `ts/scripts/anything-tests.ts` + `ts/src/index.ts` 挂工具 + `scripts/run-all-tests.sh` §10
 
-**影响**: 选 A → 立刻写 capabilities/hb-anything.ts(400 行,接 mssvc);选 B → 短 skill prompt 改写(零代码,只是改 dsh system-prompt 文件);C 是 fallback 永远有用;D 是我 1 句答复。
+**与 agent-reach 关系**: D-4 选了 A,agent-reach 作为 D-4a「fallback/补充」(LLM 在某些查询需要直接调 exa/gh 等 CLI 时仍可用),不冲突。
+
+**遗留**(不挡 go-live):
+- hotel-be `registerInternalServices` 列表也可加 `SearchSrv` 让 Anything 同时走 internal 路径(给 mssvc.Client 节点间调用)——M4 scale-up 后再说
+- Anything 没有 `lat/lng` fallback 当 hotel 没坐标时:`region.latitude` 已挖出来,前端展示够用
 
 ---
 
-### D-4 子项 D-4a:hbcli 命令 vs 直接 spawn mssvc
+## D-4a(派生):Anything 兜底链——agent-reach 是否启用?
 
-**上下**: 之前规划 hbcli `search place/place-reviews` 是因为 hotel-be 那侧要走 CLI-bridge。但 Anything 复用后——**Anything 已统一接口**——hbcli 应新增 `search anything "<keyword>" --json`,内部走 mssvc(或 agent-reach 兜底)。
+**位置**: `.shared/skills/agent-reach/SKILL.md`
 
-如果 gotry 直接调 hotel-be mssvc(不走 hbcli)——能省 hbcli 这一层,但失去 hbcli 跨进程抽象 + 跨语言复用价值。
+**当前**:`gotry_anything_search` 直接走 hbcli,hbcli 不可达时降级到 「unavailable」 verdict。**LLM 此时无 POI 答案**——必须靠大模型常识或 prompt 让用户重来。
 
-**我建议**: 始终走 hbcli(单一 transport,`gotry-state/incidents.jsonl` 统一事故证据)。
+**选项**:
+- **A. 不动**——gotry 8 工具够覆盖常用路径;agent-reach 留给 dsh LLM 直接 OS 调用(由 founder 用 prompt 控制)。
+- **B. gotry 9 工具: `gotry_web_search`(走 agent-reach)**——能力层封装 agent-reach 的几个 CLI(exa/web-reader/yt-dlp),零开发量(Panniantong 维护),LLM 在 hotel-be 不可达时降级路径。
+- **C. prompt 加 skill 引用**——零代码,只改 dsh system-prompt 让 LLM 知道 agent-reach skill 可用。
+
+**我的倾向**: **C**——零成本,但 LLM 直调 OS 命令需要谨慎(钓鱼/越权风险)。**选项 B 在 gotry 8→9 工具时引入**——单加一个 `gotry_web_search` 调 `r.jina.ai` 一个 url 就够覆盖大多数「读这个网页」场景。
+
+不是阻塞项。留给下一个迭代。
+
+---
+
+## D-5:OpenSky 实时观测 — 保留 / 拆出 (已上 tick 的再次讨论)
 
 ---
 
