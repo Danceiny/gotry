@@ -14,7 +14,7 @@
 | `ts/src/index.ts` | `Config` 砍 `pythonBin / pythonPath / preferInProcess`;execute 内 try-catch fallback 路径删除,只走 `solveChoiceSegment`(纯 TS,枚举) |
 | `ts/src/bridge.ts` | 移除 `callFeasibilityEngine`(spawn Python 子进程);保留 `ensureStateDir / recordLatency / readJson / writeJson` |
 | `ts/src/loop.ts` | erhai 路由改 `callFeasibilityEngine` → 直接调 `segmentsFromCandidate + solveChoiceSegment` |
-| `ts/scripts/diff-test.ts` | TS-vs-Python oracle → **TS-vs-TS 自对比**(同 spec, 不同 module instance) |
+| `ts/scripts/diff-test.ts` | TS-vs-Python oracle → **TS 双路径稳定性**(同 module, 不同 spec 实例——验证 solveChoiceSegment 幂等) |
 | `py/gotry_feasibility/cli.py` | **删除** |
 | `gotry` (bash) | `MODE=${1:-shell}` → `MODE=${1:-web}`,薄壳分支删除;无需 Python venv 激活 |
 | `scripts/run-all-tests.sh` | 砍 Python 单元测试节;10 套 → 9 套;不再 require `.venv/bin/python` |
@@ -48,8 +48,6 @@
 - M4 校准输入等待
 
 ---
-
-## v0.0.1-rc.1(annotated tag,2026-08-22)
 
 ## v0.0.1-rc.1(annotated tag,2026-08-22)
 
