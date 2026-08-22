@@ -61,8 +61,12 @@ Detail: https://github.com/Danceiny/gotry — README
   process.exit(0)
 }
 
-const mode = args[0]
-const rest = args.slice(1)
+// mode 决定路径: 'web'/'help'/'help' 是字面命令;否则第一段 args[0] 是任务本身的一部分
+const literal = new Set(['web', 'help', '-h', '--help'])
+const isLiteral = literal.has(args[0])
+const mode = isLiteral ? args[0] : 'headless'
+const rest = isLiteral ? args.slice(1) : args
+
 const patchPath = join(repoRoot, 'cordis.gotry-patch.yml')
 const dshBin = join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')
 
@@ -93,7 +97,26 @@ const child = spawn(process.execPath, [dshBin, ...binJs], {
   env: process.env,
   cwd: join(repoRoot, 'ts/dsh-runtime'),
 })
-child.on('exit', (code) => process.exit(code ?? 1))
+if (process.env.GOTRY_DEBUG) {
+  console.error('[gotry-debug] exec:', process.execPath, dshBin)
+  console.error('[gotry-debug] argv:', binJs)
+  console.error('[gotry-debug] cwd:', join(repoRoot, 'ts/dsh-runtime'))
+  console.error('[gotry-debug] patch exists:', existsSync(patchPath), patchPath)
+}
+child.on('exit', (code, signal) => {
+  if (code !== 0 || signal) {
+    // D-NEW 护栏:dsh 异常退出也写一条 incident,留现场而非沉默
+    import('../ts/capabilities/incident-log.ts').then(({ recordIncident }) => {
+      recordIncident({
+        ts: new Date().toISOString(),
+        kind: 'plugin_error',
+        message: `gotry spawn exit: ${mode} code=${code} signal=${signal}`,
+        source: 'gotry-cli',
+      }, repoRoot).catch(() => {})
+    }).catch(() => {}) // module 找不到时静默
+  }
+  process.exit(code ?? 1)
+})
 child.on('error', (e) => {
   console.error(`[gotry] dsh 启动失败: ${e.message}`)
   console.error('尝试: node -v 看 Node 版本(需 22+),或查看 ts/dsh-runtime/node_modules/。')
