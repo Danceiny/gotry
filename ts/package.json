@@ -1,8 +1,8 @@
 {
   "name": "@gotry/plugin",
-  "version": "0.1.0",
+  "version": "0.0.1-rc.2",
   "private": true,
-  "description": "GoTry dsh plugin: motivation / feasibility (door-to-door true cost) / wish pool tools bridged to the Python Z3 engine",
+  "description": "GoTry dsh plugin: motivation profile, feasibility (door-to-door true cost via unified segment model), skeleton connectivity, hotel search, wish pool — all pure TS, no Python runtime required",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {

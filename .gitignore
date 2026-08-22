@@ -1,5 +1,6 @@
 .venv/
 node_modules/
+package-lock.json
 gotry-state/
 *.pyc
 __pycache__
