@@ -91,7 +91,7 @@ export function createOpenAICompatLlm(flightPackPath?: string): LlmPort {
       const packByScenario: Record<string, string> = {
         erhai: pack.replace('flights_2026.json', 'golden_erhai.json'),
         workation: pack, // 五段链
-        yunnan: pack,    // 云南包未建,暂用通用(demo 期)
+        yunnan: pack.replace('flights_2026.json', 'yunnan-pack.json'),
         generic: pack,
       }
       const packPath = packByScenario[scenario] ?? pack

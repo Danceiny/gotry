@@ -1,0 +1,106 @@
+{
+  "meta": {
+    "note": "云南场景包(薄壳段5):带父母/请假型云南行的引擎级数据。班期来自骨架确认+公开调研(估算价);父母约束(海拔/体力/高血压红线)进 CompanionSpec——引擎的同行人感知首例。",
+    "sources": [
+      "OpenFlights 骨架:SZX↔LJG 直飞(祥鹏 8L)/SZX↔DLH(长龙 GJ)",
+      "dsh 验收(b0cfd97):DeepSeek 的丽江2晚+大理2晚方案经 gotry_feasibility_check 判定可行(¥5910/3 人)",
+      "住宿:丽江古城 ¥300-500/间,大理洱海 ¥400-900/间(web 检索,9 月淡季)"
+    ],
+    "companion": {
+      "type": "elderly_parents",
+      "ages": ["65+", "62+"],
+      "health": ["父亲轻度高血压——不上 4506m 玉龙雪山"],
+      "energy": { "max_altitude_m": 3300, "daily_walking_hours": 4, "pace": "slow" },
+      "structural_safety": "丽江(2400m)在前、大理(1976m)在后——适应期后降海拔,高血压窗口落在低压段"
+    }
+  },
+  "legs": [
+    {
+      "id": "yn1",
+      "note": "深圳→丽江(直飞,丽江进大理出的开口程第一段)",
+      "date": "flexible",
+      "services": [
+        { "id": "HO2312", "dep": "13:40", "arr": "16:30", "price_cny": 890, "price_note": "吉祥航空,9 月淡季估算" },
+        { "id": "8L9572", "dep": "15:20", "arr": "18:10", "price_cny": 780, "price_note": "祥鹏航空" }
+      ],
+      "buffer_min": 100,
+      "origin_transfer_min": 70,
+      "dest_transfer_min": 40,
+      "arrive_by": "19:00",
+      "origin_tz_offset_min": 480,
+      "weekday": "any"
+    },
+    {
+      "id": "yn2",
+      "note": "丽江→大理(动车,城际段)",
+      "date": "day+2",
+      "services": [
+        { "id": "D8791", "dep": "09:30", "arr": "11:40", "price_cny": 110 },
+        { "id": "D8793", "dep": "14:20", "arr": "16:30", "price_cny": 110 }
+      ],
+      "buffer_min": 40,
+      "origin_transfer_min": 30,
+      "dest_transfer_min": 30,
+      "arrive_by": "18:00",
+      "origin_tz_offset_min": 480,
+      "weekday": "any"
+    },
+    {
+      "id": "yn3",
+      "note": "大理→丽江(动车返程,衔接直飞深圳)",
+      "date": "day+4",
+      "services": [
+        { "id": "D8796", "dep": "09:30", "arr": "11:40", "price_cny": 110 }
+      ],
+      "buffer_min": 40,
+      "origin_transfer_min": 30,
+      "dest_transfer_min": 30,
+      "arrive_by": "13:00",
+      "origin_tz_offset_min": 480,
+      "weekday": "any"
+    },
+    {
+      "id": "yn4",
+      "note": "丽江→深圳(直飞返程)",
+      "date": "day+4",
+      "services": [
+        { "id": "HO2311", "dep": "14:10", "arr": "16:55", "price_cny": 850 },
+        { "id": "8L9571", "dep": "19:20", "arr": "22:05", "price_cny": 700 }
+      ],
+      "buffer_min": 100,
+      "origin_transfer_min": 40,
+      "dest_transfer_min": 50,
+      "arrive_by": "23:00",
+      "origin_tz_offset_min": 480,
+      "weekday": "any"
+    }
+  ],
+  "stays": [
+    {
+      "id": "yns1",
+      "place": "丽江古城内",
+      "nights": 2,
+      "options": [
+        { "tier": "舒适", "name": "木府心怡/安隅/开臣璞锦", "price_per_night_cny": 400, "why": "古城内步行即达,无需坡道;海拔 2400m 适应期" }
+      ],
+      "requirements_check": ["无高坡道(65+ 体力)", "含早(清淡,高血压友好)", "氧气/医疗可达"]
+    },
+    {
+      "id": "yns2",
+      "place": "大理洱海边",
+      "nights": 2,
+      "options": [
+        { "tier": "舒适", "name": "得乐茗墅·龙龛码头/闲来无室", "price_per_night_cny": 450, "why": "降到 1976m,低海拔安全垫;海景给父母" }
+      ],
+      "requirements_check": ["低海拔(高血压窗口)", "电梯/一层(行李/体力)", "近码头(慢游出发点)"]
+    }
+  ],
+  "constraints": {
+    "companion_hard": [
+      "绝不上玉龙雪山冰川公园(4506m)——父亲高血压",
+      "海拔单调递减结构:丽江 2400m → 大理 1976m(适应期后降)",
+      "每日步行 ≤4h;起床 ≥07:00(老人生物钟)"
+    ],
+    "budget_note": "3 人(2 间房);dsh 验收判定 ¥5,910 可行"
+  }
+}

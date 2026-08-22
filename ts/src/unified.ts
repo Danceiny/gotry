@@ -95,6 +95,7 @@ async function getZ3(): Promise<any> {
 /** 航班数据包(data/flights_2026.json 形态)→ 段链 */
 const SEGMENT_ROUTES: Record<string, string> = {
   f1: 'HKG->HKT', f2: 'HKT->BKK', f3: 'BKK->KMG', f4: 'KMG->SZX', f5: 'SZX->DXB',
+  yn1: 'SZX->LJG', yn2: 'LJG->DLU', yn3: 'DLU->LJG', yn4: 'LJG->SZX',
 }
 function routeHint(id: string): string | undefined {
   return SEGMENT_ROUTES[id]
