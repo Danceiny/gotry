@@ -19,6 +19,7 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { callFeasibilityEngine, ensureStateDir, readJson, recordLatency, writeJson } from './bridge.ts'
 import { solve as solveInProcess } from './engine.ts'
+import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
 
 export const name = 'gotry-tools'
@@ -264,5 +265,34 @@ export function apply(ctx: Context, config: Config): void {
       return JSON.parse(JSON.stringify({ ...result, via, latency_ms: Date.now() - started, summary: `${q.destination}:酒店搜索(${via})完成` })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'other', rawInput: args.query }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'gotry_skeleton_check',
+    description:
+      'Check flight connectivity between two airports against the OpenFlights skeleton (free tier). '
+      + 'Three-valued: found = strong positive (airlines returned); hub-to-hub absence = downgrade signal, NEVER disproof '
+      + '(skeleton lags reality); outside hub set = no conclusion. Use BEFORE recommending a route.',
+    parameters: {
+      from: { type: 'string', required: true, description: 'IATA, e.g. HKG' },
+      to: { type: 'string', required: true, description: 'IATA, e.g. HKT' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          connected: { type: 'boolean' },
+          airlines: { type: 'array', items: { type: 'string' } },
+          evidence: { type: 'string' },
+        },
+      },
+      render: (_args, value) => [{ type: 'text', text: String((value as { evidence?: string }).evidence ?? '') }],
+    },
+    async execute(args: { from: string; to: string }, _exec: unknown) {
+      const verdict = await checkConnectivity(args.from, args.to)
+      return JSON.parse(JSON.stringify(verdict)) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `骨架校验:${args.from}-${args.to}`, kind: 'other', rawInput: args }),
   }))
 }

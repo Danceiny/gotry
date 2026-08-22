@@ -17,7 +17,7 @@ let cached: Skeleton | null = null
 
 async function load(): Promise<Skeleton> {
   if (!cached) {
-    cached = JSON.parse(await readFile(join('..', 'data', 'openflights-skeleton.json'), 'utf-8')) as Skeleton
+    cached = JSON.parse(await readFile(join(import.meta.dirname, '..', '..', 'data', 'openflights-skeleton.json'), 'utf-8')) as Skeleton
   }
   return cached
 }
