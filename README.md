@@ -60,15 +60,36 @@ cp .env.example .env
 # 填 LLM_API_KEY（deepseek: sk-...；也兼容 OpenAI/Anthropic 兼容协议）
 ```
 
-### 4. 跑 — Run（**仅一种正确方式**）
+### 4. 跑 — Run
+
+v0.0.1-rc.1 把 **DeepSeek Harness (dsh) 运行时**作为唯一推荐面——任何自然语言输入在那里面都能跟 GoTry 正常对话（自动调用引擎、追问缺失字段、给出证据链）。薄壳 `./gotry shell` 已废弃：它对模糊输入处理弱，遇到「IRW」这种缩写就崩。
+
+启动方式有三种，对应三种使用场景：
+
+| 入口 | 命令 | 什么时候用 | 给你什么 |
+|---|---|---|---|
+| **① dsh Web 对话框**（默认推荐） | `./gotry web` | 第一天上手；持续多轮规划；想看推理过程可视化 | `http://127.0.0.1:3080` 浏览器界面；带 GoTry 人格的对话框 |
+| **② headless 一次性问答** | `./gotry "一句完整任务"` | 写脚本、CI 自动化、定向 LLM 调试 | stdout 输出 markdown 回答 |
+| **③ 薄壳**（已废弃） | `./gotry shell` | **别用**——保留仅为迁移证据 | 简化的三页（不推荐） |
 
 ```bash
-./gotry web                              # 把 dsh Web 启起来，http://127.0.0.1:3080
-./gotry "我想从深圳休整两天，预算 3000"   # 命令行一问一答（headless）
-./gotry                                  # 默认 = help（薄壳已废弃——见 Known limitations）
+# 推荐:打开对话框,正常打「我想去大理三天」,看引擎回答
+./gotry web
+#   → http://127.0.0.1:3080,在输入框里像跟 DeepSeek 对话一样打字
+
+# 调试/自动化:直接一问一答,无浏览器
+./gotry "我想从深圳休整两天,预算 3000,年假不办公"
+#   → stdout 拿到引擎判定 + 证据链 + 候选 gate
+
+# (deprecated,见 Known limitations)
+./gotry shell
 ```
 
-> ⚠️ **`./gotry shell` 已废弃**。在 v0.0.1-rc.1，dsh 运行时是唯一推荐面（因为 shell 没法处理任意自然语言输入）。详见 [`docs/architecture.md` §1](docs/architecture.md)。
+> ⚠️ **dsh 运行时端口冲突**:如果你之前已经手动 `node ...dsh web` 跑过,而后再 `./gotry web`,会因 `:3080` 占用启动失败。要么先 `kill <PID>`,要么直接用已经在跑的那个。
+>
+> **dsh 启动耗时**:第一次 cold start 6–15 秒（cordis 组合 + plugin 加载 + LLM 准备）；之后热启动 < 2 秒。
+
+<br>
 >
 > *The shell frontend is **deprecated**. In v0.0.1-rc.1, the dsh runtime is the only recommended surface. See [known limitations](#-known-limitations).*
 
