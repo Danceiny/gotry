@@ -23,6 +23,12 @@ assert.equal(byLeg['f5'].service, 'EK329')
 assert.equal(byLeg['f5'].energy_pct, 75)              // 红眼睡眠模型
 assert.ok(byLeg['f5'].wake.includes('前一日'))         // 跨日显示
 
+// D-5 时区感知核算(与 Python oracle 同款断言)
+assert.equal(byLeg['f5'].door_to_door, '11h20m')      // 3h 前置 + 7h35m 真实飞行 + 45m 接驳
+if (byLeg['f3'].service === 'MU6088') {
+  assert.equal(byLeg['f3'].door_to_door, '6h15m')     // +1h 时差已扣
+}
+
 // 2. D-2 回归:锚点冲突时 core 字符串不带竖线,精确点名
 const tight = parseFlightPackToSpec(pack)
 tight.segments[0].anchors!.arriveByMin = hhmmToMin('15:00')

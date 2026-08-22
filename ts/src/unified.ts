@@ -7,7 +7,7 @@
 
 import { init } from 'z3-solver'
 import { Service, hhmmToMin, minToHhmm } from './model.ts'
-import { evaluateLeg, LegReport } from './journey.ts'
+import type { LegReport } from './journey.ts'
 
 export interface AnchorsSpec {
   arriveByMin?: number
@@ -27,6 +27,8 @@ export interface MoveSpecTS {
   destTransferMin: number
   redEye?: boolean
   redEyeDurationMin?: number
+  /** D-5:目的地相对出发地的时差(KMG-BKK=+60,DXB-SZX=-240) */
+  tzOffsetMin?: number
 }
 
 export interface StaySpecTS {
@@ -90,10 +92,46 @@ export function parseFlightPackToSpec(pack: Record<string, unknown>): JourneySpe
         destTransferMin: Number(l['dest_transfer_min']),
         redEye: Boolean(l['red_eye']),
         redEyeDurationMin: Number(l['red_eye_duration_min'] ?? 0),
+        tzOffsetMin: Number(l['tz_offset_min'] ?? 0),
       },
     })),
   }))
   return { segments: legs }
+}
+
+/** D-5:时区感知的段核算(与 py unified._evaluate_option_move 对齐)。 */
+function evaluateOptionMove(segId: string, mv: MoveSpecTS): LegReport & { d2d_min?: number } {
+  const svc = mv.services[0]
+  const wake = svc.depMin - mv.bufferMin - mv.originTransferMin
+  // 真实时长 = (到达−出发) − 时差;EK329: 215−(−240)=455min=7h35m
+  const trueFlight = (svc.arrMin - svc.depMin) - (mv.tzOffsetMin ?? 0)
+  const d2d = mv.bufferMin + mv.originTransferMin + trueFlight + mv.destTransferMin
+  const wakeDisplay = wake < 0 ? `${minToHhmm(wake + 1440)}(前一日)` : minToHhmm(wake)
+  const arriveStay = svc.arrMin + mv.destTransferMin
+
+  let energy: number
+  if (mv.redEye && (mv.redEyeDurationMin ?? 0) > 0) {
+    const sleepH = ((mv.redEyeDurationMin ?? 0) - 60) / 60
+    energy = Math.max(30, Math.min(75, 30 + 8 * sleepH))
+  } else {
+    energy = 100 - 2 * 8
+    if (wake < 5 * 60) energy -= 30
+    else if (wake < 6 * 60) energy -= 25
+    if (arriveStay > 21 * 60) energy -= 10
+    if (d2d > 6 * 60) energy -= 10
+    energy = Math.max(0, energy)
+  }
+  return {
+    service: svc.id,
+    dep: minToHhmm(svc.depMin),
+    wake: wakeDisplay,
+    wakeMin: wake,
+    arrive_stay: minToHhmm(arriveStay),
+    door_to_door: `${Math.floor(d2d / 60)}h${String(d2d % 60).padStart(2, '0')}m`,
+    d2d_min: d2d,
+    energy_pct: Math.round(energy),
+    price_cny: svc.priceCny,
+  }
 }
 
 /** 航班链形态求解:按 Option 选择,锚点命名约束,core 剥竖线(D-2 修复) */
@@ -153,18 +191,7 @@ export async function solveUnified(spec: JourneySpecTS): Promise<{
         const v = await maybeAwait(model.eval(allSels[seg.id][i], true))
         if (String(v) !== 'true') continue
         const o = seg.options[i]
-        out.push({
-          leg: seg.id,
-          ...evaluateLeg({
-            id: seg.id,
-            services: o.move!.services,
-            bufferMin: o.move!.bufferMin,
-            originTransferMin: o.move!.originTransferMin,
-            destTransferMin: o.move!.destTransferMin,
-            redEye: o.move!.redEye,
-            redEyeDurationMin: o.move!.redEyeDurationMin,
-          }, o.move!.services[0]),
-        })
+        out.push({ leg: seg.id, ...evaluateOptionMove(seg.id, o.move!) })
         break
       }
     }
