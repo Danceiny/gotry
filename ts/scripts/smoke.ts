@@ -25,6 +25,7 @@ async function main() {
     stateRoot: '.',
     timeoutMs: 30_000,
     preferInProcess: true,
+    hbcliBin: 'hbcli-not-on-path',  // 强制走降级路径的确定性验证
   })
 
   console.log(`registered tools: ${registered.map(t => t.name).join(', ')}`)
