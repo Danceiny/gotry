@@ -91,18 +91,20 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 ## 8. ADR
 
-| # | 决策 | 备选与取舍 | 淘汰/复审条件 |
-|---|---|---|---|
-| 1 | Z3 作判定层 | 规则引擎/OR-Tools/纯 LLM(4.4%) | 求解 >500ms 或变量 >10³ 评估 OR-Tools;unsat core 不可让渡 |
-| 2 | 双实现 TS 生产+Python oracle | 单实现(无对账) | 差分 20 次无分歧后 Python 降为用例库 |
-| 3 | 桥接收敛:进程内优先 | 全 TS/全 Python | 每桥 ≤2;>500ms 才考虑常驻 |
-| 4 | loopx 为控制平面 | 自研状态机 | 概念冲突且无法适配时 |
-| 5 | 统一行程模型 | 维持双引擎 | 已清偿(engine/journey 退役日=迁移完成日) |
-| 6 | 静态数据包(demo 期) | 直接接 API | Stage 2 退役为夹具 |
-| 7 | 算术/求解分层 | 混合 | 永不复审 |
-| 8 | mock-LLM 先行 | 等 API key(伪阻塞) | S4 完成后 mock 留作回归夹具 |
-| 9 | 访谈确定性(缺失字段驱动) | LLM 即兴(Kimi 病根) | 永不复审 |
-| 10 | 翻译≠造数:LLM 只产骨架与锚点,班次数据永远来自能力层(数据包→实时API);spec 校验闸兜底 | 让 LLM 直接产出完整 spec(实测:MiniMax-M2 编不出时刻,要么编造要么卡死) | 永不复审 |
+**生命周期**:提案 → 采纳 →(已清偿 | 被取代 | 退役);「永不复审」是显式终态类(ADR-7/9/10 依据的是不变量级判断)。**三个诞生渠道**:① 失败诞生——真实运行暴露 mock/推演看不见的问题,当天立 ADR(ADR-10 模式);② 对账诞生——`demo-reconciliation.md` §三:模型缺项→记 ADR 并评估是否进引擎;③ 里程碑复审诞生——M-exit 全表过一遍淘汰/复审条件(§11),触发的当即立项。**锚点**:每条 ADR 必须有代码/测试执行锚点,或显式标注「流程级」——没有锚点的 ADR 会在演进中悄悄失效而无人察觉。
+
+| # | 决策 | 备选与取舍 | 淘汰/复审条件 | 锚点 |
+|---|---|---|---|---|
+| 1 | Z3 作判定层 | 规则引擎/OR-Tools/纯 LLM(4.4%) | 求解 >500ms 或变量 >10³ 评估 OR-Tools;unsat core 不可让渡 | `unified.ts`/`unified.py` 求解层;双侧套件 |
+| 2 | 双实现 TS 生产+Python oracle | 单实现(无对账) | 差分 20 次无分歧后 Python 降为用例库 | `ts/scripts/diff-test.ts`;`run-all-tests.sh` |
+| 3 | 桥接收敛:进程内优先 | 全 TS/全 Python | 每桥 ≤2;>500ms 才考虑常驻 | `ts/src/bridge.ts`;`gotry-state/bridge-latency.jsonl` |
+| 4 | loopx 为控制平面 | 自研状态机 | 概念冲突且无法适配时 | 流程级(`.loopx/` 治理状态) |
+| 5 | 统一行程模型 | 维持双引擎 | 已清偿(engine/journey 退役日=迁移完成日,D-7 跟踪) | `unified.ts`/`unified.py` |
+| 6 | 静态数据包(demo 期) | 直接接 API | M2 退役为夹具 | `data/*.json`;金标准用例 |
+| 7 | 算术/求解分层 | 混合 | 永不复审 | `model.ts`/`model.py` 纯函数层(分层测试结构) |
+| 8 | mock-LLM 先行 | 等 API key(伪阻塞) | S4 完成后 mock 留作回归夹具(已兑现) | `ts/src/mock-llm.ts`;`ts/scripts/replay.ts` |
+| 9 | 访谈确定性(缺失字段驱动) | LLM 即兴(Kimi 病根) | 永不复审 | `loop.ts interviewNext`;replay 夹具(首轮问出工作窗口) |
+| 10 | 翻译≠造数:LLM 只产骨架与锚点,班次数据永远来自能力层(数据包→实时API);spec 校验闸兜底 | 让 LLM 直接产出完整 spec(实测:MiniMax-M2 编不出时刻,要么编造要么卡死) | 永不复审 | `loop.ts validateSpec`;`dsh-llm.ts SKELETON_SYSTEM`;`replay-real.ts` |
 
 ## 9. 演进(时间线唯一来源= `roadmap.md` 的 M0-M6;此处只保留原则与现状)
 
@@ -124,7 +126,22 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-7 deprecated 层仍承重 | dsh 插件进程内路径调 `engine.ts`、`cli.py` 桥路由 `engine.solve`、`build_plan.py` 调 `journey.solve_journey`;TS unified 缺候选形态求解(文件头自认「下一迁移段」)。赎回:TS 候选形态迁移 → 插件/CLI 切 unified → engine/journey 退纯 oracle(M2 W2,ADR-5 兑现日) |
 | D-8 对话循环不进 CI | replay 三件套与 smoke 只有手动夹具,中枢 `loop.ts` 无自动化回归。赎回:replay+smoke 进 `run-all-tests.sh`(批 0) |
 
-## 11. 文档地图
+## 11. 保鲜机制(文档与现实的同步纪律)
+
+**状态面清单**(全仓只有这 6 处记载「当前状态」,其余文档一律状态让渡):① 本文 §1 当前形态;② 本文 §9 演进;③ 本文 §10 债务清单;④ `roadmap.md` 当前位置;⑤ `README.md` 当前形态;⑥ `stage1-top-down-design.md` 状态头。
+
+**同提交同步规则**:任何改变系统当前形态/状态/债务的提交,必须在同一提交内同步全部状态面——`bb880f3`(M1 exit)只改了 §1 与 ADR 表,四处状态面滞后了一个提交周期,本节由此而立。
+
+**M-exit 保鲜清单**(里程碑退出提交的勾稽项,结果附于提交信息):
+1. 6 处状态面全部同步(或显式让渡并注明让渡对象);
+2. ADR 全表逐条过「淘汰/复审条件」,触发的当即立项或改状态;
+3. 债务清单勾销与新增——债务只能在本表诞生,不许只活在代码注释里;
+4. 计数类表述(ADR 数、测试数)改为引用而非数字——数字会腐烂;
+5. 验收证据可复跑:夹具/脚本命令写进提交信息。
+
+**复审节奏**:不靠日历,靠事件——M-exit 必审全表;淘汰条件被触发(求解 >500ms、差分 20 次无分歧、桥延迟 >500ms)随时审。
+
+## 12. 文档地图
 
 | 文档 | 关注点 |
 |---|---|
