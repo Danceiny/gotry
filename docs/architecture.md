@@ -129,7 +129,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-6 红眼睡眠模型未校准 | 对账 Q10 |
 | D-7 deprecated 层仍承重 | **大部赎回**:dsh 插件进程内路径切轨 solveChoiceSegment(枚举,~0ms)、cli.py 桥切轨 solve_choice_segment、diff-test 切轨统一模型对统一模型;engine/journey 退纯 oracle(保留为金标准对照)。build_plan.py(demo 离线工具)仍调 journey.solve_journey,属剩余尾债 |
 | D-8 对话循环不进 CI | **已清偿**(replay 带终态断言 + 异步工单跨进程闭环 + smoke 进 `run-all-tests.sh` §5-7) |
-| [D-NEW] dsh 进程保活缺失 | dsh 0.1.1-rc.1 自带 process.on 只接 SIGINT/SIGTERM,缺 uncaughtException/unhandledRejection——任一 dsh 插件 wasm/runtime 异常都会杀进程(2026-08-22 z3-solver 静态 init 触发 wasm memory access 暴露此缺口)。本次 hotfix 仅在 gotry 侧加 try-catch(z3 改动态加载 + solveUnified 防护);dsh 侧的进程保活补丁超出 M2 范围,M3 早期或下一个 hotfix tick 处理 |
+| [D-NEW] dsh 进程保活缺失 | **部分赎回(gotry 侧)**: plugins/apply 内 installProcessGuards 挂 uncaughtException + unhandledRejection;incident-log.ts 同步 fsync append-only,handler 不调 process.exit——被崩溃穿透时仍能留下证据(JSONL incidents.jsonl),不阻塞 dsh 控制流。incident-tests 2/2 绿(handler 装上后未捕获异常仍记录,后续控制流不卡)。**仍 open**: dsh 侧的 plugin 异常容错(目前一个插件 error 仍会沿 cordis 传到 dsh 主循环);技术债记到 M3 |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
