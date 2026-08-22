@@ -17,7 +17,10 @@ from typing import List, Optional
 from z3 import Bool, If, Int, Solver, Sum, And, unsat
 
 from .journey import JourneyLeg, evaluate_leg
-from .model import Candidate, Service, TransferMode, hhmm_to_min
+from .model import (
+    Candidate, Choice, HubAccess, MotivationProfile, Service, TransferMode,
+    TravelRequest, evaluate_choice, hhmm_to_min,
+)
 
 
 @dataclass
@@ -32,12 +35,18 @@ class Anchors:
 
 @dataclass
 class MoveSpec:
-    """一段跨城移动:班次 × 接驳 × 缓冲(journey.JourneyLeg 的超集)。"""
+    """一段跨城移动:班次 × 接驳 × 缓冲(journey.JourneyLeg 的超集)。
+
+    候选形态(目的地选项)用 services(去程)+ ret_services(返程)+ transfers;
+    航班形态只用 services(单程)。红眼只适用于航班形态。
+    """
 
     hub: str
     services: List[Service]
+    ret_services: List[Service] = field(default_factory=list)
     transfers: List[TransferMode] = field(default_factory=list)
     buffer_min: int = 90
+    buffer_ret_min: int = 90
     origin_transfer_min: int = 60
     dest_transfer_min: int = 60
     red_eye: bool = False
@@ -84,36 +93,45 @@ class JourneySpec:
     segments: List[Segment] = field(default_factory=list)
     budget_cny: Optional[int] = None
     default_wake_floor_min: int = hhmm_to_min("06:00")
+    # 候选形态(单 choice 段)的全局上下文——由适配器从旧 request 填充
+    window_days: int = 2
+    home_hub_access: dict = field(default_factory=dict)
+    min_arrival_energy_pct: int = 40
+    required_usable_hours: float = 5.4
+    latest_arrive_stay_min: int = 18 * 60
 
 
 # ---- 适配器 1:旧候选用例(洱海形态:request + candidates)→ 单 choice 段 ------------
 
 def segments_from_candidate(req: dict, candidates: List[Candidate]) -> JourneySpec:
-    mot = (req.get("motivation") or {}).get("hard", {})
-    anchors = Anchors(
-        wake_floor_min=hhmm_to_min(mot.get("wake_not_before", "06:30")),
-        min_days=None,  # min_days 是 Option 级(每个目的地不同),不是段级
-    )
+    mot_hard = (req.get("motivation") or {}).get("hard", {})
+    weights = (req.get("motivation") or {}).get("weights", {})
+    anchors = Anchors(wake_floor_min=hhmm_to_min(mot_hard.get("wake_not_before", "06:30")))
     options = []
     for c in candidates:
-        options.append(SegmentOption(
+        opt = SegmentOption(
             id=c.id, label=c.name, score=c.imagery_match, best_months=c.best_months,
             move=MoveSpec(
-                hub=c.hub, services=c.services_out + c.services_ret,
-                transfers=c.destTransfers if hasattr(c, "destTransfers") else c.dest_transfers,
-                buffer_min=c.buffer_out_min,
+                hub=c.hub, services=list(c.services_out), ret_services=list(c.services_ret),
+                transfers=list(c.dest_transfers), buffer_min=c.buffer_out_min,
+                buffer_ret_min=c.buffer_ret_min,
             ),
-            stay=StaySpec(nights=req["window_days"] - 1, stay_cny_per_night=c.stay_cny_per_night,
+            stay=StaySpec(nights=int(req["window_days"]) - 1, stay_cny_per_night=c.stay_cny_per_night,
                           local_daily_cny=c.local_daily_cny),
-        ))
-        # Option 级差异(min_days)挂在 anchors 之外,由 min_days 字段承载:
-        options[-1].move  # noqa: B018(占位注释:steps2 会把 min_days 移入 option 约束)
-        options[-1].__dict__["min_days"] = c.min_days_for_purpose
+        )
+        opt.__dict__["min_days"] = c.min_days_for_purpose
+        options.append(opt)
+    escape = float(weights.get("escape_rest", 0.0))
     return JourneySpec(
         note=req.get("note", ""),
         segments=[Segment(id="dest", role="choice", note="目的地选择", anchors=anchors, options=options)],
         budget_cny=req.get("budget_cny"),
         default_wake_floor_min=anchors.wake_floor_min or hhmm_to_min("06:30"),
+        window_days=int(req["window_days"]),
+        home_hub_access={h: {"hub": h, "to_hub_min": a["to_hub_min"]}
+                         for h, a in (req.get("home", {}).get("hubs", {}) or {}).items()},
+        min_arrival_energy_pct=int(mot_hard.get("min_arrival_energy_pct", 40)),
+        required_usable_hours=4.0 + 2.0 * escape,
     )
 
 
@@ -247,3 +265,113 @@ def solve_unified(spec: JourneySpec) -> dict:
             _, reports = _report(s2.model())
             suggestions.append({"relax": name, "money_cny": sum(r["price_cny"] for r in reports), "legs": reports})
     return {"feasible": False, "unsat_core": core, "suggestions": suggestions}
+
+
+# ---- 候选形态求解(步 2b):枚举 + 算术过滤 ---------------------------------------
+# 规模注记(ADR 级):Option 内部组合 ≤ 班次×接驳² ×返程,个位数到几十,
+# 枚举过滤与 Z3 判定等价且可读性更好;航班链形态仍走 Z3(锚点归因)。
+
+
+def _checks(t, spec):
+    """对一次组合的 TrueCost 跑全部命名约束,返回失败约束名列表。"""
+    fails = []
+    if t.wake_min < spec.default_wake_floor_min:
+        fails.append("wake_floor")
+    if t.energy_arrival_pct < spec.min_arrival_energy_pct:
+        fails.append("energy_floor")
+    if t.usable_hours < spec.required_usable_hours:
+        fails.append("usable_hours")
+    if spec.budget_cny is not None and t.money_cny > spec.budget_cny:
+        fails.append("budget")
+    if t.arrive_stay_min > spec.latest_arrive_stay_min:
+        fails.append("arrival_before_evening")
+    return fails
+
+
+def _option_candidate(opt: SegmentOption) -> Candidate:
+    mv, st = opt.move, opt.stay
+    return Candidate(
+        id=opt.id, name=opt.label, hub=mv.hub,
+        buffer_out_min=mv.buffer_min, buffer_ret_min=mv.buffer_ret_min,
+        services_out=list(mv.services), services_ret=list(mv.ret_services or mv.services),
+        dest_transfers=list(mv.transfers),
+        stay_cny_per_night=st.stay_cny_per_night, local_daily_cny=st.local_daily_cny,
+        min_days_for_purpose=int(opt.__dict__.get("min_days", 1)),
+        imagery_match=opt.score, best_months=list(opt.best_months),
+    )
+
+
+def _enumerate(opt, cand, req, spec, days):
+    out = []
+    mv = opt.move
+    for o in mv.services:
+        for tr in mv.transfers:
+            for r in (mv.ret_services or mv.services):
+                for trr in mv.transfers:
+                    ch = Choice(out_service=o, out_transfer=tr, ret_service=r, ret_transfer=trr, days=days)
+                    t = evaluate_choice(cand, req, ch)
+                    out.append((ch, t, _checks(t, spec)))
+    return out
+
+
+def solve_choice_segment(spec: JourneySpec) -> dict:
+    """单 choice 段(目的地选项):逐 Option 枚举过滤,按 score 排序,兼容旧 engine 输出。"""
+    seg = next(s for s in spec.segments if s.role == "choice" and s.options and s.options[0].stay)
+    req = TravelRequest(
+        note=spec.note,
+        motivation=MotivationProfile(
+            weights={}, wake_floor_min=spec.default_wake_floor_min,
+            min_arrival_energy_pct=spec.min_arrival_energy_pct,
+            base_usable_hours=spec.required_usable_hours, escape_hours_per_weight=0.0),
+        window_days=spec.window_days, budget_cny=spec.budget_cny,
+        home_hub_access={h: HubAccess(h, a["to_hub_min"]) for h, a in spec.home_hub_access.items()},
+    )
+    verdicts = []
+    for opt in seg.options:
+        cand = _option_candidate(opt)
+        min_days = cand.min_days_for_purpose
+        duration_ok = spec.window_days >= min_days
+        combos = _enumerate(opt, cand, req, spec, spec.window_days) if duration_ok else []
+        good = [c for c in combos if not c[2]]
+        if good:
+            ch, t, _ = min(good, key=lambda c: c[1].money_cny)
+            verdicts.append({
+                "candidate_id": opt.id, "name": opt.label, "feasible": True, "imagery_match": opt.score,
+                "chosen": {"out_service": ch.out_service.id, "out_transfer": ch.out_transfer.mode,
+                           "ret_service": ch.ret_service.id, "ret_transfer": ch.ret_transfer.mode,
+                           "days": ch.days},
+                "true_cost": {"money_cny": t.money_cny, "wake": f"{t.wake_min//60:02d}:{t.wake_min%60:02d}",
+                              "energy_arrival_pct": t.energy_arrival_pct,
+                              "usable_hours": round(t.usable_hours, 1)},
+            })
+            continue
+        # 不可行:归因(哪条约束单独放宽可解) + duration 换长口径的最省钱条件
+        blocked = sorted({n for c in (combos or []) for n in c[2]}) or (["duration"] if not duration_ok else [])
+        suggestions = []
+        for name in blocked:
+            opened = [c for c in combos if name not in c[2]]
+            if opened:
+                ch, t, _ = min(opened, key=lambda c: c[1].money_cny)
+                suggestions.append({"relax": name, "resulting_money_cny": t.money_cny})
+        wish = None
+        if not duration_ok:
+            long_combos = [c for c in _enumerate(opt, cand, req, spec, min_days) if not c[2]]
+            budget_dropped = [c for c in _enumerate(opt, cand, req, spec, min_days)
+                              if set(_checks_t(c[1], spec)) <= {"budget"} or not _checks_t(c[1], spec)]
+            conds = {"days": min_days}
+            if budget_dropped:
+                conds["budget_cny"] = min(c[1].money_cny for c in budget_dropped)
+            if opt.best_months:
+                conds["best_months"] = opt.best_months
+            wish = {"name": opt.label, "conditions": conds,
+                    "reason": f"{spec.window_days} 天窗口装不下(目的需 {min_days} 天)"}
+        verdicts.append({
+            "candidate_id": opt.id, "name": opt.label, "feasible": False, "imagery_match": opt.score,
+            "unsat_core": blocked, "suggestions": suggestions, "wish_pool": wish,
+        })
+    feasible = sorted([v for v in verdicts if v["feasible"]], key=lambda v: -v["imagery_match"])
+    return {"verdicts": verdicts, "recommended": feasible[0]["candidate_id"] if feasible else None}
+
+
+def _checks_t(t, spec):
+    return _checks(t, spec)
