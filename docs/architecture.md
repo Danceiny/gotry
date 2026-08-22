@@ -48,9 +48,9 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/src/contracts.ts` | 顶层数据与工具契约(TripState/五工具 IO/wire schema) | 草案,待创始人走查 |
 | `ts/src/loop.ts` | 对话循环:runTurn/interviewNext/异步深度规划(request/collect+不失望四条) | ✅ 重放验证 |
 | `ts/src/mock-llm.ts` | 剧本 LLM(ADR-8):确定性重放真实对话的智能侧 | ✅(S4 后留作回归夹具) |
-| `ts/src/unified.ts` | **统一行程模型 TS 版(唯一求解入口)**:Segment/Option/时区/工作窗口+Z3 求解 | ✅ 4/4 |
+| `ts/src/unified.ts` | **统一行程模型 TS 版(唯一求解入口)**:Segment/Option/时区/工作窗口+Z3 求解(航班链)+枚举求解(候选形态) | ✅ 4/4+候选对账 |
 | `ts/src/model.ts` | 门到门全成本算术(纯函数,单候选形态) | ✅ |
-| `ts/src/engine.ts` `journey.ts` | 旧两套求解面 | **deprecated**(兼容层+差分 oracle) |
+| `ts/src/engine.ts` `journey.ts` | 旧两套求解面(纯 oracle,金标准对照) | **deprecated** |
 | `ts/src/index.ts` `bridge.ts` | dsh 插件(3 工具+进程内优先+Python 桥回退,延迟计量) | ✅ smoke |
 | `py/gotry_feasibility/unified.py` | Python oracle(候选形态枚举+航班链 Z3,与 TS 全量等价) | ✅ |
 | `py/gotry_feasibility/{model,engine,journey}.py` | 算术 oracle 与旧求解面 | engine/journey deprecated |
@@ -127,7 +127,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-5 时区语义 | **已清偿**(EK329 官网逐分一致) |
 | D-4 gate/卡片无承载界面 | **大部赎回**(薄壳三页,v0.0.1-rc;地图位/预算条待) |
 | D-6 红眼睡眠模型未校准 | 对账 Q10 |
-| D-7 deprecated 层仍承重 | dsh 插件进程内路径调 `engine.ts`、`cli.py` 桥路由 `engine.solve`、`build_plan.py` 调 `journey.solve_journey`;TS unified 缺候选形态求解;M3 洱海路由(`a028967`)在 loop.ts 新开 marker-spec 分支直连 Python 桥,属同债范围(review 挂账)。赎回:候选形态进 TS unified(solveChoiceSegment)→ 插件/CLI/洱海通道统一切轨 → engine/journey 退纯 oracle(M2 未做,顺延 M3 早期) |
+| D-7 deprecated 层仍承重 | **大部赎回**:dsh 插件进程内路径切轨 solveChoiceSegment(枚举,~0ms)、cli.py 桥切轨 solve_choice_segment、diff-test 切轨统一模型对统一模型;engine/journey 退纯 oracle(保留为金标准对照)。build_plan.py(demo 离线工具)仍调 journey.solve_journey,属剩余尾债 |
 | D-8 对话循环不进 CI | **已清偿**(replay 带终态断言 + 异步工单跨进程闭环 + smoke 进 `run-all-tests.sh` §5-7) |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)

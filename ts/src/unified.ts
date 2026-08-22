@@ -7,8 +7,8 @@
 
 import { init } from 'z3-solver'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
-import type { Service } from './model.ts'
-import { hhmmToMin, minToHhmm } from './model.ts'
+import type { Candidate, Choice, MotivationProfile, Service, TransferMode, TravelRequest, TrueCost } from './model.ts'
+import { evaluateChoice, minToHhmm, hhmmToMin, requiredUsableHours, trueCostToDict, LATEST_ARRIVE_STAY_MIN } from './model.ts'
 import type { LegReport } from './journey.ts'
 
 export interface AnchorsSpec {
@@ -99,6 +99,49 @@ const SEGMENT_ROUTES: Record<string, string> = {
 }
 function routeHint(id: string): string | undefined {
   return SEGMENT_ROUTES[id]
+}
+
+// ---- 适配器:旧候选用例(洱海形态:request + candidates)→ 单 choice 段 -------------
+// 与 py unified.py segments_from_candidate 逐行对齐
+
+export function segmentsFromCandidate(req: TravelRequest, candidates: Candidate[]): JourneySpecTS {
+  const motHard = req.motivation
+  const wakeFloor = motHard.wakeFloorMin
+  const options: SegmentOptionTS[] = candidates.map(c => ({
+    id: c.id,
+    label: c.name,
+    score: c.imageryMatch,
+    bestMonths: c.bestMonths,
+    minDays: c.minDaysForPurpose,
+    move: {
+      hub: c.hub,
+      services: [...c.servicesOut],
+      retServices: [...c.servicesRet],
+      transfers: [...c.destTransfers],
+      bufferMin: c.bufferOutMin,
+      bufferRetMin: c.bufferRetMin,
+      originTransferMin: 0, // 候选形态无独立接驳(并入 destTransfers)
+      destTransferMin: 0,
+    },
+    stay: {
+      nights: req.windowDays - 1,
+      stayCnyPerNight: c.stayCnyPerNight,
+      localDailyCny: c.localDailyCny,
+    },
+  }))
+  const escape = req.motivation.weights['escape_rest'] ?? 0
+  return {
+    note: req.note,
+    segments: [{
+      id: 'dest',
+      role: 'choice',
+      note: '目的地选择',
+      anchors: { wakeFloorMin: wakeFloor },
+      options,
+    }],
+    budgetCny: req.budgetCny,
+    defaultWakeFloorMin: wakeFloor,
+  }
 }
 
 export function parseFlightPackToSpec(pack: Record<string, unknown>): JourneySpecTS {
@@ -320,6 +363,191 @@ export async function solveUnified(spec: JourneySpecTS): Promise<{
     }
   }
   return { feasible: false, unsat_core: core, suggestions }
+}
+
+// ---- 候选形态求解(枚举过滤,与 py solve_choice_segment 对齐) --------------------
+
+interface CandidateChecks {
+  wake_floor?: boolean
+  energy_floor?: boolean
+  usable_hours?: boolean
+  budget?: boolean
+  arrival_before_evening?: boolean
+}
+
+function checkTrueCost(t: TrueCost, spec: {
+  wakeFloorMin: number; minArrivalEnergyPct: number; requiredUsableHours: number;
+  budgetCny?: number; latestArriveStayMin: number;
+}): string[] {
+  const fails: string[] = []
+  if (t.wakeMin < spec.wakeFloorMin) fails.push('wake_floor')
+  if (t.energyArrivalPct < spec.minArrivalEnergyPct) fails.push('energy_floor')
+  if (t.usableHours < spec.requiredUsableHours) fails.push('usable_hours')
+  if (spec.budgetCny !== undefined && t.moneyCny > spec.budgetCny) fails.push('budget')
+  if (t.arriveStayMin > spec.latestArriveStayMin) fails.push('arrival_before_evening')
+  return fails
+}
+
+function enumerateCombos(opt: SegmentOptionTS, cand: Candidate, req: TravelRequest, days: number):
+  Array<{ choice: Choice; cost: TrueCost; fails: string[] }> {
+  const mv = opt.move!
+  const out: Array<{ choice: Choice; cost: TrueCost; fails: string[] }> = []
+  const spec = {
+    wakeFloorMin: req.motivation.wakeFloorMin,
+    minArrivalEnergyPct: req.motivation.minArrivalEnergyPct,
+    requiredUsableHours: requiredUsableHours(req.motivation),
+    budgetCny: req.budgetCny,
+    latestArriveStayMin: LATEST_ARRIVE_STAY_MIN,
+  }
+  for (const o of mv.services) {
+    for (const tr of mv.transfers ?? []) {
+      for (const r of (mv.retServices ?? mv.services)) {
+        for (const trr of mv.transfers ?? []) {
+          const ch: Choice = { outService: o, outTransfer: tr, retService: r, retTransfer: trr, days }
+          const t = evaluateChoice(cand, req, ch)
+          out.push({ choice: ch, cost: t, fails: checkTrueCost(t, spec) })
+        }
+      }
+    }
+  }
+  return out
+}
+
+function optionToCandidate(opt: SegmentOptionTS): Candidate {
+  const mv = opt.move!, st = opt.stay!
+  return {
+    id: opt.id, name: opt.label, hub: mv.hub,
+    bufferOutMin: mv.bufferMin, bufferRetMin: mv.bufferRetMin ?? mv.bufferMin,
+    servicesOut: [...mv.services], servicesRet: [...(mv.retServices ?? mv.services)],
+    destTransfers: [...(mv.transfers ?? [])],
+    stayCnyPerNight: st.stayCnyPerNight ?? 0, localDailyCny: st.localDailyCny ?? 0,
+    minDaysForPurpose: opt.minDays ?? 1,
+    imageryMatch: opt.score ?? 0, bestMonths: opt.bestMonths ?? [],
+  }
+}
+
+/** 单 choice 段(目的地选项):逐 Option 枚举过滤,按 score 排序。与 py solve_choice_segment 等价。 */
+export function solveChoiceSegment(spec: JourneySpecTS, req: TravelRequest): Record<string, unknown> {
+  const seg = spec.segments.find(s => s.role === 'choice' && s.options.length > 0 && s.options[0].stay)
+  if (!seg) throw new Error('solveChoiceSegment: no choice segment with stay found')
+  const windowDays = req.windowDays
+  const verdicts: Array<Record<string, unknown>> = []
+
+  for (const opt of seg.options) {
+    const cand = optionToCandidate(opt)
+    const minDays = cand.minDaysForPurpose
+    const durationOk = windowDays >= minDays
+    const combos = durationOk ? enumerateCombos(opt, cand, req, windowDays) : []
+    const good = combos.filter(c => c.fails.length === 0)
+
+    if (good.length > 0) {
+      const best = good.reduce((a, b) => a.cost.moneyCny <= b.cost.moneyCny ? a : b)
+      verdicts.push({
+        candidate_id: opt.id, name: opt.label, feasible: true, imagery_match: opt.score ?? 0,
+        chosen: {
+          out_service: best.choice.outService.id, out_transfer: best.choice.outTransfer.mode,
+          ret_service: best.choice.retService.id, ret_transfer: best.choice.retTransfer.mode,
+          days: best.choice.days,
+        },
+        true_cost: trueCostToDict(best.cost),
+      })
+      continue
+    }
+
+    // 不可行:归因 + duration 换长口径的 wish pool
+    const blocked = durationOk
+      ? Array.from(new Set(combos.flatMap(c => c.fails))).sort()
+      : ['duration']
+    const suggestions: Array<{ relax: string; resulting_money_cny?: number }> = []
+    for (const name of blocked) {
+      const opened = combos.filter(c => !c.fails.includes(name))
+      if (opened.length > 0) {
+        const cheapest = opened.reduce((a, b) => a.cost.moneyCny <= b.cost.moneyCny ? a : b)
+        suggestions.push({ relax: name, resulting_money_cny: cheapest.cost.moneyCny })
+      }
+    }
+    let wish: Record<string, unknown> | null = null
+    if (!durationOk) {
+      const longCombos = enumerateCombos(opt, cand, req, minDays)
+      const budgetDropped = longCombos.filter(c => c.fails.length === 0 || (c.fails.length === 1 && c.fails[0] === 'budget'))
+      const conds: Record<string, unknown> = { days: minDays }
+      if (budgetDropped.length > 0) {
+        conds['budget_cny'] = Math.min(...budgetDropped.map(c => c.cost.moneyCny))
+      }
+      if (opt.bestMonths?.length) conds['best_months'] = opt.bestMonths
+      wish = { name: opt.label, conditions: conds, reason: `${windowDays} 天窗口装不下(目的需 ${minDays} 天)` }
+    }
+    verdicts.push({
+      candidate_id: opt.id, name: opt.label, feasible: false, imagery_match: opt.score ?? 0,
+      unsat_core: blocked, suggestions, wish_pool: wish,
+    })
+  }
+
+  const feasible = verdicts.filter(v => v.feasible).sort((a, b) => (b.imagery_match as number) - (a.imagery_match as number))
+  return {
+    verdicts,
+    recommended: feasible.length > 0 ? feasible[0]['candidate_id'] : null,
+    answer_md: renderCandidateMarkdown(req, verdicts, feasible.length > 0 ? String(feasible[0]['candidate_id']) : null),
+  }
+}
+
+function renderCandidateMarkdown(req: TravelRequest, verdicts: Array<Record<string, unknown>>, recommended: string | null): string {
+  const feasible = verdicts.filter(v => v['feasible']).sort((a, b) => (b['imagery_match'] as number) - (a['imagery_match'] as number))
+  const parked = verdicts.filter(v => !v['feasible'])
+  const lines: string[] = []
+  lines.push(`> 憧憬:${req.note}`)
+  lines.push(`> 已识别约束:窗口 ${req.windowDays} 天 | 预算 ¥${req.budgetCny} | `
+    + `动机(休整改写需求 ${requiredUsableHours(req.motivation).toFixed(1)}h 有效休整)`)
+  lines.push('')
+  for (const v of parked) {
+    const core = (v['unsat_core'] as string[]) ?? []
+    lines.push(`**${v['name']}:现在不行**——冲突约束:${core.join('、')}。`)
+    const sug = ((v['suggestions'] as Array<Record<string, unknown>>) ?? [])[0]
+    if (sug) lines.push(`- 放宽 ${sug['relax']}:约 ¥${sug['resulting_money_cny']}`)
+    const wish = v['wish_pool'] as Record<string, unknown> | null
+    if (wish) {
+      const conds = wish['conditions'] as Record<string, unknown>
+      const budgetNote = conds['budget_cny'] ? `、约 ¥${conds['budget_cny']}` : ''
+      const months = conds['best_months'] as number[] | undefined
+      const season = months ? `,${months} 月最佳` : ''
+      lines.push(`- 已放入「下一次出发」清单:需要 ${conds['days']} 天${budgetNote}${season}`)
+    }
+  }
+  lines.push('')
+  for (const v of feasible) {
+    const ch = v['chosen'] as Record<string, unknown>
+    const t = v['true_cost'] as Record<string, unknown>
+    lines.push(`**${v['name']}:可行**`
+      + `(${ch['out_service']} 出发,${ch['out_transfer']} 接驳,`
+      + `起床 ${t['wake']},到达精力 ${t['energy_arrival_pct']}%,`
+      + `门到门 ${t['door_to_door_out']},有效休整 ${t['usable_hours']}h,共 ¥${t['money_cny']})`)
+  }
+  if (feasible.length) {
+    lines.push('')
+    const best = feasible[0]
+    const alt = feasible[1]
+    lines.push(`**建议:${best['name']}**(意象匹配 ${((best['imagery_match'] as number) * 100).toFixed(0)}%)。`
+      + (alt ? `备选:${alt['name']}(¥${(alt['true_cost'] as Record<string, unknown>)['money_cny']},匹配 ${((alt['imagery_match'] as number) * 100).toFixed(0)}%)。` : ''))
+  }
+  lines.push('')
+  lines.push('**待你决定的两个问题**:')
+  if (feasible.length >= 2) {
+    lines.push(`1. ${feasible[0]['name']} 还是 ${feasible[1]['name']}?(前者更贴意象,后者更省)`)
+  } else if (feasible.length === 1) {
+    lines.push(`1. 就去 ${feasible[0]['name']} 吗?`)
+  } else {
+    lines.push('1. 所有候选都不可行——考虑放宽哪条约束?')
+  }
+  const p0 = parked[0]
+  const p0wish = p0?.['wish_pool'] as Record<string, unknown> | null
+  if (p0wish) {
+    const conds = p0wish['conditions'] as Record<string, unknown>
+    lines.push(`2. 把 ${p0!['name']} 留给「下一次出发」(${conds['days']} 天起),这次先去可行的?`)
+  } else if (feasible.length) {
+    const ch = feasible[0]['chosen'] as Record<string, unknown>
+    lines.push(`2. 出发班次选 ${ch['out_service']} 还是更晚的?`)
+  }
+  return lines.join('\n')
 }
 
 export { minToHhmm }

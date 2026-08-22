@@ -12,7 +12,7 @@ import json
 import sys
 
 from .model import Candidate, TravelRequest
-from .engine import solve
+from .unified import segments_from_candidate, solve_choice_segment
 
 
 def main(argv=None) -> int:
@@ -26,11 +26,12 @@ def main(argv=None) -> int:
 
     req = TravelRequest.from_dict(payload["request"])
     candidates = [Candidate.from_dict(c) for c in payload["candidates"]]
-    result = solve(req, candidates)
+    spec = segments_from_candidate(payload["request"], candidates)
+    result = solve_choice_segment(spec)
 
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
-    if args.markdown:
+    if args.markdown and "answer_md" in result:
         print(result["answer_md"], file=sys.stderr)
     return 0
 
