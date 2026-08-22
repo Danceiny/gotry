@@ -54,8 +54,9 @@ const FACTS_SYSTEM = `你是旅行规划的事实抽取器。从对话中抽取�
 **休假语义(关键)**:用户说「请假/年假/不用办公/休假」→ workWindow 输出 {"vacation": true}(不是省略!省略会触发重复追问);只有用户明确给了工作时间才输出完整 workWindow 对象。只输出 JSON。`
 
 const SKELETON_SYSTEM = `你是行程骨架抽取器。从对话中抽取行程的**骨架**——段(移动)与锚点,不包含任何班次数据(班次来自数据层,你不要编造时刻/价格/航班号)。
-输出 JSON:{"segments":[{"id":"f1","role":"choice|fixed","route":"HKG->HKT","dateHint":"2026-07-18","anchors":{"arriveByMin":885}}]}
-规则:每个跨城移动一段;锚点只放用户明说或必然的(如"当天到"→arriveByMin 23:59=1439);时刻用当日分钟。只输出 JSON。`
+输出 JSON:{"scenario":"erhai|workation|yunnan|generic","segments":[{"id":"f1","role":"choice|fixed","route":"HKG->HKT","dateHint":"2026-07-18","anchors":{"arriveByMin":885}}]}
+规则:每个跨城移动一段;锚点只放用户明说或必然的(如"当天到"→arriveByMin 23:59=1439);时刻用当日分钟。
+scenario 判定:「洱海/大理/千岛湖/太湖+选目的地」→erhai(候选集);「普吉/workation/远程办公+多城链」→workation(五段链);「云南/大理丽江」→yunnan;不确定→generic。只输出 JSON。`
 
 export function createOpenAICompatLlm(flightPackPath?: string): LlmPort {
   const pack = flightPackPath
@@ -85,9 +86,23 @@ export function createOpenAICompatLlm(flightPackPath?: string): LlmPort {
       // 能力层装数据:航班包提供 services;骨架按段 id 合并锚点
       if (!pack) return null
       const { readFile } = await import('node:fs/promises')
+      const scenario = String(skeleton['scenario'] ?? 'generic')
+      // 场景→数据包路由(薄壳段3:意图决定装哪个包,而非永远装通用包)
+      const packByScenario: Record<string, string> = {
+        erhai: pack.replace('flights_2026.json', 'golden_erhai.json'),
+        workation: pack, // 五段链
+        yunnan: pack,    // 云南包未建,暂用通用(demo 期)
+        generic: pack,
+      }
+      const packPath = packByScenario[scenario] ?? pack
       let packSpec: JourneySpecTS
       try {
-        packSpec = parseFlightPackToSpec(JSON.parse(await readFile(pack, 'utf-8')))
+        if (scenario === 'erhai') {
+          // 洱海 = 候选集场景:不装五段链,返回洱海候选 spec 的轻量标记(由引擎的候选求解处理;
+          // 循环层看到 scenario=erhai 时走 solveChoiceSegment 而非 solveUnified)
+          return { segments: [], note: 'erhai-candidates', budgetCny: 3000 } as unknown as JourneySpecTS
+        }
+        packSpec = parseFlightPackToSpec(JSON.parse(await readFile(packPath, 'utf-8')))
       } catch {
         return null
       }
