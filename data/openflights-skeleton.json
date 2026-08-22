@@ -1,0 +1,895 @@
+{
+ "meta": {
+  "source": "OpenFlights routes.dat+airports.dat (ODbL)",
+  "note": "骨架层:通航城市对→航司集(每对截前5);§7-1 免费路线,零依赖",
+  "hub_filter": [
+   "AUH",
+   "BKK",
+   "BOM",
+   "CAN",
+   "CNX",
+   "CTU",
+   "DEL",
+   "DLU",
+   "DMK",
+   "DOH",
+   "DXB",
+   "HAN",
+   "HKG",
+   "HKT",
+   "KBV",
+   "KMG",
+   "KUL",
+   "LJG",
+   "PEK",
+   "PVG",
+   "SGN",
+   "SHA",
+   "SIN",
+   "SZX",
+   "XIY"
+  ]
+ },
+ "pairs": {
+  "BKK-SIN": [
+   "3K",
+   "AI",
+   "CX",
+   "ET",
+   "MD"
+  ],
+  "HKG-SIN": [
+   "3K",
+   "AI",
+   "CX",
+   "SQ",
+   "TR"
+  ],
+  "HKT-SIN": [
+   "3K",
+   "FD",
+   "MI",
+   "PG",
+   "SQ"
+  ],
+  "KUL-SIN": [
+   "3K",
+   "AA",
+   "AI",
+   "AK",
+   "HY"
+  ],
+  "SGN-SIN": [
+   "3K",
+   "JT",
+   "SQ",
+   "TR",
+   "VN"
+  ],
+  "CAN-CTU": [
+   "3U",
+   "CA",
+   "CZ",
+   "EU",
+   "JD"
+  ],
+  "CTU-HKG": [
+   "3U",
+   "CA",
+   "CX",
+   "HU",
+   "HX"
+  ],
+  "CTU-HKT": [
+   "3U"
+  ],
+  "CTU-KMG": [
+   "3U",
+   "8L",
+   "CA",
+   "CZ",
+   "EU"
+  ],
+  "CTU-LJG": [
+   "3U",
+   "CA",
+   "EU",
+   "JD",
+   "ZH"
+  ],
+  "CTU-PEK": [
+   "3U",
+   "CA",
+   "CZ",
+   "HU",
+   "NH"
+  ],
+  "CTU-PVG": [
+   "3U",
+   "CA",
+   "EU",
+   "FM",
+   "MU"
+  ],
+  "CTU-SZX": [
+   "3U",
+   "CA",
+   "CZ",
+   "EU",
+   "HU"
+  ],
+  "CTU-XIY": [
+   "3U",
+   "CA",
+   "CZ",
+   "EU",
+   "HU"
+  ],
+  "KMG-XIY": [
+   "3U",
+   "8L",
+   "CZ",
+   "GS",
+   "HU"
+  ],
+  "BKK-DEL": [
+   "6E",
+   "9W",
+   "AI",
+   "TG"
+  ],
+  "BOM-DEL": [
+   "6E",
+   "9W",
+   "AI",
+   "G8",
+   "S2"
+  ],
+  "BOM-DXB": [
+   "6E",
+   "9W",
+   "AI",
+   "EK"
+  ],
+  "DEL-DXB": [
+   "6E",
+   "9W",
+   "AI",
+   "EK",
+   "SG"
+  ],
+  "BKK-HKT": [
+   "8B",
+   "AB",
+   "AF",
+   "BA",
+   "EY"
+  ],
+  "DLU-KMG": [
+   "8L",
+   "CZ",
+   "MU"
+  ],
+  "KMG-LJG": [
+   "8L",
+   "AF",
+   "CZ",
+   "JD",
+   "KY"
+  ],
+  "KMG-PEK": [
+   "8L",
+   "CA",
+   "CZ",
+   "HU",
+   "MU"
+  ],
+  "KMG-PVG": [
+   "8L",
+   "9C",
+   "CA",
+   "JL",
+   "KY"
+  ],
+  "LJG-SZX": [
+   "8L"
+  ],
+  "LJG-XIY": [
+   "8L",
+   "JD",
+   "KY",
+   "MU",
+   "ZH"
+  ],
+  "BKK-PVG": [
+   "9C",
+   "FM",
+   "HO",
+   "MU",
+   "TG"
+  ],
+  "CAN-SHA": [
+   "9C",
+   "CA",
+   "CZ",
+   "FM",
+   "HO"
+  ],
+  "CNX-PVG": [
+   "9C",
+   "HO",
+   "MU"
+  ],
+  "CTU-SHA": [
+   "9C",
+   "CA",
+   "FM",
+   "HO",
+   "MU"
+  ],
+  "HKG-PVG": [
+   "9C",
+   "CX",
+   "FM",
+   "HO",
+   "HX"
+  ],
+  "HKT-PVG": [
+   "9C",
+   "FM",
+   "HO",
+   "MU"
+  ],
+  "KMG-SHA": [
+   "9C",
+   "CZ",
+   "FM",
+   "HO",
+   "MU"
+  ],
+  "PVG-SIN": [
+   "9C",
+   "MU",
+   "SQ"
+  ],
+  "SHA-SZX": [
+   "9C",
+   "CA",
+   "CZ",
+   "FM",
+   "HO"
+  ],
+  "SHA-XIY": [
+   "9C",
+   "CZ",
+   "FM",
+   "HO",
+   "MU"
+  ],
+  "AUH-BOM": [
+   "9W",
+   "AI",
+   "AZ",
+   "EY"
+  ],
+  "AUH-DEL": [
+   "9W",
+   "AI",
+   "AZ",
+   "EY"
+  ],
+  "BKK-BOM": [
+   "9W",
+   "AI",
+   "NH",
+   "PG",
+   "TG"
+  ],
+  "BOM-DOH": [
+   "9W",
+   "IX",
+   "QR"
+  ],
+  "BOM-HKG": [
+   "9W",
+   "CX",
+   "EY"
+  ],
+  "BOM-KUL": [
+   "9W",
+   "MH",
+   "OD"
+  ],
+  "BOM-SIN": [
+   "9W",
+   "GA",
+   "SQ"
+  ],
+  "DEL-DOH": [
+   "9W",
+   "QR"
+  ],
+  "DEL-HKG": [
+   "9W",
+   "AI",
+   "CX",
+   "EY",
+   "OZ"
+  ],
+  "DEL-KUL": [
+   "9W",
+   "MH",
+   "OD"
+  ],
+  "DEL-SIN": [
+   "9W",
+   "AI",
+   "GA",
+   "SQ"
+  ],
+  "BKK-KUL": [
+   "AA",
+   "ET",
+   "MD",
+   "MH",
+   "MS"
+  ],
+  "AUH-HKT": [
+   "AB",
+   "EY"
+  ],
+  "AUH-PEK": [
+   "AB",
+   "AZ",
+   "EY",
+   "HU",
+   "NH"
+  ],
+  "AUH-SIN": [
+   "AB",
+   "AT",
+   "AZ",
+   "EY",
+   "NZ"
+  ],
+  "BKK-CNX": [
+   "AB",
+   "AF",
+   "BA",
+   "CX",
+   "EY"
+  ],
+  "BKK-KBV": [
+   "AF",
+   "CX",
+   "EY",
+   "LH",
+   "PG"
+  ],
+  "CAN-SIN": [
+   "AF",
+   "CZ",
+   "SQ",
+   "TR"
+  ],
+  "CAN-KMG": [
+   "AF",
+   "CA",
+   "CZ",
+   "KY",
+   "MU"
+  ],
+  "DEL-PVG": [
+   "AI",
+   "MU"
+  ],
+  "CAN-KUL": [
+   "AK",
+   "CZ",
+   "MH"
+  ],
+  "CNX-KUL": [
+   "AK"
+  ],
+  "DMK-KUL": [
+   "AK",
+   "FD",
+   "OD"
+  ],
+  "HAN-KUL": [
+   "AK",
+   "MH",
+   "VN"
+  ],
+  "HKG-KUL": [
+   "AK",
+   "CX",
+   "MH"
+  ],
+  "HKT-KUL": [
+   "AK",
+   "MH",
+   "PG",
+   "QR",
+   "TG"
+  ],
+  "KBV-KUL": [
+   "AK",
+   "MH"
+  ],
+  "KMG-KUL": [
+   "AK",
+   "MH"
+  ],
+  "KUL-SGN": [
+   "AK",
+   "MH",
+   "VN"
+  ],
+  "KUL-SZX": [
+   "AK"
+  ],
+  "AUH-BKK": [
+   "AZ",
+   "EY",
+   "PG"
+  ],
+  "AUH-CTU": [
+   "AZ",
+   "EY",
+   "HU"
+  ],
+  "AUH-KUL": [
+   "AZ",
+   "EY",
+   "MH",
+   "VN"
+  ],
+  "DOH-DXB": [
+   "BG",
+   "EK",
+   "FZ",
+   "QR",
+   "UA"
+  ],
+  "HAN-SGN": [
+   "BL",
+   "VJ",
+   "VN"
+  ],
+  "BKK-PEK": [
+   "CA",
+   "HU",
+   "TG"
+  ],
+  "BKK-SZX": [
+   "CA",
+   "ZH"
+  ],
+  "BOM-CTU": [
+   "CA"
+  ],
+  "CAN-PEK": [
+   "CA",
+   "CZ",
+   "HU",
+   "ZH"
+  ],
+  "CAN-PVG": [
+   "CA",
+   "CZ",
+   "FM",
+   "HO",
+   "MU"
+  ],
+  "CAN-XIY": [
+   "CA",
+   "CZ",
+   "HU",
+   "MU",
+   "ZH"
+  ],
+  "CNX-PEK": [
+   "CA"
+  ],
+  "CTU-SIN": [
+   "CA",
+   "MI",
+   "SQ"
+  ],
+  "DEL-PEK": [
+   "CA"
+  ],
+  "DXB-PEK": [
+   "CA",
+   "EK"
+  ],
+  "HKG-PEK": [
+   "CA",
+   "CX",
+   "CZ",
+   "HU",
+   "HX"
+  ],
+  "HKT-PEK": [
+   "CA",
+   "HU"
+  ],
+  "KMG-SZX": [
+   "CA",
+   "CZ",
+   "HU",
+   "KY",
+   "MU"
+  ],
+  "LJG-PEK": [
+   "CA",
+   "JD",
+   "MU",
+   "ZH"
+  ],
+  "PEK-PVG": [
+   "CA",
+   "CZ",
+   "MU",
+   "NH",
+   "NZ"
+  ],
+  "PEK-SGN": [
+   "CA"
+  ],
+  "PEK-SHA": [
+   "CA",
+   "CZ",
+   "FM",
+   "HO",
+   "HU"
+  ],
+  "PEK-SIN": [
+   "CA",
+   "SQ"
+  ],
+  "PEK-SZX": [
+   "CA",
+   "CZ",
+   "HU",
+   "ZH"
+  ],
+  "PEK-XIY": [
+   "CA",
+   "CZ",
+   "HU",
+   "MU",
+   "ZH"
+  ],
+  "PVG-SZX": [
+   "CA",
+   "CZ",
+   "HO",
+   "MU",
+   "NH"
+  ],
+  "PVG-XIY": [
+   "CA",
+   "CZ",
+   "FM",
+   "HO",
+   "HU"
+  ],
+  "SIN-SZX": [
+   "CA",
+   "MI",
+   "SQ",
+   "TR",
+   "ZH"
+  ],
+  "SZX-XIY": [
+   "CA",
+   "CZ",
+   "HU",
+   "MU",
+   "ZH"
+  ],
+  "BKK-HKG": [
+   "CX",
+   "EK",
+   "EY",
+   "HX",
+   "KQ"
+  ],
+  "CAN-HKG": [
+   "CX",
+   "CZ",
+   "KA"
+  ],
+  "CNX-HKG": [
+   "CX",
+   "FD",
+   "KA",
+   "UO"
+  ],
+  "DOH-HKG": [
+   "CX",
+   "QR"
+  ],
+  "DXB-HKG": [
+   "CX",
+   "EK"
+  ],
+  "HAN-HKG": [
+   "CX",
+   "HX",
+   "KA",
+   "VN"
+  ],
+  "AUH-HKG": [
+   "CX",
+   "EY",
+   "HM"
+  ],
+  "HKG-HKT": [
+   "CX",
+   "FD",
+   "KA",
+   "TG",
+   "UO"
+  ],
+  "HKG-KMG": [
+   "CX",
+   "KA",
+   "MU",
+   "UO"
+  ],
+  "HKG-SGN": [
+   "CX",
+   "HX",
+   "UA",
+   "VN"
+  ],
+  "HKG-SHA": [
+   "CX",
+   "FM",
+   "HX",
+   "KA",
+   "MU"
+  ],
+  "HKG-XIY": [
+   "CX",
+   "KA",
+   "MU"
+  ],
+  "BKK-CAN": [
+   "CZ",
+   "KQ",
+   "MD",
+   "TG",
+   "UL"
+  ],
+  "CAN-CNX": [
+   "CZ"
+  ],
+  "CAN-DEL": [
+   "CZ"
+  ],
+  "CAN-DXB": [
+   "CZ",
+   "EK"
+  ],
+  "CAN-HAN": [
+   "CZ",
+   "VN"
+  ],
+  "CAN-HKT": [
+   "CZ"
+  ],
+  "CAN-SGN": [
+   "CZ",
+   "VN"
+  ],
+  "HAN-PEK": [
+   "CZ",
+   "VN"
+  ],
+  "HKT-SZX": [
+   "CZ"
+  ],
+  "KUL-PVG": [
+   "CZ",
+   "D7",
+   "MH",
+   "MU"
+  ],
+  "CTU-KUL": [
+   "D7"
+  ],
+  "KUL-PEK": [
+   "D7",
+   "MH"
+  ],
+  "CNX-DMK": [
+   "DD",
+   "FD"
+  ],
+  "DMK-HKT": [
+   "DD",
+   "E8",
+   "FD",
+   "OX"
+  ],
+  "DMK-KBV": [
+   "DD",
+   "FD"
+  ],
+  "BKK-DXB": [
+   "EK",
+   "QF",
+   "TG"
+  ],
+  "DXB-HKT": [
+   "EK"
+  ],
+  "DXB-KUL": [
+   "EK",
+   "IY",
+   "QF"
+  ],
+  "DXB-PVG": [
+   "EK"
+  ],
+  "DXB-SGN": [
+   "EK"
+  ],
+  "DXB-SIN": [
+   "EK",
+   "ET",
+   "MS",
+   "QF",
+   "SQ"
+  ],
+  "AUH-DOH": [
+   "EY",
+   "QR"
+  ],
+  "AUH-PVG": [
+   "EY",
+   "HU"
+  ],
+  "AUH-SGN": [
+   "EY",
+   "VN"
+  ],
+  "CAN-DMK": [
+   "FD",
+   "OX"
+  ],
+  "CNX-HKT": [
+   "FD",
+   "TG"
+  ],
+  "CNX-KBV": [
+   "FD"
+  ],
+  "DMK-HAN": [
+   "FD"
+  ],
+  "DMK-HKG": [
+   "FD"
+  ],
+  "DMK-KMG": [
+   "FD"
+  ],
+  "DMK-SGN": [
+   "FD"
+  ],
+  "DMK-SIN": [
+   "FD"
+  ],
+  "DMK-SZX": [
+   "FD"
+  ],
+  "DMK-XIY": [
+   "FD"
+  ],
+  "KBV-SIN": [
+   "FD",
+   "TR"
+  ],
+  "CAN-LJG": [
+   "JD",
+   "MU"
+  ],
+  "DOH-KUL": [
+   "MH",
+   "QR"
+  ],
+  "CNX-SIN": [
+   "MI",
+   "PG",
+   "SQ",
+   "TR"
+  ],
+  "HAN-SIN": [
+   "MI",
+   "SQ",
+   "TR",
+   "VN"
+  ],
+  "KMG-SIN": [
+   "MI",
+   "SQ"
+  ],
+  "BKK-CTU": [
+   "MU",
+   "TG"
+  ],
+  "BKK-KMG": [
+   "MU",
+   "TG"
+  ],
+  "CNX-KMG": [
+   "MU"
+  ],
+  "CTU-DLU": [
+   "MU"
+  ],
+  "DXB-KMG": [
+   "MU"
+  ],
+  "HAN-PVG": [
+   "MU",
+   "VN"
+  ],
+  "HKG-LJG": [
+   "MU"
+  ],
+  "HKT-KMG": [
+   "MU"
+  ],
+  "LJG-SHA": [
+   "MU"
+  ],
+  "PVG-SGN": [
+   "MU",
+   "VN"
+  ],
+  "BKK-DOH": [
+   "QR"
+  ],
+  "BKK-HAN": [
+   "QR",
+   "TG",
+   "VJ",
+   "VN"
+  ],
+  "CAN-DOH": [
+   "QR"
+  ],
+  "CTU-DOH": [
+   "QR"
+  ],
+  "DOH-PEK": [
+   "QR"
+  ],
+  "DOH-PVG": [
+   "QR"
+  ],
+  "DOH-SGN": [
+   "QR"
+  ],
+  "DOH-SIN": [
+   "QR"
+  ],
+  "BKK-SGN": [
+   "TG",
+   "TK",
+   "VJ",
+   "VN"
+  ],
+  "LJG-SIN": [
+   "TR"
+  ],
+  "CTU-HAN": [
+   "VN"
+  ]
+ }
+}
