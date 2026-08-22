@@ -115,7 +115,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 原则:**不跳阶段,不提前优化下阶段的事**;每阶段 Entry/Exit/gate 见 roadmap。旧 Stage 0-4 与总纲 Phase、产品 M1-M3 已归并映射到 M0-M6(映射表在 roadmap)。
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
-- **当前 = M3(工程面完成,tag `v0.0.1-rc`)**:薄壳七段 ✅(三页/路由/休假/持久化/云南包/Markdown/UX);三场景全验(洱海/云南/普吉);D-4 大部赎回(地图位/预算条待)。**M3 剩余=种子用户启动(等 remote)**。此后 M4 记忆 → M5 交易 → M6 B2B。不跳阶段。
+- **当前 = M3(工程面完成,tag `v0.0.1-rc2`)**:薄壳七段 ✅(三页/路由/休假/持久化/云南包/Markdown/UX);三场景全验(洱海/云南/普吉);D-4 大部赎回(地图位/预算条待)。**M3 剩余=种子用户启动(等 remote 与 License 决策)**。此后 M4 记忆 → M5 交易 → M6 B2B。不跳阶段。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
@@ -125,9 +125,9 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-2 TS unsatCore 竖线 | **已清偿**(coreOf 剥竖线+回归断言) |
 | D-3 LLM 未进环 | **已清偿**(S4 由 MiniMax-M2 完成,`bb880f3`;mock 留作回归夹具,ADR-8 兑现) |
 | D-5 时区语义 | **已清偿**(EK329 官网逐分一致) |
-| D-4 gate/卡片无承载界面 | 最小 Web 面(M3) |
+| D-4 gate/卡片无承载界面 | **大部赎回**(薄壳三页,v0.0.1-rc;地图位/预算条待) |
 | D-6 红眼睡眠模型未校准 | 对账 Q10 |
-| D-7 deprecated 层仍承重 | dsh 插件进程内路径调 `engine.ts`、`cli.py` 桥路由 `engine.solve`、`build_plan.py` 调 `journey.solve_journey`;TS unified 缺候选形态求解(文件头自认「下一迁移段」)。赎回:TS 候选形态迁移 → 插件/CLI 切 unified → engine/journey 退纯 oracle(M2 W2,ADR-5 兑现日) |
+| D-7 deprecated 层仍承重 | dsh 插件进程内路径调 `engine.ts`、`cli.py` 桥路由 `engine.solve`、`build_plan.py` 调 `journey.solve_journey`;TS unified 缺候选形态求解;M3 洱海路由(`a028967`)在 loop.ts 新开 marker-spec 分支直连 Python 桥,属同债范围(review 挂账)。赎回:候选形态进 TS unified(solveChoiceSegment)→ 插件/CLI/洱海通道统一切轨 → engine/journey 退纯 oracle(M2 未做,顺延 M3 早期) |
 | D-8 对话循环不进 CI | **已清偿**(replay 带终态断言 + 异步工单跨进程闭环 + smoke 进 `run-all-tests.sh` §5-7) |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)

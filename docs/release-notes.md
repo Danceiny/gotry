@@ -3,7 +3,7 @@
 > 每个 tag 一条:内容、证据、闸勾稽。发布闸(AGENTS.md):① 全栈回归绿 ② §11 六状态面同步 ③ README 用法逐条实测 ④ License 明确 ⑤ 版本号在 tag 与全部文档间一致。
 > 对外推送(remote)与 License 未定前,所有 tag 仅为本地候选。
 
-## v0.0.1-rc2(候选,tag 待⑤闭合后打)
+## v0.0.1-rc2(annotated tag,2026-08-22)
 
 在 rc 之上的发布面修复:
 
