@@ -195,6 +195,13 @@ export function apply(ctx: Context, config: Config): void {
       const dir = await ensureStateDir(config.stateRoot)
       const path = join(dir, 'wish-pool.json')
       const pool = (await readJson(path, [])) as Array<Record<string, unknown>>
+      // 同名憧憬幂等更新(刷新理由与成行条件),不重复落盘
+      const existing = pool.findIndex(e => e['name'] === entry.name)
+      if (existing >= 0) {
+        pool[existing] = { ...pool[existing], reason: entry.reason ?? pool[existing]?.['reason'], conditions: entry.conditions }
+        await writeJson(path, pool)
+        return { added: false, total: pool.length, path }
+      }
       pool.push({ reason: '', ...entry, added_at: new Date().toISOString() })
       await writeJson(path, pool)
       return { added: true, total: pool.length, path }
