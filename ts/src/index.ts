@@ -25,6 +25,7 @@ import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards } from '../capabilities/incident-log.ts'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 import { verifyFlight } from '../capabilities/opensky.ts'
+import { anythingSearch } from '../capabilities/anything.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -381,5 +382,51 @@ export function apply(ctx: Context, config: Config): void {
       })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `飞行校验:${String((args.query as { callsign?: string })?.callsign ?? '')}`, kind: 'other', rawInput: args.query }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'gotry_anything_search',
+    description:
+      'Universal Anything search via hotel-byte CLI → hotel-be Anything endpoint. ' +
+      'Mixed destinations (cities / metropolitan areas / high-level regions) + hotels in one call. ' +
+      'Returns candidates with type, name, optional coordinates and hotel-id. ' +
+      'Three-valued semantics: hit = ≥1 candidate; miss = 0 candidates (try synonyms or contentType=city/hotel); ' +
+      'unavailable = hbcli failed (degraded, never blocks). ' +
+      'Use as the first stop when the user mentions a place/city/hotel name and you need to ground it in real catalog data ' +
+      '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region).',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ keyword: "大理", contentType?: "city"|"hotel", parentDestinationId?: "?", timeoutMs?: 12000 }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = (args.query ?? {}) as { keyword: string; contentType?: 'city' | 'hotel'; parentDestinationId?: string | number; timeoutMs?: number }
+      const started = Date.now()
+      if (!q.keyword) {
+        return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', summary: 'keyword 必填', evidence: '[hbcli-anything@error] empty' })) as Record<string, never>
+      }
+      const r = await anythingSearch(q)
+      const dir = await ensureStateDir(config.stateRoot)
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `anything:${r.via}`).catch(() => {})
+      const top5 = (r.hits ?? []).slice(0, 5)
+      const summary = r.verdict === 'hit'
+        ? `${q.keyword} → hit (${r.hits?.length ?? 0} 候选项)\n${top5.map((h, i) => `  ${i + 1}. [${h.type}] ${h.name}${h.latitude !== undefined && h.longitude !== undefined ? ` @ (${h.latitude.toFixed(3)},${h.longitude.toFixed(3)})` : ''}`).join('\n')}\n${r.evidence}`
+        : r.verdict === 'miss'
+          ? `${q.keyword} → miss (酒店-be 一切正常但无候选)\n${r.evidence}`
+          : `${q.keyword} → unavailable (${r.error})\n${r.evidence}`
+      return JSON.parse(JSON.stringify({
+        ok: r.ok, verdict: r.verdict, keyword: q.keyword,
+        content_type: q.contentType ?? null,
+        total_candidates: r.totalCandidates, hits: r.hits, evidence: r.evidence, summary,
+        latency_ms: Date.now() - started,
+      })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `Anything search:${String((args.query as { keyword?: string })?.keyword ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 }

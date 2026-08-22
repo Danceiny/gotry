@@ -10,7 +10,7 @@
 
 **GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:动机访谈进、已验证的行程方案与选择题出;LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 
-**当前形态(诚实定位,2026-08-22 `v0.0.1-rc.3` @ `3e7791a`)**:dsh 成品可用(`./gotry`,DeepSeek 原生)——人格(八条行为契约,新增时间感知)+ 七工具(可行性/骨架/酒店/天气/航班/动机/愿望池);机票数据三层组合全链(骨架 168 对+校验桥+锚点),酒店 hbcli 桥(实时/静态降级+证据标注);证据链从工具到用户渲染面贯穿。**v0.0.1-rc.3 收口**: 去掉 Python oracle(cli.py / bridge.callFeasibilityEngine / loop.ts erhai-python-bridge / diff-test ts-vs-python)——**纯 TS unified 求解**(`solveChoiceSegment` 枚举,~6ms/次);npm 一键启动骨架(根 package.json + bin/gotry.js + vendored dsh 0.1.1-rc.2 pnpm install);headless 路径实测 ✓(gotry 默认 mode 解析 fix);D-NEW 进程护栏(incident-log fsync 兜底 dsh 异常退出);README '一行安装' 5 步段;engine/journey 退纯 oracle;run-all-tests 9 套,不再依赖 Python 运行时。M3 最小可用产品。
+**当前形态(诚实定位,2026-08-22 `v0.0.1-rc.3` @ `3e7791a`)**:dsh 成品可用(`./gotry`,DeepSeek 原生)——人格(八条行为契约,新增时间感知)+ 八工具(可行性/骨架/酒店/天气/航班/Anything/动机/愿望池);机票数据三层组合全链(骨架 168 对+校验桥+锚点),酒店 hbcli 桥(实时/静态降级+证据标注);证据链从工具到用户渲染面贯穿。**v0.0.1-rc.3 收口**: 去掉 Python oracle(cli.py / bridge.callFeasibilityEngine / loop.ts erhai-python-bridge / diff-test ts-vs-python)——**纯 TS unified 求解**(`solveChoiceSegment` 枚举,~6ms/次);npm 一键启动骨架(根 package.json + bin/gotry.js + vendored dsh 0.1.1-rc.2 pnpm install);headless 路径实测 ✓(gotry 默认 mode 解析 fix);D-NEW 进程护栏(incident-log fsync 兜底 dsh 异常退出);README '一行安装' 5 步段;engine/journey 退纯 oracle;run-all-tests 9 套,不再依赖 Python 运行时。M3 最小可用产品。
 
 ## 2. 总体架构:五层与现状
 

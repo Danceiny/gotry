@@ -52,6 +52,10 @@ echo "=== 10. 航班实时观测(OpenSky 免费匿名,3 断言:observed 三值/�
 (cd ts && npx tsx scripts/opensky-tests.ts) || FAIL=1
 
 echo
+echo "=== 10. Anything 能力层(hbcli search anything 5 断言:hit/miss/error/timeout/empty) ==="
+(cd ts && npx tsx scripts/anything-tests.ts) || FAIL=1
+
+echo
 echo "=== 11. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
@@ -60,4 +64,4 @@ if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
 fi
-echo "ALL SUITES GREEN(TS engine/journey/unified + 重放 + 异步 + smoke + hbcli + incident + weather + opensky + diff;明细见各节)"
+echo "ALL SUITES GREEN(TS engine/journey/unified + 重放 + 异步 + smoke + hbcli + incident + weather + opensky + anything + diff;明细见各节)"
