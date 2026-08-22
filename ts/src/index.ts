@@ -18,12 +18,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { callFeasibilityEngine, ensureStateDir, readJson, recordLatency, writeJson } from './bridge.ts'
+import { solve as solveInProcess } from './engine.ts'
+import { parseCandidate, parseRequest } from './model.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools']
 
 export interface Config {
-  /** Python 解释器(仓库 .venv 内) */
+  /** Python 解释器(仓库 .venv 内)——桥接回退用 */
   pythonBin: string
   /** 仓库 py/ 目录(作为 PYTHONPATH) */
   pythonPath: string
@@ -31,6 +33,8 @@ export interface Config {
   stateRoot: string
   /** 引擎调用超时(ms) */
   timeoutMs: number
+  /** 优先使用进程内 TS 引擎(WASM,~6ms/次);false 或失败时回退 Python CLI(oracle,~240ms/次) */
+  preferInProcess: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -38,6 +42,7 @@ export const Config: z<Config> = z.object({
   pythonPath: z.string().default('py'),
   stateRoot: z.string().default('.'),
   timeoutMs: z.number().default(30_000),
+  preferInProcess: z.boolean().default(true),
 })
 
 interface FeasibilityResult {
@@ -84,14 +89,31 @@ export function apply(ctx: Context, config: Config): void {
       }],
     },
     async execute(args: { payload: unknown }, _exec: unknown) {
-      const { result, latencyMs } = await callFeasibilityEngine(args.payload, {
-        pythonBin: config.pythonBin,
-        pythonPath: config.pythonPath,
-        timeoutMs: config.timeoutMs,
-      })
+      const started = Date.now()
+      let result: Record<string, unknown>
+      let via = 'in-process-wasm'
+      const payload = args.payload as Record<string, unknown>
+      if (config.preferInProcess) {
+        try {
+          result = await solveInProcess(
+            parseRequest(payload['request'] as Record<string, unknown>),
+            (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate),
+          ) as Record<string, unknown>
+        } catch (e) {
+          via = `python-bridge-fallback(${(e as Error).message.slice(0, 80)})`
+          result = (await callFeasibilityEngine(payload, {
+            pythonBin: config.pythonBin, pythonPath: config.pythonPath, timeoutMs: config.timeoutMs,
+          })).result as Record<string, unknown>
+        }
+      } else {
+        via = 'python-bridge'
+        result = (await callFeasibilityEngine(payload, {
+          pythonBin: config.pythonBin, pythonPath: config.pythonPath, timeoutMs: config.timeoutMs,
+        })).result as Record<string, unknown>
+      }
       const dir = await ensureStateDir(config.stateRoot)
-      await recordLatency(join(dir, 'bridge-latency.jsonl'), latencyMs, 'feasibility_check').catch(() => {})
-      return { ...(result as Record<string, unknown>), latency_ms: latencyMs }
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `feasibility_check:${via}`).catch(() => {})
+      return { ...result, latency_ms: Date.now() - started, via }
     },
     presentCall: args => ({ card: 'generic', title: 'GoTry 可行性检查(门到门全成本)', kind: 'other', rawInput: args.payload }),
   }))
