@@ -135,7 +135,7 @@ gotry(gotry_place_search 工具, 拟新增)
 
 **配额红线**:Google Places 个人账号按次收费(hotel-be 侧已多处封顶);gotry 侧必须:
 - 每会话 place 查询上限(默认 10 次),超限自动切 OSM;
-- 证据链标注 `[实时API:hbcli-place@ts]`;OSM 兜底标 `[实时API:osm-nominatim@ts]`。
+- 证据链标注 `[实时API:hbcli-anything@ts]`(M3 Anything 主路径);M4 scale-up 后才有 `[实时API:hbcli-place@ts]`(Google Place 收费源)与 `[实时API:osm-nominatim@ts]`(OSM 兑底)。
 
 **为什么双轨(OSM 兜底)**:种子用户期配额/凭证不可控;Nominatim/Overpass 免费无 key(TREK 同款),数据薄(无评分/照片)但坐标/名称/类目可用——符合「每域至少一个免费源」原则。
 
@@ -163,8 +163,8 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 | 标注 | 语义 | 触发 |
 |---|---|---|
 | `[实时API:hbcli@<ISO ts>]` | hotel-be 实时(酒店库存;未来含 place) | hbcli 退码 0 |
-| `[实时API:hbcli-place@<ts>]` | Google Place 经 hbcli(收费源,带配额) | place 查询成功 |
-| `[实时API:osm-nominatim@<ts>]` | OSM 免费兜底 | hbcli 失败/超配额 |
+| `[实时API:hbcli-place@<ts>]` | **M4 scale-up 路径**:Google Place 经 hbcli(收费源,带配额) | place 查询成功 | placeholder, M3 实际走 `[实时API:hbcli-anything@ts]` |
+| `[实时API:osm-nominatim@<ts>]` | **M4 scale-up 路径**:OSM 免费兜底 | hbcli 失败/超配额 | placeholder, M3 实际走 `[实时API:hbcli-anything@ts]` |
 | `[实时API:opensky@<ts>]` | 航班实时观测(ADS-B 当前快照;OpenSky 匿名路径只支持实时,历史查需鉴权) | OpenSky 命中 |
 | `[实时API:open-meteo@<ts>]` | 天气预报(M3 末) | 天气查询成功 |
 | `[骨架:openflights]` | 通航性三值(肯定/枢纽对否定≠证伪/枢纽外无结论) | 求解预过滤 |
