@@ -10,17 +10,8 @@
  */
 
 import { init } from 'z3-solver'
-import {
-  Candidate,
-  Choice,
-  TrueCost,
-  TravelRequest,
-  evaluateChoice,
-  minToHhmm,
-  requiredUsableHours,
-  trueCostToDict,
-  LATEST_ARRIVE_STAY_MIN,
-} from './model.ts'
+import type { Candidate, Choice, TrueCost, TravelRequest } from './model.ts'
+import { evaluateChoice, minToHhmm, requiredUsableHours, trueCostToDict, LATEST_ARRIVE_STAY_MIN } from './model.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Z3Ctx = any
@@ -75,7 +66,10 @@ class Encoding {
   readonly assertions: Record<string, any>
   readonly moneyExpr: any
 
-  constructor(private readonly z3: any, cand: Candidate, req: TravelRequest, days?: number) {
+  private readonly z3: any
+
+  constructor(z3: any, cand: Candidate, req: TravelRequest, days?: number) {
+    this.z3 = z3
     this.cand = cand
     this.req = req
     this.days = days ?? req.windowDays
