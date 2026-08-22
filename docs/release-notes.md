@@ -1,7 +1,7 @@
 # GoTry 发版记录
 
 > 每个 tag 一条:内容、证据、闸勾稽。发布闸(AGENTS.md):① 全栈回归绿 ② §11 六状态面同步 ③ README 用法逐条实测 ④ License 明确 ⑤ 版本号在 tag 与全部文档间一致。
-> **v0.0.1-rc.1 起**:remote = github.com/Danceiny/gotry(private);License 沿用 rc 历史「未决」,本 tick 未变更。
+> **v0.0.1-rc.3 起**:remote = github.com/Danceiny/gotry(private);License 沿用 rc 历史「未决」,本 tick 未变更。
 
 ## v0.0.1-rc.2(annotated tag,2026-08-22)
 
@@ -49,7 +49,50 @@
 
 ---
 
-## v0.0.1-rc.1(annotated tag,2026-08-22)
+## v0.0.1-rc.3(annotated tag @ `3e7791a`,2026-08-22)
+
+**用户路径实测 5 步走通。** 在 rc.2 基础上叠加 npm 一键启动骨架 + headless 修复 + README 行内写作。
+
+### 增加
+
+| 模块 | 改动 |
+|---|---|
+| `package.json` | 仓库根 npm 包入口(name=gotry, bin={ gotry: ./bin/gotry.js });dependencies = `@deepseek-ai/dsh@^0.1.1-rc.1 + z3-solver@^5.2.0` |
+| `bin/gotry.js` | Node CLI, shebang #!/usr/bin/env node; 解析 argv + 加载 .env (provider-neutral LLM_API_KEY → DEEPSEEK_API_KEY); mode=web → vendored dsh web + cordis patch; mode=headless → dsh --profile headless --patch -- "task"; mode=help 三行帮助 |
+| `cordis.gotry-patch.yml` | 从 `ts/` 移到根; plugin 路径硬编码到 `ts/src/index.ts`(本地开发固定路径;npm 装时绝对路径写死) |
+| `bin/gotry.js` exit 回调 | dsh 异常退出(code≠0 / signal) fsync 一条 incident 到 `gotry-state/incidents.jsonl`(D-NEW 进程护栏落地场景) |
+| `.gitignore` | 加 `package-lock.json` 排除 |
+
+### 修复
+
+- gotry 默认 mode 修复:`./gotry "任务"` argv[0] 不再误判为 mode;`isLiteral` 白名单只识别 `web`/`help`/`-h`/`--help`,其他默认 headless
+- vendored dsh 升级 0.1.1-rc.1 → 0.1.1-rc.2(headless 路径 rc.1 也有 argv bug,rc.2 是 npm 最新)
+
+### 文档同步
+
+- README:从 rc.1 的 4 步扩到 5 步 Quick start (新增 vendored dsh runtime pnpm install,实测 51 秒);TL;DR 表版本号升级 + Node 22+ 路径明示
+- architecture §1 / §9 演进段: v0.0.1-rc.2 → v0.0.1-rc.3
+- `ts/package.json`: 修复 private 字段重复 + 描述去 Python 路径
+- `README` Last verified: `v0.0.1-rc.1 @ bf8b65e` → `v0.0.1-rc.3-dev @ 270678b` → `v0.0.1-rc.3 @ 3e7791a`
+
+### 验证(发布闸五项勾稽)
+
+| 项 | 结果 |
+|---|---|
+| ① 全栈回归绿 | ✅ 9 套测试 exit=0 + ALL SUITES GREEN |
+| ② §11 六状态面同步 | ✅ architecture §1/§9 / roadmap 当前位置 / README TL;DR / Last-verified 全部 v0.0.1-rc.3 |
+| ③ README 用法逐条实测 | ✅ `./gotry web` 实测 3080 HTTP 200;`./gotry "任务"` headless 实测返回 abc/A/B/C 候选 |
+| ④ License 明确 | ⏸️ 沿用未决(LICENSE 占位文件已就位) |
+| ⑤ 版本号一致 | ✅ 全文档 v0.0.1-rc.3 |
+
+### 已知留账
+
+- npm registry 正式发布——需 founder 提供 npm token
+- D-NEW-2(dsh 主循环 plugin 异常容错)——超出 M2 范围,等 dsh 上游修
+- Z3 WASM race(连续多套件时偶发 memory access)——已知
+- M4 校准输入——等创始人答对账七题
+
+---
 
 **点式体例首发**(对齐 dsh `X.Y.Z-rc.W`)。5 个新提交吸收 + 文档同步;无功能删除,无 API 变更。
 
