@@ -23,6 +23,7 @@ import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
 import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards } from '../capabilities/incident-log.ts'
+import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -281,5 +282,58 @@ export function apply(ctx: Context, config: Config): void {
       return JSON.parse(JSON.stringify(verdict)) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `骨架校验:${args.from}-${args.to}`, kind: 'other', rawInput: args }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'gotry_weather_check',
+    description:
+      'Check weather for a destination: forecast (≤16 days) or historical climate (seasonality baseline). '
+      + 'Free Open-Meteo API, no key required. Input: place name (Chinese ok) or lat/lng. '
+      + 'Returns daily temp range, precipitation probability, weather code — with evidence chain tagging '
+      + '[实时API:open-meteo@ts]. Use to ground seasonal advice in real data instead of LLM guessing.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ place: "大理市", month?: 8, mode?: "forecast"|"climate", days?: 7 }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = (args.query ?? {}) as { place?: string; lat?: number; lng?: number; month?: number; mode?: string; days?: number }
+      const started = Date.now()
+      let lat: number | undefined = q.lat, lng: number | undefined = q.lng
+      let placeLabel = q.place ?? `${q.lat},${q.lng}`
+      if (lat === undefined || lng === undefined) {
+        if (!q.place) throw new Error('gotry_weather_check requires place name or lat/lng')
+        const geo = await geocodePlace(q.place)
+        if (!geo.ok || geo.results.length === 0) {
+          return JSON.parse(JSON.stringify({ ok: false, summary: `地点「${q.place}」地理编码失败:${geo.error ?? '无结果'}`, evidence: geo.evidence })) as Record<string, never>
+        }
+        const hit = geo.results[0]
+        lat = hit.latitude; lng = hit.longitude
+        placeLabel = `${hit.name}(${hit.admin1 ?? hit.country ?? ''})`
+      }
+      const isClimate = q.mode === 'climate' || (q.month !== undefined && q.mode !== 'forecast')
+      const r = isClimate
+        ? await getClimate({ latitude: lat, longitude: lng }, q.month ?? new Date().getMonth() + 1)
+        : await getForecast({ latitude: lat, longitude: lng }, { days: q.days })
+      const dir = await ensureStateDir(config.stateRoot)
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `weather:${r.via}`).catch(() => {})
+      const dailyLines = (r.daily ?? []).slice(0, 7).map(d =>
+        `${d.date} ${d.tempMinC.toFixed(0)}–${d.tempMaxC.toFixed(0)}°C ${wmoLabel(d.weatherCode)}${d.precipProbMaxPct !== null ? ` 降水概率${d.precipProbMaxPct}%` : ''}`)
+      const summary = r.ok
+        ? `${placeLabel}:${isClimate ? '历史气候' : `${q.days ?? 7} 天预报`}\n${dailyLines.join('\n')}\n${r.evidence}`
+        : `${placeLabel}:天气查询失败(${r.error})${r.evidence}`
+      return JSON.parse(JSON.stringify({
+        ok: r.ok, place: placeLabel, mode: isClimate ? 'climate' : 'forecast',
+        daily: r.daily, evidence: r.evidence, summary,
+        latency_ms: Date.now() - started,
+      })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `天气:${String((args.query as { place?: string })?.place ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 }

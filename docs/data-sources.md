@@ -29,7 +29,7 @@
 | **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退 | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
 | **酒店点评/评分** | ❌ 无 | — | — | **复用 hotel-be**:geography `GetPlaceReviews`(Google Places v1)——链路见 §4 |
 | **POI/地点搜索** | ❌ 无(候选目的地硬编码在金标准包) | — | — | **双轨**:① 复用 hotel-be Google Place(富数据,收费) ② OSM Nominatim/Overpass(免费兜底,TREK 模式) |
-| **天气/季节性** | ❌ 无(LLM 人格里有雨季常识,无数据) | — | — | M3 末:Open-Meteo(免费无 key,16 天预报+历史气候)——TREK 同款 |
+| **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`) | 实时 | `[实时API:open-meteo@ts]` | 保持;WMO 码已映射中文 |
 | **地面交通(接驳/铁路)** | ⚠️ 段内 transfer 硬编码在数据包(minutes/priceCny) | 静态 | `[静态包:估算]` | M4:OSRM 免费自托管(路线/时长);12306 无开放 API 不接 |
 | **地理/行政区划** | ❌ 无 | — | — | TREK 模式:bundled GeoJSON atlas(脚本构建,离线) |
 | **时区** | ⚠️ 手写在数据包(tz_offset_min/origin_tz_offset_min) | 静态 | — | M4:用时区库(`Intl`/`tz-lookup`)替代手写 |
@@ -148,7 +148,7 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 ## 7. 演进(与 roadmap 对齐,本文只列数据侧)
 
-- **M3 末(当前)**:Open-Meteo 接入(免费无 key,当天可完);OpenSky 从脚本挂到插件工具面。
+- **M3 末(当前)**:~~Open-Meteo 接入~~ ✅ 已完成(2026-08-22,`capabilities/weather.ts` + `gotry_weather_check` 工具,5 断言实测);OpenSky 从脚本挂到插件工具面。
 - **M4**:`capabilities/place.ts` 双轨(hbcli-place + OSM 兜底);OSRM 时长估算进 transfer;时区库替代手写;汇率免费层。
 - **hotel-be 侧依赖(gate)**:search 模块 place OpenAPI + geography 白名单 + `hbcli search place`——三段都在 hotel-be 仓,由该仓 lane 推进;gotry 侧等 `hbcli search place --json` 可用即零改动接上(能力层已留降级位)。
 - **M5**:票价(aviationstack 校验层升级);KDE Itinerary 式预订导入(bookedResources 数据源)。
