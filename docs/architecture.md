@@ -80,9 +80,10 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 ## 6. 数据与运行时
 
-- 静态数据包:真实班期(附来源)价格显式标「估算」;金标准用例两枚(洱海=单候选选择,普吉 workation=五段链+工作窗口)。
+> **数据源唯一权威面 = `data-sources.md`**(2026-08-22 立):领域矩阵 × 四层架构(静态包/免费实时/hbcli 桥/OSM 生态) × Google Place 链路(hbcli→search OpenAPI→geography) × 证据链契约 × TREK 参考采纳。本节只留运行时概要。
+
 - 运行时:三条已实证路径——①TS 进程内(自研循环,~6ms/解);②真实 dsh headless+cordis 组合(pi-ai→MiniMax,`ts/cordis.gotry-patch.yml`,68ea364);**(v0.0.1-rc.2 起第三条** Python CLI 桥下线,纯 TS)。环境三件套 `LLM_API_KEY/LLM_BASE_URL/LLM_MODEL`(兼容旧 DEEPSEEK_*)。
-- 复用落地:dsh(import,rc 已对齐)/loopx(import,0.5.1 运行中)/Z3(import,双绑定)/hotelbyte-cli(import+extend,⏳T3)/travel_agent·ai-agent-book·TREK(reference,零代码)。
+- 复用落地:dsh(import,rc 已对齐)/loopx(import,0.5.1 运行中)/Z3(import,双绑定)/hotelbyte-cli(import+extend,place 链路见 data-sources.md §4)/travel_agent·ai-agent-book·TREK(reference,零代码——TREK 数据面模式采纳表见 data-sources.md §5)。
 
 ## 7. 测试与验证策略
 
@@ -150,8 +151,9 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 文档 | 关注点 |
 |---|---|
 | `roadmap.md` | **时间线唯一来源**:M0-M6 里程碑三线视图与旧模型归并 |
+| `data-sources.md` | **数据源唯一权威面**:领域矩阵/四层架构/Google Place 链路/证据链契约/TREK 参考 |
 | `tech-strategy.md` | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测体系/分工/持续优化回路/决策登记 |
-| 本文 | 技术:系统/模块/模型/循环/数据/ADR/演进/债务 |
+| 本文 | 技术:系统/模块/模型/循环/数据概要/ADR/演进/债务 |
 | `gotry-master-outline.md` | 程序:工作分解/复用矩阵/决策门(总纲) |
 | `gotry-product-design.md` | 产品:主循环/透明机制/全成本/共享经验 |
 | `stage1-top-down-design.md` | Stage 1 详细设计与实现序 |
