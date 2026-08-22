@@ -51,66 +51,81 @@
 
 ---
 
-## D-4:hotel-be place 链路 — RegisterInternalService 还是 RegisterService?
+## D-4:hotel-be place 链路 — Anything 复用 + agent-reach 数据集成
 
 **位置**:
-- `hotel-be/geography/service/google_service.go`(Google Places client 已接)
-- `hotel-be/geography/service/interface.go:93`(`InternalExposedMethods` 白名单,加 string 即可)
-- `hotel-be/api/routes.go:75 registerInternalServices`(中央注册点)
-- `hotel-be/api/routes.go:218-222`(已经挂了 `/internal/:service/:method` 路由,只缺 places service 注册)
-- `hotel-be/common/httpdispatcher/internal_dispatch.go:51 RegisterInternalService`(接受任意 method 形态)
-- `hotel-be/common/httpdispatcher/service_dispatcher.go:204 analyzeService`(要求 `(ctx,*Req)(*Resp,error)` 契约)
+-  `hotel-be/search/protocol/keyword.go`(Anything 接口协议 `SearchReq/Resp`)
+- `hotel-be/search/service/geography.go:232 func (s *SearchService) Anything(ctx, *SearchReq) (*SearchResp, error)`(实现)
+- `hotel-be/common/mssvc/client.go`(跨进程 HTTP client;需 Endpoint host:port 配)
+- `hotel-be/common/mssvc/expose.go`(`/internal/*` 是 remote 路径,不是给 gotry 用的)
+- `.shared/skills/agent-reach/SKILL.md` + `references/{search,web}.md`(dsh-side skill 集成,**13 个平台的 CLI 工具集**:ex. `mcporter exa.web_search_exa`、`curl r.jina.ai URL`、`yt-dlp`、`gh search` 等)
 
-**上下**: explorer agent 调研 + 我多次 tick 探场都明确:
-1. geography 已经接了 Google Places v1 + 个人 API key(按次收费)
-2. 白名单+配额封顶是必经之路(个人 key 不能滥用)
-3. `api/` 与 `search/` 都没 place OpenAPI endpoint,**search 模块不能直接挂这条链路**
+**上下**:
+- founder 直觉:**Anything 接口已存在**(search 通用搜索)——可复用,不必新增 Places service
+- **架构岔路**(基于上一轮探索加深):
 
-**架构岔路**(已调查清楚):
+| 选项 | 路径 | 工作量 | 是否依赖酒店-be 部署 |
+|---|---|---|---|
+| **A. Anything → hotel-be 走 mssvc.HTTP** | Gotry spawn curl 调 hotel-be `/internal/search/Anything`(hotel-be service 暴露 `/internal/*` 给 remote mssvc client) | 中:hotel-be 的 `registerInternalServices` 列表需加 `SearchSrv`;gotry spawn/配置 mssvc.Endpoint | **需**——必须有 hotelbe 进程,endpoint host:port 配 .env |
+| **B. Anything → agent-reach CLI** | dsh LLM 直接调 `.shared/skills/agent-reach/` 下的 CLI(exa, gh, r.jina.ai) | 极低:gotry 不写 capability,只往 dsh 系统 prompt 里加 skill 引用 | **不**——LLM 自己用 OS 级 CLI |
+| **C. Anything → LLM 直跳大模型常识** | 不接外部,直接让 LLM 用知识回答 POI 问题 | 零代码 | 不 |
+| **D. Anything → 占位(暂不接)** | 等创始人按 M4 校准数据/种子用户反馈再决定 | 零 | 不 |
 
-| 选项 | 路径 | 形态约束 | 鉴权 | 工作量 |
-|---|---|---|---|---|
-| **A. 走 `RegisterInternalService`**(`/internal/<svc>/<method>`) | geography 新增 PlacesService(`Service.Name()=="places"`)+ routes.go 加注册 | **任意 method 形态**(`(string,bool)`, no-ctx 等等都吃) | **无**(已 internal 组使用,nginx 禁公网) | geography.go 新增 ~150 行 + routes.go 加 1 行 |
-| **B. 走 `RegisterService`**(对外 `/api/v1/places/...`) | master_places_api.go(go-zero rest route)+ JWT 鉴权层 | 必须 `(ctx,*Req)(*Resp,error)` 契约 | **需 RBAC**(公开面要鉴权) | master_places_api.go 新文件 + auth 中间件 + JWKS 配置 |
+**各自 trade-off**:
+- **A**:质量最高(企业级 POI 缓存 + FuzzySearch + ranking 算法),**已经是酒店-be 在跑**
+- **B**:质量中(LLM 知识 + 单次 web 抓取,**单查询 5-10秒,按次付费的可能**),gotry 单用户场景足够
+- **C**:质量次(LLM 容易编造坐标——ADR-10 翻译≠造数禁止)
+- **D**:质量 0(产品面缺失)
 
-**我的建议**: **A (`RegisterInternalService`)**。理由:
-- 与现有 geography `InternalExposedMethods` 同一 transport;register module 现成 dispatcher
-- hbcli-go 通过 `mssvc.Client` 已在用 same route (`/internal/`)— 新增 just one service registration line
-- 个人 API key 的计费/限流在内部层做更简单(产品边界单一)
-- 公开 JWT/RBAC 是产品层 ticket,超出 place 接入范围
+**founder 提示**: "hotel-be 理论上要提供更好的搜索质量"——说明你在意**质量**
 
-**风险**: B 路径未来要从 hotelbyte.com 公开访问 /api/v1/places/search 给一般 web 用户,可以升级;但 gotry 侧 hbcli 直连 hb-geography 的 private 路径已经够用。
+**我的建议**: **A(若你已有 hotel-be 部署)→ B(若 hotel-be 远/不可达) → C 兜底 优先级**
 
-**影响**: 选 A → 下个 tick 一气完成 geography PlacesService + 白名单 + routes.go 注册 + 全仓编译过 → hbcli 加 `search place / search place-reviews` 子命令 → gotry `capabilities/place.ts` 双轨接入。选 B → 工作量 × 2 ~ 3 倍。
+这是 gotry 必须自己解决的**接口契约**,不依赖 founder——但**部署假设需要你拍**:
+1. hotel-be 进程已启动并暴露 `/internal/*` 了?(需要 host:port)
+2. 还是 gotry 是在另一台机器/沙箱,要走 agent-reach CLI?
 
----
-
-## D-5:OpenSky 实时观测的产品定位 — 保留 / 改造 / 拆出?
-
-**位置**:
-- `ts/capabilities/opensky.ts`(上 tick 落地)
-- dsh 工具 `gotry_flight_verify`
-- `docs/data-sources.md:140`(语义: ADS-B 当前快照;OpenSky 匿名路径只支持实时,历史查需鉴权)
-
-**上下**: 上 tick 修产品定位时发现 OpenSky 匿名路径只支持"当前 ADS-B"(/flights/airport 历史查需鉴权)。已把产品语义从"近 7 天历史校验"改为"当前观测命中"。**但** LLM 看来"实时"和"该航班一般几点飞"是两件事——前者回答"现在在天上飞吗",后者回答"今天这个航班排班飞吗"(应查 hbcli 班次+aviationstack)。
-
-**需要你的回**: 拆?
-- **A. 保留 gotry_flight_verify**: 仅"当前 ADS-B 命中",作为 LLM 引用但产品面有限
-- **B. 拆出**: gotry_flight_verify 删,改由 dsh 工具链组合:`hbcli hotel-search` 提供班期表 + 飞机票存在性 + aviationstack(已批 M4)提供实时班次。LLM 不需要"飞机现在在天上"——它需要"我买的票成不成立"。
-
-**我的建议**: B,但需要先把 hbcli 的 hotel/flight 操作们查清楚。M4-1 切到这个。
+**影响**: 选 A → 立刻写 capabilities/hb-anything.ts(400 行,接 mssvc);选 B → 短 skill prompt 改写(零代码,只是改 dsh system-prompt 文件);C 是 fallback 永远有用;D 是我 1 句答复。
 
 ---
 
-## D-6:M3 末最后一件数据源增量 — 是不是还要做 OSM Nominatim 兜底?
+### D-4 子项 D-4a:hbcli 命令 vs 直接 spawn mssvc
 
-**位置**: `docs/data-sources.md:50-51`(已规划,详细能力层未落)
+**上下**: 之前规划 hbcli `search place/place-reviews` 是因为 hotel-be 那侧要走 CLI-bridge。但 Anything 复用后——**Anything 已统一接口**——hbcli 应新增 `search anything "<keyword>" --json`,内部走 mssvc(或 agent-reach 兜底)。
 
-**上下**: hbcli place 链路无论选 D-4 的 A 或 B,Google key 失败/超配额 时必须降级到免费兜底(Nominatim/Overpass)。但 OSM Nominatim 有 fair-use 限制(每秒 1 req,需要 user-agent),NotRateLimit 违规会 IP-ban。
+如果 gotry 直接调 hotel-be mssvc(不走 hbcli)——能省 hbcli 这一层,但失去 hbcli 跨进程抽象 + 跨语言复用价值。
 
-**我建议**: D-4 选了之后再考虑;现阶段占位,优先级低于 OpenSky/hbcli 接入。
+**我建议**: 始终走 hbcli(单一 transport,`gotry-state/incidents.jsonl` 统一事故证据)。
 
 ---
+
+## D-5:OpenSky 实时观测 — 保留 / 拆出 (已上 tick 的再次讨论)
+
+**位置**: `ts/capabilities/opensky.ts`(上 tick 落地)
+
+**当前产品**(上 tick 改完): `gotry_flight_verify(callsign)` = "当前 ADS-B 全球快照中,该 callsign 在不在飞"——**是的**与 place/anything 无关。
+
+**founder 直觉**: "LLM 看来实时与班次是两件事",**现在 Anything 既然保留,飞机班次应走 Anything 的 PlaceType + hotel fallback,不需要实时 ADS-B**。
+
+**候选**:
+- **A. 保留 gotry_flight_verify**(独立工具)
+- **B. 拆出**(ff→工具链组合,hence Anything + airline lookup,无须 ADS-B)
+
+**我建议**: **A 保留 1 个 tick**——独立价值高(航司溯源,班次不能秒级确认真在飞);若 M4 校准发现无场景再拆。
+
+---
+
+## D-6:**Anything 已统一** → OSM Nominatim / Postman OSM 占位降级
+
+**位置**:`docs/data-sources.md:50-51`
+
+**上下**: 在选 D-4 = Anything 之前,想用 OSM Nominatim 兜底;Anything 选定后,LLM/Anything 自己会内部降级,**OSM 补位不是必要**。Nominatim 仍有 fair-use(IP-ban)风险。
+
+**候选**:
+- **A. 删 OSM 计划** — Anything/agent-reach 已统一
+- **B. 作为 Anything 的兜底层**(LLM 失败时落 OSM)
+
+**我建议**: **A — Anything 是兜底本身**,OSM 是兜底的兜底,过度工程,删。
 
 ## 拍板后的 0-day 行动(无新决策,纯执行)
 
