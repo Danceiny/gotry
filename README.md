@@ -35,6 +35,7 @@ cd ts && npx tsx scripts/replay-real.ts
 |---|---|
 | `docs/roadmap.md` | **时间线唯一来源**:M0-M6 里程碑与当前位置 |
 | `docs/architecture.md` | **技术权威面**:系统/五层/代码地图/统一模型/循环/数据/ADR(§8)/演进/债务 |
+| `docs/tech-strategy.md` | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测/分工/决策登记 |
 | `docs/gotry-master-outline.md` | 总纲:工作分解/复用矩阵/决策门 |
 | `docs/gotry-product-design.md` | 产品:主循环/透明机制/全成本/共享经验层 |
 | `docs/stage1-top-down-design.md` | Stage 1 详细设计与实现序(mock 先行) |

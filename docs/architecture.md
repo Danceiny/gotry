@@ -87,7 +87,10 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 ## 7. 测试与验证策略
 
-双实现差分(TS 生产 vs Python oracle,同输入判定一致)+ 金标准断言(洱海 8+5、普吉链 4、统一模型 20/20)+ **重放夹具**(S2 的 mock 重放即行为级回归,Kimi 对话是失败基线)。全栈入口:`scripts/run-all-tests.sh`。
+**评测三层(ADR-11)**:
+- **回归层(防退化)**:双实现差分(TS 生产 vs Python oracle,同输入判定一致)+ 金标准断言(洱海 8+5、普吉链 4、统一模型 20/20)+ **重放夹具**(mock 重放即行为级回归,Kimi 对话是失败基线)。全栈入口:`scripts/run-all-tests.sh`。
+- **质量层(防漂移)**:评测集+指标面板——POI 幻觉率、定稿率、不失望四条、NPS;M3 上线(见 `tech-strategy.md` §4),此前以 replay 终态断言兜底。
+- **巡检层(防「mock 绿而真智能烂」)**:真 LLM 重放(`replay-real.ts`)转 nightly,带预算闸;ADR-10 正是 mock 绿而真 LLM 烂出来的,教训制度化。
 
 ## 8. ADR
 
@@ -105,6 +108,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 8 | mock-LLM 先行 | 等 API key(伪阻塞) | S4 完成后 mock 留作回归夹具(已兑现) | `ts/src/mock-llm.ts`;`ts/scripts/replay.ts` |
 | 9 | 访谈确定性(缺失字段驱动) | LLM 即兴(Kimi 病根) | 永不复审 | `loop.ts interviewNext`;replay 夹具(首轮问出工作窗口) |
 | 10 | 翻译≠造数:LLM 只产骨架与锚点,班次数据永远来自能力层(数据包→实时API);spec 校验闸兜底 | 让 LLM 直接产出完整 spec(实测:MiniMax-M2 编不出时刻,要么编造要么卡死) | 永不复审 | `loop.ts validateSpec`;`dsh-llm.ts SKELETON_SYSTEM`;`replay-real.ts` |
+| 11 | 评测分层进架构:回归层(单元/差分/重放)防退化、质量层(评测集+指标面板)防漂移、巡检层(nightly 真 LLM 重放带预算闸)防「mock 绿而真智能烂」;M-exit 必过对应层级 | 只靠重放夹具(质量漂移无感)/事后补评测工具(指标不进架构等于不存在) | M3 exit 指标面板上线后复审一次 | `run-all-tests.sh`;replay 三件套;`tech-strategy.md` §4 |
 
 ## 9. 演进(时间线唯一来源= `roadmap.md` 的 M0-M6;此处只保留原则与现状)
 
@@ -146,6 +150,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 文档 | 关注点 |
 |---|---|
 | `roadmap.md` | **时间线唯一来源**:M0-M6 里程碑三线视图与旧模型归并 |
+| `tech-strategy.md` | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测体系/分工/持续优化回路/决策登记 |
 | 本文 | 技术:系统/模块/模型/循环/数据/ADR/演进/债务 |
 | `gotry-master-outline.md` | 程序:工作分解/复用矩阵/决策门(总纲) |
 | `gotry-product-design.md` | 产品:主循环/透明机制/全成本/共享经验 |
