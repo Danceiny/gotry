@@ -16,7 +16,7 @@
 
 ```
 L1 交互:对话即界面(gates 以消息内选择题呈现;独立 UI 属 Stage 1 后)
-L2 编排:对话循环 ts/src/loop.ts —— LlmPort(mock✅/真dsh⏳) + 确定性访谈 + 求解挂载
+L2 编排:对话循环 ts/src/loop.ts —— LlmPort(mock✅/真✅ provider-neutral) + 确定性访谈 + 求解挂载
     └ dsh 插件 gotry-tools ts/src/index.ts(已对齐已发布 rc API,smoke 绿)
 L3 领域:统一行程模型 ts|py unified.* —— Segment/Option/锚点/工作窗口/时区
     └ 可行性引擎:Z3 选择 + 命名约束 + unsat core 归因 + Optimize 最优
@@ -82,7 +82,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 ## 6. 数据与运行时
 
 - 静态数据包:真实班期(附来源)价格显式标「估算」;金标准用例两枚(洱海=单候选选择,普吉 workation=五段链+工作窗口)。
-- 运行时:TS 进程内为主(单次求解 ~6ms),Python CLI 桥为 oracle 回退(~240ms,延迟落日志);dsh 组合见 `ts/cordis.example.yml`(真 LLM 需 DEEPSEEK_API_KEY)。
+- 运行时:TS 进程内为主(单次求解 ~6ms),Python CLI 桥为 oracle 回退(~240ms,延迟落日志);dsh 组合见 `ts/cordis.example.yml`(真 LLM 经 env 三件套 `LLM_API_KEY/LLM_BASE_URL/LLM_MODEL`,默认 MiniMax-M2,兼容旧 DEEPSEEK_* 别名)。
 - 复用落地:dsh(import,rc 已对齐)/loopx(import,0.5.1 运行中)/Z3(import,双绑定)/hotelbyte-cli(import+extend,⏳T3)/travel_agent·ai-agent-book·TREK(reference,零代码)。
 
 ## 7. 测试与验证策略
@@ -108,7 +108,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 原则:**不跳阶段,不提前优化下阶段的事**;每阶段 Entry/Exit/gate 见 roadmap。旧 Stage 0-4 与总纲 Phase、产品 M1-M3 已归并映射到 M0-M6(映射表在 roadmap)。
 
-- **Stage 0 确定性管道 ✅**;**Stage 1 LLM 进环**:S2 mock 切片 ✅、S3 求解挂载 ✅、S5 架构段(异步会话形态)✅;余 S1 契约走查(等创始人)、S4 真 LLM(等 DEEPSEEK_API_KEY)、S5 后半(loopx tick 驱动)。Exit:一句自然语言进、对话级规划出,全程无人代劳。
+- **Stage 0 确定性管道 ✅**;**Stage 1 LLM 进环 ✅(M1 exit 2026-08-22,`bb880f3`)**:S2 mock 切片 ✅、S3 求解挂载 ✅、S4 真 LLM ✅(MiniMax-M2 通过 `replay-real.ts` 重放,过程中诞生 ADR-10)、S5 架构段(异步会话形态)✅;结转:S1 契约走查(等创始人,转 M2 Entry)、S5 后半(loopx tick 驱动,挂 M3)。Exit 已达成:一句自然语言进、对话级规划出,全程无人代劳。
 - Stage 2 实时数据(静态包退役)→ Stage 3 记忆与「下一次出发」(对账十题为首批校准样本)→ Stage 4 B2B 包裹(principal/sponsor,99% 复用实测)。不跳阶段。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)

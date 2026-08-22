@@ -1,0 +1,37 @@
+# GoTry 工具叠加层:官方 headless profile 之上插入 gotry-tools,并把 llm 指向 MiniMax
+# 用法(在 ts/dsh-runtime 下):
+#   DEEPSEEK_API_KEY=<minimax> DEEPSEEK_BASE_URL=https://api.minimax.io/v1 \
+#     node node_modules/@deepseek-ai/dsh/lib/bin.js --profile headless \
+#     --patch ../cordis.gotry-patch.yml "<任务>"
+- insert:
+    - id: gotry-tools
+      # 官方要求本地插件绝对路径
+      name: '/Users/bytedance/work/gotry/ts/src/index.ts'
+      config:
+        pythonBin: '../../.venv/bin/python'
+        pythonPath: '../../py'
+        stateRoot: '.'
+        timeoutMs: 30000
+        preferInProcess: true
+# pi-ai 直接接管 llm-deepseek 行(整行替换:name+config)
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      minimax:
+        displayName: MiniMax
+        apiKeyEnv: MINIMAX_API_KEY
+        api: openai-completions
+        baseURL: https://api.minimax.io/v1
+        models:
+          - id: MiniMax-M2
+            name: MiniMax M2
+            contextWindow: 196608
+            maxTokens: 131072
+            reasoningEfforts:
+              off:
+# base bundle 的 agent-default-model 行(dsh-base cordis.patch.yml:63)默认 deepseek-v4-flash——按 id 覆盖为 MiniMax-M2
+- id: agent-default-model
+  config:
+    provider: minimax
+    model: MiniMax-M2

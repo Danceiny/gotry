@@ -11,3 +11,5 @@ async_result.json
 .venv-loopx/
 
 .env
+.zcode/
+ts/dsh-runtime/

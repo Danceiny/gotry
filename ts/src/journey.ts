@@ -8,7 +8,8 @@
  */
 
 import { init } from 'z3-solver'
-import { Service, hhmmToMin, minToHhmm } from './model.ts'
+import type { Service } from './model.ts'
+import { hhmmToMin, minToHhmm } from './model.ts'
 
 export interface JourneyLegSpec {
   id: string
