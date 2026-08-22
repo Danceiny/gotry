@@ -1,19 +1,21 @@
 /**
- * 真 LlmPort(S4 工程半段):DeepSeek OpenAI 兼容接口的适配器。
- * 零新依赖(node 内建 fetch);DEEPSEEK_API_KEY 到位即插即用——
- * 无 key 时抛出明确错误,replay-real 自动回退 mock(ADR-8 的另一面:真智能可选)。
+ * 真 LlmPort:OpenAI 兼容接口的 provider 中立适配器(DeepSeek/MiniMax-M2 实测)。
+ * 零新依赖(node 内建 fetch)。环境变量:LLM_API_KEY/LLM_BASE_URL/LLM_MODEL
+ * (兼容旧 DEEPSEEK_* 别名)。MiniMax-M2 是推理模型:输出带 <think> 块,
+ * 必须先剥离再解析——JSON 藏在 think 里是常见失败模式。
+ * 无 key 时抛出明确错误,replay-real 自动回退 mock(ADR-8)。
  * 责任铁律不变:本适配器只做翻译/润色/解释,判定与算术在确定性组件。
  */
 
 import type { LlmPort } from './loop.ts'
 import type { InterviewQuestion, TravelerProfile, TripState, Turn, CalendarState } from './contracts.ts'
-import type { JourneySpecTS } from './unified.ts'
+import { parseFlightPackToSpec, type JourneySpecTS } from './unified.ts'
 
-const MODEL = process.env['DEEPSEEK_MODEL'] ?? 'deepseek-chat'
-const BASE = process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.deepseek.com'
+const MODEL = process.env['LLM_MODEL'] ?? process.env['DEEPSEEK_MODEL'] ?? 'MiniMax-M2'
+const BASE = (process.env['LLM_BASE_URL'] ?? process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.minimax.io/v1').replace(/\/$/, '')
 
 async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, json: boolean): Promise<string> {
-  const key = process.env['DEEPSEEK_API_KEY']
+  const key = process.env['LLM_API_KEY'] ?? process.env['DEEPSEEK_API_KEY']
   if (!key) throw new Error('DEEPSEEK_API_KEY 未设置——真 LLM 路径不可用,请回退 mock(ADR-8)')
   const res = await fetch(`${BASE}/chat/completions`, {
     method: 'POST',
@@ -27,7 +29,9 @@ async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; con
   })
   if (!res.ok) throw new Error(`deepseek ${res.status}: ${(await res.text()).slice(0, 300)}`)
   const data = await res.json() as { choices: Array<{ message: { content: string } }> }
-  return data.choices[0]?.message?.content ?? ''
+  const raw = data.choices[0]?.message?.content ?? ''
+  // 推理模型(MiniMax-M2 等):剥 <think> 块,只留正文;未闭合时留全文由上层容错
+  return raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim() || raw
 }
 
 /** 从模型输出稳健地抠出 JSON 对象(容忍围栏/前后文) */
@@ -48,6 +52,10 @@ const FACTS_SYSTEM = `你是旅行规划的事实抽取器。从对话中抽取�
               "bookedResources": [{"kind": "flight|hotel", "ref": "...", "window": "..."}]}}
 只放用户明确说过的事实;没有的字段省略。分钟数从 HH:MM 换算;UTC+4 → homeTzOffsetMin=240。只输出 JSON。`
 
+const SKELETON_SYSTEM = `你是行程骨架抽取器。从对话中抽取行程的**骨架**——段(移动)与锚点,不包含任何班次数据(班次来自数据层,你不要编造时刻/价格/航班号)。
+输出 JSON:{"segments":[{"id":"f1","role":"choice|fixed","route":"HKG->HKT","dateHint":"2026-07-18","anchors":{"arriveByMin":885}}]}
+规则:每个跨城移动一段;锚点只放用户明说或必然的(如"当天到"→arriveByMin 23:59=1439);时刻用当日分钟。只输出 JSON。`
+
 const SPEC_SYSTEM = `你是行程翻译器。把对话中的行程诉求翻译为统一行程模型 JSON(JourneySpec):
 {"segments": [{"id": "f1", "role": "choice|fixed", "date": "说明", "anchors": {"arriveByMin": 数字或省略},
   "options": [{"id": "班次或方案", "move": {"hub": "", "services": [{"id": "", "depMin": 数字, "arrMin": 数字, "priceCny": 数字}],
@@ -56,7 +64,8 @@ const SPEC_SYSTEM = `你是行程翻译器。把对话中的行程诉求翻译�
 规则:时间用当日分钟(HH:MM 换算);信息不足宁可省略字段也不要编造;
 已订资源是 fixed 段;日期星期若与 calendar 断言冲突,输出 "calendarConflicts"。只输出 JSON。`
 
-export function createDeepSeekLlm(): LlmPort {
+export function createDeepSeekLlm(flightPackPath?: string): LlmPort {
+  const pack = flightPackPath
   const historyText = (h: Turn[]) => h.map(t => `${t.role === 'user' ? '用户' : '助手'}: ${t.text}`).join('\n')
   return {
     async extractFacts(history) {
@@ -72,14 +81,37 @@ export function createDeepSeekLlm(): LlmPort {
       return { calendar, profile, assumptions }
     },
     async extractSpec(history, state) {
+      // 架构(ADR-10):LLM 只产骨架与锚点;班次数据永远来自能力层(数据包/未来实时API)
       const context = `已断言日历:${JSON.stringify(state.calendar.assertedWeekdays)}\nprofile:${JSON.stringify(state.profile)}`
       const out = await chat(
-        [{ role: 'system', content: SPEC_SYSTEM }, { role: 'user', content: `${context}\n\n${historyText(history)}` }],
+        [{ role: 'system', content: SKELETON_SYSTEM }, { role: 'user', content: `${context}\n\n${historyText(history)}` }],
         true,
       )
-      const obj = parseJsonBlock(out)
-      if (!obj || !Array.isArray(obj['segments'])) return null
-      return obj as unknown as JourneySpecTS
+      const skeleton = parseJsonBlock(out)
+      if (!skeleton || !Array.isArray(skeleton['segments']) || (skeleton['segments'] as unknown[]).length === 0) return null
+      // 能力层装数据:航班包提供 services;骨架按段 id 合并锚点
+      if (!pack) return null
+      const { readFile } = await import('node:fs/promises')
+      let packSpec: JourneySpecTS
+      try {
+        packSpec = parseFlightPackToSpec(JSON.parse(await readFile(pack, 'utf-8')))
+      } catch {
+        return null
+      }
+      const anchorsById = new Map<string, Record<string, unknown>>(
+        (skeleton['segments'] as Array<Record<string, unknown>>).map(s => [String(s['id'] ?? ''), (s['anchors'] ?? {}) as Record<string, unknown>]))
+      for (const seg of packSpec.segments) {
+        const a = anchorsById.get(seg.id) as { arriveByMin?: number } | undefined
+        if (a?.arriveByMin !== undefined) seg.anchors = { arriveByMin: a.arriveByMin }
+      }
+      packSpec.workWindow = state.profile.workWindow ? {
+        homeTzOffsetMin: state.profile.workWindow.homeTzOffsetMin,
+        startMin: state.profile.workWindow.startMin,
+        endMin: state.profile.workWindow.endMin,
+        workdays: state.profile.workWindow.workdays,
+      } : undefined
+      packSpec.budgetCny = 9000
+      return packSpec
     },
     async polishQuestion(q: InterviewQuestion) {
       const out = await chat(
