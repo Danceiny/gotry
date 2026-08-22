@@ -1,5 +1,6 @@
 /**
  * Multi-leg 行程引擎 TS 版(与 py/gotry_feasibility/journey.py 对齐;Python 为 oracle)。
+ * DEPRECATED(D-1 清偿):统一模型(unified.ts)是唯一求解入口;保留为兼容层与差分 oracle。
  *
  * 每 leg 选一个班次,锚点(arrive_by/depart_after/wake_floor)为命名约束;
  * 无解读 unsat core,逐锚点放宽重解给方案。红眼段用睡眠模型
