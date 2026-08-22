@@ -24,6 +24,7 @@ import { parseCandidate, parseRequest } from './model.ts'
 import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards } from '../capabilities/incident-log.ts'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
+import { verifyFlight } from '../capabilities/opensky.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -335,5 +336,50 @@ export function apply(ctx: Context, config: Config): void {
       })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `天气:${String((args.query as { place?: string })?.place ?? '')}`, kind: 'other', rawInput: args.query }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'gotry_flight_verify',
+    description:
+      'Verify whether a flight callsign is currently observable on the OpenSky ADS-B network. '
+      + 'Free anonymous API (~400 credits/day, 4 req/s burst). Three-valued semantics: '
+      + 'observed = strong positive (the aircraft is currently being broadcast); '
+      + 'not_observed = no conclusion (ADS-B coverage is limited by geography/altitude — '
+      + 'a missing signal does NOT disprove the flight); '
+      + 'unavailable = API failure, gracefully degraded. '
+      + 'Use to ground "is this flight actually flying right now?" in real data, complementing '
+      + 'the OpenFlights skeleton (historical connectivity) and the static flight pack (planned schedule).',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ callsign: "EK329", airport?: "OMDB", timeoutMs?: 10000 }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 500)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = (args.query ?? {}) as { callsign: string; airport?: string; timeoutMs?: number }
+      const started = Date.now()
+      if (!q.callsign) {
+        return JSON.parse(JSON.stringify({ verdict: 'unavailable', evidence: '[校验不可用:无 callsign]', summary: 'callsign 必填' })) as Record<string, never>
+      }
+      const r = await verifyFlight({ callsign: q.callsign, airport: q.airport, timeoutMs: q.timeoutMs })
+      const dir = await ensureStateDir(config.stateRoot)
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `flight_verify:${r.via}`).catch(() => {})
+      const summary = r.verdict === 'observed'
+        ? `${r.callsign} 当前 ADS-B 观测命中 (${r.hits?.length ?? 0} 架)${r.airport ? ` 在 ${r.airport}` : ''}\n${r.evidence}`
+        : r.verdict === 'not_observed'
+          ? `${r.callsign} 当前观测列表未见(ADS-B 覆盖有限,不否定该航班存在)\n${r.evidence}`
+          : `${r.callsign} OpenSky 不可用:${r.error}\n${r.evidence}`
+      return JSON.parse(JSON.stringify({
+        verdict: r.verdict, callsign: r.callsign, airport: r.airport,
+        sample_size: r.sampleSize, hits: r.hits, evidence: r.evidence, summary,
+        latency_ms: Date.now() - started,
+      })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `飞行校验:${String((args.query as { callsign?: string })?.callsign ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 }
