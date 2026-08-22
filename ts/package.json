@@ -13,8 +13,7 @@
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/schemastery": "*",
-    "z3-solver": "^5.2.0",
-    "zod": "^3.23.0"
+    "z3-solver": "^5.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

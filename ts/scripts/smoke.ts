@@ -66,8 +66,6 @@ async function main() {
 
   // 3) wish pool:把不可行的憧憬连同成行条件放入「下一次出发」
   const wish = byName('gotry_wish_pool_add')
-  const dali = (JSON.parse(JSON.stringify(payload.verdicts ?? [])) as unknown[])
-  void dali
   const added = await wish.execute({
     entry: {
       name: '大理·洱海',
