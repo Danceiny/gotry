@@ -1,7 +1,7 @@
 # GoTry 发版记录
 
 > 每个 tag 一条:内容、证据、闸勾稽。发布闸(AGENTS.md):① 全栈回归绿 ② §11 六状态面同步 ③ README 用法逐条实测 ④ License 明确 ⑤ 版本号在 tag 与全部文档间一致。
-> 对外推送(remote)与 License 未定前,所有 tag 仅为本地候选。
+> **v0.0.1-rc.1 起**:remote = github.com/Danceiny/gotry(private);License 沿用 rc 历史「未决」,本 tick 未变更。
 
 ## v0.0.1-rc.1(annotated tag,2026-08-22)
 
@@ -46,7 +46,7 @@
 - D-7 剩余尾债: `py/gotry_demo/build_plan.py`(demo 离线工具)仍调 `journey.solve_journey`
 - z3 WASM multi-Context race: 三个模块各自 z3Promise 时连续跑会偶发 `memory access out of bounds`(本次回滚了 unified 共用单例改动,会触发 Context mismatch 副作用;债务保留为待审)
 - M4 校准输入等待(创始人)
-- remote & License 决策等待
+- ~~remote & License 决策~~ → 2026-08-22 推 github.com/Danceiny/gotry(private);License 仍待决
 
 ---
 
