@@ -19,6 +19,13 @@ cd gotry
 - `v0.0.1-rc2` — **当前 RC**:加薄壳 `./gotry shell`、Markdown 渲染、UX 补齐
 - `main` — 开发分支(本仓库只有一个主分支,没有 dev/staging)
 
+## 直接用(服务已在跑)
+
+→ **http://127.0.0.1:4080**(GoTry 薄壳,推荐)
+→ http://127.0.0.1:3080(dsh 运行时,进阶)
+
+完整指南: [docs/user-guide.md](docs/user-guide.md) — 三个试一试场景/数字解读/FAQ
+
 ## 它能做什么
 
 | 你说 | GoTry 做 |
