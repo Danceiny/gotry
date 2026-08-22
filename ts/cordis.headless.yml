@@ -1,0 +1,57 @@
+# GoTry × dsh 真实运行时组合(M2 第一项:创始人指出的未完成验证)
+# 形态参照 dsh 官方 headless 示例;两处改造:
+#   1) llm-deepseek 经 DEEPSEEK_BASE_URL 指向 MiniMax(api.minimax.io/v1),
+#      DEEPSEEK_API_KEY=MiniMax key(.env),模型表列 MiniMax-M2
+#   2) gotry-tools 以本地路径尝试加载(cordis 传统支持相对路径;若 rc 不支持,
+#      备选=把 ts/src 打成本地包或经 dsh-mcp-client 暴露——见循环注记)
+# 运行(在 ts/ 下,需先 source ../.env 导出 DEEPSEEK_*):
+#   npx dsh --profile headless "…"
+
+- id: settings
+  name: '@deepseek-ai/dsh-settings-file'
+
+- id: credentials
+  name: '@deepseek-ai/dsh-credentials-local'
+
+- id: llm-deepseek
+  name: '@deepseek-ai/dsh-llm-deepseek'
+  config:
+    thinking: enabled
+    reasoningEffort: max
+    models:
+      - id: MiniMax-M2
+        contextWindow: 128000
+
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-local'
+
+- id: bash
+  name: '@deepseek-ai/dsh-bash-local'
+
+- id: agent-spine
+  name: '@deepseek-ai/dsh-agent-spine-demo'
+
+- id: persistence
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+
+- id: checkpoint-policy
+  name: '@deepseek-ai/dsh-session-checkpoint-policy'
+
+- id: token-meter
+  name: '@deepseek-ai/dsh-token-meter'
+
+- id: compaction-basic
+  name: '@deepseek-ai/dsh-compaction-basic'
+
+- id: session-projection
+  name: '@deepseek-ai/dsh-session-projection'
+
+# GoTry 领域插件(本地路径加载尝试;失败则记 ADR 待决:本地包化 vs MCP 暴露)
+- id: gotry-tools
+  name: './src/index.ts'
+  config:
+    pythonBin: '../.venv/bin/python'
+    pythonPath: '../py'
+    stateRoot: '.'
+    timeoutMs: 30000
+    preferInProcess: true
