@@ -70,6 +70,59 @@ export function interviewNext(state: TripState): { questions: InterviewQuestion[
 /** 求解端口:S3 起由 unified 求解器实现;循环只认此签名(确定性责任)。 */
 export type SolvePort = (spec: JourneySpecTS) => Promise<SolveResult>
 
+// ---- 异步深度规划(S5 架构段,ADR-8:编排架构先于智能) ----------------------------
+// 产品形态:复杂规划 → 「我后台做,约一小时后回来看看」→ 回访时交付
+// 已验证方案 + 选择题。不失望四条是交付物的自检契约。
+
+export interface AsyncTicket {
+  id: string
+  objective: string
+  requestedAt: string
+  /** 剧本/mock 期用分钟级;真实化(S5 后半段)由 loopx tick 驱动 */
+  etaLabel: string
+}
+
+export function isComplex(state: TripState): boolean {
+  /** 复杂度判据(架构占位,后续可细化):多段或多约束即深规划 */
+  const p = state.profile
+  return Boolean(p.workWindow && p.bookedResources) && (state.gates.length > 0 || Boolean(state.spec))
+}
+
+export async function requestDeepPlanning(state: TripState): Promise<{ reply: string; ticket: AsyncTicket }> {
+  const ticket: AsyncTicket = {
+    id: `dp-${Date.now().toString(36)}`,
+    objective: '生成已验证的行程方案:全成本核算 + 动机/约束匹配 + 不失望四条',
+    requestedAt: new Date().toISOString(),
+    etaLabel: '约 1 小时(mock 期:秒级)',
+  }
+  state.gates.push({ id: `async-${ticket.id}`, question: `深度规划已启动(${ticket.etaLabel})`, options: [] })
+  const reply = '这趟行程跨度大(两周 workation + 三城 + 红眼返程),我切到**深度规划模式**:后台做多轮校验'
+    + '(锚点/工作窗口/全成本/负例排查),做好后通知你。**先留一道选择题给你**,回来直接定:'
+    + '\n1. 预算档位?(经济/舒适/便利优先)'
+  return { reply, ticket }
+}
+
+export async function collectDeepPlanning(
+  state: TripState,
+  ticket: AsyncTicket,
+  solve: SolvePort,
+): Promise<{ reply: string; state: TripState }> {
+  const spec = state.spec
+  if (!spec) return { reply: '(内部状态缺失 spec——深度规划未就绪,这是不应发生的路径)', state }
+  state.solve = await solve(spec)
+  state.gates = state.gates.filter(g => !g.id.startsWith('async-'))
+
+  // 不失望四条自检(交付物自带,总纲 3.6)
+  const checks = {
+    '1_承诺时间后必有明确产物': Boolean(state.solve.legs?.length || state.solve.verdicts?.length),
+    '2_产物通过自检清单': state.solve.feasible ? (state.solve.legs?.every(l => (l as Record<string, unknown>)['energy_pct'] !== undefined) ?? false) : Boolean(state.solve.unsat_core?.length),
+    '3_待决问题全部是简单选择题': state.gates.every(g => g.id === 'budget' || g.options.length >= 2),
+    '4_做不到的诚实说': state.solve.feasible || Boolean(state.solve.suggestions?.length),
+  }
+  const head = `# 回访交付:${ticket.objective}\n(工单 ${ticket.id},不失望四条:${Object.values(checks).every(Boolean) ? '4/4 ✅' : '有未达项 ❌'})`
+  return { reply: `${head}\n\n${renderSolve(state)}`, state }
+}
+
 /** 求解结果 → 人话(模板;S4 可由 LLM 润色,数字与判定不可改) */
 export function renderSolve(state: TripState): string {
   const s = state.solve
