@@ -100,6 +100,25 @@ class TestAdapters(unittest.TestCase):
         self.assertFalse(r2["feasible"])
         self.assertIn("total:budget", r2["unsat_core"])
 
+    def test_work_window_forces_saturday_morning(self):
+        """M-1:工作窗口排除工作日窗口内起飞的班次,gate q3 被确定性回答。"""
+        spec = segments_from_flight_pack(self.pack)
+        spec.budget_cny = 9000
+        r = solve_unified(spec)
+        excluded = {(e["segment"], e["option"]) for e in r["work_window_exclusions"]}
+        self.assertIn(("f2", "TG216"), excluded)   # 周五 16:55 在当地 13:00-22:00 内
+        self.assertIn(("f2", "TG218"), excluded)   # 周五 19:15 同理
+        f2 = next(l for l in r["legs"] if l["leg"] == "f2")
+        self.assertEqual(f2["service"], "VZ303")   # 只剩周六早班——与真实选择一致
+
+        # 无工作窗口时(关掉约束),周五班恢复可选
+        spec2 = segments_from_flight_pack(self.pack)
+        spec2.work_window = None
+        r2 = solve_unified(spec2)
+        self.assertEqual(r2["work_window_exclusions"], [])
+        f2b = next(l for l in r2["legs"] if l["leg"] == "f2")
+        self.assertIn(f2b["service"], {"TG216", "TG218", "VZ303"})
+
     def test_candidate_shape_equivalence_with_legacy_engine(self):
         """步2b 对账:洱海经统一模型 vs 旧 engine——判定集合、推荐、wish 条件一致。"""
         candidates = [Candidate.from_dict(c) for c in self.erhai["candidates"]]
