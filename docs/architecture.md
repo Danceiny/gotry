@@ -17,7 +17,7 @@
 ```
 L1 交互:对话即界面(gates 以消息内选择题呈现;独立 UI 属 Stage 1 后)
 L2 编排:对话循环 ts/src/loop.ts —— LlmPort(mock✅/真✅ provider-neutral) + 确定性访谈 + 求解挂载
-    └ dsh 插件 gotry-tools ts/src/index.ts(已对齐已发布 rc API,smoke 绿)
+    └ dsh 插件 gotry-tools:✅ 已在真实 dsh 0.1.1-rc.1 headless 运行时端到端(68ea364)——模型经 pi-ai(MiniMax-M2)主动调用 gotry_feasibility_check 并引用引擎数字;组合见 ts/cordis.gotry-patch.yml
 L3 领域:统一行程模型 ts|py unified.* —— Segment/Option/锚点/工作窗口/时区
     └ 可行性引擎:Z3 选择 + 命名约束 + unsat core 归因 + Optimize 最优
 L4 数据:静态数据包 data/*.json(真实班期+估算价,证据标注)+ 金标准用例
@@ -82,7 +82,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 ## 6. 数据与运行时
 
 - 静态数据包:真实班期(附来源)价格显式标「估算」;金标准用例两枚(洱海=单候选选择,普吉 workation=五段链+工作窗口)。
-- 运行时:TS 进程内为主(单次求解 ~6ms),Python CLI 桥为 oracle 回退(~240ms,延迟落日志);dsh 组合见 `ts/cordis.example.yml`(真 LLM 经 env 三件套 `LLM_API_KEY/LLM_BASE_URL/LLM_MODEL`,默认 MiniMax-M2,兼容旧 DEEPSEEK_* 别名)。
+- 运行时:三条已实证路径——①TS 进程内(自研循环,~6ms/解);②真实 dsh headless+cordis 组合(pi-ai→MiniMax,`ts/cordis.gotry-patch.yml`,68ea364);③Python CLI 桥(oracle 回退,~240ms)。环境三件套 `LLM_API_KEY/LLM_BASE_URL/LLM_MODEL`(兼容旧 DEEPSEEK_*)。
 - 复用落地:dsh(import,rc 已对齐)/loopx(import,0.5.1 运行中)/Z3(import,双绑定)/hotelbyte-cli(import+extend,⏳T3)/travel_agent·ai-agent-book·TREK(reference,零代码)。
 
 ## 7. 测试与验证策略
