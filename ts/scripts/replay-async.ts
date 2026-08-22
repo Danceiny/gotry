@@ -34,8 +34,13 @@ console.log('用户> (约束齐备,行程复杂)\n')
 console.log(`GoTry> ${asyncReply}\n`)
 console.log(`(工单已持久化:${saved}——任意后续进程可执行回收)\n`)
 
-// 模拟一小时(mock 期秒级)——真实形态:另一个进程/loopx tick 执行 async-collect
-console.log('……(一小时后,另一个进程执行回收)……\n')
-const { reply: deliverable } = await collectDeepPlanning(state, ticket, solveUnified as never)
-console.log(`GoTry> ${deliverable}`)
-console.log(`\n(真实形态命令:npx tsx scripts/async-collect.ts ${ticket.id})`)
+// --request-only:只请求不回收(种一张待回收工单,供调度器/下一进程实证)
+if (process.argv.includes('--request-only')) {
+  console.log(`(request-only 模式结束;回收命令:npx tsx scripts/async-collect.ts ${ticket.id})`)
+} else {
+  // 模拟一小时(mock 期秒级)——真实形态:另一个进程/loopx tick 执行 async-collect
+  console.log('……(一小时后,另一个进程执行回收)……\n')
+  const { reply: deliverable } = await collectDeepPlanning(state, ticket, solveUnified as never)
+  console.log(`GoTry> ${deliverable}`)
+  console.log(`\n(真实形态命令:npx tsx scripts/async-collect.ts ${ticket.id})`)
+}
