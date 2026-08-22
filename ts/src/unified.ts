@@ -6,6 +6,7 @@
  */
 
 import { init } from 'z3-solver'
+import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import type { Service } from './model.ts'
 import { hhmmToMin, minToHhmm } from './model.ts'
 import type { LegReport } from './journey.ts'
@@ -67,6 +68,8 @@ export interface SegmentTS {
   role: 'choice' | 'fixed'
   note?: string
   date?: string
+  /** 城市对提示("HKG->HKT"),骨架层通航校验用 */
+  route?: string
   anchors?: AnchorsSpec
   options: SegmentOptionTS[]
 }
@@ -77,6 +80,8 @@ export interface JourneySpecTS {
   budgetCny?: number
   defaultWakeFloorMin?: number
   workWindow?: WorkWindowSpec
+  /** 骨架层开关(§7-1):true 时对带 route 提示的段做通航性三值标注 */
+  skeletonHub?: boolean
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -197,10 +202,22 @@ export async function solveUnified(spec: JourneySpecTS): Promise<{
   unsat_core?: string[]
   suggestions?: Array<{ relax: string; money_cny: number }>
   work_window_exclusions?: Array<{ segment: string; option: string; reason: string }>
+  skeleton_notes?: string[]
 }> {
   // M-1:求解前的工作窗口确定性预过滤(与 py 对齐),排除理由入记录
+  // 骨架层(§7-1):三值语义标注——枢纽间否定只降权不排除(骨架滞后会错杀 EK329)
+  const skeletonNotes: string[] = []
   const exclusions: Array<{ segment: string; option: string; reason: string }> = []
   for (const seg of spec.segments) {
+    if (spec.skeletonHub) {
+      // 段级骨架查询:route 提示(如 "HKG->HKT")优先,否则跳过
+      const route = (seg as SegmentTS & { route?: string }).route
+      if (route) {
+        const [a, b] = route.split('->').map(s => s.trim())
+        const verdict = await checkConnectivity(a, b)
+        skeletonNotes.push(`${seg.id}: ${verdict.evidence}`)
+      }
+    }
     const kept = seg.options.filter(o => {
       const reason = workWindowBlocks(spec, o)
       if (reason) exclusions.push({ segment: seg.id, option: o.id, reason })
@@ -277,7 +294,7 @@ export async function solveUnified(spec: JourneySpecTS): Promise<{
     const redFlags = legs
       .filter(l => spec.segments.find(sg => sg.id === l.leg)?.options.some(o => o.move?.redEye) && l.energy_pct < 50)
       .map(l => `${l.leg} 落地精力仅 ${l.energy_pct}%(红眼后直奔事务,当日不宜安排重要会议)`)
-    return { feasible: true, money_cny: money, legs, red_flags: redFlags, work_window_exclusions: exclusions }
+    return { feasible: true, money_cny: money, legs, red_flags: redFlags, work_window_exclusions: exclusions, skeleton_notes: skeletonNotes.length ? skeletonNotes : undefined }
   }
 
   const core = coreOf(s).sort()
