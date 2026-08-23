@@ -161,7 +161,7 @@
 
 ### agent-reach 100% follow(founder:「100% follow、import agent-reach」)
 
-- **CLI 真装**: `.venv-reach/`(python3.11)装上游 **Panniantong/Agent-Reach v1.5.0**(MIT, 74k★);`agent-reach doctor` 真跑(本机 4/15 渠道 ready: web/rss/v2ex/bilibili)
+- **CLI 真装**: `.venv/`(python3.11 单 venv)装上游 **Panniantong/Agent-Reach v1.5.0**(MIT, 74k★);`agent-reach doctor` 真跑(本机 4/15 渠道 ready: web/rss/v2ex/bilibili)
 - **路由表代码化**: `ts/capabilities/agent-reach-router.ts` —— SKILL.md 的 13 渠道路由翻译成能力层:
   - 零配置: `web`(r.jina.ai)/ `rss`(纯 XML 解析)/ `v2ex`(公开 API)
   - 可选 spawn(未装降级带装法): `youtube`(yt-dlp 字幕)/ `github`(gh 搜索)/ `bilibili`(bili-cli)/ `exa`(mcporter 语义搜索)
@@ -176,7 +176,7 @@
 
 ### 其他
 
-- `.gitignore` + `.venv-reach/`;run-all-tests 节号清理(10/11/12/…/16)
+- `.gitignore` + `.venv/`(单 venv 整合;.venv-loopx 与 .venv-reach 已合并删除);run-all-tests 节号清理(10/11/12/…/16)
 - z3 WASM OOM 新形态: 系统内存压力(dsh 常驻 + brew 并行)会触发 2GB 堆分配失败——已知债加剧,跑全栈前 kill :3080
 
 ### 验证(发布闸五项)

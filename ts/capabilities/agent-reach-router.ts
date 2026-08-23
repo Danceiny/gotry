@@ -175,15 +175,15 @@ export interface ReachStatus {
   channels: Array<{ channel: ReachChannel; state: string; note?: string }>
 }
 
-/** 渠道体检:优先 spawn 真正的 agent-reach doctor(.venv-reach 装的 v1.5.0);没有则 gotry 自探测 */
+/** 渠道体检:优先 spawn 真正的 agent-reach doctor(.venv/bin/agent-reach v1.5.0);没有则 gotry 自探测 */
 export async function reachStatus(timeoutMs = 60_000): Promise<ReachStatus> {
   const started = Date.now()
-  // 1) 真正的 agent-reach CLI(gotry .venv-reach 安装;100% follow 上游 doctor)
+  // 1) 真正的 agent-reach CLI(gotry .venv/bin/agent-reach v1.5.0;100% follow 上游 doctor)
   const { existsSync } = await import('node:fs')
   const { resolve } = await import('node:path')
   // repo root = ts/capabilities 的上两级;兼容从 ts/ 或仓根运行
   const root = resolve(import.meta.dirname, '..', '..')
-  const binCandidates = [resolve(root, '.venv-reach/bin/agent-reach'), 'agent-reach'].filter(b => b.includes('/') ? existsSync(b) : true)
+  const binCandidates = [resolve(root, '.venv/bin/agent-reach'), 'agent-reach'].filter(b => b.includes('/') ? existsSync(b) : true)
   for (const bin of binCandidates) {
     const r = await run(bin, ['doctor'], timeoutMs)
     if (!r.err?.includes('ENOENT')) {
