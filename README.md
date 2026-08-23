@@ -12,7 +12,7 @@
 | **Version** | `v0.0.1-rc.3-dev` (最新 commit `270678b`; 历史 tags: [rc.1](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.1) · [rc.2](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.2)) |
 | **Status** | M3 closed · npm 一键启动骨架就绪 · 等待 License + 种子用户启动 |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
-| **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (npm-installed, `.loopx/`) |
+| **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | TBD (MIT / Apache-2.0 pending founder decision — see [License](#-license)) |
 
 
@@ -270,6 +270,17 @@ npx gotry web          # 一行启动
 
 ---
 
+## 🐍 Python venv 现状(2026-08-23 单 venv 整合后)
+
+仓库根 `.venv/` 是**唯一 Python venv**(python3.11),同时装两个包:
+
+- `z3-solver 5.1.0` — gotry 引擎 oracle(D-1 留下的求解决策)
+- `agent-reach 1.5.0` — 13 渠道路由 CLI(rc.4 follow Panniantong/Agent-Reach)
+
+`agent-reach doctor` 真跑接通;router.ts 路径 `.venv/bin/agent-reach`(绝对路径解析仓根)。
+
+`loopx` 不在仓内 — 通过 `pipx` 装在 `~/.local/pipx/venvs/loopx/bin/loopx` 系统级。loopx todo 命令**不在仓内**跑(`.venv/bin/loopx` 不存在),用 `pipx run loopx ...` 或 `~/.local/pipx/venvs/loopx/bin/loopx ...`。
+
 ## 📜 License
 
 **MIT**（2026-08-23 落定）。与上游 dsh（MIT）/ loopx 一致——宽松、可商用、可闭源分叉。
@@ -286,6 +297,6 @@ npx gotry web          # 一行启动
 
 ---
 
-**Built with**: DeepSeek Harness 0.1.1-rc.2 · Cordis · Z3 (WASM) · loopx · hotelbyte-cli · OpenFlights · TypeScript · Bun
+**Built with**: DeepSeek Harness 0.1.1-rc.2 · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript · Bun
 
 **Last verified against `v0.0.1-rc.3-dev` @ `270678b`** (2026-08-22) — 9/9 suites green (Python-free).
