@@ -56,6 +56,10 @@ echo "=== 10. Anything 能力层(hbcli search anything 5 断言:hit/miss/error/t
 (cd ts && npx tsx scripts/anything-tests.ts) || FAIL=1
 
 echo
+echo "=== 10. probePoi 单测(datasources 编排层,5 类触发+1 类不触发) ==="
+(cd ts && npx tsx scripts/probe-poi-tests.ts) || FAIL=1
+
+echo
 echo "=== 11. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
