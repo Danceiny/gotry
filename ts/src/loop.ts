@@ -315,11 +315,16 @@ export async function settleAsyncTicket(ticketId: string, reply: string): Promis
 export function probePoi(msg: string): string | null {
   const trimmed = msg.trim()
   if (!trimmed) return null
-  // 短查询(<=24 字符 且非问句)直接当作关键词
-  if (trimmed.length <= 24 && !/[?？!！。.,，]/.test(trimmed)) return trimmed
+  // 短查询(<=24 字符 且非问句): 优先剥 trigger 词,再 fall-through 让内容触发也跑
+  const isShort = trimmed.length <= 24 && !/[?？!！。.,，]/.test(trimmed)
+  if (isShort) {
+    const stripped = trimmed.replace(/^(查一下|查|搜|找|看看|推荐|告诉我|检索)\s*/, '').trim()
+    // 即使没 trigger 词,只要 stripped 仍是 ≥2 字符的非空串就当关键词
+    if (stripped.length >= 2) return stripped.slice(0, 24)
+  }
   // 触发模式:查/搜/找/看看/推荐/告诉我/检索 + 地理/酒店类名词(贪吃但只切前 24 字符)
-  const m = trimmed.match(/(查一下|查|搜|找|看看|推荐|告诉我|检索)[\s一-龥a-zA-Z0-9·\.]{2,24}/)
-  if (m) return m[0].replace(/^(查一下|查|搜|找|看看|推荐|告诉我|检索)/, '').trim().slice(0, 24)
+  const m = trimmed.match(/(查一下|查|搜|找|看看|推荐|告诉我|检索)\s*(.{2,24})/)
+  if (m) return m[2].trim().slice(0, 24)
   // 另一模式:含"酒店"/"民宿"/"客栈" 触发酒店查
   if (/(酒店|民宿|客栈|饭店|有什么|玩什么|有哪些)/.test(trimmed)) {
     // 尝试提取前面的地名关键词
