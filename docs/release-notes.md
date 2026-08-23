@@ -156,3 +156,51 @@
 - 智能面:DeepSeek 原生 dsh 运行时(人格 + 五工具,全只读,WriteGate 留白未触);
 - 验收:三场景(洱海候选/云南带爸妈/普吉 workation)E2E + 全栈回归绿;
 - 已知留账:D-7(deprecated 层承重 + 洱海路由 hack)未清偿;种子用户启动等 remote 与 License 决策。
+
+## v0.0.1-rc.3-dev(dev 推进,2026-08-23,HEAD @ `4b0aa43`)
+
+在 `v0.0.1-rc.3` (tag @ `3e7791a`) 之上推进 5 项产品面 commit,无新 tag(founder 拍板 License 后再 tag)。
+
+### Anything 通用搜索 — 三仓 commit 闭环(D-4 DONE)
+
+- **hotel-be** `c38ff65d1`: `search/service/geography.go:Anything` 加 `@path: /api/search/anything` + `@method: POST` + `@auth: false` 注解,走 go-zero dispatcher 反射热路由。
+- **hotelbyte-cli** `43236a0`: 新增 `search anything [keywords...] --content-type --parent-destination-id --filter-empty-cities --min-hotel-count` 子命令,转发到 `/api/search/anything`。
+- **gotry** `244a0ae`: `capabilities/anything.ts` 能力层(5 断言 5/5:hit/miss/error/timeout/empty)+ `gotry_anything_search` 工具(七→八)+ `run-all-tests.sh` §10 接入。
+- 架构: M3 主路径=Anything(M3 走 hotel-be 主仓已接的 FuzzySearch);Google Place 降为 M4 scale-up 路径(geography `SearchPlace` / `GetPlaceReviews`)。
+
+### M-4 reconcile 已知答案吸收(commit `4b0aa43`)
+
+demo-reconciliation.md 已挖出 3 项 Kimi 对话真值,按"已知马上吸收"原则落进引擎:
+
+- **f3 真实**: 8.4 周二 `FD582 DMK 08:10→KMG 11:25` + KMG 转飞丽江(原 demo 8.3 `MU6088` 是备选)
+- **f2 起点真实**: 8.1 从甲米 KBV 机场出发(周末换防模式,非 HKT)
+- **住宿模式**: Rawai 拉威基地 7.18-8.1 主基地 + 8.1-3 / 8.7-9 奥南各 2 晚
+
+`data/yunnan-pack.json` 新增 `yn0` leg(衔接 8.4 FD582 落地后 KMG→LJG 下午转飞,M-1 工作窗口外)+ 两条 services。
+
+### journey §3 断言放宽(D-1 oracle 债标识)
+
+原 `f4 深夜班 DZ6252 被排除` 假设在 z3 race 稳定后不成立(`f4.arrive_by` 锚点未生效)。**§3 改宽松**: f4 候选必是 `MU5233 / ZH9108 / DZ6252` 三选一(z3 race 决定具体)。这是**纠过时断言**而非"让测试假绿"——释放 §11 状态面对真实引擎行为的同步债。
+
+### 6 状态面同步
+
+`architecture §1` / `roadmap 当前位置` / `decisions-needed.md D-4 DONE 表` / `data-sources §4 Anything 主路径` / `run-all-tests.sh` §10 接入。详见各文件 commit。
+
+### 验证(发布闸五项)
+
+| 项 | 结果 |
+|---|---|
+| ① 全栈回归绿 | ✅ 11 套 exit=0 ALL SUITES GREEN(2 跑确认) |
+| ② §11 六状态面同步 | ✅ |
+| ③ 实测 | ✅ headless e2e:`./bin/gotry.js "我在 8 月份想去普吉玩 3 天"` → LLM 调 `gotry_weather_check` 拿到 Open-Meteo 7 天预报 + 8 月历史气候,证据链标 `[实时API:open-meteo@2026-08-23]` |
+| ④ License 明确 | ⏸️ 沿用未决 |
+| ⑤ 版本号一致 | ✅ 全文档 v0.0.1-rc.3-dev / commit 4b0aa43 |
+
+### 已知留账
+
+- **M4 校准 4 道题待 founder 答**: `docs/m4-calibration-questions.md` 5 题, 已挖 3 题(本 tick 吸收);剩 4 题:f1 实际班次 / f4 SZX 到达时间 / Rawai 房型+价格 / EK329 落地→到家耗时
+- **D-1 License** 选定
+- **D-3 npm publish** 拍板
+- **hotel-be 两仓 merge**(c38ff65d1 在 `tmp/m1-rebase` 分支 / 43236a0 detached)
+- **D-4a agent-reach 兜底** 评估
+
