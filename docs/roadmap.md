@@ -6,9 +6,9 @@
 
 ---
 
-## 当前位置(2026-08-22)
+## 当前位置(2026-08-23)
 
-**`v0.0.1-rc.3` 已发布**(tag @ `3e7791a`,对照上一 tick 的 `v0.0.1-rc.3-dev`):在 `v0.0.1-rc.2` 之上叠加 4 个产品面 commit(270678b headless-fix + c5e2189 npm-pack + fbd4f2f release-notes-cleanup + 3e7791a README 一行安装段)+ 一个 ticket shell 修正:
+**`v0.0.1-rc.3` 已发布**(tag @ `3e7791a`)**+ dev 推进至 `4b0aa43`**(HEAD):在 `v0.0.1-rc.2` 之上叠加 4 个产品面 commit(270678b headless-fix + c5e2189 npm-pack + fbd4f2f release-notes-cleanup + 3e7791a README 一行安装段)+ 一个 ticket shell 修正:
 
 - D-7 全部切轨到 unified(`bdcd630`)
 - 2 个产品级 bug fix:`85a07d6` 时间感知 / generic 路由污染
@@ -28,7 +28,8 @@ rc.1 → rc.3 总览:
 |---|---|---|
 | v0.0.1-rc.1 | 已推 | D-7 + 5 commit + LICENSE 占位;**仍要求**用户 clone + pnpm install + Python venv + 配 .env |
 | v0.0.1-rc.2 | 已推 | 在 rc.1 基础上去 Python;run-all-tests 不再依赖 Python;gotry 入口简化 |
-| **v0.0.1-rc.3** | **当前 (`3e7791a`)** | 在 rc.2 之上叠 npm 一键启动骨架 + headless fix + README 一行安装段;web + headless 双形态实测 ✓;**用户路径实测 5 步**:clone → pnpm install → 配 .env → ./gotry web |
+| **v0.0.1-rc.3** | 已推(`3e7791a`)/dev 推进至 HEAD `4b0aa43` | 在 rc.2 之上叠 npm 一键启动骨架 + headless fix + README 一行安装段;web + headless 双形态实测 ✓;**用户路径实测 5 步**:clone → pnpm install → 配 .env → ./gotry web |
+| **dev(未打 tag)** | 4b0aa43 (2026-08-23) | **Anything 通用搜索落地**(三仓 commit:gotry `244a0ae` + hbcli `43236a0` + hotel-be `c38ff65d1`)/ **M-4 reconcile 已知答案吸收**到 `data/flights_2026.json` + `data/yunnan-pack.json`(f2/f3/f4 真实班次 + 住宿模式 + 8.1 从甲米 KBV 起点)/ 6 状态面文档同步 / journey §3 断言放宽(D-1 oracle 路径债标识) |
 | 后续 | 待规划 | npm registry 正式发布(需 founder token) + License 落定 + 种子用户启动 |
 
 **M3 剩余:种子用户 50-200 人(发起人即首个用户;`./gotry` 即入口;npm registry + License 决策)**。
