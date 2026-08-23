@@ -556,7 +556,7 @@ export function apply(ctx: Context, config: Config): void {
       'Channels: web(any URL via r.jina.ai) / rss(feed) / v2ex(hot topics) / youtube(subtitles via yt-dlp) / ' +
       'github(repo search via gh) / bilibili(search) / exa(semantic search via mcporter) — ' +
       'twitter/reddit/xhs/facebook/instagram/linkedin/xiaoyuzhou/xueqiu need cookies/setup and degrade with instructions. ' +
-      'Action "status" runs the real `agent-reach doctor` (installed at .venv-reach). ' +
+      'Action "status" runs the real `agent-reach doctor` (installed at .venv/bin/agent-reach (single venv with z3-solver)). ' +
       'Evidence chain: [agent-reach:<channel>@ts]; never blocks, three-valued verdicts.',
     parameters: {
       query: {

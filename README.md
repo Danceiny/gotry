@@ -12,7 +12,7 @@
 | **Version** | `v0.0.1-rc.3-dev` (最新 commit `270678b`; 历史 tags: [rc.1](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.1) · [rc.2](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.2)) |
 | **Status** | M3 closed · npm 一键启动骨架就绪 · 等待 License + 种子用户启动 |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
-| **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · LoopX (vendored at `.venv-loopx/`) · Z3 (npm `z3-solver`) |
+| **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (npm-installed, `.loopx/`) |
 | **License** | TBD (MIT / Apache-2.0 pending founder decision — see [License](#-license)) |
 
 

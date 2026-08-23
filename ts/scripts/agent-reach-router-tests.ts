@@ -1,6 +1,6 @@
 /**
  * agent-reach router 测试(13 渠道路由表,100% follow SKILL.md):
- *  1. status: 真 agent-reach doctor(.venv-reach)→ via=agent-reach-cli
+ *  1. status: 真 agent-reach doctor(.venv/bin/agent-reach)→ via=agent-reach-cli
  *  2. web: 读 example.com(走 r.jina.ai)
  *  3. rss: 真实 RSS 源解析 items
  *  4. v2ex: 真实热门 topics
