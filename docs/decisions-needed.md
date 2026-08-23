@@ -23,7 +23,12 @@
 - **Apache-2.0**(专利友好)
 - **Proprietary**(私有)
 
-**影响**: publish 后不可逆;选 MIT 后推 `v0.0.1-rc.2` + GitHub release 进入公开可用阶段。
+**founder 一句话拍**:
+- ✅ MIT: 「上 MIT」 — 我替换 LICENSE 文本为标准 MIT,打 `v0.0.1-rc.4` tag + GitHub release
+- ⏸ Apache-2.0: 我替换为 Apache-2.0
+- ⏸ Proprietary: 维持占位文件,只 README 写「私有许可证—详询」
+
+**影响**: publish 后不可逆;选 MIT 后推 `v0.0.1-rc.4` + GitHub release 进入公开可用阶段。
 
 ---
 
@@ -41,6 +46,10 @@
 
 **影响**: 答完 7 题 → engine M-1 (`work-window` 约束) / D-6 (红眼睡眠校准) 全部能转正;种子用户启动的引擎可信度飞跃。
 
+**founder 一句话拍**(答完即可):
+→ 在 `docs/m4-calibration-questions.md` 末尾 YAML 块填答 + commit YAML。
+已挖 3 项(4b0aa43 已吸收);剩 4 题:f1/f4-SZX/Rawai-房型/总花费。**答 1 题即释放 1 个债**。
+
 ---
 
 ## D-3:npm publish 拍板(License 选定后立刻发)
@@ -54,6 +63,10 @@
 - **不发**(继续走 GitHub-only + tarball 分发)
 
 **安全**: 这条 token 在此消息里明文出现过,建议 **登录 npmjs.com/settings/tokens 立刻 revoke 旧 token 再生成一个**。下次你想 publish 时让我用环境变量 `NPM_TOKEN=xxx` 注入,不入 git。
+
+**founder 一句话拍**:
+- 🚀 发: 「发 npm」 — 我用 `NPM_TOKEN=xxx` 注入执行 `npm publish --access public --registry=https://registry.npmjs.org/`;**前提**:你已 revoke 明文 token,新 token 写入环境变量
+- ⏸ 不发: 「不发」 — 维持 GitHub-only + tarball 分发
 
 ---
 
@@ -108,16 +121,24 @@ dsh LLM
 
 ## D-4a(派生):Anything 兜底链——agent-reach 是否启用?
 
-**位置**: `.shared/skills/agent-reach/SKILL.md`
+**位置**: `.shared/skills/agent-reach/SKILL.md` (.shared/skills/ 在 hotel-be 仓)
 
 **当前**:`gotry_anything_search` 直接走 hbcli,hbcli 不可达时降级到 「unavailable」 verdict。**LLM 此时无 POI 答案**——必须靠大模型常识或 prompt 让用户重来。
 
-**选项**:
-- **A. 不动**——gotry 8 工具够覆盖常用路径;agent-reach 留给 dsh LLM 直接 OS 调用(由 founder 用 prompt 控制)。
-- **B. gotry 9 工具: `gotry_web_search`(走 agent-reach)**——能力层封装 agent-reach 的几个 CLI(exa/web-reader/yt-dlp),零开发量(Panniantong 维护),LLM 在 hotel-be 不可达时降级路径。
-- **C. prompt 加 skill 引用**——零代码,只改 dsh system-prompt 让 LLM 知道 agent-reach skill 可用。
+**架构岔路**(清晰三选一):
 
-**我的倾向**: **C**——零成本,但 LLM 直调 OS 命令需要谨慎(钓鱼/越权风险)。**选项 B 在 gotry 8→9 工具时引入**——单加一个 `gotry_web_search` 调 `r.jina.ai` 一个 url 就够覆盖大多数「读这个网页」场景。
+| 选 | 路径 | 成本 | 安全 | 触发场景 |
+|---|---|---|---|---|
+| **A. 不动** | gotry 8 工具覆盖常用路径;agent-reach 留给 dsh LLM 直接 OS 调用(由 founder 用 prompt 控制) | 0 | 高(LLM 不会越权) | 不补,接受「hbcli 死时 LLM 退守常识」 |
+| **B. gotry 9 工具: `gotry_web_search`** | 能力层封装 agent-reach CLI(`r.jina.ai` 一个 url + 后续 `mcporter exa` 等); LLM 在 hotel-be 不可达时降级路径 | 中(Panniantong 已维护)+ 写能力层 ~100 行 | 中(LLM 可调 URL 需过滤) | hbcli 死+Anything 不可达 |
+| **C. prompt 加 skill 引用** | 零代码,只改 dsh system-prompt 让 LLM 知道 `.shared/skills/agent-reach/` 可用 | 0 | 中(LLM 直调 OS 命令需谨慎) | 当 LLM 在 hbcli 死时该自动想到 OS fallback |
+
+**我的倾向**:**C**。零成本,能解决 80% 场景;**B 留给 gotry 9 工具时引入**(单加 `r.jina.ai URL` 一个工具就够覆盖大多数「读这个网页」场景)。
+
+**founder 一句话拍**:
+- ✅ C: 「启用」 — 我立即改 dsh system-prompt 加 skill 引用
+- ⏸ A: 「不动」 — 标记 D-4a 暂不启用,等 M4 校准数据再决定
+- 🔧 B: 「写 gotry_web_search」 — 写能力层 ~100 行 + 测试,下个迭代
 
 不是阻塞项。留给下一个迭代。
 
@@ -127,21 +148,6 @@ dsh LLM
 
 ---
 
-## D-5:OpenSky 实时观测 — 保留 / 拆出 (已上 tick 的再次讨论)
-
-**位置**: `ts/capabilities/opensky.ts`(上 tick 落地)
-
-**当前产品**(上 tick 改完): `gotry_flight_verify(callsign)` = "当前 ADS-B 全球快照中,该 callsign 在不在飞"——**是的**与 place/anything 无关。
-
-**founder 直觉**: "LLM 看来实时与班次是两件事",**现在 Anything 既然保留,飞机班次应走 Anything 的 PlaceType + hotel fallback,不需要实时 ADS-B**。
-
-**候选**:
-- **A. 保留 gotry_flight_verify**(独立工具)
-- **B. 拆出**(ff→工具链组合,hence Anything + airline lookup,无须 ADS-B)
-
-**我建议**: **A 保留 1 个 tick**——独立价值高(航司溯源,班次不能秒级确认真在飞);若 M4 校准发现无场景再拆。
-
----
 
 ## D-6:**Anything 已统一** → OSM Nominatim / Postman OSM 占位降级
 
@@ -154,6 +160,10 @@ dsh LLM
 - **B. 作为 Anything 的兜底层**(LLM 失败时落 OSM)
 
 **我建议**: **A — Anything 是兜底本身**,OSM 是兜底的兜底,过度工程,删。
+
+**founder 一句话拍**:
+- 🗑 A: 「删 OSM」 — 删 `docs/data-sources.md` §6 中 `[实时API:osm-nominatim@ts]` 行(改 placeholder 描述),标记 M4 路线图为「M4 scale-up OSM 视 HBc 配额再决定」
+- ⏸ B: 「留 OSM」 — 我写 `capabilities/osm.ts` 封装 Nominatim/Overpass 兜底
 
 ## 拍板后的 0-day 行动(无新决策,纯执行)
 
@@ -170,3 +180,4 @@ dsh LLM
 |---|---|
 | 2026-08-23 | 立 v1:6 条决策项汇编,按优先级 D-1 ~ D-6 |
 | 2026-08-23 | v2: D-4 状态变更(DONE 三仓 commit) + 已落地表迁移首位; 待 founder merge hotel-be/tmp/m1-rebase |
+| 2026-08-23 | v3: 6 段(D-1/D-2/D-3/D-4a/D-5/D-6)统一「founder 一句话拍」格式; D-5 去重(原本双 block) |
