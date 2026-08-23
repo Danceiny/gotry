@@ -52,15 +52,19 @@ echo "=== 10. 航班实时观测(OpenSky 免费匿名,3 断言:observed 三值/�
 (cd ts && npx tsx scripts/opensky-tests.ts) || FAIL=1
 
 echo
-echo "=== 10. Anything 能力层(hbcli search anything 5 断言:hit/miss/error/timeout/empty) ==="
+echo "=== 11. Anything 能力层(hbcli search anything 5 断言:hit/miss/error/timeout/empty) ==="
 (cd ts && npx tsx scripts/anything-tests.ts) || FAIL=1
 
 echo
-echo "=== 10. probePoi 单测(datasources 编排层,5 类触发+1 类不触发) ==="
+echo "=== 12. probePoi 单测(datasources 编排层,6 类覆盖) ==="
 (cd ts && npx tsx scripts/probe-poi-tests.ts) || FAIL=1
 
 echo
-echo "=== 11. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
+echo "=== 13. agent-reach(r.jina.ai)能力层(读 URL,4 断言:真实/非法/超时/证据链) ==="
+(cd ts && npx tsx scripts/agent-reach-tests.ts) || FAIL=1
+
+echo
+echo "=== 14. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
 echo
