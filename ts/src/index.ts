@@ -26,6 +26,7 @@ import { installProcessGuards } from '../capabilities/incident-log.ts'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 import { verifyFlight } from '../capabilities/opensky.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
+import { readUrl } from '../capabilities/agent-reach.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -428,5 +429,45 @@ export function apply(ctx: Context, config: Config): void {
       })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `Anything search:${String((args.query as { keyword?: string })?.keyword ?? '')}`, kind: 'other', rawInput: args.query }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'gotry_web_search',
+    description:
+      'Read any public URL as markdown (Jina Reader, free, no key). ' +
+      'Use as the "last mile" web reader when hotel-be Anything or gotry tools lack the answer. ' +
+      'NOT a general-purpose search engine — only fetches a URL you already know. ' +
+      'Three-valued: ok / error(非法 URL/超时)/not-reachable(r.jina.ai 不可用).' +
+      'Contract with gotry capabilities/anything.ts: 同构(L4 证据链 + 降级不阻塞 + 三值)。',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ url: "https://example.com", timeoutMs?: 20000 }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content?.slice(0, 800) ?? JSON.stringify(value).slice(0, 800)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = (args.query ?? {}) as { url?: string; timeoutMs?: number }
+      const started = Date.now()
+      if (!q.url) {
+        return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填', evidence: '[agent-reach:error] empty url' })) as Record<string, never>
+      }
+      const r = await readUrl({ url: q.url, timeoutMs: q.timeoutMs })
+      const dir = await ensureStateDir(config.stateRoot)
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `agent-reach:${r.via}`).catch(() => {})
+      const summary = r.ok
+        ? `${q.url} → ${r.title ?? '(no title)'} (${r.latencyMs}ms)\n${r.evidence}\n---\n${r.content?.slice(0, 600) ?? ''}`
+        : `${q.url} → unavailable (${r.error})\n${r.evidence}`
+      return JSON.parse(JSON.stringify({
+        ok: r.ok, url: q.url, via: r.via, title: r.title,
+        content: r.content, evidence: r.evidence, summary,
+        latency_ms: Date.now() - started,
+      })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `读网页:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 }
