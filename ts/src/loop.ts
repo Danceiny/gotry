@@ -8,6 +8,7 @@
 
 import type { InterviewQuestion, TripState, TravelerProfile, Turn, CalendarState, SolveResult } from './contracts.ts'
 import type { JourneySpecTS } from './unified.ts'
+import { anythingSearch } from '../capabilities/anything.ts'
 
 /** LLM 端口:S2 mock(确定性剧本) / S4 真(dsh 运行时)。循环不感知差异。 */
 export interface LlmPort {
@@ -210,6 +211,28 @@ export async function runTurn(
 
   const parts: string[] = []
   if (conflicts.length) parts.push(`⚠️ 日历冲突:\n${conflicts.map(c => `- ${c}`).join('\n')}`)
+
+  // D-7a 例外: blocking>0 时,用户消息含"查+地名/酒店/天气"信号时,直接调 anything_search
+  // 走 PoI 真相(datasources 层主动调,不动 polling 状态机,不改求解器)
+  const poiProbe = probePoi(userMsg)
+  if (poiProbe) {
+    const ar = await anythingSearch({ keyword: poiProbe })
+    if (ar.verdict === 'hit' && ar.hits && ar.hits.length > 0) {
+      const top = ar.hits.slice(0, 5)
+      const lines = top.map((h, i) => {
+        const latlng = h.latitude !== undefined && h.longitude !== undefined
+          ? ` @ (${h.latitude.toFixed(3)},${h.longitude.toFixed(3)})`
+          : ''
+        return `  ${i + 1}. [${h.type}] ${h.name}${latlng}`
+      }).join('\n')
+      parts.push(`**${poiProbe} → hit (${ar.hits.length} 候选项)**\n${lines}\n${ar.evidence}`)
+    } else if (ar.verdict === 'miss') {
+      parts.push(`**${poiProbe} → miss** (酒店-be Anything 一切正常但无候选)\n${ar.evidence}`)
+    } else {
+      parts.push(`**${poiProbe} → unavailable** (${ar.error ?? 'hbcli 不可达'})\n${ar.evidence}`)
+    }
+  }
+
   for (const q of blocking) parts.push(await llm.polishQuestion(q))
 
   // 约束齐备(无阻塞问题)→ 翻译 spec → **校验闸** → 求解 → 渲染
@@ -282,4 +305,27 @@ export async function settleAsyncTicket(ticketId: string, reply: string): Promis
   const p = await asyncPath(`${ticketId}.deliverable.md`)
   await writeFile(p, reply, 'utf-8')
   return p
+}
+
+/**
+ * probePoi:从 user msg 探测"查 POI/酒店" 信号,返回关键词。
+ * 触发的不是关键词,是**结构**:句首含"查/搜/找" + 后接地理/酒店类名词。
+ * 不是意图(改求解器),只是 datasources 编排层的"提早调 anything"提示。
+ */
+export function probePoi(msg: string): string | null {
+  const trimmed = msg.trim()
+  if (!trimmed) return null
+  // 短查询(<=24 字符 且非问句)直接当作关键词
+  if (trimmed.length <= 24 && !/[?？!！。.,，]/.test(trimmed)) return trimmed
+  // 触发模式:查/搜/找/看看/推荐/告诉我/检索 + 地理/酒店类名词(贪吃但只切前 24 字符)
+  const m = trimmed.match(/(查一下|查|搜|找|看看|推荐|告诉我|检索)[\s一-龥a-zA-Z0-9·\.]{2,24}/)
+  if (m) return m[0].replace(/^(查一下|查|搜|找|看看|推荐|告诉我|检索)/, '').trim().slice(0, 24)
+  // 另一模式:含"酒店"/"民宿"/"客栈" 触发酒店查
+  if (/(酒店|民宿|客栈|饭店|有什么|玩什么|有哪些)/.test(trimmed)) {
+    // 尝试提取前面的地名关键词
+    const place = trimmed.match(/([一-龥a-zA-Z]{2,12})\s*(?:酒店|民宿|客栈|饭店|有什么|玩什么|有哪些)/)
+    if (place) return place[1]
+    return trimmed.replace(/(酒店|民宿|客栈|饭店|有什么|玩什么|有哪些)/, '').trim().slice(0, 24) || trimmed.slice(0, 24)
+  }
+  return null
 }
