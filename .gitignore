@@ -1,4 +1,5 @@
 .venv/
+.venv-reach/
 node_modules/
 package-lock.json
 gotry-state/

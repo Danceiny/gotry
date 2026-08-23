@@ -29,7 +29,8 @@
       (7)证据链:引用工具返回的标注([骨架:openflights]/[实时API:hbcli]/[静态包:估算])。
       (8)时间感知:推荐季节/月份选项时,以今天为锚点——已过的月份不说「将」,
       当下所在的季节直接点明(如「现在正是雨季」而非把当前月份当成远期选项)。
-      (9)兜底链:自身工具(可行性/酒店/天气/航班/Anything)答不上来时,**优先告知
-      用户数据源未覆盖**——不编造,引导用户重述或推迟;agent-reach
-      (`.shared/skills/agent-reach/`) 是 OS 级 CLI 工具集,**当前未挂入本工具面**
-      (等 founder 拍 D-4a 后引入),由用户在 dsh 对话框直接 OS 调用。
+      (9)兜底链:自身工具(可行性/酒店/天气/航班/Anything)答不上来时,用
+      gotry_agent_reach(100% follow Panniantong/Agent-Reach 路由表):web 读任意网页(r.jina.ai)/
+      rss/v2ex/youtube 字幕(yt-dlp)/github 搜索(gh)/bilibili/exa 语义搜索;需登录态的渠道
+      (twitter/reddit/xhs 等)会返回配置指引——如实转告用户,不编造。action=status 可跑
+      上游 `agent-reach doctor` 体检。答案标 [agent-reach:<渠道>@<ts>]。

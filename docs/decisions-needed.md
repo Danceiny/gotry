@@ -12,7 +12,7 @@
 
 ---
 
-## D-1:License 选定(v0.0.1-rc.2 已占位)
+## D-1:License 选定 ✅ **2026-08-23 已落地 MIT**(创始人授权「按你建议落地」)
 
 **位置**: `LICENSE`(占了位子 22 行,无协议文本)
 
@@ -119,7 +119,7 @@ dsh LLM
 
 ---
 
-## D-4a(派生):Anything 兜底链——agent-reach 是否启用?
+## D-4a ✅ **2026-08-23 已落地 100% follow**(创始人:「100% follow、import agent-reach」)
 
 **位置**: `.shared/skills/agent-reach/SKILL.md` (.shared/skills/ 在 hotel-be 仓)
 
@@ -180,4 +180,5 @@ dsh LLM
 |---|---|
 | 2026-08-23 | 立 v1:6 条决策项汇编,按优先级 D-1 ~ D-6 |
 | 2026-08-23 | v2: D-4 状态变更(DONE 三仓 commit) + 已落地表迁移首位; 待 founder merge hotel-be/tmp/m1-rebase |
-| 2026-08-23 | v3: 6 段(D-1/D-2/D-3/D-4a/D-5/D-6)统一「founder 一句话拍」格式; D-5 去重(原本双 block) |
+| 2026-08-23 | v3: 6 段统一「founder 一句话拍」格式; D-5 去重 |
+| 2026-08-23 | v4: D-1 落地 MIT + D-4a 落地 100% follow(agent-reach v1.5.0 CLI + 13 渠道路由 + doctor) |

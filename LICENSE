@@ -1,29 +1,21 @@
-# License — TBD (pending founder decision)
+MIT License
 
-**Status**: License not yet chosen — pre-release evaluation period.
+Copyright (c) 2026 Danceiny (GoTry)
 
-This repository is published as **private** at `github.com/Danceiny/gotry`
-and is **not yet open-source**. The contents are visible only to invited
-collaborators.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-A final license (MIT / Apache-2.0 / proprietary) will be selected by the
-founder before the first **public** release. Until then:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-1. **Do not** redistribute the source outside the listed collaborators.
-2. **Do not** vendor this code into third-party open-source projects.
-3. The GitHub source URL is private — it should not appear in any
-   public documentation, talks, or social media.
-
-Once chosen, this file will be replaced by the corresponding standard
-license text, and a new tag (e.g. `v0.0.1-rc.2`) will be created to
-mark the first publicly-licensed release.
-
----
-
-> **状态**：许可证尚未确定——版本发布评估期。
->
-> 本仓库为 **private**(github.com/Danceiny/gotry),仅协作者可见,尚未开源。
-> 最终许可证(MIT / Apache-2.0 / 私有)由 founder 在首个**公开**版本发布前选定。
->
-> 选定后本文件将被对应标准许可证文本替换,并打新 tag(如 `v0.0.1-rc.2`)
-> 作为首个公开许可的发布点。
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
