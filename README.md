@@ -10,10 +10,10 @@
 | | |
 |---|---|
 | **Version** | `v0.0.1-rc.3-dev` (最新 commit `270678b`; 历史 tags: [rc.1](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.1) · [rc.2](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.2)) |
-| **Status** | M3 closed · npm 一键启动骨架就绪 · 等待 License + 种子用户启动 |
+| **Status** | v0.0.1-rc.4(commit `9fad1d7`):8→12 工具 + agent-reach 100% follow + License MIT;**待你拍**:M4 校准 4 题 + npm publish + agent-reach 残余 |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
-| **License** | TBD (MIT / Apache-2.0 pending founder decision — see [License](#-license)) |
+| **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
 
 
 ---
@@ -180,7 +180,7 @@ GoTry: 收到。先把约束记下来——
 
 ## ⚠️ Known limitations · 已知限制
 
-- **License 未决** — 见 [License](#license)
+- ✅ **License MIT** (D-1 落地 2026-08-23)
 - **zh-CN 体验** — 当前面向中国出境首发(你的账号语言习惯)。英文界面/wider 国际化未做,等 M4 校准输入落定。
 - **机票实时数据** — 静态包(`data/flights_2026.json`)作为降级。实时票价接入留到 v0.1.x。
 - **Z3 WASM race** — 连续跑多个测试套件时偶发 `memory access out of bounds`(已规避回滚)。M3 早期处理。
@@ -269,6 +269,16 @@ npx gotry web          # 一行启动
 > ⚠️ **Token 安全**: 任何接触过 `.npmrc` 的会话都可能持久保存 token,记得 publish 完 `npm config delete //registry.npmjs.org/:_authToken`。
 
 ---
+
+## 🎯 待你拍(决策清单 — 在 [docs/decisions-needed.md](docs/decisions-needed.md) 有完整上下文)
+
+- **D-2 M4 校准四题** — 4 题 YAML 块在 [docs/m4-calibration-questions.md](docs/m4-calibration-questions.md) 末尾,commit YAML 即吸收进引擎
+- **D-3 npm publish** — 建议先 revoke 你之前明文给我的 token;新 token 走 `NPM_TOKEN=xxx` 注入
+- **D-4a agent-reach 残余** — rc.4 已接 4 工具(r.jina.ai / yt-dlp / gh / bilibili 走 mcporter);小红书/推特/Facebook/Instagram/LinkedIn/Podcast/雪球 需 Cookie,你拍接哪个
+- **D-5 OpenSky** — 保留 1 tick(实时 ADS-B 真飞/真没飞)
+- **D-6 OSM 兜底** — A 删 / B 留 Nominatim+Overpass 兜底层
+
+> 💡 一句话拍任何一项 → loopx 文档/仓库告知我 → 我立即推进。
 
 ## 🐍 Python venv 现状(2026-08-23 单 venv 整合后)
 
