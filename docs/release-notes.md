@@ -157,6 +157,40 @@
 - 验收:三场景(洱海候选/云南带爸妈/普吉 workation)E2E + 全栈回归绿;
 - 已知留账:D-7(deprecated 层承重 + 洱海路由 hack)未清偿;种子用户启动等 remote 与 License 决策。
 
+## v0.0.1-rc.4(2026-08-23,agent-reach 100% follow + License MIT)
+
+### agent-reach 100% follow(founder:「100% follow、import agent-reach」)
+
+- **CLI 真装**: `.venv-reach/`(python3.11)装上游 **Panniantong/Agent-Reach v1.5.0**(MIT, 74k★);`agent-reach doctor` 真跑(本机 4/15 渠道 ready: web/rss/v2ex/bilibili)
+- **路由表代码化**: `ts/capabilities/agent-reach-router.ts` —— SKILL.md 的 13 渠道路由翻译成能力层:
+  - 零配置: `web`(r.jina.ai)/ `rss`(纯 XML 解析)/ `v2ex`(公开 API)
+  - 可选 spawn(未装降级带装法): `youtube`(yt-dlp 字幕)/ `github`(gh 搜索)/ `bilibili`(bili-cli)/ `exa`(mcporter 语义搜索)
+  - 需登录态(降级带上游 guides 指引): twitter/reddit/xhs/facebook/instagram/linkedin(公开页走 web)/xiaoyuzhou/xueqiu
+- **dsh 工具**(8→12): `gotry_agent_reach`(统一路由:action=status 走真 doctor / action=reach 按渠道路由)+ `gotry_web_search` + `gotry_video_subtitle` + `gotry_github_search`
+- **测试**: §13 agent-reach(4/4) + §14 deep(4/4) + §15 router(6/6, 真 doctor 接通)—— run-all-tests 16 套
+- **persona (9)** 更新: 「已接入,13 渠道路由,needs-setup 如实转告不编造」
+
+### License MIT(D-1 落地)
+
+- `LICENSE` 替换为标准 MIT 文本(2026 Danceiny/GoTry);`package.json license: MIT`;README §License 更新;与上游 dsh(MIT)/Agent-Reach(MIT)兼容
+
+### 其他
+
+- `.gitignore` + `.venv-reach/`;run-all-tests 节号清理(10/11/12/…/16)
+- z3 WASM OOM 新形态: 系统内存压力(dsh 常驻 + brew 并行)会触发 2GB 堆分配失败——已知债加剧,跑全栈前 kill :3080
+
+### 验证(发布闸五项)
+
+| 项 | 结果 |
+|---|---|
+| ① 全栈回归绿 | ✅ 16 套 exit=0 ALL SUITES GREEN(kill 内存占用进程后) |
+| ② §11 六状态面同步 | ✅ architecture §1/§10 + data-sources + README + decisions + 本文件 |
+| ③ 实测 | ✅ router 6/6: 真 doctor(via=agent-reach-cli)+ web/rss(hnrss 5 items)/v2ex(10 topics) 真数据 |
+| ④ License 明确 | ✅ MIT 落定 |
+| ⑤ 版本号一致 | ✅ package.json 0.0.1-rc.4 + 全文档 |
+
+---
+
 ## v0.0.1-rc.3-dev(dev 推进,2026-08-23,HEAD @ `4b0aa43`)
 
 在 `v0.0.1-rc.3` (tag @ `3e7791a`) 之上推进 5 项产品面 commit,无新 tag(founder 拍板 License 后再 tag)。

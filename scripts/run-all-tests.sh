@@ -64,7 +64,15 @@ echo "=== 13. agent-reach(r.jina.ai)能力层(读 URL,4 断言:真实/非法/超
 (cd ts && npx tsx scripts/agent-reach-tests.ts) || FAIL=1
 
 echo
-echo "=== 14. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
+echo "=== 14. agent-reach 深度(yt-dlp/gh 可选工具,4 断言:三值/not-installed/证据链/超时) ==="
+(cd ts && npx tsx scripts/agent-reach-deep-tests.ts) || FAIL=1
+
+echo
+echo "=== 15. agent-reach router(13 渠道路由表 + 真 doctor,6 断言) ==="
+(cd ts && npx tsx scripts/agent-reach-router-tests.ts) || FAIL=1
+
+echo
+echo "=== 16. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
 echo

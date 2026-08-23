@@ -272,11 +272,9 @@ npx gotry web          # 一行启动
 
 ## 📜 License
 
-**TBD**。仓库处于 private 预 release 期,License 文件尚未放入。
+**MIT**（2026-08-23 落定）。与上游 dsh（MIT）/ loopx 一致——宽松、可商用、可闭源分叉。
 
-候选:[MIT](https://opensource.org/licenses/MIT)(宽松,跟上游 dsh/loopx 一致)/ [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0)(专利友好)/ 私有。
-
-由创始人(GoTry 的唯一 owner)按 M4 校准节奏拍板。选定后即放入 `LICENSE` 文件 + 打 tag。
+文本见 [LICENSE](LICENSE)。
 
 ---
 

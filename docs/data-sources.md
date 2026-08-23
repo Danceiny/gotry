@@ -158,6 +158,18 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 ---
 
+### agent-reach 100% follow(2026-08-23 落地,先于 §5 表)
+
+**Panniantong/Agent-Reach v1.5.0**(MIT, 74k★)是 installer + doctor + 路由知识(SKILL.md),实际读取由上游工具完成。GoTry 100% follow:
+
+- **CLI 真装**: `.venv-reach/`(python3.11 venv)装上游 `agent-reach` v1.5.0 → `agent-reach doctor` 真跑(4/15 渠道 ready)
+- **路由表代码化**: `ts/capabilities/agent-reach-router.ts` 把 SKILL.md 13 渠道路由翻译成能力层:
+  - 零配置: web(r.jina.ai)/ rss(纯 XML)/ v2ex(公开 API)
+  - 可选 spawn: youtube(yt-dlp)/ github(gh)/ bilibili(bili-cli)/ exa(mcporter)—— 未装降级带装法
+  - 需登录态: twitter/reddit/xhs/facebook/instagram/linkedin(部分)/xiaoyuzhou/xueqiu → needs-setup + 上游 guides 指引
+- **dsh 工具**: `gotry_agent_reach`(action=status 走真 doctor / action=reach 按渠道路由)+ 专用工具 web_search/video_subtitle/github_search
+- **证据链**: `[agent-reach:<渠道>@<ts>]` 进 L4 契约
+
 ## 6. 证据链标注契约(L4 不变量执行细则)
 
 | 标注 | 语义 | 触发 |
