@@ -22,7 +22,7 @@ import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
 import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
-import { installProcessGuards } from '../capabilities/incident-log.ts'
+import { installProcessGuards, guardToolExecute } from '../capabilities/incident-log.ts'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 import { verifyFlight } from '../capabilities/opensky.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
@@ -85,7 +85,17 @@ export function apply(ctx: Context, config: Config): void {
   // 不调 process.exit——让 dsh/上级容器决定生死,我们只留现场。
   installProcessGuards(config.stateRoot ?? '.', { uncaughtException: 'gotry-tools', unhandledRejection: 'gotry-tools' })
 
-  ctx.tools.register(defineTool({
+  // D-NEW 收尾:全部工具 execute 统一异常隔离——单个工具抛错/拒绝不再沿 cordis
+  // 传到 dsh 主循环,降级为结构化错误返回给 LLM + incident 落盘(incident-log.ts)。
+  const registerGuarded = (tool: ReturnType<typeof defineTool>): void => {
+    const t = { ...(tool as unknown as Record<string, unknown>) }
+    if (typeof t.execute === 'function') {
+      t.execute = guardToolExecute(String(t.name), config.stateRoot ?? '.', t.execute as (args: never, exec: unknown) => never)
+    }
+    ctx.tools.register(t as unknown as ReturnType<typeof defineTool>)
+  }
+
+  registerGuarded(defineTool({
     name: 'gotry_feasibility_check',
     description:
       'Check travel candidates against the user\'s motivation and hard constraints using the '
@@ -124,7 +134,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: 'GoTry 可行性检查(门到门全成本)', kind: 'other', rawInput: args.payload }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_motivation_save',
     description:
       'Persist the traveler\'s motivation profile (the "why depart" contract object). '
@@ -165,7 +175,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: '保存动机画像', kind: 'other', rawInput: args.profile }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_wish_pool_add',
     description:
       'Add an aspiration to the "next departure" wish pool — the graceful home for infeasible dreams. '
@@ -215,7 +225,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: '加入「下一次出发」清单', kind: 'other', rawInput: args.entry }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_hotel_search',
     description:
       'Search hotels via hotelbyte-cli (real-time when hbcli credentials exist, falls back to the static pack with explicit evidence tagging). '
@@ -259,7 +269,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_skeleton_check',
     description:
       'Check flight connectivity between two airports against the OpenFlights skeleton (free tier). '
@@ -288,7 +298,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `骨架校验:${args.from}-${args.to}`, kind: 'other', rawInput: args }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_weather_check',
     description:
       'Check weather for a destination: forecast (≤16 days) or historical climate (seasonality baseline). '
@@ -341,7 +351,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `天气:${String((args.query as { place?: string })?.place ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_flight_verify',
     description:
       'Verify whether a flight callsign is currently observable on the OpenSky ADS-B network. '
@@ -386,7 +396,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `飞行校验:${String((args.query as { callsign?: string })?.callsign ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_anything_search',
     description:
       'Universal Anything search via hotel-byte CLI → hotel-be Anything endpoint. ' +
@@ -432,7 +442,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `Anything search:${String((args.query as { keyword?: string })?.keyword ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_web_search',
     description:
       'Read any public URL as markdown (Jina Reader, free, no key). ' +
@@ -472,7 +482,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `读网页:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_video_subtitle',
     description:
       'Extract subtitles from a YouTube/Bilibili video (yt-dlp, optional tool). ' +
@@ -510,7 +520,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `视频字幕:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_github_search',
     description:
       'Search GitHub repositories (gh CLI, optional tool). ' +
@@ -548,7 +558,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `GitHub 搜索:${String((args.query as { query?: string })?.query ?? '')}`, kind: 'other', rawInput: args.query }),
   }))
 
-  ctx.tools.register(defineTool({
+  registerGuarded(defineTool({
     name: 'gotry_agent_reach',
     description:
       'Agent Reach — thin wrapper over Panniantong/Agent-Reach upstream registry (zero channel knowledge here). ' +
