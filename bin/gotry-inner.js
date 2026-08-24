@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * gotry CLI 入口(v0.0.1-rc.2 起):
  *   gotry web                          # dsh Web 浏览器界面(:3080)

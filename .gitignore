@@ -16,3 +16,4 @@ async_result.json
 ts/dsh-runtime/
 py/gotry.egg-info/
 shell/gotry-state/
+.npmrc.publish

@@ -5,7 +5,7 @@
   "type": "module",
   "main": "ts/src/index.ts",
   "bin": {
-    "gotry": "./bin/gotry.js"
+    "gotry": "bin/gotry-inner.js"
   },
   "files": [
     "bin/",
@@ -39,7 +39,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Danceiny/gotry.git"
+    "url": "git+https://github.com/Danceiny/gotry.git"
   },
   "keywords": [
     "ai",
