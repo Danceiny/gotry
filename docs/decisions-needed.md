@@ -32,7 +32,7 @@
 
 ---
 
-## D-2:M4 校准七题(创始人回答 → engine 落地)
+## D-2:M4 校准七题 ⚙️ **2026-08-24 auto-guess 已吸收进数据包**(founder 校正任意行即改)
 
 **位置**: `docs/demo-reconciliation.md`(M4 校准 markdown 模板)
 
