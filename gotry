@@ -7,7 +7,12 @@
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+# nvm.sh 遇 ~/.npmrc prefix 冲突会在 set -e 下 exit 整个脚本(日工作具会反复回写
+# 该行)——source 期间放宽 -e/-u;之后只要 node 在 PATH 即可
+set +eu
 source ~/.nvm/nvm.sh 2>/dev/null || true
+set -eu
+command -v node >/dev/null 2>&1 || { echo "node 不可用:先装 nvm/node,或手动把 node 加进 PATH" >&2; exit 1; }
 set -a; source "$ROOT/.env" 2>/dev/null || true; set +a
 
 MODE="${1:-web}"

@@ -249,6 +249,6 @@ demo-reconciliation.md 已挖出 3 项 Kimi 对话真值,按"已知马上吸收"
 - **透传**: needs-setup 文案 = 上游 `check()` 原话,不转述;纠正「雪球零门槛」错误认知(实测需 cookie,上游自带 configure 指引)
 - **dsh 工具**: `gotry_agent_reach` 参数面改为 `{action:'reach', channel, method, args}`;证据链 `[agent-reach:<channel>.<method>@ts]`
 - **测试**: §13 readUrl 薄壳 3/3 + §14 deep 4/4 + §15 wrapper 7/7(doctor 透传/web.read/v2ex 真调/xueqiu needs-setup 上游原话/自描述清单×2/永不抛错)—— 16 套 ALL GREEN
-- **附带**: 修 run-all-tests.sh 在 `set -e` 下被 nvm.sh 静默 exit 11 杀死的问题(~/.npmrc 的 prefix 行与 nvm 冲突,且日工作具会反复回写该行)——source nvm 期间放宽 -e/-u,脚本对 npmrc 状态免疫;不动 ~/.npmrc 本身
+- **附带**: 修 run-all-tests.sh 在 `set -e` 下被 nvm.sh 静默 exit 11 杀死的问题(~/.npmrc 的 prefix 行与 nvm 冲突,且日工作具会反复回写该行)——source nvm 期间放宽 -e/-u,对 npmrc 状态免疫;同一颗雷也炸产品入口 ./gotry(零输出死亡),同修;不动 ~/.npmrc 本身
 - **[D-NEW] 工具执行面异常隔离(gotry 侧收尾)**: incident-log.ts 新增 `guardToolExecute`——工具 execute 抛错/拒绝降级为结构化错误返回 LLM、`tool_execute_error` 落盘,单个插件错误不再沿 cordis 传到 dsh 主循环;index.ts 12 个注册点统一走 `registerGuarded`;incident 套 3/3(新增单元:同步/异步异常隔离)
 - **D-7 尾债赎清**: 删 `py/gotry_demo/`(build_plan.py 曾调废弃 journey.solve_journey)+ `py/gotry_async/`(唯一调用方是已断脚本)+ `scripts/run-golden-case.sh`(调 rc.3 已删的 gotry_feasibility.cli,跑必炸);py 树仅剩 gotry_feasibility oracle 对照,零 Python 工具链依赖
