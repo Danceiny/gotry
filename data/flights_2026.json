@@ -24,7 +24,8 @@
       "f3 真实:8.4 周二 FD582 DMK 08:10→KMG 11:25 + 昆明转飞丽江(Kimi 终轮四方案对比后采纳)",
       "f2 起点真实:8.1 从甲米(奥南)出发,周末换防模式:Rawai 7.18-8.1 主基地 + 8.1-3 奥南 2 晚 + 8.7-9 奥南 2 晚(共 3 晚)",
       "住宿模式:Rawai 拉威基地 7.18-8.1,周末甲米换防 2 段(非整体搬迁);demo 主基地+中途换防结构命中",
-      "f2 起点真实:8.1 从甲米 KBV 机场出发(不是 HKT)——周末换防 7.31 普吉→甲米,2 晚奥南,8.3 甲米→曼谷(从 KBV 飞,不是本 leg 的 HKT→DMK)"
+      "f2 起点真实:8.1 从甲米 KBV 机场出发(不是 HKT)——周末换防 7.31 普吉→甲米,2 晚奥南,8.3 甲米→曼谷(从 KBV 飞,不是本 leg 的 HKT→DMK)",
+      "auto-guess 2026-08-24 吸收:f1=HX741 20:20 / f4-SZX≈22:00 / EK329→家 1.5h(docs/decisions-needed.md D-2 auto-guess 块,founder 校正任意行即改)"
     ]
   },
   "legs": [
@@ -53,7 +54,13 @@
       "dest_transfer_min": 45,
       "arrive_by": "23:59",
       "anchors_note": "办证预计 12:00 前完成:CX773 需 12:15 离开港岛(满打满算);HX741 需 18:50 前",
-      "origin_tz_offset_min": 480
+      "origin_tz_offset_min": 480,
+      "evidence": [
+        {
+          "tag": "[auto-guess:2026-08-24]",
+          "note": "f1 实际=HX741 20:20(晚班;Kimi 7.18 当天飞+早高峰,CX773 12:15 过紧)—founder 校正即改"
+        }
+      ]
     },
     {
       "id": "f5",
@@ -76,7 +83,13 @@
       "red_eye_duration_min": 455,
       "anchors_note": "8.9 22:45 离开住处即可;DXB 04:20 落地,09:00 上班前余量 4.5h;时差迪拜 -4h",
       "tz_offset_min": -240,
-      "origin_tz_offset_min": 480
+      "origin_tz_offset_min": 480,
+      "evidence": [
+        {
+          "tag": "[auto-guess:2026-08-24]",
+          "note": "EK329 落地→躺床上≈1.5h(SZX→南山车程;D-6 精力模型落地端附加 1.5h 口径)—founder 校正即改"
+        }
+      ]
     },
     {
       "id": "f2",
@@ -190,7 +203,13 @@
       "origin_transfer_min": 60,
       "dest_transfer_min": 0,
       "anchors_note": "KMG→SZX 每天约 16 班(06:55-23:00),约 2h15m;深夜班是负例,验证锚点排除能力",
-      "origin_tz_offset_min": 480
+      "origin_tz_offset_min": 480,
+      "evidence": [
+        {
+          "tag": "[auto-guess:2026-08-24]",
+          "note": "f4 实际到达 SZX≈22:00(MU6088/DZ6252 中间值,给 EK329 红眼留 4h 缓冲)—founder 校正即改"
+        }
+      ]
     }
   ]
 }
