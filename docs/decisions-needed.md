@@ -194,7 +194,7 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 | D-1 License MIT | ✅ DONE 2026-08-23 | — |
 | D-2 M4 4 题 auto-guess | ⏸ founder yes/no 校 (commit b4e3bec) | `docs/decisions-needed.md` D-2 段 |
 | D-3 npm publish | ⏸ founder 浏览器 2FA + Bypass-2FA token + 跑 scripts/publish-npm.sh rc.5 | scripts/publish-npm.sh |
-| D-4a agent-reach 残余 | ✅ 100% follow rc.4;7 渠道需 cookie(founder 0 工作,记入 pending)+ 1 零门槛(xueqiu 雪球) | pending/blocker loopx todo |
+| D-4a agent-reach 残余 | ✅ 100% follow rc.4 → 2026-08-22 wrapper 化(反射桥,删 13 渠道 switch);8 渠道需 cookie(xueqiu 实测也要,上游 check warn 自带 configure 指引;founder 0 工作记 pending) | pending/blocker loopx todo |
 | D-5 OpenSky | ✅ 保留 1 tick | — |
 | D-6 OSM | ✅ 删(Anything + agent-reach 已统一) | — |
 
@@ -248,3 +248,4 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 | 2026-08-23 | v2: D-4 状态变更(DONE 三仓 commit) + 已落地表迁移首位; 待 founder merge hotel-be/tmp/m1-rebase |
 | 2026-08-23 | v3: 6 段统一「founder 一句话拍」格式; D-5 去重 |
 | 2026-08-23 | v4: D-1 落地 MIT + D-4a 落地 100% follow(agent-reach v1.5.0 CLI + 13 渠道路由 + doctor) |
+| 2026-08-22 | v5: D-4a wrapper 化(创始人「wrapper 不是 router」纠偏)— 删 13 渠道 switch,反射桥直调上游注册表,needs-setup 透传上游原话;纠正 xueqiu「零门槛」错误(实测需 cookie) |
