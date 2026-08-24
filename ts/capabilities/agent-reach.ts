@@ -18,6 +18,12 @@ export interface AgentReachWebQuery {
   url: string
   /** 超时(ms);默认 20_000 */
   timeoutMs?: number
+  /**
+   * reader base URL;默认 https://r.jina.ai。
+   * 测试可注入 http://127.0.0.1:port;生产不传。
+   * path 是 `${baseUrl}/${url}`(原 Jina Reader 协议)。
+   */
+  baseUrl?: string
 }
 
 export interface AgentReachWebResult {
@@ -51,7 +57,10 @@ export async function readUrl(query: AgentReachWebQuery): Promise<AgentReachWebR
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), query.timeoutMs ?? 20_000)
   try {
-    const res = await fetch(`${JINA_BASE}/${url}`, {
+    // baseUrl 注入时:直接 fetch 原 URL(测试 / 自定义 reader 路径)
+    // 否则:走 Jina Reader 协议(r.jina.ai/URL,免 key markdown 化)
+    const target = query.baseUrl ? query.url : `${JINA_BASE}/${url}`
+    const res = await fetch(target, {
       signal: ctrl.signal,
       headers: { Accept: 'text/markdown, text/plain, */*' },
     })
