@@ -255,6 +255,45 @@ export async function reach(q: ReachQuery): Promise<ReachResult> {
       return bilibiliSearch(q.arg ?? '', q.timeoutMs)
     case 'exa':
       return exaSearch(q.arg ?? '', 5, q.timeoutMs)
+    case 'xueqiu': {
+      // 100% follow 上游:spawn python 调 agent_reach.channels.xueqiu(get_stock_quote/search_stock),
+      // 不自造轮子。雪球要 cookie — 上游无 cookie 时返 400,我们如实降级 needs-setup 带上游指引。
+      const xqStart = Date.now()
+      const { existsSync } = await import('node:fs')
+      const { resolve } = await import('node:path')
+      const root = resolve(import.meta.dirname, '..', '..')
+      const py = resolve(root, '.venv/bin/python')
+      if (!existsSync(py)) {
+        return { ...base('xueqiu'), ok: false, verdict: 'not-installed', evidence: `[agent-reach:xueqiu@not-installed@${ts()}]`, latencyMs: 0, setup: '.venv 缺 python(装 agent-reach: 见 docs/tokens.md)' }
+      }
+      const script = [
+        'import json,sys',
+        'from agent_reach.channels.xueqiu import XueqiuChannel',
+        'ch = XueqiuChannel()',
+        'act, arg = sys.argv[1], sys.argv[2]',
+        'try:',
+        '    if act == "quote":',
+        '        out = ch.get_stock_quote(arg)',
+        '    elif act == "search":',
+        '        out = ch.search_stock(arg)',
+        '    else:',
+        '        out = ch.get_hot_stocks()',
+        '    print(json.dumps({"ok": True, "data": out}, ensure_ascii=False))',
+        'except Exception as e:',
+        '    print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))',
+      ].join('\n')
+      const r = await run(py, ['-c', script, q.arg === undefined ? 'hot' : (/^(sh|sz|SH|SZ)/.test(q.arg) ? 'quote' : 'search'), q.arg ?? ''], q.timeoutMs ?? 20_000)
+      const latencyMs = Date.now() - xqStart
+      try {
+        const parsed = JSON.parse((r.stdout || '').trim().split('\n').filter(Boolean).pop() ?? '{}') as { ok?: boolean; data?: unknown; error?: string }
+        if (parsed.ok) {
+          return { ...base('xueqiu'), ok: true, verdict: 'found', evidence: `[agent-reach:xueqiu@${ts()}](upstream)`, latencyMs, data: parsed.data }
+        }
+        return { ...base('xueqiu'), ok: false, verdict: 'needs-setup', evidence: `[agent-reach:xueqiu@needs-setup@${ts()}]`, latencyMs, setup: `雪球需登录 Cookie — 运行: .venv/bin/agent-reach configure --from-browser chrome --platform xueqiu(上游指引;${(parsed.error ?? '').slice(0, 80)})` }
+      } catch {
+        return { ...base('xueqiu'), ok: false, verdict: 'needs-setup', evidence: `[agent-reach:xueqiu@needs-setup@${ts()}]`, latencyMs, setup: '雪球需登录 Cookie — 运行: .venv/bin/agent-reach configure --from-browser chrome --platform xueqiu' }
+      }
+    }
     default:
       return needsSetup(q.channel)
   }
