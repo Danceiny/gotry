@@ -1,5 +1,11 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.7(2026-08-22,npm 模式首跑体验修复)
+
+- **.env 解析**:npm 安装模式此前读包目录(node_modules/@danceiny/gotry/.env)——用户当前目录的 .env 根本读不到(此前测试走环境变量传入漏检)。改为 npm 模式优先 `process.cwd()/.env`,repo 检出读仓根不变
+- **无 key 报错可执行化**:缺 LLM_API_KEY 时给出两步指引(当前目录建 .env / export),附 DeepSeek 平台链接
+- 验证:tarball 干净安装 → 无 key 出指引;CWD 建 .env(哑 key)→ web HTTP 200;16 套 ALL GREEN;恢复码第 4 枚
+
 ## v0.0.1-rc.6(2026-08-22,npm 包真正可运行:rc.5 只装得上跑不起)
 
 rc.5 的 tarball 缺 dsh runtime、patch 里是我本机绝对路径、插件 .ts 在 node_modules 下被 Node 拒 strip——`gotry web` 对外必炸(仓库内 ./gotry 不受影响)。rc.6 修三处:
