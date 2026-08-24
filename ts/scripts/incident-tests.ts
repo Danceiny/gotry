@@ -1,8 +1,9 @@
 /**
- * 进程护栏测试:验证 incident-log + installProcessGuards 三件事:
+ * 进程护栏测试:验证 incident-log + installProcessGuards + guardToolExecute 三件事:
  *  1. recordIncident 真把 JSONL 写到 gotry-state/incidents.jsonl(同步 fsync)
  *  2. uncaughtException 触发后,记录存在
  *  3. uninstall 干净卸下监听(后续触发不写盘)
+ *  4. guardToolExecute:工具 execute 同步/异步抛错均降级结构化错误并落盘(D-NEW 收尾)
  *
  * 整个测试用独立 node 子进程跑(避免在主进程留 process listener)。
  * 运行: cd ts && node --experimental-strip-types scripts/incident-tests.ts
@@ -65,5 +66,22 @@ assert.match(lastLine.message, /boom-from-child/, `应记录错误消息,实际:
 assert.equal(lastLine.source, 'test-child', `source 来自 labels.uncaughtException,实际: ${lastLine.source}`)
 console.log('INTEG 1 OK: 子进程 uncaughtException → fsync 写盘,handler 不阻塞 graceful exit')
 
+// --- 单元 2: guardToolExecute 异常隔离(D-NEW 收尾:工具 execute 不穿透 cordis) ---
+{
+  const { guardToolExecute } = await import('../capabilities/incident-log.ts')
+  const asyncBoom = guardToolExecute<{ x?: number }, Record<string, unknown>>('synthetic-tool', tmp, async () => { throw new Error('boom-async') })
+  const r1 = await asyncBoom({ x: 1 }, undefined)
+  assert.equal(r1.ok, false, '异步抛错应降级为结构化错误,不向上抛')
+  assert.ok(String(r1.summary).includes('synthetic-tool'), 'summary 指明来源工具')
+  assert.ok(String(r1.evidence).includes('tool_execute_error'), 'evidence 带 incident 标记')
+  const syncBoom = guardToolExecute<Record<string, never>, Record<string, unknown>>('synthetic-tool-sync', tmp, () => { throw new Error('boom-sync') })
+  const r2 = await syncBoom({}, undefined)
+  assert.equal(r2.ok, false, '同步抛错同样隔离')
+  const guardedLog = (await readFile(path1, 'utf8')).trim().split('\n').filter(Boolean)
+  const toolErrs = guardedLog.map(l => JSON.parse(l) as { kind?: string }).filter(x => x.kind === 'tool_execute_error')
+  assert.equal(toolErrs.length, 2, '两条 tool_execute_error 均应落盘')
+  console.log('UNIT 2 OK: guardToolExecute 同步/异步异常隔离 + incident 落盘')
+}
+
 await rm(tmp, { recursive: true, force: true })
-console.log('INCIDENT TESTS: 2/2 OK')
+console.log('INCIDENT TESTS: 3/3 OK')

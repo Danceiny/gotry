@@ -6,7 +6,7 @@
 # 真 LLM 巡检(replay-real)见 ADR-11 巡检层。
 set -euo pipefail
 cd "$(dirname "$0")/.."
-set +u; source ~/.nvm/nvm.sh 2>/dev/null || true; set -u  # nvm.sh 与 set -u 不兼容,source 期间放宽
+set +eu; source ~/.nvm/nvm.sh 2>/dev/null || true; set -eu  # nvm.sh 遇 npmrc prefix 冲突在 set -e 下会 exit 整个脚本(日工作具反复回写 prefix);source 期间放宽 -e/-u
 
 FAIL=0
 
@@ -40,7 +40,7 @@ echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装,4 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
 
 echo
-echo "=== 8. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 2 断言) ==="
+echo "=== 8. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 + guardToolExecute 异常隔离,3 断言) ==="
 (cd ts && npx tsx scripts/incident-tests.ts) || FAIL=1
 
 echo
