@@ -32,7 +32,7 @@
 
 ---
 
-## D-2:M4 校准七题 ✅ **2026-08-24 auto-guess 5/7 题已吸收进数据包**(founder 校正任意行即改,剩 2 题无需真人答)
+## D-2:M4 校准七题 ✅ **2026-08-24 auto-guess 5/7 题已吸收进数据包**(剩 2 题=founder 校口)
 
 **位置**: `docs/demo-reconciliation.md`(M4 校准 markdown 模板)
 
