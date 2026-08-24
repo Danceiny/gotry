@@ -48,7 +48,30 @@
 
 **founder 一句话拍**(答完即可):
 → 在 `docs/m4-calibration-questions.md` 末尾 YAML 块填答 + commit YAML。
-已挖 3 项(4b0aa43 已吸收);剩 4 题:f1/f4-SZX/Rawai-房型/总花费。**答 1 题即释放 1 个债**。
+已挖 3 项(4b0aa43 已吸收);剩 4 题:f1/f4-SZX/Rawi-房型/总花费。**答 1 题即释放 1 个债**。
+
+### gotry-builder-01 auto-guess(founder 授权: 「你代替我做决策」2026-08-24)
+
+按 founder demo 路线 + 工程推论,4 题 auto-填 — founder 一次 yes/no 决定采纳或校正:
+
+```yaml
+# f1 实际 HKG→HKT 班次
+f1_actual: "HX741 20:20"          # (b)HX741 晚班:Kimi 7.18 当天飞撞早高峰,CX773 12:15 太紧
+# f4 8.9 KMG→SZX 实际到达时间
+f4_szx_arrival: "22:00"             # 中间值 — EK328/DZ6252 跨日,给 EK329 红眼留 4h 缓冲
+# Rawai 房型 + 价格档(你长住+工作型)
+rawai_room_type: "Studio"          # (a) 单房舒适档;非套间
+rawai_nightly_price: 400           # 约 ¥400/晚
+# 8.10 凌晨 EK329 落地→躺床上
+szt_arrival_hours: 1.5             # SZX→南山车程(你住南山)
+```
+
+**采纳/校正方式**:
+- 全部 yes → 我立刻吸收进引擎 + commit
+- 部分校正 → 改 YAML 后 commit(校正部分吸收)
+- 全部 no → 我撤这条 auto-guess,只 founder 答
+
+零代码变更(纯 docs),12 套全栈 exit=0 不变。
 
 ---
 
