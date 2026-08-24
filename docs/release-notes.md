@@ -1,5 +1,11 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.7-dev(D-4 卡片赎回,2026-08-22)
+
+- **feasibility 结果卡**:presentResult(此前 12 工具全未用)——逐候选 `✅ 千岛湖 ¥996/人(预算 ¥3000,余 ¥2004) ← 推荐` / `❌ 大理·洱海 — duration` 紧凑行 + 人话答案,替代裸 JSON dump;smoke 新增断言
+- **12 工具 kind 图标分类**:search(酒店/Anything/GitHub)/ fetch(天气/航班/网页/字幕/AgentReach)/ execute(可行性/骨架)/ edit(动机/愿望池),dsh UI 按 kind 选图标;零 `other` 残留
+- 边界诚实:dsh 呈现词表无自定义卡型/地图位,该部分依赖 dsh 上游,不动 vendored runtime
+
 ## v0.0.1-rc.7(2026-08-22,npm 模式首跑体验修复)
 
 - **.env 解析**:npm 安装模式此前读包目录(node_modules/@danceiny/gotry/.env)——用户当前目录的 .env 根本读不到(此前测试走环境变量传入漏检)。改为 npm 模式优先 `process.cwd()/.env`,repo 检出读仓根不变

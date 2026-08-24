@@ -11,6 +11,7 @@ import { apply } from '../src/index.ts'
 interface ToolLike {
   name: string
   execute: (args: Record<string, unknown>, exec: unknown) => Promise<unknown>
+  presentResult?: (args: Record<string, unknown>, result: unknown) => { card?: string; title?: string; content?: Array<{ type: string; text?: string }> } | undefined
 }
 
 async function main() {
@@ -77,6 +78,15 @@ async function main() {
   console.log(`\nwish pool -> ${JSON.stringify(added)}`)
 
   if (result.recommended !== 'qiandao') throw new Error('FAIL: expected qiandao recommended')
+
+  // 4) D-4 结果卡:presentResult 把逐候选判定 + 全成本 vs 预算渲染成紧凑行(非裸 JSON)
+  if (typeof feasibility.presentResult !== 'function') throw new Error('FAIL: feasibility 缺 presentResult')
+  const view = feasibility.presentResult({ payload }, result)
+  if (!view?.title?.includes('qiandao')) throw new Error(`FAIL: 结果卡标题缺推荐,实际 ${view?.title}`)
+  const body = view?.content?.[0]?.text ?? ''
+  if (!body.includes('✅') || !body.includes('¥')) throw new Error('FAIL: 结果卡缺判定行/成本行')
+  console.log(`\nresult card: ${view?.title}\n${body.split('\n').slice(0, 5).join('\n')}`)
+
   console.log('\nSMOKE OK')
 }
 

@@ -125,7 +125,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-2 TS unsatCore 竖线 | **已清偿**(coreOf 剥竖线+回归断言) |
 | D-3 LLM 未进环 | **已清偿**(S4 由 MiniMax-M2 完成,`bb880f3`;mock 留作回归夹具,ADR-8 兑现) |
 | D-5 时区语义 | **已清偿**(EK329 官网逐分一致) |
-| D-4 gate/卡片无承载界面 | **大部赎回**(薄壳三页,v0.0.1-rc;地图位/预算条待) |
+| D-4 gate/卡片无承载界面 | **词表内赎回 2026-08-22**:feasibility presentResult 结果卡(逐候选判定 ✅/❌ + 全成本 vs 预算「余/超」行 + 推荐,非裸 JSON;smoke 断言)+ 12 工具 kind 图标分类(search/fetch/execute/edit,零 other);**地图位/自定义卡型需 dsh 上游 UI 词表**(vendored runtime,不动),记 M3 后观察 |
 | D-4a'(agent-reach 100% follow) | **已完成 2026-08-23;2026-08-22 wrapper 化**: Agent-Reach v1.5.0 装于 .venv(与 z3-solver 同址);gotry 侧为薄壳 —— agent-reach-bridge.py 反射桥(get_channel+getattr 直调上游注册表)+ agent-reach.ts 管道层,零渠道知识,上游加渠道零改动;gotry_agent_reach(action=reach 反射 / status 真 doctor);needs-setup 透传上游 check() 原话 |
 | D-4\'(Anything 数据接入) | **已完成 2026-08-23**: gotry capabilities/anything.ts 11 套实测 5/5 + hbcli `search anything` 子命令 + hotel-be `/api/search/anything` `@path` 注解;三仓 commit 闭环(244a0ae/c38ff65d1/43236a0) |
 | D-6 红眼睡眠模型未校准 | 对账 Q10 |

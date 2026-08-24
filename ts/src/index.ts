@@ -131,7 +131,26 @@ export function apply(ctx: Context, config: Config): void {
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'feasibility_check:in-process-unified').catch(() => {})
       return { ...result, latency_ms: Date.now() - started, via: 'in-process-unified' }
     },
-    presentCall: args => ({ card: 'generic', title: 'GoTry 可行性检查(门到门全成本)', kind: 'other', rawInput: args.payload }),
+    presentCall: args => ({ card: 'generic', title: 'GoTry 可行性检查(门到门全成本)', kind: 'execute', rawInput: args.payload }),
+    presentResult: (args, value) => {
+      // D-4 卡片赎回:结果卡不再是裸 JSON —— 逐候选判定 + 全成本 vs 预算紧凑行 + 人话答案
+      const r = value as FeasibilityResult & { verdicts?: Array<Record<string, unknown>> }
+      const budget = ((args.payload as { request?: { budget_cny?: number } })?.request)?.budget_cny
+      const lines = (r.verdicts ?? []).map(v => {
+        const tc = (v.true_cost ?? {}) as { money_cny?: number }
+        const money = typeof tc.money_cny === 'number'
+          ? ` ¥${tc.money_cny}/人` + (typeof budget === 'number' ? `(预算 ¥${budget},${tc.money_cny <= budget ? '余' : '超'} ¥${Math.abs(budget - tc.money_cny)})` : '')
+          : ''
+        return v.feasible
+          ? `✅ ${String(v.name ?? v.candidate_id)}${money}${v.candidate_id === r.recommended ? ' ← 推荐' : ''}`
+          : `❌ ${String(v.name ?? v.candidate_id)} — ${(Array.isArray(v.unsat_core) ? v.unsat_core.join(',') : '不可行')}`
+      })
+      return {
+        card: 'generic',
+        title: `可行性:${r.recommended ? `推荐 ${r.recommended}` : '全部不可行'}`,
+        content: [{ type: 'text', text: (lines.length ? lines.join('\n') + '\n\n' : '') + String(r.answer_md ?? '').slice(0, 1500) }],
+      }
+    },
   }))
 
   registerGuarded(defineTool({
@@ -172,7 +191,7 @@ export function apply(ctx: Context, config: Config): void {
       await writeJson(path, saved)
       return { saved: true, path, profile: saved }
     },
-    presentCall: args => ({ card: 'generic', title: '保存动机画像', kind: 'other', rawInput: args.profile }),
+    presentCall: args => ({ card: 'generic', title: '保存动机画像', kind: 'edit', rawInput: args.profile }),
   }))
 
   registerGuarded(defineTool({
@@ -222,7 +241,7 @@ export function apply(ctx: Context, config: Config): void {
       await writeJson(path, pool)
       return { added: true, total: pool.length, path }
     },
-    presentCall: args => ({ card: 'generic', title: '加入「下一次出发」清单', kind: 'other', rawInput: args.entry }),
+    presentCall: args => ({ card: 'generic', title: '加入「下一次出发」清单', kind: 'edit', rawInput: args.entry }),
   }))
 
   registerGuarded(defineTool({
@@ -266,7 +285,7 @@ export function apply(ctx: Context, config: Config): void {
       }
       return JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
     },
-    presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'other', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'search', rawInput: args.query }),
   }))
 
   registerGuarded(defineTool({
@@ -295,7 +314,7 @@ export function apply(ctx: Context, config: Config): void {
       const verdict = await checkConnectivity(args.from, args.to)
       return JSON.parse(JSON.stringify(verdict)) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `骨架校验:${args.from}-${args.to}`, kind: 'other', rawInput: args }),
+    presentCall: args => ({ card: 'generic', title: `骨架校验:${args.from}-${args.to}`, kind: 'execute', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -348,7 +367,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `天气:${String((args.query as { place?: string })?.place ?? '')}`, kind: 'other', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `天气:${String((args.query as { place?: string })?.place ?? '')}`, kind: 'fetch', rawInput: args.query }),
   }))
 
   registerGuarded(defineTool({
@@ -393,7 +412,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `飞行校验:${String((args.query as { callsign?: string })?.callsign ?? '')}`, kind: 'other', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `飞行校验:${String((args.query as { callsign?: string })?.callsign ?? '')}`, kind: 'fetch', rawInput: args.query }),
   }))
 
   registerGuarded(defineTool({
@@ -439,7 +458,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `Anything search:${String((args.query as { keyword?: string })?.keyword ?? '')}`, kind: 'other', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `Anything search:${String((args.query as { keyword?: string })?.keyword ?? '')}`, kind: 'search', rawInput: args.query }),
   }))
 
   registerGuarded(defineTool({
@@ -479,7 +498,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `读网页:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'other', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `读网页:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'fetch', rawInput: args.query }),
   }))
 
   registerGuarded(defineTool({
@@ -517,7 +536,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: r.latencyMs,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `视频字幕:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'other', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `视频字幕:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'fetch', rawInput: args.query }),
   }))
 
   registerGuarded(defineTool({
@@ -555,7 +574,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: r.latencyMs,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `GitHub 搜索:${String((args.query as { query?: string })?.query ?? '')}`, kind: 'other', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `GitHub 搜索:${String((args.query as { query?: string })?.query ?? '')}`, kind: 'search', rawInput: args.query }),
   }))
 
   registerGuarded(defineTool({
@@ -615,6 +634,6 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `Agent Reach:${String((args.query as { channel?: string; method?: string })?.channel ?? '')}.${String((args.query as { method?: string })?.method ?? 'status')}`, kind: 'other', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `Agent Reach:${String((args.query as { channel?: string; method?: string })?.channel ?? '')}.${String((args.query as { method?: string })?.method ?? 'status')}`, kind: 'fetch', rawInput: args.query }),
   }))
 }
