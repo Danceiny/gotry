@@ -28,14 +28,20 @@ const repoRoot = join(here, '..')
 const require_ = createRequire(import.meta.url)
 
 // --- 环境 .env 加载(provider-neutral) ---
-const envPath = join(repoRoot, '.env')
-if (existsSync(envPath)) {
-  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
-    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
-    if (!m || line.trim().startsWith('#')) continue
-    const k = m[1]; const v = m[2].trim().replace(/^["']|["']$/g, '')
-    if (process.env[k] === undefined) process.env[k] = v
-  }
+// npm 安装模式优先读用户当前目录的 .env(包目录内不该有凭证);repo 检出读仓根。
+const vendoredDshEarly = existsSync(join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'))
+const envCandidates = vendoredDshEarly
+  ? [join(repoRoot, '.env')]
+  : [join(process.cwd(), '.env'), join(repoRoot, '.env')]
+const envLines = []
+for (const p of envCandidates) {
+  if (existsSync(p)) envLines.push(...readFileSync(p, 'utf-8').split('\n'))
+}
+for (const line of envLines) {
+  const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i)
+  if (!m || line.trim().startsWith('#')) continue
+  const k = m[1]; const v = m[2].trim().replace(/^["']|["']$/g, '')
+  if (process.env[k] === undefined) process.env[k] = v
 }
 if (process.env.LLM_API_KEY && !process.env.DEEPSEEK_API_KEY) {
   process.env.DEEPSEEK_API_KEY = process.env.LLM_API_KEY
@@ -111,7 +117,9 @@ const patchRaw = readFileSync(staticPatch, 'utf-8')
 const patchPath = join(tmpdir(), `cordis.gotry.${process.pid}.yml`)
 writeFileSync(patchPath, patchRaw)
 if (!process.env.DEEPSEEK_API_KEY && mode !== 'help') {
-  console.error('[gotry] 需要 DEEPSEEK_API_KEY(或 LLM_API_KEY)— 检查 .env 或环境变量。')
+  console.error('[gotry] 缺少 LLM API key —— 两种方式任选其一后重跑:')
+  console.error(`  1) 在当前目录创建 .env 写入一行: LLM_API_KEY=<你的 DeepSeek key>(key 从 https://platform.deepseek.com 获取)`)
+  console.error('  2) 或临时环境变量: export LLM_API_KEY=<key>')
   process.exit(1)
 }
 
