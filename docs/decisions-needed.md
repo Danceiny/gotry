@@ -193,7 +193,7 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 |---|---|---|
 | D-1 License MIT | ✅ DONE 2026-08-23 | — |
 | D-2 M4 4 题 auto-guess | ⏸ founder yes/no 校 (commit b4e3bec) | `docs/decisions-needed.md` D-2 段 |
-| D-3 npm publish | ⏸ founder 浏览器 2FA + Bypass-2FA token + 跑 scripts/publish-npm.sh rc.5 | scripts/publish-npm.sh |
+| D-3 npm publish | ✅ 已打通 2026-08-22:`@danceiny/gotry@0.0.1-rc.5` PUT 200(gotry 裸名撞 go-try 改 scoped;founder 开 2FA + 恢复码当 OTP;发布命令全隔离 NPM_CONFIG_USERCONFIG);新包 npm 审查滞留后公开可见 | scripts/publish-npm.sh |
 | D-4a agent-reach 残余 | ✅ 100% follow rc.4 → 2026-08-22 wrapper 化(反射桥,删 13 渠道 switch);8 渠道需 cookie(xueqiu 实测也要,上游 check warn 自带 configure 指引;founder 0 工作记 pending) | pending/blocker loopx todo |
 | D-5 OpenSky | ✅ 保留 1 tick | — |
 | D-6 OSM | ✅ 删(Anything + agent-reach 已统一) | — |

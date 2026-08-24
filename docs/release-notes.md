@@ -42,7 +42,7 @@
 
 ### 已知留账
 
-- npm-pack 一键分发(`npx gotry`)——下一个 tick。**这一步真正给用户"一行安装"体验**
+- npm-pack 一键分发 → ✅ 已发 `@danceiny/gotry`(npx @danceiny/gotry web)
 - License 选定——待创始人按 M4 节奏定
 - Z3 WASM race(连续多套件时偶发 memory access)——仍债,GitHub rc.1 已知
 - M4 校准输入等待
@@ -251,4 +251,5 @@ demo-reconciliation.md 已挖出 3 项 Kimi 对话真值,按"已知马上吸收"
 - **测试**: §13 readUrl 薄壳 3/3 + §14 deep 4/4 + §15 wrapper 7/7(doctor 透传/web.read/v2ex 真调/xueqiu needs-setup 上游原话/自描述清单×2/永不抛错)—— 16 套 ALL GREEN
 - **附带**: 修 run-all-tests.sh 在 `set -e` 下被 nvm.sh 静默 exit 11 杀死的问题(~/.npmrc 的 prefix 行与 nvm 冲突,且日工作具会反复回写该行)——source nvm 期间放宽 -e/-u,对 npmrc 状态免疫;同一颗雷也炸产品入口 ./gotry(零输出死亡),同修;不动 ~/.npmrc 本身
 - **[D-NEW] 工具执行面异常隔离(gotry 侧收尾)**: incident-log.ts 新增 `guardToolExecute`——工具 execute 抛错/拒绝降级为结构化错误返回 LLM、`tool_execute_error` 落盘,单个插件错误不再沿 cordis 传到 dsh 主循环;index.ts 12 个注册点统一走 `registerGuarded`;incident 套 3/3(新增单元:同步/异步异常隔离)
+- **npm 发布打通(D-3 清账)**: `@danceiny/gotry@0.0.1-rc.5` PUT 200 上 registry.npmjs.org(public)。三关:①发布命令全隔离(NPM_CONFIG_USERCONFIG 仓内 .npmrc.publish,不碰全局 ~/.npmrc)②`gotry` 裸名与 `go-try` 撞名 → scoped ③2FA 墙用恢复码当 `--otp` 破(founder 开通 2FA)。bin 修复:`bin/gotry.js`(sh 挂 .js 名)会被 npm 11 剔除 → 指 `bin/gotry-inner.js` + `#!/usr/bin/env node`
 - **D-7 尾债赎清**: 删 `py/gotry_demo/`(build_plan.py 曾调废弃 journey.solve_journey)+ `py/gotry_async/`(唯一调用方是已断脚本)+ `scripts/run-golden-case.sh`(调 rc.3 已删的 gotry_feasibility.cli,跑必炸);py 树仅剩 gotry_feasibility oracle 对照,零 Python 工具链依赖
