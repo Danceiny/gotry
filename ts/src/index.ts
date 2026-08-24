@@ -26,9 +26,8 @@ import { installProcessGuards } from '../capabilities/incident-log.ts'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 import { verifyFlight } from '../capabilities/opensky.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
-import { readUrl } from '../capabilities/agent-reach.ts'
+import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
-import { reach, reachStatus, type ReachChannel } from '../capabilities/agent-reach-router.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -552,17 +551,18 @@ export function apply(ctx: Context, config: Config): void {
   ctx.tools.register(defineTool({
     name: 'gotry_agent_reach',
     description:
-      'Agent Reach — 13-platform internet access, 100% following Panniantong/Agent-Reach SKILL.md routing table. ' +
-      'Channels: web(any URL via r.jina.ai) / rss(feed) / v2ex(hot topics) / youtube(subtitles via yt-dlp) / ' +
-      'github(repo search via gh) / bilibili(search) / exa(semantic search via mcporter) — ' +
-      'twitter/reddit/xhs/facebook/instagram/linkedin/xiaoyuzhou/xueqiu need cookies/setup and degrade with instructions. ' +
-      'Action "status" runs the real `agent-reach doctor` (installed at .venv/bin/agent-reach (single venv with z3-solver)). ' +
-      'Evidence chain: [agent-reach:<channel>@ts]; never blocks, three-valued verdicts.',
+      'Agent Reach — thin wrapper over Panniantong/Agent-Reach upstream registry (zero channel knowledge here). ' +
+      'Call ANY upstream channel method by reflection: web.read(url) / v2ex.get_hot_topics() / v2ex.search(query) / ' +
+      'xueqiu.get_stock_quote(symbol) / xueqiu.search_stock(query) / youtube.transcribe(url) / <channel>.check() ... ' +
+      'Unknown channel or method? Just call it — the error returns the upstream inventory (channel list or method signatures) so you can self-correct. ' +
+      'Action "status" runs the real `agent-reach doctor` (.venv/bin/agent-reach). ' +
+      'Channels needing cookies/setup return the upstream check() guidance verbatim (never blocks). ' +
+      'Evidence chain: [agent-reach:<channel>.<method>@ts].',
     parameters: {
       query: {
         type: 'json',
         required: true,
-        description: '{ action: "status" } 或 { action: "reach", channel: "web|rss|v2ex|youtube|github|bilibili|exa|twitter|reddit|xhs|facebook|instagram|linkedin|xiaoyuzhou|xueqiu", arg: "<url or keyword>" }',
+        description: '{ action: "status" } 或 { action: "reach", channel: "<上游渠道名,如 web/v2ex/xueqiu>", method: "<上游方法名,如 read/get_hot_topics/get_stock_quote>", args?: "<空格分隔参数>" }',
       },
     },
     output: {
@@ -570,7 +570,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { action?: string; channel?: ReachChannel; arg?: string; timeoutMs?: number }
+      const q = (args.query ?? {}) as { action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }
       const started = Date.now()
       const dir = await ensureStateDir(config.stateRoot)
 
@@ -578,32 +578,33 @@ export function apply(ctx: Context, config: Config): void {
         const st = await reachStatus(q.timeoutMs)
         await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'agent-reach:doctor').catch(() => {})
         const summary = st.via === 'agent-reach-cli'
-          ? `Agent Reach doctor(上游 CLI):\n${st.channels[0]?.note ?? ''}\n${st.evidence}`
-          : `Agent Reach 自探测(${st.channels.filter(c => c.state === 'ready').length} ready):\n${st.channels.map(c => `  ${c.channel}: ${c.state}${c.note ? ` (${c.note})` : ''}`).join('\n')}\n${st.evidence}`
+          ? `Agent Reach doctor(上游 CLI,原样透传):\n${st.output}\n${st.evidence}`
+          : `Agent Reach 未装:\n${st.output}\n${st.evidence}`
         return JSON.parse(JSON.stringify({
-          ok: st.ok, via: st.via, channels: st.channels, evidence: st.evidence, summary,
+          ok: st.ok, via: st.via, output: st.output, evidence: st.evidence, summary,
           latency_ms: Date.now() - started,
         })) as Record<string, never>
       }
 
-      if (!q.channel) {
-        return JSON.parse(JSON.stringify({ ok: false, summary: 'channel 必填(或 action=status)' })) as Record<string, never>
+      if (!q.channel || !q.method) {
+        return JSON.parse(JSON.stringify({ ok: false, summary: 'channel 与 method 必填(或 action=status);清单可先随便调一次,inventory 会带回上游渠道/方法表' })) as Record<string, never>
       }
-      const r = await reach({ channel: q.channel, arg: q.arg, timeoutMs: q.timeoutMs })
-      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `agent-reach:${q.channel}:${r.verdict}`).catch(() => {})
+      const r = await reach({ channel: q.channel, method: q.method, args: q.args, timeoutMs: q.timeoutMs })
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `agent-reach:${q.channel}.${q.method}:${r.verdict}`).catch(() => {})
       const summary = r.verdict === 'found'
-        ? `${q.channel} → found (${r.latencyMs}ms)\n${r.evidence}`
+        ? `${q.channel}.${q.method} → found (${r.latencyMs}ms)\n${r.evidence}\n${typeof r.data === 'string' ? r.data.slice(0, 600) : JSON.stringify(r.data ?? null).slice(0, 600)}`
         : r.verdict === 'needs-setup'
-          ? `${q.channel} → 需配置: ${r.setup ?? ''}\n${r.evidence}`
+          ? `${q.channel}.${q.method} → 需配置(上游 check() 原话): ${r.setup ?? ''}\n${r.evidence}`
           : r.verdict === 'not-installed'
-            ? `${q.channel} → 上游工具未装: ${r.setup ?? ''}\n${r.evidence}`
-            : `${q.channel} → error (${r.error ?? ''})\n${r.evidence}`
+            ? `${q.channel}.${q.method} → 上游未装: ${r.setup ?? ''}\n${r.evidence}`
+            : `${q.channel}.${q.method} → ${r.error ?? 'error'}${r.inventory ? `\n上游清单: ${JSON.stringify(r.inventory).slice(0, 1200)}` : ''}\n${r.evidence}`
       return JSON.parse(JSON.stringify({
-        ok: r.ok, channel: r.channel, verdict: r.verdict,
-        data: r.data, setup: r.setup, evidence: r.evidence, summary,
+        ok: r.ok, channel: r.channel, method: q.method, verdict: r.verdict,
+        data: typeof r.data === 'string' ? r.data.slice(0, 4000) : r.data,
+        inventory: r.inventory, setup: r.setup, evidence: r.evidence, summary,
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `Agent Reach:${String((args.query as { channel?: string })?.channel ?? 'status')}`, kind: 'other', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `Agent Reach:${String((args.query as { channel?: string; method?: string })?.channel ?? '')}.${String((args.query as { method?: string })?.method ?? 'status')}`, kind: 'other', rawInput: args.query }),
   }))
 }

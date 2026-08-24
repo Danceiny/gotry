@@ -250,3 +250,4 @@ demo-reconciliation.md 已挖出 3 项 Kimi 对话真值,按"已知马上吸收"
 - **dsh 工具**: `gotry_agent_reach` 参数面改为 `{action:'reach', channel, method, args}`;证据链 `[agent-reach:<channel>.<method>@ts]`
 - **测试**: §13 readUrl 薄壳 3/3 + §14 deep 4/4 + §15 wrapper 7/7(doctor 透传/web.read/v2ex 真调/xueqiu needs-setup 上游原话/自描述清单×2/永不抛错)—— 16 套 ALL GREEN
 - **附带**: 修 run-all-tests.sh 在 `set -e` 下被 nvm.sh 静默 exit 11 杀死的问题(~/.npmrc 的 prefix 行与 nvm 冲突;删 prefix 行,备份 `~/.npmrc.bak-prefix`,注册表与 token 行原样保留)
+- **D-7 尾债赎清**: 删 `py/gotry_demo/`(build_plan.py 曾调废弃 journey.solve_journey)+ `py/gotry_async/`(唯一调用方是已断脚本)+ `scripts/run-golden-case.sh`(调 rc.3 已删的 gotry_feasibility.cli,跑必炸);py 树仅剩 gotry_feasibility oracle 对照,零 Python 工具链依赖
