@@ -19,7 +19,13 @@ XHS_COOKIES=             # 小红书 Cookie-Editor JSON
 
 ---
 
-## npm(npmjs.org)— 当前唯一阻塞项
+## npm(npmjs.org)— 发布已全隔离,剩浏览器一次 Approve
+
+**隔离命令**(2026-08-22 founder:「不要用全局的 ~/.npmrc,单独弄个命令隔离开」):
+- `./scripts/publish-npm.sh` — `NPM_CONFIG_USERCONFIG` 指向仓内 `.npmrc.publish`(gitignored,.env 现生成),**不读写全局 ~/.npmrc**,不受 bnpm registry/prefix 影响;废弃旧脚本 `npm config set` 往全局写 token 的做法(污染日工作具 npmrc 的源头之一)
+- 实测定性:token whoami=danceiny 认证通过、`gotry` 包名未被占、dry-run 干净;隔离后真发仍 E403「2FA or bypass-2FA granular token required」= npmjs 账户策略墙,与本地配置无关
+- **路径 A(推荐)**: `./scripts/publish-npm.sh login` → 浏览器点一次 Approve → 会话 token 只写 .npmrc.publish → 再跑一次脚本即发
+- 路径 B: npmjs 网页建 granular token(允许 bypass 2FA + packages read-write)→ 存 .env 的 NPM_TOKEN
 
 ### 你已给过的 token
 `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` → 已存 `.env` 的 `NPM_TOKEN`。
