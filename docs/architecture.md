@@ -154,6 +154,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 |---|---|
 | `roadmap.md` | **时间线唯一来源**:M0-M6 里程碑三线视图与旧模型归并 |
 | `data-sources.md` | **数据源唯一权威面**:领域矩阵/四层架构/Google Place 链路/证据链契约/TREK 参考 |
+| `tokens.md` | **token 唯一权威面**:npm 三路径(web会话/granular bypass/OIDC)+ agent-reach 8 渠道获取表 + 统一 .env 存放 |
 | `tech-strategy.md` | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测体系/分工/持续优化回路/决策登记 |
 | 本文 | 技术:系统/模块/模型/循环/数据概要/ADR/演进/债务 |
 | `gotry-master-outline.md` | 程序:工作分解/复用矩阵/决策门(总纲) |
