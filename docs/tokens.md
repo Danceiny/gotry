@@ -19,11 +19,12 @@ XHS_COOKIES=             # 小红书 Cookie-Editor JSON
 
 ---
 
-## npm(npmjs.org)— 发布已全隔离,剩浏览器一次 Approve
+## npm(npmjs.org)— ✅ 已打通(2026-08-22,@danceiny/gotry@0.0.1-rc.5 PUT 200)
 
 **隔离命令**(2026-08-22 founder:「不要用全局的 ~/.npmrc,单独弄个命令隔离开」):
 - `./scripts/publish-npm.sh` — `NPM_CONFIG_USERCONFIG` 指向仓内 `.npmrc.publish`(gitignored,.env 现生成),**不读写全局 ~/.npmrc**,不受 bnpm registry/prefix 影响;废弃旧脚本 `npm config set` 往全局写 token 的做法(污染日工作具 npmrc 的源头之一)
-- 实测定性:token whoami=danceiny 认证通过、`gotry` 包名未被占、dry-run 干净;隔离后真发仍 E403「2FA or bypass-2FA granular token required」= npmjs 账户策略墙,与本地配置无关
+- 实测全过程:whoami=danceiny 通过;`gotry` 裸名与既存 `go-try` 撞名(npm 新规)→ 改 scoped `@danceiny/gotry`;founder 开通 2FA(恢复码存 `~/work/npm_recovery_codes.txt`,已耗 2 枚);**恢复码可当 `--otp` 用**,最终 `npm publish --access public --otp=<恢复码>` → PUT 200 + public access。新包有 npm 安全审查滞留,PUT 200 后 view 可能 404 几分钟—几小时,属正常
+- **以后每次发布**: `./scripts/publish-npm.sh --otp=<6位 authenticator 码或一枚恢复码>`;嫌烦可在 npmjs Access Tokens 建 Granular token(Allow bypass 2FA + Packages Read/Write)替换 .env 的 NPM_TOKEN → 无需 OTP
 - **路径 A(推荐)**: `./scripts/publish-npm.sh login` → 浏览器点一次 Approve → 会话 token 只写 .npmrc.publish → 再跑一次脚本即发
 - 路径 B: npmjs 网页建 granular token(允许 bypass 2FA + packages read-write)→ 存 .env 的 NPM_TOKEN
 
