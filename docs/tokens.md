@@ -88,7 +88,7 @@ NPM_TOKEN=npm_xxx ./scripts/publish-npm.sh   # 或临时注入
 | 小红书 | Cookie JSON | Chrome 装 Cookie-Editor 插件 → 登录小红书 → 插件 Export(JSON) | 贴 JSON |
 | Reddit | rdt-cli cookie | OpenCLI 浏览器登录态(桌面版) | 我检测 OpenCLI 存在即用 |
 | B站字幕 | (可选)OpenCLI | 桌面装 OpenCLI 登录 B站 | 自动检测 |
-| 雪球/股票 | 无(零门槛) | — | 已在 agent-reach 渠道表,`agent-reach doctor` 自检 |
+| 雪球/股票 | 登录 Cookie | `.venv/bin/agent-reach configure --from-browser chrome --platform xueqiu`(上游指引原样透传) | 配好即用,`gotry_agent_reach` 反射调 get_stock_quote |
 | YouTube 字幕 | yt-dlp | `brew install yt-dlp` | 装完即用,无需给我任何东西 |
 | GitHub 私有仓 | gh 登录 | `brew install gh && gh auth login` | 已装即用 |
 | 全网语义搜索 | mcporter+exa | `npm i -g mcporter && mcporter config add exa https://mcp.exa.ai/mcp --scope home`(免费无 key) | 装完即用 |
@@ -110,3 +110,4 @@ NPM_TOKEN=npm_xxx ./scripts/publish-npm.sh   # 或临时注入
 | 日期 | 变更 |
 |---|---|
 | 2026-08-24 | 立 v1:npm 三路径(A web 会话/B granular bypass/C OIDC)+ agent-reach 8 渠道获取表 + 统一 .env 存放 |
+| 2026-08-22 | 雪球行纠正:实测需 cookie(上游 check warn + configure 指引),非零门槛 |

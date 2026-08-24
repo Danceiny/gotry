@@ -238,3 +238,15 @@ demo-reconciliation.md 已挖出 3 项 Kimi 对话真值,按"已知马上吸收"
 - **hotel-be 两仓 merge**(c38ff65d1 在 `tmp/m1-rebase` 分支 / 43236a0 detached)
 - **D-4a agent-reach 兜底** 评估
 
+
+## v0.0.1-rc.5-dev(dev 推进,2026-08-22,agent-reach wrapper 化)
+
+### agent-reach:router → wrapper(创始人纠偏「wrapper 不是 router,不要重复造轮子」)
+
+- **删**: `ts/capabilities/agent-reach-router.ts`(300 行 13 渠道 switch)+ SETUP_GUIDES 转述文案 + gotry-probe 假 doctor —— 渠道枚举/方法选择/setup 文案全在重复上游注册表,且已漂移(gotry 写 exa/xhs,上游真名 exa_search/xiaohongshu)
+- **增**: `ts/capabilities/agent-reach-bridge.py` 通用反射桥(`get_channel()`+`getattr()` 直调上游 python API)+ `agent-reach.ts` 薄壳(spawn/超时/永不抛错/证据链)
+- **分工**: 知识→上游注册表/`Channel.check()`/guides;决策→dsh LLM(未知渠道/方法返回上游自描述清单,LLM 自纠);管道→gotry。**上游加渠道,gotry 零改动**
+- **透传**: needs-setup 文案 = 上游 `check()` 原话,不转述;纠正「雪球零门槛」错误认知(实测需 cookie,上游自带 configure 指引)
+- **dsh 工具**: `gotry_agent_reach` 参数面改为 `{action:'reach', channel, method, args}`;证据链 `[agent-reach:<channel>.<method>@ts]`
+- **测试**: §13 readUrl 薄壳 3/3 + §14 deep 4/4 + §15 wrapper 7/7(doctor 透传/web.read/v2ex 真调/xueqiu needs-setup 上游原话/自描述清单×2/永不抛错)—— 16 套 ALL GREEN
+- **附带**: 修 run-all-tests.sh 在 `set -e` 下被 nvm.sh 静默 exit 11 杀死的问题(~/.npmrc 的 prefix 行与 nvm 冲突;删 prefix 行,备份 `~/.npmrc.bak-prefix`,注册表与 token 行原样保留)

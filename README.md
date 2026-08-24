@@ -274,7 +274,7 @@ npx gotry web          # 一行启动
 
 - **D-2 M4 校准四题** — 4 题 YAML 块在 [docs/m4-calibration-questions.md](docs/m4-calibration-questions.md) 末尾,commit YAML 即吸收进引擎
 - **D-3 npm publish** — 建议先 revoke 你之前明文给我的 token;新 token 走 `NPM_TOKEN=xxx` 注入
-- **D-4a agent-reach 残余** — rc.4 已接 4 工具(r.jina.ai / yt-dlp / gh / bilibili 走 mcporter);小红书/推特/Facebook/Instagram/LinkedIn/Podcast/雪球 需 Cookie,你拍接哪个
+- **D-4a agent-reach** — 已 wrapper 化(反射桥直调上游注册表,gotry 零渠道知识);8 渠道需 Cookie(雪球实测也要),给即接、不催
 - **D-5 OpenSky** — 保留 1 tick(实时 ADS-B 真飞/真没飞)
 - **D-6 OSM 兜底** — A 删 / B 留 Nominatim+Overpass 兜底层
 
@@ -285,9 +285,9 @@ npx gotry web          # 一行启动
 仓库根 `.venv/` 是**唯一 Python venv**(python3.11),同时装两个包:
 
 - `z3-solver 5.1.0` — gotry 引擎 oracle(D-1 留下的求解决策)
-- `agent-reach 1.5.0` — 13 渠道路由 CLI(rc.4 follow Panniantong/Agent-Reach)
+- `agent-reach 1.5.0` — 上游渠道注册表 + doctor(gotry 以反射桥 wrapper 接入,零渠道知识)
 
-`agent-reach doctor` 真跑接通;router.ts 路径 `.venv/bin/agent-reach`(绝对路径解析仓根)。
+`agent-reach doctor` 真跑接通;wrapper 反射桥走 `.venv/bin/python` + bridge 脚本,doctor 走 `.venv/bin/agent-reach`(绝对路径解析仓根)。
 
 `loopx` 不在仓内 — 通过 `pipx` 装在 `~/.local/pipx/venvs/loopx/bin/loopx` 系统级。loopx todo 命令**不在仓内**跑(`.venv/bin/loopx` 不存在),用 `pipx run loopx ...` 或 `~/.local/pipx/venvs/loopx/bin/loopx ...`。
 

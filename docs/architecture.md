@@ -126,7 +126,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-3 LLM 未进环 | **已清偿**(S4 由 MiniMax-M2 完成,`bb880f3`;mock 留作回归夹具,ADR-8 兑现) |
 | D-5 时区语义 | **已清偿**(EK329 官网逐分一致) |
 | D-4 gate/卡片无承载界面 | **大部赎回**(薄壳三页,v0.0.1-rc;地图位/预算条待) |
-| D-4a'(agent-reach 100% follow) | **已完成 2026-08-23**: Panniantong/Agent-Reach v1.5.0 CLI 装于 .venv/(python3.11 单 venv, 与 z3-solver 同址)+ 13 渠道路由表代码化(router.ts: web/rss/v2ex 零配置 + youtube/github/bilibili/exa 可选 spawn + 8 渠道 needs-setup 带指引)+ gotry_agent_reach 统一工具 + 真 doctor 接通 |
+| D-4a'(agent-reach 100% follow) | **已完成 2026-08-23;2026-08-22 wrapper 化**: Agent-Reach v1.5.0 装于 .venv(与 z3-solver 同址);gotry 侧为薄壳 —— agent-reach-bridge.py 反射桥(get_channel+getattr 直调上游注册表)+ agent-reach.ts 管道层,零渠道知识,上游加渠道零改动;gotry_agent_reach(action=reach 反射 / status 真 doctor);needs-setup 透传上游 check() 原话 |
 | D-4\'(Anything 数据接入) | **已完成 2026-08-23**: gotry capabilities/anything.ts 11 套实测 5/5 + hbcli `search anything` 子命令 + hotel-be `/api/search/anything` `@path` 注解;三仓 commit 闭环(244a0ae/c38ff65d1/43236a0) |
 | D-6 红眼睡眠模型未校准 | 对账 Q10 |
 | D-7 deprecated 层仍承重 | **大部赎回**:dsh 插件进程内路径切轨 solveChoiceSegment(枚举,~0ms)、cli.py 桥切轨 solve_choice_segment、diff-test 切轨统一模型对统一模型;engine/journey 退纯 oracle(保留为金标准对照)。build_plan.py(demo 离线工具)仍调 journey.solve_journey,属剩余尾债 |

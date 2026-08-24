@@ -158,17 +158,17 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 ---
 
-### agent-reach 100% follow(2026-08-23 落地,先于 §5 表)
+### agent-reach 100% follow → wrapper 化(2026-08-23 落地;2026-08-22 founder 纠偏「wrapper 不是 router」后重构)
 
 **Panniantong/Agent-Reach v1.5.0**(MIT, 74k★)是 installer + doctor + 路由知识(SKILL.md),实际读取由上游工具完成。GoTry 100% follow:
 
 - **CLI 真装**: `.venv/`(python3.11 venv, 单 venv 整合)装上游 `agent-reach` v1.5.0 → `agent-reach doctor` 真跑(4/15 渠道 ready)
-- **路由表代码化**: `ts/capabilities/agent-reach-router.ts` 把 SKILL.md 13 渠道路由翻译成能力层:
-  - 零配置: web(r.jina.ai)/ rss(纯 XML)/ v2ex(公开 API)
-  - 可选 spawn: youtube(yt-dlp)/ github(gh)/ bilibili(bili-cli)/ exa(mcporter)—— 未装降级带装法
-  - 需登录态: twitter/reddit/xhs/facebook/instagram/linkedin(部分)/xiaoyuzhou/xueqiu → needs-setup + 上游 guides 指引
-- **dsh 工具**: `gotry_agent_reach`(action=status 走真 doctor / action=reach 按渠道路由)+ 专用工具 web_search/video_subtitle/github_search
-- **证据链**: `[agent-reach:<渠道>@<ts>]` 进 L4 契约
+- **wrapper 化(2026-08-22 重构)**: 删 300 行 13 渠道 switch —— 渠道枚举/方法选择/setup 文案是在重复上游注册表,且实测已漂移(gotry 写 exa/xhs,上游真名 exa_search/xiaohongshu)。三层分工:
+  - 知识 → 上游(`agent_reach.channels` 注册表 + `Channel.check()` 原话 + guides/);决策 → dsh LLM(未知渠道/方法时返回上游自描述清单,LLM 自纠);管道 → gotry(spawn/超时/永不抛错/证据链)
+  - `ts/capabilities/agent-reach-bridge.py`: 通用反射桥,`get_channel()`+`getattr()` 直调上游 python API(web.read / v2ex.get_hot_topics / xueqiu.get_stock_quote ...),上游加渠道零改动
+  - `ts/capabilities/agent-reach.ts`: 薄壳;needs-setup 文案 = 上游 `check()` 原话透传不转述;CLI 工具型渠道(github→gh/字幕→yt-dlp)仍由专用工具当执行面
+- **dsh 工具**: `gotry_agent_reach`(action=status 走真 doctor / action=reach 反射调 `<channel>.<method>`)+ 专用工具 web_search/video_subtitle/github_search
+- **证据链**: `[agent-reach:<channel>.<method>@<ts>]` 进 L4 契约
 
 ## 6. 证据链标注契约(L4 不变量执行细则)
 

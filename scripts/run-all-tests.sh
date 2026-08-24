@@ -6,7 +6,7 @@
 # 真 LLM 巡检(replay-real)见 ADR-11 巡检层。
 set -euo pipefail
 cd "$(dirname "$0")/.."
-source ~/.nvm/nvm.sh 2>/dev/null || true
+set +u; source ~/.nvm/nvm.sh 2>/dev/null || true; set -u  # nvm.sh 与 set -u 不兼容,source 期间放宽
 
 FAIL=0
 
@@ -60,7 +60,7 @@ echo "=== 12. probePoi 单测(datasources 编排层,6 类覆盖) ==="
 (cd ts && npx tsx scripts/probe-poi-tests.ts) || FAIL=1
 
 echo
-echo "=== 13. agent-reach(r.jina.ai)能力层(读 URL,4 断言:真实/非法/超时/证据链) ==="
+echo "=== 13. agent-reach web 读取(readUrl 薄壳,3 断言:非法/超时/live 降级容忍) ==="
 (cd ts && npx tsx scripts/agent-reach-tests.ts) || FAIL=1
 
 echo
@@ -68,8 +68,8 @@ echo "=== 14. agent-reach 深度(yt-dlp/gh 可选工具,4 断言:三值/not-inst
 (cd ts && npx tsx scripts/agent-reach-deep-tests.ts) || FAIL=1
 
 echo
-echo "=== 15. agent-reach router(13 渠道路由表 + 真 doctor,6 断言) ==="
-(cd ts && npx tsx scripts/agent-reach-router-tests.ts) || FAIL=1
+echo "=== 15. agent-reach wrapper(反射桥 + 真 doctor,7 断言) ==="
+(cd ts && npx tsx scripts/agent-reach-wrapper-tests.ts) || FAIL=1
 
 echo
 echo "=== 16. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
