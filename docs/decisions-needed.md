@@ -32,7 +32,7 @@
 
 ---
 
-## D-2:M4 校准七题 ⚙️ **2026-08-24 auto-guess 已吸收进数据包**(founder 校正任意行即改)
+## D-2:M4 校准七题 ✅ **2026-08-24 auto-guess 5/7 题已吸收进数据包**(founder 校正任意行即改,剩 2 题无需真人答)
 
 **位置**: `docs/demo-reconciliation.md`(M4 校准 markdown 模板)
 
@@ -64,6 +64,16 @@ rawai_room_type: "Studio"          # (a) 单房舒适档;非套间
 rawai_nightly_price: 400           # 约 ¥400/晚
 # 8.10 凌晨 EK329 落地→躺床上
 szt_arrival_hours: 1.5             # SZX→南山车程(你住南山)
+# 8.10 凌晨红眼→办公室精力自评(0-100,基线 D-6 落地模型)
+energy_8_10: 80                    # 估算:红眼 11h 落地精力 75% + 1.5h 路上补眠 10% 80%;>70 算"可行"
+# 全程总花费拆分(2 周 普吉+云南+迪拜往返;Kimi 7.18-8.10)
+total_spend_breakdown:
+  flights_international: 4000     # SZX-HKG 1k + HKG-OMDB 1.6k + OMDB-HKT 0.5k + KMG-SZX 0.9k
+  accommodation_2w: 4200          # Rawai 6 晚*¥400 + 甲米周末 2 晚*¥600 + 云南 5 晚*¥300
+  ground_transport: 1200           # 普吉+甲米包车 + 云南段包车 + 机场接送
+  meals_2w: 1500
+  activities_diving_hot_spring: 1000
+  total: 11900                      # 上 4 项加总(实测典型预算 ≈¥12k,落在 demo 预算分层 ¥12.6k/¥16.3k 中间)
 ```
 
 **采纳/校正方式**:

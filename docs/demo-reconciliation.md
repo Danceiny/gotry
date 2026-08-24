@@ -44,6 +44,9 @@
 | f4 SZX 到达 | **≈22:00** | MU6088/DZ6252 中间值;EK329 红眼留 4h 缓冲 | 已入 f4.evidence |
 | Rawai 房型 | **Studio ≈¥400/晚** | 长住+工作型;非套间 | 已入 yunnan-pack meta.reconcil |
 | EK329 落地→家 | **≈1.5h** | SZX→南山车程(D-6 精力模型落地端口径) | 已入 f5.evidence |
+| 8.10 精力(0-100) | **80** | 红眼 11h 落地 75% + 路上 1.5h 补眠 ≈+10% | 已入 engine.ts 精力表 |
+| 全程花费 | **≈¥11.9k** | 机票 ¥4k + 住宿 2 周 ¥4.2k + 接驳 ¥1.2k + 餐饮 ¥1.5k + 潜水/温泉 ¥1k;落 demo 预算分层 ¥12.6k 中 | 已入 f1/f4/f5.evidence 拆解 |
+| 剩余 2 题(花式) | **没问过,无需真答** | demo-reconciliation 不追问;founder 校正即改 | — |
 
 校正方式:改 `docs/decisions-needed.md` D-2 auto-guess YAML 任意行 + commit,gotry-builder-01 按改后值重写数据包。
 
