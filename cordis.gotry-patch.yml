@@ -4,8 +4,8 @@
 #   (从 npm 安装: npx gotry web 自动应用本 patch)
 - insert:
     - id: gotry-tools
-      name: '/Users/bytedance/work/gotry/ts/src/index.ts'    # 绝对路径(本地开发);
-      # vendored dsh runtime(ts/dsh-runtime/)下文件路径固定,无需重写
+      name: 'placeholder/ts/src/index.ts'   # 占位:bin/gotry-inner.js 运行时
+      # 重写为按本包位置解析的绝对路径(repo 与 npm 安装均正确)
       config:
         stateRoot: '.'
         timeoutMs: 30000

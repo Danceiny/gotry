@@ -260,7 +260,7 @@ npm pack --dry-run --registry=https://registry.npmjs.org/
 npm publish --access public --registry=https://registry.npmjs.org/
 
 # 5. 发布成功后任何用户:
-npx @danceiny/gotry web   # 一行启动(0.0.1-rc.5 已发 npmjs)
+npx @danceiny/gotry web   # 一行启动(≥0.0.1-rc.6;rc.5 缺 runtime 不可用)
 ```
 
 > ⚠️ **注意**: publish 后**不可逆**（30 天内可 `npm unpublish` 但会污染历史）。建议先在 main 打 `v0.0.1-rc.3` tag + GitHub release,再 publish,保证 npm 包与仓库 tag 同步。
