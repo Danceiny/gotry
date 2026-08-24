@@ -3,7 +3,7 @@
 - 上游文档优先:技术权威面是 `docs/architecture.md`(系统/ADR/演进/债务);程序层决策看 `docs/gotry-master-outline.md`(总纲);复用矩阵(§2)是硬约束——代码级引入仅限 open-source import,内部资产只 bridge/reference。
 - **进入本仓的每个 agent/tick 先做异步工单清扫**:`ts/gotry-state/async/` 若有 `*.json` 而无同名 `.deliverable.md`,执行 `cd ts && npx tsx scripts/async-collect.ts <工单id>`(「一小时后回来」的调度闭环由这条驱动)。
 - 分层纪律:算术只在 `model.ts`/`unified.py` 的 evaluate 层;求解只在 `unified.ts`/`unified.py`;engine.*/journey.* 是 deprecated 兼容层,新代码不得调用。改任何一侧必须跑全栈回归(`scripts/run-all-tests.sh`,Python 20/20 + TS 套件全绿)。
-- TS↔Python 桥接面只有 `gotry_feasibility.cli` 一个 JSON 契约,不得新增第二条桥。
+- TS↔Python 无桥:py/gotry_feasibility 仅作历史对照 oracle,产品运行时与工具链零引用;不得新增任何 Python 依赖面。
 - dsh 跟 main(创始人决策):升级后先跑 `cd ts && npx tsc --noEmit && npx tsx scripts/smoke.ts`。
 - 文档纪律:单一文件承载单一关注点,版本历史归 git,不设 vN 后缀;GoTry 文档一律放本仓。
 - 状态同步纪律:任何改变系统当前形态/状态/债务的提交,必须在同一提交内同步 `architecture.md` §11 列出的全部状态面(6 处);M-exit 提交在提交信息中附保鲜清单勾稽结果。
