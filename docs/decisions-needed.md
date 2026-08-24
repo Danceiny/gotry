@@ -149,7 +149,7 @@ dsh LLM
 ---
 
 
-## D-6:**Anything 已统一** → OSM Nominatim / Postman OSM 占位降级
+## D-6 ✅ **2026-08-24 已落地 删 OSM**(founder: 「没有需要我拍的,不要阻塞在我这里」)
 
 **位置**:`docs/data-sources.md:50-51`
 
@@ -179,6 +179,7 @@ dsh LLM
 | 日期 | 变更 |
 |---|---|
 | 2026-08-23 | 立 v1:6 条决策项汇编,按优先级 D-1 ~ D-6 |
+| 2026-08-24 | v2: 5 段按 founder 倾向自决落地(D-1/D-3 标注/D-4a/D-5/D-6),D-2 留 founder |
 | 2026-08-23 | v2: D-4 状态变更(DONE 三仓 commit) + 已落地表迁移首位; 待 founder merge hotel-be/tmp/m1-rebase |
 | 2026-08-23 | v3: 6 段统一「founder 一句话拍」格式; D-5 去重 |
 | 2026-08-23 | v4: D-1 落地 MIT + D-4a 落地 100% follow(agent-reach v1.5.0 CLI + 13 渠道路由 + doctor) |

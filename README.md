@@ -10,7 +10,7 @@
 | | |
 |---|---|
 | **Version** | `v0.0.1-rc.3-dev` (最新 commit `270678b`; 历史 tags: [rc.1](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.1) · [rc.2](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.2)) |
-| **Status** | v0.0.1-rc.4(commit `9fad1d7`):8→12 工具 + agent-reach 100% follow + License MIT;**待你拍**:M4 校准 4 题 + npm publish + agent-reach 残余 |
+| **Status** | v0.0.1-rc.5(2026-08-24):按 founder 「不要阻塞」自决落地 5 段(D-1/D-3/D-4a/D-5/D-6);**仅 D-2 M4 校准待 founder** |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
