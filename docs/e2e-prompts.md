@@ -46,6 +46,18 @@ curl -sS --max-time 3 http://127.0.0.1:3080 -o /dev/null -w "dsh=%{http_code}\\n
 - 行为:工作流纪律(先问工作窗口)+ A/B/C 三方向 trade-off(避暑线/曼谷线/云南改期 wish pool)
 - ✓ wish pool 概念触发: "如果这次窗口短,不如直接曼谷,云南留给下次(可以记进愿望池,条件合适提醒你)"
 
+## wrapper 面复验(2026-08-22,rc.6 后;wrapper 化改了 gotry_agent_reach 参数面,真 LLM 会话验证反射面可被自主驱动)
+
+### 7. 反射调用 v2ex ("跑一下 agent-reach doctor 看渠道体检,然后用 agent_reach 工具的 v2ex 渠道拿今日热门话题前 5 条")
+- 行为:doctor 渠道体检表如实渲染(B站/gh/yt-dlp/mcporter 状态原样);**LLM 自主选对上游真名 `v2ex.get_hot_topics`(无参)**,取回 10 条真数据、给前 5(当天日期感知正确),还主动知道 `v2ex.search` 可用(自描述清单生效)
+- 引用 `[agent-reach:v2ex.get_hot_topics@2026-08-24T14:34:28Z]`(真调用时间戳)
+- ✓ wrapper「决策归 LLM」设计成立
+
+### 8. needs-setup 原话透传 ("用 agent_reach 查雪球 SH600519 实时股价;需要配置就原样告诉我上游的方法,不要自己编")
+- 行为:**上游 check() 原话整段引用**(`agent-reach configure --from-browser chrome --platform xueqiu`),不编股价、不转述、配置后主动提出复查
+- 引用 `[agent-reach:xueqiu.get_stock_quote@needs-setup@2026-08-24T14:35:23Z]`
+- ✓ 「setup 文案=上游原话透传」成立,LLM 诚实降级
+
 ## 总结
 
 - **8 工具人格真协同**: feasibility + skeleton + hotel + weather + flight + anything + web_search + agent_reach + motivation_save + wish_pool
