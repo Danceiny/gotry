@@ -1,30 +1,31 @@
 #!/usr/bin/env node
 /**
- * gotry CLI 入口(v0.0.1-rc.2 起):
+ * gotry CLI 入口(v0.0.1-rc.2 起;rc.6 起支持 npm 安装运行):
  *   gotry web                          # dsh Web 浏览器界面(:3080)
  *   gotry "I want 2 days in Phuket"    # headless one-shot
  *   gotry help                         # help
  *
  * 工作流程:
  *   1. 解析 argv + .env(provider-neutral → DEEPSEEK_API_KEY)
- *   2. spawn vendored dsh(`ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js`)
- *      —— 不是 npx。原因:corids patch 把 plugin 路径硬编码到仓库根。
- *   3. --patch 指向仓库根的 cordis.gotry-patch.yml
- *
- * 路线选择说明: 为什么不用 `npx dsh`?
- *   dsh 0.1.1-rc.2 的 cordis-loader 在子进程 cwd(~/.dsh/profiles/web/)求值 plugin name;
- *   而 patch name 用 './ts/src/index.ts' 或 '@gotry/plugin' 都会因为 cwd 不在仓库
- *   而失败。最稳的方案就是走 vendored runtime。要走 npx 一键启 dsh 需要 dsh 上游
- *   修 cordis 的 cwd 解析(或我们写一个 dsh-cwd-plugin);留到下个 tick。
+ *   2. 定位 dsh runtime:
+ *      a. repo checkout → vendored ts/dsh-runtime/node_modules/...
+ *      b. npm 安装     → createRequire 解析依赖 @deepseek-ai/dsh(不走 npx:
+ *         dsh cordis-loader 在子 cwd 求值 plugin name,必须绝对路径 patch)
+ *   3. 运行时生成 patch(os.tmpdir):把 gotry-tools 插件路径重写为按本包
+ *      位置解析的绝对路径 —— 仓内 cordis.gotry-patch.yml 里的 name 行只是
+ *      占位(本机绝对路径),随 tarball 分发后对其他机器必错。
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { createRequire } from 'node:module'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..')
+const require_ = createRequire(import.meta.url)
 
 // --- 环境 .env 加载(provider-neutral) ---
 const envPath = join(repoRoot, '.env')
@@ -67,20 +68,48 @@ const isLiteral = literal.has(args[0])
 const mode = isLiteral ? args[0] : 'headless'
 const rest = isLiteral ? args.slice(1) : args
 
-const patchPath = join(repoRoot, 'cordis.gotry-patch.yml')
-const dshBin = join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')
+// --- dsh runtime 定位:repo checkout(vendored)优先,npm 安装走依赖解析 ---
+const vendoredDsh = join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')
+let dshBin = ''
+let dshCwd = ''
+if (existsSync(vendoredDsh)) {
+  dshBin = vendoredDsh
+  dshCwd = join(repoRoot, 'ts/dsh-runtime')
+} else {
+  try {
+    dshBin = require_.resolve('@deepseek-ai/dsh/lib/bin.js')
+    dshCwd = process.cwd() // npm 安装:gotry-state 落在用户调用目录
+  } catch {
+    dshBin = ''
+  }
+}
 
-if (!existsSync(dshBin)) {
-  console.error(`[gotry] 找不到 vendored dsh runtime: ${dshBin}`)
-  console.error('请确认你 clone 了完整仓库(ts/dsh-runtime/ 应存在)。')
-  console.error('或运行: cd ts/dsh-runtime && pnpm install')
+if (!dshBin) {
+  console.error(`[gotry] 找不到 dsh runtime(既无 vendored ${vendoredDsh},依赖里也没有 @deepseek-ai/dsh)。`)
+  console.error('repo checkout: cd ts/dsh-runtime && pnpm install;npm 安装: npm install(检查 node_modules)。')
   process.exit(1)
 }
-if (!existsSync(patchPath)) {
-  console.error(`[gotry] 找不到 patch 配置: ${patchPath}`)
-  console.error('请确认你在仓库根目录运行。')
+
+// --- 运行时 patch:插件路径按本包位置重写为绝对路径 ---
+// npm 模式指向 dist/ 纯 JS(Node 拒绝 strip node_modules 下的 .ts);
+// repo 检出指向 .ts 源码(vendored runtime 下天然可行)。
+const distEntry = join(repoRoot, 'dist/src/index.js')
+const tsEntry = join(repoRoot, 'ts/src/index.ts')
+const npmMode = !existsSync(vendoredDsh)
+const pluginEntry = npmMode && existsSync(distEntry) ? distEntry : tsEntry
+const staticPatch = join(repoRoot, 'cordis.gotry-patch.yml')
+if (!existsSync(staticPatch)) {
+  console.error(`[gotry] 找不到 patch 配置: ${staticPatch}`)
   process.exit(1)
 }
+if (!existsSync(pluginEntry)) {
+  console.error(`[gotry] 找不到插件入口: ${pluginEntry}(包不完整?)`)
+  process.exit(1)
+}
+const patchRaw = readFileSync(staticPatch, 'utf-8')
+  .replace(/(name:\s*)'[^']*ts\/src\/index\.ts'/, `$1'${pluginEntry}'`)
+const patchPath = join(tmpdir(), `cordis.gotry.${process.pid}.yml`)
+writeFileSync(patchPath, patchRaw)
 if (!process.env.DEEPSEEK_API_KEY && mode !== 'help') {
   console.error('[gotry] 需要 DEEPSEEK_API_KEY(或 LLM_API_KEY)— 检查 .env 或环境变量。')
   process.exit(1)
@@ -95,18 +124,22 @@ const binJs = mode === 'web'
 const child = spawn(process.execPath, [dshBin, ...binJs], {
   stdio: 'inherit',
   env: process.env,
-  cwd: join(repoRoot, 'ts/dsh-runtime'),
+  cwd: dshCwd,
 })
 if (process.env.GOTRY_DEBUG) {
   console.error('[gotry-debug] exec:', process.execPath, dshBin)
   console.error('[gotry-debug] argv:', binJs)
-  console.error('[gotry-debug] cwd:', join(repoRoot, 'ts/dsh-runtime'))
+  console.error('[gotry-debug] cwd:', dshCwd)
   console.error('[gotry-debug] patch exists:', existsSync(patchPath), patchPath)
 }
 child.on('exit', (code, signal) => {
   if (code !== 0 || signal) {
     // D-NEW 护栏:dsh 异常退出也写一条 incident,留现场而非沉默
-    import('../ts/capabilities/incident-log.ts').then(({ recordIncident }) => {
+    // npm 模式 import dist JS(node_modules 下的 .ts 会被 Node 拒 strip)
+    const incidentModule = npmMode && existsSync(join(repoRoot, 'dist/capabilities/incident-log.js'))
+      ? '../dist/capabilities/incident-log.js'
+      : '../ts/capabilities/incident-log.ts'
+    import(incidentModule).then(({ recordIncident }) => {
       recordIncident({
         ts: new Date().toISOString(),
         kind: 'plugin_error',

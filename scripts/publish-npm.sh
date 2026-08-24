@@ -30,6 +30,9 @@ if [ "${1:-}" = "login" ]; then
   npm login --auth-type=web --registry=https://registry.npmjs.org/
 fi
 
+echo ">> 预编译 dist(Node 拒 strip node_modules 下的 .ts)"
+node scripts/build-dist.mjs
+
 echo ">> 隔离配置生效:registry=$(npm config get registry)"
 npm whoami --registry=https://registry.npmjs.org/ || echo "  (未登录/无 token 权限,继续尝试 publish)"
 

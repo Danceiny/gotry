@@ -1,5 +1,15 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.6(2026-08-22,npm 包真正可运行:rc.5 只装得上跑不起)
+
+rc.5 的 tarball 缺 dsh runtime、patch 里是我本机绝对路径、插件 .ts 在 node_modules 下被 Node 拒 strip——`gotry web` 对外必炸(仓库内 ./gotry 不受影响)。rc.6 修三处:
+
+- **bin 运行时解析**: gotry-inner.js 先试 vendored ts/dsh-runtime(repo 检出),失败则 createRequire 解析依赖树里的 @deepseek-ai/dsh(npm 安装);cwd 分别为 vendored 目录/用户调用目录
+- **dist 预编译**: scripts/build-dist.mjs 用 Node 自带 stripTypeScriptTypes(transform)把 ts/{src,capabilities,scripts} 编成 dist/ 纯 JS 并重写 .ts 导入说明符——Node 拒绝对 node_modules 下 .ts 做 type-strip(ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING),纯 JS 还兼容老 Node;patch 的插件路径运行时按 bin 位置重写绝对路径(仓内 yml 的 name 行改为占位符)
+- **data 静态包入包**: files += data/*.json(运行时读 openflights-skeleton/flights_2026/hotels_2026/golden_erhai)
+- 验证: 干净目录 npm install tarball → `gotry web` HTTP 200(依赖树拉真 dsh 150+ 包);repo 模式 ./gotry 同样 200;16 套 ALL GREEN(§1 首跑 z3 WASM 已知偶发,retry 过)
+- 发布: 恢复码第 3 枚当 OTP
+
 > 每个 tag 一条:内容、证据、闸勾稽。发布闸(AGENTS.md):① 全栈回归绿 ② §11 六状态面同步 ③ README 用法逐条实测 ④ License 明确 ⑤ 版本号在 tag 与全部文档间一致。
 > **v0.0.1-rc.3 起**:remote = github.com/Danceiny/gotry(private);License 沿用 rc 历史「未决」,本 tick 未变更。
 
