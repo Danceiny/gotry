@@ -76,6 +76,10 @@ echo "=== 16. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
 echo
+echo "=== 17. hotelbyte-skills 契约对齐(有凭证真校验,离线 SKIP) ==="
+(cd ts && npx tsx scripts/skills-contract-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
