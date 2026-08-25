@@ -47,10 +47,24 @@ assert.match(r3.evidence, /spawn_error/, `evidence got: ${r3.evidence}`)
 // 4. searchHotels 高层降级
 const fallback = join(tmp, 'hotels-fallback.json')
 await writeFile(fallback, JSON.stringify({ meta: 'fake', stays: [{ id: 's1' }] }))
+// v0.3.0 旗标回归:上游扁平化后旗标是 --destination-name/--room-occupancies
+{
+  const { writeFileSync, chmodSync } = await import('node:fs')
+  const echoBin = join(tmp, 'hbcli-echo')
+  writeFileSync(echoBin, '#!/bin/sh\necho "ARGS:$@"; echo \'{}\' ')
+  chmodSync(echoBin, 0o755)
+  const re = await searchHotels({ destination: '普吉', adults: 2 }, { hbcliBin: echoBin })
+  const argLine = JSON.stringify(re)
+  if (!argLine.includes('destination-name') || !argLine.includes('room-occupancies')) {
+    throw new Error(`FAIL: v0.3.0 旗标未对齐,实际 ${argLine.slice(0, 200)}`)
+  }
+  console.log('5. v0.3.0 旗标(--destination-name/--room-occupancies)对齐 OK')
+}
+
 const r4 = await searchHotels({ destination: '普吉' }, { hbcliBin: failBin2, fallbackPath: fallback })
 assert.equal(r4.via, 'hbcli-error', 'searchHotels: fails to hbcli → fallback')
 assert.equal(r4.summary.includes('降级到静态包'), true, 'summary 指明降级')
 assert.ok(r4.hotels, 'hotels 字段填上静态包内容')
 
 await rm(tmp, { recursive: true, force: true })
-console.log('HBCLI TESTS: 4/4 OK (happy path / error path / no-binary / fallback)')
+console.log('HBCLI TESTS: 5/5 OK (happy / error / no-binary / fallback / v0.3.0 旗标回归)')

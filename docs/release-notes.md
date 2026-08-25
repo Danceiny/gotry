@@ -1,5 +1,14 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.7-dev(酒店链路对齐上游 v0.3.0,2026-08-25)
+
+- 巡检发现 gotry 传的旗标是旧版(--destination/--check-in/--adults),上游 v0.3.0
+  实为 --destination-name + --room-occupancies(hotel-list 无日期旗标)——即使
+  hbcli 装好也会 unknown option。已对齐并对真 CLI 验证(参数解析过,卡在
+  凭证边界=预期);§7 增旗标回归断言(回显夹具),红→绿当场验证断言有效
+- 配套:Anything 链两端 PR 已开(hotelbyte-cli#3 / hotel-be#30949,合入前静态包兜底);
+  hotelbyte-skills contracts/hotels.md 重写为 v0.3.0 真实命令面
+
 ## v0.0.1-rc.7-dev(dsh-calendar 宿主插件,2026-08-25)
 
 - v0.3.2 装入 vendored runtime + 根包依赖 + inner 三段解析(vendored→子路径→裸名,
