@@ -663,6 +663,24 @@ export function apply(ctx: Context, config: Config): void {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'channel 与 method 必填(或 action=status);清单可先随便调一次,inventory 会带回上游渠道/方法表' })) as Record<string, never>
       }
       const r = await reach({ channel: q.channel, method: q.method, args: q.args, timeoutMs: q.timeoutMs })
+      // 长结果干净截断:数组按条目边界保留(dsh 工具上限会拦腰断 JSON,模型只能看到半条)
+      const dataStr = (v: unknown): unknown => {
+        if (Array.isArray(v)) {
+          const kept: unknown[] = []
+          let budget = 3500
+          for (const item of v) {
+            const s = JSON.stringify(item)
+            if (budget - s.length < 0) break
+            budget -= s.length + 1
+            kept.push(item)
+          }
+          if (kept.length < v.length) kept.push(`…(截断:保留 ${kept.length}/${v.length} 条;可用上游方法带 limit 参数取更少)`)
+          return kept
+        }
+        if (typeof v === 'string') return v.length > 4000 ? v.slice(0, 4000) + '…(截断)' : v
+        return v
+      }
+      if (r.ok) r.data = dataStr(r.data)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `agent-reach:${q.channel}.${q.method}:${r.verdict}`).catch(() => {})
       const summary = r.verdict === 'found'
         ? `${q.channel}.${q.method} → found (${r.latencyMs}ms)\n${r.evidence}\n${typeof r.data === 'string' ? r.data.slice(0, 600) : JSON.stringify(r.data ?? null).slice(0, 600)}`
