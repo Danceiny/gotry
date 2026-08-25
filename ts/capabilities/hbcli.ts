@@ -120,14 +120,14 @@ export async function searchHotels(
   query: { destination: string; checkIn?: string; checkOut?: string; adults?: number },
   opts: HbcliCallOptions & { fallbackPath?: string } = {},
 ): Promise<HbcliCallResult & { hotels?: unknown; summary: string }> {
-  const hbArgs = ['search', 'hotel-list', '--json']
-  if (query.destination) hbArgs.push('--destination', query.destination)
-  if (query.checkIn) hbArgs.push('--check-in', query.checkIn)
-  if (query.checkOut) hbArgs.push('--check-out', query.checkOut)
-  if (query.adults) hbArgs.push('--adults', String(query.adults))
+  // 旗标对齐上游 CLI v0.3.0(命令树扁平化后):--destination-name + --room-occupancies;
+  // hotel-list 无日期旗标(房价按上游当前窗口),checkIn/checkOut 留给 hotel-rates 跟进
+  const hbArgs = ['search', 'hotel-list', '--json', '--page-size', '10']
+  if (query.destination) hbArgs.push('--destination-name', query.destination)
+  if (query.adults) hbArgs.push('--room-occupancies', JSON.stringify([{ adultCount: query.adults, childrenAges: [] }]))
   const live = await callHbcliJson(hbArgs, opts)
   if (live.via === 'hbcli-realtime') {
-    return { ...live, hotels: live.result, summary: `${query.destination}:hbcli 实时返回` }
+    return { ...live, hotels: live.result, summary: `${query.destination}:hbcli 实时返回${query.checkIn || query.checkOut ? '(日期不传上游 list,以当前窗口房价返回)' : ''}` }
   }
   // 降级:读静态包
   const fallback = opts.fallbackPath
