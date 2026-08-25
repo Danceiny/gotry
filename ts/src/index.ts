@@ -101,7 +101,8 @@ export function apply(ctx: Context, config: Config): void {
       'Check travel candidates against the user\'s motivation and hard constraints using the '
       + 'door-to-door true-cost engine (wake time, arrival state, energy, usable hours, money). '
       + 'Input is the structured request (motivation weights + hard constraints + window + budget + home hubs) '
-      + 'and the candidate list (services/transfers/stay costs/min days), same shape as data/golden_erhai.json. '
+      + 'and the candidate list (services/transfers/stay costs/min days): '
+      + 'structure { request: { motivation weights, hard constraints, window, budget, home hubs }, candidates: [ { id, label, services, transfers, stay, minDays } ] }. '
       + 'Returns per-candidate verdicts, unsat cores with minimal-modification suggestions, '
       + 'a wish-pool entry for infeasible aspirations, and a ready-to-show markdown answer.',
     parameters: {
@@ -254,7 +255,7 @@ export function apply(ctx: Context, config: Config): void {
       query: {
         type: 'json',
         required: true,
-        description: '{ destination: "普吉", checkIn?: "2026-07-18", checkOut?: "2026-07-23", occupancy?: { adults: 2 } }',
+        description: '{ destination: "<目的地城市>", checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", occupancy?: { adults: 2 } }',
       },
     },
     output: {
@@ -337,7 +338,7 @@ export function apply(ctx: Context, config: Config): void {
       query: {
         type: 'json',
         required: true,
-        description: '{ place: "大理市", month?: 8, mode?: "forecast"|"climate", days?: 7 }',
+        description: '{ place: "<城市名>", month?: 8, mode?: "forecast"|"climate", days?: 7 }',
       },
     },
     output: {
@@ -448,7 +449,7 @@ export function apply(ctx: Context, config: Config): void {
       query: {
         type: 'json',
         required: true,
-        description: '{ keyword: "大理", contentType?: "city"|"hotel", parentDestinationId?: "?", timeoutMs?: 12000 }',
+        description: '{ keyword: "<搜索关键词>", contentType?: "city"|"hotel", parentDestinationId?: "?", timeoutMs?: 12000 }',
       },
     },
     output: {
