@@ -61,7 +61,14 @@ def main() -> int:
         return 2
 
     try:
-        out = fn(*args)
+        try:
+            out = fn(*args)
+        except TypeError:
+            # LLM 常把数值参数传成字符串("3" vs 3):数字 coercion 重试一次
+            coerced = [int(a) if isinstance(a, str) and a.isdigit() else a for a in args]
+            if coerced == args:
+                raise
+            out = fn(*coerced)
         print(json.dumps({"ok": True, "data": out}, ensure_ascii=False, default=str))
         return 0
     except Exception as e:
