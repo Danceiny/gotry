@@ -183,15 +183,8 @@ export function apply(ctx: Context, config: Config): void {
       },
     },
     output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          saved: { type: 'boolean' },
-          path: { type: 'string' },
-          profile: { type: 'json' },
-        },
-      },
+      // loose json:guard 兜底字段(ok/summary)不被 strict schema 拒(骨架事故同款)
+      schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: `动机画像已保存:${String((value as { path?: string }).path ?? '')}` }],
     },
     async execute(args: { profile: unknown }, _exec: unknown) {
@@ -223,15 +216,8 @@ export function apply(ctx: Context, config: Config): void {
       },
     },
     output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          added: { type: 'boolean' },
-          total: { type: 'integer' },
-          path: { type: 'string' },
-        },
-      },
+      // loose json:guard 兜底字段(ok/summary)不被 strict schema 拒(骨架事故同款)
+      schema: { type: 'json' },
       render: (_args, value) => {
         const v = value as { total?: number; path?: string }
         return [{ type: 'text', text: `已加入「下一次出发」清单(共 ${v.total ?? '?'} 项):${v.path ?? ''}` }]
