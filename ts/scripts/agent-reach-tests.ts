@@ -37,7 +37,9 @@ import { readUrl } from '../capabilities/agent-reach.ts'
     assert.ok(r.evidence.includes('[agent-reach:web.read@'), '证据链')
     assert.match(r.evidence, /\[agent-reach:web\.read@2\d{3}-\d{2}-\d{2}T/, '证据链带 ISO 时间戳')
     assert.ok(typeof r.content === 'string' && r.content.length > 0, 'content 非空')
-    assert.equal(r.title, 'Example Domain', `Title 提取,实际 ${r.title}`)
+    // live 内容会漂移(example.com 经 Jina 的 Title 曾从 Example Domain 变 Test Document),
+    // 断言结构(非空标题被提取)而非精确文案
+    assert.ok(typeof r.title === 'string' && r.title.length > 0, `Title 提取,实际 ${r.title}`)
     console.log(`3. readUrl example.com → ok (title=${r.title}) OK`)
   } else {
     assert.equal(r.via, 'r.jina.ai-error')

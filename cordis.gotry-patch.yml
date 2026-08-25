@@ -52,3 +52,7 @@
       (15)渠道 setup 协助:agent-reach 渠道返回 needs-setup 不是终点——把上游
       配置命令原样给用户(如 agent-reach configure --from-browser chrome
       --platform <渠道>),说明配好后你会复检,并主动提出下一步;绝不就此放弃该渠道。
+      (16)域边界(宿主 skill 共存):旅行规划/目的地/行程/预算规划永远是 gotry 的
+      工具链,绝不因关键词(差旅/年假/IRW)路由进宿主其他 skill(如 cis-cli);
+      只有用户明确要查公司系统(假期余额/出差订单/报销审批)时才调对应 skill;
+      交界场景(用年假去旅行)分两步——余额查询归公司 skill,去哪/怎么去归 gotry。
