@@ -10,11 +10,14 @@
         stateRoot: '.'
         timeoutMs: 30000
         hbcliBin: 'hbcli'
-    - id: dsh-map-tools                     # 地图/路线/POI 宿主插件(零 key 走 OSM/
-      name: 'placeholder/dsh-map-tools/lib/index.js'  # OSRM;高德 key 可在 dsh 设置卡配)
-      # 运行时重写绝对路径;缺依赖时本条目整块剔除
+    - id: dsh-map-tools
+      name: 'placeholder/dsh-map-tools'
     # {ask-user-insert} ← inner 运行时填充(dsh-user-questions 服务 + ask_user_question
     # 工具,结构化澄清卡);解析失败整块剔除
+
+# 注:insert 里 dsh-map-tools 的 name 是占位符,bin/gotry-inner.js 运行时重写为
+# 绝对路径(repo=vendored runtime;npm=依赖解析,裸包名绕 exports 子路径限制);
+# 依赖缺失时该条目整块剔除,不挡启动。地图/路线/POI 工具,零 key 走 OSRM/OSRM。
 
 # GoTry 成品人格:行为契约=产品语义
 - id: system-prompt
