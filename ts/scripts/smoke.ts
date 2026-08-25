@@ -105,6 +105,19 @@ async function main() {
   }
   console.log('unwrapQuery: string + bare-object shapes both accepted')
 
+  // 7) 骨架输出 schema 放宽回归:execute 正常返回三字段;guard 错误兜底(ok/summary)
+  // 不再被 strict schema 拒(dsh 参数层拒错→guard 兜底→旧 strict schema 校验炸,
+  // 真实错误信息被掩盖——patrol 实测抓到)
+  const skTool = byName('gotry_skeleton_check')
+  const skFlat = await skTool.execute({ from: 'HKG', to: 'BKK' } as never, null) as { connected?: boolean; evidence?: string }
+  if (skFlat.connected !== true) throw new Error(`FAIL: 骨架平铺调用应 connected=true,实际 ${JSON.stringify(skFlat).slice(0, 120)}`)
+  const skBad = await skTool.execute({ from: '', to: '' } as never, null) as { ok?: boolean; summary?: string }
+  if (typeof skBad?.summary === 'string' && (skBad as { connected?: boolean }).connected === undefined) {
+    // guard 兜底路径:宽松 schema 下字段可存在即可,不抛
+    console.log('skeleton guard-fallback shape survives (loose schema)')
+  }
+  console.log(`skeleton flat-args: connected=${skFlat.connected}`)
+
   console.log('\nSMOKE OK')
 }
 

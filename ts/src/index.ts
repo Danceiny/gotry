@@ -323,19 +323,15 @@ export function apply(ctx: Context, config: Config): void {
       to: { type: 'string', required: true, description: 'IATA, e.g. HKT' },
     },
     output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          connected: { type: 'boolean' },
-          airlines: { type: 'array', items: { type: 'string' } },
-          evidence: { type: 'string' },
-        },
-      },
-      render: (_args, value) => [{ type: 'text', text: String((value as { evidence?: string }).evidence ?? '') }],
+      // loose json(与兄弟工具一致):strict additionalProperties:false 会拒 guard 的
+      // 错误兜底字段(ok/summary),校验错掩盖真实错误
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { evidence?: string }).evidence ?? JSON.stringify(value)) }],
     },
-    async execute(args: { from: string; to: string }, _exec: unknown) {
-      const verdict = await checkConnectivity(args.from, args.to)
+    async execute(args: { from?: string; to?: string; query?: unknown } & Record<string, unknown>, _exec: unknown) {
+      // 平铺参数的工具也会被 LLM 包进 query(#12/#13 同款形态),unwrapQuery 兜住
+      const q = unwrapQuery<{ from?: string; to?: string }>(args)
+      const verdict = await checkConnectivity(String(q.from ?? ''), String(q.to ?? ''))
       return JSON.parse(JSON.stringify(verdict)) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `骨架校验:${args.from}-${args.to}`, kind: 'execute', rawInput: args }),
