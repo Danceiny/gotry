@@ -6,33 +6,24 @@
 
 ---
 
-## 当前位置(2026-08-23)
+## 当前位置(2026-08-25)
 
-**`v0.0.1-rc.3` 已发布**(tag @ `3e7791a`)**+ dev 推进至 `4b0aa43`**(HEAD):在 `v0.0.1-rc.2` 之上叠加 4 个产品面 commit(270678b headless-fix + c5e2189 npm-pack + fbd4f2f release-notes-cleanup + 3e7791a README 一行安装段)+ 一个 ticket shell 修正:
+**`@danceiny/gotry@0.0.1-rc.7` 已公开分发**(registry.npmjs.org,`npx @danceiny/gotry@rc web` 一行启动);rc.8 已构建验证待发布(npm token 轮换后等 web 登录会话)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
 
-- D-7 全部切轨到 unified(`bdcd630`)
-- 2 个产品级 bug fix:`85a07d6` 时间感知 / generic 路由污染
-- WASM 崩溃止血:`8e0509c` z3 改动态加载 + try-catch
-- hbcli 接入:`d83c5be` + 4 断言测试
-- D-NEW 进程护栏部分赎回:`df4c111` incident-log fsync
-- 完全去 Python:`23635c5` cli.py / bridge.callFeasibilityEngine / diff-test ts-vs-python 全删
-- npm 一键启动骨架:`c5e2189` 根 package.json + bin/gotry.js
-- headless 实测 ✓:`270678b` gotry 默认 mode 修复
-- README 一行安装段:`3e7791a` 5 步走通
-
-反映在架构文档:architecture.md §1 当前形态 / §9 演进 / §10 债务 / §11 状态面同步全刷新。
-
-rc.1 → rc.3 总览:
+rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
 | RC | 状态 | 范围 |
 |---|---|---|
-| v0.0.1-rc.1 | 已推 | D-7 + 5 commit + LICENSE 占位;**仍要求**用户 clone + pnpm install + Python venv + 配 .env |
-| v0.0.1-rc.2 | 已推 | 在 rc.1 基础上去 Python;run-all-tests 不再依赖 Python;gotry 入口简化 |
-| **v0.0.1-rc.3** | 已推(`3e7791a`)/dev 推进至 HEAD `4b0aa43` | 在 rc.2 之上叠 npm 一键启动骨架 + headless fix + README 一行安装段;web + headless 双形态实测 ✓;**用户路径实测 5 步**:clone → pnpm install → 配 .env → ./gotry web |
-| **dev(未打 tag)** | 4b0aa43 (2026-08-23) | **Anything 通用搜索落地**(三仓 commit:gotry `244a0ae` + hbcli `43236a0` + hotel-be `c38ff65d1`)/ **M-4 reconcile 已知答案吸收**到 `data/flights_2026.json` + `data/yunnan-pack.json`(f2/f3/f4 真实班次 + 住宿模式 + 8.1 从甲米 KBV 起点)/ 6 状态面文档同步 / journey §3 断言放宽(D-1 oracle 路径债标识) |
-| 后续 | 待规划 | npm registry 正式发布(需 founder token) + License 落定 + 种子用户启动 |
+| v0.0.1-rc.1 → rc.3 | 已推(tag) | 去 Python / npm 一键骨架 / headless 实测 / Anything 三仓落地 |
+| v0.0.1-rc.4 | 已推 | agent-reach 接入(router 形态,后被 wrapper 化取代)+ License MIT |
+| v0.0.1-rc.5 | 已发 npm(不可用,被 rc.6 取代) | 首发打通 2FA/恢复码/隔离发布命令;tarball 缺 runtime(教训) |
+| **v0.0.1-rc.6** | **已发 npm,可用** | bin 运行时解析 + dist 预编译(绕 Node 拒 strip node_modules .ts)+ data 入包;干净安装 web 200 实测 |
+| **v0.0.1-rc.7** | **已发 npm,当前 rc tag** | .env 读用户当前目录 + 无 key 可执行指引 |
+| v0.0.1-rc.8 | 已构建验证,**待发布**(等 npm 登录) | unwrapQuery 参数三形态(#12/#13)/ 人格 17 契约 / ask_user_question 三形态 / dsh-map-tools + dsh-calendar 宿主插件 / 契约对齐 §17 |
+| dev(未发) | 持续 main 直推 | issue 冲刺 14/14 交付(README 一致性/域边界/数据污染根除等),17 套 ALL GREEN |
+| 后续 | founder 侧 | npm 登录发 rc.8 / M4 校准七题 / 种子用户邀约 + issue 复验 |
 
-**M3 剩余:种子用户 50-200 人(发起人即首个用户;`./gotry` 即入口;npm registry + License 决策)**。
+**M3 剩余:真实种子用户 50-200 人(工程侧无堵点:`npx @danceiny/gotry@rc web` 一行启动已通;npm registry ✓ License MIT ✓;待 founder 邀约与反馈回收)**。
 
 (历史)**M2 已退出**(b0cfd97):§7-1 三层组合全链落地——OpenFlights 骨架(168 枢纽对,三值语义,求解消费+用户渲染双层)+ OpenSky 校验桥 + bookedResources 锚点 + hbcli 酒店桥(gotry_hotel_search,实时/静态降级);dsh 运行时端到端(DeepSeek 原生,人格+五工具);一键成品入口 `./gotry` 经全新场景验收(带爸妈云南行:人格问对问题→引擎三候选判决→证据链→三道选择题)。G1 已决(中国出境首发)、S1 已冻结、§7-1 已批——均由创始人「按推荐方案执行」指令结算。**当前 = M3 最小可用产品**:最小 Web 面(D-4)+ 种子用户 50-200 人(发起人即首个用户,`./gotry` 即入口)。
 
