@@ -38,7 +38,16 @@ GoTry 把「想去哪」变成「能不能、怎么去」：
 
 ## 🚀 快速开始 — Quick start
 
-### 1. Clone
+### 一行启动(npm,推荐)
+
+```bash
+npx @danceiny/gotry@rc web          # 首跑会提示在当前目录建 .env(LLM_API_KEY=<DeepSeek key>)
+```
+
+装完即得 :3080 对话界面。已装 dsh 的用户同理——上面的命令会自动以 cordis patch
+挂载 gotry 插件,无需任何额外配置(零成本启动)。
+
+### 源码安装(开发者)
 
 ```bash
 git clone https://github.com/Danceiny/gotry
