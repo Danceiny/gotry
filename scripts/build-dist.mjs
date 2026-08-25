@@ -30,6 +30,12 @@ function walk(dir) {
   return out
 }
 
+// agent-reach 反射桥是 python,不参与 strip,原样随 dist 分发
+// (npm 模式下 wrapper 在 dist/capabilities/ 找它;files 白名单已含 dist/)
+import { copyFileSync } from 'node:fs'
+mkdirSync(join(OUT, 'capabilities'), { recursive: true })
+copyFileSync(join(root, 'ts/capabilities/agent-reach-bridge.py'), join(OUT, 'capabilities/agent-reach-bridge.py'))
+
 let n = 0
 for (const dir of SRC) {
   for (const file of walk(join(root, dir))) {
