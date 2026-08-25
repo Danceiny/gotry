@@ -67,6 +67,11 @@ curl -sS --max-time 3 http://127.0.0.1:3080 -o /dev/null -w "dsh=%{http_code}\\n
 - 行为:两条路实测——web.read 搜索页吃反爬([agent-reach:web.read@ts])、上游渠道体检 xiaohongshu.check@off([agent-reach:xiaohongshu.check@off@ts],反射调 check 方法);**仍交付 6 条真实笔记标题+链接**(web 侧拿到),诚实声明不编造正文;按契约 (15) 给三选一 setup 方案(桌面 opencli / Cookie / 先不折腾,各带 trade-off 与精确上游命令)并主动提出配好后拉全文
 - 结论:#4①(路由优先 agent-reach、零折损——渠道不可用时降级不放弃)与 ②(setup 协助)行为面成立
 
+### 11. 判定前气候背景(T4,全要素:"2027-01-16~22 深圳出发 ¥8000 对比三亚/清迈")
+- 行为:判定前先出「① 1月气候背景」表,三亚/清迈各自带 [实时API:open-meteo@2026-08-25] 证据;气候差异进选择题 trade-off(三亚阴天概率 vs 清迈干燥晴好);引擎判定表(起床/到达精力/有效休整/全成本)+ 数据披露(估算/促销底价逐项标注,骨架三值语义正确——SYX 不覆盖○/CNX 枢纽无直飞❌)+ 跨会话画像生效(记住迪拜出发)+ 2027 春节日期换算正确
+- 首轮动机先行的分轮验证:缺要素时正确发结构化问询(出发城市含"沿用迪拜"选项/工作窗口/已订资源/具体日期 3 选)
+- 结论:T4(判定前背景调查)行为面成立;契约 (1)(17) 双双在线
+
 ## 总结
 
 - **8 工具人格真协同**: feasibility + skeleton + hotel + weather + flight + anything + web_search + agent_reach + motivation_save + wish_pool
