@@ -1,5 +1,17 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.7-dev(D-4 地图位 + 卡片赎回,2026-08-22)
+
+### 地图位落地:宿主插件 dsh-map-tools(#9 选型首位)
+
+- v0.4.4 装入 vendored runtime(peer 用 auto-install-peers=false 就地链接);
+  npm 分发:根包依赖 + gotry-inner require 解析;patch 条目占位、缺依赖整块剔除
+- 7 个 map_* 原生工具(零 key 走 OSRM/OSM,高德可在 dsh 设置卡后配);
+  e2e 实测 map_driving_route:杭州西湖→千岛湖 160.5km/119min/27 步指引
+- **顺带修 root 入口病根**:./gotry 原直连 dsh 用静态 patch(占位符路径),
+  gotry 工具一直靠 ~/.dsh/profiles 旧绝对路径 patch 暗中承重(宿主插件因此丢失)
+  ——统一改走 bin/gotry-inner.js 运行时生成 patch
+
 ## v0.0.1-rc.7-dev(D-4 卡片赎回,2026-08-22)
 
 - **feasibility 结果卡**:presentResult(此前 12 工具全未用)——逐候选 `✅ 千岛湖 ¥996/人(预算 ¥3000,余 ¥2004) ← 推荐` / `❌ 大理·洱海 — duration` 紧凑行 + 人话答案,替代裸 JSON dump;smoke 新增断言

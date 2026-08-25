@@ -18,11 +18,11 @@ set -a; source "$ROOT/.env" 2>/dev/null || true; set +a
 MODE="${1:-web}"
 
 case "$MODE" in
+  # 统一走 bin/gotry-inner.js:运行时生成 patch(插件路径按本包解析 + 宿主插件
+  # 如 dsh-map-tools 注入),不再依赖 ~/.dsh/profiles 下的陈旧 patch(旧绝对路径
+  # 暗中承重、宿主插件丢失的根因)。
   web|"")
-    : "${LLM_API_KEY:?需要 .env 里的 LLM_API_KEY}"
-    export DEEPSEEK_API_KEY="$LLM_API_KEY"
-    cd "$ROOT/ts/dsh-runtime"
-    exec node node_modules/@deepseek-ai/dsh/lib/bin.js web --patch ../cordis.gotry-patch.yml
+    exec node "$ROOT/bin/gotry-inner.js" web "$@"
     ;;
   -h|--help|help)
     cat <<EOF
@@ -42,9 +42,6 @@ GoTry —— dsh 运行时驱动
 EOF
     ;;
   *)
-    : "${LLM_API_KEY:?需要 .env 里的 LLM_API_KEY}"
-    export DEEPSEEK_API_KEY="$LLM_API_KEY"
-    cd "$ROOT/ts/dsh-runtime"
-    exec node node_modules/@deepseek-ai/dsh/lib/bin.js --profile headless --patch ../cordis.gotry-patch.yml "$@"
+    exec node "$ROOT/bin/gotry-inner.js" "$@"
     ;;
 esac

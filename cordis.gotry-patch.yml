@@ -10,6 +10,9 @@
         stateRoot: '.'
         timeoutMs: 30000
         hbcliBin: 'hbcli'
+    - id: dsh-map-tools                     # 地图/路线/POI 宿主插件(零 key 走 OSM/
+      name: 'placeholder/dsh-map-tools/lib/index.js'  # OSRM;高德 key 可在 dsh 设置卡配)
+      # 运行时重写绝对路径;缺依赖时本条目整块剔除
 
 # GoTry 成品人格:行为契约=产品语义
 - id: system-prompt
