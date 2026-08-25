@@ -112,8 +112,19 @@ if (!existsSync(pluginEntry)) {
   console.error(`[gotry] 找不到插件入口: ${pluginEntry}(包不完整?)`)
   process.exit(1)
 }
-const patchRaw = readFileSync(staticPatch, 'utf-8')
+// dsh-map-tools 宿主插件(地图/路线/POI,零 key 走 OSM/OSRM):repo 用 vendored,
+// npm 用依赖解析;都找不到就整块剔除 patch 条目(缺地图不挡旅行规划)
+let mapEntry = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js')
+if (!existsSync(mapEntry)) {
+  try { mapEntry = require_.resolve('dsh-map-tools/lib/index.js') } catch { mapEntry = '' }
+}
+let patchRaw = readFileSync(staticPatch, 'utf-8')
   .replace(/(name:\s*)'[^']*ts\/src\/index\.ts'/, `$1'${pluginEntry}'`)
+if (mapEntry) {
+  patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-map-tools[^']*'/, `$1'${mapEntry}'`)
+} else {
+  patchRaw = patchRaw.replace(/\n\s*- id: dsh-map-tools\n\s*name: 'placeholder\/dsh-map-tools[^']*'\n[^\n]*\n?/, '\n')
+}
 const patchPath = join(tmpdir(), `cordis.gotry.${process.pid}.yml`)
 writeFileSync(patchPath, patchRaw)
 if (!process.env.DEEPSEEK_API_KEY && mode !== 'help') {

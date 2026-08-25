@@ -9,7 +9,7 @@
 
 | 插件 | 核实能力 | 补哪个缺口 |
 |---|---|---|
-| [HorusJiang/dsh-map-tools](https://github.com/HorusJiang/dsh-map-tools) | 驾车/公交/步行/骑行路线规划、地理编码、逆地理编码、POI 搜索——**原生工具**,模型直接调,无需 MCP | **D-4 地图位**(词表内做不到的地图能力)+ probePoi 的 POI 增强 |
+| [HorusJiang/dsh-map-tools](https://github.com/HorusJiang/dsh-map-tools) | 驾车/公交/步行/骑行路线规划、地理编码、逆地理编码、POI 搜索——**原生工具**,模型直接调,无需 MCP | ✅ **已集成 2026-08-22**(v0.4.4,e2e 实测 map_driving_route 160.5km/119min 真调用) |
 | [STARDUSTLC666/dsh-calendar](https://github.com/STARDUSTLC666/dsh-calendar) | CalDAV 读写日历,重复日程自动展开,5 个面向模型的工具 | **工作窗口自动读取**(现在首轮必问→读日历即得,issue #1 减负)+ 行程落日历 |
 
 ## 产品闭环基建(「下一次出发」的触达宿主,M3→M5)
