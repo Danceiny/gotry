@@ -286,6 +286,15 @@ export function apply(ctx: Context, config: Config): void {
       return JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
     },
     presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'search', rawInput: args.query }),
+    presentResult: (_args, value) => {
+      const r = value as { hotels?: unknown[]; via?: string; destination?: string; summary?: string }
+      const n = Array.isArray(r.hotels) ? r.hotels.length : 0
+      return {
+        card: 'generic',
+        title: `酒店:${r.destination ?? ''} ${n ? `${n} 家(${r.via === 'hbcli-realtime' ? '实时' : '静态包'})` : '无结果'}`,
+        content: [{ type: 'text', text: String(r.summary ?? '') }],
+      }
+    },
   }))
 
   registerGuarded(defineTool({
@@ -368,6 +377,16 @@ export function apply(ctx: Context, config: Config): void {
       })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `天气:${String((args.query as { place?: string })?.place ?? '')}`, kind: 'fetch', rawInput: args.query }),
+    presentResult: (args, value) => {
+      const r = value as { summary?: string }
+      const place = String((args.query as { place?: string })?.place ?? '')
+      const failed = String(r.summary ?? '').includes('降级') || String(r.summary ?? '').includes('unavailable')
+      return {
+        card: 'generic',
+        title: `天气:${place} ${failed ? '降级' : 'ok'}`,
+        content: [{ type: 'text', text: String(r.summary ?? '') }],
+      }
+    },
   }))
 
   registerGuarded(defineTool({
@@ -459,6 +478,15 @@ export function apply(ctx: Context, config: Config): void {
       })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `Anything search:${String((args.query as { keyword?: string })?.keyword ?? '')}`, kind: 'search', rawInput: args.query }),
+    presentResult: (_args, value) => {
+      const r = value as { hits?: unknown[]; total_candidates?: number; verdict?: string; keyword?: string; summary?: string }
+      const n = Array.isArray(r.hits) ? r.hits.length : (r.total_candidates ?? 0)
+      return {
+        card: 'generic',
+        title: `Anything:${r.keyword ?? ''} ${r.verdict === 'hit' ? `${n} hits` : (r.verdict ?? 'no-result')}`,
+        content: [{ type: 'text', text: String(r.summary ?? '') }],
+      }
+    },
   }))
 
   registerGuarded(defineTool({
@@ -635,5 +663,15 @@ export function apply(ctx: Context, config: Config): void {
       })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `Agent Reach:${String((args.query as { channel?: string; method?: string })?.channel ?? '')}.${String((args.query as { method?: string })?.method ?? 'status')}`, kind: 'fetch', rawInput: args.query }),
+    presentResult: (args, value) => {
+      const r = value as { verdict?: string; summary?: string }
+      const q = (args.query as { channel?: string; method?: string }) ?? {}
+      const icon = r.verdict === 'found' ? '✅' : r.verdict === 'needs-setup' ? '🔧' : r.verdict === 'not-installed' ? '📦' : '❌'
+      return {
+        card: 'generic',
+        title: `AgentReach ${icon} ${q.channel ?? ''}.${q.method ?? 'status'} ${r.verdict ?? ''}`,
+        content: [{ type: 'text', text: String(r.summary ?? '') }],
+      }
+    },
   }))
 }
