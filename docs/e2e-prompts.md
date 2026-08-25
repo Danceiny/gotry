@@ -58,6 +58,11 @@ curl -sS --max-time 3 http://127.0.0.1:3080 -o /dev/null -w "dsh=%{http_code}\\n
 - 引用 `[agent-reach:xueqiu.get_stock_quote@needs-setup@2026-08-24T14:35:23Z]`
 - ✓ 「setup 文案=上游原话透传」成立,LLM 诚实降级
 
+### 9. 全链回归(guard/kind/结果卡/wrapper 五连改后,"8月10-11日两天窗口,深圳出发,湖边发呆,预算3000,千岛湖 vs 大理洱海")
+- 行为:一轮内 6 类证据链齐发——判定 [引擎:solveChoiceSegment@ts]、大理雨季/杭州湿热两次 [实时API:open-meteo@ts]、洱海民宿 [静态包:估算]、骨架诚实不覆盖 [骨架:openflights];不可行候选给最小修改(窗口 2→5 天+旱季+¥4632)并自动存愿望池(带浮出条件);**时间感知正确:8/10-11 相对今天已过,主动拦截要日期裁决**(待决=选择题 3 选项);末尾补问工作窗口/已订资源(动机先行)
+- 结论:guardToolExecute 包装/kind/结果卡/wrapper 五个 tick 的改动对 LLM 路径零回归
+- 附注:demo 数据包的 8 月日期已入过去时,LLM 诚实处理;后续 prompt 应锚定未来日期
+
 ## 总结
 
 - **8 工具人格真协同**: feasibility + skeleton + hotel + weather + flight + anything + web_search + agent_reach + motivation_save + wish_pool
