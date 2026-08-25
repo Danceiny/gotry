@@ -146,8 +146,22 @@ let patchRaw = readFileSync(staticPatch, 'utf-8')
 if (mapEntry) {
   patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-map-tools'/, `$1'${mapEntry}'`)
 } else {
-  // 整块剔除(缺地图不挡旅行规划);对齐极简条目形状
   patchRaw = patchRaw.replace(/\n\s*- id: dsh-map-tools\n\s*name: 'placeholder\/dsh-map-tools'\n/, '\n')
+}
+
+// dsh-calendar 宿主插件(CalDAV 工作窗口读取;未配置时工具报错降级,不挡启动)
+let calEntry = ''
+const vendoredCal = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-calendar/lib/index.js')
+if (existsSync(vendoredCal)) {
+  calEntry = vendoredCal
+} else {
+  try { calEntry = require_.resolve('dsh-calendar/lib/index.js') } catch { calEntry = '' }
+  if (!calEntry) { try { calEntry = require_.resolve('dsh-calendar') } catch { calEntry = '' } }
+}
+if (calEntry) {
+  patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-calendar'/, `$1'${calEntry}'`)
+} else {
+  patchRaw = patchRaw.replace(/\n\s*- id: dsh-calendar\n\s*name: 'placeholder\/dsh-calendar'\n/, '\n')
 }
 const patchPath = join(tmpdir(), `cordis.gotry.${process.pid}.yml`)
 writeFileSync(patchPath, patchRaw)

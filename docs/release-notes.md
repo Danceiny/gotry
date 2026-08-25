@@ -1,5 +1,14 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.7-dev(dsh-calendar 宿主插件,2026-08-25)
+
+- v0.3.2 装入 vendored runtime + 根包依赖 + inner 三段解析(vendored→子路径→裸名,
+  map-tools 同款;缺依赖整块剔除)。5 个 calendar_* 工具注册实测;
+  CalDAV 配置(dsh 设置卡)后生效——工作窗口从「首轮必问」变「读日历即得」,
+  M4 记忆启动时直接接上(#9 选型第二位兑现,减负 issue #1)
+- 注意:dsh-map-tools/dsh-calendar 的 @deepseek-ai peers 对 npm latest tag 不可解析,
+  pnpm 安装须带钉(auto-install-peers=false + 显式 0.1.1-rc.2)
+
 ## v0.0.1-rc.7-dev(T2 结构化澄清卡,2026-08-22)
 
 - **ask_user_question 注入 web 会话**(DeerFlow 研究 T2 落地):dsh-tool-ask-user
