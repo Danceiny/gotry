@@ -1,5 +1,13 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.7-dev(Anything 实时链终局撤回,2026-08-25)
+
+- 两 PR(hotelbyte-cli#3 / hotel-be#30949)按 founder 判定关闭:@path 免鉴权
+  公开面对 hotel-be 无附加值(负值:安全面+维护义务),服务内部本就可用
+- gotry 终局:Anything 工具保留(静态包兜底/降级路径如旧),酒店域实时
+  改走已注解的 hotel-list 面(上节旗标对齐);contracts/anything 降级为
+  历史记录
+
 ## v0.0.1-rc.7-dev(酒店链路对齐上游 v0.3.0,2026-08-25)
 
 - 巡检发现 gotry 传的旗标是旧版(--destination/--check-in/--adults),上游 v0.3.0
