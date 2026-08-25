@@ -63,6 +63,20 @@ interface WishPoolEntryInput {
   conditions?: Record<string, unknown>
 }
 
+
+/**
+ * query 包装参数的双形态兼容(#12/#13):dsh 工具参数是 { query: { type: 'json' } } 单包装,
+ * LLM 有时传内层对象裸形态({place:...}),有时把主键字符串直接塞进 query("https://...")。
+ * 三形态统一:包装对象 → 裸对象 → 字符串按 stringKey 收。
+ */
+function unwrapQuery<T extends Record<string, unknown>>(args: { query?: unknown } & Record<string, unknown>, stringKey?: string): T {
+  if (args.query && typeof args.query === 'object') return args.query as T
+  const { query, ...rest } = args as Record<string, unknown>
+  if (Object.keys(rest).length > 0) return rest as T
+  if (typeof query === 'string' && stringKey) return { [stringKey]: query } as T
+  return {} as T
+}
+
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
 
@@ -263,7 +277,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { destination?: string; checkIn?: string; checkOut?: string; adults?: number }
+      const q = unwrapQuery<{ destination?: string; checkIn?: string; checkOut?: string; adults?: number }>(args, 'destination')
       if (!q.destination) throw new Error('gotry_hotel_search requires destination')
       const started = Date.now()
       const fallbackPath = join(import.meta.dirname, '..', '..', 'data', 'hotels_2026.json')
@@ -346,7 +360,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { place?: string; lat?: number; lng?: number; month?: number; mode?: string; days?: number }
+      const q = unwrapQuery<{ place?: string; lat?: number; lng?: number; month?: number; mode?: string; days?: number }>(args, 'place')
       const started = Date.now()
       let lat: number | undefined = q.lat, lng: number | undefined = q.lng
       let placeLabel = q.place ?? `${q.lat},${q.lng}`
@@ -413,7 +427,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 500)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { callsign: string; airport?: string; timeoutMs?: number }
+      const q = unwrapQuery<{ callsign: string; airport?: string; timeoutMs?: number }>(args, 'callsign')
       const started = Date.now()
       if (!q.callsign) {
         return JSON.parse(JSON.stringify({ verdict: 'unavailable', evidence: '[校验不可用:无 callsign]', summary: 'callsign 必填' })) as Record<string, never>
@@ -457,7 +471,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { keyword: string; contentType?: 'city' | 'hotel'; parentDestinationId?: string | number; timeoutMs?: number }
+      const q = unwrapQuery<{ keyword: string; contentType?: 'city' | 'hotel'; parentDestinationId?: string | number; timeoutMs?: number }>(args, 'keyword')
       const started = Date.now()
       if (!q.keyword) {
         return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', summary: 'keyword 必填', evidence: '[hbcli-anything@error] empty' })) as Record<string, never>
@@ -510,7 +524,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content?.slice(0, 800) ?? JSON.stringify(value).slice(0, 800)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { url?: string; timeoutMs?: number }
+      const q = unwrapQuery<{ url?: string; timeoutMs?: number }>(args, 'url')
       const started = Date.now()
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填', evidence: '[agent-reach:error] empty url' })) as Record<string, never>
@@ -549,7 +563,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { url?: string; lang?: string }
+      const q = unwrapQuery<{ url?: string; lang?: string }>(args, 'url')
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填' })) as Record<string, never>
       }
@@ -587,7 +601,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { query?: string; limit?: number }
+      const q = unwrapQuery<{ query?: string; limit?: number }>(args, 'query')
       if (!q.query) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'query 必填' })) as Record<string, never>
       }
@@ -628,7 +642,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = (args.query ?? {}) as { action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }
+      const q = unwrapQuery<{ action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }>(args, 'channel')
       const started = Date.now()
       const dir = await ensureStateDir(config.stateRoot)
 

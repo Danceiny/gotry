@@ -96,6 +96,15 @@ async function main() {
   if (!arView?.title?.includes('✅') || !arView.title.includes('v2ex.get_hot_topics')) throw new Error(`FAIL: agent_reach 结果卡,实际 ${arView?.title}`)
   console.log(`result cards on 5 tools; agent_reach card: ${arView.title}`)
 
+  // 6) #12/#13 参数形态兼容:字符串 query 与裸对象都能落到 url(不再「url 必填」)
+  const ws = byName('gotry_web_search')
+  const r1 = await ws.execute({ query: 'not-a-url' } as never, null) as { summary?: string }
+  const r2 = await ws.execute({ url: 'not-a-url' } as never, null) as { summary?: string }
+  for (const [name, r] of [['string', r1], ['bare-obj', r2]] as const) {
+    if (r.summary === 'url 必填') throw new Error(`FAIL: ${name} 形态未被 unwrapQuery 接住`)
+  }
+  console.log('unwrapQuery: string + bare-object shapes both accepted')
+
   console.log('\nSMOKE OK')
 }
 
