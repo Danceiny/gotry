@@ -87,6 +87,15 @@ async function main() {
   if (!body.includes('✅') || !body.includes('¥')) throw new Error('FAIL: 结果卡缺判定行/成本行')
   console.log(`\nresult card: ${view?.title}\n${body.split('\n').slice(0, 5).join('\n')}`)
 
+  // 5) D-4 结果卡面:高流量 5 工具均带 presentResult;agent_reach 纯函数实拍
+  for (const n of ['gotry_feasibility_check', 'gotry_hotel_search', 'gotry_weather_check', 'gotry_anything_search', 'gotry_agent_reach']) {
+    if (typeof byName(n).presentResult !== 'function') throw new Error(`FAIL: ${n} 缺 presentResult`)
+  }
+  const ar = byName('gotry_agent_reach')
+  const arView = ar.presentResult!({ query: { action: 'reach', channel: 'v2ex', method: 'get_hot_topics' } }, { verdict: 'found', summary: '10 topics' })
+  if (!arView?.title?.includes('✅') || !arView.title.includes('v2ex.get_hot_topics')) throw new Error(`FAIL: agent_reach 结果卡,实际 ${arView?.title}`)
+  console.log(`result cards on 5 tools; agent_reach card: ${arView.title}`)
+
   console.log('\nSMOKE OK')
 }
 
