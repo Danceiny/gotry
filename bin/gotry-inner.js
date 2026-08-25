@@ -120,14 +120,19 @@ if (!existsSync(mapEntry)) {
 }
 // 结构化澄清卡(T2):ask_user_question 工具 + user-questions 服务,从 dsh 包
 // 上下文解析(pnpm 嵌套布局下只有 dsh 自己看得见这些依赖);失败整块剔除
-// 仅 web 模式注入:headless 无 UI 提供方,ask_user_question 会挂起等答复
+// 澄清卡注入(T2):web 用 dsh 原生卡片;headless+TTY 用 gotry 的 stdio 提供方
+// (终端渲染选择题);headless 非 TTY(CI/管道)不注入——工具收到 NO_PROVIDER
+// 错误,人格契约 (5) 退化文本。GOTRY_ASK_STDIO=1 强制启用(测试/外接答复)。
+const stdioAsk = mode === 'headless' && (process.stdin.isTTY || process.env.GOTRY_ASK_STDIO === '1')
+  ? join(here, 'gotry-stdio-ask.js') : ''
 let askUserInsert = ''
-if (mode === 'web') try {
+if (mode === 'web' || stdioAsk) try {
   const reqFromDsh = createRequire(dshBin)
   // 裸包名解析(这些包的 exports 不暴露 ./lib/index.js 子路径,但裸名返回真实入口)
   // userQuestions 服务默认树已注册(重复插入会崩),只插工具消费者
   const at = reqFromDsh.resolve('@deepseek-ai/dsh-tool-ask-user')
-  askUserInsert = `    - id: dsh-tool-ask-user\n      name: '${at}'`
+  askUserInsert = (stdioAsk ? `    - id: gotry-stdio-ask\n      name: '${stdioAsk}'\n` : '')
+    + `    - id: dsh-tool-ask-user\n      name: '${at}'`
 } catch { /* 缺件不挡启动 */ }
 
 let patchRaw = readFileSync(staticPatch, 'utf-8')

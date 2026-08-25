@@ -42,7 +42,7 @@ DeerFlow 1.x 深研循环在 planner 之前有 background investigation 节点�
 
 ## 落地顺序建议
 
-T1 随 M4 记忆启动(根治 #1);T2 已落地 2026-08-22(dsh-tool-ask-user 注入 web 会话);T3 等种子用户真出现长任务再上;
+T1 随 M4 记忆启动(根治 #1);T2 已落地 2026-08-22(web 卡片 + headless/TTY stdio 终端形态 + CI 文本退化,三形态);T3 等种子用户真出现长任务再上;
 T4 可作 probePoi 的下一个小迭代。
 
 ---

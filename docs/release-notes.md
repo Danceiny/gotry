@@ -7,7 +7,8 @@
   只插工具);headless 不注入(无 UI 提供方会挂起等答复),文本选择题兜底
 - 人格契约 (5) 升级:待决选择题优先 ask_user_question 结构化选项(web 渲染卡片),
   不可用/无响应退化文本;exports 子路径限制用裸包名 resolve 绕过
-- 验证:隔离 headless 注册确认「存在」;web 启动 200;16 套 ALL GREEN
+- **补强(创始人质疑「headless 排除是否最佳实践」后广搜落地)**:业界对照——Claude Code -p 的 AskUserQuestion 早期 bug 是自动返回空答复(模型把空当真答复,#50728 系列 issue),最终做法是 headless 不暴露工具;MCP elicitation 规范:decline 是正常答复非错误、无提供方要优雅降级。我们按 dsh「单一 UI 提供方」架构补了第三形态:`bin/gotry-stdio-ask.js`——headless+TTY 注册 stdio 提供方(终端渲染选择题读序号,支持多选/自定义文本/回车跳过),非 TTY 不注入(NO_PROVIDER 错误→契约退化文本),`GOTRY_ASK_STDIO=1` 可强制。三形态齐备:web 卡片 / TTY 终端 / CI 文本
+- 验证:隔离 headless 注册确认「存在」;web 启动 200;stdio 管道 e2e(printf '1' | GOTRY_ASK_STDIO=1 → 预算档位问答真闭环);16 套 ALL GREEN
 
 ## v0.0.1-rc.7-dev(D-4 地图位 + 卡片赎回,2026-08-22)
 
