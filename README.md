@@ -9,8 +9,8 @@
 
 | | |
 |---|---|
-| **Version** | `v0.0.1-rc.3-dev` (最新 commit `270678b`; 历史 tags: [rc.1](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.1) · [rc.2](https://github.com/Danceiny/gotry/releases/tag/v0.0.1-rc.2)) |
-| **Status** | v0.0.1-rc.5(2026-08-24):按 founder 「不要阻塞」自决落地 5 段(D-1/D-3/D-4a/D-5/D-6);**仅 D-2 M4 校准待 founder** |
+| **Version** | `v0.0.1-rc.7`(npm: `@danceiny/gotry@rc`;[release notes](docs/release-notes.md)) |
+| **Status** | M3 工程面 + npm 公开分发就绪;16 套测试全绿 |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
@@ -52,10 +52,9 @@ npx @danceiny/gotry@rc web          # 首跑会提示在当前目录建 .env(LLM
 ```bash
 git clone https://github.com/Danceiny/gotry
 cd gotry
-git checkout v0.0.1-rc.3-dev   # 当前的 dev 分支挂在 main 上
 ```
 
-### 2. 装 vendored dsh runtime(一次性,约 1 分钟)
+#### A. 装 vendored dsh runtime(一次性,约 1 分钟)
 
 ```bash
 cd ts/dsh-runtime
@@ -67,21 +66,21 @@ cd ../..
 > 避免 npm 一键分发时把整个 dsh 也打包进去。
 > 之后可以重复使用,无需重装。
 
-### 3. 环境前置 — Prerequisites
+#### B. 环境前置 — Prerequisites
 
 - **Node 22+**(`nvm install 22` 或更高)
 - 一个 LLM API key(默认走 DeepSeek,也支持 OpenAI 兼容协议)
 
-### 4. 配 — Configure
+#### C. 配 — Configure
 
 ```bash
 cp .env.example .env
 # 填 LLM_API_KEY(deepseek: sk-...; 也兼容 OpenAI/Anthropic 兼容协议)
 ```
 
-### 5. 跑 — Run
+#### D. 跑 — Run(仓内入口,开发者)
 
-v0.0.1-rc.3-dev 把 **DeepSeek Harness (dsh) 运行时**作为唯一推荐面——任何自然语言输入在那里面都能跟 GoTry 正常对话(自动调用引擎、追问缺失字段、给出证据链)。
+gotry 把 **DeepSeek Harness (dsh) 运行时**作为唯一推荐面——任何自然语言输入在那里面都能跟 GoTry 正常对话(自动调用引擎、追问缺失字段、给出证据链)。
 
 启动方式有三种,对应三种使用场景:
 
@@ -112,7 +111,7 @@ v0.0.1-rc.3-dev 把 **DeepSeek Harness (dsh) 运行时**作为唯一推荐面—
 
 <br>
 
-*Single one-liner mental model: clone + pnpm install once + 配置 key + `./gotry web` — done. *The shell frontend is **deprecated**. In v0.0.1-rc.3-dev, the dsh runtime is the only recommended surface.*
+*One-liner mental model: `npx @danceiny/gotry@rc web` + `.env` 一行 key — done。dsh 对话框是唯一产品面(旧 shell 前端已删除)。*
 
 > 一行安装的关键点: `./gotry web`(终端粘贴即用),或 `./gotry "任务"`(一句问答)。**任何自然语言都能用**(这是 dsh runtime 投资的最大价值)。详见 [known limitations](#-known-limitations)。
 
@@ -168,7 +167,7 @@ GoTry: 收到。先把约束记下来——
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ L1  对话即界面  chat-as-UI; gates 是消息内选择题                 │
-│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);5 个工具             │
+│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);12 个工具            │
 │ L3  领域  统一行程模型 + Z3 可行性引擎(枚举/Z3 双形态)        │
 │ L4  数据  静态数据包 + hotelbyte-cli 实时桥 + OpenFlights 骨架 │
 │ L5  治理  LoopX(objective / gates / evidence / quota)         │
@@ -177,7 +176,7 @@ GoTry: 收到。先把约束记下来——
 
 | 层 | 模块 | 角色 |
 |---|---|---|
-| L2 | `ts/src/index.ts` (dsh 插件) | 注册 5 个工具,挂 `{{current_date}}` 时间感知变量,挂 uncaughtException 护栏 |
+| L2 | `ts/src/index.ts` (dsh 插件) | 注册 12 个工具,挂 `{{current_date}}` 时间感知变量,工具 execute 异常隔离 + uncaughtException 护栏 |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/unified.py` | 唯一求解入口(候选枚举 + 航班链 Z3) |
 | L4 | `ts/capabilities/hbcli.ts` | hotelbyte-cli 进程封装 + 降级到 `data/hotels_2026.json` |
 | L4 | `ts/scripts/skeleton-check.ts` | OpenFlights 168 对枢纽,三值语义(阳性/枢纽对否定≠证伪/枢纽外=无结论) |
@@ -220,17 +219,9 @@ GoTry: 收到。先把约束记下来——
 ./scripts/run-all-tests.sh
 ```
 
-9 套测试,一次性绿(**v0.0.1-rc.2 起去 Python**):
-
-| 节 | 内容 |
-|---|---|
-| 1–3 | TS engine · journey · unified 金标准断言 |
-| 4 | 对话循环重放(mock,行为级回归) |
-| 5 | 异步工单跨进程闭环 |
-| 6 | 插件 smoke |
-| 7 | hbcli 能力封装(4 断言) |
-| 8 | 进程护栏(2 断言,fsync) |
-| 9 | 双路径稳定性(unified vs unified 同 spec) |
+16 套测试,一次性绿(纯 TS,无 Python 依赖):engine/journey/unified 金标准 · 对话重放 ·
+异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离) · 天气 · 航班 ·
+Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性。
 
 ---
 
@@ -251,55 +242,6 @@ ADR 与技术债见 [`docs/architecture.md` §8 / §10](docs/architecture.md)。
 
 ---
 
-## 📦 发布到 npm — For founder
-
-仓库已有 `package.json`(v0.0.1-rc.3,files 白名单 19 个文件,42KB)——发 npm 需**一枚 publish token + 一行命令**:
-
-```bash
-# 1. 写入 token(一次性;不要在 git 里跟踪;请去 npmjs.com/settings/tokens 新建)
-npm config set //registry.npmjs.org/:_authToken npm_xxxxxx
-
-# 2. 验证
-npm whoami --registry=https://registry.npmjs.org/   # 应输出:danceiny
-
-# 3. Dry-run 确认 tarball
-npm pack --dry-run --registry=https://registry.npmjs.org/
-
-# 4. 发布到 npm(--access public 让 gotry 名公开)
-npm publish --access public --registry=https://registry.npmjs.org/
-
-# 5. 发布成功后任何用户:
-npx @danceiny/gotry web   # 一行启动(≥0.0.1-rc.6;rc.5 缺 runtime 不可用)
-```
-
-> ⚠️ **注意**: publish 后**不可逆**（30 天内可 `npm unpublish` 但会污染历史）。建议先在 main 打 `v0.0.1-rc.3` tag + GitHub release,再 publish,保证 npm 包与仓库 tag 同步。
-
-> 💡 **名可用性**: `gotry` 名在 npm 上未被占(2026-08-22)。检查可用性: `npm view gotry --registry=https://registry.npmjs.org/` (404 即未被占)。
-> ⚠️ **Token 安全**: 任何接触过 `.npmrc` 的会话都可能持久保存 token,记得 publish 完 `npm config delete //registry.npmjs.org/:_authToken`。
-
----
-
-## 🎯 待你拍(决策清单 — 在 [docs/decisions-needed.md](docs/decisions-needed.md) 有完整上下文)
-
-- **D-2 M4 校准四题** — 4 题 YAML 块在 [docs/m4-calibration-questions.md](docs/m4-calibration-questions.md) 末尾,commit YAML 即吸收进引擎
-- **D-3 npm publish** — 建议先 revoke 你之前明文给我的 token;新 token 走 `NPM_TOKEN=xxx` 注入
-- **D-4a agent-reach** — 已 wrapper 化(反射桥直调上游注册表,gotry 零渠道知识);8 渠道需 Cookie(雪球实测也要),给即接、不催
-- **D-5 OpenSky** — 保留 1 tick(实时 ADS-B 真飞/真没飞)
-- **D-6 OSM 兜底** — A 删 / B 留 Nominatim+Overpass 兜底层
-
-> 💡 一句话拍任何一项 → loopx 文档/仓库告知我 → 我立即推进。
-
-## 🐍 Python venv 现状(2026-08-23 单 venv 整合后)
-
-仓库根 `.venv/` 是**唯一 Python venv**(python3.11),同时装两个包:
-
-- `z3-solver 5.1.0` — gotry 引擎 oracle(D-1 留下的求解决策)
-- `agent-reach 1.5.0` — 上游渠道注册表 + doctor(gotry 以反射桥 wrapper 接入,零渠道知识)
-
-`agent-reach doctor` 真跑接通;wrapper 反射桥走 `.venv/bin/python` + bridge 脚本,doctor 走 `.venv/bin/agent-reach`(绝对路径解析仓根)。
-
-`loopx` 不在仓内 — 通过 `pipx` 装在 `~/.local/pipx/venvs/loopx/bin/loopx` 系统级。loopx todo 命令**不在仓内**跑(`.venv/bin/loopx` 不存在),用 `pipx run loopx ...` 或 `~/.local/pipx/venvs/loopx/bin/loopx ...`。
-
 ## 📜 License
 
 **MIT**（2026-08-23 落定）。与上游 dsh（MIT）/ loopx 一致——宽松、可商用、可闭源分叉。
@@ -311,11 +253,11 @@ npx @danceiny/gotry web   # 一行启动(≥0.0.1-rc.6;rc.5 缺 runtime 不可�
 ## 🌐 中英版 — Locales
 
 - **English section summaries** are inline above (italic blockquotes).
-- 本 README 主语言是中文,因为 v0.0.1-rc.3-dev 面向中国出境首发种子用户群。
+- 本 README 主语言是中文,面向中国出境首发种子用户群。
 - 完整英文版 README 计划在 v0.1.0 同步([issue 路线](#-known-limitations))。
 
 ---
 
 **Built with**: DeepSeek Harness 0.1.1-rc.2 · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript · Bun
 
-**Last verified against `v0.0.1-rc.3-dev` @ `270678b`** (2026-08-22) — 9/9 suites green (Python-free).
+**Last verified against `v0.0.1-rc.7`** — 16/16 suites green(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。
