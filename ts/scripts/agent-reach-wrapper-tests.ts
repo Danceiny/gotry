@@ -28,7 +28,8 @@ import { reach, reachStatus } from '../capabilities/agent-reach.ts'
   const r = await reach({ channel: 'web', method: 'read', args: ['https://example.com'], timeoutMs: 30_000 })
   assert.equal(r.verdict, 'found')
   assert.ok(r.evidence.includes('[agent-reach:web.read@'), '证据链 [agent-reach:web.read@ts]')
-  assert.ok(typeof r.data === 'string' && r.data.includes('Example Domain'), 'content 含 Example Domain')
+  // live 内容会漂移(同 §13),断言非空 markdown 而非精确文案
+  assert.ok(typeof r.data === 'string' && r.data.length > 200, 'content 非空 markdown')
   console.log(`2. web.read example.com → found (${r.latencyMs}ms) OK`)
 }
 
