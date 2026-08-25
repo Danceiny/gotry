@@ -84,4 +84,4 @@ if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
 fi
-echo "ALL SUITES GREEN(TS engine/journey/unified + 重放 + 异步 + smoke + hbcli + incident + weather + opensky + anything + diff;明细见各节)"
+echo "ALL SUITES GREEN(17 套:engine/journey/unified + 重放 + 异步 + smoke + hbcli + incident + weather + opensky + anything + probePoi + agent-reach×3 + skills-contract + diff;明细见各节)"

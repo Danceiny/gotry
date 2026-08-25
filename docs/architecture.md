@@ -162,3 +162,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | `stage1-top-down-design.md` | Stage 1 详细设计与实现序 |
 | `kimi-postmortem.md` | 反例教材与地面真值提取 |
 | `demo-plan-2026-07-17.md` `demo-reconciliation.md` | demo 交付物与对账 |
+| `dsh-plugins-shortlist.md` | dsh 社区插件选型(awesome-dsh-plugin 全量调研,issue #9) |
+| `deerflow-research.md` | DeerFlow 研究 → gotry 优化目标 T1-T4(issue #10) |
+| `hotelbyte-skills-design.md` | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
+| `e2e-prompts.md` | dsh 端到端真 LLM 验证记录(§1-§11,wrapper/澄清卡/背景调查等) |
