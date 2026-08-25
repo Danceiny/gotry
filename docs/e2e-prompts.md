@@ -63,6 +63,10 @@ curl -sS --max-time 3 http://127.0.0.1:3080 -o /dev/null -w "dsh=%{http_code}\\n
 - 结论:guardToolExecute 包装/kind/结果卡/wrapper 五个 tick 的改动对 LLM 路径零回归
 - 附注:demo 数据包的 8 月日期已入过去时,LLM 诚实处理;后续 prompt 应锚定未来日期
 
+### 10. 数据源路由 + setup 协助(#4 行为面,"帮我看看小红书上关于千岛湖的笔记")
+- 行为:两条路实测——web.read 搜索页吃反爬([agent-reach:web.read@ts])、上游渠道体检 xiaohongshu.check@off([agent-reach:xiaohongshu.check@off@ts],反射调 check 方法);**仍交付 6 条真实笔记标题+链接**(web 侧拿到),诚实声明不编造正文;按契约 (15) 给三选一 setup 方案(桌面 opencli / Cookie / 先不折腾,各带 trade-off 与精确上游命令)并主动提出配好后拉全文
+- 结论:#4①(路由优先 agent-reach、零折损——渠道不可用时降级不放弃)与 ②(setup 协助)行为面成立
+
 ## 总结
 
 - **8 工具人格真协同**: feasibility + skeleton + hotel + weather + flight + anything + web_search + agent_reach + motivation_save + wish_pool

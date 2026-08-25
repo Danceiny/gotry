@@ -452,7 +452,7 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_anything_search',
     description:
-      'Universal Anything search via hotel-byte CLI → hotel-be Anything endpoint. ' +
+      'Travel-domain search via hotel-byte CLI → hotel-be Anything (cities/hotels/destinations) — NOT general web search; for general internet facts use gotry_agent_reach. ' +
       'Mixed destinations (cities / metropolitan areas / high-level regions) + hotels in one call. ' +
       'Returns candidates with type, name, optional coordinates and hotel-id. ' +
       'Three-valued semantics: hit = ≥1 candidate; miss = 0 candidates (try synonyms or contentType=city/hotel); ' +
@@ -623,12 +623,13 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_agent_reach',
     description:
-      'Agent Reach — thin wrapper over Panniantong/Agent-Reach upstream registry (zero channel knowledge here). ' +
+      'Agent Reach — the PRIMARY external-data gateway (thin wrapper over Panniantong/Agent-Reach upstream registry, zero channel knowledge here). ' +
+      'Prefer this for ANY external/internet fact beyond weather/flights/hotels. ' +
       'Call ANY upstream channel method by reflection: web.read(url) / v2ex.get_hot_topics() / v2ex.search(query) / ' +
       'xueqiu.get_stock_quote(symbol) / xueqiu.search_stock(query) / youtube.transcribe(url) / <channel>.check() ... ' +
       'Unknown channel or method? Just call it — the error returns the upstream inventory (channel list or method signatures) so you can self-correct. ' +
       'Action "status" runs the real `agent-reach doctor` (.venv/bin/agent-reach). ' +
-      'Channels needing cookies/setup return the upstream check() guidance verbatim (never blocks). ' +
+      'Channels needing cookies/setup return the upstream check() guidance verbatim — do NOT give up there: hand the user the exact configure command, then offer to re-check. ' +
       'Evidence chain: [agent-reach:<channel>.<method>@ts].',
     parameters: {
       query: {
