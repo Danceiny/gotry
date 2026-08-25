@@ -1,5 +1,14 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.7-dev(T2 结构化澄清卡,2026-08-22)
+
+- **ask_user_question 注入 web 会话**(DeerFlow 研究 T2 落地):dsh-tool-ask-user
+  工具消费者经 runtime patch 插入(userQuestions 服务默认树已有,重复插会崩——
+  只插工具);headless 不注入(无 UI 提供方会挂起等答复),文本选择题兜底
+- 人格契约 (5) 升级:待决选择题优先 ask_user_question 结构化选项(web 渲染卡片),
+  不可用/无响应退化文本;exports 子路径限制用裸包名 resolve 绕过
+- 验证:隔离 headless 注册确认「存在」;web 启动 200;16 套 ALL GREEN
+
 ## v0.0.1-rc.7-dev(D-4 地图位 + 卡片赎回,2026-08-22)
 
 ### 地图位落地:宿主插件 dsh-map-tools(#9 选型首位)

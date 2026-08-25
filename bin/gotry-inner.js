@@ -118,8 +118,21 @@ let mapEntry = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/ind
 if (!existsSync(mapEntry)) {
   try { mapEntry = require_.resolve('dsh-map-tools/lib/index.js') } catch { mapEntry = '' }
 }
+// 结构化澄清卡(T2):ask_user_question 工具 + user-questions 服务,从 dsh 包
+// 上下文解析(pnpm 嵌套布局下只有 dsh 自己看得见这些依赖);失败整块剔除
+// 仅 web 模式注入:headless 无 UI 提供方,ask_user_question 会挂起等答复
+let askUserInsert = ''
+if (mode === 'web') try {
+  const reqFromDsh = createRequire(dshBin)
+  // 裸包名解析(这些包的 exports 不暴露 ./lib/index.js 子路径,但裸名返回真实入口)
+  // userQuestions 服务默认树已注册(重复插入会崩),只插工具消费者
+  const at = reqFromDsh.resolve('@deepseek-ai/dsh-tool-ask-user')
+  askUserInsert = `    - id: dsh-tool-ask-user\n      name: '${at}'`
+} catch { /* 缺件不挡启动 */ }
+
 let patchRaw = readFileSync(staticPatch, 'utf-8')
   .replace(/(name:\s*)'[^']*ts\/src\/index\.ts'/, `$1'${pluginEntry}'`)
+  .replace(/^\s*# \{ask-user-insert\}.*\n(\s*# .*\n)?/m, askUserInsert ? askUserInsert + '\n' : '')
 if (mapEntry) {
   patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-map-tools[^']*'/, `$1'${mapEntry}'`)
 } else {

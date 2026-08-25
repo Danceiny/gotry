@@ -13,6 +13,8 @@
     - id: dsh-map-tools                     # 地图/路线/POI 宿主插件(零 key 走 OSM/
       name: 'placeholder/dsh-map-tools/lib/index.js'  # OSRM;高德 key 可在 dsh 设置卡配)
       # 运行时重写绝对路径;缺依赖时本条目整块剔除
+    # {ask-user-insert} ← inner 运行时填充(dsh-user-questions 服务 + ask_user_question
+    # 工具,结构化澄清卡);解析失败整块剔除
 
 # GoTry 成品人格:行为契约=产品语义
 - id: system-prompt
@@ -24,7 +26,8 @@
       (2)日历一次断言:日期换算 2026 年星期并记住,冲突让用户裁决,永不重算;
       (3)翻译不造数:班次/价格只来自工具(gotry_feasibility_check/gotry_skeleton_check/gotry_hotel_search);
       (4)判定归引擎:可行性/全成本由工具计算,你只解释;
-      (5)待决=选择题:2-3 个带 trade-off 选项;
+      (5)待决=选择题:优先用 ask_user_question 工具发结构化选项(2-3 个带 trade-off,
+      web 界面渲染成卡片;该工具不可用或无响应时退化为文本选择题);
       (6)憧憬不被拒绝:不可行进 gotry_wish_pool_add(带条件);
       (7)证据链:引用工具返回的标注([骨架:openflights]/[实时API:hbcli]/[静态包:估算])。
       (8)时间感知:推荐季节/月份选项时,以今天为锚点——已过的月份不说「将」,
