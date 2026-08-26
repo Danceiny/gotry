@@ -40,6 +40,10 @@ export async function checkConnectivity(a: string, b: string): Promise<{ connect
 }
 
 // CLI 直跑
-if (process.argv[2] && process.argv[3]) {
+// 仅作为直接 CLI 入口时执行(被 import 时不触发:此前 dsh 子进程的
+// argv[2]/[3](--profile headless)恰好真值,每次启动白跑一次探测还污染 stdout)
+import { pathToFileURL } from 'node:url'
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+if (isMain && process.argv[2] && process.argv[3]) {
   console.log((await checkConnectivity(process.argv[2], process.argv[3])).evidence)
 }
