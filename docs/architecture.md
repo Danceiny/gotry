@@ -121,6 +121,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
 - **当前 = M3(工程面完成,分发就位 `v0.0.1-rc.7`)**:三场景全验(洱海/云南/普吉);完全去 Python(仅剩 gotry_feasibility oracle 对照,D-7 清偿);**D-4 DONE**(Anything 三仓闭环 244a0ae/c38ff65d1/43236a0);agent-reach wrapper 化 + 真 LLM e2e 复验;**npm 公开分发打通**(rc.5→rc.7:隔离发布命令/dist 预编译/.env 首跑修复;干净安装实测 web 200);12 工具 execute 异常隔离;16 套 ALL GREEN。**当前 = M4 记忆域(2026-08-26 founder 指令开闸)**:T1 双层落地——①提取=LLM 的活:契约 (18) 要求模型当轮经 motivation_save 并入新事实(evidence=用户原话),不做第二套正则引擎(founder 校正「正则 rules 不对」后确立分工);②合并守门=代码的活:`memory-capture.ts` mergeProfile(追加不删史/幂等/权重变更须伴证据 P0/空守卫,§18 三断言)。后续:runTurn 接线、主动回访(可关闭)、北极星度量。此后 M5 交易 → M6 B2B。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
+- **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:`npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日完成 loopx 13 篇架构 RFC 通读与映射,产出 `loopx-inspired-upgrades-rfc.md`(proposal,四道接缝待 founder 拍板,D-12)。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
@@ -139,7 +140,8 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | [D-NEW] dsh 进程保活缺失 | **部分赎回(gotry 侧)**: plugins/apply 内 installProcessGuards 挂 uncaughtException + unhandledRejection;incident-log.ts 同步 fsync append-only,handler 不调 process.exit——被崩溃穿透时仍能留下证据(JSONL incidents.jsonl),不阻塞 dsh 控制流。incident-tests 2/2 绿(handler 装上后未捕获异常仍记录,后续控制流不卡)。**gotry 侧收尾 2026-08-22**: 12 工具 execute 统一经 guardToolExecute 异常隔离——抛错/拒绝降级结构化错误返回 LLM + tool_execute_error 落盘,不再穿透 cordis 到 dsh 主循环(incident 套 3/3);残余仅 vendored dsh 自身容错,记 M3 |
 | D-9 节日锚点表硬编码 | `time-anchor.ts` SPRING_FESTIVAL 只覆盖 2026-2028;**跨 2028 必须扩表**,否则春节锚点静默缺失。赎回时机:2028 年前任一触碰时间锚点层的提交 |
 | D-10 slot→spec 求解桥接未做 | travel_slot_extraction.v1 目前只到 intake/评测面(extractSlots + 25 题评测);进求解链路(槽位→JourneySpec)时赎回,触发 ADR-12 复审 |
-| D-11 `npx tsc --noEmit` 存量 14 错 | 2026-08-27 实测基线即红(anything/opensky/incident-log/smoke/index/memory-capture 等,与本次时间感改动零交集);赎回时机:下一次 dsh 升级或触碰这些文件时顺带清理 |
+| D-11 `npx tsc --noEmit` 存量 14 错 | **已清偿**(1bf9671,语义零变更:tsc 0 错;smoke/memory §18 全过;17 套 ALL GREEN) |
+| D-12 loopx RFC 映射升级四接缝 | **RFC 待拍板**(`docs/loopx-inspired-upgrades-rfc.md`):S1 工具 packet 纪律/S2 记忆效用 sidecar/S3 wish 触达 0..1 纪律/S4 WriteGate L0-L4 词汇;拍板前不动代码,拍板后各切片落地时登记 ADR 并按 §11 同步 |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
@@ -174,3 +176,4 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | `deerflow-research.md` | DeerFlow 研究 → gotry 优化目标 T1-T4(issue #10) |
 | `hotelbyte-skills-design.md` | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
 | `e2e-prompts.md` | dsh 端到端真 LLM 验证记录(§1-§11,wrapper/澄清卡/背景调查等) |
+| `loopx-inspired-upgrades-rfc.md` | **RFC(待拍板)**:loopx 13 篇架构 RFC 的映射升级——四道接缝(S1 工具 packet 纪律/S2 记忆效用 sidecar/S3 wish 触达 0..1 纪律/S4 WriteGate L0-L4 词汇) |
