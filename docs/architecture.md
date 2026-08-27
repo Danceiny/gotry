@@ -10,7 +10,7 @@
 
 **GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:动机访谈进、已验证的行程方案与选择题出;LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 
-**当前形态(诚实定位,2026-08-22 `v0.0.1-rc.7`)**:dsh 成品可用(`./gotry` 或 `npx @danceiny/gotry@rc web`,DeepSeek 原生)——人格(八条行为契约,含时间感知)+ 十二工具(可行性/骨架/酒店/天气/航班/Anything/网页/视频字幕/GitHub搜索/AgentReach wrapper/动机/愿望池);机票三层(骨架 168 对+校验桥+锚点)+ 酒店 hbcli 桥(实时/静态降级+证据标注)+ Anything 通用搜索(gotry anything.ts;实时链 2026-08-25 终局撤回——hotel-be @path 免鉴权面按 founder 判定无附加值,两 PR 关闭,静态包兜底;酒店域实时改走已注解的 hotel-list 面);OpenSky 实时 ADS-B + Open-Meteo 天气免费接入;**agent-reach wrapper 化**(上游 v1.5.0 装于 .venv;反射桥 agent-reach-bridge.py 直调上游注册表,零渠道知识,needs-setup 透传上游 check() 原话;真 LLM 会话复验 e2e-prompts §7/§8);**License MIT**;**npm 公开分发已通**(`@danceiny/gotry@0.0.1-rc.7`:发布命令全隔离 NPM_CONFIG_USERCONFIG + dist 预编译绕 Node 拒 strip node_modules 下 .ts + .env 读用户当前目录;干净安装 web 200 实测);12 工具 execute 统一 guardToolExecute 异常隔离(D-NEW gotry 侧收尾);py 树仅剩 gotry_feasibility oracle(D-7 清偿);run-all-tests **16 套 ALL GREEN**。M3 最小可用产品,分发链路无已知堵点。
+**当前形态(诚实定位,2026-08-22 `v0.0.1-rc.7`)**:dsh 成品可用(`./gotry` 或 `npx @danceiny/gotry@rc web`,DeepSeek 原生)——人格(八条行为契约,含时间感知)+ 十二工具(可行性/骨架/酒店/天气/航班/Anything/网页/视频字幕/GitHub搜索/AgentReach wrapper/动机/愿望池);机票三层(骨架 168 对+校验桥+锚点)+ 酒店 hbcli 桥(实时/静态降级+证据标注)+ Anything 通用搜索(gotry anything.ts;实时链 2026-08-25 终局撤回——hotel-be @path 免鉴权面按 founder 判定无附加值,两 PR 关闭,静态包兜底;酒店域实时改走已注解的 hotel-list 面);OpenSky 实时 ADS-B + Open-Meteo 天气免费接入;**agent-reach wrapper 化**(上游 v1.5.0 装于 .venv;反射桥 agent-reach-bridge.py 直调上游注册表,零渠道知识,needs-setup 透传上游 check() 原话;真 LLM 会话复验 e2e-prompts §7/§8);**License MIT**;**npm 公开分发已通**(`@danceiny/gotry@0.0.1-rc.7`:发布命令全隔离 NPM_CONFIG_USERCONFIG + dist 预编译绕 Node 拒 strip node_modules 下 .ts + .env 读用户当前目录;干净安装 web 200 实测);12 工具 execute 统一 guardToolExecute 异常隔离(D-NEW gotry 侧收尾);py 树仅剩 gotry_feasibility oracle(D-7 清偿);run-all-tests 全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节,计数不落字)。M3 最小可用产品,分发链路无已知堵点。**时间感知硬化(2026-08-27,时间评测驱动)**:确定性时间锚点层 `ts/src/time-anchor.ts`(今天/明天后天大后天/本周下周下下周/下个月分段/季度/节日锚点,纯函数;注入 persona `{{time_anchor_card}}` 与 legacy 抽取全链路——此前 FACTS/SKELETON 无时间注入,过期语义无从谈起);`ts/src/travel-slots.ts` 差旅槽位抽取(travel_slot_extraction.v1:时间表达逐字保留,过期判定与 language 检测归代码层);评测基建 `data/time-slot-eval.json`(25 题)+ `ts/scripts/time-eval-tests.ts`(确定性部分进 CI;真模型巡检基线 11/25 → 25/25,P0 8/8);顺带清偿 dsh-llm 环境变量模块顶冻结致 .env 不生效的存量隐患(改调用时惰性读取)。
 
 ## 2. 总体架构:五层与现状
 
@@ -56,6 +56,9 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `py/gotry_demo/` | **已删 2026-08-22**(D-7 尾债:demo 规划书生成器曾调废弃 journey.solve_journey;产物 docs/demo-plan-2026-07-17.md 留 git 历史) | — |
 | `ts/scripts/replay.ts` `replay-async.ts` | **验收夹具**:真实对话重放(13 轮→3 轮)与异步形态 | ✅ |
 | `ts/scripts/{engine,journey,unified,diff}-tests.ts` | 套件(8/5/4 断言+TS-vs-TS 同 spec 稳定性) | ✅(diff-test 顺序偶发为已知问题,v0.0.1-rc.2 后不再依赖 Python) |
+| `ts/src/time-anchor.ts` | **时间锚点层**(ADR-12,纯函数):锚点卡渲染(今天/相对周/月分段/季度/节日)+ 绝对月日解析;persona 与抽取链路的「今天」唯一来源 | ✅ time-eval §1 |
+| `ts/src/travel-slots.ts` | **槽位抽取层**(travel_slot_extraction.v1):schema + 抽取 prompt + 过期校验 + language 检测 + 评分器;逐字保留,判定归代码 | ✅ time-eval §2-4 |
+| `ts/scripts/time-eval-tests.ts` `data/time-slot-eval.json` | 时间感评测(25 题):确定性部分进 CI,`--real` 真模型巡检(只读报告) | ✅ 真模型 25/25 |
 | `data/golden_erhai.json` `flights_2026.json` `hotels_2026.json` `golden_trip_2026.json` `行程细化计划.docx` | 金标准用例/班期/住宿/完整任务/Kimi 对话原件 | — |
 
 ## 4. 统一行程模型(领域核心,唯一求解入口)
@@ -109,6 +112,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 9 | 访谈确定性(缺失字段驱动) | LLM 即兴(Kimi 病根) | 永不复审 | `loop.ts interviewNext`;replay 夹具(首轮问出工作窗口) |
 | 10 | 翻译≠造数:LLM 只产骨架与锚点,班次数据永远来自能力层(数据包→实时API);spec 校验闸兜底 | 让 LLM 直接产出完整 spec(实测:MiniMax-M2 编不出时刻,要么编造要么卡死) | 永不复审 | `loop.ts validateSpec`;`dsh-llm.ts SKELETON_SYSTEM`;`replay-real.ts` |
 | 11 | 评测分层进架构:回归层(单元/差分/重放)防退化、质量层(评测集+指标面板)防漂移、巡检层(nightly 真 LLM 重放带预算闸)防「mock 绿而真智能烂」;M-exit 必过对应层级 | 只靠重放夹具(质量漂移无感)/事后补评测工具(指标不进架构等于不存在) | M3 exit 指标面板上线后复审一次 | `run-all-tests.sh`;replay 三件套;`tech-strategy.md` §4 |
+| 12 | 时间感分层:锚点卡(time-anchor 纯函数,算术进代码)+ 槽位逐字保留(LLM 不换算不翻译)+ 过期/language 判定归代码层;时间评测集进仓(data/time-slot-eval.json,只增不改语义),质量层首块落地 | 全 LLM 感知(锚点缺失实测:legacy 路径无今天注入,过期无从判)/代码全量解析中文相对日期(表达开放,维护黑洞) | 槽位抽取接入求解链路(D-10 赎回)时复审 | `time-anchor.ts`;`travel-slots.ts`;`time-eval-tests.ts` |
 
 ## 9. 演进(时间线唯一来源= `roadmap.md` 的 M0-M6;此处只保留原则与现状)
 
@@ -116,6 +120,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
 - **当前 = M3(工程面完成,分发就位 `v0.0.1-rc.7`)**:三场景全验(洱海/云南/普吉);完全去 Python(仅剩 gotry_feasibility oracle 对照,D-7 清偿);**D-4 DONE**(Anything 三仓闭环 244a0ae/c38ff65d1/43236a0);agent-reach wrapper 化 + 真 LLM e2e 复验;**npm 公开分发打通**(rc.5→rc.7:隔离发布命令/dist 预编译/.env 首跑修复;干净安装实测 web 200);12 工具 execute 异常隔离;16 套 ALL GREEN。**当前 = M4 记忆域(2026-08-26 founder 指令开闸)**:T1 双层落地——①提取=LLM 的活:契约 (18) 要求模型当轮经 motivation_save 并入新事实(evidence=用户原话),不做第二套正则引擎(founder 校正「正则 rules 不对」后确立分工);②合并守门=代码的活:`memory-capture.ts` mergeProfile(追加不删史/幂等/权重变更须伴证据 P0/空守卫,§18 三断言)。后续:runTurn 接线、主动回访(可关闭)、北极星度量。此后 M5 交易 → M6 B2B。
+- **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
@@ -132,6 +137,9 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-7 deprecated 层仍承重 | **大部赎回**:dsh 插件进程内路径切轨 solveChoiceSegment(枚举,~0ms)、cli.py 桥切轨 solve_choice_segment、diff-test 切轨统一模型对统一模型;engine/journey 退纯 oracle(保留为金标准对照)。**尾债清偿 2026-08-22**:删 build_plan.py + gotry_async/demo.py + run-golden-case.sh(已断:调 rc.3 删除的 cli.py);py 树仅剩 gotry_feasibility oracle 对照 + 其 unittest |
 | D-8 对话循环不进 CI | **已清偿**(replay 带终态断言 + 异步工单跨进程闭环 + smoke 进 `run-all-tests.sh` §5-7) |
 | [D-NEW] dsh 进程保活缺失 | **部分赎回(gotry 侧)**: plugins/apply 内 installProcessGuards 挂 uncaughtException + unhandledRejection;incident-log.ts 同步 fsync append-only,handler 不调 process.exit——被崩溃穿透时仍能留下证据(JSONL incidents.jsonl),不阻塞 dsh 控制流。incident-tests 2/2 绿(handler 装上后未捕获异常仍记录,后续控制流不卡)。**gotry 侧收尾 2026-08-22**: 12 工具 execute 统一经 guardToolExecute 异常隔离——抛错/拒绝降级结构化错误返回 LLM + tool_execute_error 落盘,不再穿透 cordis 到 dsh 主循环(incident 套 3/3);残余仅 vendored dsh 自身容错,记 M3 |
+| D-9 节日锚点表硬编码 | `time-anchor.ts` SPRING_FESTIVAL 只覆盖 2026-2028;**跨 2028 必须扩表**,否则春节锚点静默缺失。赎回时机:2028 年前任一触碰时间锚点层的提交 |
+| D-10 slot→spec 求解桥接未做 | travel_slot_extraction.v1 目前只到 intake/评测面(extractSlots + 25 题评测);进求解链路(槽位→JourneySpec)时赎回,触发 ADR-12 复审 |
+| D-11 `npx tsc --noEmit` 存量 14 错 | 2026-08-27 实测基线即红(anything/opensky/incident-log/smoke/index/memory-capture 等,与本次时间感改动零交集);赎回时机:下一次 dsh 升级或触碰这些文件时顺带清理 |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 

@@ -10,18 +10,22 @@
 import type { LlmPort } from './loop.ts'
 import type { InterviewQuestion, TravelerProfile, TripState, Turn, CalendarState } from './contracts.ts'
 import { parseFlightPackToSpec, type JourneySpecTS } from './unified.ts'
+import { buildTimeAnchor } from './time-anchor.ts'
+import { buildSlotSystem, flagExpiredSlots, normalizeExtraction, type TravelSlotExtraction } from './travel-slots.ts'
 
-const MODEL = process.env['LLM_MODEL'] ?? process.env['DEEPSEEK_MODEL'] ?? 'MiniMax-M2'
-const BASE = (process.env['LLM_BASE_URL'] ?? process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.minimax.io/v1').replace(/\/$/, '')
+// 惰性读取(env 在调用时取值):模块顶常量会在 .env 加载前冻结(ESM import 提升),
+// 脚本先 loadEnv 再 import 也救不了——401 错配(key 发往默认端点)的存量隐患由此根除。
+const model = () => process.env['LLM_MODEL'] ?? process.env['DEEPSEEK_MODEL'] ?? 'MiniMax-M2'
+const base = () => (process.env['LLM_BASE_URL'] ?? process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.minimax.io/v1').replace(/\/$/, '')
 
 async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, json: boolean): Promise<string> {
   const key = process.env['LLM_API_KEY'] ?? process.env['DEEPSEEK_API_KEY']
   if (!key) throw new Error('LLM_API_KEY 未设置(兼容 DEEPSEEK_API_KEY 别名)——真 LLM 路径不可用,请回退 mock(ADR-8)')
-  const res = await fetch(`${BASE}/chat/completions`, {
+  const res = await fetch(`${base()}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({
-      model: MODEL,
+      model: model(),
       messages,
       ...(json ? { response_format: { type: 'json_object' } } : {}),
       temperature: json ? 0 : 0.7,
@@ -58,13 +62,16 @@ const SKELETON_SYSTEM = `你是行程骨架抽取器。从对话中抽取行程�
 规则:每个跨城移动一段;锚点只放用户明说或必然的(如"当天到"→arriveByMin 23:59=1439);时刻用当日分钟。
 scenario 判定:「洱海/大理/千岛湖/太湖+选目的地」→erhai(候选集);「普吉/workation/远程办公+多城链」→workation(五段链);「云南/大理丽江」→yunnan;不确定→generic。只输出 JSON。`
 
-export function createOpenAICompatLlm(flightPackPath?: string): LlmPort {
+export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date = () => new Date()): LlmPort {
   const pack = flightPackPath
   const historyText = (h: Turn[]) => h.map(t => `${t.role === 'user' ? '用户' : '助手'}: ${t.text}`).join('\n')
+  // 时间锚点卡:每条抽取链路都带上「今天」——legacy 路径此前无时间注入,
+  // 过期/相对日期语义全靠它(算术在 time-anchor 层,LLM 只查卡)。
+  const anchorContext = () => `时间锚点卡:\n${buildTimeAnchor(clock()).card}`
   return {
     async extractFacts(history) {
       const out = await chat(
-        [{ role: 'system', content: FACTS_SYSTEM }, { role: 'user', content: historyText(history) }],
+        [{ role: 'system', content: FACTS_SYSTEM }, { role: 'user', content: `${anchorContext()}\n\n${historyText(history)}` }],
         true,
       )
       const obj = parseJsonBlock(out)
@@ -76,7 +83,7 @@ export function createOpenAICompatLlm(flightPackPath?: string): LlmPort {
     },
     async extractSpec(history, state) {
       // 架构(ADR-10):LLM 只产骨架与锚点;班次数据永远来自能力层(数据包/未来实时API)
-      const context = `已断言日历:${JSON.stringify(state.calendar.assertedWeekdays)}\nprofile:${JSON.stringify(state.profile)}`
+      const context = `${anchorContext()}\n已断言日历:${JSON.stringify(state.calendar.assertedWeekdays)}\nprofile:${JSON.stringify(state.profile)}`
       const out = await chat(
         [{ role: 'system', content: SKELETON_SYSTEM }, { role: 'user', content: `${context}\n\n${historyText(history)}` }],
         true,
@@ -122,6 +129,19 @@ export function createOpenAICompatLlm(flightPackPath?: string): LlmPort {
       } : undefined
       packSpec.budgetCny = 9000
       return packSpec
+    },
+    async extractSlots(history, now?: Date): Promise<TravelSlotExtraction | null> {
+      // now 可注入(评测固定锚点);过期判定在 flagExpiredSlots(代码层),模型只管逐字抽取
+      const anchor = buildTimeAnchor(now ?? clock())
+      const out = await chat(
+        [{ role: 'system', content: buildSlotSystem(anchor) }, { role: 'user', content: historyText(history) }],
+        true,
+      )
+      const obj = parseJsonBlock(out)
+      if (!obj) return null
+      // language 判定归代码层(detectLanguage),模型输出仅供参考;过期判定同在代码层
+      const ext = normalizeExtraction(obj, history.map(t => t.text).join('\n'))
+      return ext ? flagExpiredSlots(ext, anchor) : null
     },
     async polishQuestion(q: InterviewQuestion) {
       const out = await chat(

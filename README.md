@@ -10,7 +10,7 @@
 | | |
 |---|---|
 | **Version** | `v0.0.1-rc.7`(npm: `@danceiny/gotry@rc`;[release notes](docs/release-notes.md)) |
-| **Status** | M3 工程面 + npm 公开分发就绪;16 套测试全绿 |
+| **Status** | M3 工程面 + npm 公开分发就绪;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
@@ -219,9 +219,10 @@ GoTry: 收到。先把约束记下来——
 ./scripts/run-all-tests.sh
 ```
 
-16 套测试,一次性绿(纯 TS,无 Python 依赖):engine/journey/unified 金标准 · 对话重放 ·
+全栈一次性绿(纯 TS,无 Python 依赖):engine/journey/unified 金标准 · 对话重放 ·
 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离) · 天气 · 航班 ·
-Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性。
+Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 ·
+时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)。
 
 ---
 
@@ -260,4 +261,4 @@ ADR 与技术债见 [`docs/architecture.md` §8 / §10](docs/architecture.md)。
 
 **Built with**: DeepSeek Harness 0.1.1-rc.2 · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript · Bun
 
-**Last verified against `v0.0.1-rc.7`** — 16/16 suites green(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。
+**Last verified against `v0.0.1-rc.7`** — 全栈回归全绿(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。

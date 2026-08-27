@@ -84,8 +84,12 @@ echo "=== 18. T1 记忆合并守门(M4,纯函数:追加不删史/P0 权重校验
 (cd ts && npx tsx scripts/memory-capture-tests.ts) || FAIL=1
 
 echo
+echo "=== 19. 时间感评测(时间锚点卡 + 槽位过期校验 + 评分器 + mock 回放管道,确定性;真模型巡检走 --real) ==="
+(cd ts && npx tsx scripts/time-eval-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
 fi
-echo "ALL SUITES GREEN(17 套:engine/journey/unified + 重放 + 异步 + smoke + hbcli + incident + weather + opensky + anything + probePoi + agent-reach×3 + skills-contract + diff;明细见各节)"
+echo "ALL SUITES GREEN(明细见各节;真 LLM 巡检:replay-real.ts / time-eval-tests.ts --real,ADR-11 层)"
