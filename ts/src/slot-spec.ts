@@ -139,7 +139,10 @@ export interface SpecDateMismatch {
 /**
  * spec ↔ 槽位日期一致性闸(ADR-10 翻译≠造数的执行面):LLM 产出的 JourneySpecTS 日期
  * 与代码层换算的槽位日期逐项比对,分歧即返回 mismatch(供渲染 red-flag/追问),不静默采信。
- * 只比双方都存在的日期;spec 无日期或槽位 unresolved 的项不参与(不制造假阳性)。
+ *
+ * 范围边界(2026-08-28 巡检修正):槽位 v1 只有 trip 级主日期(start/departure/check-in),
+ * **只校验恰好一个带日期段的 spec**;多段行程的逐段日期没有槽位真值可比(不比,不造假阳性
+ * ——金标准六段行程曾被全段误判分歧,求解被永久拦截)。spec 无日期或槽位 unresolved 不参与。
  */
 export function specDateMismatches(
   spec: { segments?: Array<{ date?: string }> },
@@ -153,17 +156,17 @@ export function specDateMismatches(
   ]
   const dated = primary.filter((p): p is { field: string; res: SlotDateResolution } => p.res?.date != null)
   if (dated.length === 0) return mismatches
+  const datedSegs = (spec.segments ?? []).filter(s => typeof s.date === 'string' && s.date)
+  if (datedSegs.length !== 1) return mismatches // 多段(或零段)无逐段真值,闸不判
+  const seg = datedSegs[0]!
   const slotDates = new Set(dated.map(s => s.res.date as string))
-  for (const [i, seg] of (spec.segments ?? []).entries()) {
-    if (typeof seg.date !== 'string' || !seg.date) continue
-    if (!slotDates.has(seg.date)) {
-      mismatches.push({
-        specAt: `segments[${i}].date`,
-        field: dated.map(s => s.field).join('|'),
-        specDate: seg.date,
-        slotDate: [...slotDates].join('|'),
-      })
-    }
+  if (!slotDates.has(seg.date as string)) {
+    mismatches.push({
+      specAt: `segments[${(spec.segments ?? []).indexOf(seg)}].date`,
+      field: dated.map(s => s.field).join('|'),
+      specDate: seg.date as string,
+      slotDate: [...slotDates].join('|'),
+    })
   }
   return mismatches
 }

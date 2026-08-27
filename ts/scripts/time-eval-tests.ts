@@ -173,12 +173,13 @@ const ANCHOR_NOW = new Date(ay, am - 1, ad, 12) // 锚点日中午,避免午夜�
   assert.equal(resolved.hotel?.check_out_date?.date, '2026-09-07', 'hotel 退房=下周五+3')
   assert.deepEqual(resolved.unresolved, [{ field: 'flight.departure_date', raw: '这阵子' }], 'unresolved 清单')
 
-  // spec 一致性闸:spec 日期与代码换算分歧必须暴露;unresolved 不参与(不造假阳性)
+  // spec 一致性闸:单日期段分歧必须暴露;多段/无日期/unresolved 不判(不造假阳性)
   assert.equal(specDateMismatches({ segments: [{ date: '2026-09-04' }] }, resolved).length, 0, '一致则零 mismatch')
   const mm = specDateMismatches({ segments: [{ date: '2026-09-05' }] }, resolved)
-  assert.equal(mm.length, 1, '分歧暴露')
+  assert.equal(mm.length, 1, '单日期段分歧暴露')
   assert.equal(mm[0]?.specDate, '2026-09-05')
   assert.equal(mm[0]?.slotDate, '2026-09-04')
+  assert.equal(specDateMismatches({ segments: [{ date: '2026-09-04' }, { date: '2026-09-05' }] }, resolved).length, 0, '多段无逐段真值不判(巡检修正)')
   const unresolvedOnly: ResolvedSlots = { unresolved: [{ field: 'flight.departure_date', raw: '近期' }] }
   assert.equal(specDateMismatches({ segments: [{ date: '2026-09-05' }] }, unresolvedOnly).length, 0, '全 unresolved 不参与比对')
   assert.equal(specDateMismatches({ segments: [] }, resolved).length, 0, 'spec 无日期不比对')
