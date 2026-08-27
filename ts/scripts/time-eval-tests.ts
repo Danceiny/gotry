@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildTimeAnchor, parseAbsoluteDate } from '../src/time-anchor.ts'
 import { detectLanguage, flagExpiredSlots, scoreExtraction, type TravelSlotExtraction } from '../src/travel-slots.ts'
+import { resolveSlotDate, resolveSlots, specDateMismatches, type ResolvedSlots } from '../src/slot-spec.ts'
 import { createMockLlm, type SlotScriptStep } from '../src/mock-llm.ts'
 import { createOpenAICompatLlm } from '../src/dsh-llm.ts'
 
@@ -128,7 +129,60 @@ const ANCHOR_NOW = new Date(ay, am - 1, ad, 12) // 锚点日中午,避免午夜�
   console.log(`4. mock 回放管道 OK(${pass}/${dataset.cases.length}——评分管道自身正确)`)
 }
 
-console.log('\nTIME-EVAL TESTS: 4/4 OK(确定性部分,CI 口径)')
+// ---- 5. 槽位→日期解析层(D-10 切片 A,slot-spec.ts) ------------------------------
+{
+  const anchor = buildTimeAnchor(ANCHOR_NOW) // 2026-08-27 周四
+  const r = (expr: string) => resolveSlotDate(expr, anchor)
+
+  // 绝对表达:ISO/点分/中文月日(kind=absolute)
+  assert.equal(r('2026-09-05').date, '2026-09-05', 'ISO')
+  assert.equal(r('8.20').date, '2026-08-20', '点分')
+  assert.equal(r('9月5日').date, '2026-09-05', '中文月日')
+  // 锚点卡词表:相对周/近邻日/月分段(kind=card)
+  assert.equal(r('下周一').date, '2026-08-31', '下周一')
+  assert.equal(r('本周六').date, '2026-08-29', '本周六')
+  assert.equal(r('下下周四').date, '2026-09-10', '下下周四')
+  assert.equal(r('明天').date, '2026-08-28', '明天')
+  assert.equal(r('下个月中旬').date, '2026-09-11', '下个月中旬取首日')
+  // 「+N」后缀(槽位规则 5/6 拼接约定)
+  assert.equal(r('下周五+3').date, '2026-09-07', '下周五+3')
+  assert.equal(r('8.20+2天').date, '2026-08-22', '8.20+2天')
+  // 词表外:unresolved 逐字保留(不做开放式解析,ADR-12 边界)
+  assert.equal(r('近期').kind, 'unresolved', '模糊词')
+  assert.equal(r('这阵子').date, null, '模糊词不猜')
+  assert.equal(r('next Monday').kind, 'unresolved', '英文相对不解析')
+  assert.equal(r('next Monday').raw, 'next Monday', 'unresolved 保留原话')
+
+  // 整张抽取解析:hotel+flight 双域 + unresolved 清单
+  const ext: TravelSlotExtraction = {
+    schema_version: 'travel_slot_extraction.v1',
+    language: 'zh',
+    domains: ['hotel', 'flight'],
+    slots: {
+      hotel: { action: 'search', city: '上海', check_in_date: '下周五', check_out_date: '下周五+3' },
+      flight: { action: 'search', origin: '上海', destination: '杭州', departure_date: '这阵子', trip_type: 'one_way' },
+    },
+    missing_slots: [],
+  }
+  const resolved = resolveSlots(ext, anchor)
+  assert.equal(resolved.hotel?.check_in_date?.date, '2026-09-04', 'hotel 入住=下周五')
+  assert.equal(resolved.hotel?.check_out_date?.date, '2026-09-07', 'hotel 退房=下周五+3')
+  assert.deepEqual(resolved.unresolved, [{ field: 'flight.departure_date', raw: '这阵子' }], 'unresolved 清单')
+
+  // spec 一致性闸:spec 日期与代码换算分歧必须暴露;unresolved 不参与(不造假阳性)
+  assert.equal(specDateMismatches({ segments: [{ date: '2026-09-04' }] }, resolved).length, 0, '一致则零 mismatch')
+  const mm = specDateMismatches({ segments: [{ date: '2026-09-05' }] }, resolved)
+  assert.equal(mm.length, 1, '分歧暴露')
+  assert.equal(mm[0]?.specDate, '2026-09-05')
+  assert.equal(mm[0]?.slotDate, '2026-09-04')
+  const unresolvedOnly: ResolvedSlots = { unresolved: [{ field: 'flight.departure_date', raw: '近期' }] }
+  assert.equal(specDateMismatches({ segments: [{ date: '2026-09-05' }] }, unresolvedOnly).length, 0, '全 unresolved 不参与比对')
+  assert.equal(specDateMismatches({ segments: [] }, resolved).length, 0, 'spec 无日期不比对')
+
+  console.log('5. 槽位→日期解析 OK(绝对/词表/+N/unresolved 边界/整张解析/spec 一致性闸)')
+}
+
+console.log('\nTIME-EVAL TESTS: 5/5 OK(确定性部分,CI 口径)')
 
 // ---- 真模型巡检(--real,只读报告,不进 CI 红线) ----------------------------------
 if (process.argv.includes('--real')) {

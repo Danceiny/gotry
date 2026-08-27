@@ -58,6 +58,7 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/scripts/{engine,journey,unified,diff}-tests.ts` | 套件(8/5/4 断言+TS-vs-TS 同 spec 稳定性) | ✅(diff-test 顺序偶发为已知问题,v0.0.1-rc.2 后不再依赖 Python) |
 | `ts/src/time-anchor.ts` | **时间锚点层**(ADR-12,纯函数):锚点卡渲染(今天/相对周/月分段/季度/节日)+ 绝对月日解析;persona 与抽取链路的「今天」唯一来源 | ✅ time-eval §1 |
 | `ts/src/travel-slots.ts` | **槽位抽取层**(travel_slot_extraction.v1):schema + 抽取 prompt + 过期校验 + language 检测 + 评分器;逐字保留,判定归代码 | ✅ time-eval §2-4 |
+| `ts/src/slot-spec.ts` | **槽位→日期解析层**(D-10 切片 A):锚点卡词表 + 绝对表达 + 「+N」后缀 → YYYY-MM-DD;词表外 unresolved 逐字保留(ADR-12 边界:不做开放式解析);spec 日期一致性闸 | ✅ time-eval §5 |
 | `ts/scripts/time-eval-tests.ts` `data/time-slot-eval.json` | 时间感评测(25 题):确定性部分进 CI,`--real` 真模型巡检(只读报告) | ✅ 真模型 25/25 |
 | `data/golden_erhai.json` `flights_2026.json` `hotels_2026.json` `golden_trip_2026.json` `行程细化计划.docx` | 金标准用例/班期/住宿/完整任务/Kimi 对话原件 | — |
 
@@ -112,7 +113,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 9 | 访谈确定性(缺失字段驱动) | LLM 即兴(Kimi 病根) | 永不复审 | `loop.ts interviewNext`;replay 夹具(首轮问出工作窗口) |
 | 10 | 翻译≠造数:LLM 只产骨架与锚点,班次数据永远来自能力层(数据包→实时API);spec 校验闸兜底 | 让 LLM 直接产出完整 spec(实测:MiniMax-M2 编不出时刻,要么编造要么卡死) | 永不复审 | `loop.ts validateSpec`;`dsh-llm.ts SKELETON_SYSTEM`;`replay-real.ts` |
 | 11 | 评测分层进架构:回归层(单元/差分/重放)防退化、质量层(评测集+指标面板)防漂移、巡检层(nightly 真 LLM 重放带预算闸)防「mock 绿而真智能烂」;M-exit 必过对应层级 | 只靠重放夹具(质量漂移无感)/事后补评测工具(指标不进架构等于不存在) | M3 exit 指标面板上线后复审一次 | `run-all-tests.sh`;replay 三件套;`tech-strategy.md` §4 |
-| 12 | 时间感分层:锚点卡(time-anchor 纯函数,算术进代码)+ 槽位逐字保留(LLM 不换算不翻译)+ 过期/language 判定归代码层;时间评测集进仓(data/time-slot-eval.json,只增不改语义),质量层首块落地 | 全 LLM 感知(锚点缺失实测:legacy 路径无今天注入,过期无从判)/代码全量解析中文相对日期(表达开放,维护黑洞) | 槽位抽取接入求解链路(D-10 赎回)时复审 | `time-anchor.ts`;`travel-slots.ts`;`time-eval-tests.ts` |
+| 12 | 时间感分层:锚点卡(time-anchor 纯函数,算术进代码)+ 槽位逐字保留(LLM 不换算不翻译)+ 过期/language 判定归代码层;时间评测集进仓(data/time-slot-eval.json,只增不改语义),质量层首块落地 | 全 LLM 感知(锚点缺失实测:legacy 路径无今天注入,过期无从判)/代码全量解析中文相对日期(表达开放,维护黑洞) | **2026-08-27 复审(D-10 切片 A 触发):设计成立**;补充边界——解析层只认锚点卡词表+绝对表达+「+N」后缀,词表外 unresolved 逐字保留,不开式解析(锚点:`slot-spec.ts`;time-eval §5) | `time-anchor.ts`;`travel-slots.ts`;`slot-spec.ts`;`time-eval-tests.ts` |
 
 ## 9. 演进(时间线唯一来源= `roadmap.md` 的 M0-M6;此处只保留原则与现状)
 
@@ -139,7 +140,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-8 对话循环不进 CI | **已清偿**(replay 带终态断言 + 异步工单跨进程闭环 + smoke 进 `run-all-tests.sh` §5-7) |
 | [D-NEW] dsh 进程保活缺失 | **部分赎回(gotry 侧)**: plugins/apply 内 installProcessGuards 挂 uncaughtException + unhandledRejection;incident-log.ts 同步 fsync append-only,handler 不调 process.exit——被崩溃穿透时仍能留下证据(JSONL incidents.jsonl),不阻塞 dsh 控制流。incident-tests 2/2 绿(handler 装上后未捕获异常仍记录,后续控制流不卡)。**gotry 侧收尾 2026-08-22**: 12 工具 execute 统一经 guardToolExecute 异常隔离——抛错/拒绝降级结构化错误返回 LLM + tool_execute_error 落盘,不再穿透 cordis 到 dsh 主循环(incident 套 3/3);残余仅 vendored dsh 自身容错,记 M3 |
 | D-9 节日锚点表硬编码 | `time-anchor.ts` SPRING_FESTIVAL 只覆盖 2026-2028;**跨 2028 必须扩表**,否则春节锚点静默缺失。赎回时机:2028 年前任一触碰时间锚点层的提交 |
-| D-10 slot→spec 求解桥接未做 | travel_slot_extraction.v1 目前只到 intake/评测面(extractSlots + 25 题评测);进求解链路(槽位→JourneySpec)时赎回,触发 ADR-12 复审 |
+| D-10 slot→spec 求解桥接未做 | **切片 A 落地 2026-08-27**:`slot-spec.ts` 解析层(锚点卡词表/绝对/+N → 绝对日期,词表外 unresolved;spec 日期一致性闸纯函数,time-eval §5)。**ADR-12 复审已触发并结论:设计成立**,解析范围必须有界(只解析锚点卡词表,不做开放式中文相对日期解析——被拒备选即维护黑洞)。尾债:解析结果接入工具查询面(hotel/flight 的 checkIn/departure 接受逐字表达)与 spec 抽取链路(mismatch 进渲染),接线时按 §11 同步 |
 | D-11 `npx tsc --noEmit` 存量 14 错 | **已清偿**(1bf9671,语义零变更:tsc 0 错;smoke/memory §18 全过;17 套 ALL GREEN) |
 | D-12 loopx RFC 映射升级四接缝 | **RFC 待拍板**(`docs/loopx-inspired-upgrades-rfc.md`):S1 工具 packet 纪律/S2 记忆效用 sidecar/S3 wish 触达 0..1 纪律/S4 WriteGate L0-L4 词汇;拍板前不动代码,拍板后各切片落地时登记 ADR 并按 §11 同步 |
 
