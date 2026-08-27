@@ -7,8 +7,8 @@
  *  - legacy 抽取路径:dsh-llm.ts 注入 FACTS/SKELETON/槽位抽取 prompt;
  *  - 评测:time-eval-tests.ts 用固定 now(2026-08-27)保证确定性。
  *
- * 债务(architecture §10 登记):节日锚点表 SPRING_FESTIVAL 硬编码 2026-2028,
- * 跨 2028 必须扩表,否则春节锚点静默缺失。
+ * 债务(architecture §10 登记):节日锚点表 SPRING_FESTIVAL 硬编码(2026-08-28 扩至 2031);
+ * 跨 2031 前必须再扩表,否则春节锚点静默缺失。
  */
 
 export interface TimeAnchor {
@@ -37,11 +37,14 @@ function weekMonday(d: Date): Date {
   return addDays(d, -((d.getDay() + 6) % 7))
 }
 
-/** 春节锚点表(仅此节日漂移大,硬编码;元旦/国庆固定月日,按「下一次发生」算) */
+/** 春节锚点表(仅此节日漂移大,硬编码;元旦/国庆固定月日,按「下一次发生」算)。D-9:2026-08-28 扩至 2031 */
 const SPRING_FESTIVAL: Record<number, string> = {
   2026: '2026-02-17',
   2027: '2027-02-06',
   2028: '2028-01-26',
+  2029: '2029-02-13',
+  2030: '2030-02-03',
+  2031: '2031-01-23',
 }
 
 function tzLabelOf(d: Date): string {
