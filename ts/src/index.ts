@@ -15,6 +15,7 @@
 
 import { join } from 'node:path'
 import { readFile, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -78,6 +79,27 @@ interface WishPoolEntryInput {
  */
 const unwrapQuery = interpretArgs
 
+/**
+ * 动机画像 → persona 紧凑 brief(M4 T1 读回路径):空文件返回 ''(首访),
+ * persona 据此决定是否访谈。只读,不猜——画像里没有的字段不编。
+ */
+function renderMotivationBrief(stateRoot: string): string {
+  try {
+    const raw = readFileSync(join(stateRoot, 'gotry-state', 'motivation-profile.json'), 'utf-8')
+    const p = JSON.parse(raw) as { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown>; updated_at?: string }
+    const lines: string[] = ['## 用户记忆(跨会话画像;与用户当轮说法冲突时以用户为准,更新经 gotry_motivation_save)']
+    const weights = Object.entries(p.weights ?? {})
+    if (weights.length) lines.push(`- 动机权重: ${weights.map(([k, v]) => `${k}=${v}`).join(', ')}(证据 ${p.evidence?.length ?? 0} 条)`)
+    const hard = Object.entries(p.hard ?? {})
+    if (hard.length) lines.push(`- 硬约束: ${hard.map(([k, v]) => `${k}=${String(v)}`).join(', ')}`)
+    lines.push(`- 愿望池: 用 gotry_wish_pool_list 按条件召回(0..1),勿直接堆砌`)
+    if (p.updated_at) lines.push(`- 更新于: ${p.updated_at}`)
+    return weights.length || hard.length ? lines.join('\n') : ''
+  } catch {
+    return '' // 首访:无画像
+  }
+}
+
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
 
@@ -96,6 +118,11 @@ export function apply(ctx: Context, config: Config): void {
   // 时间锚点卡(time-anchor 层,确定性):相对日期换算的唯一依据——
   // 明天/下周X/下个月中旬/节日都查卡,LLM 不自算(算术只在代码层)。
   sp?.variable?.('time_anchor_card', () => buildTimeAnchor(new Date()).card)
+
+  // M4 记忆读回(T1 闭环的另一半):motivation-profile 此前只写不读,每个新会话
+  // 模型都是盲的、重新访谈——「回访规划时长降 ≥50%」不可能成立。这里把画像
+  // 渲染成紧凑 brief 注入 persona;为空 = 首访。与当轮说法冲突时以用户为准。
+  sp?.variable?.('motivation_brief', () => renderMotivationBrief(config.stateRoot ?? '.'))
 
   // D-NEW 进程护栏(Z3 WASM crash 教训):dsh 0.1.1-rc.1 缺 uncaughtException
   // handler,插件异常穿透即杀进程。我们在 gotry 侧挂护栏:同步 fsync 写事故证据

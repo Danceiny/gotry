@@ -16,8 +16,10 @@ interface ToolLike {
 
 async function main() {
   const registered: ToolLike[] = []
+  const variables: Record<string, () => string> = {}
   const ctx = {
     tools: { register: (t: unknown) => registered.push(t as ToolLike) },
+    systemPrompt: { variable: (name: string, provider: () => string) => { variables[name] = provider } },
   } as unknown as Context
 
   apply(ctx, {
@@ -157,6 +159,21 @@ async function main() {
     const recall2 = await list.execute({ query: { action: 'recall', days: 6, budgetCny: 6000, month: 4 } } as never, null) as { suggestion?: { wish_id?: string } | null }
     if (recall2.suggestion?.wish_id === a.wish_id) throw new Error('FAIL: muted wish 不得召回')
     console.log('wish sidecar: recall 0..1 + muted excluded + owner-confirmed attribution only')
+  }
+
+  // 11) M4 T1 读回:记忆 brief——save 前空态/回访态含画像字段(与用户当轮冲突以用户为准)
+  {
+    const brief = variables['motivation_brief']
+    if (typeof brief !== 'function') throw new Error('FAIL: motivation_brief 变量未注册')
+    const saved = await byName('gotry_motivation_save').execute({
+      profile: { weights: { brief_probe: 0.6 }, evidence: ['用户原话:smoke 读回探针'], hard: { wake_not_before: '07:15' } },
+    }, null) as { ok?: boolean }
+    if (saved.ok !== true) throw new Error('FAIL: 读回探针画像应保存成功')
+    const rendered = brief()
+    if (!rendered.includes('brief_probe=') || !rendered.includes('wake_not_before=07:15') || !/证据 [1-9]\d* 条/.test(rendered)) {
+      throw new Error(`FAIL: 回访 brief 应含画像字段,实际:${rendered.slice(0, 200)}`)
+    }
+    console.log('memory read-back: motivation_brief renders profile for returning sessions (empty = first visit)')
   }
 
   console.log('\nSMOKE OK')
