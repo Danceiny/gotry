@@ -88,6 +88,10 @@ echo "=== 19. 时间感评测(时间锚点卡 + 槽位过期校验 + 评分器 +
 (cd ts && npx tsx scripts/time-eval-tests.ts) || FAIL=1
 
 echo
+echo "=== 20. 记忆效用指标投影(M4 北极星过程面,只读,空态优雅) ==="
+(cd ts && npx tsx scripts/memory-metrics.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
