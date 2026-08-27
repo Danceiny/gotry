@@ -1,0 +1,384 @@
+{
+  "schema": "time-slot-eval/v1",
+  "anchor_date": "2026-08-27",
+  "note": "时间感评测集(25 题,来自外部差旅槽位评测表 2026-08-27 转录)。golden 约定:时间表达逐字保留(换算归工具/锚点层);过期判定只依赖 anchor_date——换锚点只需复核 time_expired 一题;评测集只增不改语义(tech-strategy §4 纪律)。",
+  "cases": [
+    {
+      "id": "time_accurate",
+      "priority": "P0",
+      "note": "给出准确日期,最终目标完成机酒预定",
+      "utterance": "9.1-9.10 去广州 安排行程",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "广州", "start_date": "9.1", "end_date": "9.10", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_expired",
+      "priority": "P1",
+      "note": "存在过期时间,最终目标完成行程安排",
+      "utterance": "8.1-8.10 去广州,安排行程",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "广州", "start_date": "8.1", "end_date": "8.10", "trip_type": "one_way" }
+        },
+        "missing_slots": ["requisition.start_date (date is expired)"]
+      }
+    },
+    {
+      "id": "time_weekday_range",
+      "priority": "P0",
+      "note": "日期周表述,最终目标完成机票预定",
+      "utterance": "下周一到下周五在广州",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "广州", "start_date": "下周一", "end_date": "下周五", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_weekday_english",
+      "priority": "P1",
+      "note": "日期英文下星期表述,最终目的完成机票预定",
+      "utterance": "next Thursday 去北京,预定酒店",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "mixed",
+        "domains": ["hotel"],
+        "slots": {
+          "hotel": { "action": "search", "city": "北京", "check_in_date": "next Thursday" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_exact_same_day",
+      "priority": "P0",
+      "note": "具体日期表述,当天往返,最终目标完成行程安排",
+      "utterance": "9.10 日去北京,当天往返",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "北京", "start_date": "9.10", "trip_type": "round_trip" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_weekday_multi_dest",
+      "priority": "P1",
+      "note": "日期周表述,多目的地行程,最终目标完成行程安排",
+      "utterance": "下周四去北京,待到周日,周日去广州待两天然后回上海",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition", "flight"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": ["北京", "广州", "上海"], "start_date": "下周四", "trip_type": "round_trip" },
+          "flight": { "action": "search", "destination": ["北京", "广州", "上海"], "departure_date": "下周四", "multi_destination": true, "trip_type": "round_trip" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_english_date_range",
+      "priority": "P1",
+      "note": "英文日期表述,最终目标完成行程推荐",
+      "utterance": "Aug-5 to Aug-10, go to shanghai, recommend me trip",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "en",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "上海", "start_date": "Aug-5", "end_date": "Aug-10", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_month_vague",
+      "priority": "P1",
+      "note": "模糊月份日期表述,最终目标完成行程安排",
+      "utterance": "下个月去广州,帮我安排行程",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "广州", "start_date": "下个月", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_vague_query",
+      "priority": "P0",
+      "note": "模糊日期查询,最终目标完成机酒预定",
+      "utterance": "下周初飞北京开会,哪天机票比较便宜",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["flight"],
+        "slots": {
+          "flight": { "action": "search", "destination": "北京", "departure_date": "下周初", "sort_name": "PRICE", "sort_type": "ASC", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_weekday_stay_duration",
+      "priority": "P1",
+      "note": "日期周表述,含住宿天数,最终目标完成酒店预定",
+      "utterance": "下周二入住北京,住十天回上海",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["hotel", "flight"],
+        "slots": {
+          "hotel": { "action": "search", "city": "北京", "check_in_date": "下周二", "check_out_date": "下周二+10" },
+          "flight": { "action": "search", "origin": "北京", "destination": "上海", "departure_date": "下周二+10", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_relative_week",
+      "priority": "P0",
+      "note": "相对日期表述,最终目标完成行程安排",
+      "utterance": "明天去北京,出差一周,帮我安排行程",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "北京", "start_date": "明天", "duration_days": 7, "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_relative_departure_pref",
+      "priority": "P1",
+      "note": "相对日期表述,含出发时间偏好,最终目标完成机票预定",
+      "utterance": "上海到北京 大后天 希望早上七点后出发",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["flight"],
+        "slots": {
+          "flight": { "action": "search", "origin": "上海", "destination": "北京", "departure_date": "大后天", "departure_time_pref": "07:00后", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_month_vague_stay_duration",
+      "priority": "P1",
+      "note": "模糊月份日期表述,含停留天数,最终目标完成行程安排",
+      "utterance": "下个月初去北京,待 10 天,帮我安排行程",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "北京", "start_date": "下个月初", "duration_days": 10, "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_weekday_return",
+      "priority": "P1",
+      "note": "日期周表述,最终目标完成机票预定",
+      "utterance": "下下周四去北京,周日回",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["flight"],
+        "slots": {
+          "flight": { "action": "search", "destination": "北京", "departure_date": "下下周四", "return_date": "周日", "trip_type": "round_trip" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_english_weekday_intl_multi_dest",
+      "priority": "P1",
+      "note": "英文日期周表述,国际多目的地行程,最终目标完成机票预定",
+      "utterance": "I need to check flights for an open-jaw trip: Beijing to Tokyo next Monday, and Osaka back to Beijing next Friday. Can you handle this kind of itinerary?",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "en",
+        "domains": ["flight"],
+        "slots": {
+          "flight": { "action": "search", "origin": "Beijing", "destination": ["Tokyo", "Osaka", "Beijing"], "departure_date": "next Monday", "return_date": "next Friday", "multi_destination": true, "trip_type": "round_trip" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_vague_few_days",
+      "priority": "P0",
+      "note": "模糊日期表述,最终目标完成机票预定",
+      "utterance": "过几天要去北京,帮我看下机票",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["flight"],
+        "slots": {
+          "flight": { "action": "search", "destination": "北京", "departure_date": "过几天", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_ambiguous_semantics",
+      "priority": "P1",
+      "note": "日期表述(语义歧义),最终目标完成行程安排",
+      "utterance": "明年一月份要去北京 3 天,帮我安排行程",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "北京", "start_date": "明年一月份", "duration_days": 3, "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_month_mid_vague_hotel",
+      "priority": "P1",
+      "note": "模糊月份日期表述,最终目标完成酒店预定",
+      "utterance": "下个月中旬要去广州,待 4 天,帮我看看酒店",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["hotel"],
+        "slots": {
+          "hotel": { "action": "search", "city": "广州", "check_in_date": "下个月中旬", "check_out_date": "下个月中旬+4" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_relative_short",
+      "priority": "P1",
+      "note": "相对日期表述,最终目标完成机票预定",
+      "utterance": "后天去深圳,帮我看看机票",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["flight"],
+        "slots": {
+          "flight": { "action": "search", "destination": "深圳", "departure_date": "后天", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_relative_biweekly",
+      "priority": "P0",
+      "note": "相对日期表述(隔周),最终目标完成行程安排",
+      "utterance": "隔周要去北京三天,帮我安排行程",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "北京", "start_date": "隔周", "duration_days": 3, "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_weekday_hotel",
+      "priority": "P0",
+      "note": "日期周表述,最终目标完成酒店预定",
+      "utterance": "本周三要去广州,帮我看看酒店",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["hotel"],
+        "slots": {
+          "hotel": { "action": "search", "city": "广州", "check_in_date": "本周三" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_quarter_departure_pref",
+      "priority": "P1",
+      "note": "季度日期表述,含出发时间偏好,最终目标完成机票预定",
+      "utterance": "下个季度初去北京,帮我看看机票,最好是 8 点后出发",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["flight"],
+        "slots": {
+          "flight": { "action": "search", "destination": "北京", "departure_date": "下个季度初", "departure_time_pref": "08:00后", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_vague_recent_query",
+      "priority": "P1",
+      "note": "模糊日期表述,最终目标完成机票查询",
+      "utterance": "近期打算去北京出差,帮我看看上海到北京的机票价格",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["flight"],
+        "slots": {
+          "flight": { "action": "search", "origin": "上海", "destination": "北京", "departure_date": "近期", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_holiday_before",
+      "priority": "P1",
+      "note": "节日日期表述,最终目标完成行程安排",
+      "utterance": "国庆前需要去北京出差,帮我安排行程",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "北京", "start_date": "国庆前", "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    },
+    {
+      "id": "time_weekday_short_trip",
+      "priority": "P1",
+      "note": "日期星期表述,最终目标完成机票预定",
+      "utterance": "星期四要去广州出差,三天行程,帮我安排",
+      "expected": {
+        "schema_version": "travel_slot_extraction.v1",
+        "language": "zh",
+        "domains": ["requisition"],
+        "slots": {
+          "requisition": { "mode": "create", "destination": "广州", "start_date": "星期四", "duration_days": 3, "trip_type": "one_way" }
+        },
+        "missing_slots": []
+      }
+    }
+  ]
+}

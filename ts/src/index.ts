@@ -24,6 +24,7 @@ import { parseCandidate, parseRequest } from './model.ts'
 import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards, guardToolExecute } from '../capabilities/incident-log.ts'
 import { mergeProfile } from './memory-capture.ts'
+import { buildTimeAnchor } from './time-anchor.ts'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 import { verifyFlight } from '../capabilities/opensky.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
@@ -93,6 +94,9 @@ export function apply(ctx: Context, config: Config): void {
     const weekdays = ['日', '一', '二', '三', '四', '五', '六']
     return `${ymd} 周${weekdays[d.getDay()]}`
   })
+  // 时间锚点卡(time-anchor 层,确定性):相对日期换算的唯一依据——
+  // 明天/下周X/下个月中旬/节日都查卡,LLM 不自算(算术只在代码层)。
+  sp?.variable?.('time_anchor_card', () => buildTimeAnchor(new Date()).card)
 
   // D-NEW 进程护栏(Z3 WASM crash 教训):dsh 0.1.1-rc.1 缺 uncaughtException
   // handler,插件异常穿透即杀进程。我们在 gotry 侧挂护栏:同步 fsync 写事故证据

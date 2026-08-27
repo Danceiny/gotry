@@ -8,6 +8,7 @@
 
 import type { InterviewQuestion, TripState, TravelerProfile, Turn, CalendarState, SolveResult } from './contracts.ts'
 import type { JourneySpecTS } from './unified.ts'
+import type { TravelSlotExtraction } from './travel-slots.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
 
 /** LLM 端口:S2 mock(确定性剧本) / S4 真(dsh 运行时)。循环不感知差异。 */
@@ -20,6 +21,12 @@ export interface LlmPort {
   }>
   /** 翻译:对话历史 → 统一模型 spec;约束未齐时返回 null(循环继续访谈) */
   extractSpec(history: Turn[], state: TripState): Promise<JourneySpecTS | null>
+  /**
+   * 槽位抽取(travel_slot_extraction.v1):差旅 intake 面。时间表达逐字保留,
+   * 过期判定在确定性层(flagExpiredSlots),实现方负责注入时间锚点卡。
+   * now 可注入(评测用固定锚点保证确定性;生产省略取系统时钟)。
+   */
+  extractSlots(history: Turn[], now?: Date): Promise<TravelSlotExtraction | null>
   /** 问句润色(ADR-9:确定性驱动,LLM 只管语气) */
   polishQuestion(q: InterviewQuestion): Promise<string>
   /** 结果解释(S3 接 solve 后启用) */

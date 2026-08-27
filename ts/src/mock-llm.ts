@@ -7,6 +7,7 @@
 import type { LlmPort } from './loop.ts'
 import type { InterviewQuestion, TravelerProfile, TripState, Turn, CalendarState } from './contracts.ts'
 import type { JourneySpecTS } from './unified.ts'
+import type { TravelSlotExtraction } from './travel-slots.ts'
 import { parseFlightPackToSpec } from './unified.ts'
 
 interface ScriptStep {
@@ -14,6 +15,12 @@ interface ScriptStep {
   when: string
   calendar?: Partial<CalendarState>
   profile?: Partial<TravelerProfile>
+}
+
+/** 槽位抽取剧本:评测 harness 把 golden 逐条挂进来,mock 原样回吐(管道自测用) */
+export interface SlotScriptStep {
+  when: string
+  extraction: TravelSlotExtraction
 }
 
 /** 剧本:来自真实 Kimi 对话里用户给出关键事实的时刻 */
@@ -48,7 +55,7 @@ const SCRIPT: ScriptStep[] = [
   },
 ]
 
-export function createMockLlm(flightPackPath?: string): LlmPort {
+export function createMockLlm(flightPackPath?: string, slotScript: SlotScriptStep[] = []): LlmPort {
   let stepIdx = 0
   return {
     async extractFacts(history: Turn[], _state: TripState) {
@@ -80,6 +87,11 @@ export function createMockLlm(flightPackPath?: string): LlmPort {
       }
       spec.budgetCny = 9000
       return spec
+    },
+    async extractSlots(history: Turn[]): Promise<TravelSlotExtraction | null> {
+      const last = history[history.length - 1]?.text ?? ''
+      const hit = slotScript.find(s => last.includes(s.when))
+      return hit ? structuredClone(hit.extraction) : null
     },
     async polishQuestion(q: InterviewQuestion) {
       return `【${q.key}】${q.text}\n(为什么问:${q.why})`
