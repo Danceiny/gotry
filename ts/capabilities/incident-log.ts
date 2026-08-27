@@ -74,7 +74,7 @@ export function installProcessGuards(stateRoot: string, labels?: { uncaughtExcep
   installed = true
   logPath = resolveIncidentsPath(stateRoot)
 
-  const uncaughtHandler = (err: Error, origin: NodeJS.UncaughtExceptionOriginTypes | 'uncaughtException') => {
+  const uncaughtHandler = (err: Error, origin: NodeJS.UncaughtExceptionOrigin | 'uncaughtException') => {
     recordIncident({
       ts: new Date().toISOString(),
       kind: 'uncaughtException',
