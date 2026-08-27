@@ -34,6 +34,14 @@ const cur = {
   console.log('2. 权重归一 + P0 证据校验 OK')
 }
 
+// 2.5) 首次保存:current=null 视为空档案,补丁全量生效
+{
+  const first = mergeProfile(null, { weights: { escape_rest: 1 }, evidence: ['用户原话:「想去湖边」'] } as never)
+  assert.ok(first && first.evidence.length === 1 && Object.keys(first.weights).length === 1, '首存应生效')
+  assert.equal(mergeProfile(null, null), null, 'null 补丁仍守卫')
+  console.log('2.5 首存语义(current=null→空档案) OK')
+}
+
 // 3) 守卫与 hard 覆盖
 {
   assert.equal(mergeProfile(cur, null), null, 'null 补丁')

@@ -29,16 +29,17 @@ export function mergeProfile(
   current: { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown> } | null,
   patch: ProfilePatch | null,
 ): MergedProfile | null {
-  if (!patch || current === null) return null
-  const newEvidence = (patch.evidence ?? []).filter(Boolean).filter(e => !(current?.evidence ?? []).includes(e))
+  if (!patch) return null
+  const base = current ?? { weights: {}, evidence: [], hard: {} } // 首次保存:无档案即空档案
+  const newEvidence = (patch.evidence ?? []).filter(Boolean).filter(e => !(base.evidence).includes(e))
   const weightsChanged = !!patch.weights && Object.keys(patch.weights).length > 0 &&
-    JSON.stringify(patch.weights) !== JSON.stringify(current?.weights ?? {})
+    JSON.stringify(patch.weights) !== JSON.stringify(base.weights)
   const hardChanged = !!patch.hard && Object.keys(patch.hard).length > 0 &&
-    JSON.stringify(patch.hard) !== JSON.stringify(current?.hard ?? {})
+    JSON.stringify(patch.hard) !== JSON.stringify(base.hard)
   if (newEvidence.length === 0 && !weightsChanged && !hardChanged) return null
 
   // 权重变更必须伴至少一条新 evidence(P0:改画像要有依据),否则拒该部分
-  let weights = { ...(current?.weights ?? {}) }
+  let weights = { ...base.weights }
   if (weightsChanged && newEvidence.length > 0) {
     weights = { ...weights, ...(patch.weights ?? {}) }
     const sum = Object.values(weights).reduce((a, b) => a + b, 0)
@@ -47,7 +48,7 @@ export function mergeProfile(
 
   return {
     weights,
-    evidence: [...(current?.evidence ?? []), ...newEvidence],
-    hard: hardChanged ? { ...(current?.hard ?? {}), ...(patch.hard ?? {}) } : { ...(current?.hard ?? {}) },
+    evidence: [...base.evidence, ...newEvidence],
+    hard: hardChanged ? { ...base.hard, ...(patch.hard ?? {}) } : { ...base.hard },
   }
 }
