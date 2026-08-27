@@ -94,8 +94,8 @@ function sh(cmd: string, args: string[], opts: { timeoutMs: number; env: NodeJS.
     let stderr = ''
     let error: string | undefined
     let killed = false
-    child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
+    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
     child.on('error', (e) => { error = (e as Error).message.slice(0, 200) })
     child.on('close', (code) => {
       clearTimeout(timer)

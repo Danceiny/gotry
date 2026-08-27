@@ -95,7 +95,7 @@ export async function verifyFlight(query: FlightLiveQuery): Promise<FlightVerify
   // /api/states/all → { time, states: Array<17 元素数组> }
   // [0 icao24, 1 callsign, 2 origin_country, 3 time_position, 4 last_contact,
   //  5 lon, 6 lat, 7 baro_altitude, 8 on_ground, ...]
-  const rawStates: unknown[][] = ((r.data ?? {}) as { states?: unknown[] }).states ?? []
+  const rawStates: unknown[][] = ((r.data ?? {}) as { states?: unknown[][] }).states ?? []
   const observed: FlightHit[] = rawStates
     .filter(row => ((row[1] ?? '') as string).trim().toUpperCase().includes(cs))
     .map(row => ({

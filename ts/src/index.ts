@@ -51,6 +51,8 @@ export const Config: z<Config> = z.object({
 
 interface FeasibilityResult {
   answer_md?: string
+  recommended?: string | null
+  verdicts?: Array<Record<string, unknown>>
 }
 
 interface MotivationProfileInput {
@@ -154,7 +156,7 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: 'GoTry 可行性检查(门到门全成本)', kind: 'execute', rawInput: args.payload }),
     presentResult: (args, value) => {
       // D-4 卡片赎回:结果卡不再是裸 JSON —— 逐候选判定 + 全成本 vs 预算紧凑行 + 人话答案
-      const r = value as FeasibilityResult & { verdicts?: Array<Record<string, unknown>> }
+      const r = value as FeasibilityResult
       const budget = ((args.payload as { request?: { budget_cny?: number } })?.request)?.budget_cny
       const lines = (r.verdicts ?? []).map(v => {
         const tc = (v.true_cost ?? {}) as { money_cny?: number }
@@ -205,17 +207,17 @@ export function apply(ctx: Context, config: Config): void {
       const path = join(dir, 'motivation-profile.json')
       let existing: { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown> } | null = null
       try {
-        existing = await readJson(path) as typeof existing
+        existing = await readJson<typeof existing>(path, null)
       } catch { /* 首次保存:无档案 */ }
       const merged = mergeProfile(existing, { weights: incoming.weights, evidence: incoming.evidence, hard: incoming.hard })
       if (!merged) {
         // 幂等:补丁与现有画像完全一致,不落盘
-        const currentJson = JSON.parse(JSON.stringify({ ...existing, updated_at: new Date().toISOString() })) as JsonObject
-        return { saved: false, path, profile: currentJson, summary: '无新内容(幂等跳过)' }
+        const currentJson = JSON.parse(JSON.stringify({ ...(existing ?? {}), updated_at: new Date().toISOString() })) as JsonObject
+        return { saved: false, path, profile: currentJson, summary: '无新内容(幂等跳过)' } as never
       }
       const saved = JSON.parse(JSON.stringify({ ...merged, updated_at: new Date().toISOString() })) as JsonObject
       await writeJson(path, saved)
-      return { saved: true, path, profile: saved }
+      return { saved: true, path, profile: saved } as never
     },
     presentCall: args => ({ card: 'generic', title: '保存动机画像', kind: 'edit', rawInput: args.profile }),
   }))
@@ -301,8 +303,8 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
         summary: resp.summary,
         error: resp.error,
-      }
-      return JSON.parse(JSON.stringify(payload)) as Record<string, unknown>
+      } as never
+      return JSON.parse(JSON.stringify(payload)) as never
     },
     presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'search', rawInput: args.query }),
     presentResult: (_args, value) => {

@@ -21,11 +21,8 @@ async function main() {
   } as unknown as Context
 
   apply(ctx, {
-    pythonBin: '../.venv/bin/python',
-    pythonPath: '../py',
     stateRoot: '.',
     timeoutMs: 30_000,
-    preferInProcess: true,
     hbcliBin: 'hbcli-not-on-path',  // 强制走降级路径的确定性验证
   })
 
