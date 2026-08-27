@@ -27,6 +27,7 @@ import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards, guardToolExecute } from '../capabilities/incident-log.ts'
 import { interpretArgs, type GotryObservation } from './tool-packet.ts'
 import { appendEvent, projectUtility, type MemoryUtilityEvent } from './memory-utility.ts'
+import { pickNudgeWish, type WishPoolEntry } from './wish-pool.ts'
 import { mergeProfile } from './memory-capture.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
@@ -344,32 +345,24 @@ export function apply(ctx: Context, config: Config): void {
         if (appended) await saveSidecar(next)
         return { ok: true, recorded: appended, wish_id: q.wishId, status: q.attribution } as never
       }
-      // recall:0..1 条件匹配,muted 永不召回,无命中不硬推
+      // recall:0..1 条件匹配(判定归 wish-pool 纯函数),muted 永不召回,无命中不硬推
       const candidates = pool.filter(e => !e['muted'] && typeof e['wish_id'] === 'string')
       const month = q.month ?? new Date().getMonth() + 1
-      const scored = candidates.map(e => {
-        const c = (e['conditions'] ?? {}) as { days?: number; budget_cny?: number; best_months?: number[] }
-        let score = 0
-        if (typeof q.days === 'number' && typeof c.days === 'number' && q.days >= c.days) score++
-        if (typeof q.budgetCny === 'number' && typeof c.budget_cny === 'number' && q.budgetCny >= c.budget_cny) score++
-        if (Array.isArray(c.best_months) && c.best_months.map(Number).includes(month)) score++
-        return { e, score }
-      }).filter(s => s.score > 0).sort((a, b) => b.score - a.score)
-      const pick = scored[0]
-      if (!pick) {
+      const match = pickNudgeWish(candidates as WishPoolEntry[], { days: q.days, budgetCny: q.budgetCny, month })
+      if (!match) {
         return { ok: true, suggestion: null, summary: `无可成行的憧憬匹配当前窗口(${candidates.length} 条在册,0..1 纪律:不硬推)` } as never
       }
       const events = await loadSidecar()
       const { events: next, appended } = appendEvent(events, {
-        wish_id: String(pick.e['wish_id']), kind: 'recalled', ts: now, ctx: 'gotry_wish_pool_list.recall',
+        wish_id: match.wishId, kind: 'recalled', ts: now, ctx: 'gotry_wish_pool_list.recall',
       })
       if (appended) await saveSidecar(next)
-      const utility = projectUtility(next)[String(pick.e['wish_id'])]
+      const utility = projectUtility(next)[match.wishId]
       return {
         ok: true,
-        suggestion: { wish_id: pick.e['wish_id'], name: pick.e['name'], reason: pick.e['reason'], conditions: pick.e['conditions'], match_score: pick.score },
+        suggestion: { wish_id: match.entry['wish_id'], name: match.entry['name'], reason: match.entry['reason'], conditions: match.entry['conditions'], match_score: match.score, hits: match.hits },
         utility: { status: utility?.status ?? 'unknown', recalled: utility?.recalled ?? 1 },
-        summary: `「下一次出发」候选(0..1):${String(pick.e['name'])}——成行条件 ${JSON.stringify(pick.e['conditions'])},本次窗口命中 ${pick.score}/3 项;效用状态 ${utility?.status ?? 'unknown'}`,
+        summary: `「下一次出发」候选(0..1):${String(match.entry['name'])}——成行条件 ${JSON.stringify(match.entry['conditions'])},本次窗口命中 ${match.score}/3 项(${match.hits.join('+')});效用状态 ${utility?.status ?? 'unknown'}`,
       } as never
     },
     presentCall: args => ({ card: 'generic', title: '「下一次出发」召回', kind: 'search', rawInput: args.query }),

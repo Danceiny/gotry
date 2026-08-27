@@ -92,6 +92,24 @@ echo "=== 20. 记忆效用指标投影(M4 北极星过程面,只读,空态优雅
 (cd ts && npx tsx scripts/memory-metrics.ts) || FAIL=1
 
 echo
+echo "=== 21. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
+NUDGE_FIXTURE=$(mktemp -d)
+mkdir -p "$NUDGE_FIXTURE/gotry-state"
+cat > "$NUDGE_FIXTURE/gotry-state/wish-pool.json" <<'EOF'
+[{"wish_id":"wA","name":"普吉","conditions":{"days":5,"budget_cny":7000,"best_months":[11,12]},"added_at":"2026-08-01T00:00:00Z"},
+ {"wish_id":"wB","name":"千岛湖","conditions":{"days":2,"budget_cny":1000,"best_months":[4,5]},"added_at":"2026-08-02T00:00:00Z"},
+ {"wish_id":"wC","name":"洱海(休眠)","muted":true,"conditions":{"days":5,"budget_cny":4950,"best_months":[11]},"added_at":"2026-08-03T00:00:00Z"}]
+EOF
+(cd ts && GOTRY_NUDGE_CHANNEL=file GOTRY_NUDGE_FILE="$NUDGE_FIXTURE/digest.md" npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --budget 8000 --month 11 >/dev/null) || FAIL=1
+grep -q "普吉" "$NUDGE_FIXTURE/digest.md" || { echo "FAIL: file 摘要应含命中的普吉"; FAIL=1; }
+grep -q "洱海" "$NUDGE_FIXTURE/digest.md" && { echo "FAIL: muted 洱海不得召回"; FAIL=1; }
+(cd ts && GOTRY_NUDGE_ENABLED=false npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" | grep -q "回访已关闭") || FAIL=1
+(cd ts && npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 1 --month 7 | grep -q "不硬推") || FAIL=1
+(cd ts && GOTRY_NUDGE_CHANNEL=lark npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --month 11 | grep -q "降级") || FAIL=1
+rm -rf "$NUDGE_FIXTURE"
+echo "NUDGE SKELETON TESTS OK(0..1 匹配/muted 排除/可关闭/lark 缺 key 降级)"
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
