@@ -28,7 +28,7 @@ echo "=== 4. 对话循环重放(mock,ADR-8/9/10 行为级回归,带终态断言)
 echo
 echo "=== 5. 异步深度规划:种工单 → 另一进程回收(跨进程闭环,编码 AGENTS.md 清扫规则) ==="
 (cd ts && npx tsx scripts/replay-async.ts --request-only > /dev/null) || FAIL=1
-TICKET=$(cd ts && { ls gotry-state/async/*.json 2>/dev/null || true; } | while read -r f; do b="${f%.json}"; [ -f "$b.deliverable.md" ] || basename "$b"; done | head -1)
+TICKET=$(cd ts && { ls gotry-state/async/*.json 2>/dev/null || true; } | while read -r f; do b="${f%.json}"; [ -f "$b.deliverable.md" ] || basename "$b"; done | sed -n '1p')  # sed 非 head:head -1 早关管道,pipefail 下未回收工单 ≥2 时 SIGPIPE 整脚本 141
 if [ -z "$TICKET" ]; then echo "FAIL: 未种下待回收工单"; FAIL=1; else (cd ts && npx tsx scripts/async-collect.ts "$TICKET" > /dev/null) || FAIL=1; echo "工单 $TICKET 已跨进程回收"; fi
 
 echo
