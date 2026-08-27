@@ -23,6 +23,7 @@ import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
 import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards, guardToolExecute } from '../capabilities/incident-log.ts'
+import { interpretArgs, type GotryObservation } from './tool-packet.ts'
 import { mergeProfile } from './memory-capture.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
@@ -70,17 +71,10 @@ interface WishPoolEntryInput {
 
 
 /**
- * query 包装参数的双形态兼容(#12/#13):dsh 工具参数是 { query: { type: 'json' } } 单包装,
- * LLM 有时传内层对象裸形态({place:...}),有时把主键字符串直接塞进 query("https://...")。
- * 三形态统一:包装对象 → 裸对象 → 字符串按 stringKey 收。
+ * query 包装参数的三形态归一(#12/#13):实现移居 tool-packet.ts(interpretArgs,
+ * RFC S1 interpretation 层语义归位),此处按旧名引 handy 别名,调用点零漂移。
  */
-function unwrapQuery<T extends Record<string, unknown>>(args: { query?: unknown } & Record<string, unknown>, stringKey?: string): T {
-  if (args.query && typeof args.query === 'object') return args.query as T
-  const { query, ...rest } = args as Record<string, unknown>
-  if (Object.keys(rest).length > 0) return rest as T
-  if (typeof query === 'string' && stringKey) return { [stringKey]: query } as T
-  return {} as T
-}
+const unwrapQuery = interpretArgs
 
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
@@ -152,7 +146,7 @@ export function apply(ctx: Context, config: Config): void {
       const result = solveChoiceSegment(spec, req) as Record<string, unknown>
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'feasibility_check:in-process-unified').catch(() => {})
-      return { ...result, latency_ms: Date.now() - started, via: 'in-process-unified' }
+      return { ok: true, ...result, latency_ms: Date.now() - started, via: 'in-process-unified' }
     },
     presentCall: args => ({ card: 'generic', title: 'GoTry 可行性检查(门到门全成本)', kind: 'execute', rawInput: args.payload }),
     presentResult: (args, value) => {
@@ -214,11 +208,11 @@ export function apply(ctx: Context, config: Config): void {
       if (!merged) {
         // 幂等:补丁与现有画像完全一致,不落盘
         const currentJson = JSON.parse(JSON.stringify({ ...(existing ?? {}), updated_at: new Date().toISOString() })) as JsonObject
-        return { saved: false, path, profile: currentJson, summary: '无新内容(幂等跳过)' } as never
+        return { ok: true, saved: false, path, profile: currentJson, summary: '无新内容(幂等跳过)' }
       }
       const saved = JSON.parse(JSON.stringify({ ...merged, updated_at: new Date().toISOString() })) as JsonObject
       await writeJson(path, saved)
-      return { saved: true, path, profile: saved } as never
+      return { ok: true, saved: true, path, profile: saved, summary: '画像已合并落盘' }
     },
     presentCall: args => ({ card: 'generic', title: '保存动机画像', kind: 'edit', rawInput: args.profile }),
   }))
@@ -257,11 +251,11 @@ export function apply(ctx: Context, config: Config): void {
       if (existing >= 0) {
         pool[existing] = { ...pool[existing], reason: entry.reason ?? pool[existing]?.['reason'], conditions: entry.conditions }
         await writeJson(path, pool)
-        return { added: false, total: pool.length, path }
+        return { ok: true, added: false, total: pool.length, path }
       }
       pool.push({ reason: '', ...entry, added_at: new Date().toISOString() })
       await writeJson(path, pool)
-      return { added: true, total: pool.length, path }
+      return { ok: true, added: true, total: pool.length, path }
     },
     presentCall: args => ({ card: 'generic', title: '加入「下一次出发」清单', kind: 'edit', rawInput: args.entry }),
   }))
@@ -313,6 +307,7 @@ export function apply(ctx: Context, config: Config): void {
       const evidence = isLive ? resp.evidence : '[静态包:估算]'
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `hotel_search:${resp.via}`).catch(() => {})
       const payload = {
+        ok: true,
         hotels: resp.hotels ?? null,
         evidence,
         destination: q.destination,
@@ -356,7 +351,7 @@ export function apply(ctx: Context, config: Config): void {
       // 平铺参数的工具也会被 LLM 包进 query(#12/#13 同款形态),unwrapQuery 兜住
       const q = unwrapQuery<{ from?: string; to?: string }>(args)
       const verdict = await checkConnectivity(String(q.from ?? ''), String(q.to ?? ''))
-      return JSON.parse(JSON.stringify(verdict)) as Record<string, never>
+      return JSON.parse(JSON.stringify({ ok: true, ...verdict })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `骨架校验:${args.from}-${args.to}`, kind: 'execute', rawInput: args }),
   }))
@@ -461,6 +456,7 @@ export function apply(ctx: Context, config: Config): void {
           ? `${r.callsign} 当前观测列表未见(ADS-B 覆盖有限,不否定该航班存在)\n${r.evidence}`
           : `${r.callsign} OpenSky 不可用:${r.error}\n${r.evidence}`
       return JSON.parse(JSON.stringify({
+        ok: true,
         verdict: r.verdict, callsign: r.callsign, airport: r.airport,
         sample_size: r.sampleSize, hits: r.hits, evidence: r.evidence, summary,
         latency_ms: Date.now() - started,

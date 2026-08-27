@@ -55,6 +55,7 @@ async function main() {
   const payload = JSON.parse(await readFile(join('..', 'data', 'golden_erhai.json'), 'utf-8'))
   const feasibility = byName('gotry_feasibility_check')
   const result = await feasibility.execute({ payload }, null) as {
+    ok?: boolean
     recommended: string | null
     answer_md: string
     latency_ms: number
@@ -127,6 +128,15 @@ async function main() {
       throw new Error(`FAIL: 词表外表达应产生「日期未解析」note(不猜),实际 ${JSON.stringify(unresolved.date_notes)}`)
     }
     console.log('hotel date slots: verbatim resolved in code layer; unresolved degrades with explicit note')
+  }
+
+  // 9) RFC S1 observation envelope:成功路径平铺 ok:true;guard 兜底即失败分支同形
+  {
+    const wish = byName('gotry_wish_pool_add')
+    const w = await wish.execute({ entry: { name: 'envelope-probe', conditions: { days: 3 } } } as never, null) as { ok?: boolean }
+    if (w.ok !== true) throw new Error(`FAIL: wish 添加应 ok:true,实际 ${JSON.stringify(w)}`)
+    if (result.ok !== true) throw new Error(`FAIL: feasibility 应 ok:true,实际 ${String(result.ok)}`)
+    console.log('observation envelope: success payloads carry flat ok:true (guard fallback = failure branch)')
   }
 
   console.log('\nSMOKE OK')
