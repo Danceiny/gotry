@@ -25,6 +25,7 @@ import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards, guardToolExecute } from '../capabilities/incident-log.ts'
 import { mergeProfile } from './memory-capture.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
+import { resolveSlotDate } from './slot-spec.ts'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 import { verifyFlight } from '../capabilities/opensky.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
@@ -269,13 +270,15 @@ export function apply(ctx: Context, config: Config): void {
     name: 'gotry_hotel_search',
     description:
       'Search hotels via hotelbyte-cli (real-time when hbcli credentials exist, falls back to the static pack with explicit evidence tagging). '
-      + 'Input: destination city name + optional dates/occupancy. Output: hotel list with evidence chain ([realtime-API:hbcli] + fetch timestamp, '
+      + 'Input: destination city name + optional dates/occupancy. Dates accept verbatim natural expressions (下周五 / 8.20 / 下周五+3) — '
+      + 'the code layer resolves them against the time anchor; unresolved expressions degrade to an undated search with an explicit '
+      + 'date_notes entry instead of guessing. Output: hotel list with evidence chain ([realtime-API:hbcli] + fetch timestamp, '
       + 'or [static-pack:estimate]) per the L4 invariant.',
     parameters: {
       query: {
         type: 'json',
         required: true,
-        description: '{ destination: "<目的地城市>", checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", occupancy?: { adults: 2 } }',
+        description: '{ destination: "<目的地城市>", checkIn?: "YYYY-MM-DD 或自然表达(下周五/8.20)", checkOut?: 同上, occupancy?: { adults: 2 } }',
       },
     },
     output: {
@@ -287,8 +290,22 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.destination) throw new Error('gotry_hotel_search requires destination')
       const started = Date.now()
       const fallbackPath = join(import.meta.dirname, '..', '..', 'data', 'hotels_2026.json')
+      // D-10 切片 B:日期槽位接受逐字自然表达(下周五/8.20/+N),代码层换算(slot-spec);
+      // unresolved 不猜——降级为无日期搜索并显式记 note,由模型向用户追问
+      const anchor = buildTimeAnchor(new Date())
+      const dateNotes: string[] = []
+      const resolveDate = (expr?: string): string | undefined => {
+        if (!expr) return undefined
+        const r = resolveSlotDate(expr, anchor)
+        if (!r.date) {
+          dateNotes.push(`日期未解析:${r.raw}——请向用户确认具体日期`)
+          return undefined
+        }
+        if (r.raw !== r.date) dateNotes.push(`slot-resolved: ${r.raw} → ${r.date}`)
+        return r.date
+      }
       const resp = await hbcliSearchHotels(
-        { destination: q.destination, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults },
+        { destination: q.destination, checkIn: resolveDate(q.checkIn), checkOut: resolveDate(q.checkOut), adults: q.adults },
         { hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs, fallbackPath },
       )
       const dir = await ensureStateDir(config.stateRoot)
@@ -303,6 +320,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
         summary: resp.summary,
         error: resp.error,
+        ...(dateNotes.length ? { date_notes: dateNotes } : {}),
       } as never
       return JSON.parse(JSON.stringify(payload)) as never
     },
