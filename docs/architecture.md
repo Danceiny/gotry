@@ -114,6 +114,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 10 | 翻译≠造数:LLM 只产骨架与锚点,班次数据永远来自能力层(数据包→实时API);spec 校验闸兜底 | 让 LLM 直接产出完整 spec(实测:MiniMax-M2 编不出时刻,要么编造要么卡死) | 永不复审 | `loop.ts validateSpec`;`dsh-llm.ts SKELETON_SYSTEM`;`replay-real.ts` |
 | 11 | 评测分层进架构:回归层(单元/差分/重放)防退化、质量层(评测集+指标面板)防漂移、巡检层(nightly 真 LLM 重放带预算闸)防「mock 绿而真智能烂」;M-exit 必过对应层级 | 只靠重放夹具(质量漂移无感)/事后补评测工具(指标不进架构等于不存在) | M3 exit 指标面板上线后复审一次 | `run-all-tests.sh`;replay 三件套;`tech-strategy.md` §4 |
 | 12 | 时间感分层:锚点卡(time-anchor 纯函数,算术进代码)+ 槽位逐字保留(LLM 不换算不翻译)+ 过期/language 判定归代码层;时间评测集进仓(data/time-slot-eval.json,只增不改语义),质量层首块落地 | 全 LLM 感知(锚点缺失实测:legacy 路径无今天注入,过期无从判)/代码全量解析中文相对日期(表达开放,维护黑洞) | **2026-08-27 复审(D-10 切片 A 触发):设计成立**;补充边界——解析层只认锚点卡词表+绝对表达+「+N」后缀,词表外 unresolved 逐字保留,不开式解析(锚点:`slot-spec.ts`;time-eval §5) | `time-anchor.ts`;`travel-slots.ts`;`slot-spec.ts`;`time-eval-tests.ts` |
+| 13 | 工具观察 envelope(RFC S1,effect-interpreter 映射):12 工具成功路径平铺 `ok:true` + 载荷,失败 `{ok:false,summary,evidence}`(guard 兜底同形,`ToolFailure` 编译期对齐);参数三形态归一唯一入口 `interpretArgs`(原 unwrapQuery 移居 `tool-packet.ts`) | 逐工具自由返回(形状漂移,每个新工具重新猜)/嵌套 envelope `{ok,value}`(渲染/调用方全要拆包,侵入大) | 出现第二个真实调用方(非 dsh 非 smoke)需要不同观察形状时复审 | `tool-packet.ts`;`incident-log.ts guardToolExecute`;smoke §9 |
 
 ## 9. 演进(时间线唯一来源= `roadmap.md` 的 M0-M6;此处只保留原则与现状)
 
@@ -122,7 +123,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
 - **当前 = M3(工程面完成,分发就位 `v0.0.1-rc.7`)**:三场景全验(洱海/云南/普吉);完全去 Python(仅剩 gotry_feasibility oracle 对照,D-7 清偿);**D-4 DONE**(Anything 三仓闭环 244a0ae/c38ff65d1/43236a0);agent-reach wrapper 化 + 真 LLM e2e 复验;**npm 公开分发打通**(rc.5→rc.7:隔离发布命令/dist 预编译/.env 首跑修复;干净安装实测 web 200);12 工具 execute 异常隔离;16 套 ALL GREEN。**当前 = M4 记忆域(2026-08-26 founder 指令开闸)**:T1 双层落地——①提取=LLM 的活:契约 (18) 要求模型当轮经 motivation_save 并入新事实(evidence=用户原话),不做第二套正则引擎(founder 校正「正则 rules 不对」后确立分工);②合并守门=代码的活:`memory-capture.ts` mergeProfile(追加不删史/幂等/权重变更须伴证据 P0/空守卫,§18 三断言)。后续:runTurn 接线、主动回访(可关闭)、北极星度量。此后 M5 交易 → M6 B2B。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
-- **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:`npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日完成 loopx 13 篇架构 RFC 通读与映射,产出 `loopx-inspired-upgrades-rfc.md`(proposal,四道接缝待 founder 拍板,D-12)。
+- **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:`npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日完成 loopx 13 篇架构 RFC 通读与映射,产出 `loopx-inspired-upgrades-rfc.md`——**founder 当日指令 accepted(「按建议执行」)**,四切片 S1-S4 按序落地;同指令确立**多用户 Agent as a Service** 为未来方向(shared-goal-authority 类 claim/CAS 机制转入远期采纳面,RFC §6.5)。**S1 已落地**:`tool-packet.ts` 观察 envelope(平铺 ok:true/ok:false summary,guard 兜底同形编译期对齐)+ unwrapQuery 升格 interpretArgs;S2 记忆效用 sidecar → S3 wish 触达纪律 → S4 WriteGate 词汇依次推进(D-12)。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
@@ -142,7 +143,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-9 节日锚点表硬编码 | `time-anchor.ts` SPRING_FESTIVAL 只覆盖 2026-2028;**跨 2028 必须扩表**,否则春节锚点静默缺失。赎回时机:2028 年前任一触碰时间锚点层的提交 |
 | D-10 slot→spec 求解桥接未做 | **已清偿 2026-08-27(三切片)**:A `slot-spec.ts` 解析层(锚点卡词表/绝对/+N → 绝对日期,词表外 unresolved;time-eval §5);B 工具面接线(`gotry_hotel_search` 日期槽位收逐字表达,unresolved 降级无日期搜索+date_notes,smoke §8);C spec 链路一致性闸(runTurn 求解前 LLM spec 日期 vs 代码换算逐项比对,分歧不求解、追问确认,replay 尾段)。**ADR-12 复审结论:设计成立**,解析范围必须有界(只解析锚点卡词表,不做开放式中文相对日期解析——被拒备选即维护黑洞) |
 | D-11 `npx tsc --noEmit` 存量 14 错 | **已清偿**(1bf9671,语义零变更:tsc 0 错;smoke/memory §18 全过;17 套 ALL GREEN) |
-| D-12 loopx RFC 映射升级四接缝 | **RFC 待拍板**(`docs/loopx-inspired-upgrades-rfc.md`):S1 工具 packet 纪律/S2 记忆效用 sidecar/S3 wish 触达 0..1 纪律/S4 WriteGate L0-L4 词汇;拍板前不动代码,拍板后各切片落地时登记 ADR 并按 §11 同步 |
+| D-12 loopx RFC 映射升级四接缝 | **RFC accepted(2026-08-27 founder「按建议执行」)**;S1 已落地(`tool-packet.ts` 平铺 observation envelope + interpretArgs,ADR-13);S2 记忆效用 sidecar(wish_id 主键 + append-only 效用事件流)→ S3 wish 触达 0..1 纪律(与 S2 同批)→ S4 WriteGate L0-L4 词汇(M5 前);多用户 AaaS 方向见 RFC §6.5 远期采纳面 |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 

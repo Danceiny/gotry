@@ -1,10 +1,11 @@
 # RFC:LoopX RFC 群对 GoTry 的映射升级——四道接缝的最小切片
 
-> 状态:**proposal**(草案,待创始人拍板;拍板前只落「可逆的纯代码切片」,不绑定任何里程碑)
+> 状态:**accepted**(2026-08-27 founder 指令:「这些不用我拍板吧,loopx inspired 这些可以直接按建议执行」——四切片按 §7 顺序执行,每片落地时按 §11 同步状态面)
+> 修正(同日 founder 指令):GoTry 未来要实现**多用户的 Agent as a Service**——shared-goal-authority-state-provider(claim/CAS/在线权威)不是范围外,是**多用户期的未来正题**,从未采纳清单移入 §6.5 远期采纳面
 > 作者:gotry-builder-01(loopx 治理平面)
 > 日期:2026-08-27
 > 上游权威:`architecture.md`(技术权威面)、`roadmap.md`(M0-M6 时间线)、`gotry-product-design.md`(产品面)
-> 下游影响:若接受,每项切片在落地时按 §11 同步状态面,并按需登记为 ADR
+> 下游影响:每项切片在落地时按 §11 同步状态面,并按需登记为 ADR
 
 ## 0. 这是什么、不是什么
 
@@ -110,20 +111,27 @@ wish pool 的触达纪律:
 | loopx RFC | 不采纳理由 |
 |---|---|
 | research-exploration-control-plane | 治理平面自用(管理 loopx todo/replan),非 GoTry 产品接缝;GoTry 的「研究」就是旅行规划本身,无组合 gap 问题 |
-| shared-goal-authority-state-provider | 解决多机多 agent 共享 goal 的 claim/CAS;GoTry 单用户单机,无并发权威问题 |
 | typescript-control-plane-migration | loopx 自身的 Python→TS 渐进迁移;GoTry 已去 Python(D-7 清偿),无此债 |
 | long-horizon-benchmark C0-C4 | GoTry 已有 ADR-11 评测三层(金标准/差分/真模型),主张阶梯重叠 |
-| agent-im-openviking / goal-channel | IM 协作场景,GoTry 无外部任务板/群聊通道 |
+| agent-im-openviking / goal-channel | IM 协作场景,GoTry 无外部任务板/群聊通道(多用户 AaaS 期 revisit) |
 
-## 7. 执行计划建议
+### 6.5 远期采纳面(多用户 Agent-as-a-Service,2026-08-27 founder 指令立项)
+
+GoTry 未来是多用户的 Agent as a Service——届时 **shared-goal-authority-state-provider** 的三层分离(存储面 provider / 语义权威 authority / 持续协调 supervisor)与 claim/CAS/receipt 协议从「不采纳」转为**未来正题**:
+
+- 多用户 = 多 goal 并发 = 同一行程/同一用户资源的并发写;单机单用户时代的「文件即权威」(wish-pool.json / motivation-profile.json 直接读写)必须升级为 claim-fence-receipt;
+- 现有地基与之兼容:S2 的 memory-utility sidecar 是 append-only 事件流,CAS 账本化是存储面替换而非语义改造;
+- 触发时机:多用户种子化(共享部署、第二个真实用户)之前完成设计评审;S2/S3 的 wish_id/事件流在单用户期就按「未来可账本化」的形状落(稳定主键 + append-only),避免多用户期返工。
+
+## 7. 执行计划
 
 **顺序**(按「可逆性 × 价值 × 依赖」排序;每道独立,可被单独拍死):
 
-1. **S1 tool-packet**(60 行,零行为变化)——纯代码,随时可做;建议拍板后当 tick 落地。
-2. **S2 memory-utility sidecar**(120 行新文件 + 两处接入)——依赖 S1 的 observation 纪律(事件流是 observation 的一种);直喂 M4 北极星,建议 M4 内尽早。
-3. **S3 wish 触达纪律**(30 行 + 契约)——与 S2 共用 wish_id 主键;产品红线 96 的技术兑现,建议与 S2 同批。
-4. **S4 WriteGate L0-L4 词汇**(文档一句话)——M5 拍板前任何时刻可落。
+1. **S1 tool-packet**(60 行,零行为变化)——2026-08-27 accepted 当 tick 落地。
+2. **S2 memory-utility sidecar**——依赖 S1 的 observation 纪律;直喂 M4 北极星。
+3. **S3 wish 触达纪律**——与 S2 共用 wish_id 主键;产品红线 96 的技术兑现,与 S2 同批。
+4. **S4 WriteGate L0-L4 词汇**——M5 拍板前任何时刻可落(文档一句话)。
 
-**gate**:本 RFC 需要创始人一次拍板(四个切片可分别 approve/reject/modify)。拍板前,agent 侧不做任何代码改动;拍板后每个切片按 §11 同步状态面(architecture §9/§10 + roadmap 当前位置),S1/S2 落地时各登记一条 ADR。
+**执行纪律**(原 gate 已由 founder「按建议执行」指令解除):每片落地时按 §11 同步状态面(architecture §9/§10 + roadmap 当前位置),S1/S2 落地各登记一条 ADR;多用户 AaaS 方向只在 §6.5 记录,不提前实现。
 
 **红线**:本 RFC 不引入任何新依赖、不动 hotel-be、不改求解器语义(不在 §10 债务清单内的事不做);所有 sidecar 文件落 `gotry-state/`(红线 6:用户数据可见、可编辑、可删除)。

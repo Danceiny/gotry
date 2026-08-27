@@ -15,6 +15,7 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { ToolFailure } from '../src/tool-packet.ts'
 
 export type IncidentKind = 'uncaughtException' | 'unhandledRejection' | 'plugin_error' | 'tool_execute_error'
 
@@ -111,6 +112,7 @@ export function installProcessGuards(stateRoot: string, labels?: { uncaughtExcep
  * 工具执行面异常隔离(D-NEW gotry 侧收尾):dsh 的一个工具 execute 抛错/拒绝
  * 会沿 cordis 传到主循环,拖垮整个会话。包装后:降级为结构化错误返回给 LLM、
  * 事故落盘,永不向上抛。落盘失败也不抛(双保险,仍返回结构化错误)。
+ * 失败形状 = ToolFailure(RFC S1 observation envelope 的失败分支,编译期对齐)。
  */
 export function guardToolExecute<A, R>(name: string, stateRoot: string, execute: (args: A, exec: unknown) => R | Promise<R>): (args: A, exec: unknown) => Promise<R> {
   return async (args: A, exec: unknown): Promise<R> => {
@@ -125,11 +127,12 @@ export function guardToolExecute<A, R>(name: string, stateRoot: string, execute:
         stack: (err.stack ?? '').slice(0, 4000),
         source: name,
       }, stateRoot)
-      return {
+      const failure: ToolFailure = {
         ok: false,
         summary: `gotry_${name} 内部错误(已隔离,会话继续): ${err.message.slice(0, 300)}`,
         evidence: `[incident:tool_execute_error@${new Date().toISOString()}]`,
-      } as R
+      }
+      return failure as R
     }
   }
 }
