@@ -115,6 +115,20 @@ async function main() {
   }
   console.log(`skeleton flat-args: connected=${skFlat.connected}`)
 
+  // 8) D-10 切片 B:hotel 日期槽位接线——逐字表达代码层换算;unresolved 不猜(降级+note)
+  {
+    const hotel = byName('gotry_hotel_search')
+    const resolved = await hotel.execute({ query: { destination: '大理', checkIn: '2026-9-4', checkOut: '2026-09-06' } } as never, null) as { date_notes?: string[] }
+    if (!resolved.date_notes?.some(n => n.includes('2026-9-4 → 2026-09-04'))) {
+      throw new Error(`FAIL: 非规整 ISO 应产生 slot-resolved note,实际 ${JSON.stringify(resolved.date_notes)}`)
+    }
+    const unresolved = await hotel.execute({ query: { destination: '大理', checkIn: '近期' } } as never, null) as { date_notes?: string[] }
+    if (!unresolved.date_notes?.some(n => n.includes('日期未解析:近期'))) {
+      throw new Error(`FAIL: 词表外表达应产生「日期未解析」note(不猜),实际 ${JSON.stringify(unresolved.date_notes)}`)
+    }
+    console.log('hotel date slots: verbatim resolved in code layer; unresolved degrades with explicit note')
+  }
+
   console.log('\nSMOKE OK')
 }
 

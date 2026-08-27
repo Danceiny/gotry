@@ -140,7 +140,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-8 对话循环不进 CI | **已清偿**(replay 带终态断言 + 异步工单跨进程闭环 + smoke 进 `run-all-tests.sh` §5-7) |
 | [D-NEW] dsh 进程保活缺失 | **部分赎回(gotry 侧)**: plugins/apply 内 installProcessGuards 挂 uncaughtException + unhandledRejection;incident-log.ts 同步 fsync append-only,handler 不调 process.exit——被崩溃穿透时仍能留下证据(JSONL incidents.jsonl),不阻塞 dsh 控制流。incident-tests 2/2 绿(handler 装上后未捕获异常仍记录,后续控制流不卡)。**gotry 侧收尾 2026-08-22**: 12 工具 execute 统一经 guardToolExecute 异常隔离——抛错/拒绝降级结构化错误返回 LLM + tool_execute_error 落盘,不再穿透 cordis 到 dsh 主循环(incident 套 3/3);残余仅 vendored dsh 自身容错,记 M3 |
 | D-9 节日锚点表硬编码 | `time-anchor.ts` SPRING_FESTIVAL 只覆盖 2026-2028;**跨 2028 必须扩表**,否则春节锚点静默缺失。赎回时机:2028 年前任一触碰时间锚点层的提交 |
-| D-10 slot→spec 求解桥接未做 | **切片 A 落地 2026-08-27**:`slot-spec.ts` 解析层(锚点卡词表/绝对/+N → 绝对日期,词表外 unresolved;spec 日期一致性闸纯函数,time-eval §5)。**ADR-12 复审已触发并结论:设计成立**,解析范围必须有界(只解析锚点卡词表,不做开放式中文相对日期解析——被拒备选即维护黑洞)。尾债:解析结果接入工具查询面(hotel/flight 的 checkIn/departure 接受逐字表达)与 spec 抽取链路(mismatch 进渲染),接线时按 §11 同步 |
+| D-10 slot→spec 求解桥接未做 | **切片 A 落地 2026-08-27**:`slot-spec.ts` 解析层(锚点卡词表/绝对/+N → 绝对日期,词表外 unresolved;spec 日期一致性闸纯函数,time-eval §5)。**切片 B 落地同日**:工具查询面接线——`gotry_hotel_search` 日期槽位接受逐字表达(下周五/8.20/+N),代码层换算进查询;unresolved 不猜,降级无日期搜索 + 显式 date_notes(smoke §8)。**ADR-12 复审已触发并结论:设计成立**,解析范围必须有界(只解析锚点卡词表,不做开放式中文相对日期解析——被拒备选即维护黑洞)。尾债:spec 抽取链路接 mismatch 闸(LLM 产 spec 日期 vs 代码换算逐项比对进渲染),接线时按 §11 同步 |
 | D-11 `npx tsc --noEmit` 存量 14 错 | **已清偿**(1bf9671,语义零变更:tsc 0 错;smoke/memory §18 全过;17 套 ALL GREEN) |
 | D-12 loopx RFC 映射升级四接缝 | **RFC 待拍板**(`docs/loopx-inspired-upgrades-rfc.md`):S1 工具 packet 纪律/S2 记忆效用 sidecar/S3 wish 触达 0..1 纪律/S4 WriteGate L0-L4 词汇;拍板前不动代码,拍板后各切片落地时登记 ADR 并按 §11 同步 |
 
