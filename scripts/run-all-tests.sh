@@ -80,6 +80,10 @@ echo "=== 17. hotelbyte-skills 契约对齐(有凭证真校验,离线 SKIP) ==="
 (cd ts && npx tsx scripts/skills-contract-tests.ts) || FAIL=1
 
 echo
+echo "=== 18. T1 记忆捕获(M4,纯函数:抽取/保守性/合并幂等) ==="
+(cd ts && npx tsx scripts/memory-capture-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

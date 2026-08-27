@@ -115,7 +115,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 原则:**不跳阶段,不提前优化下阶段的事**;每阶段 Entry/Exit/gate 见 roadmap。旧 Stage 0-4 与总纲 Phase、产品 M1-M3 已归并映射到 M0-M6(映射表在 roadmap)。
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
-- **当前 = M3(工程面完成,分发就位 `v0.0.1-rc.7`)**:三场景全验(洱海/云南/普吉);完全去 Python(仅剩 gotry_feasibility oracle 对照,D-7 清偿);**D-4 DONE**(Anything 三仓闭环 244a0ae/c38ff65d1/43236a0);agent-reach wrapper 化 + 真 LLM e2e 复验;**npm 公开分发打通**(rc.5→rc.7:隔离发布命令/dist 预编译/.env 首跑修复;干净安装实测 web 200);12 工具 execute 异常隔离;16 套 ALL GREEN。**当前 = M4 记忆域(2026-08-26 founder 指令开闸)**:T1 行为面起步——契约 (18) 动态吸收(对话新事实当轮并入画像/开放性选题不外问/校准永不阻塞);后续:状态化跨会话记忆、主动回访(可关闭)、北极星度量。种子用户扩展并行。此后 M5 交易 → M6 B2B。
+- **当前 = M3(工程面完成,分发就位 `v0.0.1-rc.7`)**:三场景全验(洱海/云南/普吉);完全去 Python(仅剩 gotry_feasibility oracle 对照,D-7 清偿);**D-4 DONE**(Anything 三仓闭环 244a0ae/c38ff65d1/43236a0);agent-reach wrapper 化 + 真 LLM e2e 复验;**npm 公开分发打通**(rc.5→rc.7:隔离发布命令/dist 预编译/.env 首跑修复;干净安装实测 web 200);12 工具 execute 异常隔离;16 套 ALL GREEN。**当前 = M4 记忆域(2026-08-26 founder 指令开闸)**:T1 双层落地——①行为面:契约 (18) 动态吸收(开放性选题不外问/校准永不阻塞);②状态化:`memory-capture.ts` 纯函数层(extractFacts 启发式抽取+mergeProfile 追加不删史,§18 三断言)已就绪,插件 runTurn 尾部接入即插即用(founder 对话直达画像)。后续:主动回访(可关闭)、北极星度量。此后 M5 交易 → M6 B2B。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
