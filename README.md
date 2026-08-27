@@ -9,8 +9,8 @@
 
 | | |
 |---|---|
-| **Version** | `v0.0.1-rc.7`(npm: `@danceiny/gotry@rc`;[release notes](docs/release-notes.md)) |
-| **Status** | M3 工程面 + npm 公开分发就绪;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
+| **Version** | `v0.0.1-rc.7`(npm: `@danceiny/gotry@rc`;rc.8 已构建待发布;[release notes](docs/release-notes.md)) |
+| **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;13 工具;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
@@ -167,7 +167,7 @@ GoTry: 收到。先把约束记下来——
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ L1  对话即界面  chat-as-UI; gates 是消息内选择题                 │
-│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);12 个工具            │
+│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);13 个工具            │
 │ L3  领域  统一行程模型 + Z3 可行性引擎(枚举/Z3 双形态)        │
 │ L4  数据  静态数据包 + hotelbyte-cli 实时桥 + OpenFlights 骨架 │
 │ L5  治理  LoopX(objective / gates / evidence / quota)         │
@@ -176,7 +176,7 @@ GoTry: 收到。先把约束记下来——
 
 | 层 | 模块 | 角色 |
 |---|---|---|
-| L2 | `ts/src/index.ts` (dsh 插件) | 注册 12 个工具,挂 `{{current_date}}` 时间感知变量,工具 execute 异常隔离 + uncaughtException 护栏 |
+| L2 | `ts/src/index.ts` (dsh 插件) | 注册 13 个工具,挂 `{{current_date}}`/`{{time_anchor_card}}`/`{{motivation_brief}}` 变量,工具 execute 异常隔离 + 平铺观察 envelope + uncaughtException 护栏 |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/unified.py` | 唯一求解入口(候选枚举 + 航班链 Z3) |
 | L4 | `ts/capabilities/hbcli.ts` | hotelbyte-cli 进程封装 + 降级到 `data/hotels_2026.json` |
 | L4 | `ts/scripts/skeleton-check.ts` | OpenFlights 168 对枢纽,三值语义(阳性/枢纽对否定≠证伪/枢纽外=无结论) |
@@ -222,7 +222,8 @@ GoTry: 收到。先把约束记下来——
 全栈一次性绿(纯 TS,无 Python 依赖):engine/journey/unified 金标准 · 对话重放 ·
 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离) · 天气 · 航班 ·
 Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 ·
-时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)。
+时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)·
+记忆域(动机合并守门/效用 sidecar/只读指标投影)。
 
 ---
 
@@ -261,4 +262,4 @@ ADR 与技术债见 [`docs/architecture.md` §8 / §10](docs/architecture.md)。
 
 **Built with**: DeepSeek Harness 0.1.1-rc.2 · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript · Bun
 
-**Last verified against `v0.0.1-rc.7`** — 全栈回归全绿(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。
+**Last verified against `main`(rc.8 已构建待发布,2026-08-28)** — 全栈回归全绿(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。
