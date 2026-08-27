@@ -139,6 +139,26 @@ async function main() {
     console.log('observation envelope: success payloads carry flat ok:true (guard fallback = failure branch)')
   }
 
+  // 10) RFC S2+S3:wish pool sidecar——0..1 召回/muted 不召回/无命中不硬推/owner 确认归因
+  {
+    const add = byName('gotry_wish_pool_add')
+    const list = byName('gotry_wish_pool_list')
+    const a = await add.execute({ entry: { name: 'sidecar-probe-洱海', reason: '5 天起', conditions: { days: 5, budget_cny: 4950, best_months: [3, 4, 5] } } } as never, null) as { ok?: boolean; wish_id?: string }
+    if (!a.wish_id) throw new Error('FAIL: wish add 应返回稳定 wish_id')
+    const recall = await list.execute({ query: { action: 'recall', days: 6, budgetCny: 6000, month: 4 } } as never, null) as { suggestion?: { wish_id?: string; match_score?: number } | null; summary?: string }
+    if (!recall.suggestion?.wish_id) throw new Error(`FAIL: 条件命中应召回恰好 1 条(0..1),实际 ${JSON.stringify(recall.suggestion)}`)
+    if ((recall.suggestion.match_score ?? 0) < 3) throw new Error(`FAIL: 召回应按条件匹配评分,实际 ${JSON.stringify(recall.suggestion)}`)
+    const confirm = await list.execute({ query: { action: 'confirm-outcome', wishId: a.wish_id, attribution: 'helpful', detail: '用户明说:这条建议成了' } } as never, null) as { ok?: boolean; status?: string }
+    if (!confirm.ok || confirm.status !== 'helpful') throw new Error(`FAIL: owner 确认归因应落盘,实际 ${JSON.stringify(confirm)}`)
+    const noAttr = await list.execute({ query: { action: 'confirm-outcome', wishId: a.wish_id } } as never, null) as { ok?: boolean }
+    if (noAttr.ok !== false) throw new Error('FAIL: 无归因的 confirm 应拒绝(归因不许缺省)')
+    // muted:置休眠后 0..1 召回不再出现(同名更新 muted:true)
+    await add.execute({ entry: { name: 'sidecar-probe-洱海', conditions: { days: 5, budget_cny: 4950, best_months: [3, 4, 5] }, muted: true } } as never, null)
+    const recall2 = await list.execute({ query: { action: 'recall', days: 6, budgetCny: 6000, month: 4 } } as never, null) as { suggestion?: { wish_id?: string } | null }
+    if (recall2.suggestion?.wish_id === a.wish_id) throw new Error('FAIL: muted wish 不得召回')
+    console.log('wish sidecar: recall 0..1 + muted excluded + owner-confirmed attribution only')
+  }
+
   console.log('\nSMOKE OK')
 }
 
