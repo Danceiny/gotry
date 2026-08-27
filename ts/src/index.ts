@@ -23,6 +23,7 @@ import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
 import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards, guardToolExecute } from '../capabilities/incident-log.ts'
+import { mergeProfile } from './memory-capture.ts'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 import { verifyFlight } from '../capabilities/opensky.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
@@ -173,8 +174,9 @@ export function apply(ctx: Context, config: Config): void {
     description:
       'Persist the traveler\'s motivation profile (the "why depart" contract object). '
       + 'This is the B2B reuse seam: downstream plugins consume only MotivationProfile + constraints, '
-      + 'never the principal/sponsor distinction. Requires an evidence field: every weight must trace '
-      + 'back to the user\'s own words (P0 anti-fabrication rule).',
+      + 'never the principal/sponsor distinction. MERGE semantics (T1): call again with just the NEW '
+      + 'facts learned this turn (weights delta optional but MUST bring fresh evidence; evidence = user quotes); '
+      + 'existing history is never deleted. Requires evidence on every call (P0 anti-fabrication rule).',
     parameters: {
       profile: {
         type: 'json',
@@ -188,14 +190,26 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: `动机画像已保存:${String((value as { path?: string }).path ?? '')}` }],
     },
     async execute(args: { profile: unknown }, _exec: unknown) {
-      const profile = (args.profile ?? {}) as MotivationProfileInput
-      if (!profile.evidence?.length) {
+      // T1 接线:本工具是增量补丁语义(契约 18——模型每轮把对话新事实带进来),
+      // 经 mergeProfile 守门合并进既有画像(追加不删史/幂等/权重变更须伴新证据),
+      // 不再整档覆盖。首次调用(无档案)= 全量建立。
+      const incoming = (args.profile ?? {}) as { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown> }
+      if (!incoming.evidence?.length) {
         throw new Error('refusing to save a motivation profile without evidence (P0 anti-fabrication rule)')
       }
       const dir = await ensureStateDir(config.stateRoot)
       const path = join(dir, 'motivation-profile.json')
-      // JSON 往返保证落盘值与输出值都是 JsonValue(输出 schema 的硬要求)
-      const saved = JSON.parse(JSON.stringify({ ...profile, updated_at: new Date().toISOString() })) as JsonObject
+      let existing: { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown> } | null = null
+      try {
+        existing = await readJson(path) as typeof existing
+      } catch { /* 首次保存:无档案 */ }
+      const merged = mergeProfile(existing, { weights: incoming.weights, evidence: incoming.evidence, hard: incoming.hard })
+      if (!merged) {
+        // 幂等:补丁与现有画像完全一致,不落盘
+        const currentJson = JSON.parse(JSON.stringify({ ...existing, updated_at: new Date().toISOString() })) as JsonObject
+        return { saved: false, path, profile: currentJson, summary: '无新内容(幂等跳过)' }
+      }
+      const saved = JSON.parse(JSON.stringify({ ...merged, updated_at: new Date().toISOString() })) as JsonObject
       await writeJson(path, saved)
       return { saved: true, path, profile: saved }
     },
