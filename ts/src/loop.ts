@@ -242,7 +242,7 @@ export async function runTurn(
 
   for (const q of blocking) parts.push(await llm.polishQuestion(q))
 
-  // 约束齐备(无阻塞问题)→ 翻译 spec → **校验闸** → 求解 → 渲染
+  // 约束齐备(无阻塞问题)→ 翻译 spec → **校验闸 + 日期一致性闸** → 求解 → 渲染
   if (blocking.length === 0 && solve) {
     const spec = await llm.extractSpec([...history, { role: 'user', text: userMsg }], state)
     // 场景路由:erhai 候选标记 → 候选求解(洱海金标准的引擎判定)——纯 TS unify 路径
@@ -265,6 +265,20 @@ export async function runTurn(
     } else {
       const invalid = spec ? validateSpec(spec) : '翻译器未产出 spec'
       if (spec && !invalid) {
+        // D-10 切片 C:spec↔槽位日期一致性闸(ADR-10 翻译≠造数的执行点)。
+        // LLM 翻译的 spec 日期与代码层换算的槽位日期分歧时不求解、不猜,追问确认——
+        // 日期是求解关键输入,错日期 = 错判决。槽位缺失/unresolved 不参与(不造假阳性)。
+        const ext = await llm.extractSlots([...history, { role: 'user', text: userMsg }])
+        if (ext) {
+          const { resolveSlots, specDateMismatches } = await import('./slot-spec.ts')
+          const { buildTimeAnchor } = await import('./time-anchor.ts')
+          const mismatches = specDateMismatches(spec, resolveSlots(ext, buildTimeAnchor()))
+          if (mismatches.length > 0) {
+            const lines = mismatches.map(m => `- ${m.specAt}:翻译说 ${m.specDate},你的原话换算是 ${m.slotDate}(${m.field})`)
+            parts.push(`⚠️ 日期分歧,确认后我再算(以你为准):\n${lines.join('\n')}`)
+            return { reply: parts.join('\n\n'), state }
+          }
+        }
         state.spec = spec
         state.solve = await solve(spec)
         parts.push(llm.render ? await llm.render(state) : renderSolve(state))

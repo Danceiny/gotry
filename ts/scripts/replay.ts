@@ -44,3 +44,25 @@ if (!state.profile.workWindow?.evidence) throw new Error('FAIL: workWindow 缺�
 if (!state.profile.bookedResources?.length) throw new Error('FAIL: bookedResources 缺失')
 if (!(missing.length === 1 && missing[0] === 'budgetTier')) throw new Error(`FAIL: 剩余待问应为 [budgetTier],实为 [${missing.join(',')}]`)
 console.log('REPLAY ASSERTS OK')
+
+// ---- D-10 切片 C:spec↔槽位日期一致性闸 ------------------------------------------
+// 槽位剧本给出与航班包 spec 分歧的绝对日期 → 闸必须拦下求解并追问,不猜、不静默采信。
+{
+  const conflictScript = [{
+    when: '重新算一下',
+    extraction: {
+      schema_version: 'travel_slot_extraction.v1' as const,
+      language: 'zh' as const,
+      domains: ['requisition' as const],
+      slots: { requisition: { mode: 'create', destination: '普吉岛', start_date: '2026-12-25', trip_type: 'round_trip' } },
+      missing_slots: [] as string[],
+    },
+  }]
+  const llm2 = createMockLlm(join('..', 'data', 'flights_2026.json'), conflictScript)
+  const state2 = structuredClone(state)
+  const solveBefore = state2.solve
+  const r = await runTurn(state2, '12月25日出发,重新算一下', llm2, [...history], ((spec: Parameters<typeof solveUnified>[0]) => { spec.skeletonHub = true; return solveUnified(spec) }) as never)
+  if (!r.reply.includes('日期分歧')) throw new Error(`FAIL: 日期分歧应被闸拦下,实际回复:${r.reply.slice(0, 160)}`)
+  if (r.state.solve !== solveBefore) throw new Error('FAIL: 分歧时不应求解(spec 日期未确认)')
+  console.log('SPEC-SLOT DATE GATE OK(分歧拦截 + 不求解 + 追问)')
+}
