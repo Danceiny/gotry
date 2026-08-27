@@ -46,7 +46,9 @@ if (!(missing.length === 1 && missing[0] === 'budgetTier')) throw new Error(`FAI
 console.log('REPLAY ASSERTS OK')
 
 // ---- D-10 切片 C:spec↔槽位日期一致性闸 ------------------------------------------
-// 槽位剧本给出与航班包 spec 分歧的绝对日期 → 闸必须拦下求解并追问,不猜、不静默采信。
+// 两个面:① 单日期段 + 冲突槽位 → 闸拦下求解并追问,不猜、不静默采信;
+// ② 多段行程(pack 全 spec)→ 槽位 v1 无逐段真值,闸必须旁路(2026-08-28 巡检
+// 修正的回归:金标准六段行程曾被全段误判分歧,求解被永久拦截)。
 {
   const conflictScript = [{
     when: '重新算一下',
@@ -58,11 +60,26 @@ console.log('REPLAY ASSERTS OK')
       missing_slots: [] as string[],
     },
   }]
-  const llm2 = createMockLlm(join('..', 'data', 'flights_2026.json'), conflictScript)
+  const solvePort = ((spec: Parameters<typeof solveUnified>[0]) => { spec.skeletonHub = true; return solveUnified(spec) }) as never
+
+  // ① 单日期段:分歧 → 拦截 + 追问 + 不求解
+  const base = createMockLlm(join('..', 'data', 'flights_2026.json'), conflictScript)
+  const singleSpecLlm: typeof base = {
+    ...base,
+    extractSpec: async () => ({
+      segments: [{ id: 's1', role: 'choice', date: '2026-07-01', options: [{ id: 'o1', label: 'o1', move: { hub: 'SZX', services: [{ id: 'f1', depMin: 600, arrMin: 700 }], bufferMin: 60, originTransferMin: 30, destTransferMin: 30 } }] }],
+    }) as never,
+  }
+  const state1 = structuredClone(state)
+  const solveBefore = state1.solve
+  const r1 = await runTurn(state1, '12月25日出发,重新算一下', singleSpecLlm, [...history], solvePort)
+  if (!r1.reply.includes('日期分歧')) throw new Error(`FAIL: 单日期段分歧应被闸拦下,实际:${r1.reply.slice(0, 160)}`)
+  if (r1.state.solve !== solveBefore) throw new Error('FAIL: 分歧时不应求解(spec 日期未确认)')
+
+  // ② 多段行程:闸旁路 → 正常求解(无日期分歧文案)
   const state2 = structuredClone(state)
-  const solveBefore = state2.solve
-  const r = await runTurn(state2, '12月25日出发,重新算一下', llm2, [...history], ((spec: Parameters<typeof solveUnified>[0]) => { spec.skeletonHub = true; return solveUnified(spec) }) as never)
-  if (!r.reply.includes('日期分歧')) throw new Error(`FAIL: 日期分歧应被闸拦下,实际回复:${r.reply.slice(0, 160)}`)
-  if (r.state.solve !== solveBefore) throw new Error('FAIL: 分歧时不应求解(spec 日期未确认)')
-  console.log('SPEC-SLOT DATE GATE OK(分歧拦截 + 不求解 + 追问)')
+  const r2 = await runTurn(state2, '重新算一下', base, [...history], solvePort)
+  if (r2.reply.includes('日期分歧')) throw new Error(`FAIL: 多段行程应旁路日期闸(无逐段真值不判),实际:${r2.reply.slice(0, 160)}`)
+  if (!r2.state.solve) throw new Error('FAIL: 多段旁路后应正常求解')
+  console.log('SPEC-SLOT DATE GATE OK(单日期段分歧拦截 + 多段旁路不误伤)')
 }
