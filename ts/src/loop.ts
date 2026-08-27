@@ -330,28 +330,42 @@ export async function settleAsyncTicket(ticketId: string, reply: string): Promis
 
 /**
  * probePoi:从 user msg 探测"查 POI/酒店" 信号,返回关键词。
- * 触发的不是关键词,是**结构**:句首含"查/搜/找" + 后接地理/酒店类名词。
+ * 触发的不是关键词,是**结构**;关键词抓取有方向性——
+ *  1) 显式搜索动词(查/搜/找/看看/推荐/告诉我/检索)+ 宾语在动词后;
+ *  2) 住宿名词(酒店/民宿/客栈/饭店):优先取名词**之后**的名称段(须含拉丁/数字,
+ *     「我订了酒店:The Title…」→ The Title…);退路是名词前 2-6 字紧邻地名
+ *     (「大理酒店」→ 大理;「机票和」类垃圾后缀拒);
+ *  3) 开放问(有什么/玩什么/有哪些):取名词前的地名;
+ *  4) 短裸地名:≤12 字、无标点、无陈述动词(「大理」✓;「明天有空」「我的工作时间是…」✗——
+ *     2026-08-28 巡检收紧:旧版 ≤24 直通把访谈答案整句当关键词,垃圾 hbcli 调用+证据噪音)。
  * 不是意图(改求解器),只是 datasources 编排层的"提早调 anything"提示。
  */
 export function probePoi(msg: string): string | null {
   const trimmed = msg.trim()
   if (!trimmed) return null
-  // 短查询(<=24 字符 且非问句): 优先剥 trigger 词,再 fall-through 让内容触发也跑
-  const isShort = trimmed.length <= 24 && !/[?？!！。.,，]/.test(trimmed)
-  if (isShort) {
-    const stripped = trimmed.replace(/^(查一下|查|搜|找|看看|推荐|告诉我|检索)\s*/, '').trim()
-    // 即使没 trigger 词,只要 stripped 仍是 ≥2 字符的非空串就当关键词
-    if (stripped.length >= 2) return stripped.slice(0, 24)
-  }
-  // 触发模式:查/搜/找/看看/推荐/告诉我/检索 + 地理/酒店类名词(贪吃但只切前 24 字符)
+  const cutAtPunct = (s: string): string => s.split(/[,，。.;；!！?？]/)[0]?.trim() ?? ''
+
+  // 1) 显式搜索动词 + 宾语
   const m = trimmed.match(/(查一下|查|搜|找|看看|推荐|告诉我|检索)\s*(.{2,24})/)
-  if (m) return m[2].trim().slice(0, 24)
-  // 另一模式:含"酒店"/"民宿"/"客栈" 触发酒店查
-  if (/(酒店|民宿|客栈|饭店|有什么|玩什么|有哪些)/.test(trimmed)) {
-    // 尝试提取前面的地名关键词
-    const place = trimmed.match(/([一-龥a-zA-Z]{2,12})\s*(?:酒店|民宿|客栈|饭店|有什么|玩什么|有哪些)/)
-    if (place) return place[1]
-    return trimmed.replace(/(酒店|民宿|客栈|饭店|有什么|玩什么|有哪些)/, '').trim().slice(0, 24) || trimmed.slice(0, 24)
+  if (m?.[2]) {
+    const obj = cutAtPunct(m[2])
+    if (obj.length >= 2) return obj.slice(0, 24)
+  }
+  // 2) 住宿名词:名称段在名词后
+  if (/(酒店|民宿|客栈|饭店)/.test(trimmed)) {
+    const parts = trimmed.split(/(酒店|民宿|客栈|饭店)/)
+    const after = cutAtPunct((parts[2] ?? '').replace(/^[的:：\s]+/, ''))
+    if (after.length >= 2 && /[A-Za-z0-9]/.test(after)) return after.slice(0, 24)
+    const nounAt = trimmed.search(/(酒店|民宿|客栈|饭店)/)
+    const pre = trimmed.slice(Math.max(0, nounAt - 6), nounAt).match(/[一-龥]{2,6}$/)
+    if (pre && !/(机票|车票|和|做|订|的)$/.test(pre[0])) return pre[0]
+  }
+  // 3) 开放问:地名在疑问词前
+  const q = trimmed.match(/([一-龥a-zA-Z]{2,12})\s*(?:有什么|玩什么|有哪些)/)
+  if (q?.[1]) return q[1]
+  // 4) 短裸地名(≤12 字,无标点,无陈述动词)
+  if (trimmed.length <= 12 && !/[,，。.;；!！?？:：]/.test(trimmed) && !/[是有在要想得到说订吧呢]/.test(trimmed)) {
+    return trimmed.slice(0, 24)
   }
   return null
 }

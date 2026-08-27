@@ -80,4 +80,21 @@ pass('6. 不抛错 + 返回类型是 string 或 null(边界)', () => {
   }
 })
 
+pass('7. 金标准对话噪音回归(2026-08-28 巡检:访谈答案/多段首查不再误触发)', () => {
+  // 旧版 ≤24 直通把短访谈答案整句当关键词 → 垃圾 hbcli 调用 + 证据噪音
+  assert.equal(probePoi('我的工作时间是UTC+4的早上10点到下午7点'), null, '访谈答案(>12 字含陈述动词)不触发')
+  assert.equal(probePoi('明天有空'), null, '短句含陈述动词不触发')
+  // 多段行程首轮:动词宾语为句号/宾语为垃圾后缀 → 不触发(宁可不探,不垃圾探)
+  assert.equal(
+    probePoi('7.17周五22:40落地深圳,7.18早上去香港办银行开户&保险签约;争取7.18当天飞泰国普吉岛……8.10周一凌晨从深圳起飞,周一上班前到迪拜。请给我做机票和酒店的行程规划和推荐。'),
+    null,
+    '多段首查无 POI 信号不触发',
+  )
+  // 住宿名词后段优先:订了酒店:名称 → 抓名称而非「我订了」
+  const booking = probePoi('我订了酒店:The Title East Wing Rawai,7.18入住 7.23 退房')
+  if (!booking || !booking.includes('Title')) throw new Error(`订酒店应抓名称段,得 ${JSON.stringify(booking)}`)
+  console.log('  7a. 访谈答案/多段首查 → null OK')
+  console.log('  7b. 订酒店抓名称段(The Title…) OK')
+})
+
 console.log('\nprobePoi TESTS: 6 类 OK(不崩 + 5 类触发 + 1 类不触发返 null)')
