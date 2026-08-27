@@ -24,7 +24,8 @@
     },
     "reconcil": [
       "M-1 工作窗口约束:FD582 8.4 08:10 起飞在 W4(周二,工作日 10:00-19:00 UTC+4)外——从 DMK 起飞,home_tz_offset_min=240 转换后 11:10 = 工作日,排除。8.4 选 FD582 真实:在迪拜继续工作到 12:00 12:00-15:00 周二午休时间,DMK 起飞后家不在出发地,工作窗口不适用,这就是为什么 Kimi 当初放弃 8.3 提前一天(demo 8.3 备选 MU6088 在 M-1 下不应排除,但 Kimi 实选晚一天的 8.4)。",
-      "auto-guess 2026-08-24:Rawai 实际=The Title East Wing Studio 档,约 ¥400/晚(长住+工作型;非套间)—founder 校正即改"
+      "auto-guess 2026-08-24:Rawai 实际=The Title East Wing Studio 档,约 ¥400/晚(长住+工作型;非套间)—founder 校正即改",
+      "Rawai 住宿真值(founder 2026-08-26):首晚 The Title 公寓失败——Airbnb 房东(实为物业人员)失联、找不到房与钥匙、语言不通,吵一架后入住但条件差性价比低;次日即换普通酒店,全方位更好(更便宜/位置更好/有泳池)。auto-guess 的『Studio ¥400 长住』仅首夜成立"
     ]
   },
   "legs": [
