@@ -80,7 +80,7 @@ echo "=== 17. hotelbyte-skills 契约对齐(有凭证真校验,离线 SKIP) ==="
 (cd ts && npx tsx scripts/skills-contract-tests.ts) || FAIL=1
 
 echo
-echo "=== 18. T1 记忆捕获(M4,纯函数:抽取/保守性/合并幂等) ==="
+echo "=== 18. T1 记忆合并守门(M4,纯函数:追加不删史/P0 权重校验/幂等) ==="
 (cd ts && npx tsx scripts/memory-capture-tests.ts) || FAIL=1
 
 echo
