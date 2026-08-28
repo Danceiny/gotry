@@ -8,7 +8,7 @@
 
 ## 当前位置(2026-08-27)
 
-**`@danceiny/gotry@0.0.1-rc.7` 已公开分发**(registry.npmjs.org,`npx @danceiny/gotry@rc web` 一行启动);rc.8 已构建验证待发布(npm token 轮换后等 web 登录会话)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
+**`@danceiny/gotry@0.0.1-rc.8` 已发布且 npm latest 直指本版**(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
 
 rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
@@ -19,9 +19,9 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | v0.0.1-rc.5 | 已发 npm(不可用,被 rc.6 取代) | 首发打通 2FA/恢复码/隔离发布命令;tarball 缺 runtime(教训) |
 | **v0.0.1-rc.6** | **已发 npm,可用** | bin 运行时解析 + dist 预编译(绕 Node 拒 strip node_modules .ts)+ data 入包;干净安装 web 200 实测 |
 | **v0.0.1-rc.7** | **已发 npm,当前 rc tag** | .env 读用户当前目录 + 无 key 可执行指引 |
-| v0.0.1-rc.8 | 已构建验证,**待发布**(等 npm 登录) | unwrapQuery 参数三形态(#12/#13)/ 人格 17 契约 / ask_user_question 三形态 / dsh-map-tools + dsh-calendar 宿主插件 / 契约对齐 §17 |
+| **v0.0.1-rc.8** | **已发 npm,latest tag 直指本版** | unwrapQuery 参数三形态(#12/#13)/ 人格 17 契约 / ask_user_question 三形态 / dsh-map-tools + dsh-calendar 宿主插件 / 契约对齐 §17 |
 | dev(未发) | 持续 main 直推 | issue 冲刺 14/14 交付(README 一致性/域边界/数据污染根除等),17 套 ALL GREEN |
-| 后续 | founder 侧 | npm 登录发 rc.8 / M4 校准七题 / 种子用户邀约 + issue 复验 |
+| 后续 | founder 侧 | 种子用户邀约;rc.5 deprecate/rc tag 指向待下次 2FA 授权点击 |
 
 **M3 已被 founder 判定推进(2026-08-26 指令「现在推进 M4」)**:工程面全通+创始人真实使用中;种子用户扩展与 M4 并行。**当前 = M4 记忆域**(T1 行为面起步:契约 (18) 动态吸收;状态化跨会话记忆/主动回访按 roadmap M4 交付推进)。**2026-08-27 时间感优化落地**(外部时间评测驱动,ADR-12):时间锚点层 + 槽位抽取 v1 + 25 题评测集进仓,真模型 25/25;细节见 architecture.md §1/§9 与 ADR-12。
 
