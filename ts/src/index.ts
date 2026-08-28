@@ -37,6 +37,7 @@ import { interpretArgs, type GotryObservation } from './tool-packet.ts'
 import { appendEvent, projectUtility, type MemoryUtilityEvent } from './memory-utility.ts'
 import { pickNudgeWish, type WishPoolEntry } from './wish-pool.ts'
 import { appendTrip, resolveTimelineDate, type TimelineEvent } from './travel-timeline.ts'
+import { upsertCompanion } from './companions.ts'
 import { mergeProfile } from './memory-capture.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
@@ -107,6 +108,11 @@ function renderMotivationBrief(stateRoot: string): string {
     if (trips.length) {
       lines.push(`- 去过: ${trips.map(t => `${t.destination}(${t.start.slice(0, 7)})`).join('、')}——去过的地方不再主动推荐,除非用户点名`)
     }
+    // 同行人档案(memory-design P2):约束只进排序与行程结构建议,永不硬过滤
+    const companions = readCompanions(stateRoot)
+    if (companions.length) {
+      lines.push(`- 同行人: ${companions.map(c => `${c.label}(${c.brief})`).join('、')}——约束进结构与排序建议,不硬过滤;引用时带当初的原话依据`)
+    }
     lines.push(`- 愿望池: 用 gotry_wish_pool_list 按条件召回(0..1),勿直接堆砌`)
     if (p.updated_at) lines.push(`- 更新于: ${p.updated_at}`)
     return weights.length || hard.length ? lines.join('\n') : ''
@@ -116,6 +122,20 @@ function renderMotivationBrief(stateRoot: string): string {
 }
 
 /** 时间线摘要(brief 用):最近 3 次行程(目的地+年月);文件缺失返回空 */
+/** 同行人摘要(brief 用):label + 约束串 */
+function readCompanions(stateRoot: string): Array<{ label: string; brief: string }> {
+  try {
+    const raw = readFileSync(join(stateRoot, 'gotry-state', 'companions.json'), 'utf-8')
+    return (JSON.parse(raw) as Array<{ label: string; constraints: { mobility?: string; health?: string[]; prefs?: string[] } }>)
+      .map(c => {
+        const bits = [c.constraints.mobility, ...(c.constraints.health ?? []), ...(c.constraints.prefs ?? [])].filter(Boolean)
+        return { label: c.label, brief: bits.join('/') }
+      })
+  } catch {
+    return []
+  }
+}
+
 function readTimelineTrips(stateRoot: string): Array<{ destination: string; start: string }> {
   try {
     const raw = readFileSync(join(stateRoot, 'gotry-state', 'trips.jsonl'), 'utf-8')
@@ -410,6 +430,42 @@ export function apply(ctx: Context, config: Config): void {
       } as never
     },
     presentCall: args => ({ card: 'generic', title: '「下一次出发」召回', kind: 'search', rawInput: args.query }),
+  }))
+
+  registerGuarded(defineTool({
+    name: 'gotry_companion_save',
+    description:
+      'Save/update a travel companion profile (memory-design M5 layer): constraints that shape itinerary STRUCTURE and ranking — '
+      + 'never a hard filter (「爸爸65轻度高血压」→ 不排高海拔/控制步行量;「晕车」→ 优先火车/备提示). '
+      + 'evidence MUST be the user\'s verbatim words (append-only, traceable). '
+      + 'NEGATIVE LIST: passport/ID/phone numbers are rejected on sight — such fields never enter storage.',
+    parameters: {
+      companion: {
+        type: 'json',
+        required: true,
+        description: '{ label: "爸爸", constraints: { mobility?: "步行≤4h", health?: ["轻度高血压"], prefs?: ["怕吵"] }, evidence: "<用户原话>" }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
+    },
+    async execute(args: { companion: unknown }, _exec: unknown) {
+      const c = (args.companion ?? {}) as { label?: string; constraints?: { mobility?: string; health?: string[]; prefs?: string[] }; evidence?: string }
+      if (!c.evidence) return { ok: false, summary: 'evidence 必填(用户原话,溯源 P0)' } as never
+      const dir = await ensureStateDir(config.stateRoot)
+      const path = join(dir, 'companions.json')
+      const profiles = (await readJson(path, [])) as import('./companions.ts').CompanionProfile[]
+      const res = upsertCompanion(profiles, {
+        label: String(c.label ?? ''),
+        constraints: { mobility: c.constraints?.mobility, health: c.constraints?.health, prefs: c.constraints?.prefs },
+        evidence: c.evidence,
+      })
+      if (!res.appended && res.reason) return { ok: false, summary: res.reason } as never
+      if (res.appended) await writeJson(path, res.profiles)
+      return { ok: true, appended: res.appended, companion_id: res.companionId, total: res.profiles.length, summary: res.appended ? `同行人已保存:${res.companionId}` : `无新内容(幂等跳过):${res.companionId}` } as never
+    },
+    presentCall: args => ({ card: 'generic', title: '保存同行人', kind: 'edit', rawInput: args.companion }),
   }))
 
   registerGuarded(defineTool({
