@@ -44,12 +44,12 @@
 
 ## 4. 分期增量(每期独立可验收,无需新依赖)
 
-### P1 旅行时间线(M4 层,近期)
+### P1 旅行时间线(M4 层)——**✅ 已落地 2026-08-28**
 
 `gotry-state/trips.jsonl` append-only:`{ trip_id, destination, start, end, companions?, source, evidence }`。
 - **写入源**:①用户口述(「上次去大理是国庆」→ 契约 (18) 同款动态吸收,evidence=原话);②成行确认(wish verified_outcome 落地时自动附 timeline 事件)。两源都过守门纯函数(日期解析复用 slot-spec,冲突即停不猜)。
 - **消费**:出发地三级解析(未来行程→时间线→问用户);「去过不再推」进排序通道;回流率分子变准(verified_outcome ⟺ timeline 有对应行程)。
-- **验收**:断言 100% 可溯源;与 wish 效用事件交叉一致(verified 无 timeline = 巡检红)。
+- **验收(已达成)**:断言 100% 可溯源;交叉一致守门(verified 无 timeline = 巡检缺口暴露,不自动补写)。落地 = `travel-timeline.ts` 纯函数 + `gotry_trip_log` 工具 + confirm-outcome 可选自动挂时间线(tripStart 传入才落,否则留缺口)+ `{{motivation_brief}}` 注入「去过」行(最近 3 次)。run-all §20,7/7 断言。
 
 ### P2 同行人档案(M5-6 层)
 
