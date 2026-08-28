@@ -8,7 +8,7 @@
 
 ## 当前位置(2026-08-27)
 
-**`@danceiny/gotry@0.0.1-rc.10` 工件就绪待发**(依赖修复;publish 需 founder 一次浏览器授权或 granular token,rc.9 为 latest 但装得上跑不起);历史:`@danceiny/gotry@0.0.1-rc.8` 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
+**`@danceiny/gotry@0.0.1-rc.10` 已发布,npm latest 直指本版**(2026-08-28:双形态冻结 ADR-16/会话传输层 puppeteer 定案/依赖面根治 rc.9「装得上跑不起」缺陷;发布纪律改确认制后由 agent 执行,web 授权+浏览器二次验证+registry 回拉实测全过;rc.9 标缺陷退役);历史:`@danceiny/gotry@0.0.1-rc.8` 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
 
 rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
@@ -20,7 +20,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | **v0.0.1-rc.6** | **已发 npm,可用** | bin 运行时解析 + dist 预编译(绕 Node 拒 strip node_modules .ts)+ data 入包;干净安装 web 200 实测 |
 | **v0.0.1-rc.7** | **已发 npm,当前 rc tag** | .env 读用户当前目录 + 无 key 可执行指引 |
 | v0.0.1-rc.9 | 已发 npm(曾为 latest;**含缺陷:better-sqlite3 未入 dependencies,装得上跑不起**——被发布后干净安装验证抓出) | M4 记忆域全链/账本/17 工具/D-6 校准 |
-| **v0.0.1-rc.10** | **工件离线预验证通过**(better-sqlite3 已入 dependencies,ledger import OK);publish 挂 2FA 浏览器授权——机内环境无 GUI opener 打不到 founder,需 founder 在自己终端跑 `npm publish --access public --tag latest` 或提供一枚 granular token | 同 rc.9 + 依赖修复 |
+| **v0.0.1-rc.10** | **已发 npm,latest 直指本版**(registry 回拉实测:489 包安装/插件加载/bin 全通) | 双形态冻结 ADR-16 + 会话传输层 puppeteer 定案 + 依赖面根治 |
 | dev(未发) | 持续 main 直推 | issue 冲刺 14/14 交付(README 一致性/域边界/数据污染根除等),17 套 ALL GREEN |
 | 后续 | founder 侧 | 种子用户邀约;rc.5 deprecate/rc tag 指向待下次 2FA 授权点击 |
 

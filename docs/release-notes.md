@@ -1,6 +1,6 @@
 # GoTry 发版记录
 
-## v0.0.1-rc.10(双形态冻结 ADR-16 + 会话传输层定案 + 依赖面根治,**预验证全通过,待发布 owner 发布**)
+## v0.0.1-rc.10(双形态冻结 ADR-16 + 会话传输层定案 + 依赖面根治,**已发布 2026-08-28**,npm latest 直指本版)
 
 rc.9 → rc.10 增量:
 
@@ -17,7 +17,7 @@ rc.9 → rc.10 增量:
 
 ### 发布闸状态
 - ① 全栈回归 ALL GREEN(§1-§29)✅ ② 状态面 6 处同步 ✅ ④ License MIT ✅ ⑤ 版本号一致(rc.10)✅
-- ③ npm 干净安装实测:**通过**——tarball(254.5KB/130 文件)干净目录正常安装(489 包,无 ETARGET;dsh-scope 等 peer 全部自动解析),dist 插件加载 OK(name=gotry-tools),`gotry help` bin 正常。**rc.10 已具备发布条件,发布动作(打 tag/推 npm/发版说明)归发布 owner**
+- ③ npm 干净安装实测:**通过**——tarball(254.5KB/130 文件)干净目录正常安装(489 包,无 ETARGET;dsh-scope 等 peer 全部自动解析),dist 插件加载 OK(name=gotry-tools),`gotry help` bin 正常。**已发布**:发布纪律改确认制后由 agent 执行——web 登录(npm-profile 库级驱动,npm-auth-type:web)+ 浏览器二次验证(恢复码被 npm 拒收,改走 auth/cli web OTP)+ registry 回拉实测(489 包安装/插件加载/`gotry help` 全通)
 
 ## v0.0.1-rc.9(M4 记忆域全链 + 事务化账本 + 17 工具,2026-08-28)
 
