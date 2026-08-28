@@ -90,6 +90,11 @@ curl -sS --max-time 3 http://127.0.0.1:3080 -o /dev/null -w "dsh=%{http_code}\\n
 - 行为:模型自主调 wish_pool_list,发现池中「千岛湖发呆周末」(2 天/1200)与 11 月 5 天窗口不匹配,**主动 verbalize 不硬推**(「跟这次窗口不太对味,先放着不打扰它」)——0..1 纪律不是机械执行而是语义执行;开场引记忆 brief(回访体验),动机先行三道结构化选择题收尾;headless 无 ask-user 提供方时按契约 (5) 退化文本选择题
 - 结论:契约 (6) 三段语义(入池/先查池/0..1+归因禁令)全部真模型在线;wishlist 的「语义执行>机械执行」路线得到实证
 
+### 15. 多 lane 共存实证(2026-08-28,17 工具形态:记忆域 lane × 会话数据面 lane)
+- 场景:记忆域 lane(动机 brief/愿望池 0..1)与会话数据面 lane(flyai/session 检索,17 工具)的改动在同一 runtime persona 协同后的 live 复验("我11月有5天假,预算8000,从深圳出发。有什么建议?")
+- 行为:开场先对齐记忆 brief(权重/硬约束逐项正确)→ **自主查愿望池**,千岛湖发呆周末与 11 月窗口不匹配后主动说明「先不硬推它」(契约 (6) 语义执行)→ 天气底牌 [实时API:open-meteo] + 航线底牌 [实时API:flyai@ts] + [骨架:openflights] 三源证据链并存,会话面工具标签与记忆契约无串扰
+- 结论:ADR-13 平铺 envelope + 单一 persona 组合源在多 lane 并行演进下稳定;两条 lane 的契约(记忆 0..1 / 会话 ReadGuard 只读)在真模型会话中同时在线
+
 ## 总结
 
 - **8 工具人格真协同**: feasibility + skeleton + hotel + weather + flight + anything + web_search + agent_reach + motivation_save + wish_pool
