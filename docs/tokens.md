@@ -106,6 +106,19 @@ NPM_TOKEN=npm_xxx ./scripts/publish-npm.sh   # 或临时注入
 
 **零配置已通的**(无需任何操作):web 读页(r.jina.ai)/ RSS / V2EX / B站搜索。
 
+## 高德 MCP Server(官方 agent 通道,P0 尽调 2026-08-28)
+
+| 项 | 内容 |
+|---|---|
+| 能力 | 地理编码/逆地理/POI 搜索/驾公步骑路线(dsh-map-tools 的 OSRM 免费版升级面) |
+| 获取 | <https://console.amap.com/dev/key/app> → 创建应用 → 添加 Key(服务平台选「Web 服务」)→ 贴给我 |
+| 免费 | 个人开发者每日配额(地理编码等各接口数千次/日,以控制台为准) |
+| 用法 | key 进 `.env` 的 `AMAP_KEY`;接法走高德 MCP Server(<https://developer.amap.com/api/mcp-server/getting-started>)或直接 REST |
+
+## 飞猪 FlyAI(官方 agent 通道——**无需任何 key 已实测可用**,2026-08-28)
+
+`npx -y @fly-ai/flyai-cli search-flight --origin 上海 --destination 丽江 --dep-date 2026-10-01` 即出真实票价(¥1790 起)。8 工具全只读(机/火/酒/POI/万豪/关键词/AI 语义)。`FLYAI_API_KEY` 为可选增强项——给即配,不给也能用;申请入口 README 未披露,待飞猪控制台开放。
+
 ---
 
 ## 安全基线(不啰嗦,只列事实)

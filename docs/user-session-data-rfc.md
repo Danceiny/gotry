@@ -11,13 +11,13 @@
 
 **结论先行**:「用用户自己的登录态做只读检索」在 2026 年的工程与合规现实下**可行,但必须以「官方通道优先、会话补缺、只读物理隔离、数据不出本机」四原则落地**。检索型浏览器任务已进入顶级模型甜区(WebVoyager 类 ~88%),DOM/a11y 优先的混合架构有明确业内共识,单次站内检索可压到秒级/两美分级;真正的风险不在技术,在①平台风控对自动化频率的反制、②中国法下「经营者抓取」的边界、③prompt injection(只读 + 物理拦截兜底)。同时调研发现**国内官方通道 2025-2026 真的开了**(飞猪 FlyAI / 携程商旅 MCP / 高德 MCP),应先吃官方免费的,用户会话只补官方覆盖不了的缝(携程 C 端、美团本地、12306)。
 
-**请 founder 拍板三道题**(详见 §5 决策门):
+**请 founder 拍板三道题**(详见 §5 决策门;**2026-08-28 已结算**:founder 指令「用 loopx 管理这个项目,开始实施」):
 
-| # | 问题 | 推荐 |
-|---|---|---|
-| **G7** | 用户会话数据面是否立项(M4 增量,不挤 M4 主线记忆域) | **立项,按 §4 四阶段推进** |
-| **G8** | 12306 是否纳入首批站点适配器 | **暂不纳入**(平台对抗史最烈、刑事判例集中在抢票写侧;等携程/美团链路稳定后单独立项评审) |
-| **G9** | 官方通道尽调先行:飞猪 FlyAI key + 高德 MCP key 申请 | **批准申请动作**(零成本,决定会话面的真实缺口大小) |
+| # | 问题 | 推荐 | 决策 |
+|---|---|---|---|
+| **G7** | 用户会话数据面是否立项(M4 增量,不挤 M4 主线记忆域) | **立项,按 §4 四阶段推进** | ✅ **已立项**(loopx goal `gotry-session-data-goal`,agent `gotry-session-builder`,P0 于同日完成见 §4) |
+| **G8** | 12306 是否纳入首批站点适配器 | **暂不纳入**(平台对抗史最烈、刑事判例集中在抢票写侧;等携程/美团链路稳定后单独立项评审) | ✅ **按推荐暂缓**——且 P0 实测飞猪 FlyAI `search-train` 官方通道覆盖火车票检索(上海→大理中转链真数据),12306 会话需求进一步弱化,恢复评审的前提改为「FlyAI 火车票面出现能力缺口」 |
+| **G9** | 官方通道尽调先行:飞猪 FlyAI key + 高德 MCP key 申请 | **批准申请动作**(零成本,决定会话面的真实缺口大小) | ✅ **已批并执行**:FlyAI **无 key 已实测可用**(8 工具全只读,机/火车票真实数据;key 为可选增强,申请入口未披露);高德获取步骤已落 `tokens.md`(等 founder 给 key 即配) |
 
 ---
 
@@ -77,7 +77,7 @@
 
 ### 2.5 竞争与替代:官方通道 2025-2026 在中国开了
 
-- **飞猪 FlyAI 开放平台**(flyai.open.fliggy.com):机/酒/景/度假全场景,「实时直连官方商品库」,OpenClaw skill 一行安装(`npx skills add alibaba-flyai/flyai-skill`);门槛/收费/是否开放纯只读搜索未明——**P0 尽调第一优先**。
+- **飞猪 FlyAI 开放平台**(flyai.open.fliggy.com;CLI `@fly-ai/flyai-cli`,skill 仓 `alibaba-flyai/flyai-skill`):机/酒/景/度假全场景,「实时直连官方商品库」,OpenClaw skill 一行安装(`npx skills add alibaba-flyai/flyai-skill`)。**P0 实测(2026-08-28,无 key 无登录)**:8 工具全只读(search-flight/search-train/search-hotel/search-poi/keyword/ai/万豪×2,无任何预订原语,交易经 jumpUrl 跳飞猪由人完成);`search-flight --origin 上海 --destination 丽江 --dep-date 2026-10-01` 返结构化 journeys/segments/ticketPrice(春秋 9C6617 ¥1790 起),`search-train` 返真实中转链(虹桥 G201→昆明南→大理)。单行 JSON stdout,agent-native(hbcli 同款形态);收费/配额/门槛 README 未披露,key 为可选增强。
 - 携程商旅 MCP(企业 AI 对接,差旅域);高德 MCP Server(POI/地图/路线,与通义灵码/TRAE 集成,免费额度)——高德可即时增强 gotry 现有 map 面。
 - 里程工具先例的反面教材:AwardWallet 被 American Airlines 封锁访问、航司普遍加 2FA 墙——**平台技术反制是常态,任何单一通道都要按「可被掐断」设计**。
 
@@ -97,28 +97,31 @@ Comet 事故(Brave 2025-08 披露,Reddit 评论藏注入→跨站接管账户)�
 静态包 → 免费实时(OpenSky/Open-Meteo)→ hbcli 桥(hotel-be)→ 【新】官方 agent 通道(飞猪FlyAI/高德MCP)→ 【新】用户会话补缺
 ```
 
-领域矩阵增量(目标态):
+领域矩阵增量(P0 后修正——**机票/铁路主链路改走 FlyAI 官方通道,会话面收缩为交叉验证与官方盲区**):
 
-| 领域 | 会话面动作 | 证据链标注 |
-|---|---|---|
-| 航班班次/票价 | 携程机票页查询,XHR 嗅探结构化 | `[会话:ctrip-flight@ts]` |
-| 铁路 12306 | (G8 未决,默认关) | `[会话:rail-12306@ts]` |
-| 美团本地(民宿/门票) | 站内搜索嗅探 | `[会话:meituan@ts]` |
-| 飞猪(若 FlyAI 无只读面) | 站内搜索嗅探 | `[会话:fliggy@ts]` |
+| 领域 | 主链路(P0 后) | 会话面动作 | 证据链标注 |
+|---|---|---|---|
+| 航班班次/票价 | **FlyAI `search-flight`(官方,无 key)**;OpenSky 观测;静态包对账 | 携程机票页嗅探,与 FlyAI **交叉验证**(P1 天然对账 oracle:双源同查询一致性断言) | `[实时API:flyai@ts]` / `[会话:ctrip-flight@ts]` |
+| 铁路 12306 | **FlyAI `search-train`(官方,无 key)** | G8 暂缓;仅 FlyAI 出现能力缺口时恢复评审 | `[实时API:flyai@ts]` |
+| 美团本地(民宿/门票) | ❌ 无官方通道(盲区) | 站内搜索嗅探 | `[会话:meituan@ts]` |
+| 酒店 | hbcli(hotel-be)+ FlyAI `search-hotel` | 会话面仅交叉验证 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` |
 
 新标注语义(L4 契约增补):`[会话:site@ts]` = **用户本人会话内实时检索,非官方 API,价格/库存以站点页面为准**——与 `[实时API]`/`[静态包:估算]` 三分,新鲜度同实时、权威性低于官方 API(命中过滑块的查询结果要标 `degraded`)。
 
 ### 3.2 代码形态(对齐现有分层)
 
 ```
-ts/capabilities/session-search.ts      传输层编排:connect → navigate → sniff → extract → guard → 证据链
+ts/capabilities/flyai.ts            官方通道:P0 新增优先级——spawn @fly-ai/flyai-cli(npx),search-flight/search-train 先接,
+                                     管道层对齐 agent-reach 模式(超时/永不抛错/证据链);P1 与会话骨架同批落地
+ts/capabilities/session-search.ts    会话面传输层编排:connect → navigate → sniff → extract → guard → 证据链
 ts/capabilities/session/
   transport.ts        SessionTransport 接口 + CDPAttachTransport 首发实现
                       (playwright-core connectOverCDP/launchPersistentContext,channel:'chrome' 不下载浏览器)
   read-guard.ts       ReadGuard:网络层写请求拦截 + DOM 提交按钮黑名单,fail-closed,全量审计日志
   adapters/<site>.ts  站点适配器:{ entry, searchForm locators, networkHints[{urlPattern,parser}], a11yFallback, cooldown }
+                      首个适配器=携程机票(PoC 已识别 networkHints:search/batchSearch + FlightIntlAndInlandLowestPriceSearch)
   action-cache.ts     本地动作缓存:key=指令+DOM 指纹 → 确定性 locator;miss 回退 LLM 重定位并回写
-ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots) → 平铺 envelope(ADR-13 同构)
+ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots) → 平封 envelope(ADR-13 同构)
 ```
 
 依赖:仅 `playwright-core`(轻量,无浏览器下载,Apache-2.0,符合复用矩阵 open-source import);用戶已装 Chrome 走 `channel:'chrome'`。**npm 分发不硬依赖**:optional peer + 启动检测,缺则降级提示安装命令(沿用 dsh-map-tools 的占位剔除模式)。Stagehand v4 / playwright-mcp / chrome-devtools-mcp 作 P0 技术验证对照,P1 起按「自研薄层 + playwright-core」走(理由:三家都带不匹配的耦合——Stagehand 缓存绑云端、playwright-mcp 是进程级 MCP server、devtools-mcp 偏诊断;gotry 只需要 connect + 嗅探 + a11y 快照 ~500 行)。
@@ -152,7 +155,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 | 阶段 | 内容 | Exit(验收口径) | 预算 |
 |---|---|---|---|
-| **P0 尽调** | ①飞猪 FlyAI key 申请+只读能力探测(决定会话面真实缺口);②高德 MCP key;③本机 Chrome attach PoC(~30 行:连专用 profile 打开携程机票页,嗅探 1 条 XHR 并打印 JSON);④G7/G8/G9 决策回填本 RFC | 决策矩阵回填,FlyAI 能力备忘进 data-sources.md | 1-2 tick,零外部成本 |
+| **P0 尽调** ✅ **2026-08-28 完成** | ①飞猪 FlyAI key 申请+只读能力探测(决定会话面真实缺口);②高德 MCP key;③本机 Chrome attach PoC(~30 行:连专用 profile 打开携程机票页,嗅探 1 条 XHR 并打印 JSON);④G7/G8/G9 决策回填本 RFC | **已达成**:①FlyAI 无 key 实测可用,8 工具全只读,机/火车票官方通道开(备忘进 data-sources.md §8);②高德获取步骤落 tokens.md(等 key);③PoC 两轮零风控零交互,主接口已识别(`search/batchSearch` ~550KB + 低价日历 ~81KB,脚本 `ts/scripts/session-attach-poc.ts`,playwright-core 1.62.1 devDep);④本节决策表已结算。**结论修正:机票/铁路主链路改走 FlyAI,会话面收缩为「携程 C 端交叉验证 + 美团本地 + 官方通道盲区」** | 1-2 tick,零外部成本(实用 1 tick) |
 | **P1 骨架** | transport + ReadGuard + adapter 接口 + 首个适配器(**携程机票**,携程 C 端覆盖最优先且与现有航班静态包直接对账);证据链 `[会话:*]`;隔离 stateRoot 测试(对齐巡检状态纪律,绝不动 dsh-runtime 真实状态) | 单站点:查询→结构化结果→smoke 断言;ReadGuard 拦截用例(伪造写请求必被 abort)全绿 | 2-3 tick |
 | **P2 面上** | 美团 + 飞猪适配器;a11y 兜底抽取;action-cache 自愈;节律熔断;缓存命中路径 | 金标准 20 查询字段级准确率 ≥90%;单检索 <15s(缓存命中 <5s);注入围栏用例;熔断用例(滑块 fixture) | 2-3 tick |
 | **P3 产品化** | dsh 工具 `gotry_session_search` + 人格契约条目(何时用会话 vs 官方 vs 静态)+ e2e 真模型巡检(e2e-prompts 新 §)+ 六状态面同步(architecture §1/§9、data-sources 五层、roadmap M4 增量、README、stage1、§10 债务) | run-all-tests 新分节全绿;e2e 真模型 1 例会话检索闭环;风控触发次数 = 0(实测期) | 2 tick |
@@ -180,7 +183,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 ## 6. 与仓库纪律的勾稽
 
-- **复用矩阵修订提案**(总纲 §2 新行):`playwright-core | Apache-2.0 | import | 会话检索传输层(connectOverCDP/persistentContext,不下载浏览器)`;`playwright-mcp / Stagehand / chrome-devtools-mcp | MIT/Apache | reference | P0 对照验证,不引依赖`;`browser-use | — | 明确不引入(Python 违纪)`。
+- **复用矩阵修订提案**(总纲 §2 新行):`@fly-ai/flyai-cli | MIT | import(npx spawn,零渠道知识管道层) | 飞猪官方只读检索通道(机/火/酒/POI),交易经 jumpUrl 由人完成`;`playwright-core | Apache-2.0 | import(devDep,P0 已进 ts/package.json) | 会话检索传输层(connectOverCDP/persistentContext,不下载浏览器)`;`playwright-mcp / Stagehand / chrome-devtools-mcp | MIT/Apache | reference | P0 对照验证,不引依赖`;`browser-use | — | 明确不引入(Python 违纪)`。
 - **红线进代码**:ReadGuard = WriteGate 的检索态前置;动机画像/wish pool 红线不动;`[会话:*]` 进 L4 证据链契约。
 - **状态同步**:P3 收尾按 architecture.md §11 六状态面同提交同步。
 - **巡检状态纪律**:所有会话面测试用隔离 stateRoot / 专用测试 profile,绝不动 founder 真实浏览器 profile 与 dsh-runtime 共享状态(2026-08-26 教训的会话版)。
