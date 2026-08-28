@@ -9,10 +9,23 @@
  * 永不抛错:任何启动失败降级为 TransportFailure,由 session-search 编排层消费。
  */
 
-import puppeteer, { type Browser, type Page } from 'puppeteer-core'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { attachReadGuardPuppeteer, type ReadGuardHandle } from './read-guard.ts'
+import type { Browser, Page } from 'puppeteer-core'
+
+/**
+ * puppeteer-core 为可选依赖(D-14:产品运行时零硬依赖,缺则优雅降级)。
+ * 顶层动态 import——npm 形态若未装 puppeteer-core,openSession 返回 TransportFailure
+ * 而非在模块加载期炸掉整个插件(2026-08-28 发布面实测:静态 import 会拖垮 index.ts 加载链)。
+ */
+async function loadPuppeteer(): Promise<typeof import('puppeteer-core') | { missing: true }> {
+  try {
+    return await import('puppeteer-core')
+  } catch {
+    return { missing: true }
+  }
+}
 
 export interface TransportFailure {
   ok: false
@@ -52,6 +65,11 @@ function devtoolsWsEndpoint(): { ws: string } | { err: string } {
 }
 
 export async function openSession(opts: TransportOptions = {}): Promise<SessionTransport | TransportFailure> {
+  const pp = await loadPuppeteer()
+  if ('missing' in pp) {
+    return { ok: false, summary: 'puppeteer-core 未安装(可选依赖):会话检索不可用,官方通道 gotry_flyai_search 仍可用。安装:npm i -D puppeteer-core' }
+  }
+  const puppeteer = pp.default
   const useCdp = opts.mode === 'cdp' || (opts.mode !== 'persistent' && !opts.profileDir)
   let browser: Browser
   let isCdp = false
