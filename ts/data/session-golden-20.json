@@ -1,0 +1,25 @@
+{
+  "comment": "会话数据面金标准查询集(RFC P2 监控面输入;只增不改语义,对齐 time-slot-eval 惯例)。city 字段约束:from/to 必须同时命中 ctrip 城市码表与美团拼音表(双适配器通用)。",
+  "queries": [
+    { "id": "sf-01", "kind": "flight", "from": "上海", "to": "丽江", "date": "2026-10-01" },
+    { "id": "sf-02", "kind": "flight", "from": "北京", "to": "大理", "date": "2026-10-02" },
+    { "id": "sf-03", "kind": "flight", "from": "上海", "to": "三亚", "date": "2026-11-11" },
+    { "id": "sf-04", "kind": "flight", "from": "广州", "to": "昆明", "date": "2026-12-20" },
+    { "id": "sf-05", "kind": "flight", "from": "深圳", "to": "成都", "date": "2026-10-05" },
+    { "id": "sf-06", "kind": "flight", "from": "杭州", "to": "厦门", "date": "2026-10-06" },
+    { "id": "sf-07", "kind": "flight", "from": "西安", "to": "桂林", "date": "2026-10-07" },
+    { "id": "sf-08", "kind": "flight", "from": "重庆", "to": "贵阳", "date": "2026-10-08" },
+    { "id": "mt-01", "kind": "meituan-hotel", "city": "上海", "keyword": "陆家嘴" },
+    { "id": "mt-02", "kind": "meituan-hotel", "city": "大理", "keyword": "洱海" },
+    { "id": "mt-03", "kind": "meituan-hotel", "city": "成都", "keyword": "太古里" },
+    { "id": "mt-04", "kind": "meituan-hotel", "city": "北京", "keyword": "故宫" },
+    { "id": "mt-05", "kind": "meituan-minsu", "city": "丽江", "keyword": "古城" },
+    { "id": "mt-06", "kind": "meituan-minsu", "city": "厦门", "keyword": "鼓浪屿" },
+    { "id": "mt-07", "kind": "meituan-minsu", "city": "杭州", "keyword": "西湖" },
+    { "id": "mt-08", "kind": "meituan-minsu", "city": "三亚", "keyword": "亚龙湾" },
+    { "id": "fa-01", "kind": "flyai-flight", "from": "上海", "to": "丽江", "date": "2026-10-01" },
+    { "id": "fa-02", "kind": "flyai-flight", "from": "北京", "to": "大理", "date": "2026-10-02" },
+    { "id": "fa-03", "kind": "flyai-train", "from": "上海", "to": "大理", "date": "2026-10-01" },
+    { "id": "fa-04", "kind": "flyai-train", "from": "北京", "to": "昆明", "date": "2026-10-03" }
+  ]
+}
