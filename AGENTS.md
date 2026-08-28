@@ -9,7 +9,7 @@
 - 状态同步纪律:任何改变系统当前形态/状态/债务的提交,必须在同一提交内同步 `architecture.md` §11 列出的全部状态面(6 处);M-exit 提交在提交信息中附保鲜清单勾稽结果。
 - 红线进代码:动机画像无 evidence 拒绝落盘;wish pool 条目强制 conditions;写操作(预订/支付类工具)未来必须过 WriteGate(确认前不得实现任何直接写)。
 - 提交前跑 `git status --short` 并能解释每个条目;**只暂存自己负责的具名文件,禁止 `git add -A`/`git commit -am` 席卷工作区**——多 agent 并行时工作区常混有他人在制品;提交信息一句话说清「为什么」;测试红着不许合。
-- 对外发布纪律:打 tag / 推 remote / 发版说明**只由发布 owner 执行**(当前:创始人指定的 review agent);发布前必过发布闸——① 全栈回归绿 ② `architecture.md` §11 六状态面同步 ③ README 用法逐条实测 ④ License 明确 ⑤ 版本号在 tag 与全部文档间一致。任何 agent 不得自行宣称「已发布」。
+- 对外发布纪律(2026-08-28 founder 改为确认制):**发不发、发哪个版本由 founder 确认;确认后打 tag / 推 remote / npm 发布 / 发版说明由执行 agent 完成,无需 owner 亲为**。发布前必过发布闸——① 全栈回归绿 ② `architecture.md` §11 六状态面同步 ③ README 用法逐条实测(npm 形态必须真装真跑插件加载,web 200 不算数)④ License 明确 ⑤ 版本号在 tag 与全部文档间一致;发布后必须从 registry 实测回拉验证(npm view dist-tags + 干净安装)。未经 founder 确认不得发布;未过闸不得宣称「已发布」。
 
 ## 巡检/测试的状态纪律
 
