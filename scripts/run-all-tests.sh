@@ -132,6 +132,10 @@ echo "=== 25. action-cache 自愈层(会话数据面 P2:变量化key/指纹被�
 (cd ts && npx tsx scripts/action-cache-tests.ts) || FAIL=1
 
 echo
+echo "=== 26. 会话面 P2-2 抽取层(a11y兜底抽取/提交件剔除/美团适配器骨架/金标准20 schema,纯函数) ==="
+(cd ts && npx tsx scripts/session-extract-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

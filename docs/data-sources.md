@@ -205,6 +205,8 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 **会话数据面 P1(RFC §4,2026-08-28)**:`capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard(方法×URL 双因子 + 驼峰复合写词,写请求物理 abort + 审计,fail-closed)+ 携程机票适配器(batchSearch 嗅探→结构化)+ 节律闸(同站 ≥30s);证据链新标注 `[会话:ctrip-flight@ts]` 生效;run-all §24。live 会话检索需 headful(headless 下携程只回壳页,实测)。登录态为存在前提(founder 纠偏 2026-08-28):默认 profile `~/.gotry/session-profile` + 登录闸(needs-login)+ `scripts/session-login.ts` 首登;匿名仅 `allowAnonymous` 自检态。
 
+**美团实测边界(2026-08-28 tick)**:匿名实例 hotel.meituan.com 直接 **403**(headful 新 profile)——三站最强反爬,登录态是 403 级硬前置;适配器骨架已落(`adapters/meituan-local.ts`:城市拼音表/登录票据名单/networkHint 占位/a11y 兜底 `extractListings`),真实接口形状待登录态就绪后回填。a11y 兜底抽取器 `session/extract.ts`(快照条目/提交件剔除/nameAffinity)与金标准查询集 `data/session-golden-20.json`(20 条,只增不改)同批落地(run-all §26)。
+
 **携程机票页 XHR 嗅探 PoC**(`ts/scripts/session-attach-poc.ts`,playwright-core 1.62.1 + 专用测试 profile `/tmp/gotry-session-poc-profile`):
 - 两次实测均零风控、零交互只读;主搜索接口已识别:`flights.ctrip.com/international/search/api/search/batchSearch`(~550KB,国内票同走)+ `FlightIntlAndInlandLowestPriceSearch` 低价日历(~81KB)——P1 携程适配器的 networkHints 直接可用。
 
