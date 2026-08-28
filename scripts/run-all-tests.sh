@@ -106,6 +106,10 @@ echo "=== 23. 时间窗衰减(memory-design P3:分级窗口/单调/地板/上界
 (cd ts && npx tsx scripts/memory-decay-tests.ts) || FAIL=1
 
 echo
+echo "=== 25. 发布前离线预验证(pack→解 tarball→依赖声明完整→入口文件→import 面静态检查;rc.9 教训的永久闸) ==="
+(cd ts && npx tsx scripts/publish-preverify.ts) || FAIL=1
+
+echo
 echo "=== 24. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
 NUDGE_FIXTURE=$(mktemp -d)
 mkdir -p "$NUDGE_FIXTURE/gotry-state"
