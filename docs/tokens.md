@@ -24,6 +24,7 @@ XHS_COOKIES=             # 小红书 Cookie-Editor JSON
 **隔离命令**(2026-08-22 founder:「不要用全局的 ~/.npmrc,单独弄个命令隔离开」):
 - `./scripts/publish-npm.sh` — `NPM_CONFIG_USERCONFIG` 指向仓内 `.npmrc.publish`(gitignored,.env 现生成),**不读写全局 ~/.npmrc**,不受 bnpm registry/prefix 影响;废弃旧脚本 `npm config set` 往全局写 token 的做法(污染日工作具 npmrc 的源头之一)
 - 实测全过程:whoami=danceiny 通过;`gotry` 裸名与既存 `go-try` 撞名(npm 新规)→ 改 scoped `@danceiny/gotry`;founder 开通 2FA(恢复码存 `~/work/npm_recovery_codes.txt`,已耗 4 枚);**恢复码可当 `--otp` 用**,最终 `npm publish --access public --otp=<恢复码>` → PUT 200 + public access。新包有 npm 安全审查滞留,PUT 200 后 view 可能 404 几分钟—几小时,属正常
+- **⚠️ 2026-08-28 rc.10 发布实况(覆盖旧流程)**:.env 的 legacy NPM_TOKEN 已失效(whoami 401);**恢复码作 --otp 已被 npm 拒收**(「需要 authenticator 的一次性密码」,两枚实测均拒)。可行路径 = ① web 登录:npm CLI 无 TTY 会落交互模式失败,须用 npm-profile 库级驱动(关键头 `npm-auth-type: web`,否则 registry 400 当 couch 登录)取真实 loginUrl → 浏览器 Approve → 会话 token 写 `.npmrc.publish`;② 发布时 EOTP 用 expect 包 PTY 跑 `npm publish`,otplease 自动开浏览器走 `auth/cli` 二次验证,Approve 后自动续发布成功。rc.10 即此路径发出
 - **以后每次发布**: `./scripts/publish-npm.sh --otp=<6位 authenticator 码或一枚恢复码>`;嫌烦可在 npmjs Access Tokens 建 Granular token(Allow bypass 2FA + Packages Read/Write)替换 .env 的 NPM_TOKEN → 无需 OTP
 - **⚠️ 登录时刻的三连批次**(2026-08-26 巡检发现,凭证就绪后一次做完):
   1. 发布 rc.8(工件 /tmp 就绪)
