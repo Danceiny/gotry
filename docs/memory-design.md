@@ -51,11 +51,11 @@
 - **消费**:出发地三级解析(未来行程→时间线→问用户);「去过不再推」进排序通道;回流率分子变准(verified_outcome ⟺ timeline 有对应行程)。
 - **验收(已达成)**:断言 100% 可溯源;交叉一致守门(verified 无 timeline = 巡检缺口暴露,不自动补写)。落地 = `travel-timeline.ts` 纯函数 + `gotry_trip_log` 工具 + confirm-outcome 可选自动挂时间线(tripStart 传入才落,否则留缺口)+ `{{motivation_brief}}` 注入「去过」行(最近 3 次)。run-all §20,7/7 断言。
 
-### P2 同行人档案(M5-6 层)
+### P2 同行人档案(M5-6 层)——**✅ 已落地 2026-08-28**
 
 `gotry-state/companions.json`:`{ companion_id, label, constraints: { mobility, health, prefs }, evidence }`。
 - 写入走动机访谈同款(契约 (18));**健康/无障碍约束只进排序与行程结构建议,不进硬过滤**;渲染时「你上次说晕车」式引用需带 evidence 指针(产品设计故事三的行为面)。
-- 验收:敏感字段零入库(负面清单守卫用例);引用可溯源。
+- 验收(已达成):负面清单守卫用例(证件/手机号拒收,4/4 断言 run-all §21);引用可溯源(evidence 数组)。落地 = `companions.ts` 纯函数 + `gotry_companion_save`(第 15 工具)+ `{{motivation_brief}}` 同行人行。
 
 ### P3 时间窗衰减(M2 层)
 
