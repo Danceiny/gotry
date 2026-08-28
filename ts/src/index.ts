@@ -16,6 +16,14 @@
 import { join } from 'node:path'
 import { readFile, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
+
+async function readJsonlLines<T>(path: string): Promise<T[]> {
+  try {
+    return (await readFile(path, 'utf-8')).split('\n').filter(Boolean).map(l => JSON.parse(l) as T)
+  } catch {
+    return []
+  }
+}
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -28,6 +36,7 @@ import { installProcessGuards, guardToolExecute } from '../capabilities/incident
 import { interpretArgs, type GotryObservation } from './tool-packet.ts'
 import { appendEvent, projectUtility, type MemoryUtilityEvent } from './memory-utility.ts'
 import { pickNudgeWish, type WishPoolEntry } from './wish-pool.ts'
+import { appendTrip, resolveTimelineDate, type TimelineEvent } from './travel-timeline.ts'
 import { mergeProfile } from './memory-capture.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
@@ -93,11 +102,29 @@ function renderMotivationBrief(stateRoot: string): string {
     if (weights.length) lines.push(`- 动机权重: ${weights.map(([k, v]) => `${k}=${v}`).join(', ')}(证据 ${p.evidence?.length ?? 0} 条)`)
     const hard = Object.entries(p.hard ?? {})
     if (hard.length) lines.push(`- 硬约束: ${hard.map(([k, v]) => `${k}=${String(v)}`).join(', ')}`)
+    // 旅行时间线(memory-design P1):去过的地方不再主动推荐,除非用户点名
+    const trips = readTimelineTrips(stateRoot)
+    if (trips.length) {
+      lines.push(`- 去过: ${trips.map(t => `${t.destination}(${t.start.slice(0, 7)})`).join('、')}——去过的地方不再主动推荐,除非用户点名`)
+    }
     lines.push(`- 愿望池: 用 gotry_wish_pool_list 按条件召回(0..1),勿直接堆砌`)
     if (p.updated_at) lines.push(`- 更新于: ${p.updated_at}`)
     return weights.length || hard.length ? lines.join('\n') : ''
   } catch {
     return '' // 首访:无画像
+  }
+}
+
+/** 时间线摘要(brief 用):最近 3 次行程(目的地+年月);文件缺失返回空 */
+function readTimelineTrips(stateRoot: string): Array<{ destination: string; start: string }> {
+  try {
+    const raw = readFileSync(join(stateRoot, 'gotry-state', 'trips.jsonl'), 'utf-8')
+    return raw.split('\n').filter(Boolean)
+      .map(l => JSON.parse(l) as { destination: string; start: string })
+      .sort((a, b) => (a.start < b.start ? 1 : -1))
+      .slice(0, 3)
+  } catch {
+    return []
   }
 }
 
@@ -311,7 +338,7 @@ export function apply(ctx: Context, config: Config): void {
       query: {
         type: 'json',
         required: true,
-        description: '{ action?: "recall"|"confirm-outcome", days?: number, budgetCny?: number, month?: number, wishId?: string, attribution?: "helpful"|"harmful"|"neutral", detail?: string }',
+        description: '{ action?: "recall"|"confirm-outcome", days?, budgetCny?, month?, wishId?, attribution?: "helpful"|"harmful"|"neutral", detail?, tripStart?: "行程起始(确认成行时挂时间线)" }',
       },
     },
     output: {
@@ -319,7 +346,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
     },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ action?: string; days?: number; budgetCny?: number; month?: number; wishId?: string; attribution?: 'helpful' | 'harmful' | 'neutral'; detail?: string }>(args, 'action')
+      const q = unwrapQuery<{ action?: string; days?: number; budgetCny?: number; month?: number; wishId?: string; attribution?: 'helpful' | 'harmful' | 'neutral'; detail?: string; tripStart?: string }>(args, 'action')
       const dir = await ensureStateDir(config.stateRoot)
       const pool = (await readJson(join(dir, 'wish-pool.json'), [])) as Array<Record<string, unknown>>
       const sidecarPath = join(dir, 'memory-utility.jsonl')
@@ -343,7 +370,24 @@ export function apply(ctx: Context, config: Config): void {
           ctx: 'gotry_wish_pool_list.confirm', detail: q.detail, attribution: q.attribution,
         })
         if (appended) await saveSidecar(next)
-        return { ok: true, recorded: appended, wish_id: q.wishId, status: q.attribution } as never
+        // 成行确认自动挂时间线(memory-design P1):用户给了行程日期才落,否则留巡检缺口
+        let trip: { appended?: boolean; tripId?: string } | undefined
+        const wish = pool.find(e => e['wish_id'] === q.wishId) as { name?: string } | undefined
+        if (q.tripStart && wish?.name) {
+          const anchor = buildTimeAnchor(new Date())
+          const start = resolveTimelineDate(q.tripStart, anchor) ?? (/^\d{4}-\d{2}-\d{2}$/.test(q.tripStart) ? q.tripStart : undefined)
+          if (start) {
+            const tlPath = join(dir, 'trips.jsonl')
+            const tl = await readJsonlLines<TimelineEvent>(tlPath)
+            const r = appendTrip(tl, {
+              destination: String(wish.name), start, companions: undefined,
+              source: 'wish-confirmed', evidence: `wish ${q.wishId} confirm-outcome(${q.attribution})`,
+            })
+            if (r.appended) await writeFile(tlPath, r.events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8')
+            trip = { appended: r.appended, tripId: r.tripId }
+          }
+        }
+        return { ok: true, recorded: appended, wish_id: q.wishId, status: q.attribution, ...(trip ? { trip } : {}) } as never
       }
       // recall:0..1 条件匹配(判定归 wish-pool 纯函数),muted 永不召回,无命中不硬推
       const candidates = pool.filter(e => !e['muted'] && typeof e['wish_id'] === 'string')
@@ -366,6 +410,46 @@ export function apply(ctx: Context, config: Config): void {
       } as never
     },
     presentCall: args => ({ card: 'generic', title: '「下一次出发」召回', kind: 'search', rawInput: args.query }),
+  }))
+
+  registerGuarded(defineTool({
+    name: 'gotry_trip_log',
+    description:
+      'Record a PAST trip into the travel timeline (memory-design M4 layer). Use when the user mentions a trip they already took '
+      + '(「去年国庆去了大理」) — dates resolve via the time anchor (词表外日期会拒绝,请用户给绝对日期), evidence MUST be the user\'s verbatim words. '
+      + 'Append-only and idempotent (same destination+start+source = same trip); overlapping same-destination trips are rejected for human adjudication. '
+      + 'Past trips power origin resolution and 「去过不再推」 ranking — never a hard filter.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ destination: "大理", start: "2025-10-01 或绝对日期表达", end?: 同上, companions?: ["爸爸"], evidence: "<用户原话>" }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ destination?: string; start?: string; end?: string; companions?: string[]; evidence?: string }>(args, 'destination')
+      if (!q.destination) return { ok: false, summary: 'destination 必填' } as never
+      if (!q.evidence) return { ok: false, summary: 'evidence 必填(用户原话,溯源 P0)' } as never
+      const anchor = buildTimeAnchor(new Date())
+      const start = resolveTimelineDate(q.start ?? '', anchor) ?? (/^\d{4}-\d{2}-\d{2}$/.test(q.start ?? '') ? q.start : undefined)
+      if (!start) return { ok: false, summary: `start 无法解析为绝对日期(${q.start ?? '缺'})——请向用户要具体日期,不猜` } as never
+      const end = q.end ? (resolveTimelineDate(q.end, anchor) ?? (/^\d{4}-\d{2}-\d{2}$/.test(q.end) ? q.end : undefined)) : undefined
+      const dir = await ensureStateDir(config.stateRoot)
+      const path = join(dir, 'trips.jsonl')
+      const events = await readJsonlLines<import('./travel-timeline.ts').TimelineEvent>(path)
+      const res = appendTrip(events, {
+        destination: q.destination.trim(), start, end, companions: q.companions,
+        source: 'user-verbatim', evidence: q.evidence,
+      })
+      if (!res.appended && res.reason) return { ok: false, summary: res.reason } as never
+      if (res.appended) await writeFile(path, res.events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8')
+      return { ok: true, appended: res.appended, trip_id: res.tripId, total: res.events.length, summary: res.appended ? `已入时间线:${q.destination} @ ${start}` : `已存在(幂等跳过):${res.tripId}` } as never
+    },
+    presentCall: args => ({ card: 'generic', title: '记录旅行', kind: 'edit', rawInput: args.query }),
   }))
 
   registerGuarded(defineTool({

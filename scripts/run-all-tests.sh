@@ -90,11 +90,15 @@ echo "=== 19. 时间感评测(时间锚点卡 + 槽位过期校验 + 评分器 +
 (cd ts && npx tsx scripts/time-eval-tests.ts) || FAIL=1
 
 echo
-echo "=== 20. 记忆效用指标投影(M4 北极星过程面,只读,空态优雅) ==="
+echo "=== 20. 旅行时间线(memory-design P1 守门面:必填/幂等/重叠冲突/交叉一致) ==="
+(cd ts && npx tsx scripts/travel-timeline-tests.ts) || FAIL=1
+
+echo
+echo "=== 21. 记忆效用指标投影(M4 北极星过程面,只读,空态优雅) ==="
 (cd ts && npx tsx scripts/memory-metrics.ts) || FAIL=1
 
 echo
-echo "=== 21. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
+echo "=== 22. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
 NUDGE_FIXTURE=$(mktemp -d)
 mkdir -p "$NUDGE_FIXTURE/gotry-state"
 cat > "$NUDGE_FIXTURE/gotry-state/wish-pool.json" <<'EOF'
