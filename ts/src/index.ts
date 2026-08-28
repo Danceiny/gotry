@@ -46,6 +46,8 @@ import { verifyFlight } from '../capabilities/opensky.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
 import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
+import { flyaiSearch } from '../capabilities/flyai.ts'
+import { sessionFlightSearch } from '../capabilities/session-search.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -711,6 +713,68 @@ export function apply(ctx: Context, config: Config): void {
       })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `飞行校验:${String((args.query as { callsign?: string })?.callsign ?? '')}`, kind: 'fetch', rawInput: args.query }),
+  }))
+
+  registerGuarded(defineTool({
+    name: 'gotry_flyai_search',
+    description:
+      'Live flight/train search via Fliggy official FlyAI channel (read-only, no key, booking only via jumpUrl by the human). '
+      + 'PRIMARY source for real schedules & prices (RFC user-session-data-rfc). Input: kind=flight|train, from/to city names (Chinese), date YYYY-MM-DD. '
+      + 'Evidence [实时API:flyai@ts]. Cross-validate expensive claims against gotry_session_search when it matters.',
+    parameters: {
+      query: { type: 'json', required: true, description: '{ kind: "flight"|"train", from: "上海", to: "丽江", date: "2026-10-01" }' },
+    },
+    output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string }>(args, 'from')
+      const kind = q.kind === 'train' ? 'train' : 'flight'
+      if (!q.from || !q.to || !q.date) {
+        return { ok: false, summary: '需要 from/to(中文城市名)与 date(YYYY-MM-DD)' } as const
+      }
+      const r = await flyaiSearch({ kind, origin: q.from, destination: q.to, depDate: q.date })
+      const top = (r.options ?? []).slice(0, 8).map(o => `${o.no} ${o.name} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
+      const summary = r.verdict === 'hit'
+        ? `${q.from}→${q.to} ${q.date} ${kind === 'flight' ? '机票' : '火车票'}(飞猪官方只读)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
+        : `${q.from}→${q.to} ${q.date} 无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
+      return JSON.parse(JSON.stringify({ ...r, kind, summary })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),
+    presentResult: (args, value) => {
+      const r = value as { ok?: boolean; options?: unknown[] }
+      return { card: 'generic', title: `飞猪检索:${r.ok && (r.options?.length ?? 0) > 0 ? `${r.options!.length} 条` : '降级'}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
+    },
+  }))
+
+  registerGuarded(defineTool({
+    name: 'gotry_session_search',
+    description:
+      'Cross-validation search on the user\'s OWN logged-in browser session (dedicated persistent profile, ReadGuard = physically read-only: '
+      + 'write requests are aborted at network layer; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
+      + 'Currently ctrip-flight: sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
+      + 'verdict needs-login = run scripts/session-login.ts once with the human logging in. Rate-limited (≥30s between same-site calls). '
+      + 'Use to verify/double-check prices from gotry_flyai_search on the same itinerary (split by 直达/中转).',
+    parameters: {
+      query: { type: 'json', required: true, description: '{ from: "上海", to: "丽江", date: "2026-10-01" }' },
+    },
+    output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ from?: string; to?: string; date?: string }>(args, 'from')
+      if (!q.from || !q.to || !q.date) {
+        return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD)' } as const
+      }
+      const r = await sessionFlightSearch({ from: q.from, to: q.to, date: q.date })
+      const top = (r.options ?? []).slice(0, 8).map(o => `${o.flightNo} ${o.airline} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
+      const summary = r.verdict === 'hit'
+        ? `${q.from}→${q.to} ${q.date} 会话检索(携程,用户本人登录态)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
+        : `会话检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
+      return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `会话检索:${String((args.query as { from?: string })?.from ?? '')}`, kind: 'fetch', rawInput: args.query }),
+    presentResult: (_args, value) => {
+      const r = value as { verdict?: string; options?: unknown[] }
+      const label = r.verdict === 'hit' ? `会话 ${r.options!.length} 条` : (r.verdict === 'needs-login' ? '需登录' : r.verdict ?? '降级')
+      return { card: 'generic', title: `会话检索:${label}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
+    },
   }))
 
   registerGuarded(defineTool({
