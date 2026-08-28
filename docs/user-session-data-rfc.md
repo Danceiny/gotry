@@ -46,7 +46,7 @@
 
 | 通道 | 机制 | 2026 现状 | 适配度 |
 |---|---|---|---|
-| A. attach 用户日常 Chrome | Chrome 136(2025-05)起默认 profile 禁用调试端口(安全收紧,App-Bound Encryption 动机链);**Chrome 144+ 恢复官方路径**:`chrome://inspect/#remote-debugging` 用户手动开一次开关即可 attach(chrome-devtools-mcp `--autoConnect` 依赖此) | 可行但要求用户 Chrome ≥144 + 手动开开关;同一时刻仅一个调试客户端 | 二期选项 |
+| A. attach 用户日常 Chrome | Chrome 136(2025-05)起默认 profile 禁用调试端口(安全收紧,App-Bound Encryption 动机链);**Chrome 144+ 恢复官方路径**:`chrome://inspect/#remote-debugging` 用户手动开一次开关即可 attach(chrome-devtools-mcp `--autoConnect` 依赖此) | 要求用户 Chrome ≥144 + 手动开开关;同一时刻仅一个调试客户端 | **✅ PRIMARY(2026-08-28 founder 定案)**:专用 profile 实测失败(窗口呈匿名裸 Chrome,登录永不发生,History/Cookies 双 0 行)——「不能匿名实例」两次纠偏后,attach 日常 Chrome(用户本人登录态+真实指纹)为默认传输(mode=cdp;`needs-attach` verdict 给一次性开启指引;persistent 降为测试/后备) |
 | B. **专用持久 profile** | Playwright `launchPersistentContext`(或 `channel:'chrome'` 用用户已装 Chrome,零浏览器下载);登录一次跨会话复用 | playwright-mcp 默认模式,最成熟 | **首发**(用户人工首登,agent 永不碰密码/验证码) |
 | C. 扩展接管 | playwright-mcp `--extension` 直接接管用户现有 tab 与登录态;chrome.debugger API 同类 | 官方实现已产品化,但 attach 期间有"started debugging this browser"警告条,用户心智成本高 | 二期选项(最贴近「用户自己的浏览器」心智) |
 

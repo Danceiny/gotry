@@ -10,7 +10,7 @@
 import { openSession } from './session/transport.ts'
 import { buildEntryUrl, NETWORK_HINTS, parseBatchSearch, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 
-export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login'
+export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach'
 
 export interface SessionSearchResult {
   ok: boolean
@@ -67,8 +67,12 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     return err('error', `unresolved entry: ${(entry.unresolved ?? []).join('/')} 不在城市码表`)
   }
 
-  const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath })
-  if (!t.ok) return err('error', t.summary)
+  const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath, mode: q.profileDir ? 'persistent' : 'cdp' })
+  if (!t.ok) {
+    // cdp 未开端口 → needs-attach(一次性用户动作);persistent 启动失败仍走 error
+    if (q.profileDir === undefined && /cdp attach 失败/.test(t.summary)) return err('needs-attach', t.summary)
+    return err('error', t.summary)
+  }
 
   try {
     // 登录态闸:用户自己的账号,不是匿名实例——匿名态按 onAnonymous 处置(默认 fail)

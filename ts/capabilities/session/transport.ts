@@ -24,7 +24,11 @@ export interface SessionTransport {
 }
 
 export interface TransportOptions {
-  /** 专用 profile 目录(默认 ~/.gotry/session-profile——持久保存用户登录态;/tmp 会被系统清理;测试用 mktemp 隔离匿名态) */
+  /** 传输模式:cdp=attach 用户日常 Chrome(默认,登录态=用户本人,founder 2026-08-28 定案);persistent=专用 profile(测试/后备) */
+  mode?: 'cdp' | 'persistent'
+  /** cdp 模式调试端口(Chrome 144+ chrome://inspect/#remote-debugging 手动开启;默认 9222) */
+  cdpPort?: number
+  /** 专用 profile 目录(persistent 模式;测试用 mktemp 隔离匿名态) */
   profileDir?: string
   /** 默认 headless(CI/巡检不弹窗);交互首登场景才 headful */
   headless?: boolean
@@ -33,6 +37,32 @@ export interface TransportOptions {
 }
 
 export async function openSession(opts: TransportOptions = {}): Promise<SessionTransport | TransportFailure> {
+  if (opts.mode === 'cdp' || (opts.mode !== 'persistent' && !opts.profileDir)) {
+    // CDP attach 日常 Chrome:登录态/指纹都是用户本人(RFC §2.2 路线 A 转 primary,founder 定案)
+    try {
+      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${opts.cdpPort ?? 9222}`, { timeout: 4_000 })
+      const context = browser.contexts()[0]
+      if (!context) {
+        await browser.close().catch(() => { /* ignore */ })
+        return { ok: false, summary: 'cdp attached but no default context' }
+      }
+      let guard: ReadGuardHandle
+      try {
+        guard = await attachReadGuard(context as unknown as Parameters<typeof attachReadGuard>[0], opts.auditPath)
+      } catch (e) {
+        await browser.close().catch(() => { /* ignore */ })
+        return { ok: false, summary: `read-guard attach failed: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}` }
+      }
+      const page = context.pages()[0] ?? (await context.newPage())
+      return {
+        ok: true, context, page, guard,
+        close: async () => { await browser.close().catch(() => { /* ignore */ }) }, // 只断开连接,不关用户浏览器
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message.slice(0, 160) : String(e)
+      return { ok: false, summary: `cdp attach 失败(日常 Chrome 未开调试端口):${msg}。开启方法:日常 Chrome 打开 chrome://inspect/#remote-debugging → 打开开关并确认弹窗(Chrome 144+)` }
+    }
+  }
   const { homedir } = await import('node:os')
   const profileDir = opts.profileDir ?? `${homedir()}/.gotry/session-profile`
   let context: BrowserContext
