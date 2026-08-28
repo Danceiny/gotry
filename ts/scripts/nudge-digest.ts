@@ -16,11 +16,12 @@
  * 无参数时 days/budget 不参与评分,month 取系统当月。
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { pickNudgeWish, type WishPoolEntry } from '../src/wish-pool.ts'
 import { projectUtility, type MemoryUtilityEvent } from '../src/memory-utility.ts'
 import { buildTimeAnchor } from '../src/time-anchor.ts'
+import { readUtilityEventsWithFallback, readWishPoolWithFallback } from '../src/state-ledger.ts'
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(name)
@@ -30,20 +31,9 @@ function arg(name: string): string | undefined {
 const stateRoot = arg('--state-root') ?? '.'
 const stateDir = join(stateRoot, 'gotry-state')
 
-function readJson<T>(path: string, fallback: T): T {
-  try {
-    return JSON.parse(readFileSync(path, 'utf-8')) as T
-  } catch {
-    return fallback
-  }
-}
-
 function readEvents(): MemoryUtilityEvent[] {
-  try {
-    return readFileSync(join(stateDir, 'memory-utility.jsonl'), 'utf-8').split('\n').filter(Boolean).map(l => JSON.parse(l) as MemoryUtilityEvent)
-  } catch {
-    return []
-  }
+  // ADR-15:账本优先,未迁移 root 回退旧文件(只读)
+  return readUtilityEventsWithFallback(stateRoot)
 }
 
 if (process.env['GOTRY_NUDGE_ENABLED'] === 'false') {
@@ -51,7 +41,7 @@ if (process.env['GOTRY_NUDGE_ENABLED'] === 'false') {
   process.exit(0)
 }
 
-const pool = readJson<WishPoolEntry[]>(join(stateDir, 'wish-pool.json'), [])
+const pool = readWishPoolWithFallback(stateRoot)
 const anchor = buildTimeAnchor(new Date())
 const ctx = {
   days: arg('--days') ? Number(arg('--days')) : undefined,

@@ -14,31 +14,21 @@
  */
 
 import { join } from 'node:path'
-import { readFile, writeFile } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
 
-async function readJsonlLines<T>(path: string): Promise<T[]> {
-  try {
-    return (await readFile(path, 'utf-8')).split('\n').filter(Boolean).map(l => JSON.parse(l) as T)
-  } catch {
-    return []
-  }
-}
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { ensureStateDir, readJson, recordLatency, writeJson } from './bridge.ts'
+import { ensureStateDir, recordLatency } from './bridge.ts'
 import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
 import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards, guardToolExecute } from '../capabilities/incident-log.ts'
 import { interpretArgs, type GotryObservation } from './tool-packet.ts'
-import { appendEvent, projectUtility, type MemoryUtilityEvent } from './memory-utility.ts'
+import { projectUtility } from './memory-utility.ts'
 import { pickNudgeWish, type WishPoolEntry } from './wish-pool.ts'
-import { appendTrip, resolveTimelineDate, type TimelineEvent } from './travel-timeline.ts'
-import { upsertCompanion } from './companions.ts'
-import { mergeProfile } from './memory-capture.ts'
+import { resolveTimelineDate } from './travel-timeline.ts'
+import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, readTripsWithFallback, readWishPoolWithFallback } from './state-ledger.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
@@ -93,61 +83,48 @@ interface WishPoolEntryInput {
 const unwrapQuery = interpretArgs
 
 /**
- * 动机画像 → persona 紧凑 brief(M4 T1 读回路径):空文件返回 ''(首访),
+ * 动机画像 → persona 紧凑 brief(M4 T1 读回路径):空画像返回 ''(首访),
  * persona 据此决定是否访谈。只读,不猜——画像里没有的字段不编。
+ * ADR-15:读经账本(未迁移 root 回退旧文件,只读)。
  */
 function renderMotivationBrief(stateRoot: string): string {
-  try {
-    const raw = readFileSync(join(stateRoot, 'gotry-state', 'motivation-profile.json'), 'utf-8')
-    const p = JSON.parse(raw) as { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown>; updated_at?: string }
-    const lines: string[] = ['## 用户记忆(跨会话画像;与用户当轮说法冲突时以用户为准,更新经 gotry_motivation_save)']
-    const weights = Object.entries(p.weights ?? {})
-    if (weights.length) lines.push(`- 动机权重: ${weights.map(([k, v]) => `${k}=${v}`).join(', ')}(证据 ${p.evidence?.length ?? 0} 条)`)
-    const hard = Object.entries(p.hard ?? {})
-    if (hard.length) lines.push(`- 硬约束: ${hard.map(([k, v]) => `${k}=${String(v)}`).join(', ')}`)
-    // 旅行时间线(memory-design P1):去过的地方不再主动推荐,除非用户点名
-    const trips = readTimelineTrips(stateRoot)
-    if (trips.length) {
-      lines.push(`- 去过: ${trips.map(t => `${t.destination}(${t.start.slice(0, 7)})`).join('、')}——去过的地方不再主动推荐,除非用户点名`)
-    }
-    // 同行人档案(memory-design P2):约束只进排序与行程结构建议,永不硬过滤
-    const companions = readCompanions(stateRoot)
-    if (companions.length) {
-      lines.push(`- 同行人: ${companions.map(c => `${c.label}(${c.brief})`).join('、')}——约束进结构与排序建议,不硬过滤;引用时带当初的原话依据`)
-    }
-    lines.push(`- 愿望池: 用 gotry_wish_pool_list 按条件召回(0..1),勿直接堆砌`)
-    if (p.updated_at) lines.push(`- 更新于: ${p.updated_at}`)
-    return weights.length || hard.length ? lines.join('\n') : ''
-  } catch {
-    return '' // 首访:无画像
+  const p = readMotivationWithFallback(stateRoot)
+  if (!p) return '' // 首访:无画像
+  const lines: string[] = ['## 用户记忆(跨会话画像;与用户当轮说法冲突时以用户为准,更新经 gotry_motivation_save)']
+  const weights = Object.entries(p.weights ?? {})
+  if (weights.length) lines.push(`- 动机权重: ${weights.map(([k, v]) => `${k}=${v}`).join(', ')}(证据 ${p.evidence?.length ?? 0} 条)`)
+  const hard = Object.entries(p.hard ?? {})
+  if (hard.length) lines.push(`- 硬约束: ${hard.map(([k, v]) => `${k}=${String(v)}`).join(', ')}`)
+  // 旅行时间线(memory-design P1):去过的地方不再主动推荐,除非用户点名
+  const trips = readTimelineTrips(stateRoot)
+  if (trips.length) {
+    lines.push(`- 去过: ${trips.map(t => `${t.destination}(${t.start.slice(0, 7)})`).join('、')}——去过的地方不再主动推荐,除非用户点名`)
   }
+  // 同行人档案(memory-design P2):约束只进排序与行程结构建议,永不硬过滤
+  const companions = readCompanions(stateRoot)
+  if (companions.length) {
+    lines.push(`- 同行人: ${companions.map(c => `${c.label}(${c.brief})`).join('、')}——约束进结构与排序建议,不硬过滤;引用时带当初的原话依据`)
+  }
+  lines.push(`- 愿望池: 用 gotry_wish_pool_list 按条件召回(0..1),勿直接堆砌`)
+  if (p.updated_at) lines.push(`- 更新于: ${p.updated_at}`)
+  return weights.length || hard.length ? lines.join('\n') : ''
 }
 
-/** 时间线摘要(brief 用):最近 3 次行程(目的地+年月);文件缺失返回空 */
+/** 时间线摘要(brief 用):最近 3 次行程(目的地+年月);账本优先,未迁移回退文件 */
 /** 同行人摘要(brief 用):label + 约束串 */
 function readCompanions(stateRoot: string): Array<{ label: string; brief: string }> {
-  try {
-    const raw = readFileSync(join(stateRoot, 'gotry-state', 'companions.json'), 'utf-8')
-    return (JSON.parse(raw) as Array<{ label: string; constraints: { mobility?: string; health?: string[]; prefs?: string[] } }>)
-      .map(c => {
-        const bits = [c.constraints.mobility, ...(c.constraints.health ?? []), ...(c.constraints.prefs ?? [])].filter(Boolean)
-        return { label: c.label, brief: bits.join('/') }
-      })
-  } catch {
-    return []
-  }
+  return readCompanionsWithFallback(stateRoot)
+    .map(c => {
+      const bits = [c.constraints.mobility, ...(c.constraints.health ?? []), ...(c.constraints.prefs ?? [])].filter(Boolean)
+      return { label: c.label, brief: bits.join('/') }
+    })
 }
 
 function readTimelineTrips(stateRoot: string): Array<{ destination: string; start: string }> {
-  try {
-    const raw = readFileSync(join(stateRoot, 'gotry-state', 'trips.jsonl'), 'utf-8')
-    return raw.split('\n').filter(Boolean)
-      .map(l => JSON.parse(l) as { destination: string; start: string })
-      .sort((a, b) => (a.start < b.start ? 1 : -1))
-      .slice(0, 3)
-  } catch {
-    return []
-  }
+  return readTripsWithFallback(stateRoot)
+    .map(t => ({ destination: t.destination, start: t.start }))
+    .sort((a, b) => (a.start < b.start ? 1 : -1))
+    .slice(0, 3)
 }
 
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
@@ -273,25 +250,17 @@ export function apply(ctx: Context, config: Config): void {
       // T1 接线:本工具是增量补丁语义(契约 18——模型每轮把对话新事实带进来),
       // 经 mergeProfile 守门合并进既有画像(追加不删史/幂等/权重变更须伴新证据),
       // 不再整档覆盖。首次调用(无档案)= 全量建立。
+      // ADR-15:守门+事件+投影在账本单事务内完成,evidence 红线拒绝即回滚,账本无痕。
       const incoming = (args.profile ?? {}) as { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown> }
       if (!incoming.evidence?.length) {
         throw new Error('refusing to save a motivation profile without evidence (P0 anti-fabrication rule)')
       }
-      const dir = await ensureStateDir(config.stateRoot)
-      const path = join(dir, 'motivation-profile.json')
-      let existing: { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown> } | null = null
-      try {
-        existing = await readJson<typeof existing>(path, null)
-      } catch { /* 首次保存:无档案 */ }
-      const merged = mergeProfile(existing, { weights: incoming.weights, evidence: incoming.evidence, hard: incoming.hard })
-      if (!merged) {
-        // 幂等:补丁与现有画像完全一致,不落盘
-        const currentJson = JSON.parse(JSON.stringify({ ...(existing ?? {}), updated_at: new Date().toISOString() })) as JsonObject
-        return { ok: true, saved: false, path, profile: currentJson, summary: '无新内容(幂等跳过)' }
-      }
-      const saved = JSON.parse(JSON.stringify({ ...merged, updated_at: new Date().toISOString() })) as JsonObject
-      await writeJson(path, saved)
-      return { ok: true, saved: true, path, profile: saved, summary: '画像已合并落盘' }
+      const ledger = ensureLedger(config.stateRoot)
+      const res = ledger.appendMotivationPatch({ weights: incoming.weights, evidence: incoming.evidence, hard: incoming.hard })
+      const profileJson = JSON.parse(JSON.stringify(res.profile)) as JsonObject
+      return res.saved
+        ? { ok: true, saved: true, path: ledger.dbPath, profile: profileJson, summary: '画像已合并入账本(单事务)' }
+        : { ok: true, saved: false, path: ledger.dbPath, profile: profileJson, summary: '无新内容(幂等跳过)' }
     },
     presentCall: args => ({ card: 'generic', title: '保存动机画像', kind: 'edit', rawInput: args.profile }),
   }))
@@ -320,30 +289,11 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute(args: { entry: unknown }, _exec: unknown) {
       const entry = (args.entry ?? {}) as WishPoolEntryInput & { muted?: boolean }
-      if (!entry.name || !entry.conditions) {
-        throw new Error('wish pool entry requires name and conditions (fulfilment conditions are the whole point)')
-      }
-      const dir = await ensureStateDir(config.stateRoot)
-      const path = join(dir, 'wish-pool.json')
-      const pool = (await readJson(path, [])) as Array<Record<string, unknown>>
-      // 同名憧憬幂等更新(刷新理由与成行条件),不重复落盘;wish_id 稳定(存量补签)
-      const existing = pool.findIndex(e => e['name'] === entry.name)
-      if (existing >= 0) {
-        const prev = pool[existing] ?? {}
-        pool[existing] = {
-          ...prev,
-          wish_id: prev['wish_id'] ?? `w${Date.now().toString(36)}`,
-          reason: entry.reason ?? prev['reason'],
-          conditions: entry.conditions,
-          ...(entry.muted !== undefined ? { muted: entry.muted } : {}),
-        }
-        await writeJson(path, pool)
-        return { ok: true, added: false, wish_id: String(pool[existing]?.['wish_id']), total: pool.length, path }
-      }
-      const created = { wish_id: `w${Date.now().toString(36)}`, reason: '', ...entry, added_at: new Date().toISOString() }
-      pool.push(created)
-      await writeJson(path, pool)
-      return { ok: true, added: true, wish_id: created.wish_id, total: pool.length, path }
+      // 同名憧憬幂等更新(刷新理由与成行条件),不重复入池;wish_id 语义派生自名称,稳定可重放。
+      // ADR-15:conditions 红线在账本事务内校验拒绝。
+      const ledger = ensureLedger(config.stateRoot)
+      const r = ledger.appendWish({ name: entry.name, reason: entry.reason, conditions: entry.conditions, muted: entry.muted })
+      return { ok: true, added: r.added, wish_id: r.wish_id, total: r.total, path: ledger.dbPath }
     },
     presentCall: args => ({ card: 'generic', title: '加入「下一次出发」清单', kind: 'edit', rawInput: args.entry }),
   }))
@@ -369,60 +319,39 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute(args: { query: unknown }, _exec: unknown) {
       const q = unwrapQuery<{ action?: string; days?: number; budgetCny?: number; month?: number; wishId?: string; attribution?: 'helpful' | 'harmful' | 'neutral'; detail?: string; tripStart?: string }>(args, 'action')
-      const dir = await ensureStateDir(config.stateRoot)
-      const pool = (await readJson(join(dir, 'wish-pool.json'), [])) as Array<Record<string, unknown>>
-      const sidecarPath = join(dir, 'memory-utility.jsonl')
-      const loadSidecar = async (): Promise<MemoryUtilityEvent[]> => {
-        try {
-          const raw = await readFile(sidecarPath, 'utf-8')
-          return raw.split('\n').filter(Boolean).map(l => JSON.parse(l) as MemoryUtilityEvent)
-        } catch { return [] } // fail-open:sidecar 缺失/损坏不阻塞召回
-      }
-      const saveSidecar = async (events: MemoryUtilityEvent[]) => {
-        await writeFile(sidecarPath, events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8')
-      }
+      const ledger = ensureLedger(config.stateRoot)
       const now = new Date().toISOString()
       if (q.action === 'confirm-outcome') {
         if (!q.wishId || !q.attribution) {
           return { ok: false, summary: 'confirm-outcome 需要 wishId + attribution(helpful|harmful|neutral)' } as never
         }
-        const events = await loadSidecar()
-        const { events: next, appended } = appendEvent(events, {
-          wish_id: q.wishId, kind: 'verified_outcome', ts: now,
-          ctx: 'gotry_wish_pool_list.confirm', detail: q.detail, attribution: q.attribution,
-        })
-        if (appended) await saveSidecar(next)
-        // 成行确认自动挂时间线(memory-design P1):用户给了行程日期才落,否则留巡检缺口
-        let trip: { appended?: boolean; tripId?: string } | undefined
-        const wish = pool.find(e => e['wish_id'] === q.wishId) as { name?: string } | undefined
+        // 成行确认 = 效用事件 + 可选时间线行程,账本单事务(ADR-15:原两文件写在崩溃时分叉)
+        let tripInput: { destination: string; start: string; end?: string; companions?: string[]; source: 'wish-confirmed'; evidence: string } | undefined
+        const wish = ledger.readWishPool().find(e => String(e.wish_id) === q.wishId) as { name?: unknown } | undefined
         if (q.tripStart && wish?.name) {
           const anchor = buildTimeAnchor(new Date())
           const start = resolveTimelineDate(q.tripStart, anchor) ?? (/^\d{4}-\d{2}-\d{2}$/.test(q.tripStart) ? q.tripStart : undefined)
           if (start) {
-            const tlPath = join(dir, 'trips.jsonl')
-            const tl = await readJsonlLines<TimelineEvent>(tlPath)
-            const r = appendTrip(tl, {
+            tripInput = {
               destination: String(wish.name), start, companions: undefined,
               source: 'wish-confirmed', evidence: `wish ${q.wishId} confirm-outcome(${q.attribution})`,
-            })
-            if (r.appended) await writeFile(tlPath, r.events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8')
-            trip = { appended: r.appended, tripId: r.tripId }
+            }
           }
         }
-        return { ok: true, recorded: appended, wish_id: q.wishId, status: q.attribution, ...(trip ? { trip } : {}) } as never
+        const r = ledger.confirmOutcome({ wishId: q.wishId, attribution: q.attribution, detail: q.detail, trip: tripInput })
+        return { ok: true, recorded: r.recorded, wish_id: q.wishId, status: q.attribution, ...(r.trip ? { trip: r.trip } : {}) } as never
       }
       // recall:0..1 条件匹配(判定归 wish-pool 纯函数),muted 永不召回,无命中不硬推
-      const candidates = pool.filter(e => !e['muted'] && typeof e['wish_id'] === 'string')
+      const pool = ledger.readWishPool()
+      const candidates = pool.filter(e => !e.muted && typeof e.wish_id === 'string')
       const month = q.month ?? new Date().getMonth() + 1
       const match = pickNudgeWish(candidates as WishPoolEntry[], { days: q.days, budgetCny: q.budgetCny, month })
       if (!match) {
         return { ok: true, suggestion: null, summary: `无可成行的憧憬匹配当前窗口(${candidates.length} 条在册,0..1 纪律:不硬推)` } as never
       }
-      const events = await loadSidecar()
-      const { events: next, appended } = appendEvent(events, {
+      const { events: next } = ledger.appendUtilityEvent({
         wish_id: match.wishId, kind: 'recalled', ts: now, ctx: 'gotry_wish_pool_list.recall',
       })
-      if (appended) await saveSidecar(next)
       const utility = projectUtility(next)[match.wishId]
       return {
         ok: true,
@@ -455,17 +384,15 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args: { companion: unknown }, _exec: unknown) {
       const c = (args.companion ?? {}) as { label?: string; constraints?: { mobility?: string; health?: string[]; prefs?: string[] }; evidence?: string }
       if (!c.evidence) return { ok: false, summary: 'evidence 必填(用户原话,溯源 P0)' } as never
-      const dir = await ensureStateDir(config.stateRoot)
-      const path = join(dir, 'companions.json')
-      const profiles = (await readJson(path, [])) as import('./companions.ts').CompanionProfile[]
-      const res = upsertCompanion(profiles, {
+      // ADR-15:负面清单守卫(upsertCompanion)在账本事务内执行,拒收即回滚
+      const ledger = ensureLedger(config.stateRoot)
+      const res = ledger.appendCompanion({
         label: String(c.label ?? ''),
         constraints: { mobility: c.constraints?.mobility, health: c.constraints?.health, prefs: c.constraints?.prefs },
         evidence: c.evidence,
       })
       if (!res.appended && res.reason) return { ok: false, summary: res.reason } as never
-      if (res.appended) await writeJson(path, res.profiles)
-      return { ok: true, appended: res.appended, companion_id: res.companionId, total: res.profiles.length, summary: res.appended ? `同行人已保存:${res.companionId}` : `无新内容(幂等跳过):${res.companionId}` } as never
+      return { ok: true, appended: res.appended, companion_id: res.companionId, total: res.total, summary: res.appended ? `同行人已保存:${res.companionId}` : `无新内容(幂等跳过):${res.companionId}` } as never
     },
     presentCall: args => ({ card: 'generic', title: '保存同行人', kind: 'edit', rawInput: args.companion }),
   }))
@@ -496,16 +423,14 @@ export function apply(ctx: Context, config: Config): void {
       const start = resolveTimelineDate(q.start ?? '', anchor) ?? (/^\d{4}-\d{2}-\d{2}$/.test(q.start ?? '') ? q.start : undefined)
       if (!start) return { ok: false, summary: `start 无法解析为绝对日期(${q.start ?? '缺'})——请向用户要具体日期,不猜` } as never
       const end = q.end ? (resolveTimelineDate(q.end, anchor) ?? (/^\d{4}-\d{2}-\d{2}$/.test(q.end) ? q.end : undefined)) : undefined
-      const dir = await ensureStateDir(config.stateRoot)
-      const path = join(dir, 'trips.jsonl')
-      const events = await readJsonlLines<import('./travel-timeline.ts').TimelineEvent>(path)
-      const res = appendTrip(events, {
+      // ADR-15:appendTrip 守门(必填/绝对日期/重叠冲突即停)在账本事务内执行
+      const ledger = ensureLedger(config.stateRoot)
+      const res = ledger.appendTripEvent({
         destination: q.destination.trim(), start, end, companions: q.companions,
         source: 'user-verbatim', evidence: q.evidence,
       })
       if (!res.appended && res.reason) return { ok: false, summary: res.reason } as never
-      if (res.appended) await writeFile(path, res.events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8')
-      return { ok: true, appended: res.appended, trip_id: res.tripId, total: res.events.length, summary: res.appended ? `已入时间线:${q.destination} @ ${start}` : `已存在(幂等跳过):${res.tripId}` } as never
+      return { ok: true, appended: res.appended, trip_id: res.tripId, total: res.total, summary: res.appended ? `已入时间线:${q.destination} @ ${start}` : `已存在(幂等跳过):${res.tripId}` } as never
     },
     presentCall: args => ({ card: 'generic', title: '记录旅行', kind: 'edit', rawInput: args.query }),
   }))
@@ -762,7 +687,11 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.from || !q.to || !q.date) {
         return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD)' } as const
       }
-      const r = await sessionFlightSearch({ from: q.from, to: q.to, date: q.date })
+      const r = await sessionFlightSearch({
+        from: q.from, to: q.to, date: q.date,
+        // ADR-15 收尾:ReadGuard 审计在生产工具路径同样落盘(此前仅测试传隔离 stateRoot 才有 JSONL)
+        auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
+      })
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.flightNo} ${o.airline} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
       const summary = r.verdict === 'hit'
         ? `${q.from}→${q.to} ${q.date} 会话检索(携程,用户本人登录态)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`

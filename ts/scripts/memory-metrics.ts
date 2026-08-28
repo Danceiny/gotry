@@ -13,32 +13,14 @@
  * 只读:不改任何状态文件(巡检状态纪律);无数据时优雅空态 exit 0。
  */
 
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { projectUtility, type MemoryUtilityEvent } from '../src/memory-utility.ts'
 import { decayedConfidence } from '../src/memory-decay.ts'
+import { readUtilityEventsWithFallback, readWishPoolWithFallback } from '../src/state-ledger.ts'
 
 const stateRoot = process.argv[2] ?? '.'
-const stateDir = join(stateRoot, 'gotry-state')
 
-function readJson<T>(path: string, fallback: T): T {
-  try {
-    return JSON.parse(readFileSync(path, 'utf-8')) as T
-  } catch {
-    return fallback
-  }
-}
-
-function readJsonl(path: string): MemoryUtilityEvent[] {
-  try {
-    return readFileSync(path, 'utf-8').split('\n').filter(Boolean).map(l => JSON.parse(l) as MemoryUtilityEvent)
-  } catch {
-    return []
-  }
-}
-
-const pool = readJson<Array<{ wish_id?: string; name?: string; muted?: boolean }>>(join(stateDir, 'wish-pool.json'), [])
-const events = readJsonl(join(stateDir, 'memory-utility.jsonl'))
+const pool = readWishPoolWithFallback(stateRoot) as Array<{ wish_id?: string; name?: string; muted?: boolean }>
+const events: MemoryUtilityEvent[] = readUtilityEventsWithFallback(stateRoot)
 const projection = projectUtility(events)
 
 const active = pool.filter(w => typeof w.wish_id === 'string')
