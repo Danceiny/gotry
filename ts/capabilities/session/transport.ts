@@ -62,7 +62,8 @@ export async function openSession(opts: TransportOptions = {}): Promise<SessionT
       browser = await puppeteer.connect({ browserWSEndpoint: d.ws, defaultViewport: null })
       isCdp = true
     } catch (e) {
-      return { ok: false, summary: `cdp attach 失败:${e instanceof Error ? e.message.split('\n')[0] : String(e)}` }
+      const msg = e instanceof Error ? e.message : (e as { message?: string })?.message ?? JSON.stringify(e).slice(0, 200)
+      return { ok: false, summary: `cdp attach 失败:${String(msg).split('\n')[0]}` }
     }
   } else {
     const { tmpdir } = await import('node:os')
