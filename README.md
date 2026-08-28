@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Version** | `v0.0.1-rc.9`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
+| **Version** | `v0.0.1-rc.10`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
 | **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;17 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
@@ -47,7 +47,7 @@ npx @danceiny/gotry web          # 首跑会提示在当前目录建 .env(LLM_AP
 装完即得 :3080 对话界面。已装 dsh 的用户同理——上面的命令会自动以 cordis patch
 挂载 gotry 插件,无需任何额外配置(零成本启动)。
 
-> rc.5 为不可用首发(已停止指向);`@rc` tag 当前为 rc.7,`latest` 为 rc.9,两者均可跑。rc.10 在仓(双形态冻结 ADR-16),待发——见 release-notes。
+> rc.5 为不可用首发(已停止指向);rc.9 装得上跑不起(缺依赖声明,被 rc.10 覆盖);`latest` 为 rc.10——`npx @danceiny/gotry` 即得。
 
 ### 源码安装(开发者)
 
