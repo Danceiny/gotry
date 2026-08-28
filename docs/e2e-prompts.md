@@ -80,6 +80,11 @@ curl -sS --max-time 3 http://127.0.0.1:3080 -o /dev/null -w "dsh=%{http_code}\\n
 - 结论:13 工具形态真模型无回归;wish 触达纪律、证据链混标、动机先行三项 M4 契约全部在线;hbcli 缺席时 Anything 降级路径不影响主判定
 - 附注:本节同时是 rc.8 工件(49 文件)对应 main 形态的产品面证据
 
+### 13. 记忆读回真实链路验证(2026-08-28,"不看任何工具,只凭系统提示里「用户记忆」部分回答:我的动机画像里有哪些权重和硬约束?")
+- 机制核查:dsh 变量替换实现在 `@deepseek-ai/dsh-system-prompt`(lib bundle 内无此串,pnpm store 才找到)——`variable(name, provider)` 注册进作用域层,assemble 时严格 `{{name}}` 插值;空串合法(首访态不炸),未注册/undefined 直接抛错(故障显性,不会静默吞)
+- 实证:headless(deepseek-chat)逐字报出画像——4 个动机权重带「证据 7 条」、wake_not_before=09:00、min_arrival_energy_pct=40%,且主动补充「愿望池按条件召回(0..1)」指引=契约 (6) 同场在线;内容与 gotry-state/motivation-profile.json 逐项一致
+- 结论:写(mergeProfile)→读(motivation_brief)→插值(dsh-system-prompt)→模型,四跳全通;profile 内容为创始人真实使用数据(非 smoke 桩),回访体验在真实会话生效
+
 ## 总结
 
 - **8 工具人格真协同**: feasibility + skeleton + hotel + weather + flight + anything + web_search + agent_reach + motivation_save + wish_pool
