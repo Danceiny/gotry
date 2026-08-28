@@ -1,6 +1,6 @@
 # GoTry 发版记录
 
-## v0.0.1-rc.10(双形态冻结 ADR-16 + 会话传输层定案,**待发**——被 D-16 上游断裂卡住)
+## v0.0.1-rc.10(双形态冻结 ADR-16 + 会话传输层定案 + 依赖面根治,**预验证全通过,待发布 owner 发布**)
 
 rc.9 → rc.10 增量:
 
@@ -8,14 +8,16 @@ rc.9 → rc.10 增量:
 - **双形态架构冻结(ADR-16)**:本地+Web 一套账本语义;tenant_id 一等字段(schema v2,events/投影/工单/pending_writes 全带租户列,单用户期恒 `'local'`);同步=事件复制非状态翻译;run-all §28 双形态断言(44/44)
 - **会话传输层定案(2026-08-28)**:Chrome147 调试服务与 playwright 不兼容(握手悬挂,三轮实测)→ 换 puppeteer-core(实测 2256 cookies attach 成功);DevToolsActivePort 文件发现;ReadGuard puppeteer 适配
 
-### 发布准备中抓出并修复
-- `package.json` `files` 清单补齐 ADR-15 账本新文件(state-ledger/tool-packet/memory-*/wish-pool/travel-timeline/companions/time-*/slot-spec/state-cli/async-collect + session 能力面)——否则 npm 包缺文件
-- `better-sqlite3` 入根 dependencies(账本 npm 形态可加载)
-- `transport.ts` 顶层静态 import puppeteer-core → 动态导入+缺包优雅降级(修 npm 形态整插件加载崩溃;rc.9 同构 playwright-core 存量债一并暴露)
+### 发布准备中抓出并修复(rc.9「装得上跑不起」的根治)
+- **rc.9 已发包缺陷**:dist 带 ADR-15 账本(state-ledger.js)但 package.json 未声明 better-sqlite3——npm 形态插件加载即崩,闸③当时只测 web 200 未测插件加载,漏检上线。本轮根治并固化 publish-preverify 离线预验证闸(门禁化,防复发)
+- `package.json` `files` 清单补齐 ADR-15 账本新文件(state-ledger/tool-packet/memory-*/wish-pool/travel-timeline/companions/time-*/slot-spec/state-cli/async-collect + session 能力面)
+- 依赖面补齐:`better-sqlite3`/`puppeteer-core`/`@deepseek-ai/schemastery`(直引)/`@deepseek-ai/dsh-scope@0.1.1-rc.2`(钉版,dsh-tools peer 链)入根 dependencies
+- `transport.ts` 顶层静态 import puppeteer-core → 动态导入+缺包优雅降级(纵深防御)
+- `build-dist.mjs` 先清后建(陈旧 dist 产物不再混入 tarball)
 
 ### 发布闸状态
-- ① 全栈回归 ALL GREEN(§1-§29)✅ ② 状态面 6 处同步 ✅ ④ License MIT ✅
-- ③ npm 干净安装实测:**未通过**——D-16 上游 `@deepseek-ai/dsh-scope` 发布面断裂(0.1.x 缺位,dsh-tools/dsh-agent peer 要求 `^0.1.1-rc.1` 而 registry 仅 `0.0.1-rc.1`);tarball 文件完整(254.8KB/131 文件)但 dist 入口裸 import 被 dsh-scope 阻断。**待 D-16 解后由发布 owner 重跑闸③再发**
+- ① 全栈回归 ALL GREEN(§1-§29)✅ ② 状态面 6 处同步 ✅ ④ License MIT ✅ ⑤ 版本号一致(rc.10)✅
+- ③ npm 干净安装实测:**通过**——tarball(254.5KB/130 文件)干净目录正常安装(489 包,无 ETARGET;dsh-scope 等 peer 全部自动解析),dist 插件加载 OK(name=gotry-tools),`gotry help` bin 正常。**rc.10 已具备发布条件,发布动作(打 tag/推 npm/发版说明)归发布 owner**
 
 ## v0.0.1-rc.9(M4 记忆域全链 + 事务化账本 + 17 工具,2026-08-28)
 
