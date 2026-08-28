@@ -8,9 +8,9 @@
  */
 
 import { openSession } from './session/transport.ts'
-import { buildEntryUrl, NETWORK_HINTS, parseBatchSearch, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
+import { buildEntryUrl, NETWORK_HINTS, parseBatchSearch, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 
-export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown'
+export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login'
 
 export interface SessionSearchResult {
   ok: boolean
@@ -34,6 +34,8 @@ export interface SessionFlightQuery {
   auditPath?: string
   /** 等 networkHint 回包的上限,默认 25_000 */
   timeoutMs?: number
+  /** 允许匿名实例(默认 false——用户自己的账号是本面的存在前提);true 仅用于适配器链路自检,证据链会标 anonymous */
+  allowAnonymous?: boolean
 }
 
 /** 节律闸(§3.4):同站点最小间隔;导出仅测试用 */
@@ -69,6 +71,14 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
   if (!t.ok) return err('error', t.summary)
 
   try {
+    // 登录态闸:用户自己的账号,不是匿名实例——匿名态按 onAnonymous 处置(默认 fail)
+    const loggedIn = async (): Promise<boolean> => {
+      const cookies = await t.context.cookies([`https://flights${SITE_DOMAIN.replace(/^\./, '')}/`]).catch(() => [])
+      return cookies.some((c) => LOGIN_COOKIE_NAMES.includes(c.name))
+    }
+    if (!(await loggedIn()) && !q.allowAnonymous) {
+      return err('needs-login', '匿名实例——先跑 scripts/session-login.ts 用用户自己的账号建立登录态(allowAnonymous 仅限链路自检)')
+    }
     // 先挂监听再导航(Playwright network 模式):命中 networkHint 的第一个响应即搜索回包
     let settled = false
     let body = ''
@@ -102,7 +112,7 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     return {
       ok: true,
       via: 'session-ctrip-flight',
-      evidence: `[会话:${site}@${ts}] ${options.length} options;guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}`,
+      evidence: `[会话:${site}@${ts}] ${options.length} options;guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
       latencyMs: Date.now() - started,
       verdict,
       options,

@@ -24,7 +24,7 @@ export interface SessionTransport {
 }
 
 export interface TransportOptions {
-  /** 专用 profile 目录(默认 os tmpdir 下 gotry-session-profile;测试用 mktemp 隔离) */
+  /** 专用 profile 目录(默认 ~/.gotry/session-profile——持久保存用户登录态;/tmp 会被系统清理;测试用 mktemp 隔离匿名态) */
   profileDir?: string
   /** 默认 headless(CI/巡检不弹窗);交互首登场景才 headful */
   headless?: boolean
@@ -33,7 +33,8 @@ export interface TransportOptions {
 }
 
 export async function openSession(opts: TransportOptions = {}): Promise<SessionTransport | TransportFailure> {
-  const profileDir = opts.profileDir ?? `${(await import('node:os')).tmpdir()}/gotry-session-profile`
+  const { homedir } = await import('node:os')
+  const profileDir = opts.profileDir ?? `${homedir()}/.gotry/session-profile`
   let context: BrowserContext
   try {
     context = await chromium.launchPersistentContext(profileDir, {

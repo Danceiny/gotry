@@ -37,6 +37,13 @@ export function buildEntryUrl(from: string, to: string, depDate: string): Adapte
 /** networkHints:响应 URL 命中即视为搜索回包(对 UI 改版免疫,只怕接口改版) */
 export const NETWORK_HINTS = [/search\/api\/search\/batchSearch/]
 
+/**
+ * 登录态检测(用户自己的账号,不是匿名实例——founder 2026-08-28 纠偏):
+ * 任一登录票据 cookie 存在即视为已登录;名单基于公开常识,首个真登录后校准(D-13)。
+ */
+export const LOGIN_COOKIE_NAMES = ['cticket', 'uid', 'uname', 'passport']
+export const SITE_DOMAIN = '.ctrip.com'
+
 export interface SessionFlightOption {
   flightNo: string
   airline: string

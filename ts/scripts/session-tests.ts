@@ -93,7 +93,12 @@ if (process.env.GOTRY_SESSION_LIVE === '0') {
 } else {
   __resetRateLimiterForTest()
   const iso = mkdtempSync(join(tmpdir(), 'gotry-session-test-'))
-  const sr = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-10-01', profileDir: join(iso, 'profile'), headless: false, auditPath: join(iso, 'audit', 'session-incidents.jsonl') })
+  // G1 登录闸合同:匿名实例默认拒绝(headless 本地启 Chrome,不触网)
+  const nl = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-10-01', profileDir: join(iso, 'anon-profile'), headless: true })
+  assert(nl.verdict === 'needs-login' && nl.ok === false, '匿名实例 → needs-login(不导航不发请求)', nl)
+  __resetRateLimiterForTest()
+  // G2 链路自检:allowAnonymous 显式开闸后,嗅探/解析/守卫全链验证(真实登录态走 scripts/session-login.ts 后的默认 profile)
+  const sr = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-10-01', profileDir: join(iso, 'profile'), headless: false, allowAnonymous: true, auditPath: join(iso, 'audit', 'session-incidents.jsonl') })
   if (sr.verdict === 'challenged') {
     console.log(`  WARN - 风控命中(平台方差,合同路径验证通过):${sr.error}`)
     assert(sr.ok === false && sr.verdict === 'challenged', 'challenged = degraded 语义正确(不重试不绕过)')
