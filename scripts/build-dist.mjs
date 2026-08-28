@@ -11,7 +11,7 @@
  * 运行: node scripts/build-dist.mjs(发布脚本自动调)
  */
 
-import { readdirSync, readFileSync, mkdirSync, writeFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, mkdirSync, writeFileSync, statSync, rmSync } from 'node:fs'
 import { join, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripTypeScriptTypes } from 'node:module'
@@ -19,6 +19,9 @@ import { stripTypeScriptTypes } from 'node:module'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = ['ts/src', 'ts/capabilities', 'ts/scripts']
 const OUT = join(root, 'dist')
+
+// 先清后建:源码删除的文件(如 session-attach-*.ts)其陈旧编译产物会残留并进 tarball
+rmSync(OUT, { recursive: true, force: true })
 
 function walk(dir) {
   const out = []
