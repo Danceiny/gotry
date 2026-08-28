@@ -38,6 +38,11 @@ function rootOf(args: string[]): string {
   return first ?? '.'
 }
 
+function tenantOf(args: string[]): string {
+  const i = args.indexOf('--tenant')
+  return i >= 0 && args[i + 1] ? args[i + 1] : 'local'
+}
+
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(name)
   return i >= 0 ? process.argv[i + 1] : fallback
@@ -54,15 +59,17 @@ const HELP = '用法见文件头注释(npx tsx scripts/state-cli.ts <cmd> [root]
 switch (cmd) {
   case 'migrate': {
     const root = rootOf(rest)
-    const before = openLedgerIfExists(root)?.countEvents() ?? 0
-    const ledger = ensureLedger(root)
+    const tenant = tenantOf(rest)
+    const before = openLedgerIfExists(root, tenant)?.countEvents() ?? 0
+    const ledger = ensureLedger(root, tenant)
     const backupDir = join(root, 'gotry-state', 'pre-ledger-backup')
     console.log(`账本就绪:${ledger.dbPath}(events ${before} → ${ledger.countEvents()};存在旧文件时已快照至 ${backupDir}/)`)
     break
   }
   case 'export': {
     const root = rootOf(rest)
-    const ledger = ensureLedger(root)
+    const tenant = tenantOf(rest)
+    const ledger = ensureLedger(root, tenant)
     const dir = join(root === '.' ? process.cwd() : root, 'gotry-state')
     mkdirSync(dir, { recursive: true })
     const motivation = ledger.readMotivation()
@@ -80,8 +87,9 @@ switch (cmd) {
   }
   case 'log': {
     const root = rootOf(rest)
+    const tenant = tenantOf(rest)
     const limit = Number(arg('--limit', '20'))
-    const ledger = openLedgerIfExists(root)
+    const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.log('(无账本——未迁移 root,旧文件形态)'); break }
     for (const e of ledger.readEvents(undefined, limit)) {
       console.log(`${String(e.seq).padStart(5)}  ${e.ts}  ${e.actor.padEnd(28)} ${e.kind.padEnd(24)} ${e.subject_id}${e.idem_key ? `  #${e.idem_key}` : ''}`)
@@ -90,7 +98,8 @@ switch (cmd) {
   }
   case 'stats': {
     const root = rootOf(rest)
-    const ledger = openLedgerIfExists(root)
+    const tenant = tenantOf(rest)
+    const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.log('(无账本——未迁移 root)'); break }
     console.log(`events=${ledger.countEvents()} wishes=${ledger.readWishPool().length} companions=${ledger.readCompanions().length} trips=${ledger.readTrips().length} utility=${ledger.readUtilityEvents().length} pendingRuns=${ledger.pendingWorkflowRuns().length} pendingWrites=${ledger.listPendingWrites().length}`)
     break
@@ -98,7 +107,8 @@ switch (cmd) {
   case 'rebuild':
   case 'rewind': {
     const root = rootOf(rest)
-    const ledger = openLedgerIfExists(root)
+    const tenant = tenantOf(rest)
+    const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.error('无账本'); process.exit(1) }
     const toSeqRaw = rest.find(a => /^\d+$/.test(a))
     const r = ledger.rebuildProjections(toSeqRaw ? Number(toSeqRaw) : undefined)
@@ -107,7 +117,8 @@ switch (cmd) {
   }
   case 'forget': {
     const root = rootOf(rest)
-    const ledger = openLedgerIfExists(root)
+    const tenant = tenantOf(rest)
+    const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.error('无账本'); process.exit(1) }
     const subject = rest.find(a => !a.startsWith('--') && a !== root)
     const id = rest[rest.indexOf(subject!) + 1]
@@ -125,7 +136,8 @@ switch (cmd) {
   }
   case 'tick': {
     const root = rootOf(rest)
-    const ledger = openLedgerIfExists(root)
+    const tenant = tenantOf(rest)
+    const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.log('(无账本,无待办)'); break }
     const pending = ledger.pendingWorkflowRuns()
     if (pending.length === 0) { console.log('(无 pending 工单)'); break }
@@ -142,7 +154,8 @@ switch (cmd) {
   }
   case 'whatif': {
     const root = rootOf(rest)
-    const ledger = openLedgerIfExists(root)
+    const tenant = tenantOf(rest)
+    const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.error('无账本'); process.exit(1) }
     const dest = rest.find(a => a !== root && !a.startsWith('--'))
     if (!dest) { console.error(HELP); process.exit(1) }
@@ -153,7 +166,8 @@ switch (cmd) {
   }
   case 'pw-list': {
     const root = rootOf(rest)
-    const ledger = openLedgerIfExists(root)
+    const tenant = tenantOf(rest)
+    const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.log('(无账本)'); break }
     for (const w of ledger.listPendingWrites()) {
       console.log(`${w.status.padEnd(12)} ${w.idem_key}  seam=${w.seam}${w.receipt ? `  receipt=${w.receipt}` : ''}`)
@@ -164,7 +178,8 @@ switch (cmd) {
   case 'pw-confirm':
   case 'pw-compensate': {
     const root = rootOf(rest)
-    const ledger = ensureLedger(root)
+    const tenant = tenantOf(rest)
+    const ledger = ensureLedger(root, tenant)
     const positional = rest.filter(a => a !== root && !a.startsWith('--'))
     if (positional.length < (cmd === 'pw-request' ? 3 : 2)) { console.error(HELP); process.exit(1) }
     if (cmd === 'pw-request') {

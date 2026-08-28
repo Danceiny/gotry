@@ -79,6 +79,7 @@ function isUniqueViolation(e: unknown): boolean {
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  tenant_id TEXT NOT NULL DEFAULT 'local',
   ts TEXT NOT NULL,
   actor TEXT NOT NULL,
   kind TEXT NOT NULL,
@@ -87,48 +88,56 @@ CREATE TABLE IF NOT EXISTS events (
   idem_key TEXT,
   run_id TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS events_idem ON events(idem_key) WHERE idem_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS events_idem ON events(tenant_id, idem_key) WHERE idem_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS projection_docs (
-  subject TEXT PRIMARY KEY,
-  doc TEXT NOT NULL
+  tenant_id TEXT NOT NULL DEFAULT 'local',
+  subject TEXT NOT NULL,
+  doc TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, subject)
 );
 CREATE TABLE IF NOT EXISTS projection_items (
+  tenant_id TEXT NOT NULL DEFAULT 'local',
   subject TEXT NOT NULL,
   item_id TEXT NOT NULL,
   doc TEXT NOT NULL,
   ord INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (subject, item_id)
+  PRIMARY KEY (tenant_id, subject, item_id)
 );
 
 CREATE TABLE IF NOT EXISTS workflow_runs (
-  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'local',
+  id TEXT NOT NULL,
   goal TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending','settled','failed')),
   ticket_json TEXT NOT NULL,
   state_json TEXT NOT NULL,
   deliverable TEXT,
   created TEXT NOT NULL,
-  updated TEXT NOT NULL
+  updated TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, id)
 );
 CREATE TABLE IF NOT EXISTS workflow_steps (
+  tenant_id TEXT NOT NULL DEFAULT 'local',
   run_id TEXT NOT NULL,
   name TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('intent','done','failed')),
   result TEXT,
   intent_ts TEXT NOT NULL,
   done_ts TEXT,
-  PRIMARY KEY (run_id, name)
+  PRIMARY KEY (tenant_id, run_id, name)
 );
 
 CREATE TABLE IF NOT EXISTS pending_writes (
-  idem_key TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL DEFAULT 'local',
+  idem_key TEXT NOT NULL,
   seam TEXT NOT NULL,
   payload TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending','confirmed','compensated')),
   receipt TEXT,
   created TEXT NOT NULL,
-  updated TEXT NOT NULL
+  updated TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, idem_key)
 );
 
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -148,11 +157,13 @@ export interface WorkflowRunRow {
 export class StateLedger {
   readonly db: Database.Database
   readonly stateRoot: string
+  readonly tenant: string
   readonly dbPath: string
 
-  constructor(db: Database.Database, stateRoot: string) {
+  constructor(db: Database.Database, stateRoot: string, tenant = 'local') {
     this.db = db
     this.stateRoot = stateRoot
+    this.tenant = tenant
     this.dbPath = ledgerDbPath(stateRoot)
   }
 
@@ -199,41 +210,41 @@ export class StateLedger {
   }
 
   countEvents(): number {
-    return (this.db.prepare('SELECT COUNT(*) AS n FROM events').get() as { n: number }).n
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM events WHERE tenant_id = ?').get(this.tenant) as { n: number }).n
   }
 
   // ---- 读:投影与日志类事件 ----------------------------------------------------
 
   readMotivation(): (MergedProfile & { updated_at?: string }) | null {
-    const row = this.db.prepare(`SELECT doc FROM projection_docs WHERE subject = 'motivation'`).get() as { doc: string } | undefined
+    const row = this.db.prepare(`SELECT doc FROM projection_docs WHERE subject = 'motivation' AND tenant_id = ?`).get(this.tenant) as { doc: string } | undefined
     return row ? JSON.parse(row.doc) : null
   }
 
   readWishPool(): WishPoolEntry[] {
     const rows = this.db.prepare(
-      `SELECT doc FROM projection_items WHERE subject = 'wish_pool' ORDER BY ord, rowid`,
-    ).all() as Array<{ doc: string }>
+      `SELECT doc FROM projection_items WHERE subject = 'wish_pool' AND tenant_id = ? ORDER BY ord, rowid`,
+    ).all(this.tenant) as Array<{ doc: string }>
     return rows.map(r => JSON.parse(r.doc) as WishPoolEntry)
   }
 
   readCompanions(): CompanionProfile[] {
     const rows = this.db.prepare(
-      `SELECT doc FROM projection_items WHERE subject = 'companions' ORDER BY ord, rowid`,
-    ).all() as Array<{ doc: string }>
+      `SELECT doc FROM projection_items WHERE subject = 'companions' AND tenant_id = ? ORDER BY ord, rowid`,
+    ).all(this.tenant) as Array<{ doc: string }>
     return rows.map(r => JSON.parse(r.doc) as CompanionProfile)
   }
 
   readUtilityEvents(): MemoryUtilityEvent[] {
     const rows = this.db.prepare(
-      `SELECT payload FROM events WHERE kind = 'memory_utility.event' ORDER BY seq`,
-    ).all() as Array<{ payload: string }>
+      `SELECT payload FROM events WHERE kind = 'memory_utility.event' AND tenant_id = ? ORDER BY seq`,
+    ).all(this.tenant) as Array<{ payload: string }>
     return rows.map(r => (JSON.parse(r.payload) as { event: MemoryUtilityEvent }).event)
   }
 
   readTrips(): TimelineEvent[] {
     const rows = this.db.prepare(
-      `SELECT payload FROM events WHERE kind = 'trip.logged' ORDER BY seq`,
-    ).all() as Array<{ payload: string }>
+      `SELECT payload FROM events WHERE kind = 'trip.logged' AND tenant_id = ? ORDER BY seq`,
+    ).all(this.tenant) as Array<{ payload: string }>
     return rows.map(r => (JSON.parse(r.payload) as { trip: TimelineEvent }).trip)
   }
 
@@ -261,9 +272,9 @@ export class StateLedger {
       const doc = { ...merged, updated_at: ts }
       this.insertEvent({ actor, kind: 'motivation.patch', subjectId: 'motivation', payload: { patch }, ts })
       this.db.prepare(
-        `INSERT INTO projection_docs (subject, doc) VALUES ('motivation', ?)
-         ON CONFLICT(subject) DO UPDATE SET doc = excluded.doc`,
-      ).run(JSON.stringify(doc))
+        `INSERT INTO projection_docs (tenant_id, subject, doc) VALUES (?, 'motivation', ?)
+         ON CONFLICT(tenant_id, subject) DO UPDATE SET doc = excluded.doc`,
+      ).run(this.tenant, JSON.stringify(doc))
       return { saved: true, profile: doc }
     })
     return run()
@@ -391,31 +402,31 @@ export class StateLedger {
 
   private upsertItem(subject: string, itemId: string, doc: unknown): void {
     const ord = (this.db.prepare(
-      `SELECT ord FROM projection_items WHERE subject = ? AND item_id = ?`,
-    ).get(subject, itemId) as { ord: number } | undefined)?.ord ?? this.nextOrd(subject)
+      `SELECT ord FROM projection_items WHERE subject = ? AND item_id = ? AND tenant_id = ?`,
+    ).get(subject, itemId, this.tenant) as { ord: number } | undefined)?.ord ?? this.nextOrd(subject)
     this.db.prepare(
-      `INSERT INTO projection_items (subject, item_id, doc, ord) VALUES (?, ?, ?, ?)
-       ON CONFLICT(subject, item_id) DO UPDATE SET doc = excluded.doc`,
-    ).run(subject, itemId, JSON.stringify(doc), ord)
+      `INSERT INTO projection_items (tenant_id, subject, item_id, doc, ord) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, subject, item_id) DO UPDATE SET doc = excluded.doc`,
+    ).run(this.tenant, subject, itemId, JSON.stringify(doc), ord)
   }
 
   private insertItem(subject: string, itemId: string, doc: unknown, ord: number): void {
     this.db.prepare(
-      `INSERT INTO projection_items (subject, item_id, doc, ord) VALUES (?, ?, ?, ?)
-       ON CONFLICT(subject, item_id) DO UPDATE SET doc = excluded.doc`,
-    ).run(subject, itemId, JSON.stringify(doc), ord)
+      `INSERT INTO projection_items (tenant_id, subject, item_id, doc, ord) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, subject, item_id) DO UPDATE SET doc = excluded.doc`,
+    ).run(this.tenant, subject, itemId, JSON.stringify(doc), ord)
   }
 
   private replaceItems(subject: string, items: Array<[string, unknown]>): void {
-    this.db.prepare('DELETE FROM projection_items WHERE subject = ?').run(subject)
-    const ins = this.db.prepare('INSERT INTO projection_items (subject, item_id, doc, ord) VALUES (?, ?, ?, ?)')
-    items.forEach(([id, doc], i) => ins.run(subject, id, JSON.stringify(doc), i))
+    this.db.prepare('DELETE FROM projection_items WHERE subject = ? AND tenant_id = ?').run(subject, this.tenant)
+    const ins = this.db.prepare('INSERT INTO projection_items (tenant_id, subject, item_id, doc, ord) VALUES (?, ?, ?, ?, ?)')
+    items.forEach(([id, doc], i) => ins.run(this.tenant, subject, id, JSON.stringify(doc), i))
   }
 
   private nextOrd(subject: string): number {
     return ((this.db.prepare(
-      'SELECT COALESCE(MAX(ord), -1) AS m FROM projection_items WHERE subject = ?',
-    ).get(subject) as { m: number }).m ?? -1) + 1
+      'SELECT COALESCE(MAX(ord), -1) AS m FROM projection_items WHERE subject = ? AND tenant_id = ?',
+    ).get(subject, this.tenant) as { m: number }).m ?? -1) + 1
   }
 
   /**
@@ -424,15 +435,15 @@ export class StateLedger {
    */
   rebuildProjections(toSeq?: number): { events: number; wishes: number; companions: number } {
     const run = this.db.transaction((): { events: number; wishes: number; companions: number } => {
-      this.db.prepare('DELETE FROM projection_docs').run()
-      this.db.prepare('DELETE FROM projection_items').run()
+      this.db.prepare('DELETE FROM projection_docs WHERE tenant_id = ?').run(this.tenant)
+      this.db.prepare('DELETE FROM projection_items WHERE tenant_id = ?').run(this.tenant)
       const rows = (toSeq === undefined
-        ? this.db.prepare('SELECT seq, ts, kind, subject_id, payload FROM events ORDER BY seq')
-        : this.db.prepare('SELECT seq, ts, kind, subject_id, payload FROM events WHERE seq <= ? ORDER BY seq')
-      ).all(...(toSeq === undefined ? [] : [toSeq])) as Array<{ seq: number; ts: string; kind: string; subject_id: string; payload: string }>
+        ? this.db.prepare('SELECT seq, ts, kind, subject_id, payload FROM events WHERE tenant_id = ? ORDER BY seq')
+        : this.db.prepare('SELECT seq, ts, kind, subject_id, payload FROM events WHERE seq <= ? AND tenant_id = ? ORDER BY seq')
+      ).all(...(toSeq === undefined ? [this.tenant] : [toSeq, this.tenant])) as Array<{ seq: number; ts: string; kind: string; subject_id: string; payload: string }>
       for (const row of rows) this.foldEvent(row)
-      const wishes = (this.db.prepare(`SELECT COUNT(*) AS n FROM projection_items WHERE subject = 'wish_pool'`).get() as { n: number }).n
-      const companions = (this.db.prepare(`SELECT COUNT(*) AS n FROM projection_items WHERE subject = 'companions'`).get() as { n: number }).n
+      const wishes = (this.db.prepare(`SELECT COUNT(*) AS n FROM projection_items WHERE subject = 'wish_pool' AND tenant_id = ?`).get(this.tenant) as { n: number }).n
+      const companions = (this.db.prepare(`SELECT COUNT(*) AS n FROM projection_items WHERE subject = 'companions' AND tenant_id = ?`).get(this.tenant) as { n: number }).n
       return { events: rows.length, wishes, companions }
     })
     return run()
@@ -444,9 +455,9 @@ export class StateLedger {
       case 'motivation.imported': {
         const doc = p['profile'] as MergedProfile & { updated_at?: string }
         this.db.prepare(
-          `INSERT INTO projection_docs (subject, doc) VALUES ('motivation', ?)
-           ON CONFLICT(subject) DO UPDATE SET doc = excluded.doc`,
-        ).run(JSON.stringify(doc))
+          `INSERT INTO projection_docs (tenant_id, subject, doc) VALUES (?, 'motivation', ?)
+           ON CONFLICT(tenant_id, subject) DO UPDATE SET doc = excluded.doc`,
+        ).run(this.tenant, JSON.stringify(doc))
         break
       }
       case 'motivation.patch': {
@@ -455,9 +466,9 @@ export class StateLedger {
         if (merged) {
           const doc = { ...merged, updated_at: row.ts }
           this.db.prepare(
-            `INSERT INTO projection_docs (subject, doc) VALUES ('motivation', ?)
-             ON CONFLICT(subject) DO UPDATE SET doc = excluded.doc`,
-          ).run(JSON.stringify(doc))
+            `INSERT INTO projection_docs (tenant_id, subject, doc) VALUES (?, 'motivation', ?)
+             ON CONFLICT(tenant_id, subject) DO UPDATE SET doc = excluded.doc`,
+          ).run(this.tenant, JSON.stringify(doc))
         }
         break
       }
@@ -499,44 +510,44 @@ export class StateLedger {
     const ts = new Date().toISOString()
     const run = this.db.transaction(() => {
       this.db.prepare(
-        `INSERT INTO workflow_runs (id, goal, status, ticket_json, state_json, deliverable, created, updated)
-         VALUES (?, ?, 'pending', ?, ?, NULL, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET updated = excluded.updated`,
-      ).run(input.id, input.goal, JSON.stringify(input.ticket), JSON.stringify(input.state), ts, ts)
+        `INSERT INTO workflow_runs (tenant_id, id, goal, status, ticket_json, state_json, deliverable, created, updated)
+         VALUES (?, ?, ?, 'pending', ?, ?, NULL, ?, ?)
+         ON CONFLICT(tenant_id, id) DO UPDATE SET updated = excluded.updated`,
+      ).run(this.tenant, input.id, input.goal, JSON.stringify(input.ticket), JSON.stringify(input.state), ts, ts)
       this.insertEvent({ actor, kind: 'async.run_created', subjectId: input.id, payload: { ticket: input.ticket }, runId: input.id, ts })
     })
     run()
   }
 
   getWorkflowRun(id: string): WorkflowRunRow | undefined {
-    return this.db.prepare('SELECT * FROM workflow_runs WHERE id = ?').get(id) as WorkflowRunRow | undefined
+    return this.db.prepare('SELECT * FROM workflow_runs WHERE id = ? AND tenant_id = ?').get(id, this.tenant) as WorkflowRunRow | undefined
   }
 
   pendingWorkflowRuns(): Array<{ id: string; goal: string }> {
-    return this.db.prepare(`SELECT id, goal FROM workflow_runs WHERE status = 'pending' ORDER BY created`).all() as Array<{ id: string; goal: string }>
+    return this.db.prepare(`SELECT id, goal FROM workflow_runs WHERE status = 'pending' AND tenant_id = ? ORDER BY created`).all(this.tenant) as Array<{ id: string; goal: string }>
   }
 
   getWorkflowStep(runId: string, name: string): { status: string; result: string | null } | undefined {
-    return this.db.prepare('SELECT status, result FROM workflow_steps WHERE run_id = ? AND name = ?').get(runId, name) as { status: string; result: string | null } | undefined
+    return this.db.prepare('SELECT status, result FROM workflow_steps WHERE run_id = ? AND name = ? AND tenant_id = ?').get(runId, name, this.tenant) as { status: string; result: string | null } | undefined
   }
 
   markStepIntent(runId: string, name: string): void {
     this.db.prepare(
-      `INSERT INTO workflow_steps (run_id, name, status, intent_ts) VALUES (?, ?, 'intent', ?)
-       ON CONFLICT(run_id, name) DO NOTHING`,
-    ).run(runId, name, new Date().toISOString())
+      `INSERT INTO workflow_steps (tenant_id, run_id, name, status, intent_ts) VALUES (?, ?, ?, 'intent', ?)
+       ON CONFLICT(tenant_id, run_id, name) DO NOTHING`,
+    ).run(this.tenant, runId, name, new Date().toISOString())
   }
 
   markStepDone(runId: string, name: string, result: unknown): void {
     this.db.prepare(
-      `UPDATE workflow_steps SET status = 'done', result = ?, done_ts = ? WHERE run_id = ? AND name = ?`,
-    ).run(JSON.stringify(result), new Date().toISOString(), runId, name)
+      `UPDATE workflow_steps SET status = 'done', result = ?, done_ts = ? WHERE run_id = ? AND name = ? AND tenant_id = ?`,
+    ).run(JSON.stringify(result), new Date().toISOString(), runId, name, this.tenant)
   }
 
   settleWorkflowRun(id: string, deliverable: string, actor = 'system:async-collect'): void {
     const run = this.db.transaction(() => {
-      this.db.prepare(`UPDATE workflow_runs SET status = 'settled', deliverable = ?, updated = ? WHERE id = ?`)
-        .run(deliverable, new Date().toISOString(), id)
+      this.db.prepare(`UPDATE workflow_runs SET status = 'settled', deliverable = ?, updated = ? WHERE id = ? AND tenant_id = ?`)
+        .run(deliverable, new Date().toISOString(), id, this.tenant)
       this.insertEvent({ actor, kind: 'async.settled', subjectId: id, payload: { bytes: deliverable.length }, runId: id })
     })
     run()
@@ -549,11 +560,11 @@ export class StateLedger {
     const ts = new Date().toISOString()
     const run = this.db.transaction((): { created: boolean; status: string } => {
       const info = this.db.prepare(
-        `INSERT INTO pending_writes (idem_key, seam, payload, status, created, updated)
-         VALUES (?, ?, ?, 'pending', ?, ?) ON CONFLICT(idem_key) DO NOTHING`,
-      ).run(input.idemKey, input.seam, JSON.stringify(input.payload ?? {}), ts, ts)
+        `INSERT INTO pending_writes (tenant_id, idem_key, seam, payload, status, created, updated)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?) ON CONFLICT(tenant_id, idem_key) DO NOTHING`,
+      ).run(this.tenant, input.idemKey, input.seam, JSON.stringify(input.payload ?? {}), ts, ts)
       if (info.changes === 0) {
-        const row = this.db.prepare('SELECT status FROM pending_writes WHERE idem_key = ?').get(input.idemKey) as { status: string }
+        const row = this.db.prepare('SELECT status FROM pending_writes WHERE idem_key = ? AND tenant_id = ?').get(input.idemKey, this.tenant) as { status: string }
         return { created: false, status: row.status }
       }
       this.insertEvent({ actor, kind: 'write.pending', subjectId: input.idemKey, payload: { seam: input.seam, payload: input.payload }, idemKey: `pw:${sha(input.idemKey)}:pending` })
@@ -566,10 +577,10 @@ export class StateLedger {
   confirmPendingWrite(idemKey: string, receipt: string, actor = 'system:writegate'): { ok: boolean; status: string } {
     const run = this.db.transaction((): { ok: boolean; status: string } => {
       const info = this.db.prepare(
-        `UPDATE pending_writes SET status = 'confirmed', receipt = ?, updated = ? WHERE idem_key = ? AND status = 'pending'`,
-      ).run(receipt, new Date().toISOString(), idemKey)
+        `UPDATE pending_writes SET status = 'confirmed', receipt = ?, updated = ? WHERE idem_key = ? AND status = 'pending' AND tenant_id = ?`,
+      ).run(receipt, new Date().toISOString(), idemKey, this.tenant)
       if (info.changes === 0) {
-        const row = this.db.prepare('SELECT status FROM pending_writes WHERE idem_key = ?').get(idemKey) as { status: string } | undefined
+        const row = this.db.prepare('SELECT status FROM pending_writes WHERE idem_key = ? AND tenant_id = ?').get(idemKey, this.tenant) as { status: string } | undefined
         return { ok: false, status: row?.status ?? 'missing' }
       }
       this.insertEvent({ actor, kind: 'write.confirmed', subjectId: idemKey, payload: { receipt } })
@@ -582,10 +593,10 @@ export class StateLedger {
   compensatePendingWrite(idemKey: string, note: string, actor = 'system:writegate'): { ok: boolean; status: string } {
     const run = this.db.transaction((): { ok: boolean; status: string } => {
       const info = this.db.prepare(
-        `UPDATE pending_writes SET status = 'compensated', receipt = COALESCE(receipt, ?), updated = ? WHERE idem_key = ? AND status != 'compensated'`,
-      ).run(note, new Date().toISOString(), idemKey)
+        `UPDATE pending_writes SET status = 'compensated', receipt = COALESCE(receipt, ?), updated = ? WHERE idem_key = ? AND status != 'compensated' AND tenant_id = ?`,
+      ).run(note, new Date().toISOString(), idemKey, this.tenant)
       if (info.changes === 0) {
-        const row = this.db.prepare('SELECT status FROM pending_writes WHERE idem_key = ?').get(idemKey) as { status: string } | undefined
+        const row = this.db.prepare('SELECT status FROM pending_writes WHERE idem_key = ? AND tenant_id = ?').get(idemKey, this.tenant) as { status: string } | undefined
         return { ok: false, status: row?.status ?? 'missing' }
       }
       this.insertEvent({ actor, kind: 'write.compensated', subjectId: idemKey, payload: { note } })
@@ -595,7 +606,7 @@ export class StateLedger {
   }
 
   listPendingWrites(): Array<{ idem_key: string; seam: string; status: string; receipt: string | null; created: string }> {
-    return this.db.prepare('SELECT idem_key, seam, status, receipt, created FROM pending_writes ORDER BY created').all() as Array<{ idem_key: string; seam: string; status: string; receipt: string | null; created: string }>
+    return this.db.prepare('SELECT idem_key, seam, status, receipt, created FROM pending_writes WHERE tenant_id = ? ORDER BY created').all(this.tenant) as Array<{ idem_key: string; seam: string; status: string; receipt: string | null; created: string }>
   }
 
   /** what-if 分叉:VACUUM INTO 副本,预演不触正本(LoopX「先只读投影后执行」的物理化) */
@@ -613,8 +624,8 @@ export class StateLedger {
       for (const s of subjects) {
         const placeholders = s.kinds.map(() => '?').join(',')
         const info = this.db.prepare(
-          `DELETE FROM events WHERE subject_id = ? AND kind IN (${placeholders})`,
-        ).run(s.subjectId, ...s.kinds)
+          `DELETE FROM events WHERE subject_id = ? AND tenant_id = ? AND kind IN (${placeholders})`,
+        ).run(s.subjectId, this.tenant, ...s.kinds)
         deleted += info.changes
       }
       this.insertEvent({ actor, kind: 'forget.executed', payload: { subjects } })
@@ -633,27 +644,72 @@ export class StateLedger {
 
 const openLedgers = new Map<string, StateLedger>()
 
-function openDb(stateRoot: string): StateLedger {
+export function openDb(stateRoot: string, tenant = 'local'): StateLedger {
   const path = ledgerDbPath(stateRoot)
-  const cached = openLedgers.get(path)
+  const cacheKey = `${path}::${tenant}`
+  const cached = openLedgers.get(cacheKey)
   if (cached) return cached
-  mkdirSync(join(path, '..'), { recursive: true })
   mkdirSync(dirname(path), { recursive: true })
   const db = new Database(path)
   db.pragma('journal_mode = WAL')
   db.pragma('synchronous = NORMAL')
   db.pragma('busy_timeout = 5000')
-  db.exec(SCHEMA)
-  db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run('schema_version', SCHEMA_VERSION)
-  const ledger = new StateLedger(db, stateRoot)
-  openLedgers.set(path, ledger)
+  // schema v1→v2 迁移:v1 无 tenant_id 列(user_version 未设置过,实际为 0)
+  const version = db.pragma('user_version', { simple: true }) as number
+  if (version < 2) {
+    // 检测是否真有 v1 数据(有 events 表但无 tenant_id 列)
+    const hasEventsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'").get() !== undefined
+    const eventsHasTenant = hasEventsTable && (db.prepare("PRAGMA table_info(events)").all() as Array<{ name: string }>).some(c => c.name === 'tenant_id')
+    const isV1 = hasEventsTable && !eventsHasTenant
+    
+    db.transaction(() => {
+      if (isV1) {
+        // v1 → v2:events 加 tenant_id,回填 'local';投影/工单/pending_writes 强制重建(旧表无 tenant_id)
+        db.exec(`
+          ALTER TABLE events ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local';
+          DROP INDEX IF EXISTS events_idem;
+          CREATE UNIQUE INDEX events_idem ON events(tenant_id, idem_key) WHERE idem_key IS NOT NULL;
+          DROP TABLE IF EXISTS projection_docs;
+          DROP TABLE IF EXISTS projection_items;
+          DROP TABLE IF EXISTS workflow_runs;
+          DROP TABLE IF EXISTS workflow_steps;
+          DROP TABLE IF EXISTS pending_writes;
+        `)
+      } else {
+        // v2 幂等:检查 workflow_runs 是否缺 tenant_id(修一次跑坏的迁移)
+        const wrHasTenant = (db.prepare("PRAGMA table_info(workflow_runs)").all() as Array<{ name: string }>).some(c => c.name === 'tenant_id')
+        if (!wrHasTenant && db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_runs'").get()) {
+          db.exec(`
+            DROP TABLE IF EXISTS workflow_runs;
+            DROP TABLE IF EXISTS workflow_steps;
+            DROP TABLE IF EXISTS pending_writes;
+            DROP TABLE IF EXISTS projection_docs;
+            DROP TABLE IF EXISTS projection_items;
+          `)
+        }
+      }
+      db.exec(SCHEMA)
+      db.pragma('user_version = 2')
+      db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run('schema_version', '2')
+    })()
+    // v1 升级后:从 events 重建投影(v1 投影表已 DROP)
+    if (isV1) {
+      const ledger = new StateLedger(db, stateRoot, tenant)
+      ledger.rebuildProjections()
+    }
+  } else {
+    db.exec(SCHEMA) // 幂等建表(IF NOT EXISTS)
+    db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run('schema_version', '2')
+  }
+  const ledger = new StateLedger(db, stateRoot, tenant)
+  openLedgers.set(cacheKey, ledger)
   return ledger
 }
 
 /** 只读场景:账本不存在返回 null(调用方走文件回退) */
-export function openLedgerIfExists(stateRoot: string): StateLedger | null {
+export function openLedgerIfExists(stateRoot: string, tenant = 'local'): StateLedger | null {
   if (!ledgerExists(stateRoot)) return null
-  return openDb(stateRoot)
+  return openDb(stateRoot, tenant)
 }
 
 export interface MigrationReport {
@@ -669,8 +725,8 @@ export interface MigrationReport {
  *  - 无 DB 有旧文件 → 快照 → 建账本 → 旧数据单事务导入为 events(one-shot;
  *    导入幂等键 + kv 旗标双保险,并发 ensure 不重复导入)
  */
-export function ensureLedger(stateRoot: string): StateLedger {
-  if (ledgerExists(stateRoot)) return openDb(stateRoot)
+export function ensureLedger(stateRoot: string, tenant = 'local'): StateLedger {
+  if (ledgerExists(stateRoot)) return openDb(stateRoot, tenant)
   const dir = stateDirOf(stateRoot)
   const hasLegacy = legacyFilesPresent(stateRoot)
   let backupDir: string | null = null
@@ -681,7 +737,7 @@ export function ensureLedger(stateRoot: string): StateLedger {
       if (existsSync(join(dir, f))) copyFileSync(join(dir, f), join(backupDir, f))
     }
   }
-  const ledger = openDb(stateRoot)
+  const ledger = openDb(stateRoot, tenant)
   if (hasLegacy) importLegacyInto(ledger, dir)
   return ledger
 }

@@ -183,6 +183,18 @@ const forkCount = (forkDb.prepare('SELECT COUNT(*) AS n FROM events').get() as {
 forkDb.close()
 assert(ledger.countEvents() === forkCount - 1, 'what-if 分叉:副本写入不触正本(VACUUM INTO 预演)')
 
+// ---- 11:双形态(ADR-16):同一账本文件,tenant_id='local' 与 'u123' 两个租户互不串 --------
+
+const localLedger = ensureLedger(root) // 默认 tenant='local'
+const u123 = ensureLedger(root, 'u123') // 同一文件,租户 'u123'
+localLedger.appendWish({ name: '本地愿望', reason: '', conditions: { days: 3 } })
+u123.appendWish({ name: '云端愿望', reason: '', conditions: { days: 7 } })
+assert(localLedger.readWishPool().some(w => String(w.name) === '本地愿望'), '本地租户读到自己的愿望')
+assert(!localLedger.readWishPool().some(w => String(w.name) === '云端愿望'), '本地租户读不到云端愿望(隔离)')
+assert(u123.readWishPool().some(w => String(w.name) === '云端愿望'), '云端租户读到自己的愿望')
+assert(!u123.readWishPool().some(w => String(w.name) === '本地愿望'), '云端租户读不到本地愿望(隔离)')
+assert(localLedger.tenant === 'local' && u123.tenant === 'u123', 'tenant_id 从第一天就是一等字段')
+
 // ---- 收尾 --------------------------------------------------------------------------
 
 rmSync(root, { recursive: true, force: true })
