@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Version** | `v0.0.1-rc.8`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
+| **Version** | `v0.0.1-rc.9`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
 | **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;17 工具;事务化状态账本(ADR-15:SQLite 单文件=唯一权威,旧 JSON/JSONL 为单向导出视图);全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
@@ -264,4 +264,4 @@ ADR 与技术债见 [`docs/architecture.md` §8 / §10](docs/architecture.md)。
 
 **Built with**: DeepSeek Harness 0.1.1-rc.2 · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript · Bun
 
-**Last verified against `v0.0.1-rc.8`(已发布,2026-08-28)** — 全栈回归全绿(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。
+**Last verified against `v0.0.1-rc.9`(已发布,2026-08-28)** — 全栈回归全绿(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。

@@ -8,7 +8,7 @@
 
 ## 当前位置(2026-08-27)
 
-**`@danceiny/gotry@0.0.1-rc.9` 工件就绪待发**(账本/记忆域/17 工具已在 main,npm publish 需一枚 2FA OTP;rc.8 仍是 latest);历史:`@danceiny/gotry@0.0.1-rc.8` 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
+**`@danceiny/gotry@0.0.1-rc.9` 已发布且 latest 直指本版**(2026-08-28:web 授权流;干净内容=记忆域全链/账本/17 工具/D-6 校准);历史:`@danceiny/gotry@0.0.1-rc.8` 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
 
 rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
