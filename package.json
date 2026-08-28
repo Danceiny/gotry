@@ -1,6 +1,6 @@
 {
   "name": "@danceiny/gotry",
-  "version": "0.0.1-rc.9",
+  "version": "0.0.1-rc.10",
   "description": "GoTry — 从出发到下一次出发的 AI 旅行 Agent(dsh 插件)。npm 包入口 + vendored dsh runtime + 5 行 README 安装路径。",
   "type": "module",
   "main": "ts/src/index.ts",
@@ -41,7 +41,8 @@
     "dsh-map-tools": "^0.4.4",
     "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
     "@deepseek-ai/dsh-settings": "0.1.1-rc.2",
-    "dsh-calendar": "^0.3.2"
+    "dsh-calendar": "^0.3.2",
+    "better-sqlite3": "^13.0.3"
   },
   "repository": {
     "type": "git",
