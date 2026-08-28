@@ -161,7 +161,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-13 会话适配器维护面(RFC user-session-data-rfc) | 站点接口改版即断(当前携程 batchSearch);P2 action-cache 自愈 + 金标准监控赎回;断时降级 `[实时API:flyai]` 主链路 |
 | D-14 playwright-core 分发面(RFC) | **部分清偿 2026-08-28**:会话传输层定案 puppeteer-core(Chrome147 调试服务与 playwright 不兼容);transport.ts 改动态导入+缺包优雅降级(npm 形态不再整插件崩);puppeteer-core 入根 dependencies。**残余**:D-16 上游发布面断裂修复前,session 面在 npm 干净安装下的端到端实测未完成 |
 | D-15 账本触发式后置面(ADR-15 TS-5) | Litestream 云备份 / cr-sqlite 多写者复制 / RFC(loopx) §6.5 claim-fence-receipt 多用户实装——仅在触发器出现时启动:第二真实用户 / 多机部署 / AaaS 立项 |
-| D-16 上游 dsh 发布面断裂(2026-08-28 rc.10 发布准备抓到) | `@deepseek-ai/dsh-tools` 与 `@deepseek-ai/dsh-agent` 的 lib 真实 import `@deepseek-ai/dsh-scope`,peer 要求 `^0.1.1-rc.1`,但 **registry 上 dsh-scope 只发布到 `0.0.1-rc.1`**(0.1.x 缺位)。非版本升级回归——dsh rc.1/rc.2 均不传递 dsh-scope,系上游该包未随 0.1.x 发布。rc.9 生产能用是因 dsh 运行时经 cordis 内部加载插件,peer 缺失被掩盖;裸 `import dist/src/index.js` 才暴露。**解法二选一**:① 上游发布 dsh-scope@0.1.x(根治);② 根 dependencies 显式钉 `dsh-scope@0.0.1-rc.1` 兜底(若 API 兼容)。修复前 rc.10 发布闸③「npm 干净安装实测」不予通过 |
+| D-16 上游 dsh 发布面断裂 | **已验证解法②并落地 2026-08-28(记忆域 lane)**:D-16 前提有误——npmjs 上 dsh-scope **有完整 0.1.x**(0.1.1-rc.2 在列;lane 查的是滞后的内部 bnpm 镜像)。根 dependencies 已显式钉 `dsh-scope@0.1.1-rc.2`,干净安装实测:ERESOLVE 仅降级为 warning、ledger/index/dsh-tools 全部 import OK、五导出齐(AuthoritativeEntries 等)。rc.10 发布闸解除,待 founder 2FA 授权发布 |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
