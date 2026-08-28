@@ -38,9 +38,20 @@ export interface TransportOptions {
 
 export async function openSession(opts: TransportOptions = {}): Promise<SessionTransport | TransportFailure> {
   if (opts.mode === 'cdp' || (opts.mode !== 'persistent' && !opts.profileDir)) {
-    // CDP attach 日常 Chrome:登录态/指纹都是用户本人(RFC §2.2 路线 A 转 primary,founder 定案)
+    // CDP attach 日常 Chrome:登录态/指纹都是用户本人(RFC §2.2 路线 A 转 primary,founder 定案)。
+    // Chrome 144+ 新式调试服务把 HTTP 发现端点硬化为 404,发现走 user data directory 的
+    // DevToolsActivePort 文件(端口+browser ws 路径;文件系统可达=本地用户授权,chrome-devtools-mcp autoConnect 同机制)
     try {
-      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${opts.cdpPort ?? 9222}`, { timeout: 4_000 })
+      const { homedir: _hd } = await import('node:os')
+      const udd = process.env.CHROME_USER_DATA_DIR ?? `${_hd()}/Library/Application Support/Google/Chrome`
+      let endpoint = `http://127.0.0.1:${opts.cdpPort ?? 9222}`
+      try {
+        const { readFileSync: _rf } = await import('node:fs')
+        const portFile = `${udd}/DevToolsActivePort`
+        const [port, wsPath] = _rf(portFile, 'utf8').trim().split('\n')
+        if (port && wsPath?.startsWith('/devtools/browser/')) endpoint = `ws://127.0.0.1:${port.trim()}${wsPath.trim()}`
+      } catch { /* 无文件则回退旧式 HTTP 发现 */ }
+      const browser = await chromium.connectOverCDP(endpoint, { timeout: 4_000 })
       const context = browser.contexts()[0]
       if (!context) {
         await browser.close().catch(() => { /* ignore */ })
