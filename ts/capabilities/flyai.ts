@@ -118,7 +118,9 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
     const parsed = JSON.parse(jStart >= 0 ? r.stdout.slice(jStart) : r.stdout) as { data?: { itemList?: RawItem[] } }
     items = parsed.data?.itemList ?? []
   } catch {
-    return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] parse failed`, error: 'failed to parse flyai output as JSON' }
+    // 实测(2026-08-28):Sentinel 限流时 CLI exit=0 但 stdout 是 {"message":"SentinelBlockException..."}
+    const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)
+    return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] parse failed: ${raw}`, error: `failed to parse flyai output as JSON: ${raw}` }
   }
   const options: FlyaiOption[] = []
   for (const it of items) {

@@ -202,6 +202,7 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 - 实测(2026-08-28,本机):上海→丽江 2026-10-01 机票,春秋 9C6617 浦东 17:05→三义 20:50 ¥1790 等结构化 journeys/segments/ticketPrice JSON;上海→大理火车票,虹桥 10:00 G201 二等→昆明南→大理 22:47 中转链。
 - 单行 JSON stdout,agent-native(hbcli 同款形态)。**意义:机票班期/票价与铁路检索的官方免费通道已开——用户会话面的真实缺口收缩为「携程 C 端交叉验证 + 美团本地」;12306 会话需求(G8)大幅弱化**。
 - 未明:收费/配额/企业门槛(README 未披露,`FLYAI_API_KEY` 可选增强)。接入形态:`capabilities/flyai.ts` **已落地(P1,2026-08-28)**——spawn CLI 管道层,session-tests F 节 live 断言。
+- **限流实测(2026-08-28 下午)**:高频调用后返 `SentinelBlockException by fly-ai-search`(CLI exit=0、stdout 非业务 JSON)——**配额未文档化,恢复窗口未知**;flyai.ts 已把该形态纳入结构化 error(带 stdout 片段),测试/smoke 按「hit 或 sentinel 降级」双合法终态。金标准跑批(fa-01..04)当日被拦,待限流窗口过后由心跳轮重试。
 
 **会话数据面 P1(RFC §4,2026-08-28)**:`capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard(方法×URL 双因子 + 驼峰复合写词,写请求物理 abort + 审计,fail-closed)+ 携程机票适配器(batchSearch 嗅探→结构化)+ 节律闸(同站 ≥30s);证据链新标注 `[会话:ctrip-flight@ts]` 生效;run-all §24。live 会话检索需 headful(headless 下携程只回壳页,实测)。登录态为存在前提(founder 纠偏 2026-08-28):默认 profile `~/.gotry/session-profile` + 登录闸(needs-login)+ `scripts/session-login.ts` 首登;匿名仅 `allowAnonymous` 自检态。
 
