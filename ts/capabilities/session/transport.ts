@@ -1,14 +1,18 @@
 /**
- * SessionTransport(会话检索传输层,RFC §3.2):
- * playwright-core launchPersistentContext + channel:'chrome'(用本机已装 Chrome,不下载浏览器)
- * + 专用 profile(默认 /tmp,绝不碰用户日常浏览器 profile)。
- *
+ * SessionTransport(会话检索传输层,RFC §3.2;2026-08-28 定案 puppeteer-core):
+ * - mode=cdp(默认):attach 用户日常 Chrome——Chrome 144+ 调试服务(chrome://inspect 开关)
+ *   与 playwright 不兼容(握手后 CDP 初始化悬挂,实测三轮),与 puppeteer 完全兼容(实测 2256 cookies)。
+ *   发现走 user-data-dir 的 DevToolsActivePort 文件(HTTP 发现面已硬化 404;Origin 头=403,安全设计)。
+ *   close() 只 disconnect,绝不关用户浏览器。
+ * - mode=persistent(测试/后备):puppeteer.launch 专用 profile(测试用 mktemp 隔离匿名态)。
  * fail-closed(RFC §3.3-④):guard 装不上 = 整个会话打不开——不存在「无守卫的会话」这一形态。
  * 永不抛错:任何启动失败降级为 TransportFailure,由 session-search 编排层消费。
  */
 
-import { chromium, type BrowserContext, type Page } from 'playwright-core'
-import { attachReadGuard, type ReadGuardHandle } from './read-guard.ts'
+import puppeteer, { type Browser, type Page } from 'puppeteer-core'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { attachReadGuardPuppeteer, type ReadGuardHandle } from './read-guard.ts'
 
 export interface TransportFailure {
   ok: false
@@ -17,7 +21,7 @@ export interface TransportFailure {
 
 export interface SessionTransport {
   ok: true
-  context: BrowserContext
+  browser: Browser
   page: Page
   guard: ReadGuardHandle
   close(): Promise<void>
@@ -26,82 +30,66 @@ export interface SessionTransport {
 export interface TransportOptions {
   /** 传输模式:cdp=attach 用户日常 Chrome(默认,登录态=用户本人,founder 2026-08-28 定案);persistent=专用 profile(测试/后备) */
   mode?: 'cdp' | 'persistent'
-  /** cdp 模式调试端口(Chrome 144+ chrome://inspect/#remote-debugging 手动开启;默认 9222) */
-  cdpPort?: number
-  /** 专用 profile 目录(persistent 模式;测试用 mktemp 隔离匿名态) */
+  /** persistent 模式专用 profile 目录(测试用 mktemp 隔离匿名态;缺省 tmpdir) */
   profileDir?: string
-  /** 默认 headless(CI/巡检不弹窗);交互首登场景才 headful */
+  /** persistent 模式 headless(默认 true);cdp 模式恒为用户可见窗口 */
   headless?: boolean
   /** ReadGuard 审计落盘路径(缺省仅内存计数) */
   auditPath?: string
 }
 
+function devtoolsWsEndpoint(): { ws: string } | { err: string } {
+  try {
+    const udd = process.env.CHROME_USER_DATA_DIR ?? `${homedir()}/Library/Application Support/Google/Chrome`
+    const [port, wsPath] = readFileSync(`${udd}/DevToolsActivePort`, 'utf8').trim().split('\n')
+    if (!port || !wsPath?.startsWith('/devtools/browser/')) {
+      return { err: `DevToolsActivePort 内容异常: ${String(port)}/${String(wsPath)}` }
+    }
+    return { ws: `ws://127.0.0.1:${port.trim()}${wsPath.trim()}` }
+  } catch {
+    return { err: '日常 Chrome 未开调试端口。开启方法:Chrome 打开 chrome://inspect/#remote-debugging → 打开开关(Chrome 144+)' }
+  }
+}
+
 export async function openSession(opts: TransportOptions = {}): Promise<SessionTransport | TransportFailure> {
-  if (opts.mode === 'cdp' || (opts.mode !== 'persistent' && !opts.profileDir)) {
-    // CDP attach 日常 Chrome:登录态/指纹都是用户本人(RFC §2.2 路线 A 转 primary,founder 定案)。
-    // Chrome 144+ 新式调试服务把 HTTP 发现端点硬化为 404,发现走 user data directory 的
-    // DevToolsActivePort 文件(端口+browser ws 路径;文件系统可达=本地用户授权,chrome-devtools-mcp autoConnect 同机制)
+  const useCdp = opts.mode === 'cdp' || (opts.mode !== 'persistent' && !opts.profileDir)
+  let browser: Browser
+  let isCdp = false
+  if (useCdp) {
+    const d = devtoolsWsEndpoint()
+    if ('err' in d) return { ok: false, summary: d.err }
     try {
-      const { homedir: _hd } = await import('node:os')
-      const udd = process.env.CHROME_USER_DATA_DIR ?? `${_hd()}/Library/Application Support/Google/Chrome`
-      let endpoint = `http://127.0.0.1:${opts.cdpPort ?? 9222}`
-      try {
-        const { readFileSync: _rf } = await import('node:fs')
-        const portFile = `${udd}/DevToolsActivePort`
-        const [port, wsPath] = _rf(portFile, 'utf8').trim().split('\n')
-        if (port && wsPath?.startsWith('/devtools/browser/')) endpoint = `ws://127.0.0.1:${port.trim()}${wsPath.trim()}`
-      } catch { /* 无文件则回退旧式 HTTP 发现 */ }
-      const browser = await chromium.connectOverCDP(endpoint, { timeout: 4_000 })
-      const context = browser.contexts()[0]
-      if (!context) {
-        await browser.close().catch(() => { /* ignore */ })
-        return { ok: false, summary: 'cdp attached but no default context' }
-      }
-      let guard: ReadGuardHandle
-      try {
-        guard = await attachReadGuard(context as unknown as Parameters<typeof attachReadGuard>[0], opts.auditPath)
-      } catch (e) {
-        await browser.close().catch(() => { /* ignore */ })
-        return { ok: false, summary: `read-guard attach failed: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}` }
-      }
-      const page = context.pages()[0] ?? (await context.newPage())
-      return {
-        ok: true, context, page, guard,
-        close: async () => { await browser.close().catch(() => { /* ignore */ }) }, // 只断开连接,不关用户浏览器
-      }
+      browser = await puppeteer.connect({ browserWSEndpoint: d.ws, defaultViewport: null })
+      isCdp = true
     } catch (e) {
-      const msg = e instanceof Error ? e.message.slice(0, 160) : String(e)
-      return { ok: false, summary: `cdp attach 失败(日常 Chrome 未开调试端口):${msg}。开启方法:日常 Chrome 打开 chrome://inspect/#remote-debugging → 打开开关并确认弹窗(Chrome 144+)` }
+      return { ok: false, summary: `cdp attach 失败:${e instanceof Error ? e.message.split('\n')[0] : String(e)}` }
+    }
+  } else {
+    const { tmpdir } = await import('node:os')
+    const profileDir = opts.profileDir ?? `${tmpdir()}/gotry-session-profile`
+    try {
+      browser = await puppeteer.launch({ channel: 'chrome', headless: opts.headless ?? true, userDataDir: profileDir })
+    } catch (e) {
+      return { ok: false, summary: `chrome launch failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}` }
     }
   }
-  const { homedir } = await import('node:os')
-  const profileDir = opts.profileDir ?? `${homedir()}/.gotry/session-profile`
-  let context: BrowserContext
-  try {
-    context = await chromium.launchPersistentContext(profileDir, {
-      channel: 'chrome',
-      headless: opts.headless ?? true,
-      viewport: { width: 1366, height: 850 },
-    })
-  } catch (e) {
-    return { ok: false, summary: `chrome launch failed: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}` }
-  }
-  // fail-closed:guard 装不上即关会话返回失败——不给无守卫的导航面
+  // fail-closed:guard 装不上即断开返回失败——不给无守卫的导航面
   let guard: ReadGuardHandle
   try {
-    guard = await attachReadGuard(context as unknown as Parameters<typeof attachReadGuard>[0], opts.auditPath)
+    guard = await attachReadGuardPuppeteer(browser as unknown as Parameters<typeof attachReadGuardPuppeteer>[0], opts.auditPath)
   } catch (e) {
-    await context.close().catch(() => { /* ignore */ })
-    return { ok: false, summary: `read-guard attach failed: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}` }
+    await (isCdp ? browser.disconnect() : browser.close()).catch(() => { /* ignore */ })
+    return { ok: false, summary: `read-guard attach failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}` }
   }
-  const page = context.pages()[0] ?? (await context.newPage())
+  const page = (await browser.pages())[0] ?? (await browser.newPage())
   return {
     ok: true,
-    context,
+    browser,
     page,
     guard,
     close: async () => {
-      await context.close().catch(() => { /* ignore */ })
+      // cdp:只断开连接,绝不关用户浏览器;persistent:关自己拉起的实例
+      await (isCdp ? browser.disconnect() : browser.close()).catch(() => { /* ignore */ })
     },
   }
 }

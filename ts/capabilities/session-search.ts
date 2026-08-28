@@ -77,8 +77,8 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
   try {
     // 登录态闸:用户自己的账号,不是匿名实例——匿名态按 onAnonymous 处置(默认 fail)
     const loggedIn = async (): Promise<boolean> => {
-      const cookies = await t.context.cookies([`https://flights${SITE_DOMAIN.replace(/^\./, '')}/`]).catch(() => [])
-      return cookies.some((c) => LOGIN_COOKIE_NAMES.includes(c.name))
+      const cookies = await t.browser.cookies().catch(() => [])
+      return cookies.some((c) => c.domain.includes(SITE_DOMAIN.replace(/^\./, '')) && LOGIN_COOKIE_NAMES.includes(c.name))
     }
     if (!(await loggedIn()) && !q.allowAnonymous) {
       return err('needs-login', '匿名实例——先跑 scripts/session-login.ts 用用户自己的账号建立登录态(allowAnonymous 仅限链路自检)')
