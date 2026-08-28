@@ -28,6 +28,8 @@ export interface MoveSpecTS {
   destTransferMin: number
   redEye?: boolean
   redEyeDurationMin?: number
+  /** D-6:红眼航段落地后接驳(机场→住处/办公室)的乘车补眠时长(分钟);机上已算,落地接驳未算 */
+  groundRecoveryMin?: number
   /** D-5:目的地相对出发地的时差(KMG-BKK=+60,DXB-SZX=-240) */
   tzOffsetMin?: number
   /** M-1:出发地 UTC 偏移(工作窗口换算用) */
@@ -227,7 +229,10 @@ function evaluateOptionMove(segId: string, mv: MoveSpecTS): LegReport & { d2d_mi
   let energy: number
   if (mv.redEye && (mv.redEyeDurationMin ?? 0) > 0) {
     const sleepH = ((mv.redEyeDurationMin ?? 0) - 60) / 60
-    energy = Math.max(30, Math.min(75, 30 + 8 * sleepH))
+    // D-6 校准:机上睡眠上限 75;落地接驳(destTransferMin)乘车补眠回血(1h≈+5%,上限 80)
+    const groundH = (mv.groundRecoveryMin ?? mv.destTransferMin ?? 0) / 60
+    const recovery = Math.min(5, 5 * groundH)
+    energy = Math.max(30, Math.min(75 + recovery, 80, 30 + 8 * sleepH + recovery))
   } else {
     energy = 100 - 2 * 8
     if (wake < 5 * 60) energy -= 30
