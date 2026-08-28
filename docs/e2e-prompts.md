@@ -96,3 +96,10 @@ curl -sS --max-time 3 http://127.0.0.1:3080 -o /dev/null -w "dsh=%{http_code}\\n
 - **dsh LLM 真用能力层调真数据**(Open-Meteo、OpenFlights 骨架、Anything 路由,不是 mock)
 - **工作流纪律落地**: 动机先行 / 数据不编 / 走 wish pool / 走 needs-setup 降级指引
 - **唯一 founder 阻塞**: npm publish 2FA(路径 A/B 写 docs/tokens.md) + agent-reach 7 渠道 cookie(可等)
+
+
+## 14. 会话数据面工具面(2026-08-28,P3 切片1/2;真模型巡检待登录态)
+
+- **smoke §12 实证**:17 工具注册含 `gotry_flyai_search`/`gotry_session_search`;flyai live hit(上海→丽江 2026-10-01,10 条,证据链 [实时API:flyai@ts]);session 工具终态 needs-login(登录态存在前提合同,零导航零请求)。
+- **人格契约 (19)** 已入仓根 yml:三级路由(官方→会话交叉验证→静态包),直达/中转分桶比对;challenged 即停手。
+- **待办**:founder 登录态落盘后补真模型会话巡检一例(当前 profile Cookies 0 行——2026-08-28 tick 实测诊断,session-login 需重跑并在窗口内完成登录)。
