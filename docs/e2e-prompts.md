@@ -85,6 +85,11 @@ curl -sS --max-time 3 http://127.0.0.1:3080 -o /dev/null -w "dsh=%{http_code}\\n
 - 实证:headless(deepseek-chat)逐字报出画像——4 个动机权重带「证据 7 条」、wake_not_before=09:00、min_arrival_energy_pct=40%,且主动补充「愿望池按条件召回(0..1)」指引=契约 (6) 同场在线;内容与 gotry-state/motivation-profile.json 逐项一致
 - 结论:写(mergeProfile)→读(motivation_brief)→插值(dsh-system-prompt)→模型,四跳全通;profile 内容为创始人真实使用数据(非 smoke 桩),回访体验在真实会话生效
 
+### 14. 契约遵从探测:0..1 召回的自主驱动(2026-08-28,契约 (6) 补「新意图先查池」后,"我11月有5天假,预算8000,从深圳出发,想出去走走")
+- 前/后对照:补契约前,模型对完全命中真实 wish 条件的查询直接新推清迈/丽江,愿望池零查询;补一行「用户新出行意图可能命中已存憧憬时,先调 gotry_wish_pool_list 查询再答」后——
+- 行为:模型自主调 wish_pool_list,发现池中「千岛湖发呆周末」(2 天/1200)与 11 月 5 天窗口不匹配,**主动 verbalize 不硬推**(「跟这次窗口不太对味,先放着不打扰它」)——0..1 纪律不是机械执行而是语义执行;开场引记忆 brief(回访体验),动机先行三道结构化选择题收尾;headless 无 ask-user 提供方时按契约 (5) 退化文本选择题
+- 结论:契约 (6) 三段语义(入池/先查池/0..1+归因禁令)全部真模型在线;wishlist 的「语义执行>机械执行」路线得到实证
+
 ## 总结
 
 - **8 工具人格真协同**: feasibility + skeleton + hotel + weather + flight + anything + web_search + agent_reach + motivation_save + wish_pool
