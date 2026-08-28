@@ -22,7 +22,7 @@ assert.ok(7280 <= r1.money_cny! && r1.money_cny! <= 8350, `money=${r1.money_cny}
 const byLeg = Object.fromEntries(r1.legs!.map(l => [l.leg, l]))
 assert.notEqual(byLeg['f4'].service, 'DZ6252')       // 负例被锚点排除
 assert.equal(byLeg['f5'].service, 'EK329')
-assert.equal(byLeg['f5'].energy_pct, 75)              // 红眼睡眠模型
+assert.equal(byLeg['f5'].energy_pct, 79)              // 红眼睡眠模型(D-6 校准:机上 75 + 落地接驳 45min×5%/h≈+4 → 79;上限 80)
 assert.ok(byLeg['f5'].wake.includes('前一日'))         // 跨日显示
 
 // D-5 时区感知核算(与 Python oracle 同款断言)
