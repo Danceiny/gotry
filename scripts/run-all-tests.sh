@@ -102,7 +102,11 @@ echo "=== 22. 记忆效用指标投影(M4 北极星过程面,只读,空态优雅
 (cd ts && npx tsx scripts/memory-metrics.ts) || FAIL=1
 
 echo
-echo "=== 23. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
+echo "=== 23. 时间窗衰减(memory-design P3:分级窗口/单调/地板/上界/动机零衰减) ==="
+(cd ts && npx tsx scripts/memory-decay-tests.ts) || FAIL=1
+
+echo
+echo "=== 24. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
 NUDGE_FIXTURE=$(mktemp -d)
 mkdir -p "$NUDGE_FIXTURE/gotry-state"
 cat > "$NUDGE_FIXTURE/gotry-state/wish-pool.json" <<'EOF'

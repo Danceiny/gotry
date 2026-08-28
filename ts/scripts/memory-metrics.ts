@@ -16,6 +16,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { projectUtility, type MemoryUtilityEvent } from '../src/memory-utility.ts'
+import { decayedConfidence } from '../src/memory-decay.ts'
 
 const stateRoot = process.argv[2] ?? '.'
 const stateDir = join(stateRoot, 'gotry-state')
@@ -50,7 +51,8 @@ console.log(`wish pool: ${pool.length} 条在册(其中 ${pool.filter(w => w.mut
 console.log(`效用事件: ${events.length} 条(recalled=${events.filter(e => e.kind === 'recalled').length}, applied=${events.filter(e => e.kind === 'applied').length}, verified=${events.filter(e => e.kind === 'verified_outcome').length})`)
 for (const w of Object.values(projection)) {
   const name = pool.find(p => p.wish_id === w.wish_id)?.name ?? w.wish_id
-  console.log(`  - ${name}: status=${w.status}, recalled=${w.recalled}, applied=${w.applied}, verified=${w.verified}`)
+  const conf = decayedConfidence(events.filter(e => e.wish_id === w.wish_id), new Date())
+  console.log(`  - ${name}: status=${w.status}, recalled=${w.recalled}, applied=${w.applied}, verified=${w.verified}, 新鲜置信度=${conf}(P3 时间窗衰减)`)
 }
 console.log(`经验回流率基线 = ${verifiedWishes}/${recalledWishes} = ${refluxBaseline.toFixed(2)}(verified/recalled;单用户起步期样本稀疏属预期)`)
 if (pool.length === 0) console.log('(wish pool 为空——首访用户,指标从首条憧憬入池开始积累)')
