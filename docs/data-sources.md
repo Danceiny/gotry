@@ -195,8 +195,22 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 ---
 
+## 8. 官方 agent 通道尽调(2026-08-28,RFC `user-session-data-rfc.md` P0)
+
+**飞猪 FlyAI**(`@fly-ai/flyai-cli`,MIT,npx 直跑,**无 key 无登录已实测**):
+- 8 工具全只读:`search-flight` / `search-train` / `search-hotel` / `search-poi` / `keyword-search` / `ai-search` / 万豪×2;预订经结果内 `jumpUrl` 跳飞猪完成——**交易不进 skill,与 WriteGate 哲学同构**。
+- 实测(2026-08-28,本机):上海→丽江 2026-10-01 机票,春秋 9C6617 浦东 17:05→三义 20:50 ¥1790 等结构化 journeys/segments/ticketPrice JSON;上海→大理火车票,虹桥 10:00 G201 二等→昆明南→大理 22:47 中转链。
+- 单行 JSON stdout,agent-native(hbcli 同款形态)。**意义:机票班期/票价与铁路检索的官方免费通道已开——用户会话面的真实缺口收缩为「携程 C 端交叉验证 + 美团本地」;12306 会话需求(G8)大幅弱化**。
+- 未明:收费/配额/企业门槛(README 未披露,`FLYAI_API_KEY` 可选增强)。接入形态:gotry 新增 `capabilities/flyai.ts`(spawn CLI,对齐 agent-reach 管道层模式),P1 落地。
+
+**携程机票页 XHR 嗅探 PoC**(`ts/scripts/session-attach-poc.ts`,playwright-core 1.62.1 + 专用测试 profile `/tmp/gotry-session-poc-profile`):
+- 两次实测均零风控、零交互只读;主搜索接口已识别:`flights.ctrip.com/international/search/api/search/batchSearch`(~550KB,国内票同走)+ `FlightIntlAndInlandLowestPriceSearch` 低价日历(~81KB)——P1 携程适配器的 networkHints 直接可用。
+
+
+
 ## 修订史
 
 | 日期 | 变更 |
 |---|---|
 | 2026-08-22 | 立 v1:领域矩阵现状盘点、四层架构图、Google Place 链路 founde 定案(hbcli→search OpenAPI→geography)、TREK 参考采纳表、证据链契约细则、M3-M5 数据侧演进 |
+| 2026-08-28 | 新增 §8 官方 agent 通道尽调(RFC P0):飞猪 FlyAI 无 key 实测可用(机/火只读搜索,会话面缺口收缩)+ 携程机票 XHR 嗅探 PoC(batchSearch 接口识别,零风控) |
