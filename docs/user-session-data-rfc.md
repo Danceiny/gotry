@@ -139,7 +139,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 - 站内查询间隔 ≥30s、单会话 ≤10 次、日上限可配(`GOTRY_SESSION_*` 环境变量);
 - 检测到滑块/验证码/风控跳转:**立即熔断 + 冷却 + 通知用户人工处理**——绝不重试、绝不绕过(合规支柱②);
-- 专用 profile 首发不落 cookie 库;登录永由用户人工完成(agent 不碰密码/OTP/验证码,对齐 Operator 的 takeover 模式与总纲 3.5「敏感信息模型永不接触」)。远期若需 profile 迁移:AES-GCM 落盘 + 密钥进 OS keychain(macOS `security`/Windows DPAPI/Linux libsecret;keytar 已死不用),0600 权限。
+- 专用 profile 首发不落 cookie 库;登录永由用户人工完成(agent 不碰密码/OTP/验证码,对齐 Operator 的 takeover 模式与总纲 3.5「敏感信息模型永不接触」)。**2026-08-28 founder 纠偏落地:「打开浏览器必须有登录态,不能是匿名实例」**——默认 profile 挪 `~/.gotry/session-profile`(持久,登录态不丢);`sessionFlightSearch` 登录闸:匿名默认拒(verdict=`needs-login`),`scripts/session-login.ts` 首登 bootstrap(人工登录,轮询票据 cookie);`allowAnonymous` 仅限链路自检且证据链标 `anonymous=自检态`。远期若需 profile 迁移:AES-GCM 落盘 + 密钥进 OS keychain(macOS `security`/Windows DPAPI/Linux libsecret;keytar 已死不用),0600 权限。
 
 ### 3.5 注入防护
 
