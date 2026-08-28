@@ -66,7 +66,7 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/src/travel-timeline.ts` | **旅行时间线**(memory-design P1):trips.jsonl append-only + 幂等/重叠冲突即停 + verified↔timeline 交叉一致 | ✅ run-all §20 |
 | `ts/src/wish-pool.ts` | **愿望池匹配纯函数**:条件评分 + 0..1 挑选(muted 排除/确定性 tie-break);wish_pool_list 与 nudge 共用 | ✅ run-all §21 |
 | `ts/capabilities/flyai.ts` | **FlyAI 官方通道**:飞猪 8 只读工具的管道层(search-flight/train 先接),证据链 `[实时API:flyai@ts]` | ✅ run-all §24-F |
-| `ts/capabilities/session-search.ts` + `session/` | **会话检索面**(RFC P1):transport(playwright-core 专用 profile)/ReadGuard(写请求物理拦截+审计,fail-closed)/携程机票适配器(batchSearch 嗅探);节律闸;`[会话:*]` 证据链 | ✅ run-all §24 |
+| `ts/capabilities/session-search.ts` + `session/` | **会话检索面**(RFC P1):transport(playwright-core 专用 profile)/ReadGuard(写请求物理拦截+审计,fail-closed)/携程机票适配器(batchSearch 嗅探)/action-cache 自愈层(变量化key+指纹被动失效+miss回写);节律闸;`[会话:*]` 证据链 | ✅ run-all §24/§25 |
 | `ts/scripts/time-eval-tests.ts` `data/time-slot-eval.json` | 时间感评测(25 题):确定性部分进 CI,`--real` 真模型巡检(只读报告) | ✅ 真模型 25/25 |
 | `data/golden_erhai.json` `flights_2026.json` `hotels_2026.json` `golden_trip_2026.json` `行程细化计划.docx` | 金标准用例/班期/住宿/完整任务/Kimi 对话原件 | — |
 
