@@ -1,5 +1,31 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.8(M4 记忆域 + 时间感硬化,**已发布 2026-08-28**,npm latest tag 直指本版)
+
+rc.7 → rc.8 的完整增量(main `5ae70f7`):
+
+### M4 记忆域(写→读→效用→触达→度量,全链)
+
+- **动机画像守门合并**: `memory-capture.ts` mergeProfile(追加不删史/幂等/权重变更须伴证据 P0);`gotry_motivation_save` 切守门语义
+- **记忆读回**: `{{motivation_brief}}` persona 变量——画像渲染成 brief 注入系统提示(空=首访);真模型实证四跳全通(§13)
+- **记忆效用 sidecar**(ADR-14): `memory-utility.ts` recalled/applied/verified_outcome 事件流,归因只认 owner 确认;wish 稳定 wish_id + muted(休眠不删除)
+- **愿望池召回**: 新工具 `gotry_wish_pool_list`(0..1 条件评分召回);契约 (6) 三段语义(入池/新意图先查池/归因禁令)真模型对照实证(§14)
+- **主动回访骨架**: `scripts/nudge-digest.ts` 三通道(stdout/file/lark 待 webhook 即插即用,`GOTRY_NUDGE_ENABLED=false` 可关闭)
+- **北极星度量底座**: `scripts/memory-metrics.ts` 只读投影(经验回流率基线 verified/recalled)
+
+### 时间感硬化(ADR-12,D-10 三切片清偿)
+
+- `slot-spec.ts` 解析层:锚点卡词表/绝对/+N 后缀 → 绝对日期,词表外 unresolved 不猜;spec 日期一致性闸(单日期段)
+- 工具面: `gotry_hotel_search` 日期收逐字表达(下周五/8.20),unresolved 降级+显式 note
+- D-9 节日表扩至 2031;time-eval 5 节(25 题评测,真模型 25/25)
+
+### 平台面
+
+- **工具观察 envelope**(ADR-13): 平铺 ok:true/ok:false summary;`interpretArgs` 参数三形态归一唯一入口
+- **probePoi 收紧**: 关键词方向性(动词宾语后置/住宿名词后段/短裸地名停用动词闸),金标准噪音回归
+- **persona 单一来源**: 仓根 cordis.gotry-patch.yml(18 契约+锚点卡+brief 注入),ts/ 分叉副本退役
+- 13 工具;21 节全栈回归绿;e2e §12-§14 真模型实证
+
 ## v0.0.1-rc.7-dev(M4 开闸 + 对账终局,2026-08-26)
 
 - **M4 记忆域开闸**(founder 指令):契约 (18) 动态吸收起步——对话新事实当轮并入

@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Version** | `v0.0.1-rc.7`(npm: `@danceiny/gotry@rc`;rc.8 已构建待发布;[release notes](docs/release-notes.md)) |
+| **Version** | `v0.0.1-rc.8`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
 | **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;13 工具;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
@@ -41,11 +41,13 @@ GoTry 把「想去哪」变成「能不能、怎么去」：
 ### 一行启动(npm,推荐)
 
 ```bash
-npx @danceiny/gotry@rc web          # 首跑会提示在当前目录建 .env(LLM_API_KEY=<DeepSeek key>)
+npx @danceiny/gotry web          # 首跑会提示在当前目录建 .env(LLM_API_KEY=<DeepSeek key>)
 ```
 
 装完即得 :3080 对话界面。已装 dsh 的用户同理——上面的命令会自动以 cordis patch
 挂载 gotry 插件,无需任何额外配置(零成本启动)。
+
+> rc.5 为不可用首发(已停止指向);`@rc` tag 当前为 rc.7,`latest` 为 rc.8,两者均可跑。
 
 ### 源码安装(开发者)
 
@@ -262,4 +264,4 @@ ADR 与技术债见 [`docs/architecture.md` §8 / §10](docs/architecture.md)。
 
 **Built with**: DeepSeek Harness 0.1.1-rc.2 · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript · Bun
 
-**Last verified against `main`(rc.8 已构建待发布,2026-08-28)** — 全栈回归全绿(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。
+**Last verified against `v0.0.1-rc.8`(已发布,2026-08-28)** — 全栈回归全绿(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。
