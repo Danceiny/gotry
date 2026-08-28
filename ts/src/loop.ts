@@ -292,40 +292,80 @@ export async function runTurn(
   return { reply: parts.join('\n\n'), state }
 }
 
-// ---- 异步工单持久化(S5 编排半段):真正的「一小时后」必须跨进程存续 ----
-// 请求时落盘(ticket+state 快照);任意后续进程(如 loopx 驱动的 tick)执行
-// async-collect 加载、求解、写回交付物。状态目录属用户数据(红线 6)。
+// ---- 异步工单持久化(S5 编排半段 → ADR-15 durable 工单):真正的「一小时后」必须跨进程存续 ----
+// 权威 = 账本 workflow_runs/workflow_steps(单事务;崩溃后 done 步骤不重执行);
+// {id}.json / {id}.deliverable.md 降级为视图(AGENTS.md 清扫合同 + 人工检视),
+// tmp+rename 原子写——此前裸 writeFile 的非原子缺口(RFC §1.1)就此关闭。
 
 import { join } from 'node:path'
-import { mkdir } from 'node:fs/promises'
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, rename, writeFile, readFile } from 'node:fs/promises'
+import { ensureLedger, openLedgerIfExists, type StateLedger } from './state-ledger.ts'
 
-const ASYNC_DIR = 'gotry-state/async'
-
-async function asyncPath(name: string): Promise<string> {
-  await mkdir(ASYNC_DIR, { recursive: true })
-  return join(ASYNC_DIR, name)
+async function asyncDir(stateRoot: string): Promise<string> {
+  const root = stateRoot === '.' ? process.cwd() : stateRoot
+  const dir = join(root, 'gotry-state', 'async')
+  await mkdir(dir, { recursive: true })
+  return dir
 }
 
-export async function persistAsyncTicket(ticket: AsyncTicket, state: TripState): Promise<string> {
-  const p = await asyncPath(`${ticket.id}.json`)
-  await writeFile(p, JSON.stringify({ ticket, state }, null, 2), 'utf-8')
+async function atomicWrite(path: string, text: string): Promise<void> {
+  const tmp = `${path}.tmp`
+  await writeFile(tmp, text, 'utf-8')
+  await rename(tmp, path)
+}
+
+export async function persistAsyncTicket(ticket: AsyncTicket, state: TripState, stateRoot = '.'): Promise<string> {
+  const ledger = ensureLedger(stateRoot)
+  ledger.createWorkflowRun({ id: ticket.id, goal: ticket.objective, ticket, state })
+  const dir = await asyncDir(stateRoot)
+  const p = join(dir, `${ticket.id}.json`)
+  await atomicWrite(p, JSON.stringify({ ticket, state }, null, 2))
   return p
 }
 
-export async function loadAsyncTicket(ticketId: string): Promise<{ ticket: AsyncTicket; state: TripState } | null> {
+export async function loadAsyncTicket(ticketId: string, stateRoot = '.'): Promise<{ ticket: AsyncTicket; state: TripState } | null> {
+  // 账本优先;无账本的 root 回退旧 json 文件(只读,兼容存量已交付工单)
+  const ledger = openLedgerIfExists(stateRoot)
+  const run = ledger?.getWorkflowRun(ticketId)
+  if (run) {
+    return {
+      ticket: JSON.parse(run.ticket_json) as AsyncTicket,
+      state: JSON.parse(run.state_json) as TripState,
+    }
+  }
   try {
-    const p = await asyncPath(`${ticketId}.json`)
+    const p = join(await asyncDir(stateRoot), `${ticketId}.json`)
     return JSON.parse(await readFile(p, 'utf-8')) as { ticket: AsyncTicket; state: TripState }
   } catch {
     return null
   }
 }
 
-export async function settleAsyncTicket(ticketId: string, reply: string): Promise<string> {
-  const p = await asyncPath(`${ticketId}.deliverable.md`)
-  await writeFile(p, reply, 'utf-8')
+export async function settleAsyncTicket(ticketId: string, reply: string, stateRoot = '.'): Promise<string> {
+  openLedgerIfExists(stateRoot)?.settleWorkflowRun(ticketId, reply)
+  const dir = await asyncDir(stateRoot)
+  const p = join(dir, `${ticketId}.deliverable.md`)
+  await atomicWrite(p, reply)
   return p
+}
+
+/**
+ * 可日志化 solve 端口(ADR-15 步骤日志,intent-before-execute):
+ * 先记 intent 再执行,done 后结果落账本——任意进程恢复时 done 的步骤直接复用
+ * 结果不重执行(exactly-once:LLM/求解调用不重复花钱),intent 悬挂的重试。
+ */
+export function makeJournaledSolvePort(ledger: StateLedger, runId: string, solve: SolvePort, opts?: { onRealSolve?: () => void }): SolvePort {
+  return async spec => {
+    const step = ledger.getWorkflowStep(runId, 'solve')
+    if (step?.status === 'done' && step.result) {
+      return JSON.parse(step.result) as Awaited<ReturnType<SolvePort>>
+    }
+    ledger.markStepIntent(runId, 'solve')
+    opts?.onRealSolve?.()
+    const r = await solve(spec)
+    ledger.markStepDone(runId, 'solve', r)
+    return r
+  }
 }
 
 /**

@@ -136,6 +136,14 @@ echo "=== 27. 会话面 P2-2 抽取层(a11y兜底抽取/提交件剔除/美团�
 (cd ts && npx tsx scripts/session-extract-tests.ts) || FAIL=1
 
 echo
+echo "=== 28. 事务化状态账本(ADR-15:事务原子性/红线进事务/幂等物理化/fold 重建/rewind/one-shot 迁移/工单崩溃恢复 exactly-once/pending_writes saga) ==="
+(cd ts && npx tsx scripts/ledger-tests.ts | tail -1) || FAIL=1
+
+echo
+echo "=== 29. 账本 CLI e2e(migrate 快照/stats/log/export 视图单向/forget 物理硬删带审计/pw-* saga 面) ==="
+(cd ts && npx tsx scripts/state-cli-tests.ts | tail -1) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
