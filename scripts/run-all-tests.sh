@@ -11,7 +11,9 @@ set +eu; source ~/.nvm/nvm.sh 2>/dev/null || true; set -eu  # nvm.sh 遇 npmrc p
 FAIL=0
 
 echo "=== 1. TS engine(洱海金标准,8 断言) ==="
-(cd ts && npx tsx scripts/engine-tests.ts) || FAIL=1
+# 已知 z3 WASM worker 偶发(README Known limitations):进程级崩掉致 FAIL=1 而其余
+# 各节照常绿——历次「幻影红」均为此因(xtrace 定位)。重试一次:真回归二次仍红,偶发过。
+(cd ts && npx tsx scripts/engine-tests.ts) || (cd ts && npx tsx scripts/engine-tests.ts) || FAIL=1
 
 echo
 echo "=== 2. TS journey(五段链,5 断言) ==="

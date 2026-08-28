@@ -15,6 +15,11 @@ interface ToolLike {
 }
 
 async function main() {
+  // 巡检状态纪律:smoke 的探针数据(wish/profile/sidecar)写进独立临时 stateRoot,
+  // 不与真实用户状态(gotry-state)混居;结束即删
+  const { mkdtempSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const smokeRoot = mkdtempSync(join(tmpdir(), 'gotry-smoke-'))
   const registered: ToolLike[] = []
   const variables: Record<string, () => string> = {}
   const ctx = {
@@ -23,7 +28,7 @@ async function main() {
   } as unknown as Context
 
   apply(ctx, {
-    stateRoot: '.',
+    stateRoot: smokeRoot,
     timeoutMs: 30_000,
     hbcliBin: 'hbcli-not-on-path',  // 强制走降级路径的确定性验证
   })
@@ -175,6 +180,9 @@ async function main() {
     }
     console.log('memory read-back: motivation_brief renders profile for returning sessions (empty = first visit)')
   }
+
+  rmSync(smokeRoot, { recursive: true, force: true })
+  console.log(`smoke state cleaned: ${smokeRoot}`)
 
   console.log('\nSMOKE OK')
 }
