@@ -1,5 +1,25 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.9(M4 记忆域全链 + 事务化账本 + 17 工具,2026-08-28)
+
+rc.8 → rc.9 增量(main 30 commits,双 lane 汇合):
+
+### 记忆域分期(memory-design §4)
+- P1 旅行时间线:`travel-timeline.ts` + `gotry_trip_log`(去过的不再主动推荐)+ confirm-outcome 自动挂行程
+- P2 同行人档案:`companions.ts` + `gotry_companion_save`(负面清单守卫:证件/电话零入库)
+- P3 时间窗衰减:`memory-decay.ts`(30/90/180/365d 分级,地板 0.1,动机零衰减构造性保证)
+
+### 平台面(并行 lane 会话数据面 + ADR-15)
+- 事务化状态基座(ADR-15):SQLite 账本=唯一权威,五状态工具写路径单事务;投影 fold 复用记忆守门纯函数
+- 会话数据面:flyai 官方只读检索 + session 登录态交叉验证(ReadGuard 物理只读),17 工具
+- probePoi 关键词方向性收紧;persona 单一来源归一(仓根 yml)
+
+### 引擎校准
+- D-6 红眼睡眠模型:落地接驳补眠回血(对账真值 75%→79%)
+
+### 发布闸
+- 全栈门禁 30 节 ALL GREEN;issue #1-#14 全部关闭(证据评论);#15 dsh 升级评估完成(等上游 npm)
+
 ## v0.0.1-rc.8(M4 记忆域 + 时间感硬化,**已发布 2026-08-28**,npm latest tag 直指本版)
 
 rc.7 → rc.8 的完整增量(main `5ae70f7`):
