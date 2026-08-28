@@ -44,6 +44,8 @@ export interface FlyaiOption {
   seatClass?: string
   /** 飞猪侧预订跳转(由人完成,agent 不碰) */
   jumpUrl?: string
+  /** 打码价格原值(如 "1xxx"——未鉴权态火车价被模糊化,真实价以 jumpUrl 落地页为准) */
+  priceRaw?: string
 }
 
 export interface FlyaiResult {
@@ -72,6 +74,8 @@ interface RawItem {
     }>
   }>
   ticketPrice?: string
+  /** 火车条目用顶层 price(且未鉴权态为打码串如 "1xxx") */
+  price?: string
   jumpUrl?: string
 }
 
@@ -126,6 +130,8 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   for (const it of items) {
     const seg = it.journeys?.[0]?.segments?.[0]
     if (!seg?.marketingTransportNo || !seg.depDateTime) continue
+    const rawPrice = it.ticketPrice ?? it.price ?? ''
+    const numericPrice = Number(rawPrice)
     options.push({
       no: seg.marketingTransportNo,
       name: seg.marketingTransportName ?? '',
@@ -134,7 +140,8 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
       depStation: seg.depStationName ?? '',
       arrStation: seg.arrStationName ?? '',
       durationMin: Number(seg.duration ?? 0) || 0,
-      price: Number(it.ticketPrice ?? 0) || 0,
+      price: Number.isFinite(numericPrice) && numericPrice > 0 ? numericPrice : 0,
+      priceRaw: /^\d+$/.test(rawPrice) ? undefined : rawPrice || undefined,
       seatClass: seg.seatClassName,
       jumpUrl: it.jumpUrl,
     })

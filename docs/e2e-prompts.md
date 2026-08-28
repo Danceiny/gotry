@@ -103,3 +103,4 @@ curl -sS --max-time 3 http://127.0.0.1:3080 -o /dev/null -w "dsh=%{http_code}\\n
 - **smoke §12 实证**:17 工具注册含 `gotry_flyai_search`/`gotry_session_search`;flyai live hit(上海→丽江 2026-10-01,10 条,证据链 [实时API:flyai@ts]);session 工具终态 needs-login(登录态存在前提合同,零导航零请求)。
 - **人格契约 (19)** 已入仓根 yml:三级路由(官方→会话交叉验证→静态包),直达/中转分桶比对;challenged 即停手。
 - **待办**:founder 登录态落盘后补真模型会话巡检一例(当前 profile Cookies 0 行——2026-08-28 tick 实测诊断,session-login 需重跑并在窗口内完成登录)。
+- **金标准 flyai 基线(fa-01..04,2026-08-28 傍晚,经能力层)**:fa-01 上海→丽江 flight hit 10 条 min ¥230(中转跨天链)/2.8s;fa-02 北京→大理 flight **miss 0 条**(三值语义活案例:小机场季节性线路,miss≠错误,降级路径正确)/4.5s;fa-03 上海→大理 train hit 10 条/2.5s;fa-04 北京→昆明 train hit 10 条/2.6s。**火车价打码发现**:未鉴权态飞猪火车条目 price 为 "1xxx" 形态——flyai.ts 已加 priceRaw 透传(真实价以 jumpUrl 落地页为准),机票价不受影响。
