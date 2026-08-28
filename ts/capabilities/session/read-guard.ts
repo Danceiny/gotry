@@ -84,3 +84,58 @@ export async function attachReadGuard(ctx: RoutableContext, auditPath?: string):
     requestCount: () => total,
   }
 }
+
+/* ============ puppeteer-core 适配(2026-08-28 传输层定案:Chrome 144+ 调试服务与 playwright 不兼容) ============ */
+
+interface PpRequest {
+  method(): string
+  url(): string
+  continue(): Promise<void>
+  abort(code?: string): Promise<void>
+}
+interface PpPage {
+  setRequestInterception(on: boolean): Promise<void>
+  on(event: 'request', handler: (req: PpRequest) => void): void
+}
+interface PpBrowser {
+  pages(): Promise<PpPage[]>
+  on(event: string, handler: (target: { type(): string; page(): Promise<PpPage> }) => void): unknown
+}
+
+/**
+ * puppeteer 版守卫:对既有页面与新建页面全部开启请求拦截,写请求 abort + 审计。
+ * 与 playwright 版共用 classifyRequest 判定与审计条目(单一事实源)。
+ */
+export async function attachReadGuardPuppeteer(browser: PpBrowser, auditPath?: string): Promise<ReadGuardHandle> {
+  let blocked = 0
+  let total = 0
+  const wire = (page: PpPage): void => {
+    void (async () => {
+      try {
+        await page.setRequestInterception(true)
+        page.on('request', async (req) => {
+          total += 1
+          const verdict = classifyRequest(req.method(), req.url())
+          if (verdict === 'block') {
+            blocked += 1
+            if (auditPath) {
+              const entry: GuardAuditEntry = { ts: new Date().toISOString(), kind: 'blocked-write-request', method: req.method(), url: req.url().slice(0, 400) }
+              try {
+                mkdirSync(dirname(auditPath), { recursive: true })
+                appendFileSync(auditPath, JSON.stringify(entry) + '\n')
+              } catch { /* 审计失败不阻塞拦截本身 */ }
+            }
+            await req.abort('blockedbyclient').catch(() => { /* 目标已销毁等竞态 */ })
+            return
+          }
+          await req.continue().catch(() => { /* 竞态容忍 */ })
+        })
+      } catch { /* 已关闭的 target 容忍 */ }
+    })()
+  }
+  for (const p of await browser.pages()) wire(p)
+  browser.on('targetcreated', (t) => {
+    if (t.type() === 'page') void t.page().then(wire).catch(() => { /* ignore */ })
+  })
+  return { blockedCount: () => blocked, requestCount: () => total }
+}
