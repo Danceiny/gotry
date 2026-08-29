@@ -325,7 +325,7 @@ echo "=== 38. 会话扩展桥(#21 传输层方案 C:manifest 合同与 key→固
 (cd ts && npx tsx scripts/extension-tests.ts) || FAIL=1
 
 echo
-echo "=== 40. A2A 入口(M2:骨架+SSE——Agent Card/JSON-RPC message-send+stream+tasks-get+cancel/Bearer 鉴权 fail-closed/userToken 透传/任务终态/SSE 帧序与失败面/M3 限流+指标面;纯离线 stub driver,headless 真对话增量接线待 LLM) ==="
+echo "=== 40. A2A 入口(M2:骨架+SSE——Agent Card/JSON-RPC message-send+stream+tasks-get+cancel/Bearer 鉴权 fail-closed/userToken 透传/任务终态/SSE 帧序与失败面/M3 限流+指标面/headless driver 接线(无 key 诚实 failed);纯离线,活体对话验证由 LLM key 门控) ==="
 (cd ts && npx tsx scripts/a2a-server-tests.ts) || FAIL=1
 
 echo
