@@ -1,0 +1,34 @@
+name: 💡 功能建议 / Feature request
+description: 提出一个新场景或新能力 / Suggest a scenario or capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GoTry 的原则:**决策与算术由求解器给出、带证据链,不让模型猜**。功能建议请说明与这一透明机制的关系。
+        GoTry's north star: decisions and arithmetic come from the solver with evidence tags — the model only translates and explains.
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 用户场景 / User scenario
+      description: 你(或你要服务的用户)在什么情境下需要它?一句话行程示例最好。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望效果 / Expected outcome
+    validations:
+      required: true
+  - type: textarea
+    id: transparency
+    attributes:
+      label: 透明机制 / Transparency
+      description: 这个功能的结果如何保持可验证(证据链/算术可复核)?若是数据源,给出公开渠道。
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 自查 / Checklist
+      options:
+        - label: 我已搜索过既有 issue / I have searched existing issues
+        - label: 这个功能不依赖私有/付费渠道(或已说明) / No private or paid data source required (or explained)

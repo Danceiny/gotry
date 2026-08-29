@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 参与开发文档 / Contributing guide
+    url: https://github.com/Danceiny/gotry/blob/main/CONTRIBUTING.md
+    about: 环境搭建 · 测试 · 分支与 PR 流程 / Setup, testing, branch and PR workflow

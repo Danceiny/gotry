@@ -1,5 +1,7 @@
 # GoTry
 
+[![CI](https://github.com/Danceiny/gotry/actions/workflows/ci.yml/badge.svg)](https://github.com/Danceiny/gotry/actions/workflows/ci.yml)
+
 > **身体和灵魂，更多旅行，更少旅游。**
 > *Body and soul — more travel, less tourism.*
 
@@ -11,7 +13,7 @@
 |---|---|
 | **Version** | `v0.0.1-rc.11`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
 | **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;17 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);**2026-08-29 已知限制清算第一刀**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸)、薄壳遗留(`shell/`)物理删除;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
-| **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
+| **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) · CI: typecheck + 全栈回归(Node 22/24) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
 
@@ -231,18 +233,15 @@ Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 ·
 
 ## 🤝 参与开发 — Contributing
 
-仓库内 branch 模型:`main` 是唯一分支(没有 dev/staging)。所有迭代在 main 直接推(每次提交需全栈绿)。
+> *PR-based flow: branch off the latest `main`, full suite green, open a Pull Request — `main` never takes direct pushes; merge after review. Full guide: [CONTRIBUTING.md](CONTRIBUTING.md).*
 
-```bash
-./scripts/run-all-tests.sh   # 提交前必跑
+标准开源流程:**`main` 不直接推**——从最新 `main` 切出 `feat/ · fix/ · docs/ · chore/` 分支,本地全栈绿后开 Pull Request,CI（Node 22/24,typecheck + 全部套件）与维护者 review 双绿后 squash 合入。**测试红着不许合。**
 
-# 单独跑某个套件
-cd ts && npx tsx scripts/replay.ts          # 对话重放(mock,不需要 key)
-cd ts && npx tsx scripts/hbcli-tests.ts     # 能力封装
-cd ts && npx tsx scripts/incident-tests.ts  # 进程护栏
-```
+- 完整贡献指南(环境搭建 · 测试 · 分支与提交约定 · PR 流程): **[CONTRIBUTING.md](CONTRIBUTING.md)**
+- Bug / 功能建议:[issue 模板](.github/ISSUE_TEMPLATE/bug_report.yml)(搜过既有 issue 再提)
+- 行为或架构改动先立 ADR(`docs/architecture.md` §8);多 agent 协作契约见 [`AGENTS.md`](AGENTS.md)
 
-ADR 与技术债见 [`docs/architecture.md` §8 / §10](docs/architecture.md)。Agent 协作契约见 [`AGENTS.md`](AGENTS.md)。
+单套件快捷命令等测试细节见上面的 [🧪 跑测试 — Verify](#-跑测试--verify)。
 
 ---
 
