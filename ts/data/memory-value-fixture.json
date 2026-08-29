@@ -1,0 +1,161 @@
+{
+  "schema": "memory_value_fixture.v1",
+  "evidence_kind": "synthetic_fixture",
+  "measurement_policy": {
+    "quantile_method": "nearest_rank",
+    "predeclared_external_wait_codes": [
+      "tool_latency",
+      "user_pause"
+    ],
+    "minimum_pair_count_for_exit": 5,
+    "target_median_reduction_ratio": 0.5
+  },
+  "pairs": [
+    {
+      "pair_id": "pair-a",
+      "subject_ref": "subject-fixture-a",
+      "first": {
+        "flow_id": "flow-a-first",
+        "eligible_planning_index": 1,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-01T10:00:00Z",
+        "completed_at": "2026-08-01T10:15:00Z",
+        "external_waits": [
+          {
+            "code": "tool_latency",
+            "started_at": "2026-08-01T10:05:00Z",
+            "completed_at": "2026-08-01T10:10:00Z"
+          }
+        ]
+      },
+      "returning": {
+        "flow_id": "flow-a-returning",
+        "eligible_planning_index": 2,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-08T10:00:00Z",
+        "completed_at": "2026-08-08T10:08:00Z",
+        "external_waits": [
+          {
+            "code": "tool_latency",
+            "started_at": "2026-08-08T10:03:00Z",
+            "completed_at": "2026-08-08T10:06:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "pair_id": "pair-b",
+      "subject_ref": "subject-fixture-b",
+      "first": {
+        "flow_id": "flow-b-first",
+        "eligible_planning_index": 1,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-02T10:00:00Z",
+        "completed_at": "2026-08-02T10:14:00Z",
+        "external_waits": [
+          {
+            "code": "user_pause",
+            "started_at": "2026-08-02T10:06:00Z",
+            "completed_at": "2026-08-02T10:08:00Z"
+          }
+        ]
+      },
+      "returning": {
+        "flow_id": "flow-b-returning",
+        "eligible_planning_index": 2,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-09T10:00:00Z",
+        "completed_at": "2026-08-09T10:08:00Z",
+        "external_waits": [
+          {
+            "code": "user_pause",
+            "started_at": "2026-08-09T10:04:00Z",
+            "completed_at": "2026-08-09T10:06:00Z"
+          }
+        ]
+      }
+    },
+    {
+      "pair_id": "pair-c",
+      "subject_ref": "subject-fixture-c",
+      "first": {
+        "flow_id": "flow-c-first",
+        "eligible_planning_index": 1,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-03T10:00:00Z",
+        "completed_at": "2026-08-03T10:20:00Z",
+        "external_waits": [
+          {
+            "code": "tool_latency",
+            "started_at": "2026-08-03T10:10:00Z",
+            "completed_at": "2026-08-03T10:15:00Z"
+          }
+        ]
+      },
+      "returning": {
+        "flow_id": "flow-c-returning",
+        "eligible_planning_index": 2,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-10T10:00:00Z",
+        "completed_at": "2026-08-10T10:10:00Z",
+        "external_waits": [
+          {
+            "code": "tool_latency",
+            "started_at": "2026-08-10T10:05:00Z",
+            "completed_at": "2026-08-10T10:07:30Z"
+          }
+        ]
+      }
+    }
+  ],
+  "experience_reflux_events": [
+    {
+      "experience_id": "experience-a",
+      "kind": "recalled",
+      "evidence_ref": "fixture:experience-a:recall"
+    },
+    {
+      "experience_id": "experience-a",
+      "kind": "verified_outcome",
+      "evidence_ref": "fixture:experience-a:verification"
+    },
+    {
+      "experience_id": "experience-b",
+      "kind": "recalled",
+      "evidence_ref": "fixture:experience-b:recall"
+    }
+  ],
+  "preference_assertions": [
+    {
+      "assertion_id": "preference-a",
+      "evidence_ref": "fixture:utterance:a",
+      "consumer": "ranking",
+      "hard_filter": false
+    },
+    {
+      "assertion_id": "preference-b",
+      "evidence_ref": "fixture:utterance:b",
+      "consumer": "ranking",
+      "hard_filter": false
+    },
+    {
+      "assertion_id": "preference-c",
+      "evidence_ref": "fixture:tool-result:c",
+      "consumer": "ranking",
+      "hard_filter": false
+    }
+  ],
+  "p4": {
+    "state": "closed",
+    "triggers": {
+      "real_usage": false,
+      "multi_user": false
+    }
+  }
+}
