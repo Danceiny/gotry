@@ -183,7 +183,7 @@ async function main() {
 
   // 12) 会话数据面工具(P3 切片1):官方通道 live + 会话工具 needs-login 合同(隔离 profile,零导航)
   {
-    const fa = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; options?: unknown[]; evidence?: string; error?: string }
+    const fa = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string }
     const faBlocked = fa.verdict === 'error' && /sentinel|block/i.test(fa.error ?? '')
     // 端点不可达/超时(出口 IP 被拒或网络抖动)→ 工具以带证据链的 error 终态优雅降级,同样合法
     const faErrTerminal = fa.ok === false && fa.verdict === 'error' && /^flyai-error$/.test(String(fa.via ?? '')) && /\[实时API:flyai@error@/.test(String(fa.evidence ?? ''))
