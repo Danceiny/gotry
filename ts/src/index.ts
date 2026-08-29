@@ -590,7 +590,8 @@ export function apply(ctx: Context, config: Config): void {
       const payload = {
         ok: isLive,
         rates: isLive ? (resp.rates ?? null) : null,
-        evidence: isLive ? resp.evidence : '[价格面:fail-closed]',
+        // 价格面证据一律透传渠道证据链(含 [实时API:hbcli@error@ts] 失败形态)——L4 不变量,不丢时间戳
+        evidence: resp.evidence,
         hotelId: q.hotelId,
         via: resp.via,
         latency_ms: Date.now() - started,
@@ -636,7 +637,8 @@ export function apply(ctx: Context, config: Config): void {
       const payload = {
         ok: isLive,
         avail: isLive ? (resp.avail ?? null) : null,
-        evidence: isLive ? resp.evidence : '[价格面:fail-closed]',
+        // 同上:渠道证据链原样(失败形态含时间戳,不字面量化)
+        evidence: resp.evidence,
         ratePkgId: q.ratePkgId,
         via: resp.via,
         latency_ms: Date.now() - started,
