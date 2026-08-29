@@ -13,6 +13,8 @@
  *
  * 任务生命周期:A2A 子集 submitted→working→(input-required 预留)/completed/failed/canceled;
  * 驱动可注入(Driver 接口:stub=离线确定性测试 / headless=spawn gotry-inner 真对话)。
+ * M3 治理面:per-IP 固定窗口限流(默认 30 req/min,GOTRY_A2A_RATE_LIMIT 覆盖,0=关;超额 HTTP 429
+ * JSON-RPC error 面)+ GET /a2a/metrics 指标快照(任务态计数/请求/限流/鉴权拒绝/uptime,同款 Bearer)。
  * message/stream(SSE):event 流 = status(submitted/working)→ final(产物)或 error;诚实流——
  * 不伪造 token 级增量,真对话增量在 headless driver 接线后由 driver 逐段供给(切片 3)。
  */
@@ -45,6 +47,8 @@ export interface A2AServerOptions {
   driver?: A2ADriver
   /** 测试注入:任务表(缺省进程内 Map) */
   tasks?: Map<string, A2ATask>
+  /** 每分钟每 IP 请求上限(POST /a2a);0=关闭。缺省 30 */
+  rateLimitPerMin?: number
 }
 
 export function agentCard(baseUrl: string): Record<string, unknown> {
@@ -102,6 +106,22 @@ export function startA2AServer(opts: A2AServerOptions): Promise<{ server: Server
   const tasks = opts.tasks ?? new Map<string, A2ATask>()
   const driver: A2ADriver = opts.driver ?? (async () => { throw new Error('A2A driver 未配置(headless 接线在 M2 切片 2)') })
   const now = () => new Date().toISOString()
+  const rateLimit = opts.rateLimitPerMin ?? 30
+  const startedAt = Date.now()
+  const metrics = { requestsTotal: 0, authRejectedTotal: 0, rateLimitedTotal: 0, tasksTotal: 0, tasksByState: {} as Record<string, number> }
+  const ipWindows = new Map<string, { windowStart: number; count: number }>()
+  const rateLimited = (ip: string): boolean => {
+    if (rateLimit <= 0) return false
+    const win = ipWindows.get(ip)
+    const t = Date.now()
+    if (!win || t - win.windowStart >= 60_000) { ipWindows.set(ip, { windowStart: t, count: 1 }); return false }
+    win.count += 1
+    return win.count > rateLimit
+  }
+  const bumpTaskState = (state: A2ATaskState): void => {
+    metrics.tasksTotal += 1
+    metrics.tasksByState[state] = (metrics.tasksByState[state] ?? 0) + 1
+  }
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = String(req.url ?? '')
@@ -112,11 +132,31 @@ export function startA2AServer(opts: A2AServerOptions): Promise<{ server: Server
         res.end(JSON.stringify(agentCard(`http://${host}`)))
         return
       }
-      if (req.method === 'POST' && (url === '/a2a' || url === '/')) {
+      if (req.method === 'GET' && url === '/a2a/metrics') {
         const auth = String(req.headers.authorization ?? '')
         if (auth !== `Bearer ${opts.apiKey}`) {
+          metrics.authRejectedTotal += 1
+          res.writeHead(401, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(rpcError(null, -32001, 'unauthorized: metrics 同款 Bearer 访问控制')))
+          return
+        }
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ...metrics, rateLimitPerMin: rateLimit, uptimeSec: Math.round((Date.now() - startedAt) / 1000) }))
+        return
+      }
+      if (req.method === 'POST' && (url === '/a2a' || url === '/')) {
+        metrics.requestsTotal += 1
+        const auth = String(req.headers.authorization ?? '')
+        if (auth !== `Bearer ${opts.apiKey}`) {
+          metrics.authRejectedTotal += 1
           res.writeHead(401, { 'content-type': 'application/json' })
           res.end(JSON.stringify(rpcError(null, -32001, 'unauthorized: A2A 入口要求 Bearer API key(部署级访问控制,PRD §6)')))
+          return
+        }
+        if (rateLimited(String(req.socket.remoteAddress ?? 'unknown'))) {
+          metrics.rateLimitedTotal += 1
+          res.writeHead(429, { 'content-type': 'application/json' })
+          res.end(JSON.stringify(rpcError(null, -32004, `rate limited: 超 ${rateLimit} req/min/IP(部署级限流,稍后重试)`)))
           return
         }
         const body = await readBody(req)
@@ -139,6 +179,7 @@ export function startA2AServer(opts: A2AServerOptions): Promise<{ server: Server
           const metadata = (params.metadata ?? {}) as { userToken?: string }
           const task: A2ATask = { id: randomUUID(), state: 'submitted', createdAt: now(), updatedAt: now(), artifacts: [] }
           tasks.set(task.id, task)
+          bumpTaskState(task.state)
           const run = async (): Promise<void> => {
             task.state = 'working'
             task.updatedAt = now()
@@ -237,7 +278,8 @@ if (process.argv[1] && process.argv[1].endsWith('a2a-server.ts') && !process.env
     process.exit(1)
   }
   const port = Number(process.env.GOTRY_A2A_PORT ?? 3081)
-  void startA2AServer({ apiKey, port }).then(({ port: p }) => {
+  const rateLimitPerMin = Number(process.env.GOTRY_A2A_RATE_LIMIT ?? 30)
+  void startA2AServer({ apiKey, port, rateLimitPerMin }).then(({ port: p }) => {
     console.log(`[gotry-a2a] listening on http://127.0.0.1:${p} (card: /.well-known/agent-card.json; rpc: POST /a2a)`)
   })
 }
