@@ -209,4 +209,4 @@ Standard open-source flow: branch off latest `main` (`feat/ · fix/ · docs/ · 
 
 **Built with**: DeepSeek Harness 0.1.2-alpha.1 (vendored) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
 
-**Last verified against `v0.0.1-rc.14` (2026-08-29)** — full-stack regression green §1-§34 (release flow: `scripts/publish-npm.sh`).
+**Last verified against `v0.0.1-rc.15` (2026-08-29)** — full-stack regression green §1-§36 (release flow: `scripts/publish-npm.sh`).
