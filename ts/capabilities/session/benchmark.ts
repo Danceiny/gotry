@@ -4,7 +4,7 @@
  * 只处理已经脱敏、结构化的证据；不打开浏览器、不读登录态，也不执行任何写操作。
  */
 
-export type SessionEvidenceVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach'
+export type SessionEvidenceVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
 
 export const SESSION_BENCHMARK_SCHEMA_VERSION = 'session-double-source.v1' as const
 export const SESSION_FIELD_ACCURACY_THRESHOLD = 0.9
@@ -162,6 +162,7 @@ export type DoubleSourceState =
   | 'divergent'
   | 'waiting_attach'
   | 'waiting_login'
+  | 'waiting_extension'
   | 'challenge_stop'
   | 'guard_violation'
   | 'source_unavailable'
@@ -252,6 +253,8 @@ export function evaluateDoubleSource(input: {
   }
   if (!session) return baseEvaluation('source_unavailable', 'no_spend_stop')
   if (session.verdict === 'needs-attach') return baseEvaluation('waiting_attach', 'no_spend_waiting_user')
+  // 扩展车道(2026-08-29 PRIMARY 传输)未就绪:与 waiting-* 同族 no-spend,等待用户一次性安装
+  if (session.verdict === 'needs-extension') return baseEvaluation('waiting_extension', 'no_spend_waiting_user')
   if (session.verdict === 'needs-login') return baseEvaluation('waiting_login', 'no_spend_waiting_user')
   if (!official || official.verdict !== 'hit' || session.verdict !== 'hit') {
     return baseEvaluation('source_unavailable', 'no_spend_stop')
