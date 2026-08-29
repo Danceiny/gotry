@@ -21,6 +21,16 @@ assert.ok(Math.abs(dali.latitude - 25.6) < 0.5, `纬度应≈25.6,实际 ${dali.
 assert.match(geo.evidence, /open-meteo-geo@2/, '证据链带时间戳')
 console.log(`1. geocode 大理市 → ${dali.latitude},${dali.longitude} (${dali.name},${dali.admin1}) OK`)
 
+// 1b. issue #24 回归:「普吉岛」在 open-meteo 中文覆盖外(实测 0 结果,裸词「普吉」还错配西藏同名村)——
+//     应被弱命中/零结果闸送 Nominatim 兜底层,命中泰国普吉府
+const phuket = await geocodePlace('普吉岛')
+assert.equal(phuket.ok, true, `普吉岛 geocode ok: ${phuket.error ?? ''}`)
+assert.equal(phuket.via, 'nominatim', 'open-meteo 0 结果应走 nominatim 兜底层')
+assert.ok(Math.abs(phuket.results[0].latitude - 8.0) < 0.5, `普吉岛纬度应≈8,实际 ${phuket.results[0].latitude}(${phuket.results[0].name})`)
+assert.match(phuket.results[0].country ?? '', /泰国/, '国家标签应为泰国')
+assert.match(phuket.evidence, /\[实时API:nominatim@2/, '兜底层证据链带时间戳')
+console.log(`1b. geocode 普吉岛(兜底层)→ ${phuket.results[0].name}(${phuket.results[0].admin1},${phuket.results[0].country}) OK`)
+
 // 2. 预报:大理 7 天
 const fc = await getForecast({ latitude: dali.latitude, longitude: dali.longitude }, { days: 7 })
 assert.equal(fc.ok, true, `forecast ok: ${fc.error ?? ''}`)
@@ -49,4 +59,4 @@ assert.equal(wmoLabel(95), '雷暴')
 assert.match(wmoLabel(999), /天气码999/, '未知码回退')
 console.log('5. WMO 码映射 OK')
 
-console.log('\nWEATHER TESTS: 5/5 OK(Open-Meteo 真实 API,免费无 key)')
+console.log('\nWEATHER TESTS: 6/6 OK(Open-Meteo 真实 API,免费无 key;普吉岛走 Nominatim 兜底层)')

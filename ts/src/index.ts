@@ -656,6 +656,18 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.from || !q.to || !q.date) {
         return { ok: false, summary: '需要 from/to(中文城市名)与 date(YYYY-MM-DD)' } as const
       }
+      // 过去日期预校验(issue #24,代码层算术;分层纪律):用户说「7.18」未带年份时模型会落到当前年,
+      // 而今天可能已在 8 月——过去日期上游必拒(「出发日期非法」)。拦在发查询之前并指明修正方向,
+      // 不让模型从 miss 里猜因。
+      const now = new Date()
+      const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      if (q.date < todayYmd) {
+        return JSON.parse(JSON.stringify({
+          ok: false, verdict: 'error', kind,
+          summary: `未发起查询:日期 ${q.date} 已是过去(今天 ${todayYmd}),过去不存在在售机/火车票。`
+            + `多为用户时间表达未带年份所致——向用户确认年份(或按未来最近的同月日修正)后再查。`,
+        })) as Record<string, never>
+      }
       const r = await flyaiSearch({ kind, origin: q.from, destination: q.to, depDate: q.date })
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.no} ${o.name} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
       const summary = r.verdict === 'hit'

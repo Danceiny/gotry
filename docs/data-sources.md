@@ -29,7 +29,7 @@
 | **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退 | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
 | **酒店点评/评分** | ✅ **复用 hotel-be Anything**(内含酒店 + 城市/区域混合 candidate)+ M4 scale-up:Google Place 评分/照片 | Any(hit/miss),M4:geography | `hbcli-anything` | M3:DONE(founder 校准 Anything 复用);M4:Google Place scale-up 路径(geography GetPlaceReviews) |
 | **POI/地点搜索** | ✅ Anything(混合 城市+酒店+place 候选) + OSM Nominatim 兜底 | Any | `hbcli-anything` / M4 `osm-nominatim` | M3:DONE;TREK 同款,免费兜底 |
-| **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`) | 实时 | `[实时API:open-meteo@ts]` | 保持;WMO 码已映射中文 |
+| **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`);地理编码双源:Open-Meteo(主,人口/行政级排序防同名小地压主城)+ OSM Nominatim(中文兜底——open-meteo 中文名覆盖有洞,issue #24 实测「普吉岛」0 结果) | 实时 | `[实时API:open-meteo@ts]` / 兜底 `[实时API:nominatim@ts]` | 保持;WMO 码已映射中文 |
 | **地面交通(接驳/铁路)** | ⚠️ 段内 transfer 硬编码在数据包(minutes/priceCny) | 静态 | `[静态包:估算]` | M4:OSRM 免费自托管(路线/时长);12306 无开放 API 不接 |
 | **地理/行政区划** | ❌ 无 | — | — | TREK 模式:bundled GeoJSON atlas(脚本构建,离线) |
 | **时区** | ⚠️ 手写在数据包(tz_offset_min/origin_tz_offset_min) | 静态 | — | M4:用时区库(`Intl`/`tz-lookup`)替代手写 |
@@ -219,3 +219,4 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 |---|---|
 | 2026-08-22 | 立 v1:领域矩阵现状盘点、四层架构图、Google Place 链路 founde 定案(hbcli→search OpenAPI→geography)、TREK 参考采纳表、证据链契约细则、M3-M5 数据侧演进 |
 | 2026-08-28 | 新增 §8 官方 agent 通道尽调(RFC P0):飞猪 FlyAI 无 key 实测可用(机/火只读搜索,会话面缺口收缩)+ 携程机票 XHR 嗅探 PoC(batchSearch 接口识别,零风控) |
+| 2026-08-29 | issue #24 工具不可用三处修复:① flyai 上游语义失败(exit=0 + `data:null` + `message:"出发日期非法"`)由吞成 miss 改为带上游原话的 error 终态,工具层加过去日期预校验;② 天气地理编码双源化(Open-Meteo 主 + Nominatim 中文兜底,「普吉岛」0 结果/「普吉」错配西藏同名村);③ hbcli 静态包回退按目的地过滤命中块(不再整包倾倒),无命中明示无数据 |

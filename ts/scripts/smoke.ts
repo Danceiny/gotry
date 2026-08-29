@@ -195,6 +195,11 @@ async function main() {
       throw new Error(`FAIL: flyai 工具应 live hit,实际:${JSON.stringify(fa).slice(0, 200)}`)
     }
     const prof = mkdtempSync(join(smokeRoot, 'sess-'))
+    // 过去日期预校验(issue #24):代码层直接拒绝并指明修正方向,不发上游查询、不产生误导性 miss
+    const faPast = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' } }, null) as { ok?: boolean; summary?: string }
+    if (!(faPast.ok === false && /已是过去/.test(String(faPast.summary ?? '')))) {
+      throw new Error(`FAIL: flyai 过去日期应代码层预校验拒绝,实际:${JSON.stringify(faPast).slice(0, 200)}`)
+    }
     const ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; via?: string; evidence?: string }
     rmSync(prof, { recursive: true, force: true })
     // 工具默认 profile(~/.gotry);smoke 环境下若 founder 已登录会真检索(节律闸限制单次)——两种合法终态

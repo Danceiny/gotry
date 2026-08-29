@@ -6,7 +6,7 @@
  * 隔离纪律:live 用 mktemp profile 与 stateRoot,绝不动共享状态与日常浏览器 profile。
  */
 
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -91,6 +91,18 @@ if (sentinelBlocked) {
   assert((fr.options?.length ?? 0) >= 1 && (fr.options?.every((o) => o.price > 0 && /^\d+[A-Z]\d+|^[A-Z]{2}\d+/.test(o.no)) ?? false), '结构化字段齐(price>0,航班号形)', fr.options?.[0])
 }
 assert(/\[实时API:flyai/.test(fr.evidence), '证据链 [实时API:flyai@*]')
+
+// F2. 离线回归(issue #24):上游语义失败——CLI exit=0 且 {"data":null,"message":"出发日期非法"}
+// 必须带上游原话走结构化 error,不得吞成 miss(miss 会误导模型「这条线路没有航班」)
+{
+  const fakeDir = mkdtempSync(join(tmpdir(), 'flyai-fake-'))
+  const fakeCli = join(fakeDir, 'flyai-cli-fake')
+  writeFileSync(fakeCli, '#!/bin/sh\necho \'{"data":null,"message":"出发日期非法","status":1,"systemMessage":null}\'\nexit 0\n', { mode: 0o755 })
+  const fr2 = await flyaiSearch({ kind: 'flight', origin: '深圳', destination: '普吉', depDate: '2026-07-18', cliBin: fakeCli })
+  assert(fr2.ok === false && fr2.verdict === 'error', 'data:null 语义失败 → error 终态(非 miss)', fr2)
+  assert(/出发日期非法/.test(fr2.error ?? '') && /flyai@error@/.test(fr2.evidence), '上游原话透传 + 证据链错误形', fr2)
+  rmSync(fakeDir, { recursive: true, force: true })
+}
 
 // G. live 会话检索(Chrome+携程;GOTRY_SESSION_LIVE=0 关;Chrome 缺席 SKIP)
 console.log('G. sessionFlightSearch(live,隔离 profile + ReadGuard)')

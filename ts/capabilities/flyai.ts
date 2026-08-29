@@ -119,8 +119,15 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   let items: RawItem[]
   try {
     const jStart = r.stdout.indexOf('{')
-    const parsed = JSON.parse(jStart >= 0 ? r.stdout.slice(jStart) : r.stdout) as { data?: { itemList?: RawItem[] } }
-    items = parsed.data?.itemList ?? []
+    const parsed = JSON.parse(jStart >= 0 ? r.stdout.slice(jStart) : r.stdout) as { data?: { itemList?: RawItem[] } | null; message?: string }
+    if (parsed.data?.itemList === undefined) {
+      // 实测(issue #24,2026-08-29):过去/非法日期上游语义失败——CLI exit=0 且 stdout 为
+      // {"data":null,"message":"出发日期非法"}。吞成 miss 会误导模型「这线路没航班」,
+      // 必须带上游原话走 error 终态(与 Sentinel 限流形态同构)。
+      const upstreamMsg = (parsed.message ?? 'data:null(上游未返回业务数据)').slice(0, 200)
+      return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] ${upstreamMsg}`, error: upstreamMsg }
+    }
+    items = parsed.data.itemList
   } catch {
     // 实测(2026-08-28):Sentinel 限流时 CLI exit=0 但 stdout 是 {"message":"SentinelBlockException..."}
     const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)
