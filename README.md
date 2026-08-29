@@ -78,7 +78,7 @@ cp .env.example .env                              # ② set LLM_API_KEY
 
 ---
 
-## 🧰 18 tools
+## 🧰 20 tools
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -94,6 +94,7 @@ cp .env.example .env                              # ② set LLM_API_KEY
 | **Memory & reachability** | `gotry_motivation_save` | Persist motivation profile (evidence mandatory, anti-fabrication) |
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | "next departure" wish pool + 0..1 conditional recall |
 | | `gotry_companion_save` · `gotry_trip_log` | companion profile / travel timeline |
+| **Artifacts** | `gotry_artifacts_list` / `gotry_artifacts_read` | Discover & view generated artifacts (async deliverables + working-dir markdown) as a line-numbered file view (read-only) |
 | **General external** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | web / subtitles / GitHub / all-channel external info (via Agent-Reach) |
 
 ---
@@ -138,7 +139,7 @@ Engine verdict:
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ L1  chat-as-interface; gates are in-message choice cards       │
-│ L2  orchestration  dsh runtime + GoTry plugin (ReAct); 18 tools│
+│ L2  orchestration  dsh runtime + GoTry plugin (ReAct); 20 tools│
 │ L3  domain  unified itinerary model + Z3 feasibility engine    │
 │ L4  data  static packs + hotelbyte-cli bridge + OpenFlights    │
 │ L5  governance  LoopX (objective / gates / evidence / quota)   │
@@ -147,7 +148,7 @@ Engine verdict:
 
 | Layer | Module | Role |
 |---|---|---|
-| L2 | `ts/src/index.ts` (dsh plugin) | 18 tools, time-anchor & memory-brief variables; execute isolation + consent gate + process guards |
+| L2 | `ts/src/index.ts` (dsh plugin) | 20 tools, time-anchor & memory-brief variables; execute isolation + consent gate + process guards |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | single solving entry (candidate enumeration + flight-chain Z3) |
 | L4 | `ts/capabilities/hbcli.ts` · `skeleton-check.ts` | realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
 | L5 | loopx governance | objective / gates / evidence / quota |
