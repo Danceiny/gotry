@@ -9,21 +9,15 @@
  * - WASM init ~60-140ms 一次性,单次求解 ~6ms(进程内,无子进程桥)。
  */
 
-import { init } from 'z3-solver'
+import { parseCandidate, parseRequest } from './model.ts'
 import type { Candidate, Choice, TrueCost, TravelRequest } from './model.ts'
 import { evaluateChoice, minToHhmm, requiredUsableHours, trueCostToDict, LATEST_ARRIVE_STAY_MIN } from './model.ts'
+import { withZ3, type Z3Ctx } from './z3-shared.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type Z3Ctx = any
-
-let z3Promise: Promise<Z3Ctx> | null = null
-
-async function getZ3(): Promise<Z3Ctx> {
-  if (!z3Promise) {
-    z3Promise = (async () => (await init()).Context('main'))()
-  }
-  return z3Promise
-}
+// Z3 运行时收敛到 z3-shared(单一 WASM 实例 + 单一 Context + 会话级互斥);
+// 本模块不再自持 z3Promise(此前三模块并存 + solve() Promise.all 并发多候选
+// 是「memory access out of bounds」偶发的根因,见 z3-shared.ts 头注)。
 
 export interface Suggestion {
   relax: string[]
@@ -185,9 +179,8 @@ async function unsatCoreOf(s: any): Promise<string[]> {
   return out
 }
 
-async function cheapestPlan(enc: Encoding, skip: ReadonlySet<string>): Promise<{ choice: Choice; cost: TrueCost } | null> {
+async function cheapestPlan(enc: Encoding, skip: ReadonlySet<string>, z3: Z3Ctx): Promise<{ choice: Choice; cost: TrueCost } | null> {
   /** 放宽 skip 约束下的最省钱方案:getLower 取最优值,等值回代提模(与 Python _cheapest_plan 同)。 */
-  const z3 = await getZ3()
   const opt = new z3.Optimize()
   opt.add(enc.structure)
   for (const name of CONSTRAINT_LABEL_KEYS) {
@@ -219,7 +212,8 @@ function suggestText(relax: string[], cand: Candidate, req: TravelRequest, choic
 }
 
 export async function solveCandidate(cand: Candidate, req: TravelRequest): Promise<Verdict> {
-  const z3 = await getZ3()
+  // 会话级互斥门:整个判定(编码 + 多轮求解)独占共享实例;门内绝不嵌套 withZ3。
+  return withZ3('engine.solveCandidate', async z3 => {
   const enc = new Encoding(z3, cand, req)
   const verdict: Verdict = {
     candidateId: cand.id, name: cand.name, feasible: false,
@@ -260,7 +254,7 @@ export async function solveCandidate(cand: Candidate, req: TravelRequest): Promi
         const trial = new Set(joint.filter(n => n !== name))
         if (!(await isUnsat(await longEnc.solverWith(trial)))) joint = [...trial]
       }
-      const plan = await cheapestPlan(longEnc, new Set(joint))
+      const plan = await cheapestPlan(longEnc, new Set(joint), z3)
       if (plan) {
         verdict.suggestions.push({
           relax: joint,
@@ -274,7 +268,7 @@ export async function solveCandidate(cand: Candidate, req: TravelRequest): Promi
   // 憧憬不被拒绝:放宽时长能救活 → wish pool + 成行条件(最省钱口径)
   if (verdict.suggestions.some(sg => sg.relax.includes('duration'))) {
     const longEnc = new Encoding(z3, cand, req, cand.minDaysForPurpose)
-    const plan = await cheapestPlan(longEnc, new Set(['duration', 'budget']))
+    const plan = await cheapestPlan(longEnc, new Set(['duration', 'budget']), z3)
     const conditions: Record<string, unknown> = { days: cand.minDaysForPurpose }
     if (plan) conditions['budget_cny'] = plan.cost.moneyCny
     if (cand.bestMonths.length) conditions['best_months'] = cand.bestMonths
@@ -285,10 +279,14 @@ export async function solveCandidate(cand: Candidate, req: TravelRequest): Promi
     }
   }
   return verdict
+  })
 }
 
 export async function solve(req: TravelRequest, candidates: Candidate[]): Promise<Record<string, unknown>> {
-  const verdicts = await Promise.all(candidates.map(c => solveCandidate(c, req)))
+  // 顺序求解:候选间共享单一 WASM 实例,不并发交错(此前 Promise.all 是
+  // 「memory access out of bounds」偶发的根因;求解 ~6ms/次,串行可忽略)。
+  const verdicts: Verdict[] = []
+  for (const c of candidates) verdicts.push(await solveCandidate(c, req))
   const feasible = verdicts.filter(v => v.feasible).sort((a, b) => b.imageryMatch - a.imageryMatch)
   const recommended = feasible[0]?.candidateId ?? null
   return {

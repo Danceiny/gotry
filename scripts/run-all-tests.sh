@@ -11,9 +11,9 @@ set +eu; source ~/.nvm/nvm.sh 2>/dev/null || true; set -eu  # nvm.sh 遇 npmrc p
 FAIL=0
 
 echo "=== 1. TS engine(洱海金标准,8 断言) ==="
-# 已知 z3 WASM worker 偶发(README Known limitations):进程级崩掉致 FAIL=1 而其余
-# 各节照常绿——历次「幻影红」均为此因(xtrace 定位)。重试一次:真回归二次仍红,偶发过。
-(cd ts && npx tsx scripts/engine-tests.ts) || (cd ts && npx tsx scripts/engine-tests.ts) || FAIL=1
+# Z3 WASM race 已根治(2026-08-29,z3-shared.ts 单一实例+会话级互斥):不再需要「重试一次」
+# 止血;并发形态的回归闸见 §30 z3-race-tests。
+(cd ts && npx tsx scripts/engine-tests.ts) || FAIL=1
 
 echo
 echo "=== 2. TS journey(五段链,5 断言) ==="
@@ -146,6 +146,10 @@ echo "=== 28. 事务化状态账本(ADR-15:事务原子性/红线进事务/幂�
 echo
 echo "=== 29. 账本 CLI e2e(migrate 快照/stats/log/export 视图单向/forget 物理硬删带审计/pw-* saga 面) ==="
 (cd ts && npx tsx scripts/state-cli-tests.ts | tail -1) || FAIL=1
+
+echo
+echo "=== 30. Z3 WASM race 回归(engine/journey/unified 三形态同轮并发压测;修复验证面,run-all §1 止血移除的闸) ==="
+(cd ts && npx tsx scripts/z3-race-tests.ts) || FAIL=1
 
 echo
 if [ "$FAIL" -ne 0 ]; then
