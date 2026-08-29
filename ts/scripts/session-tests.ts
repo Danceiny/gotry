@@ -1,8 +1,9 @@
 /**
  * 会话数据面 P1 测试(RFC §4 P1 exit):
- *   A-E 纯函数(确定性,进 CI):ReadGuard 分类器/批搜解析(buildEntryUrl/fixture)/提交件过滤/节律闸;
+ *   A-E 纯函数(确定性,进 CI):ReadGuard 分类器/批搜解析/提交件过滤/节律闸;
  *   F   live FlyAI 官方通道(同 weather-tests 的 live 先例);
  *   G   live 会话检索(Chrome + 携程;GOTRY_SESSION_LIVE=0 可关;Chrome 缺席 → SKIP 不 fail)。
+ * #21 字段 scorer/双源 gate 的无网络验收独立放在 scripts/session-benchmark.ts。
  * 隔离纪律:live 用 mktemp profile 与 stateRoot,绝不动共享状态与日常浏览器 profile。
  */
 
@@ -12,7 +13,7 @@ import { join } from 'node:path'
 
 import { classifyRequest, isSubmitText } from '../capabilities/session/read-guard.ts'
 import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
-import { sessionFlightSearch, __resetRateLimiterForTest } from '../capabilities/session-search.ts'
+import { sessionFlightSearch, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 
 let pass = 0
@@ -79,8 +80,11 @@ assert(r1.verdict === 'error' && /unresolved/.test(r1.error ?? ''), '首次调�
 assert(r2.verdict === 'cooldown', '30s 内二次调用 → cooldown,不发起导航')
 __resetRateLimiterForTest()
 
-// F. live FlyAI 官方通道(同 weather-tests live 先例)
-console.log('F. flyaiSearch(live,飞猪官方,无 key)')
+// F. transport 失败分类 + live FlyAI 官方通道
+console.log('F. transport verdict + flyaiSearch(live,飞猪官方,无 key)')
+assert(classifyTransportFailure('日常 Chrome 未开调试端口', true) === 'needs-attach', '调试端口未开稳定投影 needs-attach')
+assert(classifyTransportFailure('cdp attach 失败:socket closed', true) === 'needs-attach', 'CDP 握手失败稳定投影 needs-attach')
+assert(classifyTransportFailure('chrome launch failed', false) === 'error', '隔离 profile 启动失败不误投影用户门禁')
 const fr = await flyaiSearch({ kind: 'flight', origin: '上海', destination: '丽江', depDate: '2026-10-01' })
 const sentinelBlocked = fr.verdict === 'error' && /sentinel|block/i.test(fr.error ?? '')
 if (sentinelBlocked) {
