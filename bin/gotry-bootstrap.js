@@ -68,7 +68,14 @@ async function setupHbcli() {
   say('[gotry-setup] hbcli(hotelbyte-cli,可选酒店实时源)')
   const candidates = ['hbcli', join(homedir(), '.local/bin/hbcli'), join(homedir(), '.staicli/current/hbcli')]
   const present = candidates.some((p) => existsSync(p)) && (await probe(candidates[0], ['version']) || await probe(candidates[1], ['version']) || await probe(candidates[2], ['version']))
-  if (present) { say('  ✓ 已安装'); return { ok: true } }
+  const credFile = join(homedir(), '.staicli', 'credentials.json')
+  if (present) {
+    say('  ✓ 已安装')
+    if (existsSync(credFile)) say('  ✓ 凭证已配置(自检: hbcli auth whoami)')
+    else say('  ✗ 凭证未配置——酒店检索将用内置静态包(非实时),账号配置见下方指引')
+    if (CHECK_ONLY) say('  (--check-only 只报告,不安装)')
+    return { ok: true }
+  }
   if (CHECK_ONLY) { say('  ✗ 未安装(--check-only 只报告)'); return { ok: true } }
   say(`  安装中(官方脚本): ${HBCLI_INSTALL_CMD}`)
   const r = await run('bash', ['-c', HBCLI_INSTALL_CMD], { timeoutMs: 120_000 })
@@ -77,7 +84,11 @@ async function setupHbcli() {
   if (!process.env.PATH.split(':').includes(binDir)) {
     say(`  ⚠ ${binDir} 不在当前 PATH —— gotry 工具已内建候选路径回退,无需手动处理;其他程序可用: export PATH="${binDir}:$PATH"`)
   }
-  say('  ✓ 安装完成(凭证选配: hbcli auth set-credentials --app-key ... --app-secret ...,或 HOTELBYTE_TOKEN;未配时酒店检索自动用静态包)')
+  say('  ✓ 安装完成——账号配置(未配时酒店检索自动用静态包,非实时):')
+  say('    · 快速试用(官方沙箱演示账号): hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo')
+  say('    · 正式接入: 向 HotelByte 申请专属 appKey/appSecret 后用同一命令替换')
+  say('    · 门户账号(权限更大,酒店搜索无必要): hbcli auth login --username <email>')
+  say('  自检: hbcli auth whoami(api_key.configured=true 即就位)')
   return { ok: true }
 }
 
