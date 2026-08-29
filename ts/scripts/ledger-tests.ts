@@ -18,7 +18,20 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import type { TripState } from '../src/contracts.ts'
+import { persistAsyncTicket, type AsyncTicket } from '../src/loop.ts'
 import { ensureLedger, openLedgerIfExists } from '../src/state-ledger.ts'
+import { parseFlightPackToSpec } from '../src/unified.ts'
+
+type TerminalOutcome = {
+  schema: 'gotry_async_terminal.v1'
+  ticket_id: string
+  status: 'succeeded' | 'failed'
+  passed: number
+  total: number
+  checks: Record<string, boolean>
+  failed_checks: string[]
+}
 
 let pass = 0
 let fail = 0
@@ -29,6 +42,26 @@ function assert(cond: boolean, msg: string): void {
   } else {
     fail++
     console.error(`  FAIL - ${msg}`)
+  }
+}
+
+function terminalOutcomeOf(stdout: string): TerminalOutcome | null {
+  const line = stdout.trim().split('\n').filter(Boolean).at(-1)
+  if (!line) return null
+  try {
+    const value = JSON.parse(line) as Partial<TerminalOutcome>
+    if (
+      value.schema !== 'gotry_async_terminal.v1'
+      || typeof value.ticket_id !== 'string'
+      || (value.status !== 'succeeded' && value.status !== 'failed')
+      || typeof value.passed !== 'number'
+      || typeof value.total !== 'number'
+      || typeof value.checks !== 'object'
+      || !Array.isArray(value.failed_checks)
+    ) return null
+    return value as TerminalOutcome
+  } catch {
+    return null
   }
 }
 
@@ -148,17 +181,134 @@ assert(count1 === 1, '崩溃前真实求解恰 1 次')
 const resume = spawnSync('npx', ['tsx', 'scripts/async-collect.ts', 'dp-crash1', wroot], {
   encoding: 'utf-8', env: { ...process.env, GOTRY_SOLVE_COUNT_FILE: countFile },
 })
-assert(resume.status === 0, `恢复进程 exit 0(实际 ${resume.status}:${(resume.stderr ?? '').slice(0, 300)})`)
+const failedOutcome = terminalOutcomeOf(resume.stdout ?? '')
+assert(resume.status === 2, `非4/4 恢复进程 exit 2(实际 ${resume.status}:${(resume.stderr ?? '').slice(0, 300)})`)
+assert(
+  failedOutcome?.status === 'failed'
+  && failedOutcome.ticket_id === 'dp-crash1'
+  && failedOutcome.passed < failedOutcome.total
+  && failedOutcome.failed_checks.length > 0,
+  '非4/4 输出 gotry_async_terminal.v1/failed 与失败项',
+)
 const count2 = readFileSync(countFile, 'utf-8').split('\n').filter(Boolean).length
 assert(count2 === 1, '恢复时 done 步骤零重算(exactly-once:求解计数仍 1,不重复花钱)')
-assert(existsSync(join(wroot, 'gotry-state', 'async', 'dp-crash1.deliverable.md')), '交付物视图已落盘(.deliverable.md)')
-assert(openLedgerIfExists(wroot)?.getWorkflowRun('dp-crash1')?.status === 'settled', '账本终态 settled')
+const failedDeliverablePath = join(wroot, 'gotry-state', 'async', 'dp-crash1.deliverable.md')
+assert(existsSync(failedDeliverablePath), '交付物视图已落盘(.deliverable.md)')
+const failedLedger = openLedgerIfExists(wroot)
+assert(failedLedger?.getWorkflowRun('dp-crash1')?.status === 'failed', '非4/4 账本终态 failed')
+assert(
+  JSON.stringify(failedLedger?.getWorkflowTerminalOutcome('dp-crash1')) === JSON.stringify(failedOutcome),
+  '非4/4 结构化终态随 async.failed 事件落账',
+)
 const replay = spawnSync('npx', ['tsx', 'scripts/async-collect.ts', 'dp-crash1', wroot], {
   encoding: 'utf-8', env: { ...process.env, GOTRY_SOLVE_COUNT_FILE: countFile },
 })
-assert(replay.status === 0, '终态复诵 exit 0(幂等)')
+assert(
+  replay.status === 2 && JSON.stringify(terminalOutcomeOf(replay.stdout ?? '')) === JSON.stringify(failedOutcome),
+  'failed 终态复诵保持 exit 2 与同一结构化结果',
+)
 const count3 = readFileSync(countFile, 'utf-8').split('\n').filter(Boolean).length
 assert(count3 === 1, '终态复诵零重算')
+const failedDeliverable = readFileSync(failedDeliverablePath, 'utf-8')
+rmSync(failedDeliverablePath)
+const replayAfterMissingView = spawnSync('npx', ['tsx', 'scripts/async-collect.ts', 'dp-crash1', wroot], {
+  encoding: 'utf-8', env: { ...process.env, GOTRY_SOLVE_COUNT_FILE: countFile },
+})
+assert(
+  replayAfterMissingView.status === 2
+  && JSON.stringify(terminalOutcomeOf(replayAfterMissingView.stdout ?? '')) === JSON.stringify(failedOutcome),
+  'failed 终态缺失视图时仍复诵同一 exit 2 与结构化结果',
+)
+assert(
+  existsSync(failedDeliverablePath) && readFileSync(failedDeliverablePath, 'utf-8') === failedDeliverable,
+  'failed 终态复诵重建缺失 .deliverable.md 视图',
+)
+const countAfterViewRepair = readFileSync(countFile, 'utf-8').split('\n').filter(Boolean).length
+assert(countAfterViewRepair === 1, '终态视图修复零重算')
+
+// state-cli tick 是另一个 durable driver；即使旧调用未显式透传 outcome，
+// settle 层也必须从账本中的权威 state/step 恢复机器终态，不能误结算为成功。
+const tickRoot = mkdtempSync(join(tmpdir(), 'gotry-wf-tick-failed-'))
+const tickTicket: AsyncTicket = {
+  id: 'dp-tick-failed1',
+  objective: 'state-cli 非4/4 机器终态回归',
+  requestedAt: new Date().toISOString(),
+  etaLabel: '秒级',
+}
+const tickState = {
+  calendar: { year: 2026, assertedWeekdays: {} },
+  profile: {},
+  gates: [],
+  wishes: [],
+} as TripState
+await persistAsyncTicket(tickTicket, tickState, tickRoot)
+const tick = spawnSync('npx', ['tsx', 'scripts/state-cli.ts', 'tick', tickRoot], { encoding: 'utf-8' })
+assert(tick.status === 0, `state-cli tick 完成回收(实际 ${tick.status}:${(tick.stderr ?? '').slice(0, 200)})`)
+const tickLedger = openLedgerIfExists(tickRoot)
+const tickOutcome = tickLedger?.getWorkflowTerminalOutcome(tickTicket.id) as TerminalOutcome | null
+assert(
+  tickLedger?.getWorkflowRun(tickTicket.id)?.status === 'failed'
+  && tickOutcome?.schema === 'gotry_async_terminal.v1'
+  && tickOutcome.status === 'failed'
+  && tickOutcome.passed === 0
+  && tickOutcome.failed_checks.length === 4,
+  'state-cli tick 未透传 outcome 时仍从权威账本恢复非4/4 failed 终态',
+)
+const tickReplay = spawnSync('npx', ['tsx', 'scripts/async-collect.ts', tickTicket.id, tickRoot], { encoding: 'utf-8' })
+assert(
+  tickReplay.status === 2
+  && JSON.stringify(terminalOutcomeOf(tickReplay.stdout ?? '')) === JSON.stringify(tickOutcome),
+  'state-cli 写入的 failed 终态可由 collector 幂等复诵为同一 outcome/exit 2',
+)
+
+const successRoot = mkdtempSync(join(tmpdir(), 'gotry-wf-success-'))
+const successCountFile = join(successRoot, 'solve-count.txt')
+writeFileSync(successCountFile, '')
+const successTicket: AsyncTicket = {
+  id: 'dp-success1',
+  objective: '4/4 机器终态回归',
+  requestedAt: new Date().toISOString(),
+  etaLabel: '秒级',
+}
+const successSpec = parseFlightPackToSpec(JSON.parse(readFileSync(join('..', 'data', 'flights_2026.json'), 'utf-8')))
+successSpec.budgetCny = 9000
+const successState = {
+  calendar: { year: 2026, assertedWeekdays: {} },
+  profile: {},
+  gates: [],
+  wishes: [],
+  spec: successSpec,
+} as unknown as TripState
+await persistAsyncTicket(successTicket, successState, successRoot)
+const success = spawnSync('npx', ['tsx', 'scripts/async-collect.ts', successTicket.id, successRoot], {
+  encoding: 'utf-8', env: { ...process.env, GOTRY_SOLVE_COUNT_FILE: successCountFile },
+})
+const successOutcome = terminalOutcomeOf(success.stdout ?? '')
+assert(
+  success.status === 0
+  && successOutcome?.status === 'succeeded'
+  && successOutcome.ticket_id === successTicket.id
+  && successOutcome.passed === 4
+  && successOutcome.total === 4
+  && successOutcome.failed_checks.length === 0,
+  `4/4 输出 gotry_async_terminal.v1/succeeded 且 exit 0(实际 ${success.status})`,
+)
+const successLedger = openLedgerIfExists(successRoot)
+assert(
+  successLedger?.getWorkflowRun(successTicket.id)?.status === 'settled'
+  && successLedger.getWorkflowTerminalOutcome(successTicket.id)?.['status'] === 'succeeded',
+  '4/4 账本终态 settled 且结构化结果随 async.settled 落账',
+)
+const successReplay = spawnSync('npx', ['tsx', 'scripts/async-collect.ts', successTicket.id, successRoot], {
+  encoding: 'utf-8', env: { ...process.env, GOTRY_SOLVE_COUNT_FILE: successCountFile },
+})
+const successCount = readFileSync(successCountFile, 'utf-8').split('\n').filter(Boolean).length
+assert(
+  successReplay.status === 0
+  && successCount === 1
+  && JSON.stringify(terminalOutcomeOf(successReplay.stdout ?? '')) === JSON.stringify(successOutcome),
+  'succeeded 终态复诵保持 exit 0、同一结构化结果且零重算',
+)
 
 // ---- 10:pending_writes saga + what-if 分叉 -----------------------------------------
 
@@ -200,5 +350,6 @@ assert(localLedger.tenant === 'local' && u123.tenant === 'u123', 'tenant_id 从�
 rmSync(root, { recursive: true, force: true })
 rmSync(mroot, { recursive: true, force: true })
 rmSync(wroot, { recursive: true, force: true })
+rmSync(successRoot, { recursive: true, force: true })
 console.log(`\nLEDGER TESTS: ${pass} ok, ${fail} fail`)
 if (fail > 0) process.exit(1)
