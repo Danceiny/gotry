@@ -17,13 +17,17 @@ TAG="${TAG:-rc.5}"
 NPM_CONFIG_USERCONFIG="$NPMRC"
 export NPM_CONFIG_USERCONFIG
 
-# 每次现生成:registry 固定 npmjs,token 来自 .env(有则写)
-{
-  echo 'registry=https://registry.npmjs.org/'
-  echo '//registry.npmjs.org/:always-auth=true'
-  TOKEN="$(grep '^NPM_TOKEN=' .env 2>/dev/null | cut -d= -f2)"
-  [ -n "$TOKEN" ] && echo "//registry.npmjs.org/:_authToken=$TOKEN"
-} > "$NPMRC"
+# 每次现生成:registry 固定 npmjs;token 优先级=上次 web 登录会话(仍有效则保留) > .env;
+# 修复:此前无条件重写 .npmrc.publish,login 会话 token 每次都被 .env 里的死 token 覆盖(rc.13 发布曾 404)
+if grep -q _authToken "$NPMRC" 2>/dev/null && NPM_CONFIG_USERCONFIG="$NPMRC" npm whoami --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+  echo ">> 保留 .npmrc.publish 中仍有效的登录会话 token"
+else
+  {
+    echo 'registry=https://registry.npmjs.org/'
+    TOKEN="$(grep '^NPM_TOKEN=' .env 2>/dev/null | cut -d= -f2)"
+    [ -n "$TOKEN" ] && echo "//registry.npmjs.org/:_authToken=$TOKEN"
+  } > "$NPMRC"
+fi
 
 if [ "${1:-}" = "login" ]; then
   echo ">> web 登录:会话 token 只写 $NPMRC(全局 ~/.npmrc 不动)。浏览器点 Approve 后即可发布。"
