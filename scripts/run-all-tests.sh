@@ -121,14 +121,17 @@ EOF
 (cd ts && GOTRY_NUDGE_CHANNEL=file GOTRY_NUDGE_FILE="$NUDGE_FIXTURE/digest.md" npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --budget 8000 --month 11 >/dev/null) || FAIL=1
 grep -q "普吉" "$NUDGE_FIXTURE/digest.md" || { echo "FAIL: file 摘要应含命中的普吉"; FAIL=1; }
 grep -q "洱海" "$NUDGE_FIXTURE/digest.md" && { echo "FAIL: muted 洱海不得召回"; FAIL=1; }
-(cd ts && GOTRY_NUDGE_ENABLED=false npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" | grep -q "回访已关闭") || FAIL=1
-(cd ts && npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 1 --month 7 | grep -q "不硬推") || FAIL=1
-(cd ts && GOTRY_NUDGE_CHANNEL=lark npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --month 11 | grep -q "降级") || FAIL=1
+NUDGE_DISABLED_OUTPUT=$(cd ts && GOTRY_NUDGE_ENABLED=false npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE") || FAIL=1
+grep -q "回访已关闭" <<<"$NUDGE_DISABLED_OUTPUT" || FAIL=1
+NUDGE_NO_MATCH_OUTPUT=$(cd ts && npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 1 --month 7) || FAIL=1
+grep -q "不硬推" <<<"$NUDGE_NO_MATCH_OUTPUT" || FAIL=1
+NUDGE_LARK_OUTPUT=$(cd ts && GOTRY_NUDGE_CHANNEL=lark npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --month 11) || FAIL=1
+grep -q "降级" <<<"$NUDGE_LARK_OUTPUT" || FAIL=1
 rm -rf "$NUDGE_FIXTURE"
 echo "NUDGE SKELETON TESTS OK(0..1 匹配/muted 排除/可关闭/lark 缺 key 降级)"
 
 echo
-echo "=== 25. 会话数据面 P1-P2(ReadGuard/携程解析/节律闸 + #21 字段 fixture scorer/双源合同/waiting-attach no-spend + live FlyAI/会话;GOTRY_SESSION_LIVE=0 可关 live 会话) ==="
+echo "=== 25. 会话数据面 P1-P2(ReadGuard/携程解析/节律闸 + #21 字段 fixture scorer/双源合同/waiting-attach no-spend + live FlyAI/会话;GOTRY_SESSION_LIVE=0 关闭全部 live 端点) ==="
 (cd ts && npx tsx scripts/session-benchmark.ts) || FAIL=1
 (cd ts && npx tsx scripts/session-tests.ts) || FAIL=1
 
@@ -159,6 +162,78 @@ echo "=== 31. 实时票价 overlay(flyai 实时桥 + 静态降级三值语义;�
 echo
 echo "=== 32. i18n 目录(en 零缺键/默认 zh 金标准逐字节/en 切换数据不动/插值回退) ==="
 (cd ts && npx tsx scripts/i18n-tests.ts | tail -1) || FAIL=1
+
+echo
+echo "=== 33. M3 cohort 指标合同(冻结阈值/脱敏 schema/真实与 fixture 分流) ==="
+M3_FIXTURE_OUTPUT=$(cd ts && npx tsx scripts/product-metrics.ts --fixture data/product-metrics-fixture.json --format json) || FAIL=1
+M3_FIXTURE_OUTPUT="$M3_FIXTURE_OUTPUT" node --input-type=module <<'NODE' || FAIL=1
+import assert from 'node:assert/strict'
+const summary = JSON.parse(process.env.M3_FIXTURE_OUTPUT ?? '{}')
+assert.equal(summary.schema_version, 'gotry_m3_product_metrics_summary_v1')
+assert.equal(summary.sample.participants, 5)
+assert.equal(summary.sample.pass, false)
+assert.deepEqual(summary.finalization, { numerator: 2, denominator: 5, rate: 0.4, pass: true })
+assert.deepEqual(summary.nps, { promoters: 3, passives: 1, detractors: 1, denominator: 5, score: 40, pass: true })
+assert.deepEqual(summary.poi_hallucination, { invalid_claims: 1, locked_claims: 200, rate: 0.005, pass: true })
+assert.equal(summary.nightly.replayable_real_llm_runs, 1)
+assert.equal(summary.nightly.cost_usd, 1.25)
+assert.equal(summary.business_pass, false)
+assert.match(summary.business_pass_reason, /synthetic_fixture/)
+NODE
+M3_TEST_ROOT=$(mktemp -d)
+node --input-type=module - "$PWD/ts/data/product-metrics-fixture.json" "$M3_TEST_ROOT" <<'NODE' || FAIL=1
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+const source = JSON.parse(readFileSync(process.argv[2], 'utf8'))
+const root = process.argv[3]
+const positive = structuredClone(source)
+positive.manifest.evidence_kind = 'real_seed_cohort'
+positive.manifest.cohort_id = 'm3-real-contract-fixture'
+positive.cohort = Array.from({ length: 50 }, (_, index) => ({
+  ...structuredClone(source.cohort[index % 5]),
+  participant_key: `hmac-sha256:${(index + 1).toString(16).padStart(64, '0')}`,
+  plan_key: `hmac-sha256:${(index + 101).toString(16).padStart(64, '0')}`,
+}))
+writeFileSync(join(root, 'positive.json'), JSON.stringify(positive))
+const pii = structuredClone(source)
+pii.cohort[0].raw_email = 'must-not-enter-evidence@example.com'
+writeFileSync(join(root, 'pii.json'), JSON.stringify(pii))
+const relaxed = structuredClone(source)
+relaxed.manifest.metrics.sample_size.minimum = 1
+writeFileSync(join(root, 'relaxed.json'), JSON.stringify(relaxed))
+const staleNightly = structuredClone(positive)
+staleNightly.nightly_runs[0].executed_at = '2025-08-20T00:00:00Z'
+writeFileSync(join(root, 'stale-nightly.json'), JSON.stringify(staleNightly))
+NODE
+M3_REAL_OUTPUT=$(cd ts && npx tsx scripts/product-metrics.ts --fixture "$M3_TEST_ROOT/positive.json" --format json) || FAIL=1
+M3_REAL_OUTPUT="$M3_REAL_OUTPUT" node --input-type=module <<'NODE' || FAIL=1
+import assert from 'node:assert/strict'
+const summary = JSON.parse(process.env.M3_REAL_OUTPUT ?? '{}')
+assert.equal(summary.evidence_kind, 'real_seed_cohort')
+assert.deepEqual(summary.sample, { participants: 50, minimum: 50, maximum: 200, pass: true })
+assert.equal(summary.finalization.rate, 0.4)
+assert.equal(summary.nps.score, 40)
+assert.equal(summary.poi_hallucination.rate, 0.005)
+assert.equal(summary.business_pass, true)
+NODE
+if (cd ts && npx tsx scripts/product-metrics.ts --fixture "$M3_TEST_ROOT/pii.json" --format json >/dev/null 2>&1); then
+  echo "FAIL: M3 evidence schema must reject undeclared/raw PII fields"
+  FAIL=1
+fi
+if (cd ts && npx tsx scripts/product-metrics.ts --fixture "$M3_TEST_ROOT/relaxed.json" --format json >/dev/null 2>&1); then
+  echo "FAIL: M3 acceptance thresholds must not be weakened by evidence input"
+  FAIL=1
+fi
+M3_STALE_OUTPUT=$(cd ts && npx tsx scripts/product-metrics.ts --fixture "$M3_TEST_ROOT/stale-nightly.json" --format json) || FAIL=1
+M3_STALE_OUTPUT="$M3_STALE_OUTPUT" node --input-type=module <<'NODE' || FAIL=1
+import assert from 'node:assert/strict'
+const summary = JSON.parse(process.env.M3_STALE_OUTPUT ?? '{}')
+assert.equal(summary.nightly.replayable_real_llm_runs, 0)
+assert.equal(summary.nightly.pass, false)
+assert.equal(summary.business_pass, false)
+NODE
+rm -rf "$M3_TEST_ROOT"
+echo "M3 PRODUCT METRICS TESTS OK(fixture fail-closed/50 人正向合同/PII 拒绝/阈值防篡改/nightly 窗口闸)"
 
 echo
 if [ "$FAIL" -ne 0 ]; then
