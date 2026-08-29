@@ -57,6 +57,14 @@ export interface TransportOptions {
    * 凭证流的中间(隐私+可靠性双输)。该形态下不发起任何检索导航、不落审计。
    */
   guard?: boolean
+  /**
+   * 开**自己的新标签页**(默认 false=沿用既有首页——那是用户的页面!)。
+   * 人机共治纪律(2026-08-29 founder:「我根本就看不到登录页面」):登录与检索一律
+   * newPage 开自己的页,绝不劫持用户已有标签页;closeOwnPage 控制收尾是否关掉自己开的页。
+   */
+  newPage?: boolean
+  /** newPage:true 时,close() 是否连自己开的标签页一起关(默认 true;登录引导保持 false——把登录页留给用户) */
+  closeOwnPage?: boolean
 }
 
 function devtoolsWsEndpoint(): { ws: string } | { err: string } {
@@ -111,14 +119,27 @@ export async function openSession(opts: TransportOptions = {}): Promise<SessionT
       return { ok: false, summary: `read-guard attach failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}` }
     }
   }
-  const page = (await browser.pages())[0] ?? (await browser.newPage())
+  // 标签页纪律:ownPage=自己开的新页(newPage:true)——用它,收尾按 closeOwnPage 关;
+  // 否则沿用既有首页(仅 persistent 兼容形态;cdp 检索/登录一律 newPage)
+  let ownPage: boolean = false
+  let page
+  if (opts.newPage) {
+    page = await browser.newPage()
+    ownPage = true
+  } else {
+    page = (await browser.pages())[0] ?? await browser.newPage()
+  }
   return {
     ok: true,
     browser,
     page,
     guard: guard ?? { blockedCount: () => 0, requestCount: () => 0 },
     close: async () => {
+      // 自己开的标签页按 closeOwnPage 收尾(登录引导保持 false——登录页留给用户);
       // cdp:只断开连接,绝不关用户浏览器;persistent:关自己拉起的实例
+      if (ownPage && (opts.closeOwnPage ?? true)) {
+        await (page as { close(): Promise<void> }).close().catch(() => { /* ignore */ })
+      }
       await (isCdp ? browser.disconnect() : browser.close()).catch(() => { /* ignore */ })
     },
   }

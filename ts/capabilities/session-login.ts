@@ -84,7 +84,9 @@ export async function sessionLogin(q: SessionLoginQuery = {}): Promise<SessionLo
   if (!target) {
     return err(site, 'error', `未知站点 ${site}(可选 ${Object.keys(LOGIN_TARGETS).join('/')})`, started, ts)
   }
-  const t = await openSession({ mode: 'cdp', guard: false })
+  // 人机共治纪律:开自己的新标签页并置前台——用户必须看见登录页(2026-08-29 founder:
+  // 「我根本就看不到登录页面」,此前误劫持用户既有标签页);closeOwnPage=false 把登录页留给用户
+  const t = await openSession({ mode: 'cdp', guard: false, newPage: true, closeOwnPage: false })
   if (!t.ok) {
     const needsAttach = /chrome:\/\/inspect|DevToolsActivePort|cdp attach 失败/.test(t.summary)
     return err(
@@ -98,6 +100,8 @@ export async function sessionLogin(q: SessionLoginQuery = {}): Promise<SessionLo
   }
   const evidenceTag = `[会话:${site}-login@${ts}]`
   try {
+    // 新标签页置前台:用户当下就能看到(attach 的浏览器可能被藏在别的窗口/空间)
+    await (t.page as unknown as { bringToFront(): Promise<void> }).bringToFront().catch(() => { /* 某些环境不可置前,忽略 */ })
     try {
       await t.page.goto(target.entryUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
     } catch {
