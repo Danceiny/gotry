@@ -1,5 +1,16 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.14(文档中英分开发布,**已发布 2026-08-29**)
+
+rc.13 → rc.14 增量(founder 指令「文档要中英文分开。。。常见的设计」):
+
+- **README 双语分文件**:`README.md` = 英文(完整自含,工具表/账号隐私/状态都镜像),`README.zh-CN.md` = 中文(原内容),顶部互链 `[English](README.md) | [简体中文](README.zh-CN.md)`——常见开源双语布局;npm 首页展示英文版,中文版为种子用户主语言
+- README 可读性结构沿用 rc.13:30 秒上手 / 18 工具分组 / 账号会话授权与隐私四条 hard 规则 / 已就绪-未收口两栏
+- `docs/` 深度工程文档当前中文先行,英文版计划 v0.1.0;两个 README 的「Last verified」随发布同步
+
+### 发布闸状态
+- ① 全栈回归 ALL GREEN(document-only;套件面为 rc.13 同面)✅ ② 六状态面同步(README ×2/roadmap/architecture/release-notes,同提交)✅ ③ README 用法实测(npm 干净安装回拉)✅ ④ License MIT ✅ ⑤ 版本号一致(rc.14)✅
+
 ## v0.0.1-rc.13(账号会话三连修复 + README 可读性重排,**已发布 2026-08-29**)
 
 rc.12 → rc.13 增量(founder 确认制下 agent 执行,发布指令「确认。这次也要把README文档可读性优化一版」):
