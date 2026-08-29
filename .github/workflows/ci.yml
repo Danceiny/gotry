@@ -51,10 +51,8 @@ jobs:
       - name: Build dist (§25 publish-preverify packs the real dist)
         run: node scripts/build-dist.mjs
 
-      - name: Install agent-reach (§15 wrapper 真 doctor)
-        run: |
-          python3 -m venv .venv
-          .venv/bin/pip install --quiet agent-reach==1.5.0
+      # agent-reach 不装:上游 wheel 不在公共 PyPI(内部分发),§15 wrapper 在未装时
+      # 结构化 SKIP(真集成面设备绑定);有装的开发机仍跑全 7 断言
 
       - name: Typecheck
         run: npx tsc --noEmit
