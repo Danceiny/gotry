@@ -1,0 +1,30 @@
+{
+  "schema_version": "gotry_llm_price_table_v1",
+  "as_of": "2026-08-29",
+  "source_url": "https://api-docs.deepseek.com/quick_start/pricing",
+  "pricing_bias": "peak_conservative_upper_bound",
+  "pricing_bias_note": "成本证据只高不低:换算一律取 peak 价(cache miss 计入全部输入),off-peak 列仅为官方价目完整存档供审计,不参与换算。价格调整必须改本文件过 PR,历史记录不回填。",
+  "aliases": {
+    "deepseek-chat": "deepseek-v4-flash",
+    "deepseek-reasoner": "deepseek-v4-pro"
+  },
+  "alias_note": "deepseek-chat/deepseek-reasoner 是 DeepSeek API 的世代别名(chat=非思考/reasoner=思考),按当前 V4 系列对应映射;alias 目标变更时改本文件(可审计)。",
+  "prices": {
+    "deepseek-v4-flash": {
+      "input_cache_miss_usd_per_1m_peak": 0.44,
+      "input_cache_miss_usd_per_1m_offpeak": 0.22,
+      "input_cache_hit_usd_per_1m_peak": 0.014,
+      "input_cache_hit_usd_per_1m_offpeak": 0.007,
+      "output_usd_per_1m_peak": 1.32,
+      "output_usd_per_1m_offpeak": 0.66
+    },
+    "deepseek-v4-pro": {
+      "input_cache_miss_usd_per_1m_peak": 1.32,
+      "input_cache_miss_usd_per_1m_offpeak": 0.66,
+      "input_cache_hit_usd_per_1m_peak": 0.044,
+      "input_cache_hit_usd_per_1m_offpeak": 0.022,
+      "output_usd_per_1m_peak": 3.96,
+      "output_usd_per_1m_offpeak": 1.98
+    }
+  }
+}

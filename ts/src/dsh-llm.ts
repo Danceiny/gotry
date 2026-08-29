@@ -18,7 +18,25 @@ import { buildSlotSystem, flagExpiredSlots, normalizeExtraction, type TravelSlot
 const model = () => process.env['LLM_MODEL'] ?? process.env['DEEPSEEK_MODEL'] ?? 'MiniMax-M2'
 const base = () => (process.env['LLM_BASE_URL'] ?? process.env['DEEPSEEK_BASE_URL'] ?? 'https://api.minimax.io/v1').replace(/\/$/, '')
 
-async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, json: boolean): Promise<string> {
+/**
+ * Token 用量累计器(OpenAI 兼容 usage 映射)。nightly real-LLM 成本证据(Issue #22
+ * `gotry_m3_nightly_run_v1.cost_usd`)的唯一测量来源——成本不允许凭空断言,只允许
+ * 这里实测出的 tokens × 封存价表换算;responsesMissingUsage > 0 时成本不可证,调用方必须 fail-closed。
+ */
+export interface LlmUsageTracker {
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  inputCacheHitTokens: number
+  inputCacheMissTokens: number
+  responsesMissingUsage: number
+}
+
+function emptyUsage(): LlmUsageTracker {
+  return { calls: 0, inputTokens: 0, outputTokens: 0, inputCacheHitTokens: 0, inputCacheMissTokens: 0, responsesMissingUsage: 0 }
+}
+
+async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, json: boolean, usage?: LlmUsageTracker): Promise<string> {
   const key = process.env['LLM_API_KEY'] ?? process.env['DEEPSEEK_API_KEY']
   if (!key) throw new Error('LLM_API_KEY 未设置(兼容 DEEPSEEK_API_KEY 别名)——真 LLM 路径不可用,请回退 mock(ADR-8)')
   const res = await fetch(`${base()}/chat/completions`, {
@@ -32,7 +50,20 @@ async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; con
     }),
   })
   if (!res.ok) throw new Error(`llm ${res.status}: ${(await res.text()).slice(0, 300)}`)
-  const data = await res.json() as { choices: Array<{ message: { content: string } }> }
+  const data = await res.json() as { choices: Array<{ message: { content: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number } }
+  if (usage) {
+    usage.calls += 1
+    const u = data.usage
+    if (u && Number.isFinite(u.prompt_tokens) && Number.isFinite(u.completion_tokens)) {
+      usage.inputTokens += u.prompt_tokens ?? 0
+      usage.outputTokens += u.completion_tokens ?? 0
+      usage.inputCacheHitTokens += u.prompt_cache_hit_tokens ?? 0
+      // 无缓存明细的 provider:全部输入按 miss 记(随后按 peak miss 价换算,只高不低)
+      usage.inputCacheMissTokens += u.prompt_cache_miss_tokens ?? (u.prompt_tokens ?? 0)
+    } else {
+      usage.responsesMissingUsage += 1
+    }
+  }
   const raw = data.choices[0]?.message?.content ?? ''
   // 推理模型(MiniMax-M2 等):剥 <think> 块,只留正文;未闭合时留全文由上层容错
   return raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim() || raw
@@ -62,8 +93,9 @@ const SKELETON_SYSTEM = `你是行程骨架抽取器。从对话中抽取行程�
 规则:每个跨城移动一段;锚点只放用户明说或必然的(如"当天到"→arriveByMin 23:59=1439);时刻用当日分钟。
 scenario 判定:「洱海/大理/千岛湖/太湖+选目的地」→erhai(候选集);「普吉/workation/远程办公+多城链」→workation(五段链);「云南/大理丽江」→yunnan;不确定→generic。只输出 JSON。`
 
-export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date = () => new Date()): LlmPort {
+export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date = () => new Date()): LlmPort & { usage: LlmUsageTracker } {
   const pack = flightPackPath
+  const usage = emptyUsage()
   const historyText = (h: Turn[]) => h.map(t => `${t.role === 'user' ? '用户' : '助手'}: ${t.text}`).join('\n')
   // 时间锚点卡:每条抽取链路都带上「今天」——legacy 路径此前无时间注入,
   // 过期/相对日期语义全靠它(算术在 time-anchor 层,LLM 只查卡)。
@@ -73,6 +105,7 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
       const out = await chat(
         [{ role: 'system', content: FACTS_SYSTEM }, { role: 'user', content: `${anchorContext()}\n\n${historyText(history)}` }],
         true,
+        usage,
       )
       const obj = parseJsonBlock(out)
       if (!obj) return { assumptions: [] }
@@ -87,6 +120,7 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
       const out = await chat(
         [{ role: 'system', content: SKELETON_SYSTEM }, { role: 'user', content: `${context}\n\n${historyText(history)}` }],
         true,
+        usage,
       )
       const skeleton = parseJsonBlock(out)
       if (!skeleton || !Array.isArray(skeleton['segments']) || (skeleton['segments'] as unknown[]).length === 0) return null
@@ -136,6 +170,7 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
       const out = await chat(
         [{ role: 'system', content: buildSlotSystem(anchor) }, { role: 'user', content: historyText(history) }],
         true,
+        usage,
       )
       const obj = parseJsonBlock(out)
       if (!obj) return null
@@ -148,8 +183,10 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
         [{ role: 'system', content: '把旅行规划的追问润色得更自然,保留全部信息(含为什么问),一两句话,不要加表情。' },
          { role: 'user', content: `【${q.key}】${q.text}(为什么问:${q.why})` }],
         false,
+        usage,
       )
       return out.trim() || `【${q.key}】${q.text}`
     },
+    usage,
   }
 }
