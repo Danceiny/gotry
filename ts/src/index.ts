@@ -535,6 +535,119 @@ export function apply(ctx: Context, config: Config): void {
     },
   }))
 
+  // ── M0 预订链读工具(自然语言预订,PRD hotel-be docs/products/gotry-a2a-nl-booking-prd.md)──
+  // 价格面红线:报价/验价无静态降级(fail-closed)——不可用即诚实失败,不估算房价;
+  // rates 产出 RatePkgId(后端 session 由上游 hotelRates 建立),check-avail 以其为入参。
+
+  registerGuarded(defineTool({
+    name: 'gotry_hotel_rates',
+    description:
+      'Fetch room rates for a specific hotel via hotelbyte-cli (real-time only: this call creates the backend session; '
+      + 'the returned rooms carry ratePkgId which gotry_check_avail and future booking steps consume). Price surface has '
+      + 'NO static fallback — when hbcli is unavailable it fails honestly (fail-closed, never estimates a price). '
+      + 'Dates accept verbatim natural expressions (下周五 / 8.20 / 下周五+3) resolved against the time anchor; '
+      + 'unresolved expressions degrade to an undated request with an explicit date_notes entry instead of guessing.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ hotelId: "<hotelbyte hotel id from gotry_hotel_search results>", checkIn?: "YYYY-MM-DD 或自然表达", checkOut?: 同上, adults?: 2, countryCode?: "US", nationalityCode?: "US", residencyCode?: "US" }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ hotelId?: string; checkIn?: string; checkOut?: string; adults?: number; countryCode?: string; nationalityCode?: string; residencyCode?: string }>(args, 'hotelId')
+      if (!q.hotelId) throw new Error('gotry_hotel_rates requires hotelId')
+      const started = Date.now()
+      const anchor = buildTimeAnchor(new Date())
+      const dateNotes: string[] = []
+      const resolveDate = (expr?: string): string | undefined => {
+        if (!expr) return undefined
+        const r = resolveSlotDate(expr, anchor)
+        if (!r.date) {
+          dateNotes.push(`日期未解析:${r.raw}——请向用户确认具体日期`)
+          return undefined
+        }
+        if (r.raw !== r.date) dateNotes.push(`slot-resolved: ${r.raw} → ${r.date}`)
+        return r.date
+      }
+      const itp = await interpretEffect({
+        effect: 'HBCLI_HOTEL_RATES',
+        params: {
+          hotelId: q.hotelId, checkIn: resolveDate(q.checkIn), checkOut: resolveDate(q.checkOut), adults: q.adults,
+          countryCode: q.countryCode, nationalityCode: q.nationalityCode, residencyCode: q.residencyCode,
+          hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs,
+        },
+      })
+      if (!itp.result) return declinedObservation('HBCLI_HOTEL_RATES', itp.trace)
+      const resp = itp.result
+      const dir = await ensureStateDir(config.stateRoot)
+      const isLive = resp.via === 'hbcli-realtime'
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `hotel_rates:${resp.via}`).catch(() => {})
+      const payload = {
+        ok: isLive,
+        rates: isLive ? (resp.rates ?? null) : null,
+        evidence: isLive ? resp.evidence : '[价格面:fail-closed]',
+        hotelId: q.hotelId,
+        via: resp.via,
+        latency_ms: Date.now() - started,
+        summary: resp.summary,
+        error: resp.error,
+        ...(dateNotes.length ? { date_notes: dateNotes } : {}),
+      } as never
+      return JSON.parse(JSON.stringify(payload)) as never
+    },
+    presentCall: args => ({ card: 'generic', title: `房型报价:${String((args.query as { hotelId?: string })?.hotelId ?? '')}`, kind: 'search', rawInput: args.query }),
+  }))
+
+  registerGuarded(defineTool({
+    name: 'gotry_check_avail',
+    description:
+      'Re-verify real-time availability and price for one rate package right before booking (input ratePkgId comes from '
+      + 'gotry_hotel_rates output). Price surface: real-time only, fail-closed, no static fallback — an unavailable channel '
+      + 'returns an honest error and MUST NOT be presented as bookable. Stock and price are always backend-authoritative.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ ratePkgId: "<from gotry_hotel_rates rooms[]>" }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ ratePkgId?: string }>(args, 'ratePkgId')
+      if (!q.ratePkgId) throw new Error('gotry_check_avail requires ratePkgId')
+      const started = Date.now()
+      const itp = await interpretEffect({
+        effect: 'HBCLI_CHECK_AVAIL',
+        params: { ratePkgId: q.ratePkgId, hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs },
+      })
+      if (!itp.result) return declinedObservation('HBCLI_CHECK_AVAIL', itp.trace)
+      const resp = itp.result
+      const dir = await ensureStateDir(config.stateRoot)
+      const isLive = resp.via === 'hbcli-realtime'
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `check_avail:${resp.via}`).catch(() => {})
+      const payload = {
+        ok: isLive,
+        avail: isLive ? (resp.avail ?? null) : null,
+        evidence: isLive ? resp.evidence : '[价格面:fail-closed]',
+        ratePkgId: q.ratePkgId,
+        via: resp.via,
+        latency_ms: Date.now() - started,
+        summary: resp.summary,
+        error: resp.error,
+      } as never
+      return JSON.parse(JSON.stringify(payload)) as never
+    },
+    presentCall: args => ({ card: 'generic', title: `实时验价:${String((args.query as { ratePkgId?: string })?.ratePkgId ?? '')}`, kind: 'search', rawInput: args.query }),
+  }))
+
   registerGuarded(defineTool({
     name: 'gotry_skeleton_check',
     description:

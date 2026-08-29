@@ -89,6 +89,8 @@ cp .env.example .env                              # ② set LLM_API_KEY
 | | `gotry_flight_verify` | OpenSky ADS-B live flight observation (three-valued) |
 | | `gotry_skeleton_check` | OpenFlights 168-hub-pair connectivity (three-valued) |
 | **Inventory & catalog** | `gotry_hotel_search` | hotel-byte realtime bridge, degrades to static pack (tagged) |
+| | `gotry_hotel_rates` | room rates per hotel (real-time only, creates backend session; price surface fail-closed, no estimates) |
+| | `gotry_check_avail` | pre-booking availability/price re-verification by ratePkgId (real-time only, fail-closed) |
 | | `gotry_anything_search` | mixed city/hotel/POI catalog (hotel-be Anything) |
 | **Decision engine** | `gotry_feasibility_check` | Door-to-door true-cost feasibility (Z3), per-candidate verdicts |
 | **Memory & reachability** | `gotry_motivation_save` | Persist motivation profile (evidence mandatory, anti-fabrication) |
