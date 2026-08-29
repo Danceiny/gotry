@@ -9,6 +9,8 @@ import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import type { Candidate, Choice, MotivationProfile, Service, TransferMode, TravelRequest, TrueCost } from './model.ts'
 import { evaluateChoice, minToHhmm, hhmmToMin, requiredUsableHours, trueCostToDict, LATEST_ARRIVE_STAY_MIN } from './model.ts'
 import type { LegReport } from './journey.ts'
+import { withZ3 } from './z3-shared.ts'
+import { t as i18nT } from './i18n.ts'
 
 export interface AnchorsSpec {
   arriveByMin?: number
@@ -85,18 +87,9 @@ export interface JourneySpecTS {
   skeletonHub?: boolean
 }
 
+// Z3 运行时收敛到 z3-shared(单一 WASM 实例 + 单一 Context + 会话级互斥)——
+// 此前模块级 z3Promise 三份并存是 WASM race/OOM 的根因(见 z3-shared.ts 头注)。
 /* eslint-disable @typescript-eslint/no-explicit-any */
-let z3Promise: Promise<any> | null = null
-
-async function getZ3(): Promise<any> {
-  // 延迟到首次实际调用 solveUnified 才加载:避免 dsh 加载 GoTry 模块时启动
-  // WASM worker,引起 worker 线程内存冲突(z3-built.wasm 多线程 unsafe)。
-  if (!z3Promise) {
-    const { init } = await import('z3-solver')
-    z3Promise = (async () => (await init()).Context('main'))()
-  }
-  return z3Promise
-}
 
 /** 航班数据包(data/flights_2026.json 形态)→ 段链 */
 const SEGMENT_ROUTES: Record<string, string> = {
@@ -211,7 +204,9 @@ function workWindowBlocks(spec: JourneySpecTS, option: SegmentOptionTS): string 
   const start = ww.startMin + shift, end = ww.endMin + shift
   if (start <= dep && dep <= end) {
     const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
-    return `周${WEEKDAY_CN[option.depWeekday]} ${hhmm(dep)} 起飞落在工作窗口(当地 ${hhmm(start)}-${hhmm(end)})内`
+    return i18nT('un.workwindow_reason', {
+      wd: WEEKDAY_CN[option.depWeekday] ?? '', dep: hhmm(dep), start: hhmm(start), end: hhmm(end),
+    })
   }
   return null
 }
@@ -310,7 +305,9 @@ async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
     }
   }
 
-  const z3 = await getZ3()
+  // Z3 会话进互斥门(骨架/预过滤等网络段留在门外):solveUnifiedInner 的判定段
+  // 从 here 到 return 全部独占共享实例。
+  return withZ3('unified.solveUnifiedInner', async z3 => {
   const { Bool, If, Int, Solver, Sum } = z3
   const wakeFloor = spec.defaultWakeFloorMin ?? hhmmToMin('06:00')
 
@@ -374,7 +371,7 @@ async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
     const money = legs.reduce((a, l) => a + l.price_cny, 0)
     const redFlags = legs
       .filter(l => spec.segments.find(sg => sg.id === l.leg)?.options.some(o => o.move?.redEye) && l.energy_pct < 50)
-      .map(l => `${l.leg} 落地精力仅 ${l.energy_pct}%(红眼后直奔事务,当日不宜安排重要会议)`)
+      .map(l => i18nT('un.redflag_redeye', { leg: l.leg, pct: l.energy_pct }))
     return { feasible: true, money_cny: money, legs, red_flags: redFlags, work_window_exclusions: exclusions, skeleton_notes: skeletonNotes.length ? skeletonNotes : undefined }
   }
 
@@ -392,6 +389,7 @@ async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
     }
   }
   return { feasible: false, unsat_core: core, suggestions }
+  })
 }
 
 // ---- 候选形态求解(枚举过滤,与 py solve_choice_segment 对齐) --------------------
@@ -504,7 +502,7 @@ export function solveChoiceSegment(spec: JourneySpecTS, req: TravelRequest): Rec
         conds['budget_cny'] = Math.min(...budgetDropped.map(c => c.cost.moneyCny))
       }
       if (opt.bestMonths?.length) conds['best_months'] = opt.bestMonths
-      wish = { name: opt.label, conditions: conds, reason: `${windowDays} 天窗口装不下(目的需 ${minDays} 天)` }
+      wish = { name: opt.label, conditions: conds, reason: i18nT('sg.wish_reason_window', { days: windowDays, minDays }) }
     }
     verdicts.push({
       candidate_id: opt.id, name: opt.label, feasible: false, imagery_match: opt.score ?? 0,
@@ -524,57 +522,63 @@ function renderCandidateMarkdown(req: TravelRequest, verdicts: Array<Record<stri
   const feasible = verdicts.filter(v => v['feasible']).sort((a, b) => (b['imagery_match'] as number) - (a['imagery_match'] as number))
   const parked = verdicts.filter(v => !v['feasible'])
   const lines: string[] = []
-  lines.push(`> 憧憬:${req.note}`)
-  lines.push(`> 已识别约束:窗口 ${req.windowDays} 天 | 预算 ¥${req.budgetCny} | `
-    + `动机(休整改写需求 ${requiredUsableHours(req.motivation).toFixed(1)}h 有效休整)`)
+  lines.push(i18nT('md.header', { note: req.note }))
+  lines.push(i18nT('md.constraints', {
+    days: req.windowDays, budget: req.budgetCny,
+    hours: requiredUsableHours(req.motivation).toFixed(1),
+  }))
   lines.push('')
   for (const v of parked) {
     const core = (v['unsat_core'] as string[]) ?? []
-    lines.push(`**${v['name']}:现在不行**——冲突约束:${core.join('、')}。`)
+    lines.push(i18nT('md.infeasible', { name: String(v['name']), core: core.join('、') }))
     const sug = ((v['suggestions'] as Array<Record<string, unknown>>) ?? [])[0]
-    if (sug) lines.push(`- 放宽 ${sug['relax']}:约 ¥${sug['resulting_money_cny']}`)
+    if (sug) lines.push(i18nT('md.relax_one', { relax: String(sug['relax']), money: String(sug['resulting_money_cny'] ?? '') }))
     const wish = v['wish_pool'] as Record<string, unknown> | null
     if (wish) {
       const conds = wish['conditions'] as Record<string, unknown>
-      const budgetNote = conds['budget_cny'] ? `、约 ¥${conds['budget_cny']}` : ''
+      const budgetNote = conds['budget_cny'] ? i18nT('md.wish_budget', { cny: String(conds['budget_cny']) }) : ''
       const months = conds['best_months'] as number[] | undefined
-      const season = months ? `,${months} 月最佳` : ''
-      lines.push(`- 已放入「下一次出发」清单:需要 ${conds['days']} 天${budgetNote}${season}`)
+      const season = months ? i18nT('md.wish_season', { months: String(months) }) : ''
+      lines.push(i18nT('md.wish_pool', { days: String(conds['days']), budgetNote, season }))
     }
   }
   lines.push('')
   for (const v of feasible) {
     const ch = v['chosen'] as Record<string, unknown>
-    const t = v['true_cost'] as Record<string, unknown>
-    lines.push(`**${v['name']}:可行**`
-      + `(${ch['out_service']} 出发,${ch['out_transfer']} 接驳,`
-      + `起床 ${t['wake']},到达精力 ${t['energy_arrival_pct']}%,`
-      + `门到门 ${t['door_to_door_out']},有效休整 ${t['usable_hours']}h,共 ¥${t['money_cny']})`)
+    const tc = v['true_cost'] as Record<string, unknown>
+    lines.push(i18nT('md.feasible_unified', {
+      name: String(v['name']), svc: String(ch['out_service']), mode: String(ch['out_transfer']),
+      wake: String(tc['wake']), energy: String(tc['energy_arrival_pct']), d2d: String(tc['door_to_door_out']),
+      hours: String(tc['usable_hours']), money: String(tc['money_cny']),
+    }))
   }
   if (feasible.length) {
     lines.push('')
     const best = feasible[0]
     const alt = feasible[1]
-    lines.push(`**建议:${best['name']}**(意象匹配 ${((best['imagery_match'] as number) * 100).toFixed(0)}%)。`
-      + (alt ? `备选:${alt['name']}(¥${(alt['true_cost'] as Record<string, unknown>)['money_cny']},匹配 ${((alt['imagery_match'] as number) * 100).toFixed(0)}%)。` : ''))
+    lines.push(i18nT('md.recommend', { best: String(best['name']), match: ((best['imagery_match'] as number) * 100).toFixed(0) })
+      + (alt ? i18nT('md.alt', {
+        name: String(alt['name']), money: String((alt['true_cost'] as Record<string, unknown>)['money_cny']),
+        match: ((alt['imagery_match'] as number) * 100).toFixed(0),
+      }) : ''))
   }
   lines.push('')
-  lines.push('**待你决定的两个问题**:')
+  lines.push(i18nT('md.decide_two'))
   if (feasible.length >= 2) {
-    lines.push(`1. ${feasible[0]['name']} 还是 ${feasible[1]['name']}?(前者更贴意象,后者更省)`)
+    lines.push(i18nT('md.q_choice', { a: String(feasible[0]['name']), b: String(feasible[1]['name']) }))
   } else if (feasible.length === 1) {
-    lines.push(`1. 就去 ${feasible[0]['name']} 吗?`)
+    lines.push(i18nT('md.q_single', { name: String(feasible[0]['name']) }))
   } else {
-    lines.push('1. 所有候选都不可行——考虑放宽哪条约束?')
+    lines.push(i18nT('md.q_none'))
   }
   const p0 = parked[0]
   const p0wish = p0?.['wish_pool'] as Record<string, unknown> | null
   if (p0wish) {
     const conds = p0wish['conditions'] as Record<string, unknown>
-    lines.push(`2. 把 ${p0!['name']} 留给「下一次出发」(${conds['days']} 天起),这次先去可行的?`)
+    lines.push(i18nT('md.q_wish', { name: String(p0!['name']), days: String(conds['days']) }))
   } else if (feasible.length) {
     const ch = feasible[0]['chosen'] as Record<string, unknown>
-    lines.push(`2. 出发班次选 ${ch['out_service']} 还是更晚的?`)
+    lines.push(i18nT('md.q_depart', { id: String(ch['out_service']), dep: '' }))
   }
   return lines.join('\n')
 }

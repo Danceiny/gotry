@@ -11,9 +11,9 @@ set +eu; source ~/.nvm/nvm.sh 2>/dev/null || true; set -eu  # nvm.sh 遇 npmrc p
 FAIL=0
 
 echo "=== 1. TS engine(洱海金标准,8 断言) ==="
-# 已知 z3 WASM worker 偶发(README Known limitations):进程级崩掉致 FAIL=1 而其余
-# 各节照常绿——历次「幻影红」均为此因(xtrace 定位)。重试一次:真回归二次仍红,偶发过。
-(cd ts && npx tsx scripts/engine-tests.ts) || (cd ts && npx tsx scripts/engine-tests.ts) || FAIL=1
+# Z3 WASM race 已根治(2026-08-29,z3-shared.ts 单一实例+会话级互斥):不再需要「重试一次」
+# 止血;并发形态的回归闸见 §30 z3-race-tests。
+(cd ts && npx tsx scripts/engine-tests.ts) || FAIL=1
 
 echo
 echo "=== 2. TS journey(五段链,5 断言) ==="
@@ -28,10 +28,15 @@ echo "=== 4. 对话循环重放(mock,ADR-8/9/10 行为级回归,带终态断言)
 (cd ts && npx tsx scripts/replay.ts | tail -3) || FAIL=1
 
 echo
-echo "=== 5. 异步深度规划:种工单 → 另一进程回收(跨进程闭环,编码 AGENTS.md 清扫规则) ==="
-(cd ts && npx tsx scripts/replay-async.ts --request-only > /dev/null) || FAIL=1
-TICKET=$(cd ts && { ls gotry-state/async/*.json 2>/dev/null || true; } | while read -r f; do b="${f%.json}"; [ -f "$b.deliverable.md" ] || basename "$b"; done | sed -n '1p')  # sed 非 head:head -1 早关管道,pipefail 下未回收工单 ≥2 时 SIGPIPE 整脚本 141
-if [ -z "$TICKET" ]; then echo "FAIL: 未种下待回收工单"; FAIL=1; else (cd ts && npx tsx scripts/async-collect.ts "$TICKET" > /dev/null) || FAIL=1; echo "工单 $TICKET 已跨进程回收"; fi
+echo "=== 5. 异步深度规划:隔离 stateRoot 种工单 → 另一进程回收(跨进程闭环,不触真实产品状态) ==="
+REPO_ROOT=$PWD
+ASYNC_FIXTURE=$(mktemp -d)
+mkdir -p "$ASYNC_FIXTURE/ts" "$ASYNC_FIXTURE/data"
+ln -s "$REPO_ROOT/data/flights_2026.json" "$ASYNC_FIXTURE/data/flights_2026.json"
+(cd "$ASYNC_FIXTURE/ts" && "$REPO_ROOT/ts/node_modules/.bin/tsx" "$REPO_ROOT/ts/scripts/replay-async.ts" --request-only > /dev/null) || FAIL=1
+TICKET=$({ ls "$ASYNC_FIXTURE"/ts/gotry-state/async/*.json 2>/dev/null || true; } | while read -r f; do b="${f%.json}"; [ -f "$b.deliverable.md" ] || basename "$b"; done | sed -n '1p')  # sed 非 head:head -1 早关管道,pipefail 下未回收工单 ≥2 时 SIGPIPE 整脚本 141
+if [ -z "$TICKET" ]; then echo "FAIL: 未种下待回收工单"; FAIL=1; else (cd ts && npx tsx scripts/async-collect.ts "$TICKET" "$ASYNC_FIXTURE/ts" > /dev/null) || FAIL=1; echo "工单 $TICKET 已在隔离 stateRoot 跨进程回收"; fi
+rm -rf "$ASYNC_FIXTURE"
 
 echo
 echo "=== 6. 插件 smoke(注册/execute/红线断言) ==="
@@ -129,14 +134,18 @@ EOF
 (cd ts && GOTRY_NUDGE_CHANNEL=file GOTRY_NUDGE_FILE="$NUDGE_FIXTURE/digest.md" npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --budget 8000 --month 11 >/dev/null) || FAIL=1
 grep -q "普吉" "$NUDGE_FIXTURE/digest.md" || { echo "FAIL: file 摘要应含命中的普吉"; FAIL=1; }
 grep -q "洱海" "$NUDGE_FIXTURE/digest.md" && { echo "FAIL: muted 洱海不得召回"; FAIL=1; }
-(cd ts && GOTRY_NUDGE_ENABLED=false npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" | grep -q "回访已关闭") || FAIL=1
-(cd ts && npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 1 --month 7 | grep -q "不硬推") || FAIL=1
-(cd ts && GOTRY_NUDGE_CHANNEL=lark npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --month 11 | grep -q "降级") || FAIL=1
+NUDGE_DISABLED_OUTPUT=$(cd ts && GOTRY_NUDGE_ENABLED=false npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE") || FAIL=1
+grep -q "回访已关闭" <<<"$NUDGE_DISABLED_OUTPUT" || FAIL=1
+NUDGE_NO_MATCH_OUTPUT=$(cd ts && npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 1 --month 7) || FAIL=1
+grep -q "不硬推" <<<"$NUDGE_NO_MATCH_OUTPUT" || FAIL=1
+NUDGE_LARK_OUTPUT=$(cd ts && GOTRY_NUDGE_CHANNEL=lark npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --month 11) || FAIL=1
+grep -q "降级" <<<"$NUDGE_LARK_OUTPUT" || FAIL=1
 rm -rf "$NUDGE_FIXTURE"
 echo "NUDGE SKELETON TESTS OK(0..1 匹配/muted 排除/可关闭/lark 缺 key 降级)"
 
 echo
-echo "=== 25. 会话数据面 P1(ReadGuard 双因子/携程批搜解析/城市码表/节律闸 + live FlyAI 官方通道 + live 会话嗅探;GOTRY_SESSION_LIVE=0 可关 live 会话) ==="
+echo "=== 25. 会话数据面 P1-P2(ReadGuard/携程解析/节律闸 + #21 字段 fixture scorer/双源合同/waiting-attach no-spend + live FlyAI/会话;GOTRY_SESSION_LIVE=0 关闭全部 live 端点) ==="
+(cd ts && npx tsx scripts/session-benchmark.ts) || FAIL=1
 (cd ts && npx tsx scripts/session-tests.ts) || FAIL=1
 
 echo
@@ -148,12 +157,144 @@ echo "=== 27. 会话面 P2-2 抽取层(a11y兜底抽取/提交件剔除/美团�
 (cd ts && npx tsx scripts/session-extract-tests.ts) || FAIL=1
 
 echo
-echo "=== 28. 事务化状态账本(ADR-15:事务原子性/红线进事务/幂等物理化/fold 重建/rewind/one-shot 迁移/工单崩溃恢复 exactly-once/pending_writes saga) ==="
+echo "=== 28. 事务化状态账本(ADR-15:事务原子性/红线进事务/幂等物理化/fold 重建/rewind/one-shot 迁移/工单 exactly-once + 4/4/非4/4 机器终态/pending_writes saga) ==="
 (cd ts && npx tsx scripts/ledger-tests.ts | tail -1) || FAIL=1
 
 echo
 echo "=== 29. 账本 CLI e2e(migrate 快照/stats/log/export 视图单向/forget 物理硬删带审计/pw-* saga 面) ==="
 (cd ts && npx tsx scripts/state-cli-tests.ts | tail -1) || FAIL=1
+
+echo
+echo "=== 30. Z3 WASM race 回归(engine/journey/unified 三形态同轮并发压测;修复验证面,run-all §1 止血移除的闸) ==="
+(cd ts && npx tsx scripts/z3-race-tests.ts) || FAIL=1
+
+echo
+echo "=== 31. 实时票价 overlay(flyai 实时桥 + 静态降级三值语义;纯离线注入,hit 覆写/error 降级/日期词表闸/求解集成) ==="
+(cd ts && npx tsx scripts/realtime-pricing-tests.ts | tail -1) || FAIL=1
+
+echo
+echo "=== 32. i18n 目录(en 零缺键/默认 zh 金标准逐字节/en 切换数据不动/插值回退) ==="
+(cd ts && npx tsx scripts/i18n-tests.ts | tail -1) || FAIL=1
+
+echo
+echo "=== 33. M3 cohort 指标合同(冻结阈值/脱敏 schema/真实与 fixture 分流) ==="
+M3_FIXTURE_OUTPUT=$(cd ts && npx tsx scripts/product-metrics.ts --fixture data/product-metrics-fixture.json --format json) || FAIL=1
+M3_FIXTURE_OUTPUT="$M3_FIXTURE_OUTPUT" node --input-type=module <<'NODE' || FAIL=1
+import assert from 'node:assert/strict'
+const summary = JSON.parse(process.env.M3_FIXTURE_OUTPUT ?? '{}')
+assert.equal(summary.schema_version, 'gotry_m3_product_metrics_summary_v1')
+assert.equal(summary.sample.participants, 5)
+assert.equal(summary.sample.pass, false)
+assert.deepEqual(summary.finalization, { numerator: 2, denominator: 5, rate: 0.4, pass: true })
+assert.deepEqual(summary.nps, { promoters: 3, passives: 1, detractors: 1, denominator: 5, score: 40, pass: true })
+assert.deepEqual(summary.poi_hallucination, { invalid_claims: 1, locked_claims: 200, rate: 0.005, pass: true })
+assert.equal(summary.nightly.replayable_real_llm_runs, 1)
+assert.equal(summary.nightly.cost_usd, 1.25)
+assert.equal(summary.business_pass, false)
+assert.match(summary.business_pass_reason, /synthetic_fixture/)
+NODE
+M3_TEST_ROOT=$(mktemp -d)
+node --input-type=module - "$PWD/ts/data/product-metrics-fixture.json" "$M3_TEST_ROOT" <<'NODE' || FAIL=1
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+const source = JSON.parse(readFileSync(process.argv[2], 'utf8'))
+const root = process.argv[3]
+const positive = structuredClone(source)
+positive.manifest.evidence_kind = 'real_seed_cohort'
+positive.manifest.cohort_id = 'm3-real-contract-fixture'
+positive.cohort = Array.from({ length: 50 }, (_, index) => ({
+  ...structuredClone(source.cohort[index % 5]),
+  participant_key: `hmac-sha256:${(index + 1).toString(16).padStart(64, '0')}`,
+  plan_key: `hmac-sha256:${(index + 101).toString(16).padStart(64, '0')}`,
+}))
+writeFileSync(join(root, 'positive.json'), JSON.stringify(positive))
+const pii = structuredClone(source)
+pii.cohort[0].raw_email = 'must-not-enter-evidence@example.com'
+writeFileSync(join(root, 'pii.json'), JSON.stringify(pii))
+const relaxed = structuredClone(source)
+relaxed.manifest.metrics.sample_size.minimum = 1
+writeFileSync(join(root, 'relaxed.json'), JSON.stringify(relaxed))
+const staleNightly = structuredClone(positive)
+staleNightly.nightly_runs[0].executed_at = '2025-08-20T00:00:00Z'
+writeFileSync(join(root, 'stale-nightly.json'), JSON.stringify(staleNightly))
+NODE
+M3_REAL_OUTPUT=$(cd ts && npx tsx scripts/product-metrics.ts --fixture "$M3_TEST_ROOT/positive.json" --format json) || FAIL=1
+M3_REAL_OUTPUT="$M3_REAL_OUTPUT" node --input-type=module <<'NODE' || FAIL=1
+import assert from 'node:assert/strict'
+const summary = JSON.parse(process.env.M3_REAL_OUTPUT ?? '{}')
+assert.equal(summary.evidence_kind, 'real_seed_cohort')
+assert.deepEqual(summary.sample, { participants: 50, minimum: 50, maximum: 200, pass: true })
+assert.equal(summary.finalization.rate, 0.4)
+assert.equal(summary.nps.score, 40)
+assert.equal(summary.poi_hallucination.rate, 0.005)
+assert.equal(summary.business_pass, true)
+NODE
+if (cd ts && npx tsx scripts/product-metrics.ts --fixture "$M3_TEST_ROOT/pii.json" --format json >/dev/null 2>&1); then
+  echo "FAIL: M3 evidence schema must reject undeclared/raw PII fields"
+  FAIL=1
+fi
+if (cd ts && npx tsx scripts/product-metrics.ts --fixture "$M3_TEST_ROOT/relaxed.json" --format json >/dev/null 2>&1); then
+  echo "FAIL: M3 acceptance thresholds must not be weakened by evidence input"
+  FAIL=1
+fi
+M3_STALE_OUTPUT=$(cd ts && npx tsx scripts/product-metrics.ts --fixture "$M3_TEST_ROOT/stale-nightly.json" --format json) || FAIL=1
+M3_STALE_OUTPUT="$M3_STALE_OUTPUT" node --input-type=module <<'NODE' || FAIL=1
+import assert from 'node:assert/strict'
+const summary = JSON.parse(process.env.M3_STALE_OUTPUT ?? '{}')
+assert.equal(summary.nightly.replayable_real_llm_runs, 0)
+assert.equal(summary.nightly.pass, false)
+assert.equal(summary.business_pass, false)
+NODE
+rm -rf "$M3_TEST_ROOT"
+echo "M3 PRODUCT METRICS TESTS OK(fixture fail-closed/50 人正向合同/PII 拒绝/阈值防篡改/nightly 窗口闸)"
+
+echo
+echo "=== 34. M4 memory value paired-cohort 合同(fixture:active planning/reflux/溯源/P4 闸) ==="
+M4_REPORT=$(mktemp)
+(cd ts && npx tsx scripts/memory-value-report.ts data/memory-value-fixture.json > "$M4_REPORT") || FAIL=1
+node - "$M4_REPORT" <<'NODE' || FAIL=1
+const { readFileSync } = require('node:fs')
+const report = JSON.parse(readFileSync(process.argv[2], 'utf8'))
+const checks = [
+  ['contract_valid', report.contract_valid === true],
+  ['paired N', report.cohort.eligible_pair_count === 3],
+  ['first p50/p75', report.cohort.first_active_seconds.p50 === 720 && report.cohort.first_active_seconds.p75 === 900],
+  ['returning p50/p75', report.cohort.returning_active_seconds.p50 === 360 && report.cohort.returning_active_seconds.p75 === 450],
+  ['paired median reduction', report.cohort.paired_reduction_ratio.p50 === 0.5],
+  ['reflux baseline', report.experience_reflux.baseline === 0.5],
+  ['assertion traceability', report.preference_assertions.traceable_ratio === 1],
+  ['no hard filter', report.preference_assertions.hard_filter_violation_count === 0],
+  ['P4 remains closed', report.p4.contract_met === true && report.p4.state === 'closed'],
+  ['fixture cannot close M4', report.exit_evidence_eligible === false && report.exit_ready === false]
+]
+for (const [name, ok] of checks) {
+  if (!ok) throw new Error(`memory value fixture check failed: ${name}`)
+}
+console.log(`MEMORY VALUE REPORT TESTS: ${checks.length}/${checks.length} OK(fixture contract; synthetic evidence cannot close M4)`)
+NODE
+(cd ts && npx tsx -e '
+  import { readFileSync } from "node:fs";
+  import { scoreMemoryValue } from "./scripts/memory-value-report.ts";
+  const fixture = JSON.parse(readFileSync("data/memory-value-fixture.json", "utf8"));
+  const undeclaredWait = structuredClone(fixture);
+  undeclaredWait.pairs[0].returning.external_waits[0].code = "undeclared_wait";
+  if (scoreMemoryValue(undeclaredWait).contract_valid) throw new Error("undeclared external wait must fail the contract");
+  const hardFilter = structuredClone(fixture);
+  hardFilter.preference_assertions[0].hard_filter = true;
+  if (scoreMemoryValue(hardFilter).preference_assertions.contract_met) throw new Error("memory hard filter must fail acceptance");
+  const earlyP4 = structuredClone(fixture);
+  earlyP4.p4.state = "open";
+  if (scoreMemoryValue(earlyP4).p4.contract_met) throw new Error("P4 must remain closed before a real-usage or multi-user trigger");
+  const duplicateSubject = structuredClone(fixture);
+  duplicateSubject.pairs[1].subject_ref = duplicateSubject.pairs[0].subject_ref;
+  if (scoreMemoryValue(duplicateSubject).contract_valid) throw new Error("one subject must contribute at most one paired measurement");
+  const reversedReturn = structuredClone(fixture);
+  reversedReturn.pairs[0].returning.started_at = "2026-07-31T10:00:00Z";
+  reversedReturn.pairs[0].returning.completed_at = "2026-07-31T10:08:00Z";
+  reversedReturn.pairs[0].returning.external_waits = [];
+  if (scoreMemoryValue(reversedReturn).contract_valid) throw new Error("returning flow must follow the first completed flow");
+') || FAIL=1
+rm -f "$M4_REPORT"
 
 echo
 if [ "$FAIL" -ne 0 ]; then

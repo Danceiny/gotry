@@ -1,0 +1,174 @@
+{
+  "schema_version": "gotry_m3_product_metrics_fixture_v1",
+  "manifest": {
+    "schema_version": "gotry_m3_evidence_manifest_v1",
+    "evidence_kind": "synthetic_fixture",
+    "cohort_id": "m3-fixture-2026-08",
+    "locked_at": "2026-08-28T00:00:00Z",
+    "window": {
+      "start_at": "2026-08-01T00:00:00Z",
+      "end_at": "2026-08-31T23:59:59Z",
+      "timezone": "Asia/Dubai"
+    },
+    "eligibility": {
+      "sample_unit": "unique_participant_with_eligible_delivered_plan",
+      "requires_invitation": true,
+      "requires_consent": true,
+      "allowed_attribution": [
+        "gotry_primary"
+      ],
+      "exclusion_codes": [
+        "outside_locked_window",
+        "not_invited",
+        "consent_missing_or_withdrawn",
+        "test_or_staff",
+        "attribution_not_allowed"
+      ]
+    },
+    "metrics": {
+      "sample_size": {
+        "minimum": 50,
+        "maximum": 200
+      },
+      "finalization_rate": {
+        "formula": "finalized_eligible_delivered_plans / eligible_delivered_plans",
+        "minimum": 0.4
+      },
+      "nps": {
+        "formula": "100 * (promoters_9_10 - detractors_0_6) / valid_responses",
+        "minimum": 40
+      },
+      "poi_hallucination_rate": {
+        "formula": "audited_invalid_poi_claims / locked_audited_poi_claims",
+        "exclusive_maximum": 0.01
+      }
+    },
+    "nightly": {
+      "requires_real_llm": true,
+      "requires_prompt_set_sha256": true,
+      "requires_output_sha256": true,
+      "requires_cost_usd": true
+    }
+  },
+  "cohort": [
+    {
+      "schema_version": "gotry_m3_cohort_record_v1",
+      "participant_key": "hmac-sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "plan_key": "hmac-sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "invited": true,
+      "consent": true,
+      "test_or_staff": false,
+      "attribution": "gotry_primary",
+      "delivered_at": "2026-08-03T10:00:00Z",
+      "finalized_at": "2026-08-04T10:00:00Z",
+      "nps_score": 10,
+      "nps_recorded_at": "2026-08-05T10:00:00Z",
+      "poi_audit": {
+        "locked_at": "2026-08-05T10:00:00Z",
+        "locked_claims": 40,
+        "invalid_claims": 0
+      }
+    },
+    {
+      "schema_version": "gotry_m3_cohort_record_v1",
+      "participant_key": "hmac-sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "plan_key": "hmac-sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "invited": true,
+      "consent": true,
+      "test_or_staff": false,
+      "attribution": "gotry_primary",
+      "delivered_at": "2026-08-06T10:00:00Z",
+      "finalized_at": "2026-08-07T10:00:00Z",
+      "nps_score": 9,
+      "nps_recorded_at": "2026-08-08T10:00:00Z",
+      "poi_audit": {
+        "locked_at": "2026-08-08T10:00:00Z",
+        "locked_claims": 40,
+        "invalid_claims": 0
+      }
+    },
+    {
+      "schema_version": "gotry_m3_cohort_record_v1",
+      "participant_key": "hmac-sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "plan_key": "hmac-sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "invited": true,
+      "consent": true,
+      "test_or_staff": false,
+      "attribution": "gotry_primary",
+      "delivered_at": "2026-08-09T10:00:00Z",
+      "finalized_at": null,
+      "nps_score": 9,
+      "nps_recorded_at": "2026-08-10T10:00:00Z",
+      "poi_audit": {
+        "locked_at": "2026-08-10T10:00:00Z",
+        "locked_claims": 40,
+        "invalid_claims": 0
+      }
+    },
+    {
+      "schema_version": "gotry_m3_cohort_record_v1",
+      "participant_key": "hmac-sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "plan_key": "hmac-sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "invited": true,
+      "consent": true,
+      "test_or_staff": false,
+      "attribution": "gotry_primary",
+      "delivered_at": "2026-08-12T10:00:00Z",
+      "finalized_at": null,
+      "nps_score": 7,
+      "nps_recorded_at": "2026-08-13T10:00:00Z",
+      "poi_audit": {
+        "locked_at": "2026-08-13T10:00:00Z",
+        "locked_claims": 40,
+        "invalid_claims": 0
+      }
+    },
+    {
+      "schema_version": "gotry_m3_cohort_record_v1",
+      "participant_key": "hmac-sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "plan_key": "hmac-sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "invited": true,
+      "consent": true,
+      "test_or_staff": false,
+      "attribution": "gotry_primary",
+      "delivered_at": "2026-08-15T10:00:00Z",
+      "finalized_at": null,
+      "nps_score": 0,
+      "nps_recorded_at": "2026-08-16T10:00:00Z",
+      "poi_audit": {
+        "locked_at": "2026-08-16T10:00:00Z",
+        "locked_claims": 40,
+        "invalid_claims": 1
+      }
+    },
+    {
+      "schema_version": "gotry_m3_cohort_record_v1",
+      "participant_key": "hmac-sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "plan_key": "hmac-sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "invited": true,
+      "consent": true,
+      "test_or_staff": true,
+      "attribution": "gotry_primary",
+      "delivered_at": "2026-08-18T10:00:00Z",
+      "finalized_at": "2026-08-19T10:00:00Z",
+      "nps_score": 10,
+      "nps_recorded_at": "2026-08-20T10:00:00Z",
+      "poi_audit": {
+        "locked_at": "2026-08-20T10:00:00Z",
+        "locked_claims": 1,
+        "invalid_claims": 1
+      }
+    }
+  ],
+  "nightly_runs": [
+    {
+      "schema_version": "gotry_m3_nightly_run_v1",
+      "run_key": "hmac-sha256:7777777777777777777777777777777777777777777777777777777777777777",
+      "executed_at": "2026-08-20T00:00:00Z",
+      "real_llm": true,
+      "prompt_set_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+      "output_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "cost_usd": 1.25
+    }
+  ]
+}

@@ -1,7 +1,6 @@
 .venv/
 .venv-reach/
 node_modules/
-package-lock.json
 gotry-state/
 *.pyc
 __pycache__
@@ -13,7 +12,8 @@ async_result.json
 
 .env
 .zcode/
-ts/dsh-runtime/
+ts/dsh-runtime/gotry-state/
+ts/dsh-runtime/node_modules/
 py/gotry.egg-info/
 shell/gotry-state/
 .npmrc.publish

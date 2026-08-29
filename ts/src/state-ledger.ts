@@ -544,13 +544,57 @@ export class StateLedger {
     ).run(JSON.stringify(result), new Date().toISOString(), runId, name, this.tenant)
   }
 
-  settleWorkflowRun(id: string, deliverable: string, actor = 'system:async-collect'): void {
+  private finishWorkflowRun(
+    id: string,
+    status: 'settled' | 'failed',
+    eventKind: 'async.settled' | 'async.failed',
+    deliverable: string,
+    terminalOutcome?: unknown,
+    actor = 'system:async-collect',
+  ): void {
     const run = this.db.transaction(() => {
-      this.db.prepare(`UPDATE workflow_runs SET status = 'settled', deliverable = ?, updated = ? WHERE id = ? AND tenant_id = ?`)
-        .run(deliverable, new Date().toISOString(), id, this.tenant)
-      this.insertEvent({ actor, kind: 'async.settled', subjectId: id, payload: { bytes: deliverable.length }, runId: id })
+      const update = this.db.prepare(
+        `UPDATE workflow_runs SET status = ?, deliverable = ?, updated = ?
+         WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
+      ).run(status, deliverable, new Date().toISOString(), id, this.tenant)
+      if (update.changes === 0) {
+        const existing = this.getWorkflowRun(id)
+        if (existing?.status === status) return
+        throw new Error(`workflow ${id} cannot transition ${existing?.status ?? 'missing'} -> ${status}`)
+      }
+      this.insertEvent({
+        actor,
+        kind: eventKind,
+        subjectId: id,
+        payload: { bytes: deliverable.length, terminal_outcome: terminalOutcome },
+        idemKey: `async-terminal:${id}`,
+        runId: id,
+      })
     })
     run()
+  }
+
+  settleWorkflowRun(id: string, deliverable: string, terminalOutcome?: unknown, actor = 'system:async-collect'): void {
+    this.finishWorkflowRun(id, 'settled', 'async.settled', deliverable, terminalOutcome, actor)
+  }
+
+  failWorkflowRun(id: string, deliverable: string, terminalOutcome: unknown, actor = 'system:async-collect'): void {
+    this.finishWorkflowRun(id, 'failed', 'async.failed', deliverable, terminalOutcome, actor)
+  }
+
+  getWorkflowTerminalOutcome(id: string): Record<string, unknown> | null {
+    const row = this.db.prepare(
+      `SELECT payload FROM events
+       WHERE tenant_id = ? AND run_id = ? AND kind IN ('async.settled', 'async.failed')
+       ORDER BY seq DESC LIMIT 1`,
+    ).get(this.tenant, id) as { payload: string } | undefined
+    if (!row) return null
+    try {
+      const payload = JSON.parse(row.payload) as { terminal_outcome?: Record<string, unknown> }
+      return payload.terminal_outcome ?? null
+    } catch {
+      return null
+    }
   }
 
   // ---- WriteGate saga 基座(TS-4, RFC S4 L2/L3 物理预备) -----------------------

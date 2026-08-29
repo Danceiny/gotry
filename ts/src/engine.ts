@@ -9,21 +9,16 @@
  * - WASM init ~60-140ms 一次性,单次求解 ~6ms(进程内,无子进程桥)。
  */
 
-import { init } from 'z3-solver'
+import { parseCandidate, parseRequest } from './model.ts'
 import type { Candidate, Choice, TrueCost, TravelRequest } from './model.ts'
 import { evaluateChoice, minToHhmm, requiredUsableHours, trueCostToDict, LATEST_ARRIVE_STAY_MIN } from './model.ts'
+import { withZ3, type Z3Ctx } from './z3-shared.ts'
+import { t } from './i18n.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type Z3Ctx = any
-
-let z3Promise: Promise<Z3Ctx> | null = null
-
-async function getZ3(): Promise<Z3Ctx> {
-  if (!z3Promise) {
-    z3Promise = (async () => (await init()).Context('main'))()
-  }
-  return z3Promise
-}
+// Z3 运行时收敛到 z3-shared(单一 WASM 实例 + 单一 Context + 会话级互斥);
+// 本模块不再自持 z3Promise(此前三模块并存 + solve() Promise.all 并发多候选
+// 是「memory access out of bounds」偶发的根因,见 z3-shared.ts 头注)。
 
 export interface Suggestion {
   relax: string[]
@@ -185,9 +180,8 @@ async function unsatCoreOf(s: any): Promise<string[]> {
   return out
 }
 
-async function cheapestPlan(enc: Encoding, skip: ReadonlySet<string>): Promise<{ choice: Choice; cost: TrueCost } | null> {
+async function cheapestPlan(enc: Encoding, skip: ReadonlySet<string>, z3: Z3Ctx): Promise<{ choice: Choice; cost: TrueCost } | null> {
   /** 放宽 skip 约束下的最省钱方案:getLower 取最优值,等值回代提模(与 Python _cheapest_plan 同)。 */
-  const z3 = await getZ3()
   const opt = new z3.Optimize()
   opt.add(enc.structure)
   for (const name of CONSTRAINT_LABEL_KEYS) {
@@ -206,20 +200,23 @@ async function cheapestPlan(enc: Encoding, skip: ReadonlySet<string>): Promise<{
 function suggestText(relax: string[], cand: Candidate, req: TravelRequest, choice: Choice, cost: TrueCost): string {
   const mot = req.motivation
   const parts: string[] = []
-  if (relax.includes('duration')) parts.push(`把行程延长到 ${choice.days} 天(${cand.name} 值得这个窗口)`)
-  if (relax.includes('budget')) parts.push(`预算提高到 ¥${cost.moneyCny}(原 ¥${req.budgetCny})`)
-  if (relax.includes('wake_floor')) parts.push(`接受 ${minToHhmm(cost.wakeMin)} 起床——破坏生物钟,与你的休整动机冲突,不推荐`)
-  if (relax.includes('energy_floor')) parts.push(`接受到达精力 ${cost.energyArrivalPct}%(低于你要求的 ${mot.minArrivalEnergyPct}%)`)
-  if (relax.includes('usable_hours')) parts.push(`接受有效休整 ${cost.usableHours.toFixed(1)}h(低于动机所需的 ${requiredUsableHours(mot).toFixed(1)}h)`)
-  if (relax.includes('arrival_before_evening')) parts.push(`接受 ${minToHhmm(cost.arriveStayMin)} 才到住处`)
-  const plan = `可行方案:${choice.outService.id} ${minToHhmm(choice.outService.depMin)} 出发、`
-    + `${choice.outTransfer.mode} 接驳,¥${cost.moneyCny},${minToHhmm(cost.wakeMin)} 起床,`
-    + `${minToHhmm(cost.arriveStayMin)} 到住处,到达精力 ${cost.energyArrivalPct}%`
+  if (relax.includes('duration')) parts.push(t('sg.duration', { days: choice.days, name: cand.name }))
+  if (relax.includes('budget')) parts.push(t('sg.budget', { cost: cost.moneyCny, budget: req.budgetCny }))
+  if (relax.includes('wake_floor')) parts.push(t('sg.wake_floor', { wake: minToHhmm(cost.wakeMin) }))
+  if (relax.includes('energy_floor')) parts.push(t('sg.energy_floor', { pct: cost.energyArrivalPct, min: mot.minArrivalEnergyPct }))
+  if (relax.includes('usable_hours')) parts.push(t('sg.usable_hours', { hours: cost.usableHours.toFixed(1), need: requiredUsableHours(mot).toFixed(1) }))
+  if (relax.includes('arrival_before_evening')) parts.push(t('sg.arrival', { time: minToHhmm(cost.arriveStayMin) }))
+  const plan = t('sg.plan', {
+    id: choice.outService.id, dep: minToHhmm(choice.outService.depMin), mode: choice.outTransfer.mode,
+    money: cost.moneyCny, wake: minToHhmm(cost.wakeMin), arrive: minToHhmm(cost.arriveStayMin),
+    percent: cost.energyArrivalPct,
+  })
   return parts.join(' + ') + `;${plan}`
 }
 
 export async function solveCandidate(cand: Candidate, req: TravelRequest): Promise<Verdict> {
-  const z3 = await getZ3()
+  // 会话级互斥门:整个判定(编码 + 多轮求解)独占共享实例;门内绝不嵌套 withZ3。
+  return withZ3('engine.solveCandidate', async z3 => {
   const enc = new Encoding(z3, cand, req)
   const verdict: Verdict = {
     candidateId: cand.id, name: cand.name, feasible: false,
@@ -260,7 +257,7 @@ export async function solveCandidate(cand: Candidate, req: TravelRequest): Promi
         const trial = new Set(joint.filter(n => n !== name))
         if (!(await isUnsat(await longEnc.solverWith(trial)))) joint = [...trial]
       }
-      const plan = await cheapestPlan(longEnc, new Set(joint))
+      const plan = await cheapestPlan(longEnc, new Set(joint), z3)
       if (plan) {
         verdict.suggestions.push({
           relax: joint,
@@ -274,21 +271,25 @@ export async function solveCandidate(cand: Candidate, req: TravelRequest): Promi
   // 憧憬不被拒绝:放宽时长能救活 → wish pool + 成行条件(最省钱口径)
   if (verdict.suggestions.some(sg => sg.relax.includes('duration'))) {
     const longEnc = new Encoding(z3, cand, req, cand.minDaysForPurpose)
-    const plan = await cheapestPlan(longEnc, new Set(['duration', 'budget']))
+    const plan = await cheapestPlan(longEnc, new Set(['duration', 'budget']), z3)
     const conditions: Record<string, unknown> = { days: cand.minDaysForPurpose }
     if (plan) conditions['budget_cny'] = plan.cost.moneyCny
     if (cand.bestMonths.length) conditions['best_months'] = cand.bestMonths
     verdict.wishPool = {
       name: cand.name,
       conditions,
-      reason: `动机谱系 ${JSON.stringify(req.motivation.weights)} 下,${req.windowDays} 天窗口装不下这个目的地`,
+      reason: t('sg.wish_reason_engine', { weights: JSON.stringify(req.motivation.weights), days: req.windowDays }),
     }
   }
   return verdict
+  })
 }
 
 export async function solve(req: TravelRequest, candidates: Candidate[]): Promise<Record<string, unknown>> {
-  const verdicts = await Promise.all(candidates.map(c => solveCandidate(c, req)))
+  // 顺序求解:候选间共享单一 WASM 实例,不并发交错(此前 Promise.all 是
+  // 「memory access out of bounds」偶发的根因;求解 ~6ms/次,串行可忽略)。
+  const verdicts: Verdict[] = []
+  for (const c of candidates) verdicts.push(await solveCandidate(c, req))
   const feasible = verdicts.filter(v => v.feasible).sort((a, b) => b.imageryMatch - a.imageryMatch)
   const recommended = feasible[0]?.candidateId ?? null
   return {
@@ -331,52 +332,56 @@ function renderMarkdown(req: TravelRequest, verdicts: Verdict[], recommended: st
   const feasible = verdicts.filter(v => v.feasible).sort((a, b) => b.imageryMatch - a.imageryMatch)
   const parked = verdicts.filter(v => !v.feasible)
   const lines: string[] = []
-  lines.push(`> 憧憬:${req.note}`)
-  lines.push(`> 已识别约束:窗口 ${req.windowDays} 天 | 预算 ¥${req.budgetCny} | `
-    + `动机(休整改写需求 ${requiredUsableHours(req.motivation).toFixed(1)}h 有效休整)`)
+  lines.push(t('md.header', { note: req.note }))
+  lines.push(t('md.constraints', {
+    days: req.windowDays, budget: req.budgetCny,
+    hours: requiredUsableHours(req.motivation).toFixed(1),
+  }))
   lines.push('')
   for (const v of parked) {
-    lines.push(`**${v.name}:现在不行**——冲突约束:${v.unsatCore.join('、')}。`)
+    lines.push(t('md.infeasible', { name: v.name, core: v.unsatCore.join('、') }))
     for (const sg of v.suggestions.slice(0, 1)) lines.push(`- ${sg.text}`)
     if (v.wishPool) {
       const conds = v.wishPool.conditions
-      const budgetNote = conds['budget_cny'] ? `、约 ¥${conds['budget_cny']}` : ''
+      const budgetNote = conds['budget_cny'] ? t('md.wish_budget', { cny: String(conds['budget_cny']) }) : ''
       const months = conds['best_months'] as number[] | undefined
-      const season = months ? `,${months} 月最佳` : ''
-      lines.push(`- 已放入「下一次出发」清单:需要 ${conds['days']} 天${budgetNote}${season}`)
+      const season = months ? t('md.wish_season', { months: months.join(',') }) : ''
+      lines.push(t('md.wish_pool', { days: String(conds['days']), budgetNote, season }))
     }
   }
   lines.push('')
   for (const v of feasible) {
-    const c = v.choice!, t = v.trueCost!
-    lines.push(`**${v.name}:可行**`
-      + `(${c.outService.id} ${minToHhmm(c.outService.depMin)} 出发,`
-      + `${c.outTransfer.mode} 接驳,${minToHhmm(t.arriveStayMin)} 到住处,`
-      + `起床 ${minToHhmm(t.wakeMin)},到达精力 ${t.energyArrivalPct}%,`
-      + `门到门 ${Math.floor(t.doorToDoorOutMin / 60)}h${String(t.doorToDoorOutMin % 60).padStart(2, '0')}m,`
-      + `有效休整 ${t.usableHours.toFixed(1)}h,共 ¥${t.moneyCny})`)
+    const c = v.choice!, cost = v.trueCost!
+    lines.push(t('md.feasible_engine', {
+      name: v.name, id: c.outService.id, dep: minToHhmm(c.outService.depMin), mode: c.outTransfer.mode,
+      arrive: minToHhmm(cost.arriveStayMin), wake: minToHhmm(cost.wakeMin), energy: cost.energyArrivalPct,
+      d2d: `${Math.floor(cost.doorToDoorOutMin / 60)}h${String(cost.doorToDoorOutMin % 60).padStart(2, '0')}m`,
+      hours: cost.usableHours.toFixed(1), money: cost.moneyCny,
+    }))
   }
   if (feasible.length) {
     lines.push('')
     const best = feasible[0]
     const alt = feasible[1]
-    lines.push(`**建议:${best.name}**(意象匹配 ${(best.imageryMatch * 100).toFixed(0)}%)。`
-      + (alt ? `备选:${alt.name}(¥${alt.trueCost!.moneyCny},匹配 ${(alt.imageryMatch * 100).toFixed(0)}%)。` : ''))
+    lines.push(t('md.recommend', { best: best.name, match: (best.imageryMatch * 100).toFixed(0) })
+      + (alt ? t('md.alt', { name: alt.name, money: alt.trueCost!.moneyCny, match: (alt.imageryMatch * 100).toFixed(0) }) : ''))
   }
   lines.push('')
-  lines.push('**待你决定的两个问题**:')
+  lines.push(t('md.decide_two'))
   if (feasible.length >= 2) {
-    lines.push(`1. ${feasible[0].name} 还是 ${feasible[1].name}?(前者更贴意象,后者更省)`)
+    lines.push(t('md.q_choice', { a: feasible[0].name, b: feasible[1].name }))
   } else if (feasible.length === 1) {
-    lines.push(`1. 就去 ${feasible[0].name} 吗?`)
+    lines.push(t('md.q_single', { name: feasible[0].name }))
   } else {
-    lines.push('1. 所有候选都不可行——考虑放宽哪条约束?')
+    lines.push(t('md.q_none'))
   }
   const p0 = parked[0]
   if (p0?.wishPool) {
-    lines.push(`2. 把 ${p0.name} 留给「下一次出发」(${p0.wishPool.conditions['days']} 天起),这次先去可行的?`)
+    lines.push(t('md.q_wish', { name: p0.name, days: String(p0.wishPool.conditions['days']) }))
   } else if (feasible.length) {
-    lines.push(`2. 出发班次选 ${feasible[0].choice!.outService.id}(${minToHhmm(feasible[0].choice!.outService.depMin)})还是更晚的?`)
+    lines.push(t('md.q_depart', {
+      id: feasible[0].choice!.outService.id, dep: minToHhmm(feasible[0].choice!.outService.depMin),
+    }))
   }
   return lines.join('\n')
 }

@@ -110,6 +110,51 @@ export interface AsyncTicket {
   etaLabel: string
 }
 
+export const ASYNC_TERMINAL_SCHEMA = 'gotry_async_terminal.v1' as const
+
+export interface AsyncTerminalOutcome {
+  schema: typeof ASYNC_TERMINAL_SCHEMA
+  ticket_id: string
+  status: 'succeeded' | 'failed'
+  passed: number
+  total: 4
+  checks: Record<string, boolean>
+  failed_checks: string[]
+}
+
+function asyncTerminalOutcome(ticketId: string, checks: Record<string, boolean>): AsyncTerminalOutcome {
+  const failedChecks = Object.entries(checks).filter(([, passed]) => !passed).map(([name]) => name)
+  return {
+    schema: ASYNC_TERMINAL_SCHEMA,
+    ticket_id: ticketId,
+    status: failedChecks.length === 0 ? 'succeeded' : 'failed',
+    passed: Object.values(checks).filter(Boolean).length,
+    total: 4,
+    checks,
+    failed_checks: failedChecks,
+  }
+}
+
+function terminalOutcomeFromState(ticketId: string, state: TripState): AsyncTerminalOutcome {
+  if (!state.spec || !state.solve) {
+    return asyncTerminalOutcome(ticketId, {
+      '1_承诺时间后必有明确产物': false,
+      '2_产物通过自检清单': false,
+      '3_待决问题全部是简单选择题': false,
+      '4_做不到的诚实说': false,
+    })
+  }
+
+  return asyncTerminalOutcome(ticketId, {
+    '1_承诺时间后必有明确产物': Boolean(state.solve.legs?.length || state.solve.verdicts?.length),
+    '2_产物通过自检清单': state.solve.feasible
+      ? (state.solve.legs?.every(l => (l as Record<string, unknown>)['energy_pct'] !== undefined) ?? false)
+      : Boolean(state.solve.unsat_core?.length),
+    '3_待决问题全部是简单选择题': state.gates.every(g => g.id === 'budget' || g.options.length >= 2),
+    '4_做不到的诚实说': state.solve.feasible || Boolean(state.solve.suggestions?.length),
+  })
+}
+
 export function isComplex(state: TripState): boolean {
   /** 复杂度判据(架构占位,后续可细化):多段或多约束即深规划 */
   const p = state.profile
@@ -134,21 +179,19 @@ export async function collectDeepPlanning(
   state: TripState,
   ticket: AsyncTicket,
   solve: SolvePort,
-): Promise<{ reply: string; state: TripState }> {
+): Promise<{ reply: string; state: TripState; outcome: AsyncTerminalOutcome }> {
   const spec = state.spec
-  if (!spec) return { reply: '(内部状态缺失 spec——深度规划未就绪,这是不应发生的路径)', state }
+  if (!spec) {
+    const outcome = terminalOutcomeFromState(ticket.id, state)
+    return { reply: '(内部状态缺失 spec——深度规划未就绪,这是不应发生的路径)', state, outcome }
+  }
   state.solve = await solve(spec)
   state.gates = state.gates.filter(g => !g.id.startsWith('async-'))
 
   // 不失望四条自检(交付物自带,总纲 3.6)
-  const checks = {
-    '1_承诺时间后必有明确产物': Boolean(state.solve.legs?.length || state.solve.verdicts?.length),
-    '2_产物通过自检清单': state.solve.feasible ? (state.solve.legs?.every(l => (l as Record<string, unknown>)['energy_pct'] !== undefined) ?? false) : Boolean(state.solve.unsat_core?.length),
-    '3_待决问题全部是简单选择题': state.gates.every(g => g.id === 'budget' || g.options.length >= 2),
-    '4_做不到的诚实说': state.solve.feasible || Boolean(state.solve.suggestions?.length),
-  }
-  const head = `# 回访交付:${ticket.objective}\n(工单 ${ticket.id},不失望四条:${Object.values(checks).every(Boolean) ? '4/4 ✅' : '有未达项 ❌'})`
-  return { reply: `${head}\n\n${renderSolve(state)}`, state }
+  const outcome = terminalOutcomeFromState(ticket.id, state)
+  const head = `# 回访交付:${ticket.objective}\n(工单 ${ticket.id},不失望四条:${outcome.status === 'succeeded' ? '4/4 ✅' : '有未达项 ❌'})`
+  return { reply: `${head}\n\n${renderSolve(state)}`, state, outcome }
 }
 
 /** 求解结果 → 人话(模板;S4 可由 LLM 润色,数字与判定不可改) */
@@ -341,12 +384,42 @@ export async function loadAsyncTicket(ticketId: string, stateRoot = '.'): Promis
   }
 }
 
-export async function settleAsyncTicket(ticketId: string, reply: string, stateRoot = '.'): Promise<string> {
-  openLedgerIfExists(stateRoot)?.settleWorkflowRun(ticketId, reply)
+export async function settleAsyncTicket(
+  ticketId: string,
+  reply: string,
+  stateRoot = '.',
+  outcome?: AsyncTerminalOutcome,
+): Promise<string> {
+  const ledger = openLedgerIfExists(stateRoot)
+  const terminalOutcome = outcome ?? recoverAsyncTerminalOutcome(ledger, ticketId)
+  if (ledger && !terminalOutcome) {
+    throw new Error(`workflow ${ticketId} 缺少可恢复的 ${ASYNC_TERMINAL_SCHEMA}，拒绝误结算`)
+  }
+  if (terminalOutcome?.status === 'failed') ledger?.failWorkflowRun(ticketId, reply, terminalOutcome)
+  else ledger?.settleWorkflowRun(ticketId, reply, terminalOutcome)
   const dir = await asyncDir(stateRoot)
   const p = join(dir, `${ticketId}.deliverable.md`)
   await atomicWrite(p, reply)
   return p
+}
+
+function recoverAsyncTerminalOutcome(ledger: StateLedger | null, ticketId: string): AsyncTerminalOutcome | undefined {
+  if (!ledger) return undefined
+  const run = ledger.getWorkflowRun(ticketId)
+  if (!run) return undefined
+
+  try {
+    const state = JSON.parse(run.state_json) as TripState
+    if (!state.spec) return terminalOutcomeFromState(ticketId, state)
+
+    const solveStep = ledger.getWorkflowStep(ticketId, 'solve')
+    if (solveStep?.status !== 'done' || !solveStep.result) return undefined
+    state.solve = JSON.parse(solveStep.result) as SolveResult
+    state.gates = state.gates.filter(g => !g.id.startsWith('async-'))
+    return terminalOutcomeFromState(ticketId, state)
+  } catch {
+    return undefined
+  }
 }
 
 /**

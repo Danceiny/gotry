@@ -113,6 +113,8 @@ Comet 事故(Brave 2025-08 披露,Reddit 评论藏注入→跨站接管账户)�
 ```
 ts/capabilities/flyai.ts            官方通道:P0 新增优先级——spawn @fly-ai/flyai-cli(npx),search-flight/search-train 先接,
                                      管道层对齐 agent-reach 模式(超时/永不抛错/证据链);P1 与会话骨架同批落地
+                                     【2026-08-29 第二批实装:kind=flight|train|hotel——search-hotel 已接(打码价
+                                     priceRaw 保真,真实价经 detailUrl 由人完成),OTA 工具面平铺(无主/降级路由)】
 ts/capabilities/session-search.ts    会话面传输层编排:connect → navigate → sniff → extract → guard → 证据链
 ts/capabilities/session/
   transport.ts        SessionTransport 接口 + CDPAttachTransport 首发实现
@@ -135,10 +137,14 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 这是 WriteGate(L0-L4)在检索态的镜像:**写不是「被禁止的行为」,是「不存在的原语」**。
 
+**人机共治标签页纪律(2026-08-29)**:检索与登录引导一律开**独立新标签页**(登录页置前台、留在用户侧),绝不导航用户既有标签页——CDP attach 的浏览器属于用户,我们只动自己开的页(收尾只关自己的页+断开连接);live 探针默认关(`GOTRY_SESSION_LIVE=1` opt-in),测试永不自动开窗。
+
 ### 3.4 节律与熔断(把「像人」做成代码)
 
 - 站内查询间隔 ≥30s、单会话 ≤10 次、日上限可配(`GOTRY_SESSION_*` 环境变量);
 - 检测到滑块/验证码/风控跳转:**立即熔断 + 冷却 + 通知用户人工处理**——绝不重试、绝不绕过(合规支柱②);
+- **授权闸 v2(支柱④进代码,2026-08-29 第二批落地、同日按 founder 实测改会话内一次)**:动用用户本人登录态的工具(`gotry_session_search`)经 dsh `tools/pre-execute`(`session-consent.ts`)在**每会话每站点首次调用**时请求 `ApprovalService` 审批卡授权;allowed-once 记入会话 granted 集(会话内免再弹),rejected/cancelled 记入 denied = **本会话吊销**(不弹卡不执行——拒绝是裁决,不反复骚扰);无审批通道一律 fail-closed(headless 无用户在场 = 无授权——「明示授权 + 可撤回」的运行时具象);插件 config `sessionAccess: ask|allow|off`(随时可关/预授权/总闸);站点白名单=适配器注册表现状(仅 ctrip-flight)。**首版逐调用弹卡经 founder 实测判为骚扰(「每次都要弹,经常无法点击」),当日改会话内一次**。**飞猪匿名通道不过闸**(调用不携带用户身份,无账号风控/PIPL 处理面;其对用户的义务由「只读 + jumpUrl 人完成交易 + 配额限流结构化 error」覆盖);session-tests §I 断言;
+- **登录 bootstrap 真脚本(2026-08-29)**:`scripts/session-login.ts`——attach 用户日常 Chrome → 打开登录入口标签 → 人登录 → 只读轮询票据 cookie 名(不读值不碰凭证),`needs-login` 文案指向它;**测试永不自动开浏览器窗口**(session-tests live 节 GOTRY_SESSION_LIVE=1 opt-in——founder 反馈「匿名窗口反复打开携程/界面闪退」= 测试骚扰,当日根治);
 - 专用 profile 首发不落 cookie 库;登录永由用户人工完成(agent 不碰密码/OTP/验证码,对齐 Operator 的 takeover 模式与总纲 3.5「敏感信息模型永不接触」)。**2026-08-28 founder 纠偏落地:「打开浏览器必须有登录态,不能是匿名实例」**——默认 profile 挪 `~/.gotry/session-profile`(持久,登录态不丢);`sessionFlightSearch` 登录闸:匿名默认拒(verdict=`needs-login`),`scripts/session-login.ts` 首登 bootstrap(人工登录,轮询票据 cookie);`allowAnonymous` 仅限链路自检且证据链标 `anonymous=自检态`。远期若需 profile 迁移:AES-GCM 落盘 + 密钥进 OS keychain(macOS `security`/Windows DPAPI/Linux libsecret;keytar 已死不用),0600 权限。
 
 ### 3.5 注入防护
@@ -157,7 +163,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 |---|---|---|---|
 | **P0 尽调** ✅ **2026-08-28 完成** | ①飞猪 FlyAI key 申请+只读能力探测(决定会话面真实缺口);②高德 MCP key;③本机 Chrome attach PoC(~30 行:连专用 profile 打开携程机票页,嗅探 1 条 XHR 并打印 JSON);④G7/G8/G9 决策回填本 RFC | **已达成**:①FlyAI 无 key 实测可用,8 工具全只读,机/火车票官方通道开(备忘进 data-sources.md §8);②高德获取步骤落 tokens.md(等 key);③PoC 两轮零风控零交互,主接口已识别(`search/batchSearch` ~550KB + 低价日历 ~81KB,脚本 `ts/scripts/session-attach-poc.ts`,playwright-core 1.62.1 devDep);④本节决策表已结算。**结论修正:机票/铁路主链路改走 FlyAI,会话面收缩为「携程 C 端交叉验证 + 美团本地 + 官方通道盲区」** | 1-2 tick,零外部成本(实用 1 tick) |
 | **P1 骨架** ✅ **2026-08-28 完成** | transport + ReadGuard + adapter 接口 + 首个适配器(**携程机票**,携程 C 端覆盖最优先且与现有航班静态包直接对账);证据链 `[会话:*]`;隔离 stateRoot 测试(对齐巡检状态纪律,绝不动 dsh-runtime 真实状态) | **已达成**:`capabilities/flyai.ts`(官方通道)+ `capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 五件落地;`session-tests.ts` 25 断言全绿(ReadGuard 双因子/驼峰复合写词/fixture 解析/城市码表三值/节律闸 cooldown/live FlyAI hit/live 会话嗅探 hit+guard 零拦截+审计文件不出现);run-all §24 全栈 ALL GREEN;双源对照首记录(FlyAI ¥230 vs 会话 ¥1611)——**价差已解释(2026-08-28):FlyAI 最低价为南京中转+跨天衔接链(浦东23:00→禄口23:55→次日17:00→三义),携程首屏 ¥1611 为直达档;双源对照断言口径=按 journeyType(直达/中转)分桶、逐段日期对齐后再比**,价差本身即交叉验证的价值论据 | 2-3 tick(实用 1 tick) |
-| **P2 面上** ◐ 2026-08-28 主体完成(余项待登录态) | action-cache 自愈层 ✅(run-all §26);美团适配器骨架+a11y 兜底抽取器 ✅(§27;**匿名 403 实测——登录态是 403 级硬前置,networkHint 待登录后回填**);金标准 20 查询集 ✅ + flyai 基线 ✅(fa-01..04:e2e §14,含 miss 三值活例与火车价打码发现);飞猪无需会话适配器(FlyAI 官方覆盖);字段级 ≥90% 跑批与熔断 fixture 用例**待登录态** | 已完成项全绿;剩余挂 founder gate | 2-3 tick(实用 3 tick) |
+| **P2 面上** ◐ 2026-08-28 主体完成(余项待登录态) | action-cache 自愈层 ✅(run-all §26);美团适配器骨架+a11y 兜底抽取器 ✅(§27;**匿名 403 实测——登录态是 403 级硬前置,networkHint 待登录后回填**);金标准 20 查询集 ✅ + flyai 基线 ✅(fa-01..04:e2e §14,含 miss 三值活例与火车价打码发现);**#21 字段 fixture scorer/双源合同/waiting-attach no-spend ✅**(`session/benchmark.ts`,run-all §25);飞猪无需会话适配器(FlyAI 官方覆盖);真实 sf-01..08 字段级 ≥90% 跑批仍待登录态 | fixture 合同已纳入确定性回归;真实跑批仍需 Chrome 权限确认和 CDP 握手 | 2-3 tick(实用 3 tick) |
 | **P3 产品化** ◐ 2026-08-28 切片 1/2 完成 | `gotry_flyai_search`+`gotry_session_search` 双工具 ✅(17 工具,smoke §12,hit/限流双合法终态);人格契约 **(19) 三级路由** ✅(仓根 yml,直达/中转分桶);e2e §14 实证记录 ✅;architecture §1/§3/§10、data-sources §8、roadmap ✅,README 无工具清单免同步,stage1 显式让渡;run-all §25-27 全绿 | 真模型 e2e **flyai 侧 ✅**(e2e §15,8ddb997:真模型实际调用 flyai 工具,三源证据链并存,多 lane 协同实证);**待登录态**:真模型 e2e session 侧一例 + 双源 sf-01..08 跑批(风控触发次数=0 实测期口径同此) | 2 tick(实用 2 tick) |
 
 依赖与并行:P0 可即刻开始(不等 M4 记忆域);P1 起与 M4 交替推进,不挤占 M4 主线(会话面是数据域增量,与记忆域正交)。

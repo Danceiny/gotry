@@ -26,10 +26,10 @@
 | **航线通航性** | ✅ OpenFlights 骨架 168 枢纽对(ODbL,`data/openflights-skeleton.json`) | 静态(月级) | `[骨架:openflights]` | 保持;扩枢纽集;Amadeus 已关停不回 |
 | **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`(公开渠道调研,5 段链) | 静态(2026-07 调研) | `[静态包:估算]` | M4:aviationstack 校验层(§7-1 已批三层组合);票价 M5 |
 | **航班实时观测** | ✅ OpenSky 已接(`capabilities/opensky.ts` + `gotry_flight_verify` 工具;`/api/states/all` 当前 ADS-B 全球观测,~400 credits/天) | 实时 | `[实时API:opensky]` | ✅ 已落地(2026-08-22) |
-| **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退;**2026-08-29 起 npm 安装期自动按官方脚本安装 hbcli**(hotelbyte-cli 为公开仓 github.com/hotelbyte-com/hotelbyte-cli,MIT——D-19 初判「无分发渠道」有误已改口径;`gotry setup` 手动入口;能力层带 ~/.local/bin、~/.staicli/current 候选回退;实时数据仍需用户凭证,未配时静态包为默认) | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
+| **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ **飞猪官方 OTA 通道已接**(`gotry_flyai_search` kind=hotel → search-hotel,2026-08-29 实测,未鉴权打码价保 priceRaw 不伪装)+ 静态包 `data/hotels_2026.json` 按目的地过滤回退;**2026-08-29(PR #33)起 npm 安装期自动按官方脚本安装 hbcli**(hotelbyte-cli 为公开仓 github.com/hotelbyte-com/hotelbyte-cli,MIT;`gotry setup` 手动入口;能力层带 ~/.local/bin、~/.staicli/current 候选回退;实时数据仍需用户凭证,未配时静态包为默认,D-22) | 实时/静态 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时;OTA 工具面平铺(无主/降级路由,按查询取用) |
 | **酒店点评/评分** | ✅ **复用 hotel-be Anything**(内含酒店 + 城市/区域混合 candidate)+ M4 scale-up:Google Place 评分/照片 | Any(hit/miss),M4:geography | `hbcli-anything` | M3:DONE(founder 校准 Anything 复用);M4:Google Place scale-up 路径(geography GetPlaceReviews) |
 | **POI/地点搜索** | ✅ Anything(混合 城市+酒店+place 候选) + OSM Nominatim 兜底 | Any | `hbcli-anything` / M4 `osm-nominatim` | M3:DONE;TREK 同款,免费兜底 |
-| **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`;2026-08-29 地理编码别名阶梯 `resolvePlace`:产品词表别名优先→原样→去后缀+population 防歧义,「普吉岛」经 Phuket 别名命中) | 实时 | `[实时API:open-meteo@ts]` | 保持;WMO 码已映射中文 |
+| **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`);地理编码双源:Open-Meteo(主,人口/行政级排序防同名小地压主城)+ OSM Nominatim(中文兜底——open-meteo 中文名覆盖有洞,issue #24 实测「普吉岛」0 结果) | 实时 | `[实时API:open-meteo@ts]` / 兜底 `[实时API:nominatim@ts]` | 保持;WMO 码已映射中文 |
 | **地面交通(接驳/铁路)** | ⚠️ 段内 transfer 硬编码在数据包(minutes/priceCny) | 静态 | `[静态包:估算]` | M4:OSRM 免费自托管(路线/时长);12306 无开放 API 不接 |
 | **地理/行政区划** | ❌ 无 | — | — | TREK 模式:bundled GeoJSON atlas(脚本构建,离线) |
 | **时区** | ⚠️ 手写在数据包(tz_offset_min/origin_tz_offset_min) | 静态 | — | M4:用时区库(`Intl`/`tz-lookup`)替代手写 |
@@ -206,10 +206,22 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 **会话数据面 P1(RFC §4,2026-08-28)**:`capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard(方法×URL 双因子 + 驼峰复合写词,写请求物理 abort + 审计,fail-closed)+ 携程机票适配器(batchSearch 嗅探→结构化)+ 节律闸(同站 ≥30s);证据链新标注 `[会话:ctrip-flight@ts]` 生效;run-all §24。live 会话检索需 headful(headless 下携程只回壳页,实测)。登录态为存在前提(founder 纠偏 2026-08-28,同日二次纠偏「仍然匿名实例」后**定案 CDP attach 为默认传输**):`openSession(mode=cdp)` attach 日常 Chrome(chrome://inspect/#remote-debugging 一次性开关,Chrome 144+,本机 147 ✓),登录态/指纹=用户本人,ReadGuard 同样生效;`needs-attach`/`needs-login` 双降级 verdict;`scripts/session-attach-diagnose.ts` 校准票据名单(只读不导航);persistent 专用 profile 降为测试/后备(实测:匿名窗口无人会登录,History/Cookies 双 0 行)。
 
+**#21 双源验收合同(2026-08-29)**:`session/benchmark.ts` 把 query/segments/journey type/逐段时刻与班次/currency/price/source/fetched_at/verdict 固化为字段级 fixture scorer(缺字段计错,默认 ≥90%)；双源对齐按同 journey/segments/时刻/班次判断,价格差独立记录、不要求相等。`needs-attach`/`needs-login` 返回 waiting-user no-spend,challenge 或 ReadGuard blocked>0 立即 fail-closed；当前只验证脱敏 fixture,不触碰日常 Chrome,真实 sf-01..08 仍需权限确认和 CDP 握手。
+
 **美团实测边界(2026-08-28 tick)**:匿名实例 hotel.meituan.com 直接 **403**(headful 新 profile)——三站最强反爬,登录态是 403 级硬前置;适配器骨架已落(`adapters/meituan-local.ts`:城市拼音表/登录票据名单/networkHint 占位/a11y 兜底 `extractListings`),真实接口形状待登录态就绪后回填。a11y 兜底抽取器 `session/extract.ts`(快照条目/提交件剔除/nameAffinity)与金标准查询集 `data/session-golden-20.json`(20 条,只增不改)同批落地(run-all §26)。
 
 **携程机票页 XHR 嗅探 PoC**(`ts/scripts/session-attach-poc.ts`,playwright-core 1.62.1 + 专用测试 profile `/tmp/gotry-session-poc-profile`):
 - 两次实测均零风控、零交互只读;主搜索接口已识别:`flights.ctrip.com/international/search/api/search/batchSearch`(~550KB,国内票同走)+ `FlightIntlAndInlandLowestPriceSearch` 低价日历(~81KB)——P1 携程适配器的 networkHints 直接可用。
+
+**OTA 平铺 + 酒店通道 + 账号授权闸(2026-08-29 第二批,founder 口径「OTA 这些都是工具,不要区分什么主路径/降级路径;这要用到用户的账号,所以必须跟用户确认」)**:
+- **search-hotel 接入**:`gotry_flyai_search` kind=hotel(实测大理:结构化 name/star 档级/打码价 ¥7xx/address/interestsPoi/shId/detailUrl;解析契约 `FlyaiHotelOption`)。**打码价纪律**:未鉴权价上游打码(¥7xx),解析保 `priceRaw` 原值、`price` 数字恒 0——「¥7xx 截成 7 伪装真价」是被明确拒绝的形态;真实价以 `detailUrl` 酒店页为准(交易经 detailUrl 由人完成,不进工具)。flags:`--dest-name` 必填 + `--check-in-date/--check-out-date`(成对可选,未定档期先摸底)+ `--key-words`。session-tests §H(live hit/离线解析/参数闸三态)+ smoke §12。
+- **OTA 平铺**:founder 口径落地——工具描述与 persona (19) 删「主链路/交叉验证/三级路由」层级话术;**拍平的是路由优先级,不是 L4 证据链纪律**(逐源标注照旧必达用户)。
+- **账号授权闸(支柱④进代码;v2 会话内一次)**:`tools/pre-execute` 监听器(`session-consent.ts`)对账号面工具**每会话每站点首次调用**返回 `{kind:'ask'}` → dsh 原生 `ApprovalService`(dsh-base profile 默认挂载 policy=ask)→ web 审批卡;allowed-once 记入会话 granted 集(会话内免再弹),**rejected/cancelled 记入 denied 集 = 本会话吊销**(不弹卡不执行——founder 实测「每次都弹,经常无法点击」,逐次批准骚扰已根治);无审批通道 fail-closed(headless 无用户在场 = 无授权);插件 config `sessionAccess: ask|allow|off`(随时可关/预授权/总闸);站点白名单=适配器注册表现状(仅 ctrip-flight)。飞猪通道**不过闸**(匿名无用户身份,无账号风控/PIPL 面,配额限流已是结构化 error);session-tests §I + smoke §13 断言。
+- **登录产品化(第 18 工具 `gotry_session_login`,2026-08-29)**:`needs-login` 时 agent 直调(用户无需终端)——attach 用户 Chrome、弹登录入口、等待其在**携程官网**完成登录;**语义红线:登录永远发生在外部网站——gotry 永不收集/存储/传输密码、验证码或任何 cookie 值**,只读票据 cookie 名这个存在性事实(名称级,0 值过手;session-tests §J3 值不泄露断言)。登录引导页不挂 ReadGuard(transport `guard:false` 唯一豁免面):检索面「无守卫会话不存在」不变量不变,登录页是用户自己的凭证流,我们的写拦截反而会物理 abort 用户本人的登录 POST(隐私+可靠性双输)。遗留 CLI 探针 `scripts/session-login.ts` 降级为薄壳。——attach 用户日常 Chrome(与检索同传输层)→ 新开登录入口标签 → 人自行登录 → 只读轮询票据 cookie 名(不读值不碰密码/OTP/验证码)→ 检出即报;`needs-login` 文案改指该脚本(不再是「跑脚本」空指引)。
+- **测试纪律(2026-08-29 founder 反馈根治)**:例行回归**永不自动开浏览器窗口**——session-tests G 节 live 探针默认 SKIP,`GOTRY_SESSION_LIVE=1` 显式 opt-in;「在匿名窗口反复打开携程/界面闪退」形态就此退役。
+- **未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
+**未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
+- **人机共治标签页纪律(2026-08-29,founder「我根本就看不到登录页面」根治)**:登录引导与会话检索一律 `newPage` 开**自己的独立标签页**(登录页 `bringToFront` 置前台、`closeOwnPage=false` 留给用户),绝不劫持用户既有标签页(此前实现拿 `browser.pages()[0]` 导航,登录页开在用户看不见的位置=严重 UX bug);检索页用完即关自己的页。
 
 
 
@@ -219,4 +231,7 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 |---|---|
 | 2026-08-22 | 立 v1:领域矩阵现状盘点、四层架构图、Google Place 链路 founde 定案(hbcli→search OpenAPI→geography)、TREK 参考采纳表、证据链契约细则、M3-M5 数据侧演进 |
 | 2026-08-28 | 新增 §8 官方 agent 通道尽调(RFC P0):飞猪 FlyAI 无 key 实测可用(机/火只读搜索,会话面缺口收缩)+ 携程机票 XHR 嗅探 PoC(batchSearch 接口识别,零风控) |
-| 2026-08-29 | Issue #24 工具可用性硬化:flyai Sentinel 合法-JSON 形状由静默 miss 改判 error(§8);weather 地理编码别名阶梯 resolvePlace(§2);hbcli 定性更正(hotelbyte-cli 系公开仓)+ 安装期官方方式自举 + ENOENT 人话化(D-19,§2) |
+| 2026-08-29 | issue #24 工具不可用三处修复:① flyai 上游语义失败(exit=0 + `data:null` + `message:"出发日期非法"`)由吞成 miss 改为带上游原话的 error 终态,工具层加过去日期预校验;② 天气地理编码双源化(Open-Meteo 主 + Nominatim 中文兜底,「普吉岛」0 结果/「普吉」错配西藏同名村);③ hbcli 静态包回退按目的地过滤命中块(不再整包倾倒),无命中明示无数据 |
+| 2026-08-29(第二批) | §2 酒店行/§8:飞猪 `search-hotel` 接入(kind=hotel,打码价 priceRaw 保真纪律)+ OTA 工具面平铺(去主/降级路由话术,persona (19) 重写)+ 账号会话授权闸落地(`tools/pre-execute`→ApprovalService 审批卡,`sessionAccess: ask\|off` 总闸,RFC 支柱④进代码;飞猪匿名通道不过闸);session-tests §H + smoke §12-13 |
+| 2026-08-29(v2 同日) | founder 实测反馈两刀:**①授权闸 v2**——逐调用弹卡=骚扰,改「每会话每站点首次调用弹卡、会话内记住;拒绝=本会话吊销不再弹」(`session-consent.ts` 会话态,sessionAccess `ask\|allow\|off`);**②登录态 seam 真落地**——`scripts/session-login.ts`(attach 用户 Chrome→开登录入口→人登录→只读轮询票据,needs-login 文案指向真脚本);**③测试不再自动开浏览器窗**(session-tests live 节 GOTRY_SESSION_LIVE=1 opt-in,「匿名窗口反复开携程/闪退」形态退役);session-tests §G/H/I + smoke §12-13 |
+| 2026-08-29(PR #33 合流) | Issue #24 双 lane 修复合流:weather 双源/飞猪扫描器/静态包过滤采纳 main 版;本 lane 增量入列——hbcli ENOENT 人话化+候选路径回退(~/.local/bin、~/.staicli/current)+安装期外部依赖自举(hbcli 官方 install.sh / agent-reach 官方 pip 入包内 .venv,postinstall --auto 非致命,`gotry setup` 手动入口;§2 酒店行)+ 离线 flyai 套件(run-all §7b)+ bootstrap 套件(§7c);hotelbyte-cli 定性更正为公开仓(D-22) |

@@ -49,6 +49,22 @@ export interface TransportOptions {
   headless?: boolean
   /** ReadGuard 审计落盘路径(缺省仅内存计数) */
   auditPath?: string
+  /**
+   * 是否挂 ReadGuard(默认 true;检索面强制:检索会话不存在无守卫形态)。
+   * 唯一豁免 = 登录 bootstrap(guard:false):那是用户本人的凭证入口页,agent 只开页+只读轮询
+   * cookie 名,从不检索/点提交——守卫若在场,反而会物理 abort 用户自己的登录 POST
+   * (护照登录端点多为 POST /login/submit,命中写词模式),既挡登录又让我们站在用户
+   * 凭证流的中间(隐私+可靠性双输)。该形态下不发起任何检索导航、不落审计。
+   */
+  guard?: boolean
+  /**
+   * 开**自己的新标签页**(默认 false=沿用既有首页——那是用户的页面!)。
+   * 人机共治纪律(2026-08-29 founder:「我根本就看不到登录页面」):登录与检索一律
+   * newPage 开自己的页,绝不劫持用户已有标签页;closeOwnPage 控制收尾是否关掉自己开的页。
+   */
+  newPage?: boolean
+  /** newPage:true 时,close() 是否连自己开的标签页一起关(默认 true;登录引导保持 false——把登录页留给用户) */
+  closeOwnPage?: boolean
 }
 
 function devtoolsWsEndpoint(): { ws: string } | { err: string } {
@@ -92,22 +108,38 @@ export async function openSession(opts: TransportOptions = {}): Promise<SessionT
       return { ok: false, summary: `chrome launch failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}` }
     }
   }
-  // fail-closed:guard 装不上即断开返回失败——不给无守卫的导航面
-  let guard: ReadGuardHandle
-  try {
-    guard = await attachReadGuardPuppeteer(browser as unknown as Parameters<typeof attachReadGuardPuppeteer>[0], opts.auditPath)
-  } catch (e) {
-    await (isCdp ? browser.disconnect() : browser.close()).catch(() => { /* ignore */ })
-    return { ok: false, summary: `read-guard attach failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}` }
+  // fail-closed:guard 装不上即断开返回失败——不给无守卫的检索会话形态
+  // (唯一豁免:登录 bootstrap 显式 guard:false,见 TransportOptions 注释)
+  let guard: ReadGuardHandle | undefined
+  if (opts.guard !== false) {
+    try {
+      guard = await attachReadGuardPuppeteer(browser as unknown as Parameters<typeof attachReadGuardPuppeteer>[0], opts.auditPath)
+    } catch (e) {
+      await (isCdp ? browser.disconnect() : browser.close()).catch(() => { /* ignore */ })
+      return { ok: false, summary: `read-guard attach failed: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}` }
+    }
   }
-  const page = (await browser.pages())[0] ?? (await browser.newPage())
+  // 标签页纪律:ownPage=自己开的新页(newPage:true)——用它,收尾按 closeOwnPage 关;
+  // 否则沿用既有首页(仅 persistent 兼容形态;cdp 检索/登录一律 newPage)
+  let ownPage: boolean = false
+  let page
+  if (opts.newPage) {
+    page = await browser.newPage()
+    ownPage = true
+  } else {
+    page = (await browser.pages())[0] ?? await browser.newPage()
+  }
   return {
     ok: true,
     browser,
     page,
-    guard,
+    guard: guard ?? { blockedCount: () => 0, requestCount: () => 0 },
     close: async () => {
+      // 自己开的标签页按 closeOwnPage 收尾(登录引导保持 false——登录页留给用户);
       // cdp:只断开连接,绝不关用户浏览器;persistent:关自己拉起的实例
+      if (ownPage && (opts.closeOwnPage ?? true)) {
+        await (page as { close(): Promise<void> }).close().catch(() => { /* ignore */ })
+      }
       await (isCdp ? browser.disconnect() : browser.close()).catch(() => { /* ignore */ })
     },
   }

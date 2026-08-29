@@ -1,0 +1,58 @@
+name: 🐛 Bug 报告 / Bug report
+description: 报告一个可复现的问题 / Report a reproducible problem
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！提 bug 前请先[搜索既有 issue](https://github.com/Danceiny/gotry/issues?q=) 避免重复。
+        Thanks for reporting — please search existing issues first.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么？ / What happened?
+      description: 一句话说清问题本质。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. 运行 `./gotry web`
+        2. 输入「我想去 …」
+        3. 见到 …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为 / Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 证据链 / Evidence
+      description: GoTry 的输出带 `[来源标注]`(如 `[实时API:flyai@ts]`),粘贴这些行最能定位问题;控制台报错请带完整堆栈。
+  - type: dropdown
+    id: install
+    attributes:
+      label: 安装方式 / Install method
+      options:
+        - npm 形态(`npx @danceiny/gotry web`)
+        - 源码形态(`./gotry web`)
+        - 其他 / Other
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node 版本 / Node version
+      placeholder: "v22.14.0"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 其他信息 / Additional context

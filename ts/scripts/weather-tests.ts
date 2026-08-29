@@ -5,13 +5,12 @@
  *  3. 历史气候:大理去年 8 月(雨季基线)
  *  4. 降级:不可达域名(改 base 的坏请求)返回 ok=false 而非抛错
  *  5. WMO 码映射:已知码有中文,未知码回退
- *  6. 地名别名阶梯(issue #24):「普吉岛」原样无结果 → 别名 Phuket 命中泰国普吉市
  *
  * 运行: cd ts && npx tsx scripts/weather-tests.ts
  */
 
 import assert from 'node:assert/strict'
-import { geocodePlace, resolvePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
+import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 
 // 1. 地理编码:「大理市」精确命中云南(「大理」会命中四川同名地——中文地名歧义,API 无行政区优先级)
 const geo = await geocodePlace('大理市', { count: 10 })
@@ -21,6 +20,16 @@ const dali = geo.results.find(r => (r.admin1 ?? '').includes('云南')) ?? geo.r
 assert.ok(Math.abs(dali.latitude - 25.6) < 0.5, `纬度应≈25.6,实际 ${dali.latitude}(${dali.name},${dali.admin1})`)
 assert.match(geo.evidence, /open-meteo-geo@2/, '证据链带时间戳')
 console.log(`1. geocode 大理市 → ${dali.latitude},${dali.longitude} (${dali.name},${dali.admin1}) OK`)
+
+// 1b. issue #24 回归:「普吉岛」在 open-meteo 中文覆盖外(实测 0 结果,裸词「普吉」还错配西藏同名村)——
+//     应被弱命中/零结果闸送 Nominatim 兜底层,命中泰国普吉府
+const phuket = await geocodePlace('普吉岛')
+assert.equal(phuket.ok, true, `普吉岛 geocode ok: ${phuket.error ?? ''}`)
+assert.equal(phuket.via, 'nominatim', 'open-meteo 0 结果应走 nominatim 兜底层')
+assert.ok(Math.abs(phuket.results[0].latitude - 8.0) < 0.5, `普吉岛纬度应≈8,实际 ${phuket.results[0].latitude}(${phuket.results[0].name})`)
+assert.match(phuket.results[0].country ?? '', /泰国/, '国家标签应为泰国')
+assert.match(phuket.evidence, /\[实时API:nominatim@2/, '兜底层证据链带时间戳')
+console.log(`1b. geocode 普吉岛(兜底层)→ ${phuket.results[0].name}(${phuket.results[0].admin1},${phuket.results[0].country}) OK`)
 
 // 2. 预报:大理 7 天
 const fc = await getForecast({ latitude: dali.latitude, longitude: dali.longitude }, { days: 7 })
@@ -50,17 +59,4 @@ assert.equal(wmoLabel(95), '雷暴')
 assert.match(wmoLabel(999), /天气码999/, '未知码回退')
 console.log('5. WMO 码映射 OK')
 
-// 6. 地名别名阶梯(issue #24):「普吉岛」GeoNames 无条目(zh/en 均无结果),
-//    裸「普吉」唯一命中是西藏林芝同名村(人口百级)→ 别名表 Phuket 应命中泰国普吉市
-const phuket = await resolvePlace('普吉岛')
-assert.equal(phuket.ok, true, `resolvePlace ok: ${phuket.error ?? ''} tried=${phuket.tried.join('/')}`)
-assert.ok(phuket.results.length > 0, '普吉岛经别名阶梯应有结果')
-const pk = phuket.results[0]
-assert.ok(Math.abs(pk.latitude - 7.89) < 0.5, `普吉纬度应≈7.89(泰国普吉市),实际 ${pk.latitude}(${pk.name},${pk.country})`)
-assert.ok((pk.country ?? '').includes('泰国'), `应命中泰国,实际 ${pk.country}`)
-assert.match(phuket.evidence, /via "Phuket"/, `证据链标注实际命中形式,实际 ${phuket.evidence}`)
-const aliasBare = await resolvePlace('普吉')
-assert.ok((aliasBare.results[0]?.country ?? '').includes('泰国'), `裸「普吉」别名优先应命中泰国,实际 ${aliasBare.results[0]?.country}`)
-console.log(`6. resolvePlace 普吉岛 → ${pk.latitude},${pk.longitude} (${pk.name},${pk.country}) via 别名表 OK`)
-
-console.log('\nWEATHER TESTS: 6/6 OK(Open-Meteo 真实 API,免费无 key)')
+console.log('\nWEATHER TESTS: 6/6 OK(Open-Meteo 真实 API,免费无 key;普吉岛走 Nominatim 兜底层)')

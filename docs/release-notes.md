@@ -1,5 +1,58 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.13(账号会话三连修复 + README 可读性重排,**已发布 2026-08-29**)
+
+rc.12 → rc.13 增量(founder 确认制下 agent 执行,发布指令「确认。这次也要把README文档可读性优化一版」):
+
+### 自动检测与可见性(会话面)
+- **登录自动检测优先**:`gotry_session_login` 先只读票据 cookie 名——已登录则**零弹窗**直接确认(0 网页交互,实测登录即被即时识别 `[cticket]`);未检出才开独立置前登录页等待
+- **登录页可见性根治**:此前 `openSession` 取 `browser.pages()[0]`(用户既有标签页)导航,登录页开在用户看不见的位置——现登录/检索一律 `newPage` 开**独立标签页**(登录页置前台、留用户侧;`transport newPage/closeOwnPage`)
+- **标签页纪律入条款**:data-sources §8 / RFC §3.3——绝不劫持用户既有标签页;例行测试永不自动开窗
+
+### README 可读性一版
+- 头部状态瘦身(长表进 `<details>`),30 秒上手先行
+- 新增 **18 工具分组表**(检索/库存/引擎/记忆/通用)+ **「账号会话:授权与隐私」**专节(四条硬规则)
+- Known limitations 重排为「已就绪 / 未收口」两栏(诚实清单:真实 cohort 未收口/英文界面残余/携程酒店与美团适配器待回填)
+
+### 发布闸状态
+- ① 全栈回归 ALL GREEN(tsc 0 错;session-tests 50/50)✅ ② 六状态面同步 ✅ ③ README 用法实测(npm 干净安装回拉:bin/插件加载/headless 真跑)✅ ④ License MIT ✅ ⑤ 版本号一致(rc.13)✅
+
+## v0.0.1-rc.12(OTA 扁平化 + 账号会话授权闸 + 登录产品化 + dsh runtime alpha.1 + issue #24,**已发布 2026-08-29**)
+
+rc.11 → rc.12 增量(founder 确认制下 agent 执行;发布指令「更新文档,开PR合PR,发布新版本吧」):
+
+### 用户可感面
+- **酒店接 OTA**:「搜酒店」不再只有内网 hbcli——`gotry_flyai_search` kind=hotel 直连飞猪官方 `search-hotel`(零 key 只读;未鉴权价上游打码如 ¥7xx,工具保 `priceRaw` 原值绝不伪装成数字价,真实价以 jumpUrl 页为准);实时机票/火车/酒店+会话检索全部平铺为工具,无「主路径/降级」路由
+- **OTA 工具面扁平化(founder 口径「OTA 这些都是工具」)**:工具描述与 persona (19) 删「三级路由/主链路/交叉验证」层级话术;证据链逐源标注纪律不变——拍平的是路由优先级,不是标注
+- **账号授权闸 v2(founder 口径「用用户账号必须跟用户确认」)**:动用用户本人登录态的 `gotry_session_search` 经 dsh 原生审批卡授权——**每会话每站点首次调用**弹卡、批准后会话内记住;**拒绝 = 本会话吊销**(不再弹卡不再执行);无审批通道(headless)一律 fail-closed;`sessionAccess: ask|allow|off` 总闸随时可关
+- **登录产品化(第 18 工具 `gotry_session_login`)**:会话检索遇 needs-login 时 agent 直调——在用户自己的 Chrome 弹出携程登录入口、等用户在**携程官网**完成登录,**全程零终端**。语义红线(工具描述/persona/证据链三处钉死):**登录永远发生在外部网站,gotry 永不收集/存储/传输密码、验证码或任何 cookie 值**——只读票据 cookie 名这个存在性事实(名称级,0 值过手)
+- **会话检索实时化**:携程会话面经 CDP attach 用户本人 Chrome(登录态=用户本人;needs-login/needs-attach/challenged 全部降级语义)
+
+### 工程面
+- **dsh vendored runtime 升 0.1.2-alpha.1**(issue #15):上游只挂 GitHub 不发 npm,免等发版从源码 tag 构建跟进;npm 公共分发面(root deps)仍钉 rc.1/rc.2 已发版本
+- **issue #24 工具不可用三处修复**:① flyai 上游语义失败(过去/非法日期)由吞成 miss 改为带上游原话的 error 终态 + 工具层过去日期预校验;② 天气地理编码双源化(Open-Meteo 主 + Nominatim 中文兜底);③ hbcli 静态包回退按目的地过滤
+- **测试纪律根治(founder「匿名窗口反复打开携程/闪退」反馈)**:例行回归**永不自动开浏览器窗口**——live 探针 `GOTRY_SESSION_LIVE=1` 显式 opt-in;授权闸会话语义与登录引导全部落成确定性断言(session-tests §G/H/I/J,42→47 pass)
+- **18 工具**:新增 `gotry_session_login`;工具 execute 异常隔离/证据链/三值语义契约不变
+
+### 发布闸状态
+- ① 全栈回归 ALL GREEN(§1-§32;tsc 0 错)✅ ② §11 六状态面同步(同提交)✅ ③ README 用法实测(npm 干净安装回拉:bin/插件加载/headless 真跑)✅ ④ License MIT ✅ ⑤ 版本号一致(rc.12:tag/package.json/release-notes/文档)✅
+
+## v0.0.1-rc.11(已知限制清算:Z3 race 根治 + 实时票价桥 + i18n 英文面 + 薄壳删除,**已发布 2026-08-29**)
+
+rc.10 → rc.11 增量(founder 确认制下 agent 执行;发布指令「测试好了就可以发新版本」):
+
+### 已知限制清算(README 四条全清)
+- **Z3 WASM race 根治(D-17)**:历史债双重根因——三模块各自 `init()` 的 WASM 实例并存(OOM 形态)+ engine.solve `Promise.all` 共 Context 并发(Asyncify 不允许并发 unwind → 栈损坏)。收敛 `ts/src/z3-shared.ts`(单一实例+单一 Context+会话级互斥门 `withZ3`,门内禁嵌套);run-all §1「重试一次」止血退役,新增 §30 进程内三形态并发回归闸 ×12
+- **实时票价桥**:`realtime-pricing.ts`——dated 航班链段(spec 带 date+route 词表内城市对)经 FlyAI 官方只读通道(零 key)按航班号精确匹配覆写价格,证据链 `[实时API:flyai@ts]`(含静态原价留档)并进 skeleton_notes;miss/error/打码价/无匹配一律降级回静态包,永不抛错;`realtimeSolvePort`(env 闸 `GOTRY_REALTIME_PRICING`,默认关)接线 replay-real 真模型巡检 solve port;静态包由唯一来源变为显式降级;run-all §31
+- **i18n 英文面(工程层)**:`i18n.ts` 消息目录——zh-CN 默认与金标准逐字节一致,`GOTRY_LOCALE=en`(或 `setLocale('en')`)切英文,en 缺键回退 zh;覆盖候选/航班链 answer_md、放宽建议、工作窗口排除理由、wish 成行理由、红眼红旗;run-all §32(en 零缺键/切换数据不动)
+- **薄壳遗留物理删除**(`shell/` 目录);dsh web 确认唯一产品面
+
+### 发布闸状态
+- ① 全栈回归 ALL GREEN(§1-§32,新增 §30 Z3 并发竞态闸/§31 实时票价闸/§32 i18n 闸)✅ ② 状态面 6 处同步 ✅ ④ License MIT ✅ ⑤ 版本号一致(rc.11)✅
+- ③ npm 干净安装实测:**通过**。发布实录:web 会话登录(npm-profile 库级驱动,`npm-auth-type: web` 头,founder 点 Approve)→ `npm publish --tag rc.11` 走 auth/cli 二次验证(expect PTY + 浏览器 Authorize,PUT 200)→ **registry 回拉**:dist-tags latest 直指 rc.11(`rc: '0.0.1-rc.7'` 保持/`rc.5` 坏包已 deprecate 历史)、干净目录 `npm install @danceiny/gotry@0.0.1-rc.11`(0 vulnerabilities)→ 三新面文件入包(dist/src/z3-shared.js/i18n.js/realtime-pricing.js)→ `gotry help` bin 正常 → dist 插件面真加载(exports=Config/apply/inject/name,rc.9「装得上跑不起」教训不复发)
+
+# GoTry 发版记录
+
 ## v0.0.1-rc.10(双形态冻结 ADR-16 + 会话传输层定案 + 依赖面根治,**已发布 2026-08-28**,npm latest 直指本版)
 
 rc.9 → rc.10 增量:
