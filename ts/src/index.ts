@@ -736,7 +736,7 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_session_login',
     description:
-      'Productized login bootstrap for the account session channel (call this when gotry_session_search returns needs-login — the user never needs a terminal). '
+      'Productized login bootstrap for the account session channel (call this when gotry_session_search returns needs-login — the user never needs a terminal). ' + 'AUTO-DETECTION FIRST: it reads ticket-cookie NAMES before anything else — if the user already logged in (on the external site) it confirms instantly WITHOUT opening any page. '
       + 'OPENS the site login entry in the USER\'S OWN Chrome and waits for the user to finish logging in on the external site. '
       + 'GoTry NEVER collects, stores, or transmits credentials: no passwords, no SMS codes, no cookie values — it only checks the boolean fact "already logged in" (reads cookie NAMES only, zero values). '
       + 'verdict logged-in (tickets detected) | pending (login tab opened, user not done yet — offer to re-check later) | needs-attach (one-time Chrome remote-debugging switch instructions). '

@@ -283,6 +283,9 @@ console.log('J. sessionLogin(登录引导:无凭证语义/表格完备/pending �
     const lr = await sessionLogin({ waitMs: 2500, pollMs: 500 })
     if (lr.verdict === 'needs-attach') {
       assert(lr.ok === false && /chrome:\/\/inspect/.test(lr.error ?? ''), 'live:Chrome 未开调试 → needs-attach + 一次性指引', lr)
+    } else if (lr.verdict === 'logged-in') {
+      // 自动检测快路径:票据已在 → 零弹窗直接确认(不打开任何页面)
+      assert(lr.ok === true && (lr.tickets?.length ?? 0) > 0, 'live:已登录自动检测 → logged-in(零弹窗,票据名级)', lr)
     } else {
       assert(lr.ok === true && lr.verdict === 'pending', 'live:attach 成功不交互 → pending(入口已开,等人登录)', lr)
       const evidenceTagRe = /\[会话:ctrip-flight-login@/
