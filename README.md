@@ -93,7 +93,7 @@ cp .env.example .env                              # ② set LLM_API_KEY
 | | `gotry_check_avail` | pre-booking availability/price re-verification by ratePkgId (real-time only, fail-closed) |
 | **Booking (M1)** | `gotry_book` | WRITE via saga-guarded effect; confirmation-gated (card first, zero channel touch until confirmed) |
 | | `gotry_query_orders` | order query / saga receipt reconciliation by idempotency key (read-only) |
-| **A2A face (M2)** | `gotry a2a` | A2A v1.0-subset server: agent card + JSON-RPC message/send, tasks/get/cancel; Bearer API key (GOTRY_A2A_API_KEY, fail-closed); user-token passthrough (SSE + live driver: next slice) |
+| **A2A face (M2)** | `gotry a2a` | A2A v1.0-subset server: agent card + JSON-RPC message/send, tasks/get/cancel; Bearer API key (GOTRY_A2A_API_KEY, fail-closed); user-token passthrough; per-IP rate limit (GOTRY_A2A_RATE_LIMIT, default 30/min) + GET /a2a/metrics (SSE + live driver: next slice) |
 | | `gotry_anything_search` | mixed city/hotel/POI catalog (hotel-be Anything) |
 | **Decision engine** | `gotry_feasibility_check` | Door-to-door true-cost feasibility (Z3), per-candidate verdicts |
 | **Memory & reachability** | `gotry_motivation_save` | Persist motivation profile (evidence mandatory, anti-fabrication) |

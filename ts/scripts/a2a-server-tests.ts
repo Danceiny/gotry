@@ -132,5 +132,27 @@ console.log('6. fail-closed(无 apiKey 拒启)OK')
   console.log('8. message/stream 失败面(error 帧,不伪装完成)OK')
 }
 
+// 9/10. M3 治理面:per-IP 限流(429)+ 指标快照(同款 Bearer)
+{
+  const { port: p4, close: c4 } = await startA2AServer({ apiKey: KEY, driver: stubDriver, rateLimitPerMin: 3 })
+  const fire = () => fetch(`http://127.0.0.1:${p4}/a2a`, { method: 'POST', headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 40, method: 'tasks/get', params: { id: 'x' } }) })
+  const codes: number[] = []
+  for (let i = 0; i < 5; i++) codes.push((await fire()).status)
+  assert.deepEqual(codes.slice(0, 3), [200, 200, 200], '限流窗内前 3 个请求放行')
+  assert.ok(codes.slice(3).every((c) => c === 429), `超额应 429,实际 ${codes.slice(3)}`)
+  const m = await fetch(`http://127.0.0.1:${p4}/a2a/metrics`, { headers: { authorization: `Bearer ${KEY}` } })
+  assert.equal(m.status, 200)
+  const mv = (await m.json()) as { requestsTotal?: number; rateLimitedTotal?: number; rateLimitPerMin?: number; uptimeSec?: number }
+  assert.equal(mv.requestsTotal, 5, 'requestsTotal 计满')
+  assert.equal(mv.rateLimitedTotal, 2, '限流计数=2')
+  assert.equal(mv.rateLimitPerMin, 3)
+  assert.ok(typeof mv.uptimeSec === 'number')
+  const mNoAuth = await fetch(`http://127.0.0.1:${p4}/a2a/metrics`)
+  assert.equal(mNoAuth.status, 401, 'metrics 无鉴权拒绝')
+  await c4()
+  console.log('9. per-IP 限流(3/min 窗:3 放行/超额 429)OK')
+  console.log('10. 指标面(requestsTotal/rateLimitedTotal/uptime;同款 Bearer)OK')
+}
+
 await close()
-console.log('A2A SERVER TESTS: 8/8 OK(card/鉴权/send+token 透传/get/cancel/fail-closed/SSE 流式+失败面,纯离线 stub driver)')
+console.log('A2A SERVER TESTS: 10/10 OK(card/鉴权/send+token 透传/get/cancel/fail-closed/SSE 流式+失败面/限流+指标,纯离线 stub driver)')
