@@ -70,7 +70,7 @@ Detail: https://github.com/Danceiny/gotry — README
 }
 
 // mode 决定路径: 'web'/'setup'/'help' 是字面命令;否则第一段 args[0] 是任务本身的一部分
-const literal = new Set(['web', 'setup', 'help', '-h', '--help'])
+const literal = new Set(['web', 'setup', 'help', '-h', '--help', 'a2a'])
 const isLiteral = literal.has(args[0])
 const mode = isLiteral ? args[0] : 'headless'
 const rest = isLiteral ? args.slice(1) : args
@@ -78,6 +78,13 @@ const rest = isLiteral ? args.slice(1) : args
 // setup:外部依赖自举(hbcli/agent-reach),不需要 dsh runtime 与 LLM key,同步分发后即退
 if (mode === 'setup') {
   const r = spawnSync(process.execPath, [join(here, 'gotry-bootstrap.js'), ...rest], { stdio: 'inherit' })
+  process.exit(r.status ?? (r.error ? 1 : 0))
+}
+
+// a2a(M2,A2A v1.0 子集入口):不需要 dsh runtime——node:http 手写 JSON-RPC;
+// 访问控制 fail-closed(GOTRY_A2A_API_KEY 未配置服务自身拒启),LLM key 只在真对话 driver 期需要
+if (mode === 'a2a') {
+  const r = spawnSync('npx', ['tsx', join(repoRoot, 'ts/src/a2a-server.ts'), ...rest], { stdio: 'inherit', env: process.env })
   process.exit(r.status ?? (r.error ? 1 : 0))
 }
 
