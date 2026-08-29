@@ -78,7 +78,7 @@ cp .env.example .env                              # ② set LLM_API_KEY
 
 ---
 
-## 🧰 20 tools
+## 🧰 21 tools
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -95,6 +95,7 @@ cp .env.example .env                              # ② set LLM_API_KEY
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | "next departure" wish pool + 0..1 conditional recall |
 | | `gotry_companion_save` · `gotry_trip_log` | companion profile / travel timeline |
 | **Artifacts** | `gotry_artifacts_list` / `gotry_artifacts_read` | Discover & view generated artifacts (async deliverables + working-dir markdown) as a line-numbered file view (read-only) |
+| **Factuality gate** | `gotry_fact_gate` | Pre-delivery gate for itinerary artifacts: every bookable claim (flight no./time/airport/price/policy) must trace to an exact-date tool result (hit AND miss recorded); unverifiable ⇒ blocked — never present as a verified plan |
 | **General external** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | web / subtitles / GitHub / all-channel external info (via Agent-Reach) |
 
 ---
@@ -108,7 +109,7 @@ The account session channel reads realtime hotel/flight data from **the user's o
 3. **Physically read-only.** A ReadGuard aborts all write requests at the network layer (ordering/payment is unreachable in transport); the agent never touches credentials or captchas — on a captcha it stops and hands control back.
 4. **Never hijacks your browser.** Retrieval/login always open their own dedicated tab; the login page is brought to front and stays with you; routine test runs never open browser windows.
 
-> One-time prerequisite: in your daily Chrome, open `chrome://inspect/#remote-debugging` and enable the switch (Chrome 144+). Without it the tools return `needs-attach` with instructions and spend nothing.
+> One-time prerequisite: install the bundled **GoTry Session Bridge** browser extension (MV3, ~30 seconds): run `npx gotry setup` to place it at `~/.gotry/extension`, then in Chrome open `chrome://extensions`, enable Developer mode and "Load unpacked" that folder. Zero Chrome system dialogs afterwards — the extension passively forwards the site's own search responses (read-only by construction; cookies are read by NAME only, values never leave the browser). Until installed, tools return `needs-extension` with instructions and spend nothing. (A `cdp` fallback via `chrome://inspect` remote debugging still exists for diagnostics: `GOTRY_SESSION_TRANSPORT=cdp` — note Chrome 144+ shows a permission box on every connection.)
 
 ---
 
@@ -141,7 +142,7 @@ Engine verdict:
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ L1  chat-as-interface; gates are in-message choice cards       │
-│ L2  orchestration  dsh runtime + GoTry plugin (ReAct); 20 tools│
+│ L2  orchestration  dsh runtime + GoTry plugin (ReAct); 21 tools│
 │ L3  domain  unified itinerary model + Z3 feasibility engine    │
 │ L4  data  static packs + hotelbyte-cli bridge + OpenFlights    │
 │ L5  governance  LoopX (objective / gates / evidence / quota)   │
@@ -150,7 +151,7 @@ Engine verdict:
 
 | Layer | Module | Role |
 |---|---|---|
-| L2 | `ts/src/index.ts` (dsh plugin) | 20 tools, time-anchor & memory-brief variables; execute isolation + consent gate + process guards |
+| L2 | `ts/src/index.ts` (dsh plugin) | 21 tools, time-anchor & memory-brief variables; execute isolation + consent gate + process guards |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | single solving entry (candidate enumeration + flight-chain Z3) |
 | L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | effect interpreter (backoff retry / circuit breaker / mock interpreter, issue #16) + realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
 | L5 | loopx governance | objective / gates / evidence / quota |
@@ -209,4 +210,4 @@ Standard open-source flow: branch off latest `main` (`feat/ · fix/ · docs/ · 
 
 **Built with**: DeepSeek Harness 0.1.2-alpha.1 (vendored) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
 
-**Last verified against `v0.0.1-rc.15` (2026-08-29)** — full-stack regression green §1-§36 (release flow: `scripts/publish-npm.sh`).
+**Last verified against `v0.0.1-rc.15` (2026-08-29)** — full-stack regression green §1-§38 (release flow: `scripts/publish-npm.sh`).

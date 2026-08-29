@@ -8,6 +8,9 @@
  *                           dsh web 侧栏工作台(文件浏览/Markdown/Mermaid/PDF 预览)——
  *                           gotry 产物(工单交付 md/行程 md)的成熟查看面(issue #25)。
  *                           宿主层安装(dsh plugin → ~/.dsh/profiles/web),不进 gotry 依赖。
+ *   gotry-session-bridge   → 会话检索浏览器扩展(issue #21 传输层方案 C,2026-08-29 定案):
+ *                           一次性安装替代逐连接 CDP 弹窗;幂等拷贝到 ~/.gotry/extension,
+ *                           最后一步是用户在 chrome://extensions 「加载已解压的扩展程序」(约 30 秒,零系统弹窗)。
  *
  * 用法:
  *   node bin/gotry-bootstrap.js              # 显式安装(缺啥装啥;失败 exit 1)
@@ -19,6 +22,7 @@
  *   GOTRY_SETUP_HBCLI=0           跳过 hbcli
  *   GOTRY_SETUP_REACH=0           跳过 agent-reach
  *   GOTRY_SETUP_SIDEBAR=0         跳过 dsh-better-sidebar
+ *   GOTRY_SETUP_EXTENSION=0       跳过会话检索扩展落位
  *
  * 契约:安装外部依赖永远不挡 gotry 本体——能力层各有降级路径(静态包/not-installed
  * verdict),自举失败只降级体验,不产生故障。凭证(hbcli auth / agent-reach 渠道
@@ -26,7 +30,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -109,8 +113,7 @@ async function setupReach() {
   return { ok: true }
 }
 
-async function setupSidebar() {
-  say('[gotry-setup] dsh-better-sidebar(dsh web 侧栏工作台,产物查看面 issue #25)')
+async function setupSidebar() {  say('[gotry-setup] dsh-better-sidebar(dsh web 侧栏工作台,产物查看面 issue #25)')
   const installed = existsSync(join(homedir(), '.dsh/profiles/web/node_modules/dsh-better-sidebar/package.json'))
   if (installed) { say('  ✓ 已安装(~/.dsh/profiles/web)'); return { ok: true } }
   if (CHECK_ONLY) { say('  ✗ 未安装(--check-only 只报告)'); return { ok: true } }
@@ -140,11 +143,56 @@ async function setupSidebar() {
   return { ok: true }
 }
 
+const EXTENSION_FILES = ['manifest.json', 'background.js', 'content-main.js', 'content-bridge.js', 'README.md']
+
+function readManifestVersion(manifestPath) {
+  try { return JSON.parse(readFileSync(manifestPath, 'utf8')).version ?? null } catch { return null }
+}
+
+function copyExtensionDir(srcDir, dstDir) {
+  mkdirSync(dstDir, { recursive: true })
+  for (const f of EXTENSION_FILES) {
+    const s = join(srcDir, f)
+    if (!existsSync(s)) continue
+    copyFileSync(s, join(dstDir, f))
+  }
+}
+
+/** 会话检索扩展(issue #21 方案 C):包内 extension/ → ~/.gotry/extension 幂等落位 + 一次性加载指引 */
+async function setupExtension() {
+  say('[gotry-setup] GoTry Session Bridge 扩展(会话检索数据面 issue #21;一次性安装,替代逐连接弹窗)')
+  const srcDir = join(repoRoot, 'extension')
+  const srcManifest = join(srcDir, 'manifest.json')
+  if (!existsSync(srcManifest)) {
+    say(`  ✗ 包内未找到扩展文件(${srcDir})——不影响 gotry:会话检索降级,重装 npx gotry 可恢复`)
+    return { ok: false }
+  }
+  const srcVersion = readManifestVersion(srcManifest)
+  const dstDir = join(homedir(), '.gotry', 'extension')
+  const dstVersion = readManifestVersion(join(dstDir, 'manifest.json'))
+  if (dstVersion != null && dstVersion === srcVersion) {
+    say(`  ✓ 已就位(~/.gotry/extension,v${dstVersion};若浏览器里尚未加载:chrome://extensions → 开发者模式 → 加载已解压的扩展程序 → 选 ~/.gotry/extension)`)
+    return { ok: true }
+  }
+  if (CHECK_ONLY) { say(`  ✗ ${dstVersion == null ? `未安装(落位 ${dstDir})` : `待更新 v${dstVersion} → v${srcVersion},落位 ${dstDir}`}(--check-only 只报告)`); return { ok: true } }
+  try {
+    copyExtensionDir(srcDir, dstDir)
+  } catch (e) {
+    say(`  ✗ 落位失败(${e.message})——不影响 gotry:会话检索降级;可手动拷贝 ${srcDir} → ${dstDir}`)
+    return { ok: false }
+  }
+  say(`  ✓ 已落位 ${dstDir}(v${srcVersion};manifest 带固定 key,扩展 ID 恒为 olpgkofjhhiiiahdkkbcninhjmegghfe)`)
+  say('  最后一步(每台浏览器一次,约 30 秒):Chrome 打开 chrome://extensions → 右上角开启「开发者模式」→「加载已解压的扩展程序」→ 选择 ~/.gotry/extension')
+  say('  装好即生效,零系统弹窗;扩展卡片开关=总闸(与 gotry 授权闸 sessionAccess 双重控制)')
+  return { ok: true }
+}
+
 async function main() {
   if (process.platform === 'win32') {
     say('[gotry-setup] Windows 暂不支持自动安装(hbcli 上游仅 darwin/linux)。手动指引:')
     say(`  hbcli: ${HBCLI_INSTALL_CMD}(WSL);agent-reach: python -m venv .venv && .venv/Scripts/pip install ${REACH_INSTALL_URL}`)
     say('  dsh-better-sidebar: npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar@latest')
+    say('  GoTry Session Bridge 扩展:手动把包内 extension/ 目录拷到 %USERPROFILE%\\.gotry\\extension,再在 chrome://extensions 开发者模式「加载已解压的扩展程序」')
     process.exit(AUTO ? 0 : 1)
   }
   if (AUTO && (process.env.CI || process.env.GOTRY_SETUP_SKIP === '1')) {
@@ -160,6 +208,8 @@ async function main() {
   else say('[gotry-setup] agent-reach:GOTRY_SETUP_REACH=0 跳过')
   if (process.env.GOTRY_SETUP_SIDEBAR !== '0') results.push(await setupSidebar())
   else say('[gotry-setup] dsh-better-sidebar:GOTRY_SETUP_SIDEBAR=0 跳过')
+  if (process.env.GOTRY_SETUP_EXTENSION !== '0') results.push(await setupExtension())
+  else say('[gotry-setup] GoTry Session Bridge 扩展:GOTRY_SETUP_EXTENSION=0 跳过')
   say('[gotry-setup] flyai:无需安装(npx 每次自拉 @fly-ai/flyai-cli,免 key)')
   const failed = results.filter((r) => !r.ok).length
   if (failed > 0) {

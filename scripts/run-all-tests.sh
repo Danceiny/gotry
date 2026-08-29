@@ -123,7 +123,7 @@ echo "=== 23. 时间窗衰减(memory-design P3:分级窗口/单调/地板/上界
 (cd ts && npx tsx scripts/memory-decay-tests.ts) || FAIL=1
 
 echo
-echo "=== 25. 发布前离线预验证(pack→解 tarball→依赖声明完整→入口文件→import 面静态检查;rc.9 教训的永久闸) ==="
+echo "=== 23b. 发布前离线预验证(pack→解 tarball→依赖声明完整→入口文件→import 面静态检查;rc.9 教训的永久闸;原误标 25 与会话面重号,当日修正) ==="
 (cd ts && npx tsx scripts/publish-preverify.ts) || FAIL=1
 
 echo
@@ -319,6 +319,10 @@ echo "=== 36. 预订 saga 状态机(booking_saga_fsm.v1,issue #17 采纳:字母�
 echo
 echo "=== 37. 效应解译器(effect_interpreter.v1,issue #16 采纳:注册表封闭性/指数退避链/断路三态+熔断后零执行/Sentinel 不重试/mock 夹具回放/SESSION 永不重试不熔断/真实 handler 静态包降级,纯离线) ==="
 (cd ts && npx tsx scripts/effect-tests.ts) || FAIL=1
+
+echo
+echo "=== 38. 会话扩展桥(#21 传输层方案 C:manifest 合同与 key→固定 ID 派生/Node↔扩展常量防漂移/origin 白名单/长轮询取活幂等/心跳判定/提交-回包闭环/needs-extension no-spend/waiting_extension 双源合同;全离线,唯一慢例~6s 为 no-spend 语义本身) ==="
+(cd ts && npx tsx scripts/extension-tests.ts) || FAIL=1
 
 echo
 if [ "$FAIL" -ne 0 ]; then
