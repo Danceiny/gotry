@@ -118,6 +118,25 @@ async function main() {
   const availNoBin = await byName('gotry_check_avail').execute({ query: { ratePkgId: 'rp-smoke' } } as never, null) as { ok?: boolean }
   if (availNoBin.ok !== false) throw new Error(`FAIL: gotry_check_avail 价格面应 fail-closed,实际 ${JSON.stringify(availNoBin).slice(0, 160)}`)
   console.log('M0 booking-chain read tools registered; price surface fail-closed verified')
+  // M1 预订写工具:确认门(WriteGate 红线)——未 confirmed 只出确认卡零触达;确认后走 saga(config 的
+  // not-on-path bin → ENOENT → compensate 路径,同样离线确定)
+  const bookTool = byName('gotry_book')
+  if (typeof bookTool.execute !== 'function') throw new Error('FAIL: gotry_book 未注册')
+  const gate = await bookTool.execute({ query: { ratePkgId: 'rp-gate', holder: { name: 'H' }, guests: [{ firstName: 'G', type: 'adult' }] } }, null) as Record<string, unknown>
+  if (gate.ok !== false || gate.needs_confirmation !== true || gate.executed !== false) {
+    throw new Error(`FAIL: 未确认调用必须只出确认卡零触达,实际 ${JSON.stringify(gate).slice(0, 200)}`)
+  }
+  const card = (gate.confirmation_card ?? {}) as { customerReferenceNo?: string }
+  if (!card.customerReferenceNo) throw new Error('FAIL: 确认卡应携带幂等键 customerReferenceNo')
+  const noRef = await bookTool.execute({ query: { ratePkgId: 'rp-gate', holder: { name: 'H' }, guests: [{ firstName: 'G', type: 'adult' }], confirmed: true } }, null) as Record<string, unknown>
+  if (noRef.ok !== false || !String(noRef.summary ?? '').includes('customerReferenceNo')) {
+    throw new Error('FAIL: confirmed 无幂等键应被拒绝')
+  }
+  const compensated = await bookTool.execute({ query: { ratePkgId: 'rp-gate', holder: { name: 'H' }, guests: [{ firstName: 'G', type: 'adult' }], confirmed: true, customerReferenceNo: 'smoke-book-idem-1' } }, null) as Record<string, unknown>
+  if (compensated.ok !== false || compensated.saga !== 'compensated' || compensated.executed !== true) {
+    throw new Error(`FAIL: 通道失败应走 saga 补偿,实际 ${JSON.stringify(compensated).slice(0, 200)}`)
+  }
+  console.log('M1 book tool gate verified (unconfirmed=card zero-touch / no-ref rejected / channel-fail=saga compensated)')
   const ar = byName('gotry_agent_reach')
   const arView = ar.presentResult!({ query: { action: 'reach', channel: 'v2ex', method: 'get_hot_topics' } }, { verdict: 'found', summary: '10 topics' })
   if (!arView?.title?.includes('✅') || !arView.title.includes('v2ex.get_hot_topics')) throw new Error(`FAIL: agent_reach 结果卡,实际 ${arView?.title}`)

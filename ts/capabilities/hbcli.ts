@@ -240,3 +240,31 @@ export async function checkAvail(
     : `ratePkg ${query.ratePkgId}:hbcli 实时验价不可用(${live.error ?? live.via});价格面无静态降级,fail-closed`
   return { ...live, avail: live.result, summary }
 }
+
+/**
+ * 高层语义化封装:下单(spawn trade book)。原始通道面——**只被 saga 编排层调用**,
+ * 工具层不得直调(写效应红线:预订写必须过 booking_saga_fsm.v1 边表,ADR-17/ADR-18)。
+ * 金额不入参:价格权威在后端 check-avail session,CLI 只传 ratePkgId+人证+幂等键。
+ */
+export async function bookHotel(
+  query: {
+    ratePkgId: string
+    holder: Record<string, unknown>
+    guests: Array<Record<string, unknown>>
+    customerReferenceNo: string
+    confirmDuplicate?: boolean
+    duplicateReason?: string
+  },
+  opts: HbcliCallOptions = {},
+): Promise<HbcliCallResult & { book?: unknown; summary: string }> {
+  const hbArgs = ['trade', 'book', '--json', '--rate-pkg-id', query.ratePkgId,
+    '--holder', JSON.stringify(query.holder), '--guests', JSON.stringify(query.guests),
+    '--customer-reference-no', query.customerReferenceNo]
+  if (query.confirmDuplicate) hbArgs.push('--confirm-duplicate')
+  if (query.duplicateReason) hbArgs.push('--duplicate-reason', query.duplicateReason)
+  const live = await callHbcliJson(hbArgs, opts)
+  const summary = live.via === 'hbcli-realtime'
+    ? `book ${query.ratePkgId.slice(0, 24)}…:hbcli 实时下单已提交(幂等键 ${query.customerReferenceNo})`
+    : `book:hbcli 下单不可用(${live.error ?? live.via});写面无降级,未产生订单`
+  return { ...live, book: live.result, summary }
+}
