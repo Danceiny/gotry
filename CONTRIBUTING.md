@@ -31,7 +31,7 @@ cd ts && npm ci && cd ../..
 cp .env.example .env      # 填 LLM_API_KEY(DeepSeek sk-... 或 OpenAI 兼容协议)
 ```
 
-> **为什么是两份依赖**:root `package.json` 是 npm 包形态（`@danceiny/gotry`）的发布清单，`ts/package.json` 是插件源码与全部测试套件的开发清单。dsh runtime 是 vendored 且**不入 git**（`ts/dsh-runtime/` 内仅 `package.json`/lockfile 入库，`node_modules/` 与运行时 `gotry-state/` 被忽略），避免 npm 一键分发时整包打入。
+> **为什么是两份依赖**:root `package.json` 是 npm 包形态（`@danceiny/gotry`）的发布清单，`ts/package.json` 是插件源码与全部测试套件的开发清单。dsh runtime 以全量 vendored tarball 入 git（`ts/dsh-runtime/vendor/`，上游 npm 未发版、从源码 tag 构建，见 [`vendor/README.md`](ts/dsh-runtime/vendor/README.md)）；`node_modules/` 与运行时 `gotry-state/` 仍被忽略，npm 一键分发面也不打包它。
 
 ---
 
