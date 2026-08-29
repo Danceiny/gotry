@@ -313,6 +313,10 @@ echo "=== 36. 预订 saga 状态机(booking_saga_fsm.v1,issue #17 采纳:字母�
 (cd ts && npx tsx scripts/booking-saga-tests.ts | tail -1) || FAIL=1
 
 echo
+echo "=== 37. 效应解译器(effect_interpreter.v1,issue #16 采纳:注册表封闭性/指数退避链/断路三态+熔断后零执行/Sentinel 不重试/mock 夹具回放/SESSION 永不重试不熔断/真实 handler 静态包降级,纯离线) ==="
+(cd ts && npx tsx scripts/effect-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

@@ -152,7 +152,7 @@ Engine verdict:
 |---|---|---|
 | L2 | `ts/src/index.ts` (dsh plugin) | 20 tools, time-anchor & memory-brief variables; execute isolation + consent gate + process guards |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | single solving entry (candidate enumeration + flight-chain Z3) |
-| L4 | `ts/capabilities/hbcli.ts` · `skeleton-check.ts` | realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
+| L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | effect interpreter (backoff retry / circuit breaker / mock interpreter, issue #16) + realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
 | L5 | loopx governance | objective / gates / evidence / quota |
 
 > 📖 Full ADRs / evolution / debt ledger: [`docs/architecture.md`](docs/architecture.md) (Chinese — English versions planned for v0.1.0)

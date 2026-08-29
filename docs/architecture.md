@@ -24,6 +24,8 @@
 
 **预订 saga 状态机具名化(2026-08-29,issue #17 采纳)**:「多 Agent 协同用 FSM 显式建模」提议的处置——机理全有归宿(共享态/原子更新=账本;检查点=events+fold;防重复副作用=workflow_steps exactly-once+idem_key;HITL=pending 持久挂起+ApprovalSeam),LangGraph 编排不引入;本次落地**词汇层** `ts/src/booking-saga.ts`(booking_saga_fsm.v1,纯函数):状态字母表与 pending_writes CHECK 逐字一致、四条边全函数边表(12 格含结构化拒绝闭集,吸收态无出边)、审计链校验器(合法路径四条/空 receipt 抓出),run-all §36 物理对账 25 断言锁定「词汇层=账本 saga 基座语义,分叉即红」。ADR-17 三口径:①企业审批=pending 持久挂起+外部事件沿边恢复,复用 ApprovalSeam;②合规检查恒为 deterministic-edge(Z3 命名约束/unsat core),永不做成 LLM Agent 节点;③M5 启封增量(空 receipt 物理 CHECK/booking seam 词汇/L2 L4 接线)仍是 M5 Entry 交付物(M4 exit + 供应链协议开闸),本词汇层不构成里程碑证据。设计文档 `booking-saga-fsm.md`。
 
+**效应解译器落地(2026-08-29,issue #16 采纳,ADR-18)**:外部依赖隔离走「效应描述+解译器」——工具层只产纯数据效应值 `{effect, params}`,渠道访问/退避重试/断路器/编译期 mock 全部收敛到解译层(`ts/capabilities/effect.ts` effect_interpreter.v1 + `resilience.ts`,run-all §37);垂直切片五个渠道工具(flyai/hotel/session/weather/flight_verify)+realtime-pricing 查询口已改走 `interpretEffect`,渠道韧性策略 per-效应显式拍板(默认全关零行为变化,Sentinel 永不重试/SESSION 永不重试不熔断/免费源退避 2 次),浏览器解译=既有 SESSION CDP 通道、不做视觉 CUA(零 Python 红线),不做渠道自动路由(OTA 平铺);余下渠道工具增量迁移记 D-23。设计文档 `effect-interpreter.md`。
+
 
 **产物面最小切片(Issue #25,2026-08-29)**:`gotry_artifacts_list/read`(第 19/20 工具)——账本 workflow_runs 交付 + dsh 工作目录顶层 md 在 dsh 内可发现、可读(dsh read 卡行号文件视图,工单 id 直读 + offset/limit 翻页);只读能力层 `capabilities/artifacts.ts`(路径白名单 = stateRoot+工作目录、排除 node_modules/.git;扩展名白名单 = 文本类),smoke §13。面板第二切片(同日,founder 指令「看 dsh-market 成熟组件」):自建零依赖 webui 因 UI 品质不达产品级撤回,改走宿主组件 **dsh-better-sidebar**(dshmarket.com #1 UI,18.9 万周装,v0.17.1 双形态兼容)——`gotry setup` 宿主层安装(dsh plugin → ~/.dsh/profiles/web,不进 gotry 依赖),dsh web 右侧工作台(文件树/Markdown/Mermaid/PDF 预览)直接浏览工作区产物;账本感知产物 Tab(better-sidebar registerTab,需 client-half 插件面)列下一阶段。
 
@@ -83,6 +85,7 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/capabilities/flyai.ts` | **FlyAI 官方通道**:飞猪 8 只读工具的管道层(search-flight/train 先接),证据链 `[实时API:flyai@ts]` | ✅ run-all §24-F |
 | `ts/capabilities/session-search.ts` + `session/` | **会话检索面**(RFC P1):transport(puppeteer-core 专用 profile)/ReadGuard(写请求物理拦截+审计,fail-closed)/携程机票适配器(batchSearch 嗅探)/action-cache 自愈层(变量化key+指纹被动失效+miss回写);节律闸;`[会话:*]` 证据链 | ✅ run-all §24/§25 |
 | `ts/capabilities/artifacts.ts` | **产物面**(issue #25 最小切片):产物发现(账本 workflow_runs 权威 + 无账本回退 async 目录视图 + dsh 工作目录顶层 md)+ 行号窗口读取(dsh read 卡);只读,路径/扩展名白名单 | ✅ smoke §13 |
+| `ts/capabilities/effect.ts` `ts/capabilities/resilience.ts` | **效应解译器 + 韧性原语**(effect_interpreter.v1,issue #16 采纳/ADR-18):效应值注册表(渠道 handler+策略表)+生产/mock 解译器(渠道 observation 原样透传+trace 横切证据)+ 指数退避(withRetry)/断路器三态(CircuitBreaker);已接 flyai/hotel/session/weather/flight_verify 五工具与 realtime-pricing 默认查询口,余下渠道走 D-23 增量迁移 | ✅ run-all §37 |
 | `ts/src/state-ledger.ts` | **事务化状态账本**(ADR-15):SQLite 单文件唯一权威(events append-only+语义幂等键/投影表 fold 可重建/workflow_steps durable 工单/pending_writes saga)；`gotry_async_terminal.v1` 固化 4/4/非 4/4 终态、退出码与零重算复诵;守门纯函数复用为写路径与 fold 处理器;读路径带旧文件回退;首写自动 one-shot 迁移+快照 | ✅ run-all §28 |
 | `ts/src/booking-saga.ts` `ts/scripts/booking-saga-tests.ts` | **预订 saga 状态机词汇层**(booking_saga_fsm.v1,issue #17 采纳/ADR-17):状态字母表+四条边全函数边表+结构化拒绝闭集+审计链校验;§36 与账本 saga 基座逐格物理对账 | ✅ run-all §36(纯函数,零写路径接线) |
 | `ts/scripts/state-cli.ts` | **账本操作面**(ADR-15):migrate/export(视图单向)/log/stats/rebuild/rewind/forget(物理硬删带审计)/tick(回收 pending 工单)/whatif(VACUUM INTO 分叉)/pw-*(WriteGate saga CLI 面) | ✅ run-all §29 |
@@ -147,6 +150,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 15 | 事务化状态基座(RFC `transactional-state-rfc`,业界 durable-execution 五件套收敛):单文件 SQLite 账本(better-sqlite3,WAL)= 唯一权威——events append-only(语义幂等键 UNIQUE 物理化,wish_id 语义派生)+ 投影表 fold 可重建(纯函数守门原样复用,语义层零改造)+ 红线进事务(evidence/conditions 拒绝即回滚)+ durable 工单(workflow_steps intent-before-execute,崩溃恢复 exactly-once)+ pending_writes saga(WriteGate L2/L3 基座:幂等键/receipt/补偿)+ what-if 分叉(VACUUM INTO);旧 JSON/JSONL 降级单向导出视图(红线 6);one-shot 迁移(首写自动+快照 `pre-ledger-backup/`) | Postgres/DBOS/Temporal/Restate 平台(单用户本地产品不需要服务端;SQLite durable 学派「一文件即控制面」)/纯文件加固 tmp+rename(修不了跨文件分叉与并发)/node:sqlite(零依赖但较新,D1 落选备选) | 多用户 AaaS 化(RFC §6.5 claim/CAS 实装)或需要多写者/多端复制(cr-sqlite/Litestream,触发式=D-15)时复审 | `state-ledger.ts`;run-all §28/§29 |
 | 16 | 双形态架构冻结(本地+Web,通用 agent 产品形态):**一套账本语义,两种宿主绑定**——本地=better-sqlite3 直读文件,Web=同一 schema 跑在每用户 SQLite 文件(或 Postgres,schema 同构);**tenant_id 从第一天就是一等字段**(events/投影/工单/pending_writes 全部带租户列,单用户期恒为 `'local'`,主键空间化防跨用户撞);**同步=账本事件的复制而非状态的翻译**(events 行带 tenant_id+幂等键,双端合并天然幂等);写必经账本、读必带租户上下文进不变量表 | 本地与 Web 各长一套逻辑(多用户期合并不动,推倒重来)/云端为权威本地为缓存(违反红线 6 本地优先)/同步投影而非事件(投影是派生态,合并会分叉) | 永不复审(双形态是产品形态基座);同步协议实装(Litestream/cr-sqlite/自建 API)与 claim/CAS 实装仍按触发器后置 | `state-ledger.ts` schema v2;run-all §28 双形态断言 |
 | 17 | 预订 saga 状态机具名化(issue #17 采纳,2026-08-29):预订/支付/退改的 saga **不引入编排框架(LangGraph 等)**,FSM 落为账本 pending_writes 的具名字母表+四条边全函数边表(`booking_saga_fsm.v1`,纯函数零接线);三种边型入词汇——deterministic-edge(合规/政策判定恒为代码层 Z3 命名约束/unsat core,永不做成 LLM Agent 节点)/gate-edge(用户选择题)/external-event-edge(HITL 审批=pending 持久挂起+外部账本事件恢复,复用 ApprovalSeam);M5 Entry 后任何 booking seam 只许走该边表 | LangGraph/Temporal 式 FSM 框架(第二运行时,违反 harness 基线与复用矩阵)/状态散落 SQL 字符串(边语义漂移无词表)/多 Agent 提示词协同(隐式依赖,ADR-9/10 教训) | M5 拍板 WriteGate 时复审(启封增量的 schema CHECK/seam 词汇/L4 自动类);若出现需要并行多写者的预订流,复审 keyed 单写者形态 | `ts/src/booking-saga.ts`;`docs/booking-saga-fsm.md`;run-all §36 |
+| 18 | 效应解译器 effect_interpreter.v1(issue #16 采纳,2026-08-29):「效应描述+解译器」下沉到 L4 渠道边界——工具/编排层只产纯数据效应值 `{effect, params}`,`ts/capabilities/effect.ts` 注册表换算成渠道 handler 调用;**韧性横切(指数退避重试/断路器)只能来自 per-效应策略表,没有策略行就没有效应(默认全关=零行为)**;生产/mock 双解译器同接口(`selectInterpreter` 环境注入,mock=夹具回放零网络),渠道 observation 原样透传 + trace 横切证据;浏览器解译=SESSION_* 效应(CDP attach+ReadGuard+授权闸),视觉 CUA 不做(零 Python 红线);解译器**不做**渠道自动路由/比价聚合(OTA 平铺是 founder 判定) | 逐工具自由调用能力层(横切逻辑复制,无退避/熔断/mock 面)/Python browser-use(违反零 Python 依赖)/解译器内置多渠道路由排序(违反 OTA 平铺)/全量重写 20 工具(风险大,走增量迁移 D-23) | 出现需要跨渠道比价聚合的产品裁决时复审「平铺」边界;写效应(预订/支付)入注册表时必须走 booking_saga_fsm.v1 边表(M5 Entry) | `ts/capabilities/effect.ts` `resilience.ts`;`docs/effect-interpreter.md`;run-all §37 |
 
 ## 9. 演进(时间线唯一来源= `roadmap.md` 的 M0-M6;此处只保留原则与现状)
 
@@ -169,6 +173,8 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 - **预订 saga 状态机具名化(2026-08-29 第二批,issue #17 采纳)**:针对「多 Agent 协同用 FSM 显式建模副作用传递」提议,逐机理勾稽(共享态/检查点/防重复副作用/HITL 在账本与 durable 工单已物理存在)后,落地词汇层 `booking-saga.ts` + 设计文档 `booking-saga-fsm.md` + ADR-17;LangGraph 编排不引入,合规恒为 deterministic-edge,HITL 审批 = pending 挂起 + 外部事件恢复;run-all §36 物理对账 25 断言。
 
 - **产物面(2026-08-29,issue #25,两步)**:①dsh 内查看——`gotry_artifacts_list/read` 把账本工单交付与工作目录 md 变为可发现、可读对象(read 卡);②成熟面板——dsh-market 调研(dshmarket.com,2495 插件)选型 **dsh-better-sidebar**(★3083/18.9 万周装,#1 UI 组件;自建零依赖 webui 因品质不达产品级当日撤回),`gotry setup` 宿主层安装(GOTRY_SETUP_SIDEBAR=0 可跳,幂等/失败降级路①),dsh web 侧栏工作台浏览+渲染工作区产物;产物 Tab(registerTab client-half)为下一阶段。
+
+- **效应解译器(2026-08-29,issue #16 采纳,ADR-18)**:「效应描述+解译器」落地 L4 渠道边界——`ts/capabilities/effect.ts`(effect_interpreter.v1:效应值注册表+生产/mock 双解译器+渠道 observation 原样透传)与 `resilience.ts`(指数退避 withRetry+断路器三态)。关键保守边界:①韧性策略 per-效应显式拍板,没有策略行就没有效应(默认全关=对既有行为零改变);②FlyAI Sentinel 上游「说不」永不重试但计熔断(3 连错开 60s 保配额),SESSION 通道永不重试不熔断(风控红线),免费源 2 次退避;③浏览器解译=SESSION_* 效应(既有 CDP 通道),零 Python 红线不做视觉 CUA;④不做渠道自动路由/比价(OTA 平铺 founder 判定,agent 层比价)。垂直切片接 5 工具+realtime-pricing 默认查询口,余下渠道增量迁移(D-23)。设计文档 `effect-interpreter.md`;run-all §37;smoke/flyai/hbcli/weather/session/realtime-pricing 套件同轮全绿。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
@@ -199,6 +205,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-20 六状态面里程碑口径漂移 | **已清偿 2026-08-29(Issue #19)**:六状态面统一为「M3 真实 evidence 未收口；M4 为 founder 授权并行，不是 M3 Exit 证明；M5/M6 仅受各自 Entry gate 开闸」。后续不得把工程交付、发布或并行切片等同于里程碑退出证据。 |
 | D-21 async 非 4/4 被误结算为成功 | **已清偿 2026-08-29(Issue #19)**:`collectDeepPlanning` 产出 `gotry_async_terminal.v1`；collector 仅在 4/4 时写 `succeeded`/ledger `settled`/exit 0，任一未达写 `failed`/ledger `failed`/exit 2；账本保存结构化结果，终态复诵零重算且保持同一退出码。隔离 `stateRoot` 回归见 run-all §28。 |
 | D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
+| D-23 效应解译器迁移未完成(ADR-18) | **部分清偿**:词汇层+生产/mock 解译器+韧性横切已落地,五工具(flyai/hotel/session/weather/flight_verify)与 realtime-pricing 默认查询口已走 `interpretEffect`;`anything/web_search/video_subtitle/github_search/agent_reach/session_login` 等其余渠道工具仍直连能力层(同款永不抛错契约,无退避/熔断/mock 面)。按渠道逐个搬,搬一个删一横切;全部走通即抄销 | `ts/capabilities/effect.ts`;`docs/effect-interpreter.md` §4;run-all §37 |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
@@ -237,3 +244,4 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | `loopx-inspired-upgrades-rfc.md` | **RFC(accepted 2026-08-27)**:loopx 13 篇架构 RFC 的映射升级——四道接缝(S1 工具 packet 纪律/S2 记忆效用 sidecar/S3 wish 触达 0..1 纪律/S4 WriteGate L0-L4 词汇) |
 | `transactional-state-rfc.md` | **RFC(accepted 2026-08-28,ADR-15)**:事务化状态基座——业界 durable-execution 调研收敛五件套 + GoTry 落地架构 + TS-0..TS-5 执行计划与决策记录(D1-D5) |
 | `booking-saga-fsm.md` | **预订 saga 状态机设计(issue #17 采纳,ADR-17)**:booking_saga_fsm.v1 字母表/边表/拒绝闭集 + 三种边型词汇(deterministic/gate/external-event)+ HITL 审批的挂起-恢复形态 + M5 启封增量与不引入编排框架的判定记录 |
+| `effect-interpreter.md` | **效应解译器设计(issue #16 采纳,ADR-18)**:effect_interpreter.v1 词汇(效应值/EffectOutcome/trace)+ 渠道韧性策略表(退避/断路/节律依据逐行)+ 生产/mock 双解译器 + 为什么不做视觉 CUA 与自动多渠道路由的判定记录 + D-23 迁移面 |

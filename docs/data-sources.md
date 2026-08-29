@@ -184,6 +184,8 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 三值语义(通航性专用):**检出=强肯定;枢纽对查空=降权信号,永不排除(骨架滞后会错杀);枢纽集外=无结论**。
 
+韧性横切落位(2026-08-29,issue #16 采纳/ADR-18):对外渠道的重试/熔断/节律不再逐能力层复制——效应解译器 `effect_interpreter.v1`(`ts/capabilities/effect.ts`,设计文档 `effect-interpreter.md`)按 per-效应策略表统一执行(已接 flyai/hbcli/session/weather/opensky 通道+realtime-pricing 查询口):重试只认瞬时类失败(**Sentinel 限流永不重试**),SESSION 通道永不重试不熔断(风控红线,治理在节律闸+授权闸);解译层横切证据 `[效应:<NAME>@<ts>]` 与上表渠道证据链并存(渠道标注不动,解译层只记 attempts/backoff/breaker 与拒绝面)。
+
 ---
 
 ## 7. 演进(与 roadmap 对齐,本文只列数据侧)
@@ -235,3 +237,4 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 | 2026-08-29(第二批) | §2 酒店行/§8:飞猪 `search-hotel` 接入(kind=hotel,打码价 priceRaw 保真纪律)+ OTA 工具面平铺(去主/降级路由话术,persona (19) 重写)+ 账号会话授权闸落地(`tools/pre-execute`→ApprovalService 审批卡,`sessionAccess: ask\|off` 总闸,RFC 支柱④进代码;飞猪匿名通道不过闸);session-tests §H + smoke §12-13 |
 | 2026-08-29(v2 同日) | founder 实测反馈两刀:**①授权闸 v2**——逐调用弹卡=骚扰,改「每会话每站点首次调用弹卡、会话内记住;拒绝=本会话吊销不再弹」(`session-consent.ts` 会话态,sessionAccess `ask\|allow\|off`);**②登录态 seam 真落地**——`scripts/session-login.ts`(attach 用户 Chrome→开登录入口→人登录→只读轮询票据,needs-login 文案指向真脚本);**③测试不再自动开浏览器窗**(session-tests live 节 GOTRY_SESSION_LIVE=1 opt-in,「匿名窗口反复开携程/闪退」形态退役);session-tests §G/H/I + smoke §12-13 |
 | 2026-08-29(PR #33 合流) | Issue #24 双 lane 修复合流:weather 双源/飞猪扫描器/静态包过滤采纳 main 版;本 lane 增量入列——hbcli ENOENT 人话化+候选路径回退(~/.local/bin、~/.staicli/current)+安装期外部依赖自举(hbcli 官方 install.sh / agent-reach 官方 pip 入包内 .venv,postinstall --auto 非致命,`gotry setup` 手动入口;§2 酒店行)+ 离线 flyai 套件(run-all §7b)+ bootstrap 套件(§7c);hotelbyte-cli 定性更正为公开仓(D-22) |
+| 2026-08-29(issue #16 采纳) | §6 增韧性横切落位:外部渠道重试/熔断/节律归口效应解译层 effect_interpreter.v1(ADR-18,`ts/capabilities/effect.ts`+`resilience.ts`,设计文档 `effect-interpreter.md`)——per-效应策略表(Sentinel 永不重试/SESSION 永不重试不熔断/免费源退避 2 次),`[效应:<NAME>@ts]` 横切证据与渠道证据链并存;flyai/hbcli/session/weather/opensky 通道+realtime-pricing 查询口已接,余下渠道 D-23 增量迁移;run-all §37 |
