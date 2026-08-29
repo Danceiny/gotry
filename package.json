@@ -55,7 +55,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "postinstall": "echo 'GoTry installed. Run: npx gotry web   (dsh Web UI on :3080)\\nSee: https://github.com/Danceiny/gotry'",
+    "postinstall": "node bin/gotry-bootstrap.js --auto",
     "test": "bash scripts/run-all-tests.sh"
   },
   "dependencies": {
