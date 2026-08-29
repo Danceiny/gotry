@@ -46,7 +46,7 @@ GoTry turns "I want to go somewhere" into "can I, how, and at what true cost":
 | **Fact extraction** | LLM | Working hours semantics, leave semantics |
 | **Feasibility verdict** | **Z3 solver** | Which destinations are feasible / infeasible, why, and the **smallest change that makes them feasible** |
 | **Door-to-door true cost** | Solver | Real flight duration (incl. time zones) + early-wake penalty + transfer cost + arrival energy % |
-| **Evidence chain** | Render layer | Every number tagged: `[骨架:openflights]` / `[实时API:flyai]` / `[静态包:估算]` |
+| **Evidence chain** | Render layer | Every number carries a **source tag**: `[骨架:openflights]` = route existence verified against the public route database; `[实时API:flyai]` = pulled live from an API seconds ago; `[静态包:估算]` = a researched estimate (**not realtime — verify before booking**). On degradation the tag switches honestly — an estimate never poses as realtime |
 
 **Unlike a regular AI chat**, the LLM only translates and explains. **Decisions and arithmetic are computed by a Z3 solver**, not guessed.
 
@@ -131,6 +131,8 @@ Engine verdict:
 [static-pack:estimate] G7315/G7316 priced on Jul–Aug off-season rates
 ```
 
+> Tag guide: `[骨架:openflights]` means "this route can be flown" was verified against the public route database; `[实时API:*]` marks data pulled live seconds ago; `[静态包:估算]` flags an off-season estimate — **verify before booking**. Tags are attached by the render layer, never by the model.
+
 ---
 
 ## 🏛️ Architecture
@@ -158,24 +160,23 @@ Engine verdict:
 
 ## ⚠️ Status & limitations
 
-**Ready (green, verifiable):**
+**Working today** (full-stack regression §1–§34 green; every item has deterministic tests):
 
-- ✅ **Z3 WASM race fixed** (`z3-shared.ts` single instance + session-level mutex; run-all §30 concurrency regression gate)
-- ✅ **Realtime flight/hotel/session retrieval** via the FlyAI official channel (flight/train/hotel; `GOTRY_REALTIME_PRICING=1` optionally overwrites priced legs in the solver)
-- ✅ **English output for the deterministic solve layer** (`GOTRY_LOCALE=en`, zero missing keys)
-- ✅ **Account session: consent gate + productized login + auto-detection** (see [🔐 Account session](#-account-session-consent--privacy))
-- License MIT; legacy shell frontend removed (dsh web is the only product surface)
+- **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed (§30 regression gate)
+- **Realtime retrieval** — flight/train/hotel (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`)
+- **Account session search** — Ctrip flights on your own logged-in Chrome; consent & privacy rules above (see 🔐 **Account session: consent & privacy**)
+- **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English output via `GOTRY_LOCALE=en`
 
-**Open (honest list):**
+**Open limitations** (as of 2026-08-29, honest list):
 
-- ⏳ **M3 Exit not closed** — engineering & distribution ready, but real seed-user evidence (50–200 person cohort) not yet accumulated; synthetic fixtures prove contracts, not business pass
-- ⏳ **Non-Chinese UI remnants** — the dsh web UI belongs to the host; tool result cards and persona dialogue localization await M4 calibration samples
-- ⏳ **Ctrip-hotel / Meituan session adapters** — flight done; hotel session surfaces await real login-state backfill (next tick)
+- ⏳ **M3 Exit not closed** — engineering & distribution ready, but real seed-user evidence (50–200 person cohort) not yet accumulated; automated tests prove contracts and formulas, not business pass
+- ⏳ **Ctrip-hotel / Meituan logged-in adapters** — flights done; hotel session surfaces await real login-state backfill (next tick)
+- ⏳ **Interface language** — English currently covers the deterministic solve-output layer only; the dsh host UI and dialogue surface belong to the host / calibration samples
 
 <details>
-<summary>📖 Full status ledger (transactional state / evidence contracts / milestone stance)</summary>
+<summary>📖 Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
 
-Transactional state ledger (ADR-15, `gotry_async_terminal.v1`: 4/4→`succeeded`/ledger `settled`/exit 0; non-4/4→`failed`/`failed`/exit 2; replaying the terminal state recomputes nothing); dual-form architecture freeze (ADR-16: one ledger semantics for local+Web, tenant_id first-class); session-data-plane #21 field fixture scorer, dual-source contract and waiting-attach no-spend are in deterministic regression, real sf-01..08 not yet accepted; milestone stance (2026-08-29): M3 engineering & distribution ready but real seed-user evidence not closed, M4 proceeds under founder authorization without constituting M3 Exit proof, M5/M6 only after their Entry gates — details in [`docs/roadmap.md`](docs/roadmap.md) and [`docs/architecture.md`](docs/architecture.md).
+The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate); the M4 paired-cohort value evidence contract (run-all §34 — synthetic data is never Exit evidence); async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22.
 
 </details>
 

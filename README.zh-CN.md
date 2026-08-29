@@ -62,7 +62,7 @@ GoTry 把「想去哪」变成「能不能、怎么去」:
 | **事实抽取** | LLM | 工作窗口生效 + 休假语义识别 |
 | **可行性判定** | **Z3 求解器** | 哪些候选可行、哪些不可行、为什么、**最小改动让它可行** |
 | **门到门全成本** | 求解器 | 真实飞行时长(含时差)+ 醒来起夜惩罚 + 接驳代价 + 到达精力 % |
-| **证据链** | 渲染层 | 每个数字带标签:`[骨架:openflights]` / `[实时API:flyai]` / `[静态包:估算]` |
+| **证据链** | 渲染层 | 每个数字都带**来源标签**:`[骨架:openflights]`=公开航线数据校验过"这条线能飞";`[实时API:flyai]`=刚从实时接口拉的现价现况;`[静态包:估算]`=非实时的调研估算(**下单前请核实**)。降级时标签如实更换,估算绝不冒充实时 |
 
 **不像普通 AI 聊天**——LLM 只做理解和解释,**判定与算术是数学求解器**算的。
 
@@ -92,7 +92,9 @@ GoTry: 收到。先把约束记下来——
 [静态包:估算] G7315/G7316 价格按 7-8 月淡季估算
 ```
 
-> **Brief English summary**: input → engine verdicts (feasibility + whole-cost) → recommendation + wish-pool entry for infeasible candidates. Every numeric carries an evidence tag.
+> 标签导读:`[骨架:openflights]` 说的是"这条航线能飞"已被公开航线数据校验;`[实时API:*]` 说的是刚从实时接口拉回的当下数据;`[静态包:估算]` 提醒价格是淡季档估算——**订前核实**。
+
+> **Brief English summary**: input → engine verdicts (feasibility + whole-cost) → recommendation + wish-pool entry for infeasible candidates. Every numeric carries an evidence tag. See the 证据链 row above for what each tag means.
 
 ---
 
@@ -154,24 +156,23 @@ GoTry: 收到。先把约束记下来——
 
 ## ⚠️ 状态与限制 — Status & limitations
 
-**已就绪(全绿可验)**:
+**今天可用的能力**(全栈回归 §1–§34 全绿,每项都有确定性测试):
 
-- ✅ **Z3 WASM race 已根治**(`z3-shared.ts` 单实例+会话级互斥;run-all §30 并发回归闸)
-- ✅ **实时机票/酒店/会话检索**已接入:FlyAI 官方通道(机/火/酒;`GOTRY_REALTIME_PRICING=1` 可选把实时票价覆写进求解)
-- ✅ **英文面(工程层)**:`GOTRY_LOCALE=en` 一键切换,en 零缺键,金标准行为不变
-- ✅ **账号会话:授权闸 + 登录产品化 + 自动检测**(见上方 [🔐 账号会话](#-账号会话授权与隐私--account-consent))
-- ✅ License MIT;薄壳遗留已删除(dsh web 唯一产品面)
+- **Z3 求解引擎** —— 可行性判定 + 门到门全成本;历史并发竞态已根治(§30 并发回归闸)
+- **实时检索**:机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;可选让实时票价覆写进求解(`GOTRY_REALTIME_PRICING=1`)
+- **账号会话检索**:你本人登录态查携程机票,授权与隐私规则见上方 **🔐 账号会话:授权与隐私** 小节
+- **记忆与触达**:动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
 
-**未收口(诚实清单)**:
+**已知限制**(截至 2026-08-29,诚实清单):
 
-- ⏳ **M3 Exit 未关闭** —— 工程与分发面就绪,但真实种子用户 evidence(50–200 人 cohort)未积累;合成 fixture 只证明合同不证明 business pass
-- ⏳ **中文之外的界面残余** —— dsh web 界面属宿主;工具结果卡与人格对话面的英文校准件挂 M4 校准样本
-- ⏳ **携程酒店/美团会话适配器** —— 机票已通,酒店会话面等登录态实测回填(下一 tick)
+- ⏳ **M3 Exit 未关闭** —— 工程与分发面就绪,但"真实种子用户"证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
+- ⏳ **携程酒店 / 美团的登录态会话适配** —— 机票已通,酒店面等登录态实测回填(下一个 tick)
+- ⏳ **界面语言** —— 英文界面仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
 
 <details>
-<summary>📖 展开完整状态表(账本/证据合同/里程碑口径)</summary>
+<summary>📖 更深的工程状态(账本合同 / 证据合同 / 里程碑口径)</summary>
 
-事务化状态账本(ADR-15,`gotry_async_terminal.v1`:4/4→`succeeded`/ledger `settled`/exit 0,非 4/4→`failed`/`failed`/exit 2,终态复诵零重算);双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);会话数据面 #21 的字段 fixture scorer、双源合同与 waiting-attach no-spend 已进确定性回归,真实 sf-01..08 尚未验收;里程碑口径(2026-08-29):M3 工程与分发面已就绪但真实种子用户 evidence 未收口,M4 由 founder 授权并行推进不构成 M3 Exit 证明,M5/M6 仅在各自 Entry gate 满足后启动——细则见 [`docs/roadmap.md`](docs/roadmap.md) 与 [`docs/architecture.md`](docs/architecture.md)。
+状态权威面在这里,README 不展开:事务化状态账本(ADR-15)+ 双形态冻结(ADR-16:本地+Web 一套账本语义);M3 真实 cohort 证据合同已立(fixture 不充当 Exit,真实 50–200 人样本即开 Exit);M4 paired-cohort 价值证据合同(run-all §34)合成数据不充当 Exit 证据;异步工单终态合同(`gotry_async_terminal.v1`:4/4→succeeded/ledger settled/exit 0)。细则见 [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 与 #19–#22。
 
 </details>
 
