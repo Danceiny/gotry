@@ -68,10 +68,26 @@ Trip Notebook(durable,后台 LLM 提取,负面清单执行)+ Hot Context(30min �
 
 ## 5. 与里程碑/验收的挂钩
 
-- **M4 exit**:「回访规划时长较首访降 ≥50%」← 读回链(e2e §13 已证机制);「经验回流率有基线」← memory-metrics(已落地)。P1 落地后回流率分子从「owner 口头确认」升级为「timeline 行程」——基线质变。
+- **M4 exit**:「回访规划时长较首访降 ≥50%」← 读回链(e2e §13 已证机制)+ Issue #20 paired-cohort scorer(合同与 fixture 已落地,真实 repeat cohort 未到);「经验回流率有基线」← memory-metrics(过程面)+ Issue #20 experience reflux 观测面。P1 落地后回流率分子从「owner 口头确认」升级为「timeline 行程」——基线质变。
 - **M5 技术线 T7**:偏好断言 100% 可溯源;「画像不进硬过滤」守卫用例——本设计 §1.2/1.3 即其验收定义。
 - **多用户 AaaS**:全部层以 append-only + 稳定主键落地,账本化(RFC §6.5)只换存储面。
 
 ## 6. 明确不做
 
 - 对话原文存储(隐私立场);敏感证件/支付字段入库(后端填充);LLM 自由记忆(提取必有守门);为「记忆完整」而提前实现 M5/P4(无真实调用方不花钱)。
+
+## 7. Issue #20 价值证据合同
+
+`ts/scripts/memory-value-report.ts` 只读评分 `memory_value_fixture.v1`:
+
+- **paired cohort**:每个 pair 只接受唯一匿名 subject 的首次与下一次 `eligible + completed` planning flow;returning flow 必须晚于 first flow 完成。active planning duration = wall clock − 预声明且互不重叠的 external waits。分位数固定 nearest-rank,报告 N、首访/回访 p50/p75 与逐 pair reduction p50/p75。
+- **experience reflux**:按 experience_id 统计 recalled 与 verified_outcome 的交集,基线 = verified/recalled;每条事件必须有 evidence_ref。
+- **偏好红线**:报告 traceable ratio 与 hard-filter violation count;100% 可溯源且 0 hard filter 才满足验收。
+- **P4 闸**:没有 real usage 或 multi-user trigger 时必须保持 `closed`。
+- **证据等级**:`synthetic_fixture` 只能证明合同与算法,`exit_evidence_eligible=false`;仅私有 `observed_private` cohort 可参与 M4 Exit。真实证据留在 `ts/gotry-state/evidence/m4/` 的 manifest/paired-cohort/summary,不得提交原始用户材料。
+
+复跑夹具:
+
+```bash
+cd ts && npx tsx scripts/memory-value-report.ts data/memory-value-fixture.json
+```
