@@ -12,7 +12,7 @@ rc.10 → rc.11 增量(founder 确认制下 agent 执行;发布指令「测试�
 
 ### 发布闸状态
 - ① 全栈回归 ALL GREEN(§1-§32,新增 §30 Z3 并发竞态闸/§31 实时票价闸/§32 i18n 闸)✅ ② 状态面 6 处同步 ✅ ④ License MIT ✅ ⑤ 版本号一致(rc.11)✅
-- ③ npm 干净安装实测:通过(见 registry 回拉实录——干净目录安装、插件加载、bin 全通)
+- ③ npm 干净安装实测:**通过**。发布实录:web 会话登录(npm-profile 库级驱动,`npm-auth-type: web` 头,founder 点 Approve)→ `npm publish --tag rc.11` 走 auth/cli 二次验证(expect PTY + 浏览器 Authorize,PUT 200)→ **registry 回拉**:dist-tags latest 直指 rc.11(`rc: '0.0.1-rc.7'` 保持/`rc.5` 坏包已 deprecate 历史)、干净目录 `npm install @danceiny/gotry@0.0.1-rc.11`(0 vulnerabilities)→ 三新面文件入包(dist/src/z3-shared.js/i18n.js/realtime-pricing.js)→ `gotry help` bin 正常 → dist 插件面真加载(exports=Config/apply/inject/name,rc.9「装得上跑不起」教训不复发)
 
 # GoTry 发版记录
 
