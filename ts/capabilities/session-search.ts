@@ -1,16 +1,24 @@
 /**
  * 会话检索编排层(RFC §3.2):transport → adapter entry → networkHint 嗅探 → 解析 → ReadGuard → 证据链。
  *
+ * 传输车道(2026-08-29 定案,RFC §2.2):**扩展桥为默认**——一次性安装的 MV3 扩展
+ * (GoTry Session Bridge)在自己标签页被动嗅探 batchSearch,零 Chrome 系统弹窗;
+ *  cdp(attach 日常 Chrome,Chrome 144+ 每连接弹权限框)降为显式后备
+ * (`GOTRY_SESSION_TRANSPORT=cdp` opt-in,诊断/测试用);persistent 仅测试。
+ *
  * 证据链(L4 增补):[会话:ctrip-flight@ts] = 用户本人会话内实时检索,非官方 API;
  * 风控命中(verdict='challenged')= degraded,绝不重试、绝不绕过(合规支柱②)。
  * 节律(§3.4):同站点 ≥30s 间隔 + 单调冷却;超间隔返回 verdict='cooldown'。
- * 永不抛错;transport 必带 ReadGuard(fail-closed);测试/巡检用隔离 profile 与 stateRoot。
+ * 永不抛错;扩展车道 fail-closed(桥/扩展不可用即 verdict,零花费);测试/巡检用隔离 profile 与 stateRoot。
  */
 
 import { openSession } from './session/transport.ts'
+import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure, NEEDS_EXTENSION_HINT } from './session/extension-channel.ts'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { buildEntryUrl, NETWORK_HINTS, parseBatchSearch, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 
-export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach'
+export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
 
 export interface SessionSearchResult {
   ok: boolean
@@ -54,6 +62,22 @@ export function classifyTransportFailure(summary: string, cdpMode: boolean): Ext
     : 'error'
 }
 
+/** 传输车道解析(纯函数,测试锚点):persistent=隔离 profile(测试自检);cdp=显式 opt-in;扩展=默认 */
+export function resolveTransportMode(profileDir?: string): 'cdp' | 'persistent' | 'extension' {
+  if (profileDir !== undefined) return 'persistent'
+  return (process.env.GOTRY_SESSION_TRANSPORT ?? '').trim().toLowerCase() === 'cdp' ? 'cdp' : 'extension'
+}
+
+/** 扩展车道 job 审计(ReadGuard 审计同款 JSONL,kind 区分;auditPath 缺省不落盘) */
+export function appendExtensionAudit(auditPath: string | undefined, entry: { kind: 'extension-session-job'; site: string; url: string; jobId: string; result: string }): void {
+  if (!auditPath) return
+  try {
+    const record = { ts: new Date().toISOString(), ...entry, url: entry.url.slice(0, 400) }
+    mkdirSync(dirname(auditPath), { recursive: true })
+    appendFileSync(auditPath, JSON.stringify(record) + '\n')
+  } catch { /* 审计失败不阻塞检索 */ }
+}
+
 export async function sessionFlightSearch(q: SessionFlightQuery): Promise<SessionSearchResult> {
   const started = Date.now()
   const ts = new Date().toISOString()
@@ -74,8 +98,49 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     return err('error', `unresolved entry: ${(entry.unresolved ?? []).join('/')} 不在城市码表`)
   }
 
+  const mode = resolveTransportMode(q.profileDir)
+
+  if (mode === 'extension') {
+    // ① 登录态快查:票据 cookie 名存在性(免标签页,秒回;needs-login 不再先付一次导航成本)
+    const login = await extensionCookieNames({ site, domain: SITE_DOMAIN.replace(/^\./, ''), ticketNames: LOGIN_COOKIE_NAMES })
+    if (!login.ok) {
+      const verdict = classifyBridgeFailure(login.kind)
+      return err(verdict, verdict === 'needs-extension' ? `${login.summary};${NEEDS_EXTENSION_HINT}` : login.summary)
+    }
+    // 登录态闸:用户自己的账号;匿名默认拒(allowAnonymous 仅链路自检且证据标自检态)
+    if (login.tickets.length === 0 && !q.allowAnonymous) {
+      return err('needs-login', '未检出你本人登录态——调用 gotry_session_login 为用户打开携程登录入口(登录在携程官网完成;gotry 永不经手密码/验证码/cookie 值)')
+    }
+    // ② 检索 job:后台标签 + MAIN-world 被动嗅探(检索请求由站点自己发出,扩展零写行为)
+    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs })
+    appendExtensionAudit(q.auditPath, {
+      kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
+      result: r.ok ? (r.timedOut ? 'timeout' : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
+    })
+    if (!r.ok) {
+      const verdict = classifyBridgeFailure(r.kind)
+      return err(verdict, verdict === 'needs-extension' ? `${r.summary};${NEEDS_EXTENSION_HINT}` : r.summary)
+    }
+    const title = r.title
+    const head = r.body.slice(0, 5000)
+    if (CHALLENGE_RE.test(title + head)) {
+      return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
+    }
+    const options = parseBatchSearch(r.body)
+    const verdict: SessionVerdict = options.length > 0 ? 'hit' : 'miss'
+    return {
+      ok: true,
+      via: 'session-ctrip-flight',
+      evidence: `[会话:${site}@${ts}] ${options.length} options;transport=extension(被动嗅探,零系统弹窗;扩展零写行为=物理只读)${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
+      latencyMs: Date.now() - started,
+      verdict,
+      options,
+    }
+  }
+
   // 人机共治纪律:检索一律开自己的新标签页(绝不劫持用户已有页面),用完关自己的页
-  const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath, mode: q.profileDir ? 'persistent' : 'cdp', newPage: true })
+  // cdp 车道(显式 GOTRY_SESSION_TRANSPORT=cdp opt-in)与 persistent(测试隔离 profile)
+  const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath, mode: mode === 'persistent' ? 'persistent' : 'cdp', newPage: true })
   if (!t.ok) {
     // cdp 未开端口或握手失败 → needs-attach(一次性用户动作);persistent 启动失败仍走 error。
     // transport 的“端口未开”在连接前返回,文案不含 `cdp attach 失败`,两种形态都要归入同一用户门禁。

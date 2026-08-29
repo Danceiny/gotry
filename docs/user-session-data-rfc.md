@@ -46,11 +46,11 @@
 
 | 通道 | 机制 | 2026 现状 | 适配度 |
 |---|---|---|---|
-| A. attach 用户日常 Chrome | Chrome 136(2025-05)起默认 profile 禁用调试端口(安全收紧,App-Bound Encryption 动机链);**Chrome 144+ 恢复官方路径**:`chrome://inspect/#remote-debugging` 用户手动开一次开关即可 attach(chrome-devtools-mcp `--autoConnect` 依赖此) | 要求用户 Chrome ≥144 + 手动开开关;同一时刻仅一个调试客户端 | **✅ PRIMARY(2026-08-28 founder 定案)**:专用 profile 实测失败(窗口呈匿名裸 Chrome,登录永不发生,History/Cookies 双 0 行)——「不能匿名实例」两次纠偏后,attach 日常 Chrome(用户本人登录态+真实指纹)为默认传输(mode=cdp;`needs-attach` verdict 给一次性开启指引;persistent 降为测试/后备)。**授权模型官方实锤(chrome-devtools-mcp #825):Chrome 144+ 每次连接尝试都弹浏览器侧权限框等用户点击,4s 短超时必撤回——attach 须 60s 级长等待(session-attach-wait.ts)且用户在场点击;持久化批准尚无官方支持** |
-| B. **专用持久 profile** | Playwright `launchPersistentContext`(或 `channel:'chrome'` 用用户已装 Chrome,零浏览器下载);登录一次跨会话复用 | playwright-mcp 默认模式,最成熟 | **首发**(用户人工首登,agent 永不碰密码/验证码) |
-| C. 扩展接管 | playwright-mcp `--extension` 直接接管用户现有 tab 与登录态;chrome.debugger API 同类 | 官方实现已产品化,但 attach 期间有"started debugging this browser"警告条,用户心智成本高 | 二期选项(最贴近「用户自己的浏览器」心智) |
+| A. attach 用户日常 Chrome | Chrome 136(2025-05)起默认 profile 禁用调试端口(安全收紧,App-Bound Encryption 动机链);**Chrome 144+ 恢复官方路径**:`chrome://inspect/#remote-debugging` 用户手动开一次开关即可 attach(chrome-devtools-mcp `--autoConnect` 依赖此) | 要求用户 Chrome ≥144 + 手动开开关;同一时刻仅一个调试客户端 | **⚠ 降级为显式后备(2026-08-30 founder 定案)**:曾为 PRIMARY(2026-08-28),被产品实测推翻——**授权模型官方实锤(chrome-devtools-mcp #825):Chrome 144+ 每次连接尝试都弹浏览器侧权限框等用户点击,持久化批准尚无官方支持**,逐连接弹窗对普通用户/开发者均不可用(founder:「授权操作太频繁了,根本无法使用」)。保留 `GOTRY_SESSION_TRANSPORT=cdp` 显式 opt-in 供诊断/测试,不再自动回退(回退即重新引入弹窗) |
+| B. **专用持久 profile** | Playwright `launchPersistentContext`(或 `channel:'chrome'` 用用户已装 Chrome,零浏览器下载);登录一次跨会话复用 | playwright-mcp 默认模式,最成熟 | **仅测试/后备**(匿名裸窗口实测无人会登录,founder「不能匿名实例」) |
+| C. 扩展接管 | **MV3 扩展 + 本地桥**:一次性安装;扩展在**自己的标签页**里被动嗅探站点自身发出的检索响应(请求由站点代码发出,扩展零写行为),经 `127.0.0.1` 长轮询回传 Node;不用 `chrome.debugger`(无警告条) | gotry 自研 `extension/`(GoTry Session Bridge,4 文件零构建,manifest 固定 key=扩展 ID 跨机器稳定)+ Node 侧 `session/extension-bridge.ts`(`node:http` 长轮询桥,零新依赖;origin 白名单防网页跨域) | **✅ PRIMARY(2026-08-30 founder 定案,issue #21 传输层方案 B/C)**:Chrome 系统级弹窗从「每连接 1 次」降为 **0 次**;授权模型=一次性安装(约 30 秒,`npx gotry setup` 落位指引)+ manifest key 派生固定 ID origin 白名单 + 既有会话内授权闸不变;`needs-extension` verdict 为 waiting no-spend 用户门 |
 
-明确不做:cookie 磁盘库直读(Chrome App-Bound Encryption 已封死)、云端 session 服务(Browserbase Contexts/Steel Profiles——凭证离开本机,违反 local-first 与红线)、**browser-use 生态(Python,违反零 Python 依赖面纪律;npm 上 TS 移植非官方未证实)**、LaVague(2025-01 停更)。
+明确不做:cookie 磁盘库直读(Chrome App-Bound Encryption 已封死)、云端 session 服务(Browserbase Contexts/Steel Profiles——凭证离开本机,违反 local-first 与红线)、**browser-use 生态(Python,违反零 Python 依赖面纪律;npm 上 TS 移植非官方未证实)**、LaVague(2025-01 停更)。**native messaging 宿主**(扩展经 OS 注册表拉起本机进程,更强配对)列为二期备选:安装面更重(需写 NativeMessagingHosts 注册表),当前「回环 + origin 白名单 + 固定扩展 ID」已覆盖单用户本机威胁模型,记入 §5 风险复审触发。
 
 风控暴露面:attach 真实会话 = 用户真实指纹,暴露面最小;Playwright 原生驱动有结构性泄漏(Runtime.enable 自动调用等,rebrowser-patches/Patchright 在修)——**专用 profile + 用户人工首登 + 只读 + 人速节律**是业内标准组合,不需要引入 stealth 系(puppeteer stealth 插件 2023-03 已死)。**绝不自动绕过验证码/滑块**——检测到即停、交还用户,这同时是合规生命线(见 2.4)。
 
@@ -115,18 +115,30 @@ ts/capabilities/flyai.ts            官方通道:P0 新增优先级——spawn @
                                      管道层对齐 agent-reach 模式(超时/永不抛错/证据链);P1 与会话骨架同批落地
                                      【2026-08-29 第二批实装:kind=flight|train|hotel——search-hotel 已接(打码价
                                      priceRaw 保真,真实价经 detailUrl 由人完成),OTA 工具面平铺(无主/降级路由)】
-ts/capabilities/session-search.ts    会话面传输层编排:connect → navigate → sniff → extract → guard → 证据链
+ts/capabilities/session-search.ts    会话面传输层编排:车道选择(扩展默认/cdp 显式/persistent 测试)→ navigate → sniff
+                                     → extract → guard → 证据链;resolveTransportMode 纯函数
 ts/capabilities/session/
-  transport.ts        SessionTransport 接口 + CDPAttachTransport 首发实现
-                      (playwright-core connectOverCDP/launchPersistentContext,channel:'chrome' 不下载浏览器)
-  read-guard.ts       ReadGuard:网络层写请求拦截 + DOM 提交按钮黑名单,fail-closed,全量审计日志
+  extension-bridge.ts  本地桥(2026-08-30,零新依赖):node:http 懒单例,只绑 127.0.0.1,端口池 8791-8795
+                       (与 manifest host_permissions 一一对应);origin 白名单(固定扩展 ID);/jobs 长轮询
+                       (hold ≤20s < MV3 SW 30s 存活窗口)/ /results 回包(≤8MB)/ /health 心跳/ /status 诊断;
+                       queued+inFlight 双表(取活即迁,回包按 jobId 路由);parked 即时派发(新 job 免等一个轮询周期)
+  extension-channel.ts 车道客户端:cookie-names(票据**名字**,协议面无值字段)/ open-login(置前台留用户)/
+                       search(被动嗅探回包)三 job 封装;classifyBridgeFailure 纯函数(仅 extension-not-connected
+                       是用户门 → needs-extension,其余降级 error)
+  transport.ts         CDPAttachTransport(cdp 显式 opt-in 后备:DevToolsActivePort 发现 + puppeteer-core
+                       connect;Chrome 144+ 每连接弹权限框——因此降级);persistent=测试隔离 profile
+  read-guard.ts        ReadGuard(CDP 车道):网络层写请求拦截 + DOM 提交按钮黑名单,fail-closed,全量审计日志
   adapters/<site>.ts  站点适配器:{ entry, searchForm locators, networkHints[{urlPattern,parser}], a11yFallback, cooldown }
                       首个适配器=携程机票(PoC 已识别 networkHints:search/batchSearch + FlightIntlAndInlandLowestPriceSearch)
   action-cache.ts     本地动作缓存:key=指令+DOM 指纹 → 确定性 locator;miss 回退 LLM 重定位并回写
+extension/             GoTry Session Bridge(MV3,零构建):manifest(固定 key)/background.js(长轮询 SW:
+                       search 后台标签+收尾关自己页/open-login 置前台留用户/cookie-names 只取名字值即弃)/
+                       content-main.js(MAIN world hook fetch/XHR,NETWORK_HINTS 命中→CustomEvent)/
+                       content-bridge.js(ISOLATED world,CustomEvent↔chrome.runtime)
 ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots) → 平封 envelope(ADR-13 同构)
 ```
 
-依赖:仅 `playwright-core`(轻量,无浏览器下载,Apache-2.0,符合复用矩阵 open-source import);用戶已装 Chrome 走 `channel:'chrome'`。**npm 分发不硬依赖**:optional peer + 启动检测,缺则降级提示安装命令(沿用 dsh-map-tools 的占位剔除模式)。Stagehand v4 / playwright-mcp / chrome-devtools-mcp 作 P0 技术验证对照,P1 起按「自研薄层 + playwright-core」走(理由:三家都带不匹配的耦合——Stagehand 缓存绑云端、playwright-mcp 是进程级 MCP server、devtools-mcp 偏诊断;gotry 只需要 connect + 嗅探 + a11y 快照 ~500 行)。
+依赖:传输层自身**零新依赖**(扩展=纯 JS 零构建;桥=node:http 手写,不引 ws——MV3 SW 靠 ≤20s 长轮询节奏维持存活,HTTP 够用;publish-preverify 依赖声明闸亦不允许偷用传递依赖);cdp 后备车道保留 puppeteer-core 可选依赖(动态 import 缺包优雅降级)。
 
 ### 3.3 ReadGuard(写操作的物理不可能性,不只是承诺)
 
@@ -137,7 +149,12 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 这是 WriteGate(L0-L4)在检索态的镜像:**写不是「被禁止的行为」,是「不存在的原语」**。
 
-**人机共治标签页纪律(2026-08-29)**:检索与登录引导一律开**独立新标签页**(登录页置前台、留在用户侧),绝不导航用户既有标签页——CDP attach 的浏览器属于用户,我们只动自己开的页(收尾只关自己的页+断开连接);live 探针默认关(`GOTRY_SESSION_LIVE=1` opt-in),测试永不自动开窗。
+**守卫模型按车道分形(2026-08-30 传输层定案增补)**:
+- **扩展车道(PRIMARY)**:物理只读由「扩展自身零写行为」承担——background SW 绝不向站点发任何请求(全部 fetch 只指向 127.0.0.1 桥,run-all §38 代码面断言),只「导航到白名单域 job URL + 被动转发 NETWORK_HINTS 命中响应」;请求级 abort 不存在也不需要(agent 从不注入交互,页面请求全由站点自己发出)。fail-closed 不变量=「桥/扩展未握手即 verdict,零花费」(`needs-extension`,有界等待,不静默回退 CDP)。
+- **cdp 车道(显式后备)**:保留 §3.3 原四层——puppeteer 请求拦截 classifyRequest 双因子 abort + 审计 JSONL + fail-closed(guard 装不上整会话打不开)。
+- 两侧共享:审计同落 `session-incidents.jsonl`(扩展 job 以 `kind:'extension-session-job'` 区分)、`evaluateDoubleSource` 的 `read_guard_blocked!=0 → guard_violation/no_spend_stop` 不变、`needs-extension` → `waiting_extension`(waiting-* 同族 no-spend)。
+
+**人机共治标签页纪律(2026-08-29)**:检索与登录引导一律开**独立新标签页**(登录页置前台、留在用户侧),绝不导航用户既有标签页——浏览器属于用户,我们只动自己开的页(扩展车道:检索后台标签收尾自动关、登录标签留给用户;CDP 车道:收尾只关自己的页+断开连接);live 探针默认关(`GOTRY_SESSION_LIVE=1` opt-in),测试永不自动开窗。
 
 ### 3.4 节律与熔断(把「像人」做成代码)
 
@@ -165,6 +182,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 | **P1 骨架** ✅ **2026-08-28 完成** | transport + ReadGuard + adapter 接口 + 首个适配器(**携程机票**,携程 C 端覆盖最优先且与现有航班静态包直接对账);证据链 `[会话:*]`;隔离 stateRoot 测试(对齐巡检状态纪律,绝不动 dsh-runtime 真实状态) | **已达成**:`capabilities/flyai.ts`(官方通道)+ `capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 五件落地;`session-tests.ts` 25 断言全绿(ReadGuard 双因子/驼峰复合写词/fixture 解析/城市码表三值/节律闸 cooldown/live FlyAI hit/live 会话嗅探 hit+guard 零拦截+审计文件不出现);run-all §24 全栈 ALL GREEN;双源对照首记录(FlyAI ¥230 vs 会话 ¥1611)——**价差已解释(2026-08-28):FlyAI 最低价为南京中转+跨天衔接链(浦东23:00→禄口23:55→次日17:00→三义),携程首屏 ¥1611 为直达档;双源对照断言口径=按 journeyType(直达/中转)分桶、逐段日期对齐后再比**,价差本身即交叉验证的价值论据 | 2-3 tick(实用 1 tick) |
 | **P2 面上** ◐ 2026-08-28 主体完成(余项待登录态) | action-cache 自愈层 ✅(run-all §26);美团适配器骨架+a11y 兜底抽取器 ✅(§27;**匿名 403 实测——登录态是 403 级硬前置,networkHint 待登录后回填**);金标准 20 查询集 ✅ + flyai 基线 ✅(fa-01..04:e2e §14,含 miss 三值活例与火车价打码发现);**#21 字段 fixture scorer/双源合同/waiting-attach no-spend ✅**(`session/benchmark.ts`,run-all §25);飞猪无需会话适配器(FlyAI 官方覆盖);真实 sf-01..08 字段级 ≥90% 跑批仍待登录态 | fixture 合同已纳入确定性回归;真实跑批仍需 Chrome 权限确认和 CDP 握手 | 2-3 tick(实用 3 tick) |
 | **P3 产品化** ◐ 2026-08-28 切片 1/2 完成 | `gotry_flyai_search`+`gotry_session_search` 双工具 ✅(17 工具,smoke §12,hit/限流双合法终态);人格契约 **(19) 三级路由** ✅(仓根 yml,直达/中转分桶);e2e §14 实证记录 ✅;architecture §1/§3/§10、data-sources §8、roadmap ✅,README 无工具清单免同步,stage1 显式让渡;run-all §25-27 全绿 | 真模型 e2e **flyai 侧 ✅**(e2e §15,8ddb997:真模型实际调用 flyai 工具,三源证据链并存,多 lane 协同实证);**待登录态**:真模型 e2e session 侧一例 + 双源 sf-01..08 跑批(风控触发次数=0 实测期口径同此) | 2 tick(实用 2 tick) |
+| **P3.5 传输层定案:扩展桥** ✅ **2026-08-30 完成(方案 C 升 PRIMARY)** | **动因(founder 实测)**:「Chrome attach 逐连接权限框太频繁,根本无法使用」——chrome-devtools-mcp #825 实锤 Chrome 144+ 每连接弹框且无持久化批准,CDP 路线对产品不可用。落地:`extension/` GoTry Session Bridge(MV3 四文件零构建,manifest 固定 key=扩展 ID 稳定;SW 长轮询;MAIN-world 嗅探;cookie-names 只取名字)+ `session/extension-bridge.ts`(node:http 回环桥,零新依赖,origin 白名单,长轮询 <20s 维持 SW 存活)+ `extension-channel.ts` 三 job 封装 + session-search/login 车道路由(扩展默认,cdp 显式 `GOTRY_SESSION_TRANSPORT=cdp`,不静默回退)+ `gotry setup` 扩展落位(~/.gotry/extension,幂等,GOTRY_SETUP_EXTENSION=0 可跳) | 系统弹窗 0 次/会话;run-all §38 全离线合同 23 断言(manifest/固定 ID 派生/Node↔扩展常量防漂移/origin 403/长轮询幂等/心跳/闭环/超时/needs-extension no-spend/waiting_extension);bootstrap-tests 5/5;会话面既有套件全绿;真实 sf-01..08 双源跑批待用户一次性装扩展后收尾(门禁从「开调试端口+每连接点框」降为「装一次扩展」) | 1 tick |
 
 依赖与并行:P0 可即刻开始(不等 M4 记忆域);P1 起与 M4 交替推进,不挤占 M4 主线(会话面是数据域增量,与记忆域正交)。
 
@@ -182,14 +200,14 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 | R2 中国法边界(反不正当竞争 §19 / 刑事红线) | 中 | 四支柱进代码;**绝不绕过反爬、绝不牟利代抢、绝不共享沉淀**;G8 暂缓 12306;正式商用(M5)前取一次法务意见 |
 | R3 prompt injection | 低(因只读) | ReadGuard 物理隔离 + 不可信围栏 + schema 校验;零写原语=爆炸半径为零 |
 | R4 适配器维护(OTA 改版) | 中 | XHR 优先(免疫 UI 改版)+ action-cache 自愈 + 金标准监控;站点数起步 ≤3 |
-| R5 用户心智(「agent 动我浏览器」) | 低 | 首发专用 profile(不动日常浏览器);可见窗口操作;站点白名单;一键全关 |
-| R6 平台通道演化(官方 MCP 全面开放/收紧) | 中 | 数据面排序官方优先;会话层传输/适配器分离,任一侧被掐断可单独替换 |
+| R5 用户心智(「agent 动我浏览器」) | 低 | **扩展桥主载(2026-08-30 定案)**:一次性安装、零系统弹窗、扩展卡片即总闸(与授权闸 sessionAccess 双重控制);检索后台标签收尾自动关、登录标签置前台留给用户;站点白名单;一键全关。原「专用 profile 首发」已按 founder 纠偏退役(匿名实例无人登录) |
+| R6 平台通道演化(官方 MCP 全面开放/收紧) | 中 | 数据面排序官方优先;会话层传输/适配器分离,任一侧被掐断可单独替换;**传输层车道分离(扩展/cdp/persistent)使 Chrome 安全模型再收紧时只动车道不动语义** |
 
 ---
 
 ## 6. 与仓库纪律的勾稽
 
-- **复用矩阵修订提案**(总纲 §2 新行):`@fly-ai/flyai-cli | MIT | import(npx spawn,零渠道知识管道层) | 飞猪官方只读检索通道(机/火/酒/POI),交易经 jumpUrl 由人完成`;`playwright-core | Apache-2.0 | import(devDep,P0 已进 ts/package.json) | 会话检索传输层(connectOverCDP/persistentContext,不下载浏览器)`;`playwright-mcp / Stagehand / chrome-devtools-mcp | MIT/Apache | reference | P0 对照验证,不引依赖`;`browser-use | — | 明确不引入(Python 违纪)`。
+- **复用矩阵修订提案**(总纲 §2 新行):`@fly-ai/flyai-cli | MIT | import(npx spawn,零渠道知识管道层) | 飞猪官方只读检索通道(机/火/酒/POI),交易经 jumpUrl 由人完成`;`playwright-core | Apache-2.0 | import(devDep) | cdp 后备车道传输(Chrome 144+ 逐连接弹窗实测不可产品化,2026-08-30 降级为诊断/显式 opt-in)`;`Chrome Extensions MV3 平台 | 平台能力 | reference + 自研 | 会话传输主载 GoTry Session Bridge(extension/ 自研,2026-08-30 PRIMARY):一次性安装、MAIN-world 被动嗅探、固定 key 扩展 ID;playwright-mcp --extension 仅设计对照,不引代码`;`browser-use | — | 明确不引入(Python 违纪)`。
 - **红线进代码**:ReadGuard = WriteGate 的检索态前置;动机画像/wish pool 红线不动;`[会话:*]` 进 L4 证据链契约。
 - **状态同步**:P3 收尾按 architecture.md §11 六状态面同提交同步。
 - **巡检状态纪律**:所有会话面测试用隔离 stateRoot / 专用测试 profile,绝不动 founder 真实浏览器 profile 与 dsh-runtime 共享状态(2026-08-26 教训的会话版)。

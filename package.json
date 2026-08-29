@@ -45,6 +45,7 @@
     "ts/capabilities/flyai.ts",
     "ts/capabilities/session-search.ts",
     "ts/capabilities/session/",
+    "extension/",
     "ts/package.json",
     "cordis.gotry-patch.yml",
     "README.md",

@@ -98,7 +98,7 @@ GoTry: 收到。先把约束记下来——
 
 ---
 
-## 🧰 20 个工具 — Tools
+## 🧰 21 个工具 — Tools
 
 | 组 | 工具 | 干什么 |
 |---|---|---|
@@ -115,6 +115,7 @@ GoTry: 收到。先把约束记下来——
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | 「下一次出发」愿望池 + 0..1 条件召回 |
 | | `gotry_companion_save` · `gotry_trip_log` | 同行人档案 / 旅行时间线 |
 | **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成的产物(异步交付 + 工作目录 markdown),行号文件视图,只读 |
+| **事实闸** | `gotry_fact_gate` | 行程产物交付前闸:每条可下单 claim(航班号/时刻/机场/价格/政策)必须回溯到 exact-date 工具结果(hit/miss 均落账);无法回溯 ⇒ blocked——不得宣称「已验证方案」 |
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页/字幕/GitHub/全渠道外部信息(经 Agent-Reach) |
 
 ---
@@ -128,7 +129,7 @@ GoTry: 收到。先把约束记下来——
 3. **物理只读** —— ReadGuard 在网络层中止一切写请求(下单/支付在传输层不可达),agent 永不接触凭证与验证码;遇到验证码立即停,交还给你。
 4. **绝不劫持你的浏览器** —— 检索/登录只开自己的独立标签页,登录页置前台、留在你那;例行动测试永不自动开浏览器窗。
 
-> 前置(一次性):日常 Chrome 打开 `chrome://inspect/#remote-debugging` 打开开关(Chrome 144+),并保持 Chrome 在线。未开启时工具返回 `needs-attach` 并给出指引,不消耗执行配额。
+> 前置(一次性):安装随包分发的 **GoTry Session Bridge** 浏览器扩展(MV3,约 30 秒):跑 `npx gotry setup` 落位到 `~/.gotry/extension`,再到 Chrome `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」选该目录。装完**零系统弹窗**——扩展只被动转发站点自己发出的检索响应(构造上只读;cookie 只读名字,值永不离开浏览器)。未安装时工具返回 `needs-extension` 并给出指引,不消耗执行配额。(诊断后备:cdp 车道经 `chrome://inspect` 远程调试,`GOTRY_SESSION_TRANSPORT=cdp` 显式开启——注意 Chrome 144+ 每次连接都会弹权限框。)
 
 ---
 
@@ -137,7 +138,7 @@ GoTry: 收到。先把约束记下来——
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ L1  对话即界面  chat-as-UI; gates 是消息内选择题                 │
-│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);20 个工具            │
+│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);21 个工具            │
 │ L3  领域  统一行程模型 + Z3 可行性引擎(枚举/Z3 双形态)        │
 │ L4  数据  静态数据包 + hotelbyte-cli 实时桥 + OpenFlights 骨架 │
 │ L5  治理  LoopX(objective / gates / evidence / quota)         │
@@ -146,7 +147,7 @@ GoTry: 收到。先把约束记下来——
 
 | 层 | 模块 | 角色 |
 |---|---|---|
-| L2 | `ts/src/index.ts`(dsh 插件) | 注册 20 工具,挂时间锚点/记忆 brief 变量;execute 异常隔离 + 授权闸 + 进程护栏 |
+| L2 | `ts/src/index.ts`(dsh 插件) | 注册 21 工具,挂时间锚点/记忆 brief 变量;execute 异常隔离 + 授权闸 + 进程护栏 |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | 唯一求解入口(候选枚举 + 航班链 Z3) |
 | L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | 效应解译层(退避重试/断路器/mock 解译器,issue #16)+ 实时库存桥 + OpenFlights 骨架(三值语义) |
 | L5 | loopx 治理面 | objective / gates / evidence / quota |
@@ -232,4 +233,4 @@ GoTry: 收到。先把约束记下来——
 
 **Built with**: DeepSeek Harness 0.1.2-alpha.1 (vendored) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
 
-**Last verified against `v0.0.1-rc.15`(2026-08-29)** — 全栈回归全绿 §1-§36(发布流程见 `scripts/publish-npm.sh`)。
+**Last verified against `v0.0.1-rc.15`(2026-08-29)** — 全栈回归全绿 §1-§38(发布流程见 `scripts/publish-npm.sh`)。
