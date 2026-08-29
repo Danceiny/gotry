@@ -1,5 +1,17 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.15(预订 saga 状态机具名化,**已发布 2026-08-29**)
+
+rc.14 → rc.15 增量(issue #17 采纳,founder 确认制下 agent 执行,指令「按你推荐的做,然后提pr,发新版本」):
+
+- **预订 saga 状态机词汇层**:`booking_saga_fsm.v1` 纯函数(`ts/src/booking-saga.ts`)——状态字母表(与 pending_writes CHECK 逐字一致)+ 四条边全函数边表(12 格含结构化拒绝闭集,compensated 吸收态)+ 审计链校验器;`ts/scripts/booking-saga-tests.ts` 25 断言与账本 saga 基座逐格物理对账(run-all 新增 §36)——M5 启封时 booking seam 只许走该边表
+- **边型词汇**:deterministic-edge(合规/政策判定恒为代码层 Z3 命名约束/unsat core)/ gate-edge(用户选择题)/ external-event-edge(HITL 审批 = pending 持久挂起 + 外部账本事件恢复,复用 ApprovalSeam)——回应 issue #17「FSM 显式建模」而不引入编排骨架(LangGraph 等,ADR-17)
+- ADR-17 立;设计文档 `docs/booking-saga-fsm.md`(机理归宿映射 + M5 启封增量);已知边界「空 receipt 无物理 CHECK」= D-22
+- npm files 增补 `ts/src/booking-saga.ts`(词汇层入包,M5 seam 消费)
+
+### 发布闸状态
+- ① 全栈回归 ALL GREEN(§1-§36,新增 §36 预订 saga 状态机 25 断言)✅ ② 六状态面同步(architecture §1/§9/§10/§12 + roadmap 当前位置 ×2 + release-notes + 双 README Last verified,分两提交:特性 #44 + 本发布提交)✅ ③ README 用法实测(发布后 registry 干净安装回拉)✅ ④ License MIT ✅ ⑤ 版本号一致(tag/package.json/双 README/roadmap/release-notes = rc.15)✅
+
 ## v0.0.1-rc.14(文档中英分开发布,**已发布 2026-08-29**)
 
 rc.13 → rc.14 增量(founder 指令「文档要中英文分开。。。常见的设计」):
