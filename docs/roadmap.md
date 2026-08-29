@@ -8,7 +8,7 @@
 
 ## 当前位置(2026-08-27)
 
-**`@danceiny/gotry@0.0.1-rc.11` 已发布,npm latest 直指本版**(2026-08-29:已知限制清算第一刀——Z3 WASM race 根治(D-17)/实时票价桥(flyai overlay,静态包转显式降级)/i18n 英文面(工程层)/薄壳遗留删除;run-all 新增 §30-§32 三闸;founder 确认制下 agent 执行(「测试好了就可以发新版本」),registry 回拉实测全过);历史:rc.10 2026-08-28 发布(双形态冻结 ADR-16/会话传输层 puppeteer 定案/依赖面根治 rc.9「装得上跑不起」缺陷,曾为 latest;rc.9 标缺陷退役);rc.8 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
+**`@danceiny/gotry@0.0.1-rc.11` 已发布,npm latest 直指本版**(2026-08-29:已知限制清算第一刀——Z3 WASM race 根治(D-17)/实时票价桥(flyai overlay,静态包转显式降级)/i18n 英文面(工程层)/薄壳遗留删除;run-all 新增 §30-§32 三闸;founder 确认制下 agent 执行(「测试好了就可以发新版本」),registry 回拉实测全过);历史:rc.10 2026-08-28 发布(双形态冻结 ADR-16/会话传输层 puppeteer 定案/依赖面根治 rc.9「装得上跑不起」缺陷,曾为 latest;rc.9 标缺陷退役);rc.8 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**里程碑口径:M3 工程与分发面已就绪，但真实种子用户 evidence 未收口；M4 由 founder 授权并行推进，不构成 M3 Exit 证明；M5/M6 仅在各自 Entry gate 满足后启动。**
 
 **M3 真实证据并行线(Issue #22,2026-08-29)**:manifest 冻结样本窗口、纳排、分母、归因与 Exit 阈值；脱敏 cohort/nightly schema 和确定性 scorer 已有 synthetic fixture 守门。fixture 只能证明合同与公式，永不算 business pass；当前没有 50–200 人真实 cohort，M3 Exit 仍开放。
 
@@ -27,7 +27,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | dev(未发) | 持续 main 直推 | issue 冲刺 14/14 交付(README 一致性/域边界/数据污染根除等),17 套 ALL GREEN |
 | 后续 | founder 侧 | 种子用户邀约;rc.5 deprecate/rc tag 指向待下次 2FA 授权点击 |
 
-**M3 已被 founder 判定推进(2026-08-26 指令「现在推进 M4」)**:工程面全通+创始人真实使用中;种子用户扩展与 M4 并行。**当前 = M4 记忆域**(T1 行为链已闭合:动态吸收→读回→效用→触达→度量;六层重设计正式落地 `memory-design.md`,分期增量 P1 旅行时间线→P2 同行人档案→P3 时间窗衰减→P4 双区会话后置)。**2026-08-28 会话数据面并行线(RFC `user-session-data-rfc.md`,loopx goal `gotry-session-data-goal`)**:P0 官方通道尽调(飞猪 FlyAI 无 key 只读,机/火检索官方主链路)+ P1 会话骨架(ReadGuard 物理只读/携程 batchSearch 嗅探/节律闸,登录态=存在前提)+ P2 action-cache 自愈层/美团骨架(a11y 兜底,匿名 403 实测)/金标准 20 查询/**#21 字段 fixture scorer+双源合同+waiting-attach no-spend 已落** + P3 工具面两工具(17 工具,smoke §12)与人格契约 (19) 三级路由——与 M4 记忆域正交推进;待用户日常 Chrome 完成 remote debugging、权限确认和 CDP 握手后收尾真实 sf-01..08 双源跑批/真模型巡检。**2026-08-28 事务化状态基座落地(ADR-15,RFC `transactional-state-rfc.md` accepted「按你的建议来」)**:「文件即权威」升级为「单文件 SQLite 账本即权威」——events append-only + 投影 fold 重建 + 红线(evidence/conditions)进事务 + confirm-outcome 单事务 + 异步工单 durable 恢复(exactly-once)+ pending_writes saga(WriteGate M5 的 L2/L3 基座,D4 定为 M5 Entry 前置);旧 JSON/JSONL 降级为单向导出视图(红线 6),首写自动迁移+快照;run-all §28(44 断言,含双形态)/§29,多用户账本化(RFC §6.5)触发式后置(D-15)。**同日 ADR-16 双形态架构冻结**:本地+Web 一套账本语义、tenant_id 一等字段(schema v2)、同步=事件复制非状态翻译——防「将来大规模重构」的核心冻结,founder 拍板「要的」。**2026-08-29 已知限制清算第一刀(founder 指令「解决这些 known limitations」)**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸),薄壳遗留(`shell/`)物理删除——README Known limitations 中两条就此清偿,余两条同批推进:实时票价桥已接入(flyai overlay+env 闸,run-all §31),i18n 工程面落地(run-all §32:en 零缺键/zh 金标准逐字节),人格与工具卡的校准后补齐挂 M4。
+**M3 工程面已推进但 Exit 未关闭；M4 自 2026-08-26 起由 founder 授权并行推进，不是 M3 Exit 证明。** M4 记忆域 T1 行为链已闭合（动态吸收→读回→效用→触达→度量），六层重设计已落地 `memory-design.md`，分期增量为 P1 旅行时间线→P2 同行人档案→P3 时间窗衰减→P4 双区会话后置。**2026-08-28 会话数据面并行线(RFC `user-session-data-rfc.md`,loopx goal `gotry-session-data-goal`)**:P0 官方通道尽调(飞猪 FlyAI 无 key 只读,机/火检索官方主链路)+ P1 会话骨架(ReadGuard 物理只读/携程 batchSearch 嗅探/节律闸,登录态=存在前提)+ P2 action-cache 自愈层/美团骨架(a11y 兜底,匿名 403 实测)/金标准 20 查询/**#21 字段 fixture scorer+双源合同+waiting-attach no-spend 已落** + P3 工具面两工具(17 工具,smoke §12)与人格契约 (19) 三级路由——与 M4 记忆域正交推进;待用户日常 Chrome 完成 remote debugging、权限确认和 CDP 握手后收尾真实 sf-01..08 双源跑批/真模型巡检。**2026-08-28 事务化状态基座落地(ADR-15,RFC `transactional-state-rfc.md` accepted「按你的建议来」)**:「文件即权威」升级为「单文件 SQLite 账本即权威」——events append-only + 投影 fold 重建 + 红线(evidence/conditions)进事务 + confirm-outcome 单事务 + 异步工单 durable 恢复(exactly-once；`gotry_async_terminal.v1` 将 4/4 映射为 `succeeded`/ledger `settled`/exit 0，将非 4/4 映射为 `failed`/ledger `failed`/exit 2，终态复诵零重算且保持同一退出码)+ pending_writes saga(WriteGate M5 的 L2/L3 基座,D4 定为 M5 Entry 前置);旧 JSON/JSONL 降级为单向导出视图(红线 6),首写自动迁移+快照;run-all §28/§29,多用户账本化(RFC §6.5)触发式后置(D-15)。**同日 ADR-16 双形态架构冻结**:本地+Web 一套账本语义、tenant_id 一等字段(schema v2)、同步=事件复制非状态翻译——防「将来大规模重构」的核心冻结,founder 拍板「要的」。**2026-08-29 已知限制清算第一刀(founder 指令「解决这些 known limitations」)**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸),薄壳遗留(`shell/`)物理删除——README Known limitations 中两条就此清偿,余两条同批推进:实时票价桥已接入(flyai overlay+env 闸,run-all §31),i18n 工程面落地(run-all §32:en 零缺键/zh 金标准逐字节),人格与工具卡的校准后补齐挂 M4。
 
 **M4 Issue #20 证据切片(2026-08-29)**:paired cohort 合同与只读 synthetic fixture scorer 已落地,固定唯一匿名 subject、returning 晚于 first、active planning duration 扣除预声明 external waits、N/p50/p75/逐 pair reduction、experience reflux、偏好溯源/硬过滤红线与 P4 trigger 闸。合成 N=3 明确 `exit_evidence_eligible=false`;当前瓶颈是私有真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
 
@@ -42,10 +42,10 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | M0 | 确定性管道 | 引擎双实现+真实数据包+对账框架 | demo 规划书 | — | ✅ |
 | M1 | **Agent 形态成立** | LLM 进环(S1-S5) | 对话即界面(gates 选择题) | — | ✅(2026-08-22,`bb880f3`) |
 | M2 | 实时数据 | hotelbyte-cli 桥+航班源(免费/开源优先),静态包退役为夹具 | 证据链换血([估算]→[实时API]) | 数据源选型(免费/开源优先) | ✅(2026-08-22,`b0cfd97`) |
-| M3 | 最小可用产品 | 最小 Web 面(D-4 偿还)+ cohort evidence scorer | 透明卡片/动机访谈可体验;种子用户 50-200 人 | **G1 市场锁定必须在此前完成**;种子即洱海+普吉两类场景 | ← **当前;等待真实 cohort** |
-| M4 | 记忆与「下一次出发」 | 六层 memory 的 C 端域实现;wish pool 联动回访 | 北极星(下一次出发率)开始度量;对账七题=首批校准 | 订阅形态验证(¥49/年锚) | **并行推进**(#20 合同 scorer 已落地;真实 cohort 待) |
-| M5 | 交易闭环 | WriteGate 上生产;预订/支付/退改 | 佣金披露上线;红线随行 | 三层收入全开(免费/Plus/佣金) | 未启动 |
-| M6 | B2B 包裹 | principal/sponsor 插件化,内核零改动跑通旅行社嵌入 | 两层为什么实证 | 「99% 复用」从论断变实测;B2B 试点 | 未启动 |
+| M3 | 最小可用产品 | 最小 Web 面(D-4 偿还)+ cohort evidence scorer | 透明卡片/动机访谈可体验;种子用户 50-200 人 | **G1 市场锁定必须在此前完成**;种子即洱海+普吉两类场景 | ← **evidence 未收口** |
+| M4 | 记忆与「下一次出发」 | 六层 memory 的 C 端域实现;wish pool 联动回访 | 北极星(下一次出发率)开始度量;对账七题=首批校准 | 订阅形态验证(¥49/年锚) | **founder 授权并行，非 M3 Exit**（#20 scorer 已落地；真实 `observed_private` N≥5 待） |
+| M5 | 交易闭环 | WriteGate 上生产;预订/支付/退改 | 佣金披露上线;红线随行 | 三层收入全开(免费/Plus/佣金) | 未来，仅受 M5 Entry gate 开闸 |
+| M6 | B2B 包裹 | principal/sponsor 插件化,内核零改动跑通旅行社嵌入 | 两层为什么实证 | 「99% 复用」从论断变实测;B2B 试点 | 未来，仅受 M6 Entry gate 开闸 |
 
 ## 里程碑详情
 
@@ -60,13 +60,13 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 - **交付**:capability-hotelbe 插件、航班数据桥(OpenFlights 骨架+OpenSky 校验+bookedResources 锚点);deprecated 层迁移(D-7)未做,顺延 M3 早期(见 §10)。
 - **Exit**:同一 JourneySpec 实时 vs 静态的求解差异可度量、可归因。
 
-### M3:最小可用产品(← 当前;产品里程碑与商业 gate 交汇点)
+### M3:最小可用产品(← evidence 未收口;产品里程碑与商业 gate 交汇点)
 - **Entry**:M2 exit ✅ + **G1 市场锁定** ✅(中国出境首发,创始人「按推荐方案执行」指令结算,`b0cfd97` 同批)。
 - **交付**:最小 Web 面(透明卡片+动机访谈+gates 的可体验形态,D-4 清偿);种子用户 50-200 人邀请制;Issue #22 evidence manifest、脱敏 schema 与确定性 scorer 已进入工程面，真实样本只进私有且被忽略的 `ts/gotry-state/evidence/m3/`。
 - **Exit**:种子用户行程定稿率 ≥40%、NPS ≥40、POI 幻觉 <1%(评测三件套全绿)。
 
-### M4:记忆与「下一次出发」
-- **Entry**:M3 exit。**交付**:C 端记忆域(六层框架重设计)、主动回访(可关闭)、北极星开始度量;对账七题答案=红眼模型与偏好的首批校准样本。
+### M4:记忆与「下一次出发」(founder 授权并行;非 M3 Exit 证明)
+- **Entry**:正式里程碑 Entry 仍是 M3 exit；当前仅由 founder 授权并行工程切片，不改变 M3 Exit 判定。**交付**:C 端记忆域(六层框架重设计)、主动回访(可关闭)、北极星开始度量;对账七题答案=红眼模型与偏好的首批校准样本。Issue #20 scorer 已落地，真实 `observed_private` N≥5 repeat cohort 仍是 M4 Exit 前置。
 - **Exit**:回访用户规划时长较首访降 ≥50%;经验回流率有基线。
 
 ### M5:交易闭环
