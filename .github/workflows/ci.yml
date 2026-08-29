@@ -48,6 +48,14 @@ jobs:
         run: npm ci --no-audit --no-fund
         working-directory: ts
 
+      - name: Build dist (§25 publish-preverify packs the real dist)
+        run: node scripts/build-dist.mjs
+
+      - name: Install agent-reach (§15 wrapper 真 doctor)
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet agent-reach==1.5.0
+
       - name: Typecheck
         run: npx tsc --noEmit
         working-directory: ts
