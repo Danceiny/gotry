@@ -22,7 +22,7 @@
 **异步终态合同(Issue #19,2026-08-29)**:`gotry_async_terminal.v1` 将 4/4 映射为 `succeeded`/ledger `settled`/exit 0,将非 4/4 映射为 `failed`/ledger `failed`/exit 2;终态复诵返回同一结构化结果与退出码且零重算。
 
 
-**产物面最小切片(Issue #25,2026-08-29)**:`gotry_artifacts_list/read`(第 19/20 工具)——账本 workflow_runs 交付 + dsh 工作目录顶层 md 在 dsh 内可发现、可读(dsh read 卡行号文件视图,工单 id 直读 + offset/limit 翻页);只读能力层 `capabilities/artifacts.ts`(路径白名单 = stateRoot+工作目录、排除 node_modules/.git;扩展名白名单 = 文本类),smoke §13。完整 artifacts 面板(Manus/Kimi 式侧栏)不在本切片,仍属 m3-web-gap G-3/G-4 方向 B。
+**产物面最小切片(Issue #25,2026-08-29)**:`gotry_artifacts_list/read`(第 19/20 工具)——账本 workflow_runs 交付 + dsh 工作目录顶层 md 在 dsh 内可发现、可读(dsh read 卡行号文件视图,工单 id 直读 + offset/limit 翻页);只读能力层 `capabilities/artifacts.ts`(路径白名单 = stateRoot+工作目录、排除 node_modules/.git;扩展名白名单 = 文本类),smoke §13。面板第二切片(同日,founder 指令「看 dsh-market 成熟组件」):自建零依赖 webui 因 UI 品质不达产品级撤回,改走宿主组件 **dsh-better-sidebar**(dshmarket.com #1 UI,18.9 万周装,v0.17.1 双形态兼容)——`gotry setup` 宿主层安装(dsh plugin → ~/.dsh/profiles/web,不进 gotry 依赖),dsh web 右侧工作台(文件树/Markdown/Mermaid/PDF 预览)直接浏览工作区产物;账本感知产物 Tab(better-sidebar registerTab,需 client-half 插件面)列下一阶段。
 
 ## 2. 总体架构:五层与现状
 
@@ -161,7 +161,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 - **OTA 平铺 + 账号授权闸(2026-08-29 第二批,founder 口径「OTA 这些都是工具,不要区分主路径/降级路径;用用户账号必须跟用户确认」)**:①酒店接入官方只读通道——flyai `search-hotel` 实测(大理:结构化 name/star/打码价 ¥7xx/detailUrl;解析契约 `FlyaiHotelOption`,打码价保 priceRaw 原值、数字价恒 0,防「¥7xx 截成 7 伪装真价」),`gotry_flyai_search` kind=flight|train|hotel 三形态,参数闸 per-kind;②OTA 工具面平铺——工具描述与 persona (19) 去「主链路/交叉验证/三级路由」层级话术(数据层 L4 证据链逐源标注照旧,拍平的是路由优先级不是标注纪律);③账号授权闸(v2,当日二迭代):`session-consent.ts` 挂 `tools/pre-execute`,**每会话每站点首次调用**弹审批卡→会话内记住,**拒绝=本会话吊销**(不再弹卡不再执行;首版逐次弹卡被 founder 实测否决——「每次都要弹,经常无法点击」),sessionAccess `ask|allow|off` 三态,无审批通道/headless fail-closed;授权状态存 Weak<agent> 绝不跨会话延续;④**登录态 seam 落地**:`scripts/session-login.ts`(cdp attach→开登录入口→人登录→只读轮询票据名)替代「跑脚本」空指引;⑤测试纪律:session-tests live 节默认 SKIP,`GOTRY_SESSION_LIVE=1` 显式开启——**例行回归永不自动开用户浏览器窗口**。run-all §24(session-tests §H/§I)+ smoke §12-13;全栈回归全绿。
 
-- **产物面最小切片(2026-08-29,issue #25)**:agent 产物此前只写本地文件、dsh 内仅见文件名——`gotry_artifacts_list/read` 把账本工单交付与工作目录 md 变为 dsh 内可发现、可读的对象;完整 artifacts 面板仍属 m3-web-gap G-3/G-4 方向 B。
+- **产物面(2026-08-29,issue #25,两步)**:①dsh 内查看——`gotry_artifacts_list/read` 把账本工单交付与工作目录 md 变为可发现、可读对象(read 卡);②成熟面板——dsh-market 调研(dshmarket.com,2495 插件)选型 **dsh-better-sidebar**(★3083/18.9 万周装,#1 UI 组件;自建零依赖 webui 因品质不达产品级当日撤回),`gotry setup` 宿主层安装(GOTRY_SETUP_SIDEBAR=0 可跳,幂等/失败降级路①),dsh web 侧栏工作台浏览+渲染工作区产物;产物 Tab(registerTab client-half)为下一阶段。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 

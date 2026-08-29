@@ -11,6 +11,7 @@
 |---|---|---|
 | [HorusJiang/dsh-map-tools](https://github.com/HorusJiang/dsh-map-tools) | 驾车/公交/步行/骑行路线规划、地理编码、逆地理编码、POI 搜索——**原生工具**,模型直接调,无需 MCP | ✅ **已集成 2026-08-22**(v0.4.4,e2e 实测 map_driving_route 160.5km/119min 真调用) |
 | [STARDUSTLC666/dsh-calendar](https://github.com/STARDUSTLC666/dsh-calendar) | CalDAV 读写日历,重复日程自动展开,5 个面向模型的工具 | ✅ **已集成 2026-08-25**(v0.3.2,calendar_list/search/create/update/delete 注册;CalDAV 配置后工作窗口自动读取,等配置即插即用) |
+| [omdsh-dev/DSH-better-sidebar](https://dshmarket.com/zh/p/omdsh-dev/DSH-better-sidebar/) | dsh web 侧栏工作台:文件树+Markdown/Mermaid/PDF 预览+编辑器+Git 面板;三方 Tab API(registerTab/registerFileViewer);★3083/18.9 万周装(dshmarket #1 UI) | ✅ **已集成 2026-08-29**(v0.17.1,`gotry setup` 宿主层安装,issue #25 产物查看面;实测 web profile 加载,文件工作台可用;账本感知产物 Tab 待 client-half 阶段) |
 
 ## 产品闭环基建(「下一次出发」的触达宿主,M3→M5)
 
