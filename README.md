@@ -191,7 +191,7 @@ GoTry: 收到。先把约束记下来——
 ## ⚠️ Known limitations · 已知限制
 
 - ✅ **License MIT** (D-1 落地 2026-08-23)
-- **zh-CN 体验** — 当前面向中国出境首发(你的账号语言习惯)。英文界面/wider 国际化未做,等 M4 校准输入落定。
+- ✅ **英文面(工程层)已就绪** — 求解确定性输出面(候选/航班链 answer_md、放宽建议、排除理由)i18n catalog 化:`GOTRY_LOCALE=en` 或 `setLocale('en')` 即英文,默认 zh-CN 与金标准逐字节一致(run-all §32:en 零缺键/切换数据不动)。**残余(诚实声明)**:dsh web 界面属宿主、工具结果卡与人格对话面等 M4 校准输入落定后随校准样本补齐——种子市场仍是中国出境(G1)
 - ✅ **机票实时数据已接入** — dated 航班链段可经 FlyAI 官方只读通道取实时票价覆写(`GOTRY_REALTIME_PRICING=1`,证据链 `[实时API:flyai@ts]`,miss/error/打码价一律降级回静态包 `data/flights_2026.json`);静态包由「唯一来源」变为「显式降级」,零 key 可用
 - **Z3 WASM race** — 连续跑多个测试套件时偶发 `memory access out of bounds`(已规避回滚)。M3 早期处理。
 - ✅ **薄壳已删除** — `shell/` 目录与 `./gotry shell` 分支已移除(2026-08-29 清理;dsh web 唯一产品面,旧命令行在 git 历史/rc.6 文档内可考)
@@ -225,7 +225,7 @@ GoTry: 收到。先把约束记下来——
 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离) · 天气 · 航班 ·
 Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 ·
 时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)·
-记忆域(动机合并守门/效用 sidecar/只读指标投影)。
+记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)**。
 
 ---
 

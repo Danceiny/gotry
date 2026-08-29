@@ -156,6 +156,10 @@ echo "=== 31. 实时票价 overlay(flyai 实时桥 + 静态降级三值语义;�
 (cd ts && npx tsx scripts/realtime-pricing-tests.ts | tail -1) || FAIL=1
 
 echo
+echo "=== 32. i18n 目录(en 零缺键/默认 zh 金标准逐字节/en 切换数据不动/插值回退) ==="
+(cd ts && npx tsx scripts/i18n-tests.ts | tail -1) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
