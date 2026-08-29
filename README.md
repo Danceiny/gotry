@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Version** | `v0.0.1-rc.11`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
-| **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;17 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);**会话数据面 #21**:字段 fixture scorer、双源合同与 waiting-attach no-spend 已进确定性回归,真实 sf-01..08 尚未验收;**2026-08-29 已知限制清算第一刀**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸)、薄壳遗留(`shell/`)物理删除;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
+| **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;M3 真实证据并行线(Issue #22)提供冻结阈值、严格脱敏 schema 与确定性 scorer，synthetic fixture 永不产生 business pass，真实 50–200 人 cohort 仍待收集，M3 Exit 未关闭;17 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);**会话数据面 #21**:字段 fixture scorer、双源合同与 waiting-attach no-spend 已进确定性回归,真实 sf-01..08 尚未验收;**2026-08-29 已知限制清算第一刀**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸)、薄壳遗留(`shell/`)物理删除;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) · CI: typecheck + 全栈回归(Node 22/24) |
 | **Runtime** | DeepSeek Harness **0.1.2-alpha.1**（vendored 源码 tarball `ts/dsh-runtime/vendor/`，上游 npm 未发版、从 GitHub tag `dsh-v0.1.2-alpha.1` 构建，溯源见 [`ts/dsh-runtime/vendor/README.md`](ts/dsh-runtime/vendor/README.md)；[upstream](https://github.com/deepseek-ai/DeepSeek-Harness)） · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
@@ -237,7 +237,7 @@ GoTry: 收到。先把约束记下来——
 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离) · 天气 · 航班 ·
 Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 ·
 时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)·
-记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)**。
+记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)· M3 cohort 证据合同(§33)**。
 
 ---
 
