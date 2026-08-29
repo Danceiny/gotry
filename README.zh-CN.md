@@ -232,4 +232,4 @@ GoTry: 收到。先把约束记下来——
 
 **Built with**: DeepSeek Harness 0.1.2-alpha.1 (vendored) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
 
-**Last verified against `v0.0.1-rc.14`(2026-08-29)** — 全栈回归全绿 §1-§34(发布流程见 `scripts/publish-npm.sh`)。
+**Last verified against `v0.0.1-rc.15`(2026-08-29)** — 全栈回归全绿 §1-§36(发布流程见 `scripts/publish-npm.sh`)。
