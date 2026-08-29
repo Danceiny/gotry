@@ -12,6 +12,8 @@
 
 **M3 真实证据并行线(Issue #22,2026-08-29)**:manifest 冻结样本窗口、纳排、分母、归因与 Exit 阈值;脱敏 cohort/nightly schema 和确定性 scorer 已有 synthetic fixture 守门。fixture 只能证明合同与公式,永不算 business pass;同日第二批:nightly real-LLM 证据生产器 `nightly-evidence.ts` 就位(封存 prompt 集+价表,无凭证 waiting/backoff/no-spend 零写入,run-all §35),验收⑥「nightly 可复跑」的机械前提闭合,真跑记录待凭证环境;当前没有 50–200 人真实 cohort,M3 Exit 仍开放。
 
+**架构面增量(2026-08-29,未随版本发布,主仓领先已发包形态)**:issue #16 采纳——效应解译器 effect_interpreter.v1(ADR-18)落地 L4 渠道边界:指数退避重试/断路器/mock 解译器(纯离线 CI 面)收敛进解译层,五渠道工具+realtime-pricing 已接,余下渠道增量迁移(D-23),run-all §37;OTA 工具面照旧平铺,证据链逐源标注不变。工程面交付,不构成任何里程碑 Exit 证据(D-20 口径)。
+
 rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
 | RC | 状态 | 范围 |

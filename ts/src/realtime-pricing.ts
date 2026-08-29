@@ -11,7 +11,8 @@
  *   - 查询实现注入(测试离线确定性);默认关,`GOTRY_REALTIME_PRICING=1` 开启产品面。
  */
 
-import { flyaiSearch, type FlyaiOption, type FlyaiResult } from '../capabilities/flyai.ts'
+import { interpretEffect } from '../capabilities/effect.ts'
+import type { FlyaiOption, FlyaiResult } from '../capabilities/flyai.ts'
 import type { JourneySpecTS, SegmentTS } from './unified.ts'
 
 export interface RealtimeQueryPort {
@@ -86,7 +87,13 @@ export async function overlayRealtimeFlightPrices(
   return out
 }
 
-const defaultQuery: RealtimeQueryPort = q => flyaiSearch({ kind: q.kind, origin: q.origin, destination: q.destination, depDate: q.depDate })
+/** 默认查询面走效应解译器(ADR-18):多段行程连查享有退避重试/断路器保护——
+ * 断路拒绝(上游连环失败)时抛错,一并落在「实时票价不可用(降级静态包)」既有兜底里 */
+const defaultQuery: RealtimeQueryPort = async q => {
+  const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind: q.kind, origin: q.origin, destination: q.destination, depDate: q.depDate } })
+  if (!itp.result) throw new Error(itp.trace.evidence.join(';'))
+  return itp.result
+}
 
 interface SolveResultWithNotes {
   feasible: boolean

@@ -22,7 +22,6 @@ import { ensureStateDir, recordLatency } from './bridge.ts'
 import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import { parseCandidate, parseRequest } from './model.ts'
-import { searchHotels as hbcliSearchHotels } from '../capabilities/hbcli.ts'
 import { installProcessGuards, guardToolExecute } from '../capabilities/incident-log.ts'
 import { interpretArgs, type GotryObservation } from './tool-packet.ts'
 import { projectUtility } from './memory-utility.ts'
@@ -31,16 +30,14 @@ import { resolveTimelineDate } from './travel-timeline.ts'
 import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, readTripsWithFallback, readWishPoolWithFallback } from './state-ledger.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
-import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
-import { verifyFlight } from '../capabilities/opensky.ts'
+import { wmoLabel } from '../capabilities/weather.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
 import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
-import { flyaiSearch } from '../capabilities/flyai.ts'
-import { sessionFlightSearch } from '../capabilities/session-search.ts'
 import { sessionLogin } from '../capabilities/session-login.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
+import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -494,10 +491,14 @@ export function apply(ctx: Context, config: Config): void {
         if (r.raw !== r.date) dateNotes.push(`slot-resolved: ${r.raw} → ${r.date}`)
         return r.date
       }
-      const resp = await hbcliSearchHotels(
-        { destination: q.destination, checkIn: resolveDate(q.checkIn), checkOut: resolveDate(q.checkOut), adults: q.adults },
-        { hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs, fallbackPath },
-      )
+      // 效应解译层(ADR-18):渠道选择/韧性(重试/熔断)在解译器,result 原样透传——
+      // 断路拒绝时返回平铺失败面(不发起查询,不伪装成 miss)
+      const itp = await interpretEffect({
+        effect: 'HBCLI_HOTEL_SEARCH',
+        params: { destination: q.destination, checkIn: resolveDate(q.checkIn), checkOut: resolveDate(q.checkOut), adults: q.adults, hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs, fallbackPath },
+      })
+      if (!itp.result) return declinedObservation('HBCLI_HOTEL_SEARCH', itp.trace)
+      const resp = itp.result
       const dir = await ensureStateDir(config.stateRoot)
       const isLive = resp.via === 'hbcli-realtime'
       const evidence = isLive ? resp.evidence : '[静态包:估算]'
@@ -584,7 +585,9 @@ export function apply(ctx: Context, config: Config): void {
       let placeLabel = q.place ?? `${q.lat},${q.lng}`
       if (lat === undefined || lng === undefined) {
         if (!q.place) throw new Error('gotry_weather_check requires place name or lat/lng')
-        const geo = await geocodePlace(q.place)
+        const geoItp = await interpretEffect({ effect: 'WEATHER_GEOCODE', params: { name: q.place } })
+        if (!geoItp.result) return declinedObservation('WEATHER_GEOCODE', geoItp.trace)
+        const geo = geoItp.result
         if (!geo.ok || geo.results.length === 0) {
           return JSON.parse(JSON.stringify({ ok: false, summary: `地点「${q.place}」地理编码失败:${geo.error ?? '无结果'}`, evidence: geo.evidence })) as Record<string, never>
         }
@@ -593,9 +596,11 @@ export function apply(ctx: Context, config: Config): void {
         placeLabel = `${hit.name}(${hit.admin1 ?? hit.country ?? ''})`
       }
       const isClimate = q.mode === 'climate' || (q.month !== undefined && q.mode !== 'forecast')
-      const r = isClimate
-        ? await getClimate({ latitude: lat, longitude: lng }, q.month ?? new Date().getMonth() + 1)
-        : await getForecast({ latitude: lat, longitude: lng }, { days: q.days })
+      const wxItp = isClimate
+        ? await interpretEffect({ effect: 'WEATHER_CLIMATE', params: { latitude: lat, longitude: lng, month: q.month ?? new Date().getMonth() + 1 } })
+        : await interpretEffect({ effect: 'WEATHER_FORECAST', params: { latitude: lat, longitude: lng, days: q.days } })
+      if (!wxItp.result) return declinedObservation(isClimate ? 'WEATHER_CLIMATE' : 'WEATHER_FORECAST', wxItp.trace)
+      const r = wxItp.result
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `weather:${r.via}`).catch(() => {})
       const dailyLines = (r.daily ?? []).slice(0, 7).map(d =>
@@ -650,7 +655,9 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.callsign) {
         return JSON.parse(JSON.stringify({ verdict: 'unavailable', evidence: '[校验不可用:无 callsign]', summary: 'callsign 必填' })) as Record<string, never>
       }
-      const r = await verifyFlight({ callsign: q.callsign, airport: q.airport, timeoutMs: q.timeoutMs })
+      const itp = await interpretEffect({ effect: 'OPENSKY_FLIGHT_VERIFY', params: { callsign: q.callsign, airport: q.airport, timeoutMs: q.timeoutMs } })
+      if (!itp.result) return declinedObservation('OPENSKY_FLIGHT_VERIFY', itp.trace)
+      const r = itp.result
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `flight_verify:${r.via}`).catch(() => {})
       const summary = r.verdict === 'observed'
@@ -702,7 +709,9 @@ export function apply(ctx: Context, config: Config): void {
             return { ok: false, summary: 'checkOut 需 YYYY-MM-DD(与 checkIn 成对)' } as const
           }
         }
-        const r = await flyaiSearch({ kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords })
+        const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords } })
+        if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
+        const r = itp.result
         const top = (r.hotels ?? []).slice(0, 8).map(o => `${o.name}${o.star ? `(${o.star})` : ''} ${o.priceRaw ?? '价待询'}${o.poi ? ` · ${o.poi}` : ''}`)
         const summary = r.verdict === 'hit'
           ? `${dest} 酒店(飞猪官方只读)前 ${top.length} 家(价格多为打码,真实价以 jumpUrl 为准):\n${top.join('\n')}\n${r.evidence}`
@@ -725,7 +734,9 @@ export function apply(ctx: Context, config: Config): void {
             + `多为用户时间表达未带年份所致——向用户确认年份(或按未来最近的同月日修正)后再查。`,
         })) as Record<string, never>
       }
-      const r = await flyaiSearch({ kind, origin: q.from, destination: q.to, depDate: q.date })
+      const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind, origin: q.from, destination: q.to, depDate: q.date } })
+      if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
+      const r = itp.result
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.no} ${o.name} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
       // issue #24:miss(上游正常返回 0 条)与 error(限流/网络)分开陈述,不再混写「无结果或失败」
       // (过去日期已被上方预校验拦下,此处不会出现过期查询)
@@ -796,11 +807,18 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.from || !q.to || !q.date) {
         return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD)' } as const
       }
-      const r = await sessionFlightSearch({
-        from: q.from, to: q.to, date: q.date,
-        // ADR-15 收尾:ReadGuard 审计在生产工具路径同样落盘(此前仅测试传隔离 stateRoot 才有 JSONL)
-        auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
+      // 效应解译层(ADR-18):SESSION 通道策略=永不重试/不熔断,节律闸在渠道内;
+      // 解译器只做分发与证据拼装,verdict 语义(risk 型 needs-login/challenged)原样透传
+      const itp = await interpretEffect({
+        effect: 'SESSION_FLIGHT_SEARCH',
+        params: {
+          from: q.from, to: q.to, date: q.date,
+          // ADR-15 收尾:ReadGuard 审计在生产工具路径同样落盘(此前仅测试传隔离 stateRoot 才有 JSONL)
+          auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
+        },
       })
+      if (!itp.result) return declinedObservation('SESSION_FLIGHT_SEARCH', itp.trace)
+      const r = itp.result
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.flightNo} ${o.airline} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
       const summary = r.verdict === 'hit'
         ? `${q.from}→${q.to} ${q.date} 会话检索(携程,用户本人登录态)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
