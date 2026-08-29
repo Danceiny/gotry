@@ -516,11 +516,18 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'search', rawInput: args.query }),
     presentResult: (_args, value) => {
-      const r = value as { hotels?: unknown[]; via?: string; destination?: string; summary?: string }
-      const n = Array.isArray(r.hotels) ? r.hotels.length : 0
+      const r = value as { hotels?: unknown; via?: string; destination?: string; summary?: string }
+      const h = r.hotels
+      const liveCount = Array.isArray(h) ? h.length : 0
+      // 静态包是 {meta, stays} 对象而非数组(issue #24:此前计数恒 0 → UI 显示「无结果」)
+      const stays = !Array.isArray(h) && h && typeof h === 'object' ? (h as { stays?: unknown[] }).stays : undefined
+      const staticCount = Array.isArray(stays) ? stays.length : 0
+      const tag = r.via === 'hbcli-realtime'
+        ? (liveCount ? `实时 ${liveCount} 家` : '实时')
+        : staticCount ? `静态包 ${staticCount} 块` : (liveCount ? `${liveCount} 家` : '无结果')
       return {
         card: 'generic',
-        title: `酒店:${r.destination ?? ''} ${n ? `${n} 家(${r.via === 'hbcli-realtime' ? '实时' : '静态包'})` : '无结果'}`,
+        title: `酒店:${r.destination ?? ''} ${tag}`,
         content: [{ type: 'text', text: String(r.summary ?? '') }],
       }
     },
@@ -719,9 +726,14 @@ export function apply(ctx: Context, config: Config): void {
       }
       const r = await flyaiSearch({ kind, origin: q.from, destination: q.to, depDate: q.date })
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.no} ${o.name} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
+      // issue #24:miss(上游正常返回 0 条)与 error(限流/网络)分开陈述,不再混写「无结果或失败」
+      // (过去日期已被上方预校验拦下,此处不会出现过期查询)
+      const label = kind === 'flight' ? '机票' : '火车票'
       const summary = r.verdict === 'hit'
-        ? `${q.from}→${q.to} ${q.date} ${kind === 'flight' ? '机票' : '火车票'}(飞猪官方只读)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
-        : `${q.from}→${q.to} ${q.date} 无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
+        ? `${q.from}→${q.to} ${q.date} ${label}(飞猪官方只读)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
+        : r.verdict === 'miss'
+          ? `${q.from}→${q.to} ${q.date} ${label}官方通道正常返回 0 条(常见原因:航线未开放/当日售罄)。${r.evidence}`
+          : `${q.from}→${q.to} ${q.date} ${label}检索失败(可能限流/网络):${r.error ?? ''} ${r.evidence}`
       return JSON.parse(JSON.stringify({ ...r, kind, summary })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),

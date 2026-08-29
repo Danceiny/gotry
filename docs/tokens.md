@@ -94,6 +94,8 @@ NPM_TOKEN=npm_xxx ./scripts/publish-npm.sh   # 或临时注入
 
 ## agent-reach 渠道(全部选配,给即接,不催)
 
+> 运行时本体已在 gotry 安装期自动装入包内 `.venv`(官方 pip;`npx gotry setup` 可手动补装/重装)。下表只是**渠道凭证**,仍需逐渠道选配。
+
 | 渠道 | 需要什么 | 获取步骤 | 给我格式 |
 |---|---|---|---|
 | Twitter/X | 2 个 cookie 值 | 浏览器登录 x.com → F12 → Application → Cookies → 复制 `auth_token` 和 `ct0` | 对话里贴两行 |

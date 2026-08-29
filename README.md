@@ -155,7 +155,8 @@ GoTry: 收到。先把约束记下来——
 **已就绪(全绿可验)**:
 
 - ✅ **Z3 WASM race 已根治**(`z3-shared.ts` 单实例+会话级互斥;run-all §30 并发回归闸)
-- ✅ **实时机票/酒店/会话检索**已接入:FlyAI 官方通道(机/火/酒;`GOTRY_REALTIME_PRICING=1` 可选把实时票价覆写进求解)
+- ✅ **实时机票/酒店/会话检索**已接入:FlyAI 官方通道(机/火/酒;`GOTRY_REALTIME_PRICING=1` 可选把实时票价覆写进求解);地名解析双源兜底(Open-Meteo 人口/行政级排序 + Nominatim,「普吉岛」直查可用)
+- ✅ **外部依赖安装期自举** — hbcli(hotelbyte-cli,[公开仓](https://github.com/hotelbyte-com/hotelbyte-cli),MIT)按其官方脚本自动安装、agent-reach 按上游官方 pip 装入包内 `.venv`(`npx gotry setup` 可手动补装;PATH 未含 `~/.local/bin` 时自动按安装位回退);实时酒店需自配凭证(`hbcli auth set-credentials` 或 `HOTELBYTE_TOKEN`),未配时用内置静态参考包并显式标注(设计行为而非故障);CI / `GOTRY_SETUP_SKIP=1` 跳过,自举失败永不挡安装
 - ✅ **英文面(工程层)**:`GOTRY_LOCALE=en` 一键切换,en 零缺键,金标准行为不变
 - ✅ **账号会话:授权闸 + 登录产品化 + 自动检测**(见上方 [🔐 账号会话](#-账号会话授权与隐私--account-consent))
 - ✅ License MIT;薄壳遗留已删除(dsh web 唯一产品面)
