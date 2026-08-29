@@ -86,7 +86,7 @@ export async function sessionLogin(q: SessionLoginQuery = {}): Promise<SessionLo
   }
   // 人机共治纪律:开自己的新标签页并置前台——用户必须看见登录页(2026-08-29 founder:
   // 「我根本就看不到登录页面」,此前误劫持用户既有标签页);closeOwnPage=false 把登录页留给用户
-  const t = await openSession({ mode: 'cdp', guard: false, newPage: true, closeOwnPage: false })
+  const t = await openSession({ mode: 'cdp', guard: false })
   if (!t.ok) {
     const needsAttach = /chrome:\/\/inspect|DevToolsActivePort|cdp attach 失败/.test(t.summary)
     return err(
@@ -100,13 +100,25 @@ export async function sessionLogin(q: SessionLoginQuery = {}): Promise<SessionLo
   }
   const evidenceTag = `[会话:${site}-login@${ts}]`
   try {
-    // 新标签页置前台:用户当下就能看到(attach 的浏览器可能被藏在别的窗口/空间)
-    await (t.page as unknown as { bringToFront(): Promise<void> }).bringToFront().catch(() => { /* 某些环境不可置前,忽略 */ })
+    // 自动检测优先(2026-08-29 founder「UI 里有自动检测吗」):先只读票据名——
+    // 已登录则**零弹窗**直接确认,不打开任何页面;登录状态由用户在携程官网自然留存
+    const pre = await pollTicketNames(t.browser as unknown as { cookies(): Promise<CookieLike[]> }, target)
+    if (pre.length > 0) {
+      await t.close()
+      return {
+        ok: true, via: 'session-login', latencyMs: Date.now() - started, verdict: 'logged-in', site, tickets: pre,
+        evidence: `${evidenceTag} 自动检测:票据 cookie 已在(先前登录已生效)——[${pre.join(', ')}](只读名字,0 网页交互)`,
+      }
+    }
+    // 未检出 → 开自己的新标签页并置前台(绝不劫持用户既有页面),等待用户在官网完成登录
+    const page = await t.browser.newPage()
+    await (page as unknown as { bringToFront(): Promise<void> }).bringToFront().catch(() => { /* 某些环境不可置前 */ })
     try {
-      await t.page.goto(target.entryUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+      await page.goto(target.entryUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
     } catch {
       // 站点慢不致命:入口标签已打开,用户手动登录即可
     }
+    console.log(`[session-login] ${target.label} 登录入口已在新标签页置前打开`)
     const waitMs = Math.min(Math.max(q.waitMs ?? 90_000, 0), 300_000)
     const pollMs = Math.min(Math.max(q.pollMs ?? 3_000, 500), 10_000)
     const deadline = Date.now() + waitMs
