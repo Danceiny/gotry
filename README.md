@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Version** | `v0.0.1-rc.11`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
-| **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;18 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);**2026-08-29 已知限制清算第一刀**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸)、薄壳遗留(`shell/`)物理删除;**2026-08-29 第二批:OTA 平铺 + 账号授权闸 + 登录产品化**——飞猪 `search-hotel` 接入(酒店实时报价)、OTA 工具面去「主/降级」路由话术、会话检索授权闸(每会话一次 + 拒绝即会话内吊销)、`gotry_session_login` 登录产品化(登录在携程官网完成,gotry 只读票据名零值过手);全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
+| **Status** | **M3 工程与分发面已就绪,但真实种子用户 evidence 未收口,M3 Exit 仍开放;M4 记忆域由 founder 授权并行推进,不构成 M3 Exit 证明;M5/M6 仅在各自 Entry gate 满足后启动。** M4 Issue #20 的 paired-cohort/active-planning/experience-reflux 证据合同与 synthetic fixture scorer 已接入 run-all §34(合成 N=3 不充当 Exit,真实 `observed_private` N≥5 paired cohort 待积累);18 工具(2026-08-29 +`gotry_session_login`);事务化状态账本(ADR-15,`gotry_async_terminal.v1`:4/4→`succeeded`/ledger `settled`/exit 0,非 4/4→`failed`/ledger `failed`/exit 2,终态复诵零重算)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);**会话数据面 #21**:字段 fixture scorer、双源合同与 waiting-attach no-spend 已进确定性回归,真实 sf-01..08 尚未验收;**2026-08-29 已知限制清算第一刀**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸)、薄壳遗留(`shell/`)物理删除;**2026-08-29 第二批:OTA 扁平化 + 账号授权闸 + 登录产品化**——飞猪 `search-hotel` 接入(酒店实时报价)、OTA 工具面去「主/降级」路由话术、会话检索授权闸(每会话一次 + 拒绝即会话内吊销)、`gotry_session_login` 登录产品化(登录在携程官网完成,gotry 只读票据名零值过手);全栈回归以 `scripts/run-all-tests.sh` 为准 |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) · CI: typecheck + 全栈回归(Node 22/24) |
 | **Runtime** | DeepSeek Harness **0.1.2-alpha.1**（vendored 源码 tarball `ts/dsh-runtime/vendor/`，上游 npm 未发版、从 GitHub tag `dsh-v0.1.2-alpha.1` 构建，溯源见 [`ts/dsh-runtime/vendor/README.md`](ts/dsh-runtime/vendor/README.md)；[upstream](https://github.com/deepseek-ai/DeepSeek-Harness)） · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
@@ -118,6 +118,16 @@ gotry 把 **DeepSeek Harness (dsh) 运行时**作为唯一推荐面——任何�
 *One-liner mental model: `npx @danceiny/gotry@rc web` + `.env` 一行 key — done。dsh 对话框是唯一产品面(旧 shell 前端已删除)。*
 
 > 一行安装的关键点: `./gotry web`(终端粘贴即用),或 `./gotry "任务"`(一句问答)。**任何自然语言都能用**(这是 dsh runtime 投资的最大价值)。详见 [known limitations](#-known-limitations)。
+
+### 可选：启用登录态会话检索
+
+会话检索默认只读，并复用用户本人已登录的日常 Chrome。使用前需要 Chrome 144+：
+
+1. 在日常 Chrome 打开 `chrome://inspect/#remote-debugging` 并启用 Remote Debugging；
+2. 保持 Chrome 打开；GoTry 发起连接后，在 Chrome 弹出的权限框中确认连接；
+3. 若遇到登录、OTP、验证码或 challenge，由用户本人处理，GoTry 不读取或代填这些信息。
+
+**仅打开该页面或启用开关不代表已经 attach 成功。** 必须等权限确认和 CDP 握手完成；在此之前会稳定返回 `needs-attach`，停止并且不消耗执行配额。
 
 
 ---
@@ -229,7 +239,7 @@ GoTry: 收到。先把约束记下来——
 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离) · 天气 · 航班 ·
 Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 ·
 时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)·
-记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)**。
+记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)· M3 cohort 证据合同(§33)· M4 价值证据合同(§34)**。
 
 ---
 

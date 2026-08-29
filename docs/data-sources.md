@@ -206,6 +206,8 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 **会话数据面 P1(RFC §4,2026-08-28)**:`capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard(方法×URL 双因子 + 驼峰复合写词,写请求物理 abort + 审计,fail-closed)+ 携程机票适配器(batchSearch 嗅探→结构化)+ 节律闸(同站 ≥30s);证据链新标注 `[会话:ctrip-flight@ts]` 生效;run-all §24。live 会话检索需 headful(headless 下携程只回壳页,实测)。登录态为存在前提(founder 纠偏 2026-08-28,同日二次纠偏「仍然匿名实例」后**定案 CDP attach 为默认传输**):`openSession(mode=cdp)` attach 日常 Chrome(chrome://inspect/#remote-debugging 一次性开关,Chrome 144+,本机 147 ✓),登录态/指纹=用户本人,ReadGuard 同样生效;`needs-attach`/`needs-login` 双降级 verdict;`scripts/session-attach-diagnose.ts` 校准票据名单(只读不导航);persistent 专用 profile 降为测试/后备(实测:匿名窗口无人会登录,History/Cookies 双 0 行)。
 
+**#21 双源验收合同(2026-08-29)**:`session/benchmark.ts` 把 query/segments/journey type/逐段时刻与班次/currency/price/source/fetched_at/verdict 固化为字段级 fixture scorer(缺字段计错,默认 ≥90%)；双源对齐按同 journey/segments/时刻/班次判断,价格差独立记录、不要求相等。`needs-attach`/`needs-login` 返回 waiting-user no-spend,challenge 或 ReadGuard blocked>0 立即 fail-closed；当前只验证脱敏 fixture,不触碰日常 Chrome,真实 sf-01..08 仍需权限确认和 CDP 握手。
+
 **美团实测边界(2026-08-28 tick)**:匿名实例 hotel.meituan.com 直接 **403**(headful 新 profile)——三站最强反爬,登录态是 403 级硬前置;适配器骨架已落(`adapters/meituan-local.ts`:城市拼音表/登录票据名单/networkHint 占位/a11y 兜底 `extractListings`),真实接口形状待登录态就绪后回填。a11y 兜底抽取器 `session/extract.ts`(快照条目/提交件剔除/nameAffinity)与金标准查询集 `data/session-golden-20.json`(20 条,只增不改)同批落地(run-all §26)。
 
 **携程机票页 XHR 嗅探 PoC**(`ts/scripts/session-attach-poc.ts`,playwright-core 1.62.1 + 专用测试 profile `/tmp/gotry-session-poc-profile`):

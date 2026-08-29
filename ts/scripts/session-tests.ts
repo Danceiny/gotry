@@ -4,7 +4,9 @@
  *   F   live FlyAI 官方通道(同 weather-tests 的 live 先例;纯 CLI,无浏览器窗口);
  *   G   live 会话检索(Chrome + 携程;**默认 SKIP**——测试永不自动开用户浏览器窗口,GOTRY_SESSION_LIVE=1 显式开启);
  *   H   酒店通道(flyai search-hotel;纯 CLI,无浏览器窗口);
- *   I   账号会话授权闸(纯函数:每会话一次/拒绝=会话内吊销/allow/off/无审批通道,确定性)。
+ *   I   账号会话授权闸(纯函数:每会话一次/拒绝=会话内吊销/allow/off/无审批通道,确定性);
+ *   J   登录引导(无凭证语义/表格完备/票据名级检查;live opt-in 同 G)。
+ * #21 字段 scorer/双源 gate 的无网络验收独立放在 scripts/session-benchmark.ts。
  * 隔离纪律:live 用 mktemp profile 与 stateRoot,绝不动共享状态与日常浏览器 profile;
  * 任何测试不自动弹浏览器窗口(用户 Chrome 只经 CDP attach 或用户手动运行 session-login)。
  */
@@ -15,7 +17,7 @@ import { join } from 'node:path'
 
 import { classifyRequest, isSubmitText } from '../capabilities/session/read-guard.ts'
 import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
-import { sessionFlightSearch, __resetRateLimiterForTest } from '../capabilities/session-search.ts'
+import { sessionFlightSearch, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
@@ -84,18 +86,26 @@ assert(r1.verdict === 'error' && /unresolved/.test(r1.error ?? ''), '首次调�
 assert(r2.verdict === 'cooldown', '30s 内二次调用 → cooldown,不发起导航')
 __resetRateLimiterForTest()
 
-// F. live FlyAI 官方通道(同 weather-tests live 先例)
-console.log('F. flyaiSearch(live,飞猪官方,无 key)')
-const fr = await flyaiSearch({ kind: 'flight', origin: '上海', destination: '丽江', depDate: '2026-10-01' })
-const sentinelBlocked = fr.verdict === 'error' && /sentinel|block/i.test(fr.error ?? '')
-if (sentinelBlocked) {
-  console.log('  WARN - 飞猪 Sentinel 限流(2026-08-28 实测,配额未文档化)——降级合同验证通过,跳过 hit 断言')
-  assert(fr.ok === false && /\[实时API:flyai@error@/.test(fr.evidence), '限流降级:结构化 error + 证据链错误形')
+// F. transport 失败分类 + live FlyAI 官方通道
+console.log('F. transport verdict + flyaiSearch(live,飞猪官方,无 key;GOTRY_SESSION_LIVE=0 跳过)')
+assert(classifyTransportFailure('日常 Chrome 未开调试端口', true) === 'needs-attach', '调试端口未开稳定投影 needs-attach')
+assert(classifyTransportFailure('cdp attach 失败:socket closed', true) === 'needs-attach', 'CDP 握手失败稳定投影 needs-attach')
+assert(classifyTransportFailure('chrome launch failed', false) === 'error', '隔离 profile 启动失败不误投影用户门禁')
+let fr: Awaited<ReturnType<typeof flyaiSearch>> | null = null
+if (process.env.GOTRY_SESSION_LIVE === '0') {
+  console.log('  SKIP - GOTRY_SESSION_LIVE=0(离线门禁不调用 FlyAI 外部实时端点)')
 } else {
-  assert(fr.ok === true && fr.verdict === 'hit', '上海→丽江 hit', fr)
-  assert((fr.options?.length ?? 0) >= 1 && (fr.options?.every((o) => o.price > 0 && /^\d+[A-Z]\d+|^[A-Z]{2}\d+/.test(o.no)) ?? false), '结构化字段齐(price>0,航班号形)', fr.options?.[0])
+  fr = await flyaiSearch({ kind: 'flight', origin: '上海', destination: '丽江', depDate: '2026-10-01' })
+  const sentinelBlocked = fr.verdict === 'error' && /sentinel|block/i.test(fr.error ?? '')
+  if (sentinelBlocked) {
+    console.log('  WARN - 飞猪 Sentinel 限流(2026-08-28 实测,配额未文档化)——降级合同验证通过,跳过 hit 断言')
+    assert(fr.ok === false && /\[实时API:flyai@error@/.test(fr.evidence), '限流降级:结构化 error + 证据链错误形')
+  } else {
+    assert(fr.ok === true && fr.verdict === 'hit', '上海→丽江 hit', fr)
+    assert((fr.options?.length ?? 0) >= 1 && (fr.options?.every((o) => o.price > 0 && /^\d+[A-Z]\d+|^[A-Z]{2}\d+/.test(o.no)) ?? false), '结构化字段齐(price>0,航班号形)', fr.options?.[0])
+  }
+  assert(/\[实时API:flyai/.test(fr.evidence), '证据链 [实时API:flyai@*]')
 }
-assert(/\[实时API:flyai/.test(fr.evidence), '证据链 [实时API:flyai@*]')
 
 // F2. 离线回归(issue #24):上游语义失败——CLI exit=0 且 {"data":null,"message":"出发日期非法"}
 // 必须带上游原话走结构化 error,不得吞成 miss(miss 会误导模型「这条线路没有航班」)
@@ -144,7 +154,7 @@ if (process.env.GOTRY_SESSION_LIVE !== '1') {
     assert(/\[会话:ctrip-flight@/.test(sr.evidence) && /blocked=0/.test(sr.evidence), '证据链 [会话:*] + ReadGuard 零拦截(纯只读)')
     assert(!existsSync(join(iso, 'audit', 'session-incidents.jsonl')), '审计文件不出现(零写请求)')
     // 双源对照(记录式):FlyAI vs 携程会话 同查询最低价
-    const flyaiMin = Math.min(...(fr.options?.map((o) => o.price).filter((p) => p > 0) ?? [0]))
+    const flyaiMin = Math.min(...(fr?.options?.map((o) => o.price).filter((p) => p > 0) ?? [0]))
     const sessionMin = Math.min(...(sr.options?.map((o) => o.price).filter((p) => p > 0) ?? [0]))
     console.log(`  双源对照:FlyAI 最低 ¥${flyaiMin} vs 会话(携程)最低 ¥${sessionMin}(同日同线路,记录不判等)`)
   }

@@ -22,7 +22,7 @@ async function main() {
   const smokeRoot = mkdtempSync(join(tmpdir(), 'gotry-smoke-'))
   const registered: ToolLike[] = []
   const variables: Record<string, () => string> = {}
-  // pre-execute 监听器捕获:授权闸(RFC 支柱④进代码)在 apply() 里经 ctx.on 挂注册表
+  // pre-execute 监听器捕获:账号会话授权闸(RFC 支柱④进代码)在 apply() 里经 ctx.on 挂注册表
   type PreDecision = { kind: 'allow' | 'deny' | 'ask'; reason?: string }
   const preExecutes: Array<(exec: { name?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>> = []
   const ctx = {
@@ -204,19 +204,28 @@ async function main() {
     } else if (fa.ok !== true || fa.verdict !== 'hit' || (fa.options?.length ?? 0) < 1 || !/\[实时API:flyai@/.test(fa.evidence ?? '')) {
       throw new Error(`FAIL: flyai 工具应 live hit,实际:${JSON.stringify(fa).slice(0, 200)}`)
     }
+    // smoke 不得 attach 或读取用户日常 Chrome；把发现目录指向隔离空目录,
+    // 确定性验证 needs-attach/no-spend 合同。真实 attach 只走 #21 人在场验收。
     const prof = mkdtempSync(join(smokeRoot, 'sess-'))
     // 过去日期预校验(issue #24):代码层直接拒绝并指明修正方向,不发上游查询、不产生误导性 miss
     const faPast = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' } }, null) as { ok?: boolean; summary?: string }
     if (!(faPast.ok === false && /已是过去/.test(String(faPast.summary ?? '')))) {
       throw new Error(`FAIL: flyai 过去日期应代码层预校验拒绝,实际:${JSON.stringify(faPast).slice(0, 200)}`)
     }
-    const ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; via?: string; evidence?: string }
-    rmSync(prof, { recursive: true, force: true })
-    // 工具默认 profile(~/.gotry);smoke 环境下若 founder 已登录会真检索(节律闸限制单次)——两种合法终态
-    // 无 Chrome 调试端口的环境(纯 headless 机器/CI)下,工具以带证据链的 error 终态优雅降级,同样合法
+    const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR
+    process.env.CHROME_USER_DATA_DIR = prof
+    let ss: { ok?: boolean; verdict?: string; via?: string; evidence?: string }
+    try {
+      ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as typeof ss
+    } finally {
+      if (previousChromeUserDataDir === undefined) delete process.env.CHROME_USER_DATA_DIR
+      else process.env.CHROME_USER_DATA_DIR = previousChromeUserDataDir
+      rmSync(prof, { recursive: true, force: true })
+    }
+    // puppeteer-core 可用时应为 needs-attach；缺依赖环境仍以带证据链 error 优雅降级。
     const ssErrTerminal = ss.ok === false && /^session-[a-z0-9-]+-error$/.test(String(ss.via ?? '')) && !!ss.evidence
     if (!(ss.verdict === 'needs-login' || ss.verdict === 'needs-attach' || ss.verdict === 'hit' || ss.verdict === 'cooldown' || ss.verdict === 'challenged') && !ssErrTerminal) {
-      throw new Error(`FAIL: session 工具终态应属 {needs-login,hit,cooldown,challenged} 或带证据的 error 终态,实际:${JSON.stringify(ss).slice(0, 200)}`)
+      throw new Error(`FAIL: session 工具终态应属 {needs-attach,needs-login,hit,cooldown,challenged} 或带证据的 error 终态,实际:${JSON.stringify(ss).slice(0, 200)}`)
     }
     console.log(`session-face tools: flyai ${faBlocked ? 'sentinel-限流降级' : `live hit(${fa.options?.length ?? 0} 条)`}; session 终态=${ss.verdict ?? ss.via}(登录态存在前提合同)`)
     // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 双合法终态(限流/端点降级 or hit)
@@ -228,7 +237,7 @@ async function main() {
     } else if (fh.ok !== true || fh.verdict !== 'hit' || (fh.hotels?.length ?? 0) < 1 || !/\[实时API:flyai@/.test(fh.evidence ?? '')) {
       throw new Error(`FAIL: flyai hotel 应 live hit,实际:${JSON.stringify(fh).slice(0, 220)}`)
     }
-    const fhDest = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel' } }, null) as { ok?: boolean; summary?: string }
+    const fhDest = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel' } }, null) as { ok?: boolean }
     if (fhDest.ok !== false) throw new Error('FAIL: hotel 缺目的地应参数闸拒绝')
     const fhPast = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-01-01', checkOut: '2026-01-03' } }, null) as { ok?: boolean; summary?: string }
     if (!(fhPast.ok === false && /不是未来合法区间/.test(String(fhPast.summary ?? '')))) {
@@ -251,12 +260,12 @@ async function main() {
     const pass = await gate({ name: 'gotry_anything_search' }, next)
     if (pass.kind !== 'allow') throw new Error(`FAIL: 非会话工具应原样放行,实际:${JSON.stringify(pass)}`)
     cfg.sessionAccess = 'off'
-    const deny = await gate({ name: 'gotry_session_search' }, next) as { kind?: string }
+    const deny = await gate({ name: 'gotry_session_search' }, next) as { kind?: string; reason?: string }
     if (deny.kind !== 'deny' || !/sessionAccess=off/.test(String((deny as { reason?: string }).reason ?? ''))) {
       throw new Error(`FAIL: sessionAccess=off 应 fail-closed deny,实际:${JSON.stringify(deny)}`)
     }
     cfg.sessionAccess = 'ask'
-    console.log('consent gate: session tool → approval-card ask(每会话一次/拒绝即会话内吊销,smoke 无审批缝走 ask 兜底); off → fail-closed deny; other tools pass through')
+    console.log('consent gate: session tool → approval-card ask(每会话一次/拒绝即会话内吊销); off → fail-closed deny; other tools pass through')
   }
 
   // 14) 登录引导产品工具(gotry_session_login,第 18 工具):注册 + 「登录在外部网站完成、
