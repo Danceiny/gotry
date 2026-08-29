@@ -1,5 +1,21 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.11(已知限制清算:Z3 race 根治 + 实时票价桥 + i18n 英文面 + 薄壳删除,**已发布 2026-08-29**)
+
+rc.10 → rc.11 增量(founder 确认制下 agent 执行;发布指令「测试好了就可以发新版本」):
+
+### 已知限制清算(README 四条全清)
+- **Z3 WASM race 根治(D-17)**:历史债双重根因——三模块各自 `init()` 的 WASM 实例并存(OOM 形态)+ engine.solve `Promise.all` 共 Context 并发(Asyncify 不允许并发 unwind → 栈损坏)。收敛 `ts/src/z3-shared.ts`(单一实例+单一 Context+会话级互斥门 `withZ3`,门内禁嵌套);run-all §1「重试一次」止血退役,新增 §30 进程内三形态并发回归闸 ×12
+- **实时票价桥**:`realtime-pricing.ts`——dated 航班链段(spec 带 date+route 词表内城市对)经 FlyAI 官方只读通道(零 key)按航班号精确匹配覆写价格,证据链 `[实时API:flyai@ts]`(含静态原价留档)并进 skeleton_notes;miss/error/打码价/无匹配一律降级回静态包,永不抛错;`realtimeSolvePort`(env 闸 `GOTRY_REALTIME_PRICING`,默认关)接线 replay-real 真模型巡检 solve port;静态包由唯一来源变为显式降级;run-all §31
+- **i18n 英文面(工程层)**:`i18n.ts` 消息目录——zh-CN 默认与金标准逐字节一致,`GOTRY_LOCALE=en`(或 `setLocale('en')`)切英文,en 缺键回退 zh;覆盖候选/航班链 answer_md、放宽建议、工作窗口排除理由、wish 成行理由、红眼红旗;run-all §32(en 零缺键/切换数据不动)
+- **薄壳遗留物理删除**(`shell/` 目录);dsh web 确认唯一产品面
+
+### 发布闸状态
+- ① 全栈回归 ALL GREEN(§1-§32,新增 §30 Z3 并发竞态闸/§31 实时票价闸/§32 i18n 闸)✅ ② 状态面 6 处同步 ✅ ④ License MIT ✅ ⑤ 版本号一致(rc.11)✅
+- ③ npm 干净安装实测:通过(见 registry 回拉实录——干净目录安装、插件加载、bin 全通)
+
+# GoTry 发版记录
+
 ## v0.0.1-rc.10(双形态冻结 ADR-16 + 会话传输层定案 + 依赖面根治,**已发布 2026-08-28**,npm latest 直指本版)
 
 rc.9 → rc.10 增量:

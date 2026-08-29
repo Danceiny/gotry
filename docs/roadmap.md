@@ -8,7 +8,7 @@
 
 ## 当前位置(2026-08-27)
 
-**`@danceiny/gotry@0.0.1-rc.10` 已发布,npm latest 直指本版**(2026-08-28:双形态冻结 ADR-16/会话传输层 puppeteer 定案/依赖面根治 rc.9「装得上跑不起」缺陷;发布纪律改确认制后由 agent 执行,web 授权+浏览器二次验证+registry 回拉实测全过;rc.9 标缺陷退役);历史:`@danceiny/gotry@0.0.1-rc.8` 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
+**`@danceiny/gotry@0.0.1-rc.11` 已发布,npm latest 直指本版**(2026-08-29:已知限制清算第一刀——Z3 WASM race 根治(D-17)/实时票价桥(flyai overlay,静态包转显式降级)/i18n 英文面(工程层)/薄壳遗留删除;run-all 新增 §30-§32 三闸;founder 确认制下 agent 执行(「测试好了就可以发新版本」),registry 回拉实测全过);历史:rc.10 2026-08-28 发布(双形态冻结 ADR-16/会话传输层 puppeteer 定案/依赖面根治 rc.9「装得上跑不起」缺陷,曾为 latest;rc.9 标缺陷退役);rc.8 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**M3 工程面全部就位,剩余 = 真实种子用户(founder 侧邀约)**。
 
 rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
@@ -21,6 +21,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | **v0.0.1-rc.7** | **已发 npm,当前 rc tag** | .env 读用户当前目录 + 无 key 可执行指引 |
 | v0.0.1-rc.9 | 已发 npm(曾为 latest;**含缺陷:better-sqlite3 未入 dependencies,装得上跑不起**——被发布后干净安装验证抓出) | M4 记忆域全链/账本/17 工具/D-6 校准 |
 | **v0.0.1-rc.10** | **已发 npm,latest 直指本版**(registry 回拉实测:489 包安装/插件加载/bin 全通) | 双形态冻结 ADR-16 + 会话传输层 puppeteer 定案 + 依赖面根治 |
+| **v0.0.1-rc.11** | **已发 npm,latest 直指本版**(registry 回拉实测:干净安装/插件加载/bin 全通) | 已知限制清算:Z3 WASM race 根治(D-17)+ 实时票价桥(flyai overlay)+ i18n 英文面(工程层)+ 薄壳删除;run-all 新增 §30-§32 |
 | dev(未发) | 持续 main 直推 | issue 冲刺 14/14 交付(README 一致性/域边界/数据污染根除等),17 套 ALL GREEN |
 | 后续 | founder 侧 | 种子用户邀约;rc.5 deprecate/rc tag 指向待下次 2FA 授权点击 |
 
