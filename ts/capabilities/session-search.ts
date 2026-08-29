@@ -74,7 +74,8 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     return err('error', `unresolved entry: ${(entry.unresolved ?? []).join('/')} 不在城市码表`)
   }
 
-  const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath, mode: q.profileDir ? 'persistent' : 'cdp' })
+  // 人机共治纪律:检索一律开自己的新标签页(绝不劫持用户已有页面),用完关自己的页
+  const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath, mode: q.profileDir ? 'persistent' : 'cdp', newPage: true })
   if (!t.ok) {
     // cdp 未开端口或握手失败 → needs-attach(一次性用户动作);persistent 启动失败仍走 error。
     // transport 的“端口未开”在连接前返回,文案不含 `cdp attach 失败`,两种形态都要归入同一用户门禁。
