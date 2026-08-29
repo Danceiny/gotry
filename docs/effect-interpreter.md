@@ -67,6 +67,7 @@ issue #16「多渠道比价与外部依赖隔离」提出三件事:
 | `HBCLI_HOTEL_SEARCH` | cli | 永不(1 次) | 3 连错/开 60s | – | hbcli 契约「候选路径是切换不是重试」 |
 | `HBCLI_HOTEL_RATES` | cli | 永不(1 次) | 3 连错/开 60s | – | 同 HBCLI 族;价格面**无静态降级 fail-closed**(不估算房价,与 bookable-facts 证据分级同口径) |
 | `HBCLI_CHECK_AVAIL` | cli | 永不(1 次) | 3 连错/开 60s | – | 同上;验价不可用即诚实失败(预订链下单前置,M0) |
+| `HBCLI_TRADE_BOOK` | cli | **永不**(写幂等在 saga idem_key,通道重试=双订) | 3 连错/开 60s | 工具层确认门(confirmed)+`booking_saga_fsm.v1` 边表(propose→confirm 携回执/compensate;`capabilities/booking-write.ts`) | M1 预订写:ADR-17/18 写效应入注册表必须走 saga 边表;金额不入参,价格后端权威 |
 | `SESSION_FLIGHT_SEARCH` | browser | **永不** | **不参与** | 渠道内 ≥30s 节律闸 + 账号授权闸 | 风控/挑战=「上游说不」,重试即红线;needs-login/cooldown 是状态不是故障 |
 | `WEATHER_GEOCODE/FORECAST/CLIMATE` | api | 2 次/400ms | 3 连错/开 30s | – | 免费源瞬时抖动重试合法,熔断防免费配额空转 |
 | `OPENSKY_FLIGHT_VERIFY` | api | 2 次/400ms | 3 连错/开 30s | – | 同上(~400 credits/天) |

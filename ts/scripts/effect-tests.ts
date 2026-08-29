@@ -25,6 +25,8 @@ import {
   __resetEffectBreakersForTest,
   type GotryEffect,
 } from '../capabilities/effect.ts'
+import { bookWithSaga } from '../capabilities/booking-write.ts'
+import { ensureLedger } from '../src/state-ledger.ts'
 
 const sleep0 = async () => {} // 回退即时放行(确定性,不真睡)
 let clock = 1_000_000
@@ -280,4 +282,60 @@ assert.equal((m10b.result as { avail?: { avail?: boolean } }).avail?.avail, true
 assert.match(m10a.trace.evidence[0] ?? '', /\[效应:mock@.*夹具回放/, 'mock trace 标注')
 console.log('10c. mock 解译器夹具回放(预订链 CI 形态)OK')
 
-console.log('EFFECT INTERPRETER TESTS: 10/10 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 预订链读效应,纯离线)')
+// ---------------------------------------------------------------------------
+// 11. M1 预订写效应:HBCLI_TRADE_BOOK 的 saga 边表(伪通道离线确定性)
+//     propose→通道→confirm(携回执)/compensate;重复提议物理幂等 no-op
+// ---------------------------------------------------------------------------
+const tmp11 = await mkdtemp(join(tmpdir(), 'effect-m1-'))
+const writeFile = (await import('node:fs/promises')).writeFile
+// 成功伪通道:输出订单 JSON 并按调用次数落标记行(证明重复提议零二次触达)
+const okStub = join(tmp11, 'hbcli-ok')
+await writeFile(okStub, '#!/bin/bash\necho \'{"orderNo":"ON-TEST-1","status":"confirmed"}\'\necho call >> "' + join(tmp11, 'calls.log') + '"\n', { mode: 0o755 })
+const failStub = join(tmp11, 'hbcli-fail')
+await writeFile(failStub, '#!/bin/bash\necho "upstream rejected" >&2\nexit 3\n', { mode: 0o755 })
+const state11 = join(tmp11, 'state')
+const bookParams = (bin: string) => ({
+  ratePkgId: '10000000<HB>-1<HB>E2-NRF|20260918|20260920',
+  holder: { name: 'Test Holder', email: 't@example.com' },
+  guests: [{ firstName: 'Test', lastName: 'Guest', type: 'adult' }],
+  customerReferenceNo: 'effect-m1-idem-1',
+  stateRoot: state11, hbcliBin: bin, timeoutMs: 5_000,
+})
+
+// 11a. 成功链:pending → confirmed,receipt=订单号
+const okObs = await bookWithSaga(bookParams(okStub))
+assert.equal(okObs.saga, 'confirmed', '成功链应 confirm')
+assert.equal(okObs.receipt, 'ON-TEST-1', 'receipt 取订单回执')
+assert.equal(okObs.executed, true)
+assert.ok(okObs.evidence.includes('[实时API:hbcli@'), '成功证据链')
+const led11 = ensureLedger(state11)
+const rowA = (led11 as unknown as { db: { prepare: (q: string) => { get: (...a: unknown[]) => { status: string; receipt: string } } } }).db.prepare('SELECT status, receipt FROM pending_writes WHERE idem_key = ?').get('effect-m1-idem-1')
+assert.equal(rowA.status, 'confirmed', '账本行 confirmed')
+assert.equal(rowA.receipt, 'ON-TEST-1', '账本 receipt')
+console.log('11a. 写效应成功链(propose→通道→confirm 携回执,账本落 confirmed)OK')
+
+// 11b. 重复提议同幂等键:物理 no-op,零二次通道触达
+const dupObs = await bookWithSaga(bookParams(okStub))
+assert.equal(dupObs.executed, false, '重复提议不得二次触达通道')
+assert.equal(dupObs.saga, 'confirmed', '返回既有状态')
+const callsCount = (await (await import('node:fs/promises')).readFile(join(tmp11, 'calls.log'), 'utf-8')).trim().split('\n').length
+assert.equal(callsCount, 1, `伪通道只被调用 1 次,实际 ${callsCount}`)
+console.log('11b. 幂等 no-op(同 idem_key 二次提议零通道触达)OK')
+
+// 11c. 失败链:pending → compensated,未产生订单
+const failObs = await bookWithSaga({ ...bookParams(failStub), customerReferenceNo: 'effect-m1-idem-2' })
+assert.equal(failObs.saga, 'compensated', '失败链应补偿')
+assert.equal(failObs.book ?? null, null, '失败不携带订单')
+assert.equal(failObs.executed, true)
+assert.match(failObs.summary, /补偿/, 'summary 明示补偿')
+console.log('11c. 写效应失败链(propose→通道失败→compensate,未产生订单)OK')
+
+// 11d. 效应注册表派发:HBCLI_TRADE_BOOK 永不重试 + observation 透传(saga 字段保真)
+__resetEffectBreakersForTest()
+const itp11 = await interp({ effect: 'HBCLI_TRADE_BOOK', params: { ...bookParams(failStub), customerReferenceNo: 'effect-m1-idem-3' } } satisfies GotryEffect)
+assert.equal(itp11.trace.attempts, 1, '写效应永不重试(双订风险)')
+assert.equal((itp11.result as { saga?: string } | null)?.saga, 'compensated', 'saga 字段经解译层保真')
+await rm(tmp11, { recursive: true, force: true })
+console.log('11d. 写效应注册表派发(永不重试/saga 保真)OK')
+
+console.log('EFFECT INTERPRETER TESTS: 11/11 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 读效应/M1 写效应 saga,纯离线)')

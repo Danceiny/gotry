@@ -650,6 +650,88 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `实时验价:${String((args.query as { ratePkgId?: string })?.ratePkgId ?? '')}`, kind: 'search', rawInput: args.query }),
   }))
 
+  // ── M1 预订写工具:确认门(WriteGate 红线——confirmed!==true 一律只出确认卡,零通道触达)──
+  registerGuarded(defineTool({
+    name: 'gotry_book',
+    description:
+      'Book a hotel room package (WRITE, money-adjacent). Hard gate: unless query.confirmed === true this tool NEVER reaches the booking '
+      + 'channel — it returns a confirmation card echoing ratePkgId/holder/guests/price snapshot and the idempotency key '
+      + '(customerReferenceNo) for the user to review. Only after explicit user confirmation should the model re-call with '
+      + 'confirmed: true AND the same customerReferenceNo. The write is saga-guarded (booking_saga_fsm.v1): propose → channel → '
+      + 'confirm-with-receipt / compensate; re-proposing the same key is a no-op (physically idempotent). Prices never come from '
+      + 'this tool — they are backend-authoritative from the check-avail session behind ratePkgId.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ ratePkgId, holder: {name,email,phone}, guests: [{firstName,lastName,type}], customerReferenceNo?, confirmed?: false, priceSnapshot?: "for the card only, from gotry_check_avail", hotelName? }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ ratePkgId?: string; holder?: Record<string, unknown>; guests?: Array<Record<string, unknown>>; customerReferenceNo?: string; confirmed?: boolean; confirmDuplicate?: boolean; duplicateReason?: string; priceSnapshot?: string; hotelName?: string }>(args, 'ratePkgId')
+      if (!q.ratePkgId || !q.holder || !Array.isArray(q.guests) || q.guests.length === 0) {
+        return { ok: false, summary: 'book 需要 ratePkgId + holder + guests(至少一位入住人)' } as never
+      }
+      // 确认门:未确认 = 只出确认卡,不触达任何通道(红线:确认前不得直接写)
+      if (q.confirmed !== true) {
+        const suggestedRef = q.customerReferenceNo ?? `gotry-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).slice(2, 8)}`
+        return {
+          ok: false,
+          needs_confirmation: true,
+          confirmation_card: {
+            action: 'hotel_booking',
+            ratePkgId: q.ratePkgId,
+            hotelName: q.hotelName ?? null,
+            holder: q.holder,
+            guests: q.guests,
+            priceSnapshot: q.priceSnapshot ?? '(以确认时后端 check-avail 实时价为准)',
+            customerReferenceNo: suggestedRef,
+            note: '金额以后端为准,本卡不含任何来自模型的价格构造',
+          },
+          executed: false,
+          summary: `预订确认卡已生成(ratePkg ${q.ratePkgId.slice(0, 24)}…;幂等键 ${suggestedRef})——用户确认后携带 confirmed:true 与同一 customerReferenceNo 重新调用才会真正下单`,
+        } as never
+      }
+      if (!q.customerReferenceNo) {
+        return { ok: false, summary: 'confirmed 调用必须携带确认卡上的 customerReferenceNo(幂等键)' } as never
+      }
+      const started = Date.now()
+      const itp = await interpretEffect({
+        effect: 'HBCLI_TRADE_BOOK',
+        params: {
+          ratePkgId: q.ratePkgId, holder: q.holder, guests: q.guests,
+          customerReferenceNo: q.customerReferenceNo,
+          confirmDuplicate: q.confirmDuplicate, duplicateReason: q.duplicateReason,
+          stateRoot: config.stateRoot, hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs,
+        },
+      })
+      if (!itp.result) return declinedObservation('HBCLI_TRADE_BOOK', itp.trace)
+      const resp = itp.result as { via?: string; saga?: string; receipt?: string; executed?: boolean; evidence?: string; summary?: string; error?: string; book?: unknown }
+      const dir = await ensureStateDir(config.stateRoot)
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `trade_book:${resp.via ?? 'na'}`).catch(() => {})
+      const payload = {
+        ok: resp.saga === 'confirmed',
+        saga: resp.saga,
+        receipt: resp.receipt ?? '',
+        executed: resp.executed ?? false,
+        order: resp.saga === 'confirmed' ? (resp.book ?? null) : null,
+        evidence: resp.evidence,
+        ratePkgId: q.ratePkgId,
+        customerReferenceNo: q.customerReferenceNo,
+        via: resp.via,
+        latency_ms: Date.now() - started,
+        summary: resp.summary,
+        error: resp.error,
+      } as never
+      return JSON.parse(JSON.stringify(payload)) as never
+    },
+    presentCall: args => ({ card: 'generic', title: `预订下单:${String((args.query as { ratePkgId?: string })?.ratePkgId ?? '').slice(0, 24)}…`, kind: 'edit', rawInput: args.query }),
+  }))
+
   registerGuarded(defineTool({
     name: 'gotry_skeleton_check',
     description:

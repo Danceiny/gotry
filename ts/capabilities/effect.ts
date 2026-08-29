@@ -32,6 +32,7 @@ import {
 } from './resilience.ts'
 import { flyaiSearch, type FlyaiQuery } from './flyai.ts'
 import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
+import { bookWithSaga, type HbBookWriteParams } from './booking-write.ts'
 import { sessionFlightSearch, type SessionFlightQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
 import { verifyFlight, type FlightLiveQuery } from './opensky.ts'
@@ -105,8 +106,11 @@ const DEFAULT_HANDLERS = {
   WEATHER_CLIMATE: (p: WeatherPoint & { month: number; timeoutMs?: number }) => getClimate({ latitude: p.latitude, longitude: p.longitude }, p.month, { timeoutMs: p.timeoutMs }),
   /** OpenSky ADS-B 实时印证(免费匿名,~400 credits/天) */
   OPENSKY_FLIGHT_VERIFY: (p: FlightLiveQuery) => verifyFlight(p),
+  /** 预订写(M1):saga 编排的 trade book——propose→通道→confirm/compensate;工具层过确认门后才可触达 */
+  HBCLI_TRADE_BOOK: (p: HbBookWriteParams) => bookWithSaga(p),
 } as const
 
+export type { HbBookWriteParams } from './booking-write.ts'
 export type EffectName = keyof typeof DEFAULT_HANDLERS
 export type EffectParams<K extends EffectName> = Parameters<typeof DEFAULT_HANDLERS[K]>[0]
 /** 渠道自有 observation 类型(从注册表单一来源推导,避免与能力层声明漂移) */
@@ -141,6 +145,8 @@ const API_BREAKER = { failureThreshold: 3, openMs: 30_000 }
  * 渠道韧性策略表(权威面;docs/effect-interpreter.md §3 同表逐行有依据):
  *   - FLYAI:瞬时代码级错误重试 1 次;连续 3 次 error(含 Sentinel)熔断 60s 保护配额;
  *   - HBCLI:永不重试(上游契约「候选路径是切换不是重试」),熔断同上;
+ *     BOOK 是唯一写效应:永不重试(幂等在 saga idem_key,通道重试=双订风险),
+ *     确认门(工具层 confirmed)+saga 边表双重护栏(ADR-17/18,写效应入注册表规则);
  *     RATES/CHECK_AVAIL 同族,且价格面无静态降级(fail-closed,不估算房价——
  *     与 bookable-facts 证据分级同口径,live_inventory 才可进确认卡);
  *   - SESSION:永不重试、不熔断——风控/挑战是「上游说不」,重试即红线;
@@ -171,6 +177,12 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     isFailure: r => (r as { via?: string }).via === 'hbcli-error',
   },
   HBCLI_CHECK_AVAIL: {
+    channel: 'cli',
+    retry: null,
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => (r as { via?: string }).via === 'hbcli-error',
+  },
+  HBCLI_TRADE_BOOK: {
     channel: 'cli',
     retry: null,
     breaker: { failureThreshold: 3, openMs: 60_000 },
