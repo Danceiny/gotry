@@ -3,15 +3,49 @@
  * 经可日志化 solve 端口执行深度规划(done 步骤复用账本结果,不重执行),
  * 交付物落账本 + .deliverable.md 视图。可由任何后续进程执行(loopx 驱动的
  * tick、state-cli tick、人工、未来的通知系统)——「一小时后回来」跨进程成立,
- * 且崩溃恢复 exactly-once:重放不重复花钱。
+ * 且崩溃恢复 exactly-once:重放不重复花钱。最后一行固定输出
+ * gotry_async_terminal.v1 JSON；4/4 exit 0，非 4/4 exit 2。
  * 运行(在 ts/ 下):npx tsx scripts/async-collect.ts <ticketId> [stateRoot]
  * 环境变量 GOTRY_SOLVE_COUNT_FILE:每次真实求解追加一行(回归用计数探针)。
  */
 
 import { appendFileSync } from 'node:fs'
-import { collectDeepPlanning, loadAsyncTicket, makeJournaledSolvePort, settleAsyncTicket } from '../src/loop.ts'
+import {
+  ASYNC_TERMINAL_SCHEMA,
+  collectDeepPlanning,
+  loadAsyncTicket,
+  makeJournaledSolvePort,
+  settleAsyncTicket,
+  type AsyncTerminalOutcome,
+} from '../src/loop.ts'
 import { solveUnified } from '../src/unified.ts'
 import { openLedgerIfExists } from '../src/state-ledger.ts'
+
+function isTerminalOutcome(value: Record<string, unknown> | null): value is Record<string, unknown> & AsyncTerminalOutcome {
+  return value?.['schema'] === ASYNC_TERMINAL_SCHEMA
+    && (value['status'] === 'succeeded' || value['status'] === 'failed')
+    && typeof value['passed'] === 'number'
+    && value['total'] === 4
+    && Array.isArray(value['failed_checks'])
+}
+
+function legacyTerminalOutcome(ticket: string, status: 'settled' | 'failed', deliverable: string): AsyncTerminalOutcome {
+  const succeeded = status === 'settled' && deliverable.includes('不失望四条:4/4 ✅')
+  return {
+    schema: ASYNC_TERMINAL_SCHEMA,
+    ticket_id: ticket,
+    status: succeeded ? 'succeeded' : 'failed',
+    passed: succeeded ? 4 : 0,
+    total: 4,
+    checks: { legacy_human_marker_only: succeeded },
+    failed_checks: succeeded ? [] : ['legacy_unstructured_terminal'],
+  }
+}
+
+function emitTerminal(outcome: AsyncTerminalOutcome): never {
+  console.log(JSON.stringify(outcome))
+  process.exit(outcome.status === 'succeeded' ? 0 : 2)
+}
 
 const ticketId = process.argv[2]
 const stateRoot = process.argv[3] ?? '.'
@@ -26,12 +60,17 @@ if (!loaded) {
   process.exit(1)
 }
 
-// 终态幂等:已 settled 的工单复诵账本交付物,零重算
+// 终态幂等:已 settled/failed 的工单复诵账本交付物与机器终态,零重算
 const ledger = openLedgerIfExists(stateRoot)
 const run = ledger?.getWorkflowRun(ticketId)
-if (run?.status === 'settled' && run.deliverable) {
+if ((run?.status === 'settled' || run?.status === 'failed') && run.deliverable) {
+  const storedOutcome = ledger?.getWorkflowTerminalOutcome(ticketId) ?? null
+  const outcome = isTerminalOutcome(storedOutcome)
+    ? storedOutcome
+    : legacyTerminalOutcome(ticketId, run.status, run.deliverable)
+  await settleAsyncTicket(ticketId, run.deliverable, stateRoot, outcome)
   console.log(`工单 ${ticketId} 已交付(账本终态,复诵不重算):\n\n${run.deliverable}`)
-  process.exit(0)
+  emitTerminal(outcome)
 }
 if (!ledger) {
   console.error(`工单 ${ticketId}:stateRoot(${stateRoot})无账本——持久化先于回收,不应发生`)
@@ -45,6 +84,8 @@ const solve = makeJournaledSolvePort(ledger, ticketId, solveUnified as never, {
   },
 })
 
-const { reply } = await collectDeepPlanning(loaded.state, loaded.ticket, solve)
-const out = await settleAsyncTicket(ticketId, reply, stateRoot)
+const { reply, outcome } = await collectDeepPlanning(loaded.state, loaded.ticket, solve)
+const out = await settleAsyncTicket(ticketId, reply, stateRoot, outcome)
 console.log(`交付物已落盘:${out}\n\n${reply}`)
+console.log(JSON.stringify(outcome))
+process.exitCode = outcome.status === 'succeeded' ? 0 : 2

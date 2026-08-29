@@ -28,10 +28,15 @@ echo "=== 4. 对话循环重放(mock,ADR-8/9/10 行为级回归,带终态断言)
 (cd ts && npx tsx scripts/replay.ts | tail -3) || FAIL=1
 
 echo
-echo "=== 5. 异步深度规划:种工单 → 另一进程回收(跨进程闭环,编码 AGENTS.md 清扫规则) ==="
-(cd ts && npx tsx scripts/replay-async.ts --request-only > /dev/null) || FAIL=1
-TICKET=$(cd ts && { ls gotry-state/async/*.json 2>/dev/null || true; } | while read -r f; do b="${f%.json}"; [ -f "$b.deliverable.md" ] || basename "$b"; done | sed -n '1p')  # sed 非 head:head -1 早关管道,pipefail 下未回收工单 ≥2 时 SIGPIPE 整脚本 141
-if [ -z "$TICKET" ]; then echo "FAIL: 未种下待回收工单"; FAIL=1; else (cd ts && npx tsx scripts/async-collect.ts "$TICKET" > /dev/null) || FAIL=1; echo "工单 $TICKET 已跨进程回收"; fi
+echo "=== 5. 异步深度规划:隔离 stateRoot 种工单 → 另一进程回收(跨进程闭环,不触真实产品状态) ==="
+REPO_ROOT=$PWD
+ASYNC_FIXTURE=$(mktemp -d)
+mkdir -p "$ASYNC_FIXTURE/ts" "$ASYNC_FIXTURE/data"
+ln -s "$REPO_ROOT/data/flights_2026.json" "$ASYNC_FIXTURE/data/flights_2026.json"
+(cd "$ASYNC_FIXTURE/ts" && "$REPO_ROOT/ts/node_modules/.bin/tsx" "$REPO_ROOT/ts/scripts/replay-async.ts" --request-only > /dev/null) || FAIL=1
+TICKET=$({ ls "$ASYNC_FIXTURE"/ts/gotry-state/async/*.json 2>/dev/null || true; } | while read -r f; do b="${f%.json}"; [ -f "$b.deliverable.md" ] || basename "$b"; done | sed -n '1p')  # sed 非 head:head -1 早关管道,pipefail 下未回收工单 ≥2 时 SIGPIPE 整脚本 141
+if [ -z "$TICKET" ]; then echo "FAIL: 未种下待回收工单"; FAIL=1; else (cd ts && npx tsx scripts/async-collect.ts "$TICKET" "$ASYNC_FIXTURE/ts" > /dev/null) || FAIL=1; echo "工单 $TICKET 已在隔离 stateRoot 跨进程回收"; fi
+rm -rf "$ASYNC_FIXTURE"
 
 echo
 echo "=== 6. 插件 smoke(注册/execute/红线断言) ==="
@@ -144,7 +149,7 @@ echo "=== 27. 会话面 P2-2 抽取层(a11y兜底抽取/提交件剔除/美团�
 (cd ts && npx tsx scripts/session-extract-tests.ts) || FAIL=1
 
 echo
-echo "=== 28. 事务化状态账本(ADR-15:事务原子性/红线进事务/幂等物理化/fold 重建/rewind/one-shot 迁移/工单崩溃恢复 exactly-once/pending_writes saga) ==="
+echo "=== 28. 事务化状态账本(ADR-15:事务原子性/红线进事务/幂等物理化/fold 重建/rewind/one-shot 迁移/工单 exactly-once + 4/4/非4/4 机器终态/pending_writes saga) ==="
 (cd ts && npx tsx scripts/ledger-tests.ts | tail -1) || FAIL=1
 
 echo
