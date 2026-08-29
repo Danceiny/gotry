@@ -309,6 +309,10 @@ else
 fi
 
 echo
+echo "=== 36. 预订 saga 状态机(booking_saga_fsm.v1,issue #17 采纳:字母表/边表封闭性 + 主路径/吸收态 + 审计链校验 + 与账本 saga 基座物理对账/多租户,纯函数) ==="
+(cd ts && npx tsx scripts/booking-saga-tests.ts | tail -1) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
