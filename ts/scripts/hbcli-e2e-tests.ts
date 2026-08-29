@@ -1,6 +1,8 @@
 /**
  * staicli(hbcli)全流程端到端测试:二进制 → 隔离凭证面 → 真实 UAT 取票 →
  * 能力层真实 spawn → 效应解译层策略(ADR-18)→ 工具层 gotry_hotel_search。
+ * M0 预订链(NL booking PRD §4.1a):6-8 步扩展 rates/check-avail 全链——
+ * 价格面 fail-closed(无静态降级,不可用即诚实失败)是本链的断言重心。
  *
  * 账号与凭证纪律(红线):
  *   - 测试账号用 hotel-be 种子沙箱 API 账号 hotelbyte_api_demo/hotelbyte_api_demo
@@ -25,7 +27,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
-import { listDestinations, searchHotels, hbcliBinCandidates } from '../capabilities/hbcli.ts'
+import { listDestinations, searchHotels, hotelRates, checkAvail, hbcliBinCandidates } from '../capabilities/hbcli.ts'
 import { makeProductionInterpreter } from '../capabilities/effect.ts'
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -156,7 +158,67 @@ async function main(): Promise<void> {
     assert.ok(String(obs.summary).length > 0, 'summary 应存在')
     console.log(`5. 工具层端到端(gotry_hotel_search → 效应解译器 → ${UAT})via=${obs.via},evidence=${ev.slice(0, 46)}… OK`)
 
-    console.log('HBCLI E2E TESTS: 5/5 OK(隔离凭证面/实时通道/降级诚实/解译策略/工具面全链)')
+    // 6) M0 预订链·能力层:hotelRates 真实 spawn(search hotel-rates)。
+    //    UAT 无该酒店库存时业务层失败 → via=hbcli-error:断言 fail-closed 诚实性
+    //    (rates=null、summary 明示不可用与无静态降级)——价格面永不估算。
+    const rates = await hotelRates(
+      { hotelId: '900000001', checkIn: '2026-09-18', checkOut: '2026-09-20', adults: 2 },
+      { timeoutMs: 30_000 },
+    ) as unknown as HbcliLike & { rates?: unknown; summary: string }
+    if (rates.via === 'hbcli-error') {
+      assert.ok(rates.error, '报价失败应携带上游原话原因')
+      assert.equal(rates.rates, null, '价格面失败必须 rates=null(fail-closed)')
+      assert.match(rates.summary, /不可用/, 'summary 应明示不可用')
+      assert.ok(!/静态包/.test(rates.summary), '报价不得降级到静态包(不估算房价红线)')
+      assert.match(rates.evidence, /\[实时API:hbcli@/, '失败证据链仍应标注实时通道与时间戳')
+      console.log(`6. hotel-rates 真实链(via=hbcli-error,原因:${String(rates.error).slice(0, 60)}…;fail-closed 不估算)OK`)
+    } else {
+      assert.equal(rates.via, 'hbcli-realtime')
+      assert.match(rates.evidence, /\[实时API:hbcli@\d{4}-/)
+      assert.ok(rates.rates !== null && typeof rates.rates === 'object', '实时返回应携带房型报价对象')
+      console.log('6. hotel-rates 实时返回(UAT 有该酒店库存)证据链 OK')
+    }
+
+    // 7) M0 预订链·效应解译层:HBCLI_HOTEL_RATES / HBCLI_CHECK_AVAIL 策略
+    //    (永不重试 + 熔断在册 + 价格面 observation 原样透传)
+    for (const fx of [
+      { effect: 'HBCLI_HOTEL_RATES' as const, params: { hotelId: '900000001', timeoutMs: 30_000 } },
+      { effect: 'HBCLI_CHECK_AVAIL' as const, params: { ratePkgId: 'rp-e2e-probe', timeoutMs: 30_000 } },
+    ]) {
+      const r = await makeProductionInterpreter({ breakers: new Map() })(fx)
+      assert.equal(r.trace.attempts, 1, `${fx.effect} 永不重试`)
+      assert.equal(r.trace.channel, 'cli')
+      assert.ok(r.trace.evidence[0]?.startsWith(`[效应:${fx.effect}@`), `${fx.effect} trace 横切证据`)
+      assert.ok(r.result !== null, `${fx.effect} observation 原样透传(含失败形态)`)
+      const viaFx = (r.result as HbcliLike).via
+      assert.ok(viaFx === 'hbcli-error' || viaFx === 'hbcli-realtime', `${fx.effect} via 保真,实际 ${viaFx}`)
+    }
+    console.log('7. 预订链效应解译层(RATES/CHECK_AVAIL attempts=1 永不重试,via 保真)OK')
+
+    // 8) M0 预订链·工具层:gotry_hotel_rates / gotry_check_avail 经解译器跑完整链。
+    //    失败形态必须走 ok:false 平铺包络 + fail-closed 证据(永不抛错、不伪装可订)。
+    const ratesTool = registered.find(t => t.name === 'gotry_hotel_rates')
+    assert.ok(ratesTool, 'gotry_hotel_rates 应已注册')
+    const ratesObs = await ratesTool.execute({ query: { hotelId: '900000001', checkIn: '2026-09-18', checkOut: '2026-09-20' } }, null) as Record<string, unknown>
+    assert.ok(typeof ratesObs.ok === 'boolean', '工具面应返回 ok 包络(永不抛错契约)')
+    if (ratesObs.ok === false) {
+      assert.equal(ratesObs.rates, null, '失败时 rates=null')
+      assert.match(String(ratesObs.evidence), /实时API:hbcli@/, '失败证据链标注实时通道(含时间戳)')
+      assert.match(String(ratesObs.summary), /不可用/, 'summary 明示不可用(fail-closed)')
+    } else {
+      assert.match(String(ratesObs.evidence), /实时API:hbcli@\d{4}-/)
+    }
+    const availTool = registered.find(t => t.name === 'gotry_check_avail')
+    assert.ok(availTool, 'gotry_check_avail 应已注册')
+    const availObs = await availTool.execute({ query: { ratePkgId: 'rp-e2e-probe' } }, null) as Record<string, unknown>
+    assert.ok(typeof availObs.ok === 'boolean', 'check_avail 工具面应返回 ok 包络')
+    if (availObs.ok === false) {
+      assert.equal(availObs.avail, null, '失败时 avail=null(不可伪装可订)')
+      assert.match(String(availObs.summary), /不可用/, 'check_avail summary 明示不可用')
+    }
+    console.log(`8. 预订链工具层端到端(rates ok=${ratesObs.ok} / check_avail ok=${availObs.ok};失败形态=fail-closed 平铺包络)OK`)
+
+    console.log('HBCLI E2E TESTS: 8/8 OK(隔离凭证面/实时通道/降级诚实/解译策略/工具面全链/M0 预订链 rates+check-avail)')
   } finally {
     process.env.STAICLI_HOME = undefined
     rmSync(staicliHome, { recursive: true, force: true })
