@@ -192,7 +192,7 @@ GoTry: 收到。先把约束记下来——
 
 - ✅ **License MIT** (D-1 落地 2026-08-23)
 - **zh-CN 体验** — 当前面向中国出境首发(你的账号语言习惯)。英文界面/wider 国际化未做,等 M4 校准输入落定。
-- **机票实时数据** — 静态包(`data/flights_2026.json`)作为降级。实时票价接入留到 v0.1.x。
+- ✅ **机票实时数据已接入** — dated 航班链段可经 FlyAI 官方只读通道取实时票价覆写(`GOTRY_REALTIME_PRICING=1`,证据链 `[实时API:flyai@ts]`,miss/error/打码价一律降级回静态包 `data/flights_2026.json`);静态包由「唯一来源」变为「显式降级」,零 key 可用
 - **Z3 WASM race** — 连续跑多个测试套件时偶发 `memory access out of bounds`(已规避回滚)。M3 早期处理。
 - ✅ **薄壳已删除** — `shell/` 目录与 `./gotry shell` 分支已移除(2026-08-29 清理;dsh web 唯一产品面,旧命令行在 git 历史/rc.6 文档内可考)
 

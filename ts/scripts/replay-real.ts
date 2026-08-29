@@ -18,10 +18,13 @@ import { createMockLlm } from '../src/mock-llm.ts'
 import { createOpenAICompatLlm } from '../src/dsh-llm.ts'
 import { newState, runTurn } from '../src/loop.ts'
 import { solveUnified } from '../src/unified.ts'
+import { realtimeSolvePort } from '../src/realtime-pricing.ts'
 import type { LlmPort } from '../src/loop.ts'
 
 const useReal = Boolean(process.env['LLM_API_KEY'] ?? process.env['DEEPSEEK_API_KEY'])
 const llm: LlmPort = useReal ? createOpenAICompatLlm(join('..', 'data', 'flights_2026.json')) : createMockLlm(join('..', 'data', 'flights_2026.json'))
+// 实时票价接缝(默认关):GOTRY_REALTIME_PRICING=1 时 dated 段经 FlyAI 实时价覆写,证据并进 skeleton_notes
+const solvePort = realtimeSolvePort(solveUnified)
 console.log(useReal ? `=== 真 LLM 模式(${process.env['LLM_MODEL'] ?? 'MiniMax-M2'})===` : '=== 无 LLM_API_KEY,回退 mock(ADR-8)===\n')
 
 const state = newState()
@@ -32,7 +35,7 @@ const turns = [
   '我订了酒店:The Title East Wing Rawai,7.18入住 7.23 退房',
 ]
 for (const t of turns) {
-  const { reply } = await runTurn(state, t, llm, [...history], solveUnified as never)
+  const { reply } = await runTurn(state, t, llm, [...history], solvePort as never)
   history.push({ role: 'user', text: t }, { role: 'assistant', text: reply })
   console.log(`\n用户> ${t.slice(0, 46)}…\nGoTry> ${reply}`)
 }
