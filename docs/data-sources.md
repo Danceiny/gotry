@@ -26,7 +26,7 @@
 | **航线通航性** | ✅ OpenFlights 骨架 168 枢纽对(ODbL,`data/openflights-skeleton.json`) | 静态(月级) | `[骨架:openflights]` | 保持;扩枢纽集;Amadeus 已关停不回 |
 | **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`(公开渠道调研,5 段链) | 静态(2026-07 调研) | `[静态包:估算]` | M4:aviationstack 校验层(§7-1 已批三层组合);票价 M5 |
 | **航班实时观测** | ✅ OpenSky 已接(`capabilities/opensky.ts` + `gotry_flight_verify` 工具;`/api/states/all` 当前 ADS-B 全球观测,~400 credits/天) | 实时 | `[实时API:opensky]` | ✅ 已落地(2026-08-22) |
-| **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退 | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
+| **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ **飞猪官方 OTA 通道已接**(`gotry_flyai_search` kind=hotel → search-hotel,2026-08-29 实测,未鉴权打码价保 priceRaw 不伪装)+ 静态包 `data/hotels_2026.json` 回退 | 实时/静态 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时;OTA 工具面平铺(无主/降级路由,按查询取用) |
 | **酒店点评/评分** | ✅ **复用 hotel-be Anything**(内含酒店 + 城市/区域混合 candidate)+ M4 scale-up:Google Place 评分/照片 | Any(hit/miss),M4:geography | `hbcli-anything` | M3:DONE(founder 校准 Anything 复用);M4:Google Place scale-up 路径(geography GetPlaceReviews) |
 | **POI/地点搜索** | ✅ Anything(混合 城市+酒店+place 候选) + OSM Nominatim 兜底 | Any | `hbcli-anything` / M4 `osm-nominatim` | M3:DONE;TREK 同款,免费兜底 |
 | **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`);地理编码双源:Open-Meteo(主,人口/行政级排序防同名小地压主城)+ OSM Nominatim(中文兜底——open-meteo 中文名覆盖有洞,issue #24 实测「普吉岛」0 结果) | 实时 | `[实时API:open-meteo@ts]` / 兜底 `[实时API:nominatim@ts]` | 保持;WMO 码已映射中文 |
@@ -211,6 +211,12 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 **携程机票页 XHR 嗅探 PoC**(`ts/scripts/session-attach-poc.ts`,playwright-core 1.62.1 + 专用测试 profile `/tmp/gotry-session-poc-profile`):
 - 两次实测均零风控、零交互只读;主搜索接口已识别:`flights.ctrip.com/international/search/api/search/batchSearch`(~550KB,国内票同走)+ `FlightIntlAndInlandLowestPriceSearch` 低价日历(~81KB)——P1 携程适配器的 networkHints 直接可用。
 
+**OTA 平铺 + 酒店通道 + 账号授权闸(2026-08-29 第二批,founder 口径「OTA 这些都是工具,不要区分什么主路径/降级路径;这要用到用户的账号,所以必须跟用户确认」)**:
+- **search-hotel 接入**:`gotry_flyai_search` kind=hotel(实测大理:结构化 name/star 档级/打码价 ¥7xx/address/interestsPoi/shId/detailUrl;解析契约 `FlyaiHotelOption`)。**打码价纪律**:未鉴权价上游打码(¥7xx),解析保 `priceRaw` 原值、`price` 数字恒 0——「¥7xx 截成 7 伪装真价」是被明确拒绝的形态;真实价以 `detailUrl` 酒店页为准(交易经 detailUrl 由人完成,不进工具)。flags:`--dest-name` 必填 + `--check-in-date/--check-out-date`(成对可选,未定档期先摸底)+ `--key-words`。session-tests §H(live hit/离线解析/参数闸三态)+ smoke §12。
+- **OTA 平铺**:founder 口径落地——工具描述与 persona (19) 删「主链路/交叉验证/三级路由」层级话术;**拍平的是路由优先级,不是 L4 证据链纪律**(逐源标注照旧必达用户)。
+- **账号授权闸(支柱④进代码)**:`tools/pre-execute` 监听器对 `gotry_session_search` 返回 `{kind:'ask'}` → dsh 原生 `ApprovalService`(dsh-base profile 默认挂载 policy=ask)→ web 审批卡;`allowed-once` 逐次放行,rejected/cancelled/无审批通道一律 fail-closed(headless 无用户在场 = 无授权);插件 config `sessionAccess: ask|off` 总闸「随时可关」;站点白名单=适配器注册表现状(仅 ctrip-flight)。飞猪通道**不过闸**(匿名无用户身份,无账号风控/PIPL 面,配额限流已是结构化 error);smoke §13 三态断言(ask/deny/放行)。
+- **未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
+
 
 
 ## 修订史
@@ -220,3 +226,4 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 | 2026-08-22 | 立 v1:领域矩阵现状盘点、四层架构图、Google Place 链路 founde 定案(hbcli→search OpenAPI→geography)、TREK 参考采纳表、证据链契约细则、M3-M5 数据侧演进 |
 | 2026-08-28 | 新增 §8 官方 agent 通道尽调(RFC P0):飞猪 FlyAI 无 key 实测可用(机/火只读搜索,会话面缺口收缩)+ 携程机票 XHR 嗅探 PoC(batchSearch 接口识别,零风控) |
 | 2026-08-29 | issue #24 工具不可用三处修复:① flyai 上游语义失败(exit=0 + `data:null` + `message:"出发日期非法"`)由吞成 miss 改为带上游原话的 error 终态,工具层加过去日期预校验;② 天气地理编码双源化(Open-Meteo 主 + Nominatim 中文兜底,「普吉岛」0 结果/「普吉」错配西藏同名村);③ hbcli 静态包回退按目的地过滤命中块(不再整包倾倒),无命中明示无数据 |
+| 2026-08-29(第二批) | §2 酒店行/§8:飞猪 `search-hotel` 接入(kind=hotel,打码价 priceRaw 保真纪律)+ OTA 工具面平铺(去主/降级路由话术,persona (19) 重写)+ 账号会话授权闸落地(`tools/pre-execute`→ApprovalService 审批卡,`sessionAccess: ask\|off` 总闸,RFC 支柱④进代码;飞猪匿名通道不过闸);session-tests §H + smoke §12-13 |

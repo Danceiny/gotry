@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Version** | `v0.0.1-rc.11`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
-| **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;17 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);**2026-08-29 已知限制清算第一刀**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸)、薄壳遗留(`shell/`)物理删除;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
+| **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;17 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);**2026-08-29 已知限制清算第一刀**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸)、薄壳遗留(`shell/`)物理删除;**2026-08-29 第二批:OTA 平铺 + 账号授权闸**——飞猪 `search-hotel` 接入(酒店实时报价)、OTA 工具面去「主/降级」路由话术、会话检索授权闸(审批卡逐次批准 + `sessionAccess` 总闸);全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) · CI: typecheck + 全栈回归(Node 22/24) |
 | **Runtime** | DeepSeek Harness **0.1.2-alpha.1**（vendored 源码 tarball `ts/dsh-runtime/vendor/`，上游 npm 未发版、从 GitHub tag `dsh-v0.1.2-alpha.1` 构建，溯源见 [`ts/dsh-runtime/vendor/README.md`](ts/dsh-runtime/vendor/README.md)；[upstream](https://github.com/deepseek-ai/DeepSeek-Harness)） · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
@@ -171,7 +171,7 @@ GoTry: 收到。先把约束记下来——
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ L1  对话即界面  chat-as-UI; gates 是消息内选择题                 │
-│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);13 个工具            │
+│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);17 个工具            │
 │ L3  领域  统一行程模型 + Z3 可行性引擎(枚举/Z3 双形态)        │
 │ L4  数据  静态数据包 + hotelbyte-cli 实时桥 + OpenFlights 骨架 │
 │ L5  治理  LoopX(objective / gates / evidence / quota)         │
@@ -180,7 +180,7 @@ GoTry: 收到。先把约束记下来——
 
 | 层 | 模块 | 角色 |
 |---|---|---|
-| L2 | `ts/src/index.ts` (dsh 插件) | 注册 13 个工具,挂 `{{current_date}}`/`{{time_anchor_card}}`/`{{motivation_brief}}` 变量,工具 execute 异常隔离 + 平铺观察 envelope + uncaughtException 护栏 |
+| L2 | `ts/src/index.ts` (dsh 插件) | 注册 17 个工具,挂 `{{current_date}}`/`{{time_anchor_card}}`/`{{motivation_brief}}` 变量,工具 execute 异常隔离 + 平铺观察 envelope + uncaughtException 护栏;账号会话工具(gotry_session_search)挂授权闸(`tools/pre-execute` → 运行时审批卡逐次批准,`sessionAccess: ask\|off` 总闸随时可关) |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/unified.py` | 唯一求解入口(候选枚举 + 航班链 Z3) |
 | L4 | `ts/capabilities/hbcli.ts` | hotelbyte-cli 进程封装 + 降级到 `data/hotels_2026.json` |
 | L4 | `ts/scripts/skeleton-check.ts` | OpenFlights 168 对枢纽,三值语义(阳性/枢纽对否定≠证伪/枢纽外=无结论) |
@@ -195,6 +195,8 @@ GoTry: 收到。先把约束记下来——
 - ✅ **License MIT** (D-1 落地 2026-08-23)
 - ✅ **英文面(工程层)已就绪** — 求解确定性输出面(候选/航班链 answer_md、放宽建议、排除理由)i18n catalog 化:`GOTRY_LOCALE=en` 或 `setLocale('en')` 即英文,默认 zh-CN 与金标准逐字节一致(run-all §32:en 零缺键/切换数据不动)。**残余(诚实声明)**:dsh web 界面属宿主、工具结果卡与人格对话面等 M4 校准输入落定后随校准样本补齐——种子市场仍是中国出境(G1)
 - ✅ **机票实时数据已接入** — dated 航班链段可经 FlyAI 官方只读通道取实时票价覆写(`GOTRY_REALTIME_PRICING=1`,证据链 `[实时API:flyai@ts]`,miss/error/打码价一律降级回静态包 `data/flights_2026.json`);静态包由「唯一来源」变为「显式降级」,零 key 可用
+- ✅ **酒店实时报价已接入(OTA 平铺)** — `gotry_flyai_search` kind=hotel 直连飞猪官方 `search-hotel`(2026-08-29 实测:结构化 名称/档级/打码价);未鉴权价格上游打码(如 ¥7xx),工具保 priceRaw 原值不伪装成数字价,真实价以 jumpUrl 酒店页为准;OTA 工具面平铺,无「主链路/降级」路由——按查询取用,证据链逐源标注
+- ✅ **账号会话检索已加授权闸** — 动用用户本人登录态的 `gotry_session_search` 每次调用先经 dsh 运行时审批卡请求授权(allowed-once 逐次批准;拒绝/无审批通道/headless 无用户在场一律不执行);`sessionAccess: ask|off` 配置总闸随时可关——「用你的账号,必须先经你点头」(smoke §12-13 验证)
 - ✅ **Z3 WASM race 已根治** — 三模块各自持 WASM 实例 + 候选求解 `Promise.all` 共 Context 并发是双重根因;现收敛 `ts/src/z3-shared.ts`(单一实例+单一 Context+会话级互斥门),run-all §1 的「重试一次」止血已退役,新增 §30 进程内三形态并发回归闸 ×12(D-17)
 - ✅ **薄壳已删除** — `shell/` 目录与 `./gotry shell` 分支已移除(2026-08-29 清理;dsh web 唯一产品面,旧命令行在 git 历史/rc.6 文档内可考)
 

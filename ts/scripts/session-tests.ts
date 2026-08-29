@@ -122,12 +122,16 @@ if (process.env.GOTRY_SESSION_LIVE === '0') {
     assert(sr.ok === false && sr.verdict === 'challenged', 'challenged = degraded 语义正确(不重试不绕过)')
   } else if (sr.verdict === 'error' && /chrome launch failed/.test(sr.error ?? '')) {
     console.log('  SKIP - 本机无 Chrome(channel:chrome 不可用)')
-  } else if (sr.verdict === 'error' && /chrome launch failed/.test(sr.error ?? '')) {
+  } else if (sr.verdict === 'error' && /chrome launch failed/i.test(sr.error ?? '')) {
     console.log('  SKIP - 本机无 Chrome(channel:chrome 不可用)')
   } else if ((sr.verdict === 'miss' || sr.verdict === 'error') && /blocked=0/.test(sr.evidence)) {
     // 匿名自检态 0 options = 外部会话数据面未取回(站点方差/匿名态;三值语义与 Sentinel 限流同构:
     // miss ≠ 链路断,守卫/证据/审计合同仍在 miss 证据里验证)。真 hit 收敛挂 founder 登录态(D-13)。
     console.log(`  SKIP - 会话数据面 miss(外部方差,合同降级语义):${sr.evidence.slice(0, 90)}`)
+  } else if (sr.verdict === 'error' && /timeout/i.test(sr.error ?? '')) {
+    // 页面 30s 未完成加载(外部网络方差;与 flyai 端点不可达降级同构:可达性不进合并闸)
+    console.log(`  SKIP - 携程页面加载超时(外部方差,合同降级语义):${String(sr.error).slice(0, 80)}`)
+    assert(sr.ok === false && /\[会话:ctrip-flight@error@/.test(sr.evidence), '超时降级仍带证据链错误形')
   } else {
     assert(sr.ok === true && sr.verdict === 'hit' && (sr.options?.length ?? 0) >= 1, '上海→丽江 会话嗅探 hit', sr)
     assert(sr.options?.every((o) => o.price > 0 && o.depDateTime.includes('2026-10-01')) ?? false, '班期=查询日,价格>0', sr.options?.[0])
@@ -139,6 +143,41 @@ if (process.env.GOTRY_SESSION_LIVE === '0') {
     console.log(`  双源对照:FlyAI 最低 ¥${flyaiMin} vs 会话(携程)最低 ¥${sessionMin}(同日同线路,记录不判等)`)
   }
   rmSync(iso, { recursive: true, force: true })
+}
+
+// H. 酒店通道(2026-08-29 平铺接入):live 双合法终态 + 离线解析 + 参数闸
+console.log('H. flyaiSearch hotel(飞猪官方 search-hotel)')
+{
+  // H1 live:带日期两形态(成对可选;未定档期可不带日期)
+  const hr = await flyaiSearch({ kind: 'hotel', destName: '大理', checkInDate: '2026-10-01', checkOutDate: '2026-10-03' })
+  const hSentinel = hr.verdict === 'error' && /sentinel|block/i.test(hr.error ?? '')
+  if (hSentinel) {
+    console.log('  WARN - 飞猪 Sentinel 限流——降级合同验证通过,跳过 hit 断言')
+    assert(hr.ok === false && /\[实时API:flyai@error@/.test(hr.evidence), '酒店限流降级:结构化 error + 证据链错误形')
+  } else if (hr.ok === false) {
+    console.log(`  WARN - flyai hotel 端点降级(${String(hr.error).slice(0, 60)})——证据链合同通过,hit 断言跳过`)
+    assert(/\[实时API:flyai@error@/.test(hr.evidence), '端点降级仍带证据链错误形')
+  } else {
+    assert(hr.verdict === 'hit' && (hr.hotels?.length ?? 0) >= 1, '大理酒店 hit', hr.hotels?.[0])
+    assert(hr.hotels?.every(h => !!h.name && !!h.jumpUrl) ?? false, '条目结构化(name + jumpUrl 透传)', hr.hotels?.[0])
+  }
+  assert(/\[实时API:flyai/.test(hr.evidence), '证据链 [实时API:flyai@*]')
+  // H2 离线解析(实测 2026-08-29 大理形状):打码价保 priceRaw、数字价 0、缺名条目跳过
+  const fakeDir = mkdtempSync(join(tmpdir(), 'flyai-hotel-fake-'))
+  const fakeCliH = join(fakeDir, 'flyai-hotel-fake')
+  writeFileSync(fakeCliH, '#!/bin/sh\necho \'{"data":{"itemList":[{"name":"大理A 酒店","shId":"1","star":"高档型","rate":null,"price":"\\u00a57xx","address":"addr","interestsPoi":"近洱海","detailUrl":"https://router.feizhu.com/x"},{"star":"舒适型"}]}}\'\nexit 0\n', { mode: 0o755 })
+  const h2 = await flyaiSearch({ kind: 'hotel', destName: '大理', cliBin: fakeCliH })
+  assert(h2.verdict === 'hit' && h2.hotels?.length === 1, '酒店解析:缺名条目跳过,1 条有效', h2)
+  const h0 = h2.hotels?.[0]
+  assert(h0?.name === '大理A 酒店' && h0?.priceRaw === '¥7xx' && h0?.price === 0, '打码价保 priceRaw 原值(数字价 0)', h0)
+  assert(h0?.star === '高档型' && h0?.hotelId === '1' && h0?.jumpUrl === 'https://router.feizhu.com/x', 'star/jumpUrl(shId/detailUrl)透传', h0)
+  // H3 参数闸:无目的地 / 日期不成对 / 非规整日期 都走结构化 error,不发上游
+  const hb1 = await flyaiSearch({ kind: 'hotel' })
+  assert(hb1.verdict === 'error' && /destName|目的地/.test(hb1.error ?? ''), '缺目的地 → bad args error', hb1)
+  const hb2 = await flyaiSearch({ kind: 'hotel', destName: '大理', checkInDate: '2026-10-01' })
+  assert(hb2.verdict === 'error' && /成对/.test(hb2.error ?? ''), '入住/退房不成对 → error(不静默)', hb2)
+  assert((await flyaiSearch({ kind: 'hotel', destName: '大理', checkInDate: '10月1号', checkOutDate: '2026-10-03' })).verdict === 'error', '非法日期格式 → error')
+  rmSync(fakeDir, { recursive: true, force: true })
 }
 
 console.log(`\nSESSION P1: ${pass} pass, ${fail} fail`)

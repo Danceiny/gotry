@@ -49,12 +49,15 @@ export interface Config {
   timeoutMs: number
   /** hbcli 二进制路径(hotelbyte-cli;空=禁用实时酒店,回退数据包) */
   hbcliBin: string
+  /** 账号会话检索总闸(RFC 支柱④「用户明示授权+随时可关」):ask=gotry_session_search 每次调用先过运行时审批卡(默认);off=总闸关闭,直接拒绝 */
+  sessionAccess: string
 }
 
 export const Config: z<Config> = z.object({
   stateRoot: z.string().default('.'),
   timeoutMs: z.number().default(30_000),
   hbcliBin: z.string().default('hbcli'),
+  sessionAccess: z.string().default('ask'),
 })
 
 interface FeasibilityResult {
@@ -156,6 +159,27 @@ export function apply(ctx: Context, config: Config): void {
   // (gotry-state/incidents.jsonl),handler 自身不再抛,不阻塞后续控制流。
   // 不调 process.exit——让 dsh/上级容器决定生死,我们只留现场。
   installProcessGuards(config.stateRoot ?? '.', { uncaughtException: 'gotry-tools', unhandledRejection: 'gotry-tools' })
+
+  // 账号会话授权闸(RFC 支柱④「用户明示授权 + 站点白名单 + 随时可关」进代码):
+  // 会话面工具动用用户本人登录态,每次调用前必须经 dsh 原生审批链——
+  // tools/pre-execute 返回 {kind:'ask'} 由 registry 交 ApprovalService(审批卡),
+  // allowed-once 仅放行该次调用;rejected/cancelled/无审批通道一律 fail-closed
+  // 拒绝(headless 无应答者同理——无用户在场 = 无授权)。本插件不复读不重试。
+  // 防御:极简宿主/mock ctx 无事件总线时跳过注册(真实 dsh/cordis 必有 on)。
+  const ctxOn = (ctx as unknown as { on?: unknown }).on
+  if (typeof ctxOn === 'function') {
+    ctx.on('tools/pre-execute', async (exec, next) => {
+      if (exec.name !== 'gotry_session_search') return next()
+      if ((config.sessionAccess ?? 'ask') === 'off') {
+        return { kind: 'deny', reason: 'gotry_session_search 已被配置关闭(sessionAccess=off);需要账号会话检索时由用户开启' }
+      }
+      return {
+        kind: 'ask',
+        reason: 'gotry_session_search 将使用你本人已登录的浏览器会话做携程机票只读检索'
+          + '(ReadGuard 物理只读:写请求网络层中止,agent 永不碰凭证与验证码);批准仅对本次调用生效',
+      }
+    })
+  }
 
   // D-NEW 收尾:全部工具 execute 统一异常隔离——单个工具抛错/拒绝不再沿 cordis
   // 传到 dsh 主循环,降级为结构化错误返回给 LLM + incident 落盘(incident-log.ts)。
@@ -643,15 +667,44 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_flyai_search',
     description:
-      'Live flight/train search via Fliggy official FlyAI channel (read-only, no key, booking only via jumpUrl by the human). '
-      + 'PRIMARY source for real schedules & prices (RFC user-session-data-rfc). Input: kind=flight|train, from/to city names (Chinese), date YYYY-MM-DD. '
-      + 'Evidence [实时API:flyai@ts]. Cross-validate expensive claims against gotry_session_search when it matters.',
+      'Live travel search through the Fliggy official FlyAI channel (read-only, no key; booking/comparison happens by the HUMAN on the jumpUrl page). '
+      + 'kind="flight"|"train": { kind, from, to, date } (中文城市名, date YYYY-MM-DD) — real schedules & prices, split 直达/中转 in results. '
+      + 'kind="hotel": { kind:"hotel", to:"大理"(目的地中文), checkIn?, checkOut? (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords? }. '
+      + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
+      + 'Evidence [实时API:flyai@ts]. Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.',
     parameters: {
-      query: { type: 'json', required: true, description: '{ kind: "flight"|"train", from: "上海", to: "丽江", date: "2026-10-01" }' },
+      query: { type: 'json', required: true, description: 'kind=flight|train: { kind, from: "上海", to: "丽江", date: "2026-10-01" }; kind="hotel": { kind:"hotel", to:"大理", checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", keyWords?: "洱海" }' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string }>(args, 'from')
+      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; checkIn?: string; checkOut?: string; keyWords?: string }>(args, 'from')
+      if (q.kind === 'hotel') {
+        const dest = (q.to ?? '').trim()
+        if (!dest) return { ok: false, summary: 'kind=hotel 需要 to(目的地中文,如 大理)' } as const
+        if ((q.checkIn ? 1 : 0) !== (q.checkOut ? 1 : 0) || (q.checkIn && !/^\d{4}-\d{2}-\d{2}$/.test(q.checkIn))) {
+          return { ok: false, summary: '酒店 checkIn/checkOut 须成对且为 YYYY-MM-DD(未定档期可不填,先摸底)' } as const
+        }
+        // 过去入住日同机/火过去日期闸(issue #24 同构;分层纪律:日期算术在代码层)
+        if (q.checkIn) {
+          const now = new Date()
+          const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+          if (q.checkIn < todayYmd || (q.checkOut ?? '') < q.checkIn) {
+            return JSON.parse(JSON.stringify({
+              ok: false, verdict: 'error', kind: 'hotel',
+              summary: `未发起查询:入住 ${q.checkIn}/退房 ${q.checkOut ?? ''} 不是未来合法区间(今天 ${todayYmd})。向用户确认日期后再查。`,
+            })) as Record<string, never>
+          }
+          if ((q.checkOut ?? '').length !== 10) {
+            return { ok: false, summary: 'checkOut 需 YYYY-MM-DD(与 checkIn 成对)' } as const
+          }
+        }
+        const r = await flyaiSearch({ kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords })
+        const top = (r.hotels ?? []).slice(0, 8).map(o => `${o.name}${o.star ? `(${o.star})` : ''} ${o.priceRaw ?? '价待询'}${o.poi ? ` · ${o.poi}` : ''}`)
+        const summary = r.verdict === 'hit'
+          ? `${dest} 酒店(飞猪官方只读)前 ${top.length} 家(价格多为打码,真实价以 jumpUrl 为准):\n${top.join('\n')}\n${r.evidence}`
+          : `${dest} 酒店无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
+        return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+      }
       const kind = q.kind === 'train' ? 'train' : 'flight'
       if (!q.from || !q.to || !q.date) {
         return { ok: false, summary: '需要 from/to(中文城市名)与 date(YYYY-MM-DD)' } as const
@@ -677,19 +730,22 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),
     presentResult: (args, value) => {
-      const r = value as { ok?: boolean; options?: unknown[] }
-      return { card: 'generic', title: `飞猪检索:${r.ok && (r.options?.length ?? 0) > 0 ? `${r.options!.length} 条` : '降级'}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
+      const isHotel = String((args.query as { kind?: string })?.kind) === 'hotel'
+      const r = value as { ok?: boolean; options?: unknown[]; hotels?: unknown[] }
+      const n = Math.max((r.options ?? []).length, (r.hotels ?? []).length)
+      return { card: 'generic', title: `${isHotel ? '飞猪酒店' : '飞猪检索'}:${r.ok && n > 0 ? `${n} 条` : '降级'}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
     },
   }))
 
   registerGuarded(defineTool({
     name: 'gotry_session_search',
     description:
-      'Cross-validation search on the user\'s OWN logged-in browser session (dedicated persistent profile, ReadGuard = physically read-only: '
-      + 'write requests are aborted at network layer; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
+      'Search on the USER\'S OWN logged-in browser session (Ctrip flights today; the account channel, not an anonymous instance). '
+      + 'Consent gate: every call asks the user first via the runtime approval card (allowed-once per call; denied or absent approval channel = not executed — fall back to other tools, never retry). '
+      + 'ReadGuard = physically read-only (write requests aborted at network layer; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
       + 'Currently ctrip-flight: sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
-      + 'verdict needs-login = run scripts/session-login.ts once with the human logging in. Rate-limited (≥30s between same-site calls). '
-      + 'Use to verify/double-check prices from gotry_flyai_search on the same itinerary (split by 直达/中转).',
+      + 'verdict needs-login = run scripts/session-login.ts once with the human logging in; needs-attach = one-time Chrome remote-debugging switch. '
+      + 'Rate-limited (≥30s between same-site calls).',
     parameters: {
       query: { type: 'json', required: true, description: '{ from: "上海", to: "丽江", date: "2026-10-01" }' },
     },

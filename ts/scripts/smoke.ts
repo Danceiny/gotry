@@ -22,16 +22,26 @@ async function main() {
   const smokeRoot = mkdtempSync(join(tmpdir(), 'gotry-smoke-'))
   const registered: ToolLike[] = []
   const variables: Record<string, () => string> = {}
+  // pre-execute 监听器捕获:授权闸(RFC 支柱④进代码)在 apply() 里经 ctx.on 挂注册表
+  type PreDecision = { kind: 'allow' | 'deny' | 'ask'; reason?: string }
+  const preExecutes: Array<(exec: { name?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>> = []
   const ctx = {
     tools: { register: (t: unknown) => registered.push(t as ToolLike) },
     systemPrompt: { variable: (name: string, provider: () => string) => { variables[name] = provider } },
+    on: (event: string, fn: (exec: { name?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>) => {
+      if (event === 'tools/pre-execute') preExecutes.push(fn)
+      return () => {}
+    },
   } as unknown as Context
 
-  apply(ctx, {
+  // 配置对象持引用:授权闸总闸(sessionAccess)在 §13 里运行时切闸验证
+  const cfg = {
     stateRoot: smokeRoot,
     timeoutMs: 30_000,
     hbcliBin: 'hbcli-not-on-path',  // 强制走降级路径的确定性验证
-  })
+    sessionAccess: 'ask',
+  }
+  apply(ctx, cfg)
 
   console.log(`registered tools: ${registered.map(t => t.name).join(', ')}`)
 
@@ -209,6 +219,41 @@ async function main() {
       throw new Error(`FAIL: session 工具终态应属 {needs-login,hit,cooldown,challenged} 或带证据的 error 终态,实际:${JSON.stringify(ss).slice(0, 200)}`)
     }
     console.log(`session-face tools: flyai ${faBlocked ? 'sentinel-限流降级' : `live hit(${fa.options?.length ?? 0} 条)`}; session 终态=${ss.verdict ?? ss.via}(登录态存在前提合同)`)
+    // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 双合法终态(限流/端点降级 or hit)
+    const fh = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' } }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string }
+    const fhBlocked = fh.verdict === 'error' && /sentinel|block/i.test(fh.error ?? '')
+    const fhErrTerminal = fh.ok === false && fh.verdict === 'error' && /^flyai-error$/.test(String(fh.via ?? '')) && /\[实时API:flyai@error@/.test(String(fh.evidence ?? ''))
+    if (fhBlocked || fhErrTerminal) {
+      console.log('  WARN - flyai hotel 限流/端点降级,证据链合同通过(hit 断言跳过)')
+    } else if (fh.ok !== true || fh.verdict !== 'hit' || (fh.hotels?.length ?? 0) < 1 || !/\[实时API:flyai@/.test(fh.evidence ?? '')) {
+      throw new Error(`FAIL: flyai hotel 应 live hit,实际:${JSON.stringify(fh).slice(0, 220)}`)
+    }
+    const fhDest = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel' } }, null) as { ok?: boolean; summary?: string }
+    if (fhDest.ok !== false) throw new Error('FAIL: hotel 缺目的地应参数闸拒绝')
+    const fhPast = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-01-01', checkOut: '2026-01-03' } }, null) as { ok?: boolean; summary?: string }
+    if (!(fhPast.ok === false && /不是未来合法区间/.test(String(fhPast.summary ?? '')))) {
+      throw new Error(`FAIL: 酒店过去入住日应代码层预校验拒绝,实际:${JSON.stringify(fhPast).slice(0, 200)}`)
+    }
+    console.log(`  hotel channel: ${fhBlocked ? 'sentinel-限流降级' : `${fh.hotels?.length ?? 0} 家`}; 参数闸/过去日闸生效`)
+  }
+
+  // 13) 账号会话授权闸(RFC 支柱④进代码):会话工具 pre-execute → ask(批准一次只放一次);
+  // 总闸 off → deny(随时可关);其他工具原样放行(runtime 原声 ApprovalService 在宿主侧结算)
+  {
+    const gate = preExecutes.at(-1)
+    if (!gate) throw new Error('FAIL: tools/pre-execute 授权闸未注册')
+    const next = async () => ({ kind: 'allow' as const })
+    const ask = await gate({ name: 'gotry_session_search' }, next) as { kind?: string; reason?: string }
+    if (ask.kind !== 'ask' || !/仅对本次调用生效/.test(String(ask.reason ?? ''))) {
+      throw new Error(`FAIL: 会话工具应返回 ask(审批卡,allowed-once 语义),实际:${JSON.stringify(ask)}`)
+    }
+    const pass = await gate({ name: 'gotry_anything_search' }, next)
+    if (pass.kind !== 'allow') throw new Error(`FAIL: 非会话工具应原样放行,实际:${JSON.stringify(pass)}`)
+    cfg.sessionAccess = 'off'
+    const deny = await gate({ name: 'gotry_session_search' }, next) as { kind?: string }
+    if (deny.kind !== 'deny') throw new Error(`FAIL: sessionAccess=off 应 deny,实际:${JSON.stringify(deny)}`)
+    cfg.sessionAccess = 'ask'
+    console.log('consent gate: session tool → approval-card ask; off → fail-closed deny; other tools pass through')
   }
 
   rmSync(smokeRoot, { recursive: true, force: true })
