@@ -129,16 +129,28 @@ export async function searchHotels(
   if (live.via === 'hbcli-realtime') {
     return { ...live, hotels: live.result, summary: `${query.destination}:hbcli 实时返回${query.checkIn || query.checkOut ? '(日期不传上游 list,以当前窗口房价返回)' : ''}` }
   }
-  // 降级:读静态包
+  // 降级:读静态包,按目的地过滤命中的住宿块(issue #24)——整包倾倒会把无关场景
+  // (深圳/普吉/曼谷/云南/大理混装)灌给模型且不指明哪块相关;包内无该目的地时明示
+  // 「无数据」而不是伪装成可用结果。
   const fallback = opts.fallbackPath
   if (fallback) {
     try {
       const { readFile } = await import('node:fs/promises')
-      const pack = JSON.parse(await readFile(fallback, 'utf-8')) as Record<string, unknown>
+      const pack = JSON.parse(await readFile(fallback, 'utf-8')) as { stays?: unknown[] } & Record<string, unknown>
+      const kw = query.destination.trim()
+      const stays = Array.isArray(pack.stays) ? pack.stays : []
+      const matched = kw ? stays.filter(s => JSON.stringify(s).includes(kw)) : stays
+      if (matched.length) {
+        return {
+          ...live,
+          hotels: { stays: matched },
+          summary: `${query.destination}:hbcli 不可用(${live.error ?? live.via}),降级到静态包,命中 ${matched.length} 个住宿块`,
+        }
+      }
       return {
         ...live,
-        hotels: pack,
-        summary: `${query.destination}:hbcli 不可用(${live.error ?? live.via}),降级到静态包`,
+        hotels: null,
+        summary: `${query.destination}:hbcli 不可用(${live.error ?? live.via}),且静态包无「${query.destination}」住宿数据(静态包仅覆盖内置场景)`,
       }
     } catch { /* 静态包读不到也优雅降级 */ }
   }

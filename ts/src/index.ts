@@ -38,6 +38,8 @@ import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { sessionFlightSearch } from '../capabilities/session-search.ts'
+import { sessionLogin } from '../capabilities/session-login.ts'
+import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -49,12 +51,15 @@ export interface Config {
   timeoutMs: number
   /** hbcli 二进制路径(hotelbyte-cli;空=禁用实时酒店,回退数据包) */
   hbcliBin: string
+  /** 账号会话检索总闸(RFC 支柱④「用户明示授权+随时可关」):ask=gotry_session_search 每会话每站点首次调用弹审批卡、会话内记住(默认);allow=用户已在配置明示预授权(直接放行);off=总闸关闭,直接拒绝 */
+  sessionAccess: string
 }
 
 export const Config: z<Config> = z.object({
   stateRoot: z.string().default('.'),
   timeoutMs: z.number().default(30_000),
   hbcliBin: z.string().default('hbcli'),
+  sessionAccess: z.string().default('ask'),
 })
 
 interface FeasibilityResult {
@@ -156,6 +161,21 @@ export function apply(ctx: Context, config: Config): void {
   // (gotry-state/incidents.jsonl),handler 自身不再抛,不阻塞后续控制流。
   // 不调 process.exit——让 dsh/上级容器决定生死,我们只留现场。
   installProcessGuards(config.stateRoot ?? '.', { uncaughtException: 'gotry-tools', unhandledRejection: 'gotry-tools' })
+
+  // 账号会话授权闸(RFC 支柱④「用户明示授权 + 站点白名单 + 随时可关」进代码;v2 每会话一次):
+  // 会话面工具动用用户本人登录态,**每会话每站点首次调用**弹 dsh 原生审批卡——
+  // allowed-once 记入会话 granted 集,后续同站调用免弹;用户拒绝 = 本会话吊销
+  // (denied 集,不再弹卡也不再执行——拒绝是裁决,不反复骚扰);无审批通道
+  // (headless 无用户在场)一律 fail-closed 拒绝。sessionAccess: ask(默认)|allow|off。
+  // v1 教训(2026-08-29 founder 实测「每次都要弹,经常无法点击」):逐调用弹卡 = 骚扰,
+  // 会话态收归 capabilities/session-consent.ts。防御:极简宿主/mock ctx 无事件总线时跳过。
+  const ctxOn = (ctx as unknown as { on?: unknown }).on
+  if (typeof ctxOn === 'function') {
+    ctx.on('tools/pre-execute', createConsentGate({
+      access: () => config.sessionAccess ?? 'ask',
+      approval: approvalFromContext(ctx),
+    }))
+  }
 
   // D-NEW 收尾:全部工具 execute 统一异常隔离——单个工具抛错/拒绝不再沿 cordis
   // 传到 dsh 主循环,降级为结构化错误返回给 LLM + incident 落盘(incident-log.ts)。
@@ -643,18 +663,59 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_flyai_search',
     description:
-      'Live flight/train search via Fliggy official FlyAI channel (read-only, no key, booking only via jumpUrl by the human). '
-      + 'PRIMARY source for real schedules & prices (RFC user-session-data-rfc). Input: kind=flight|train, from/to city names (Chinese), date YYYY-MM-DD. '
-      + 'Evidence [实时API:flyai@ts]. Cross-validate expensive claims against gotry_session_search when it matters.',
+      'Live travel search through the Fliggy official FlyAI channel (read-only, no key; booking/comparison happens by the HUMAN on the jumpUrl page). '
+      + 'kind="flight"|"train": { kind, from, to, date } (中文城市名, date YYYY-MM-DD) — real schedules & prices, split 直达/中转 in results. '
+      + 'kind="hotel": { kind:"hotel", to:"大理"(目的地中文), checkIn?, checkOut? (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords? }. '
+      + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
+      + 'Evidence [实时API:flyai@ts]. Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.',
     parameters: {
-      query: { type: 'json', required: true, description: '{ kind: "flight"|"train", from: "上海", to: "丽江", date: "2026-10-01" }' },
+      query: { type: 'json', required: true, description: 'kind=flight|train: { kind, from: "上海", to: "丽江", date: "2026-10-01" }; kind="hotel": { kind:"hotel", to:"大理", checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", keyWords?: "洱海" }' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string }>(args, 'from')
+      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; checkIn?: string; checkOut?: string; keyWords?: string }>(args, 'from')
+      if (q.kind === 'hotel') {
+        const dest = (q.to ?? '').trim()
+        if (!dest) return { ok: false, summary: 'kind=hotel 需要 to(目的地中文,如 大理)' } as const
+        if ((q.checkIn ? 1 : 0) !== (q.checkOut ? 1 : 0) || (q.checkIn && !/^\d{4}-\d{2}-\d{2}$/.test(q.checkIn))) {
+          return { ok: false, summary: '酒店 checkIn/checkOut 须成对且为 YYYY-MM-DD(未定档期可不填,先摸底)' } as const
+        }
+        // 过去入住日同机/火过去日期闸(issue #24 同构;分层纪律:日期算术在代码层)
+        if (q.checkIn) {
+          const now = new Date()
+          const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+          if (q.checkIn < todayYmd || (q.checkOut ?? '') < q.checkIn) {
+            return JSON.parse(JSON.stringify({
+              ok: false, verdict: 'error', kind: 'hotel',
+              summary: `未发起查询:入住 ${q.checkIn}/退房 ${q.checkOut ?? ''} 不是未来合法区间(今天 ${todayYmd})。向用户确认日期后再查。`,
+            })) as Record<string, never>
+          }
+          if ((q.checkOut ?? '').length !== 10) {
+            return { ok: false, summary: 'checkOut 需 YYYY-MM-DD(与 checkIn 成对)' } as const
+          }
+        }
+        const r = await flyaiSearch({ kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords })
+        const top = (r.hotels ?? []).slice(0, 8).map(o => `${o.name}${o.star ? `(${o.star})` : ''} ${o.priceRaw ?? '价待询'}${o.poi ? ` · ${o.poi}` : ''}`)
+        const summary = r.verdict === 'hit'
+          ? `${dest} 酒店(飞猪官方只读)前 ${top.length} 家(价格多为打码,真实价以 jumpUrl 为准):\n${top.join('\n')}\n${r.evidence}`
+          : `${dest} 酒店无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
+        return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+      }
       const kind = q.kind === 'train' ? 'train' : 'flight'
       if (!q.from || !q.to || !q.date) {
         return { ok: false, summary: '需要 from/to(中文城市名)与 date(YYYY-MM-DD)' } as const
+      }
+      // 过去日期预校验(issue #24,代码层算术;分层纪律):用户说「7.18」未带年份时模型会落到当前年,
+      // 而今天可能已在 8 月——过去日期上游必拒(「出发日期非法」)。拦在发查询之前并指明修正方向,
+      // 不让模型从 miss 里猜因。
+      const now = new Date()
+      const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      if (q.date < todayYmd) {
+        return JSON.parse(JSON.stringify({
+          ok: false, verdict: 'error', kind,
+          summary: `未发起查询:日期 ${q.date} 已是过去(今天 ${todayYmd}),过去不存在在售机/火车票。`
+            + `多为用户时间表达未带年份所致——向用户确认年份(或按未来最近的同月日修正)后再查。`,
+        })) as Record<string, never>
       }
       const r = await flyaiSearch({ kind, origin: q.from, destination: q.to, depDate: q.date })
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.no} ${o.name} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
@@ -665,19 +726,54 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),
     presentResult: (args, value) => {
-      const r = value as { ok?: boolean; options?: unknown[] }
-      return { card: 'generic', title: `飞猪检索:${r.ok && (r.options?.length ?? 0) > 0 ? `${r.options!.length} 条` : '降级'}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
+      const isHotel = String((args.query as { kind?: string })?.kind) === 'hotel'
+      const r = value as { ok?: boolean; options?: unknown[]; hotels?: unknown[] }
+      const n = Math.max((r.options ?? []).length, (r.hotels ?? []).length)
+      return { card: 'generic', title: `${isHotel ? '飞猪酒店' : '飞猪检索'}:${r.ok && n > 0 ? `${n} 条` : '降级'}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
+    },
+  }))
+
+  registerGuarded(defineTool({
+    name: 'gotry_session_login',
+    description:
+      'Productized login bootstrap for the account session channel (call this when gotry_session_search returns needs-login — the user never needs a terminal). '
+      + 'OPENS the site login entry in the USER\'S OWN Chrome and waits for the user to finish logging in on the external site. '
+      + 'GoTry NEVER collects, stores, or transmits credentials: no passwords, no SMS codes, no cookie values — it only checks the boolean fact "already logged in" (reads cookie NAMES only, zero values). '
+      + 'verdict logged-in (tickets detected) | pending (login tab opened, user not done yet — offer to re-check later) | needs-attach (one-time Chrome remote-debugging switch instructions). '
+      + 'Evidence [会话:<site>-login@ts].',
+    parameters: {
+      query: { type: 'json', required: true, description: '可空对象 {}: { waitSeconds?: number }(等待用户完成登录的上限秒数,默认 90,至多 300)' },
+    },
+    output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { evidence?: string }).evidence ?? JSON.stringify(v).slice(0, 600)) }] },
+    async execute(args: { query?: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ waitSeconds?: number }>(args, 'waitSeconds')
+      const r = await sessionLogin({ waitMs: typeof q?.waitSeconds === 'number' ? q.waitSeconds * 1000 : undefined })
+      const summary = r.verdict === 'logged-in'
+        ? `${r.site} 登录完成确认(票据 cookie 名已检出,只读名字)。说明:登录是在携程官网、用你自己的浏览器完成的——gotry 全程未接触任何密码/验证码/cookie 值。现在可以继续会话检索了。${r.evidence}`
+        : r.verdict === 'pending'
+          ? `登录入口已在你的 Chrome 打开;请在弹出的标签页里正常登录携程(登录由你在官网完成,不属于 gotry)。完成后说一声"继续",我再确认。gotry 只检查"是否已登录",永不收集你的账号信息。${r.evidence}`
+          : r.verdict === 'needs-attach'
+            ? `需要一次性开启你 Chrome 的远程调试开关:在你的 Chrome 地址栏打开 chrome://inspect/#remote-debugging 并打开开关,然后说一声"重试"。${r.evidence}`
+            : `登录引导未完成:${r.error ?? '未知原因'} ${r.evidence}`
+      return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+    },
+    presentCall: _args => ({ card: 'generic', title: '登录携程(用你自己的浏览器,不在 gotry 输入)', kind: 'fetch', rawInput: {} }),
+    presentResult: (_args, value) => {
+      const r = value as { verdict?: string; tickets?: string[] }
+      const label = r.verdict === 'logged-in' ? `已登录(${(r.tickets ?? []).length} 票据)` : r.verdict === 'pending' ? '等待你在携程页面完成登录' : r.verdict ?? '降级'
+      return { card: 'generic', title: `账号登录:${label}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
     },
   }))
 
   registerGuarded(defineTool({
     name: 'gotry_session_search',
     description:
-      'Cross-validation search on the user\'s OWN logged-in browser session (dedicated persistent profile, ReadGuard = physically read-only: '
-      + 'write requests are aborted at network layer; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
+      'Search on the USER\'S OWN logged-in browser session (Ctrip flights today; the account channel, not an anonymous instance). '
+      + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
+      + 'ReadGuard = physically read-only (write requests aborted at network layer; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
       + 'Currently ctrip-flight: sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
-      + 'verdict needs-login = run scripts/session-login.ts once with the human logging in. Rate-limited (≥30s between same-site calls). '
-      + 'Use to verify/double-check prices from gotry_flyai_search on the same itinerary (split by 直达/中转).',
+      + 'verdict needs-login = call gotry_session_login (product tool: opens the Ctrip login entry in the user\'s own Chrome and waits for them to log in on the external site — no terminal, no credentials through GoTry); needs-attach = one-time Chrome remote-debugging switch. '
+      + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).',
     parameters: {
       query: { type: 'json', required: true, description: '{ from: "上海", to: "丽江", date: "2026-10-01" }' },
     },

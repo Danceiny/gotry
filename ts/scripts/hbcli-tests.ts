@@ -44,9 +44,9 @@ const r3 = await callHbcliJson(['search', 'hotel-list', '--json'], { hbcliBin: '
 assert.equal(r3.via, 'hbcli-error', 'no-binary path')
 assert.match(r3.evidence, /spawn_error/, `evidence got: ${r3.evidence}`)
 
-// 4. searchHotels 高层降级
+// 4. searchHotels 高层降级:静态包按目的地过滤命中块(issue #24 契约,不整包倾倒)
 const fallback = join(tmp, 'hotels-fallback.json')
-await writeFile(fallback, JSON.stringify({ meta: 'fake', stays: [{ id: 's1' }] }))
+await writeFile(fallback, JSON.stringify({ meta: 'fake', stays: [{ id: 's1', note: '普吉岛 workation 两周(13 晚)' }, { id: 's2', note: '曼谷周末(2 晚)' }] }))
 // v0.3.0 旗标回归:上游扁平化后旗标是 --destination-name/--room-occupancies
 {
   const { writeFileSync, chmodSync } = await import('node:fs')
@@ -61,10 +61,16 @@ await writeFile(fallback, JSON.stringify({ meta: 'fake', stays: [{ id: 's1' }] }
   console.log('5. v0.3.0 旗标(--destination-name/--room-occupancies)对齐 OK')
 }
 
-const r4 = await searchHotels({ destination: '普吉' }, { hbcliBin: failBin2, fallbackPath: fallback })
+const r4 = await searchHotels({ destination: '普吉岛' }, { hbcliBin: failBin2, fallbackPath: fallback })
 assert.equal(r4.via, 'hbcli-error', 'searchHotels: fails to hbcli → fallback')
 assert.equal(r4.summary.includes('降级到静态包'), true, 'summary 指明降级')
-assert.ok(r4.hotels, 'hotels 字段填上静态包内容')
+assert.deepEqual(r4.hotels, { stays: [{ id: 's1', note: '普吉岛 workation 两周(13 晚)' }] }, 'hotels 只含目的地命中的住宿块')
+assert.equal(r4.summary.includes('命中 1 个住宿块'), true, 'summary 指明命中块数')
+
+// 5. 静态包无该目的地 → hotels=null 明示无数据,不伪装成可用结果
+const r5 = await searchHotels({ destination: '巴黎' }, { hbcliBin: failBin2, fallbackPath: fallback })
+assert.equal(r5.hotels ?? null, null, '无目的地命中时 hotels 为 null(不整包倾倒)')
+assert.match(r5.summary, /无「巴黎」住宿数据/, 'summary 明示静态包无该目的地')
 
 await rm(tmp, { recursive: true, force: true })
-console.log('HBCLI TESTS: 5/5 OK (happy / error / no-binary / fallback / v0.3.0 旗标回归)')
+console.log('HBCLI TESTS: 6/6 OK (happy / error / no-binary / fallback-filter / fallback-no-match / v0.3.0 旗标回归)')

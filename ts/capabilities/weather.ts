@@ -59,11 +59,11 @@ export function wmoLabel(code: number): string {
   return WMO_ZH[code] ?? `天气码${code}`
 }
 
-async function fetchJson(url: string, timeoutMs: number): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+async function fetchJson(url: string, timeoutMs: number, headers: Record<string, string> = {}): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json' } })
+    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json', ...headers } })
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
     return { ok: true, data: await res.json() }
   } catch (e) {
@@ -73,29 +73,94 @@ async function fetchJson(url: string, timeoutMs: number): Promise<{ ok: boolean;
   }
 }
 
-/** 地名 → 坐标(地理编码,供 dsh 工具把「大理」转成经纬度) */
+const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org/search'
+
+/** 行政级/人口重镇 feature_code(open-meteo 命名惯例):PPLC=首都 PPLA*=首府 PPLB=城镇 PPLX=区片 */
+const MAJOR_FEATURE = /^(PPLC|PPLA|PPLB|PPLX)/
+
+interface GeoHitInternal {
+  name: string
+  latitude: number
+  longitude: number
+  country?: string
+  admin1?: string
+  /** 排序用:open-meteo 有 population;同名小地(村/镇)缺失时按 -1 处理 */
+  population: number
+  featureCode: string
+}
+
+function stripHits(hits: GeoHitInternal[]): Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }> {
+  return hits.map(({ name, latitude, longitude, country, admin1 }) =>
+    ({ ...(country ? { country } : {}), ...(admin1 ? { admin1 } : {}), name, latitude, longitude }))
+}
+
+/** 地名 → 坐标(双源,供 dsh 工具把「大理」转成经纬度):
+ *  1. Open-Meteo(主源):命中按人口/行政级降序——「大理」会同时命中云南州府与四川同名乡,不能盲信次序;
+ *  2. Nominatim(兜底):open-meteo 的中文名覆盖有洞(实测(issue #24)「普吉岛」0 结果、
+ *     裸词「普吉」错配西藏林芝同名村),弱命中/零结果时走 Nominatim 拿正确目标,
+ *     兜底仍空则回退 open-meteo 弱结果(不比此前更差)。 */
 export async function geocodePlace(
   name: string,
   opts: { timeoutMs?: number; count?: number } = {},
-): Promise<{ ok: boolean; evidence: string; results: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>; error?: string }> {
+): Promise<{ ok: boolean; evidence: string; via?: 'open-meteo' | 'nominatim'; results: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>; error?: string }> {
   const ts = new Date().toISOString()
   const count = opts.count ?? 5
-  const url = `${GEOCODE_BASE}?name=${encodeURIComponent(name)}&count=${count}&language=zh&format=json`
-  const r = await fetchJson(url, opts.timeoutMs ?? 15_000)
-  if (!r.ok) {
-    return { ok: false, evidence: `[实时API:open-meteo-geo@error@${ts}]`, results: [], error: r.error }
+  const query = name.trim()
+  const omUrl = `${GEOCODE_BASE}?name=${encodeURIComponent(query)}&count=${count}&language=zh&format=json`
+  const r = await fetchJson(omUrl, opts.timeoutMs ?? 15_000)
+  const omResults: GeoHitInternal[] = r.ok
+    ? ((r.data as { results?: unknown[] })?.results ?? []).map((item) => {
+        const it = item as Record<string, unknown>
+        return {
+          name: String(it['name'] ?? ''),
+          latitude: Number(it['latitude']),
+          longitude: Number(it['longitude']),
+          country: it['country'] ? String(it['country']) : undefined,
+          admin1: it['admin1'] ? String(it['admin1']) : undefined,
+          population: Number(it['population'] ?? 0) || 0,
+          featureCode: String(it['feature_code'] ?? ''),
+        }
+      }).filter(h => h.name && Number.isFinite(h.latitude) && Number.isFinite(h.longitude))
+    : []
+  omResults.sort((a, b) => (b.population - a.population) || (Number(MAJOR_FEATURE.test(b.featureCode)) - Number(MAJOR_FEATURE.test(a.featureCode))))
+  const top = omResults[0]
+  // 强命中:有人口规模或主要行政级,直接采信(「深圳市」「曼谷」路径不变)
+  if (top && (top.population > 0 || MAJOR_FEATURE.test(top.featureCode))) {
+    return { ok: true, evidence: `[实时API:open-meteo-geo@${ts}]`, via: 'open-meteo', results: stripHits(omResults) }
   }
-  const results = ((r.data as { results?: unknown[] })?.results ?? []).map((item) => {
-    const it = item as Record<string, unknown>
-    return {
-      name: String(it['name'] ?? ''),
-      latitude: Number(it['latitude']),
-      longitude: Number(it['longitude']),
-      country: it['country'] ? String(it['country']) : undefined,
-      admin1: it['admin1'] ? String(it['admin1']) : undefined,
-    }
-  })
-  return { ok: true, evidence: `[实时API:open-meteo-geo@${ts}]`, results }
+  // 弱命中/零结果/主源请求失败:Nominatim 兜底(免费无 key;中文 accept-language)
+  const nomTs = new Date().toISOString()
+  const nomUrl = `${NOMINATIM_BASE}?q=${encodeURIComponent(query)}&format=jsonv2&limit=${count}&accept-language=zh&addressdetails=1`
+  const nom = await fetchJson(nomUrl, opts.timeoutMs ?? 15_000, { 'User-Agent': 'gotry-travel-agent/0.1 (+https://github.com/Danceiny/gotry)' })
+  const nomResults: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }> = nom.ok
+    ? ((nom.data as unknown[]) ?? []).map((item) => {
+        const it = item as Record<string, unknown>
+        const addr = (it['address'] ?? {}) as Record<string, string>
+        return {
+          name: String(it['name'] ?? ''),
+          latitude: Number(it['lat']),
+          longitude: Number(it['lon']),
+          country: addr['country'],
+          admin1: addr['province'] ?? addr['state'] ?? addr['county'],
+        }
+      }).filter(h => h.name && Number.isFinite(h.latitude) && Number.isFinite(h.longitude))
+    : []
+  if (nomResults.length) {
+    const omNote = r.ok
+      ? `open-meteo ${omResults.length} 条弱命中(无人口/行政级,不足采信)`
+      : `open-meteo 失败:${r.error ?? 'HTTP error'}`
+    return { ok: true, evidence: `[实时API:nominatim@${nomTs}](兜底层: ${omNote})`, via: 'nominatim', results: nomResults }
+  }
+  // 双源皆空/兜底失败:open-meteo 有弱结果仍返回(同构「降级不阻塞」契约),否则维持失败终态
+  if (omResults.length) {
+    return { ok: true, evidence: `[实时API:open-meteo-geo@${ts}]`, via: 'open-meteo', results: stripHits(omResults) }
+  }
+  return {
+    ok: false,
+    evidence: `[实时API:open-meteo-geo@error@${ts}];[实时API:nominatim@error@${nomTs}]`,
+    results: [],
+    error: r.ok ? `双源无结果:${nom.error ?? 'nominatim empty'}` : (r.error),
+  }
 }
 
 /** 未来天气预报(≤16 天) */
