@@ -121,14 +121,17 @@ EOF
 (cd ts && GOTRY_NUDGE_CHANNEL=file GOTRY_NUDGE_FILE="$NUDGE_FIXTURE/digest.md" npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --budget 8000 --month 11 >/dev/null) || FAIL=1
 grep -q "普吉" "$NUDGE_FIXTURE/digest.md" || { echo "FAIL: file 摘要应含命中的普吉"; FAIL=1; }
 grep -q "洱海" "$NUDGE_FIXTURE/digest.md" && { echo "FAIL: muted 洱海不得召回"; FAIL=1; }
-(cd ts && GOTRY_NUDGE_ENABLED=false npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" | grep -q "回访已关闭") || FAIL=1
-(cd ts && npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 1 --month 7 | grep -q "不硬推") || FAIL=1
-(cd ts && GOTRY_NUDGE_CHANNEL=lark npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --month 11 | grep -q "降级") || FAIL=1
+NUDGE_DISABLED_OUTPUT=$(cd ts && GOTRY_NUDGE_ENABLED=false npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE") || FAIL=1
+grep -q "回访已关闭" <<<"$NUDGE_DISABLED_OUTPUT" || FAIL=1
+NUDGE_NO_MATCH_OUTPUT=$(cd ts && npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 1 --month 7) || FAIL=1
+grep -q "不硬推" <<<"$NUDGE_NO_MATCH_OUTPUT" || FAIL=1
+NUDGE_LARK_OUTPUT=$(cd ts && GOTRY_NUDGE_CHANNEL=lark npx tsx scripts/nudge-digest.ts --state-root "$NUDGE_FIXTURE" --days 6 --month 11) || FAIL=1
+grep -q "降级" <<<"$NUDGE_LARK_OUTPUT" || FAIL=1
 rm -rf "$NUDGE_FIXTURE"
 echo "NUDGE SKELETON TESTS OK(0..1 匹配/muted 排除/可关闭/lark 缺 key 降级)"
 
 echo
-echo "=== 25. 会话数据面 P1-P2(ReadGuard/携程解析/节律闸 + #21 字段 fixture scorer/双源合同/waiting-attach no-spend + live FlyAI/会话;GOTRY_SESSION_LIVE=0 可关 live 会话) ==="
+echo "=== 25. 会话数据面 P1-P2(ReadGuard/携程解析/节律闸 + #21 字段 fixture scorer/双源合同/waiting-attach no-spend + live FlyAI/会话;GOTRY_SESSION_LIVE=0 关闭全部 live 端点) ==="
 (cd ts && npx tsx scripts/session-benchmark.ts) || FAIL=1
 (cd ts && npx tsx scripts/session-tests.ts) || FAIL=1
 
