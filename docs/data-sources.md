@@ -220,6 +220,8 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 - **登录产品化(第 18 工具 `gotry_session_login`,2026-08-29)**:`needs-login` 时 agent 直调(用户无需终端)——attach 用户 Chrome、弹登录入口、等待其在**携程官网**完成登录;**语义红线:登录永远发生在外部网站——gotry 永不收集/存储/传输密码、验证码或任何 cookie 值**,只读票据 cookie 名这个存在性事实(名称级,0 值过手;session-tests §J3 值不泄露断言)。登录引导页不挂 ReadGuard(transport `guard:false` 唯一豁免面):检索面「无守卫会话不存在」不变量不变,登录页是用户自己的凭证流,我们的写拦截反而会物理 abort 用户本人的登录 POST(隐私+可靠性双输)。遗留 CLI 探针 `scripts/session-login.ts` 降级为薄壳。——attach 用户日常 Chrome(与检索同传输层)→ 新开登录入口标签 → 人自行登录 → 只读轮询票据 cookie 名(不读值不碰密码/OTP/验证码)→ 检出即报;`needs-login` 文案改指该脚本(不再是「跑脚本」空指引)。
 - **测试纪律(2026-08-29 founder 反馈根治)**:例行回归**永不自动开浏览器窗口**——session-tests G 节 live 探针默认 SKIP,`GOTRY_SESSION_LIVE=1` 显式 opt-in;「在匿名窗口反复打开携程/界面闪退」形态就此退役。
 - **未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
+**未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
+- **人机共治标签页纪律(2026-08-29,founder「我根本就看不到登录页面」根治)**:登录引导与会话检索一律 `newPage` 开**自己的独立标签页**(登录页 `bringToFront` 置前台、`closeOwnPage=false` 留给用户),绝不劫持用户既有标签页(此前实现拿 `browser.pages()[0]` 导航,登录页开在用户看不见的位置=严重 UX bug);检索页用完即关自己的页。
 
 
 
