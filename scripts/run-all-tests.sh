@@ -296,6 +296,18 @@ NODE
 ') || FAIL=1
 rm -f "$M4_REPORT"
 
+echo "=== 35. M3 nightly evidence 生产器合同(封存价表保守换算/未知模型与usage缺失 fail-closed/run_key 确定性/无凭证 waiting 零写入/dry-run mock 全链零落盘;真跑花钱不进 CI) ==="
+(cd ts && npx tsx scripts/nightly-evidence-tests.ts) || FAIL=1
+NIGHTLY_DRY=$(cd ts && npx tsx scripts/nightly-evidence.ts --dry-run --format json) || FAIL=1
+echo "$NIGHTLY_DRY" | grep -q '"state":"dry_run"' || { echo "FAIL: nightly dry-run must exercise the pipeline against mock"; FAIL=1; }
+if [ -z "${LLM_API_KEY:-}" ] && [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+  NIGHTLY_WAIT=$(cd ts && npx tsx scripts/nightly-evidence.ts --no-env-file --format json) || FAIL=1
+  echo "$NIGHTLY_WAIT" | grep -q '"state":"waiting_external_evidence"' || { echo "FAIL: missing credential must report waiting_external_evidence"; FAIL=1; }
+  echo "nightly CLI: dry-run 演练 + 无凭证等待态已验证(执行环境无真实凭证)"
+else
+  echo "SKIP: 执行环境存在真实 LLM 凭证,CLI 等待态跳过(真凭证不进 CI,fail-closed)"
+fi
+
 echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"

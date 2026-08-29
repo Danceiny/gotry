@@ -10,7 +10,7 @@
 
 **`@danceiny/gotry@0.0.1-rc.14` 已发布,npm latest 直指本版**(2026-08-29 文档中英分开发布:`README.md` 英文 + `README.zh-CN.md` 中文顶部互链,npm files 增补中文版;历史:rc.13 2026-08-29 第三批:账号会话三连修复——登录自动检测零弹窗/登录页置前可见/标签页纪律;README 可读性一版;历史:rc.12 2026-08-29 第二批:OTA 扁平化+账号授权闸 v2+登录产品化 `gotry_session_login`——酒店接飞猪 search-hotel/会话检索授权卡每会话一次+登录在携程官网完成零终端;历史:rc.11 2026-08-29 第一刀——Z3 WASM race 根治(D-17)/实时票价桥(flyai overlay,静态包转显式降级)/i18n 英文面(工程层)/薄壳遗留删除;run-all 新增 §30-§32 三闸;founder 确认制下 agent 执行(「测试好了就可以发新版本」),registry 回拉实测全过);历史:rc.10 2026-08-28 发布(双形态冻结 ADR-16/会话传输层 puppeteer 定案/依赖面根治 rc.9「装得上跑不起」缺陷,曾为 latest;rc.9 标缺陷退役);rc.8 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**里程碑口径:M3 工程与分发面已就绪,但真实种子用户 evidence 未收口;M4 由 founder 授权并行推进,不构成 M3 Exit 证明;M5/M6 仅在各自 Entry gate 满足后启动。**
 
-**M3 真实证据并行线(Issue #22,2026-08-29)**:manifest 冻结样本窗口、纳排、分母、归因与 Exit 阈值;脱敏 cohort/nightly schema 和确定性 scorer 已有 synthetic fixture 守门。fixture 只能证明合同与公式,永不算 business pass;当前没有 50–200 人真实 cohort,M3 Exit 仍开放。
+**M3 真实证据并行线(Issue #22,2026-08-29)**:manifest 冻结样本窗口、纳排、分母、归因与 Exit 阈值;脱敏 cohort/nightly schema 和确定性 scorer 已有 synthetic fixture 守门。fixture 只能证明合同与公式,永不算 business pass;同日第二批:nightly real-LLM 证据生产器 `nightly-evidence.ts` 就位(封存 prompt 集+价表,无凭证 waiting/backoff/no-spend 零写入,run-all §35),验收⑥「nightly 可复跑」的机械前提闭合,真跑记录待凭证环境;当前没有 50–200 人真实 cohort,M3 Exit 仍开放。
 
 rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
