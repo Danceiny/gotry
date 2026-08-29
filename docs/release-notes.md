@@ -1,5 +1,25 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.12(OTA 扁平化 + 账号会话授权闸 + 登录产品化 + dsh runtime alpha.1 + issue #24,**已发布 2026-08-29**)
+
+rc.11 → rc.12 增量(founder 确认制下 agent 执行;发布指令「更新文档,开PR合PR,发布新版本吧」):
+
+### 用户可感面
+- **酒店接 OTA**:「搜酒店」不再只有内网 hbcli——`gotry_flyai_search` kind=hotel 直连飞猪官方 `search-hotel`(零 key 只读;未鉴权价上游打码如 ¥7xx,工具保 `priceRaw` 原值绝不伪装成数字价,真实价以 jumpUrl 页为准);实时机票/火车/酒店+会话检索全部平铺为工具,无「主路径/降级」路由
+- **OTA 工具面扁平化(founder 口径「OTA 这些都是工具」)**:工具描述与 persona (19) 删「三级路由/主链路/交叉验证」层级话术;证据链逐源标注纪律不变——拍平的是路由优先级,不是标注
+- **账号授权闸 v2(founder 口径「用用户账号必须跟用户确认」)**:动用用户本人登录态的 `gotry_session_search` 经 dsh 原生审批卡授权——**每会话每站点首次调用**弹卡、批准后会话内记住;**拒绝 = 本会话吊销**(不再弹卡不再执行);无审批通道(headless)一律 fail-closed;`sessionAccess: ask|allow|off` 总闸随时可关
+- **登录产品化(第 18 工具 `gotry_session_login`)**:会话检索遇 needs-login 时 agent 直调——在用户自己的 Chrome 弹出携程登录入口、等用户在**携程官网**完成登录,**全程零终端**。语义红线(工具描述/persona/证据链三处钉死):**登录永远发生在外部网站,gotry 永不收集/存储/传输密码、验证码或任何 cookie 值**——只读票据 cookie 名这个存在性事实(名称级,0 值过手)
+- **会话检索实时化**:携程会话面经 CDP attach 用户本人 Chrome(登录态=用户本人;needs-login/needs-attach/challenged 全部降级语义)
+
+### 工程面
+- **dsh vendored runtime 升 0.1.2-alpha.1**(issue #15):上游只挂 GitHub 不发 npm,免等发版从源码 tag 构建跟进;npm 公共分发面(root deps)仍钉 rc.1/rc.2 已发版本
+- **issue #24 工具不可用三处修复**:① flyai 上游语义失败(过去/非法日期)由吞成 miss 改为带上游原话的 error 终态 + 工具层过去日期预校验;② 天气地理编码双源化(Open-Meteo 主 + Nominatim 中文兜底);③ hbcli 静态包回退按目的地过滤
+- **测试纪律根治(founder「匿名窗口反复打开携程/闪退」反馈)**:例行回归**永不自动开浏览器窗口**——live 探针 `GOTRY_SESSION_LIVE=1` 显式 opt-in;授权闸会话语义与登录引导全部落成确定性断言(session-tests §G/H/I/J,42→47 pass)
+- **18 工具**:新增 `gotry_session_login`;工具 execute 异常隔离/证据链/三值语义契约不变
+
+### 发布闸状态
+- ① 全栈回归 ALL GREEN(§1-§32;tsc 0 错)✅ ② §11 六状态面同步(同提交)✅ ③ README 用法实测(npm 干净安装回拉:bin/插件加载/headless 真跑)✅ ④ License MIT ✅ ⑤ 版本号一致(rc.12:tag/package.json/release-notes/文档)✅
+
 ## v0.0.1-rc.11(已知限制清算:Z3 race 根治 + 实时票价桥 + i18n 英文面 + 薄壳删除,**已发布 2026-08-29**)
 
 rc.10 → rc.11 增量(founder 确认制下 agent 执行;发布指令「测试好了就可以发新版本」):

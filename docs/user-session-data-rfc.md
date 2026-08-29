@@ -113,6 +113,8 @@ Comet 事故(Brave 2025-08 披露,Reddit 评论藏注入→跨站接管账户)�
 ```
 ts/capabilities/flyai.ts            官方通道:P0 新增优先级——spawn @fly-ai/flyai-cli(npx),search-flight/search-train 先接,
                                      管道层对齐 agent-reach 模式(超时/永不抛错/证据链);P1 与会话骨架同批落地
+                                     【2026-08-29 第二批实装:kind=flight|train|hotel——search-hotel 已接(打码价
+                                     priceRaw 保真,真实价经 detailUrl 由人完成),OTA 工具面平铺(无主/降级路由)】
 ts/capabilities/session-search.ts    会话面传输层编排:connect → navigate → sniff → extract → guard → 证据链
 ts/capabilities/session/
   transport.ts        SessionTransport 接口 + CDPAttachTransport 首发实现
@@ -139,6 +141,8 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 - 站内查询间隔 ≥30s、单会话 ≤10 次、日上限可配(`GOTRY_SESSION_*` 环境变量);
 - 检测到滑块/验证码/风控跳转:**立即熔断 + 冷却 + 通知用户人工处理**——绝不重试、绝不绕过(合规支柱②);
+- **授权闸 v2(支柱④进代码,2026-08-29 第二批落地、同日按 founder 实测改会话内一次)**:动用用户本人登录态的工具(`gotry_session_search`)经 dsh `tools/pre-execute`(`session-consent.ts`)在**每会话每站点首次调用**时请求 `ApprovalService` 审批卡授权;allowed-once 记入会话 granted 集(会话内免再弹),rejected/cancelled 记入 denied = **本会话吊销**(不弹卡不执行——拒绝是裁决,不反复骚扰);无审批通道一律 fail-closed(headless 无用户在场 = 无授权——「明示授权 + 可撤回」的运行时具象);插件 config `sessionAccess: ask|allow|off`(随时可关/预授权/总闸);站点白名单=适配器注册表现状(仅 ctrip-flight)。**首版逐调用弹卡经 founder 实测判为骚扰(「每次都要弹,经常无法点击」),当日改会话内一次**。**飞猪匿名通道不过闸**(调用不携带用户身份,无账号风控/PIPL 处理面;其对用户的义务由「只读 + jumpUrl 人完成交易 + 配额限流结构化 error」覆盖);session-tests §I 断言;
+- **登录 bootstrap 真脚本(2026-08-29)**:`scripts/session-login.ts`——attach 用户日常 Chrome → 打开登录入口标签 → 人登录 → 只读轮询票据 cookie 名(不读值不碰凭证),`needs-login` 文案指向它;**测试永不自动开浏览器窗口**(session-tests live 节 GOTRY_SESSION_LIVE=1 opt-in——founder 反馈「匿名窗口反复打开携程/界面闪退」= 测试骚扰,当日根治);
 - 专用 profile 首发不落 cookie 库;登录永由用户人工完成(agent 不碰密码/OTP/验证码,对齐 Operator 的 takeover 模式与总纲 3.5「敏感信息模型永不接触」)。**2026-08-28 founder 纠偏落地:「打开浏览器必须有登录态,不能是匿名实例」**——默认 profile 挪 `~/.gotry/session-profile`(持久,登录态不丢);`sessionFlightSearch` 登录闸:匿名默认拒(verdict=`needs-login`),`scripts/session-login.ts` 首登 bootstrap(人工登录,轮询票据 cookie);`allowAnonymous` 仅限链路自检且证据链标 `anonymous=自检态`。远期若需 profile 迁移:AES-GCM 落盘 + 密钥进 OS keychain(macOS `security`/Windows DPAPI/Linux libsecret;keytar 已死不用),0600 权限。
 
 ### 3.5 注入防护
