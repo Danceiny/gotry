@@ -18,9 +18,9 @@
 | # | 差距 | 严重度 | M3 内赎回方式 |
 |---|---|---|---|
 | G-1 | **标题是「DeepSeek Harness」不是「GoTry」**——用户看到的是别人的产品 | 高(品牌) | dsh web 支持 title 定制或加登录页/封面;或 M3 自建薄壳(下条) |
-| G-2 | **dsh web 是编码 agent 界面,非旅行产品界面**:对话流可用,但透明卡片/markdown 表格的渲染是通用 chat 质量,非产品级(无卡片化选择题/无地图位/无预算条) | 高(产品体验) | 方向 A:深用 dsh 的 `presentCall`/`presentResult` 卡片机制(工具已实现但样式是 generic);方向 B(tech-strategy §7-3):assistant-ui+Vercel AI SDK 自建 3-5 页薄壳,`./gotry` 起本地服务 |
-| G-3 | **异步「一小时后回来」在 web 模式的呈现**:dsh 无产品化的工单进度视图 | 中 | 短期:对话内文字进度;中期:gotry-state/async 的只读状态页(一条 /status 路由)。**2026-08-29 最小切片已落地(issue #25)**:`gotry_artifacts_list/read` 在 dsh 内发现+行号阅读工单交付与工作目录 md(read 卡)——完整 artifacts 面板仍方向 B |
-| G-4 | 会话/状态是 dsh 的 session,非 TripState 的产品视图(wish pool/动机画像无处可看) | 中 | 自建壳的三个页面:对话/wish pool/动机画像(TripState 已有 JSON) |
+| G-2 | **dsh web 是编码 agent 界面,非旅行产品界面**:对话流可用,但透明卡片/markdown 表格的渲染是通用 chat 质量,非产品级(无卡片化选择题/无地图位/无预算条) | 高(产品体验) | 方向 A:深用 dsh 的 `presentCall`/`presentResult` 卡片机制(工具已实现但样式是 generic);方向 B(tech-strategy §7-3):assistant-ui+Vercel AI SDK 自建 3-5 页薄壳。**2026-08-29 校正:自建薄壳试验(零依赖 webui/)因 UI 品质不达产品级撤回(founder 判定),工作台面改走宿主组件 dsh-better-sidebar(见 G-3)** |
+| G-3 | **异步「一小时后回来」在 web 模式的呈现**:dsh 无产品化的工单进度视图 | 中 | 短期:对话内文字进度;中期:gotry-state/async 的只读状态页(一条 /status 路由)。**2026-08-29 最小切片已落地(issue #25)**:`gotry_artifacts_list/read` 在 dsh 内发现+行号阅读工单交付与工作目录 md(read 卡)——完整面板走宿主成熟组件(2026-08-29 第二切片,founder 指令「看 dsh-market」):dsh-better-sidebar(dshmarket #1 UI,18.9 万周装)经 `gotry setup` 宿主层安装——dsh web 右侧工作台(文件树/Markdown/Mermaid/PDF 预览)直接浏览工作区产物;账本感知的「产物 Tab」需 client-half 插件面,列下一阶段 |
+| G-4 | 会话/状态是 dsh 的 session,非 TripState 的产品视图(wish pool/动机画像无处可看) | 中 | 自建壳的三个页面:对话/wish pool/动机画像(TripState 已有 JSON);或经 better-sidebar 三方 Tab API(registerTab,client-half)挂只读页 |
 | G-5 | 无移动端 | 低(M3 种子用户是邀请制桌面优先可接受) | M4 后 |
 
 ## 三、建议(呈 §7-3 决策)

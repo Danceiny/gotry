@@ -64,7 +64,10 @@ cp .env.example .env && vi .env                  # 填 LLM_API_KEY
 
 不想要了,删文件即可;想改画像,直接编辑(下次会话生效)。
 
-**想看生成的文件(行程 md、工单交付)不用去翻目录**:在 dsh 对话里直接说「看看我生成的行程 / 打开上次的规划」,GoTry 会用 `gotry_artifacts_list` 列出在册产物,再用 `gotry_artifacts_read` 以行号视图打开(只读,支持翻页)。
+**想看生成的文件(行程 md、工单交付)不用去翻目录**,两条路:
+
+1. 对话里直接说「看看我生成的行程 / 打开上次的规划」——GoTry 会用 `gotry_artifacts_list` 列出在册产物,再用 `gotry_artifacts_read` 以行号视图打开(只读,支持翻页);
+2. `gotry setup` 装好的 **dsh web 侧栏工作台**(dsh-better-sidebar,dsh-market 第一 UI 组件):`gotry web` 页面右侧展开工作台,文件树里点开工作区里的行程 md/工单交付,即见产品级渲染(表格/图表/PDF 都支持)。未装也不影响路 1。
 
 ## 进阶:headless 一问一答
 

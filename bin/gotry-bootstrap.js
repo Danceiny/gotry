@@ -4,6 +4,10 @@
  *   hbcli(hotelbyte-cli)  → 官方 install.sh(原生二进制,~/.local/bin/hbcli)
  *   agent-reach            → 官方 pip 安装 git+ upstream(包内 .venv,与 z3-solver 同址原则)
  *   flyai                  → 无需安装(npx 每次自拉 @fly-ai/flyai-cli)
+ *   dsh-better-sidebar     → dsh 宿主层插件市场组件(dshmarket.com #1 UI,18.9 万周装):
+ *                           dsh web 侧栏工作台(文件浏览/Markdown/Mermaid/PDF 预览)——
+ *                           gotry 产物(工单交付 md/行程 md)的成熟查看面(issue #25)。
+ *                           宿主层安装(dsh plugin → ~/.dsh/profiles/web),不进 gotry 依赖。
  *
  * 用法:
  *   node bin/gotry-bootstrap.js              # 显式安装(缺啥装啥;失败 exit 1)
@@ -14,6 +18,7 @@
  *   GOTRY_SETUP_SKIP=1            全部跳过
  *   GOTRY_SETUP_HBCLI=0           跳过 hbcli
  *   GOTRY_SETUP_REACH=0           跳过 agent-reach
+ *   GOTRY_SETUP_SIDEBAR=0         跳过 dsh-better-sidebar
  *
  * 契约:安装外部依赖永远不挡 gotry 本体——能力层各有降级路径(静态包/not-installed
  * verdict),自举失败只降级体验,不产生故障。凭证(hbcli auth / agent-reach 渠道
@@ -93,10 +98,42 @@ async function setupReach() {
   return { ok: true }
 }
 
+async function setupSidebar() {
+  say('[gotry-setup] dsh-better-sidebar(dsh web 侧栏工作台,产物查看面 issue #25)')
+  const installed = existsSync(join(homedir(), '.dsh/profiles/web/node_modules/dsh-better-sidebar/package.json'))
+  if (installed) { say('  ✓ 已安装(~/.dsh/profiles/web)'); return { ok: true } }
+  if (CHECK_ONLY) { say('  ✗ 未安装(--check-only 只报告)'); return { ok: true } }
+  const SIDEBAR_PKG = 'dsh-better-sidebar@latest'
+  // dsh CLI:本包依赖里的 @deepseek-ai/dsh 优先;解析不到走 npx 自拉(官方安装途径同款)
+  const { createRequire } = await import('node:module')
+  const require_ = createRequire(join(repoRoot, 'package.json'))
+  let launched = false
+  try {
+    const dshBin = require_.resolve('@deepseek-ai/dsh/lib/bin.js')
+    say(`  安装中(dsh plugin → web profile): ${SIDEBAR_PKG}`)
+    const r = await run(process.execPath, [dshBin, 'plugin', '--profile', 'web', 'add', SIDEBAR_PKG], { timeoutMs: 300_000 })
+    launched = true
+    if (r.ok) {
+      say('  ✓ 安装完成(gotry web 刷新浏览器即见右侧工作台;工作区里的产物 md 可直接预览)')
+      return { ok: true }
+    }
+    say(`  ✗ dsh plugin 安装失败(${r.error})——尝试 npx 途径`)
+  } catch { /* 本包未携带 @deepseek-ai/dsh */ }
+  if (!launched) say('  本包未携带 @deepseek-ai/dsh,走 npx 途径安装')
+  const r2 = await run('npx', ['-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', 'web', 'add', SIDEBAR_PKG], { timeoutMs: 300_000 })
+  if (!r2.ok) {
+    say('  ✗ 安装失败——不影响 gotry:产物仍可在对话里说「看看我生成的行程」经 gotry_artifacts_list/read 查看;可稍后重试: npx gotry setup')
+    return { ok: false }
+  }
+  say('  ✓ 安装完成(gotry web 刷新浏览器即见右侧工作台)')
+  return { ok: true }
+}
+
 async function main() {
   if (process.platform === 'win32') {
     say('[gotry-setup] Windows 暂不支持自动安装(hbcli 上游仅 darwin/linux)。手动指引:')
     say(`  hbcli: ${HBCLI_INSTALL_CMD}(WSL);agent-reach: python -m venv .venv && .venv/Scripts/pip install ${REACH_INSTALL_URL}`)
+    say('  dsh-better-sidebar: npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar@latest')
     process.exit(AUTO ? 0 : 1)
   }
   if (AUTO && (process.env.CI || process.env.GOTRY_SETUP_SKIP === '1')) {
@@ -110,6 +147,8 @@ async function main() {
   else say('[gotry-setup] hbcli:GOTRY_SETUP_HBCLI=0 跳过')
   if (process.env.GOTRY_SETUP_REACH !== '0') results.push(await setupReach())
   else say('[gotry-setup] agent-reach:GOTRY_SETUP_REACH=0 跳过')
+  if (process.env.GOTRY_SETUP_SIDEBAR !== '0') results.push(await setupSidebar())
+  else say('[gotry-setup] dsh-better-sidebar:GOTRY_SETUP_SIDEBAR=0 跳过')
   say('[gotry-setup] flyai:无需安装(npx 每次自拉 @fly-ai/flyai-cli,免 key)')
   const failed = results.filter((r) => !r.ok).length
   if (failed > 0) {
