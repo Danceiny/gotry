@@ -1,0 +1,55 @@
+{
+  "name": "@deepseek-ai/dsh-app-boot",
+  "description": "Shared boot glue for the app bins: .env loading, fail-loud Loader guards, snapshot-aware config resolution, and the Loader boot sequence",
+  "version": "0.1.2-alpha.1",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/boot/app-boot"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./invariant": {
+      "types": "./lib/types/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/invariant.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "js-yaml": "^4.2.0",
+    "resolve.exports": "^2.0.3",
+    "@deepseek-ai/dsh-atomic-write": "^0.1.2-alpha.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis-plugin-group": "^1.0.1",
+    "@deepseek-ai/cordis-plugin-hmr": "^1.0.16",
+    "@deepseek-ai/dsh-launch-environment": "^0.1.2-alpha.1",
+    "@deepseek-ai/cordis-plugin-loader": "^1.0.2",
+    "@deepseek-ai/cordis-plugin-include": "^1.0.6",
+    "@deepseek-ai/dsh-invariants": "^0.1.2-alpha.1",
+    "@deepseek-ai/dsh-home-paths": "^0.1.2-alpha.1",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.2-alpha.1",
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis-plugin-hmr": {
+      "optional": true
+    }
+  }
+}

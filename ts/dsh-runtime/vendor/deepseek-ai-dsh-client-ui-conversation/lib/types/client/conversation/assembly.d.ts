@@ -1,0 +1,80 @@
+/** Per-Session target-neutral Conversation assembly. */
+import { Service, type Context } from '@deepseek-ai/cordis';
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment';
+import type { ISessions, SessionBinding } from '@deepseek-ai/dsh-api-session-controller/client';
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session/types';
+import { type ObservableSnapshot } from '@deepseek-ai/dsh-client-store';
+import type { ConversationViewSnapshotMap } from '../contract/conversation.ts';
+import type { ConversationSnapshot } from '../contract/snapshot.ts';
+import type { ConversationPromptSnapshot, RequestPromptInspection } from '../contract/request-inspection.ts';
+import { ConversationEventRegistry } from './event-registry.ts';
+import { ConversationViewRegistry } from './view-registry.ts';
+/** Observable faces published for one Session's Conversation assembly. */
+export interface ConversationBinding {
+    readonly snapshot: ObservableSnapshot<ConversationSnapshot>;
+    /**
+     * Resolve one target-owned snapshot source.
+     * @param target - registered Conversation target.
+     * @returns identity-stable source following the target.
+     */
+    target<Target extends Extract<keyof ConversationViewSnapshotMap, string>>(target: Target): ObservableSnapshot<ConversationViewSnapshotMap[Target] | undefined>;
+}
+/** Root service owning Conversation registries and per-Session bindings. */
+export declare class UiConversation extends Service {
+    private readonly sessions;
+    /** Registry of event matchers and target snapshot builders. */
+    readonly events: ConversationEventRegistry;
+    /** Registry of target View definitions. */
+    readonly views: ConversationViewRegistry;
+    private readonly bindings;
+    private readonly images;
+    /**
+     * @param ctx - owning Client context.
+     * @param sessions - Session Controller object layer.
+     */
+    constructor(ctx: Context, sessions: ISessions);
+    /**
+     * Resolve the Conversation binding for one Controller binding or Session id.
+     * @param source - Session binding or identity.
+     * @returns stable Conversation binding.
+     */
+    binding(source: SessionBinding | SessionId): ConversationBinding;
+    /**
+     * Resolve one session-authorized durable image URL, cached per Session so
+     * every Conversation target shares one read and one browser URL.
+     * @param sessionId - Session authorization and lifetime scope.
+     * @param attachment - Durable image reference from a session event.
+     * @returns browser URL valid until the Session binding is released.
+     */
+    imageUrl(sessionId: SessionId, attachment: ImageAttachmentRef): Promise<string>;
+    /**
+     * Read a cached durable image URL synchronously when one is available.
+     * @param sessionId - Session authorization and lifetime scope.
+     * @param attachment - Durable image reference from a session event.
+     * @returns current preview or canonical URL, if cached.
+     */
+    peekImageUrl(sessionId: SessionId, attachment: ImageAttachmentRef): string | undefined;
+    /**
+     * Adopt an already-displayable URL for one durable reference (see
+     * HistoricalImageCache.seed): the transcript node then renders it without a
+     * byte round-trip.
+     * @param sessionId - Session authorization and lifetime scope.
+     * @param attachment - Durable image reference the URL displays.
+     * @param url - browser URL to adopt.
+     * @returns whether the cache took URL ownership.
+     */
+    seedImageUrl(sessionId: SessionId, attachment: ImageAttachmentRef, url: string): boolean;
+    /**
+     * Canonicalize one `request/header` event against the previous prompt state.
+     *
+     * A pure interpretation shared by the Chat and Trajectory Definitions, exposed
+     * as a service method because cross-plugin value imports are forbidden in
+     * client bundles.
+     * @param previous - prompt recorded by the preceding loaded header, if any.
+     * @param event - the `request/header` session event to interpret.
+     * @returns the canonical prompt snapshot and any model-visible change.
+     */
+    inspectRequestPrompt(previous: ConversationPromptSnapshot | undefined, event: SessionEvent<'request/header'>): RequestPromptInspection;
+    private drop;
+}
+//# sourceMappingURL=assembly.d.ts.map
