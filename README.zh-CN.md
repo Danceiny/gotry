@@ -148,7 +148,7 @@ GoTry: 收到。先把约束记下来——
 |---|---|---|
 | L2 | `ts/src/index.ts`(dsh 插件) | 注册 20 工具,挂时间锚点/记忆 brief 变量;execute 异常隔离 + 授权闸 + 进程护栏 |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | 唯一求解入口(候选枚举 + 航班链 Z3) |
-| L4 | `ts/capabilities/hbcli.ts` · `skeleton-check.ts` | 实时库存桥 + OpenFlights 骨架(三值语义) |
+| L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | 效应解译层(退避重试/断路器/mock 解译器,issue #16)+ 实时库存桥 + OpenFlights 骨架(三值语义) |
 | L5 | loopx 治理面 | objective / gates / evidence / quota |
 
 > 📖 完整 ADR / 演进 / 债务清单: [`docs/architecture.md`](docs/architecture.md)
