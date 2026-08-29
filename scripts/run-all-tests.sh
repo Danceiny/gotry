@@ -236,6 +236,54 @@ rm -rf "$M3_TEST_ROOT"
 echo "M3 PRODUCT METRICS TESTS OK(fixture fail-closed/50 人正向合同/PII 拒绝/阈值防篡改/nightly 窗口闸)"
 
 echo
+echo "=== 34. M4 memory value paired-cohort 合同(fixture:active planning/reflux/溯源/P4 闸) ==="
+M4_REPORT=$(mktemp)
+(cd ts && npx tsx scripts/memory-value-report.ts data/memory-value-fixture.json > "$M4_REPORT") || FAIL=1
+node - "$M4_REPORT" <<'NODE' || FAIL=1
+const { readFileSync } = require('node:fs')
+const report = JSON.parse(readFileSync(process.argv[2], 'utf8'))
+const checks = [
+  ['contract_valid', report.contract_valid === true],
+  ['paired N', report.cohort.eligible_pair_count === 3],
+  ['first p50/p75', report.cohort.first_active_seconds.p50 === 720 && report.cohort.first_active_seconds.p75 === 900],
+  ['returning p50/p75', report.cohort.returning_active_seconds.p50 === 360 && report.cohort.returning_active_seconds.p75 === 450],
+  ['paired median reduction', report.cohort.paired_reduction_ratio.p50 === 0.5],
+  ['reflux baseline', report.experience_reflux.baseline === 0.5],
+  ['assertion traceability', report.preference_assertions.traceable_ratio === 1],
+  ['no hard filter', report.preference_assertions.hard_filter_violation_count === 0],
+  ['P4 remains closed', report.p4.contract_met === true && report.p4.state === 'closed'],
+  ['fixture cannot close M4', report.exit_evidence_eligible === false && report.exit_ready === false]
+]
+for (const [name, ok] of checks) {
+  if (!ok) throw new Error(`memory value fixture check failed: ${name}`)
+}
+console.log(`MEMORY VALUE REPORT TESTS: ${checks.length}/${checks.length} OK(fixture contract; synthetic evidence cannot close M4)`)
+NODE
+(cd ts && npx tsx -e '
+  import { readFileSync } from "node:fs";
+  import { scoreMemoryValue } from "./scripts/memory-value-report.ts";
+  const fixture = JSON.parse(readFileSync("data/memory-value-fixture.json", "utf8"));
+  const undeclaredWait = structuredClone(fixture);
+  undeclaredWait.pairs[0].returning.external_waits[0].code = "undeclared_wait";
+  if (scoreMemoryValue(undeclaredWait).contract_valid) throw new Error("undeclared external wait must fail the contract");
+  const hardFilter = structuredClone(fixture);
+  hardFilter.preference_assertions[0].hard_filter = true;
+  if (scoreMemoryValue(hardFilter).preference_assertions.contract_met) throw new Error("memory hard filter must fail acceptance");
+  const earlyP4 = structuredClone(fixture);
+  earlyP4.p4.state = "open";
+  if (scoreMemoryValue(earlyP4).p4.contract_met) throw new Error("P4 must remain closed before a real-usage or multi-user trigger");
+  const duplicateSubject = structuredClone(fixture);
+  duplicateSubject.pairs[1].subject_ref = duplicateSubject.pairs[0].subject_ref;
+  if (scoreMemoryValue(duplicateSubject).contract_valid) throw new Error("one subject must contribute at most one paired measurement");
+  const reversedReturn = structuredClone(fixture);
+  reversedReturn.pairs[0].returning.started_at = "2026-07-31T10:00:00Z";
+  reversedReturn.pairs[0].returning.completed_at = "2026-07-31T10:08:00Z";
+  reversedReturn.pairs[0].returning.external_waits = [];
+  if (scoreMemoryValue(reversedReturn).contract_valid) throw new Error("returning flow must follow the first completed flow");
+') || FAIL=1
+rm -f "$M4_REPORT"
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

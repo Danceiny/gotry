@@ -29,6 +29,8 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
 **M3 已被 founder 判定推进(2026-08-26 指令「现在推进 M4」)**:工程面全通+创始人真实使用中;种子用户扩展与 M4 并行。**当前 = M4 记忆域**(T1 行为链已闭合:动态吸收→读回→效用→触达→度量;六层重设计正式落地 `memory-design.md`,分期增量 P1 旅行时间线→P2 同行人档案→P3 时间窗衰减→P4 双区会话后置)。**2026-08-28 会话数据面并行线(RFC `user-session-data-rfc.md`,loopx goal `gotry-session-data-goal`)**:P0 官方通道尽调(飞猪 FlyAI 无 key 只读,机/火检索官方主链路)+ P1 会话骨架(ReadGuard 物理只读/携程 batchSearch 嗅探/节律闸,登录态=存在前提)+ P2 action-cache 自愈层/美团骨架(a11y 兜底,匿名 403 实测)/金标准 20 查询/**#21 字段 fixture scorer+双源合同+waiting-attach no-spend 已落** + P3 工具面两工具(17 工具,smoke §12)与人格契约 (19) 三级路由——与 M4 记忆域正交推进;待用户日常 Chrome 完成 remote debugging、权限确认和 CDP 握手后收尾真实 sf-01..08 双源跑批/真模型巡检。**2026-08-28 事务化状态基座落地(ADR-15,RFC `transactional-state-rfc.md` accepted「按你的建议来」)**:「文件即权威」升级为「单文件 SQLite 账本即权威」——events append-only + 投影 fold 重建 + 红线(evidence/conditions)进事务 + confirm-outcome 单事务 + 异步工单 durable 恢复(exactly-once)+ pending_writes saga(WriteGate M5 的 L2/L3 基座,D4 定为 M5 Entry 前置);旧 JSON/JSONL 降级为单向导出视图(红线 6),首写自动迁移+快照;run-all §28(44 断言,含双形态)/§29,多用户账本化(RFC §6.5)触发式后置(D-15)。**同日 ADR-16 双形态架构冻结**:本地+Web 一套账本语义、tenant_id 一等字段(schema v2)、同步=事件复制非状态翻译——防「将来大规模重构」的核心冻结,founder 拍板「要的」。**2026-08-29 已知限制清算第一刀(founder 指令「解决这些 known limitations」)**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸),薄壳遗留(`shell/`)物理删除——README Known limitations 中两条就此清偿,余两条同批推进:实时票价桥已接入(flyai overlay+env 闸,run-all §31),i18n 工程面落地(run-all §32:en 零缺键/zh 金标准逐字节),人格与工具卡的校准后补齐挂 M4。
 
+**M4 Issue #20 证据切片(2026-08-29)**:paired cohort 合同与只读 synthetic fixture scorer 已落地,固定唯一匿名 subject、returning 晚于 first、active planning duration 扣除预声明 external waits、N/p50/p75/逐 pair reduction、experience reflux、偏好溯源/硬过滤红线与 P4 trigger 闸。合成 N=3 明确 `exit_evidence_eligible=false`;当前瓶颈是私有真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
+
 **2026-08-27 时间感优化落地**(外部时间评测驱动,ADR-12):时间锚点层 + 槽位抽取 v1 + 25 题评测集进仓,真模型 25/25;细节见 architecture.md §1/§9 与 ADR-12。
 
 (历史)**M2 已退出**(b0cfd97):§7-1 三层组合全链落地——OpenFlights 骨架(168 枢纽对,三值语义,求解消费+用户渲染双层)+ OpenSky 校验桥 + bookedResources 锚点 + hbcli 酒店桥(gotry_hotel_search,实时/静态降级);dsh 运行时端到端(DeepSeek 原生,人格+五工具);一键成品入口 `./gotry` 经全新场景验收(带爸妈云南行:人格问对问题→引擎三候选判决→证据链→三道选择题)。G1 已决(中国出境首发)、S1 已冻结、§7-1 已批——均由创始人「按推荐方案执行」指令结算。**当前 = M3 最小可用产品**:最小 Web 面(D-4)+ 种子用户 50-200 人(发起人即首个用户,`./gotry` 即入口)。
@@ -41,7 +43,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | M1 | **Agent 形态成立** | LLM 进环(S1-S5) | 对话即界面(gates 选择题) | — | ✅(2026-08-22,`bb880f3`) |
 | M2 | 实时数据 | hotelbyte-cli 桥+航班源(免费/开源优先),静态包退役为夹具 | 证据链换血([估算]→[实时API]) | 数据源选型(免费/开源优先) | ✅(2026-08-22,`b0cfd97`) |
 | M3 | 最小可用产品 | 最小 Web 面(D-4 偿还)+ cohort evidence scorer | 透明卡片/动机访谈可体验;种子用户 50-200 人 | **G1 市场锁定必须在此前完成**;种子即洱海+普吉两类场景 | ← **当前;等待真实 cohort** |
-| M4 | 记忆与「下一次出发」 | 六层 memory 的 C 端域实现;wish pool 联动回访 | 北极星(下一次出发率)开始度量;对账七题=首批校准 | 订阅形态验证(¥49/年锚) | 未启动 |
+| M4 | 记忆与「下一次出发」 | 六层 memory 的 C 端域实现;wish pool 联动回访 | 北极星(下一次出发率)开始度量;对账七题=首批校准 | 订阅形态验证(¥49/年锚) | **并行推进**(#20 合同 scorer 已落地;真实 cohort 待) |
 | M5 | 交易闭环 | WriteGate 上生产;预订/支付/退改 | 佣金披露上线;红线随行 | 三层收入全开(免费/Plus/佣金) | 未启动 |
 | M6 | B2B 包裹 | principal/sponsor 插件化,内核零改动跑通旅行社嵌入 | 两层为什么实证 | 「99% 复用」从论断变实测;B2B 试点 | 未启动 |
 
