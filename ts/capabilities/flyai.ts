@@ -79,6 +79,62 @@ interface RawItem {
   jumpUrl?: string
 }
 
+/**
+ * 从 CLI stdout 中提取首个完整且含 itemList 的 JSON 对象。
+ *
+ * npx/CLI 偶发在业务 JSON 前后追加提示；不能从首个 `{` 一直切到 EOF。
+ * 扫描器识别字符串与转义,因此 JSON 字符串里的花括号不会破坏深度计数。
+ */
+export function parseFlyaiItemList(stdout: string): unknown[] {
+  let start = -1
+  let depth = 0
+  let inString = false
+  let escaped = false
+  let sawIncompleteObject = false
+
+  for (let index = 0; index < stdout.length; index += 1) {
+    const char = stdout[index]!
+    if (start < 0) {
+      if (char === '{') {
+        start = index
+        depth = 1
+        inString = false
+        escaped = false
+        sawIncompleteObject = true
+      }
+      continue
+    }
+
+    if (inString) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') inString = false
+      continue
+    }
+
+    if (char === '"') inString = true
+    else if (char === '{') depth += 1
+    else if (char === '}') {
+      depth -= 1
+      if (depth !== 0) continue
+
+      const candidate = stdout.slice(start, index + 1)
+      start = -1
+      sawIncompleteObject = false
+      try {
+        const parsed = JSON.parse(candidate) as { data?: { itemList?: unknown } }
+        if (Array.isArray(parsed.data?.itemList)) return parsed.data.itemList
+      } catch {
+        // 前缀日志可能包含成对花括号但不是 JSON；继续找下一个完整对象。
+      }
+    }
+  }
+
+  throw new Error(sawIncompleteObject
+    ? 'incomplete FlyAI JSON object'
+    : 'no complete FlyAI itemList JSON object')
+}
+
 function sh(cmd: string, args: string[], opts: { timeoutMs: number }) {
   const child = spawn(cmd, args, { env: process.env, cwd: process.cwd() })
   let stdout = ''
@@ -118,13 +174,12 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   }
   let items: RawItem[]
   try {
-    const jStart = r.stdout.indexOf('{')
-    const parsed = JSON.parse(jStart >= 0 ? r.stdout.slice(jStart) : r.stdout) as { data?: { itemList?: RawItem[] } }
-    items = parsed.data?.itemList ?? []
-  } catch {
+    items = parseFlyaiItemList(r.stdout) as RawItem[]
+  } catch (e) {
     // 实测(2026-08-28):Sentinel 限流时 CLI exit=0 但 stdout 是 {"message":"SentinelBlockException..."}
     const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)
-    return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] parse failed: ${raw}`, error: `failed to parse flyai output as JSON: ${raw}` }
+    const reason = e instanceof Error ? e.message : String(e)
+    return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] parse failed(${reason}): ${raw}`, error: `failed to parse flyai output as JSON (${reason}): ${raw}` }
   }
   const options: FlyaiOption[] = []
   for (const it of items) {

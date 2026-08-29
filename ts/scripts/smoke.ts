@@ -194,14 +194,23 @@ async function main() {
     } else if (fa.ok !== true || fa.verdict !== 'hit' || (fa.options?.length ?? 0) < 1 || !/\[实时API:flyai@/.test(fa.evidence ?? '')) {
       throw new Error(`FAIL: flyai 工具应 live hit,实际:${JSON.stringify(fa).slice(0, 200)}`)
     }
+    // smoke 不得 attach 或读取用户日常 Chrome；把发现目录指向隔离空目录,
+    // 确定性验证 needs-attach/no-spend 合同。真实 attach 只走 #21 人在场验收。
     const prof = mkdtempSync(join(smokeRoot, 'sess-'))
-    const ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; via?: string; evidence?: string }
-    rmSync(prof, { recursive: true, force: true })
-    // 工具默认 profile(~/.gotry);smoke 环境下若 founder 已登录会真检索(节律闸限制单次)——两种合法终态
-    // 无 Chrome 调试端口的环境(纯 headless 机器/CI)下,工具以带证据链的 error 终态优雅降级,同样合法
+    const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR
+    process.env.CHROME_USER_DATA_DIR = prof
+    let ss: { ok?: boolean; verdict?: string; via?: string; evidence?: string }
+    try {
+      ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as typeof ss
+    } finally {
+      if (previousChromeUserDataDir === undefined) delete process.env.CHROME_USER_DATA_DIR
+      else process.env.CHROME_USER_DATA_DIR = previousChromeUserDataDir
+      rmSync(prof, { recursive: true, force: true })
+    }
+    // puppeteer-core 可用时应为 needs-attach；缺依赖环境仍以带证据链 error 优雅降级。
     const ssErrTerminal = ss.ok === false && /^session-[a-z0-9-]+-error$/.test(String(ss.via ?? '')) && !!ss.evidence
     if (!(ss.verdict === 'needs-login' || ss.verdict === 'needs-attach' || ss.verdict === 'hit' || ss.verdict === 'cooldown' || ss.verdict === 'challenged') && !ssErrTerminal) {
-      throw new Error(`FAIL: session 工具终态应属 {needs-login,hit,cooldown,challenged} 或带证据的 error 终态,实际:${JSON.stringify(ss).slice(0, 200)}`)
+      throw new Error(`FAIL: session 工具终态应属 {needs-attach,needs-login,hit,cooldown,challenged} 或带证据的 error 终态,实际:${JSON.stringify(ss).slice(0, 200)}`)
     }
     console.log(`session-face tools: flyai ${faBlocked ? 'sentinel-限流降级' : `live hit(${fa.options?.length ?? 0} 条)`}; session 终态=${ss.verdict ?? ss.via}(登录态存在前提合同)`)
   }
