@@ -36,7 +36,8 @@ assert.equal(c1.code, 0, `--check-only 应 exit 0,实际 ${c1.code}\n${c1.out}`)
 assert.ok(c1.out.includes('hbcli'), '报告应含 hbcli 节')
 assert.ok(c1.out.includes('agent-reach'), '报告应含 agent-reach 节')
 assert.ok(c1.out.includes('flyai'), '报告应含 flyai(无需安装)节')
-console.log('1. --check-only 探测报告 exit 0(hbcli/agent-reach/flyai 三节齐)OK')
+assert.ok(c1.out.includes('dsh-better-sidebar'), '报告应含 dsh-better-sidebar 节(issue #25 产物查看面)')
+console.log('1. --check-only 探测报告 exit 0(hbcli/agent-reach/flyai/dsh-better-sidebar 四节齐)OK')
 
 // 2. --auto + GOTRY_SETUP_SKIP=1:postinstall 跳过语义,exit 0 不挡安装
 const c2 = runBootstrap(['--auto'], { GOTRY_SETUP_SKIP: '1' })
@@ -50,4 +51,11 @@ assert.equal(c3.code, 0, '显式模式跳过态应 exit 0')
 assert.ok(c3.out.includes('跳过'), '应输出跳过说明')
 console.log('3. 显式模式 + GOTRY_SETUP_SKIP=1 → exit 0 OK')
 
-console.log('BOOTSTRAP TESTS: 3/3 OK(探测报告/跳过开关/postinstall 非致命)')
+// 4. 单项开关:GOTRY_SETUP_SIDEBAR=0 只跳过侧栏组件,其余节照常(--check-only 零网络)
+const c4 = runBootstrap(['--check-only'], { GOTRY_SETUP_SIDEBAR: '0' })
+assert.equal(c4.code, 0, '单项跳过态应 exit 0')
+assert.ok(c4.out.includes('GOTRY_SETUP_SIDEBAR=0 跳过'), '应输出侧栏单项跳过说明')
+assert.ok(c4.out.includes('hbcli'), '其余节不受单项开关影响')
+console.log('4. GOTRY_SETUP_SIDEBAR=0 单项跳过(其余节照常)OK')
+
+console.log('BOOTSTRAP TESTS: 4/4 OK(探测报告/跳过开关/单项开关/postinstall 非致命)')
