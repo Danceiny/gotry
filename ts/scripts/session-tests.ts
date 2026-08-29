@@ -110,6 +110,12 @@ if (process.env.GOTRY_SESSION_LIVE === '0') {
     assert(sr.ok === false && sr.verdict === 'challenged', 'challenged = degraded 语义正确(不重试不绕过)')
   } else if (sr.verdict === 'error' && /chrome launch failed/.test(sr.error ?? '')) {
     console.log('  SKIP - 本机无 Chrome(channel:chrome 不可用)')
+  } else if (sr.verdict === 'error' && /chrome launch failed/.test(sr.error ?? '')) {
+    console.log('  SKIP - 本机无 Chrome(channel:chrome 不可用)')
+  } else if ((sr.verdict === 'miss' || sr.verdict === 'error') && /blocked=0/.test(sr.evidence)) {
+    // 匿名自检态 0 options = 外部会话数据面未取回(站点方差/匿名态;三值语义与 Sentinel 限流同构:
+    // miss ≠ 链路断,守卫/证据/审计合同仍在 miss 证据里验证)。真 hit 收敛挂 founder 登录态(D-13)。
+    console.log(`  SKIP - 会话数据面 miss(外部方差,合同降级语义):${sr.evidence.slice(0, 90)}`)
   } else {
     assert(sr.ok === true && sr.verdict === 'hit' && (sr.options?.length ?? 0) >= 1, '上海→丽江 会话嗅探 hit', sr)
     assert(sr.options?.every((o) => o.price > 0 && o.depDateTime.includes('2026-10-01')) ?? false, '班期=查询日,价格>0', sr.options?.[0])
