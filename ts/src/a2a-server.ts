@@ -279,7 +279,9 @@ if (process.argv[1] && process.argv[1].endsWith('a2a-server.ts') && !process.env
   }
   const port = Number(process.env.GOTRY_A2A_PORT ?? 3081)
   const rateLimitPerMin = Number(process.env.GOTRY_A2A_RATE_LIMIT ?? 30)
-  void startA2AServer({ apiKey, port, rateLimitPerMin }).then(({ port: p }) => {
+  // headless 真对话 driver(每消息 spawn inner;key 缺失/失效时任务诚实 failed)
+  void import('./a2a-driver.ts').then(({ makeHeadlessDriver }) =>
+    startA2AServer({ apiKey, port, rateLimitPerMin, driver: makeHeadlessDriver() })).then(({ port: p }) => {
     console.log(`[gotry-a2a] listening on http://127.0.0.1:${p} (card: /.well-known/agent-card.json; rpc: POST /a2a)`)
   })
 }

@@ -14,6 +14,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildHeadlessDriverEnv, startA2AServer, type A2ADriver } from '../src/a2a-server.ts'
+import { makeHeadlessDriver, userStateRoot } from '../src/a2a-driver.ts'
+import { createHash } from 'node:crypto'
+const createHashDemo = (t: string) => `u-${createHash('sha256').update(t).digest('hex').slice(0, 12)}`
 
 const KEY = 'test-a2a-key'
 
@@ -154,5 +157,39 @@ console.log('6. fail-closed(无 apiKey 拒启)OK')
   console.log('10. 指标面(requestsTotal/rateLimitedTotal/uptime;同款 Bearer)OK')
 }
 
+// 11. headless 真对话 driver 接线:无 LLM key → 任务诚实 failed(错误面含指引);
+//     per-user stateRoot 哈希派生(不落 token 值);活体对话验证由 key 门控(部署后续期即通)
+{
+  const tmpBase = mkdtempSync(join(tmpdir(), 'a2a-driver-'))
+  const su = userStateRoot(tmpBase, 'ST:driver-u1')
+  const sa = userStateRoot(tmpBase)
+  assert.ok(su.endsWith(createHashDemo('ST:driver-u1')), 'per-user 根由 token 哈希派生')
+  assert.notEqual(su, sa, '匿名与具名根分离')
+  assert.ok(su.includes('u-'), '根形如 u-<hash12>')
+  // driver 在无 key 环境下的诚实失败(inner 自身 fail-closed:缺 DEEPSEEK_API_KEY 即退 1)
+  const noKeyEnv: Record<string, string | undefined> = {}
+  for (const k of Object.keys(process.env)) if (k !== 'DEEPSEEK_API_KEY' && k !== 'LLM_API_KEY') noKeyEnv[k] = process.env[k]
+  const driver = makeHeadlessDriver({ stateBase: tmpBase, env: noKeyEnv, timeoutMs: 60_000 })
+  const { port: p5, close: c5 } = await startA2AServer({ apiKey: KEY, driver })
+  const send5 = await fetch(`http://127.0.0.1:${p5}/a2a`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 50, method: 'message/send', params: { message: { parts: [{ kind: 'text', text: '查大理报价' }] }, metadata: { userToken: 'ST:driver-u1' } } }),
+  })
+  const t5 = ((await send5.json()) as { result?: { taskId?: string } }).result?.taskId
+  type TaskView5 = { result?: { state?: string; error?: string } }
+  let v5: TaskView5 | null = null
+  for (let i = 0; i < 100; i++) {
+    const g = await fetch(`http://127.0.0.1:${p5}/a2a`, { method: 'POST', headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 51, method: 'tasks/get', params: { id: t5 } }) })
+    v5 = (await g.json()) as TaskView5
+    if (v5?.result?.state === 'completed' || v5?.result?.state === 'failed') break
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  assert.equal(v5?.result?.state, 'failed', '无 key 环境下任务应诚实 failed(不伪装应答)')
+  await c5()
+  rmSync(tmpBase, { recursive: true, force: true })
+  console.log('11. headless driver 接线(无 key 诚实 failed;per-user 根派生;活体验证待 key)OK')
+}
+
 await close()
-console.log('A2A SERVER TESTS: 10/10 OK(card/鉴权/send+token 透传/get/cancel/fail-closed/SSE 流式+失败面/限流+指标,纯离线 stub driver)')
+console.log('A2A SERVER TESTS: 11/11 OK(card/鉴权/send+token 透传/get/cancel/fail-closed/SSE 流式+失败面/限流+指标/headless driver 接线,纯离线)')
