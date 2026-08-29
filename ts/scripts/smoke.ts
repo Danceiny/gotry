@@ -280,6 +280,53 @@ async function main() {
     console.log('login tool: registered; 登录=外部网站+用户自己的浏览器,gotry 只读票据名(0 值过手)语义钉死')
   }
 
+  // 15) 产物面(issue #25):账本工单 + cwd md 可发现;read 行号窗口;dsh read 卡字段;越界/类型护栏
+  {
+    const { writeFileSync } = await import('node:fs')
+    const { listArtifacts, readArtifact } = await import('../capabilities/artifacts.ts')
+    const { ensureLedger } = await import('../src/state-ledger.ts')
+    const cwdDir = mkdtempSync(join(tmpdir(), 'gotry-artifacts-cwd-'))
+    const twelve = Array.from({ length: 12 }, (_, i) => `第 ${i + 1} 行`).join('\n')
+    writeFileSync(join(cwdDir, 'trip-2027-probe.md'), `# 行程·产物探针\n${twelve}\n`)
+
+    // 账本权威路径:种一个已交付工单(隔离 stateRoot,不碰真实 gotry-state)
+    const ledger = ensureLedger(smokeRoot)
+    ledger.createWorkflowRun({ id: 'art-probe-1', goal: '行程·产物探针(账本)', ticket: { objective: 'probe' }, state: {} })
+    ledger.settleWorkflowRun('art-probe-1', '# 交付·账本权威\nD1 大理\nD2 洱海')
+
+    const listTool = byName('gotry_artifacts_list')
+    const ledList = await listTool.execute({ query: {} }, null) as { ok?: boolean; artifacts?: Array<{ source?: string; id?: string; status?: string }>; total?: number }
+    const run = ledList.artifacts?.find(a => a.id === 'art-probe-1')
+    if (!ledList.ok || !run || run.source !== 'async-run' || run.status !== 'settled') {
+      throw new Error(`FAIL: artifacts list 应发现账本已交付工单,实际:${JSON.stringify(ledList).slice(0, 200)}`)
+    }
+    const direct = await listArtifacts({ stateRoot: smokeRoot, cwd: cwdDir })
+    if (!direct.artifacts.some(a => a.source === 'cwd-file' && a.id === 'trip-2027-probe.md')) {
+      throw new Error(`FAIL: artifacts list 应发现 cwd 顶层 md,实际:${JSON.stringify(direct.artifacts.map(a => a.id))}`)
+    }
+
+    const readTool = byName('gotry_artifacts_read')
+    const r1 = await readTool.execute({ query: { path: 'art-probe-1' } }, null) as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string }
+    if (!r1.ok || r1.lines?.[0]?.number !== 1 || !r1.lines?.[0]?.text.includes('交付·账本权威') || r1.lang !== 'markdown') {
+      throw new Error(`FAIL: 裸工单 id 应从账本读出行号视图,实际:${JSON.stringify(r1).slice(0, 200)}`)
+    }
+    const view = readTool.presentResult?.({ query: { path: 'art-probe-1' } }, r1) as { card?: string; path?: string; offset?: number; lines?: unknown[]; totalLines?: number; lang?: string }
+    if (view?.card !== 'read' || view.path !== r1.path || view.offset !== 1 || view.lines?.length !== r1.lines?.length || view.totalLines !== r1.totalLines || view.lang !== 'markdown') {
+      throw new Error(`FAIL: read 卡字段不齐,实际:${JSON.stringify(view).slice(0, 200)}`)
+    }
+    const r2 = await readArtifact({ stateRoot: smokeRoot, cwd: cwdDir, path: 'trip-2027-probe.md', offset: 10, limit: 5 })
+    if (!r2.ok || r2.lines[0].number !== 10 || r2.windowed !== false) {
+      throw new Error(`FAIL: 行窗口 12 行文件 offset=10 应从行号 10 起,实际:${JSON.stringify(r2.ok ? { o: r2.offset, first: r2.lines[0]?.number } : r2)}`)
+    }
+    if (r2.lines.length !== 5) throw new Error(`FAIL: 14 行文件 offset=10/limit=5 窗口应恰 5 行(10-14),实际 ${r2.lines.length}`)
+    const badPath = await readArtifact({ stateRoot: smokeRoot, cwd: cwdDir, path: '../../../../../etc/passwd' })
+    if (badPath.ok) throw new Error('FAIL: 越界路径必须被拒')
+    const badExt = await readArtifact({ stateRoot: smokeRoot, cwd: cwdDir, path: 'gotry-state/gotry-state.db' })
+    if (badExt.ok) throw new Error('FAIL: 白名单外扩展名(.db)必须被拒')
+    rmSync(cwdDir, { recursive: true, force: true })
+    console.log(`artifacts: ledger run + cwd md discovered; read window(${r2.ok ? r2.lines.length : '?'} lines @10) + read card; path/ext guardrails hold`)
+  }
+
   rmSync(smokeRoot, { recursive: true, force: true })
   console.log(`smoke state cleaned: ${smokeRoot}`)
 

@@ -98,7 +98,7 @@ GoTry: 收到。先把约束记下来——
 
 ---
 
-## 🧰 18 个工具 — Tools
+## 🧰 20 个工具 — Tools
 
 | 组 | 工具 | 干什么 |
 |---|---|---|
@@ -114,6 +114,7 @@ GoTry: 收到。先把约束记下来——
 | **记忆与触达** | `gotry_motivation_save` | 动机画像落盘(evidence 强制,反幻觉) |
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | 「下一次出发」愿望池 + 0..1 条件召回 |
 | | `gotry_companion_save` · `gotry_trip_log` | 同行人档案 / 旅行时间线 |
+| **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成的产物(异步交付 + 工作目录 markdown),行号文件视图,只读 |
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页/字幕/GitHub/全渠道外部信息(经 Agent-Reach) |
 
 ---
@@ -136,7 +137,7 @@ GoTry: 收到。先把约束记下来——
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ L1  对话即界面  chat-as-UI; gates 是消息内选择题                 │
-│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);18 个工具            │
+│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);20 个工具            │
 │ L3  领域  统一行程模型 + Z3 可行性引擎(枚举/Z3 双形态)        │
 │ L4  数据  静态数据包 + hotelbyte-cli 实时桥 + OpenFlights 骨架 │
 │ L5  治理  LoopX(objective / gates / evidence / quota)         │
@@ -145,7 +146,7 @@ GoTry: 收到。先把约束记下来——
 
 | 层 | 模块 | 角色 |
 |---|---|---|
-| L2 | `ts/src/index.ts`(dsh 插件) | 注册 18 工具,挂时间锚点/记忆 brief 变量;execute 异常隔离 + 授权闸 + 进程护栏 |
+| L2 | `ts/src/index.ts`(dsh 插件) | 注册 20 工具,挂时间锚点/记忆 brief 变量;execute 异常隔离 + 授权闸 + 进程护栏 |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | 唯一求解入口(候选枚举 + 航班链 Z3) |
 | L4 | `ts/capabilities/hbcli.ts` · `skeleton-check.ts` | 实时库存桥 + OpenFlights 骨架(三值语义) |
 | L5 | loopx 治理面 | objective / gates / evidence / quota |

@@ -50,7 +50,8 @@
     "README.zh-CN.md",
     "LICENSE",
     "ts/capabilities/session-consent.ts",
-    "ts/capabilities/session-login.ts"
+    "ts/capabilities/session-login.ts",
+    "ts/capabilities/artifacts.ts"
   ],
   "engines": {
     "node": ">=22.0.0"
