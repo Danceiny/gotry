@@ -732,6 +732,55 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({ card: 'generic', title: `预订下单:${String((args.query as { ratePkgId?: string })?.ratePkgId ?? '').slice(0, 24)}…`, kind: 'edit', rawInput: args.query }),
   }))
 
+  // ── M1 订单查询(只读):saga 回执对账入口——按幂等键查单即可验证 book 回执真实性 ──
+  registerGuarded(defineTool({
+    name: 'gotry_query_orders',
+    description:
+      'Query hotel orders (READ-ONLY) via hotelbyte-cli trade query-orders. Primary booking-loop use: pass the customerReferenceNo '
+      + '(saga idempotency key) from gotry_book to verify the order receipt against the backend — closing the loop between the local '
+      + 'saga ledger and the authoritative order record. Supports optional supplier refs / status / guest-name filters.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ customerReferenceNos?: ["<idem key from gotry_book>"], supplierReferenceNos?: [...], statusList?: [...], guestName?, sortBy?, sortOrder? }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ customerReferenceNos?: string[]; supplierReferenceNos?: string[]; statusList?: string[]; guestName?: string; roomCount?: number; sortBy?: string; sortOrder?: 'asc' | 'desc' }>(args)
+      const started = Date.now()
+      const itp = await interpretEffect({
+        effect: 'HBCLI_QUERY_ORDERS',
+        params: {
+          customerReferenceNos: q.customerReferenceNos, supplierReferenceNos: q.supplierReferenceNos,
+          statusList: q.statusList, guestName: q.guestName, roomCount: q.roomCount,
+          sortBy: q.sortBy, sortOrder: q.sortOrder,
+          hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs,
+        },
+      })
+      if (!itp.result) return declinedObservation('HBCLI_QUERY_ORDERS', itp.trace)
+      const resp = itp.result
+      const dir = await ensureStateDir(config.stateRoot)
+      const isLive = resp.via === 'hbcli-realtime'
+      await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `query_orders:${resp.via}`).catch(() => {})
+      const payload = {
+        ok: isLive,
+        orders: isLive ? (resp.orders ?? null) : null,
+        evidence: resp.evidence,
+        via: resp.via,
+        latency_ms: Date.now() - started,
+        summary: resp.summary,
+        error: resp.error,
+      } as never
+      return JSON.parse(JSON.stringify(payload)) as never
+    },
+    presentCall: args => ({ card: 'generic', title: '订单查询', kind: 'search', rawInput: args.query }),
+  }))
+
   registerGuarded(defineTool({
     name: 'gotry_skeleton_check',
     description:
