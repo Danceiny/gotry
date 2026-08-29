@@ -55,6 +55,10 @@ echo "=== 7c. 外部依赖自举(check-only 探测/跳过开关/postinstall 非�
 (cd ts && npx tsx scripts/bootstrap-tests.ts) || FAIL=1
 
 echo
+echo "=== 7d. hbcli 全流程端到端(隔离 STAICLI_HOME+沙箱账号真打 UAT:取票/实时通道/降级诚实/解译策略/工具面全链;无 bin 或无网 SKIP) ==="
+(cd ts && npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
+
+echo
 echo "=== 8. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 + guardToolExecute 异常隔离,3 断言) ==="
 (cd ts && npx tsx scripts/incident-tests.ts) || FAIL=1
 
