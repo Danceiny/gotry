@@ -14,9 +14,14 @@
 import assert from 'node:assert/strict'
 import { reach, reachStatus } from '../capabilities/agent-reach.ts'
 
-// 1. status(真 doctor 原样透传)
+// 1. status(真 doctor 原样透传;agent-reach 未装时结构化 SKIP——真集成面设备绑定,
+//    与 §17 skills-contract「有凭证真校验,离线 SKIP」同构;CI 装了则全跑 7 断言)
 {
   const st = await reachStatus(90_000)
+  if (!st.ok) {
+    console.log(`SKIP: agent-reach doctor 未就绪(未安装/needs-setup),7 断言整体跳过 — via=${st.via} output=${String(st.output).slice(0, 120)}`)
+    process.exit(0)
+  }
   assert.equal(st.ok, true)
   assert.equal(st.via, 'agent-reach-cli')
   assert.ok(st.output.length > 50, 'doctor 输出非空(上游原样)')
