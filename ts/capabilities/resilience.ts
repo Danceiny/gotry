@@ -106,7 +106,11 @@ export class CircuitBreaker {
   private openedAt = 0
   private probeInFlight = false
 
-  constructor(private readonly o: BreakerOptions) {}
+  private readonly o: BreakerOptions
+
+  constructor(o: BreakerOptions) {
+    this.o = o
+  }
 
   private threshold(): number {
     return Math.max(1, this.o.failureThreshold)

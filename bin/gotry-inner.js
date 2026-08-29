@@ -170,6 +170,18 @@ if (calEntry) {
 } else {
   patchRaw = patchRaw.replace(/\n\s*- id: dsh-calendar\n\s*name: 'placeholder\/dsh-calendar'\n/, '\n')
 }
+// GOTRY_NO_CALENDAR=1:剔除 dsh-calendar 条目(隔离冒烟/无 CalDAV 环境——
+// vendored calendar 未配 username 时在 boot 期挡启动;日历属可选能力,缺件不挡旅行规划)
+if (process.env.GOTRY_NO_CALENDAR === '1') {
+  patchRaw = patchRaw.replace(/\n\s*- id: dsh-calendar\n\s*name: '[^']*'\n/, '\n')
+}
+
+// GOTRY_STATE_ROOT:状态隔离开关(测试/巡检纪律——测试 prompt 不得写真实产品状态;
+// 巡检或自动化冒烟设置后,账本/异步工单/副作用全部落在该绝对目录)
+if (process.env.GOTRY_STATE_ROOT) {
+  patchRaw = patchRaw.replace(/(stateRoot:\s*)'[^']*'/, `$1'${process.env.GOTRY_STATE_ROOT}'`)
+}
+
 const patchPath = join(tmpdir(), `cordis.gotry.${process.pid}.yml`)
 writeFileSync(patchPath, patchRaw)
 if (!process.env.DEEPSEEK_API_KEY && mode !== 'help') {
