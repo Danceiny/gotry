@@ -8,7 +8,7 @@
 
 ## 当前位置(2026-08-27)
 
-**`@danceiny/gotry@0.0.1-rc.13` 已发布,npm latest 直指本版**(2026-08-29 第三批:账号会话三连修复——登录自动检测零弹窗/登录页置前可见/标签页纪律;README 可读性一版;历史:rc.12 2026-08-29 第二批:OTA 扁平化+账号授权闸 v2+登录产品化 `gotry_session_login`——酒店接飞猪 search-hotel/会话检索授权卡每会话一次+登录在携程官网完成零终端;历史:rc.11 2026-08-29 第一刀——Z3 WASM race 根治(D-17)/实时票价桥(flyai overlay,静态包转显式降级)/i18n 英文面(工程层)/薄壳遗留删除;run-all 新增 §30-§32 三闸;founder 确认制下 agent 执行(「测试好了就可以发新版本」),registry 回拉实测全过);历史:rc.10 2026-08-28 发布(双形态冻结 ADR-16/会话传输层 puppeteer 定案/依赖面根治 rc.9「装得上跑不起」缺陷,曾为 latest;rc.9 标缺陷退役);rc.8 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**里程碑口径:M3 工程与分发面已就绪,但真实种子用户 evidence 未收口;M4 由 founder 授权并行推进,不构成 M3 Exit 证明;M5/M6 仅在各自 Entry gate 满足后启动。**
+**`@danceiny/gotry@0.0.1-rc.14` 已发布,npm latest 直指本版**(2026-08-29 文档中英分开发布:`README.md` 英文 + `README.zh-CN.md` 中文顶部互链,npm files 增补中文版;历史:rc.13 2026-08-29 第三批:账号会话三连修复——登录自动检测零弹窗/登录页置前可见/标签页纪律;README 可读性一版;历史:rc.12 2026-08-29 第二批:OTA 扁平化+账号授权闸 v2+登录产品化 `gotry_session_login`——酒店接飞猪 search-hotel/会话检索授权卡每会话一次+登录在携程官网完成零终端;历史:rc.11 2026-08-29 第一刀——Z3 WASM race 根治(D-17)/实时票价桥(flyai overlay,静态包转显式降级)/i18n 英文面(工程层)/薄壳遗留删除;run-all 新增 §30-§32 三闸;founder 确认制下 agent 执行(「测试好了就可以发新版本」),registry 回拉实测全过);历史:rc.10 2026-08-28 发布(双形态冻结 ADR-16/会话传输层 puppeteer 定案/依赖面根治 rc.9「装得上跑不起」缺陷,曾为 latest;rc.9 标缺陷退役);rc.8 曾直指 latest(2026-08-28:`npx @danceiny/gotry` 即得;干净安装 headless 实测跑通;`rc` tag 暂留同样可用的 rc.7)。License MIT。**里程碑口径:M3 工程与分发面已就绪,但真实种子用户 evidence 未收口;M4 由 founder 授权并行推进,不构成 M3 Exit 证明;M5/M6 仅在各自 Entry gate 满足后启动。**
 
 **M3 真实证据并行线(Issue #22,2026-08-29)**:manifest 冻结样本窗口、纳排、分母、归因与 Exit 阈值;脱敏 cohort/nightly schema 和确定性 scorer 已有 synthetic fixture 守门。fixture 只能证明合同与公式,永不算 business pass;当前没有 50–200 人真实 cohort,M3 Exit 仍开放。
 
@@ -26,6 +26,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | **v0.0.1-rc.11** | **已发 npm,latest 直指本版**(registry 回拉实测:干净安装/插件加载/bin 全通) | 已知限制清算:Z3 WASM race 根治(D-17)+ 实时票价桥(flyai overlay)+ i18n 英文面(工程层)+ 薄壳删除;run-all 新增 §30-§32 |
 | **v0.0.1-rc.12** | **已发 npm,latest 直指本版**(registry 回拉实测:干净安装/插件加载/bin 全通) | OTA 扁平化(flyai kind=hotel 酒店接入)+ 账号会话授权闸 v2(每会话一次/拒绝吊销/sessionAccess 总闸)+ 登录产品化(`gotry_session_login`,第 18 工具,零终端零凭证)+ dsh vendored alpha.1 + issue #24 三处修复 |
 | **v0.0.1-rc.13** | **已发 npm,latest 直指本版**(registry 回拉实测通过) | 账号会话三连修复:登录自动检测(已登录零弹窗)+ 登录页置前可见性(`newPage` 纪律)+ 例行测试永不自动开窗;README 可读性一版(18 工具分组/账号会话隐私专节/状态重排) |
+| **v0.0.1-rc.14** | **已发 npm,latest 直指本版**(registry 回拉实测:干净安装/bin/npm 页英文 README) | 文档中英分开发布:`README.md`(英文,完整镜像)+ `README.zh-CN.md`(中文)互链,顶层 switcher;npm files 增补中文版 |
 | dev(未发) | 持续 main 直推 | issue 冲刺 14/14 交付(README 一致性/域边界/数据污染根除等),17 套 ALL GREEN |
 | 后续 | founder 侧 | 种子用户邀约;rc.5 deprecate/rc tag 指向待下次 2FA 授权点击 |
 
@@ -36,8 +37,6 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 **2026-08-29 第二批:OTA 平铺 + 账号授权闸(founder 口径「OTA 这些都是工具,不要区分什么主路径/降级路径;这要用到用户的账号,所以必须跟用户确认」)**:飞猪 `search-hotel` 接入(`gotry_flyai_search` kind=hotel,打码价保真);OTA 工具描述与 persona (19) 去「三级路由/主链路/交叉验证」层级,改平铺工具面(证据链逐源标注不变);账号会话工具授权闸进代码——v1 逐调用弹卡经 founder 实测(「每次都要弹,经常无法点击」)当批改 v2:**每会话每站点首次调用**弹 dsh 原生审批卡、批准后会话内记住;**拒绝=本会话吊销**(不再弹卡不再执行);无审批通道(headless)一律 fail-closed;`sessionAccess: ask|allow|off` 总闸(`session-consent.ts`)。**④登录产品化(第 18 工具 `gotry_session_login`)**:needs-login 时 agent 直调——在用户 Chrome 弹携程登录页等用户在**携程官网**完成登录,无需终端;语义红线=登录永远发生在外部网站,gotry 永不经手密码/验证码/cookie 值(只读票据名,0 值过手;登录引导页不挂 ReadGuard——凭证流绝不被我们拦截,transport `guard:false` 唯一豁免面);③例行动回归永不自动开浏览器窗口(live 探针 GOTRY_SESSION_LIVE=1 opt-in);携程酒店/美团会话适配器仍等登录态 seam(独立 tick,见 data-sources §8)。
 
 **2026-08-27 时间感优化落地**(外部时间评测驱动,ADR-12):时间锚点层 + 槽位抽取 v1 + 25 题评测集进仓,真模型 25/25;细节见 architecture.md §1/§9 与 ADR-12。
-
-**2026-08-29 工具可用性硬化(Issue #24,npm 形态用户轨迹反馈)**:weather「普吉岛」地理编码失败→`resolvePlace` 别名阶梯;flyai Sentinel 限流静默 miss→error 改判+summary 三分支(过去日期显式提示);hbcli ENOENT 人话化+静态包 UI 计数修复。同日 founder 两则指令落地:①hotelbyte-cli 系**公开仓**(初判「无分发渠道」有误,D-19 改口径);②**外部依赖自举**——npm 安装期(postinstall --auto)与 `gotry setup` 手动入口按上游官方方式补装 hbcli(install.sh)与 agent-reach(pip 入 .venv),自举失败永不挡安装,凭证选配不自动配(D-19 残余=凭证+UAT 状态)。
 
 (历史)**M2 已退出**(b0cfd97):§7-1 三层组合全链落地——OpenFlights 骨架(168 枢纽对,三值语义,求解消费+用户渲染双层)+ OpenSky 校验桥 + bookedResources 锚点 + hbcli 酒店桥(gotry_hotel_search,实时/静态降级);dsh 运行时端到端(DeepSeek 原生,人格+五工具);一键成品入口 `./gotry` 经全新场景验收(带爸妈云南行:人格问对问题→引擎三候选判决→证据链→三道选择题)。G1 已决(中国出境首发)、S1 已冻结、§7-1 已批——均由创始人「按推荐方案执行」指令结算。**当前 = M3 最小可用产品**:最小 Web 面(D-4)+ 种子用户 50-200 人(发起人即首个用户,`./gotry` 即入口)。
 

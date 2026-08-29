@@ -1,6 +1,6 @@
 {
   "name": "@danceiny/gotry",
-  "version": "0.0.1-rc.13",
+  "version": "0.0.1-rc.14",
   "description": "GoTry — 从出发到下一次出发的 AI 旅行 Agent(dsh 插件)。npm 包入口 + vendored dsh runtime + 5 行 README 安装路径。",
   "type": "module",
   "main": "ts/src/index.ts",
@@ -47,6 +47,7 @@
     "ts/package.json",
     "cordis.gotry-patch.yml",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE",
     "ts/capabilities/session-consent.ts",
     "ts/capabilities/session-login.ts"
@@ -55,7 +56,7 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "postinstall": "node bin/gotry-bootstrap.js --auto",
+    "postinstall": "echo 'GoTry installed. Run: npx gotry web   (dsh Web UI on :3080)\\nSee: https://github.com/Danceiny/gotry'",
     "test": "bash scripts/run-all-tests.sh"
   },
   "dependencies": {
