@@ -38,6 +38,7 @@ import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { sessionFlightSearch } from '../capabilities/session-search.ts'
+import { sessionLogin } from '../capabilities/session-login.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 
 export const name = 'gotry-tools'
@@ -733,13 +734,45 @@ export function apply(ctx: Context, config: Config): void {
   }))
 
   registerGuarded(defineTool({
+    name: 'gotry_session_login',
+    description:
+      'Productized login bootstrap for the account session channel (call this when gotry_session_search returns needs-login — the user never needs a terminal). '
+      + 'OPENS the site login entry in the USER\'S OWN Chrome and waits for the user to finish logging in on the external site. '
+      + 'GoTry NEVER collects, stores, or transmits credentials: no passwords, no SMS codes, no cookie values — it only checks the boolean fact "already logged in" (reads cookie NAMES only, zero values). '
+      + 'verdict logged-in (tickets detected) | pending (login tab opened, user not done yet — offer to re-check later) | needs-attach (one-time Chrome remote-debugging switch instructions). '
+      + 'Evidence [会话:<site>-login@ts].',
+    parameters: {
+      query: { type: 'json', required: true, description: '可空对象 {}: { waitSeconds?: number }(等待用户完成登录的上限秒数,默认 90,至多 300)' },
+    },
+    output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { evidence?: string }).evidence ?? JSON.stringify(v).slice(0, 600)) }] },
+    async execute(args: { query?: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ waitSeconds?: number }>(args, 'waitSeconds')
+      const r = await sessionLogin({ waitMs: typeof q?.waitSeconds === 'number' ? q.waitSeconds * 1000 : undefined })
+      const summary = r.verdict === 'logged-in'
+        ? `${r.site} 登录完成确认(票据 cookie 名已检出,只读名字)。说明:登录是在携程官网、用你自己的浏览器完成的——gotry 全程未接触任何密码/验证码/cookie 值。现在可以继续会话检索了。${r.evidence}`
+        : r.verdict === 'pending'
+          ? `登录入口已在你的 Chrome 打开;请在弹出的标签页里正常登录携程(登录由你在官网完成,不属于 gotry)。完成后说一声"继续",我再确认。gotry 只检查"是否已登录",永不收集你的账号信息。${r.evidence}`
+          : r.verdict === 'needs-attach'
+            ? `需要一次性开启你 Chrome 的远程调试开关:在你的 Chrome 地址栏打开 chrome://inspect/#remote-debugging 并打开开关,然后说一声"重试"。${r.evidence}`
+            : `登录引导未完成:${r.error ?? '未知原因'} ${r.evidence}`
+      return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+    },
+    presentCall: _args => ({ card: 'generic', title: '登录携程(用你自己的浏览器,不在 gotry 输入)', kind: 'fetch', rawInput: {} }),
+    presentResult: (_args, value) => {
+      const r = value as { verdict?: string; tickets?: string[] }
+      const label = r.verdict === 'logged-in' ? `已登录(${(r.tickets ?? []).length} 票据)` : r.verdict === 'pending' ? '等待你在携程页面完成登录' : r.verdict ?? '降级'
+      return { card: 'generic', title: `账号登录:${label}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
+    },
+  }))
+
+  registerGuarded(defineTool({
     name: 'gotry_session_search',
     description:
       'Search on the USER\'S OWN logged-in browser session (Ctrip flights today; the account channel, not an anonymous instance). '
       + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'ReadGuard = physically read-only (write requests aborted at network layer; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
       + 'Currently ctrip-flight: sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
-      + 'verdict needs-login = ask the human to log in once (scripts/session-login.ts opens the login entry in their own Chrome); needs-attach = one-time Chrome remote-debugging switch. '
+      + 'verdict needs-login = call gotry_session_login (product tool: opens the Ctrip login entry in the user\'s own Chrome and waits for them to log in on the external site — no terminal, no credentials through GoTry); needs-attach = one-time Chrome remote-debugging switch. '
       + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).',
     parameters: {
       query: { type: 'json', required: true, description: '{ from: "上海", to: "丽江", date: "2026-10-01" }' },

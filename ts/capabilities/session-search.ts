@@ -81,7 +81,7 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
       return cookies.some((c) => c.domain.includes(SITE_DOMAIN.replace(/^\./, '')) && LOGIN_COOKIE_NAMES.includes(c.name))
     }
     if (!(await loggedIn()) && !q.allowAnonymous) {
-      return err('needs-login', '未检出你本人登录态——运行 npx tsx scripts/session-login.ts(会在你的 Chrome 打开携程登录入口,登录一次即完成);匿名实例不建立登录态')
+      return err('needs-login', '未检出你本人登录态——调用 gotry_session_login 为用户打开携程登录入口(登录在携程官网完成;gotry 永不经手密码/验证码/cookie 值)')
     }
     // 先挂监听再导航(Playwright network 模式):命中 networkHint 的第一个响应即搜索回包
     let settled = false

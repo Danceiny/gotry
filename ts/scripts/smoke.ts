@@ -259,6 +259,18 @@ async function main() {
     console.log('consent gate: session tool → approval-card ask(每会话一次/拒绝即会话内吊销,smoke 无审批缝走 ask 兜底); off → fail-closed deny; other tools pass through')
   }
 
+  // 14) 登录引导产品工具(gotry_session_login,第 18 工具):注册 + 「登录在外部网站完成、
+  // gotry 不经手任何凭证」红线钉在描述里;不真调 execute(测试纪律:不开用户浏览器/不 attach)
+  {
+    const lo = byName('gotry_session_login')
+    if (typeof lo.presentResult !== 'function') throw new Error('FAIL: gotry_session_login 缺 presentResult')
+    const desc = String((lo as unknown as { description?: string }).description ?? '')
+    if (!/NEVER collects, stores, or transmits credentials/.test(desc)) {
+      throw new Error(`FAIL: 登录工具描述缺「不经手凭证」语义红线,实际 ${desc.slice(0, 120)}`)
+    }
+    console.log('login tool: registered; 登录=外部网站+用户自己的浏览器,gotry 只读票据名(0 值过手)语义钉死')
+  }
+
   rmSync(smokeRoot, { recursive: true, force: true })
   console.log(`smoke state cleaned: ${smokeRoot}`)
 

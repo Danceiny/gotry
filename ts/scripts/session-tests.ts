@@ -18,6 +18,7 @@ import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapter
 import { sessionFlightSearch, __resetRateLimiterForTest } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
+import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
 
 let pass = 0
 let fail = 0
@@ -240,6 +241,47 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
   {
     const gate = mkGate('allow')
     assert((await gate(sess(), next)).kind === 'allow', 'sessionAccess=allow → 配置明示预授权,直接放行')
+  }
+}
+
+// J. 登录引导(产品工具 gotry_session_login 的能力层;纯函数/确定性部分)
+//    语义红线(founder):登录永远发生在外部网站——gotry 永不经手密码/验证码/cookie 值,
+//    只读「票据 cookie 名」这个存在性事实(名称级,0 个值过手)。
+console.log('J. sessionLogin(登录引导:无凭证语义/表格完备/pending 语义)')
+{
+  // J1 表格完备:每个站点必须有 domain/names/label/entryUrl,票据名表非空
+  for (const [site, t] of Object.entries(LOGIN_TARGETS)) {
+    assert(!!t.domain && t.names.length > 0 && !!t.label && t.entryUrl.startsWith('https://'), `${site} 登录目标表完备`, t)
+  }
+  // J2 未知站点 → 结构化 error,不抛错
+  const unknownSite = await sessionLogin({ site: 'not-a-site', waitMs: 0 })
+  assert(unknownSite.ok === false && unknownSite.verdict === 'error' && /未知站点/.test(unknownSite.error ?? ''), '未知站点 → 结构化 error(降级不抛)', unknownSite)
+  // J3 pollTicketNames 名称级:只回名字,绝不携带任何 cookie 值(值即便在 fixture 里也到不了 results)
+  {
+    const fakeBrowser = { cookies: async () => [
+      { domain: '.ctrip.com', name: 'cticket', value: 'SECRET-TICKET' },
+      { domain: 'ctrip.com', name: 'uid', value: 'SECRET-UID' },
+      { domain: 'ctrip.com', name: 'irrelevant', value: 'x' },
+    ] } as { cookies(): Promise<Array<{ domain?: string; name?: string; value?: string }>> }
+    const names = await pollTicketNames(fakeBrowser, LOGIN_TARGETS['ctrip-flight']!)
+    assert(JSON.stringify(names) === '["cticket","uid"]', '票据名级检查:只回名字;值(SOCRET)永不进入结果', names)
+    const joined = JSON.stringify(names)
+    assert(!joined.includes('SECRET'), '存在性检查零值过手(fixture 值不泄露)', joined)
+  }
+  // J4 live(opt-in,同 G 节纪律):不交互的短等待 → needs-attach(Chrome 未开调试)或 pending(入口已开)
+  if (process.env.GOTRY_SESSION_LIVE === '1') {
+    const lr = await sessionLogin({ waitMs: 2500, pollMs: 500 })
+    if (lr.verdict === 'needs-attach') {
+      assert(lr.ok === false && /chrome:\/\/inspect/.test(lr.error ?? ''), 'live:Chrome 未开调试 → needs-attach + 一次性指引', lr)
+    } else {
+      assert(lr.ok === true && lr.verdict === 'pending', 'live:attach 成功不交互 → pending(入口已开,等人登录)', lr)
+      const evidenceTagRe = /\[会话:ctrip-flight-login@/
+      if (!evidenceTagRe.test(lr.evidence ?? '')) throw new Error(`FAIL: 登录证据链缺失,实际 ${lr.evidence}`)
+      pass += 1
+      console.log('  ok - 登录证据链 [会话:ctrip-flight-login@*] 形态')
+    }
+  } else {
+    console.log('  SKIP - 登录 live 探针默认关(GOTRY_SESSION_LIVE=1 opt-in;工具面/桌面入口才真调)')
   }
 }
 
