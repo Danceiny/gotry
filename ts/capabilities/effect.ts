@@ -31,7 +31,7 @@ import {
   type RetryablePredicate,
 } from './resilience.ts'
 import { flyaiSearch, type FlyaiQuery } from './flyai.ts'
-import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
+import { checkAvail, hotelRates, queryOrders, searchHotels } from './hbcli.ts'
 import { bookWithSaga, type HbBookWriteParams } from './booking-write.ts'
 import { sessionFlightSearch, type SessionFlightQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
@@ -74,6 +74,19 @@ export interface HbCheckAvailEffectParams {
   timeoutMs?: number
 }
 
+/** hbcli 订单查询参数(M1;只读面,saga 回执对账入口——按幂等键查单即验证 receipt) */
+export interface HbQueryOrdersEffectParams {
+  customerReferenceNos?: string[]
+  supplierReferenceNos?: string[]
+  statusList?: string[]
+  guestName?: string
+  roomCount?: number
+  sortBy?: string
+  sortOrder?: 'asc' | 'desc'
+  hbcliBin?: string
+  timeoutMs?: number
+}
+
 /** 默认渠道实现(生产解译器的 dispatch 目标;全部满足「永不抛错」能力层契约) */
 const DEFAULT_HANDLERS = {
   /** 飞猪官方只读通道(机/火/酒店;spawn CLI) */
@@ -108,6 +121,8 @@ const DEFAULT_HANDLERS = {
   OPENSKY_FLIGHT_VERIFY: (p: FlightLiveQuery) => verifyFlight(p),
   /** 预订写(M1):saga 编排的 trade book——propose→通道→confirm/compensate;工具层过确认门后才可触达 */
   HBCLI_TRADE_BOOK: (p: HbBookWriteParams) => bookWithSaga(p),
+  /** 订单查询(M1,只读):saga 回执对账入口(按幂等键查单验证 receipt) */
+  HBCLI_QUERY_ORDERS: (p: HbQueryOrdersEffectParams) => queryOrders(p),
 } as const
 
 export type { HbBookWriteParams } from './booking-write.ts'
@@ -183,6 +198,12 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     isFailure: r => (r as { via?: string }).via === 'hbcli-error',
   },
   HBCLI_TRADE_BOOK: {
+    channel: 'cli',
+    retry: null,
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => (r as { via?: string }).via === 'hbcli-error',
+  },
+  HBCLI_QUERY_ORDERS: {
     channel: 'cli',
     retry: null,
     breaker: { failureThreshold: 3, openMs: 60_000 },

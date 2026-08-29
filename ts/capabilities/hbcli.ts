@@ -268,3 +268,31 @@ export async function bookHotel(
     : `book:hbcli 下单不可用(${live.error ?? live.via});写面无降级,未产生订单`
   return { ...live, book: live.result, summary }
 }
+
+/** 高层语义化封装:订单查询(spawn trade query-orders;只读面,saga 后验证/对账入口)。 */
+export async function queryOrders(
+  query: {
+    customerReferenceNos?: string[]
+    supplierReferenceNos?: string[]
+    statusList?: string[]
+    guestName?: string
+    roomCount?: number
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+  } = {},
+  opts: HbcliCallOptions = {},
+): Promise<HbcliCallResult & { orders?: unknown; summary: string }> {
+  const hbArgs = ['trade', 'query-orders', '--json']
+  if (query.customerReferenceNos?.length) hbArgs.push('--customer-reference-nos', query.customerReferenceNos.join(','))
+  if (query.supplierReferenceNos?.length) hbArgs.push('--supplier-reference-nos', query.supplierReferenceNos.join(','))
+  if (query.statusList?.length) hbArgs.push('--status-list', query.statusList.join(','))
+  if (query.guestName) hbArgs.push('--guest-name', query.guestName)
+  if (query.roomCount !== undefined) hbArgs.push('--room-count', String(query.roomCount))
+  if (query.sortBy) hbArgs.push('--sort-by', query.sortBy)
+  if (query.sortOrder) hbArgs.push('--sort-order', query.sortOrder)
+  const live = await callHbcliJson(hbArgs, opts)
+  const summary = live.via === 'hbcli-realtime'
+    ? `query-orders:hbcli 实时返回(过滤:${query.customerReferenceNos?.length ? `idem[${query.customerReferenceNos.length}]` : '全部'})`
+    : `query-orders:hbcli 不可用(${live.error ?? live.via});只读面诚实失败`
+  return { ...live, orders: live.result, summary }
+}

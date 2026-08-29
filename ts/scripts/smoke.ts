@@ -137,6 +137,14 @@ async function main() {
     throw new Error(`FAIL: 通道失败应走 saga 补偿,实际 ${JSON.stringify(compensated).slice(0, 200)}`)
   }
   console.log('M1 book tool gate verified (unconfirmed=card zero-touch / no-ref rejected / channel-fail=saga compensated)')
+  const qoTool = byName('gotry_query_orders')
+  if (typeof qoTool.execute !== 'function') throw new Error('FAIL: gotry_query_orders 未注册')
+  const qoObs = await qoTool.execute({ query: { customerReferenceNos: ['smoke-book-idem-1'] } }, null) as Record<string, unknown>
+  if (qoObs.ok !== false || (qoObs as { saga?: string }).saga !== undefined) {
+    // not-on-path bin → 只读面诚实失败;查询工具不得有 saga 字段(非写面)
+    throw new Error(`FAIL: gotry_query_orders 只读面应诚实失败且无 saga 字段,实际 ${JSON.stringify(qoObs).slice(0, 160)}`)
+  }
+  console.log('M1 query_orders tool registered (read-only, honest failure)')
   const ar = byName('gotry_agent_reach')
   const arView = ar.presentResult!({ query: { action: 'reach', channel: 'v2ex', method: 'get_hot_topics' } }, { verdict: 'found', summary: '10 topics' })
   if (!arView?.title?.includes('✅') || !arView.title.includes('v2ex.get_hot_topics')) throw new Error(`FAIL: agent_reach 结果卡,实际 ${arView?.title}`)

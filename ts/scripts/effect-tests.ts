@@ -338,4 +338,25 @@ assert.equal((itp11.result as { saga?: string } | null)?.saga, 'compensated', 's
 await rm(tmp11, { recursive: true, force: true })
 console.log('11d. 写效应注册表派发(永不重试/saga 保真)OK')
 
-console.log('EFFECT INTERPRETER TESTS: 11/11 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 读效应/M1 写效应 saga,纯离线)')
+// ---------------------------------------------------------------------------
+// 12. M1 订单查询效应:HBCLI_QUERY_ORDERS(只读;注册派发 + 真实 handler 离线冒烟)
+// ---------------------------------------------------------------------------
+let qoCalls = 0
+const ipQo = makeProductionInterpreter({
+  sleep: sleep0,
+  breakers: new Map(),
+  handlers: { HBCLI_QUERY_ORDERS: async () => { qoCalls += 1; return { via: 'hbcli-realtime', exitCode: 0, result: { orders: [{ orderNo: 'ON-Q1' }] }, evidence: '[实时API:hbcli@ts]', latencyMs: 1, orders: { orders: [{ orderNo: 'ON-Q1' }] }, summary: 'ok' } } },
+})
+const itp12 = await ipQo({ effect: 'HBCLI_QUERY_ORDERS', params: { customerReferenceNos: ['gotry-idem-x'] } } satisfies GotryEffect)
+assert.equal(itp12.trace.attempts, 1, 'QUERY_ORDERS 永不重试')
+assert.ok(itp12.result != null && !itp12.trace.declined, '命中注入 handler')
+assert.equal((itp12.result as { orders?: { orders?: unknown[] } }).orders?.orders?.length, 1, 'orders 透传')
+assert.ok(itp12.trace.evidence[0]?.startsWith('[效应:HBCLI_QUERY_ORDERS@'), 'trace 证据行')
+const tmp12 = await mkdtemp(join(tmpdir(), 'effect-qo-'))
+const itp12b = await interp({ effect: 'HBCLI_QUERY_ORDERS', params: { customerReferenceNos: ['z'], hbcliBin: join(tmp12, 'no-such-hbcli') } } satisfies GotryEffect)
+assert.equal((itp12b.result as { via?: string } | null)?.via, 'hbcli-error', '不可达 bin 诚实失败(只读面同口径)')
+await rm(tmp12, { recursive: true, force: true })
+assert.equal(qoCalls, 1)
+console.log('12. 订单查询效应(注册派发/orders 透传/离线诚实失败)OK')
+
+console.log('EFFECT INTERPRETER TESTS: 12/12 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 读效应/M1 写效应 saga/订单查询,纯离线)')
