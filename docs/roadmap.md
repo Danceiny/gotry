@@ -77,7 +77,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 - **Exit**:回访用户规划时长较首访降 ≥50%;经验回流率有基线。
 
 ### M5:交易闭环
-- **Entry**:M4 exit + 供应链协议。**交付**:WriteGate 生产化——写权按 L0-L4 渐进授权(L2 建议/L3 具名 seam 确认带 receipt/L4 自动类),每级可回滚(RFC S4);预订/支付/退改;佣金披露(红线随行)。
+- **Entry**:M4 exit + 供应链协议。**交付**:WriteGate 生产化——写权按 L0-L4 渐进授权(L2 建议/L3 具名 seam 确认带 receipt/L4 自动类),每级可回滚(RFC S4);预订/支付/退改;佣金披露(红线随行)。**设计基座已备(2026-08-29,issue #17 采纳/ADR-17)**:预订 saga 状态机词汇层(`booking_saga_fsm.v1`,`ts/src/booking-saga.ts` + `docs/booking-saga-fsm.md`)——字母表/四条边全函数边表/拒绝闭集/审计链校验,run-all §36 与账本物理对账;启封时任何 booking seam 只许走该边表;空 receipt 物理 CHECK、seam 命名词汇、L2/L4 接线与审批等待态为 M5 交付物。
 - **Exit**:预订零误操作事故;单位经济实测(对齐 D1 §8)。
 
 ### M6:B2B 包裹

@@ -126,6 +126,7 @@ async-collect 从「读 JSON 工单」升级为「恢复一个 journaled run」;
 - `idem_key` 唯一 = 「同一预订确认不可能下两次」的物理保证(产品红线:三步确认+幂等键)。
 - what-if 预演 = 复制 DB(`VACUUM INTO`)后在副本上 fold,确认后才在正本走 saga——LoopX「先只读投影后执行」的物理化。
 - ReadGuard 维持现状:检索态物理只读,与 pending_writes 互不相交。
+- **增补(2026-08-29,issue #17 采纳/ADR-17)**:saga 状态推进词汇已显式化为 `booking_saga_fsm.v1`(`ts/src/booking-saga.ts` + `docs/booking-saga-fsm.md`;run-all §36 物理对账)——M5 启封时 booking seam 只许走该边表;已知边界「空 receipt 无物理 CHECK」= D-22。
 
 ### 4.4 选型
 
