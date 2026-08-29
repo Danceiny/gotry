@@ -40,7 +40,7 @@ cp .env.example .env      # 填 LLM_API_KEY(DeepSeek sk-... 或 OpenAI 兼容协
 **提交前必跑，全绿才算完成**:
 
 ```bash
-./scripts/run-all-tests.sh   # 全栈回归:§1-§32,含金标准/重放/账本/Z3 竞态/i18n 等全部套件
+./scripts/run-all-tests.sh   # 全栈回归:§1-§34,含金标准/重放/账本/Z3 竞态/i18n/M3/M4 价值证据等全部套件
 ```
 
 部分会打免费公网 API（Open-Meteo/OpenSky/FlyAI）——离线或被限流时对应套件有降级断言，不会无脑失败。会话面 live 嗅探默认可用 `GOTRY_SESSION_LIVE=0` 关闭。
@@ -79,7 +79,7 @@ git checkout main && git pull && git checkout -b fix/your-topic
 
 ## 🔀 Pull Request 流程 — PR Workflow
 
-1. 本地全栈绿（§1-§32 全部通过）。
+1. 本地全栈绿（§1-§34 全部通过）。
 2. 推分支、开 PR：描述写清「**为什么改 · 改了什么 · 测试证据**」（模板已内置）。
 3. CI 必须绿（typecheck + 全栈回归，Node 22/24 双版本），维护者 review 通过。
 4. **squash 合入** `main`（保持线性历史），合入即删分支。
