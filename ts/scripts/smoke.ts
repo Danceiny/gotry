@@ -237,23 +237,26 @@ async function main() {
     console.log(`  hotel channel: ${fhBlocked ? 'sentinel-限流降级' : `${fh.hotels?.length ?? 0} 家`}; 参数闸/过去日闸生效`)
   }
 
-  // 13) 账号会话授权闸(RFC 支柱④进代码):会话工具 pre-execute → ask(批准一次只放一次);
-  // 总闸 off → deny(随时可关);其他工具原样放行(runtime 原声 ApprovalService 在宿主侧结算)
+  // 13) 账号会话授权闸(v2,RFC 支柱④进代码):每会话每站点首次弹卡、会话内记住;
+  // 总闸 off → fail-closed deny(随时可关);其他工具原样放行。授权完整语义(批准记忆/
+  // 拒绝吊销/allow)由 session-tests §I 纯函数覆盖;此处验证闸确实挂上了注册表。
   {
     const gate = preExecutes.at(-1)
     if (!gate) throw new Error('FAIL: tools/pre-execute 授权闸未注册')
     const next = async () => ({ kind: 'allow' as const })
     const ask = await gate({ name: 'gotry_session_search' }, next) as { kind?: string; reason?: string }
-    if (ask.kind !== 'ask' || !/仅对本次调用生效/.test(String(ask.reason ?? ''))) {
-      throw new Error(`FAIL: 会话工具应返回 ask(审批卡,allowed-once 语义),实际:${JSON.stringify(ask)}`)
+    if (ask.kind !== 'ask' || !/只读检索/.test(String(ask.reason ?? ''))) {
+      throw new Error(`FAIL: 会话工具无审批通道时应交 ask(运行时原生结算),实际:${JSON.stringify(ask)}`)
     }
     const pass = await gate({ name: 'gotry_anything_search' }, next)
     if (pass.kind !== 'allow') throw new Error(`FAIL: 非会话工具应原样放行,实际:${JSON.stringify(pass)}`)
     cfg.sessionAccess = 'off'
     const deny = await gate({ name: 'gotry_session_search' }, next) as { kind?: string }
-    if (deny.kind !== 'deny') throw new Error(`FAIL: sessionAccess=off 应 deny,实际:${JSON.stringify(deny)}`)
+    if (deny.kind !== 'deny' || !/sessionAccess=off/.test(String((deny as { reason?: string }).reason ?? ''))) {
+      throw new Error(`FAIL: sessionAccess=off 应 fail-closed deny,实际:${JSON.stringify(deny)}`)
+    }
     cfg.sessionAccess = 'ask'
-    console.log('consent gate: session tool → approval-card ask; off → fail-closed deny; other tools pass through')
+    console.log('consent gate: session tool → approval-card ask(每会话一次/拒绝即会话内吊销,smoke 无审批缝走 ask 兜底); off → fail-closed deny; other tools pass through')
   }
 
   rmSync(smokeRoot, { recursive: true, force: true })

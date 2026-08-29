@@ -1,9 +1,12 @@
 /**
  * 会话数据面 P1 测试(RFC §4 P1 exit):
  *   A-E 纯函数(确定性,进 CI):ReadGuard 分类器/批搜解析(buildEntryUrl/fixture)/提交件过滤/节律闸;
- *   F   live FlyAI 官方通道(同 weather-tests 的 live 先例);
- *   G   live 会话检索(Chrome + 携程;GOTRY_SESSION_LIVE=0 可关;Chrome 缺席 → SKIP 不 fail)。
- * 隔离纪律:live 用 mktemp profile 与 stateRoot,绝不动共享状态与日常浏览器 profile。
+ *   F   live FlyAI 官方通道(同 weather-tests 的 live 先例;纯 CLI,无浏览器窗口);
+ *   G   live 会话检索(Chrome + 携程;**默认 SKIP**——测试永不自动开用户浏览器窗口,GOTRY_SESSION_LIVE=1 显式开启);
+ *   H   酒店通道(flyai search-hotel;纯 CLI,无浏览器窗口);
+ *   I   账号会话授权闸(纯函数:每会话一次/拒绝=会话内吊销/allow/off/无审批通道,确定性)。
+ * 隔离纪律:live 用 mktemp profile 与 stateRoot,绝不动共享状态与日常浏览器 profile;
+ * 任何测试不自动弹浏览器窗口(用户 Chrome 只经 CDP attach 或用户手动运行 session-login)。
  */
 
 import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
@@ -14,6 +17,7 @@ import { classifyRequest, isSubmitText } from '../capabilities/session/read-guar
 import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { sessionFlightSearch, __resetRateLimiterForTest } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
+import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 
 let pass = 0
 let fail = 0
@@ -104,10 +108,11 @@ assert(/\[实时API:flyai/.test(fr.evidence), '证据链 [实时API:flyai@*]')
   rmSync(fakeDir, { recursive: true, force: true })
 }
 
-// G. live 会话检索(Chrome+携程;GOTRY_SESSION_LIVE=0 关;Chrome 缺席 SKIP)
-console.log('G. sessionFlightSearch(live,隔离 profile + ReadGuard)')
-if (process.env.GOTRY_SESSION_LIVE === '0') {
-  console.log('  SKIP - GOTRY_SESSION_LIVE=0')
+// G. live 会话检索(默认 SKIP:例行动回归**永不**自启浏览器窗口—— founder 2026-08-29 反馈
+// 「匿名窗口反复打开携程/浏览器闪退」= 测试骚扰,live 须显式 GOTRY_SESSION_LIVE=1 请求)
+console.log('G. sessionFlightSearch(live,Chrome+携程;默认跳过,GOTRY_SESSION_LIVE=1 显式开启)')
+if (process.env.GOTRY_SESSION_LIVE !== '1') {
+  console.log('  SKIP - 会话 live 探针默认关(测试不再自动开浏览器窗口;GOTRY_SESSION_LIVE=1 显式开启)')
 } else {
   __resetRateLimiterForTest()
   const iso = mkdtempSync(join(tmpdir(), 'gotry-session-test-'))
@@ -180,5 +185,62 @@ console.log('H. flyaiSearch hotel(飞猪官方 search-hotel)')
   rmSync(fakeDir, { recursive: true, force: true })
 }
 
+// I. 账号会话授权闸(纯函数;v2 语义:每会话每站点一次,拒绝=会话内吊销,不再逐次弹卡)
+console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊销/allow/off/无通道)')
+{
+  const next = async (): Promise<ConsentDecision> => ({ kind: 'allow' })
+  const agentA = { id: 'agent-A' } as unknown as object
+  const agentB = { id: 'agent-B' } as unknown as object
+  const sess = (a: object = agentA) => ({ name: 'gotry_session_search', agent: a, callId: 'c1' })
+  const other = () => ({ name: 'gotry_anything_search', agent: agentA })
+  const mkStore = () => new WeakMap<object, { granted: Set<string>; denied: Set<string> }>()
+  const mkGate = (access: SessionAccess, seam?: ApprovalSeam) =>
+    createConsentGate({ access: () => (access as string), approval: seam ? () => seam : undefined, store: mkStore() })
+
+  // I1 无审批通道(headless/极简宿主):账号工具 → ask(交运行时 fail-closed);非账号工具放行
+  const gateBare = createConsentGate({ access: () => 'ask' })
+  const d1 = await gateBare({ name: 'gotry_session_search', agent: undefined }, next)
+  assert(d1.kind === 'ask', '无审批通道 → ask(交运行时 fail-closed;denies 责任在 registry)', d1)
+  assert((await gateBare({ name: 'gotry_anything_search', agent: undefined }, next)).kind === 'allow', '非账号工具不过闸,原样放行')
+
+  // I2 批准一次 → 会话内记住:第二次免弹卡直接放行(审批请求计数恒 1)
+  {
+    let requests = 0
+    const seam: { request: ApprovalSeam['request'] } = { request: async () => { requests += 1; return 'allowed-once' } }
+    const gate = createConsentGate({ access: () => 'ask', approval: () => seam })
+    const r1 = await gate(sess(), next)
+    assert(r1.kind === 'allow' && requests === 1, '首次调用:弹卡一次,批准后放行', { r1, requests })
+    const r2 = await gate(sess(), next)
+    assert(r2.kind === 'allow' && requests === 1, '会话内第二次调用免弹卡直接放行(不重复骚扰)', { r2: r1, requests })
+  }
+
+  // I3 拒绝 = 本会话吊销:deny 且不再弹卡;另一会话不受影响
+  {
+    let requests = 0
+    const seam: ApprovalSeam = { request: async () => { requests += 1; return 'rejected' } }
+    const store = mkStore()
+    const gate = createConsentGate({ access: () => 'ask', approval: () => seam, store })
+    const d1 = await gate(sess(), next)
+    assert(d1.kind === 'deny' && /拒绝/.test(String(d1.kind === 'deny' ? d1.reason : '')), '拒绝 → deny + 明示「本会话内生效」', d1)
+    const d2 = await gate(sess(), next)
+    assert(d2.kind === 'deny' && requests === 1, '拒绝后再次调用 → 直接 deny,不再弹卡(拒绝=吊销)', { d2 })
+    const dB = await gate({ name: 'gotry_session_search', agent: agentB }, next)
+    assert(dB.kind === 'deny' && requests === 2, '另一会话不受此前拒绝影响——会重新发起一次审批请求(seam 本例仍拒)', { dB, requests })
+  }
+
+  // I4 off 总闸:不弹卡直接 deny;非账号工具不受影响
+  {
+    const gate = mkGate('off')
+    const d = await gate(sess(), next)
+    assert(d.kind === 'deny' && /sessionAccess=off/.test(String(d.kind === 'deny' ? d.reason : '')), 'off → 不弹卡直接 deny', d)
+    assert((await gate(other(), next)).kind === 'allow', 'off 只关账号面工具,其余放行')
+  }
+
+  // I5 allow(配置级预授权):直接放行,不弹卡
+  {
+    const gate = mkGate('allow')
+    assert((await gate(sess(), next)).kind === 'allow', 'sessionAccess=allow → 配置明示预授权,直接放行')
+  }
+}
+
 console.log(`\nSESSION P1: ${pass} pass, ${fail} fail`)
-process.exit(fail > 0 ? 1 : 0)

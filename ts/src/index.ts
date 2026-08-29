@@ -38,6 +38,7 @@ import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { sessionFlightSearch } from '../capabilities/session-search.ts'
+import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -49,7 +50,7 @@ export interface Config {
   timeoutMs: number
   /** hbcli 二进制路径(hotelbyte-cli;空=禁用实时酒店,回退数据包) */
   hbcliBin: string
-  /** 账号会话检索总闸(RFC 支柱④「用户明示授权+随时可关」):ask=gotry_session_search 每次调用先过运行时审批卡(默认);off=总闸关闭,直接拒绝 */
+  /** 账号会话检索总闸(RFC 支柱④「用户明示授权+随时可关」):ask=gotry_session_search 每会话每站点首次调用弹审批卡、会话内记住(默认);allow=用户已在配置明示预授权(直接放行);off=总闸关闭,直接拒绝 */
   sessionAccess: string
 }
 
@@ -160,25 +161,19 @@ export function apply(ctx: Context, config: Config): void {
   // 不调 process.exit——让 dsh/上级容器决定生死,我们只留现场。
   installProcessGuards(config.stateRoot ?? '.', { uncaughtException: 'gotry-tools', unhandledRejection: 'gotry-tools' })
 
-  // 账号会话授权闸(RFC 支柱④「用户明示授权 + 站点白名单 + 随时可关」进代码):
-  // 会话面工具动用用户本人登录态,每次调用前必须经 dsh 原生审批链——
-  // tools/pre-execute 返回 {kind:'ask'} 由 registry 交 ApprovalService(审批卡),
-  // allowed-once 仅放行该次调用;rejected/cancelled/无审批通道一律 fail-closed
-  // 拒绝(headless 无应答者同理——无用户在场 = 无授权)。本插件不复读不重试。
-  // 防御:极简宿主/mock ctx 无事件总线时跳过注册(真实 dsh/cordis 必有 on)。
+  // 账号会话授权闸(RFC 支柱④「用户明示授权 + 站点白名单 + 随时可关」进代码;v2 每会话一次):
+  // 会话面工具动用用户本人登录态,**每会话每站点首次调用**弹 dsh 原生审批卡——
+  // allowed-once 记入会话 granted 集,后续同站调用免弹;用户拒绝 = 本会话吊销
+  // (denied 集,不再弹卡也不再执行——拒绝是裁决,不反复骚扰);无审批通道
+  // (headless 无用户在场)一律 fail-closed 拒绝。sessionAccess: ask(默认)|allow|off。
+  // v1 教训(2026-08-29 founder 实测「每次都要弹,经常无法点击」):逐调用弹卡 = 骚扰,
+  // 会话态收归 capabilities/session-consent.ts。防御:极简宿主/mock ctx 无事件总线时跳过。
   const ctxOn = (ctx as unknown as { on?: unknown }).on
   if (typeof ctxOn === 'function') {
-    ctx.on('tools/pre-execute', async (exec, next) => {
-      if (exec.name !== 'gotry_session_search') return next()
-      if ((config.sessionAccess ?? 'ask') === 'off') {
-        return { kind: 'deny', reason: 'gotry_session_search 已被配置关闭(sessionAccess=off);需要账号会话检索时由用户开启' }
-      }
-      return {
-        kind: 'ask',
-        reason: 'gotry_session_search 将使用你本人已登录的浏览器会话做携程机票只读检索'
-          + '(ReadGuard 物理只读:写请求网络层中止,agent 永不碰凭证与验证码);批准仅对本次调用生效',
-      }
-    })
+    ctx.on('tools/pre-execute', createConsentGate({
+      access: () => config.sessionAccess ?? 'ask',
+      approval: approvalFromContext(ctx),
+    }))
   }
 
   // D-NEW 收尾:全部工具 execute 统一异常隔离——单个工具抛错/拒绝不再沿 cordis
@@ -741,11 +736,11 @@ export function apply(ctx: Context, config: Config): void {
     name: 'gotry_session_search',
     description:
       'Search on the USER\'S OWN logged-in browser session (Ctrip flights today; the account channel, not an anonymous instance). '
-      + 'Consent gate: every call asks the user first via the runtime approval card (allowed-once per call; denied or absent approval channel = not executed — fall back to other tools, never retry). '
+      + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'ReadGuard = physically read-only (write requests aborted at network layer; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
       + 'Currently ctrip-flight: sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
-      + 'verdict needs-login = run scripts/session-login.ts once with the human logging in; needs-attach = one-time Chrome remote-debugging switch. '
-      + 'Rate-limited (≥30s between same-site calls).',
+      + 'verdict needs-login = ask the human to log in once (scripts/session-login.ts opens the login entry in their own Chrome); needs-attach = one-time Chrome remote-debugging switch. '
+      + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).',
     parameters: {
       query: { type: 'json', required: true, description: '{ from: "上海", to: "丽江", date: "2026-10-01" }' },
     },

@@ -214,7 +214,9 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 **OTA 平铺 + 酒店通道 + 账号授权闸(2026-08-29 第二批,founder 口径「OTA 这些都是工具,不要区分什么主路径/降级路径;这要用到用户的账号,所以必须跟用户确认」)**:
 - **search-hotel 接入**:`gotry_flyai_search` kind=hotel(实测大理:结构化 name/star 档级/打码价 ¥7xx/address/interestsPoi/shId/detailUrl;解析契约 `FlyaiHotelOption`)。**打码价纪律**:未鉴权价上游打码(¥7xx),解析保 `priceRaw` 原值、`price` 数字恒 0——「¥7xx 截成 7 伪装真价」是被明确拒绝的形态;真实价以 `detailUrl` 酒店页为准(交易经 detailUrl 由人完成,不进工具)。flags:`--dest-name` 必填 + `--check-in-date/--check-out-date`(成对可选,未定档期先摸底)+ `--key-words`。session-tests §H(live hit/离线解析/参数闸三态)+ smoke §12。
 - **OTA 平铺**:founder 口径落地——工具描述与 persona (19) 删「主链路/交叉验证/三级路由」层级话术;**拍平的是路由优先级,不是 L4 证据链纪律**(逐源标注照旧必达用户)。
-- **账号授权闸(支柱④进代码)**:`tools/pre-execute` 监听器对 `gotry_session_search` 返回 `{kind:'ask'}` → dsh 原生 `ApprovalService`(dsh-base profile 默认挂载 policy=ask)→ web 审批卡;`allowed-once` 逐次放行,rejected/cancelled/无审批通道一律 fail-closed(headless 无用户在场 = 无授权);插件 config `sessionAccess: ask|off` 总闸「随时可关」;站点白名单=适配器注册表现状(仅 ctrip-flight)。飞猪通道**不过闸**(匿名无用户身份,无账号风控/PIPL 面,配额限流已是结构化 error);smoke §13 三态断言(ask/deny/放行)。
+- **账号授权闸(支柱④进代码;v2 会话内一次)**:`tools/pre-execute` 监听器(`session-consent.ts`)对账号面工具**每会话每站点首次调用**返回 `{kind:'ask'}` → dsh 原生 `ApprovalService`(dsh-base profile 默认挂载 policy=ask)→ web 审批卡;allowed-once 记入会话 granted 集(会话内免再弹),**rejected/cancelled 记入 denied 集 = 本会话吊销**(不弹卡不执行——founder 实测「每次都弹,经常无法点击」,逐次批准骚扰已根治);无审批通道 fail-closed(headless 无用户在场 = 无授权);插件 config `sessionAccess: ask|allow|off`(随时可关/预授权/总闸);站点白名单=适配器注册表现状(仅 ctrip-flight)。飞猪通道**不过闸**(匿名无用户身份,无账号风控/PIPL 面,配额限流已是结构化 error);session-tests §I + smoke §13 断言。
+- **登录态 seam 落地**:`scripts/session-login.ts`——attach 用户日常 Chrome(与检索同传输层)→ 新开登录入口标签 → 人自行登录 → 只读轮询票据 cookie 名(不读值不碰密码/OTP/验证码)→ 检出即报;`needs-login` 文案改指该脚本(不再是「跑脚本」空指引)。
+- **测试纪律(2026-08-29 founder 反馈根治)**:例行回归**永不自动开浏览器窗口**——session-tests G 节 live 探针默认 SKIP,`GOTRY_SESSION_LIVE=1` 显式 opt-in;「在匿名窗口反复打开携程/界面闪退」形态就此退役。
 - **未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
 
 
@@ -227,3 +229,4 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 | 2026-08-28 | 新增 §8 官方 agent 通道尽调(RFC P0):飞猪 FlyAI 无 key 实测可用(机/火只读搜索,会话面缺口收缩)+ 携程机票 XHR 嗅探 PoC(batchSearch 接口识别,零风控) |
 | 2026-08-29 | issue #24 工具不可用三处修复:① flyai 上游语义失败(exit=0 + `data:null` + `message:"出发日期非法"`)由吞成 miss 改为带上游原话的 error 终态,工具层加过去日期预校验;② 天气地理编码双源化(Open-Meteo 主 + Nominatim 中文兜底,「普吉岛」0 结果/「普吉」错配西藏同名村);③ hbcli 静态包回退按目的地过滤命中块(不再整包倾倒),无命中明示无数据 |
 | 2026-08-29(第二批) | §2 酒店行/§8:飞猪 `search-hotel` 接入(kind=hotel,打码价 priceRaw 保真纪律)+ OTA 工具面平铺(去主/降级路由话术,persona (19) 重写)+ 账号会话授权闸落地(`tools/pre-execute`→ApprovalService 审批卡,`sessionAccess: ask\|off` 总闸,RFC 支柱④进代码;飞猪匿名通道不过闸);session-tests §H + smoke §12-13 |
+| 2026-08-29(v2 同日) | founder 实测反馈两刀:**①授权闸 v2**——逐调用弹卡=骚扰,改「每会话每站点首次调用弹卡、会话内记住;拒绝=本会话吊销不再弹」(`session-consent.ts` 会话态,sessionAccess `ask\|allow\|off`);**②登录态 seam 真落地**——`scripts/session-login.ts`(attach 用户 Chrome→开登录入口→人登录→只读轮询票据,needs-login 文案指向真脚本);**③测试不再自动开浏览器窗**(session-tests live 节 GOTRY_SESSION_LIVE=1 opt-in,「匿名窗口反复开携程/闪退」形态退役);session-tests §G/H/I + smoke §12-13 |

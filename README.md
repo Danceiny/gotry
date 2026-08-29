@@ -196,7 +196,7 @@ GoTry: 收到。先把约束记下来——
 - ✅ **英文面(工程层)已就绪** — 求解确定性输出面(候选/航班链 answer_md、放宽建议、排除理由)i18n catalog 化:`GOTRY_LOCALE=en` 或 `setLocale('en')` 即英文,默认 zh-CN 与金标准逐字节一致(run-all §32:en 零缺键/切换数据不动)。**残余(诚实声明)**:dsh web 界面属宿主、工具结果卡与人格对话面等 M4 校准输入落定后随校准样本补齐——种子市场仍是中国出境(G1)
 - ✅ **机票实时数据已接入** — dated 航班链段可经 FlyAI 官方只读通道取实时票价覆写(`GOTRY_REALTIME_PRICING=1`,证据链 `[实时API:flyai@ts]`,miss/error/打码价一律降级回静态包 `data/flights_2026.json`);静态包由「唯一来源」变为「显式降级」,零 key 可用
 - ✅ **酒店实时报价已接入(OTA 平铺)** — `gotry_flyai_search` kind=hotel 直连飞猪官方 `search-hotel`(2026-08-29 实测:结构化 名称/档级/打码价);未鉴权价格上游打码(如 ¥7xx),工具保 priceRaw 原值不伪装成数字价,真实价以 jumpUrl 酒店页为准;OTA 工具面平铺,无「主链路/降级」路由——按查询取用,证据链逐源标注
-- ✅ **账号会话检索已加授权闸** — 动用用户本人登录态的 `gotry_session_search` 每次调用先经 dsh 运行时审批卡请求授权(allowed-once 逐次批准;拒绝/无审批通道/headless 无用户在场一律不执行);`sessionAccess: ask|off` 配置总闸随时可关——「用你的账号,必须先经你点头」(smoke §12-13 验证)
+- ✅ **账号会话检索已加授权闸(v2)** — 动用用户本人登录态的 `gotry_session_search` **每会话首次调用**经 dsh 运行时审批卡请求授权(会话内记住,不重复弹卡;拒绝 = 本会话吊销不再执行;无审批通道/headless 无用户在场一律不执行);`sessionAccess: ask|allow|off` 配置总闸随时可关——「用你的账号,必须先经你点头」(session-tests §I + smoke §13 验证)。登录态由 `scripts/session-login.ts` 建立(在你的 Chrome 打开登录入口,登录一次即完成)
 - ✅ **Z3 WASM race 已根治** — 三模块各自持 WASM 实例 + 候选求解 `Promise.all` 共 Context 并发是双重根因;现收敛 `ts/src/z3-shared.ts`(单一实例+单一 Context+会话级互斥门),run-all §1 的「重试一次」止血已退役,新增 §30 进程内三形态并发回归闸 ×12(D-17)
 - ✅ **薄壳已删除** — `shell/` 目录与 `./gotry shell` 分支已移除(2026-08-29 清理;dsh web 唯一产品面,旧命令行在 git 历史/rc.6 文档内可考)
 
