@@ -65,6 +65,8 @@ issue #16「多渠道比价与外部依赖隔离」提出三件事:
 |---|---|---|---|---|---|
 | `FLYAI_SEARCH` | cli | 瞬时类 2 次/500ms 起 | 3 连错/开 60s | – | data-sources §8:Sentinel 限流绝不硬重试;熔断保护未公布配额 |
 | `HBCLI_HOTEL_SEARCH` | cli | 永不(1 次) | 3 连错/开 60s | – | hbcli 契约「候选路径是切换不是重试」 |
+| `HBCLI_HOTEL_RATES` | cli | 永不(1 次) | 3 连错/开 60s | – | 同 HBCLI 族;价格面**无静态降级 fail-closed**(不估算房价,与 bookable-facts 证据分级同口径) |
+| `HBCLI_CHECK_AVAIL` | cli | 永不(1 次) | 3 连错/开 60s | – | 同上;验价不可用即诚实失败(预订链下单前置,M0) |
 | `SESSION_FLIGHT_SEARCH` | browser | **永不** | **不参与** | 渠道内 ≥30s 节律闸 + 账号授权闸 | 风控/挑战=「上游说不」,重试即红线;needs-login/cooldown 是状态不是故障 |
 | `WEATHER_GEOCODE/FORECAST/CLIMATE` | api | 2 次/400ms | 3 连错/开 30s | – | 免费源瞬时抖动重试合法,熔断防免费配额空转 |
 | `OPENSKY_FLIGHT_VERIFY` | api | 2 次/400ms | 3 连错/开 30s | – | 同上(~400 credits/天) |
