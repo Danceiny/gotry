@@ -10,7 +10,7 @@
 | | |
 |---|---|
 | **Version** | `v0.0.1-rc.10`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
-| **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;17 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
+| **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;17 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);**2026-08-29 已知限制清算第一刀**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸)、薄壳遗留(`shell/`)物理删除;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) (private) |
 | **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
@@ -194,7 +194,7 @@ GoTry: 收到。先把约束记下来——
 - **zh-CN 体验** — 当前面向中国出境首发(你的账号语言习惯)。英文界面/wider 国际化未做,等 M4 校准输入落定。
 - **机票实时数据** — 静态包(`data/flights_2026.json`)作为降级。实时票价接入留到 v0.1.x。
 - **Z3 WASM race** — 连续跑多个测试套件时偶发 `memory access out of bounds`(已规避回滚)。M3 早期处理。
-- **薄壳已废弃** — `./gotry shell` 不再推荐;dsh web 是唯一面。本版 README 仍保留旧命令行做迁移证据。
+- ✅ **薄壳已删除** — `shell/` 目录与 `./gotry shell` 分支已移除(2026-08-29 清理;dsh web 唯一产品面,旧命令行在 git 历史/rc.6 文档内可考)
 
 
 ---

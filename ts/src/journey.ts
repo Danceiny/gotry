@@ -7,9 +7,9 @@
  * (精力 = 30 + 8×睡眠小时,clamp 30-75)。
  */
 
-import { init } from 'z3-solver'
 import type { Service } from './model.ts'
 import { hhmmToMin, minToHhmm } from './model.ts'
+import { withZ3 } from './z3-shared.ts'
 
 export interface JourneyLegSpec {
   id: string
@@ -52,12 +52,8 @@ export interface JourneyResult {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-let z3Promise: Promise<any> | null = null
-
-async function getZ3(): Promise<any> {
-  if (!z3Promise) z3Promise = (async () => (await init()).Context('main'))()
-  return z3Promise
-}
+// Z3 运行时收敛到 z3-shared(单一 WASM 实例 + 单一 Context + 会话级互斥);
+// 本模块自有 z3Promise 已删(见 unified.ts / engine.ts 同批迁移)。
 
 export function evaluateLeg(leg: JourneyLegSpec, svc: Service): LegReport {
   const wake = svc.depMin - leg.bufferMin - leg.originTransferMin
@@ -94,7 +90,8 @@ function exactlyOne(z3: any, sels: any[]): any {
 }
 
 export async function solveJourney(req: JourneyRequestSpec): Promise<JourneyResult> {
-  const z3 = await getZ3()
+  // 会话级互斥门:判定段从 here 到 return 独占共享实例,防同 Context 并发 unwind。
+  return withZ3('journey.solveJourney', async z3 => {
   const { Bool, If, Sum, Int, Solver } = z3
   const wakeFloor = req.wakeFloorMin ?? hhmmToMin('06:00')
 
@@ -177,6 +174,7 @@ export async function solveJourney(req: JourneyRequestSpec): Promise<JourneyResu
     }
   }
   return { feasible: false, unsat_core: core, suggestions }
+  })
 }
 
 async function maybeAwait<T>(v: T | Promise<T>): Promise<T> {

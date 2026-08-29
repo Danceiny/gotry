@@ -9,6 +9,7 @@ import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import type { Candidate, Choice, MotivationProfile, Service, TransferMode, TravelRequest, TrueCost } from './model.ts'
 import { evaluateChoice, minToHhmm, hhmmToMin, requiredUsableHours, trueCostToDict, LATEST_ARRIVE_STAY_MIN } from './model.ts'
 import type { LegReport } from './journey.ts'
+import { withZ3 } from './z3-shared.ts'
 
 export interface AnchorsSpec {
   arriveByMin?: number
@@ -85,18 +86,9 @@ export interface JourneySpecTS {
   skeletonHub?: boolean
 }
 
+// Z3 运行时收敛到 z3-shared(单一 WASM 实例 + 单一 Context + 会话级互斥)——
+// 此前模块级 z3Promise 三份并存是 WASM race/OOM 的根因(见 z3-shared.ts 头注)。
 /* eslint-disable @typescript-eslint/no-explicit-any */
-let z3Promise: Promise<any> | null = null
-
-async function getZ3(): Promise<any> {
-  // 延迟到首次实际调用 solveUnified 才加载:避免 dsh 加载 GoTry 模块时启动
-  // WASM worker,引起 worker 线程内存冲突(z3-built.wasm 多线程 unsafe)。
-  if (!z3Promise) {
-    const { init } = await import('z3-solver')
-    z3Promise = (async () => (await init()).Context('main'))()
-  }
-  return z3Promise
-}
 
 /** 航班数据包(data/flights_2026.json 形态)→ 段链 */
 const SEGMENT_ROUTES: Record<string, string> = {
@@ -310,7 +302,9 @@ async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
     }
   }
 
-  const z3 = await getZ3()
+  // Z3 会话进互斥门(骨架/预过滤等网络段留在门外):solveUnifiedInner 的判定段
+  // 从 here 到 return 全部独占共享实例。
+  return withZ3('unified.solveUnifiedInner', async z3 => {
   const { Bool, If, Int, Solver, Sum } = z3
   const wakeFloor = spec.defaultWakeFloorMin ?? hhmmToMin('06:00')
 
@@ -392,6 +386,7 @@ async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
     }
   }
   return { feasible: false, unsat_core: core, suggestions }
+  })
 }
 
 // ---- 候选形态求解(枚举过滤,与 py solve_choice_segment 对齐) --------------------
