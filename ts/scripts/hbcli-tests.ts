@@ -66,5 +66,13 @@ assert.equal(r4.via, 'hbcli-error', 'searchHotels: fails to hbcli → fallback')
 assert.equal(r4.summary.includes('降级到静态包'), true, 'summary 指明降级')
 assert.ok(r4.hotels, 'hotels 字段填上静态包内容')
 
+// 6. ENOENT 降级原因人话化(issue #24):npm 形态未装 hotelbyte-cli 是常态,
+//    裸 "spawn hbcli ENOENT" 读起来像工具坏了 → summary 应解释为可选实时源未安装
+const r6 = await searchHotels({ destination: '普吉' }, { hbcliBin: '/nope/hbcli', fallbackPath: fallback })
+assert.equal(r6.via, 'hbcli-error', 'no-binary path')
+assert.ok(r6.summary.includes('未安装 hbcli'), `summary 应人话化 ENOENT,实际 ${r6.summary}`)
+assert.ok(r6.summary.includes('降级到静态包'), '人话化后仍指明降级到静态包')
+console.log(`6. ENOENT 人话化 OK:${r6.summary}`)
+
 await rm(tmp, { recursive: true, force: true })
-console.log('HBCLI TESTS: 5/5 OK (happy / error / no-binary / fallback / v0.3.0 旗标回归)')
+console.log('HBCLI TESTS: 6/6 OK (happy / error / no-binary / fallback / v0.3.0 旗标回归 / ENOENT 人话化)')

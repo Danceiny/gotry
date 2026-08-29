@@ -119,8 +119,15 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   let items: RawItem[]
   try {
     const jStart = r.stdout.indexOf('{')
-    const parsed = JSON.parse(jStart >= 0 ? r.stdout.slice(jStart) : r.stdout) as { data?: { itemList?: RawItem[] } }
-    items = parsed.data?.itemList ?? []
+    const parsed = JSON.parse(jStart >= 0 ? r.stdout.slice(jStart) : r.stdout) as { data?: { itemList?: RawItem[] }; message?: string }
+    if (!parsed.data || parsed.data.itemList === undefined) {
+      // 非业务形状(合法 JSON 但无 data.itemList):典型为 Sentinel 限流的
+      // {"message":"SentinelBlockException..."}——此前被 `data?.itemList ?? []`
+      // 吞成 0/0 静默 miss(issue #24)。保留原文供限流识别(含 sentinel 字样)。
+      const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)
+      return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] non-business payload: ${raw}`, error: `上游非业务响应(疑似限流):${parsed.message ?? raw}` }
+    }
+    items = parsed.data.itemList
   } catch {
     // 实测(2026-08-28):Sentinel 限流时 CLI exit=0 但 stdout 是 {"message":"SentinelBlockException..."}
     const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)

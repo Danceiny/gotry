@@ -31,7 +31,7 @@ import { resolveTimelineDate } from './travel-timeline.ts'
 import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, readTripsWithFallback, readWishPoolWithFallback } from './state-ledger.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
-import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
+import { resolvePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 import { verifyFlight } from '../capabilities/opensky.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
 import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
@@ -496,11 +496,18 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'search', rawInput: args.query }),
     presentResult: (_args, value) => {
-      const r = value as { hotels?: unknown[]; via?: string; destination?: string; summary?: string }
-      const n = Array.isArray(r.hotels) ? r.hotels.length : 0
+      const r = value as { hotels?: unknown; via?: string; destination?: string; summary?: string }
+      const h = r.hotels
+      const liveCount = Array.isArray(h) ? h.length : 0
+      // 静态包是 {meta, stays} 对象而非数组(issue #24:此前计数恒 0 → UI 显示「无结果」)
+      const stays = !Array.isArray(h) && h && typeof h === 'object' ? (h as { stays?: unknown[] }).stays : undefined
+      const staticCount = Array.isArray(stays) ? stays.length : 0
+      const tag = r.via === 'hbcli-realtime'
+        ? (liveCount ? `实时 ${liveCount} 家` : '实时')
+        : staticCount ? `静态包 ${staticCount} 块` : (liveCount ? `${liveCount} 家` : '无结果')
       return {
         card: 'generic',
-        title: `酒店:${r.destination ?? ''} ${n ? `${n} 家(${r.via === 'hbcli-realtime' ? '实时' : '静态包'})` : '无结果'}`,
+        title: `酒店:${r.destination ?? ''} ${tag}`,
         content: [{ type: 'text', text: String(r.summary ?? '') }],
       }
     },
@@ -556,9 +563,11 @@ export function apply(ctx: Context, config: Config): void {
       let placeLabel = q.place ?? `${q.lat},${q.lng}`
       if (lat === undefined || lng === undefined) {
         if (!q.place) throw new Error('gotry_weather_check requires place name or lat/lng')
-        const geo = await geocodePlace(q.place)
+        // issue #24:「普吉岛」类地名 GeoNames 无条目——resolvePlace 走别名/去后缀阶梯
+        const geo = await resolvePlace(q.place)
         if (!geo.ok || geo.results.length === 0) {
-          return JSON.parse(JSON.stringify({ ok: false, summary: `地点「${q.place}」地理编码失败:${geo.error ?? '无结果'}`, evidence: geo.evidence })) as Record<string, never>
+          const tried = geo.tried.length ? `(尝试过:${geo.tried.join('/')})` : ''
+          return JSON.parse(JSON.stringify({ ok: false, summary: `地点「${q.place}」地理编码失败:${geo.error ?? '无结果'}${tried};可改用常用中文地名(如「大理市」)或英文名/坐标 lat,lng`, evidence: geo.evidence })) as Record<string, never>
         }
         const hit = geo.results[0]
         lat = hit.latitude; lng = hit.longitude
@@ -658,9 +667,17 @@ export function apply(ctx: Context, config: Config): void {
       }
       const r = await flyaiSearch({ kind, origin: q.from, destination: q.to, depDate: q.date })
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.no} ${o.name} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
+      // issue #24:miss(上游正常返回 0 条)与 error(限流/网络)分开陈述,不再混写「无结果或失败」;
+      // 过去日期显式提示(官方通道对过期航班通常无数据,不等于工具不可用)
+      const now = new Date()
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      const pastNote = q.date < todayStr ? `注意:${q.date} 为过去日期(今天 ${todayStr}),官方通道对过期航班通常无数据。\n` : ''
+      const label = kind === 'flight' ? '机票' : '火车票'
       const summary = r.verdict === 'hit'
-        ? `${q.from}→${q.to} ${q.date} ${kind === 'flight' ? '机票' : '火车票'}(飞猪官方只读)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
-        : `${q.from}→${q.to} ${q.date} 无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
+        ? `${q.from}→${q.to} ${q.date} ${label}(飞猪官方只读)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
+        : r.verdict === 'miss'
+          ? `${q.from}→${q.to} ${q.date} ${label}官方通道正常返回 0 条(常见原因:日期已过/航线未开放/当日售罄)。\n${pastNote}${r.evidence}`
+          : `${q.from}→${q.to} ${q.date} ${label}检索失败(可能限流/网络):${r.error ?? ''}\n${pastNote}${r.evidence}`
       return JSON.parse(JSON.stringify({ ...r, kind, summary })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),

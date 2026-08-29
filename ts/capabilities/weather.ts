@@ -20,6 +20,16 @@ export interface WeatherPoint {
   longitude: number
 }
 
+export interface GeoPlace {
+  name: string
+  latitude: number
+  longitude: number
+  country?: string
+  admin1?: string
+  /** GeoNames 人口(千级以下多为同名小村,用于歧义防护;缺失视为 0) */
+  population?: number
+}
+
 export interface WeatherDaily {
   date: string
   tempMaxC: number
@@ -77,7 +87,7 @@ async function fetchJson(url: string, timeoutMs: number): Promise<{ ok: boolean;
 export async function geocodePlace(
   name: string,
   opts: { timeoutMs?: number; count?: number } = {},
-): Promise<{ ok: boolean; evidence: string; results: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>; error?: string }> {
+): Promise<{ ok: boolean; evidence: string; results: GeoPlace[]; error?: string }> {
   const ts = new Date().toISOString()
   const count = opts.count ?? 5
   const url = `${GEOCODE_BASE}?name=${encodeURIComponent(name)}&count=${count}&language=zh&format=json`
@@ -93,9 +103,75 @@ export async function geocodePlace(
       longitude: Number(it['longitude']),
       country: it['country'] ? String(it['country']) : undefined,
       admin1: it['admin1'] ? String(it['admin1']) : undefined,
+      population: it['population'] !== undefined ? Number(it['population']) : undefined,
     }
   })
   return { ok: true, evidence: `[实时API:open-meteo-geo@${ts}]`, results }
+}
+
+/**
+ * 地名别名表(产品词表内「查不到」地名 → 地理编码可命中的规范形)。
+ * 实测(2026-08-29,issue #24):GeoNames 无「普吉岛」条目(zh/en 均无结果);
+ * 裸「普吉」唯一命中是西藏林芝普吉村(人口百级)——而产品语境(静态包/愿望池)
+ * 中「普吉」均指泰国普吉。只收产品词表内条目,不做开放式中文地名 NLP
+ * (有界解析原则,与 slot-spec/ADR-12 同款:开放词表是维护黑洞)。
+ */
+const PLACE_ALIASES: Record<string, string> = {
+  '普吉岛': 'Phuket',
+  '普吉': 'Phuket',
+}
+
+const PLACE_SUFFIXES = /[岛市县区镇乡村府]$/
+
+export interface ResolvePlaceResult {
+  ok: boolean
+  evidence: string
+  results: GeoPlace[]
+  error?: string
+  /** 依次尝试过的查询形式(失败诊断用) */
+  tried: string[]
+}
+
+/**
+ * 地名 → 坐标,带别名/去后缀解析阶梯(issue #24:「普吉岛」原样查询无结果)。
+ * 阶梯:① 别名表(产品词表显式覆盖,优先) ② 原样 ③ 去通用后缀一次且只接受
+ * population ≥ 1000 的候选(防「普吉」→西藏同名村类假阳性)。
+ * 证据链标注实际命中的查询形式(via "form")。
+ */
+export async function resolvePlace(
+  name: string,
+  opts: { timeoutMs?: number; count?: number } = {},
+): Promise<ResolvePlaceResult> {
+  const tried: string[] = []
+  const attempt = async (form: string, filter?: (r: GeoPlace) => boolean): Promise<ResolvePlaceResult | null> => {
+    tried.push(form)
+    const geo = await geocodePlace(form, opts)
+    if (!geo.ok) {
+      return { ok: false, evidence: geo.evidence, results: [], error: geo.error, tried: [...tried] }
+    }
+    const hits = filter ? geo.results.filter(filter) : geo.results
+    if (hits.length === 0) return null
+    const viaSuffix = form === name.trim() ? '' : ` via "${form}"`
+    return { ok: true, evidence: `${geo.evidence}${viaSuffix}`, results: hits, tried: [...tried] }
+  }
+  const input = name.trim()
+  if (!input) {
+    return { ok: false, evidence: '[实时API:open-meteo-geo@error]', results: [], error: 'empty place name', tried }
+  }
+  // 别名优先于原样:显式映射是产品词表覆盖(裸「普吉」原样会命中西藏同名村)
+  const steps: Array<{ form: string; filter?: (r: GeoPlace) => boolean }> = []
+  const alias = PLACE_ALIASES[input]
+  if (alias) steps.push({ form: alias })
+  steps.push({ form: input })
+  const stripped = input.replace(PLACE_SUFFIXES, '')
+  if (stripped !== input && stripped.length >= 2) {
+    steps.push({ form: stripped, filter: r => (r.population ?? 0) >= 1000 })
+  }
+  for (const step of steps) {
+    const r = await attempt(step.form, step.filter)
+    if (r) return r
+  }
+  return { ok: false, evidence: '[实时API:open-meteo-geo@nomatch]', results: [], error: '无结果', tried }
 }
 
 /** 未来天气预报(≤16 天) */

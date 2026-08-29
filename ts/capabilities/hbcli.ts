@@ -129,6 +129,10 @@ export async function searchHotels(
   if (live.via === 'hbcli-realtime') {
     return { ...live, hotels: live.result, summary: `${query.destination}:hbcli 实时返回${query.checkIn || query.checkOut ? '(日期不传上游 list,以当前窗口房价返回)' : ''}` }
   }
+  // 降级原因人话化(issue #24):npm 形态下 hotelbyte-cli 未安装是常态而非异常,
+  // 裸 "spawn hbcli ENOENT" 读起来像工具坏了——实际静态包降级是设计行为
+  const rawReason = live.error ?? live.via
+  const reason = /ENOENT/i.test(rawReason) ? '未安装 hbcli(hotelbyte-cli,可选实时源)' : rawReason
   // 降级:读静态包
   const fallback = opts.fallbackPath
   if (fallback) {
@@ -138,11 +142,11 @@ export async function searchHotels(
       return {
         ...live,
         hotels: pack,
-        summary: `${query.destination}:hbcli 不可用(${live.error ?? live.via}),降级到静态包`,
+        summary: `${query.destination}:hbcli 实时源不可用(${reason}),已降级到静态包(公开渠道估算,非实时)`,
       }
     } catch { /* 静态包读不到也优雅降级 */ }
   }
-  return { ...live, summary: `${query.destination}:hbcli 不可用且无静态包(仅返回错误)` }
+  return { ...live, summary: `${query.destination}:hbcli 实时源不可用(${reason})且无静态包(仅返回错误)` }
 }
 
 /** 高层语义化封装:目的地列表(无数据依赖,通常 hbcli dest 命令可独立调通) */

@@ -26,10 +26,10 @@
 | **航线通航性** | ✅ OpenFlights 骨架 168 枢纽对(ODbL,`data/openflights-skeleton.json`) | 静态(月级) | `[骨架:openflights]` | 保持;扩枢纽集;Amadeus 已关停不回 |
 | **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`(公开渠道调研,5 段链) | 静态(2026-07 调研) | `[静态包:估算]` | M4:aviationstack 校验层(§7-1 已批三层组合);票价 M5 |
 | **航班实时观测** | ✅ OpenSky 已接(`capabilities/opensky.ts` + `gotry_flight_verify` 工具;`/api/states/all` 当前 ADS-B 全球观测,~400 credits/天) | 实时 | `[实时API:opensky]` | ✅ 已落地(2026-08-22) |
-| **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退 | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
+| **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退;**npm 形态默认静态包**(D-19:hotelbyte-cli 无公开分发渠道,ENOENT 属常态,2026-08-29 文案人话化+UI 计数修复) | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
 | **酒店点评/评分** | ✅ **复用 hotel-be Anything**(内含酒店 + 城市/区域混合 candidate)+ M4 scale-up:Google Place 评分/照片 | Any(hit/miss),M4:geography | `hbcli-anything` | M3:DONE(founder 校准 Anything 复用);M4:Google Place scale-up 路径(geography GetPlaceReviews) |
 | **POI/地点搜索** | ✅ Anything(混合 城市+酒店+place 候选) + OSM Nominatim 兜底 | Any | `hbcli-anything` / M4 `osm-nominatim` | M3:DONE;TREK 同款,免费兜底 |
-| **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`) | 实时 | `[实时API:open-meteo@ts]` | 保持;WMO 码已映射中文 |
+| **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`;2026-08-29 地理编码别名阶梯 `resolvePlace`:产品词表别名优先→原样→去后缀+population 防歧义,「普吉岛」经 Phuket 别名命中) | 实时 | `[实时API:open-meteo@ts]` | 保持;WMO 码已映射中文 |
 | **地面交通(接驳/铁路)** | ⚠️ 段内 transfer 硬编码在数据包(minutes/priceCny) | 静态 | `[静态包:估算]` | M4:OSRM 免费自托管(路线/时长);12306 无开放 API 不接 |
 | **地理/行政区划** | ❌ 无 | — | — | TREK 模式:bundled GeoJSON atlas(脚本构建,离线) |
 | **时区** | ⚠️ 手写在数据包(tz_offset_min/origin_tz_offset_min) | 静态 | — | M4:用时区库(`Intl`/`tz-lookup`)替代手写 |
@@ -202,7 +202,7 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 - 实测(2026-08-28,本机):上海→丽江 2026-10-01 机票,春秋 9C6617 浦东 17:05→三义 20:50 ¥1790 等结构化 journeys/segments/ticketPrice JSON;上海→大理火车票,虹桥 10:00 G201 二等→昆明南→大理 22:47 中转链。
 - 单行 JSON stdout,agent-native(hbcli 同款形态)。**意义:机票班期/票价与铁路检索的官方免费通道已开——用户会话面的真实缺口收缩为「携程 C 端交叉验证 + 美团本地」;12306 会话需求(G8)大幅弱化**。
 - 未明:收费/配额/企业门槛(README 未披露,`FLYAI_API_KEY` 可选增强)。接入形态:`capabilities/flyai.ts` **已落地(P1,2026-08-28)**——spawn CLI 管道层,session-tests F 节 live 断言。
-- **限流实测(2026-08-28 下午)**:高频调用后返 `SentinelBlockException by fly-ai-search`(CLI exit=0、stdout 非业务 JSON)——**配额未文档化,恢复窗口未知**;flyai.ts 已把该形态纳入结构化 error(带 stdout 片段),测试/smoke 按「hit 或 sentinel 降级」双合法终态。金标准跑批(fa-01..04)当日被拦,待限流窗口过后由心跳轮重试。
+- **限流实测(2026-08-28 下午)**:高频调用后返 `SentinelBlockException by fly-ai-search`(CLI exit=0、stdout 非业务 JSON)——**配额未文档化,恢复窗口未知**;flyai.ts 已把该形态纳入结构化 error(带 stdout 片段),测试/smoke 按「hit 或 sentinel 降级」双合法终态。金标准跑批(fa-01..04)当日被拦,待限流窗口过后由心跳轮重试。**2026-08-29 缺口修复(Issue #24)**:该限流输出是合法 JSON,曾走 `data?.itemList ?? []` 被吞成 0/0 静默 miss——现按形状判别(无 `data.itemList` 即 error),离线回归见 run-all §7b;工具层 summary 三分支(hit/miss/error)+过去日期显式提示。
 
 **会话数据面 P1(RFC §4,2026-08-28)**:`capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard(方法×URL 双因子 + 驼峰复合写词,写请求物理 abort + 审计,fail-closed)+ 携程机票适配器(batchSearch 嗅探→结构化)+ 节律闸(同站 ≥30s);证据链新标注 `[会话:ctrip-flight@ts]` 生效;run-all §24。live 会话检索需 headful(headless 下携程只回壳页,实测)。登录态为存在前提(founder 纠偏 2026-08-28,同日二次纠偏「仍然匿名实例」后**定案 CDP attach 为默认传输**):`openSession(mode=cdp)` attach 日常 Chrome(chrome://inspect/#remote-debugging 一次性开关,Chrome 144+,本机 147 ✓),登录态/指纹=用户本人,ReadGuard 同样生效;`needs-attach`/`needs-login` 双降级 verdict;`scripts/session-attach-diagnose.ts` 校准票据名单(只读不导航);persistent 专用 profile 降为测试/后备(实测:匿名窗口无人会登录,History/Cookies 双 0 行)。
 
@@ -219,3 +219,4 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 |---|---|
 | 2026-08-22 | 立 v1:领域矩阵现状盘点、四层架构图、Google Place 链路 founde 定案(hbcli→search OpenAPI→geography)、TREK 参考采纳表、证据链契约细则、M3-M5 数据侧演进 |
 | 2026-08-28 | 新增 §8 官方 agent 通道尽调(RFC P0):飞猪 FlyAI 无 key 实测可用(机/火只读搜索,会话面缺口收缩)+ 携程机票 XHR 嗅探 PoC(batchSearch 接口识别,零风控) |
+| 2026-08-29 | Issue #24 工具可用性硬化:flyai Sentinel 合法-JSON 形状由静默 miss 改判 error(§8);weather 地理编码别名阶梯 resolvePlace(§2);hbcli npm 形态默认静态包定性 + ENOENT 人话化(D-19,§2) |
