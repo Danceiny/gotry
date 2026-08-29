@@ -106,6 +106,18 @@ async function main() {
   for (const n of ['gotry_feasibility_check', 'gotry_hotel_search', 'gotry_weather_check', 'gotry_anything_search', 'gotry_agent_reach']) {
     if (typeof byName(n).presentResult !== 'function') throw new Error(`FAIL: ${n} 缺 presentResult`)
   }
+  // M0 预订链读工具:注册 + 价格面 fail-closed(不可达 bin → ok:false 诚实失败,不抛错不伪装)
+  for (const n of ['gotry_hotel_rates', 'gotry_check_avail']) {
+    const t = byName(n)
+    if (typeof t.execute !== 'function') throw new Error(`FAIL: ${n} 未注册`)
+  }
+  const ratesNoBin = await byName('gotry_hotel_rates').execute({ query: { hotelId: '900000001' } } as never, null) as { ok?: boolean; via?: string; summary?: string }
+  if (ratesNoBin.ok !== false || !String(ratesNoBin.summary ?? '').includes('不可用')) {
+    throw new Error(`FAIL: gotry_hotel_rates 价格面应 fail-closed 诚实失败,实际 ${JSON.stringify(ratesNoBin).slice(0, 160)}`)
+  }
+  const availNoBin = await byName('gotry_check_avail').execute({ query: { ratePkgId: 'rp-smoke' } } as never, null) as { ok?: boolean }
+  if (availNoBin.ok !== false) throw new Error(`FAIL: gotry_check_avail 价格面应 fail-closed,实际 ${JSON.stringify(availNoBin).slice(0, 160)}`)
+  console.log('M0 booking-chain read tools registered; price surface fail-closed verified')
   const ar = byName('gotry_agent_reach')
   const arView = ar.presentResult!({ query: { action: 'reach', channel: 'v2ex', method: 'get_hot_topics' } }, { verdict: 'found', summary: '10 topics' })
   if (!arView?.title?.includes('✅') || !arView.title.includes('v2ex.get_hot_topics')) throw new Error(`FAIL: agent_reach 结果卡,实际 ${arView?.title}`)
