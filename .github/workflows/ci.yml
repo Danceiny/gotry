@@ -1,6 +1,6 @@
 name: CI
 
-# 全栈回归是唯一合并闸(§1-§34):typecheck + 全部测试套件,Node 22/24 双版本。
+# 全栈回归是唯一合并闸(§1-§35):typecheck + 全部测试套件,Node 22/24 双版本。
 # 依赖来自公共 npm registry(lockfile 已全部 resolved 到 registry.npmjs.org)。
 # 真 LLM 巡检(replay-real / time-eval --real)消耗真实 key,不进 CI,由维护者本地执行。
 
