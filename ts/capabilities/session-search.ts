@@ -47,6 +47,13 @@ export function __resetRateLimiterForTest(): void {
 
 const CHALLENGE_RE = /验证|滑块|captcha|verify/i
 
+/** 把 transport 文案漂移收敛为稳定的产品 verdict；纯函数供回归覆盖。 */
+export function classifyTransportFailure(summary: string, cdpMode: boolean): Extract<SessionVerdict, 'needs-attach' | 'error'> {
+  return cdpMode && /日常 Chrome 未开调试端口|cdp attach 失败/.test(summary)
+    ? 'needs-attach'
+    : 'error'
+}
+
 export async function sessionFlightSearch(q: SessionFlightQuery): Promise<SessionSearchResult> {
   const started = Date.now()
   const ts = new Date().toISOString()
@@ -69,9 +76,9 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
 
   const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath, mode: q.profileDir ? 'persistent' : 'cdp' })
   if (!t.ok) {
-    // cdp 未开端口 → needs-attach(一次性用户动作);persistent 启动失败仍走 error
-    if (q.profileDir === undefined && /cdp attach 失败/.test(t.summary)) return err('needs-attach', t.summary)
-    return err('error', t.summary)
+    // cdp 未开端口或握手失败 → needs-attach(一次性用户动作);persistent 启动失败仍走 error。
+    // transport 的“端口未开”在连接前返回,文案不含 `cdp attach 失败`,两种形态都要归入同一用户门禁。
+    return err(classifyTransportFailure(t.summary, q.profileDir === undefined), t.summary)
   }
 
   try {
