@@ -58,7 +58,10 @@ export class ActionCache {
   private readonly maxPerSite: number
   private readonly now: () => Date
 
-  constructor(private readonly filePath: string, opts: ActionCacheOptions = {}) {
+  private readonly filePath: string
+
+  constructor(filePath: string, opts: ActionCacheOptions = {}) {
+    this.filePath = filePath
     this.ttlMs = opts.ttlMs ?? 48 * 3600_000
     this.maxPerSite = opts.maxEntriesPerSite ?? 50
     this.now = opts.now ?? (() => new Date())
