@@ -14,7 +14,7 @@
 | **Version** | `v0.0.1-rc.11`(npm **latest 直指本版**,`npx @danceiny/gotry` 即得;[release notes](docs/release-notes.md)) |
 | **Status** | M4 记忆域推进中(2026-08-28):记忆写读闭环 + 效用 sidecar + 「下一次出发」0::1 召回;17 工具;事务化状态账本(ADR-15)+ 双形态架构冻结(ADR-16:本地+Web 一套账本语义,tenant_id 一等字段);**2026-08-29 已知限制清算第一刀**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸)、薄壳遗留(`shell/`)物理删除;全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节) |
 | **Repo** | [github.com/Danceiny/gotry](https://github.com/Danceiny/gotry) · CI: typecheck + 全栈回归(Node 22/24) |
-| **Runtime** | DeepSeek Harness 0.1.1-rc.2 (vendored `ts/dsh-runtime/`, [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
+| **Runtime** | DeepSeek Harness **0.1.2-alpha.1**（vendored 源码 tarball `ts/dsh-runtime/vendor/`，上游 npm 未发版、从 GitHub tag `dsh-v0.1.2-alpha.1` 构建，溯源见 [`ts/dsh-runtime/vendor/README.md`](ts/dsh-runtime/vendor/README.md)；[upstream](https://github.com/deepseek-ai/DeepSeek-Harness)） · Z3 (npm `z3-solver`) · LoopX (pipx, `~/.local/pipx/venvs/loopx/bin/loopx`) · Agent-Reach v1.5.0 (`.venv/bin/agent-reach`) |
 | **License** | **MIT** (2026-08-23 落定,见 [LICENSE](LICENSE)) |
 
 
@@ -62,7 +62,7 @@ cd gotry
 
 ```bash
 cd ts/dsh-runtime
-pnpm install    # 拉 @deepseek-ai/dsh 0.1.1-rc.2 + 依赖(实测 51 秒)
+pnpm install    # 装 vendored dsh 0.1.2-alpha.1 + 第三方依赖 (tarball 在 vendor/, 溯源见 vendor/README.md)
 cd ../..
 ```
 
@@ -261,6 +261,6 @@ Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 ·
 
 ---
 
-**Built with**: DeepSeek Harness 0.1.1-rc.2 · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript · Bun
+**Built with**: DeepSeek Harness 0.1.2-alpha.1 (vendored) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript · Bun
 
 **Last verified against `v0.0.1-rc.11`(已发布,2026-08-29)** — 全栈回归全绿 §1-§32(发布流程见 `scripts/publish-npm.sh`,内部决策见 [docs/decisions-needed.md](docs/decisions-needed.md)、[docs/tokens.md](docs/tokens.md))。
