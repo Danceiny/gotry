@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { callHbcliJson, searchHotels } from '../capabilities/hbcli.ts'
+import { callHbcliJson, searchHotels, hbcliBinCandidates } from '../capabilities/hbcli.ts'
 
 const tmp = await mkdtemp(join(tmpdir(), 'hbcli-test-'))
 async function fakeBin(name: string, code: number, payload: string): Promise<string> {
@@ -66,13 +66,23 @@ assert.equal(r4.via, 'hbcli-error', 'searchHotels: fails to hbcli → fallback')
 assert.equal(r4.summary.includes('降级到静态包'), true, 'summary 指明降级')
 assert.ok(r4.hotels, 'hotels 字段填上静态包内容')
 
-// 6. ENOENT 降级原因人话化(issue #24):npm 形态未装 hotelbyte-cli 是常态,
-//    裸 "spawn hbcli ENOENT" 读起来像工具坏了 → summary 应解释为可选实时源未安装
+// 6. ENOENT 降级原因人话化(issue #24):hbcli 未安装时降级原因应带 gotry setup 指引
 const r6 = await searchHotels({ destination: '普吉' }, { hbcliBin: '/nope/hbcli', fallbackPath: fallback })
 assert.equal(r6.via, 'hbcli-error', 'no-binary path')
 assert.ok(r6.summary.includes('未安装 hbcli'), `summary 应人话化 ENOENT,实际 ${r6.summary}`)
+assert.ok(r6.summary.includes('gotry setup'), '应带 gotry setup 安装指引')
 assert.ok(r6.summary.includes('降级到静态包'), '人话化后仍指明降级到静态包')
 console.log(`6. ENOENT 人话化 OK:${r6.summary}`)
 
+// 7. 候选路径回退(gotry setup 官方脚本装到 ~/.local/bin,PATH 可能不含):
+//    默认名 'hbcli' 扩展已知安装位;显式自定义名不扩展(保配置即所用的可测性)
+{
+  const home = '/home/t'
+  assert.deepEqual(hbcliBinCandidates('hbcli', home), ['hbcli', '/home/t/.local/bin/hbcli', '/home/t/.staicli/current/hbcli'], '默认名应带安装位候选')
+  assert.deepEqual(hbcliBinCandidates('hbcli-not-on-path', home), ['hbcli-not-on-path'], '自定义名单候选(测试确定性)')
+  assert.deepEqual(hbcliBinCandidates('/nope/hbcli', home), ['/nope/hbcli'], '绝对路径单候选')
+  console.log('7. hbcliBinCandidates(~/.local/bin + ~/.staicli/current 回退)OK')
+}
+
 await rm(tmp, { recursive: true, force: true })
-console.log('HBCLI TESTS: 6/6 OK (happy / error / no-binary / fallback / v0.3.0 旗标回归 / ENOENT 人话化)')
+console.log('HBCLI TESTS: 7/7 OK (happy / error / no-binary / fallback / v0.3.0 旗标回归 / ENOENT 人话化 / 候选路径)')

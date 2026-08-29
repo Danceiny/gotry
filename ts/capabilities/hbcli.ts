@@ -13,9 +13,11 @@
  */
 
 import { spawn } from 'node:child_process'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 export interface HbcliCallOptions {
-  /** hbcli 二进制路径(默认 'hbcli',依赖 PATH) */
+  /** hbcli 二进制路径(默认 'hbcli',依赖 PATH;~/.local/bin 等已知安装位自动回退) */
   hbcliBin?: string
   /** 超时(ms) */
   timeoutMs?: number
@@ -43,23 +45,29 @@ export interface HbcliCallResult {
   error?: string
 }
 
-/** 通用 hbcli JSON 调用封装:失败不抛,而是返回降级结果 */
-export async function callHbcliJson(
-  args: string[],
-  opts: HbcliCallOptions = {},
-): Promise<HbcliCallResult> {
-  const started = Date.now()
-  const bin = opts.hbcliBin ?? 'hbcli'
-  const timeoutMs = opts.timeoutMs ?? 15_000
-  const env = opts.env ?? 'uat'
-  const envVars: Record<string, string> = { HOTELBYTE_ENV: env }
-  if (opts.token) envVars['HOTELBYTE_TOKEN'] = opts.token
+/**
+ * hbcli 二进制候选路径(gotry setup 按官方脚本装到 ~/.local/bin/hbcli,
+ * symlink 指向 ~/.staicli/current/hbcli——当 PATH 不含 ~/.local/bin 时裸名
+ * spawn 仍 ENOENT,按已知安装位回退)。仅对默认名 'hbcli' 扩展;显式自定义
+ * 名(如测试注入的不存在路径)不扩展,保持配置即所用的可测性。
+ */
+export function hbcliBinCandidates(bin: string, homeDir: string = homedir()): string[] {
+  if (bin !== 'hbcli') return [bin]
+  return [bin, join(homeDir, '.local/bin/hbcli'), join(homeDir, '.staicli/current/hbcli')]
+}
 
+/** 单个候选的一次 spawn 封装:失败不抛,返回降级结果(spawnError 标记 ENOENT 类失败供上层换候选) */
+function attemptHbcli(
+  bin: string,
+  args: string[],
+  opts: Required<Pick<HbcliCallOptions, 'timeoutMs' | 'env'>> & { envVars: Record<string, string> },
+): Promise<HbcliCallResult & { spawnError?: boolean }> {
+  const started = Date.now()
   return new Promise((resolve) => {
     let stdout = ''
     let stderr = ''
     let settled = false
-    const child = spawn(bin, args, { env: { ...process.env, ...envVars } })
+    const child = spawn(bin, args, { env: { ...process.env, ...opts.envVars } })
     const timer = setTimeout(() => {
       if (!settled) {
         settled = true
@@ -67,10 +75,10 @@ export async function callHbcliJson(
         resolve({
           via: 'hbcli-error', exitCode: -1, result: null,
           evidence: `[实时API:hbcli@timeout@${new Date().toISOString()}]`,
-          latencyMs: Date.now() - started, error: `timeout after ${timeoutMs}ms`,
+          latencyMs: Date.now() - started, error: `timeout after ${opts.timeoutMs}ms`,
         })
       }
-    }, timeoutMs)
+    }, opts.timeoutMs)
     child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
     child.on('close', (code) => {
@@ -105,14 +113,33 @@ export async function callHbcliJson(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      // ENOENT (二进制不存在) 等也走降级路径
+      // ENOENT (二进制不存在) 等也走降级路径;spawnError 供上层按候选路径重试
       resolve({
         via: 'hbcli-error', exitCode: -1, result: null,
         evidence: `[实时API:hbcli@spawn_error@${new Date().toISOString()}]`,
-        latencyMs: Date.now() - started, error: (e as Error).message,
+        latencyMs: Date.now() - started, error: (e as Error).message, spawnError: true,
       })
     })
   })
+}
+
+/** 通用 hbcli JSON 调用封装:失败不抛,而是返回降级结果 */
+export async function callHbcliJson(
+  args: string[],
+  opts: HbcliCallOptions = {},
+): Promise<HbcliCallResult> {
+  const env = opts.env ?? 'uat'
+  const envVars: Record<string, string> = { HOTELBYTE_ENV: env }
+  if (opts.token) envVars['HOTELBYTE_TOKEN'] = opts.token
+  const callOpts = { timeoutMs: opts.timeoutMs ?? 15_000, env, envVars }
+  const candidates = hbcliBinCandidates(opts.hbcliBin ?? 'hbcli')
+  let last: HbcliCallResult & { spawnError?: boolean } | undefined
+  for (const bin of candidates) {
+    last = await attemptHbcli(bin, args, callOpts)
+    // spawn 级失败(ENOENT 等)且还有候选 → 换下一个已知安装位;其余失败(退码/超时)无重试意义
+    if (!(last.spawnError && candidates.indexOf(bin) < candidates.length - 1)) return last
+  }
+  return last!
 }
 
 /** 高层语义化封装:酒店列表查询(down-tier to 静态包 + 证据链标注) */
@@ -129,10 +156,11 @@ export async function searchHotels(
   if (live.via === 'hbcli-realtime') {
     return { ...live, hotels: live.result, summary: `${query.destination}:hbcli 实时返回${query.checkIn || query.checkOut ? '(日期不传上游 list,以当前窗口房价返回)' : ''}` }
   }
-  // 降级原因人话化(issue #24):npm 形态下 hotelbyte-cli 未安装是常态而非异常,
+  // 降级原因人话化(issue #24):hbcli 未安装时按 gotry setup 指引(npm 安装期已
+  // 自动跑过官方脚本;PATH 未含 ~/.local/bin 时上方候选路径也已兜住),
   // 裸 "spawn hbcli ENOENT" 读起来像工具坏了——实际静态包降级是设计行为
   const rawReason = live.error ?? live.via
-  const reason = /ENOENT/i.test(rawReason) ? '未安装 hbcli(hotelbyte-cli,可选实时源)' : rawReason
+  const reason = /ENOENT/i.test(rawReason) ? '未安装 hbcli(可选实时源;npx gotry setup 可按官方脚本安装)' : rawReason
   // 降级:读静态包
   const fallback = opts.fallbackPath
   if (fallback) {

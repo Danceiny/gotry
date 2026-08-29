@@ -38,12 +38,16 @@ echo "=== 6. 插件 smoke(注册/execute/红线断言) ==="
 (cd ts && npx tsx scripts/smoke.ts | tail -2) || FAIL=1
 
 echo
-echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化,6 断言) ==="
+echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
 
 echo
 echo "=== 7b. flyai 能力层(离线假 CLI,4 断言:Sentinel 非业务形状→error/空 itemList→miss/命中→hit/exit≠0→error;issue #24) ==="
 (cd ts && npx tsx scripts/flyai-tests.ts) || FAIL=1
+
+echo
+echo "=== 7c. 外部依赖自举(check-only 探测/跳过开关/postinstall 非致命;真安装属发布前干净安装实测) ==="
+(cd ts && npx tsx scripts/bootstrap-tests.ts) || FAIL=1
 
 echo
 echo "=== 8. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 + guardToolExecute 异常隔离,3 断言) ==="

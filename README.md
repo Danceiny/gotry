@@ -193,7 +193,7 @@ GoTry: 收到。先把约束记下来——
 - ✅ **License MIT** (D-1 落地 2026-08-23)
 - **zh-CN 体验** — 当前面向中国出境首发(你的账号语言习惯)。英文界面/wider 国际化未做,等 M4 校准输入落定。
 - **机票实时数据** — 静态包(`data/flights_2026.json`)作为降级。实时票价接入留到 v0.1.x。
-- **数据源与降级(npm 形态)** — 机/火车票检索走飞猪 FlyAI 官方通道(免 key,npx 自动拉起;高频调用会遇限流,会明确标注为限流而非「无结果」);天气走 Open-Meteo(免 key;生僻地名自动别名/去后缀重试,如「普吉岛」);**酒店实时源 hotelbyte-cli 属内部工具、无公开安装渠道——npm 形态默认使用内置静态参考包**(`data/hotels_2026.json`,公开渠道估算并显式标注,非实时报价),这是设计行为而非故障。
+- **数据源与降级(npm 形态)** — 机/火车票检索走飞猪 FlyAI 官方通道(免 key,npx 自动拉起;高频调用会遇限流,会明确标注为限流而非「无结果」);天气走 Open-Meteo(免 key;生僻地名自动别名/去后缀重试,如「普吉岛」);**酒店实时源 hotelbyte-cli([公开仓](https://github.com/hotelbyte-com/hotelbyte-cli),MIT)在 npm 安装时已自动按其官方脚本安装**(也可手动 `npx gotry setup`;PATH 未含 `~/.local/bin` 时 gotry 自动按安装位回退)——实时数据需自配凭证(`hbcli auth set-credentials` 或 `HOTELBYTE_TOKEN`),未配时自动使用内置静态参考包 `data/hotels_2026.json`(公开渠道估算并显式标注,非实时报价),这是设计行为而非故障;网页/社媒读取源 agent-reach 同样在安装期自动装入包内 `.venv`(渠道凭证选配见 docs/tokens.md)。CI 或 `GOTRY_SETUP_SKIP=1` 时跳过自动安装。
 - **Z3 WASM race** — 连续跑多个测试套件时偶发 `memory access out of bounds`(已规避回滚)。M3 早期处理。
 - **薄壳已废弃** — `./gotry shell` 不再推荐;dsh web 是唯一面。本版 README 仍保留旧命令行做迁移证据。
 

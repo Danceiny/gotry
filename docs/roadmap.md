@@ -28,7 +28,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
 **2026-08-27 时间感优化落地**(外部时间评测驱动,ADR-12):时间锚点层 + 槽位抽取 v1 + 25 题评测集进仓,真模型 25/25;细节见 architecture.md §1/§9 与 ADR-12。
 
-**2026-08-29 工具可用性硬化(Issue #24,npm 形态用户轨迹反馈)**:weather「普吉岛」地理编码失败→`resolvePlace` 别名阶梯;flyai Sentinel 限流静默 miss→error 改判+summary 三分支(过去日期显式提示);hbcli ENOENT 人话化+静态包 UI 计数修复——npm 形态三工具均返回可用数据或诚实降级标注(D-19 记账:hbcli 实时源无公开分发,静态包为设计默认)。
+**2026-08-29 工具可用性硬化(Issue #24,npm 形态用户轨迹反馈)**:weather「普吉岛」地理编码失败→`resolvePlace` 别名阶梯;flyai Sentinel 限流静默 miss→error 改判+summary 三分支(过去日期显式提示);hbcli ENOENT 人话化+静态包 UI 计数修复。同日 founder 两则指令落地:①hotelbyte-cli 系**公开仓**(初判「无分发渠道」有误,D-19 改口径);②**外部依赖自举**——npm 安装期(postinstall --auto)与 `gotry setup` 手动入口按上游官方方式补装 hbcli(install.sh)与 agent-reach(pip 入 .venv),自举失败永不挡安装,凭证选配不自动配(D-19 残余=凭证+UAT 状态)。
 
 (历史)**M2 已退出**(b0cfd97):§7-1 三层组合全链落地——OpenFlights 骨架(168 枢纽对,三值语义,求解消费+用户渲染双层)+ OpenSky 校验桥 + bookedResources 锚点 + hbcli 酒店桥(gotry_hotel_search,实时/静态降级);dsh 运行时端到端(DeepSeek 原生,人格+五工具);一键成品入口 `./gotry` 经全新场景验收(带爸妈云南行:人格问对问题→引擎三候选判决→证据链→三道选择题)。G1 已决(中国出境首发)、S1 已冻结、§7-1 已批——均由创始人「按推荐方案执行」指令结算。**当前 = M3 最小可用产品**:最小 Web 面(D-4)+ 种子用户 50-200 人(发起人即首个用户,`./gotry` 即入口)。
 

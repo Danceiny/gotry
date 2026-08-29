@@ -16,7 +16,7 @@
  *      占位(本机绝对路径),随 tarball 分发后对其他机器必错。
  */
 
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -56,6 +56,7 @@ if (help) {
 
 Usage:
   gotry web                          # dsh Web UI on http://127.0.0.1:3080
+  gotry setup                        # 安装可选外部依赖(hbcli 官方脚本 / agent-reach pip;装时已自动跑过)
   gotry "一段完整任务..."            # headless 一问一答
   gotry help                         # this help
 
@@ -68,11 +69,17 @@ Detail: https://github.com/Danceiny/gotry — README
   process.exit(0)
 }
 
-// mode 决定路径: 'web'/'help'/'help' 是字面命令;否则第一段 args[0] 是任务本身的一部分
-const literal = new Set(['web', 'help', '-h', '--help'])
+// mode 决定路径: 'web'/'setup'/'help' 是字面命令;否则第一段 args[0] 是任务本身的一部分
+const literal = new Set(['web', 'setup', 'help', '-h', '--help'])
 const isLiteral = literal.has(args[0])
 const mode = isLiteral ? args[0] : 'headless'
 const rest = isLiteral ? args.slice(1) : args
+
+// setup:外部依赖自举(hbcli/agent-reach),不需要 dsh runtime 与 LLM key,同步分发后即退
+if (mode === 'setup') {
+  const r = spawnSync(process.execPath, [join(here, 'gotry-bootstrap.js'), ...rest], { stdio: 'inherit' })
+  process.exit(r.status ?? (r.error ? 1 : 0))
+}
 
 // --- dsh runtime 定位:repo checkout(vendored)优先,npm 安装走依赖解析 ---
 const vendoredDsh = join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')

@@ -26,7 +26,7 @@
 | **航线通航性** | ✅ OpenFlights 骨架 168 枢纽对(ODbL,`data/openflights-skeleton.json`) | 静态(月级) | `[骨架:openflights]` | 保持;扩枢纽集;Amadeus 已关停不回 |
 | **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`(公开渠道调研,5 段链) | 静态(2026-07 调研) | `[静态包:估算]` | M4:aviationstack 校验层(§7-1 已批三层组合);票价 M5 |
 | **航班实时观测** | ✅ OpenSky 已接(`capabilities/opensky.ts` + `gotry_flight_verify` 工具;`/api/states/all` 当前 ADS-B 全球观测,~400 credits/天) | 实时 | `[实时API:opensky]` | ✅ 已落地(2026-08-22) |
-| **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退;**npm 形态默认静态包**(D-19:hotelbyte-cli 无公开分发渠道,ENOENT 属常态,2026-08-29 文案人话化+UI 计数修复) | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
+| **酒店库存/报价** | ✅ hbcli 桥(实时,证书过期降级中)+ 静态包 `data/hotels_2026.json` 回退;**2026-08-29 起 npm 安装期自动按官方脚本安装 hbcli**(hotelbyte-cli 为公开仓 github.com/hotelbyte-com/hotelbyte-cli,MIT——D-19 初判「无分发渠道」有误已改口径;`gotry setup` 手动入口;能力层带 ~/.local/bin、~/.staicli/current 候选回退;实时数据仍需用户凭证,未配时静态包为默认) | 实时/静态 | `[实时API:hbcli@ts]` / `[静态包:估算]` | 保持;hbcli UAT 证书恢复即回实时 |
 | **酒店点评/评分** | ✅ **复用 hotel-be Anything**(内含酒店 + 城市/区域混合 candidate)+ M4 scale-up:Google Place 评分/照片 | Any(hit/miss),M4:geography | `hbcli-anything` | M3:DONE(founder 校准 Anything 复用);M4:Google Place scale-up 路径(geography GetPlaceReviews) |
 | **POI/地点搜索** | ✅ Anything(混合 城市+酒店+place 候选) + OSM Nominatim 兜底 | Any | `hbcli-anything` / M4 `osm-nominatim` | M3:DONE;TREK 同款,免费兜底 |
 | **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`;2026-08-29 地理编码别名阶梯 `resolvePlace`:产品词表别名优先→原样→去后缀+population 防歧义,「普吉岛」经 Phuket 别名命中) | 实时 | `[实时API:open-meteo@ts]` | 保持;WMO 码已映射中文 |
@@ -219,4 +219,4 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 |---|---|
 | 2026-08-22 | 立 v1:领域矩阵现状盘点、四层架构图、Google Place 链路 founde 定案(hbcli→search OpenAPI→geography)、TREK 参考采纳表、证据链契约细则、M3-M5 数据侧演进 |
 | 2026-08-28 | 新增 §8 官方 agent 通道尽调(RFC P0):飞猪 FlyAI 无 key 实测可用(机/火只读搜索,会话面缺口收缩)+ 携程机票 XHR 嗅探 PoC(batchSearch 接口识别,零风控) |
-| 2026-08-29 | Issue #24 工具可用性硬化:flyai Sentinel 合法-JSON 形状由静默 miss 改判 error(§8);weather 地理编码别名阶梯 resolvePlace(§2);hbcli npm 形态默认静态包定性 + ENOENT 人话化(D-19,§2) |
+| 2026-08-29 | Issue #24 工具可用性硬化:flyai Sentinel 合法-JSON 形状由静默 miss 改判 error(§8);weather 地理编码别名阶梯 resolvePlace(§2);hbcli 定性更正(hotelbyte-cli 系公开仓)+ 安装期官方方式自举 + ENOENT 人话化(D-19,§2) |
