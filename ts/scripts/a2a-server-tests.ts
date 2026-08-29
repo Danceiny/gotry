@@ -43,7 +43,7 @@ const card = (await cardResp.json()) as { name?: string; url?: string; skills?: 
 assert.equal(card.name, 'gotry')
 assert.equal(card.url, `${base}/a2a`)
 assert.equal(card.skills?.[0]?.id, 'nl-hotel-booking')
-assert.equal(card.capabilities?.streaming, false, 'SSE 留切片 2,卡面如实声明')
+assert.equal(card.capabilities?.streaming, true, '切片 2 起 SSE 在列,卡面如实声明')
 console.log('1. Agent Card(name/url/技能/能力如实)OK')
 
 // 2. 鉴权 fail-closed
@@ -103,5 +103,34 @@ try { await startA2AServer({ apiKey: '' }) } catch { refused = true }
 assert.ok(refused, '无 apiKey 应拒绝启动')
 console.log('6. fail-closed(无 apiKey 拒启)OK')
 
+// 7. message/stream(SSE):status(submitted/working)→final(产物)帧序;error 帧走失败 driver
+{
+  const stream = await fetch(`${base}/a2a`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 30, method: 'message/stream', params: { message: { parts: [{ kind: 'text', text: '流式查价' }] }, metadata: { userToken: 'ST:u2' } } }),
+  })
+  assert.equal(stream.status, 200)
+  assert.match(String(stream.headers.get('content-type') ?? ''), /text\/event-stream/, 'SSE content-type')
+  const body = await stream.text()
+  assert.match(body, /event: status\ndata: .*submitted/, '首帧 status=submitted')
+  assert.match(body, /event: status\ndata: .*working/, '次帧 status=working')
+  assert.match(body, /event: final\ndata: .*echo:流式查价/, '终帧 final 携产物')
+  assert.ok(!body.includes('event: error'), '成功流无 error 帧')
+  console.log('7. message/stream(SSE 帧序 submitted→working→final,诚实流无伪造增量)OK')
+}
+{
+  const { port: p3, close: c3 } = await startA2AServer({ apiKey: KEY, driver: async () => { throw new Error('driver down') } })
+  const errStream = await fetch(`http://127.0.0.1:${p3}/a2a`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 31, method: 'message/stream', params: { message: { parts: [{ kind: 'text', text: 'x' }] } } }),
+  })
+  const errBody = await errStream.text()
+  assert.match(errBody, /event: error\ndata: .*driver down/, '失败 driver → error 帧')
+  await c3()
+  console.log('8. message/stream 失败面(error 帧,不伪装完成)OK')
+}
+
 await close()
-console.log('A2A SERVER TESTS: 6/6 OK(card/鉴权/send+token 透传/get/cancel/fail-closed,纯离线 stub driver)')
+console.log('A2A SERVER TESTS: 8/8 OK(card/鉴权/send+token 透传/get/cancel/fail-closed/SSE 流式+失败面,纯离线 stub driver)')

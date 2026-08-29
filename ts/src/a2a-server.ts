@@ -13,7 +13,8 @@
  *
  * 任务生命周期:A2A 子集 submitted→working→(input-required 预留)/completed/failed/canceled;
  * 驱动可注入(Driver 接口:stub=离线确定性测试 / headless=spawn gotry-inner 真对话)。
- * message/stream(SSE)与 pushNotifications 留 M2 切片 2。
+ * message/stream(SSE):event 流 = status(submitted/working)→ final(产物)或 error;诚实流——
+ * 不伪造 token 级增量,真对话增量在 headless driver 接线后由 driver 逐段供给(切片 3)。
  */
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http'
@@ -52,7 +53,7 @@ export function agentCard(baseUrl: string): Record<string, unknown> {
     description: 'AI travel agent: natural-language hotel search, rates, availability check and (confirmation-gated) booking on HotelByte',
     url: `${baseUrl}/a2a`,
     version: '0.1.0',
-    capabilities: { streaming: false, pushNotifications: false },
+    capabilities: { streaming: true, pushNotifications: false },
     defaultInputModes: ['text'],
     defaultOutputModes: ['text', 'data'],
     skills: [
@@ -127,7 +128,7 @@ export function startA2AServer(opts: A2AServerOptions): Promise<{ server: Server
           return
         }
         const params = (msg.params ?? {}) as Record<string, unknown>
-        if (msg.method === 'message/send') {
+        if (msg.method === 'message/send' || msg.method === 'message/stream') {
           const a2aMessage = (params.message ?? {}) as { parts?: Array<{ kind?: string; text?: string }> }
           const text = (a2aMessage.parts ?? []).filter(p => p.kind === 'text').map(p => p.text ?? '').join('\n').trim()
           if (!text) {
@@ -138,11 +139,9 @@ export function startA2AServer(opts: A2AServerOptions): Promise<{ server: Server
           const metadata = (params.metadata ?? {}) as { userToken?: string }
           const task: A2ATask = { id: randomUUID(), state: 'submitted', createdAt: now(), updatedAt: now(), artifacts: [] }
           tasks.set(task.id, task)
-          res.writeHead(200, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { taskId: task.id, state: task.state } }))
-          task.state = 'working'
-          task.updatedAt = now()
-          void (async () => {
+          const run = async (): Promise<void> => {
+            task.state = 'working'
+            task.updatedAt = now()
             try {
               const out = await driver({ text, userToken: metadata.userToken })
               task.userTokenSeen = metadata.userToken != null && metadata.userToken !== ''
@@ -153,7 +152,25 @@ export function startA2AServer(opts: A2AServerOptions): Promise<{ server: Server
               task.state = 'failed'
             }
             task.updatedAt = now()
-          })()
+          }
+          if (msg.method === 'message/send') {
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { taskId: task.id, state: task.state } }))
+            void run()
+            return
+          }
+          // message/stream:SSE 诚实流(status 状态帧 → final 产物帧 / error 帧),结束即关
+          res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
+          const sse = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: data })}\n\n`)
+          sse('status', { taskId: task.id, state: 'submitted' })
+          task.state = 'working'
+          task.updatedAt = now()
+          sse('status', { taskId: task.id, state: 'working' })
+          await run()
+          const finalState = task.state as A2ATaskState // run() 闭包内重赋值,TS 不追踪——显式宽化
+          if (finalState === 'completed') sse('final', { taskId: task.id, state: 'completed', artifacts: task.artifacts })
+          else sse('error', { taskId: task.id, state: 'failed', error: task.error })
+          res.end()
           return
         }
         if (msg.method === 'tasks/get') {
@@ -189,7 +206,7 @@ export function startA2AServer(opts: A2AServerOptions): Promise<{ server: Server
           return
         }
         res.writeHead(200, { 'content-type': 'application/json' })
-        res.end(JSON.stringify(rpcError(msg.id, -32601, `method not found: ${msg.method}(M2 切片 1 子集: message/send|tasks/get|tasks/cancel)`)))
+        res.end(JSON.stringify(rpcError(msg.id, -32601, `method not found: ${msg.method}(子集: message/send|message/stream|tasks/get|tasks/cancel)`)))
         return
       }
       res.writeHead(404, { 'content-type': 'application/json' })
