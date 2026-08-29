@@ -40,6 +40,7 @@ import { flyaiSearch } from '../capabilities/flyai.ts'
 import { sessionFlightSearch } from '../capabilities/session-search.ts'
 import { sessionLogin } from '../capabilities/session-login.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
+import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -1070,6 +1071,95 @@ export function apply(ctx: Context, config: Config): void {
         card: 'generic',
         title: `AgentReach ${icon} ${q.channel ?? ''}.${q.method ?? 'status'} ${r.verdict ?? ''}`,
         content: [{ type: 'text', text: String(r.summary ?? '') }],
+      }
+    },
+  }))
+
+  // ---- 产物面(issue #25):agent 生成的文件可在 dsh 内发现与阅读,不再只是本地文件名 ----
+
+  registerGuarded(defineTool({
+    name: 'gotry_artifacts_list',
+    description:
+      'List GoTry artifacts — deep-planning deliverables (async runs from the state ledger) plus agent-written markdown files ' +
+      'in the working directory (trip plans etc.). READ-ONLY discovery. ' +
+      'Use when the user asks to see/open/revisit a previously generated artifact ' +
+      '(「看看刚才生成的行程」「上次的规划在哪」「打开那个 md」) — list first, then read with gotry_artifacts_read.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ limit?: 20 }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ limit?: number }>(args, 'limit')
+      const r = await listArtifacts({ stateRoot: config.stateRoot ?? '.', limit: q.limit })
+      const lines = r.artifacts.map(a =>
+        `- [${a.source}] ${a.title}${a.status ? `(${a.status})` : ''} — ${a.path}${a.updated ? ` @ ${a.updated.slice(0, 16).replace('T', ' ')}` : ''}`)
+      const summary = r.artifacts.length
+        ? `在册产物 ${r.artifacts.length}/${r.total} 项${r.truncated ? '(截断,可加 limit)' : ''}:\n${lines.join('\n')}`
+        : '无在册产物(异步深度规划交付与工作目录 md 文件都会出现在这里)'
+      return JSON.parse(JSON.stringify({ ok: true, artifacts: r.artifacts, total: r.total, truncated: r.truncated, summary })) as Record<string, never>
+    },
+    presentCall: () => ({ card: 'generic', title: '列出产物', kind: 'search' }),
+    presentResult: (_args, value) => {
+      const r = value as { summary?: string; total?: number }
+      return {
+        card: 'generic',
+        title: `产物:${r.total ?? 0} 项在册`,
+        content: [{ type: 'text', text: String(r.summary ?? '') }],
+      }
+    },
+  }))
+
+  registerGuarded(defineTool({
+    name: 'gotry_artifacts_read',
+    description:
+      'Read one GoTry artifact as a line-numbered file view rendered directly in the chat UI. ' +
+      'Input: the path from gotry_artifacts_list, or a bare async ticket id (e.g. dp-xxxx). ' +
+      'Optional offset (1-based) / limit window for paging large files. ' +
+      'READ-ONLY; text artifacts only (md/txt/json/jsonl/csv/log/yaml).',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ path: "<list 返回的路径或工单 id>", offset?: 1, limit?: 400 }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content ?? JSON.stringify(value).slice(0, 600)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ path?: string; offset?: number; limit?: number }>(args, 'path')
+      if (!q.path) return JSON.parse(JSON.stringify({ ok: false, error: 'path 必填(来自 gotry_artifacts_list)' })) as Record<string, never>
+      const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', path: q.path, offset: q.offset, limit: q.limit })
+      if (!r.ok) return JSON.parse(JSON.stringify(r)) as Record<string, never>
+      return JSON.parse(JSON.stringify({
+        ...r,
+        summary: `${r.path}(${r.totalLines} 行)第 ${r.offset}-${r.offset + r.lines.length - 1} 行${r.windowed ? `(共 ${r.totalLines} 行,可翻页)` : ''}`,
+      })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `读产物:${String((args.query as { path?: string })?.path ?? '')}`, kind: 'read', rawInput: args.query }),
+    presentResult: (_args, value) => {
+      const r = value as unknown as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; content?: string; error?: string }
+      if (!r.ok) {
+        return { card: 'generic', title: '读产物失败', content: [{ type: 'text', text: String(r.error ?? '') }] }
+      }
+      // dsh read 卡:UI 渲染为行号文件视图(issue #25 的「插件能力查看 artifacts」落点)
+      return {
+        card: 'read' as const,
+        title: r.path?.split('/').pop() ?? r.path ?? '',
+        path: r.path ?? '',
+        offset: r.offset ?? 1,
+        lines: r.lines ?? [],
+        totalLines: r.totalLines ?? 0,
+        lang: r.lang,
+        content: [{ type: 'text', text: r.content ?? '' }],
       }
     },
   }))
