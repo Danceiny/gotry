@@ -38,6 +38,24 @@ import { sessionLogin } from '../capabilities/session-login.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
+import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
+import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
+import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
+
+/** 航司→机场映射表(issue #46 冲突检测面;data/airline-airports.json,as_of 快照) */
+let airlineAirportMapCache: AirlineAirportMap | null = null
+async function loadAirlineAirportMap(): Promise<AirlineAirportMap | null> {
+  if (airlineAirportMapCache) return airlineAirportMapCache
+  try {
+    const { readFile } = await import('node:fs/promises')
+    airlineAirportMapCache = JSON.parse(
+      await readFile(join(import.meta.dirname, '..', '..', 'data', 'airline-airports.json'), 'utf-8'),
+    ) as AirlineAirportMap
+    return airlineAirportMapCache
+  } catch {
+    return null // 映射缺失不阻塞检索主路径;闸工具侧另行显式报错
+  }
+}
 
 export const name = 'gotry-tools'
 export const inject = ['tools', 'systemPrompt']
@@ -737,6 +755,10 @@ export function apply(ctx: Context, config: Config): void {
       const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind, origin: q.from, destination: q.to, depDate: q.date } })
       if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
       const r = itp.result
+      // issue #46 事实落账(ADR-19):exact-date 检索结论(hit 正事实 / miss 负事实)追加进
+      // bookable-facts 侧车——产物事实闸(gotry_fact_gate)的唯一事实源;落盘失败不阻塞检索
+      const avMap = await loadAirlineAirportMap()
+      await appendFacts(config.stateRoot ?? '.', factsFromFlyai({ kind, origin: q.from, destination: q.to, date: q.date }, r, new Date().toISOString(), avMap?.city_alias))
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.no} ${o.name} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
       // issue #24:miss(上游正常返回 0 条)与 error(限流/网络)分开陈述,不再混写「无结果或失败」
       // (过去日期已被上方预校验拦下,此处不会出现过期查询)
@@ -823,6 +845,9 @@ export function apply(ctx: Context, config: Config): void {
       })
       if (!itp.result) return declinedObservation('SESSION_FLIGHT_SEARCH', itp.trace)
       const r = itp.result
+      // issue #46 事实落账(ADR-19):会话面 exact-date 结论同样进事实注册表(独立 source 并列标注)
+      const avMapS = await loadAirlineAirportMap()
+      await appendFacts(config.stateRoot ?? '.', factsFromSession({ origin: q.from, destination: q.to, date: q.date }, r, new Date().toISOString(), avMapS?.city_alias))
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.flightNo} ${o.airline} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
       const summary = r.verdict === 'hit'
         ? `${q.from}→${q.to} ${q.date} 会话检索(携程,用户本人登录态)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
@@ -1188,6 +1213,65 @@ export function apply(ctx: Context, config: Config): void {
         totalLines: r.totalLines ?? 0,
         lang: r.lang,
         content: [{ type: 'text', text: r.content ?? '' }],
+      }
+    },
+  }))
+
+  // ---- 产物事实闸(issue #46,ADR-19):含可下单事实的产物交付前必过 ----
+  // 每个航班号/时刻/机场/价格/政策断言必须回溯到本会话 exact-date 工具结果
+  // (bookable-facts 侧车,query_id 可重放);无法回溯即 blocked——不得宣称「已验证方案」。
+
+  registerGuarded(defineTool({
+    name: 'gotry_fact_gate',
+    description:
+      'Factuality gate for itinerary artifacts (issue #46): call BEFORE delivering any artifact that contains bookable facts '
+      + '(flight numbers, times, airports, prices, visa/entry policies). Every bookable claim in the markdown is checked against '
+      + 'the session fact registry (exact-date tool results recorded by gotry_flyai_search / gotry_session_search — hit AND miss). '
+      + 'Blocked when: a claimed flight is absent from the exact-date source (never backfill from route pages/history/adjacent dates); '
+      + 'route+date never queried; times contradict the snapshot; carrier→airport mapping conflicts (FD=DMK vs VZ=BKK are NOT interchangeable); '
+      + '「联程」without protected_connection=true; policy claims without 「截至 YYYY-MM-DD」; unconditional ✓ on unverified claims. '
+      + 'Optional itinerary object enables machine invariants (hotel_nights + onboard_nights = total nights, O&D segments vs flight legs, '
+      + 'budget floor ≥ sum of item minimums). verdict=blocked ⇒ fix or downgrade wording — never present as a verified plan.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ markdown?: "<产物全文>", path?: "<产物路径(artifacts_list 返回的)>— 二选一", tripYear?: 2027, itinerary?: { trip_start, trip_end, stays: [{place,check_in,check_out}], onboard_nights, od_segments: [{from,to,date,mode,legs}], budget_items: [{label,min_cny,max_cny}], claimed_floor_cny? } }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
+    },
+    async execute(args: { query: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ markdown?: string; path?: string; tripYear?: number; itinerary?: Record<string, unknown> }>(args, 'markdown')
+      const avMap = await loadAirlineAirportMap()
+      if (!avMap) {
+        return JSON.parse(JSON.stringify({ ok: false, summary: '航司机场映射缺失(data/airline-airports.json)——事实闸不可用,fail closed:产物不得宣称已验证' })) as Record<string, never>
+      }
+      let markdown = q.markdown
+      if (!markdown && q.path) {
+        const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', path: q.path })
+        if (!r.ok) return JSON.parse(JSON.stringify({ ok: false, summary: `产物读取失败:${String((r as { error?: string }).error ?? '')}` })) as Record<string, never>
+        markdown = r.content
+      }
+      if (!markdown) return JSON.parse(JSON.stringify({ ok: false, summary: '需要 markdown(产物全文)或 path(产物路径)' })) as Record<string, never>
+      const itinerary = q.itinerary as import('./bookable-facts.ts').ItineraryFacts | undefined
+      const registry = await loadFactRegistry(config.stateRoot ?? '.')
+      const report = gateArtifact(markdown, registry, avMap, { trip_year: q.tripYear, itinerary })
+      const lines = report.violations.slice(0, 20).map(v => `  L${v.line} [${v.kind}] ${v.detail}`)
+      const summary = report.verdict === 'pass'
+        ? `事实闸 PASS:${report.traceable}/${report.claims_checked} 可下单 claim 全部回溯到 exact-date 工具结果(query_id 可重放)——可宣称「已验证方案」。`
+        : `事实闸 BLOCKED(${report.violations.length} 违例,${report.traceable}/${report.claims_checked} claim 可回溯)——不得宣称「已验证方案」:\n${lines.join('\n')}\n修正路径:逐条改成 exact-date 源返回的事实,或降级为「未确认/当前不可售,到 D-xx 复核」;exact-date miss 的 route+date 不得用历史班期/相邻日期/航线页填充。`
+      return JSON.parse(JSON.stringify({ ok: true, ...report, summary })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: '产物事实闸', kind: 'execute', rawInput: args.query }),
+    presentResult: (_args, value) => {
+      const r = value as { verdict?: string; violations?: unknown[]; summary?: string }
+      return {
+        card: 'generic',
+        title: `事实闸:${r.verdict === 'pass' ? '✅ pass' : `⛔ blocked(${r.violations?.length ?? '?'})`}`,
+        content: [{ type: 'text', text: String(r.summary ?? '') }],
       }
     },
   }))

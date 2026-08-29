@@ -325,6 +325,10 @@ echo "=== 38. 会话扩展桥(#21 传输层方案 C:manifest 合同与 key→固
 (cd ts && npx tsx scripts/extension-tests.ts) || FAIL=1
 
 echo
+echo "=== 39. 可下单事实模型+产物事实闸(issue #46:gotry_bookable_fact.v1 hit/miss 落账/负事实 fail-closed/航司→机场映射 FD=DMK·VZ=BKK/联程仅 protected_connection/时刻矛盾/夜数·O&D·预算不变式/locked golden 2027 E2E,纯离线) ==="
+(cd ts && npx tsx scripts/fact-gate-tests.ts | tail -1) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

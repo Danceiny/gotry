@@ -1,0 +1,156 @@
+{
+  "meta": {
+    "schema": "gotry_golden_trip_2027.v1",
+    "locked": true,
+    "as_of": "2026-08-29",
+    "source": "issue #46 独立审计快照(trip.com 2027 exact-date 可售链接)",
+    "trip_window": ["2027-07-16", "2027-08-09"],
+    "note": "锁定闸行为,不锁定真实班期:issue 审计给出的字段(班次号/时刻/机场归属)逐字采用;审计未给出的字段(部分时刻与全部价格)是占位值,只用于驱动转换器与闸的确定性行为,不构成真实可售断言。未来班期调整后更新本 fixture 必须连同 issue 复核链接一起改。"
+  },
+  "queries": [
+    {
+      "comment": "DXB→HKG 去程:EK/CX 直飞在架;未见 flydubai 执飞直达(审计行①)",
+      "kind": "flight", "origin": "迪拜", "destination": "香港", "date": "2027-07-16", "verdict": "hit",
+      "options": [
+        { "no": "EK380", "name": "阿联酋航空", "depDateTime": "2027-07-16T10:40", "arrDateTime": "2027-07-16T21:35", "depStation": "DXB", "arrStation": "HKG", "durationMin": 415, "price": 3200 },
+        { "no": "CX746", "name": "国泰航空", "depDateTime": "2027-07-16T11:25", "arrDateTime": "2027-07-16T22:10", "depStation": "DXB", "arrStation": "HKG", "durationMin": 405, "price": 3500 }
+      ]
+    },
+    {
+      "comment": "DXB→SZX 备选:EK328 当前快照约 11:00→22:40(7h40m)——产物写的 10:05→22:50 是旧航季(审计行②)",
+      "kind": "flight", "origin": "迪拜", "destination": "深圳", "date": "2027-07-16", "verdict": "hit",
+      "options": [
+        { "no": "EK328", "name": "阿联酋航空", "depDateTime": "2027-07-16T11:00", "arrDateTime": "2027-07-16T22:40", "depStation": "DXB", "arrStation": "SZX", "durationMin": 460, "price": 3000 }
+      ]
+    },
+    {
+      "comment": "HKG→HKT 核心衔接日:当前直飞仅早班 UO724 07:55 / CX771 08:05;未见下午 UO784(审计行③)——「上午办事+当天下午直飞」不可行的证据",
+      "kind": "flight", "origin": "香港", "destination": "普吉", "date": "2027-07-17", "verdict": "hit",
+      "options": [
+        { "no": "UO724", "name": "香港快运航空", "depDateTime": "2027-07-17T07:55", "arrDateTime": "2027-07-17T10:30", "depStation": "HKG", "arrStation": "HKT", "durationMin": 215, "price": 793 },
+        { "no": "CX771", "name": "国泰航空", "depDateTime": "2027-07-17T08:05", "arrDateTime": "2027-07-17T10:45", "depStation": "HKG", "arrStation": "HKT", "durationMin": 220, "price": 1200 }
+      ]
+    },
+    {
+      "comment": "HKT→曼谷:FD 落 DMK、VZ 落 BKK(审计行④)——机场映射不得合并",
+      "kind": "flight", "origin": "普吉", "destination": "曼谷", "date": "2027-07-30", "verdict": "hit",
+      "options": [
+        { "no": "FD3037", "name": "泰国亚洲航空", "depDateTime": "2027-07-30T18:40", "arrDateTime": "2027-07-30T20:05", "depStation": "HKT", "arrStation": "DMK", "durationMin": 85, "price": 350 },
+        { "no": "VZ321", "name": "泰国越捷航空", "depDateTime": "2027-07-30T19:20", "arrDateTime": "2027-07-30T20:45", "depStation": "HKT", "arrStation": "BKK", "durationMin": 85, "price": 420 }
+      ]
+    },
+    {
+      "comment": "KBV→曼谷:直飞在架——Phuket→Krabi→Phuket 回头路的最小改动面(审计「路线优化」行)",
+      "kind": "flight", "origin": "甲米", "destination": "曼谷", "date": "2027-07-30", "verdict": "hit",
+      "options": [
+        { "no": "FD3201", "name": "泰国亚洲航空", "depDateTime": "2027-07-30T19:00", "arrDateTime": "2027-07-30T20:25", "depStation": "KBV", "arrStation": "DMK", "durationMin": 85, "price": 330 }
+      ]
+    },
+    {
+      "comment": "BKK→KMG:MU 在架;当前 exact-date 未见 8L 直飞(审计「无证据分支」行)",
+      "kind": "flight", "origin": "曼谷", "destination": "昆明", "date": "2027-08-01", "verdict": "hit",
+      "options": [
+        { "no": "MU9626", "name": "中国东方航空", "depDateTime": "2027-08-01T18:05", "arrDateTime": "2027-08-01T21:20", "depStation": "BKK", "arrStation": "KMG", "durationMin": 135, "price": 800 }
+      ]
+    },
+    {
+      "comment": "LJG→SZX:当前快照 CZ8582 12:15→15:00(审计行⑦;产物写的 MF1538 11:13→13:19 未见)",
+      "kind": "flight", "origin": "丽江", "destination": "深圳", "date": "2027-08-08", "verdict": "hit",
+      "options": [
+        { "no": "CZ8582", "name": "中国南方航空", "depDateTime": "2027-08-08T12:15", "arrDateTime": "2027-08-08T15:00", "depStation": "LJG", "arrStation": "SZX", "durationMin": 165, "price": 900 }
+      ]
+    },
+    {
+      "comment": "SZX→DXB 返程红眼:当前对应班次 EK329(审计行⑧;产物写的 EK327/CZ8437 与快照不匹配)",
+      "kind": "flight", "origin": "深圳", "destination": "迪拜", "date": "2027-08-09", "verdict": "hit",
+      "options": [
+        { "no": "EK329", "name": "阿联酋航空", "depDateTime": "2027-08-09T00:30", "arrDateTime": "2027-08-09T04:55", "depStation": "SZX", "arrStation": "DXB", "durationMin": 505, "price": 3200 }
+      ]
+    },
+    {
+      "comment": "NKG→HKT 同行人去程:当前 exact-date 未见白天直飞,可售以经昆明中转为主(审计「同行人去程」行)",
+      "kind": "flight", "origin": "南京", "destination": "普吉", "date": "2027-07-17", "verdict": "hit",
+      "options": [
+        { "no": "MU2705", "name": "中国东方航空", "depDateTime": "2027-07-17T08:15", "arrDateTime": "2027-07-17T16:40", "depStation": "NKG", "arrStation": "HKT", "durationMin": 505, "price": 1400, "nonstop": false }
+      ]
+    },
+    {
+      "comment": "HKG→HKT 次日(修正方案的实际飞行日,占位:与 7.17 同班期形态)——香港加 1 晚后的早班直飞",
+      "kind": "flight", "origin": "香港", "destination": "普吉", "date": "2027-07-18", "verdict": "hit",
+      "options": [
+        { "no": "UO724", "name": "香港快运航空", "depDateTime": "2027-07-18T07:55", "arrDateTime": "2027-07-18T10:30", "depStation": "HKG", "arrStation": "HKT", "durationMin": 215, "price": 810 },
+        { "no": "CX771", "name": "国泰航空", "depDateTime": "2027-07-18T08:05", "arrDateTime": "2027-07-18T10:45", "depStation": "HKG", "arrStation": "HKT", "durationMin": 220, "price": 1150 }
+      ]
+    },
+    {
+      "comment": "远期 miss 形态锚:同 route 相邻日期正常返回 0 条 → 负事实(2026-08-29 会话实测全部 2027 查询 miss 的复现形态)",
+      "kind": "flight", "origin": "深圳", "destination": "普吉", "date": "2027-07-17", "verdict": "miss",
+      "options": []
+    }
+  ],
+  "good_itinerary": {
+    "comment": "最小可行路线(issue 推荐面):香港两晚完成办事 → 7.18 早班直飞普吉 → 甲米 → KBV 直飞曼谷 → 云南 → 深圳红眼回迪拜;23 酒店夜 + 1 机上夜 = 24 夜;航班 O&D 6 段",
+    "trip_start": "2027-07-16", "trip_end": "2027-08-09",
+    "stays": [
+      { "place": "香港", "check_in": "2027-07-16", "check_out": "2027-07-18" },
+      { "place": "普吉", "check_in": "2027-07-18", "check_out": "2027-07-27" },
+      { "place": "甲米", "check_in": "2027-07-27", "check_out": "2027-07-30" },
+      { "place": "曼谷", "check_in": "2027-07-30", "check_out": "2027-08-01" },
+      { "place": "昆明", "check_in": "2027-08-01", "check_out": "2027-08-02" },
+      { "place": "大理", "check_in": "2027-08-02", "check_out": "2027-08-04" },
+      { "place": "丽江", "check_in": "2027-08-04", "check_out": "2027-08-08" }
+    ],
+    "onboard_nights": 1,
+    "od_segments": [
+      { "from": "DXB", "to": "HKG", "date": "2027-07-16", "mode": "flight", "legs": 1 },
+      { "from": "HKG", "to": "HKT", "date": "2027-07-18", "mode": "flight", "legs": 1 },
+      { "from": "HKT", "to": "KBV", "date": "2027-07-27", "mode": "car", "legs": 1 },
+      { "from": "KBV", "to": "BKK", "date": "2027-07-30", "mode": "flight", "legs": 1 },
+      { "from": "BKK", "to": "KMG", "date": "2027-08-01", "mode": "flight", "legs": 1 },
+      { "from": "KMG", "to": "DLU", "date": "2027-08-02", "mode": "rail", "legs": 1 },
+      { "from": "DLU", "to": "LJG", "date": "2027-08-04", "mode": "rail", "legs": 1 },
+      { "from": "LJG", "to": "SZX", "date": "2027-08-08", "mode": "flight", "legs": 1 },
+      { "from": "SZX", "to": "DXB", "date": "2027-08-09", "mode": "flight", "legs": 1 }
+    ],
+    "budget_items": [
+      { "label": "国际往返(迪拜-香港/深圳-迪拜)", "min_cny": 5600, "max_cny": 8000 },
+      { "label": "区域段(香港-普吉/甲米-曼谷/曼谷-昆明/丽江-深圳)", "min_cny": 2800, "max_cny": 4300 },
+      { "label": "住宿 23 晚", "min_cny": 7000, "max_cny": 14000 },
+      { "label": "云南内部动车+地面", "min_cny": 800, "max_cny": 1500 },
+      { "label": "餐饮门票潜水", "min_cny": 6000, "max_cny": 12000 }
+    ],
+    "claimed_floor_cny": 23000
+  },
+  "bad_itinerary": {
+    "comment": "复刻 issue 审计的预算不自洽:分项最低合计 35,500 却声称可压到 30,000",
+    "trip_start": "2027-07-16", "trip_end": "2027-08-09",
+    "stays": [
+      { "place": "香港", "check_in": "2027-07-16", "check_out": "2027-07-17" },
+      { "place": "普吉", "check_in": "2027-07-17", "check_out": "2027-07-24" },
+      { "place": "甲米", "check_in": "2027-07-24", "check_out": "2027-07-26" },
+      { "place": "普吉", "check_in": "2027-07-26", "check_out": "2027-07-30" },
+      { "place": "曼谷", "check_in": "2027-07-30", "check_out": "2027-08-01" },
+      { "place": "昆明", "check_in": "2027-08-01", "check_out": "2027-08-02" },
+      { "place": "大理", "check_in": "2027-08-02", "check_out": "2027-08-04" },
+      { "place": "丽江", "check_in": "2027-08-04", "check_out": "2027-08-08" }
+    ],
+    "onboard_nights": 0,
+    "od_segments": [
+      { "from": "DXB", "to": "SZX", "date": "2027-07-16", "mode": "flight", "legs": 1 },
+      { "from": "HKG", "to": "HKT", "date": "2027-07-17", "mode": "flight", "legs": 1 },
+      { "from": "HKT", "to": "BKK", "date": "2027-07-30", "mode": "flight", "legs": 1 },
+      { "from": "BKK", "to": "KMG", "date": "2027-08-01", "mode": "flight", "legs": 1 },
+      { "from": "LJG", "to": "SZX", "date": "2027-08-08", "mode": "flight", "legs": 1 },
+      { "from": "SZX", "to": "DXB", "date": "2027-08-09", "mode": "flight", "legs": 1 },
+      { "from": "SZX", "to": "BKK", "date": "2027-08-08", "mode": "flight", "legs": 1 }
+    ],
+    "budget_items": [
+      { "label": "国际往返", "min_cny": 6000, "max_cny": 9000 },
+      { "label": "区域段", "min_cny": 3000, "max_cny": 4500 },
+      { "label": "住宿", "min_cny": 9500, "max_cny": 16000 },
+      { "label": "地面交通", "min_cny": 2000, "max_cny": 3000 },
+      { "label": "餐饮游玩", "min_cny": 15000, "max_cny": 22000 }
+    ],
+    "claimed_floor_cny": 30000
+  }
+}
