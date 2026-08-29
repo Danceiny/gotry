@@ -14,6 +14,8 @@
  */
 
 import { openSession } from './session/transport.ts'
+import { extensionCookieNames, extensionOpenLogin, classifyBridgeFailure, NEEDS_EXTENSION_HINT } from './session/extension-channel.ts'
+import { resolveTransportMode } from './session-search.ts'
 
 export interface LoginTarget {
   domain: string
@@ -48,7 +50,7 @@ export interface SessionLoginResult {
   via: 'session-login' | 'session-login-error'
   evidence: string
   latencyMs: number
-  verdict: 'logged-in' | 'pending' | 'needs-attach' | 'error'
+  verdict: 'logged-in' | 'pending' | 'needs-attach' | 'needs-extension' | 'error'
   site: string
   /** 已检出的登录票据 cookie 名(名字,非值——本模块永不读取/存储/回传任何 cookie 值) */
   tickets?: string[]
@@ -74,7 +76,7 @@ export async function pollTicketNames(browser: { cookies(): Promise<CookieLike[]
 /**
  * 产品化登录引导(永不抛错;登录由用户在携程官网完成,gotry 只做名称级存在性检查)。
  * verdict:logged-in=已检出票据;pending=登录入口已打开、用户尚未完成(不阻塞,可稍后再查);
- * needs-attach=用户 Chrome 未开调试端口(一次性开关指引);error=其余降级。
+ * needs-extension=扩展桥未连接(一次性安装指引,默认车道);needs-attach=cdp 车道下用户 Chrome 未开调试端口;error=其余降级。
  */
 export async function sessionLogin(q: SessionLoginQuery = {}): Promise<SessionLoginResult> {
   const started = Date.now()
@@ -83,6 +85,10 @@ export async function sessionLogin(q: SessionLoginQuery = {}): Promise<SessionLo
   const target = LOGIN_TARGETS[site]
   if (!target) {
     return err(site, 'error', `未知站点 ${site}(可选 ${Object.keys(LOGIN_TARGETS).join('/')})`, started, ts)
+  }
+  // 扩展车道(默认):零 CDP、零系统弹窗——cookie 名快查 + 登录入口 job
+  if (resolveTransportMode() === 'extension') {
+    return sessionLoginViaExtension(site, target, q, started, ts)
   }
   // 人机共治纪律:开自己的新标签页并置前台——用户必须看见登录页(2026-08-29 founder:
   // 「我根本就看不到登录页面」,此前误劫持用户既有标签页);closeOwnPage=false 把登录页留给用户
@@ -142,5 +148,50 @@ export async function sessionLogin(q: SessionLoginQuery = {}): Promise<SessionLo
   } catch (e) {
     await t.close().catch(() => { /* ignore */ })
     return err(site, 'error', e instanceof Error ? e.message : String(e), started, ts)
+  }
+}
+
+/**
+ * 扩展车道登录引导(2026-08-29 传输层方案 C):语义与 cdp 车道一致——
+ * 自动检测优先(票据名在 = 零弹窗直接确认);未检出才开登录入口 job(置前台,标签留给用户);
+ * 只读轮询票据名,永不接触 cookie 值。verdict:logged-in | pending | needs-extension | error。
+ */
+async function sessionLoginViaExtension(site: string, target: LoginTarget, q: SessionLoginQuery, started: number, ts: string): Promise<SessionLoginResult> {
+  const evidenceTag = `[会话:${site}-login@${ts}]`
+  const quick = (verdict: SessionLoginResult['verdict'], error: string): SessionLoginResult => ({
+    ok: false, via: 'session-login-error', evidence: `[会话:login-error@${ts}] ${error.slice(0, 200)}`,
+    latencyMs: Date.now() - started, verdict, site, error: verdict === 'needs-extension' ? `${error};${NEEDS_EXTENSION_HINT}`.slice(0, 400) : error.slice(0, 400),
+  })
+  // 自动检测优先:先只读票据名——已登录则零交互直接确认(与 cdp 车道同一语义,founder「UI 里有自动检测吗」)
+  const pre = await extensionCookieNames({ site, domain: target.domain, ticketNames: target.names, timeoutMs: 8_000 })
+  if (!pre.ok) return quick(classifyBridgeFailure(pre.kind) === 'needs-extension' ? 'needs-extension' : 'error', pre.summary)
+  if (pre.tickets.length > 0) {
+    return {
+      ok: true, via: 'session-login', latencyMs: Date.now() - started, verdict: 'logged-in', site, tickets: pre.tickets,
+      evidence: `${evidenceTag} 自动检测:票据 cookie 已在(先前登录已生效)——[${pre.tickets.join(', ')}](只读名字,0 网页交互,零弹窗)`,
+    }
+  }
+  // 未检出 → 开登录入口标签(置前台,绝不劫持用户已有页面;登录在携程官网完成)
+  const opened = await extensionOpenLogin({ site, url: target.entryUrl, timeoutMs: 15_000 })
+  if (!opened.ok) return quick(classifyBridgeFailure(opened.kind) === 'needs-extension' ? 'needs-extension' : 'error', opened.summary)
+  const waitMs = Math.min(Math.max(q.waitMs ?? 90_000, 0), 300_000)
+  const pollMs = Math.min(Math.max(q.pollMs ?? 3_000, 500), 10_000)
+  const deadline = Date.now() + waitMs
+  let tickets: string[] = []
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, pollMs))
+    const poll = await extensionCookieNames({ site, domain: target.domain, ticketNames: target.names, timeoutMs: 8_000 })
+    if (poll.ok) tickets = poll.tickets
+    if (tickets.length > 0) break
+  }
+  if (tickets.length > 0) {
+    return {
+      ok: true, via: 'session-login', latencyMs: Date.now() - started, verdict: 'logged-in', site, tickets,
+      evidence: `${evidenceTag} 票据 cookie 已检出 [${tickets.join(', ')}](只读名字;登录在你自己的浏览器里完成,gotry 全程未接触任何密码/验证码/cookie 值)`,
+    }
+  }
+  return {
+    ok: true, via: 'session-login', latencyMs: Date.now() - started, verdict: 'pending', site, tickets: [],
+    evidence: `${evidenceTag} 登录入口已在你的 Chrome 置前打开(${target.label});在标签页里正常登录完成后再说一声「继续查」即可——gotry 只检查"是否已登录",永不收集你的账号信息`,
   }
 }

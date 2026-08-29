@@ -37,7 +37,8 @@ assert.ok(c1.out.includes('hbcli'), '报告应含 hbcli 节')
 assert.ok(c1.out.includes('agent-reach'), '报告应含 agent-reach 节')
 assert.ok(c1.out.includes('flyai'), '报告应含 flyai(无需安装)节')
 assert.ok(c1.out.includes('dsh-better-sidebar'), '报告应含 dsh-better-sidebar 节(issue #25 产物查看面)')
-console.log('1. --check-only 探测报告 exit 0(hbcli/agent-reach/flyai/dsh-better-sidebar 四节齐)OK')
+assert.ok(c1.out.includes('Session Bridge'), '报告应含会话扩展节(issue #21 传输层方案 C)')
+console.log('1. --check-only 探测报告 exit 0(hbcli/agent-reach/flyai/dsh-better-sidebar/会话扩展 五节齐)OK')
 
 // 2. --auto + GOTRY_SETUP_SKIP=1:postinstall 跳过语义,exit 0 不挡安装
 const c2 = runBootstrap(['--auto'], { GOTRY_SETUP_SKIP: '1' })
@@ -58,4 +59,12 @@ assert.ok(c4.out.includes('GOTRY_SETUP_SIDEBAR=0 跳过'), '应输出侧栏单�
 assert.ok(c4.out.includes('hbcli'), '其余节不受单项开关影响')
 console.log('4. GOTRY_SETUP_SIDEBAR=0 单项跳过(其余节照常)OK')
 
-console.log('BOOTSTRAP TESTS: 4/4 OK(探测报告/跳过开关/单项开关/postinstall 非致命)')
+// 5. 会话扩展节(issue #21 方案 C):--check-only 报告安装态;单项开关 GOTRY_SETUP_EXTENSION=0 可跳
+const c5 = runBootstrap(['--check-only'], {})
+assert.ok(c5.out.includes('.gotry/extension'), '扩展报告应含落位路径 ~/.gotry/extension(绝对路径形态)')
+const c5b = runBootstrap(['--check-only'], { GOTRY_SETUP_EXTENSION: '0' })
+assert.equal(c5b.code, 0, '扩展单项跳过态应 exit 0')
+assert.ok(c5b.out.includes('GOTRY_SETUP_EXTENSION=0 跳过'), '应输出扩展单项跳过说明')
+console.log('5. 会话扩展节(check-only 报告 + GOTRY_SETUP_EXTENSION=0 单项跳过)OK')
+
+console.log('BOOTSTRAP TESTS: 5/5 OK(探测报告/跳过开关/单项开关/postinstall 非致命/会话扩展)')
