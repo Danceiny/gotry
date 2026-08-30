@@ -169,6 +169,7 @@ GoTry: 收到。先把约束记下来——
 - **一次性浏览器扩展安装**:`npx gotry setup wizard` 引导你 30 秒装好 GoTry Session Bridge(MV3,扩展 ID 跨机器稳定,会话内零系统弹窗);后台 health-watch 探活,扩展一就位自动重放你的检索,**无需你手动重跑命令**
 - **扩展分发双通道(issue #21,ADR-21)**:默认仍用包内副本(离线确定性);`npx gotry setup --extension-from=github` 显式走 GitHub Releases 下载通道(版本化 tar.gz + SHA256 + 固定 key 钉扎,原子交换 `~/.gotry/extension`,任何失败显式降级包内副本)。平台约束(诚实):Chrome 只有上架 Web Store 才能消掉「开发者模式加载已解压」的点击——上架材料已备好(`docs/extension-webstore-submission.md`,待 founder 提交)。
 - **会话数据交叉验证(issue #21 / #67)**:8 条 sf-01..sf-08 benchmark query 端到端验证 —— 7/8 verdict=hit / 6/6 manual-golden 软命中 100% / hit 全部 <15s / ReadGuard 零写。对照源可插拔:`--golden=manual`(默认)、`--golden=flyai`、`--golden=static`。static 模式以 OpenFlights ODbL 固定修订提供航线/承运人,叠加手工时刻与价格带；evidence 分开记录请求源/实际源、provenance、estimated fields 与 fallback reason。快照/路由异常会向 stderr 告警后回退 manual。static 是确定性 benchmark 数据,**不是实时班期、票价或库存**。
+- **static 源登录态观测(2026-08-30)**:连续两轮 static official 均 8/8 hit、零 fallback;携程 session hit 从 3/8 波动到 5/8,两轮所有可评分 hit(3+5 条)全部 13/13(100%)。非 hit 均是显式 `miss`,因此 ≥90% 字段分不表述为 8/8 实时可售。同轮修复扩展在线时空闲 parked timer/socket 钉住默认 CLI 桥的生命周期缺口,wizard `keepBridge` 语义不变(§38:24/24,§40:9/9)。
 - **记忆与触达**:动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
 
 **已知限制**(截至 2026-08-29,诚实清单):

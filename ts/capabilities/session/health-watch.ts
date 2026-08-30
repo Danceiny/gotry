@@ -20,7 +20,7 @@
  * - 重放上限(防止 watch 反复 ready/抖动导致无限重放;maxRetries 默认 1)。
  *
  * 纪律:
- * - 不引 GUI 依赖;只 spawn `node:http` 探活(已经在扩展桥验证过,§38 23 断言覆盖);
+ * - 不引 GUI 依赖;只 spawn `node:http` 探活(已经在扩展桥验证过,§38 24 断言覆盖);
  * - 不持锁、不轮询文件、不读 dsh-runtime 共享状态;
  * - 不污染扩展桥 single-instance;probe 走独立短连接。
  */

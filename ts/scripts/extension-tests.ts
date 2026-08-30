@@ -16,6 +16,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { fork } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -42,6 +43,7 @@ import { LOGIN_COOKIE_NAMES, NETWORK_HINTS, SITE_DOMAIN } from '../capabilities/
 import { evaluateDoubleSource, type SessionComparableRecord } from '../capabilities/session/benchmark.ts'
 
 const EXT_DIR = fileURLToPath(new URL('../../extension/', import.meta.url))
+const UNREF_CHILD = fileURLToPath(new URL('./fixtures/extension-bridge-unref-child.mjs', import.meta.url))
 const read = (f: string): string => readFileSync(join(EXT_DIR, f), 'utf8')
 
 let passed = 0
@@ -90,6 +92,63 @@ async function claimOnce(port: number, respond: ((job: FakeJob) => Record<string
 async function heartbeat(port: number): Promise<void> {
   // 带扩展 Origin(与浏览器扩展 SW fetch 同形;无 Origin 的 /health 只是诊断,不记心跳)
   await fetch(`http://127.0.0.1:${port}/health`, { headers: { origin: EXTENSION_ORIGIN } })
+}
+
+async function waitForParkedCount(port: number, expected: number, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const r = await fetch(`http://127.0.0.1:${port}/status`)
+    const body = (await r.json()) as { parked?: number }
+    if (body.parked === expected) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`/status 未在 ${timeoutMs}ms 内报告 parked=${expected}`)
+}
+
+async function assertParkedClientDoesNotPinHost(): Promise<void> {
+  const child = fork(UNREF_CHILD, [], {
+    execArgv: process.execArgv,
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+  })
+  let stderr = ''
+  child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+  let parkedRequest: Promise<{ job: FakeJob | null }> | null = null
+  try {
+    const port = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('子进程扩展桥未在 2s 内监听')), 2_000)
+      child.once('message', (message: unknown) => {
+        clearTimeout(timer)
+        const data = message as { kind?: string; port?: number; summary?: string }
+        if (data.kind === 'listening' && typeof data.port === 'number') resolve(data.port)
+        else reject(new Error(data.summary ?? `子进程消息异常:${JSON.stringify(data)}`))
+      })
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer)
+        reject(new Error(`子进程过早退出 code=${code} signal=${signal} ${stderr}`))
+      })
+    })
+
+    parkedRequest = claimOnce(port, null).catch(() => ({ job: null }))
+    await waitForParkedCount(port, 1)
+
+    const exitP = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        child.kill()
+        reject(new Error('默认桥被 parked /jobs 长轮询钉住超过 1500ms'))
+      }, 1_500)
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer)
+        resolve({ code, signal })
+      })
+    })
+    child.send({ kind: 'release' })
+    const exited = await exitP
+    assert.equal(exited.code, 0, `子进程应自然退出:${stderr}`)
+    assert.equal(exited.signal, null)
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill()
+    if (parkedRequest) await parkedRequest
+  }
 }
 
 const stripRe = (s: string): string => s.replace(/\\/g, '')
@@ -188,6 +247,8 @@ async function main(): Promise<void> {
     assert.equal(body.service, 'gotry-session-bridge')
   })
 
+  await check('默认桥:parked 扩展长轮询不得钉住宿主 CLI 进程', assertParkedClientDoesNotPinHost)
+
   await check('origin 白名单:邪恶源(网页跨域必带)POST /jobs 与 /results 一律 403', async () => {
     for (const path of ['/jobs', '/results/whatever']) {
       const r = await fetch(`http://127.0.0.1:${port}${path}`, {
@@ -224,17 +285,29 @@ async function main(): Promise<void> {
   })
 
   await check('长轮询幂等:并发取活只有一个客户端领到 job;后到者空手(快速中止,不挂进程)', async () => {
-    const submitP = b.submit({ kind: 'cookie-names', site: 'ctrip-flight', timeoutMs: 5_000 }, { timeoutMs: 5_000 })
-    const firstP = claimOnce(port, (job) => ({ ok: true, kind: 'cookie-names', names: ['cticket'] }))
-    const ac = new AbortController()
-    setTimeout(() => ac.abort(), 300)
-    const secondP = claimOnce(port, null, ac.signal).catch(() => ({ job: null }))
-    const first = await firstP
-    assert.ok(first.job, '先到的取活者必须领到 job')
-    const outcome = await submitP
-    assert.ok(outcome.ok)
-    ac.abort()
-    await secondP
+    const firstAc = new AbortController()
+    const secondAc = new AbortController()
+    const firstP = claimOnce(
+      port,
+      () => ({ ok: true, kind: 'cookie-names', names: ['cticket'] }),
+      firstAc.signal,
+    ).catch(() => ({ job: null }))
+    let secondP: Promise<{ job: FakeJob | null }> | null = null
+    try {
+      await waitForParkedCount(port, 1)
+      secondP = claimOnce(port, null, secondAc.signal).catch(() => ({ job: null }))
+      await waitForParkedCount(port, 2)
+
+      const submitP = b.submit({ kind: 'cookie-names', site: 'ctrip-flight', timeoutMs: 5_000 }, { timeoutMs: 5_000 })
+      const first = await firstP
+      assert.ok(first.job, '先进入 parked 队列的取活者必须领到 job')
+      const outcome = await submitP
+      assert.ok(outcome.ok)
+    } finally {
+      firstAc.abort()
+      secondAc.abort()
+      if (secondP) await secondP
+    }
   })
 
   await check('超时语义:扩展在线但不回包 → timeout(降级 error,不伪装成功)', async () => {

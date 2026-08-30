@@ -20,6 +20,8 @@
 
 **会话 benchmark 增量(2026-08-30,Issue #67)**:`sf-live-benchmark` 新增 `--golden=static`，以 OpenFlights ODbL 固定修订提供航线/承运人，以 `sf-golden-manifest.json` 提供估算时刻与价格带。evidence 分开记录请求源与实际源(`requested_source`/`effective_source`)、estimated fields、provenance 与 fallback reason；快照或路由异常会向 stderr 明示后回退 `manual-golden`。这是可复跑的 benchmark 对照源，**不是实时班期、票价或库存**；真实会话侧仍须用户 Chrome 扩展连接。离线守门列入 run-all §44，不改变 M3/M4 里程碑口径。
 
+**Issue #67 验收 evidence 与生命周期补强(2026-08-30)**:登录态 Chrome 连续两轮真跑,static official 均 8/8 hit、零 fallback;session 分别 3/8 与 5/8 hit,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 明示 miss。评分门通过不等于 8/8 可售性。真扩展在线时默认桥不退出的存量缺口同轮清偿:parked timer/socket 只在默认桥 `unref`,wizard `keepBridge` 不变;§38 24/24、§40 9/9。
+
 rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
 | RC | 状态 | 范围 |
