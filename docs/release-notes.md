@@ -1,5 +1,22 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.16(价表 provider-aware v2 + 价格漂移监测长机制 + CHANGELOG 自动化,**已发布 2026-08-30**)
+
+rc.15 → rc.16 增量(founder 确认制下 agent 执行,owner 「这次要把 changelog 机制补上」):
+
+- **LLM 价表 v2(provider-aware,ADR-20)**:`ts/data/llm-price-table.json` 从 `gotry_llm_price_table_v1`(DeepSeek V4 only)升 `v2`(`providers.<id>.models.<model>` 平铺结构 + `family`/`price_strategy`/`source_url`/`aliases` provider-aware 字段);**MiniMax M2/M2.1/M3 入表**——M2/M2.1 取 \$0.30 input / \$0.03 cache read / \$1.20 output per 1M(peak);M3 取 >512k tokens 档作 peak ceiling \$0.60 / \$0.12 / \$2.40 守 ADR-11 「peak only-high-not-low」;`flat_no_offpeak` 纪律:MiniMax 无 off-peak 列,以同价占位填入 offpeak 列(供审计完整存档);`loadPriceTable` 双格式兼容 v1/v2,`priceRunCost` 外暴露 API 不变;未知模型 → fail-closed,不猜价
+
+- **价格漂移监测长机制**:`ts/scripts/price-drift-watch.ts` + `tests` —— 覆盖 **DeepSeek / MiniMax / OpenAI / Anthropic** 四家主流 provider;默认离线模式对照 baseline fixture + snapshot(OpenAI/Anthropic 等 SPA provider 走 snapshot 优先,__NEXT_DATA__ 内嵌 JSON dump 双路径解析 + 段落文字 fallback——**CI 零联网**);`--fetch` 模式拉取官方页 + 首次写 fixture + snapshot;**永不自动 apply 价格**(founder 实测「自动 apply 易把官方 down 5% 误认为我的 bug」,ADR-11 纪律);fetch 失败/解析失败/snapshot 缺失 四态 SKIP + reason,零写未知数据;PR 段落含 model/field/from/to/direction 四向 drift 表
+
+- **CHANGELOG 自动化机制(owner 拍板补)**:`ts/scripts/build-changelog.ts` + `CHANGELOG.md`(Keep a Changelog 1.1.0 + Conventional Commits 解析,9 类型 feat/fix/perf/refactor/docs/test/build/ci/chore/revert + scope + `!` breaking change marker + PR/sha 后缀);prependEntry 不覆盖历史段,长 subject 自动 truncate;`scripts/publish-npm.sh` 集成 changelog 闸(发布前自动跑 build-changelog + 校验 CHANGELOG.md 顶部含 `## [<current-version>]` 段 + 校验 git 已 commit);发布成功后 `gh release create` 自动建 GitHub Release(从 CHANGELOG + release-notes 拼接 notes);`--skip-changelog` 应急开关(不推荐);run-all 新增 §42 changelog 合同 11/11 绿
+
+- **§38 扩展桥 zombie port 根治**:`ts/scripts/extension-tests.ts` 车道闭环断言 finally 加 `lane.close()`,`process.on('exit')` best-effort 关主桥——跨次跑 §38 不再因临时桥 listener 占 8791-8795 触发 EADDRINUSE;§38 23/23 全绿跨次跑稳
+
+- run-all 新增 §41(LLM 价格漂移,11/11 绿) + §42(CHANGELOG 生成器,11/11 绿);六状态面同步:architecture §1/§97/ADR-20 ·roadmap §7 ·data-sources §7 ·stage1 状态头 ·tokens.md 价表与漂移监测节 ·README 中英双语「Switching models / providers?」节
+
+### 发布闸状态
+- ① 全栈回归:§1-§22 + §24-§41 + §42 全绿(§23b 发布面 dist 缺失预存回归,非本 PR)✅ ② 六状态面同步(本提交 + 保鲜清单勾稽)✅ ③ README 用法实测(todo:发布后回拉) ⏳ ④ License MIT ✅ ⑤ 版本号一致(package.json `0.0.1-rc.16` / 双 README Last verified / roadmap rc 序列 / release-notes / CHANGELOG = rc.16)✅
+
 ## v0.0.1-rc.15(预订 saga 状态机具名化,**已发布 2026-08-29**)
 
 rc.14 → rc.15 增量(issue #17 采纳,founder 确认制下 agent 执行,指令「按你推荐的做,然后提pr,发新版本」):

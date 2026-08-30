@@ -397,11 +397,3 @@ main().catch((e) => {
   try { __resetSessionBridgeForTest().catch(() => {}) } catch {}
   process.exit(1)
 })
-
-// 测试主进程退出前,显式关主桥,避免 §38 中临时桥的 listener 留作 zombie 占用 8791-8795,
-// 跨次跑 §38 时 EADDRINUSE 失败(回归面 issue #49 owner 实测发现)。
-process.on('exit', () => {
-  // process.on('exit') 仅同步可见;Node 进程退出时异步关闭 server 不可靠,
-  // 但 b.close() 内部 server.close() 同步调一次已能立刻释放端口 listen 占用。
-  try { void b.close() } catch {}
-})
