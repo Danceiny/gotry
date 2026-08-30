@@ -68,7 +68,8 @@ if [ "$SKIP_CHANGELOG" = "0" ]; then
     exit 1
   fi
   # 校验除 CHANGELOG.md(本脚本自动改)外无其他未提交修改(防 tarball 漏开发者改动)
-  OTHER_DIRTY="$(git status --porcelain -- ':!CHANGELOG.md')"
+  # --untracked-files=no 排除 worktree 的 dev-only symlink(ts/node_modules)等
+  OTHER_DIRTY="$(git status --porcelain --untracked-files=no ':!CHANGELOG.md')"
   if [ -n "$OTHER_DIRTY" ]; then
     echo "!! 工作区有未提交改动(非 CHANGELOG.md),请先 git commit/stash 再 publish"
     echo "$OTHER_DIRTY"
