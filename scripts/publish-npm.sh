@@ -62,6 +62,7 @@ if [ "$SKIP_CHANGELOG" = "0" ]; then
   PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | grep -v "^v${CURRENT_VERSION}\$" | head -1)"
   [ -z "$PREV_TAG" ] && PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | tail -1)"
   DATE="$(date +%Y-%m-%d)"
+  # 写入 CHANGELOG 前先 commit(否则 build-changelog 写盘后 git dirty 触发闸自检)
   (cd ts && npx tsx scripts/build-changelog.ts --version "$CURRENT_VERSION" --date "$DATE" --since "$PREV_TAG" --write) || {
     echo "!! build-changelog 失败;用 --skip-changelog 跳过(不推荐)"
     exit 1
@@ -71,12 +72,21 @@ if [ "$SKIP_CHANGELOG" = "0" ]; then
     echo "!! CHANGELOG.md 顶部缺 ## [${CURRENT_VERSION}] 段;请重跑 build-changelog 或 --skip-changelog 绕过"
     exit 1
   fi
-  # 校验发布后 git 已 commit CHANGELOG.md(避免未追踪的 changelog 被 tarball 漏)
-  if [ -n "$(git status --porcelain CHANGELOG.md)" ]; then
-    echo "!! CHANGELOG.md 有未提交修改;请先 git commit 再 publish(防 tarball 漏最新 changelog)"
+  # 校验除 CHANGELOG.md(本脚本自动改)外无其他未提交修改(防 tarball 漏开发者改动)
+  # --untracked-files=no 排除 worktree 的 dev-only symlink(ts/node_modules)等
+  OTHER_DIRTY="$(git status --porcelain --untracked-files=no ':!CHANGELOG.md')"
+  if [ -n "$OTHER_DIRTY" ]; then
+    echo "!! 工作区有未提交改动(非 CHANGELOG.md),请先 git commit/stash 再 publish"
+    echo "$OTHER_DIRTY"
     exit 1
   fi
-  echo ">> changelog 闸通过(顶部 ## [${CURRENT_VERSION}] 段已就位)"
+  # CHANGELOG.md 由 build-changelog 自动写盘,publish 前自动 commit,确保 tarball 含新版本段
+  if [ -n "$(git status --porcelain CHANGELOG.md)" ]; then
+    echo ">> 自动 commit CHANGELOG.md(本脚本自动生成)"
+    git add CHANGELOG.md
+    git commit -m "docs(changelog): 自动生成 v${CURRENT_VERSION} 段" || true
+  fi
+  echo ">> changelog 闸通过(顶部 ## [${CURRENT_VERSION}] 段已就位 + git committed)"
 fi
 
 echo ">> 预编译 dist(Node 拒 strip node_modules 下的 .ts)"
@@ -108,7 +118,7 @@ if [ "$SKIP_CHANGELOG" = "0" ] && command -v gh >/dev/null 2>&1; then
     gh release create "v${CURRENT_VERSION}" \
       --title "v${CURRENT_VERSION}" \
       --notes-file "$NOTES_FILE" \
-      --target "$(git rev-parse HEAD)" \
+      --target "v${CURRENT_VERSION}" \
       || echo "  (gh release create 失败;手动补:gh release create v${CURRENT_VERSION} --notes-file <>)"
     rm -f "$NOTES_FILE"
   else
