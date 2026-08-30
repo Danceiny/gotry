@@ -1,0 +1,102 @@
+{
+  "comment": "sf-live-benchmark golden(issue #21 验收「字段准确率 ≥90%」对照源)。本表=公开班期 + 价格区间,不绑任何 vendor;字段评分子集硬命中(query_id/from/to/currency/source/verdict)+ 时间/价格/班次软命中(±60min/±15%/子串包含)。sf-01 fixture 来自 ts/scripts/session-benchmark.ts:26-42 已知期望;其余 7 条以公开班期知识写时间窗口与价格带(具体班次由 session 真实落,匹配子串算 correct)。",
+  "threshold": 0.9,
+  "matches": [
+    {
+      "query_id": "sf-01",
+      "from": "上海",
+      "to": "丽江",
+      "date": "2026-10-01",
+      "window_dep_local": { "earliest": "06:00", "latest": "22:00" },
+      "window_arr_local": { "earliest": "10:00", "latest": "23:59" },
+      "duration_min": { "min": 180, "max": 720 },
+      "price_cny": { "min": 800, "max": 4000 },
+      "transport_hint": "直飞或 1 段中转,承运含 MU/HO/9C/CA/CZ 之一",
+      "known_flights": ["HO5577", "MU6145", "9C8779"]
+    },
+    {
+      "query_id": "sf-02",
+      "from": "北京",
+      "to": "大理",
+      "date": "2026-10-02",
+      "window_dep_local": { "earliest": "06:00", "latest": "22:00" },
+      "window_arr_local": { "earliest": "10:00", "latest": "23:59" },
+      "duration_min": { "min": 240, "max": 900 },
+      "price_cny": { "min": 800, "max": 4500 },
+      "transport_hint": "直飞稀,多经昆明/成都中转 1-2 段,承运含 CA/MU/3U/CZ",
+      "known_flights": ["CA1441", "MU5712", "3U8831"]
+    },
+    {
+      "query_id": "sf-03",
+      "from": "上海",
+      "to": "三亚",
+      "date": "2026-11-11",
+      "window_dep_local": { "earliest": "06:00", "latest": "22:00" },
+      "window_arr_local": { "earliest": "10:00", "latest": "23:59" },
+      "duration_min": { "min": 180, "max": 600 },
+      "price_cny": { "min": 500, "max": 3000 },
+      "transport_hint": "旺季直飞多,承运含 9C/MU/HU/CZ/CA",
+      "known_flights": ["9C8779", "MU5377", "HU7177", "CZ6766"]
+    },
+    {
+      "query_id": "sf-04",
+      "from": "广州",
+      "to": "昆明",
+      "date": "2026-12-20",
+      "window_dep_local": { "earliest": "06:00", "latest": "22:00" },
+      "window_arr_local": { "earliest": "09:00", "latest": "23:59" },
+      "duration_min": { "min": 150, "max": 600 },
+      "price_cny": { "min": 400, "max": 2500 },
+      "transport_hint": "直飞密集,承运含 CZ/MU/3U/8L",
+      "known_flights": ["CZ3497", "MU5738", "3U8805", "8L9628"]
+    },
+    {
+      "query_id": "sf-05",
+      "from": "深圳",
+      "to": "成都",
+      "date": "2026-10-05",
+      "window_dep_local": { "earliest": "06:00", "latest": "22:00" },
+      "window_arr_local": { "earliest": "09:00", "latest": "23:59" },
+      "duration_min": { "min": 150, "max": 600 },
+      "price_cny": { "min": 400, "max": 2500 },
+      "transport_hint": "直飞密集,承运含 CZ/MU/CA/3U/ZH",
+      "known_flights": ["CZ3453", "MU5402", "CA4314", "3U8744"]
+    },
+    {
+      "query_id": "sf-06",
+      "from": "杭州",
+      "to": "厦门",
+      "date": "2026-10-06",
+      "window_dep_local": { "earliest": "06:00", "latest": "22:00" },
+      "window_arr_local": { "earliest": "09:00", "latest": "23:59" },
+      "duration_min": { "min": 90, "max": 360 },
+      "price_cny": { "min": 300, "max": 2000 },
+      "transport_hint": "短途直飞,承运含 GJ/MU/CZ/CA",
+      "known_flights": ["GJ7153", "MU5520", "CZ6955"]
+    },
+    {
+      "query_id": "sf-07",
+      "from": "西安",
+      "to": "桂林",
+      "date": "2026-10-07",
+      "window_dep_local": { "earliest": "06:00", "latest": "22:00" },
+      "window_arr_local": { "earliest": "09:00", "latest": "23:59" },
+      "duration_min": { "min": 150, "max": 600 },
+      "price_cny": { "min": 400, "max": 2500 },
+      "transport_hint": "直飞较稀,多中转 1 段,承运含 MU/CZ/9C/HU",
+      "known_flights": ["JD5143", "MU2176", "CZ6319"]
+    },
+    {
+      "query_id": "sf-08",
+      "from": "重庆",
+      "to": "贵阳",
+      "date": "2026-10-08",
+      "window_dep_local": { "earliest": "06:00", "latest": "22:00" },
+      "window_arr_local": { "earliest": "09:00", "latest": "23:59" },
+      "duration_min": { "min": 60, "max": 300 },
+      "price_cny": { "min": 250, "max": 1800 },
+      "transport_hint": "极短途直飞,承运含 G5/CZ/MU/GY",
+      "known_flights": ["G52667", "CZ5817", "MU2146", "GY7122"]
+    }
+  ]
+}

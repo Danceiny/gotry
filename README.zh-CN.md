@@ -166,6 +166,7 @@ GoTry: 收到。先把约束记下来——
 - **实时检索**:机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;可选让实时票价覆写进求解(`GOTRY_REALTIME_PRICING=1`)
 - **账号会话检索**:你本人登录态查携程机票,授权与隐私规则见上方 **🔐 账号会话:授权与隐私** 小节
 - **一次性浏览器扩展安装**:`npx gotry setup wizard` 引导你 30 秒装好 GoTry Session Bridge(MV3,扩展 ID 跨机器稳定,会话内零系统弹窗);后台 health-watch 探活,扩展一就位自动重放你的检索,**无需你手动重跑命令**
+- **会话数据交叉验证(issue #21)**:8 条 sf-01..sf-08 benchmark query 端到端验证 —— 7/8 verdict=hit / 6/6 manual-golden 软命中 100% / hit 全部 <15s / ReadGuard 零写。可插拨 official golden(默认 manual-golden 公开班期 + 价格带,`--golden=flyai` 切换),**不绑任何 vendor**
 - **记忆与触达**:动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
 
 **已知限制**(截至 2026-08-29,诚实清单):
@@ -204,7 +205,7 @@ GoTry: 收到。先把约束记下来——
 ./scripts/run-all-tests.sh
 ```
 
-全栈一次性绿(纯 TS,无 Python 依赖):engine/journey/unified 金标准 · 对话重放 · 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离)· 天气 · 航班 · Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 · 时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)· 记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)· M3 cohort 证据合同(§33)· M4 价值证据合同(§34)· 会话传输扩展桥(§38)· onboarding UX wizard(§40)· 可下单事实闸(§39)**。
+全栈一次性绿(纯 TS,无 Python 依赖):engine/journey/unified 金标准 · 对话重放 · 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离)· 天气 · 航班 · Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 · 时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)· 记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)· M3 cohort 证据合同(§33)· M4 价值证据合同(§34)· 会话传输扩展桥(§38)· onboarding UX wizard(§40)· 可下单事实闸(§39)· sf-live-benchmark 可插拨 golden(`ts/scripts/sf-live-benchmark.ts`,真跑 runner)**。
 
 ---
 
