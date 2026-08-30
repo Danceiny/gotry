@@ -11,6 +11,7 @@ import { execSync } from 'node:child_process'
 import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const repoRoot = join(import.meta.dirname, '..', '..')
 process.chdir(repoRoot)
@@ -48,12 +49,27 @@ try {
   console.log('deps resolvable: OK')
 
   // 4) 关键入口文件在包内 + 账本模块真实 import
-  for (const e of ['dist/src/state-ledger.js', 'dist/src/index.js', 'bin/gotry-inner.js']) {
+  for (const e of [
+    'dist/src/state-ledger.js',
+    'dist/src/index.js',
+    'bin/gotry-inner.js',
+    'dist/capabilities/session/static-flight-golden.js',
+    'dist/capabilities/session/golden-score.js',
+    'dist/scripts/sf-live-benchmark.js',
+    'dist/data/session-golden-20.json',
+    'dist/data/sf-golden-manifest.json',
+    'dist/data/sf-static-routes.json',
+  ]) {
     if (!existsSync(join(pkgDir, e))) throw new Error(`发布缺文件: ${e}`)
   }
   // import 冒烟改静态:state-ledger 的 better-sqlite3 引用已被 §3b 声明检查覆盖(无安装树时无法真 import)
   if (!execSync(`grep -c "better-sqlite3" ${join(pkgDir, 'dist/src/state-ledger.js')}`, { encoding: 'utf-8' }).trim().match(/^[1-9]/)) {
     throw new Error('dist/src/state-ledger.js 未引用 better-sqlite3(声明与实现不符)')
+  }
+  const staticProvider = await import(pathToFileURL(join(pkgDir, 'dist/capabilities/session/static-flight-golden.js')).href)
+  const staticSnapshot = staticProvider.loadStaticFlightSnapshot()
+  if (staticSnapshot.schema_version !== 'sf-static-routes.v1' || staticSnapshot.routes.length !== 8) {
+    throw new Error('发布 static golden 快照不可加载或覆盖不足 8 条')
   }
 
   console.log('PUBLISH PREVERIFY: OK')

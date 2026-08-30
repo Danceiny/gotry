@@ -1,0 +1,91 @@
+{
+  "schema_version": "sf-static-routes.v1",
+  "source": {
+    "name": "OpenFlights routes.dat",
+    "url": "https://raw.githubusercontent.com/jpatokal/openflights/4b969f8e91eb800c45f0e0e2355a0fbb93de27e4/data/routes.dat",
+    "revision": "4b969f8e91eb800c45f0e0e2355a0fbb93de27e4",
+    "license": "ODbL-1.0",
+    "retrieved_at": "2026-08-30",
+    "limitations": [
+      "route/carrier coverage only",
+      "no schedule",
+      "no price",
+      "no availability"
+    ]
+  },
+  "routes": [
+    {
+      "query_id": "sf-01",
+      "from_city": "上海",
+      "to_city": "丽江",
+      "route_kind": "direct",
+      "legs": [
+        { "from_iata": "SHA", "to_iata": "LJG", "carrier_codes": ["MU"] }
+      ]
+    },
+    {
+      "query_id": "sf-02",
+      "from_city": "北京",
+      "to_city": "大理",
+      "route_kind": "transfer",
+      "legs": [
+        { "from_iata": "PEK", "to_iata": "KMG", "carrier_codes": ["8L", "CA", "CZ", "HU", "MU", "ZH"] },
+        { "from_iata": "KMG", "to_iata": "DLU", "carrier_codes": ["8L", "CZ", "MU"] }
+      ]
+    },
+    {
+      "query_id": "sf-03",
+      "from_city": "上海",
+      "to_city": "三亚",
+      "route_kind": "direct",
+      "legs": [
+        { "from_iata": "PVG", "to_iata": "SYX", "carrier_codes": ["9C", "CZ", "FM", "HO", "MU"] }
+      ]
+    },
+    {
+      "query_id": "sf-04",
+      "from_city": "广州",
+      "to_city": "昆明",
+      "route_kind": "direct",
+      "legs": [
+        { "from_iata": "CAN", "to_iata": "KMG", "carrier_codes": ["CA", "CZ", "KY", "MU", "ZH"] }
+      ]
+    },
+    {
+      "query_id": "sf-05",
+      "from_city": "深圳",
+      "to_city": "成都",
+      "route_kind": "direct",
+      "legs": [
+        { "from_iata": "SZX", "to_iata": "CTU", "carrier_codes": ["3U", "CA", "CZ", "EU", "HU", "TV", "ZH"] }
+      ]
+    },
+    {
+      "query_id": "sf-06",
+      "from_city": "杭州",
+      "to_city": "厦门",
+      "route_kind": "direct",
+      "legs": [
+        { "from_iata": "HGH", "to_iata": "XMN", "carrier_codes": ["CA", "CZ", "MF", "MU", "SC"] }
+      ]
+    },
+    {
+      "query_id": "sf-07",
+      "from_city": "西安",
+      "to_city": "桂林",
+      "route_kind": "direct",
+      "legs": [
+        { "from_iata": "XIY", "to_iata": "KWL", "carrier_codes": ["CA", "CZ", "GS", "JD", "MU", "NS", "ZH"] }
+      ]
+    },
+    {
+      "query_id": "sf-08",
+      "from_city": "重庆",
+      "to_city": "贵阳",
+      "route_kind": "direct",
+      "legs": [
+        { "from_iata": "CKG", "to_iata": "KWE", "carrier_codes": ["CA", "CZ", "G5", "GS", "SC"] }
+      ]
+    }
+  ]
+}
