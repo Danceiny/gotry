@@ -21,6 +21,8 @@ npx @danceiny/gotry web
 # → 浏览器打开 http://127.0.0.1:3080,像聊天一样说「我想去大理三天」
 ```
 
+> **换模型 / 换中转?** 价表(`ts/data/llm-price-table.json`,schema `gotry_llm_price_table_v2`)是 `gotry_m3_nightly_run_v1.cost_usd` 唯一事实源(ADR-11)。新增模型或换中转=改本文件走 PR(peak 保守上界只高不低),未知模型 → **fail-closed 不猜价**。漂移监测:`npx tsx ts/scripts/price-drift-watch.ts`(默认离线对照 baseline 比对输出 PR-就绪 Markdown diff;`--fetch` 拉取官方页 + 首次写 fixture)。**永不自动 apply 价格**。
+
 | 你想要的 | 命令 |
 |---|---|
 | 🖥️ 对话规划(推荐) | `npx @danceiny/gotry web` → :3080 对话界面 |
@@ -203,7 +205,7 @@ GoTry: 收到。先把约束记下来——
 ./scripts/run-all-tests.sh
 ```
 
-全栈一次性绿(纯 TS,无 Python 依赖):engine/journey/unified 金标准 · 对话重放 · 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离)· 天气 · 航班 · Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 · 时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)· 记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)· M3 cohort 证据合同(§33)· M4 价值证据合同(§34)· 会话传输扩展桥(§38)· onboarding UX wizard(§40)· 可下单事实闸(§39)· sf-live-benchmark 可插拨 golden(§41)**。
+全栈一次性绿(纯 TS,无 Python 依赖):engine/journey/unified 金标准 · 对话重放 · 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离)· 天气 · 航班 · Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 · 时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)· 记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)· M3 cohort 证据合同(§33)· M4 价值证据合同(§34)· 会话传输扩展桥(§38)· onboarding UX wizard(§40)· 可下单事实闸(§39)· sf-live-benchmark 可插拨 golden(`ts/scripts/sf-live-benchmark.ts`,真跑 runner)**。
 
 ---
 
@@ -235,4 +237,4 @@ GoTry: 收到。先把约束记下来——
 
 **Built with**: DeepSeek Harness 0.1.2-alpha.1 (vendored) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
 
-**Last verified against `v0.0.1-rc.15`(2026-08-29)** — 全栈回归全绿 §1-§38(发布流程见 `scripts/publish-npm.sh`)。
+**Last verified against `v0.0.1-rc.16`(2026-08-30)** — 全栈回归全绿 §1-§42(发布流程见 `scripts/publish-npm.sh`)。

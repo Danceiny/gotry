@@ -329,6 +329,14 @@ echo "=== 39. 可下单事实模型+产物事实闸(issue #46:gotry_bookable_fac
 (cd ts && npx tsx scripts/fact-gate-tests.ts | tail -1) || FAIL=1
 
 echo
+echo "=== 41. LLM 价格漂移监测(issue #49 长效机制:offline baseline 比对/fetch 首次写 fixture/up·down·new·removed 四向/坏 baseline SKIP/PR 段落含纪律注脚;零网络,纯离线合同) ==="
+(cd ts && npx tsx scripts/price-drift-tests.ts | tail -1) || FAIL=1
+
+echo
+echo "=== 42. CHANGELOG 生成器(2026-08-30 owner 拍板补 changelog 机制:Conventional Commits → Keep a Changelog 1.1.0/类型映射/节结构/PR&sha 后缀/prepend 不覆盖历史/空列表/breaking change marker;纯函数) ==="
+(cd ts && npx tsx scripts/changelog-tests.ts | tail -1) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

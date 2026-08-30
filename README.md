@@ -26,6 +26,8 @@ npx @danceiny/gotry web
 # → open http://127.0.0.1:3080 and chat: "I want three relaxing days in Dali"
 ```
 
+> **Switching models / providers?** The price table (`ts/data/llm-price-table.json`, schema `gotry_llm_price_table_v2`) is the single source of truth for `gotry_m3_nightly_run_v1.cost_usd`. Adding a new model or switching relay = update this file via PR (ADR-11, peak-conservative upper bound only). Unknown models **fail-closed** — no guessed prices. Drift monitor: `npx tsx ts/scripts/price-drift-watch.ts` (offline baseline diff; `--fetch` for live official pages). Never auto-applies changes.
+
 | You want | Command |
 |---|---|
 | 🖥️ Conversational planner (recommended) | `npx @danceiny/gotry web` → chat UI on :3080 |
@@ -192,7 +194,7 @@ The authoritative state lives in the docs, not this README: transactional state 
 ./scripts/run-all-tests.sh
 ```
 
-One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30) · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39) · sf-live-benchmark pluggable golden (§41)**.
+One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30) · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39) · sf-live-benchmark pluggable golden (`ts/scripts/sf-live-benchmark.ts`, live runner)**.
 
 ---
 
@@ -212,4 +214,4 @@ Standard open-source flow: branch off latest `main` (`feat/ · fix/ · docs/ · 
 
 **Built with**: DeepSeek Harness 0.1.2-alpha.1 (vendored) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
 
-**Last verified against `v0.0.1-rc.15` (2026-08-29)** — full-stack regression green §1-§38 (release flow: `scripts/publish-npm.sh`).
+**Last verified against `v0.0.1-rc.16` (2026-08-30)** — full-stack regression green §1-§42 (release flow: `scripts/publish-npm.sh`).

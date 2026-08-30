@@ -348,6 +348,7 @@ async function main(): Promise<void> {
     } finally {
       await __resetSessionBridgeForTest()
       __setSessionBridgeForTest(null)
+      await lane.close()
     }
   })
 
@@ -392,5 +393,7 @@ async function main(): Promise<void> {
 
 main().catch((e) => {
   console.error('FAIL:', e)
+  // best-effort cleanup on early failure:关掉所有未释放的桥
+  try { __resetSessionBridgeForTest().catch(() => {}) } catch {}
   process.exit(1)
 })

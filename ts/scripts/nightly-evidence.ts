@@ -18,6 +18,14 @@
  *   - 预算闸 GOTRY_NIGHTLY_BUDGET_USD(默认 1.00 美元):超闸时记录照写(已发生的花费是事实),
  *     但退出码 3,heartbeat 应 backoff。
  *   - 写入前先过消费方 parseNightlyRun 校验——生产器自己写出的必须是评分器读得懂的记录。
+ *
+ * 价表 schema 演进(issue #49 落地):
+ *   - `gotry_llm_price_table_v1`:仅 DeepSeek,flat 字段直接挂在 prices.<model> 下,本 loader 兼容读取。
+ *   - `gotry_llm_price_table_v2`(本仓现状):providers.<id>.models.<model>,provider-aware。
+ *     v2 引入 provider 别名/价格策略(tiered_peak_offpeak vs flat_no_offpeak),允许 MiniMax/等
+ *     没有 off-peak 列的 provider 以同价占位填入 _offpeak 列(peak_conservative_upper_bound 纪律)。
+ *   - reader 兼容 v1/v2:loadPriceTable 检测 schema_version;v1 走旧 PriceEntry 形态,v2 走
+ *     ProviderEntry 形态;priceRunCost 与外暴露 API 不变。
  */
 
 import { createHash } from 'node:crypto'
@@ -90,7 +98,7 @@ export interface PriceEntry {
 }
 
 export interface LlmPriceTable {
-  schema_version: 'gotry_llm_price_table_v1'
+  schema_version: 'gotry_llm_price_table_v1' | 'gotry_llm_price_table_v2'
   aliases: Record<string, string>
   prices: Record<string, PriceEntry>
 }
@@ -109,9 +117,17 @@ function assertPriceEntry(label: string, value: unknown): PriceEntry {
 
 export function loadPriceTable(path: string): LlmPriceTable {
   const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
-  if (raw['schema_version'] !== 'gotry_llm_price_table_v1') {
-    throw new Error(`price table schema_version must be gotry_llm_price_table_v1, got: ${String(raw['schema_version'])}`)
+  const schemaVersion = raw['schema_version']
+  if (schemaVersion === 'gotry_llm_price_table_v2') {
+    return loadPriceTableV2(raw)
   }
+  if (schemaVersion === 'gotry_llm_price_table_v1') {
+    return loadPriceTableV1(raw)
+  }
+  throw new Error(`price table schema_version must be gotry_llm_price_table_v1 or _v2, got: ${String(schemaVersion)}`)
+}
+
+function loadPriceTableV1(raw: Record<string, unknown>): LlmPriceTable {
   const aliases = typeof raw['aliases'] === 'object' && raw['aliases'] !== null ? raw['aliases'] as Record<string, string> : {}
   for (const [from, to] of Object.entries(aliases)) {
     if (typeof to !== 'string') throw new Error(`price table alias ${from} must map to a model name`)
@@ -121,6 +137,68 @@ export function loadPriceTable(path: string): LlmPriceTable {
     prices[name] = assertPriceEntry(`price table entry ${name}`, entry)
   }
   return { schema_version: 'gotry_llm_price_table_v1', aliases, prices }
+}
+
+interface ProviderEntry {
+  family: string
+  price_strategy: 'tiered_peak_offpeak' | 'flat_no_offpeak' | string
+  api_base?: string
+  source_url?: string
+  aliases: Record<string, string>
+  models: Record<string, PriceEntry>
+}
+
+/** v2 reader:providers.<id>.models.<model> 平铺为统一的 aliases/prices 双表,外暴露 API 不变。
+ *  lookup 规则:给定 model 名 →
+ *    1. 若在 aliases 表中,跳到别名目标(qualified `providerId:model`);
+ *    2. 否则直接以 qualified `providerId:model` 在 prices 中查找;
+ *    3. 否则尝试裸 `model` 键(单 provider 时透明,如 MiniMax-M3 在 minimax:models 下唯一);
+ *    4. 仍找不到 → fail-closed。 */
+function loadPriceTableV2(raw: Record<string, unknown>): LlmPriceTable {
+  const providersObj = typeof raw['providers'] === 'object' && raw['providers'] !== null ? raw['providers'] as Record<string, unknown> : null
+  if (!providersObj) throw new Error('price table v2 requires providers object')
+  const aliases: Record<string, string> = {}
+  const prices: Record<string, PriceEntry> = {}
+  for (const [providerId, rawProvider] of Object.entries(providersObj)) {
+    const provider = assertProviderEntry(`price table provider ${providerId}`, rawProvider)
+    for (const [aliasName, target] of Object.entries(provider.aliases)) {
+      if (typeof target !== 'string') throw new Error(`provider ${providerId} alias ${aliasName} must map to a model name`)
+      if (!provider.models[target]) {
+        throw new Error(`provider ${providerId} alias ${aliasName} -> ${target} has no entry; update data/llm-price-table.json via PR`)
+      }
+      aliases[aliasName] = target
+    }
+    for (const [modelName, entry] of Object.entries(provider.models)) {
+      const qualified = `${providerId}:${modelName}`
+      const validated = assertPriceEntry(`price table provider ${providerId} model ${modelName}`, entry)
+      if (prices[qualified]) throw new Error(`duplicate price table key ${qualified}`)
+      prices[qualified] = validated
+      if (prices[modelName]) throw new Error(`duplicate price table key ${modelName} (across providers, disambiguate via aliases or qualified lookup)`)
+      prices[modelName] = validated
+    }
+  }
+  return { schema_version: 'gotry_llm_price_table_v2', aliases, prices }
+}
+
+function assertProviderEntry(label: string, value: unknown): ProviderEntry {
+  const entry = typeof value === 'object' && value !== null ? value as Record<string, unknown> : null
+  if (!entry) throw new Error(`${label} must be an object`)
+  const family = entry['family']
+  if (typeof family !== 'string' || family.length === 0) throw new Error(`${label}.family must be a non-empty string`)
+  const strategy = entry['price_strategy']
+  if (strategy !== 'tiered_peak_offpeak' && strategy !== 'flat_no_offpeak') {
+    throw new Error(`${label}.price_strategy must be 'tiered_peak_offpeak' or 'flat_no_offpeak', got: ${String(strategy)}`)
+  }
+  const aliases = typeof entry['aliases'] === 'object' && entry['aliases'] !== null ? entry['aliases'] as Record<string, string> : {}
+  const models = typeof entry['models'] === 'object' && entry['models'] !== null ? entry['models'] as Record<string, PriceEntry> : {}
+  return {
+    family,
+    price_strategy: strategy,
+    api_base: typeof entry['api_base'] === 'string' ? entry['api_base'] as string : undefined,
+    source_url: typeof entry['source_url'] === 'string' ? entry['source_url'] as string : undefined,
+    aliases,
+    models,
+  }
 }
 
 /** 换算单次运行成本(peak 保守上界:全部输入按 cache miss 峰价计,只高不低)。 */

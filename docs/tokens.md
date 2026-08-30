@@ -90,6 +90,12 @@ NPM_TOKEN=npm_xxx ./scripts/publish-npm.sh   # 或临时注入
 已存 `.env` 的 `LLM_API_KEY`(2026-08-22 给,`sk-f2f5...83d8`)。
 获取新 key:<https://platform.deepseek.com/api_keys> → Create new key → 直接贴给我。
 
+## LLM 价表与价格漂移监测(issue #49)
+
+> **换模型 / 换中转时价表随动**:`ts/data/llm-price-table.json` 是 `gotry_m3_nightly_run_v1.cost_usd` 唯一事实源(ADR-11),peak 保守上界只高不低。
+> 增 provider/改价:`gotry_llm_price_table_v2` schema;`loadPriceTable` 双格式兼容 v1;unknown model → fail-closed,不猜价。
+> 长效机制:`npx tsx scripts/price-drift-watch.ts`(默认离线对照 baseline fixture 比对输出 PR-就绪 Markdown diff)/`--fetch`(联网拉官方页 + 首次写 fixture,fetch 失败/解析失败一律 SKIP 零写未知数据);**永不自动 apply 价格**——价格调整必须人工 PR,符合 ADR-11「peak only-high-not-low」。
+
 ---
 
 ## agent-reach 渠道(全部选配,给即接,不催)
