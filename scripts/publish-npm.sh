@@ -6,7 +6,8 @@
 #   —— 不读写 ~/.npmrc,不受 bnpm registry/prefix 行影响,也不污染日工作具配置。
 #
 # 用法:
-#   ./scripts/publish-npm.sh              # 用 .env 的 NPM_TOKEN 直发
+#   TAG=latest ./scripts/publish-npm.sh   # dist-tag 必须显式传(issue #50①:曾默认 rc.5,
+#                                          忘传会把新包发到陈旧 dist-tag,表面成功实则 latest 不可见)
 #   ./scripts/publish-npm.sh login        # 走 web 会话(浏览器点一次 Approve),
 #                                          会话 token 也只写 .npmrc.publish
 #   ./scripts/publish-npm.sh --skip-changelog   # 跳过 changelog 闸(应急;publish-npm.sh 不应绕过)
@@ -19,7 +20,11 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 NPMRC="$ROOT/.npmrc.publish"
-TAG="${TAG:-rc.5}"
+# dist-tag 必须显式传入,未传即拒发(issue #50① 脚枪根治:默认值 rc.5 曾把新包发到陈旧通道)
+if [ -z "${TAG:-}" ]; then
+  echo "!! TAG 未指定,拒绝发布。用法:TAG=latest ./scripts/publish-npm.sh(dist-tag 是显式意图,无默认值)" >&2
+  exit 1
+fi
 NPM_CONFIG_USERCONFIG="$NPMRC"
 export NPM_CONFIG_USERCONFIG
 
@@ -80,7 +85,7 @@ node scripts/build-dist.mjs
 echo ">> 隔离配置生效:registry=$(npm config get registry)"
 npm whoami --registry=https://registry.npmjs.org/ || echo "  (未登录/无 token 权限,继续尝试 publish)"
 
-echo ">> publish $(grep -o '"name": "[^"]*"' package.json | head -1)"
+echo ">> publish $(grep -o '"name": "[^"]*"' package.json | head -1) --tag $TAG"
 npm publish --access public --tag "$TAG" --registry=https://registry.npmjs.org/
 
 echo ">> Done → npm view $(grep -o '"name": "[^"]*"' package.json | head -1) --registry=https://registry.npmjs.org/"
