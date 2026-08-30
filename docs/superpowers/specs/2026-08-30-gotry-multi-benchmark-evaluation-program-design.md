@@ -1,6 +1,6 @@
 # GoTry 多 Benchmark 评测与 Agent 优化计划
 
-状态：设计确认，等待实现计划
+状态：设计已批准，进入 Phase 0 实现计划
 
 日期：2026-08-30
 
@@ -18,6 +18,13 @@ GoTry 采用“先建立基线，再按失败簇优化”的多 benchmark 计划
 2. 一组 GoTry 自有的确定性回归；
 3. 一次匹配的外部 benchmark 复测与必要的跨 benchmark guardrail；
 4. Discussion #78 中一条唯一对应的评论。
+
+### 1.1 Sol 推理 + Luna 执行运行契约
+
+- **Sol 车道**：使用 `gpt-5.6-sol` + `high`；只在架构分歧或反复失败已超出当前归因时升到 `xhigh`。Sol 负责失败归因、可证伪假设、验收边界与最终审核，不承担常规机械实现。
+- **Luna 车道**：使用 `gpt-5.6-luna` + `medium`；纯机械、只读的探索任务可降到 `low`。Luna 负责代码探索、TDD、实现、测试、benchmark 执行、证据整理以及 commit/PR 交付。
+- **上下文与写入权**：车道派发统一使用 `fork_turns=none`；Sol 把范围、假设、接口和验收证据写入磁盘 brief，Luna 把执行命令、SHA、exit code、失败与产物写入磁盘 report。每个 worktree 同时只允许一个 Luna writer，其他车道只读或在独立 worktree 工作。
+- **闭环**：每个可审核切片按 `Sol 归因/验收 → Luna TDD/实现/证据 → Sol 最终审核` 运行。同一可证伪假设连续两轮执行失败后，Luna 停止局部试错并回交 Sol 重做失败归因；新假设经 Sol 记录后才能继续。
 
 ## 2. 目标与非目标
 
@@ -72,7 +79,7 @@ flowchart LR
 
 - `gotry_benchmark_registry_entry_v0`：官方入口、revision、许可、任务类别、指标、数据边界、可计分条件。
 - `gotry_eval_case_v0`：case 标识、输入类别、隔离状态、时钟/时区、允许与禁止效应、预算和 scorer 版本；不含第三方原始题面或 gold。
-- `gotry_eval_run_receipt_v0`：GoTry SHA、模型、prompt/tool/scorer revision、原生指标、通用 guardrail、countability 和证据摘要。
+- `gotry_eval_run_receipt_v0`：GoTry SHA、模型、prompt/tool/scorer revision、原生指标、通用 guardrail、countability qualification inputs 和证据摘要；`matched_pair_countable` 只由 aggregate 校验派生，不存入单条 receipt。
 - `gotry_eval_failure_cluster_v0`：失败类别、严重度、受影响 benchmark/case、复现条件、GoTry 自有 regression id 和建议优化面。
 
 仓内只保存合同、校验器、许可安全的 registry 元数据、脱敏 receipt 和 GoTry 自有案例。它们进入 TypeScript 测试面，并由 `scripts/run-all-tests.sh` 守门。
