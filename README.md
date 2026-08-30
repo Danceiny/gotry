@@ -170,6 +170,7 @@ Engine verdict:
 - **Realtime retrieval** — flight/train/hotel (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`)
 - **Account session search** — Ctrip flights on your own logged-in Chrome; consent & privacy rules above (see 🔐 **Account session: consent & privacy**)
 - **One-time browser extension setup** — `npx gotry setup wizard` walks you through a 30-second install of GoTry Session Bridge (MV3, fixed extension ID, zero system dialogs per session). Background health-watch auto-plays your query once the extension is connected — no manual retry needed.
+- **Extension distribution (issue #21, ADR-21)** — the npm-bundled copy stays the default (offline-deterministic). Opt in to the GitHub Releases channel with `npx gotry setup --extension-from=github`: versioned tarball + SHA256 + fixed-key pinning, atomic swap into `~/.gotry/extension`; any failure falls back to the bundled copy. Platform constraint, honestly: only a Chrome Web Store listing can remove the developer-mode load-unpacked clicks — store submission materials are prepared in `docs/extension-webstore-submission.md` (founder to submit).
 - **Session data cross-verification (issue #21)** — 8 benchmark queries (sf-01..sf-08) verified end-to-end: 7/8 verdict=hit, 6/6 manual-golden soft-score 100%, all hits <15s, zero ReadGuard writes. Pluggable official golden (default: manual-golden public schedule, `--golden=flyai` to switch) — no vendor lock.
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English output via `GOTRY_LOCALE=en`
 
@@ -194,7 +195,7 @@ The authoritative state lives in the docs, not this README: transactional state 
 ./scripts/run-all-tests.sh
 ```
 
-One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30) · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39) · sf-live-benchmark pluggable golden (`ts/scripts/sf-live-benchmark.ts`, live runner)**.
+One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30) · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39) · sf-live-benchmark pluggable golden (`ts/scripts/sf-live-benchmark.ts`, live runner) · extension distribution channel (§43)**.
 
 ---
 

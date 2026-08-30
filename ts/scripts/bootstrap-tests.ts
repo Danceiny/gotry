@@ -86,4 +86,20 @@ assert.equal(c7.code, 1, `wizard(超时)应 exit 1,实际 ${c7.code}\n${c7.out}`
 assert.ok(c7.out.includes('3 步') || c7.out.includes('gotry-wizard'), '应输出引导标题')
 console.log('7. wizard 真实路径(扩展未就绪,exit 1 + 引导标题 + 心跳)OK')
 
-console.log('BOOTSTRAP TESTS: 7/7 OK(探测报告/跳过开关/单项开关/postinstall 非致命/会话扩展/wizard --dry-run/wizard 真实)')
+// 8. 扩展分发 github 通道(ADR-21):基址指不可达回环(127.0.0.1:1 拒连,离线确定性)
+//    → 显式降级 bundled + check-only 报告,exit 0;非法 --extension-from 值回落 bundled 不进网络通道。
+const c8 = runBootstrap(['--check-only', '--extension-from=github', '--auto'], {
+  GOTRY_SETUP_HBCLI: '0', GOTRY_SETUP_REACH: '0', GOTRY_SETUP_SIDEBAR: '0',
+  GOTRY_EXTENSION_RELEASE_BASE: 'http://127.0.0.1:1/releases',
+})
+assert.equal(c8.code, 0, `github 通道降级应 exit 0,实际 ${c8.code}\n${c8.out}`)
+assert.ok(c8.out.includes('GitHub Releases 下载通道'), '应打印 github 通道标题')
+assert.ok(c8.out.includes('降级包内副本'), '失败应显式降级 bundled')
+const c8b = runBootstrap(['--check-only', '--extension-from=不合法值', '--auto'], {
+  GOTRY_SETUP_HBCLI: '0', GOTRY_SETUP_REACH: '0', GOTRY_SETUP_SIDEBAR: '0',
+})
+assert.equal(c8b.code, 0, `非法 --extension-from 值应回落 bundled 且 exit 0,实际 ${c8b.code}\n${c8b.out}`)
+assert.ok(!c8b.out.includes('下载通道'), '非法值不应进入 github 通道')
+console.log('8. 扩展分发 github 通道(不可达基址即时降级 + 非法值回落 bundled)OK')
+
+console.log('BOOTSTRAP TESTS: 8/8 OK(探测报告/跳过开关/单项开关/postinstall 非致命/会话扩展/wizard --dry-run/wizard 真实/扩展分发通道)')
