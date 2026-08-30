@@ -14,8 +14,10 @@ import { getOrCreateSessionBridge, type SessionJobHandle } from './extension-bri
 
 /** 一次性用户门文案(needs-extension 统一指引,与 bootstrap setupExtension 输出同口径) */
 export const NEEDS_EXTENSION_HINT =
-  '需要一次性安装 GoTry Session Bridge 浏览器扩展(约 30 秒,装完零弹窗):跑 npx gotry setup 拿指引,'
-  + '或在 chrome://extensions 开发者模式「加载已解压的扩展程序」指向 ~/.gotry/extension'
+  '需要一次性安装 GoTry Session Bridge 浏览器扩展(约 30 秒,装完零弹窗):'
+  + '推荐 npx gotry setup --extension-from=github(GitHub Releases 自动下载落位 ~/.gotry/extension),'
+  + '或手动下载 github.com/Danceiny/gotry/releases(标签 ext-* 的 gotry-session-bridge.tar.gz)解压后,'
+  + '在 chrome://extensions 开发者模式「加载已解压的扩展程序」指向解压目录'
 
 export type BridgeFailureKind = 'bridge-unavailable' | 'extension-not-connected' | 'timeout' | 'job-error'
 

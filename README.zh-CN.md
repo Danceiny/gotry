@@ -131,7 +131,7 @@ GoTry: 收到。先把约束记下来——
 3. **物理只读** —— ReadGuard 在网络层中止一切写请求(下单/支付在传输层不可达),agent 永不接触凭证与验证码;遇到验证码立即停,交还给你。
 4. **绝不劫持你的浏览器** —— 检索/登录只开自己的独立标签页,登录页置前台、留在你那;例行动测试永不自动开浏览器窗。
 
-> 前置(一次性):安装随包分发的 **GoTry Session Bridge** 浏览器扩展(MV3,约 30 秒):跑 `npx gotry setup` 落位到 `~/.gotry/extension`,再到 Chrome `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」选该目录。装完**零系统弹窗**——扩展只被动转发站点自己发出的检索响应(构造上只读;cookie 只读名字,值永不离开浏览器)。未安装时工具返回 `needs-extension` 并给出指引,不消耗执行配额。(诊断后备:cdp 车道经 `chrome://inspect` 远程调试,`GOTRY_SESSION_TRANSPORT=cdp` 显式开启——注意 Chrome 144+ 每次连接都会弹权限框。)
+> 前置(一次性):安装随包分发的 **GoTry Session Bridge** 浏览器扩展(MV3,约 30 秒):跑 `npx gotry setup` 落位到 `~/.gotry/extension`(推荐 `--extension-from=github` 走 GitHub Releases 下载通道;手动下载: Releases 标签 `ext-*`),再到 Chrome `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」选该目录。装完**零系统弹窗**——扩展只被动转发站点自己发出的检索响应(构造上只读;cookie 只读名字,值永不离开浏览器)。未安装时工具返回 `needs-extension` 并给出指引,不消耗执行配额。(诊断后备:cdp 车道经 `chrome://inspect` 远程调试,`GOTRY_SESSION_TRANSPORT=cdp` 显式开启——注意 Chrome 144+ 每次连接都会弹权限框。)
 
 ---
 
