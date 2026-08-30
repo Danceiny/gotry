@@ -52,6 +52,16 @@ if (process.env.LLM_API_KEY && !process.env.DEEPSEEK_API_KEY) {
 if (process.env.LLM_BASE_URL && !process.env.DEEPSEEK_BASE_URL) {
   process.env.DEEPSEEK_BASE_URL = process.env.LLM_BASE_URL
 }
+// model 映射(issue #77):LLM_MODEL 显式存在时让它真正驱动 dsh 会话面——
+// ① 这里映射为 GOTRY_LLM_MODEL 传给 gotry-tools 插件,在 agent/request 瀑布做
+//    内存覆盖(dsh settings 用户层 ~/.dsh 压过 composition 层,单靠 patch 不够;
+//    覆盖零持久化,进程退即散,不改写用户设置);
+// ② 下方运行时 patch 追加两条 by-id 覆盖:agent-default-model 默认模型 +
+//    llm-deepseek 目录条目(web UI 模型页可见、元数据可记账)。
+// 不设 LLM_MODEL 则两条都不动——默认路径(组合配置或用户 web 设置)面不变。
+if (process.env.LLM_MODEL && !process.env.GOTRY_LLM_MODEL) {
+  process.env.GOTRY_LLM_MODEL = process.env.LLM_MODEL
+}
 
 // --- argv 解析 ---
 const args = process.argv.slice(2)
@@ -68,7 +78,7 @@ Usage:
 
 Prerequisites:
   • Node 22+
-  • \`.env\` 里 LLM_API_KEY (DeepSeek / OpenAI 兼容均可;自定义端点另配 LLM_BASE_URL,一般以 /v1 结尾)
+  • \`.env\` 里 LLM_API_KEY (DeepSeek / OpenAI 兼容均可;自定义端点另配 LLM_BASE_URL,一般以 /v1 结尾;指定模型另配 LLM_MODEL,同时驱动 dsh 会话面与仓内脚本)
 
 Detail: https://github.com/Danceiny/gotry — README
 `)
@@ -175,6 +185,17 @@ if (calEntry) {
   patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-calendar'/, `$1'${calEntry}'`)
 } else {
   patchRaw = patchRaw.replace(/\n\s*- id: dsh-calendar\n\s*name: 'placeholder\/dsh-calendar'\n/, '\n')
+}
+
+// LLM_MODEL 指定模型(issue #77)②:composition 层 by-id 覆盖。cordis patch 语义
+// (dsh-app-boot applyEntryPatches):非 insert 的 {id, ...overrides} 对目标条目做浅层
+// 键赋值,config 整体替换;id 不存在只 warn+skip 不崩(上游改名时优雅退化)。
+// 两条目标在 headless/web profile 均有(dsh-base 声明 llm-deepseek、两 profile 均声明
+// agent-default-model)。llm-deepseek 目录整体替换为单条目:显式指定模型的场景多为
+// 中转/兼容端点,默认 v4-* 目录对其是误导;不硬编码上游 DEFAULT_MODELS 防漂移。
+if (process.env.GOTRY_LLM_MODEL) {
+  const modelYaml = `'${process.env.GOTRY_LLM_MODEL.replace(/'/g, "''")}'`
+  patchRaw += `\n# LLM_MODEL 指定模型(issue #77):dsh 会话面默认模型 + 模型目录\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: ${modelYaml}\n- id: llm-deepseek\n  config:\n    models:\n      - id: ${modelYaml}\n        name: ${modelYaml}\n`
 }
 const patchPath = join(tmpdir(), `cordis.gotry.${process.pid}.yml`)
 writeFileSync(patchPath, patchRaw)
