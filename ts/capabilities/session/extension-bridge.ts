@@ -78,6 +78,14 @@ export interface SessionBridgeOptions {
   ports?: number[]
   extensionOrigin?: string
   now?: () => number
+  /**
+   * **保持桥进程钉住事件循环**(不 unref)。wizard 期间需要:扩展 SW 周期心跳
+   * ≤30s,unref 后 wizard main 一退桥就退,扩展再发心跳连不上 → 误判扩展未就绪。
+   * 真实 session 检索走单 job 流程,默认 unref=true(任何跑完主流程的宿主进程能退出)。
+   * run-all §40 onboarding-tests 用 keepBridge=true 验证 wizard 探活;
+   * §38 session 套件走默认 unref,语义不变。
+   */
+  keepBridge?: boolean
 }
 
 interface QueuedJob {
@@ -301,8 +309,12 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
   for (const p of ports) {
     try {
       await listenAt(p)
-      // 桥是后台服务:不得钉住事件循环——否则任何跑完主流程的宿主进程(如 smoke/CI)无法退出
-      server.unref()
+      if (!opts.keepBridge) {
+        // 桥是后台服务:不得钉住事件循环——否则任何跑完主流程的宿主进程(如 smoke/CI)无法退出
+        server.unref()
+      }
+      // keepBridge 模式下:wizard 期间要持续监听扩展心跳(30s 周期),
+      // 不 unref 让 server 钉事件循环,wizard main 退时再显式 close 释放。
       port = (server.address() as { port: number }).port
       bridge.port = port
       return { ok: true, bridge }

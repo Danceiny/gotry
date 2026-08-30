@@ -351,14 +351,26 @@ async function main(): Promise<void> {
     }
   })
 
-  await check('全链 no-spend:扩展车道无扩展 → sessionFlightSearch verdict=needs-extension(零花费,一次性安装指引)', async () => {
-    await __resetSessionBridgeForTest()
+  await check('全链 fail-closed:扩展车道桥端口池全占 → sessionFlightSearch verdict=error(环境故障,非用户门)', async () => {
+    // 设计契约:只有 extension-not-connected 才是 user gate (needs-extension);
+    // 端口池全占是环境故障(并行 gotry 实例/外部进程占端口)→ verdict=error,
+    // 不诱导用户去「装扩展」(装也解决不了)。
+    const { createServer } = await import('node:http')
+    const blockers: Array<{ close: () => Promise<void> }> = []
     try {
+      for (const port of [8791, 8792, 8793, 8794, 8795]) {
+        const s = createServer().listen(port, '127.0.0.1')
+        await new Promise<void>((r) => s.once('listening', () => r()))
+        blockers.push({ close: () => new Promise<void>((r) => s.close(() => r())) })
+      }
+      await __resetSessionBridgeForTest()
       const r = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01' })
-      assert.equal(r.verdict, 'needs-extension')
-      assert.ok(r.error?.includes('一次性安装'), '错误面必须带一次性安装指引')
+      assert.equal(r.verdict, 'error', `端口池全占应 error(环境故障),实 ${r.verdict}:${r.error}`)
+      assert.ok(r.error?.includes('端口池'), '错误面必须点明端口池环境问题')
+      assert.ok(!r.error?.includes('一次性安装'), 'error 路径不应诱导用户去装扩展')
     } finally {
       await __resetSessionBridgeForTest()
+      for (const b of blockers) await b.close()
     }
   })
 

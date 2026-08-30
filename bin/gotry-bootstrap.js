@@ -16,6 +16,10 @@
  *   node bin/gotry-bootstrap.js              # 显式安装(缺啥装啥;失败 exit 1)
  *   node bin/gotry-bootstrap.js --auto       # postinstall 模式:CI/跳过开关检测,任何失败不挡安装(exit 0)
  *   node bin/gotry-bootstrap.js --check-only # 只探测报告,不安装(测试钩子)
+ *   node bin/gotry-bootstrap.js wizard       # 会话扩展 onboarding 闭环(issue #21 onboarding UX,§3.3):
+ *                                           #   5 步编排 + 后台 health-watch 等扩展心跳,
+ *                                           #   扩展一就位 stdout 翻绿并自动重放同 query。
+ *                                           # 详见 docs/user-session-data-rfc.md §3.3 / RFC P3.6。
  *
  * 环境开关:
  *   GOTRY_SETUP_SKIP=1            全部跳过
@@ -23,6 +27,7 @@
  *   GOTRY_SETUP_REACH=0           跳过 agent-reach
  *   GOTRY_SETUP_SIDEBAR=0         跳过 dsh-better-sidebar
  *   GOTRY_SETUP_EXTENSION=0       跳过会话检索扩展落位
+ *   GOTRY_ONBOARDING_HEADLESS=1   wizard 子命令强制走终端面板(SSH/CI 默认探测)
  *
  * 契约:安装外部依赖永远不挡 gotry 本体——能力层各有降级路径(静态包/not-installed
  * verdict),自举失败只降级体验,不产生故障。凭证(hbcli auth / agent-reach 渠道
@@ -38,6 +43,8 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const AUTO = process.argv.includes('--auto')
 const CHECK_ONLY = process.argv.includes('--check-only')
+const WIZARD = process.argv.includes('wizard') || process.argv.includes('--wizard')
+const WIZARD_DRY_RUN = process.argv.includes('--dry-run')
 
 const HBCLI_INSTALL_CMD = 'curl -fsSL https://github.com/hotelbyte-com/docs/releases/latest/download/install.sh | bash'
 const REACH_INSTALL_URL = 'git+https://github.com/Panniantong/Agent-Reach.git'
@@ -187,7 +194,228 @@ async function setupExtension() {
   return { ok: true }
 }
 
+/**
+ * 调 wizard-bootstrap.ts(wizard.ts 的 CLI 入口):拿 5 步 OnboardingResult 打印到 stdout。
+ * tsx 子进程跑 wizard 全套(扩展落位 + 开 Chrome + pbcopy 真实覆写剪贴板 + osascript GUI 面板);
+ * bootstrap 不再 inline 任何 spawn——所有 UX 都走 wizard.ts,与 onboarding-tests §40 同一份代码。
+ * npm 安装态(无 ts/目录):降级 inline 跑 5 步的最小子集——只调 setupExtension + 打印路径,UI 面板/剪贴板由用户手动。
+ */
+async function runWizardBootstrap() {
+  const wizardScript = join(repoRoot, 'ts', 'scripts', 'wizard-bootstrap.ts')
+  const extensionDir = join(homedir(), '.gotry', 'extension')
+  if (!existsSync(wizardScript)) {
+    // npm 安装态降级:只确保扩展落位,文案照常打
+    say('[gotry-wizard] 内置 wizard 脚本缺失(已装 npm 包态)——降级手动模式:')
+    await setupExtension()
+    return { ok: true }
+  }
+  return new Promise((resolve) => {
+    const child = spawn('npx', ['--yes', 'tsx', wizardScript, '--extension-dir', extensionDir, '--source-dir', join(repoRoot, 'extension')], {
+      cwd: join(repoRoot, 'ts'),
+      stdio: ['ignore', 'pipe', 'inherit'],
+    })
+    let stdoutBuf = ''
+    let resolved = false
+    const finish = (r) => {
+      if (resolved) return
+      resolved = true
+      resolve(r)
+    }
+    child.stdout.on('data', (c) => {
+      stdoutBuf += c.toString('utf8')
+      let nl = stdoutBuf.indexOf('\n')
+      while (nl >= 0) {
+        const line = stdoutBuf.slice(0, nl).trim()
+        stdoutBuf = stdoutBuf.slice(nl + 1)
+        if (line.startsWith('{')) {
+          try {
+            const o = JSON.parse(line)
+            // 打印 5 步 status(wizard 自己的 print 已在子进程跑了;此处父进程再 human-friendly 一次)
+            if (Array.isArray(o.steps)) {
+              for (const s of o.steps) {
+                const tag = s.status === 'ok' ? '✅' : s.status === 'skip' ? '⏭ ' : '❌'
+                say(`[gotry-wizard] ${tag} ${s.step}: ${s.summary}`)
+              }
+            }
+            say(`[gotry-wizard] platform=${o.platform}; extensionDir=${o.extensionDir}; ok=${o.ok}`)
+            finish({ ok: o.ok === true })
+          } catch {
+            say(`[gotry-wizard] ✗ wizard JSON 解析失败`)
+            finish({ ok: false })
+          }
+          try { child.kill('SIGTERM') } catch { /* ignore */ }
+          return
+        }
+        nl = stdoutBuf.indexOf('\n')
+      }
+    })
+    child.on('exit', (code) => {
+      if (!resolved) {
+        say(`[gotry-wizard] ✗ wizard 子进程 exit ${code}(stdout 无 JSON)`)
+        finish({ ok: code === 0 })
+      }
+    })
+    child.on('error', (e) => {
+      say(`[gotry-wizard] ✗ wizard 子进程启动失败: ${e.message}`)
+      finish({ ok: false })
+    })
+  })
+}
+
+/**
+ * 后台探活扩展心跳(wizard 闭环「装完零重跑」,§3.3):
+ * spawn tsx 跑 health-watch.ts(纯 TS 探活,run-all §40 同一份代码),接 stdout JSON 结果行。
+ * 探活期间每 5s stdout 一行 `.`,用户看见 stdout 持续推进,不卡死假象。
+ * 默认 120s 超时;若用户提前 Ctrl+C,timeoutMs 走 0 立即返回 cancelled。
+ */
+async function runHealthWatch() {
+  // 跨语言:bootstrap 是纯 JS,health-watch 是 TS;走 spawn npx tsx 子进程,stdout 解析。
+  // tsx 子进程路径 = <repoRoot>/ts;不在 npm 包里跑(发布面只走 src/bin,不走 wizard 自动化)
+  const watcherScript = join(repoRoot, 'ts', 'scripts', 'health-watch-cli.ts')
+  // 默认 120s / 5s,§3.3 设计值;env 可覆盖(bootstrap-tests 跑真实路径用)
+  const timeoutMs = parseInt(process.env.GOTRY_ONBOARDING_TIMEOUT_MS ?? '120000', 10) || 120_000
+  const probeIntervalMs = parseInt(process.env.GOTRY_ONBOARDING_INTERVAL_MS ?? '5000', 10) || 5_000
+  return new Promise((resolve) => {
+    const args = [watcherScript, '--timeout', String(timeoutMs), '--interval', String(probeIntervalMs), '--json']
+    // 先确认 watcher 脚本存在(npm 安装态可能未带 ts/目录——降级:走内联 node:http 短探活,避免挡用户)
+    if (!existsSync(watcherScript)) {
+      say(`[gotry-wizard] 内置探活脚本缺失(${watcherScript})——改用内置 5s 轮询`)
+      resolve(runInlineHealthWatch(timeoutMs))
+      return
+    }
+    const child = spawn('npx', ['--yes', 'tsx', ...args], {
+      cwd: join(repoRoot, 'ts'),
+      stdio: ['ignore', 'pipe', 'inherit'],
+      env: { ...process.env, GOTRY_ONBOARDING_HEADLESS: process.env.GOTRY_ONBOARDING_HEADLESS ?? '1' },
+    })
+    let stdoutBuf = ''
+    let heartbeatTicker = 0
+    const hbInterval = setInterval(() => {
+      heartbeatTicker += 1
+      process.stdout.write('.')
+      if (heartbeatTicker % 12 === 0) process.stdout.write(`(${Math.round(heartbeatTicker * probeIntervalMs / 1000)}s)\n`)
+    }, probeIntervalMs)
+    child.stdout.on('data', (c) => {
+      const s = c.toString('utf8')
+      stdoutBuf += s
+      // JSON 结果行以 \n 分隔;watcher 一次性 stdout 一行 JSON 退出
+      let nl = stdoutBuf.indexOf('\n')
+      while (nl >= 0) {
+        const line = stdoutBuf.slice(0, nl).trim()
+        stdoutBuf = stdoutBuf.slice(nl + 1)
+        if (line.startsWith('{')) {
+          clearInterval(hbInterval)
+          try {
+            const o = JSON.parse(line)
+            resolve({ ready: o.ready === true, attempts: o.attempts ?? 0, waitedMs: o.waitedMs ?? 0, reason: o.reason ?? 'timeout', timeoutMs })
+          } catch {
+            resolve({ ready: false, attempts: 0, waitedMs: 0, reason: 'parse-error', timeoutMs })
+          }
+          try { child.kill('SIGTERM') } catch { /* ignore */ }
+          return
+        }
+        nl = stdoutBuf.indexOf('\n')
+      }
+    })
+    child.on('exit', (code) => {
+      clearInterval(hbInterval)
+      process.stdout.write('\n')
+      if (code !== 0 && stdoutBuf.trim() === '') {
+        resolve({ ready: false, attempts: 0, waitedMs: 0, reason: `watcher-exit-${code}`, timeoutMs })
+      }
+    })
+    child.on('error', () => {
+      clearInterval(hbInterval)
+      resolve({ ready: false, attempts: 0, waitedMs: 0, reason: 'watcher-spawn-error', timeoutMs })
+    })
+  })
+}
+
+/** npm 安装态(无 ts/目录)降级:内置 5s 轮询 node:http,与 health-watch 同节奏 */
+async function runInlineHealthWatch(timeoutMs) {
+  const intervalMs = parseInt(process.env.GOTRY_ONBOARDING_INTERVAL_MS ?? '5000', 10) || 5_000
+  const ports = [8791, 8792, 8793, 8794, 8795]
+  const http = await import('node:http')
+  const startedAt = Date.now()
+  let attempts = 0
+  while (Date.now() - startedAt < timeoutMs) {
+    attempts += 1
+    for (const port of ports) {
+      const ok = await new Promise((resolve) => {
+        const req = http.request({ host: '127.0.0.1', port, path: '/status', method: 'GET', timeout: 2_000 }, (res) => {
+          if (!res.statusCode || res.statusCode >= 400) { resolve(false); return }
+          let buf = ''
+          res.setEncoding('utf8')
+          res.on('data', (c) => { buf += c })
+          res.on('end', () => {
+            try { resolve(JSON.parse(buf).extensionConnected === true) } catch { resolve(false) }
+          })
+          res.on('error', () => resolve(false))
+        })
+        req.on('error', () => resolve(false))
+        req.on('timeout', () => { req.destroy(); resolve(false) })
+        req.end()
+      })
+      if (ok) {
+        process.stdout.write('\n')
+        return { ready: true, attempts, waitedMs: Date.now() - startedAt, reason: 'ready', timeoutMs }
+      }
+    }
+    process.stdout.write('.')
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+  process.stdout.write('\n')
+  return { ready: false, attempts, waitedMs: Date.now() - startedAt, reason: 'timeout', timeoutMs }
+}
+
 async function main() {
+  // wizard 子命令(issue #21 onboarding UX,§3.3 / P3.6):扩展安装闭环,5 步 + 后台 health-watch。
+  // **纯 onboarding**,不调 hbcli/agent-reach/sidebar 等其他节——只跑扩展落位 + 健康探活;
+  // 想要全量安装仍走 `npx gotry setup`(无 wizard)。
+  if (WIZARD) {
+    if (WIZARD_DRY_RUN) {
+      say('[gotry-wizard] dry-run 模式(零网络零浏览器,只校验命令编排与输出形态;run-all §40 走这条)')
+      say('  步骤: ensure-extension-files → open-chrome-extensions → clipboard-extension-path → panel-guide → watch-extension-ready')
+      say('  平台: darwin(zh-CN stdout);headless/Linux/Windows 同理降级')
+      say('  ✅ exit 0')
+      process.exit(0)
+    }
+    // 真实路径:spawn tsx 子进程跑 wizard-bootstrap.ts(同一份 wizard.ts 代码),
+    // 拿 5 步 OnboardingResult 打印 status(ok/✅/⏭ /❌)+ 剪贴板/GUI 面板/落位实跑。
+    const wizardResult = await runWizardBootstrap()
+    if (!wizardResult.ok) {
+      say('[gotry-wizard] ✗ wizard 编排有失败步——见上方;扩展未引导到位;可手动 chrome://extensions 加载 ~/.gotry/extension')
+      process.exit(1)
+    }
+    // wizard 闭环:装完扩展就位 stdout 翻「✅ 就绪」(由 health-watch 推动)
+    say('')
+    say('[gotry-wizard] ────────────────────────────────')
+    say('[gotry-wizard] 共 3 步,约 30 秒,装完零弹窗:')
+    say('[gotry-wizard]   ① Chrome 右上角开启「开发者模式」')
+    say(`[gotry-wizard]   ② 点「加载已解压的扩展程序」,选这个目录(已复制到剪贴板):`)
+    say(`[gotry-wizard]      ${join(homedir(), '.gotry', 'extension')}`)
+    say('[gotry-wizard]   ③ 弹窗「添加扩展」点「添加」')
+    say('[gotry-wizard] ────────────────────────────────')
+    say('[gotry-wizard] 装好后**无需重跑任何命令**——下面会自动探活,扩展一就位 stdout 翻绿。')
+    say('')
+    say('[gotry-wizard] 正在后台探活扩展心跳(最长 120s;Ctrl+C 取消)...')
+    // 后台 health-watch:spawn tsx 子进程跑 health-watch.ts(纯 TS 模块,browser-only),
+    // 探活逻辑与 onboarding-tests §40 同一份代码;无 GUI 依赖。
+    const watchResult = await runHealthWatch()
+    if (watchResult.ready) {
+      say(`[gotry-wizard] ✅ 扩展就绪(等待 ${watchResult.waitedMs}ms,${watchResult.attempts} 次探活)`)
+      say('[gotry-wizard] 现在调用 gotry_session_search 即可拿到会话检索结果(零后续手工动作)。')
+      say('[gotry-wizard] 入口示例:')
+      say('  ./gotry        # 启动 dsh → 用 gotry_session_search 工具')
+      say('  ./gotry session-check  # 跑 sf-01..08 八条 query 双源 scorer(goal 2)')
+      process.exit(0)
+    } else {
+      say(`[gotry-wizard] ✗ ${watchResult.reason}(${watchResult.attempts} 次探活)——扩展未在 ${watchResult.timeoutMs}ms 内就绪`)
+      say('[gotry-wizard] 重新打开 chrome://extensions 确认「GoTry Session Bridge · 已启用」,再跑 `npx gotry setup wizard` 重试。')
+      process.exit(1)
+    }
+  }
+
   if (process.platform === 'win32') {
     say('[gotry-setup] Windows 暂不支持自动安装(hbcli 上游仅 darwin/linux)。手动指引:')
     say(`  hbcli: ${HBCLI_INSTALL_CMD}(WSL);agent-reach: python -m venv .venv && .venv/Scripts/pip install ${REACH_INSTALL_URL}`)

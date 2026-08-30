@@ -140,7 +140,36 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 依赖:传输层自身**零新依赖**(扩展=纯 JS 零构建;桥=node:http 手写,不引 ws——MV3 SW 靠 ≤20s 长轮询节奏维持存活,HTTP 够用;publish-preverify 依赖声明闸亦不允许偷用传递依赖);cdp 后备车道保留 puppeteer-core 可选依赖(动态 import 缺包优雅降级)。
 
-### 3.3 ReadGuard(写操作的物理不可能性,不只是承诺)
+### 3.3 Onboarding UX(2026-08-30 founder 补设计)
+
+**目标**:从「从未接触过 gotry 的用户」到「session 检索第一次拿到 hit」,需要做的非 gotry 侧动作 ≤ **3 次点击 + 0 次终端命令**(chrome://extensions 的「开开发者模式」+「加载已解压」+ 信任弹窗「添加扩展」;携程登录在 gotry 弹出的标签里,登录后 0 后续点击)。
+
+**反例(本 RFC 上版的隐性状态)**:5 次点击 + 1 个原生文件对话框 + 跨 app 切换(终端→Chrome) + 装完还要自己重跑 sf 命令验证。「能装」与「装到能用」之间缺一整段 UX。
+
+**四块组件**(2026-08-30 立项,即 gotry-session-onboarding-goal):
+
+1. **`npx gotry setup wizard` 单命令闭环**:步骤化 stdout 输出 + 自动复制扩展路径到剪贴板(`pbcopy`,非 macOS 降级 `xclip`/stdout)+ `open -a "Google Chrome" "chrome://extensions/?..."` 直达页面;health-watch 后台轮询,扩展心跳一就位 stdout 自动翻绿。
+2. **健康检查 + 自动重放(health-watch)**:首次 `sessionFlightSearch` 遇 `needs-extension` 时,默认启动 ≤120s 有界后台轮询(`intervalMs=5000`),扩展一就位**自动重放同一 query_id 同一参数**——用户装完无需自己重跑命令。超时再返回 `needs-extension` 错误。**`sessionFlightSearch({immediate:true})` 显式 opt-out,跳过 watch**。
+3. **原生引导面板(headless 跨平台降级到终端)**:macOS 走 `osascript` 弹 Cocoa 引导面板(标题/步骤序号/下一步高亮/已复制提示/「我做完了」按钮),叠在 Chrome 上方;Linux/Windows 走 `zenity`/`msg`;无 GUI 环境(headless/CI/SSH)降回终端面板,文案与按钮形态不变。**不引入 Electron / Webview**,遵守 gotry 零 GUI 依赖面纪律。
+4. **`npx gotry setup verify` 验收入口**(goal 2 = sf-live-benchmark 入口,本 RFC 不包含,但 §4 落地表登记):goal 1 exit(扩展心跳 + 登录态只读 cookie 名)→ goal 2 才能跑。
+
+**离线合同(测试可固化,run-all §40)**:
+
+- (1) `gotry setup wizard --dry-run` 零网络零浏览器,只校验命令输出与退出码
+- (2) health-watch 三时序分支:0ms ready / 5s ready(中途 ready)/ 120s+1ms 超时
+- (3) `pbcopy`/`osascript` 在非 macOS / 缺工具时优雅降级到 stdout,不挡主流程
+- (4) 单条 query 的 retry-after-watch:watch 内 ready → 自动重放同一 query_id,产物命中同一 evidence 文件
+- (5) wizard 在无 Chrome 环境走 terminal 降级面板,exit 0 不弹原生窗口
+
+**与现有约束的勾稽**:
+
+- §3.2 传输层零新依赖纪律:osascript/zenity 走 `child_process` 异步 spawn,不引入 npm 包;剪贴板走 `pbcopy`/`xclip` 命令式调用,不引 clipboardy
+- §3.3 ReadGuard 不变:onboarding 不碰任何 cookie 值,只验证扩展心跳与登录态 cookie 名存在性
+- §3.4 授权闸 v2:onboarding 完成后首条 session 检索仍过 `tools/pre-execute` (session-consent.ts) 审批卡一次——onboarding 只解决「能跑」,不替代「会话内明示授权」
+- §2.4 合规四支柱:「随时可关」门加倍——扩展卡片开关 + `GOTRY_SETUP_EXTENSION=0` + `sessionAccess: off` 三重
+- §6 复用矩阵同步:`browser-use | — | 明确不引入(Python 违纪,且其隔离 Chromium ≠ 用户桌面 Chrome,装不到目标扩展,假象)`——把「为什么用 browser-use 也装不了扩展」写明,免得反复来问
+
+### 3.4 ReadGuard(写操作的物理不可能性,不只是承诺)
 
 1. **网络层**:CDP Fetch/Network 域拦截——deny-list(POST/PUT/DELETE + URL 模式 `/order|/pay|/submit|/trade|/booking`)命中即 abort 请求并落盘审计(`session-incidents.jsonl`,对齐 incident-log 惯例);
 2. **DOM 层**:提交类按钮(role=button 且文本命中 下单/支付/预订/提交订单)从 a11y 快照中**直接剔除**——模型根本看不到可点击的提交件;
@@ -156,7 +185,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 **人机共治标签页纪律(2026-08-29)**:检索与登录引导一律开**独立新标签页**(登录页置前台、留在用户侧),绝不导航用户既有标签页——浏览器属于用户,我们只动自己开的页(扩展车道:检索后台标签收尾自动关、登录标签留给用户;CDP 车道:收尾只关自己的页+断开连接);live 探针默认关(`GOTRY_SESSION_LIVE=1` opt-in),测试永不自动开窗。
 
-### 3.4 节律与熔断(把「像人」做成代码)
+### 3.5 节律与熔断(把「像人」做成代码)
 
 - 站内查询间隔 ≥30s、单会话 ≤10 次、日上限可配(`GOTRY_SESSION_*` 环境变量);
 - 检测到滑块/验证码/风控跳转:**立即熔断 + 冷却 + 通知用户人工处理**——绝不重试、绝不绕过(合规支柱②);
@@ -164,11 +193,11 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 - **登录 bootstrap 真脚本(2026-08-29)**:`scripts/session-login.ts`——attach 用户日常 Chrome → 打开登录入口标签 → 人登录 → 只读轮询票据 cookie 名(不读值不碰凭证),`needs-login` 文案指向它;**测试永不自动开浏览器窗口**(session-tests live 节 GOTRY_SESSION_LIVE=1 opt-in——founder 反馈「匿名窗口反复打开携程/界面闪退」= 测试骚扰,当日根治);
 - 专用 profile 首发不落 cookie 库;登录永由用户人工完成(agent 不碰密码/OTP/验证码,对齐 Operator 的 takeover 模式与总纲 3.5「敏感信息模型永不接触」)。**2026-08-28 founder 纠偏落地:「打开浏览器必须有登录态,不能是匿名实例」**——默认 profile 挪 `~/.gotry/session-profile`(持久,登录态不丢);`sessionFlightSearch` 登录闸:匿名默认拒(verdict=`needs-login`),`scripts/session-login.ts` 首登 bootstrap(人工登录,轮询票据 cookie);`allowAnonymous` 仅限链路自检且证据链标 `anonymous=自检态`。远期若需 profile 迁移:AES-GCM 落盘 + 密钥进 OS keychain(macOS `security`/Windows DPAPI/Linux libsecret;keytar 已死不用),0600 权限。
 
-### 3.5 注入防护
+### 3.6 注入防护
 
 页面文本进 LLM 前统一包不可信围栏(`<<UNTRUSTED_PAGE_CONTENT>>`,指令剥离 + 长度上限);检索任务携带结构化意图 {site, query, fields},解析输出过 Zod schema,超纲字段丢弃;结果卡片渲染前二次校验(价格/时刻格式与 sanity 范围)。
 
-### 3.6 数据边界(与共享经验层的防火墙)
+### 3.7 数据边界(与共享经验层的防火墙)
 
 会话检索结果**只存在于当前会话上下文与本地缓存(TTL 短,仅去重用)**;M4 经验回流/愿望池**不得引用会话原始数据**,只允许用户确认过的断言级结论(「十一大理机票 ¥1600 级」)且不含账号可归因信息。这条进 memory-utility 的 merge 守门 P0 断言。
 
@@ -183,6 +212,8 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 | **P2 面上** ◐ 2026-08-28 主体完成(余项待登录态) | action-cache 自愈层 ✅(run-all §26);美团适配器骨架+a11y 兜底抽取器 ✅(§27;**匿名 403 实测——登录态是 403 级硬前置,networkHint 待登录后回填**);金标准 20 查询集 ✅ + flyai 基线 ✅(fa-01..04:e2e §14,含 miss 三值活例与火车价打码发现);**#21 字段 fixture scorer/双源合同/waiting-attach no-spend ✅**(`session/benchmark.ts`,run-all §25);飞猪无需会话适配器(FlyAI 官方覆盖);真实 sf-01..08 字段级 ≥90% 跑批仍待登录态 | fixture 合同已纳入确定性回归;真实跑批仍需 Chrome 权限确认和 CDP 握手 | 2-3 tick(实用 3 tick) |
 | **P3 产品化** ◐ 2026-08-28 切片 1/2 完成 | `gotry_flyai_search`+`gotry_session_search` 双工具 ✅(17 工具,smoke §12,hit/限流双合法终态);人格契约 **(19) 三级路由** ✅(仓根 yml,直达/中转分桶);e2e §14 实证记录 ✅;architecture §1/§3/§10、data-sources §8、roadmap ✅,README 无工具清单免同步,stage1 显式让渡;run-all §25-27 全绿 | 真模型 e2e **flyai 侧 ✅**(e2e §15,8ddb997:真模型实际调用 flyai 工具,三源证据链并存,多 lane 协同实证);**待登录态**:真模型 e2e session 侧一例 + 双源 sf-01..08 跑批(风控触发次数=0 实测期口径同此) | 2 tick(实用 2 tick) |
 | **P3.5 传输层定案:扩展桥** ✅ **2026-08-30 完成(方案 C 升 PRIMARY)** | **动因(founder 实测)**:「Chrome attach 逐连接权限框太频繁,根本无法使用」——chrome-devtools-mcp #825 实锤 Chrome 144+ 每连接弹框且无持久化批准,CDP 路线对产品不可用。落地:`extension/` GoTry Session Bridge(MV3 四文件零构建,manifest 固定 key=扩展 ID 稳定;SW 长轮询;MAIN-world 嗅探;cookie-names 只取名字)+ `session/extension-bridge.ts`(node:http 回环桥,零新依赖,origin 白名单,长轮询 <20s 维持 SW 存活)+ `extension-channel.ts` 三 job 封装 + session-search/login 车道路由(扩展默认,cdp 显式 `GOTRY_SESSION_TRANSPORT=cdp`,不静默回退)+ `gotry setup` 扩展落位(~/.gotry/extension,幂等,GOTRY_SETUP_EXTENSION=0 可跳) | 系统弹窗 0 次/会话;run-all §38 全离线合同 23 断言(manifest/固定 ID 派生/Node↔扩展常量防漂移/origin 403/长轮询幂等/心跳/闭环/超时/needs-extension no-spend/waiting_extension);bootstrap-tests 5/5;会话面既有套件全绿;真实 sf-01..08 双源跑批待用户一次性装扩展后收尾(门禁从「开调试端口+每连接点框」降为「装一次扩展」) | 1 tick |
+| **P3.6 Onboarding UX 闭环** ◐ **2026-08-30 立项(gotry-session-onboarding-goal)** | **动因(founder 实测)**:「能装」≠「装到能用」——上版隐性状态要求 5 次点击 + 1 个原生文件对话框 + 跨 app 切换 + 装完还要自己重跑命令,本批降至 **3 次点击 + 0 次终端命令**。落地:`npx gotry setup wizard` 单命令闭环(pbcopy 复制扩展路径 + open 直达 chrome://extensions + 后台 health-watch 自动翻绿);`health-watch`(≤120s 有界后台轮询,扩展一就位**自动重放同一 query**,用户零手工重跑);原生引导面板(macOS osascript / Linux zenity / Windows msg / headless 终端降级,**不引 Electron**);`GOTRY_SETUP_EXTENSION=0` + `sessionAccess: off` + 扩展卡片三重总闸 | run-all §40 onboarding-tests 5/5(--dry-run 零网络 / health-watch 三时序 / 剪贴板+原生面板跨平台降级 / retry-after-watch 同 query_id 重放 / wizard 无 GUI 降终端);bootstrap-tests 增 wizard 节;六状态面同步。**前置依赖**:P3.5 已 ✅;**后续 goal**:sf-live-benchmark-goal(八条 query + 双源 scorer,本 RFC 不包含) | 2 tick |
+
 
 依赖与并行:P0 可即刻开始(不等 M4 记忆域);P1 起与 M4 交替推进,不挤占 M4 主线(会话面是数据域增量,与记忆域正交)。
 
@@ -207,7 +238,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 ## 6. 与仓库纪律的勾稽
 
-- **复用矩阵修订提案**(总纲 §2 新行):`@fly-ai/flyai-cli | MIT | import(npx spawn,零渠道知识管道层) | 飞猪官方只读检索通道(机/火/酒/POI),交易经 jumpUrl 由人完成`;`playwright-core | Apache-2.0 | import(devDep) | cdp 后备车道传输(Chrome 144+ 逐连接弹窗实测不可产品化,2026-08-30 降级为诊断/显式 opt-in)`;`Chrome Extensions MV3 平台 | 平台能力 | reference + 自研 | 会话传输主载 GoTry Session Bridge(extension/ 自研,2026-08-30 PRIMARY):一次性安装、MAIN-world 被动嗅探、固定 key 扩展 ID;playwright-mcp --extension 仅设计对照,不引代码`;`browser-use | — | 明确不引入(Python 违纪)`。
+- **复用矩阵修订提案**(总纲 §2 新行):`@fly-ai/flyai-cli | MIT | import(npx spawn,零渠道知识管道层) | 飞猪官方只读检索通道(机/火/酒/POI),交易经 jumpUrl 由人完成`;`playwright-core | Apache-2.0 | import(devDep) | cdp 后备车道传输(Chrome 144+ 逐连接弹窗实测不可产品化,2026-08-30 降级为诊断/显式 opt-in)`;`Chrome Extensions MV3 平台 | 平台能力 | reference + 自研 | 会话传输主载 GoTry Session Bridge(extension/ 自研,2026-08-30 PRIMARY):一次性安装、MAIN-world 被动嗅探、固定 key 扩展 ID;playwright-mcp --extension 仅设计对照,不引代码`;`browser-use | — | 明确不引入(Python 违纪,且其隔离 Chromium ≠ 用户桌面 Chrome,装不到目标扩展,假象替代)`;`osascript / zenity / msg | 平台原生 | reference | onboarding 引导面板(2026-08-30,§3.3);不引 Electron/Webview,保持零 GUI 依赖面`。
 - **红线进代码**:ReadGuard = WriteGate 的检索态前置;动机画像/wish pool 红线不动;`[会话:*]` 进 L4 证据链契约。
 - **状态同步**:P3 收尾按 architecture.md §11 六状态面同提交同步。
 - **巡检状态纪律**:所有会话面测试用隔离 stateRoot / 专用测试 profile,绝不动 founder 真实浏览器 profile 与 dsh-runtime 共享状态(2026-08-26 教训的会话版)。
