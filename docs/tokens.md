@@ -25,13 +25,15 @@ XHS_COOKIES=             # 小红书 Cookie-Editor JSON
 - `./scripts/publish-npm.sh` — `NPM_CONFIG_USERCONFIG` 指向仓内 `.npmrc.publish`(gitignored,.env 现生成),**不读写全局 ~/.npmrc**,不受 bnpm registry/prefix 影响;废弃旧脚本 `npm config set` 往全局写 token 的做法(污染日工作具 npmrc 的源头之一)
 - 实测全过程:whoami=danceiny 通过;`gotry` 裸名与既存 `go-try` 撞名(npm 新规)→ 改 scoped `@danceiny/gotry`;founder 开通 2FA(恢复码存 `~/work/npm_recovery_codes.txt`,已耗 4 枚);**恢复码可当 `--otp` 用**,最终 `npm publish --access public --otp=<恢复码>` → PUT 200 + public access。新包有 npm 安全审查滞留,PUT 200 后 view 可能 404 几分钟—几小时,属正常
 - **⚠️ 2026-08-28 rc.10 发布实况(覆盖旧流程)**:.env 的 legacy NPM_TOKEN 已失效(whoami 401);**恢复码作 --otp 已被 npm 拒收**(「需要 authenticator 的一次性密码」,两枚实测均拒)。可行路径 = ① web 登录:npm CLI 无 TTY 会落交互模式失败,须用 npm-profile 库级驱动(关键头 `npm-auth-type: web`,否则 registry 400 当 couch 登录)取真实 loginUrl → 浏览器 Approve → 会话 token 写 `.npmrc.publish`;② 发布时 EOTP 用 expect 包 PTY 跑 `npm publish`,otplease 自动开浏览器走 `auth/cli` 二次验证,Approve 后自动续发布成功。rc.10 即此路径发出
-- **以后每次发布**: `./scripts/publish-npm.sh --otp=<6位 authenticator 码或一枚恢复码>`;嫌烦可在 npmjs Access Tokens 建 Granular token(Allow bypass 2FA + Packages Read/Write)替换 .env 的 NPM_TOKEN → 无需 OTP
+- **⚠️ rc.15 发布实录(2026-08-29,#50③ 固化为标准发布动作)**:web 会话 token(`.npmrc.publish`,路径 A)可登录、可 whoami,但 **publish PUT 被账号级 2FA 拦截(EOTP→网页二次确认)**;npm 日志同时给出 deprecation 警告——bypass-2FA token 的 direct publish 正被收紧(<https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>,target 2027-01)。实走通路径 = **PTY 终端下 `npm publish`**(rc.10 起为 expect 包 PTY)→ otplib 弹网页授权 → **founder 浏览器点一次 Approve** → PUT 自动重试成功。**「发布 = 一次浏览器 approve,由 founder 点击」自此为标准动作**(已同步 AGENTS.md 发布闸)
+- **以后每次发布**: `TAG=latest ./scripts/publish-npm.sh`(dist-tag 必须显式传,#50①:旧默认 rc.5 曾把新包发到陈旧通道);凭据走路径 A web 会话——`--otp=<恢复码>` 已被 npm 拒收,granular bypass token(路径 B)在 npm 收紧通道上,均不作主路径
+- **dist-tag 维护(与发布同窗顺手做,#50②)**:dist-tag 写操作同样吃 2FA,窗口外单发会再触发一次授权(rc.15 发布时即因此未做)。登录会话仍活的窗口内执行:`npm dist-tag add @danceiny/gotry@<最新可用版> rc --registry=https://registry.npmjs.org/`;截至 2026-08-30 `rc` 仍滞留 rc.7,杂散 dist-tag(rc.5/rc.11/rc.12/rc.13/rc.14)待同窗清理
 - **⚠️ 登录时刻的三连批次**(2026-08-26 巡检发现,凭证就绪后一次做完):
   1. 发布 rc.8(工件 /tmp 就绪)
   2. `npm dist-tag add @danceiny/gotry@0.0.1-rc.8 latest` —— **latest 还指着 rc.5(坏包,缺 runtime)**,不带 @rc 的裸安装/npx 用户会中招
   3. `npm deprecate @danceiny/gotry@0.0.1-rc.5 "broken: missing runtime; use @rc"`
 - **路径 A(推荐)**: `./scripts/publish-npm.sh login` → 浏览器点一次 Approve → 会话 token 只写 .npmrc.publish → 再跑一次脚本即发
-- 路径 B: npmjs 网页建 granular token(允许 bypass 2FA + packages read-write)→ 存 .env 的 NPM_TOKEN
+- 路径 B(**收紧中,不作主路径**): npmjs 网页建 granular token(允许 bypass 2FA + packages read-write)→ 存 .env 的 NPM_TOKEN——npm 政策 target 2027-01 禁 bypass-2FA direct publish,rc.15 发布日志已见 deprecation 警告
 
 ### 你已给过的 token
 `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` → 已存 `.env` 的 `NPM_TOKEN`。
@@ -46,7 +48,7 @@ XHS_COOKIES=             # 小红书 Cookie-Editor JSON
 | `npm publish` | ❌ 403 | classic token 无 2FA 能力;需 web 会话或 bypass token |
 
 政策原文:<https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>
-direct publish 的 token 限制 target 2027-01;当前可行路径是**web 会话(推荐)**或 **Granular bypass token**。
+direct publish 的 token 限制 target 2027-01;主路径 = **路径 A web 会话(发布时 founder 一次浏览器 approve)**;Granular bypass token(路径 B)仍可用但已在退役轨道,中期迁移到路径 C OIDC。
 
 ### 路径 A:web 会话(最简,10 秒,无需生成任何 token)
 
@@ -71,7 +73,7 @@ npm login --auth-type=web --registry=https://registry.npmjs.org/
    - **勾选 "Allow token to bypass two-factor authentication"**(页面下方,不勾等于白建)
 4. 生成后复制 `npm_` 开头的串,贴给我 → 我写 `.env` → `./scripts/publish-npm.sh` 发
 
-### 路径 C(长期):GitHub Actions OIDC trusted publishing
+### 路径 C(中期主评估,#50③):GitHub Actions OIDC trusted publishing
 
 包首次发上去后,在 npmjs 包设置页关联 GitHub 仓库 + workflow,
 之后 CI 自动发布,**永久无 token 无 2FA**。首次发布前用不了——先走 A 或 B。
@@ -79,8 +81,8 @@ npm login --auth-type=web --registry=https://registry.npmjs.org/
 ### 发布脚本(已就位)
 
 ```sh
-./scripts/publish-npm.sh          # 读 .env 的 NPM_TOKEN
-NPM_TOKEN=npm_xxx ./scripts/publish-npm.sh   # 或临时注入
+TAG=latest ./scripts/publish-npm.sh                    # dist-tag 必须显式传(#50①);凭据优先用 .npmrc.publish 会话,回退 .env 的 NPM_TOKEN
+NPM_TOKEN=npm_xxx TAG=latest ./scripts/publish-npm.sh  # 或临时注入 token
 ```
 
 ---
@@ -142,5 +144,6 @@ NPM_TOKEN=npm_xxx ./scripts/publish-npm.sh   # 或临时注入
 
 | 日期 | 变更 |
 |---|---|
+| 2026-08-30 | #50:rc.15 网页批准发布实录固化为标准动作;路径 B 降级(收紧中)/路径 C 升中期主评估;新增 dist-tag 维护 runbook;发布命令改 TAG 显式传 |
 | 2026-08-24 | 立 v1:npm 三路径(A web 会话/B granular bypass/C OIDC)+ agent-reach 8 渠道获取表 + 统一 .env 存放 |
 | 2026-08-22 | 雪球行纠正:实测需 cookie(上游 check warn + configure 指引),非零门槛 |
