@@ -16,6 +16,8 @@
 - **勘误**:此前「registry 回拉实测全过」的记载不实(#50 勘误)——publish 实际未完成。
 - rc 逐版范围见下方「rc 序列总览」与 `release-notes.md`。
 
+Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures plus test-only aggregate admission; no adapter, external runner, Python runtime dependency, baseline, matched production evidence, or Agent uplift claim.
+
 ### 架构面增量(未随版本发布,主仓领先已发包形态)
 
 > 以下均为**工程面交付,不构成任何里程碑 Exit 证据**(D-20 口径)。
