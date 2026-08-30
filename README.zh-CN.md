@@ -19,6 +19,8 @@
 npx @danceiny/gotry web
 # 首跑会提示建 .env:LLM_API_KEY=<DeepSeek key 或 OpenAI 兼容 key>
 #   不走 DeepSeek 官方?再配一行 LLM_BASE_URL=<你的端点,一般以 /v1 结尾>
+#   要指定模型(中转而常需要)?配 LLM_MODEL=<模型名>——同时驱动 dsh 会话面
+#   (web/headless)与仓内脚本,并压过你在 dsh web 设置里选过的模型。
 # → 浏览器打开 http://127.0.0.1:3080,像聊天一样说「我想去大理三天」
 ```
 
@@ -30,7 +32,7 @@ npx @danceiny/gotry web
 | 🤖 脚本/一次性问答 | `npx @danceiny/gotry "我想从深圳休整两天,预算 3000"` |
 | 🛠️ 开发者:仓内运行 | 见下方[源码安装](#-快速开始) |
 
-- 前置:Node 22+;一个 LLM API key。任何 OpenAI 兼容端点(MiniMax/中转/自建网关)也可——在 `.env` 另配 `LLM_BASE_URL`(一般以 `/v1` 结尾,如 `https://api.minimax.io/v1`),请求即走它而非 DeepSeek 默认端点。零成本启动——dsh 运行时以 cordis patch 自动挂载,无额外配置。
+- 前置:Node 22+;一个 LLM API key。任何 OpenAI 兼容端点(MiniMax/中转/自建网关)也可——在 `.env` 另配 `LLM_BASE_URL`(一般以 `/v1` 结尾,如 `https://api.minimax.io/v1`),请求即走它而非 DeepSeek 默认端点。要锁定模型就配 `LLM_MODEL`(如 `MiniMax-M2`):对 dsh 会话面与仓内脚本同时生效,并压过 dsh web 设置里持久化的模型选择;不配则用 dsh 内置默认(`deepseek-v4-flash`)或你在 web 界面的选择。零成本启动——dsh 运行时以 cordis patch 自动挂载,无额外配置。
 - 例外提示:`:3080` 端口被占时先 `kill <PID>`;首启 6–15 秒属正常冷启动;异常退出会留证据到 `gotry-state/incidents.jsonl`(不静默)。
 
 <details>
@@ -39,7 +41,7 @@ npx @danceiny/gotry web
 ```bash
 git clone https://github.com/Danceiny/gotry && cd gotry
 cd ts/dsh-runtime && pnpm install && cd ../..    # ① vendored dsh 0.1.2-alpha.1(一次性)
-cp .env.example .env                              # ② 填 LLM_API_KEY(非 DeepSeek 官方另配 LLM_BASE_URL)
+cp .env.example .env                              # ② 填 LLM_API_KEY(非 DeepSeek 官方另配 LLM_BASE_URL;锁定模型另配 LLM_MODEL)
 ./gotry web                                       # ③ 仓内入口,同 npm 形态
 ```
 

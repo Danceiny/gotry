@@ -36,6 +36,7 @@ import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
 import { sessionLogin } from '../capabilities/session-login.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
+import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
@@ -192,6 +193,10 @@ export function apply(ctx: Context, config: Config): void {
       approval: approvalFromContext(ctx),
     }))
   }
+
+  // LLM_MODEL → dsh 会话面模型覆盖(issue #77;机制与分层见
+  // capabilities/model-override.ts 头注)。GOTRY_LLM_MODEL 未设时零行为变化。
+  installModelOverride(ctx as unknown as Parameters<typeof installModelOverride>[0])
 
   // D-NEW 收尾:全部工具 execute 统一异常隔离——单个工具抛错/拒绝不再沿 cordis
   // 传到 dsh 主循环,降级为结构化错误返回给 LLM + incident 落盘(incident-log.ts)。

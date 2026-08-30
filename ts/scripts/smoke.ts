@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply } from '../src/index.ts'
 import type { FlightFact } from '../src/bookable-facts.ts'
+import { installModelOverride, type AgentRequestConfig } from '../capabilities/model-override.ts'
 
 interface ToolLike {
   name: string
@@ -362,6 +363,35 @@ async function main() {
     const view = gate.presentResult?.({ query: {} }, blocked) as { title?: string }
     if (!view?.title?.includes('blocked')) throw new Error(`FAIL: blocked 呈现卡标题应含 blocked,实际:${view?.title}`)
     console.log(`fact gate: registry 1+1(hit/miss);verified 措辞 pass;miss 填充 UO784 blocked(not_in_source) + 呈现卡`)
+  }
+
+  // 17) LLM_MODEL 会话面覆盖(issue #77):未设 GOTRY_LLM_MODEL 不挂监听(默认路径
+  //     面不变);设了则 agent/request 瀑布 post-next 覆盖 provider/model 并清掉继承
+  //     effort——用户层(~/.dsh)选择被显式 .env 意图压过,内存态零持久化
+  {
+    // 17a 未设环境变量 → 不挂监听(默认面不变)
+    const none: Array<unknown> = []
+    const ctxNone = { on: (_e: string, fn: unknown) => { none.push(fn) } }
+    if (installModelOverride(ctxNone, {}) !== false || none.length !== 0) {
+      throw new Error('FAIL: 未设 GOTRY_LLM_MODEL 时不得挂 agent/request 覆盖')
+    }
+    // 17b 无事件总线的极简宿主 → false 而非抛错
+    if (installModelOverride({}, { GOTRY_LLM_MODEL: 'MiniMax-M2' }) !== false) {
+      throw new Error('FAIL: 无事件总线宿主应返回 false 而非抛错')
+    }
+    // 17c 设定 → 覆盖生效且清继承 effort(其余请求字段原样保留)
+    const listeners: Array<(p: unknown, next: () => Promise<AgentRequestConfig>) => Promise<AgentRequestConfig>> = []
+    const ctxOn = { on: (_e: string, fn: (p: unknown, next: () => Promise<AgentRequestConfig>) => Promise<AgentRequestConfig>) => { listeners.push(fn) } }
+    if (installModelOverride(ctxOn, { GOTRY_LLM_MODEL: 'MiniMax-M2' }) !== true || listeners.length !== 1) {
+      throw new Error('FAIL: 设定 GOTRY_LLM_MODEL 后应挂恰好一条 agent/request 覆盖')
+    }
+    const inner = async () => ({ provider: 'deepseek-official', model: 'glm-5.3-flash', reasoningEffort: 'high', maxTokens: 4096 })
+    const overridden = await listeners[0](null, inner)
+    if (overridden.model !== 'MiniMax-M2' || overridden.provider !== 'deepseek-official'
+      || 'reasoningEffort' in overridden || overridden.maxTokens !== 4096) {
+      throw new Error(`FAIL: 覆盖结果不符预期:${JSON.stringify(overridden)}`)
+    }
+    console.log('model override: 未设不挂/无总线不抛/设定后压过用户层选择(glm-5.3-flash→MiniMax-M2)且清继承 effort')
   }
 
   rmSync(smokeRoot, { recursive: true, force: true })
