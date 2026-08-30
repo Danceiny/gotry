@@ -53,9 +53,22 @@ for (const f of ['manifest.json', 'background.js', 'content-main.js', 'content-b
   cpSync(join(SRC, f), join(STAGE, f))
 }
 
+// store 变体:剥离 manifest 的 key 字段——Chrome Web Store 实测(2026-08-30 首传)拒绝 key,
+// 商店自派扩展 ID(≠未打包/GitHub 通道的固定 ID);tar.gz 不受影响,保留 key 保通道 ID 不变量
+const STAGE_STORE = join(OUT, 'gotry-session-bridge-store')
+mkdirSync(STAGE_STORE, { recursive: true })
+for (const f of ['manifest.json', 'background.js', 'content-main.js', 'content-bridge.js', 'README.md']) {
+  cpSync(join(SRC, f), join(STAGE_STORE, f))
+}
+{
+  const m = JSON.parse(readFileSync(join(STAGE_STORE, 'manifest.json'), 'utf8'))
+  delete m.key
+  writeFileSync(join(STAGE_STORE, 'manifest.json'), `${JSON.stringify(m, null, 2)}\n`)
+}
+
 must('tar', ['-czf', join(OUT, ASSET_TARBALL), '-C', OUT, 'gotry-session-bridge'], 'tar.gz 打包')
 // store zip:manifest 必须在 zip 根(Chrome Web Store 上传要求);tar.gz 才带顶层目录约定
-must('zip', ['-r', '-q', join(OUT, ASSET_STORE_ZIP), '.'], 'store zip 打包', STAGE)
+must('zip', ['-r', '-q', join(OUT, ASSET_STORE_ZIP), '.'], 'store zip 打包', STAGE_STORE)
 
 const sha256 = (p) => createHash('sha256').update(readFileSync(p)).digest('hex')
 let commit = ''
