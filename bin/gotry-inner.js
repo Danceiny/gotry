@@ -6,7 +6,7 @@
  *   gotry help                         # help
  *
  * 工作流程:
- *   1. 解析 argv + .env(provider-neutral → DEEPSEEK_API_KEY)
+ *   1. 解析 argv + .env(provider-neutral → DEEPSEEK_API_KEY/DEEPSEEK_BASE_URL)
  *   2. 定位 dsh runtime:
  *      a. repo checkout → vendored ts/dsh-runtime/node_modules/...
  *      b. npm 安装     → createRequire 解析依赖 @deepseek-ai/dsh(不走 npx:
@@ -46,6 +46,12 @@ for (const line of envLines) {
 if (process.env.LLM_API_KEY && !process.env.DEEPSEEK_API_KEY) {
   process.env.DEEPSEEK_API_KEY = process.env.LLM_API_KEY
 }
+// base 同点映射(issue #48):dsh 侧 llm-deepseek 读 DEEPSEEK_BASE_URL 并拼
+// `${base}/chat/completions`(与 ts/src/dsh-llm.ts 同语义,自定义端点一般含 /v1);
+// 只映射 key 不映射 base 时,OpenAI 兼容 key 会被发往 DeepSeek 官方端点必然 401。
+if (process.env.LLM_BASE_URL && !process.env.DEEPSEEK_BASE_URL) {
+  process.env.DEEPSEEK_BASE_URL = process.env.LLM_BASE_URL
+}
 
 // --- argv 解析 ---
 const args = process.argv.slice(2)
@@ -62,7 +68,7 @@ Usage:
 
 Prerequisites:
   • Node 22+
-  • \`.env\` 里 LLM_API_KEY (DeepSeek / OpenAI 兼容均可)
+  • \`.env\` 里 LLM_API_KEY (DeepSeek / OpenAI 兼容均可;自定义端点另配 LLM_BASE_URL,一般以 /v1 结尾)
 
 Detail: https://github.com/Danceiny/gotry — README
 `)

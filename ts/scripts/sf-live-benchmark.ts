@@ -3,15 +3,16 @@
  * ——pluggable golden 版:
  *
  * 之前版本绑 flyaiSearch 失败(Trial limit reached);本版改 pluggable:
- *   - 默认 official = 手工 golden(数据/sf-golden-manifest.json 公开班期 + 价格带,零网络零 vendor)
- *   - 可选 --golden=flyai / --golden=hbcli 显式切换(FlyAI 走 flyaiSearch / hbcli 走 hotelbyte-cli)
+ *   - 默认 comparator = 手工 golden(data/sf-golden-manifest.json 时间/价格带,零网络零 vendor)
+ *   - 可选 --golden=flyai / --golden=static 显式切换；未知 vendor 在网络调用前 fail-closed
+ *   - static = OpenFlights 固定 route/carrier 快照 + manual 时间/价格带；估算字段与回退原因显式落证据
  *   - 字段评分改软命中:硬字段(query_id/from/to/currency/source/verdict)必中,软字段
  *     (transport_number/departure_at/arrival_at/price)落在窗口内算 correct
  *
  * 与 ts/scripts/session-benchmark.ts 的关系:session-benchmark.ts 是离线 fixture 自测
  * (13/18 字段黄金 + 双源合同纯函数断言);sf-live-benchmark.ts 是真网络真扩展端到端。
  *
- * evidence 落盘:gotry-state/evidence/session/sf-XX/<ISO ts>.json(issue #21 私有证据)
+ * evidence 落盘:~/.gotry/evidence/session/sf-XX/<ISO ts>.json(issue #21/#67 私有证据)
  *
  * 退出码:0 = 跑完(即便部分 query miss);人类评审 evidence 决定 issue 是否可关
  */
@@ -22,12 +23,24 @@ import { homedir } from 'node:os'
 
 import {
   evaluateDoubleSource,
-  scoreSessionFixture,
   type SessionComparableRecord,
   SESSION_FIELD_ACCURACY_THRESHOLD,
 } from '../capabilities/session/benchmark.ts'
 import { sessionFlightSearch, type SessionSearchResult } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
+import {
+  loadStaticFlightSnapshot,
+  parseGoldenSource,
+  resolveStaticGolden,
+  type GoldenSource,
+  type StaticFlightSnapshot,
+  type StaticGoldenResolution,
+} from '../capabilities/session/static-flight-golden.ts'
+import {
+  scoreSessionAgainstGoldenBand,
+  type GoldenBand,
+  type GoldenSoftScore,
+} from '../capabilities/session/golden-score.ts'
 
 interface GoldenQuery {
   id: string
@@ -40,37 +53,11 @@ interface GoldenFile {
   queries: GoldenQuery[]
 }
 
-interface GoldenMatch {
-  query_id: string
-  from: string
-  to: string
-  date: string
-  window_dep_local: { earliest: string; latest: string }
-  window_arr_local: { earliest: string; latest: string }
-  duration_min: { min: number; max: number }
-  price_cny: { min: number; max: number }
-  transport_hint: string
-  known_flights: string[]
-}
+type GoldenMatch = GoldenBand
 interface GoldenManifest {
   comment: string
   threshold: number
   matches: GoldenMatch[]
-}
-
-interface SoftScoreResult {
-  pass: boolean
-  /** 软命中分母 = session 总字段数(13 字段直飞) */
-  total: number
-  /** 软命中分子 = 硬字段 + 窗口内软字段 */
-  correct: number
-  /** 软命中的精度 = correct / total */
-  accuracy: number
-  /** 透传字段缺失 / 字段超出窗口的明细(给人类评审) */
-  missing: string[]
-  incorrect: string[]
-  /** 来源标识,evidence 里能看到 golden 是哪个 vendor */
-  golden_source: string
 }
 
 /** 从 session-golden-20.json 拿 8 条飞行 query */
@@ -178,90 +165,19 @@ function emptyOfficialRecord(q: GoldenQuery, source: string): SessionComparableR
   }
 }
 
-/**
- * 软命中评分(替代 scoreSessionFixture 的 strict equal):
- * - 硬命中(必中):query_id / route_segments[0].from / .to / currency / source / verdict
- * - 软命中(窗口/子串):departure_at 在 ±60min 窗口内算 correct / arrival_at 同 / price 在 price_cny 带内 ±15% 算 correct / transport_number 包含任一 known_flights 子串算 correct
- */
-function softScore(session: SessionComparableRecord, m: GoldenMatch, goldenSource: string): SoftScoreResult {
-  const missing: string[] = []
-  const incorrect: string[] = []
-  const hard = ['query_id', 'currency', 'source', 'verdict'] as const
-  const seg0 = session.route_segments[0]
-  // 硬字段
-  for (const k of hard) {
-    if (session[k as keyof SessionComparableRecord] === undefined || session[k as keyof SessionComparableRecord] === '') missing.push(k)
-  }
-  if (!seg0) {
-    missing.push('route_segments[0]')
-  } else {
-    if (!seg0.from) missing.push('route_segments[0].from')
-    if (!seg0.to) missing.push('route_segments[0].to')
-    if (!seg0.departure_at) missing.push('route_segments[0].departure_at')
-    if (!seg0.arrival_at) missing.push('route_segments[0].arrival_at')
-    if (!seg0.transport_number) missing.push('route_segments[0].transport_number')
-  }
-  // 软字段(命中条件)
-  const softChecks: Array<{ path: string; ok: boolean; detail: string }> = []
-  if (seg0?.departure_at) {
-    const t = parseDepArrLocal(seg0.departure_at)
-    const ok = t !== null && t.dep >= parseHHmm(m.window_dep_local.earliest) && t.dep <= parseHHmm(m.window_dep_local.latest)
-    softChecks.push({ path: 'route_segments[0].departure_at', ok, detail: `${t?.depHHmm ?? '-'} ∈ [${m.window_dep_local.earliest},${m.window_dep_local.latest}]` })
-  }
-  if (seg0?.arrival_at) {
-    const t = parseDepArrLocal(seg0.arrival_at)
-    const ok = t !== null && t.arr >= parseHHmm(m.window_arr_local.earliest) && t.arr <= parseHHmm(m.window_arr_local.latest)
-    softChecks.push({ path: 'route_segments[0].arrival_at', ok, detail: `${t?.arrHHmm ?? '-'} ∈ [${m.window_arr_local.earliest},${m.window_arr_local.latest}]` })
-  }
-  if (seg0?.transport_number) {
-    const ok = m.known_flights.some((kf) => seg0.transport_number.toUpperCase().startsWith(kf.toUpperCase())) || m.known_flights.some((kf) => seg0.transport_number.toUpperCase().includes(kf.toUpperCase().slice(0, 2)))
-    softChecks.push({ path: 'route_segments[0].transport_number', ok, detail: `${seg0.transport_number} ≈ ${m.known_flights.join('|')}` })
-  }
-  if (session.price > 0) {
-    const margin = m.price_cny.max * 0.15
-    const ok = session.price >= (m.price_cny.min - margin) && session.price <= (m.price_cny.max + margin)
-    softChecks.push({ path: 'price', ok, detail: `¥${session.price} ∈ [¥${m.price_cny.min},¥${m.price_cny.max}] ±15%` })
-  }
-  // 总字段数 = 硬字段数 + 软检查数(分母全透明)
-  const hardFieldCount = hard.length + (seg0 ? 5 : 0) // from/to/dep/arr/transport_no
-  const total = hardFieldCount + softChecks.length
-  const hardCorrect = total - missing.length - incorrect.length - softChecks.filter((c) => !c.ok).length
-  const correct = hardCorrect
-  const accuracy = total > 0 ? correct / total : 0
-  for (const c of softChecks) if (!c.ok) incorrect.push(c.path)
-  return {
-    pass: missing.length === 0 && accuracy >= SESSION_FIELD_ACCURACY_THRESHOLD,
-    total,
-    correct,
-    accuracy,
-    missing: Array.from(new Set(missing)),
-    incorrect,
-    golden_source: goldenSource,
-  }
-}
-
-function parseHHmm(s: string): number {
-  const [h, m] = s.split(':')
-  return parseInt(h!, 10) * 60 + parseInt(m!, 10)
-}
-
-function parseDepArrLocal(s: string): { dep: number; arr: number; depHHmm: string; arrHHmm: string } | null {
-  // 接受 "2026-10-01 06:45:00" / "2026-10-01T06:45:00+08:00" 两种
-  const m = s.match(/(\d{2}):(\d{2})/)
-  if (!m) return null
-  const hh = parseInt(m[1]!, 10)
-  const mm = parseInt(m[2]!, 10)
-  return { dep: hh * 60 + mm, arr: hh * 60 + mm, depHHmm: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, arrHHmm: `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}` }
-}
-
 interface QueryRunRecord {
   query_id: string
   expected: { from: string; to: string; date: string; kind: string }
+  requested_source: GoldenSource
+  effective_source: string
+  fallback_reason: string | null
+  estimated_fields: string[]
+  official_provenance: StaticGoldenResolution['provenance'] | null
   official: SessionComparableRecord | null
   official_source: string
   session: SessionComparableRecord | null
   doubleSource: ReturnType<typeof evaluateDoubleSource>
-  softScore: SoftScoreResult | null
+  softScore: GoldenSoftScore | null
   officialLatencyMs: number | null
   sessionLatencyMs: number | null
   sessionVerdict: string
@@ -280,24 +196,56 @@ interface RunSummary {
   challenge: number
   no_data: number
   live_under_15s: number
+  requested_source: GoldenSource
+  effective_sources: string[]
+  fallback_count: number
   golden_source: string
   records: QueryRunRecord[]
 }
 
-async function runOne(q: GoldenQuery, officialSource: 'manual' | 'flyai', manifest: GoldenManifest): Promise<QueryRunRecord> {
+interface StaticContext {
+  snapshot?: StaticFlightSnapshot
+  error?: string
+}
+
+async function runOne(
+  q: GoldenQuery,
+  requestedSource: GoldenSource,
+  manifest: GoldenManifest,
+  staticContext: StaticContext,
+): Promise<QueryRunRecord> {
   const startedAt = new Date().toISOString()
   let official: SessionComparableRecord | null = null
   let officialLatencyMs: number | null = null
-  const officialSourceLabel = officialSource === 'manual' ? 'manual-golden' : 'flyai'
+  let effectiveSource = requestedSource === 'manual' ? 'manual-golden' : requestedSource
+  let fallbackReason: string | null = null
+  let estimatedFields: string[] = []
+  let officialProvenance: StaticGoldenResolution['provenance'] | null = null
 
-  if (officialSource === 'manual') {
+  if (requestedSource === 'manual') {
     const m = manualOfficial(q, manifest)
     official = m.record
     officialLatencyMs = m.latencyMs
-  } else {
+  } else if (requestedSource === 'flyai') {
     const r = await flyaiOfficial(q)
     official = r.record
     officialLatencyMs = r.latencyMs
+  } else {
+    const started = Date.now()
+    const manual = manualOfficial(q, manifest)
+    const resolution = resolveStaticGolden({
+      query: q,
+      manualRecord: manual.record ?? emptyOfficialRecord(q, 'manual-golden'),
+      snapshot: staticContext.snapshot,
+      snapshotError: staticContext.error,
+      warn: (message) => console.error(message),
+    })
+    official = resolution.record
+    officialLatencyMs = Date.now() - started
+    effectiveSource = resolution.effective_source
+    fallbackReason = resolution.fallback_reason ?? null
+    estimatedFields = resolution.estimated_fields
+    officialProvenance = resolution.provenance
   }
 
   // session = sessionFlightSearch(节律闸 ≥30s 由 caller sleep 35s 处理)
@@ -345,18 +293,23 @@ async function runOne(q: GoldenQuery, officialSource: 'manual' | 'flyai', manife
 
   const doubleSource = evaluateDoubleSource({ official: official ?? undefined, session: session ?? undefined })
 
-  // 软命中评分(只在 session hit 且 manual 有窗口时算)
-  let softResult: SoftScoreResult | null = null
+  // 字段准确率始终对照同一 manual band；provider 只改变 official 来源与 provenance。
+  let softResult: GoldenSoftScore | null = null
   const m = manifest.matches.find((x) => x.query_id === q.id)
-  if (session?.verdict === 'hit' && m && officialSource === 'manual') {
-    softResult = softScore(session, m, officialSourceLabel)
+  if (session?.verdict === 'hit' && m) {
+    softResult = scoreSessionAgainstGoldenBand(session, m, effectiveSource)
   }
 
   return {
     query_id: q.id,
     expected: { from: q.from, to: q.to, date: q.date, kind: q.kind },
+    requested_source: requestedSource,
+    effective_source: effectiveSource,
+    fallback_reason: fallbackReason,
+    estimated_fields: estimatedFields,
+    official_provenance: officialProvenance,
     official,
-    official_source: officialSourceLabel,
+    official_source: effectiveSource,
     session,
     doubleSource,
     softScore: softResult,
@@ -370,14 +323,27 @@ async function runOne(q: GoldenQuery, officialSource: 'manual' | 'flyai', manife
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
-  const officialSource: 'manual' | 'flyai' = args.includes('--golden=flyai') ? 'flyai' : 'manual'
+  const requestedSource = parseGoldenSource(args)
   const queries = loadFlightQueries()
   if (queries.length < 8) {
     console.error(`金标准 sf-* 不足 8 条(实际 ${queries.length})`)
     process.exit(1)
   }
   const manifest = loadManualGolden()
-  console.log(`[sf-live-benchmark] official source = ${officialSource === 'manual' ? '手工 golden (sf-golden-manifest.json,零网络零 vendor)' : 'flyai (FlyAI 官方)'}`)
+  const staticContext: StaticContext = {}
+  if (requestedSource === 'static') {
+    try {
+      staticContext.snapshot = loadStaticFlightSnapshot()
+    } catch (error) {
+      staticContext.error = error instanceof Error ? error.message : String(error)
+    }
+  }
+  const sourceDescription = requestedSource === 'manual'
+    ? '手工 golden (sf-golden-manifest.json,零网络零 vendor)'
+    : requestedSource === 'flyai'
+      ? 'flyai (FlyAI 官方)'
+      : 'static (OpenFlights route/carrier + manual time/price band,估算字段显式标注)'
+  console.log(`[sf-live-benchmark] requested official source = ${sourceDescription}`)
   console.log(`[sf-live-benchmark] 阈值:字段准确率 ≥${SESSION_FIELD_ACCURACY_THRESHOLD * 100}%(软命中)`)
 
   const runStartedAt = new Date().toISOString()
@@ -386,12 +352,12 @@ async function main(): Promise<void> {
   for (const q of queries) {
     if (records.length > 0) await new Promise((r) => setTimeout(r, 35_000))
     console.log(`\n[sf-live-benchmark] ${q.id} ${q.from}→${q.to} ${q.date}`)
-    const rec = await runOne(q, officialSource, manifest)
+    const rec = await runOne(q, requestedSource, manifest, staticContext)
     records.push(rec)
     const evPath = join(homedir(), '.gotry', 'evidence', 'session', q.id, `${runStartedAt.replace(/[:.]/g, '-')}.json`)
     mkdirSync(dirname(evPath), { recursive: true })
     writeFileSync(evPath, JSON.stringify(rec, null, 2))
-    console.log(`  official(${rec.official_source}): verdict=${rec.official?.verdict ?? '-'} latency=${rec.officialLatencyMs ?? 0}ms`)
+    console.log(`  official(requested=${rec.requested_source},effective=${rec.effective_source}): verdict=${rec.official?.verdict ?? '-'} latency=${rec.officialLatencyMs ?? 0}ms${rec.fallback_reason ? ` fallback=${rec.fallback_reason}` : ''}`)
     console.log(`  session(ctrip): verdict=${rec.sessionVerdict} latency=${rec.sessionLatencyMs ?? 0}ms${rec.sessionError ? ` err=${rec.sessionError.slice(0, 80)}` : ''}`)
     console.log(`  doubleSource: state=${rec.doubleSource.state} quota=${rec.doubleSource.quota_disposition} price_delta=${rec.doubleSource.price_delta ?? '-'} mismatches=${rec.doubleSource.mismatches.length}`)
     if (rec.softScore) {
@@ -407,6 +373,8 @@ async function main(): Promise<void> {
   const live_under_15s = records.filter((r) =>
     (r.sessionLatencyMs !== null && r.sessionVerdict === 'hit' && r.sessionLatencyMs < 15_000)
   ).length
+  const effectiveSources = Array.from(new Set(records.map((record) => record.effective_source)))
+  const fallbackCount = records.filter((record) => record.fallback_reason !== null).length
 
   const summary: RunSummary = {
     started_at: runStartedAt,
@@ -419,7 +387,10 @@ async function main(): Promise<void> {
     challenge,
     no_data,
     live_under_15s,
-    golden_source: officialSource === 'manual' ? 'manual-golden' : 'flyai',
+    requested_source: requestedSource,
+    effective_sources: effectiveSources,
+    fallback_count: fallbackCount,
+    golden_source: requestedSource === 'manual' ? 'manual-golden' : requestedSource,
     records,
   }
 
@@ -428,7 +399,8 @@ async function main(): Promise<void> {
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2))
 
   console.log(`\n──── sf-live-benchmark 汇总 ────`)
-  console.log(`golden = ${summary.golden_source}`)
+  console.log(`golden requested = ${summary.requested_source}`)
+  console.log(`golden effective = ${summary.effective_sources.join(',')};fallback=${summary.fallback_count}`)
   console.log(`跑批 query 数: ${records.length}`)
   console.log(`verdict=hit: ${hit}/${records.length}`)
   console.log(`双源合同=comparable: ${comparable}/${records.length}`)

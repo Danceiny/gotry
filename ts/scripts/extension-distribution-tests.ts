@@ -60,6 +60,7 @@ function ok(cond: boolean, label: string) {
   ok(pkgSrc.includes(`const ASSET_STORE_ZIP = '${DIST_ASSET_STORE_ZIP}'`), 'package-extension.mjs store zip 资产名一致')
   ok(pkgSrc.includes(`const ASSET_MANIFEST = '${DIST_ASSET_MANIFEST}'`), 'package-extension.mjs dist-manifest 资产名一致')
   ok(pkgSrc.includes("const STAGE = join(OUT, 'gotry-session-bridge')"), '打包根目录名固定 gotry-session-bridge/(下载端 strip-components 依赖)')
+  ok(pkgSrc.includes('delete m.key'), 'store zip 变体剥离 manifest key(2026-08-30 商店首传实测拒绝 key;tar.gz 保留 key 保通道 ID 不变量)')
 }
 
 // ─── ② parseDistManifest fail-closed ────────────────────────────────────────
