@@ -1,0 +1,14 @@
+{
+  "schema_version": "gotry_llm_price_baseline_v1",
+  "as_of": "2026-08-30T00:00:00.000Z",
+  "source_url": "mock://openai-pricing",
+  "rows": [
+    { "model": "gpt-4o", "input_cache_miss_usd_per_1m": 2.5, "input_cache_hit_usd_per_1m": 1.25, "output_usd_per_1m": 10.0 },
+    { "model": "gpt-4o-mini", "input_cache_miss_usd_per_1m": 0.15, "input_cache_hit_usd_per_1m": 0.075, "output_usd_per_1m": 0.6 },
+    { "model": "gpt-4.1", "input_cache_miss_usd_per_1m": 2.0, "input_cache_hit_usd_per_1m": 0.5, "output_usd_per_1m": 8.0 },
+    { "model": "gpt-4.1-mini", "input_cache_miss_usd_per_1m": 0.4, "input_cache_hit_usd_per_1m": 0.1, "output_usd_per_1m": 1.6 },
+    { "model": "o1", "input_cache_miss_usd_per_1m": 15.0, "input_cache_hit_usd_per_1m": 7.5, "output_usd_per_1m": 60.0 },
+    { "model": "o1-mini", "input_cache_miss_usd_per_1m": 3.0, "input_cache_hit_usd_per_1m": 1.5, "output_usd_per_1m": 12.0 },
+    { "model": "o3-mini", "input_cache_miss_usd_per_1m": 1.1, "input_cache_hit_usd_per_1m": 0.55, "output_usd_per_1m": 8.8 }
+  ]
+}
