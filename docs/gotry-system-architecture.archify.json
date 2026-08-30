@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "GoTry 当前系统架构",
+    "locale": "zh-CN",
+    "output": "gotry-system-architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [1360, 800],
+    "views": [
+      {
+        "id": "conversation-path",
+        "label": "同步对话主链",
+        "focus": ["user", "local-runtime", "gotry-plugin", "travel-core"],
+        "note": "用户从 Web 或 headless 入口进入 dsh，模型调用 GoTry 工具，确定性内核负责算术与判定。"
+      },
+      {
+        "id": "evidence-path",
+        "label": "证据与能力链",
+        "focus": ["gotry-plugin", "capability-adapters", "external-sources"],
+        "note": "实时 CLI/API 与本地降级数据共同支撑方案；Session/CDP 仅在用户登录态可用时接入。"
+      },
+      {
+        "id": "async-control",
+        "label": "状态与异步控制面",
+        "focus": ["gotry-plugin", "state-ledger", "async-worker", "travel-core"],
+        "note": "SQLite 保存权威状态；异步工单由独立 worker 恢复并调用统一求解入口。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "用户",
+      "sublabel": "浏览器 / 终端",
+      "pos": [40, 350],
+      "size": [150, 70]
+    },
+    {
+      "id": "local-runtime",
+      "type": "frontend",
+      "label": "gotry + dsh / Cordis",
+      "sublabel": "CLI 启动 · Web :3080 · Agent Host",
+      "pos": [270, 350],
+      "size": [220, 70],
+      "tag": "imported runtime"
+    },
+    {
+      "id": "llm-provider",
+      "type": "external",
+      "label": "LLM Provider",
+      "sublabel": "DeepSeek / OpenAI-compatible",
+      "pos": [270, 90],
+      "size": [220, 70]
+    },
+    {
+      "id": "gotry-plugin",
+      "type": "backend",
+      "label": "gotry-tools",
+      "sublabel": "工具注册 · persona / memory 注入",
+      "pos": [610, 350],
+      "size": [200, 70],
+      "tag": "Cordis plugin"
+    },
+    {
+      "id": "travel-core",
+      "type": "backend",
+      "label": "确定性行程内核",
+      "sublabel": "unified.ts / model.ts · 枚举 / Z3",
+      "pos": [950, 350],
+      "size": [240, 70],
+      "tag": "TS runtime"
+    },
+    {
+      "id": "state-ledger",
+      "type": "database",
+      "label": "State Ledger",
+      "sublabel": "SQLite WAL · events / workflows",
+      "pos": [610, 90],
+      "size": [210, 70],
+      "tag": "authoritative"
+    },
+    {
+      "id": "async-worker",
+      "type": "messagebus",
+      "label": "异步工单 Worker",
+      "sublabel": "async-collect / state-cli tick",
+      "pos": [950, 90],
+      "size": [240, 70],
+      "tag": "off sync path"
+    },
+    {
+      "id": "capability-adapters",
+      "type": "backend",
+      "label": "读取与检索适配器",
+      "sublabel": "CLI / API / CDP / Agent-Reach",
+      "pos": [610, 610],
+      "size": [240, 70]
+    },
+    {
+      "id": "external-sources",
+      "type": "external",
+      "label": "旅行数据与证据源",
+      "sublabel": "HotelByte · FlyAI · Open APIs · 用户 Chrome · 本地降级包",
+      "pos": [950, 610],
+      "size": [370, 70],
+      "tag": "Session 需登录态"
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-enters",
+      "from": "user",
+      "to": "local-runtime",
+      "label": "Web / CLI",
+      "variant": "emphasis"
+    },
+    {
+      "id": "runtime-calls-llm",
+      "from": "local-runtime",
+      "to": "llm-provider",
+      "label": "HTTPS 模型调用",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "runtime-invokes-tools",
+      "from": "local-runtime",
+      "to": "gotry-plugin",
+      "label": "gotry_tools 调用",
+      "variant": "emphasis"
+    },
+    {
+      "id": "plugin-solves",
+      "from": "gotry-plugin",
+      "to": "travel-core",
+      "label": "可行性 / 骨架 / 深度求解",
+      "variant": "emphasis"
+    },
+    {
+      "id": "plugin-uses-ledger",
+      "from": "gotry-plugin",
+      "to": "state-ledger",
+      "label": "事务读写",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "worker-uses-ledger",
+      "from": "async-worker",
+      "to": "state-ledger",
+      "label": "读取 / 落账",
+      "variant": "dashed"
+    },
+    {
+      "id": "worker-solves",
+      "from": "async-worker",
+      "to": "travel-core",
+      "label": "solveUnified",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [1070, 174]
+    },
+    {
+      "id": "plugin-calls-adapters",
+      "from": "gotry-plugin",
+      "to": "capability-adapters",
+      "label": "只读工具调用",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "adapters-query-sources",
+      "from": "capability-adapters",
+      "to": "external-sources",
+      "label": "CLI / HTTPS / CDP",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "职责分界",
+      "items": [
+        "LLM 负责理解与解释；TypeScript 负责算术与判定",
+        "普通候选枚举，多段航班链用 Z3；Python feasibility 仅历史对照"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "证据与安全",
+      "items": [
+        "实时能力标注来源；本地数据只作证据或显式降级",
+        "Session 需用户 Chrome 登录态；ReadGuard 对写请求 fail-closed"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "状态与异步",
+      "items": [
+        "SQLite events / workflows 是权威；JSON / Markdown 仅作视图",
+        "异步 worker 由 LoopX / CLI / tick 独立驱动"
+      ]
+    }
+  ]
+}
