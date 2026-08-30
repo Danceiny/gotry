@@ -46,6 +46,12 @@ for (const line of envLines) {
 if (process.env.LLM_API_KEY && !process.env.DEEPSEEK_API_KEY) {
   process.env.DEEPSEEK_API_KEY = process.env.LLM_API_KEY
 }
+// 自定义端点映射:.env 的 LLM_BASE_URL(OpenAI 兼容中转)→ dsh 的 DEEPSEEK_BASE_URL
+// (dsh 端点覆盖词为 DEEPSEEK_BASE_URL——缺此映射时中转 key 会被发往 DeepSeek 官方
+// 端点而报「key 无效」,R1 期「key 失效」误诊的根因)
+if (process.env.LLM_BASE_URL && !process.env.DEEPSEEK_BASE_URL) {
+  process.env.DEEPSEEK_BASE_URL = process.env.LLM_BASE_URL
+}
 
 // --- argv 解析 ---
 const args = process.argv.slice(2)
