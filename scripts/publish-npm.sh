@@ -113,7 +113,7 @@ if [ "$SKIP_CHANGELOG" = "0" ] && command -v gh >/dev/null 2>&1; then
     gh release create "v${CURRENT_VERSION}" \
       --title "v${CURRENT_VERSION}" \
       --notes-file "$NOTES_FILE" \
-      --target "$(git rev-parse HEAD)" \
+      --target "v${CURRENT_VERSION}" \
       || echo "  (gh release create 失败;手动补:gh release create v${CURRENT_VERSION} --notes-file <>)"
     rm -f "$NOTES_FILE"
   else
