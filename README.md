@@ -172,6 +172,8 @@ Engine verdict:
 
 ## ⚠️ Status & limitations
 
+Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures plus test-only aggregate admission; no adapter, external runner, Python runtime dependency, baseline, matched production evidence, or Agent uplift claim.
+
 **Working today** (full-stack regression §1–§34 green; every item has deterministic tests):
 
 - **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed (§30 regression gate)
@@ -209,6 +211,8 @@ The authoritative state lives in the docs, not this README: transactional state 
 
 ```bash
 ./scripts/run-all-tests.sh
+# Evaluation Phase 0 diagnostic contracts (offline; no adapter/runner/Python)
+cd ts && npx tsx scripts/evaluation-contract-tests.ts
 ```
 
 One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30)
