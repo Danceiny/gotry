@@ -16,6 +16,8 @@
 
 **架构面增量(2026-08-30,未随版本发布,主仓领先已发包形态)**:issue #46(P0 事实性)处置——可下单事实单一数据源 `gotry_bookable_fact.v1` + 产物事实闸(ADR-19):flyai/session exact-date 检索结果 hit/miss 逐条落账(query_id 可重放),exact-date miss 禁止历史班期/相邻日期/航线页回填;第 21 工具 `gotry_fact_gate` 交付前必过(claim 反向抽取回溯 + 夜数/O&D/预算不变式),blocked 不得宣称「已验证方案」;persona (20) 红线化;run-all §39 locked golden 2027 E2E + smoke §16;覆盖面缺口记 D-24。工程面交付,不构成任何里程碑 Exit 证据(D-20 口径)。
 
+**架构面增量(2026-08-30 第二批,未随版本发布,主仓领先已发包形态)**:issue #48(P1 分发)修复——npm 形态 bin env 映射补 `LLM_BASE_URL → DEEPSEEK_BASE_URL`:rc.15 回拉实测暴露只映射 key 不映射 base,OpenAI 兼容端点 key 被发往 DeepSeek 官方端点必然 401;修复后三件套 `.env`(LLM_API_KEY/LLM_BASE_URL/LLM_MODEL)即全链通,显式 `DEEPSEEK_BASE_URL` 仍优先,默认官方 DeepSeek 路径零改变;dsh 侧(llm-deepseek)与仓内 `dsh-llm.ts` 拼接语义核验一致(`${base}/chat/completions`);README 双语 + .env.example + bin help 配法同步。已知缺口:`LLM_MODEL` 不进 dsh 模型表(宽松中转可用,严格中转待模型表注入,独立后续工单)。工程面交付,不构成任何里程碑 Exit 证据(D-20 口径)。
+
 rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
 | RC | 状态 | 范围 |
