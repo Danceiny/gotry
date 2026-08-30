@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply } from '../src/index.ts'
+import type { FlightFact } from '../src/bookable-facts.ts'
 
 interface ToolLike {
   name: string
@@ -325,6 +326,42 @@ async function main() {
     if (badExt.ok) throw new Error('FAIL: 白名单外扩展名(.db)必须被拒')
     rmSync(cwdDir, { recursive: true, force: true })
     console.log(`artifacts: ledger run + cwd md discovered; read window(${r2.ok ? r2.lines.length : '?'} lines @10) + read card; path/ext guardrails hold`)
+  }
+
+  // 16) 产物事实闸(issue #46,第 21 工具):事实落账(hit 正事实 + miss 负事实,隔离 stateRoot)
+  //     → 闸内回溯:已验证措辞 pass;exact-date miss 的 route+date 被航班号填充 = blocked
+  {
+    const { appendFacts, loadFactRegistry } = await import('../capabilities/fact-log.ts')
+    const { factsFromFlyai } = await import('../src/bookable-facts.ts')
+    // 与生产同路径:事实落账即归一到 IATA 空间(index.ts 传 city_alias;闸侧 claim 也归一,两边才可比)
+    const avMap = JSON.parse(await readFile(join(import.meta.dirname, '..', '..', 'data', 'airline-airports.json'), 'utf-8')) as { city_alias?: Record<string, string> }
+    const fetchedAt = '2026-08-29T00:00:00.000Z'
+    await appendFacts(smokeRoot, [
+      ...factsFromFlyai({ kind: 'flight', origin: '香港', destination: '普吉', date: '2027-07-18' },
+        { verdict: 'hit', options: [{ no: 'CX771', name: '国泰航空', depDateTime: '2027-07-18T08:05:00+08:00', arrDateTime: '2027-07-18T10:35:00+07:00', price: 1234 }], evidence: '' }, fetchedAt, avMap.city_alias),
+      ...factsFromFlyai({ kind: 'flight', origin: '深圳', destination: '普吉', date: '2027-07-16' },
+        { verdict: 'miss', options: [], evidence: '' }, fetchedAt, avMap.city_alias),
+    ])
+    const registry = await loadFactRegistry(smokeRoot)
+    // §12 的 flyai live 检索也会落账(接线正确性的副产品)——按本次探针的 query_id 过滤
+    const probeFacts = registry.filter((f): f is FlightFact => f.kind !== 'policy' && (f.query_id.endsWith(':2027-07-16') || f.query_id.endsWith(':2027-07-18')))
+    if (probeFacts.length !== 2 || !probeFacts.some(f => f.bookability === 'unavailable_exact_date') || !probeFacts.some(f => f.bookability === 'bookable_exact_date')) {
+      throw new Error(`FAIL: 事实侧车应落 1 正 1 负两条,实际:${JSON.stringify(probeFacts.map(f => f.bookability))}`)
+    }
+    const gate = byName('gotry_fact_gate')
+    const passMd = ['# 行程片段', '## D3 7.18 香港 → 普吉', '- 国泰航空 CX771 08:05→10:35(已按 exact-date 检索记录)'].join('\n')
+    const pass = await gate.execute({ query: { markdown: passMd, tripYear: 2027 } }, null) as { verdict?: string; presentation?: string }
+    if (pass.verdict !== 'pass' || pass.presentation !== 'verified_itinerary_allowed') {
+      throw new Error(`FAIL: 可回溯产物应 pass,实际:${JSON.stringify(pass).slice(0, 300)}`)
+    }
+    const badMd = ['# 行程片段', '## D1 7.16 深圳 → 普吉', '- 香港快运 UO784 10:05→12:40 直飞 ✓'].join('\n')
+    const blocked = await gate.execute({ query: { markdown: badMd, tripYear: 2027 } }, null) as { verdict?: string; violations?: Array<{ kind?: string }>; summary?: string }
+    if (blocked.verdict !== 'blocked' || !blocked.violations?.some(v => v.kind === 'not_in_source')) {
+      throw new Error(`FAIL: exact-date miss 被 UO784 填充必须 blocked(not_in_source),实际:${JSON.stringify(blocked).slice(0, 300)}`)
+    }
+    const view = gate.presentResult?.({ query: {} }, blocked) as { title?: string }
+    if (!view?.title?.includes('blocked')) throw new Error(`FAIL: blocked 呈现卡标题应含 blocked,实际:${view?.title}`)
+    console.log(`fact gate: registry 1+1(hit/miss);verified 措辞 pass;miss 填充 UO784 blocked(not_in_source) + 呈现卡`)
   }
 
   rmSync(smokeRoot, { recursive: true, force: true })

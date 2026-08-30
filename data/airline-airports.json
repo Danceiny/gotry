@@ -1,0 +1,39 @@
+{
+  "meta": {
+    "schema": "gotry_airline_airports.v1",
+    "as_of": "2026-08-29",
+    "review_by": "2026-09-28",
+    "source": "issue #46 exact-date audit snapshot (trip.com 2027 日期可售快照)",
+    "note": "两张表职责不同:city_alias 是稳定词汇(解析航线上下文);carrier_airport 是 dated 快照,只作冲突检测——可下单事实的唯一来源永远是 exact-date 工具结果,本表不产事实。双机场城市的航司→机场映射过期风险高,过 review_by 后只降级使用(仍作冲突检测,结论标注快照日)。"
+  },
+  "city_alias": {
+    "香港": "HKG",
+    "普吉": "HKT",
+    "甲米": "KBV",
+    "奥南": "KBV",
+    "曼谷": "BKK",
+    "深圳": "SZX",
+    "广州": "CAN",
+    "迪拜": "DXB",
+    "昆明": "KMG",
+    "大理": "DLU",
+    "丽江": "LJG",
+    "南京": "NKG",
+    "上海": "PVG",
+    "北京": "PEK",
+    "成都": "CTU",
+    "西安": "XIY",
+    "杭州": "HGH",
+    "多哈": "DOH"
+  },
+  "carrier_airport": {
+    "BKK": {
+      "FD": "DMK",
+      "VZ": "BKK",
+      "SL": "DMK",
+      "DD": "DMK",
+      "PG": "BKK",
+      "TG": "BKK"
+    }
+  }
+}

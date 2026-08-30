@@ -21,6 +21,8 @@
     "ts/src/mock-llm.ts",
     "ts/src/state-ledger.ts",
     "ts/src/booking-saga.ts",
+    "ts/src/bookable-facts.ts",
+    "ts/src/artifact-gate.ts",
     "ts/src/tool-packet.ts",
     "ts/src/memory-capture.ts",
     "ts/src/memory-utility.ts",
@@ -53,7 +55,8 @@
     "LICENSE",
     "ts/capabilities/session-consent.ts",
     "ts/capabilities/session-login.ts",
-    "ts/capabilities/artifacts.ts"
+    "ts/capabilities/artifacts.ts",
+    "ts/capabilities/fact-log.ts"
   ],
   "engines": {
     "node": ">=22.0.0"

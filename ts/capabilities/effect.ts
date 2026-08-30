@@ -8,7 +8,8 @@
  *   - 生产解译器 makeProductionInterpreter:查注册表 → 韧性横切(指数退避重试/
  *     断路器,per-效应策略表)→ 渠道 handler(现能力层函数,零改写);
  *   - mock  解译器 makeMockInterpreter:夹具回放(CI/本地无网确定性);
- *   - 浏览器解译 = SESSION_* 效应(用户本人 Chrome 的 CDP 通道,ReadGuard+授权闸,
+ *   - 浏览器解译 = SESSION_* 效应(用户本人登录态的扩展桥车道,2026-08-29 起默认传输:
+ *     MV3 GoTry Session Bridge + 本地桥长轮询,零系统弹窗;ReadGuard+授权闸不变,
  *     非 CUA 视觉点击——本仓已按零 Python 依赖与 a11y/DOM 优先判死后者,
  *     docs/effect-interpreter.md §4)。
  *
@@ -30,7 +31,7 @@ import {
   type RetryablePredicate,
 } from './resilience.ts'
 import { flyaiSearch, type FlyaiQuery } from './flyai.ts'
-import { searchHotels } from './hbcli.ts'
+import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
 import { sessionFlightSearch, type SessionFlightQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
 import { verifyFlight, type FlightLiveQuery } from './opensky.ts'
@@ -52,6 +53,26 @@ export interface HbHotelEffectParams {
   timeoutMs?: number
 }
 
+/** hbcli 房型报价参数(M0 预订链;价格面无静态降级 fail-closed,产物 RatePkgId 供 check-avail/book) */
+export interface HbRatesEffectParams {
+  hotelId: string
+  checkIn?: string
+  checkOut?: string
+  adults?: number
+  countryCode?: string
+  nationalityCode?: string
+  residencyCode?: string
+  hbcliBin?: string
+  timeoutMs?: number
+}
+
+/** hbcli 实时验价参数(M0 预订链;入参 RatePkgId 来自 HBCLI_HOTEL_RATES 产物) */
+export interface HbCheckAvailEffectParams {
+  ratePkgId: string
+  hbcliBin?: string
+  timeoutMs?: number
+}
+
 /** 默认渠道实现(生产解译器的 dispatch 目标;全部满足「永不抛错」能力层契约) */
 const DEFAULT_HANDLERS = {
   /** 飞猪官方只读通道(机/火/酒店;spawn CLI) */
@@ -62,7 +83,19 @@ const DEFAULT_HANDLERS = {
       { destination: p.destination, checkIn: p.checkIn, checkOut: p.checkOut, adults: p.adults },
       { hbcliBin: p.hbcliBin, timeoutMs: p.timeoutMs, fallbackPath: p.fallbackPath },
     ),
-  /** 用户本人登录态会话检索(浏览器解译通道:CDP attach + ReadGuard + 节律闸) */
+  /** hotelbyte 桥·房型报价(M0 预订链;spawn CLI;价格面无静态降级 fail-closed) */
+  HBCLI_HOTEL_RATES: (p: HbRatesEffectParams) =>
+    hotelRates(
+      {
+        hotelId: p.hotelId, checkIn: p.checkIn, checkOut: p.checkOut, adults: p.adults,
+        countryCode: p.countryCode, nationalityCode: p.nationalityCode, residencyCode: p.residencyCode,
+      },
+      { hbcliBin: p.hbcliBin, timeoutMs: p.timeoutMs },
+    ),
+  /** hotelbyte 桥·下单前实时验价(M0 预订链;spawn CLI;同价格面红线,不可用即诚实失败) */
+  HBCLI_CHECK_AVAIL: (p: HbCheckAvailEffectParams) =>
+    checkAvail({ ratePkgId: p.ratePkgId }, { hbcliBin: p.hbcliBin, timeoutMs: p.timeoutMs }),
+  /** 用户本人登录态会话检索(浏览器解译通道:扩展桥默认 + cdp 显式后备;ReadGuard+节律闸) */
   SESSION_FLIGHT_SEARCH: (p: SessionFlightQuery) => sessionFlightSearch(p),
   /** 地名 → 坐标(open-meteo → nominatim 双源,免费) */
   WEATHER_GEOCODE: (p: { name: string; count?: number; timeoutMs?: number }) => geocodePlace(p.name, { count: p.count, timeoutMs: p.timeoutMs }),
@@ -108,6 +141,8 @@ const API_BREAKER = { failureThreshold: 3, openMs: 30_000 }
  * 渠道韧性策略表(权威面;docs/effect-interpreter.md §3 同表逐行有依据):
  *   - FLYAI:瞬时代码级错误重试 1 次;连续 3 次 error(含 Sentinel)熔断 60s 保护配额;
  *   - HBCLI:永不重试(上游契约「候选路径是切换不是重试」),熔断同上;
+ *     RATES/CHECK_AVAIL 同族,且价格面无静态降级(fail-closed,不估算房价——
+ *     与 bookable-facts 证据分级同口径,live_inventory 才可进确认卡);
  *   - SESSION:永不重试、不熔断——风控/挑战是「上游说不」,重试即红线;
  *     节律闸(≥30s)在渠道内(session-search §3.4),不在本层重复。
  *   - WEATHER/OPENSKY:免费源,瞬时网络抖动可重试,熔断防免费配额空转。
@@ -124,6 +159,18 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     isFailure: defaultIsFailure,
   },
   HBCLI_HOTEL_SEARCH: {
+    channel: 'cli',
+    retry: null,
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => (r as { via?: string }).via === 'hbcli-error',
+  },
+  HBCLI_HOTEL_RATES: {
+    channel: 'cli',
+    retry: null,
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => (r as { via?: string }).via === 'hbcli-error',
+  },
+  HBCLI_CHECK_AVAIL: {
     channel: 'cli',
     retry: null,
     breaker: { failureThreshold: 3, openMs: 60_000 },
