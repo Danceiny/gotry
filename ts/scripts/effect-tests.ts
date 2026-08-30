@@ -219,4 +219,65 @@ assert.ok(itp9.trace.evidence[0]?.startsWith('[效应:HBCLI_HOTEL_SEARCH@'), '�
 await rm(tmp, { recursive: true, force: true })
 console.log(`9. 真实 handler 离线冒烟(HBCLI 静态包降级,summary=${(hb9!.summary ?? '').slice(0, 40)}…)OK`)
 
-console.log('EFFECT INTERPRETER TESTS: 9/9 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级,纯离线)')
+// ---------------------------------------------------------------------------
+// 10. M0 预订链读效应:HBCLI_HOTEL_RATES / HBCLI_CHECK_AVAIL
+//     (注入 handler 验策略面;真实 handler 离线冒烟验价格面 fail-closed;mock 夹具)
+// ---------------------------------------------------------------------------
+// 10a. 注册进生产解译器:注入 handler 派发 / 永不重试 / 失败计熔断 / 三连错开闸
+let ratesDispatches = 0
+const ipM0 = makeProductionInterpreter({
+  sleep: sleep0,
+  breakers: new Map(),
+  handlers: {
+    HBCLI_HOTEL_RATES: async () => {
+      ratesDispatches += 1
+      return { via: 'hbcli-realtime', exitCode: 0, result: { rooms: [] }, evidence: '[实时API:hbcli@ts]', latencyMs: 1, rates: { rooms: [] }, summary: 'ok' }
+    },
+    HBCLI_CHECK_AVAIL: async () =>
+      ({ via: 'hbcli-error', exitCode: 1, result: null, evidence: '[实时API:hbcli@error@ts]', latencyMs: 1, error: 'boom', avail: null, summary: 'err' }),
+  },
+})
+const itp10 = await ipM0({ effect: 'HBCLI_HOTEL_RATES', params: { hotelId: '900000001', checkIn: '2026-09-05', checkOut: '2026-09-07', adults: 2 } } satisfies GotryEffect)
+assert.equal(itp10.trace.attempts, 1, 'RATES 永不重试(候选路径切换不是重试)')
+assert.ok(itp10.result != null && !itp10.trace.declined, 'RATES 命中注入 handler,observation 透传')
+assert.ok(itp10.trace.evidence[0]?.startsWith('[效应:HBCLI_HOTEL_RATES@'), '解译层证据行')
+const itp10b = await ipM0({ effect: 'HBCLI_CHECK_AVAIL', params: { ratePkgId: 'rp-1' } } satisfies GotryEffect)
+assert.equal((itp10b.result as { via?: string } | null)?.via, 'hbcli-error', '渠道失败观察原样透传(平铺失败面,isFailure 计熔断)')
+await ipM0({ effect: 'HBCLI_CHECK_AVAIL', params: { ratePkgId: 'rp-2' } } satisfies GotryEffect)
+await ipM0({ effect: 'HBCLI_CHECK_AVAIL', params: { ratePkgId: 'rp-3' } } satisfies GotryEffect)
+const itp10c = await ipM0({ effect: 'HBCLI_CHECK_AVAIL', params: { ratePkgId: 'rp-4' } } satisfies GotryEffect)
+assert.equal(itp10c.trace.declined, 'circuit-open', '3 连错熔断保护(同 HBCLI 族策略)')
+assert.equal(ratesDispatches, 1, '成功通道不受失败通道熔断影响(per-effect 隔离)')
+console.log('10a. 预订链读效应注册(派发/永不重试/熔断族/per-effect 隔离)OK')
+
+// 10b. 真实 handler 离线冒烟:不可达 bin → 诚实失败,价格面无静态降级(fail-closed)
+__resetEffectBreakersForTest()
+const tmp10 = await mkdtemp(join(tmpdir(), 'effect-m0-'))
+const itp10d = await interp({
+  effect: 'HBCLI_HOTEL_RATES',
+  // 自定义不存在的 bin:候选路径不回退已知安装位 → ENOENT → 诚实失败(hotel-list 才有静态包降级)
+  params: { hotelId: '900000001', hbcliBin: join(tmp10, 'no-such-hbcli') },
+} satisfies GotryEffect)
+const hr10 = itp10d.result as { via?: string; summary?: string } | null
+assert.ok(hr10 != null, '不可达仍返回 observation(永不抛错)')
+assert.equal(hr10!.via, 'hbcli-error', '未伪装成功')
+assert.match(hr10!.summary ?? '', /不可用/, 'summary 明示不可用')
+assert.ok(!/静态包/.test(hr10!.summary ?? '') || /无静态降级/.test(hr10!.summary ?? ''), '价格面不降级到静态包')
+const itp10e = await interp({ effect: 'HBCLI_CHECK_AVAIL', params: { ratePkgId: 'rp-x', hbcliBin: join(tmp10, 'no-such-hbcli') } } satisfies GotryEffect)
+assert.equal((itp10e.result as { via?: string } | null)?.via, 'hbcli-error', 'check-avail 同口径诚实失败')
+await rm(tmp10, { recursive: true, force: true })
+console.log('10b. 真实 handler 离线冒烟(价格面 fail-closed,无静态降级)OK')
+
+// 10c. mock 解译器夹具回放(预订链 CI 形态;录制形态 = 渠道 observation 原样)
+const mock10 = makeMockInterpreter({
+  HBCLI_HOTEL_RATES: { via: 'hbcli-realtime', exitCode: 0, result: { rooms: [{ ratePkgId: 'rp-fx-1', roomTypeName: 'Deluxe King' }] }, evidence: '[实时API:hbcli@2026-08-30T00:00:00Z]', latencyMs: 1800, rates: { rooms: [{ ratePkgId: 'rp-fx-1', roomTypeName: 'Deluxe King' }] }, summary: 'hotel 900000001:hbcli 实时报价(2026-09-05 → 2026-09-07)' },
+  HBCLI_CHECK_AVAIL: { via: 'hbcli-realtime', exitCode: 0, result: { ratePkgId: 'rp-fx-1', avail: true }, evidence: '[实时API:hbcli@2026-08-30T00:00:01Z]', latencyMs: 900, avail: { ratePkgId: 'rp-fx-1', avail: true }, summary: 'ratePkg rp-fx-1:hbcli 实时验价(库存与价格以后端为准)' },
+})
+const m10a = await mock10({ effect: 'HBCLI_HOTEL_RATES', params: { hotelId: '900000001' } } satisfies GotryEffect)
+const m10b = await mock10({ effect: 'HBCLI_CHECK_AVAIL', params: { ratePkgId: 'rp-fx-1' } } satisfies GotryEffect)
+assert.equal((m10a.result as { rates?: { rooms?: unknown[] } }).rates?.rooms?.length, 1, 'RATES 夹具回放')
+assert.equal((m10b.result as { avail?: { avail?: boolean } }).avail?.avail, true, 'CHECK_AVAIL 夹具回放')
+assert.match(m10a.trace.evidence[0] ?? '', /\[效应:mock@.*夹具回放/, 'mock trace 标注')
+console.log('10c. mock 解译器夹具回放(预订链 CI 形态)OK')
+
+console.log('EFFECT INTERPRETER TESTS: 10/10 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 预订链读效应,纯离线)')

@@ -194,3 +194,49 @@ export async function listDestinations(opts: HbcliCallOptions = {}): Promise<Hbc
   const r = await callHbcliJson(['search', 'destinations', '--json'], opts)
   return { ...r, destinations: r.result }
 }
+
+/**
+ * 高层语义化封装:房型报价(hotel-rates;上游 hotelRates 创建后端 session,
+ * 产出带 RatePkgId 的房型列表——check-avail 与 book 的入参来源)。
+ *
+ * 价格面无静态降级(fail-closed):hotel-list 的静态包降级是定性住宿信息,
+ * 房价是钱——估算价格冒充实时价是红线;不可用就诚实失败,证据链标注,
+ * 与 bookable-facts 证据分级(live_inventory 才可进确认卡)同口径。
+ */
+export async function hotelRates(
+  query: {
+    hotelId: string
+    checkIn?: string
+    checkOut?: string
+    adults?: number
+    countryCode?: string
+    nationalityCode?: string
+    residencyCode?: string
+  },
+  opts: HbcliCallOptions = {},
+): Promise<HbcliCallResult & { rates?: unknown; summary: string }> {
+  const hbArgs = ['search', 'hotel-rates', '--json', '--hotel-id', query.hotelId]
+  if (query.checkIn) hbArgs.push('--check-in', query.checkIn)
+  if (query.checkOut) hbArgs.push('--check-out', query.checkOut)
+  if (query.countryCode) hbArgs.push('--country-code', query.countryCode)
+  if (query.nationalityCode) hbArgs.push('--nationality-code', query.nationalityCode)
+  if (query.residencyCode) hbArgs.push('--residency-code', query.residencyCode)
+  if (query.adults) hbArgs.push('--room-occupancies', JSON.stringify([{ adultCount: query.adults, childrenAges: [] }]))
+  const live = await callHbcliJson(hbArgs, opts)
+  const summary = live.via === 'hbcli-realtime'
+    ? `hotel ${query.hotelId}:hbcli 实时报价${query.checkIn ? `(${query.checkIn} → ${query.checkOut ?? '?'})` : ''}`
+    : `hotel ${query.hotelId}:hbcli 实时报价不可用(${live.error ?? live.via});价格面无静态降级,fail-closed 不估算`
+  return { ...live, rates: live.result, summary }
+}
+
+/** 高层语义化封装:下单前实时验价(check-avail;入参 RatePkgId 来自 hotel-rates 产物)。价格面同上:不可用即诚实失败。 */
+export async function checkAvail(
+  query: { ratePkgId: string },
+  opts: HbcliCallOptions = {},
+): Promise<HbcliCallResult & { avail?: unknown; summary: string }> {
+  const live = await callHbcliJson(['search', 'check-avail', '--json', '--rate-pkg-id', query.ratePkgId], opts)
+  const summary = live.via === 'hbcli-realtime'
+    ? `ratePkg ${query.ratePkgId}:hbcli 实时验价(库存与价格以后端为准)`
+    : `ratePkg ${query.ratePkgId}:hbcli 实时验价不可用(${live.error ?? live.via});价格面无静态降级,fail-closed`
+  return { ...live, avail: live.result, summary }
+}
