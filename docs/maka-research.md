@@ -12,7 +12,7 @@
 | 准确定名 | **Apache Maka (Incubating)**;无官方中文名(中文 README 保留「Maka」不译,并声明「以英文原文为准」) | [podling 状态页](https://incubator.apache.org/projects/maka.html)、[README.zh-CN.md](https://github.com/apache/maka/blob/main/README.zh-CN.md) |
 | 一句话定位 | "a local-first AI agent runtime and workspace"——本地优先的 AI agent 运行时与工作台;模型消息、工具调用、工具结果、权限决策、终止事件全部记为 append-only log | [repo description](https://github.com/apache/maka) |
 | 产品形态 | Electron 桌面(macOS ARM 早期公开版 / Windows 未签名预览 / Linux 桌面未支持)+ TUI/CLI(`maka-agent` npm 包)+ 声明式 Eval;三形态全部经由同一个 Runtime Host 进程执行 | [README](https://github.com/apache/maka)、[CLI README](https://github.com/apache/maka/blob/main/packages/cli/README.md) |
-| 捐赠方 | 无单一公司捐赠:代码原在 `github.com/maka-agent/maka-agent`(2026-05-27 建,Apache-2.0),入孵化时移交 apache org(旧地址现 301 重定向至 apache/maka);提案定位为「vendor-neutral 社区捐赠」,创始人 Jie Wen(jackwener,署 Botiverse, Inc.),7 位初始 committer 分布在 6 家组织 + 1 名独立开发者 | [maka-proposal-zh-review.txt](https://github.com/apache/maka/blob/main/maka-proposal-zh-review.txt)(draft v0.11,正式版以英文原文为准)、[api.github.com 重定向实测](https://api.github.com/repos/maka-agent/maka-agent) |
+| 捐赠方 | 无单一公司捐赠:代码原在 `github.com/maka-agent/maka-agent`(2026-05-27 建,Apache-2.0),入孵化时移交 apache org(旧地址现 301 重定向至 apache/maka);提案定位为「vendor-neutral 社区捐赠」,创始人 J… **详见下方「捐赠方」** | [maka-proposal-zh-review.txt](https://github.com/apache/maka/blob/main/maka-proposal-zh-review.txt)(draft v0.11,正式版以英文原文为准)、[api.github.com 重定向实测](https://api.github.com/repos/maka-agent/maka-agent) |
 | 孵化时间线 | [DISCUSS] 2026-08-05 起 → [VOTE] 2026-08-09(champion tison 发起)→ [RESULT] 2026-08-13 接受入孵化;GitHub 仓库创建于 2026-05-27 | [marc.info 存档](https://marc.info/?l=incubator-general&s=maka&w=2&r=1&q=b)、[podling 状态页](https://incubator.apache.org/projects/maka.html) |
 | Champion / Mentors | champion:tison(Zili Chen);mentors:xuanwo(Hao Ding)/ benjobs(Huajie Wang)/ psiace(Zhuoran Shang)/ tanxinyu(Xinyu Tan) | [podling 状态页](https://incubator.apache.org/projects/maka.html) |
 | 当前阶段 | 早期 podling:孵化器 setup 清单大半未勾(SGA 回执/ASF 版权头/全体 committer CLA 与 LDAP 等标 pending);无毕业/退役标志;提案自估孵化「约两年,取决于形成可持续多元 committer base」 | [podling 状态页](https://incubator.apache.org/projects/maka.html)、[proposal review](https://github.com/apache/maka/blob/main/maka-proposal-zh-review.txt) |
@@ -43,14 +43,22 @@ Eval(Experiment → Cells → Attempts → Results)→ Runtime Host
 
 ### 2.2 agent 执行与状态的建模
 
-- **RuntimeEvent 不是「role+text」**:七维正交分解——Identity(sessionId/invocationId/runId/turnId/branch)、Ordering、Source(role×author 双轴:权限决策 fact 的 role=system 而 author=user)、Content、**Actions**(state delta/permission/artifact/usage/end)、Correlation(工具调用-结果稳定配对)、Lifecycle(partial/status)([core draft §What one RuntimeEvent preserves](https://github.com/apache/maka/blob/main/docs/architecture/runtime-core-architecture-draft.md)、[packages/core/src/runtime-event.ts](https://github.com/apache/maka/blob/main/packages/core/src/runtime-event.ts))。
+- **RuntimeEvent 不是「role+text」**:
+  - 七维正交分解——
+  - Identity(sessionId/invocationId/runId/turnId/branch)、Ordering、Source(role×author 双轴:权限决策 fact 的 role=system 而 author=user)、Content、**Actions**(state delta/permission/artifact/usage/end)、Correlation(工具调用-结果稳定配对)、Lifecycle(partial/status)
+    - ([core draft §What one RuntimeEvent preserves](https://github.com/apache/maka/blob/main/docs/architecture/runtime-core-architecture-draft.md)、[packages/core/src/runtime-event.ts](https://github.com/apache/maka/blob/main/packages/core/src/runtime-event.ts))。
 - **权限 = 运行时控制流,不是对话框**:越界工具返回 `sandbox_boundary_required` + 具体 expansion;模型调 `request_sandbox_boundary` 发起边界扩权请求;执行停在有身份的位置等待;Session 投影 `waiting_for_user` 但 Run 身份不丢("parked")。请求与决策都是 typed fact(只带 actions.stateDelta,不带 content)(core draft §Permission is runtime control flow)。
 - **平台沙箱**:macOS Seatbelt / Linux bubblewrap+seccomp / Windows AppContainer broker;全部 fail-closed,不支持静默降级到宿主执行([packages/runtime/src/sandbox/README.md](https://github.com/apache/maka/blob/main/packages/runtime/src/sandbox/README.md))。
-- **任务账本(task ledger)**:session 级任务模型,`task_create/task_update/task_list/task_get` 四工具;六状态机(pending/in_progress/blocked/completed/failed/cancelled)+ 受控转移;**evidence 强制进契约**——blocked 必带 blockedReason、failed 必带 failureReason、completed 必带 completionEvidence;恢复分类器 `resumeTrust`(trusted/needs_revalidation/stale/repaired/untrusted);子 agent 只能 claim 不能偷任务,"A successful child does not complete the task. The parent agent must verify the result and supply completionEvidence"。显式非目标:"no workflow engine"([docs/session-task-ledger-lifecycle.md](https://github.com/apache/maka/blob/main/docs/session-task-ledger-lifecycle.md))。
+- **任务账本(task ledger)**:
+  - session 级任务模型,`task_create/task_update/task_list/task_get` 四工具;六状态机(pending/in_progress/blocked/completed/failed/cancelled)+ 受控转移;**evidence 强制进契约**——blocked 必带 blockedReason、failed 必带 failureReason、completed 必带 completionEvidence;恢复分类器 `resumeTrust`(trusted/needs_revalidation/stale/repaired/untrusted);
+  - 子 agent 只能 claim 不能偷任务,"A successful child does not complete the task. The parent agent must verify the result and supply completionEvidence"。显式非目标:"no workflow engine"([docs/session-task-ledger-lifecycle.md](https://github.com/apache/maka/blob/main/docs/session-task-ledger-lifecycle.md))。
 
 ### 2.3 持久化 / 事务 / durable-execution 机制
 
-**存储选型**:SQLite(`runtime.sqlite` 为 live record),但用 **`node:sqlite`(Node 内置 DatabaseSync)而非 better-sqlite3**;PRAGMA:WAL + `synchronous = FULL` + `foreign_keys = ON` + `busy_timeout = 5000`([packages/storage/src/sqlite-runtime-schema.ts](https://github.com/apache/maka/blob/main/packages/storage/src/sqlite-runtime-schema.ts) `configureSqliteRuntimeDatabase`)。schema 按域分片、各自版本化:runtime v12 / core-execution v5 / workflow v9 / session-metadata / usage / artifact / long-term-memory(各 `sqlite-*-schema.ts`,[packages/storage/src](https://github.com/apache/maka/tree/main/packages/storage/src))。
+**存储选型**:
+- SQLite(`runtime.sqlite` 为 live record),但用 **`node:sqlite`(Node 内置 DatabaseSync)而非 better-sqlite3**;
+- PRAGMA:WAL + `synchronous = FULL` + `foreign_keys = ON` + `busy_timeout = 5000`([packages/storage/src/sqlite-runtime-schema.ts](https://github.com/apache/maka/blob/main/packages/storage/src/sqlite-runtime-schema.ts) `configureSqliteRuntimeDatabase`)。
+- schema 按域分片、各自版本化:runtime v12 / core-execution v5 / workflow v9 / session-metadata / usage / artifact / long-term-memory(各 `sqlite-*-schema.ts`,[packages/storage/src](https://github.com/apache/maka/tree/main/packages/storage/src))。
 
 **事件溯源(物理层证据,[sqlite-runtime-schema.ts](https://github.com/apache/maka/blob/main/packages/storage/src/sqlite-runtime-schema.ts) MIGRATIONS)**:
 
@@ -64,9 +72,14 @@ Eval(Experiment → Cells → Attempts → Results)→ Runtime Host
 | `runtime_workspace_epochs/versions/heads` | git 工作区版本化(epoch→version→head,commit/tree oid,绑 accepted_event) | origin_kind CHECK = 'baseline' 等 |
 | `runtime_session_event_ordinals` | session 级稠密序号 | WITHOUT ROWID + ON DELETE CASCADE |
 
-workflow 域([sqlite-workflow-schema.ts](https://github.com/apache/maka/blob/main/packages/storage/src/sqlite-workflow-schema.ts))是标准的 **events+projection 成对**:`workflow_task_ledger_events`/`workflow_task_ledger_projections`、`workflow_plan_events`/`workflow_plan_projections`(`store_version UNIQUE` 乐观并发)、`workflow_scheduled_tasks` + `workflow_scheduled_task_fires`(`task_id UNIQUE`——**定时任务只能 fire 一次,fire claim 幂等**)、`workflow_work_board_items`(revision ≥1 CAS + scope CHECK)。core 执行域([sqlite-core-execution-schema.ts](https://github.com/apache/maka/blob/main/packages/storage/src/sqlite-core-execution-schema.ts))另有 `core_root_turn_admissions`/`core_root_turn_start_rejections`/`core_root_source_message_proofs`(回合准入/拒绝/消息证明 = 回合级 intent-before-execute)与 `core_interaction_requests`/`core_interaction_outcomes`(权限请求→裁决落库,FK 强制成对)。
+workflow 域([sqlite-workflow-schema.ts](https://github.com/apache/maka/blob/main/packages/storage/src/sqlite-workflow-schema.ts))是标准的 **events+projection 成对**:`workflow_task_ledger_events`/`workflow_task_ledger_projections`、`workflow_plan_events`/`workflow_plan_projections`(`store_version UNIQUE` 乐观并发)、`workflow_scheduled_tasks` + `workflow_scheduled_task_fires`(`task_id UNIQUE`——
+- **定时任务只能 fire 一次,fire claim 幂等**)、`workflow_work_board_items`(revision ≥1 CAS + scope CHECK)。
+- core 执行域([sqlite-core-execution-schema.ts](https://github.com/apache/maka/blob/main/packages/storage/src/sqlite-core-execution-schema.ts))另有 `core_root_turn_admissions`/`core_root_turn_start_rejections`/`core_root_source_message_proofs`(回合准入/拒绝/消息证明 = 回合级 intent-before-execute)与 `core_interaction_requests`/`core_interaction_outcomes`(权限请求→裁决落库,FK 强制成对)。
 
-**intent-before-execute(三处,全部「先落库再执行」)**:① `AgentRun.begin()` 在派发 Backend 前先持久化 initial user RuntimeEvent;② Run Composer:构建不可变 Run Composition(system prompt/工具目录/策略及修订)→ commit 到 AgentRun store → **commit 成功后才调 provider**("Provider dispatch waits for a durable Run Composition commit",[runtime-host-architecture.md](https://github.com/apache/maka/blob/main/docs/architecture/runtime-host-architecture.md) 规则 8);③ 工具层 T1/T2:Phase 2 "T1 guaranteed before tool execution and T2 before returning the result"([runtime-resume-architecture.md](https://github.com/apache/maka/blob/main/docs/architecture/runtime-resume-architecture.md) 相位表)。
+**intent-before-execute(三处,全部「先落库再执行」)**:
+- ① `AgentRun.begin()` 在派发 Backend 前先持久化 initial user RuntimeEvent;
+- ② Run Composer:构建不可变 Run Composition(system prompt/工具目录/策略及修订)→ commit 到 AgentRun store → **commit 成功后才调 provider**("Provider dispatch waits for a durable Run Composition commit",[runtime-host-architecture.md](https://github.com/apache/maka/blob/main/docs/architecture/runtime-host-architecture.md) 规则 8);
+- ③ 工具层 T1/T2:Phase 2 "T1 guaranteed before tool execution and T2 before returning the result"([runtime-resume-architecture.md](https://github.com/apache/maka/blob/main/docs/architecture/runtime-resume-architecture.md) 相位表)。
 
 **崩溃恢复(Phase 0-4,分级事实能力)**([runtime-resume-architecture.md](https://github.com/apache/maka/blob/main/docs/architecture/runtime-resume-architecture.md)):
 
@@ -98,7 +111,8 @@ CAS 变体:work_board `revision`、plan `store_version`、goal `authority_revisi
 ### 2.5 记忆与评测(与 GoTry 记忆面/巡检面相关)
 
 - durable 长期记忆子系统:`packages/storage/src/sqlite-long-term-memory-{schema,store}.ts` + `memory-extraction(+-proposal).ts`(记忆抽取进 SQLite,带 crash 测试 `sqlite-long-term-memory-crash.test.ts`);
-- Eval 内核:Experiment = benchmark+executor+subjects+tasks+repetitions;Cell = task×repetition×subject;attempt log **append-only**,"result selection always uses the earliest valid attempt"——操作者不能挑结果;"A/B is simply a two-arm Experiment"([packages/eval/README.md](https://github.com/apache/maka/blob/main/packages/eval/README.md)、[ARCHITECTURE.md](https://github.com/apache/maka/blob/main/ARCHITECTURE.md))。
+- Eval 内核:Experiment = benchmark+executor+subjects+tasks+repetitions;Cell = task×repetition×subject;attempt log **append-only**,"result selection always uses the earliest valid attempt"——操作者不能挑结果;
+  - "A/B is simply a two-arm Experiment"([packages/eval/README.md](https://github.com/apache/maka/blob/main/packages/eval/README.md)、[ARCHITECTURE.md](https://github.com/apache/maka/blob/main/ARCHITECTURE.md))。
 
 ## §3 开发者面
 
@@ -218,3 +232,8 @@ ADR-15 五件套定义见 `transactional-state-rfc.md` §2.2;maka 侧证据见 �
 25. MoClaw 博文「The Agent That Logs Everything」等第三方覆盖——未用于结论
 
 GoTry 侧(仓内):`docs/architecture.md` §8 ADR-15 / §11 状态面;`docs/transactional-state-rfc.md`(五件套/TS-0..5/D1-D5);`docs/deerflow-research.md`(风格与「不借」先例)。
+
+
+**捐赠方**
+
+- 无单一公司捐赠:代码原在 `github.com/maka-agent/maka-agent`(2026-05-27 建,Apache-2.0),入孵化时移交 apache org(旧地址现 301 重定向至 apache/maka);提案定位为「vendor-neutral 社区捐赠」,创始人 Jie Wen(jackwener,署 Botiverse, Inc.),7 位初始 committer 分布在 6 家组织 + 1 名独立开发者
