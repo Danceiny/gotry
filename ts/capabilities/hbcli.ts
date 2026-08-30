@@ -151,7 +151,9 @@ export async function searchHotels(
   // hotel-list 无日期旗标(房价按上游当前窗口),checkIn/checkOut 留给 hotel-rates 跟进
   const hbArgs = ['search', 'hotel-list', '--json', '--page-size', '10']
   if (query.destination) hbArgs.push('--destination-name', query.destination)
-  if (query.adults) hbArgs.push('--room-occupancies', JSON.stringify([{ adultCount: query.adults, childrenAges: [] }]))
+  // 纵深防御:LLM 常传字符串数字;canonical 强转在 staicli CLI 边界(hotelbyte-cli#7)
+  const adultsN = Number(query.adults)
+  if (Number.isFinite(adultsN) && adultsN > 0) hbArgs.push('--room-occupancies', JSON.stringify([{ adultCount: adultsN, childrenAges: [] }]))
   const live = await callHbcliJson(hbArgs, opts)
   if (live.via === 'hbcli-realtime') {
     return { ...live, hotels: live.result, summary: `${query.destination}:hbcli 实时返回${query.checkIn || query.checkOut ? '(日期不传上游 list,以当前窗口房价返回)' : ''}` }
@@ -221,7 +223,8 @@ export async function hotelRates(
   if (query.countryCode) hbArgs.push('--country-code', query.countryCode)
   if (query.nationalityCode) hbArgs.push('--nationality-code', query.nationalityCode)
   if (query.residencyCode) hbArgs.push('--residency-code', query.residencyCode)
-  if (query.adults) hbArgs.push('--room-occupancies', JSON.stringify([{ adultCount: query.adults, childrenAges: [] }]))
+  const adultsListN = Number(query.adults)
+  if (Number.isFinite(adultsListN) && adultsListN > 0) hbArgs.push('--room-occupancies', JSON.stringify([{ adultCount: adultsListN, childrenAges: [] }]))
   const live = await callHbcliJson(hbArgs, opts)
   const summary = live.via === 'hbcli-realtime'
     ? `hotel ${query.hotelId}:hbcli 实时报价${query.checkIn ? `(${query.checkIn} → ${query.checkOut ?? '?'})` : ''}`
