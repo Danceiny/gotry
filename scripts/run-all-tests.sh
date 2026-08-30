@@ -337,6 +337,10 @@ echo "=== 42. CHANGELOG 生成器(2026-08-30 owner 拍板补 changelog 机制:Co
 (cd ts && npx tsx scripts/changelog-tests.ts | tail -1) || FAIL=1
 
 echo
+echo "=== 43. 扩展分发通道(ADR-21 分发 A:GitHub Releases 下载链——稳定资产名/URL 合同 + package-extension.mjs 防漂移 / dist-manifest fail-closed / 版本比较 / 回环 e2e installed·up-to-date·check-only·坏SHA·无网·key漂移 / CLI 单行 JSON 契约;全离线) ==="
+(cd ts && npx tsx scripts/extension-distribution-tests.ts | tail -1) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

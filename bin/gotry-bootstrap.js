@@ -16,6 +16,10 @@
  *   node bin/gotry-bootstrap.js              # 显式安装(缺啥装啥;失败 exit 1)
  *   node bin/gotry-bootstrap.js --auto       # postinstall 模式:CI/跳过开关检测,任何失败不挡安装(exit 0)
  *   node bin/gotry-bootstrap.js --check-only # 只探测报告,不安装(测试钩子)
+ *   node bin/gotry-bootstrap.js --extension-from=github
+ *                                           # 扩展改走 GitHub Releases 下载通道(ADR-21):
+ *                                           #   dist-manifest → tar.gz → SHA256 → key 钉扎 → 原子交换;
+ *                                           #   任何失败显式降级回包内副本(离线确定性不变)。
  *   node bin/gotry-bootstrap.js wizard       # 会话扩展 onboarding 闭环(issue #21 onboarding UX,§3.3):
  *                                           #   5 步编排 + 后台 health-watch 等扩展心跳,
  *                                           #   扩展一就位 stdout 翻绿并自动重放同 query。
@@ -27,6 +31,8 @@
  *   GOTRY_SETUP_REACH=0           跳过 agent-reach
  *   GOTRY_SETUP_SIDEBAR=0         跳过 dsh-better-sidebar
  *   GOTRY_SETUP_EXTENSION=0       跳过会话检索扩展落位
+ *   GOTRY_EXTENSION_SOURCE=github 等效 --extension-from=github(显式 opt-in,默认 bundled)
+ *   GOTRY_EXTENSION_RELEASE_BASE=<url> 下载通道基址覆盖(镜像/测试;缺省 GitHub 官方)
  *   GOTRY_ONBOARDING_HEADLESS=1   wizard 子命令强制走终端面板(SSH/CI 默认探测)
  *
  * 契约:安装外部依赖永远不挡 gotry 本体——能力层各有降级路径(静态包/not-installed
@@ -45,6 +51,10 @@ const AUTO = process.argv.includes('--auto')
 const CHECK_ONLY = process.argv.includes('--check-only')
 const WIZARD = process.argv.includes('wizard') || process.argv.includes('--wizard')
 const WIZARD_DRY_RUN = process.argv.includes('--dry-run')
+// 扩展分发源(ADR-21):默认 bundled(包内副本,离线确定性);github 显式 opt-in
+// (镜像 GOTRY_SESSION_TRANSPORT=cdp 的显式 opt-in 文化——不静默引入网络依赖)
+const EXT_FROM_ARG = (process.argv.find((a) => a.startsWith('--extension-from=')) ?? '').split('=')[1]
+const EXTENSION_FROM = EXT_FROM_ARG === 'github' || EXT_FROM_ARG === 'bundled' ? EXT_FROM_ARG : process.env.GOTRY_EXTENSION_SOURCE === 'github' ? 'github' : 'bundled'
 
 const HBCLI_INSTALL_CMD = 'curl -fsSL https://github.com/hotelbyte-com/docs/releases/latest/download/install.sh | bash'
 const REACH_INSTALL_URL = 'git+https://github.com/Panniantong/Agent-Reach.git'
@@ -192,6 +202,58 @@ async function setupExtension() {
   say('  最后一步(每台浏览器一次,约 30 秒):Chrome 打开 chrome://extensions → 右上角开启「开发者模式」→「加载已解压的扩展程序」→ 选择 ~/.gotry/extension')
   say('  装好即生效,零系统弹窗;扩展卡片开关=总闸(与 gotry 授权闸 sessionAccess 双重控制)')
   return { ok: true }
+}
+
+/**
+ * GitHub Releases 下载通道(ADR-21 分发 A,--extension-from=github 显式 opt-in):
+ * repo 态 spawn tsx CLI(与 wizard/health-watch 同款单行 JSON 回传),npm 态 import dist JS;
+ * 任何失败显式降级 bundled 包内副本——安装外部产物永远不挡 gotry 本体。
+ */
+async function setupExtensionFromGithub() {
+  say('[gotry-setup] GoTry Session Bridge 扩展 · GitHub Releases 下载通道(dist-manifest → tar.gz → SHA256 → key 钉扎)')
+  const destDir = join(homedir(), '.gotry', 'extension')
+  const cliScript = join(repoRoot, 'ts', 'scripts', 'extension-distribution-cli.ts')
+  const releaseBase = process.env.GOTRY_EXTENSION_RELEASE_BASE // 镜像/测试基址覆盖;缺省 GitHub 官方
+  let r = null
+  if (existsSync(cliScript)) {
+    r = await new Promise((resolve) => {
+      const child = spawn('npx', ['--yes', 'tsx', cliScript, '--dest', destDir, '--source-dir', join(repoRoot, 'extension'), ...(releaseBase ? ['--release-base', releaseBase] : []), ...(CHECK_ONLY ? ['--check-only'] : [])], {
+        cwd: join(repoRoot, 'ts'),
+        stdio: ['ignore', 'pipe', 'inherit'],
+      })
+      let buf = ''
+      child.stdout.on('data', (c) => { buf += c.toString('utf8') })
+      child.on('close', () => {
+        const line = (buf.trim().split('\n').pop() ?? '')
+        if (line.startsWith('{')) { try { resolve(JSON.parse(line)); return } catch { /* 落到下一行 */ } }
+        resolve({ ok: false, action: 'fallback-bundled', error: `CLI 无 JSON 输出(末行:${line.slice(0, 120)})` })
+      })
+      child.on('error', (e) => resolve({ ok: false, action: 'fallback-bundled', error: `CLI 启动失败 ${e.message}` }))
+    })
+  } else {
+    try {
+      const mod = await import('../dist/capabilities/session/extension-distribution.js')
+      r = await mod.installExtensionFromGithub({ destDir, pinnedSourceDir: join(repoRoot, 'extension'), ...(releaseBase ? { releaseBase } : {}), checkOnly: CHECK_ONLY })
+    } catch (e) {
+      r = { ok: false, action: 'fallback-bundled', error: `dist 模块不可用:${e.message}` }
+    }
+  }
+  if (r && r.ok) {
+    if (r.action === 'installed') {
+      say(`  ✓ 已从 GitHub Releases 落位 ${destDir}(v${r.version}${r.previousVersion ? `,旧 v${r.previousVersion}` : ''})`)
+      say('  已装过旧版的浏览器:chrome://extensions → GoTry Session Bridge 卡片 → 「重新加载」一次即生效(新装跳过)。')
+      return { ok: true }
+    }
+    // up-to-date(check-only 下远端更新也会走到这里,只报告不落盘)
+    if (r.version != null && r.previousVersion != null && r.version !== r.previousVersion) {
+      say(`  ✓ 远端有新版 v${r.version}(本地 v${r.previousVersion})${CHECK_ONLY ? '(--check-only 只报告)' : ''}`)
+      return { ok: true }
+    }
+    say(`  ✓ 已是最新(v${r.version ?? '?'});若浏览器里尚未加载:chrome://extensions → 开发者模式 → 加载已解压 → 选 ${destDir}`)
+    return { ok: true }
+  }
+  say(`  ✗ GitHub 通道失败(${r && r.error ? r.error : '未知'})——显式降级包内副本:`)
+  return setupExtension()
 }
 
 /**
@@ -436,7 +498,7 @@ async function main() {
   else say('[gotry-setup] agent-reach:GOTRY_SETUP_REACH=0 跳过')
   if (process.env.GOTRY_SETUP_SIDEBAR !== '0') results.push(await setupSidebar())
   else say('[gotry-setup] dsh-better-sidebar:GOTRY_SETUP_SIDEBAR=0 跳过')
-  if (process.env.GOTRY_SETUP_EXTENSION !== '0') results.push(await setupExtension())
+  if (process.env.GOTRY_SETUP_EXTENSION !== '0') results.push(await (EXTENSION_FROM === 'github' ? setupExtensionFromGithub() : setupExtension()))
   else say('[gotry-setup] GoTry Session Bridge 扩展:GOTRY_SETUP_EXTENSION=0 跳过')
   say('[gotry-setup] flyai:无需安装(npx 每次自拉 @fly-ai/flyai-cli,免 key)')
   const failed = results.filter((r) => !r.ok).length
