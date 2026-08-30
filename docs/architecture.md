@@ -1,43 +1,87 @@
 # GoTry 技术文档(唯一技术权威面)
 
 > 定位:本仓的**完整技术文档**——系统是什么、怎么构成的、每个模块在哪、怎么跑、往哪演进。
+> 读者:接手或维护本仓的工程 agent 与人。想知道「现在是什么形态」看 §1,「为什么这么定」看 §8,「该接什么活」看 §10。
 > 纪律:单一文件承载单一关注点,版本历史归 git,不设 vN 文件后缀;上游为总纲(`gotry-master-outline.md`)与产品设计(`gotry-product-design.md`)。
 > 下游:loopx todos 依本文§9 演进阶段与§10 债务清单派生;引擎/求解器细节工作只在债务清单标注时进行。
+
+**目录**
+
+| | | | |
+|---|---|---|---|
+| [1 系统是什么](#1-系统是什么) | [2 总体架构](#2-总体架构五层与现状) | [3 代码地图](#3-代码地图每个模块是什么) | [4 统一行程模型](#4-统一行程模型领域核心唯一求解入口) |
+| [5 对话循环](#5-对话循环l2) | [6 数据与运行时](#6-数据与运行时) | [7 测试与验证](#7-测试与验证策略) | [8 ADR](#8-adr) |
+| [9 演进](#9-演进时间线唯一来源-roadmapmd-的-m0-m6此处只保留原则与现状) | [10 债务清单](#10-债务清单引擎细节工作只能来自这里) | [11 保鲜机制](#11-保鲜机制文档与现实的同步纪律) | [12 文档地图](#12-文档地图) |
 
 ---
 
 ## 1. 系统是什么
+## 1. 系统是什么
+
+> 本节只回答「系统**现在**是什么」。「什么时候发生了什么、为什么改」一律归 §9 演进与
+> `release-notes.md`——本节出现日期叙事即为错位(§11 保鲜纪律第 4 条)。
 
 **GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:动机访谈进、已验证的行程方案与选择题出;LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 
-**当前形态(诚实定位,2026-08-30 `v0.0.1-rc.16`)**:dsh 成品可用(`./gotry` 或 `npx @danceiny/gotry@latest web`,DeepSeek 原生;`rc` dist-tag 滞留旧版 rc.7,#50② 治理完成前不用 `@rc`)——人格(行为契约 20 条,锚点卡/记忆 brief 注入 persona,运行时组合唯一来源=仓根 cordis.gotry-patch.yml——2026-08-28 发现 ts/ 副本分叉致产品面跑旧人格,当日归一退役副本)+ 二十工具(可行性/骨架/酒店/天气/航班/Anything/网页/视频字幕/GitHub搜索/AgentReach wrapper/动机/愿望池/愿望召回/旅行时间线/同行人/**飞猪官方检索/会话检索/账号登录**——2026-08-29 OTA 平铺与账号授权闸:gotry_flyai_search 扩 kind=hotel(飞猪 search-hotel 实测接入,未鉴权打码价保 priceRaw 原值不伪装数字价),persona (19) 删「三级路由」改平铺工具面(无预设路由优先级,证据链逐源标注不变);账号会话工具授权闸进代码——`tools/pre-execute` 监听器(`session-consent.ts`)**每会话每站点首次调用**经 dsh 原生 ApprovalService 审批卡请求授权(allowed-once 记入会话 granted 集,会话内后续调用免弹;**用户拒绝 = 本会话吊销**,不再弹卡也不再执行——founder 实测「每次都弹,经常无法点击」后由逐次批准改会话内一次;无审批通道/headless 一律 fail-closed 拒绝),插件 config `sessionAccess: ask|allow|off`(随时可关/明示预授权/总闸关闭)(RFC 支柱④「用户明示授权+站点白名单+随时可关」进代码,founder 口径「OTA 都是工具;用用户账号必须确认」);**登录产品化(第 20 工具 `gotry_session_login`,能力层 `capabilities/session-login.ts`)**:needs-login 时 agent 直调——在用户 Chrome 弹登录入口、等其在携程官网完成登录,无需终端;gotry 只读票据 cookie 名零值过手(登录永远在外部网站完成);登录引导页不挂 ReadGuard 为唯一豁免面(检索面不变量不变,`transport guard:false`);遗留 CLI `scripts/session-login.ts` 降薄壳;**测试不再自动开浏览器窗口**(session-tests G 节 live 改 GOTRY_SESSION_LIVE=1 显式 opt-in——founder 反馈「在匿名窗口反复打开携程/界面闪退」= 测试骚扰,当批根治),smoke §12-13 + session-tests §G/H/I + run-all §24);机票三层(骨架 168 对+校验桥+锚点)+ 酒店 hbcli 桥(实时/静态降级+证据标注;**2026-08-30 全流程 E2E 收口**:本机官方脚本装 staicli → hotel-be 种子沙箱账号取票 → UAT 通道/鉴权/搜索编排真通(供应商 provenance 实证),UAT 库存暂空走设计内静态包降级,run-all §7d 固化、无 bin/无网 SKIP)+ Anything 通用搜索(gotry anything.ts;实时链 2026-08-25 终局撤回——hotel-be @path 免鉴权面按 founder 判定无附加值,两 PR 关闭,静态包兜底;酒店域实时改走已注解的 hotel-list 面);OpenSky 实时 ADS-B + Open-Meteo 天气免费接入;**agent-reach wrapper 化**(上游 v1.5.0 装于 .venv;反射桥 agent-reach-bridge.py 直调上游注册表,零渠道知识,needs-setup 透传上游 check() 原话;真 LLM 会话复验 e2e-prompts §7/§8);**License MIT**;**npm 公开分发已通,latest=rc.15;rc.16 tag 已推但 npm 未发布**(2026-08-30 #50 核实:registry versions/dist-tags 均无 rc.16、GitHub Release 未建——发布凭证缺位,补发待 founder 浏览器 approve 窗口;rc.16 内容=issue #49 采纳——价表 provider-aware v2(`gotry_llm_price_table_v2`)+ MiniMax M2/M2.1/M3 入表 + 价格漂移监测长机制 `ts/scripts/price-drift-watch.ts`(DeepSeek/MiniMax/OpenAI/Anthropic 四家主流 provider,**永不自动 apply 价格**——ADR-11 纪律)+ CHANGELOG 自动化机制(`build-changelog.ts` + `CHANGELOG.md`,Keep a Changelog 1.1.0 + Conventional Commits 解析)+ §38 扩展桥 zombie port 根治;run-all 新增 §41 §42 两闸;founder 确认制下 agent 执行——publish 实际未完成、「registry 回拉实测过」记载不实,#50 勘误);**rc.15 分发缺陷 #48 已修(2026-08-30,未随版本发布)**——bin env 映射只映射 key 不映射 base,OpenAI 兼容端点用户的 key 被发往 DeepSeek 官方端点必然 401;同点补 `LLM_BASE_URL → DEEPSEEK_BASE_URL`(显式 DEEPSEEK_* 优先,默认官方路径不变),README 双语/.env.example/bin help 同步配法;历史 rc.15 2026-08-29 发布:issue #17 采纳——预订 saga 状态机具名化 booking_saga_fsm.v1(ADR-17,run-all §36 与账本物理对账);历史 rc.14 2026-08-29 发布:文档中英分文件(README.md 英文 + README.zh-CN.md 中文互链);历史 rc.13 2026-08-29 发布:账号会话三连修复(登录自动检测/登录页置前/标签页纪律)+ README 可读性一版;历史 rc.12 2026-08-29 发布:OTA 扁平化/账号授权闸 v2/登录产品化第 20 工具;历史 rc.11 2026-08-29 发布:已知限制清算——Z3 race 根治 D-17/实时票价桥/i18n 英文面/薄壳删除;run-all §30-§32 固化;founder 确认制下 agent 执行,registry 回拉实测过;历史:rc.10 2026-08-28=双形态冻结/传输层 puppeteer 定案/依赖面根治,曾为 latest;rc.9 已发包缺陷=dist 带账本但缺 better-sqlite3 声明,装得上跑不起,由 rc.10 覆盖);工具 execute 统一 guardToolExecute 异常隔离(D-NEW gotry 侧收尾)+ 平铺观察 envelope(ADR-13);py 树仅剩 gotry_feasibility oracle(D-7 清偿);run-all-tests 全栈回归全绿(套件清单见 `scripts/run-all-tests.sh` 分节,计数不落字)。M3 最小可用产品,分发链路无已知堵点。**时间感知硬化(2026-08-27,时间评测驱动)**:确定性时间锚点层 `ts/src/time-anchor.ts`(今天/明天后天大后天/本周下周下下周/下个月分段/季度/节日锚点,纯函数;注入 persona `{{time_anchor_card}}` 与 legacy 抽取全链路——此前 FACTS/SKELETON 无时间注入,过期语义无从谈起);`ts/src/travel-slots.ts` 差旅槽位抽取(travel_slot_extraction.v1:时间表达逐字保留,过期判定与 language 检测归代码层);`ts/src/slot-spec.ts` 槽位→日期解析层(锚点卡词表换算+spec 一致性闸,D-10 三切片清偿);评测基建 `data/time-slot-eval.json`(25 题)+ `ts/scripts/time-eval-tests.ts`(确定性部分进 CI;真模型巡检基线 11/25 → 25/25,P0 8/8);顺带清偿 dsh-llm 环境变量模块顶冻结致 .env 不生效的存量隐患(改调用时惰性读取)。**M4 记忆效用 sidecar(2026-08-27,RFC S2/S3)**:`ts/src/memory-utility.ts`(recalled/applied/verified_outcome 三类事件 + 归因只认 owner 确认,模型不许自评「有用」)+ wish 稳定 wish_id/muted + `gotry_wish_pool_list`(0..1 条件召回,muted 不召回,北极星「下一次出发率」的度量底座)。**记忆读回(T1 写读闭环,2026-08-28)**:画像此前只写不读,新会话模型盲访——`{{motivation_brief}}` persona 变量把 motivation-profile 渲染成紧凑 brief 注入(空=首访,契约 (1) 据此分支;回访不重复问已答字段,冲突以用户当轮为准)——M4 exit「回访规划时长降 ≥50%」的机制前提。**记忆域 P3 时间窗衰减落地(2026-08-28)**:`memory-decay.ts` 分级窗口原语(只降不删/地板 0.1/动机零衰减构造性保证)+ memory-metrics 新鲜置信度列——行为记忆按 30/90/180/365d 分级新鲜度参与投影。**记忆域 P2 同行人档案落地(2026-08-28)**:`companions.ts` + `gotry_companion_save`(15 工具)+ brief 同行人行——P1/P2 连续落地(memory-design §4)。**记忆域 P1 时间线落地(2026-08-28)**:`travel-timeline.ts` + `gotry_trip_log`(第 14 工具)+ confirm-outcome 自动挂时间线 + brief「去过」行——M4 分期 P1 完成(memory-design §4)。**记忆域正式设计(2026-08-28)**:`memory-design.md` 落地 M4 交付「六层框架重设计」——六层(M1 用户基础/M2 动机偏好/M3 预算/M4 时间线/M5 同行人/M6 双区会话)现状映射 + 分期增量(P1 旅行时间线→P2 同行人档案→P3 时间窗衰减→P4 双区会话后置)+ 铁律(溯源 P0/排序不硬过滤/负面清单/多用户前向兼容)。**北极星过程面度量(2026-08-28)**:`scripts/memory-metrics.ts` 只读投影(wish 在册/休眠、效用事件计数、经验回流率基线 verified/recalled,run-all-tests §20)——M4 exit「经验回流率有基线」的工具前提。**主动回访骨架(2026-08-28)**:`scripts/nudge-digest.ts`(0..1 条件匹配经 `wish-pool.ts` 纯函数,三通道 stdout/file/lark——lark 等 GOTRY_LARK_WEBHOOK 配置即插即用,投递失败降级 stdout 不阻塞;`GOTRY_NUDGE_ENABLED=false` 全局关闭,契约「可关闭」,run-all §21)。**真模型巡检轮(2026-08-28,ADR-11 巡检层)**:persona 扩三处(motivation_brief/0..1/归因禁令)+13 工具后全量巡检——time-eval --real 25/25(P0 8/8)保持;replay-real 抓出 D-10 闸多段误伤并当日收窄修复(见 D-10),修复后真模型多段行程全链求解恢复;同轮暴露 probePoi 三类误触发(短句直通把访谈答案整句当关键词/订酒店抓「我订了」/多段首查抓「机票和」),当日收紧——关键词方向性(动词宾语后置、住宿名词后段优先、短裸地名 ≤12 字加陈述动词闸),probe-poi §7 金标准噪音回归,订酒店改抓真实名称段(The Title…)。**会话数据面 P1(2026-08-28,RFC `user-session-data-rfc.md` G7 立项)**:官方通道 `capabilities/flyai.ts`(飞猪 FlyAI 无 key 只读,机/火车票;spawn CLI 管道,agent-reach 同构)+ 会话面 `capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}`(puppeteer-core 专用 profile;ReadGuard 方法×URL 双因子写拦截+审计+fail-closed;携程 batchSearch 嗅探;节律闸 ≥30s;证据链 `[会话:ctrip-flight@ts]`;live 需 headful);run-all §24,session-tests 25 断言。工具面接线在 P3。**事务化状态基座(2026-08-28,ADR-15,RFC `transactional-state-rfc.md` accepted)**:「文件即权威」升级为「单文件 SQLite 账本即权威」(`ts/src/state-ledger.ts`,better-sqlite3/WAL):events append-only 唯一权威(语义幂等键 UNIQUE 物理化,wish_id 改语义派生)+ 投影表可 fold 重建(mergeProfile/appendTrip/upsertCompanion 守门纯函数原样复用为写路径与 fold 处理器,语义层零改造)+ 红线(evidence/conditions)进事务、拒绝即回滚 + confirm-outcome 单事务(效用+行程同生,跨文件分叉物理不可能)+ 异步工单 durable 恢复(workflow_steps intent-before-execute,崩溃后 done 步骤零重执行,exactly-once)+ pending_writes saga(WriteGate L2/L3 基座:幂等键/receipt/补偿,what-if VACUUM INTO 分叉);五状态工具写路径与 brief/nudge/metrics 读路径全部接线,`gotry_session_search` 审计落盘生产路径,ASYNC_DIR 接 stateRoot;旧 JSON/JSONL 降级为单向导出视图(`state-cli export`,红线 6),首写自动 one-shot 迁移+快照(`pre-ledger-backup/`);run-all §28(39 断言)/§29(CLI e2e 14 断言)。**Z3 求解面收敛(2026-08-29,README Known limitation「Z3 WASM race」清偿)**:`ts/src/z3-shared.ts` 单一 WASM 实例 + 单一 Context + 会话级互斥门(`withZ3`),engine/journey/unified 三模块全部过门、engine.solve 弃 `Promise.all` 改串行——同 Context 并发 unwind(Asyncify 栈损坏→`memory access out of bounds`)与三实例并存的 OOM 形态一并根除;run-all §1「重试一次」止血退役,新增 §30 进程内三形态并发回归闸 ×12。**i18n 英文面工程层(2026-08-29,同批)**:`i18n.ts` 消息目录——zh-CN 默认且与金标准逐字节一致,`GOTRY_LOCALE=en`(或 setLocale('en'))切英文、en 缺键回退 zh;覆盖求解确定性面(候选/航班链 answer_md、放宽建议、排除理由、wish 理由);run-all §32;工具卡(宿主面)与人格对话面待 M4 校准样本随补。**实时票价接入(2026-08-29,同批清算)**:`ts/src/realtime-pricing.ts`——dated 航班链段(spec 带 date+route 词表内城市对)经 FlyAI 官方只读通道按航班号精确匹配覆写 spec 价格,证据链 `[实时API:flyai@ts]` 并进 skeleton_notes;miss/error/打码价/无匹配一律降级回静态包,永不抛错;`realtimeSolvePort`(env 闸 `GOTRY_REALTIME_PRICING`,默认关)接线 replay-real 真模型巡检 solve port——静态包由唯一来源变为显式降级,run-all §31(纯离线注入)。**贡献基建(2026-08-29,开源协作面)**:GitHub Actions CI(node 22/24 矩阵:typecheck + 全栈回归 §1-§34,`GOTRY_SESSION_LIVE=0`);`CONTRIBUTING.md` + issue/PR 模板;lockfile(root/ts 双份)与 dsh-runtime 三 manifest(package.json/pnpm-lock/pnpm-workspace)入 git,resolved 全量从 bnpm 内部镜像改指 registry.npmjs.org(integrity 逐包验证);贡献流程改 PR 制——`main` 收保护不直接推,分支+全绿+PR review+squash 合入。**dsh runtime 升级 alpha.1(2026-08-29,issue #15 跟进,免等上游 npm 发版)**:vendored runtime 从 `0.1.1-rc.2` 升 `0.1.2-alpha.1`——上游 GitHub tag `dsh-v0.1.2-alpha.1` 源码构建(`pnpm build:official` + `pnpm release:pack --family dsh` 产 241 tarball,全量解包入 `ts/dsh-runtime/vendor/`,pnpm workspace 成员 + `linkWorkspacePackages: true` 解析,成员间 `^0.1.2-alpha.1` range 命中本地版本,零 overrides);解包对齐 npm 装机语义(剥离 devDependencies——上游 devDeps 引用未入发布家族的 dsh-experimental-* 私有包;唯 `dsh-subprocess-local` postinstall 保留,恢复 node-pty spawn-helper 可执行位);alpha 的 `--profile` 强制项 gotry 侧早已预落地(`bin/gotry-inner.js` headless 恒带 `--profile headless`,9fad1d7),8-28 源码评审的 API 兼容面(defineTool/systemPrompt.variable/patch)实测确认;CI 不安装 runtime 不受影响,npm 公共分发面(root deps)仍钉 rc.2 等上游 publish;验证 `./gotry help` 版本探活 + tsc + smoke + run-all §1-§32 全绿;溯源与升级流程 `ts/dsh-runtime/vendor/README.md`。**会话传输层定案扩展桥(2026-08-30,issue #21 方案 C,founder「逐连接权限框根本无法使用」实测定案)**:Chrome 144+ 每次 CDP 连接都弹浏览器侧权限框且持久化批准无官方支持(chrome-devtools-mcp #825)——CDP 车道降为显式 opt-in(`GOTRY_SESSION_TRANSPORT=cdp`,诊断/测试,不静默回退),**扩展桥升 PRIMARY**:自研 `extension/` GoTry Session Bridge(MV3 零构建,manifest 固定 key=扩展 ID 跨机器稳定;SW 长轮询取活 ≤20s 维持存活;MAIN-world 被动嗅探 batchSearch——检索请求由站点自己发出,扩展零写行为;cookie-names 只取票据名,值即取即弃)+ `session/extension-bridge.ts` 回环桥(`node:http` 零新依赖,端口池 8791-8795=manifest host_permissions,origin 白名单防网页跨域,queued+inFlight 双表/parked 即时派发)+ `extension-channel.ts` 三 job 封装;登录快路径免标签页秒回;系统弹窗每会话 0 次(对照 CDP 每连接 1 次);`needs-extension`=waiting no-spend 用户门(有界等待,一次性安装指引);守卫模型按车道分形(扩展=零写行为+hints 白名单+同款 JSONL 审计;cdp=请求级 abort 保留);`gotry setup` 扩展落位 `~/.gotry/extension`(幂等,`GOTRY_SETUP_EXTENSION=0` 可跳);run-all §38 全离线 23 断言(manifest/固定 ID 派生/Node↔扩展常量防漂移/origin 403/闭环/no-spend),bootstrap-tests 5/5,RFC §2.2/§3.2/§3.3 同步;真实 sf-01..08 双源跑批门禁从「开调试端口+每连接点框」降为「装一次扩展」。**会话扩展 onboarding UX(2026-08-30,issue #21 P3.6,loopx `gotry-session-onboarding-goal`)**:founder 实测「能装≠装到能用」——上版隐性状态要求 5 次点击 + 1 个原生文件对话框 + 跨 app 切换(终端→Chrome)+ 装完还要自己重跑 sf 命令验证。闭环:`npx gotry setup wizard`(5 步编排 + pbcopy/xclip 复制扩展路径 + open 直达 chrome://extensions + macOS osascript / Linux zenity / Windows msg / headless 终端跨平台 GUI 面板 + 后台 health-watch ≤120s 探活 + 扩展一就位 stdout 翻绿自动重放同 query_id)——用户侧降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。`ts/capabilities/session/wizard.ts`(跨平台 spawn 编排 + 测试 spawn 注入)+ `health-watch.ts`(默认 120s/5s、有界、AbortSignal 取消)+ `scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程单行 JSON 输出)+ bootstrap `wizard` 子命令(inline 降级兜 npm 安装态)+ run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节 + RFC §3.3/§4 P3.6/§6 osascript 复用矩阵同步;后续 goal 2 `sf-live-benchmark` 仍待用户一次性装扩展后跑八条 query。**价表 provider-aware v2 + 价格漂移监测(2026-08-30,issue #49,ADR-20)**:封存价表从 `gotry_llm_price_table_v1`(DeepSeek V4 only)升 `v2`(`providers.<id>.models.<model>` 平铺结构 + `family`/`price_strategy`/`source_url`/`aliases` provider-aware 字段);**MiniMax 系 M2/M2.1/M3 入表**——M3 取 >512k tokens 档作 peak ceiling(\$0.60/\$0.12/\$2.40 per 1M)守 ADR-11「peak only-high-not-low」;`flat_no_offpeak` 纪律:MiniMax 无 off-peak 列,以同价占位填入 _offpeak 列(供审计完整存档);`loadPriceTable` 双格式兼容 v1/v2,`priceRunCost` 外暴露 API 不变;未知模型 → fail-closed,不猜价;`ts/scripts/price-drift-watch.ts` 覆盖 DeepSeek/MiniMax/OpenAI/Anthropic 四家主流 provider,默认离线对照 baseline fixture + snapshot(OpenAI/Anthropic 等 SPA provider 走 snapshot 优先,__NEXT_DATA__ 内嵌 JSON dump 双路径解析 + 段落文字 fallback——CI 零联网);`--fetch` 模式拉取官方页 + 首次写 fixture + snapshot;**永不自动 apply 价格**——价格调整必须人工 PR + 人 review(ADR-11 纪律);fetch 失败/解析失败/snapshot 缺失 四态 SKIP + reason,零写未知数据;PR 段落含 model/field/from/to/direction 四向 drift 表;run-all §41 合同 11/11 绿。**CHANGELOG 自动化(2026-08-30 owner 拍板补,run-all §42)**:Keep a Changelog 1.1.0 + Conventional Commits 解析(`ts/scripts/build-changelog.ts` + `CHANGELOG.md` 根目录);`docs/release-notes.md` 是人写决策面(创始人「为什么」),`CHANGELOG.md` 是机器权威面(commit log 衍生),二者并存;`scripts/publish-npm.sh` 集成 changelog 闸(发布前自动跑 build-changelog + 校验顶部 `## [<ver>]` 段 + 校验 git 已 commit);发布成功后 `gh release create` 自动建 GitHub Release(notes 拼自 CHANGELOG + release-notes 同段);`--skip-changelog` 应急开关(不推荐);§38 扩展桥 zombie port 根治(`lane.close()` + `process.on('exit')`);run-all 新增 §41 §42 两闸 11/11 绿。
+M3 最小可用产品,分发链路无已知堵点。
 
-**扩展分发双通道(2026-08-30,issue #21 分发通道,ADR-21)**:founder 指令「产物下载和安装也得做成更好的用户体验,可以用 github 作为分发渠道」——Chrome 平台约束诚实前置(非商店不可免「开发者模式加载已解压」的 3 次点击,GitHub 只能改善下载),双通道分工:**GitHub Releases 下载通道(已落)**——`gotry setup --extension-from=github` 显式 opt-in(env `GOTRY_EXTENSION_SOURCE` 等效,默认仍 bundled 保离线确定性;`GOTRY_EXTENSION_RELEASE_BASE` 可覆盖基址/镜像),Releases 稳定资产名三件套(gotry-session-bridge.tar.gz + -store.zip + extension-dist-manifest.json,`scripts/package-extension.mjs` 只产产物不上传=发布确认制),下载链=dist-manifest→SHA256→key 钉扎(固定扩展 ID 不变量,通道产物与 bundled 不同 key 即拒装)→版本比较→原子交换 `~/.gotry/extension`,任何失败显式降级 bundled 不挡 setup;信任边界=TLS+同源哈希完整性(防截断/误传,非独立 pinning——会把扩展更新重新耦合回 npm 发版节奏,明确不做);**Chrome Web Store 上架通道(B 轨材料就绪未提交)**——一键装+自动更新的唯一平台路径,商店材料(单一用途声明/权限逐条理由/隐私披露/双语文案)+隐私政策落 `docs/extension-webstore-submission.md` 与 `docs/extension-privacy.md`,注册与提交归 founder(D-25);固定 key 预期商店同 ID,以首次上传实测为准;run-all §43 35 断言(资产名/打包脚本防漂移、dist-manifest fail-closed、版本比较、回环 e2e 六态、CLI 契约)+ bootstrap-tests 8/8(不可达基址即时降级/非法值回落 bundled)。
+### 1.1 交付形态与入口
 
-**扩展分发双通道(2026-08-30,issue #21 分发通道,ADR-21)**:founder 指令「产物下载和安装也得做成更好的用户体验,可以用 github 作为分发渠道」——Chrome 平台约束诚实前置(非商店不可免「开发者模式加载已解压」的 3 次点击,GitHub 只能改善下载),双通道分工:**GitHub Releases 下载通道(已落)**——`gotry setup --extension-from=github` 显式 opt-in(env `GOTRY_EXTENSION_SOURCE` 等效,默认仍 bundled 保离线确定性;`GOTRY_EXTENSION_RELEASE_BASE` 可覆盖基址/镜像),Releases 稳定资产名三件套(gotry-session-bridge.tar.gz + -store.zip + extension-dist-manifest.json,`scripts/package-extension.mjs` 只产产物不上传=发布确认制),下载链=dist-manifest→SHA256→key 钉扎(固定扩展 ID 不变量,通道产物与 bundled 不同 key 即拒装)→版本比较→原子交换 `~/.gotry/extension`,任何失败显式降级 bundled 不挡 setup;信任边界=TLS+同源哈希完整性(防截断/误传,非独立 pinning——会把扩展更新重新耦合回 npm 发版节奏,明确不做);**Chrome Web Store 上架通道(B 轨已提交审核中,2026-08-30 founder)**——一键装+自动更新的唯一平台路径,商店材料(单一用途声明/权限逐条理由/隐私披露/双语文案)+隐私政策落 `docs/extension-webstore-submission.md` 与 `docs/extension-privacy.md`,注册与提交归 founder(D-25);固定 key 预期商店同 ID,以首次上传实测为准;用户指引面(needs-extension 提示/wizard 面板/setup 尾注/README 双语)统一以 GitHub Releases 为获取通道、商店过审后切一键装文案;run-all §43 35 断言(资产名/打包脚本防漂移、dist-manifest fail-closed、版本比较、回环 e2e 六态、CLI 契约)+ bootstrap-tests 8/8(不可达基址即时降级/非法值回落 bundled)。
+| | |
+|---|---|
+| 入口 | `./gotry`(仓内)或 `npx @danceiny/gotry@latest web`(npm) |
+| 运行时 | dsh 成品形态,DeepSeek 原生 |
+| 版本 | 见 `package.json` 与 `release-notes.md`;**`rc` dist-tag 滞留旧版,#50② 治理完成前不要用 `@rc`** |
+| License | MIT |
+| 人格 | 行为契约 20 条;锚点卡与记忆 brief 注入 persona。**运行时组合唯一来源 = 仓根 `cordis.gotry-patch.yml`** |
 
-**可下单事实闸(2026-08-30,issue #46,ADR-19)**:复杂远期行程曾把未核验航班号/时刻/机场/价格/政策写成确定事实(✓/推荐/证据链措辞)——可下单事实收敛单一数据源 `gotry_bookable_fact.v1`(`ts/src/bookable-facts.ts` 纯函数:flyai/session exact-date 工具结果逐条落账,hit 正事实/miss 负事实,query_id 可重放,IATA 归一;四层证据 tier 永不合并),**exact-date miss =「未确认/当前不可售,到 D-xx 复核」,禁止历史班期/相邻日期/航线页回填**(route-exists ≠ flight-on-date);联程仅 protected_connection=true,分票自助转机显式标注;航司→机场映射(FD=DMK/VZ=BKK)进 `data/airline-airports.json` as_of 快照;政策表述强制「截至 YYYY-MM-DD」+复核日期;**第 21 工具 `gotry_fact_gate`**(`ts/src/artifact-gate.ts`:markdown claim 反向抽取逐条回溯 + 夜数/O&D/预算/时刻矛盾机器不变式 + 同日衔接硬约束 + 迂回检测)——交付含可下单事实的产物前必过,blocked 即不得宣称「已验证方案」;persona (20) 红线化;run-all §39 locked golden 2027 E2E(issue 审计值夹具)+ smoke §16。
-**M3 真实 cohort 证据面(Issue #22,2026-08-29)**:`ts/scripts/product-metrics.ts` 固化样本窗、纳排、分母、归因和 M3 Exit 阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;`ts/data/product-metrics-fixture.json` 只验证公式与守门,synthetic fixture 永不产生 business pass。真实证据只进入被忽略的 `ts/gotry-state/evidence/m3/`;当前没有 50–200 人真实 cohort,故 M3 Exit 保持开放。**nightly real-LLM 证据生产器(2026-08-29 同日第二批,Issue #22 验收⑥)**:`ts/scripts/nightly-evidence.ts` 固定封存 prompt 集(`ts/data/m3-nightly-prompts.json`)× 真 LLM,产出 `gotry_m3_nightly_run_v1` 记录追加进私有证据账本 `ts/gotry-state/evidence/m3/cohort.jsonl`;cost_usd 只来自 dsh-llm 新增 usage 累计器(`createOpenAICompatLlm` 返回 port 附带 usage)× 封存价表 `ts/data/llm-price-table.json`(DeepSeek V4 官方 peak 价,只高不低,未知模型 fail-closed 不猜价);无凭证 = waiting_external_evidence/backoff/no-spend 零写入,预算闸 `GOTRY_NIGHTLY_BUDGET_USD`(默认 $1)超限退 3,prompt_set_sha256/output_sha256/run_key 确定性锚定;run-all §35 纯离线合同验证,真跑花钱不进 CI(heartbeat/founder 手动执行)。
+### 1.2 能力面
 
-**会话数据面 #21 当前增量(2026-08-29)**:首个非门禁切片已落地 `session-double-source.v1` 字段级 fixture scorer 与双源可比性合同;`waiting_attach`/`waiting_login`/challenge/ReadGuard 均为 no-spend 停止态。真实 sf-01..08 Chrome attach 验证仍须用户手工开启 remote debugging、确认浏览器侧权限并完成 CDP 握手;仅打开设置页不算成功 attach。
+工具面注册于 `ts/src/index.ts`(**清单与计数以代码为准,此处不落数字**——§11 保鲜清单第 4 条):
 
-**Issue #67 static golden 当前增量(2026-08-30)**:`ts/scripts/sf-live-benchmark.ts --golden=static` 新增离线确定性对照源:航线与承运人来自 OpenFlights ODbL 快照(固定 revision `4b969f8e91eb800c45f0e0e2355a0fbb93de27e4`),时刻与价格仍取 `sf-golden-manifest.json` 手工区间并在 evidence 标为 estimated fields；记录同时保留 `requested_source=static`、实际 `effective_source`、provenance 与 `fallback_reason`。静态快照缺失/坏 schema/路由不匹配时向 stderr 明示并回退 `manual-golden`,不静默换源。该源只用于 benchmark comparator,**不是实时班期、票价或库存**；真实会话结果仍由携程会话通道产生。离线合同进 run-all §44。
+- **判定类**:可行性、骨架校验、航班校验、**产物事实闸 `gotry_fact_gate`**(交付前必过,blocked 不得宣称「已验证方案」)
+- **检索类**:酒店(hbcli 桥)、天气、Anything 通用搜索、网页、视频字幕、GitHub、飞猪官方检索(机/火/酒)、会话检索
+- **记忆类**:动机、愿望池(入池/召回)、旅行时间线、同行人
+- **产物类**:产物 list/read(账本工单交付 + 工作目录 md,只读)
+- **账号类**:会话登录 `gotry_session_login`(在用户 Chrome 弹登录入口,票据 cookie 名零值过手)
+- **外联**:AgentReach wrapper(上游装于 `.venv`,反射桥 `agent-reach-bridge.py` 直调上游注册表,零渠道知识)
 
-**Issue #67 真实 evidence 与桥生命周期(2026-08-30)**:用户 Chrome 已登录后连续两轮重跑 sf-01..08:`static` official 每轮 8/8 hit、`fallback_count=0`;携程 session 分别 3/8 与 5/8 hit,两轮全部可评分 hit(3+5 条)均 13/13=100%,非 hit 均显式 `miss`。这证明 session 命中数会随站点响应波动;≥90% 只证明命中样本的字段准确率,不伪装成 8/8 可售性。同轮暴露扩展在线时默认桥的 parked `/jobs` timer/socket 会钉住 CLI;默认桥现仅对空闲长轮询 `unref`,wizard `keepBridge=true` 常驻语义不变,run-all §38 现为 24 段。
+**工具面无预设路由优先级**(persona (19) 已删「三级路由」改平铺),证据链逐源标注。
 
-**M4 Issue #20 价值证据合同(2026-08-29)**:`ts/scripts/memory-value-report.ts` + `ts/data/memory-value-fixture.json` 固化唯一匿名用户首次/下一次 eligible completed flow 的 paired measurement,returning 必须晚于 first 完成,active planning duration 只扣预声明且互不重叠的 external waits,统一输出 N/p50/p75/逐 pair reduction、experience reflux、偏好溯源/硬过滤红线与 P4 trigger 闸。`synthetic_fixture` 永不充当 Exit 证据;真实 `observed_private` N≥5 repeat cohort 尚缺(D-19);run-all §34 固化合同与负例。
+数据接入:机票三层(骨架 168 对 + 校验桥 + 锚点)、酒店 hbcli 桥(实时/静态降级 + 证据标注)、OpenSky 实时 ADS-B、Open-Meteo 天气、飞猪 FlyAI 官方只读通道。
 
-**里程碑口径(Issue #19,2026-08-29)**:M3 工程与分发面已就绪,但真实种子用户 evidence 未收口,M3 Exit 仍开放;M4 由 founder 授权并行推进,Issue #20 scorer 已落地而真实 `observed_private` N≥5 仍缺,这些 M4 切片不构成 M3 Exit 证明;M5/M6 仅在各自 Entry gate 满足后启动。
+### 1.3 账号会话与授权闸
 
-**异步终态合同(Issue #19,2026-08-29)**:`gotry_async_terminal.v1` 将 4/4 映射为 `succeeded`/ledger `settled`/exit 0,将非 4/4 映射为 `failed`/ledger `failed`/exit 2;终态复诵返回同一结构化结果与退出码且零重算。
+- **授权闸**:`tools/pre-execute` 监听器(`session-consent.ts`)在**每会话每站点首次调用**时经 dsh 原生 ApprovalService 请求授权。allowed-once 记入会话 granted 集,会话内后续调用免弹;**用户拒绝 = 本会话吊销**,不再弹卡也不再执行。无审批通道 / headless 一律 **fail-closed 拒绝**。
+- **开关**:插件 config `sessionAccess: ask|allow|off`(随时可关 / 明示预授权 / 总闸关闭)——RFC 支柱④「用户明示授权 + 站点白名单 + 随时可关」进代码。
+- **登录**:`capabilities/session-login.ts` 在用户 Chrome 弹登录入口,登录**永远在外部网站完成**;登录引导页不挂 ReadGuard 是唯一豁免面(检索面不变量不变)。
+- **只读不变量**:ReadGuard 方法×URL 双因子写拦截 + 审计 + fail-closed;节律闸;证据链 `[会话:*]`。
 
+### 1.4 事实性与状态基座
 
-**预订 saga 状态机具名化(2026-08-29,issue #17 采纳)**:「多 Agent 协同用 FSM 显式建模」提议的处置——机理全有归宿(共享态/原子更新=账本;检查点=events+fold;防重复副作用=workflow_steps exactly-once+idem_key;HITL=pending 持久挂起+ApprovalSeam),LangGraph 编排不引入;本次落地**词汇层** `ts/src/booking-saga.ts`(booking_saga_fsm.v1,纯函数):状态字母表与 pending_writes CHECK 逐字一致、四条边全函数边表(12 格含结构化拒绝闭集,吸收态无出边)、审计链校验器(合法路径四条/空 receipt 抓出),run-all §36 物理对账 25 断言锁定「词汇层=账本 saga 基座语义,分叉即红」。ADR-17 三口径:①企业审批=pending 持久挂起+外部事件沿边恢复,复用 ApprovalSeam;②合规检查恒为 deterministic-edge(Z3 命名约束/unsat core),永不做成 LLM Agent 节点;③M5 启封增量(空 receipt 物理 CHECK/booking seam 词汇/L2 L4 接线)仍是 M5 Entry 交付物(M4 exit + 供应链协议开闸),本词汇层不构成里程碑证据。设计文档 `booking-saga-fsm.md`。
+- **可下单事实单一数据源**(ADR-19):`ts/src/bookable-facts.ts`(`gotry_bookable_fact.v1`,纯函数)——flyai/session exact-date 工具结果逐条落账,hit 正事实 / miss 负事实,query_id 可重放,IATA 归一;四层证据 tier **永不合并**。**exact-date miss =「未确认/当前不可售,到 D-xx 复核」**,禁止用历史班期/相邻日期/航线页回填。
+- **状态权威 = 单文件 SQLite 账本**(ADR-15,`ts/src/state-ledger.ts`):events append-only + 投影 fold 可重建 + 红线进事务 + 工单 durable 恢复(exactly-once)+ pending_writes saga。旧 JSON/JSONL 降级为单向导出视图。
+- **双形态冻结**(ADR-16):本地 + Web 一套账本语义,`tenant_id` 一等字段,同步 = 事件复制而非状态翻译。
+- **预订 saga 词汇层**(ADR-17,`ts/src/booking-saga.ts`):状态字母表与 pending_writes CHECK 逐字一致。
+- **异步终态合同**:`gotry_async_terminal.v1` 将 4/4 映射为 `succeeded`/ledger `settled`/exit 0,非 4/4 映射为 `failed`/ledger `failed`/exit 2;终态复诵返回同一结构化结果与退出码且零重算。
 
-**效应解译器落地(2026-08-29,issue #16 采纳,ADR-18)**:外部依赖隔离走「效应描述+解译器」——工具层只产纯数据效应值 `{effect, params}`,渠道访问/退避重试/断路器/编译期 mock 全部收敛到解译层(`ts/capabilities/effect.ts` effect_interpreter.v1 + `resilience.ts`,run-all §37);垂直切片五个渠道工具(flyai/hotel/session/weather/flight_verify)+realtime-pricing 查询口已改走 `interpretEffect`,渠道韧性策略 per-效应显式拍板(默认全关零行为变化,Sentinel 永不重试/SESSION 永不重试不熔断/免费源退避 2 次),浏览器解译=既有 SESSION CDP 通道、不做视觉 CUA(零 Python 红线),不做渠道自动路由(OTA 平铺);余下渠道工具增量迁移记 D-23。设计文档 `effect-interpreter.md`。
+### 1.5 记忆域与时间感知
 
+- **记忆域六层**(设计见 `memory-design.md`):动机 brief 读回 persona、效用 sidecar(归因只认 owner 确认)、愿望池 0..1 召回(`gotry_wish_pool_list`)、旅行时间线(`gotry_trip_log`)、同行人档案(`gotry_companion_save`)、时间窗衰减(只降不删/地板 0.1/动机零衰减)。度量与触达:`scripts/memory-metrics.ts` 只读投影 + `scripts/nudge-digest.ts` 主动回访(`GOTRY_NUDGE_ENABLED=false` 可全局关闭)。
+- **时间感知**:确定性锚点层 `ts/src/time-anchor.ts` + 槽位抽取 `travel-slots.ts` + 槽位→日期解析 `slot-spec.ts`。**算术进代码,LLM 查卡不自算**。
 
-**产物面最小切片(Issue #25,2026-08-29)**:`gotry_artifacts_list/read`(第 19/20 工具)——账本 workflow_runs 交付 + dsh 工作目录顶层 md 在 dsh 内可发现、可读(dsh read 卡行号文件视图,工单 id 直读 + offset/limit 翻页);只读能力层 `capabilities/artifacts.ts`(路径白名单 = stateRoot+工作目录、排除 node_modules/.git;扩展名白名单 = 文本类),smoke §13。面板第二切片(同日,founder 指令「看 dsh-market 成熟组件」):自建零依赖 webui 因 UI 品质不达产品级撤回,改走宿主组件 **dsh-better-sidebar**(dshmarket.com #1 UI,18.9 万周装,v0.17.1 双形态兼容)——`gotry setup` 宿主层安装(dsh plugin → ~/.dsh/profiles/web,不进 gotry 依赖),dsh web 右侧工作台(文件树/Markdown/Mermaid/PDF 预览)直接浏览工作区产物;账本感知产物 Tab(better-sidebar registerTab,需 client-half 插件面)列下一阶段。
+### 1.6 工程不变量
+
+- 工具 execute 统一经 `guardToolExecute` 异常隔离 + 平铺观察 envelope(ADR-13)。
+- 外部依赖走**效应描述 + 解译器**(ADR-18):工具层只产纯数据效应值 `{effect, params}`,渠道访问/退避重试/断路器/编译期 mock 收敛到 `ts/capabilities/effect.ts` 与 `resilience.ts`。
+- py 树仅剩 `gotry_feasibility` oracle,产品运行时零 Python 依赖(D-7 清偿)。
+- 全栈回归见 `scripts/run-all-tests.sh` 分节(计数不落字)。
+
+### 1.7 里程碑口径(Issue #19)
+
+M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20 scorer 已落地而真实 `observed_private` N≥5 仍缺——**这些 M4 切片不构成 M3 Exit 证明**。M5/M6 仅在各自 Entry gate 满足后启动。
+
+证据面现状:`ts/scripts/product-metrics.ts`(M3 cohort)与 `ts/scripts/memory-value-report.ts`(M4 价值)固化了样本窗/纳排/分母/归因与阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;synthetic fixture **永不产生 business pass**。真实证据只进入被忽略的 `ts/gotry-state/evidence/`。
 
 ## 2. 总体架构:五层与现状
 
@@ -103,9 +147,13 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/src/artifact-gate.ts` `ts/capabilities/fact-log.ts` | **产物事实闸 + 事实侧车**(issue #46/ADR-19):markdown 可下单 claim 反向抽取(航班号/承运直飞/中文承运名/机场映射/政策「截至」语境/✓/联程断言,小节上下文继承)→ 逐条回溯注册表(not_in_source/route_unqueried/时刻矛盾/联程违例等 12 类违例);第 21 工具 `gotry_fact_gate`,blocked 不得宣称已验证;fact-log 落 `<stateRoot>/gotry-state/bookable-facts.jsonl` 侧车(永不阻塞检索主路径) | ✅ run-all §39 + smoke §16 |
 | `data/airline-airports.json` `ts/data/golden-trip-2027-facts.json` | 航司→机场映射 + 城市→IATA 词表(gotry_airline_airports.v1,as_of 快照+review_by):FD=DMK/VZ=BKK 冲突检测面,闸加载缺失即 fail-closed;golden fixture=issue #46 审计值锁定的 2027 行程事实集(11 查询)+ 好/坏行程不变式对 | ✅ run-all §39 |
 | `ts/scripts/state-cli.ts` | **账本操作面**(ADR-15):migrate/export(视图单向)/log/stats/rebuild/rewind/forget(物理硬删带审计)/tick(回收 pending 工单)/whatif(VACUUM INTO 分叉)/pw-*(WriteGate saga CLI 面) | ✅ run-all §29 |
-| `ts/scripts/product-metrics.ts` `ts/data/product-metrics-fixture.json` + `ts/scripts/nightly-evidence.ts` `ts/data/m3-nightly-prompts.json` `ts/data/llm-price-table.json` | **M3 cohort 证据评分面 + nightly 证据生产器(Issue #22)**:阈值冻结 manifest + 脱敏 cohort/nightly schema + 定稿率/NPS/POI 幻觉率 scorer；fixture 与真实证据分流，未知字段 fail-closed；nightly 生产器封存 prompt 集与价表(peak 保守上界,未知模型 fail-closed)、无凭证 waiting/backoff/no-spend、超预算退 3,记录写入前必过消费方 parseNightlyRun | ✅ run-all §33/§35；真实 cohort 待收集,nightly 真跑记录待凭证环境执行 |
+| `ts/scripts/product-metrics.ts` `ts/data/product-metrics-fixture.json` + `ts/scripts/nightly-evidence.ts` `ts/data/m3-nightly-prompts.json` `ts/data/llm-price-table.json` | **M3 cohort 证据评分面 + nightly 证据生产器(Issue #22)**:阈值冻结 manifest + 脱敏 cohort/nightly schema + 定稿率/NPS/POI 幻觉率 scorer； **详见下方「ts/scripts/product-metrics.ts ts/data/pr」** | ✅ run-all §33/§35；真实 cohort 待收集,nightly 真跑记录待凭证环境执行 |
 | `ts/scripts/time-eval-tests.ts` `data/time-slot-eval.json` | 时间感评测(25 题):确定性部分进 CI,`--real` 真模型巡检(只读报告) | ✅ 真模型 25/25 |
 | `data/golden_erhai.json` `flights_2026.json` `hotels_2026.json` `golden_trip_2026.json` `行程细化计划.docx` | 金标准用例/班期/住宿/完整任务/Kimi 对话原件 | — |
+
+**ts/scripts/product-metrics.ts ts/data/pr**
+- **M3 cohort 证据评分面 + nightly 证据生产器(Issue #22)**:阈值冻结 manifest + 脱敏 cohort/nightly schema + 定稿率/NPS/POI 幻觉率 scorer；fixture 与真实证据分流，未知字段 fail-closed；nightly 生产器封存 prompt 集与价表(peak 保守上界,未知模型 fail-closed)、无凭证 waiting/backoff/no-spend、超预算退 3,记录写入前必过消费方 parseNightlyRun
+
 
 ## 4. 统一行程模型(领域核心,唯一求解入口)
 
@@ -139,7 +187,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 **评测三层(ADR-11)**:
 - **回归层(防退化)**:TS-vs-TS 双路径稳定性(同 spec 不同 module instance)+ 金标准断言(洱海 8+5、普吉链 4、统一模型 20/20)+ **重放夹具**(mock 重放即行为级回归,Kimi 对话是失败基线)。**v0.0.1-rc.2 起:** 不再依赖 Python oracle 差分;run-all-tests 9 套一次性绿,无需 Python 运行时。全栈入口:`scripts/run-all-tests.sh`。
 - **质量层(防漂移)**:评测集+指标面板——POI 幻觉率、定稿率、不失望四条、NPS;M3 上线(见 `tech-strategy.md` §4),此前以 replay 终态断言兜底。
-- **巡检层(防「mock 绿而真智能烂」)**:真 LLM 重放(`replay-real.ts`)的 nightly 形态已落地——`nightly-evidence.ts`(封存 prompt 集+封存价表,预算闸 `GOTRY_NIGHTLY_BUDGET_USD`,无凭证 waiting/backoff/no-spend 零写入,run-all §35;真跑花钱不进 CI,heartbeat/founder 手动执行);ADR-10 正是 mock 绿而真 LLM 烂出来的,教训制度化。
+- **巡检层(防「mock 绿而真智能烂」)**:真 LLM 重放(`replay-real.ts`)的 nightly 形态已落地——`nightly-evidence.ts`(封存 prompt 集 + 封存价表,预算闸 `GOTRY_NIGHTLY_BUDGET_USD`,无凭证 waiting/backoff/no-spend 零写入,run-all §35;真跑花钱不进 CI,heartbeat/founder 手动执行)。产出 `gotry_m3_nightly_run_v1` 记录追加进**私有证据账本** `ts/gotry-state/evidence/m3/cohort.jsonl`(git 忽略);`cost_usd` 只来自 dsh-llm 的 usage 累计器 × 封存价表。ADR-10 正是 mock 绿而真 LLM 烂出来的,教训制度化。
 
 ## 8. ADR
 
@@ -158,16 +206,75 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 9 | 访谈确定性(缺失字段驱动) | LLM 即兴(Kimi 病根) | 永不复审 | `loop.ts interviewNext`;replay 夹具(首轮问出工作窗口) |
 | 10 | 翻译≠造数:LLM 只产骨架与锚点,班次数据永远来自能力层(数据包→实时API);spec 校验闸兜底 | 让 LLM 直接产出完整 spec(实测:MiniMax-M2 编不出时刻,要么编造要么卡死) | 永不复审 | `loop.ts validateSpec`;`dsh-llm.ts SKELETON_SYSTEM`;`replay-real.ts` |
 | 11 | 评测分层进架构:回归层(单元/差分/重放)防退化、质量层(评测集+指标面板)防漂移、巡检层(nightly 真 LLM 重放带预算闸)防「mock 绿而真智能烂」;M-exit 必过对应层级 | 只靠重放夹具(质量漂移无感)/事后补评测工具(指标不进架构等于不存在) | M3 exit 指标面板上线后复审一次 | `run-all-tests.sh`;replay 三件套;`tech-strategy.md` §4 |
-| 12 | 时间感分层:锚点卡(time-anchor 纯函数,算术进代码)+ 槽位逐字保留(LLM 不换算不翻译)+ 过期/language 判定归代码层;时间评测集进仓(data/time-slot-eval.json,只增不改语义),质量层首块落地 | 全 LLM 感知(锚点缺失实测:legacy 路径无今天注入,过期无从判)/代码全量解析中文相对日期(表达开放,维护黑洞) | **2026-08-27 复审(D-10 切片 A 触发):设计成立**;补充边界——解析层只认锚点卡词表+绝对表达+「+N」后缀,词表外 unresolved 逐字保留,不开式解析(锚点:`slot-spec.ts`;time-eval §5) | `time-anchor.ts`;`travel-slots.ts`;`slot-spec.ts`;`time-eval-tests.ts` |
+| 12 | 时间感分层:锚点卡(算术进代码)+ 槽位逐字保留(LLM 不换算不翻译)+ 过期/language 判定归代码层 | 见 §8.12 | **2026-08-27 复审(D-10 切片 A 触发):设计成立**,补充边界见 §8.12 | `time-anchor.ts`;`travel-slots.ts`;`slot-spec.ts`;`time-eval-tests.ts` |
 | 13 | 工具观察 envelope(RFC S1,effect-interpreter 映射):12 工具成功路径平铺 `ok:true` + 载荷,失败 `{ok:false,summary,evidence}`(guard 兜底同形,`ToolFailure` 编译期对齐);参数三形态归一唯一入口 `interpretArgs`(原 unwrapQuery 移居 `tool-packet.ts`) | 逐工具自由返回(形状漂移,每个新工具重新猜)/嵌套 envelope `{ok,value}`(渲染/调用方全要拆包,侵入大) | 出现第二个真实调用方(非 dsh 非 smoke)需要不同观察形状时复审 | `tool-packet.ts`;`incident-log.ts guardToolExecute`;smoke §9 |
-| 14 | 记忆效用 sidecar(RFC S2/S3,post-outcome-memory 映射):recalled/applied/verified_outcome 三类事件 append-only(`gotry-state/memory-utility.jsonl`),归因只认 owner 确认(attribution 只能在 confirm-outcome 由用户明说落盘,模型不许自评「有用」);wish 稳定 `wish_id` + muted(休眠不删除);召回 0..1/轮(`gotry_wish_pool_list` 条件评分,muted 永不召回,无命中不硬推)——M4 北极星「下一次出发率」的度量底座 | 召回即记「有用」(自称用了≠让结果变好)/wish 删除制(憧憬不被拒绝) | 多用户 AaaS 账本化(RFC §6.5)或出现第二个效用消费方时复审 | `memory-utility.ts`;`index.ts gotry_wish_pool_list`;smoke §10 |
-| 15 | 事务化状态基座(RFC `transactional-state-rfc`,业界 durable-execution 五件套收敛):单文件 SQLite 账本(better-sqlite3,WAL)= 唯一权威——events append-only(语义幂等键 UNIQUE 物理化,wish_id 语义派生)+ 投影表 fold 可重建(纯函数守门原样复用,语义层零改造)+ 红线进事务(evidence/conditions 拒绝即回滚)+ durable 工单(workflow_steps intent-before-execute,崩溃恢复 exactly-once)+ pending_writes saga(WriteGate L2/L3 基座:幂等键/receipt/补偿)+ what-if 分叉(VACUUM INTO);旧 JSON/JSONL 降级单向导出视图(红线 6);one-shot 迁移(首写自动+快照 `pre-ledger-backup/`) | Postgres/DBOS/Temporal/Restate 平台(单用户本地产品不需要服务端;SQLite durable 学派「一文件即控制面」)/纯文件加固 tmp+rename(修不了跨文件分叉与并发)/node:sqlite(零依赖但较新,D1 落选备选) | 多用户 AaaS 化(RFC §6.5 claim/CAS 实装)或需要多写者/多端复制(cr-sqlite/Litestream,触发式=D-15)时复审 | `state-ledger.ts`;run-all §28/§29 |
-| 16 | 双形态架构冻结(本地+Web,通用 agent 产品形态):**一套账本语义,两种宿主绑定**——本地=better-sqlite3 直读文件,Web=同一 schema 跑在每用户 SQLite 文件(或 Postgres,schema 同构);**tenant_id 从第一天就是一等字段**(events/投影/工单/pending_writes 全部带租户列,单用户期恒为 `'local'`,主键空间化防跨用户撞);**同步=账本事件的复制而非状态的翻译**(events 行带 tenant_id+幂等键,双端合并天然幂等);写必经账本、读必带租户上下文进不变量表 | 本地与 Web 各长一套逻辑(多用户期合并不动,推倒重来)/云端为权威本地为缓存(违反红线 6 本地优先)/同步投影而非事件(投影是派生态,合并会分叉) | 永不复审(双形态是产品形态基座);同步协议实装(Litestream/cr-sqlite/自建 API)与 claim/CAS 实装仍按触发器后置 | `state-ledger.ts` schema v2;run-all §28 双形态断言 |
-| 17 | 预订 saga 状态机具名化(issue #17 采纳,2026-08-29):预订/支付/退改的 saga **不引入编排框架(LangGraph 等)**,FSM 落为账本 pending_writes 的具名字母表+四条边全函数边表(`booking_saga_fsm.v1`,纯函数零接线);三种边型入词汇——deterministic-edge(合规/政策判定恒为代码层 Z3 命名约束/unsat core,永不做成 LLM Agent 节点)/gate-edge(用户选择题)/external-event-edge(HITL 审批=pending 持久挂起+外部账本事件恢复,复用 ApprovalSeam);M5 Entry 后任何 booking seam 只许走该边表 | LangGraph/Temporal 式 FSM 框架(第二运行时,违反 harness 基线与复用矩阵)/状态散落 SQL 字符串(边语义漂移无词表)/多 Agent 提示词协同(隐式依赖,ADR-9/10 教训) | M5 拍板 WriteGate 时复审(启封增量的 schema CHECK/seam 词汇/L4 自动类);若出现需要并行多写者的预订流,复审 keyed 单写者形态 | `ts/src/booking-saga.ts`;`docs/booking-saga-fsm.md`;run-all §36 |
-| 18 | 效应解译器 effect_interpreter.v1(issue #16 采纳,2026-08-29):「效应描述+解译器」下沉到 L4 渠道边界——工具/编排层只产纯数据效应值 `{effect, params}`,`ts/capabilities/effect.ts` 注册表换算成渠道 handler 调用;**韧性横切(指数退避重试/断路器)只能来自 per-效应策略表,没有策略行就没有效应(默认全关=零行为)**;生产/mock 双解译器同接口(`selectInterpreter` 环境注入,mock=夹具回放零网络),渠道 observation 原样透传 + trace 横切证据;浏览器解译=SESSION_* 效应(CDP attach+ReadGuard+授权闸),视觉 CUA 不做(零 Python 红线);解译器**不做**渠道自动路由/比价聚合(OTA 平铺是 founder 判定) | 逐工具自由调用能力层(横切逻辑复制,无退避/熔断/mock 面)/Python browser-use(违反零 Python 依赖)/解译器内置多渠道路由排序(违反 OTA 平铺)/全量重写 20 工具(风险大,走增量迁移 D-23) | 出现需要跨渠道比价聚合的产品裁决时复审「平铺」边界;写效应(预订/支付)入注册表时必须走 booking_saga_fsm.v1 边表(M5 Entry) | `ts/capabilities/effect.ts` `resilience.ts`;`docs/effect-interpreter.md`;run-all §37 |
-| 19 | 可下单事实单一数据源 + 产物事实闸(issue #46,2026-08-30):每个可下单事实(航班号/时刻/机场/价格/政策)只允许存在于结构化事实层(gotry_bookable_fact.v1:exact-date 工具结果逐条落账,hit 正事实/miss 负事实,query_id 可重放),Markdown 只是它的渲染产物;**exact-date miss =「未确认/当前不可售,到 D-xx 复核」,禁止用历史班期/相邻日期/航线页回填**(route-exists ≠ flight-on-date);四层证据 tier(live_inventory/route_exists/historical_schedule/benchmark_price)永不合并;冲突永不得 ✓;联程仅 protected_connection=true;FD 落 DMK、VZ 落 BKK 进 as_of 映射快照;交付含可下单事实的产物前必过 `gotry_fact_gate`(claim 反向抽取逐条回溯 + 夜数/O&D/预算机器不变式),blocked 即不得宣称「已验证方案」 | LLM 自觉标注(无强制力,issue #46 实证失败)/渲染时宽松放行(未核验事实出门)/政策面接实时签证 API(v1 政策事实仅渲染侧+闸侧,生产端记 D-24) | 出现第二类需闸产物(如酒店直订)时复审覆盖面;政策实时源接入后复审政策事实生产端;根治方向=产物只由渲染原语生成(结构化→markdown 单向),反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts`;`data/airline-airports.json`;run-all §39;smoke §16 |
-| 21 | 扩展分发双通道(issue #21 分发通道,2026-08-30):Chrome 平台禁止非商店 CRX 直装——GitHub Releases 只做「下载」(稳定资产名 tar.gz/store-zip/dist-manifest + SHA256 完整性 + 固定 key 钉扎防 ID 漂移 + 显式 opt-in + 失败显式降级 bundled),Chrome Web Store 才做「一键装+自动更新」(固定 key 双通道同 ID 共存);信任边界=TLS+同源哈希(防截断误传),非独立 pinning(会重新耦合 npm 发版节奏);打包只产产物,上传/上架走发布确认制 | 任意 URL 装 CRX(平台禁止)/npm 包唯一通道(扩展更新被迫跟 rc 发版火车)/独立 pinning(与解耦目标冲突)/自建更新服务器(违反零基建面)/Electron 式自带运行时(GUI 依赖面) | 商店过审后复审 wizard 步骤(store 版检测跳 dev-mode 三步);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/extension-webstore-submission.md` |
-| 22 | static golden 是**可审计 benchmark comparator**,不是实时航班源(issue #67,2026-08-30):route/carrier 只取 OpenFlights 固定 revision,时刻/价格取 manual band 且逐字段标 estimated；requested/effective source、revision/license 与 fallback reason 同条 evidence 落盘；快照或路由失败必须 stderr 告警后回退 manual,禁止静默换源或伪装 live availability | `hbcli search-flight`(本机与上游均无此能力,N/A)/携程免凭证开放 API(未找到且公开页 432,N/A)/直接把 manual 改名 static(来源造假)/仅保 manual(继续 vendor 锁) | 出现可免私有凭证、许可清晰且稳定的官方 flight API，或 hbcli 发布 flight 合同时复审其为新 provider；static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`;`ts/data/sf-static-routes.json`;run-all §44 |
+| 14 | 记忆效用 sidecar(RFC S2/S3):三类事件 append-only,**归因只认 owner 确认**;wish 稳定 id + 休眠制;召回 0..1/轮 | 见 §8.14 | 多用户 AaaS 账本化(RFC §6.5)或出现第二个效用消费方时复审 | `memory-utility.ts`;`index.ts gotry_wish_pool_list`;smoke §10 |
+| 15 | 事务化状态基座(RFC `transactional-state-rfc`,业界 durable-execution 五件套收敛) | 见 §8.15 | 多用户 AaaS 化(RFC §6.5 claim/CAS 实装)或需要多写者/多端复制(cr-sqlite/Litestream,触发式=D-15)时复审 | `state-ledger.ts`;run-all §28/§29 |
+| 16 | 双形态架构冻结(本地+Web):**一套账本语义,两种宿主绑定**;`tenant_id` 一等字段;同步=事件复制非状态翻译 | 见 §8.16 | 永不复审(双形态是产品形态基座);同步协议与 claim/CAS 实装按触发器后置 | `state-ledger.ts` schema v2;run-all §28 双形态断言 |
+| 17 | 预订 saga 状态机具名化(issue #17 采纳,2026-08-29) | 见 §8.17 | M5 拍板 WriteGate 时复审(启封增量的 schema CHECK/seam 词汇/L4 自动类);若出现需要并行多写者的预订流,复审 keyed 单写者形态 | `ts/src/booking-saga.ts`;`docs/booking-saga-fsm.md`;run-all §36 |
+| 18 | 效应解译器 effect_interpreter.v1(issue #16 采纳,2026-08-29) | 见 §8.18 | 出现需要跨渠道比价聚合的产品裁决时复审「平铺」边界;写效应(预订/支付)入注册表时必须走 booking_saga_fsm.v1 边表(M5 Entry) | `ts/capabilities/effect.ts` `resilience.ts`;`docs/effect-interpreter.md`;run-all §37 |
+| 19 | 可下单事实单一数据源 + 产物事实闸(issue #46,2026-08-30) | 见 §8.19 | 出现第二类需闸产物(如酒店直订)时复审覆盖面;政策实时源接入后复审政策事实生产端;根治方向=产物只由渲染原语生成(结构化→markdown 单向),反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts`;`data/airline-airports.json`;run-all §39;smoke §16 |
+| 21 | 扩展分发双通道(issue #21 分发通道,2026-08-30) | 见 §8.21 | 商店过审后复审 wizard 步骤(store 版检测跳 dev-mode 三步);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/extension-webstore-submission.md` |
+| 22 | static golden 是**可审计 benchmark comparator**,不是实时航班源(issue #67) | 见 §8.22 | 出现可免私有凭证、许可清晰且稳定的官方 flight API,或 hbcli 发布 flight 合同时复审其为新 provider;static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`;`ts/data/sf-static-routes.json`;run-all §44 |
+
+### ADR 展开(表内「见 §8.x」的正文)
+
+#### 8.12 时间感分层
+- 时间评测集进仓(`data/time-slot-eval.json`,只增不改语义),质量层首块落地。
+- 备选与取舍:全 LLM 感知——锚点缺失实测(legacy 路径无「今天」注入,过期无从判);代码全量解析中文相对日期——表达开放,维护黑洞。
+- **复审补充的边界**:解析层只认锚点卡词表 + 绝对表达 + 「+N」后缀;词表外 unresolved 逐字保留,**不做开放式解析**(锚点 `slot-spec.ts`;time-eval §5)。
+
+#### 8.14 记忆效用 sidecar
+- `recalled`/`applied`/`verified_outcome` 三类事件 append-only(`gotry-state/memory-utility.jsonl`)。
+- **归因纪律**:attribution 只能在 confirm-outcome 由用户明说落盘,**模型不许自评「有用」**。
+- wish 稳定 `wish_id` + muted(休眠不删除);召回 0..1/轮(`gotry_wish_pool_list` 条件评分,muted 永不召回,无命中不硬推)——M4 北极星「下一次出发率」的度量底座。
+- 备选与取舍:召回即记「有用」——自称用了 ≠ 让结果变好;wish 删除制——憧憬不该被拒绝。
+
+#### 8.15 事务化状态基座
+单文件 SQLite 账本(better-sqlite3,WAL)= 唯一权威,业界 durable-execution 五件套收敛:
+1. **events append-only**:语义幂等键 UNIQUE 物理化,`wish_id` 语义派生。
+2. **投影表 fold 可重建**:纯函数守门原样复用,语义层零改造。
+3. **红线进事务**:evidence/conditions 拒绝即回滚。
+4. **durable 工单**:`workflow_steps` intent-before-execute,崩溃恢复 exactly-once。
+5. **pending_writes saga**:WriteGate L2/L3 基座(幂等键/receipt/补偿)+ what-if 分叉(VACUUM INTO)。
+
+旧 JSON/JSONL 降级为单向导出视图(红线 6);one-shot 迁移(首写自动 + 快照 `pre-ledger-backup/`)。
+
+备选与取舍:Postgres/DBOS/Temporal/Restate 平台——单用户本地产品不需要服务端(SQLite durable 学派「一文件即控制面」);纯文件加固 tmp+rename——修不了跨文件分叉与并发;`node:sqlite`——零依赖但较新,D1 落选备选。
+
+#### 8.16 双形态架构冻结
+- **一套账本语义,两种宿主绑定**:本地 = better-sqlite3 直读文件;Web = 同一 schema 跑在每用户 SQLite 文件(或 Postgres,schema 同构)。
+- **`tenant_id` 从第一天就是一等字段**:events/投影/工单/pending_writes 全部带租户列,单用户期恒为 `'local'`,主键空间化防跨用户撞。
+- **同步 = 账本事件的复制,而非状态的翻译**:events 行带 `tenant_id` + 幂等键,双端合并天然幂等。写必经账本,读必带租户上下文进不变量表。
+- 备选与取舍:本地与 Web 各长一套逻辑——多用户期合并只能推倒重来;云端权威 + 本地缓存——违反红线 6 本地优先;同步投影而非事件——投影是派生态,合并会分叉。
+
+#### 8.17 预订 saga 状态机具名化
+预订/支付/退改的 saga **不引入编排框架(LangGraph 等)**,FSM 落为账本 `pending_writes` 的词汇层(`ts/src/booking-saga.ts`,`booking_saga_fsm.v1` 纯函数):状态字母表与 CHECK 约束逐字一致,边全函数化。
+
+备选与取舍:LangGraph/Temporal 式框架——第二运行时,违反 harness 基线与复用矩阵;状态散落 SQL 字符串——边语义漂移无词表;多 Agent 提示词协同——隐式依赖。
+
+#### 8.18 效应解译器 `effect_interpreter.v1`
+「效应描述 + 解译器」下沉到 L4 渠道边界——工具/编排层只产纯数据效应值 `{effect, params}`;渠道访问、退避重试、断路器、编译期 mock 全部收敛到解译层。
+
+备选与取舍:逐工具自由调用能力层——横切逻辑复制,无退避/熔断/mock 面;Python browser-use——违反零 Python 依赖;解译器内置多渠道路由排序——违反 OTA 平铺。
+
+#### 8.19 可下单事实单一数据源 + 产物事实闸
+每个可下单事实(航班号/时刻/机场/价格/政策)**只允许存在于结构化事实层**(`gotry_bookable_fact.v1`),产物渲染前过闸。
+
+备选与取舍:LLM 自觉标注——无强制力(issue #46 实证失败);渲染时宽松放行——未核验事实出门;政策面接实时签证 API——v1 政策事实仅渲染侧 + 闸侧,生产端记 D-24。
+
+**根治方向**:产物只由渲染原语生成(结构化 → markdown 单向),反向抽取降为过渡态。
+
+#### 8.21 扩展分发双通道
+Chrome 平台禁止非商店 CRX 直装——GitHub Releases 只做「下载」(稳定资产名 tar.gz/store-zip/dist-manifest),Web Store 才是「一键装 + 自动更新」。默认仍 bundled 保离线确定性,GitHub 通道显式 opt-in。
+
+备选与取舍:任意 URL 装 CRX——平台禁止;npm 包唯一通道——扩展更新被迫跟 rc 发版火车;独立 pinning——与解耦目标冲突;自建更新服务器——违反零基建面。
+
+#### 8.22 static golden = 可审计 comparator
+route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band 且逐字段标 estimated;`requested`/`effective` source、revision/license 与 fallback reason 同条 evidence 落盘。**快照或路由失败必须 stderr 告警后回退 manual,禁止静默换源或伪装 live availability。**
+
+备选与取舍:`hbcli search-flight`——本机与上游均无此能力(N/A);携程免凭证开放 API——未找到且公开页 432(N/A);直接把 manual 改名 static——来源造假;仅保 manual——继续 vendor 锁。
+
 
 ## 9. 演进(时间线唯一来源= `roadmap.md` 的 M0-M6;此处只保留原则与现状)
 
@@ -177,63 +284,186 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 - **当前主线 = M3 evidence 未收口；并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪，真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进；T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明，真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动，不得由并行实现倒推开闸。
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面；业务达标只接受阈值冻结的 `real_seed_cohort`，fixture 恒 fail。真实 cohort 仍为空，等待 50–200 个脱敏样本，不宣称 M3 Exit。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
-- **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:`npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日完成 loopx 13 篇架构 RFC 通读与映射,产出 `loopx-inspired-upgrades-rfc.md`——**founder 当日指令 accepted(「按建议执行」)**,四切片 S1-S4 按序落地;同指令确立**多用户 Agent as a Service** 为未来方向(shared-goal-authority 类 claim/CAS 机制转入远期采纳面,RFC §6.5)。**S1 已落地**:`tool-packet.ts` 观察 envelope(平铺 ok:true/ok:false summary,guard 兜底同形编译期对齐)+ unwrapQuery 升格 interpretArgs;S2 记忆效用 sidecar → S3 wish 触达纪律 → S4 WriteGate 词汇依次推进(D-12)。
-- **事务化状态基座落地(2026-08-28,ADR-15)**:业界调研(loopx/DBOS/Temporal/Restate/LangGraph/Letta/Claude Code transcript 学派/SQLite durable 学派/TigerFS/SagaLLM/Cockroach 七失效模式)收敛五件套(append-only 账本/投影/约束即红线/步骤日志/saga 补偿)→ `transactional-state-rfc.md` 立例、founder 当日 accepted(「按你的建议来」,D1-D5 全按建议结算)。TS-0..TS-4 一次落地:`state-ledger.ts` 账本 + 五状态工具写路径接线 + brief/nudge/metrics 读路径回退兼容 + `state-cli` 操作面 + durable 工单崩溃恢复 exactly-once(§28 子进程 exit 9 实证)+ `gotry_async_terminal.v1` 4/4/非 4/4 结构化终态、差异退出码与零重算复诵 + pending_writes saga;run-all §28/§29。TS-5 触发式后置=D-15。**同日 ADR-16 双形态冻结**:本地+Web 一套账本语义,tenant_id 一等字段(schema v2),同步=事件复制非状态翻译;§28 双形态断言(同库双租户互不串)。
+- **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:
+  - `npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日完成 loopx 13 篇架构 RFC 通读与映射,产出 `loopx-inspired-upgrades-rfc.md`——**founder 当日指令 accepted(「按建议执行」)**,四切片 S1-S4 按序落地;同指令确立**多用户 Agent as a Service** 为未来方向(shared-goal-authority 类 claim/CAS 机制转入远期采纳面,RFC §6.5)。
+  - **S1 已落地**:`tool-packet.ts` 观察 envelope(平铺 ok:true/ok:false summary,guard 兜底同形编译期对齐)+ unwrapQuery 升格 interpretArgs;S2 记忆效用 sidecar → S3 wish 触达纪律 → S4 WriteGate 词汇依次推进(D-12)。
+- **事务化状态基座落地(2026-08-28,ADR-15)**:
+  - 业界调研(loopx/DBOS/Temporal/Restate/LangGraph/Letta/Claude Code transcript 学派/SQLite durable 学派/TigerFS/SagaLLM/Cockroach 七失效模式)收敛五件套(append-only 账本/投影/约束即红线/步骤日志/saga 补偿)→ `transactional-state-rfc.md` 立例、founder 当日 accepted(「按你的建议来」,D1-D5 全按建议结算)。
+  - TS-0..TS-4 一次落地:`state-ledger.ts` 账本 + 五状态工具写路径接线 + brief/nudge/metrics 读路径回退兼容 + `state-cli` 操作面 + durable 工单崩溃恢复 exactly-once(§28 子进程 exit 9 实证)+ `gotry_async_terminal.v1` 4/4/非 4/4 结构化终态、差异退出码与零重算复诵 + pending_writes saga;run-all §28/§29。
+  - TS-5 触发式后置=D-15。
+  - **同日 ADR-16 双形态冻结**:本地+Web 一套账本语义,tenant_id 一等字段(schema v2),同步=事件复制非状态翻译;§28 双形态断言(同库双租户互不串)。
 - **会话数据面 #21 首切片(2026-08-29)**:`session/benchmark.ts` 固化 required comparable fields 的 fixture scorer(缺字段计错、默认 90% 闸)与双源合同(按 journey/segments/时刻/班次对齐,价格只记差值不判等)；`needs-attach`/`needs-login` 为 waiting-user no-spend,challenge 与 ReadGuard 非零 fail-closed。纯 fixture 已进 run-all §25；真实 sf-01..08 仍等待 Chrome attach 权限确认与握手。
-- **会话传输层定案扩展桥(2026-08-30,#21 方案 C 升 PRIMARY)**:founder 实测「Chrome attach 逐连接权限框根本无法使用」(chrome-devtools-mcp #825:每次连接必弹、无持久化批准)→ CDP 降显式 opt-in、扩展桥主载——`extension/`(MV3 零构建,固定 key=扩展 ID,SW 长轮询,MAIN-world 被动嗅探,cookie-names 只取名)+ `extension-bridge.ts`(`node:http` 回环桥,origin 白名单,零新依赖)+ 车道路由(扩展默认/cdp 显式/persistent 测试);登录快路径免标签页;守卫按车道分形(扩展=零写行为+hints 白名单,cdp=请求级 abort);`needs-extension` → `waiting_extension`(waiting-* 同族 no-spend);run-all §38(23 断言)+ bootstrap-tests 5/5;真实 sf-01..08 门禁降为「装一次扩展」。
+- **扩展分发双通道(2026-08-30,issue #21,ADR-21)**:founder 指令「产物下载和安装也得做成更好的用户体验,可以用 github 作为分发渠道」。Chrome 平台约束**诚实前置**——非商店不可免「开发者模式加载已解压」的 3 次点击,GitHub 只能改善下载。双通道分工:
+  - **GitHub Releases 下载通道(已落)**:`gotry setup --extension-from=github` 显式 opt-in(env `GOTRY_EXTENSION_SOURCE` 等效),默认仍 bundled 保离线确定性。
+  - **Chrome Web Store 通道(已提交审核中,2026-08-30 founder)**:一键装 + 自动更新的唯一平台路径。商店材料(单一用途声明/权限逐条理由/隐私披露/双语文案)与隐私政策落 `docs/extension-webstore-submission.md`、`docs/extension-privacy.md`;注册与提交归 founder(D-25)。固定 key 预期商店同 ID,以首次上传实测为准。
+  - 回归:run-all §43(资产名/打包脚本防漂移、dist-manifest fail-closed、版本比较、回环 e2e)。
+  - **注**:本条曾在 §1 出现两份内容矛盾的副本(一份「材料就绪未提交」、一份「已提交审核中」),2026-08-31 文档重构时以后者为准合并。
+- **会话传输层定案扩展桥(2026-08-30,#21 方案 C 升 PRIMARY)**:
+  - founder 实测「Chrome attach 逐连接权限框根本无法使用」(chrome-devtools-mcp #825:每次连接必弹、无持久化批准)→ CDP 降显式 opt-in、扩展桥主载——`extension/`(MV3 零构建,固定 key=扩展 ID,SW 长轮询,MAIN-world 被动嗅探,cookie-names 只取名)+ `extension-bridge.ts`(`node:http` 回环桥,origin 白名单,零新依赖)+ 车道路由(扩展默认/cdp 显式/persistent 测试);登录快路径免标签页;守卫按车道分形(扩展=零写行为+hints 白名单,cdp=请求级 abort);
+  - `needs-extension` → `waiting_extension`(waiting-* 同族 no-spend);run-all §38(23 断言)+ bootstrap-tests 5/5;真实 sf-01..08 门禁降为「装一次扩展」。
 - **Issue #67 static golden(2026-08-30)**:`sf-live-benchmark` 的 vendor 闭集扩为 `manual|flyai|static`；`static` 由 OpenFlights 固定修订提供 route/carrier,由手工 manifest 提供估算时刻/价格带,并把 requested/effective source、estimated fields、provenance、fallback reason 逐条写进 evidence。静态源异常时 stderr 告警后回退 manual；它不声称实时班期/价格/库存。run-all §44 固化 CLI fail-closed、八条覆盖、回退与 provider-independent 软评分。
 - **Issue #67 登录态真跑与桥退出语义(2026-08-30)**:连续两轮 static official 均 8/8 命中且零 fallback;session hit 数从 3/8 波动到 5/8,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 必须显式披露且不进软评分分母。真扩展在线场景触发的 CLI 不退出已以默认桥 parked timer/socket `unref` 修复;`keepBridge` wizard 轨通过 §40 9/9,§38 增子进程回归至 24 段。
 - **M4 Issue #20 价值证据切片(2026-08-29)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。合成数据明确不可关闭 M4;下一阶段只等真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
-- **已知限制清算第一刀(2026-08-29,founder 指令「解决这些 known limitations」)**:Z3 WASM race 根治——历史债「三模块各自 init 的 WASM 实例并存 + Promise.all 同 Context 并发」双重根因经 `z3-shared.ts`(单一实例/单一 Context/会话级互斥 withZ3)关闭,当年 rc.4 单例回滚的 Context mismatch 来自混用残留 Context,本次三入口同门无混用面;run-all §1 重试止血退役 + §30 并发回归闸;薄壳遗留(`shell/` 目录)物理删除,dsh web 确认为唯一产品面。**实时票价同批接入**:`realtime-pricing.ts` overlay + `realtimeSolvePort` env 闸 + run-all §31(见 §1 尾注)。**i18n 同批**:`i18n.ts` catalog(zh 金标准逐字节/GOTRY_LOCALE=en 切换/en 缺键回退),run-all §32;工具卡与人格面挂 M4 校准。
+- **已知限制清算第一刀(2026-08-29,founder 指令「解决这些 known limitations」)**:
+  - **Z3 WASM race 根治**:历史债「三模块各自 init 的 WASM 实例并存 + `Promise.all` 同 Context 并发」双重根因,经 `ts/src/z3-shared.ts`(单一实例 / 单一 Context / 会话级互斥 `withZ3`)关闭;engine/journey/unified 三模块全部过门,engine.solve 弃 `Promise.all` 改串行。当年 rc.4 单例回滚的 Context mismatch 来自混用残留 Context,本次三入口同门无混用面。run-all §1 重试止血退役 + §30 并发回归闸。
+  - **薄壳遗留**(`shell/` 目录)物理删除,dsh web 确认为唯一产品面。
+  - **实时票价接入**:`ts/src/realtime-pricing.ts`——dated 航班链段经 FlyAI 官方只读通道按航班号精确匹配覆写 spec 价格,证据链 `[实时API:flyai@ts]` 并进 skeleton_notes;miss/error/打码价/无匹配一律降级回静态包,永不抛错。`realtimeSolvePort`(env 闸 `GOTRY_REALTIME_PRICING`,默认关)接线 replay-real——**静态包由唯一来源变为显式降级**,run-all §31。
+  - **i18n 英文面工程层**:`i18n.ts` 消息目录——zh-CN 默认且与金标准逐字节一致,`GOTRY_LOCALE=en` 切英文、en 缺键回退 zh;覆盖求解确定性面(候选/航班链 answer_md、放宽建议、排除理由、wish 理由)。run-all §32;工具卡与人格对话面挂 M4 校准样本随补。
+- **贡献基建(2026-08-29,开源协作面)**:GitHub Actions CI(node 22/24 矩阵:typecheck + 全栈回归,`GOTRY_SESSION_LIVE=0`);`CONTRIBUTING.md` + issue/PR 模板;lockfile(root/ts 双份)与 dsh-runtime 三 manifest 入 git,resolved 全量从内部镜像改指 registry.npmjs.org(integrity 逐包验证);贡献流程改 PR 制。
+- **onboarding wizard(2026-08-30,#21)**:
+  - founder 实测「能装 ≠ 装到能用」——上版隐性状态要求 5 次点击 + 1 个原生文件对话框 + 跨 app 切换 + 装完自己重跑。闭环 `npx gotry setup wizard`:5 步编排 + 复制扩展路径(pbcopy/xclip)+ 直达 `chrome://extensions` + 跨平台 GUI 面板(macOS osascript / Linux zenity / Windows msg / headless 终端)+ 后台 health-watch ≤120s 探活 + 扩展就位后自动重放同 query_id。用户侧降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。
+  - 落地:`ts/capabilities/session/wizard.ts` + `health-watch.ts`(默认 120s/5s、有界、AbortSignal 可取消)+ `scripts/health-watch-cli.ts` + bootstrap `wizard` 子命令;run-all §40 onboarding-tests 9/9 + bootstrap-tests wizard 节。
+- **价表 provider-aware v2 + 价格漂移监测(2026-08-30,issue #49,ADR-20)**:
+  - 封存价表从 `gotry_llm_price_table_v1`(DeepSeek V4 only)升 `v2`(`providers.<id>.models.<model>` 平铺 + `family`/`price_strategy`/`source_url`/`aliases`);MiniMax M2/M2.1/M3 入表;`ts/scripts/price-drift-watch.ts` 监测四家主流 provider(DeepSeek/MiniMax/OpenAI/Anthropic),**永不自动 apply 价格**(ADR-11 纪律)。
+  - 同批 CHANGELOG 自动化:`ts/scripts/build-changelog.ts` + `CHANGELOG.md`(Keep a Changelog 1.1.0 + Conventional Commits 解析)。run-all §41/§42。
 
-- **dsh runtime 跟进上游 alpha.1(2026-08-29,issue #15)**:上游 `dsh-v0.1.2-alpha.1` 只挂 GitHub 不发 npm(rc.2 后 1079 commits),「等 publish」改「源码跟进」——vendored runtime 换装 alpha.1 全量 241 包 tarball 解包(`vendor/` + pnpm workspace),免等上游发版;npm 公共面仍 rc.2,上游 publish 后可整体回到 npm 依赖形态。详见 §1 尾注与 `vendor/README.md`。
+- **dsh runtime 跟进上游 alpha.1(2026-08-29,issue #15)**:上游 `dsh-v0.1.2-alpha.1` 只挂 GitHub 不发 npm(rc.2 后 1079 commits),「等 publish」改「源码跟进」——vendored runtime 换装 alpha.1 全量 241 包 tarball 解包(`vendor/` + pnpm workspace),免等上游发版;npm 公共面仍钉 rc.2,上游 publish 后可整体回到 npm 依赖形态。验证:`./gotry help` 版本探活 + tsc + smoke + run-all 全绿。溯源与升级流程见 `ts/dsh-runtime/vendor/README.md`。
 
-- **OTA 平铺 + 账号授权闸(2026-08-29 第二批,founder 口径「OTA 这些都是工具,不要区分主路径/降级路径;用用户账号必须跟用户确认」)**:①酒店接入官方只读通道——flyai `search-hotel` 实测(大理:结构化 name/star/打码价 ¥7xx/detailUrl;解析契约 `FlyaiHotelOption`,打码价保 priceRaw 原值、数字价恒 0,防「¥7xx 截成 7 伪装真价」),`gotry_flyai_search` kind=flight|train|hotel 三形态,参数闸 per-kind;②OTA 工具面平铺——工具描述与 persona (19) 去「主链路/交叉验证/三级路由」层级话术(数据层 L4 证据链逐源标注照旧,拍平的是路由优先级不是标注纪律);③账号授权闸(v2,当日二迭代):`session-consent.ts` 挂 `tools/pre-execute`,**每会话每站点首次调用**弹审批卡→会话内记住,**拒绝=本会话吊销**(不再弹卡不再执行;首版逐次弹卡被 founder 实测否决——「每次都要弹,经常无法点击」),sessionAccess `ask|allow|off` 三态,无审批通道/headless fail-closed;授权状态存 Weak<agent> 绝不跨会话延续;④**登录态 seam 落地**:`scripts/session-login.ts`(cdp attach→开登录入口→人登录→只读轮询票据名)替代「跑脚本」空指引;⑤测试纪律:session-tests live 节默认 SKIP,`GOTRY_SESSION_LIVE=1` 显式开启——**例行回归永不自动开用户浏览器窗口**。run-all §24(session-tests §H/§I)+ smoke §12-13;全栈回归全绿。
+- **OTA 平铺 + 账号授权闸(2026-08-29 第二批,founder 口径「OTA 这些都是工具,不要区分主路径/降级路径;用用户账号必须跟用户确认」)**:
+  - ①酒店接入官方只读通道——flyai `search-hotel` 实测(大理:结构化 name/star/打码价 ¥7xx/detailUrl;解析契约 `FlyaiHotelOption`,打码价保 priceRaw 原值、数字价恒 0,防「¥7xx 截成 7 伪装真价」),`gotry_flyai_search` kind=flight|train|hotel 三形态,参数闸 per-kind;②OTA 工具面平铺——工具描述与 persona (19) 去「主链路/交叉验证/三级路由」层级话术(数据层 L4 证据链逐源标注照旧,拍平的是路由优先级不是标注纪律);③账号授权闸(v2,当日二迭代):`session-consent.ts` 挂 `tools/pre-execute`,**每会话每站点首次调用**弹审批卡→会话内记住,**拒绝=本会话吊销**(不再弹卡不再执行;
+    首版逐次弹卡被 founder 实测否决——「每次都要弹,经常无法点击」),sessionAccess `ask|allow|off` 三态,无审批通道/headless fail-closed;授权状态存 Weak<agent> 绝不跨会话延续;④**登录态 seam 落地**:`scripts/session-login.ts`(cdp attach→开登录入口→人登录→只读轮询票据名)替代「跑脚本」空指引;⑤测试纪律:session-tests live 节默认 SKIP,`GOTRY_SESSION_LIVE=1` 显式开启——**例行回归永不自动开用户浏览器窗口**。
+  - run-all §24(session-tests §H/§I)+ smoke §12-13;全栈回归全绿。
 
 - **预订 saga 状态机具名化(2026-08-29 第二批,issue #17 采纳)**:针对「多 Agent 协同用 FSM 显式建模副作用传递」提议,逐机理勾稽(共享态/检查点/防重复副作用/HITL 在账本与 durable 工单已物理存在)后,落地词汇层 `booking-saga.ts` + 设计文档 `booking-saga-fsm.md` + ADR-17;LangGraph 编排不引入,合规恒为 deterministic-edge,HITL 审批 = pending 挂起 + 外部事件恢复;run-all §36 物理对账 25 断言。
 
 - **产物面(2026-08-29,issue #25,两步)**:①dsh 内查看——`gotry_artifacts_list/read` 把账本工单交付与工作目录 md 变为可发现、可读对象(read 卡);②成熟面板——dsh-market 调研(dshmarket.com,2495 插件)选型 **dsh-better-sidebar**(★3083/18.9 万周装,#1 UI 组件;自建零依赖 webui 因品质不达产品级当日撤回),`gotry setup` 宿主层安装(GOTRY_SETUP_SIDEBAR=0 可跳,幂等/失败降级路①),dsh web 侧栏工作台浏览+渲染工作区产物;产物 Tab(registerTab client-half)为下一阶段。
 
-- **效应解译器(2026-08-29,issue #16 采纳,ADR-18)**:「效应描述+解译器」落地 L4 渠道边界——`ts/capabilities/effect.ts`(effect_interpreter.v1:效应值注册表+生产/mock 双解译器+渠道 observation 原样透传)与 `resilience.ts`(指数退避 withRetry+断路器三态)。关键保守边界:①韧性策略 per-效应显式拍板,没有策略行就没有效应(默认全关=对既有行为零改变);②FlyAI Sentinel 上游「说不」永不重试但计熔断(3 连错开 60s 保配额),SESSION 通道永不重试不熔断(风控红线),免费源 2 次退避;③浏览器解译=SESSION_* 效应(既有 CDP 通道),零 Python 红线不做视觉 CUA;④不做渠道自动路由/比价(OTA 平铺 founder 判定,agent 层比价)。垂直切片接 5 工具+realtime-pricing 默认查询口,余下渠道增量迁移(D-23)。设计文档 `effect-interpreter.md`;run-all §37;smoke/flyai/hbcli/weather/session/realtime-pricing 套件同轮全绿。
+- **效应解译器(2026-08-29,issue #16 采纳,ADR-18)**:
+-  - 「效应描述+解译器」落地 L4 渠道边界——`ts/capabilities/effect.ts`(effect_interpreter.v1:效应值注册表+生产/mock 双解译器+渠道 observation 原样透传)与 `resilience.ts`(指数退避 withRetry+断路器三态)。关键保守边界:①韧性策略 per-效应显式拍板,没有策略行就没有效应(默认全关=对既有行为零改变);②FlyAI Sentinel 上游「说不」永不重试但计熔断(3 连错开 60s 保配额),SESSION 通道永不重试不熔断(风控红线),免费源 2 次退避;③浏览器解译=SESSION_* 效应(既有 CDP 通道),零 Python 红线不做视觉 CUA;④不做渠道自动路由/比价(OTA 平铺 founder 判定,agent 层比价)。
+-  - 垂直切片接 5 工具+realtime-pricing 默认查询口,余下渠道增量迁移(D-23)。设计文档 `effect-interpreter.md`;run-all §37;smoke/flyai/hbcli/weather/session/realtime-pricing 套件同轮全绿。
 - **可下单事实闸(2026-08-30,issue #46,ADR-19)**:真实会话产物(2027 远期行程)把 exact-date 全 miss 的航班用「当前班期网页+历史」回填并标 ✓/推荐——根因=可下单事实无单一数据源、产物无闸。落地:`bookable-facts.ts`(gotry_bookable_fact.v1 纯函数层)+ `artifact-gate.ts`(产物闸)+ `fact-log.ts`(侧车落账)+ 第 21 工具 `gotry_fact_gate` + persona (20) 红线 + `data/airline-airports.json` 映射快照;locked golden 2027 E2E(issue 审计值夹具)复现全部违例并抓出(44 断言,run-all §39;smoke §16 接线验证)。覆盖面缺口记 D-24。
-- **npm 形态自定义端点修复(2026-08-30,issue #48,未随版本发布)**:rc.15 回拉实测暴露——bin/gotry-inner.js env 映射只做 `LLM_API_KEY → DEEPSEEK_API_KEY`,base 不映射,vendored dsh(llm-deepseek 读 `DEEPSEEK_BASE_URL`)把 OpenAI 兼容端点的 key 发往 DeepSeek 官方端点必然 401,README「OpenAI 兼容均可」承诺行为未跟上;同点补 `LLM_BASE_URL → DEEPSEEK_BASE_URL`(显式 DEEPSEEK_BASE_URL 优先,默认官方路径零改变);两侧拼接语义核验一致(dsh-llm-deepseek 与 `ts/src/dsh-llm.ts` 均为 `${base}/chat/completions`,自定义端点一般含 `/v1`);README.md/README.zh-CN.md(30 秒上手/前置/源码安装三处×2)+ .env.example + bin help 同步配法。**已知缺口(同日由 issue #77 闭环,见下条)**:`LLM_MODEL` 不进 dsh 模型表(模型选择=dsh 默认 deepseek-v4-* 或用户 ~/.dsh 设置),严格中转(仅认特定模型名)落空。
-- **LLM_MODEL 接通 dsh 会话面(2026-08-30,issue #77,未随版本发布)**:三件套 `.env` 的 `LLM_MODEL` 此前在 dsh 会话面零消费者——#48 修复 E2E 实测暴露(mock 中转 + `LLM_MODEL=MiniMax-M2`,请求体 model 仍是 ~/.dsh 用户层选的 glm-5.3-flash),dsh 模型选择只来自 llm-deepseek `DEFAULT_MODELS` 或用户 ~/.dsh 设置,README/.env.example 形成「配了即生效」错觉,严格中转必然打不通。修复双轨:① bin/gotry-inner.js 把 `LLM_MODEL` 映射为 `GOTRY_LLM_MODEL`,gotry-tools 插件(`capabilities/model-override.ts`)在 `agent/request` 瀑布挂根监听、post-next 覆盖 provider/model(内存态零持久化,进程退即散,不改写用户 ~/.dsh)——必须走这条是因为 dsh settings 分层为 schema 默认 < composition 配置 < 用户层,web UI 选过模型后单靠 composition patch 压不过;瀑布按注册序嵌套(先注册=最外层、post-next 最后生效),插件随 cordis patch 在根组装载先于任何 agent 创建,显式 .env 意图因此压过一切持久层选择;覆盖同时清掉继承的 reasoningEffort(与 installModelSelection 同语义,不错配上一模型的推理档);② 运行时 cordis patch 追加两条 by-id 覆盖(`agent-default-model` 默认模型 + `llm-deepseek` 目录单条目替换——显式指定模型多为中转场景,默认 v4-* 目录对其是误导,不硬编码上游 DEFAULT_MODELS 防漂移;cordis patch 语义核验:applyEntryPatches 对 by-id 浅层键赋值、config 整体替换,未知 id 仅 warn+skip 优雅退化)。默认路径保护:`LLM_MODEL` 不设时两轨均不动作,.env.example 默认行注释化,dsh 内置默认/用户 web 选择面不变。E2E:`ts/scripts/model-override-e2e.ts` mock 中转四场景(指定模型→请求体 model 一致/指定+预置用户层→env 压过/不设→内置默认 deepseek-v4-flash/不设+用户层→用户选择保留;②④ 同一 settings 文件仅差 env,对照证明覆盖因果),隔离 DSH_HOME、强制 npm 发布形态(dist 构建+临时移开 vendored 运行时),全绿;smoke §17 单元回归(未设零监听/无事件总线不抛/覆盖语义)。附查发现一项环境债:vendored 仓内形态 Node 兼容窗口断裂,记 D-27。
+- **npm 形态自定义端点修复(2026-08-30,issue #48,未随版本发布)**:
+  - rc.15 回拉实测暴露——bin/gotry-inner.js env 映射只做 `LLM_API_KEY → DEEPSEEK_API_KEY`,base 不映射,vendored dsh(llm-deepseek 读 `DEEPSEEK_BASE_URL`)把 OpenAI 兼容端点的 key 发往 DeepSeek 官方端点必然 401,README「OpenAI 兼容均可」承诺行为未跟上;同点补 `LLM_BASE_URL → DEEPSEEK_BASE_URL`(显式 DEEPSEEK_BASE_URL 优先,默认官方路径零改变);
+    - 两侧拼接语义核验一致(dsh-llm-deepseek 与 `ts/src/dsh-llm.ts` 均为 `${base}/chat/completions`,自定义端点一般含 `/v1`);README.md/README.zh-CN.md(30 秒上手/前置/源码安装三处×2)+ .env.example + bin help 同步配法。
+  - **已知缺口(同日由 issue #77 闭环,见下条)**:`LLM_MODEL` 不进 dsh 模型表(模型选择=dsh 默认 deepseek-v4-* 或用户 ~/.dsh 设置),严格中转(仅认特定模型名)落空。
+- **LLM_MODEL 接通 dsh 会话面(2026-08-30,issue #77,未随版本发布)**:
+  - 三件套 `.env` 的 `LLM_MODEL` 此前在 dsh 会话面零消费者——#48 修复 E2E 实测暴露(mock 中转 + `LLM_MODEL=MiniMax-M2`,请求体 model 仍是 ~/.dsh 用户层选的 glm-5.3-flash),dsh 模型选择只来自 llm-deepseek `DEFAULT_MODELS` 或用户 ~/.dsh 设置,README/.env.example 形成「配了即生效」错觉,严格中转必然打不通。
+    修复双轨:① bin/gotry-inner.js 把 `LLM_MODEL` 映射为 `GOTRY_LLM_MODEL`,gotry-tools 插件(`capabilities/model-override.ts`)在 `agent/request` 瀑布挂根监听、post-next 覆盖 provider/model(内存态零持久化,进程退即散,不改写用户 ~/.dsh)——必须走这条是因为 dsh settings 分层为 schema 默认 < composition 配置 < 用户层,web UI 选过模型后单靠 composition patch 压不过;瀑布按注册序嵌套(先注册=最外层、post-next 最后生效),插件随 cordis patch 在根组装载先于任何 agent 创建,显式 .env 意图因此压过一切持久层选择;
+    覆盖同时清掉继承的 reasoningEffort(与 installModelSelection 同语义,不错配上一模型的推理档);② 运行时 cordis patch 追加两条 by-id 覆盖(`agent-default-model` 默认模型 + `llm-deepseek` 目录单条目替换——显式指定模型多为中转场景,默认 v4-* 目录对其是误导,不硬编码上游 DEFAULT_MODELS 防漂移;cordis patch 语义核验:applyEntryPatches 对 by-id 浅层键赋值、config 整体替换,未知 id 仅 warn+skip 优雅退化)。默认路径保护:`LLM_MODEL` 不设时两轨均不动作,.env.example 默认行注释化,dsh 内置默认/用户 web 选择面不变。
+  - E2E:`ts/scripts/model-override-e2e.ts` mock 中转四场景(指定模型→请求体 model 一致/指定+预置用户层→env 压过/不设→内置默认 deepseek-v4-flash/不设+用户层→用户选择保留;②④ 同一 settings 文件仅差 env,对照证明覆盖因果),隔离 DSH_HOME、强制 npm 发布形态(dist 构建+临时移开 vendored 运行时),全绿;smoke §17 单元回归(未设零监听/无事件总线不抛/覆盖语义)。附查发现一项环境债:vendored 仓内形态 Node 兼容窗口断裂,记 D-27。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
-| # | 债务 | 状态/赎回时机 |
+> 债务只能在本表诞生,不许只活在代码注释里(§11 M-exit 清单第 3 条)。
+> **§10.1 = 仍然开着的债**(要接的活从这里来);**§10.2 = 已清偿存档**(留证据,不再是工作面)。
+>
+> ⚠️ **编号冲突待裁定**:`D-24` 当前被两条不同债务同时占用(「会话扩展 onboarding UX 缺口」与「事实闸覆盖面缺口」),
+> 系并行 lane 各自登记所致。本次重构只如实标注、不擅自改号——**下一个动到本表的提交请给后者改号**。
+
+### 10.1 未清偿(工作面)
+
+| # | 债务 | 状态 / 赎回时机 |
+|---|---|---|
+| [D-NEW] dsh 进程保活缺失 | 见下方「[D-NEW] dsh 进程保活缺失」 |
+| D-9 节日锚点表硬编码 | **2026-08-28 扩表清偿**:SPRING_FESTIVAL 覆盖 2026-2031(2029-02-13/2030-02-03/2031-01-23),time-eval §1b 回归闸(2030 锚点断言 2031 春节)。**跨 2031 前必须再扩表**,否则春节锚点静默缺失 |
+| D-12 loopx RFC 映射升级四接缝 | **已全部落地(RFC accepted 2026-08-27)**:S1 tool-packet envelope(ADR-13);S2+S3 记忆效用 sidecar + wish 触达 0..1(ADR-14);S4 WriteGate L0-L4 渐进授权词汇进 roadmap M5 交付物(2026-08-28);多用户 AaaS 方向见 RFC §6.5 远期采纳面 |
+| D-13 会话适配器维护面(RFC user-session-data-rfc) | 见下方「D-13 会话适配器维护面」 |
+| D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态) | 见下方「D-24 会话扩展 onboarding UX 缺口」 |
+| D-25 扩展商店上架审核中(一键装/自动更新仍缺,ADR-21 分发 B 轨) | 见下方「D-25 扩展商店上架审核中」 |
+| D-15 账本触发式后置面(ADR-15 TS-5) | Litestream 云备份 / cr-sqlite 多写者复制 / RFC(loopx) §6.5 claim-fence-receipt 多用户实装——仅在触发器出现时启动:第二真实用户 / 多机部署 / AaaS 立项 |
+| D-16 上游 dsh 发布面断裂 | 见下方「D-16 上游 dsh 发布面断裂」 |
+| D-18 M3 Exit 真实 cohort 证据缺口 | 见下方「D-18 M3 Exit 真实 cohort 证据缺口」 |
+| D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地 2026-08-29**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit。赎回条件=私有 `observed_private` cohort 达 N≥5 并产出脱敏 summary;无真实样本时 waiting/backoff/no-spend,不扩 schema 假装进展。 |
+| D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
+| D-23 效应解译器迁移未完成(ADR-18) | 见下方「D-23 效应解译器迁移未完成」 |
+| D-24 事实闸覆盖面缺口(ADR-19) | v1 闸覆盖航班+政策 claim;酒店 claim 未入抽取面(flyai hotel 打码价语义独立,不落 bookable facts);政策事实只有渲染侧+闸侧,生产端无实时签证/入境源——政策 claim 只能降级「未确认」或省掉;反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
+| D-27 vendored 仓内形态 Node 兼容窗口断裂 | 见下方「D-27 vendored 仓内形态 Node 兼容窗口断裂」 |
+
+**[D-NEW] dsh 进程保活缺失**
+
+**部分赎回(gotry 侧)**:
+- plugins/apply 内 installProcessGuards 挂 uncaughtException + unhandledRejection;incident-log.ts 同步 fsync append-only,handler 不调 process.exit——被崩溃穿透时仍能留下证据(JSONL incidents.jsonl),不阻塞 dsh 控制流。incident-tests 2/2 绿(handler 装上后未捕获异常仍记录,后续控制流不卡)。**gotry 侧收尾 2026-08-22**: 12 工具 execute 统一经 guardToolExecute 异常隔离——
+- 抛错/拒绝降级结构化错误返回 LLM + tool_execute_error 落盘,不再穿透 cordis 到 dsh 主循环(incident 套 3/3);残余仅 vendored dsh 自身容错,记 M3
+
+**D-13 会话适配器维护面(RFC user-session-data-rfc)**
+
+**部分清偿 2026-08-30**:action-cache + 金标准输入 + #21 字段 fixture scorer/双源 shape gate 已落;传输层定案扩展桥(§38 防漂移测试把 Node 常量与扩展代码锁死);Issue #67 增加 `--golden=static` 离线 comparator(OpenFlights 固定 route/carrier + manual 时刻/价格带,requested/effective/provenance/fallback 可审计,§44),但它不是实时可售性来源、也不降低携程 batchSearch 改版风险;真实 sf-01..08 会话证据仍依赖用户扩展连接,站点断时按既有渠道显式降级
+
+**D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态)**
+
+**部分清偿 2026-08-30**:
+- founder 实测「能装≠装到能用」——上版隐性状态要求 5 次点击 + 1 个原生文件对话框 + 跨 app 切换 + 装完还要自己重跑 sf 命令验证;`npx gotry setup wizard`(5 步编排 + 剪贴板 + 跨平台 GUI 面板 + 后台 health-watch 自动重放同 query_id)闭环至 **3 次点击 + 0 次终端命令 + 装完零重跑**。
+- `ts/capabilities/session/{wizard,health-watch}.ts` + `ts/scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程,inline 降级兜) + bootstrap `wizard` 子命令 + run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节。**赎回条件**:用户首次 `gotry setup wizard` → 装一次扩展 → 后续调用 `gotry_session_search` 零后续动作即拿到 hit(goal 1 exit);goal 2 sf-01..08 跑批仍待用户桌面 Chrome 一次性装扩展后启
+
+**D-25 扩展商店上架审核中(一键装/自动更新仍缺,ADR-21 分发 B 轨)**
+
+已提交(2026-08-30 founder 确认审核中;材料同下):`docs/extension-webstore-submission.md`(单一用途/权限理由/隐私披露/文案/founder 清单)+ `docs/extension-privacy.md`(隐私政策 URL)+ `scripts/package-extension.mjs` store-zip 产物;**赎回条件**:founder 注册开发者账号($5)→ 上传 zip → 粘贴材料 → 提审;过审后 wizard 增补「已装商店版跳过 dev-mode 三步」检测
+
+**D-16 上游 dsh 发布面断裂**
+
+**已验证解法②并落地 2026-08-28(记忆域 lane)**:
+- D-16 前提有误——npmjs 上 dsh-scope **有完整 0.1.x**(0.1.1-rc.2 在列;lane 查的是滞后的内部 bnpm 镜像)。根 dependencies 已显式钉 `dsh-scope@0.1.1-rc.2`,干净安装实测:ERESOLVE 仅降级为 warning、ledger/index/dsh-tools 全部 import OK、五导出齐(AuthoritativeEntries 等)。rc.10 已发布(founder 确认制下 agent 执行:web 登录 + 浏览器二次验证,恢复码被 npm 拒收改用 web OTP 通道)。
+- **2026-08-29 增补**:dsh 家族 0.1.2-alpha.1 不发 npm 的堵点对 repo 工作副本已解除——`ts/dsh-runtime/vendor/` 全量 vendored 源码 tarball(上游 GitHub tag 构建,workspace 成员解析);发布面收敛为单点残余:npm 公共分发面(root deps)仍钉 rc.2,上游 publish 0.1.2.x 后升版即可关闭
+
+**D-18 M3 Exit 真实 cohort 证据缺口**
+
+**进行中(Issue #22)**:公开面已有冻结 manifest、严格脱敏 schema、确定性 scorer 与 synthetic fixture 守门；nightly real-LLM 证据生产器已进入工程面(封存 prompt 集/价表、无凭证 waiting 零写入、预算闸),验收⑥「nightly 可复跑」的机械前提已就位,真实 nightly 记录待凭证环境真跑。私有真实样本尚未进入 `ts/gotry-state/evidence/m3/`。只有 50–200 人真实 cohort 同时达到定稿率 ≥40%、NPS ≥40、POI 幻觉率 <1% 且窗口内 nightly real-LLM 可复跑,才允许业务达标;无样本时不关闭 M3 Exit。 | `product-metrics.ts`;`nightly-evidence.ts`;run-all §33/§35
+
+**D-23 效应解译器迁移未完成(ADR-18)**
+
+**部分清偿**:词汇层+生产/mock 解译器+韧性横切已落地,五工具(flyai/hotel/session/weather/flight_verify)与 realtime-pricing 默认查询口已走 `interpretEffect`;`anything/web_search/video_subtitle/github_search/agent_reach/session_login` 等其余渠道工具仍直连能力层(同款永不抛错契约,无退避/熔断/mock 面)。按渠道逐个搬,搬一个删一横切;全部走通即抄销 | `ts/capabilities/effect.ts`;`docs/effect-interpreter.md` §4;run-all §37
+
+**D-27 vendored 仓内形态 Node 兼容窗口断裂**
+
+**发现于 2026-08-30(issue #77 E2E 前置)**:
+- 仓内形态(bin 优先走 `ts/dsh-runtime/node_modules` vendored dsh)以 `.ts` 直载插件,两处硬约束未写明——① vendored `session-persistence-jsonl` 需 `node:zlib` 的 `createZstdDecompress`(Node ≥22.15,22.14 实测缺导出);
+  - ② Node 默认 type-stripping 为 strip-only,拒绝 parameter properties(`ts/capabilities/resilience.ts:109` 与 `session/action-cache.ts:61`,经 effect.ts 链入,Node 26 实测 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` 拒载 gotry-tools)。npm 发布形态(dist 预编译)不受影响;
+- 主仓工作副本无 `ts/dsh-runtime/node_modules` 时 bin 回落 npm 形态,故日常未暴露。**赎回**:两处 parameter properties 改显式字段 + README 源码安装节写明 Node 版本窗口,vendored 形态真跑 smoke 验收 | `ts/capabilities/resilience.ts`;`ts/capabilities/session/action-cache.ts`
+
+### 10.2 已清偿(存档)
+
+| # | 债务 | 清偿 |
 |---|---|---|
 | D-1 双引擎算术复制 | **已清偿**(统一模型落地,洱海对账等价) |
 | D-2 TS unsatCore 竖线 | **已清偿**(coreOf 剥竖线+回归断言) |
 | D-3 LLM 未进环 | **已清偿**(S4 由 MiniMax-M2 完成,`bb880f3`;mock 留作回归夹具,ADR-8 兑现) |
 | D-5 时区语义 | **已清偿**(EK329 官网逐分一致) |
-| D-4 gate/卡片无承载界面 | **词表内赎回 2026-08-22**:feasibility + 酒店/天气/Anything/AgentReach 五工具 presentResult 结果卡(可行性:候选判定+预算行;酒店:N 家(实时/静态);天气:ok/降级;Anything:N hits;AgentReach:✅/🔧/📦/❌ verdict)+ 12 工具 kind 图标分类(search/fetch/execute/edit,零 other);**地图位已解 2026-08-22**:宿主插件 dsh-map-tools v0.4.4(7 个 map_* 原生工具:驾/公/步/骑路线+地理编码+POI,零 key 走 OSRM,高德可后配)——装于 vendored runtime,npm 分发经根包依赖 + inner 运行时 require 解析;patch 条目占位、缺依赖整块剔除不挡启动;root ./gotry 统一改走 inner(修复旧 profile patch 暗中承重) |
-| D-4a'(agent-reach 100% follow) | **已完成 2026-08-23;2026-08-22 wrapper 化**: Agent-Reach v1.5.0 装于 .venv(与 z3-solver 同址);gotry 侧为薄壳 —— agent-reach-bridge.py 反射桥(get_channel+getattr 直调上游注册表)+ agent-reach.ts 管道层,零渠道知识,上游加渠道零改动;gotry_agent_reach(action=reach 反射 / status 真 doctor);needs-setup 透传上游 check() 原话 |
+| D-4 gate/卡片无承载界面 | 已清偿,详见下方 |
+| D-4a'(agent-reach 100% follow) | 已清偿,详见下方 |
 | D-4\'(Anything 数据接入) | **已完成 2026-08-23**: gotry capabilities/anything.ts 11 套实测 5/5 + hbcli `search anything` 子命令 + hotel-be `/api/search/anything` `@path` 注解;三仓 commit 闭环(244a0ae/c38ff65d1/43236a0) |
 | D-6 红眼睡眠模型未校准 | **已校准 2026-08-28**:红眼航段落地后接驳(机场→住处/办公室)乘车补眠回血(1h≈+5%,上限 80)——对账真值:引擎原算 75%(机上睡眠),你真实体感 80%(75+1.5h 路上补眠);落地补眠此前未算,现加 `groundRecoveryMin` 参数;EK329 精力 75→79(45min 接驳×5%/h≈+4),unified 断言同步 |
-| D-7 deprecated 层仍承重 | **大部赎回**:dsh 插件进程内路径切轨 solveChoiceSegment(枚举,~0ms)、cli.py 桥切轨 solve_choice_segment、diff-test 切轨统一模型对统一模型;engine/journey 退纯 oracle(保留为金标准对照)。**尾债清偿 2026-08-22**:删 build_plan.py + gotry_async/demo.py + run-golden-case.sh(已断:调 rc.3 删除的 cli.py);py 树仅剩 gotry_feasibility oracle 对照 + 其 unittest |
+| D-7 deprecated 层仍承重 | 已清偿,详见下方 |
 | D-8 对话循环不进 CI | **已清偿**(replay 带终态断言 + 异步工单跨进程闭环 + smoke 进 `run-all-tests.sh` §5-7) |
-| [D-NEW] dsh 进程保活缺失 | **部分赎回(gotry 侧)**: plugins/apply 内 installProcessGuards 挂 uncaughtException + unhandledRejection;incident-log.ts 同步 fsync append-only,handler 不调 process.exit——被崩溃穿透时仍能留下证据(JSONL incidents.jsonl),不阻塞 dsh 控制流。incident-tests 2/2 绿(handler 装上后未捕获异常仍记录,后续控制流不卡)。**gotry 侧收尾 2026-08-22**: 12 工具 execute 统一经 guardToolExecute 异常隔离——抛错/拒绝降级结构化错误返回 LLM + tool_execute_error 落盘,不再穿透 cordis 到 dsh 主循环(incident 套 3/3);残余仅 vendored dsh 自身容错,记 M3 |
-| D-9 节日锚点表硬编码 | **2026-08-28 扩表清偿**:SPRING_FESTIVAL 覆盖 2026-2031(2029-02-13/2030-02-03/2031-01-23),time-eval §1b 回归闸(2030 锚点断言 2031 春节)。**跨 2031 前必须再扩表**,否则春节锚点静默缺失 |
-| D-10 slot→spec 求解桥接未做 | **已清偿 2026-08-27(三切片)**:A `slot-spec.ts` 解析层(锚点卡词表/绝对/+N → 绝对日期,词表外 unresolved;time-eval §5);B 工具面接线(`gotry_hotel_search` 日期槽位收逐字表达,unresolved 降级无日期搜索+date_notes,smoke §8);C spec 链路一致性闸(runTurn 求解前比对,分歧不求解、追问确认,replay 尾段)。**ADR-12 复审结论:设计成立**,解析范围必须有界(只解析锚点卡词表,不做开放式中文相对日期解析——被拒备选即维护黑洞)。**闸范围边界(2026-08-28 真模型巡检修正)**:槽位 v1 只有 trip 级主日期,闸仅校验恰好一个带日期段的 spec;多段行程逐段日期无槽位真值,不判(金标准六段行程曾被全段误判分歧拦死求解,巡检抓出后收窄,多段旁路回归进 replay 尾段) |
+| D-10 slot→spec 求解桥接未做 | 已清偿,详见下方 |
 | D-11 `npx tsc --noEmit` 存量 14 错 | **已清偿**(1bf9671,语义零变更:tsc 0 错;smoke/memory §18 全过;17 套 ALL GREEN) |
-| D-12 loopx RFC 映射升级四接缝 | **已全部落地(RFC accepted 2026-08-27)**:S1 tool-packet envelope(ADR-13);S2+S3 记忆效用 sidecar + wish 触达 0..1(ADR-14);S4 WriteGate L0-L4 渐进授权词汇进 roadmap M5 交付物(2026-08-28);多用户 AaaS 方向见 RFC §6.5 远期采纳面 |
-| D-13 会话适配器维护面(RFC user-session-data-rfc) | **部分清偿 2026-08-30**:action-cache + 金标准输入 + #21 字段 fixture scorer/双源 shape gate 已落;传输层定案扩展桥(§38 防漂移测试把 Node 常量与扩展代码锁死);Issue #67 增加 `--golden=static` 离线 comparator(OpenFlights 固定 route/carrier + manual 时刻/价格带,requested/effective/provenance/fallback 可审计,§44),但它不是实时可售性来源、也不降低携程 batchSearch 改版风险;真实 sf-01..08 会话证据仍依赖用户扩展连接,站点断时按既有渠道显式降级 |
-| D-26 扩展在线时默认桥钉住 CLI | **已清偿 2026-08-30**:`server.unref()` 不会自动解开已接受 socket 与 parked 长轮询 timer,导致 `SMOKE OK` 后进程仍存活;默认桥对两者 `unref`,active submit timer 与 wizard `keepBridge=true` 保持引用。§38 子进程红→绿 + §40 9/9 + 真扩展 smoke exit 0 守住。 |
+| D-26 扩展在线时默认桥钉住 CLI | 已清偿,详见下方 |
 | D-14 playwright-core 分发面(RFC) | **基本清偿 2026-08-30**:传输主载改自研扩展桥(零新依赖,node:http);puppeteer-core 降为 cdp 显式后备车道的可选依赖(动态导入+缺包优雅降级);`extension/` 进 npm files 白名单,`gotry setup` 负责落位与加载指引。**残余**:D-16 上游发布面断裂修复前,session 面在 npm 干净安装下的端到端实测未完成 |
-| D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态) | **部分清偿 2026-08-30**:founder 实测「能装≠装到能用」——上版隐性状态要求 5 次点击 + 1 个原生文件对话框 + 跨 app 切换 + 装完还要自己重跑 sf 命令验证;`npx gotry setup wizard`(5 步编排 + 剪贴板 + 跨平台 GUI 面板 + 后台 health-watch 自动重放同 query_id)闭环至 **3 次点击 + 0 次终端命令 + 装完零重跑**。`ts/capabilities/session/{wizard,health-watch}.ts` + `ts/scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程,inline 降级兜) + bootstrap `wizard` 子命令 + run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节。**赎回条件**:用户首次 `gotry setup wizard` → 装一次扩展 → 后续调用 `gotry_session_search` 零后续动作即拿到 hit(goal 1 exit);goal 2 sf-01..08 跑批仍待用户桌面 Chrome 一次性装扩展后启 |
-| D-25 扩展商店上架审核中(一键装/自动更新仍缺,ADR-21 分发 B 轨) | 已提交(2026-08-30 founder 确认审核中;材料同下):`docs/extension-webstore-submission.md`(单一用途/权限理由/隐私披露/文案/founder 清单)+ `docs/extension-privacy.md`(隐私政策 URL)+ `scripts/package-extension.mjs` store-zip 产物;**赎回条件**:founder 注册开发者账号($5)→ 上传 zip → 粘贴材料 → 提审;过审后 wizard 增补「已装商店版跳过 dev-mode 三步」检测 |
-| D-15 账本触发式后置面(ADR-15 TS-5) | Litestream 云备份 / cr-sqlite 多写者复制 / RFC(loopx) §6.5 claim-fence-receipt 多用户实装——仅在触发器出现时启动:第二真实用户 / 多机部署 / AaaS 立项 |
-| D-16 上游 dsh 发布面断裂 | **已验证解法②并落地 2026-08-28(记忆域 lane)**:D-16 前提有误——npmjs 上 dsh-scope **有完整 0.1.x**(0.1.1-rc.2 在列;lane 查的是滞后的内部 bnpm 镜像)。根 dependencies 已显式钉 `dsh-scope@0.1.1-rc.2`,干净安装实测:ERESOLVE 仅降级为 warning、ledger/index/dsh-tools 全部 import OK、五导出齐(AuthoritativeEntries 等)。rc.10 已发布(founder 确认制下 agent 执行:web 登录 + 浏览器二次验证,恢复码被 npm 拒收改用 web OTP 通道)。**2026-08-29 增补**:dsh 家族 0.1.2-alpha.1 不发 npm 的堵点对 repo 工作副本已解除——`ts/dsh-runtime/vendor/` 全量 vendored 源码 tarball(上游 GitHub tag 构建,workspace 成员解析);发布面收敛为单点残余:npm 公共分发面(root deps)仍钉 rc.2,上游 publish 0.1.2.x 后升版即可关闭 |
-| D-17 Z3 WASM race(README Known limitation) | **已清偿 2026-08-29**(`z3-shared.ts`):双重根因一并关闭——①三模块(engine/journey/unified)各自 `init()` 使单进程并存 2-3 份 WASM 实例(内存放大,系统压力下 2GB 堆分配失败的 OOM 形态);②`engine.solve` 用 `Promise.all` 多候选并发共享同一 Context,z3 async 会话交错即栈损坏(`mk_bool_var memory access out of bounds`,run-all §1 长期靠「重试一次」止血)。现三入口经 `withZ3` 会话级互斥(单实例单 Context,门内禁嵌套),rc.4 当年单例回滚的「Context mismatch」源于残留自建 Context 混用,现无混用面;run-all §1 止血退役,新增 §30 并发回归闸(进程内三形态同轮并发 ×12 与顺序基线逐项对账) | `z3-shared.ts`;run-all §30 |
-| D-18 M3 Exit 真实 cohort 证据缺口 | **进行中(Issue #22)**:公开面已有冻结 manifest、严格脱敏 schema、确定性 scorer 与 synthetic fixture 守门；nightly real-LLM 证据生产器已进入工程面(封存 prompt 集/价表、无凭证 waiting 零写入、预算闸),验收⑥「nightly 可复跑」的机械前提已就位,真实 nightly 记录待凭证环境真跑。私有真实样本尚未进入 `ts/gotry-state/evidence/m3/`。只有 50–200 人真实 cohort 同时达到定稿率 ≥40%、NPS ≥40、POI 幻觉率 <1% 且窗口内 nightly real-LLM 可复跑,才允许业务达标;无样本时不关闭 M3 Exit。 | `product-metrics.ts`;`nightly-evidence.ts`;run-all §33/§35 |
-| D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地 2026-08-29**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit。赎回条件=私有 `observed_private` cohort 达 N≥5 并产出脱敏 summary;无真实样本时 waiting/backoff/no-spend,不扩 schema 假装进展。 |
+| D-17 Z3 WASM race(README Known limitation) | 已清偿,详见下方 |
 | D-20 六状态面里程碑口径漂移 | **已清偿 2026-08-29(Issue #19)**:六状态面统一为「M3 真实 evidence 未收口；M4 为 founder 授权并行，不是 M3 Exit 证明；M5/M6 仅受各自 Entry gate 开闸」。后续不得把工程交付、发布或并行切片等同于里程碑退出证据。 |
-| D-21 async 非 4/4 被误结算为成功 | **已清偿 2026-08-29(Issue #19)**:`collectDeepPlanning` 产出 `gotry_async_terminal.v1`；collector 仅在 4/4 时写 `succeeded`/ledger `settled`/exit 0，任一未达写 `failed`/ledger `failed`/exit 2；账本保存结构化结果，终态复诵零重算且保持同一退出码。隔离 `stateRoot` 回归见 run-all §28。 |
-| D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
-| D-23 效应解译器迁移未完成(ADR-18) | **部分清偿**:词汇层+生产/mock 解译器+韧性横切已落地,五工具(flyai/hotel/session/weather/flight_verify)与 realtime-pricing 默认查询口已走 `interpretEffect`;`anything/web_search/video_subtitle/github_search/agent_reach/session_login` 等其余渠道工具仍直连能力层(同款永不抛错契约,无退避/熔断/mock 面)。按渠道逐个搬,搬一个删一横切;全部走通即抄销 | `ts/capabilities/effect.ts`;`docs/effect-interpreter.md` §4;run-all §37 |
-| D-24 事实闸覆盖面缺口(ADR-19) | v1 闸覆盖航班+政策 claim;酒店 claim 未入抽取面(flyai hotel 打码价语义独立,不落 bookable facts);政策事实只有渲染侧+闸侧,生产端无实时签证/入境源——政策 claim 只能降级「未确认」或省掉;反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
-| D-27 vendored 仓内形态 Node 兼容窗口断裂 | **发现于 2026-08-30(issue #77 E2E 前置)**:仓内形态(bin 优先走 `ts/dsh-runtime/node_modules` vendored dsh)以 `.ts` 直载插件,两处硬约束未写明——① vendored `session-persistence-jsonl` 需 `node:zlib` 的 `createZstdDecompress`(Node ≥22.15,22.14 实测缺导出);② Node 默认 type-stripping 为 strip-only,拒绝 parameter properties(`ts/capabilities/resilience.ts:109` 与 `session/action-cache.ts:61`,经 effect.ts 链入,Node 26 实测 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` 拒载 gotry-tools)。npm 发布形态(dist 预编译)不受影响;主仓工作副本无 `ts/dsh-runtime/node_modules` 时 bin 回落 npm 形态,故日常未暴露。**赎回**:两处 parameter properties 改显式字段 + README 源码安装节写明 Node 版本窗口,vendored 形态真跑 smoke 验收 | `ts/capabilities/resilience.ts`;`ts/capabilities/session/action-cache.ts` |
+| D-21 async 非 4/4 被误结算为成功 | 已清偿,详见下方 |
+
+**D-4 gate/卡片无承载界面**
+
+**词表内赎回 2026-08-22**:
+- feasibility + 酒店/天气/Anything/AgentReach 五工具 presentResult 结果卡(可行性:候选判定+预算行;酒店:N 家(实时/静态);天气:ok/降级;Anything:N hits;AgentReach:✅/🔧/📦/❌ verdict)+ 12 工具 kind 图标分类(search/fetch/execute/edit,零 other);**地图位已解 2026-08-22**:宿主插件 dsh-map-tools v0.4.4(7 个 map_* 原生工具:驾/公/步/骑路线+地理编码+POI,零 key 走 OSRM,高德可后配)——
+- 装于 vendored runtime,npm 分发经根包依赖 + inner 运行时 require 解析;patch 条目占位、缺依赖整块剔除不挡启动;root ./gotry 统一改走 inner(修复旧 profile patch 暗中承重)
+
+**D-4a'(agent-reach 100% follow)**
+
+**已完成 2026-08-23;2026-08-22 wrapper 化**: Agent-Reach v1.5.0 装于 .venv(与 z3-solver 同址);gotry 侧为薄壳 —— agent-reach-bridge.py 反射桥(get_channel+getattr 直调上游注册表)+ agent-reach.ts 管道层,零渠道知识,上游加渠道零改动;gotry_agent_reach(action=reach 反射 / status 真 doctor);needs-setup 透传上游 check() 原话
+
+**D-7 deprecated 层仍承重**
+
+**大部赎回**:dsh 插件进程内路径切轨 solveChoiceSegment(枚举,~0ms)、cli.py 桥切轨 solve_choice_segment、diff-test 切轨统一模型对统一模型;engine/journey 退纯 oracle(保留为金标准对照)。**尾债清偿 2026-08-22**:删 build_plan.py + gotry_async/demo.py + run-golden-case.sh(已断:调 rc.3 删除的 cli.py);py 树仅剩 gotry_feasibility oracle 对照 + 其 unittest
+
+**D-10 slot→spec 求解桥接未做**
+
+**已清偿 2026-08-27(三切片)**:
+- A `slot-spec.ts` 解析层(锚点卡词表/绝对/+N → 绝对日期,词表外 unresolved;time-eval §5);B 工具面接线(`gotry_hotel_search` 日期槽位收逐字表达,unresolved 降级无日期搜索+date_notes,smoke §8);C spec 链路一致性闸(runTurn 求解前比对,分歧不求解、追问确认,replay 尾段)。**ADR-12 复审结论:设计成立**,解析范围必须有界(只解析锚点卡词表,不做开放式中文相对日期解析——被拒备选即维护黑洞)。
+- **闸范围边界(2026-08-28 真模型巡检修正)**:槽位 v1 只有 trip 级主日期,闸仅校验恰好一个带日期段的 spec;多段行程逐段日期无槽位真值,不判(金标准六段行程曾被全段误判分歧拦死求解,巡检抓出后收窄,多段旁路回归进 replay 尾段)
+
+**D-26 扩展在线时默认桥钉住 CLI**
+
+**已清偿 2026-08-30**:`server.unref()` 不会自动解开已接受 socket 与 parked 长轮询 timer,导致 `SMOKE OK` 后进程仍存活;默认桥对两者 `unref`,active submit timer 与 wizard `keepBridge=true` 保持引用。§38 子进程红→绿 + §40 9/9 + 真扩展 smoke exit 0 守住。
+
+**D-17 Z3 WASM race(README Known limitation)**
+
+**已清偿 2026-08-29**(`z3-shared.ts`):双重根因一并关闭——①三模块(engine/journey/unified)各自 `init()` 使单进程并存 2-3 份 WASM 实例(内存放大,系统压力下 2GB 堆分配失败的 OOM 形态);②`engine.solve` 用 `Promise.all` 多候选并发共享同一 Context,z3 async 会话交错即栈损坏(`mk_bool_var memory access out of bounds`,run-all §1 长期靠「重试一次」止血)。
+- 现三入口经 `withZ3` 会话级互斥(单实例单 Context,门内禁嵌套),rc.4 当年单例回滚的「Context mismatch」源于残留自建 Context 混用,现无混用面;run-all §1 止血退役,新增 §30 并发回归闸(进程内三形态同轮并发 ×12 与顺序基线逐项对账) | `z3-shared.ts`;run-all §30
+
+**D-21 async 非 4/4 被误结算为成功**
+
+**已清偿 2026-08-29(Issue #19)**:`collectDeepPlanning` 产出 `gotry_async_terminal.v1`；collector 仅在 4/4 时写 `succeeded`/ledger `settled`/exit 0，任一未达写 `failed`/ledger `failed`/exit 2；账本保存结构化结果，终态复诵零重算且保持同一退出码。隔离 `stateRoot` 回归见 run-all §28。
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
@@ -273,4 +503,13 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | `loopx-inspired-upgrades-rfc.md` | **RFC(accepted 2026-08-27)**:loopx 13 篇架构 RFC 的映射升级——四道接缝(S1 工具 packet 纪律/S2 记忆效用 sidecar/S3 wish 触达 0..1 纪律/S4 WriteGate L0-L4 词汇) |
 | `transactional-state-rfc.md` | **RFC(accepted 2026-08-28,ADR-15)**:事务化状态基座——业界 durable-execution 调研收敛五件套 + GoTry 落地架构 + TS-0..TS-5 执行计划与决策记录(D1-D5) |
 | `booking-saga-fsm.md` | **预订 saga 状态机设计(issue #17 采纳,ADR-17)**:booking_saga_fsm.v1 字母表/边表/拒绝闭集 + 三种边型词汇(deterministic/gate/external-event)+ HITL 审批的挂起-恢复形态 + M5 启封增量与不引入编排框架的判定记录 |
-| `effect-interpreter.md` | **效应解译器设计(issue #16 采纳,ADR-18)**:effect_interpreter.v1 词汇(效应值/EffectOutcome/trace)+ 渠道韧性策略表(退避/断路/节律依据逐行)+ 生产/mock 双解译器 + 为什么不做视觉 CUA 与自动多渠道路由的判定记录 + D-23 迁移面 |
+| `effect-interpreter.md` | **效应解译器设计(issue #16 采纳,ADR-18)**:effect_interpreter.v1 词汇(效应值/EffectOutcome/trace)+ 渠道韧性策略表(退避/断路/节律依据逐行)+ 生产/mock 双解译器 + 为什么不做视觉 CUA 与自动多渠道路由的判定记录 + D-23 迁移面 || `user-session-data-rfc.md` | **RFC**:用户会话数据面——官方通道优先 + 用户会话补缺,四阶段落地(P0-P4)与决策门 |
+| `user-guide.md` | 面向使用者的上手指南(dsh 形态用法) |
+| `release-notes.md` | 发版记录(按版本归档,最新在上) |
+| `decisions-needed.md` | 待创始人拍板的决策清单 |
+| `m3-web-gap.md` | M3 Web 形态缺口(G-1..G-4 方向) |
+| `m4-calibration-questions.md` | M4 校准问题集 |
+| `extension-webstore-submission.md` · `extension-privacy.md` | Chrome Web Store 上架材料与隐私政策(ADR-21 通道 B) |
+| `maka-research.md` | MAKA 竞品/形态研究 |
+| `m2-capability-gap.md` · `m2-flight-data-options.md` | M2 期能力缺口与机票数据选型(历史备忘) |
+| `s1-walkthrough.md` · `g1-market-memo.md` | Stage 1 走查与 G1 首发市场备忘(历史备忘) |

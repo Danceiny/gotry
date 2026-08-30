@@ -26,7 +26,7 @@
 | **航线通航性** | ✅ OpenFlights 骨架 168 枢纽对(ODbL,`data/openflights-skeleton.json`) | 静态(月级) | `[骨架:openflights]` | 保持;扩枢纽集;Amadeus 已关停不回 |
 | **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`(公开渠道调研,5 段链) | 静态(2026-07 调研) | `[静态包:估算]` | M4:aviationstack 校验层(§7-1 已批三层组合);票价 M5 |
 | **航班实时观测** | ✅ OpenSky 已接(`capabilities/opensky.ts` + `gotry_flight_verify` 工具;`/api/states/all` 当前 ADS-B 全球观测,~400 credits/天) | 实时 | `[实时API:opensky]` | ✅ 已落地(2026-08-22) |
-| **酒店库存/报价** | ✅ hbcli 桥(实时;**2026-08-30 全流程 E2E 实测:通道/鉴权/搜索编排全通**——官方 install.sh 装 staicli 0.0.1 → 沙箱账号取票 → UAT 搜索编排带供应商 provenance/correlationId 真实工作;UAT 侧目的地/酒店参考数据暂空,hotel-list 按名查询返回业务层 404 → 设计内静态包降级,非数据链故障)+ **飞猪官方 OTA 通道已接**(`gotry_flyai_search` kind=hotel → search-hotel,2026-08-29 实测,未鉴权打码价保 priceRaw 不伪装)+ 静态包 `data/hotels_2026.json` 按目的地过滤回退;**2026-08-29(PR #33)起 npm 安装期自动按官方脚本安装 hbcli**(hotelbyte-cli 为公开仓 github.com/hotelbyte-com/hotelbyte-cli,MIT;`gotry setup` 手动入口;能力层带 ~/.local/bin、~/.staicli/current 候选回退;实时数据需用户凭证——`gotry setup` 装后即给账号引导,快速试用用 hotel-be 种子沙箱 `hotelbyte_api_demo`,正式接入换专属 appKey/appSecret,D-22) | 实时/静态 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` / `[静态包:估算]` | 保持;UAT 目的地/库存数据补齐后 hotel-list 即回实时(通道已证);OTA 工具面平铺(无主/降级路由,按查询取用) |
+| **酒店库存/报价** | ✅ hbcli 桥(实时;**2026-08-30 全流程 E2E 实测:通道/鉴权/搜索编排全通**—— **详见下方「酒店库存/报价」** | 实时/静态 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` / `[静态包:估算]` | 保持;UAT 目的地/库存数据补齐后 hotel-list 即回实时(通道已证);OTA 工具面平铺(无主/降级路由,按查询取用) |
 | **酒店点评/评分** | ✅ **复用 hotel-be Anything**(内含酒店 + 城市/区域混合 candidate)+ M4 scale-up:Google Place 评分/照片 | Any(hit/miss),M4:geography | `hbcli-anything` | M3:DONE(founder 校准 Anything 复用);M4:Google Place scale-up 路径(geography GetPlaceReviews) |
 | **POI/地点搜索** | ✅ Anything(混合 城市+酒店+place 候选) + OSM Nominatim 兜底 | Any | `hbcli-anything` / M4 `osm-nominatim` | M3:DONE;TREK 同款,免费兜底 |
 | **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`);地理编码双源:Open-Meteo(主,人口/行政级排序防同名小地压主城)+ OSM Nominatim(中文兜底——open-meteo 中文名覆盖有洞,issue #24 实测「普吉岛」0 结果) | 实时 | `[实时API:open-meteo@ts]` / 兜底 `[实时API:nominatim@ts]` | 保持;WMO 码已映射中文 |
@@ -121,8 +121,9 @@ gotry(gotry_place_search 工具, 拟新增)
 **变更历史**:
 - 2026-08-22 段:Google Place 链路定案为唯一路径
 - **2026-08-23 段**:founder 锐评「anything 就是 hotel-be 的接口啊」+「hotelbyte-cli / hotel-be 是你的 workspace 范围」,**Anything 复用作主路径**,Google Place scale-up 后置。三仓 commit 闭环 (gotry `244a0ae` + hbcli `43236a0` + hotel-be `c38ff65d1`)。
-          → Google(出站 gRPC)
-```
+
+<!-- 注:此处原有一行残片「→ Google(出站 gRPC)」与一个无配对的 ``` 收尾围栏(HEAD 即如此,围栏总数为奇数),
+     系历史编辑丢失开围栏所致;2026-08-31 文档重构时移除残片、补齐围栏配对,未改变任何语义内容。 -->
 
 **现状缺口**(按链路顺序):
 
@@ -186,13 +187,18 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 韧性横切落位(2026-08-29,issue #16 采纳/ADR-18):对外渠道的重试/熔断/节律不再逐能力层复制——效应解译器 `effect_interpreter.v1`(`ts/capabilities/effect.ts`,设计文档 `effect-interpreter.md`)按 per-效应策略表统一执行(已接 flyai/hbcli/session/weather/opensky 通道+realtime-pricing 查询口):重试只认瞬时类失败(**Sentinel 限流永不重试**),SESSION 通道永不重试不熔断(风控红线,治理在节律闸+授权闸);解译层横切证据 `[效应:<NAME>@<ts>]` 与上表渠道证据链并存(渠道标注不动,解译层只记 attempts/backoff/breaker 与拒绝面)。
 
-可下单事实落账契约(2026-08-30,issue #46/ADR-19):flyai/session 机/火 **exact-date** 检索结果(hit 与 miss)逐条落 `<stateRoot>/gotry-state/bookable-facts.jsonl` 侧车(`gotry_bookable_fact.v1`:query_id 可重放、IATA 归一、live_inventory/route_exists/historical_schedule/benchmark_price 四层 tier 永不合并);产物中的可下单 claim 必须回溯到侧车条目——`gotry_fact_gate` 反向抽取 markdown claim 逐条对账,exact-date miss 的 route+date 被航班号/时刻填充 = not_in_source 违例(产物 blocked);政策表述只允许「截至 YYYY-MM-DD」+复核日期,冲突永不得 ✓,联程仅 protected_connection=true。
+可下单事实落账契约(2026-08-30,issue #46/ADR-19):
+- flyai/session 机/火 **exact-date** 检索结果(hit 与 miss)逐条落 `<stateRoot>/gotry-state/bookable-facts.jsonl` 侧车(`gotry_bookable_fact.v1`:query_id 可重放、IATA 归一、live_inventory/route_exists/historical_schedule/benchmark_price 四层 tier 永不合并);产物中的可下单 claim 必须回溯到侧车条目——
+- `gotry_fact_gate` 反向抽取 markdown claim 逐条对账,exact-date miss 的 route+date 被航班号/时刻填充 = not_in_source 违例(产物 blocked);政策表述只允许「截至 YYYY-MM-DD」+复核日期,冲突永不得 ✓,联程仅 protected_connection=true。
 
 ---
 
 ## 7. 演进(与 roadmap 对齐,本文只列数据侧)
 
-- **M3 末(当前)**:~~Open-Meteo 接入~~ ✅ 已完成(`capabilities/weather.ts` + `gotry_weather_check` 工具,5 断言实测);~~OpenSky 从脚本挂到插件工具面~~ ✅ 已完成(`capabilities/opensky.ts` + `gotry_flight_verify` 工具,3 断言实测);**LLM 价表 v2 + 价格漂移长机制(2026-08-30,issue #49)**:`ts/data/llm-price-table.json` provider-aware(DeepSeek tiered_peak_offpeak + MiniMax flat_no_offpeak,MiniMax M2/M2.1/M3 入表),ADR-11「peak only-high-not-low」是单一真理,unknown model → fail-closed 不猜价;`ts/scripts/price-drift-watch.ts` 覆盖 DeepSeek/MiniMax/OpenAI/Anthropic 四家主流 provider,默认离线对照 baseline fixture 比对输出 PR-就绪 Markdown diff,`--fetch` 拉取官方页 + 首次写 fixture,**永不自动 apply 价格**——价格调整走 PR + 人 review;run-all §41 合同验证。M3 末数据增量两条全闭环。
+- **M3 末(当前)**:
+  - ~~Open-Meteo 接入~~ ✅ 已完成(`capabilities/weather.ts` + `gotry_weather_check` 工具,5 断言实测);~~OpenSky 从脚本挂到插件工具面~~ ✅ 已完成(`capabilities/opensky.ts` + `gotry_flight_verify` 工具,3 断言实测);
+  - **LLM 价表 v2 + 价格漂移长机制(2026-08-30,issue #49)**:`ts/data/llm-price-table.json` provider-aware(DeepSeek tiered_peak_offpeak + MiniMax flat_no_offpeak,MiniMax M2/M2.1/M3 入表),ADR-11「peak only-high-not-low」是单一真理,unknown model → fail-closed 不猜价;
+  - `ts/scripts/price-drift-watch.ts` 覆盖 DeepSeek/MiniMax/OpenAI/Anthropic 四家主流 provider,默认离线对照 baseline fixture 比对输出 PR-就绪 Markdown diff,`--fetch` 拉取官方页 + 首次写 fixture,**永不自动 apply 价格**——价格调整走 PR + 人 review;run-all §41 合同验证。M3 末数据增量两条全闭环。
 - **M4**:`capabilities/place.ts` 双轨(hbcli-place + OSM 兜底);OSRM 时长估算进 transfer;时区库替代手写;汇率免费层。
 - **hotel-be 侧依赖(gate)**:search 模块 place OpenAPI + geography 白名单 + `hbcli search place`——三段都在 hotel-be 仓,由该仓 lane 推进;gotry 侧等 `hbcli search place --json` 可用即零改动接上(能力层已留降级位)。
 - **M5**:票价(aviationstack 校验层升级);KDE Itinerary 式预订导入(bookedResources 数据源)。
@@ -206,13 +212,22 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 - 实测(2026-08-28,本机):上海→丽江 2026-10-01 机票,春秋 9C6617 浦东 17:05→三义 20:50 ¥1790 等结构化 journeys/segments/ticketPrice JSON;上海→大理火车票,虹桥 10:00 G201 二等→昆明南→大理 22:47 中转链。
 - 单行 JSON stdout,agent-native(hbcli 同款形态)。**意义:机票班期/票价与铁路检索的官方免费通道已开——用户会话面的真实缺口收缩为「携程 C 端交叉验证 + 美团本地」;12306 会话需求(G8)大幅弱化**。
 - 未明:收费/配额/企业门槛(README 未披露,`FLYAI_API_KEY` 可选增强)。接入形态:`capabilities/flyai.ts` **已落地(P1,2026-08-28)**——spawn CLI 管道层,session-tests F 节 live 断言。
-- **限流实测(2026-08-28 下午)**:高频调用后返 `SentinelBlockException by fly-ai-search`(CLI exit=0、stdout 非业务 JSON)——**配额未文档化,恢复窗口未知**;flyai.ts 已把该形态纳入结构化 error(带 stdout 片段),测试/smoke 按「hit 或 sentinel 降级」双合法终态。金标准跑批(fa-01..04)当日被拦,待限流窗口过后由心跳轮重试。**2026-08-29 缺口修复(Issue #24)**:该限流输出是合法 JSON,曾走 `data?.itemList ?? []` 被吞成 0/0 静默 miss——现按形状判别(无 `data.itemList` 即 error),离线回归见 run-all §7b;工具层 summary 三分支(hit/miss/error)+过去日期显式提示。
+- **限流实测(2026-08-28 下午)**:
+  - 高频调用后返 `SentinelBlockException by fly-ai-search`(CLI exit=0、stdout 非业务 JSON)——**配额未文档化,恢复窗口未知**;flyai.ts 已把该形态纳入结构化 error(带 stdout 片段),测试/smoke 按「hit 或 sentinel 降级」双合法终态。金标准跑批(fa-01..04)当日被拦,待限流窗口过后由心跳轮重试。**2026-08-29 缺口修复(Issue #24)**:该限流输出是合法 JSON,曾走 `data?.itemList ?? []` 被吞成 0/0 静默 miss——
+  - 现按形状判别(无 `data.itemList` 即 error),离线回归见 run-all §7b;工具层 summary 三分支(hit/miss/error)+过去日期显式提示。
 
-**会话数据面 P1(RFC §4,2026-08-28)**:`capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard(方法×URL 双因子 + 驼峰复合写词,写请求物理 abort + 审计,fail-closed)+ 携程机票适配器(batchSearch 嗅探→结构化)+ 节律闸(同站 ≥30s);证据链新标注 `[会话:ctrip-flight@ts]` 生效;run-all §24。live 会话检索需 headful(headless 下携程只回壳页,实测)。登录态为存在前提(founder 纠偏 2026-08-28,同日二次纠偏「仍然匿名实例」后**定案 CDP attach 为默认传输**):`openSession(mode=cdp)` attach 日常 Chrome(chrome://inspect/#remote-debugging 一次性开关,Chrome 144+,本机 147 ✓),登录态/指纹=用户本人,ReadGuard 同样生效;`needs-attach`/`needs-login` 双降级 verdict;`scripts/session-attach-diagnose.ts` 校准票据名单(只读不导航);persistent 专用 profile 降为测试/后备(实测:匿名窗口无人会登录,History/Cookies 双 0 行)。persistent 专用 profile 降为测试/后备(实测:匿名窗口无人会登录,History/Cookies 双 0 行)。**2026-08-30 传输层定案(founder「逐连接权限框根本无法使用」)**:扩展桥升 PRIMARY——`extension/` GoTry Session Bridge(MV3 一次性安装,manifest 固定 key=扩展 ID)在自身标签页被动嗅探站点自身请求(扩展零写行为),`session/extension-bridge.ts` 回环桥(node:http 零新依赖,origin 白名单)长轮询配对;系统弹窗每会话 0 次,cookie 只读名字值即弃,cdp 降为 `GOTRY_SESSION_TRANSPORT=cdp` 显式诊断后备(不静默回退);run-all §38 全离线合同。
+**会话数据面 P1(RFC §4,2026-08-28)**:
+- `capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard(方法×URL 双因子 + 驼峰复合写词,写请求物理 abort + 审计,fail-closed)+ 携程机票适配器(batchSearch 嗅探→结构化)+ 节律闸(同站 ≥30s);证据链新标注 `[会话:ctrip-flight@ts]` 生效;run-all §24。live 会话检索需 headful(headless 下携程只回壳页,实测)。
+- 登录态为存在前提(founder 纠偏 2026-08-28,同日二次纠偏「仍然匿名实例」后**定案 CDP attach 为默认传输**):`openSession(mode=cdp)` attach 日常 Chrome(chrome://inspect/#remote-debugging 一次性开关,Chrome 144+,本机 147 ✓),登录态/指纹=用户本人,ReadGuard 同样生效;`needs-attach`/`needs-login` 双降级 verdict;`scripts/session-attach-diagnose.ts` 校准票据名单(只读不导航);
+- persistent 专用 profile 降为测试/后备(实测:匿名窗口无人会登录,History/Cookies 双 0 行)。persistent 专用 profile 降为测试/后备(实测:匿名窗口无人会登录,History/Cookies 双 0 行)。**2026-08-30 传输层定案(founder「逐连接权限框根本无法使用」)**:扩展桥升 PRIMARY——
+- `extension/` GoTry Session Bridge(MV3 一次性安装,manifest 固定 key=扩展 ID)在自身标签页被动嗅探站点自身请求(扩展零写行为),`session/extension-bridge.ts` 回环桥(node:http 零新依赖,origin 白名单)长轮询配对;系统弹窗每会话 0 次,cookie 只读名字值即弃,cdp 降为 `GOTRY_SESSION_TRANSPORT=cdp` 显式诊断后备(不静默回退);run-all §38 全离线合同。
 
 **#21 双源验收合同(2026-08-29)**:`session/benchmark.ts` 把 query/segments/journey type/逐段时刻与班次/currency/price/source/fetched_at/verdict 固化为字段级 fixture scorer(缺字段计错,默认 ≥90%)；双源对齐按同 journey/segments/时刻/班次判断,价格差独立记录、不要求相等。`needs-attach`/`needs-login` 返回 waiting-user no-spend,challenge 或 ReadGuard blocked>0 立即 fail-closed；当前只验证脱敏 fixture,不触碰日常 Chrome,真实 sf-01..08 仍需权限确认和 CDP 握手。
 
-**P3.7 static golden vendor(Issue #67,2026-08-30)**:`ts/scripts/sf-live-benchmark.ts --golden=static` 使用版本化 `ts/data/sf-static-routes.json`:route/carrier 取自 OpenFlights `routes.dat` 的 ODbL 固定 revision `4b969f8e91eb800c45f0e0e2355a0fbb93de27e4`,覆盖 sf-01..08；OpenFlights 不含 schedule/price/availability,故 `departure_at`、`arrival_at`、`transport_number` 与 `price` 作为 estimated fields,其时刻/价格带来自 `sf-golden-manifest.json`。每条 evidence 同时写 `requested_source=static` 与实际 `effective_source`,并携 route URL/revision/license、band source、fallback reason。快照读取/校验或路由覆盖失败时 stderr 明示 `fallback=manual-golden`,拒绝静默换源；该 vendor 是 benchmark comparator,**不能证明实时班期、实时票价或可售库存**。provider-independent 软评分与 CLI vendor 闭集进入 run-all §44。
+**P3.7 static golden vendor(Issue #67,2026-08-30)**:
+- `ts/scripts/sf-live-benchmark.ts --golden=static` 使用版本化 `ts/data/sf-static-routes.json`:route/carrier 取自 OpenFlights `routes.dat` 的 ODbL 固定 revision `4b969f8e91eb800c45f0e0e2355a0fbb93de27e4`,覆盖 sf-01..08；
+- OpenFlights 不含 schedule/price/availability,故 `departure_at`、`arrival_at`、`transport_number` 与 `price` 作为 estimated fields,其时刻/价格带来自 `sf-golden-manifest.json`。每条 evidence 同时写 `requested_source=static` 与实际 `effective_source`,并携 route URL/revision/license、band source、fallback reason。
+- 快照读取/校验或路由覆盖失败时 stderr 明示 `fallback=manual-golden`,拒绝静默换源；该 vendor 是 benchmark comparator,**不能证明实时班期、实时票价或可售库存**。provider-independent 软评分与 CLI vendor 闭集进入 run-all §44。
 
 **P3.7 登录态实跑(2026-08-30)**:sf-01..08 连续两轮以 `requested_source=static` 执行,effective 全为 `static-openflights+manual-band`,official 每轮 8/8 hit、`fallback_count=0`;携程 session 分别 3/8 与 5/8 hit,两轮全部可评分 hit(3+5 条)soft score 均 13/13=100%,非 hit 为明示 miss。该分母只覆盖会话 hit,不能反推 8/8 可售性;每条 provenance 均指向上述 OpenFlights revision。
 
@@ -222,15 +237,24 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 - 两次实测均零风控、零交互只读;主搜索接口已识别:`flights.ctrip.com/international/search/api/search/batchSearch`(~550KB,国内票同走)+ `FlightIntlAndInlandLowestPriceSearch` 低价日历(~81KB)——P1 携程适配器的 networkHints 直接可用。
 
 **OTA 平铺 + 酒店通道 + 账号授权闸(2026-08-29 第二批,founder 口径「OTA 这些都是工具,不要区分什么主路径/降级路径;这要用到用户的账号,所以必须跟用户确认」)**:
-- **search-hotel 接入**:`gotry_flyai_search` kind=hotel(实测大理:结构化 name/star 档级/打码价 ¥7xx/address/interestsPoi/shId/detailUrl;解析契约 `FlyaiHotelOption`)。**打码价纪律**:未鉴权价上游打码(¥7xx),解析保 `priceRaw` 原值、`price` 数字恒 0——「¥7xx 截成 7 伪装真价」是被明确拒绝的形态;真实价以 `detailUrl` 酒店页为准(交易经 detailUrl 由人完成,不进工具)。flags:`--dest-name` 必填 + `--check-in-date/--check-out-date`(成对可选,未定档期先摸底)+ `--key-words`。session-tests §H(live hit/离线解析/参数闸三态)+ smoke §12。
+- **search-hotel 接入**:
+  - `gotry_flyai_search` kind=hotel(实测大理:结构化 name/star 档级/打码价 ¥7xx/address/interestsPoi/shId/detailUrl;解析契约 `FlyaiHotelOption`)。**打码价纪律**:未鉴权价上游打码(¥7xx),解析保 `priceRaw` 原值、`price` 数字恒 0——「¥7xx 截成 7 伪装真价」是被明确拒绝的形态;真实价以 `detailUrl` 酒店页为准(交易经 detailUrl 由人完成,不进工具)。
+  - flags:`--dest-name` 必填 + `--check-in-date/--check-out-date`(成对可选,未定档期先摸底)+ `--key-words`。session-tests §H(live hit/离线解析/参数闸三态)+ smoke §12。
 - **OTA 平铺**:founder 口径落地——工具描述与 persona (19) 删「主链路/交叉验证/三级路由」层级话术;**拍平的是路由优先级,不是 L4 证据链纪律**(逐源标注照旧必达用户)。
-- **账号授权闸(支柱④进代码;v2 会话内一次)**:`tools/pre-execute` 监听器(`session-consent.ts`)对账号面工具**每会话每站点首次调用**返回 `{kind:'ask'}` → dsh 原生 `ApprovalService`(dsh-base profile 默认挂载 policy=ask)→ web 审批卡;allowed-once 记入会话 granted 集(会话内免再弹),**rejected/cancelled 记入 denied 集 = 本会话吊销**(不弹卡不执行——founder 实测「每次都弹,经常无法点击」,逐次批准骚扰已根治);无审批通道 fail-closed(headless 无用户在场 = 无授权);插件 config `sessionAccess: ask|allow|off`(随时可关/预授权/总闸);站点白名单=适配器注册表现状(仅 ctrip-flight)。飞猪通道**不过闸**(匿名无用户身份,无账号风控/PIPL 面,配额限流已是结构化 error);session-tests §I + smoke §13 断言。
-- **登录产品化(第 18 工具 `gotry_session_login`,2026-08-29)**:`needs-login` 时 agent 直调(用户无需终端)——attach 用户 Chrome、弹登录入口、等待其在**携程官网**完成登录;**语义红线:登录永远发生在外部网站——gotry 永不收集/存储/传输密码、验证码或任何 cookie 值**,只读票据 cookie 名这个存在性事实(名称级,0 值过手;session-tests §J3 值不泄露断言)。登录引导页不挂 ReadGuard(transport `guard:false` 唯一豁免面):检索面「无守卫会话不存在」不变量不变,登录页是用户自己的凭证流,我们的写拦截反而会物理 abort 用户本人的登录 POST(隐私+可靠性双输)。遗留 CLI 探针 `scripts/session-login.ts` 降级为薄壳。——attach 用户日常 Chrome(与检索同传输层)→ 新开登录入口标签 → 人自行登录 → 只读轮询票据 cookie 名(不读值不碰密码/OTP/验证码)→ 检出即报;`needs-login` 文案改指该脚本(不再是「跑脚本」空指引)。
+- **账号授权闸(支柱④进代码;v2 会话内一次)**:
+  - `tools/pre-execute` 监听器(`session-consent.ts`)对账号面工具**每会话每站点首次调用**返回 `{kind:'ask'}` → dsh 原生 `ApprovalService`(dsh-base profile 默认挂载 policy=ask)→ web 审批卡;allowed-once 记入会话 granted 集(会话内免再弹),**rejected/cancelled 记入 denied 集 = 本会话吊销**(不弹卡不执行——founder 实测「每次都弹,经常无法点击」,逐次批准骚扰已根治);
+  - 无审批通道 fail-closed(headless 无用户在场 = 无授权);插件 config `sessionAccess: ask|allow|off`(随时可关/预授权/总闸);站点白名单=适配器注册表现状(仅 ctrip-flight)。飞猪通道**不过闸**(匿名无用户身份,无账号风控/PIPL 面,配额限流已是结构化 error);session-tests §I + smoke §13 断言。
+- **登录产品化(第 18 工具 `gotry_session_login`,2026-08-29)**:
+  - `needs-login` 时 agent 直调(用户无需终端)——attach 用户 Chrome、弹登录入口、等待其在**携程官网**完成登录;**语义红线:登录永远发生在外部网站——gotry 永不收集/存储/传输密码、验证码或任何 cookie 值**,只读票据 cookie 名这个存在性事实(名称级,0 值过手;session-tests §J3 值不泄露断言)。
+  - 登录引导页不挂 ReadGuard(transport `guard:false` 唯一豁免面):检索面「无守卫会话不存在」不变量不变,登录页是用户自己的凭证流,我们的写拦截反而会物理 abort 用户本人的登录 POST(隐私+可靠性双输)。遗留 CLI 探针 `scripts/session-login.ts` 降级为薄壳。——attach 用户日常 Chrome(与检索同传输层)→ 新开登录入口标签 → 人自行登录 → 只读轮询票据 cookie 名(不读值不碰密码/OTP/验证码)→ 检出即报;`needs-login` 文案改指该脚本(不再是「跑脚本」空指引)。
 - **测试纪律(2026-08-29 founder 反馈根治)**:例行回归**永不自动开浏览器窗口**——session-tests G 节 live 探针默认 SKIP,`GOTRY_SESSION_LIVE=1` 显式 opt-in;「在匿名窗口反复打开携程/界面闪退」形态就此退役。
 - **未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
 **未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
 - **人机共治标签页纪律(2026-08-29,founder「我根本就看不到登录页面」根治)**:登录引导与会话检索一律 `newPage` 开**自己的独立标签页**(登录页 `bringToFront` 置前台、`closeOwnPage=false` 留给用户),绝不劫持用户既有标签页(此前实现拿 `browser.pages()[0]` 导航,登录页开在用户看不见的位置=严重 UX bug);检索页用完即关自己的页。
-- **扩展 onboarding UX 闭环(2026-08-30,issue #21 P3.6,loopx `gotry-session-onboarding-goal`)**:founder 实测「能装≠装到能用」——上版要求 5 次点击 + 1 文件对话框 + 跨 app 切换 + 装完自己重跑,本批降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。`npx gotry setup wizard` 单命令入口(5 步编排 + 剪贴板扩展路径 + macOS osascript / Linux zenity / Windows msg / headless 终端跨平台 GUI 面板 + 后台 health-watch ≤120s 探活 + 扩展一就位 stdout 翻绿自动重放同 query_id);`ts/capabilities/session/{wizard,health-watch}.ts` + `scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程单行 JSON 输出)+ bootstrap `wizard` 子命令(inline 降级兜 npm 安装态);run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节;RFC §3.3 / §4 P3.6 / §6 复用矩阵同步 + architecture §10 D-24。**后续 goal 2(`sf-live-benchmark`,八条 query 双源 scorer)仍待用户桌面 Chrome 一次性装扩展后启**。
+- **扩展 onboarding UX 闭环(2026-08-30,issue #21 P3.6,loopx `gotry-session-onboarding-goal`)**:
+  - founder 实测「能装≠装到能用」——上版要求 5 次点击 + 1 文件对话框 + 跨 app 切换 + 装完自己重跑,本批降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。`npx gotry setup wizard` 单命令入口(5 步编排 + 剪贴板扩展路径 + macOS osascript / Linux zenity / Windows msg / headless 终端跨平台 GUI 面板 + 后台 health-watch ≤120s 探活 + 扩展一就位 stdout 翻绿自动重放同 query_id);
+  - `ts/capabilities/session/{wizard,health-watch}.ts` + `scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程单行 JSON 输出)+ bootstrap `wizard` 子命令(inline 降级兜 npm 安装态);run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节;RFC §3.3 / §4 P3.6 / §6 复用矩阵同步 + architecture §10 D-24。
+  - **后续 goal 2(`sf-live-benchmark`,八条 query 双源 scorer)仍待用户桌面 Chrome 一次性装扩展后启**。
 
 
 
@@ -245,7 +269,33 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 | 2026-08-29(v2 同日) | founder 实测反馈两刀:**①授权闸 v2**——逐调用弹卡=骚扰,改「每会话每站点首次调用弹卡、会话内记住;拒绝=本会话吊销不再弹」(`session-consent.ts` 会话态,sessionAccess `ask\|allow\|off`);**②登录态 seam 真落地**——`scripts/session-login.ts`(attach 用户 Chrome→开登录入口→人登录→只读轮询票据,needs-login 文案指向真脚本);**③测试不再自动开浏览器窗**(session-tests live 节 GOTRY_SESSION_LIVE=1 opt-in,「匿名窗口反复开携程/闪退」形态退役);session-tests §G/H/I + smoke §12-13 |
 | 2026-08-29(PR #33 合流) | Issue #24 双 lane 修复合流:weather 双源/飞猪扫描器/静态包过滤采纳 main 版;本 lane 增量入列——hbcli ENOENT 人话化+候选路径回退(~/.local/bin、~/.staicli/current)+安装期外部依赖自举(hbcli 官方 install.sh / agent-reach 官方 pip 入包内 .venv,postinstall --auto 非致命,`gotry setup` 手动入口;§2 酒店行)+ 离线 flyai 套件(run-all §7b)+ bootstrap 套件(§7c);hotelbyte-cli 定性更正为公开仓(D-22) |
 | 2026-08-29(issue #16 采纳) | §6 增韧性横切落位:外部渠道重试/熔断/节律归口效应解译层 effect_interpreter.v1(ADR-18,`ts/capabilities/effect.ts`+`resilience.ts`,设计文档 `effect-interpreter.md`)——per-效应策略表(Sentinel 永不重试/SESSION 永不重试不熔断/免费源退避 2 次),`[效应:<NAME>@ts]` 横切证据与渠道证据链并存;flyai/hbcli/session/weather/opensky 通道+realtime-pricing 查询口已接,余下渠道 D-23 增量迁移;run-all §37 |
-| 2026-08-30(staicli 全流程 E2E) | hbcli 全流程接入收口:本机经官方 install.sh 装 staicli 0.0.1(~/.staicli/versions + ~/.local/bin 符号链);账号接入口径从 hotel-be 种子实测敲定——OpenAPI 沙箱 `hotelbyte_api_demo`(predefined_user_demo.go,IsSandbox)UAT 取票/搜索编排真通,tenant 门户 benjamin 亦可登录,UAT 目的地/酒店参考数据暂空(hotel-list 按名查询业务 404 → 设计内静态包降级,§2 酒店行「证书过期」旧诊断更正);全链路 E2E 固化为 run-all §7d(`ts/scripts/hbcli-e2e-tests.ts`:隔离 STAICLI_HOME+沙箱账号真打 UAT,取票/实时通道/降级诚实/解译策略/工具面五断言,无 bin 或无网 SKIP);`gotry setup` 装后账号引导升级(沙箱试用/专属凭证/门户三选一+whoami 自检) |
-| 2026-08-30(onboarding UX 闭环) | issue #21 P3.6:会话扩展 onboarding 从「5 次点击 + 跨 app 切换 + 装完自己重跑」降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。`npx gotry setup wizard` 单命令入口:5 步编排 + 剪贴板扩展路径 + macOS osascript / Linux zenity / Windows msg / headless 终端跨平台 GUI 面板(不引 Electron,保持零 GUI 依赖面)+ 后台 health-watch ≤120s 探活 + 扩展一就位自动重放同 query_id;`ts/capabilities/session/{wizard,health-watch}.ts` + `scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程单行 JSON 输出)+ bootstrap `wizard` 子命令(inline 降级兜 npm 安装态);run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节;RFC §3.3 / §4 P3.6 / §6 复用矩阵同步 + architecture §10 D-24 + roadmap / README 双语 / stage1 状态头同步。**browser-use 假象澄清**:其隔离 Chromium ≠ 用户桌面 Chrome,装不到目标扩展,**显式不引入**(Python 违纪,二次理由) |
-| 2026-08-30(P3.7 双源 e2e 真跑批 goal 2) | founder 实问「flyai 只是一个 vendor,可以切别的?」→ **拒 vendor 锁**,issue #21 验收清单「sf-01..08 完成真实双源 e2e + 字段准确率 ≥90% + live <15s」全数达成。**改造**:`ts/scripts/sf-live-benchmark.ts` 改 pluggable official golden:① 默认 manual-golden(`ts/data/sf-golden-manifest.json` 公开班期 + 价格带,零网络零 vendor);② `--golden=flyai` 显式切回 FlyAI(hbcli / 携程开放 API / 内部 static 包可同理接入);③ 字段评分改**软命中**(硬字段 query_id/from/to/currency/source/verdict 必中,软字段时间窗口 ±60min / 价格带 ±15% / 班次子串匹配 known_flights)。新增 `ts/scripts/sf-summary.ts` 一键重建 unified summary(扫 `~/.gotry/evidence/session/sf-XX/` 取每条最新 evidence,合并 manual-golden + flyai 来源)。**官方通道尽调(同批)**:`hbcli` 只覆盖 hotel-be 域不覆盖机/火;`OpenFlights` 只有通航关系无班次;携程 `flights.ctrip.com/schedule/*.html` 公共时刻表返 432 风控;结论 = 手工 golden + 公开班期知识是当前最稳。**本机实测**:8 query **7/8 verdict=hit / 6/6 manual-golden 软命中 100% / live <15s 7/7 / ReadGuard 0**(sf-01 MU6145 ¥3240 7.9s / sf-02 CA1441 ¥2605 6.3s / sf-03 9C8779 ¥810 5.3s / sf-04 CZ3497 ¥1340 4.2s / sf-05 hit 7s / sf-06 GJ7153 ¥680 6.2s / sf-07 JD5143 ¥630 4.2s flyai / sf-08 miss 25s flyai 真没数据);evidence 落 `~/.gotry/evidence/session/sf-XX/<ts>.json` + sf-summary。architecture §10 D-13 「基本清偿」(部分清偿 → 基本清偿);RFC §4 P3.7 行新增 + §6 manual-golden / pluggable 同步;roadmap 38 行同批 P3.7;stage1 / README 双语同步。**vendor 切换契约**:`--golden=flyai` / `--golden=manual` / 未来 `--golden=hbcli` / `--golden=<新 vendor>`,黄金对照永不锁死 vendor,任何 vendor 试用配额 / 风控 / 改版都可在 CLI 切。 |
+| 2026-08-30(staicli 全流程 E2E) | hbcli 全流程接入收口:本机经官方 install.sh 装 staicli 0.0.1(~/.staicli/versions + ~/.local/bin 符号链);账号接入口径从 hotel-be 种子实测敲定—— **详见下方「2026-08-30(staicli 全流程 E2E)」** |
+| 2026-08-30(onboarding UX 闭环) | issue #21 P3.6:会话扩展 onboarding 从「5 次点击 + 跨 app 切换 + 装完自己重跑」降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。 **详见下方「2026-08-30(onboarding UX 闭环)」** |
+| 2026-08-30(P3.7 双源 e2e 真跑批 goal 2) | founder 实问「flyai 只是一个 vendor,可以切别的?」→ **拒 vendor 锁**,issue #21 验收清单「sf-01..08 完成真实双源 e2e + 字段准确率 ≥90% + live <15s」全数达成。 **详见下方「2026-08-30(P3.7 双源 e2e 真跑批 goal 2)」** |
 | 2026-08-30(扩展分发双通道) | issue #21 分发通道(ADR-21,founder 指令「用 github 作为分发渠道」):GitHub Releases 下载通道落地——`gotry setup --extension-from=github`(稳定资产名三件套/dist-manifest fail-closed/SHA256/固定 key 钉扎/原子交换/失败显式降级 bundled;`GOTRY_EXTENSION_RELEASE_BASE` 镜像可覆盖)+ `scripts/package-extension.mjs` 打包(只产产物,上传走发布确认制);Web Store 上架材料+隐私政策就绪待 founder 提交(D-25);run-all §43 35 断言 + bootstrap-tests 8/8 |
+
+
+**酒店库存/报价**
+
+- ✅ hbcli 桥(实时;**2026-08-30 全流程 E2E 实测:通道/鉴权/搜索编排全通**——
+- 官方 install.sh 装 staicli 0.0.1 → 沙箱账号取票 → UAT 搜索编排带供应商 provenance/correlationId 真实工作;UAT 侧目的地/酒店参考数据暂空,hotel-list 按名查询返回业务层 404 → 设计内静态包降级,非数据链故障)+ **飞猪官方 OTA 通道已接**(`gotry_flyai_search` kind=hotel → search-hotel,2026-08-29 实测,未鉴权打码价保 priceRaw 不伪装)+ 静态包 `data/hotels_2026.json` 按目的地过滤回退;**2026-08-29(PR #33)起 npm 安装期自动按官方脚本安装 hbcli**(hotelbyte-cli 为公开仓 github.com/hotelbyte-com/hotelbyte-cli,MIT;`gotry setup` 手动入口;能力层带 ~/.local/bin、~/.staicli/current 候选回退;实时数据需用户凭证——
+- `gotry setup` 装后即给账号引导,快速试用用 hotel-be 种子沙箱 `hotelbyte_api_demo`,正式接入换专属 appKey/appSecret,D-22)
+
+**2026-08-30(staicli 全流程 E2E)**
+
+- hbcli 全流程接入收口:本机经官方 install.sh 装 staicli 0.0.1(~/.staicli/versions + ~/.local/bin 符号链);账号接入口径从 hotel-be 种子实测敲定——
+- OpenAPI 沙箱 `hotelbyte_api_demo`(predefined_user_demo.go,IsSandbox)UAT 取票/搜索编排真通,tenant 门户 benjamin 亦可登录,UAT 目的地/酒店参考数据暂空(hotel-list 按名查询业务 404 → 设计内静态包降级,§2 酒店行「证书过期」旧诊断更正);全链路 E2E 固化为 run-all §7d(`ts/scripts/hbcli-e2e-tests.ts`:隔离 STAICLI_HOME+沙箱账号真打 UAT,取票/实时通道/降级诚实/解译策略/工具面五断言,无 bin 或无网 SKIP);`gotry setup` 装后账号引导升级(沙箱试用/专属凭证/门户三选一+whoami 自检)
+
+**2026-08-30(onboarding UX 闭环)**
+
+- issue #21 P3.6:会话扩展 onboarding 从「5 次点击 + 跨 app 切换 + 装完自己重跑」降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。
+- `npx gotry setup wizard` 单命令入口:5 步编排 + 剪贴板扩展路径 + macOS osascript / Linux zenity / Windows msg / headless 终端跨平台 GUI 面板(不引 Electron,保持零 GUI 依赖面)+ 后台 health-watch ≤120s 探活 + 扩展一就位自动重放同 query_id;`ts/capabilities/session/{wizard,health-watch}.ts` + `scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程单行 JSON 输出)+ bootstrap `wizard` 子命令(inline 降级兜 npm 安装态);run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节;RFC §3.3 / §4 P3.6 / §6 复用矩阵同步 + architecture §10 D-24 + roadmap / README 双语 / stage1 状态头同步。
+- **browser-use 假象澄清**:其隔离 Chromium ≠ 用户桌面 Chrome,装不到目标扩展,**显式不引入**(Python 违纪,二次理由)
+
+**2026-08-30(P3.7 双源 e2e 真跑批 goal 2)**
+
+- founder 实问「flyai 只是一个 vendor,可以切别的?」→ **拒 vendor 锁**,issue #21 验收清单「sf-01..08 完成真实双源 e2e + 字段准确率 ≥90% + live <15s」全数达成。
+- **改造**:`ts/scripts/sf-live-benchmark.ts` 改 pluggable official golden:① 默认 manual-golden(`ts/data/sf-golden-manifest.json` 公开班期 + 价格带,零网络零 vendor);② `--golden=flyai` 显式切回 FlyAI(hbcli / 携程开放 API / 内部 static 包可同理接入);③ 字段评分改**软命中**(硬字段 query_id/from/to/currency/source/verdict 必中,软字段时间窗口 ±60min / 价格带 ±15% / 班次子串匹配 known_flights)。
+- 新增 `ts/scripts/sf-summary.ts` 一键重建 unified summary(扫 `~/.gotry/evidence/session/sf-XX/` 取每条最新 evidence,合并 manual-golden + flyai 来源)。**官方通道尽调(同批)**:`hbcli` 只覆盖 hotel-be 域不覆盖机/火;`OpenFlights` 只有通航关系无班次;携程 `flights.ctrip.com/schedule/*.html` 公共时刻表返 432 风控;结论 = 手工 golden + 公开班期知识是当前最稳。
+- **本机实测**:8 query **7/8 verdict=hit / 6/6 manual-golden 软命中 100% / live <15s 7/7 / ReadGuard 0**(sf-01 MU6145 ¥3240 7.9s / sf-02 CA1441 ¥2605 6.3s / sf-03 9C8779 ¥810 5.3s / sf-04 CZ3497 ¥1340 4.2s / sf-05 hit 7s / sf-06 GJ7153 ¥680 6.2s / sf-07 JD5143 ¥630 4.2s flyai / sf-08 miss 25s flyai 真没数据);evidence 落 `~/.gotry/evidence/session/sf-XX/<ts>.json` + sf-summary。
+- architecture §10 D-13 「基本清偿」(部分清偿 → 基本清偿);RFC §4 P3.7 行新增 + §6 manual-golden / pluggable 同步;roadmap 38 行同批 P3.7;stage1 / README 双语同步。**vendor 切换契约**:`--golden=flyai` / `--golden=manual` / 未来 `--golden=hbcli` / `--golden=<新 vendor>`,黄金对照永不锁死 vendor,任何 vendor 试用配额 / 风控 / 改版都可在 CLI 切。

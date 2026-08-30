@@ -29,7 +29,9 @@ npx @danceiny/gotry web
 # → open http://127.0.0.1:3080 and chat: "I want three relaxing days in Dali"
 ```
 
-> **Switching models / providers?** The price table (`ts/data/llm-price-table.json`, schema `gotry_llm_price_table_v2`) is the single source of truth for `gotry_m3_nightly_run_v1.cost_usd`. Adding a new model or switching relay = update this file via PR (ADR-11, peak-conservative upper bound only). Unknown models **fail-closed** — no guessed prices. Drift monitor: `npx tsx ts/scripts/price-drift-watch.ts` (offline baseline diff; `--fetch` for live official pages). Never auto-applies changes.
+> **Switching models / providers?** The price table (`ts/data/llm-price-table.json`, schema `gotry_llm_price_table_v2`) is the single source of truth for `gotry_m3_nightly_run_v1.cost_usd`. Adding a new model or switching relay = update this file via PR (ADR-11, peak-conservative upper bound only)
+- . Unknown models **fail-closed** — no guessed prices. Drift monitor: `npx tsx ts/scripts/price-drift-watch.ts` (offline baseline diff;
+- `--fetch` for live official pages). Never auto-applies changes.
 
 | You want | Command |
 |---|---|
@@ -37,7 +39,9 @@ npx @danceiny/gotry web
 | 🤖 Scripted / one-shot answer | `npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"` |
 | 🛠️ Developer: run from source | see [source install](#%EF%B8%8F-developer-source-install) below |
 
-- Requires Node 22+ and one LLM API key. Any OpenAI-compatible endpoint (MiniMax / relays / self-hosted gateways) works too — add `LLM_BASE_URL` to `.env` (usually ends with `/v1`, e.g. `https://api.minimax.io/v1`) and requests follow it instead of the DeepSeek default. To pin the model, set `LLM_MODEL` (e.g. `MiniMax-M2`): it applies to both the dsh chat face and the repo scripts, and beats the model selection persisted in the dsh web UI; unset, the dsh built-in default (`deepseek-v4-flash`) or your web-UI choice is used. Zero-config startup — the dsh runtime is mounted automatically via a cordis patch.
+- Requires Node 22+ and one LLM API key. Any OpenAI-compatible endpoint (MiniMax / relays / self-hosted gateways) works too — add `LLM_BASE_URL` to `.env` (usually ends with `/v1`, e.g. `https://api.minimax.io/v1`) and requests follow it instead of the DeepSeek default. To pin the model,
+  - set `LLM_MODEL` (e.g. `MiniMax-M2`): it applies to both the dsh chat face and the repo scripts, and beats the model selection persisted in the dsh web UI;
+  - unset, the dsh built-in default (`deepseek-v4-flash`) or your web-UI choice is used. Zero-config startup — the dsh runtime is mounted automatically via a cordis patch.
 
 ---
 
@@ -114,7 +118,8 @@ The account session channel reads realtime hotel/flight data from **the user's o
 3. **Physically read-only.** A ReadGuard aborts all write requests at the network layer (ordering/payment is unreachable in transport); the agent never touches credentials or captchas — on a captcha it stops and hands control back.
 4. **Never hijacks your browser.** Retrieval/login always open their own dedicated tab; the login page is brought to front and stays with you; routine test runs never open browser windows.
 
-> One-time prerequisite: install the bundled **GoTry Session Bridge** browser extension (MV3, ~30 seconds): run `npx gotry setup` to place it at `~/.gotry/extension`, then in Chrome open `chrome://extensions`, enable Developer mode and "Load unpacked" that folder. Zero Chrome system dialogs afterwards — the extension passively forwards the site's own search responses (read-only by construction; cookies are read by NAME only, values never leave the browser). Until installed, tools return `needs-extension` with instructions and spend nothing. (A `cdp` fallback via `chrome://inspect` remote debugging still exists for diagnostics: `GOTRY_SESSION_TRANSPORT=cdp` — note Chrome 144+ shows a permission box on every connection.)
+> One-time prerequisite: install the bundled **GoTry Session Bridge** browser extension (MV3, ~30 seconds): run `npx gotry setup` to place it at `~/.gotry/extension`, then in Chrome open `chrome://extensions`, enable Developer mode and "Load unpacked" that folder. Zero Chrome system dialogs afterwards — the extension passively forwards the site's own search responses (read-only by construction;
+- cookies are read by NAME only, values never leave the browser). Until installed, tools return `needs-extension` with instructions and spend nothing. (A `cdp` fallback via `chrome://inspect` remote debugging still exists for diagnostics: `GOTRY_SESSION_TRANSPORT=cdp` — note Chrome 144+ shows a permission box on every connection.)
 
 ---
 
@@ -173,9 +178,14 @@ Engine verdict:
 - **Realtime retrieval** — flight/train/hotel (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`)
 - **Account session search** — Ctrip flights on your own logged-in Chrome; consent & privacy rules above (see 🔐 **Account session: consent & privacy**)
 - **One-time browser extension setup** — `npx gotry setup wizard` walks you through a 30-second install of GoTry Session Bridge (MV3, fixed extension ID, zero system dialogs per session). Background health-watch auto-plays your query once the extension is connected — no manual retry needed.
-- **Extension distribution (issue #21, ADR-21)** — the npm-bundled copy stays the default (offline-deterministic). Opt in to the GitHub Releases channel with `npx gotry setup --extension-from=github`: versioned tarball + SHA256 + fixed-key pinning, atomic swap into `~/.gotry/extension`; any failure falls back to the bundled copy. Platform constraint, honestly: only a Chrome Web Store listing can remove the developer-mode load-unpacked clicks — store submission materials are prepared in `docs/extension-webstore-submission.md` (founder to submit).
-- **Session data cross-verification (issues #21 / #67)** — 8 benchmark queries (sf-01..sf-08) verified end-to-end: 7/8 verdict=hit, 6/6 manual-golden soft-score 100%, all hits <15s, zero ReadGuard writes. The comparator is pluggable: `--golden=manual` (default), `--golden=flyai`, or `--golden=static`. Static mode pins an ODbL OpenFlights route/carrier snapshot and combines it with manual time/price bands; evidence records requested vs effective source, provenance, estimated fields, and fallback reason. Snapshot/route failure prints a warning to stderr and falls back to manual. Static mode is deterministic benchmark data, **not live schedule, fare, or availability**.
-- **Observed static-source runs (2026-08-30, logged-in Chrome)** — two consecutive runs produced static official 8/8 with zero fallback each time; Ctrip session hits varied from 3/8 to 5/8, while every scored hit across both runs (3+5 records) passed 13/13 (100%). Non-hits remain explicit `miss` records, so the ≥90% field score is not presented as 8/8 live availability. The same runs exposed and fixed an online-extension lifecycle bug: idle parked timers/sockets no longer pin the default CLI bridge, while wizard `keepBridge` behavior remains unchanged (§38: 24/24, §40: 9/9).
+- **Extension distribution (issue #21, ADR-21)** — the npm-bundled copy stays the default (offline-deterministic). Opt in to the GitHub Releases channel with `npx gotry setup --extension-from=github`: versioned tarball + SHA256 + fixed-key pinning, atomic swap into `~/.gotry/extension`;
+  - any failure falls back to the bundled copy. Platform constraint, honestly: only a Chrome Web Store listing can remove the developer-mode load-unpacked clicks — store submission materials are prepared in `docs/extension-webstore-submission.md` (founder to submit).
+- **Session data cross-verification (issues #21 / #67)** — 8 benchmark queries (sf-01..sf-08) verified end-to-end: 7/8 verdict=hit, 6/6 manual-golden soft-score 100%, all hits <15s, zero ReadGuard writes. The comparator is pluggable: `--golden=manual` (default), `--golden=flyai`,
+  - or `--golden=static`. Static mode pins an ODbL OpenFlights route/carrier snapshot and combines it with manual time/price bands;
+  - evidence records requested vs effective source, provenance, estimated fields, and fallback reason. Snapshot/route failure prints a warning to stderr and falls back to manual. Static mode is deterministic benchmark data, **not live schedule, fare, or availability**.
+- **Observed static-source runs (2026-08-30, logged-in Chrome)** — two consecutive runs produced static official 8/8 with zero fallback each time;
+  - Ctrip session hits varied from 3/8 to 5/8, while every scored hit across both runs (3+5 records) passed 13/13 (100%). Non-hits remain explicit `miss` records,
+    - so the ≥90% field score is not presented as 8/8 live availability. The same runs exposed and fixed an online-extension lifecycle bug: idle parked timers/sockets no longer pin the default CLI bridge, while wizard `keepBridge` behavior remains unchanged (§38: 24/24, §40: 9/9).
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English output via `GOTRY_LOCALE=en`
 
 **Open limitations** (as of 2026-08-29, honest list):
@@ -187,7 +197,9 @@ Engine verdict:
 <details>
 <summary>📖 Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
 
-The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate); the M4 paired-cohort value evidence contract (run-all §34 — synthetic data is never Exit evidence); async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22.
+The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate);
+- the M4 paired-cohort value evidence contract (run-all §34 — synthetic data is never Exit evidence);
+- async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22.
 
 </details>
 
@@ -199,7 +211,9 @@ The authoritative state lives in the docs, not this README: transactional state 
 ./scripts/run-all-tests.sh
 ```
 
-One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30) · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39) · extension distribution channel (§43) · sf-live static-golden offline contracts (§44)**. The live runner remains `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static` and requires the user's connected Chrome session.
+One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30)
+- · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39)
+- · extension distribution channel (§43) · sf-live static-golden offline contracts (§44)**. The live runner remains `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static` and requires the user's connected Chrome session.
 
 ---
 
