@@ -26,6 +26,8 @@ npx @danceiny/gotry web
 # → open http://127.0.0.1:3080 and chat: "I want three relaxing days in Dali"
 ```
 
+> **Switching models / providers?** The price table (`ts/data/llm-price-table.json`, schema `gotry_llm_price_table_v2`) is the single source of truth for `gotry_m3_nightly_run_v1.cost_usd`. Adding a new model or switching relay = update this file via PR (ADR-11, peak-conservative upper bound only). Unknown models **fail-closed** — no guessed prices. Drift monitor: `npx tsx ts/scripts/price-drift-watch.ts` (offline baseline diff; `--fetch` for live official pages). Never auto-applies changes.
+
 | You want | Command |
 |---|---|
 | 🖥️ Conversational planner (recommended) | `npx @danceiny/gotry web` → chat UI on :3080 |

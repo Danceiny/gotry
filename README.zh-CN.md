@@ -21,6 +21,8 @@ npx @danceiny/gotry web
 # → 浏览器打开 http://127.0.0.1:3080,像聊天一样说「我想去大理三天」
 ```
 
+> **换模型 / 换中转?** 价表(`ts/data/llm-price-table.json`,schema `gotry_llm_price_table_v2`)是 `gotry_m3_nightly_run_v1.cost_usd` 唯一事实源(ADR-11)。新增模型或换中转=改本文件走 PR(peak 保守上界只高不低),未知模型 → **fail-closed 不猜价**。漂移监测:`npx tsx ts/scripts/price-drift-watch.ts`(默认离线对照 baseline 比对输出 PR-就绪 Markdown diff;`--fetch` 拉取官方页 + 首次写 fixture)。**永不自动 apply 价格**。
+
 | 你想要的 | 命令 |
 |---|---|
 | 🖥️ 对话规划(推荐) | `npx @danceiny/gotry web` → :3080 对话界面 |
