@@ -167,6 +167,7 @@ Engine verdict:
 - **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed (§30 regression gate)
 - **Realtime retrieval** — flight/train/hotel (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`)
 - **Account session search** — Ctrip flights on your own logged-in Chrome; consent & privacy rules above (see 🔐 **Account session: consent & privacy**)
+- **One-time browser extension setup** — `npx gotry setup wizard` walks you through a 30-second install of GoTry Session Bridge (MV3, fixed extension ID, zero system dialogs per session). Background health-watch auto-plays your query once the extension is connected — no manual retry needed.
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English output via `GOTRY_LOCALE=en`
 
 **Open limitations** (as of 2026-08-29, honest list):
@@ -190,7 +191,7 @@ The authoritative state lives in the docs, not this README: transactional state 
 ./scripts/run-all-tests.sh
 ```
 
-One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30) · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35)**.
+One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30) · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39)**.
 
 ---
 
