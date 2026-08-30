@@ -120,7 +120,8 @@ dsh 内核(Cordis,import)
 
 **LLM 语义层是自研增量**(ai-agent-book 仅作设计参考):动机画像(跨年)、旅行复盘沉淀——写入走与 WriteGate 同级的审计路径,用户可见、可编辑(红线 6)。
 
-**设计参考阅读清单**(`~/work/travel_agent`,用于理解设计,非移植目标):`internal/domain/hotel/types/preferences.go`(偏好三级分解)、`internal/pureagent/session_memory.go` + `hot_context.go` + `internal/chatstore/notebook.go`(双区会话记忆三件套)、`internal/pureagent/agenttools/location_prediction_tool.go`(位置推断)、`internal/pureagent/sensitive_tool_arguments.go`(敏感填充)、`internal/application/flight/user_profile_cache.go`(请求级画像缓存,singleflight)。
+**设计参考阅读清单**(`~/work/travel_agent`,用于理解设计,非移植目标):`internal/domain/hotel/types/preferences.go`(偏好三级分解)、`internal/pureagent/session_memory.go` + `hot_context.go` + `internal/chatstore/notebook.go`(双区会话记忆三件套)、`internal/pureagent/agenttools/location_prediction_tool.go`(位置推断)
+- 、`internal/pureagent/sensitive_tool_arguments.go`(敏感填充)、`internal/application/flight/user_profile_cache.go`(请求级画像缓存,singleflight)。
 
 ### 3.6 异步深度规划:「一小时后回来,不失望」
 
