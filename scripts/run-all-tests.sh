@@ -329,6 +329,10 @@ echo "=== 40. A2A 入口(M2:骨架+SSE——Agent Card/JSON-RPC message-send+str
 (cd ts && npx tsx scripts/a2a-server-tests.ts) || FAIL=1
 
 echo
+echo "=== 41. interpretArgs 参数形态归一(①对象/②平铺/③主键串/④XML标签串/⑤JSON串;真 LLM 对话实测暴露的 ④⑤) ==="
+(cd ts && npx tsx scripts/dbg-args.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
