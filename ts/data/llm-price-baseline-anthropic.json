@@ -1,0 +1,11 @@
+{
+  "schema_version": "gotry_llm_price_baseline_v1",
+  "as_of": "2026-08-30T00:00:00.000Z",
+  "source_url": "mock://anthropic-pricing",
+  "rows": [
+    { "model": "claude-opus-4-1", "input_cache_miss_usd_per_1m": 15.0, "input_cache_hit_usd_per_1m": 1.5, "output_usd_per_1m": 75.0 },
+    { "model": "claude-sonnet-4-5", "input_cache_miss_usd_per_1m": 3.0, "input_cache_hit_usd_per_1m": 0.30, "output_usd_per_1m": 15.0 },
+    { "model": "claude-haiku-4-5", "input_cache_miss_usd_per_1m": 1.0, "input_cache_hit_usd_per_1m": 0.10, "output_usd_per_1m": 5.0 },
+    { "model": "claude-opus-4-0", "input_cache_miss_usd_per_1m": 15.0, "input_cache_hit_usd_per_1m": 1.5, "output_usd_per_1m": 75.0 }
+  ]
+}

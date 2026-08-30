@@ -1,30 +1,76 @@
 {
-  "schema_version": "gotry_llm_price_table_v1",
-  "as_of": "2026-08-29",
-  "source_url": "https://api-docs.deepseek.com/quick_start/pricing",
+  "schema_version": "gotry_llm_price_table_v2",
+  "as_of": "2026-08-30",
   "pricing_bias": "peak_conservative_upper_bound",
-  "pricing_bias_note": "成本证据只高不低:换算一律取 peak 价(cache miss 计入全部输入),off-peak 列仅为官方价目完整存档供审计,不参与换算。价格调整必须改本文件过 PR,历史记录不回填。",
-  "aliases": {
-    "deepseek-chat": "deepseek-v4-flash",
-    "deepseek-reasoner": "deepseek-v4-pro"
-  },
-  "alias_note": "deepseek-chat/deepseek-reasoner 是 DeepSeek API 的世代别名(chat=非思考/reasoner=思考),按当前 V4 系列对应映射;alias 目标变更时改本文件(可审计)。",
-  "prices": {
-    "deepseek-v4-flash": {
-      "input_cache_miss_usd_per_1m_peak": 0.44,
-      "input_cache_miss_usd_per_1m_offpeak": 0.22,
-      "input_cache_hit_usd_per_1m_peak": 0.014,
-      "input_cache_hit_usd_per_1m_offpeak": 0.007,
-      "output_usd_per_1m_peak": 1.32,
-      "output_usd_per_1m_offpeak": 0.66
+  "pricing_bias_note": "成本证据只高不低:DeepSeek 用 peak 价换算(offpeak 列仅为官方价目完整存档供审计,不参与换算);MiniMax 无 off-peak 列时直接采用官方公开报价作为 peak,>512k 高 tokens 档按 2× 高 tier 作为 peak ceiling(issue #49 + ADR-11)。价格调整必须改本文件过 PR,历史记录不回填。",
+  "providers": {
+    "deepseek": {
+      "family": "deepseek_v4",
+      "price_strategy": "tiered_peak_offpeak",
+      "api_base": "https://api.deepseek.com/v1",
+      "source_url": "https://api-docs.deepseek.com/quick_start/pricing",
+      "aliases": {
+        "deepseek-chat": "deepseek-v4-flash",
+        "deepseek-reasoner": "deepseek-v4-pro"
+      },
+      "alias_note": "deepseek-chat/deepseek-reasoner 是 DeepSeek API 的世代别名(chat=非思考/reasoner=思考),按当前 V4 系列对应映射;alias 目标变更时改本文件(可审计)。",
+      "models": {
+        "deepseek-v4-flash": {
+          "input_cache_miss_usd_per_1m_peak": 0.44,
+          "input_cache_miss_usd_per_1m_offpeak": 0.22,
+          "input_cache_hit_usd_per_1m_peak": 0.014,
+          "input_cache_hit_usd_per_1m_offpeak": 0.007,
+          "output_usd_per_1m_peak": 1.32,
+          "output_usd_per_1m_offpeak": 0.66
+        },
+        "deepseek-v4-pro": {
+          "input_cache_miss_usd_per_1m_peak": 1.32,
+          "input_cache_miss_usd_per_1m_offpeak": 0.66,
+          "input_cache_hit_usd_per_1m_peak": 0.044,
+          "input_cache_hit_usd_per_1m_offpeak": 0.022,
+          "output_usd_per_1m_peak": 3.96,
+          "output_usd_per_1m_offpeak": 1.98
+        }
+      }
     },
-    "deepseek-v4-pro": {
-      "input_cache_miss_usd_per_1m_peak": 1.32,
-      "input_cache_miss_usd_per_1m_offpeak": 0.66,
-      "input_cache_hit_usd_per_1m_peak": 0.044,
-      "input_cache_hit_usd_per_1m_offpeak": 0.022,
-      "output_usd_per_1m_peak": 3.96,
-      "output_usd_per_1m_offpeak": 1.98
+    "minimax": {
+      "family": "minimax_m2",
+      "price_strategy": "flat_no_offpeak",
+      "api_base": "https://api.minimax.io/v1",
+      "source_url": "https://platform.minimax.io/docs/guides/pricing-paygo",
+      "aliases": {},
+      "alias_note": "MiniMax 模型 ID(MiniMax-M2/M2.1/M3)即 API 直传名,无需世代别名。",
+      "models": {
+        "MiniMax-M2": {
+          "input_cache_miss_usd_per_1m_peak": 0.30,
+          "input_cache_miss_usd_per_1m_offpeak": 0.30,
+          "input_cache_hit_usd_per_1m_peak": 0.03,
+          "input_cache_hit_usd_per_1m_offpeak": 0.03,
+          "output_usd_per_1m_peak": 1.20,
+          "output_usd_per_1m_offpeak": 1.20
+        },
+        "MiniMax-M2.1": {
+          "input_cache_miss_usd_per_1m_peak": 0.30,
+          "input_cache_miss_usd_per_1m_offpeak": 0.30,
+          "input_cache_hit_usd_per_1m_peak": 0.03,
+          "input_cache_hit_usd_per_1m_offpeak": 0.03,
+          "output_usd_per_1m_peak": 1.20,
+          "output_usd_per_1m_offpeak": 1.20
+        },
+        "MiniMax-M3": {
+          "input_cache_miss_usd_per_1m_peak": 0.60,
+          "input_cache_miss_usd_per_1m_offpeak": 0.60,
+          "input_cache_hit_usd_per_1m_peak": 0.12,
+          "input_cache_hit_usd_per_1m_offpeak": 0.12,
+          "output_usd_per_1m_peak": 2.40,
+          "output_usd_per_1m_offpeak": 2.40
+        }
+      },
+      "notes": [
+        "MiniMax-M3 官方公开价 $0.30/$1.20/$0.06(≤512k tokens)已于 2026 年某时下调 50% 永久生效,本文档写上限($0.60/$2.40/$0.12,等价于 >512k 档)以遵守 ADR-11 'peak only-high-not-low' 纪律(issue #49)。",
+        "MiniMax API usage 报告不返回 prompt_cache_hit_tokens / prompt_cache_miss_tokens 拆分字段(MiniMax 仅列 Cache Read 与 Cache Write,字段名与 OpenAI 兼容 schema 不同);dsh-llm.ts 第 62 行注释说明,无缓存明细的 provider:全部输入按 miss 记(随后按 peak miss 价换算,只高不低)——已天然兼容。",
+        "MiniMax-M3.5/M2.7 等不在 issue #49 范围内,留待后续补入(若补,需新增 provider 字段映射)。"
+      ]
     }
   }
 }
