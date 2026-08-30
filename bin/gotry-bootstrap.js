@@ -200,7 +200,8 @@ async function setupExtension() {
   }
   say(`  ✓ 已落位 ${dstDir}(v${srcVersion};manifest 带固定 key,扩展 ID 恒为 olpgkofjhhiiiahdkkbcninhjmegghfe)`)
   say('  最后一步(每台浏览器一次,约 30 秒):Chrome 打开 chrome://extensions → 右上角开启「开发者模式」→「加载已解压的扩展程序」→ 选择 ~/.gotry/extension')
-  say('  装好即生效,零系统弹窗;扩展卡片开关=总闸(与 gotry 授权闸 sessionAccess 双重控制)')
+  say('  获取/更新扩展可走 GitHub Releases:npx gotry setup --extension-from=github(自动下载校验落位;手动下载: github.com/Danceiny/gotry/releases 标签 ext-*)')
+  say('  Chrome Web Store 上架审核中,上架后可一键安装;装好即生效,零系统弹窗;扩展卡片开关=总闸(与 gotry 授权闸 sessionAccess 双重控制)')
   return { ok: true }
 }
 

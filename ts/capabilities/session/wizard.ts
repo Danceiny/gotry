@@ -175,6 +175,8 @@ function panelGuideTerminal(plat: 'darwin' | 'linux' | 'win32' | 'headless', ext
     `│     ${extensionDir}`,
     '│  ③ 弹窗「添加扩展」点「添加」                    │',
     `│                                                   │`,
+    `│  获取/更新: npx gotry setup --extension-from=github │`,
+    `│  (GitHub Releases 自动下载;Chrome 商店上架审核中)  │`,
     `│  后台探活中(最长 ${Math.round(watchMs / 1000)}s)…         │`,
     '└───────────────────────────────────────────────────┘',
   ]
@@ -191,7 +193,7 @@ function panelGuideTerminal(plat: 'darwin' | 'linux' | 'win32' | 'headless', ext
 function panelGuideGui(sp: typeof spawn, plat: 'darwin' | 'linux' | 'win32' | 'headless', extensionDir: string, dryRun: boolean): OnboardingStep {
   if (dryRun) return { step: 'panel-guide', status: 'skip', summary: '[dry-run] skip GUI 面板' }
   if (plat === 'headless') return panelGuideTerminal(plat, extensionDir, 120_000)
-  const message = `在 Chrome 右上角开启「开发者模式」 → 点「加载已解压的扩展程序」 → 选择(已复制):${extensionDir} → 弹窗点「添加扩展」`
+  const message = `在 Chrome 右上角开启「开发者模式」 → 点「加载已解压的扩展程序」 → 选择(已复制):${extensionDir} → 弹窗点「添加扩展」(获取/更新: npx gotry setup --extension-from=github;Chrome 商店上架审核中)`
   try {
     if (plat === 'darwin') {
       const script = `display dialog "${message.replace(/"/g, '\\"')}" with title "GoTry 扩展安装" buttons {"我装好了"} default button 1`
