@@ -18,6 +18,10 @@
 
 **架构面增量(2026-08-30 第二批,未随版本发布,主仓领先已发包形态)**:issue #48(P1 分发)修复——npm 形态 bin env 映射补 `LLM_BASE_URL → DEEPSEEK_BASE_URL`:rc.15 回拉实测暴露只映射 key 不映射 base,OpenAI 兼容端点 key 被发往 DeepSeek 官方端点必然 401;修复后三件套 `.env`(LLM_API_KEY/LLM_BASE_URL/LLM_MODEL)即全链通,显式 `DEEPSEEK_BASE_URL` 仍优先,默认官方 DeepSeek 路径零改变;dsh 侧(llm-deepseek)与仓内 `dsh-llm.ts` 拼接语义核验一致(`${base}/chat/completions`);README 双语 + .env.example + bin help 配法同步。已知缺口:`LLM_MODEL` 不进 dsh 模型表(宽松中转可用,严格中转待模型表注入,独立后续工单)。工程面交付,不构成任何里程碑 Exit 证据(D-20 口径)。
 
+**会话 benchmark 增量(2026-08-30,Issue #67)**:`sf-live-benchmark` 新增 `--golden=static`，以 OpenFlights ODbL 固定修订提供航线/承运人，以 `sf-golden-manifest.json` 提供估算时刻与价格带。evidence 分开记录请求源与实际源(`requested_source`/`effective_source`)、estimated fields、provenance 与 fallback reason；快照或路由异常会向 stderr 明示后回退 `manual-golden`。这是可复跑的 benchmark 对照源，**不是实时班期、票价或库存**；真实会话侧仍须用户 Chrome 扩展连接。离线守门列入 run-all §44，不改变 M3/M4 里程碑口径。
+
+**Issue #67 验收 evidence 与生命周期补强(2026-08-30)**:登录态 Chrome 连续两轮真跑,static official 均 8/8 hit、零 fallback;session 分别 3/8 与 5/8 hit,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 明示 miss。评分门通过不等于 8/8 可售性。真扩展在线时默认桥不退出的存量缺口同轮清偿:parked timer/socket 只在默认桥 `unref`,wizard `keepBridge` 不变;§38 24/24、§40 9/9。
+
 rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
 | RC | 状态 | 范围 |

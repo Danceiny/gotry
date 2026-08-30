@@ -12,7 +12,7 @@
  *
  * 协议(长轮询):
  *   GET  /health           → lastSeen 刷新(扩展每 ≤30s 一次 + 每次断线重连)
- *   GET  /status           → 诊断面 {port, extensionConnected, lastSeenMsAgo}
+ *   GET  /status           → 诊断面 {port, extensionConnected, lastSeenMsAgo, queued, inFlight, parked}
  *   POST /jobs             → 长轮询取活(hold ≤20s 返 {job:null});扩展单客户端
  *   POST /results/:jobId   → 善果/失败回传(≤8MB;batchSearch ~550KB)
  * 语义:桥不存在即整个扩展车道不存在——fail-closed 不变量在调用方(session-search 的 needs-extension)。
@@ -169,6 +169,7 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
         lastSeenMsAgo: lastSeenAt > 0 ? now() - lastSeenAt : null,
         queued: queue.length,
         inFlight: inFlight.size,
+        parked: parked.length,
       })
       return
     }
@@ -182,6 +183,9 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
         if (i >= 0) parked.splice(i, 1)
         finish(200, { job: null })
       }, JOBS_LONG_POLL_MS)
+      // 默认桥是惰性能力:外部扩展的 parked 轮询不得在主流程结束后钉住 CLI。
+      // keepBridge wizard 反过来要靠它守住进程,因此只对默认形态 unref。
+      if (!opts.keepBridge) parkTimer.unref()
       parked.push({ res, timer: parkTimer })
       res.on('close', () => {
         const i = parked.findIndex((p) => p.res === res)
@@ -207,6 +211,10 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
       return
     }
     finish(404, { ok: false, error: 'unknown endpoint' })
+  })
+  server.on('connection', (socket) => {
+    // server.unref() 只解开监听器;已接受的扩展长轮询 socket 仍会引用事件循环。
+    if (!opts.keepBridge) socket.unref()
   })
 
   /** 扩展回包:queued 与 inFlight 两处都可寻址(job 执行失败 = result.ok:false,桥自身不吞) */
