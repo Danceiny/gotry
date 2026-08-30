@@ -212,6 +212,8 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 **#21 双源验收合同(2026-08-29)**:`session/benchmark.ts` 把 query/segments/journey type/逐段时刻与班次/currency/price/source/fetched_at/verdict 固化为字段级 fixture scorer(缺字段计错,默认 ≥90%)；双源对齐按同 journey/segments/时刻/班次判断,价格差独立记录、不要求相等。`needs-attach`/`needs-login` 返回 waiting-user no-spend,challenge 或 ReadGuard blocked>0 立即 fail-closed；当前只验证脱敏 fixture,不触碰日常 Chrome,真实 sf-01..08 仍需权限确认和 CDP 握手。
 
+**P3.7 static golden vendor(Issue #67,2026-08-30)**:`ts/scripts/sf-live-benchmark.ts --golden=static` 使用版本化 `ts/data/sf-static-routes.json`:route/carrier 取自 OpenFlights `routes.dat` 的 ODbL 固定 revision `4b969f8e91eb800c45f0e0e2355a0fbb93de27e4`,覆盖 sf-01..08；OpenFlights 不含 schedule/price/availability,故 `departure_at`、`arrival_at`、`transport_number` 与 `price` 作为 estimated fields,其时刻/价格带来自 `sf-golden-manifest.json`。每条 evidence 同时写 `requested_source=static` 与实际 `effective_source`,并携 route URL/revision/license、band source、fallback reason。快照读取/校验或路由覆盖失败时 stderr 明示 `fallback=manual-golden`,拒绝静默换源；该 vendor 是 benchmark comparator,**不能证明实时班期、实时票价或可售库存**。provider-independent 软评分与 CLI vendor 闭集进入 run-all §44。
+
 **美团实测边界(2026-08-28 tick)**:匿名实例 hotel.meituan.com 直接 **403**(headful 新 profile)——三站最强反爬,登录态是 403 级硬前置;适配器骨架已落(`adapters/meituan-local.ts`:城市拼音表/登录票据名单/networkHint 占位/a11y 兜底 `extractListings`),真实接口形状待登录态就绪后回填。a11y 兜底抽取器 `session/extract.ts`(快照条目/提交件剔除/nameAffinity)与金标准查询集 `data/session-golden-20.json`(20 条,只增不改)同批落地(run-all §26)。
 
 **携程机票页 XHR 嗅探 PoC**(`ts/scripts/session-attach-poc.ts`,playwright-core 1.62.1 + 专用测试 profile `/tmp/gotry-session-poc-profile`):

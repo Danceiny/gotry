@@ -11,13 +11,14 @@
  * 运行: node scripts/build-dist.mjs(发布脚本自动调)
  */
 
-import { readdirSync, readFileSync, mkdirSync, writeFileSync, statSync, rmSync } from 'node:fs'
+import { copyFileSync, readdirSync, readFileSync, mkdirSync, writeFileSync, statSync, rmSync } from 'node:fs'
 import { join, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripTypeScriptTypes } from 'node:module'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SRC = ['ts/src', 'ts/capabilities', 'ts/scripts']
+const DATA = ['session-golden-20.json', 'sf-golden-manifest.json', 'sf-static-routes.json']
 const OUT = join(root, 'dist')
 
 // 先清后建:源码删除的文件(如 session-attach-*.ts)其陈旧编译产物会残留并进 tarball
@@ -33,11 +34,15 @@ function walk(dir) {
   return out
 }
 
-// agent-reach 反射桥是 python,不参与 strip,原样随 dist 分发
-// (npm 模式下 wrapper 在 dist/capabilities/ 找它;files 白名单已含 dist/)
-import { copyFileSync } from 'node:fs'
+// 非 TS 运行时资产原样随 dist 分发(files 白名单已含 dist/)。
+// agent-reach wrapper 在 dist/capabilities/ 找 Python 反射桥；sf-live runner
+// 与 static provider 从 dist/data/ 读取同一组 benchmark 输入。
 mkdirSync(join(OUT, 'capabilities'), { recursive: true })
 copyFileSync(join(root, 'ts/capabilities/agent-reach-bridge.py'), join(OUT, 'capabilities/agent-reach-bridge.py'))
+mkdirSync(join(OUT, 'data'), { recursive: true })
+for (const file of DATA) {
+  copyFileSync(join(root, 'ts/data', file), join(OUT, 'data', file))
+}
 
 let n = 0
 for (const dir of SRC) {
@@ -52,4 +57,4 @@ for (const dir of SRC) {
     n++
   }
 }
-console.log(`dist built: ${n} files → ${relative(root, OUT)}/`)
+console.log(`dist built: ${n} TS files + ${DATA.length} data files → ${relative(root, OUT)}/`)
