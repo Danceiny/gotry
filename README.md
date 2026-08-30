@@ -23,6 +23,7 @@
 ```bash
 npx @danceiny/gotry web
 # First run creates .env: LLM_API_KEY=<DeepSeek key, or OpenAI-compatible key>
+#   Not using DeepSeek directly? Also set LLM_BASE_URL=<your endpoint, usually ending in /v1>
 # → open http://127.0.0.1:3080 and chat: "I want three relaxing days in Dali"
 ```
 
@@ -34,7 +35,7 @@ npx @danceiny/gotry web
 | 🤖 Scripted / one-shot answer | `npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"` |
 | 🛠️ Developer: run from source | see [source install](#%EF%B8%8F-developer-source-install) below |
 
-- Requires Node 22+ and one LLM API key. Zero-config startup — the dsh runtime is mounted automatically via a cordis patch.
+- Requires Node 22+ and one LLM API key. Any OpenAI-compatible endpoint (MiniMax / relays / self-hosted gateways) works too — add `LLM_BASE_URL` to `.env` (usually ends with `/v1`, e.g. `https://api.minimax.io/v1`) and requests follow it instead of the DeepSeek default. Zero-config startup — the dsh runtime is mounted automatically via a cordis patch.
 
 ---
 
@@ -69,7 +70,7 @@ That's it — the dsh chat UI on `:3080` with the GoTry persona mounted. First c
 ```bash
 git clone https://github.com/Danceiny/gotry && cd gotry
 cd ts/dsh-runtime && pnpm install && cd ../..    # ① vendored dsh 0.1.2-alpha.1 (one-off)
-cp .env.example .env                              # ② set LLM_API_KEY
+cp .env.example .env                              # ② set LLM_API_KEY (+ LLM_BASE_URL if not on DeepSeek)
 ./gotry web                                       # ③ in-repo entry, same UX
 ```
 
