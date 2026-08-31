@@ -32,7 +32,7 @@ M3 最小可用产品,分发链路无已知堵点。
 | 运行时 | dsh 成品形态,DeepSeek 原生 |
 | 版本 | 见 `package.json` 与 `release-notes.md`;**`rc` dist-tag 滞留旧版,#50② 治理完成前不要用 `@rc`** |
 | License | MIT |
-| 人格 | 行为契约 20 条;锚点卡与记忆 brief 注入 persona。**运行时组合唯一来源 = 仓根 `cordis.gotry-patch.yml`** |
+| 人格 | 行为契约 21 条;锚点卡与记忆 brief 注入 persona。**运行时组合唯一来源 = 仓根 `cordis.gotry-patch.yml`** |
 
 ### 1.2 能力面
 
@@ -72,6 +72,7 @@ M3 最小可用产品,分发链路无已知堵点。
 ### 1.6 工程不变量
 
 - 工具 execute 统一经 `guardToolExecute` 异常隔离 + 平铺观察 envelope(ADR-13)。
+- Agent 工具循环有每轮硬预算:`ts/src/tool-budget.ts` 在第 16 次真实派发后注入 `TOOL_BUDGET_SOFT` 收敛上下文,第 18 次是最后一次工具 body；同一步已准备的第 19 次及以后调用先经 execute waterfall 得到 `error.info.code=TOOL_BUDGET_EXHAUSTED` 且 body 零执行,再在该批 `step/end` 隐藏 agent 继承的工具 schema,让下一次 native 请求进入 text-only final。延迟到 `step/end` 是必要的:若第 18 次即改 live registry,同批第 19 次会在预算 waterfall 前退化成不可归因的 `unknown tool`。无 agent 的程序化调用不计数,turn/session 终态释放状态与限制。CI 先打当前 SHA 的 tarball、在隔离 pnpm consumer 中解析 dsh peer closure,再把该安装入口交给同一 E2E,不借 root 开发树冒充发布形态。
 - 外部依赖走**效应描述 + 解译器**(ADR-18):工具层只产纯数据效应值 `{effect, params}`,渠道访问/退避重试/断路器/编译期 mock 收敛到 `ts/capabilities/effect.ts` 与 `resilience.ts`。
 - py 树仅剩 `gotry_feasibility` oracle,产品运行时零 Python 依赖(D-7 清偿)。
 - 全栈回归见 `scripts/run-all-tests.sh` 分节(计数不落字)。
@@ -124,6 +125,7 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/src/model.ts` | 门到门全成本算术(纯函数,单候选形态) | ✅ |
 | `ts/src/engine.ts` `journey.ts` | 旧两套求解面(纯 oracle,金标准对照) | **deprecated** |
 | `ts/src/index.ts` `bridge.ts` | dsh 插件(纯 TS unified 求解 + hbcli 桥 + 进程护栏,延迟计量) | ✅ smoke |
+| `ts/src/tool-budget.ts` | Agent 每轮工具预算:16 次软收敛、18 次硬上限、同一步超额结构化拒绝、下一步 native 工具 schema 抑制 | ✅ run-all §45 |
 | `py/gotry_feasibility/unified.py` | Python oracle(v0.0.1-rc.2 后**仅历史对照**,不再被产品运行时引用) | 保留 |
 | `py/gotry_demo/` | **已删 2026-08-22**(D-7 尾债:demo 规划书生成器曾调废弃 journey.solve_journey;产物 docs/demo-plan-2026-07-17.md 留 git 历史) | — |
 | `ts/scripts/replay.ts` `replay-async.ts` | **验收夹具**:真实对话重放(13 轮→3 轮)与异步形态 | ✅ |
@@ -262,7 +264,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 #### 8.19 可下单事实单一数据源 + 产物事实闸
 每个可下单事实(航班号/时刻/机场/价格/政策)**只允许存在于结构化事实层**(`gotry_bookable_fact.v1`),产物渲染前过闸。
 
-备选与取舍:LLM 自觉标注——无强制力(issue #46 实证失败);渲染时宽松放行——未核验事实出门;政策面接实时签证 API——v1 政策事实仅渲染侧 + 闸侧,生产端记 D-24。
+备选与取舍:LLM 自觉标注——无强制力(issue #46 实证失败);渲染时宽松放行——未核验事实出门;政策面接实时签证 API——v1 政策事实仅渲染侧 + 闸侧,生产端记 D-26。
 
 **根治方向**:产物只由渲染原语生成(结构化 → markdown 单向),反向抽取降为过渡态。
 
@@ -285,6 +287,7 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 - **当前主线 = M3 evidence 未收口；并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪，真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进；T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明，真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动，不得由并行实现倒推开闸。
 
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面；业务达标只接受阈值冻结的 `real_seed_cohort`，fixture 恒 fail。真实 cohort 仍为空，等待 50–200 个脱敏样本，不宣称 M3 Exit。
+- **Evaluation → Agent 优化 Round 1(Discussion #78,ChinaTravel canary 反馈)**:冻结 grounding-v3 canary 的首例终态通过,第二例暴露 planner 在重复工具调用中超过 300s；因此不生成 5-query 聚合。GoTry 侧把收敛边界下沉到 `tools/execute`:16 次软提示、18 次 body 上限、同一步第 19 次起结构化拒绝,并在 `step/end` 让下一步 native request text-only。run-all §45 同时覆盖 Cordis integration/并行/生命周期与真实 `bin/gotry-inner.js → dist → dsh headless` 离线 E2E(18 个正常结果、1 个结构化拒绝、下一请求零工具 schema、非空 final)；CI 对当前 SHA 打包并在隔离 pnpm consumer 中安装,由 `GOTRY_BUDGET_E2E_BIN` 重放同一链路。冻结 timeout case 的 exit 0、非空 final、<300s 与恢复 5-query 仍是 D-28 的外部验收,离线 runtime E2E 不替代 benchmark evidence。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
 - **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:
   - `npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日完成 loopx 13 篇架构 RFC 通读与映射,产出 `loopx-inspired-upgrades-rfc.md`——**founder 当日指令 accepted(「按建议执行」)**,四切片 S1-S4 按序落地;同指令确立**多用户 Agent as a Service** 为未来方向(shared-goal-authority 类 claim/CAS 机制转入远期采纳面,RFC §6.5)。
@@ -333,7 +336,7 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 - **效应解译器(2026-08-29,issue #16 采纳,ADR-18)**:
 -  - 「效应描述+解译器」落地 L4 渠道边界——`ts/capabilities/effect.ts`(effect_interpreter.v1:效应值注册表+生产/mock 双解译器+渠道 observation 原样透传)与 `resilience.ts`(指数退避 withRetry+断路器三态)。关键保守边界:①韧性策略 per-效应显式拍板,没有策略行就没有效应(默认全关=对既有行为零改变);②FlyAI Sentinel 上游「说不」永不重试但计熔断(3 连错开 60s 保配额),SESSION 通道永不重试不熔断(风控红线),免费源 2 次退避;③浏览器解译=SESSION_* 效应(既有 CDP 通道),零 Python 红线不做视觉 CUA;④不做渠道自动路由/比价(OTA 平铺 founder 判定,agent 层比价)。
 -  - 垂直切片接 5 工具+realtime-pricing 默认查询口,余下渠道增量迁移(D-23)。设计文档 `effect-interpreter.md`;run-all §37;smoke/flyai/hbcli/weather/session/realtime-pricing 套件同轮全绿。
-- **可下单事实闸(2026-08-30,issue #46,ADR-19)**:真实会话产物(2027 远期行程)把 exact-date 全 miss 的航班用「当前班期网页+历史」回填并标 ✓/推荐——根因=可下单事实无单一数据源、产物无闸。落地:`bookable-facts.ts`(gotry_bookable_fact.v1 纯函数层)+ `artifact-gate.ts`(产物闸)+ `fact-log.ts`(侧车落账)+ 第 21 工具 `gotry_fact_gate` + persona (20) 红线 + `data/airline-airports.json` 映射快照;locked golden 2027 E2E(issue 审计值夹具)复现全部违例并抓出(44 断言,run-all §39;smoke §16 接线验证)。覆盖面缺口记 D-24。
+- **可下单事实闸(2026-08-30,issue #46,ADR-19)**:真实会话产物(2027 远期行程)把 exact-date 全 miss 的航班用「当前班期网页+历史」回填并标 ✓/推荐——根因=可下单事实无单一数据源、产物无闸。落地:`bookable-facts.ts`(gotry_bookable_fact.v1 纯函数层)+ `artifact-gate.ts`(产物闸)+ `fact-log.ts`(侧车落账)+ 第 21 工具 `gotry_fact_gate` + persona (20) 红线 + `data/airline-airports.json` 映射快照;locked golden 2027 E2E(issue 审计值夹具)复现全部违例并抓出(44 断言,run-all §39;smoke §16 接线验证)。覆盖面缺口记 D-26。
 - **npm 形态自定义端点修复(2026-08-30,issue #48,未随版本发布)**:
   - rc.15 回拉实测暴露——bin/gotry-inner.js env 映射只做 `LLM_API_KEY → DEEPSEEK_API_KEY`,base 不映射,vendored dsh(llm-deepseek 读 `DEEPSEEK_BASE_URL`)把 OpenAI 兼容端点的 key 发往 DeepSeek 官方端点必然 401,README「OpenAI 兼容均可」承诺行为未跟上;同点补 `LLM_BASE_URL → DEEPSEEK_BASE_URL`(显式 DEEPSEEK_BASE_URL 优先,默认官方路径零改变);
     - 两侧拼接语义核验一致(dsh-llm-deepseek 与 `ts/src/dsh-llm.ts` 均为 `${base}/chat/completions`,自定义端点一般含 `/v1`);README.md/README.zh-CN.md(30 秒上手/前置/源码安装三处×2)+ .env.example + bin help 同步配法。
@@ -351,8 +354,7 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 > 债务只能在本表诞生,不许只活在代码注释里(§11 M-exit 清单第 3 条)。
 > **§10.1 = 仍然开着的债**(要接的活从这里来);**§10.2 = 已清偿存档**(留证据,不再是工作面)。
 >
-> ⚠️ **编号冲突待裁定**:`D-24` 当前被两条不同债务同时占用(「会话扩展 onboarding UX 缺口」与「事实闸覆盖面缺口」),
-> 系并行 lane 各自登记所致。本次重构只如实标注、不擅自改号——**下一个动到本表的提交请给后者改号**。
+> `D-24` 曾被会话扩展 onboarding 与事实闸覆盖面重复占用；事实闸债务现已迁至 `D-26`,编号冲突解除。
 
 ### 10.1 未清偿(工作面)
 
@@ -370,8 +372,9 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 | D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地 2026-08-29**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit。赎回条件=私有 `observed_private` cohort 达 N≥5 并产出脱敏 summary;无真实样本时 waiting/backoff/no-spend,不扩 schema 假装进展。 |
 | D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
 | D-23 效应解译器迁移未完成(ADR-18) | 见下方「D-23 效应解译器迁移未完成」 |
-| D-24 事实闸覆盖面缺口(ADR-19) | v1 闸覆盖航班+政策 claim;酒店 claim 未入抽取面(flyai hotel 打码价语义独立,不落 bookable facts);政策事实只有渲染侧+闸侧,生产端无实时签证/入境源——政策 claim 只能降级「未确认」或省掉;反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
+| D-26 事实闸覆盖面缺口(ADR-19) | v1 闸覆盖航班+政策 claim;酒店 claim 未入抽取面(flyai hotel 打码价语义独立,不落 bookable facts);政策事实只有渲染侧+闸侧,生产端无实时签证/入境源——政策 claim 只能降级「未确认」或省掉;反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
 | D-27 vendored 仓内形态 Node 兼容窗口断裂 | 见下方「D-27 vendored 仓内形态 Node 兼容窗口断裂」 |
+| D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」 |
 
 **[D-NEW] dsh 进程保活缺失**
 
@@ -413,6 +416,10 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 - 仓内形态(bin 优先走 `ts/dsh-runtime/node_modules` vendored dsh)以 `.ts` 直载插件,两处硬约束未写明——① vendored `session-persistence-jsonl` 需 `node:zlib` 的 `createZstdDecompress`(Node ≥22.15,22.14 实测缺导出);
   - ② Node 默认 type-stripping 为 strip-only,拒绝 parameter properties(`ts/capabilities/resilience.ts:109` 与 `session/action-cache.ts:61`,经 effect.ts 链入,Node 26 实测 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` 拒载 gotry-tools)。npm 发布形态(dist 预编译)不受影响;
 - 主仓工作副本无 `ts/dsh-runtime/node_modules` 时 bin 回落 npm 形态,故日常未暴露。**赎回**:两处 parameter properties 改显式字段 + README 源码安装节写明 Node 版本窗口,vendored 形态真跑 smoke 验收 | `ts/capabilities/resilience.ts`;`ts/capabilities/session/action-cache.ts`
+
+**D-28 外部 benchmark 驱动的 Agent 泛化证据缺口**
+
+ChinaTravel grounding-v3 的冻结 5-query canary 只完成 1 个可评分终态,第二例在 planner 重复工具调用中触发 300s timeout；因此当前没有合法 5-query 聚合。Round 1 已增加 GoTry 每轮工具预算与 text-only 收敛边界,且 npm-mode dist + dsh headless 离线 E2E 证明真实 runtime 会执行 18 个 body、结构化拒绝同批第 19 次、随后无工具完成 final；CI 另以当前 SHA tarball 的隔离 pnpm consumer 入口重放同一证据,不借本地开发依赖蒙混。现有 ChinaTravel runner 仍直接启动 Codex,没有加载该 GoTry treatment。**赎回顺序**:建立带 SHA/tarball/入口证明的 GoTry benchmark adapter → 同一冻结 timeout case 在 no-oracle 边界下 `exit=0`、非空 final、planner<300s → 原 manifest 5/5 终态且 schema/forbidden/七指标完整 → 再按 registry 扩展其他公开 benchmark；每轮 agent 优化必须独立 PR 并在 Discussion #78 单独追加证据评论。
 
 ### 10.2 已清偿(存档)
 

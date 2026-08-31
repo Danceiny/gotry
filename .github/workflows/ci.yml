@@ -1,6 +1,6 @@
 name: CI
 
-# 合并闸:typecheck + post-DSH 插件 smoke + 全部回归套件,Node 22/24 双版本。
+# 全栈回归是唯一合并闸(§1-§45):typecheck + 全部测试套件,Node 22/24 双版本。
 # 依赖来自公共 npm registry(lockfile 已全部 resolved 到 registry.npmjs.org)。
 # 真 LLM 巡检(replay-real / time-eval --real)消耗真实 key,不进 CI,由维护者本地执行。
 
@@ -50,6 +50,23 @@ jobs:
 
       - name: Build dist (§25 publish-preverify packs the real dist)
         run: node scripts/build-dist.mjs
+
+      # Root npm ci follows the historical lockfile and does not materialize
+      # dsh's transitive peer closure. Exercise the publish shape from a clean
+      # consumer install instead of accidentally borrowing a developer tree.
+      - name: Prepare packaged tool-budget E2E runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="$(mktemp -d)"
+          install_dir="$(mktemp -d)"
+          npm pack --pack-destination "$package_dir" >/dev/null
+          tarballs=("$package_dir"/*.tgz)
+          test "${#tarballs[@]}" -eq 1
+          (cd "$install_dir" && npm init --yes >/dev/null)
+          npx --yes pnpm@11.5.0 --dir "$install_dir" add --ignore-scripts "${tarballs[0]}"
+          test -x "$install_dir/node_modules/.bin/gotry"
+          echo "GOTRY_BUDGET_E2E_BIN=$install_dir/node_modules/.bin/gotry" >> "$GITHUB_ENV"
 
       # agent-reach 不装:上游 wheel 不在公共 PyPI(内部分发),§15 wrapper 在未装时
       # 结构化 SKIP(真集成面设备绑定);有装的开发机仍跑全 7 断言
