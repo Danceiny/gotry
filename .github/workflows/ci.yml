@@ -1,6 +1,6 @@
 name: CI
 
-# 全栈回归是唯一合并闸(§1-§45):typecheck + 全部测试套件,Node 22/24 双版本。
+# 全栈回归是唯一合并闸(§1-§48):typecheck + 全部测试套件,Node 22/24 双版本。
 # 依赖来自公共 npm registry(lockfile 已全部 resolved 到 registry.npmjs.org)。
 # 真 LLM 巡检(replay-real / time-eval --real)消耗真实 key,不进 CI,由维护者本地执行。
 
@@ -67,6 +67,7 @@ jobs:
           npx --yes pnpm@11.5.0 --dir "$install_dir" add --ignore-scripts "${tarballs[0]}"
           test -x "$install_dir/node_modules/.bin/gotry"
           echo "GOTRY_BUDGET_E2E_BIN=$install_dir/node_modules/.bin/gotry" >> "$GITHUB_ENV"
+          echo "GOTRY_BRIDGE_E2E_BIN=$install_dir/node_modules/.bin/gotry" >> "$GITHUB_ENV"
 
       # agent-reach 不装:上游 wheel 不在公共 PyPI(内部分发),§15 wrapper 在未装时
       # 结构化 SKIP(真集成面设备绑定);有装的开发机仍跑全 7 断言
@@ -75,5 +76,5 @@ jobs:
         run: npx tsc --noEmit
         working-directory: ts
 
-      - name: Full-stack regression (§1-§45)
+      - name: Full-stack regression (§1-§48)
         run: bash scripts/run-all-tests.sh

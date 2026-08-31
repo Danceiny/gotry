@@ -17,8 +17,8 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
@@ -166,6 +166,34 @@ if (mode === 'web' || stdioAsk) try {
 let patchRaw = readFileSync(staticPatch, 'utf-8')
   .replace(/(name:\s*)'[^']*ts\/src\/index\.ts'/, `$1'${pluginEntry}'`)
   .replace(/^\s*# \{ask-user-insert\}.*\n(\s*# .*\n)?/m, askUserInsert ? askUserInsert + '\n' : '')
+
+// Owner-local benchmark environment opt-in. Keep the path out of tool input
+// and logs; it is only injected into the local plugin config as YAML data.
+const benchmarkEnvironmentConfig = process.env.GOTRY_BENCHMARK_ENV_CONFIG
+if (benchmarkEnvironmentConfig !== undefined && benchmarkEnvironmentConfig !== '') {
+  let validBenchmarkEnvironmentConfig = false
+  try {
+    const bridgeModule = existsSync(join(repoRoot, 'scripts/build-dist.mjs'))
+      ? join(repoRoot, 'ts/src/benchmark-environment-bridge.ts')
+      : join(repoRoot, 'dist/src/benchmark-environment-bridge.js')
+    const { loadBenchmarkEnvironmentConfig } = await import(pathToFileURL(bridgeModule).href)
+    validBenchmarkEnvironmentConfig = benchmarkEnvironmentConfig.length > 0
+      && benchmarkEnvironmentConfig.length <= 4096
+      && !benchmarkEnvironmentConfig.includes('\0')
+      && !benchmarkEnvironmentConfig.includes('\r')
+      && !benchmarkEnvironmentConfig.includes('\n')
+      && loadBenchmarkEnvironmentConfig(benchmarkEnvironmentConfig) !== null
+  } catch { validBenchmarkEnvironmentConfig = false }
+  if (!validBenchmarkEnvironmentConfig) {
+    console.error('[gotry] benchmark environment configuration unavailable')
+    process.exit(1)
+  }
+  const benchmarkPathYaml = benchmarkEnvironmentConfig.replace(/'/g, "''")
+  patchRaw = patchRaw.replace(
+    /(\n\s+hbcliBin:\s+'[^']*')/,
+    `$1\n        benchmarkEnvironmentConfigPath: '${benchmarkPathYaml}'`,
+  )
+}
 if (mapEntry) {
   patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-map-tools'/, `$1'${mapEntry}'`)
 } else {
@@ -197,12 +225,34 @@ if (process.env.GOTRY_LLM_MODEL) {
   const modelYaml = `'${process.env.GOTRY_LLM_MODEL.replace(/'/g, "''")}'`
   patchRaw += `\n# LLM_MODEL 指定模型(issue #77):dsh 会话面默认模型 + 模型目录\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: ${modelYaml}\n- id: llm-deepseek\n  config:\n    models:\n      - id: ${modelYaml}\n        name: ${modelYaml}\n`
 }
-const patchPath = join(tmpdir(), `cordis.gotry.${process.pid}.yml`)
-writeFileSync(patchPath, patchRaw)
+// Keep the patch private and short-lived. mkdtempSync creates a 0700 directory;
+// wx prevents accidental reuse/races if a process is started concurrently.
+const patchDir = mkdtempSync(join(tmpdir(), 'gotry-cordis-'))
+const patchPath = join(patchDir, 'patch.yml')
+writeFileSync(patchPath, patchRaw, { mode: 0o600, flag: 'wx' })
+let patchCleaned = false
+const cleanupPatch = () => {
+  if (patchCleaned) return
+  patchCleaned = true
+  rmSync(patchDir, { recursive: true, force: true })
+}
+process.once('exit', cleanupPatch)
+let child = null
+const terminateOnSignal = (signal, listener) => {
+  cleanupPatch()
+  if (child && !child.killed) child.kill(signal)
+  process.off(signal, listener)
+  process.kill(process.pid, signal)
+}
+const onSigint = () => terminateOnSignal('SIGINT', onSigint)
+const onSigterm = () => terminateOnSignal('SIGTERM', onSigterm)
+process.once('SIGINT', onSigint)
+process.once('SIGTERM', onSigterm)
 if (!process.env.DEEPSEEK_API_KEY && mode !== 'help') {
   console.error('[gotry] 缺少 LLM API key —— 两种方式任选其一后重跑:')
   console.error(`  1) 在当前目录创建 .env 写入一行: LLM_API_KEY=<你的 DeepSeek key>(key 从 https://platform.deepseek.com 获取)`)
   console.error('  2) 或临时环境变量: export LLM_API_KEY=<key>')
+  cleanupPatch()
   process.exit(1)
 }
 
@@ -212,9 +262,22 @@ const binJs = mode === 'web'
   ? ['web', '--patch', patchPath, ...(process.argv.includes('--no-open') ? ['--no-open'] : [])]
   : ['--profile', 'headless', '--patch', patchPath, ...rest]
 
-const child = spawn(process.execPath, [dshBin, ...binJs], {
+const childEnv = { ...process.env }
+// The benchmark config is parent-only metadata. Never make its path visible to
+// dsh or any plugin loaded by the child.
+delete childEnv.GOTRY_BENCHMARK_ENV_CONFIG
+if (benchmarkEnvironmentConfig) {
+  for (const key of [
+    'GOTRY_BENCHMARK_BRIDGE_PARENT_SECRET',
+    'DATABASE_URL',
+    'SSH_AUTH_SOCK',
+    'AWS_PROFILE',
+    'HTTPS_PROXY',
+  ]) delete childEnv[key]
+}
+child = spawn(process.execPath, [dshBin, ...binJs], {
   stdio: 'inherit',
-  env: process.env,
+  env: childEnv,
   cwd: dshCwd,
 })
 if (process.env.GOTRY_DEBUG) {
@@ -224,6 +287,7 @@ if (process.env.GOTRY_DEBUG) {
   console.error('[gotry-debug] patch exists:', existsSync(patchPath), patchPath)
 }
 child.on('exit', (code, signal) => {
+  cleanupPatch()
   if (code !== 0 || signal) {
     // D-NEW 护栏:dsh 异常退出也写一条 incident,留现场而非沉默
     // npm 模式 import dist JS(node_modules 下的 .ts 会被 Node 拒 strip)
@@ -242,6 +306,7 @@ child.on('exit', (code, signal) => {
   process.exit(code ?? 1)
 })
 child.on('error', (e) => {
+  cleanupPatch()
   console.error(`[gotry] dsh 启动失败: ${e.message}`)
   console.error('尝试: node -v 看 Node 版本(需 22+),或查看 ts/dsh-runtime/node_modules/。')
   process.exit(1)
