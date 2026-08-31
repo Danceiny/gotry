@@ -161,7 +161,7 @@ Engine verdict:
 
 | Layer | Module | Role |
 |---|---|---|
-| L2 | `ts/src/index.ts` (dsh plugin) | 21 tools, time-anchor & memory-brief variables; execute isolation + consent gate + process guards |
+| L2 | `ts/src/index.ts` (dsh plugin) | 21 tools, time-anchor & memory-brief variables; execute isolation + consent gate + per-turn tool budget + process guards |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | single solving entry (candidate enumeration + flight-chain Z3) |
 | L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | effect interpreter (backoff retry / circuit breaker / mock interpreter, issue #16) + realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
 | L5 | loopx governance | objective / gates / evidence / quota |
@@ -187,12 +187,14 @@ Engine verdict:
   - Ctrip session hits varied from 3/8 to 5/8, while every scored hit across both runs (3+5 records) passed 13/13 (100%). Non-hits remain explicit `miss` records,
     - so the ≥90% field score is not presented as 8/8 live availability. The same runs exposed and fixed an online-extension lifecycle bug: idle parked timers/sockets no longer pin the default CLI bridge, while wizard `keepBridge` behavior remains unchanged (§38: 24/24, §40: 9/9).
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English output via `GOTRY_LOCALE=en`
+- **Bounded agent tool loops** — a soft convergence context is injected after real dispatch 16; dispatch 18 is the last tool body, already-prepared calls 19+ receive structured `TOOL_BUDGET_EXHAUSTED` failures without entering the body, and inherited native tool schemas are suppressed at `step/end` for a text-only next step. The boundary is exercised through the packaged `dist` entry and a real dsh headless loop against an offline relay; direct/programmatic calls are outside this per-turn budget.
 
 **Open limitations** (as of 2026-08-29, honest list):
 
 - ⏳ **M3 Exit not closed** — engineering & distribution ready, but real seed-user evidence (50–200 person cohort) not yet accumulated; automated tests prove contracts and formulas, not business pass
 - ⏳ **Ctrip-hotel / Meituan logged-in adapters** — flights done; hotel session surfaces await real login-state backfill (next tick)
 - ⏳ **Interface language** — English currently covers the deterministic solve-output layer only; the dsh host UI and dialogue surface belong to the host / calibration samples
+- ⏳ **External benchmark generalization** — ChinaTravel's frozen grounding-v3 canary exposed a 300 s planner timeout after one scored case. The runtime bound is covered by Cordis contracts and an offline dsh headless E2E, but the current ChinaTravel runner does not load GoTry; a treatment-attested adapter, the same frozen timeout case, and then the original 5-query manifest must pass before any aggregate or improvement claim.
 
 <details>
 <summary>📖 Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
@@ -213,7 +215,7 @@ The authoritative state lives in the docs, not this README: transactional state 
 
 One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30)
 - · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39)
-- · extension distribution channel (§43) · sf-live static-golden offline contracts (§44)**. The live runner remains `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static` and requires the user's connected Chrome session.
+- · extension distribution channel (§43) · sf-live static-golden offline contracts (§44) · agent tool-budget Cordis integration + dsh headless E2E (§45)**. The live runner remains `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static` and requires the user's connected Chrome session.
 
 ---
 

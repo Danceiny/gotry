@@ -42,6 +42,7 @@ import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
+import { installToolBudget } from './tool-budget.ts'
 
 /** 航司→机场映射表(issue #46 冲突检测面;data/airline-airports.json,as_of 快照) */
 let airlineAirportMapCache: AirlineAirportMap | null = null
@@ -153,6 +154,8 @@ type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
 
 export function apply(ctx: Context, config: Config): void {
+  installToolBudget(ctx)
+
   // 时间感知:注册动态变量,persona 里用 {{current_date}} 引用。
   // 每次 assemble 时取系统时钟——LLM 始终知道「今天是几号」。
   const sp = (ctx as unknown as Record<string, unknown>)['systemPrompt'] as {

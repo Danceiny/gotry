@@ -21,7 +21,7 @@
 > 以下均为**工程面交付,不构成任何里程碑 Exit 证据**(D-20 口径)。
 
 - **效应解译器(2026-08-29,issue #16,ADR-18)**:`effect_interpreter.v1` 落地 L4 渠道边界——指数退避重试 / 断路器 / mock 解译器(纯离线 CI 面)收敛进解译层;五渠道工具 + realtime-pricing 已接,余下渠道增量迁移(D-23)。run-all §37。OTA 工具面照旧平铺,证据链逐源标注不变。
-- **可下单事实闸(2026-08-30,issue #46,ADR-19)**:`gotry_bookable_fact.v1` 单一数据源 + 产物事实闸——flyai/session exact-date 检索结果 hit/miss 逐条落账(query_id 可重放),**exact-date miss 禁止用历史班期/相邻日期/航线页回填**;`gotry_fact_gate` 交付前必过(claim 反向抽取回溯 + 夜数/O&D/预算不变式),blocked 不得宣称「已验证方案」;persona (20) 红线化。run-all §39 locked golden 2027 E2E + smoke §16。覆盖面缺口记 D-24。
+- **可下单事实闸(2026-08-30,issue #46,ADR-19)**:`gotry_bookable_fact.v1` 单一数据源 + 产物事实闸——flyai/session exact-date 检索结果 hit/miss 逐条落账(query_id 可重放),**exact-date miss 禁止用历史班期/相邻日期/航线页回填**;`gotry_fact_gate` 交付前必过(claim 反向抽取回溯 + 夜数/O&D/预算不变式),blocked 不得宣称「已验证方案」;persona (20) 红线化。run-all §39 locked golden 2027 E2E + smoke §16。覆盖面缺口记 D-26。
 - **npm 形态自定义端点修复(2026-08-30,issue #48)**:bin env 映射补 `LLM_BASE_URL → DEEPSEEK_BASE_URL`——rc.15 回拉实测暴露只映射 key 不映射 base,OpenAI 兼容端点 key 被发往 DeepSeek 官方端点必然 401。修复后三件套 `.env`(`LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`)即全链通;显式 `DEEPSEEK_BASE_URL` 仍优先,默认官方路径零改变。dsh 侧(llm-deepseek)与仓内 `dsh-llm.ts` 拼接语义核验一致(`${base}/chat/completions`)。README 双语 + `.env.example` + bin help 同步。
 - **价表 v2 + 价格漂移长机制(2026-08-30,issue #49,ADR-20)**:
   - 封存价表 v1(DeepSeek V4 only)升 v2(provider-aware,`gotry_llm_price_table_v2`);MiniMax M2/M2.1/M3 入表;`ts/scripts/price-drift-watch.ts` 覆盖四家主流 provider,默认离线对照 baseline 比对输出 PR-就绪 Markdown diff,**永不自动 apply 价格**(ADR-11 纪律——founder 实测「自动 apply 易把官方 down 5% 误认为我的 bug」)。fetch/解析失败 → SKIP + reason,零写未知数据。
@@ -39,6 +39,12 @@
 - `sf-live-benchmark` 新增 `--golden=static`:以 OpenFlights ODbL 固定修订提供航线/承运人,以 `sf-golden-manifest.json` 提供估算时刻与价格带。
 - evidence 分开记录请求源与实际源(`requested_source`/`effective_source`)、estimated fields、provenance 与 fallback reason;快照或路由异常会向 stderr 明示后回退 `manual-golden`。
 - **这是可复跑的 benchmark 对照源,不是实时班期、票价或库存**;真实会话侧仍须用户 Chrome 扩展连接。离线守门列入 run-all §44,不改变 M3/M4 里程碑口径。
+
+### Agent evaluation 反馈闭环(Discussion #78)
+
+- ChinaTravel grounding-v3 冻结 canary 的首例可评分终态通过,第二例因 planner 重复工具循环超过 300s；当前只允许报告 `attempted=2/scored=1/timeout=1`,不得外推 5-query aggregate。
+- Round 1 聚焦 GoTry 自身:模型每轮第 16 次真实工具派发注入收敛上下文,第 18 次是最后一个 body；同一步第 19 次起返回 `TOOL_BUDGET_EXHAUSTED`,该批 `step/end` 后下一步 native 请求抑制继承工具 schema。run-all §45 已覆盖 Cordis integration/并行/turn+session 生命周期及真实 npm-mode dist + dsh headless 离线 E2E(18 body、1 structured refusal、下一请求 text-only、非空 final)。
+- 外部验收仍是 TODO:现有 ChinaTravel runner 直接启动 Codex,不能选择或证明加载 GoTry treatment。D-28 必须先补 treatment-attested adapter,再重跑同一冻结 timeout case(exit 0、非空 final、<300s)并恢复原 5-query manifest；之后按公开 benchmark registry 逐项评测。每轮 agent 优化独立 PR + Discussion #78 独立评论。
 - **验收 evidence(2026-08-30)**:登录态 Chrome 连续两轮真跑——static official 均 8/8 hit、零 fallback;session 分别 3/8 与 5/8 hit,全部可评分 hit(3+5 条)均 13/13 = 100%,非 hit 明示 miss。**评分门通过不等于 8/8 可售性。**
 - 同轮清偿:真扩展在线时默认桥不退出的存量缺口——parked timer/socket 只在默认桥 `unref`,wizard `keepBridge` 不变;§38 24/24、§40 9/9。
 

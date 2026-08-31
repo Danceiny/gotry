@@ -2,6 +2,7 @@
 
 > **状态速览**:
 - S2 mock 切片 ✅ / S3 求解挂载 ✅ / S4 真 LLM ✅(MiniMax-M2,`bb880f3`)/ S5 编排+持久化 ✅(详见 `architecture.md` §9,那里是唯一的当前状态源);本文保留设计原文供追溯。**M1/M2 已退出；M3 工程面已就绪但真实种子用户 evidence 未收口，M3 Exit 仍开放；M4 由 founder 授权并行推进，不构成 M3 Exit 证明；M5/M6 仍受各自 Entry gate 约束。
+- Discussion #78 的 external benchmark 反馈已进入 S5 编排边界:每轮第 16 次真实工具派发注入软收敛,第 18 次是最后一个 body,同一步第 19 次起结构化拒绝；该批 `step/end` 后下一次 native request 抑制继承工具 schema。run-all §45 以 Cordis contracts + npm-mode dist/dsh headless 离线 E2E 固定真实 runtime 行为。现有 ChinaTravel runner 尚未加载 GoTry treatment,冻结 timeout case 与原 5-query manifest 仍待 treatment-attested adapter 后外部回归,不得把离线 runtime E2E 宣称为 benchmark 改善。
 - ** 2026-08-27 起,①③ 两环的时间语义由 `ts/src/time-anchor.ts` 锚点卡供给(ADR-12),本文①中「2026 年历」的硬编码表述以锚点层为准。
 - 2026-08-28 起,S5 工单持久化升级为账本 durable 形态(ADR-15:workflow_runs/steps 权威 + json/md 视图),本文工单文件表述以 `state-ledger.ts` 为准；`gotry_async_terminal.v1` 将 4/4 映射为 `succeeded`/ledger `settled`/exit 0，将非 4/4 映射为 `failed`/ledger `failed`/exit 2，终态复诵保持同一结果与退出码且零重算。2026-08-29 起,求解运行时收敛 `z3-shared.ts`(单一 WASM 实例+会话级互斥,run-all §30 并发回归闸)——
 - Z3 WASM race 已知限制清偿。2026-08-29 同批:④中 dated 段经 `realtime-pricing.ts` 实时价覆写(env 闸默认关,证据 `[实时API:flyai@ts]`),run-all §31。同批:i18n catalog 接缝(`i18n.ts`,`GOTRY_LOCALE` 默认 zh-CN,金标准逐字节不变),求解确定性面英文可用,run-all §32。
