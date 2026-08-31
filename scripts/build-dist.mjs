@@ -24,12 +24,12 @@ const OUT = join(root, 'dist')
 // 先清后建:源码删除的文件(如 session-attach-*.ts)其陈旧编译产物会残留并进 tarball
 rmSync(OUT, { recursive: true, force: true })
 
-function walk(dir) {
+function walk(dir, extension = '.ts') {
   const out = []
   for (const name of readdirSync(dir)) {
     const p = join(dir, name)
-    if (statSync(p).isDirectory()) out.push(...walk(p))
-    else if (name.endsWith('.ts')) out.push(p)
+    if (statSync(p).isDirectory()) out.push(...walk(p, extension))
+    else if (name.endsWith(extension)) out.push(p)
   }
   return out
 }
@@ -50,11 +50,27 @@ for (const dir of SRC) {
     const rel = relative(join(root, 'ts'), file).replace(/\.ts$/, '.js')
     const target = join(OUT, rel)
     let js = stripTypeScriptTypes(readFileSync(file, 'utf-8'), { mode: 'transform', sourceUrl: file })
-    // 相对导入的 .ts 说明符重写为 .js(bare import 如 @deepseek-ai/dsh-tools 不动)
-    js = js.replace(/(from\s+|import\s*\(\s*)(['"])(\.[^'"]*?)\.ts(\2)/g, '$1$2$3.js$4')
+    // 相对导入的 .ts 说明符重写为 .js。Node 的 transform stripper
+    // 会把部分 `import type ... from` 变成 side-effect `import './x.ts'`，
+    // 因此要覆盖所有相对字符串说明符，而非只匹配 `from`/动态 import。
+    js = js.replace(/(['"])(\.[^'"]*?)\.ts\1/g, '$1$2.js$1')
     mkdirSync(dirname(target), { recursive: true })
     writeFileSync(target, js)
     n++
   }
 }
-console.log(`dist built: ${n} TS files + ${DATA.length} data files → ${relative(root, OUT)}/`)
+
+// Runtime JS assets live next to their TypeScript callers. In particular the
+// dsh plugin and canonical-schema projector must exist at the same relative
+// location in the npm package's compiled dist tree.
+let jsAssets = 0
+for (const dir of SRC) {
+  for (const file of walk(join(root, dir), '.js')) {
+    const rel = relative(join(root, 'ts'), file)
+    const target = join(OUT, rel)
+    mkdirSync(dirname(target), { recursive: true })
+    copyFileSync(file, target)
+    jsAssets++
+  }
+}
+console.log(`dist built: ${n} TS files + ${jsAssets} JS assets + ${DATA.length} data files → ${relative(root, OUT)}/`)
