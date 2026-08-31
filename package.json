@@ -24,6 +24,7 @@
     "ts/src/bookable-facts.ts",
     "ts/src/artifact-gate.ts",
     "ts/src/tool-packet.ts",
+    "ts/src/tool-budget.ts",
     "ts/src/memory-capture.ts",
     "ts/src/memory-utility.ts",
     "ts/src/memory-decay.ts",

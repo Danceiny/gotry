@@ -347,6 +347,11 @@ echo "=== 44. sf-live static golden(issue #67:CLI vendor 闭集/OpenFlights 固�
 (cd ts && npx tsx scripts/sf-live-cli-tests.ts) || FAIL=1
 
 echo
+echo "=== 45. Agent 工具预算(第16次软收敛/最多18次真实派发/同 step 第19次结构化拒绝/下一 step text-only/新轮次复位;Cordis integration + dsh headless E2E) ==="
+(cd ts && npx tsx scripts/agent-planning-budget-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/agent-planning-budget-e2e.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
