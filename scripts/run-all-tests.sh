@@ -355,6 +355,21 @@ echo "=== 46. Evaluation cadence policy(PR/nightly/weekly/milestone admission/pa
 (cd ts && npx tsx scripts/evaluation-cadence-tests.ts) || FAIL=1
 
 echo
+echo "=== 47. Booking Copilot embedded contract(canonical schema/npm subpath/closed read registry/task-scoped ledger/real dsh core/BFF-only SSE/production bin;local model fixture) ==="
+(node scripts/build-dist.mjs) || FAIL=1
+(npx tsx scripts/booking-surface-package-proof.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-surface-contract-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-runtime-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-receipt-ledger-concurrency-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-operation-ledger-concurrency-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-server-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-dsh-plugin-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-dsh-planner-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-startup-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-dsh-core-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-bin-proof-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

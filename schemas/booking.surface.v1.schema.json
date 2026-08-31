@@ -1,0 +1,927 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gotry.dev/schemas/booking.surface.v1.schema.json",
+  "title": "GoTry Booking Surface v1",
+  "description": "Canonical typed contract for an embedded, read-side Booking Copilot. Text is explanatory only; executable operations are BookingReadActionV1 data objects.",
+  "oneOf": [
+    { "$ref": "#/$defs/BookingWorkspaceSnapshotV1" },
+    { "$ref": "#/$defs/BookingReadActionV1" },
+    { "$ref": "#/$defs/ActionReceiptV1" },
+    { "$ref": "#/$defs/BookingCopilotIngressTurnV1" },
+    { "$ref": "#/$defs/BookingCopilotTurnV1" },
+    { "$ref": "#/$defs/BookingSurfaceEventV1" }
+  ],
+  "$defs": {
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "OpaqueRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "SchemaVersion": {
+      "const": "booking.surface.v1"
+    },
+    "BookingSurfaceV1": {
+      "enum": ["tenant", "customer_portal", "storefront", "payment_link"]
+    },
+    "BookingReadActionKindV1": {
+      "enum": [
+        "search.patch",
+        "search.run",
+        "results.view.patch",
+        "hotel.focus",
+        "hotel.select",
+        "offers.query",
+        "offers.view.patch",
+        "offers.compare",
+        "offer.select",
+        "offer.check",
+        "checkout.prepare",
+        "order.observe"
+      ]
+    },
+    "ActionReceiptStatusV1": {
+      "enum": [
+        "applied",
+        "needs_input",
+        "partial",
+        "no_match",
+        "unavailable",
+        "changed",
+        "stale",
+        "unsupported",
+        "failed"
+      ]
+    },
+    "MoneyV1": {
+      "type": "object",
+      "required": ["amount", "currency", "sourceFactRef"],
+      "properties": {
+        "amount": { "type": "string", "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$", "maxLength": 64 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "sourceFactRef": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "OccupancyRoomV1": {
+      "type": "object",
+      "required": ["adults", "childAges"],
+      "properties": {
+        "adults": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "childAges": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "integer", "minimum": 0, "maximum": 17 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "StringArrayCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": { "enum": ["must", "prefer"] },
+        "value": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "BooleanCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": { "enum": ["must", "prefer"] },
+        "value": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "StringCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": { "enum": ["must", "prefer"] },
+        "value": { "$ref": "#/$defs/NonEmptyString" }
+      },
+      "additionalProperties": false
+    },
+    "IntegerCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": { "enum": ["must", "prefer"] },
+        "value": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "MoneyCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": { "enum": ["must", "prefer"] },
+        "value": { "$ref": "#/$defs/MoneyV1" }
+      },
+      "additionalProperties": false
+    },
+    "SearchCriteriaPatchV1": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "destination": {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "query": { "$ref": "#/$defs/NonEmptyString" },
+            "placeRef": { "$ref": "#/$defs/OpaqueRef" }
+          },
+          "additionalProperties": false
+        },
+        "hotel": {
+          "type": "object",
+          "required": ["strength", "value"],
+          "properties": {
+            "strength": { "enum": ["must", "prefer"] },
+            "value": {
+              "type": "object",
+              "minProperties": 1,
+              "properties": {
+                "name": { "$ref": "#/$defs/NonEmptyString" },
+                "hotelRef": { "$ref": "#/$defs/OpaqueRef" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "stay": {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "checkIn": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+            "checkOut": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+          },
+          "additionalProperties": false
+        },
+        "occupancy": {
+          "type": "object",
+          "required": ["rooms"],
+          "properties": {
+            "rooms": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": { "$ref": "#/$defs/OccupancyRoomV1" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "budget": {
+          "type": "object",
+          "required": ["strength", "value"],
+          "properties": {
+            "strength": { "enum": ["must", "prefer"] },
+            "value": {
+              "type": "object",
+              "minProperties": 1,
+              "properties": {
+                "min": { "$ref": "#/$defs/MoneyV1" },
+                "max": { "$ref": "#/$defs/MoneyV1" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "starRating": {
+          "type": "object",
+          "required": ["strength", "value"],
+          "properties": {
+            "strength": { "enum": ["must", "prefer"] },
+            "value": {
+              "type": "object",
+              "minProperties": 1,
+              "properties": {
+                "min": { "type": "number", "minimum": 0, "maximum": 5 },
+                "max": { "type": "number", "minimum": 0, "maximum": 5 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "guestRating": {
+          "type": "object",
+          "required": ["strength", "value"],
+          "properties": {
+            "strength": { "enum": ["must", "prefer"] },
+            "value": {
+              "type": "object",
+              "required": ["min"],
+              "properties": { "min": { "type": "number", "minimum": 0, "maximum": 10 } },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "facilities": {
+          "type": "object",
+          "required": ["strength", "value"],
+          "properties": {
+            "strength": { "enum": ["must", "prefer"] },
+            "value": {
+              "type": "object",
+              "required": ["allOf"],
+              "properties": {
+                "allOf": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "uniqueItems": true,
+                  "items": { "$ref": "#/$defs/NonEmptyString" }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "distance": {
+          "type": "object",
+          "required": ["strength", "value"],
+          "properties": {
+            "strength": { "enum": ["must", "prefer"] },
+            "value": {
+              "type": "object",
+              "required": ["maxKm"],
+              "properties": {
+                "anchorLabel": { "$ref": "#/$defs/NonEmptyString" },
+                "anchorRef": { "$ref": "#/$defs/OpaqueRef" },
+                "maxKm": { "type": "number", "exclusiveMinimum": 0, "maximum": 50000 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResultsViewPatchV1": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "starRating": {
+          "type": ["object", "null"],
+          "properties": {
+            "min": { "type": "number", "minimum": 0, "maximum": 5 },
+            "max": { "type": "number", "minimum": 0, "maximum": 5 }
+          },
+          "additionalProperties": false
+        },
+        "guestRatingMin": { "type": ["number", "null"], "minimum": 0, "maximum": 10 },
+        "facilitiesAllOf": {
+          "type": ["array", "null"],
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "uniqueItems": true,
+          "maxItems": 100
+        },
+        "distance": {
+          "type": ["object", "null"],
+          "required": ["anchorRef", "maxKm"],
+          "properties": {
+            "anchorRef": { "$ref": "#/$defs/OpaqueRef" },
+            "maxKm": { "type": "number", "exclusiveMinimum": 0, "maximum": 50000 }
+          },
+          "additionalProperties": false
+        },
+        "price": {
+          "type": ["object", "null"],
+          "properties": {
+            "min": { "$ref": "#/$defs/MoneyV1" },
+            "max": { "$ref": "#/$defs/MoneyV1" }
+          },
+          "additionalProperties": false
+        },
+        "sort": { "enum": ["recommended", "price_asc", "price_desc", "rating_desc", "distance_asc"] }
+      },
+      "additionalProperties": false
+    },
+    "OfferCriteriaV1": {
+      "type": "object",
+      "properties": {
+        "roomType": { "$ref": "#/$defs/StringArrayCriterion" },
+        "bedType": { "$ref": "#/$defs/StringArrayCriterion" },
+        "meals": { "$ref": "#/$defs/StringArrayCriterion" },
+        "freeCancellation": { "$ref": "#/$defs/BooleanCriterion" },
+        "freeCancellationUntil": { "$ref": "#/$defs/StringCriterion" },
+        "totalPriceMax": { "$ref": "#/$defs/MoneyCriterion" },
+        "roomsAvailableMin": { "$ref": "#/$defs/IntegerCriterion" },
+        "payAtProperty": { "$ref": "#/$defs/BooleanCriterion" },
+        "mobileRate": { "$ref": "#/$defs/BooleanCriterion" },
+        "targetCount": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "sort": { "enum": ["best_match", "total_price_asc", "cancellation_latest"] }
+      },
+      "additionalProperties": false
+    },
+    "SurfaceCapabilitiesV1": {
+      "type": "object",
+      "required": ["surface", "allowedActions"],
+      "properties": {
+        "surface": { "$ref": "#/$defs/BookingSurfaceV1" },
+        "allowedActions": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 11,
+          "items": { "$ref": "#/$defs/BookingReadActionKindV1" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "SearchDraftSnapshotV1": {
+      "type": "object",
+      "properties": {
+        "destination": {
+          "type": "object",
+          "properties": {
+            "query": { "$ref": "#/$defs/NonEmptyString" },
+            "placeRef": { "$ref": "#/$defs/OpaqueRef" }
+          },
+          "additionalProperties": false
+        },
+        "stay": {
+          "type": "object",
+          "properties": {
+            "checkIn": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+            "checkOut": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+          },
+          "additionalProperties": false
+        },
+        "occupancy": {
+          "type": "object",
+          "required": ["rooms"],
+          "properties": {
+            "rooms": { "type": "array", "items": { "$ref": "#/$defs/OccupancyRoomV1" }, "maxItems": 20 }
+          },
+          "additionalProperties": false
+        },
+        "criteria": { "$ref": "#/$defs/SearchCriteriaPatchV1" }
+      },
+      "additionalProperties": false
+    },
+    "ResultViewSnapshotV1": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["idle", "loading", "ready", "partial", "failed"] },
+        "filters": { "$ref": "#/$defs/ResultsViewPatchV1" },
+        "sort": { "enum": ["recommended", "price_asc", "price_desc", "rating_desc", "distance_asc"] },
+        "resultCount": { "type": "integer", "minimum": 0 },
+        "searchSessionRef": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "VisibleHotelFactV1": {
+      "type": "object",
+      "required": ["hotelRef", "name", "factRefs"],
+      "properties": {
+        "hotelRef": { "$ref": "#/$defs/OpaqueRef" },
+        "name": { "$ref": "#/$defs/NonEmptyString" },
+        "starRating": { "type": "number", "minimum": 0, "maximum": 5 },
+        "guestRating": { "type": "number", "minimum": 0, "maximum": 10 },
+        "distanceKm": { "type": "number", "minimum": 0 },
+        "facilityCodes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } },
+        "factRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } }
+      },
+      "additionalProperties": false
+    },
+    "LoadedOfferFactV1": {
+      "type": "object",
+      "required": ["offerRef", "hotelRef", "evidenceLevel", "factRefs"],
+      "properties": {
+        "offerRef": { "$ref": "#/$defs/OpaqueRef" },
+        "hotelRef": { "$ref": "#/$defs/OpaqueRef" },
+        "evidenceLevel": { "enum": ["listed", "rate_loaded", "checked"] },
+        "factRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } }
+      },
+      "additionalProperties": false
+    },
+    "BookingWorkspaceSnapshotV1": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "contextRef",
+        "surface",
+        "revision",
+        "locale",
+        "currency",
+        "searchDraft",
+        "results",
+        "visibleHotels",
+        "loadedOffers",
+        "shortlistedOfferRefs",
+        "capabilities"
+      ],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "surface": { "$ref": "#/$defs/BookingSurfaceV1" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "locale": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "searchDraft": { "$ref": "#/$defs/SearchDraftSnapshotV1" },
+        "results": { "$ref": "#/$defs/ResultViewSnapshotV1" },
+        "visibleHotels": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/VisibleHotelFactV1" } },
+        "loadedOffers": { "type": "array", "maxItems": 2000, "items": { "$ref": "#/$defs/LoadedOfferFactV1" } },
+        "focusedHotelRef": { "$ref": "#/$defs/OpaqueRef" },
+        "shortlistedOfferRefs": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/$defs/OpaqueRef" } },
+        "selectedOfferRef": { "$ref": "#/$defs/OpaqueRef" },
+        "verifiedOfferRef": { "$ref": "#/$defs/OpaqueRef" },
+        "capabilities": { "$ref": "#/$defs/SurfaceCapabilitiesV1" }
+      },
+      "additionalProperties": false
+    },
+    "BookingWorkspaceIngressSnapshotV1": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "revision",
+        "locale",
+        "currency",
+        "searchDraft",
+        "results",
+        "visibleHotels",
+        "loadedOffers",
+        "shortlistedOfferRefs"
+      ],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "locale": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "searchDraft": { "$ref": "#/$defs/SearchDraftSnapshotV1" },
+        "results": { "$ref": "#/$defs/ResultViewSnapshotV1" },
+        "visibleHotels": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/VisibleHotelFactV1" } },
+        "loadedOffers": { "type": "array", "maxItems": 2000, "items": { "$ref": "#/$defs/LoadedOfferFactV1" } },
+        "focusedHotelRef": { "$ref": "#/$defs/OpaqueRef" },
+        "shortlistedOfferRefs": { "type": "array", "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/$defs/OpaqueRef" } },
+        "selectedOfferRef": { "$ref": "#/$defs/OpaqueRef" },
+        "verifiedOfferRef": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "SearchRunInputV1": {
+      "type": "object",
+      "maxProperties": 0,
+      "additionalProperties": false
+    },
+    "SearchPatchInputV1": {
+      "type": "object",
+      "required": ["patch"],
+      "properties": { "patch": { "$ref": "#/$defs/SearchCriteriaPatchV1" } },
+      "additionalProperties": false
+    },
+    "ResultsViewPatchInputV1": {
+      "type": "object",
+      "required": ["patch"],
+      "properties": { "patch": { "$ref": "#/$defs/ResultsViewPatchV1" } },
+      "additionalProperties": false
+    },
+    "HotelFocusInputV1": {
+      "type": "object",
+      "required": ["hotelRef"],
+      "properties": { "hotelRef": { "$ref": "#/$defs/OpaqueRef" } },
+      "additionalProperties": false
+    },
+    "HotelSelectInputV1": {
+      "type": "object",
+      "required": ["hotelRef"],
+      "properties": { "hotelRef": { "$ref": "#/$defs/OpaqueRef" } },
+      "additionalProperties": false
+    },
+    "OffersQueryInputV1": {
+      "type": "object",
+      "required": ["hotelRefs", "criteria"],
+      "properties": {
+        "hotelRefs": { "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": { "$ref": "#/$defs/OpaqueRef" } },
+        "criteria": { "$ref": "#/$defs/OfferCriteriaV1" }
+      },
+      "additionalProperties": false
+    },
+    "OffersViewPatchInputV1": {
+      "type": "object",
+      "required": ["hotelRef", "criteria"],
+      "properties": {
+        "hotelRef": { "$ref": "#/$defs/OpaqueRef" },
+        "criteria": { "$ref": "#/$defs/OfferCriteriaV1" }
+      },
+      "additionalProperties": false
+    },
+    "OffersCompareInputV1": {
+      "type": "object",
+      "required": ["offerRefs", "requestedCount"],
+      "properties": {
+        "offerRefs": { "type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": true, "items": { "$ref": "#/$defs/OpaqueRef" } },
+        "requestedCount": { "type": "integer", "minimum": 1, "maximum": 50 }
+      },
+      "additionalProperties": false
+    },
+    "OfferRefInputV1": {
+      "type": "object",
+      "required": ["offerRef"],
+      "properties": { "offerRef": { "$ref": "#/$defs/OpaqueRef" } },
+      "additionalProperties": false
+    },
+    "CheckoutPrepareInputV1": {
+      "type": "object",
+      "required": ["offerRef", "verifiedOfferRef"],
+      "properties": {
+        "offerRef": { "$ref": "#/$defs/OpaqueRef" },
+        "verifiedOfferRef": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "OrderObserveInputV1": {
+      "type": "object",
+      "required": ["orderRef"],
+      "properties": { "orderRef": { "$ref": "#/$defs/OpaqueRef" } },
+      "additionalProperties": false
+    },
+    "BookingReadActionV1": {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "actionId", "contextRef", "expectedRevision", "reason", "factRefs", "input"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "kind": { "$ref": "#/$defs/BookingReadActionKindV1" },
+        "actionId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "expectedRevision": { "$ref": "#/$defs/Revision" },
+        "reason": { "$ref": "#/$defs/NonEmptyString" },
+        "factRefs": { "type": "array", "maxItems": 200, "uniqueItems": true, "items": { "$ref": "#/$defs/OpaqueRef" } },
+        "input": { "type": "object" }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "search.patch" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/SearchPatchInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "search.run" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/SearchRunInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "results.view.patch" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/ResultsViewPatchInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "hotel.focus" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/HotelFocusInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "hotel.select" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/HotelSelectInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "offers.query" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/OffersQueryInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "offers.view.patch" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/OffersViewPatchInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "offers.compare" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/OffersCompareInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "offer.select" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/OfferRefInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "offer.check" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/OfferRefInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "checkout.prepare" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/CheckoutPrepareInputV1" } } } },
+        { "if": { "properties": { "kind": { "const": "order.observe" } }, "required": ["kind"] }, "then": { "properties": { "input": { "$ref": "#/$defs/OrderObserveInputV1" } } } }
+      ]
+    },
+    "ActionObservationV1": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "search.state" },
+            "searchSessionRef": { "$ref": "#/$defs/OpaqueRef" },
+            "resultCount": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "hotelRef"],
+          "properties": {
+            "kind": { "const": "hotel.selection" },
+            "hotelRef": { "$ref": "#/$defs/OpaqueRef" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "matchedHotelRefs", "visibleCount"],
+          "properties": {
+            "kind": { "const": "results.state" },
+            "matchedHotelRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } },
+            "visibleCount": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "hotelRef"],
+          "properties": {
+            "kind": { "const": "hotel.focus" },
+            "hotelRef": { "$ref": "#/$defs/OpaqueRef" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "hotelRefs", "offerRefs", "loadedHotelCount"],
+          "properties": {
+            "kind": { "const": "offers.state" },
+            "hotelRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } },
+            "offerRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } },
+            "loadedHotelCount": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "offerRef"],
+          "properties": {
+            "kind": { "const": "offer.selection" },
+            "offerRef": { "$ref": "#/$defs/OpaqueRef" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "offerRef", "available", "changedFactRefs"],
+          "properties": {
+            "kind": { "const": "offer.availability" },
+            "offerRef": { "$ref": "#/$defs/OpaqueRef" },
+            "verifiedOfferRef": { "$ref": "#/$defs/OpaqueRef" },
+            "available": { "type": "boolean" },
+            "changedFactRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "offerRef", "verifiedOfferRef", "handoffRef"],
+          "properties": {
+            "kind": { "const": "checkout.handoff" },
+            "offerRef": { "$ref": "#/$defs/OpaqueRef" },
+            "verifiedOfferRef": { "$ref": "#/$defs/OpaqueRef" },
+            "handoffRef": { "$ref": "#/$defs/OpaqueRef" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "orderRef", "state"],
+          "properties": {
+            "kind": { "const": "order.state" },
+            "orderRef": { "$ref": "#/$defs/OpaqueRef" },
+            "state": { "enum": ["pending", "verified", "failed", "unknown"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "code", "factRefs"],
+          "properties": {
+            "kind": { "const": "gap" },
+            "code": { "$ref": "#/$defs/NonEmptyString" },
+            "factRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ResultContractV1": {
+      "type": "object",
+      "required": ["outcome", "hardCriteriaMet", "factRefs", "gapCodes"],
+      "properties": {
+        "outcome": { "enum": ["complete", "partial", "empty"] },
+        "requestedCount": { "type": "integer", "minimum": 0 },
+        "actualCount": { "type": "integer", "minimum": 0 },
+        "hardCriteriaMet": { "type": "boolean" },
+        "factRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } },
+        "gapCodes": { "type": "array", "items": { "$ref": "#/$defs/NonEmptyString" } }
+      },
+      "additionalProperties": false
+    },
+    "ActionReceiptV1": {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "actionId", "contextRef", "status", "revision", "observation", "resultContract"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "kind": { "const": "action.receipt" },
+        "actionId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "status": { "$ref": "#/$defs/ActionReceiptStatusV1" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "observation": { "$ref": "#/$defs/ActionObservationV1" },
+        "resultContract": { "$ref": "#/$defs/ResultContractV1" },
+        "undoToken": { "$ref": "#/$defs/OpaqueRef" }
+      },
+      "additionalProperties": false
+    },
+    "UserTurnV1": {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "workspace", "request"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "kind": { "const": "user.turn" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "workspace": { "$ref": "#/$defs/BookingWorkspaceSnapshotV1" },
+        "request": {
+          "type": "object",
+          "required": ["text"],
+          "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 16000 } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "BookingCopilotIngressTurnV1": {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "surfaceHint", "workspace", "request"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "kind": { "const": "user.turn.ingress" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "type": "null" },
+        "surfaceHint": { "$ref": "#/$defs/BookingSurfaceV1" },
+        "workspace": { "$ref": "#/$defs/BookingWorkspaceIngressSnapshotV1" },
+        "request": {
+          "type": "object",
+          "required": ["text"],
+          "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 16000 } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "ActionReceiptContinuationV1": {
+      "type": "object",
+      "required": ["schemaVersion", "kind", "taskId", "workspace", "receipt"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "kind": { "const": "action.receipt.continuation" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "workspace": { "$ref": "#/$defs/BookingWorkspaceSnapshotV1" },
+        "receipt": { "$ref": "#/$defs/ActionReceiptV1" }
+      },
+      "additionalProperties": false
+    },
+    "BookingCopilotTurnV1": {
+      "oneOf": [
+        { "$ref": "#/$defs/UserTurnV1" },
+        { "$ref": "#/$defs/ActionReceiptContinuationV1" }
+      ]
+    },
+    "EventCommonProperties": {
+      "type": "object",
+      "required": ["schemaVersion", "eventId", "taskId", "contextRef", "sequence", "emittedAt", "kind"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "eventId": { "$ref": "#/$defs/OpaqueRef" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "emittedAt": { "type": "string", "minLength": 20, "maxLength": 64 },
+        "kind": { "enum": ["status", "question", "operation", "explanation", "terminal", "error"] }
+      }
+    },
+    "BookingStatusEventV1": {
+      "type": "object",
+      "required": ["schemaVersion", "eventId", "taskId", "contextRef", "sequence", "emittedAt", "kind", "status"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "eventId": { "$ref": "#/$defs/OpaqueRef" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "emittedAt": { "type": "string", "minLength": 20, "maxLength": 64 },
+        "kind": { "const": "status" },
+        "status": { "enum": ["submitted", "working", "waiting_receipt", "input_required"] }
+      },
+      "additionalProperties": false
+    },
+    "BookingQuestionEventV1": {
+      "type": "object",
+      "required": ["schemaVersion", "eventId", "taskId", "contextRef", "sequence", "emittedAt", "kind", "question"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "eventId": { "$ref": "#/$defs/OpaqueRef" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "emittedAt": { "type": "string", "minLength": 20, "maxLength": 64 },
+        "kind": { "const": "question" },
+        "question": {
+          "type": "object",
+          "required": ["questionId", "prompt", "missingFields"],
+          "properties": {
+            "questionId": { "$ref": "#/$defs/OpaqueRef" },
+            "prompt": { "$ref": "#/$defs/NonEmptyString" },
+            "missingFields": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/NonEmptyString" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "BookingOperationEventV1": {
+      "type": "object",
+      "required": ["schemaVersion", "eventId", "taskId", "contextRef", "sequence", "emittedAt", "kind", "action"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "eventId": { "$ref": "#/$defs/OpaqueRef" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "emittedAt": { "type": "string", "minLength": 20, "maxLength": 64 },
+        "kind": { "const": "operation" },
+        "action": { "$ref": "#/$defs/BookingReadActionV1" }
+      },
+      "additionalProperties": false
+    },
+    "BookingExplanationEventV1": {
+      "type": "object",
+      "required": ["schemaVersion", "eventId", "taskId", "contextRef", "sequence", "emittedAt", "kind", "explanation"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "eventId": { "$ref": "#/$defs/OpaqueRef" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "emittedAt": { "type": "string", "minLength": 20, "maxLength": 64 },
+        "kind": { "const": "explanation" },
+        "explanation": {
+          "type": "object",
+          "required": ["text", "factRefs"],
+          "properties": {
+            "text": { "$ref": "#/$defs/NonEmptyString" },
+            "factRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "BookingTerminalEventV1": {
+      "type": "object",
+      "required": ["schemaVersion", "eventId", "taskId", "contextRef", "sequence", "emittedAt", "kind", "terminal"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "eventId": { "$ref": "#/$defs/OpaqueRef" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "emittedAt": { "type": "string", "minLength": 20, "maxLength": 64 },
+        "kind": { "const": "terminal" },
+        "terminal": {
+          "type": "object",
+          "required": ["status", "summary", "factRefs"],
+          "properties": {
+            "status": { "enum": ["completed", "stopped"] },
+            "summary": { "$ref": "#/$defs/NonEmptyString" },
+            "factRefs": { "type": "array", "items": { "$ref": "#/$defs/OpaqueRef" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "BookingErrorEventV1": {
+      "type": "object",
+      "required": ["schemaVersion", "eventId", "taskId", "contextRef", "sequence", "emittedAt", "kind", "error"],
+      "properties": {
+        "schemaVersion": { "$ref": "#/$defs/SchemaVersion" },
+        "eventId": { "$ref": "#/$defs/OpaqueRef" },
+        "taskId": { "$ref": "#/$defs/OpaqueRef" },
+        "contextRef": { "$ref": "#/$defs/OpaqueRef" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "emittedAt": { "type": "string", "minLength": 20, "maxLength": 64 },
+        "kind": { "const": "error" },
+        "error": {
+          "type": "object",
+          "required": ["code", "message", "retryable"],
+          "properties": {
+            "code": { "$ref": "#/$defs/NonEmptyString" },
+            "message": { "$ref": "#/$defs/NonEmptyString" },
+            "retryable": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "BookingSurfaceEventV1": {
+      "oneOf": [
+        { "$ref": "#/$defs/BookingStatusEventV1" },
+        { "$ref": "#/$defs/BookingQuestionEventV1" },
+        { "$ref": "#/$defs/BookingOperationEventV1" },
+        { "$ref": "#/$defs/BookingExplanationEventV1" },
+        { "$ref": "#/$defs/BookingTerminalEventV1" },
+        { "$ref": "#/$defs/BookingErrorEventV1" }
+      ]
+    }
+  }
+}
