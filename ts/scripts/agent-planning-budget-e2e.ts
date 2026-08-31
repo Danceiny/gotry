@@ -166,7 +166,11 @@ async function main(): Promise<void> {
   }
 
   assert.equal(exitCode, 0, `headless exit=${exitCode}; output tail=${output.slice(-1200)}`)
-  assert.equal(relay.plannerBodies.length, 18, `expected 18 tool-enabled planner requests, got ${relay.plannerBodies.length}`)
+  assert.equal(
+    relay.plannerBodies.length,
+    18,
+    `expected 18 tool-enabled planner requests, got ${relay.plannerBodies.length}; output tail=${output.slice(-12_000)}`,
+  )
 
   // Every request carries the full conversation history. Inspect the last
   // request so each dispatched tool result is counted exactly once.
