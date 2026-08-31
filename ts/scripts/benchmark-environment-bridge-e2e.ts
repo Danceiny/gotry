@@ -76,6 +76,7 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
   if (mode === 'unsafe-config') chmodSync(configPath, 0o666)
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    DSH_TOOLS_MODE: 'both',
     DSH_HOME: dsh,
     LLM_API_KEY: 'synthetic-bridge-key',
     LLM_BASE_URL: `http://127.0.0.1:${port}/v1`,
@@ -116,6 +117,12 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
   assert.ok(
     enabled.requests.some(r => names(r).includes(TOOL)),
     `${target} opt-in planner request must expose benchmark tool; schemas=${JSON.stringify(enabled.requests.map(names))}; output=${enabled.output.slice(-4_000)}`,
+  )
+  const enabledToolNames = [...new Set(enabled.requests.flatMap(names))].sort()
+  assert.deepEqual(
+    enabledToolNames,
+    [TOOL],
+    `${target} enabled runtime must expose exactly the benchmark tool; observed tool names=${JSON.stringify(enabledToolNames)}`,
   )
   assert.ok(enabled.requests.some(toolResultPresent), `${target} marker must enter model history as tool result`)
   const leakedReport = enabled.requests.map(r => JSON.stringify(r).match(/\\?"leaked\\?":\[(.*?)\]/)?.[1]).filter(Boolean).join('|')

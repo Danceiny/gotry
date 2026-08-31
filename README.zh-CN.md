@@ -179,7 +179,7 @@ GoTry: 收到。先把约束记下来——
 - ⏳ **M3 Exit 未关闭** —— 工程与分发面就绪,但"真实种子用户"证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
 - ⏳ **携程酒店 / 美团的登录态会话适配** —— 机票已通,酒店面等登录态实测回填(下一个 tick)
 - ⏳ **界面语言** —— 英文界面仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
-- ⏳ **外部 benchmark 泛化 / Phase 1 bridge** —— Round 1 treatment-attested installed GoTry 已实际进入冻结 ChinaTravel case：exact DeepSeek 为 environment unavailable/schema-invalid（score 0），GLM run 为 300 秒超时。Round 2 default-off owner-local bridge 已通过 unit 与 source/installed-package synthetic E2E；config 要求固定 executable/cwd/argv allowlist、timeout/output 上限，写入禁止/网络拒绝必须由 owner/host 实际 enforce，并可用 `allowed_output_keys` 按工具强制正向 visible-output 键合同。冻结 ChinaTravel treatment 仍待运行，不宣称分数提升或外部 benchmark closure。详见 [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)。
+- ⏳ **外部 benchmark 泛化 / Phase 1 bridge** —— Round 1 treatment-attested installed GoTry 已实际进入冻结 ChinaTravel case：exact DeepSeek 为 environment unavailable/schema-invalid（score 0），GLM run 为 300 秒超时。Round 2 default-off owner-local bridge 已通过 unit 与 source/installed-package synthetic E2E；config 要求固定 executable/cwd/argv allowlist、timeout/output 上限，写入禁止/网络拒绝必须由 owner/host 实际 enforce，并可用 `allowed_output_keys` 按工具强制正向 visible-output 键合同。opt-in 仅允许 cold-start：benchmark agent 被强制为 native 且只能解析原始 bridge definition，最终 assembly 或 downstream pre-step 的 surface 漂移均 fail-closed。agent disposal 释放 scoped effect；若插件先卸载，live agent 保持 fail-closed quarantine 到 agent/process disposal，HMR 不热挂。冻结 ChinaTravel treatment 仍待运行，不宣称分数提升或外部 benchmark closure。详见 [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)。
 
 <details>
 <summary>📖 更深的工程状态(账本合同 / 证据合同 / 里程碑口径)</summary>

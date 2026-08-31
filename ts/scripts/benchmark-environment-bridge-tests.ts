@@ -2,11 +2,14 @@ import assert from 'node:assert/strict'
 import { chmodSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import { apply, type Config } from '../src/index.ts'
+import { installBenchmarkToolIsolation } from '../src/benchmark-tool-isolation.ts'
 
 type RegisteredTool = {
   name: string
+  description?: string
+  parameters?: unknown
   execute?: (args: unknown, exec: unknown) => Promise<unknown>
 }
 
@@ -54,6 +57,62 @@ function fakeHandle(outcome: FakeOutcome) {
   }
 }
 
+async function assertRealCordisWaterfallOrdering(): Promise<void> {
+  const ctx = new Context()
+  const bridge = {
+    name: 'gotry_benchmark_environment',
+    description: 'benchmark bridge',
+    parameters: { query: { type: 'json', required: true } },
+  }
+  const exactSchema = structuredClone(bridge)
+  let addPreStepTool = false
+  const rootTools = {
+    get(name: string) { return name === bridge.name ? bridge : undefined },
+    schemas(agent?: unknown) {
+      return agent && addPreStepTool ? [exactSchema, { name: 'non_bridge' }] : [exactSchema]
+    },
+  }
+  ctx.provide('tools', rootTools)
+  ctx.provide('agents', { list: () => [] })
+  const bus = ctx as unknown as {
+    on: (event: string, listener: (...args: any[]) => unknown, options?: { prepend?: boolean }) => unknown
+    emit: (event: string, payload: unknown) => void
+    waterfall: (event: string, ...args: any[]) => Promise<unknown>
+  }
+  bus.on('system-prompt/assemble', async (_assembly, _context, next: () => Promise<{ tools: unknown[] }>) => {
+    const result = await next()
+    return { ...result, tools: [...result.tools, { name: 'non_bridge' }] }
+  })
+  bus.on('agent/pre-step', async (_payload, next: () => Promise<unknown>) => {
+    const result = await next()
+    addPreStepTool = true
+    return result
+  })
+  installBenchmarkToolIsolation(ctx)
+
+  const scopedEffect = (action: () => unknown, label?: string) => ctx.effect(action as never, label)
+  const scopedTools = {
+    guard: () => ctx.effect(() => () => undefined),
+    presentAs: () => ctx.effect(() => () => undefined),
+    restrict: () => ctx.effect(() => () => undefined),
+  }
+  const agent = { ctx: { tools: scopedTools, effect: scopedEffect, on: bus.on } }
+  bus.emit('agent/created', { agent })
+  await assert.rejects(
+    bus.waterfall('system-prompt/assemble', { tools: [] }, { agent, scope: agent }, async () => ({ tools: [exactSchema] })),
+    /BENCHMARK_TOOL_SURFACE_VIOLATION/,
+    'prepend assembly guard observes an earlier listener post-next mutation',
+  )
+  await assert.rejects(
+    bus.waterfall('agent/pre-step', { agent }, async () => ({ kind: 'enter' })),
+    /BENCHMARK_TOOL_SURFACE_VIOLATION/,
+    'prepend pre-step guard observes an earlier listener post-next scope mutation',
+  )
+  await ctx.fiber.dispose()
+}
+
+await assertRealCordisWaterfallOrdering()
+
 const root = mkdtempSync(join(tmpdir(), 'gotry-benchmark-bridge-test-'))
 const ambientSentinelNames = [
   'GOTRY_BENCHMARK_BRIDGE_PARENT_SENTINEL',
@@ -83,7 +142,37 @@ try {
   }))
 
   const registered: RegisteredTool[] = []
+  let visibleBridge: RegisteredTool | undefined
+  let shadowedAgent: unknown
+  const scopedExtraSchemas = new Map<unknown, unknown[]>()
   const spawnSpecs: SpawnSpec[] = []
+  type ScopedAgentTools = {
+    restrict?: (filter: { allow: string[] }) => unknown
+    guard?: (check: (execution: { name: string; args?: unknown }) => string | undefined) => unknown
+    presentAs?: (mode: 'native') => unknown
+  }
+  type AgentCreated = { agent: { ctx: { tools?: ScopedAgentTools; effect?: (action: () => unknown) => unknown; on?: (event: string, listener: (...args: any[]) => unknown, options?: unknown) => unknown } } }
+  const agentCreatedListeners: Array<(event: AgentCreated) => void> = []
+  const eventNames: string[] = []
+  const assemblyListeners: Array<(...args: any[]) => unknown> = []
+  const preStepListeners: Array<(...args: any[]) => unknown> = []
+  const disposedListeners: Array<(...args: any[]) => unknown> = []
+  const eventOptions = new Map<string, unknown>()
+  const runEffect = (action: () => unknown): (() => Promise<void>) => {
+    const yielded: Array<() => unknown> = []
+    const value = action()
+    if (value && typeof (value as { next?: unknown }).next === 'function') {
+      let step = (value as Generator<unknown>).next()
+      while (!step.done) { if (typeof step.value === 'function') yielded.push(step.value as () => unknown); step = (value as Generator<unknown>).next() }
+    }
+    let active = true
+    return async () => {
+      if (!active) return
+      active = false
+      for (const dispose of yielded.reverse()) await dispose()
+    }
+  }
+  let disposeRootIsolation: (() => Promise<void>) | undefined
   let timeoutSignal: AbortSignal | undefined
   const outcomes: FakeOutcome[] = [{ stdout: '{"result":[{"city":"Dubai"}]}' }]
   process.env.GOTRY_BENCHMARK_BRIDGE_PARENT_SENTINEL = 'must-not-cross-boundary'
@@ -97,9 +186,33 @@ try {
         registered.push(tool)
         return () => {}
       },
+      get(name: string, agent?: unknown) { return name === 'gotry_benchmark_environment' ? (agent !== undefined && agent === shadowedAgent ? { name } : registered.find(tool => tool.name === name)) : undefined },
+      schemas(agent?: unknown) {
+        const project = (tool: RegisteredTool) => ({ name: tool.name, description: tool.description, parameters: structuredClone(tool.parameters) })
+        const schemas = registered.map(project)
+        if (agent === undefined) return schemas
+        return [...schemas.filter(schema => schema.name === 'gotry_benchmark_environment'), ...(scopedExtraSchemas.get(agent) ?? [])]
+      },
     },
     systemPrompt: { variable() {} },
-    get(name: string) { return name === 'subprocess' ? (this as unknown as { subprocess: unknown }).subprocess : undefined },
+    on(event: string, listener: (event: AgentCreated) => void, options?: unknown) {
+      eventNames.push(event)
+      eventOptions.set(event, options)
+      if (event === 'agent/created') agentCreatedListeners.push(listener)
+      if (event === 'agent/disposed') disposedListeners.push(listener)
+      if (event === 'system-prompt/assemble') assemblyListeners.push(listener)
+      if (event === 'agent/pre-step') preStepListeners.push(listener)
+      return () => {}
+    },
+    effect(action: () => unknown, label?: string) {
+      const dispose = runEffect(action)
+      if (label === 'benchmark-environment-tool-isolation') disposeRootIsolation = dispose
+      return dispose
+    },
+    get(name: string) {
+      if (name === 'subprocess') return (this as unknown as { subprocess: unknown }).subprocess
+      if (name === 'agents') return (this as unknown as { agents: unknown }).agents
+    },
     subprocess: {
       spawn(spec: SpawnSpec) {
         spawnSpecs.push(spec)
@@ -114,7 +227,21 @@ try {
         return fakeHandle(outcome)
       },
     },
+    agents: { list() { return [] } },
   } as unknown as Context
+
+  const coldStartListeners: string[] = []
+  const coldStartRoot = { name: 'gotry_benchmark_environment' }
+  assert.throws(
+    () => installBenchmarkToolIsolation({
+      tools: { get(name: string) { return name === 'gotry_benchmark_environment' ? coldStartRoot : undefined }, schemas() { return [{ name: 'gotry_benchmark_environment' }] } },
+      agents: { list() { return [{ id: 'already-live' }] } },
+      on(event: string) { coldStartListeners.push(event); return () => {} },
+    } as unknown as Context),
+    /cold-start|live-agent/i,
+    'installing benchmark isolation with an existing agent fails hard',
+  )
+  assert.deepEqual(coldStartListeners, [], 'cold-start rejection does not register an isolation listener')
 
   apply(ctx, {
     stateRoot: root,
@@ -128,6 +255,130 @@ try {
     registered.some(tool => tool.name === 'gotry_benchmark_environment'),
     'an explicit valid owner-local config registers the benchmark environment bridge',
   )
+  visibleBridge = registered.find(tool => tool.name === 'gotry_benchmark_environment')!
+
+  const restrictions: Array<{ allow: string[] }> = []
+  const guards: Array<(execution: { name: string; args?: unknown }) => string | undefined> = []
+  const presentations: string[] = []
+  const cleanupCounts = { restrict: 0, guard: 0, presentAs: 0, assembly: 0 }
+  const firstScopedAssemblyListeners: Array<(...args: any[]) => unknown> = []
+  const scopedTools: ScopedAgentTools = {
+    restrict(filter) { restrictions.push(filter); return () => { cleanupCounts.restrict += 1 } },
+    guard(check) { guards.push(check); return () => { cleanupCounts.guard += 1 } },
+    presentAs(mode) { presentations.push(mode); return () => { cleanupCounts.presentAs += 1 } },
+  }
+  assert.equal(agentCreatedListeners.length, 1, 'opt-in bridge installs an agent/created isolation listener')
+  const isolatedAgent = { ctx: {
+    tools: scopedTools,
+    effect: (action: () => unknown) => runEffect(action),
+    on: (event: string, listener: (...args: any[]) => unknown, options?: unknown) => {
+      assert.equal(event, 'system-prompt/assemble')
+      assert.deepEqual(options, { prepend: true })
+      firstScopedAssemblyListeners.push(listener)
+      return () => { cleanupCounts.assembly += 1 }
+    },
+  } }
+  for (const listener of agentCreatedListeners) listener({ agent: isolatedAgent })
+  assert.deepEqual(restrictions, [{ allow: ['gotry_benchmark_environment'] }], 'agent scope allows only the bridge tool')
+  assert.deepEqual(presentations, ['native'], 'agent scope forces native tool presentation')
+  assert.ok(eventNames.includes('agent/pre-step'), 'isolation observes pre-step before each request')
+  assert.deepEqual(eventOptions.get('agent/pre-step'), { prepend: true }, 'pre-step isolation wraps every previously registered listener')
+  assert.ok(eventNames.includes('agent/disposed'), 'isolation cleans up on agent disposal')
+  assert.ok(assemblyListeners.length > 0, 'isolation validates final assembled tool surface')
+  assert.equal(firstScopedAssemblyListeners.length, 1, 'agent owns a scoped assembly quarantine listener')
+  assert.deepEqual(eventOptions.get('system-prompt/assemble'), { prepend: true }, 'assembly isolation wraps every previously registered listener')
+  assert.equal(disposedListeners.length, 1, 'isolation owns one agent/disposed listener')
+  assert.ok(disposeRootIsolation, 'root isolation effect exposes plugin-lifecycle cleanup')
+  const exactSchema = {
+    name: visibleBridge.name,
+    description: visibleBridge.description,
+    parameters: structuredClone(visibleBridge.parameters),
+  }
+  const assemble = assemblyListeners[0]!
+  const nextExact = async () => ({ tools: [exactSchema] })
+  assert.deepEqual(await assemble({ tools: [] }, { agent: isolatedAgent, scope: isolatedAgent }, nextExact), { tools: [exactSchema] }, 'legal final assembly passes unchanged')
+  await assert.rejects(async () => await assemble({ tools: [] }, { agent: isolatedAgent, scope: isolatedAgent }, async () => ({ tools: [exactSchema, { name: 'own_side_effect' }] })), /BENCHMARK_TOOL_SURFACE_VIOLATION/)
+  await assert.rejects(async () => await assemble({ tools: [] }, { agent: isolatedAgent, scope: isolatedAgent }, async () => ({ tools: [{ ...exactSchema, description: `${exactSchema.description ?? ''} tampered` }] })), /BENCHMARK_TOOL_SURFACE_VIOLATION/, 'final assembly rejects same-name schema mutation')
+  const diagnosticAssembly = { tools: [{ name: 'diagnostic_tool' }] }
+  assert.equal(await assemble({ tools: [] }, { scope: { id: 'diagnostic-scope' } }, async () => diagnosticAssembly), diagnosticAssembly, 'non-agent diagnostic assembly passes through')
+  await assert.rejects(async () => await assemble({ tools: [] }, { agent: isolatedAgent, scope: { id: 'wrong-scope' } }, nextExact), /BENCHMARK_TOOL_SURFACE_VIOLATION/, 'agent assembly requires the same agent and scope')
+  const preStep = preStepListeners[0]!
+  assert.deepEqual(await preStep({ agent: isolatedAgent }, async () => ({ decision: 'continue' })), { decision: 'continue' }, 'legal pre-step decision passes unchanged')
+  scopedExtraSchemas.set(isolatedAgent, [{ name: 'own_side_effect' }])
+  await assert.rejects(async () => await preStep({ agent: isolatedAgent }, async () => ({ decision: 'continue' })), /BENCHMARK_TOOL_SURFACE_VIOLATION/, 'downstream pre-step scope expansion fails closed')
+  scopedExtraSchemas.delete(isolatedAgent)
+  shadowedAgent = isolatedAgent
+  await assert.rejects(async () => await assemble({ tools: [] }, { agent: isolatedAgent, scope: isolatedAgent }, nextExact), /BENCHMARK_TOOL_SURFACE_VIOLATION/, 'same-name scoped shadow fails final assembly identity check')
+  shadowedAgent = undefined
+  assert.equal(guards.length, 1, 'agent scope installs a monotonic guard')
+  const guard = guards[0]!
+  const originalAgent = { ctx: { tools: { get: (name: string) => name === 'gotry_benchmark_environment' ? visibleBridge : undefined } } }
+  const shadowAgent = { ctx: { tools: { get: (name: string) => name === 'gotry_benchmark_environment' ? { name } : undefined } } }
+  shadowedAgent = shadowAgent
+  assert.equal(guard({ name: 'gotry_benchmark_environment', args: {}, agent: originalAgent } as never), undefined, 'original bridge definition is allowed')
+  assert.equal(guard({ name: 'gotry_benchmark_environment', args: {}, agent: shadowAgent } as never), 'BENCHMARK_TOOL_NOT_ALLOWED', 'same-name shadow definition is denied')
+  assert.equal(guard({ name: 'gotry_benchmark_environment', args: { path: '/private/secret' }, agent: isolatedAgent } as never), undefined, 'bridge tool is allowed')
+  const denied = guard({ name: 'other_tool', args: { path: '/private/secret', token: 'secret' } })
+  assert.equal(denied, 'BENCHMARK_TOOL_NOT_ALLOWED', 'non-bridge tools are denied without argument/path echo')
+  assert.equal(denied?.includes('/private/secret'), false)
+  assert.equal(denied?.includes('secret'), false)
+  assert.equal(guard({ name: 'other_tool', args: { different: true } }), denied, 'denial reason is stable')
+  assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: { restrict(filter) { void filter }, guard(check) { void check } } } } }), /presentAs/, 'missing scoped presentAs fails hard')
+  assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: scopedTools } } }), /effect/, 'missing scoped effect fails hard')
+  assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: scopedTools, effect: (action: () => unknown) => runEffect(action) } } }), /event bus/, 'missing scoped event bus fails hard')
+  assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: { guard: guards[0] } } } }), /restrict/, 'missing scoped restrict fails hard')
+  assert.throws(() => agentCreatedListeners[0]!({ agent: { ctx: { tools: { restrict(filter) { void filter } } } } }), /guard/, 'missing scoped guard fails hard')
+  assert.throws(() => installBenchmarkToolIsolation({
+    tools: { get(name: string) { return name === 'gotry_benchmark_environment' ? { name: 'gotry_benchmark_environment' } : undefined }, schemas() { return [{ name: 'gotry_benchmark_environment' }] } },
+    agents: { list() { return [] } },
+    on() { return () => {} },
+  } as unknown as Context), /effect/, 'missing ctx.effect fails hard')
+
+  await disposedListeners[0]!({ agent: isolatedAgent })
+  assert.deepEqual(cleanupCounts, { restrict: 1, guard: 1, presentAs: 1, assembly: 1 }, 'agent disposal releases every scoped isolation effect exactly once')
+
+  const secondCleanup = { restrict: 0, guard: 0, presentAs: 0, assembly: 0 }
+  const secondGuards: Array<(execution: { name: string; agent?: unknown }) => string | undefined> = []
+  const secondScopedAssemblyListeners: Array<(...args: any[]) => unknown> = []
+  const secondTools: ScopedAgentTools = {
+    restrict() { return () => { secondCleanup.restrict += 1 } },
+    guard(check) { secondGuards.push(check); return () => { secondCleanup.guard += 1 } },
+    presentAs() { return () => { secondCleanup.presentAs += 1 } },
+  }
+  let disposeSecondAgentEffect: (() => Promise<void>) | undefined
+  const secondAgent = { ctx: {
+    tools: secondTools,
+    effect: (action: () => unknown) => {
+      const dispose = runEffect(action)
+      disposeSecondAgentEffect = dispose
+      return dispose
+    },
+    on: (_event: string, listener: (...args: any[]) => unknown) => {
+      secondScopedAssemblyListeners.push(listener)
+      return () => { secondCleanup.assembly += 1 }
+    },
+  } }
+  for (const listener of agentCreatedListeners) listener({ agent: secondAgent })
+  let inFlightNextCalls = 0
+  await assert.rejects(async () => await secondScopedAssemblyListeners[0]!({}, { agent: secondAgent, scope: secondAgent }, async () => {
+    inFlightNextCalls += 1
+    await disposeRootIsolation!()
+    return { tools: [exactSchema] }
+  }), /BENCHMARK_TOOL_SURFACE_VIOLATION/, 'plugin unload during assembly fails closed before returning a model-visible result')
+  assert.equal(inFlightNextCalls, 1, 'in-flight quarantine test reaches the controlled unload point')
+  assert.deepEqual(secondCleanup, { restrict: 0, guard: 0, presentAs: 0, assembly: 0 }, 'plugin unload keeps a live agent quarantined')
+  let quarantineNextCalls = 0
+  await assert.rejects(async () => await secondScopedAssemblyListeners[0]!({}, { agent: secondAgent, scope: secondAgent }, async () => {
+    quarantineNextCalls += 1
+    return { tools: [exactSchema] }
+  }), /BENCHMARK_TOOL_SURFACE_VIOLATION/, 'plugin-unloaded live agent rejects assembly before model request')
+  assert.equal(quarantineNextCalls, 0, 'quarantine does not enter the remaining assembly chain')
+  assert.equal(secondGuards[0]!({ name: 'other_tool', agent: secondAgent }), 'BENCHMARK_TOOL_NOT_ALLOWED', 'quarantined agent still denies non-bridge dispatch after plugin unload')
+  assert.equal(secondGuards[0]!({ name: 'gotry_benchmark_environment', agent: secondAgent }), 'BENCHMARK_TOOL_NOT_ALLOWED', 'quarantined agent also denies bridge dispatch after plugin unload')
+  assert.deepEqual(cleanupCounts, { restrict: 1, guard: 1, presentAs: 1, assembly: 1 }, 'plugin unload does not double-dispose an already removed agent')
+  assert.throws(() => agentCreatedListeners[0]!({ agent: secondAgent }), /BENCHMARK_TOOL_SURFACE_VIOLATION/, 'agent creation during plugin stop fails closed')
+  await disposeSecondAgentEffect!()
+  assert.deepEqual(secondCleanup, { restrict: 1, guard: 1, presentAs: 1, assembly: 1 }, 'agent disposal releases its quarantined scoped effects')
 
   const bridge = registered.find(tool => tool.name === 'gotry_benchmark_environment')!
   assert.ok(bridge.execute, 'registered bridge exposes execute')
@@ -272,9 +523,15 @@ try {
     writeFileSync(path, JSON.stringify(config))
     const tools: RegisteredTool[] = []
     const freshCtx = {
-      tools: { register(tool: RegisteredTool) { tools.push(tool); return () => {} } },
+      tools: { register(tool: RegisteredTool) { tools.push(tool); return () => {} }, get(name: string) { return tools.find(tool => tool.name === name) }, schemas() { return tools.map(tool => ({ name: tool.name })) } },
       systemPrompt: { variable() {} },
-      get(name: string) { return name === 'subprocess' ? (this as unknown as { subprocess: unknown }).subprocess : undefined },
+      on() { return () => {} },
+      effect(action: () => unknown) { return action() },
+      agents: { list() { return [] } },
+      get(name: string) {
+        if (name === 'subprocess') return (this as unknown as { subprocess: unknown }).subprocess
+        if (name === 'agents') return (this as unknown as { agents: unknown }).agents
+      },
       ...(withSubprocess ? { subprocess: { spawn: (_spec: SpawnSpec) => fakeHandle({ stdout: '{"result":{}}' }) } } : {}),
     } as unknown as Context
     apply(freshCtx, {
@@ -310,9 +567,15 @@ try {
   writeFileSync(legacyConfigPath, JSON.stringify(validConfig))
   const legacyTools: RegisteredTool[] = []
   const legacyCtx = {
-    tools: { register(tool: RegisteredTool) { legacyTools.push(tool); return () => {} } },
+    tools: { register(tool: RegisteredTool) { legacyTools.push(tool); return () => {} }, get(name: string) { return legacyTools.find(tool => tool.name === name) }, schemas() { return legacyTools.map(tool => ({ name: tool.name })) } },
     systemPrompt: { variable() {} },
-    get(name: string) { return name === 'subprocess' ? (this as unknown as { subprocess: unknown }).subprocess : undefined },
+    on() { return () => {} },
+    effect(_action: () => unknown) { return () => {} },
+    agents: { list() { return [] } },
+    get(name: string) {
+      if (name === 'subprocess') return (this as unknown as { subprocess: unknown }).subprocess
+      if (name === 'agents') return (this as unknown as { agents: unknown }).agents
+    },
     subprocess: { spawn: (_spec: SpawnSpec) => fakeHandle({ stdout: '{"result":{"city":"Dubai"}}' }) },
   } as unknown as Context
   apply(legacyCtx, {
@@ -341,9 +604,15 @@ try {
 function loadConfigRegistration(path: string, stateRoot: string): boolean {
   const tools: RegisteredTool[] = []
   const freshCtx = {
-    tools: { register(tool: RegisteredTool) { tools.push(tool); return () => {} } },
+    tools: { register(tool: RegisteredTool) { tools.push(tool); return () => {} }, get(name: string) { return tools.find(tool => tool.name === name) }, schemas() { return tools.map(tool => ({ name: tool.name })) } },
     systemPrompt: { variable() {} },
-    get(name: string) { return name === 'subprocess' ? (this as unknown as { subprocess: unknown }).subprocess : undefined },
+    agents: { list() { return [] } },
+    on() { return () => {} },
+    effect(_action: () => unknown) { return () => {} },
+    get(name: string) {
+      if (name === 'subprocess') return (this as unknown as { subprocess: unknown }).subprocess
+      if (name === 'agents') return (this as unknown as { agents: unknown }).agents
+    },
     subprocess: { spawn: (_spec: SpawnSpec) => fakeHandle({ stdout: '{"result":{}}' }) },
   } as unknown as Context
   apply(freshCtx, {

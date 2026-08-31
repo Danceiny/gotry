@@ -17,6 +17,27 @@ Once the variable is set, an invalid schema or unavailable active subprocess
 provider fails hard before any model request; explicit opt-in never falls back
 to an ordinary GoTry run without the bridge.
 
+## Cold-start tool-surface isolation
+
+Opt-in is a process-start boundary. Installation fails if an agent is already
+live; it is never hot-attached to an existing session. Every later benchmark
+agent is forced to native tool presentation and restricted to the exact global
+`gotry_benchmark_environment` definition captured after bridge registration.
+Matching the name alone is insufficient: an agent-scoped same-name shadow is
+denied at dispatch.
+
+The final authoritative `system-prompt/assemble` result must contain exactly
+the captured bridge schema. After all downstream `agent/pre-step` listeners
+return, the registry schema and definition identity are checked again. An
+extra scoped tool, schema mutation, same-name shadow, or retained PTC
+`run_code` transport therefore fails before the model request. Per-agent
+guard/presentation/restriction effects are installed atomically and partial
+installation rolls back. Agent disposal releases them. If the plugin unloads
+first, a live agent keeps an agent-owned assembly blocker plus its scoped
+guard/restriction as a fail-closed quarantine: no later model request enters
+the remaining assembly chain, and bridge/non-bridge dispatch is denied until
+that agent or process is disposed. HMR cannot hot-attach to the old agent.
+
 Example (placeholder paths only):
 
 ```json
@@ -94,7 +115,11 @@ exercises the source checkout. When `GOTRY_BRIDGE_E2E_BIN` is set, it instead
 exercises that clean installed-package CLI; CI uses this route because the
 historical root npm lock is not the publish consumer dependency closure. It
 verifies default-off behavior, environment isolation, private config
-rejection, real output truncation, and a real deadline. It is not ChinaTravel
+rejection, real output truncation, a real deadline, global `both` mode being
+overridden to one native bridge schema, and source/installed requests exposing
+no other model tool. Unit contracts additionally cover live-agent rejection,
+same-name identity shadows, final-assembly/pre-step schema drift, agent
+cleanup without double disposal, and plugin-unload quarantine. It is not ChinaTravel
 treatment evidence. Round 1's exact DeepSeek frozen case produced an
 environment-unavailable, schema-invalid result (score 0); the separate GLM run
 hit the 300 s planner timeout. Round 2's synthetic checks are evidence for the
