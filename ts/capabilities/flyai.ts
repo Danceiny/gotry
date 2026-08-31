@@ -15,6 +15,9 @@
  */
 
 import { spawn } from 'node:child_process'
+import { closeSync, openSync, readFileSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 export type FlyaiKind = 'flight' | 'train' | 'hotel'
 
@@ -175,20 +178,30 @@ export function parseFlyaiItemList(stdout: string): unknown[] {
 }
 
 
+/**
+ * 子进程 stdout 走临时文件而非管道(issue #84):
+ * flyai CLI 异步写 stdout 后立即 process.exit();stdout 是管道时未 flush 的
+ * 尾部会被丢掉(实测截断在 ~7.6KB,exit=0 静默)。stdout 是文件时 Node 同步写,
+ * exit 不丢数据;且文件无 64KB 管道缓冲上限。close 后读文件,语义不变。
+ */
 function sh(cmd: string, args: string[], opts: { timeoutMs: number }) {
-  const child = spawn(cmd, args, { env: process.env, cwd: process.cwd() })
-  let stdout = ''
+  const outFile = join(tmpdir(), `gotry-flyai-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.out`)
+  const outFd = openSync(outFile, 'w')
+  const child = spawn(cmd, args, { env: process.env, cwd: process.cwd(), stdio: ['ignore', outFd, 'pipe'] })
   let stderr = ''
   let error: string | undefined
   const timer = setTimeout(() => {
     try { child.kill('SIGKILL') } catch { /* ignore */ }
   }, opts.timeoutMs)
   return new Promise<{ code: number; stdout: string; stderr: string; error?: string; timedOut?: boolean }>((resolve) => {
-    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
     child.on('error', (e) => { error = (e as Error).message.slice(0, 200) })
     child.on('close', (code) => {
       clearTimeout(timer)
+      closeSync(outFd)
+      let stdout = ''
+      try { stdout = readFileSync(outFile, 'utf8') } catch { /* 子进程未启动时文件可能为空,按空 stdout 处理 */ }
+      try { unlinkSync(outFile) } catch { /* ignore */ }
       resolve({ code: code ?? -1, stdout, stderr, error })
     })
   }).finally(() => clearTimeout(timer))
