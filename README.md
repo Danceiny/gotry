@@ -172,6 +172,8 @@ Engine verdict:
 
 ## ⚠️ Status & limitations
 
+Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
+
 **Working today** (full-stack regression §1–§34 green; every item has deterministic tests):
 
 - **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed (§30 regression gate)
@@ -211,11 +213,16 @@ The authoritative state lives in the docs, not this README: transactional state 
 
 ```bash
 ./scripts/run-all-tests.sh
+# Evaluation Phase 0 diagnostic contracts and deterministic cadence planner
+# (offline; no adapter/scheduler/runner/spend/score/Python)
+cd ts
+npx tsx scripts/evaluation-contract-tests.ts
+npx tsx scripts/evaluation-cadence-tests.ts
 ```
 
 One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30)
 - · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39)
-- · extension distribution channel (§43) · sf-live static-golden offline contracts (§44) · agent tool-budget Cordis integration + dsh headless E2E (§45)**. The live runner remains `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static` and requires the user's connected Chrome session.
+- · extension distribution channel (§43) · sf-live static-golden offline contracts (§44) · evaluation foundation and cadence policy (§45–§46) · agent tool-budget Cordis integration + dsh headless E2E (§47)**. The live runner remains `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static` and requires the user's connected Chrome session.
 
 ---
 

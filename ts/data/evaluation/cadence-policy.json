@@ -1,0 +1,15 @@
+{
+  "schema": "gotry_evaluation_cadence_policy_v1",
+  "levels": [
+    { "cadence": "pr", "pass_k": 1, "max_cost_usd": 0, "max_wall_minutes": 20, "max_tool_calls_per_case": 18, "human_calibration": { "required": false, "min_samples": 0 } },
+    { "cadence": "nightly", "pass_k": 2, "max_cost_usd": 2, "max_wall_minutes": 90, "max_tool_calls_per_case": 18, "human_calibration": { "required": false, "min_samples": 0 } },
+    { "cadence": "weekly", "pass_k": 3, "max_cost_usd": 10, "max_wall_minutes": 360, "max_tool_calls_per_case": 18, "human_calibration": { "required": true, "min_samples": 10 } },
+    { "cadence": "milestone", "pass_k": 5, "max_cost_usd": 50, "max_wall_minutes": 1440, "max_tool_calls_per_case": 18, "human_calibration": { "required": true, "min_samples": 30 } }
+  ],
+  "cross_benchmark_window": { "min_prs": 3, "max_prs": 5 },
+  "performance_tradeoff_disclosure_threshold": 0.2,
+  "round_delivery": { "exactly_one_gotry_pr": true, "exactly_one_discussion_78_comment": true, "update_existing_comment": true },
+  "stop_signals": ["source_revision_drift", "license_unresolved", "scorer_ceiling_invalid", "known_bad_no_longer_fails", "hard_violation", "matched_regression", "variance_breach", "budget_breach"],
+  "failure_registry_signals": ["hard_violation", "matched_regression", "variance_breach", "budget_breach"],
+  "public_safety": { "artifact_classification": "public_safe", "contains_third_party_prompt": false, "contains_gold": false, "contains_oracle": false, "contains_private_data": false }
+}

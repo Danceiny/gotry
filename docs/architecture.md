@@ -16,7 +16,6 @@
 ---
 
 ## 1. 系统是什么
-## 1. 系统是什么
 
 > 本节只回答「系统**现在**是什么」。「什么时候发生了什么、为什么改」一律归 §9 演进与
 > `release-notes.md`——本节出现日期叙事即为错位(§11 保鲜纪律第 4 条)。
@@ -83,6 +82,8 @@ M3 最小可用产品,分发链路无已知堵点。
 M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20 scorer 已落地而真实 `observed_private` N≥5 仍缺——**这些 M4 切片不构成 M3 Exit 证明**。M5/M6 仅在各自 Entry gate 满足后启动。
 
 证据面现状:`ts/scripts/product-metrics.ts`(M3 cohort)与 `ts/scripts/memory-value-report.ts`(M4 价值)固化了样本窗/纳排/分母/归因与阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;synthetic fixture **永不产生 business pass**。真实证据只进入被忽略的 `ts/gotry-state/evidence/`。
+
+Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
 
 ## 2. 总体架构:五层与现状
 
@@ -284,6 +285,7 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
 - **当前主线 = M3 evidence 未收口；并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪，真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进；T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明，真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动，不得由并行实现倒推开闸。
+
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面；业务达标只接受阈值冻结的 `real_seed_cohort`，fixture 恒 fail。真实 cohort 仍为空，等待 50–200 个脱敏样本，不宣称 M3 Exit。
 - **Evaluation → Agent 优化 Round 1(Discussion #78,ChinaTravel canary 反馈)**:冻结 grounding-v3 canary 的首例终态通过,第二例暴露 planner 在重复工具调用中超过 300s；因此不生成 5-query 聚合。GoTry 侧把收敛边界下沉到 `tools/execute`:16 次软提示、18 次 body 上限、同一步第 19 次起结构化拒绝,并在 `step/end` 让下一步 native request text-only。run-all §45 同时覆盖 Cordis integration/并行/生命周期与真实 `bin/gotry-inner.js → dist → dsh headless` 离线 E2E(18 个正常结果、1 个结构化拒绝、下一请求零工具 schema、非空 final)；CI 对当前 SHA 打包并在隔离 pnpm consumer 中安装,由 `GOTRY_BUDGET_E2E_BIN` 重放同一链路。冻结 timeout case 的 exit 0、非空 final、<300s 与恢复 5-query 仍是 D-28 的外部验收,离线 runtime E2E 不替代 benchmark evidence。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
@@ -344,6 +346,8 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
     修复双轨:① bin/gotry-inner.js 把 `LLM_MODEL` 映射为 `GOTRY_LLM_MODEL`,gotry-tools 插件(`capabilities/model-override.ts`)在 `agent/request` 瀑布挂根监听、post-next 覆盖 provider/model(内存态零持久化,进程退即散,不改写用户 ~/.dsh)——必须走这条是因为 dsh settings 分层为 schema 默认 < composition 配置 < 用户层,web UI 选过模型后单靠 composition patch 压不过;瀑布按注册序嵌套(先注册=最外层、post-next 最后生效),插件随 cordis patch 在根组装载先于任何 agent 创建,显式 .env 意图因此压过一切持久层选择;
     覆盖同时清掉继承的 reasoningEffort(与 installModelSelection 同语义,不错配上一模型的推理档);② 运行时 cordis patch 追加两条 by-id 覆盖(`agent-default-model` 默认模型 + `llm-deepseek` 目录单条目替换——显式指定模型多为中转场景,默认 v4-* 目录对其是误导,不硬编码上游 DEFAULT_MODELS 防漂移;cordis patch 语义核验:applyEntryPatches 对 by-id 浅层键赋值、config 整体替换,未知 id 仅 warn+skip 优雅退化)。默认路径保护:`LLM_MODEL` 不设时两轨均不动作,.env.example 默认行注释化,dsh 内置默认/用户 web 选择面不变。
   - E2E:`ts/scripts/model-override-e2e.ts` mock 中转四场景(指定模型→请求体 model 一致/指定+预置用户层→env 压过/不设→内置默认 deepseek-v4-flash/不设+用户层→用户选择保留;②④ 同一 settings 文件仅差 env,对照证明覆盖因果),隔离 DSH_HOME、强制 npm 发布形态(dist 构建+临时移开 vendored 运行时),全绿;smoke §17 单元回归(未设零监听/无事件总线不抛/覆盖语义)。附查发现一项环境债:vendored 仓内形态 Node 兼容窗口断裂,记 D-27。
+
+Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
@@ -472,6 +476,10 @@ ChinaTravel grounding-v3 的冻结 5-query canary 只完成 1 个可评分终态
 
 **已清偿 2026-08-29(Issue #19)**:`collectDeepPlanning` 产出 `gotry_async_terminal.v1`；collector 仅在 4/4 时写 `succeeded`/ledger `settled`/exit 0，任一未达写 `failed`/ledger `failed`/exit 2；账本保存结构化结果，终态复诵零重算且保持同一退出码。隔离 `stateRoot` 回归见 run-all §28。
 
+| # | 债务 | 状态 / 赎回时机 |
+|---|---|---|
+| D-28 Evaluation Phase 0→Phase 1 adapter admission | Evaluation Phase 0 foundation now includes contracts/registry/validators, unmatched diagnostic fixtures/test-only aggregate admission, and a deterministic cadence policy/planner. The planner has no scheduler, launch, spend, scorer, baseline, or uplift effect. | **open**: every adapter, external runner, baseline, and matched production-evidence path still requires a separate approved plan/PR plus the license/evaluator/source-fence controls in [`evaluation-foundation.md`](evaluation-foundation.md) |
+
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
 **状态面清单**(全仓只有这 6 处记载「当前状态」,其余文档一律状态让渡):① 本文 §1 当前形态;② 本文 §9 演进;③ 本文 §10 债务清单;④ `roadmap.md` 当前位置;⑤ `README.md` 当前形态;⑥ `stage1-top-down-design.md` 状态头。
@@ -498,6 +506,7 @@ ChinaTravel grounding-v3 的冻结 5-query canary 只完成 1 个可评分终态
 | 本文 | 技术:系统/模块/模型/循环/数据概要/ADR/演进/债务 |
 | `gotry-master-outline.md` | 程序:工作分解/复用矩阵/决策门(总纲) |
 | `gotry-product-design.md` | 产品:主循环/透明机制/全成本/共享经验 |
+| [`evaluation-foundation.md`](evaluation-foundation.md) | Evaluation Phase 0 contracts, registry ownership, aggregate admission, and non-uplift boundary |
 | `stage1-top-down-design.md` | Stage 1 详细设计与实现序 |
 | `kimi-postmortem.md` | 反例教材与地面真值提取 |
 | `demo-plan-2026-07-17.md` `demo-reconciliation.md` | demo 交付物与对账 |
