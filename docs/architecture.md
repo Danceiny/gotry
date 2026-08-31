@@ -128,7 +128,7 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/src/model.ts` | 门到门全成本算术(纯函数,单候选形态) | ✅ |
 | `ts/src/engine.ts` `journey.ts` | 旧两套求解面(纯 oracle,金标准对照) | **deprecated** |
 | `ts/src/index.ts` `bridge.ts` | dsh 插件(纯 TS unified 求解 + hbcli 桥 + 进程护栏,延迟计量) | ✅ smoke |
-| `ts/src/tool-budget.ts` | Agent 每轮工具预算:16 次软收敛、18 次硬上限、同一步超额结构化拒绝、下一步 native 工具 schema 抑制 | ✅ run-all §47 |
+| `ts/src/tool-budget.ts` | Agent 每轮工具预算:16 次软收敛、18 次硬上限、同一步超额结构化拒绝、下一步 native 工具 schema 抑制 | ✅ run-all §45 |
 | `py/gotry_feasibility/unified.py` | Python oracle(v0.0.1-rc.2 后**仅历史对照**,不再被产品运行时引用) | 保留 |
 | `py/gotry_demo/` | **已删 2026-08-22**(D-7 尾债:demo 规划书生成器曾调废弃 journey.solve_journey;产物 docs/demo-plan-2026-07-17.md 留 git 历史) | — |
 | `ts/scripts/replay.ts` `replay-async.ts` | **验收夹具**:真实对话重放(13 轮→3 轮)与异步形态 | ✅ |
@@ -290,7 +290,7 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 - **当前主线 = M3 evidence 未收口；并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪，真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进；T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明，真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动，不得由并行实现倒推开闸。
 
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面；业务达标只接受阈值冻结的 `real_seed_cohort`，fixture 恒 fail。真实 cohort 仍为空，等待 50–200 个脱敏样本，不宣称 M3 Exit。
-- **Evaluation → Agent 优化 Round 1(Discussion #78,ChinaTravel canary 反馈)**:冻结 grounding-v3 canary 的首例终态通过,第二例暴露 planner 在重复工具调用中超过 300s；因此不生成 5-query 聚合。GoTry 侧把收敛边界下沉到 `tools/execute`:16 次软提示、18 次 body 上限、同一步第 19 次起结构化拒绝,并在 `step/end` 让下一步 native request text-only。Round 1 treatment-attested installed GoTry 已实际运行，exact DeepSeek 因 environment unavailable/schema-invalid 得 0，GLM 为 300s timeout。run-all §47 同时覆盖 Cordis integration/并行/生命周期与真实 `bin/gotry-inner.js → dist → dsh headless` 离线 E2E(18 个正常结果、1 个结构化拒绝、下一请求零工具 schema、非空 final)；CI 对当前 SHA 打包并在隔离 pnpm consumer 中安装,由 `GOTRY_BUDGET_E2E_BIN` 重放同一链路。frozen ChinaTravel treatment 与 5-query 恢复仍是 D-28 外部验收,离线 runtime E2E 不替代 benchmark evidence。
+- **Evaluation → Agent 优化 Round 1(Discussion #78,ChinaTravel canary 反馈)**:冻结 grounding-v3 canary 的首例终态通过,第二例暴露 planner 在重复工具调用中超过 300s；因此不生成 5-query 聚合。GoTry 侧把收敛边界下沉到 `tools/execute`:16 次软提示、18 次 body 上限、同一步第 19 次起结构化拒绝,并在 `step/end` 让下一步 native request text-only。Round 1 treatment-attested installed GoTry 已实际运行，exact DeepSeek 因 environment unavailable/schema-invalid 得 0，GLM 为 300s timeout。run-all §45 同时覆盖 Cordis integration/并行/生命周期与真实 `bin/gotry-inner.js → dist → dsh headless` 离线 E2E(18 个正常结果、1 个结构化拒绝、下一请求零工具 schema、非空 final)；CI 对当前 SHA 打包并在隔离 pnpm consumer 中安装,由 `GOTRY_BUDGET_E2E_BIN` 重放同一链路。frozen ChinaTravel treatment 与 5-query 恢复仍是 D-28 外部验收,离线 runtime E2E 不替代 benchmark evidence。
 - **Evaluation → Phase 1 environment bridge (Round 2)**:新增 default-off、owner-local config 与 host-enforced isolation contract；产品 seam 执行固定 direct argv/allowlist、最小 runner 环境、参数/输出结构上限、递归 no-oracle 键拒绝与可选 per-tool `allowed_output_keys` 正向键合同，未声明 visible-output 键 fail-closed 且不反射，writes/network 仍由 owner/host OS enforce，synthetic E2E 不证明 OS sandbox。unit + model-driven source/installed-package synthetic E2E 已覆盖注册、allowlist、argv、marker history、环境隔离、正向输出合同、真实 timeout/truncation 与 final text。它只提供显式 benchmark CLI seam,不调度、不花费、不读取 hidden query loader,也不引入 Python 产品依赖。Frozen ChinaTravel treatment 仍未运行,故不形成分数提升或外部 benchmark closure。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
 - **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:
