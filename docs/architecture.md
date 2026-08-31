@@ -73,7 +73,7 @@ M3 最小可用产品,分发链路无已知堵点。
 ### 1.6 工程不变量
 
 - 工具 execute 统一经 `guardToolExecute` 异常隔离 + 平铺观察 envelope(ADR-13)。
-- Agent 工具循环有每轮硬预算:`ts/src/tool-budget.ts` 在第 16 次真实派发后注入 `TOOL_BUDGET_SOFT` 收敛上下文,第 18 次是最后一次工具 body；同一步已准备的第 19 次及以后调用先经 execute waterfall 得到 `error.info.code=TOOL_BUDGET_EXHAUSTED` 且 body 零执行,再在该批 `step/end` 隐藏 agent 继承的工具 schema,让下一次 native 请求进入 text-only final。延迟到 `step/end` 是必要的:若第 18 次即改 live registry,同批第 19 次会在预算 waterfall 前退化成不可归因的 `unknown tool`。无 agent 的程序化调用不计数,turn/session 终态释放状态与限制。
+- Agent 工具循环有每轮硬预算:`ts/src/tool-budget.ts` 在第 16 次真实派发后注入 `TOOL_BUDGET_SOFT` 收敛上下文,第 18 次是最后一次工具 body；同一步已准备的第 19 次及以后调用先经 execute waterfall 得到 `error.info.code=TOOL_BUDGET_EXHAUSTED` 且 body 零执行,再在该批 `step/end` 隐藏 agent 继承的工具 schema,让下一次 native 请求进入 text-only final。延迟到 `step/end` 是必要的:若第 18 次即改 live registry,同批第 19 次会在预算 waterfall 前退化成不可归因的 `unknown tool`。无 agent 的程序化调用不计数,turn/session 终态释放状态与限制。CI 先打当前 SHA 的 tarball、在隔离 pnpm consumer 中解析 dsh peer closure,再把该安装入口交给同一 E2E,不借 root 开发树冒充发布形态。
 - 外部依赖走**效应描述 + 解译器**(ADR-18):工具层只产纯数据效应值 `{effect, params}`,渠道访问/退避重试/断路器/编译期 mock 收敛到 `ts/capabilities/effect.ts` 与 `resilience.ts`。
 - py 树仅剩 `gotry_feasibility` oracle,产品运行时零 Python 依赖(D-7 清偿)。
 - 全栈回归见 `scripts/run-all-tests.sh` 分节(计数不落字)。
@@ -285,7 +285,7 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
 - **当前主线 = M3 evidence 未收口；并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪，真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进；T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明，真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动，不得由并行实现倒推开闸。
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面；业务达标只接受阈值冻结的 `real_seed_cohort`，fixture 恒 fail。真实 cohort 仍为空，等待 50–200 个脱敏样本，不宣称 M3 Exit。
-- **Evaluation → Agent 优化 Round 1(Discussion #78,ChinaTravel canary 反馈)**:冻结 grounding-v3 canary 的首例终态通过,第二例暴露 planner 在重复工具调用中超过 300s；因此不生成 5-query 聚合。GoTry 侧把收敛边界下沉到 `tools/execute`:16 次软提示、18 次 body 上限、同一步第 19 次起结构化拒绝,并在 `step/end` 让下一步 native request text-only。run-all §45 同时覆盖 Cordis integration/并行/生命周期与真实 `bin/gotry-inner.js → dist → dsh headless` 离线 E2E(18 个正常结果、1 个结构化拒绝、下一请求零工具 schema、非空 final)。冻结 timeout case 的 exit 0、非空 final、<300s 与恢复 5-query 仍是 D-28 的外部验收,离线 runtime E2E 不替代 benchmark evidence。
+- **Evaluation → Agent 优化 Round 1(Discussion #78,ChinaTravel canary 反馈)**:冻结 grounding-v3 canary 的首例终态通过,第二例暴露 planner 在重复工具调用中超过 300s；因此不生成 5-query 聚合。GoTry 侧把收敛边界下沉到 `tools/execute`:16 次软提示、18 次 body 上限、同一步第 19 次起结构化拒绝,并在 `step/end` 让下一步 native request text-only。run-all §45 同时覆盖 Cordis integration/并行/生命周期与真实 `bin/gotry-inner.js → dist → dsh headless` 离线 E2E(18 个正常结果、1 个结构化拒绝、下一请求零工具 schema、非空 final)；CI 对当前 SHA 打包并在隔离 pnpm consumer 中安装,由 `GOTRY_BUDGET_E2E_BIN` 重放同一链路。冻结 timeout case 的 exit 0、非空 final、<300s 与恢复 5-query 仍是 D-28 的外部验收,离线 runtime E2E 不替代 benchmark evidence。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
 - **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:
   - `npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日完成 loopx 13 篇架构 RFC 通读与映射,产出 `loopx-inspired-upgrades-rfc.md`——**founder 当日指令 accepted(「按建议执行」)**,四切片 S1-S4 按序落地;同指令确立**多用户 Agent as a Service** 为未来方向(shared-goal-authority 类 claim/CAS 机制转入远期采纳面,RFC §6.5)。
@@ -415,7 +415,7 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 
 **D-28 外部 benchmark 驱动的 Agent 泛化证据缺口**
 
-ChinaTravel grounding-v3 的冻结 5-query canary 只完成 1 个可评分终态,第二例在 planner 重复工具调用中触发 300s timeout；因此当前没有合法 5-query 聚合。Round 1 已增加 GoTry 每轮工具预算与 text-only 收敛边界,且 npm-mode dist + dsh headless 离线 E2E 证明真实 runtime 会执行 18 个 body、结构化拒绝同批第 19 次、随后无工具完成 final；但现有 ChinaTravel runner 仍直接启动 Codex,没有加载该 GoTry treatment。**赎回顺序**:建立带 SHA/tarball/入口证明的 GoTry benchmark adapter → 同一冻结 timeout case 在 no-oracle 边界下 `exit=0`、非空 final、planner<300s → 原 manifest 5/5 终态且 schema/forbidden/七指标完整 → 再按 registry 扩展其他公开 benchmark；每轮 agent 优化必须独立 PR 并在 Discussion #78 单独追加证据评论。
+ChinaTravel grounding-v3 的冻结 5-query canary 只完成 1 个可评分终态,第二例在 planner 重复工具调用中触发 300s timeout；因此当前没有合法 5-query 聚合。Round 1 已增加 GoTry 每轮工具预算与 text-only 收敛边界,且 npm-mode dist + dsh headless 离线 E2E 证明真实 runtime 会执行 18 个 body、结构化拒绝同批第 19 次、随后无工具完成 final；CI 另以当前 SHA tarball 的隔离 pnpm consumer 入口重放同一证据,不借本地开发依赖蒙混。现有 ChinaTravel runner 仍直接启动 Codex,没有加载该 GoTry treatment。**赎回顺序**:建立带 SHA/tarball/入口证明的 GoTry benchmark adapter → 同一冻结 timeout case 在 no-oracle 边界下 `exit=0`、非空 final、planner<300s → 原 manifest 5/5 终态且 schema/forbidden/七指标完整 → 再按 registry 扩展其他公开 benchmark；每轮 agent 优化必须独立 PR 并在 Discussion #78 单独追加证据评论。
 
 ### 10.2 已清偿(存档)
 

@@ -43,7 +43,7 @@
 ### Agent evaluation 反馈闭环(Discussion #78)
 
 - ChinaTravel grounding-v3 冻结 canary 的首例可评分终态通过,第二例因 planner 重复工具循环超过 300s；当前只允许报告 `attempted=2/scored=1/timeout=1`,不得外推 5-query aggregate。
-- Round 1 聚焦 GoTry 自身:模型每轮第 16 次真实工具派发注入收敛上下文,第 18 次是最后一个 body；同一步第 19 次起返回 `TOOL_BUDGET_EXHAUSTED`,该批 `step/end` 后下一步 native 请求抑制继承工具 schema。run-all §45 已覆盖 Cordis integration/并行/turn+session 生命周期及真实 npm-mode dist + dsh headless 离线 E2E(18 body、1 structured refusal、下一请求 text-only、非空 final)。
+- Round 1 聚焦 GoTry 自身:模型每轮第 16 次真实工具派发注入收敛上下文,第 18 次是最后一个 body；同一步第 19 次起返回 `TOOL_BUDGET_EXHAUSTED`,该批 `step/end` 后下一步 native 请求抑制继承工具 schema。run-all §45 已覆盖 Cordis integration/并行/turn+session 生命周期及真实 npm-mode dist + dsh headless 离线 E2E(18 body、1 structured refusal、下一请求 text-only、非空 final)；CI 以当前 SHA tarball 的隔离 pnpm consumer 入口重放同一链路,不借 root 开发树。
 - 外部验收仍是 TODO:现有 ChinaTravel runner 直接启动 Codex,不能选择或证明加载 GoTry treatment。D-28 必须先补 treatment-attested adapter,再重跑同一冻结 timeout case(exit 0、非空 final、<300s)并恢复原 5-query manifest；之后按公开 benchmark registry 逐项评测。每轮 agent 优化独立 PR + Discussion #78 独立评论。
 - **验收 evidence(2026-08-30)**:登录态 Chrome 连续两轮真跑——static official 均 8/8 hit、零 fallback;session 分别 3/8 与 5/8 hit,全部可评分 hit(3+5 条)均 13/13 = 100%,非 hit 明示 miss。**评分门通过不等于 8/8 可售性。**
 - 同轮清偿:真扩展在线时默认桥不退出的存量缺口——parked timer/socket 只在默认桥 `unref`,wizard `keepBridge` 不变;§38 24/24、§40 9/9。
