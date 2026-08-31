@@ -12,7 +12,7 @@
  */
 
 import { copyFileSync, readdirSync, readFileSync, mkdirSync, writeFileSync, statSync, rmSync } from 'node:fs'
-import { join, dirname, relative } from 'node:path'
+import { join, dirname, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { stripTypeScriptTypes } from 'node:module'
 
@@ -49,7 +49,10 @@ for (const dir of SRC) {
   for (const file of walk(join(root, dir))) {
     const rel = relative(join(root, 'ts'), file).replace(/\.ts$/, '.js')
     const target = join(OUT, rel)
-    let js = stripTypeScriptTypes(readFileSync(file, 'utf-8'), { mode: 'transform', sourceUrl: file })
+    // Keep generated output reproducible: absolute temp/worktree paths would
+    // leak into source maps and make the release manifest vary per machine.
+    const sourceUrl = relative(root, file).split(sep).join('/')
+    let js = stripTypeScriptTypes(readFileSync(file, 'utf-8'), { mode: 'transform', sourceUrl })
     // 相对导入的 .ts 说明符重写为 .js。Node 的 transform stripper
     // 会把部分 `import type ... from` 变成 side-effect `import './x.ts'`，
     // 因此要覆盖所有相对字符串说明符，而非只匹配 `from`/动态 import。
