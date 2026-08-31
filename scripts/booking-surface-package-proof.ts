@@ -28,6 +28,13 @@ const schemaPath = fileURLToPath(import.meta.resolve('@danceiny/gotry/booking-su
 const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as { $id?: string }
 assert.equal(schema.$id, 'https://gotry.dev/schemas/booking.surface.v1.schema.json')
 
+// Boot the packaged dsh core itself without a model/network call. This catches
+// missing runtime closure (notably dsh-tool-bash's sandbox peer) in the same
+// installed tree used by consumers.
+const dshBin = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules/.bin/dsh')
+const dshHelp = spawnSync(dshBin, ['--help'], { encoding: 'utf8' })
+assert.equal(dshHelp.status, 0, dshHelp.stderr || dshHelp.stdout)
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packed = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
   cwd: root,
