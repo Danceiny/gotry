@@ -351,6 +351,10 @@ echo "=== 45. Evaluation Phase 0 foundation(four v0 contracts/seven-source regis
 (cd ts && npx tsx scripts/evaluation-contract-tests.ts) || FAIL=1
 
 echo
+echo "=== 46. Evaluation cadence policy(PR/nightly/weekly/milestone admission/pass^k/budgets/calibration/stop signals;no scheduler,runner,spend,score,Agent round) ==="
+(cd ts && npx tsx scripts/evaluation-cadence-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
