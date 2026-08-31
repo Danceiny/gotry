@@ -146,6 +146,10 @@ try {
     assert.equal(response.headers.get('x-booking-surface-version'), 'booking.surface.v1')
     assert.equal(response.headers.get('x-booking-surface-schema-sha256'), 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81')
     assert.equal(response.headers.get('x-gotry-artifact-id'), process.env.EXPECTED_GOTRY_ARTIFACT_ID)
+    assert.equal(response.headers.get('x-gotry-node-version'), process.env.EXPECTED_NODE_VERSION)
+    assert.equal(response.headers.get('x-gotry-node-modules-abi'), process.versions.modules)
+    assert.equal(response.headers.get('x-gotry-release-tuple'), process.env.EXPECTED_GOTRY_RELEASE_TUPLE)
+    assert.equal(response.headers.get('x-gotry-glibc-version'), process.report.getReport().header.glibcVersionRuntime)
     assert.deepEqual(await response.json(), { schemaSha256: 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81', schemaVersion: 'booking.surface.v1', status: 'ready' })
   } finally {
     if (child.exitCode === null) child.kill('SIGTERM')
@@ -161,7 +165,7 @@ try {
   }
   const finalHead = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: baseEnv }).stdout.trim()
   assert.equal(finalHead, process.env.EXPECTED_GOTRY_ARTIFACT_ID, 'HEAD changed during release proof')
-  console.log(`BOOKING COPILOT RELEASE BUILDER: PASS (${release.artifactId}, ${release.files} files, ${release.bytes} bytes; contract/startup/health/SIGTERM PASS)`)
+  console.log(`BOOKING COPILOT RELEASE BUILDER: PASS (${release.artifactId}, ${release.files} files, ${release.bytes} bytes; BE contract ${contract ? 'PASS' : 'SKIP'}; startup/health/SIGTERM PASS)`)
 } finally {
   for (const path of tempRoots) rmSync(path, { recursive: true, force: true })
 }

@@ -16,6 +16,8 @@
 | **License** | **MIT** ([LICENSE](LICENSE)) |
 | **Docs** | English (this file) · [简体中文 README](README.zh-CN.md) · deep engineering docs are Chinese-first ([docs/architecture.md](docs/architecture.md)) |
 
+> **HotelByte Booking Copilot status:** this branch contains a Draft, BFF-only embedded planner for the existing search/offer/Checkout workspace. Its closed profile has no `Book` capability; the Linux artifact is bound to an exact source/schema/runtime identity. It is not part of npm `latest` and is not merge-eligible until four-surface real-inventory UAT, including an unavailable/changed-offer recovery loop through the original Checkout, has evidence.
+
 ---
 
 ## ⚡ 30-second start

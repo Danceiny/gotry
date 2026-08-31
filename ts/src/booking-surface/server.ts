@@ -58,6 +58,25 @@ export interface BookingCopilotServerHandleV1 {
   close(): Promise<void>
 }
 
+interface BookingCopilotRuntimeIdentityV1 {
+  nodeVersion: string
+  nodeModulesAbi: string
+  releaseTuple: string
+  glibcVersion: string
+}
+
+function runtimeIdentity(): BookingCopilotRuntimeIdentityV1 {
+  const report = process.report?.getReport?.() as { header?: { glibcVersionRuntime?: string } } | undefined
+  const header = report?.header
+  const glibcVersion = header?.glibcVersionRuntime ?? ''
+  return {
+    nodeVersion: process.version,
+    nodeModulesAbi: process.versions.modules ?? '',
+    releaseTuple: `${process.platform}-${process.arch}-${glibcVersion ? 'glibc' : 'unknown'}`,
+    glibcVersion,
+  }
+}
+
 function safeSecretEqual(actual: string, expected: string): boolean {
   const actualBytes = Buffer.from(actual)
   const expectedBytes = Buffer.from(expected)
@@ -104,6 +123,7 @@ export function startBookingCopilotServer(
   }
   const sessions = new Map<string, BookingPlannerSessionV1>()
   const maxBodyBytes = options.maxBodyBytes ?? 1_000_000
+  const runningIdentity = runtimeIdentity()
 
   const server = createServer(async (req, res) => {
     const isProbe = req.method === 'GET' && (req.url === '/healthz' || req.url === '/status')
@@ -120,6 +140,10 @@ export function startBookingCopilotServer(
       res.setHeader(BOOKING_SURFACE_VERSION_HEADER, BOOKING_SURFACE_SCHEMA_VERSION)
       res.setHeader(BOOKING_SURFACE_SCHEMA_SHA256_HEADER, BOOKING_SURFACE_SCHEMA_SHA256)
       if (options.artifactId) res.setHeader('X-GoTry-Artifact-ID', options.artifactId)
+      res.setHeader('X-GoTry-Node-Version', runningIdentity.nodeVersion)
+      res.setHeader('X-GoTry-Node-Modules-ABI', runningIdentity.nodeModulesAbi)
+      res.setHeader('X-GoTry-Release-Tuple', runningIdentity.releaseTuple)
+      if (runningIdentity.glibcVersion) res.setHeader('X-GoTry-Glibc-Version', runningIdentity.glibcVersion)
       sendJson(res, 200, {
         schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
         schemaSha256: BOOKING_SURFACE_SCHEMA_SHA256,

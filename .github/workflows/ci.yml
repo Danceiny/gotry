@@ -23,23 +23,30 @@ env:
 jobs:
   booking-copilot-release:
     name: Booking Copilot release contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    container:
+      # Pin the complete Node/npm/glibc build userspace. The source SHA alone
+      # is not a byte identity if a mutable runner image changes underneath it.
+      image: docker.io/library/node:24.20.0-bookworm@sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.20.0
-      - name: Pin and verify npm
-        run: npm install --global npm@11.16.0 && test "$(node --version)" = v24.20.0 && test "$(npm --version)" = 11.16.0
+      - name: Verify pinned build userspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = v24.20.0
+          test "$(npm --version)" = 11.19.0
+          test "$(node -p 'process.versions.modules')" = 137
+          test "$(node -p 'process.report.getReport().header.glibcVersionRuntime')" = 2.36
       - name: Booking Copilot release builder
         env:
           EXPECTED_GOTRY_ARTIFACT_ID: ${{ github.event.pull_request.head.sha || github.sha }}
           EXPECTED_GOTRY_RELEASE_TUPLE: linux-x64-glibc
           EXPECTED_NODE_VERSION: v24.20.0
-          EXPECTED_NPM_VERSION: 11.16.0
+          EXPECTED_NPM_VERSION: 11.19.0
         run: node scripts/booking-copilot-release-builder-tests.mjs
 
   ci:
