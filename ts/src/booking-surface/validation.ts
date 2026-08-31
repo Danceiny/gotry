@@ -28,6 +28,9 @@ const validateCanonicalAction = canonicalAjv.compile({
 const validateCanonicalReceipt = canonicalAjv.compile({
   $ref: `${CANONICAL_SCHEMA_ID}#/$defs/ActionReceiptV1`,
 }) as ValidateFunction
+const validateCanonicalWorkspace = canonicalAjv.compile({ $ref: `${CANONICAL_SCHEMA_ID}#/$defs/BookingWorkspaceSnapshotV1` }) as ValidateFunction
+const validateCanonicalIngressTurn = canonicalAjv.compile({ $ref: `${CANONICAL_SCHEMA_ID}#/$defs/BookingCopilotIngressTurnV1` }) as ValidateFunction
+const validateCanonicalTurn = canonicalAjv.compile({ $ref: `${CANONICAL_SCHEMA_ID}#/$defs/BookingCopilotTurnV1` }) as ValidateFunction
 
 export type BookingSurfaceValidationResult =
   | { ok: true }
@@ -133,6 +136,7 @@ function validateWorkspace(value: unknown, at: string, errors: string[]): value 
       errors.push(`${at}.capabilities.allowedActions: duplicates forbidden`)
     }
   }
+  appendCanonicalErrors(validateCanonicalWorkspace, value, at, errors)
   return errors.length === 0
 }
 
@@ -190,6 +194,10 @@ function canonicalError(error: ErrorObject, at: string): string {
     ? `.${String((error.params as { additionalProperty?: unknown }).additionalProperty ?? '')}`
     : ''
   return `${at}${path}${property}: ${error.message ?? error.keyword}`
+}
+
+function appendCanonicalErrors(validate: ValidateFunction, value: unknown, at: string, errors: string[]): void {
+  if (!validate(value)) for (const error of validate.errors ?? []) errors.push(canonicalError(error, at))
 }
 
 export function validateBookingReadActionV1(value: unknown): BookingSurfaceValidationResult {
@@ -325,6 +333,7 @@ export function validateBookingCopilotIngressTurnV1(value: unknown): BookingSurf
     exactKeys(value.request, ['text'], ['text'], '$.request', errors)
     if (!isNonEmptyString(value.request.text)) errors.push('$.request.text: non-empty string required')
   }
+  appendCanonicalErrors(validateCanonicalIngressTurn, value, '$', errors)
   return errors.length === 0 ? { ok: true } : { ok: false, errors }
 }
 
@@ -353,6 +362,7 @@ export function validateBookingCopilotTurnV1(value: unknown): BookingSurfaceVali
     if (value.receipt.contextRef !== value.workspace.contextRef) errors.push('$.receipt.contextRef: must equal workspace.contextRef')
     if (value.receipt.revision !== value.workspace.revision) errors.push('$.receipt.revision: must equal workspace.revision')
   }
+  appendCanonicalErrors(validateCanonicalTurn, value, '$', errors)
   return errors.length === 0 ? { ok: true } : { ok: false, errors }
 }
 

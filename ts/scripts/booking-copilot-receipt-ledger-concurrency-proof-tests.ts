@@ -78,8 +78,7 @@ type WorkerResult = { result: string; variant?: string; error?: string }
 async function runPair(stateRoot: string, left: string, right: string): Promise<WorkerResult[]> {
   const script = fileURLToPath(import.meta.url)
   const args = [script, '--child', stateRoot, action.actionId]
-  const tsxBin = process.env.PATH?.split(':').map((dir) => join(dir, 'tsx')).find(existsSync)
-  if (!tsxBin) throw new Error('tsx_binary_missing')
+  const tsxBin = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url))
   const children = [left, right].map((which) => spawn(tsxBin, [...args, which], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] }))
   const outputs = children.map(() => '')
   children.forEach((p, i) => { p.stdout.on('data', (b) => { outputs[i] += b.toString() }); p.stderr.on('data', (b) => { outputs[i] += b.toString() }); p.on('error', (e) => { outputs[i] += `spawn_error:${e.message}` }) })

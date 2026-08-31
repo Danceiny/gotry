@@ -343,7 +343,7 @@
         "allowedActions": {
           "type": "array",
           "uniqueItems": true,
-          "maxItems": 11,
+          "maxItems": 12,
           "items": { "$ref": "#/$defs/BookingReadActionKindV1" }
         }
       },

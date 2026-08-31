@@ -139,6 +139,8 @@ const plannerTurn = {
   request: { text: ingress.request.text },
 }
 assert.deepEqual(validateBookingCopilotTurnV1(plannerTurn), { ok: true })
+assert.equal(validateBookingCopilotTurnV1({ ...plannerTurn, workspace: { ...strictWorkspace, capabilities: { surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] } } }).ok, true, 'full closed 12-action registry is canonical-valid')
+assert.equal(validateBookingCopilotTurnV1({ ...plannerTurn, workspace: { ...strictWorkspace, results: {} } }).ok, false, 'canonical turn rejects results without status')
 const { contextRef: _omitted, ...workspaceWithoutContext } = strictWorkspace
 assert.equal(validateBookingCopilotTurnV1({ ...plannerTurn, workspace: workspaceWithoutContext }).ok, false, 'planner turn requires the server-minted contextRef')
 

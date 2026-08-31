@@ -55,7 +55,7 @@ if (child) {
 }
 
 async function pair(root: string, left: string, right: string): Promise<Array<{ result: string; error?: string; event?: unknown }>> {
-  const tsx = join(process.cwd(), 'ts/node_modules/tsx/dist/cli.mjs'); const script = fileURLToPath(import.meta.url); const ps = [left, right].map((v) => spawn(process.execPath, [tsx, script, '--child', root, v], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] }))
+  const tsx = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url)); const script = fileURLToPath(import.meta.url); const ps = [left, right].map((v) => spawn(process.execPath, [tsx, script, '--child', root, v], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] }))
   const out = ps.map(() => ''); ps.forEach((p, i) => { p.stdout.on('data', (b) => { out[i] += b }); p.stderr.on('data', (b) => { out[i] += b }) })
   await Promise.all([waitFile(join(root, `started-${left}`)), waitFile(join(root, `started-${right}`))]); writeFileSync(join(root, 'start'), 'start')
   try { await Promise.race([waitFile(join(root, `ready-${left}`)), waitFile(join(root, `ready-${right}`))]) } catch (error) { ps.forEach((p) => p.kill('SIGKILL')); throw new Error(`workers_did_not_reach_callsite:${out.join('|')}:${error}`) }
@@ -77,7 +77,7 @@ async function run(kind: 'same' | 'conflict' | 'different', conflictVariant = 'c
   const durable = ledger.db.prepare("SELECT payload FROM events WHERE kind = 'booking.copilot.action.issued'").get() as { payload: string }
   assert.ok(!/raw-reason-marker|raw-input-marker|Bearer RAW_SECRET|@example|secret/i.test(durable.payload))
   if (kind === 'same') {
-    const event = success[0].event; ledger.close(); const tsx = join(process.cwd(), 'ts/node_modules/tsx/dist/cli.mjs')
+    const event = success[0].event; ledger.close(); const tsx = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url))
     async function replayVariant(v: string) { const replayChild = spawn(process.execPath, [tsx, fileURLToPath(import.meta.url), '--replay', root, v], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] }); let replayOutput = ''; replayChild.stdout.on('data', (b) => { replayOutput += b }); replayChild.stderr.on('data', (b) => { replayOutput += b }); await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => { replayChild.kill('SIGKILL'); reject(new Error('replay_timeout')) }, 10_000); replayChild.on('exit', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`replay_exit:${code}:${replayOutput}`)) }) }); return JSON.parse(replayOutput.trim().split('\n').at(-1)!) }
     const replayResult = await replayVariant('base'); assert.deepEqual(replayResult.event, event); const conflictResult = await replayVariant('conflict'); assert.equal(conflictResult.error, 'action_conflict'); const differentResult = await replayVariant('different'); assert.equal(differentResult.error, 'receipt_required'); const restarted = ensureLedger(root); assert.equal((restarted.db.prepare("SELECT COUNT(*) AS n FROM events WHERE kind = 'booking.copilot.action.issued'").get() as { n: number }).n, 1); const replay = replayResult.event
     const pending = new BookingCopilotTaskRuntime(restarted).resumeTask(taskId)?.pendingAction; assert.deepEqual(pending && { eventId: pending.eventId, sequence: pending.sequence, emittedAt: pending.emittedAt }, { eventId: (replay as any).eventId, sequence: (replay as any).sequence, emittedAt: (replay as any).emittedAt }); restarted.close()

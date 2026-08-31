@@ -7,7 +7,7 @@
 
 export const BOOKING_SURFACE_SCHEMA_VERSION = 'booking.surface.v1' as const
 /** SHA-256 of schemas/booking.surface.v1.schema.json; package proof pins drift. */
-export const BOOKING_SURFACE_SCHEMA_SHA256 = 'bfa74700bbeadd14a499aaa3463a1a91468c771febdbe9f414446c3623f7081e' as const
+export const BOOKING_SURFACE_SCHEMA_SHA256 = 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81' as const
 export const BOOKING_SURFACE_VERSION_HEADER = 'x-booking-surface-version' as const
 export const BOOKING_SURFACE_SCHEMA_SHA256_HEADER = 'x-booking-surface-schema-sha256' as const
 
