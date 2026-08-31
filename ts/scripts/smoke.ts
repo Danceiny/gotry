@@ -196,11 +196,11 @@ async function main() {
   // 12) 会话数据面工具(P3 切片1):官方通道 live + 会话工具 needs-login 合同(隔离 profile,零导航)
   {
     const fa = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string }
-    const faBlocked = fa.verdict === 'error' && /sentinel|block/i.test(fa.error ?? '')
+    const faBlocked = fa.verdict === 'error' && /sentinel|block|trial limit/i.test(fa.error ?? '')
     // 端点不可达/超时(出口 IP 被拒或网络抖动)→ 工具以带证据链的 error 终态优雅降级,同样合法
     const faErrTerminal = fa.ok === false && fa.verdict === 'error' && /^flyai-error$/.test(String(fa.via ?? '')) && /\[实时API:flyai@error@/.test(String(fa.evidence ?? ''))
     if (faBlocked) {
-      console.log('  WARN - flyai Sentinel 限流中,降级合同通过(hit 断言跳过)')
+      console.log('  WARN - flyai 上游限流中(Sentinel/trial-limit 429),降级合同通过(hit 断言跳过)')
     } else if (faErrTerminal) {
       console.log('  WARN - flyai 端点不可达(超时/降级),证据链合同通过(hit 断言跳过)')
     } else if (fa.ok !== true || fa.verdict !== 'hit' || (fa.options?.length ?? 0) < 1 || !/\[实时API:flyai@/.test(fa.evidence ?? '')) {
@@ -232,7 +232,7 @@ async function main() {
     console.log(`session-face tools: flyai ${faBlocked ? 'sentinel-限流降级' : `live hit(${fa.options?.length ?? 0} 条)`}; session 终态=${ss.verdict ?? ss.via}(登录态存在前提合同)`)
     // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 双合法终态(限流/端点降级 or hit)
     const fh = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' } }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string }
-    const fhBlocked = fh.verdict === 'error' && /sentinel|block/i.test(fh.error ?? '')
+    const fhBlocked = fh.verdict === 'error' && /sentinel|block|trial limit/i.test(fh.error ?? '')
     const fhErrTerminal = fh.ok === false && fh.verdict === 'error' && /^flyai-error$/.test(String(fh.via ?? '')) && /\[实时API:flyai@error@/.test(String(fh.evidence ?? ''))
     if (fhBlocked || fhErrTerminal) {
       console.log('  WARN - flyai hotel 限流/端点降级,证据链合同通过(hit 断言跳过)')
