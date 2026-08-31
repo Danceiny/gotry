@@ -27,6 +27,9 @@ Example (placeholder paths only):
   "cwd": "/OWNER-LOCAL/harness",
   "argv_prefix": ["/OWNER-LOCAL/harness/runner.js"],
   "allowed_tools": ["lookup"],
+  "allowed_output_keys": {
+    "lookup": ["city", "country"]
+  },
   "timeout_ms": 30000,
   "max_output_bytes": 65536,
   "isolation": {
@@ -40,7 +43,17 @@ Example (placeholder paths only):
 The executable and cwd are absolute and fixed. Calls use an argv list with the
 configured prefix; arbitrary shell strings, shell interpolation, and arbitrary
 commands are not exposed. `allowed_tools` is a bounded, unique identifier
-allowlist. Timeout and output caps are enforced by the subprocess seam, with
+allowlist. The optional `allowed_output_keys` mapping is a bounded per-tool
+positive allowlist: each mapped tool must be in `allowed_tools`, and each
+nonempty list must contain unique ASCII identifier-like JSON key names. When
+configured for a call, every object key in the visible result (recursing
+through arrays and nested objects) must be listed; unknown keys fail closed as
+`{"ok":false,"error":"forbidden_output"}` without reflecting their names or
+values. Configurations omitting this field remain backward-compatible. The
+mapping may be partial: allowed tools without a mapping retain the
+recursive denylist only. Benchmark admission should map every allowed tool when
+the stronger positive contract is required.
+Timeout and output caps are enforced by the subprocess seam, with
 non-zero exit, timeout, truncation, invalid JSON, and disallowed tool returning
 a structured failure envelope. The subprocess receives only selected
 `PATH`/locale/time-zone values plus Python no-user-site/no-bytecode guards;

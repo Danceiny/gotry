@@ -6,6 +6,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 const SCHEMA_VERSION = 'gotry_benchmark_environment_bridge_v1'
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_.-]*$/
 const CONFIG_KEYS = ['allowed_tools', 'argv_prefix', 'cwd', 'enabled', 'executable', 'isolation', 'max_output_bytes', 'schema_version', 'timeout_ms']
+const OPTIONAL_CONFIG_KEYS = ['allowed_output_keys']
 
 export interface BenchmarkEnvironmentBridgeConfig {
   schema_version: typeof SCHEMA_VERSION
@@ -14,6 +15,7 @@ export interface BenchmarkEnvironmentBridgeConfig {
   cwd: string
   argv_prefix: string[]
   allowed_tools: string[]
+  allowed_output_keys?: Record<string, string[]>
   timeout_ms: number
   max_output_bytes: number
   isolation: {
@@ -53,6 +55,13 @@ function identifiers(value: unknown): value is string[] {
   )
 }
 
+function allowedOutputKeys(value: unknown, allowedTools: string[]): value is Record<string, string[]> {
+  if (!plainObject(value)) return false
+  const keys = Object.keys(value)
+  return keys.length > 0 && keys.length <= 64
+    && keys.every(tool => allowedTools.includes(tool) && identifiers(value[tool]))
+}
+
 // These are passed as direct argv entries (never through a shell), so options
 // such as "-m" and dotted module names are valid. Keep the prefix bounded and
 // reject line/control separators that could make diagnostics ambiguous.
@@ -81,8 +90,11 @@ function validBound(value: unknown, maximum: number): value is number {
 }
 
 function validate(value: unknown): value is BenchmarkEnvironmentBridgeConfig {
+  const configKeys = plainObject(value) ? Object.keys(value).sort() : []
+  const baseKeys = [...CONFIG_KEYS].sort()
+  const extendedKeys = [...CONFIG_KEYS, ...OPTIONAL_CONFIG_KEYS].sort()
   if (!plainObject(value)
-    || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(CONFIG_KEYS)
+    || ![baseKeys, extendedKeys].some(keys => JSON.stringify(configKeys) === JSON.stringify(keys))
     || value.schema_version !== SCHEMA_VERSION
     || value.enabled !== true
     || !existingExecutable(value.executable)
@@ -91,7 +103,8 @@ function validate(value: unknown): value is BenchmarkEnvironmentBridgeConfig {
     || !identifiers(value.allowed_tools)
     || !validBound(value.timeout_ms, 120_000)
     || !validBound(value.max_output_bytes, 10 * 1024 * 1024)
-    || !exactIsolation(value.isolation)) return false
+    || !exactIsolation(value.isolation)
+    || (Object.hasOwn(value, 'allowed_output_keys') && !allowedOutputKeys(value.allowed_output_keys, value.allowed_tools))) return false
   return true
 }
 
@@ -174,6 +187,26 @@ function inspectOutput(value: unknown): 'ok' | 'forbidden_key' | 'structure_limi
     }
   }
   return 'ok'
+}
+
+function inspectAllowedOutput(value: unknown, allowedKeys: string[]): boolean {
+  const allowed = new Set(allowedKeys)
+  const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }]
+  let nodes = 0
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    if (++nodes > 10_000 || current.depth > 24) return false
+    if (Array.isArray(current.value)) {
+      for (const child of current.value) pending.push({ value: child, depth: current.depth + 1 })
+      continue
+    }
+    if (!plainObject(current.value)) continue
+    for (const [key, child] of Object.entries(current.value)) {
+      if (!allowed.has(key)) return false
+      pending.push({ value: child, depth: current.depth + 1 })
+    }
+  }
+  return true
 }
 
 function serializedArguments(value: Record<string, unknown>): { json: string; reason?: never } | { json?: never; reason: string } {
@@ -288,6 +321,10 @@ export function registerBenchmarkEnvironmentBridge(
         if (outputInspection === 'structure_limit') return jsonObject({ ok: false, error: 'invalid_output' })
         const visibleResult = parsed.result ?? parsed
         if (!plainObject(visibleResult) && !Array.isArray(visibleResult)) return jsonObject({ ok: false, error: 'invalid_output' })
+        const outputKeys = bridge.allowed_output_keys && Object.hasOwn(bridge.allowed_output_keys, query.tool)
+          ? bridge.allowed_output_keys[query.tool]
+          : undefined
+        if (outputKeys && !inspectAllowedOutput(visibleResult, outputKeys)) return jsonObject({ ok: false, error: 'forbidden_output' })
         return jsonObject({ ok: true, result: visibleResult })
       } catch {
         if (controller.signal.aborted) return jsonObject({ ok: false, error: 'timed_out' })
