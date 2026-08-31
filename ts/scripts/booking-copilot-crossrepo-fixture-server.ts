@@ -3,8 +3,8 @@
  *
  * The proof starts this process as a real GoTry HTTP/SSE server.  The planner
  * is intentionally in-process and typed: it selects a hotel on the payment
- * link surface, starts a search on the storefront surface, and only emits a
- * terminal event after the corresponding receipt continuation.
+ * link surface, starts a search on every other accepted surface, and only
+ * emits a terminal event after the corresponding receipt continuation.
  */
 
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -58,7 +58,7 @@ const plannerFactory: BookingPlannerSessionFactoryV1 = (initialTask: BookingCopi
         ? {
             schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
             kind: 'hotel.select',
-            actionId: 'cross-repo-select-1',
+            actionId: 'cross-repo-action-1',
             contextRef: task.contextRef,
             expectedRevision: task.revision,
             reason: 'Select the requested hotel.',
@@ -68,10 +68,10 @@ const plannerFactory: BookingPlannerSessionFactoryV1 = (initialTask: BookingCopi
         : {
             schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
             kind: 'search.run',
-            actionId: 'cross-repo-select-1',
+            actionId: 'cross-repo-action-1',
             contextRef: task.contextRef,
             expectedRevision: task.revision,
-            reason: 'Run the storefront search.',
+            reason: 'Run the requested search.',
             factRefs: [],
             input: {},
           }
