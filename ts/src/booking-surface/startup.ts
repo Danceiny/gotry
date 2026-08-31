@@ -1,0 +1,154 @@
+/** Production composition entry for GoTry's BFF-only Booking Copilot server. */
+
+import { mkdirSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { ensureLedger, type StateLedger } from '../state-ledger.ts'
+import {
+  buildDshPlannerEnvironment,
+  createDshEmbeddedBookingPlanner,
+  type DshEmbeddedBookingPlannerHandleV1,
+  type DshEmbeddedBookingPlannerOptionsV1,
+} from './dsh-planner.ts'
+import { BookingCopilotTaskRuntime } from './runtime.ts'
+import {
+  startBookingCopilotServer,
+  type BookingCopilotServerHandleV1,
+  type BookingCopilotServerOptionsV1,
+} from './server.ts'
+
+export interface BookingCopilotStartupConfigV1 {
+  apiKey: string
+  stateRoot: string
+  host: string
+  port: number
+}
+
+export interface BookingCopilotStartupHandleV1 {
+  port: number
+  close(): Promise<void>
+}
+
+export interface BookingCopilotStartupDependenciesV1 {
+  ensureLedger(stateRoot: string): StateLedger
+  runtimeFactory(ledger: StateLedger): BookingCopilotTaskRuntime
+  createPlanner(options: DshEmbeddedBookingPlannerOptionsV1): Promise<DshEmbeddedBookingPlannerHandleV1>
+  startServer(options: BookingCopilotServerOptionsV1): Promise<BookingCopilotServerHandleV1>
+}
+
+const DEFAULT_DEPENDENCIES: BookingCopilotStartupDependenciesV1 = {
+  ensureLedger,
+  runtimeFactory: (ledger) => new BookingCopilotTaskRuntime(ledger),
+  createPlanner: createDshEmbeddedBookingPlanner,
+  startServer: startBookingCopilotServer,
+}
+
+function parsePort(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return 3_082
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 0 || value > 65_535) throw new Error('booking_copilot_invalid_port')
+  return value
+}
+
+export function resolveBookingCopilotStartupConfig(
+  env: Record<string, string | undefined> = process.env,
+): BookingCopilotStartupConfigV1 {
+  const apiKey = env.GOTRY_BOOKING_COPILOT_API_KEY ?? ''
+  if (!apiKey) throw new Error('booking_copilot_api_key_required')
+  const stateRoot = env.GOTRY_BOOKING_COPILOT_STATE_ROOT ?? ''
+  if (!stateRoot) throw new Error('booking_copilot_state_root_required')
+  if (!isAbsolute(stateRoot)) throw new Error('booking_copilot_state_root_must_be_absolute')
+  return {
+    apiKey,
+    stateRoot,
+    host: env.GOTRY_BOOKING_COPILOT_HOST || '127.0.0.1',
+    port: parsePort(env.GOTRY_BOOKING_COPILOT_PORT),
+  }
+}
+
+async function closeAll(
+  server: BookingCopilotServerHandleV1 | undefined,
+  planner: DshEmbeddedBookingPlannerHandleV1 | undefined,
+  ledger: StateLedger | undefined,
+): Promise<void> {
+  const failures: unknown[] = []
+  for (const close of [
+    server ? () => server.close() : undefined,
+    planner ? () => planner.close() : undefined,
+    ledger ? () => Promise.resolve(ledger.close()) : undefined,
+  ]) {
+    if (!close) continue
+    try { await close() } catch (error) { failures.push(error) }
+  }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1) throw new AggregateError(failures, 'booking_copilot_shutdown_failed')
+}
+
+/**
+ * Boot one process-scoped dsh core and task-scoped sessions behind the typed
+ * HTTP/SSE server. Only the HTTP layer receives the BFF deployment key.
+ */
+export async function startBookingCopilotFromEnvironment(
+  env: Record<string, string | undefined> = process.env,
+  dependencies: BookingCopilotStartupDependenciesV1 = DEFAULT_DEPENDENCIES,
+): Promise<BookingCopilotStartupHandleV1> {
+  const config = resolveBookingCopilotStartupConfig(env)
+  mkdirSync(config.stateRoot, { recursive: true })
+  let ledger: StateLedger | undefined
+  let planner: DshEmbeddedBookingPlannerHandleV1 | undefined
+  let server: BookingCopilotServerHandleV1 | undefined
+  try {
+    ledger = dependencies.ensureLedger(config.stateRoot)
+    const runtime = dependencies.runtimeFactory(ledger)
+    planner = await dependencies.createPlanner({
+      stateRoot: config.stateRoot,
+      env: buildDshPlannerEnvironment(env),
+    })
+    server = await dependencies.startServer({
+      apiKey: config.apiKey,
+      runtime,
+      plannerFactory: planner.plannerFactory,
+      host: config.host,
+      port: config.port,
+    })
+  } catch (error) {
+    try { await closeAll(server, planner, ledger) } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'booking_copilot_startup_and_cleanup_failed')
+    }
+    throw error
+  }
+
+  let closed = false
+  return {
+    port: server.port,
+    async close() {
+      if (closed) return
+      closed = true
+      await closeAll(server, planner, ledger)
+    },
+  }
+}
+
+async function runCli(): Promise<void> {
+  const handle = await startBookingCopilotFromEnvironment()
+  process.stderr.write(`[gotry-booking-copilot] listening on http://127.0.0.1:${handle.port}/a2a/booking-copilot/turn\n`)
+  let stopping = false
+  const stop = () => {
+    if (stopping) return
+    stopping = true
+    void handle.close().then(() => process.exit(0), (error) => {
+      process.stderr.write(`[gotry-booking-copilot] shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`)
+      process.exit(1)
+    })
+  }
+  process.once('SIGINT', stop)
+  process.once('SIGTERM', stop)
+}
+
+const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''
+if (invokedPath === fileURLToPath(import.meta.url)) {
+  runCli().catch((error) => {
+    process.stderr.write(`[gotry-booking-copilot] startup failed: ${error instanceof Error ? error.message : String(error)}\n`)
+    process.exit(1)
+  })
+}

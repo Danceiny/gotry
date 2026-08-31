@@ -681,6 +681,7 @@ export class StateLedger {
 
   close(): void {
     this.db.close()
+    for (const [key, value] of openLedgers) if (value === this) openLedgers.delete(key)
   }
 }
 
