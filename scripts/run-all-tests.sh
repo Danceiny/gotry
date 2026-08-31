@@ -364,6 +364,7 @@ echo "=== 47. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 (node scripts/build-dist.mjs) || FAIL=1
 (npx tsx scripts/booking-surface-package-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-contract-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-gap-code-contract-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-runtime-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-receipt-ledger-concurrency-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-operation-ledger-concurrency-proof-tests.ts) || FAIL=1
