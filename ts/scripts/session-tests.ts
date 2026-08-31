@@ -96,9 +96,9 @@ if (process.env.GOTRY_SESSION_LIVE === '0') {
   console.log('  SKIP - GOTRY_SESSION_LIVE=0(离线门禁不调用 FlyAI 外部实时端点)')
 } else {
   fr = await flyaiSearch({ kind: 'flight', origin: '上海', destination: '丽江', depDate: '2026-10-01' })
-  const sentinelBlocked = fr.verdict === 'error' && /sentinel|block/i.test(fr.error ?? '')
+  const sentinelBlocked = fr.verdict === 'error' && /sentinel|block|trial limit/i.test(fr.error ?? '')
   if (sentinelBlocked) {
-    console.log('  WARN - 飞猪 Sentinel 限流(2026-08-28 实测,配额未文档化)——降级合同验证通过,跳过 hit 断言')
+    console.log('  WARN - 飞猪上游限流(Sentinel 2026-08-28 / trial-limit 429 2026-08-31 实测,配额未文档化)——降级合同验证通过,跳过 hit 断言')
     assert(fr.ok === false && /\[实时API:flyai@error@/.test(fr.evidence), '限流降级:结构化 error + 证据链错误形')
   } else {
     assert(fr.ok === true && fr.verdict === 'hit', '上海→丽江 hit', fr)
@@ -117,6 +117,38 @@ if (process.env.GOTRY_SESSION_LIVE === '0') {
   assert(fr2.ok === false && fr2.verdict === 'error', 'data:null 语义失败 → error 终态(非 miss)', fr2)
   assert(/出发日期非法/.test(fr2.error ?? '') && /flyai@error@/.test(fr2.evidence), '上游原话透传 + 证据链错误形', fr2)
   rmSync(fakeDir, { recursive: true, force: true })
+}
+
+// F3. stdout 截断回归(issue #84):CLI 分片异步写 >64KB 后立即 exit——
+// 管道消费丢未 flush 尾部(实测截 ~7.6KB,静默 exit=0);文件重定向同步写不丢。
+{
+  const bigDir = mkdtempSync(join(tmpdir(), 'flyai-trunc-'))
+  const payloadJs = join(bigDir, 'payload.js')
+  const itemCount = 100
+  writeFileSync(payloadJs, `
+const items = []
+for (let i = 0; i < ${itemCount}; i++) {
+  items.push({
+    journeys: [{ segments: [{
+      marketingTransportName: '吉祥航空', marketingTransportNo: 'HO' + (1000 + i),
+      depDateTime: '2026-09-15 08:30', arrDateTime: '2026-09-15 12:10',
+      depStationName: '浦东国际机场', arrStationName: '长水机场', duration: '220', seatClassName: '经济舱',
+    }] }],
+    ticketPrice: String(800 + i),
+    jumpUrl: 'https://fliggy.com/item/' + 'x'.repeat(800) + i,
+  })
+}
+const payload = JSON.stringify({ data: { itemList: items } })
+const step = Math.ceil(payload.length / 100)
+for (let i = 0; i < 100; i++) process.stdout.write(payload.slice(i * step, (i + 1) * step))
+process.exit(0)
+`)
+  const bigBin = join(bigDir, 'flyai-cli-big')
+  writeFileSync(bigBin, `#!/bin/sh\nexec node "${payloadJs}"\n`, { mode: 0o755 })
+  const tr = await flyaiSearch({ kind: 'flight', origin: '上海', destination: '昆明', depDate: '2026-09-15', cliBin: bigBin })
+  assert(tr.ok === true && tr.verdict === 'hit' && tr.options?.length === itemCount,
+    `大载荷 ${itemCount} 条(>64KB)完整解析无截断(#84)`, { verdict: tr.verdict, options: tr.options?.length, error: tr.error })
+  rmSync(bigDir, { recursive: true, force: true })
 }
 
 // G. live 会话检索(默认 SKIP:例行动回归**永不**自启浏览器窗口—— founder 2026-08-29 反馈
