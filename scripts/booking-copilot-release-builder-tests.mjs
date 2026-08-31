@@ -91,6 +91,7 @@ try {
     libc: 'glibc',
     libcVersion: process.report.getReport().header.glibcVersionRuntime,
     nodeVersion: process.env.EXPECTED_NODE_VERSION,
+    nodeModulesAbi: process.versions.modules,
     npmVersion: process.env.EXPECTED_NPM_VERSION,
     releaseTuple: process.env.EXPECTED_GOTRY_RELEASE_TUPLE,
   })

@@ -16,6 +16,8 @@ if (process.platform !== 'linux' || !['x64', 'arm64'].includes(process.arch)) fa
 const glibcVersion = process.report?.getReport?.().header?.glibcVersionRuntime || ''
 const libc = glibcVersion ? 'glibc' : ''
 if (!libc) fail('glibc runtime is required')
+const nodeModulesAbi = process.versions.modules || ''
+if (!/^[0-9]+$/.test(nodeModulesAbi)) fail('Node modules ABI is unavailable')
 const releaseTuple = `${process.platform}-${process.arch}-${libc}`
 for (const name of ['EXPECTED_GOTRY_ARTIFACT_ID', 'EXPECTED_GOTRY_RELEASE_TUPLE', 'EXPECTED_NODE_VERSION', 'EXPECTED_NPM_VERSION']) if (!process.env[name]) fail(`${name} is required`)
 if (!/^[0-9a-f]{40}$/.test(process.env.EXPECTED_GOTRY_ARTIFACT_ID)) fail('EXPECTED_GOTRY_ARTIFACT_ID must be a full lowercase commit SHA')
@@ -119,6 +121,7 @@ try {
     libc,
     libcVersion: glibcVersion,
     nodeVersion: process.env.EXPECTED_NODE_VERSION,
+    nodeModulesAbi,
     npmVersion: process.env.EXPECTED_NPM_VERSION,
     releaseTuple,
   }, null, 2)}\n`)
