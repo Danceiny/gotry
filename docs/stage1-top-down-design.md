@@ -24,6 +24,7 @@
 > **Issue #67 会话 benchmark 状态**:`sf-live-benchmark --golden=static` 以 OpenFlights 固定修订提供 route/carrier,以手工 manifest 提供估算时刻/价格带；evidence 显式记录 requested/effective source、provenance、estimated fields 与 fallback reason。静态源失败会 stderr 告警并回退 manual,不伪装成实时班期/票价/库存；真实会话侧仍依赖用户 Chrome 扩展。离线合同归 run-all §44。
 > **Issue #67 真跑边界与桥生命周期**:已登录 Chrome 连续两轮 static official 均 8/8 hit、fallback 0;session 分别 3/8 与 5/8 hit,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 均显式 miss。这证明软评分 ≥90% 与来源可审计,不证明 8/8 可售性。默认桥已对空闲 parked timer/socket `unref`,wizard `keepBridge` 不变;§38 24/24、§40 9/9。
 
+> Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it has no scheduler, external launch, spend, score, Agent-round, or uplift effect. No Python runtime dependency, baseline, or matched production evidence is included.
 > 创始人指令(第三次纠偏):自顶向下实现,不要自底向上打磨细节。
 > 本文档是 Stage 1 的**唯一权威设计**;一切实现工作从这里派生,叶子(求解器/引擎)已就位,缺的是树干。
 > 关键架构判断先行:**对话循环的架构验证不需要 DEEPSEEK_API_KEY——用 mock LLM 先行,API key 只解锁智能质量,不阻塞架构。** 此前「Stage 1 全阻塞在 key」是误判。
