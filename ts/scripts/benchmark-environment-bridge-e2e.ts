@@ -1,6 +1,9 @@
 /** Offline contract for the opt-in benchmark environment bridge.
  *
  * Covers default-off, explicit opt-in, and fail-closed configuration paths.
+ * A local developer run exercises the source checkout. CI supplies the clean
+ * packaged consumer binary because the historical root npm lock does not
+ * materialize dsh's complete peer closure.
  */
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -93,61 +96,51 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
   }
 }
 
-const disabled = await runCase('disabled')
-assert.equal(disabled.exit, 0, `default-off child exit=${disabled.exit}`)
-assert.ok(
-  disabled.requests.length > 0 && !disabled.requests.some(r => names(r).includes(TOOL)),
-  `default-off must reach the relay without exposing benchmark tool; exit=${disabled.exit}; requests=${disabled.requests.length}; output=${disabled.output.slice(-2_000)}`,
-)
-const enabled = await runCase('enabled')
-assert.equal(enabled.exit, 0, `opt-in child exit=${enabled.exit}; output tail=${enabled.output.slice(-1000)}`)
-assert.ok(
-  enabled.requests.some(r => names(r).includes(TOOL)),
-  `opt-in planner request must expose benchmark tool; schemas=${JSON.stringify(enabled.requests.map(names))}; output=${enabled.output.slice(-4_000)}`,
-)
-assert.ok(enabled.requests.some(toolResultPresent), 'marker must enter model history as tool result')
-const leakedReport = enabled.requests.map(r => JSON.stringify(r).match(/\\?"leaked\\?":\[(.*?)\]/)?.[1]).filter(Boolean).join('|')
-assert.ok(enabled.requests.some(r => /\\?"leaked\\?":\[\]/.test(JSON.stringify(r))), `tool result must report no forbidden environment names; observed names=${leakedReport || '(none)'}`)
-assert.equal(enabled.requests.some(r => JSON.stringify(r).includes('do-not-leak')), false, 'tool result must not expose the parent secret value')
-assert.match(enabled.output, /bridge final text/)
-const invalidPath = await runCase('invalid-path')
-assert.equal(invalidPath.exit, 1, `invalid config basename child exit=${invalidPath.exit}`)
-assert.equal(invalidPath.requests.length, 0, 'invalid config must fail before relay/network activity')
-assert.match(invalidPath.output, /benchmark environment configuration unavailable/)
-assert.equal(invalidPath.output.includes('benchmark-env-config-'), false, 'invalid config error must not expose path or filename')
-const unsafeConfig = await runCase('unsafe-config')
-assert.equal(unsafeConfig.exit, 1, `group/world-writable config child exit=${unsafeConfig.exit}; requests=${unsafeConfig.requests.length}; output=${unsafeConfig.output.slice(-2_000)}`)
-assert.equal(unsafeConfig.requests.length, 0, 'unsafe config must fail before relay/network activity')
-assert.match(unsafeConfig.output, /benchmark environment configuration unavailable/)
-const invalidSchema = await runCase('invalid-schema')
-assert.equal(invalidSchema.exit, 1, `invalid config schema child exit=${invalidSchema.exit}`)
-assert.equal(invalidSchema.requests.length, 0, 'invalid schema must fail before relay/network activity')
-assert.match(invalidSchema.output, /benchmark environment configuration unavailable/)
+async function assertRuntimeContract(executableOverride?: string): Promise<void> {
+  const target = executableOverride ? 'packaged' : 'source'
+  const disabled = await runCase('disabled', executableOverride)
+  assert.equal(disabled.exit, 0, `${target} default-off child exit=${disabled.exit}; output tail=${disabled.output.slice(-2_000)}`)
+  assert.ok(
+    disabled.requests.length > 0 && !disabled.requests.some(r => names(r).includes(TOOL)),
+    `${target} default-off must reach the relay without exposing benchmark tool; exit=${disabled.exit}; requests=${disabled.requests.length}; output=${disabled.output.slice(-2_000)}`,
+  )
+  const enabled = await runCase('enabled', executableOverride)
+  assert.equal(enabled.exit, 0, `${target} opt-in child exit=${enabled.exit}; output tail=${enabled.output.slice(-1000)}`)
+  assert.ok(
+    enabled.requests.some(r => names(r).includes(TOOL)),
+    `${target} opt-in planner request must expose benchmark tool; schemas=${JSON.stringify(enabled.requests.map(names))}; output=${enabled.output.slice(-4_000)}`,
+  )
+  assert.ok(enabled.requests.some(toolResultPresent), `${target} marker must enter model history as tool result`)
+  const leakedReport = enabled.requests.map(r => JSON.stringify(r).match(/\\?"leaked\\?":\[(.*?)\]/)?.[1]).filter(Boolean).join('|')
+  assert.ok(enabled.requests.some(r => /\\?"leaked\\?":\[\]/.test(JSON.stringify(r))), `${target} tool result must report no forbidden environment names; observed names=${leakedReport || '(none)'}`)
+  assert.equal(enabled.requests.some(r => JSON.stringify(r).includes('do-not-leak')), false, `${target} tool result must not expose the parent secret value`)
+  assert.match(enabled.output, /bridge final text/)
+  const invalidPath = await runCase('invalid-path', executableOverride)
+  assert.equal(invalidPath.exit, 1, `${target} invalid config basename child exit=${invalidPath.exit}`)
+  assert.equal(invalidPath.requests.length, 0, `${target} invalid config must fail before relay/network activity`)
+  assert.match(invalidPath.output, /benchmark environment configuration unavailable/)
+  assert.equal(invalidPath.output.includes('benchmark-env-config-'), false, `${target} invalid config error must not expose path or filename`)
+  const unsafeConfig = await runCase('unsafe-config', executableOverride)
+  assert.equal(unsafeConfig.exit, 1, `${target} group/world-writable config child exit=${unsafeConfig.exit}; requests=${unsafeConfig.requests.length}; output=${unsafeConfig.output.slice(-2_000)}`)
+  assert.equal(unsafeConfig.requests.length, 0, `${target} unsafe config must fail before relay/network activity`)
+  assert.match(unsafeConfig.output, /benchmark environment configuration unavailable/)
+  const invalidSchema = await runCase('invalid-schema', executableOverride)
+  assert.equal(invalidSchema.exit, 1, `${target} invalid config schema child exit=${invalidSchema.exit}`)
+  assert.equal(invalidSchema.requests.length, 0, `${target} invalid schema must fail before relay/network activity`)
+  assert.match(invalidSchema.output, /benchmark environment configuration unavailable/)
 
-const truncated = await runCase('output-truncated')
-assert.equal(truncated.exit, 0, `output truncation child exit=${truncated.exit}`)
-assert.ok(truncated.requests.some(r => JSON.stringify(r).includes('output_truncated')), 'real runner output over the configured cap is rejected')
-const timedOut = await runCase('timeout')
-assert.equal(timedOut.exit, 0, `timeout child exit=${timedOut.exit}`)
-assert.ok(timedOut.requests.some(r => JSON.stringify(r).includes('timed_out')), 'real runner deadline is enforced')
+  const truncated = await runCase('output-truncated', executableOverride)
+  assert.equal(truncated.exit, 0, `${target} output truncation child exit=${truncated.exit}`)
+  assert.ok(truncated.requests.some(r => JSON.stringify(r).includes('output_truncated')), `${target} real runner output over the configured cap is rejected`)
+  const timedOut = await runCase('timeout', executableOverride)
+  assert.equal(timedOut.exit, 0, `${target} timeout child exit=${timedOut.exit}`)
+  assert.ok(timedOut.requests.some(r => JSON.stringify(r).includes('timed_out')), `${target} real runner deadline is enforced`)
+}
 
 const packaged = process.env.GOTRY_BRIDGE_E2E_BIN
-if (packaged) {
-  // The packaged binary must pass the same gate after the source CLI has passed.
-  for (const mode of ['disabled', 'enabled', 'invalid-path', 'invalid-schema', 'unsafe-config', 'output-truncated', 'timeout'] as CaseMode[]) {
-    const result = await runCase(mode, packaged)
-    assert.equal(result.exit, mode === 'invalid-path' || mode === 'invalid-schema' || mode === 'unsafe-config' ? 1 : 0, `packaged ${mode} exit=${result.exit}`)
-    if (mode === 'disabled') assert.equal(result.requests.some(r => names(r).includes(TOOL)), false, 'packaged default-off hides bridge tool')
-    if (mode === 'enabled') {
-      assert.ok(result.requests.some(toolResultPresent), 'packaged opt-in returns runner marker')
-      assert.ok(result.requests.some(r => /\\?"leaked\\?":\[\]/.test(JSON.stringify(r))), 'packaged runner receives no forbidden ambient names')
-      assert.equal(result.requests.some(r => JSON.stringify(r).includes('do-not-leak')), false, 'packaged tool result omits parent secret value')
-    }
-    if (mode === 'invalid-path' || mode === 'invalid-schema' || mode === 'unsafe-config') assert.equal(result.requests.length, 0, `packaged ${mode} fails before relay/network activity`)
-    if (mode === 'output-truncated') assert.ok(result.requests.some(r => JSON.stringify(r).includes('output_truncated')))
-    if (mode === 'timeout') assert.ok(result.requests.some(r => JSON.stringify(r).includes('timed_out')))
-  }
+await assertRuntimeContract(packaged)
 
+if (packaged) {
   const consumerRoot = dirname(dirname(dirname(packaged)))
   const packageMain = createRequire(join(consumerRoot, 'package.json')).resolve('@danceiny/gotry')
   const packageRoot = dirname(dirname(dirname(packageMain)))
@@ -170,4 +163,4 @@ if (packaged) {
     rmSync(missingServiceRoot, { recursive: true, force: true })
   }
 }
-console.log(`benchmark environment bridge E2E: OK (source${packaged ? ' + packaged' : ''})`)
+console.log(`benchmark environment bridge E2E: OK (${packaged ? 'packaged' : 'source'})`)
