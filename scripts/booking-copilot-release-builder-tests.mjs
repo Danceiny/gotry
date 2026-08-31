@@ -4,10 +4,10 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const root = fileURLToPath(new URL('..', import.meta.url))
+const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const builder = join(root, 'scripts/build-booking-copilot-release.mjs')
 const contract = process.env.BOOKING_COPILOT_RELEASE_CONTRACT
   || (process.env.HOTEL_BE_ROOT ? join(process.env.HOTEL_BE_ROOT, 'build/deploy/gotry-booking-copilot/release-contract.sh') : '')
@@ -27,6 +27,7 @@ const allowedEnv = [
 ]
 const baseEnv = Object.fromEntries(allowedEnv.filter((key) => process.env[key]).map((key) => [key, process.env[key]]))
 baseEnv.PATH = `${dirname(node24)}${delimiter}${process.env.PATH || ''}`
+const gitArgs = ['-c', `safe.directory=${root}`]
 const version = spawnSync(node24, ['--version'], { encoding: 'utf8', env: baseEnv })
 assert.equal(version.status, 0, version.stderr)
 assert.match(version.stdout.trim(), /^v24\./, `release builder test must run with Node24 (got ${version.stdout.trim()})`)
@@ -34,13 +35,15 @@ assert.equal(version.stdout.trim(), process.env.EXPECTED_NODE_VERSION)
 assert.equal(process.platform, 'linux', 'authoritative release gate requires Linux glibc')
 assert.ok(['x64', 'arm64'].includes(process.arch))
 assert.equal(process.env.EXPECTED_GOTRY_RELEASE_TUPLE, `linux-${process.arch}-glibc`)
-const artifactId = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: baseEnv }).stdout.trim()
+const headProbe = spawnSync('git', [...gitArgs, 'rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: baseEnv })
+assert.equal(headProbe.status, 0, headProbe.stderr)
+const artifactId = headProbe.stdout.trim()
 assert.equal(artifactId, process.env.EXPECTED_GOTRY_ARTIFACT_ID)
 const npmProbe = spawnSync('npm', ['--version'], { encoding: 'utf8', env: baseEnv })
 assert.equal(npmProbe.status, 0, npmProbe.stderr)
 const npmVersion = npmProbe.stdout.trim()
 assert.equal(npmVersion, process.env.EXPECTED_NPM_VERSION)
-const committedBuilder = spawnSync('git', ['show', `${artifactId}:scripts/build-booking-copilot-release.mjs`], { cwd: root, env: baseEnv })
+const committedBuilder = spawnSync('git', [...gitArgs, 'show', `${artifactId}:scripts/build-booking-copilot-release.mjs`], { cwd: root, env: baseEnv })
 assert.equal(committedBuilder.status, 0, 'builder must exist in HEAD before release execution')
 assert.deepEqual(readFileSync(builder), committedBuilder.stdout, 'executing builder must equal the committed HEAD builder')
 
@@ -163,7 +166,9 @@ try {
     }
     assert.equal(stopped, 0, `artifact did not stop cleanly: ${stopped}`)
   }
-  const finalHead = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: baseEnv }).stdout.trim()
+  const finalHeadProbe = spawnSync('git', [...gitArgs, 'rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: baseEnv })
+  assert.equal(finalHeadProbe.status, 0, finalHeadProbe.stderr)
+  const finalHead = finalHeadProbe.stdout.trim()
   assert.equal(finalHead, process.env.EXPECTED_GOTRY_ARTIFACT_ID, 'HEAD changed during release proof')
   console.log(`BOOKING COPILOT RELEASE BUILDER: PASS (${release.artifactId}, ${release.files} files, ${release.bytes} bytes; BE contract ${contract ? 'PASS' : 'SKIP'}; startup/health/SIGTERM PASS)`)
 } finally {

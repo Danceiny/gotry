@@ -31,6 +31,7 @@ const allowedEnv = [
 ]
 const childEnv = Object.fromEntries(allowedEnv.filter((key) => process.env[key]).map((key) => [key, process.env[key]]))
 childEnv.PATH = `${nodeBinDir}${delimiter}${process.env.PATH || ''}`
+const gitArgs = ['-c', `safe.directory=${ROOT}`]
 function run(command, args, cwd) {
   try { return execFileSync(command, args, { cwd, encoding: 'utf8', env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] }) }
   catch (error) { fail(`${command} failed: ${error.stderr?.trim() || error.message}`) }
@@ -55,12 +56,12 @@ function probeNode24() {
 
 if (process.versions.node.split('.')[0] !== '24') fail(`Node 24 is required (got ${process.version})`)
 if (!existsSync(join(ROOT, '.git'))) fail('must run inside the GoTry git worktree')
-const trackedStatus = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=no'], { cwd: ROOT, encoding: 'utf8', env: childEnv }).trim()
+const trackedStatus = execFileSync('git', [...gitArgs, 'status', '--porcelain=v1', '--untracked-files=no'], { cwd: ROOT, encoding: 'utf8', env: childEnv }).trim()
 if (trackedStatus) fail(`tracked worktree changes are not allowed:\n${trackedStatus}`)
-const artifactId = run('git', ['rev-parse', 'HEAD'], ROOT).trim()
+const artifactId = run('git', [...gitArgs, 'rev-parse', 'HEAD'], ROOT).trim()
 if (!/^[0-9a-f]{40}$/.test(artifactId)) fail('HEAD is not a full commit SHA')
 if (artifactId !== process.env.EXPECTED_GOTRY_ARTIFACT_ID) fail('artifact identity does not match EXPECTED_GOTRY_ARTIFACT_ID')
-const committedBuilder = execFileSync('git', ['show', `${artifactId}:scripts/build-booking-copilot-release.mjs`], { cwd: ROOT, env: childEnv })
+const committedBuilder = execFileSync('git', [...gitArgs, 'show', `${artifactId}:scripts/build-booking-copilot-release.mjs`], { cwd: ROOT, env: childEnv })
 if (!committedBuilder.equals(readFileSync(fileURLToPath(import.meta.url)))) fail('packaging logic must match committed HEAD')
 
 if (!process.argv[2]) fail('output path is required and must be outside the repository')
@@ -83,7 +84,7 @@ try {
   childEnv.NPM_CONFIG_CACHE = process.env.BOOKING_COPILOT_NPM_CACHE || npmCache
   childEnv.NPM_CONFIG_REGISTRY = 'https://registry.npmjs.org/'
   writeFileSync(childEnv.NPM_CONFIG_USERCONFIG, '')
-  execFileSync('git', ['archive', '-o', archivePath, artifactId], { cwd: ROOT, env: childEnv, stdio: 'ignore' })
+  execFileSync('git', [...gitArgs, 'archive', '-o', archivePath, artifactId], { cwd: ROOT, env: childEnv, stdio: 'ignore' })
   execFileSync('tar', ['-xf', archivePath, '-C', source], { env: childEnv, stdio: 'ignore' })
   run(process.execPath, ['scripts/build-dist.mjs'], source)
 
