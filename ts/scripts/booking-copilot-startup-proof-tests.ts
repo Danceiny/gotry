@@ -16,6 +16,14 @@ assert.throws(
 assert.throws(
   () => resolveBookingCopilotStartupConfig({
     GOTRY_BOOKING_COPILOT_API_KEY: 'bff-key',
+    GOTRY_BOOKING_COPILOT_STATE_ROOT: '/tmp/gotry-booking-startup',
+    GOTRY_BOOKING_COPILOT_ARTIFACT_ID: 'not-a-commit',
+  }),
+  /booking_copilot_artifact_id_invalid/,
+)
+assert.throws(
+  () => resolveBookingCopilotStartupConfig({
+    GOTRY_BOOKING_COPILOT_API_KEY: 'bff-key',
     GOTRY_BOOKING_COPILOT_STATE_ROOT: 'relative/state',
   }),
   /booking_copilot_state_root_must_be_absolute/,
@@ -26,6 +34,7 @@ const env = {
   GOTRY_BOOKING_COPILOT_API_KEY: 'bff-only-key',
   GOTRY_BOOKING_COPILOT_STATE_ROOT: stateRoot,
   GOTRY_BOOKING_COPILOT_PORT: '0',
+  GOTRY_BOOKING_COPILOT_ARTIFACT_ID: '1111111111111111111111111111111111111111',
   LLM_API_KEY: 'model-only-key',
   PORTAL_TOKEN: 'must-not-enter-planner',
   HOTELBYTE_TOKEN: 'must-not-enter-planner',
@@ -34,6 +43,7 @@ const env = {
 const closeOrder: string[] = []
 let plannerEnv: Record<string, string | undefined> | undefined
 let serverApiKey = ''
+let serverArtifactId = ''
 const fakeLedger = { close() { closeOrder.push('ledger') } }
 const started = await startBookingCopilotFromEnvironment(env, {
   ensureLedger() { return fakeLedger as never },
@@ -47,6 +57,7 @@ const started = await startBookingCopilotFromEnvironment(env, {
   },
   async startServer(options) {
     serverApiKey = options.apiKey
+    serverArtifactId = options.artifactId ?? ''
     return {
       server: {} as never,
       port: 43123,
@@ -57,6 +68,7 @@ const started = await startBookingCopilotFromEnvironment(env, {
 
 assert.equal(started.port, 43123)
 assert.equal(serverApiKey, 'bff-only-key', 'BFF deployment key terminates at the HTTP server')
+assert.equal(serverArtifactId, env.GOTRY_BOOKING_COPILOT_ARTIFACT_ID)
 assert.equal(plannerEnv?.DEEPSEEK_API_KEY, 'model-only-key')
 assert.equal(plannerEnv?.GOTRY_BOOKING_COPILOT_API_KEY, undefined)
 assert.equal(plannerEnv?.PORTAL_TOKEN, undefined)

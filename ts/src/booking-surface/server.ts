@@ -48,6 +48,8 @@ export interface BookingCopilotServerOptionsV1 {
   host?: string
   port?: number
   maxBodyBytes?: number
+  /** GoTry source commit loaded from the root-owned release artifact. */
+  artifactId?: string
 }
 
 export interface BookingCopilotServerHandleV1 {
@@ -97,17 +99,32 @@ export function startBookingCopilotServer(
   options: BookingCopilotServerOptionsV1,
 ): Promise<BookingCopilotServerHandleV1> {
   if (!options.apiKey) return Promise.reject(new Error('booking_copilot_api_key_required'))
+  if (options.artifactId !== undefined && !/^[0-9a-f]{40}$/.test(options.artifactId)) {
+    return Promise.reject(new Error('booking_copilot_artifact_id_invalid'))
+  }
   const sessions = new Map<string, BookingPlannerSessionV1>()
   const maxBodyBytes = options.maxBodyBytes ?? 1_000_000
 
   const server = createServer(async (req, res) => {
-    if (req.method !== 'POST' || req.url !== '/a2a/booking-copilot/turn') {
+    const isProbe = req.method === 'GET' && (req.url === '/healthz' || req.url === '/status')
+    if (!isProbe && (req.method !== 'POST' || req.url !== '/a2a/booking-copilot/turn')) {
       sendJson(res, 404, { error: { code: 'not_found' } })
       return
     }
     const auth = String(req.headers.authorization ?? '')
     if (!safeSecretEqual(auth, `Bearer ${options.apiKey}`)) {
       sendJson(res, 401, { error: { code: 'unauthorized' } })
+      return
+    }
+    if (isProbe) {
+      res.setHeader(BOOKING_SURFACE_VERSION_HEADER, BOOKING_SURFACE_SCHEMA_VERSION)
+      res.setHeader(BOOKING_SURFACE_SCHEMA_SHA256_HEADER, BOOKING_SURFACE_SCHEMA_SHA256)
+      if (options.artifactId) res.setHeader('X-GoTry-Artifact-ID', options.artifactId)
+      sendJson(res, 200, {
+        schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
+        schemaSha256: BOOKING_SURFACE_SCHEMA_SHA256,
+        status: 'ready',
+      })
       return
     }
     const schemaVersion = String(req.headers[BOOKING_SURFACE_VERSION_HEADER] ?? '')

@@ -22,6 +22,7 @@ export interface BookingCopilotStartupConfigV1 {
   stateRoot: string
   host: string
   port: number
+  artifactId?: string
 }
 
 export interface BookingCopilotStartupHandleV1 {
@@ -58,11 +59,16 @@ export function resolveBookingCopilotStartupConfig(
   const stateRoot = env.GOTRY_BOOKING_COPILOT_STATE_ROOT ?? ''
   if (!stateRoot) throw new Error('booking_copilot_state_root_required')
   if (!isAbsolute(stateRoot)) throw new Error('booking_copilot_state_root_must_be_absolute')
+  const artifactId = env.GOTRY_BOOKING_COPILOT_ARTIFACT_ID || undefined
+  if (artifactId !== undefined && !/^[0-9a-f]{40}$/.test(artifactId)) {
+    throw new Error('booking_copilot_artifact_id_invalid')
+  }
   return {
     apiKey,
     stateRoot,
     host: env.GOTRY_BOOKING_COPILOT_HOST || '127.0.0.1',
     port: parsePort(env.GOTRY_BOOKING_COPILOT_PORT),
+    artifactId,
   }
 }
 
@@ -110,6 +116,7 @@ export async function startBookingCopilotFromEnvironment(
       plannerFactory: planner.plannerFactory,
       host: config.host,
       port: config.port,
+      artifactId: config.artifactId,
     })
   } catch (error) {
     try { await closeAll(server, planner, ledger) } catch (cleanupError) {
