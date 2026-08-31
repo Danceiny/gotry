@@ -4,6 +4,8 @@
 
 Phase 0 provides registry, case, run-receipt, and failure-cluster v0 contracts plus deterministic validators. It installs and executes no benchmark adapter, external runner, or official evaluator.
 
+The versioned cadence policy covers PR, nightly, weekly, and milestone planning. Its pure planner returns admission, `pass^k`, cost/wall/tool budgets, human-calibration requirements, failure-registry routing, and the 3–5 optimization-PR synthesis window. It never schedules or launches an adapter, spends a budget, or generates a benchmark score.
+
 ## Ownership and storage
 
 GoTry git owns the TypeScript contracts, seven-row public metadata registry, and synthetic diagnostic fixtures. Upstream prompts, answers, gold, trajectories, judge/evaluator payloads, private user material, credentials, and absolute paths remain outside this repository. Every `license.upstream_rights` code/data/evaluator determination carries a value, declared-or-not-separately-declared status, and exact verification URL; `metadata_only_no_upstream_payload` is GoTry's stricter storage policy.
@@ -22,4 +24,4 @@ The repository known-good fixture derives zero pairs. The focused test construct
 
 ## Verification and next phase
 
-Run `cd ts && npx tsx scripts/evaluation-contract-tests.ts`, then `./scripts/run-all-tests.sh`. An adapter, external evaluator execution, result receipt, baseline, or Agent change requires a separately approved later plan and PR.
+Run `cd ts && npx tsx scripts/evaluation-contract-tests.ts && npx tsx scripts/evaluation-cadence-tests.ts`, then `./scripts/run-all-tests.sh`. An adapter, external evaluator execution, result receipt, baseline, or Agent change requires a separately approved later plan and PR. Foundation and adapter work is not an Agent optimization round and does not create a new round comment in Discussion #78.

@@ -82,7 +82,7 @@ M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exi
 
 证据面现状:`ts/scripts/product-metrics.ts`(M3 cohort)与 `ts/scripts/memory-value-report.ts`(M4 价值)固化了样本窗/纳排/分母/归因与阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;synthetic fixture **永不产生 business pass**。真实证据只进入被忽略的 `ts/gotry-state/evidence/`。
 
-Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures plus test-only aggregate admission; no adapter, external runner, Python runtime dependency, baseline, matched production evidence, or Agent uplift claim.
+Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
 
 ## 2. 总体架构:五层与现状
 
@@ -344,7 +344,7 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
     覆盖同时清掉继承的 reasoningEffort(与 installModelSelection 同语义,不错配上一模型的推理档);② 运行时 cordis patch 追加两条 by-id 覆盖(`agent-default-model` 默认模型 + `llm-deepseek` 目录单条目替换——显式指定模型多为中转场景,默认 v4-* 目录对其是误导,不硬编码上游 DEFAULT_MODELS 防漂移;cordis patch 语义核验:applyEntryPatches 对 by-id 浅层键赋值、config 整体替换,未知 id 仅 warn+skip 优雅退化)。默认路径保护:`LLM_MODEL` 不设时两轨均不动作,.env.example 默认行注释化,dsh 内置默认/用户 web 选择面不变。
   - E2E:`ts/scripts/model-override-e2e.ts` mock 中转四场景(指定模型→请求体 model 一致/指定+预置用户层→env 压过/不设→内置默认 deepseek-v4-flash/不设+用户层→用户选择保留;②④ 同一 settings 文件仅差 env,对照证明覆盖因果),隔离 DSH_HOME、强制 npm 发布形态(dist 构建+临时移开 vendored 运行时),全绿;smoke §17 单元回归(未设零监听/无事件总线不抛/覆盖语义)。附查发现一项环境债:vendored 仓内形态 Node 兼容窗口断裂,记 D-27。
 
-Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures plus test-only aggregate admission; no adapter, external runner, Python runtime dependency, baseline, matched production evidence, or Agent uplift claim.
+Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
@@ -471,7 +471,7 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 
 | # | 债务 | 状态 / 赎回时机 |
 |---|---|---|
-| D-28 Evaluation Phase 0→Phase 1 adapter admission | Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures plus test-only aggregate admission; no adapter, external runner, Python runtime dependency, baseline, matched production evidence, or Agent uplift claim. | **open**: adapter admission requires a separate approved plan/PR and the license/evaluator/source-fence controls in [`evaluation-foundation.md`](evaluation-foundation.md) |
+| D-28 Evaluation Phase 0→Phase 1 adapter admission | Evaluation Phase 0 foundation now includes contracts/registry/validators, unmatched diagnostic fixtures/test-only aggregate admission, and a deterministic cadence policy/planner. The planner has no scheduler, launch, spend, scorer, baseline, or uplift effect. | **open**: every adapter, external runner, baseline, and matched production-evidence path still requires a separate approved plan/PR plus the license/evaluator/source-fence controls in [`evaluation-foundation.md`](evaluation-foundation.md) |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
