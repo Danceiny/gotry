@@ -4,8 +4,39 @@
   "description": "GoTry — 从出发到下一次出发的 AI 旅行 Agent(dsh 插件)。npm 包入口 + vendored dsh runtime + 5 行 README 安装路径。",
   "type": "module",
   "main": "ts/src/index.ts",
+  "exports": {
+    ".": "./ts/src/index.ts",
+    "./booking-surface": {
+      "types": "./ts/src/booking-surface/index.ts",
+      "import": "./dist/src/booking-surface/index.js",
+      "default": "./dist/src/booking-surface/index.js"
+    },
+    "./booking-surface/schema": "./schemas/booking.surface.v1.schema.json",
+    "./booking-surface/runtime": {
+      "types": "./ts/src/booking-surface/runtime.ts",
+      "import": "./dist/src/booking-surface/runtime.js",
+      "default": "./dist/src/booking-surface/runtime.js"
+    },
+    "./booking-surface/server": {
+      "types": "./ts/src/booking-surface/server.ts",
+      "import": "./dist/src/booking-surface/server.js",
+      "default": "./dist/src/booking-surface/server.js"
+    },
+    "./booking-surface/dsh-planner": {
+      "types": "./ts/src/booking-surface/dsh-planner.ts",
+      "import": "./dist/src/booking-surface/dsh-planner.js",
+      "default": "./dist/src/booking-surface/dsh-planner.js"
+    },
+    "./booking-surface/startup": {
+      "types": "./ts/src/booking-surface/startup.ts",
+      "import": "./dist/src/booking-surface/startup.js",
+      "default": "./dist/src/booking-surface/startup.js"
+    },
+    "./*": "./*"
+  },
   "bin": {
-    "gotry": "bin/gotry-inner.js"
+    "gotry": "bin/gotry-inner.js",
+    "gotry-booking-copilot": "bin/gotry-booking-copilot.js"
   },
   "files": [
     "dist/",
@@ -35,6 +66,8 @@
     "ts/src/time-anchor.ts",
     "ts/src/slot-spec.ts",
     "ts/src/travel-slots.ts",
+    "ts/src/booking-surface/",
+    "schemas/booking.surface.v1.schema.json",
     "ts/scripts/skeleton-check.ts",
     "ts/scripts/skeleton-integration-test.ts",
     "ts/scripts/async-collect.ts",
@@ -68,16 +101,36 @@
     "test": "bash scripts/run-all-tests.sh"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "^0.1.1-rc.1",
-    "@deepseek-ai/dsh-settings": "0.1.1-rc.2",
-    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/cordis-plugin-group": "1.0.2",
+    "@deepseek-ai/dsh": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-anonymous-user-id": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-attachment": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-invariants": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-jobs": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-llm": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-agent": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-sandbox-policy": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-output-retention": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-fs": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-session-persistence": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-sdk-client": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-sandbox": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-shell": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-shell-env": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-sdk-protocol": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-session": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-settings": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-tools": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-system-prompt": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-user-approval": "0.1.2-alpha.2",
     "@deepseek-ai/schemastery": "^3.18.1",
+    "ajv": "^8.17.1",
     "better-sqlite3": "^13.0.3",
     "dsh-calendar": "^0.3.2",
-    "dsh-map-tools": "^0.4.4",
     "puppeteer-core": "^25.9.0",
     "z3-solver": "^5.2.0",
-    "@deepseek-ai/dsh-scope": "0.1.1-rc.2"
+    "@deepseek-ai/dsh-scope": "0.1.2-alpha.2"
   },
   "repository": {
     "type": "git",
@@ -91,5 +144,6 @@
     "dsh",
     "deepseek-harness"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "packageManager": "pnpm@11.5.0+sha512.dbfcc4f81cf48597afd4bc391ffdf12c11f1a9fb83a395bfa6b0a2d9cc2fd8ffebafdb1ccbd529632153f793904c2615b7f09fe1a345473fd1c35845172a8eb1"
 }
