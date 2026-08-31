@@ -1,9 +1,11 @@
 /** Public npm package subpath proof. Run from the repository root with tsx. */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import {
   BOOKING_READ_ACTION_KINDS,
   BOOKING_SURFACE_SCHEMA_VERSION,
@@ -28,20 +30,45 @@ const schemaPath = fileURLToPath(import.meta.resolve('@danceiny/gotry/booking-su
 const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as { $id?: string }
 assert.equal(schema.$id, 'https://gotry.dev/schemas/booking.surface.v1.schema.json')
 
-// Boot the packaged dsh core itself without a model/network call. This catches
-// missing runtime closure (notably dsh-tool-bash's sandbox peer) in the same
-// installed tree used by consumers.
-const dshBin = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules/.bin/dsh')
-const dshHelp = spawnSync(dshBin, ['--help'], { encoding: 'utf8' })
-assert.equal(dshHelp.status, 0, dshHelp.stderr || dshHelp.stdout)
-
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const packed = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
+const consumerRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-consumer-'))
+const packedConsumer = join(consumerRoot, 'consumer')
+mkdirSync(packedConsumer)
+const consumerScript = join(packedConsumer, 'boot-core.mjs')
+writeFileSync(consumerScript, `
+import { createServer } from 'node:http'
+import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
+const server = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end('data: ' + JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 0, model: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'booted' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) + '\\n\\ndata: [DONE]\\n\\n') }) })
+await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+const address = server.address()
+const harness = new DeepSeekHarness({ profile: 'sdk-minimal', dshHome: '${consumerRoot}/dsh-home', cwd: '${consumerRoot}', processCwd: '${consumerRoot}', env: { PATH: process.env.PATH, DEEPSEEK_API_KEY: 'fixture', DEEPSEEK_BASE_URL: 'http://127.0.0.1:' + address.port + '/v1' } })
+try { await harness.run('boot core', { sessionId: 'package-proof-core' }) } finally { await harness.close(); await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }
+console.log('PACKED CONSUMER DSH CORE BOOT: OK')
+`)
+const tarballResult = spawnSync('npm', ['pack', '--silent', '--ignore-scripts'], { cwd: root, encoding: 'utf8' })
+assert.equal(tarballResult.status, 0, tarballResult.stderr || tarballResult.stdout)
+const tarball = resolve(root, tarballResult.stdout.trim())
+writeFileSync(join(packedConsumer, 'package.json'), JSON.stringify({ name: 'clean-consumer', private: true, type: 'module' }))
+const install = spawnSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], { cwd: packedConsumer, encoding: 'utf8', timeout: 120_000 })
+assert.equal(install.status, 0, install.stderr || install.stdout)
+const consumerRun = spawnSync(process.execPath, [consumerScript], { cwd: packedConsumer, encoding: 'utf8', timeout: 60_000 })
+assert.equal(consumerRun.status, 0, consumerRun.stderr || consumerRun.stdout)
+const sandboxPath = join(packedConsumer, 'node_modules/@deepseek-ai/dsh-sandbox')
+const sandboxBackup = join(consumerRoot, 'dsh-sandbox.backup')
+renameSync(sandboxPath, sandboxBackup)
+try {
+  const faultRun = spawnSync(process.execPath, [consumerScript], { cwd: packedConsumer, encoding: 'utf8', timeout: 60_000 })
+  assert.notEqual(faultRun.status, 0, 'removing dsh-sandbox must make the real core proof fail')
+} finally { renameSync(sandboxBackup, sandboxPath) }
+rmSync(tarball, { force: true })
+rmSync(consumerRoot, { recursive: true, force: true })
+
+const packReport = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
   cwd: root,
   encoding: 'utf8',
 })
-assert.equal(packed.status, 0, packed.stderr || packed.stdout)
-const report = JSON.parse(packed.stdout) as Array<{ files: Array<{ path: string; mode?: number }> }>
+assert.equal(packReport.status, 0, packReport.stderr || packReport.stdout)
+const report = JSON.parse(packReport.stdout) as Array<{ files: Array<{ path: string; mode?: number }> }>
 const files = new Map(report[0]!.files.map((entry) => [entry.path, entry]))
 for (const path of [
   'bin/gotry-booking-copilot.js',
