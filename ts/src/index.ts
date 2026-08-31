@@ -43,6 +43,7 @@ import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installToolBudget } from './tool-budget.ts'
+import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 
 /** 航司→机场映射表(issue #46 冲突检测面;data/airline-airports.json,as_of 快照) */
 let airlineAirportMapCache: AirlineAirportMap | null = null
@@ -60,6 +61,9 @@ async function loadAirlineAirportMap(): Promise<AirlineAirportMap | null> {
 }
 
 export const name = 'gotry-tools'
+// The bridge obtains subprocess through an optional Cordis lookup at apply
+// time. Declaring it as a required injection would make the whole plugin
+// depend on a service that is only needed for explicit benchmark opt-in.
 export const inject = ['tools', 'systemPrompt']
 
 export interface Config {
@@ -71,6 +75,8 @@ export interface Config {
   hbcliBin: string
   /** 账号会话检索总闸(RFC 支柱④「用户明示授权+随时可关」):ask=gotry_session_search 每会话每站点首次调用弹审批卡、会话内记住(默认);allow=用户已在配置明示预授权(直接放行);off=总闸关闭,直接拒绝 */
   sessionAccess: string
+  /** Owner-local benchmark environment bridge config; empty disables the bridge. */
+  benchmarkEnvironmentConfigPath?: string
 }
 
 export const Config: z<Config> = z.object({
@@ -78,6 +84,7 @@ export const Config: z<Config> = z.object({
   timeoutMs: z.number().default(30_000),
   hbcliBin: z.string().default('hbcli'),
   sessionAccess: z.string().default('ask'),
+  benchmarkEnvironmentConfigPath: z.string().default(''),
 })
 
 interface FeasibilityResult {
@@ -209,6 +216,17 @@ export function apply(ctx: Context, config: Config): void {
       t.execute = guardToolExecute(String(t.name), config.stateRoot ?? '.', t.execute as (args: never, exec: unknown) => never)
     }
     ctx.tools.register(t as unknown as ReturnType<typeof defineTool>)
+  }
+
+  if (config.benchmarkEnvironmentConfigPath?.trim()) {
+    const bridgePath = config.benchmarkEnvironmentConfigPath
+    // subprocess is an optional Cordis service: a missing provider must not make
+    // the normal plugin path fail. Keep the benchmark bridge fail-closed.
+    const getService = (ctx as unknown as { get?: (name: string, fallback?: unknown) => unknown }).get
+    const directSubprocess = (typeof getService === 'function'
+      ? getService.call(ctx, 'subprocess')
+      : undefined) as BenchmarkSubprocessService | undefined
+    registerBenchmarkEnvironmentBridge(bridgePath, registerGuarded, directSubprocess)
   }
 
   registerGuarded(defineTool({
