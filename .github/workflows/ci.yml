@@ -21,6 +21,27 @@ env:
   GOTRY_SESSION_LIVE: "0"
 
 jobs:
+  booking-copilot-release:
+    name: Booking Copilot release contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.20.0
+      - name: Pin and verify npm
+        run: npm install --global npm@11.16.0 && test "$(node --version)" = v24.20.0 && test "$(npm --version)" = 11.16.0
+      - name: Booking Copilot release builder
+        env:
+          EXPECTED_GOTRY_ARTIFACT_ID: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_GOTRY_RELEASE_TUPLE: linux-x64-glibc
+          EXPECTED_NODE_VERSION: v24.20.0
+          EXPECTED_NPM_VERSION: 11.16.0
+        run: node scripts/booking-copilot-release-builder-tests.mjs
+
   ci:
     name: typecheck + full regression
     runs-on: ubuntu-latest
@@ -50,6 +71,22 @@ jobs:
 
       - name: Build dist (§25 publish-preverify packs the real dist)
         run: node scripts/build-dist.mjs
+
+      - name: Booking Copilot builder rejects non-Node24
+        if: matrix.node-version == 22
+        shell: bash
+        run: |
+          set -euo pipefail
+          error_file="$(mktemp)"
+          if EXPECTED_GOTRY_ARTIFACT_ID="$(git rev-parse HEAD)" \
+             EXPECTED_GOTRY_RELEASE_TUPLE=linux-x64-glibc \
+             EXPECTED_NODE_VERSION="$(node --version)" \
+             EXPECTED_NPM_VERSION="$(npm --version)" \
+             node scripts/build-booking-copilot-release.mjs "$RUNNER_TEMP/non-node24-release" 2>"$error_file"; then
+            echo "Node22 unexpectedly built a Booking Copilot release" >&2
+            exit 1
+          fi
+          grep -Fq "Node 24 is required" "$error_file"
 
       # Root npm ci follows the historical lockfile and does not materialize
       # dsh's transitive peer closure. Exercise the publish shape from a clean
