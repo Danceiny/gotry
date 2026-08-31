@@ -76,9 +76,11 @@ npx tsx scripts/benchmark-environment-bridge-e2e.ts
 ```
 
 The E2E uses a loopback synthetic model relay, a temporary owner-local runner,
-an isolated `DSH_HOME` and cwd, and a synthetic key only. It exercises source
-and, when `GOTRY_BRIDGE_E2E_BIN` is set, the installed-package CLI in the same
-gate. It verifies default-off behavior, environment isolation, private config
+an isolated `DSH_HOME` and cwd, and a synthetic key only. By default it
+exercises the source checkout. When `GOTRY_BRIDGE_E2E_BIN` is set, it instead
+exercises that clean installed-package CLI; CI uses this route because the
+historical root npm lock is not the publish consumer dependency closure. It
+verifies default-off behavior, environment isolation, private config
 rejection, real output truncation, and a real deadline. It is not ChinaTravel
 treatment evidence. Round 1's exact DeepSeek frozen case produced an
 environment-unavailable, schema-invalid result (score 0); the separate GLM run

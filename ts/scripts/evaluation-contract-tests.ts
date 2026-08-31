@@ -149,7 +149,7 @@ for (const vector of vectors) {
 }
 
 const runAll = readFileSync('../scripts/run-all-tests.sh', 'utf8')
-assert.match(runAll, /=== 45\. Evaluation Phase 0 foundation/)
+assert.match(runAll, /=== 46\. Evaluation Phase 0 foundation/)
 assert.match(runAll, /npx tsx scripts\/evaluation-contract-tests\.ts/)
 assert.throws(() => deriveMatchedPairs(countable, emptyResolver), /artifact/)
 for (const [key, value] of [['apikey', 'secret'], ['access-token', 'secret'], ['apiKey', 'secret'], ['ACCESS-TOKEN', 'secret'], ['client_secret', 'secret'], ['authorization', 'Bearer abcdefghijklmnopqrstuvwxyz123456'], ['value', '/private/file'], ['value', '~/private/file'], ['value', 'C:\\private\\file'], ['value', 'file:///private/file'], ['value', 'sk-abcdefghijklmnopqrstuv'], ['value', 'ghp_abcdefghijklmnopqrstuvwxyz123456'], ['value', 'AKIA1234567890ABCDEF']]) assert.throws(() => assertPublicArtifactSafe({ [key]: value }, 'adversarial'), /absolute path or secret|credentials/)
