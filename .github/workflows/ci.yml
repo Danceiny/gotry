@@ -75,5 +75,9 @@ jobs:
         run: npx tsc --noEmit
         working-directory: ts
 
-      - name: Full-stack regression (§1-§45)
+      - name: Post-DSH-upgrade plugin smoke
+        run: npx tsx scripts/smoke.ts
+        working-directory: ts
+
+      - name: Full-stack regression (§1-§34)
         run: bash scripts/run-all-tests.sh
