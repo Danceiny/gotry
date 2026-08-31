@@ -71,7 +71,8 @@ try {
     executable: process.execPath,
     cwd: root,
     argv_prefix: ['-m', 'agent_env.cli', '--lang', 'en'],
-    allowed_tools: ['lookup'],
+    allowed_tools: ['lookup', 'constructor', 'toString'],
+    allowed_output_keys: { lookup: ['city', 'nested'], constructor: ['legacy'] },
     timeout_ms: 20,
     max_output_bytes: 4_096,
     isolation: {
@@ -148,6 +149,30 @@ try {
   assert.equal(spawnSpecs[0]?.env?.PYTHONDONTWRITEBYTECODE, '1')
   assert.equal(spawnSpecs[0]?.env?.PYTHONNOUSERSITE, '1')
   assert.deepEqual(result, { ok: true, result: [{ city: 'Dubai' }] }, 'one-line JSON stdout becomes structured result')
+
+  outcomes.push({ stdout: '{"result":{"city":"Dubai"}}' })
+  const unmappedResult = await bridge.execute!({ query: { action: 'call', tool: 'toString', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(unmappedResult, { ok: true, result: { city: 'Dubai' } }, 'allowed tool without a positive mapping retains the recursive denylist only')
+
+  outcomes.push({ stdout: '{"result":{"legacy":"value"}}' })
+  const legacyResult = await bridge.execute!({ query: { action: 'call', tool: 'constructor', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(legacyResult, { ok: true, result: { legacy: 'value' } }, 'mapped constructor accepts its declared positive key')
+
+  outcomes.push({ stdout: '{"result":{"city":"Dubai"}}' })
+  const constructorUnexpected = await bridge.execute!({ query: { action: 'call', tool: 'constructor', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(constructorUnexpected, { ok: false, error: 'forbidden_output' }, 'mapped constructor rejects undeclared positive keys')
+
+  outcomes.push({ stdout: '{"result":{"nested":{"city":"Dubai"}}}' })
+  const nestedAllowedResult = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(nestedAllowedResult, { ok: true, result: { nested: { city: 'Dubai' } } }, 'configured positive output allowlist accepts declared nested keys')
+
+  outcomes.push({ stdout: '{"result":{"city":"Dubai","unexpected":"secret"}}' })
+  const unexpectedResult = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(unexpectedResult, { ok: false, error: 'forbidden_output' }, 'configured positive output allowlist rejects unexpected keys without reflecting them')
+
+  outcomes.push({ stdout: '{"result":[{"city":"Dubai","nested":{"unexpected":"secret"}}]}' })
+  const nestedUnexpectedResult = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(nestedUnexpectedResult, { ok: false, error: 'forbidden_output' }, 'configured positive output allowlist recurses through arrays and objects')
 
   for (const forbidden of [
     'gold', 'goldAnswer', 'oracle', 'expected', 'expected_answer', 'answer', 'label',
@@ -260,6 +285,11 @@ try {
 
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, unknown: true }), /benchmark environment bridge configuration unavailable/, 'unknown top-level config key fails hard')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_tools: ['lookup', 'lookup'] }), /benchmark environment bridge configuration unavailable/, 'duplicate allowed tool fails hard')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_output_keys: {} }), /benchmark environment bridge configuration unavailable/, 'empty output-key mapping fails hard')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_output_keys: { lookup: [] } }), /benchmark environment bridge configuration unavailable/, 'empty output-key allowlist fails hard')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_output_keys: { unknown: ['city'] } }), /benchmark environment bridge configuration unavailable/, 'output-key mapping for unknown tool fails hard')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_output_keys: { lookup: ['city', 'city'] } }), /benchmark environment bridge configuration unavailable/, 'duplicate output key fails hard')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_output_keys: { lookup: ['not a key'] } }), /benchmark environment bridge configuration unavailable/, 'non-identifier output key fails hard')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, argv_prefix: ['agent\n--unsafe'] }), /benchmark environment bridge configuration unavailable/, 'argv control separator fails hard')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_tools: ['lookup;rm'] }), /benchmark environment bridge configuration unavailable/, 'shell metacharacter tool identifier fails hard')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, isolation: { mode: 'host-enforced', writes: 'forbidden' } }), /benchmark environment bridge configuration unavailable/, 'incomplete isolation policy fails hard')
@@ -275,6 +305,26 @@ try {
   writeFileSync(widePath, JSON.stringify(validConfig))
   chmodSync(widePath, 0o666)
   assert.throws(() => loadConfigRegistration(widePath, root), /benchmark environment bridge configuration unavailable/, 'group/world writable config fails hard')
+
+  const legacyConfigPath = join(root, 'legacy-bridge.json')
+  writeFileSync(legacyConfigPath, JSON.stringify(validConfig))
+  const legacyTools: RegisteredTool[] = []
+  const legacyCtx = {
+    tools: { register(tool: RegisteredTool) { legacyTools.push(tool); return () => {} } },
+    systemPrompt: { variable() {} },
+    get(name: string) { return name === 'subprocess' ? (this as unknown as { subprocess: unknown }).subprocess : undefined },
+    subprocess: { spawn: (_spec: SpawnSpec) => fakeHandle({ stdout: '{"result":{"city":"Dubai"}}' }) },
+  } as unknown as Context
+  apply(legacyCtx, {
+    stateRoot: root, timeoutMs: 20, hbcliBin: '', sessionAccess: 'off', benchmarkEnvironmentConfigPath: legacyConfigPath,
+  } as Config & { benchmarkEnvironmentConfigPath: string })
+  const legacyBridge = legacyTools.find(tool => tool.name === 'gotry_benchmark_environment')
+  assert.ok(legacyBridge?.execute, 'legacy config without allowed_output_keys registers the bridge')
+  assert.deepEqual(
+    await legacyBridge!.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null),
+    { ok: true, result: { city: 'Dubai' } },
+    'legacy config without allowed_output_keys still executes safe structured output',
+  )
 
   console.log('BENCHMARK ENVIRONMENT BRIDGE TESTS: registration + TDD bridge contract assertions')
 } catch (error) {

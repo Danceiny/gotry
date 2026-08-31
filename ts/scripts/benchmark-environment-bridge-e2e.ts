@@ -19,6 +19,7 @@ const BIN = join(ROOT, 'bin', 'gotry-inner.js')
 const TOOL = 'gotry_benchmark_environment'
 const MARKER = 'BENCHMARK_BRIDGE_LOOKUP_OK'
 const TIMEOUT_MS = 30_000
+const TSX_LOADER = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href
 type Body = { messages?: Array<Record<string, unknown>>; tools?: Array<Record<string, unknown>> }
 
 function sse(payload: Record<string, unknown>): string {
@@ -38,8 +39,11 @@ function names(body: Body): string[] {
 function toolResultPresent(body: Body): boolean {
   return (body.messages ?? []).some(m => m.role === 'tool' && JSON.stringify(m).includes(MARKER))
 }
+function anyToolResultPresent(body: Body): boolean {
+  return (body.messages ?? []).some(m => m.role === 'tool')
+}
 
-type CaseMode = 'disabled' | 'enabled' | 'invalid-path' | 'invalid-schema' | 'unsafe-config' | 'output-truncated' | 'timeout'
+type CaseMode = 'disabled' | 'enabled' | 'unexpected-output' | 'invalid-path' | 'invalid-schema' | 'unsafe-config' | 'output-truncated' | 'timeout'
 
 async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ exit: number | null; output: string; requests: Body[] }> {
   const requests: Body[] = []
@@ -50,7 +54,7 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
       let body: Body = {}; try { body = JSON.parse(Buffer.concat(chunks).toString()) as Body } catch { /* diagnostic remains structural */ }
       requests.push(body)
       res.writeHead(200, { 'content-type': 'text/event-stream' })
-      if (mode !== 'disabled' && mode !== 'invalid-path' && mode !== 'invalid-schema' && mode !== 'unsafe-config' && names(body).includes(TOOL) && !toolResultPresent(body)) res.end(toolCall())
+      if (mode !== 'disabled' && mode !== 'invalid-path' && mode !== 'invalid-schema' && mode !== 'unsafe-config' && names(body).includes(TOOL) && !anyToolResultPresent(body)) res.end(toolCall())
       else res.end(finalText(mode === 'enabled' ? 'bridge final text' : 'default final text'))
     })
   })
@@ -64,9 +68,11 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
     ? `setTimeout(() => {}, 60_000)`
     : mode === 'output-truncated'
       ? `process.stdout.write('x'.repeat(20_000))`
+      : mode === 'unexpected-output'
+        ? `process.stdout.write(JSON.stringify({ result: { marker: '${MARKER}', leaked: [], unexpected: 'must-not-reflect' } }))`
       : `const forbidden = ['GOTRY_BENCHMARK_ENV_CONFIG', 'GOTRY_BENCHMARK_BRIDGE_PARENT_SECRET', 'LLM_API_KEY', 'LLM_BASE_URL', 'LLM_MODEL', 'DEEPSEEK_BASE_URL', 'GOTRY_LLM_MODEL', 'DATABASE_URL', 'SSH_AUTH_SOCK', 'AWS_PROFILE', 'HTTPS_PROXY']; const leaked = forbidden.filter(name => process.env[name] !== undefined); process.stdout.write(JSON.stringify({ result: { marker: '${MARKER}', leaked } }))`
   writeFileSync(runner, `if (process.argv.length !== 5 || process.argv[2] !== 'call' || process.argv[3] !== 'lookup' || JSON.parse(process.argv[4]).city !== 'Dubai') process.exit(2); ${runnerBody}`)
-  writeFileSync(configPath, JSON.stringify({ schema_version: mode === 'invalid-schema' ? 'invalid' : 'gotry_benchmark_environment_bridge_v1', enabled: true, executable: process.execPath, cwd, argv_prefix: [runner], allowed_tools: ['lookup'], timeout_ms: mode === 'timeout' ? 50 : 10_000, max_output_bytes: mode === 'output-truncated' ? 1_024 : 4_096, isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' } }))
+  writeFileSync(configPath, JSON.stringify({ schema_version: mode === 'invalid-schema' ? 'invalid' : 'gotry_benchmark_environment_bridge_v1', enabled: true, executable: process.execPath, cwd, argv_prefix: [runner], allowed_tools: ['lookup'], allowed_output_keys: { lookup: ['marker', 'leaked'] }, timeout_ms: mode === 'timeout' ? 50 : 10_000, max_output_bytes: mode === 'output-truncated' ? 1_024 : 4_096, isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' } }))
   if (mode === 'unsafe-config') chmodSync(configPath, 0o666)
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -80,6 +86,7 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
     HTTPS_PROXY: 'https://sentinel-proxy',
     GOTRY_BENCHMARK_ENV_CONFIG: mode === 'disabled' ? '' : configPath,
     ...(mode !== 'disabled' ? { GOTRY_BENCHMARK_BRIDGE_PARENT_SECRET: 'do-not-leak' } : {}),
+    ...(!executableOverride ? { NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${TSX_LOADER}`].filter(Boolean).join(' ') } : {}),
   }
   if (mode === 'disabled') delete env.GOTRY_BENCHMARK_ENV_CONFIG
   const executable = executableOverride || process.execPath
@@ -115,6 +122,10 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
   assert.ok(enabled.requests.some(r => /\\?"leaked\\?":\[\]/.test(JSON.stringify(r))), `${target} tool result must report no forbidden environment names; observed names=${leakedReport || '(none)'}`)
   assert.equal(enabled.requests.some(r => JSON.stringify(r).includes('do-not-leak')), false, `${target} tool result must not expose the parent secret value`)
   assert.match(enabled.output, /bridge final text/)
+  const unexpected = await runCase('unexpected-output', executableOverride)
+  assert.equal(unexpected.exit, 0, `${target} unexpected output child exit=${unexpected.exit}; output tail=${unexpected.output.slice(-1000)}`)
+  assert.ok(unexpected.requests.some(r => JSON.stringify(r).includes('forbidden_output')), `${target} positive output allowlist must reject unexpected output`)
+  assert.equal(unexpected.requests.some(r => JSON.stringify(r).includes('must-not-reflect')), false, `${target} positive output rejection must not reflect unexpected key/value`)
   const invalidPath = await runCase('invalid-path', executableOverride)
   assert.equal(invalidPath.exit, 1, `${target} invalid config basename child exit=${invalidPath.exit}`)
   assert.equal(invalidPath.requests.length, 0, `${target} invalid config must fail before relay/network activity`)
