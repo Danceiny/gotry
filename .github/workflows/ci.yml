@@ -51,9 +51,9 @@ jobs:
       - name: Build dist (§25 publish-preverify packs the real dist)
         run: node scripts/build-dist.mjs
 
-      # Root npm ci follows the historical lockfile and does not materialize
-      # dsh's transitive peer closure. Exercise the publish shape from a clean
-      # consumer install instead of accidentally borrowing a developer tree.
+      # Root npm ci now materializes the pinned DSH closure. Keep exercising the
+      # publish shape from a clean consumer so package E2E cannot borrow source
+      # files or node_modules from the developer tree.
       - name: Prepare packaged tool-budget E2E runtime
         shell: bash
         run: |

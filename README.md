@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Version** | `v0.0.1-rc.13+` (npm `latest`; [release notes](docs/release-notes.md)) |
-| **Runtime** | DeepSeek Harness **0.1.2-alpha.1** (vendored; [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 WASM · Cordis |
+| **Runtime** | DeepSeek Harness **0.1.2-alpha.3** (root-pinned; [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 WASM · Cordis |
 | **License** | **MIT** ([LICENSE](LICENSE)) |
 | **Docs** | English (this file) · [简体中文 README](README.zh-CN.md) · deep engineering docs are Chinese-first ([docs/architecture.md](docs/architecture.md)) |
 
@@ -39,7 +39,7 @@ npx @danceiny/gotry web
 | 🤖 Scripted / one-shot answer | `npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"` |
 | 🛠️ Developer: run from source | see [source install](#%EF%B8%8F-developer-source-install) below |
 
-- Requires Node 22+ and one LLM API key. Any OpenAI-compatible endpoint (MiniMax / relays / self-hosted gateways) works too — add `LLM_BASE_URL` to `.env` (usually ends with `/v1`, e.g. `https://api.minimax.io/v1`) and requests follow it instead of the DeepSeek default. To pin the model,
+- Requires Node 22.15+ and one LLM API key. Any OpenAI-compatible endpoint (MiniMax / relays / self-hosted gateways) works too — add `LLM_BASE_URL` to `.env` (usually ends with `/v1`, e.g. `https://api.minimax.io/v1`) and requests follow it instead of the DeepSeek default. To pin the model,
   - set `LLM_MODEL` (e.g. `MiniMax-M2`): it applies to both the dsh chat face and the repo scripts, and beats the model selection persisted in the dsh web UI;
   - unset, the dsh built-in default (`deepseek-v4-flash`) or your web-UI choice is used. Zero-config startup — the dsh runtime is mounted automatically via a cordis patch.
 
@@ -75,15 +75,18 @@ That's it — the dsh chat UI on `:3080` with the GoTry persona mounted. First c
 
 ```bash
 git clone https://github.com/Danceiny/gotry && cd gotry
-cd ts/dsh-runtime && pnpm install && cd ../..    # ① vendored dsh 0.1.2-alpha.1 (one-off)
-cp .env.example .env                              # ② set LLM_API_KEY (+ LLM_BASE_URL if not on DeepSeek; + LLM_MODEL to pin the model)
-./gotry web                                       # ③ in-repo entry, same UX
+npm ci && npm --prefix ts ci                      # ① install the pinned root/TS closure
+node scripts/build-dist.mjs                       # ② build the source checkout's JS runtime
+cp .env.example .env                              # ③ set LLM_API_KEY (+ LLM_BASE_URL if not on DeepSeek; + LLM_MODEL to pin the model)
+./gotry web                                       # ④ in-repo entry, same UX
 ```
 
 | Entry | Command | When |
 |---|---|---|
 | dsh Web chat (recommended) | `./gotry web` | multi-turn planning with visualized reasoning → :3080 |
 | headless one-shot | `./gotry "one full task"` | scripts / CI / targeted debugging → stdout |
+
+The source entry and npm package both resolve the root-pinned DSH alpha.3 runtime. Source checkout runs dsh from `ts/dsh-runtime/` in normal mode so `gotry-state/` continuity is preserved; benchmark opt-in and npm-package runs use the invocation directory for isolation. The old `ts/dsh-runtime/` vendor tree remains a non-benchmark legacy resolution fallback, not a promised runnable path or the recommended install path.
 
 ---
 
@@ -196,7 +199,7 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 - ⏳ **M3 Exit not closed** — engineering & distribution ready, but real seed-user evidence (50–200 person cohort) not yet accumulated; automated tests prove contracts and formulas, not business pass
 - ⏳ **Ctrip-hotel / Meituan logged-in adapters** — flights done; hotel session surfaces await real login-state backfill (next tick)
 - ⏳ **Interface language** — English currently covers the deterministic solve-output layer only; the dsh host UI and dialogue surface belong to the host / calibration samples
-- ⏳ **External benchmark generalization / Phase 1 bridge** — Round 1's exact DeepSeek treatment was environment-unavailable/schema-invalid (score 0), while GLM timed out at 300 s. Round 2 added the default-off owner-local bridge; its frozen treatment remained diagnostic-only because no structured native bridge call or tagged JSON reached the evaluator. Round 3 added provider-neutral native-call/result/terminal conformance, but its new frozen treatment still stopped after one runner spawn with planner/runner exit 1, zero released terminal bytes, no evaluator entry, and null official scores. Round 4 therefore validates the owner-local config first, projects benchmark startup to exactly one `gotry-tools` insert before resolving any optional host plugin, and requires exactly one config-path injection anchor. Source and clean-package E2E poison optional/future plugins and prove default-off loads the poison while benchmark mode performs zero such loads and reaches the bridge; missing/duplicate allowlist or anchor state fails before relay activity. Host/owner enforcement still owns write/network denial. A new frozen treatment and cross-benchmark evidence remain open, so no uplift or external benchmark closure is claimed. See [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md).
+- ⏳ **External benchmark generalization / Phase 1 bridge** — Round 1's exact DeepSeek treatment was environment-unavailable/schema-invalid (score 0), while GLM timed out at 300 s. Round 2 added the default-off owner-local bridge; its frozen treatment remained diagnostic-only because no structured native bridge call or tagged JSON reached the evaluator. Round 3 added provider-neutral native-call/result/terminal conformance, but its new frozen treatment still stopped after one runner spawn with planner/runner exit 1, zero released terminal bytes, no evaluator entry, and null official scores. Round 4's treatment at SHA `5ebddb2` had primary preflight pass, but planner/runner both exited 1 after 30.968 s, released 0 bytes, the evaluator was not entered, and official scores were null. The product Node gate was v24.20.0 while that treatment used v26.3.0, so the result remains diagnostic-only with no uplift claim. GitHub Node 22/24 §48 separately exposed a source default-off 30 s lifecycle hang. Round 5 is limited to removing the timer/keepalive preload, pinning the root/package DSH closure to alpha.3, making source checkout resolve that locked runtime before the legacy vendored fallback, preserving source normal-mode state under `ts/dsh-runtime/gotry-state/` while benchmark/package runs use the invocation directory for isolation, rejecting a non-alpha.3 benchmark runtime before spawn, enforcing Node 22.15+, and adding a benchmark-only structured diagnostic pipe with allowlisted redacted reason codes while stdout remains fail-closed; the next UID has not been consumed. Cross-benchmark evidence remains open. See [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md).
 
 <details>
 <summary>📖 Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
@@ -240,6 +243,6 @@ Standard open-source flow: branch off latest `main` (`feat/ · fix/ · docs/ · 
 
 ---
 
-**Built with**: DeepSeek Harness 0.1.2-alpha.1 (vendored) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
+**Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
 
 **Version baseline: `v0.0.1-rc.16` (2026-08-30).** The current checkout's authoritative verification gates are enumerated by `scripts/run-all-tests.sh` (release flow: `scripts/publish-npm.sh`).

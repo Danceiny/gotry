@@ -2,10 +2,18 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import {
+  emitBenchmarkChildDiagnostic,
+  type BenchmarkChildFailureCode,
+} from './benchmark-headless-child-diagnostics.ts'
 
 export const MAX_CONFORMANCE_RETRIES = 1 as const
 export const BENCHMARK_BRIDGE_CALL_REQUIRED = 'BENCHMARK_BRIDGE_CALL_REQUIRED'
 export const BENCHMARK_BRIDGE_CALL_FAILED = 'BENCHMARK_BRIDGE_CALL_FAILED'
+export const BENCHMARK_BRIDGE_TIMED_OUT = 'BENCHMARK_BRIDGE_TIMED_OUT'
+export const BENCHMARK_BRIDGE_RUNNER_FAILED = 'BENCHMARK_BRIDGE_RUNNER_FAILED'
+export const BENCHMARK_BRIDGE_SPAWN_FAILED = 'BENCHMARK_BRIDGE_SPAWN_FAILED'
+export const BENCHMARK_BRIDGE_OUTPUT_TRUNCATED = 'BENCHMARK_BRIDGE_OUTPUT_TRUNCATED'
 export const BENCHMARK_TERMINAL_INVALID = 'BENCHMARK_TERMINAL_INVALID'
 export const BENCHMARK_BRIDGE_RETRY_CALL_NOT_ALLOWED = 'BENCHMARK_BRIDGE_RETRY_CALL_NOT_ALLOWED'
 export const BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE = 'BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE'
@@ -37,6 +45,7 @@ interface TurnState {
   retryMode: RetryMode
   successfulResultStep?: number
   bridgeCallFailed: boolean
+  bridgeFailureCode?: string
   retryRedispatchAttempted: boolean
   lastAssistant?: {
     step: number
@@ -132,23 +141,46 @@ function assistantText(data: Record<string, unknown>): { text: string; interrupt
   return { text, interrupted: data.interrupted === true }
 }
 
-function successfulBridgeResult(data: Record<string, unknown>, callId: string): boolean {
-  if (!plainObject(data.message) || !plainObject(data.message.source)) return false
-  if (data.message.source.callId !== callId || !Array.isArray(data.message.content)) return false
+function bridgeResultStatus(data: Record<string, unknown>, callId: string): { ok: true } | { ok: false; code: string } | undefined {
+  if (!plainObject(data.message) || !plainObject(data.message.source)) return undefined
+  if (data.message.source.callId !== callId || !Array.isArray(data.message.content)) return undefined
   const block = data.message.content.find(candidate => plainObject(candidate)
     && candidate.type === 'tool-result'
     && candidate.toolCallId === callId)
-  if (!plainObject(block) || block.isError === true || !Array.isArray(block.content)) return false
+  if (!plainObject(block) || block.isError === true || !Array.isArray(block.content)) return undefined
   const text = block.content
     .filter(candidate => plainObject(candidate) && candidate.type === 'text' && typeof candidate.text === 'string')
     .map(candidate => String((candidate as Record<string, unknown>).text))
     .join('')
   try {
     const parsed: unknown = JSON.parse(text)
-    return plainObject(parsed) && parsed.ok === true
+    if (!plainObject(parsed)) return undefined
+    if (parsed.ok === true) return { ok: true }
+    if (parsed.ok === false && typeof parsed.error === 'string') {
+      const code = parsed.error === 'timed_out'
+        ? BENCHMARK_BRIDGE_TIMED_OUT
+        : parsed.error === 'runner_failed'
+          ? BENCHMARK_BRIDGE_RUNNER_FAILED
+          : parsed.error === 'spawn_failed'
+            ? BENCHMARK_BRIDGE_SPAWN_FAILED
+            : parsed.error === 'output_truncated'
+              ? BENCHMARK_BRIDGE_OUTPUT_TRUNCATED
+            : BENCHMARK_BRIDGE_CALL_FAILED
+      return { ok: false, code }
+    }
+    return undefined
   } catch {
-    return false
+    return undefined
   }
+}
+
+export function benchmarkChildFailureForConformanceCode(code: string): BenchmarkChildFailureCode {
+  if (code === BENCHMARK_BRIDGE_TIMED_OUT) return 'child_bridge_timed_out'
+  if (code === BENCHMARK_BRIDGE_RUNNER_FAILED) return 'child_bridge_runner_failed'
+  if (code === BENCHMARK_BRIDGE_SPAWN_FAILED) return 'child_bridge_spawn_failed'
+  if (code === BENCHMARK_BRIDGE_OUTPUT_TRUNCATED) return 'child_bridge_output_truncated'
+  if (code === BENCHMARK_BRIDGE_CALL_FAILED) return 'child_bridge_failure'
+  return 'child_conformance_failure'
 }
 
 function newTurn(turn: number): TurnState {
@@ -206,12 +238,14 @@ export function createBenchmarkAgentConformance(projection: BenchmarkBridgeProje
         if (!plainObject(event.data.message) || !plainObject(event.data.message.source)) return
         const callId = event.data.message.source.callId
         if (typeof callId !== 'string' || !state.validCallIds.has(callId)) return
-        if (successfulBridgeResult(event.data, callId)) {
+        const resultStatus = bridgeResultStatus(event.data, callId)
+        if (resultStatus?.ok === true) {
           state.successfulResultStep = typeof event.data.step === 'number'
             ? event.data.step
             : state.successfulResultStep
         } else {
           state.bridgeCallFailed = true
+          state.bridgeFailureCode = resultStatus?.code ?? BENCHMARK_BRIDGE_CALL_FAILED
         }
         return
       }
@@ -232,7 +266,7 @@ export function createBenchmarkAgentConformance(projection: BenchmarkBridgeProje
       }
       if (state.successfulResultStep === undefined) {
         if (state.bridgeCallFailed) {
-          return { kind: 'reject', code: BENCHMARK_BRIDGE_CALL_FAILED }
+          return { kind: 'reject', code: state.bridgeFailureCode ?? BENCHMARK_BRIDGE_CALL_FAILED }
         }
         if (state.retryCount >= MAX_CONFORMANCE_RETRIES) {
           return { kind: 'reject', code: BENCHMARK_BRIDGE_CALL_REQUIRED }
@@ -371,12 +405,19 @@ export function installBenchmarkAgentConformance(ctx: Context, projection: Bench
   bus.on('agent/turn-stopping', (payload: { agent?: ScopedAgent; turn?: number }) => {
     const agent = payload.agent
     if (!agent || typeof agent !== 'object' || typeof payload.turn !== 'number') {
+      emitBenchmarkChildDiagnostic('child_conformance_failure')
       throw new Error(BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE)
     }
     const controller = byAgent.get(agent)
-    if (!controller) throw new Error(BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE)
+    if (!controller) {
+      emitBenchmarkChildDiagnostic('child_conformance_failure')
+      throw new Error(BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE)
+    }
     const decision = controller.stopping(payload.turn)
-    if (decision.kind === 'reject') throw new Error(decision.code)
+    if (decision.kind === 'reject') {
+      emitBenchmarkChildDiagnostic(benchmarkChildFailureForConformanceCode(decision.code))
+      throw new Error(decision.code)
+    }
     if (decision.kind === 'steer') agent.steer!(correctionMessage(decision.mode, projection))
   }, { prepend: true })
 }
