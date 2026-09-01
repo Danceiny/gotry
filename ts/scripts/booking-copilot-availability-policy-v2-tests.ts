@@ -36,6 +36,19 @@ const gapReceipt=(actionId:string,revision:number,status:ActionReceiptV2['status
   assert.equal(exhausted.terminal?.code, 'availability_exhausted_complete', 'second unavailable reaches conclusive exhaustion')
   assert.throws(() => recordOfferCheckIssuedV2(exhausted, ws(3, ['budget-hotel'], [['budget-offer', 'budget-hotel']]), 'budget-offer', 'budget-check-3'), /availability_terminal/, 'third CheckAvail cannot be issued after terminal exhaustion')
 
+  const unavailableWithGap = (actionId: string, revision: number): ActionReceiptV2 => ({
+    ...receipt(actionId, revision, 'budget-offer'),
+    resultContract: { outcome: 'empty', hardCriteriaMet: false, factRefs: [], gapCodes: ['offer_unavailable'], blockers: [], relaxationsApplied: [] },
+  })
+  let inconclusive = recordOfferCheckIssuedV2(createAvailabilityPolicyV2(unavailableWorkspace), unavailableWorkspace, 'budget-offer', 'gap-check-1')
+  inconclusive = recordOfferCheckReceiptV2(inconclusive, ws(1, ['budget-hotel'], [['budget-offer', 'budget-hotel']]), unavailableWithGap('gap-check-1', 1), 'gap-check-1', 'budget-offer', 0)
+  inconclusive = recordOffersQueryIssuedV2(inconclusive, ['budget-hotel'], ws(1, ['budget-hotel'], [['budget-offer', 'budget-hotel']]), 'gap-query-1')
+  const gapRefreshedReceipt = offersReceipt('gap-query-1', 2, ['budget-hotel'], ['budget-offer'], 1)
+  inconclusive = recordOffersGenerationV2(inconclusive, ['budget-hotel'], ws(2, ['budget-hotel'], [['budget-offer', 'budget-hotel']]), 'gap-query-1', digestV2(gapRefreshedReceipt), gapRefreshedReceipt)
+  inconclusive = recordOfferCheckIssuedV2(inconclusive, ws(2, ['budget-hotel'], [['budget-offer', 'budget-hotel']]), 'budget-offer', 'gap-check-2')
+  inconclusive = recordOfferCheckReceiptV2(inconclusive, ws(3, ['budget-hotel'], [['budget-offer', 'budget-hotel']]), unavailableWithGap('gap-check-2', 3), 'gap-check-2', 'budget-offer', 2)
+  assert.equal(inconclusive.terminal?.code, 'availability_exhausted_inconclusive', 'an unavailable receipt with a gap never masquerades as conclusive exhaustion')
+
   let queryBudget = recordOfferCheckIssuedV2(createAvailabilityPolicyV2(unavailableWorkspace), unavailableWorkspace, 'budget-offer', 'query-budget-check')
   queryBudget = recordOfferCheckReceiptV2(queryBudget, ws(1, ['budget-hotel'], [['budget-offer', 'budget-hotel']]), receipt('query-budget-check', 1, 'budget-offer'), 'query-budget-check', 'budget-offer', 0)
   for (const [actionId, revision] of [['query-budget-1', 2], ['query-budget-2', 3] ] as const) {

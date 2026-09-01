@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SCHEMA_VERSION = 'booking.surface.v1'
 const SCHEMA_SHA256 = 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81'
-const SCHEMA_V2_SHA256 = '976fd79a85fc62587dad639920852679a6c8696ff40e9658953ef16509dea026'
+const SCHEMA_V2_SHA256 = '13ed3c8855f8909a722ee66a2bfd4f92fd33223fd1a8b001a4168b4a4bc941ff'
 const PROVENANCE_VERSION = 'gotry.booking-copilot.release-provenance.v1'
 function fail(message) { throw new Error(`booking-copilot-release: ${message}`) }
 

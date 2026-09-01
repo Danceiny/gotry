@@ -106,7 +106,7 @@ try {
   verifyManifest(output)
   assert.equal(
     createHash('sha256').update(readFileSync(join(output, 'schemas/booking.surface.v2.schema.json'))).digest('hex'),
-    '976fd79a85fc62587dad639920852679a6c8696ff40e9658953ef16509dea026',
+    '13ed3c8855f8909a722ee66a2bfd4f92fd33223fd1a8b001a4168b4a4bc941ff',
   )
   const manifestText = readFileSync(join(output, 'MANIFEST.sha256'), 'utf8')
   assert.doesNotMatch(manifestText, /\.worktree\.env|\.env(?:\.|$)|(?:^|\/)secrets?(?:[._/-]|$)/i)

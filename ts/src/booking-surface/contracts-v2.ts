@@ -1,7 +1,7 @@
 import type { BookingReadActionKindV1, BookingWorkspaceSnapshotV1, SearchCriteriaPatchV1, ResultsViewPatchV1, OfferCriteriaV1 } from './contracts.ts'
 
 export const BOOKING_SURFACE_SCHEMA_VERSION_V2 = 'booking.surface.v2' as const
-export const BOOKING_SURFACE_SCHEMA_V2_SHA256 = '976fd79a85fc62587dad639920852679a6c8696ff40e9658953ef16509dea026' as const
+export const BOOKING_SURFACE_SCHEMA_V2_SHA256 = '13ed3c8855f8909a722ee66a2bfd4f92fd33223fd1a8b001a4168b4a4bc941ff' as const
 export const BOOKING_READ_ACTION_KINDS_V2 = ['search.patch','search.run','results.view.patch','hotel.focus','hotel.select','offers.query','offers.view.patch','offers.compare','offer.select','offer.check','checkout.prepare','order.observe'] as const satisfies readonly BookingReadActionKindV1[]
 export type BookingReadActionKindV2 = typeof BOOKING_READ_ACTION_KINDS_V2[number]
 export type BookingSurfaceV2 = 'tenant' | 'customer_portal' | 'storefront' | 'payment_link'
@@ -46,7 +46,7 @@ export type CheckoutPrepareActionV2 = Base<'checkout.prepare', { offerRef: strin
 export type OrderObserveActionV2 = Base<'order.observe', { orderRef: string }>
 export type BookingReadActionV2=SearchPatchActionV2|SearchRunActionV2|ResultsViewPatchActionV2|HotelFocusActionV2|HotelSelectActionV2|OffersQueryActionV2|OffersViewPatchActionV2|OffersCompareActionV2|OfferSelectActionV2|OfferCheckActionV2|CheckoutPrepareActionV2|OrderObserveActionV2
 export interface BookingWorkspaceSnapshotV2 extends Omit<BookingWorkspaceSnapshotV1,'schemaVersion'|'surface'|'capabilities'>{schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;surface:BookingSurfaceV2;capabilities:{surface:BookingSurfaceV2;allowedActions:BookingReadActionKindV2[]}}
-export type BookingWorkspaceIngressSnapshotV2 = Pick<BookingWorkspaceSnapshotV2, 'schemaVersion'|'revision'|'locale'|'currency'|'searchDraft'|'results'|'visibleHotels'|'loadedOffers'|'shortlistedOfferRefs'>
+export type BookingWorkspaceIngressSnapshotV2 = Pick<BookingWorkspaceSnapshotV2, 'schemaVersion'|'revision'|'locale'|'currency'|'searchDraft'|'results'|'visibleHotels'|'loadedOffers'|'focusedHotelRef'|'shortlistedOfferRefs'|'selectedOfferRef'>
 export type ActionObservationV2 =
   | { kind: 'search.state'; searchSessionRef?: string; resultCount?: number; gapCodes?: BookingV2GapCode[] }
   | { kind: 'results.state'; matchedHotelRefs: string[]; visibleCount: number; gapCodes?: BookingV2GapCode[] }

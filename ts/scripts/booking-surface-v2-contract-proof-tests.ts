@@ -54,6 +54,12 @@ for (const observation of observations.filter((item) => ['search.state','results
 reject('gap observation dynamic code', {...receipt, observation:{kind:'gap',code:'dynamic',factRefs:[]}})
 const turn={schemaVersion:'booking.surface.v2',kind:'user.turn',taskId:'task-1',turnId:'turn-1',workspace,request:{text:'find hotels'}}; const ingress={schemaVersion:'booking.surface.v2',kind:'user.turn.ingress',taskId:'task-1',turnId:'ingress-1',surfaceHint:'tenant',workspace:ingressWorkspace,request:{text:'find hotels'}}; const continuation={schemaVersion:'booking.surface.v2',kind:'action.receipt.continuation',taskId:'task-1',workspace,receipt}
 accept('valid user turn',turn); accept('valid ingress',ingress); accept('valid continuation',continuation); reject('empty text',{...turn,request:{text:''}}); reject('multiple approvals',{...turn,request:{text:'x',approval:[approval,approval]}}); accept('text only remains non-approval',{...turn,request:{text:'please relax must'}})
+const selectedIngressWorkspace = {...ingressWorkspace,visibleHotels:[{hotelRef:'hotel-1',name:'Hotel 1',factRefs:['hotel-fact-1']}],loadedOffers:[{offerRef:'offer-1',hotelRef:'hotel-1',evidenceLevel:'rate_loaded',factRefs:['offer-fact-1']}],focusedHotelRef:'hotel-1',selectedOfferRef:'offer-1'}
+accept('ingress preserves visible focus and loaded selection',{...ingress,workspace:selectedIngressWorkspace})
+reject('ingress rejects invisible focus',{...ingress,workspace:{...selectedIngressWorkspace,focusedHotelRef:'hotel-other'}})
+reject('ingress rejects unloaded selection',{...ingress,workspace:{...selectedIngressWorkspace,selectedOfferRef:'offer-other'}})
+reject('ingress rejects selection whose hotel is not visible',{...ingress,workspace:{...selectedIngressWorkspace,visibleHotels:[{hotelRef:'hotel-other',name:'Other',factRefs:[]}]}})
+reject('ingress never accepts verified authority',{...ingress,workspace:{...selectedIngressWorkspace,verifiedOfferRef:'verified-offer-1'}})
 reject('missing user turn identity',{...turn,turnId:undefined}); reject('missing ingress turn identity',{...ingress,turnId:undefined}); reject('unsafe user turn identity',{...turn,turnId:'Bearer token'}); reject('unsafe ingress turn identity',{...ingress,turnId:'user@example.com'})
 reject('missing user task identity',{...turn,taskId:undefined}); reject('missing ingress task identity',{...ingress,taskId:undefined})
 assert.equal(validateCriterionBlockerV2({...blocker, evidence:{factRefs:[],gapCodes:[]}}).ok,false); negative++

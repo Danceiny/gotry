@@ -72,6 +72,15 @@ function cross(value: unknown): string[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return e
   const x = value as Record<string, any>
   const semantic = x.kind === 'action.receipt.continuation' ? x.receipt : x
+  if (x.kind === 'user.turn.ingress') {
+    const workspace = x.workspace as Record<string, any> | undefined
+    const visibleHotels = Array.isArray(workspace?.visibleHotels) ? workspace.visibleHotels : []
+    const loadedOffers = Array.isArray(workspace?.loadedOffers) ? workspace.loadedOffers : []
+    if (workspace?.focusedHotelRef !== undefined && !visibleHotels.some((hotel: any) => hotel?.hotelRef === workspace.focusedHotelRef)) e.push('$.workspace.focusedHotelRef: visible hotel required')
+    const selectedOffer = workspace?.selectedOfferRef === undefined ? undefined : loadedOffers.find((offer: any) => offer?.offerRef === workspace.selectedOfferRef)
+    if (workspace?.selectedOfferRef !== undefined && !selectedOffer) e.push('$.workspace.selectedOfferRef: loaded offer required')
+    if (selectedOffer && !visibleHotels.some((hotel: any) => hotel?.hotelRef === selectedOffer.hotelRef)) e.push('$.workspace.selectedOfferRef: offer hotel must be visible')
+  }
   if (semantic !== x && semantic?.resultContract?.hardCriteriaMet === true && semantic.resultContract.blockers?.length) e.push('$.receipt.resultContract: hardCriteriaMet cannot coexist with blockers')
   if (kinds.has(x.kind)) {
     const allowed: Record<string, string[]> = {

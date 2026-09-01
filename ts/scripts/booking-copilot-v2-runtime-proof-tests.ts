@@ -49,6 +49,20 @@ assert.throws(() => directIngressRuntime.startTask({
   request: { text: 'find hotels in Dubai' },
 } as never), /invalid_planner_turn/)
 assert.equal(directIngressLedger.countEvents(), directIngressBefore, 'missing ingress taskId has no direct runtime ledger side effects')
+const selectedIngressRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-selected-ingress-'))
+const selectedIngressLedger = ensureLedger(selectedIngressRoot)
+const selectedIngressRuntime = new BookingCopilotTaskRuntimeV2(selectedIngressLedger, { contextRefFactory: () => 'ctx-selected-ingress' })
+const selectedIngress = {
+  schemaVersion: 'booking.surface.v2' as const, kind: 'user.turn.ingress' as const, taskId: 'task-selected-ingress', turnId: 'turn-selected-ingress', surfaceHint: 'tenant' as const,
+  workspace: { schemaVersion: 'booking.surface.v2' as const, revision: 0, locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' as const }, visibleHotels: [{ hotelRef: 'hotel-selected', name: 'Selected Hotel', factRefs: [] }], loadedOffers: [{ offerRef: 'offer-selected', hotelRef: 'hotel-selected', evidenceLevel: 'rate_loaded' as const, factRefs: [] }], focusedHotelRef: 'hotel-selected', shortlistedOfferRefs: [], selectedOfferRef: 'offer-selected' },
+  request: { text: 'is this selected room still bookable?' },
+}
+const selectedIngressTask = selectedIngressRuntime.startTask(selectedIngress)
+const selectedPlannerTurn = selectedIngressRuntime.bindIngressTurn(selectedIngress, selectedIngressTask)
+assert.equal(selectedPlannerTurn.workspace.focusedHotelRef, 'hotel-selected')
+assert.equal(selectedPlannerTurn.workspace.selectedOfferRef, 'offer-selected')
+assert.equal(selectedPlannerTurn.workspace.verifiedOfferRef, undefined, 'initial ingress cannot assert verified availability authority')
+selectedIngressLedger.close(); rmSync(selectedIngressRoot, { recursive: true, force: true })
 const operation = runtime.issueOperation(task.taskId, action('action-v2'))
 assert.equal(operation.action.actionId, 'action-v2')
 assert.equal(operation.action.kind, 'search.run')
