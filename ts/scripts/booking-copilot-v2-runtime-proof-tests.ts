@@ -1031,13 +1031,76 @@ await server.close()
 const defaultBindingRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-default-binding-'))
 const defaultBindingLedger = ensureLedger(defaultBindingRoot)
 const defaultBindingRuntime = new BookingCopilotTaskRuntimeV2(defaultBindingLedger)
+let defaultBindingPlannerCalls = 0
 await assert.rejects(startBookingCopilotServer({
+  apiKey: 'partial-binding-key',
+  v2: { runtime: defaultBindingRuntime, plannerFactory: () => ({ next: async () => [] }), principal: { subject: 'partial-only', scope: 'booking:read' } },
+}), /booking_copilot_v2_ingress_binding_pair_required/)
+await assert.rejects(startBookingCopilotServer({
+  apiKey: 'partial-principal-key',
+  v2: { runtime: defaultBindingRuntime, plannerFactory: () => ({ next: async () => [] }), ingressBinding: { bind: () => ({ taskId: 'partial', turnId: 'partial', contextRef: 'partial', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS_V2] }) } },
+}), /booking_copilot_v2_ingress_binding_pair_required/)
+const defaultBindingServer = await startBookingCopilotServer({
   apiKey: 'default-binding-key',
   runtime: new BookingCopilotTaskRuntime(defaultBindingLedger),
   plannerFactory: () => ({ next: async () => [] }),
-  v2: { runtime: defaultBindingRuntime, plannerFactory: () => ({ next: async () => [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'default binding', factRefs: [] } }] }) },
-}), /booking_copilot_v2_ingress_binding_required/, 'production composition rejects unusable v2 before listening')
-assert.equal(defaultBindingLedger.countEvents(), 0, 'unbound browser ingress has no ledger side effects')
+  v2: { runtime: defaultBindingRuntime, plannerFactory: () => ({ next: async () => { defaultBindingPlannerCalls++; return [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'default binding', factRefs: [] } }] } }) },
+})
+const defaultBindingEndpoint = `http://127.0.0.1:${defaultBindingServer.port}/a2a/booking-copilot/turn`
+const defaultBindingHeaders = { ...headers, authorization: 'Bearer default-binding-key' }
+const defaultBindingBeforeIngress = defaultBindingLedger.countEvents()
+const rejectedDefaultIngress = await fetch(defaultBindingEndpoint, { method: 'POST', headers: defaultBindingHeaders, body: JSON.stringify(ingress) })
+assert.equal(rejectedDefaultIngress.status, 503, 'bound-turn-only mode rejects browser ingress before the ledger')
+assert.deepEqual(await rejectedDefaultIngress.json(), { error: { code: 'trusted_ingress_binding_required', mode: 'bff-bound-turn-only', acceptedTurnKinds: ['user.turn', 'action.receipt.continuation'] } })
+assert.equal(defaultBindingLedger.countEvents(), defaultBindingBeforeIngress, 'rejected browser ingress has no ledger side effects')
+
+const boundTurnForSurface = (taskId: string, surface: BookingSurfaceV2, allowedActions: BookingReadActionKindV2[]) => ({
+  ...turn(taskId),
+  workspace: { ...workspace(), surface, capabilities: { surface, allowedActions } },
+})
+const invalidBoundTurns = [
+  boundTurnForSurface('task-bound-storefront-escalation', 'storefront', ['order.observe']),
+  boundTurnForSurface('task-bound-payment-escalation', 'payment_link', ['checkout.prepare']),
+  { ...boundTurnForSurface('task-bound-capability-mismatch', 'storefront', ['search.run']), workspace: { ...workspace(), surface: 'storefront', capabilities: { surface: 'tenant', allowedActions: ['search.run'] } } },
+  boundTurnForSurface('task-bound-duplicate-capability', 'tenant', ['search.run', 'search.run']),
+  boundTurnForSurface('task-bound-unknown-capability', 'tenant', ['book' as BookingReadActionKindV2]),
+]
+for (const invalidBoundTurn of invalidBoundTurns) {
+  const before = defaultBindingLedger.countEvents()
+  const response = await fetch(defaultBindingEndpoint, { method: 'POST', headers: defaultBindingHeaders, body: JSON.stringify(invalidBoundTurn) })
+  assert.ok([400, 403].includes(response.status), `${invalidBoundTurn.taskId} is rejected at the schema/authority boundary`)
+  assert.equal(defaultBindingLedger.countEvents(), before, `${invalidBoundTurn.taskId} has no ledger side effects`)
+}
+const invalidBoundContinuation = {
+  schemaVersion: 'booking.surface.v2' as const,
+  kind: 'action.receipt.continuation' as const,
+  taskId: 'task-bound-invalid-continuation',
+  workspace: { ...workspace(1), surface: 'storefront' as const, capabilities: { surface: 'storefront' as const, allowedActions: ['order.observe' as BookingReadActionKindV2] } },
+  receipt: {
+    schemaVersion: 'booking.surface.v2' as const, kind: 'action.receipt' as const, actionId: 'missing-action', contextRef: 'ctx-v2', status: 'failed' as const, revision: 1,
+    observation: { kind: 'gap' as const, code: 'unhandled' as const, factRefs: [] },
+    resultContract: { outcome: 'empty' as const, hardCriteriaMet: false, factRefs: [], gapCodes: ['unhandled' as const], blockers: [], relaxationsApplied: [] },
+  },
+}
+const invalidContinuationBefore = defaultBindingLedger.countEvents()
+const invalidContinuationResponse = await fetch(defaultBindingEndpoint, { method: 'POST', headers: defaultBindingHeaders, body: JSON.stringify(invalidBoundContinuation) })
+assert.equal(invalidContinuationResponse.status, 403, 'receipt continuation cannot change to a surface-disallowed capability')
+assert.equal(defaultBindingLedger.countEvents(), invalidContinuationBefore, 'invalid bound continuation has no ledger side effects')
+assert.equal(defaultBindingPlannerCalls, 0, 'invalid bound turns do not call the planner')
+
+for (const [surface, allowedActions] of [
+  ['tenant', ['search.run']],
+  ['customer_portal', ['offers.query']],
+  ['storefront', ['search.run']],
+  ['payment_link', ['hotel.select']],
+] as Array<[BookingSurfaceV2, BookingReadActionKindV2[]]>) {
+  const response = await fetch(defaultBindingEndpoint, { method: 'POST', headers: defaultBindingHeaders, body: JSON.stringify(boundTurnForSurface(`task-bound-valid-${surface}`, surface, allowedActions)) })
+  assert.equal(response.status, 200, `valid ${surface} bound turn is accepted`)
+  assert.match(await response.text(), /event: terminal/)
+}
+assert.equal(defaultBindingPlannerCalls, 4, 'only valid surface-bound turns call the planner')
+await defaultBindingServer.close()
+assert.equal(defaultBindingLedger.countEvents() > defaultBindingBeforeIngress, true)
 defaultBindingLedger.close(); rmSync(defaultBindingRoot, { recursive: true, force: true })
 
 // HTTP ingress retries after terminal are allowed only for the exact durable
@@ -1141,25 +1204,20 @@ for (const [label, plannerFactory, expectedCode] of [
   await errorServer.close(); errorLedger.close(); rmSync(errorRoot, { recursive: true, force: true })
 }
 
-// A mixed v1+v2 deployment must not advertise v2 until the same trusted BFF
-// principal/binding seam is supplied at composition time.
+// A mixed v1+v2 deployment defaults to BFF-bound-turn-only. Browser ingress
+// remains unavailable until the same trusted BFF principal/binding seam is
+// supplied at composition time.
 const mixedRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-mixed-startup-'))
 const mixedLedger = ensureLedger(mixedRoot)
 const mixedRuntimeV2 = new BookingCopilotTaskRuntimeV2(mixedLedger)
-await assert.rejects(
-  startBookingCopilotServer({ apiKey: 'mixed-v2-key', runtime: new BookingCopilotTaskRuntime(mixedLedger), plannerFactory: () => ({ next: async () => [] }), v2: { runtime: mixedRuntimeV2, plannerFactory: () => ({ next: async () => [] }) } }),
-  /booking_copilot_v2_ingress_binding_required/,
-  'mixed v1+v2 composition rejects unusable v2 instead of reporting partial readiness',
-)
+const mixedServer = await startBookingCopilotServer({ apiKey: 'mixed-v2-key', runtime: new BookingCopilotTaskRuntime(mixedLedger), plannerFactory: () => ({ next: async () => [] }), v2: { runtime: mixedRuntimeV2, plannerFactory: () => ({ next: async () => [] }) } })
+await mixedServer.close()
 mixedLedger.close(); rmSync(mixedRoot, { recursive: true, force: true })
 const v2OnlyRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-only-'))
 const v2OnlyLedger = ensureLedger(v2OnlyRoot)
 const v2OnlyRuntime = new BookingCopilotTaskRuntimeV2(v2OnlyLedger)
-await assert.rejects(
-  startBookingCopilotServer({ apiKey: 'v2-only-key', v2: { runtime: v2OnlyRuntime, plannerFactory: () => ({ next: async () => [] }) } }),
-  /booking_copilot_v2_ingress_binding_required/,
-  'v2-only server cannot start without trusted ingress binding and principal',
-)
+const boundOnlyV2Server = await startBookingCopilotServer({ apiKey: 'v2-only-key', v2: { runtime: v2OnlyRuntime, plannerFactory: () => ({ next: async () => [] }) } })
+await boundOnlyV2Server.close()
 const v2OnlyServer = await startBookingCopilotServer({
   apiKey: 'v2-only-key',
   v2: {
@@ -1171,7 +1229,7 @@ const v2OnlyServer = await startBookingCopilotServer({
 })
 const v2Health = await fetch(`http://127.0.0.1:${v2OnlyServer.port}/healthz`, { headers: { authorization: 'Bearer v2-only-key' } })
 assert.equal(v2Health.status, 200)
-assert.deepEqual(await v2Health.json(), { schemaVersion: 'booking.surface.v2', schemaSha256: BOOKING_SURFACE_SCHEMA_V2_SHA256, supportedSchemaVersions: ['booking.surface.v2'], status: 'ready' }, 'v2-only health reports ready only with trusted ingress configuration')
+assert.deepEqual(await v2Health.json(), { schemaVersion: 'booking.surface.v2', schemaSha256: BOOKING_SURFACE_SCHEMA_V2_SHA256, supportedSchemaVersions: ['booking.surface.v2'], status: 'ready', ingressMode: 'bff-ingress-binding', acceptedTurnKinds: ['user.turn', 'action.receipt.continuation', 'user.turn.ingress'] }, 'v2-only health reports the complete trusted ingress mode')
 await v2OnlyServer.close()
 v2OnlyLedger.close()
 rmSync(v2OnlyRoot, { recursive: true, force: true })
