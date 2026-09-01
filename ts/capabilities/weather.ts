@@ -60,6 +60,8 @@ export function wmoLabel(code: number): string {
 }
 
 type FetchImpl = typeof fetch
+const monotonicNow = (): number => performance.now()
+const normalizeTimeout = (value: number): number | null => Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : null
 
 async function fetchJson(url: string, timeoutMs: number, headers: Record<string, string> = {}, fetchImpl: FetchImpl = globalThis.fetch): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   const ctrl = new AbortController()
@@ -119,12 +121,12 @@ export async function geocodePlace(
   const ts = new Date().toISOString()
   const count = opts.count ?? 5
   const query = name.trim()
-  const timeoutMs = opts.timeoutMs ?? 15_000
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return { ok: false, evidence: `[实时API:open-meteo-geo@error@${ts}]`, results: [], error: 'timeoutMs must be positive' }
+  const timeoutMs = normalizeTimeout(opts.timeoutMs ?? 15_000)
+  if (timeoutMs === null) return { ok: false, evidence: `[实时API:open-meteo-geo@error@${ts}]`, results: [], error: 'timeoutMs must be a finite positive number' }
   const omUrl = `${GEOCODE_BASE}?name=${encodeURIComponent(query)}&count=${count}&language=zh&format=json`
   // timeoutMs is a budget for the complete primary→fallback chain, not per request.
-  const deadline = Date.now() + (opts.timeoutMs ?? 15_000)
-  const remaining = () => deadline - Date.now()
+  const deadline = monotonicNow() + timeoutMs
+  const remaining = () => deadline - monotonicNow()
   const primaryRemaining = remaining()
   const r = await fetchJson(omUrl, primaryRemaining, {}, opts.fetchImpl)
   const primaryPayload = r.ok && isRecord(r.data) && Array.isArray(r.data['results']) ? r.data['results'] : null
@@ -152,7 +154,7 @@ export async function geocodePlace(
   // 弱命中/零结果/主源请求失败:Nominatim 兜底(免费无 key;中文 accept-language)
   const nomTs = new Date().toISOString()
   const nomUrl = `${NOMINATIM_BASE}?q=${encodeURIComponent(query)}&format=jsonv2&limit=${count}&accept-language=zh&addressdetails=1`
-  const fallbackRemaining = remaining()
+  const fallbackRemaining = r.error?.startsWith('timeout') ? 0 : remaining()
   const nom = fallbackRemaining > 0
     ? await fetchJson(nomUrl, fallbackRemaining, { 'User-Agent': 'gotry-travel-agent/0.1 (+https://github.com/Danceiny/gotry)' }, opts.fetchImpl)
     : { ok: false, error: 'total timeout budget exhausted' }
@@ -162,13 +164,9 @@ export async function geocodePlace(
         if (!isRecord(item)) return null
         const it = item as Record<string, unknown>
         const addr = isRecord(it['address']) ? it['address'] : {}
-        return {
-          name: String(it['name'] ?? ''),
-          latitude: Number(it['lat']),
-          longitude: Number(it['lon']),
-          country: typeof addr['country'] === 'string' ? addr['country'] : undefined,
-          admin1: [addr['province'], addr['state'], addr['county']].find(v => typeof v === 'string') as string | undefined,
-        }
+        const country = typeof addr['country'] === 'string' ? addr['country'] : undefined
+        const admin1 = [addr['province'], addr['state'], addr['county']].find(v => typeof v === 'string') as string | undefined
+        return { name: String(it['name'] ?? ''), latitude: Number(it['lat']), longitude: Number(it['lon']), ...(country ? { country } : {}), ...(admin1 ? { admin1 } : {}) }
       }).filter((h) => !!h && !!h.name && Number.isFinite(h.latitude) && Number.isFinite(h.longitude)) as Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>
     nomResults.push(...parsedNom)
   }
@@ -195,17 +193,17 @@ export async function getForecast(
   point: WeatherPoint,
   opts: { days?: number; timeoutMs?: number; fetchImpl?: FetchImpl } = {},
 ): Promise<WeatherResult> {
-  const started = Date.now()
+  const started = monotonicNow()
   const ts = new Date().toISOString()
   const requestedDays = opts.days ?? 7
   const days = Number.isInteger(requestedDays) && requestedDays > 0 ? Math.min(requestedDays, 16) : 0
-  const timeoutMs = opts.timeoutMs ?? 15_000
-  if (days < 1 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo@error@${ts}]`, latencyMs: Date.now() - started, error: 'days and timeoutMs must be positive' }
+  const timeoutMs = normalizeTimeout(opts.timeoutMs ?? 15_000)
+  if (days < 1 || timeoutMs === null) return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo@error@${ts}]`, latencyMs: monotonicNow() - started, error: 'days and timeoutMs must be valid positive values' }
   const url = `${FORECAST_BASE}?latitude=${point.latitude}&longitude=${point.longitude}`
     + `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode`
     + `&forecast_days=${days}&timezone=auto`
   const r = await fetchJson(url, timeoutMs, {}, opts.fetchImpl)
-  const latencyMs = Date.now() - started
+  const latencyMs = monotonicNow() - started
   if (!r.ok) {
     return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo@error@${ts}]`, latencyMs, error: r.error }
   }
@@ -249,20 +247,24 @@ export async function getClimate(
   month: number,
   opts: { year?: number; timeoutMs?: number; fetchImpl?: FetchImpl } = {},
 ): Promise<WeatherResult> {
-  const started = Date.now()
+  const started = monotonicNow()
   const ts = new Date().toISOString()
-  const timeoutMs = opts.timeoutMs ?? 15_000
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo-climate@error@${ts}]`, latencyMs: Date.now() - started, error: 'timeoutMs must be positive' }
+  const timeoutMs = normalizeTimeout(opts.timeoutMs ?? 15_000)
+  if (timeoutMs === null) return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo-climate@error@${ts}]`, latencyMs: monotonicNow() - started, error: 'timeoutMs must be a finite positive number' }
   // 默认取去年同月做气候基线
   const year = opts.year ?? (new Date().getFullYear() - 1)
+  if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year) || year < 1940 || year > new Date().getUTCFullYear()) {
+    return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo-climate@error@${ts}]`, latencyMs: monotonicNow() - started, error: 'month/year must be valid historical calendar values' }
+  }
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const expectedDates = Array.from({ length: lastDay }, (_, i) => `${year}-${String(month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`)
   const start = `${year}-${String(month).padStart(2, '0')}-01`
   const end = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
   const url = `${ARCHIVE_BASE}?latitude=${point.latitude}&longitude=${point.longitude}`
     + `&start_date=${start}&end_date=${end}`
     + `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto`
   const r = await fetchJson(url, timeoutMs, {}, opts.fetchImpl)
-  const latencyMs = Date.now() - started
+  const latencyMs = monotonicNow() - started
   if (!r.ok) {
     return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo-climate@error@${ts}]`, latencyMs, error: r.error }
   }
@@ -275,7 +277,7 @@ export async function getClimate(
     || daily.time.length !== daily.temperature_2m_min.length
     || daily.time.length !== daily.weathercode.length
     || daily.time.some(v => typeof v !== 'string')
-    || daily.time.some(v => typeof v === 'string' && !v.startsWith(`${year}-${String(month).padStart(2, '0')}-`))
+    || daily.time.some((v, i) => v !== expectedDates[i])
     || daily.temperature_2m_max.some(v => typeof v !== 'number' || !Number.isFinite(v))
     || daily.temperature_2m_min.some(v => typeof v !== 'number' || !Number.isFinite(v))
     || daily.weathercode.some(v => typeof v !== 'number' || !Number.isFinite(v))) {
