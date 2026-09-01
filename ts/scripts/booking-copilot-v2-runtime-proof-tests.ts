@@ -6,13 +6,16 @@ import { ensureLedger } from '../src/state-ledger.ts'
 import { BookingCopilotTaskRuntime } from '../src/booking-surface/runtime.ts'
 import {
   BookingCopilotTaskRuntimeV2,
+  bookingV2Digest,
+  type BookingApprovalStateV2,
   type BookingCopilotTaskStateV2,
   type BookingPlannerDecisionV2,
 } from '../src/booking-surface/runtime-v2.ts'
 import { startBookingCopilotServer } from '../src/booking-surface/server.ts'
-import { BOOKING_READ_ACTION_KINDS_V2, BOOKING_SURFACE_SCHEMA_VERSION_V2, type BookingReadActionKindV2, type BookingSurfaceV2, type BookingWorkspaceSnapshotV2, type RelaxationApprovalV2 } from '../src/booking-surface/contracts-v2.ts'
+import { BOOKING_READ_ACTION_KINDS_V2, BOOKING_SURFACE_SCHEMA_VERSION_V2, type ActionReceiptV2, type BookingReadActionKindV2, type BookingSurfaceV2, type BookingWorkspaceSnapshotV2, type RelaxationApprovalV2, type VerifiedOfferCapabilityV2 } from '../src/booking-surface/contracts-v2.ts'
 import { BOOKING_SURFACE_SCHEMA_V2_SHA256 } from '../src/booking-surface/contracts-v2.ts'
 import { BOOKING_SURFACE_SCHEMA_SHA256, BOOKING_SURFACE_SCHEMA_VERSION, type UserTurnV1 } from '../src/booking-surface/contracts.ts'
+import { validateBookingSurfaceV2 } from '../src/booking-surface/validation-v2.ts'
 
 const stateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-runtime-'))
 const workspace = (revision = 0): BookingWorkspaceSnapshotV2 => ({
@@ -21,6 +24,66 @@ const workspace = (revision = 0): BookingWorkspaceSnapshotV2 => ({
   visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
   capabilities: { surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS_V2] },
 })
+const loadedOffer = (offerRef: string, hotelRef: string, offerVersionRef = `${offerRef}:v1`) => ({ offerRef, offerVersionRef, hotelRef, evidenceLevel: 'rate_loaded' as const, factRefs: [] })
+const verifiedCapability = (offerRef: string, offerVersionRef = `${offerRef}:v1`, expiresAt = '2026-09-01T10:30:00.000Z'): VerifiedOfferCapabilityV2 => ({ offerRef, offerVersionRef, verifiedOfferRef: `verified-${offerRef}`, expiresAt })
+const availabilityObservation = (offerRef: string, checkedOfferVersionRef = `${offerRef}:v1`, available = false, currentOfferVersionRef?: string): ActionReceiptV2['observation'] => ({ kind: 'offer.availability', offerRef, checkedOfferVersionRef, currentOfferVersionRef: available ? (currentOfferVersionRef ?? checkedOfferVersionRef) : undefined, available, changedFactRefs: [], gapCodes: [] })
+const oldWorkspaceDigest = (value: Record<string, unknown>): string => {
+  const { contextRef: _contextRef, ...withoutContext } = value
+  return bookingV2Digest(withoutContext)
+}
+const oldWorkspaceSemanticDigest = (value: Record<string, unknown>): string => {
+  const { contextRef: _contextRef, revision: _revision, ...semantic } = value
+  return bookingV2Digest(semantic)
+}
+const legacyWorkspace = (value: BookingWorkspaceSnapshotV2, verifiedOfferRef?: string): Record<string, unknown> => {
+  const workspaceValue = structuredClone(value) as unknown as Record<string, unknown>
+  const loadedOffers = Array.isArray(workspaceValue.loadedOffers) ? workspaceValue.loadedOffers : []
+  workspaceValue.loadedOffers = loadedOffers.map((loaded) => {
+    const oldOffer = { ...(loaded as Record<string, unknown>) }
+    delete oldOffer.offerVersionRef
+    return oldOffer
+  })
+  delete workspaceValue.verifiedOffer
+  if (verifiedOfferRef !== undefined) workspaceValue.verifiedOfferRef = verifiedOfferRef
+  return workspaceValue
+}
+const legacyAvailability = (value: Record<string, unknown>, workspaceDigest?: string): Record<string, unknown> => {
+  const availability = structuredClone(value)
+  const hotels = availability.hotels
+  if (hotels && typeof hotels === 'object' && !Array.isArray(hotels)) {
+    for (const hotel of Object.values(hotels as Record<string, unknown>)) {
+      if (!hotel || typeof hotel !== 'object' || Array.isArray(hotel)) continue
+      const oldHotel = hotel as Record<string, unknown>
+      delete oldHotel.tombstonedOfferVersionRefs
+      const generation = oldHotel.currentGeneration
+      if (workspaceDigest && generation && typeof generation === 'object' && !Array.isArray(generation)) {
+        const source = (generation as Record<string, unknown>).source
+        if (source && typeof source === 'object' && !Array.isArray(source) && (source as Record<string, unknown>).kind === 'workspace_snapshot') (source as Record<string, unknown>).workspaceDigest = workspaceDigest
+      }
+    }
+  }
+  if (Array.isArray(availability.attempts)) {
+    availability.attempts = availability.attempts.map((attempt) => {
+      if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)) return attempt
+      const oldAttempt = { ...(attempt as Record<string, unknown>) }
+      delete oldAttempt.offerVersionRef
+      return oldAttempt
+    })
+  }
+  return availability
+}
+const stripLegacyReceipt = (value: ActionReceiptV2): Record<string, unknown> => {
+  const receipt = structuredClone(value) as unknown as Record<string, unknown>
+  const observation = receipt.observation
+  if (observation && typeof observation === 'object' && !Array.isArray(observation)) {
+    const oldObservation = observation as Record<string, unknown>
+    delete oldObservation.offerVersionRef
+    delete oldObservation.checkedOfferVersionRef
+    delete oldObservation.currentOfferVersionRef
+  }
+  return receipt
+}
+const legacyTurnDigest = (taskId: string, turnId: string, workspaceValue: Record<string, unknown>, text: string): string => bookingV2Digest({ schemaVersion: 'booking.surface.v2', kind: 'user.turn', taskId, turnId, workspace: workspaceValue, request: { text } })
 const turn = (taskId: string, revision = 0) => ({
   schemaVersion: 'booking.surface.v2' as const, kind: 'user.turn' as const, taskId,
   turnId: `${taskId}-turn-${revision}`,
@@ -54,15 +117,144 @@ const selectedIngressLedger = ensureLedger(selectedIngressRoot)
 const selectedIngressRuntime = new BookingCopilotTaskRuntimeV2(selectedIngressLedger, { contextRefFactory: () => 'ctx-selected-ingress' })
 const selectedIngress = {
   schemaVersion: 'booking.surface.v2' as const, kind: 'user.turn.ingress' as const, requestKey: 'selected-ingress-request', taskHandle: 'opaque-task-handle', surfaceHint: 'tenant' as const,
-  workspace: { schemaVersion: 'booking.surface.v2' as const, revision: 0, locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' as const }, visibleHotels: [{ hotelRef: 'hotel-selected', name: 'Selected Hotel', factRefs: [] }], loadedOffers: [{ offerRef: 'offer-selected', hotelRef: 'hotel-selected', evidenceLevel: 'rate_loaded' as const, factRefs: [] }], focusedHotelRef: 'hotel-selected', shortlistedOfferRefs: [], selectedOfferRef: 'offer-selected' },
+  workspace: { schemaVersion: 'booking.surface.v2' as const, revision: 0, locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' as const }, visibleHotels: [{ hotelRef: 'hotel-selected', name: 'Selected Hotel', factRefs: [] }], loadedOffers: [loadedOffer('offer-selected', 'hotel-selected')], focusedHotelRef: 'hotel-selected', shortlistedOfferRefs: [], selectedOfferRef: 'offer-selected' },
   request: { text: 'is this selected room still bookable?' },
 }
 const selectedIngressTask = selectedIngressRuntime.startTask(turn('task-selected-ingress'))
 const selectedPlannerTurn = selectedIngressRuntime.bindIngressTurn(selectedIngress, selectedIngressTask, 'turn-selected-ingress')
 assert.equal(selectedPlannerTurn.workspace.focusedHotelRef, 'hotel-selected')
 assert.equal(selectedPlannerTurn.workspace.selectedOfferRef, 'offer-selected')
-assert.equal(selectedPlannerTurn.workspace.verifiedOfferRef, undefined, 'initial ingress cannot assert verified availability authority')
+assert.equal(selectedPlannerTurn.workspace.verifiedOffer, undefined, 'initial ingress cannot assert verified availability authority')
 selectedIngressLedger.close(); rmSync(selectedIngressRoot, { recursive: true, force: true })
+const duplicateOfferWorkspace: BookingWorkspaceSnapshotV2 = { ...workspace(0), visibleHotels: [{ hotelRef: 'hotel-dup-a', name: 'Hotel Dup A', factRefs: [] }, { hotelRef: 'hotel-dup-b', name: 'Hotel Dup B', factRefs: [] }], loadedOffers: [loadedOffer('duplicate-offer-ref', 'hotel-dup-a'), loadedOffer('duplicate-offer-ref', 'hotel-dup-b')] }
+const duplicateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-duplicate-offer-'))
+const duplicateLedger = ensureLedger(duplicateRoot)
+const duplicateRuntime = new BookingCopilotTaskRuntimeV2(duplicateLedger, { contextRefFactory: () => 'ctx-v2' })
+assert.equal(validateBookingSurfaceV2({ ...turn('validator-duplicate-logical'), workspace: duplicateOfferWorkspace }).ok, false, 'published validator rejects duplicate logical offer refs')
+const duplicateVersionWorkspace: BookingWorkspaceSnapshotV2 = { ...workspace(0), visibleHotels: [{ hotelRef: 'hotel-dup-a', name: 'Hotel Dup A', factRefs: [] }, { hotelRef: 'hotel-dup-b', name: 'Hotel Dup B', factRefs: [] }], loadedOffers: [loadedOffer('offer-dup-a', 'hotel-dup-a', 'shared-offer:v1'), loadedOffer('offer-dup-b', 'hotel-dup-b', 'shared-offer:v1')] }
+assert.equal(validateBookingSurfaceV2({ ...turn('validator-duplicate-version'), workspace: duplicateVersionWorkspace }).ok, false, 'published validator rejects duplicate offer version refs')
+const verifiedVersionMismatchWorkspace: BookingWorkspaceSnapshotV2 = { ...workspace(0), visibleHotels: [{ hotelRef: 'hotel-verified', name: 'Verified Hotel', factRefs: [] }], loadedOffers: [loadedOffer('offer-verified', 'hotel-verified', 'offer-verified:v1')], verifiedOffer: verifiedCapability('offer-verified', 'offer-verified:v2') }
+assert.equal(validateBookingSurfaceV2({ ...turn('validator-verified-version-mismatch'), workspace: verifiedVersionMismatchWorkspace }).ok, false, 'standalone workspace validation rejects a verified capability for an unloaded version')
+assert.equal(validateBookingSurfaceV2({ ...turn('validator-verified-logical-mismatch'), workspace: { ...verifiedVersionMismatchWorkspace, verifiedOffer: verifiedCapability('other-offer', 'other-offer:v1') } }).ok, false, 'standalone workspace validation rejects a verified capability for another logical offer')
+assert.throws(() => duplicateRuntime.startTask({ ...turn('task-duplicate-offer'), workspace: duplicateOfferWorkspace }), /invalid_planner_turn|availability_duplicate_offer_ref/)
+assert.equal(duplicateLedger.countEvents(), 0, 'duplicate loaded OfferRef is rejected at admission before ledger writes')
+const duplicateContinuationRuntime = new BookingCopilotTaskRuntimeV2(duplicateLedger, { contextRefFactory: () => 'ctx-v2' })
+const duplicateContinuationTask = duplicateContinuationRuntime.startTask({ ...turn('task-duplicate-continuation'), workspace: { ...workspace(0), visibleHotels: [{ hotelRef: 'hotel-dup-a', name: 'Hotel Dup A', factRefs: [] }], loadedOffers: [loadedOffer('unique-offer-ref', 'hotel-dup-a')] } })
+duplicateContinuationRuntime.issueOperation(duplicateContinuationTask.taskId, { ...action('duplicate-continuation-check'), kind: 'offer.check', input: { offerRef: 'unique-offer-ref', offerVersionRef: 'unique-offer-ref:v1' } })
+assert.throws(() => duplicateContinuationRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: duplicateContinuationTask.taskId, workspace: { ...duplicateOfferWorkspace, revision: 1 }, receipt: { schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: 'duplicate-continuation-check', contextRef: 'ctx-v2', status: 'unavailable', revision: 1, observation: availabilityObservation('unique-offer-ref'), resultContract: { outcome: 'empty', hardCriteriaMet: false, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } }), /invalid_receipt_continuation|availability_duplicate_offer_ref/)
+;(duplicateContinuationRuntime as unknown as { appendTurn: (taskId: string, contextRef: string, requestDigest: string, workspaceDigest: string, workspaceSemanticDigest: string, ordinal: number, turnId: string, workspace: BookingWorkspaceSnapshotV2) => void }).appendTurn('task-duplicate-continuation', 'ctx-v2', 'tampered', 'tampered', 'tampered', 2, 'duplicate-replay-turn', duplicateOfferWorkspace)
+assert.throws(() => duplicateContinuationRuntime.resumeTask('task-duplicate-continuation'), /ledger_corrupt:task-duplicate-continuation:turn_workspace/, 'duplicate loaded OfferRef is fail-closed during ledger replay')
+duplicateLedger.close(); rmSync(duplicateRoot, { recursive: true, force: true })
+
+// A receipt for offer A is not authority to mutate the selection to offer B.
+// The receipt target and the resulting workspace selection must agree on the
+// same logical/versioned offer pair.
+const selectRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-select-receipt-binding-'))
+const selectLedger = ensureLedger(selectRoot)
+const selectRuntime = new BookingCopilotTaskRuntimeV2(selectLedger, { contextRefFactory: () => 'ctx-v2' })
+const selectWorkspace: BookingWorkspaceSnapshotV2 = {
+  ...workspace(0),
+  visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }, { hotelRef: 'hotel-b', name: 'Hotel B', factRefs: [] }],
+  loadedOffers: [loadedOffer('offer-a', 'hotel-a'), loadedOffer('offer-b', 'hotel-b')],
+  shortlistedOfferRefs: ['offer-a', 'offer-b'],
+}
+const selectTask = selectRuntime.startTask({ ...turn('task-select-receipt-binding'), workspace: selectWorkspace })
+selectRuntime.issueOperation(selectTask.taskId, { ...action('select-a'), kind: 'offer.select' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } })
+assert.throws(() => selectRuntime.continueWithReceipt({
+  schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: selectTask.taskId,
+  workspace: { ...selectWorkspace, revision: 1, selectedOfferRef: 'offer-b' },
+  receipt: { schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: 'select-a', contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offer.selection', offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } },
+}), /workspace_mismatch|receipt_transition/, 'offer.select receipt A cannot select offer B')
+selectLedger.close(); rmSync(selectRoot, { recursive: true, force: true })
+
+// Checkout is admitted only for the exact, unexpired verified capability tuple:
+// logical offer, version and opaque verification ref all bind together.
+const checkoutWorkspace = (revision: number, capability: VerifiedOfferCapabilityV2): BookingWorkspaceSnapshotV2 => ({
+  ...workspace(revision),
+  visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }, { hotelRef: 'hotel-b', name: 'Hotel B', factRefs: [] }],
+  loadedOffers: [loadedOffer('offer-a', 'hotel-a'), loadedOffer('offer-b', 'hotel-b')],
+  selectedOfferRef: 'offer-a',
+  verifiedOffer: capability,
+})
+const checkoutReceipt = (actionId: string, offerRef: string, offerVersionRef: string, verifiedOfferRef: string): ActionReceiptV2 => ({
+  schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId, contextRef: 'ctx-v2', status: 'applied', revision: 1,
+  observation: { kind: 'checkout.handoff', offerRef, offerVersionRef, verifiedOfferRef, handoffRef: `${offerRef}-checkout` },
+  resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+})
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-checkout-capability-'))
+  const ledger = ensureLedger(root)
+  const rt = new BookingCopilotTaskRuntimeV2(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const capability = verifiedCapability('offer-a', 'offer-a:v1', '2026-09-01T10:30:00.000Z')
+  const t = rt.startTask({ ...turn('task-checkout-capability-exact'), workspace: checkoutWorkspace(0, capability) })
+  const checkout = { ...action('checkout-exact'), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } }
+  rt.issueOperation(t.taskId, checkout)
+  rt.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: t.taskId, workspace: checkoutWorkspace(1, capability), receipt: checkoutReceipt('checkout-exact', 'offer-a', 'offer-a:v1', capability.verifiedOfferRef) })
+  assert.equal(rt.resumeTask(t.taskId)?.lastReceipt?.observation.kind, 'checkout.handoff', 'exact unexpired capability reaches checkout handoff')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-checkout-capability-cross-offer-'))
+  const ledger = ensureLedger(root)
+  const rt = new BookingCopilotTaskRuntimeV2(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const capability = verifiedCapability('offer-a', 'offer-a:v1', '2026-09-01T10:30:00.000Z')
+  const t = rt.startTask({ ...turn('task-checkout-capability-cross-offer'), workspace: checkoutWorkspace(0, capability) })
+  assert.throws(() => rt.issueOperation(t.taskId, { ...action('checkout-cross-offer'), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-b', offerVersionRef: 'offer-b:v1', verifiedOfferRef: capability.verifiedOfferRef } }), /verified_offer|offer_capability|offer_version/, 'offer A capability cannot authorize offer B')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-checkout-capability-expired-'))
+  const ledger = ensureLedger(root)
+  const rt = new BookingCopilotTaskRuntimeV2(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const expired = verifiedCapability('offer-a', 'offer-a:v1', '2026-09-01T09:59:59.000Z')
+  const t = rt.startTask({ ...turn('task-checkout-capability-expired'), workspace: checkoutWorkspace(0, expired) })
+  assert.throws(() => rt.issueOperation(t.taskId, { ...action('checkout-expired'), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: expired.verifiedOfferRef } }), /verified_offer_expired|offer_capability_expired|capability_expired|offer_version_not_loaded/, 'expired verified capability is rejected')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-expired-receipt-write-'))
+  const ledger = ensureLedger(root)
+  const rt = new BookingCopilotTaskRuntimeV2(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T11:00:00.000Z' })
+  const expired = verifiedCapability('offer-a', 'offer-a:v1', '2026-09-01T10:30:00.000Z')
+  const before = checkoutWorkspace(0, expired)
+  const after = checkoutWorkspace(1, expired)
+  const t = rt.startTask({ ...turn('task-expired-receipt-write'), workspace: before })
+  rt.issueOperation(t.taskId, { ...action('expired-receipt-check'), kind: 'offer.check' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } })
+  const receipt: ActionReceiptV2 = { schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: 'expired-receipt-check', contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offer.availability', offerRef: 'offer-a', checkedOfferVersionRef: 'offer-a:v1', currentOfferVersionRef: 'offer-a:v1', verifiedOfferRef: expired.verifiedOfferRef, available: true, changedFactRefs: [], gapCodes: [] }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } }
+  assert.throws(() => rt.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: t.taskId, workspace: after, receipt }), /receipt_verified_offer_expired/, 'expired capability is rejected at receipt write time')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-expired-receipt-replay-'))
+  const ledger = ensureLedger(root)
+  const capability = verifiedCapability('offer-a', 'offer-a:v1', '2026-09-01T10:30:00.000Z')
+  const before = checkoutWorkspace(0, capability)
+  const after = checkoutWorkspace(1, capability)
+  const writer = new BookingCopilotTaskRuntimeV2(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const t = writer.startTask({ ...turn('task-expired-receipt-replay'), workspace: before })
+  writer.issueOperation(t.taskId, { ...action('historical-check'), kind: 'offer.check' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } })
+  const historicalReceipt: ActionReceiptV2 = { schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: 'historical-check', contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offer.availability', offerRef: 'offer-a', checkedOfferVersionRef: 'offer-a:v1', currentOfferVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef, available: true, changedFactRefs: [], gapCodes: [] }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } }
+  writer.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: t.taskId, workspace: after, receipt: historicalReceipt })
+  const reader = new BookingCopilotTaskRuntimeV2(ensureLedger(root), { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T11:00:00.000Z' })
+  const replayed = reader.resumeTask(t.taskId)
+  assert.equal(replayed?.lastReceipt?.status, 'applied', 'historical accepted availability receipt remains replayable after capability expiry')
+  assert.equal(replayed?.lastReceipt?.observation.kind === 'offer.availability' ? replayed.lastReceipt.observation.verifiedOfferRef : undefined, capability.verifiedOfferRef)
+  reader['ledger'].close(); ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-partial-verified-offer-'))
+  const ledger = ensureLedger(root)
+  const capability = verifiedCapability('offer-a', 'offer-a:v1', '2026-09-01T10:30:00.000Z')
+  const before = checkoutWorkspace(0, capability)
+  const after = checkoutWorkspace(1, capability)
+  const rt = new BookingCopilotTaskRuntimeV2(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const t = rt.startTask({ ...turn('task-partial-verified-offer'), workspace: before })
+  rt.issueOperation(t.taskId, { ...action('partial-verified-check'), kind: 'offer.check' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } })
+  const partialReceipt: ActionReceiptV2 = { schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: 'partial-verified-check', contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offer.availability', offerRef: 'offer-a', checkedOfferVersionRef: 'offer-a:v1', currentOfferVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef, available: true, changedFactRefs: [], gapCodes: ['check_avail_unverified'] }, resultContract: { outcome: 'partial', hardCriteriaMet: false, factRefs: [], gapCodes: ['check_avail_unverified'], blockers: [], relaxationsApplied: [] } }
+  assert.throws(() => rt.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: t.taskId, workspace: after, receipt: partialReceipt }), /workspace_mismatch|receipt_verified|availability_receipt|invalid_receipt/, 'partial applied availability cannot publish a checkout-authorizing verified capability')
+  assert.throws(() => rt.issueOperation(t.taskId, { ...action('partial-verified-checkout'), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } }), /receipt_required|verified_offer|offer_version/, 'partial availability cannot authorize a later checkout')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
 const operation = runtime.issueOperation(task.taskId, action('action-v2'))
 assert.equal(operation.action.actionId, 'action-v2')
 assert.equal(operation.action.kind, 'search.run')
@@ -95,11 +287,81 @@ assert.equal(afterReceipt.awaitingApproval?.blocker.blockerId, 'blocker-v2')
 const offerRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-target-'))
 const offerRuntime = new BookingCopilotTaskRuntimeV2(ensureLedger(offerRoot), { contextRefFactory: () => 'ctx-v2' })
 const offerTurn = turn('task-offer-target')
-const offerTask = offerRuntime.startTask({ ...offerTurn, workspace: { ...offerTurn.workspace, visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }], loadedOffers: [{ offerRef: 'offer-a', hotelRef: 'hotel-a', evidenceLevel: 'rate_loaded', factRefs: [] }] } })
-offerRuntime.issueOperation(offerTask.taskId, { ...action('offer-action'), kind: 'offer.check', input: { offerRef: 'offer-a' } })
-const offerReceipt = offerRuntime.withReceiptDigest({ ...receipt, actionId: 'offer-action', observation: { kind: 'offer.availability', offerRef: 'offer-b', available: true, changedFactRefs: [], gapCodes: [] }, resultContract: { ...receipt.resultContract, blockers: [], gapCodes: [] } })
-const offerWorkspace1 = { ...offerTurn.workspace, revision: 1, visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }], loadedOffers: [{ offerRef: 'offer-a', hotelRef: 'hotel-a', evidenceLevel: 'rate_loaded' as const, factRefs: [] }] }
+const offerTask = offerRuntime.startTask({ ...offerTurn, workspace: { ...offerTurn.workspace, visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }], loadedOffers: [loadedOffer('offer-a', 'hotel-a')] } })
+offerRuntime.issueOperation(offerTask.taskId, { ...action('offer-action'), kind: 'offer.check', input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } })
+const offerReceipt = offerRuntime.withReceiptDigest({ ...receipt, actionId: 'offer-action', observation: availabilityObservation('offer-b', 'offer-b:v1', true), resultContract: { ...receipt.resultContract, blockers: [], gapCodes: [] } })
+const offerWorkspace1 = { ...offerTurn.workspace, revision: 1, visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }], loadedOffers: [loadedOffer('offer-a', 'hotel-a')] }
 assert.throws(() => offerRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: offerTask.taskId, workspace: offerWorkspace1, receipt: offerReceipt }), /receipt_target_mismatch/)
+const offerCheckWorkspace = (revision: number, selectedOfferRef?: string, shortlistedOfferRefs: string[] = ['offer-cleanup', 'offer-peer'], verifiedOffer?: VerifiedOfferCapabilityV2): BookingWorkspaceSnapshotV2 => ({ ...workspace(revision), visibleHotels: [{ hotelRef: 'hotel-cleanup', name: 'Hotel Cleanup', factRefs: [] }], loadedOffers: [loadedOffer('offer-cleanup', 'hotel-cleanup'), loadedOffer('offer-peer', 'hotel-cleanup')], selectedOfferRef, shortlistedOfferRefs, ...(verifiedOffer ? { verifiedOffer } : {}) })
+const checkReceipt = (actionId: string, status: 'applied' | 'unavailable' | 'changed' | 'no_match' | 'failed' | 'stale' | 'unsupported', available = status === 'changed'): ActionReceiptV2 => ({ schemaVersion: 'booking.surface.v2' as const, kind: 'action.receipt' as const, actionId, contextRef: 'ctx-v2', status, revision: 1, observation: { kind: 'offer.availability' as const, offerRef: 'offer-cleanup', checkedOfferVersionRef: 'offer-cleanup:v1', currentOfferVersionRef: available ? (status === 'changed' ? 'offer-cleanup:v2' : 'offer-cleanup:v1') : undefined, available, verifiedOfferRef: available && status !== 'changed' ? 'verified-offer-cleanup' : undefined, changedFactRefs: status === 'changed' ? ['price'] : [], gapCodes: [] }, resultContract: { outcome: status === 'changed' ? 'partial' as const : available ? 'complete' as const : status === 'unavailable' || status === 'no_match' ? 'empty' as const : 'partial' as const, hardCriteriaMet: available && status !== 'changed', factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } })
+const assertOfferCheckContinuation = (name: string, before: BookingWorkspaceSnapshotV2, after: BookingWorkspaceSnapshotV2, receipt: ActionReceiptV2, pattern?: RegExp): void => {
+  const root = mkdtempSync(join(tmpdir(), `gotry-booking-v2-${name}-`))
+  const rt = new BookingCopilotTaskRuntimeV2(ensureLedger(root), { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const t = rt.startTask({ ...turn(`task-${name}`), workspace: before })
+  rt.issueOperation(t.taskId, { ...action(`${name}-action`), kind: 'offer.check' as const, input: { offerRef: 'offer-cleanup', offerVersionRef: 'offer-cleanup:v1' } })
+  if (pattern) assert.throws(() => rt.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: t.taskId, workspace: after, receipt: { ...receipt, actionId: `${name}-action` } }), pattern)
+  else rt.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: t.taskId, workspace: after, receipt: { ...receipt, actionId: `${name}-action` } })
+  rt['ledger'].close(); rmSync(root, { recursive: true, force: true })
+}
+assertOfferCheckContinuation('offer-success-first-check', offerCheckWorkspace(0, undefined), offerCheckWorkspace(1, 'offer-cleanup', ['offer-cleanup', 'offer-peer'], verifiedCapability('offer-cleanup')), checkReceipt('offer-success-first-check-action', 'applied', true))
+assertOfferCheckContinuation('offer-success-peer-to-checked', offerCheckWorkspace(0, 'offer-peer'), offerCheckWorkspace(1, 'offer-cleanup', ['offer-cleanup', 'offer-peer'], verifiedCapability('offer-cleanup')), checkReceipt('offer-success-peer-to-checked-action', 'applied', true))
+assertOfferCheckContinuation('offer-success-cleared-forbidden', offerCheckWorkspace(0, 'offer-peer'), offerCheckWorkspace(1, undefined, ['offer-peer'], verifiedCapability('offer-cleanup')), checkReceipt('offer-success-cleared-forbidden-action', 'applied', true), /workspace_mismatch/)
+const cleanupRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-cleanup-'))
+const cleanupRuntime = new BookingCopilotTaskRuntimeV2(ensureLedger(cleanupRoot), { contextRefFactory: () => 'ctx-v2' })
+const cleanupWorkspace0: BookingWorkspaceSnapshotV2 = { ...workspace(0), visibleHotels: [{ hotelRef: 'hotel-cleanup', name: 'Hotel Cleanup', factRefs: [] }], loadedOffers: [loadedOffer('offer-cleanup', 'hotel-cleanup'), loadedOffer('offer-peer', 'hotel-cleanup')], selectedOfferRef: 'offer-cleanup', shortlistedOfferRefs: ['offer-cleanup', 'offer-peer'], verifiedOffer: verifiedCapability('offer-cleanup', 'offer-cleanup:v1', '2026-09-01T10:30:00.000Z') }
+const cleanupTask = cleanupRuntime.startTask({ ...turn('task-offer-cleanup'), workspace: cleanupWorkspace0 })
+const cleanupAction = { ...action('offer-cleanup-action'), kind: 'offer.check' as const, input: { offerRef: 'offer-cleanup', offerVersionRef: 'offer-cleanup:v1' } }
+cleanupRuntime.issueOperation(cleanupTask.taskId, cleanupAction)
+const cleanupReceipt = { schemaVersion: 'booking.surface.v2' as const, kind: 'action.receipt' as const, actionId: 'offer-cleanup-action', contextRef: 'ctx-v2', status: 'unavailable' as const, revision: 1, observation: { kind: 'offer.availability' as const, offerRef: 'offer-cleanup', checkedOfferVersionRef: 'offer-cleanup:v1', available: false, changedFactRefs: [], gapCodes: [] }, resultContract: { outcome: 'empty' as const, hardCriteriaMet: false, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } }
+const cleanupWorkspace1: BookingWorkspaceSnapshotV2 = { ...cleanupWorkspace0, revision: 1, selectedOfferRef: undefined, shortlistedOfferRefs: ['offer-peer'], verifiedOffer: undefined }
+cleanupRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: cleanupTask.taskId, workspace: cleanupWorkspace1, receipt: cleanupReceipt })
+assert.equal(cleanupRuntime.resumeTask(cleanupTask.taskId)?.lastReceipt?.status, 'unavailable', 'offer.check can clear only the checked selection/shortlist and stale verification while preserving loaded offer evidence')
+assertOfferCheckContinuation('offer-negative-kept-checked-forbidden', cleanupWorkspace0, { ...cleanupWorkspace1, selectedOfferRef: 'offer-cleanup', shortlistedOfferRefs: ['offer-cleanup', 'offer-peer'] }, cleanupReceipt, /workspace_mismatch/)
+const cleanupChangedWorkspace1: BookingWorkspaceSnapshotV2 = { ...cleanupWorkspace0, revision: 1, loadedOffers: [{ ...loadedOffer('offer-cleanup', 'hotel-cleanup', 'offer-cleanup:v2'), factRefs: ['price'] }, loadedOffer('offer-peer', 'hotel-cleanup')], verifiedOffer: undefined }
+const changedRuntimeRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-changed-runtime-'))
+const changedRuntime = new BookingCopilotTaskRuntimeV2(ensureLedger(changedRuntimeRoot), { contextRefFactory: () => 'ctx-v2' })
+const changedTask = changedRuntime.startTask({ ...turn('task-offer-changed-runtime'), workspace: cleanupWorkspace0 })
+changedRuntime.issueOperation(changedTask.taskId, { ...action('offer-changed-seed-query'), kind: 'offers.query' as const, input: { hotelRefs: ['hotel-cleanup'], criteria: {} } })
+const changedSeedWorkspace: BookingWorkspaceSnapshotV2 = { ...cleanupWorkspace0, revision: 1 }
+changedRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: changedTask.taskId, workspace: changedSeedWorkspace, receipt: { schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: 'offer-changed-seed-query', contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offers.state', hotelRefs: ['hotel-cleanup'], offerRefs: ['offer-cleanup', 'offer-peer'], loadedHotelCount: 1 }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
+changedRuntime.issueOperation(changedTask.taskId, { ...action('offer-changed-runtime-check', 1), kind: 'offer.check' as const, input: { offerRef: 'offer-cleanup', offerVersionRef: 'offer-cleanup:v1' } })
+changedRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: changedTask.taskId, workspace: { ...cleanupChangedWorkspace1, revision: 2 }, receipt: { ...checkReceipt('offer-changed-runtime-check', 'changed'), revision: 2 } })
+assert.equal(changedRuntime.resumeTask(changedTask.taskId)?.lastReceipt?.status, 'changed', 'runtime persists changed availability against a replacement offer version')
+changedRuntime['ledger'].close(); rmSync(changedRuntimeRoot, { recursive: true, force: true })
+// Existing search results may be checked directly before GoTry has issued an
+// offers.query. This is the product-critical v1 -> v2 recovery path: the
+// changed receipt must survive restart, then the replacement version must be
+// the only admissible next CheckAvail candidate.
+const directChangedRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-direct-offer-changed-'))
+const directChangedRuntime = new BookingCopilotTaskRuntimeV2(ensureLedger(directChangedRoot), { contextRefFactory: () => 'ctx-v2' })
+const directChangedTask = directChangedRuntime.startTask({ ...turn('task-direct-offer-changed'), workspace: cleanupWorkspace0 })
+directChangedRuntime.issueOperation(directChangedTask.taskId, { ...action('direct-offer-check-v1'), kind: 'offer.check' as const, input: { offerRef: 'offer-cleanup', offerVersionRef: 'offer-cleanup:v1' } })
+const directChangedWorkspace: BookingWorkspaceSnapshotV2 = { ...cleanupChangedWorkspace1, revision: 1 }
+directChangedRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: directChangedTask.taskId, workspace: directChangedWorkspace, receipt: checkReceipt('direct-offer-check-v1', 'changed') })
+assert.equal(directChangedRuntime.resumeTask(directChangedTask.taskId)?.lastReceipt?.status, 'changed', 'direct first CheckAvail changed receipt is durable')
+const directChangedRestart = new BookingCopilotTaskRuntimeV2(ensureLedger(directChangedRoot), { contextRefFactory: () => 'ctx-v2' })
+const resumedDirect = directChangedRestart.resumeTask(directChangedTask.taskId)
+assert.equal(resumedDirect?.lastReceipt?.observation.kind, 'offer.availability')
+assert.equal(resumedDirect?.lastReceipt?.observation.kind === 'offer.availability' ? resumedDirect.lastReceipt.observation.currentOfferVersionRef : undefined, 'offer-cleanup:v2', 'restart retains replacement offer version')
+const recheckV2 = { ...action('direct-offer-check-v2', 1), kind: 'offer.check' as const, input: { offerRef: 'offer-cleanup', offerVersionRef: 'offer-cleanup:v2' } }
+directChangedRestart.issueOperation(directChangedTask.taskId, recheckV2)
+directChangedRuntime['ledger'].close(); directChangedRestart['ledger'].close(); rmSync(directChangedRoot, { recursive: true, force: true })
+assertOfferCheckContinuation('offer-no-match-cleanup', cleanupWorkspace0, cleanupWorkspace1, { ...cleanupReceipt, status: 'no_match' })
+assertOfferCheckContinuation('offer-failed-drift-forbidden', cleanupWorkspace0, cleanupWorkspace1, { ...cleanupReceipt, status: 'failed', resultContract: { ...cleanupReceipt.resultContract, outcome: 'partial' } }, /workspace_mismatch/)
+assertOfferCheckContinuation('offer-stale-drift-forbidden', cleanupWorkspace0, cleanupWorkspace1, { ...cleanupReceipt, status: 'stale', resultContract: { ...cleanupReceipt.resultContract, outcome: 'partial' } }, /workspace_mismatch/)
+assertOfferCheckContinuation('offer-unsupported-drift-forbidden', cleanupWorkspace0, cleanupWorkspace1, { ...cleanupReceipt, status: 'unsupported', resultContract: { ...cleanupReceipt.resultContract, outcome: 'partial' } }, /workspace_mismatch/)
+const replacedRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-cleanup-replaced-'))
+const replacedRuntime = new BookingCopilotTaskRuntimeV2(ensureLedger(replacedRoot), { contextRefFactory: () => 'ctx-v2' })
+const replacedTask = replacedRuntime.startTask({ ...turn('task-offer-cleanup-replaced'), workspace: cleanupWorkspace0 })
+replacedRuntime.issueOperation(replacedTask.taskId, { ...cleanupAction, actionId: 'offer-cleanup-replaced' })
+assert.throws(() => replacedRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: replacedTask.taskId, workspace: { ...cleanupWorkspace1, selectedOfferRef: 'offer-peer' }, receipt: { ...cleanupReceipt, actionId: 'offer-cleanup-replaced' } }), /workspace_mismatch/, 'offer.check cannot replace selection with a different offer')
+const loadedDriftRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-cleanup-loaded-drift-'))
+const loadedDriftRuntime = new BookingCopilotTaskRuntimeV2(ensureLedger(loadedDriftRoot), { contextRefFactory: () => 'ctx-v2' })
+const loadedDriftTask = loadedDriftRuntime.startTask({ ...turn('task-offer-cleanup-loaded-drift'), workspace: cleanupWorkspace0 })
+loadedDriftRuntime.issueOperation(loadedDriftTask.taskId, { ...cleanupAction, actionId: 'offer-cleanup-loaded-drift' })
+assert.throws(() => loadedDriftRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: loadedDriftTask.taskId, workspace: { ...cleanupWorkspace1, loadedOffers: [loadedOffer('offer-peer', 'hotel-cleanup')] }, receipt: { ...cleanupReceipt, actionId: 'offer-cleanup-loaded-drift' } }), /workspace_mismatch/, 'offer.check cannot mutate loadedOffers evidence')
+cleanupRuntime['ledger'].close(); replacedRuntime['ledger'].close(); loadedDriftRuntime['ledger'].close()
+rmSync(cleanupRoot, { recursive: true, force: true }); rmSync(replacedRoot, { recursive: true, force: true }); rmSync(loadedDriftRoot, { recursive: true, force: true })
 const approvalQuestion = runtime.approvalQuestion(task.taskId)
 assert.equal(approvalQuestion.kind, 'question')
 if (approvalQuestion.kind === 'question') {
@@ -115,7 +377,7 @@ assert.throws(() => runtime.startTask({ ...turn(task.taskId, 1), request: { text
 const awaitingBeforeBatch = runtime.resumeTask(task.taskId)?.awaitingApproval
 assert.ok(awaitingBeforeBatch)
 const approvalPresentationKey = runtime.approvalPresentationRequestKey(task.taskId)
-;(runtime as any).ensureApprovalOffered(task.taskId, task.contextRef, awaitingBeforeBatch!, approvalPresentationKey)
+;(runtime as unknown as { ensureApprovalOffered: (taskId: string, contextRef: string, approval: BookingApprovalStateV2, requestKey: string) => void }).ensureApprovalOffered(task.taskId, task.contextRef, awaitingBeforeBatch!, approvalPresentationKey)
 assert.equal(runtime.resumeTask(task.taskId)?.awaitingApproval?.optionsEmitted, false)
 assert.throws(() => runtime.startTask({ ...turn(task.taskId, 1), request: { text: 'relax destination', approval } }), /approval_not_presented/)
 assert.throws(() => runtime.commitDecisionBatch(task.taskId, 'turn:unrelated-turn', [approvalQuestion]), /approval_presentation_key_mismatch/)
@@ -413,6 +675,340 @@ ordinalTamperLedger.db.prepare("UPDATE events SET payload = json_set(payload, '$
 const ordinalRestart = new BookingCopilotTaskRuntimeV2(ensureLedger(ordinalTamperRoot))
 assert.throws(() => ordinalRestart.resumeTask('task-ordinal-tamper'), /ledger_corrupt:task-ordinal-tamper:action/, 'inconsistent explicit operation ordinal is rejected')
 ordinalRestart['ledger'].close(); ordinalTamperLedger.close(); rmSync(ordinalTamperRoot, { recursive: true, force: true })
+
+// A pre-versioned ledger family omitted offer versions from every persisted
+// workspace, action, receipt and availability object. Rebuild the exact old
+// digests, rather than only deleting one field, so replay proves migration of
+// the row family and not a versioned fixture with a missing leaf.
+type LegacyPayload = Record<string, unknown> & { action?: Record<string, unknown>; receipt?: ActionReceiptV2; workspace?: Record<string, unknown>; availability?: Record<string, unknown> }
+const rewriteLegacyOfferRows = (ledger: ReturnType<typeof ensureLedger>, taskId: string, text: string, scalarVerifiedOfferRef?: string): void => {
+  const rows = ledger.db.prepare("SELECT seq, kind, payload FROM events WHERE run_id = ? ORDER BY seq").all(taskId) as Array<{ seq: number; kind: string; payload: string }>
+  const actionKinds = new Map<string, string>()
+  const actionWorkspaceDigests = new Map<string, string>()
+  const workspaceDigestMigration = new Map<string, string>()
+  let currentWorkspace: Record<string, unknown> | undefined
+  for (const row of rows) {
+    if (row.kind !== 'booking.copilot.v2.action.issued') continue
+    const payload = JSON.parse(row.payload) as LegacyPayload
+    const action = payload.action
+    if (action && typeof action.actionId === 'string' && typeof action.kind === 'string') actionKinds.set(action.actionId, action.kind)
+  }
+  for (const row of rows) {
+    const payload = JSON.parse(row.payload) as LegacyPayload
+    const receiptActionId = row.kind === 'booking.copilot.v2.receipt.observed' && payload.receipt && typeof payload.receipt.actionId === 'string' ? payload.receipt.actionId : undefined
+    if (payload.workspace && typeof payload.workspace === 'object') {
+      const versionedWorkspace = structuredClone(payload.workspace)
+      const oldWorkspace = legacyWorkspace(payload.workspace as unknown as BookingWorkspaceSnapshotV2, scalarVerifiedOfferRef)
+      payload.workspace = oldWorkspace
+      const oldDigest = oldWorkspaceDigest(oldWorkspace)
+      workspaceDigestMigration.set(oldWorkspaceDigest(versionedWorkspace as Record<string, unknown>), oldDigest)
+      payload.workspaceDigest = oldDigest
+      payload.workspaceSemanticDigest = oldWorkspaceSemanticDigest(oldWorkspace)
+      currentWorkspace = oldWorkspace
+    }
+    if (payload.availability && typeof payload.availability === 'object') {
+      const actionId = payload.action && typeof payload.action === 'object' && typeof payload.action.actionId === 'string' ? payload.action.actionId : undefined
+      const availabilityValue = structuredClone(payload.availability) as Record<string, unknown>
+      const sourceWorkspaceDigest: string | undefined = (() => {
+        const hotels = availabilityValue.hotels
+        if (!hotels || typeof hotels !== 'object' || Array.isArray(hotels)) return undefined
+        for (const hotel of Object.values(hotels as Record<string, unknown>)) {
+          if (!hotel || typeof hotel !== 'object' || Array.isArray(hotel)) continue
+          const generation = (hotel as Record<string, unknown>).currentGeneration
+          if (!generation || typeof generation !== 'object' || Array.isArray(generation)) continue
+          const source = (generation as Record<string, unknown>).source
+          if (source && typeof source === 'object' && !Array.isArray(source) && (source as Record<string, unknown>).kind === 'workspace_snapshot' && typeof (source as Record<string, unknown>).workspaceDigest === 'string') return (source as Record<string, unknown>).workspaceDigest as string
+        }
+        return undefined
+      })()
+      const sourceDigest = workspaceDigestMigration.get(sourceWorkspaceDigest ?? '') ?? (receiptActionId ? actionWorkspaceDigests.get(receiptActionId) : currentWorkspace ? oldWorkspaceDigest(currentWorkspace) : undefined)
+      const oldAvailability = legacyAvailability(payload.availability, sourceDigest)
+      payload.availability = oldAvailability
+      payload.availabilityDigest = bookingV2Digest(oldAvailability)
+      if (actionId) actionWorkspaceDigests.set(actionId, currentWorkspace ? oldWorkspaceDigest(currentWorkspace) : '')
+    }
+    if (row.kind === 'booking.copilot.v2.user.turn.observed' && typeof payload.turnId === 'string' && payload.workspace && typeof payload.workspace === 'object') {
+      payload.requestDigest = legacyTurnDigest(taskId, payload.turnId, payload.workspace, text)
+    }
+    if (row.kind === 'booking.copilot.v2.action.issued' && payload.action && typeof payload.action === 'object') {
+      const oldAction = payload.action
+      const input = oldAction.input
+      if (input && typeof input === 'object' && !Array.isArray(input) && ['offer.select', 'offer.check', 'checkout.prepare'].includes(String(oldAction.kind))) {
+        delete (input as Record<string, unknown>).offerVersionRef
+      }
+      if (input && typeof input === 'object' && !Array.isArray(input)) oldAction.inputDigest = bookingV2Digest(input)
+      const { actionDigest: _oldActionDigest, ...actionBase } = oldAction
+      oldAction.actionDigest = bookingV2Digest(actionBase)
+    }
+    if (row.kind === 'booking.copilot.v2.receipt.observed' && payload.receipt && typeof payload.receipt === 'object') {
+      const actionId = typeof payload.receipt.actionId === 'string' ? payload.receipt.actionId : ''
+      const oldReceipt = stripLegacyReceipt(payload.receipt)
+      if (actionKinds.get(actionId) === 'checkout.prepare' && oldReceipt.observation && typeof oldReceipt.observation === 'object') {
+        // A pre-versioned checkout carried only the legacy scalar verification
+        // ref. It must never be upgraded into a live version capability.
+        ;(oldReceipt.observation as Record<string, unknown>).verifiedOfferRef = scalarVerifiedOfferRef
+      }
+      payload.receipt = oldReceipt as unknown as ActionReceiptV2
+      payload.receiptDigest = bookingV2Digest(oldReceipt)
+    }
+    if (row.kind === 'booking.copilot.v2.decision.batch' && Array.isArray(payload.events)) {
+      payload.events = payload.events.map((event) => {
+        if (!event || typeof event !== 'object' || Array.isArray(event)) return event
+        const oldEvent = event as Record<string, unknown>
+        if (oldEvent.kind !== 'operation' || !oldEvent.action || typeof oldEvent.action !== 'object' || Array.isArray(oldEvent.action)) return oldEvent
+        const oldAction = oldEvent.action as Record<string, unknown>
+        const input = oldAction.input
+        if (input && typeof input === 'object' && !Array.isArray(input) && ['offer.select', 'offer.check', 'checkout.prepare'].includes(String(oldAction.kind))) delete (input as Record<string, unknown>).offerVersionRef
+        return oldEvent
+      })
+    }
+    ledger.db.prepare('UPDATE events SET payload = ? WHERE seq = ?').run(JSON.stringify(payload), row.seq)
+  }
+}
+
+const legacyOfferRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-legacy-offer-version-'))
+const legacyOfferLedger = ensureLedger(legacyOfferRoot)
+const legacyOfferRuntime = new BookingCopilotTaskRuntimeV2(legacyOfferLedger, { contextRefFactory: () => 'ctx-v2' })
+const legacyWorkspace0: BookingWorkspaceSnapshotV2 = { ...workspace(0), visibleHotels: [{ hotelRef: 'legacy-hotel', name: 'Legacy Hotel', factRefs: [] }], loadedOffers: [loadedOffer('legacy-offer-a', 'legacy-hotel'), loadedOffer('legacy-offer-b', 'legacy-hotel')], selectedOfferRef: 'legacy-offer-a', shortlistedOfferRefs: ['legacy-offer-a', 'legacy-offer-b'] }
+const legacyWorkspace1: BookingWorkspaceSnapshotV2 = { ...legacyWorkspace0, revision: 1, loadedOffers: [{ ...loadedOffer('legacy-offer-a', 'legacy-hotel', 'legacy-offer-a:v2'), factRefs: ['price'] }, loadedOffer('legacy-offer-b', 'legacy-hotel')] }
+const legacyOfferTask = legacyOfferRuntime.startTask({ ...turn('task-legacy-offer-version'), workspace: legacyWorkspace0 })
+legacyOfferRuntime.issueOperation(legacyOfferTask.taskId, { ...action('legacy-offer-check-v1'), kind: 'offer.check' as const, input: { offerRef: 'legacy-offer-a', offerVersionRef: 'legacy-offer-a:v1' } })
+legacyOfferRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: legacyOfferTask.taskId, workspace: legacyWorkspace1, receipt: { schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: 'legacy-offer-check-v1', contextRef: 'ctx-v2', status: 'changed', revision: 1, observation: { kind: 'offer.availability', offerRef: 'legacy-offer-a', checkedOfferVersionRef: 'legacy-offer-a:v1', currentOfferVersionRef: 'legacy-offer-a:v2', available: true, changedFactRefs: ['price'], gapCodes: [] }, resultContract: { outcome: 'partial', hardCriteriaMet: false, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
+legacyOfferRuntime.startTask({ ...turn('task-legacy-offer-version', 1), workspace: legacyWorkspace1, turnId: 'task-legacy-offer-version-turn-1' })
+legacyOfferRuntime.issueOperation(legacyOfferTask.taskId, { ...action('legacy-offer-check-v2', 1), kind: 'offer.check' as const, input: { offerRef: 'legacy-offer-a', offerVersionRef: 'legacy-offer-a:v2' } })
+rewriteLegacyOfferRows(legacyOfferLedger, legacyOfferTask.taskId, 'find hotels in Dubai')
+const legacyOfferRestart = new BookingCopilotTaskRuntimeV2(ensureLedger(legacyOfferRoot), { contextRefFactory: () => 'ctx-v2' })
+const legacyOfferRecovered = legacyOfferRestart.resumeTask(legacyOfferTask.taskId)
+assert.ok(legacyOfferRecovered && legacyOfferRecovered.pendingAction?.input.offerVersionRef, 'pre-versioned row family migrates to a version-bound pending action')
+assert.deepEqual(legacyOfferRecovered?.availability.attempts.map((attempt) => attempt.offerVersionRef), ['legacy-offer-version:' + bookingV2Digest({ contextRef: 'ctx-v2', offerRef: 'legacy-offer-a', hotelRef: 'legacy-hotel', evidenceLevel: 'rate_loaded', factRefs: [] }).slice(0, 40), 'legacy-offer-version:' + bookingV2Digest({ contextRef: 'ctx-v2', offerRef: 'legacy-offer-a', hotelRef: 'legacy-hotel', evidenceLevel: 'rate_loaded', factRefs: ['price'] }).slice(0, 40)], 'legacy A attempts retain distinct old v1 and changed v2 identities')
+legacyOfferRestart['ledger'].close(); legacyOfferLedger.close(); rmSync(legacyOfferRoot, { recursive: true, force: true })
+
+// An unsafe legacy checkout tail must not resurrect a scalar verifiedOfferRef
+// or strand the task behind terminal/error events written by the old runtime.
+// The upgrader skips that tail, preserves ordinals/sequences, then permits a
+// new typed turn and a new version-bound check to append after restart.
+const legacyCheckoutRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-legacy-checkout-tail-'))
+const legacyCheckoutLedger = ensureLedger(legacyCheckoutRoot)
+const legacyCheckoutRuntime = new BookingCopilotTaskRuntimeV2(legacyCheckoutLedger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+const legacyCheckoutCapability = verifiedCapability('legacy-checkout', 'legacy-checkout:v1')
+const legacyCheckoutWorkspace: BookingWorkspaceSnapshotV2 = { ...workspace(1), visibleHotels: [{ hotelRef: 'legacy-checkout-hotel', name: 'Legacy Checkout Hotel', factRefs: [] }], loadedOffers: [loadedOffer('legacy-checkout', 'legacy-checkout-hotel')], selectedOfferRef: 'legacy-checkout', verifiedOffer: legacyCheckoutCapability }
+const legacyCheckoutTask = legacyCheckoutRuntime.startTask({ ...turn('task-legacy-checkout-tail'), workspace: legacyCheckoutWorkspace })
+const legacyCheckoutAction = { ...action('legacy-checkout-action', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'legacy-checkout', offerVersionRef: 'legacy-checkout:v1', verifiedOfferRef: legacyCheckoutCapability.verifiedOfferRef } }
+const legacyCheckoutBatch = legacyCheckoutRuntime.applyDecisionBatch(legacyCheckoutTask.taskId, 'legacy-checkout-batch', [{ kind: 'operation', action: legacyCheckoutAction }, { kind: 'explanation', explanation: { text: 'checkout handoff is awaiting receipt', factRefs: [] } }], true)
+assert.equal(legacyCheckoutBatch.some((event) => event.kind === 'operation' && event.action.actionId === legacyCheckoutAction.actionId), true, 'normal decision batch includes the checkout operation envelope')
+const appendLegacyEvent = (eventId: string, sequence: number, eventKind: 'terminal' | 'error'): void => {
+  const safeContent = eventKind === 'terminal' ? { status: 'stopped' as const, summary: 'legacy-terminal', factRefs: [] } : { code: 'unhandled', message: 'legacy error', retryable: false }
+  legacyCheckoutLedger.insertEvent({ actor: 'system:booking-copilot-v2', kind: 'booking.copilot.v2.event.emitted', subjectId: legacyCheckoutTask.taskId, runId: legacyCheckoutTask.taskId, ts: '2026-09-01T10:00:01.000Z', idemKey: `legacy-tail:${eventId}`, payload: { schema: 'booking.copilot.ledger.v2', taskId: legacyCheckoutTask.taskId, contextRef: 'ctx-v2', eventId, sequence, emittedAt: '2026-09-01T10:00:01.000Z', eventKind, contentDigest: bookingV2Digest(safeContent) } })
+}
+appendLegacyEvent('legacy-terminal-event', 6, 'terminal')
+appendLegacyEvent('legacy-error-event', 7, 'error')
+rewriteLegacyOfferRows(legacyCheckoutLedger, legacyCheckoutTask.taskId, 'find hotels in Dubai', legacyCheckoutCapability.verifiedOfferRef)
+const legacyCheckoutNextWorkspace: BookingWorkspaceSnapshotV2 = { ...legacyCheckoutWorkspace, revision: 2, verifiedOffer: undefined }
+;(legacyCheckoutRuntime as unknown as { appendTurn: (taskId: string, contextRef: string, requestDigest: string, workspaceDigest: string, workspaceSemanticDigest: string, ordinal: number, turnId: string, workspace: BookingWorkspaceSnapshotV2) => void }).appendTurn(legacyCheckoutTask.taskId, 'ctx-v2', bookingV2Digest({ schemaVersion: 'booking.surface.v2', kind: 'user.turn', taskId: legacyCheckoutTask.taskId, turnId: 'legacy-checkout-next-turn', workspace: legacyCheckoutNextWorkspace, request: { text: 'check the replacement room' } }), oldWorkspaceDigest(legacyCheckoutNextWorkspace as unknown as Record<string, unknown>), oldWorkspaceSemanticDigest(legacyCheckoutNextWorkspace as unknown as Record<string, unknown>), 2, 'legacy-checkout-next-turn', legacyCheckoutNextWorkspace)
+const legacyCheckoutRestart = new BookingCopilotTaskRuntimeV2(ensureLedger(legacyCheckoutRoot), { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+const legacyCheckoutRecovery = legacyCheckoutRestart.resumeTask(legacyCheckoutTask.taskId)
+assert.equal(legacyCheckoutRecovery?.workspaceSnapshot?.verifiedOffer, undefined, 'legacy scalar verifiedOfferRef never becomes a live capability')
+assert.equal(legacyCheckoutRecovery?.phase, 'planning', 'unsafe legacy checkout tail suppresses old terminal/error events and replans')
+assert.equal(legacyCheckoutRecovery?.operationCount, 1, 'legacy checkout action ordinal remains consumed after tail skip')
+assert.ok((legacyCheckoutRecovery?.lastSequence ?? 0) >= 7, 'legacy terminal/error sequence remains consumed for append-only continuation')
+legacyCheckoutRestart.issueOperation(legacyCheckoutTask.taskId, { ...action('legacy-checkout-recheck', 2), kind: 'offer.check' as const, input: { offerRef: 'legacy-checkout', offerVersionRef: 'legacy-checkout:v1' } })
+const legacyCheckoutAfterAppend = legacyCheckoutRestart.resumeTask(legacyCheckoutTask.taskId)
+assert.equal(legacyCheckoutAfterAppend?.phase, 'waiting_receipt', 'new typed offer.check remains reachable after unsafe legacy tail')
+assert.equal(legacyCheckoutAfterAppend?.operationCount, 2)
+assert.equal(legacyCheckoutAfterAppend?.revision, 2)
+const legacyCheckoutNewEvent = legacyCheckoutRestart.emitEvent(legacyCheckoutTask.taskId, { kind: 'explanation', explanation: { text: 'new anchor event', factRefs: [] } })
+assert.equal(legacyCheckoutNewEvent.sequence, (legacyCheckoutAfterAppend?.lastSequence ?? 0) + 1, 'new post-reanchor event receives the next unique sequence')
+legacyCheckoutRestart['ledger'].close(); legacyCheckoutLedger.close(); rmSync(legacyCheckoutRoot, { recursive: true, force: true })
+
+// The DECISION_BATCH is a duplicate envelope around individually persisted
+// EVENT/ACTION/EVENT rows. A clean legacy batch is replayable only when every
+// envelope item points to the exact consumed identity/content; omissions,
+// unknown identities, duplicate identities and content edits are corruption.
+type BatchVariant = 'tampered' | 'missing' | 'unknown' | 'duplicate'
+const legacyBatchVariantFixture = (variant: BatchVariant): { root: string; taskId: string } => {
+  const root = mkdtempSync(join(tmpdir(), `gotry-booking-v2-legacy-batch-${variant}-`))
+  const ledger = ensureLedger(root)
+  const writer = new BookingCopilotTaskRuntimeV2(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const taskId = `task-legacy-batch-${variant}`
+  const capability = verifiedCapability(`batch-${variant}-offer`)
+  const batchWorkspace: BookingWorkspaceSnapshotV2 = { ...workspace(0), visibleHotels: [{ hotelRef: `batch-${variant}-hotel`, name: 'Batch Hotel', factRefs: [] }], loadedOffers: [loadedOffer(`batch-${variant}-offer`, `batch-${variant}-hotel`)], selectedOfferRef: `batch-${variant}-offer`, verifiedOffer: capability }
+  writer.startTask({ ...turn(taskId), workspace: batchWorkspace })
+  const batchAction = { ...action(`batch-${variant}-checkout`), kind: 'checkout.prepare' as const, input: { offerRef: `batch-${variant}-offer`, offerVersionRef: `batch-${variant}-offer:v1`, verifiedOfferRef: capability.verifiedOfferRef } }
+  writer.applyDecisionBatch(taskId, `batch-envelope-${variant}`, [{ kind: 'operation', action: batchAction }, { kind: 'explanation', explanation: { text: 'batch envelope', factRefs: [] } }], true)
+  rewriteLegacyOfferRows(ledger, taskId, 'find hotels in Dubai', capability.verifiedOfferRef)
+  const row = ledger.db.prepare("SELECT seq, payload FROM events WHERE run_id = ? AND kind = 'booking.copilot.v2.decision.batch'").get(taskId) as { seq: number; payload: string }
+  const payload = JSON.parse(row.payload) as { events: Array<Record<string, unknown>> }
+  if (variant === 'tampered') {
+    const explanation = payload.events.find((event) => event.kind === 'explanation')
+    if (explanation && explanation.explanation && typeof explanation.explanation === 'object') (explanation.explanation as Record<string, unknown>).text = 'edited envelope'
+  } else if (variant === 'missing') {
+    const operationIndex = payload.events.findIndex((event) => event.kind === 'operation')
+    assert.ok(operationIndex >= 0, 'missing batch fixture has a retained operation identity to remove')
+    payload.events.splice(operationIndex, 1)
+  } else if (variant === 'unknown') {
+    const first = payload.events[0]
+    if (first) first.eventId = 'unknown-envelope-event'
+  } else {
+    const first = payload.events[0]
+    if (first) payload.events.push(structuredClone(first))
+  }
+  ledger.db.prepare('UPDATE events SET payload = ? WHERE seq = ?').run(JSON.stringify(payload), row.seq)
+  ledger.close()
+  return { root, taskId }
+}
+for (const variant of ['tampered', 'missing', 'unknown', 'duplicate'] as const) {
+  const fixtureState = legacyBatchVariantFixture(variant)
+  const replayLedger = ensureLedger(fixtureState.root)
+  const replay = new BookingCopilotTaskRuntimeV2(replayLedger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  assert.throws(() => replay.resumeTask(fixtureState.taskId), new RegExp(`ledger_corrupt:${fixtureState.taskId}:decision_batch`), `legacy duplicate batch ${variant} mismatch fails closed`)
+  replayLedger.close()
+  rmSync(fixtureState.root, { recursive: true, force: true })
+}
+
+// Batch identity is scoped to its own envelope. A standalone EVENT/ACTION
+// pair is completed before a normal batch, then a second unsafe legacy batch
+// opens the migration skip tail. Replay must consume the first batch normally,
+// validate the second against only its own individual rows, and reject a
+// cross-batch event graft instead of accepting a globally consumed identity.
+const legacyTwoBatchFixture = (crossBatchGraft: boolean): { root: string; taskId: string } => {
+  const root = mkdtempSync(join(tmpdir(), `gotry-booking-v2-legacy-two-batch-${crossBatchGraft ? 'graft' : 'clean'}-`))
+  const ledger = ensureLedger(root)
+  const writer = new BookingCopilotTaskRuntimeV2(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const taskId = `task-legacy-two-batch-${crossBatchGraft ? 'graft' : 'clean'}`
+  writer.startTask(turn(taskId))
+  const standaloneStatus = writer.emitEvent(taskId, { kind: 'status', status: 'submitted' })
+  const standaloneAction = writer.issueOperation(taskId, action(`${taskId}-standalone-action`))
+  const standaloneReceipt = writer.withReceiptDigest({
+    schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: standaloneAction.action.actionId, contextRef: 'ctx-v2', status: 'applied', revision: 1,
+    observation: { kind: 'search.state', resultCount: 0 }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+  })
+  writer.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId, workspace: workspace(1), receipt: standaloneReceipt })
+  const capability = verifiedCapability(`${taskId}-offer`)
+  const batchWorkspace: BookingWorkspaceSnapshotV2 = {
+    ...workspace(1), visibleHotels: [{ hotelRef: `${taskId}-hotel`, name: 'Two Batch Hotel', factRefs: [] }],
+    loadedOffers: [loadedOffer(`${taskId}-offer`, `${taskId}-hotel`)], selectedOfferRef: `${taskId}-offer`, verifiedOffer: capability,
+  }
+  writer.startTask({ ...turn(taskId, 1), turnId: `${taskId}-anchor-turn`, workspace: batchWorkspace })
+  const normalBatch = writer.applyDecisionBatch(taskId, `${taskId}-normal-batch`, [{ kind: 'explanation', explanation: { text: 'normal completed batch', factRefs: [] } }], true)
+  assert.ok(normalBatch.some((event) => event.kind === 'explanation'), 'normal batch persists its own explanation')
+  const unsafeAction = { ...action(`${taskId}-unsafe-checkout`, 1), kind: 'checkout.prepare' as const, input: { offerRef: `${taskId}-offer`, offerVersionRef: `${taskId}-offer:v1`, verifiedOfferRef: capability.verifiedOfferRef } }
+  writer.applyDecisionBatch(taskId, `${taskId}-unsafe-batch`, [{ kind: 'operation', action: unsafeAction }, { kind: 'explanation', explanation: { text: 'unsafe legacy batch', factRefs: [] } }], true)
+  rewriteLegacyOfferRows(ledger, taskId, 'find hotels in Dubai', capability.verifiedOfferRef)
+  if (crossBatchGraft) {
+    const rows = ledger.db.prepare("SELECT seq, payload FROM events WHERE run_id = ? AND kind = 'booking.copilot.v2.decision.batch' ORDER BY seq").all(taskId) as Array<{ seq: number; payload: string }>
+    assert.equal(rows.length, 2, 'two-batch fixture retains both decision envelopes')
+    const firstPayload = JSON.parse(rows[0]!.payload) as { events: Array<Record<string, unknown>> }
+    const secondPayload = JSON.parse(rows[1]!.payload) as { events: Array<Record<string, unknown>> }
+    const graft = firstPayload.events.find((event) => event.kind === 'explanation')
+    assert.ok(graft, 'first batch has an event identity available for graft detection')
+    const graftIndex = secondPayload.events.findIndex((event) => event.kind === 'explanation')
+    assert.ok(graftIndex >= 0, 'second batch has a retained event slot for graft detection')
+    secondPayload.events[graftIndex] = structuredClone(graft)
+    ledger.db.prepare('UPDATE events SET payload = ? WHERE seq = ?').run(JSON.stringify(secondPayload), rows[1]!.seq)
+  }
+  assert.equal(standaloneStatus.sequence < standaloneAction.sequence, true, 'standalone EVENT precedes standalone ACTION before batched work')
+  ledger.close()
+  return { root, taskId }
+}
+const cleanTwoBatch = legacyTwoBatchFixture(false)
+const cleanTwoBatchReplayLedger = ensureLedger(cleanTwoBatch.root)
+const cleanTwoBatchReplay = new BookingCopilotTaskRuntimeV2(cleanTwoBatchReplayLedger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+const cleanTwoBatchState = cleanTwoBatchReplay.resumeTask(cleanTwoBatch.taskId)
+assert.equal(cleanTwoBatchState?.phase, 'planning', 'normal batch replays before unsafe legacy batch enters replan')
+assert.equal(cleanTwoBatchState?.operationCount, 2, 'standalone action and unsafe batch action ordinals remain consumed')
+cleanTwoBatchReplayLedger.close()
+rmSync(cleanTwoBatch.root, { recursive: true, force: true })
+const graftedTwoBatch = legacyTwoBatchFixture(true)
+const graftedTwoBatchReplayLedger = ensureLedger(graftedTwoBatch.root)
+const graftedTwoBatchReplay = new BookingCopilotTaskRuntimeV2(graftedTwoBatchReplayLedger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+assert.throws(() => graftedTwoBatchReplay.resumeTask(graftedTwoBatch.taskId), new RegExp(`ledger_corrupt:${graftedTwoBatch.taskId}:decision_batch`), 'cross-batch event graft fails closed within the second envelope')
+graftedTwoBatchReplayLedger.close()
+rmSync(graftedTwoBatch.root, { recursive: true, force: true })
+
+// A safe pre-versioned offer.select/offer.check batch must be readable through
+// both restart and the durable batch-replay API. The normalized operation is
+// schema-valid and uses the same deterministic synthetic version that the
+// workspace migration derives from the loaded offer facts.
+for (const kind of ['offer.select', 'offer.check'] as const) {
+  const root = mkdtempSync(join(tmpdir(), `gotry-booking-v2-legacy-safe-batch-${kind.replace('.', '-')}-`))
+  const ledger = ensureLedger(root)
+  const writer = new BookingCopilotTaskRuntimeV2(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const taskId = `task-legacy-safe-batch-${kind.replace('.', '-')}`
+  const offerRef = `${taskId}-offer`
+  const hotelRef = `${taskId}-hotel`
+  const safeWorkspace: BookingWorkspaceSnapshotV2 = { ...workspace(0), visibleHotels: [{ hotelRef, name: 'Safe Batch Hotel', factRefs: [] }], loadedOffers: [loadedOffer(offerRef, hotelRef)] }
+  writer.startTask({ ...turn(taskId), workspace: safeWorkspace })
+  const safeAction = { ...action(`${taskId}-action`), kind, input: { offerRef, offerVersionRef: `${offerRef}:v1` } } as const
+  const requestKey = `${taskId}-request`
+  writer.applyDecisionBatch(taskId, requestKey, [{ kind: 'operation', action: safeAction }], true)
+  rewriteLegacyOfferRows(ledger, taskId, 'find hotels in Dubai')
+  ledger.close()
+  const restartLedger = ensureLedger(root)
+  const restart = new BookingCopilotTaskRuntimeV2(restartLedger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const recovered = restart.resumeTask(taskId)
+  const recoveredOperation = recovered?.pendingAction
+  const expectedVersion = `legacy-offer-version:${bookingV2Digest({ contextRef: 'ctx-v2', offerRef, hotelRef, evidenceLevel: 'rate_loaded', factRefs: [] }).slice(0, 40)}`
+  const offerVersionFromAction = (candidate: { input: unknown } | undefined): string | undefined => {
+    const input = candidate?.input
+    return input && typeof input === 'object' && !Array.isArray(input) && 'offerVersionRef' in input && typeof input.offerVersionRef === 'string' ? input.offerVersionRef : undefined
+  }
+  assert.equal(recoveredOperation?.kind, kind, `legacy ${kind} batch restart retains operation kind`)
+  assert.equal(offerVersionFromAction(recoveredOperation), expectedVersion, `legacy ${kind} batch restart binds deterministic synthetic version`)
+  const replayBatch = restart.readDecisionBatch(taskId, requestKey)
+  assert.ok(replayBatch, `legacy ${kind} batch is readable after restart`)
+  const replayOperation = replayBatch?.find((event) => event.kind === 'operation')
+  assert.ok(replayOperation && validateBookingSurfaceV2(replayOperation).ok, `legacy ${kind} batch operation is schema-valid after replay normalization`)
+  assert.equal(replayOperation?.kind === 'operation' ? offerVersionFromAction(replayOperation.action) : undefined, expectedVersion, `legacy ${kind} batch replay operation carries synthetic version`)
+  restartLedger.close()
+  rmSync(root, { recursive: true, force: true })
+}
+
+// A legacy receipt whose normalization changes a blocker/approval lineage is
+// unsafe to replay: it must enter an explicit replan gap, never be mislabeled
+// as a corrupt ledger or silently recreate approval authority.
+const legacyBlockerRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-legacy-blocker-replan-'))
+const legacyBlockerLedger = ensureLedger(legacyBlockerRoot)
+const legacyBlockerRuntime = new BookingCopilotTaskRuntimeV2(legacyBlockerLedger, { contextRefFactory: () => 'ctx-v2' })
+const blockerWorkspace0: BookingWorkspaceSnapshotV2 = { ...workspace(0), visibleHotels: [{ hotelRef: 'blocker-hotel', name: 'Blocker Hotel', factRefs: [] }], loadedOffers: [loadedOffer('blocker-offer', 'blocker-hotel')] }
+const blockerTask = legacyBlockerRuntime.startTask({ ...turn('task-legacy-blocker-lineage'), workspace: blockerWorkspace0 })
+legacyBlockerRuntime.issueOperation(blockerTask.taskId, { ...action('legacy-blocker-check'), kind: 'offer.check' as const, input: { offerRef: 'blocker-offer', offerVersionRef: 'blocker-offer:v1' } })
+const legacyLineageReceipt = legacyBlockerRuntime.withReceiptDigest({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: 'legacy-blocker-check', contextRef: 'ctx-v2', status: 'needs_input', revision: 1, observation: { kind: 'offer.availability', offerRef: 'blocker-offer', checkedOfferVersionRef: 'blocker-offer:v1', available: false, changedFactRefs: [], gapCodes: [] }, resultContract: { outcome: 'partial', hardCriteriaMet: false, factRefs: ['fact-free-cancellation'], gapCodes: ['criterion_must_not_met'], blockers: [{ blockerId: 'legacy-blocker', sourceActionId: 'legacy-blocker-check', sourceReceiptDigest: '', scope: 'availability', code: 'criterion_must_not_met', criterionPath: 'offers.freeCancellation', strength: 'must', valueDigest: 'c'.repeat(64), evidence: { factRefs: ['fact-free-cancellation'], gapCodes: ['criterion_must_not_met'] } }], relaxationsApplied: [] } })
+legacyBlockerRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: blockerTask.taskId, workspace: { ...blockerWorkspace0, revision: 1 }, receipt: legacyLineageReceipt })
+rewriteLegacyOfferRows(legacyBlockerLedger, blockerTask.taskId, 'find hotels in Dubai')
+const legacyBlockerRestart = new BookingCopilotTaskRuntimeV2(ensureLedger(legacyBlockerRoot), { contextRefFactory: () => 'ctx-v2' })
+const blockerRecovery = legacyBlockerRestart.resumeTask(blockerTask.taskId)
+assert.equal(blockerRecovery?.phase, 'planning', 'normalized legacy blocker receipt fail-closes to replan')
+assert.equal(blockerRecovery?.replayUpgradeRequired, true, 'legacy blocker lineage records an explicit replay upgrade gap')
+assert.equal(blockerRecovery?.pendingAction, undefined)
+assert.throws(() => legacyBlockerRestart.issueOperation(blockerTask.taskId, action('blocked-replan-action', 1)), /replay_upgrade|reanchor|replan|turn_required/, 'replay upgrade gap blocks direct operation before a new anchor turn')
+assert.throws(() => legacyBlockerRestart.applyDecisionBatch(blockerTask.taskId, 'blocked-replan-batch', [{ kind: 'operation', action: action('blocked-replan-decision', 1) }]), /replay_upgrade|reanchor|replan|turn_required/, 'replay upgrade gap blocks decision batches before a new anchor turn')
+assert.throws(() => legacyBlockerRestart.emitEvent(blockerTask.taskId, { kind: 'explanation', explanation: { text: 'must wait for a new anchor turn', factRefs: [] } }), /replay_upgrade|reanchor|replan|turn_required/, 'replay upgrade gap blocks standalone event mutation')
+const blockedBindingTurn = { ...turn(blockerTask.taskId, 1), turnId: 'blocked-replan-binding-turn' }
+assert.throws(() => legacyBlockerRestart.persistRequestBinding('blocked-replan-request', blockedBindingTurn, { requestKey: 'blocked-replan-request', principal: { subject: 'blocked-replan-principal', scope: 'booking:read' } }), /replay_upgrade|reanchor|replan|turn_required/, 'replay upgrade gap blocks request binding mutation')
+assert.throws(() => legacyBlockerRestart.terminalDecisionBatch(blockerTask.taskId, 'blocked-replan-terminal-batch'), /replay_upgrade|reanchor|replan|turn_required|task_not_terminal/, 'replay upgrade gap blocks terminal decision mutation')
+const reanchorWorkspace = blockerRecovery!.workspaceSnapshot!
+const reanchor = legacyBlockerRestart.startTask({ ...turn(blockerTask.taskId, reanchorWorkspace.revision), turnId: 'legacy-blocker-reanchor-turn', workspace: reanchorWorkspace, request: { text: 're-anchor the upgraded workspace' } })
+assert.equal(reanchor.replayUpgradeRequired, undefined, 'validated new TURN clears replay upgrade gap')
+legacyBlockerRestart['ledger'].close(); legacyBlockerLedger.close(); rmSync(legacyBlockerRoot, { recursive: true, force: true })
+
+// Once that legitimate checkout upgrade gap activates tail skipping, a later
+// skipped ACTION is still validated. Inflated ordinals may not be hidden by
+// Math.max while the runtime consumes the old tail.
+const skippedActionRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-legacy-skipped-action-tamper-'))
+const skippedActionLedger = ensureLedger(skippedActionRoot)
+const skippedActionWriter = new BookingCopilotTaskRuntimeV2(skippedActionLedger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+const skippedWorkspace: BookingWorkspaceSnapshotV2 = { ...workspace(0), visibleHotels: [{ hotelRef: 'skipped-hotel', name: 'Skipped Hotel', factRefs: [] }], loadedOffers: [loadedOffer('skipped-offer', 'skipped-hotel')], selectedOfferRef: 'skipped-offer', verifiedOffer: verifiedCapability('skipped-offer') }
+const skippedTask = skippedActionWriter.startTask({ ...turn('task-legacy-skipped-action'), workspace: skippedWorkspace })
+skippedActionWriter.issueOperation(skippedTask.taskId, { ...action('unsafe-checkout-tail'), kind: 'checkout.prepare' as const, input: { offerRef: 'skipped-offer', offerVersionRef: 'skipped-offer:v1', verifiedOfferRef: 'verified-skipped-offer' } })
+rewriteLegacyOfferRows(skippedActionLedger, skippedTask.taskId, 'find hotels in Dubai', 'verified-skipped-offer')
+skippedActionLedger.insertEvent({ actor: 'system:booking-copilot-v2', kind: 'booking.copilot.v2.event.emitted', subjectId: skippedTask.taskId, runId: skippedTask.taskId, ts: '2026-09-01T10:00:01.000Z', idemKey: 'skipped-action-tail-event', payload: { schema: 'booking.copilot.ledger.v2', taskId: skippedTask.taskId, contextRef: 'ctx-v2', eventId: 'skipped-action-tail-event', sequence: 2, emittedAt: '2026-09-01T10:00:01.000Z', eventKind: 'error', contentDigest: bookingV2Digest({ code: 'unhandled', message: 'legacy error', retryable: false }) } })
+const lateActionBase = { actionId: 'legacy-skipped-action', kind: 'search.run', contextRef: 'ctx-v2', expectedRevision: 0, factRefs: [], reasonDigest: bookingV2Digest('legacy search'), inputDigest: bookingV2Digest({}), input: {}, eventId: 'legacy-skipped-operation', sequence: 3, emittedAt: '2026-09-01T10:00:02.000Z', sourceTurnId: 'task-legacy-skipped-action-turn-0' }
+const lateAction = { ...lateActionBase, actionDigest: bookingV2Digest(lateActionBase) }
+const startAvailability = (JSON.parse((skippedActionLedger.db.prepare("SELECT payload FROM events WHERE run_id = ? AND kind = 'booking.copilot.v2.task.started'").get(skippedTask.taskId) as { payload: string }).payload) as { availability: Record<string, unknown> }).availability
+skippedActionLedger.insertEvent({ actor: 'system:booking-copilot-v2', kind: 'booking.copilot.v2.action.issued', subjectId: skippedTask.taskId, runId: skippedTask.taskId, ts: '2026-09-01T10:00:02.000Z', idemKey: 'legacy-skipped-action-row', payload: { schema: 'booking.copilot.ledger.v2', taskId: skippedTask.taskId, contextRef: 'ctx-v2', action: lateAction, operationCount: 99, availability: legacyAvailability(startAvailability), availabilityDigest: bookingV2Digest(legacyAvailability(startAvailability)) } })
+const skippedActionRestart = new BookingCopilotTaskRuntimeV2(ensureLedger(skippedActionRoot), { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+assert.throws(() => skippedActionRestart.resumeTask(skippedTask.taskId), /ledger_corrupt:task-legacy-skipped-action:action/, 'tampered skipped ACTION ordinal fails closed during legacy tail replay')
+skippedActionRestart['ledger'].close(); skippedActionLedger.close(); rmSync(skippedActionRoot, { recursive: true, force: true })
 
 const approvedReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(approvedTurn) })
 assert.equal(approvedReplay.status, 200)
