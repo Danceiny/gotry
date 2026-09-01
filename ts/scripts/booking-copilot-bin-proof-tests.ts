@@ -35,7 +35,9 @@ try {
       GOTRY_BOOKING_COPILOT_STATE_ROOT: stateRoot,
       GOTRY_BOOKING_COPILOT_HOST: '127.0.0.1',
       GOTRY_BOOKING_COPILOT_PORT: '0',
+      GOTRY_BOOKING_COPILOT_TRUSTED_INGRESS_FIXTURE: '1',
       DEEPSEEK_API_KEY: 'fixture-model-key',
+      NODE_ENV: 'test',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

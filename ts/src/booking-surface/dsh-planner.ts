@@ -434,7 +434,8 @@ export async function createDshEmbeddedBookingPlannerV2(
         if (closed) throw new Error('planner_closed')
         if (busy) throw new Error('planner_turn_in_flight')
         if (task.taskId !== taskId) throw new Error('planner_task_mismatch')
-        if (task.contextRef !== contextRef || (turn.kind !== 'user.turn.ingress' && turn.workspace.contextRef !== contextRef)) throw new Error('planner_context_mismatch')
+        if (turn.kind === 'user.turn.ingress') throw new Error('planner_identity_required')
+        if (task.contextRef !== contextRef || turn.workspace.contextRef !== contextRef) throw new Error('planner_context_mismatch')
         if (task.phase === 'waiting_receipt') throw new Error('receipt_required')
         busy = true
         try {

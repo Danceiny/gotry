@@ -24,6 +24,7 @@ import {
 } from './runtime.ts'
 import { validateBookingCopilotTurnV1 } from './validation.ts'
 import { handleBookingCopilotV2Request, type BookingCopilotV2Adapter } from './server-v2.ts'
+import { normalizeBookingErrorCode, safeBookingErrorMessage } from './error-codes.ts'
 import { BOOKING_SURFACE_SCHEMA_V2_SHA256, BOOKING_SURFACE_SCHEMA_VERSION_V2 } from './contracts-v2.ts'
 
 export type BookingPlannerDecisionV1 =
@@ -114,15 +115,24 @@ function writeSse(res: ServerResponse, event: BookingSurfaceEventV1): void {
   res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`)
 }
 
-function errorCode(error: unknown): string {
-  return error instanceof Error && error.message ? error.message.split(':', 1)[0]! : 'planner_failed'
-}
-
 export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1): Promise<BookingCopilotServerHandleV1> {
   if (!options.apiKey) return Promise.reject(new Error('booking_copilot_api_key_required'))
   if (options.artifactId !== undefined && !/^[0-9a-f]{40}$/.test(options.artifactId)) {
     return Promise.reject(new Error('booking_copilot_artifact_id_invalid'))
   }
+  const v2IngressUsable = options.v2
+    ? typeof options.v2.ingressBinding?.bind === 'function'
+      && typeof options.v2.principal?.subject === 'string'
+      && options.v2.principal.subject.length > 0
+      && options.v2.principal.subject.length <= 256
+      && typeof options.v2.principal.scope === 'string'
+      && options.v2.principal.scope.length > 0
+      && options.v2.principal.scope.length <= 256
+    : true
+  if (options.v2 && !v2IngressUsable) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_binding_required'))
+  }
+  const v2Only = Boolean(options.v2 && !options.runtime && !options.plannerFactory)
   const sessions = new Map<string, BookingPlannerSessionV1>()
   const maxBodyBytes = options.maxBodyBytes ?? 1_000_000
   const runningIdentity = runtimeIdentity()
@@ -192,8 +202,8 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
       }
       turn = parsed as BookingCopilotTurnV1
     } catch (error) {
-      const code = errorCode(error)
-      sendJson(res, code === 'payload_too_large' ? 413 : 400, { error: { code } })
+      const code = normalizeBookingErrorCode(error)
+      sendJson(res, code === 'PAYLOAD_TOO_LARGE' ? 413 : 400, { error: { code } })
       return
     }
 
@@ -210,7 +220,7 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
         task = options.runtime.continueWithReceipt(turn)
       }
     } catch (error) {
-      sendJson(res, 409, { error: { code: errorCode(error) } })
+      sendJson(res, 409, { error: { code: normalizeBookingErrorCode(error) } })
       return
     }
 
@@ -250,15 +260,21 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
       try {
         writeSse(res, options.runtime.emitEvent(task.taskId, {
           kind: 'error',
-          error: {
-            code: errorCode(error),
-            message: error instanceof Error ? error.message : 'planner_failed',
-            retryable: false,
-          },
+          error: { code: normalizeBookingErrorCode(error), message: safeBookingErrorMessage(normalizeBookingErrorCode(error)), retryable: false },
         }))
       } catch {
-        // Headers are already committed. Ending the stream is the only honest
-        // fallback if even the typed error event cannot be recorded.
+        // Headers are already committed. Preserve a non-empty typed SSE error
+        // even when the durable event append is unavailable.
+        writeSse(res, {
+          schemaVersion: 'booking.surface.v1',
+          eventId: `error-${task.taskId}-${task.lastSequence + 1}`,
+          taskId: task.taskId,
+          contextRef: task.contextRef,
+          sequence: task.lastSequence + 1,
+          emittedAt: new Date().toISOString(),
+          kind: 'error',
+          error: { code: normalizeBookingErrorCode(error), message: safeBookingErrorMessage(normalizeBookingErrorCode(error)), retryable: false },
+        })
       }
     } finally {
       res.end()

@@ -1,10 +1,26 @@
 import type { BookingReadActionKindV1, BookingWorkspaceSnapshotV1, SearchCriteriaPatchV1, ResultsViewPatchV1, OfferCriteriaV1 } from './contracts.ts'
 
 export const BOOKING_SURFACE_SCHEMA_VERSION_V2 = 'booking.surface.v2' as const
-export const BOOKING_SURFACE_SCHEMA_V2_SHA256 = '13ed3c8855f8909a722ee66a2bfd4f92fd33223fd1a8b001a4168b4a4bc941ff' as const
+/** Hard task-level operation budget. The counter is persisted in the v2 ledger. */
+export const BOOKING_COPILOT_MAX_OPERATIONS_V2 = 20 as const
+export const BOOKING_SURFACE_SCHEMA_V2_SHA256 = '4a8e8b4c4ce86ec4d93c4349bcf981c638d39f6b93fc2f3d59ae6af17a927a92' as const
 export const BOOKING_READ_ACTION_KINDS_V2 = ['search.patch','search.run','results.view.patch','hotel.focus','hotel.select','offers.query','offers.view.patch','offers.compare','offer.select','offer.check','checkout.prepare','order.observe'] as const satisfies readonly BookingReadActionKindV1[]
 export type BookingReadActionKindV2 = typeof BOOKING_READ_ACTION_KINDS_V2[number]
 export type BookingSurfaceV2 = 'tenant' | 'customer_portal' | 'storefront' | 'payment_link'
+/** Product-owned least-privilege action matrix. BFF bindings may narrow these lists, never expand them. */
+export const BOOKING_SURFACE_ALLOWED_ACTIONS_V2: Record<BookingSurfaceV2, readonly BookingReadActionKindV2[]> = {
+  tenant: BOOKING_READ_ACTION_KINDS_V2,
+  customer_portal: BOOKING_READ_ACTION_KINDS_V2,
+  storefront: ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus'],
+  payment_link: ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'hotel.select'],
+}
+/** Stable product-matrix observation for UAT and server readiness proofs. */
+export function bookingSurfaceAllowedActionsV2(surface: BookingSurfaceV2): BookingReadActionKindV2[] {
+  return [...BOOKING_SURFACE_ALLOWED_ACTIONS_V2[surface]]
+}
+export type BookingRequestKeyV2 = string
+/** Runtime-owned idempotency key; this is not a browser request key. */
+export type BookingInternalDecisionKeyV2 = string
 export const BOOKING_V2_BLOCKER_CODES = ['no_hotels_matched','hotel_not_visible','hotel_rates_failed','criterion_must_not_met','offer_target_not_reached','offer_unavailable'] as const
 export type BookingV2BlockerCode = typeof BOOKING_V2_BLOCKER_CODES[number]
 export const BOOKING_V2_GAP_CODES = ['byos_mapped_risk','check_avail_failed','check_avail_unverified','component_executor_unavailable','hotel_not_visible','hotel_rates_failed','offer_facts_changed','offer_not_loaded','offer_unavailable','order_not_found','order_outcome_not_observed','order_state_unknown','order_status_unavailable','requested_offers_not_loaded','search_failed','search_form_invalid','search_session_expired','search_terminal_timeout','stale_revision','surface_adapter_failed','undo_token_not_found','unhandled','unsupported','verified_offer_required','workspace_changed_during_action','criterion_must_not_met','no_hotels_matched','offer_target_not_reached'] as const
@@ -61,9 +77,25 @@ export type ActionObservationV2 =
 export interface ResultContractV2 {outcome:'complete'|'partial'|'empty';requestedCount?:number;actualCount?:number;hardCriteriaMet:boolean;factRefs:string[];gapCodes:BookingV2GapCode[];blockers:CriterionBlockerV2[];relaxationsApplied:RelaxationApprovalV2[]}
 export interface ActionReceiptV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'action.receipt';actionId:string;contextRef:string;status:'applied'|'needs_input'|'partial'|'no_match'|'unavailable'|'changed'|'stale'|'unsupported'|'failed';revision:number;observation:ActionObservationV2;resultContract:ResultContractV2;undoToken?:string}
 export interface UserTurnV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'user.turn';taskId:string;turnId:string;workspace:BookingWorkspaceSnapshotV2;request:{text:string;approval?:RelaxationApprovalV2}}
-export interface IngressTurnV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'user.turn.ingress';taskId:string;turnId:string;contextRef?:null;surfaceHint:BookingSurfaceV2;workspace:BookingWorkspaceIngressSnapshotV2;request:{text:string}}
+/** Browser-to-BFF ingress. Identity is deliberately absent from this shape. */
+export interface IngressTurnV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'user.turn.ingress';requestKey:BookingRequestKeyV2;taskHandle?:string;surfaceHint:BookingSurfaceV2;workspace:BookingWorkspaceIngressSnapshotV2;request:{text:string}}
 export interface ReceiptContinuationV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'action.receipt.continuation';taskId:string;workspace:BookingWorkspaceSnapshotV2;receipt:ActionReceiptV2}
 export type BookingCopilotTurnV2=UserTurnV2|IngressTurnV2|ReceiptContinuationV2
+/** Typed BFF seam: implementations authenticate ingress and return only
+ * server-issued identity. The HTTP adapter constructs the internal UserTurn. */
+export interface BookingIngressIdentityBindingV2 {
+  taskId: string
+  turnId: string
+  contextRef: string
+  /** Authoritative BFF surface; never copied from the browser hint. */
+  surface: BookingSurfaceV2
+  /** BFF-authorized closed action subset for this surface. */
+  allowedActions: BookingReadActionKindV2[]
+}
+export interface BookingIngressPrincipalV2 { subject: string; scope: string }
+export interface BookingIngressBindingV2 {
+  bind(input: IngressTurnV2, principal: BookingIngressPrincipalV2): BookingIngressIdentityBindingV2 | Promise<BookingIngressIdentityBindingV2>
+}
 export interface BookingQuestionEventV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;eventId:string;taskId:string;contextRef:string;sequence:number;emittedAt:string;kind:'question';question:{questionId:string;prompt:string;missingFields:string[];type:'relaxation_approval_required';blocker:CriterionBlockerV2;approvalOptions:Array<{approval:RelaxationApprovalV2}>}}
 export interface BookingEventBaseV2 { schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION_V2; eventId: string; taskId: string; contextRef: string; sequence: number; emittedAt: string }
 export type BookingSurfaceEventV2 =

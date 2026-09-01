@@ -14,6 +14,7 @@ import {
 } from './dsh-planner.ts'
 import { BookingCopilotTaskRuntime } from './runtime.ts'
 import { BookingCopilotTaskRuntimeV2 } from './runtime-v2.ts'
+import { bookingSurfaceAllowedActionsV2, type BookingIngressBindingV2, type BookingIngressPrincipalV2 } from './contracts-v2.ts'
 import {
   startBookingCopilotServer,
   type BookingCopilotServerHandleV1,
@@ -39,6 +40,9 @@ export interface BookingCopilotStartupDependenciesV1 {
   createPlanner(options: DshEmbeddedBookingPlannerOptionsV1): Promise<DshEmbeddedBookingPlannerHandleV1>
   runtimeFactoryV2?: (ledger: StateLedger) => BookingCopilotTaskRuntimeV2
   createPlannerV2?: (options: DshEmbeddedBookingPlannerOptionsV1) => Promise<DshEmbeddedBookingPlannerHandleV2>
+  /** BFF-authenticated identity seam required whenever v2 is composed. */
+  ingressBinding?: BookingIngressBindingV2
+  principal?: BookingIngressPrincipalV2
   startServer(options: BookingCopilotServerOptionsV1): Promise<BookingCopilotServerHandleV1>
 }
 
@@ -49,6 +53,24 @@ const DEFAULT_DEPENDENCIES: BookingCopilotStartupDependenciesV1 = {
   runtimeFactoryV2: (ledger) => new BookingCopilotTaskRuntimeV2(ledger),
   createPlannerV2: createDshEmbeddedBookingPlannerV2,
   startServer: startBookingCopilotServer,
+}
+
+function trustedIngressFixtureFromEnv(env: Record<string, string | undefined>): Pick<BookingCopilotStartupDependenciesV1, 'ingressBinding' | 'principal'> | undefined {
+  if (env.NODE_ENV !== 'test' || env.GOTRY_BOOKING_COPILOT_TRUSTED_INGRESS_FIXTURE !== '1') return undefined
+  return {
+    principal: { subject: 'fixture-bff', scope: 'booking:read' },
+    ingressBinding: {
+      bind(input) {
+        return {
+          taskId: `fixture-task-${input.requestKey}`,
+          turnId: `fixture-turn-${input.requestKey}`,
+          contextRef: `fixture-context-${input.requestKey}`,
+          surface: input.surfaceHint,
+          allowedActions: bookingSurfaceAllowedActionsV2(input.surfaceHint),
+        }
+      },
+    },
+  }
 }
 
 function parsePort(raw: string | undefined): number {
@@ -108,6 +130,13 @@ export async function startBookingCopilotFromEnvironment(
   dependencies: BookingCopilotStartupDependenciesV1 = DEFAULT_DEPENDENCIES,
 ): Promise<BookingCopilotStartupHandleV1> {
   const config = resolveBookingCopilotStartupConfig(env)
+  const fixture = trustedIngressFixtureFromEnv(env)
+  const activeDependencies = fixture && !dependencies.ingressBinding && !dependencies.principal ? { ...dependencies, ...fixture } : dependencies
+  const principal = activeDependencies.principal
+  const trustedIngressUsable = typeof activeDependencies.ingressBinding?.bind === 'function'
+    && typeof principal?.subject === 'string' && principal.subject.length > 0 && principal.subject.length <= 256
+    && typeof principal?.scope === 'string' && principal.scope.length > 0 && principal.scope.length <= 256
+  if (!trustedIngressUsable) throw new Error('booking_copilot_v2_ingress_binding_required')
   mkdirSync(config.stateRoot, { recursive: true })
   let ledger: StateLedger | undefined
   let planner: DshEmbeddedBookingPlannerHandleV1 | undefined
@@ -116,14 +145,14 @@ export async function startBookingCopilotFromEnvironment(
   try {
     ledger = dependencies.ensureLedger(config.stateRoot)
     const plannerOptions = { stateRoot: config.stateRoot, env: buildDshPlannerEnvironment(env) }
-    if (!dependencies.runtimeFactoryV2 || !dependencies.createPlannerV2) throw new Error('booking_copilot_v2_startup_dependency_missing')
-    const runtime = dependencies.runtimeFactory(ledger)
-    planner = await dependencies.createPlanner(plannerOptions)
-    const runtimeV2 = dependencies.runtimeFactoryV2(ledger)
-    plannerV2 = await dependencies.createPlannerV2(plannerOptions)
-    server = await dependencies.startServer({
+    if (!activeDependencies.runtimeFactoryV2 || !activeDependencies.createPlannerV2) throw new Error('booking_copilot_v2_startup_dependency_missing')
+    const runtime = activeDependencies.runtimeFactory(ledger)
+    planner = await activeDependencies.createPlanner(plannerOptions)
+    const runtimeV2 = activeDependencies.runtimeFactoryV2(ledger)
+    plannerV2 = await activeDependencies.createPlannerV2(plannerOptions)
+    server = await activeDependencies.startServer({
       apiKey: config.apiKey, runtime, plannerFactory: planner.plannerFactory,
-      v2: { runtime: runtimeV2, plannerFactory: plannerV2.plannerFactory },
+      v2: { runtime: runtimeV2, plannerFactory: plannerV2.plannerFactory, ingressBinding: activeDependencies.ingressBinding, principal: activeDependencies.principal },
       host: config.host, port: config.port, artifactId: config.artifactId,
     })
   } catch (error) {

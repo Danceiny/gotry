@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { BOOKING_READ_ACTION_KINDS_V2, BOOKING_V2_GAP_CODES, BOOKING_V2_BLOCKER_CODES, BOOKING_SURFACE_SCHEMA_V2_SHA256 } from '../src/booking-surface/contracts-v2.ts'
+import { BOOKING_READ_ACTION_KINDS_V2, BOOKING_V2_GAP_CODES, BOOKING_V2_BLOCKER_CODES, BOOKING_SURFACE_SCHEMA_V2_SHA256, bookingSurfaceAllowedActionsV2 } from '../src/booking-surface/contracts-v2.ts'
 import { validateBookingSurfaceV2, validateBookingReadActionV2, validateBookingSurfaceEventV2, validateCriterionBlockerV2, validateRelaxationApprovalV2, validateApprovalAgainstBlocker } from '../src/booking-surface/validation-v2.ts'
 
 let positive = 0
 let negative = 0
 function accept(label: string, value: unknown) { assert.equal(validateBookingSurfaceV2(value).ok, true, label); positive++ }
 function reject(label: string, value: unknown) { assert.equal(validateBookingSurfaceV2(value).ok, false, label); negative++ }
+assert.deepEqual(bookingSurfaceAllowedActionsV2('storefront'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus'], 'storefront UAT availability observation is least privilege')
+assert.deepEqual(bookingSurfaceAllowedActionsV2('payment_link'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'hotel.select'], 'payment_link UAT availability observation is least privilege')
+assert.ok(!bookingSurfaceAllowedActionsV2('storefront').includes('offers.query'), 'storefront availability cannot expand into offers')
+assert.ok(!bookingSurfaceAllowedActionsV2('payment_link').includes('checkout.prepare'), 'payment_link availability cannot expand into checkout')
 const hash = 'a'.repeat(64)
 const workspace = { schemaVersion:'booking.surface.v2', contextRef:'ctx-1', surface:'tenant', revision:0, locale:'zh-CN', currency:'AED', searchDraft:{}, results:{status:'idle'}, visibleHotels:[], loadedOffers:[], shortlistedOfferRefs:[], capabilities:{surface:'tenant',allowedActions:[...BOOKING_READ_ACTION_KINDS_V2]} }
 const ingressWorkspace = { ...workspace }; delete (ingressWorkspace as any).contextRef; delete (ingressWorkspace as any).surface; delete (ingressWorkspace as any).capabilities
@@ -52,7 +56,7 @@ for (const observation of observations.filter((item) => ['search.state','results
   reject(`observation dynamic gap ${observation.kind}`, {...receipt, observation:{...observation, gapCodes:['dynamic']}})
 }
 reject('gap observation dynamic code', {...receipt, observation:{kind:'gap',code:'dynamic',factRefs:[]}})
-const turn={schemaVersion:'booking.surface.v2',kind:'user.turn',taskId:'task-1',turnId:'turn-1',workspace,request:{text:'find hotels'}}; const ingress={schemaVersion:'booking.surface.v2',kind:'user.turn.ingress',taskId:'task-1',turnId:'ingress-1',surfaceHint:'tenant',workspace:ingressWorkspace,request:{text:'find hotels'}}; const continuation={schemaVersion:'booking.surface.v2',kind:'action.receipt.continuation',taskId:'task-1',workspace,receipt}
+const turn={schemaVersion:'booking.surface.v2',kind:'user.turn',taskId:'task-1',turnId:'turn-1',workspace,request:{text:'find hotels'}}; const ingress={schemaVersion:'booking.surface.v2',kind:'user.turn.ingress',requestKey:'request-1',taskHandle:'opaque-task-handle-1',surfaceHint:'tenant',workspace:ingressWorkspace,request:{text:'find hotels'}}; const continuation={schemaVersion:'booking.surface.v2',kind:'action.receipt.continuation',taskId:'task-1',workspace,receipt}
 accept('valid user turn',turn); accept('valid ingress',ingress); accept('valid continuation',continuation); reject('empty text',{...turn,request:{text:''}}); reject('multiple approvals',{...turn,request:{text:'x',approval:[approval,approval]}}); accept('text only remains non-approval',{...turn,request:{text:'please relax must'}})
 const selectedIngressWorkspace = {...ingressWorkspace,visibleHotels:[{hotelRef:'hotel-1',name:'Hotel 1',factRefs:['hotel-fact-1']}],loadedOffers:[{offerRef:'offer-1',hotelRef:'hotel-1',evidenceLevel:'rate_loaded',factRefs:['offer-fact-1']}],focusedHotelRef:'hotel-1',selectedOfferRef:'offer-1'}
 accept('ingress preserves visible focus and loaded selection',{...ingress,workspace:selectedIngressWorkspace})
@@ -60,8 +64,8 @@ reject('ingress rejects invisible focus',{...ingress,workspace:{...selectedIngre
 reject('ingress rejects unloaded selection',{...ingress,workspace:{...selectedIngressWorkspace,selectedOfferRef:'offer-other'}})
 reject('ingress rejects selection whose hotel is not visible',{...ingress,workspace:{...selectedIngressWorkspace,visibleHotels:[{hotelRef:'hotel-other',name:'Other',factRefs:[]}]}})
 reject('ingress never accepts verified authority',{...ingress,workspace:{...selectedIngressWorkspace,verifiedOfferRef:'verified-offer-1'}})
-reject('missing user turn identity',{...turn,turnId:undefined}); reject('missing ingress turn identity',{...ingress,turnId:undefined}); reject('unsafe user turn identity',{...turn,turnId:'Bearer token'}); reject('unsafe ingress turn identity',{...ingress,turnId:'user@example.com'})
-reject('missing user task identity',{...turn,taskId:undefined}); reject('missing ingress task identity',{...ingress,taskId:undefined})
+reject('missing user turn identity',{...turn,turnId:undefined}); reject('missing ingress request key',{...ingress,requestKey:undefined}); reject('unsafe user turn identity',{...turn,turnId:'Bearer token'}); reject('unsafe ingress task handle',{...ingress,taskHandle:'user@example.com'})
+reject('missing user task identity',{...turn,taskId:undefined}); reject('browser task identity injection',{...ingress,taskId:'browser-task'}); reject('browser turn identity injection',{...ingress,turnId:'browser-turn'}); reject('browser context identity injection',{...ingress,contextRef:null}); reject('browser verified authority injection',{...ingress,workspace:{...ingressWorkspace,verifiedOfferRef:'verified-offer-1'}})
 assert.equal(validateCriterionBlockerV2({...blocker, evidence:{factRefs:[],gapCodes:[]}}).ok,false); negative++
 assert.equal(validateApprovalAgainstBlocker({...approval, blockerId:'wrong'}, blocker).ok,false); negative++
 const continuationBlocked = {...continuation, receipt:{...receipt,resultContract:{...receipt.resultContract,hardCriteriaMet:true}}}; reject('continuation hard criteria with blocker', continuationBlocked)
@@ -70,6 +74,9 @@ const common={schemaVersion:'booking.surface.v2',eventId:'e-1',taskId:'task-1',c
 const events=[{...common,kind:'status',status:'working'},{...common,kind:'question',question:{questionId:'q-1',prompt:'Relax?',missingFields:[],type:'relaxation_approval_required',blocker,approvalOptions:[{approval}] }},{...common,kind:'operation',action:actions['search.run']},{...common,kind:'explanation',explanation:{text:'x',factRefs:[]}},{...common,kind:'terminal',terminal:{status:'completed',summary:'x',factRefs:[]}},{...common,kind:'error',error:{code:'ERR',message:'x',retryable:false}}]
 assert.equal(validateBookingSurfaceEventV2({...common,kind:'question',question:{...(events[1] as any).question,approvalOptions:[{approval:{...approval,blockerId:'wrong'}}]}}).ok,false); negative++
 for (const event of events) accept(`valid event ${event.kind}`,event)
+assert.equal(validateBookingSurfaceEventV2({...events[5],eventId:'event-4242-4242-4242-4242'}).ok,true); positive++
+assert.equal(validateBookingSurfaceEventV2({...events[3],explanation:{text:'card 4111 1111 1111 1111',factRefs:[]}}).ok,false); negative++
 reject('event mixed payload',{...events[0],question:{}}); reject('event missing payload',{...events[1],question:undefined}); reject('event open nested',{...events[4],terminal:{status:'completed',summary:'x',factRefs:[],open:true}})
+reject('request key whitespace', {...ingress,requestKey:'request key'}); reject('request key newline', {...ingress,requestKey:'request-1\nnext'}); reject('request key path', {...ingress,requestKey:'request/path'}); reject('request key email', {...ingress,requestKey:'user@example.com'}); reject('request key secret-like', {...ingress,requestKey:'sk-live-abcdefghijkl'}); reject('request key too short', {...ingress,requestKey:'r1'})
 accept('ISO date and currency', {...workspace,searchDraft:{stay:{checkIn:'2026-09-01',checkOut:'2026-09-03'}}}); reject('email secret',{...turn,request:{text:'user@example.com'}}); reject('Bearer secret',{...turn,request:{text:'Bearer abc'}}); reject('sk secret',{...turn,request:{text:'sk-live-abcdefghijkl'}}); reject('JWT secret',{...turn,request:{text:'eyJabc.def.ghi'}}); accept('E164-like ordinary date safe',turn)
 assert.equal(createHash('sha256').update(readFileSync(new URL('../../schemas/booking.surface.v2.schema.json',import.meta.url))).digest('hex'),BOOKING_SURFACE_SCHEMA_V2_SHA256); console.log(`BOOKING SURFACE V2 CONTRACT PROOF: positive=${positive} negative=${negative}`); assert.ok(positive>=65&&negative>=105)

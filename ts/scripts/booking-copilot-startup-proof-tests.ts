@@ -8,6 +8,7 @@ import {
   resolveBookingCopilotStartupConfig,
   startBookingCopilotFromEnvironment,
 } from '../src/booking-surface/startup.ts'
+import { BOOKING_READ_ACTION_KINDS_V2 } from '../src/booking-surface/contracts-v2.ts'
 
 assert.throws(
   () => resolveBookingCopilotStartupConfig({}),
@@ -40,12 +41,19 @@ const env = {
   HOTELBYTE_TOKEN: 'must-not-enter-planner',
 }
 
+await assert.rejects(
+  startBookingCopilotFromEnvironment(env, {} as never),
+  /booking_copilot_v2_ingress_binding_required/,
+  'production v2 composition rejects startup when the trusted BFF seam is absent',
+)
+
 const closeOrder: string[] = []
 let plannerEnv: Record<string, string | undefined> | undefined
 let plannerV2Env: Record<string, string | undefined> | undefined
 let serverApiKey = ''
 let serverArtifactId = ''
 const fakeLedger = { close() { closeOrder.push('ledger') } }
+const trustedBinding = { bind: () => ({ taskId: 'startup-task', turnId: 'startup-turn', contextRef: 'startup-context', surface: 'tenant' as const, allowedActions: [...BOOKING_READ_ACTION_KINDS_V2] }) }
 const started = await startBookingCopilotFromEnvironment(env, {
   ensureLedger() { return fakeLedger as never },
   runtimeFactory() { return {} as never },
@@ -61,6 +69,8 @@ const started = await startBookingCopilotFromEnvironment(env, {
     plannerV2Env = options.env
     return { plannerFactory() { return { async next() { return [] } } }, async close() { closeOrder.push('planner-v2') } }
   },
+  ingressBinding: trustedBinding,
+  principal: { subject: 'startup-bff', scope: 'booking:read' },
   async startServer(options) {
     serverApiKey = options.apiKey
     serverArtifactId = options.artifactId ?? ''
@@ -101,6 +111,8 @@ const v2Started = await startBookingCopilotFromEnvironment({
     v2PlannerEnv = options.env
     return { plannerFactory() { return { async next() { return [] } } }, async close() { v2CloseOrder.push('planner-v2') } }
   },
+  ingressBinding: trustedBinding,
+  principal: { subject: 'startup-bff', scope: 'booking:read' },
   async startServer(options) {
     v2Passed = Boolean(options.v2 && options.runtime && options.plannerFactory)
     return { server: {} as never, port: 43124, async close() { v2CloseOrder.push('server') } }

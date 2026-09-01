@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { StateLedger } from '../state-ledger.ts'
 import {
   BOOKING_READ_ACTION_KINDS_V2,
+  BOOKING_COPILOT_MAX_OPERATIONS_V2,
   type ActionReceiptV2,
   type BookingCopilotTurnV2,
   type BookingReadActionV2,
@@ -12,6 +13,9 @@ import {
   type BookingSurfaceV2,
   type BookingWorkspaceSnapshotV2,
   type BookingWorkspaceIngressSnapshotV2,
+  type BookingRequestKeyV2,
+  type BookingInternalDecisionKeyV2,
+  type BookingIngressPrincipalV2,
   type CriterionBlockerV2,
   type IngressTurnV2,
   type RelaxationApprovalRefV2,
@@ -24,6 +28,7 @@ import {
   validateBookingReadActionV2,
   validateBookingSurfaceEventV2,
   validateBookingSurfaceV2,
+  isSafeBookingRequestKeyV2,
 } from './validation-v2.ts'
 import {
   canIssueOfferCheckV2,
@@ -36,6 +41,7 @@ import {
   type AvailabilityExhaustionV2,
   type AvailabilityPolicyStateV2,
 } from './availability-policy-v2.ts'
+import { normalizeBookingErrorCode, safeBookingErrorMessage } from './error-codes.ts'
 
 const LEDGER_SCHEMA = 'booking.copilot.ledger.v2' as const
 const ACTOR = 'system:booking-copilot-v2'
@@ -48,6 +54,7 @@ const APPROVAL_GRANTED = 'booking.copilot.v2.approval.granted'
 const APPROVAL_OFFERED = 'booking.copilot.v2.approval.option.offered'
 const APPROVAL_CONSUMED = 'booking.copilot.v2.approval.consumed'
 const DECISION_BATCH = 'booking.copilot.v2.decision.batch'
+const REQUEST_BINDING = 'booking.copilot.v2.request.binding'
 
 export type BookingCopilotTaskPhaseV2 = 'planning' | 'submitted' | 'working' | 'waiting_receipt' | 'input_required' | 'terminal' | 'error'
 
@@ -87,8 +94,9 @@ export interface BookingCopilotTaskStateV2 {
   revision: number
   allowedActions: BookingReadActionKindV2[]
   userTurnCount: number
+  /** Durable task-level operation ordinal, folded from action ledger rows. */
+  operationCount: number
   lastTurnId?: string
-  lastUserTurnDigest?: string
   phase: BookingCopilotTaskPhaseV2
   lastSequence: number
   pendingAction?: BookingActionCheckpointV2
@@ -128,11 +136,13 @@ interface Row { seq: number; kind: string; payload: string }
 interface BasePayload { schema: typeof LEDGER_SCHEMA; taskId: string; contextRef: string; [key: string]: unknown }
 interface StartedPayload extends BasePayload { surface: BookingSurfaceV2; revision: number; allowedActions: BookingReadActionKindV2[]; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshotV2; availability: AvailabilityPolicyStateV2; availabilityDigest: string }
 interface TurnPayload extends BasePayload { requestDigest: string; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshotV2; turnId: string }
-interface ActionPayload extends BasePayload { action: BookingActionCheckpointV2; availability: AvailabilityPolicyStateV2; availabilityDigest: string }
-interface ReceiptPayload extends BasePayload { receipt: ActionReceiptV2; receiptDigest: string; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshotV2; availability: AvailabilityPolicyStateV2; availabilityDigest: string; availabilityTerminal?: AvailabilityExhaustionV2 }
+interface ActionPayload extends BasePayload { action: BookingActionCheckpointV2; operationCount?: number; availability: AvailabilityPolicyStateV2; availabilityDigest: string }
+interface ReceiptPayload extends BasePayload { receipt: ActionReceiptV2; receiptDigest: string; operationCount?: number; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshotV2; availability: AvailabilityPolicyStateV2; availabilityDigest: string; availabilityTerminal?: AvailabilityExhaustionV2 }
 interface EventPayload extends BasePayload { eventId: string; sequence: number; emittedAt: string; eventKind: Exclude<BookingSurfaceEventV2['kind'], 'operation'>; status?: 'submitted'|'working'|'waiting_receipt'|'input_required'; contentDigest: string }
 interface ApprovalPayload extends BasePayload { approval: BookingApprovalStateV2; ref?: RelaxationApprovalRefV2; approvalDigest: string }
 interface DecisionBatchPayload extends BasePayload { requestKey: string; events: BookingSurfaceEventV2[] }
+interface RequestBindingPayload extends BasePayload { requestKey: BookingRequestKeyV2; requestDigest: string; turnId: string; workspaceDigest: string; workspaceSemanticDigest: string; surface: BookingSurfaceV2; capabilityDigest: string; principalDigest: string; scopeDigest: string; taskHandle?: string }
+export interface BookingIngressRequestBindingInputV2 { requestKey: BookingRequestKeyV2; principal: BookingIngressPrincipalV2; taskHandle?: string }
 
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable)
@@ -165,8 +175,31 @@ function canonicalReceiptDigest(value: ActionReceiptV2): string { return booking
 function errorText(result: { ok: true } | { ok: false; errors: string[] }): string { return result.ok ? '' : result.errors.join('; ') }
 function assertTaskId(taskId: string): void { if (!/^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(taskId)) throw new Error('invalid_task_id') }
 function assertSafeRef(value: string): void { if (!/^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(value)) throw new Error('unsafe_opaque_ref') }
+function safeIdentity(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(value) }
 function sameActions(a: readonly string[], b: readonly string[]): boolean { return a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]) }
 function availabilityPolicyTerminal(state: AvailabilityPolicyStateV2): AvailabilityExhaustionV2 | undefined { return availabilityPolicyResultV2(state) }
+function taskHasTerminalBudget(state: Pick<BookingCopilotTaskStateV2, 'operationCount' | 'availability'>): boolean {
+  return state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS_V2 || Boolean(state.availability.terminal)
+}
+function assertRequestKey(requestKey: string): asserts requestKey is BookingRequestKeyV2 {
+  if (!isSafeBookingRequestKeyV2(requestKey)) throw new Error('unsafe_request_key')
+}
+/** Decision batches are runtime-owned and may contain long task/turn/action refs. */
+function assertInternalDecisionKey(requestKey: string): asserts requestKey is BookingInternalDecisionKeyV2 {
+  if (typeof requestKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,2047}$/.test(requestKey)) throw new Error('unsafe_internal_decision_key')
+}
+
+function assertDecisionBatchFinality(decisions: readonly BookingPlannerDecisionV2[]): void {
+  let finalSeen = false
+  for (const decision of decisions) {
+    const isFinal = decision.kind === 'terminal' || decision.kind === 'error'
+    if (finalSeen) throw new Error('decision_batch_finality')
+    if (isFinal) finalSeen = true
+  }
+}
+function assertPrincipal(principal: BookingIngressPrincipalV2): void {
+  if (!principal || typeof principal.subject !== 'string' || !principal.subject || principal.subject.length > 256 || typeof principal.scope !== 'string' || !principal.scope || principal.scope.length > 256) throw new Error('trusted_principal_required')
+}
 
 function assertAvailabilityLiveness(state: BookingCopilotTaskStateV2, decisions: readonly BookingPlannerDecisionV2[]): void {
   if (!state.availability.recoveryStarted || state.awaitingApproval) return
@@ -325,10 +358,43 @@ export class BookingCopilotTaskRuntimeV2 {
     this.approvalTtlMs = options.approvalTtlMs ?? 120_000
   }
 
+  /** Read-only conflict check used before startTask can append a new turn. */
+  assertRequestBinding(requestKey: string, turn: UserTurnV2, input: BookingIngressRequestBindingInputV2): void {
+    assertRequestKey(requestKey)
+    assertPrincipal(input.principal)
+    if (input.requestKey !== requestKey) throw new Error('request_conflict')
+    const existing = this.requestBinding(requestKey)
+    if (!existing) return
+    const candidate = this.requestBindingPayload(requestKey, turn, input)
+    if (existing.requestDigest !== candidate.requestDigest || existing.turnId !== candidate.turnId || existing.workspaceDigest !== candidate.workspaceDigest || existing.workspaceSemanticDigest !== candidate.workspaceSemanticDigest || existing.surface !== candidate.surface || existing.capabilityDigest !== candidate.capabilityDigest || existing.contextRef !== turn.workspace.contextRef || existing.principalDigest !== candidate.principalDigest || existing.scopeDigest !== candidate.scopeDigest || existing.taskHandle !== candidate.taskHandle) throw new Error('request_conflict')
+  }
+
+  /** Verifies a direct planner turn against its durable TURN row. */
+  assertTurnBinding(taskId: string, turn: UserTurnV2): void {
+    assertTaskId(taskId)
+    const row = this.ledger.db.prepare(`SELECT payload FROM events WHERE tenant_id = ? AND run_id = ? AND kind = ? ORDER BY seq DESC`).all(this.ledger.tenant, taskId, TURN) as Array<{ payload: string }>
+    const observed = row.map(({ payload }) => JSON.parse(payload) as TurnPayload).find((candidate) => candidate.turnId === turn.turnId)
+    if (!observed || observed.requestDigest !== bookingV2TurnDigest(turn) || observed.workspaceDigest !== bookingV2WorkspaceDigest(turn.workspace) || observed.workspaceSemanticDigest !== bookingV2WorkspaceSemanticDigest(turn.workspace) || observed.contextRef !== turn.workspace.contextRef) throw new Error('turn_conflict')
+  }
+
+  /** Persists the per-requestKey receipt/replay binding after task creation. */
+  persistRequestBinding(requestKey: string, turn: UserTurnV2, input: BookingIngressRequestBindingInputV2): void {
+    assertRequestKey(requestKey)
+    assertPrincipal(input.principal)
+    if (input.requestKey !== requestKey) throw new Error('request_conflict')
+    const run = this.ledger.db.transaction(() => {
+      const state = this.requireTask(turn.taskId)
+      if (state.phase === 'terminal' || state.phase === 'error') throw new Error('task_terminal')
+      this.appendRequestBindingInTransaction(requestKey, turn, input)
+    })
+    run.immediate()
+  }
+
   /** Binds the untrusted ingress snapshot to server-owned task/context/capabilities. */
-  bindIngressTurn(turn: IngressTurnV2, task: BookingCopilotTaskStateV2): UserTurnV2 {
+  bindIngressTurn(turn: IngressTurnV2, task: BookingCopilotTaskStateV2, turnId: string): UserTurnV2 {
+    assertSafeRef(turnId)
     return {
-      schemaVersion: 'booking.surface.v2', kind: 'user.turn', taskId: task.taskId, turnId: turn.turnId,
+      schemaVersion: 'booking.surface.v2', kind: 'user.turn', taskId: task.taskId, turnId,
       workspace: {
         ...turn.workspace,
         schemaVersion: 'booking.surface.v2', contextRef: task.contextRef, surface: task.surface,
@@ -338,26 +404,24 @@ export class BookingCopilotTaskRuntimeV2 {
     }
   }
 
-  startTask(turn: BookingCopilotTurnV2): BookingCopilotTaskStateV2 {
+  startTask(turn: BookingCopilotTurnV2, requestBinding?: BookingIngressRequestBindingInputV2): BookingCopilotTaskStateV2 {
     const validation = validateBookingSurfaceV2(turn)
     if (!validation.ok) throw new Error(`invalid_planner_turn:${errorText(validation)}`)
+    if (turn.kind === 'user.turn.ingress') throw new Error('ingress_binding_required')
     if (turn.kind === 'action.receipt.continuation') throw new Error('receipt_continuation_requires_continue')
-    if (!turn.taskId) throw new Error('invalid_planner_turn:task_id_required')
-    const taskId = turn.taskId
+    const userTurn = turn as UserTurnV2
+    if (!userTurn.taskId) throw new Error('invalid_planner_turn:task_id_required')
+    const taskId = userTurn.taskId
     assertTaskId(taskId)
-    const userTurn = turn.kind === 'user.turn.ingress' ? undefined : turn
-    const turnId = (turn.kind === 'user.turn' || turn.kind === 'user.turn.ingress') ? turn.turnId : undefined
+    const turnId = userTurn.turnId
     if (!turnId) throw new Error('invalid_planner_turn:turn_id_required')
     assertSafeRef(turnId)
-    const contextRef = turn.kind === 'user.turn.ingress' ? this.contextRefFactory() : turn.workspace.contextRef
-    const surface = turn.kind === 'user.turn.ingress' ? turn.surfaceHint : turn.workspace.surface
-    const revision = turn.workspace.revision
-    const allowedActions = turn.kind === 'user.turn.ingress' ? [...BOOKING_READ_ACTION_KINDS_V2] : [...turn.workspace.capabilities.allowedActions]
+    const contextRef = userTurn.workspace.contextRef
+    const surface = userTurn.workspace.surface
+    const revision = userTurn.workspace.revision
+    const allowedActions = [...userTurn.workspace.capabilities.allowedActions]
     const requestDigest = bookingV2TurnDigest(turn)
-    const boundWorkspace = turn.kind === 'user.turn.ingress' ? {
-      ...turn.workspace, contextRef, surface,
-      capabilities: { surface, allowedActions },
-    } as BookingWorkspaceSnapshotV2 : turn.workspace
+    const boundWorkspace = userTurn.workspace
     const workspaceDigest = bookingV2WorkspaceDigest(boundWorkspace)
     const workspaceSemanticDigest = bookingV2WorkspaceSemanticDigest(boundWorkspace)
     const availability = createAvailabilityPolicyV2(boundWorkspace)
@@ -372,11 +436,12 @@ export class BookingCopilotTaskRuntimeV2 {
         if (existing.surface !== surface) throw new Error('task_conflict:surface_mismatch')
         if (existing.revision !== revision && existing.phase !== 'waiting_receipt') throw new Error('task_conflict:revision_mismatch')
         if (!sameActions(existing.allowedActions, allowedActions)) throw new Error('task_conflict:capability_mismatch')
+        if (existing.phase === 'terminal' || existing.phase === 'error') throw new Error('task_terminal')
         if (turnId && existing.lastTurnId === turnId) {
-          if (existing.lastUserTurnDigest !== requestDigest) throw new Error('task_conflict:turn_mismatch')
+          this.assertTurnBinding(taskId, userTurn)
+          if (requestBinding) this.appendRequestBindingInTransaction(requestBinding.requestKey, userTurn, requestBinding)
           return existing
         }
-        if (existing.phase === 'terminal' || existing.phase === 'error') throw new Error('task_terminal')
         if (existing.phase === 'waiting_receipt') throw new Error('receipt_required')
         const approval = userTurn && 'approval' in userTurn.request ? userTurn.request.approval : undefined
         let approvalState: BookingApprovalStateV2 | undefined
@@ -395,12 +460,14 @@ export class BookingCopilotTaskRuntimeV2 {
           throw new Error('approval_required')
         }
         this.appendTurn(taskId, existing.contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, existing.userTurnCount + 1, turnId, boundWorkspace)
+        if (requestBinding) this.appendRequestBindingInTransaction(requestBinding.requestKey, userTurn, requestBinding)
         return this.requireTask(taskId)
       }
       if (userTurn?.request.approval) throw new Error('approval_not_awaiting')
       const started: StartedPayload = { schema: LEDGER_SCHEMA, taskId, contextRef, surface, revision, allowedActions, workspaceDigest, workspaceSemanticDigest, workspace: boundWorkspace, availability, availabilityDigest: bookingV2Digest(availability) }
       this.append(STARTED, taskId, started, `booking-v2:task:${taskId}`)
       this.appendTurn(taskId, contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, 1, turnId, boundWorkspace)
+      if (requestBinding) this.appendRequestBindingInTransaction(requestBinding.requestKey, userTurn, requestBinding)
       return this.requireTask(taskId)
     })
     return run.immediate()
@@ -420,17 +487,21 @@ export class BookingCopilotTaskRuntimeV2 {
         let initialAvailability: AvailabilityPolicyStateV2
         try { initialAvailability = createAvailabilityPolicyV2(started.workspace) } catch { throw new Error(`ledger_corrupt:${taskId}:start_availability`) }
         if (!started.workspaceDigest || !started.workspaceSemanticDigest || !started.workspace || !started.availability || !started.availabilityDigest || !validateAvailabilityPolicyV2(started.availability) || bookingV2Digest(started.availability) !== started.availabilityDigest || bookingV2Digest(initialAvailability) !== started.availabilityDigest || bookingV2WorkspaceDigest(started.workspace) !== started.workspaceDigest || bookingV2WorkspaceSemanticDigest(started.workspace) !== started.workspaceSemanticDigest) throw new Error(`ledger_corrupt:${taskId}:start_workspace`)
-        state = { schemaVersion: 'booking.surface.v2', taskId, contextRef: started.contextRef, surface: started.surface, revision: started.revision, allowedActions: [...started.allowedActions], userTurnCount: 0, phase: started.availability.terminal ? 'terminal' : 'planning', lastSequence: 0, workspaceDigest: started.workspaceDigest, workspaceSemanticDigest: started.workspaceSemanticDigest, workspaceSnapshot: started.workspace, availability: started.availability }
+        state = { schemaVersion: 'booking.surface.v2', taskId, contextRef: started.contextRef, surface: started.surface, revision: started.revision, allowedActions: [...started.allowedActions], userTurnCount: 0, operationCount: 0, phase: started.availability.terminal ? 'terminal' : 'planning', lastSequence: 0, workspaceDigest: started.workspaceDigest, workspaceSemanticDigest: started.workspaceSemanticDigest, workspaceSnapshot: started.workspace, availability: started.availability }
       } else {
         if (!state) throw new Error(`ledger_corrupt:${taskId}:event_before_start`)
         if (payload.contextRef !== state.contextRef) throw new Error(`ledger_corrupt:${taskId}:context_drift`)
-        if (row.kind === TURN) {
+        if (row.kind === REQUEST_BINDING) {
+          const binding = payload as RequestBindingPayload
+          const turnRows = this.ledger.db.prepare(`SELECT payload FROM events WHERE tenant_id = ? AND run_id = ? AND kind = ?`).all(this.ledger.tenant, taskId, TURN) as Array<{ payload: string }>
+          const boundTurn = turnRows.map(({ payload }) => JSON.parse(payload) as TurnPayload).find((candidate) => candidate.turnId === binding.turnId)
+          if (!isSafeBookingRequestKeyV2(binding.requestKey) || !safeIdentity(binding.turnId) || !safeIdentity(binding.contextRef) || (binding.taskHandle !== undefined && !safeIdentity(binding.taskHandle)) || !/^[0-9a-f]{64}$/.test(binding.requestDigest) || !/^[0-9a-f]{64}$/.test(binding.workspaceDigest) || !/^[0-9a-f]{64}$/.test(binding.workspaceSemanticDigest) || !/^[0-9a-f]{64}$/.test(binding.capabilityDigest) || !/^[0-9a-f]{64}$/.test(binding.principalDigest) || !/^[0-9a-f]{64}$/.test(binding.scopeDigest) || !['tenant', 'customer_portal', 'storefront', 'payment_link'].includes(binding.surface) || !boundTurn || boundTurn.requestDigest !== binding.requestDigest || boundTurn.workspaceDigest !== binding.workspaceDigest || boundTurn.workspaceSemanticDigest !== binding.workspaceSemanticDigest || bookingV2Digest(boundTurn.workspace.capabilities) !== binding.capabilityDigest || boundTurn.workspace.surface !== binding.surface) throw new Error(`ledger_corrupt:${taskId}:request_binding`)
+        } else if (row.kind === TURN) {
           const t = payload as TurnPayload
           if (Object.prototype.hasOwnProperty.call(payload, 'approval')) throw new Error(`ledger_corrupt:${taskId}:turn_approval`)
           if (!t.workspaceDigest || !t.workspaceSemanticDigest || !t.workspace || bookingV2WorkspaceDigest(t.workspace) !== t.workspaceDigest || bookingV2WorkspaceSemanticDigest(t.workspace) !== t.workspaceSemanticDigest) throw new Error(`ledger_corrupt:${taskId}:turn_workspace`)
           state.userTurnCount++
           state.lastTurnId = t.turnId
-          state.lastUserTurnDigest = t.requestDigest
           state.workspaceDigest = t.workspaceDigest
           state.workspaceSemanticDigest = t.workspaceSemanticDigest
           state.workspaceSnapshot = t.workspace
@@ -452,18 +523,21 @@ export class BookingCopilotTaskRuntimeV2 {
           const actionPayload = payload as ActionPayload
           const a = actionPayload.action
           const { actionDigest: _actionDigest, ...actionBase } = a
-          if (a.actionDigest !== checkpointDigest(actionBase) || !actionPayload.availability || !actionPayload.availabilityDigest || !validateAvailabilityPolicyV2(actionPayload.availability) || bookingV2Digest(actionPayload.availability) !== actionPayload.availabilityDigest || !state.workspaceSnapshot) throw new Error(`ledger_corrupt:${taskId}:action`)
+          const operationCount = actionPayload.operationCount ?? state.operationCount + 1
+          if (a.actionDigest !== checkpointDigest(actionBase) || !Number.isSafeInteger(operationCount) || operationCount !== state.operationCount + 1 || operationCount > BOOKING_COPILOT_MAX_OPERATIONS_V2 || !actionPayload.availability || !actionPayload.availabilityDigest || !validateAvailabilityPolicyV2(actionPayload.availability) || bookingV2Digest(actionPayload.availability) !== actionPayload.availabilityDigest || !state.workspaceSnapshot) throw new Error(`ledger_corrupt:${taskId}:action`)
           if (a.relaxationApprovalRef) assertApprovalRef(a.relaxationApprovalRef, state, a)
           if (state.pendingAction) throw new Error(`ledger_corrupt:${taskId}:parallel_actions`)
           let expectedAvailability: AvailabilityPolicyStateV2
           try { expectedAvailability = reduceAvailabilityActionV2(state.availability, state.workspaceSnapshot, a) } catch { throw new Error(`ledger_corrupt:${taskId}:action_transition`) }
           if (bookingV2Digest(expectedAvailability) !== actionPayload.availabilityDigest) throw new Error(`ledger_corrupt:${taskId}:action_transition`)
+          state.operationCount = operationCount
           state.availability = actionPayload.availability
           state.pendingAction = a; state.phase = 'waiting_receipt'; state.lastSequence = Math.max(state.lastSequence, a.sequence)
           delete state.awaitingApproval
         } else if (row.kind === RECEIPT) {
           const r = payload as ReceiptPayload
-          if (r.receiptDigest !== canonicalReceiptDigest(r.receipt) || !validateBookingSurfaceV2(r.receipt).ok || !r.availability || !r.availabilityDigest || !validateAvailabilityPolicyV2(r.availability) || bookingV2Digest(r.availability) !== r.availabilityDigest) throw new Error(`ledger_corrupt:${taskId}:receipt`)
+          const operationCount = r.operationCount ?? state.operationCount
+          if (r.receiptDigest !== canonicalReceiptDigest(r.receipt) || !Number.isSafeInteger(operationCount) || operationCount !== state.operationCount || !validateBookingSurfaceV2(r.receipt).ok || !r.availability || !r.availabilityDigest || !validateAvailabilityPolicyV2(r.availability) || bookingV2Digest(r.availability) !== r.availabilityDigest) throw new Error(`ledger_corrupt:${taskId}:receipt`)
           if (!state.pendingAction || state.pendingAction.actionId !== r.receipt.actionId) throw new Error(`ledger_corrupt:${taskId}:orphan_receipt`)
           if (!r.workspaceDigest || !r.workspaceSemanticDigest || !r.workspace || bookingV2WorkspaceDigest(r.workspace) !== r.workspaceDigest || bookingV2WorkspaceSemanticDigest(r.workspace) !== r.workspaceSemanticDigest) throw new Error(`ledger_corrupt:${taskId}:receipt_workspace`)
           if (Boolean(r.availabilityTerminal) !== Boolean(r.availability.terminal) || (r.availabilityTerminal && r.availability.terminal && bookingV2Digest(r.availabilityTerminal) !== bookingV2Digest(r.availability.terminal))) throw new Error(`ledger_corrupt:${taskId}:availability_terminal`)
@@ -472,7 +546,7 @@ export class BookingCopilotTaskRuntimeV2 {
           let expectedAvailability: AvailabilityPolicyStateV2
           try { expectedAvailability = reduceAvailabilityReceiptV2(state.availability, r.workspace, r.receipt, state.pendingAction) } catch { throw new Error(`ledger_corrupt:${taskId}:receipt_transition`) }
           if (bookingV2Digest(expectedAvailability) !== r.availabilityDigest) throw new Error(`ledger_corrupt:${taskId}:receipt_transition`)
-          state.lastReceipt = r.receipt; state.revision = r.receipt.revision; state.workspaceDigest = r.workspaceDigest; state.workspaceSemanticDigest = r.workspaceSemanticDigest; state.workspaceSnapshot = r.workspace; state.availability = r.availability; delete state.pendingAction; state.phase = r.availability.terminal ? 'terminal' : 'planning'
+          state.lastReceipt = r.receipt; state.revision = r.receipt.revision; state.workspaceDigest = r.workspaceDigest; state.workspaceSemanticDigest = r.workspaceSemanticDigest; state.workspaceSnapshot = r.workspace; state.availability = r.availability; delete state.pendingAction; state.phase = r.availability.terminal || state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS_V2 ? 'terminal' : 'planning'
           delete state.awaitingApproval
         } else if (row.kind === APPROVAL_CONSUMED) {
           const consumed = payload as ApprovalPayload
@@ -557,14 +631,18 @@ export class BookingCopilotTaskRuntimeV2 {
     return null
   }
 
-  /** Materializes the policy-owned terminal response once, before SSE. */
+  /** Materializes the durable policy/budget terminal response once, before SSE. */
   terminalDecisionBatch(taskId: string, requestKey: string): BookingSurfaceEventV2[] {
+    assertInternalDecisionKey(requestKey)
     const prior = this.readDecisionBatch(taskId, requestKey)
     if (prior) return prior
+    const state = this.requireTask(taskId)
+    if (state.phase === 'terminal' || state.phase === 'error') throw new Error('task_terminal')
     const run = this.ledger.db.transaction(() => {
       const state = this.requireTask(taskId)
-      if (!state.availability.terminal || state.phase !== 'terminal') throw new Error('task_not_terminal')
+      if (!taskHasTerminalBudget(state) || state.phase !== 'terminal') throw new Error('task_not_terminal')
       const event = this.terminalEvent(state)
+      this.appendTerminalEvent(taskId, event)
       this.append(DECISION_BATCH, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef: state.contextRef, requestKey, events: [event] }, `booking-v2:decision-batch:${taskId}:${requestKey}`)
       return [event]
     })
@@ -573,10 +651,12 @@ export class BookingCopilotTaskRuntimeV2 {
 
   /** Atomically applies planner decisions and records the exact SSE batch before it is sent. */
   applyDecisionBatch(taskId: string, requestKey: string, decisions: readonly BookingPlannerDecisionV2[], includeSubmitted = false): BookingSurfaceEventV2[] {
+    assertInternalDecisionKey(requestKey)
     const prior = this.readDecisionBatch(taskId, requestKey)
     if (prior) return prior
     const current = this.requireTask(taskId)
     if (current.phase === 'terminal' || current.phase === 'error') throw new Error('task_terminal')
+    assertDecisionBatchFinality(decisions)
     assertAvailabilityLiveness(current, decisions)
     if (current.availability.recoveryStarted && !current.availability.terminal && decisions.some((decision) => decision.kind === 'terminal' || decision.kind === 'error')) throw new Error('availability_terminal_policy_owned')
     for (const decision of decisions) {
@@ -631,6 +711,7 @@ export class BookingCopilotTaskRuntimeV2 {
       if (candidate.contextRef !== state.contextRef) throw new Error('context_mismatch')
       if (!state.allowedActions.includes(candidate.kind)) throw new Error('unsupported_action')
       if (candidate.expectedRevision !== state.revision) throw new Error('stale_revision')
+      if (state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS_V2) throw new Error('operation_limit_reached')
       if (candidate.relaxationApprovalRef) throw new Error('approval_ref_planner_owned_forbidden')
       if (!state.workspaceSnapshot) throw new Error(`ledger_corrupt:${taskId}:workspace_missing`)
       let action = candidate
@@ -656,7 +737,7 @@ export class BookingCopilotTaskRuntimeV2 {
       const eventValidation = validateBookingSurfaceEventV2(event)
       if (!eventValidation.ok) throw new Error(`invalid_operation_event:${errorText(eventValidation)}`)
       if (!state.lastTurnId) throw new Error(`ledger_corrupt:${taskId}:turn_id`)
-      this.appendAction(taskId, state.contextRef, checkpointFor(action, eventId, sequence, emittedAt, state.lastTurnId), availability)
+      this.appendAction(taskId, state.contextRef, checkpointFor(action, eventId, sequence, emittedAt, state.lastTurnId), state.operationCount + 1, availability)
       return event
   }
 
@@ -679,6 +760,7 @@ export class BookingCopilotTaskRuntimeV2 {
         if (prior.workspaceDigest !== receiptWorkspace) throw new Error('workspace_mismatch')
         return state
       }
+      if (state.phase === 'terminal' || state.phase === 'error') throw new Error('task_terminal')
       if (!state.pendingAction) throw new Error('unexpected_receipt')
       if (state.pendingAction.actionId !== turn.receipt.actionId) throw new Error('receipt_action_mismatch')
       if (turn.receipt.revision < state.pendingAction.expectedRevision) throw new Error('revision_regression')
@@ -694,10 +776,11 @@ export class BookingCopilotTaskRuntimeV2 {
       if (turn.receipt.revision !== turn.workspace.revision) throw new Error('revision_mismatch')
       const availability = reduceAvailabilityReceiptV2(state.availability, turn.workspace, turn.receipt, pending)
       const availabilityTerminal = availabilityPolicyTerminal(availability)
-      this.append(RECEIPT, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: state.contextRef, receipt: turn.receipt, receiptDigest, workspaceDigest: receiptWorkspace, workspaceSemanticDigest: receiptWorkspaceSemantic, workspace: turn.workspace, availability, availabilityDigest: bookingV2Digest(availability), ...(availabilityTerminal ? { availabilityTerminal } : {}) }, `booking-v2:receipt:${turn.taskId}:${turn.receipt.actionId}`)
-      if (availabilityTerminal) {
+      this.append(RECEIPT, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: state.contextRef, receipt: turn.receipt, receiptDigest, operationCount: state.operationCount, workspaceDigest: receiptWorkspace, workspaceSemanticDigest: receiptWorkspaceSemantic, workspace: turn.workspace, availability, availabilityDigest: bookingV2Digest(availability), ...(availabilityTerminal ? { availabilityTerminal } : {}) }, `booking-v2:receipt:${turn.taskId}:${turn.receipt.actionId}`)
+      if (availabilityTerminal || state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS_V2) {
         const terminalState = this.requireTask(turn.taskId)
         const terminalEvent = this.terminalEvent(terminalState)
+        this.appendTerminalEvent(turn.taskId, terminalEvent)
         this.append(DECISION_BATCH, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: state.contextRef, requestKey: `receipt:${turn.receipt.actionId}:${receiptDigest}`, events: [terminalEvent] }, `booking-v2:decision-batch:${turn.taskId}:receipt:${turn.receipt.actionId}:${receiptDigest}`)
         return terminalState
       }
@@ -727,10 +810,13 @@ export class BookingCopilotTaskRuntimeV2 {
 
   private emitEventInTransaction(taskId: string, draft: BookingSurfaceEventDraftV2) {
       const state = this.requireTask(taskId)
-      const event = { schemaVersion: 'booking.surface.v2' as const, eventId: this.idFactory('event'), taskId, contextRef: state.contextRef, sequence: state.lastSequence + 1, emittedAt: this.now(), ...draft } as Exclude<BookingSurfaceEventV2, { kind: 'operation' }>
+      const safeDraft = draft.kind === 'error'
+        ? { ...draft, error: { ...draft.error, code: normalizeBookingErrorCode(draft.error.code), message: safeBookingErrorMessage(normalizeBookingErrorCode(draft.error.code)) } }
+        : draft
+      const event = { schemaVersion: 'booking.surface.v2' as const, eventId: this.idFactory('event'), taskId, contextRef: state.contextRef, sequence: state.lastSequence + 1, emittedAt: this.now(), ...safeDraft } as Exclude<BookingSurfaceEventV2, { kind: 'operation' }>
       const checked = validateBookingSurfaceEventV2(event)
       if (!checked.ok) throw new Error(`invalid_event:${errorText(checked)}`)
-      this.append(EVENT, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef: state.contextRef, eventId: event.eventId, sequence: event.sequence, emittedAt: event.emittedAt, eventKind: event.kind, ...(event.kind === 'status' ? { status: event.status } : {}), contentDigest: bookingV2Digest(draft) }, `booking-v2:event:${taskId}:${event.eventId}`)
+      this.append(EVENT, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef: state.contextRef, eventId: event.eventId, sequence: event.sequence, emittedAt: event.emittedAt, eventKind: event.kind, ...(event.kind === 'status' ? { status: event.status } : {}), contentDigest: bookingV2Digest(safeDraft) }, `booking-v2:event:${taskId}:${event.eventId}`)
       return event
   }
 
@@ -739,22 +825,77 @@ export class BookingCopilotTaskRuntimeV2 {
     return { schemaVersion: 'booking.surface.v2' as const, eventId: checkpoint.eventId, taskId, contextRef: checkpoint.contextRef, sequence: checkpoint.sequence, emittedAt: checkpoint.emittedAt, kind: 'operation' as const, action: replayAction }
   }
   private terminalEvent(state: BookingCopilotTaskStateV2): Extract<BookingSurfaceEventV2, { kind: 'terminal' }> {
-    if (!state.availability.terminal) throw new Error('task_not_terminal')
-    const event = { schemaVersion: 'booking.surface.v2' as const, eventId: this.idFactory('event'), taskId: state.taskId, contextRef: state.contextRef, sequence: state.lastSequence + 1, emittedAt: this.now(), kind: 'terminal' as const, terminal: { status: state.availability.terminal.code === 'availability_confirmed' ? 'completed' as const : 'stopped' as const, summary: state.availability.terminal.code, factRefs: [] } }
+    if (!taskHasTerminalBudget(state)) throw new Error('task_not_terminal')
+    const terminalCode = state.availability.terminal?.code ?? 'operation_limit_reached'
+    const event = { schemaVersion: 'booking.surface.v2' as const, eventId: `terminal-${state.taskId}-${state.operationCount}`, taskId: state.taskId, contextRef: state.contextRef, sequence: state.lastSequence + 1, emittedAt: this.now(), kind: 'terminal' as const, terminal: { status: state.availability.terminal?.code === 'availability_confirmed' ? 'completed' as const : 'stopped' as const, summary: terminalCode, factRefs: [] } }
     const checked = validateBookingSurfaceEventV2(event)
     if (!checked.ok) throw new Error(`invalid_terminal_event:${errorText(checked)}`)
     return event
   }
 
   private requireTask(taskId: string): BookingCopilotTaskStateV2 { const state = this.resumeTask(taskId); if (!state) throw new Error('task_not_found'); return state }
-  private rows(taskId: string): Row[] { return this.ledger.db.prepare(`SELECT seq, kind, payload FROM events WHERE tenant_id = ? AND run_id = ? AND kind IN (?, ?, ?, ?, ?, ?, ?, ?, ?) ORDER BY seq`).all(this.ledger.tenant, taskId, STARTED, TURN, ACTION, RECEIPT, EVENT, APPROVAL_GRANTED, APPROVAL_OFFERED, APPROVAL_CONSUMED, DECISION_BATCH) as Row[] }
+  private requestBinding(requestKey: string): RequestBindingPayload | null {
+    const rows = this.ledger.db.prepare(`SELECT payload FROM events WHERE tenant_id = ? AND kind = ? ORDER BY seq DESC`).all(this.ledger.tenant, REQUEST_BINDING) as Array<{ payload: string }>
+    for (const row of rows) {
+      const binding = JSON.parse(row.payload) as RequestBindingPayload
+      if (binding.requestKey === requestKey) return binding
+    }
+    return null
+  }
+  private requestBindingPayload(requestKey: string, turn: UserTurnV2, input: BookingIngressRequestBindingInputV2): Omit<RequestBindingPayload, 'schema' | 'taskId' | 'contextRef'> {
+    assertPrincipal(input.principal)
+    assertRequestKey(requestKey)
+    if (input.taskHandle) assertSafeRef(input.taskHandle)
+    return {
+      requestKey,
+      requestDigest: bookingV2TurnDigest(turn),
+      turnId: turn.turnId,
+      workspaceDigest: bookingV2WorkspaceDigest(turn.workspace),
+      workspaceSemanticDigest: bookingV2WorkspaceSemanticDigest(turn.workspace),
+      surface: turn.workspace.surface,
+      capabilityDigest: bookingV2Digest(turn.workspace.capabilities),
+      principalDigest: bookingV2Digest({ subject: input.principal.subject }),
+      scopeDigest: bookingV2Digest({ scope: input.principal.scope }),
+      ...(input.taskHandle ? { taskHandle: input.taskHandle } : {}),
+    }
+  }
+  private appendRequestBindingInTransaction(requestKey: string, turn: UserTurnV2, input: BookingIngressRequestBindingInputV2): void {
+    assertRequestKey(requestKey)
+    assertPrincipal(input.principal)
+    const payload = this.requestBindingPayload(requestKey, turn, input)
+    if (input.taskHandle) {
+      const prior = this.ledger.db.prepare(`SELECT payload FROM events WHERE tenant_id = ? AND kind = ?`).all(this.ledger.tenant, REQUEST_BINDING) as Array<{ payload: string }>
+      for (const row of prior) {
+        const binding = JSON.parse(row.payload) as RequestBindingPayload
+        if (binding.taskHandle !== input.taskHandle) continue
+        if (binding.principalDigest !== payload.principalDigest || binding.scopeDigest !== payload.scopeDigest) throw new Error('principal_conflict')
+        if (binding.taskId !== turn.taskId || binding.contextRef !== turn.workspace.contextRef) throw new Error('task_handle_conflict')
+      }
+    }
+    const existing = this.requestBinding(requestKey)
+    if (existing) {
+      if (existing.taskId !== turn.taskId || existing.contextRef !== turn.workspace.contextRef || existing.requestDigest !== payload.requestDigest || existing.turnId !== payload.turnId || existing.workspaceDigest !== payload.workspaceDigest || existing.workspaceSemanticDigest !== payload.workspaceSemanticDigest || existing.surface !== payload.surface || existing.capabilityDigest !== payload.capabilityDigest || existing.principalDigest !== payload.principalDigest || existing.scopeDigest !== payload.scopeDigest || existing.taskHandle !== payload.taskHandle) throw new Error('request_conflict')
+      return
+    }
+    this.append(REQUEST_BINDING, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: turn.workspace.contextRef, ...payload }, `booking-v2:request-binding:${requestKey}`)
+  }
+  private rows(taskId: string): Row[] { return this.ledger.db.prepare(`SELECT seq, kind, payload FROM events WHERE tenant_id = ? AND run_id = ? AND kind IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ORDER BY seq`).all(this.ledger.tenant, taskId, STARTED, TURN, ACTION, RECEIPT, EVENT, APPROVAL_GRANTED, APPROVAL_OFFERED, APPROVAL_CONSUMED, DECISION_BATCH, REQUEST_BINDING) as Row[] }
   private append(kind: string, taskId: string, payload: BasePayload, idemKey: string): void {
     const result = this.ledger.db.prepare(`INSERT OR IGNORE INTO events (tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(this.ledger.tenant, this.now(), ACTOR, kind, taskId, JSON.stringify(payload), idemKey, taskId)
     if (result.changes === 0) throw new Error(`ledger_write_failed:${kind}`)
   }
   private appendTurn(taskId: string, contextRef: string, requestDigest: string, workspaceDigest: string, workspaceSemanticDigest: string, ordinal: number, turnId: string, workspace?: BookingWorkspaceSnapshotV2): void { if (!workspace) throw new Error('ledger_write_failed:turn_workspace'); this.append(TURN, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, workspace, turnId }, `booking-v2:turn:${taskId}:${turnId}`) }
   private appendApproval(taskId: string, contextRef: string, approval: BookingApprovalStateV2): void { this.append(APPROVAL_GRANTED, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, approval, approvalDigest: bookingV2Digest(approval) }, `booking-v2:approval-granted:${taskId}:${approval.approval?.approvalId ?? 'pending'}:${approval.nonce}`) }
-  private appendAction(taskId: string, contextRef: string, action: BookingActionCheckpointV2, availability: AvailabilityPolicyStateV2): void { this.append(ACTION, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, action, availability, availabilityDigest: bookingV2Digest(availability) }, `booking-v2:action:${taskId}:${action.actionId}`) }
+  private appendAction(taskId: string, contextRef: string, action: BookingActionCheckpointV2, operationCount: number, availability: AvailabilityPolicyStateV2): void { this.append(ACTION, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, action, operationCount, availability, availabilityDigest: bookingV2Digest(availability) }, `booking-v2:action:${taskId}:${action.actionId}`) }
+  private appendTerminalEvent(taskId: string, event: Extract<BookingSurfaceEventV2, { kind: 'terminal' }>): void {
+    const payload: EventPayload = { schema: LEDGER_SCHEMA, taskId, contextRef: event.contextRef, eventId: event.eventId, sequence: event.sequence, emittedAt: event.emittedAt, eventKind: 'terminal', contentDigest: bookingV2Digest(event.terminal) }
+    const idemKey = `booking-v2:terminal-event:${taskId}`
+    const result = this.ledger.db.prepare(`INSERT OR IGNORE INTO events (tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(this.ledger.tenant, this.now(), ACTOR, EVENT, taskId, JSON.stringify(payload), idemKey, taskId)
+    if (result.changes === 0) {
+      const existing = this.ledger.db.prepare('SELECT payload FROM events WHERE tenant_id = ? AND idem_key = ?').get(this.ledger.tenant, idemKey) as { payload: string } | undefined
+      if (!existing || (JSON.parse(existing.payload) as EventPayload).contentDigest !== payload.contentDigest) throw new Error('ledger_write_failed:terminal_event')
+    }
+  }
   private ensureApprovalOffered(taskId: string, contextRef: string, approval: BookingApprovalStateV2, requestKey: string): void {
     if (requestKey !== approval.presentationRequestKey) throw new Error('approval_presentation_key_mismatch')
     const idemKey = `booking-v2:approval-offered:${taskId}:${requestKey}`
