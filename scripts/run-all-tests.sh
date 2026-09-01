@@ -129,6 +129,7 @@ echo "=== 23. 时间窗衰减(memory-design P3:分级窗口/单调/地板/上界
 echo
 echo "=== 23b. 发布前离线预验证(pack→解 tarball→依赖声明完整→入口文件→import 面静态检查;rc.9 教训的永久闸;原误标 25 与会话面重号,当日修正) ==="
 (cd ts && npx tsx scripts/publish-preverify.ts) || FAIL=1
+(cd ts && npx tsx scripts/dsh-runtime-closure-tests.ts) || FAIL=1
 
 echo
 echo "=== 24. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
@@ -375,6 +376,7 @@ if [ -z "$package_e2e_bin" ]; then
       && [ -f "${package_e2e_tarballs[0]}" ] \
       && (cd "$package_e2e_install_dir" && npm init --yes >/dev/null) \
       && npx --yes pnpm@11.5.0 --dir "$package_e2e_install_dir" add --ignore-scripts "${package_e2e_tarballs[0]}" >/dev/null \
+      && npx tsx ts/scripts/pnpm-dsh-closure-proof.ts "$package_e2e_install_dir" \
       && [ -x "$package_e2e_install_dir/node_modules/.bin/gotry" ]; then
       package_e2e_bin="$package_e2e_install_dir/node_modules/.bin/gotry"
     else

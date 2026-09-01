@@ -192,12 +192,14 @@ bytes, never entered the evaluator, and produced null official scores. The
 product Node gate was v24.20.0 while that treatment used v26.3.0, so it is
 diagnostic-only and has no uplift claim. GitHub Node 22/24 §48 separately
 exposed a source default-off 30-second lifecycle hang. Round 5 is limited to
-removing the timer/keepalive preload; pinning the root/package DSH closure to
-alpha.3; resolving that locked runtime before the legacy vendored fallback in
+removing the timer/keepalive preload; declaring all 216 packages in the
+root/package DSH `0.1.2-alpha.3` closure as exact direct dependencies and
+failing publish preverify on omissions, mixed versions, or ranges; resolving
+that locked runtime before the legacy vendored fallback in
 a source checkout; preserving source normal-mode state continuity under
 `ts/dsh-runtime/gotry-state/` while benchmark opt-in and npm-package runs use
 the invocation directory for isolation; rejecting a non-alpha.3 benchmark
 runtime before spawn; enforcing Node 22.15+; and adding a benchmark-only
 structured diagnostic pipe with allowlisted redacted reason codes while stdout
-remains fail-closed. The next UID has not been consumed.
+remains fail-closed. The frozen treatment is tracked against its exact SHA in Discussion #78.
 No external benchmark closure is claimed.
