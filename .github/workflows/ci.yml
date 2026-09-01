@@ -95,9 +95,9 @@ jobs:
           fi
           grep -Fq "Node 24 is required" "$error_file"
 
-      # Root npm ci follows the historical lockfile and does not materialize
-      # dsh's transitive peer closure. Exercise the publish shape from a clean
-      # consumer install instead of accidentally borrowing a developer tree.
+      # Root npm ci now closes dsh's peer graph strictly. Keep a separate clean
+      # consumer install here to prove the packed publish shape is self-sufficient
+      # instead of accidentally borrowing dependencies from a developer tree.
       - name: Prepare packaged tool-budget E2E runtime
         shell: bash
         run: |

@@ -375,7 +375,7 @@ echo "=== 46. Evaluation cadence policy(PR/nightly/weekly/milestone admission/pa
 
 echo
 echo "=== 47. Booking Copilot embedded contract(canonical schema/npm subpath/closed read registry/task-scoped ledger/real dsh core/BFF-only SSE/production bin;local model fixture) ==="
-(npx tsx scripts/booking-surface-package-proof.ts) || FAIL=1
+("$TSX_BIN" scripts/booking-surface-package-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-contract-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-v2-contract-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-gap-code-contract-proof-tests.ts) || FAIL=1

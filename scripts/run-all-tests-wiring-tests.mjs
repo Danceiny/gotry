@@ -26,6 +26,10 @@ assert.match(script, /TSX_BIN=.*ts\/node_modules\/\.bin\/tsx/)
 assert.match(script, /export PATH=.*\$TSX_BIN/)
 assert.match(script, /-x "\$TSX_BIN"/)
 assert.ok(
+  executableLines.includes('("$TSX_BIN" scripts/booking-surface-package-proof.ts) || FAIL=1'),
+  'the root package proof must use the installed tsx binary without an implicit npx fetch',
+)
+assert.ok(
   executableLines.includes('(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/session-tests.ts) || FAIL=1'),
   'the active full-suite command must default optional live session probes off',
 )
