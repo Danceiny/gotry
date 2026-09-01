@@ -197,19 +197,23 @@ if (process.env.GOTRY_SESSION_LIVE !== '1') {
 console.log('H. flyaiSearch hotel(飞猪官方 search-hotel)')
 {
   // H1 live:带日期两形态(成对可选;未定档期可不带日期)
-  const hr = await flyaiSearch({ kind: 'hotel', destName: '大理', checkInDate: '2026-10-01', checkOutDate: '2026-10-03' })
-  const hSentinel = hr.verdict === 'error' && /sentinel|block/i.test(hr.error ?? '')
-  if (hSentinel) {
-    console.log('  WARN - 飞猪 Sentinel 限流——降级合同验证通过,跳过 hit 断言')
-    assert(hr.ok === false && /\[实时API:flyai@error@/.test(hr.evidence), '酒店限流降级:结构化 error + 证据链错误形')
-  } else if (hr.ok === false) {
-    console.log(`  WARN - flyai hotel 端点降级(${String(hr.error).slice(0, 60)})——证据链合同通过,hit 断言跳过`)
-    assert(/\[实时API:flyai@error@/.test(hr.evidence), '端点降级仍带证据链错误形')
+  if (process.env.GOTRY_SESSION_LIVE === '0') {
+    console.log('  SKIP - GOTRY_SESSION_LIVE=0(离线门禁不调用 FlyAI 酒店实时端点)')
   } else {
-    assert(hr.verdict === 'hit' && (hr.hotels?.length ?? 0) >= 1, '大理酒店 hit', hr.hotels?.[0])
-    assert(hr.hotels?.every(h => !!h.name && !!h.jumpUrl) ?? false, '条目结构化(name + jumpUrl 透传)', hr.hotels?.[0])
+    const hr = await flyaiSearch({ kind: 'hotel', destName: '大理', checkInDate: '2026-10-01', checkOutDate: '2026-10-03' })
+    const hSentinel = hr.verdict === 'error' && /sentinel|block/i.test(hr.error ?? '')
+    if (hSentinel) {
+      console.log('  WARN - 飞猪 Sentinel 限流——降级合同验证通过,跳过 hit 断言')
+      assert(hr.ok === false && /\[实时API:flyai@error@/.test(hr.evidence), '酒店限流降级:结构化 error + 证据链错误形')
+    } else if (hr.ok === false) {
+      console.log(`  WARN - flyai hotel 端点降级(${String(hr.error).slice(0, 60)})——证据链合同通过,hit 断言跳过`)
+      assert(/\[实时API:flyai@error@/.test(hr.evidence), '端点降级仍带证据链错误形')
+    } else {
+      assert(hr.verdict === 'hit' && (hr.hotels?.length ?? 0) >= 1, '大理酒店 hit', hr.hotels?.[0])
+      assert(hr.hotels?.every(h => !!h.name && !!h.jumpUrl) ?? false, '条目结构化(name + jumpUrl 透传)', hr.hotels?.[0])
+    }
+    assert(/\[实时API:flyai/.test(hr.evidence), '证据链 [实时API:flyai@*]')
   }
-  assert(/\[实时API:flyai/.test(hr.evidence), '证据链 [实时API:flyai@*]')
   // H2 离线解析(实测 2026-08-29 大理形状):打码价保 priceRaw、数字价 0、缺名条目跳过
   const fakeDir = mkdtempSync(join(tmpdir(), 'flyai-hotel-fake-'))
   const fakeCliH = join(fakeDir, 'flyai-hotel-fake')
@@ -330,4 +334,8 @@ console.log('J. sessionLogin(登录引导:无凭证语义/表格完备/pending �
   }
 }
 
+if (process.env.GOTRY_SESSION_TEST_FORCE_FAILURE === '1') {
+  assert(false, 'forced session failure propagation proof')
+}
 console.log(`\nSESSION P1: ${pass} pass, ${fail} fail`)
+if (fail > 0) process.exitCode = 1

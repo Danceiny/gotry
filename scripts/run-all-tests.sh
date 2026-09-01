@@ -10,6 +10,19 @@ set +eu; source ~/.nvm/nvm.sh 2>/dev/null || true; set -eu  # nvm.sh 遇 npmrc p
 
 FAIL=0
 
+echo "=== 0. 全量测试运行时前置(一次 dist 构建 + 本地 tsx 路径) ==="
+TSX_BIN="$PWD/ts/node_modules/.bin/tsx"
+if [ ! -x "$TSX_BIN" ]; then
+  echo "FAIL: 本地 tsx 不存在: $TSX_BIN"
+  FAIL=1
+else
+  # Some proof suites spawn tsx directly. Keep the repository-local runner
+  # ahead of ambient/npm-managed PATH so those children use the same binary.
+  export PATH="$(dirname "$TSX_BIN"):$PATH"
+fi
+(node scripts/run-all-tests-wiring-tests.mjs) || FAIL=1
+(node scripts/build-dist.mjs) || FAIL=1
+
 echo "=== 1. TS engine(洱海金标准,8 断言) ==="
 # Z3 WASM race 已根治(2026-08-29,z3-shared.ts 单一实例+会话级互斥):不再需要「重试一次」
 # 止血;并发形态的回归闸见 §30 z3-race-tests。
@@ -150,7 +163,7 @@ echo "NUDGE SKELETON TESTS OK(0..1 匹配/muted 排除/可关闭/lark 缺 key �
 echo
 echo "=== 25. 会话数据面 P1-P2(ReadGuard/携程解析/节律闸 + #21 字段 fixture scorer/双源合同/waiting-attach no-spend + live FlyAI/会话;GOTRY_SESSION_LIVE=0 关闭全部 live 端点) ==="
 (cd ts && npx tsx scripts/session-benchmark.ts) || FAIL=1
-(cd ts && npx tsx scripts/session-tests.ts) || FAIL=1
+(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/session-tests.ts) || FAIL=1
 
 echo
 echo "=== 26. action-cache 自愈层(会话数据面 P2:变量化key/指纹被动失效/miss回写/TTL/LRU/损坏容错,纯函数) ==="
@@ -361,12 +374,17 @@ echo "=== 46. Evaluation cadence policy(PR/nightly/weekly/milestone admission/pa
 
 echo
 echo "=== 47. Booking Copilot embedded contract(canonical schema/npm subpath/closed read registry/task-scoped ledger/real dsh core/BFF-only SSE/production bin;local model fixture) ==="
-(node scripts/build-dist.mjs) || FAIL=1
 (npx tsx scripts/booking-surface-package-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-contract-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-surface-v2-contract-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-gap-code-contract-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-runtime-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-v2-runtime-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-availability-policy-v2-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-availability-ledger-binding-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-receipt-ledger-concurrency-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-operation-ledger-concurrency-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-event-sequence-concurrency-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-server-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-plugin-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-planner-proof-tests.ts) || FAIL=1

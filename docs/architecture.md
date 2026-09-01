@@ -74,6 +74,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - 工具 execute 统一经 `guardToolExecute` 异常隔离 + 平铺观察 envelope(ADR-13)。
 - Agent 工具循环有每轮硬预算:`ts/src/tool-budget.ts` 在第 16 次真实派发后注入 `TOOL_BUDGET_SOFT` 收敛上下文,第 18 次是最后一次工具 body；同一步已准备的第 19 次及以后调用先经 execute waterfall 得到 `error.info.code=TOOL_BUDGET_EXHAUSTED` 且 body 零执行,再在该批 `step/end` 隐藏 agent 继承的工具 schema,让下一次 native 请求进入 text-only final。延迟到 `step/end` 是必要的:若第 18 次即改 live registry,同批第 19 次会在预算 waterfall 前退化成不可归因的 `unknown tool`。无 agent 的程序化调用不计数,turn/session 终态释放状态与限制。CI 先打当前 SHA 的 tarball、在隔离 pnpm consumer 中解析 dsh peer closure,再把该安装入口交给同一 E2E,不借 root 开发树冒充发布形态。
 - 外部依赖走**效应描述 + 解译器**(ADR-18):工具层只产纯数据效应值 `{effect, params}`,渠道访问/退避重试/断路器/编译期 mock 收敛到 `ts/capabilities/effect.ts` 与 `resilience.ts`。
+- **HotelByte embedded Booking Copilot 是只读协作面，不是 M5 写闸启封**:`booking.surface.v1` 与 `booking.surface.v2` 共享同一 BFF listener、task ownership 与闭合 typed read-action profile；v2 通过 version+schema hash 逐请求 dispatch，`user.turn`/`user.turn.ingress` 必须携带 BFF 生成并重用的安全 opaque `taskId + turnId` 稳定身份对，零 `Book`、零 portal token/PII 输入。两者任一缺失或不安全都在 ledger/planner 副作用前拒绝。v2 durable ledger 投影包含六个生命周期阶段、七个 phase 字面值（`terminal`/`error` 为两种终态结果），v1 保持 legacy 两态投影；must blocker 只能由绑定 task/context/source turn/action/receipt/presentation key、随机 delivery nonce 与 option digest 的一次性 approval 放行。部署候选固定 exact GoTry SHA/schema 与 Linux glibc + Node 24/ABI provenance，鉴权 health 回显实际进程 identity；四 surface 真实库存、不可订重试链与原 Checkout/订单观察仍是外部 UAT gate，未通过前不得宣称产品验收或可合并。
 - py 树仅剩 `gotry_feasibility` oracle,产品运行时零 Python 依赖(D-7 清偿)。
 - 全栈回归见 `scripts/run-all-tests.sh` 分节(计数不落字)。
 
@@ -219,6 +220,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 19 | 可下单事实单一数据源 + 产物事实闸(issue #46,2026-08-30) | 见 §8.19 | 出现第二类需闸产物(如酒店直订)时复审覆盖面;政策实时源接入后复审政策事实生产端;根治方向=产物只由渲染原语生成(结构化→markdown 单向),反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts`;`data/airline-airports.json`;run-all §39;smoke §16 |
 | 21 | 扩展分发双通道(issue #21 分发通道,2026-08-30) | 见 §8.21 | 商店过审后复审 wizard 步骤(store 版检测跳 dev-mode 三步);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/extension-webstore-submission.md` |
 | 22 | static golden 是**可审计 benchmark comparator**,不是实时航班源(issue #67) | 见 §8.22 | 出现可免私有凭证、许可清晰且稳定的官方 flight API,或 hbcli 发布 flight 合同时复审其为新 provider;static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`;`ts/data/sf-static-routes.json`;run-all §44 |
+| 23 | embedded Booking Copilot 双协议安全边界与稳定 turn identity | 见 §8.23 | 出现离页自动写/支付必须另立 M5 WriteGate ADR；出现多写者/跨 host 触发 ADR-15/16 复审；所有消费方迁移 v2 后再退 v1 | `schemas/booking.surface.v2.schema.json`;`ts/src/booking-surface/contracts-v2.ts`;`runtime-v2.ts`;`server.ts`/`startup.ts`;v2 runtime/package/run-all proofs |
 
 ### ADR 展开(表内「见 §8.x」的正文)
 
@@ -278,6 +280,13 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 
 备选与取舍:`hbcli search-flight`——本机与上游均无此能力(N/A);携程免凭证开放 API——未找到且公开页 432(N/A);直接把 manual 改名 static——来源造假;仅保 manual——继续 vendor 锁。
 
+#### 8.23 ADR-23：embedded Booking Copilot 双协议安全边界与稳定 task/turn identity
+Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：v1 保持兼容，v2 使用 closed typed contract；两者由同一 listener、task ownership 与 ledger 按请求 version+schema hash dispatch。v2 的 `UserTurn`/`Ingress` 必须带 BFF 生成并重用的安全 opaque `taskId + turnId` 稳定身份对，作为 durable turn replay 身份；任一缺失或不安全都在任何 ledger/planner side effect 前拒绝。must blocker 只能经 runtime 持久化并实际呈现的 option 放行，且 approval 逐字段绑定 task、context、source turn、source action、source receipt digest、canonical presentation key、随机 delivery nonce 与 option digest，只能消费一次。
+
+可用性恢复同样是 runtime-owned 的 typed reducer：一次 recovery 冻结最多 5 家候选酒店；每家 generation 最多考虑 3 个当前 OfferRef，每家生命周期最多 2 次 CheckAvail、最多 2 次 offers/HotelRates generation。`unavailable`、material `changed` 或不可确认 gap 会使整个 generation 失效并要求 fresh query；partial evidence 只能产生 inconclusive exhaustion，不能宣称市场无房。generation、attempt、candidate、receipt digest 与 workspace revision 随 ledger action/receipt fold，重启和相同 action/receipt replay 不增加预算或调用；terminal 是吸收态，不能再发 operation/status。
+
+明确拒绝的备选：独立聊天预订页；用 breaking v2 替换 v1；自由文本/JSON 执行；把 server outbox 意图当作已展示；在 embedded 面暴露 `Book`。当前能力不包含 portal token、PII 或供应商成本出站；离页自动写/支付须另立 M5 WriteGate ADR，多写者或跨 host 则按 ADR-15/16 复审。
+
 
 ## 9. 演进(时间线唯一来源= `roadmap.md` 的 M0-M6;此处只保留原则与现状)
 
@@ -285,6 +294,7 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
 - **当前主线 = M3 evidence 未收口；并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪，真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进；T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明，真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动，不得由并行实现倒推开闸。
+- **HotelByte Booking Copilot 产品验收并行线**:当前候选以 v1/v2 双协议兼容的 GoTry 作为既有搜索/报价/Checkout 工作台的 BFF-only typed read-action planner；两协议共用单 listener、task ownership 与 runtime ownership，v2 使用六个生命周期阶段、七个 phase 字面值（`terminal`/`error` 为两种终态结果），v1 保持 legacy 两态，v2 user turn 要求 BFF 生成并重用稳定 opaque `taskId + turnId` 身份对，并以 presentation identity 绑定一次性 approval，Linux release builder 固定 SHA/schema/runtime provenance，health 暴露实际 artifact/Node/ABI/release tuple 供部署端闭合。该线不含 `Book`，不构成 M5 Entry；四 surface 真实库存与“不可订→重搜→新 CheckAvail→原 Checkout”证据尚未取得，见 D-29。
 
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面；业务达标只接受阈值冻结的 `real_seed_cohort`，fixture 恒 fail。真实 cohort 仍为空，等待 50–200 个脱敏样本，不宣称 M3 Exit。
 - **Evaluation → Agent 优化 Round 1(Discussion #78,ChinaTravel canary 反馈)**:冻结 grounding-v3 canary 的首例终态通过,第二例暴露 planner 在重复工具调用中超过 300s；因此不生成 5-query 聚合。GoTry 侧把收敛边界下沉到 `tools/execute`:16 次软提示、18 次 body 上限、同一步第 19 次起结构化拒绝,并在 `step/end` 让下一步 native request text-only。run-all §45 同时覆盖 Cordis integration/并行/生命周期与真实 `bin/gotry-inner.js → dist → dsh headless` 离线 E2E(18 个正常结果、1 个结构化拒绝、下一请求零工具 schema、非空 final)；CI 对当前 SHA 打包并在隔离 pnpm consumer 中安装,由 `GOTRY_BUDGET_E2E_BIN` 重放同一链路。冻结 timeout case 的 exit 0、非空 final、<300s 与恢复 5-query 仍是 D-28 的外部验收,离线 runtime E2E 不替代 benchmark evidence。
@@ -479,8 +489,11 @@ ChinaTravel grounding-v3 的冻结 5-query canary 只完成 1 个可评分终态
 | # | 债务 | 状态 / 赎回时机 |
 |---|---|---|
 | D-28 Evaluation Phase 0→Phase 1 adapter admission | Evaluation Phase 0 foundation now includes contracts/registry/validators, unmatched diagnostic fixtures/test-only aggregate admission, and a deterministic cadence policy/planner. The planner has no scheduler, launch, spend, scorer, baseline, or uplift effect. | **open**: every adapter, external runner, baseline, and matched production-evidence path still requires a separate approved plan/PR plus the license/evaluator/source-fence controls in [`evaluation-foundation.md`](evaluation-foundation.md) |
+| D-29 Booking Copilot 真实库存产品验收 | typed read-action/BFF/task ledger 与可复现 Linux 产物只证明工程边界；不证明供应商库存、不可订恢复或 Checkout/订单状态业务效果 | **open**:冻结三仓 exact SHA 后，在 tenant/customer/storefront/payment-link 四 surface 跑真实库存；至少一条 unavailable/changed 报价必须经重新搜索、新 CheckAvail、原 Checkout 恢复；Book 仍仅由 Checkout 授权，并以 QueryOrders/清理证据收口 |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
+
+**Booking Copilot v2 当前生命周期投影**：六个阶段为 `planning → submitted → working → waiting_receipt → input_required → terminal outcome`；公开类型保留七个 phase 字面值，其中终态结果分为 `terminal` 与 `error`。`action.receipt`、`approval.granted/consumed` 与 decision batch 是恢复和精确 SSE replay 的权威事件，BFF 生成并重用稳定 opaque `taskId + turnId` 身份对绑定 durable user turn replay，presentation key/随机 delivery nonce/option digest 绑定 approval。availability reducer 另有 `need_offers → waiting_offers → need_check → waiting_check → terminal` typed 子状态，并持久化 candidate/generation/attempt budget；它不改变外层六状态投影。v1 保持 legacy 两态 `planning → waiting_receipt` 投影；两协议共用 listener 与 task ownership，但不把 v1 宣称为 v2 生命周期投影。
 
 **状态面清单**(全仓只有这 6 处记载「当前状态」,其余文档一律状态让渡):① 本文 §1 当前形态;② 本文 §9 演进;③ 本文 §10 债务清单;④ `roadmap.md` 当前位置;⑤ `README.md` 当前形态;⑥ `stage1-top-down-design.md` 状态头。
 
