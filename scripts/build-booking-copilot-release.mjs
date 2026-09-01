@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SCHEMA_VERSION = 'booking.surface.v1'
 const SCHEMA_SHA256 = 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81'
+const SCHEMA_V2_SHA256 = '976fd79a85fc62587dad639920852679a6c8696ff40e9658953ef16509dea026'
 const PROVENANCE_VERSION = 'gotry.booking-copilot.release-provenance.v1'
 function fail(message) { throw new Error(`booking-copilot-release: ${message}`) }
 
@@ -89,7 +90,13 @@ try {
   run(process.execPath, ['scripts/build-dist.mjs'], source)
 
   mkdirSync(release, { recursive: true })
-  for (const path of ['package.json', 'package-lock.json', 'bin/gotry-booking-copilot.js', 'schemas/booking.surface.v1.schema.json']) {
+  for (const path of [
+    'package.json',
+    'package-lock.json',
+    'bin/gotry-booking-copilot.js',
+    'schemas/booking.surface.v1.schema.json',
+    'schemas/booking.surface.v2.schema.json',
+  ]) {
     const target = join(release, path)
     mkdirSync(dirname(target), { recursive: true })
     execFileSync('cp', ['-p', join(source, path), target], { env: childEnv })
@@ -112,6 +119,8 @@ try {
 
   const schema = join(release, 'schemas/booking.surface.v1.schema.json')
   if (sha256(schema) !== SCHEMA_SHA256) fail('schema bytes do not match the Hotel-BE release contract')
+  const schemaV2 = join(release, 'schemas/booking.surface.v2.schema.json')
+  if (sha256(schemaV2) !== SCHEMA_V2_SHA256) fail('v2 schema bytes do not match the GoTry release contract')
   writeFileSync(join(release, 'SCHEMA_VERSION'), `${SCHEMA_VERSION}\n`)
   writeFileSync(join(release, 'SCHEMA_SHA256'), `${SCHEMA_SHA256}\n`)
   writeFileSync(join(release, 'ARTIFACT_ID'), `${artifactId}\n`)

@@ -104,6 +104,10 @@ try {
     assert.equal(check.status, 0, check.stderr || check.stdout)
   } else console.log('BE contract: SKIP (no BOOKING_COPILOT_RELEASE_CONTRACT or HOTEL_BE_ROOT)')
   verifyManifest(output)
+  assert.equal(
+    createHash('sha256').update(readFileSync(join(output, 'schemas/booking.surface.v2.schema.json'))).digest('hex'),
+    '976fd79a85fc62587dad639920852679a6c8696ff40e9658953ef16509dea026',
+  )
   const manifestText = readFileSync(join(output, 'MANIFEST.sha256'), 'utf8')
   assert.doesNotMatch(manifestText, /\.worktree\.env|\.env(?:\.|$)|(?:^|\/)secrets?(?:[._/-]|$)/i)
   const output2 = join(temp(), 'release')
@@ -153,7 +157,12 @@ try {
     assert.equal(response.headers.get('x-gotry-node-modules-abi'), process.versions.modules)
     assert.equal(response.headers.get('x-gotry-release-tuple'), process.env.EXPECTED_GOTRY_RELEASE_TUPLE)
     assert.equal(response.headers.get('x-gotry-glibc-version'), process.report.getReport().header.glibcVersionRuntime)
-    assert.deepEqual(await response.json(), { schemaSha256: 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81', schemaVersion: 'booking.surface.v1', status: 'ready' })
+    assert.deepEqual(await response.json(), {
+      schemaSha256: 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81',
+      schemaVersion: 'booking.surface.v1',
+      status: 'ready',
+      supportedSchemaVersions: ['booking.surface.v1', 'booking.surface.v2'],
+    })
   } finally {
     if (child.exitCode === null) child.kill('SIGTERM')
     const stopped = await Promise.race([
@@ -164,7 +173,7 @@ try {
       child.kill('SIGKILL')
       await exit
     }
-    assert.equal(stopped, 0, `artifact did not stop cleanly: ${stopped}`)
+    assert.equal(stopped, 0, `artifact did not stop cleanly: ${stopped}; stderr: ${stderr}`)
   }
   const finalHeadProbe = spawnSync('git', [...gitArgs, 'rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: baseEnv })
   assert.equal(finalHeadProbe.status, 0, finalHeadProbe.stderr)
