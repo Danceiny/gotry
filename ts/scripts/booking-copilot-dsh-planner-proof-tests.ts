@@ -13,8 +13,11 @@ import {
   DSH_EMBEDDED_BOOKING_TOOL_NAMES,
   buildDshPlannerEnvironment,
   createDshEmbeddedBookingPlanner,
+  createDshEmbeddedBookingPlannerV2,
   type DshPlannerRunPortV1,
 } from '../src/booking-surface/dsh-planner.ts'
+import type { BookingWorkspaceSnapshotV2 } from '../src/booking-surface/contracts-v2.ts'
+import type { BookingCopilotTaskStateV2 } from '../src/booking-surface/runtime-v2.ts'
 
 const task: BookingCopilotTaskStateV1 = {
   schemaVersion: 'booking.surface.v1',
@@ -224,5 +227,23 @@ await assert.rejects(
   /planner_forbidden_tool/,
 )
 
-await Promise.all([adapter.close(), proseOnly.close(), forbidden.close()])
+const v2Task: BookingCopilotTaskStateV2 = {
+  schemaVersion: 'booking.surface.v2', taskId: 'task-dsh-v2', contextRef: 'ctx-dsh-v2', surface: 'tenant', revision: 0,
+  allowedActions: ['search.run'], userTurnCount: 1, lastUserTurnDigest: 'v2-digest', phase: 'planning', lastSequence: 0,
+}
+const v2Workspace: BookingWorkspaceSnapshotV2 = {
+  schemaVersion: 'booking.surface.v2', contextRef: v2Task.contextRef, surface: 'tenant', revision: 0, locale: 'en-US', currency: 'AED',
+  searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
+  capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
+}
+const v2Port: DshPlannerRunPortV1 = {
+  async run() { return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, schemaVersion: 'booking.surface.v2', contextRef: v2Task.contextRef, actionId: 'action-dsh-v2' } } }) } }] } },
+  async close() {},
+}
+const v2Adapter = await createDshEmbeddedBookingPlannerV2({ runPort: v2Port })
+const v2Decisions = await v2Adapter.plannerFactory(v2Task).next({ task: v2Task, turn: { schemaVersion: 'booking.surface.v2', kind: 'user.turn', taskId: v2Task.taskId, turnId: 'dsh-v2-turn-1', workspace: v2Workspace, request: { text: 'find hotels' } } })
+assert.equal(v2Decisions[0]?.kind, 'operation', 'real DSH adapter accepts canonical v2 typed action')
+assert.equal(v2Decisions[0]?.kind === 'operation' ? v2Decisions[0].action.schemaVersion : '', 'booking.surface.v2')
+
+await Promise.all([adapter.close(), proseOnly.close(), forbidden.close(), v2Adapter.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')

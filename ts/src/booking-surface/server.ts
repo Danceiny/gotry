@@ -23,6 +23,8 @@ import {
   type BookingSurfaceEventDraftV1,
 } from './runtime.ts'
 import { validateBookingCopilotTurnV1 } from './validation.ts'
+import { handleBookingCopilotV2Request, type BookingCopilotV2Adapter } from './server-v2.ts'
+import { BOOKING_SURFACE_SCHEMA_V2_SHA256, BOOKING_SURFACE_SCHEMA_VERSION_V2 } from './contracts-v2.ts'
 
 export type BookingPlannerDecisionV1 =
   | { kind: 'operation'; action: BookingReadActionV1 }
@@ -43,13 +45,15 @@ export type BookingPlannerSessionFactoryV1 = (
 export interface BookingCopilotServerOptionsV1 {
   /** Deployment credential shared only with the HotelByte BFF. */
   apiKey: string
-  runtime: BookingCopilotTaskRuntime
-  plannerFactory: BookingPlannerSessionFactoryV1
+  runtime?: BookingCopilotTaskRuntime
+  plannerFactory?: BookingPlannerSessionFactoryV1
   host?: string
   port?: number
   maxBodyBytes?: number
   /** GoTry source commit loaded from the root-owned release artifact. */
   artifactId?: string
+  /** Optional v2 adapter dispatched by the same listener after version/hash selection. */
+  v2?: BookingCopilotV2Adapter
 }
 
 export interface BookingCopilotServerHandleV1 {
@@ -114,9 +118,7 @@ function errorCode(error: unknown): string {
   return error instanceof Error && error.message ? error.message.split(':', 1)[0]! : 'planner_failed'
 }
 
-export function startBookingCopilotServer(
-  options: BookingCopilotServerOptionsV1,
-): Promise<BookingCopilotServerHandleV1> {
+export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1): Promise<BookingCopilotServerHandleV1> {
   if (!options.apiKey) return Promise.reject(new Error('booking_copilot_api_key_required'))
   if (options.artifactId !== undefined && !/^[0-9a-f]{40}$/.test(options.artifactId)) {
     return Promise.reject(new Error('booking_copilot_artifact_id_invalid'))
@@ -137,22 +139,33 @@ export function startBookingCopilotServer(
       return
     }
     if (isProbe) {
-      res.setHeader(BOOKING_SURFACE_VERSION_HEADER, BOOKING_SURFACE_SCHEMA_VERSION)
-      res.setHeader(BOOKING_SURFACE_SCHEMA_SHA256_HEADER, BOOKING_SURFACE_SCHEMA_SHA256)
+      const activeV2Only = Boolean(options.v2 && !options.runtime && !options.plannerFactory)
+      res.setHeader(BOOKING_SURFACE_VERSION_HEADER, activeV2Only ? BOOKING_SURFACE_SCHEMA_VERSION_V2 : BOOKING_SURFACE_SCHEMA_VERSION)
+      res.setHeader(BOOKING_SURFACE_SCHEMA_SHA256_HEADER, activeV2Only ? BOOKING_SURFACE_SCHEMA_V2_SHA256 : BOOKING_SURFACE_SCHEMA_SHA256)
       if (options.artifactId) res.setHeader('X-GoTry-Artifact-ID', options.artifactId)
       res.setHeader('X-GoTry-Node-Version', runningIdentity.nodeVersion)
       res.setHeader('X-GoTry-Node-Modules-ABI', runningIdentity.nodeModulesAbi)
       res.setHeader('X-GoTry-Release-Tuple', runningIdentity.releaseTuple)
       if (runningIdentity.glibcVersion) res.setHeader('X-GoTry-Glibc-Version', runningIdentity.glibcVersion)
-      sendJson(res, 200, {
-        schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
-        schemaSha256: BOOKING_SURFACE_SCHEMA_SHA256,
+      const healthBody: Record<string, unknown> = {
+        schemaVersion: activeV2Only ? BOOKING_SURFACE_SCHEMA_VERSION_V2 : BOOKING_SURFACE_SCHEMA_VERSION,
+        schemaSha256: activeV2Only ? BOOKING_SURFACE_SCHEMA_V2_SHA256 : BOOKING_SURFACE_SCHEMA_SHA256,
         status: 'ready',
-      })
+      }
+      if (activeV2Only || options.v2) healthBody.supportedSchemaVersions = activeV2Only ? [BOOKING_SURFACE_SCHEMA_VERSION_V2] : [BOOKING_SURFACE_SCHEMA_VERSION, BOOKING_SURFACE_SCHEMA_VERSION_V2]
+      sendJson(res, 200, healthBody)
       return
     }
     const schemaVersion = String(req.headers[BOOKING_SURFACE_VERSION_HEADER] ?? '')
     const schemaHash = String(req.headers[BOOKING_SURFACE_SCHEMA_SHA256_HEADER] ?? '')
+    if (schemaVersion === BOOKING_SURFACE_SCHEMA_VERSION_V2) {
+      if (!options.v2 || schemaHash !== BOOKING_SURFACE_SCHEMA_V2_SHA256) {
+        sendJson(res, 409, { error: { code: 'booking_surface_schema_mismatch', expectedVersion: BOOKING_SURFACE_SCHEMA_VERSION_V2, expectedSchemaSha256: BOOKING_SURFACE_SCHEMA_V2_SHA256 } })
+        return
+      }
+      await handleBookingCopilotV2Request(req, res, options.v2, maxBodyBytes)
+      return
+    }
     if (schemaVersion !== BOOKING_SURFACE_SCHEMA_VERSION || schemaHash !== BOOKING_SURFACE_SCHEMA_SHA256) {
       sendJson(res, 409, {
         error: {
@@ -161,6 +174,10 @@ export function startBookingCopilotServer(
           expectedSchemaSha256: BOOKING_SURFACE_SCHEMA_SHA256,
         },
       })
+      return
+    }
+    if (!options.runtime || !options.plannerFactory) {
+      sendJson(res, 503, { error: { code: 'booking_surface_v1_not_configured' } })
       return
     }
 
@@ -183,6 +200,8 @@ export function startBookingCopilotServer(
     let task: BookingCopilotTaskStateV1
     let isNewTask = false
     try {
+      const taskId = turn.taskId
+      if (options.v2 && taskId && options.v2.runtime.resumeTask(taskId)) throw new Error('task_conflict:protocol_version')
       if (turn.kind === 'user.turn') {
         const suppliedTaskId = turn.taskId
         isNewTask = !suppliedTaskId || options.runtime.resumeTask(suppliedTaskId) === null

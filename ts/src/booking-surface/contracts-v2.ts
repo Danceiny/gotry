@@ -1,7 +1,7 @@
 import type { BookingReadActionKindV1, BookingWorkspaceSnapshotV1, SearchCriteriaPatchV1, ResultsViewPatchV1, OfferCriteriaV1 } from './contracts.ts'
 
 export const BOOKING_SURFACE_SCHEMA_VERSION_V2 = 'booking.surface.v2' as const
-export const BOOKING_SURFACE_SCHEMA_V2_SHA256 = '72b3aa3e13722135cfc329a982db986f9ea5e0638c807270693c291ab428ce98' as const
+export const BOOKING_SURFACE_SCHEMA_V2_SHA256 = '976fd79a85fc62587dad639920852679a6c8696ff40e9658953ef16509dea026' as const
 export const BOOKING_READ_ACTION_KINDS_V2 = ['search.patch','search.run','results.view.patch','hotel.focus','hotel.select','offers.query','offers.view.patch','offers.compare','offer.select','offer.check','checkout.prepare','order.observe'] as const satisfies readonly BookingReadActionKindV1[]
 export type BookingReadActionKindV2 = typeof BOOKING_READ_ACTION_KINDS_V2[number]
 export type BookingSurfaceV2 = 'tenant' | 'customer_portal' | 'storefront' | 'payment_link'
@@ -12,7 +12,13 @@ export type BookingV2GapCode = typeof BOOKING_V2_GAP_CODES[number]
 export type BookingV2BlockerScope = 'search' | 'offer' | 'availability' | 'checkout'
 export interface CriterionBlockerV2 { blockerId: string; sourceActionId: string; sourceReceiptDigest: string; scope: BookingV2BlockerScope; code: BookingV2BlockerCode; criterionPath: string; strength: 'must'; valueDigest: string; valueLabel?: string; evidence: { factRefs: string[]; gapCodes: BookingV2GapCode[]; requested?: number; actual?: number } }
 export interface RelaxationApprovalV2 {
+  taskId: string
+  contextRef: string
+  sourceTurnId: string
+  presentationRequestKey: string
+  optionDigest: string
   approvalId: string
+  deliveryNonce: string
   blockerId: string
   sourceActionId: string
   sourceReceiptDigest: string
@@ -24,7 +30,7 @@ export interface RelaxationApprovalV2 {
   to: 'prefer' | 'drop'
   approved: true
 }
-export interface RelaxationApprovalRefV2 { approvalId: string; blockerId: string; contextRef: string; sourceActionId: string; targetActionId: string; sourceRevision: number; targetActionKind: BookingReadActionKindV2; to: 'prefer'|'drop'; expiresAt: string; nonce: string; sourceReceiptDigest: string; scope: BookingV2BlockerScope; code: BookingV2BlockerCode; criterionPath: string; valueDigest: string }
+export interface RelaxationApprovalRefV2 { approvalId: string; blockerId: string; contextRef: string; sourceTurnId: string; presentationRequestKey: string; sourceActionId: string; targetActionId: string; sourceRevision: number; targetActionKind: BookingReadActionKindV2; to: 'prefer'|'drop'; expiresAt: string; nonce: string; sourceReceiptDigest: string; scope: BookingV2BlockerScope; code: BookingV2BlockerCode; criterionPath: string; valueDigest: string }
 interface Base<K extends BookingReadActionKindV2, I> { schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION_V2; kind: K; actionId: string; contextRef: string; expectedRevision: number; reason: string; factRefs: string[]; input: I; relaxationApprovalRef?: RelaxationApprovalRefV2 }
 export type SearchPatchActionV2 = Base<'search.patch', { patch: SearchCriteriaPatchV1 }>
 export type SearchRunActionV2 = Base<'search.run', Record<string, never>>
@@ -54,8 +60,8 @@ export type ActionObservationV2 =
   | { kind: 'gap'; code: BookingV2GapCode; factRefs: string[] }
 export interface ResultContractV2 {outcome:'complete'|'partial'|'empty';requestedCount?:number;actualCount?:number;hardCriteriaMet:boolean;factRefs:string[];gapCodes:BookingV2GapCode[];blockers:CriterionBlockerV2[];relaxationsApplied:RelaxationApprovalV2[]}
 export interface ActionReceiptV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'action.receipt';actionId:string;contextRef:string;status:'applied'|'needs_input'|'partial'|'no_match'|'unavailable'|'changed'|'stale'|'unsupported'|'failed';revision:number;observation:ActionObservationV2;resultContract:ResultContractV2;undoToken?:string}
-export interface UserTurnV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'user.turn';taskId?:string;workspace:BookingWorkspaceSnapshotV2;request:{text:string;approval?:RelaxationApprovalV2}}
-export interface IngressTurnV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'user.turn.ingress';taskId?:string;contextRef?:null;surfaceHint:BookingSurfaceV2;workspace:BookingWorkspaceIngressSnapshotV2;request:{text:string}}
+export interface UserTurnV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'user.turn';taskId:string;turnId:string;workspace:BookingWorkspaceSnapshotV2;request:{text:string;approval?:RelaxationApprovalV2}}
+export interface IngressTurnV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'user.turn.ingress';taskId:string;turnId:string;contextRef?:null;surfaceHint:BookingSurfaceV2;workspace:BookingWorkspaceIngressSnapshotV2;request:{text:string}}
 export interface ReceiptContinuationV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;kind:'action.receipt.continuation';taskId:string;workspace:BookingWorkspaceSnapshotV2;receipt:ActionReceiptV2}
 export type BookingCopilotTurnV2=UserTurnV2|IngressTurnV2|ReceiptContinuationV2
 export interface BookingQuestionEventV2 {schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;eventId:string;taskId:string;contextRef:string;sequence:number;emittedAt:string;kind:'question';question:{questionId:string;prompt:string;missingFields:string[];type:'relaxation_approval_required';blocker:CriterionBlockerV2;approvalOptions:Array<{approval:RelaxationApprovalV2}>}}

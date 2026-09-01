@@ -224,6 +224,10 @@ export class BookingCopilotTaskRuntime {
         this.observeUserTurn(taskId, existing.contextRef, requestDigest, existing.userTurnCount + 1)
         return this.requireTask(taskId)
       }
+      const foreign = this.ledger.db.prepare(
+        "SELECT 1 AS present FROM events WHERE tenant_id = ? AND run_id = ? AND kind LIKE 'booking.copilot.v2.%' LIMIT 1",
+      ).get(this.ledger.tenant, taskId) as { present: number } | undefined
+      if (foreign) throw new Error('task_conflict:protocol_version')
       const payload: TaskStartedPayload = {
         schema: LEDGER_SCHEMA,
         taskId,

@@ -1,0 +1,681 @@
+/** Durable task-scoped runtime for the closed Booking Surface v2 contract. */
+
+import { createHash, randomUUID } from 'node:crypto'
+import type { StateLedger } from '../state-ledger.ts'
+import {
+  BOOKING_READ_ACTION_KINDS_V2,
+  type ActionReceiptV2,
+  type BookingCopilotTurnV2,
+  type BookingReadActionV2,
+  type BookingReadActionKindV2,
+  type BookingSurfaceEventV2,
+  type BookingSurfaceV2,
+  type BookingWorkspaceSnapshotV2,
+  type BookingWorkspaceIngressSnapshotV2,
+  type CriterionBlockerV2,
+  type IngressTurnV2,
+  type RelaxationApprovalRefV2,
+  type RelaxationApprovalV2,
+  type UserTurnV2,
+} from './contracts-v2.ts'
+import {
+  validateApprovalAgainstBlocker,
+  validateCriterionBlockerV2,
+  validateBookingReadActionV2,
+  validateBookingSurfaceEventV2,
+  validateBookingSurfaceV2,
+} from './validation-v2.ts'
+
+const LEDGER_SCHEMA = 'booking.copilot.ledger.v2' as const
+const ACTOR = 'system:booking-copilot-v2'
+const STARTED = 'booking.copilot.v2.task.started'
+const TURN = 'booking.copilot.v2.user.turn.observed'
+const ACTION = 'booking.copilot.v2.action.issued'
+const RECEIPT = 'booking.copilot.v2.receipt.observed'
+const EVENT = 'booking.copilot.v2.event.emitted'
+const APPROVAL_GRANTED = 'booking.copilot.v2.approval.granted'
+const APPROVAL_OFFERED = 'booking.copilot.v2.approval.option.offered'
+const APPROVAL_CONSUMED = 'booking.copilot.v2.approval.consumed'
+const DECISION_BATCH = 'booking.copilot.v2.decision.batch'
+
+export type BookingCopilotTaskPhaseV2 = 'planning' | 'submitted' | 'working' | 'waiting_receipt' | 'input_required' | 'terminal' | 'error'
+
+export interface BookingApprovalStateV2 {
+  approval?: RelaxationApprovalV2
+  blocker: CriterionBlockerV2
+  options: RelaxationApprovalV2[]
+  optionsEmitted: boolean
+  nonce: string
+  expiresAt: string
+  sourceTurnId: string
+  presentationRequestKey: string
+}
+
+export interface BookingActionCheckpointV2 {
+  actionId: string
+  kind: BookingReadActionKindV2
+  contextRef: string
+  expectedRevision: number
+  factRefs: string[]
+  input: Record<string, any>
+  reasonDigest: string
+  inputDigest: string
+  actionDigest: string
+  eventId: string
+  sequence: number
+  emittedAt: string
+  sourceTurnId: string
+  relaxationApprovalRef?: RelaxationApprovalRefV2
+}
+
+export interface BookingCopilotTaskStateV2 {
+  schemaVersion: 'booking.surface.v2'
+  taskId: string
+  contextRef: string
+  surface: BookingSurfaceV2
+  revision: number
+  allowedActions: BookingReadActionKindV2[]
+  userTurnCount: number
+  lastTurnId?: string
+  lastUserTurnDigest?: string
+  phase: BookingCopilotTaskPhaseV2
+  lastSequence: number
+  pendingAction?: BookingActionCheckpointV2
+  lastReceipt?: ActionReceiptV2
+  awaitingApproval?: BookingApprovalStateV2
+  workspaceDigest?: string
+  workspaceSemanticDigest?: string
+  workspaceSnapshot?: BookingWorkspaceSnapshotV2
+}
+
+export type BookingSurfaceEventDraftV2 =
+  | Pick<Extract<BookingSurfaceEventV2, { kind: 'status' }>, 'kind' | 'status'>
+  | Pick<Extract<BookingSurfaceEventV2, { kind: 'question' }>, 'kind' | 'question'>
+  | Pick<Extract<BookingSurfaceEventV2, { kind: 'explanation' }>, 'kind' | 'explanation'>
+  | Pick<Extract<BookingSurfaceEventV2, { kind: 'terminal' }>, 'kind' | 'terminal'>
+  | Pick<Extract<BookingSurfaceEventV2, { kind: 'error' }>, 'kind' | 'error'>
+
+export type BookingPlannerDecisionV2 =
+  | { kind: 'operation'; action: BookingReadActionV2 }
+  | BookingSurfaceEventDraftV2
+
+export interface BookingPlannerSessionV2 {
+  next(input: { turn: BookingCopilotTurnV2; task: BookingCopilotTaskStateV2 }): Promise<readonly BookingPlannerDecisionV2[]>
+}
+
+export type BookingPlannerSessionFactoryV2 = (initialTask: BookingCopilotTaskStateV2) => BookingPlannerSessionV2
+
+export interface BookingCopilotRuntimeOptionsV2 {
+  idFactory?: (prefix: string) => string
+  contextRefFactory?: () => string
+  now?: () => string
+  approvalTtlMs?: number
+}
+
+interface Row { seq: number; kind: string; payload: string }
+interface BasePayload { schema: typeof LEDGER_SCHEMA; taskId: string; contextRef: string; [key: string]: unknown }
+interface StartedPayload extends BasePayload { surface: BookingSurfaceV2; revision: number; allowedActions: BookingReadActionKindV2[]; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshotV2 }
+interface TurnPayload extends BasePayload { requestDigest: string; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshotV2; turnId: string }
+interface ActionPayload extends BasePayload { action: BookingActionCheckpointV2 }
+interface ReceiptPayload extends BasePayload { receipt: ActionReceiptV2; receiptDigest: string; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshotV2 }
+interface EventPayload extends BasePayload { eventId: string; sequence: number; emittedAt: string; eventKind: Exclude<BookingSurfaceEventV2['kind'], 'operation'>; status?: 'submitted'|'working'|'waiting_receipt'|'input_required'; contentDigest: string }
+interface ApprovalPayload extends BasePayload { approval: BookingApprovalStateV2; ref?: RelaxationApprovalRefV2; approvalDigest: string }
+interface DecisionBatchPayload extends BasePayload { requestKey: string; events: BookingSurfaceEventV2[] }
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable)
+  if (!value || typeof value !== 'object') return value
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) out[key] = stable((value as Record<string, unknown>)[key])
+  return out
+}
+
+export function bookingV2Digest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(stable(value))).digest('hex')
+}
+
+export function bookingV2WorkspaceDigest(workspace: BookingWorkspaceSnapshotV2 | BookingWorkspaceIngressSnapshotV2): string {
+  const { contextRef: _contextRef, ...contextBoundWorkspace } = workspace as Record<string, unknown>
+  return bookingV2Digest(contextBoundWorkspace)
+}
+
+function bookingV2WorkspaceSemanticDigest(workspace: BookingWorkspaceSnapshotV2 | BookingWorkspaceIngressSnapshotV2): string {
+  const { contextRef: _contextRef, revision: _revision, ...semanticWorkspace } = workspace as Record<string, unknown>
+  return bookingV2Digest(semanticWorkspace)
+}
+
+export function bookingV2TurnDigest(turn: Extract<BookingCopilotTurnV2, { kind: 'user.turn' | 'user.turn.ingress' }>): string {
+  return bookingV2Digest(turn)
+}
+
+function canonicalReceiptDigest(value: ActionReceiptV2): string { return bookingV2Digest(value) }
+
+function errorText(result: { ok: true } | { ok: false; errors: string[] }): string { return result.ok ? '' : result.errors.join('; ') }
+function assertTaskId(taskId: string): void { if (!/^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(taskId)) throw new Error('invalid_task_id') }
+function assertSafeRef(value: string): void { if (!/^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(value)) throw new Error('unsafe_opaque_ref') }
+function sameActions(a: readonly string[], b: readonly string[]): boolean { return a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]) }
+
+function checkpointDigest(action: Omit<BookingActionCheckpointV2, 'actionDigest'>): string {
+  return bookingV2Digest(action)
+}
+
+function checkpointFor(action: BookingReadActionV2, eventId: string, sequence: number, emittedAt: string, sourceTurnId: string): BookingActionCheckpointV2 {
+  const base: Omit<BookingActionCheckpointV2, 'actionDigest'> = {
+    actionId: action.actionId,
+    kind: action.kind,
+    contextRef: action.contextRef,
+    expectedRevision: action.expectedRevision,
+    factRefs: [...action.factRefs],
+    reasonDigest: bookingV2Digest(action.reason),
+    inputDigest: bookingV2Digest(action.input),
+    input: action.input,
+    eventId,
+    sequence,
+    emittedAt,
+    sourceTurnId,
+    ...(action.relaxationApprovalRef ? { relaxationApprovalRef: action.relaxationApprovalRef } : {}),
+  }
+  return { ...base, actionDigest: checkpointDigest(base) }
+}
+
+function matchesCheckpoint(action: BookingReadActionV2, checkpoint: BookingActionCheckpointV2): boolean {
+  const candidate = checkpointFor(
+    action.relaxationApprovalRef || !checkpoint.relaxationApprovalRef ? action : { ...action, relaxationApprovalRef: checkpoint.relaxationApprovalRef },
+    checkpoint.eventId,
+    checkpoint.sequence,
+    checkpoint.emittedAt,
+    checkpoint.sourceTurnId,
+  )
+  const { actionDigest: _ignored, ...candidateBase } = candidate
+  return checkpoint.actionDigest === checkpointDigest(candidateBase)
+}
+
+function receiptSourceDigest(receipt: ActionReceiptV2): string {
+  return bookingV2Digest({
+    ...receipt,
+    resultContract: {
+      ...receipt.resultContract,
+      blockers: receipt.resultContract.blockers.map(({ sourceReceiptDigest: _ignored, ...blocker }) => blocker),
+    },
+  })
+}
+
+function assertCanonicalReceipt(receipt: ActionReceiptV2): void {
+  const expected = receiptSourceDigest(receipt)
+  if (receipt.resultContract.blockers.some((blocker) => blocker.sourceReceiptDigest !== expected)) throw new Error('receipt_source_digest_mismatch')
+}
+
+function receiptObservationMatchesAction(observation: ActionReceiptV2['observation']['kind'], action: BookingReadActionKindV2): boolean {
+  if (observation === 'gap') return true
+  const expected: Partial<Record<BookingReadActionKindV2, ActionReceiptV2['observation']['kind']>> = {
+    'search.patch': 'search.state', 'search.run': 'search.state', 'results.view.patch': 'results.state',
+    'hotel.focus': 'hotel.focus', 'hotel.select': 'hotel.selection', 'offers.query': 'offers.state',
+    'offers.view.patch': 'offers.state', 'offers.compare': 'offers.state', 'offer.select': 'offer.selection',
+    'offer.check': 'offer.availability', 'checkout.prepare': 'checkout.handoff', 'order.observe': 'order.state',
+  }
+  return expected[action] === observation
+}
+
+function sameRefSet(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && [...a].sort().every((value, index) => value === [...b].sort()[index])
+}
+
+function receiptTargetMatchesAction(receipt: ActionReceiptV2, action: { kind: BookingReadActionKindV2; input: Record<string, any> }): boolean {
+  const observation = receipt.observation
+  const input = action.input
+  if (action.kind === 'hotel.focus' && observation.kind === 'hotel.focus') return observation.hotelRef === input.hotelRef
+  if (action.kind === 'hotel.select' && observation.kind === 'hotel.selection') return observation.hotelRef === input.hotelRef
+  if (action.kind === 'offer.select' && observation.kind === 'offer.selection') return observation.offerRef === input.offerRef
+  if (action.kind === 'offer.check' && observation.kind === 'offer.availability') return observation.offerRef === input.offerRef
+  if (action.kind === 'checkout.prepare' && observation.kind === 'checkout.handoff') return observation.offerRef === input.offerRef && observation.verifiedOfferRef === input.verifiedOfferRef
+  if (action.kind === 'offers.query' && observation.kind === 'offers.state') return sameRefSet(observation.hotelRefs, input.hotelRefs)
+  if (action.kind === 'offers.view.patch' && observation.kind === 'offers.state') return observation.hotelRefs.includes(input.hotelRef)
+  if (action.kind === 'offers.compare' && observation.kind === 'offers.state') return input.offerRefs.every((offerRef: string) => observation.offerRefs.includes(offerRef))
+  if (action.kind === 'order.observe' && observation.kind === 'order.state') return observation.orderRef === input.orderRef
+  return observation.kind === 'gap' || action.kind === 'search.patch' || action.kind === 'search.run' || action.kind === 'results.view.patch'
+}
+
+function workspaceBoundaryMatches(a: BookingWorkspaceSnapshotV2, b: BookingWorkspaceSnapshotV2): boolean {
+  return a.locale === b.locale && a.currency === b.currency && a.surface === b.surface && a.contextRef === b.contextRef && a.capabilities.surface === b.capabilities.surface && sameActions(a.capabilities.allowedActions, b.capabilities.allowedActions)
+}
+
+function workspacePostActionMatches(previous: BookingWorkspaceSnapshotV2, current: BookingWorkspaceSnapshotV2, action: BookingReadActionKindV2): boolean {
+  if (!workspaceBoundaryMatches(previous, current)) return false
+  const mutable: Partial<Record<BookingReadActionKindV2, string[]>> = {
+    'search.patch': ['searchDraft'], 'search.run': ['results', 'visibleHotels'], 'results.view.patch': ['results'],
+    'hotel.focus': ['focusedHotelRef'], 'hotel.select': ['focusedHotelRef'],
+    'offers.query': ['loadedOffers'], 'offers.view.patch': ['loadedOffers'],
+    'offer.select': ['selectedOfferRef'], 'offer.check': ['verifiedOfferRef'],
+  }
+  const allowed = new Set(['revision', ...(mutable[action] ?? [])])
+  const keys = new Set([...Object.keys(previous), ...Object.keys(current)])
+  for (const key of keys) {
+    if (allowed.has(key)) continue
+    if (bookingV2Digest((previous as unknown as Record<string, unknown>)[key]) !== bookingV2Digest((current as unknown as Record<string, unknown>)[key])) return false
+  }
+  return true
+}
+
+function approvalOption(taskId: string, contextRef: string, sourceTurnId: string, presentationRequestKey: string, blocker: CriterionBlockerV2, to: RelaxationApprovalV2['to'], deliveryNonce: string): RelaxationApprovalV2 {
+  const base = {
+    taskId, contextRef, sourceTurnId, presentationRequestKey,
+    approvalId: `approval-${blocker.blockerId}-${to}`, deliveryNonce, blockerId: blocker.blockerId,
+    sourceActionId: blocker.sourceActionId, sourceReceiptDigest: blocker.sourceReceiptDigest,
+    scope: blocker.scope, code: blocker.code, criterionPath: blocker.criterionPath,
+    valueDigest: blocker.valueDigest, from: 'must' as const, to, approved: true as const,
+  }
+  return { ...base, optionDigest: bookingV2Digest(base) }
+}
+
+function approvalOptionDigest(approval: RelaxationApprovalV2): string {
+  const { optionDigest: _optionDigest, ...base } = approval
+  return bookingV2Digest(base)
+}
+
+function presentationKey(taskId: string, sourceTurnId: string, actionId: string, receiptDigest: string): string {
+  return `approval:${taskId}:${sourceTurnId}:${actionId}:${receiptDigest}`
+}
+
+type ApprovalTarget = Pick<BookingReadActionV2, 'actionId' | 'expectedRevision' | 'kind' | 'contextRef'>
+function assertApprovalRef(ref: RelaxationApprovalRefV2, state: BookingCopilotTaskStateV2, action: ApprovalTarget): void {
+  const approval = state.awaitingApproval?.approval
+  const blocker = state.awaitingApproval?.blocker
+  if (!approval || !blocker || ref.approvalId !== approval.approvalId || ref.blockerId !== blocker.blockerId || ref.contextRef !== state.contextRef || ref.sourceTurnId !== state.awaitingApproval?.sourceTurnId || ref.presentationRequestKey !== state.awaitingApproval?.presentationRequestKey || ref.sourceActionId !== blocker.sourceActionId || ref.targetActionId !== action.actionId || ref.sourceRevision !== action.expectedRevision || ref.targetActionKind !== action.kind || ref.to !== approval.to || ref.expiresAt !== state.awaitingApproval?.expiresAt || ref.nonce !== state.awaitingApproval?.nonce || ref.sourceReceiptDigest !== blocker.sourceReceiptDigest || ref.scope !== blocker.scope || ref.code !== blocker.code || ref.criterionPath !== blocker.criterionPath || ref.valueDigest !== blocker.valueDigest) throw new Error('ledger_corrupt:approval_ref')
+}
+
+export class BookingCopilotTaskRuntimeV2 {
+  private readonly idFactory: (prefix: string) => string
+  private readonly contextRefFactory: () => string
+  private readonly now: () => string
+  private readonly approvalTtlMs: number
+
+  constructor(private readonly ledger: StateLedger, options: BookingCopilotRuntimeOptionsV2 = {}) {
+    this.idFactory = options.idFactory ?? ((prefix) => `${prefix}-${randomUUID()}`)
+    this.contextRefFactory = options.contextRefFactory ?? (() => this.idFactory('context'))
+    this.now = options.now ?? (() => new Date().toISOString())
+    this.approvalTtlMs = options.approvalTtlMs ?? 120_000
+  }
+
+  /** Binds the untrusted ingress snapshot to server-owned task/context/capabilities. */
+  bindIngressTurn(turn: IngressTurnV2, task: BookingCopilotTaskStateV2): UserTurnV2 {
+    return {
+      schemaVersion: 'booking.surface.v2', kind: 'user.turn', taskId: task.taskId, turnId: turn.turnId,
+      workspace: {
+        ...turn.workspace,
+        schemaVersion: 'booking.surface.v2', contextRef: task.contextRef, surface: task.surface,
+        capabilities: { surface: task.surface, allowedActions: [...task.allowedActions] },
+      },
+      request: { text: turn.request.text },
+    }
+  }
+
+  startTask(turn: BookingCopilotTurnV2): BookingCopilotTaskStateV2 {
+    const validation = validateBookingSurfaceV2(turn)
+    if (!validation.ok) throw new Error(`invalid_planner_turn:${errorText(validation)}`)
+    if (turn.kind === 'action.receipt.continuation') throw new Error('receipt_continuation_requires_continue')
+    if (!turn.taskId) throw new Error('invalid_planner_turn:task_id_required')
+    const taskId = turn.taskId
+    assertTaskId(taskId)
+    const userTurn = turn.kind === 'user.turn.ingress' ? undefined : turn
+    const turnId = (turn.kind === 'user.turn' || turn.kind === 'user.turn.ingress') ? turn.turnId : undefined
+    if (!turnId) throw new Error('invalid_planner_turn:turn_id_required')
+    assertSafeRef(turnId)
+    const contextRef = turn.kind === 'user.turn.ingress' ? this.contextRefFactory() : turn.workspace.contextRef
+    const surface = turn.kind === 'user.turn.ingress' ? turn.surfaceHint : turn.workspace.surface
+    const revision = turn.workspace.revision
+    const allowedActions = turn.kind === 'user.turn.ingress' ? [...BOOKING_READ_ACTION_KINDS_V2] : [...turn.workspace.capabilities.allowedActions]
+    const requestDigest = bookingV2TurnDigest(turn)
+    const boundWorkspace = turn.kind === 'user.turn.ingress' ? {
+      ...turn.workspace, contextRef, surface,
+      capabilities: { surface, allowedActions },
+    } as BookingWorkspaceSnapshotV2 : turn.workspace
+    const workspaceDigest = bookingV2WorkspaceDigest(boundWorkspace)
+    const workspaceSemanticDigest = bookingV2WorkspaceSemanticDigest(boundWorkspace)
+      const run = this.ledger.db.transaction(() => {
+      if (!this.resumeTask(taskId)) {
+        const foreign = this.ledger.db.prepare("SELECT 1 AS present FROM events WHERE tenant_id = ? AND run_id = ? AND kind LIKE 'booking.copilot.%' AND kind NOT LIKE 'booking.copilot.v2.%' LIMIT 1").get(this.ledger.tenant, taskId) as { present: number } | undefined
+        if (foreign) throw new Error('task_conflict:protocol_version')
+      }
+      const existing = this.resumeTask(taskId)
+      if (existing) {
+        if (existing.contextRef !== contextRef) throw new Error('task_conflict:context_mismatch')
+        if (existing.surface !== surface) throw new Error('task_conflict:surface_mismatch')
+        if (existing.revision !== revision && existing.phase !== 'waiting_receipt') throw new Error('task_conflict:revision_mismatch')
+        if (!sameActions(existing.allowedActions, allowedActions)) throw new Error('task_conflict:capability_mismatch')
+        if (turnId && existing.lastTurnId === turnId) {
+          if (existing.lastUserTurnDigest !== requestDigest) throw new Error('task_conflict:turn_mismatch')
+          return existing
+        }
+        if (existing.phase === 'terminal' || existing.phase === 'error') throw new Error('task_terminal')
+        if (existing.phase === 'waiting_receipt') throw new Error('receipt_required')
+        const approval = userTurn && 'approval' in userTurn.request ? userTurn.request.approval : undefined
+        let approvalState: BookingApprovalStateV2 | undefined
+        if (approval) {
+          const awaiting = existing.awaitingApproval
+          if (!awaiting) throw new Error('approval_not_awaiting')
+          if (!awaiting.optionsEmitted) throw new Error('approval_not_presented')
+          if (Date.parse(awaiting.expiresAt) <= Date.parse(this.now())) throw new Error('approval_expired')
+          const checked = validateApprovalAgainstBlocker(approval, awaiting.blocker)
+          const option = awaiting.options.find((candidate) => candidate.optionDigest === approval.optionDigest && bookingV2Digest(candidate) === bookingV2Digest(approval))
+          if (!checked.ok || !option || approval.taskId !== existing.taskId || approval.contextRef !== existing.contextRef || approval.sourceTurnId !== awaiting.sourceTurnId || approval.presentationRequestKey !== awaiting.presentationRequestKey || approval.optionDigest !== approvalOptionDigest(approval) || (awaiting.approval && bookingV2Digest(approval) !== bookingV2Digest(awaiting.approval))) throw new Error('approval_mismatch')
+          if (awaiting.approval && bookingV2Digest(awaiting.approval) === bookingV2Digest(approval)) return existing
+          approvalState = { ...awaiting, approval }
+          this.appendApproval(taskId, existing.contextRef, approvalState)
+        } else if (existing.awaitingApproval) {
+          throw new Error('approval_required')
+        }
+        this.appendTurn(taskId, existing.contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, existing.userTurnCount + 1, turnId, boundWorkspace)
+        return this.requireTask(taskId)
+      }
+      if (userTurn?.request.approval) throw new Error('approval_not_awaiting')
+      const started: StartedPayload = { schema: LEDGER_SCHEMA, taskId, contextRef, surface, revision, allowedActions, workspaceDigest, workspaceSemanticDigest, workspace: boundWorkspace }
+      this.append(STARTED, taskId, started, `booking-v2:task:${taskId}`)
+      this.appendTurn(taskId, contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, 1, turnId, boundWorkspace)
+      return this.requireTask(taskId)
+    })
+    return run.immediate()
+  }
+
+  resumeTask(taskId: string): BookingCopilotTaskStateV2 | null {
+    assertTaskId(taskId)
+    const rows = this.rows(taskId)
+    if (!rows.length) return null
+    let state: BookingCopilotTaskStateV2 | null = null
+    for (const row of rows) {
+      const payload = JSON.parse(row.payload) as BasePayload & Record<string, any>
+      if (payload.schema !== LEDGER_SCHEMA || payload.taskId !== taskId) throw new Error(`ledger_corrupt:${taskId}:seq=${row.seq}`)
+      if (row.kind === STARTED) {
+        if (state) throw new Error(`ledger_corrupt:${taskId}:duplicate_start`)
+        const started = payload as StartedPayload
+        if (!started.workspaceDigest || !started.workspaceSemanticDigest || !started.workspace || bookingV2WorkspaceDigest(started.workspace) !== started.workspaceDigest || bookingV2WorkspaceSemanticDigest(started.workspace) !== started.workspaceSemanticDigest) throw new Error(`ledger_corrupt:${taskId}:start_workspace`)
+        state = { schemaVersion: 'booking.surface.v2', taskId, contextRef: started.contextRef, surface: started.surface, revision: started.revision, allowedActions: [...started.allowedActions], userTurnCount: 0, phase: 'planning', lastSequence: 0, workspaceDigest: started.workspaceDigest, workspaceSemanticDigest: started.workspaceSemanticDigest, workspaceSnapshot: started.workspace }
+      } else {
+        if (!state) throw new Error(`ledger_corrupt:${taskId}:event_before_start`)
+        if (payload.contextRef !== state.contextRef) throw new Error(`ledger_corrupt:${taskId}:context_drift`)
+        if (row.kind === TURN) {
+          const t = payload as TurnPayload
+          if (Object.prototype.hasOwnProperty.call(payload, 'approval')) throw new Error(`ledger_corrupt:${taskId}:turn_approval`)
+          if (!t.workspaceDigest || !t.workspaceSemanticDigest || !t.workspace || bookingV2WorkspaceDigest(t.workspace) !== t.workspaceDigest || bookingV2WorkspaceSemanticDigest(t.workspace) !== t.workspaceSemanticDigest) throw new Error(`ledger_corrupt:${taskId}:turn_workspace`)
+          state.userTurnCount++
+          state.lastTurnId = t.turnId
+          state.lastUserTurnDigest = t.requestDigest
+          state.workspaceDigest = t.workspaceDigest
+          state.workspaceSemanticDigest = t.workspaceSemanticDigest
+          state.workspaceSnapshot = t.workspace
+          // Approval authority is established only by APPROVAL_GRANTED; a turn
+          // is merely an observation and cannot restore or mutate approval state.
+        } else if (row.kind === APPROVAL_GRANTED) {
+          const granted = payload as ApprovalPayload
+          if (!granted.approval || granted.approvalDigest !== bookingV2Digest(granted.approval) || !granted.approval.sourceTurnId || !granted.approval.presentationRequestKey || !validateCriterionBlockerV2(granted.approval.blocker).ok || !granted.approval.options?.length || granted.approval.options.some((option) => !validateApprovalAgainstBlocker(option, granted.approval!.blocker).ok || option.taskId !== taskId || option.contextRef !== state!.contextRef || option.sourceTurnId !== granted.approval!.sourceTurnId || option.presentationRequestKey !== granted.approval!.presentationRequestKey || option.optionDigest !== approvalOptionDigest(option)) || (granted.approval.approval && !granted.approval.options.some((option) => bookingV2Digest(option) === bookingV2Digest(granted.approval!.approval!)))) throw new Error(`ledger_corrupt:${taskId}:approval_granted`)
+          state.awaitingApproval = granted.approval; state.phase = 'input_required'
+        } else if (row.kind === APPROVAL_OFFERED) {
+          const offered = payload as ApprovalPayload
+          if (!offered.approval || offered.approvalDigest !== bookingV2Digest(offered.approval) || !state.awaitingApproval || bookingV2Digest(offered.approval) !== bookingV2Digest(state.awaitingApproval)) throw new Error(`ledger_corrupt:${taskId}:approval_offered`)
+          // This is a durable outbox intent only.  It is deliberately not
+          // evidence that the question entered a replayable output batch:
+          // a crash between this row and DECISION_BATCH must still reject an
+          // approval until the exact question can be replayed.
+          state.phase = 'input_required'
+        } else if (row.kind === ACTION) {
+          const a = (payload as ActionPayload).action
+          const { actionDigest: _actionDigest, ...actionBase } = a
+          if (a.actionDigest !== checkpointDigest(actionBase)) throw new Error(`ledger_corrupt:${taskId}:action`)
+          if (a.relaxationApprovalRef) assertApprovalRef(a.relaxationApprovalRef, state, a)
+          if (state.pendingAction) throw new Error(`ledger_corrupt:${taskId}:parallel_actions`)
+          state.pendingAction = a; state.phase = 'waiting_receipt'; state.lastSequence = Math.max(state.lastSequence, a.sequence)
+          delete state.awaitingApproval
+        } else if (row.kind === RECEIPT) {
+          const r = payload as ReceiptPayload
+          if (r.receiptDigest !== canonicalReceiptDigest(r.receipt) || !validateBookingSurfaceV2(r.receipt).ok) throw new Error(`ledger_corrupt:${taskId}:receipt`)
+          if (!state.pendingAction || state.pendingAction.actionId !== r.receipt.actionId) throw new Error(`ledger_corrupt:${taskId}:orphan_receipt`)
+          if (!r.workspaceDigest || !r.workspaceSemanticDigest || !r.workspace || bookingV2WorkspaceDigest(r.workspace) !== r.workspaceDigest || bookingV2WorkspaceSemanticDigest(r.workspace) !== r.workspaceSemanticDigest) throw new Error(`ledger_corrupt:${taskId}:receipt_workspace`)
+          state.lastReceipt = r.receipt; state.revision = r.receipt.revision; state.workspaceDigest = r.workspaceDigest; state.workspaceSemanticDigest = r.workspaceSemanticDigest; state.workspaceSnapshot = r.workspace; delete state.pendingAction; state.phase = 'planning'
+          delete state.awaitingApproval
+        } else if (row.kind === APPROVAL_CONSUMED) {
+          const consumed = payload as ApprovalPayload
+          if (!consumed.ref || consumed.approvalDigest !== bookingV2Digest(consumed.ref) || !consumed.approval?.approval || !consumed.approval.options?.some((option) => bookingV2Digest(option) === bookingV2Digest(consumed.approval!.approval!)) || !state.awaitingApproval || bookingV2Digest(consumed.approval) !== bookingV2Digest(state.awaitingApproval) || consumed.ref.approvalId !== consumed.approval.approval.approvalId || consumed.ref.blockerId !== consumed.approval.blocker.blockerId || consumed.ref.contextRef !== state.contextRef || consumed.ref.sourceTurnId !== consumed.approval.sourceTurnId || consumed.ref.presentationRequestKey !== consumed.approval.presentationRequestKey || consumed.ref.sourceActionId !== consumed.approval.blocker.sourceActionId || consumed.ref.targetActionId === '' || consumed.ref.sourceReceiptDigest !== consumed.approval.blocker.sourceReceiptDigest || consumed.ref.nonce !== consumed.approval.nonce || consumed.ref.nonce !== consumed.approval.approval.deliveryNonce || consumed.ref.to !== consumed.approval.approval.to || consumed.ref.scope !== consumed.approval.blocker.scope || consumed.ref.code !== consumed.approval.blocker.code || consumed.ref.criterionPath !== consumed.approval.blocker.criterionPath || consumed.ref.valueDigest !== consumed.approval.blocker.valueDigest) throw new Error(`ledger_corrupt:${taskId}:approval`)
+        } else if (row.kind === DECISION_BATCH) {
+          const batch = payload as DecisionBatchPayload
+          if (!batch.requestKey || !Array.isArray(batch.events) || batch.events.some((event) => event.taskId !== taskId || !validateBookingSurfaceEventV2(event).ok)) throw new Error(`ledger_corrupt:${taskId}:decision_batch`)
+          for (const event of batch.events) {
+            if (event.kind !== 'question') continue
+            const awaiting = state.awaitingApproval
+            if (!awaiting || bookingV2Digest(event.question.blocker) !== bookingV2Digest(awaiting.blocker) || event.question.approvalOptions.length !== awaiting.options.length || event.question.approvalOptions.some(({ approval }) => !awaiting.options.some((option) => bookingV2Digest(option) === bookingV2Digest(approval)))) throw new Error(`ledger_corrupt:${taskId}:decision_batch_question`)
+            // Only the atomic, durable batch makes the presentation nonce
+            // usable.  APPROVAL_OFFERED alone is intentionally insufficient.
+            awaiting.optionsEmitted = true
+            state.phase = 'input_required'
+          }
+        } else if (row.kind === EVENT) {
+          const event = payload as EventPayload
+          state.lastSequence = Math.max(state.lastSequence, event.sequence)
+          if (event.eventKind === 'status') state.phase = event.status === 'submitted' ? 'submitted' : event.status === 'working' ? 'working' : event.status === 'waiting_receipt' ? 'waiting_receipt' : 'input_required'
+          else if (event.eventKind === 'question') state.phase = 'input_required'
+          else if (event.eventKind === 'terminal') state.phase = 'terminal'
+          else if (event.eventKind === 'error') state.phase = 'error'
+        }
+      }
+    }
+    return state
+  }
+
+  withReceiptDigest<T extends ActionReceiptV2>(receipt: T): T {
+    // The source receipt digest is the authority used by the approval binding.
+    const sourceDigest = receiptSourceDigest(receipt)
+    return { ...receipt, resultContract: { ...receipt.resultContract, blockers: receipt.resultContract.blockers.map((b) => ({ ...b, sourceReceiptDigest: sourceDigest })) } }
+  }
+
+  receiptDigest(receipt: ActionReceiptV2): string { return canonicalReceiptDigest(receipt) }
+
+  /** Builds the only relaxation question exposed to the planner stream. The
+   * blocker is ledger-derived; a planner cannot invent its tuple or ref. */
+  approvalQuestion(taskId: string): BookingSurfaceEventDraftV2 {
+    const task = this.requireTask(taskId)
+    const awaiting = task.awaitingApproval
+    if (!awaiting) throw new Error('approval_not_awaiting')
+    return {
+      kind: 'question',
+      question: {
+        questionId: `question-${awaiting.blocker.blockerId}`,
+        prompt: `Relax required criterion ${awaiting.blocker.criterionPath}?`,
+        missingFields: [awaiting.blocker.criterionPath],
+        type: 'relaxation_approval_required',
+        blocker: awaiting.blocker,
+        approvalOptions: awaiting.options.map((approval) => ({ approval })),
+      },
+    }
+  }
+
+  approvalPresentationRequestKey(taskId: string): string {
+    const task = this.requireTask(taskId)
+    const awaiting = task.awaitingApproval
+    if (!awaiting) throw new Error('approval_not_awaiting')
+    return awaiting.presentationRequestKey
+  }
+
+  commitDecisionBatch(taskId: string, requestKey: string, decisions: readonly BookingPlannerDecisionV2[]): BookingSurfaceEventV2[] {
+    return this.applyDecisionBatch(taskId, requestKey, decisions)
+  }
+
+  readDecisionBatch(taskId: string, requestKey: string): BookingSurfaceEventV2[] | null {
+    const rows = this.ledger.db.prepare('SELECT payload FROM events WHERE tenant_id = ? AND run_id = ? AND kind = ? ORDER BY seq DESC').all(this.ledger.tenant, taskId, DECISION_BATCH) as Array<{ payload: string }>
+    for (const row of rows) {
+      const payload = JSON.parse(row.payload) as DecisionBatchPayload
+      if (payload.requestKey !== requestKey) continue
+      const state = this.requireTask(taskId)
+      if (payload.schema !== LEDGER_SCHEMA || payload.taskId !== taskId || payload.contextRef !== state.contextRef || !Array.isArray(payload.events) || payload.events.some((event) => event.taskId !== taskId || event.contextRef !== state.contextRef || !validateBookingSurfaceEventV2(event).ok)) throw new Error(`ledger_corrupt:${taskId}:decision_batch`)
+      for (const event of payload.events) {
+        if (event.kind !== 'question') continue
+        const awaiting = state.awaitingApproval
+        if (!awaiting || requestKey !== awaiting.presentationRequestKey || bookingV2Digest(event.question.blocker) !== bookingV2Digest(awaiting.blocker) || event.question.approvalOptions.length !== awaiting.options.length || event.question.approvalOptions.some(({ approval }) => !awaiting.options.some((option) => option.optionDigest === approval.optionDigest && bookingV2Digest(option) === bookingV2Digest(approval)))) throw new Error(`ledger_corrupt:${taskId}:decision_batch_question`)
+      }
+      return payload.events
+    }
+    return null
+  }
+
+  /** Atomically applies planner decisions and records the exact SSE batch before it is sent. */
+  applyDecisionBatch(taskId: string, requestKey: string, decisions: readonly BookingPlannerDecisionV2[], includeSubmitted = false): BookingSurfaceEventV2[] {
+    const prior = this.readDecisionBatch(taskId, requestKey)
+    if (prior) return prior
+    for (const decision of decisions) {
+      if (decision.kind === 'operation') {
+        const checked = validateBookingReadActionV2(decision.action)
+        if (!checked.ok) throw new Error(`invalid_action:${errorText(checked)}`)
+      }
+    }
+    const run = this.ledger.db.transaction(() => {
+      const events: BookingSurfaceEventV2[] = []
+      const before = this.requireTask(taskId)
+      for (const decision of decisions) {
+        if (decision.kind !== 'question') continue
+        const awaiting = before.awaitingApproval
+        if (!awaiting || requestKey !== awaiting.presentationRequestKey || bookingV2Digest(decision.question.blocker) !== bookingV2Digest(awaiting.blocker) || decision.question.approvalOptions.length !== awaiting.options.length || decision.question.approvalOptions.some(({ approval }) => !awaiting.options.some((option) => option.optionDigest === approval.optionDigest && bookingV2Digest(option) === bookingV2Digest(approval)))) throw new Error('approval_presentation_key_mismatch')
+        this.ensureApprovalOffered(taskId, before.contextRef, awaiting, requestKey)
+      }
+      if (includeSubmitted) events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'submitted' }))
+      events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'working' }))
+      for (const decision of decisions) {
+        if (decision.kind === 'operation') {
+          events.push(this.issueOperationInTransaction(taskId, decision.action))
+          events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'waiting_receipt' }))
+        }
+        else events.push(this.emitEventInTransaction(taskId, decision))
+      }
+      const state = this.requireTask(taskId)
+      this.append(DECISION_BATCH, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef: state.contextRef, requestKey, events }, `booking-v2:decision-batch:${taskId}:${requestKey}`)
+      return events
+    })
+    return run.immediate()
+  }
+
+  issueOperation(taskId: string, candidate: BookingReadActionV2): { schemaVersion: 'booking.surface.v2'; eventId: string; taskId: string; contextRef: string; sequence: number; emittedAt: string; kind: 'operation'; action: BookingReadActionV2 } {
+    const validation = validateBookingReadActionV2(candidate)
+    if (!validation.ok) throw new Error(`invalid_action:${errorText(validation)}`)
+    assertTaskId(taskId); assertSafeRef(candidate.actionId); candidate.factRefs.forEach(assertSafeRef)
+    return this.ledger.db.transaction(() => this.issueOperationInTransaction(taskId, candidate)).immediate()
+  }
+
+  private issueOperationInTransaction(taskId: string, candidate: BookingReadActionV2) {
+      assertSafeRef(candidate.actionId); candidate.factRefs.forEach(assertSafeRef)
+      const state = this.requireTask(taskId)
+      if (state.pendingAction) {
+        if (state.pendingAction.actionId !== candidate.actionId) throw new Error('receipt_required')
+        if (!matchesCheckpoint(candidate, state.pendingAction)) throw new Error('action_conflict')
+        return this.operationEvent(taskId, state.pendingAction, candidate)
+      }
+      if (candidate.contextRef !== state.contextRef) throw new Error('context_mismatch')
+      if (!state.allowedActions.includes(candidate.kind)) throw new Error('unsupported_action')
+      if (candidate.expectedRevision !== state.revision) throw new Error('stale_revision')
+      if (candidate.relaxationApprovalRef) throw new Error('approval_ref_planner_owned_forbidden')
+      let action = candidate
+      if (state.awaitingApproval) {
+        const approval = state.awaitingApproval
+        if (!approval.approval || Date.parse(approval.expiresAt) <= Date.parse(this.now())) throw new Error('approval_expired')
+        const ref: RelaxationApprovalRefV2 = {
+          approvalId: approval.approval.approvalId, blockerId: approval.blocker.blockerId,
+          contextRef: state.contextRef, sourceTurnId: approval.sourceTurnId,
+          presentationRequestKey: approval.presentationRequestKey, sourceActionId: approval.blocker.sourceActionId,
+          targetActionId: candidate.actionId, sourceRevision: candidate.expectedRevision,
+          targetActionKind: candidate.kind, to: approval.approval.to, expiresAt: approval.expiresAt,
+          nonce: approval.nonce, sourceReceiptDigest: approval.blocker.sourceReceiptDigest,
+          scope: approval.blocker.scope, code: approval.blocker.code, criterionPath: approval.blocker.criterionPath,
+          valueDigest: approval.blocker.valueDigest,
+        }
+        action = { ...candidate, relaxationApprovalRef: ref }
+        this.append(APPROVAL_CONSUMED, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef: state.contextRef, approval, ref, approvalDigest: bookingV2Digest(ref) }, `booking-v2:approval-consumed:${taskId}:${approval.approval.approvalId}:${approval.nonce}`)
+      }
+      const eventId = this.idFactory('event'); const emittedAt = this.now(); const sequence = state.lastSequence + 1
+      const event = { schemaVersion: 'booking.surface.v2' as const, eventId, taskId, contextRef: state.contextRef, sequence, emittedAt, kind: 'operation' as const, action }
+      const eventValidation = validateBookingSurfaceEventV2(event)
+      if (!eventValidation.ok) throw new Error(`invalid_operation_event:${errorText(eventValidation)}`)
+      if (!state.lastTurnId) throw new Error(`ledger_corrupt:${taskId}:turn_id`)
+      this.appendAction(taskId, state.contextRef, checkpointFor(action, eventId, sequence, emittedAt, state.lastTurnId))
+      return event
+  }
+
+  continueWithReceipt(turn: Extract<BookingCopilotTurnV2, { kind: 'action.receipt.continuation' }>): BookingCopilotTaskStateV2 {
+    const validation = validateBookingSurfaceV2(turn)
+    if (!validation.ok) throw new Error(`invalid_receipt_continuation:${errorText(validation)}`)
+    assertCanonicalReceipt(turn.receipt)
+    const run = this.ledger.db.transaction(() => {
+      const state = this.requireTask(turn.taskId)
+      if (turn.workspace.contextRef !== state.contextRef || turn.receipt.contextRef !== state.contextRef) throw new Error('context_mismatch')
+      const receiptWorkspace = bookingV2WorkspaceDigest(turn.workspace)
+      const receiptWorkspaceSemantic = bookingV2WorkspaceSemanticDigest(turn.workspace)
+      if (!state.workspaceSnapshot || !workspaceBoundaryMatches(state.workspaceSnapshot, turn.workspace)) throw new Error('workspace_mismatch')
+      const existing = this.ledger.db.prepare(`SELECT payload FROM events WHERE tenant_id = ? AND run_id = ? AND kind = ? ORDER BY seq`).all(this.ledger.tenant, turn.taskId, RECEIPT) as Array<{ payload: string }>
+      const receiptDigest = canonicalReceiptDigest(turn.receipt)
+      for (const row of existing) {
+        const prior = JSON.parse(row.payload) as ReceiptPayload
+        if (prior.receipt.actionId !== turn.receipt.actionId) continue
+        if (prior.receiptDigest !== receiptDigest) throw new Error('receipt_conflict')
+        if (prior.workspaceDigest !== receiptWorkspace) throw new Error('workspace_mismatch')
+        return state
+      }
+      if (!state.pendingAction) throw new Error('unexpected_receipt')
+      if (state.pendingAction.actionId !== turn.receipt.actionId) throw new Error('receipt_action_mismatch')
+      if (turn.receipt.revision < state.pendingAction.expectedRevision) throw new Error('revision_regression')
+      if (turn.receipt.resultContract.blockers.some((blocker) => blocker.sourceActionId !== state.pendingAction!.actionId)) throw new Error('receipt_source_action_mismatch')
+      if (!workspacePostActionMatches(state.workspaceSnapshot, turn.workspace, state.pendingAction.kind)) throw new Error('workspace_mismatch')
+      if (!receiptObservationMatchesAction(turn.receipt.observation.kind, state.pendingAction.kind)) throw new Error('receipt_observation_action_mismatch')
+      if (!receiptTargetMatchesAction(turn.receipt, state.pendingAction)) throw new Error('receipt_target_mismatch')
+      if (turn.receipt.resultContract.relaxationsApplied.some((approval) => !this.approvalWasConsumed(turn.taskId, approval, state.pendingAction!.actionId))) throw new Error('receipt_relaxation_unauthorized')
+      this.append(RECEIPT, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: state.contextRef, receipt: turn.receipt, receiptDigest, workspaceDigest: receiptWorkspace, workspaceSemanticDigest: receiptWorkspaceSemantic, workspace: turn.workspace }, `booking-v2:receipt:${turn.taskId}:${turn.receipt.actionId}`)
+      const blocker = turn.receipt.resultContract.blockers[0]
+      if (blocker) {
+        // Never derive this claim from the injectable id factory: production
+        // and crash proofs must not make a presentation nonce guessable from
+        // deterministic task/event ids.
+        const nonce = randomUUID()
+        const sourceTurnId = state.pendingAction?.sourceTurnId ?? state.lastTurnId ?? `ordinal:${state.userTurnCount}`
+        const requestKey = presentationKey(turn.taskId, sourceTurnId, turn.receipt.actionId, receiptDigest)
+        const approval = { blocker, options: [approvalOption(turn.taskId, state.contextRef, sourceTurnId, requestKey, blocker, 'prefer', nonce), approvalOption(turn.taskId, state.contextRef, sourceTurnId, requestKey, blocker, 'drop', nonce)], optionsEmitted: false, approval: undefined as never, nonce, expiresAt: new Date(Date.parse(this.now()) + this.approvalTtlMs).toISOString(), sourceTurnId, presentationRequestKey: requestKey }
+        this.append(APPROVAL_GRANTED, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: state.contextRef, approval, approvalDigest: bookingV2Digest(approval) }, `booking-v2:approval-awaiting:${turn.taskId}:${turn.receipt.actionId}`)
+      }
+      return this.requireTask(turn.taskId)
+    })
+    return run.immediate()
+  }
+
+  emitEvent(taskId: string, draft: BookingSurfaceEventDraftV2): Exclude<BookingSurfaceEventV2, { kind: 'operation' }> {
+    return this.ledger.db.transaction(() => this.emitEventInTransaction(taskId, draft)).immediate()
+  }
+
+  private emitEventInTransaction(taskId: string, draft: BookingSurfaceEventDraftV2) {
+      const state = this.requireTask(taskId)
+      const event = { schemaVersion: 'booking.surface.v2' as const, eventId: this.idFactory('event'), taskId, contextRef: state.contextRef, sequence: state.lastSequence + 1, emittedAt: this.now(), ...draft } as Exclude<BookingSurfaceEventV2, { kind: 'operation' }>
+      const checked = validateBookingSurfaceEventV2(event)
+      if (!checked.ok) throw new Error(`invalid_event:${errorText(checked)}`)
+      this.append(EVENT, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef: state.contextRef, eventId: event.eventId, sequence: event.sequence, emittedAt: event.emittedAt, eventKind: event.kind, ...(event.kind === 'status' ? { status: event.status } : {}), contentDigest: bookingV2Digest(draft) }, `booking-v2:event:${taskId}:${event.eventId}`)
+      return event
+  }
+
+  private operationEvent(taskId: string, checkpoint: BookingActionCheckpointV2, action: BookingReadActionV2) {
+    const replayAction = action.relaxationApprovalRef || !checkpoint.relaxationApprovalRef ? action : { ...action, relaxationApprovalRef: checkpoint.relaxationApprovalRef }
+    return { schemaVersion: 'booking.surface.v2' as const, eventId: checkpoint.eventId, taskId, contextRef: checkpoint.contextRef, sequence: checkpoint.sequence, emittedAt: checkpoint.emittedAt, kind: 'operation' as const, action: replayAction }
+  }
+
+  private requireTask(taskId: string): BookingCopilotTaskStateV2 { const state = this.resumeTask(taskId); if (!state) throw new Error('task_not_found'); return state }
+  private rows(taskId: string): Row[] { return this.ledger.db.prepare(`SELECT seq, kind, payload FROM events WHERE tenant_id = ? AND run_id = ? AND kind IN (?, ?, ?, ?, ?, ?, ?, ?, ?) ORDER BY seq`).all(this.ledger.tenant, taskId, STARTED, TURN, ACTION, RECEIPT, EVENT, APPROVAL_GRANTED, APPROVAL_OFFERED, APPROVAL_CONSUMED, DECISION_BATCH) as Row[] }
+  private append(kind: string, taskId: string, payload: BasePayload, idemKey: string): void {
+    const result = this.ledger.db.prepare(`INSERT OR IGNORE INTO events (tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(this.ledger.tenant, this.now(), ACTOR, kind, taskId, JSON.stringify(payload), idemKey, taskId)
+    if (result.changes === 0) throw new Error(`ledger_write_failed:${kind}`)
+  }
+  private appendTurn(taskId: string, contextRef: string, requestDigest: string, workspaceDigest: string, workspaceSemanticDigest: string, ordinal: number, turnId: string, workspace?: BookingWorkspaceSnapshotV2): void { if (!workspace) throw new Error('ledger_write_failed:turn_workspace'); this.append(TURN, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, workspace, turnId }, `booking-v2:turn:${taskId}:${turnId}`) }
+  private appendApproval(taskId: string, contextRef: string, approval: BookingApprovalStateV2): void { this.append(APPROVAL_GRANTED, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, approval, approvalDigest: bookingV2Digest(approval) }, `booking-v2:approval-granted:${taskId}:${approval.approval?.approvalId ?? 'pending'}:${approval.nonce}`) }
+  private appendAction(taskId: string, contextRef: string, action: BookingActionCheckpointV2): void { this.append(ACTION, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, action }, `booking-v2:action:${taskId}:${action.actionId}`) }
+  private ensureApprovalOffered(taskId: string, contextRef: string, approval: BookingApprovalStateV2, requestKey: string): void {
+    if (requestKey !== approval.presentationRequestKey) throw new Error('approval_presentation_key_mismatch')
+    const idemKey = `booking-v2:approval-offered:${taskId}:${requestKey}`
+    const exists = this.ledger.db.prepare('SELECT 1 AS present FROM events WHERE tenant_id = ? AND idem_key = ?').get(this.ledger.tenant, idemKey) as { present: number } | undefined
+    if (!exists) this.append(APPROVAL_OFFERED, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, approval, approvalDigest: bookingV2Digest(approval) }, idemKey)
+  }
+  private approvalWasConsumed(taskId: string, approval: RelaxationApprovalV2, targetActionId: string): boolean {
+    const rows = this.ledger.db.prepare(`SELECT payload FROM events WHERE tenant_id = ? AND run_id = ? AND kind = ?`).all(this.ledger.tenant, taskId, APPROVAL_CONSUMED) as Array<{ payload: string }>
+    return rows.some(({ payload }) => {
+      const consumed = JSON.parse(payload) as ApprovalPayload
+      return consumed.ref?.targetActionId === targetActionId && consumed.approval?.approval && bookingV2Digest(consumed.approval.approval) === bookingV2Digest(approval)
+    })
+  }
+}

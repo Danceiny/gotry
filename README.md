@@ -16,7 +16,7 @@
 | **License** | **MIT** ([LICENSE](LICENSE)) |
 | **Docs** | English (this file) · [简体中文 README](README.zh-CN.md) · deep engineering docs are Chinese-first ([docs/architecture.md](docs/architecture.md)) |
 
-> **HotelByte Booking Copilot status:** this branch contains a Draft, BFF-only embedded planner for the existing search/offer/Checkout workspace. Its closed profile has no `Book` capability; the Linux artifact is bound to an exact source/schema/runtime identity. It is not part of npm `latest` and is not merge-eligible until four-surface real-inventory UAT, including an unavailable/changed-offer recovery loop through the original Checkout, has evidence.
+> **HotelByte Booking Copilot status:** this branch contains a Draft, BFF-only embedded planner for the existing search/offer/Checkout workspace. Its v1/v2 protocols share one listener and task ownership; v2 exposes seven durable phase values across six lifecycle stages (`terminal`/`error` are the two terminal outcomes) while v1 retains its legacy two-state projection, and the closed profile has no `Book` capability. The Linux artifact is bound to an exact source/schema/runtime identity. It is not part of npm `latest` and is not merge-eligible until four-surface real-inventory UAT, including an unavailable/changed-offer recovery loop through the original Checkout, has evidence.
 
 ---
 

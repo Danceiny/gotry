@@ -11,52 +11,73 @@ import { readFileSync } from 'node:fs'
 
 const schemaUrl = new URL('../../../schemas/booking.surface.v1.schema.json', import.meta.url)
 export const canonicalBookingSurfaceSchemaV1 = JSON.parse(readFileSync(schemaUrl, 'utf8'))
+const schemaV2Url = new URL('../../../schemas/booking.surface.v2.schema.json', import.meta.url)
+export const canonicalBookingSurfaceSchemaV2 = JSON.parse(readFileSync(schemaV2Url, 'utf8'))
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
-function definitionFromRef(ref) {
+function definitionFromRef(ref, schema) {
   const prefix = '#/$defs/'
-  if (typeof ref !== 'string' || !ref.startsWith(prefix)) {
+  if (typeof ref !== 'string') {
     throw new Error(`booking_schema_external_ref_forbidden:${String(ref)}`)
   }
-  const name = ref.slice(prefix.length)
-  const definition = canonicalBookingSurfaceSchemaV1.$defs?.[name]
+  const externalV1 = 'https://gotry.dev/schemas/booking.surface.v1.schema.json#/$defs/'
+  const definitionSchema = ref.startsWith(prefix) ? schema : ref.startsWith(externalV1) ? canonicalBookingSurfaceSchemaV1 : undefined
+  if (!definitionSchema) throw new Error(`booking_schema_external_ref_forbidden:${String(ref)}`)
+  const name = ref.startsWith(prefix) ? ref.slice(prefix.length) : ref.slice(externalV1.length)
+  const definition = definitionSchema.$defs?.[name]
   if (!definition) throw new Error(`booking_schema_missing_definition:${name}`)
   return definition
 }
 
-function inlineLocalRefs(value, stack = []) {
-  if (Array.isArray(value)) return value.map((item) => inlineLocalRefs(item, stack))
+function inlineLocalRefs(value, schema, stack = []) {
+  if (Array.isArray(value)) return value.map((item) => inlineLocalRefs(item, schema, stack))
   if (typeof value !== 'object' || value === null) return value
   if (typeof value.$ref === 'string') {
     if (stack.includes(value.$ref)) throw new Error(`booking_schema_recursive_ref:${value.$ref}`)
     const { $ref, ...siblings } = value
+    const definitionSchema = typeof $ref === 'string' && $ref.startsWith('https://gotry.dev/schemas/booking.surface.v1.schema.json#/$defs/') ? canonicalBookingSurfaceSchemaV1 : schema
     return {
-      ...inlineLocalRefs(definitionFromRef($ref), [...stack, $ref]),
-      ...inlineLocalRefs(siblings, stack),
+      ...inlineLocalRefs(definitionFromRef($ref, schema), definitionSchema, [...stack, $ref]),
+      ...inlineLocalRefs(siblings, schema, stack),
     }
   }
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, inlineLocalRefs(item, stack)]))
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, inlineLocalRefs(item, schema, stack)]))
+}
+
+function canonicalActionSchemaForKind(kind, schema, definitionName) {
+  const action = schema.$defs?.[definitionName]
+  if (!action) throw new Error('booking_schema_action_union_missing')
+  if (Array.isArray(action.allOf)) {
+    const branch = action.allOf.find((candidate) => candidate?.if?.properties?.kind?.const === kind)
+    const input = branch?.then?.properties?.input
+    if (!input) throw new Error(`booking_schema_action_kind_missing:${kind}`)
+    return clone(inlineLocalRefs({
+      type: action.type,
+      required: action.required,
+      properties: { ...action.properties, kind: { type: 'string', const: kind }, input },
+      additionalProperties: action.additionalProperties,
+    }, schema))
+  }
+  if (!Array.isArray(action.oneOf)) throw new Error('booking_schema_action_union_missing')
+  const branch = action.oneOf.find((candidate) => candidate?.allOf?.some((part) => part?.properties?.kind?.const === kind))
+  const base = schema.$defs?.ActionBase
+  const input = branch?.allOf?.find((part) => part?.properties?.input)?.properties?.input
+  if (!base || !input) throw new Error(`booking_schema_action_kind_missing:${kind}`)
+  return clone(inlineLocalRefs({
+    ...base,
+    properties: { ...base.properties, kind: { type: 'string', const: kind }, input },
+  }, schema))
 }
 
 export function canonicalBookingActionSchemaForKind(kind) {
-  const action = canonicalBookingSurfaceSchemaV1.$defs?.BookingReadActionV1
-  if (!action || !Array.isArray(action.allOf)) throw new Error('booking_schema_action_union_missing')
-  const branch = action.allOf.find((candidate) => candidate?.if?.properties?.kind?.const === kind)
-  const input = branch?.then?.properties?.input
-  if (!input) throw new Error(`booking_schema_action_kind_missing:${kind}`)
-  return clone(inlineLocalRefs({
-    type: action.type,
-    required: action.required,
-    properties: {
-      ...action.properties,
-      kind: { type: 'string', const: kind },
-      input,
-    },
-    additionalProperties: action.additionalProperties,
-  }))
+  return canonicalActionSchemaForKind(kind, canonicalBookingSurfaceSchemaV1, 'BookingReadActionV1')
+}
+
+export function canonicalBookingActionSchemaForKindV2(kind) {
+  return canonicalActionSchemaForKind(kind, canonicalBookingSurfaceSchemaV2, 'Action')
 }
 
 const DSH_JSON_SCHEMA_KEYS = new Set([
@@ -85,4 +106,8 @@ function projectDshSchema(value) {
  */
 export function dshBookingActionSchemaForKind(kind) {
   return projectDshSchema(canonicalBookingActionSchemaForKind(kind))
+}
+
+export function dshBookingActionSchemaForKindV2(kind) {
+  return projectDshSchema(canonicalBookingActionSchemaForKindV2(kind))
 }
