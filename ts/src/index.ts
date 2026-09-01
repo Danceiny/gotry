@@ -165,6 +165,27 @@ type JsonObject = { [k: string]: Json }
 export function apply(ctx: Context, config: Config): void {
   installToolBudget(ctx)
 
+  const benchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath?.trim() ?? ''
+  if (benchmarkEnvironmentConfigPath) {
+    // Benchmark mode is a deliberately minimal kernel: only the model
+    // override and the environment bridge are installed.  In particular,
+    // product prompt variables, process/consent guards, and guarded product
+    // tools must not be observable on this path.
+    installModelOverride(ctx as unknown as Parameters<typeof installModelOverride>[0])
+    const getService = (ctx as unknown as { get?: (name: string, fallback?: unknown) => unknown }).get
+    const directSubprocess = (typeof getService === 'function'
+      ? getService.call(ctx, 'subprocess')
+      : undefined) as BenchmarkSubprocessService | undefined
+    const projection = registerBenchmarkEnvironmentBridge(
+      benchmarkEnvironmentConfigPath,
+      tool => ctx.tools.register(tool),
+      directSubprocess,
+    )
+    installBenchmarkToolIsolation(ctx)
+    installBenchmarkAgentConformance(ctx, projection)
+    return
+  }
+
   // 时间感知:注册动态变量,persona 里用 {{current_date}} 引用。
   // 每次 assemble 时取系统时钟——LLM 始终知道「今天是几号」。
   const sp = (ctx as unknown as Record<string, unknown>)['systemPrompt'] as {
@@ -218,19 +239,6 @@ export function apply(ctx: Context, config: Config): void {
       t.execute = guardToolExecute(String(t.name), config.stateRoot ?? '.', t.execute as (args: never, exec: unknown) => never)
     }
     ctx.tools.register(t as unknown as ReturnType<typeof defineTool>)
-  }
-
-  if (config.benchmarkEnvironmentConfigPath?.trim()) {
-    const bridgePath = config.benchmarkEnvironmentConfigPath
-    // subprocess is an optional Cordis service: a missing provider must not make
-    // the normal plugin path fail. Keep the benchmark bridge fail-closed.
-    const getService = (ctx as unknown as { get?: (name: string, fallback?: unknown) => unknown }).get
-    const directSubprocess = (typeof getService === 'function'
-      ? getService.call(ctx, 'subprocess')
-      : undefined) as BenchmarkSubprocessService | undefined
-    const projection = registerBenchmarkEnvironmentBridge(bridgePath, registerGuarded, directSubprocess)
-    installBenchmarkToolIsolation(ctx)
-    installBenchmarkAgentConformance(ctx, projection)
   }
 
   registerGuarded(defineTool({
