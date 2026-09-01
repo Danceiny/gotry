@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { ensureLedger } from '../src/state-ledger.ts'
 import { BookingCopilotTaskRuntimeV2 } from '../src/booking-surface/runtime-v2.ts'
 import { createAvailabilityPolicyV2, digestV2, MAX_HOTELS_PER_TASK_V2, MAX_OFFER_CHECKS_PER_HOTEL_V2, MAX_OFFER_QUERIES_PER_HOTEL_V2, recordObservedOffersQueryV2, recordOfferCheckIssuedV2, recordOfferCheckReceiptV2, recordOffersGenerationV2, recordOffersQueryIssuedV2, canIssueOfferCheckV2, type AvailabilityPolicyStateV2 } from '../src/booking-surface/availability-policy-v2.ts'
-import type { ActionReceiptV2, BookingWorkspaceSnapshotV2 } from '../src/booking-surface/contracts-v2.ts'
+import { bookingSurfaceAllowedActionsV2 } from '../src/booking-surface/contracts-v2.ts'
+import type { ActionReceiptV2, BookingSurfaceEventV2, BookingWorkspaceSnapshotV2 } from '../src/booking-surface/contracts-v2.ts'
 import type { OfferCriteriaV1 } from '../src/booking-surface/contracts.ts'
 const ws=(revision:number,hotels:string[],offers:Array<[string,string]>,shortlistedOfferRefs:string[]=[]):BookingWorkspaceSnapshotV2=>({schemaVersion:'booking.surface.v2',contextRef:'ctx-availability',surface:'tenant',revision,locale:'en-US',currency:'AED',searchDraft:{},results:{status:'idle'},visibleHotels:hotels.map(h=>({hotelRef:h,name:h,factRefs:[]})),loadedOffers:offers.map(([offerRef,hotelRef])=>({offerRef,hotelRef,evidenceLevel:'rate_loaded',factRefs:[]})),shortlistedOfferRefs,capabilities:{surface:'tenant',allowedActions:['offers.query','offer.check'] as any}})
 const receipt=(actionId:string,revision:number,offerRef:string,status:ActionReceiptV2['status']='unavailable',available=false):ActionReceiptV2=>({schemaVersion:'booking.surface.v2',kind:'action.receipt',actionId,contextRef:'ctx-availability',status,revision,observation:{kind:'offer.availability',offerRef,available,verifiedOfferRef:available?'verified-'+offerRef:undefined,changedFactRefs:[],gapCodes:[]},resultContract:{outcome:available?'complete':'empty',hardCriteriaMet:available,factRefs:[],gapCodes:[],blockers:[],relaxationsApplied:[]}})
@@ -13,6 +14,11 @@ const foldQuery = (state: AvailabilityPolicyStateV2, hotelRefs: string[], worksp
 const criteria: OfferCriteriaV1 = {}
 const offersReceipt=(actionId:string,revision:number,hotelRefs:string[],offerRefs:string[],loadedHotelCount:number,status:ActionReceiptV2['status']='applied',outcome:'complete'|'partial'|'empty'='complete',hardCriteriaMet=true):ActionReceiptV2=>({schemaVersion:'booking.surface.v2',kind:'action.receipt',actionId,contextRef:'ctx-availability',status,revision,observation:{kind:'offers.state',hotelRefs,offerRefs,loadedHotelCount,gapCodes:[]},resultContract:{outcome,hardCriteriaMet,factRefs:[],gapCodes:[],blockers:[],relaxationsApplied:[]}})
 const gapReceipt=(actionId:string,revision:number,status:ActionReceiptV2['status']='failed'):ActionReceiptV2=>({schemaVersion:'booking.surface.v2',kind:'action.receipt',actionId,contextRef:'ctx-availability',status,revision,observation:{kind:'gap',code:'hotel_rates_failed',factRefs:[]},resultContract:{outcome:'partial',hardCriteriaMet:false,factRefs:[],gapCodes:['hotel_rates_failed'],blockers:[],relaxationsApplied:[]}})
+
+// UAT-facing product availability observation: these are exact least-privilege
+// sets, and are intentionally separate from the full tenant action vocabulary.
+assert.deepEqual(bookingSurfaceAllowedActionsV2('storefront'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus'])
+assert.deepEqual(bookingSurfaceAllowedActionsV2('payment_link'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'hotel.select'])
 
 // Lifetime budget mutation guard: these assertions exercise the transitions,
 // not just the exported constants, so changing a comparison or reset policy
@@ -168,8 +174,12 @@ runtime.issueOperation('runtime-availability', query2)
 runtime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: 'runtime-availability', workspace: ws(3, ['rh'], []), receipt: { schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId: 'rq-2', contextRef: 'ctx-availability', status: 'no_match', revision: 3, observation: { kind: 'offers.state', hotelRefs: ['rh'], offerRefs: [], loadedHotelCount: 0 }, resultContract: { outcome: 'empty', hardCriteriaMet: false, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
 assert.equal(runtime.resumeTask('runtime-availability')?.phase, 'terminal')
 const eventCount = ledger.countEvents()
-assert.deepEqual(runtime.terminalDecisionBatch('runtime-availability', 'receipt:rq-2:test'), runtime.terminalDecisionBatch('runtime-availability', 'receipt:rq-2:test'))
+const terminalBatchPayload = ledger.db.prepare("SELECT payload FROM events WHERE kind = 'booking.copilot.v2.decision.batch' ORDER BY seq DESC LIMIT 1").get() as { payload: string }
+const terminalBatch = JSON.parse(terminalBatchPayload.payload) as { requestKey: string; events: BookingSurfaceEventV2[] }
+assert.deepEqual(runtime.terminalDecisionBatch('runtime-availability', terminalBatch.requestKey), terminalBatch.events)
+assert.deepEqual(runtime.terminalDecisionBatch('runtime-availability', terminalBatch.requestKey), terminalBatch.events, 'exact terminal batch replay is read-only')
+assert.throws(() => runtime.terminalDecisionBatch('runtime-availability', 'arbitrary-new-terminal-key'), /task_terminal/)
 assert.throws(() => runtime.issueOperation('runtime-availability', { ...query, actionId: 'late', expectedRevision: 3 }), /task_terminal/)
 assert.throws(() => runtime.emitEvent('runtime-availability', { kind: 'status', status: 'working' }), /task_terminal/)
-assert.equal(ledger.countEvents() > eventCount, true)
+assert.equal(ledger.countEvents(), eventCount)
 ledger.close(); restarted['ledger'].close(); rmSync(ledgerRoot, { recursive: true, force: true })

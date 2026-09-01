@@ -29,6 +29,7 @@ import {
   validateBookingReadActionV1,
   validateBookingSurfaceEventV1,
 } from './validation.ts'
+import { normalizeBookingErrorCode, safeBookingErrorMessage } from './error-codes.ts'
 
 export type {
   ActionReceiptContinuationV1,
@@ -380,6 +381,9 @@ export class BookingCopilotTaskRuntime {
     // critical section across independent runtime processes.
     const apply = this.ledger.db.transaction(() => {
       const state = this.requireTask(taskId)
+      const safeDraft = draft.kind === 'error'
+        ? { ...draft, error: { ...draft.error, code: normalizeBookingErrorCode(draft.error.code), message: safeBookingErrorMessage(normalizeBookingErrorCode(draft.error.code)) } }
+        : draft
       const event = {
         schemaVersion: 'booking.surface.v1',
         eventId: this.idFactory('event'),
@@ -387,7 +391,7 @@ export class BookingCopilotTaskRuntime {
         contextRef: state.contextRef,
         sequence: state.lastSequence + 1,
         emittedAt: this.now(),
-        ...draft,
+        ...safeDraft,
       } as Exclude<BookingSurfaceEventV1, BookingOperationEventV1>
       const validation = validateBookingSurfaceEventV1(event)
       if (!validation.ok) throw new Error(`invalid_event:${validation.errors.join('; ')}`)
@@ -399,7 +403,7 @@ export class BookingCopilotTaskRuntime {
         sequence: event.sequence,
         emittedAt: event.emittedAt,
         eventKind: event.kind,
-        contentDigest: digest(draft),
+        contentDigest: digest(safeDraft),
       }
       this.appendLedgerEvent(EVENT_EMITTED, taskId, payload, `booking-copilot:event:${taskId}:${event.eventId}`)
       return event

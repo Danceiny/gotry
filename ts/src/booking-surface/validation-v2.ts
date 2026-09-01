@@ -16,6 +16,7 @@ const kinds = new Set<string>(BOOKING_READ_ACTION_KINDS_V2)
 const codes = new Set<string>(BOOKING_V2_BLOCKER_CODES)
 const gapCodes = new Set<string>(BOOKING_V2_GAP_CODES)
 const safeOpaque = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(value)
+const safeRequestKey = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]{7,127}$/.test(value) && !secret.test(value)
 const secret = /(?:Bearer\s+\S|\bsk-(?!ill(?:s)?\b)[A-Za-z0-9_-]{12,}|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/i
 // `.example` is reserved for documentation, so these identifiers cannot be a
 // real mailbox. Do not allowlist lookalikes on routable domains.
@@ -57,13 +58,31 @@ function hasPaymentCard(value: string): boolean {
   return candidates.some((candidate) => (explicitlyLabeled || /[ -]/.test(candidate)) && luhn(candidate))
 }
 
-function hasSensitiveText(value: string): boolean {
+function hasSensitiveText(value: string, opts: { allowOpaqueNumericId?: boolean } = {}): boolean {
   const normalized = value.normalize('NFKC')
   if (normalized.includes('@') && !technicalEmail.test(normalized.trim())) return true
-  return secret.test(normalized) || hasInternationalPhone(normalized) || hasSupplierCost(normalized) || hasPaymentCard(normalized)
+  return secret.test(normalized) || hasInternationalPhone(normalized) || hasSupplierCost(normalized) || (!opts.allowOpaqueNumericId && hasPaymentCard(normalized))
 }
 function luhn(value: string): boolean { const digits = value.replaceAll(/\D/g, ''); if (digits.length < 13 || digits.length > 19) return false; let sum = 0; for (let i = digits.length - 1, parity = 0; i >= 0; i--, parity++) { let n = Number(digits[i]); if (parity % 2 === 1) { n *= 2; if (n > 9) n -= 9 } sum += n } return sum % 10 === 0 }
-const scan = (v: unknown): boolean => typeof v === 'string' ? hasSensitiveText(v) : Array.isArray(v) ? v.some(scan) : !!v && typeof v === 'object' ? Object.entries(v).some(([k,x]) => /cost|price/i.test(k) ? /supplier|internal|wholesale/i.test(String(x)) : scan(x)) : false
+const opaqueFieldNames = new Set([
+  'eventId', 'taskId', 'contextRef', 'actionId', 'hotelRef', 'offerRef', 'verifiedOfferRef',
+  'orderRef', 'searchSessionRef', 'handoffRef', 'questionId', 'blockerId', 'approvalId',
+  'sourceActionId', 'targetActionId', 'sourceTurnId', 'turnId', 'requestKey', 'taskHandle',
+  'nonce', 'deliveryNonce', 'optionDigest', 'sourceReceiptDigest', 'valueDigest',
+])
+function isOpaqueFieldPath(path: string): boolean {
+  const clean = path.replace(/\[\]$/g, '')
+  const field = clean.split('.').at(-1)
+  return field ? opaqueFieldNames.has(field) || field.endsWith('Ref') || field.endsWith('Refs') : false
+}
+const scan = (v: unknown, path = '$'): boolean => typeof v === 'string'
+  ? hasSensitiveText(v, { allowOpaqueNumericId: isOpaqueFieldPath(path) })
+  : Array.isArray(v)
+    ? v.some((child) => scan(child, `${path}[]`))
+    : !!v && typeof v === 'object'
+      ? Object.entries(v).some(([k,x]) => /cost|price/i.test(k) ? /supplier|internal|wholesale/i.test(String(x)) : scan(x, `${path}.${k}`))
+      : false
+export function isSafeBookingRequestKeyV2(value: unknown): value is string { return safeRequestKey(value) }
 export type BookingSurfaceV2ValidationResult = { ok: true } | { ok: false; errors: string[] }
 function errors(v: ValidateFunction): string[] { return (v.errors ?? []).map(e => `${e.instancePath || '$'}: ${e.message ?? e.keyword}`) }
 function cross(value: unknown): string[] {
@@ -73,6 +92,7 @@ function cross(value: unknown): string[] {
   const x = value as Record<string, any>
   const semantic = x.kind === 'action.receipt.continuation' ? x.receipt : x
   if (x.kind === 'user.turn.ingress') {
+    if (!safeRequestKey(x.requestKey)) e.push('$.requestKey: safe opaque request key required')
     const workspace = x.workspace as Record<string, any> | undefined
     const visibleHotels = Array.isArray(workspace?.visibleHotels) ? workspace.visibleHotels : []
     const loadedOffers = Array.isArray(workspace?.loadedOffers) ? workspace.loadedOffers : []
