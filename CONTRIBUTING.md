@@ -43,7 +43,7 @@ cp .env.example .env      # 填 LLM_API_KEY(DeepSeek sk-... 或 OpenAI 兼容协
 ./scripts/run-all-tests.sh   # 全栈回归:§1-§34,含金标准/重放/账本/Z3 竞态/i18n/M3/M4 价值证据等全部套件
 ```
 
-部分会打免费公网 API（Open-Meteo/OpenSky/FlyAI）——离线或被限流时对应套件有降级断言，不会无脑失败。会话面 live 嗅探默认可用 `GOTRY_SESSION_LIVE=0` 关闭。
+天气回归使用受控 deterministic fixture；真实 Open-Meteo/Nominatim 仅属可变外围观测，不决定 merge gate。OpenSky/FlyAI 等 live 通道离线或被限流时对应套件有降级断言；会话面 live 嗅探默认可用 `GOTRY_SESSION_LIVE=0` 关闭。
 
 单独跑某个套件:
 
