@@ -38,6 +38,21 @@ guard/restriction as a fail-closed quarantine: no later model request enters
 the remaining assembly chain, and bridge/non-bridge dispatch is denied until
 that agent or process is disposed. HMR cannot hot-attach to the old agent.
 
+## Benchmark startup composition isolation
+
+After the owner-local config validates, but before any optional host plugin is
+resolved or imported, the CLI projects the top-level patch insert sequence to
+exactly one `gotry-tools` item. Calendar, map, ask-user, inline/reordered
+unknown items, and future non-GoTry inserts are discarded only for benchmark
+opt-in; default-off startup retains the ordinary GoTry composition. Missing or
+duplicate `gotry-tools` entries fail closed.
+
+The config path is then injected into that projected item through exactly one
+`hbcliBin` anchor. A missing or duplicate anchor, or a pre-existing config-path
+field, fails before optional-plugin resolution, dsh spawn, or relay activity.
+The error is stable and does not reflect package paths, config paths, plugin
+names, or benchmark content.
+
 ## Agent conformance and terminal gate
 
 Benchmark opt-in is headless one-shot only. GoTry adds an agent-scoped native
@@ -153,7 +168,11 @@ consumer dependency closure. It
 verifies default-off behavior, environment isolation, private config
 rejection, real output truncation, a real deadline, global `both` mode being
 overridden to one native bridge schema, and source/installed requests exposing
-no other model tool. Conformance cases additionally cover prose/no-call
+no other model tool. A clean-package projection fixture adds executable
+inline/reordered future plugins: default-off must actually load the poison,
+while benchmark opt-in must record zero loads and still reach the bridge.
+Missing/duplicate `gotry-tools`, missing/duplicate injection anchors, and a
+pre-existing config-path field must all stop before relay activity. Conformance cases additionally cover prose/no-call
 correction, one real native call followed by tagged JSON, one format-only
 retry, retry exhaustion, and parent stdout suppression. Unit contracts
 additionally cover live-agent rejection,
@@ -163,6 +182,10 @@ treatment evidence. Round 2 executed one frozen, diagnostic-only treatment:
 the provider preflight and planner succeeded, but the runner returned 3 before
 evaluation because the agent described an intended CLI/tool action without a
 structured bridge call or parseable tagged JSON. Official scores therefore
-remain null ([Round 2 evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18215707)). Round 3 addresses that general prompt/tool/output conformance gap;
-no score uplift or external benchmark closure is claimed until a new frozen
-treatment reaches the official evaluator.
+remain null ([Round 2 evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18215707)). Round 3 addressed that general prompt/tool/output conformance gap, but its new
+frozen treatment stopped after one runner spawn with planner/runner exit 1,
+zero released terminal bytes, no evaluator entry, and null official scores
+([Round 3 evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18232139)).
+Round 4 addresses the newly isolated startup-composition failure. No score
+uplift or external benchmark closure is claimed until a new frozen treatment
+reaches the official evaluator.

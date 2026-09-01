@@ -139,42 +139,120 @@ if (!existsSync(pluginEntry)) {
   console.error(`[gotry] 找不到插件入口: ${pluginEntry}(包不完整?)`)
   process.exit(1)
 }
-// dsh-map-tools 宿主插件(地图/路线/POI,零 key 走 OSM/OSRM):repo 用 vendored,
-// npm 用依赖解析;都找不到就整块剔除 patch 条目(缺地图不挡旅行规划)
-let mapEntry = ''
-const vendoredMap = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js')
-if (existsSync(vendoredMap)) {
-  mapEntry = vendoredMap
-} else {
-  // npm 布局:子路径可能被 exports 挡(resolve 抛错不能留下旧值),裸包名返回真实入口
-  try { mapEntry = require_.resolve('dsh-map-tools/lib/index.js') } catch { mapEntry = '' }
-  if (!mapEntry) { try { mapEntry = require_.resolve('dsh-map-tools') } catch { mapEntry = '' } }
+
+// Benchmark mode projects the patch before any optional host plugin is
+// resolved/imported. Non-GoTry (including unknown/future) insert entries are
+// safely discarded; a missing/duplicate gotry-tools entry fails closed.
+function projectBenchmarkPatch(raw, entryPath, configPath) {
+  const lines = raw.split('\n')
+  const rootInsertKey = /(?:^|[,{}]\s*)(?:insert|'insert'|"insert")\s*:/
+  const rootInsertLines = lines
+    .map((line, index) => {
+      const rootItem = line.match(/^-\s+(.*)$/)?.[1]?.trim()
+      const directProperty = line.match(/^ {2}(.*)$/)?.[1]?.trim()
+      return rootInsertKey.test(rootItem ?? '') || /^(?:insert|'insert'|"insert")\s*:/.test(directProperty ?? '') ? index : -1
+    })
+    .filter(index => index >= 0)
+  const canonicalInsertStarts = lines
+    .map((line, index) => /^- insert:\s*(?:#.*)?$/.test(line) ? index : -1)
+    .filter(index => index >= 0)
+  if (rootInsertLines.length !== 1 || canonicalInsertStarts.length !== 1 || rootInsertLines[0] !== canonicalInsertStarts[0]) {
+    throw new Error('benchmark insert block violation')
+  }
+  const start = canonicalInsertStarts[0]
+  let end = start + 1
+  while (end < lines.length) {
+    const line = lines[end]
+    if (line.trim() !== '' && !/^\s/.test(line) && !line.trim().startsWith('#')) break
+    end += 1
+  }
+  const body = lines.slice(start + 1, end)
+  const firstItem = body.find(line => line.trim() !== '' && !line.trim().startsWith('#'))
+  const firstItemMatch = firstItem?.match(/^(\s*)-\s+/)
+  if (!firstItemMatch) throw new Error('invalid insert sequence')
+  const itemIndent = firstItemMatch[1].length
+  const itemStarts = []
+  for (let index = 0; index < body.length; index += 1) {
+    const line = body[index]
+    if (line.trim() === '' || line.trim().startsWith('#')) continue
+    const indent = line.match(/^\s*/)?.[0].length ?? 0
+    if (indent < itemIndent || (indent === itemIndent && !/^\s*-\s+/.test(line))) {
+      throw new Error('invalid insert sequence')
+    }
+    if (indent === itemIndent) itemStarts.push(index)
+  }
+  if (itemStarts.length === 0) throw new Error('empty insert sequence')
+
+  const parseId = value => {
+    const quoted = value.trim().match(/^(['"])([A-Za-z0-9._-]+)\1(?:\s+#.*)?$/)
+    if (quoted) return quoted[2]
+    return value.trim().match(/^([A-Za-z0-9._-]+)(?:\s+#.*)?$/)?.[1] ?? null
+  }
+  const itemId = item => {
+    const header = item[0].slice(itemIndent + 2).trim()
+    const canonical = header.match(/^id:\s*(.+)$/)
+    if (canonical) return parseId(canonical[1])
+    if (header.startsWith('{')) {
+      const inline = header.match(/(?:^\{\s*|,\s*)id\s*:\s*(['"]?)([A-Za-z0-9._-]+)\1(?=\s*[,}])/)
+      if (inline) return inline[2]
+    }
+    const propertyIndent = ' '.repeat(itemIndent + 2)
+    const directIds = item.slice(1)
+      .map(line => line.startsWith(`${propertyIndent}id:`) ? parseId(line.slice(propertyIndent.length + 3)) : null)
+      .filter(Boolean)
+    if (directIds.length > 1) throw new Error('duplicate insert id')
+    return directIds[0] ?? null
+  }
+  const items = itemStarts.map((itemStart, index) => body.slice(itemStart, itemStarts[index + 1] ?? body.length))
+  const gotryItems = items.filter(item => itemId(item) === 'gotry-tools')
+  if (gotryItems.length !== 1) throw new Error('benchmark insert allowlist violation')
+  let gotry = gotryItems[0].join('\n')
+  gotry = rewriteBenchmarkPluginEntry(gotry, entryPath)
+  gotry = injectBenchmarkEnvironmentConfig(gotry, configPath)
+  return [...lines.slice(0, start + 1), ...gotry.split('\n'), ...lines.slice(end)].join('\n')
 }
-// 结构化澄清卡(T2):ask_user_question 工具 + user-questions 服务,从 dsh 包
-// 上下文解析(pnpm 嵌套布局下只有 dsh 自己看得见这些依赖);失败整块剔除
-// 澄清卡注入(T2):web 用 dsh 原生卡片;headless+TTY 用 gotry 的 stdio 提供方
-// (终端渲染选择题);headless 非 TTY(CI/管道)不注入——工具收到 NO_PROVIDER
-// 错误,人格契约 (5) 退化文本。GOTRY_ASK_STDIO=1 强制启用(测试/外接答复)。
-const stdioAsk = mode === 'headless' && (process.stdin.isTTY || process.env.GOTRY_ASK_STDIO === '1')
-  ? join(here, 'gotry-stdio-ask.js') : ''
-let askUserInsert = ''
-if (mode === 'web' || stdioAsk) try {
-  const reqFromDsh = createRequire(dshBin)
-  // 裸包名解析(这些包的 exports 不暴露 ./lib/index.js 子路径,但裸名返回真实入口)
-  // userQuestions 服务默认树已注册(重复插入会崩),只插工具消费者
-  const at = reqFromDsh.resolve('@deepseek-ai/dsh-tool-ask-user')
-  askUserInsert = (stdioAsk ? `    - id: gotry-stdio-ask\n      name: '${stdioAsk}'\n` : '')
-    + `    - id: dsh-tool-ask-user\n      name: '${at}'`
-} catch { /* 缺件不挡启动 */ }
 
-let patchRaw = readFileSync(staticPatch, 'utf-8')
-  .replace(/(name:\s*)'[^']*ts\/src\/index\.ts'/, `$1'${pluginEntry}'`)
-  .replace(/^\s*# \{ask-user-insert\}.*\n(\s*# .*\n)?/m, askUserInsert ? askUserInsert + '\n' : '')
+function rewriteBenchmarkPluginEntry(raw, entryPath) {
+  const itemIndent = raw.match(/^(\s*)-\s+/)?.[1].length
+  if (itemIndent === undefined) throw new Error('benchmark plugin item unavailable')
+  const propertyIndent = ' '.repeat(itemIndent + 2)
+  const anchorPattern = new RegExp(`^(${propertyIndent}name:\\s*)'[^'\\r\\n]*ts\\/src\\/index\\.ts'(\\s*(?:#.*)?)$`, 'gm')
+  const anchors = [...raw.matchAll(anchorPattern)]
+  if (anchors.length !== 1 || anchors[0].index === undefined) throw new Error('benchmark plugin anchor unavailable')
+  const anchor = anchors[0]
+  const escapedEntry = entryPath.replace(/'/g, "''")
+  const replacement = `${anchor[1]}'${escapedEntry}'${anchor[2]}`
+  const rewritten = `${raw.slice(0, anchor.index)}${replacement}${raw.slice(anchor.index + anchor[0].length)}`
+  if (!rewritten.includes(replacement)) throw new Error('benchmark plugin rewrite unavailable')
+  return rewritten
+}
 
-// Owner-local benchmark environment opt-in. Keep the path out of tool input
-// and logs; it is only injected into the local plugin config as YAML data.
+function injectBenchmarkEnvironmentConfig(raw, configPath) {
+  const itemIndent = raw.match(/^(\s*)-\s+/)?.[1].length
+  if (itemIndent === undefined) throw new Error('benchmark config item unavailable')
+  const propertyIndent = ' '.repeat(itemIndent + 2)
+  const configIndent = ' '.repeat(itemIndent + 4)
+  const configAnchors = raw.match(new RegExp(`^${propertyIndent}config:\\s*(?:#.*)?$`, 'gm')) ?? []
+  if (configAnchors.length !== 1) throw new Error('benchmark config block unavailable')
+  if ((raw.match(new RegExp(`^${configIndent}benchmarkEnvironmentConfigPath\\s*:`, 'gm')) ?? []).length !== 0) {
+    throw new Error('duplicate benchmark config path')
+  }
+  const anchorPattern = new RegExp(`^(${configIndent})hbcliBin:\\s*'[^'\\r\\n]*'\\s*(?:#.*)?$`, 'gm')
+  const anchors = [...raw.matchAll(anchorPattern)]
+  if (anchors.length !== 1 || anchors[0].index === undefined) throw new Error('benchmark config anchor unavailable')
+  const anchor = anchors[0]
+  const escapedPath = configPath.replace(/'/g, "''")
+  const insertAt = anchor.index + anchor[0].length
+  const injected = `${raw.slice(0, insertAt)}\n${anchor[1]}benchmarkEnvironmentConfigPath: '${escapedPath}'${raw.slice(insertAt)}`
+  if ((injected.match(new RegExp(`^${configIndent}benchmarkEnvironmentConfigPath\\s*:`, 'gm')) ?? []).length !== 1) {
+    throw new Error('benchmark config injection unavailable')
+  }
+  return injected
+}
+
 const benchmarkEnvironmentConfig = process.env.GOTRY_BENCHMARK_ENV_CONFIG
 let benchmarkTerminalConfig = null
+let benchmarkPatchProjection = null
 if (benchmarkEnvironmentConfig !== undefined && benchmarkEnvironmentConfig !== '') {
   let validBenchmarkEnvironmentConfig = false
   try {
@@ -191,21 +269,55 @@ if (benchmarkEnvironmentConfig !== undefined && benchmarkEnvironmentConfig !== '
       : null
     validBenchmarkEnvironmentConfig = loadedConfig !== null
     benchmarkTerminalConfig = loadedConfig?.terminal_output ?? null
+    if (validBenchmarkEnvironmentConfig) {
+      benchmarkPatchProjection = projectBenchmarkPatch(readFileSync(staticPatch, 'utf-8'), pluginEntry, benchmarkEnvironmentConfig)
+    }
   } catch { validBenchmarkEnvironmentConfig = false }
   if (!validBenchmarkEnvironmentConfig) {
     console.error('[gotry] benchmark environment configuration unavailable')
     process.exit(1)
   }
-  const benchmarkPathYaml = benchmarkEnvironmentConfig.replace(/'/g, "''")
-  patchRaw = patchRaw.replace(
-    /(\n\s+hbcliBin:\s+'[^']*')/,
-    `$1\n        benchmarkEnvironmentConfigPath: '${benchmarkPathYaml}'`,
-  )
 }
 if (benchmarkEnvironmentConfig && mode !== 'headless') {
   console.error('[gotry] benchmark environment requires headless mode')
   process.exit(1)
 }
+// dsh-map-tools 宿主插件(地图/路线/POI,零 key 走 OSM/OSRM):repo 用 vendored,
+// npm 用依赖解析;都找不到就整块剔除 patch 条目(缺地图不挡旅行规划)
+let mapEntry = ''
+if (!benchmarkEnvironmentConfig) {
+  const vendoredMap = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js')
+  if (existsSync(vendoredMap)) {
+    mapEntry = vendoredMap
+  } else {
+    // npm 布局:子路径可能被 exports 挡(resolve 抛错不能留下旧值),裸包名返回真实入口
+    try { mapEntry = require_.resolve('dsh-map-tools/lib/index.js') } catch { mapEntry = '' }
+    if (!mapEntry) { try { mapEntry = require_.resolve('dsh-map-tools') } catch { mapEntry = '' } }
+  }
+}
+// 结构化澄清卡(T2):ask_user_question 工具 + user-questions 服务,从 dsh 包
+// 上下文解析(pnpm 嵌套布局下只有 dsh 自己看得见这些依赖);失败整块剔除
+// 澄清卡注入(T2):web 用 dsh 原生卡片;headless+TTY 用 gotry 的 stdio 提供方
+// (终端渲染选择题);headless 非 TTY(CI/管道)不注入——工具收到 NO_PROVIDER
+// 错误,人格契约 (5) 退化文本。GOTRY_ASK_STDIO=1 强制启用(测试/外接答复)。
+const stdioAsk = mode === 'headless' && (process.stdin.isTTY || process.env.GOTRY_ASK_STDIO === '1')
+  ? join(here, 'gotry-stdio-ask.js') : ''
+let askUserInsert = ''
+if (!benchmarkEnvironmentConfig && (mode === 'web' || stdioAsk)) try {
+  const reqFromDsh = createRequire(dshBin)
+  // 裸包名解析(这些包的 exports 不暴露 ./lib/index.js 子路径,但裸名返回真实入口)
+  // userQuestions 服务默认树已注册(重复插入会崩),只插工具消费者
+  const at = reqFromDsh.resolve('@deepseek-ai/dsh-tool-ask-user')
+  askUserInsert = (stdioAsk ? `    - id: gotry-stdio-ask\n      name: '${stdioAsk}'\n` : '')
+    + `    - id: dsh-tool-ask-user\n      name: '${at}'`
+} catch { /* 缺件不挡启动 */ }
+
+const unboundPatch = benchmarkPatchProjection ?? readFileSync(staticPatch, 'utf-8')
+let patchRaw = benchmarkPatchProjection ?? unboundPatch.replace(/(name:\s*)'[^']*ts\/src\/index\.ts'/, `$1'${pluginEntry}'`)
+patchRaw = patchRaw.replace(/^\s*# \{ask-user-insert\}.*\n(\s*# .*\n)?/m, askUserInsert ? askUserInsert + '\n' : '')
+
+// Owner-local benchmark environment opt-in. Keep the path out of tool input
+// and logs; it is only injected into the local plugin config as YAML data.
 if (mapEntry) {
   patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-map-tools'/, `$1'${mapEntry}'`)
 } else {
@@ -214,12 +326,14 @@ if (mapEntry) {
 
 // dsh-calendar 宿主插件(CalDAV 工作窗口读取;未配置时工具报错降级,不挡启动)
 let calEntry = ''
-const vendoredCal = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-calendar/lib/index.js')
-if (existsSync(vendoredCal)) {
-  calEntry = vendoredCal
-} else {
-  try { calEntry = require_.resolve('dsh-calendar/lib/index.js') } catch { calEntry = '' }
-  if (!calEntry) { try { calEntry = require_.resolve('dsh-calendar') } catch { calEntry = '' } }
+if (!benchmarkEnvironmentConfig) {
+  const vendoredCal = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-calendar/lib/index.js')
+  if (existsSync(vendoredCal)) {
+    calEntry = vendoredCal
+  } else {
+    try { calEntry = require_.resolve('dsh-calendar/lib/index.js') } catch { calEntry = '' }
+    if (!calEntry) { try { calEntry = require_.resolve('dsh-calendar') } catch { calEntry = '' } }
+  }
 }
 if (calEntry) {
   patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-calendar'/, `$1'${calEntry}'`)
@@ -242,6 +356,14 @@ if (process.env.GOTRY_LLM_MODEL) {
 const patchDir = mkdtempSync(join(tmpdir(), 'gotry-cordis-'))
 const patchPath = join(patchDir, 'patch.yml')
 writeFileSync(patchPath, patchRaw, { mode: 0o600, flag: 'wx' })
+const headlessKeepalivePath = join(patchDir, 'headless-keepalive.cjs')
+if (mode === 'headless') {
+  writeFileSync(headlessKeepalivePath, `
+const hold = setInterval(() => {
+  if (process.exitCode !== undefined) clearInterval(hold)
+}, 50)
+`, { mode: 0o600, flag: 'wx' })
+}
 let patchCleaned = false
 const cleanupPatch = () => {
   if (patchCleaned) return
@@ -275,6 +397,9 @@ const binJs = mode === 'web'
   : ['--profile', 'headless', '--patch', patchPath, ...rest]
 
 const childEnv = { ...process.env }
+if (mode === 'headless') {
+  childEnv.NODE_OPTIONS = [childEnv.NODE_OPTIONS, `--require=${headlessKeepalivePath}`].filter(Boolean).join(' ')
+}
 // The benchmark config is parent-only metadata. Never make its path visible to
 // dsh or any plugin loaded by the child.
 delete childEnv.GOTRY_BENCHMARK_ENV_CONFIG
@@ -288,10 +413,17 @@ if (benchmarkEnvironmentConfig) {
   ]) delete childEnv[key]
 }
 const benchmarkStdout = benchmarkEnvironmentConfig ? [] : null
+const childStdio = mode === 'web'
+  ? 'inherit'
+  : benchmarkStdout
+    ? ['pipe', 'pipe', 'pipe']
+    : process.stdin.isTTY
+      ? 'inherit'
+      : ['pipe', 'inherit', 'inherit']
 let benchmarkCapturedBytes = 0
 let benchmarkOutputTruncated = false
 child = spawn(process.execPath, [dshBin, ...binJs], {
-  stdio: benchmarkStdout ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+  stdio: childStdio,
   env: childEnv,
   cwd: dshCwd,
 })

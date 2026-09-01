@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -22,43 +22,58 @@ const TIMEOUT_MS = 30_000
 const TSX_LOADER = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href
 type Body = { messages?: Array<Record<string, unknown>>; tools?: Array<Record<string, unknown>> }
 
-function writeIsolationPreload(path: string, proofPath: string, executableOverride?: string): void {
-  const anchor = executableOverride || join(ROOT, 'ts', 'dsh-runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
-  const gotryEntry = executableOverride ? '@danceiny/gotry' : join(ROOT, 'ts', 'src', 'index.ts')
-  const dshEntry = join(ROOT, 'ts', 'dsh-runtime', 'vendor', 'deepseek-ai-dsh', 'lib', 'bin.js')
+function writeResolutionProbe(path: string, resultPath: string, block: boolean): void {
   writeFileSync(path, `
 const fs = require('node:fs')
 const Module = require('node:module')
-const { createRequire } = require('node:module')
-const blocked = new Set(['dsh-calendar', 'dsh-calendar/lib/index.js'])
-const originalResolve = Module._resolveFilename
-Module._resolveFilename = function (request, parent, isMain, options) {
-  if (blocked.has(request)) {
-    const error = new Error('isolated benchmark runtime')
+const resultPath = ${JSON.stringify(resultPath)}
+const isOptional = value => typeof value === 'string' && (value.includes('dsh-calendar') || value.includes('dsh-map-tools'))
+const record = (kind, target) => {
+  if (isOptional(target)) fs.appendFileSync(resultPath, JSON.stringify({ pid: process.pid, kind, target }) + '\\n')
+}
+const observe = request => {
+  if (typeof request !== 'string') return
+  record('resolve', request)
+  if (${JSON.stringify(block)} && isOptional(request)) {
+    const error = new Error('optional benchmark probe isolation')
     error.code = 'MODULE_NOT_FOUND'
     throw error
   }
+}
+const originalResolve = Module._resolveFilename
+Module._resolveFilename = function (request, parent, isMain, options) {
+  observe(request)
   return originalResolve.call(this, request, parent, isMain, options)
 }
-const resolver = createRequire(${JSON.stringify(anchor)})
-const resolve = request => { try { resolver.resolve(request); return true } catch { return false } }
-const proof = {
-  calendarBlocked: [...blocked].every(request => !resolve(request)),
-  dshResolvable: resolve('@deepseek-ai/dsh/lib/bin.js') || fs.existsSync(${JSON.stringify(dshEntry)}),
-  tsxResolvable: resolve('tsx'),
-  gotryResolvable: resolve(${JSON.stringify(gotryEntry)}),
+const originalFindPath = Module._findPath
+Module._findPath = function (request, paths, isMain) {
+  observe(request)
+  return originalFindPath.call(this, request, paths, isMain)
 }
-  fs.writeFileSync(${JSON.stringify(proofPath)}, JSON.stringify(proof), { mode: 0o600 })
+const originalExistsSync = fs.existsSync
+fs.existsSync = function (target) {
+  record('existsSync', target)
+  if (${JSON.stringify(block)} && isOptional(target)) return false
+  return originalExistsSync.call(this, target)
+}
+const originalCreateRequire = Module.createRequire
+Module.createRequire = function (...args) {
+  const required = originalCreateRequire.apply(this, args)
+  const originalRequiredResolve = required.resolve
+  required.resolve = function (request, ...args) {
+    record('resolve', request)
+    if (${JSON.stringify(block)} && isOptional(request)) {
+      const error = new Error('optional benchmark probe isolation')
+      error.code = 'MODULE_NOT_FOUND'
+      throw error
+    }
+    return originalRequiredResolve.call(required, request, ...args)
+  }
+  required.resolve.paths = originalRequiredResolve.paths
+  return required
+}
+Module.syncBuiltinESMExports()
 `, { mode: 0o600, flag: 'wx' })
-}
-
-function assertIsolationProof(proofPath: string, target: string): void {
-  assert.deepEqual(JSON.parse(readFileSync(proofPath, 'utf8')), {
-    calendarBlocked: true,
-    dshResolvable: true,
-    tsxResolvable: true,
-    gotryResolvable: true,
-  }, `${target} preload must isolate only calendar resolution while preserving dsh/tsx/GoTry resolution`)
 }
 
 function sse(payload: Record<string, unknown>): string {
@@ -84,7 +99,7 @@ function anyToolResultPresent(body: Body): boolean {
 
 type CaseMode = 'disabled' | 'enabled' | 'unexpected-output' | 'invalid-path' | 'invalid-schema' | 'unsafe-config' | 'output-truncated' | 'timeout' | 'web-mode' | 'debug-redaction'
 
-async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ exit: number | null; output: string; requests: Body[] }> {
+async function runCase(mode: CaseMode, executableOverride?: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<{ exit: number | null; output: string; requests: Body[]; optionalResolutionHits: { calendar: number; map: number } }> {
   const requests: Body[] = []
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = []
@@ -101,9 +116,10 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
   const port = (server.address() as { port: number }).port
   const cwd = mkdtempSync(join(tmpdir(), 'gotry-bridge-cwd-'))
   const dsh = mkdtempSync(join(tmpdir(), 'gotry-bridge-dsh-'))
-  const preload = join(cwd, 'benchmark-isolation-preload.cjs')
-  const preloadProof = join(cwd, 'benchmark-isolation-proof.json')
-  writeIsolationPreload(preload, preloadProof, executableOverride)
+  const probe = join(cwd, 'benchmark-resolution-probe.cjs')
+  const probeResult = join(cwd, 'benchmark-resolution-hits.json')
+  writeFileSync(probeResult, '', { mode: 0o600, flag: 'wx' })
+  writeResolutionProbe(probe, probeResult, mode === 'disabled')
   const runner = join(cwd, 'synthetic-runner.js')
   const configPath = join(cwd, mode === 'invalid-path' ? 'benchmark-env-config-\n.json' : 'benchmark-env-config.json')
   const runnerBody = mode === 'timeout'
@@ -123,15 +139,22 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
     LLM_API_KEY: 'synthetic-bridge-key',
     LLM_BASE_URL: `http://127.0.0.1:${port}/v1`,
     LLM_MODEL: 'synthetic-bridge-model',
-    DATABASE_URL: 'postgres://sentinel',
-    SSH_AUTH_SOCK: '/tmp/sentinel.sock',
-    AWS_PROFILE: 'sentinel-profile',
-    HTTPS_PROXY: 'https://sentinel-proxy',
+    DEEPSEEK_API_KEY: 'synthetic-bridge-key',
+    DEEPSEEK_BASE_URL: `http://127.0.0.1:${port}/v1`,
+    ...(mode !== 'disabled' ? {
+      DATABASE_URL: 'postgres://sentinel',
+      SSH_AUTH_SOCK: '/tmp/sentinel.sock',
+      AWS_PROFILE: 'sentinel-profile',
+    } : {}),
     GOTRY_BENCHMARK_ENV_CONFIG: mode === 'disabled' ? '' : configPath,
     ...(mode !== 'disabled' ? { GOTRY_BENCHMARK_BRIDGE_PARENT_SECRET: 'do-not-leak' } : {}),
     ...(mode === 'debug-redaction' ? { GOTRY_DEBUG: '1' } : {}),
-    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${preload}`, ...(!executableOverride ? [`--import=${TSX_LOADER}`] : [])].filter(Boolean).join(' '),
+    ...extraEnv,
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, ...(!executableOverride ? [`--import=${TSX_LOADER}`] : []), `--require=${probe}`].filter(Boolean).join(' '),
   }
+  for (const key of ['GOTRY_LLM_MODEL', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[key]
+  env.NO_PROXY = '127.0.0.1,localhost'
+  if (mode !== 'disabled') env.HTTPS_PROXY = 'https://sentinel-proxy'
   if (mode === 'disabled') delete env.GOTRY_BENCHMARK_ENV_CONFIG
   const executable = executableOverride || process.execPath
   const invocation = mode === 'web-mode'
@@ -142,16 +165,19 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
     const child = spawn(executable, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''; child.stdout.on('data', c => { output += c }); child.stderr.on('data', c => { output += c })
     const exit = await new Promise<number | null>(resolve => { const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(null) }, TIMEOUT_MS); child.once('close', code => { clearTimeout(timer); resolve(code) }) })
-    assertIsolationProof(preloadProof, targetForExecutable(executableOverride))
-    return { exit, output, requests }
+    const optionalResolutionHits = readFileSync(probeResult, 'utf8').split('\n').filter(Boolean).reduce((hits, line) => {
+      const event = JSON.parse(line) as { target?: string }
+      if (event.target?.includes('dsh-calendar')) hits.calendar += 1
+      if (event.target?.includes('dsh-map-tools')) hits.map += 1
+      return hits
+    }, { calendar: 0, map: 0 })
+    return { exit, output, requests, optionalResolutionHits }
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
     rmSync(dsh, { recursive: true, force: true })
     rmSync(cwd, { recursive: true, force: true })
   }
 }
-
-function targetForExecutable(executableOverride?: string): string { return executableOverride ? 'packaged' : 'source' }
 
 async function assertRuntimeContract(executableOverride?: string): Promise<void> {
   const target = executableOverride ? 'packaged' : 'source'
@@ -161,13 +187,9 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     disabled.requests.length > 0 && !disabled.requests.some(r => names(r).includes(TOOL)),
     `${target} default-off must reach the relay without exposing benchmark tool; exit=${disabled.exit}; requests=${disabled.requests.length}; output=${disabled.output.slice(-2_000)}`,
   )
-  assert.equal(
-    disabled.requests.some(r => names(r).some(name => name.startsWith('calendar_'))),
-    false,
-    `${target} calendar isolation must not leave calendar tools on the default-off relay`,
-  )
+  assert.ok(disabled.optionalResolutionHits.calendar > 0 || disabled.optionalResolutionHits.map > 0, `${target} default-off must retain optional plugin resolution as a counter-proof`)
   const enabled = await runCase('enabled', executableOverride)
-  assert.equal(enabled.exit, 0, `${target} opt-in child exit=${enabled.exit}; output tail=${enabled.output.slice(-1000)}`)
+  assert.equal(enabled.exit, 0, `${target} opt-in child exit=${enabled.exit}; output tail=${enabled.output.slice(-10000)}`)
   assert.ok(
     enabled.requests.some(r => names(r).includes(TOOL)),
     `${target} opt-in planner request must expose benchmark tool; schemas=${JSON.stringify(enabled.requests.map(names))}; output=${enabled.output.slice(-4_000)}`,
@@ -178,6 +200,8 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     [TOOL],
     `${target} enabled runtime must expose exactly the benchmark tool; observed tool names=${JSON.stringify(enabledToolNames)}`,
   )
+  assert.equal(enabledToolNames.some(name => name.startsWith('calendar_') || name.startsWith('map_')), false, `${target} benchmark projection must not expose calendar/map tools`)
+  assert.deepEqual(enabled.optionalResolutionHits, { calendar: 0, map: 0 }, `${target} benchmark mode must not resolve optional calendar/map plugins`)
   assert.ok(enabled.requests.some(toolResultPresent), `${target} marker must enter model history as tool result`)
   const leakedReport = enabled.requests.map(r => JSON.stringify(r).match(/\\?"leaked\\?":\[(.*?)\]/)?.[1]).filter(Boolean).join('|')
   assert.ok(enabled.requests.some(r => /\\?"leaked\\?":\[\]/.test(JSON.stringify(r))), `${target} tool result must report no forbidden environment names; observed names=${leakedReport || '(none)'}`)
@@ -216,6 +240,102 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
   const timedOut = await runCase('timeout', executableOverride)
   assert.equal(timedOut.exit, 1, `${target} timeout fails the successful-call conformance gate`)
   assert.ok(timedOut.requests.some(r => JSON.stringify(r).includes('timed_out')), `${target} real runner deadline is enforced`)
+}
+
+function installedPackageRoot(executable: string): string {
+  const consumerRoot = dirname(dirname(dirname(executable)))
+  const packageMain = createRequire(join(consumerRoot, 'package.json')).resolve('@danceiny/gotry')
+  return dirname(dirname(dirname(packageMain)))
+}
+
+async function assertPackagedPatchProjection(executable: string): Promise<void> {
+  const sourcePackageRoot = installedPackageRoot(executable)
+  const packageScope = dirname(sourcePackageRoot)
+  const probeParent = mkdtempSync(join(packageScope, 'round4-projection-'))
+  const probePackageRoot = join(probeParent, 'gotry')
+  const probeExecutable = join(probePackageRoot, 'bin', 'gotry-inner.js')
+  const patchPath = join(probePackageRoot, 'cordis.gotry-patch.yml')
+  const inlinePoisonModule = join(probePackageRoot, 'future-inline-plugin.cjs')
+  const reorderedPoisonModule = join(probePackageRoot, 'future-reordered-plugin.cjs')
+  const inlinePoisonProof = join(probeParent, 'future-inline-loaded.txt')
+  const reorderedPoisonProof = join(probeParent, 'future-reordered-loaded.txt')
+  cpSync(sourcePackageRoot, probePackageRoot, { recursive: true })
+  chmodSync(probeExecutable, 0o755)
+  const basePatch = readFileSync(patchPath, 'utf8')
+  const stableError = /benchmark environment configuration unavailable/
+  const poisonEnv = {
+    GOTRY_FUTURE_INLINE_PROOF: inlinePoisonProof,
+    GOTRY_FUTURE_REORDERED_PROOF: reorderedPoisonProof,
+  }
+  const runRejectedPatch = async (label: string, patch: string, forbiddenValues: string[] = []): Promise<void> => {
+    rmSync(inlinePoisonProof, { force: true })
+    rmSync(reorderedPoisonProof, { force: true })
+    writeFileSync(patchPath, patch)
+    const result = await runCase('enabled', probeExecutable, poisonEnv)
+    assert.equal(result.exit, 1, `${label} must reject the benchmark startup`)
+    assert.equal(result.requests.length, 0, `${label} must fail before relay activity`)
+    assert.deepEqual(result.optionalResolutionHits, { calendar: 0, map: 0 }, `${label} must fail before optional plugin resolution`)
+    assert.match(result.output, stableError, `${label} emits a stable generic error`)
+    assert.equal(result.output.includes(probePackageRoot), false, `${label} must not reflect the package path`)
+    assert.equal(existsSync(inlinePoisonProof) || existsSync(reorderedPoisonProof), false, `${label} must not execute a poison plugin`)
+    for (const value of forbiddenValues) assert.equal(result.output.includes(value), false, `${label} must not reflect rejected input`)
+  }
+
+  try {
+    writeFileSync(inlinePoisonModule, `const fs = require('node:fs'); fs.appendFileSync(process.env.GOTRY_FUTURE_INLINE_PROOF, 'loaded\\n'); exports.name = 'round4-future-inline'; exports.apply = () => {}`)
+    writeFileSync(reorderedPoisonModule, `const fs = require('node:fs'); fs.appendFileSync(process.env.GOTRY_FUTURE_REORDERED_PROOF, 'loaded\\n'); exports.name = 'round4-future-reordered'; exports.apply = () => {}`)
+    const futureEntries = [
+      `    - { id: dsh-future-inline, name: '${inlinePoisonModule}' }`,
+      `    - name: '${reorderedPoisonModule}'\n      id: dsh-future-reordered`,
+    ].join('\n')
+    const futurePatch = basePatch.replace(
+      "    - id: dsh-map-tools",
+      `${futureEntries}\n    - id: dsh-map-tools`,
+    )
+    assert.notEqual(futurePatch, basePatch, 'future-plugin fixture must enter the insert sequence')
+    writeFileSync(patchPath, futurePatch)
+
+    const ordinary = await runCase('disabled', probeExecutable, poisonEnv)
+    assert.ok(existsSync(inlinePoisonProof), `default-off must execute the inline future-plugin top level; exit=${ordinary.exit}; output=${ordinary.output.slice(-2_000)}`)
+    assert.ok(existsSync(reorderedPoisonProof), `default-off must execute the reordered future-plugin top level; exit=${ordinary.exit}; output=${ordinary.output.slice(-2_000)}`)
+    rmSync(inlinePoisonProof, { force: true })
+    rmSync(reorderedPoisonProof, { force: true })
+    const benchmark = await runCase('enabled', probeExecutable, poisonEnv)
+    assert.equal(benchmark.exit, 0, `benchmark future-plugin projection exits 0; output=${benchmark.output.slice(-2_000)}`)
+    assert.ok(benchmark.requests.some(request => names(request).includes(TOOL)), 'benchmark future-plugin projection reaches the bridge relay')
+    assert.equal(existsSync(inlinePoisonProof) || existsSync(reorderedPoisonProof), false, 'benchmark projection must not execute inline or reordered future plugins')
+    assert.deepEqual(benchmark.optionalResolutionHits, { calendar: 0, map: 0 }, 'benchmark future-plugin projection does not resolve optional host plugins')
+
+    await runRejectedPatch('missing gotry-tools', basePatch.replace('    - id: gotry-tools', '    - id: gotry-tools-missing'))
+    await runRejectedPatch('duplicate gotry-tools', basePatch.replace('    - id: dsh-map-tools', "    - id: gotry-tools\n      name: 'duplicate/gotry-tools'\n    - id: dsh-map-tools"))
+    await runRejectedPatch('second insert block', `${basePatch}\n- insert:\n    - id: dsh-second-insert\n      name: '${inlinePoisonModule}'\n`, [inlinePoisonModule])
+    await runRejectedPatch('flow second insert block', `${basePatch}\n- insert: [{ id: dsh-flow-second-insert, name: '${inlinePoisonModule}' }]\n`, [inlinePoisonModule])
+    await runRejectedPatch('spoofed gotry-tools name', basePatch.replace("name: 'placeholder/ts/src/index.ts'", `name: '${inlinePoisonModule}'`), [inlinePoisonModule])
+    await runRejectedPatch(
+      'spoofed gotry-tools name with decoy anchor',
+      `${basePatch.replace("name: 'placeholder/ts/src/index.ts'", `name: '${inlinePoisonModule}'`)}\n- id: benchmark-name-decoy\n  name: 'placeholder/ts/src/index.ts'\n`,
+      [inlinePoisonModule],
+    )
+    await runRejectedPatch(
+      'spoofed gotry-tools name with nested decoy anchor',
+      basePatch
+        .replace("name: 'placeholder/ts/src/index.ts'", `name: '${inlinePoisonModule}'`)
+        .replace("        stateRoot: '.'", "        name: 'placeholder/ts/src/index.ts'\n        stateRoot: '.'"),
+      [inlinePoisonModule],
+    )
+    await runRejectedPatch('missing benchmark config anchor', basePatch.replace(/^\s*hbcliBin:.*\n/m, ''))
+    await runRejectedPatch('missing benchmark config anchor with decoy', `${basePatch.replace(/^\s*hbcliBin:.*\n/m, '')}\n- id: benchmark-anchor-decoy\n  hbcliBin: 'hbcli'\n`)
+    await runRejectedPatch(
+      'missing benchmark config anchor with nested decoy',
+      basePatch
+        .replace(/^\s*hbcliBin:.*\n/m, '')
+        .replace("        stateRoot: '.'", "        nestedAnchorDecoy:\n          hbcliBin: 'hbcli'\n        stateRoot: '.'"),
+    )
+    await runRejectedPatch('duplicate benchmark config anchor', basePatch.replace("        hbcliBin: 'hbcli'", "        hbcliBin: 'hbcli'\n        hbcliBin: 'hbcli'"))
+    await runRejectedPatch('pre-existing benchmark config path', basePatch.replace("        hbcliBin: 'hbcli'", "        hbcliBin: 'hbcli'\n        benchmarkEnvironmentConfigPath: '/not/used'"), ['/not/used'])
+  } finally {
+    rmSync(probeParent, { recursive: true, force: true })
+  }
 }
 
 type ConformanceMode = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'large'
@@ -264,9 +384,6 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
   const port = (server.address() as { port: number }).port
   const cwd = mkdtempSync(join(tmpdir(), 'gotry-conformance-cwd-'))
   const dsh = mkdtempSync(join(tmpdir(), 'gotry-conformance-dsh-'))
-  const preload = join(cwd, 'benchmark-isolation-preload.cjs')
-  const preloadProof = join(cwd, 'benchmark-isolation-proof.json')
-  writeIsolationPreload(preload, preloadProof, executableOverride)
   const runner = join(cwd, 'synthetic-runner.js')
   const runnerCount = join(cwd, 'runner-count.txt')
   const configPath = join(cwd, 'benchmark-env-config.json')
@@ -283,8 +400,11 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
     DSH_TOOLS_MODE: 'both', DSH_HOME: dsh,
     LLM_API_KEY: 'synthetic-conformance-key', LLM_BASE_URL: `http://127.0.0.1:${port}/v1`,
     LLM_MODEL: 'synthetic-conformance-model', GOTRY_BENCHMARK_ENV_CONFIG: configPath,
-    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${preload}`, ...(!executableOverride ? [`--import=${TSX_LOADER}`] : [])].filter(Boolean).join(' '),
+    DEEPSEEK_API_KEY: 'synthetic-conformance-key', DEEPSEEK_BASE_URL: `http://127.0.0.1:${port}/v1`,
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, ...(!executableOverride ? [`--import=${TSX_LOADER}`] : [])].filter(Boolean).join(' '),
   }
+  for (const key of ['GOTRY_LLM_MODEL', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[key]
+  env.NO_PROXY = '127.0.0.1,localhost'
   let stdout = ''
   let stderr = ''
   try {
@@ -298,7 +418,6 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
       child.once('close', code => { clearTimeout(timer); resolve(code) })
     })
     const runnerInvocations = existsSync(runnerCount) ? Number(readFileSync(runnerCount, 'utf8')) : 0
-    assertIsolationProof(preloadProof, targetForExecutable(executableOverride))
     return { exit, stdout, stderr, requests, servedToolCalls, runnerInvocations }
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
@@ -352,9 +471,8 @@ await assertOutputConformance()
 if (packaged) {
   await assertRuntimeContract(packaged)
   await assertOutputConformance(packaged)
-  const consumerRoot = dirname(dirname(dirname(packaged)))
-  const packageMain = createRequire(join(consumerRoot, 'package.json')).resolve('@danceiny/gotry')
-  const packageRoot = dirname(dirname(dirname(packageMain)))
+  await assertPackagedPatchProjection(packaged)
+  const packageRoot = installedPackageRoot(packaged)
   const packagedBridge = await import(pathToFileURL(join(packageRoot, 'dist', 'src', 'benchmark-environment-bridge.js')).href)
   const missingServiceRoot = mkdtempSync(join(tmpdir(), 'gotry-bridge-missing-service-'))
   try {
