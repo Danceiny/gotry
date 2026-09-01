@@ -15,7 +15,10 @@ import { startBookingCopilotServer } from '@danceiny/gotry/booking-surface/serve
 import { createDshEmbeddedBookingPlanner } from '@danceiny/gotry/booking-surface/dsh-planner'
 import { startBookingCopilotFromEnvironment } from '@danceiny/gotry/booking-surface/startup'
 import { REQUIRED_BENCHMARK_DSH_VERSION } from '../bin/gotry-runtime-resolution.js'
-import { validateDshRuntimeClosure } from '../ts/scripts/dsh-runtime-closure.ts'
+import {
+  REQUIRED_DSH_RUNTIME_PACKAGE_COUNT,
+  validateDshRuntimeClosure,
+} from '../ts/scripts/dsh-runtime-closure.ts'
 
 assert.equal(BOOKING_SURFACE_SCHEMA_VERSION, 'booking.surface.v1')
 assert.deepEqual([...BOOKING_READ_ACTION_KINDS].sort(), [
@@ -63,8 +66,9 @@ const npmClosure = validateDshRuntimeClosure({
   dependencies: installedPackage.dependencies ?? {},
   lockPackages: consumerLock.packages ?? {},
   runtimeVersion: REQUIRED_BENCHMARK_DSH_VERSION,
+  expectedPackageCount: REQUIRED_DSH_RUNTIME_PACKAGE_COUNT,
 })
-assert.equal(npmClosure.names.length, 216, 'clean npm consumer must resolve the complete Round 5 DSH closure')
+assert.equal(npmClosure.names.length, REQUIRED_DSH_RUNTIME_PACKAGE_COUNT, 'clean npm consumer must resolve the complete Round 5 DSH closure')
 const consumerRun = spawnSync(process.execPath, [consumerScript], { cwd: packedConsumer, encoding: 'utf8', timeout: 60_000 })
 assert.equal(consumerRun.status, 0, consumerRun.stderr || consumerRun.stdout)
 const sandboxPath = join(packedConsumer, 'node_modules/@deepseek-ai/dsh-sandbox')

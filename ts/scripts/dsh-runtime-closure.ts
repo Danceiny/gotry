@@ -2,15 +2,130 @@ export type DshLockPackage = {
   version?: string
 }
 
+export const REQUIRED_DSH_RUNTIME_PACKAGE_COUNT = 216
+
 export type DshRuntimeClosureInput = {
   dependencies: Record<string, string>
   lockPackages: Record<string, DshLockPackage>
   runtimeVersion: string
+  expectedPackageCount?: number
 }
 
 export type DshRuntimeClosure = {
   names: string[]
   version: string
+}
+
+export type PnpmRootDshImporterEntry = {
+  specifier: string
+  resolvedVersion: string
+}
+
+export type PnpmRootDshImporterInput = {
+  dependencies: Record<string, string>
+  importerEntries: Record<string, PnpmRootDshImporterEntry>
+  runtimeVersion: string
+  expectedPackageCount?: number
+}
+
+function yamlScalar(value: string): string {
+  const trimmed = value.trim().replace(/\s+#.*$/, '')
+  const quoted = trimmed.match(/^(['"])(.*)\1$/)
+  return quoted?.[2] ?? trimmed
+}
+
+function indentation(line: string): number {
+  return line.match(/^ */)?.[0].length ?? 0
+}
+
+function resolvedPnpmVersion(value: string): string {
+  return yamlScalar(value).replace(/\(.+$/, '')
+}
+
+export function parsePnpmRootDshImporter(text: string): Record<string, PnpmRootDshImporterEntry> {
+  const lines = text.split(/\r?\n/)
+  const importers = lines
+    .map((line, index) => line === 'importers:' ? index : -1)
+    .filter((index) => index >= 0)
+  if (importers.length !== 1) throw new Error('pnpm lock importers 区块不可用')
+
+  const importersStart = importers[0]!
+  const importersEnd = lines.findIndex((line, index) => index > importersStart && line.trim() !== '' && indentation(line) === 0)
+  const rootCandidates = lines
+    .map((line, index) => index > importersStart && (importersEnd < 0 || index < importersEnd)
+      && /^ {2}(?:\.|'\.'|"\."):\s*$/.test(line) ? index : -1)
+    .filter((index) => index >= 0)
+  if (rootCandidates.length !== 1) throw new Error('pnpm root importer 不唯一')
+
+  const rootStart = rootCandidates[0]!
+  const rootEndRelative = lines.slice(rootStart + 1, importersEnd < 0 ? lines.length : importersEnd)
+    .findIndex((line) => line.trim() !== '' && indentation(line) <= 2)
+  const rootEnd = rootEndRelative < 0
+    ? (importersEnd < 0 ? lines.length : importersEnd)
+    : rootStart + 1 + rootEndRelative
+  const dependencyBlocks = lines
+    .map((line, index) => index > rootStart && index < rootEnd && /^ {4}dependencies:\s*$/.test(line) ? index : -1)
+    .filter((index) => index >= 0)
+  if (dependencyBlocks.length !== 1) throw new Error('pnpm root importer dependencies 区块不可用')
+
+  const dependenciesStart = dependencyBlocks[0]!
+  const dependenciesEndRelative = lines.slice(dependenciesStart + 1, rootEnd)
+    .findIndex((line) => line.trim() !== '' && indentation(line) <= 4)
+  const dependenciesEnd = dependenciesEndRelative < 0 ? rootEnd : dependenciesStart + 1 + dependenciesEndRelative
+  const entries = lines
+    .map((line, index) => {
+      if (index <= dependenciesStart || index >= dependenciesEnd) return null
+      const match = line.match(/^ {6}(['"]?)([^'":\s]+)\1:\s*$/)
+      return match ? { index, name: match[2]! } : null
+    })
+    .filter((entry): entry is { index: number; name: string } => entry !== null)
+
+  const importerEntries: Record<string, PnpmRootDshImporterEntry> = {}
+  for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
+    const entry = entries[entryIndex]!
+    if (entry.name !== '@deepseek-ai/dsh' && !entry.name.startsWith('@deepseek-ai/dsh-')) continue
+    if (Object.hasOwn(importerEntries, entry.name)) throw new Error(`pnpm root importer DSH 依赖重复:${entry.name}`)
+    const end = entries[entryIndex + 1]?.index ?? dependenciesEnd
+    const block = lines.slice(entry.index + 1, end)
+    const specifiers = block
+      .map((line) => line.match(/^ {8}specifier:\s*(.+)$/)?.[1])
+      .filter((value): value is string => value !== undefined)
+    if (specifiers.length !== 1) throw new Error(`pnpm root importer specifier 不可用:${entry.name}`)
+    const versions = block
+      .map((line) => line.match(/^ {8}version:\s*(.+)$/)?.[1])
+      .filter((value): value is string => value !== undefined)
+    if (versions.length !== 1) throw new Error(`pnpm root importer version 不可用:${entry.name}`)
+    importerEntries[entry.name] = {
+      specifier: yamlScalar(specifiers[0]!),
+      resolvedVersion: resolvedPnpmVersion(versions[0]!),
+    }
+  }
+  return importerEntries
+}
+
+export function validatePnpmRootDshImporter(input: PnpmRootDshImporterInput): DshRuntimeClosure {
+  const manifestNames = Object.keys(input.dependencies)
+    .filter((name) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
+    .sort()
+  const importerNames = Object.keys(input.importerEntries).sort()
+  const missing = manifestNames.filter((name) => !importerNames.includes(name))
+  const extra = importerNames.filter((name) => !manifestNames.includes(name))
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(`pnpm root importer 与 manifest 集合不一致:missing=${missing.join(',') || '-'};extra=${extra.join(',') || '-'}`)
+  }
+  for (const name of importerNames) {
+    const importerEntry = input.importerEntries[name]!
+    if (input.dependencies[name] !== input.runtimeVersion || importerEntry.specifier !== input.runtimeVersion) {
+      throw new Error(`pnpm root importer 未精确锁定:${name}@${input.runtimeVersion}`)
+    }
+    if (importerEntry.resolvedVersion !== input.runtimeVersion) {
+      throw new Error(`pnpm root importer resolved 版本漂移:${name}@${importerEntry.resolvedVersion}(expected ${input.runtimeVersion})`)
+    }
+  }
+  if (input.expectedPackageCount !== undefined && importerNames.length !== input.expectedPackageCount) {
+    throw new Error(`pnpm root importer 包数量不符:${importerNames.length}(expected ${input.expectedPackageCount})`)
+  }
+  return { names: importerNames, version: input.runtimeVersion }
 }
 
 export function parsePnpmDshLock(text: string): Record<string, DshLockPackage> {
@@ -71,6 +186,9 @@ export function validateDshRuntimeClosure(input: DshRuntimeClosureInput): DshRun
     if (input.dependencies[name] !== dshVersion) {
       throw new Error(`DSH closure 未精确声明:${name}@${dshVersion}`)
     }
+  }
+  if (input.expectedPackageCount !== undefined && lockNames.length !== input.expectedPackageCount) {
+    throw new Error(`DSH closure 包数量不符:${lockNames.length}(expected ${input.expectedPackageCount})`)
   }
 
   return { names: lockNames, version: dshVersion }
