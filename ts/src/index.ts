@@ -165,8 +165,8 @@ type JsonObject = { [k: string]: Json }
 export function apply(ctx: Context, config: Config): void {
   installToolBudget(ctx)
 
-  const benchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath?.trim() ?? ''
-  if (benchmarkEnvironmentConfigPath) {
+  const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
+  if (rawBenchmarkEnvironmentConfigPath.trim()) {
     // Benchmark mode is a deliberately minimal kernel: only the model
     // override and the environment bridge are installed.  In particular,
     // product prompt variables, process/consent guards, and guarded product
@@ -177,7 +177,7 @@ export function apply(ctx: Context, config: Config): void {
       ? getService.call(ctx, 'subprocess')
       : undefined) as BenchmarkSubprocessService | undefined
     const projection = registerBenchmarkEnvironmentBridge(
-      benchmarkEnvironmentConfigPath,
+      rawBenchmarkEnvironmentConfigPath,
       tool => ctx.tools.register(tool),
       directSubprocess,
     )

@@ -297,6 +297,11 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     assert.equal(enabledPrompt.includes(variable), false, `${target} benchmark persona must not retain ${variable}`)
   }
   assert.equal(enabledPrompt.includes('gotry_feasibility_check'), false, `${target} benchmark persona must not retain ordinary GoTry tool instructions`)
+  assert.ok(enabled.requests.length > 0 && enabled.requests.some(request => {
+    const prompt = JSON.stringify(request)
+    return (prompt.match(/You are GoTry, a task-agnostic travel planning assistant\./g) ?? []).length === 1
+      && (prompt.match(/Use only the current conversation and tools available in this benchmark session\./g) ?? []).length === 1
+  }), `${target} benchmark persona has each stable sentence exactly once per request`)
   assert.match(enabled.output, /benchmark_terminal/)
   const debugRedaction = await runCase('debug-redaction', executableOverride)
   assert.equal(debugRedaction.exit, 0, `${target} benchmark debug mode preserves successful execution`)
@@ -465,6 +470,13 @@ async function assertPackagedPatchProjection(executable: string): Promise<void> 
     await runRejectedPatch('pre-existing benchmark config path', basePatch.replace("        hbcliBin: 'hbcli'", "        hbcliBin: 'hbcli'\n        benchmarkEnvironmentConfigPath: '/not/used'"), ['/not/used'])
     await runRejectedPatch('missing system-prompt anchor', basePatch.replace(/^- id: system-prompt[\s\S]*$/m, ''))
     await runRejectedPatch('duplicate system-prompt anchor', `${basePatch}\n- id: system-prompt\n  config:\n    persona: >-\n      duplicate\n`)
+    await runRejectedPatch('quoted system-prompt duplicate', `${basePatch}\n- id: 'system-prompt'\n  config:\n    persona: >-\n      quoted duplicate\n`)
+    const systemPromptMutationSentinel = 'ROUND7_SYSTEM_PROMPT_MUTATION_SENTINEL_DO_NOT_REFLECT'
+    await runRejectedPatch('quoted mapping-key system-prompt duplicate', `${basePatch}\n- "id": system-prompt\n  config:\n    persona: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('flow quoted-key system-prompt duplicate', `${basePatch}\n- { "id": system-prompt, config: { persona: ${systemPromptMutationSentinel} } }\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('reordered system-prompt duplicate', `${basePatch}\n- name: reordered-system-prompt\n  id: system-prompt\n  config:\n    persona: >-\n      reordered duplicate\n`)
+    await runRejectedPatch('flow system-prompt duplicate', `${basePatch}\n- { id: system-prompt, config: { persona: flow duplicate } }\n`)
+    await runRejectedPatch('noncanonical insert id root item', `${basePatch}\n- id: insert\n  config:\n    persona: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
     await runRejectedPatch('malformed system-prompt persona', basePatch.replace(/^    persona: >-$/m, '    persona: plain'))
   } finally {
     rmSync(probeParent, { recursive: true, force: true })

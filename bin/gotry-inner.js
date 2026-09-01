@@ -245,11 +245,13 @@ function projectBenchmarkPatch(raw, entryPath, configPath) {
 // source shape before replacing it; malformed or ambiguous prompt config must
 // fail closed rather than being partially interpreted.
 function projectBenchmarkSystemPrompt(lines) {
-  const starts = lines
-    .map((line, index) => /^- id:\s*system-prompt\s*(?:#.*)?$/.test(line) ? index : -1)
-    .filter(index => index >= 0)
-  if (starts.length !== 1) throw new Error('benchmark system-prompt block violation')
-  const start = starts[0]
+  const rootStarts = lines.map((line, index) => /^-\s+/.test(line) ? index : -1).filter(index => index >= 0)
+  const rootItems = rootStarts.map((itemStart, index) => lines.slice(itemStart, rootStarts[index + 1] ?? lines.length))
+  if (rootItems.length !== 2) throw new Error('benchmark system-prompt root shape violation')
+  const insertItems = rootItems.filter(item => /^- insert:\s*(?:#.*)?$/.test(item[0]))
+  const systemItems = rootItems.filter(item => /^- id:\s*system-prompt\s*(?:#.*)?$/.test(item[0]))
+  if (insertItems.length !== 1 || systemItems.length !== 1) throw new Error('benchmark system-prompt canonical shape violation')
+  const start = rootStarts[rootItems.indexOf(systemItems[0])]
   let end = start + 1
   while (end < lines.length && (lines[end].trim() === '' || /^\s/.test(lines[end]) || lines[end].trim().startsWith('#'))) end += 1
   const item = lines.slice(start, end)

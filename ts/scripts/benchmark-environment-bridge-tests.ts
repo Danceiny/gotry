@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -963,6 +963,30 @@ try {
   const rejected = await bridge.execute!({ query: { action: 'call', tool: 'delete_all', arguments: {} } }, null)
   assert.deepEqual(rejected, { ok: false, error: 'disallowed_tool' }, 'disallowed tool is rejected structurally')
   assert.equal(spawnSpecs.length, beforeRejected, 'disallowed tool is rejected before spawn')
+
+  const spacedConfigPath = join(root, ' benchmark-environment-config.json ')
+  writeFileSync(spacedConfigPath, readFileSync(configPath))
+  const spacedTools: RegisteredTool[] = []
+  const spacedCtx = {
+    tools: {
+      register(tool: RegisteredTool) { spacedTools.push(tool); return () => {} },
+      get(name: string) { return spacedTools.find(tool => tool.name === name) },
+      schemas() { return spacedTools.map(tool => ({ name: tool.name })) },
+    },
+    agents: { list() { return [] } },
+    systemPrompt: { variable() {} },
+    on() { return () => {} },
+    effect() { return () => {} },
+    get(name: string) {
+      if (name === 'subprocess') return { spawn: (_spec: SpawnSpec) => fakeHandle({ stdout: '{}' }) }
+      if (name === 'agents') return { list() { return [] } }
+      return undefined
+    },
+  } as unknown as Context
+  apply(spacedCtx, {
+    stateRoot: root, timeoutMs: 20, hbcliBin: '', sessionAccess: 'off', benchmarkEnvironmentConfigPath: spacedConfigPath,
+  } as Config & { benchmarkEnvironmentConfigPath: string })
+  assert.deepEqual(spacedTools.map(tool => tool.name), ['gotry_benchmark_environment'], 'benchmark bridge loads a valid raw path with whitespace basename')
 
   const disabled: RegisteredTool[] = []
   const disabledVariables: string[] = []
