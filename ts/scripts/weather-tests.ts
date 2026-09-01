@@ -1,62 +1,101 @@
 /**
- * weather 能力层测试(Open-Meteo 真实 API,免费无 key):
- *  1. 地理编码:大理 → 坐标
- *  2. 预报:大理 7 天,字段齐全 + 证据链标注
- *  3. 历史气候:大理去年 8 月(雨季基线)
- *  4. 降级:不可达域名(改 base 的坏请求)返回 ok=false 而非抛错
- *  5. WMO 码映射:已知码有中文,未知码回退
+ * 天气能力层确定性回归：受控 fetch fixture 覆盖行为和时间预算。
  *
- * 运行: cd ts && npx tsx scripts/weather-tests.ts
+ * 真实 Open-Meteo/Nominatim 是可变外围观测，不参与合并闸；需要时可单独
+ * 运行 WEATHER_LIVE_SMOKE=1 做人工 smoke。本套件必须离线、快速、可重复。
  */
-
 import assert from 'node:assert/strict'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
 
-// 1. 地理编码:「大理市」精确命中云南(「大理」会命中四川同名地——中文地名歧义,API 无行政区优先级)
-const geo = await geocodePlace('大理市', { count: 10 })
-assert.equal(geo.ok, true, `geocode ok: ${geo.error ?? ''}`)
-assert.ok(geo.results.length > 0, '应有结果')
-const dali = geo.results.find(r => (r.admin1 ?? '').includes('云南')) ?? geo.results[0]
-assert.ok(Math.abs(dali.latitude - 25.6) < 0.5, `纬度应≈25.6,实际 ${dali.latitude}(${dali.name},${dali.admin1})`)
-assert.match(geo.evidence, /open-meteo-geo@2/, '证据链带时间戳')
-console.log(`1. geocode 大理市 → ${dali.latitude},${dali.longitude} (${dali.name},${dali.admin1}) OK`)
+const jsonResponse = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), {
+  status, headers: { 'content-type': 'application/json' },
+})
+const geoDali = { results: [{ name: '大理市', latitude: 25.6, longitude: 100.2, country: '中国', admin1: '云南省', population: 600000, feature_code: 'PPLA' }] }
+const geoPhuket = [{ name: 'Phuket', lat: '7.88', lon: '98.39', address: { country: '泰国', province: '普吉府' } }]
+const forecastBody = (days: number) => ({
+  timezone: 'Asia/Shanghai',
+  daily: {
+    time: Array.from({ length: days }, (_, i) => `2026-09-${String(i + 1).padStart(2, '0')}`),
+    temperature_2m_max: Array.from({ length: days }, () => 30),
+    temperature_2m_min: Array.from({ length: days }, () => 21),
+    precipitation_probability_max: Array.from({ length: days }, () => 60),
+    weathercode: Array.from({ length: days }, () => 61),
+  },
+})
+const climateBody = { daily: { time: Array.from({ length: 31 }, (_, i) => `2025-08-${String(i + 1).padStart(2, '0')}`), temperature_2m_max: Array(31).fill(29), temperature_2m_min: Array(31).fill(21), weathercode: Array(31).fill(2) } }
 
-// 1b. issue #24 回归:「普吉岛」在 open-meteo 中文覆盖外(实测 0 结果,裸词「普吉」还错配西藏同名村)——
-//     应被弱命中/零结果闸送 Nominatim 兜底层,命中泰国普吉府
-const phuket = await geocodePlace('普吉岛')
-assert.equal(phuket.ok, true, `普吉岛 geocode ok: ${phuket.error ?? ''}`)
-assert.equal(phuket.via, 'nominatim', 'open-meteo 0 结果应走 nominatim 兜底层')
-assert.ok(Math.abs(phuket.results[0].latitude - 8.0) < 0.5, `普吉岛纬度应≈8,实际 ${phuket.results[0].latitude}(${phuket.results[0].name})`)
-assert.match(phuket.results[0].country ?? '', /泰国/, '国家标签应为泰国')
-assert.match(phuket.evidence, /\[实时API:nominatim@2/, '兜底层证据链带时间戳')
-console.log(`1b. geocode 普吉岛(兜底层)→ ${phuket.results[0].name}(${phuket.results[0].admin1},${phuket.results[0].country}) OK`)
+type FetchMock = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+const mockFetch = (handler: (url: string, signal: AbortSignal) => unknown | Promise<unknown>): FetchMock =>
+  async (input, init) => jsonResponse(await handler(String(input), init?.signal ?? new AbortController().signal))
 
-// 2. 预报:大理 7 天
-const fc = await getForecast({ latitude: dali.latitude, longitude: dali.longitude }, { days: 7 })
-assert.equal(fc.ok, true, `forecast ok: ${fc.error ?? ''}`)
-assert.equal(fc.daily!.length, 7, '7 天')
-assert.ok(fc.daily![0]!.tempMaxC > -50 && fc.daily![0]!.tempMaxC < 60, '温度合理范围')
-assert.match(fc.evidence, /\[实时API:open-meteo@2/, '证据链')
-assert.ok(fc.latencyMs < 5000, `延迟应 <5s,实际 ${fc.latencyMs}ms`)
-console.log(`2. forecast 大理 7 天:${fc.daily![0]!.tempMinC}–${fc.daily![0]!.tempMaxC}°C ${wmoLabel(fc.daily![0]!.weatherCode)} OK`)
+// 1. 地理编码主源命中 + schema/别名正常路径
+const geo = await geocodePlace('大理市', { count: 10, fetchImpl: mockFetch(() => geoDali) })
+assert.equal(geo.ok, true)
+assert.equal(geo.via, 'open-meteo')
+assert.ok(Math.abs(geo.results[0]!.latitude - 25.6) < 0.5)
+assert.match(geo.evidence, /open-meteo-geo@2/)
+console.log('1. geocode 主源命中 + alias/schema OK')
 
-// 3. 历史气候:去年 8 月(雨季基线)
-const cl = await getClimate({ latitude: dali.latitude, longitude: dali.longitude }, 8)
-assert.equal(cl.ok, true, `climate ok: ${cl.error ?? ''}`)
-assert.ok(cl.daily!.length >= 28, '8 月应有 ≥28 天')
-assert.match(cl.evidence, /open-meteo-climate@/, '气候证据链')
-console.log(`3. climate 大理去年 8 月:${cl.daily!.length} 天 OK`)
+// 2. 零结果进入 Nominatim 兜底，并保持正确国家/坐标
+const phuket = await geocodePlace('普吉岛', { fetchImpl: mockFetch((url) => url.includes('nominatim') ? geoPhuket : { results: [] }) })
+assert.equal(phuket.ok, true)
+assert.equal(phuket.via, 'nominatim')
+assert.match(phuket.results[0]!.country ?? '', /泰国/)
+assert.ok(Math.abs(phuket.results[0]!.latitude - 8) < 0.5)
+console.log('2. geocode 兜底链 + 地名 alias OK')
 
-// 4. 降级:非法坐标(纬度 999 越界)→ ok=false 不抛错
-const bad = await getForecast({ latitude: 999, longitude: 0 }, { timeoutMs: 10_000 })
-assert.equal(bad.ok, false, '非法输入应返回 ok=false')
-assert.ok(bad.evidence.includes('error'), '降级证据标注')
-console.log(`4. 降级 ok=false 不抛错 OK`)
+// 3. 预报正常 schema
+const fc = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: 7, fetchImpl: mockFetch(() => forecastBody(7)) })
+assert.equal(fc.ok, true)
+assert.equal(fc.daily?.length, 7)
+assert.equal(fc.daily?.[0]?.weatherCode, 61)
+assert.ok(fc.latencyMs < 1000)
+console.log('3. forecast schema/行为 OK')
 
-// 5. WMO 码映射
+// 4. 慢 forecast 必须在受控 timeout 内 graceful fallback（不抛错）
+const slow = mockFetch((_url, signal) => new Promise((_, reject) => {
+  const abort = () => reject(new Error('This operation was aborted'))
+  if (signal.aborted) abort()
+  else signal.addEventListener('abort', abort, { once: true })
+  setTimeout(() => reject(new Error('late response')), 250)
+}))
+const slowStarted = Date.now()
+const slowFc = await getForecast({ latitude: 25.6, longitude: 100.2 }, { timeoutMs: 25, fetchImpl: slow })
+assert.equal(slowFc.ok, false)
+assert.ok(Date.now() - slowStarted < 150, 'slow forecast must respect timeout')
+assert.match(slowFc.evidence, /error/)
+console.log('4. slow forecast timeout + graceful fallback OK')
+
+// 5. 双源 fallback 的总预算（两个请求共享 timeoutMs），并检查网络错误终态
+let calls = 0
+const slowBoth = mockFetch((_url, signal) => {
+  calls += 1
+  return new Promise((_, reject) => {
+    const abort = () => reject(new Error('network timeout'))
+    if (signal.aborted) abort()
+    else signal.addEventListener('abort', abort, { once: true })
+  })
+})
+const chainStarted = Date.now()
+const chain = await geocodePlace('不存在的地方', { timeoutMs: 35, fetchImpl: slowBoth })
+assert.equal(chain.ok, false)
+assert.equal(calls, 2, 'primary and fallback should both be attempted')
+assert.ok(Date.now() - chainStarted < 150, 'fallback chain must share one total budget')
+assert.match(chain.evidence, /open-meteo-geo@error/)
+const network = await getForecast({ latitude: 25.6, longitude: 100.2 }, { fetchImpl: mockFetch(() => { throw new Error('ECONNRESET') }) })
+assert.equal(network.ok, false)
+assert.match(network.error ?? '', /ECONNRESET/)
+console.log('5. slow geocode + fallback total budget + network error OK')
+
+// 6. climate schema、malformed schema、WMO mapping
+const cl = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { year: 2025, fetchImpl: mockFetch(() => climateBody) })
+assert.equal(cl.ok, true)
+assert.equal(cl.daily?.length, 31)
+const malformed = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: 7, fetchImpl: mockFetch(() => ({ daily: { time: [] } })) })
+assert.equal(malformed.ok, false)
 assert.equal(wmoLabel(0), '晴')
 assert.equal(wmoLabel(95), '雷暴')
-assert.match(wmoLabel(999), /天气码999/, '未知码回退')
-console.log('5. WMO 码映射 OK')
+assert.match(wmoLabel(999), /天气码999/)
+console.log('6. climate/schema guard/WMO OK')
 
-console.log('\nWEATHER TESTS: 6/6 OK(Open-Meteo 真实 API,免费无 key;普吉岛走 Nominatim 兜底层)')
+console.log('\nWEATHER TESTS: deterministic 6/6 OK (live APIs are peripheral smoke only)')

@@ -59,11 +59,13 @@ export function wmoLabel(code: number): string {
   return WMO_ZH[code] ?? `天气码${code}`
 }
 
-async function fetchJson(url: string, timeoutMs: number, headers: Record<string, string> = {}): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+type FetchImpl = typeof fetch
+
+async function fetchJson(url: string, timeoutMs: number, headers: Record<string, string> = {}, fetchImpl: FetchImpl = globalThis.fetch): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json', ...headers } })
+    const res = await fetchImpl(url, { signal: ctrl.signal, headers: { Accept: 'application/json', ...headers } })
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
     return { ok: true, data: await res.json() }
   } catch (e) {
@@ -101,13 +103,16 @@ function stripHits(hits: GeoHitInternal[]): Array<{ name: string; latitude: numb
  *     兜底仍空则回退 open-meteo 弱结果(不比此前更差)。 */
 export async function geocodePlace(
   name: string,
-  opts: { timeoutMs?: number; count?: number } = {},
+  opts: { timeoutMs?: number; count?: number; fetchImpl?: FetchImpl } = {},
 ): Promise<{ ok: boolean; evidence: string; via?: 'open-meteo' | 'nominatim'; results: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>; error?: string }> {
   const ts = new Date().toISOString()
   const count = opts.count ?? 5
   const query = name.trim()
   const omUrl = `${GEOCODE_BASE}?name=${encodeURIComponent(query)}&count=${count}&language=zh&format=json`
-  const r = await fetchJson(omUrl, opts.timeoutMs ?? 15_000)
+  // timeoutMs is a budget for the complete primary→fallback chain, not per request.
+  const deadline = Date.now() + (opts.timeoutMs ?? 15_000)
+  const remaining = () => Math.max(1, deadline - Date.now())
+  const r = await fetchJson(omUrl, remaining(), {}, opts.fetchImpl)
   const omResults: GeoHitInternal[] = r.ok
     ? ((r.data as { results?: unknown[] })?.results ?? []).map((item) => {
         const it = item as Record<string, unknown>
@@ -131,7 +136,7 @@ export async function geocodePlace(
   // 弱命中/零结果/主源请求失败:Nominatim 兜底(免费无 key;中文 accept-language)
   const nomTs = new Date().toISOString()
   const nomUrl = `${NOMINATIM_BASE}?q=${encodeURIComponent(query)}&format=jsonv2&limit=${count}&accept-language=zh&addressdetails=1`
-  const nom = await fetchJson(nomUrl, opts.timeoutMs ?? 15_000, { 'User-Agent': 'gotry-travel-agent/0.1 (+https://github.com/Danceiny/gotry)' })
+  const nom = await fetchJson(nomUrl, remaining(), { 'User-Agent': 'gotry-travel-agent/0.1 (+https://github.com/Danceiny/gotry)' }, opts.fetchImpl)
   const nomResults: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }> = nom.ok
     ? ((nom.data as unknown[]) ?? []).map((item) => {
         const it = item as Record<string, unknown>
@@ -166,7 +171,7 @@ export async function geocodePlace(
 /** 未来天气预报(≤16 天) */
 export async function getForecast(
   point: WeatherPoint,
-  opts: { days?: number; timeoutMs?: number } = {},
+  opts: { days?: number; timeoutMs?: number; fetchImpl?: FetchImpl } = {},
 ): Promise<WeatherResult> {
   const started = Date.now()
   const ts = new Date().toISOString()
@@ -174,13 +179,16 @@ export async function getForecast(
   const url = `${FORECAST_BASE}?latitude=${point.latitude}&longitude=${point.longitude}`
     + `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode`
     + `&forecast_days=${days}&timezone=auto`
-  const r = await fetchJson(url, opts.timeoutMs ?? 15_000)
+  const r = await fetchJson(url, opts.timeoutMs ?? 15_000, {}, opts.fetchImpl)
   const latencyMs = Date.now() - started
   if (!r.ok) {
     return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo@error@${ts}]`, latencyMs, error: r.error }
   }
   const daily = (r.data as { daily?: { time: string[]; temperature_2m_max: number[]; temperature_2m_min: number[]; precipitation_probability_max?: (number | null)[]; weathercode: number[] }; timezone?: string }).daily
-  if (!daily) {
+  if (!daily || !Array.isArray(daily.time) || !Array.isArray(daily.temperature_2m_max)
+    || !Array.isArray(daily.temperature_2m_min) || !Array.isArray(daily.weathercode)
+    || daily.time.length !== days || daily.temperature_2m_max.length !== days
+    || daily.temperature_2m_min.length !== days || daily.weathercode.length !== days) {
     return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo@error@${ts}]`, latencyMs, error: 'empty daily payload' }
   }
   const rows: WeatherDaily[] = daily.time.map((date, i) => ({
@@ -203,7 +211,7 @@ export async function getForecast(
 export async function getClimate(
   point: WeatherPoint,
   month: number,
-  opts: { year?: number; timeoutMs?: number } = {},
+  opts: { year?: number; timeoutMs?: number; fetchImpl?: FetchImpl } = {},
 ): Promise<WeatherResult> {
   const started = Date.now()
   const ts = new Date().toISOString()
@@ -215,13 +223,17 @@ export async function getClimate(
   const url = `${ARCHIVE_BASE}?latitude=${point.latitude}&longitude=${point.longitude}`
     + `&start_date=${start}&end_date=${end}`
     + `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto`
-  const r = await fetchJson(url, opts.timeoutMs ?? 15_000)
+  const r = await fetchJson(url, opts.timeoutMs ?? 15_000, {}, opts.fetchImpl)
   const latencyMs = Date.now() - started
   if (!r.ok) {
     return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo-climate@error@${ts}]`, latencyMs, error: r.error }
   }
   const daily = (r.data as { daily?: { time: string[]; temperature_2m_max: number[]; temperature_2m_min: number[]; weathercode: number[] } }).daily
-  if (!daily) {
+  if (!daily || !Array.isArray(daily.time) || !Array.isArray(daily.temperature_2m_max)
+    || !Array.isArray(daily.temperature_2m_min) || !Array.isArray(daily.weathercode)
+    || daily.time.length !== daily.temperature_2m_max.length
+    || daily.time.length !== daily.temperature_2m_min.length
+    || daily.time.length !== daily.weathercode.length) {
     return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo-climate@error@${ts}]`, latencyMs, error: 'empty daily payload' }
   }
   const rows: WeatherDaily[] = daily.time.map((date, i) => ({
