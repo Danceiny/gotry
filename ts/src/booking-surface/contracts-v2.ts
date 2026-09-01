@@ -1,9 +1,9 @@
-import type { BookingReadActionKindV1, BookingWorkspaceSnapshotV1, SearchCriteriaPatchV1, ResultsViewPatchV1, OfferCriteriaV1 } from './contracts.ts'
+import type { BookingReadActionKindV1, BookingWorkspaceSnapshotV1, SearchCriteriaPatchV1, ResultsViewPatchV1, OfferCriteriaV1, EvidenceLevelV1 } from './contracts.ts'
 
 export const BOOKING_SURFACE_SCHEMA_VERSION_V2 = 'booking.surface.v2' as const
 /** Hard task-level operation budget. The counter is persisted in the v2 ledger. */
 export const BOOKING_COPILOT_MAX_OPERATIONS_V2 = 20 as const
-export const BOOKING_SURFACE_SCHEMA_V2_SHA256 = '4a8e8b4c4ce86ec4d93c4349bcf981c638d39f6b93fc2f3d59ae6af17a927a92' as const
+export const BOOKING_SURFACE_SCHEMA_V2_SHA256 = '45df62db1b19d30a4fd22ddc94eb550e8ff32d8a225558b5ff13ba303588fc03' as const
 export const BOOKING_READ_ACTION_KINDS_V2 = ['search.patch','search.run','results.view.patch','hotel.focus','hotel.select','offers.query','offers.view.patch','offers.compare','offer.select','offer.check','checkout.prepare','order.observe'] as const satisfies readonly BookingReadActionKindV1[]
 export type BookingReadActionKindV2 = typeof BOOKING_READ_ACTION_KINDS_V2[number]
 export type BookingSurfaceV2 = 'tenant' | 'customer_portal' | 'storefront' | 'payment_link'
@@ -56,12 +56,14 @@ export type HotelSelectActionV2 = Base<'hotel.select', { hotelRef: string }>
 export type OffersQueryActionV2 = Base<'offers.query', { hotelRefs: string[]; criteria: OfferCriteriaV1 }>
 export type OffersViewPatchActionV2 = Base<'offers.view.patch', { hotelRef: string; criteria: OfferCriteriaV1 }>
 export type OffersCompareActionV2 = Base<'offers.compare', { offerRefs: string[]; requestedCount: number }>
-export type OfferSelectActionV2 = Base<'offer.select', { offerRef: string }>
-export type OfferCheckActionV2 = Base<'offer.check', { offerRef: string }>
-export type CheckoutPrepareActionV2 = Base<'checkout.prepare', { offerRef: string; verifiedOfferRef: string }>
+export interface LoadedOfferFactV2 { offerRef: string; offerVersionRef: string; hotelRef: string; evidenceLevel: EvidenceLevelV1; factRefs: string[] }
+export interface VerifiedOfferCapabilityV2 { offerRef: string; offerVersionRef: string; verifiedOfferRef: string; expiresAt: string }
+export type OfferSelectActionV2 = Base<'offer.select', { offerRef: string; offerVersionRef: string }>
+export type OfferCheckActionV2 = Base<'offer.check', { offerRef: string; offerVersionRef: string }>
+export type CheckoutPrepareActionV2 = Base<'checkout.prepare', { offerRef: string; offerVersionRef: string; verifiedOfferRef: string }>
 export type OrderObserveActionV2 = Base<'order.observe', { orderRef: string }>
 export type BookingReadActionV2=SearchPatchActionV2|SearchRunActionV2|ResultsViewPatchActionV2|HotelFocusActionV2|HotelSelectActionV2|OffersQueryActionV2|OffersViewPatchActionV2|OffersCompareActionV2|OfferSelectActionV2|OfferCheckActionV2|CheckoutPrepareActionV2|OrderObserveActionV2
-export interface BookingWorkspaceSnapshotV2 extends Omit<BookingWorkspaceSnapshotV1,'schemaVersion'|'surface'|'capabilities'>{schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;surface:BookingSurfaceV2;capabilities:{surface:BookingSurfaceV2;allowedActions:BookingReadActionKindV2[]}}
+export interface BookingWorkspaceSnapshotV2 extends Omit<BookingWorkspaceSnapshotV1,'schemaVersion'|'surface'|'capabilities'|'loadedOffers'|'verifiedOfferRef'>{schemaVersion:typeof BOOKING_SURFACE_SCHEMA_VERSION_V2;surface:BookingSurfaceV2;loadedOffers:LoadedOfferFactV2[];verifiedOffer?:VerifiedOfferCapabilityV2;capabilities:{surface:BookingSurfaceV2;allowedActions:BookingReadActionKindV2[]}}
 export type BookingWorkspaceIngressSnapshotV2 = Pick<BookingWorkspaceSnapshotV2, 'schemaVersion'|'revision'|'locale'|'currency'|'searchDraft'|'results'|'visibleHotels'|'loadedOffers'|'focusedHotelRef'|'shortlistedOfferRefs'|'selectedOfferRef'>
 export type ActionObservationV2 =
   | { kind: 'search.state'; searchSessionRef?: string; resultCount?: number; gapCodes?: BookingV2GapCode[] }
@@ -69,9 +71,9 @@ export type ActionObservationV2 =
   | { kind: 'hotel.focus'; hotelRef: string }
   | { kind: 'hotel.selection'; hotelRef: string }
   | { kind: 'offers.state'; hotelRefs: string[]; offerRefs: string[]; loadedHotelCount: number; gapCodes?: BookingV2GapCode[] }
-  | { kind: 'offer.selection'; offerRef: string }
-  | { kind: 'offer.availability'; offerRef: string; verifiedOfferRef?: string; available: boolean; changedFactRefs: string[]; gapCodes?: BookingV2GapCode[] }
-  | { kind: 'checkout.handoff'; offerRef: string; verifiedOfferRef: string; handoffRef: string }
+  | { kind: 'offer.selection'; offerRef: string; offerVersionRef: string }
+  | { kind: 'offer.availability'; offerRef: string; checkedOfferVersionRef: string; currentOfferVersionRef?: string; verifiedOfferRef?: string; available: boolean; changedFactRefs: string[]; gapCodes?: BookingV2GapCode[] }
+  | { kind: 'checkout.handoff'; offerRef: string; offerVersionRef: string; verifiedOfferRef: string; handoffRef: string }
   | { kind: 'order.state'; orderRef: string; state: 'pending'|'verified'|'failed'|'unknown'; gapCodes?: BookingV2GapCode[] }
   | { kind: 'gap'; code: BookingV2GapCode; factRefs: string[] }
 export interface ResultContractV2 {outcome:'complete'|'partial'|'empty';requestedCount?:number;actualCount?:number;hardCriteriaMet:boolean;factRefs:string[];gapCodes:BookingV2GapCode[];blockers:CriterionBlockerV2[];relaxationsApplied:RelaxationApprovalV2[]}
