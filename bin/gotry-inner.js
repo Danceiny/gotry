@@ -120,12 +120,16 @@ if (!dshBin) {
 }
 
 // --- 运行时 patch:插件路径按本包位置重写为绝对路径 ---
-// npm 模式指向 dist/ 纯 JS(Node 拒绝 strip node_modules 下的 .ts);
-// repo 检出指向 .ts 源码(vendored runtime 下天然可行)。
+// 安装包始终指向 dist/ 纯 JS(Node 拒绝 strip node_modules 下的 .ts)。
+// repo 检出仅在 vendored runtime 或显式 tsx loader 可用时走 .ts；否则
+// 使用当前 worktree 已构建的 dist，避免 Node strip-only 拒绝参数属性语法。
 const distEntry = join(repoRoot, 'dist/src/index.js')
 const tsEntry = join(repoRoot, 'ts/src/index.ts')
-const npmMode = !existsSync(vendoredDsh)
-const pluginEntry = npmMode && existsSync(distEntry) ? distEntry : tsEntry
+const installedPackageMode = !existsSync(join(repoRoot, '.git'))
+const tsxLoaderActive = /(?:^|\s)--(?:import|loader)(?:=|\s)(?:"[^"]*tsx[^"]*"|'[^']*tsx[^']*'|\S*tsx\S*)/.test(process.env.NODE_OPTIONS ?? '')
+const sourceTypeScriptMode = !installedPackageMode && (existsSync(vendoredDsh) || tsxLoaderActive)
+const pluginEntry = !sourceTypeScriptMode && existsSync(distEntry) ? distEntry : tsEntry
+const distModuleMode = pluginEntry === distEntry
 const staticPatch = join(repoRoot, 'cordis.gotry-patch.yml')
 if (!existsSync(staticPatch)) {
   console.error(`[gotry] 找不到 patch 配置: ${staticPatch}`)
@@ -170,19 +174,23 @@ let patchRaw = readFileSync(staticPatch, 'utf-8')
 // Owner-local benchmark environment opt-in. Keep the path out of tool input
 // and logs; it is only injected into the local plugin config as YAML data.
 const benchmarkEnvironmentConfig = process.env.GOTRY_BENCHMARK_ENV_CONFIG
+let benchmarkTerminalConfig = null
 if (benchmarkEnvironmentConfig !== undefined && benchmarkEnvironmentConfig !== '') {
   let validBenchmarkEnvironmentConfig = false
   try {
-    const bridgeModule = existsSync(join(repoRoot, 'scripts/build-dist.mjs'))
-      ? join(repoRoot, 'ts/src/benchmark-environment-bridge.ts')
-      : join(repoRoot, 'dist/src/benchmark-environment-bridge.js')
+    const bridgeModule = distModuleMode && existsSync(join(repoRoot, 'dist/src/benchmark-environment-bridge.js'))
+      ? join(repoRoot, 'dist/src/benchmark-environment-bridge.js')
+      : join(repoRoot, 'ts/src/benchmark-environment-bridge.ts')
     const { loadBenchmarkEnvironmentConfig } = await import(pathToFileURL(bridgeModule).href)
-    validBenchmarkEnvironmentConfig = benchmarkEnvironmentConfig.length > 0
+    const loadedConfig = benchmarkEnvironmentConfig.length > 0
       && benchmarkEnvironmentConfig.length <= 4096
       && !benchmarkEnvironmentConfig.includes('\0')
       && !benchmarkEnvironmentConfig.includes('\r')
       && !benchmarkEnvironmentConfig.includes('\n')
-      && loadBenchmarkEnvironmentConfig(benchmarkEnvironmentConfig) !== null
+      ? loadBenchmarkEnvironmentConfig(benchmarkEnvironmentConfig)
+      : null
+    validBenchmarkEnvironmentConfig = loadedConfig !== null
+    benchmarkTerminalConfig = loadedConfig?.terminal_output ?? null
   } catch { validBenchmarkEnvironmentConfig = false }
   if (!validBenchmarkEnvironmentConfig) {
     console.error('[gotry] benchmark environment configuration unavailable')
@@ -193,6 +201,10 @@ if (benchmarkEnvironmentConfig !== undefined && benchmarkEnvironmentConfig !== '
     /(\n\s+hbcliBin:\s+'[^']*')/,
     `$1\n        benchmarkEnvironmentConfigPath: '${benchmarkPathYaml}'`,
   )
+}
+if (benchmarkEnvironmentConfig && mode !== 'headless') {
+  console.error('[gotry] benchmark environment requires headless mode')
+  process.exit(1)
 }
 if (mapEntry) {
   patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-map-tools'/, `$1'${mapEntry}'`)
@@ -275,23 +287,76 @@ if (benchmarkEnvironmentConfig) {
     'HTTPS_PROXY',
   ]) delete childEnv[key]
 }
+const benchmarkStdout = benchmarkEnvironmentConfig ? [] : null
+let benchmarkCapturedBytes = 0
+let benchmarkOutputTruncated = false
 child = spawn(process.execPath, [dshBin, ...binJs], {
-  stdio: 'inherit',
+  stdio: benchmarkStdout ? ['ignore', 'pipe', 'pipe'] : 'inherit',
   env: childEnv,
   cwd: dshCwd,
 })
-if (process.env.GOTRY_DEBUG) {
-  console.error('[gotry-debug] exec:', process.execPath, dshBin)
-  console.error('[gotry-debug] argv:', binJs)
-  console.error('[gotry-debug] cwd:', dshCwd)
-  console.error('[gotry-debug] patch exists:', existsSync(patchPath), patchPath)
+if (benchmarkStdout) {
+  const maxBytes = Math.max(1, Number(benchmarkTerminalConfig?.max_bytes ?? 1))
+  child.stdout?.on('data', chunk => {
+    if (benchmarkCapturedBytes + Buffer.byteLength(chunk) > maxBytes) benchmarkOutputTruncated = true
+    if (benchmarkCapturedBytes < maxBytes) {
+      const bytes = Buffer.from(chunk)
+      benchmarkStdout.push(bytes.subarray(0, Math.max(0, maxBytes - benchmarkCapturedBytes)))
+      benchmarkCapturedBytes += Math.min(bytes.length, maxBytes - benchmarkCapturedBytes)
+    }
+  })
+  child.stderr?.resume()
 }
-child.on('exit', (code, signal) => {
+if (process.env.GOTRY_DEBUG) {
+  if (benchmarkEnvironmentConfig) {
+    console.error('[gotry-debug] benchmark headless child configured(details redacted)')
+  } else {
+    console.error('[gotry-debug] exec:', process.execPath, dshBin)
+    console.error('[gotry-debug] argv:', binJs)
+    console.error('[gotry-debug] cwd:', dshCwd)
+    console.error('[gotry-debug] patch exists:', existsSync(patchPath), patchPath)
+  }
+}
+child.on('close', (code, signal) => {
   cleanupPatch()
+  if (benchmarkStdout) {
+    const captured = Buffer.concat(benchmarkStdout).toString('utf8')
+    if (code !== 0 || signal || benchmarkOutputTruncated) {
+      console.error('[gotry] benchmark terminal output unavailable')
+      process.exit(1)
+    }
+    const parserModule = distModuleMode && existsSync(join(repoRoot, 'dist/src/benchmark-agent-conformance.js'))
+      ? join(repoRoot, 'dist/src/benchmark-agent-conformance.js')
+      : join(repoRoot, 'ts/src/benchmark-agent-conformance.ts')
+    import(pathToFileURL(parserModule).href).then(async ({ parseBenchmarkTerminal }) => {
+      const parsed = parseBenchmarkTerminal(captured, benchmarkTerminalConfig)
+      if (!parsed || parsed.ok !== true) {
+        console.error('[gotry] benchmark terminal output unavailable')
+        process.exitCode = 1
+        return
+      }
+      await new Promise((resolve, reject) => {
+        const onError = error => {
+          process.stdout.off('error', onError)
+          reject(error)
+        }
+        process.stdout.once('error', onError)
+        process.stdout.write(captured, () => {
+          process.stdout.off('error', onError)
+          resolve()
+        })
+      })
+      process.exitCode = 0
+    }).catch(() => {
+      console.error('[gotry] benchmark terminal output unavailable')
+      process.exitCode = 1
+    })
+    return
+  }
   if (code !== 0 || signal) {
     // D-NEW 护栏:dsh 异常退出也写一条 incident,留现场而非沉默
-    // npm 模式 import dist JS(node_modules 下的 .ts 会被 Node 拒 strip)
-    const incidentModule = npmMode && existsSync(join(repoRoot, 'dist/capabilities/incident-log.js'))
+    // dist 模式 import JS(node_modules 下的 .ts 会被 Node 拒 strip)
+    const incidentModule = distModuleMode && existsSync(join(repoRoot, 'dist/capabilities/incident-log.js'))
       ? '../dist/capabilities/incident-log.js'
       : '../ts/capabilities/incident-log.ts'
     import(incidentModule).then(({ recordIncident }) => {
