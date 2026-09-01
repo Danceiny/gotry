@@ -1,21 +1,21 @@
 /**
  * Offline headless E2E for the agent tool-call budget.
  *
- * This deliberately exercises the published/npm path:
+ * This requires and exercises a clean installed-package binary:
  *   bin/gotry-inner.js -> dist/src/index.js -> dsh headless -> local SSE relay
- * No GoTry state is used: both DSH_HOME and the child cwd are fresh temporary
- * directories, and the only model endpoint is a loopback HTTP server.
+ * scripts/run-all-tests.sh builds that binary from the current tarball when CI
+ * has not provided one. No GoTry state is used: both DSH_HOME and the child cwd
+ * are fresh temporary directories, and the only model endpoint is loopback.
  */
 
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { existsSync, mkdtempSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 
 const ROOT = join(import.meta.dirname, '..', '..')
-const BIN = join(ROOT, 'bin', 'gotry-inner.js')
 const TIMEOUT_MS = 90_000
 const TOOL = 'gotry_artifacts_list'
 const EXHAUSTED = 'TOOL_BUDGET_EXHAUSTED'
@@ -124,22 +124,13 @@ async function main(): Promise<void> {
   const relay = await startRelay()
   const dshHome = mkdtempSync(join(tmpdir(), 'gotry-budget-dsh-home-'))
   const childCwd = mkdtempSync(join(tmpdir(), 'gotry-budget-cwd-'))
-  const vendored = join(ROOT, 'ts', 'dsh-runtime', 'node_modules')
-  const aside = join(tmpdir(), `gotry-budget-vendored-${process.pid}`)
-  let restored = false
-  const restore = () => {
-    if (restored) return
-    restored = true
-    if (existsSync(aside) && !existsSync(vendored)) renameSync(aside, vendored)
-  }
   let exitCode: number | null = null
   let output = ''
   const configuredBin = process.env.GOTRY_BUDGET_E2E_BIN
+  assert.ok(configuredBin && existsSync(configuredBin), 'GOTRY_BUDGET_E2E_BIN must point to the clean installed-package binary')
   try {
-    // npm-mode is selected by absence of the vendored runtime. Restore in finally.
-    if (!configuredBin && existsSync(vendored)) renameSync(vendored, aside)
-    const executable = configuredBin || process.execPath
-    const executableArgs = configuredBin ? ['exercise the tool budget'] : [BIN, 'exercise the tool budget']
+    const executable = configuredBin
+    const executableArgs = ['exercise the tool budget']
     const childEnv: NodeJS.ProcessEnv = { ...process.env }
     childEnv.DSH_HOME = dshHome
     childEnv.LLM_API_KEY = 'synthetic-e2e-key'
@@ -160,7 +151,6 @@ async function main(): Promise<void> {
     })
   } finally {
     await relay.close()
-    restore()
     rmSync(dshHome, { recursive: true, force: true })
     rmSync(childCwd, { recursive: true, force: true })
   }

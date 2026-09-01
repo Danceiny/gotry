@@ -350,10 +350,52 @@ echo "=== 44. sf-live static golden(issue #67:CLI vendor 闭集/OpenFlights 固�
 (cd ts && npx tsx scripts/sf-soft-score-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/sf-live-cli-tests.ts) || FAIL=1
 
+package_e2e_bin="${GOTRY_BRIDGE_E2E_BIN:-${GOTRY_BUDGET_E2E_BIN:-}}"
+package_e2e_dir=""
+package_e2e_install_dir=""
+cleanup_packaged_e2e_runtime() {
+  if [ -n "$package_e2e_dir" ] && [ -n "$package_e2e_install_dir" ]; then
+    rm -rf -- "$package_e2e_dir" "$package_e2e_install_dir"
+  elif [ -n "$package_e2e_dir" ]; then
+    rm -rf -- "$package_e2e_dir"
+  fi
+}
+trap cleanup_packaged_e2e_runtime EXIT
+if [ -n "${GOTRY_BRIDGE_E2E_BIN:-}" ] && [ -n "${GOTRY_BUDGET_E2E_BIN:-}" ] \
+  && [ "$GOTRY_BRIDGE_E2E_BIN" != "$GOTRY_BUDGET_E2E_BIN" ]; then
+  echo "FAIL: packaged E2E bins disagree"
+  FAIL=1
+fi
+if [ -z "$package_e2e_bin" ]; then
+  package_e2e_dir=$(mktemp -d)
+  package_e2e_install_dir=$(mktemp -d)
+  if npm pack --silent --pack-destination "$package_e2e_dir" >/dev/null; then
+    package_e2e_tarballs=("$package_e2e_dir"/*.tgz)
+    if [ "${#package_e2e_tarballs[@]}" -eq 1 ] \
+      && [ -f "${package_e2e_tarballs[0]}" ] \
+      && (cd "$package_e2e_install_dir" && npm init --yes >/dev/null) \
+      && npx --yes pnpm@11.5.0 --dir "$package_e2e_install_dir" add --ignore-scripts "${package_e2e_tarballs[0]}" >/dev/null \
+      && [ -x "$package_e2e_install_dir/node_modules/.bin/gotry" ]; then
+      package_e2e_bin="$package_e2e_install_dir/node_modules/.bin/gotry"
+    else
+      echo "FAIL: packaged E2E runtime preparation failed"
+      FAIL=1
+    fi
+  else
+    echo "FAIL: package creation failed"
+    FAIL=1
+  fi
+fi
+
 echo
 echo "=== 45. Agent 工具预算(第16次软收敛/最多18次真实派发/同 step 第19次结构化拒绝/下一 step text-only/新轮次复位;Cordis integration + dsh headless E2E) ==="
 (cd ts && npx tsx scripts/agent-planning-budget-tests.ts) || FAIL=1
-(cd ts && npx tsx scripts/agent-planning-budget-e2e.ts) || FAIL=1
+if [ -n "$package_e2e_bin" ] && [ -x "$package_e2e_bin" ]; then
+  (cd ts && GOTRY_BUDGET_E2E_BIN="$package_e2e_bin" npx tsx scripts/agent-planning-budget-e2e.ts) || FAIL=1
+else
+  echo "FAIL: tool-budget packaged runtime unavailable"
+  FAIL=1
+fi
 
 echo
 echo "=== 46. Evaluation Phase 0 foundation(four v0 contracts/seven-source registry/diagnostic fixtures/test-only aggregate admission;no adapter,runner,Python,uplift claim) ==="
@@ -366,44 +408,13 @@ echo "=== 47. Evaluation cadence policy(PR/nightly/weekly/milestone admission/pa
 echo
 echo "=== 48. Benchmark environment bridge(default-off/allowlist/failure/env isolation/model-driven installed runtime;focused contract + packaged CLI E2E) ==="
 (cd ts && npx tsx scripts/benchmark-environment-bridge-tests.ts) || FAIL=1
-bridge_e2e_bin="${GOTRY_BRIDGE_E2E_BIN:-}"
-bridge_package_dir=""
-bridge_install_dir=""
-cleanup_benchmark_package_runtime() {
-  if [ -n "$bridge_package_dir" ] && [ -n "$bridge_install_dir" ]; then
-    rm -rf -- "$bridge_package_dir" "$bridge_install_dir"
-  elif [ -n "$bridge_package_dir" ]; then
-    rm -rf -- "$bridge_package_dir"
-  fi
-}
-trap cleanup_benchmark_package_runtime EXIT
-if [ -z "$bridge_e2e_bin" ]; then
-  bridge_package_dir=$(mktemp -d)
-  bridge_install_dir=$(mktemp -d)
-  if npm pack --silent --pack-destination "$bridge_package_dir" >/dev/null; then
-    bridge_tarballs=("$bridge_package_dir"/*.tgz)
-    if [ "${#bridge_tarballs[@]}" -eq 1 ] \
-      && [ -f "${bridge_tarballs[0]}" ] \
-      && (cd "$bridge_install_dir" && npm init --yes >/dev/null) \
-      && npx --yes pnpm@11.5.0 --dir "$bridge_install_dir" add --ignore-scripts "${bridge_tarballs[0]}" >/dev/null \
-      && [ -x "$bridge_install_dir/node_modules/.bin/gotry" ]; then
-      bridge_e2e_bin="$bridge_install_dir/node_modules/.bin/gotry"
-    else
-      echo "FAIL: benchmark packaged runtime preparation failed"
-      FAIL=1
-    fi
-  else
-    echo "FAIL: benchmark package creation failed"
-    FAIL=1
-  fi
-fi
-if [ -n "$bridge_e2e_bin" ] && [ -x "$bridge_e2e_bin" ]; then
-  (cd ts && GOTRY_BRIDGE_E2E_BIN="$bridge_e2e_bin" npx tsx scripts/benchmark-environment-bridge-e2e.ts) || FAIL=1
+if [ -n "$package_e2e_bin" ] && [ -x "$package_e2e_bin" ]; then
+  (cd ts && GOTRY_BRIDGE_E2E_BIN="$package_e2e_bin" npx tsx scripts/benchmark-environment-bridge-e2e.ts) || FAIL=1
 else
   echo "FAIL: benchmark packaged runtime unavailable"
   FAIL=1
 fi
-cleanup_benchmark_package_runtime
+cleanup_packaged_e2e_runtime
 trap - EXIT
 
 echo

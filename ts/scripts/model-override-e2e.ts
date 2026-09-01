@@ -1,7 +1,7 @@
 /**
  * issue #77 E2E:LLM_MODEL 对 dsh 会话面生效的端到端证据。
  *
- * 四场景(全部走真实路径:bin/gotry-inner.js → vendored dsh headless →
+ * 四场景(全部走真实路径:clean package bin → dsh headless →
  * llm-deepseek → 本地 mock OpenAI 兼容中转,中转落盘每个请求体的 model 字段):
  *
  *   1. 设 LLM_MODEL,干净 DSH_HOME        → 请求体 model = LLM_MODEL
@@ -16,22 +16,19 @@
  * mock 模型只回固定文本、从不调工具 → gotry-state 零写入(动机/愿望池不动);
  * 环境变量直接 export(不走 .env 文件,repo 模式 .env 加载路径已由 #48 覆盖)。
  *
- * 形态:测 npm(发布)形态——插件走 dist/ 纯 JS。vendored runtime 存在时脚本会
- * 临时将其 node_modules 移开(bin 的 repo/npm 形态判据),结束时恢复;repo 形态的
- * .ts 直载依赖 Node 版本对 strip-only 的支持(仓内残留构造器参数属性),不在本
- * 脚本验证面内。前置:先跑 `node scripts/build-dist.mjs`。
+ * 形态:只接受 clean npm 安装形态——插件走 dist/ 纯 JS，不再通过移动源码树依赖
+ * 来伪装 package mode。调用方须提供当前 tarball 安装出的 bin。
  *
- * 运行(在仓根):npx tsx ts/scripts/model-override-e2e.ts
+ * 运行(在仓根):GOTRY_MODEL_OVERRIDE_E2E_BIN=/clean/node_modules/.bin/gotry
+ *   npx tsx ts/scripts/model-override-e2e.ts
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { existsSync, mkdtempSync, renameSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 
-const REPO_ROOT = join(import.meta.dirname, '..', '..')
-const BIN = join(REPO_ROOT, 'bin', 'gotry-inner.js')
 const BOOT_TIMEOUT_MS = 120_000
 
 interface CapturedRequest { model?: unknown; stream?: unknown }
@@ -69,9 +66,10 @@ interface Scenario {
   expectModel: string
 }
 
-async function runScenario(s: Scenario): Promise<{ ok: boolean; detail: string }> {
+async function runScenario(s: Scenario, packageBin: string): Promise<{ ok: boolean; detail: string }> {
   const relay = await startMockRelay()
   const dshHome = mkdtempSync(join(tmpdir(), 'gotry-77-dsh-home-'))
+  const childCwd = mkdtempSync(join(tmpdir(), 'gotry-77-cwd-'))
   try {
     if (s.userLayerModel) {
       // 预置用户层设置(等价于用户在 dsh web UI 选过模型并持久化)
@@ -88,9 +86,9 @@ async function runScenario(s: Scenario): Promise<{ ok: boolean; detail: string }
     if (s.llmModel) env['LLM_MODEL'] = s.llmModel
     else delete env['LLM_MODEL']
 
-    const child = spawn(process.execPath, [BIN, 'reply with the word ok'], {
+    const child = spawn(packageBin, ['reply with the word ok'], {
       env,
-      cwd: mkdtempSync(join(tmpdir(), 'gotry-77-cwd-')),
+      cwd: childCwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let logTail = ''
@@ -112,35 +110,20 @@ async function runScenario(s: Scenario): Promise<{ ok: boolean; detail: string }
   } finally {
     await relay.close()
     rmSync(dshHome, { recursive: true, force: true })
+    rmSync(childCwd, { recursive: true, force: true })
   }
 }
 
 async function main() {
-  // 形态前置:dist 必须是最新构建(npm 形态插件入口)
-  for (const f of ['dist/src/index.js', 'dist/capabilities/model-override.js']) {
-    if (!existsSync(join(REPO_ROOT, f))) {
-      console.error(`缺少 ${f}——先跑 node scripts/build-dist.mjs`)
-      process.exit(2)
-    }
+  const packageBin = process.env.GOTRY_MODEL_OVERRIDE_E2E_BIN
+  if (!packageBin || !existsSync(packageBin)) {
+    console.error('GOTRY_MODEL_OVERRIDE_E2E_BIN 必须指向当前 tarball 的 clean installed-package bin')
+    process.exit(2)
   }
-  // bin 形态判据是 vendored dsh 存在与否:临时移开以走 npm(发布)形态,结束恢复
-  const vendoredNm = join(REPO_ROOT, 'ts', 'dsh-runtime', 'node_modules')
-  const vendoredAside = join(tmpdir(), `gotry-77-vendored-${process.pid}`)
-  let restoreVendored: (() => void) | undefined
-  if (existsSync(join(vendoredNm, '@deepseek-ai', 'dsh', 'lib', 'bin.js'))) {
-    renameSync(vendoredNm, vendoredAside)
-    restoreVendored = () => { try { renameSync(vendoredAside, vendoredNm) } catch { /* 恢复失败时目录在 tmpdir,手动 mv 回 */ } }
-    process.on('exit', () => restoreVendored?.())
-  }
-  try {
-    await runAll()
-  } finally {
-    restoreVendored?.()
-    restoreVendored = undefined
-  }
+  await runAll(packageBin)
 }
 
-async function runAll() {
+async function runAll(packageBin: string) {
   const scenarios: Scenario[] = [
     { name: '① 设 LLM_MODEL(干净 DSH_HOME)', llmModel: 'gotry-e2e-model', expectModel: 'gotry-e2e-model' },
     { name: '② 设 LLM_MODEL + 用户层已选模型', llmModel: 'gotry-e2e-model', userLayerModel: 'user-picked-model', expectModel: 'gotry-e2e-model' },
@@ -151,7 +134,7 @@ async function runAll() {
   for (const s of scenarios) {
     process.stdout.write(`${s.name} … `)
     const t0 = Date.now()
-    const r = await runScenario(s)
+    const r = await runScenario(s, packageBin)
     console.log(`${r.ok ? 'PASS' : 'FAIL'}(${((Date.now() - t0) / 1000).toFixed(1)}s)${r.detail}`)
     if (!r.ok) fail = 1
   }

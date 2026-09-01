@@ -8,8 +8,8 @@
  * 工作流程:
  *   1. 解析 argv + .env(provider-neutral → DEEPSEEK_API_KEY/DEEPSEEK_BASE_URL)
  *   2. 定位 dsh runtime:
- *      a. repo checkout → vendored ts/dsh-runtime/node_modules/...
- *      b. npm 安装     → createRequire 解析依赖 @deepseek-ai/dsh(不走 npx:
+ *      a. repo checkout / npm 安装 → root package 解析锁定的 @deepseek-ai/dsh
+ *      b. 非 benchmark 且 root 缺失时 → legacy vendored node_modules fallback(不走 npx:
  *         dsh cordis-loader 在子 cwd 求值 plugin name,必须绝对路径 patch)
  *   3. 运行时生成 patch(os.tmpdir):把 gotry-tools 插件路径重写为按本包
  *      位置解析的绝对路径 —— 仓内 cordis.gotry-patch.yml 里的 name 行只是
@@ -22,15 +22,25 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
+import {
+  benchmarkRuntimeSupported,
+  resolveDshPackage,
+  selectDshCwd,
+  selectDshRuntime,
+  supportsNodeVersion,
+} from './gotry-runtime-resolution.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..')
+const sourceCheckoutMode = existsSync(join(repoRoot, '.git'))
 const require_ = createRequire(import.meta.url)
+const rootRequire = createRequire(join(repoRoot, 'package.json'))
 
 // --- 环境 .env 加载(provider-neutral) ---
 // npm 安装模式优先读用户当前目录的 .env(包目录内不该有凭证);repo 检出读仓根。
-const vendoredDshEarly = existsSync(join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'))
-const envCandidates = vendoredDshEarly
+const sourceDshEarly = resolveDshPackage(rootRequire)
+const vendoredDshEarly = !sourceDshEarly && existsSync(join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'))
+const envCandidates = sourceCheckoutMode || vendoredDshEarly
   ? [join(repoRoot, '.env')]
   : [join(process.cwd(), '.env'), join(repoRoot, '.env')]
 const envLines = []
@@ -77,7 +87,7 @@ Usage:
   gotry help                         # this help
 
 Prerequisites:
-  • Node 22+
+  • Node 22.15+
   • \`.env\` 里 LLM_API_KEY (DeepSeek / OpenAI 兼容均可;自定义端点另配 LLM_BASE_URL,一般以 /v1 结尾;指定模型另配 LLM_MODEL,同时驱动 dsh 会话面与仓内脚本)
 
 Detail: https://github.com/Danceiny/gotry — README
@@ -97,25 +107,42 @@ if (mode === 'setup') {
   process.exit(r.status ?? (r.error ? 1 : 0))
 }
 
-// --- dsh runtime 定位:repo checkout(vendored)优先,npm 安装走依赖解析 ---
-const vendoredDsh = join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')
-let dshBin = ''
-let dshCwd = ''
-if (existsSync(vendoredDsh)) {
-  dshBin = vendoredDsh
-  dshCwd = join(repoRoot, 'ts/dsh-runtime')
-} else {
-  try {
-    dshBin = require_.resolve('@deepseek-ai/dsh/lib/bin.js')
-    dshCwd = process.cwd() // npm 安装:gotry-state 落在用户调用目录
-  } catch {
-    dshBin = ''
-  }
+const benchmarkEnvironmentConfig = process.env.GOTRY_BENCHMARK_ENV_CONFIG
+if (!supportsNodeVersion(process.versions.node)) {
+  console.error('[gotry] Node.js 22.15 or newer is required')
+  process.exit(1)
 }
 
+// --- dsh runtime 定位:root manifest/require.resolve 优先;旧 vendored 仅作 legacy fallback ---
+const vendoredDsh = join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')
+const installedPackageMode = !sourceCheckoutMode
+const selectedDsh = selectDshRuntime({
+  repoRoot,
+  rootResolver: rootRequire,
+  benchmark: Boolean(benchmarkEnvironmentConfig),
+})
+let dshBin = selectedDsh?.bin ?? ''
+const dshSource = selectedDsh?.source ?? ''
+const dshCwd = selectedDsh
+  ? selectDshCwd({
+      repoRoot,
+      invocationCwd: process.cwd(),
+      sourceCheckoutMode,
+      benchmark: Boolean(benchmarkEnvironmentConfig),
+    })
+  : ''
+
 if (!dshBin) {
+  if (benchmarkEnvironmentConfig) {
+    console.error('[gotry] benchmark dsh runtime unavailable')
+    process.exit(1)
+  }
   console.error(`[gotry] 找不到 dsh runtime(既无 vendored ${vendoredDsh},依赖里也没有 @deepseek-ai/dsh)。`)
-  console.error('repo checkout: cd ts/dsh-runtime && pnpm install;npm 安装: npm install(检查 node_modules)。')
+  console.error('repo checkout: npm ci && npm --prefix ts ci && node scripts/build-dist.mjs;npm 安装: npm install(检查 node_modules)。')
+  process.exit(1)
+}
+if (benchmarkEnvironmentConfig && !benchmarkRuntimeSupported(selectedDsh)) {
+  console.error('[gotry] benchmark dsh runtime unavailable')
   process.exit(1)
 }
 
@@ -125,9 +152,8 @@ if (!dshBin) {
 // 使用当前 worktree 已构建的 dist，避免 Node strip-only 拒绝参数属性语法。
 const distEntry = join(repoRoot, 'dist/src/index.js')
 const tsEntry = join(repoRoot, 'ts/src/index.ts')
-const installedPackageMode = !existsSync(join(repoRoot, '.git'))
 const tsxLoaderActive = /(?:^|\s)--(?:import|loader)(?:=|\s)(?:"[^"]*tsx[^"]*"|'[^']*tsx[^']*'|\S*tsx\S*)/.test(process.env.NODE_OPTIONS ?? '')
-const sourceTypeScriptMode = !installedPackageMode && (existsSync(vendoredDsh) || tsxLoaderActive)
+const sourceTypeScriptMode = !installedPackageMode && (dshSource === 'legacy-vendored' || tsxLoaderActive)
 const pluginEntry = !sourceTypeScriptMode && existsSync(distEntry) ? distEntry : tsEntry
 const distModuleMode = pluginEntry === distEntry
 const staticPatch = join(repoRoot, 'cordis.gotry-patch.yml')
@@ -250,9 +276,9 @@ function injectBenchmarkEnvironmentConfig(raw, configPath) {
   return injected
 }
 
-const benchmarkEnvironmentConfig = process.env.GOTRY_BENCHMARK_ENV_CONFIG
 let benchmarkTerminalConfig = null
 let benchmarkPatchProjection = null
+let benchmarkChildDiagnostics = null
 if (benchmarkEnvironmentConfig !== undefined && benchmarkEnvironmentConfig !== '') {
   let validBenchmarkEnvironmentConfig = false
   try {
@@ -281,6 +307,17 @@ if (benchmarkEnvironmentConfig !== undefined && benchmarkEnvironmentConfig !== '
 if (benchmarkEnvironmentConfig && mode !== 'headless') {
   console.error('[gotry] benchmark environment requires headless mode')
   process.exit(1)
+}
+if (benchmarkEnvironmentConfig) {
+  try {
+    const diagnosticModule = distModuleMode && existsSync(join(repoRoot, 'dist/src/benchmark-headless-child-diagnostics.js'))
+      ? join(repoRoot, 'dist/src/benchmark-headless-child-diagnostics.js')
+      : join(repoRoot, 'ts/src/benchmark-headless-child-diagnostics.ts')
+    benchmarkChildDiagnostics = await import(pathToFileURL(diagnosticModule).href)
+  } catch {
+    console.error('[gotry] benchmark environment configuration unavailable')
+    process.exit(1)
+  }
 }
 // dsh-map-tools 宿主插件(地图/路线/POI,零 key 走 OSM/OSRM):repo 用 vendored,
 // npm 用依赖解析;都找不到就整块剔除 patch 条目(缺地图不挡旅行规划)
@@ -356,14 +393,6 @@ if (process.env.GOTRY_LLM_MODEL) {
 const patchDir = mkdtempSync(join(tmpdir(), 'gotry-cordis-'))
 const patchPath = join(patchDir, 'patch.yml')
 writeFileSync(patchPath, patchRaw, { mode: 0o600, flag: 'wx' })
-const headlessKeepalivePath = join(patchDir, 'headless-keepalive.cjs')
-if (mode === 'headless') {
-  writeFileSync(headlessKeepalivePath, `
-const hold = setInterval(() => {
-  if (process.exitCode !== undefined) clearInterval(hold)
-}, 50)
-`, { mode: 0o600, flag: 'wx' })
-}
 let patchCleaned = false
 const cleanupPatch = () => {
   if (patchCleaned) return
@@ -397,9 +426,6 @@ const binJs = mode === 'web'
   : ['--profile', 'headless', '--patch', patchPath, ...rest]
 
 const childEnv = { ...process.env }
-if (mode === 'headless') {
-  childEnv.NODE_OPTIONS = [childEnv.NODE_OPTIONS, `--require=${headlessKeepalivePath}`].filter(Boolean).join(' ')
-}
 // The benchmark config is parent-only metadata. Never make its path visible to
 // dsh or any plugin loaded by the child.
 delete childEnv.GOTRY_BENCHMARK_ENV_CONFIG
@@ -413,14 +439,16 @@ if (benchmarkEnvironmentConfig) {
   ]) delete childEnv[key]
 }
 const benchmarkStdout = benchmarkEnvironmentConfig ? [] : null
+if (benchmarkEnvironmentConfig) childEnv.GOTRY_BENCHMARK_DIAGNOSTIC_FD = '3'
 const childStdio = mode === 'web'
   ? 'inherit'
   : benchmarkStdout
-    ? ['pipe', 'pipe', 'pipe']
+    ? ['pipe', 'pipe', 'pipe', 'pipe']
     : process.stdin.isTTY
       ? 'inherit'
       : ['pipe', 'inherit', 'inherit']
 let benchmarkCapturedBytes = 0
+let benchmarkDiagnosticBuffer = Buffer.alloc(0)
 let benchmarkOutputTruncated = false
 child = spawn(process.execPath, [dshBin, ...binJs], {
   stdio: childStdio,
@@ -438,6 +466,12 @@ if (benchmarkStdout) {
     }
   })
   child.stderr?.resume()
+  child.stdio?.[3]?.on('data', chunk => {
+    benchmarkDiagnosticBuffer = benchmarkChildDiagnostics.appendBoundedChildDiagnostic(
+      benchmarkDiagnosticBuffer,
+      Buffer.from(chunk),
+    )
+  })
 }
 if (process.env.GOTRY_DEBUG) {
   if (benchmarkEnvironmentConfig) {
@@ -449,13 +483,27 @@ if (process.env.GOTRY_DEBUG) {
     console.error('[gotry-debug] patch exists:', existsSync(patchPath), patchPath)
   }
 }
+let benchmarkFailureReported = false
+const reportBenchmarkFailure = reason => {
+  if (benchmarkFailureReported) return
+  benchmarkFailureReported = true
+  process.exitCode = 1
+  process.stderr.write(`[gotry] benchmark terminal output unavailable (${reason})\n`)
+}
+
 child.on('close', (code, signal) => {
   cleanupPatch()
   if (benchmarkStdout) {
     const captured = Buffer.concat(benchmarkStdout).toString('utf8')
     if (code !== 0 || signal || benchmarkOutputTruncated) {
-      console.error('[gotry] benchmark terminal output unavailable')
-      process.exit(1)
+      const reason = benchmarkChildDiagnostics.classifyBenchmarkChildFailure({
+        code,
+        signal,
+        diagnostic: benchmarkDiagnosticBuffer.toString('utf8'),
+        outputTruncated: benchmarkOutputTruncated,
+      })
+      reportBenchmarkFailure(reason)
+      return
     }
     const parserModule = distModuleMode && existsSync(join(repoRoot, 'dist/src/benchmark-agent-conformance.js'))
       ? join(repoRoot, 'dist/src/benchmark-agent-conformance.js')
@@ -463,8 +511,7 @@ child.on('close', (code, signal) => {
     import(pathToFileURL(parserModule).href).then(async ({ parseBenchmarkTerminal }) => {
       const parsed = parseBenchmarkTerminal(captured, benchmarkTerminalConfig)
       if (!parsed || parsed.ok !== true) {
-        console.error('[gotry] benchmark terminal output unavailable')
-        process.exitCode = 1
+        reportBenchmarkFailure('child_terminal_invalid')
         return
       }
       await new Promise((resolve, reject) => {
@@ -480,8 +527,7 @@ child.on('close', (code, signal) => {
       })
       process.exitCode = 0
     }).catch(() => {
-      console.error('[gotry] benchmark terminal output unavailable')
-      process.exitCode = 1
+      reportBenchmarkFailure('child_lifecycle_failure')
     })
     return
   }
@@ -504,7 +550,11 @@ child.on('close', (code, signal) => {
 })
 child.on('error', (e) => {
   cleanupPatch()
+  if (benchmarkEnvironmentConfig) {
+    reportBenchmarkFailure('child_spawn_failure')
+    return
+  }
   console.error(`[gotry] dsh 启动失败: ${e.message}`)
-  console.error('尝试: node -v 看 Node 版本(需 22+),或查看 ts/dsh-runtime/node_modules/。')
+  console.error('尝试: node -v 看 Node 版本(需 22.15+),或查看 ts/dsh-runtime/node_modules/。')
   process.exit(1)
 })
