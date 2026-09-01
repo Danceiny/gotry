@@ -38,11 +38,37 @@ guard/restriction as a fail-closed quarantine: no later model request enters
 the remaining assembly chain, and bridge/non-bridge dispatch is denied until
 that agent or process is disposed. HMR cannot hot-attach to the old agent.
 
+## Agent conformance and terminal gate
+
+Benchmark opt-in is headless one-shot only. GoTry adds an agent-scoped native
+execution contract that translates prompt references to a CLI, shell, Python,
+or `agent_env.cli` into structured calls to the sole visible
+`gotry_benchmark_environment` tool. `action:"tools"` is discovery only. A
+countable turn must issue an allowed `action:"call"` and receive its paired
+successful tool result before it can stop.
+
+The owner-local config also declares a generic tagged-JSON terminal envelope.
+The tag is a bounded identifier and `max_bytes` is capped at 1 MiB. A valid
+terminal response is exactly one matching tag pair whose body is one JSON
+object; prose, code fences, duplicate tags, arrays, primitives, trailing text,
+and oversized bodies fail closed. This is syntax conformance only: the
+external adapter and official evaluator still own the business schema.
+
+If the model tries to stop without a real bridge call, or returns a malformed
+terminal response after a successful call, GoTry injects at most one fixed
+conformance correction. A terminal-format correction must reuse the existing
+tool result and cannot dispatch the bridge again. A second violation ends the
+turn with a stable error that does not reflect the prompt, arguments, tool
+result, paths, or invalid response. The parent CLI separately buffers bounded
+stdout and releases it only when the child exits successfully and the same
+terminal parser accepts it; rejected assistant text is never forwarded as a
+successful benchmark result.
+
 Example (placeholder paths only):
 
 ```json
 {
-  "schema_version": "gotry_benchmark_environment_bridge_v1",
+  "schema_version": "gotry_benchmark_environment_bridge_v2",
   "enabled": true,
   "executable": "/OWNER-LOCAL/bin/node",
   "cwd": "/OWNER-LOCAL/harness",
@@ -53,6 +79,10 @@ Example (placeholder paths only):
   },
   "timeout_ms": 30000,
   "max_output_bytes": 65536,
+  "terminal_output": {
+    "tag": "output",
+    "max_bytes": 65536
+  },
   "isolation": {
     "mode": "host-enforced",
     "writes": "forbidden",
@@ -64,7 +94,11 @@ Example (placeholder paths only):
 The executable and cwd are absolute and fixed. Calls use an argv list with the
 configured prefix; arbitrary shell strings, shell interpolation, and arbitrary
 commands are not exposed. `allowed_tools` is a bounded, unique identifier
-allowlist. The optional `allowed_output_keys` mapping is a bounded per-tool
+allowlist. `terminal_output` is required: its identifier-like `tag` defines the
+only accepted envelope and its positive `max_bytes` is capped at 1 MiB. The
+required terminal contract makes this schema v2; a v1 owner-local file must be
+updated explicitly rather than being accepted with ambiguous terminal behavior. The
+optional `allowed_output_keys` mapping is a bounded per-tool
 positive allowlist: each mapped tool must be in `allowed_tools`, and each
 nonempty list must contain unique ASCII identifier-like JSON key names. When
 configured for a call, every object key in the visible result (recursing
@@ -110,18 +144,25 @@ npx tsx scripts/benchmark-environment-bridge-e2e.ts
 ```
 
 The E2E uses a loopback synthetic model relay, a temporary owner-local runner,
-an isolated `DSH_HOME` and cwd, and a synthetic key only. By default it
-exercises the source checkout. When `GOTRY_BRIDGE_E2E_BIN` is set, it instead
-exercises that clean installed-package CLI; CI uses this route because the
-historical root npm lock is not the publish consumer dependency closure. It
+an isolated `DSH_HOME` and cwd, and a synthetic key only. It always exercises
+the source checkout. When `GOTRY_BRIDGE_E2E_BIN` is set, it additionally
+exercises that clean installed-package CLI. The standard regression creates a
+temporary clean consumer when the variable is absent, while CI prepares the
+same route explicitly because the historical root npm lock is not the publish
+consumer dependency closure. It
 verifies default-off behavior, environment isolation, private config
 rejection, real output truncation, a real deadline, global `both` mode being
 overridden to one native bridge schema, and source/installed requests exposing
-no other model tool. Unit contracts additionally cover live-agent rejection,
+no other model tool. Conformance cases additionally cover prose/no-call
+correction, one real native call followed by tagged JSON, one format-only
+retry, retry exhaustion, and parent stdout suppression. Unit contracts
+additionally cover live-agent rejection,
 same-name identity shadows, final-assembly/pre-step schema drift, agent
 cleanup without double disposal, and plugin-unload quarantine. It is not ChinaTravel
-treatment evidence. Round 1's exact DeepSeek frozen case produced an
-environment-unavailable, schema-invalid result (score 0); the separate GLM run
-hit the 300 s planner timeout. Round 2's synthetic checks are evidence for the
-seam only. The frozen ChinaTravel treatment has not run, so no score uplift or
-external benchmark closure is claimed.
+treatment evidence. Round 2 executed one frozen, diagnostic-only treatment:
+the provider preflight and planner succeeded, but the runner returned 3 before
+evaluation because the agent described an intended CLI/tool action without a
+structured bridge call or parseable tagged JSON. Official scores therefore
+remain null ([Round 2 evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18215707)). Round 3 addresses that general prompt/tool/output conformance gap;
+no score uplift or external benchmark closure is claimed until a new frozen
+treatment reaches the official evaluator.

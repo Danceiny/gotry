@@ -4,7 +4,20 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { apply, type Config } from '../src/index.ts'
+import { registerBenchmarkEnvironmentBridge } from '../src/benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from '../src/benchmark-tool-isolation.ts'
+import {
+  BENCHMARK_BRIDGE_CALL_FAILED,
+  BENCHMARK_BRIDGE_CALL_REQUIRED,
+  BENCHMARK_BRIDGE_RETRY_CALL_NOT_ALLOWED,
+  BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE,
+  BENCHMARK_TERMINAL_INVALID,
+  MAX_CONFORMANCE_RETRIES,
+  createBenchmarkAgentConformance,
+  installBenchmarkAgentConformance,
+  parseBenchmarkTerminal,
+  validateTerminalOutputConfig,
+} from '../src/benchmark-agent-conformance.ts'
 
 type RegisteredTool = {
   name: string
@@ -34,6 +47,231 @@ type FakeOutcome = {
   signal?: string | null
   spawnError?: boolean
   waitForAbort?: boolean
+}
+
+assert.equal(MAX_CONFORMANCE_RETRIES, 1)
+const projection = {
+  toolName: 'gotry_benchmark_environment',
+  allowedTools: ['lookup'],
+  terminal: { tag: 'done', max_bytes: 1024 },
+} as const
+
+assert.equal(validateTerminalOutputConfig(projection.terminal), true)
+for (const invalid of [
+  null,
+  { tag: 'done' },
+  { tag: '1bad', max_bytes: 1024 },
+  { tag: 'done', max_bytes: 0 },
+  { tag: 'done', max_bytes: 1024 * 1024 + 1 },
+  { tag: 'done', max_bytes: 1024, extra: true },
+]) assert.equal(validateTerminalOutputConfig(invalid), false)
+
+assert.deepEqual(parseBenchmarkTerminal(' \n<done>{"ok":true}</done>\n', projection.terminal), { ok: true, value: { ok: true } })
+for (const invalid of [
+  'prose <done>{"ok":true}</done>',
+  '<done>{"ok":true}</done> trailing',
+  '<done>```json\n{"ok":true}\n```</done>',
+  '<done>{"ok":true}</done><done>{"ok":true}</done>',
+  '<done>{"value":"</done><done>"}</done>',
+  '<wrong>{"ok":true}</wrong>',
+  '<done>[{"ok":true}]</done>',
+  '<done>true</done>',
+  '<done>{"ok":</done>',
+]) assert.equal(parseBenchmarkTerminal(invalid, projection.terminal).ok, false)
+assert.equal(parseBenchmarkTerminal(`<done>{"x":"${'y'.repeat(1024)}"}</done>`, projection.terminal).ok, false)
+
+function turnStart(turn = 1) {
+  return { type: 'turn/start', data: { turn } }
+}
+function turnEnd(turn = 1) {
+  return { type: 'turn/end', data: { turn, reason: { kind: 'completed' } } }
+}
+function toolCall(callId = 'call-1', options: { turn?: number; step?: number; action?: string; tool?: string } = {}) {
+  const { turn = 1, step = 1, action = 'call', tool = 'lookup' } = options
+  return {
+    type: 'tool/call',
+    data: {
+      turn,
+      step,
+      callId,
+      name: projection.toolName,
+      arguments: JSON.stringify({ query: { action, tool, arguments: {} } }),
+    },
+  }
+}
+function toolResult(callId = 'call-1', options: { turn?: number; step?: number; ok?: boolean; isError?: boolean } = {}) {
+  const { turn = 1, step = 1, ok = true, isError = false } = options
+  return {
+    type: 'tool/result',
+    data: {
+      turn,
+      step,
+      message: {
+        source: { kind: 'tool', callId },
+        content: [{
+          type: 'tool-result',
+          toolCallId: callId,
+          isError,
+          content: [{ type: 'text', text: JSON.stringify(ok ? { ok: true, result: {} } : { ok: false, error: 'runner_failed' }) }],
+        }],
+      },
+    },
+  }
+}
+function assistant(text: string, options: { turn?: number; step?: number; interrupted?: boolean } = {}) {
+  const { turn = 1, step = 2, interrupted = false } = options
+  return {
+    type: 'assistant/message',
+    data: {
+      turn,
+      step,
+      message: { content: [{ type: 'text', text }] },
+      ...(interrupted ? { interrupted: true } : {}),
+    },
+  }
+}
+
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(assistant('I would run the CLI.', { step: 1 }))
+  assert.deepEqual(state.stopping(1), { kind: 'steer', mode: 'call' }, 'no-call first stop gets one correction')
+  assert.equal(state.guardBridgeExecution(), undefined, 'call correction still permits the first real bridge dispatch')
+  state.observe(toolCall('call-a', { step: 2 }))
+  state.observe(toolResult('call-a', { step: 2 }))
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 3 }))
+  assert.deepEqual(state.stopping(1), { kind: 'accept' }, 'call correction may converge to one successful terminal')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 1 }))
+  assert.deepEqual(state.stopping(1), { kind: 'steer', mode: 'call' }, 'valid terminal without a call still needs a call')
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 2 }))
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_BRIDGE_CALL_REQUIRED })
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult())
+  state.observe(assistant('bad terminal'))
+  assert.deepEqual(state.stopping(1), { kind: 'steer', mode: 'terminal' }, 'bad terminal gets one format-only correction')
+  assert.equal(state.guardBridgeExecution(), BENCHMARK_BRIDGE_RETRY_CALL_NOT_ALLOWED)
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 3 }))
+  assert.deepEqual(state.stopping(1), { kind: 'accept' }, 'format-only correction can reuse the successful result')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult())
+  state.observe(assistant('bad terminal'))
+  assert.deepEqual(state.stopping(1), { kind: 'steer', mode: 'terminal' })
+  state.observe(toolCall('call-2', { step: 3 }))
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_BRIDGE_RETRY_CALL_NOT_ALLOWED })
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult())
+  state.observe(assistant('bad terminal'))
+  assert.deepEqual(state.stopping(1), { kind: 'steer', mode: 'terminal' })
+  state.observe(assistant('still bad', { step: 3 }))
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_TERMINAL_INVALID })
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult('call-1', { ok: false }))
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_BRIDGE_CALL_FAILED }, 'structured runner failure is not retried')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall('failed', { step: 1 }))
+  state.observe(toolResult('failed', { step: 1, ok: false }))
+  state.observe(toolCall('successful', { step: 2 }))
+  state.observe(toolResult('successful', { step: 2 }))
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 3 }))
+  assert.deepEqual(state.stopping(1), { kind: 'accept' }, 'a model-owned later success can recover from an earlier failed call without a conformance retry')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall('successful', { step: 1 }))
+  state.observe(toolResult('successful', { step: 1 }))
+  state.observe(toolCall('failed', { step: 2 }))
+  state.observe(toolResult('failed', { step: 2, ok: false }))
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 3 }))
+  assert.deepEqual(state.stopping(1), { kind: 'accept' }, 'a later failed optional call does not erase an already paired successful result')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall('discovery', { action: 'tools' }))
+  state.observe(toolResult('discovery'))
+  state.observe(assistant('<done>{"status":"succeeded"}</done>'))
+  assert.deepEqual(state.stopping(1), { kind: 'steer', mode: 'call' }, 'action tools does not satisfy the call gate')
+  state.observe(turnEnd())
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE })
+  state.observe(turnStart(2))
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE }, 'turn state cannot leak across turns')
+}
+
+{
+  const rootListeners = new Map<string, Array<(...args: any[]) => unknown>>()
+  const scopedListeners = new Map<string, Array<(...args: any[]) => unknown>>()
+  const guards: Array<(execution: { name: string }) => string | undefined> = []
+  const steers: unknown[] = []
+  const runEffect = (action: () => unknown) => {
+    const disposers: Array<() => unknown> = []
+    const value = action()
+    if (value && typeof (value as { next?: unknown }).next === 'function') {
+      let item = (value as Generator<unknown>).next()
+      while (!item.done) {
+        if (typeof item.value === 'function') disposers.push(item.value as () => unknown)
+        item = (value as Generator<unknown>).next()
+      }
+    }
+    return () => { for (const dispose of disposers.reverse()) dispose() }
+  }
+  const add = (target: Map<string, Array<(...args: any[]) => unknown>>, name: string, listener: (...args: any[]) => unknown) => {
+    const list = target.get(name) ?? []
+    list.push(listener)
+    target.set(name, list)
+    return () => target.set(name, list.filter(candidate => candidate !== listener))
+  }
+  const session = {}
+  const agent = {
+    session,
+    steer(message: unknown) { steers.push(message) },
+    ctx: {
+      tools: { guard(check: (execution: { name: string }) => string | undefined) { guards.push(check); return () => {} } },
+      effect: runEffect,
+      on(name: string, listener: (...args: any[]) => unknown) { return add(scopedListeners, name, listener) },
+    },
+  }
+  const ctx = {
+    on(name: string, listener: (...args: any[]) => unknown) { return add(rootListeners, name, listener) },
+  } as unknown as Context
+  installBenchmarkAgentConformance(ctx, projection)
+  rootListeners.get('agent/created')![0]!({ agent })
+  rootListeners.get('session/event')![0]!(session, turnStart())
+  rootListeners.get('session/event')![0]!(session, assistant('prose only', { step: 1 }))
+  rootListeners.get('agent/turn-stopping')![0]!({ agent, turn: 1 })
+  assert.equal(steers.length, 1, 'runtime wiring steers exactly once at the stop boundary')
+  assert.equal((steers[0] as { role?: unknown }).role, 'user')
+  assert.equal(Object.isFrozen(steers[0]), true, 'correction uses the official immutable DSH user message')
+  assert.equal(Object.isFrozen((steers[0] as { content: unknown }).content), true, 'correction content is deeply frozen')
+  assert.equal(guards[0]!({ name: projection.toolName }), undefined, 'call correction leaves bridge execution available')
+  const assembled = await scopedListeners.get('system-prompt/assemble')![0]!({}, {}, async () => ({ sections: [], tools: [] })) as { sections: Array<{ text: string }> }
+  assert.match(assembled.sections[0]!.text, /agent_env\.cli/)
+  assert.match(assembled.sections[0]!.text, /\"action\":\"call\"/)
+  assert.match(assembled.sections[0]!.text, /<done>/)
+  assert.equal(assembled.sections[0]!.text.includes('/tmp/'), false)
 }
 
 function fakeHandle(outcome: FakeOutcome) {
@@ -125,7 +363,7 @@ const ambientSentinels = new Map(ambientSentinelNames.map(name => [name, process
 try {
   const configPath = join(root, 'bridge.json')
   writeFileSync(configPath, JSON.stringify({
-    schema_version: 'gotry_benchmark_environment_bridge_v1',
+    schema_version: 'gotry_benchmark_environment_bridge_v2',
     enabled: true,
     executable: process.execPath,
     cwd: root,
@@ -134,6 +372,7 @@ try {
     allowed_output_keys: { lookup: ['city', 'nested'], constructor: ['legacy'] },
     timeout_ms: 20,
     max_output_bytes: 4_096,
+    terminal_output: { tag: 'done', max_bytes: 4_096 },
     isolation: {
       mode: 'host-enforced',
       writes: 'forbidden',
@@ -151,7 +390,7 @@ try {
     guard?: (check: (execution: { name: string; args?: unknown }) => string | undefined) => unknown
     presentAs?: (mode: 'native') => unknown
   }
-  type AgentCreated = { agent: { ctx: { tools?: ScopedAgentTools; effect?: (action: () => unknown) => unknown; on?: (event: string, listener: (...args: any[]) => unknown, options?: unknown) => unknown } } }
+  type AgentCreated = { agent: { session?: object; steer?: (message: unknown) => void; ctx: { tools?: ScopedAgentTools; effect?: (action: () => unknown) => unknown; on?: (event: string, listener: (...args: any[]) => unknown, options?: unknown) => unknown } } }
   const agentCreatedListeners: Array<(event: AgentCreated) => void> = []
   const eventNames: string[] = []
   const assemblyListeners: Array<(...args: any[]) => unknown> = []
@@ -267,10 +506,15 @@ try {
     guard(check) { guards.push(check); return () => { cleanupCounts.guard += 1 } },
     presentAs(mode) { presentations.push(mode); return () => { cleanupCounts.presentAs += 1 } },
   }
-  assert.equal(agentCreatedListeners.length, 1, 'opt-in bridge installs an agent/created isolation listener')
-  const isolatedAgent = { ctx: {
+  assert.equal(agentCreatedListeners.length, 2, 'opt-in bridge installs exactly isolation and conformance agent listeners')
+  const isolatedAgentEffects: Array<() => Promise<void>> = []
+  const isolatedAgent = { session: {}, steer(_message: unknown) {}, ctx: {
     tools: scopedTools,
-    effect: (action: () => unknown) => runEffect(action),
+    effect: (action: () => unknown) => {
+      const dispose = runEffect(action)
+      isolatedAgentEffects.push(dispose)
+      return dispose
+    },
     on: (event: string, listener: (...args: any[]) => unknown, options?: unknown) => {
       assert.equal(event, 'system-prompt/assemble')
       assert.deepEqual(options, { prepend: true })
@@ -285,9 +529,9 @@ try {
   assert.deepEqual(eventOptions.get('agent/pre-step'), { prepend: true }, 'pre-step isolation wraps every previously registered listener')
   assert.ok(eventNames.includes('agent/disposed'), 'isolation cleans up on agent disposal')
   assert.ok(assemblyListeners.length > 0, 'isolation validates final assembled tool surface')
-  assert.equal(firstScopedAssemblyListeners.length, 1, 'agent owns a scoped assembly quarantine listener')
+  assert.equal(firstScopedAssemblyListeners.length, 2, 'agent owns one isolation assembly listener and one conformance section listener')
   assert.deepEqual(eventOptions.get('system-prompt/assemble'), { prepend: true }, 'assembly isolation wraps every previously registered listener')
-  assert.equal(disposedListeners.length, 1, 'isolation owns one agent/disposed listener')
+  assert.equal(disposedListeners.length, 2, 'isolation and conformance each own one agent/disposed listener')
   assert.ok(disposeRootIsolation, 'root isolation effect exposes plugin-lifecycle cleanup')
   const exactSchema = {
     name: visibleBridge.name,
@@ -310,7 +554,7 @@ try {
   shadowedAgent = isolatedAgent
   await assert.rejects(async () => await assemble({ tools: [] }, { agent: isolatedAgent, scope: isolatedAgent }, nextExact), /BENCHMARK_TOOL_SURFACE_VIOLATION/, 'same-name scoped shadow fails final assembly identity check')
   shadowedAgent = undefined
-  assert.equal(guards.length, 1, 'agent scope installs a monotonic guard')
+  assert.equal(guards.length, 2, 'agent scope installs exact isolation and conformance guards')
   const guard = guards[0]!
   const originalAgent = { ctx: { tools: { get: (name: string) => name === 'gotry_benchmark_environment' ? visibleBridge : undefined } } }
   const shadowAgent = { ctx: { tools: { get: (name: string) => name === 'gotry_benchmark_environment' ? { name } : undefined } } }
@@ -336,6 +580,9 @@ try {
 
   await disposedListeners[0]!({ agent: isolatedAgent })
   assert.deepEqual(cleanupCounts, { restrict: 1, guard: 1, presentAs: 1, assembly: 1 }, 'agent disposal releases every scoped isolation effect exactly once')
+  await disposedListeners[1]!({ agent: isolatedAgent })
+  await isolatedAgentEffects[1]!()
+  assert.deepEqual(cleanupCounts, { restrict: 1, guard: 2, presentAs: 1, assembly: 2 }, 'agent-scope disposal also releases conformance guard and prompt section')
 
   const secondCleanup = { restrict: 0, guard: 0, presentAs: 0, assembly: 0 }
   const secondGuards: Array<(execution: { name: string; agent?: unknown }) => string | undefined> = []
@@ -345,12 +592,12 @@ try {
     guard(check) { secondGuards.push(check); return () => { secondCleanup.guard += 1 } },
     presentAs() { return () => { secondCleanup.presentAs += 1 } },
   }
-  let disposeSecondAgentEffect: (() => Promise<void>) | undefined
-  const secondAgent = { ctx: {
+  const secondAgentEffects: Array<() => Promise<void>> = []
+  const secondAgent = { session: {}, steer(_message: unknown) {}, ctx: {
     tools: secondTools,
     effect: (action: () => unknown) => {
       const dispose = runEffect(action)
-      disposeSecondAgentEffect = dispose
+      secondAgentEffects.push(dispose)
       return dispose
     },
     on: (_event: string, listener: (...args: any[]) => unknown) => {
@@ -375,10 +622,10 @@ try {
   assert.equal(quarantineNextCalls, 0, 'quarantine does not enter the remaining assembly chain')
   assert.equal(secondGuards[0]!({ name: 'other_tool', agent: secondAgent }), 'BENCHMARK_TOOL_NOT_ALLOWED', 'quarantined agent still denies non-bridge dispatch after plugin unload')
   assert.equal(secondGuards[0]!({ name: 'gotry_benchmark_environment', agent: secondAgent }), 'BENCHMARK_TOOL_NOT_ALLOWED', 'quarantined agent also denies bridge dispatch after plugin unload')
-  assert.deepEqual(cleanupCounts, { restrict: 1, guard: 1, presentAs: 1, assembly: 1 }, 'plugin unload does not double-dispose an already removed agent')
+  assert.deepEqual(cleanupCounts, { restrict: 1, guard: 2, presentAs: 1, assembly: 2 }, 'plugin unload does not double-dispose an already removed agent')
   assert.throws(() => agentCreatedListeners[0]!({ agent: secondAgent }), /BENCHMARK_TOOL_SURFACE_VIOLATION/, 'agent creation during plugin stop fails closed')
-  await disposeSecondAgentEffect!()
-  assert.deepEqual(secondCleanup, { restrict: 1, guard: 1, presentAs: 1, assembly: 1 }, 'agent disposal releases its quarantined scoped effects')
+  for (const dispose of secondAgentEffects) await dispose()
+  assert.deepEqual(secondCleanup, { restrict: 1, guard: 2, presentAs: 1, assembly: 2 }, 'agent disposal releases its quarantined isolation and conformance effects')
 
   const bridge = registered.find(tool => tool.name === 'gotry_benchmark_environment')!
   assert.ok(bridge.execute, 'registered bridge exposes execute')
@@ -508,7 +755,7 @@ try {
   assert.equal(disabled.some(tool => tool.name === 'gotry_benchmark_environment'), false, 'empty config path keeps bridge default-off')
 
   const validConfig = {
-    schema_version: 'gotry_benchmark_environment_bridge_v1',
+    schema_version: 'gotry_benchmark_environment_bridge_v2',
     enabled: true,
     executable: process.execPath,
     cwd: root,
@@ -516,8 +763,17 @@ try {
     allowed_tools: ['lookup'],
     timeout_ms: 20,
     max_output_bytes: 4_096,
+    terminal_output: { tag: 'done', max_bytes: 4_096 },
     isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' },
   }
+  const frozenProjection = registerBenchmarkEnvironmentBridge(configPath, () => {}, {
+    spawn: (_spec: SpawnSpec) => fakeHandle({ stdout: '{"result":{}}' }),
+  })
+  assert.equal(Object.isFrozen(frozenProjection), true, 'bridge projection is frozen')
+  assert.equal(Object.isFrozen(frozenProjection.allowedTools), true, 'projected allowlist is frozen')
+  assert.equal(Object.isFrozen(frozenProjection.terminal), true, 'projected terminal contract is frozen')
+  assert.throws(() => { (frozenProjection.allowedTools as string[]).push('escape') }, TypeError)
+  assert.throws(() => { (frozenProjection.terminal as { tag: string }).tag = 'escape' }, TypeError)
   const bridgeRegistrationFor = (config: Record<string, unknown>, withSubprocess = true): boolean => {
     const path = join(root, `config-${Math.random().toString(36).slice(2)}.json`)
     writeFileSync(path, JSON.stringify(config))
@@ -541,6 +797,7 @@ try {
   }
 
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, unknown: true }), /benchmark environment bridge configuration unavailable/, 'unknown top-level config key fails hard')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, schema_version: 'gotry_benchmark_environment_bridge_v1' }), /benchmark environment bridge configuration unavailable/, 'v1 config cannot silently omit the Round 3 terminal semantics')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_tools: ['lookup', 'lookup'] }), /benchmark environment bridge configuration unavailable/, 'duplicate allowed tool fails hard')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_output_keys: {} }), /benchmark environment bridge configuration unavailable/, 'empty output-key mapping fails hard')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_output_keys: { lookup: [] } }), /benchmark environment bridge configuration unavailable/, 'empty output-key allowlist fails hard')
@@ -550,6 +807,12 @@ try {
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, argv_prefix: ['agent\n--unsafe'] }), /benchmark environment bridge configuration unavailable/, 'argv control separator fails hard')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, allowed_tools: ['lookup;rm'] }), /benchmark environment bridge configuration unavailable/, 'shell metacharacter tool identifier fails hard')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, isolation: { mode: 'host-enforced', writes: 'forbidden' } }), /benchmark environment bridge configuration unavailable/, 'incomplete isolation policy fails hard')
+  const { terminal_output: _terminalOutput, ...missingTerminalConfig } = validConfig
+  assert.throws(() => bridgeRegistrationFor(missingTerminalConfig), /benchmark environment bridge configuration unavailable/, 'terminal output contract is required')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, terminal_output: { tag: '1invalid', max_bytes: 4_096 } }), /benchmark environment bridge configuration unavailable/, 'terminal tag must be an identifier')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, terminal_output: { tag: 'done', max_bytes: 0 } }), /benchmark environment bridge configuration unavailable/, 'terminal output lower bound fails hard')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, terminal_output: { tag: 'done', max_bytes: 1024 * 1024 + 1 } }), /benchmark environment bridge configuration unavailable/, 'terminal output upper bound fails hard')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, terminal_output: { tag: 'done', max_bytes: 4_096, extra: true } }), /benchmark environment bridge configuration unavailable/, 'terminal output rejects unknown keys')
   assert.throws(() => bridgeRegistrationFor(validConfig, false), /benchmark environment bridge subprocess unavailable/, 'explicit opt-in without an active subprocess provider fails hard')
 
   assert.equal(loadConfigRegistration(configPath, root), true, 'owner-local regular 0644 config remains valid')
