@@ -48,7 +48,7 @@ const proof = {
   tsxResolvable: resolve('tsx'),
   gotryResolvable: resolve(${JSON.stringify(gotryEntry)}),
 }
-fs.writeFileSync(${JSON.stringify(proofPath)}, JSON.stringify(proof))
+  fs.writeFileSync(${JSON.stringify(proofPath)}, JSON.stringify(proof), { mode: 0o600 })
 `, { mode: 0o600, flag: 'wx' })
 }
 
@@ -101,11 +101,6 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
   const port = (server.address() as { port: number }).port
   const cwd = mkdtempSync(join(tmpdir(), 'gotry-bridge-cwd-'))
   const dsh = mkdtempSync(join(tmpdir(), 'gotry-bridge-dsh-'))
-  // Keep the child independent from the invoking user's dsh/calendar config.
-  // CI runners may have a partial calendar setup in HOME, which can abort the
-  // default-off relay before it reaches the synthetic server. The temporary
-  // HOME/XDG roots preserve the real dsh runtime while making this E2E hermetic.
-  const home = mkdtempSync(join(tmpdir(), 'gotry-bridge-home-'))
   const preload = join(cwd, 'benchmark-isolation-preload.cjs')
   const preloadProof = join(cwd, 'benchmark-isolation-proof.json')
   writeIsolationPreload(preload, preloadProof, executableOverride)
@@ -123,10 +118,6 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
   if (mode === 'unsafe-config') chmodSync(configPath, 0o666)
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    HOME: home,
-    XDG_CONFIG_HOME: join(home, '.config'),
-    XDG_DATA_HOME: join(home, '.local', 'share'),
-    XDG_CACHE_HOME: join(home, '.cache'),
     DSH_TOOLS_MODE: 'both',
     DSH_HOME: dsh,
     LLM_API_KEY: 'synthetic-bridge-key',
@@ -157,7 +148,6 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
     await new Promise<void>(resolve => server.close(() => resolve()))
     rmSync(dsh, { recursive: true, force: true })
     rmSync(cwd, { recursive: true, force: true })
-    rmSync(home, { recursive: true, force: true })
   }
 }
 
@@ -274,7 +264,6 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
   const port = (server.address() as { port: number }).port
   const cwd = mkdtempSync(join(tmpdir(), 'gotry-conformance-cwd-'))
   const dsh = mkdtempSync(join(tmpdir(), 'gotry-conformance-dsh-'))
-  const home = mkdtempSync(join(tmpdir(), 'gotry-conformance-home-'))
   const preload = join(cwd, 'benchmark-isolation-preload.cjs')
   const preloadProof = join(cwd, 'benchmark-isolation-proof.json')
   writeIsolationPreload(preload, preloadProof, executableOverride)
@@ -291,10 +280,6 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
   }))
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    HOME: home,
-    XDG_CONFIG_HOME: join(home, '.config'),
-    XDG_DATA_HOME: join(home, '.local', 'share'),
-    XDG_CACHE_HOME: join(home, '.cache'),
     DSH_TOOLS_MODE: 'both', DSH_HOME: dsh,
     LLM_API_KEY: 'synthetic-conformance-key', LLM_BASE_URL: `http://127.0.0.1:${port}/v1`,
     LLM_MODEL: 'synthetic-conformance-model', GOTRY_BENCHMARK_ENV_CONFIG: configPath,
@@ -319,7 +304,6 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
     await new Promise<void>(resolve => server.close(() => resolve()))
     rmSync(dsh, { recursive: true, force: true })
     rmSync(cwd, { recursive: true, force: true })
-    rmSync(home, { recursive: true, force: true })
   }
 }
 
