@@ -25,7 +25,14 @@ import {
 import { validateBookingCopilotTurnV1 } from './validation.ts'
 import { handleBookingCopilotV2Request, type BookingCopilotV2Adapter } from './server-v2.ts'
 import { normalizeBookingErrorCode, safeBookingErrorMessage } from './error-codes.ts'
-import { BOOKING_SURFACE_SCHEMA_V2_SHA256, BOOKING_SURFACE_SCHEMA_VERSION_V2 } from './contracts-v2.ts'
+import {
+  BOOKING_COPILOT_V2_ACCEPTED_TURN_KINDS,
+  BOOKING_COPILOT_V2_INGRESS_TURN_KIND,
+  BOOKING_COPILOT_V2_INGRESS_MODES,
+  BOOKING_SURFACE_SCHEMA_V2_SHA256,
+  BOOKING_SURFACE_SCHEMA_VERSION_V2,
+  type BookingCopilotV2IngressMode,
+} from './contracts-v2.ts'
 
 export type BookingPlannerDecisionV1 =
   | { kind: 'operation'; action: BookingReadActionV1 }
@@ -120,19 +127,30 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
   if (options.artifactId !== undefined && !/^[0-9a-f]{40}$/.test(options.artifactId)) {
     return Promise.reject(new Error('booking_copilot_artifact_id_invalid'))
   }
-  const v2IngressUsable = options.v2
-    ? typeof options.v2.ingressBinding?.bind === 'function'
-      && typeof options.v2.principal?.subject === 'string'
-      && options.v2.principal.subject.length > 0
-      && options.v2.principal.subject.length <= 256
-      && typeof options.v2.principal.scope === 'string'
-      && options.v2.principal.scope.length > 0
-      && options.v2.principal.scope.length <= 256
-    : true
-  if (options.v2 && !v2IngressUsable) {
+  const hasIngressBinding = Boolean(options.v2?.ingressBinding)
+  const hasPrincipal = Boolean(options.v2?.principal)
+  if (options.v2 && hasIngressBinding !== hasPrincipal) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_binding_pair_required'))
+  }
+  if (options.v2 && hasIngressBinding && (typeof options.v2.ingressBinding?.bind !== 'function'
+    || typeof options.v2.principal?.subject !== 'string' || options.v2.principal.subject.length === 0 || options.v2.principal.subject.length > 256
+    || typeof options.v2.principal?.scope !== 'string' || options.v2.principal.scope.length === 0 || options.v2.principal.scope.length > 256)) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_binding_invalid'))
+  }
+  const ingressMode: BookingCopilotV2IngressMode | undefined = options.v2
+    ? options.v2.ingressMode ?? (hasIngressBinding ? 'bff-ingress-binding' : 'bff-bound-turn-only')
+    : undefined
+  if (options.v2 && !BOOKING_COPILOT_V2_INGRESS_MODES.includes(ingressMode!)) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_mode_invalid'))
+  }
+  if (options.v2 && ingressMode === 'bff-ingress-binding' && !hasIngressBinding) {
     return Promise.reject(new Error('booking_copilot_v2_ingress_binding_required'))
   }
-  const v2Only = Boolean(options.v2 && !options.runtime && !options.plannerFactory)
+  if (options.v2 && ingressMode === 'bff-bound-turn-only' && hasIngressBinding) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_mode_conflict'))
+  }
+  const v2 = options.v2 ? { ...options.v2, ingressMode } : undefined
+  const v2Only = Boolean(v2 && !options.runtime && !options.plannerFactory)
   const sessions = new Map<string, BookingPlannerSessionV1>()
   const maxBodyBytes = options.maxBodyBytes ?? 1_000_000
   const runningIdentity = runtimeIdentity()
@@ -149,7 +167,7 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
       return
     }
     if (isProbe) {
-      const activeV2Only = Boolean(options.v2 && !options.runtime && !options.plannerFactory)
+      const activeV2Only = Boolean(v2 && !options.runtime && !options.plannerFactory)
       res.setHeader(BOOKING_SURFACE_VERSION_HEADER, activeV2Only ? BOOKING_SURFACE_SCHEMA_VERSION_V2 : BOOKING_SURFACE_SCHEMA_VERSION)
       res.setHeader(BOOKING_SURFACE_SCHEMA_SHA256_HEADER, activeV2Only ? BOOKING_SURFACE_SCHEMA_V2_SHA256 : BOOKING_SURFACE_SCHEMA_SHA256)
       if (options.artifactId) res.setHeader('X-GoTry-Artifact-ID', options.artifactId)
@@ -162,18 +180,27 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
         schemaSha256: activeV2Only ? BOOKING_SURFACE_SCHEMA_V2_SHA256 : BOOKING_SURFACE_SCHEMA_SHA256,
         status: 'ready',
       }
-      if (activeV2Only || options.v2) healthBody.supportedSchemaVersions = activeV2Only ? [BOOKING_SURFACE_SCHEMA_VERSION_V2] : [BOOKING_SURFACE_SCHEMA_VERSION, BOOKING_SURFACE_SCHEMA_VERSION_V2]
+      if (activeV2Only || v2) healthBody.supportedSchemaVersions = activeV2Only ? [BOOKING_SURFACE_SCHEMA_VERSION_V2] : [BOOKING_SURFACE_SCHEMA_VERSION, BOOKING_SURFACE_SCHEMA_VERSION_V2]
+      if (v2) {
+        const acceptedTurnKinds = v2.ingressMode === 'bff-ingress-binding'
+          ? [...BOOKING_COPILOT_V2_ACCEPTED_TURN_KINDS, BOOKING_COPILOT_V2_INGRESS_TURN_KIND]
+          : [...BOOKING_COPILOT_V2_ACCEPTED_TURN_KINDS]
+        healthBody.ingressMode = v2.ingressMode
+        healthBody.acceptedTurnKinds = acceptedTurnKinds
+        res.setHeader('X-GoTry-Ingress-Mode', v2.ingressMode!)
+        res.setHeader('X-GoTry-Accepted-Turn-Kinds', acceptedTurnKinds.join(','))
+      }
       sendJson(res, 200, healthBody)
       return
     }
     const schemaVersion = String(req.headers[BOOKING_SURFACE_VERSION_HEADER] ?? '')
     const schemaHash = String(req.headers[BOOKING_SURFACE_SCHEMA_SHA256_HEADER] ?? '')
     if (schemaVersion === BOOKING_SURFACE_SCHEMA_VERSION_V2) {
-      if (!options.v2 || schemaHash !== BOOKING_SURFACE_SCHEMA_V2_SHA256) {
+      if (!v2 || schemaHash !== BOOKING_SURFACE_SCHEMA_V2_SHA256) {
         sendJson(res, 409, { error: { code: 'booking_surface_schema_mismatch', expectedVersion: BOOKING_SURFACE_SCHEMA_VERSION_V2, expectedSchemaSha256: BOOKING_SURFACE_SCHEMA_V2_SHA256 } })
         return
       }
-      await handleBookingCopilotV2Request(req, res, options.v2, maxBodyBytes)
+      await handleBookingCopilotV2Request(req, res, v2, maxBodyBytes)
       return
     }
     if (schemaVersion !== BOOKING_SURFACE_SCHEMA_VERSION || schemaHash !== BOOKING_SURFACE_SCHEMA_SHA256) {
@@ -211,7 +238,7 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
     let isNewTask = false
     try {
       const taskId = turn.taskId
-      if (options.v2 && taskId && options.v2.runtime.resumeTask(taskId)) throw new Error('task_conflict:protocol_version')
+      if (v2 && taskId && v2.runtime.resumeTask(taskId)) throw new Error('task_conflict:protocol_version')
       if (turn.kind === 'user.turn') {
         const suppliedTaskId = turn.taskId
         isNewTask = !suppliedTaskId || options.runtime.resumeTask(suppliedTaskId) === null

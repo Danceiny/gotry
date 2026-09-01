@@ -157,12 +157,118 @@ try {
     assert.equal(response.headers.get('x-gotry-node-modules-abi'), process.versions.modules)
     assert.equal(response.headers.get('x-gotry-release-tuple'), process.env.EXPECTED_GOTRY_RELEASE_TUPLE)
     assert.equal(response.headers.get('x-gotry-glibc-version'), process.report.getReport().header.glibcVersionRuntime)
+    assert.equal(response.headers.get('x-gotry-ingress-mode'), 'bff-bound-turn-only')
+    assert.equal(response.headers.get('x-gotry-accepted-turn-kinds'), 'user.turn,action.receipt.continuation')
     assert.deepEqual(await response.json(), {
       schemaSha256: 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81',
       schemaVersion: 'booking.surface.v1',
       status: 'ready',
       supportedSchemaVersions: ['booking.surface.v1', 'booking.surface.v2'],
+      ingressMode: 'bff-bound-turn-only',
+      acceptedTurnKinds: ['user.turn', 'action.receipt.continuation'],
     })
+    const v2Headers = {
+      Authorization: 'Bearer fixture-key',
+      'content-type': 'application/json',
+      accept: 'application/json',
+      'x-booking-surface-version': 'booking.surface.v2',
+      'x-booking-surface-schema-sha256': '45df62db1b19d30a4fd22ddc94eb550e8ff32d8a225558b5ff13ba303588fc03',
+    }
+    const ingressResponse = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, {
+      method: 'POST',
+      headers: v2Headers,
+      body: JSON.stringify({
+        schemaVersion: 'booking.surface.v2',
+        kind: 'user.turn.ingress',
+        requestKey: 'release-browser-request',
+        surfaceHint: 'tenant',
+        workspace: {
+          schemaVersion: 'booking.surface.v2',
+          revision: 0,
+          locale: 'en-US',
+          currency: 'AED',
+          searchDraft: {},
+          results: { status: 'idle' },
+          visibleHotels: [],
+          loadedOffers: [],
+          shortlistedOfferRefs: [],
+        },
+        request: { text: 'release ingress must be BFF-bound' },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    })
+    assert.equal(ingressResponse.status, 503)
+    assert.deepEqual(await ingressResponse.json(), {
+      error: {
+        code: 'trusted_ingress_binding_required',
+        mode: 'bff-bound-turn-only',
+        acceptedTurnKinds: ['user.turn', 'action.receipt.continuation'],
+      },
+    })
+    const releaseLedgerEventCount = () => {
+      const count = spawnSync(node24, ['--input-type=module', '-e', "import Database from 'better-sqlite3'; const db = new Database(process.argv[1], { readonly: true }); process.stdout.write(String(db.prepare('SELECT COUNT(*) AS count FROM events').get().count)); db.close()", join(stateRoot, 'gotry-state/gotry-state.db')], { cwd: output, encoding: 'utf8' })
+      assert.equal(count.status, 0, count.stderr)
+      return count.stdout.trim()
+    }
+    assert.equal(releaseLedgerEventCount(), '0', 'rejected release ingress creates no ledger event')
+    const escalatedBoundTurnResponse = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, {
+      method: 'POST',
+      headers: v2Headers,
+      body: JSON.stringify({
+        schemaVersion: 'booking.surface.v2',
+        kind: 'user.turn',
+        taskId: 'release-escalated-task',
+        turnId: 'release-escalated-turn',
+        workspace: {
+          schemaVersion: 'booking.surface.v2',
+          contextRef: 'release-escalated-context',
+          surface: 'storefront',
+          revision: 0,
+          locale: 'en-US',
+          currency: 'AED',
+          searchDraft: {},
+          results: { status: 'idle' },
+          visibleHotels: [],
+          loadedOffers: [],
+          shortlistedOfferRefs: [],
+          capabilities: { surface: 'storefront', allowedActions: ['order.observe'] },
+        },
+        request: { text: 'must remain within the storefront capability matrix' },
+      }),
+      signal: AbortSignal.timeout(5_000),
+    })
+    assert.equal(escalatedBoundTurnResponse.status, 403)
+    assert.deepEqual(await escalatedBoundTurnResponse.json(), { error: { code: 'invalid_bound_turn_authority' } })
+    assert.equal(releaseLedgerEventCount(), '0', 'surface-disallowed bound turn creates no ledger event')
+    const boundTurnResponse = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, {
+      method: 'POST',
+      headers: v2Headers,
+      body: JSON.stringify({
+        schemaVersion: 'booking.surface.v2',
+        kind: 'user.turn',
+        taskId: 'release-bound-task',
+        turnId: 'release-bound-turn',
+        workspace: {
+          schemaVersion: 'booking.surface.v2',
+          contextRef: 'release-bound-context',
+          surface: 'tenant',
+          revision: 0,
+          locale: 'en-US',
+          currency: 'AED',
+          searchDraft: {},
+          results: { status: 'idle' },
+          visibleHotels: [],
+          loadedOffers: [],
+          shortlistedOfferRefs: [],
+          capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
+        },
+        request: { text: 'BFF-bound internal turn' },
+      }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    assert.equal(boundTurnResponse.status, 200, 'bound internal user.turn is not rejected by the ingress seam')
+    const boundTurnBody = await boundTurnResponse.text()
+    assert.doesNotMatch(boundTurnBody, /trusted_ingress_binding_required/)
   } finally {
     if (child.exitCode === null) child.kill('SIGTERM')
     const stopped = await Promise.race([

@@ -4,6 +4,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   BOOKING_SURFACE_SCHEMA_V2_SHA256,
   BOOKING_SURFACE_SCHEMA_VERSION_V2,
+  BOOKING_COPILOT_V2_ACCEPTED_TURN_KINDS,
+  type BookingCopilotV2IngressMode,
   BOOKING_READ_ACTION_KINDS_V2,
   BOOKING_SURFACE_ALLOWED_ACTIONS_V2,
   type BookingCopilotTurnV2,
@@ -26,10 +28,12 @@ import { normalizeBookingErrorCode, safeBookingErrorMessage } from './error-code
 export interface BookingCopilotV2Adapter {
   runtime: BookingCopilotTaskRuntimeV2
   plannerFactory: BookingPlannerSessionFactoryV2
-  /** BFF-owned identity binding. GoTry never accepts browser task/turn/context identity. */
+  /** Optional BFF-owned identity binding. GoTry never accepts browser identity. */
   ingressBinding?: BookingIngressBindingV2
   /** Principal authenticated by the HotelByte BFF, never by browser input. */
   principal?: BookingIngressPrincipalV2
+  /** Explicit process composition mode; omitted means infer from a complete pair. */
+  ingressMode?: BookingCopilotV2IngressMode
 }
 
 const sessionsByAdapter = new WeakMap<BookingCopilotV2Adapter, Map<string, ReturnType<BookingPlannerSessionFactoryV2>>>()
@@ -74,6 +78,20 @@ function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): 
 
 const SURFACE_ACTION_MATRIX: Record<BookingWorkspaceSnapshotV2['surface'], readonly string[]> = BOOKING_SURFACE_ALLOWED_ACTIONS_V2
 
+function validSurfaceActions(surface: unknown, allowed: unknown): allowed is BookingWorkspaceSnapshotV2['capabilities']['allowedActions'] {
+  if (typeof surface !== 'string' || !Object.prototype.hasOwnProperty.call(SURFACE_ACTION_MATRIX, surface)) return false
+  if (!Array.isArray(allowed) || allowed.length < 1 || new Set(allowed).size !== allowed.length) return false
+  const matrix = SURFACE_ACTION_MATRIX[surface as BookingWorkspaceSnapshotV2['surface']]
+  return allowed.every((action) => typeof action === 'string'
+    && matrix.includes(action)
+    && (BOOKING_READ_ACTION_KINDS_V2 as readonly string[]).includes(action))
+}
+
+function validBoundWorkspaceAuthority(workspace: BookingWorkspaceSnapshotV2): boolean {
+  return workspace.capabilities.surface === workspace.surface
+    && validSurfaceActions(workspace.surface, workspace.capabilities.allowedActions)
+}
+
 function validIngressBinding(binding: unknown, ingress: IngressTurnV2): binding is {
   taskId: string
   turnId: string
@@ -86,10 +104,7 @@ function validIngressBinding(binding: unknown, ingress: IngressTurnV2): binding 
   if (!exactKeys(candidate, ['taskId', 'turnId', 'contextRef', 'surface', 'allowedActions'])) return false
   if (typeof candidate.taskId !== 'string' || typeof candidate.turnId !== 'string' || typeof candidate.contextRef !== 'string') return false
   if (typeof candidate.surface !== 'string' || candidate.surface !== ingress.surfaceHint || !Object.prototype.hasOwnProperty.call(SURFACE_ACTION_MATRIX, candidate.surface)) return false
-  if (!Array.isArray(candidate.allowedActions) || candidate.allowedActions.length < 1) return false
-  const allowed = candidate.allowedActions as unknown[]
-  const matrix = SURFACE_ACTION_MATRIX[candidate.surface as BookingWorkspaceSnapshotV2['surface']]
-  return new Set(allowed).size === allowed.length && allowed.every((action) => typeof action === 'string' && matrix.includes(action) && (BOOKING_READ_ACTION_KINDS_V2 as readonly string[]).includes(action))
+  return validSurfaceActions(candidate.surface, candidate.allowedActions)
 }
 
 function fallbackErrorEvent(task: BookingCopilotTaskStateV2, code: string): BookingSurfaceEventV2 {
@@ -134,7 +149,10 @@ export async function handleBookingCopilotV2Request(req: IncomingMessage, res: S
     if ((parsed as BookingCopilotTurnV2).kind === 'user.turn.ingress') {
       const ingress = parsed as IngressTurnV2
       browserRequestKey = ingress.requestKey
-      if (!adapter.ingressBinding || !adapter.principal) { send(res, 503, { error: { code: 'trusted_ingress_binding_required' } }); return }
+      if (adapter.ingressMode !== 'bff-ingress-binding' || !adapter.ingressBinding || !adapter.principal) {
+        send(res, 503, { error: { code: 'trusted_ingress_binding_required', mode: adapter.ingressMode ?? 'bff-bound-turn-only', acceptedTurnKinds: [...BOOKING_COPILOT_V2_ACCEPTED_TURN_KINDS] } })
+        return
+      }
       const binding = await adapter.ingressBinding.bind(ingress, adapter.principal)
       if (!validIngressBinding(binding, ingress)) { send(res, 502, { error: { code: 'invalid_ingress_binding' } }); return }
       const boundWorkspace = {
@@ -149,6 +167,10 @@ export async function handleBookingCopilotV2Request(req: IncomingMessage, res: S
       if (!boundValid.ok) { send(res, 502, { error: { code: 'invalid_ingress_binding', details: boundValid.errors } }); return }
     } else {
       turn = parsed as Exclude<BookingCopilotTurnV2, IngressTurnV2>
+      if (!validBoundWorkspaceAuthority(turn.workspace)) {
+        send(res, 403, { error: { code: 'invalid_bound_turn_authority' } })
+        return
+      }
     }
   } catch (error) { const code = normalizeBookingErrorCode(error); send(res, code === 'PAYLOAD_TOO_LARGE' ? 413 : 400, { error: { code } }); return }
 

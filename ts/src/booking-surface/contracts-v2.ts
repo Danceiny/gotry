@@ -1,6 +1,15 @@
 import type { BookingReadActionKindV1, BookingWorkspaceSnapshotV1, SearchCriteriaPatchV1, ResultsViewPatchV1, OfferCriteriaV1, EvidenceLevelV1 } from './contracts.ts'
 
 export const BOOKING_SURFACE_SCHEMA_VERSION_V2 = 'booking.surface.v2' as const
+/**
+ * Process composition modes are deliberately separate from the payload
+ * schema. The default accepts turns already bound by HotelByte's BFF; the
+ * second mode is reserved for an in-process BFF binding seam.
+ */
+export const BOOKING_COPILOT_V2_INGRESS_MODES = ['bff-bound-turn-only', 'bff-ingress-binding'] as const
+export type BookingCopilotV2IngressMode = typeof BOOKING_COPILOT_V2_INGRESS_MODES[number]
+export const BOOKING_COPILOT_V2_ACCEPTED_TURN_KINDS = ['user.turn', 'action.receipt.continuation'] as const
+export const BOOKING_COPILOT_V2_INGRESS_TURN_KIND = 'user.turn.ingress' as const
 /** Hard task-level operation budget. The counter is persisted in the v2 ledger. */
 export const BOOKING_COPILOT_MAX_OPERATIONS_V2 = 20 as const
 export const BOOKING_SURFACE_SCHEMA_V2_SHA256 = '45df62db1b19d30a4fd22ddc94eb550e8ff32d8a225558b5ff13ba303588fc03' as const

@@ -14,7 +14,7 @@ import {
 } from './dsh-planner.ts'
 import { BookingCopilotTaskRuntime } from './runtime.ts'
 import { BookingCopilotTaskRuntimeV2 } from './runtime-v2.ts'
-import { bookingSurfaceAllowedActionsV2, type BookingIngressBindingV2, type BookingIngressPrincipalV2 } from './contracts-v2.ts'
+import { BOOKING_COPILOT_V2_INGRESS_MODES, type BookingCopilotV2IngressMode, type BookingIngressBindingV2, type BookingIngressPrincipalV2 } from './contracts-v2.ts'
 import {
   startBookingCopilotServer,
   type BookingCopilotServerHandleV1,
@@ -27,6 +27,8 @@ export interface BookingCopilotStartupConfigV1 {
   host: string
   port: number
   artifactId?: string
+  /** Defaults to bound-turn-only; a complete injected seam enables ingress. */
+  ingressMode: BookingCopilotV2IngressMode
 }
 
 export interface BookingCopilotStartupHandleV1 {
@@ -40,7 +42,7 @@ export interface BookingCopilotStartupDependenciesV1 {
   createPlanner(options: DshEmbeddedBookingPlannerOptionsV1): Promise<DshEmbeddedBookingPlannerHandleV1>
   runtimeFactoryV2?: (ledger: StateLedger) => BookingCopilotTaskRuntimeV2
   createPlannerV2?: (options: DshEmbeddedBookingPlannerOptionsV1) => Promise<DshEmbeddedBookingPlannerHandleV2>
-  /** BFF-authenticated identity seam required whenever v2 is composed. */
+  /** Optional in-process BFF identity seam; standalone v2 uses bound-turn-only mode. */
   ingressBinding?: BookingIngressBindingV2
   principal?: BookingIngressPrincipalV2
   startServer(options: BookingCopilotServerOptionsV1): Promise<BookingCopilotServerHandleV1>
@@ -53,24 +55,6 @@ const DEFAULT_DEPENDENCIES: BookingCopilotStartupDependenciesV1 = {
   runtimeFactoryV2: (ledger) => new BookingCopilotTaskRuntimeV2(ledger),
   createPlannerV2: createDshEmbeddedBookingPlannerV2,
   startServer: startBookingCopilotServer,
-}
-
-function trustedIngressFixtureFromEnv(env: Record<string, string | undefined>): Pick<BookingCopilotStartupDependenciesV1, 'ingressBinding' | 'principal'> | undefined {
-  if (env.NODE_ENV !== 'test' || env.GOTRY_BOOKING_COPILOT_TRUSTED_INGRESS_FIXTURE !== '1') return undefined
-  return {
-    principal: { subject: 'fixture-bff', scope: 'booking:read' },
-    ingressBinding: {
-      bind(input) {
-        return {
-          taskId: `fixture-task-${input.requestKey}`,
-          turnId: `fixture-turn-${input.requestKey}`,
-          contextRef: `fixture-context-${input.requestKey}`,
-          surface: input.surfaceHint,
-          allowedActions: bookingSurfaceAllowedActionsV2(input.surfaceHint),
-        }
-      },
-    },
-  }
 }
 
 function parsePort(raw: string | undefined): number {
@@ -92,12 +76,18 @@ export function resolveBookingCopilotStartupConfig(
   if (artifactId !== undefined && !/^[0-9a-f]{40}$/.test(artifactId)) {
     throw new Error('booking_copilot_artifact_id_invalid')
   }
+  const rawIngressMode = env.GOTRY_BOOKING_COPILOT_V2_INGRESS_MODE
+  const ingressMode = rawIngressMode === undefined || rawIngressMode === '' ? 'bff-bound-turn-only' : rawIngressMode
+  if (!(BOOKING_COPILOT_V2_INGRESS_MODES as readonly string[]).includes(ingressMode)) {
+    throw new Error('booking_copilot_v2_ingress_mode_invalid')
+  }
   return {
     apiKey,
     stateRoot,
     host: env.GOTRY_BOOKING_COPILOT_HOST || '127.0.0.1',
     port: parsePort(env.GOTRY_BOOKING_COPILOT_PORT),
     artifactId,
+    ingressMode: ingressMode as BookingCopilotV2IngressMode,
   }
 }
 
@@ -130,13 +120,21 @@ export async function startBookingCopilotFromEnvironment(
   dependencies: BookingCopilotStartupDependenciesV1 = DEFAULT_DEPENDENCIES,
 ): Promise<BookingCopilotStartupHandleV1> {
   const config = resolveBookingCopilotStartupConfig(env)
-  const fixture = trustedIngressFixtureFromEnv(env)
-  const activeDependencies = fixture && !dependencies.ingressBinding && !dependencies.principal ? { ...dependencies, ...fixture } : dependencies
-  const principal = activeDependencies.principal
-  const trustedIngressUsable = typeof activeDependencies.ingressBinding?.bind === 'function'
-    && typeof principal?.subject === 'string' && principal.subject.length > 0 && principal.subject.length <= 256
-    && typeof principal?.scope === 'string' && principal.scope.length > 0 && principal.scope.length <= 256
-  if (!trustedIngressUsable) throw new Error('booking_copilot_v2_ingress_binding_required')
+  const activeDependencies = dependencies
+  const hasIngressBinding = Boolean(activeDependencies.ingressBinding)
+  const hasPrincipal = Boolean(activeDependencies.principal)
+  if (hasIngressBinding !== hasPrincipal) throw new Error('booking_copilot_v2_ingress_binding_pair_required')
+  const ingressPair = hasIngressBinding && hasPrincipal
+  if (ingressPair && env.GOTRY_BOOKING_COPILOT_V2_INGRESS_MODE !== undefined && config.ingressMode === 'bff-bound-turn-only') {
+    throw new Error('booking_copilot_v2_ingress_mode_conflict')
+  }
+  if (!ingressPair && config.ingressMode === 'bff-ingress-binding') throw new Error('booking_copilot_v2_ingress_binding_required')
+  if (ingressPair && (typeof activeDependencies.ingressBinding?.bind !== 'function'
+    || typeof activeDependencies.principal?.subject !== 'string' || activeDependencies.principal.subject.length === 0 || activeDependencies.principal.subject.length > 256
+    || typeof activeDependencies.principal?.scope !== 'string' || activeDependencies.principal.scope.length === 0 || activeDependencies.principal.scope.length > 256)) {
+    throw new Error('booking_copilot_v2_ingress_binding_invalid')
+  }
+  const activeIngressMode: BookingCopilotV2IngressMode = ingressPair ? 'bff-ingress-binding' : 'bff-bound-turn-only'
   mkdirSync(config.stateRoot, { recursive: true })
   let ledger: StateLedger | undefined
   let planner: DshEmbeddedBookingPlannerHandleV1 | undefined
@@ -152,7 +150,7 @@ export async function startBookingCopilotFromEnvironment(
     plannerV2 = await activeDependencies.createPlannerV2(plannerOptions)
     server = await activeDependencies.startServer({
       apiKey: config.apiKey, runtime, plannerFactory: planner.plannerFactory,
-      v2: { runtime: runtimeV2, plannerFactory: plannerV2.plannerFactory, ingressBinding: activeDependencies.ingressBinding, principal: activeDependencies.principal },
+      v2: { runtime: runtimeV2, plannerFactory: plannerV2.plannerFactory, ingressBinding: activeDependencies.ingressBinding, principal: activeDependencies.principal, ingressMode: activeIngressMode },
       host: config.host, port: config.port, artifactId: config.artifactId,
     })
   } catch (error) {
