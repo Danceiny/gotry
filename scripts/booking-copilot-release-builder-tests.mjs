@@ -46,6 +46,9 @@ assert.equal(npmVersion, process.env.EXPECTED_NPM_VERSION)
 const committedBuilder = spawnSync('git', [...gitArgs, 'show', `${artifactId}:scripts/build-booking-copilot-release.mjs`], { cwd: root, env: baseEnv })
 assert.equal(committedBuilder.status, 0, 'builder must exist in HEAD before release execution')
 assert.deepEqual(readFileSync(builder), committedBuilder.stdout, 'executing builder must equal the committed HEAD builder')
+assert.doesNotMatch(readFileSync(builder, 'utf8'), /--legacy-peer-deps(?:['\"]|=true['\"])/, 'release install must not bypass peer closure')
+assert.match(readFileSync(builder, 'utf8'), /--strict-peer-deps=true/, 'release install must enforce strict peer resolution')
+assert.match(readFileSync(builder, 'utf8'), /--legacy-peer-deps=false/, 'release install must explicitly use strict peer resolution')
 
 const tempRoots = []
 const temp = () => { const path = mkdtempSync(join(tmpdir(), 'gotry-builder-test-')); tempRoots.push(path); return path }

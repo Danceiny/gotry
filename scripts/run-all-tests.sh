@@ -53,6 +53,7 @@ rm -rf "$ASYNC_FIXTURE"
 
 echo
 echo "=== 6. 插件 smoke(注册/execute/红线断言) ==="
+(cd ts && npx tsx scripts/smoke-session-gate-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/smoke.ts | tail -2) || FAIL=1
 
 echo

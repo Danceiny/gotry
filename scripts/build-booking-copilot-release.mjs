@@ -103,9 +103,9 @@ try {
   }
   execFileSync('cp', ['-a', join(source, 'dist'), join(release, 'dist')], { env: childEnv })
   probeNode24()
-  // The root lock was created with npm's legacy peer resolver. Reuse that
-  // resolution instead of asking a newer npm to invent an unlocked peer tree.
-  run('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--legacy-peer-deps'], release)
+  // Release consumers must resolve the complete DSH peer closure just like
+  // the repository consumer. Keep strict resolution explicit at this seam.
+  run('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--strict-peer-deps=true', '--legacy-peer-deps=false'], release)
   const packageJson = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
   writeFileSync(join(release, 'package.json'), `${JSON.stringify({
     name: packageJson.name,

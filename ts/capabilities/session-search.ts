@@ -68,6 +68,33 @@ export function resolveTransportMode(profileDir?: string): 'cdp' | 'persistent' 
   return (process.env.GOTRY_SESSION_TRANSPORT ?? '').trim().toLowerCase() === 'cdp' ? 'cdp' : 'extension'
 }
 
+/** Live browser transport is an explicit opt-in for smoke/full-suite callers. */
+export function sessionLiveEnabled(env: Partial<Pick<NodeJS.ProcessEnv, 'GOTRY_SESSION_LIVE'>> = process.env): boolean {
+  return env.GOTRY_SESSION_LIVE === '1'
+}
+
+/** Deterministic offline observation used when the live session gate is closed. */
+export function offlineSessionFlightResult(): SessionSearchResult {
+  return {
+    ok: false,
+    via: 'session-ctrip-flight-error',
+    evidence: '[会话:ctrip-flight@offline] GOTRY_SESSION_LIVE!=1; live transport not invoked',
+    latencyMs: 0,
+    verdict: 'error',
+    error: 'GOTRY_SESSION_LIVE=1 required for live session transport',
+  }
+}
+
+/** Gate a caller before it can invoke the browser/session transport. */
+export async function gatedSessionFlightSearch(
+  q: SessionFlightQuery,
+  search: (query: SessionFlightQuery) => Promise<SessionSearchResult> = sessionFlightSearch,
+  env: Partial<Pick<NodeJS.ProcessEnv, 'GOTRY_SESSION_LIVE'>> = process.env,
+): Promise<SessionSearchResult> {
+  if (!sessionLiveEnabled(env)) return offlineSessionFlightResult()
+  return search(q)
+}
+
 /** 扩展车道 job 审计(ReadGuard 审计同款 JSONL,kind 区分;auditPath 缺省不落盘) */
 export function appendExtensionAudit(auditPath: string | undefined, entry: { kind: 'extension-session-job'; site: string; url: string; jobId: string; result: string }): void {
   if (!auditPath) return
