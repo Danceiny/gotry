@@ -28,8 +28,66 @@ import {
   BENCHMARK_CHILD_DIAGNOSTIC_SCHEMA,
   appendBoundedChildDiagnostic,
   classifyBenchmarkChildFailure,
+  classifyBenchmarkTurnEnd,
+  createBenchmarkDiagnosticArbiter,
   parseBenchmarkChildDiagnostic,
 } from '../src/benchmark-headless-child-diagnostics.ts'
+
+// Round 6 RED tests: terminal facts must be classified from the structured
+// turn/end envelope, without consulting stderr or reflecting its body.
+{
+  const exactFamilies: Array<[string[], string]> = [
+    [['AUTH', 'INVALID_CREDENTIAL', 'MISSING_CREDENTIAL'], 'child_model_auth'],
+    [['QUOTA', 'RATE_LIMIT'], 'child_model_capacity'],
+    [['SERVER'], 'child_model_server'],
+    [['TRANSPORT', 'TIMEOUT'], 'child_model_transport'],
+    [['EMPTY_RESPONSE', 'STREAM_CLOSED', 'MALFORMED_RESPONSE', 'INVALID_RESPONSE'], 'child_model_stream'],
+    [['INVALID_REQUEST', 'CONTEXT_WINDOW_EXCEEDED', 'NO_ADAPTER', 'UNKNOWN_MODEL', 'UNSUPPORTED_OPTION'], 'child_model_request'],
+    [['ABORTED'], 'child_aborted'],
+  ]
+  for (const [codes, expected] of exactFamilies) {
+    for (const code of codes) assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code } }), expected)
+  }
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'RATE_LIMIT', message: 'sentinel' } }), 'child_model_capacity')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'AUTH', message: 'sentinel' } }), 'child_model_auth')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'sentinel' } }), 'child_model_auth')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'QUOTA', message: 'sentinel' } }), 'child_model_capacity')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'SERVER', message: 'sentinel' } }), 'child_model_server')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'TRANSPORT', message: 'api-key sentinel' } }), 'child_model_transport')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 401, message: 'key sentinel' } }), 'child_model_auth')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 403, message: 'key sentinel' } }), 'child_model_auth')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 429, message: 'quota sentinel' } }), 'child_model_capacity')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 503, message: 'server sentinel' } }), 'child_model_server')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 500, message: 'server sentinel' } }), 'child_model_server')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 599, message: 'server sentinel' } }), 'child_model_server')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'PI_AI_ERROR', message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'INVALID_RESPONSE', message: 'opaque' } }), 'child_model_stream')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'UNSUPPORTED_OPTION', message: 'opaque' } }), 'child_model_request')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 503.5, message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 99, message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 600, message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'rate_limit', message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'UNKNOWN', message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'UNKNOWN', message: 'message sentinel', requestId: 'request sentinel', path: 'path sentinel', prompt: 'prompt sentinel', key: 'key sentinel' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'blocked' }), 'child_blocked')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'max-tokens' }), 'child_max_tokens')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'aborted' }), 'child_aborted')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'interrupted' }), 'child_interrupted')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'completed' }), undefined)
+
+  const writes: string[] = []
+  const arbiter = createBenchmarkDiagnosticArbiter(code => writes.push(code))
+  arbiter.offer('session-a', 'child_conformance_failure')
+  arbiter.offer('session-a', 'child_runtime_error')
+  arbiter.offer('session-a', 'child_bridge_failure')
+  arbiter.offer('session-b', 'child_model_server')
+  arbiter.flush('session-a')
+  arbiter.flush('session-a')
+  arbiter.flush('session-b')
+  arbiter.flush('session-b')
+  assert.deepEqual(writes, ['child_bridge_failure', 'child_model_server'])
+
+}
 
 type RegisteredTool = {
   name: string
@@ -246,6 +304,7 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
   const scopedListeners = new Map<string, Array<(...args: any[]) => unknown>>()
   const guards: Array<(execution: { name: string }) => string | undefined> = []
   const steers: unknown[] = []
+  const runtimeWrites: string[] = []
   const runEffect = (action: () => unknown) => {
     const disposers: Array<() => unknown> = []
     const value = action()
@@ -277,9 +336,11 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
   const ctx = {
     on(name: string, listener: (...args: any[]) => unknown) { return add(rootListeners, name, listener) },
   } as unknown as Context
-  installBenchmarkAgentConformance(ctx, projection)
+  installBenchmarkAgentConformance(ctx, projection, code => runtimeWrites.push(code))
   rootListeners.get('agent/created')![0]!({ agent })
   rootListeners.get('session/event')![0]!(session, turnStart())
+  rootListeners.get('session/event')![0]!(session, { type: 'llm/retry', data: { turn: 1, reason: { kind: 'error', error: { code: 'RATE_LIMIT' } } } })
+  rootListeners.get('session/event')![0]!(session, { type: 'agent/request-error', data: { turn: 1, error: { code: 'SERVER' } } })
   rootListeners.get('session/event')![0]!(session, assistant('prose only', { step: 1 }))
   rootListeners.get('agent/turn-stopping')![0]!({ agent, turn: 1 })
   assert.equal(steers.length, 1, 'runtime wiring steers exactly once at the stop boundary')
@@ -292,6 +353,36 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
   assert.match(assembled.sections[0]!.text, /\"action\":\"call\"/)
   assert.match(assembled.sections[0]!.text, /<done>/)
   assert.equal(assembled.sections[0]!.text.includes('/tmp/'), false)
+
+  // Intermediate retry/request errors never write; only final completed observes recovery.
+  rootListeners.get('session/event')![0]!(session, turnEnd())
+  assert.deepEqual(runtimeWrites, [])
+
+  // A final structured model error writes exactly once, despite duplicate end/dispose.
+  rootListeners.get('session/event')![0]!(session, turnStart(2))
+  rootListeners.get('session/event')![0]!(session, { type: 'turn/end', data: { turn: 2, reason: { kind: 'error', error: { code: 'SERVER', message: 'sentinel' } } } })
+  rootListeners.get('session/event')![0]!(session, { type: 'turn/end', data: { turn: 2, reason: { kind: 'error', error: { code: 'UNKNOWN_MODEL' } } } })
+  assert.deepEqual(runtimeWrites, ['child_model_server'])
+
+  rootListeners.get('session/disposed')![0]!(session)
+
+  // A malformed stopping payload with a valid session is arbited above a later generic error.
+  const session2 = {}
+  const agent2 = { session: session2, steer() {}, ctx: agent.ctx }
+  rootListeners.get('agent/created')![0]!({ agent: agent2 })
+  rootListeners.get('session/event')![0]!(session2, turnStart())
+  assert.throws(() => rootListeners.get('agent/turn-stopping')![0]!({ agent: agent2 }), new RegExp(BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE))
+  rootListeners.get('session/event')![0]!(session2, { type: 'turn/end', data: { turn: 1, reason: { kind: 'error', error: { code: 'UNKNOWN' } } } })
+  assert.deepEqual(runtimeWrites, ['child_model_server', 'child_conformance_failure'])
+  rootListeners.get('session/disposed')![0]!(session2)
+
+  const session3 = {}
+  const agent3 = { session: session3, steer() {}, ctx: agent.ctx }
+  rootListeners.get('agent/created')![0]!({ agent: agent3 })
+  rootListeners.get('session/event')![0]!(session3, turnStart())
+  rootListeners.get('session/event')![0]!(session3, { type: 'turn/end', data: { turn: 1, reason: { kind: 'error', error: { code: 'TIMEOUT' } } } })
+  assert.deepEqual(runtimeWrites, ['child_model_server', 'child_conformance_failure', 'child_model_transport'], 'session diagnostics remain isolated')
+  rootListeners.get('session/disposed')![0]!(session3)
 }
 
 function fakeHandle(outcome: FakeOutcome) {

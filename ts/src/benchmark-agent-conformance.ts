@@ -3,6 +3,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import {
+  classifyBenchmarkTurnEnd,
+  createBenchmarkDiagnosticArbiter,
   emitBenchmarkChildDiagnostic,
   type BenchmarkChildFailureCode,
 } from './benchmark-headless-child-diagnostics.ts'
@@ -345,12 +347,19 @@ function systemSection(projection: BenchmarkBridgeProjection): { name: string; t
 }
 
 /** Install conformance only after the exact benchmark bridge isolation layer. */
-export function installBenchmarkAgentConformance(ctx: Context, projection: BenchmarkBridgeProjection): void {
+export function installBenchmarkAgentConformance(
+  ctx: Context,
+  projection: BenchmarkBridgeProjection,
+  diagnosticWriter: (code: BenchmarkChildFailureCode) => void = emitBenchmarkChildDiagnostic,
+): void {
   const bus = ctx as unknown as EventBus
   if (typeof bus.on !== 'function') throw new Error('benchmark conformance event bus unavailable')
 
   const byAgent = new WeakMap<object, BenchmarkAgentConformance>()
   const bySession = new WeakMap<object, BenchmarkAgentConformance>()
+  const sessionKeys = new WeakMap<object, string>()
+  let sessionOrdinal = 0
+  const diagnostics = createBenchmarkDiagnosticArbiter(diagnosticWriter)
 
   bus.on('agent/created', (payload: { agent?: ScopedAgent }) => {
     const agent = payload.agent
@@ -365,6 +374,7 @@ export function installBenchmarkAgentConformance(ctx: Context, projection: Bench
     const controller = createBenchmarkAgentConformance(projection)
     byAgent.set(agent, controller)
     bySession.set(agent.session, controller)
+    sessionKeys.set(agent.session, `session-${++sessionOrdinal}`)
     try {
       requireDisposer(agent.ctx.effect.call(agent.ctx, function* () {
         yield requireDisposer(agent.ctx!.tools!.guard!(execution => {
@@ -392,8 +402,18 @@ export function installBenchmarkAgentConformance(ctx: Context, projection: Bench
 
   bus.on('session/event', (session: object, event: unknown) => {
     bySession.get(session)?.observe(event)
+    if (typeof event === 'object' && event !== null && (event as { type?: unknown }).type === 'turn/end') {
+      const key = sessionKeys.get(session)
+      if (key !== undefined) {
+        diagnostics.offer(key, classifyBenchmarkTurnEnd((event as { data?: { reason?: unknown } }).data?.reason))
+        diagnostics.flush(key)
+      }
+    }
   })
   bus.on('session/disposed', (session: object) => {
+    const key = sessionKeys.get(session)
+    if (key !== undefined) diagnostics.flush(key)
+    sessionKeys.delete(session)
     bySession.delete(session)
   })
   bus.on('agent/disposed', (payload: { agent?: ScopedAgent }) => {
@@ -402,20 +422,25 @@ export function installBenchmarkAgentConformance(ctx: Context, projection: Bench
     byAgent.delete(agent)
     if (agent.session) bySession.delete(agent.session)
   })
-  bus.on('agent/turn-stopping', (payload: { agent?: ScopedAgent; turn?: number }) => {
+  bus.on('agent/turn-stopping', (payload: { agent?: ScopedAgent; session?: object; turn?: number }) => {
     const agent = payload.agent
+    const session = agent?.session ?? payload.session
+    const key = session && typeof session === 'object' ? sessionKeys.get(session) : undefined
     if (!agent || typeof agent !== 'object' || typeof payload.turn !== 'number') {
-      emitBenchmarkChildDiagnostic('child_conformance_failure')
+      if (key !== undefined) diagnostics.offer(key, 'child_conformance_failure')
+      else diagnosticWriter('child_conformance_failure')
       throw new Error(BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE)
     }
     const controller = byAgent.get(agent)
     if (!controller) {
-      emitBenchmarkChildDiagnostic('child_conformance_failure')
+      if (key !== undefined) diagnostics.offer(key, 'child_conformance_failure')
+      else diagnosticWriter('child_conformance_failure')
       throw new Error(BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE)
     }
     const decision = controller.stopping(payload.turn)
     if (decision.kind === 'reject') {
-      emitBenchmarkChildDiagnostic(benchmarkChildFailureForConformanceCode(decision.code))
+      if (key !== undefined) diagnostics.offer(key, benchmarkChildFailureForConformanceCode(decision.code))
+      else diagnosticWriter(benchmarkChildFailureForConformanceCode(decision.code))
       throw new Error(decision.code)
     }
     if (decision.kind === 'steer') agent.steer!(correctionMessage(decision.mode, projection))
