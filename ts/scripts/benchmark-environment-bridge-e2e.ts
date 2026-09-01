@@ -22,6 +22,45 @@ const TIMEOUT_MS = 30_000
 const TSX_LOADER = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href
 type Body = { messages?: Array<Record<string, unknown>>; tools?: Array<Record<string, unknown>> }
 
+function writeIsolationPreload(path: string, proofPath: string, executableOverride?: string): void {
+  const anchor = executableOverride || join(ROOT, 'ts', 'dsh-runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  const gotryEntry = executableOverride ? '@danceiny/gotry' : join(ROOT, 'ts', 'src', 'index.ts')
+  const dshEntry = join(ROOT, 'ts', 'dsh-runtime', 'vendor', 'deepseek-ai-dsh', 'lib', 'bin.js')
+  writeFileSync(path, `
+const fs = require('node:fs')
+const Module = require('node:module')
+const { createRequire } = require('node:module')
+const blocked = new Set(['dsh-calendar', 'dsh-calendar/lib/index.js'])
+const originalResolve = Module._resolveFilename
+Module._resolveFilename = function (request, parent, isMain, options) {
+  if (blocked.has(request)) {
+    const error = new Error('isolated benchmark runtime')
+    error.code = 'MODULE_NOT_FOUND'
+    throw error
+  }
+  return originalResolve.call(this, request, parent, isMain, options)
+}
+const resolver = createRequire(${JSON.stringify(anchor)})
+const resolve = request => { try { resolver.resolve(request); return true } catch { return false } }
+const proof = {
+  calendarBlocked: [...blocked].every(request => !resolve(request)),
+  dshResolvable: resolve('@deepseek-ai/dsh/lib/bin.js') || fs.existsSync(${JSON.stringify(dshEntry)}),
+  tsxResolvable: resolve('tsx'),
+  gotryResolvable: resolve(${JSON.stringify(gotryEntry)}),
+}
+fs.writeFileSync(${JSON.stringify(proofPath)}, JSON.stringify(proof))
+`, { mode: 0o600, flag: 'wx' })
+}
+
+function assertIsolationProof(proofPath: string, target: string): void {
+  assert.deepEqual(JSON.parse(readFileSync(proofPath, 'utf8')), {
+    calendarBlocked: true,
+    dshResolvable: true,
+    tsxResolvable: true,
+    gotryResolvable: true,
+  }, `${target} preload must isolate only calendar resolution while preserving dsh/tsx/GoTry resolution`)
+}
+
 function sse(payload: Record<string, unknown>): string {
   return `data: ${JSON.stringify(payload)}\n\n`
 }
@@ -67,6 +106,9 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
   // default-off relay before it reaches the synthetic server. The temporary
   // HOME/XDG roots preserve the real dsh runtime while making this E2E hermetic.
   const home = mkdtempSync(join(tmpdir(), 'gotry-bridge-home-'))
+  const preload = join(cwd, 'benchmark-isolation-preload.cjs')
+  const preloadProof = join(cwd, 'benchmark-isolation-proof.json')
+  writeIsolationPreload(preload, preloadProof, executableOverride)
   const runner = join(cwd, 'synthetic-runner.js')
   const configPath = join(cwd, mode === 'invalid-path' ? 'benchmark-env-config-\n.json' : 'benchmark-env-config.json')
   const runnerBody = mode === 'timeout'
@@ -97,7 +139,7 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
     GOTRY_BENCHMARK_ENV_CONFIG: mode === 'disabled' ? '' : configPath,
     ...(mode !== 'disabled' ? { GOTRY_BENCHMARK_BRIDGE_PARENT_SECRET: 'do-not-leak' } : {}),
     ...(mode === 'debug-redaction' ? { GOTRY_DEBUG: '1' } : {}),
-    ...(!executableOverride ? { NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${TSX_LOADER}`].filter(Boolean).join(' ') } : {}),
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${preload}`, ...(!executableOverride ? [`--import=${TSX_LOADER}`] : [])].filter(Boolean).join(' '),
   }
   if (mode === 'disabled') delete env.GOTRY_BENCHMARK_ENV_CONFIG
   const executable = executableOverride || process.execPath
@@ -109,6 +151,7 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
     const child = spawn(executable, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''; child.stdout.on('data', c => { output += c }); child.stderr.on('data', c => { output += c })
     const exit = await new Promise<number | null>(resolve => { const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(null) }, TIMEOUT_MS); child.once('close', code => { clearTimeout(timer); resolve(code) }) })
+    assertIsolationProof(preloadProof, targetForExecutable(executableOverride))
     return { exit, output, requests }
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
@@ -118,6 +161,8 @@ async function runCase(mode: CaseMode, executableOverride?: string): Promise<{ e
   }
 }
 
+function targetForExecutable(executableOverride?: string): string { return executableOverride ? 'packaged' : 'source' }
+
 async function assertRuntimeContract(executableOverride?: string): Promise<void> {
   const target = executableOverride ? 'packaged' : 'source'
   const disabled = await runCase('disabled', executableOverride)
@@ -125,6 +170,11 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
   assert.ok(
     disabled.requests.length > 0 && !disabled.requests.some(r => names(r).includes(TOOL)),
     `${target} default-off must reach the relay without exposing benchmark tool; exit=${disabled.exit}; requests=${disabled.requests.length}; output=${disabled.output.slice(-2_000)}`,
+  )
+  assert.equal(
+    disabled.requests.some(r => names(r).some(name => name.startsWith('calendar_'))),
+    false,
+    `${target} calendar isolation must not leave calendar tools on the default-off relay`,
   )
   const enabled = await runCase('enabled', executableOverride)
   assert.equal(enabled.exit, 0, `${target} opt-in child exit=${enabled.exit}; output tail=${enabled.output.slice(-1000)}`)
@@ -225,6 +275,9 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
   const cwd = mkdtempSync(join(tmpdir(), 'gotry-conformance-cwd-'))
   const dsh = mkdtempSync(join(tmpdir(), 'gotry-conformance-dsh-'))
   const home = mkdtempSync(join(tmpdir(), 'gotry-conformance-home-'))
+  const preload = join(cwd, 'benchmark-isolation-preload.cjs')
+  const preloadProof = join(cwd, 'benchmark-isolation-proof.json')
+  writeIsolationPreload(preload, preloadProof, executableOverride)
   const runner = join(cwd, 'synthetic-runner.js')
   const runnerCount = join(cwd, 'runner-count.txt')
   const configPath = join(cwd, 'benchmark-env-config.json')
@@ -245,7 +298,7 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
     DSH_TOOLS_MODE: 'both', DSH_HOME: dsh,
     LLM_API_KEY: 'synthetic-conformance-key', LLM_BASE_URL: `http://127.0.0.1:${port}/v1`,
     LLM_MODEL: 'synthetic-conformance-model', GOTRY_BENCHMARK_ENV_CONFIG: configPath,
-    ...(!executableOverride ? { NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${TSX_LOADER}`].filter(Boolean).join(' ') } : {}),
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${preload}`, ...(!executableOverride ? [`--import=${TSX_LOADER}`] : [])].filter(Boolean).join(' '),
   }
   let stdout = ''
   let stderr = ''
@@ -260,6 +313,7 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
       child.once('close', code => { clearTimeout(timer); resolve(code) })
     })
     const runnerInvocations = existsSync(runnerCount) ? Number(readFileSync(runnerCount, 'utf8')) : 0
+    assertIsolationProof(preloadProof, targetForExecutable(executableOverride))
     return { exit, stdout, stderr, requests, servedToolCalls, runnerInvocations }
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
