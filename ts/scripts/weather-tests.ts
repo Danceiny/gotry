@@ -1,8 +1,7 @@
 /**
  * 天气能力层确定性回归：受控 fetch fixture 覆盖行为和时间预算。
  *
- * 真实 Open-Meteo/Nominatim 是可变外围观测，不参与合并闸；需要时可单独
- * 运行 WEATHER_LIVE_SMOKE=1 做人工 smoke。本套件必须离线、快速、可重复。
+ * 真实 Open-Meteo/Nominatim 观测不参与合并闸；本套件必须离线、快速、可重复。
  */
 import assert from 'node:assert/strict'
 import { geocodePlace, getForecast, getClimate, wmoLabel } from '../capabilities/weather.ts'
@@ -37,11 +36,18 @@ assert.match(geo.evidence, /open-meteo-geo@2/)
 console.log('1. geocode 主源命中 + alias/schema OK')
 
 // 2. 零结果进入 Nominatim 兜底，并保持正确国家/坐标
-const phuket = await geocodePlace('普吉岛', { fetchImpl: mockFetch((url) => url.includes('nominatim') ? geoPhuket : { results: [] }) })
+const seenRequests: Array<{ url: string; headers: Headers }> = []
+const phuket = await geocodePlace('普吉岛', { count: 3, fetchImpl: async (input, init) => {
+  seenRequests.push({ url: String(input), headers: new Headers(init?.headers) })
+  return jsonResponse(String(input).includes('nominatim') ? geoPhuket : { results: [] })
+} })
 assert.equal(phuket.ok, true)
 assert.equal(phuket.via, 'nominatim')
 assert.match(phuket.results[0]!.country ?? '', /泰国/)
 assert.ok(Math.abs(phuket.results[0]!.latitude - 8) < 0.5)
+assert.match(seenRequests[0]!.url, /name=%E6%99%AE%E5%90%89%E5%B2%9B.*count=3.*language=zh/)
+assert.match(seenRequests[1]!.url, /q=%E6%99%AE%E5%90%89%E5%B2%9B.*limit=3.*accept-language=zh/)
+assert.match(seenRequests[1]!.headers.get('user-agent') ?? '', /gotry-travel-agent/)
 console.log('2. geocode 兜底链 + 地名 alias OK')
 
 // 3. 预报正常 schema
@@ -64,9 +70,14 @@ const slowFc = await getForecast({ latitude: 25.6, longitude: 100.2 }, { timeout
 assert.equal(slowFc.ok, false)
 assert.ok(Date.now() - slowStarted < 150, 'slow forecast must respect timeout')
 assert.match(slowFc.evidence, /error/)
+const never = mockFetch(() => new Promise<never>(() => undefined))
+const neverStarted = Date.now()
+const neverFc = await getForecast({ latitude: 25.6, longitude: 100.2 }, { timeoutMs: 20, fetchImpl: never })
+assert.equal(neverFc.ok, false)
+assert.ok(Date.now() - neverStarted < 150, 'hard deadline must cover a fetch that ignores abort')
 console.log('4. slow forecast timeout + graceful fallback OK')
 
-// 5. 双源 fallback 的总预算（两个请求共享 timeoutMs），并检查网络错误终态
+// 5. 双源 fallback 的总预算：主源耗尽预算时不再发第二个请求。
 let calls = 0
 const slowBoth = mockFetch((_url, signal) => {
   calls += 1
@@ -79,13 +90,26 @@ const slowBoth = mockFetch((_url, signal) => {
 const chainStarted = Date.now()
 const chain = await geocodePlace('不存在的地方', { timeoutMs: 35, fetchImpl: slowBoth })
 assert.equal(chain.ok, false)
-assert.equal(calls, 2, 'primary and fallback should both be attempted')
+assert.equal(calls, 1, 'an exhausted primary budget must not start fallback')
 assert.ok(Date.now() - chainStarted < 150, 'fallback chain must share one total budget')
 assert.match(chain.evidence, /open-meteo-geo@error/)
+let fastFailureCalls = 0
+const fastFailure = mockFetch((_url) => { fastFailureCalls += 1; throw new Error('ECONNRESET') })
+const fallbackAfterFastFailure = await geocodePlace('不存在的地方', { timeoutMs: 100, fetchImpl: async (input, init) => {
+  if (String(input).includes('nominatim')) return jsonResponse([])
+  return fastFailure(input, init)
+} })
+assert.equal(fallbackAfterFastFailure.ok, false)
+assert.equal(fastFailureCalls, 1, 'a fast primary failure should still attempt fallback')
 const network = await getForecast({ latitude: 25.6, longitude: 100.2 }, { fetchImpl: mockFetch(() => { throw new Error('ECONNRESET') }) })
 assert.equal(network.ok, false)
 assert.match(network.error ?? '', /ECONNRESET/)
-console.log('5. slow geocode + fallback total budget + network error OK')
+const httpError = await getForecast({ latitude: 25.6, longitude: 100.2 }, { fetchImpl: async () => jsonResponse({}, 503) })
+assert.equal(httpError.ok, false)
+assert.match(httpError.error ?? '', /HTTP 503/)
+const malformedGeo = await geocodePlace('坏响应', { timeoutMs: 100, fetchImpl: mockFetch((url) => url.includes('nominatim') ? {} : { results: {} }) })
+assert.equal(malformedGeo.ok, false)
+console.log('5. slow geocode + strict fallback budget + network/HTTP errors OK')
 
 // 6. climate schema、malformed schema、WMO mapping
 const cl = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { year: 2025, fetchImpl: mockFetch(() => climateBody) })
@@ -93,6 +117,12 @@ assert.equal(cl.ok, true)
 assert.equal(cl.daily?.length, 31)
 const malformed = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: 7, fetchImpl: mockFetch(() => ({ daily: { time: [] } })) })
 assert.equal(malformed.ok, false)
+const malformedElement = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: 7, fetchImpl: mockFetch(() => ({ daily: { ...forecastBody(7).daily, temperature_2m_max: [30, 'bad', 30, 30, 30, 30, 30] } })) })
+assert.equal(malformedElement.ok, false)
+const nullClimate = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { fetchImpl: mockFetch(() => null) })
+assert.equal(nullClimate.ok, false)
+const slowClimate = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { timeoutMs: 20, fetchImpl: slow })
+assert.equal(slowClimate.ok, false)
 assert.equal(wmoLabel(0), '晴')
 assert.equal(wmoLabel(95), '雷暴')
 assert.match(wmoLabel(999), /天气码999/)
