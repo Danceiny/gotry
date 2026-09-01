@@ -13,7 +13,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { REQUIRED_BENCHMARK_DSH_VERSION } from '../../bin/gotry-runtime-resolution.js'
-import { validateDshRuntimeClosure } from './dsh-runtime-closure.ts'
+import {
+  parsePnpmDshLock,
+  parsePnpmRootDshImporter,
+  REQUIRED_DSH_RUNTIME_PACKAGE_COUNT,
+  validateDshRuntimeClosure,
+  validatePnpmRootDshImporter,
+} from './dsh-runtime-closure.ts'
 
 const repoRoot = join(import.meta.dirname, '..', '..')
 process.chdir(repoRoot)
@@ -51,8 +57,23 @@ try {
     dependencies: installedPkg.dependencies ?? {},
     lockPackages: rootLock.packages ?? {},
     runtimeVersion: REQUIRED_BENCHMARK_DSH_VERSION,
+    expectedPackageCount: REQUIRED_DSH_RUNTIME_PACKAGE_COUNT,
   })
   console.log(`dsh closure: ${dshClosure.names.length} packages pinned at ${dshClosure.version}`)
+  const pnpmLock = readFileSync(join(repoRoot, 'pnpm-lock.yaml'), 'utf-8')
+  const pnpmClosure = validateDshRuntimeClosure({
+    dependencies: installedPkg.dependencies ?? {},
+    lockPackages: parsePnpmDshLock(pnpmLock),
+    runtimeVersion: REQUIRED_BENCHMARK_DSH_VERSION,
+    expectedPackageCount: REQUIRED_DSH_RUNTIME_PACKAGE_COUNT,
+  })
+  const pnpmImporter = validatePnpmRootDshImporter({
+    dependencies: installedPkg.dependencies ?? {},
+    importerEntries: parsePnpmRootDshImporter(pnpmLock),
+    runtimeVersion: REQUIRED_BENCHMARK_DSH_VERSION,
+    expectedPackageCount: REQUIRED_DSH_RUNTIME_PACKAGE_COUNT,
+  })
+  console.log(`pnpm closure: ${pnpmClosure.names.length} packages, root importer ${pnpmImporter.names.length}`)
 
   // 3) dependencies 声明完整性:每个依赖必须存在于安装树(rc.9 缺陷=声明了运行时使用但根本没声明依赖)
   const deps = Object.keys(installedPkg.dependencies ?? {})

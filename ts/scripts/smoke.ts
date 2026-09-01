@@ -55,12 +55,14 @@ async function main() {
 
   // 1) 动机画像:evidence 缺失必须被拒绝(P0 反幻觉红线)
   const motivation = byName('gotry_motivation_save')
-  try {
-    await motivation.execute({ profile: { weights: { escape_rest: 0.7 } } }, null)
-    throw new Error('FAIL: profile without evidence should have been rejected')
-  } catch (e) {
-    console.log(`motivation without evidence rejected: ${(e as Error).message.slice(0, 60)}...`)
+  const rejectedMotivation = await motivation.execute(
+    { profile: { weights: { escape_rest: 0.7 } } },
+    null,
+  ) as { ok?: boolean; summary?: string }
+  if (rejectedMotivation.ok !== false || !rejectedMotivation.summary?.includes('without evidence')) {
+    throw new Error(`FAIL: profile without evidence should have been rejected, actual ${JSON.stringify(rejectedMotivation).slice(0, 120)}`)
   }
+  console.log(`motivation without evidence rejected: ${rejectedMotivation.summary.slice(0, 80)}...`)
   const saved = await motivation.execute({
     profile: {
       weights: { escape_rest: 0.7, curiosity: 0.3 },
