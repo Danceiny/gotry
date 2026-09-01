@@ -459,7 +459,7 @@ async function assertPackagedPatchProjection(executable: string): Promise<void> 
   }
 }
 
-type ConformanceMode = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'large'
+type ConformanceMode = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'large' | 'exhausted' | 'recovered' | 'post-failure' | 'unknown'
 const LARGE_TERMINAL_PAYLOAD = 'x'.repeat(80 * 1024)
 
 function taggedTerminal(valid: boolean): string {
@@ -483,6 +483,7 @@ function conformanceResponse(mode: ConformanceMode, request: Body, plannerCount:
 async function runConformanceCase(mode: ConformanceMode, executableOverride?: string): Promise<{ exit: number | null; stdout: string; stderr: string; requests: Body[]; servedToolCalls: number; runnerInvocations: number }> {
   const requests: Body[] = []
   let plannerCount = 0
+  let recoveredAttempts = 0
   let servedToolCalls = 0
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = []
@@ -491,11 +492,22 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
       let body: Body = {}
       try { body = JSON.parse(Buffer.concat(chunks).toString()) as Body } catch { /* structural failure */ }
       requests.push(body)
+      const requestHasToolResult = anyToolResultPresent(body)
       const plannerRequest = names(body).includes(TOOL)
+      if (mode === 'exhausted' || mode === 'unknown' || (mode === 'post-failure' && requestHasToolResult)) {
+        res.writeHead(mode === 'exhausted' ? 429 : mode === 'unknown' ? 418 : 500, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { message: 'PRIVATE_SENTINEL_DO_NOT_REFLECT', type: 'server_error' } }))
+        return
+      }
+      if (mode === 'recovered' && plannerRequest && !requestHasToolResult && recoveredAttempts++ === 0) {
+        res.writeHead(503, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: { message: 'PRIVATE_SENTINEL_DO_NOT_REFLECT', type: 'server_error' } }))
+        return
+      }
       if (plannerRequest) plannerCount += 1
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       const response = plannerRequest
-        ? conformanceResponse(mode, body, plannerCount)
+        ? conformanceResponse(mode === 'recovered' ? 'b' : mode === 'post-failure' ? 'f' : mode, body, plannerCount)
         : finalText('auxiliary request')
       if (response.includes(`"name":"${TOOL}"`)) servedToolCalls += 1
       res.end(response)
@@ -550,6 +562,42 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
   }
 }
 
+async function assertTerminalDiagnostics(executableOverride?: string): Promise<void> {
+  const terminalReasons = (stderr: string): string[] => [...stderr.matchAll(/benchmark terminal output unavailable \(([^)]+)\)/g)].map(match => match[1]!)
+  const exhausted = await runConformanceCase('exhausted', executableOverride)
+  assert.notEqual(exhausted.exit, 0, 'exhausted transient model failure exits non-zero')
+  assert.match(exhausted.stderr, /child_model_capacity/, 'exhausted transient model failure emits coarse capacity enum')
+  assert.ok(exhausted.requests.length > 1, 'exhausted case actually exercises retry attempts')
+  assert.equal(exhausted.stdout, '', 'exhausted transient model failure releases no terminal stdout')
+  assert.equal(exhausted.stderr.includes('PRIVATE_SENTINEL_DO_NOT_REFLECT'), false, 'exhausted error body is never reflected')
+  assert.deepEqual(terminalReasons(exhausted.stderr), ['child_model_capacity'], 'exhausted emits exactly one terminal reason')
+
+  const recovered = await runConformanceCase('recovered', executableOverride)
+  assert.equal(recovered.exit, 0, 'transient model failure followed by valid terminal recovers')
+  assert.match(recovered.stdout, /<benchmark_terminal>/, 'recovered run releases terminal stdout')
+  assert.equal(recovered.stderr.includes('child_model_'), false, 'recovered run emits no failure enum')
+  assert.deepEqual(terminalReasons(recovered.stderr), [], 'recovered emits no terminal reason')
+
+  const postFailure = await runConformanceCase('post-failure', executableOverride)
+  assert.notEqual(postFailure.exit, 0, 'model failure after successful bridge exits non-zero')
+  assert.equal(postFailure.runnerInvocations, 1, 'post-bridge failure follows exactly one successful bridge invocation')
+  assert.match(postFailure.stderr, /child_model_server/, 'post-bridge model failure emits server enum')
+  assert.equal(postFailure.stdout, '', 'post-bridge model failure releases no terminal stdout')
+  assert.deepEqual(terminalReasons(postFailure.stderr), ['child_model_server'], 'post-bridge emits exactly one terminal reason')
+
+  const unknown = await runConformanceCase('unknown', executableOverride)
+  assert.notEqual(unknown.exit, 0, 'unknown model failure exits non-zero')
+  assert.match(unknown.stderr, /child_runtime_error/, 'unknown model failure collapses to generic runtime enum')
+  assert.equal(unknown.stdout, '', 'unknown model failure releases no terminal stdout')
+  assert.equal(unknown.stderr.includes('PRIVATE_SENTINEL_DO_NOT_REFLECT'), false, 'unknown error body is never reflected')
+  assert.deepEqual(terminalReasons(unknown.stderr), ['child_runtime_error'], 'unknown emits exactly one terminal reason')
+
+  const precedence = await runConformanceCase('f', executableOverride)
+  assert.match(precedence.stderr, /child_conformance_failure/, 'conformance-specific failure remains higher precedence than final generic error')
+  assert.equal(precedence.stderr.includes('child_runtime_error'), false, 'generic terminal classification does not double-write')
+  assert.deepEqual(terminalReasons(precedence.stderr), ['child_conformance_failure'], 'precedence emits exactly one terminal reason')
+}
+
 async function assertOutputConformance(executableOverride?: string): Promise<void> {
   const a = await runConformanceCase('a', executableOverride)
   assert.equal(a.exit, 0, 'A prose/no-call correction then one bridge call and valid terminal exits 0')
@@ -595,10 +643,12 @@ const packaged = process.env.GOTRY_BRIDGE_E2E_BIN
 assertRuntimeSelectionAndVersionGuards()
 const sourceRuntimeChecked = await assertSourceRuntimeContractWhenAvailable()
 if (sourceRuntimeChecked) await assertOutputConformance()
+if (sourceRuntimeChecked) await assertTerminalDiagnostics()
 
 if (packaged) {
   await assertRuntimeContract(packaged)
   await assertOutputConformance(packaged)
+  await assertTerminalDiagnostics(packaged)
   await assertPackagedPatchProjection(packaged)
   const packageRoot = installedPackageRoot(packaged)
   const packagedBridge = await import(pathToFileURL(join(packageRoot, 'dist', 'src', 'benchmark-environment-bridge.js')).href)

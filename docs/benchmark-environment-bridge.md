@@ -206,4 +206,16 @@ remains fail-closed. The frozen treatment at code SHA `752e54c` stopped after
 140.715 seconds with `child_nonzero_exit`, zero terminal bytes, and null
 evaluator/official scores, so it remains diagnostic-only. The lock-consistency
 successor does not rewrite that UID attribution.
+Round 6 narrows the remaining `child_nonzero_exit` ambiguity without reading
+raw stderr. Benchmark conformance observes only the final structured
+`turn/end.reason` and maps allowlisted model codes or limited HTTP status values
+to closed auth, capacity, server, transport, stream, request, and generic
+runtime families; blocked, max-token, aborted, and interrupted are also closed
+enums. A per-session arbiter writes at most once and retains a more specific
+bridge/conformance failure over a later generic terminal error. Transient model
+errors that recover before the final turn end emit no failure. Free-form
+messages, paths, prompts, request IDs, and credentials are neither inspected
+nor reflected. This changes diagnostics only: stdout, retry policy, prompts,
+tools, evaluator behavior, and scoring remain unchanged. Fresh frozen-treatment
+evidence is still required before any benchmark or uplift claim.
 No external benchmark closure is claimed.
