@@ -8,10 +8,12 @@
  */
 
 import { execSync } from 'node:child_process'
-import { mkdtempSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { REQUIRED_BENCHMARK_DSH_VERSION } from '../../bin/gotry-runtime-resolution.js'
+import { validateDshRuntimeClosure } from './dsh-runtime-closure.ts'
 
 const repoRoot = join(import.meta.dirname, '..', '..')
 process.chdir(repoRoot)
@@ -38,9 +40,23 @@ try {
   const installedPkg = JSON.parse(execSync(`cat ${join(pkgDir, 'package.json')}`, { encoding: 'utf-8' }))
   if (installedPkg.version !== version) throw new Error(`版本不符:${installedPkg.version}`)
 
+  // DSH prerelease packages publish their internal edges as caret ranges. A
+  // clean consumer must therefore receive the whole tested family as exact
+  // top-level dependencies; otherwise a newly published alpha can be mixed
+  // into the older runtime even though the source lockfile is coherent.
+  const rootLock = JSON.parse(readFileSync(join(repoRoot, 'package-lock.json'), 'utf-8')) as {
+    packages?: Record<string, { version?: string }>
+  }
+  const dshClosure = validateDshRuntimeClosure({
+    dependencies: installedPkg.dependencies ?? {},
+    lockPackages: rootLock.packages ?? {},
+    runtimeVersion: REQUIRED_BENCHMARK_DSH_VERSION,
+  })
+  console.log(`dsh closure: ${dshClosure.names.length} packages pinned at ${dshClosure.version}`)
+
   // 3) dependencies 声明完整性:每个依赖必须存在于安装树(rc.9 缺陷=声明了运行时使用但根本没声明依赖)
   const deps = Object.keys(installedPkg.dependencies ?? {})
-  console.log(`dependencies: ${deps.join(', ')}`)
+  console.log(`dependencies: ${deps.length} declared`)
   // 3b) 运行时 import 的重依赖必须在 dependencies 里声明(可用性由 npm 安装时保证;rc.9 缺陷=用了但没声明)
   const runtimeImports = ['better-sqlite3']
   for (const dep of runtimeImports) {

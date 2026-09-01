@@ -65,6 +65,7 @@ jobs:
           test "${#tarballs[@]}" -eq 1
           (cd "$install_dir" && npm init --yes >/dev/null)
           npx --yes pnpm@11.5.0 --dir "$install_dir" add --ignore-scripts "${tarballs[0]}"
+          npx tsx ts/scripts/pnpm-dsh-closure-proof.ts "$install_dir"
           test -x "$install_dir/node_modules/.bin/gotry"
           echo "GOTRY_BUDGET_E2E_BIN=$install_dir/node_modules/.bin/gotry" >> "$GITHUB_ENV"
           echo "GOTRY_BRIDGE_E2E_BIN=$install_dir/node_modules/.bin/gotry" >> "$GITHUB_ENV"

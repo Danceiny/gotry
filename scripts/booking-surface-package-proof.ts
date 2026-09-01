@@ -14,6 +14,8 @@ import { BookingCopilotTaskRuntime } from '@danceiny/gotry/booking-surface/runti
 import { startBookingCopilotServer } from '@danceiny/gotry/booking-surface/server'
 import { createDshEmbeddedBookingPlanner } from '@danceiny/gotry/booking-surface/dsh-planner'
 import { startBookingCopilotFromEnvironment } from '@danceiny/gotry/booking-surface/startup'
+import { REQUIRED_BENCHMARK_DSH_VERSION } from '../bin/gotry-runtime-resolution.js'
+import { validateDshRuntimeClosure } from '../ts/scripts/dsh-runtime-closure.ts'
 
 assert.equal(BOOKING_SURFACE_SCHEMA_VERSION, 'booking.surface.v1')
 assert.deepEqual([...BOOKING_READ_ACTION_KINDS].sort(), [
@@ -51,6 +53,18 @@ const tarball = resolve(root, tarballResult.stdout.trim())
 writeFileSync(join(packedConsumer, 'package.json'), JSON.stringify({ name: 'clean-consumer', private: true, type: 'module' }))
 const install = spawnSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], { cwd: packedConsumer, encoding: 'utf8', timeout: 120_000 })
 assert.equal(install.status, 0, install.stderr || install.stdout)
+const installedPackage = JSON.parse(readFileSync(join(packedConsumer, 'node_modules/@danceiny/gotry/package.json'), 'utf8')) as {
+  dependencies?: Record<string, string>
+}
+const consumerLock = JSON.parse(readFileSync(join(packedConsumer, 'package-lock.json'), 'utf8')) as {
+  packages?: Record<string, { version?: string }>
+}
+const npmClosure = validateDshRuntimeClosure({
+  dependencies: installedPackage.dependencies ?? {},
+  lockPackages: consumerLock.packages ?? {},
+  runtimeVersion: REQUIRED_BENCHMARK_DSH_VERSION,
+})
+assert.equal(npmClosure.names.length, 216, 'clean npm consumer must resolve the complete Round 5 DSH closure')
 const consumerRun = spawnSync(process.execPath, [consumerScript], { cwd: packedConsumer, encoding: 'utf8', timeout: 60_000 })
 assert.equal(consumerRun.status, 0, consumerRun.stderr || consumerRun.stdout)
 const sandboxPath = join(packedConsumer, 'node_modules/@deepseek-ai/dsh-sandbox')
