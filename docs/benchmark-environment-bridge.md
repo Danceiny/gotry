@@ -216,6 +216,13 @@ bridge/conformance failure over a later generic terminal error. Transient model
 errors that recover before the final turn end emit no failure. Free-form
 messages, paths, prompts, request IDs, and credentials are neither inspected
 nor reflected. This changes diagnostics only: stdout, retry policy, prompts,
-tools, evaluator behavior, and scoring remain unchanged. Fresh frozen-treatment
-evidence is still required before any benchmark or uplift claim.
+tools, evaluator behavior, and scoring remain unchanged. The frozen ChinaTravel
+treatment at code SHA `c61600b` used the clean-installed tarball SHA-256
+`8df65b69873034df282dfa126ab93171fa9f1d4177cf17c5f9c694e737ff1161`,
+UID `phase2_familiar_20250321040138918100_00001`, and
+`deepseek-v4-flash`. It stopped after 49.546 seconds with parent reason
+`child_runtime_error`, zero terminal bytes, and null evaluator/official scores.
+Leakage and local credential/endpoint scans were zero. This is diagnostic-only
+evidence and creates no benchmark or uplift claim; a later documentation-only
+successor does not rewrite the treatment attribution.
 No external benchmark closure is claimed.
