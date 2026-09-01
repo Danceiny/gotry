@@ -119,11 +119,14 @@ export async function geocodePlace(
   const ts = new Date().toISOString()
   const count = opts.count ?? 5
   const query = name.trim()
+  const timeoutMs = opts.timeoutMs ?? 15_000
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return { ok: false, evidence: `[实时API:open-meteo-geo@error@${ts}]`, results: [], error: 'timeoutMs must be positive' }
   const omUrl = `${GEOCODE_BASE}?name=${encodeURIComponent(query)}&count=${count}&language=zh&format=json`
   // timeoutMs is a budget for the complete primary→fallback chain, not per request.
   const deadline = Date.now() + (opts.timeoutMs ?? 15_000)
   const remaining = () => deadline - Date.now()
-  const r = await fetchJson(omUrl, remaining(), {}, opts.fetchImpl)
+  const primaryRemaining = remaining()
+  const r = await fetchJson(omUrl, primaryRemaining, {}, opts.fetchImpl)
   const primaryPayload = r.ok && isRecord(r.data) && Array.isArray(r.data['results']) ? r.data['results'] : null
   const omResults: GeoHitInternal[] = primaryPayload
     ? primaryPayload.map((item) => {
@@ -149,8 +152,9 @@ export async function geocodePlace(
   // 弱命中/零结果/主源请求失败:Nominatim 兜底(免费无 key;中文 accept-language)
   const nomTs = new Date().toISOString()
   const nomUrl = `${NOMINATIM_BASE}?q=${encodeURIComponent(query)}&format=jsonv2&limit=${count}&accept-language=zh&addressdetails=1`
-  const nom = remaining() > 0
-    ? await fetchJson(nomUrl, remaining(), { 'User-Agent': 'gotry-travel-agent/0.1 (+https://github.com/Danceiny/gotry)' }, opts.fetchImpl)
+  const fallbackRemaining = remaining()
+  const nom = fallbackRemaining > 0
+    ? await fetchJson(nomUrl, fallbackRemaining, { 'User-Agent': 'gotry-travel-agent/0.1 (+https://github.com/Danceiny/gotry)' }, opts.fetchImpl)
     : { ok: false, error: 'total timeout budget exhausted' }
   const nomResults: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }> = []
   if (nom.ok && Array.isArray(nom.data)) {
@@ -162,8 +166,8 @@ export async function geocodePlace(
           name: String(it['name'] ?? ''),
           latitude: Number(it['lat']),
           longitude: Number(it['lon']),
-          country: addr['country'],
-          admin1: addr['province'] ?? addr['state'] ?? addr['county'],
+          country: typeof addr['country'] === 'string' ? addr['country'] : undefined,
+          admin1: [addr['province'], addr['state'], addr['county']].find(v => typeof v === 'string') as string | undefined,
         }
       }).filter((h) => !!h && !!h.name && Number.isFinite(h.latitude) && Number.isFinite(h.longitude)) as Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>
     nomResults.push(...parsedNom)
@@ -193,11 +197,14 @@ export async function getForecast(
 ): Promise<WeatherResult> {
   const started = Date.now()
   const ts = new Date().toISOString()
-  const days = Math.min(opts.days ?? 7, 16)
+  const requestedDays = opts.days ?? 7
+  const days = Number.isInteger(requestedDays) && requestedDays > 0 ? Math.min(requestedDays, 16) : 0
+  const timeoutMs = opts.timeoutMs ?? 15_000
+  if (days < 1 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo@error@${ts}]`, latencyMs: Date.now() - started, error: 'days and timeoutMs must be positive' }
   const url = `${FORECAST_BASE}?latitude=${point.latitude}&longitude=${point.longitude}`
     + `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode`
     + `&forecast_days=${days}&timezone=auto`
-  const r = await fetchJson(url, opts.timeoutMs ?? 15_000, {}, opts.fetchImpl)
+  const r = await fetchJson(url, timeoutMs, {}, opts.fetchImpl)
   const latencyMs = Date.now() - started
   if (!r.ok) {
     return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo@error@${ts}]`, latencyMs, error: r.error }
@@ -213,6 +220,8 @@ export async function getForecast(
     || daily.temperature_2m_min.some(v => typeof v !== 'number' || !Number.isFinite(v))
     || daily.weathercode.some(v => typeof v !== 'number' || !Number.isFinite(v))
     || (daily.precipitation_probability_max !== undefined
+      && !Array.isArray(daily.precipitation_probability_max))
+    || (Array.isArray(daily.precipitation_probability_max)
       && (daily.precipitation_probability_max.length !== days
         || daily.precipitation_probability_max.some(v => v !== null && (typeof v !== 'number' || !Number.isFinite(v)))))) {
     return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo@error@${ts}]`, latencyMs, error: 'empty daily payload' }
@@ -242,6 +251,8 @@ export async function getClimate(
 ): Promise<WeatherResult> {
   const started = Date.now()
   const ts = new Date().toISOString()
+  const timeoutMs = opts.timeoutMs ?? 15_000
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo-climate@error@${ts}]`, latencyMs: Date.now() - started, error: 'timeoutMs must be positive' }
   // 默认取去年同月做气候基线
   const year = opts.year ?? (new Date().getFullYear() - 1)
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate()
@@ -250,7 +261,7 @@ export async function getClimate(
   const url = `${ARCHIVE_BASE}?latitude=${point.latitude}&longitude=${point.longitude}`
     + `&start_date=${start}&end_date=${end}`
     + `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto`
-  const r = await fetchJson(url, opts.timeoutMs ?? 15_000, {}, opts.fetchImpl)
+  const r = await fetchJson(url, timeoutMs, {}, opts.fetchImpl)
   const latencyMs = Date.now() - started
   if (!r.ok) {
     return { ok: false, via: 'open-meteo-error', evidence: `[实时API:open-meteo-climate@error@${ts}]`, latencyMs, error: r.error }
@@ -259,10 +270,12 @@ export async function getClimate(
   const daily = isRecord(payload?.['daily']) ? payload['daily'] as { time?: unknown[]; temperature_2m_max?: unknown[]; temperature_2m_min?: unknown[]; weathercode?: unknown[] } : null
   if (!daily || !Array.isArray(daily.time) || !Array.isArray(daily.temperature_2m_max)
     || !Array.isArray(daily.temperature_2m_min) || !Array.isArray(daily.weathercode)
+    || daily.time.length !== lastDay
     || daily.time.length !== daily.temperature_2m_max.length
     || daily.time.length !== daily.temperature_2m_min.length
     || daily.time.length !== daily.weathercode.length
     || daily.time.some(v => typeof v !== 'string')
+    || daily.time.some(v => typeof v === 'string' && !v.startsWith(`${year}-${String(month).padStart(2, '0')}-`))
     || daily.temperature_2m_max.some(v => typeof v !== 'number' || !Number.isFinite(v))
     || daily.temperature_2m_min.some(v => typeof v !== 'number' || !Number.isFinite(v))
     || daily.weathercode.some(v => typeof v !== 'number' || !Number.isFinite(v))) {

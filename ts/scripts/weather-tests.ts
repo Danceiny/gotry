@@ -93,14 +93,16 @@ assert.equal(chain.ok, false)
 assert.equal(calls, 1, 'an exhausted primary budget must not start fallback')
 assert.ok(Date.now() - chainStarted < 150, 'fallback chain must share one total budget')
 assert.match(chain.evidence, /open-meteo-geo@error/)
-let fastFailureCalls = 0
-const fastFailure = mockFetch((_url) => { fastFailureCalls += 1; throw new Error('ECONNRESET') })
+let fastPrimaryCalls = 0
+let fastFallbackCalls = 0
 const fallbackAfterFastFailure = await geocodePlace('不存在的地方', { timeoutMs: 100, fetchImpl: async (input, init) => {
-  if (String(input).includes('nominatim')) return jsonResponse([])
-  return fastFailure(input, init)
+  if (String(input).includes('nominatim')) { fastFallbackCalls += 1; return jsonResponse([]) }
+  fastPrimaryCalls += 1
+  throw new Error('ECONNRESET')
 } })
 assert.equal(fallbackAfterFastFailure.ok, false)
-assert.equal(fastFailureCalls, 1, 'a fast primary failure should still attempt fallback')
+assert.equal(fastPrimaryCalls, 1, 'primary should be attempted once')
+assert.equal(fastFallbackCalls, 1, 'a fast primary failure should still attempt fallback once')
 const network = await getForecast({ latitude: 25.6, longitude: 100.2 }, { fetchImpl: mockFetch(() => { throw new Error('ECONNRESET') }) })
 assert.equal(network.ok, false)
 assert.match(network.error ?? '', /ECONNRESET/)
@@ -119,10 +121,26 @@ const malformed = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days
 assert.equal(malformed.ok, false)
 const malformedElement = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: 7, fetchImpl: mockFetch(() => ({ daily: { ...forecastBody(7).daily, temperature_2m_max: [30, 'bad', 30, 30, 30, 30, 30] } })) })
 assert.equal(malformedElement.ok, false)
+const wrongPrecip = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: 7, fetchImpl: mockFetch(() => ({ daily: { ...forecastBody(7).daily, precipitation_probability_max: 'bad' } })) })
+assert.equal(wrongPrecip.ok, false)
+const wrongPrecipObject = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: 7, fetchImpl: mockFetch(() => ({ daily: { ...forecastBody(7).daily, precipitation_probability_max: {} } })) })
+assert.equal(wrongPrecipObject.ok, false)
 const nullClimate = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { fetchImpl: mockFetch(() => null) })
 assert.equal(nullClimate.ok, false)
 const slowClimate = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { timeoutMs: 20, fetchImpl: slow })
 assert.equal(slowClimate.ok, false)
+const shortClimate = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { fetchImpl: mockFetch(() => ({ daily: { ...climateBody.daily, time: ['2025-08-01'], temperature_2m_max: [29], temperature_2m_min: [21], weathercode: [2] } })) })
+assert.equal(shortClimate.ok, false)
+for (const badDays of [0, Number.NaN, 2.5]) {
+  let fetches = 0
+  const invalid = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: badDays, fetchImpl: mockFetch(() => { fetches += 1; return forecastBody(7) }) })
+  assert.equal(invalid.ok, false)
+  assert.equal(fetches, 0)
+}
+let zeroTimeoutFetches = 0
+const zeroTimeout = await getForecast({ latitude: 25.6, longitude: 100.2 }, { timeoutMs: 0, fetchImpl: mockFetch(() => { zeroTimeoutFetches += 1; return forecastBody(7) }) })
+assert.equal(zeroTimeout.ok, false)
+assert.equal(zeroTimeoutFetches, 0)
 assert.equal(wmoLabel(0), '晴')
 assert.equal(wmoLabel(95), '雷暴')
 assert.match(wmoLabel(999), /天气码999/)
