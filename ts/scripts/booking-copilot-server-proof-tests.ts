@@ -21,6 +21,7 @@ import { BOOKING_SURFACE_SCHEMA_SHA256, BOOKING_SURFACE_SCHEMA_VERSION } from '.
 const API_KEY = 'server-to-server-key'
 const SCHEMA_VERSION = BOOKING_SURFACE_SCHEMA_VERSION
 const SCHEMA_SHA256 = BOOKING_SURFACE_SCHEMA_SHA256
+const ARTIFACT_ID = '1111111111111111111111111111111111111111'
 const stateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-server-'))
 const ledger = ensureLedger(stateRoot)
 let nextId = 0
@@ -70,8 +71,43 @@ const serverHandle = await startBookingCopilotServer({
   apiKey: API_KEY,
   runtime,
   plannerFactory,
+  artifactId: ARTIFACT_ID,
 })
 const endpoint = `http://127.0.0.1:${serverHandle.port}/a2a/booking-copilot/turn`
+const expectedProbe = {
+  schemaVersion: SCHEMA_VERSION,
+  schemaSha256: SCHEMA_SHA256,
+  status: 'ready',
+}
+const runtimeReport = process.report?.getReport?.() as { header?: { glibcVersionRuntime?: string } } | undefined
+const runtimeGlibcVersion = runtimeReport?.header?.glibcVersionRuntime ?? ''
+const runtimeReleaseTuple = `${process.platform}-${process.arch}-${runtimeGlibcVersion ? 'glibc' : 'unknown'}`
+await assert.rejects(
+  startBookingCopilotServer({
+    apiKey: API_KEY,
+    runtime,
+    plannerFactory,
+    artifactId: 'not-a-commit',
+  }),
+  /booking_copilot_artifact_id_invalid/,
+)
+for (const path of ['/healthz', '/status']) {
+  const probeUrl = `http://127.0.0.1:${serverHandle.port}${path}`
+  for (const authorization of [undefined, 'Bearer wrong-key']) {
+    const rejected = await fetch(probeUrl, authorization ? { headers: { authorization } } : undefined)
+    assert.equal(rejected.status, 401, `${path} rejects ${authorization ? 'wrong' : 'missing'} bearer`)
+  }
+  const authorized = await fetch(probeUrl, { headers: { authorization: `Bearer ${API_KEY}` } })
+  assert.equal(authorized.status, 200, `${path} accepts deployment bearer`)
+  assert.equal(authorized.headers.get('x-booking-surface-version'), SCHEMA_VERSION, `${path} returns canonical schema version header`)
+  assert.equal(authorized.headers.get('x-booking-surface-schema-sha256'), SCHEMA_SHA256, `${path} returns canonical schema hash header`)
+  assert.equal(authorized.headers.get('x-gotry-artifact-id'), ARTIFACT_ID, `${path} returns the running release identity`)
+  assert.equal(authorized.headers.get('x-gotry-node-version'), process.version, `${path} returns the actual Node runtime`)
+  assert.equal(authorized.headers.get('x-gotry-node-modules-abi'), process.versions.modules, `${path} returns the actual native ABI`)
+  assert.equal(authorized.headers.get('x-gotry-release-tuple'), runtimeReleaseTuple, `${path} returns the actual runtime tuple`)
+  assert.equal(authorized.headers.get('x-gotry-glibc-version'), runtimeGlibcVersion || null, `${path} returns glibc only when present`)
+  assert.deepEqual(await authorized.json(), expectedProbe, `${path} exposes only typed readiness contract`)
+}
 
 const workspace = {
   schemaVersion: 'booking.surface.v1',

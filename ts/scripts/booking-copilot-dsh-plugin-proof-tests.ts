@@ -59,6 +59,10 @@ const validSearchDecision = {
   },
 }
 assert.equal(validateSearchTool(validSearchDecision), true, JSON.stringify(validateSearchTool.errors))
+assert.equal(validateSearchTool({ decision: { kind: 'operation', action: {
+  schemaVersion: 'booking.surface.v2', kind: 'search.run', actionId: 'action-model-v2', contextRef: 'ctx-model-1', expectedRevision: 0,
+  reason: 'Run the authoritative workspace search.', factRefs: [], input: {},
+} } }), true, JSON.stringify(validateSearchTool.errors))
 assert.equal(validateSearchTool({
   ...validSearchDecision,
   decision: {

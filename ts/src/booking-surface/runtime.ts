@@ -207,29 +207,40 @@ export class BookingCopilotTaskRuntime {
     const taskId = turn.taskId ?? this.idFactory('task')
     assertTaskId(taskId)
     const requestDigest = digest(turn.request.text)
-    const existing = this.resumeTask(taskId)
-    if (existing) {
-      if (existing.contextRef !== turn.workspace.contextRef) throw new Error('task_conflict:context_mismatch')
-      if (existing.surface !== turn.workspace.surface) throw new Error('task_conflict:surface_mismatch')
-      if (existing.revision !== turn.workspace.revision) throw new Error('task_conflict:revision_mismatch')
-      if (!sameActionAllowlist(existing.allowedActions, turn.workspace.capabilities.allowedActions)) {
-        throw new Error('task_conflict:capability_mismatch')
+    // The task fold and its user-turn append must share one write transaction.
+    // An immediate transaction serializes separate processes before either can
+    // derive state (and therefore an ordinal/next event sequence) from a stale
+    // snapshot.
+    const apply = this.ledger.db.transaction(() => {
+      const existing = this.resumeTask(taskId)
+      if (existing) {
+        if (existing.contextRef !== turn.workspace.contextRef) throw new Error('task_conflict:context_mismatch')
+        if (existing.surface !== turn.workspace.surface) throw new Error('task_conflict:surface_mismatch')
+        if (existing.revision !== turn.workspace.revision) throw new Error('task_conflict:revision_mismatch')
+        if (!sameActionAllowlist(existing.allowedActions, turn.workspace.capabilities.allowedActions)) {
+          throw new Error('task_conflict:capability_mismatch')
+        }
+        if (existing.phase === 'waiting_receipt') throw new Error('receipt_required')
+        this.observeUserTurn(taskId, existing.contextRef, requestDigest, existing.userTurnCount + 1)
+        return this.requireTask(taskId)
       }
-      if (existing.phase === 'waiting_receipt') throw new Error('receipt_required')
-      this.observeUserTurn(taskId, existing.contextRef, requestDigest, existing.userTurnCount + 1)
+      const foreign = this.ledger.db.prepare(
+        "SELECT 1 AS present FROM events WHERE tenant_id = ? AND run_id = ? AND kind LIKE 'booking.copilot.v2.%' LIMIT 1",
+      ).get(this.ledger.tenant, taskId) as { present: number } | undefined
+      if (foreign) throw new Error('task_conflict:protocol_version')
+      const payload: TaskStartedPayload = {
+        schema: LEDGER_SCHEMA,
+        taskId,
+        contextRef: turn.workspace.contextRef,
+        surface: turn.workspace.surface,
+        revision: turn.workspace.revision,
+        allowedActions: [...turn.workspace.capabilities.allowedActions],
+      }
+      this.appendLedgerEvent(TASK_STARTED, taskId, payload, `booking-copilot:task:${taskId}`)
+      this.observeUserTurn(taskId, turn.workspace.contextRef, requestDigest, 1)
       return this.requireTask(taskId)
-    }
-    const payload: TaskStartedPayload = {
-      schema: LEDGER_SCHEMA,
-      taskId,
-      contextRef: turn.workspace.contextRef,
-      surface: turn.workspace.surface,
-      revision: turn.workspace.revision,
-      allowedActions: [...turn.workspace.capabilities.allowedActions],
-    }
-    this.appendLedgerEvent(TASK_STARTED, taskId, payload, `booking-copilot:task:${taskId}`)
-    this.observeUserTurn(taskId, turn.workspace.contextRef, requestDigest, 1)
-    return this.requireTask(taskId)
+    })
+    return apply.immediate()
   }
 
   resumeTask(taskId: string): BookingCopilotTaskStateV1 | null {
@@ -364,30 +375,36 @@ export class BookingCopilotTaskRuntime {
   }
 
   emitEvent(taskId: string, draft: BookingSurfaceEventDraftV1): Exclude<BookingSurfaceEventV1, BookingOperationEventV1> {
-    const state = this.requireTask(taskId)
-    const event = {
-      schemaVersion: 'booking.surface.v1',
-      eventId: this.idFactory('event'),
-      taskId,
-      contextRef: state.contextRef,
-      sequence: state.lastSequence + 1,
-      emittedAt: this.now(),
-      ...draft,
-    } as Exclude<BookingSurfaceEventV1, BookingOperationEventV1>
-    const validation = validateBookingSurfaceEventV1(event)
-    if (!validation.ok) throw new Error(`invalid_event:${validation.errors.join('; ')}`)
-    const payload: EventEmittedPayload = {
-      schema: LEDGER_SCHEMA,
-      taskId,
-      contextRef: state.contextRef,
-      eventId: event.eventId,
-      sequence: event.sequence,
-      emittedAt: event.emittedAt,
-      eventKind: event.kind,
-      contentDigest: digest(draft),
-    }
-    this.appendLedgerEvent(EVENT_EMITTED, taskId, payload, `booking-copilot:event:${taskId}:${event.eventId}`)
-    return event
+    // Sequence allocation is part of the same immediate transaction as the
+    // durable append. This makes the fold read and next-sequence write one
+    // critical section across independent runtime processes.
+    const apply = this.ledger.db.transaction(() => {
+      const state = this.requireTask(taskId)
+      const event = {
+        schemaVersion: 'booking.surface.v1',
+        eventId: this.idFactory('event'),
+        taskId,
+        contextRef: state.contextRef,
+        sequence: state.lastSequence + 1,
+        emittedAt: this.now(),
+        ...draft,
+      } as Exclude<BookingSurfaceEventV1, BookingOperationEventV1>
+      const validation = validateBookingSurfaceEventV1(event)
+      if (!validation.ok) throw new Error(`invalid_event:${validation.errors.join('; ')}`)
+      const payload: EventEmittedPayload = {
+        schema: LEDGER_SCHEMA,
+        taskId,
+        contextRef: state.contextRef,
+        eventId: event.eventId,
+        sequence: event.sequence,
+        emittedAt: event.emittedAt,
+        eventKind: event.kind,
+        contentDigest: digest(draft),
+      }
+      this.appendLedgerEvent(EVENT_EMITTED, taskId, payload, `booking-copilot:event:${taskId}:${event.eventId}`)
+      return event
+    })
+    return apply.immediate()
   }
 
   private requireTask(taskId: string): BookingCopilotTaskStateV1 {
