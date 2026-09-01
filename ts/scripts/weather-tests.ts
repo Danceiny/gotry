@@ -21,7 +21,12 @@ const forecastBody = (days: number) => ({
     weathercode: Array.from({ length: days }, () => 61),
   },
 })
-const climateBody = { daily: { time: Array.from({ length: 31 }, (_, i) => `2025-08-${String(i + 1).padStart(2, '0')}`), temperature_2m_max: Array(31).fill(29), temperature_2m_min: Array(31).fill(21), weathercode: Array(31).fill(2) } }
+const climateBodyFor = (year: number, month: number) => {
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  const monthText = String(month).padStart(2, '0')
+  return { daily: { time: Array.from({ length: days }, (_, i) => `${year}-${monthText}-${String(i + 1).padStart(2, '0')}`), temperature_2m_max: Array(days).fill(29), temperature_2m_min: Array(days).fill(21), weathercode: Array(days).fill(2) } }
+}
+const climateBody = climateBodyFor(2025, 8)
 
 type FetchMock = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 const mockFetch = (handler: (url: string, signal: AbortSignal) => unknown | Promise<unknown>): FetchMock =>
@@ -81,6 +86,21 @@ assert.equal(neverFc.ok, false)
 assert.ok(Date.now() - neverStarted < 150, 'hard deadline must cover a fetch that ignores abort')
 const neverBody = await getForecast({ latitude: 25.6, longitude: 100.2 }, { timeoutMs: 20, fetchImpl: async () => ({ ok: true, json: () => new Promise<never>(() => undefined) } as unknown as Response) })
 assert.equal(neverBody.ok, false, 'hard deadline must cover a body decoder that never settles')
+let lateResolve: ((value: unknown) => void) | undefined
+const lateResolveResult = await getForecast({ latitude: 25.6, longitude: 100.2 }, {
+  timeoutMs: 10,
+  fetchImpl: async () => ({ ok: true, json: () => new Promise(resolve => { lateResolve = resolve }) } as unknown as Response),
+})
+assert.equal(lateResolveResult.ok, false)
+lateResolve?.(forecastBody(7))
+let lateReject: ((reason?: unknown) => void) | undefined
+const lateRejectResult = await getForecast({ latitude: 25.6, longitude: 100.2 }, {
+  timeoutMs: 10,
+  fetchImpl: async () => ({ ok: true, json: () => new Promise((_, reject) => { lateReject = reject }) } as unknown as Response),
+})
+assert.equal(lateRejectResult.ok, false)
+lateReject?.(Object.create(null))
+await new Promise<void>(resolve => setImmediate(resolve))
 console.log('4. slow forecast timeout + graceful fallback OK')
 
 // 5. 双源 fallback 的总预算：主源耗尽预算时不再发第二个请求。
@@ -131,6 +151,17 @@ const wrongPrecip = await getForecast({ latitude: 25.6, longitude: 100.2 }, { da
 assert.equal(wrongPrecip.ok, false)
 const wrongPrecipObject = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: 7, fetchImpl: mockFetch(() => ({ daily: { ...forecastBody(7).daily, precipitation_probability_max: {} } })) })
 assert.equal(wrongPrecipObject.ok, false)
+const absentPrecip = { daily: { ...forecastBody(7).daily } }
+delete (absentPrecip.daily as { precipitation_probability_max?: unknown }).precipitation_probability_max
+const forecastAbsentPrecip = await getForecast({ latitude: 25.6, longitude: 100.2 }, { fetchImpl: mockFetch(() => absentPrecip) })
+assert.equal(forecastAbsentPrecip.ok, true)
+assert.equal(forecastAbsentPrecip.daily?.[0]?.precipProbMaxPct, null)
+const forecastNullPrecip = await getForecast({ latitude: 25.6, longitude: 100.2 }, { fetchImpl: mockFetch(() => ({ daily: { ...forecastBody(7).daily, precipitation_probability_max: null } })) })
+assert.equal(forecastNullPrecip.ok, true)
+assert.equal(forecastNullPrecip.daily?.[0]?.precipProbMaxPct, null)
+const forecastValidPrecip = await getForecast({ latitude: 25.6, longitude: 100.2 }, { fetchImpl: mockFetch(() => forecastBody(7)) })
+assert.equal(forecastValidPrecip.ok, true)
+assert.equal(forecastValidPrecip.daily?.[0]?.precipProbMaxPct, 60)
 const nullClimate = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { fetchImpl: mockFetch(() => null) })
 assert.equal(nullClimate.ok, false)
 const slowClimate = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { timeoutMs: 20, fetchImpl: slow })
@@ -143,10 +174,20 @@ for (const badDays of [0, Number.NaN, 2.5]) {
   assert.equal(invalid.ok, false)
   assert.equal(fetches, 0)
 }
-let zeroTimeoutFetches = 0
-const zeroTimeout = await getForecast({ latitude: 25.6, longitude: 100.2 }, { timeoutMs: 0, fetchImpl: mockFetch(() => { zeroTimeoutFetches += 1; return forecastBody(7) }) })
-assert.equal(zeroTimeout.ok, false)
-assert.equal(zeroTimeoutFetches, 0)
+for (const badTimeout of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2.5]) {
+  let forecastFetches = 0
+  const invalidForecast = await getForecast({ latitude: 25.6, longitude: 100.2 }, { timeoutMs: badTimeout, fetchImpl: mockFetch(() => { forecastFetches += 1; return forecastBody(7) }) })
+  assert.equal(invalidForecast.ok, false)
+  assert.equal(forecastFetches, 0, `invalid forecast timeout ${String(badTimeout)} must not fetch`)
+  let climateFetches = 0
+  const invalidClimateTimeout = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { timeoutMs: badTimeout, fetchImpl: mockFetch(() => { climateFetches += 1; return climateBody }) })
+  assert.equal(invalidClimateTimeout.ok, false)
+  assert.equal(climateFetches, 0, `invalid climate timeout ${String(badTimeout)} must not fetch`)
+  let geoFetches = 0
+  const invalidGeoTimeout = await geocodePlace('大理市', { timeoutMs: badTimeout, fetchImpl: mockFetch(() => { geoFetches += 1; return geoDali }) })
+  assert.equal(invalidGeoTimeout.ok, false)
+  assert.equal(geoFetches, 0, `invalid geocode timeout ${String(badTimeout)} must not fetch`)
+}
 let cappedDays = ''
 const capped = await getForecast({ latitude: 25.6, longitude: 100.2 }, { days: 99, fetchImpl: async (input) => { cappedDays = String(input); return jsonResponse(forecastBody(16)) } })
 assert.equal(capped.ok, true)
@@ -156,6 +197,25 @@ assert.equal(wrongMonth.ok, false)
 const leapBody = { daily: { time: Array.from({ length: 29 }, (_, i) => `2024-02-${String(i + 1).padStart(2, '0')}`), temperature_2m_max: Array(29).fill(10), temperature_2m_min: Array(29).fill(1), weathercode: Array(29).fill(0) } }
 const leap = await getClimate({ latitude: 25.6, longitude: 100.2 }, 2, { year: 2024, fetchImpl: mockFetch(() => leapBody) })
 assert.equal(leap.ok, true)
+const historicalMinimum = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { year: 1940, fetchImpl: mockFetch(() => climateBodyFor(1940, 8)) })
+assert.equal(historicalMinimum.ok, true)
+const currentYear = new Date().getUTCFullYear()
+const currentClimate = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { year: currentYear, fetchImpl: mockFetch(() => climateBodyFor(currentYear, 8)) })
+assert.equal(currentClimate.ok, true)
+for (const badYear of [1939, 2025.5, currentYear + 1]) {
+  let yearFetches = 0
+  const invalidYear = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { year: badYear, fetchImpl: mockFetch(() => { yearFetches += 1; return climateBody }) })
+  assert.equal(invalidYear.ok, false)
+  assert.equal(yearFetches, 0, `invalid climate year ${String(badYear)} must not fetch`)
+}
+const duplicateDayBody = climateBodyFor(2025, 8)
+duplicateDayBody.daily.time[1] = duplicateDayBody.daily.time[0]!
+const duplicateDay = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { year: 2025, fetchImpl: mockFetch(() => duplicateDayBody) })
+assert.equal(duplicateDay.ok, false)
+const day99Body = climateBodyFor(2025, 8)
+day99Body.daily.time[0] = '2025-08-99'
+const day99 = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { year: 2025, fetchImpl: mockFetch(() => day99Body) })
+assert.equal(day99.ok, false)
 let invalidClimateFetches = 0
 const invalidClimate = await getClimate({ latitude: 25.6, longitude: 100.2 }, 13, { year: 2025, fetchImpl: mockFetch(() => { invalidClimateFetches += 1; return climateBody }) })
 assert.equal(invalidClimate.ok, false)
@@ -168,6 +228,46 @@ let climateZeroFetches = 0
 const climateZero = await getClimate({ latitude: 25.6, longitude: 100.2 }, 8, { timeoutMs: 0, fetchImpl: mockFetch(() => { climateZeroFetches += 1; return climateBody }) })
 assert.equal(climateZero.ok, false)
 assert.equal(climateZeroFetches, 0)
+let primaryResolutionFetches = 0
+const originalPerformanceNow = performance.now
+Object.defineProperty(performance, 'now', { configurable: true, value: (() => {
+  const values = [100, 104.5, 104.5]
+  return () => values.shift() ?? 104.5
+})() })
+try {
+  const primaryResolution = await geocodePlace('剩余不足一毫秒', { timeoutMs: 5, fetchImpl: mockFetch(() => { primaryResolutionFetches += 1; return geoDali }) })
+  assert.equal(primaryResolution.ok, false)
+  assert.equal(primaryResolutionFetches, 0, 'sub-millisecond primary budget must not fetch')
+} finally {
+  Object.defineProperty(performance, 'now', { configurable: true, value: originalPerformanceNow })
+}
+let primaryBudgetFetches = 0
+let fallbackResolutionFetches = 0
+Object.defineProperty(performance, 'now', { configurable: true, value: (() => {
+  const values = [200, 200, 205]
+  return () => values.shift() ?? 205
+})() })
+try {
+  const fallbackResolution = await geocodePlace('兜底剩余不足一毫秒', { timeoutMs: 5, fetchImpl: async input => {
+    if (String(input).includes('nominatim')) {
+      fallbackResolutionFetches += 1
+      return jsonResponse([])
+    }
+    primaryBudgetFetches += 1
+    return jsonResponse({ results: [] })
+  } })
+  assert.equal(fallbackResolution.ok, false)
+  assert.equal(primaryBudgetFetches, 1)
+  assert.equal(fallbackResolutionFetches, 0, 'sub-millisecond fallback budget must not fetch')
+} finally {
+  Object.defineProperty(performance, 'now', { configurable: true, value: originalPerformanceNow })
+}
+const nonErrorRejection = await getForecast({ latitude: 25.6, longitude: 100.2 }, { fetchImpl: async () => { throw Object.create(null) } })
+assert.equal(nonErrorRejection.ok, false)
+assert.equal(nonErrorRejection.error, 'request failed')
+const symbolRejection = await getForecast({ latitude: 25.6, longitude: 100.2 }, { fetchImpl: async () => { throw Symbol('untrusted') } })
+assert.equal(symbolRejection.ok, false)
+assert.equal(symbolRejection.error, 'request failed')
 const originalDateNow = Date.now
 Date.now = () => 0
 try {
