@@ -80,10 +80,12 @@ const afterReceipt = runtime.continueWithReceipt({ schemaVersion: 'booking.surfa
 assert.equal(afterReceipt.awaitingApproval?.blocker.blockerId, 'blocker-v2')
 const offerRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-target-'))
 const offerRuntime = new BookingCopilotTaskRuntimeV2(ensureLedger(offerRoot), { contextRefFactory: () => 'ctx-v2' })
-const offerTask = offerRuntime.startTask(turn('task-offer-target'))
+const offerTurn = turn('task-offer-target')
+const offerTask = offerRuntime.startTask({ ...offerTurn, workspace: { ...offerTurn.workspace, visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }], loadedOffers: [{ offerRef: 'offer-a', hotelRef: 'hotel-a', evidenceLevel: 'rate_loaded', factRefs: [] }] } })
 offerRuntime.issueOperation(offerTask.taskId, { ...action('offer-action'), kind: 'offer.check', input: { offerRef: 'offer-a' } })
 const offerReceipt = offerRuntime.withReceiptDigest({ ...receipt, actionId: 'offer-action', observation: { kind: 'offer.availability', offerRef: 'offer-b', available: true, changedFactRefs: [], gapCodes: [] }, resultContract: { ...receipt.resultContract, blockers: [], gapCodes: [] } })
-assert.throws(() => offerRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: offerTask.taskId, workspace: workspace(1), receipt: offerReceipt }), /receipt_target_mismatch/)
+const offerWorkspace1 = { ...offerTurn.workspace, revision: 1, visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }], loadedOffers: [{ offerRef: 'offer-a', hotelRef: 'hotel-a', evidenceLevel: 'rate_loaded' as const, factRefs: [] }] }
+assert.throws(() => offerRuntime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: offerTask.taskId, workspace: offerWorkspace1, receipt: offerReceipt }), /receipt_target_mismatch/)
 const approvalQuestion = runtime.approvalQuestion(task.taskId)
 assert.equal(approvalQuestion.kind, 'question')
 if (approvalQuestion.kind === 'question') {

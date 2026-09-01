@@ -230,6 +230,7 @@ await assert.rejects(
 const v2Task: BookingCopilotTaskStateV2 = {
   schemaVersion: 'booking.surface.v2', taskId: 'task-dsh-v2', contextRef: 'ctx-dsh-v2', surface: 'tenant', revision: 0,
   allowedActions: ['search.run'], userTurnCount: 1, lastUserTurnDigest: 'v2-digest', phase: 'planning', lastSequence: 0,
+  availability: { initialized: true, recoveryStarted: true, availabilityPhase: 'terminal', activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [], terminal: { code: 'availability_exhausted_complete', hotelRefs: [], reason: 'no_current_offers', evidence: 'conclusive' } },
 }
 const v2Workspace: BookingWorkspaceSnapshotV2 = {
   schemaVersion: 'booking.surface.v2', contextRef: v2Task.contextRef, surface: 'tenant', revision: 0, locale: 'en-US', currency: 'AED',

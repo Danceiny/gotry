@@ -283,6 +283,8 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 #### 8.23 ADR-23：embedded Booking Copilot 双协议安全边界与稳定 task/turn identity
 Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：v1 保持兼容，v2 使用 closed typed contract；两者由同一 listener、task ownership 与 ledger 按请求 version+schema hash dispatch。v2 的 `UserTurn`/`Ingress` 必须带 BFF 生成并重用的安全 opaque `taskId + turnId` 稳定身份对，作为 durable turn replay 身份；任一缺失或不安全都在任何 ledger/planner side effect 前拒绝。must blocker 只能经 runtime 持久化并实际呈现的 option 放行，且 approval 逐字段绑定 task、context、source turn、source action、source receipt digest、canonical presentation key、随机 delivery nonce 与 option digest，只能消费一次。
 
+可用性恢复同样是 runtime-owned 的 typed reducer：一次 recovery 冻结最多 5 家候选酒店；每家 generation 最多考虑 3 个当前 OfferRef，每家生命周期最多 2 次 CheckAvail、最多 2 次 offers/HotelRates generation。`unavailable`、material `changed` 或不可确认 gap 会使整个 generation 失效并要求 fresh query；partial evidence 只能产生 inconclusive exhaustion，不能宣称市场无房。generation、attempt、candidate、receipt digest 与 workspace revision 随 ledger action/receipt fold，重启和相同 action/receipt replay 不增加预算或调用；terminal 是吸收态，不能再发 operation/status。
+
 明确拒绝的备选：独立聊天预订页；用 breaking v2 替换 v1；自由文本/JSON 执行；把 server outbox 意图当作已展示；在 embedded 面暴露 `Book`。当前能力不包含 portal token、PII 或供应商成本出站；离页自动写/支付须另立 M5 WriteGate ADR，多写者或跨 host 则按 ADR-15/16 复审。
 
 
@@ -491,7 +493,7 @@ ChinaTravel grounding-v3 的冻结 5-query canary 只完成 1 个可评分终态
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
-**Booking Copilot v2 当前生命周期投影**：六个阶段为 `planning → submitted → working → waiting_receipt → input_required → terminal outcome`；公开类型保留七个 phase 字面值，其中终态结果分为 `terminal` 与 `error`。`action.receipt`、`approval.granted/consumed` 与 decision batch 是恢复和精确 SSE replay 的权威事件，BFF 生成并重用稳定 opaque `taskId + turnId` 身份对绑定 durable user turn replay，presentation key/随机 delivery nonce/option digest 绑定 approval。v1 保持 legacy 两态 `planning → waiting_receipt` 投影；两协议共用 listener 与 task ownership，但不把 v1 宣称为 v2 生命周期投影。
+**Booking Copilot v2 当前生命周期投影**：六个阶段为 `planning → submitted → working → waiting_receipt → input_required → terminal outcome`；公开类型保留七个 phase 字面值，其中终态结果分为 `terminal` 与 `error`。`action.receipt`、`approval.granted/consumed` 与 decision batch 是恢复和精确 SSE replay 的权威事件，BFF 生成并重用稳定 opaque `taskId + turnId` 身份对绑定 durable user turn replay，presentation key/随机 delivery nonce/option digest 绑定 approval。availability reducer 另有 `need_offers → waiting_offers → need_check → waiting_check → terminal` typed 子状态，并持久化 candidate/generation/attempt budget；它不改变外层六状态投影。v1 保持 legacy 两态 `planning → waiting_receipt` 投影；两协议共用 listener 与 task ownership，但不把 v1 宣称为 v2 生命周期投影。
 
 **状态面清单**(全仓只有这 6 处记载「当前状态」,其余文档一律状态让渡):① 本文 §1 当前形态;② 本文 §9 演进;③ 本文 §10 债务清单;④ `roadmap.md` 当前位置;⑤ `README.md` 当前形态;⑥ `stage1-top-down-design.md` 状态头。
 
