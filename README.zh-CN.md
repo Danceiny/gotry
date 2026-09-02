@@ -32,7 +32,7 @@ npx @danceiny/gotry web
 | 🤖 脚本/一次性问答 | `npx @danceiny/gotry "我想从深圳休整两天,预算 3000"` |
 | 🛠️ 开发者:仓内运行 | 见下方[源码安装](#-快速开始) |
 
-- 前置:Node 22+;一个 LLM API key。任何 OpenAI 兼容端点(MiniMax/中转/自建网关)也可——在 `.env` 另配 `LLM_BASE_URL`(一般以 `/v1` 结尾,如 `https://api.minimax.io/v1`),请求即走它而非 DeepSeek 默认端点。要锁定模型就配 `LLM_MODEL`(如 `MiniMax-M2`):对 dsh 会话面与仓内脚本同时生效,并压过 dsh web 设置里持久化的模型选择;不配则用 dsh 内置默认(`deepseek-v4-flash`)或你在 web 界面的选择。零成本启动——dsh 运行时以 cordis patch 自动挂载,无额外配置。
+- 前置:Node 22.15+;一个 LLM API key。任何 OpenAI 兼容端点(MiniMax/中转/自建网关)也可——在 `.env` 另配 `LLM_BASE_URL`(一般以 `/v1` 结尾,如 `https://api.minimax.io/v1`),请求即走它而非 DeepSeek 默认端点。要锁定模型就配 `LLM_MODEL`(如 `MiniMax-M2`):对 dsh 会话面与仓内脚本同时生效,并压过 dsh web 设置里持久化的模型选择;不配则用 dsh 内置默认(`deepseek-v4-flash`)或你在 web 界面的选择。零成本启动——dsh 运行时以 cordis patch 自动挂载,无额外配置。
 - 例外提示:`:3080` 端口被占时先 `kill <PID>`;首启 6–15 秒属正常冷启动;异常退出会留证据到 `gotry-state/incidents.jsonl`(不静默)。
 
 <details>
@@ -40,9 +40,10 @@ npx @danceiny/gotry web
 
 ```bash
 git clone https://github.com/Danceiny/gotry && cd gotry
-cd ts/dsh-runtime && pnpm install && cd ../..    # ① vendored dsh 0.1.2-alpha.1(一次性)
-cp .env.example .env                              # ② 填 LLM_API_KEY(非 DeepSeek 官方另配 LLM_BASE_URL;锁定模型另配 LLM_MODEL)
-./gotry web                                       # ③ 仓内入口,同 npm 形态
+npm ci && npm --prefix ts ci                      # ① 安装 root/TS 锁定依赖闭包
+node scripts/build-dist.mjs                       # ② 构建源码检出的 JS runtime
+cp .env.example .env                              # ③ 填 LLM_API_KEY(非 DeepSeek 官方另配 LLM_BASE_URL;锁定模型另配 LLM_MODEL)
+./gotry web                                       # ④ 仓内入口,同 npm 形态
 ```
 
 | 入口 | 命令 | 什么时候用 |
@@ -51,7 +52,7 @@ cp .env.example .env                              # ② 填 LLM_API_KEY(非 Deep
 | headless 一问一答 | `./gotry "一句任务"` | 脚本 / CI / 定向调试 → stdout |
 | help | `./gotry help` | 三行帮助 |
 
-为什么源码模式要先装 runtime:dsh 以 vendored tarball 进 git(`ts/dsh-runtime/`),npm 一键分发不打包它;源码检出读 `.ts` 源码,装完一次重复可用。
+为什么源码模式先装 root/TS 闭包并构建 dist:源码入口与 npm 包都解析同一组 216 个精确直接依赖的 DSH `0.1.2-alpha.3` closure；manifest、package-lock 与 root pnpm importer 必须暴露同一 216 项名称集合，publish preverify 会拒绝漏钉、混版和 range；源码普通运行的 dsh cwd 仍是 `ts/dsh-runtime/`，因此状态继续落 `ts/dsh-runtime/gotry-state/`；benchmark opt-in 与 npm 包运行使用调用目录隔离。`ts/dsh-runtime/` 的旧 vendored runtime 只保留为非 benchmark legacy 解析兼容，不承诺可运行，也不再是推荐安装路径。
 
 </details>
 
@@ -179,7 +180,7 @@ GoTry: 收到。先把约束记下来——
 - ⏳ **M3 Exit 未关闭** —— 工程与分发面就绪,但"真实种子用户"证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
 - ⏳ **携程酒店 / 美团的登录态会话适配** —— 机票已通,酒店面等登录态实测回填(下一个 tick)
 - ⏳ **界面语言** —— 英文界面仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
-- ⏳ **外部 benchmark 泛化 / Phase 1 bridge** —— Round 1 的 exact DeepSeek treatment 为 environment unavailable/schema-invalid（score 0），GLM 为 300 秒超时。Round 2 default-off owner-local bridge 已通过 unit 与 source/installed-package synthetic E2E，但唯一冻结 treatment 只算 diagnostic-only：provider 与 planner 正常，agent 没有产生 structured native bridge call 或 tagged JSON，runner 在 evaluator 前退出，official scores 全为 null。Round 3 增加 provider-neutral conformance：prompt 中 CLI/shell/Python 指令映射为 allowed native `query.action=call`；只有配对成功 result 后的单一配置 tag JSON object 才能结束；最多一次固定纠偏，格式纠偏禁止再次派发 bridge，headless parent 还会用同一 parser 重验有界 stdout。写入/网络拒绝仍由 owner/host 实际 enforce。新冻结 treatment 与跨 benchmark 证据仍待运行，因此不声称分数提升或 external benchmark closure。详见 [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)。
+- ⏳ **外部 benchmark 泛化 / Phase 1 bridge** —— Round 1 的 exact DeepSeek treatment 为 environment unavailable/schema-invalid（score 0），GLM 为 300 秒超时。Round 2 建立 default-off owner-local bridge；其冻结 treatment 因没有 structured native bridge call 与 tagged JSON，只到 diagnostic-only。Round 3 增加 provider-neutral 的 native call/result/terminal conformance，但新冻结 treatment 仍在 runner 仅派发一次后以 planner/runner exit 1 停止，parent 释放 0 字节终态，evaluator 未进入，official scores 全为 null。Round 4 treatment（SHA `5ebddb2`）primary preflight=pass，但 planner/runner 均在 30.968s 以 exit 1 结束，释放 0 字节，evaluator 未进入，official scores 全为 null。产品 gate 使用 Node v24.20.0，而该 treatment 使用 v26.3.0，因此该结果仅 diagnostic-only，不产生 uplift。GitHub Node 22/24 §48 另暴露 source default-off 30s lifecycle hang。Round 5 仅限移除 timer/keepalive preload、将 root/package DSH closure 锁定为 alpha.3、让 source checkout 优先解析该锁定 runtime、保留源码普通运行的 `ts/dsh-runtime/gotry-state/` 状态连续性、让 benchmark/package 用调用目录隔离、在 spawn 前拒绝非 alpha.3 benchmark runtime、强制 Node 22.15+，并增加 benchmark-only 结构化诊断 pipe（allowlisted redacted reason codes），stdout 继续 fail-closed；其 frozen treatment（代码 SHA `752e54c`）在 140.715 秒后以 `child_nonzero_exit`、0 terminal bytes、evaluator/official scores null 停止，仅 diagnostic-only，后续纯 lock-consistency 提交不改写该 UID 归属。跨 benchmark 证据仍待运行，不声称 external benchmark closure。详见 [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)。
 
 <details>
 <summary>📖 更深的工程状态(账本合同 / 证据合同 / 里程碑口径)</summary>
@@ -241,6 +242,6 @@ GoTry: 收到。先把约束记下来——
 
 ---
 
-**Built with**: DeepSeek Harness 0.1.2-alpha.1 (vendored) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
+**Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
 
 **版本基线:`v0.0.1-rc.16`(2026-08-30)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际分节为准(发布流程见 `scripts/publish-npm.sh`)。

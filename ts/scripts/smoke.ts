@@ -55,12 +55,14 @@ async function main() {
 
   // 1) 动机画像:evidence 缺失必须被拒绝(P0 反幻觉红线)
   const motivation = byName('gotry_motivation_save')
-  try {
-    await motivation.execute({ profile: { weights: { escape_rest: 0.7 } } }, null)
-    throw new Error('FAIL: profile without evidence should have been rejected')
-  } catch (e) {
-    console.log(`motivation without evidence rejected: ${(e as Error).message.slice(0, 60)}...`)
+  const rejectedMotivation = await motivation.execute(
+    { profile: { weights: { escape_rest: 0.7 } } },
+    null,
+  ) as { ok?: boolean; summary?: string }
+  if (rejectedMotivation.ok !== false || !rejectedMotivation.summary?.includes('without evidence')) {
+    throw new Error(`FAIL: profile without evidence should have been rejected, actual ${JSON.stringify(rejectedMotivation).slice(0, 120)}`)
   }
+  console.log(`motivation without evidence rejected: ${rejectedMotivation.summary.slice(0, 80)}...`)
   const saved = await motivation.execute({
     profile: {
       weights: { escape_rest: 0.7, curiosity: 0.3 },
@@ -206,8 +208,8 @@ async function main() {
     } else if (fa.ok !== true || fa.verdict !== 'hit' || (fa.options?.length ?? 0) < 1 || !/\[实时API:flyai@/.test(fa.evidence ?? '')) {
       throw new Error(`FAIL: flyai 工具应 live hit,实际:${JSON.stringify(fa).slice(0, 200)}`)
     }
-    // smoke 不得 attach 或读取用户日常 Chrome；把发现目录指向隔离空目录,
-    // 确定性验证 needs-attach/no-spend 合同。真实 attach 只走 #21 人在场验收。
+    // smoke 不得 attach 或读取用户日常 Chrome；显式选择 cdp 诊断车道并把发现目录
+    // 指向隔离空目录，确定性验证 needs-attach/no-spend 合同。真实 attach 只走 #21 人在场验收。
     const prof = mkdtempSync(join(smokeRoot, 'sess-'))
     // 过去日期预校验(issue #24):代码层直接拒绝并指明修正方向,不发上游查询、不产生误导性 miss
     const faPast = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' } }, null) as { ok?: boolean; summary?: string }
@@ -215,21 +217,32 @@ async function main() {
       throw new Error(`FAIL: flyai 过去日期应代码层预校验拒绝,实际:${JSON.stringify(faPast).slice(0, 200)}`)
     }
     const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR
+    const previousSessionTransport = process.env.GOTRY_SESSION_TRANSPORT
     process.env.CHROME_USER_DATA_DIR = prof
+    process.env.GOTRY_SESSION_TRANSPORT = 'cdp'
     let ss: { ok?: boolean; verdict?: string; via?: string; evidence?: string }
     try {
       ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as typeof ss
     } finally {
       if (previousChromeUserDataDir === undefined) delete process.env.CHROME_USER_DATA_DIR
       else process.env.CHROME_USER_DATA_DIR = previousChromeUserDataDir
+      if (previousSessionTransport === undefined) delete process.env.GOTRY_SESSION_TRANSPORT
+      else process.env.GOTRY_SESSION_TRANSPORT = previousSessionTransport
       rmSync(prof, { recursive: true, force: true })
     }
-    // puppeteer-core 可用时应为 needs-attach；缺依赖环境仍以带证据链 error 优雅降级。
-    const ssErrTerminal = ss.ok === false && /^session-[a-z0-9-]+-error$/.test(String(ss.via ?? '')) && !!ss.evidence
-    if (!(ss.verdict === 'needs-login' || ss.verdict === 'needs-attach' || ss.verdict === 'hit' || ss.verdict === 'cooldown' || ss.verdict === 'challenged') && !ssErrTerminal) {
-      throw new Error(`FAIL: session 工具终态应属 {needs-attach,needs-login,hit,cooldown,challenged} 或带证据的 error 终态,实际:${JSON.stringify(ss).slice(0, 200)}`)
+    const isolatedNeedsAttach = ss.ok === false
+      && ss.verdict === 'needs-attach'
+      && ss.via === 'session-ctrip-flight-error'
+      && /\[会话:ctrip-flight@error@/.test(String(ss.evidence ?? ''))
+    if (!isolatedNeedsAttach) {
+      throw new Error(`FAIL: session cdp 隔离门禁应确定性返回 needs-attach,实际:${JSON.stringify(ss).slice(0, 200)}`)
     }
-    console.log(`session-face tools: flyai ${faBlocked ? 'sentinel-限流降级' : `live hit(${fa.options?.length ?? 0} 条)`}; session 终态=${ss.verdict ?? ss.via}(登录态存在前提合同)`)
+    const faOutcome = faBlocked
+      ? 'sentinel-限流降级'
+      : faErrTerminal
+        ? '端点不可达降级'
+        : `live hit(${fa.options?.length ?? 0} 条)`
+    console.log(`session-face tools: flyai ${faOutcome}; session cdp 隔离门禁=needs-attach`)
     // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 双合法终态(限流/端点降级 or hit)
     const fh = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' } }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string }
     const fhBlocked = fh.verdict === 'error' && /sentinel|block|trial limit/i.test(fh.error ?? '')
@@ -245,7 +258,12 @@ async function main() {
     if (!(fhPast.ok === false && /不是未来合法区间/.test(String(fhPast.summary ?? '')))) {
       throw new Error(`FAIL: 酒店过去入住日应代码层预校验拒绝,实际:${JSON.stringify(fhPast).slice(0, 200)}`)
     }
-    console.log(`  hotel channel: ${fhBlocked ? 'sentinel-限流降级' : `${fh.hotels?.length ?? 0} 家`}; 参数闸/过去日闸生效`)
+    const fhOutcome = fhBlocked
+      ? 'sentinel-限流降级'
+      : fhErrTerminal
+        ? '端点不可达降级'
+        : `${fh.hotels?.length ?? 0} 家`
+    console.log(`  hotel channel: ${fhOutcome}; 参数闸/过去日闸生效`)
   }
 
   // 13) 账号会话授权闸(v2,RFC 支柱④进代码):每会话每站点首次弹卡、会话内记住;

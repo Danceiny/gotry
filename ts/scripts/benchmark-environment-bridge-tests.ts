@@ -10,14 +10,26 @@ import {
   BENCHMARK_BRIDGE_CALL_FAILED,
   BENCHMARK_BRIDGE_CALL_REQUIRED,
   BENCHMARK_BRIDGE_RETRY_CALL_NOT_ALLOWED,
+  BENCHMARK_BRIDGE_OUTPUT_TRUNCATED,
+  BENCHMARK_BRIDGE_RUNNER_FAILED,
+  BENCHMARK_BRIDGE_SPAWN_FAILED,
+  BENCHMARK_BRIDGE_TIMED_OUT,
   BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE,
   BENCHMARK_TERMINAL_INVALID,
   MAX_CONFORMANCE_RETRIES,
+  benchmarkChildFailureForConformanceCode,
   createBenchmarkAgentConformance,
   installBenchmarkAgentConformance,
   parseBenchmarkTerminal,
   validateTerminalOutputConfig,
 } from '../src/benchmark-agent-conformance.ts'
+import {
+  BENCHMARK_CHILD_DIAGNOSTIC_MAX_BYTES,
+  BENCHMARK_CHILD_DIAGNOSTIC_SCHEMA,
+  appendBoundedChildDiagnostic,
+  classifyBenchmarkChildFailure,
+  parseBenchmarkChildDiagnostic,
+} from '../src/benchmark-headless-child-diagnostics.ts'
 
 type RegisteredTool = {
   name: string
@@ -46,6 +58,7 @@ type FakeOutcome = {
   exitCode?: number | null
   signal?: string | null
   spawnError?: boolean
+  spawnReject?: boolean
   waitForAbort?: boolean
 }
 
@@ -99,8 +112,8 @@ function toolCall(callId = 'call-1', options: { turn?: number; step?: number; ac
     },
   }
 }
-function toolResult(callId = 'call-1', options: { turn?: number; step?: number; ok?: boolean; isError?: boolean } = {}) {
-  const { turn = 1, step = 1, ok = true, isError = false } = options
+function toolResult(callId = 'call-1', options: { turn?: number; step?: number; ok?: boolean; isError?: boolean; error?: string } = {}) {
+  const { turn = 1, step = 1, ok = true, isError = false, error = 'runner_failed' } = options
   return {
     type: 'tool/result',
     data: {
@@ -112,7 +125,7 @@ function toolResult(callId = 'call-1', options: { turn?: number; step?: number; 
           type: 'tool-result',
           toolCallId: callId,
           isError,
-          content: [{ type: 'text', text: JSON.stringify(ok ? { ok: true, result: {} } : { ok: false, error: 'runner_failed' }) }],
+          content: [{ type: 'text', text: JSON.stringify(ok ? { ok: true, result: {} } : { ok: false, error }) }],
         }],
       },
     },
@@ -186,7 +199,14 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
   state.observe(turnStart())
   state.observe(toolCall())
   state.observe(toolResult('call-1', { ok: false }))
-  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_BRIDGE_CALL_FAILED }, 'structured runner failure is not retried')
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_BRIDGE_RUNNER_FAILED }, 'structured runner failure is not retried')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult('call-1', { ok: false, error: 'output_truncated' }))
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_BRIDGE_OUTPUT_TRUNCATED }, 'structured runner truncation has a distinct reason')
 }
 {
   const state = createBenchmarkAgentConformance(projection)
@@ -280,11 +300,13 @@ function fakeHandle(outcome: FakeOutcome) {
   const reader = { readFrom: (_offset: number) => ({ text: stdout, nextOffset: Buffer.byteLength(stdout), lossy: outcome.lossy ?? false }) }
   const errorReader = { readFrom: (_offset: number) => ({ text: stderr, nextOffset: Buffer.byteLength(stderr), lossy: false }) }
   let rejectDone: ((error: Error) => void) | undefined
-  const done = outcome.waitForAbort
+  const done = outcome.spawnReject
+    ? Promise.reject(new Error('spawn rejected'))
+    : outcome.waitForAbort
     ? new Promise<{ exitCode: number | null; signal: string | null }>((_resolve, reject) => { rejectDone = reject })
     : Promise.resolve({ exitCode: outcome.exitCode ?? 0, signal: outcome.signal ?? null })
   return {
-    pid: 4242,
+    pid: outcome.spawnReject ? -1 : 4242,
     stdin: undefined,
     stdout: undefined,
     stderr: undefined,
@@ -361,6 +383,68 @@ const ambientSentinelNames = [
 ] as const
 const ambientSentinels = new Map(ambientSentinelNames.map(name => [name, process.env[name]]))
 try {
+  const timedOutDiagnostic = '\n' + JSON.stringify({
+    schema_version: BENCHMARK_CHILD_DIAGNOSTIC_SCHEMA,
+    code: 'child_bridge_timed_out',
+  }) + '\n'
+  assert.equal(
+    parseBenchmarkChildDiagnostic(timedOutDiagnostic),
+    'child_bridge_timed_out',
+    'strict control record parses to its allowlisted reason code',
+  )
+  assert.equal(
+    classifyBenchmarkChildFailure({ code: 1, diagnostic: timedOutDiagnostic }),
+    'child_bridge_timed_out',
+    'structured control data maps to a stable bridge timeout code',
+  )
+  assert.equal(
+    classifyBenchmarkChildFailure({ code: 1, diagnostic: `provider text contains child_bridge_timed_out and ${BENCHMARK_BRIDGE_TIMED_OUT}` }),
+    'child_nonzero_exit',
+    'free text cannot impersonate a structured bridge reason',
+  )
+  assert.equal(
+    parseBenchmarkChildDiagnostic(JSON.stringify({ schema_version: BENCHMARK_CHILD_DIAGNOSTIC_SCHEMA, code: 'child_bridge_timed_out', extra: 'rejected' })),
+    undefined,
+    'control records with extra keys fail closed',
+  )
+  assert.equal(
+    benchmarkChildFailureForConformanceCode(BENCHMARK_BRIDGE_RUNNER_FAILED),
+    'child_bridge_runner_failed',
+    'runner failure maps to a stable structured child reason',
+  )
+  assert.equal(
+    benchmarkChildFailureForConformanceCode(BENCHMARK_BRIDGE_SPAWN_FAILED),
+    'child_bridge_spawn_failed',
+    'spawn failure maps to a stable structured child reason',
+  )
+  assert.equal(
+    benchmarkChildFailureForConformanceCode(BENCHMARK_BRIDGE_OUTPUT_TRUNCATED),
+    'child_bridge_output_truncated',
+    'runner output truncation maps to a stable structured child reason',
+  )
+  assert.equal(
+    classifyBenchmarkChildFailure({ code: 0, outputTruncated: true }),
+    'child_output_truncated',
+    'truncated terminal output takes precedence over control data',
+  )
+  assert.equal(
+    classifyBenchmarkChildFailure({ code: null, signal: 'SIGTERM', diagnostic: timedOutDiagnostic }),
+    'child_signaled',
+    'outer child signal takes precedence over an inner bridge diagnostic',
+  )
+  assert.equal(
+    classifyBenchmarkChildFailure({ code: 0, diagnostic: '' }),
+    'child_lifecycle_failure',
+    'unexpected zero-exit diagnostic path remains a stable lifecycle failure',
+  )
+  const noisyPrefix = Buffer.alloc(BENCHMARK_CHILD_DIAGNOSTIC_MAX_BYTES + 10, 'x')
+  const boundedControl = appendBoundedChildDiagnostic(
+    appendBoundedChildDiagnostic(Buffer.alloc(0), noisyPrefix),
+    timedOutDiagnostic,
+  )
+  assert.equal(boundedControl.length, BENCHMARK_CHILD_DIAGNOSTIC_MAX_BYTES, 'control capture is bounded')
+  assert.equal(parseBenchmarkChildDiagnostic(boundedControl.toString('utf8')), 'child_bridge_timed_out', 'rolling tail preserves a final structured reason after bounded noise')
+
   const configPath = join(root, 'bridge.json')
   writeFileSync(configPath, JSON.stringify({
     schema_version: 'gotry_benchmark_environment_bridge_v2',
@@ -728,6 +812,10 @@ try {
   outcomes.push({ spawnError: true })
   const spawnFailed = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
   assert.deepEqual(spawnFailed, { ok: false, error: 'spawn_failed' }, 'spawn infrastructure failure is structured')
+
+  outcomes.push({ spawnReject: true })
+  const asyncSpawnFailed = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(asyncSpawnFailed, { ok: false, error: 'spawn_failed' }, 'DSH pid=-1 spawn rejection is distinct from a started runner failure')
 
   outcomes.push({ waitForAbort: true })
   const timedOut = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
