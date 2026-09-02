@@ -226,3 +226,21 @@ Leakage and local credential/endpoint scans were zero. This is diagnostic-only
 evidence and creates no benchmark or uplift claim; a later documentation-only
 successor does not rewrite the treatment attribution.
 No external benchmark closure is claimed.
+
+Round 7 changes the benchmark opt-in to a minimal kernel at code SHA
+`edb9392896625adbb48abae4a2ecf968dbfc0349`: tool budget, model override, one
+native bridge, and isolation/conformance remain; product prompt variables,
+process guards, consent hooks, and ordinary GoTry tools are not installed.
+The default path is unchanged. The CLI projects a stable, task-agnostic
+persona and accepts exactly one canonical root `insert` item and one canonical
+`system-prompt` item; missing, duplicate, quoted, reordered, flow, or other
+noncanonical root items fail closed. The treatment used tarball SHA-256
+`506f20f01966663cb30231df72e7163661402a61cf6d96691972c72cebb24e79`, UID
+`e20241028160248698752` (`easy`), and `deepseek-v4-flash`. Preflight passed
+without fallback; after 80.463 seconds the runner exited 1 and terminal output
+was zero/invalid. The evaluator was not entered, official score was null, and
+the case is not countable. The allowlisted reason was
+`child_bridge_runner_failed`. No uplift or external benchmark closure is
+claimed. The next optimization question is a generic bridge-tool schema and a
+recoverable domain-error contract, without changing provider routing or
+scoring.

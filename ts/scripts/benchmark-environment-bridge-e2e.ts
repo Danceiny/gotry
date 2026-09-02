@@ -271,7 +271,11 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
   )
   assert.ok(disabled.optionalResolutionHits.calendar > 0 || disabled.optionalResolutionHits.map > 0, `${target} default-off must retain optional plugin resolution as a counter-proof`)
   const enabled = await runCase('enabled', executableOverride)
-  assert.equal(enabled.exit, 0, `${target} opt-in child exit=${enabled.exit}; output tail=${enabled.output.slice(-10000)}`)
+  assert.equal(
+    enabled.exit,
+    0,
+    `${target} opt-in child exit=${enabled.exit}; requests=${enabled.requests.length}; tool surfaces=${JSON.stringify(enabled.requests.map(names))}; output tail=${enabled.output.slice(-10000)}`,
+  )
   assert.ok(
     enabled.requests.some(r => names(r).includes(TOOL)),
     `${target} opt-in planner request must expose benchmark tool; schemas=${JSON.stringify(enabled.requests.map(names))}; output=${enabled.output.slice(-4_000)}`,
@@ -288,6 +292,16 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
   const leakedReport = enabled.requests.map(r => JSON.stringify(r).match(/\\?"leaked\\?":\[(.*?)\]/)?.[1]).filter(Boolean).join('|')
   assert.ok(enabled.requests.some(r => /\\?"leaked\\?":\[\]/.test(JSON.stringify(r))), `${target} tool result must report no forbidden environment names; observed names=${leakedReport || '(none)'}`)
   assert.equal(enabled.requests.some(r => JSON.stringify(r).includes('do-not-leak')), false, `${target} tool result must not expose the parent secret value`)
+  const enabledPrompt = enabled.requests.map(r => JSON.stringify(r)).join('\n')
+  for (const variable of ['{{current_date}}', '{{time_anchor_card}}', '{{motivation_brief}}']) {
+    assert.equal(enabledPrompt.includes(variable), false, `${target} benchmark persona must not retain ${variable}`)
+  }
+  assert.equal(enabledPrompt.includes('gotry_feasibility_check'), false, `${target} benchmark persona must not retain ordinary GoTry tool instructions`)
+  assert.ok(enabled.requests.length > 0 && enabled.requests.some(request => {
+    const prompt = JSON.stringify(request)
+    return (prompt.match(/You are GoTry, a task-agnostic travel planning assistant\./g) ?? []).length === 1
+      && (prompt.match(/Use only the current conversation and tools available in this benchmark session\./g) ?? []).length === 1
+  }), `${target} benchmark persona has each stable sentence exactly once per request`)
   assert.match(enabled.output, /benchmark_terminal/)
   const debugRedaction = await runCase('debug-redaction', executableOverride)
   assert.equal(debugRedaction.exit, 0, `${target} benchmark debug mode preserves successful execution`)
@@ -454,6 +468,16 @@ async function assertPackagedPatchProjection(executable: string): Promise<void> 
     )
     await runRejectedPatch('duplicate benchmark config anchor', basePatch.replace("        hbcliBin: 'hbcli'", "        hbcliBin: 'hbcli'\n        hbcliBin: 'hbcli'"))
     await runRejectedPatch('pre-existing benchmark config path', basePatch.replace("        hbcliBin: 'hbcli'", "        hbcliBin: 'hbcli'\n        benchmarkEnvironmentConfigPath: '/not/used'"), ['/not/used'])
+    await runRejectedPatch('missing system-prompt anchor', basePatch.replace(/^- id: system-prompt[\s\S]*$/m, ''))
+    await runRejectedPatch('duplicate system-prompt anchor', `${basePatch}\n- id: system-prompt\n  config:\n    persona: >-\n      duplicate\n`)
+    await runRejectedPatch('quoted system-prompt duplicate', `${basePatch}\n- id: 'system-prompt'\n  config:\n    persona: >-\n      quoted duplicate\n`)
+    const systemPromptMutationSentinel = 'ROUND7_SYSTEM_PROMPT_MUTATION_SENTINEL_DO_NOT_REFLECT'
+    await runRejectedPatch('quoted mapping-key system-prompt duplicate', `${basePatch}\n- "id": system-prompt\n  config:\n    persona: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('flow quoted-key system-prompt duplicate', `${basePatch}\n- { "id": system-prompt, config: { persona: ${systemPromptMutationSentinel} } }\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('reordered system-prompt duplicate', `${basePatch}\n- name: reordered-system-prompt\n  id: system-prompt\n  config:\n    persona: >-\n      reordered duplicate\n`)
+    await runRejectedPatch('flow system-prompt duplicate', `${basePatch}\n- { id: system-prompt, config: { persona: flow duplicate } }\n`)
+    await runRejectedPatch('noncanonical insert id root item', `${basePatch}\n- id: insert\n  config:\n    persona: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('malformed system-prompt persona', basePatch.replace(/^    persona: >-$/m, '    persona: plain'))
   } finally {
     rmSync(probeParent, { recursive: true, force: true })
   }
