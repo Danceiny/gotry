@@ -206,4 +206,41 @@ remains fail-closed. The frozen treatment at code SHA `752e54c` stopped after
 140.715 seconds with `child_nonzero_exit`, zero terminal bytes, and null
 evaluator/official scores, so it remains diagnostic-only. The lock-consistency
 successor does not rewrite that UID attribution.
+Round 6 narrows the remaining `child_nonzero_exit` ambiguity without reading
+raw stderr. Benchmark conformance observes only the final structured
+`turn/end.reason` and maps allowlisted model codes or limited HTTP status values
+to closed auth, capacity, server, transport, stream, request, and generic
+runtime families; blocked, max-token, aborted, and interrupted are also closed
+enums. A per-session arbiter writes at most once and retains a more specific
+bridge/conformance failure over a later generic terminal error. Transient model
+errors that recover before the final turn end emit no failure. Free-form
+messages, paths, prompts, request IDs, and credentials are neither inspected
+nor reflected. This changes diagnostics only: stdout, retry policy, prompts,
+tools, evaluator behavior, and scoring remain unchanged. The frozen ChinaTravel
+treatment at code SHA `c61600b` used the clean-installed tarball SHA-256
+`8df65b69873034df282dfa126ab93171fa9f1d4177cf17c5f9c694e737ff1161`,
+UID `phase2_familiar_20250321040138918100_00001`, and
+`deepseek-v4-flash`. It stopped after 49.546 seconds with parent reason
+`child_runtime_error`, zero terminal bytes, and null evaluator/official scores.
+Leakage and local credential/endpoint scans were zero. This is diagnostic-only
+evidence and creates no benchmark or uplift claim; a later documentation-only
+successor does not rewrite the treatment attribution.
 No external benchmark closure is claimed.
+
+Round 7 changes the benchmark opt-in to a minimal kernel at code SHA
+`edb9392896625adbb48abae4a2ecf968dbfc0349`: tool budget, model override, one
+native bridge, and isolation/conformance remain; product prompt variables,
+process guards, consent hooks, and ordinary GoTry tools are not installed.
+The default path is unchanged. The CLI projects a stable, task-agnostic
+persona and accepts exactly one canonical root `insert` item and one canonical
+`system-prompt` item; missing, duplicate, quoted, reordered, flow, or other
+noncanonical root items fail closed. The treatment used tarball SHA-256
+`506f20f01966663cb30231df72e7163661402a61cf6d96691972c72cebb24e79`, UID
+`e20241028160248698752` (`easy`), and `deepseek-v4-flash`. Preflight passed
+without fallback; after 80.463 seconds the runner exited 1 and terminal output
+was zero/invalid. The evaluator was not entered, official score was null, and
+the case is not countable. The allowlisted reason was
+`child_bridge_runner_failed`. No uplift or external benchmark closure is
+claimed. The next optimization question is a generic bridge-tool schema and a
+recoverable domain-error contract, without changing provider routing or
+scoring.

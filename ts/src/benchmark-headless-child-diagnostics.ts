@@ -19,6 +19,17 @@ export type BenchmarkChildFailureCode =
   | 'child_terminal_invalid'
   | 'child_nonzero_exit'
   | 'child_spawn_failure'
+  | 'child_model_auth'
+  | 'child_model_capacity'
+  | 'child_model_server'
+  | 'child_model_transport'
+  | 'child_model_stream'
+  | 'child_model_request'
+  | 'child_runtime_error'
+  | 'child_blocked'
+  | 'child_max_tokens'
+  | 'child_aborted'
+  | 'child_interrupted'
 
 const FAILURE_CODES = new Set<BenchmarkChildFailureCode>([
   'child_output_truncated',
@@ -33,6 +44,17 @@ const FAILURE_CODES = new Set<BenchmarkChildFailureCode>([
   'child_terminal_invalid',
   'child_nonzero_exit',
   'child_spawn_failure',
+  'child_model_auth',
+  'child_model_capacity',
+  'child_model_server',
+  'child_model_transport',
+  'child_model_stream',
+  'child_model_request',
+  'child_runtime_error',
+  'child_blocked',
+  'child_max_tokens',
+  'child_aborted',
+  'child_interrupted',
 ])
 
 export interface BenchmarkChildFailureInput {
@@ -40,6 +62,68 @@ export interface BenchmarkChildFailureInput {
   readonly signal?: string | null
   readonly diagnostic?: string
   readonly outputTruncated?: boolean
+}
+
+type DiagnosticCode = BenchmarkChildFailureCode | undefined
+
+const MODEL_AUTH = new Set(['AUTH', 'INVALID_CREDENTIAL', 'MISSING_CREDENTIAL'])
+const MODEL_CAPACITY = new Set(['QUOTA', 'RATE_LIMIT'])
+const MODEL_SERVER = new Set(['SERVER'])
+const MODEL_TRANSPORT = new Set(['TRANSPORT', 'TIMEOUT'])
+const MODEL_STREAM = new Set(['EMPTY_RESPONSE', 'STREAM_CLOSED', 'MALFORMED_RESPONSE', 'INVALID_RESPONSE'])
+const MODEL_REQUEST = new Set(['INVALID_REQUEST', 'CONTEXT_WINDOW_EXCEEDED', 'NO_ADAPTER', 'UNKNOWN_MODEL', 'UNSUPPORTED_OPTION'])
+
+/** Classify only the structured final turn/end envelope; free-form fields are ignored. */
+export function classifyBenchmarkTurnEnd(reason: unknown): DiagnosticCode {
+  if (!plainObject(reason) || typeof reason.kind !== 'string') return 'child_runtime_error'
+  switch (reason.kind) {
+    case 'completed': return undefined
+    case 'blocked': return 'child_blocked'
+    case 'max-tokens': return 'child_max_tokens'
+    case 'aborted': return 'child_aborted'
+    case 'interrupted': return 'child_interrupted'
+    case 'error': {
+      const error = plainObject(reason.error) ? reason.error : {}
+      const code = typeof error.code === 'string' ? error.code : ''
+      const status = typeof error.status === 'number' && Number.isInteger(error.status) && error.status >= 100 && error.status <= 599
+        ? error.status
+        : undefined
+      if (MODEL_AUTH.has(code)) return 'child_model_auth'
+      if (MODEL_CAPACITY.has(code)) return 'child_model_capacity'
+      if (MODEL_SERVER.has(code)) return 'child_model_server'
+      if (MODEL_TRANSPORT.has(code)) return 'child_model_transport'
+      if (MODEL_STREAM.has(code)) return 'child_model_stream'
+      if (MODEL_REQUEST.has(code)) return 'child_model_request'
+      if (code === 'ABORTED') return 'child_aborted'
+      if (status === 401 || status === 403) return 'child_model_auth'
+      if (status === 429) return 'child_model_capacity'
+      if (status !== undefined && status >= 500 && status <= 599) return 'child_model_server'
+      return 'child_runtime_error'
+    }
+    default: return 'child_runtime_error'
+  }
+}
+
+/** Per-session final arbiter. It emits one best closed enum, never its payload. */
+export function createBenchmarkDiagnosticArbiter(write: (code: BenchmarkChildFailureCode) => void) {
+  const pending = new Map<string, BenchmarkChildFailureCode>()
+  const emitted = new Set<string>()
+  const rank = (code: BenchmarkChildFailureCode): number => code.startsWith('child_bridge_') ? 4 : code === 'child_conformance_failure' ? 3 : code === 'child_runtime_error' ? 1 : 2
+  return {
+    offer(session: string, code: BenchmarkChildFailureCode | undefined): void {
+      if (code === undefined || emitted.has(session)) return
+      const previous = pending.get(session)
+      if (previous === undefined || rank(code) > rank(previous)) pending.set(session, code)
+    },
+    flush(session: string): void {
+      if (emitted.has(session)) return
+      const code = pending.get(session)
+      if (code === undefined) return
+      emitted.add(session)
+      pending.delete(session)
+      write(code)
+    },
+  }
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {
