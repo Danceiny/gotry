@@ -235,7 +235,49 @@ function projectBenchmarkPatch(raw, entryPath, configPath) {
   let gotry = gotryItems[0].join('\n')
   gotry = rewriteBenchmarkPluginEntry(gotry, entryPath)
   gotry = injectBenchmarkEnvironmentConfig(gotry, configPath)
-  return [...lines.slice(0, start + 1), ...gotry.split('\n'), ...lines.slice(end)].join('\n')
+  const projected = [...lines.slice(0, start + 1), ...gotry.split('\n'), ...lines.slice(end)]
+  return projectBenchmarkSystemPrompt(projected).join('\n')
+}
+
+// The normal persona contains dynamic variables and product-only tool
+// instructions.  They are not meaningful in the minimal benchmark kernel and
+// can make dsh fail while assembling the first request.  Require the exact
+// source shape before replacing it; malformed or ambiguous prompt config must
+// fail closed rather than being partially interpreted.
+function projectBenchmarkSystemPrompt(lines) {
+  const rootStarts = lines.map((line, index) => /^-\s+/.test(line) ? index : -1).filter(index => index >= 0)
+  const rootItems = rootStarts.map((itemStart, index) => lines.slice(itemStart, rootStarts[index + 1] ?? lines.length))
+  if (rootItems.length !== 2) throw new Error('benchmark system-prompt root shape violation')
+  const insertItems = rootItems.filter(item => /^- insert:\s*(?:#.*)?$/.test(item[0]))
+  const systemItems = rootItems.filter(item => /^- id:\s*system-prompt\s*(?:#.*)?$/.test(item[0]))
+  if (insertItems.length !== 1 || systemItems.length !== 1) throw new Error('benchmark system-prompt canonical shape violation')
+  const start = rootStarts[rootItems.indexOf(systemItems[0])]
+  let end = start + 1
+  while (end < lines.length && (lines[end].trim() === '' || /^\s/.test(lines[end]) || lines[end].trim().startsWith('#'))) end += 1
+  const item = lines.slice(start, end)
+  const configIndexes = item.map((line, index) => /^ {2}config:\s*$/.test(line) ? index : -1).filter(index => index >= 0)
+  const personaIndexes = item.map((line, index) => /^ {4}persona:\s*>-\s*$/.test(line) ? index : -1).filter(index => index >= 0)
+  if (configIndexes.length !== 1 || personaIndexes.length !== 1 || personaIndexes[0] <= configIndexes[0]) {
+    throw new Error('benchmark system-prompt config violation')
+  }
+  const persona = personaIndexes[0]
+  const blockEnd = item.slice(persona + 1).findIndex(line => line.trim() !== '' && !/^\s{6,}/.test(line))
+  const contentEnd = blockEnd < 0 ? item.length : persona + 1 + blockEnd
+  if (contentEnd === persona + 1 || item.slice(persona + 1, contentEnd).some(line => line.trim() !== '' && !/^\s{6,}/.test(line))) {
+    throw new Error('benchmark system-prompt persona violation')
+  }
+  const before = item.slice(1, configIndexes[0]).filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
+  const between = item.slice(configIndexes[0] + 1, persona).filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
+  const after = item.slice(contentEnd).filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
+  if (before.length !== 0 || between.length !== 0 || after.length !== 0) throw new Error('benchmark system-prompt shape violation')
+  const replacement = [
+    '- id: system-prompt',
+    '  config:',
+    '    persona: >-',
+    '      You are GoTry, a task-agnostic travel planning assistant.',
+    '      Use only the current conversation and tools available in this benchmark session.',
+  ]
+  return [...lines.slice(0, start), ...replacement, ...lines.slice(end)]
 }
 
 function rewriteBenchmarkPluginEntry(raw, entryPath) {
