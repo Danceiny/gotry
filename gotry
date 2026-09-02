@@ -3,7 +3,7 @@
 #   ./gotry web                         启 dsh Web 浏览器界面
 #   ./gotry "一句完整任务..."           一问一答,stdout markdown
 #   ./gotry                             = 默认 web
-# 前置:源仓库已经 `pnpm install`,dsh runtime 在 ts/dsh-runtime/ 内 vendored。
+# 前置:源仓库已经安装 root/TS 依赖并构建 dist；dsh runtime 由 root lock 固定。
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -34,8 +34,8 @@ GoTry —— dsh 运行时驱动
   ./gotry help                         # 此帮助
 
 环境前置:
-  • Node 22+
-  • 已 pnpm install(ts/dsh-runtime/)
+  • Node 22.15+
+  • 已 npm ci && npm --prefix ts ci && node scripts/build-dist.mjs
   • .env 中 LLM_API_KEY (DeepSeek / OpenAI 兼容均可)
 
 详细文档: README.md
