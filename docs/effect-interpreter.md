@@ -57,16 +57,16 @@ issue #16「多渠道比价与外部依赖隔离」提出三件事:
   探测(成功→closed 清零;失败→重开冷却重启)。状态是**进程内瞬态**(同 session
   节律闸先例),不落盘成持久资产;测试用注入时钟/即时 sleep 完全确定性。
 - **重试语义**:只重试「瞬时类」失败(超时/网络断/socket);上游明确说「不」的失败
-  (FlyAI Sentinel 限流)与 ENOENT 类必败失败永不重试——重试是放大器不是修复器。
+  (FlyAI Sentinel 限流、429 试用额度达限)与 ENOENT 类必败失败永不重试——重试是放大器不是修复器。
 
 ### 渠道韧性策略表(权威面,代码即实现 `SPECS`)
 
 | 效应 | 渠道 | 重试 | 断路器 | 节律/授权 | 依据 |
 |---|---|---|---|---|---|
-| `FLYAI_SEARCH` | cli | 瞬时类 2 次/500ms 起 | 3 连错/开 60s | – | data-sources §8:Sentinel 限流绝不硬重试;熔断保护未公布配额 |
-| `HBCLI_HOTEL_SEARCH` | cli | 永不(1 次) | 3 连错/开 60s | – | hbcli 契约「候选路径是切换不是重试」 |
-| `HBCLI_HOTEL_RATES` | cli | 永不(1 次) | 3 连错/开 60s | – | 同 HBCLI 族;价格面**无静态降级 fail-closed**(不估算房价,与 bookable-facts 证据分级同口径) |
-| `HBCLI_CHECK_AVAIL` | cli | 永不(1 次) | 3 连错/开 60s | – | 同上;验价不可用即诚实失败(预订链下单前置,M0) |
+| `FLYAI_SEARCH` | cli | 瞬时类 2 次/500ms 起 | 3 连错/开 60s | – | data-sources §8:Sentinel 限流绝不硬重试;熔断保护未公布配额;429 试用达限归 needs-setup(工具面阻断盲重试,2026-09-02 迪拜 session) |
+| `HBCLI_HOTEL_SEARCH` | cli | 仅 timeout 2 次/300ms 起 | 3 连错/开 60s | – | hbcli 契约「候选路径是切换不是重试」只覆盖 ENOENT 类;timeout(上游冷启动建后端 session 可超 30s)重试 1 次即恢复(2026-09-02 迪拜 session 实况) |
+| `HBCLI_HOTEL_RATES` | cli | 仅 timeout 2 次/300ms 起 | 3 连错/开 60s | – | 同 HBCLI 族(timeout-only);价格面**无静态降级 fail-closed**(不估算房价,与 bookable-facts 证据分级同口径) |
+| `HBCLI_CHECK_AVAIL` | cli | 仅 timeout 2 次/300ms 起 | 3 连错/开 60s | – | 同上;验价不可用即诚实失败(预订链下单前置,M0) |
 | `SESSION_FLIGHT_SEARCH` | browser | **永不** | **不参与** | 渠道内 ≥30s 节律闸 + 账号授权闸 | 风控/挑战=「上游说不」,重试即红线;needs-login/cooldown 是状态不是故障 |
 | `WEATHER_GEOCODE/FORECAST/CLIMATE` | api | 2 次/400ms | 3 连错/开 30s | – | 免费源瞬时抖动重试合法,熔断防免费配额空转 |
 | `OPENSKY_FLIGHT_VERIFY` | api | 2 次/400ms | 3 连错/开 30s | – | 同上(~400 credits/天) |

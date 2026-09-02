@@ -140,9 +140,23 @@ const API_RETRY = { maxAttempts: 2, baseDelayMs: 400, maxDelayMs: 1_600 }
 const API_BREAKER = { failureThreshold: 3, openMs: 30_000 }
 
 /**
+ * HBCLI timeout 专用瞬时判定(2026-09-02 迪拜 session 实况:hotel-list 首调
+ * 30s 超时,LLM 立即手动重试即成功——上游冷启动建后端 session 可超 30s,而
+ * 「候选路径是切换不是重试」的契约只针对 ENOENT 类 spawn 失败,不覆盖超时)。
+ * 只有 timeout 类失败值得重试一次;ENOENT/退码类上游明确说「不」的失败永不。
+ */
+const hbcliTimeout = (r: unknown): boolean => {
+  const msg = String(((r ?? {}) as { error?: string }).error ?? '')
+  return msg.length > 0 && /timeout/i.test(msg)
+}
+const HBCLI_RETRY: RetryPolicy = { maxAttempts: 2, baseDelayMs: 300, maxDelayMs: 1_000 }
+
+/**
  * 渠道韧性策略表(权威面;docs/effect-interpreter.md §3 同表逐行有依据):
  *   - FLYAI:瞬时代码级错误重试 1 次;连续 3 次 error(含 Sentinel)熔断 60s 保护配额;
- *   - HBCLI:永不重试(上游契约「候选路径是切换不是重试」),熔断同上;
+ *     试用额度达限(429)归 needs-setup,永不重试;
+ *   - HBCLI:仅 timeout 类失败重试 1 次(冷启动建后端 session 可超时,重试即恢复);
+ *     ENOENT/退码类永不重试(上游契约「候选路径是切换不是重试」),熔断同上;
  *     RATES/CHECK_AVAIL 同族,且价格面无静态降级(fail-closed,不估算房价——
  *     与 bookable-facts 证据分级同口径,live_inventory 才可进确认卡);
  *   - SESSION:永不重试、不熔断——风控/挑战是「上游说不」,重试即红线;
@@ -162,19 +176,24 @@ const SPECS: Record<EffectName, ChannelSpec> = {
   },
   HBCLI_HOTEL_SEARCH: {
     channel: 'cli',
-    retry: null,
+    retry: HBCLI_RETRY,
+    // spec 级 isRetryable 是解译器组装 policy 的权威源(FLYAI 同款):仅 timeout 类
+    // 瞬时(冷启动建后端 session);ENOENT/退码类永不(「切换不是重试」契约不变)
+    isRetryable: (r) => hbcliTimeout(r),
     breaker: { failureThreshold: 3, openMs: 60_000 },
     isFailure: r => (r as { via?: string }).via === 'hbcli-error',
   },
   HBCLI_HOTEL_RATES: {
     channel: 'cli',
-    retry: null,
+    retry: HBCLI_RETRY,
+    isRetryable: (r) => hbcliTimeout(r),
     breaker: { failureThreshold: 3, openMs: 60_000 },
     isFailure: r => (r as { via?: string }).via === 'hbcli-error',
   },
   HBCLI_CHECK_AVAIL: {
     channel: 'cli',
-    retry: null,
+    retry: HBCLI_RETRY,
+    isRetryable: (r) => hbcliTimeout(r),
     breaker: { failureThreshold: 3, openMs: 60_000 },
     isFailure: r => (r as { via?: string }).via === 'hbcli-error',
   },

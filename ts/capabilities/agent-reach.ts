@@ -77,7 +77,7 @@ export async function reach(q: { channel: string; method: string; args?: string[
   }
   const py = venvPython()
   if (!existsSync(py)) {
-    return { ...base, ok: false, verdict: 'not-installed', evidence: evidence('not-installed'), latencyMs: 0, setup: 'gotry .venv 缺 python — 见 docs/tokens.md(agent-reach 安装)' }
+    return { ...base, ok: false, verdict: 'not-installed', evidence: evidence('not-installed'), latencyMs: 0, setup: 'gotry .venv 缺 python——可选依赖未装配。补装:终端跑 npx gotry doctor --fix,或让用户看体检报告 npx gotry doctor' }
   }
   const args = Array.isArray(q.args) ? q.args : (q.args ? q.args.split(/\s+/).filter(Boolean) : [])
   const r = await run(py, [bridgeScript(), q.channel, q.method, ...args], q.timeoutMs ?? 30_000)
@@ -89,14 +89,14 @@ export async function reach(q: { channel: string; method: string; args?: string[
   } catch { /* 走下面的兜底 */ }
 
   if (r.err?.includes('ENOENT')) {
-    return { ...base, ok: false, verdict: 'not-installed', evidence: evidence('not-installed'), latencyMs, setup: '.venv/bin/python 不可执行(装 agent-reach: 见 docs/tokens.md)' }
+    return { ...base, ok: false, verdict: 'not-installed', evidence: evidence('not-installed'), latencyMs, setup: '.venv/bin/python 不可执行——补装:终端跑 npx gotry doctor --fix' }
   }
   if (parsed.ok === true) {
     return { ...base, ok: true, verdict: 'found', evidence: evidence('found'), latencyMs, data: parsed.data }
   }
   // 上游 agent_reach 包未装(bridge 自己的 exit 3 输出)
   if (parsed.error?.includes('agent_reach 未安装')) {
-    return { ...base, ok: false, verdict: 'not-installed', evidence: evidence('not-installed'), latencyMs, setup: '.venv 缺 agent-reach(pip install agent-reach,见 docs/tokens.md)' }
+    return { ...base, ok: false, verdict: 'not-installed', evidence: evidence('not-installed'), latencyMs, setup: '.venv 缺 agent-reach 包——补装:终端跑 npx gotry doctor --fix' }
   }
   // 未知渠道/方法:自描述,附上游清单(不拦 LLM,让它看清单自纠)
   if (r.code === 2) {
@@ -144,7 +144,7 @@ export async function reachStatus(timeoutMs = 90_000): Promise<ReachStatus> {
   const started = Date.now()
   const bin = resolve(repoRoot(), '.venv/bin/agent-reach')
   if (!existsSync(bin)) {
-    return { ok: false, via: 'not-installed', evidence: `[agent-reach:doctor@not-installed@${ts()}]`, latencyMs: 0, output: 'pip install agent-reach 于 .venv(见 docs/tokens.md)' }
+    return { ok: false, via: 'not-installed', evidence: `[agent-reach:doctor@not-installed@${ts()}]`, latencyMs: 0, output: 'Agent Reach 未装配(.venv 缺失)——可选依赖,补装:终端跑 npx gotry doctor --fix;或让助手调 gotry_doctor 看整体体检报告' }
   }
   const r = await run(bin, ['doctor'], timeoutMs)
   const output = (r.stdout || r.stderr).trim()

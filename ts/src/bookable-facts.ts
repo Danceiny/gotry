@@ -133,7 +133,8 @@ export interface FlyaiLikeOption {
 }
 
 export interface FlyaiLikeResult {
-  verdict: 'hit' | 'miss' | 'error'
+  /** needs-setup(试用额度达限)同 error:无结论不是证据,不落事实 */
+  verdict: 'hit' | 'miss' | 'error' | 'needs-setup'
   options?: FlyaiLikeOption[]
   evidence?: string
 }
@@ -190,7 +191,7 @@ export function factsFromFlyai(q: { kind: 'flight' | 'train'; origin: string; de
   const queryId = makeQueryId(source, q.kind, q.origin, q.destination, q.date)
   const origin = iataOf(alias, q.origin)
   const destination = iataOf(alias, q.destination)
-  if (r.verdict === 'error') return []
+  if (r.verdict === 'error' || r.verdict === 'needs-setup') return []
   if (r.verdict === 'miss') return [negativeFact(queryId, q.kind, q.origin, q.destination, q.date, source, fetchedAt, alias)]
   const facts: FlightFact[] = []
   for (const o of r.options ?? []) {
