@@ -117,20 +117,16 @@ Engine verdict:
 
 ```bash
 npx @danceiny/gotry web
-# First run creates .env in the current directory:
-#   LLM_API_KEY=<DeepSeek key, or any OpenAI-compatible key>
-#   LLM_BASE_URL=<your endpoint, usually ending in /v1>   # if not on DeepSeek directly
-#   LLM_MODEL=<model name>                                 # relays often need this; pins the model
 # → open http://127.0.0.1:3080 and chat: "I want three relaxing days in Dali"
+# LLM key & model: handled by the dsh host UI; nothing for gotry to ask on the CLI
 ```
 
 | Entry | Command | When |
 |---|---|---|
 | Web chat (recommended) | `npx @danceiny/gotry web` | multi-turn planning with visualized reasoning → `:3080` |
 | Headless one-shot | `npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"` | scripts / CI / targeted debugging → stdout |
-| Extension setup | `npx gotry setup` | one-time, for account-session tools — see [Consent and Privacy](#consent-and-privacy) |
 
-Requires Node ≥ 22.15 and one LLM API key. Any OpenAI-compatible endpoint works (MiniMax / relays / self-hosted gateways). `LLM_MODEL` (e.g. `MiniMax-M2`) applies to both the dsh chat face and repo scripts, and overrides any model picked in the web UI. First cold start takes 6–15 s; if port `:3080` is taken, free it first; unexpected exits leave evidence in `gotry-state/incidents.jsonl` (nothing silent).
+Requires Node ≥ 22.15. LLM credentials are managed by your dsh host UI — gotry itself never asks for or echoes them. OpenAI-compatible endpoints (MiniMax / relays / self-hosted gateways) are handled by the dsh model configuration. First cold start takes 6–15 s; if port `:3080` is taken, free it first; unexpected exits leave evidence in `gotry-state/incidents.jsonl` (nothing silent).
 
 > **Cost accounting** — `ts/data/llm-price-table.json` (schema `gotry_llm_price_table_v2`) is the single source of truth for nightly run cost. Adding a model or switching relays = a PR against this file (peak-conservative upper bounds only); unknown models **fail closed** — no guessed prices. Drift monitor: `npx tsx ts/scripts/price-drift-watch.ts` (offline baseline diff; `--fetch` for live official pages). It never auto-applies changes.
 
@@ -140,7 +136,6 @@ Requires Node ≥ 22.15 and one LLM API key. Any OpenAI-compatible endpoint work
 git clone https://github.com/Danceiny/gotry && cd gotry
 npm ci && npm --prefix ts ci                      # pinned root/TS closure
 node scripts/build-dist.mjs                       # build the JS runtime
-cp .env.example .env                              # set LLM_API_KEY (+ LLM_BASE_URL / LLM_MODEL)
 ./gotry web                                       # in-repo entry, same UX
 ```
 
@@ -155,7 +150,7 @@ The account-session channel reads realtime hotel/flight data from **your own log
 3. **Physically read-only.** A ReadGuard aborts all write requests at the network layer — ordering/payment is unreachable in transport. The agent never touches credentials or captchas; on a captcha it stops and hands control back to you.
 4. **Never hijacks your browser.** Retrieval/login always open their own dedicated tab; the login page is brought to front and stays with you; routine test runs never open browser windows.
 
-One-time prerequisite: the bundled **GoTry Session Bridge** browser extension (MV3, ~30 seconds). `npx gotry setup` walks you through installing it at `~/.gotry/extension` (Chrome → `chrome://extensions` → Developer mode → Load unpacked). Zero Chrome system dialogs afterwards — the extension passively forwards the site's own search responses (read-only by construction; cookies are read by NAME only, values never leave the browser). A background health-watch auto-replays your query once the extension is connected. Until installed, tools return `needs-extension` with instructions and spend nothing. Prefer the GitHub Releases channel? `npx gotry setup --extension-from=github` (versioned tarball + SHA256 + fixed-key pinning, atomic swap, automatic fallback to the bundled copy). Only a Chrome Web Store listing can remove the developer-mode clicks entirely — submission materials are prepared, founder to submit.
+One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) Chrome extension — handled by the dsh host UI when an account-session tool first needs it (`gotry_session_search` surfaces the install URL as a clickable link in the verdict). The extension itself is one-click on the Chrome Web Store, auto-updates, and the gotry side never asks the user to load unpacked or to run a setup wizard. Zero Chrome system dialogs afterwards — the extension passively forwards the site's own search responses (read-only by construction; cookies are read by NAME only, values never leave the browser). A background health-watch auto-replays your query once the extension is connected. Until installed, tools return `needs-extension` with the store URL and spend nothing.
 
 ## Trustworthy by Construction
 
@@ -170,14 +165,14 @@ One-time prerequisite: the bundled **GoTry Session Bridge** browser extension (M
 
 ## Project Status
 
-Current release: **v0.0.1-rc.16** (npm `latest`). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims.
+Current release: **v0.0.1-rc.17** (npm dist-tag `rc`; `latest` stays on rc.16 per the dsh-as-LLM-host install convention). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims.
 
 **Working today** (full-stack regression green; every item has deterministic tests):
 
 - **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed and regression-gated
 - **Realtime retrieval** — flights/trains/hotels (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`)
 - **Account-session search** — Ctrip flights on your logged-in Chrome; observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
-- **Setup wizard & dual extension channels** — `npx gotry setup` (bundled default, offline-deterministic); GitHub Releases channel opt-in with SHA256 + key pinning and automatic fallback
+- **Extension install on demand** — `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` is offered as a clickable link in the dsh UI when an account-session tool first needs it (one-click install + auto-update); the gotry side never runs a setup wizard
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English solve output via `GOTRY_LOCALE=en`
 - **Bounded agent tool loops** — soft convergence after 16 dispatches, structured `TOOL_BUDGET_EXHAUSTED` refusals beyond 18, exercised end-to-end through a packaged consumer install in CI
 

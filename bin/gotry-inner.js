@@ -86,10 +86,6 @@ Usage:
   gotry "一段完整任务..."            # headless 一问一答
   gotry help                         # this help
 
-Prerequisites:
-  • Node 22.15+
-  • \`.env\` 里 LLM_API_KEY (DeepSeek / OpenAI 兼容均可;自定义端点另配 LLM_BASE_URL,一般以 /v1 结尾;指定模型另配 LLM_MODEL,同时驱动 dsh 会话面与仓内脚本)
-
 Detail: https://github.com/Danceiny/gotry — README
 `)
   process.exit(0)
@@ -450,20 +446,8 @@ const terminateOnSignal = (signal, listener) => {
   process.off(signal, listener)
   process.kill(process.pid, signal)
 }
-const onSigint = () => terminateOnSignal('SIGINT', onSigint)
-const onSigterm = () => terminateOnSignal('SIGTERM', onSigterm)
-process.once('SIGINT', onSigint)
-process.once('SIGTERM', onSigterm)
-if (!process.env.DEEPSEEK_API_KEY && mode !== 'help') {
-  console.error('[gotry] 缺少 LLM API key —— 两种方式任选其一后重跑:')
-  console.error(`  1) 在当前目录创建 .env 写入一行: LLM_API_KEY=<你的 DeepSeek key>(key 从 https://platform.deepseek.com 获取)`)
-  console.error('  2) 或临时环境变量: export LLM_API_KEY=<key>')
-  cleanupPatch()
-  process.exit(1)
-}
-
-// --- 调 vendored dsh 二进制(不走 npx)---
-// headless: 第一个非 -- 之后的参数是 task —— gotry argv 0 是 headless 触发,其余都算 task;
+// LLM key 由 dsh 宿主管理(凭证是用户资产,UI 在 dsh 里;gotry 不拦截启动期,
+// 不在用户面前展示任何 key 配置引导),此处直接放手 spawn dsh。
 const binJs = mode === 'web'
   ? ['web', '--patch', patchPath, ...(process.argv.includes('--no-open') ? ['--no-open'] : [])]
   : ['--profile', 'headless', '--patch', patchPath, ...rest]
