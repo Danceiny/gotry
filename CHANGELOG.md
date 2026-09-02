@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.1-rc.18] - 2026-09-02
+
+### Fixed
+
+- bug修复——started 期不再拦截 LLM key、setup 不再替用户管 dsh 生态依赖(hbcli/agent-reach/sidebar 让出);gotry 在 CLI 是 dsh 插件,凭证由 dsh 宿主 UI 配,go… (8953be5)
+
+### Documentation
+
+- 升 rc.17 → rc.18(changelog 闸由 publish-npm.sh 自动生成 + commit;这一发是 'gotry CLI 不再硬拦截 dsh 用户' bugfix)(#105)… (08bb82b)
+
 ## [0.0.1-rc.17] - 2026-09-02
 
 ### Added
