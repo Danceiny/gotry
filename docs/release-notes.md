@@ -4,6 +4,24 @@
 
 ---
 
+## v0.0.1-rc.18 · 2026-09-02
+
+### What's New
+
+- **修了一个让你卡死在终端的 bug** — 之前 `gotry web` 启动时如果没设 LLM key，CLI 会直接打一段「缺少 LLM API key」然后退出，根本进不了 dsh。但 key 是 dsh 那边管的事，不该 gotry 来挡。现在启动期只剩静默委托 dsh。
+- **`gotry setup` 不再替你管别的依赖** — 之前它会顺手装 hbcli / agent-reach / dsh-better-sidebar 一堆与 gotry 无关的工具，现在它只检查一件事：浏览器扩展装好了吗。其他事归各自的宿主生态。
+- **文档同步卸 key 引导** — README 中英、`user-guide.md` 不再让你「在 .env 里写 LLM_API_KEY」。
+
+### For Developers
+
+- 这一版主要是「让 gotry 在 CLI 层更像个插件」—— 它不再假装自己是入口，也不再要求用户配它本不该管的事。
+
+### 安装
+
+- 没变化，跑 `npx @danceiny/gotry web`，dsh 那边该弹什么弹什么。
+
+---
+
 ## v0.0.1-rc.17 · 2026-09-02
 
 ### What's New
