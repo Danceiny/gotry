@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 
 const ROOT = join(import.meta.dirname, '..', '..')
+const TS_DIR = join(import.meta.dirname, '..')
 const TIMEOUT_MS = 90_000
 const TOOL = 'gotry_artifacts_list'
 const SOFT_MS = 5_000
@@ -178,7 +179,7 @@ async function main(): Promise<void> {
       child.once('exit', code => { clearTimeout(timer); resolve(code) })
     })
   } finally {
-    await relay.close()
+    // relay 故意不在此关闭:收集闭环段还要以同一 relay 做模型端点。
     // Give the spawned binary a brief moment to release its temp files
     // before we recursively remove the tmpdir.
     await new Promise<void>(resolve => setTimeout(resolve, 200))
@@ -216,8 +217,54 @@ async function main(): Promise<void> {
   const finalNames = toolNames(finalRequest)
   assert.ok(!finalNames.includes(TOOL), `final request inherited GoTry tool: ${finalNames.join(', ')}`)
   assert.match(output, /deadline E2E final answer/)
-  console.log(`agent turn deadline E2E: OK (exit=${exitCode}, plannerRequests=${relay.plannerBodies.length}, handoffResults=${handoffResults.length}, ticket=${ticketFiles[0]})`)
 
+  // ---- 收集闭环:collector 以真打包二进制为 planner 回收这单工单。------
+  // 子会话(GOTRY_HANDOFF_CHILD=1)带满工具面打到 relay;relay 的全局
+  // plannerIndex 已 >1,立即回 text-only final → 子会话 converge 退出,
+  // collector 把最终答复结算为交付物。工单 open→settled,交付物可复访。
+  {
+    const ticketId = String(ticket['id'])
+    const collector = spawn(process.execPath, [
+      join(TS_DIR, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
+      join(TS_DIR, 'scripts', 'turn-handoff-collect.ts'),
+      ticketId, handoffRoot,
+    ], {
+      cwd: TS_DIR,
+      env: {
+        ...process.env,
+        GOTRY_HANDOFF_PLANNER_BIN: configuredBin,
+        LLM_API_KEY: 'synthetic-e2e-key',
+        LLM_BASE_URL: 'http://127.0.0.1:' + relay.port + '/v1',
+        LLM_MODEL: 'synthetic-deadline-model',
+        GOTRY_LOCALE: 'zh-CN',
+        GOTRY_DISABLE_OPTIONAL_CALENDAR: '1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let collectorOut = ''
+    let collectorErr = ''
+    collector.stdout.on('data', chunk => { collectorOut += chunk.toString() })
+    collector.stderr.on('data', chunk => { collectorErr += chunk.toString() })
+    const collectorCode = await new Promise<number | null>(resolve => {
+      const timer = setTimeout(() => { collector.kill('SIGKILL'); resolve(null) }, 90_000)
+      collector.once('exit', code => { clearTimeout(timer); resolve(code) })
+    })
+    assert.equal(collectorCode, 0, `collector exit=${collectorCode}; stderr tail=${collectorErr.slice(-800)}; stdout tail=${collectorOut.slice(-400)}`)
+    const terminal = JSON.parse(collectorOut.trim().split('\n').at(-1)!) as Record<string, unknown>
+    assert.equal(terminal['schema'], 'gotry_turn_handoff_terminal.v1')
+    assert.equal(terminal['status'], 'succeeded')
+    assert.ok(String(terminal['deliverable_path']).includes(`${ticketId}.deliverable.md`))
+
+    const settled = JSON.parse(readFileSync(join(ticketDir, `${ticketId}.json`), 'utf8')) as Record<string, unknown>
+    assert.equal(settled['status'], 'settled')
+    assert.ok(settled['settledAt'], 'settledAt recorded')
+    const deliverable = readFileSync(join(ticketDir, `${ticketId}.deliverable.md`), 'utf8')
+    assert.ok(deliverable.includes('deadline E2E final answer'), `deliverable carries planner final; got: ${deliverable.slice(-400)}`)
+  }
+
+  console.log(`agent turn deadline E2E: OK (exit=${exitCode}, plannerRequests=${relay.plannerBodies.length}, handoffResults=${handoffResults.length}, ticket=${ticketFiles[0]}, collected=settled)`)
+
+  await relay.close()
   rmSync(dshHome, { recursive: true, force: true })
   rmSync(childCwd, { recursive: true, force: true })
   rmSync(handoffRoot, { recursive: true, force: true })

@@ -43,7 +43,7 @@ import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
-import { installTurnDeadline } from './turn-deadline.ts'
+import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
@@ -167,10 +167,15 @@ export function apply(ctx: Context, config: Config): void {
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
   // 预算,复杂度决定出口结构(converge/handoff)。benchmark opt-in 钉死
-  // 固定 policy 保证评测可复现,不走路由。
-  installTurnDeadline(ctx, rawBenchmarkEnvironmentConfigPath.trim()
-    ? { fixedPolicy: { softMs: 60_000, hardMs: 120_000, exit: 'converge' } }
-    : { stateRoot: process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.' })
+  // 固定 policy 保证评测可复现,不走路由。GOTRY_HANDOFF_CHILD=1 是收集器
+  // 派生的后台规划会话:唯一出口 converge + 长 leash——前台转后台,后台
+  // 必须产出最终交付物,不得再次 handoff(否则无限递归)。
+  const handoffChild = process.env.GOTRY_HANDOFF_CHILD === '1'
+  installTurnDeadline(ctx, handoffChild
+    ? { fixedPolicy: { softMs: 300_000, hardMs: 900_000, exit: 'converge' } }
+    : rawBenchmarkEnvironmentConfigPath.trim()
+      ? { fixedPolicy: { softMs: 60_000, hardMs: 120_000, exit: 'converge' } }
+      : { stateRoot: process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.' })
   if (rawBenchmarkEnvironmentConfigPath.trim()) {
     // Benchmark mode is a deliberately minimal kernel: only the model
     // override and the environment bridge are installed besides the pinned
@@ -441,6 +446,53 @@ export function apply(ctx: Context, config: Config): void {
       } as never
     },
     presentCall: args => ({ card: 'generic', title: '「下一次出发」召回', kind: 'search', rawInput: args.query }),
+  }))
+
+  // ADR-24 v2 复访交付面:用户回问「行程规划好了吗」时,模型用这个只读工具
+  // 查后台工单状态;settled 附交付物摘录(完整内容在工单同目录
+  // .deliverable.md)。工单由 scripts/turn-handoff-collect.ts 收集结算。
+  registerGuarded(defineTool({
+    name: 'gotry_turn_handoff_list',
+    description:
+      'List background deep-planning handoff tickets (read-only). Call this whenever the user asks about '
+      + 'a previously handed-off plan («规划好了吗» / «上次那个行程»): open = still being worked in the '
+      + 'background (ETA ' + '约 1 小时' + '), settled = deliverable ready (excerpt included, full text in the '
+      + 'ticket\'s .deliverable.md), failed = honest failure note. Never fabricate a deliverable that is not here.',
+    parameters: {
+      query: {
+        type: 'json',
+        description: '{ ticketId?: "th-...(可选,只看这一单)" }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
+    },
+    async execute(args: { query?: unknown }) {
+      const q = interpretArgs<{ ticketId?: string }>(args)
+      const root = process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.'
+      const all = await listTurnHandoffTickets(root)
+      const tickets = (q.ticketId ? all.filter(t => t.id === q.ticketId) : all).slice(0, 10)
+      if (tickets.length === 0) {
+        return {
+          ok: true, count: 0,
+          summary: q.ticketId
+            ? `没有 id 为 ${q.ticketId} 的后台规划工单(可能已被清理或记错 id)`
+            : '当前没有后台深度规划工单(无挂起、无历史)',
+        } as never
+      }
+      const lines = tickets.map(t => {
+        const head = `[${t.status}] ${t.id} ${t.objective.slice(0, 40)}`
+        if (t.status === 'open') return `${head}——后台规划中,ETA ${t.etaLabel}`
+        if (t.status === 'failed') return `${head}——失败:${t.error ?? '未知原因'}(请重新发起规划)`
+        return `${head}——已交付,摘要:${(t.deliverableExcerpt ?? '').slice(0, 120).replace(/\n/g, ' ')}`
+      })
+      return {
+        ok: true, count: tickets.length, tickets,
+        summary: `后台规划工单 ${tickets.length} 张:\n${lines.join('\n')}`,
+      } as never
+    },
+    presentCall: args => ({ card: 'generic', title: '后台规划工单查询', kind: 'search', rawInput: args.query }),
   }))
 
   registerGuarded(defineTool({

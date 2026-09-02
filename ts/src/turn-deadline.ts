@@ -18,7 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -37,7 +37,25 @@ export interface TurnHandoffTicket {
   userMessage: string
   requestedAt: string
   etaLabel: string
-  status: 'open'
+  status: 'open' | 'settled' | 'failed'
+  /** 结算时间(ISO);open 时缺省。 */
+  settledAt?: string
+  /** 结算交付物文件名(与工单同目录的 .deliverable.md)。 */
+  deliverableFile?: string
+  /** failed 时的稳定错误描述。 */
+  error?: string
+}
+
+/** 复访视图:工单事实 + 已结算交付物摘录(有界)。 */
+export interface TurnHandoffTicketView {
+  id: string
+  status: TurnHandoffTicket['status']
+  objective: string
+  requestedAt: string
+  etaLabel: string
+  settledAt?: string
+  error?: string
+  deliverableExcerpt?: string
 }
 
 export interface TurnDeadlineOptions {
@@ -61,14 +79,88 @@ export async function writeTurnHandoffTicket(stateRoot: string, userMessage: str
     etaLabel: TURN_HANDOFF_ETA_LABEL,
     status: 'open',
   }
+  await writeTicketJson(stateRoot, ticket)
+  return ticket
+}
+
+function handoffDir(stateRoot: string): string {
   const root = stateRoot === '.' ? process.cwd() : stateRoot
-  const dir = join(root, 'gotry-state', 'turn-handoffs')
+  return join(root, 'gotry-state', 'turn-handoffs')
+}
+
+async function writeTicketJson(stateRoot: string, ticket: TurnHandoffTicket): Promise<string> {
+  const dir = handoffDir(stateRoot)
   await mkdir(dir, { recursive: true })
   const path = join(dir, `${ticket.id}.json`)
   const tmp = `${path}.tmp`
   await writeFile(tmp, JSON.stringify(ticket, null, 2), 'utf-8')
   await rename(tmp, path)
-  return ticket
+  return path
+}
+
+/**
+ * 结算工单:交付物落 `<id>.deliverable.md`(settled=规划产物;failed=诚实
+ * 失败说明),工单 json 原子更新 status/settledAt/deliverableFile/error。
+ */
+export async function settleTurnHandoffTicket(
+  stateRoot: string,
+  ticket: TurnHandoffTicket,
+  status: 'settled' | 'failed',
+  deliverable: string,
+  error?: string,
+): Promise<{ ticketPath: string; deliverablePath: string }> {
+  const dir = handoffDir(stateRoot)
+  await mkdir(dir, { recursive: true })
+  const deliverablePath = join(dir, `${ticket.id}.deliverable.md`)
+  const deliverableTmp = `${deliverablePath}.tmp`
+  await writeFile(deliverableTmp, deliverable, 'utf-8')
+  await rename(deliverableTmp, deliverablePath)
+  const settled: TurnHandoffTicket = {
+    ...ticket,
+    status,
+    settledAt: new Date().toISOString(),
+    deliverableFile: `${ticket.id}.deliverable.md`,
+    ...(error ? { error } : {}),
+  }
+  const ticketPath = await writeTicketJson(stateRoot, settled)
+  return { ticketPath, deliverablePath }
+}
+
+/** 复访查询:按请求时间倒序列出工单;settled 附交付物摘录(≤600 字)。 */
+export async function listTurnHandoffTickets(stateRoot: string): Promise<TurnHandoffTicketView[]> {
+  const dir = handoffDir(stateRoot)
+  let names: string[]
+  try {
+    names = await readdir(dir)
+  } catch {
+    return []
+  }
+  const views: TurnHandoffTicketView[] = []
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    try {
+      const raw = JSON.parse(await readFile(join(dir, name), 'utf-8')) as TurnHandoffTicket
+      if (raw?.schema !== TURN_HANDOFF_SCHEMA) continue
+      const view: TurnHandoffTicketView = {
+        id: raw.id,
+        status: raw.status,
+        objective: raw.objective,
+        requestedAt: raw.requestedAt,
+        etaLabel: raw.etaLabel,
+        ...(raw.settledAt ? { settledAt: raw.settledAt } : {}),
+        ...(raw.error ? { error: raw.error } : {}),
+      }
+      if (raw.status !== 'open' && raw.deliverableFile) {
+        try {
+          const text = await readFile(join(dir, raw.deliverableFile), 'utf-8')
+          view.deliverableExcerpt = text.length > 600 ? `${text.slice(0, 600)}…` : text
+        } catch { /* 交付物缺失时视图降级,不阻塞列表 */ }
+      }
+      views.push(view)
+    } catch { /* 单个坏工单不阻塞列表 */ }
+  }
+  views.sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : -1))
+  return views
 }
 
 function resolveEnvPin(name: string): number | null {

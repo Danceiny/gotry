@@ -404,6 +404,7 @@ echo
 echo "=== 45. Agent turn boundary(路由 quick/sync/deep→wall-clock 双出口 converge/handoff;handoff 落 gotry_turn_handoff.v1 工单;确定性路由表测 + Cordis integration + dsh headless E2E) ==="
 (cd ts && npx tsx scripts/turn-policy-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/agent-planning-turn-deadline-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/turn-handoff-collect-tests.ts) || FAIL=1
 if [ -n "$package_e2e_bin" ] && [ -x "$package_e2e_bin" ]; then
   (cd ts && GOTRY_DEADLINE_E2E_BIN="$package_e2e_bin" npx tsx scripts/agent-planning-turn-deadline-e2e.ts) || FAIL=1
 else
