@@ -7,7 +7,7 @@
  *   - gotry_wish_pool_add       「下一次出发」清单(憧憬不被拒绝)
  *
  * 插件形态遵循 dsh 约定(name/inject/Config/apply + ctx.tools.register(defineTool(...))),
- * 对齐 @deepseek-ai/dsh-tools@0.1.2-alpha.2 的契约:
+ * 对齐 @deepseek-ai/dsh-tools@0.1.2-alpha.3 的契约:
  * render 位于 output 对象内,参数属性是 ValueSchemaSpec(支持 type:'json')。
  *
  * @module @gotry/plugin

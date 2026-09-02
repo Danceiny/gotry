@@ -10,9 +10,9 @@
 
 **环境前置**:
 
-- **Node 22+**（`nvm install 22` 或更高;`package.json` engines 硬约束）
+- **Node 22.15+**（`nvm install 22` 或更高;`package.json` engines 硬约束）
 - **npm**（root 与 `ts/` 均用 npm,`package-lock.json` 锁定公共 registry 版本）
-- **pnpm**（仅 vendored dsh runtime 一次性安装用）
+- **pnpm**（仅维护 legacy vendored dsh runtime 时需要;普通源码开发不需要）
 - 可选:LLM API key(真模型巡检用;全部自动化测试均为 mock,不需要 key)
 - 可选:Python `.venv`（agent-reach wrapper;缺失时测试自动降级为 needs-setup 断言）
 
@@ -20,18 +20,18 @@
 git clone https://github.com/Danceiny/gotry
 cd gotry
 
-# ① 装 vendored dsh runtime(一次性;只影响 ./gotry web 产品形态,测试不依赖)
-cd ts/dsh-runtime && pnpm install && cd ../..
-
-# ② 装依赖(root = 产品面,ts = 插件/测试面)
+# ① 装依赖(root = 产品面与锁定 DSH runtime,ts = 插件/测试面)
 npm ci
 cd ts && npm ci && cd ../..
+
+# ② 构建源码检出的 JS runtime
+node scripts/build-dist.mjs
 
 # ③ 配环境变量
 cp .env.example .env      # 填 LLM_API_KEY(DeepSeek sk-... 或 OpenAI 兼容协议)
 ```
 
-> **为什么是两份依赖**:root `package.json` 是 npm 包形态（`@danceiny/gotry`）的发布清单，`ts/package.json` 是插件源码与全部测试套件的开发清单。dsh runtime 以全量 vendored tarball 入 git（`ts/dsh-runtime/vendor/`，上游 npm 未发版、从源码 tag 构建，见 [`vendor/README.md`](ts/dsh-runtime/vendor/README.md)）；`node_modules/` 与运行时 `gotry-state/` 仍被忽略，npm 一键分发面也不打包它。
+> **为什么是两份依赖**:root `package.json` 是 npm 包形态（`@danceiny/gotry`）的发布清单，也把源码与发布形态共用的 216 个 DSH `0.1.2-alpha.3` runtime 包全部锁成精确直接依赖；manifest、package-lock 与 root pnpm importer 必须暴露同一 216 项名称集合，publish preverify 会拒绝漏钉、混版和 range。`ts/package.json` 是插件源码与全部测试套件的开发清单。源码普通运行的 dsh cwd 保持在 `ts/dsh-runtime/`，真实运行状态继续落 `ts/dsh-runtime/gotry-state/`；benchmark opt-in 与 npm 包运行使用调用目录隔离。`ts/dsh-runtime/vendor/` 的 alpha.1 树只保留为非 benchmark legacy 解析兼容，不承诺可运行，也不再是推荐安装路径；`node_modules/` 与运行时 `gotry-state/` 仍被忽略。
 
 ---
 

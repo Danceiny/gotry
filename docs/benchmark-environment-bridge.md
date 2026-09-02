@@ -186,6 +186,24 @@ remain null ([Round 2 evidence](https://github.com/Danceiny/gotry/discussions/78
 frozen treatment stopped after one runner spawn with planner/runner exit 1,
 zero released terminal bytes, no evaluator entry, and null official scores
 ([Round 3 evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18232139)).
-Round 4 addresses the newly isolated startup-composition failure. No score
-uplift or external benchmark closure is claimed until a new frozen treatment
-reaches the official evaluator.
+Round 4's treatment at SHA `5ebddb2` had primary preflight pass, but the
+planner and runner both exited 1 after 30.968 seconds, released zero terminal
+bytes, never entered the evaluator, and produced null official scores. The
+product Node gate was v24.20.0 while that treatment used v26.3.0, so it is
+diagnostic-only and has no uplift claim. GitHub Node 22/24 §48 separately
+exposed a source default-off 30-second lifecycle hang. Round 5 is limited to
+removing the timer/keepalive preload; declaring all 216 packages in the
+root/package DSH `0.1.2-alpha.3` closure as exact direct dependencies;
+requiring the manifest, package lock, and root pnpm importer to expose the same
+216-name set; failing publish preverify on omissions, mixed versions, or ranges; resolving
+that locked runtime before the legacy vendored fallback in
+a source checkout; preserving source normal-mode state continuity under
+`ts/dsh-runtime/gotry-state/` while benchmark opt-in and npm-package runs use
+the invocation directory for isolation; rejecting a non-alpha.3 benchmark
+runtime before spawn; enforcing Node 22.15+; and adding a benchmark-only
+structured diagnostic pipe with allowlisted redacted reason codes while stdout
+remains fail-closed. The frozen treatment at code SHA `752e54c` stopped after
+140.715 seconds with `child_nonzero_exit`, zero terminal bytes, and null
+evaluator/official scores, so it remains diagnostic-only. The lock-consistency
+successor does not rewrite that UID attribution.
+No external benchmark closure is claimed.
