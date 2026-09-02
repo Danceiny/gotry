@@ -10,7 +10,7 @@ set +eu; source ~/.nvm/nvm.sh 2>/dev/null || true; set -eu  # nvm.sh 遇 npmrc p
 
 FAIL=0
 
-echo "=== 0. 全量测试运行时前置(一次 dist 构建 + 本地 tsx 路径) ==="
+echo "=== 0. 全量测试运行时前置(一次 dist 构建 + 本地 tsx 路径;packaged/runtime E2E must not reuse stale generated JS) ==="
 TSX_BIN="$PWD/ts/node_modules/.bin/tsx"
 if [ ! -x "$TSX_BIN" ]; then
   echo "FAIL: 本地 tsx 不存在: $TSX_BIN"
@@ -376,10 +376,49 @@ echo "=== 47. Evaluation cadence policy(PR/nightly/weekly/milestone admission/pa
 echo
 echo "=== 48. Benchmark environment bridge(default-off/allowlist/failure/env isolation/model-driven installed runtime;focused contract + packaged CLI E2E) ==="
 (cd ts && npx tsx scripts/benchmark-environment-bridge-tests.ts) || FAIL=1
-(cd ts && npx tsx scripts/benchmark-environment-bridge-e2e.ts) || FAIL=1
+bridge_e2e_bin="${GOTRY_BRIDGE_E2E_BIN:-}"
+bridge_package_dir=""
+bridge_install_dir=""
+cleanup_benchmark_package_runtime() {
+  if [ -n "$bridge_package_dir" ] && [ -n "$bridge_install_dir" ]; then
+    rm -rf -- "$bridge_package_dir" "$bridge_install_dir"
+  elif [ -n "$bridge_package_dir" ]; then
+    rm -rf -- "$bridge_package_dir"
+  fi
+}
+trap cleanup_benchmark_package_runtime EXIT
+if [ -z "$bridge_e2e_bin" ]; then
+  bridge_package_dir=$(mktemp -d)
+  bridge_install_dir=$(mktemp -d)
+  if npm pack --silent --pack-destination "$bridge_package_dir" >/dev/null; then
+    bridge_tarballs=("$bridge_package_dir"/*.tgz)
+    if [ "${#bridge_tarballs[@]}" -eq 1 ] \
+      && [ -f "${bridge_tarballs[0]}" ] \
+      && (cd "$bridge_install_dir" && npm init --yes >/dev/null) \
+      && npx --yes pnpm@11.5.0 --dir "$bridge_install_dir" add --ignore-scripts "${bridge_tarballs[0]}" >/dev/null \
+      && [ -x "$bridge_install_dir/node_modules/.bin/gotry" ]; then
+      bridge_e2e_bin="$bridge_install_dir/node_modules/.bin/gotry"
+    else
+      echo "FAIL: benchmark packaged runtime preparation failed"
+      FAIL=1
+    fi
+  else
+    echo "FAIL: benchmark package creation failed"
+    FAIL=1
+  fi
+fi
+if [ -n "$bridge_e2e_bin" ] && [ -x "$bridge_e2e_bin" ]; then
+  (cd ts && GOTRY_BRIDGE_E2E_BIN="$bridge_e2e_bin" npx tsx scripts/benchmark-environment-bridge-e2e.ts) || FAIL=1
+else
+  echo "FAIL: benchmark packaged runtime unavailable"
+  FAIL=1
+fi
+cleanup_benchmark_package_runtime
+trap - EXIT
 
 echo
 echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/closed read registry/task-scoped ledger/real dsh core/BFF-only SSE/production bin;local model fixture) ==="
+(node scripts/build-dist.mjs) || FAIL=1
 (npx tsx scripts/booking-surface-package-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-contract-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-v2-contract-proof-tests.ts) || FAIL=1

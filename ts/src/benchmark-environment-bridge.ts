@@ -2,10 +2,15 @@ import { accessSync, constants, lstatSync, readFileSync, statSync } from 'node:f
 import { getuid } from 'node:process'
 import { isAbsolute } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import {
+  validateTerminalOutputConfig,
+  type BenchmarkBridgeProjection,
+  type TerminalOutputConfig,
+} from './benchmark-agent-conformance.ts'
 
-const SCHEMA_VERSION = 'gotry_benchmark_environment_bridge_v1'
+const SCHEMA_VERSION = 'gotry_benchmark_environment_bridge_v2'
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_.-]*$/
-const CONFIG_KEYS = ['allowed_tools', 'argv_prefix', 'cwd', 'enabled', 'executable', 'isolation', 'max_output_bytes', 'schema_version', 'timeout_ms']
+const CONFIG_KEYS = ['allowed_tools', 'argv_prefix', 'cwd', 'enabled', 'executable', 'isolation', 'max_output_bytes', 'schema_version', 'terminal_output', 'timeout_ms']
 const OPTIONAL_CONFIG_KEYS = ['allowed_output_keys']
 
 export interface BenchmarkEnvironmentBridgeConfig {
@@ -18,6 +23,7 @@ export interface BenchmarkEnvironmentBridgeConfig {
   allowed_output_keys?: Record<string, string[]>
   timeout_ms: number
   max_output_bytes: number
+  terminal_output: TerminalOutputConfig
   isolation: {
     mode: 'host-enforced'
     writes: 'forbidden'
@@ -103,6 +109,7 @@ function validate(value: unknown): value is BenchmarkEnvironmentBridgeConfig {
     || !identifiers(value.allowed_tools)
     || !validBound(value.timeout_ms, 120_000)
     || !validBound(value.max_output_bytes, 10 * 1024 * 1024)
+    || !validateTerminalOutputConfig(value.terminal_output)
     || !exactIsolation(value.isolation)
     || (Object.hasOwn(value, 'allowed_output_keys') && !allowedOutputKeys(value.allowed_output_keys, value.allowed_tools))) return false
   return true
@@ -124,7 +131,6 @@ export function loadBenchmarkEnvironmentConfig(path: string): BenchmarkEnvironme
 }
 
 type Register = (tool: ReturnType<typeof defineTool>) => void
-
 interface CollectedText {
   readFrom(offset: number): { text: string; nextOffset: number; lossy?: boolean }
 }
@@ -241,7 +247,7 @@ export function registerBenchmarkEnvironmentBridge(
   path: string,
   register: Register,
   subprocess?: BenchmarkSubprocessService,
-): void {
+): BenchmarkBridgeProjection {
   const bridge = loadBenchmarkEnvironmentConfig(path)
   if (!bridge) throw new Error('benchmark environment bridge configuration unavailable')
   if (!subprocess) throw new Error('benchmark environment bridge subprocess unavailable')
@@ -334,4 +340,9 @@ export function registerBenchmarkEnvironmentBridge(
       }
     },
   }))
+  return Object.freeze({
+    toolName: 'gotry_benchmark_environment',
+    allowedTools: Object.freeze([...bridge.allowed_tools]),
+    terminal: Object.freeze({ ...bridge.terminal_output }),
+  })
 }
