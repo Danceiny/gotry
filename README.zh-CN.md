@@ -1,110 +1,75 @@
-# GoTry
-
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[![CI](https://github.com/Danceiny/gotry/actions/workflows/ci.yml/badge.svg)](https://github.com/Danceiny/gotry/actions/workflows/ci.yml)
+# GoTry
 
 > **身体和灵魂,更多旅行,更少旅游。**
 > *Body and soul — more travel, less tourism.*
 
-**GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:你用一句话说想去哪、为什么想出发;它先问清楚你的工作时间和已订资源,再用**数学求解器**给你一份经过验证的行程方案。
+**GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:你用一句话说想去哪、为什么想出发;它先问清楚你的工作窗口和已订资源,再用 **Z3 数学求解器**给你一份经过形式化验证的行程方案——是算出来的,不是模型猜的。
 
-**GoTry is an AI travel agent for departure-to-next-departure.** Tell it where you want to go and why. It asks what's missing, then hands you a **formally verified itinerary** — not vibes.
+[![CI](https://github.com/Danceiny/gotry/actions/workflows/ci.yml/badge.svg)](https://github.com/Danceiny/gotry/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@danceiny/gotry)](https://www.npmjs.com/package/@danceiny/gotry)
+[![License: MIT](https://img.shields.io/badge/License-MIT-informational)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.15-blue)](https://www.npmjs.com/package/@danceiny/gotry)
+[![Docs](https://img.shields.io/badge/docs-architecture.md-blue)](docs/architecture.md)
 
----
+**[它做什么](#它做什么)** · **[工作原理](#工作原理)** · **[工具](#工具)** · **[一段对话](#一段对话)** · **[快速开始](#快速开始)** · **[账号会话:授权与隐私](#账号会话授权与隐私)** · **[构造上可信](#构造上可信)** · **[状态与限制](#状态与限制)** · **[路线图](#路线图)** · **[给 AI Agent](#给-ai-agent)** · **[文档](#文档)** · **[License](#license)**
 
-## 🚀 30 秒上手
+> **新读者提示**:一条命令就能感受差别——`npx @danceiny/gotry web`,打开 `http://127.0.0.1:3080`,说一句「我想去大理躺三天」。Agent 会先访谈你;然后由求解器(而非模型)判定什么可行。完整走查见 [`docs/user-guide.md`](docs/user-guide.md)。
 
-```bash
-npx @danceiny/gotry web
-# 首跑会提示建 .env:LLM_API_KEY=<DeepSeek key 或 OpenAI 兼容 key>
-#   不走 DeepSeek 官方?再配一行 LLM_BASE_URL=<你的端点,一般以 /v1 结尾>
-#   要指定模型(中转而常需要)?配 LLM_MODEL=<模型名>——同时驱动 dsh 会话面
-#   (web/headless)与仓内脚本,并压过你在 dsh web 设置里选过的模型。
-# → 浏览器打开 http://127.0.0.1:3080,像聊天一样说「我想去大理三天」
-```
+## 它做什么
 
-> **换模型 / 换中转?** 价表(`ts/data/llm-price-table.json`,schema `gotry_llm_price_table_v2`)是 `gotry_m3_nightly_run_v1.cost_usd` 唯一事实源(ADR-11)。新增模型或换中转=改本文件走 PR(peak 保守上界只高不低),未知模型 → **fail-closed 不猜价**。漂移监测:`npx tsx ts/scripts/price-drift-watch.ts`(默认离线对照 baseline 比对输出 PR-就绪 Markdown diff;`--fetch` 拉取官方页 + 首次写 fixture)。**永不自动 apply 价格**。
+GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多少」。当答案是「这周末不行」时,目的地连同成行条件进愿望池接住,而不是被丢掉。
 
-| 你想要的 | 命令 |
-|---|---|
-| 🖥️ 对话规划(推荐) | `npx @danceiny/gotry web` → :3080 对话界面 |
-| 🤖 脚本/一次性问答 | `npx @danceiny/gotry "我想从深圳休整两天,预算 3000"` |
-| 🛠️ 开发者:仓内运行 | 见下方[源码安装](#-快速开始) |
+- **给旅行者** —— 一个先问对人问题(工作窗口/已订资源/出发城市/预算)的对话规划器,然后逐目的地给判决:可行/不可行、为什么、以及**让它可行的最小改动**。
+- **给 Agent 工程师** —— 一个「LLM 只负责听懂、翻译、解释」的落地样本:判定与算术在 Z3 求解器里,交付物里每个数字都带来源标签,写操作从设计上就是被闸住的。
+- **证据内建** —— 估算绝不冒充实时。标签由渲染层附加、模型无权染指;降级时标签如实更换。回溯不到 exact-date 工具结果的可下单 claim,交付前就被拦下。
 
-- 前置:Node 22.15+;一个 LLM API key。任何 OpenAI 兼容端点(MiniMax/中转/自建网关)也可——在 `.env` 另配 `LLM_BASE_URL`(一般以 `/v1` 结尾,如 `https://api.minimax.io/v1`),请求即走它而非 DeepSeek 默认端点。要锁定模型就配 `LLM_MODEL`(如 `MiniMax-M2`):对 dsh 会话面与仓内脚本同时生效,并压过 dsh web 设置里持久化的模型选择;不配则用 dsh 内置默认(`deepseek-v4-flash`)或你在 web 界面的选择。零成本启动——dsh 运行时以 cordis patch 自动挂载,无额外配置。
-- 例外提示:`:3080` 端口被占时先 `kill <PID>`;首启 6–15 秒属正常冷启动;异常退出会留证据到 `gotry-state/incidents.jsonl`(不静默)。
+## 工作原理
 
-<details>
-<summary>🛠️ 开发者:源码安装(仓内运行)</summary>
-
-```bash
-git clone https://github.com/Danceiny/gotry && cd gotry
-npm ci && npm --prefix ts ci                      # ① 安装 root/TS 锁定依赖闭包
-node scripts/build-dist.mjs                       # ② 构建源码检出的 JS runtime
-cp .env.example .env                              # ③ 填 LLM_API_KEY(非 DeepSeek 官方另配 LLM_BASE_URL;锁定模型另配 LLM_MODEL)
-./gotry web                                       # ④ 仓内入口,同 npm 形态
-```
-
-| 入口 | 命令 | 什么时候用 |
-|---|---|---|
-| dsh Web 对话(推荐) | `./gotry web` | 持续多轮规划,看推理可视化 → :3080 |
-| headless 一问一答 | `./gotry "一句任务"` | 脚本 / CI / 定向调试 → stdout |
-| help | `./gotry help` | 三行帮助 |
-
-为什么源码模式先装 root/TS 闭包并构建 dist:源码入口与 npm 包都解析同一组 216 个精确直接依赖的 DSH `0.1.2-alpha.3` closure；manifest、package-lock 与 root pnpm importer 必须暴露同一 216 项名称集合，publish preverify 会拒绝漏钉、混版和 range；源码普通运行的 dsh cwd 仍是 `ts/dsh-runtime/`，因此状态继续落 `ts/dsh-runtime/gotry-state/`；benchmark opt-in 与 npm 包运行使用调用目录隔离。`ts/dsh-runtime/` 的旧 vendored runtime 只保留为非 benchmark legacy 解析兼容，不承诺可运行，也不再是推荐安装路径。
-
-</details>
-
----
-
-## ✨ 它做什么 — What it does
-
-GoTry 把「想去哪」变成「能不能、怎么去」:
+一次规划是一条流水线:模型只占语言密集的两端,数值全部归求解器:
 
 | 阶段 | 由谁做 | 给你什么 |
 |---|---|---|
-| **动机访谈** | LLM | 必问项:工作窗口 / 已订资源 / 出发城市 |
-| **事实抽取** | LLM | 工作窗口生效 + 休假语义识别 |
-| **可行性判定** | **Z3 求解器** | 哪些候选可行、哪些不可行、为什么、**最小改动让它可行** |
-| **门到门全成本** | 求解器 | 真实飞行时长(含时差)+ 醒来起夜惩罚 + 接驳代价 + 到达精力 % |
-| **证据链** | 渲染层 | 每个数字都带**来源标签**:`[骨架:openflights]`=公开航线数据校验过"这条线能飞";`[实时API:flyai]`=刚从实时接口拉的现价现况;`[静态包:估算]`=非实时的调研估算(**下单前请核实**)。降级时标签如实更换,估算绝不冒充实时 |
+| 动机访谈 | LLM | 必问项:工作窗口 / 已订资源 / 出发城市 |
+| 事实抽取 | LLM | 工作窗口生效 + 休假语义识别 |
+| 可行性判决 | **Z3 求解器** | 哪些候选可行/不可行、为什么、**最小改动让它可行** |
+| 门到门全成本 | 求解器 | 真实飞行时长(含时差)+ 早起惩罚 + 接驳代价 + 到达精力 % |
+| 证据链 | 渲染层 | 每个数字都带来源标签 |
+| 交付闸 | 事实闸 | 可下单 claim 必须回溯到 exact-date 工具结果,否则产物 blocked |
+| 记忆 | 领域层 | 当下不可行 → 愿望池,附显式召回条件 |
 
-**不像普通 AI 聊天**——LLM 只做理解和解释,**判定与算术是数学求解器**算的。
+在 GoTry 的回答里会遇到的词汇:
 
-> **Unlike a regular AI chat**, the LLM only translates and explains. **Decisions and arithmetic are computed by a Z3 solver**, not guessed.
+- **证据标签** —— `[骨架:openflights]` 航线存在性经公开航线库校验;`[实时API:...]` 刚从实时接口拉回数秒;`[静态包:估算]` 调研估算——非实时,下单前请核实。降级时标签如实更换。
+- **门到门全成本** —— 票价之外,这段旅程真正从你身上拿走的东西:跨时区的真实时长、早起惩罚、接驳、落地时的精力余额。
+- **愿望池** —— 「下一次出发」的存储。装不下的憧憬带显式条件(如「5 天+、淡季」)入池,条件满足时被召回。
+- **事实闸** —— 行程产物交付前闸:每条可下单 claim(航班号/时刻/机场/价格/政策)必须回溯到 exact-date 工具结果;回溯不到即 blocked——绝不宣称「已验证方案」。
 
----
-
-## 🎬 一段对话 — Demo
-
-输入 → 引擎判定 → 输出(真实输出,milliseconds 保留原味):
+架构五层:
 
 ```
-> 我想去洱海边发呆两三天,上海出发,预算 3000,年假别让我办公。
-
-GoTry: 收到。先把约束记下来——
-  • 窗口: 2 天(2026 年窗口)  • 出发: 上海  • 预算: ¥3000 全含
-  • 动机: 休整 / [escape_rest: 0.7]  • 还没订任何东西
-
-引擎判定:
-  **大理·洱海: 现在不行** —— 2 天窗口装不下「至少 5 天的洱海休整」。
-    放宽方案: 行程延长到 5 天,约 ¥4950。★已放入「下一次出发」清单。
-  **千岛湖: 可行** (G7315 06:35 出发,¥996,到达精力 84%,有效休整 4.4h)
-  **太湖: 可行** (G101 09:00 出发,¥716,有效休整 4.6h)
-  建议: 千岛湖(意象匹配 80%)。
-
-[骨架:openflights] ✓ SZX↔PVG 已校验 [实时API:hbcli] 上海机场在跑
-[静态包:估算] G7315/G7316 价格按 7-8 月淡季估算
+┌──────────────────────────────────────────────────────────────┐
+│ L1  对话即界面  chat-as-UI; gates 是消息内选择题                 │
+│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);21 个工具            │
+│ L3  领域  统一行程模型 + Z3 可行性引擎                          │
+│ L4  数据  静态数据包 + hotelbyte-cli 实时桥 + OpenFlights 骨架 │
+│ L5  治理  LoopX(objective / gates / evidence / quota)         │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-> 标签导读:`[骨架:openflights]` 说的是"这条航线能飞"已被公开航线数据校验;`[实时API:*]` 说的是刚从实时接口拉回的当下数据;`[静态包:估算]` 提醒价格是淡季档估算——**订前核实**。
+| 层 | 模块 | 角色 |
+|---|---|---|
+| L2 | `ts/src/index.ts`(dsh 插件) | 注册 21 工具,挂时间锚点/记忆 brief 变量;execute 异常隔离 + 授权闸 + 每轮工具预算 + 进程护栏 |
+| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | 唯一求解入口(候选枚举 + 航班链 Z3) |
+| L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | 效应解译层(退避重试/断路器/mock 解译器)+ 实时库存桥 + OpenFlights 骨架(三值语义) |
+| L5 | loopx 治理面 | objective / gates / evidence / quota |
 
-> **Brief English summary**: input → engine verdicts (feasibility + whole-cost) → recommendation + wish-pool entry for infeasible candidates. Every numeric carries an evidence tag. See the 证据链 row above for what each tag means.
+> 完整 ADR / 演进 / 债务清单:[`docs/architecture.md`](docs/architecture.md)(英文版计划 v0.1.0)。
 
----
+## 工具
 
-## 🧰 21 个工具 — Tools
+六组共 21 个:
 
 | 组 | 工具 | 干什么 |
 |---|---|---|
@@ -121,129 +86,188 @@ GoTry: 收到。先把约束记下来——
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | 「下一次出发」愿望池 + 0..1 条件召回 |
 | | `gotry_companion_save` · `gotry_trip_log` | 同行人档案 / 旅行时间线 |
 | **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成的产物(异步交付 + 工作目录 markdown),行号文件视图,只读 |
-| **事实闸** | `gotry_fact_gate` | 行程产物交付前闸:每条可下单 claim(航班号/时刻/机场/价格/政策)必须回溯到 exact-date 工具结果(hit/miss 均落账);无法回溯 ⇒ blocked——不得宣称「已验证方案」 |
+| **事实闸** | `gotry_fact_gate` | 行程产物交付前闸——见上文[工作原理](#工作原理)中的定义 |
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页/字幕/GitHub/全渠道外部信息(经 Agent-Reach) |
 
----
+## 一段对话
 
-## 🔐 账号会话:授权与隐私 — Account consent
+```
+> 我想去洱海边发呆两三天,上海出发,预算 3000,年假别让我办公。
 
-会话检索使用**你本人已登录的 Chrome**读取酒店/机票实时数据,为此立了四条 hard 规则:
+GoTry: 收到。先把约束记下来——
+  • 窗口: 2 天  • 出发: 上海  • 预算: ¥3000 全含
+  • 动机: 休整 / [escape_rest: 0.7]  • 还没订任何东西
 
-1. **登录在外部网站完成** —— gotry 从不提供、不代填、不收集任何密码/验证码/cookie 值。它只回答一个布尔问题:"登录票据 cookie 存在吗"(只读**名字**,0 值过手)。
-2. **授权卡,每会话一次** —— 首次动用账号会话会弹运行时审批卡;批准后会话内记住,拒绝即本会话吊销,不再打扰。总闸 `sessionAccess: ask|allow|off` 随时可关。
-3. **物理只读** —— ReadGuard 在网络层中止一切写请求(下单/支付在传输层不可达),agent 永不接触凭证与验证码;遇到验证码立即停,交还给你。
+引擎判定:
+  **大理·洱海: 现在不行** —— 2 天窗口装不下「至少 5 天的洱海休整」。
+    放宽方案: 行程延长到 5 天,约 ¥4950。★已放入「下一次出发」清单。
+  **千岛湖: 可行** (G7315 06:35 出发,¥996,到达精力 84%,有效休整 4.4h)
+  **太湖: 可行** (G101 09:00 出发,¥716,有效休整 4.6h)
+  建议: 千岛湖(意象匹配 80%)。
+
+[骨架:openflights] ✓ SZX↔PVG 已校验 [实时API:hbcli] 上海机场在跑
+[静态包:估算] G7315/G7316 价格按 7-8 月淡季估算
+```
+
+> 标签导读:`[骨架:openflights]` 说的是"这条航线能飞"已被公开航线数据校验;`[实时API:*]` 说的是刚从实时接口拉回的当下数据;`[静态包:估算]` 提醒价格是淡季档估算——**订前核实**。标签由渲染层附加,模型无权染指。
+
+## 快速开始
+
+### npm(推荐)
+
+```bash
+npx @danceiny/gotry web
+# 首跑会在当前目录建 .env:
+#   LLM_API_KEY=<DeepSeek key 或 OpenAI 兼容 key>
+#   LLM_BASE_URL=<你的端点,一般以 /v1 结尾>   # 不走 DeepSeek 官方时配
+#   LLM_MODEL=<模型名>                         # 中转常需要;同时锁定模型
+# → 浏览器打开 http://127.0.0.1:3080,说「我想去大理躺三天」
+```
+
+| 入口 | 命令 | 什么时候用 |
+|---|---|---|
+| Web 对话(推荐) | `npx @danceiny/gotry web` | 持续多轮规划,看推理可视化 → `:3080` |
+| headless 一问一答 | `npx @danceiny/gotry "我想从深圳休整两天,预算 3000"` | 脚本 / CI / 定向调试 → stdout |
+| 扩展安装 | `npx gotry setup` | 一次性,为账号会话工具——见[账号会话:授权与隐私](#账号会话授权与隐私) |
+
+前置:Node ≥ 22.15;一个 LLM API key。任何 OpenAI 兼容端点(MiniMax/中转/自建网关)均可。`LLM_MODEL`(如 `MiniMax-M2`)对 dsh 会话面与仓内脚本同时生效,并压过 dsh web 设置里持久化的模型选择。首启 6–15 秒属正常冷启动;`:3080` 被占先腾端口;异常退出会留证据到 `gotry-state/incidents.jsonl`(不静默)。
+
+> **成本核算** —— `ts/data/llm-price-table.json`(schema `gotry_llm_price_table_v2`)是 nightly 成本核算的唯一事实源。新增模型或换中转=对该文件提 PR(peak 保守上界只高不低);未知模型 **fail-closed 不猜价**。漂移监测:`npx tsx ts/scripts/price-drift-watch.ts`(默认离线对照 baseline;`--fetch` 拉官方页)。**永不自动 apply 价格**。
+
+### 开发者源码安装
+
+```bash
+git clone https://github.com/Danceiny/gotry && cd gotry
+npm ci && npm --prefix ts ci                      # 锁定的 root/TS 依赖闭包
+node scripts/build-dist.mjs                       # 构建 JS runtime
+cp .env.example .env                              # 填 LLM_API_KEY(另按需 LLM_BASE_URL / LLM_MODEL)
+./gotry web                                       # 仓内入口,与 npm 形态同 UX
+```
+
+源码入口与 npm 包解析同一组 216 个精确直接依赖的 DSH `0.1.2-alpha.3` closure(publish preverify 拒绝漏钉、混版和 range)。源码普通运行状态落在 `ts/dsh-runtime/gotry-state/`;benchmark opt-in 与 npm 包运行用调用目录隔离。
+
+## 账号会话:授权与隐私
+
+账号会话通道用**你本人已登录的 Chrome**读酒店/机票实时数据,为此立了四条 hard 规则:
+
+1. **登录在外部网站完成** —— gotry 从不提供、不代填、不收集任何密码/验证码/cookie 值。它只回答一个布尔问题:"登录票据 cookie 存在吗"(只读**名字**,0 值过手)。已登录会被自动识别,零弹窗。
+2. **授权卡,每会话一次** —— 首次动用账号会话弹运行时审批卡;批准后会话内记住,拒绝即本会话吊销,不再打扰。总闸 `sessionAccess: ask|allow|off` 随时可关。
+3. **物理只读** —— ReadGuard 在网络层中止一切写请求(下单/支付在传输层不可达);agent 永不接触凭证与验证码,遇验证码立即停、交还给你。
 4. **绝不劫持你的浏览器** —— 检索/登录只开自己的独立标签页,登录页置前台、留在你那;例行动测试永不自动开浏览器窗。
 
-> 前置(一次性):安装随包分发的 **GoTry Session Bridge** 浏览器扩展(MV3,约 30 秒):跑 `npx gotry setup` 落位到 `~/.gotry/extension`,再到 Chrome `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」选该目录。装完**零系统弹窗**——扩展只被动转发站点自己发出的检索响应(构造上只读;cookie 只读名字,值永不离开浏览器)。未安装时工具返回 `needs-extension` 并给出指引,不消耗执行配额。(诊断后备:cdp 车道经 `chrome://inspect` 远程调试,`GOTRY_SESSION_TRANSPORT=cdp` 显式开启——注意 Chrome 144+ 每次连接都会弹权限框。)
+前置(一次性):随包分发的 **GoTry Session Bridge** 浏览器扩展(MV3,约 30 秒)。`npx gotry setup` 引导你装到 `~/.gotry/extension`(Chrome → `chrome://extensions` → 开发者模式 → 加载已解压的扩展程序)。装完**零系统弹窗**——扩展只被动转发站点自己发出的检索响应(构造上只读;cookie 只读名字,值永不离开浏览器);后台 health-watch 探活,扩展一就位自动重放你的检索。未安装时工具返回 `needs-extension` 并给指引,不消耗执行配额。想走 GitHub Releases 下载通道?`npx gotry setup --extension-from=github`(版本化 tar.gz + SHA256 + 固定 key 钉扎,原子交换,任何失败自动降级包内副本)。平台约束(诚实):Chrome 只有上架 Web Store 才能消掉「开发者模式加载已解压」的点击——上架材料已备好,待 founder 提交。
 
----
+## 构造上可信
 
-## 🏛️ 架构 — Architecture
+1. **模型只翻译,求解器才判决** —— LLM 永远不产出可行性判决与算术;那些由 Z3 基于抽取事实计算。
+2. **每个数字带来源标签** —— 由渲染层附加,模型无权染指;降级时如实更换,估算绝不冒充实时。
+3. **不存在写路径** —— 预订/支付类工具必须先过 WriteGate 才允许实现;未来的预订缝已被 `booking_saga_fsm.v1` 边表钉住。
+4. **登录永不碰凭证** —— 登录发生在外部网站;gotry 只读 cookie 名;授权每会话问一次、可吊销。
+5. **检索物理只读** —— ReadGuard 在网络层中止写请求;验证码让 agent 停下、把控制权交还给你。
+6. **回溯不到就是 blocked** —— 事实闸拒绝交付任何可下单 claim 无法回溯到 exact-date 工具结果的行程——绝不宣称「已验证方案」。
+7. **价格 fail-closed** —— 未知模型不猜价;价表只经 PR 变更;漂移监测只报告、永不自动 apply。
+8. **你的数据是你的** —— 产品状态在 `gotry-state/`;自动化测试与 smoke 用隔离 state root,永不写创始人的真实产品数据。
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│ L1  对话即界面  chat-as-UI; gates 是消息内选择题                 │
-│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);21 个工具            │
-│ L3  领域  统一行程模型 + Z3 可行性引擎(枚举/Z3 双形态)        │
-│ L4  数据  静态数据包 + hotelbyte-cli 实时桥 + OpenFlights 骨架 │
-│ L5  治理  LoopX(objective / gates / evidence / quota)         │
-└──────────────────────────────────────────────────────────────┘
-```
+## 状态与限制
 
-| 层 | 模块 | 角色 |
-|---|---|---|
-| L2 | `ts/src/index.ts`(dsh 插件) | 注册 21 工具,挂时间锚点/记忆 brief 变量;execute 异常隔离 + 授权闸 + 进程护栏 |
-| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | 唯一求解入口(候选枚举 + 航班链 Z3) |
-| L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | 效应解译层(退避重试/断路器/mock 解译器,issue #16)+ 实时库存桥 + OpenFlights 骨架(三值语义) |
-| L5 | loopx 治理面 | objective / gates / evidence / quota |
+当前版本:**v0.0.1-rc.16**(npm `latest`)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。
 
-> 📖 完整 ADR / 演进 / 债务清单: [`docs/architecture.md`](docs/architecture.md)
+**今天可用**(全栈回归全绿;每项都有确定性测试):
 
----
+- **Z3 求解引擎** —— 可行性判决 + 门到门全成本;历史并发竞态已根治并进回归闸
+- **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`)
+- **账号会话检索** —— 你本人登录态查携程机票;观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
+- **安装向导与扩展双通道** —— `npx gotry setup`(包内副本默认,离线确定性);GitHub Releases 通道显式 opt-in,SHA256 + key 钉扎,失败自动降级
+- **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
+- **有界的工具循环** —— 16 次派发后注入软收敛,18 次后结构化 `TOOL_BUDGET_EXHAUSTED` 拒绝;经打包消费者安装的 E2E 在 CI 里实测
 
-## ⚠️ 状态与限制 — Status & limitations
+**已知限制**(诚实清单):
 
-**今天可用的能力**(全栈回归 §1–§34 全绿,每项都有确定性测试):
-
-- **Z3 求解引擎** —— 可行性判定 + 门到门全成本;历史并发竞态已根治(§30 并发回归闸)
-- **实时检索**:机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;可选让实时票价覆写进求解(`GOTRY_REALTIME_PRICING=1`)
-- **账号会话检索**:你本人登录态查携程机票,授权与隐私规则见上方 **🔐 账号会话:授权与隐私** 小节
-- **一次性浏览器扩展安装**:`npx gotry setup wizard` 引导你 30 秒装好 GoTry Session Bridge(MV3,扩展 ID 跨机器稳定,会话内零系统弹窗);后台 health-watch 探活,扩展一就位自动重放你的检索,**无需你手动重跑命令**
-- **扩展分发双通道(issue #21,ADR-21)**:默认仍用包内副本(离线确定性);`npx gotry setup --extension-from=github` 显式走 GitHub Releases 下载通道(版本化 tar.gz + SHA256 + 固定 key 钉扎,原子交换 `~/.gotry/extension`,任何失败显式降级包内副本)。平台约束(诚实):Chrome 只有上架 Web Store 才能消掉「开发者模式加载已解压」的点击——上架材料已备好(`docs/extension-webstore-submission.md`,待 founder 提交)。
-- **会话数据交叉验证(issue #21 / #67)**:8 条 sf-01..sf-08 benchmark query 端到端验证 —— 7/8 verdict=hit / 6/6 manual-golden 软命中 100% / hit 全部 <15s / ReadGuard 零写。对照源可插拔:`--golden=manual`(默认)、`--golden=flyai`、`--golden=static`。static 模式以 OpenFlights ODbL 固定修订提供航线/承运人,叠加手工时刻与价格带；evidence 分开记录请求源/实际源、provenance、estimated fields 与 fallback reason。快照/路由异常会向 stderr 告警后回退 manual。static 是确定性 benchmark 数据,**不是实时班期、票价或库存**。
-- **static 源登录态观测(2026-08-30)**:连续两轮 static official 均 8/8 hit、零 fallback;携程 session hit 从 3/8 波动到 5/8,两轮所有可评分 hit(3+5 条)全部 13/13(100%)。非 hit 均是显式 `miss`,因此 ≥90% 字段分不表述为 8/8 实时可售。同轮修复扩展在线时空闲 parked timer/socket 钉住默认 CLI 桥的生命周期缺口,wizard `keepBridge` 语义不变(§38:24/24,§40:9/9)。
-- **记忆与触达**:动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
-
-**已知限制**(截至 2026-08-29,诚实清单):
-
-- ⏳ **M3 Exit 未关闭** —— 工程与分发面就绪,但"真实种子用户"证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
-- ⏳ **携程酒店 / 美团的登录态会话适配** —— 机票已通,酒店面等登录态实测回填(下一个 tick)
-- ⏳ **界面语言** —— 英文界面仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
-- ⏳ **外部 benchmark 泛化 / Phase 1 bridge** —— Round 1 的 exact DeepSeek treatment 为 environment unavailable/schema-invalid（score 0），GLM 为 300 秒超时。Round 2 建立 default-off owner-local bridge；其冻结 treatment 因没有 structured native bridge call 与 tagged JSON，只到 diagnostic-only。Round 3 增加 provider-neutral 的 native call/result/terminal conformance，但新冻结 treatment 仍在 runner 仅派发一次后以 planner/runner exit 1 停止，parent 释放 0 字节终态，evaluator 未进入，official scores 全为 null。Round 4 treatment（SHA `5ebddb2`）primary preflight=pass，但 planner/runner 均在 30.968s 以 exit 1 结束，释放 0 字节，evaluator 未进入，official scores 全为 null。产品 gate 使用 Node v24.20.0，而该 treatment 使用 v26.3.0，因此该结果仅 diagnostic-only，不产生 uplift。GitHub Node 22/24 §48 另暴露 source default-off 30s lifecycle hang。Round 5 仅限移除 timer/keepalive preload、将 root/package DSH closure 锁定为 alpha.3、让 source checkout 优先解析该锁定 runtime、保留源码普通运行的 `ts/dsh-runtime/gotry-state/` 状态连续性、让 benchmark/package 用调用目录隔离、在 spawn 前拒绝非 alpha.3 benchmark runtime、强制 Node 22.15+，并增加 benchmark-only 结构化诊断 pipe（allowlisted redacted reason codes），stdout 继续 fail-closed；其 frozen treatment（代码 SHA `752e54c`）在 140.715 秒后以 `child_nonzero_exit`、0 terminal bytes、evaluator/official scores null 停止，仅 diagnostic-only，后续纯 lock-consistency 提交不改写该 UID 归属。跨 benchmark 证据仍待运行，不声称 external benchmark closure。详见 [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)。
-- ⏳ **Round 6 结构化终态诊断** —— benchmark 模式只把最终结构化 `turn/end` 投影为闭合、脱敏的模型/运行时原因族；per-session 仲裁最多写一次，且 bridge/conformance 专项原因优先于后续 generic runtime。恢复成功的 transient retry 不写失败；message、raw stderr、路径、prompt、request id 与凭证不跨控制通道。代码 SHA `c61600b` 的 ChinaTravel 冻结 treatment（`..._00001`，`deepseek-v4-flash`）在 49.546 秒后以 `child_runtime_error`、0 terminal bytes、evaluator/official scores null 停止；leakage 与本地凭证/端点扫描均为 0。该证据只改善归因，不产生 score/uplift 结论；后续纯文档 successor 不改写 treatment 归属。
-- ⏳ **Round 7 minimal kernel** —— 代码 SHA `edb9392896625adbb48abae4a2ecf968dbfc0349` 的 benchmark opt-in 仅保留 tool budget、model override、唯一 bridge、isolation/conformance；不装产品 prompt variables、process guards、consent hooks 与普通 GoTry tools，默认路径不变。CLI 将系统人格投影为稳定、task-agnostic persona，root patch 只接受 canonical `insert` 与 `system-prompt` 各一，缺失、重复、quoted、reordered、flow 或其他非 canonical root item 均 fail-closed。ChinaTravel 冻结 treatment UID `e20241028160248698752`（`easy`，`deepseek-v4-flash`）preflight pass 且未回退，80.463 秒后 runner exit 1、terminal 0 bytes/invalid，evaluator 未进入、official null、不可计分；白名单归因为 `child_bridge_runner_failed`，不产生 uplift 或 external benchmark closure。下一轮聚焦 generic bridge tool schema 与可恢复 domain-error contract。
+- **M3 Exit 未关闭** —— 工程与分发面就绪,但真实种子用户证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
+- **酒店会话适配** —— 携程酒店/美团登录态面等实测回填;机票已通
+- **界面语言** —— 英文仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
+- **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic(无分数、无 uplift 声明);逐轮工程台账见 [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)
+- **预订** —— 今天没有任何可下单路径;M5 只经 WriteGate 与 booking-saga 状态机启封
 
 <details>
-<summary>📖 更深的工程状态(账本合同 / 证据合同 / 里程碑口径)</summary>
+<summary>更深的工程状态(账本合同 / 证据合同 / 里程碑口径)</summary>
 
-状态权威面在这里,README 不展开:事务化状态账本(ADR-15)+ 双形态冻结(ADR-16:本地+Web 一套账本语义);M3 真实 cohort 证据合同已立(fixture 不充当 Exit,真实 50–200 人样本即开 Exit);M4 paired-cohort 价值证据合同(run-all §34)合成数据不充当 Exit 证据;异步工单终态合同(`gotry_async_terminal.v1`:4/4→succeeded/ledger settled/exit 0)。细则见 [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 与 #19–#22。
+状态权威面在文档,不在 README:事务化状态账本(ADR-15)+ 双形态冻结(ADR-16:本地+Web 一套账本语义);M3 真实 cohort 证据合同已立(fixture 不充当 Exit,真实 50–200 人样本即开 Exit);M4 paired-cohort 价值证据合同(合成数据不充当 Exit 证据);异步工单终态合同(`gotry_async_terminal.v1`:4/4 → succeeded / ledger settled / exit 0)。细则见 [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 与 #19–#22。
 
 </details>
 
----
+## 路线图
 
-## 📚 文档 — Docs
+| # | 里程碑 | 范围 | 状态 |
+|---|---|---|---|
+| M0 | 确定性管道 | 引擎双实现 + 真实数据包 + 对账框架 | ✅ |
+| M1 | Agent 形态成立 | LLM 进环;对话即界面;gates 选择题 | ✅ 2026-08-22 |
+| M2 | 实时数据 | hotelbyte 桥 + 航班源;证据链换实时标签 | ✅ 2026-08-22 |
+| M3 | 最小可用产品 | 最小 Web 面 + 50–200 种子用户(洱海/普吉场景) | **← 当前 —— evidence 未收口** |
+| M4 | 记忆与「下一次出发」 | 六层记忆 C 端域;paired-cohort 价值证据 | founder 授权并行 |
+| M5 | 交易闭环 | WriteGate 上生产;预订 / 支付 / 退改 | entry gate 启封 |
+| M6 | B2B 包裹 | principal/sponsor 插件,内核零改动 | entry gate 启封 |
 
-| 文档 | 适合谁 |
-|---|---|
-| [本 README](README.md) | **所有人**:是什么 · 怎么用 · 限制 |
-| [`docs/architecture.md`](docs/architecture.md) | 工程师:分层 · ADR · 演进 · 债务 |
-| [`docs/roadmap.md`](docs/roadmap.md) | 项目管理:M0–M6 与当前位置 |
-| [`docs/user-guide.md`](docs/user-guide.md) | 终端用户:详细使用文档 |
-| [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | 产品:主循环 · 透明机制 · 全成本模型 |
-| [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md) | 决策者:工作分解 · 复用矩阵 |
-| [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md) | 所有人:真实 AI 旅行规划失败复盘(反面教材) |
-| [`docs/release-notes.md`](docs/release-notes.md) | 历史:每个 tag 的发布闸勾稽 |
+唯一权威时间线(逐里程碑的进入/退出条件、交付物与 gate):[`docs/roadmap.md`](docs/roadmap.md)。
 
----
-
-## 🧪 跑测试 — Verify
+## 跑测试
 
 ```bash
-./scripts/run-all-tests.sh
+./scripts/run-all-tests.sh                     # 全栈套件(纯 TS,无 Python 依赖)
+cd ts
+npx tsx scripts/evaluation-contract-tests.ts   # 评测 Phase 0 合同(离线)
+npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 ```
 
-全栈一次性绿(纯 TS,无 Python 依赖):engine/journey/unified 金标准 · 对话重放 · 异步工单跨进程 · 插件 smoke · hbcli · 进程护栏(含工具异常隔离)· 天气 · 航班 · Anything · probePoi · agent-reach(web/deep/wrapper)· 双路径稳定性 · 时间感评测(锚点卡/槽位过期校验/评分器/mock 回放;真模型巡检 `time-eval-tests.ts --real`)· 记忆域(动机合并守门/效用 sidecar/只读指标投影)· **Z3 并发竞态(§30)· 实时票价桥(§31)· i18n 目录(§32)· M3 cohort 证据合同(§33)· M4 价值证据合同(§34)· 会话传输扩展桥(§38)· onboarding UX wizard(§40)· 可下单事实闸(§39)· 扩展分发通道(§43)· sf-live static-golden 离线合同(§44)**。真实 runner 为 `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static`,仍需用户 Chrome 会话扩展在线。
+套件覆盖金标准引擎、对话重放、跨进程异步工单、插件 smoke、实时桥、进程护栏、i18n、记忆域、Z3 并发闸、事实闸、打包消费者工具预算 E2E 等;权威分节以 `scripts/run-all-tests.sh` 实际枚举为准。真实会话 benchmark(`npx tsx scripts/sf-live-benchmark.ts --golden=static`)为 opt-in,需你的 Chrome 会话扩展在线,永不进 CI。
+
+## 参与开发
+
+从最新 `main` 切出 `feat/ · fix/ · docs/ · chore/` 分支,本地全栈绿后开 Pull Request——`main` 不直接推。CI(Node 22/24,typecheck + 全部套件)与维护者 review 双绿后 squash 合入。**测试红着不许合。** 完整指南:[CONTRIBUTING.md](CONTRIBUTING.md)。Bug/功能建议:用 issue 模板(先搜既有 issue)。
+
+## 给 AI Agent
+
+如果你是在本仓工作的 agent,[`AGENTS.md`](AGENTS.md) 是绑定契约,先读它。要点:
+
+- **入场先清扫异步工单**:`ts/gotry-state/async/*.json` 无同名 `.deliverable.md` → `cd ts && npx tsx scripts/async-collect.ts <id>`。
+- **分层纪律**:算术只在 `model.ts` / `unified.py` 的 evaluate 层;求解只在 `unified.ts` / `unified.py`;`engine.*` / `journey.*` 是 deprecated 兼容层,新代码不得调用。改任何一侧必须跑全栈回归。
+- **绝不写共享状态**:`ts/dsh-runtime/gotry-state/` 是创始人真实产品数据;验证写路径只用隔离 `stateRoot`。
+- **状态同步纪律**:任何改变系统形态/状态/债务的提交,必须在同一提交内同步 `architecture.md` §11 六状态面;只暂存具名文件——禁止 `git add -A`。
+
+程序层语境:[`docs/gotry-master-outline.md`](docs/gotry-master-outline.md)。技术权威面:[`docs/architecture.md`](docs/architecture.md)。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | 系统 / ADR / 演进 / 债务清单(中文,权威) |
+| [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md) | 总纲:工作分解 · 复用矩阵 |
+| [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | 产品设计:主循环 · 透明机制 · 全成本模型 |
+| [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 时间线与当前位置 |
+| [`docs/user-guide.md`](docs/user-guide.md) | 终端用户使用指南 |
+| [`docs/data-sources.md`](docs/data-sources.md) | 数据源与证据链政策 |
+| [`docs/extension-privacy.md`](docs/extension-privacy.md) | Session Bridge 扩展隐私 |
+| [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md) | 外部 benchmark 桥——工程台账 |
+| [`docs/evaluation-foundation.md`](docs/evaluation-foundation.md) | 评测 Phase 0 基座 |
+| [`docs/booking-saga-fsm.md`](docs/booking-saga-fsm.md) | 预订 saga 状态机(M5 缝词汇) |
+| [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md) | 一次真实 AI 旅行规划失败复盘(反面教材) |
+| [`docs/release-notes.md`](docs/release-notes.md) | 逐版本发布决策(「为什么」) |
+| [`CHANGELOG.md`](CHANGELOG.md) | 机器衍生的变更日志(Keep a Changelog + Conventional Commits) |
+| [`docs/tokens.md`](docs/tokens.md) | npm 2FA / 发布机制 |
+
+## License
+
+**MIT**——与上游 dsh 一致。文本见 [LICENSE](LICENSE)。
 
 ---
 
-## 🤝 参与开发 — Contributing
+**Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-> *PR-based flow: branch off the latest `main`, full suite green, open a Pull Request — `main` never takes direct pushes; merge after review. Full guide: [CONTRIBUTING.md](CONTRIBUTING.md).*
-
-标准开源流程:**`main` 不直接推**——从最新 `main` 切出 `feat/ · fix/ · docs/ · chore/` 分支,本地全栈绿后开 Pull Request,CI(Node 22/24,typecheck + 全部套件)与维护者 review 双绿后 squash 合入。**测试红着不许合。**
-
-- 完整贡献指南(环境搭建 · 测试 · 分支与提交约定 · PR 流程): **[CONTRIBUTING.md](CONTRIBUTING.md)**
-- Bug / 功能建议:[issue 模板](.github/ISSUE_TEMPLATE/bug_report.yml)(搜过既有 issue 再提)
-- 行为或架构改动先立 ADR(`docs/architecture.md` §8);多 agent 协作契约见 [`AGENTS.md`](AGENTS.md)
+**版本基线:`v0.0.1-rc.16`(npm `latest`)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际枚举为准;发布流程见 `scripts/publish-npm.sh`。
 
 ---
 
-## 📜 License
+## 中英版说明
 
-**MIT**(2026-08-23 落定)。与上游 dsh(MIT)/ loopx 一致——宽松、可商用、可闭源分叉。文本见 [LICENSE](LICENSE)。
-
----
-
-## 🌐 中英版 — Locales
-
-- 本文件(main)**英文版独立成文**:[README.md](README.md)——两文件各自完整,常见开源双语布局。
-- 深 README(中文)面向中国出境首发种子用户群;英文版是它的完整镜像(不含深度工程文档)。
+- 本文件与 [README.md](README.md) 各自完整自含、结构互为镜像(常见开源双语布局)。
 - `docs/` 深度工程文档当前中文先行,英文版计划 v0.1.0 同步。
-
----
-
-**Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
-
-**版本基线:`v0.0.1-rc.16`(2026-08-30)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际分节为准(发布流程见 `scripts/publish-npm.sh`)。
