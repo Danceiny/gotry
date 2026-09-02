@@ -143,31 +143,44 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 依赖:传输层自身**零新依赖**(扩展=纯 JS 零构建;桥=node:http 手写,不引 ws——MV3 SW 靠 ≤20s 长轮询节奏维持存活,HTTP 够用;publish-preverify 依赖声明闸亦不允许偷用传递依赖);cdp 后备车道保留 puppeteer-core 可选依赖(动态 import 缺包优雅降级)。
 
-### 3.3 Onboarding UX(2026-08-30 founder 补设计)
+### 3.3 Onboarding UX(2026-09-02 商店上架后重设:职责返交)
 
-**目标**:从「从未接触过 gotry 的用户」到「session 检索第一次拿到 hit」,需要做的非 gotry 侧动作 ≤ **3 次点击 + 0 次终端命令**(chrome://extensions 的「开开发者模式」+「加载已解压」+ 信任弹窗「添加扩展」;携程登录在 gotry 弹出的标签里,登录后 0 后续点击)。
+**立场反转**:上版「3 次点击 + 0 次终端命令」的 UX 形态看似用户友好,实则 gotry 越界管起了浏览器(`open -a "Google Chrome"` 弹窗、`pbcopy`/`xclip` 动剪贴板、`osascript -e 'display dialog ...'` / `zenity` 抢 GUI)与 dsh 渲染层(用 stdout 文字墙代替 verdict)。LLM 由 dsh 管理、扩展安装由浏览器商店管、CLI 自举由 `gotry setup` 管——三条职责原本就分清。
 
-**反例(本 RFC 上版的隐性状态)**:5 次点击 + 1 个原生文件对话框 + 跨 app 切换(终端→Chrome) + 装完还要自己重跑 sf 命令验证。「能装」与「装到能用」之间缺一整段 UX。
+**新形态**(2026-09-02 Chrome Web Store 上架后立刻落地):
 
-**四块组件**(2026-08-30 立项,即 gotry-session-onboarding-goal):
+- **安装 = 浏览器的事**:用户去 [Chrome 应用商店](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) 点「添加至 Chrome」,**0 终端命令、0 gotry CLI 介入**。自动更新归商店。
+- **渲染 = dsh UI 的事**:gotry `sessionFlightSearch` / `sessionLogin` 在 `needs-extension` 时返回 verdict 字段:
+  ```ts
+  { verdict: 'needs-extension', installUrl: 'https://chromewebstore.google.com/detail/...', installAction: 'add-to-chrome' }
+  ```
+  dsh 原生 presentResult 层把 `installUrl` 渲成可点链接(网页里直接 `<a href target=_blank>`);gotry 不再写「请打开 chrome://extensions...」的 CLI 文字墙。
+- **`gotry setup wizard` 子命令**退化为**离线健康探活等待**(纯 stdout,不动剪贴板/不开浏览器/不弹 GUI)。用户在 dsh UI 里看到 needs-extension 链接时,可能顺手在终端敲 `npx gotry setup wizard` 等扩展一跳就连上;纯 Node:detect → wait → exit 0/1。
 
-1. **`npx gotry setup wizard` 单命令闭环**:步骤化 stdout 输出 + 自动复制扩展路径到剪贴板(`pbcopy`,非 macOS 降级 `xclip`/stdout)+ `open -a "Google Chrome" "chrome://extensions/?..."` 直达页面;health-watch 后台轮询,扩展心跳一就位 stdout 自动翻绿。
-2. **健康检查 + 自动重放(health-watch)**:首次 `sessionFlightSearch` 遇 `needs-extension` 时,默认启动 ≤120s 有界后台轮询(`intervalMs=5000`),扩展一就位**自动重放同一 query_id 同一参数**——用户装完无需自己重跑命令。超时再返回 `needs-extension` 错误。**`sessionFlightSearch({immediate:true})` 显式 opt-out,跳过 watch**。
-3. **原生引导面板(headless 跨平台降级到终端)**:macOS 走 `osascript` 弹 Cocoa 引导面板(标题/步骤序号/下一步高亮/已复制提示/「我做完了」按钮),叠在 Chrome 上方;Linux/Windows 走 `zenity`/`msg`;无 GUI 环境(headless/CI/SSH)降回终端面板,文案与按钮形态不变。**不引入 Electron / Webview**,遵守 gotry 零 GUI 依赖面纪律。
-4. **`npx gotry setup verify` 验收入口**(goal 2 = sf-live-benchmark 入口,本 RFC 不包含,但 §4 落地表登记):goal 1 exit(扩展心跳 + 登录态只读 cookie 名)→ goal 2 才能跑。
+**自动重放(health-watch 仍保留,Node 端职责合理)**:首次 `sessionFlightSearch` 遇 `needs-extension` 时,默认启动 ≤120s 有界后台轮询(`intervalMs=5000`),扩展一就位**自动重放同一 query_id 同一参数**——用户装完无需自己重跑命令。**`sessionFlightSearch({immediate:true})` 显式 opt-out,跳过 watch**。
 
 **离线合同(测试可固化,run-all §40)**:
 
-- (1) `gotry setup wizard --dry-run` 零网络零浏览器,只校验命令输出与退出码
+- (1) `gotry setup wizard --dry-run` 零网络零浏览器零剪贴板零 GUI spawn,只校验命令输出与退出码(2 步:ensure + watch precheck)
 - (2) health-watch 三时序分支:0ms ready / 5s ready(中途 ready)/ 120s+1ms 超时
-- (3) `pbcopy`/`osascript` 在非 macOS / 缺工具时优雅降级到 stdout,不挡主流程
+- (3) wizard 不调任何 `spawn`(`open / pbcopy / xclip / osascript / zenity / msg / clip` 全退役);手工失败(fail 路径)同样不调 spawn
 - (4) 单条 query 的 retry-after-watch:watch 内 ready → 自动重放同一 query_id,产物命中同一 evidence 文件
-- (5) wizard 在无 Chrome 环境走 terminal 降级面板,exit 0 不弹原生窗口
+- (5) `sessionFlightSearch` / `sessionLogin` 在 `needs-extension` 时返回的 verdict 含 `installUrl` + `installAction:'add-to-chrome'`,可被 dsh UI 直接渲染成可点链接
 
 **与现有约束的勾稽**:
 
-- §3.2 传输层零新依赖纪律:osascript/zenity 走 `child_process` 异步 spawn,不引入 npm 包;剪贴板走 `pbcopy`/`xclip` 命令式调用,不引 clipboardy
+- §3.2 传输层零新依赖纪律:osascript/pbcopy/zenity/xclip/clip 全退役,wizard.ts 不再有 `spawn` import;health-watch 是 Node http 轮询,职责内
 - §3.3 ReadGuard 不变:onboarding 不碰任何 cookie 值,只验证扩展心跳与登录态 cookie 名存在性
+- ⑤ 登录产品化不变:shopper 在 dsh UI 里点 `gotry_session_login` 由扩展在用户 Chrome 弹登录入口,跟商店安装是同一条扩展的两种用途
+
+**§3.3 历史形态对比**:
+
+| | 2026-08-30 初版(撤销) | 2026-09-02 上架后(现行) |
+|---|---|---|
+| 安装入口 | `npx gotry setup wizard`(5 步 GUI 编排) | Chrome 应用商店一键装 |
+| CLI 行为 | open Chrome / pbcopy / osascript / zenity | 只输出 stdout |
+| needs-extension 渲染 | CLI stdout 一墙文字 + 用户自己操作 | dsh UI verdict.installUrl 可点链接 |
+| 用户侧动作 | 3 次点击(开发者模式 + 加载 + 添加) | 1 次点击(添加至 Chrome)+ dsh 自动 retry |
 - §3.4 授权闸 v2:onboarding 完成后首条 session 检索仍过 `tools/pre-execute` (session-consent.ts) 审批卡一次——onboarding 只解决「能跑」,不替代「会话内明示授权」
 - §2.4 合规四支柱:「随时可关」门加倍——扩展卡片开关 + `GOTRY_SETUP_EXTENSION=0` + `sessionAccess: off` 三重
 - §6 复用矩阵同步:`browser-use | — | 明确不引入(Python 违纪,且其隔离 Chromium ≠ 用户桌面 Chrome,装不到目标扩展,假象)`——把「为什么用 browser-use 也装不了扩展」写明,免得反复来问
@@ -228,7 +241,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 | **P3 产品化** ◐ 2026-08-28 切片 1/2 完成 | 见 §4「P3 产品化」 | 2 tick(实用 2 tick) |
 | **P3.5 传输层定案:扩展桥** ✅ **2026-08-30 完成(方案 C 升 PRIMARY)** | 见 §4「P3.5 传输层定案:扩展桥」 | 1 tick |
 | **P4 分发通道(ADR-21)** ✅ **2026-08-30 完成(通道 A 落地;通道 B 材料就绪待 founder 提交)** | 见 §4「P4 分发通道(ADR-21)」 | 1 tick |
-| **P3.6 Onboarding UX 闭环** ✅ **2026-08-30 完成(gotry-session-onboarding-goal,PR #66 `9f9207a`)** | 见 §4「P3.6 Onboarding UX 闭环」 | 2 tick |
+| **P3.6 Onboarding UX(2026-09-02 职责返交重设)** ✅ **2026-09-02 完成(wizard 退化为离线健康探活等待;安装归浏览器、渲染归 dsh UI)** | 见 §4「P3.6 Onboarding UX(2026-09-02 职责返交重设)」 | 0 tick(职责返交,不再新编功能) |
 | **P3.7 双源 e2e 真跑批(goal 2)** ✅ **2026-08-30 完成(commit `60669f8` + PR #66 follow-up)** | 见 §4「P3.7 双源 e2e 真跑批(goal 2)」 | 1 tick |
 | **P3.8 Issue #67 static vendor + 默认桥生命周期** ✅ **2026-08-30** | 见 §4「P3.8 Issue #67 static vendor + 默认桥生命周期」 | 1 tick |
 
@@ -284,17 +297,18 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 **Exit(验收口径)**:通道 A:`--extension-from=github` 下载链(稳定资产名/SHA256/key 钉扎/原子交换/失败降级 bundled)+ `scripts/package-extension.mjs` 打包(只产产物,上传确认制);通道 B:`docs/extension-webstore-submission.md` + `docs/extension-privacy.md`(D-25 赎回条件=founder 注册+提审);run-all §43 35 断言 + bootstrap-tests 8/8
 
-#### P3.6 Onboarding UX 闭环
+#### P3.6 Onboarding UX(2026-09-02 职责返交重设)
 
-**状态**:**P3.6 Onboarding UX 闭环** ✅ **2026-08-30 完成(gotry-session-onboarding-goal,PR #66 `9f9207a`)**
+**状态**:**P3.6 职责返交** ✅ **2026-09-02 完成(Chrome Web Store 上架 → gotry 不再介入浏览器)**
 
 **内容**:
-- **动因(founder 实测)**:「能装」≠「装到能用」——上版隐性状态要求 5 次点击 + 1 个原生文件对话框 + 跨 app 切换 + 装完还要自己重跑命令,本批降至 **3 次点击 + 0 次终端命令**。落地:`npx gotry setup wizard` 单命令闭环(pbcopy 复制扩展路径 + open 直达 chrome://extensions + 后台 health-watch 自动翻绿);`health-watch`(≤120s 有界后台轮询,扩展一就位**自动重放同一 query**,用户零手工重跑);
-- 原生引导面板(macOS osascript / Linux zenity / Windows msg / headless 终端降级,**不引 Electron**);`GOTRY_SETUP_EXTENSION=0` + `sessionAccess: off` + 扩展卡片三重总闸
+- **动因(founder 反思)**:上版「3 次点击 + 0 次终端命令」的 UX 形态看似用户友好,实则 gotry 越界管起了浏览器(`open -a "Google Chrome"` 弹窗、`pbcopy`/`xclip` 动剪贴板、`osascript -e 'display dialog ...'` / `zenity` 抢 GUI)与 dsh 渲染层(stdout 文字墙代替 verdict)。LLM 由 dsh 管理、扩展由浏览器商店管、CLI 自举由 gotry setup 管——三条职责原本就分清。
+- **新形态**:安装=浏览器的事(去 Chrome 应用商店点「添加至 Chrome」);渲染=dsh UI 的事(`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时返回 verdict.installUrl,dsh 原生 presentResult 层渲可点链接);`gotry setup wizard` 子命令退化为离线健康探活等待(纯 stdout,不动剪贴板/不开浏览器/不弹 GUI)。
+- `health-watch`(≤120s 有界后台轮询,扩展一就位**自动重放同一 query**,用户零手工重跑)——这是 Node 端职责,保留;`GOTRY_SESSION_LIVE=0` 总闸 + `sessionAccess` + 扩展卡片三重总闸不变。
 
 **Exit(验收口径)**:
-- run-all §40 onboarding-tests **9/9**(--dry-run 零网络 / health-watch 三时序 / 剪贴板+原生面板跨平台降级 / retry-after-watch 同 query_id 重放 / wizard 无 GUI 降终端 / withAutoRetry 端到端 / 探针边界常量 / extensionDir 契约 / 不存在目录不抛);bootstrap-tests 7/7(wizard 两条);
-- 本机实测 `node bin/gotry-bootstrap.js wizard` ✅ 扩展就绪 4533ms 4 次探活 / pbpaste = `~/.gotry/extension` pbcopy 真覆写。**前置依赖**:P3.5 已 ✅;**后续 goal**:sf-live-benchmark-goal(本表 P3.7 行)
+- run-all §40 onboarding-tests **9/9**(已重设:--dry-run 零网络零 GUI / health-watch 三时序 / wizard 不调任何 spawn / retry-after-watch 同 query_id 重放 / wizard 不依赖 platform/panel 参数 / withAutoRetry 端到端 / 探针边界常量 / extensionDir 契约 / 不存在目录不抛);bootstrap-tests 8/8(wizard dry-run + 真实路径 + 扩展分发两条)。
+- **前置依赖**:P3.5 已 ✅;**后续 goal**:无(去 3.3 重设已闭合 UX 债务)。
 
 #### P3.7 双源 e2e 真跑批(goal 2)
 
@@ -315,7 +329,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 **内容**:`--golden=static` 以 OpenFlights 固定 revision 提供 route/carrier,时刻/价格带显式标 estimated,requested/effective/provenance/fallback 同条 evidence;static 异常 stderr 后回退 manual
 
-**Exit(验收口径)**:登录态连续两轮 8-query:official 均 8/8 hit、fallback 0;session 分别 3/8 与 5/8 hit,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 明示 miss。默认桥 parked timer/socket `unref`,wizard `keepBridge` 不变;§38 24/24、§40 9/9
+**Exit(验收口径)**:登录态连续两轮 8-query:official 均 8/8 hit、fallback 0;session 分别 3/8 与 5/8 hit,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 明示 miss。默认桥 parked timer/socket `unref`,wizardless `keepBridge` 不变;§38 24/24、§40 9/9
 
 依赖与并行:P0 可即刻开始(不等 M4 记忆域);P1 起与 M4 交替推进,不挤占 M4 主线(会话面是数据域增量,与记忆域正交)。
 
@@ -342,7 +356,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 - **复用矩阵修订提案**(总纲 §2 新行):`@fly-ai/flyai-cli | MIT | import(npx spawn,零渠道知识管道层) | 飞猪官方只读检索通道(机/火/酒/POI),交易经 jumpUrl 由人完成`;`playwright-core | Apache-2.0 | import(devDep) | cdp 后备车道传输(Chrome 144+ 逐连接弹窗实测不可产品化,2026-08-30 降级为诊断/显式 opt-in)`;
   - `Chrome Extensions MV3 平台 | 平台能力 | reference + 自研 | 会话传输主载 GoTry Session Bridge(extension/ 自研,2026-08-30 PRIMARY):一次性安装、MAIN-world 被动嗅探、固定 key 扩展 ID;playwright-mcp --extension 仅设计对照,不引代码`;`browser-use | — | 明确不引入(Python 违纪,且其隔离 Chromium ≠ 用户桌面 Chrome,装不到目标扩展,假象替代)`;
-  - `osascript / zenity / msg | 平台原生 | reference | onboarding 引导面板(2026-08-30,§3.3);不引 Electron/Webview,保持零 GUI 依赖面`;`GitHub Releases + 平台 tar | 平台能力/原生 | reference | 扩展分发通道 A(2026-08-30,ADR-21,§3.3 分发):稳定资产名 + SHA256 dist-manifest + `tar -xzf` 解压,零新 npm 依赖`。
+  - `Chrome Web Store 上架清单(2026-09-02,§3.3 分发通道 B + §3.3 UX 职责返交)| 平台原生 | reference | 商店上架材料(单一用途/权限理由/隐私披露/文案/后续发版流程)+ wizard 退化为离线健康探活等待,不动 pbcopy/osascript/zenity,安装 = 浏览器的事、渲染 = dsh UI 的事`;`GitHub Releases + 平台 tar | 平台能力/原生 | reference | 扩展分发通道 A(2026-08-30,ADR-21,§3.3 分发):稳定资产名 + SHA256 dist-manifest + `tar -xzf` 解压,零新 npm 依赖`。
 - **红线进代码**:ReadGuard = WriteGate 的检索态前置;动机画像/wish pool 红线不动;`[会话:*]` 进 L4 证据链契约。
 - **状态同步**:P3 收尾按 architecture.md §11 六状态面同提交同步。
 - **巡检状态纪律**:所有会话面测试用隔离 stateRoot / 专用测试 profile,绝不动 founder 真实浏览器 profile 与 dsh-runtime 共享状态(2026-08-26 教训的会话版)。

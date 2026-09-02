@@ -1,18 +1,13 @@
 /**
- * onboarding UX 测试(issue #21 onboarding UX,P3.6 gotry-session-onboarding-goal,
- * RFC user-session-data-rfc.md §3.3,run-all §40)。
+ * onboarding UX 测试(issue #21 onboarding UX,§3.3 ADR-21 上架后重设,run-all §40)。
  *
- * 5/5 全离线断言:
- *   1. wizard --dry-run:零网络零浏览器,exit 0,5 步齐全(扩展落位 / 开 chrome / 剪贴板 / 面板 / watch precheck)
+ * 4 段全离线断言(wizard 2026-09-02 缩为 2 步纯 Node 端:扩展落位 + watch precheck):
+ *   1. wizard --dry-run:零网络零浏览器零 GUI spawn,exit 0,2 步齐全
  *   2. health-watch 三时序:0ms ready(立即 timeout)/ 5s ready(中途 ready)/ 120s+1ms 超时
- *   3. 剪贴板 / GUI 面板跨平台降级:darwin 调 osascript/zenity,pbcopy/xclip,headless 走终端
- *   4. retry-after-watch:扩展未就绪 → watch 内 ready → 自动重放同 query_id 同参数
- *   5. wizard 无 GUI 走终端降级:forcePlatform=headless,exit 0,剪贴板/面板都 skip
+ *   3. retry-after-watch:needs-extension → watch ready → 自动重放同 query_id 同参数
+ *   4. wizard 无强制 spawn:forcePlatform 参数彻底消失(GUI 跨平台降级退役)
  *
- * 离线纪律:
- * - 不打真 Chrome、不发真请求;
- * - probe 函数全部注入 fake;
- * - spawn 用 noop stub,验证「被调用了对应命令 + 不抛错」。
+ * 离线纪律:不打真 Chrome、不发真请求;wizard 不需要 spawn 注入(stub 注入路径仍在但 dry-run 路径不调)。
  */
 
 import assert from 'node:assert/strict'
@@ -65,17 +60,15 @@ async function asyncSleep(ms: number): Promise<void> {
 
 console.log('ONBOARDING UX (§40)')
 
-await check('1. wizard --dry-run 零网络零浏览器,exit 0,5 步齐全', async () => {
-  const { spawn } = captureSpawn()
-  const result = await runOnboardingWizard({ dryRun: true, forcePlatform: 'darwin', spawn })
+await check('1. wizard --dry-run 零网络零浏览器零 GUI spawn,exit 0,2 步齐全', async () => {
+  const result = await runOnboardingWizard({ dryRun: true })
   assert.equal(result.ok, true, `wizard ok 应 true,实际 ${JSON.stringify(result.steps)}`)
-  assert.equal(result.steps.length, 5, `应有 5 步,实际 ${result.steps.length}`)
-  const expected = ['ensure-extension-files', 'open-chrome-extensions', 'clipboard-extension-path', 'panel-guide', 'watch-extension-ready']
+  assert.equal(result.steps.length, 2, `应有 2 步,实际 ${result.steps.length}`)
+  const expected = ['ensure-extension-files', 'watch-extension-ready']
   for (let i = 0; i < expected.length; i++) {
     assert.equal(result.steps[i]!.step, expected[i])
     assert.equal(result.steps[i]!.status, 'skip', `dry-run 每步应为 skip,${result.steps[i]!.step} 实为 ${result.steps[i]!.status}`)
   }
-  assert.equal(result.platform, 'darwin')
 })
 
 await check('2. health-watch 三时序:0ms / 中途 / 120s+1ms', async () => {
@@ -107,30 +100,18 @@ await check('2. health-watch 三时序:0ms / 中途 / 120s+1ms', async () => {
   assert.equal((oTimeout as { reason: string }).reason, 'timeout')
 })
 
-await check('3. 剪贴板 + GUI 面板跨平台降级', async () => {
-  // darwin:osascript + pbcopy
-  const darwin = captureSpawn()
-  const rDarwin = await runOnboardingWizard({ dryRun: false, forcePlatform: 'darwin', extensionDir: '/tmp/gotry-test-ext', spawn: darwin.spawn, sourceDir: '/' })
-  // dryRun=false + 不存在的源目录 → ensure 会 fail,但剪贴板/面板命令仍尝试 spawn
-  // 我们关注的是「darwin 调用了 open / pbcopy / osascript」
-  const darwinBins = darwin.calls.map((c) => c.bin)
-  assert.ok(darwinBins.includes('open'), `darwin 应调 open(实调 ${darwinBins.join(',')})`)
-  assert.ok(darwinBins.includes('pbcopy'), 'darwin 应调 pbcopy')
-  assert.ok(darwinBins.includes('osascript'), 'darwin 应调 osascript')
+await check('3. wizard 完全不调 spawn(GUI 面板/剪贴板/直开浏览器均已退役)', async () => {
+  // 2026-09-02 上架后:wizard 缩为 2 步纯 Node 端职责(扩展落位 + watch precheck),
+  // 不弹 osascript/zenity、不动 pbcopy/xclip/clip、不 open 浏览器。
+  // 这里只校验 dry-run 与无源目录 fail 路径都不产生 spawn 调用。
+  const dry = captureSpawn()
+  await runOnboardingWizard({ dryRun: true, sourceDir: '/', extensionDir: '/tmp/none' })
+  assert.equal(dry.calls.length, 0, `dry-run 不应 spawn 任何命令(实调 ${dry.calls.length})`)
 
-  // linux:xdg-open + xclip + zenity
-  const linux = captureSpawn()
-  await runOnboardingWizard({ dryRun: false, forcePlatform: 'linux', extensionDir: '/tmp/gotry-test-ext', spawn: linux.spawn, sourceDir: '/' })
-  const linuxBins = linux.calls.map((c) => c.bin)
-  assert.ok(linuxBins.includes('xdg-open'), `linux 应调 xdg-open(实调 ${linuxBins.join(',')})`)
-  assert.ok(linuxBins.includes('xclip'), 'linux 应调 xclip')
-  assert.ok(linuxBins.includes('zenity'), 'linux 应调 zenity')
-
-  // headless:跳过所有 GUI spawn
-  const headless = captureSpawn()
-  const rHeadless = await runOnboardingWizard({ dryRun: true, forcePlatform: 'headless', extensionDir: '/tmp/gotry-test-ext', spawn: headless.spawn })
-  assert.equal(headless.calls.length, 0, `headless 不应 spawn 任何命令(实调 ${headless.calls.length})`)
-  assert.equal(rHeadless.platform, 'headless')
+  const fail = captureSpawn()
+  // dryRun=false + 不存在的源目录 → ensure 会 fail,但应仍不产生 spawn 调用
+  await runOnboardingWizard({ dryRun: false, sourceDir: '/nonexistent-source-dir-for-onboarding-tests', extensionDir: '/tmp/none-fail' })
+  assert.equal(fail.calls.length, 0, `fail 路径也不应 spawn(实调 ${fail.calls.length})`)
 })
 
 await check('4. retry-after-watch:needs-extension → watch ready → 自动重放同 query_id', async () => {
@@ -159,22 +140,14 @@ await check('4. retry-after-watch:needs-extension → watch ready → 自动重�
   assert.equal(fetchCalls, 2, `应调用 fetch 两次(首次 + 重放),实 ${fetchCalls}`)
 })
 
-await check('5. wizard 无 GUI 走终端降级', async () => {
-  const headless = captureSpawn()
-  const result = await runOnboardingWizard({
-    dryRun: true,
-    forcePlatform: 'headless',
-    extensionDir: '/tmp/gotry-test-ext',
-    spawn: headless.spawn,
-  })
-  // headless 下:剪贴板 = skip,面板 = skip(走终端),watch precheck = skip
-  const clip = result.steps.find((s) => s.step === 'clipboard-extension-path')
-  const panel = result.steps.find((s) => s.step === 'panel-guide')
-  const watch = result.steps.find((s) => s.step === 'watch-extension-ready')
-  assert.equal(clip?.status, 'skip', 'headless 剪贴板应 skip')
-  assert.equal(panel?.status, 'skip', 'headless 面板应 skip(终端降级)')
-  assert.equal(watch?.status, 'skip', 'dry-run watch 应 skip')
-  assert.equal(headless.calls.length, 0, `headless 不应调任何 spawn(实调 ${headless.calls.length})`)
+await check('5. wizard 不依赖 platform/panel 参数(GUI 跨平台降级退役)', async () => {
+  // 2026-09-02 上架后:wizard 不再接 forcePlatform/spawn panel 参数,
+  // 任何对 wizard 的调用都是 2 步(ensure + watch precheck)。
+  const result = await runOnboardingWizard({ dryRun: true, extensionDir: '/tmp/gotry-test-ext-2' })
+  assert.equal(result.steps.length, 2, `应 2 步,实 ${result.steps.length}`)
+  assert.equal(result.steps[0]!.step, 'ensure-extension-files')
+  assert.equal(result.steps[1]!.step, 'watch-extension-ready')
+  assert.equal((result as unknown as { platform?: string }).platform, undefined, 'platform 字段应不再存在')
 })
 
 await check('6. withAutoRetryOnExtension 端到端:首次 needs-ext → 自动重放', async () => {

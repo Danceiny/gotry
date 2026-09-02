@@ -9,8 +9,11 @@
  *                           gotry 产物(工单交付 md/行程 md)的成熟查看面(issue #25)。
  *                           宿主层安装(dsh plugin → ~/.dsh/profiles/web),不进 gotry 依赖。
  *   gotry-session-bridge   → 会话检索浏览器扩展(issue #21 传输层方案 C,2026-08-29 定案):
- *                           一次性安装替代逐连接 CDP 弹窗;幂等拷贝到 ~/.gotry/extension,
- *                           最后一步是用户在 chrome://extensions 「加载已解压的扩展程序」(约 30 秒,零系统弹窗)。
+ *                           一次性安装替代逐连接 CDP 弹窗;已上架 Chrome Web Store
+ *                           (2026-09-02,一键装+自动更新)。**gory 不介入浏览器**——
+ *                           商店页安装是浏览器的事;`gotry setup wizard` 仅作离线检测的
+ *                           进程护栏(打印商店 URL + 健康探活等待),不动剪贴板、
+ *                           不弹 osascript、不 open 浏览器。
  *
  * 用法:
  *   node bin/gotry-bootstrap.js              # 显式安装(缺啥装啥;失败 exit 1)
@@ -33,11 +36,13 @@
  *   GOTRY_SETUP_EXTENSION=0       跳过会话检索扩展落位
  *   GOTRY_EXTENSION_SOURCE=github 等效 --extension-from=github(显式 opt-in,默认 bundled)
  *   GOTRY_EXTENSION_RELEASE_BASE=<url> 下载通道基址覆盖(镜像/测试;缺省 GitHub 官方)
- *   GOTRY_ONBOARDING_HEADLESS=1   wizard 子命令强制走终端面板(SSH/CI 默认探测)
+ *   GOTRY_ONBOARDING_HEADLESS=1   wizard 仅 stdout(SSH/CI 默认探测)
  *
- * 契约:安装外部依赖永远不挡 gotry 本体——能力层各有降级路径(静态包/not-installed
- * verdict),自举失败只降级体验,不产生故障。凭证(hbcli auth / agent-reach 渠道
- * cookie)属用户资产,不自动配置,装完二进制后给指引。
+ * 设计纪律(wizard 子命令,2026-09-02 商店上架后):
+ * **浏览器自己当安装器**——浏览器商店页直达,点「添加至 Chrome」即完事;gotry
+ * 不扮演 GUI/CLI 越界者:不动剪贴板、不动 osascript/zenity/msg、不 open 浏览器。
+ * dsh host UI 是 gotry 工具渲染面,needs-extension 时 URL 走 verdict 字段给 UI
+ * 自渲。wizard 子命令退化为「离线健康探活等待」,只输出 stdout,不挡用户。
  */
 
 import { spawn } from 'node:child_process'
@@ -198,10 +203,11 @@ async function setupExtension() {
     say(`  ✗ 落位失败(${e.message})——不影响 gotry:会话检索降级;可手动拷贝 ${srcDir} → ${dstDir}`)
     return { ok: false }
   }
-  say(`  ✓ 已落位 ${dstDir}(v${srcVersion};manifest 带固定 key,扩展 ID 恒为 olpgkofjhhiiiahdkkbcninhjmegghfe)`)
-  say('  最后一步(每台浏览器一次,约 30 秒):Chrome 打开 chrome://extensions → 右上角开启「开发者模式」→「加载已解压的扩展程序」→ 选择 ~/.gotry/extension')
-  say('  获取/更新扩展可走 GitHub Releases:npx gotry setup --extension-from=github(自动下载校验落位;手动下载: github.com/Danceiny/gotry/releases 标签 ext-*)')
-  say('  Chrome Web Store 上架审核中,上架后可一键安装;装好即生效,零系统弹窗;扩展卡片开关=总闸(与 gotry 授权闸 sessionAccess 双重控制)')
+  say(`  ✓ 已落位 ${dstDir}(v${srcVersion};manifest 带固定 key,unpacked 扩展 ID 恒为 olpgkofjhhiiiahdkkbcninhjmegghfe)`)
+  say('  推荐(免下面三步):Chrome 应用商店一键安装 GoTry Session Bridge(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd')
+  say('  本地加载(每台浏览器一次,约 30 秒):Chrome 打开 chrome://extensions → 右上角开启「开发者模式」→「加载已解压的扩展程序」→ 选择 ~/.gotry/extension')
+  say('  获取/更新本地通道扩展可走 GitHub Releases:npx gotry setup --extension-from=github(自动下载校验落位;手动下载: github.com/Danceiny/gotry/releases 标签 ext-*)')
+  say('  装好即生效,零系统弹窗;扩展卡片开关=总闸(与 gotry 授权闸 sessionAccess 双重控制)')
   return { ok: true }
 }
 
@@ -258,22 +264,24 @@ async function setupExtensionFromGithub() {
 }
 
 /**
- * 调 wizard-bootstrap.ts(wizard.ts 的 CLI 入口):拿 5 步 OnboardingResult 打印到 stdout。
- * tsx 子进程跑 wizard 全套(扩展落位 + 开 Chrome + pbcopy 真实覆写剪贴板 + osascript GUI 面板);
- * bootstrap 不再 inline 任何 spawn——所有 UX 都走 wizard.ts,与 onboarding-tests §40 同一份代码。
- * npm 安装态(无 ts/目录):降级 inline 跑 5 步的最小子集——只调 setupExtension + 打印路径,UI 面板/剪贴板由用户手动。
+ * 调 (npm 安装态降级)只确保扩展落位后跑扩展分支 hydration。wizard.ts 现在
+ * 只做 ensure + watch precheck(Node 端职责),不 spawn 任何 GUI;真正的浏览器
+ * 商店页安装走 dsh UI 渲染的 verdict.installUrl,健康探活走 runHealthWatch。
+ *
+ * 历史:wizard-bootstrap.ts(此文件之前 spawn 的 tsx 子进程)已删除;
+ * run-all §40 onboarding-tests 直接 import wizard.ts 的 runOnboardingWizard。
  */
 async function runWizardBootstrap() {
+  // wizard.ts 已退化为纯 Node 2 步(ensure + watch precheck),不 spawn 任何东西;
+  // tsx 子进程路径 = <repoRoot>/ts;npm 安装态(wizard-bootstrap.ts 已删除)走包内 setupExtension。
   const wizardScript = join(repoRoot, 'ts', 'scripts', 'wizard-bootstrap.ts')
-  const extensionDir = join(homedir(), '.gotry', 'extension')
   if (!existsSync(wizardScript)) {
-    // npm 安装态降级:只确保扩展落位,文案照常打
-    say('[gotry-wizard] 内置 wizard 脚本缺失(已装 npm 包态)——降级手动模式:')
+    say('[gotry-wizard] 内置 wizard 脚本缺失(已装 npm 包态;npm 安装态应在浏览器商店一键装,不需要 wizard 跑落位)——只跑包内扩展落位:')
     await setupExtension()
     return { ok: true }
   }
   return new Promise((resolve) => {
-    const child = spawn('npx', ['--yes', 'tsx', wizardScript, '--extension-dir', extensionDir, '--source-dir', join(repoRoot, 'extension')], {
+    const child = spawn('npx', ['--yes', 'tsx', wizardScript, '--extension-dir', join(homedir(), '.gotry', 'extension'), '--source-dir', join(repoRoot, 'extension')], {
       cwd: join(repoRoot, 'ts'),
       stdio: ['ignore', 'pipe', 'inherit'],
     })
@@ -293,17 +301,17 @@ async function runWizardBootstrap() {
         if (line.startsWith('{')) {
           try {
             const o = JSON.parse(line)
-            // 打印 5 步 status(wizard 自己的 print 已在子进程跑了;此处父进程再 human-friendly 一次)
+            // 打印 2 步 status(wizard 自己的 print 已在子进程跑了;此处父进程再 human-friendly 一次)
             if (Array.isArray(o.steps)) {
               for (const s of o.steps) {
                 const tag = s.status === 'ok' ? '✅' : s.status === 'skip' ? '⏭ ' : '❌'
                 say(`[gotry-wizard] ${tag} ${s.step}: ${s.summary}`)
               }
             }
-            say(`[gotry-wizard] platform=${o.platform}; extensionDir=${o.extensionDir}; ok=${o.ok}`)
+            say(`[gotry-wizard] extensionDir=${o.extensionDir}; ok=${o.ok}`)
             finish({ ok: o.ok === true })
           } catch {
-            say(`[gotry-wizard] ✗ wizard JSON 解析失败`)
+            say('[gotry-wizard] ✗ wizard JSON 解析失败')
             finish({ ok: false })
           }
           try { child.kill('SIGTERM') } catch { /* ignore */ }
@@ -432,49 +440,38 @@ async function runInlineHealthWatch(timeoutMs) {
 }
 
 async function main() {
-  // wizard 子命令(issue #21 onboarding UX,§3.3 / P3.6):扩展安装闭环,5 步 + 后台 health-watch。
-  // **纯 onboarding**,不调 hbcli/agent-reach/sidebar 等其他节——只跑扩展落位 + 健康探活;
-  // 想要全量安装仍走 `npx gotry setup`(无 wizard)。
+  // wizard 子命令(2026-09-02 商店上架后退化):**只走 stdout 提示 + 健康探活等待**;
+  // 不 spawn 任何 GUI 工具(不动 pbcopy / osascript / open / xdg-open / zenity),
+  // 不打开 chrome://extensions,不动扩展路径——浏览器自己当安装器,gotry 不越界。
+  // 期望用户路径:`npx gotry web` → dsh UI → 调 gotry_session_search 遇 needs-extension
+  // → dsh UI 渲商店 URL → 用户点链接 → 装好 → 同会话内自动 retry(health-watch)。
   if (WIZARD) {
     if (WIZARD_DRY_RUN) {
-      say('[gotry-wizard] dry-run 模式(零网络零浏览器,只校验命令编排与输出形态;run-all §40 走这条)')
-      say('  步骤: ensure-extension-files → open-chrome-extensions → clipboard-extension-path → panel-guide → watch-extension-ready')
-      say('  平台: darwin(zh-CN stdout);headless/Linux/Windows 同理降级')
+      say('[gotry-wizard] dry-run(零网络零浏览器零剪贴板;run-all §40 走这条)')
+      say('  步骤: ensure-extension-files → watch-extension-ready(2 步纯 Node 端)')
+      say('  平台: 不依赖 darwin/linux/win32(只 stdout)')
       say('  ✅ exit 0')
       process.exit(0)
     }
-    // 真实路径:spawn tsx 子进程跑 wizard-bootstrap.ts(同一份 wizard.ts 代码),
-    // 拿 5 步 OnboardingResult 打印 status(ok/✅/⏭ /❌)+ 剪贴板/GUI 面板/落位实跑。
-    const wizardResult = await runWizardBootstrap()
-    if (!wizardResult.ok) {
-      say('[gotry-wizard] ✗ wizard 编排有失败步——见上方;扩展未引导到位;可手动 chrome://extensions 加载 ~/.gotry/extension')
-      process.exit(1)
-    }
-    // wizard 闭环:装完扩展就位 stdout 翻「✅ 就绪」(由 health-watch 推动)
     say('')
     say('[gotry-wizard] ────────────────────────────────')
-    say('[gotry-wizard] 共 3 步,约 30 秒,装完零弹窗:')
-    say('[gotry-wizard]   ① Chrome 右上角开启「开发者模式」')
-    say(`[gotry-wizard]   ② 点「加载已解压的扩展程序」,选这个目录(已复制到剪贴板):`)
-    say(`[gotry-wizard]      ${join(homedir(), '.gotry', 'extension')}`)
-    say('[gotry-wizard]   ③ 弹窗「添加扩展」点「添加」')
+    say('[gotry-wizard] GoTry Session Bridge 是浏览器的事——在 Chrome 应用商店一键装:')
+    say('[gotry-wizard]   https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd')
+    say('[gotry-wizard] 装好即生效;装完后我会自动检测到(下方探活等待,最长 120s)。')
+    say('[gotry-wizard] 全过程 gotry 不动你的剪贴板、不开你的 Chrome、不弹任何面板。')
     say('[gotry-wizard] ────────────────────────────────')
-    say('[gotry-wizard] 装好后**无需重跑任何命令**——下面会自动探活,扩展一就位 stdout 翻绿。')
     say('')
-    say('[gotry-wizard] 正在后台探活扩展心跳(最长 120s;Ctrl+C 取消)...')
-    // 后台 health-watch:spawn tsx 子进程跑 health-watch.ts(纯 TS 模块,browser-only),
-    // 探活逻辑与 onboarding-tests §40 同一份代码;无 GUI 依赖。
+    say('[gotry-wizard] 探活中(Ctrl+C 立即退出)…')
+
+    // 健康探活等待:扩展一就位即返回;无 GUI/剪贴板副作用
     const watchResult = await runHealthWatch()
     if (watchResult.ready) {
-      say(`[gotry-wizard] ✅ 扩展就绪(等待 ${watchResult.waitedMs}ms,${watchResult.attempts} 次探活)`)
-      say('[gotry-wizard] 现在调用 gotry_session_search 即可拿到会话检索结果(零后续手工动作)。')
-      say('[gotry-wizard] 入口示例:')
-      say('  ./gotry        # 启动 dsh → 用 gotry_session_search 工具')
-      say('  ./gotry session-check  # 跑 sf-01..08 八条 query 双源 scorer(goal 2)')
+      say(`[gotry-wizard] ✅ 扩展就绪(${watchResult.attempts} 次探活,等待 ${watchResult.waitedMs}ms)`)
+      say('[gotry-wizard] 现在 `npx gotry web` → dsh UI → 调 gotry_session_search 即可拿到结果。')
       process.exit(0)
     } else {
-      say(`[gotry-wizard] ✗ ${watchResult.reason}(${watchResult.attempts} 次探活)——扩展未在 ${watchResult.timeoutMs}ms 内就绪`)
-      say('[gotry-wizard] 重新打开 chrome://extensions 确认「GoTry Session Bridge · 已启用」,再跑 `npx gotry setup wizard` 重试。')
+      say(`[gotry-wizard] ✗ ${watchResult.reason}——未在 ${watchResult.timeoutMs}ms 内就绪`)
+      say('[gotry-wizard] dsh UI 中 `gotry_session_search` 的 needs-extension 仍带商店链接;无需重跑,wizard 完全幂等。')
       process.exit(1)
     }
   }
@@ -483,7 +480,7 @@ async function main() {
     say('[gotry-setup] Windows 暂不支持自动安装(hbcli 上游仅 darwin/linux)。手动指引:')
     say(`  hbcli: ${HBCLI_INSTALL_CMD}(WSL);agent-reach: python -m venv .venv && .venv/Scripts/pip install ${REACH_INSTALL_URL}`)
     say('  dsh-better-sidebar: npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar@latest')
-    say('  GoTry Session Bridge 扩展:手动把包内 extension/ 目录拷到 %USERPROFILE%\\.gotry\\extension,再在 chrome://extensions 开发者模式「加载已解压的扩展程序」')
+    say('  GoTry Session Bridge 扩展:推荐 Chrome 应用商店一键安装 https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd ;本地通道:手动把包内 extension/ 目录拷到 %USERPROFILE%\\.gotry\\extension,再在 chrome://extensions 开发者模式「加载已解压的扩展程序」')
     process.exit(AUTO ? 0 : 1)
   }
   if (AUTO && (process.env.CI || process.env.GOTRY_SETUP_SKIP === '1')) {
