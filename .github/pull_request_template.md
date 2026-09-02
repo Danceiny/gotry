@@ -1,6 +1,6 @@
 <!--
-感谢 PR!提交前请读 CONTRIBUTING.md。合并条件:CI 全绿(Node 22/24,typecheck + §1-§34)+ 维护者 review。
-Thanks for your PR! Merging requires green CI (Node 22/24, typecheck + full regression §1-§34) plus maintainer review.
+感谢 PR!提交前请读 CONTRIBUTING.md。合并条件:CI 全绿(Node 22/24,typecheck + §1-§49)+ 维护者 review。
+Thanks for your PR! Merging requires green CI (Node 22/24, typecheck + full regression §1-§49) plus maintainer review.
 -->
 
 ## 为什么改 · Why
@@ -17,7 +17,7 @@ Thanks for your PR! Merging requires green CI (Node 22/24, typecheck + full regr
 
 ## 自查清单 · Checklist
 
-- [ ] 本地全栈回归全绿(`./scripts/run-all-tests.sh`,§1-§34)
+- [ ] 本地全栈回归全绿(`./scripts/run-all-tests.sh`,§1-§49)
 - [ ] 分支从最新 `main` 切出,单一关注点;只暂存了本 PR 的具名文件(未用 `git add -A` / `git commit -am`)
 - [ ] 未调用 deprecated 层(`engine.*` / `journey.*`);算术仅在 `model.ts`/`unified.py` evaluate 层,求解仅在 `unified.*`
 - [ ] 行为/架构改动已立 ADR(`docs/architecture.md` §8),或本改动无行为变化

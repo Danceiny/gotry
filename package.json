@@ -64,6 +64,7 @@
     "data/*.json",
     "bin/",
     "ts/src/index.ts",
+    "ts/src/benchmark-environment-bridge.ts",
     "ts/src/contracts.ts",
     "ts/src/unified.ts",
     "ts/src/model.ts",
