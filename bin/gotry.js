@@ -17,7 +17,7 @@ if [ -z "$conf" ] || [ ! -x "$conf" ]; then
 fi
 if [ -z "$conf" ] || [ ! -x "$conf" ]; then
   cat >&2 <<'EOF'
-gotry: node not found in PATH. Install Node 22+:
+gotry: node not found in PATH. Install Node 22.15+:
   macOS:  brew install node@22  (or use nvm)
   Linux:  https://nodejs.org/
 
