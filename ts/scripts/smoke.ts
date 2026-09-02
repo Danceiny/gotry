@@ -9,6 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { apply } from '../src/index.ts'
 import type { FlightFact } from '../src/bookable-facts.ts'
 import { installModelOverride, type AgentRequestConfig } from '../capabilities/model-override.ts'
+import { offlineSessionFlightResult, sessionLiveEnabled } from '../capabilities/session-search.ts'
 
 interface ToolLike {
   name: string
@@ -216,26 +217,25 @@ async function main() {
     if (!(faPast.ok === false && /已是过去/.test(String(faPast.summary ?? '')))) {
       throw new Error(`FAIL: flyai 过去日期应代码层预校验拒绝,实际:${JSON.stringify(faPast).slice(0, 200)}`)
     }
-    const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR
-    const previousSessionTransport = process.env.GOTRY_SESSION_TRANSPORT
-    process.env.CHROME_USER_DATA_DIR = prof
-    process.env.GOTRY_SESSION_TRANSPORT = 'cdp'
     let ss: { ok?: boolean; verdict?: string; via?: string; evidence?: string }
-    try {
-      ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as typeof ss
-    } finally {
-      if (previousChromeUserDataDir === undefined) delete process.env.CHROME_USER_DATA_DIR
-      else process.env.CHROME_USER_DATA_DIR = previousChromeUserDataDir
-      if (previousSessionTransport === undefined) delete process.env.GOTRY_SESSION_TRANSPORT
-      else process.env.GOTRY_SESSION_TRANSPORT = previousSessionTransport
-      rmSync(prof, { recursive: true, force: true })
+    if (!sessionLiveEnabled()) {
+      ss = offlineSessionFlightResult()
+      console.log('  OFFLINE - GOTRY_SESSION_LIVE!=1: session transport was not invoked')
+    } else {
+      const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR
+      process.env.CHROME_USER_DATA_DIR = prof
+      try {
+        ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as typeof ss
+      } finally {
+        if (previousChromeUserDataDir === undefined) delete process.env.CHROME_USER_DATA_DIR
+        else process.env.CHROME_USER_DATA_DIR = previousChromeUserDataDir
+      }
     }
-    const isolatedNeedsAttach = ss.ok === false
-      && ss.verdict === 'needs-attach'
-      && ss.via === 'session-ctrip-flight-error'
-      && /\[会话:ctrip-flight@error@/.test(String(ss.evidence ?? ''))
-    if (!isolatedNeedsAttach) {
-      throw new Error(`FAIL: session cdp 隔离门禁应确定性返回 needs-attach,实际:${JSON.stringify(ss).slice(0, 200)}`)
+    rmSync(prof, { recursive: true, force: true })
+    // puppeteer-core 可用时应为 needs-attach；缺依赖环境仍以带证据链 error 优雅降级。
+    const ssErrTerminal = ss.ok === false && /^session-[a-z0-9-]+-error$/.test(String(ss.via ?? '')) && !!ss.evidence
+    if (!(ss.verdict === 'needs-login' || ss.verdict === 'needs-attach' || ss.verdict === 'hit' || ss.verdict === 'cooldown' || ss.verdict === 'challenged') && !ssErrTerminal) {
+      throw new Error(`FAIL: session 工具终态应属 {needs-attach,needs-login,hit,cooldown,challenged} 或带证据的 error 终态,实际:${JSON.stringify(ss).slice(0, 200)}`)
     }
     const faOutcome = faBlocked
       ? 'sentinel-限流降级'

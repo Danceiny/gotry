@@ -18,9 +18,10 @@ export interface AvailabilityHotelStateV2 {
   currentGeneration?: AvailabilityGenerationV2
   /** Compatibility projection for callers needing current refs only. */
   generation: number; currentOfferRefs: string[]; invalidatedOfferRefs: string[]; checkCount: number; freshOffersRequired: boolean
+  tombstonedOfferRefs: string[]; tombstonedOfferVersionRefs: string[]
   lastEvidence: 'none' | 'confirmed' | 'unavailable' | 'inconclusive'
 }
-export interface AvailabilityAttemptV2 { actionId: string; hotelRef: string; offerRef: string; generation: number; ordinal: number; workspaceRevision: number }
+export interface AvailabilityAttemptV2 { actionId: string; hotelRef: string; offerRef: string; offerVersionRef: string; generation: number; ordinal: number; workspaceRevision: number }
 export interface AvailabilityQueryReservationV2 { actionId: string; hotelRefs: string[]; workspaceRevision: number }
 export interface AvailabilityExhaustionV2 {
   code: 'availability_confirmed' | 'availability_exhausted_complete' | 'availability_exhausted_inconclusive'
@@ -35,12 +36,16 @@ export interface AvailabilityPolicyStateV2 {
   lastQueryOfferHotels?: Record<string, string>; lastQuerySourceActionId?: string; lastQuerySourceReceiptDigest?: string; lastQueryWorkspaceRevision?: number
 }
 export type AvailabilityPolicyDecisionV2 =
-  | { ok: true; hotelRef: string; offerRef: string; checkCount: number; generation: number }
+  | { ok: true; hotelRef: string; offerRef: string; offerVersionRef: string; checkCount: number; generation: number }
   | { ok: false; code: 'hotel_unknown' | 'offer_not_loaded' | 'offers_refresh_required' | 'hotel_check_limit_reached' | 'availability_exhausted' | 'generation_invalid' | 'hotel_not_active' }
 
 type AvailabilityActionLikeV2 = { kind: BookingReadActionV2['kind']; actionId: string; input: Record<string, any>; expectedRevision?: number }
 
 function unique(values: readonly string[]): string[] { return [...new Set(values)] }
+export function assertWorkspaceLoadedOfferRefsUniqueV2(workspace: BookingWorkspaceSnapshotV2): void {
+  if (workspace.loadedOffers.length !== new Set(workspace.loadedOffers.map((offer) => offer.offerRef)).size) throw new Error('availability_duplicate_offer_ref')
+  if (workspace.loadedOffers.length !== new Set(workspace.loadedOffers.map((offer) => offer.offerVersionRef)).size) throw new Error('availability_duplicate_offer_version_ref')
+}
 function stable(value: unknown): unknown { if (Array.isArray(value)) return value.map(stable); if (!value || typeof value !== 'object') return value; return Object.fromEntries(Object.keys(value as Record<string, unknown>).sort().map((key) => [key, stable((value as Record<string, unknown>)[key])])); }
 export function digestV2(value: unknown): string { return createHash('sha256').update(JSON.stringify(stable(value))).digest('hex') }
 function workspaceDigestV2(workspace: BookingWorkspaceSnapshotV2): string { const { contextRef: _context, ...bound } = workspace as unknown as Record<string, unknown>; return digestV2(bound) }
@@ -50,8 +55,18 @@ function offerRefsForHotel(workspace: BookingWorkspaceSnapshotV2, hotelRef: stri
   if (refs.length > MAX_OFFERS_PER_HOTEL_GENERATION_V2) throw new Error('availability_offer_limit_exceeded')
   return refs
 }
+function loadedOfferVersion(workspace: BookingWorkspaceSnapshotV2, offerRef: string, offerVersionRef: string) { return workspace.loadedOffers.find((offer) => offer.offerRef === offerRef && offer.offerVersionRef === offerVersionRef) }
+function legalOfferRefsForHotel(workspace: BookingWorkspaceSnapshotV2, hotel: AvailabilityHotelStateV2, refs: readonly string[]): string[] {
+  const legal = refs.filter((ref) => {
+    if (hotel.tombstonedOfferRefs.includes(ref)) return false
+    const loaded = workspace.loadedOffers.find((offer) => offer.offerRef === ref && offer.hotelRef === hotel.hotelRef)
+    return Boolean(loaded && !hotel.tombstonedOfferVersionRefs.includes(loaded.offerVersionRef))
+  })
+  if (legal.length > MAX_OFFERS_PER_HOTEL_GENERATION_V2) throw new Error('availability_offer_limit_exceeded')
+  return unique(legal)
+}
 function copyHotel(hotel: AvailabilityHotelStateV2): AvailabilityHotelStateV2 {
-  return { ...hotel, currentOfferRefs: [...hotel.currentOfferRefs], invalidatedOfferRefs: [...hotel.invalidatedOfferRefs], ...(hotel.currentGeneration ? { currentGeneration: { ...hotel.currentGeneration, orderedOfferRefs: [...hotel.currentGeneration.orderedOfferRefs] } } : {}) }
+  return { ...hotel, currentOfferRefs: [...hotel.currentOfferRefs], invalidatedOfferRefs: [...hotel.invalidatedOfferRefs], tombstonedOfferRefs: [...hotel.tombstonedOfferRefs], tombstonedOfferVersionRefs: [...hotel.tombstonedOfferVersionRefs], ...(hotel.currentGeneration ? { currentGeneration: { ...hotel.currentGeneration, orderedOfferRefs: [...hotel.currentGeneration.orderedOfferRefs] } } : {}) }
 }
 function copyState(state: AvailabilityPolicyStateV2): AvailabilityPolicyStateV2 {
   return { ...state, ...(state.criteria ? { criteria: structuredClone(state.criteria) } : {}), hotelRefs: [...state.hotelRefs], hotels: Object.fromEntries(Object.entries(state.hotels).map(([ref, hotel]) => [ref, copyHotel(hotel)])), attempts: state.attempts.map((attempt) => ({ ...attempt })), queryReservations: state.queryReservations.map((query) => ({ ...query, hotelRefs: [...query.hotelRefs] })), ...(state.lastQueryHotelRefs ? { lastQueryHotelRefs: [...state.lastQueryHotelRefs] } : {}), ...(state.lastQueryOfferHotels ? { lastQueryOfferHotels: { ...state.lastQueryOfferHotels } } : {}), ...(state.terminal ? { terminal: { ...state.terminal, hotelRefs: [...state.terminal.hotelRefs] } } : {}) }
@@ -115,7 +130,7 @@ function terminalFor(state: AvailabilityPolicyStateV2): AvailabilityExhaustionV2
   return { code: conclusive ? 'availability_exhausted_complete' : 'availability_exhausted_inconclusive', hotelRefs: [...state.hotelRefs], reason: hotels.every((hotel) => !hotel.currentOfferRefs.length) ? 'no_current_offers' : 'check_limit_reached', evidence: conclusive ? 'conclusive' : 'inconclusive' }
 }
 function withTerminal(state: AvailabilityPolicyStateV2): AvailabilityPolicyStateV2 { const terminal = terminalFor(state); return terminal ? { ...state, terminal, availabilityPhase: 'terminal' } : state }
-function newHotel(hotelRef: string): AvailabilityHotelStateV2 { return { hotelRef, status: 'unvisited', checksIssued: 0, offerQueriesIssued: 0, generationNo: 0, generation: 0, currentOfferRefs: [], invalidatedOfferRefs: [], checkCount: 0, freshOffersRequired: false, lastEvidence: 'none' } }
+function newHotel(hotelRef: string): AvailabilityHotelStateV2 { return { hotelRef, status: 'unvisited', checksIssued: 0, offerQueriesIssued: 0, generationNo: 0, generation: 0, currentOfferRefs: [], invalidatedOfferRefs: [], checkCount: 0, freshOffersRequired: false, tombstonedOfferRefs: [], tombstonedOfferVersionRefs: [], lastEvidence: 'none' } }
 function phaseForActiveHotel(state: AvailabilityPolicyStateV2): 'need_offers' | 'need_check' {
   const active = state.hotels[state.hotelRefs[state.activeHotelOrdinal] ?? '']
   return active?.status === 'active' && active.currentGeneration?.valid && active.currentOfferRefs.length > 0 && !active.freshOffersRequired
@@ -124,11 +139,12 @@ function phaseForActiveHotel(state: AvailabilityPolicyStateV2): 'need_offers' | 
 }
 
 /** Initial workspace is only a hint; the bounded recovery starts at typed offers.query. */
-export function createAvailabilityPolicyV2(_workspace: BookingWorkspaceSnapshotV2): AvailabilityPolicyStateV2 { return { initialized: false, recoveryStarted: false, availabilityPhase: 'need_offers', activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] } }
+export function createAvailabilityPolicyV2(workspace: BookingWorkspaceSnapshotV2): AvailabilityPolicyStateV2 { assertWorkspaceLoadedOfferRefsUniqueV2(workspace); return { initialized: false, recoveryStarted: false, availabilityPhase: 'need_offers', activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] } }
 /** Ordinary search results never get silently truncated into recovery candidates. */
 export function recordVisibleHotelsV2(state: AvailabilityPolicyStateV2, _workspace: BookingWorkspaceSnapshotV2): AvailabilityPolicyStateV2 { return copyState(state) }
 /** Observe a normal offers query without opening an availability recovery. */
 export function recordObservedOffersQueryV2(state: AvailabilityPolicyStateV2, hotelRefs: readonly string[], criteriaDigest: string, workspace?: BookingWorkspaceSnapshotV2, receipt?: ActionReceiptV2, sourceActionId?: string, receiptDigest?: string, criteria?: OfferCriteriaV1): AvailabilityPolicyStateV2 {
+  if (workspace) assertWorkspaceLoadedOfferRefsUniqueV2(workspace)
   if (state.recoveryStarted) return copyState(state)
   const next = copyState(state)
   if (!workspace || !receipt) return next
@@ -171,6 +187,7 @@ export function recordObservedOffersQueryV2(state: AvailabilityPolicyStateV2, ho
  * evidenced subset. An unreported offer is never silently admitted.
  */
 export function validateOffersReceiptWorkspaceV2(receipt: ActionReceiptV2, workspace: BookingWorkspaceSnapshotV2, hotelRefs: readonly string[]): Record<string, string> {
+  assertWorkspaceLoadedOfferRefsUniqueV2(workspace)
   if (receipt.observation.kind !== 'offers.state') throw new Error('availability_offers_observation_required')
   const requested = unique(hotelRefs)
   if (!sameSet(receipt.observation.hotelRefs, requested)) throw new Error('availability_offers_hotel_mismatch')
@@ -194,6 +211,7 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean { return a
 
 /** A typed offers.query receipt starts/advances a bounded candidate recovery. */
 export function recordOffersQueryIssuedV2(state: AvailabilityPolicyStateV2, hotelRefs: readonly string[], workspace: BookingWorkspaceSnapshotV2, actionId: string, criteriaDigest = '', criteria?: OfferCriteriaV1): AvailabilityPolicyStateV2 {
+  assertWorkspaceLoadedOfferRefsUniqueV2(workspace)
   const next = copyState(state); const requested = unique(hotelRefs)
   if (!requested.length || requested.length > MAX_HOTELS_PER_TASK_V2) throw new Error('availability_hotel_limit_exceeded')
   if (!state.recoveryStarted) throw new Error('availability_recovery_not_started')
@@ -213,6 +231,7 @@ export function recordOffersQueryIssuedV2(state: AvailabilityPolicyStateV2, hote
   next.queryReservations.push({ actionId, hotelRefs: [...requested], workspaceRevision: workspace.revision }); next.availabilityPhase = 'waiting_offers'; next.initialized = true; return next
 }
 export function recordOffersGenerationV2(state: AvailabilityPolicyStateV2, hotelRefs: readonly string[], workspace: BookingWorkspaceSnapshotV2, actionId: string, receiptDigest: string, receipt: ActionReceiptV2, criteriaDigest = '', criteria?: OfferCriteriaV1): AvailabilityPolicyStateV2 {
+  assertWorkspaceLoadedOfferRefsUniqueV2(workspace)
   if (!state.recoveryStarted) return copyState(state)
   if (state.terminal) throw new Error('availability_terminal')
   const next = copyState(state); const requested = unique(hotelRefs)
@@ -228,15 +247,17 @@ export function recordOffersGenerationV2(state: AvailabilityPolicyStateV2, hotel
   for (const hotelRef of requested) {
     const hotel = next.hotels[hotelRef]!
     const partial = receipt.status === 'changed' || receipt.status === 'partial' || receipt.status === 'failed' || receipt.status === 'stale' || receipt.resultContract.outcome === 'partial' || (receipt.resultContract.outcome === 'complete' && !receipt.resultContract.hardCriteriaMet) || Boolean(receipt.resultContract.blockers.length) || Boolean(receipt.resultContract.gapCodes.length) || Boolean(receipt.observation.kind === 'gap' || (receipt.observation.kind === 'offers.state' && receipt.observation.gapCodes?.length))
-    const refs = partial
+    const candidateRefs = partial
       ? receipt.observation.kind === 'offers.state'
         ? receipt.observation.offerRefs.filter((ref) => workspace.loadedOffers.some((offer) => offer.offerRef === ref && offer.hotelRef === hotelRef))
         : []
       : offerRefsForHotel(workspace, hotelRef)
-    if (refs.length > MAX_OFFERS_PER_HOTEL_GENERATION_V2) throw new Error('availability_offer_limit_exceeded')
+    const refs = legalOfferRefsForHotel(workspace, hotel, candidateRefs)
     const unusable = ['stale', 'failed', 'unsupported'].includes(receipt.status)
     if (unusable) { hotel.currentOfferRefs = []; hotel.invalidatedOfferRefs = [...(hotel.currentGeneration?.orderedOfferRefs ?? [])]; hotel.freshOffersRequired = hotel.checksIssued < MAX_OFFER_CHECKS_PER_HOTEL_V2 && hotel.offerQueriesIssued < MAX_OFFER_QUERIES_PER_HOTEL_V2; hotel.status = 'inconclusive'; hotel.lastEvidence = 'inconclusive'; continue }
-    hotel.generationNo += 1; hotel.generation = hotel.generationNo; hotel.currentOfferRefs = partial ? [] : refs; hotel.invalidatedOfferRefs = partial ? refs : []; hotel.freshOffersRequired = partial && hotel.checksIssued < MAX_OFFER_CHECKS_PER_HOTEL_V2 && hotel.offerQueriesIssued < MAX_OFFER_QUERIES_PER_HOTEL_V2; hotel.status = partial ? 'inconclusive' : refs.length ? 'active' : 'negative'; hotel.lastEvidence = partial ? 'inconclusive' : refs.length ? 'none' : 'unavailable'
+    const filteredAllCandidates = candidateRefs.length > 0 && refs.length === 0
+    const noLegalRefsNeedsRefresh = filteredAllCandidates && hotel.offerQueriesIssued < MAX_OFFER_QUERIES_PER_HOTEL_V2
+    hotel.generationNo += 1; hotel.generation = hotel.generationNo; hotel.currentOfferRefs = partial || noLegalRefsNeedsRefresh ? [] : refs; hotel.invalidatedOfferRefs = partial || noLegalRefsNeedsRefresh ? candidateRefs : []; hotel.freshOffersRequired = (partial || noLegalRefsNeedsRefresh) && hotel.checksIssued < MAX_OFFER_CHECKS_PER_HOTEL_V2 && hotel.offerQueriesIssued < MAX_OFFER_QUERIES_PER_HOTEL_V2; hotel.status = partial || noLegalRefsNeedsRefresh ? 'inconclusive' : refs.length ? 'active' : 'negative'; hotel.lastEvidence = partial || noLegalRefsNeedsRefresh ? 'inconclusive' : refs.length ? 'none' : 'unavailable'
     hotel.currentGeneration = { generationId: `${hotelRef}:generation:${hotel.generationNo}`, source: { kind: 'query_receipt', actionId, receiptDigest, workspaceRevision: workspace.revision }, offerSetDigest: digestV2(refs), orderedOfferRefs: refs, evidence: partial ? 'partial' : 'complete', valid: refs.length > 0 && !partial }
   }
   const firstRequested = next.hotelRefs.indexOf(requested[0]!)
@@ -250,26 +271,29 @@ export function recordOffersGenerationV2(state: AvailabilityPolicyStateV2, hotel
   next.initialized = true; next.availabilityPhase = phaseForActiveHotel(next); delete next.terminal; return withTerminal(next)
 }
 
-export function canIssueOfferCheckV2(state: AvailabilityPolicyStateV2, workspace: BookingWorkspaceSnapshotV2, offerRef: string): AvailabilityPolicyDecisionV2 {
+export function canIssueOfferCheckV2(state: AvailabilityPolicyStateV2, workspace: BookingWorkspaceSnapshotV2, offerRef: string, offerVersionRef: string): AvailabilityPolicyDecisionV2 {
+  assertWorkspaceLoadedOfferRefsUniqueV2(workspace)
   // Availability recovery is opt-in at the typed offers.query seam. Existing
   // v2 read flows retain their pre-recovery offer.check behavior.
   if (!state.recoveryStarted) {
-    const loaded = workspace.loadedOffers.find((offer) => offer.offerRef === offerRef)
+    const loaded = loadedOfferVersion(workspace, offerRef, offerVersionRef)
     return loaded
-      ? { ok: true, hotelRef: loaded.hotelRef, offerRef, checkCount: 0, generation: 0 }
+      ? { ok: true, hotelRef: loaded.hotelRef, offerRef, offerVersionRef, checkCount: 0, generation: 0 }
       : { ok: false, code: 'offer_not_loaded' }
   }
   if (state.terminal) return { ok: false, code: 'availability_exhausted' }
-  const loaded = workspace.loadedOffers.find((offer) => offer.offerRef === offerRef); if (!loaded) return { ok: false, code: 'offer_not_loaded' }
+  const loaded = loadedOfferVersion(workspace, offerRef, offerVersionRef); if (!loaded) return { ok: false, code: 'offer_not_loaded' }
   const hotel = state.hotels[loaded.hotelRef]; if (!hotel) return { ok: false, code: 'hotel_unknown' }
   if (state.hotelRefs[state.activeHotelOrdinal] !== loaded.hotelRef) return { ok: false, code: 'hotel_not_active' }
   if (hotel.freshOffersRequired) return { ok: false, code: 'offers_refresh_required' }
+  if (hotel.tombstonedOfferRefs.includes(offerRef) || hotel.tombstonedOfferVersionRefs.includes(offerVersionRef)) return { ok: false, code: 'generation_invalid' }
   if (!hotel.currentGeneration?.valid || !hotel.currentGeneration.orderedOfferRefs.includes(offerRef) || hotel.invalidatedOfferRefs.includes(offerRef)) return { ok: false, code: 'generation_invalid' }
   if (hotel.checksIssued >= MAX_OFFER_CHECKS_PER_HOTEL_V2) return { ok: false, code: 'hotel_check_limit_reached' }
-  return { ok: true, hotelRef: loaded.hotelRef, offerRef, checkCount: hotel.checksIssued + 1, generation: hotel.generationNo }
+  return { ok: true, hotelRef: loaded.hotelRef, offerRef, offerVersionRef, checkCount: hotel.checksIssued + 1, generation: hotel.generationNo }
 }
 /** Start the bounded recovery epoch at the first typed offer.check. */
 function startRecoveryAtOfferV2(state: AvailabilityPolicyStateV2, workspace: BookingWorkspaceSnapshotV2, offerRef: string, actionId: string): AvailabilityPolicyStateV2 {
+  assertWorkspaceLoadedOfferRefsUniqueV2(workspace)
   const loaded = workspace.loadedOffers.find((offer) => offer.offerRef === offerRef)
   if (!loaded) return copyState(state)
   const shortlistHotels = workspace.shortlistedOfferRefs.map((ref) => workspace.loadedOffers.find((offer) => offer.offerRef === ref)?.hotelRef ?? state.lastQueryOfferHotels?.[ref]).map((ref, index) => {
@@ -295,15 +319,16 @@ function startRecoveryAtOfferV2(state: AvailabilityPolicyStateV2, workspace: Boo
     : { kind: 'workspace_snapshot' as const, workspaceDigest: workspaceDigestV2(workspace), workspaceRevision: workspace.revision }
   nextHotel.generationNo = 1; nextHotel.generation = 1; nextHotel.currentOfferRefs = refs; nextHotel.status = refs.length ? 'active' : 'inconclusive'; nextHotel.currentGeneration = { generationId: `${loaded.hotelRef}:generation:1`, source, offerSetDigest: digestV2(refs), orderedOfferRefs: refs, evidence: 'complete', valid: refs.length > 0 }; next.initialized = true; next.availabilityPhase = 'need_check'; return next
 }
-export function recordOfferCheckIssuedV2(state: AvailabilityPolicyStateV2, workspace: BookingWorkspaceSnapshotV2, offerRef: string, actionId = `offer-check-${offerRef}-${state.attempts.length + 1}`): AvailabilityPolicyStateV2 {
+export function recordOfferCheckIssuedV2(state: AvailabilityPolicyStateV2, workspace: BookingWorkspaceSnapshotV2, offerRef: string, offerVersionRef: string, actionId = `offer-check-${offerRef}-${state.attempts.length + 1}`): AvailabilityPolicyStateV2 {
+  assertWorkspaceLoadedOfferRefsUniqueV2(workspace)
   if (state.terminal) throw new Error('availability_terminal')
   if (!state.recoveryStarted) {
-    if (!workspace.loadedOffers.some((offer) => offer.offerRef === offerRef)) throw new Error('availability_offer_not_loaded')
+    if (!loadedOfferVersion(workspace, offerRef, offerVersionRef)) throw new Error('availability_offer_not_loaded')
     const started = startRecoveryAtOfferV2(state, workspace, offerRef, actionId)
-    return recordOfferCheckIssuedV2(started, workspace, offerRef, actionId)
+    return recordOfferCheckIssuedV2(started, workspace, offerRef, offerVersionRef, actionId)
   }
-  const decision = canIssueOfferCheckV2(state, workspace, offerRef); if (!decision.ok) throw new Error(`availability_${decision.code}`)
-  const next = copyState(state); const hotel = next.hotels[decision.hotelRef]!; hotel.checksIssued += 1; hotel.checkCount = hotel.checksIssued; next.attempts.push({ actionId, hotelRef: decision.hotelRef, offerRef, generation: hotel.generationNo, ordinal: hotel.checksIssued, workspaceRevision: workspace.revision }); hotel.currentGeneration!.valid = false; next.availabilityPhase = 'waiting_check'; return next
+  const decision = canIssueOfferCheckV2(state, workspace, offerRef, offerVersionRef); if (!decision.ok) throw new Error(`availability_${decision.code}`)
+  const next = copyState(state); const hotel = next.hotels[decision.hotelRef]!; hotel.checksIssued += 1; hotel.checkCount = hotel.checksIssued; next.attempts.push({ actionId, hotelRef: decision.hotelRef, offerRef, offerVersionRef, generation: hotel.generationNo, ordinal: hotel.checksIssued, workspaceRevision: workspace.revision }); hotel.currentGeneration!.valid = false; next.availabilityPhase = 'waiting_check'; return next
 }
 
 /**
@@ -325,30 +350,40 @@ export function reduceAvailabilityActionV2(
     if (state.recoveryStarted) next = recordOffersQueryIssuedV2(next, action.input.hotelRefs, workspace, action.actionId, criteriaDigest, action.input.criteria)
     return next
   }
-  if (action.kind === 'offer.check') return recordOfferCheckIssuedV2(state, workspace, action.input.offerRef, action.actionId)
+  if (action.kind === 'offer.check') return recordOfferCheckIssuedV2(state, workspace, action.input.offerRef, action.input.offerVersionRef, action.actionId)
   return copyState(state)
 }
 
 /** Fold a receipt against the exact durable attempt. Non-confirming results invalidate the whole generation. */
-export function recordOfferCheckReceiptV2(state: AvailabilityPolicyStateV2, workspace: BookingWorkspaceSnapshotV2, receipt: ActionReceiptV2, actionId: string, offerRef: string, expectedRevision: number): AvailabilityPolicyStateV2 {
+export function recordOfferCheckReceiptV2(state: AvailabilityPolicyStateV2, workspace: BookingWorkspaceSnapshotV2, receipt: ActionReceiptV2, actionId: string, offerRef: string, offerVersionRef: string, expectedRevision: number): AvailabilityPolicyStateV2 {
+  assertWorkspaceLoadedOfferRefsUniqueV2(workspace)
   if (!state.recoveryStarted) return copyState(state)
   const attempt = state.attempts.find((candidate) => candidate.actionId === actionId); if (!attempt) throw new Error('availability_attempt_unknown')
   if (receipt.actionId !== actionId) throw new Error('availability_attempt_mismatch')
   if (receipt.revision !== workspace.revision || receipt.revision < expectedRevision) throw new Error('availability_stale_receipt')
   const targetOfferRef = receipt.observation.kind === 'offer.availability' ? receipt.observation.offerRef : offerRef
-  if (attempt.offerRef !== targetOfferRef || offerRef !== targetOfferRef || attempt.workspaceRevision !== expectedRevision) throw new Error('availability_attempt_mismatch')
-  const loaded = workspace.loadedOffers.find((offer) => offer.offerRef === targetOfferRef); if (!loaded) throw new Error('availability_offer_not_loaded')
-  const next = copyState(state); const hotel = next.hotels[loaded.hotelRef]; if (!hotel || !hotel.currentGeneration || attempt.generation !== hotel.generationNo) throw new Error('availability_generation_mismatch')
+  const targetVersionRef = receipt.observation.kind === 'offer.availability' ? receipt.observation.checkedOfferVersionRef : offerVersionRef
+  if (attempt.offerRef !== targetOfferRef || attempt.offerVersionRef !== targetVersionRef || offerRef !== targetOfferRef || offerVersionRef !== targetVersionRef || attempt.workspaceRevision !== expectedRevision) throw new Error('availability_attempt_mismatch')
+  const next = copyState(state); const hotel = next.hotels[attempt.hotelRef]; if (!hotel || !hotel.currentGeneration || attempt.generation !== hotel.generationNo) throw new Error('availability_generation_mismatch')
   const observation = receipt.observation.kind === 'offer.availability' ? receipt.observation : undefined
+  if (['applied', 'changed', 'unavailable', 'no_match'].includes(receipt.status) && !observation) throw new Error('availability_observation_required')
   if (observation?.available && (receipt.resultContract.outcome === 'empty' || ['unavailable', 'no_match', 'failed', 'stale', 'unsupported'].includes(receipt.status))) throw new Error('availability_receipt_incoherent')
-  if (observation && !observation.available && observation.verifiedOfferRef) throw new Error('availability_receipt_incoherent')
+  if (observation && !observation.available && (observation.verifiedOfferRef || observation.currentOfferVersionRef)) throw new Error('availability_receipt_incoherent')
   if (['unavailable', 'no_match'].includes(receipt.status) && receipt.resultContract.outcome !== 'empty') throw new Error('availability_receipt_incoherent')
-  const confirmed = receipt.status === 'applied' && Boolean(observation?.available && observation.verifiedOfferRef && workspace.verifiedOfferRef === observation.verifiedOfferRef) && !observation?.changedFactRefs.length && !observation?.gapCodes?.length && receipt.resultContract.outcome === 'complete' && receipt.resultContract.hardCriteriaMet && !receipt.resultContract.blockers.length && !receipt.resultContract.gapCodes.length
+  const confirmed = receipt.status === 'applied' && Boolean(observation?.available && observation.currentOfferVersionRef === offerVersionRef && observation.verifiedOfferRef && workspace.verifiedOffer?.offerRef === offerRef && workspace.verifiedOffer.offerVersionRef === offerVersionRef && workspace.verifiedOffer.verifiedOfferRef === observation.verifiedOfferRef && loadedOfferVersion(workspace, offerRef, offerVersionRef)) && !observation?.changedFactRefs.length && !observation?.gapCodes?.length && receipt.resultContract.outcome === 'complete' && receipt.resultContract.hardCriteriaMet && !receipt.resultContract.blockers.length && !receipt.resultContract.gapCodes.length
   if (confirmed) { hotel.status = 'confirmed'; hotel.lastEvidence = 'confirmed'; hotel.currentGeneration.valid = false; return withTerminal(next) }
-  hotel.currentGeneration.valid = false; hotel.invalidatedOfferRefs = [...hotel.currentGeneration.orderedOfferRefs]; hotel.currentOfferRefs = []; hotel.freshOffersRequired = hotel.checksIssued < MAX_OFFER_CHECKS_PER_HOTEL_V2 && hotel.offerQueriesIssued < MAX_OFFER_QUERIES_PER_HOTEL_V2
+  if (receipt.status === 'changed' && observation?.available && observation.currentOfferVersionRef && observation.currentOfferVersionRef !== offerVersionRef && observation.changedFactRefs.length && !observation.verifiedOfferRef && loadedOfferVersion(workspace, offerRef, observation.currentOfferVersionRef)) {
+    hotel.tombstonedOfferVersionRefs = unique([...hotel.tombstonedOfferVersionRefs, offerVersionRef])
+    hotel.currentGeneration.valid = true; hotel.invalidatedOfferRefs = []; hotel.currentOfferRefs = [offerRef]; hotel.freshOffersRequired = false; hotel.status = 'active'; hotel.lastEvidence = 'none'; next.availabilityPhase = 'need_check'; return withTerminal(next)
+  }
   const completeNegative = (receipt.status === 'unavailable' || receipt.status === 'no_match') && receipt.resultContract.outcome === 'empty' && observation?.available === false && receipt.resultContract.gapCodes.length === 0 && !receipt.resultContract.blockers.length && !observation.gapCodes?.length
+  if (completeNegative) {
+    hotel.tombstonedOfferVersionRefs = unique([...hotel.tombstonedOfferVersionRefs, offerVersionRef])
+    hotel.tombstonedOfferRefs = unique([...hotel.tombstonedOfferRefs, offerRef])
+  }
+  hotel.currentGeneration.valid = false; hotel.invalidatedOfferRefs = [...hotel.currentGeneration.orderedOfferRefs]; hotel.currentOfferRefs = []; hotel.freshOffersRequired = hotel.checksIssued < MAX_OFFER_CHECKS_PER_HOTEL_V2 && hotel.offerQueriesIssued < MAX_OFFER_QUERIES_PER_HOTEL_V2
   hotel.status = completeNegative ? 'negative' : 'inconclusive'; hotel.lastEvidence = completeNegative ? 'unavailable' : 'inconclusive'
-  const currentOrdinal = next.hotelRefs.indexOf(loaded.hotelRef)
+  const currentOrdinal = next.hotelRefs.indexOf(attempt.hotelRef)
   const nextOrdinal = hotel.freshOffersRequired ? currentOrdinal : next.hotelRefs.findIndex((ref) => ['active', 'unvisited'].includes(next.hotels[ref]!.status))
   if (nextOrdinal >= 0) next.activeHotelOrdinal = nextOrdinal
   next.availabilityPhase = phaseForActiveHotel(next); return withTerminal(next)
@@ -371,7 +406,7 @@ export function reduceAvailabilityReceiptV2(
     next = recordOffersGenerationV2(next, action.input.hotelRefs, workspace, action.actionId, digestV2(receipt), receipt, state.criteriaDigest ?? '', action.input.criteria)
   } else if (action.kind === 'offer.check') {
     if (action.expectedRevision === undefined) throw new Error('availability_expected_revision_missing')
-    next = recordOfferCheckReceiptV2(next, workspace, receipt, action.actionId, action.input.offerRef, action.expectedRevision)
+    next = recordOfferCheckReceiptV2(next, workspace, receipt, action.actionId, action.input.offerRef, action.input.offerVersionRef, action.expectedRevision)
   }
   return next
 }
@@ -403,11 +438,13 @@ export function validateAvailabilityPolicyV2(state: AvailabilityPolicyStateV2): 
     }
     if (!state.initialized || !state.recoveryId || !state.candidateSetDigest || state.candidateSetDigest !== digestV2(state.hotelRefs)) return false
     const criteriaBound = isOfferCriteriaV2(state.criteria) && Boolean(state.criteriaDigest) && state.criteriaDigest === digestV2(state.criteria)
-    const firstCheckMayBindCriteria = !state.criteria && !state.criteriaDigest && state.queryReservations.length === 0 && state.attempts.length === 1 && (
+    const manualCheckWorkspaceSnapshot = state.attempts.length > 0 && state.attempts.every((attempt) => state.hotels[attempt.hotelRef]?.currentGeneration?.source.kind === 'workspace_snapshot')
+    const manualCheckMayBindCriteria = !state.criteria && !state.criteriaDigest && state.queryReservations.length === 0 && manualCheckWorkspaceSnapshot && (
       ['waiting_check', 'need_offers'].includes(state.availabilityPhase)
-      || (state.availabilityPhase === 'terminal' && state.terminal?.code === 'availability_confirmed' && state.attempts[0] && state.hotels[state.attempts[0].hotelRef]?.currentGeneration?.source.kind === 'workspace_snapshot')
+      || state.availabilityPhase === 'need_check'
+      || (state.availabilityPhase === 'terminal' && state.terminal?.code === 'availability_confirmed')
     )
-    if (!criteriaBound && !firstCheckMayBindCriteria) return false
+    if (!criteriaBound && !manualCheckMayBindCriteria) return false
     if (state.lastQueryCriteriaDigest !== undefined && state.lastQueryCriteriaDigest !== state.criteriaDigest) return false
     if (state.lastQueryHotelRefs !== undefined && (!Array.isArray(state.lastQueryHotelRefs) || new Set(state.lastQueryHotelRefs).size !== state.lastQueryHotelRefs.length || state.lastQueryHotelRefs.some((ref) => typeof ref !== 'string' || !ref))) return false
     if (state.lastQueryOfferHotels !== undefined && (!state.lastQueryHotelRefs || Object.values(state.lastQueryOfferHotels).some((ref) => typeof ref !== 'string' || !state.lastQueryHotelRefs!.includes(ref)) || Object.keys(state.lastQueryOfferHotels).some((ref) => typeof ref !== 'string' || !ref))) return false
@@ -421,12 +458,12 @@ export function validateAvailabilityPolicyV2(state: AvailabilityPolicyStateV2): 
       if (!hotel || hotel.hotelRef !== ref || !validStatus.has(hotel.status) || !validEvidence.has(hotel.lastEvidence)) return false
       if (![hotel.checksIssued, hotel.offerQueriesIssued, hotel.generationNo, hotel.generation, hotel.checkCount].every(Number.isSafeInteger)) return false
       if (hotel.checksIssued < 0 || hotel.checksIssued > MAX_OFFER_CHECKS_PER_HOTEL_V2 || hotel.offerQueriesIssued < 0 || hotel.offerQueriesIssued > MAX_OFFER_QUERIES_PER_HOTEL_V2 || hotel.generationNo < 0 || hotel.generation !== hotel.generationNo || hotel.checkCount !== hotel.checksIssued) return false
-      if (typeof hotel.freshOffersRequired !== 'boolean' || !Array.isArray(hotel.currentOfferRefs) || !Array.isArray(hotel.invalidatedOfferRefs)) return false
-      if (hotel.currentOfferRefs.some((offer) => typeof offer !== 'string' || !offer) || hotel.invalidatedOfferRefs.some((offer) => typeof offer !== 'string' || !offer)) return false
-      if (new Set(hotel.currentOfferRefs).size !== hotel.currentOfferRefs.length || new Set(hotel.invalidatedOfferRefs).size !== hotel.invalidatedOfferRefs.length || hotel.currentOfferRefs.length > MAX_OFFERS_PER_HOTEL_GENERATION_V2 || hotel.invalidatedOfferRefs.length > MAX_OFFERS_PER_HOTEL_GENERATION_V2 || hotel.currentOfferRefs.some((offer) => hotel.invalidatedOfferRefs.includes(offer))) return false
+      if (typeof hotel.freshOffersRequired !== 'boolean' || !Array.isArray(hotel.currentOfferRefs) || !Array.isArray(hotel.invalidatedOfferRefs) || !Array.isArray(hotel.tombstonedOfferRefs) || !Array.isArray(hotel.tombstonedOfferVersionRefs)) return false
+      if (hotel.currentOfferRefs.some((offer) => typeof offer !== 'string' || !offer) || hotel.invalidatedOfferRefs.some((offer) => typeof offer !== 'string' || !offer) || hotel.tombstonedOfferRefs.some((offer) => typeof offer !== 'string' || !offer) || hotel.tombstonedOfferVersionRefs.some((offer) => typeof offer !== 'string' || !offer)) return false
+      if (new Set(hotel.currentOfferRefs).size !== hotel.currentOfferRefs.length || new Set(hotel.invalidatedOfferRefs).size !== hotel.invalidatedOfferRefs.length || new Set(hotel.tombstonedOfferRefs).size !== hotel.tombstonedOfferRefs.length || new Set(hotel.tombstonedOfferVersionRefs).size !== hotel.tombstonedOfferVersionRefs.length || hotel.currentOfferRefs.length > MAX_OFFERS_PER_HOTEL_GENERATION_V2 || hotel.invalidatedOfferRefs.length > MAX_OFFERS_PER_HOTEL_GENERATION_V2 || hotel.currentOfferRefs.some((offer) => hotel.invalidatedOfferRefs.includes(offer) || hotel.tombstonedOfferRefs.includes(offer))) return false
       const generation = hotel.currentGeneration
       if (hotel.generationNo === 0) {
-        if (generation !== undefined || hotel.currentOfferRefs.length || hotel.invalidatedOfferRefs.length || hotel.status !== 'unvisited' || hotel.lastEvidence !== 'none' || hotel.checksIssued !== 0 || hotel.offerQueriesIssued !== 0 || hotel.freshOffersRequired) return false
+        if (generation !== undefined || hotel.currentOfferRefs.length || hotel.invalidatedOfferRefs.length || hotel.tombstonedOfferRefs.length || hotel.tombstonedOfferVersionRefs.length || hotel.status !== 'unvisited' || hotel.lastEvidence !== 'none' || hotel.checksIssued !== 0 || hotel.offerQueriesIssued !== 0 || hotel.freshOffersRequired) return false
         continue
       }
       if (!generation || generation.generationId !== `${ref}:generation:${hotel.generationNo}` || !/^[0-9a-f]{64}$/.test(generation.offerSetDigest) || generation.offerSetDigest !== digestV2(generation.orderedOfferRefs) || !Array.isArray(generation.orderedOfferRefs) || generation.orderedOfferRefs.length > MAX_OFFERS_PER_HOTEL_GENERATION_V2 || generation.orderedOfferRefs.some((offer) => typeof offer !== 'string' || !offer) || new Set(generation.orderedOfferRefs).size !== generation.orderedOfferRefs.length || !['complete', 'partial'].includes(generation.evidence) || typeof generation.valid !== 'boolean') return false
@@ -448,7 +485,7 @@ export function validateAvailabilityPolicyV2(state: AvailabilityPolicyStateV2): 
     if (new Set(attempts.map((attempt) => attempt.actionId)).size !== attempts.length) return false
     const attemptsByHotel = new Map<string, AvailabilityAttemptV2[]>()
     for (const attempt of attempts) {
-      if (typeof attempt.actionId !== 'string' || !attempt.actionId || !state.hotels[attempt.hotelRef] || typeof attempt.offerRef !== 'string' || !attempt.offerRef || !Number.isSafeInteger(attempt.generation) || !Number.isSafeInteger(attempt.ordinal) || !Number.isSafeInteger(attempt.workspaceRevision) || attempt.workspaceRevision < 0) return false
+      if (typeof attempt.actionId !== 'string' || !attempt.actionId || !state.hotels[attempt.hotelRef] || typeof attempt.offerRef !== 'string' || !attempt.offerRef || typeof attempt.offerVersionRef !== 'string' || !attempt.offerVersionRef || !Number.isSafeInteger(attempt.generation) || !Number.isSafeInteger(attempt.ordinal) || !Number.isSafeInteger(attempt.workspaceRevision) || attempt.workspaceRevision < 0) return false
       const hotel = state.hotels[attempt.hotelRef]!
       const generation = hotel.currentGeneration
       if (!generation || attempt.generation < 1 || attempt.generation > hotel.generationNo || attempt.ordinal < 1 || attempt.ordinal > hotel.checksIssued || (attempt.generation === hotel.generationNo && !generation.orderedOfferRefs.includes(attempt.offerRef))) return false
@@ -456,7 +493,7 @@ export function validateAvailabilityPolicyV2(state: AvailabilityPolicyStateV2): 
     }
     for (const [ref, attemptsForHotel] of attemptsByHotel) {
       const ordinals = attemptsForHotel.map((attempt) => attempt.ordinal)
-      if (new Set(ordinals).size !== ordinals.length || attemptsForHotel.length !== state.hotels[ref]!.checksIssued || new Set(attemptsForHotel.map((attempt) => `${attempt.generation}:${attempt.offerRef}`)).size !== attemptsForHotel.length) return false
+      if (new Set(ordinals).size !== ordinals.length || attemptsForHotel.length !== state.hotels[ref]!.checksIssued || new Set(attemptsForHotel.map((attempt) => `${attempt.generation}:${attempt.offerRef}:${attempt.offerVersionRef}`)).size !== attemptsForHotel.length) return false
     }
     for (const ref of state.hotelRefs) if ((attemptsByHotel.get(ref)?.length ?? 0) !== state.hotels[ref]!.checksIssued) return false
     if (new Set(state.queryReservations.map((reservation) => reservation.actionId)).size !== state.queryReservations.length) return false

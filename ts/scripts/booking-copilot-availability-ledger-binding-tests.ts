@@ -10,7 +10,7 @@ const workspace = (revision: number): BookingWorkspaceSnapshotV2 => ({
   schemaVersion: 'booking.surface.v2', contextRef: 'ctx-ledger-binding', surface: 'tenant', revision,
   locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' },
   visibleHotels: [{ hotelRef: 'h1', name: 'H1', factRefs: [] }, { hotelRef: 'h2', name: 'H2', factRefs: [] }],
-  loadedOffers: [{ offerRef: 'o1', hotelRef: 'h1', evidenceLevel: 'rate_loaded', factRefs: [] }, { offerRef: 'o2', hotelRef: 'h2', evidenceLevel: 'rate_loaded', factRefs: [] }],
+  loadedOffers: [{ offerRef: 'o1', offerVersionRef: 'o1:v1', hotelRef: 'h1', evidenceLevel: 'rate_loaded', factRefs: [] }, { offerRef: 'o2', offerVersionRef: 'o2:v1', hotelRef: 'h2', evidenceLevel: 'rate_loaded', factRefs: [] }],
   shortlistedOfferRefs: ['o1', 'o2'], capabilities: { surface: 'tenant', allowedActions: ['offers.query', 'offer.check'] },
 })
 
@@ -22,7 +22,7 @@ const offersReceipt = (actionId: string, revision: number): ActionReceiptV2 => (
 
 const checkReceipt = (actionId: string, revision: number): ActionReceiptV2 => ({
   schemaVersion: 'booking.surface.v2', kind: 'action.receipt', actionId, contextRef: 'ctx-ledger-binding', status: 'unavailable', revision,
-  observation: { kind: 'offer.availability', offerRef: 'o1', available: false, changedFactRefs: [], gapCodes: [] },
+  observation: { kind: 'offer.availability', offerRef: 'o1', checkedOfferVersionRef: 'o1:v1', available: false, changedFactRefs: [], gapCodes: [] },
   resultContract: { outcome: 'empty', hardCriteriaMet: false, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
 })
 
@@ -37,9 +37,9 @@ function fixture(stage: 'action' | 'receipt'): Fixture {
   const query = { schemaVersion: 'booking.surface.v2' as const, kind: 'offers.query' as const, actionId: 'query-1', contextRef: 'ctx-ledger-binding', expectedRevision: 0, reason: 'load offers', factRefs: [], input: { hotelRefs: ['h1'], criteria: {} } }
   runtime.issueOperation(task, query)
   runtime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: task, workspace: workspace(1), receipt: offersReceipt('query-1', 1) })
-  const check = { schemaVersion: 'booking.surface.v2' as const, kind: 'offer.check' as const, actionId: 'check-1', contextRef: 'ctx-ledger-binding', expectedRevision: 1, reason: 'check', factRefs: [], input: { offerRef: 'o1' } }
+  const check = { schemaVersion: 'booking.surface.v2' as const, kind: 'offer.check' as const, actionId: 'check-1', contextRef: 'ctx-ledger-binding', expectedRevision: 1, reason: 'check', factRefs: [], input: { offerRef: 'o1', offerVersionRef: 'o1:v1' } }
   runtime.issueOperation(task, check)
-  if (stage === 'receipt') runtime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: task, workspace: workspace(2), receipt: checkReceipt('check-1', 2) })
+  if (stage === 'receipt') runtime.continueWithReceipt({ schemaVersion: 'booking.surface.v2', kind: 'action.receipt.continuation', taskId: task, workspace: { ...workspace(2), shortlistedOfferRefs: ['o2'], selectedOfferRef: undefined, verifiedOffer: undefined }, receipt: checkReceipt('check-1', 2) })
   ledger.close()
   return { root, ledger, task }
 }
@@ -79,6 +79,21 @@ for (const [label, mutate] of [
   const fixtureState = fixture('action')
   rewrite(fixtureState.root, 'booking.copilot.v2.action.issued', mutate)
   assertCorrupt(fixtureState.root, label)
+  rmSync(fixtureState.root, { recursive: true, force: true })
+}
+
+// A digest mismatch must be rejected before any legacy/normalized availability
+// migration can make the payload appear coherent.
+{
+  const fixtureState = fixture('action')
+  rewrite(fixtureState.root, 'booking.copilot.v2.action.issued', (payload) => { payload.availability.activeHotelOrdinal = 1 })
+  assertCorrupt(fixtureState.root, 'raw ACTION availability digest mismatch')
+  rmSync(fixtureState.root, { recursive: true, force: true })
+}
+{
+  const fixtureState = fixture('receipt')
+  rewrite(fixtureState.root, 'booking.copilot.v2.receipt.observed', (payload) => { payload.availability.activeHotelOrdinal = 1 })
+  assertCorrupt(fixtureState.root, 'raw RECEIPT availability digest mismatch')
   rmSync(fixtureState.root, { recursive: true, force: true })
 }
 

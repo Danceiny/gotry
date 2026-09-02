@@ -54,6 +54,7 @@ rm -rf "$ASYNC_FIXTURE"
 
 echo
 echo "=== 6. 插件 smoke(注册/execute/红线断言) ==="
+(cd ts && npx tsx scripts/smoke-session-gate-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/smoke.ts | tail -2) || FAIL=1
 
 echo
@@ -432,7 +433,7 @@ trap - EXIT
 echo
 echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/closed read registry/task-scoped ledger/real dsh core/BFF-only SSE/production bin;local model fixture) ==="
 (node scripts/build-dist.mjs) || FAIL=1
-(npx tsx scripts/booking-surface-package-proof.ts) || FAIL=1
+("$TSX_BIN" scripts/booking-surface-package-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-contract-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-v2-contract-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-gap-code-contract-proof-tests.ts) || FAIL=1
