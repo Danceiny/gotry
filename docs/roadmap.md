@@ -10,10 +10,10 @@
 
 ### 发行状态
 
-**当前 npm latest = `0.0.1-rc.15`;rc.16 tag 已推但 npm 发布未落地。**
+**当前 npm latest = `0.0.1-rc.16`(已发布);`rc` dist-tag 已同步指向 rc.16。**
 
-- 2026-08-30 #50 核实:registry versions/dist-tags 均无 rc.16、GitHub Release 亦未建——发布凭证缺位,补发待 founder 浏览器 approve 窗口。
-- **勘误**:此前「registry 回拉实测全过」的记载不实(#50 勘误)——publish 实际未完成。
+- 2026-08-30 上午 #50 核实 registry 无 rc.16(「已发布」口径勘误);**同日 13:00Z 补发落地**(npm time 实测 `0.0.1-rc.16` = 2026-08-30T13:00:38Z),GitHub Release 13:03Z 随建(#76 修复生效)。
+- 2026-09-02 #50② 收口:回拉实测 latest=rc.16(干净安装 489 包 / bin `--help` / dist 入口全通);`rc` 由滞留 rc.7 迁至 rc.16,杂散 `rc.5` 改指同名版本、`rc.11–rc.14` 各自同名自洽——五别名彻底删除需 npmjs web UI(granular token 对 DELETE dist-tag 端点 403,curl 复核同)。
 - rc 逐版范围见下方「rc 序列总览」与 `release-notes.md`。
 
 Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
@@ -72,7 +72,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | v0.0.1-rc.4 | 已推 | agent-reach 接入(router 形态,后被 wrapper 化取代)+ License MIT |
 | v0.0.1-rc.5 | 已发 npm(不可用,被 rc.6 取代) | 首发打通 2FA/恢复码/隔离发布命令;tarball 缺 runtime(教训) |
 | **v0.0.1-rc.6** | **已发 npm,可用** | bin 运行时解析 + dist 预编译(绕 Node 拒 strip node_modules .ts)+ data 入包;干净安装 web 200 实测 |
-| v0.0.1-rc.7 | 已发 npm;rc tag 仍滞留本版(可用但旧,#50② 迁移待授权窗) | .env 读用户当前目录 + 无 key 可执行指引 |
+| v0.0.1-rc.7 | 已发 npm;rc tag 曾滞留本版至 2026-09-02(#50② 已迁至 rc.16) | .env 读用户当前目录 + 无 key 可执行指引 |
 | v0.0.1-rc.8 | 已发 npm(曾直指 latest) | `npx @danceiny/gotry` 即得;干净安装 headless 实测跑通 |
 | v0.0.1-rc.9 | 已发 npm(曾为 latest;**含缺陷:better-sqlite3 未入 dependencies,装得上跑不起**——被发布后干净安装验证抓出) | M4 记忆域全链/账本/17 工具/D-6 校准 |
 | **v0.0.1-rc.10** | 已发 npm(曾为 latest;registry 回拉实测:489 包安装/插件加载/bin 全通) | 双形态冻结 ADR-16 + 会话传输层 puppeteer 定案 + 依赖面根治;rc.9 标缺陷由本版覆盖后退役 |
@@ -81,7 +81,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | **v0.0.1-rc.13** | **已发 npm,latest 直指本版**(registry 回拉实测通过) | 账号会话三连修复:登录自动检测(已登录零弹窗)+ 登录页置前可见性(`newPage` 纪律)+ 例行测试永不自动开窗;README 可读性一版(18 工具分组/账号会话隐私专节/状态重排) |
 | **v0.0.1-rc.14** | **已发 npm,latest 直指本版**(registry 回拉实测:干净安装/bin/npm 页英文 README) | 文档中英分开发布:`README.md`(英文,完整镜像)+ `README.zh-CN.md`(中文)互链,顶层 switcher;npm files 增补中文版 |
 | **v0.0.1-rc.15** | **已发 npm,latest 直指本版**(registry 回拉实测:干净安装/bin/插件加载全通) | issue #17 采纳:预订 saga 状态机具名化 `booking_saga_fsm.v1`(ADR-17,纯函数词汇层+§36 与账本物理对账)+ HITL 审批边/合规确定性边词汇;run-all 新增 §36 |
-| v0.0.1-rc.16 | **tag 已推,npm 未发布**(registry 无此版本,#50 勘误;补发待授权窗) | issue #49 采纳:价表 provider-aware v2 + MiniMax 入表(ADR-20)+ 价格漂移监测长机制 + CHANGELOG 机制 + §38 扩展桥 zombie port 根治;run-all §41/§42 两闸。详见上方「架构面增量」 |
+| **v0.0.1-rc.16** | **已发 npm,latest 直指本版**(2026-08-30T13:00Z 补发落地;2026-09-02 回拉实测干净安装/bin 全通,#50② 同窗完成 dist-tag 治理) | issue #49 采纳:价表 provider-aware v2 + MiniMax 入表(ADR-20)+ 价格漂移监测长机制 + CHANGELOG 机制 + §38 扩展桥 zombie port 根治;run-all §41/§42 两闸。详见上方「架构面增量」 |
 | dev(未发) | 持续 main 直推 | issue 冲刺 14/14 交付(README 一致性/域边界/数据污染根除等),17 套 ALL GREEN |
 | 后续 | founder 侧 | 种子用户邀约;rc.16 补发 + dist-tag 卫生(rc tag→最新可用版、清杂散 rc.5/rc.11-rc.14)同一次浏览器 approve 窗口内做完(#50②③) |
 

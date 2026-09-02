@@ -30,7 +30,7 @@ M3 最小可用产品,分发链路无已知堵点。
 |---|---|
 | 入口 | `./gotry`(仓内)或 `npx @danceiny/gotry@latest web`(npm) |
 | 运行时 | dsh 成品形态,DeepSeek 原生 |
-| 版本 | 见 `package.json` 与 `release-notes.md`;**`rc` dist-tag 滞留旧版,#50② 治理完成前不要用 `@rc`** |
+| 版本 | 见 `package.json` 与 `release-notes.md`;**`rc` dist-tag 已指向最新 rc(2026-09-02 #50② 完成),`@rc` 可用;用户引导仍优先 `@latest`** |
 | License | MIT |
 | 人格 | 行为契约 21 条;锚点卡与记忆 brief 注入 persona。**运行时组合唯一来源 = 仓根 `cordis.gotry-patch.yml`** |
 
