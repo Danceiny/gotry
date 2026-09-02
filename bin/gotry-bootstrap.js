@@ -440,12 +440,10 @@ async function runInlineHealthWatch(timeoutMs) {
 }
 
 async function main() {
-  // wizard 子命令(2026-09-02 商店上架后退化):**只走 stdout 提示 + 健康探活等待**;
-  // 不 spawn 任何 GUI 工具(不动 pbcopy / osascript / open / xdg-open / zenity),
-  // 不打开 chrome://extensions,不动扩展路径——浏览器自己当安装器,gotry 不越界。
-  // 期望用户路径:`npx gotry web` → dsh UI → 调 gotry_session_search 遇 needs-extension
-  // → dsh UI 渲商店 URL → 用户点链接 → 装好 → 同会话内自动 retry(health-watch)。
-  if (WIZARD) {
+// wizard 子命令(2026-09-02 商店上架后退化):**只走 stdout 提示 + 健康探活等待**;
+// 不 spawn 任何 GUI 工具(不动 pbcopy / osascript / open / xdg-open / zenity),
+// 不打开 chrome://extensions,不动扩展路径——浏览器自己当安装器,gotry 不越界。
+if (WIZARD) {
     if (WIZARD_DRY_RUN) {
       say('[gotry-wizard] dry-run(零网络零浏览器零剪贴板;run-all §40 走这条)')
       say('  步骤: ensure-extension-files → watch-extension-ready(2 步纯 Node 端)')
@@ -467,44 +465,33 @@ async function main() {
     const watchResult = await runHealthWatch()
     if (watchResult.ready) {
       say(`[gotry-wizard] ✅ 扩展就绪(${watchResult.attempts} 次探活,等待 ${watchResult.waitedMs}ms)`)
-      say('[gotry-wizard] 现在 `npx gotry web` → dsh UI → 调 gotry_session_search 即可拿到结果。')
       process.exit(0)
     } else {
       say(`[gotry-wizard] ✗ ${watchResult.reason}——未在 ${watchResult.timeoutMs}ms 内就绪`)
-      say('[gotry-wizard] dsh UI 中 `gotry_session_search` 的 needs-extension 仍带商店链接;无需重跑,wizard 完全幂等。')
+      say('[gotry-wizard] 不需重跑;扩展未装时 dsh UI 中 gotry_session_search 的 needs-extension 会带商店链接,wizard 完全幂等。')
       process.exit(1)
     }
   }
 
   if (process.platform === 'win32') {
-    say('[gotry-setup] Windows 暂不支持自动安装(hbcli 上游仅 darwin/linux)。手动指引:')
-    say(`  hbcli: ${HBCLI_INSTALL_CMD}(WSL);agent-reach: python -m venv .venv && .venv/Scripts/pip install ${REACH_INSTALL_URL}`)
-    say('  dsh-better-sidebar: npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar@latest')
-    say('  GoTry Session Bridge 扩展:推荐 Chrome 应用商店一键安装 https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd ;本地通道:手动把包内 extension/ 目录拷到 %USERPROFILE%\\.gotry\\extension,再在 chrome://extensions 开发者模式「加载已解压的扩展程序」')
+    say('[gotry-setup] GoTry Session Bridge 扩展:推荐 Chrome 应用商店一键安装 https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd ;本地通道:手动把包内 extension/ 目录拷到 %USERPROFILE%\\.gotry\\extension,再在 chrome://extensions 开发者模式「加载已解压的扩展程序」')
     process.exit(AUTO ? 0 : 1)
   }
   if (AUTO && (process.env.CI || process.env.GOTRY_SETUP_SKIP === '1')) {
-    say('[gotry-setup] CI/GOTRY_SETUP_SKIP 检测——跳过外部依赖自举(可随时手动: npx gotry setup)')
-    say('GoTry installed. Run: npx gotry web   (dsh Web UI on :3080)')
+    say('[gotry-setup] CI/GOTRY_SETUP_SKIP 检测——跳过')
     process.exit(0)
   }
   if (!AUTO && process.env.GOTRY_SETUP_SKIP === '1') { say('[gotry-setup] GOTRY_SETUP_SKIP=1——跳过'); process.exit(0) }
   const results = []
-  if (process.env.GOTRY_SETUP_HBCLI !== '0') results.push(await setupHbcli())
-  else say('[gotry-setup] hbcli:GOTRY_SETUP_HBCLI=0 跳过')
-  if (process.env.GOTRY_SETUP_REACH !== '0') results.push(await setupReach())
-  else say('[gotry-setup] agent-reach:GOTRY_SETUP_REACH=0 跳过')
-  if (process.env.GOTRY_SETUP_SIDEBAR !== '0') results.push(await setupSidebar())
-  else say('[gotry-setup] dsh-better-sidebar:GOTRY_SETUP_SIDEBAR=0 跳过')
+  // gotry 自留面只剩扩展是否就位;hbcli/agent-reach/dsh-better-sidebar 由各自宿主生态自管。
   if (process.env.GOTRY_SETUP_EXTENSION !== '0') results.push(await (EXTENSION_FROM === 'github' ? setupExtensionFromGithub() : setupExtension()))
   else say('[gotry-setup] GoTry Session Bridge 扩展:GOTRY_SETUP_EXTENSION=0 跳过')
-  say('[gotry-setup] flyai:无需安装(npx 每次自拉 @fly-ai/flyai-cli,免 key)')
   const failed = results.filter((r) => !r.ok).length
   if (failed > 0) {
-    say(`[gotry-setup] ${failed} 项未就绪——gotry 本体不受影响(各能力均有降级路径);可稍后重跑: npx gotry setup`)
+    say(`[gotry-setup] ${failed} 项未就绪——gotry 本体不受影响;可稍后重跑: npx gotry setup`)
     process.exit(AUTO ? 0 : 1)
   }
-  say('[gotry-setup] 全部就绪。Run: npx gotry web')
+  say('[gotry-setup] 扩展就绪检查完成。')
   process.exit(0)
 }
 
