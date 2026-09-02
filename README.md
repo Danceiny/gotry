@@ -170,11 +170,10 @@ Current release: **v0.0.1-rc.17** (npm dist-tag `rc`; `latest` stays on rc.16 pe
 **Working today** (full-stack regression green; every item has deterministic tests):
 
 - **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed and regression-gated
-- **Realtime retrieval** — flights/trains/hotels (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`)
 - **Account-session search** — Ctrip flights on your logged-in Chrome; observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
 - **Extension install on demand** — `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` is offered as a clickable link in the dsh UI when an account-session tool first needs it (one-click install + auto-update); the gotry side never runs a setup wizard
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English solve output via `GOTRY_LOCALE=en`
-- **Bounded agent turns** — the product path installs no per-turn tool-call counter; the wall-clock deadline (default 60s soft / 120s hard, overridable via `GOTRY_TURN_DEADLINE_SOFT_MS` / `GOTRY_TURN_DEADLINE_HARD_MS`) is opt-in for benchmark runs only and refuses further dispatches past the hard limit with structured `TURN_DEADLINE_EXHAUSTED`, exercised end-to-end through a packaged consumer install in CI
+- **Routed turn budgets** — every turn is classified (quick / sync / deep-planning) by a deterministic, zero-LLM router; time is the only budget and the deadline exit follows the task: quick and sync turns converge to an answer, deep-planning turns hand off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) instead of dying mid-stream; exercised end-to-end through a packaged consumer install in CI
 
 **Open limitations** (honest list):
 

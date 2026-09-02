@@ -164,26 +164,19 @@ type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
 
 export function apply(ctx: Context, config: Config): void {
-  // Test-only escape hatch for the offline turn-deadline E2E. The product
-  // path keeps `installTurnDeadline` out so real users are not gated by a
-  // benchmark-shaped wall-clock deadline (ADR-24); setting this env var
-  // forces the install regardless of `benchmarkEnvironmentConfigPath` so
-  // the headless E2E can exercise the deadline hook without pulling in
-  // the entire benchmark bridge / model-override kernel.
-  const forceTurnDeadline = process.env.GOTRY_FORCE_TURN_DEADLINE === '1'
-  if (forceTurnDeadline) {
-    installTurnDeadline(ctx)
-  }
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
+  // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
+  // 预算,复杂度决定出口结构(converge/handoff)。benchmark opt-in 钉死
+  // 固定 policy 保证评测可复现,不走路由。
+  installTurnDeadline(ctx, rawBenchmarkEnvironmentConfigPath.trim()
+    ? { fixedPolicy: { softMs: 60_000, hardMs: 120_000, exit: 'converge' } }
+    : { stateRoot: process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.' })
   if (rawBenchmarkEnvironmentConfigPath.trim()) {
     // Benchmark mode is a deliberately minimal kernel: only the model
-    // override, the environment bridge, and the turn-deadline wall-clock
-    // guard are installed. In particular, product prompt variables,
+    // override and the environment bridge are installed besides the pinned
+    // turn-deadline policy above. In particular, product prompt variables,
     // process/consent guards, and guarded product tools must not be
-    // observable on this path. ADR-20: tool/step budgets are a benchmark
-    // concept; the product path opts out so user-perceived time stays the
-    // only budget that gates the loop.
-    installTurnDeadline(ctx)
+    // observable on this path.
     installModelOverride(ctx as unknown as Parameters<typeof installModelOverride>[0])
     const getService = (ctx as unknown as { get?: (name: string, fallback?: unknown) => unknown }).get
     const directSubprocess = (typeof getService === 'function'

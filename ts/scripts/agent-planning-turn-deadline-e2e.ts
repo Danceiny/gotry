@@ -1,21 +1,22 @@
 /**
- * Offline headless E2E for the agent turn-deadline wall-clock guard.
+ * Offline headless E2E for the agent turn boundary (ADR-24 v2).
  *
- * Exercises a clean installed-package binary:
+ * Exercises a clean installed-package binary on the PRODUCT path:
  *   bin/gotry-inner.js -> dist/src/index.js -> dsh headless -> local SSE relay
  *
- * The deadline is shrunk to a few hundred ms via env so the E2E runs in
- * under a second. The relay stalls the first planner response by ~600 ms
- * so the second planner request lands past the hard deadline; subsequent
- * requests must arrive without tool schemas and the model must converge to
- * the text-only final answer. No GoTry state is used: both DSH_HOME and the
- * child cwd are fresh temporary directories, and the only model endpoint is
- * loopback.
+ * 场景是失败轨迹的合成重放:deep-planning 类用户消息(10.3 婚礼 + 十几天
+ * + 请假 + IRW)进入路由,relay 把首个 planner 响应拖过硬阈(阈值经 env
+ * 压到秒级,exit 仍由路由决定为 handoff)→ 首个工具派发被拒并落
+ * `gotry_turn_handoff.v1` 工单 → 工具 schema 同步抑制 → 下一请求
+ * text-only → 二进制以含 ETA 语义的 final 收尾。工单落盘走
+ * GOTRY_TURN_HANDOFF_ROOT 钉死的隔离根,不触碰真实 gotry-state
+ * (巡检状态纪律);DSH_HOME 与 child cwd 均为临时目录,唯一模型端点
+ * 是 loopback。
  */
 
 import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
@@ -26,7 +27,11 @@ const TOOL = 'gotry_artifacts_list'
 const SOFT_MS = 5_000
 const HARD_MS = 10_000
 const RELAY_STALL_MS = HARD_MS + 1_000
-const EXHAUSTED = 'TURN_DEADLINE_EXHAUSTED'
+const HANDOFF = 'TURN_DEADLINE_HANDOFF'
+const HANDOFF_SCHEMA = 'gotry_turn_handoff.v1'
+/** 失败轨迹的合成等价消息:必须命中 deep-planning 路由。 */
+const DEEP_MESSAGE = '2026年我还有6天IRW额度,我准备再请几天假,在国内待个十几天。'
+  + '其中10.3要去湖南衡阳参加同学婚礼。请根据我的实际情况和偏好,给我安排行程'
 
 type WireBody = {
   messages?: Array<Record<string, unknown>>
@@ -93,18 +98,13 @@ async function startRelay(): Promise<Relay> {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
       if (toolNames(body).includes(TOOL)) {
         plannerBodies.push(body)
-        const alreadyExhausted = JSON.stringify(body).includes(EXHAUSTED)
         const plannerIndex = plannerBodies.length
-        // Stalling the first planner response past HARD_MS guarantees the
-        // binary's first `tools/execute` lands after the wall-clock deadline
-        // — the very first tool call must be refused with
-        // TURN_DEADLINE_EXHAUSTED and no successful tool body should ever run.
-        // Once exhaustion has fired, every subsequent planner request must
-        // be answered with the text-only final answer so the agent loop
-        // converges and the binary emits the final.
-        const stall = !alreadyExhausted && plannerIndex === 1 ? RELAY_STALL_MS : 0
+        const alreadyHandedOff = JSON.stringify(body).includes(HANDOFF)
+        // 首个 planner 响应拖过硬阈:首个工具派发必然越过 wall-clock 边界。
+        // handoff 发生后,后续 planner 请求一律回 text-only final,收敛回路。
+        const stall = !alreadyHandedOff && plannerIndex === 1 ? RELAY_STALL_MS : 0
         setTimeout(() => {
-          if (!alreadyExhausted && plannerIndex === 1) {
+          if (!alreadyHandedOff && plannerIndex === 1) {
             res.end(toolResponse(String(plannerIndex)))
           } else {
             res.end(textResponse('deadline E2E final answer'))
@@ -112,11 +112,8 @@ async function startRelay(): Promise<Relay> {
         }, stall)
       } else {
         // Session-title and other auxiliary calls deliberately carry no tool
-        // schemas. Headless mode forwards only the first text response to
-        // stdout, so we return the final-answer text here to satisfy the
-        // output assertion; the agent-loop convergence check still holds
-        // because the planner requests above carry the EXHAUSTED message.
-        res.end(textResponse('deadline E2E final answer', 'deadline-final'))
+        // schemas. Keep them out of the planner-call budget and answer text.
+        res.end(textResponse('deadline E2E final answer', 'deadline-auxiliary'))
       }
     })
   })
@@ -148,13 +145,15 @@ async function main(): Promise<void> {
   const relay = await startRelay()
   const dshHome = mkdtempSync(join(tmpdir(), 'gotry-deadline-dsh-home-'))
   const childCwd = mkdtempSync(join(tmpdir(), 'gotry-deadline-cwd-'))
+  // 巡检状态纪律:handoff 工单只落隔离根(source 模式 dsh cwd 是创始人真实
+  // 数据目录 ts/dsh-runtime,绝不让 E2E 往那里写)。
+  const handoffRoot = mkdtempSync(join(tmpdir(), 'gotry-deadline-handoff-'))
   let exitCode: number | null = null
   let output = ''
   const configuredBin = process.env.GOTRY_DEADLINE_E2E_BIN
   assert.ok(configuredBin && existsSync(configuredBin), 'GOTRY_DEADLINE_E2E_BIN must point to the clean installed-package binary')
   try {
-    const executable = configuredBin
-    const executableArgs = ['exercise the turn deadline']
+    const executableArgs = [DEEP_MESSAGE]
     const childEnv: NodeJS.ProcessEnv = { ...process.env }
     childEnv.DSH_HOME = dshHome
     childEnv.LLM_API_KEY = 'synthetic-e2e-key'
@@ -164,12 +163,10 @@ async function main(): Promise<void> {
     childEnv.GOTRY_DISABLE_OPTIONAL_CALENDAR = '1'
     childEnv.GOTRY_TURN_DEADLINE_SOFT_MS = String(SOFT_MS)
     childEnv.GOTRY_TURN_DEADLINE_HARD_MS = String(HARD_MS)
-    // Force-install the turn-deadline hook on the product path so this E2E
-    // exercises the same code branch the benchmark opt-in path uses without
-    // pulling in the full benchmark bridge / model-override kernel.
-    childEnv.GOTRY_FORCE_TURN_DEADLINE = '1'
+    childEnv.GOTRY_TURN_HANDOFF_ROOT = handoffRoot
     delete childEnv.GOTRY_LLM_MODEL
-    const child = spawn(executable, executableArgs, {
+    delete childEnv.GOTRY_FORCE_TURN_DEADLINE
+    const child = spawn(configuredBin, executableArgs, {
       cwd: childCwd,
       env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -183,12 +180,8 @@ async function main(): Promise<void> {
   } finally {
     await relay.close()
     // Give the spawned binary a brief moment to release its temp files
-    // before we recursively remove the tmpdir. Without this, on fast
-    // wall-clock-deadline E2Es the cleanup races against the child still
-    // holding an open handle on `dshHome`.
+    // before we recursively remove the tmpdir.
     await new Promise<void>(resolve => setTimeout(resolve, 200))
-    rmSync(dshHome, { recursive: true, force: true })
-    rmSync(childCwd, { recursive: true, force: true })
   }
 
   assert.equal(exitCode, 0, `headless exit=${exitCode}; output tail=${output.slice(-1200)}`)
@@ -197,33 +190,37 @@ async function main(): Promise<void> {
     `expected at least one tool-enabled planner request, got ${relay.plannerBodies.length}; output tail=${output.slice(-12_000)}`,
   )
 
-  // Wall-clock budget of HARD_MS=50ms fires well inside the first planner
-  // request — the binary's process boot + initial agent-loop dispatch is
-  // already past the deadline by the time the first `tools/execute` runs.
-  // That means the very first tool call must be refused with
-  // TURN_DEADLINE_EXHAUSTED and no successful tool body should ever run.
+  // 首个工具派发越过硬阈:必须得到 handoff 语义的结构化拒绝,且没有任何
+  // 工具 body 真正执行。
   const toolMessages = allToolMessages(relay.bodies)
-  const exhaustedResults = toolMessages.filter(message => JSON.stringify(message).includes(EXHAUSTED))
-  const successfulResults = toolMessages.filter(message => message.content && !JSON.stringify(message).includes(EXHAUSTED))
   const toolMessageDiagnostic = JSON.stringify(toolMessages).slice(-12_000)
-  assert.ok(
-    exhaustedResults.length >= 1,
-    `expected at least one structured exhaustion result; messages=${toolMessageDiagnostic}`,
-  )
-  assert.equal(
-    successfulResults.length,
-    0,
-    `no tool body should run before HARD_MS=50ms; messages=${toolMessageDiagnostic}`,
-  )
+  const handoffResults = toolMessages.filter(message => JSON.stringify(message).includes(HANDOFF))
+  const successfulResults = toolMessages.filter(message => !JSON.stringify(message).includes(HANDOFF))
+  assert.ok(handoffResults.length >= 1, `expected at least one handoff result; messages=${toolMessageDiagnostic}`)
+  assert.equal(successfulResults.length, 0, `no tool body should run past the hard deadline; messages=${toolMessageDiagnostic}`)
+  assert.match(JSON.stringify(handoffResults[0]), /th-/, 'handoff result carries the ticket id')
 
-  // The conversation converges: the final native request must arrive without
-  // any inherited GoTry tool schema, and the model must surface its final
-  // text answer.
+  // handoff 工单已落隔离根,字段完整(含用户原文与 ETA 承诺)。
+  const ticketDir = join(handoffRoot, 'gotry-state', 'turn-handoffs')
+  assert.ok(existsSync(ticketDir), `ticket dir missing: ${ticketDir}`)
+  const ticketFiles = readdirSync(ticketDir).filter(name => name.endsWith('.json'))
+  assert.equal(ticketFiles.length, 1, `expected exactly one handoff ticket, got ${ticketFiles.join(', ')}`)
+  const ticket = JSON.parse(readFileSync(join(ticketDir, ticketFiles[0]), 'utf8')) as Record<string, unknown>
+  assert.equal(ticket['schema'], HANDOFF_SCHEMA)
+  assert.equal(ticket['status'], 'open')
+  assert.ok(String(ticket['userMessage']).includes('婚礼'), 'ticket carries the verbatim deep-planning ask')
+  assert.ok(String(ticket['etaLabel']).includes('约 1 小时'))
+
+  // 回路收敛:最终请求不带任何继承工具 schema,二进制输出 final。
   const finalRequest = relay.bodies.at(-1) as WireBody
   const finalNames = toolNames(finalRequest)
   assert.ok(!finalNames.includes(TOOL), `final request inherited GoTry tool: ${finalNames.join(', ')}`)
   assert.match(output, /deadline E2E final answer/)
-  console.log(`agent planning turn deadline E2E: OK (exit=${exitCode}, plannerRequests=${relay.plannerBodies.length}, exhausted=${exhaustedResults.length})`)
+  console.log(`agent turn deadline E2E: OK (exit=${exitCode}, plannerRequests=${relay.plannerBodies.length}, handoffResults=${handoffResults.length}, ticket=${ticketFiles[0]})`)
+
+  rmSync(dshHome, { recursive: true, force: true })
+  rmSync(childCwd, { recursive: true, force: true })
+  rmSync(handoffRoot, { recursive: true, force: true })
 }
 
 await main()
