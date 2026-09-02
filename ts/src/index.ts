@@ -33,6 +33,7 @@ import { resolveSlotDate } from './slot-spec.ts'
 import { wmoLabel } from '../capabilities/weather.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
 import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
+import { runDoctorChecks, renderDoctorReportMd } from '../capabilities/doctor.ts'
 import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
 import { sessionLogin } from '../capabilities/session-login.ts'
 import { EXTENSION_STORE_URL } from '../capabilities/session/extension-bridge.ts'
@@ -796,7 +797,8 @@ export function apply(ctx: Context, config: Config): void {
       + 'kind="flight"|"train": { kind, from, to, date } (中文城市名, date YYYY-MM-DD) — real schedules & prices, split 直达/中转 in results. '
       + 'kind="hotel": { kind:"hotel", to:"大理"(目的地中文), checkIn?, checkOut? (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords? }. '
       + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
-      + 'Evidence [实时API:flyai@ts]. Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.',
+      + 'Evidence [实时API:flyai@ts]. verdict=needs-setup (anonymous trial quota exhausted, upstream 429) is a CONFIG issue, not a search failure: surface the setup hint once, do NOT retry this tool this session — switch to gotry_session_search or web search. '
+      + 'Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.',
     parameters: {
       query: { type: 'json', required: true, description: 'kind=flight|train: { kind, from: "上海", to: "丽江", date: "2026-10-01" }; kind="hotel": { kind:"hotel", to:"大理", checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", keyWords?: "洱海" }' },
     },
@@ -829,7 +831,9 @@ export function apply(ctx: Context, config: Config): void {
         const top = (r.hotels ?? []).slice(0, 8).map(o => `${o.name}${o.star ? `(${o.star})` : ''} ${o.priceRaw ?? '价待询'}${o.poi ? ` · ${o.poi}` : ''}`)
         const summary = r.verdict === 'hit'
           ? `${dest} 酒店(飞猪官方只读)前 ${top.length} 家(价格多为打码,真实价以 jumpUrl 为准):\n${top.join('\n')}\n${r.evidence}`
-          : `${dest} 酒店无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
+          : r.verdict === 'needs-setup'
+            ? `${dest} 酒店检索未发起(配置问题,非检索失败):${r.error ?? ''}\n${r.setup ?? ''}\n状态体检可调 gotry_doctor。${r.evidence}`
+            : `${dest} 酒店无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
         return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
       }
       const kind = q.kind === 'train' ? 'train' : 'flight'
@@ -863,7 +867,9 @@ export function apply(ctx: Context, config: Config): void {
         ? `${q.from}→${q.to} ${q.date} ${label}(飞猪官方只读)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
         : r.verdict === 'miss'
           ? `${q.from}→${q.to} ${q.date} ${label}官方通道正常返回 0 条(常见原因:航线未开放/当日售罄)。${r.evidence}`
-          : `${q.from}→${q.to} ${q.date} ${label}检索失败(可能限流/网络):${r.error ?? ''} ${r.evidence}`
+          : r.verdict === 'needs-setup'
+            ? `${q.from}→${q.to} ${q.date} ${label}检索未发起(配置问题,非检索失败):${r.error ?? ''}\n${r.setup ?? ''}\n状态体检可调 gotry_doctor。${r.evidence}`
+            : `${q.from}→${q.to} ${q.date} ${label}检索失败(可能限流/网络):${r.error ?? ''} ${r.evidence}`
       return JSON.parse(JSON.stringify({ ...r, kind, summary })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),
@@ -1209,7 +1215,7 @@ export function apply(ctx: Context, config: Config): void {
         await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'agent-reach:doctor').catch(() => {})
         const summary = st.via === 'agent-reach-cli'
           ? `Agent Reach doctor(上游 CLI,原样透传):\n${st.output}\n${st.evidence}`
-          : `Agent Reach 未装:\n${st.output}\n${st.evidence}`
+          : `Agent Reach 未装配(.venv 缺失)——可选依赖,机/酒/网页社媒读取之外的工具不受影响。\n补装:终端跑 npx gotry doctor --fix;整体依赖状态可调 gotry_doctor 工具查看。\n${st.evidence}`
         return JSON.parse(JSON.stringify({
           ok: st.ok, via: st.via, output: st.output, evidence: st.evidence, summary,
           latency_ms: Date.now() - started,
@@ -1244,7 +1250,7 @@ export function apply(ctx: Context, config: Config): void {
         : r.verdict === 'needs-setup'
           ? `${q.channel}.${q.method} → 需配置(上游 check() 原话): ${r.setup ?? ''}\n${r.evidence}`
           : r.verdict === 'not-installed'
-            ? `${q.channel}.${q.method} → 上游未装: ${r.setup ?? ''}\n${r.evidence}`
+            ? `${q.channel}.${q.method} → 上游未装配(可选依赖): ${r.setup ?? ''}\n整体依赖状态可调 gotry_doctor 查看;补装: npx gotry doctor --fix\n${r.evidence}`
             : `${q.channel}.${q.method} → ${r.error ?? 'error'}${r.inventory ? `\n上游清单: ${JSON.stringify(r.inventory).slice(0, 1200)}` : ''}\n${r.evidence}`
       return JSON.parse(JSON.stringify({
         ok: r.ok, channel: r.channel, method: q.method, verdict: r.verdict,
@@ -1261,6 +1267,57 @@ export function apply(ctx: Context, config: Config): void {
       return {
         card: 'generic',
         title: `AgentReach ${icon} ${q.channel ?? ''}.${q.method ?? 'status'} ${r.verdict ?? ''}`,
+        content: [{ type: 'text', text: String(r.summary ?? '') }],
+      }
+    },
+  }))
+
+  // ---- 依赖体检面(2026-09-02 迪拜 session 复盘:可选依赖未装配时,LLM 需要一个
+  // 统一的状态入口来「显示状态 + 引导补装」,而不是在 not-installed 里各自摸索)----
+
+  registerGuarded(defineTool({
+    name: 'gotry_doctor',
+    description:
+      'Check optional-dependency health for ALL gotry tools (read-only, never installs): GoTry Session Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key / dsh-better-sidebar. '
+      + 'Call this when ANY gotry tool returns not-installed / needs-setup, when the user asks 「体检/依赖状态/工具为什么不可用」, or BEFORE leaning on a channel for a plan. '
+      + 'Returns per-item status (ok/degraded/missing) with exact fix commands. '
+      + 'Repair = `npx gotry doctor --fix` run BY THE USER in a terminal (this tool never installs anything); LLM keys are the dsh host\'s business and are deliberately out of scope. '
+      + 'A markdown report is rendered for the workspace (gotry-state/doctor-report.md) so the sidebar workbench can preview it.',
+    parameters: {
+      query: {
+        type: 'json',
+        required: true,
+        description: '{ },{ 体检 } 或 { writeReport?: boolean(默认 true,把 markdown 报告写进 gotry-state/doctor-report.md,侧栏工作台可预览) }',
+      },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 900)) }],
+    },
+    async execute(args: { query?: unknown }, _exec: unknown) {
+      const q = unwrapQuery<{ writeReport?: boolean }>(args, 'writeReport')
+      const report = await runDoctorChecks()
+      // 报告落 gotry-state(侧栏工作台预览面);写失败不阻塞体检结论本身
+      let reportPath: string | undefined
+      if (q?.writeReport !== false) {
+        try {
+          const { writeFile } = await import('node:fs/promises')
+          const dir = await ensureStateDir(config.stateRoot)
+          reportPath = join(dir, 'doctor-report.md')
+          await writeFile(reportPath, renderDoctorReportMd(report), 'utf-8')
+        } catch { reportPath = undefined }
+      }
+      const icon = (s: string) => (s === 'ok' ? '✅' : s === 'degraded' ? '⚠️' : '❌')
+      const lines = report.items.map(i => `${icon(i.status)} ${i.label}:${i.detail}${i.fix ? `\n   ↳ 修复: ${i.fix}` : ''}`)
+      const summary = `${report.summary}\n${lines.join('\n')}${reportPath ? `\n报告已写: ${reportPath}(侧栏工作台可直接预览)` : '\n(报告写盘失败,仅本对话展示)'}`
+      return JSON.parse(JSON.stringify({ ok: true, verdict: report.ok ? 'all-clear' : 'needs-attention', items: report.items, report_path: reportPath, evidence: `[doctor@${new Date().toISOString()}]`, summary })) as Record<string, never>
+    },
+    presentCall: _args => ({ card: 'generic', title: '🩺 依赖体检', kind: 'execute', rawInput: {} }),
+    presentResult: (_args, value) => {
+      const r = value as { verdict?: string; summary?: string }
+      return {
+        card: 'generic',
+        title: `🩺 依赖体检:${r.verdict === 'all-clear' ? '✅ 全部就绪' : '🔧 有项待处理'}`,
         content: [{ type: 'text', text: String(r.summary ?? '') }],
       }
     },

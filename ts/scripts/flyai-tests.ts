@@ -5,6 +5,8 @@
  *  2. 业务空形状 {"data":{"itemList":[]}} → verdict=miss(0/0,evidence 标注)
  *  3. 业务命中形状 → verdict=hit,选项字段(航班号/时刻/价格)解析
  *  4. exit≠0 → verdict=error
+ *  5. 试用额度达限(exit 1 + MCP HTTP 429 "Trial limit reached",2026-09-02 迪拜
+ *     session 实况)→ verdict=needs-setup + setup 指引(不再当通用 error 盲重试)
  *
  * 运行: cd ts && npx tsx scripts/flyai-tests.ts
  */
@@ -74,5 +76,18 @@ assert.equal(f.ok, false)
 assert.equal(f.verdict, 'error', '非零退出应判 error')
 console.log('4. 非零退出 → error OK')
 
+// 5. 试用额度达限(2026-09-02 迪拜 session 实况:exit 1 + MCP HTTP 429 Trial limit
+//    reached)→ needs-setup 而非通用 error——阻断 LLM 拿同一把 429 跨轮盲重试
+const trialBin = join(tmp, 'flyai-trial')
+await writeFile(trialBin, `#!/bin/sh\necho 'search-hotel: MCP HTTP 429: Body: {"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Trial limit reached. Please visit the console at flyai.open.fliggy.com to get a formal API Key"}}' >&2\nexit 1\n`, { mode: 0o755 })
+const t = await flyaiSearch({ ...base, cliBin: trialBin, timeoutMs: 5000 })
+assert.equal(t.ok, false)
+assert.equal(t.verdict, 'needs-setup', `429 达限应判 needs-setup,实际 ${t.verdict}`)
+assert.match(t.setup ?? '', /FLYAI_API_KEY/, 'setup 指引带 FLYAI_API_KEY 配置路径')
+assert.match(t.setup ?? '', /flyai\.open\.fliggy\.com/, 'setup 指引带控制台入口')
+assert.match(t.setup ?? '', /请勿重试|勿重试|不要重试/, 'setup 明示本会话勿重试')
+assert.match(t.error ?? '', /429|Trial limit/i, 'error 保留上游 429 原话')
+assert.match(t.evidence, /\[实时API:flyai@error@/, '证据链标注')
+
 await rm(tmp, { recursive: true, force: true })
-console.log('FLYAI TESTS: 4/4 OK(离线假 CLI:Sentinel→error / 空 itemList→miss / 命中→hit / exit≠0→error)')
+console.log('FLYAI TESTS: 5/5 OK(离线假 CLI:Sentinel→error / 空 itemList→miss / 命中→hit / exit≠0→error / 429 达限→needs-setup)')

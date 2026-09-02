@@ -23,6 +23,11 @@
  *                                           # 扩展改走 GitHub Releases 下载通道(ADR-21):
  *                                           #   dist-manifest → tar.gz → SHA256 → key 钉扎 → 原子交换;
  *                                           #   任何失败显式降级回包内副本(离线确定性不变)。
+ *   node bin/gotry-bootstrap.js doctor      # 可选依赖体检(2026-09-02 迪拜 session 复盘):
+ *                                           #   扩展/agent-reach/.venv/hbcli/flyai key/sidebar
+ *                                           #   逐项只读检查 + 精确补装指引;
+ *                                           #   报告落 gotry-state/doctor-report.md(侧栏工作台可预览)。
+ *   node bin/gotry-bootstrap.js doctor --fix # 体检后按缺失项补装(复用下方三个安装器;LLM key 永不管)。
  *   node bin/gotry-bootstrap.js wizard       # 会话扩展 onboarding 闭环(issue #21 onboarding UX,§3.3):
  *                                           #   5 步编排 + 后台 health-watch 等扩展心跳,
  *                                           #   扩展一就位 stdout 翻绿并自动重放同 query。
@@ -46,7 +51,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -158,11 +163,130 @@ async function setupSidebar() {  say('[gotry-setup] dsh-better-sidebar(dsh web �
   if (!launched) say('  本包未携带 @deepseek-ai/dsh,走 npx 途径安装')
   const r2 = await run('npx', ['-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', 'web', 'add', SIDEBAR_PKG], { timeoutMs: 300_000 })
   if (!r2.ok) {
-    say('  ✗ 安装失败——不影响 gotry:产物仍可在对话里说「看看我生成的行程」经 gotry_artifacts_list/read 查看;可稍后重试: npx gotry setup')
+    say('  ✗ 安装失败——不影响 gotry:产物仍可在对话里说「看看我生成的行程」经 gotry_artifacts_list/read 查看;可稍后重试: npx gotry doctor --fix')
     return { ok: false }
   }
   say('  ✓ 安装完成(gotry web 刷新浏览器即见右侧工作台)')
   return { ok: true }
+}
+
+// ---------------------------------------------------------------------------
+// doctor(可选依赖体检;与 ts/capabilities/doctor.ts 同一状态面,-bootstrap 是
+// CLI 执行面纯 JS、capabilities 是 MCP 工具面 TS——两边清单/口径成对修改)
+// ---------------------------------------------------------------------------
+
+const DOCTOR = process.argv.includes('doctor')
+const DOCTOR_FIX = process.argv.includes('--fix')
+
+/** 逐项只读检查(永不抛错;LLM key 显式让渡给 dsh 宿主,不体检)。
+ *  level 与 ts/capabilities/doctor.ts DoctorStatus 同构:ok / missing / degraded。 */
+async function doctorChecks() {
+  const items = []
+  // Node 运行时
+  const nv = process.versions.node
+  const [maj, min] = nv.split('.').map(Number)
+  const nodeFine = maj > 22 || (maj === 22 && min >= 15)
+  items.push({ label: 'Node 运行时', ok: nodeFine, level: nodeFine ? 'ok' : 'missing', detail: `Node ${nv}(需 ≥22.15)`, fix: nodeFine ? undefined : '升级 Node.js 至 22.15+(https://nodejs.org)' })
+  // 扩展
+  const extManifest = join(homedir(), '.gotry', 'extension', 'manifest.json')
+  const extOk = existsSync(extManifest)
+  items.push({ label: 'GoTry Session Bridge 扩展', ok: extOk, level: extOk ? 'ok' : 'missing', detail: extOk ? `已就位(${extManifest})` : '未安装——gotry_session_search / gotry_session_login(账号会话通道)不可用,其余工具不受影响', fix: extOk ? undefined : '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd' })
+  // agent-reach(.venv 装在包内)
+  const venvPython = join(repoRoot, '.venv/bin/python')
+  const reachBin = join(repoRoot, '.venv/bin/agent-reach')
+  const reachOk = existsSync(reachBin)
+  const reachLevel = reachOk ? 'ok' : existsSync(venvPython) ? 'degraded' : 'missing'
+  items.push({ label: 'Agent Reach(网页/社媒读取)', ok: reachOk, level: reachLevel, detail: reachOk ? `已安装(${reachBin})` : reachLevel === 'degraded' ? '.venv 在但缺 agent-reach 包——gotry_agent_reach / gotry_web_search 读页会失败' : '未装配——gotry_agent_reach / gotry_web_search(读网页)/ gotry_video_subtitle / gotry_github_search 全部不可用', fix: reachOk ? undefined : 'npx gotry doctor --fix' })
+  // hbcli(裸名靠 PATH 探测;绝对路径 existsSync)
+  let hbBin = ''
+  for (const p of ['hbcli', join(homedir(), '.local/bin/hbcli'), join(homedir(), '.staicli/current/hbcli')]) {
+    if (p === 'hbcli') { if (await probe(p, ['version'])) { hbBin = 'hbcli(PATH)'; break } } else if (existsSync(p)) { hbBin = p; break }
+  }
+  if (hbBin) {
+    const whoami = await probe(hbBin === 'hbcli(PATH)' ? 'hbcli' : hbBin, ['auth', 'whoami'])
+    items.push({ label: 'hbcli(酒店实时源)', ok: whoami, level: whoami ? 'ok' : 'degraded', detail: whoami ? `已安装且凭证有效(${hbBin})` : '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)', fix: whoami ? undefined : 'hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)' })
+  } else {
+    items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: '未安装——酒店检索降级静态包(公开渠道估算,非实时,仅覆盖内置场景)', fix: 'npx gotry doctor --fix' })
+  }
+  // flyai key(匿名试用额度共享易达限;正式 key 即免)
+  const flyaiKey = (process.env.FLYAI_API_KEY ?? '').trim()
+  items.push({ label: 'FlyAI(飞猪官方检索)', ok: Boolean(flyaiKey), level: flyaiKey ? 'ok' : 'degraded', detail: flyaiKey ? 'FLYAI_API_KEY 已配(正式 key,无试用额度限制)' : '未配 FLYAI_API_KEY——走匿名试用额度(共享,易达限;达限报 "Trial limit reached")', fix: flyaiKey ? undefined : '到 flyai.open.fliggy.com 控制台申请正式 key,配进环境变量 FLYAI_API_KEY' })
+  // sidebar
+  const sidebarPkg = join(homedir(), '.dsh/profiles/web/node_modules/dsh-better-sidebar/package.json')
+  const sbOk = existsSync(sidebarPkg)
+  items.push({ label: 'dsh-better-sidebar(侧栏工作台)', ok: sbOk, level: sbOk ? 'ok' : 'missing', detail: sbOk ? '已安装——web UI 右侧工作台可预览产物与 doctor 报告(gotry-state/doctor-report.md)' : '未安装——dsh web 无右侧工作台,产物与 doctor 报告只能在对话里看(gotry_artifacts_list)', fix: sbOk ? undefined : 'npx gotry doctor --fix' })
+  // LLM key:显式让渡(founder 2026-09-02:doctor 不管 key)
+  items.push({ label: 'LLM key', ok: true, level: 'ok', detail: '由 dsh 宿主 UI 管理——不在体检范围(gotry 不接触、不回显凭证)', fix: undefined })
+  return items
+}
+
+const doctorIcon = { ok: '✅', missing: '❌', degraded: '⚠️' }
+
+/** 修复指引入表:命令类才加反引号( prose 类如「到控制台申请 key」原样) */
+const fixCell = (fix) => (!fix ? '—' : /^(npx|hbcli|curl|pip|python|\$)/.test(fix) ? `\`${fix}\`` : fix)
+
+/** 体检报告 markdown(与 ts/capabilities/doctor.ts renderDoctorReportMd 同形) */
+function renderDoctorReportMd(items) {
+  const broken = items.filter((i) => i.level !== 'ok' && i.label !== 'LLM key')
+  const lines = [
+    '# GoTry 依赖体检报告(doctor)',
+    '',
+    `> 生成于 ${new Date().toISOString()};重新生成:终端 \`npx gotry doctor\`,或在对话里让助手调 gotry_doctor。`,
+    '',
+    '| 状态 | 依赖 | 现状 | 修复指引 |',
+    '|---|---|---|---|',
+    ...items.map((i) => `| ${doctorIcon[i.level]} | ${i.label} | ${i.detail} | ${fixCell(i.fix)} |`),
+    '',
+    `**结论**:${broken.length === 0 ? '全部就绪(可选依赖齐,LLM key 归 dsh 宿主管)。' : `${broken.length} 项待处理:${broken.map((i) => i.label).join('、')}。补装: npx gotry doctor --fix`}`,
+    '',
+    '---',
+    '',
+    '- `npx gotry doctor` 随时可重跑(只读,不改任何东西);',
+    '- `npx gotry doctor --fix` 按上表补装(hbcli 官方脚本 / agent-reach pip / dsh-better-sidebar 插件);',
+    '- LLM key 由 dsh 宿主 UI 管理,gotry 永不体检、不回显。',
+    '',
+  ]
+  return lines.join('\n')
+}
+
+/** doctor 主流程:体检 → 打印 →(可选)fix → 报告落盘。
+ *  exit 0=就绪(或仅剩有自动回退的降级项);exit 1=仍有缺失类问题。 */
+async function runDoctor() {
+  say('[gotry-doctor] GoTry 可选依赖体检(只读;LLM key 归 dsh 宿主管,不在范围)')
+  let items = await doctorChecks()
+  for (const i of items) {
+    say(`  ${doctorIcon[i.level]} ${i.label}:${i.detail}`)
+    if (i.level !== 'ok' && i.fix) say(`      ↳ 修复: ${i.fix}`)
+  }
+  if (DOCTOR_FIX) {
+    if (process.platform === 'win32') {
+      say('[gotry-doctor] --fix 在 Windows 暂不支持自动安装(hbcli/agent-reach 上游无 win 安装面);请按各项修复指引手动处理')
+    } else {
+      say('[gotry-doctor] 开始补装缺失项(--fix)…')
+      const results = []
+      if (process.env.GOTRY_SETUP_HBCLI !== '0') results.push(await setupHbcli())
+      if (process.env.GOTRY_SETUP_REACH !== '0') results.push(await setupReach())
+      if (process.env.GOTRY_SETUP_SIDEBAR !== '0') results.push(await setupSidebar())
+      const failedFix = results.filter((r) => !r.ok).length
+      say(failedFix === 0 ? '[gotry-doctor] 补装完成;下面是补装后复检。' : `[gotry-doctor] ${failedFix} 项补装失败——见上方安装器输出;可重跑 npx gotry doctor --fix`)
+      items = await doctorChecks()
+      for (const i of items) {
+        say(`  ${doctorIcon[i.level]} ${i.label}:${i.detail}`)
+      }
+    }
+  }
+  // 报告落盘(侧栏工作台预览面;写失败不挡体检结论)
+  try {
+    const stateDir = join(repoRoot, 'gotry-state')
+    mkdirSync(stateDir, { recursive: true })
+    writeFileSync(join(stateDir, 'doctor-report.md'), renderDoctorReportMd(items), 'utf8')
+    say(`[gotry-doctor] 报告已写: ${join(stateDir, 'doctor-report.md')}(dsh 侧栏工作台可直接预览)`)
+  } catch (e) {
+    say(`[gotry-doctor] 报告写盘失败(${e.message})——体检结论仍有效`)
+  }
+  // 降级类(凭证未配/flyai 试用)不挡 exit 0——降级有自动回退路径,缺失类才挡
+  const stillMissing = items.filter((i) => i.level === 'missing').length
+  return stillMissing === 0 ? 0 : 1
 }
 
 const EXTENSION_FILES = ['manifest.json', 'background.js', 'content-main.js', 'content-bridge.js', 'README.md']
@@ -440,6 +564,10 @@ async function runInlineHealthWatch(timeoutMs) {
 }
 
 async function main() {
+  // doctor 子命令(2026-09-02 迪拜 session 复盘):可选依赖体检 + 补装指引/补装执行;
+  // 只读体检零副作用(--fix 才装),win32 也可跑体检(fix 面另有提示)。
+  if (DOCTOR) process.exit(await runDoctor())
+
 // wizard 子命令(2026-09-02 商店上架后退化):**只走 stdout 提示 + 健康探活等待**;
 // 不 spawn 任何 GUI 工具(不动 pbcopy / osascript / open / xdg-open / zenity),
 // 不打开 chrome://extensions,不动扩展路径——浏览器自己当安装器,gotry 不越界。
