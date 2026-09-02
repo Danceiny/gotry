@@ -117,20 +117,16 @@ GoTry: 收到。先把约束记下来——
 
 ```bash
 npx @danceiny/gotry web
-# 首跑会在当前目录建 .env:
-#   LLM_API_KEY=<DeepSeek key 或 OpenAI 兼容 key>
-#   LLM_BASE_URL=<你的端点,一般以 /v1 结尾>   # 不走 DeepSeek 官方时配
-#   LLM_MODEL=<模型名>                         # 中转常需要;同时锁定模型
 # → 浏览器打开 http://127.0.0.1:3080,说「我想去大理躺三天」
+# LLM key & 模型:由 dsh 宿主 UI 配;gotry 在 CLI 层完全不出声,不要求也不回显任何凭证
 ```
 
 | 入口 | 命令 | 什么时候用 |
 |---|---|---|
 | Web 对话(推荐) | `npx @danceiny/gotry web` | 持续多轮规划,看推理可视化 → `:3080` |
 | headless 一问一答 | `npx @danceiny/gotry "我想从深圳休整两天,预算 3000"` | 脚本 / CI / 定向调试 → stdout |
-| 扩展安装 | `npx gotry setup` | 一次性,为账号会话工具——见[账号会话:授权与隐私](#账号会话授权与隐私) |
 
-前置:Node ≥ 22.15;一个 LLM API key。任何 OpenAI 兼容端点(MiniMax/中转/自建网关)均可。`LLM_MODEL`(如 `MiniMax-M2`)对 dsh 会话面与仓内脚本同时生效,并压过 dsh web 设置里持久化的模型选择。首启 6–15 秒属正常冷启动;`:3080` 被占先腾端口;异常退出会留证据到 `gotry-state/incidents.jsonl`(不静默)。
+前置:Node ≥ 22.15。LLM 凭证由 dsh 宿主 UI 配,OpenAI 兼容端点(MiniMax/中转/自建网关)走 dsh 的模型设置。首启 6–15 秒属正常冷启动;`:3080` 被占先腾端口;异常退出会留证据到 `gotry-state/incidents.jsonl`(不静默)。
 
 > **成本核算** —— `ts/data/llm-price-table.json`(schema `gotry_llm_price_table_v2`)是 nightly 成本核算的唯一事实源。新增模型或换中转=对该文件提 PR(peak 保守上界只高不低);未知模型 **fail-closed 不猜价**。漂移监测:`npx tsx ts/scripts/price-drift-watch.ts`(默认离线对照 baseline;`--fetch` 拉官方页)。**永不自动 apply 价格**。
 
@@ -140,7 +136,6 @@ npx @danceiny/gotry web
 git clone https://github.com/Danceiny/gotry && cd gotry
 npm ci && npm --prefix ts ci                      # 锁定的 root/TS 依赖闭包
 node scripts/build-dist.mjs                       # 构建 JS runtime
-cp .env.example .env                              # 填 LLM_API_KEY(另按需 LLM_BASE_URL / LLM_MODEL)
 ./gotry web                                       # 仓内入口,与 npm 形态同 UX
 ```
 
@@ -155,7 +150,7 @@ cp .env.example .env                              # 填 LLM_API_KEY(另按需 LL
 3. **物理只读** —— ReadGuard 在网络层中止一切写请求(下单/支付在传输层不可达);agent 永不接触凭证与验证码,遇验证码立即停、交还给你。
 4. **绝不劫持你的浏览器** —— 检索/登录只开自己的独立标签页,登录页置前台、留在你那;例行动测试永不自动开浏览器窗。
 
-前置(一次性):随包分发的 **GoTry Session Bridge** 浏览器扩展(MV3,约 30 秒)。`npx gotry setup` 引导你装到 `~/.gotry/extension`(Chrome → `chrome://extensions` → 开发者模式 → 加载已解压的扩展程序)。装完**零系统弹窗**——扩展只被动转发站点自己发出的检索响应(构造上只读;cookie 只读名字,值永不离开浏览器);后台 health-watch 探活,扩展一就位自动重放你的检索。未安装时工具返回 `needs-extension` 并给指引,不消耗执行配额。想走 GitHub Releases 下载通道?`npx gotry setup --extension-from=github`(版本化 tar.gz + SHA256 + 固定 key 钉扎,原子交换,任何失败自动降级包内副本)。平台约束(诚实):Chrome 只有上架 Web Store 才能消掉「开发者模式加载已解压」的点击——上架材料已备好,待 founder 提交。
+前置(一次性):[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) Chrome 应用商店一键装(自动更新)。账号会话工具首次需要扩展时,**由 dsh 宿主 UI 把商店 URL 作为可点链接渲染**;gotry 这边不会跑任何 setup wizard、也不会让你手动加载已解压扩展。装完**零系统弹窗**——扩展只被动转发站点自己发出的检索响应(构造上只读;cookie 只读名字,值永不离开浏览器);后台 health-watch 探活,扩展一就位自动重放你的检索。未安装时工具返回 `needs-extension` 并把商店链接置于 verdict,不消耗执行配额。
 
 ## 构造上可信
 
@@ -170,14 +165,14 @@ cp .env.example .env                              # 填 LLM_API_KEY(另按需 LL
 
 ## 状态与限制
 
-当前版本:**v0.0.1-rc.16**(npm `latest`)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。
+当前版本:**v0.0.1-rc.17**(npm dist-tag `rc`;`latest` 仍指 rc.16,沿用 dsh-管-LLM 安装口径)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。
 
 **今天可用**(全栈回归全绿;每项都有确定性测试):
 
 - **Z3 求解引擎** —— 可行性判决 + 门到门全成本;历史并发竞态已根治并进回归闸
 - **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`)
 - **账号会话检索** —— 你本人登录态查携程机票;观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
-- **安装向导与扩展双通道** —— `npx gotry setup`(包内副本默认,离线确定性);GitHub Releases 通道显式 opt-in,SHA256 + key 钉扎,失败自动降级
+- **扩展按需装** —— `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 这边不跑 setup wizard、不开 chrome://extensions、不动剪贴板
 - **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
 - **有界的工具循环** —— 16 次派发后注入软收敛,18 次后结构化 `TOOL_BUDGET_EXHAUSTED` 拒绝;经打包消费者安装的 E2E 在 CI 里实测
 
@@ -263,7 +258,7 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 
 **Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-**版本基线:`v0.0.1-rc.16`(npm `latest`)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际枚举为准;发布流程见 `scripts/publish-npm.sh`。
+**版本基线:`v0.0.1-rc.17`(npm dist-tag `rc`;`latest` 沿用 rc.16)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际枚举为准;发布流程见 `scripts/publish-npm.sh`。
 
 ---
 

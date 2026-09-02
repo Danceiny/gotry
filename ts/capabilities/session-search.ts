@@ -13,10 +13,11 @@
  */
 
 import { openSession } from './session/transport.ts'
-import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure, NEEDS_EXTENSION_HINT } from './session/extension-channel.ts'
+import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure } from './session/extension-channel.ts'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { buildEntryUrl, NETWORK_HINTS, parseBatchSearch, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
+import { EXTENSION_STORE_URL } from './session/extension-bridge.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
 
@@ -28,6 +29,9 @@ export interface SessionSearchResult {
   verdict: SessionVerdict
   options?: SessionFlightOption[]
   error?: string
+  /** needs-extension 时给出 Chrome Web Store URL —— dsh UI 应直接渲成可点链接(浏览器自己当安装器,gotry 不插手) */
+  installUrl?: string
+  installAction?: 'add-to-chrome'
 }
 
 export interface SessionFlightQuery {
@@ -132,7 +136,10 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     const login = await extensionCookieNames({ site, domain: SITE_DOMAIN.replace(/^\./, ''), ticketNames: LOGIN_COOKIE_NAMES })
     if (!login.ok) {
       const verdict = classifyBridgeFailure(login.kind)
-      return err(verdict, verdict === 'needs-extension' ? `${login.summary};${NEEDS_EXTENSION_HINT}` : login.summary)
+      if (verdict === 'needs-extension') {
+        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: login.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+      }
+      return err(verdict, login.summary)
     }
     // 登录态闸:用户自己的账号;匿名默认拒(allowAnonymous 仅链路自检且证据标自检态)
     if (login.tickets.length === 0 && !q.allowAnonymous) {
@@ -146,7 +153,10 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     })
     if (!r.ok) {
       const verdict = classifyBridgeFailure(r.kind)
-      return err(verdict, verdict === 'needs-extension' ? `${r.summary};${NEEDS_EXTENSION_HINT}` : r.summary)
+      if (verdict === 'needs-extension') {
+        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: r.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+      }
+      return err(verdict, r.summary)
     }
     const title = r.title
     const head = r.body.slice(0, 5000)

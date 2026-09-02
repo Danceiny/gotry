@@ -14,7 +14,8 @@
  */
 
 import { openSession } from './session/transport.ts'
-import { extensionCookieNames, extensionOpenLogin, classifyBridgeFailure, NEEDS_EXTENSION_HINT } from './session/extension-channel.ts'
+import { extensionCookieNames, extensionOpenLogin, classifyBridgeFailure } from './session/extension-channel.ts'
+import { EXTENSION_STORE_URL } from './session/extension-bridge.ts'
 import { resolveTransportMode } from './session-search.ts'
 
 export interface LoginTarget {
@@ -55,6 +56,9 @@ export interface SessionLoginResult {
   /** 已检出的登录票据 cookie 名(名字,非值——本模块永不读取/存储/回传任何 cookie 值) */
   tickets?: string[]
   error?: string
+  /** needs-extension 时给出 Chrome Web Store URL —— dsh UI 应直接渲成可点链接(浏览器自己当安装器,gotry 不插手) */
+  installUrl?: string
+  installAction?: 'add-to-chrome'
 }
 
 function err(site: string, verdict: SessionLoginResult['verdict'], error: string, started: number, ts: string): SessionLoginResult {
@@ -158,10 +162,16 @@ export async function sessionLogin(q: SessionLoginQuery = {}): Promise<SessionLo
  */
 async function sessionLoginViaExtension(site: string, target: LoginTarget, q: SessionLoginQuery, started: number, ts: string): Promise<SessionLoginResult> {
   const evidenceTag = `[会话:${site}-login@${ts}]`
-  const quick = (verdict: SessionLoginResult['verdict'], error: string): SessionLoginResult => ({
-    ok: false, via: 'session-login-error', evidence: `[会话:login-error@${ts}] ${error.slice(0, 200)}`,
-    latencyMs: Date.now() - started, verdict, site, error: verdict === 'needs-extension' ? `${error};${NEEDS_EXTENSION_HINT}`.slice(0, 400) : error.slice(0, 400),
-  })
+  const quick = (verdict: SessionLoginResult['verdict'], error: string): SessionLoginResult => {
+    const base: SessionLoginResult = {
+      ok: false, via: 'session-login-error', evidence: `[会话:login-error@${ts}] ${error.slice(0, 200)}`,
+      latencyMs: Date.now() - started, verdict, site, error: error.slice(0, 400),
+    }
+    // needs-extension:浏览器自己当安装器,gotry 不弹面板不开剪贴板——只把商店 URL 给 dsh UI
+    if (verdict === 'needs-extension') base.installUrl = EXTENSION_STORE_URL
+    if (verdict === 'needs-extension') base.installAction = 'add-to-chrome'
+    return base
+  }
   // 自动检测优先:先只读票据名——已登录则零交互直接确认(与 cdp 车道同一语义,founder「UI 里有自动检测吗」)
   const pre = await extensionCookieNames({ site, domain: target.domain, ticketNames: target.names, timeoutMs: 8_000 })
   if (!pre.ok) return quick(classifyBridgeFailure(pre.kind) === 'needs-extension' ? 'needs-extension' : 'error', pre.summary)

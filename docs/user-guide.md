@@ -8,7 +8,7 @@
 
 ```bash
 npx @danceiny/gotry web
-# 首跑会在当前目录提示建 .env:填 LLM_API_KEY=<DeepSeek key>(OpenAI 兼容协议均可)
+# LLM key 由 dsh 宿主 UI 配置,gotry CLI 不出声
 ```
 
 **源码(开发者)**:
@@ -17,7 +17,6 @@ npx @danceiny/gotry web
 git clone https://github.com/Danceiny/gotry && cd gotry
 npm ci && npm --prefix ts ci                     # root/TS 锁定闭包
 node scripts/build-dist.mjs                      # 构建源码 runtime
-cp .env.example .env && vi .env                  # 填 LLM_API_KEY
 ./gotry web
 ```
 
