@@ -35,6 +35,7 @@ import { anythingSearch } from '../capabilities/anything.ts'
 import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
 import { sessionLogin } from '../capabilities/session-login.ts'
+import { EXTENSION_STORE_URL } from '../capabilities/session/extension-bridge.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
@@ -824,7 +825,7 @@ export function apply(ctx: Context, config: Config): void {
       + 'OPENS the site login entry in the USER\'S OWN Chrome (foreground tab, left open for the user) and waits for the user to finish logging in on the external site. '
       + 'GoTry NEVER collects, stores, or transmits credentials: no passwords, no SMS codes, no cookie values — it only checks the boolean fact "already logged in" (reads cookie NAMES only, zero values). '
       + 'Transport: the GoTry Session Bridge browser extension (one-time install, ZERO Chrome system dialogs). '
-      + 'verdict logged-in (tickets detected) | pending (login tab opened, user not done yet — offer to re-check later) | needs-extension (one-time extension install: npx gotry setup, then chrome://extensions → load unpacked ~/.gotry/extension). '
+      + `verdict logged-in (tickets detected) | pending (login tab opened, user not done yet — offer to re-check later) | needs-extension (one-time extension install: the verdict surfaces the Chrome Web Store installUrl as a clickable link for dsh UI to render — installation is a browser concern, not gotry's). `
       + 'Evidence [会话:<site>-login@ts].',
     parameters: {
       query: { type: 'json', required: true, description: '可空对象 {}: { waitSeconds?: number }(等待用户完成登录的上限秒数,默认 90,至多 300)' },
@@ -838,7 +839,7 @@ export function apply(ctx: Context, config: Config): void {
         : r.verdict === 'pending'
           ? `登录入口已在你的 Chrome 打开;请在弹出的标签页里正常登录携程(登录由你在官网完成,不属于 gotry)。完成后说一声"继续",我再确认。gotry 只检查"是否已登录",永不收集你的账号信息。${r.evidence}`
           : r.verdict === 'needs-extension'
-            ? `需要一次性安装 GoTry Session Bridge 浏览器扩展(约 30 秒,装完零弹窗):跑 npx gotry setup 拿安装指引,在 chrome://extensions 开发者模式「加载已解压的扩展程序」指向 ~/.gotry/extension,装好后说一声"重试"。${r.evidence}`
+            ? `需要一次性安装 GoTry Session Bridge 浏览器扩展:这是浏览器的事,gotry 不弹面板不开剪贴板——请直接在 Chrome 应用商店一键装(add-to-chrome 自动更新)。storeUrl=${EXTENSION_STORE_URL}. 装好即生效,装完后告诉我「重试」即可。${r.evidence}`
             : r.verdict === 'needs-attach'
               ? `cdp 车道需要一次性开启你 Chrome 的远程调试开关:在你的 Chrome 地址栏打开 chrome://inspect/#remote-debugging 并打开开关,然后说一声"重试"(默认走扩展车道,无需此步)。${r.evidence}`
               : `登录引导未完成:${r.error ?? '未知原因'} ${r.evidence}`
@@ -846,9 +847,20 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: _args => ({ card: 'generic', title: '登录携程(用你自己的浏览器,不在 gotry 输入)', kind: 'fetch', rawInput: {} }),
     presentResult: (_args, value) => {
-      const r = value as { verdict?: string; tickets?: string[] }
-      const label = r.verdict === 'logged-in' ? `已登录(${(r.tickets ?? []).length} 票据)` : r.verdict === 'pending' ? '等待你在携程页面完成登录' : r.verdict ?? '降级'
-      return { card: 'generic', title: `账号登录:${label}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
+      const r = value as { verdict?: string; tickets?: string[]; installUrl?: string }
+      const needsExt = r.verdict === 'needs-extension'
+      const label = r.verdict === 'logged-in'
+        ? `已登录(${(r.tickets ?? []).length} 票据)`
+        : r.verdict === 'pending'
+          ? '等待你在携程页面完成登录'
+          : needsExt
+            ? '🧩 需装 GoTry Session Bridge 扩展(浏览器商店一键装,自动更新)'
+            : r.verdict ?? '降级'
+      const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }]
+      // needs-extension:把商店 URL 渲成可点链接(浏览器自己当安装器,gotry 不插手)
+      // dsh presentResult 若支持 actions 字段,URL 可被原生渲染;否则 content 里也保留文本兜底
+      if (needsExt && r.installUrl) content.push({ type: 'text', text: `安装链接:${r.installUrl}` })
+      return { card: 'generic', title: `账号登录:${label}`, content }
     },
   }))
 
@@ -860,7 +872,7 @@ export function apply(ctx: Context, config: Config): void {
       + 'Transport: GoTry Session Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
       + 'Currently ctrip-flight: sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
       + 'verdict needs-login = call gotry_session_login (opens the Ctrip login entry in the user\'s own foreground tab — no terminal, no credentials through GoTry); '
-      + 'needs-extension = one-time browser-extension install (npx gotry setup for instructions) — the DEFAULT transport; cdp (chrome://inspect remote debugging) is a diagnostic fallback only via GOTRY_SESSION_TRANSPORT=cdp. '
+      + `needs-extension = one-time browser-extension install (Chrome Web Store one-click, installUrl is also surfaced as a clickable link in the verdict field for dsh UI to render) — the DEFAULT transport; cdp (chrome://inspect remote debugging) is a diagnostic fallback only via GOTRY_SESSION_TRANSPORT=cdp. `
       + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).',
     parameters: {
       query: { type: 'json', required: true, description: '{ from: "上海", to: "丽江", date: "2026-10-01" }' },
@@ -894,15 +906,18 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: args => ({ card: 'generic', title: `会话检索:${String((args.query as { from?: string })?.from ?? '')}`, kind: 'fetch', rawInput: args.query }),
     presentResult: (_args, value) => {
-      const r = value as { verdict?: string; options?: unknown[] }
+      const r = value as { verdict?: string; options?: unknown[]; installUrl?: string }
+      const needsExt = r.verdict === 'needs-extension'
       const label = r.verdict === 'hit'
         ? `会话 ${r.options!.length} 条`
         : r.verdict === 'needs-login'
           ? '需登录'
-          : r.verdict === 'needs-extension'
-            ? '需装扩展(一次性)'
+          : needsExt
+            ? '🧩 需装 GoTry Session Bridge 扩展(浏览器商店一键装,自动更新)'
             : r.verdict ?? '降级'
-      return { card: 'generic', title: `会话检索:${label}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
+      const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }]
+      if (needsExt && r.installUrl) content.push({ type: 'text', text: `安装链接:${r.installUrl}` })
+      return { card: 'generic', title: `会话检索:${label}`, content }
     },
   }))
 

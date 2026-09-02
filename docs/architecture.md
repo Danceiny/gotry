@@ -229,7 +229,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 17 | 预订 saga 状态机具名化(issue #17 采纳,2026-08-29) | 见 §8.17 | M5 拍板 WriteGate 时复审(启封增量的 schema CHECK/seam 词汇/L4 自动类);若出现需要并行多写者的预订流,复审 keyed 单写者形态 | `ts/src/booking-saga.ts`;`docs/booking-saga-fsm.md`;run-all §36 |
 | 18 | 效应解译器 effect_interpreter.v1(issue #16 采纳,2026-08-29) | 见 §8.18 | 出现需要跨渠道比价聚合的产品裁决时复审「平铺」边界;写效应(预订/支付)入注册表时必须走 booking_saga_fsm.v1 边表(M5 Entry) | `ts/capabilities/effect.ts` `resilience.ts`;`docs/effect-interpreter.md`;run-all §37 |
 | 19 | 可下单事实单一数据源 + 产物事实闸(issue #46,2026-08-30) | 见 §8.19 | 出现第二类需闸产物(如酒店直订)时复审覆盖面;政策实时源接入后复审政策事实生产端;根治方向=产物只由渲染原语生成(结构化→markdown 单向),反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts`;`data/airline-airports.json`;run-all §39;smoke §16 |
-| 21 | 扩展分发双通道(issue #21 分发通道,2026-08-30) | 见 §8.21 | 商店过审后复审 wizard 步骤(store 版检测跳 dev-mode 三步);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/extension-webstore-submission.md` |
+| 21 | 扩展分发三通道(issue #21 分发通道,2026-08-30;商店轨 2026-09-02 上架) | 见 §8.21 | ~~商店过审后复审 wizard 步骤~~(已触发:wizard 退化为离线健康探活等待;安装=浏览器的事、渲染=dsh UI 的事,§3.3 职责返交落地);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/extension-webstore-submission.md` |
 | 22 | static golden 是**可审计 benchmark comparator**,不是实时航班源(issue #67) | 见 §8.22 | 出现可免私有凭证、许可清晰且稳定的官方 flight API,或 hbcli 发布 flight 合同时复审其为新 provider;static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`;`ts/data/sf-static-routes.json`;run-all §44 |
 | 23 | embedded Booking Copilot 双协议安全边界与 BFF request identity binding | 见 §8.23 | 出现离页自动写/支付必须另立 M5 WriteGate ADR；出现多写者/跨 host 触发 ADR-15/16 复审；所有消费方迁移 v2 后再退 v1 | `schemas/booking.surface.v2.schema.json`;`ts/src/booking-surface/contracts-v2.ts`;`runtime-v2.ts`;`server.ts`/`startup.ts`;v2 runtime/package/run-all proofs |
 
@@ -281,8 +281,10 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 **根治方向**:产物只由渲染原语生成(结构化 → markdown 单向),反向抽取降为过渡态。
 
-#### 8.21 扩展分发双通道
-Chrome 平台禁止非商店 CRX 直装——GitHub Releases 只做「下载」(稳定资产名 tar.gz/store-zip/dist-manifest),Web Store 才是「一键装 + 自动更新」。默认仍 bundled 保离线确定性,GitHub 通道显式 opt-in。
+#### 8.21 扩展分发三通道
+Chrome 平台禁止非商店 CRX 直装——GitHub Releases 只做「下载」(稳定资产名 tar.gz/store-zip/dist-manifest),Web Store 才是「一键装 + 自动更新」。三通道同一扩展:**Chrome Web Store(2026-09-02 上架,推荐)** 一键装/自动更新;GitHub 通道显式 opt-in(免审核、版本更新更快);bundled 保离线确定性兜底。
+
+**上架实测**:商店用自己生成的签名 key 重签,不认 manifest 固定 key——商店版扩展 ID(`oeajpiccmonococjcegddlooeeohlbgd`)与 unpacked 固定 ID(`olpgkofjhhiiiahdkkbcninhjmegghfe`)不同;桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,run-all §38),端口池/host 白名单不随通道漂移。
 
 备选与取舍:任意 URL 装 CRX——平台禁止;npm 包唯一通道——扩展更新被迫跟 rc 发版火车;独立 pinning——与解耦目标冲突;自建更新服务器——违反零基建面。
 
@@ -328,7 +330,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：v1 
 - **会话数据面 #21 首切片(2026-08-29)**:`session/benchmark.ts` 固化 required comparable fields 的 fixture scorer(缺字段计错、默认 90% 闸)与双源合同(按 journey/segments/时刻/班次对齐,价格只记差值不判等)；`needs-attach`/`needs-login` 为 waiting-user no-spend,challenge 与 ReadGuard 非零 fail-closed。纯 fixture 已进 run-all §25；真实 sf-01..08 仍等待 Chrome attach 权限确认与握手。
 - **扩展分发双通道(2026-08-30,issue #21,ADR-21)**:founder 指令「产物下载和安装也得做成更好的用户体验,可以用 github 作为分发渠道」。Chrome 平台约束**诚实前置**——非商店不可免「开发者模式加载已解压」的 3 次点击,GitHub 只能改善下载。双通道分工:
   - **GitHub Releases 下载通道(已落)**:`gotry setup --extension-from=github` 显式 opt-in(env `GOTRY_EXTENSION_SOURCE` 等效),默认仍 bundled 保离线确定性。
-  - **Chrome Web Store 通道(已提交审核中,2026-08-30 founder)**:一键装 + 自动更新的唯一平台路径。商店材料(单一用途声明/权限逐条理由/隐私披露/双语文案)与隐私政策落 `docs/extension-webstore-submission.md`、`docs/extension-privacy.md`;注册与提交归 founder(D-25)。固定 key 预期商店同 ID,以首次上传实测为准。
+  - **Chrome Web Store 通道(2026-08-30 提交,2026-09-02 过审上架 v0.1.0)**:一键装 + 自动更新的唯一平台路径,现为推荐安装方式。商店材料(单一用途声明/权限逐条理由/隐私披露/双语文案)与隐私政策落 `docs/extension-webstore-submission.md`、`docs/extension-privacy.md`。**上架实测**:商店用自己签名 key 重签、不认 manifest 固定 key——商店版 ID `oeajpiccmonococjcegddlooeeohlbgd` ≠ unpacked 固定 ID;桥 Origin 白名单改双通道同信(`EXTENSION_ORIGINS`,§38 回归),向导/README/工具文案全部商店优先(D-25 清偿)。
   - 回归:run-all §43(资产名/打包脚本防漂移、dist-manifest fail-closed、版本比较、回环 e2e)。
   - **注**:本条曾在 §1 出现两份内容矛盾的副本(一份「材料就绪未提交」、一份「已提交审核中」),2026-08-31 文档重构时以后者为准合并。
 - **会话传输层定案扩展桥(2026-08-30,#21 方案 C 升 PRIMARY)**:
@@ -343,9 +345,10 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：v1 
   - **实时票价接入**:`ts/src/realtime-pricing.ts`——dated 航班链段经 FlyAI 官方只读通道按航班号精确匹配覆写 spec 价格,证据链 `[实时API:flyai@ts]` 并进 skeleton_notes;miss/error/打码价/无匹配一律降级回静态包,永不抛错。`realtimeSolvePort`(env 闸 `GOTRY_REALTIME_PRICING`,默认关)接线 replay-real——**静态包由唯一来源变为显式降级**,run-all §31。
   - **i18n 英文面工程层**:`i18n.ts` 消息目录——zh-CN 默认且与金标准逐字节一致,`GOTRY_LOCALE=en` 切英文、en 缺键回退 zh;覆盖求解确定性面(候选/航班链 answer_md、放宽建议、排除理由、wish 理由)。run-all §32;工具卡与人格对话面挂 M4 校准样本随补。
 - **贡献基建(2026-08-29,开源协作面)**:GitHub Actions CI(node 22/24 矩阵:typecheck + 全栈回归,`GOTRY_SESSION_LIVE=0`);`CONTRIBUTING.md` + issue/PR 模板;lockfile(root/ts 双份)与 dsh-runtime 三 manifest 入 git,resolved 全量从内部镜像改指 registry.npmjs.org(integrity 逐包验证);贡献流程改 PR 制。
-- **onboarding wizard(2026-08-30,#21)**:
-  - founder 实测「能装 ≠ 装到能用」——上版隐性状态要求 5 次点击 + 1 个原生文件对话框 + 跨 app 切换 + 装完自己重跑。闭环 `npx gotry setup wizard`:5 步编排 + 复制扩展路径(pbcopy/xclip)+ 直达 `chrome://extensions` + 跨平台 GUI 面板(macOS osascript / Linux zenity / Windows msg / headless 终端)+ 后台 health-watch ≤120s 探活 + 扩展就位后自动重放同 query_id。用户侧降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。
-  - 落地:`ts/capabilities/session/wizard.ts` + `health-watch.ts`(默认 120s/5s、有界、AbortSignal 可取消)+ `scripts/health-watch-cli.ts` + bootstrap `wizard` 子命令;run-all §40 onboarding-tests 9/9 + bootstrap-tests wizard 节。
+- **onboarding wizard(2026-08-30,#21 · 2026-09-02 职责返交重设)**:
+  - 2026-08-30 立项:founder 实测「能装 ≠ 装到能用」——上版隐性状态要求 5 次点击 + 1 个原生文件对话框 + 跨 app 切换 + 装完自己重跑。首版闭环 `npx gotry setup wizard`:5 步编排 + 复制扩展路径(pbcopy/xclip)+ 直达 `chrome://extensions` + 跨平台 GUI 面板(macOS osascript / Linux zenity / Windows msg / headless 终端)+ 后台 health-watch ≤120s 探活 + 扩展就位后自动重放同 query_id。用户侧降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。
+  - **2026-09-02 商店上架后撤销**:gotry 越界管起了浏览器(`open` 弹窗、`pbcopy` 动剪贴板、`osascript/zenity` 抢 GUI)与 dsh 渲染层(用 stdout 文字墙代替 verdict)。LLM 由 dsh 管、扩展由浏览器商店管、CLI 自举由 `gotry setup` 管——三条职责原本就分清。wizard 退化为**离线健康探活等待**(纯 stdout,不动 spawn);商店页安装回浏览器;`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时返回 `verdict.installUrl` 给 dsh UI 直接渲可点链接。
+  - 落地:`ts/capabilities/session/wizard.ts`(2 步纯 Node:`ensure-extension-files` + `watch-extension-ready`)+ `health-watch.ts`(默认 120s/5s、有界、AbortSignal 可取消,继续保留)+ `scripts/health-watch-cli.ts`;`scripts/wizard-bootstrap.ts` 已删除(wizard.ts 直接被 onboarding-tests import);run-all §40 onboarding-tests 9/9 + bootstrap-tests wizard 节。
 - **价表 provider-aware v2 + 价格漂移监测(2026-08-30,issue #49,ADR-20)**:
   - 封存价表从 `gotry_llm_price_table_v1`(DeepSeek V4 only)升 `v2`(`providers.<id>.models.<model>` 平铺 + `family`/`price_strategy`/`source_url`/`aliases`);MiniMax M2/M2.1/M3 入表;`ts/scripts/price-drift-watch.ts` 监测四家主流 provider(DeepSeek/MiniMax/OpenAI/Anthropic),**永不自动 apply 价格**(ADR-11 纪律)。
   - 同批 CHANGELOG 自动化:`ts/scripts/build-changelog.ts` + `CHANGELOG.md`(Keep a Changelog 1.1.0 + Conventional Commits 解析)。run-all §41/§42。
@@ -393,7 +396,6 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 | D-12 loopx RFC 映射升级四接缝 | **已全部落地(RFC accepted 2026-08-27)**:S1 tool-packet envelope(ADR-13);S2+S3 记忆效用 sidecar + wish 触达 0..1(ADR-14);S4 WriteGate L0-L4 渐进授权词汇进 roadmap M5 交付物(2026-08-28);多用户 AaaS 方向见 RFC §6.5 远期采纳面 |
 | D-13 会话适配器维护面(RFC user-session-data-rfc) | 见下方「D-13 会话适配器维护面」 |
 | D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态) | 见下方「D-24 会话扩展 onboarding UX 缺口」 |
-| D-25 扩展商店上架审核中(一键装/自动更新仍缺,ADR-21 分发 B 轨) | 见下方「D-25 扩展商店上架审核中」 |
 | D-15 账本触发式后置面(ADR-15 TS-5) | Litestream 云备份 / cr-sqlite 多写者复制 / RFC(loopx) §6.5 claim-fence-receipt 多用户实装——仅在触发器出现时启动:第二真实用户 / 多机部署 / AaaS 立项 |
 | D-16 上游 dsh 发布面断裂 | 见下方「D-16 上游 dsh 发布面断裂」 |
 | D-18 M3 Exit 真实 cohort 证据缺口 | 见下方「D-18 M3 Exit 真实 cohort 证据缺口」 |
@@ -417,12 +419,9 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 **D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态)**
 
 **部分清偿 2026-08-30**:
-- founder 实测「能装≠装到能用」——上版隐性状态要求 5 次点击 + 1 个原生文件对话框 + 跨 app 切换 + 装完还要自己重跑 sf 命令验证;`npx gotry setup wizard`(5 步编排 + 剪贴板 + 跨平台 GUI 面板 + 后台 health-watch 自动重放同 query_id)闭环至 **3 次点击 + 0 次终端命令 + 装完零重跑**。
-- `ts/capabilities/session/{wizard,health-watch}.ts` + `ts/scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程,inline 降级兜) + bootstrap `wizard` 子命令 + run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节。**赎回条件**:用户首次 `gotry setup wizard` → 装一次扩展 → 后续调用 `gotry_session_search` 零后续动作即拿到 hit(goal 1 exit);goal 2 sf-01..08 跑批仍待用户桌面 Chrome 一次性装扩展后启
-
-**D-25 扩展商店上架审核中(一键装/自动更新仍缺,ADR-21 分发 B 轨)**
-
-已提交(2026-08-30 founder 确认审核中;材料同下):`docs/extension-webstore-submission.md`(单一用途/权限理由/隐私披露/文案/founder 清单)+ `docs/extension-privacy.md`(隐私政策 URL)+ `scripts/package-extension.mjs` store-zip 产物;**赎回条件**:founder 注册开发者账号($5)→ 上传 zip → 粘贴材料 → 提审;过审后 wizard 增补「已装商店版跳过 dev-mode 三步」检测
+- **基础版(founder 实测)**:2026-08-30 实证「能装≠装到能用」,降到 **3 次点击 + 0 次终端命令**(5 步 wizard + 剪贴板 + GUI 面板 + health-watch 自动重放)
+- `ts/capabilities/session/{wizard,health-watch}.ts` + `ts/scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程,inline 降级兜) + bootstrap `wizard` 子命令 + run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节。
+- **2026-09-02 商店上架 + 职责返交**:wizard 撤销 5 步形态,`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时返回 `verdict.installUrl`,dsh UI 直接渲可点链接——用户侧进一步降到 1 次点击(Chrome 商店「添加至 Chrome」)+ dsh 自动 retry,gotry CLI 完全不介入。
 
 **D-16 上游 dsh 发布面断裂（Round 5 工程面已清偿）**
 
@@ -469,6 +468,7 @@ Round 7 将 benchmark opt-in 收敛为 minimal kernel，并把 system-prompt/roo
 | D-10 slot→spec 求解桥接未做 | 已清偿,详见下方 |
 | D-11 `npx tsc --noEmit` 存量 14 错 | **已清偿**(1bf9671,语义零变更:tsc 0 错;smoke/memory §18 全过;17 套 ALL GREEN) |
 | D-26 扩展在线时默认桥钉住 CLI | 已清偿,详见下方 |
+| D-25 扩展商店上架(ADR-21 分发 B 轨) | 已清偿 2026-09-02,详见下方 |
 | D-14 playwright-core 分发面(RFC) | **基本清偿 2026-08-30**:传输主载改自研扩展桥(零新依赖,node:http);puppeteer-core 降为 cdp 显式后备车道的可选依赖(动态导入+缺包优雅降级);`extension/` 进 npm files 白名单,`gotry setup` 负责落位与加载指引。**残余**:D-16 上游发布面断裂修复前,session 面在 npm 干净安装下的端到端实测未完成 |
 | D-17 Z3 WASM race(README Known limitation) | 已清偿,详见下方 |
 | D-20 六状态面里程碑口径漂移 | **已清偿 2026-08-29(Issue #19)**:六状态面统一为「M3 真实 evidence 未收口；M4 为 founder 授权并行，不是 M3 Exit 证明；M5/M6 仅受各自 Entry gate 开闸」。后续不得把工程交付、发布或并行切片等同于里程碑退出证据。 |
@@ -496,7 +496,11 @@ Round 7 将 benchmark opt-in 收敛为 minimal kernel，并把 system-prompt/roo
 
 **D-26 扩展在线时默认桥钉住 CLI**
 
-**已清偿 2026-08-30**:`server.unref()` 不会自动解开已接受 socket 与 parked 长轮询 timer,导致 `SMOKE OK` 后进程仍存活;默认桥对两者 `unref`,active submit timer 与 wizard `keepBridge=true` 保持引用。§38 子进程红→绿 + §40 9/9 + 真扩展 smoke exit 0 守住。
+**已清偿 2026-08-30**:`server.unref()` 不会自动解开已接受 socket 与 parked 长轮询 timer,导致 `SMOKE OK` 后进程仍存活;默认桥对两者 `unref`,active submit timer 与 `keepBridge=true` 保持引用。§38 子进程红→绿 + §40 9/9 + 真扩展 smoke exit 0 守住。
+
+**D-25 扩展商店上架(ADR-21 分发 B 轨)**
+
+**已清偿 2026-09-02**:Chrome Web Store 过审发布 v0.1.0([商店页](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)),一键装 + 自动更新通道打通。上架实测坐实材料预案——商店用自己签名 key 重签、不认 manifest 固定 key,商店版 ID 与 unpacked 固定 ID 不同;影响面按预案收口:桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,§38 新增商店源断言),扩展代码/manifest 零改动。wizard/README/needs-extension 文案全部商店优先;「已装商店版自动跳过 dev-mode 三步」检测残余转 D-24。
 
 **D-17 Z3 WASM race(README Known limitation)**
 

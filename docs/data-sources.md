@@ -251,9 +251,9 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 - **未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
 **未接(独立 tick)**:携程酒店/美团酒店会话适配器——登录态 seam(`scripts/session-login.ts`)与美团 403 硬前置未解,见上两段。
 - **人机共治标签页纪律(2026-08-29,founder「我根本就看不到登录页面」根治)**:登录引导与会话检索一律 `newPage` 开**自己的独立标签页**(登录页 `bringToFront` 置前台、`closeOwnPage=false` 留给用户),绝不劫持用户既有标签页(此前实现拿 `browser.pages()[0]` 导航,登录页开在用户看不见的位置=严重 UX bug);检索页用完即关自己的页。
-- **扩展 onboarding UX 闭环(2026-08-30,issue #21 P3.6,loopx `gotry-session-onboarding-goal`)**:
-  - founder 实测「能装≠装到能用」——上版要求 5 次点击 + 1 文件对话框 + 跨 app 切换 + 装完自己重跑,本批降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。`npx gotry setup wizard` 单命令入口(5 步编排 + 剪贴板扩展路径 + macOS osascript / Linux zenity / Windows msg / headless 终端跨平台 GUI 面板 + 后台 health-watch ≤120s 探活 + 扩展一就位 stdout 翻绿自动重放同 query_id);
-  - `ts/capabilities/session/{wizard,health-watch}.ts` + `scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程单行 JSON 输出)+ bootstrap `wizard` 子命令(inline 降级兜 npm 安装态);run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节;RFC §3.3 / §4 P3.6 / §6 复用矩阵同步 + architecture §10 D-24。
+- **扩展 onboarding UX 闭环(2026-08-30,issue #21 P3.6,后于 2026-09-02 商店上架后撤销,§3.3 职责返交)**:
+  - 2026-08-30 founder 实测「能装≠装到能用」——上版要求 5 次点击 + 1 文件对话框 + 跨 app 切换 + 装完自己重跑,本批降至 **3 次点击 + 0 次终端命令 + 装完零重跑**(已撤销,详见 RFC §3.3 历史对比表)。`npx gotry setup wizard` 单命令入口(撤销前:5 步编排 + 剪贴板扩展路径 + macOS osascript / Linux zenity / Windows msg / headless 终端跨平台 GUI 面板 + 后台 health-watch ≤120s 探活 + 扩展一就位 stdout 翻绿自动重放同 query_id);
+  - `ts/capabilities/session/{wizard(wizardless,2 步),health-watch}.ts` + `scripts/health-watch-cli.ts`;run-all §40 onboarding-tests 9/9 + bootstrap-tests 8/8 wizard 节(已重设);RFC §3.3 / §4 P3.6 / §6 复用矩阵同步 + architecture §10 D-24/D-25。
   - **后续 goal 2(`sf-live-benchmark`,八条 query 双源 scorer)仍待用户桌面 Chrome 一次性装扩展后启**。
 
 
@@ -270,9 +270,10 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 | 2026-08-29(PR #33 合流) | Issue #24 双 lane 修复合流:weather 双源/飞猪扫描器/静态包过滤采纳 main 版;本 lane 增量入列——hbcli ENOENT 人话化+候选路径回退(~/.local/bin、~/.staicli/current)+安装期外部依赖自举(hbcli 官方 install.sh / agent-reach 官方 pip 入包内 .venv,postinstall --auto 非致命,`gotry setup` 手动入口;§2 酒店行)+ 离线 flyai 套件(run-all §7b)+ bootstrap 套件(§7c);hotelbyte-cli 定性更正为公开仓(D-22) |
 | 2026-08-29(issue #16 采纳) | §6 增韧性横切落位:外部渠道重试/熔断/节律归口效应解译层 effect_interpreter.v1(ADR-18,`ts/capabilities/effect.ts`+`resilience.ts`,设计文档 `effect-interpreter.md`)——per-效应策略表(Sentinel 永不重试/SESSION 永不重试不熔断/免费源退避 2 次),`[效应:<NAME>@ts]` 横切证据与渠道证据链并存;flyai/hbcli/session/weather/opensky 通道+realtime-pricing 查询口已接,余下渠道 D-23 增量迁移;run-all §37 |
 | 2026-08-30(staicli 全流程 E2E) | hbcli 全流程接入收口:本机经官方 install.sh 装 staicli 0.0.1(~/.staicli/versions + ~/.local/bin 符号链);账号接入口径从 hotel-be 种子实测敲定—— **详见下方「2026-08-30(staicli 全流程 E2E)」** |
-| 2026-08-30(onboarding UX 闭环) | issue #21 P3.6:会话扩展 onboarding 从「5 次点击 + 跨 app 切换 + 装完自己重跑」降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。 **详见下方「2026-08-30(onboarding UX 闭环)」** |
+| 2026-08-30(onboarding UX 闭环 · 2026-09-02 撤销) | issue #21 P3.6:会话扩展 onboarding 从「5 次点击 + 跨 app 切换 + 装完自己重跑」降至 **3 次点击 + 0 次终端命令 + 装完零重跑**;后由 Chrome 应用商店上架接管,gotry wizard 退化为离线健康探活等待(RFC §3.3)。 **详见下方「2026-08-30(onboarding UX 闭环 · 2026-09-02 撤销)」** |
 | 2026-08-30(P3.7 双源 e2e 真跑批 goal 2) | founder 实问「flyai 只是一个 vendor,可以切别的?」→ **拒 vendor 锁**,issue #21 验收清单「sf-01..08 完成真实双源 e2e + 字段准确率 ≥90% + live <15s」全数达成。 **详见下方「2026-08-30(P3.7 双源 e2e 真跑批 goal 2)」** |
 | 2026-08-30(扩展分发双通道) | issue #21 分发通道(ADR-21,founder 指令「用 github 作为分发渠道」):GitHub Releases 下载通道落地——`gotry setup --extension-from=github`(稳定资产名三件套/dist-manifest fail-closed/SHA256/固定 key 钉扎/原子交换/失败显式降级 bundled;`GOTRY_EXTENSION_RELEASE_BASE` 镜像可覆盖)+ `scripts/package-extension.mjs` 打包(只产产物,上传走发布确认制);Web Store 上架材料+隐私政策就绪待 founder 提交(D-25);run-all §43 35 断言 + bootstrap-tests 8/8 |
+| 2026-09-02(扩展商店上架) | Chrome Web Store 过审发布 v0.1.0([商店页](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd),一键装+自动更新=推荐安装面;D-25 清偿)。**上架实测**:商店用自己签名 key 重签、不认 manifest 固定 key——商店版扩展 ID `oeajpiccmonococjcegddlooeeohlbgd` ≠ unpacked 固定 ID `olpgkofjhhiiiahdkkbcninhjmegghfe`,桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,run-all §38 增商店源断言);wizard 直达商店页 + 极简兜底面板,README/needs-extension 文案商店优先,GitHub Releases 通道保留(免审核、版本更新更快) |
 
 
 **酒店库存/报价**
@@ -286,10 +287,10 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 - hbcli 全流程接入收口:本机经官方 install.sh 装 staicli 0.0.1(~/.staicli/versions + ~/.local/bin 符号链);账号接入口径从 hotel-be 种子实测敲定——
 - OpenAPI 沙箱 `hotelbyte_api_demo`(predefined_user_demo.go,IsSandbox)UAT 取票/搜索编排真通,tenant 门户 benjamin 亦可登录,UAT 目的地/酒店参考数据暂空(hotel-list 按名查询业务 404 → 设计内静态包降级,§2 酒店行「证书过期」旧诊断更正);全链路 E2E 固化为 run-all §7d(`ts/scripts/hbcli-e2e-tests.ts`:隔离 STAICLI_HOME+沙箱账号真打 UAT,取票/实时通道/降级诚实/解译策略/工具面五断言,无 bin 或无网 SKIP);`gotry setup` 装后账号引导升级(沙箱试用/专属凭证/门户三选一+whoami 自检)
 
-**2026-08-30(onboarding UX 闭环)**
+**2026-08-30(onboarding UX 闭环 · 2026-09-02 撤销)**
 
-- issue #21 P3.6:会话扩展 onboarding 从「5 次点击 + 跨 app 切换 + 装完自己重跑」降至 **3 次点击 + 0 次终端命令 + 装完零重跑**。
-- `npx gotry setup wizard` 单命令入口:5 步编排 + 剪贴板扩展路径 + macOS osascript / Linux zenity / Windows msg / headless 终端跨平台 GUI 面板(不引 Electron,保持零 GUI 依赖面)+ 后台 health-watch ≤120s 探活 + 扩展一就位自动重放同 query_id;`ts/capabilities/session/{wizard,health-watch}.ts` + `scripts/health-watch-cli.ts`(bootstrap spawn tsx 子进程单行 JSON 输出)+ bootstrap `wizard` 子命令(inline 降级兜 npm 安装态);run-all §40 onboarding-tests 9/9 + bootstrap-tests 7/7 wizard 节;RFC §3.3 / §4 P3.6 / §6 复用矩阵同步 + architecture §10 D-24 + roadmap / README 双语 / stage1 状态头同步。
+- issue #21 P3.6:会话扩展 onboarding 从「5 次点击 + 跨 app 切换 + 装完自己重跑」降至 **3 次点击 + 0 次终端命令 + 装完零重跑**;**2026-09-02 商店上架后撤销**——安装回浏览器、渲染回 dsh UI,wizard 退化为离线健康探活等待。
+- `npx gotry setup wizard` 单命令入口(撤销前为 5 步编排 + 剪贴板扩展路径 + macOS osascript / Linux zenity / Windows msg / headless 终端跨平台 GUI 面板(不引 Electron)+ 后台 health-watch ≤120s 探活 + 扩展一就位自动重放同 query_id;撤销后纯 stdout 输出商店 URL + 健康探活等待,无 spawn);`ts/capabilities/session/wizard.ts`(2 步纯 Node:`ensure-extension-files` + `watch-extension-ready`)+ `scripts/health-watch-cli.ts`;run-all §40 onboarding-tests 9/9 + bootstrap-tests 8/8 wizard 节(已重设);RFC §3.3 / §4 P3.6 / §6 复用矩阵同步 + architecture §10 D-24 / D-25 + roadmap / README 双语 / stage1 状态头同步。
 - **browser-use 假象澄清**:其隔离 Chromium ≠ 用户桌面 Chrome,装不到目标扩展,**显式不引入**(Python 违纪,二次理由)
 
 **2026-08-30(P3.7 双源 e2e 真跑批 goal 2)**
