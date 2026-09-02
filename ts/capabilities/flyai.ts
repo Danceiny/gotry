@@ -11,7 +11,10 @@
  *   - 只读:8 工具全只读,交易经 jumpUrl/detailUrl 由人完成(与 WriteGate 哲学同构);
  *   - 永不抛错:网络/超时/解析失败一律降级返回 verdict='error';
  *   - 证据链:成功 [实时API:flyai@ts];失败 [实时API:flyai@error@ts];
- *   - 无 key 可用;FLYAI_API_KEY 为可选增强(env 透传)。
+ *   - 匿名试用额度可用但共享易达限(2026-09-02 迪拜 session:429 Trial limit reached
+ *     被当通用 error,LLM 跨轮盲重试 4 次)——达限归类 verdict='needs-setup' +
+ *     setup 指引(申请正式 key 配 FLYAI_API_KEY),工具层据此阻断盲目重试。
+ *     FLYAI_API_KEY 已配时 env 透传,不再走试用额度。
  */
 
 import { spawn } from 'node:child_process'
@@ -86,11 +89,14 @@ export interface FlyaiResult {
   via: 'flyai' | 'flyai-error'
   evidence: string
   latencyMs: number
-  verdict: 'hit' | 'miss' | 'error'
+  /** needs-setup = 配置问题(试用额度达限/需正式 key),不是检索失败——工具层应阻断盲目重试 */
+  verdict: 'hit' | 'miss' | 'error' | 'needs-setup'
   kind: FlyaiKind
   options?: FlyaiOption[]
   hotels?: FlyaiHotelOption[]
   error?: string
+  /** 上游指引原话/补配指引(仅 needs-setup 时) */
+  setup?: string
 }
 
 interface RawItem {
@@ -245,6 +251,18 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   })
   const latencyMs = Date.now() - started
   if (r.error || r.code !== 0) {
+    // 试用额度达限(2026-09-02 迪拜 session 实况:exit 1 + MCP HTTP 429 "Trial limit
+    // reached")是配置问题不是瞬时故障——归 needs-setup 带补配指引,让工具层阻断
+    // LLM 拿同一把 429 跨轮盲重试;正式 key 经 FLYAI_API_KEY 配入后此路径不再触发。
+    const upstream = `${r.stderr}\n${r.stdout}`
+    if (/Trial limit reached|HTTP\s*429|\b429\b/.test(upstream)) {
+      return {
+        ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'needs-setup',
+        evidence: `[实时API:flyai@error@${ts}] trial quota exhausted`,
+        error: `FlyAI 匿名试用额度已用尽(上游 429):${upstream.replace(/\s+/g, ' ').slice(0, 160)}`,
+        setup: 'FlyAI 试用额度达限——到 flyai.open.fliggy.com 控制台申请正式 API Key,配入环境变量 FLYAI_API_KEY 即恢复;本会话请勿重试 gotry_flyai_search,机/火/酒改走 gotry_session_search(账号会话)或 web 检索推进。',
+      }
+    }
     return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] ${r.error ?? `exit ${r.code}`}`, error: r.error ?? r.stderr.replace(/\s+/g, ' ').slice(0, 200) }
   }
   let items: RawItem[]

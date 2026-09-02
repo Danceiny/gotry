@@ -106,6 +106,10 @@ echo "=== 15. agent-reach wrapper(反射桥 + 真 doctor,7 断言) ==="
 (cd ts && npx tsx scripts/agent-reach-wrapper-tests.ts) || FAIL=1
 
 echo
+echo "=== 15b. doctor 可选依赖体检(注入式三态分级/LLM key 让渡/报告渲染/gotry_doctor 工具面落盘,6 段) ==="
+(cd ts && npx tsx scripts/doctor-tests.ts) || FAIL=1
+
+echo
 echo "=== 16. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
