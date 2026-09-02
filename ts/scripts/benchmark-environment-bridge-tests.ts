@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -28,8 +28,66 @@ import {
   BENCHMARK_CHILD_DIAGNOSTIC_SCHEMA,
   appendBoundedChildDiagnostic,
   classifyBenchmarkChildFailure,
+  classifyBenchmarkTurnEnd,
+  createBenchmarkDiagnosticArbiter,
   parseBenchmarkChildDiagnostic,
 } from '../src/benchmark-headless-child-diagnostics.ts'
+
+// Round 6 RED tests: terminal facts must be classified from the structured
+// turn/end envelope, without consulting stderr or reflecting its body.
+{
+  const exactFamilies: Array<[string[], string]> = [
+    [['AUTH', 'INVALID_CREDENTIAL', 'MISSING_CREDENTIAL'], 'child_model_auth'],
+    [['QUOTA', 'RATE_LIMIT'], 'child_model_capacity'],
+    [['SERVER'], 'child_model_server'],
+    [['TRANSPORT', 'TIMEOUT'], 'child_model_transport'],
+    [['EMPTY_RESPONSE', 'STREAM_CLOSED', 'MALFORMED_RESPONSE', 'INVALID_RESPONSE'], 'child_model_stream'],
+    [['INVALID_REQUEST', 'CONTEXT_WINDOW_EXCEEDED', 'NO_ADAPTER', 'UNKNOWN_MODEL', 'UNSUPPORTED_OPTION'], 'child_model_request'],
+    [['ABORTED'], 'child_aborted'],
+  ]
+  for (const [codes, expected] of exactFamilies) {
+    for (const code of codes) assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code } }), expected)
+  }
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'RATE_LIMIT', message: 'sentinel' } }), 'child_model_capacity')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'AUTH', message: 'sentinel' } }), 'child_model_auth')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'MISSING_CREDENTIAL', message: 'sentinel' } }), 'child_model_auth')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'QUOTA', message: 'sentinel' } }), 'child_model_capacity')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'SERVER', message: 'sentinel' } }), 'child_model_server')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'TRANSPORT', message: 'api-key sentinel' } }), 'child_model_transport')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 401, message: 'key sentinel' } }), 'child_model_auth')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 403, message: 'key sentinel' } }), 'child_model_auth')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 429, message: 'quota sentinel' } }), 'child_model_capacity')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 503, message: 'server sentinel' } }), 'child_model_server')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 500, message: 'server sentinel' } }), 'child_model_server')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 599, message: 'server sentinel' } }), 'child_model_server')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'PI_AI_ERROR', message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'INVALID_RESPONSE', message: 'opaque' } }), 'child_model_stream')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'UNSUPPORTED_OPTION', message: 'opaque' } }), 'child_model_request')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 503.5, message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 99, message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'OTHER', status: 600, message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'rate_limit', message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'UNKNOWN', message: 'opaque' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'error', error: { code: 'UNKNOWN', message: 'message sentinel', requestId: 'request sentinel', path: 'path sentinel', prompt: 'prompt sentinel', key: 'key sentinel' } }), 'child_runtime_error')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'blocked' }), 'child_blocked')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'max-tokens' }), 'child_max_tokens')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'aborted' }), 'child_aborted')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'interrupted' }), 'child_interrupted')
+  assert.equal(classifyBenchmarkTurnEnd({ kind: 'completed' }), undefined)
+
+  const writes: string[] = []
+  const arbiter = createBenchmarkDiagnosticArbiter(code => writes.push(code))
+  arbiter.offer('session-a', 'child_conformance_failure')
+  arbiter.offer('session-a', 'child_runtime_error')
+  arbiter.offer('session-a', 'child_bridge_failure')
+  arbiter.offer('session-b', 'child_model_server')
+  arbiter.flush('session-a')
+  arbiter.flush('session-a')
+  arbiter.flush('session-b')
+  arbiter.flush('session-b')
+  assert.deepEqual(writes, ['child_bridge_failure', 'child_model_server'])
+
+}
 
 type RegisteredTool = {
   name: string
@@ -246,6 +304,7 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
   const scopedListeners = new Map<string, Array<(...args: any[]) => unknown>>()
   const guards: Array<(execution: { name: string }) => string | undefined> = []
   const steers: unknown[] = []
+  const runtimeWrites: string[] = []
   const runEffect = (action: () => unknown) => {
     const disposers: Array<() => unknown> = []
     const value = action()
@@ -277,9 +336,11 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
   const ctx = {
     on(name: string, listener: (...args: any[]) => unknown) { return add(rootListeners, name, listener) },
   } as unknown as Context
-  installBenchmarkAgentConformance(ctx, projection)
+  installBenchmarkAgentConformance(ctx, projection, code => runtimeWrites.push(code))
   rootListeners.get('agent/created')![0]!({ agent })
   rootListeners.get('session/event')![0]!(session, turnStart())
+  rootListeners.get('session/event')![0]!(session, { type: 'llm/retry', data: { turn: 1, reason: { kind: 'error', error: { code: 'RATE_LIMIT' } } } })
+  rootListeners.get('session/event')![0]!(session, { type: 'agent/request-error', data: { turn: 1, error: { code: 'SERVER' } } })
   rootListeners.get('session/event')![0]!(session, assistant('prose only', { step: 1 }))
   rootListeners.get('agent/turn-stopping')![0]!({ agent, turn: 1 })
   assert.equal(steers.length, 1, 'runtime wiring steers exactly once at the stop boundary')
@@ -292,6 +353,36 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
   assert.match(assembled.sections[0]!.text, /\"action\":\"call\"/)
   assert.match(assembled.sections[0]!.text, /<done>/)
   assert.equal(assembled.sections[0]!.text.includes('/tmp/'), false)
+
+  // Intermediate retry/request errors never write; only final completed observes recovery.
+  rootListeners.get('session/event')![0]!(session, turnEnd())
+  assert.deepEqual(runtimeWrites, [])
+
+  // A final structured model error writes exactly once, despite duplicate end/dispose.
+  rootListeners.get('session/event')![0]!(session, turnStart(2))
+  rootListeners.get('session/event')![0]!(session, { type: 'turn/end', data: { turn: 2, reason: { kind: 'error', error: { code: 'SERVER', message: 'sentinel' } } } })
+  rootListeners.get('session/event')![0]!(session, { type: 'turn/end', data: { turn: 2, reason: { kind: 'error', error: { code: 'UNKNOWN_MODEL' } } } })
+  assert.deepEqual(runtimeWrites, ['child_model_server'])
+
+  rootListeners.get('session/disposed')![0]!(session)
+
+  // A malformed stopping payload with a valid session is arbited above a later generic error.
+  const session2 = {}
+  const agent2 = { session: session2, steer() {}, ctx: agent.ctx }
+  rootListeners.get('agent/created')![0]!({ agent: agent2 })
+  rootListeners.get('session/event')![0]!(session2, turnStart())
+  assert.throws(() => rootListeners.get('agent/turn-stopping')![0]!({ agent: agent2 }), new RegExp(BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE))
+  rootListeners.get('session/event')![0]!(session2, { type: 'turn/end', data: { turn: 1, reason: { kind: 'error', error: { code: 'UNKNOWN' } } } })
+  assert.deepEqual(runtimeWrites, ['child_model_server', 'child_conformance_failure'])
+  rootListeners.get('session/disposed')![0]!(session2)
+
+  const session3 = {}
+  const agent3 = { session: session3, steer() {}, ctx: agent.ctx }
+  rootListeners.get('agent/created')![0]!({ agent: agent3 })
+  rootListeners.get('session/event')![0]!(session3, turnStart())
+  rootListeners.get('session/event')![0]!(session3, { type: 'turn/end', data: { turn: 1, reason: { kind: 'error', error: { code: 'TIMEOUT' } } } })
+  assert.deepEqual(runtimeWrites, ['child_model_server', 'child_conformance_failure', 'child_model_transport'], 'session diagnostics remain isolated')
+  rootListeners.get('session/disposed')![0]!(session3)
 }
 
 function fakeHandle(outcome: FakeOutcome) {
@@ -376,6 +467,7 @@ await assertRealCordisWaterfallOrdering()
 const root = mkdtempSync(join(tmpdir(), 'gotry-benchmark-bridge-test-'))
 const ambientSentinelNames = [
   'GOTRY_BENCHMARK_BRIDGE_PARENT_SENTINEL',
+  'GOTRY_LLM_MODEL',
   'DATABASE_URL',
   'SSH_AUTH_SOCK',
   'AWS_PROFILE',
@@ -383,6 +475,7 @@ const ambientSentinelNames = [
 ] as const
 const ambientSentinels = new Map(ambientSentinelNames.map(name => [name, process.env[name]]))
 try {
+  delete process.env.GOTRY_LLM_MODEL
   const timedOutDiagnostic = '\n' + JSON.stringify({
     schema_version: BENCHMARK_CHILD_DIAGNOSTIC_SCHEMA,
     code: 'child_bridge_timed_out',
@@ -477,6 +570,7 @@ try {
   type AgentCreated = { agent: { session?: object; steer?: (message: unknown) => void; ctx: { tools?: ScopedAgentTools; effect?: (action: () => unknown) => unknown; on?: (event: string, listener: (...args: any[]) => unknown, options?: unknown) => unknown } } }
   const agentCreatedListeners: Array<(event: AgentCreated) => void> = []
   const eventNames: string[] = []
+  const promptVariables: string[] = []
   const assemblyListeners: Array<(...args: any[]) => unknown> = []
   const preStepListeners: Array<(...args: any[]) => unknown> = []
   const disposedListeners: Array<(...args: any[]) => unknown> = []
@@ -517,7 +611,7 @@ try {
         return [...schemas.filter(schema => schema.name === 'gotry_benchmark_environment'), ...(scopedExtraSchemas.get(agent) ?? [])]
       },
     },
-    systemPrompt: { variable() {} },
+    systemPrompt: { variable(name: string) { promptVariables.push(name) } },
     on(event: string, listener: (event: AgentCreated) => void, options?: unknown) {
       eventNames.push(event)
       eventOptions.set(event, options)
@@ -566,6 +660,10 @@ try {
   )
   assert.deepEqual(coldStartListeners, [], 'cold-start rejection does not register an isolation listener')
 
+  const processListenersBeforeBenchmark = {
+    uncaughtException: process.listenerCount('uncaughtException'),
+    unhandledRejection: process.listenerCount('unhandledRejection'),
+  }
   apply(ctx, {
     stateRoot: root,
     timeoutMs: 20,
@@ -577,6 +675,40 @@ try {
   assert.ok(
     registered.some(tool => tool.name === 'gotry_benchmark_environment'),
     'an explicit valid owner-local config registers the benchmark environment bridge',
+  )
+  assert.deepEqual(
+    registered.map(tool => tool.name),
+    ['gotry_benchmark_environment'],
+    'benchmark mode boots only the single bridge tool instead of the product tool catalog',
+  )
+  assert.deepEqual(promptVariables, [], 'benchmark mode does not install product prompt variables')
+  assert.equal(eventNames.includes('tools/pre-execute'), false, 'benchmark mode does not install the product session-consent hook')
+  assert.deepEqual(
+    {
+      uncaughtException: process.listenerCount('uncaughtException'),
+      unhandledRejection: process.listenerCount('unhandledRejection'),
+    },
+    processListenersBeforeBenchmark,
+    'benchmark mode does not install product process incident guards',
+  )
+  assert.deepEqual(
+    [...eventNames].sort(),
+    [
+      'agent/created',
+      'agent/created',
+      'agent/disposed',
+      'agent/disposed',
+      'agent/pre-step',
+      'agent/turn-stopping',
+      'session/disposed',
+      'session/disposed',
+      'session/event',
+      'session/event',
+      'system-prompt/assemble',
+      'tools/execute',
+      'tools/post-execute',
+    ],
+    'benchmark root listeners come only from budget, isolation, and conformance when model override is unset',
   )
   visibleBridge = registered.find(tool => tool.name === 'gotry_benchmark_environment')!
 
@@ -832,15 +964,95 @@ try {
   assert.deepEqual(rejected, { ok: false, error: 'disallowed_tool' }, 'disallowed tool is rejected structurally')
   assert.equal(spawnSpecs.length, beforeRejected, 'disallowed tool is rejected before spawn')
 
+  const spacedConfigPath = join(root, ' benchmark-environment-config.json ')
+  writeFileSync(spacedConfigPath, readFileSync(configPath))
+  const spacedTools: RegisteredTool[] = []
+  const spacedCtx = {
+    tools: {
+      register(tool: RegisteredTool) { spacedTools.push(tool); return () => {} },
+      get(name: string) { return spacedTools.find(tool => tool.name === name) },
+      schemas() { return spacedTools.map(tool => ({ name: tool.name })) },
+    },
+    agents: { list() { return [] } },
+    systemPrompt: { variable() {} },
+    on() { return () => {} },
+    effect() { return () => {} },
+    get(name: string) {
+      if (name === 'subprocess') return { spawn: (_spec: SpawnSpec) => fakeHandle({ stdout: '{}' }) }
+      if (name === 'agents') return { list() { return [] } }
+      return undefined
+    },
+  } as unknown as Context
+  apply(spacedCtx, {
+    stateRoot: root, timeoutMs: 20, hbcliBin: '', sessionAccess: 'off', benchmarkEnvironmentConfigPath: spacedConfigPath,
+  } as Config & { benchmarkEnvironmentConfigPath: string })
+  assert.deepEqual(spacedTools.map(tool => tool.name), ['gotry_benchmark_environment'], 'benchmark bridge loads a valid raw path with whitespace basename')
+
   const disabled: RegisteredTool[] = []
+  const disabledVariables: string[] = []
   const disabledCtx = {
     tools: { register(tool: RegisteredTool) { disabled.push(tool); return () => {} } },
-    systemPrompt: { variable() {} },
+    systemPrompt: { variable(name: string) { disabledVariables.push(name) } },
   } as unknown as Context
   apply(disabledCtx, {
     stateRoot: root, timeoutMs: 1_000, hbcliBin: '', sessionAccess: 'off', benchmarkEnvironmentConfigPath: '',
   } as Config)
   assert.equal(disabled.some(tool => tool.name === 'gotry_benchmark_environment'), false, 'empty config path keeps bridge default-off')
+  assert.ok(disabled.length > 1, 'normal product mode keeps the full GoTry tool catalog')
+  assert.deepEqual(disabledVariables, ['current_date', 'time_anchor_card', 'motivation_brief'], 'normal product mode keeps its prompt variables')
+
+  const whitespace: RegisteredTool[] = []
+  const whitespaceCtx = {
+    tools: { register(tool: RegisteredTool) { whitespace.push(tool); return () => {} } },
+    systemPrompt: { variable() {} },
+  } as unknown as Context
+  apply(whitespaceCtx, {
+    stateRoot: root, timeoutMs: 1_000, hbcliBin: '', sessionAccess: 'off', benchmarkEnvironmentConfigPath: '   \t  ',
+  } as Config)
+  assert.equal(whitespace.some(tool => tool.name === 'gotry_benchmark_environment'), false, 'whitespace config path keeps benchmark mode default-off')
+  assert.ok(whitespace.length > 1, 'whitespace path preserves the ordinary product tool catalog')
+
+  const originalModelOverride = process.env.GOTRY_LLM_MODEL
+  process.env.GOTRY_LLM_MODEL = 'round7-model-preserved'
+  try {
+    const modelTools: RegisteredTool[] = []
+    let modelRequest: ((payload: unknown, next: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>) | undefined
+    const modelEvents: string[] = []
+    const modelCtx = {
+      tools: {
+        register(tool: RegisteredTool) { modelTools.push(tool); return () => {} },
+        get(name: string) { return modelTools.find(tool => tool.name === name) },
+        schemas() { return modelTools.map(tool => ({ name: tool.name })) },
+      },
+      agents: { list() { return [] } },
+      systemPrompt: { variable() {} },
+      on(event: string, listener: (payload: unknown, next: () => Promise<Record<string, unknown>>) => Promise<Record<string, unknown>>) {
+        modelEvents.push(event)
+        if (event === 'agent/request') modelRequest = listener
+        return () => {}
+      },
+      effect() { return () => {} },
+      get(name: string) {
+        if (name === 'subprocess') return { spawn: (_spec: SpawnSpec) => fakeHandle({ stdout: '{}' }) }
+        if (name === 'agents') return { list() { return [] } }
+        return undefined
+      },
+    } as unknown as Context
+    apply(modelCtx, {
+      stateRoot: root, timeoutMs: 20, hbcliBin: '', sessionAccess: 'off', benchmarkEnvironmentConfigPath: configPath,
+    } as Config & { benchmarkEnvironmentConfigPath: string })
+    assert.deepEqual(modelTools.map(tool => tool.name), ['gotry_benchmark_environment'], 'benchmark model override does not re-enable product tools')
+    assert.ok(modelEvents.includes('agent/request'), 'benchmark mode preserves the model override hook')
+    assert.ok(modelRequest)
+    assert.deepEqual(
+      await modelRequest!({}, async () => ({ provider: 'persisted', model: 'old', reasoningEffort: 'high', marker: 'kept' })),
+      { provider: 'deepseek-official', model: 'round7-model-preserved', marker: 'kept' },
+      'benchmark model override remains effective and replaces the persisted model only',
+    )
+  } finally {
+    if (originalModelOverride === undefined) delete process.env.GOTRY_LLM_MODEL
+    else process.env.GOTRY_LLM_MODEL = originalModelOverride
+  }
 
   const validConfig = {
     schema_version: 'gotry_benchmark_environment_bridge_v2',
