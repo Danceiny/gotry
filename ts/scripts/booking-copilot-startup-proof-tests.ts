@@ -8,6 +8,7 @@ import {
   resolveBookingCopilotStartupConfig,
   startBookingCopilotFromEnvironment,
 } from '../src/booking-surface/startup.ts'
+import { BOOKING_READ_ACTION_KINDS_V2 } from '../src/booking-surface/contracts-v2.ts'
 
 assert.throws(
   () => resolveBookingCopilotStartupConfig({}),
@@ -40,13 +41,51 @@ const env = {
   HOTELBYTE_TOKEN: 'must-not-enter-planner',
 }
 
+await assert.rejects(
+  startBookingCopilotFromEnvironment({ ...env, GOTRY_BOOKING_COPILOT_V2_INGRESS_MODE: 'bff-ingress-binding' }, {} as never),
+  /booking_copilot_v2_ingress_binding_required/,
+  'explicit ingress mode rejects startup when the trusted BFF seam is absent',
+)
+await assert.rejects(
+  startBookingCopilotFromEnvironment(env, {
+    ingressBinding: { bind: () => ({ taskId: 'partial-task', turnId: 'partial-turn', contextRef: 'partial-context', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS_V2] }) },
+  } as never),
+  /booking_copilot_v2_ingress_binding_pair_required/,
+  'partial trusted BFF seam is rejected before startup',
+)
+await assert.rejects(
+  startBookingCopilotFromEnvironment(env, { principal: { subject: 'partial-bff', scope: 'booking:read' } } as never),
+  /booking_copilot_v2_ingress_binding_pair_required/,
+  'principal without a binding is rejected before startup',
+)
+
+let standaloneIngressMode = ''
+const standaloneStateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-startup-standalone-'))
+const standalone = await startBookingCopilotFromEnvironment({ ...env, GOTRY_BOOKING_COPILOT_STATE_ROOT: standaloneStateRoot }, {
+  ensureLedger() { return { close() {} } as never },
+  runtimeFactory() { return {} as never },
+  createPlanner: async () => ({ plannerFactory() { return { async next() { return [] } } }, async close() {} }),
+  runtimeFactoryV2() { return {} as never },
+  createPlannerV2: async () => ({ plannerFactory() { return { async next() { return [] } } }, async close() {} }),
+  async startServer(options) {
+    standaloneIngressMode = options.v2?.ingressMode ?? ''
+    return { server: {} as never, port: 43122, async close() {} }
+  },
+})
+assert.equal(standalone.port, 43122)
+assert.equal(standaloneIngressMode, 'bff-bound-turn-only', 'standalone production startup uses the explicit bound-turn-only mode')
+await standalone.close()
+rmSync(standaloneStateRoot, { recursive: true, force: true })
+
 const closeOrder: string[] = []
 let plannerEnv: Record<string, string | undefined> | undefined
 let plannerV2Env: Record<string, string | undefined> | undefined
 let serverApiKey = ''
 let serverArtifactId = ''
+const trustedEnv = { ...env, GOTRY_BOOKING_COPILOT_V2_INGRESS_MODE: 'bff-ingress-binding' }
 const fakeLedger = { close() { closeOrder.push('ledger') } }
-const started = await startBookingCopilotFromEnvironment(env, {
+const trustedBinding = { bind: () => ({ taskId: 'startup-task', turnId: 'startup-turn', contextRef: 'startup-context', surface: 'tenant' as const, allowedActions: [...BOOKING_READ_ACTION_KINDS_V2] }) }
+const started = await startBookingCopilotFromEnvironment(trustedEnv, {
   ensureLedger() { return fakeLedger as never },
   runtimeFactory() { return {} as never },
   async createPlanner(options) {
@@ -61,9 +100,12 @@ const started = await startBookingCopilotFromEnvironment(env, {
     plannerV2Env = options.env
     return { plannerFactory() { return { async next() { return [] } } }, async close() { closeOrder.push('planner-v2') } }
   },
+  ingressBinding: trustedBinding,
+  principal: { subject: 'startup-bff', scope: 'booking:read' },
   async startServer(options) {
     serverApiKey = options.apiKey
     serverArtifactId = options.artifactId ?? ''
+    assert.equal(options.v2?.ingressMode, 'bff-ingress-binding')
     return {
       server: {} as never,
       port: 43123,
@@ -90,7 +132,7 @@ let v2Passed = false
 let v2PlannerEnv: Record<string, string | undefined> | undefined
 const v2CloseOrder: string[] = []
 const v2Started = await startBookingCopilotFromEnvironment({
-  ...env,
+  ...trustedEnv,
   GOTRY_BOOKING_COPILOT_STATE_ROOT: v2StateRoot,
 }, {
   ensureLedger() { return { close() { v2CloseOrder.push('ledger') } } as never },
@@ -101,6 +143,8 @@ const v2Started = await startBookingCopilotFromEnvironment({
     v2PlannerEnv = options.env
     return { plannerFactory() { return { async next() { return [] } } }, async close() { v2CloseOrder.push('planner-v2') } }
   },
+  ingressBinding: trustedBinding,
+  principal: { subject: 'startup-bff', scope: 'booking:read' },
   async startServer(options) {
     v2Passed = Boolean(options.v2 && options.runtime && options.plannerFactory)
     return { server: {} as never, port: 43124, async close() { v2CloseOrder.push('server') } }

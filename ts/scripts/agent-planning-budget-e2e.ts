@@ -137,6 +137,7 @@ async function main(): Promise<void> {
     childEnv.LLM_BASE_URL = 'http://127.0.0.1:' + relay.port + '/v1'
     childEnv.LLM_MODEL = 'synthetic-budget-model'
     childEnv.GOTRY_LOCALE = 'zh-CN'
+    childEnv.GOTRY_DISABLE_OPTIONAL_CALENDAR = '1'
     delete childEnv.GOTRY_LLM_MODEL
     const child = spawn(executable, executableArgs, {
       cwd: childCwd,

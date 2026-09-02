@@ -24,7 +24,15 @@ import {
 } from './runtime.ts'
 import { validateBookingCopilotTurnV1 } from './validation.ts'
 import { handleBookingCopilotV2Request, type BookingCopilotV2Adapter } from './server-v2.ts'
-import { BOOKING_SURFACE_SCHEMA_V2_SHA256, BOOKING_SURFACE_SCHEMA_VERSION_V2 } from './contracts-v2.ts'
+import { normalizeBookingErrorCode, safeBookingErrorMessage } from './error-codes.ts'
+import {
+  BOOKING_COPILOT_V2_ACCEPTED_TURN_KINDS,
+  BOOKING_COPILOT_V2_INGRESS_TURN_KIND,
+  BOOKING_COPILOT_V2_INGRESS_MODES,
+  BOOKING_SURFACE_SCHEMA_V2_SHA256,
+  BOOKING_SURFACE_SCHEMA_VERSION_V2,
+  type BookingCopilotV2IngressMode,
+} from './contracts-v2.ts'
 
 export type BookingPlannerDecisionV1 =
   | { kind: 'operation'; action: BookingReadActionV1 }
@@ -114,15 +122,35 @@ function writeSse(res: ServerResponse, event: BookingSurfaceEventV1): void {
   res.write(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`)
 }
 
-function errorCode(error: unknown): string {
-  return error instanceof Error && error.message ? error.message.split(':', 1)[0]! : 'planner_failed'
-}
-
 export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1): Promise<BookingCopilotServerHandleV1> {
   if (!options.apiKey) return Promise.reject(new Error('booking_copilot_api_key_required'))
   if (options.artifactId !== undefined && !/^[0-9a-f]{40}$/.test(options.artifactId)) {
     return Promise.reject(new Error('booking_copilot_artifact_id_invalid'))
   }
+  const hasIngressBinding = Boolean(options.v2?.ingressBinding)
+  const hasPrincipal = Boolean(options.v2?.principal)
+  if (options.v2 && hasIngressBinding !== hasPrincipal) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_binding_pair_required'))
+  }
+  if (options.v2 && hasIngressBinding && (typeof options.v2.ingressBinding?.bind !== 'function'
+    || typeof options.v2.principal?.subject !== 'string' || options.v2.principal.subject.length === 0 || options.v2.principal.subject.length > 256
+    || typeof options.v2.principal?.scope !== 'string' || options.v2.principal.scope.length === 0 || options.v2.principal.scope.length > 256)) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_binding_invalid'))
+  }
+  const ingressMode: BookingCopilotV2IngressMode | undefined = options.v2
+    ? options.v2.ingressMode ?? (hasIngressBinding ? 'bff-ingress-binding' : 'bff-bound-turn-only')
+    : undefined
+  if (options.v2 && !BOOKING_COPILOT_V2_INGRESS_MODES.includes(ingressMode!)) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_mode_invalid'))
+  }
+  if (options.v2 && ingressMode === 'bff-ingress-binding' && !hasIngressBinding) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_binding_required'))
+  }
+  if (options.v2 && ingressMode === 'bff-bound-turn-only' && hasIngressBinding) {
+    return Promise.reject(new Error('booking_copilot_v2_ingress_mode_conflict'))
+  }
+  const v2 = options.v2 ? { ...options.v2, ingressMode } : undefined
+  const v2Only = Boolean(v2 && !options.runtime && !options.plannerFactory)
   const sessions = new Map<string, BookingPlannerSessionV1>()
   const maxBodyBytes = options.maxBodyBytes ?? 1_000_000
   const runningIdentity = runtimeIdentity()
@@ -139,7 +167,7 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
       return
     }
     if (isProbe) {
-      const activeV2Only = Boolean(options.v2 && !options.runtime && !options.plannerFactory)
+      const activeV2Only = Boolean(v2 && !options.runtime && !options.plannerFactory)
       res.setHeader(BOOKING_SURFACE_VERSION_HEADER, activeV2Only ? BOOKING_SURFACE_SCHEMA_VERSION_V2 : BOOKING_SURFACE_SCHEMA_VERSION)
       res.setHeader(BOOKING_SURFACE_SCHEMA_SHA256_HEADER, activeV2Only ? BOOKING_SURFACE_SCHEMA_V2_SHA256 : BOOKING_SURFACE_SCHEMA_SHA256)
       if (options.artifactId) res.setHeader('X-GoTry-Artifact-ID', options.artifactId)
@@ -152,18 +180,27 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
         schemaSha256: activeV2Only ? BOOKING_SURFACE_SCHEMA_V2_SHA256 : BOOKING_SURFACE_SCHEMA_SHA256,
         status: 'ready',
       }
-      if (activeV2Only || options.v2) healthBody.supportedSchemaVersions = activeV2Only ? [BOOKING_SURFACE_SCHEMA_VERSION_V2] : [BOOKING_SURFACE_SCHEMA_VERSION, BOOKING_SURFACE_SCHEMA_VERSION_V2]
+      if (activeV2Only || v2) healthBody.supportedSchemaVersions = activeV2Only ? [BOOKING_SURFACE_SCHEMA_VERSION_V2] : [BOOKING_SURFACE_SCHEMA_VERSION, BOOKING_SURFACE_SCHEMA_VERSION_V2]
+      if (v2) {
+        const acceptedTurnKinds = v2.ingressMode === 'bff-ingress-binding'
+          ? [...BOOKING_COPILOT_V2_ACCEPTED_TURN_KINDS, BOOKING_COPILOT_V2_INGRESS_TURN_KIND]
+          : [...BOOKING_COPILOT_V2_ACCEPTED_TURN_KINDS]
+        healthBody.ingressMode = v2.ingressMode
+        healthBody.acceptedTurnKinds = acceptedTurnKinds
+        res.setHeader('X-GoTry-Ingress-Mode', v2.ingressMode!)
+        res.setHeader('X-GoTry-Accepted-Turn-Kinds', acceptedTurnKinds.join(','))
+      }
       sendJson(res, 200, healthBody)
       return
     }
     const schemaVersion = String(req.headers[BOOKING_SURFACE_VERSION_HEADER] ?? '')
     const schemaHash = String(req.headers[BOOKING_SURFACE_SCHEMA_SHA256_HEADER] ?? '')
     if (schemaVersion === BOOKING_SURFACE_SCHEMA_VERSION_V2) {
-      if (!options.v2 || schemaHash !== BOOKING_SURFACE_SCHEMA_V2_SHA256) {
+      if (!v2 || schemaHash !== BOOKING_SURFACE_SCHEMA_V2_SHA256) {
         sendJson(res, 409, { error: { code: 'booking_surface_schema_mismatch', expectedVersion: BOOKING_SURFACE_SCHEMA_VERSION_V2, expectedSchemaSha256: BOOKING_SURFACE_SCHEMA_V2_SHA256 } })
         return
       }
-      await handleBookingCopilotV2Request(req, res, options.v2, maxBodyBytes)
+      await handleBookingCopilotV2Request(req, res, v2, maxBodyBytes)
       return
     }
     if (schemaVersion !== BOOKING_SURFACE_SCHEMA_VERSION || schemaHash !== BOOKING_SURFACE_SCHEMA_SHA256) {
@@ -192,8 +229,8 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
       }
       turn = parsed as BookingCopilotTurnV1
     } catch (error) {
-      const code = errorCode(error)
-      sendJson(res, code === 'payload_too_large' ? 413 : 400, { error: { code } })
+      const code = normalizeBookingErrorCode(error)
+      sendJson(res, code === 'PAYLOAD_TOO_LARGE' ? 413 : 400, { error: { code } })
       return
     }
 
@@ -201,7 +238,7 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
     let isNewTask = false
     try {
       const taskId = turn.taskId
-      if (options.v2 && taskId && options.v2.runtime.resumeTask(taskId)) throw new Error('task_conflict:protocol_version')
+      if (v2 && taskId && v2.runtime.resumeTask(taskId)) throw new Error('task_conflict:protocol_version')
       if (turn.kind === 'user.turn') {
         const suppliedTaskId = turn.taskId
         isNewTask = !suppliedTaskId || options.runtime.resumeTask(suppliedTaskId) === null
@@ -210,7 +247,7 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
         task = options.runtime.continueWithReceipt(turn)
       }
     } catch (error) {
-      sendJson(res, 409, { error: { code: errorCode(error) } })
+      sendJson(res, 409, { error: { code: normalizeBookingErrorCode(error) } })
       return
     }
 
@@ -250,15 +287,21 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptionsV1
       try {
         writeSse(res, options.runtime.emitEvent(task.taskId, {
           kind: 'error',
-          error: {
-            code: errorCode(error),
-            message: error instanceof Error ? error.message : 'planner_failed',
-            retryable: false,
-          },
+          error: { code: normalizeBookingErrorCode(error), message: safeBookingErrorMessage(normalizeBookingErrorCode(error)), retryable: false },
         }))
       } catch {
-        // Headers are already committed. Ending the stream is the only honest
-        // fallback if even the typed error event cannot be recorded.
+        // Headers are already committed. Preserve a non-empty typed SSE error
+        // even when the durable event append is unavailable.
+        writeSse(res, {
+          schemaVersion: 'booking.surface.v1',
+          eventId: `error-${task.taskId}-${task.lastSequence + 1}`,
+          taskId: task.taskId,
+          contextRef: task.contextRef,
+          sequence: task.lastSequence + 1,
+          emittedAt: new Date().toISOString(),
+          kind: 'error',
+          error: { code: normalizeBookingErrorCode(error), message: safeBookingErrorMessage(normalizeBookingErrorCode(error)), retryable: false },
+        })
       }
     } finally {
       res.end()

@@ -13,10 +13,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   createDshEmbeddedBookingPlanner,
+  createDshEmbeddedBookingPlannerV2,
   DSH_EMBEDDED_BOOKING_TOOL_NAMES,
 } from '../src/booking-surface/dsh-planner.ts'
 import type { BookingCopilotTaskStateV1 } from '../src/booking-surface/runtime.ts'
 import type { BookingWorkspaceSnapshotV1, UserTurnV1 } from '../src/booking-surface/contracts.ts'
+import type { BookingCopilotTaskStateV2 } from '../src/booking-surface/runtime-v2.ts'
+import type { BookingWorkspaceSnapshotV2 } from '../src/booking-surface/contracts-v2.ts'
 
 const action = {
   schemaVersion: 'booking.surface.v1',
@@ -76,6 +79,13 @@ const modelServer = createServer((req, res) => {
           finish_reason: 'tool_calls',
         }],
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }])
+      return
+    }
+    if (modelCall === 3) {
+      sse(res, [{
+        id: 'chatcmpl-booking-v2-continuation', object: 'chat.completion.chunk', created: 0, model: 'deepseek-v4-flash',
+        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call-booking-v2-continuation', type: 'function', function: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'v2 continuation handled', factRefs: [] } } }) } }] }, finish_reason: 'tool_calls' }],
       }])
       return
     }
@@ -158,6 +168,33 @@ try {
   assert.ok(!executableKeys.some((key: string) => /^(book|payment|holder|guest|portalToken|supplierCost)$/i.test(key)), 'tool inputs expose no write or PII field')
   assert.equal(requests[0]!.headers.authorization, 'Bearer fixture-model-key')
   assert.ok(!JSON.stringify(requests).includes('must-not-enter-dsh'), 'BFF and portal credentials never enter the dsh model transport')
+  const v2Workspace: BookingWorkspaceSnapshotV2 = {
+    schemaVersion: 'booking.surface.v2', contextRef: 'ctx-real-dsh-v2', surface: 'tenant', revision: 1, locale: 'en-US', currency: 'AED',
+    searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
+    capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
+  }
+  const v2Task: BookingCopilotTaskStateV2 = {
+    schemaVersion: 'booking.surface.v2', taskId: 'task-real-dsh-v2', contextRef: v2Workspace.contextRef, surface: 'tenant', revision: 1,
+    allowedActions: ['search.run'], userTurnCount: 1, operationCount: 1, phase: 'planning', lastSequence: 1,
+    availability: { initialized: true, recoveryStarted: false, availabilityPhase: 'need_offers', activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] },
+    workspaceSnapshot: v2Workspace,
+  }
+  const v2Continuation = {
+    schemaVersion: 'booking.surface.v2' as const, kind: 'action.receipt.continuation' as const, taskId: v2Task.taskId, workspace: v2Workspace,
+    receipt: { schemaVersion: 'booking.surface.v2' as const, kind: 'action.receipt' as const, actionId: 'action-real-dsh-v2', contextRef: v2Workspace.contextRef, status: 'applied' as const, revision: 1,
+      observation: { kind: 'search.state' as const, resultCount: 1 }, resultContract: { outcome: 'complete' as const, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } },
+  }
+  const v2Planner = await createDshEmbeddedBookingPlannerV2({
+    stateRoot,
+    env: { PATH: process.env.PATH, DEEPSEEK_API_KEY: 'fixture-model-key', DEEPSEEK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
+    maxTokens: 512,
+  })
+  try {
+    const continuationDecisions = await v2Planner.plannerFactory(v2Task).next({ turn: v2Continuation, task: { ...v2Task, lastReceipt: v2Continuation.receipt } })
+    assert.deepEqual(continuationDecisions, [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'v2 continuation handled', factRefs: [] } }], 'real dsh v2 accepts action.receipt.continuation through the typed planner seam')
+  } finally {
+    await v2Planner.close()
+  }
 } finally {
   await planner?.close()
   await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()))

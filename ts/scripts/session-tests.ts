@@ -1,7 +1,7 @@
 /**
  * 会话数据面 P1 测试(RFC §4 P1 exit):
  *   A-E 纯函数(确定性,进 CI):ReadGuard 分类器/批搜解析(buildEntryUrl/fixture)/提交件过滤/节律闸;
- *   F   live FlyAI 官方通道(同 weather-tests 的 live 先例;纯 CLI,无浏览器窗口);
+ *   F   live FlyAI 官方通道(天气回归为 deterministic fixture；live 天气观测不进 merge gate);
  *   G   live 会话检索(Chrome + 携程;**默认 SKIP**——测试永不自动开用户浏览器窗口,GOTRY_SESSION_LIVE=1 显式开启);
  *   H   酒店通道(flyai search-hotel;纯 CLI,无浏览器窗口);
  *   I   账号会话授权闸(纯函数:每会话一次/拒绝=会话内吊销/allow/off/无审批通道,确定性);
