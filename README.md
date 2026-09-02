@@ -2,95 +2,74 @@
 
 # GoTry
 
-[![CI](https://github.com/Danceiny/gotry/actions/workflows/ci.yml/badge.svg)](https://github.com/Danceiny/gotry/actions/workflows/ci.yml)
-
 > **Body and soul — more travel, less tourism.**
 > *身体和灵魂,更多旅行,更少旅游。*
 
-**GoTry is an AI travel agent for "departure to next departure."** You say where you want to go and why; it asks about your working hours and existing bookings, then hands you a **formally verified itinerary** — computed by a solver, not guessed by a model.
+GoTry is an AI travel agent for **"departure to next departure."** You tell it where you want to go and why; it interviews you about your working hours and existing bookings, then hands you a **formally verified itinerary** — computed by a Z3 solver, not guessed by a model.
 
-| | |
-|---|---|
-| **Version** | `v0.0.1-rc.13+` (npm `latest`; [release notes](docs/release-notes.md)) |
-| **Runtime** | DeepSeek Harness **0.1.2-alpha.3** (root-pinned; [upstream](https://github.com/deepseek-ai/DeepSeek-Harness)) · Z3 WASM · Cordis |
-| **License** | **MIT** ([LICENSE](LICENSE)) |
-| **Docs** | English (this file) · [简体中文 README](README.zh-CN.md) · deep engineering docs are Chinese-first ([docs/architecture.md](docs/architecture.md)) |
+[![CI](https://github.com/Danceiny/gotry/actions/workflows/ci.yml/badge.svg)](https://github.com/Danceiny/gotry/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@danceiny/gotry)](https://www.npmjs.com/package/@danceiny/gotry)
+[![License: MIT](https://img.shields.io/badge/License-MIT-informational)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.15-blue)](https://www.npmjs.com/package/@danceiny/gotry)
+[![Docs](https://img.shields.io/badge/docs-architecture.md-blue)](docs/architecture.md)
 
----
+**[What GoTry Does](#what-gotry-does)** · **[How It Works](#how-it-works)** · **[Tools](#tools)** · **[Demo](#demo)** · **[Quick Start](#quick-start)** · **[Consent and Privacy](#consent-and-privacy)** · **[Trustworthy by Construction](#trustworthy-by-construction)** · **[Project Status](#project-status)** · **[Roadmap](#roadmap)** · **[For AI Agents](#for-ai-agents)** · **[Documentation](#documentation)** · **[License](#license)**
 
-## ⚡ 30-second start
+> **Tip for newcomers:** one command is enough to feel the difference — `npx @danceiny/gotry web`, open `http://127.0.0.1:3080`, and say *"I want three relaxing days in Dali."* The agent interviews you first; then the solver, not the model, decides what is feasible. Full walkthrough: [`docs/user-guide.md`](docs/user-guide.md).
 
-```bash
-npx @danceiny/gotry web
-# First run creates .env: LLM_API_KEY=<DeepSeek key, or OpenAI-compatible key>
-#   Not using DeepSeek directly? Also set LLM_BASE_URL=<your endpoint, usually ending in /v1>
-#   Need a specific model (relays often do)? Set LLM_MODEL=<model name> — it drives the
-#   dsh chat face (web/headless) and overrides any model picked in the dsh web settings.
-# → open http://127.0.0.1:3080 and chat: "I want three relaxing days in Dali"
-```
+## What GoTry Does
 
-> **Switching models / providers?** The price table (`ts/data/llm-price-table.json`, schema `gotry_llm_price_table_v2`) is the single source of truth for `gotry_m3_nightly_run_v1.cost_usd`. Adding a new model or switching relay = update this file via PR (ADR-11, peak-conservative upper bound only)
-- . Unknown models **fail-closed** — no guessed prices. Drift monitor: `npx tsx ts/scripts/price-drift-watch.ts` (offline baseline diff;
-- `--fetch` for live official pages). Never auto-applies changes.
+GoTry turns "I want to go somewhere" into "can I — and how, at what true cost?" When the answer is "not this weekend," the destination is caught in a wish pool with its conditions instead of being dropped.
 
-| You want | Command |
-|---|---|
-| 🖥️ Conversational planner (recommended) | `npx @danceiny/gotry web` → chat UI on :3080 |
-| 🤖 Scripted / one-shot answer | `npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"` |
-| 🛠️ Developer: run from source | see [source install](#%EF%B8%8F-developer-source-install) below |
+- **For travelers** — a conversational planner that asks the questions that actually matter (working window, booked resources, departure city, budget), then returns a verdict per destination: feasible or not, why, and the **smallest change that makes it feasible**.
+- **For agent builders** — a working example of an agent where the LLM only listens, translates, and explains. Decisions and arithmetic live in a Z3 solver; every deliverable number carries a provenance tag; write operations are gated by design.
+- **Evidence built in** — an estimate never poses as realtime. Tags are attached by the render layer, never by the model, and switch honestly on degradation. Bookable claims that cannot trace to an exact-date tool result are blocked before delivery.
 
-- Requires Node 22.15+ and one LLM API key. Any OpenAI-compatible endpoint (MiniMax / relays / self-hosted gateways) works too — add `LLM_BASE_URL` to `.env` (usually ends with `/v1`, e.g. `https://api.minimax.io/v1`) and requests follow it instead of the DeepSeek default. To pin the model,
-  - set `LLM_MODEL` (e.g. `MiniMax-M2`): it applies to both the dsh chat face and the repo scripts, and beats the model selection persisted in the dsh web UI;
-  - unset, the dsh built-in default (`deepseek-v4-flash`) or your web-UI choice is used. Zero-config startup — the dsh runtime is mounted automatically via a cordis patch.
+## How It Works
 
----
-
-## ✨ What it does
-
-GoTry turns "I want to go somewhere" into "can I, how, and at what true cost":
+One planning pass is a pipeline. The model owns the two language-heavy ends; the solver owns everything numeric:
 
 | Stage | Who | Output |
 |---|---|---|
-| **Motivation interview** | LLM | Mandatory questions: working window / booked resources / departure city |
-| **Fact extraction** | LLM | Working hours semantics, leave semantics |
-| **Feasibility verdict** | **Z3 solver** | Which destinations are feasible / infeasible, why, and the **smallest change that makes them feasible** |
-| **Door-to-door true cost** | Solver | Real flight duration (incl. time zones) + early-wake penalty + transfer cost + arrival energy % |
-| **Evidence chain** | Render layer | Every number carries a **source tag**: `[骨架:openflights]` = route existence verified against the public route database; `[实时API:flyai]` = pulled live from an API seconds ago; `[静态包:估算]` = a researched estimate (**not realtime — verify before booking**). On degradation the tag switches honestly — an estimate never poses as realtime |
+| Motivation interview | LLM | Mandatory questions: working window / booked resources / departure city |
+| Fact extraction | LLM | Working-hours semantics, leave semantics |
+| Feasibility verdict | **Z3 solver** | Which destinations are feasible / infeasible, why, and the smallest change that makes them feasible |
+| Door-to-door true cost | Solver | Real flight duration (incl. time zones) + early-wake penalty + transfer cost + arrival energy |
+| Evidence chain | Render layer | Every number carries a source tag |
+| Delivery gate | Fact gate | Bookable claims must trace to exact-date tool results, or the artifact is blocked |
+| Memory | Domain layer | Infeasible today → wish pool, with explicit recall conditions |
 
-**Unlike a regular AI chat**, the LLM only translates and explains. **Decisions and arithmetic are computed by a Z3 solver**, not guessed.
+Vocabulary you will meet in a GoTry answer:
 
----
+- **Evidence tag** — `[skeleton:openflights]` route existence verified against the public route database; `[realtime:...]` pulled live from an API seconds ago; `[static-pack:estimate]` a researched estimate — not realtime, verify before booking. On degradation the tag switches honestly.
+- **Door-to-door true cost** — the ticket price plus what the trip actually takes from you: real duration across time zones, the early-wake penalty, transfers, and the energy you land with.
+- **Wish pool** — "next departure" storage. An infeasible dream is saved with explicit conditions (e.g. "5+ days, off-season") and recalled when they can be met.
+- **Fact gate** — pre-delivery check on itinerary artifacts: every bookable claim (flight no. / time / airport / price / policy) must trace to an exact-date tool result; unverifiable means blocked — never presented as a verified plan.
 
-## 🚀 Quick start
+Architecture, five layers:
 
-### One-liner (npm, recommended)
-
-```bash
-npx @danceiny/gotry web
+```
+┌──────────────────────────────────────────────────────────────┐
+│ L1  chat-as-interface; gates are in-message choice cards       │
+│ L2  orchestration  dsh runtime + GoTry plugin (ReAct); 21 tools│
+│ L3  domain  unified itinerary model + Z3 feasibility engine    │
+│ L4  data  static packs + hotelbyte-cli bridge + OpenFlights    │
+│ L5  governance  LoopX (objective / gates / evidence / quota)   │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-That's it — the dsh chat UI on `:3080` with the GoTry persona mounted. First cold start is 6–15 s; if port `:3080` is taken, free it first; unexpected exits leave evidence in `gotry-state/incidents.jsonl` (nothing silent).
-
-### Developer source install
-
-```bash
-git clone https://github.com/Danceiny/gotry && cd gotry
-npm ci && npm --prefix ts ci                      # ① install the pinned root/TS closure
-node scripts/build-dist.mjs                       # ② build the source checkout's JS runtime
-cp .env.example .env                              # ③ set LLM_API_KEY (+ LLM_BASE_URL if not on DeepSeek; + LLM_MODEL to pin the model)
-./gotry web                                       # ④ in-repo entry, same UX
-```
-
-| Entry | Command | When |
+| Layer | Module | Role |
 |---|---|---|
-| dsh Web chat (recommended) | `./gotry web` | multi-turn planning with visualized reasoning → :3080 |
-| headless one-shot | `./gotry "one full task"` | scripts / CI / targeted debugging → stdout |
+| L2 | `ts/src/index.ts` (dsh plugin) | 21 tools, time-anchor & memory-brief variables; execute isolation + consent gate + per-turn tool budget + process guards |
+| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | single solving entry (candidate enumeration + flight-chain Z3) |
+| L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | effect interpreter (backoff retry / circuit breaker / mock interpreter) + realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
+| L5 | loopx governance | objective / gates / evidence / quota |
 
-The source entry and npm package both resolve one 216-package DSH `0.1.2-alpha.3` closure declared as exact direct dependencies. The manifest, package lock, and root pnpm importer must expose the same 216-name set; publish preverify rejects omissions, mixed versions, and ranges. Source checkout runs dsh from `ts/dsh-runtime/` in normal mode so `gotry-state/` continuity is preserved; benchmark opt-in and npm-package runs use the invocation directory for isolation. The old `ts/dsh-runtime/` vendor tree remains a non-benchmark legacy resolution fallback, not a promised runnable path or the recommended install path.
+> Full ADRs / evolution / debt ledger: [`docs/architecture.md`](docs/architecture.md) (Chinese — English versions planned for v0.1.0).
 
----
+## Tools
 
-## 🧰 21 tools
+21 tools in six groups:
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -107,26 +86,10 @@ The source entry and npm package both resolve one 216-package DSH `0.1.2-alpha.3
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | "next departure" wish pool + 0..1 conditional recall |
 | | `gotry_companion_save` · `gotry_trip_log` | companion profile / travel timeline |
 | **Artifacts** | `gotry_artifacts_list` / `gotry_artifacts_read` | Discover & view generated artifacts (async deliverables + working-dir markdown) as a line-numbered file view (read-only) |
-| **Factuality gate** | `gotry_fact_gate` | Pre-delivery gate for itinerary artifacts: every bookable claim (flight no./time/airport/price/policy) must trace to an exact-date tool result (hit AND miss recorded); unverifiable ⇒ blocked — never present as a verified plan |
+| **Factuality gate** | `gotry_fact_gate` | Pre-delivery gate for itinerary artifacts — see [fact gate](#how-it-works) above |
 | **General external** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | web / subtitles / GitHub / all-channel external info (via Agent-Reach) |
 
----
-
-## 🔐 Account session: consent & privacy
-
-The account session channel reads realtime hotel/flight data from **the user's own logged-in Chrome**, under four hard rules:
-
-1. **Login happens on the external website.** GoTry never offers, fills, or collects any password / SMS code / cookie value. It only answers one boolean question: "does a login-ticket cookie exist" (reads cookie **names** only — zero values touched).
-2. **Consent card, once per session.** The first account-session use pops a runtime approval card; approval holds for the session, a refusal revokes it for the session (no repeat prompting). Master switch `sessionAccess: ask|allow|off` at any time.
-3. **Physically read-only.** A ReadGuard aborts all write requests at the network layer (ordering/payment is unreachable in transport); the agent never touches credentials or captchas — on a captcha it stops and hands control back.
-4. **Never hijacks your browser.** Retrieval/login always open their own dedicated tab; the login page is brought to front and stays with you; routine test runs never open browser windows.
-
-> One-time prerequisite: install the bundled **GoTry Session Bridge** browser extension (MV3, ~30 seconds): run `npx gotry setup` to place it at `~/.gotry/extension`, then in Chrome open `chrome://extensions`, enable Developer mode and "Load unpacked" that folder. Zero Chrome system dialogs afterwards — the extension passively forwards the site's own search responses (read-only by construction;
-- cookies are read by NAME only, values never leave the browser). Until installed, tools return `needs-extension` with instructions and spend nothing. (A `cdp` fallback via `chrome://inspect` remote debugging still exists for diagnostics: `GOTRY_SESSION_TRANSPORT=cdp` — note Chrome 144+ shows a permission box on every connection.)
-
----
-
-## 🎬 A conversation — Demo
+## Demo
 
 ```
 > Two or three days staring at Erhai Lake, leaving from Shanghai, budget 3000, annual leave — no work.
@@ -146,105 +109,158 @@ Engine verdict:
 [static-pack:estimate] G7315/G7316 priced on Jul–Aug off-season rates
 ```
 
-> Tag guide: `[骨架:openflights]` means "this route can be flown" was verified against the public route database; `[实时API:*]` marks data pulled live seconds ago; `[静态包:估算]` flags an off-season estimate — **verify before booking**. Tags are attached by the render layer, never by the model.
+> Tag guide: `[skeleton:openflights]` means "this route can be flown" was verified against the public route database; `[realtime:...]` marks data pulled live seconds ago; `[static-pack:estimate]` flags an off-season estimate — **verify before booking**. Tags are attached by the render layer, never by the model.
 
----
+## Quick Start
 
-## 🏛️ Architecture
+### npm (recommended)
 
+```bash
+npx @danceiny/gotry web
+# First run creates .env in the current directory:
+#   LLM_API_KEY=<DeepSeek key, or any OpenAI-compatible key>
+#   LLM_BASE_URL=<your endpoint, usually ending in /v1>   # if not on DeepSeek directly
+#   LLM_MODEL=<model name>                                 # relays often need this; pins the model
+# → open http://127.0.0.1:3080 and chat: "I want three relaxing days in Dali"
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ L1  chat-as-interface; gates are in-message choice cards       │
-│ L2  orchestration  dsh runtime + GoTry plugin (ReAct); 21 tools│
-│ L3  domain  unified itinerary model + Z3 feasibility engine    │
-│ L4  data  static packs + hotelbyte-cli bridge + OpenFlights    │
-│ L5  governance  LoopX (objective / gates / evidence / quota)   │
-└──────────────────────────────────────────────────────────────┘
-```
 
-| Layer | Module | Role |
+| Entry | Command | When |
 |---|---|---|
-| L2 | `ts/src/index.ts` (dsh plugin) | 21 tools, time-anchor & memory-brief variables; execute isolation + consent gate + per-turn tool budget + process guards |
-| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | single solving entry (candidate enumeration + flight-chain Z3) |
-| L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | effect interpreter (backoff retry / circuit breaker / mock interpreter, issue #16) + realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
-| L5 | loopx governance | objective / gates / evidence / quota |
+| Web chat (recommended) | `npx @danceiny/gotry web` | multi-turn planning with visualized reasoning → `:3080` |
+| Headless one-shot | `npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"` | scripts / CI / targeted debugging → stdout |
+| Extension setup | `npx gotry setup` | one-time, for account-session tools — see [Consent and Privacy](#consent-and-privacy) |
 
-> 📖 Full ADRs / evolution / debt ledger: [`docs/architecture.md`](docs/architecture.md) (Chinese — English versions planned for v0.1.0)
+Requires Node ≥ 22.15 and one LLM API key. Any OpenAI-compatible endpoint works (MiniMax / relays / self-hosted gateways). `LLM_MODEL` (e.g. `MiniMax-M2`) applies to both the dsh chat face and repo scripts, and overrides any model picked in the web UI. First cold start takes 6–15 s; if port `:3080` is taken, free it first; unexpected exits leave evidence in `gotry-state/incidents.jsonl` (nothing silent).
 
----
+> **Cost accounting** — `ts/data/llm-price-table.json` (schema `gotry_llm_price_table_v2`) is the single source of truth for nightly run cost. Adding a model or switching relays = a PR against this file (peak-conservative upper bounds only); unknown models **fail closed** — no guessed prices. Drift monitor: `npx tsx ts/scripts/price-drift-watch.ts` (offline baseline diff; `--fetch` for live official pages). It never auto-applies changes.
 
-## ⚠️ Status & limitations
+### Developer source install
 
-Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
+```bash
+git clone https://github.com/Danceiny/gotry && cd gotry
+npm ci && npm --prefix ts ci                      # pinned root/TS closure
+node scripts/build-dist.mjs                       # build the JS runtime
+cp .env.example .env                              # set LLM_API_KEY (+ LLM_BASE_URL / LLM_MODEL)
+./gotry web                                       # in-repo entry, same UX
+```
 
-**Working today** (full-stack regression §1–§34 green; every item has deterministic tests):
+The source entry and the npm package resolve the same 216-package DeepSeek Harness `0.1.2-alpha.3` closure (exact direct dependencies; publish preverify rejects omissions, mixed versions, and ranges). Source normal runs keep their state under `ts/dsh-runtime/gotry-state/`; benchmark opt-in and npm-package runs use the invocation directory for isolation.
 
-- **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed (§30 regression gate)
-- **Realtime retrieval** — flight/train/hotel (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`)
-- **Account session search** — Ctrip flights on your own logged-in Chrome; consent & privacy rules above (see 🔐 **Account session: consent & privacy**)
-- **One-time browser extension setup** — `npx gotry setup wizard` walks you through a 30-second install of GoTry Session Bridge (MV3, fixed extension ID, zero system dialogs per session). Background health-watch auto-plays your query once the extension is connected — no manual retry needed.
-- **Extension distribution (issue #21, ADR-21)** — the npm-bundled copy stays the default (offline-deterministic). Opt in to the GitHub Releases channel with `npx gotry setup --extension-from=github`: versioned tarball + SHA256 + fixed-key pinning, atomic swap into `~/.gotry/extension`;
-  - any failure falls back to the bundled copy. Platform constraint, honestly: only a Chrome Web Store listing can remove the developer-mode load-unpacked clicks — store submission materials are prepared in `docs/extension-webstore-submission.md` (founder to submit).
-- **Session data cross-verification (issues #21 / #67)** — 8 benchmark queries (sf-01..sf-08) verified end-to-end: 7/8 verdict=hit, 6/6 manual-golden soft-score 100%, all hits <15s, zero ReadGuard writes. The comparator is pluggable: `--golden=manual` (default), `--golden=flyai`,
-  - or `--golden=static`. Static mode pins an ODbL OpenFlights route/carrier snapshot and combines it with manual time/price bands;
-  - evidence records requested vs effective source, provenance, estimated fields, and fallback reason. Snapshot/route failure prints a warning to stderr and falls back to manual. Static mode is deterministic benchmark data, **not live schedule, fare, or availability**.
-- **Observed static-source runs (2026-08-30, logged-in Chrome)** — two consecutive runs produced static official 8/8 with zero fallback each time;
-  - Ctrip session hits varied from 3/8 to 5/8, while every scored hit across both runs (3+5 records) passed 13/13 (100%). Non-hits remain explicit `miss` records,
-    - so the ≥90% field score is not presented as 8/8 live availability. The same runs exposed and fixed an online-extension lifecycle bug: idle parked timers/sockets no longer pin the default CLI bridge, while wizard `keepBridge` behavior remains unchanged (§38: 24/24, §40: 9/9).
-- **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English output via `GOTRY_LOCALE=en`
-- **Bounded agent tool loops** — a soft convergence context is injected after real dispatch 16; dispatch 18 is the last tool body, already-prepared calls 19+ receive structured `TOOL_BUDGET_EXHAUSTED` failures without entering the body, and inherited native tool schemas are suppressed at `step/end` for a text-only next step. The boundary is exercised through the packaged `dist` entry and a real dsh headless loop against an offline relay; CI packs the current SHA and repeats the E2E from an isolated pnpm consumer install rather than the root development tree. Direct/programmatic calls are outside this per-turn budget.
+## Consent and Privacy
 
-**Open limitations** (as of 2026-08-29, honest list):
+The account-session channel reads realtime hotel/flight data from **your own logged-in Chrome**, under four hard rules:
 
-- ⏳ **M3 Exit not closed** — engineering & distribution ready, but real seed-user evidence (50–200 person cohort) not yet accumulated; automated tests prove contracts and formulas, not business pass
-- ⏳ **Ctrip-hotel / Meituan logged-in adapters** — flights done; hotel session surfaces await real login-state backfill (next tick)
-- ⏳ **Interface language** — English currently covers the deterministic solve-output layer only; the dsh host UI and dialogue surface belong to the host / calibration samples
-- ⏳ **External benchmark generalization / Phase 1 bridge** — Round 1's exact DeepSeek treatment was environment-unavailable/schema-invalid (score 0), while GLM timed out at 300 s. Round 2 added the default-off owner-local bridge; its frozen treatment remained diagnostic-only because no structured native bridge call or tagged JSON reached the evaluator. Round 3 added provider-neutral native-call/result/terminal conformance, but its new frozen treatment still stopped after one runner spawn with planner/runner exit 1, zero released terminal bytes, no evaluator entry, and null official scores. Round 4's treatment at SHA `5ebddb2` had primary preflight pass, but planner/runner both exited 1 after 30.968 s, released 0 bytes, the evaluator was not entered, and official scores were null. The product Node gate was v24.20.0 while that treatment used v26.3.0, so the result remains diagnostic-only with no uplift claim. GitHub Node 22/24 §48 separately exposed a source default-off 30 s lifecycle hang. Round 5 is limited to removing the timer/keepalive preload, pinning the root/package DSH closure to alpha.3, making source checkout resolve that locked runtime before the legacy vendored fallback, preserving source normal-mode state under `ts/dsh-runtime/gotry-state/` while benchmark/package runs use the invocation directory for isolation, rejecting a non-alpha.3 benchmark runtime before spawn, enforcing Node 22.15+, and adding a benchmark-only structured diagnostic pipe with allowlisted redacted reason codes while stdout remains fail-closed. Its frozen treatment at code SHA `752e54c` stopped after 140.715 s with `child_nonzero_exit`, zero terminal bytes, and null evaluator/official scores, so it remains diagnostic-only; the lock-consistency successor does not rewrite that UID attribution. Cross-benchmark evidence remains open. See [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md).
-- ⏳ **Round 6 structured terminal diagnostics** — benchmark mode maps only the final structured `turn/end` into closed, redacted model/runtime reason families. A per-session arbiter emits at most once and preserves a specific bridge/conformance reason over a later generic runtime reason; recovered transient retries emit no failure. Free-form messages, raw stderr, paths, prompts, request IDs, and credentials never cross the control pipe. The frozen ChinaTravel treatment at code SHA `c61600b` (`..._00001`, `deepseek-v4-flash`) stopped after 49.546 s with `child_runtime_error`, zero terminal bytes, and null evaluator/official scores; leakage and local credential/endpoint scans were zero. This is diagnostic evidence only and creates no score/uplift claim; later documentation-only successors do not rewrite the treatment attribution.
-- ⏳ **Round 7 minimal benchmark kernel** — at code SHA `edb9392896625adbb48abae4a2ecf968dbfc0349`, benchmark opt-in retains only tool budget, model override, one bridge, and isolation/conformance; product prompt variables, process guards, consent hooks, and ordinary GoTry tools are not installed, while the default path is unchanged. The CLI projects a stable task-agnostic persona and accepts only canonical `insert` and `system-prompt` root items, failing closed on missing, duplicate, quoted, reordered, flow, or noncanonical items. ChinaTravel frozen treatment UID `e20241028160248698752` (`easy`, `deepseek-v4-flash`) passed preflight without fallback, then ended after 80.463 s with runner exit 1 and zero/invalid terminal bytes; the evaluator was not entered, official score is null, and the case is not countable. The allowlisted attribution is `child_bridge_runner_failed`; no uplift or external benchmark closure is claimed. The next problem is a generic bridge-tool schema and recoverable domain-error contract.
+1. **Login happens on the external website.** GoTry never offers, fills, or collects any password / SMS code / cookie value. It only answers one boolean question — "does a login-ticket cookie exist" (reads cookie **names** only, zero values touched). Existing logins are auto-detected with zero popups.
+2. **Consent card, once per session.** The first account-session use pops a runtime approval card; approval holds for the session, a refusal revokes it (no repeat prompting). Master switch `sessionAccess: ask|allow|off` at any time.
+3. **Physically read-only.** A ReadGuard aborts all write requests at the network layer — ordering/payment is unreachable in transport. The agent never touches credentials or captchas; on a captcha it stops and hands control back to you.
+4. **Never hijacks your browser.** Retrieval/login always open their own dedicated tab; the login page is brought to front and stays with you; routine test runs never open browser windows.
+
+One-time prerequisite: the bundled **GoTry Session Bridge** browser extension (MV3, ~30 seconds). `npx gotry setup` walks you through installing it at `~/.gotry/extension` (Chrome → `chrome://extensions` → Developer mode → Load unpacked). Zero Chrome system dialogs afterwards — the extension passively forwards the site's own search responses (read-only by construction; cookies are read by NAME only, values never leave the browser). A background health-watch auto-replays your query once the extension is connected. Until installed, tools return `needs-extension` with instructions and spend nothing. Prefer the GitHub Releases channel? `npx gotry setup --extension-from=github` (versioned tarball + SHA256 + fixed-key pinning, atomic swap, automatic fallback to the bundled copy). Only a Chrome Web Store listing can remove the developer-mode clicks entirely — submission materials are prepared, founder to submit.
+
+## Trustworthy by Construction
+
+1. **The model translates; the solver decides.** The LLM never produces feasibility verdicts or arithmetic — those are computed by Z3 against the extracted facts.
+2. **Every number carries a source tag** — attached by the render layer, never the model. Tags switch honestly on degradation; an estimate never poses as realtime.
+3. **No write path exists.** Booking/payment-class tools must pass WriteGate before any implementation ships; the future booking seam is already pinned by the `booking_saga_fsm.v1` edge table.
+4. **Login never touches credentials.** Login happens on the external website; GoTry reads cookie names only; consent is asked once per session and revocable.
+5. **Retrieval is physically read-only.** A ReadGuard aborts write requests at the network layer; a captcha stops the agent and hands control back to you.
+6. **Unverifiable means blocked.** The fact gate refuses to deliver any itinerary whose bookable claims cannot trace to exact-date tool results — it is never presented as a verified plan.
+7. **Prices fail closed.** Unknown models get no guessed price; the price table changes only by PR; the drift monitor reports, never auto-applies.
+8. **Your data is yours.** Product state lives under `gotry-state/`; automated tests and smoke runs use isolated state roots and never write the founder's real product data.
+
+## Project Status
+
+Current release: **v0.0.1-rc.16** (npm `latest`). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims.
+
+**Working today** (full-stack regression green; every item has deterministic tests):
+
+- **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed and regression-gated
+- **Realtime retrieval** — flights/trains/hotels (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`)
+- **Account-session search** — Ctrip flights on your logged-in Chrome; observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
+- **Setup wizard & dual extension channels** — `npx gotry setup` (bundled default, offline-deterministic); GitHub Releases channel opt-in with SHA256 + key pinning and automatic fallback
+- **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English solve output via `GOTRY_LOCALE=en`
+- **Bounded agent tool loops** — soft convergence after 16 dispatches, structured `TOOL_BUDGET_EXHAUSTED` refusals beyond 18, exercised end-to-end through a packaged consumer install in CI
+
+**Open limitations** (honest list):
+
+- **M3 Exit not closed** — engineering & distribution are ready, but real seed-user evidence (50–200 person cohort) has not been accumulated; automated tests prove contracts and formulas, not business pass
+- **Hotel session adapters** — Ctrip-hotel / Meituan logged-in surfaces await real login-state backfill; flights are done
+- **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host / calibration samples
+- **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim); the round-by-round engineering ledger lives in [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)
+- **Booking** — nothing bookable ships today; M5 opens only through WriteGate and the booking-saga FSM
 
 <details>
-<summary>📖 Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
+<summary>Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
 
-The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate);
-- the M4 paired-cohort value evidence contract (run-all §34 — synthetic data is never Exit evidence);
-- async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22.
+The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate); the M4 paired-cohort value evidence contract (synthetic data is never Exit evidence); the async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22.
 
 </details>
 
----
+## Roadmap
 
-## 🧪 Verify
+| # | Milestone | Scope | Status |
+|---|---|---|---|
+| M0 | Deterministic pipeline | dual engine implementations + real data packs + reconciliation | ✅ |
+| M1 | Agent form established | LLM in the loop; chat as interface; gates as choice cards | ✅ 2026-08-22 |
+| M2 | Realtime data | hotelbyte bridge + flight sources; evidence chain switches to realtime tags | ✅ 2026-08-22 |
+| M3 | MVP | minimal web face + 50–200 seed users (Erhai / Phuket scenarios) | **← current — evidence open** |
+| M4 | Memory & "next departure" | six-layer memory C-end domain; paired-cohort value evidence | founder-authorized parallel |
+| M5 | Transaction loop | WriteGate in production; booking / payment / refunds | entry-gated |
+| M6 | B2B embedding | principal/sponsor plugin with zero kernel changes | entry-gated |
+
+The single authoritative timeline — entry/exit conditions, deliverables, and gates per milestone — is [`docs/roadmap.md`](docs/roadmap.md).
+
+## Verify
 
 ```bash
-./scripts/run-all-tests.sh
-# Evaluation Phase 0 diagnostic contracts and deterministic cadence planner
-# (offline; no adapter/scheduler/runner/spend/score/Python)
+./scripts/run-all-tests.sh                     # full-stack suite (pure TS, no Python needed)
 cd ts
-npx tsx scripts/evaluation-contract-tests.ts
-npx tsx scripts/evaluation-cadence-tests.ts
+npx tsx scripts/evaluation-contract-tests.ts   # evaluation Phase 0 contracts (offline)
+npx tsx scripts/evaluation-cadence-tests.ts    # deterministic cadence policy/planner
 ```
 
-One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30)
-- · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39)
-- · extension distribution channel (§43) · sf-live static-golden offline contracts (§44) · evaluation foundation and cadence policy (§45–§46) · agent tool-budget Cordis integration + dsh headless E2E (§47)**. The live runner remains `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static` and requires the user's connected Chrome session.
+The suite covers golden engines, dialogue replay, cross-process async work-orders, plugin smoke, realtime bridges, process guards, i18n, memory domain, the Z3 concurrency gate, the fact gate, and a packaged-consumer tool-budget E2E, among others; the authoritative section list is whatever `scripts/run-all-tests.sh` enumerates. The live session benchmark (`npx tsx scripts/sf-live-benchmark.ts --golden=static`) is opt-in, requires your connected Chrome session, and never runs in CI.
+
+## Contributing
+
+Branch off latest `main` (`feat/ · fix/ · docs/ · chore/`), full suite green locally, open a Pull Request — `main` never takes direct pushes. CI (Node 22/24, typecheck + all suites) plus maintainer review, then squash-merge. **Red tests never merge.** Full guide: [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports / feature suggestions: use the issue templates (search existing issues first).
+
+## For AI Agents
+
+If you are an agent working in this repository, [`AGENTS.md`](AGENTS.md) is the binding contract — read it first. In brief:
+
+- **Sweep async work orders on entry**: `ts/gotry-state/async/*.json` without a matching `.deliverable.md` → `cd ts && npx tsx scripts/async-collect.ts <id>`.
+- **Layer discipline**: arithmetic only in the evaluate layer of `model.ts` / `unified.py`; solving only in `unified.ts` / `unified.py`; `engine.*` / `journey.*` are deprecated compatibility layers — new code must not call them. Any side change requires the full-stack regression.
+- **Never write shared state**: `ts/dsh-runtime/gotry-state/` is the founder's real product data; validate write paths with an isolated `stateRoot` only.
+- **State-sync discipline**: any commit changing the system's shape/state/debt must sync the six state faces of `architecture.md` §11 in the same commit; stage only named files — never `git add -A`.
+
+Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md). Technical authority: [`docs/architecture.md`](docs/architecture.md).
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | System, ADRs, evolution, debt ledger (Chinese, authoritative) |
+| [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md) | Program master outline & reuse matrix |
+| [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | Product design: main loop, transparency, whole-cost model |
+| [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 timeline & current position |
+| [`docs/user-guide.md`](docs/user-guide.md) | End-user guide |
+| [`docs/data-sources.md`](docs/data-sources.md) | Data sources & evidence-chain policy |
+| [`docs/extension-privacy.md`](docs/extension-privacy.md) | Session Bridge extension privacy |
+| [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md) | External benchmark bridge — engineering ledger |
+| [`docs/evaluation-foundation.md`](docs/evaluation-foundation.md) | Evaluation Phase 0 foundation |
+| [`docs/booking-saga-fsm.md`](docs/booking-saga-fsm.md) | Booking saga FSM (the M5 seam vocabulary) |
+| [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md) | A real AI-travel-planning failure postmortem (cautionary tale) |
+| [`docs/release-notes.md`](docs/release-notes.md) | Release decisions per version (the "why") |
+| [`CHANGELOG.md`](CHANGELOG.md) | Machine-derived changelog (Keep a Changelog + Conventional Commits) |
+| [`docs/tokens.md`](docs/tokens.md) | npm 2FA / release mechanics |
+
+## License
+
+**MIT** — same as upstream dsh. See [LICENSE](LICENSE).
 
 ---
 
-## 🤝 Contributing
+**Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-> *PR-based flow: branch off the latest `main`, full suite green, open a Pull Request — `main` never takes direct pushes. Full guide: [CONTRIBUTING.md](CONTRIBUTING.md).*
-
-Standard open-source flow: branch off latest `main` (`feat/ · fix/ · docs/ · chore/`), full suite green locally, open a PR; CI (Node 22/24, typecheck + all suites) plus maintainer review, then squash-merge. **Red tests never merge.**
-
----
-
-## 📜 License
-
-**MIT** (2026-08-23) — same as upstream dsh. See [LICENSE](LICENSE).
-
----
-
-**Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 (`.venv/`) · OpenFlights · TypeScript
-
-**Version baseline: `v0.0.1-rc.16` (2026-08-30).** The current checkout's authoritative verification gates are enumerated by `scripts/run-all-tests.sh` (release flow: `scripts/publish-npm.sh`).
+**Version baseline: `v0.0.1-rc.16` (npm `latest`).** The authoritative verification gates for the current checkout are enumerated by `scripts/run-all-tests.sh`; release flow: `scripts/publish-npm.sh`.
