@@ -23,6 +23,7 @@ fi
 (node scripts/run-all-tests-wiring-tests.mjs) || FAIL=1
 (node scripts/build-dist.mjs) || FAIL=1
 
+echo
 echo "=== 1. TS engine(洱海金标准,8 断言) ==="
 # Z3 WASM race 已根治(2026-08-29,z3-shared.ts 单一实例+会话级互斥):不再需要「重试一次」
 # 止血;并发形态的回归闸见 §30 z3-race-tests。
@@ -360,20 +361,25 @@ echo "=== 44. sf-live static golden(issue #67:CLI vendor 闭集/OpenFlights 固�
 (cd ts && npx tsx scripts/sf-live-cli-tests.ts) || FAIL=1
 
 echo
-echo "=== 47. Agent 工具预算(第16次软收敛/最多18次真实派发/同 step 第19次结构化拒绝/下一 step text-only/新轮次复位;Cordis integration + dsh headless E2E) ==="
+echo "=== 45. Agent 工具预算(第16次软收敛/最多18次真实派发/同 step 第19次结构化拒绝/下一 step text-only/新轮次复位;Cordis integration + dsh headless E2E) ==="
 (cd ts && npx tsx scripts/agent-planning-budget-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/agent-planning-budget-e2e.ts) || FAIL=1
 
 echo
-echo "=== 45. Evaluation Phase 0 foundation(four v0 contracts/seven-source registry/diagnostic fixtures/test-only aggregate admission;no adapter,runner,Python,uplift claim) ==="
+echo "=== 46. Evaluation Phase 0 foundation(four v0 contracts/seven-source registry/diagnostic fixtures/test-only aggregate admission;no adapter,runner,Python,uplift claim) ==="
 (cd ts && npx tsx scripts/evaluation-contract-tests.ts) || FAIL=1
 
 echo
-echo "=== 46. Evaluation cadence policy(PR/nightly/weekly/milestone admission/pass^k/budgets/calibration/stop signals;no scheduler,runner,spend,score,Agent round) ==="
+echo "=== 47. Evaluation cadence policy(PR/nightly/weekly/milestone admission/pass^k/budgets/calibration/stop signals;no scheduler,runner,spend,score,Agent round) ==="
 (cd ts && npx tsx scripts/evaluation-cadence-tests.ts) || FAIL=1
 
 echo
-echo "=== 47. Booking Copilot embedded contract(canonical schema/npm subpath/closed read registry/task-scoped ledger/real dsh core/BFF-only SSE/production bin;local model fixture) ==="
+echo "=== 48. Benchmark environment bridge(default-off/allowlist/failure/env isolation/model-driven installed runtime;focused contract + packaged CLI E2E) ==="
+(cd ts && npx tsx scripts/benchmark-environment-bridge-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/benchmark-environment-bridge-e2e.ts) || FAIL=1
+
+echo
+echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/closed read registry/task-scoped ledger/real dsh core/BFF-only SSE/production bin;local model fixture) ==="
 (npx tsx scripts/booking-surface-package-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-contract-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-v2-contract-proof-tests.ts) || FAIL=1
