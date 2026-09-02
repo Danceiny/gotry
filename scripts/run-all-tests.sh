@@ -401,12 +401,12 @@ if [ -z "$package_e2e_bin" ]; then
 fi
 
 echo
-echo "=== 45. Agent 工具预算(第16次软收敛/最多18次真实派发/同 step 第19次结构化拒绝/下一 step text-only/新轮次复位;Cordis integration + dsh headless E2E) ==="
-(cd ts && npx tsx scripts/agent-planning-budget-tests.ts) || FAIL=1
+echo "=== 45. Agent turn deadline(per-turn wall-clock soft/hard;产品路径默认不装,benchmark opt-in 装;超阈结构化拒绝 + 下一 step text-only;Cordis integration + dsh headless E2E) ==="
+(cd ts && npx tsx scripts/agent-planning-turn-deadline-tests.ts) || FAIL=1
 if [ -n "$package_e2e_bin" ] && [ -x "$package_e2e_bin" ]; then
-  (cd ts && GOTRY_BUDGET_E2E_BIN="$package_e2e_bin" npx tsx scripts/agent-planning-budget-e2e.ts) || FAIL=1
+  (cd ts && GOTRY_DEADLINE_E2E_BIN="$package_e2e_bin" npx tsx scripts/agent-planning-turn-deadline-e2e.ts) || FAIL=1
 else
-  echo "FAIL: tool-budget packaged runtime unavailable"
+  echo "FAIL: turn-deadline packaged runtime unavailable"
   FAIL=1
 fi
 

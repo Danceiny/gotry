@@ -174,7 +174,7 @@ Current release: **v0.0.1-rc.17** (npm dist-tag `rc`; `latest` stays on rc.16 pe
 - **Account-session search** — Ctrip flights on your logged-in Chrome; observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
 - **Extension install on demand** — `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` is offered as a clickable link in the dsh UI when an account-session tool first needs it (one-click install + auto-update); the gotry side never runs a setup wizard
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English solve output via `GOTRY_LOCALE=en`
-- **Bounded agent tool loops** — soft convergence after 16 dispatches, structured `TOOL_BUDGET_EXHAUSTED` refusals beyond 18, exercised end-to-end through a packaged consumer install in CI
+- **Bounded agent turns** — the product path installs no per-turn tool-call counter; the wall-clock deadline (default 60s soft / 120s hard, overridable via `GOTRY_TURN_DEADLINE_SOFT_MS` / `GOTRY_TURN_DEADLINE_HARD_MS`) is opt-in for benchmark runs only and refuses further dispatches past the hard limit with structured `TURN_DEADLINE_EXHAUSTED`, exercised end-to-end through a packaged consumer install in CI
 
 **Open limitations** (honest list):
 
@@ -214,7 +214,7 @@ npx tsx scripts/evaluation-contract-tests.ts   # evaluation Phase 0 contracts (o
 npx tsx scripts/evaluation-cadence-tests.ts    # deterministic cadence policy/planner
 ```
 
-The suite covers golden engines, dialogue replay, cross-process async work-orders, plugin smoke, realtime bridges, process guards, i18n, memory domain, the Z3 concurrency gate, the fact gate, and a packaged-consumer tool-budget E2E, among others; the authoritative section list is whatever `scripts/run-all-tests.sh` enumerates. The live session benchmark (`npx tsx scripts/sf-live-benchmark.ts --golden=static`) is opt-in, requires your connected Chrome session, and never runs in CI.
+The suite covers golden engines, dialogue replay, cross-process async work-orders, plugin smoke, realtime bridges, process guards, i18n, memory domain, the Z3 concurrency gate, the fact gate, and a packaged-consumer turn-deadline E2E, among others; the authoritative section list is whatever `scripts/run-all-tests.sh` enumerates. The live session benchmark (`npx tsx scripts/sf-live-benchmark.ts --golden=static`) is opt-in, requires your connected Chrome session, and never runs in CI.
 
 ## Contributing
 

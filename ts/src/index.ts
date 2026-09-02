@@ -43,7 +43,7 @@ import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
-import { installToolBudget } from './tool-budget.ts'
+import { installTurnDeadline } from './turn-deadline.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
@@ -164,14 +164,26 @@ type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
 
 export function apply(ctx: Context, config: Config): void {
-  installToolBudget(ctx)
-
+  // Test-only escape hatch for the offline turn-deadline E2E. The product
+  // path keeps `installTurnDeadline` out so real users are not gated by a
+  // benchmark-shaped wall-clock deadline (ADR-24); setting this env var
+  // forces the install regardless of `benchmarkEnvironmentConfigPath` so
+  // the headless E2E can exercise the deadline hook without pulling in
+  // the entire benchmark bridge / model-override kernel.
+  const forceTurnDeadline = process.env.GOTRY_FORCE_TURN_DEADLINE === '1'
+  if (forceTurnDeadline) {
+    installTurnDeadline(ctx)
+  }
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   if (rawBenchmarkEnvironmentConfigPath.trim()) {
     // Benchmark mode is a deliberately minimal kernel: only the model
-    // override and the environment bridge are installed.  In particular,
-    // product prompt variables, process/consent guards, and guarded product
-    // tools must not be observable on this path.
+    // override, the environment bridge, and the turn-deadline wall-clock
+    // guard are installed. In particular, product prompt variables,
+    // process/consent guards, and guarded product tools must not be
+    // observable on this path. ADR-20: tool/step budgets are a benchmark
+    // concept; the product path opts out so user-perceived time stays the
+    // only budget that gates the loop.
+    installTurnDeadline(ctx)
     installModelOverride(ctx as unknown as Parameters<typeof installModelOverride>[0])
     const getService = (ctx as unknown as { get?: (name: string, fallback?: unknown) => unknown }).get
     const directSubprocess = (typeof getService === 'function'
