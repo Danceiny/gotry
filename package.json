@@ -65,6 +65,8 @@
     "bin/",
     "ts/src/index.ts",
     "ts/src/benchmark-environment-bridge.ts",
+    "ts/src/benchmark-tool-isolation.ts",
+    "ts/src/benchmark-agent-conformance.ts",
     "ts/src/contracts.ts",
     "ts/src/unified.ts",
     "ts/src/model.ts",

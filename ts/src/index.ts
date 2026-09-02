@@ -45,6 +45,7 @@ import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installToolBudget } from './tool-budget.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
+import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
 
 /** 航司→机场映射表(issue #46 冲突检测面;data/airline-airports.json,as_of 快照) */
 let airlineAirportMapCache: AirlineAirportMap | null = null
@@ -227,8 +228,9 @@ export function apply(ctx: Context, config: Config): void {
     const directSubprocess = (typeof getService === 'function'
       ? getService.call(ctx, 'subprocess')
       : undefined) as BenchmarkSubprocessService | undefined
-    registerBenchmarkEnvironmentBridge(bridgePath, registerGuarded, directSubprocess)
+    const projection = registerBenchmarkEnvironmentBridge(bridgePath, registerGuarded, directSubprocess)
     installBenchmarkToolIsolation(ctx)
+    installBenchmarkAgentConformance(ctx, projection)
   }
 
   registerGuarded(defineTool({
