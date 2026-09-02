@@ -26,7 +26,11 @@ import { fileURLToPath } from 'node:url'
 import {
   BRIDGE_PORTS,
   EXTENSION_ID,
+  EXTENSION_ID_STORE,
   EXTENSION_ORIGIN,
+  EXTENSION_ORIGIN_STORE,
+  EXTENSION_ORIGINS,
+  EXTENSION_STORE_URL,
   createSessionBridge,
   __resetSessionBridgeForTest,
   __setSessionBridgeForTest,
@@ -54,7 +58,8 @@ async function check(label: string, assertion: () => void | Promise<void>): Prom
 }
 
 const mustBridge = async (ports: number[]): Promise<SessionJobHandle> => {
-  const created = await createSessionBridge({ ports, extensionOrigin: EXTENSION_ORIGIN })
+  // 缺省 EXTENSION_ORIGINS(unpacked + 商店版双通道)——行为测试直接覆盖生产默认白名单
+  const created = await createSessionBridge({ ports })
   if (!created.ok) throw new Error(created.summary)
   return created.bridge
 }
@@ -173,9 +178,17 @@ async function main(): Promise<void> {
     .subarray(0, 16)
     .toString('hex')
     .replace(/[0-9a-f]/g, (c) => 'abcdefghijklmnop'[Number.parseInt(c, 16)])
-  await check('manifest key 派生扩展 ID = Node 侧固定 EXTENSION_ID(origin 白名单锚点)', () => {
+  await check('manifest key 派生扩展 ID = Node 侧固定 EXTENSION_ID(unpacked 通道 origin 白名单锚点)', () => {
     assert.equal(derivedId, EXTENSION_ID)
     assert.equal(EXTENSION_ORIGIN, `chrome-extension://${EXTENSION_ID}`)
+  })
+
+  await check('双通道白名单:商店版 ID(CWS 重签,不认 manifest key)与 unpacked 固定 ID 同信,商店 URL 锚定 item ID', () => {
+    assert.equal(EXTENSION_ORIGIN_STORE, `chrome-extension://${EXTENSION_ID_STORE}`)
+    assert.ok(EXTENSION_ORIGINS.includes(EXTENSION_ORIGIN))
+    assert.ok(EXTENSION_ORIGINS.includes(EXTENSION_ORIGIN_STORE))
+    assert.equal(EXTENSION_ORIGINS.length, 2)
+    assert.ok(EXTENSION_STORE_URL.includes(EXTENSION_ID_STORE))
   })
 
   await check('manifest 合同:MV3 + 最小权限(cookies/alarms;无 debugger/tabs)', () => {
@@ -257,6 +270,22 @@ async function main(): Promise<void> {
         body: '{}',
       })
       assert.equal(r.status, 403, path)
+    }
+  })
+
+  await check('origin 白名单:商店版扩展源(CWS 重签 ID,2026-09-02 上架)POST 放行且计入心跳', async () => {
+    const storeLane = await mustBridge([0])
+    try {
+      assert.equal(storeLane.extensionConnected(), false)
+      const r = await fetch(`http://127.0.0.1:${storeLane.port}/results/whatever`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN_STORE },
+        body: '{}',
+      })
+      assert.equal(r.status, 200, '商店版扩展源不得吃 403(否则商店通道全断)')
+      assert.equal(storeLane.extensionConnected(), true, '白名单源的任何请求都刷新心跳')
+    } finally {
+      await storeLane.close()
     }
   })
 

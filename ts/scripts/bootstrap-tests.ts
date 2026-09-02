@@ -67,23 +67,20 @@ assert.equal(c5b.code, 0, '扩展单项跳过态应 exit 0')
 assert.ok(c5b.out.includes('GOTRY_SETUP_EXTENSION=0 跳过'), '应输出扩展单项跳过说明')
 console.log('5. 会话扩展节(check-only 报告 + GOTRY_SETUP_EXTENSION=0 单项跳过)OK')
 
-// 6. wizard 子命令(issue #21 onboarding UX,§3.3):dry-run 模式零网络零浏览器,exit 0,引导文案齐全
+// 6. wizard 子命令(2026-09-02 商店上架后退化):dry-run 模式零网络零浏览器零剪贴板,exit 0,2 步齐全
 const c6 = runBootstrap(['wizard', '--dry-run'], {})
 assert.equal(c6.code, 0, `wizard --dry-run 应 exit 0,实际 ${c6.code}\n${c6.out}`)
 assert.ok(c6.out.includes('dry-run'), '应输出 dry-run 字样')
-assert.ok(c6.out.includes('Gotry Wizard') || c6.out.includes('gotry-wizard') || c6.out.includes('3 步'), '应输出引导步骤')
-assert.ok(c6.out.includes('ensure-extension-files'), 'dry-run 应列 5 步')
-assert.ok(c6.out.includes('open-chrome-extensions'), 'dry-run 应列开 chrome://extensions')
-assert.ok(c6.out.includes('clipboard-extension-path'), 'dry-run 应列剪贴板')
-assert.ok(c6.out.includes('panel-guide'), 'dry-run 应列面板')
-assert.ok(c6.out.includes('watch-extension-ready'), 'dry-run 应列 watch precheck')
-console.log('6. wizard 子命令(--dry-run 零网络,5 步齐全 + 引导文案)OK')
+assert.ok(c6.out.includes('gotry-wizard'), '应输出 [gotry-wizard] 标签')
+assert.ok(c6.out.includes('ensure-extension-files'), 'dry-run 应列 ensure-extension-files')
+assert.ok(c6.out.includes('watch-extension-ready'), 'dry-run 应列 watch-extension-ready')
+console.log('6. wizard 子命令(--dry-run 零网络,2 步齐全 + 极简 stdout)OK')
 
 // 7. wizard 走真实路径但 timeout 极短(GOTRY_ONBOARDING_TIMEOUT_MS 缺省走 120s,降级由 inline 探活兜),
-//    确认 stdout 输出 wizard 引导 + 探活提示 + 至少一次 .(心跳点),exit 1 表示未就绪
+//    确认 stdout 至少含一次探活心跳 + 引导标题(不再断言 "3 步",纯 stdout 形态下标题文案已简化)
 const c7 = runBootstrap(['wizard'], { GOTRY_SETUP_EXTENSION: '0', GOTRY_ONBOARDING_TIMEOUT_MS: '600', GOTRY_ONBOARDING_INTERVAL_MS: '200' })
 assert.equal(c7.code, 1, `wizard(超时)应 exit 1,实际 ${c7.code}\n${c7.out}`)
-assert.ok(c7.out.includes('3 步') || c7.out.includes('gotry-wizard'), '应输出引导标题')
+assert.ok(c7.out.includes('gotry-wizard'), '应输出 [gotry-wizard] 标签')
 console.log('7. wizard 真实路径(扩展未就绪,exit 1 + 引导标题 + 心跳)OK')
 
 // 8. 扩展分发 github 通道(ADR-21):基址指不可达回环(127.0.0.1:1 拒连,离线确定性);显式模式不带 --auto——CI 环境里 AUTO+CI 会提前跳过全部节,断言面会落空

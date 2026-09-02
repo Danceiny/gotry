@@ -1,5 +1,30 @@
 # GoTry 发版记录
 
+## v0.0.1-rc.17(扩展商店上架 + 安装 UX 职责返交,**founder 确认 2026-09-02 当日发版**)
+
+rc.16 → rc.17 增量(发布确认制,founder 当日「我确认」):
+
+- **GoTry Session Bridge Chrome Web Store 上架(2026-09-02,D-25 清偿)**:[商店页](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) v0.1.0 过审发布,一键装 + 自动更新通道打通,升为推荐安装方式。上架实测:商店用自己签名 key 重签、不认 manifest 固定 key,商店版扩展 ID `oeajpiccmonococjcegddlooeeohlbgd` ≠ unpacked 固定 ID `olpgkofjhhiiiahdkkbcninhjmegghfe`;桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,§38 新增商店源断言);`docs/extension-webstore-submission.md` 标「已上架」、founder 提交清单划线、后续发版流程进入 A 轨日常维护
+
+- **会话扩展安装 UX 职责返交(2026-09-02,founder 立纠)**:
+  - 上版 `npx gotry setup wizard` 5 步 GUI 编排(`pbcopy/osascript/zenity/clip/xdg-open/open` 抢浏览器与 dsh 渲染层职责)撤销,`wizard.ts` 缩为 2 步纯 Node;`scripts/wizard-bootstrap.ts` 物理删除;run-all §40 onboarding-tests 9 段重设
+  - 安装 = 浏览器的事(去 Chrome 应用商店点「添加至 Chrome」);渲染 = dsh UI 的事(`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时返回结构化字段 `{ installUrl, installAction:'add-to-chrome' }`,dsh presentResult 层渲可点链接);`gotry setup wizard` 退化为离线健康探活等待
+  - 用户侧由 **3 次点击** → **1 次点击**(商店「添加至 Chrome」)+ dsh 自动 retry(health-watch 保留)
+
+- **桥代码 DATA 防漂移同步**(`extension-bridge.ts` + `extension-tests.ts` §38 新增 4 断言)
+  - `EXTENSION_STORE_URL` 常量(锚定 `EXTENSION_ID_STORE` item ID);
+  - `extensionOrigins` 集合(替代单一 `extensionOrigin`,双通道同信);
+  - `SessionBridgeOptions` API 同步;
+  - `extension-not-connected` 失败信息携带商店 URL
+
+- **README / RFC / docs 同步**:`extension/README.md` + README 中英 + `docs/user-session-data-rfc.md` §3.3 重设 + §4 P3.6「职责返交」 + §6 复用矩阵 + `architecture.md` §8.21 §9 onboarding 段落 + `roadmap.md` + `stage1-top-down-design.md` + `data-sources.md` 时间线 + `gotry-master-outline.md` 全部改到 2026-09-02
+
+### 发布闸状态(发布前勾稽)
+- ① 全栈回归:`tsc --noEmit` 0 错 + §38 26 段 + §40 9 pass + §43 36 pass + bootstrap 8/8 + smoke ✅
+- ② 六状态面同步:`architecture.md §1 / §9 / §10 / §11 / ADR-21` + `roadmap.md` + `data-sources.md` + `stage1-top-down-design.md` + `gotry-master-outline.md` + `extension/README.md` + README 中英 ✅
+- ③ README 用法实测:`npm install -g @danceiny/gotry@rc.17` 真装 + `npx gotry --help` + dsh web + `gotry_session_search` needs-extension 在 dsh UI 渲可点链接 + 浏览器商店页点击「添加至 Chrome」✅ ④ License MIT ✅ ⑤ 版本号一致(tag `rc.17` / `package.json` / 双 README / release-notes / CHANGELOG = rc.17)✅
+- **发布后回拉实测**(AGENTS.md 「发布后必须从 registry 实测回拉验证」):`npm view @danceiny/gotry dist-tags` + 干净安装 `@rc` + `npm view versions` 见 rc.17
+
 ## v0.0.1-rc.16(价表 provider-aware v2 + 价格漂移监测长机制 + CHANGELOG 自动化,**已发布:npm 2026-08-30T13:00Z + GitHub Release 同日;#50② 于 2026-09-02 同窗完成 dist-tag 治理并回拉实测**)
 
 rc.15 → rc.16 增量(founder 确认制下 agent 执行,owner 「这次要把 changelog 机制补上」):
