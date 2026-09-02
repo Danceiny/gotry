@@ -16,6 +16,8 @@
 | **License** | **MIT** ([LICENSE](LICENSE)) |
 | **Docs** | English (this file) · [简体中文 README](README.zh-CN.md) · deep engineering docs are Chinese-first ([docs/architecture.md](docs/architecture.md)) |
 
+> **HotelByte Booking Copilot status:** this branch contains a Draft, BFF-only embedded planner for the existing search/offer/Checkout workspace. Its v1/v2 protocols share one listener and task ownership; v2 exposes seven durable phase values across six lifecycle stages (`terminal`/`error` are the two terminal outcomes) while v1 retains its legacy two-state projection, and the closed profile has no `Book` capability. The Linux artifact is bound to an exact source/schema/runtime identity. It is not part of npm `latest` and is not merge-eligible until four-surface real-inventory UAT, including an unavailable/changed-offer recovery loop through the original Checkout, has evidence.
+
 ---
 
 ## ⚡ 30-second start
@@ -222,7 +224,7 @@ npx tsx scripts/evaluation-cadence-tests.ts
 
 One-shot full-stack green (pure TS, no Python needed): golden engines · dialogue replay · cross-process async work-orders · plugin smoke · hbcli · process guards · weather · flights · Anything · probePoi · agent-reach · dual-path stability · time-awareness eval · memory domain · **Z3 race (§30)
 - · realtime pricing (§31) · i18n catalog (§32) · M3 cohort evidence contract (§33) · M4 value evidence contract (§34) · M3 nightly evidence producer contract (§35) · session transport extension bridge (§38) · onboarding UX wizard (§40) · bookable-fact gate (§39)
-- · extension distribution channel (§43) · sf-live static-golden offline contracts (§44) · evaluation foundation and cadence policy (§45–§46) · agent tool-budget Cordis integration + dsh headless E2E (§47)**. The live runner remains `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static` and requires the user's connected Chrome session.
+- · extension distribution channel (§43) · sf-live static-golden offline contracts (§44) · agent tool-budget Cordis integration + dsh headless E2E (§45) · evaluation foundation and cadence policy (§46–§47) · benchmark environment bridge (§48)**. The live runner remains `cd ts && npx tsx scripts/sf-live-benchmark.ts --golden=static` and requires the user's connected Chrome session.
 
 ---
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /** Standalone, BFF-only Booking Copilot HTTP/SSE service. */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -23,6 +23,12 @@ function safeError(error) {
 
 async function main() {
   if (!existsSync(startupPath)) throw new Error('booking_copilot_compiled_runtime_missing')
+  const artifactPath = join(root, 'ARTIFACT_ID')
+  if (existsSync(artifactPath)) {
+    const artifactId = readFileSync(artifactPath, 'utf8').trim()
+    if (!/^[0-9a-f]{40}$/.test(artifactId)) throw new Error('booking_copilot_artifact_id_invalid')
+    process.env.GOTRY_BOOKING_COPILOT_ARTIFACT_ID = artifactId
+  }
   const startup = await import(pathToFileURL(startupPath).href)
   const config = startup.resolveBookingCopilotStartupConfig(process.env)
   const handle = await startup.startBookingCopilotFromEnvironment(process.env)
