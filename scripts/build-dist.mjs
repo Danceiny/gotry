@@ -5,8 +5,8 @@
  * 为什么:Node 拒绝对 node_modules 下的 .ts 做 type-stripping
  * (ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING)——npm 安装后 dsh 加载
  * gotry-tools 插件必炸。发布前把 ts/{src,capabilities,scripts} 编成
- * dist/ 纯 JS,bin/gotry-inner.js 在 npm 模式下指向 dist/src/index.js;
- * repo 检出(vendored runtime)仍走 .ts 源码,互不影响。
+ * dist/ 纯 JS,bin/gotry-inner.js 在 npm 模式和无 tsx loader 的源码模式下
+ * 指向 dist/src/index.js；legacy vendored/显式 tsx 才直载 .ts。
  *
  * 运行: node scripts/build-dist.mjs(发布脚本自动调)
  */

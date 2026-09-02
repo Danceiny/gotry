@@ -15,7 +15,8 @@ npx @danceiny/gotry web
 
 ```bash
 git clone https://github.com/Danceiny/gotry && cd gotry
-cd ts/dsh-runtime && pnpm install && cd ../..   # vendored runtime,一次性
+npm ci && npm --prefix ts ci                     # root/TS 锁定闭包
+node scripts/build-dist.mjs                      # 构建源码 runtime
 cp .env.example .env && vi .env                  # 填 LLM_API_KEY
 ./gotry web
 ```
@@ -54,7 +55,7 @@ cp .env.example .env && vi .env                  # 填 LLM_API_KEY
 
 ## 你的数据在哪(可见、可编辑、可删除)
 
-全部落在启动目录的 `gotry-state/`:
+数据目录由运行形态决定:源码普通运行落在 `ts/dsh-runtime/gotry-state/`，npm 包运行落在调用目录的 `gotry-state/`，benchmark opt-in 使用隔离调用目录，避免写入共享状态。
 
 | 文件 | 内容 |
 |---|---|

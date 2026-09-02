@@ -136,6 +136,8 @@ interface CollectedText {
 }
 
 interface SubprocessHandle {
+  /** DSH reports -1 when process creation itself failed. */
+  readonly pid: number
   collected: { stdout: CollectedText; stderr: CollectedText }
   done: Promise<{ exitCode: number | null; signal?: string | null }>
   terminate?: () => void
@@ -283,8 +285,7 @@ export function registerBenchmarkEnvironmentBridge(
       const timer = setTimeout(() => {
         controller.abort()
       }, bridge.timeout_ms)
-      let handle: SubprocessHandle
-      let spawned = false
+      let handle: SubprocessHandle | undefined
       try {
         const env: NodeJS.ProcessEnv = Object.fromEntries(
           Object.keys(process.env).map(key => [key, undefined]),
@@ -306,7 +307,6 @@ export function registerBenchmarkEnvironmentBridge(
           env,
           signal: controller.signal,
         })
-        spawned = true
         const status = await handle.done
         if (controller.signal.aborted) return jsonObject({ ok: false, error: 'timed_out' })
         const stdout = handle.collected.stdout.readFrom(0)
@@ -334,7 +334,7 @@ export function registerBenchmarkEnvironmentBridge(
         return jsonObject({ ok: true, result: visibleResult })
       } catch {
         if (controller.signal.aborted) return jsonObject({ ok: false, error: 'timed_out' })
-        return jsonObject({ ok: false, error: spawned ? 'runner_failed' : 'spawn_failed' })
+        return jsonObject({ ok: false, error: !handle || handle.pid === -1 ? 'spawn_failed' : 'runner_failed' })
       } finally {
         clearTimeout(timer)
       }

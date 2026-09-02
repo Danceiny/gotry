@@ -51,9 +51,9 @@ jobs:
       - name: Build dist (§25 publish-preverify packs the real dist)
         run: node scripts/build-dist.mjs
 
-      # Root npm ci follows the historical lockfile and does not materialize
-      # dsh's transitive peer closure. Exercise the publish shape from a clean
-      # consumer install instead of accidentally borrowing a developer tree.
+      # Root npm ci now materializes the pinned DSH closure. Keep exercising the
+      # publish shape from a clean consumer so package E2E cannot borrow source
+      # files or node_modules from the developer tree.
       - name: Prepare packaged tool-budget E2E runtime
         shell: bash
         run: |
@@ -65,6 +65,7 @@ jobs:
           test "${#tarballs[@]}" -eq 1
           (cd "$install_dir" && npm init --yes >/dev/null)
           npx --yes pnpm@11.5.0 --dir "$install_dir" add --ignore-scripts "${tarballs[0]}"
+          npx tsx ts/scripts/pnpm-dsh-closure-proof.ts "$install_dir"
           test -x "$install_dir/node_modules/.bin/gotry"
           echo "GOTRY_BUDGET_E2E_BIN=$install_dir/node_modules/.bin/gotry" >> "$GITHUB_ENV"
           echo "GOTRY_BRIDGE_E2E_BIN=$install_dir/node_modules/.bin/gotry" >> "$GITHUB_ENV"
