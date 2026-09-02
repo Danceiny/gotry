@@ -1,6 +1,6 @@
 # GoTry 发版记录
 
-## v0.0.1-rc.16(价表 provider-aware v2 + 价格漂移监测长机制 + CHANGELOG 自动化,**tag 已推 2026-08-30——npm 发布未落地:registry 无此版本,补发待 founder 浏览器 approve(#50 勘误)**)
+## v0.0.1-rc.16(价表 provider-aware v2 + 价格漂移监测长机制 + CHANGELOG 自动化,**已发布:npm 2026-08-30T13:00Z + GitHub Release 同日;#50② 于 2026-09-02 同窗完成 dist-tag 治理并回拉实测**)
 
 rc.15 → rc.16 增量(founder 确认制下 agent 执行,owner 「这次要把 changelog 机制补上」):
 
@@ -21,7 +21,7 @@ rc.15 → rc.16 增量(founder 确认制下 agent 执行,owner 「这次要把 c
 - run-all 新增 §41(LLM 价格漂移,11/11 绿) + §42(CHANGELOG 生成器,11/11 绿);六状态面同步:architecture §1/§97/ADR-20 ·roadmap §7 ·data-sources §7 ·stage1 状态头 ·tokens.md 价表与漂移监测节 ·README 中英双语「Switching models / providers?」节
 
 ### 发布闸状态
-- ① 全栈回归:§1-§22 + §24-§41 + §42 全绿(§23b 发布面 dist 缺失预存回归,非本 PR)✅ ② 六状态面同步(本提交 + 保鲜清单勾稽)✅ ③ README 用法实测 ⏳(2026-08-30 #50 核实:registry 无 rc.16、GitHub Release 未建——publish 实际未发生,本条与「已发布」口径一并勘误;补发后重勾) ④ License MIT ✅ ⑤ 版本号一致(package.json `0.0.1-rc.16` / 双 README Last verified / roadmap rc 序列 / release-notes / CHANGELOG = rc.16)✅
+- ① 全栈回归:§1-§22 + §24-§41 + §42 全绿(§23b 发布面 dist 缺失预存回归,非本 PR)✅ ② 六状态面同步(本提交 + 保鲜清单勾稽)✅ ③ README 用法实测 ✅(2026-09-02 回拉:registry latest=rc.16;干净安装 @latest 489 包、`gotry --help`、dist 入口全通;GitHub Release v0.0.1-rc.16 已建) ④ License MIT ✅ ⑤ 版本号一致(package.json `0.0.1-rc.16` / 双 README Last verified / roadmap rc 序列 / release-notes / CHANGELOG = rc.16)✅
 
 ## v0.0.1-rc.15(预订 saga 状态机具名化,**已发布 2026-08-29**)
 
