@@ -83,15 +83,23 @@ Example (placeholder paths only):
 
 ```json
 {
-  "schema_version": "gotry_benchmark_environment_bridge_v2",
+  "schema_version": "gotry_benchmark_environment_bridge_v3",
   "enabled": true,
   "executable": "/OWNER-LOCAL/bin/node",
   "cwd": "/OWNER-LOCAL/harness",
   "argv_prefix": ["/OWNER-LOCAL/harness/runner.js"],
-  "allowed_tools": ["lookup"],
-  "allowed_output_keys": {
-    "lookup": ["city", "country"]
-  },
+  "tools": [{
+    "name": "lookup",
+    "description": "Lookup a city.",
+    "input_schema": {
+      "type": "object",
+      "properties": { "city": { "type": "string", "enum": ["Dubai", "Singapore"] } },
+      "required": ["city"],
+      "additionalProperties": false
+    },
+    "output_keys": ["city", "country"],
+    "domain_outcomes": [{ "status": "miss", "code": "NOT_FOUND", "recovery": "revise_arguments" }]
+  }],
   "timeout_ms": 30000,
   "max_output_bytes": 65536,
   "terminal_output": {
@@ -108,21 +116,21 @@ Example (placeholder paths only):
 
 The executable and cwd are absolute and fixed. Calls use an argv list with the
 configured prefix; arbitrary shell strings, shell interpolation, and arbitrary
-commands are not exposed. `allowed_tools` is a bounded, unique identifier
-allowlist. `terminal_output` is required: its identifier-like `tag` defines the
-only accepted envelope and its positive `max_bytes` is capped at 1 MiB. The
-required terminal contract makes this schema v2; a v1 owner-local file must be
-updated explicitly rather than being accepted with ambiguous terminal behavior. The
-optional `allowed_output_keys` mapping is a bounded per-tool
-positive allowlist: each mapped tool must be in `allowed_tools`, and each
-nonempty list must contain unique ASCII identifier-like JSON key names. When
-configured for a call, every object key in the visible result (recursing
-through arrays and nested objects) must be listed; unknown keys fail closed as
-`{"ok":false,"error":"forbidden_output"}` without reflecting their names or
-values. Configurations omitting this field remain backward-compatible. The
-mapping may be partial: allowed tools without a mapping retain the
-recursive denylist only. Benchmark admission should map every allowed tool when
-the stronger positive contract is required.
+commands are not exposed. In v3, `tools` is the single source for the model
+schema, discovery response, pre-spawn input validation, output-key allowlist,
+and declared `domain_outcomes`. Each input schema is bounded, object-rooted,
+closed (`required` plus `additionalProperties:false`), and uses only the
+supported typed subset. `output_keys` is required. `terminal_output` remains
+required and capped at 1 MiB.
+
+An adapter must return exactly one v1 envelope: `{schema_version,status:"ok",result}`
+or `{schema_version,status:"miss"|"error",code,recovery}`. The tuple must be
+declared by that tool. A domain miss/error is an outer successful tool result;
+the model may choose to revise arguments and issue another call, but the bridge
+never retries automatically. Non-zero exit, spawn, timeout, truncation, and
+protocol failures remain infrastructure failures (`runner_failed` or their
+specific structured failure); a domain-looking JSON body on a non-zero exit
+does not change that classification.
 Timeout and output caps are enforced by the subprocess seam, with
 non-zero exit, timeout, truncation, invalid JSON, and disallowed tool returning
 a structured failure envelope. The subprocess receives only selected
@@ -244,3 +252,15 @@ the case is not countable. The allowlisted reason was
 claimed. The next optimization question is a generic bridge-tool schema and a
 recoverable domain-error contract, without changing provider routing or
 scoring.
+
+Round 8 replaces that open question with the v3 typed descriptor and exact
+result-envelope contract described above. Offline unit coverage proves the
+closed schema subset, max/max+1 resource bounds, deep freeze, pre-spawn
+required/type/additional-property rejection, exact declared domain tuples, and
+nonzero-exit precedence. The loopback source E2E captures the native provider
+payload, then drives a declared miss, a model-authored argument revision, a
+second adapter invocation, and a tagged terminal; the bridge performs no
+automatic retry. This is contract evidence only. A frozen treatment has not
+run, no official score exists, and provider routing, scorer, evaluator, and
+default product mode are unchanged. No uplift or external benchmark closure is
+claimed.
