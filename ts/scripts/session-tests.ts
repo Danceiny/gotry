@@ -6,6 +6,7 @@
  *   H   酒店通道(flyai search-hotel;纯 CLI,无浏览器窗口);
  *   I   账号会话授权闸(纯函数:每会话一次/拒绝=会话内吊销/allow/off/无审批通道,确定性);
  *   J   登录引导(无凭证语义/表格完备/票据名级检查;live opt-in 同 G)。
+ *   K   酒店会话面(2026-09-03 实装:entry URL/走形解析/形状嗅探/城市码指引/闸面;纯函数,transport 前短路)。
  * #21 字段 scorer/双源 gate 的无网络验收独立放在 scripts/session-benchmark.ts。
  * 隔离纪律:live 用 mktemp profile 与 stateRoot,绝不动共享状态与日常浏览器 profile;
  * 任何测试不自动弹浏览器窗口(用户 Chrome 只经 CDP attach 或用户手动运行 session-login)。
@@ -17,7 +18,8 @@ import { join } from 'node:path'
 
 import { classifyRequest, isSubmitText } from '../capabilities/session/read-guard.ts'
 import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
-import { sessionFlightSearch, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
+import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
+import { sessionFlightSearch, sessionHotelSearch, hotelCityUnresolvedHint, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
@@ -332,6 +334,52 @@ console.log('J. sessionLogin(登录引导:无凭证语义/表格完备/pending �
   } else {
     console.log('  SKIP - 登录 live 探针默认关(GOTRY_SESSION_LIVE=1 opt-in;工具面/桌面入口才真调)')
   }
+}
+
+
+// K. 酒店会话面(2026-09-03 实装,迪拜 session 复盘:会话面此前只有机票)
+console.log('K. 酒店适配器(buildHotelEntryUrl/走形解析/形状嗅探/城市码指引/节律与日期闸)')
+{
+  // K1 entry URL:cityId 覆盖 / 码表 / 未收录
+  const h1 = buildHotelEntryUrl({ to: '迪拜', cityId: 220, checkIn: '2026-12-01', checkOut: '2026-12-03', adults: 2 })
+  assert(h1.ok && h1.url === 'https://hotels.ctrip.com/hotels/list?city=220&checkin=2026-12-01&checkout=2026-12-03&adult=2', 'cityId 显式覆盖 + 参数序', h1)
+  const h2 = buildHotelEntryUrl({ to: '上海' })
+  assert(h2.ok && h2.url === 'https://hotels.ctrip.com/hotels/list?city=2', '码表内城市(上海=2,D-13 公开常识口径)', h2)
+  const h3 = buildHotelEntryUrl({ to: '不在码表的城市' })
+  assert(!h3.ok && h3.unresolved?.includes('不在码表的城市') === true, '未收录城市 unresolved(不猜 id,不造数)', h3)
+  assert(/city=/.test(hotelCityUnresolvedHint(['迪拜'])), '未收录指引带 cityId 发现路径(web 搜 list 页 URL)')
+
+  // K2 走形解析:domestic 形态(priceInfo 对象)/扁平形态/打码价/malformed
+  const fixture = JSON.stringify({
+    data: { hotelList: [
+      { hotelId: 442516, hotelName: 'Dubai Marriott', star: 5, commentScore: 4.7, position: { address: 'Sheikh Zayed Rd' }, priceInfo: { avgPrice: 680, total: 1360 } },
+      { hotelId: '999', hotelName: 'Rove Downtown', priceInfo: { priceDisplay: '¥7xx' } },
+    ] },
+  })
+  const hotels1 = parseCtripHotelList(fixture)
+  assert(hotels1.length === 2, '走形解析命中 hotelList 数组', hotels1)
+  assert(hotels1[0]!.name === 'Dubai Marriott' && hotels1[0]!.price === 680 && hotels1[0]!.star === 5 && hotels1[0]!.score === '4.7', '归一化字段(名/价/星/评分)', hotels1[0])
+  assert(hotels1[0]!.jumpUrl === 'https://hotels.ctrip.com/hotel/442516', 'jumpUrl 由 hotelId 构造(预订由人完成)', hotels1[0])
+  assert(hotels1[1]!.price === 0 && hotels1[1]!.priceRaw === '¥7xx', '打码价原样保留不数值化(不伪装真价)', hotels1[1])
+  const hotels2 = parseCtripHotelList(JSON.stringify({ hotelMatchInfos: [{ name: 'Atlantis', price: 2100, score: '4.8', hotelId: '123' }] }))
+  assert(hotels2.length === 1 && hotels2[0]!.price === 2100, '扁平形态(顶层 price 数字)同样命中', hotels2)
+  assert(parseCtripHotelList('not json{').length === 0 && parseCtripHotelList('{"a":1}').length === 0, 'malformed/无签名 一律返空(不抛错)')
+
+  // K3 形状嗅探签名
+  assert(looksLikeHotelListBody('{"data":{"hotelList":[]}}') === true, '签名命中 hotelList')
+  assert(looksLikeHotelListBody('{"data":{"userList":[]}}') === false, '无签名不转发(防无关响应误投)')
+  assert(looksLikeHotelListBody('x'.repeat(2_000_001)) === false, '超大响应体不嗅探(上限把关)')
+
+  // K4 闸面:日期对闸(不发上游)/城市未收录 error/节律闸 cooldown(全在 transport 之前,零桥零浏览器)
+  const dPast = await sessionHotelSearch({ to: '上海', checkIn: '2026-01-01', checkOut: '2026-01-03' })
+  assert(dPast.ok === false && dPast.verdict === 'error' && /不是未来合法区间/.test(dPast.error ?? ''), '过去入住日代码层拒绝,不发上游', dPast)
+  const dPair = await sessionHotelSearch({ to: '上海', checkIn: '2026-12-01' })
+  assert(dPair.ok === false && /成对/.test(dPair.error ?? ''), 'checkIn/checkOut 须成对', dPair)
+  __resetRateLimiterForTest()
+  const e1 = await sessionHotelSearch({ to: '不在码表的城市' })
+  assert(e1.ok === false && e1.verdict === 'error' && /city=/.test(e1.error ?? ''), '未收录城市 → error + cityId 指引', e1)
+  const e2 = await sessionHotelSearch({ to: '上海' })
+  assert(e2.ok === false && e2.verdict === 'cooldown', '节律闸:同站点 30s 内第二调 → cooldown(不发起导航)', e2)
 }
 
 if (process.env.GOTRY_SESSION_TEST_FORCE_FAILURE === '1') {

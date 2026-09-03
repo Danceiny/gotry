@@ -924,21 +924,44 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_session_search',
     description:
-      'Search on the USER\'S OWN logged-in browser session (Ctrip flights today; the account channel, not an anonymous instance). '
+      'Search on the USER\'S OWN logged-in browser session (Ctrip: kind="flight" (default) or kind="hotel"; the account channel, not an anonymous instance). '
       + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'Transport: GoTry Session Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
-      + 'Currently ctrip-flight: sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
+      + 'kind="flight": { from, to, date } — sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
+      + 'kind="hotel": { to, cityId?, checkIn?, checkOut?, adults? } — cityId = the numeric city= in a hotels.ctrip.com list URL (web-search it when the destination is outside the built-in city table); hotel prices are the user\'s real logged-in prices. Evidence [会话:ctrip-hotel@ts]. '
       + 'verdict needs-login = call gotry_session_login (opens the Ctrip login entry in the user\'s own foreground tab — no terminal, no credentials through GoTry); '
       + `needs-extension = one-time browser-extension install (Chrome Web Store one-click, installUrl is also surfaced as a clickable link in the verdict field for dsh UI to render) — the DEFAULT transport; cdp (chrome://inspect remote debugging) is a diagnostic fallback only via GOTRY_SESSION_TRANSPORT=cdp. `
       + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).',
     parameters: {
-      query: { type: 'json', required: true, description: '{ from: "上海", to: "丽江", date: "2026-10-01" }' },
+      query: { type: 'json', required: true, description: 'kind=flight(默认): { from: "上海", to: "丽江", date: "2026-10-01" }; kind=hotel: { kind: "hotel", to: "迪拜", cityId?: 220, checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", adults?: 2 }' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ from?: string; to?: string; date?: string }>(args, 'from')
+      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; cityId?: number | string; checkIn?: string; checkOut?: string; adults?: number }>(args, 'from')
+      // ---- 会话酒店(2026-09-03 实装;2026-09-02 迪拜 session:用户要携程找酒店,会话面却只有机票)----
+      if (q.kind === 'hotel') {
+        if (!q.to) {
+          return { ok: false, summary: 'kind=hotel 需要 to(目的地中文;城市码表外带 cityId=携程酒店 list 页 URL 里的 city= 数字)' } as const
+        }
+        const itp = await interpretEffect({
+          effect: 'SESSION_HOTEL_SEARCH',
+          params: {
+            to: q.to, cityId: q.cityId, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults,
+            auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
+          },
+        })
+        if (!itp.result) return declinedObservation('SESSION_HOTEL_SEARCH', itp.trace)
+        const r = itp.result
+        const top = (r.hotels ?? []).slice(0, 8).map(h => `${h.name}${h.star ? `(${h.star}星)` : ''} ${h.priceRaw ?? (h.price > 0 ? `¥${h.price}` : '价待询')}${h.score ? ` 评分${h.score}` : ''}`)
+        const summary = r.verdict === 'hit'
+          ? `${q.to} 酒店(携程,用户本人登录态,真实价)前 ${top.length} 家(预订以 jumpUrl 落地页为准):\n${top.join('\n')}\n${r.evidence}`
+          : r.verdict === 'cooldown'
+            ? `会话酒店检索节律闸冷却中(两次会话检索需 ≥30s 间隔)——稍候重试或先用其他工具推进。${r.evidence}`
+            : `会话酒店检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
+        return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+      }
       if (!q.from || !q.to || !q.date) {
-        return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD)' } as const
+        return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD);酒店检索用 kind=hotel' } as const
       }
       // 效应解译层(ADR-18):SESSION 通道策略=永不重试/不熔断,节律闸在渠道内;
       // 解译器只做分发与证据拼装,verdict 语义(risk 型 needs-login/challenged)原样透传
@@ -961,12 +984,17 @@ export function apply(ctx: Context, config: Config): void {
         : `会话检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
       return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `会话检索:${String((args.query as { from?: string })?.from ?? '')}`, kind: 'fetch', rawInput: args.query }),
-    presentResult: (_args, value) => {
-      const r = value as { verdict?: string; options?: unknown[]; installUrl?: string }
+    presentCall: args => {
+      const q = (args.query as { kind?: string; from?: string; to?: string }) ?? {}
+      return { card: 'generic', title: q.kind === 'hotel' ? `会话酒店:${q.to ?? ''}` : `会话检索:${q.from ?? ''}`, kind: 'fetch', rawInput: args.query }
+    },
+    presentResult: (args, value) => {
+      const r = value as { verdict?: string; options?: unknown[]; hotels?: unknown[]; installUrl?: string }
+      const isHotel = String((args.query as { kind?: string })?.kind) === 'hotel'
+      const n = Math.max((r.options ?? []).length, (r.hotels ?? []).length)
       const needsExt = r.verdict === 'needs-extension'
       const label = r.verdict === 'hit'
-        ? `会话 ${r.options!.length} 条`
+        ? `会话 ${n} 条`
         : r.verdict === 'needs-login'
           ? '需登录'
           : needsExt
@@ -974,7 +1002,7 @@ export function apply(ctx: Context, config: Config): void {
             : r.verdict ?? '降级'
       const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }]
       if (needsExt && r.installUrl) content.push({ type: 'text', text: `安装链接:${r.installUrl}` })
-      return { card: 'generic', title: `会话检索:${label}`, content }
+      return { card: 'generic', title: `${isHotel ? '会话酒店' : '会话检索'}:${label}`, content }
     },
   }))
 

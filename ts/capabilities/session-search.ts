@@ -6,7 +6,7 @@
  *  cdp(attach 日常 Chrome,Chrome 144+ 每连接弹权限框)降为显式后备
  * (`GOTRY_SESSION_TRANSPORT=cdp` opt-in,诊断/测试用);persistent 仅测试。
  *
- * 证据链(L4 增补):[会话:ctrip-flight@ts] = 用户本人会话内实时检索,非官方 API;
+ * 证据链(L4 增补):[会话:ctrip-flight@ts] / [会话:ctrip-hotel@ts] = 用户本人会话内实时检索,非官方 API;
  * 风控命中(verdict='challenged')= degraded,绝不重试、绝不绕过(合规支柱②)。
  * 节律(§3.4):同站点 ≥30s 间隔 + 单调冷却;超间隔返回 verdict='cooldown'。
  * 永不抛错;扩展车道 fail-closed(桥/扩展不可用即 verdict,零花费);测试/巡检用隔离 profile 与 stateRoot。
@@ -17,6 +17,7 @@ import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure } from 
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { buildEntryUrl, NETWORK_HINTS, parseBatchSearch, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
+import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
 import { EXTENSION_STORE_URL } from './session/extension-bridge.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
@@ -107,6 +108,184 @@ export function appendExtensionAudit(auditPath: string | undefined, entry: { kin
     mkdirSync(dirname(auditPath), { recursive: true })
     appendFileSync(auditPath, JSON.stringify(record) + '\n')
   } catch { /* 审计失败不阻塞检索 */ }
+}
+
+// ---------------------------------------------------------------------------
+// 酒店会话检索(2026-09-03 实装;与机票同构:节律闸/登录闸/needs-extension 映射/
+// 挑战红线/证据链。酒店页与机票页同属 ctrip.com 风控域,但通道键独立——
+// 各自 30s 预算已足够礼貌,跨通道合并预算留首个真会话风控观测后校准)
+// ---------------------------------------------------------------------------
+
+export interface SessionHotelQuery {
+  /** 目的地(中文);城市码表未收录时须带 cityId */
+  to: string
+  /** 显式城市 id(携程/trip.com 酒店 list 页 URL 的 city= 数字;覆盖码表) */
+  cityId?: number | string
+  /** YYYY-MM-DD */
+  checkIn?: string
+  /** YYYY-MM-DD(与 checkIn 成对) */
+  checkOut?: string
+  adults?: number
+  /** 隔离 profile 目录(测试必传;默认 /tmp 专用目录) */
+  profileDir?: string
+  headless?: boolean
+  /** ReadGuard 审计路径(测试传隔离 stateRoot 下) */
+  auditPath?: string
+  /** 等嗅探回包的上限,默认 30_000(酒店列表接口比机票慢) */
+  timeoutMs?: number
+  /** 允许匿名实例(默认 false);true 仅适配器链路自检,证据链标 anonymous */
+  allowAnonymous?: boolean
+}
+
+export interface SessionHotelResult {
+  ok: boolean
+  via: 'session-ctrip-hotel' | 'session-ctrip-hotel-error'
+  evidence: string
+  latencyMs: number
+  verdict: SessionVerdict
+  hotels?: SessionHotelOption[]
+  error?: string
+  /** needs-extension 时给出 Chrome Web Store URL(dsh UI 渲成可点链接) */
+  installUrl?: string
+  installAction?: 'add-to-chrome'
+}
+
+/** 酒店城市码表未收录时的人话指引(纯函数,测试锚点) */
+export function hotelCityUnresolvedHint(cities: string[]): string {
+  return `城市 ${cities.join('/')} 不在携程酒店城市码表——先 web 搜「hotels.ctrip.com ${cities[0] ?? ''} 酒店」拿到 list 页 URL 里的 city= 数字,带 cityId 重试`
+}
+
+export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionHotelResult> {
+  const started = Date.now()
+  const ts = new Date().toISOString()
+  const site = 'ctrip-hotel'
+  const err = (verdict: SessionVerdict, error: string): SessionHotelResult => ({
+    ok: false, via: 'session-ctrip-hotel-error', evidence: `[会话:${site}@error@${ts}] ${error}`, latencyMs: Date.now() - started, verdict, error,
+  })
+
+  // 日期对闸(与 flyai hotel 同口径):成对且 YYYY-MM-DD;过去日期不发上游
+  if ((q.checkIn ? 1 : 0) !== (q.checkOut ? 1 : 0) || (q.checkIn && !/^\d{4}-\d{2}-\d{2}$/.test(q.checkIn))) {
+    return err('error', 'checkIn/checkOut 须成对且为 YYYY-MM-DD(未定档期可不带日期)')
+  }
+  if (q.checkIn) {
+    const now = new Date()
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    if (q.checkIn < today || (q.checkOut ?? '') < q.checkIn) {
+      return err('error', `入住 ${q.checkIn}/退房 ${q.checkOut ?? ''} 不是未来合法区间(今天 ${today})——向用户确认日期后再查`)
+    }
+  }
+
+  // 节律闸:超间隔即拒,不发起导航
+  const last = lastCallAt.get(site) ?? 0
+  if (Date.now() - last < MIN_INTERVAL_MS) {
+    return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
+  }
+  lastCallAt.set(site, Date.now())
+
+  const entry = buildHotelEntryUrl({ to: q.to, cityId: q.cityId, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults })
+  if (!entry.ok || !entry.url) {
+    return err('error', hotelCityUnresolvedHint(entry.unresolved ?? [q.to]))
+  }
+
+  const mode = resolveTransportMode(q.profileDir)
+
+  if (mode === 'extension') {
+    // ① 登录态快查(与机票同账号体系,票据 cookie 名一致)
+    const login = await extensionCookieNames({ site, domain: SITE_DOMAIN.replace(/^\./, ''), ticketNames: LOGIN_COOKIE_NAMES })
+    if (!login.ok) {
+      const verdict = classifyBridgeFailure(login.kind)
+      if (verdict === 'needs-extension') {
+        return { ok: false, via: 'session-ctrip-hotel-error', evidence: '[会话:ctrip-hotel-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: login.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+      }
+      return err(verdict, login.summary)
+    }
+    if (login.tickets.length === 0 && !q.allowAnonymous) {
+      return err('needs-login', '未检出你本人登录态——调用 gotry_session_login 为用户打开携程登录入口(登录在携程官网完成;gotry 永不经手密码/验证码/cookie 值)')
+    }
+    // ② 检索 job:后台标签 + 被动嗅探(URL hint + 形状兜底;扩展零写行为)
+    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs })
+    appendExtensionAudit(q.auditPath, {
+      kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
+      result: r.ok ? (r.timedOut ? 'timeout' : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
+    })
+    if (!r.ok) {
+      const verdict = classifyBridgeFailure(r.kind)
+      if (verdict === 'needs-extension') {
+        return { ok: false, via: 'session-ctrip-hotel-error', evidence: '[会话:ctrip-hotel-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: r.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+      }
+      return err(verdict, r.summary)
+    }
+    const title = r.title
+    const head = r.body.slice(0, 5000)
+    if (CHALLENGE_RE.test(title + head)) {
+      return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
+    }
+    const hotels = parseCtripHotelList(r.body)
+    const verdict: SessionVerdict = hotels.length > 0 ? 'hit' : 'miss'
+    return {
+      ok: true,
+      via: 'session-ctrip-hotel',
+      evidence: `[会话:${site}@${ts}] ${hotels.length} hotels;transport=extension(被动嗅探,零系统弹窗;扩展零写行为=物理只读)${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
+      latencyMs: Date.now() - started,
+      verdict,
+      hotels,
+    }
+  }
+
+  // cdp/persistent 车道:与机票同构——挂监听等 NETWORK hint 回包(酒店用 HOTEL hints + 形状兜底)
+  const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath, mode: mode === 'persistent' ? 'persistent' : 'cdp', newPage: true })
+  if (!t.ok) {
+    return err(classifyTransportFailure(t.summary, q.profileDir === undefined), t.summary)
+  }
+  try {
+    const loggedIn = async (): Promise<boolean> => {
+      const cookies = await t.browser.cookies().catch(() => [])
+      return cookies.some((c) => c.domain.includes(SITE_DOMAIN.replace(/^\./, '')) && LOGIN_COOKIE_NAMES.includes(c.name))
+    }
+    if (!(await loggedIn()) && !q.allowAnonymous) {
+      return err('needs-login', '未检出你本人登录态——调用 gotry_session_login 为用户打开携程登录入口(登录在携程官网完成;gotry 永不经手密码/验证码/cookie 值)')
+    }
+    let settled = false
+    let body = ''
+    const heard = new Promise<void>((resolve) => {
+      t.page.on('response', async (res) => {
+        if (settled) return
+        const u = res.url()
+        const hostHit = u.includes(HOTEL_SITE_HOST)
+        if (!hostHit) return
+        try {
+          const text = await res.text()
+          if (text && (hostHit && /hotels\.ctrip\.com\/(hotels\/api|domestic\/pc\/api)|GetHotelListBySOA|GetHotelListByCity|HotelSearch|hotelsearch/i.test(u) || text.length <= 2_000_000 && /"hotelList"|"hotelMatchInfos"|"hotelName"/.test(text))) {
+            body = text
+            settled = true
+            resolve()
+          }
+        } catch { /* 流式/竞态不可读则继续等下一个 */ }
+      })
+      setTimeout(() => resolve(), q.timeoutMs ?? 30_000)
+    })
+    await t.page.goto(entry.url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    await heard
+    const title = await t.page.title().catch(() => '')
+    const headHtml = (await t.page.content().catch(() => '')).slice(0, 5000)
+    if (CHALLENGE_RE.test(title + headHtml)) {
+      return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
+    }
+    const hotels = parseCtripHotelList(body)
+    const verdict: SessionVerdict = hotels.length > 0 ? 'hit' : 'miss'
+    return {
+      ok: true,
+      via: 'session-ctrip-hotel',
+      evidence: `[会话:${site}@${ts}] ${hotels.length} hotels;guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
+      latencyMs: Date.now() - started,
+      verdict,
+      hotels,
+    }
+  } catch (e) {
+    return err('error', e instanceof Error ? e.message.slice(0, 200) : String(e))
+  } finally {
+    await t.close()
+  }
 }
 
 export async function sessionFlightSearch(q: SessionFlightQuery): Promise<SessionSearchResult> {

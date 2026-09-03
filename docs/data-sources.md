@@ -243,7 +243,7 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 - **OTA 平铺**:founder 口径落地——工具描述与 persona (19) 删「主链路/交叉验证/三级路由」层级话术;**拍平的是路由优先级,不是 L4 证据链纪律**(逐源标注照旧必达用户)。
 - **账号授权闸(支柱④进代码;v2 会话内一次)**:
   - `tools/pre-execute` 监听器(`session-consent.ts`)对账号面工具**每会话每站点首次调用**返回 `{kind:'ask'}` → dsh 原生 `ApprovalService`(dsh-base profile 默认挂载 policy=ask)→ web 审批卡;allowed-once 记入会话 granted 集(会话内免再弹),**rejected/cancelled 记入 denied 集 = 本会话吊销**(不弹卡不执行——founder 实测「每次都弹,经常无法点击」,逐次批准骚扰已根治);
-  - 无审批通道 fail-closed(headless 无用户在场 = 无授权);插件 config `sessionAccess: ask|allow|off`(随时可关/预授权/总闸);站点白名单=适配器注册表现状(仅 ctrip-flight)。飞猪通道**不过闸**(匿名无用户身份,无账号风控/PIPL 面,配额限流已是结构化 error);session-tests §I + smoke §13 断言。
+  - 无审批通道 fail-closed(headless 无用户在场 = 无授权);插件 config `sessionAccess: ask|allow|off`(随时可关/预授权/总闸);站点白名单=适配器注册表现状(ctrip-flight + ctrip-hotel,2026-09-03 酒店实装)。飞猪通道**不过闸**(匿名无用户身份,无账号风控/PIPL 面,配额限流已是结构化 error);session-tests §I + smoke §13 断言。
 - **登录产品化(第 18 工具 `gotry_session_login`,2026-08-29)**:
   - `needs-login` 时 agent 直调(用户无需终端)——attach 用户 Chrome、弹登录入口、等待其在**携程官网**完成登录;**语义红线:登录永远发生在外部网站——gotry 永不收集/存储/传输密码、验证码或任何 cookie 值**,只读票据 cookie 名这个存在性事实(名称级,0 值过手;session-tests §J3 值不泄露断言)。
   - 登录引导页不挂 ReadGuard(transport `guard:false` 唯一豁免面):检索面「无守卫会话不存在」不变量不变,登录页是用户自己的凭证流,我们的写拦截反而会物理 abort 用户本人的登录 POST(隐私+可靠性双输)。遗留 CLI 探针 `scripts/session-login.ts` 降级为薄壳。——attach 用户日常 Chrome(与检索同传输层)→ 新开登录入口标签 → 人自行登录 → 只读轮询票据 cookie 名(不读值不碰密码/OTP/验证码)→ 检出即报;`needs-login` 文案改指该脚本(不再是「跑脚本」空指引)。
