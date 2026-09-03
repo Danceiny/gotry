@@ -170,11 +170,10 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 **今天可用**(全栈回归全绿;每项都有确定性测试):
 
 - **Z3 求解引擎** —— 可行性判决 + 门到门全成本;历史并发竞态已根治并进回归闸
-- **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`)
 - **账号会话检索** —— 你本人登录态查携程机票;观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
 - **扩展按需装** —— `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 这边不跑 setup wizard、不开 chrome://extensions、不动剪贴板
 - **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
-- **有界的工具循环** —— 16 次派发后注入软收敛,18 次后结构化 `TOOL_BUDGET_EXHAUSTED` 拒绝;经打包消费者安装的 E2E 在 CI 里实测
+- **按任务路由的回合预算** —— 每轮先由确定性路由器(零 LLM)分类 quick / sync / deep-planning;时间才是唯一预算,且到点出口跟任务走:quick/sync 收敛作答,deep-planning 转后台落 `gotry_turn_handoff.v1` 工单(ETA 约 1 小时)而不是让会话流死掉;工单由 `scripts/turn-handoff-collect.ts` 在后台收集结算(幂等、带递归防护的子规划会话),回访时经只读工具 `gotry_turn_handoff_list` 查询状态与交付物;经打包消费者安装的 E2E 在 CI 里实测
 
 **已知限制**(诚实清单):
 
