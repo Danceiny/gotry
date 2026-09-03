@@ -18,7 +18,7 @@ const executableLines = script.split('\n').map((line) => line.trim()).filter((li
 const build = script.indexOf('(node scripts/build-dist.mjs) || FAIL=1')
 assert.notEqual(build, -1, 'run-all must build dist')
 const preverify = script.indexOf('scripts/publish-preverify.ts')
-const plannerE2E = script.indexOf('scripts/agent-planning-budget-e2e.ts')
+const plannerE2E = script.indexOf('scripts/agent-planning-turn-deadline-e2e.ts')
 assert.ok(build < preverify, 'dist build must precede publish preverify')
 assert.ok(build < plannerE2E, 'dist build must precede planner E2E')
 
