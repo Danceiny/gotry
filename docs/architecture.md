@@ -572,6 +572,7 @@ Round 7 将 benchmark opt-in 收敛为 minimal kernel，并把 system-prompt/roo
 | `dsh-plugins-shortlist.md` | dsh 社区插件选型(awesome-dsh-plugin 全量调研,issue #9) |
 | `deerflow-research.md` | DeerFlow 研究 → gotry 优化目标 T1-T4(issue #10) |
 | `maka-research.md` | Apache Maka(Incubating)研究 → 与 ADR-15 事务化状态基座逐项对照(durable-execution 机制/可采纳面,研究底稿供 founder 拍板) |
+| `enterprise-travel-reference-study.md` | **某企业级差旅 Agent 系统八维参考研究(2026-09-03,来源脱敏)**:双轨执行/写闭环→M5 设计输入(ADR-17/S4 接缝),合规收口装饰器/领域 skill→M6 输入,生产级状态→D-15 触发时参考,双模型/上下文压缩→不采纳(ADR-24 已覆盖);差异化保留清单与「不追求代码量等价」判定 |
 | `hotelbyte-skills-design.md` | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
 | `e2e-prompts.md` | dsh 端到端真 LLM 验证记录(§1-§11,wrapper/澄清卡/背景调查等) |
 | `memory-design.md` | **记忆域设计**:C 端六层重设计(M1-M6 现状映射/P1-P4 分期增量/铁律与验收),M4 交付「六层框架重设计」的正式文档 |
