@@ -17,7 +17,8 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const repoRoot = join(import.meta.dirname, '..', '..')
@@ -112,4 +113,29 @@ assert.ok(report.includes('# GoTry 依赖体检报告'), '报告 markdown 应落
 assert.ok(report.includes('npx gotry doctor --fix'), '报告应带补装指引')
 console.log('8. doctor 子命令(体检清单 + LLM key 让渡 + 报告落盘)OK')
 
-console.log('BOOTSTRAP TESTS: 8/8 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / 显式跳过 + auto 跳过 + 单项跳过)')
+// 9. calendar 子命令(issue #106/D-9:setup 状态面,禁止 env 控制产品行为)。
+//    HOME 隔离到 tmp(os.homedir() 尊重 $HOME):状态文件 ~/.gotry/calendar.json
+//    的 on/off/status 三态全部走真实 bootstrap 路径验证。
+const calHome = mkdtempSync(join(tmpdir(), 'gotry-cal-test-'))
+const calEnv = { HOME: calHome }
+const c9a = runBootstrap(['calendar', '--status'], calEnv)
+assert.equal(c9a.code, 0, `calendar --status(默认态)应 exit 0\n${c9a.out}`)
+assert.ok(c9a.out.includes('默认未挂载'), '默认态=未挂载')
+assert.ok(c9a.out.includes(join(calHome, '.gotry', 'calendar.json')), '状态文件路径可见')
+const c9b = runBootstrap(['calendar'], calEnv)
+assert.equal(c9b.code, 0, `calendar(开启)应 exit 0\n${c9b.out}`)
+assert.ok(c9b.out.includes('已开启挂载'), '开启态输出')
+assert.ok(c9b.out.includes('cordis.patch.yml'), '未配置时给 profile 配置指引')
+const c9c = runBootstrap(['calendar', '--status'], calEnv)
+assert.ok(c9c.out.includes('已挂载'), '开启后 --status 显示已挂载')
+const c9d = runBootstrap(['doctor'], { ...calEnv, GOTRY_SETUP_SKIP: '1' })
+assert.ok(c9d.out.includes('dsh-calendar'), 'doctor 清单含 calendar 项(setup 状态面)')
+assert.ok(c9d.out.includes('已挂载但 calendar 未配置'), '开启未配置=doctor 可见')
+const c9e = runBootstrap(['calendar', '--off'], calEnv)
+assert.equal(c9e.code, 0, `calendar --off 应 exit 0\n${c9e.out}`)
+assert.ok(c9e.out.includes('恢复默认不挂载'), '关闭态输出')
+const c9f = runBootstrap(['calendar', '--status'], calEnv)
+assert.ok(c9f.out.includes('默认未挂载'), '关闭后回到默认态')
+console.log('9. calendar 子命令(setup 状态面 on/off/status + doctor 三态,HOME 隔离)OK')
+
+console.log('BOOTSTRAP TESTS: 9/9 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过)')

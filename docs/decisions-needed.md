@@ -284,7 +284,7 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 **上下**: dsh-calendar 在 gotry 分发面内(`cordis.gotry-patch.yml` 分发、`gotry-inner.js` 运行时解析注入),且代码注释明知「未配置时工具报错降级」——模型会话中段撞「未配置 username」是分发决策的直接后果(triage 的「零引用」结论只覆盖 persona/文档,未覆盖分发面)。gotry 对 calendar 的唯一诉求是工作窗口读取,而 persona (1) 访谈本就首轮必问工作窗口。
 
 **选项**:
-- **A. 默认不挂载**(推荐)— `GOTRY_ENABLE_CALENDAR=1` opt-in;doctor 新增宿主插件节给配置引导。未配置的 calendar 是纯负资产(多一个会报错的工具)
+- **A. 默认不挂载**(推荐)— 挂载与否进 **setup 状态管理**(`~/.gotry/calendar.json`,`npx gotry setup calendar` on/off;**禁止环境变量控制产品行为**——founder 2026-09-03 纠偏);doctor 新增宿主插件节给三态与配置引导。未配置的 calendar 是纯负资产(多一个会报错的工具)
 - **B. 保留默认挂载 + doctor 引导** — 治标:模型仍会先撞一次报错才知道要配置
 
 **founder 一句话拍**:

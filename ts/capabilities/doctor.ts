@@ -170,8 +170,13 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
 
   // 6. dsh-calendar(patch 分发面宿主插件;D-9 拍板:默认不挂载)
   //    未配置的日历工具是纯负资产(issue #106:会话中段才撞「未配置 username」),
-  //    工作窗口由 persona (1) 访谈覆盖;opt-in 挂载 + doctor 引导配置。
-  const calEnabled = env.GOTRY_ENABLE_CALENDAR === '1'
+  //    工作窗口由 persona (1) 访谈覆盖;挂载与否由 **setup 状态面**决定
+  //    (`~/.gotry/calendar.json`,`npx gotry setup calendar` on/off——founder
+  //    2026-09-03 纠偏:禁止环境变量控制产品行为,可选依赖进 setup 状态管理)。
+  const calStatePath = join(home, '.gotry', 'calendar.json')
+  const calEnabled = (() => {
+    try { return JSON.parse(readFileSync(calStatePath, 'utf-8'))?.enabled === true } catch { return false }
+  })()
   const calProfilePatch = join(home, '.dsh/profiles/web/cordis.patch.yml')
   const calConfigured = calEnabled && existsSync(calProfilePatch) && (() => {
     try {
@@ -185,11 +190,11 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
         detail: '默认未挂载(D-9:未配置的日历工具不进工具箱;工作窗口由访谈覆盖,不影响任何检索)',
       }
     : calConfigured
-      ? { id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'ok', detail: `已挂载且已配置(${calProfilePatch})` }
+      ? { id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'ok', detail: `已挂载且已配置(${calStatePath})` }
       : {
           id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'degraded',
-          detail: 'GOTRY_ENABLE_CALENDAR=1 已设但 calendar 未配置 username——日历工具会话中会报「未配置」',
-          fix: `在 ${calProfilePatch} 覆盖 calendar 行的 config 填 username(或去掉 GOTRY_ENABLE_CALENDAR 恢复默认不挂载)`,
+          detail: '已挂载但 calendar 未配置 username——日历工具会话中会报「未配置」',
+          fix: `npx gotry setup calendar --off(恢复默认不挂载),或在 ${calProfilePatch} 覆盖 calendar 行 config 填 username(指引: npx gotry setup calendar --status)`,
         })
 
   // 7. LLM key:显式让渡给 dsh 宿主(founder 2026-09-02:doctor 不管 key)
