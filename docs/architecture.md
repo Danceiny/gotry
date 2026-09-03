@@ -435,6 +435,8 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 
 **部分清偿 2026-08-30**:action-cache + 金标准输入 + #21 字段 fixture scorer/双源 shape gate 已落;传输层定案扩展桥(§38 防漂移测试把 Node 常量与扩展代码锁死);Issue #67 增加 `--golden=static` 离线 comparator(OpenFlights 固定 route/carrier + manual 时刻/价格带,requested/effective/provenance/fallback 可审计,§44),但它不是实时可售性来源、也不降低携程 batchSearch 改版风险;真实 sf-01..08 会话证据仍依赖用户扩展连接,站点断时按既有渠道显式降级
 
+**部分清偿 2026-09-03(12306 第一方校准)**:rail-12306 适配器不再等「首个真会话后校准」——电报码表逐条核对自官方 `station_name.js` 全量站表(32 城起步集→129 城,曾借此纠出南宁 NIZ→NNZ 错码),座位桶索引与站名映射取自官方前端 `queryLeftTicket_end_js.js` 的 cN(result,map) 转换函数(旧公开常识索引与官方现行映射不符,首查前即纠);`data/stations-12306-verify.json` 快照 + session-tests L 段防漂移断言锁死,携程侧接口面校准仍待真会话
+
 **D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态)**
 
 **部分清偿 2026-08-30**:
