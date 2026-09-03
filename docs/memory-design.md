@@ -1,7 +1,7 @@
 # GoTry 记忆域设计(C 端六层重设计)
 
 > 状态:**active design**(M4 交付「六层框架重设计」的正式设计文档;已落地部分以 ✅ 标注,分期增量见 §4)
-> 上游:`gotry-master-outline.md` §3.5(六层参考框架,travel_agent 设计参考,代码与 schema 均不搬用)、`gotry-product-design.md` §7.6(长程状态与记忆)
+> 上游:`gotry-master-outline.md` §3.5(六层参考框架,T 系统设计参考,代码与 schema 均不搬用;T 系统=某企业级差旅 Agent 生产系统,来源脱敏)、`gotry-product-design.md` §7.6(长程状态与记忆)
 > 纪律:单一文件承载记忆域;版本历史归 git
 > 日期:2026-08-28
 
@@ -25,7 +25,7 @@
 | **M5 同行人档案** | 同行人+约束(高血压/晕车/体力),敏感填充形态 | TripState.companions(会话内) | ⚠️ 简版;**缺持久化**——增量 P2 |
 | **M6 会话双区记忆** | Trip Notebook(durable)+ Hot Context(分层过期) | dsh 会话自有 transcript | ❌ 增量 P3(依赖真实使用模式) |
 
-**参考框架之外的 GoTry 增量**(travel_agent/ai-agent-book 都没有的,本域原创):
+**参考框架之外的 GoTry 增量**(T 系统/ai-agent-book 都没有的,本域原创):
 
 - **效用归因 sidecar**(`memory-utility.ts`,ADR-14):recalled/applied/verified_outcome 三类事件;归因只认 owner 确认——「被召回 ≠ 有用」。这是六层之上的一把**标尺**,量每层记忆值不值得存。
 - **触达纪律**(`wish-pool.ts` 0..1):记忆的输出面受「永不主动推销」红线约束(产品红线 96)。
