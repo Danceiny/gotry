@@ -74,7 +74,7 @@ Architecture, five layers:
 | Group | Tool | What it does |
 |---|---|---|
 | **Realtime retrieval (OTA/official, read-only)** | `gotry_flyai_search` | Live flight/train/hotel quotes via the Fliggy official channel (masked hotel prices upstream; real prices on the jumpUrl page) |
-| | `gotry_session_search` | Ctrip flights on the **user's own logged-in Chrome session** (consent-gated, physically read-only) |
+| | `gotry_session_search` | Ctrip flights **and hotels** on the **user's own logged-in Chrome session** (consent-gated, physically read-only; hotels = `kind:"hotel"` + optional `cityId`, real logged-in prices) |
 | | `gotry_session_login` | Login bootstrap: auto-detects existing login first; otherwise opens the login entry in the user's Chrome (**zero terminal**) |
 | | `gotry_weather_check` | Open-Meteo forecast ≤16 d + historical climate baseline |
 | | `gotry_flight_verify` | OpenSky ADS-B live flight observation (three-valued) |
@@ -170,7 +170,7 @@ Current release: **v0.0.1-rc.17** (npm dist-tag `rc`; `latest` stays on rc.16 pe
 **Working today** (full-stack regression green; every item has deterministic tests):
 
 - **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed and regression-gated
-- **Account-session search** — Ctrip flights on your logged-in Chrome; observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
+- **Account-session search** — Ctrip flights **and hotels** on your logged-in Chrome (hotels added 2026-09-03: real logged-in prices via passive sniffing; interface surface calibrates with the first live session); observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
 - **Extension install on demand** — `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` is offered as a clickable link in the dsh UI when an account-session tool first needs it (one-click install + auto-update); the gotry side never runs a setup wizard
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English solve output via `GOTRY_LOCALE=en`
 - **Routed turn budgets** — every turn is classified (quick / sync / deep-planning) by a deterministic, zero-LLM router; time is the only budget and the deadline exit follows the task: quick and sync turns converge to an answer, deep-planning turns hand off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) instead of dying mid-stream; the ticket is collected in the background by `scripts/turn-handoff-collect.ts` (idempotent, recursion-guarded child planner) and surfaces in-chat via the read-only `gotry_turn_handoff_list` tool; exercised end-to-end through a packaged consumer install in CI

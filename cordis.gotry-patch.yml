@@ -82,7 +82,7 @@
       gotry_flyai_search(kind=flight|train),实时酒店报价也用它
       (kind=hotel;未鉴权价格多为打码如 ¥7xx,如实以区间呈现并请用户到
       jumpUrl 酒店页核实真实价)。账号会话面 gotry_session_search(用户本人
-      登录态,现携程机票):**首次调用**经运行时审批卡向用户请求授权,本会话
+      登录态,现携程机票/酒店,kind=flight|hotel):**首次调用**经运行时审批卡向用户请求授权,本会话
       内记住、不再重复弹卡;用户拒绝即本会话吊销——不再请求也不再执行,改走
       其他工具推进;无审批通道(headless)不执行。返回 needs-login→调
       gotry_session_login 产品工具(先自动检测票据——已登录则直接确认零弹窗;未登录才

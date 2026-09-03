@@ -41,9 +41,10 @@ import {
   extensionCookieNames,
   extensionSearchJob,
 } from '../capabilities/session/extension-channel.ts'
-import { appendExtensionAudit, resolveTransportMode, sessionFlightSearch } from '../capabilities/session-search.ts'
+import { appendExtensionAudit, resolveTransportMode, sessionFlightSearch, sessionHotelSearch, __resetRateLimiterForTest } from '../capabilities/session-search.ts'
 import { sessionLogin } from '../capabilities/session-login.ts'
 import { LOGIN_COOKIE_NAMES, NETWORK_HINTS, SITE_DOMAIN } from '../capabilities/session/adapters/ctrip-flight.ts'
+import { HOTEL_NETWORK_HINTS, HOTEL_SITE_HOST, buildHotelEntryUrl } from '../capabilities/session/adapters/ctrip-hotel.ts'
 import { evaluateDoubleSource, type SessionComparableRecord } from '../capabilities/session/benchmark.ts'
 
 const EXT_DIR = fileURLToPath(new URL('../../extension/', import.meta.url))
@@ -206,10 +207,10 @@ async function main(): Promise<void> {
     assert.ok(manifest.host_permissions.includes('https://*.ctrip.com/*'))
   })
 
-  await check('防漂移:content_scripts 双 world 只挂 flights.ctrip.com(MAIN 嗅探 + ISOLATED 桥)', () => {
+  await check('防漂移:content_scripts 双 world 挂 flights+hotels.ctrip.com(MAIN 嗅探 + ISOLATED 桥;2026-09-03 酒店实装)', () => {
     assert.equal(manifest.content_scripts.length, 2)
     for (const cs of manifest.content_scripts) {
-      assert.deepEqual(cs.matches, ['https://flights.ctrip.com/*'])
+      assert.deepEqual(cs.matches, ['https://flights.ctrip.com/*', `https://${HOTEL_SITE_HOST}/*`])
       assert.equal(cs.run_at, 'document_start')
     }
     const worlds = manifest.content_scripts.map((cs) => cs.world ?? 'ISOLATED').sort()
@@ -226,13 +227,22 @@ async function main(): Promise<void> {
     }
     assert.ok(backgroundJs.includes("domain: 'ctrip.com'"), 'background.js 站点域应与 LOGIN_TARGETS.domain 对账')
   })
-  await check('防漂移:NETWORK_HINTS(Node)= content-main HINT_RE(MAIN-world 嗅探面)', () => {
+  await check('防漂移:NETWORK_HINTS + HOTEL_NETWORK_HINTS(Node)= content-main 嗅探面(MAIN-world)', () => {
     for (const hint of NETWORK_HINTS) {
       assert.ok(stripRe(contentMainJs).includes(stripRe(hint.source)), `content-main.js 缺 hint ${hint.source}`)
     }
+    for (const hint of HOTEL_NETWORK_HINTS) {
+      assert.ok(stripRe(contentMainJs).includes(stripRe(hint.source)), `content-main.js 缺酒店 hint ${hint.source}`)
+    }
+    assert.ok(contentMainJs.includes('hotels\\.ctrip\\.com'), 'content-main.js 应感知酒店页域(形状嗅探兜底的作用域)')
   })
-  await check('防漂移:检索/登录 URL 面(background 只允许 flights.ctrip.com;ISOLATED 桥转发两类事件)', () => {
-    assert.ok(backgroundJs.includes('https://flights.ctrip.com/'))
+  await check('防漂移:酒店形状签名(Node looksLikeHotelListBody 同款)= content-main HOTEL_BODY_SIG_RE', () => {
+    assert.ok(stripRe(contentMainJs).includes('"hotelList"|"hotelMatchInfos"|"hotelName"'), '形状嗅探签名两侧必须逐字一致')
+  })
+  await check('防漂移:检索/登录 URL 面(background per-site 白名单 flights+hotels;ISOLATED 桥转发两类事件)', () => {
+    assert.ok(backgroundJs.includes('https://flights.ctrip.com/'), 'background 应含机票检索白名单')
+    assert.ok(backgroundJs.includes(`https://${HOTEL_SITE_HOST}/`), 'background 应含酒店检索白名单(2026-09-03 实装)')
+    assert.ok(backgroundJs.includes("'ctrip-hotel'"), 'background SITES 应注册 ctrip-hotel')
     assert.ok(contentMainJs.includes('gotry-ctrip-sniff'))
     assert.ok(contentBridgeJs.includes('gotry-ctrip-sniff'))
     assert.ok(contentBridgeJs.includes('gotry-page'))
@@ -421,8 +431,17 @@ async function main(): Promise<void> {
             await claimOnce(lane.port, (job) => {
               if (job.kind === 'cookie-names') return { ok: true, kind: 'cookie-names', names: ['cticket'] }
               if (job.kind === 'search') {
-                assert.ok(String(job.url).startsWith('https://flights.ctrip.com/'))
-                return { ok: true, kind: 'search', body: JSON.stringify({ data: { flightItineraryList: [] } }), title: '机票列表' }
+                const u = String(job.url)
+                const isHotel = u.startsWith(`https://${HOTEL_SITE_HOST}/`)
+                assert.ok(u.startsWith('https://flights.ctrip.com/') || isHotel, `search job 只允许已注册站点域,实际 ${u}`)
+                return {
+                  ok: true,
+                  kind: 'search',
+                  body: isHotel
+                    ? JSON.stringify({ data: { hotelList: [{ hotelId: 442516, hotelName: 'Hotel X', star: 5, commentScore: 4.7, priceInfo: { avgPrice: 680 } }] } })
+                    : JSON.stringify({ data: { flightItineraryList: [] } }),
+                  title: isHotel ? '酒店列表' : '机票列表',
+                }
               }
               return { ok: false, error: `unexpected kind ${job.kind}` }
             }, ac.signal)
@@ -439,6 +458,18 @@ async function main(): Promise<void> {
       assert.ok(search.ok)
       assert.equal(search.ok ? search.timedOut : true, false)
       assert.ok(search.ok ? search.body.includes('flightItineraryList') : false)
+
+      // 酒店车道(2026-09-03 实装):per-site 白名单放行 hotels.ctrip.com,嗅探回包走形解析出结构化酒店
+      const hotelLane = await extensionSearchJob({ site: 'ctrip-hotel', url: `https://${HOTEL_SITE_HOST}/hotels/list?city=220&checkin=2026-12-01&checkout=2026-12-03`, timeoutMs: 3_000 })
+      assert.ok(hotelLane.ok, '酒店 search job 应放行(per-site 白名单)')
+      assert.ok(hotelLane.ok ? hotelLane.body.includes('hotelList') : false)
+      __resetRateLimiterForTest()
+      const hotelSession = await sessionHotelSearch({ to: '迪拜', cityId: 220, checkIn: '2026-12-01', checkOut: '2026-12-03', timeoutMs: 3_000 })
+      assert.equal(hotelSession.verdict, 'hit', `酒店会话检索应 hit,实际 ${hotelSession.verdict}:${hotelSession.error ?? ''}`)
+      assert.ok(hotelSession.evidence.includes('[会话:ctrip-hotel@'), '酒店证据链 [会话:ctrip-hotel@ts]')
+      assert.equal(hotelSession.hotels?.[0]?.name, 'Hotel X')
+      assert.equal(hotelSession.hotels?.[0]?.price, 680)
+      assert.ok(hotelSession.hotels?.[0]?.jumpUrl?.includes('/hotel/442516'), 'jumpUrl 由 hotelId 构造(预订由人在落地页完成)')
 
       const login = await sessionLogin({ site: 'ctrip-flight' })
       assert.equal(login.verdict, 'logged-in')
