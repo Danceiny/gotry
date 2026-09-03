@@ -16,15 +16,16 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { readLatestChannelEvents } from './channel-health.ts'
 
 export type DoctorStatus = 'ok' | 'missing' | 'degraded'
 
 export interface DoctorItem {
   /** 稳定 id(报告/测试锚点) */
-  id: 'node' | 'extension' | 'agent-reach' | 'hbcli' | 'flyai' | 'sidebar' | 'llm-key'
+  id: 'node' | 'extension' | 'agent-reach' | 'hbcli' | 'flyai' | 'sidebar' | 'llm-key' | 'calendar'
   /** 展示名 */
   label: string
   status: DoctorStatus
@@ -45,6 +46,8 @@ export interface DoctorOptions {
   repoRoot?: string
   homeDir?: string
   env?: NodeJS.ProcessEnv
+  /** 状态根(读通道健康事件 channel-health.jsonl;缺省不读) */
+  stateRoot?: string
 }
 
 /** hbcli 已知安装位(与 capabilities/hbcli.ts hbcliBinCandidates 同清单) */
@@ -138,12 +141,20 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
   }
 
   // 4. flyai(飞猪官方只读通道;匿名试用额度共享,易达限)
+  //    配额状态可见(通道健康持久面):最近一次达限时间进 detail——
+  //    「易达限却不可见」是 issue #107 的病灶之一。
   const flyaiKey = env.FLYAI_API_KEY?.trim()
+  const flyaiQuotaNote = !flyaiKey && opts.stateRoot
+    ? await (async () => {
+        const ev = (await readLatestChannelEvents(opts.stateRoot!)).get('flyai')
+        return ev?.state === 'down' ? `;最近一次试用达限: ${ev.at}(匿名共享池,正式 key 可解除)` : ''
+      })()
+    : ''
   items.push(flyaiKey
     ? { id: 'flyai', label: 'FlyAI(飞猪官方检索)', status: 'ok', detail: 'FLYAI_API_KEY 已配(正式 key,无试用额度限制)' }
     : {
         id: 'flyai', label: 'FlyAI(飞猪官方检索)', status: 'degraded',
-        detail: '未配 FLYAI_API_KEY——走匿名试用额度(共享,易达限;达限报 "Trial limit reached")',
+        detail: `未配 FLYAI_API_KEY——走匿名试用额度(共享,易达限;达限报 "Trial limit reached")${flyaiQuotaNote}`,
         fix: '到 flyai.open.fliggy.com 控制台申请正式 key,配进环境变量 FLYAI_API_KEY;无 key 期间机/火/酒检索请以 gotry_session_search(账号会话)为主',
       })
 
@@ -157,7 +168,31 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
         fix: 'npx gotry doctor --fix',
       })
 
-  // 6. LLM key:显式让渡给 dsh 宿主(founder 2026-09-02:doctor 不管 key)
+  // 6. dsh-calendar(patch 分发面宿主插件;D-9 拍板:默认不挂载)
+  //    未配置的日历工具是纯负资产(issue #106:会话中段才撞「未配置 username」),
+  //    工作窗口由 persona (1) 访谈覆盖;opt-in 挂载 + doctor 引导配置。
+  const calEnabled = env.GOTRY_ENABLE_CALENDAR === '1'
+  const calProfilePatch = join(home, '.dsh/profiles/web/cordis.patch.yml')
+  const calConfigured = calEnabled && existsSync(calProfilePatch) && (() => {
+    try {
+      const content = readFileSync(calProfilePatch, 'utf-8')
+      return /calendar/.test(content) && /username\s*:/.test(content)
+    } catch { return false }
+  })()
+  items.push(!calEnabled
+    ? {
+        id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'ok',
+        detail: '默认未挂载(D-9:未配置的日历工具不进工具箱;工作窗口由访谈覆盖,不影响任何检索)',
+      }
+    : calConfigured
+      ? { id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'ok', detail: `已挂载且已配置(${calProfilePatch})` }
+      : {
+          id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'degraded',
+          detail: 'GOTRY_ENABLE_CALENDAR=1 已设但 calendar 未配置 username——日历工具会话中会报「未配置」',
+          fix: `在 ${calProfilePatch} 覆盖 calendar 行的 config 填 username(或去掉 GOTRY_ENABLE_CALENDAR 恢复默认不挂载)`,
+        })
+
+  // 7. LLM key:显式让渡给 dsh 宿主(founder 2026-09-02:doctor 不管 key)
   items.push({ id: 'llm-key', label: 'LLM key', status: 'ok', detail: '由 dsh 宿主 UI 管理——不在 doctor 体检范围(gotry 不接触、不回显凭证)' })
 
   const broken = items.filter(i => i.status !== 'ok' && i.id !== 'llm-key')

@@ -44,10 +44,10 @@ M3 最小可用产品,分发链路无已知堵点。
 - **产物类**:产物 list/read(账本工单交付 + 工作目录 md,只读)
 - **账号类**:会话登录 `gotry_session_login`(在用户 Chrome 弹登录入口,票据 cookie 名零值过手)
 - **回合类**:`gotry_turn_handoff_list` 后台深度规划工单复访查询(只读;open=后台规划中/ETA,settled=交付物摘录,failed=诚实失败说明;收集结算由 `scripts/turn-handoff-collect.ts` 驱动,ADR-24 v2)
-- **自检类**:`gotry_doctor` 依赖体检(可选依赖统一状态面:扩展/agent-reach `.venv`/hbcli/FlyAI key/sidebar,逐项分级 ok/degraded/missing + 精确补装指引;安装只经用户终端 `npx gotry doctor --fix`;LLM key 归 dsh 宿主,刻意不管)。CLI 侧同源命令 `npx gotry doctor`,报告落 `gotry-state/doctor-report.md`;工具层 not-installed/needs-setup 报错统一指 doctor(2026-09-02 迪拜 session 复盘:阻断对已坏通道的盲目重试)
+- **自检类**:`gotry_doctor` 依赖体检(可选依赖统一状态面:扩展/agent-reach `.venv`/hbcli/FlyAI key(**含最近一次匿名试用达限时间**,通道健康持久面)/dsh-calendar 挂载态/sidebar,逐项分级 ok/degraded/missing + 精确补装指引;安装只经用户终端 `npx gotry doctor --fix`;LLM key 归 dsh 宿主,刻意不管)。CLI 侧同源命令 `npx gotry doctor`,报告落 `gotry-state/doctor-report.md`;工具层 not-installed/needs-setup 报错统一指 doctor(2026-09-02 迪拜 session 复盘:阻断对已坏通道的盲目重试)
 - **外联**:AgentReach wrapper(上游装于 `.venv`,反射桥 `agent-reach-bridge.py` 直调上游注册表,零渠道知识)
 
-**工具面无预设路由优先级**(persona (19) 已删「三级路由」改平铺),证据链逐源标注。
+**工具面无预设静态路由优先级**(persona (19) 平铺保持);通道顺位由**通道注册表**生成、健康态过滤(D-8):`ts/capabilities/channel-registry.ts` 单一数据来源(意图×通道×配额类×证据级),persona 路由卡(`{{channel_routing_card}}`)与检索工具结果内 `routing` 建议(verdict≠hit 时)同源生成——建议不是派发,解译器不做隐藏改道;会话健康面(`channel-health.ts`)记 down/cooldown,`hit` 即清除。证据链逐源标注不变。
 
 数据接入:机票三层(骨架 168 对 + 校验桥 + 锚点)、酒店 hbcli 桥(实时/静态降级 + 证据标注)、OpenSky 实时 ADS-B、Open-Meteo 天气、飞猪 FlyAI 官方只读通道。
 
@@ -153,6 +153,7 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/src/companions.ts` | **同行人档案**(memory-design P2):upsert 合并 + 负面清单守卫(证件/电话零入库);约束只进排序 | ✅ run-all §21 |
 | `ts/src/travel-timeline.ts` | **旅行时间线**(memory-design P1):trips.jsonl append-only + 幂等/重叠冲突即停 + verified↔timeline 交叉一致 | ✅ run-all §20 |
 | `ts/src/wish-pool.ts` | **愿望池匹配纯函数**:条件评分 + 0..1 挑选(muted 排除/确定性 tie-break);wish_pool_list 与 nudge 共用 | ✅ run-all §21 |
+| `ts/capabilities/channel-registry.ts` `ts/capabilities/channel-health.ts` | **通道注册表 + 通道健康面**(tool-orchestration-design.md,issue #106/#107/#108/D-7/D-8/D-9):通道×意图×配额类×证据级单一数据来源;persona 路由卡 `{{channel_routing_card}}` 与检索工具 verdict≠hit 时的 `routing` 建议同源生成;会话瞬态态(down/cooldown,hit 即清除)+ `channel-health.jsonl` 持久事件面(doctor 配额可见);排序=lexicographic(可用性,证据级,效率),建议非派发 | ✅ run-all §50 |
 | `ts/capabilities/flyai.ts` | **FlyAI 官方通道**:飞猪 8 只读工具的管道层(search-flight/train 先接),证据链 `[实时API:flyai@ts]` | ✅ run-all §24-F |
 | `ts/capabilities/session-search.ts` + `session/` + `extension/` | **会话检索面**(RFC P1-P3.5):传输=扩展桥 PRIMARY(`extension/` MV3 + `extension-bridge.ts` 回环桥,零新依赖)/cdp 显式后备(ReadGuard 写请求物理拦截+审计,fail-closed)/persistent 测试;携程机票适配器(batchSearch 嗅探)/action-cache 自愈层(变量化key+指纹被动失效+miss回写);节律闸;`[会话:*]` 证据链 | ✅ run-all §25/§38 |
 | `ts/capabilities/session/extension-distribution.ts` + `ts/scripts/extension-distribution-cli.ts` | **扩展分发通道**(ADR-21 分发 A):GitHub Releases 下载链(稳定资产名/dist-manifest fail-closed 解析/SHA256/平台 tar 解压/key 钉扎/版本比较/原子交换),失败显式降级 bundled;CLI 单行 JSON 供 bootstrap spawn | ✅ run-all §43 |
@@ -235,6 +236,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 22 | static golden 是**可审计 benchmark comparator**,不是实时航班源(issue #67) | 见 §8.22 | 出现可免私有凭证、许可清晰且稳定的官方 flight API,或 hbcli 发布 flight 合同时复审其为新 provider;static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`;`ts/data/sf-static-routes.json`;run-all §44 |
 | 23 | embedded Booking Copilot 双协议安全边界与 BFF request identity binding | 见 §8.23 | 出现离页自动写/支付必须另立 M5 WriteGate ADR；出现多写者/跨 host 触发 ADR-15/16 复审；所有消费方迁移 v2 后再退 v1 | `schemas/booking.surface.v2.schema.json`;`ts/src/booking-surface/contracts-v2.ts`;`runtime-v2.ts`;`server.ts`/`startup.ts`;v2 runtime/package/run-all proofs |
 | 24 | turn 预算 = 路由 + wall-clock 双出口:确定性分类 → converge/handoff;handoff 落独立工单待 loopx tick 收 | 见 §8.24 | 路由误分成系统性问题时(用户反馈「该当面答的被转后台」可观测),先扩 Tier 0 信号词表再考虑 Tier 2(结构化状态);handoff 工单积压需要真实收集器时启动 loopx tick 设计;评测端 60s 太紧先调 env pin | `ts/src/turn-policy.ts`;`ts/src/turn-deadline.ts`;`ts/src/index.ts` 装配;`ts/scripts/turn-policy-tests.ts`;`ts/scripts/agent-planning-turn-deadline-{tests,e2e}.ts`;`scripts/run-all-tests.sh` §45 |
+| 25 | 通道健康面与动态路由建议(issue #106/#107/#108,D-7/D-8/D-9 采纳 2026-09-03):工具面保持平铺(ADR-18 判定不动)、解译器不做隐藏改道;通道注册表单一数据来源生成 persona 卡/工具描述/doctor 行;检索 verdict≠hit 时结果内注入 `routing` 有序建议(可用性>证据级>效率字典序,健康态过滤),契约在失败现场教学;配额五分类(user-session/user-key/anonymous-trial/free-public/static)冻结归属语义;calendar 默认不挂载(D-9) | 解译器自动改道(拒绝:模型以为调 A 实际走 B,破坏调用可审计性)/静态反转优先级(拒绝:每个新用户先付扩展安装成本)/只靠 prose 教义(拒绝:prose 腐坏,普通模型读不动) | routing 建议误配成系统性问题时先修注册表数据;出现跨通道比价聚合产品裁决时与 ADR-18 一起复审;正式 key 池(产品统一申请)待 M3 真实 cohort 规模复审 | `ts/capabilities/channel-registry.ts` `channel-health.ts`;`docs/tool-orchestration-design.md`;run-all §50;smoke(flyai needs-setup→routing) |
 
 ### ADR 展开(表内「见 §8.x」的正文)
 
@@ -396,6 +398,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：v1 
     修复双轨:① bin/gotry-inner.js 把 `LLM_MODEL` 映射为 `GOTRY_LLM_MODEL`,gotry-tools 插件(`capabilities/model-override.ts`)在 `agent/request` 瀑布挂根监听、post-next 覆盖 provider/model(内存态零持久化,进程退即散,不改写用户 ~/.dsh)——必须走这条是因为 dsh settings 分层为 schema 默认 < composition 配置 < 用户层,web UI 选过模型后单靠 composition patch 压不过;瀑布按注册序嵌套(先注册=最外层、post-next 最后生效),插件随 cordis patch 在根组装载先于任何 agent 创建,显式 .env 意图因此压过一切持久层选择;
     覆盖同时清掉继承的 reasoningEffort(与 installModelSelection 同语义,不错配上一模型的推理档);② 运行时 cordis patch 追加两条 by-id 覆盖(`agent-default-model` 默认模型 + `llm-deepseek` 目录单条目替换——显式指定模型多为中转场景,默认 v4-* 目录对其是误导,不硬编码上游 DEFAULT_MODELS 防漂移;cordis patch 语义核验:applyEntryPatches 对 by-id 浅层键赋值、config 整体替换,未知 id 仅 warn+skip 优雅退化)。默认路径保护:`LLM_MODEL` 不设时两轨均不动作,.env.example 默认行注释化,dsh 内置默认/用户 web 选择面不变。
   - E2E:`ts/scripts/model-override-e2e.ts` mock 中转四场景(指定模型→请求体 model 一致/指定+预置用户层→env 压过/不设→内置默认 deepseek-v4-flash/不设+用户层→用户选择保留;②④ 同一 settings 文件仅差 env,对照证明覆盖因果),隔离 DSH_HOME、要求 current tarball 的 clean installed-package bin,全绿；不再靠临时移动 vendored 依赖伪装 package mode。smoke §17 单元回归(未设零监听/无事件总线不抛/覆盖语义)。附查发现一项环境债:vendored 仓内形态 Node 兼容窗口断裂,记 D-27。
+- **通道注册表与健康面(2026-09-03,issue #106/#107/#108,ADR-25)**:三个工具调用 issue 统一根因=「失败瞬间模型手里没有结构化的通道状态与改道指引」(flyai 429 跨轮盲重试/配额不可见/未配置的 calendar 会话中段才撞错)。落地:①`channel-registry.ts` 通道×意图×配额类×证据级单一数据来源,persona 路由卡 `{{channel_routing_card}}` 与 `routing` 建议字段生成化(persona (19) 工具枚举收缩为查卡);②`channel-health.ts` 会话瞬态态(down/cooldown,hit 即清除)+ JSONL 持久事件面;③doctor v2=flyai 最近达限时间 + dsh-calendar 三态(D-9 默认不挂载,`GOTRY_ENABLE_CALENDAR=1` opt-in);④smoke 真跑命中真实 429 验证 needs-setup→routing 全链。设计全文 `tool-orchestration-design.md`(含「普通 LLM 长久保持工具调用性能」「开放生态可扩展性」两命题);run-all §50。typed 参数契约迁移余量记 D-30。
 
 Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
 
@@ -424,6 +427,7 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 | D-26 事实闸覆盖面缺口(ADR-19) | v1 闸覆盖航班+政策 claim;酒店 claim 未入抽取面(flyai hotel 打码价语义独立,不落 bookable facts);政策事实只有渲染侧+闸侧,生产端无实时签证/入境源——政策 claim 只能降级「未确认」或省掉;反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
 | D-27 vendored 仓内形态 Node 兼容窗口断裂 | 见下方「D-27 vendored 仓内形态 Node 兼容窗口断裂」 |
 | D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」 |
+| D-30 检索工具 typed 参数契约迁移未完成(ADR-25 配套) | 普通模型性能的最大单项杠杆(tool-orchestration-design.md §4③):高流量工具(flyai/session/hotel/weather)参数面仍是无类型 `query: json` blob,模型看不到逐字段 schema——dsh `defineTool` 原生支持 typed ParameterSchemaSpec(object/properties/enum/required + execute 前 validateArgs),blob 是本仓的选择不是上游限制。迁移以独立 PR 推进,每个首批工具带一轮普通模型 canary;`interpretArgs` 留作旧形态容忍层 | `ts/src/index.ts` 参数面;dsh-tools schema;issue #102 同模式 |
 
 **[D-NEW] dsh 进程保活缺失**
 
@@ -579,6 +583,7 @@ Round 7 将 benchmark opt-in 收敛为 minimal kernel，并把 system-prompt/roo
 | `transactional-state-rfc.md` | **RFC(accepted 2026-08-28,ADR-15)**:事务化状态基座——业界 durable-execution 调研收敛五件套 + GoTry 落地架构 + TS-0..TS-5 执行计划与决策记录(D1-D5) |
 | `booking-saga-fsm.md` | **预订 saga 状态机设计(issue #17 采纳,ADR-17)**:booking_saga_fsm.v1 字母表/边表/拒绝闭集 + 三种边型词汇(deterministic/gate/external-event)+ HITL 审批的挂起-恢复形态 + M5 启封增量与不引入编排框架的判定记录 |
 | `effect-interpreter.md` | **效应解译器设计(issue #16 采纳,ADR-18)**:effect_interpreter.v1 词汇(效应值/EffectOutcome/trace)+ 渠道韧性策略表(退避/断路/节律依据逐行)+ 生产/mock 双解译器 + 为什么不做视觉 CUA 与自动多渠道路由的判定记录 + D-23 迁移面 || `user-session-data-rfc.md` | **RFC**:用户会话数据面——官方通道优先 + 用户会话补缺,四阶段落地(P0-P4)与决策门 |
+| `tool-orchestration-design.md` | **工具编排与通道健康面设计(proposal,2026-09-03)**:issue #106/#107/#108 收口——通道注册表(数据单一来源)+ 通道健康面(doctor 持久面 + 会话瞬态面)+ DP 编排=健康态驱动的动态建议;含「普通 LLM 下长久保持工具调用性能」与「开放生态可扩展性」两命题回答;拍板点 = decisions-needed D-7/D-8/D-9 |
 | `user-guide.md` | 面向使用者的上手指南(dsh 形态用法) |
 | `release-notes.md` | 发版记录(按版本归档,最新在上) |
 | `decisions-needed.md` | 待创始人拍板的决策清单 |

@@ -88,7 +88,9 @@ GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多�
 | **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成的产物(异步交付 + 工作目录 markdown),行号文件视图,只读 |
 | **事实闸** | `gotry_fact_gate` | 行程产物交付前闸——见上文[工作原理](#工作原理)中的定义 |
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页/字幕/GitHub/全渠道外部信息(经 Agent-Reach) |
-| **自检** | `gotry_doctor` | 可选依赖只读体检(扩展 / Agent-Reach .venv / hbcli / FlyAI key / sidebar),逐项状态 + 精确补装指引;安装只经用户在终端跑 `npx gotry doctor --fix` 完成。LLM key 归 dsh 宿主管,doctor 刻意不管。报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
+| **自检** | `gotry_doctor` | 可选依赖只读体检(扩展 / Agent-Reach .venv / hbcli / FlyAI key **+ 最近一次匿名试用达限时间** / dsh-calendar 挂载态 / sidebar),逐项状态 + 精确补装指引;安装只经用户在终端跑 `npx gotry doctor --fix` 完成。LLM key 归 dsh 宿主管,doctor 刻意不管。报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
+
+> **通道路由**:检索工具面保持平铺(无隐藏派发);persona 路由卡与检索失败结果内附的 `routing` 建议**由通道注册表单一生成**(官方 API > 用户会话 > 网页兜底,按会话健康面过滤)。某通道额度耗尽时,结果会明说并指名下一通道——盲重试是契约违例,不靠 prompt 碰运气。
 
 ## 一段对话
 

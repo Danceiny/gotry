@@ -999,7 +999,7 @@ try {
   } as Config)
   assert.equal(disabled.some(tool => tool.name === 'gotry_benchmark_environment'), false, 'empty config path keeps bridge default-off')
   assert.ok(disabled.length > 1, 'normal product mode keeps the full GoTry tool catalog')
-  assert.deepEqual(disabledVariables, ['current_date', 'time_anchor_card', 'motivation_brief'], 'normal product mode keeps its prompt variables')
+  assert.deepEqual(disabledVariables, ['current_date', 'time_anchor_card', 'motivation_brief', 'channel_routing_card'], 'normal product mode keeps its prompt variables')
 
   const whitespace: RegisteredTool[] = []
   const whitespaceCtx = {

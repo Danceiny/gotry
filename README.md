@@ -88,7 +88,9 @@ Architecture, five layers:
 | **Artifacts** | `gotry_artifacts_list` / `gotry_artifacts_read` | Discover & view generated artifacts (async deliverables + working-dir markdown) as a line-numbered file view (read-only) |
 | **Factuality gate** | `gotry_fact_gate` | Pre-delivery gate for itinerary artifacts — see [fact gate](#how-it-works) above |
 | **General external** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | web / subtitles / GitHub / all-channel external info (via Agent-Reach) |
-| **Self-check** | `gotry_doctor` | Read-only health check of optional dependencies (extension / Agent-Reach .venv / hbcli / FlyAI key / sidebar) with exact repair guidance; installs only ever happen via the user running `npx gotry doctor --fix`. LLM keys are the dsh host's business — deliberately out of scope. Report lands in `gotry-state/doctor-report.md` (sidebar-workbench previewable) |
+| **Self-check** | `gotry_doctor` | Read-only health check of optional dependencies (extension / Agent-Reach .venv / hbcli / FlyAI key **+ recent trial-quota exhaustion time** / dsh-calendar mount state / sidebar) with exact repair guidance; installs only ever happen via the user running `npx gotry doctor --fix`. LLM keys are the dsh host's business — deliberately out of scope. Report lands in `gotry-state/doctor-report.md` (sidebar-workbench previewable) |
+
+> **Channel routing**: retrieval tools stay flat (no hidden dispatch); the persona routing card and the `routing` suggestions attached to failed search results are **generated from one channel registry** (official API > user session > web fallback, filtered by per-session channel health). When a channel exhausts its quota the result says so and names the next channel — retry-blindness is a contract violation, not a prompt hope.
 
 ## Demo
 
