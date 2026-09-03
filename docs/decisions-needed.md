@@ -239,6 +239,62 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 
 ---
 
+## D-7:有额度工具的配额归属机制 ✅ **2026-09-03 已落地(选项 A;founder「推进实现落地」)**
+
+**位置**: `docs/tool-orchestration-design.md` §3.2(配额五分类 + 归属建议)
+
+**上下**: flyai 匿名试用共享池 429 达限(2026-09-02 迪拜 session 实测)暴露「额度归属」无定义。症状层已被 ADR-24 v2 根治(handoff 双出口);needs-setup verdict + 勿重试指引已落地(defeb5b)。开放问题:正式 key 的归属(用户自备 vs 产品统一申请)、配额耗尽的会话级降级策略。
+
+**选项**:
+- **A. 分层归属**(推荐)— 匿名 trial 池定位「首次体验导流层」,正式使用一律升级 user-key(FLYAI_API_KEY,doctor 引导)或 user-session(账号会话);产品统一 key 池暂缓,M3 真实 cohort 规模出现时复审;doctor 增配额状态探测(最近 429 时间可见)
+- **B. 产品统一申请 key 池** — 零用户摩擦,但成本/滥用面/上游 ToS 三个未定量立即到期
+- **C. 维持现状** — needs-setup 指引已够,不配额探测
+
+**founder 一句话拍**:
+- ✅ A: 「按 A 落地」 — doctor v2 配额探测 + 注册表 quotaClass 冻结五分类
+- ⏸ B/C: 按回执执行
+
+**影响**: A 不改变任何工具默认行为,只增加可见性与文档级归属定义;issue #107 据此收口。
+
+---
+
+## D-8:工具编排策略——静态平铺 + 健康态驱动的动态建议 ✅ **2026-09-03 已落地(选项 A;founder「推进实现落地」)**
+
+**位置**: `docs/tool-orchestration-design.md` §3.3(DP 形式化 + 工程形态)
+
+**上下**: issue 要求「可用性>可靠性>效率」的 DP 编排,并指出 flyai 额度尽时未意识到 session bridge 更强。历史判定(ADR-18 不采纳自动多渠道路由、persona (19) 平铺无预设优先级)与诉求表面冲突;triage 已标注待拍板。
+
+**选项**:
+- **A. 静态平铺 + 动态建议**(推荐)— 工具面平铺不变、解译器不做隐藏派发;新增通道健康面(会话级通道状态 + doctor 持久面),verdict≠hit 时结果内注入 `routing` 顺位表(可用性>证据级>效率字典序);persona (19) 收缩为注册表生成片段。DP = 健康态驱动的有序建议表,确定性零 LLM
+- **B. 解译器层自动改道** — 模型调 A 实际走 B;破坏调用可审计性,与 WriteGate 透明原则相违,且推翻 ADR-18 判定记录
+- **C. 反转静态优先级(session 优先)** — 每个新用户先付一次扩展安装成本;triage 已不建议
+
+**founder 一句话拍**:
+- ✅ A: 「按 A 落地」 — 按设计文档 §6 L1 序列拆 PR(typed 契约迁移 → routing 注入 → persona 生成化)
+- ⏸ B/C: 按回执执行
+
+**影响**: A 下「session bridge 优先级」从常量变为健康面投影:flyai 健康时首荐 flyai(零摩擦),429 当刻 session 升首荐并附安装/登录指引;issue #108 据此收口。
+
+---
+
+## D-9:dsh-calendar 分发面 ✅ **2026-09-03 已落地(选项 A:默认不挂载;founder「推进实现落地」)**
+
+**位置**: `docs/tool-orchestration-design.md` §3.1
+
+**上下**: dsh-calendar 在 gotry 分发面内(`cordis.gotry-patch.yml` 分发、`gotry-inner.js` 运行时解析注入),且代码注释明知「未配置时工具报错降级」——模型会话中段撞「未配置 username」是分发决策的直接后果(triage 的「零引用」结论只覆盖 persona/文档,未覆盖分发面)。gotry 对 calendar 的唯一诉求是工作窗口读取,而 persona (1) 访谈本就首轮必问工作窗口。
+
+**选项**:
+- **A. 默认不挂载**(推荐)— `GOTRY_ENABLE_CALENDAR=1` opt-in;doctor 新增宿主插件节给配置引导。未配置的 calendar 是纯负资产(多一个会报错的工具)
+- **B. 保留默认挂载 + doctor 引导** — 治标:模型仍会先撞一次报错才知道要配置
+
+**founder 一句话拍**:
+- ✅ A: 「按 A 落地」 — inner 加 env 闸 + doctor v2 宿主插件节
+- ⏸ B: 保留挂载,只补 doctor
+
+**影响**: A 改变默认工具面(少一个未配置工具),属行为变化,落地 PR 需过全栈回归并同步六状态面;issue #106 子项②(glob/grep 超时)维持 triage 结论归上游 dsh,不在本决策内。
+
+---
+
 ## 修订史
 
 | 日期 | 变更 |
@@ -249,3 +305,5 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 | 2026-08-23 | v3: 6 段统一「founder 一句话拍」格式; D-5 去重 |
 | 2026-08-23 | v4: D-1 落地 MIT + D-4a 落地 100% follow(agent-reach v1.5.0 CLI + 13 渠道路由 + doctor) |
 | 2026-08-22 | v5: D-4a wrapper 化(创始人「wrapper 不是 router」纠偏)— 删 13 渠道 switch,反射桥直调上游注册表,needs-setup 透传上游原话;纠正 xueqiu「零门槛」错误(实测需 cookie) |
+| 2026-09-03 | v6: 新增 D-7(配额归属,#107)/D-8(工具编排策略,#108)/D-9(calendar 分发面,#106),设计全文见 `tool-orchestration-design.md` |
+| 2026-09-03 | v7: D-7/D-8/D-9 三项按建议项落地(founder「推进实现落地」;ADR-25,run-all §50)——三项建议项即实施项 |

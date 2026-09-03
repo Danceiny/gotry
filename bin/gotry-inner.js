@@ -401,8 +401,10 @@ if (mapEntry) {
   patchRaw = patchRaw.replace(/\n\s*- id: dsh-map-tools\n\s*name: 'placeholder\/dsh-map-tools'\n/, '\n')
 }
 
-// dsh-calendar 宿主插件(CalDAV 工作窗口读取;未配置时工具报错降级,不挡启动)。
-// 离线预算 E2E 显式禁用可选宿主插件，避免测试依赖真实 CalDAV 账号。
+// dsh-calendar 宿主插件(CalDAV 工作窗口读取)——D-9 拍板(issue #106):默认不挂载。
+// 未配置的日历工具是纯负资产(会话中段才撞「未配置 username」报错),gotry 对它的
+// 唯一诉求(工作窗口)由访谈首轮覆盖。需要日历时设 GOTRY_ENABLE_CALENDAR=1,并在
+// profile 的 cordis.patch.yml 覆盖 calendar 行 config 填 username(doctor 有指引)。
 let calEntry = ''
 if (!benchmarkEnvironmentConfig) {
   const vendoredCal = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-calendar/lib/index.js')
@@ -413,7 +415,7 @@ if (!benchmarkEnvironmentConfig) {
     if (!calEntry) { try { calEntry = require_.resolve('dsh-calendar') } catch { calEntry = '' } }
   }
 }
-if (calEntry && process.env.GOTRY_DISABLE_OPTIONAL_CALENDAR !== '1') {
+if (calEntry && process.env.GOTRY_ENABLE_CALENDAR === '1') {
   patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-calendar'/, `$1'${calEntry}'`)
 } else {
   patchRaw = patchRaw.replace(/\n\s*- id: dsh-calendar\n\s*name: 'placeholder\/dsh-calendar'\n/, '\n')

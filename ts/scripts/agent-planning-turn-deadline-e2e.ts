@@ -161,7 +161,6 @@ async function main(): Promise<void> {
     childEnv.LLM_BASE_URL = 'http://127.0.0.1:' + relay.port + '/v1'
     childEnv.LLM_MODEL = 'synthetic-deadline-model'
     childEnv.GOTRY_LOCALE = 'zh-CN'
-    childEnv.GOTRY_DISABLE_OPTIONAL_CALENDAR = '1'
     childEnv.GOTRY_TURN_DEADLINE_SOFT_MS = String(SOFT_MS)
     childEnv.GOTRY_TURN_DEADLINE_HARD_MS = String(HARD_MS)
     childEnv.GOTRY_TURN_HANDOFF_ROOT = handoffRoot
@@ -237,7 +236,6 @@ async function main(): Promise<void> {
         LLM_BASE_URL: 'http://127.0.0.1:' + relay.port + '/v1',
         LLM_MODEL: 'synthetic-deadline-model',
         GOTRY_LOCALE: 'zh-CN',
-        GOTRY_DISABLE_OPTIONAL_CALENDAR: '1',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

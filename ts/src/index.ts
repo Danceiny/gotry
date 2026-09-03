@@ -45,6 +45,8 @@ import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
+import { noteChannelVerdict, recordChannelEvent } from '../capabilities/channel-health.ts'
+import { routingAdvice, renderRoutingCard, type ChannelIntent } from '../capabilities/channel-registry.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
@@ -217,6 +219,21 @@ export function apply(ctx: Context, config: Config): void {
   // 模型都是盲的、重新访谈——「回访规划时长降 ≥50%」不可能成立。这里把画像
   // 渲染成紧凑 brief 注入 persona;为空 = 首访。与当轮说法冲突时以用户为准。
   sp?.variable?.('motivation_brief', () => renderMotivationBrief(config.stateRoot ?? '.'))
+
+  // 通道路由卡(通道注册表生成,tool-orchestration-design.md §2.1/D-8):
+  // persona (19) 只留行为契约,机/火/酒通道顺位与额度口径查卡——prose 教义
+  // 变查表教义,注册表加通道卡片自动一致。
+  sp?.variable?.('channel_routing_card', () => renderRoutingCard())
+
+  // 通道健康面接线(issue #107/#108):检索通道 verdict → 会话状态标记 +
+  // down/cooldown 事件落持久面(doctor CLI 进程消费)。落盘失败不阻塞检索。
+  const noteChannel = async (channel: string, verdict: string): Promise<void> => {
+    const ev = noteChannelVerdict(channel, verdict)
+    if (ev) await recordChannelEvent(config.stateRoot ?? '.', ev)
+  }
+  /** verdict≠hit 时在平铺 envelope 上追加 routing 建议(§3.3:失败现场教学) */
+  const routingField = (intent: ChannelIntent, excludeChannel: string) =>
+    ({ routing: routingAdvice(intent, { excludeChannel }) })
 
   // D-NEW 进程护栏(Z3 WASM crash 教训):dsh 0.1.1-rc.1 缺 uncaughtException
   // handler,插件异常穿透即杀进程。我们在 gotry 侧挂护栏:同步 fsync 写事故证据
@@ -828,13 +845,14 @@ export function apply(ctx: Context, config: Config): void {
         const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords } })
         if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
         const r = itp.result
+        await noteChannel('flyai', r.verdict)
         const top = (r.hotels ?? []).slice(0, 8).map(o => `${o.name}${o.star ? `(${o.star})` : ''} ${o.priceRaw ?? '价待询'}${o.poi ? ` · ${o.poi}` : ''}`)
         const summary = r.verdict === 'hit'
           ? `${dest} 酒店(飞猪官方只读)前 ${top.length} 家(价格多为打码,真实价以 jumpUrl 为准):\n${top.join('\n')}\n${r.evidence}`
           : r.verdict === 'needs-setup'
             ? `${dest} 酒店检索未发起(配置问题,非检索失败):${r.error ?? ''}\n${r.setup ?? ''}\n状态体检可调 gotry_doctor。${r.evidence}`
             : `${dest} 酒店无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
-        return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+        return JSON.parse(JSON.stringify({ ...r, summary, ...(r.verdict !== 'hit' ? routingField('search-hotel', 'flyai') : {}) })) as Record<string, never>
       }
       const kind = q.kind === 'train' ? 'train' : 'flight'
       if (!q.from || !q.to || !q.date) {
@@ -855,6 +873,7 @@ export function apply(ctx: Context, config: Config): void {
       const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind, origin: q.from, destination: q.to, depDate: q.date } })
       if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
       const r = itp.result
+      await noteChannel('flyai', r.verdict)
       // issue #46 事实落账(ADR-19):exact-date 检索结论(hit 正事实 / miss 负事实)追加进
       // bookable-facts 侧车——产物事实闸(gotry_fact_gate)的唯一事实源;落盘失败不阻塞检索
       const avMap = await loadAirlineAirportMap()
@@ -870,7 +889,10 @@ export function apply(ctx: Context, config: Config): void {
           : r.verdict === 'needs-setup'
             ? `${q.from}→${q.to} ${q.date} ${label}检索未发起(配置问题,非检索失败):${r.error ?? ''}\n${r.setup ?? ''}\n状态体检可调 gotry_doctor。${r.evidence}`
             : `${q.from}→${q.to} ${q.date} ${label}检索失败(可能限流/网络):${r.error ?? ''} ${r.evidence}`
-      return JSON.parse(JSON.stringify({ ...r, kind, summary })) as Record<string, never>
+      return JSON.parse(JSON.stringify({
+        ...r, kind, summary,
+        ...(r.verdict !== 'hit' ? routingField(kind === 'train' ? 'search-train' : 'search-flight', 'flyai') : {}),
+      })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),
     presentResult: (args, value) => {
@@ -970,13 +992,17 @@ export function apply(ctx: Context, config: Config): void {
         })
         if (!itpT.result) return declinedObservation('SESSION_TRAIN_SEARCH', itpT.trace)
         const rT = itpT.result
+        await noteChannel('session:12306-train', rT.verdict)
         const topT = (rT.trains ?? []).slice(0, 10).map(t => `${t.trainCode} ${t.depTime}→${t.arrTime} 历时${Math.round(t.durationMin / 60 * 10) / 10}h ${t.canWebBuy === 'Y' ? '可订' : t.canWebBuy}${Object.entries(t.seats).filter(([, v]) => v && v !== '--' && v !== '无').slice(0, 3).map(([k, v]) => `${k}:${v}`).join(' ')}`)
         const summaryT = rT.verdict === 'hit'
           ? `${q.from}→${q.to} ${q.date} 余票(12306 公开查询面,${(rT.trains ?? []).length} 趟)前 ${topT.length} 条(列表接口不含票价,票价以 12306 落地页为准):\n${topT.join('\n')}\n${rT.evidence}`
           : rT.verdict === 'cooldown'
             ? `会话火车检索节律闸冷却中(两次会话检索需 ≥30s 间隔)——稍候重试或先用其他工具推进。${rT.evidence}`
             : `会话火车检索未取回(${rT.verdict}):${rT.error ?? ''} ${rT.evidence}`
-        return JSON.parse(JSON.stringify({ ...rT, summary: summaryT })) as Record<string, never>
+        return JSON.parse(JSON.stringify({
+          ...rT, summary: summaryT,
+          ...(rT.verdict !== 'hit' ? routingField('search-train', 'session:12306-train') : {}),
+        })) as Record<string, never>
       }
       if (q.kind === 'hotel') {
         if (!q.to) {
@@ -991,13 +1017,17 @@ export function apply(ctx: Context, config: Config): void {
         })
         if (!itp.result) return declinedObservation('SESSION_HOTEL_SEARCH', itp.trace)
         const r = itp.result
+        await noteChannel('session:ctrip-hotel', r.verdict)
         const top = (r.hotels ?? []).slice(0, 8).map(h => `${h.name}${h.star ? `(${h.star}星)` : ''} ${h.priceRaw ?? (h.price > 0 ? `¥${h.price}` : '价待询')}${h.score ? ` 评分${h.score}` : ''}`)
         const summary = r.verdict === 'hit'
           ? `${q.to} 酒店(携程,用户本人登录态,真实价)前 ${top.length} 家(预订以 jumpUrl 落地页为准):\n${top.join('\n')}\n${r.evidence}`
           : r.verdict === 'cooldown'
             ? `会话酒店检索节律闸冷却中(两次会话检索需 ≥30s 间隔)——稍候重试或先用其他工具推进。${r.evidence}`
             : `会话酒店检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
-        return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+        return JSON.parse(JSON.stringify({
+          ...r, summary,
+          ...(r.verdict !== 'hit' ? routingField('search-hotel', 'session:ctrip-hotel') : {}),
+        })) as Record<string, never>
       }
       if (!q.from || !q.to || !q.date) {
         return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD);酒店/火车检索分别用 kind=hotel / kind=train' } as const
@@ -1014,6 +1044,7 @@ export function apply(ctx: Context, config: Config): void {
       })
       if (!itp.result) return declinedObservation('SESSION_FLIGHT_SEARCH', itp.trace)
       const r = itp.result
+      await noteChannel('session:ctrip-flight', r.verdict)
       // issue #46 事实落账(ADR-19):会话面 exact-date 结论同样进事实注册表(独立 source 并列标注)
       const avMapS = await loadAirlineAirportMap()
       await appendFacts(config.stateRoot ?? '.', factsFromSession({ origin: q.from, destination: q.to, date: q.date }, r, new Date().toISOString(), avMapS?.city_alias))
@@ -1021,7 +1052,10 @@ export function apply(ctx: Context, config: Config): void {
       const summary = r.verdict === 'hit'
         ? `${q.from}→${q.to} ${q.date} 会话检索(携程,用户本人登录态)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
         : `会话检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
-      return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+      return JSON.parse(JSON.stringify({
+        ...r, summary,
+        ...(r.verdict !== 'hit' ? routingField('search-flight', 'session:ctrip-flight') : {}),
+      })) as Record<string, never>
     },
     presentCall: args => {
       const q = (args.query as { kind?: string; from?: string; to?: string }) ?? {}
@@ -1314,7 +1348,7 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_doctor',
     description:
-      'Check optional-dependency health for ALL gotry tools (read-only, never installs): GoTry Session Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key / dsh-better-sidebar. '
+      'Check optional-dependency health for ALL gotry tools (read-only, never installs): GoTry Session Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key + recent trial-quota exhaustion time / dsh-calendar mount state / dsh-better-sidebar. '
       + 'Call this when ANY gotry tool returns not-installed / needs-setup, when the user asks 「体检/依赖状态/工具为什么不可用」, or BEFORE leaning on a channel for a plan. '
       + 'Returns per-item status (ok/degraded/missing) with exact fix commands. '
       + 'Repair = `npx gotry doctor --fix` run BY THE USER in a terminal (this tool never installs anything); LLM keys are the dsh host\'s business and are deliberately out of scope. '
@@ -1332,7 +1366,7 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute(args: { query?: unknown }, _exec: unknown) {
       const q = unwrapQuery<{ writeReport?: boolean }>(args, 'writeReport')
-      const report = await runDoctorChecks()
+      const report = await runDoctorChecks({ stateRoot: config.stateRoot ?? '.' })
       // 报告落 gotry-state(侧栏工作台预览面);写失败不阻塞体检结论本身
       let reportPath: string | undefined
       if (q?.writeReport !== false) {
