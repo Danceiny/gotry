@@ -167,7 +167,7 @@ One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.
 
 ## Project Status
 
-Current release: **v0.0.1-rc.17** (npm dist-tag `rc`; `latest` stays on rc.16 per the dsh-as-LLM-host install convention). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims.
+Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; registry pull-verified 2026-09-03: clean install / bin / dist entry all pass). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims.
 
 **Working today** (full-stack regression green; every item has deterministic tests):
 
@@ -261,4 +261,4 @@ Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outlin
 
 **Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-**Version baseline: `v0.0.1-rc.16` (npm `latest`).** The authoritative verification gates for the current checkout are enumerated by `scripts/run-all-tests.sh`; release flow: `scripts/publish-npm.sh`.
+**Version baseline: `v0.0.1-rc.18` (npm `latest`).** The authoritative verification gates for the current checkout are enumerated by `scripts/run-all-tests.sh`; release flow: `scripts/publish-npm.sh`.
