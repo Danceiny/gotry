@@ -274,6 +274,12 @@ async function main() {
       throw new Error(`FAIL: 会话酒店未收录城市应带 cityId 指引,实际:${JSON.stringify(sh).slice(0, 200)}`)
     }
     console.log('  hotel kind 路由:未收录城市 → error + cityId 指引(transport 前短路)')
+    // 会话火车路由(2026-09-03 实装):未收录电报码在 transport 前短路 → error + 电报码发现指引(offline 零桥零浏览器)
+    const st = await byName('gotry_session_search').execute({ query: { kind: 'train', from: '不在码表', to: '也不在', date: '2026-12-01' } }, null) as { ok?: boolean; verdict?: string; summary?: string }
+    if (!(st.ok === false && /fromStationTelecode/.test(String(st.summary ?? '')))) {
+      throw new Error(`FAIL: 会话火车未收录电报码应带发现指引,实际:${JSON.stringify(st).slice(0, 200)}`)
+    }
+    console.log('  train kind 路由:未收录电报码 → error + 电报码指引(transport 前短路)')
     const fhPast = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-01-01', checkOut: '2026-01-03' } }, null) as { ok?: boolean; summary?: string }
     if (!(fhPast.ok === false && /不是未来合法区间/.test(String(fhPast.summary ?? '')))) {
       throw new Error(`FAIL: 酒店过去入住日应代码层预校验拒绝,实际:${JSON.stringify(fhPast).slice(0, 200)}`)

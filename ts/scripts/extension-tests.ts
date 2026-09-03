@@ -41,10 +41,11 @@ import {
   extensionCookieNames,
   extensionSearchJob,
 } from '../capabilities/session/extension-channel.ts'
-import { appendExtensionAudit, resolveTransportMode, sessionFlightSearch, sessionHotelSearch, __resetRateLimiterForTest } from '../capabilities/session-search.ts'
+import { appendExtensionAudit, resolveTransportMode, sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, __resetRateLimiterForTest } from '../capabilities/session-search.ts'
 import { sessionLogin } from '../capabilities/session-login.ts'
 import { LOGIN_COOKIE_NAMES, NETWORK_HINTS, SITE_DOMAIN } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { HOTEL_NETWORK_HINTS, HOTEL_SITE_HOST, buildHotelEntryUrl } from '../capabilities/session/adapters/ctrip-hotel.ts'
+import { TRAIN_NETWORK_HINTS, TRAIN_SITE_HOST } from '../capabilities/session/adapters/rail-12306.ts'
 import { evaluateDoubleSource, type SessionComparableRecord } from '../capabilities/session/benchmark.ts'
 
 const EXT_DIR = fileURLToPath(new URL('../../extension/', import.meta.url))
@@ -207,10 +208,10 @@ async function main(): Promise<void> {
     assert.ok(manifest.host_permissions.includes('https://*.ctrip.com/*'))
   })
 
-  await check('防漂移:content_scripts 双 world 挂 flights+hotels.ctrip.com(MAIN 嗅探 + ISOLATED 桥;2026-09-03 酒店实装)', () => {
+  await check('防漂移:content_scripts 双 world 挂 ctrip 双站+12306(MAIN 嗅探 + ISOLATED 桥;2026-09-03 酒/火实装)', () => {
     assert.equal(manifest.content_scripts.length, 2)
     for (const cs of manifest.content_scripts) {
-      assert.deepEqual(cs.matches, ['https://flights.ctrip.com/*', `https://${HOTEL_SITE_HOST}/*`])
+      assert.deepEqual(cs.matches, ['https://flights.ctrip.com/*', `https://${HOTEL_SITE_HOST}/*`, `https://${TRAIN_SITE_HOST}/*`, 'https://www.12306.cn/*'])
       assert.equal(cs.run_at, 'document_start')
     }
     const worlds = manifest.content_scripts.map((cs) => cs.world ?? 'ISOLATED').sort()
@@ -234,6 +235,10 @@ async function main(): Promise<void> {
     for (const hint of HOTEL_NETWORK_HINTS) {
       assert.ok(stripRe(contentMainJs).includes(stripRe(hint.source)), `content-main.js 缺酒店 hint ${hint.source}`)
     }
+    for (const hint of TRAIN_NETWORK_HINTS) {
+      assert.ok(stripRe(contentMainJs).includes(stripRe(hint.source)), `content-main.js 缺火车 hint ${hint.source}`)
+    }
+    assert.ok(contentMainJs.includes('12306'), 'content-main.js 应感知 12306 页域(火车嗅探作用域)')
     assert.ok(contentMainJs.includes('hotels\\.ctrip\\.com'), 'content-main.js 应感知酒店页域(形状嗅探兜底的作用域)')
   })
   await check('防漂移:酒店形状签名(Node looksLikeHotelListBody 同款)= content-main HOTEL_BODY_SIG_RE', () => {
@@ -242,7 +247,9 @@ async function main(): Promise<void> {
   await check('防漂移:检索/登录 URL 面(background per-site 白名单 flights+hotels;ISOLATED 桥转发两类事件)', () => {
     assert.ok(backgroundJs.includes('https://flights.ctrip.com/'), 'background 应含机票检索白名单')
     assert.ok(backgroundJs.includes(`https://${HOTEL_SITE_HOST}/`), 'background 应含酒店检索白名单(2026-09-03 实装)')
+    assert.ok(backgroundJs.includes('https://kyfw.12306.cn/'), 'background 应含火车检索白名单(2026-09-03 实装)')
     assert.ok(backgroundJs.includes("'ctrip-hotel'"), 'background SITES 应注册 ctrip-hotel')
+    assert.ok(backgroundJs.includes("'train-12306'"), 'background SITES 应注册 train-12306')
     assert.ok(contentMainJs.includes('gotry-ctrip-sniff'))
     assert.ok(contentBridgeJs.includes('gotry-ctrip-sniff'))
     assert.ok(contentBridgeJs.includes('gotry-page'))
@@ -433,14 +440,17 @@ async function main(): Promise<void> {
               if (job.kind === 'search') {
                 const u = String(job.url)
                 const isHotel = u.startsWith(`https://${HOTEL_SITE_HOST}/`)
-                assert.ok(u.startsWith('https://flights.ctrip.com/') || isHotel, `search job 只允许已注册站点域,实际 ${u}`)
+                const isTrain = u.startsWith('https://kyfw.12306.cn/')
+                assert.ok(u.startsWith('https://flights.ctrip.com/') || isHotel || isTrain, `search job 只允许已注册站点域,实际 ${u}`)
                 return {
                   ok: true,
                   kind: 'search',
                   body: isHotel
                     ? JSON.stringify({ data: { hotelList: [{ hotelId: 442516, hotelName: 'Hotel X', star: 5, commentScore: 4.7, priceInfo: { avgPrice: 680 } }] } })
-                    : JSON.stringify({ data: { flightItineraryList: [] } }),
-                  title: isHotel ? '酒店列表' : '机票列表',
+                    : isTrain
+                      ? JSON.stringify({ data: { result: ['|预订|24000000G1375|G1375|SHH|KMM|SHH|KMM|07:35|15:27|07:52|Y|||||上海南|昆明|0|||有|有|--|有|--|--|有|--|--|有|'], map: {} } })
+                      : JSON.stringify({ data: { flightItineraryList: [] } }),
+                  title: isHotel ? '酒店列表' : isTrain ? '12306 车票预订' : '机票列表',
                 }
               }
               return { ok: false, error: `unexpected kind ${job.kind}` }
@@ -470,6 +480,17 @@ async function main(): Promise<void> {
       assert.equal(hotelSession.hotels?.[0]?.name, 'Hotel X')
       assert.equal(hotelSession.hotels?.[0]?.price, 680)
       assert.ok(hotelSession.hotels?.[0]?.jumpUrl?.includes('/hotel/442516'), 'jumpUrl 由 hotelId 构造(预订由人在落地页完成)')
+
+      // 火车车道(2026-09-03 实装):公开查询面无登录闸,per-site 白名单放行 kyfw,管道行解析出结构化车次
+      __resetRateLimiterForTest()
+      const trainSession = await sessionTrainSearch({ from: '上海', to: '昆明', date: '2026-12-01', timeoutMs: 3_000 })
+      assert.equal(trainSession.verdict, 'hit', `火车会话检索应 hit,实际 ${trainSession.verdict}:${trainSession.error ?? ''}`)
+      assert.ok(trainSession.evidence.includes('[会话:train-12306@'), '火车证据链 [会话:train-12306@ts]')
+      assert.ok(trainSession.evidence.includes('公开查询面'), '证据链标注公开查询面(无登录闸的诚实口径)')
+      assert.equal(trainSession.trains?.[0]?.trainCode, 'G1375')
+      assert.equal(trainSession.trains?.[0]?.depTime, '07:35')
+      assert.equal(trainSession.trains?.[0]?.durationMin, 472)
+      assert.ok(trainSession.trains?.[0]?.jumpUrl?.includes('kyfw.12306.cn'), 'jumpUrl=查询落地页(人选车完成预订)')
 
       const login = await sessionLogin({ site: 'ctrip-flight' })
       assert.equal(login.verdict, 'logged-in')

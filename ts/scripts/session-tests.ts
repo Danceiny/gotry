@@ -7,6 +7,7 @@
  *   I   账号会话授权闸(纯函数:每会话一次/拒绝=会话内吊销/allow/off/无审批通道,确定性);
  *   J   登录引导(无凭证语义/表格完备/票据名级检查;live opt-in 同 G)。
  *   K   酒店会话面(2026-09-03 实装:entry URL/走形解析/形状嗅探/城市码指引/闸面;纯函数,transport 前短路)。
+ *   L   火车会话面(2026-09-03 实装:12306 管道行解析/行级签名防索引漂移/电报码指引/闸面;公开查询面)。
  * #21 字段 scorer/双源 gate 的无网络验收独立放在 scripts/session-benchmark.ts。
  * 隔离纪律:live 用 mktemp profile 与 stateRoot,绝不动共享状态与日常浏览器 profile;
  * 任何测试不自动弹浏览器窗口(用户 Chrome 只经 CDP attach 或用户手动运行 session-login)。
@@ -19,7 +20,8 @@ import { join } from 'node:path'
 import { classifyRequest, isSubmitText } from '../capabilities/session/read-guard.ts'
 import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
-import { sessionFlightSearch, sessionHotelSearch, hotelCityUnresolvedHint, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
+import { buildTrainEntryUrl, parseLeftTicketQuery } from '../capabilities/session/adapters/rail-12306.ts'
+import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
@@ -379,6 +381,41 @@ console.log('K. 酒店适配器(buildHotelEntryUrl/走形解析/形状嗅探/城
   const e1 = await sessionHotelSearch({ to: '不在码表的城市' })
   assert(e1.ok === false && e1.verdict === 'error' && /city=/.test(e1.error ?? ''), '未收录城市 → error + cityId 指引', e1)
   const e2 = await sessionHotelSearch({ to: '上海' })
+  assert(e2.ok === false && e2.verdict === 'cooldown', '节律闸:同站点 30s 内第二调 → cooldown(不发起导航)', e2)
+}
+
+
+// L. 火车会话面(2026-09-03 实装,12306 公开查询面)纯函数:entry URL/管道行解析/电报码指引/闸面
+console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报码指引/节律闸)')
+{
+  // L1 entry URL:码表 / 显式电报码 / 未收录
+  const t1 = buildTrainEntryUrl({ from: '上海', to: '昆明', date: '2026-12-01' })
+  assert(t1.ok && t1.url!.includes('fs=%E4%B8%8A%E6%B5%B7%2CSHH') && t1.url!.includes('ts=%E6%98%86%E6%98%8E%2CKMM') && t1.url!.includes('date=2026-12-01'), '城市电报码(fs=城市名,SHH 形态)', t1)
+  const t2 = buildTrainEntryUrl({ from: '丽江', to: '大理', date: '2026-12-01', fromStationTelecode: 'EHM', toStationTelecode: 'KDM' })
+  assert(t2.ok && t2.url!.includes('%2CEHM') && t2.url!.includes('%2CKDM'), '显式电报码覆盖(码表外城市)', t2)
+  const t3 = buildTrainEntryUrl({ from: '丽江', to: '大理', date: '2026-12-01' })
+  assert(!t3.ok && t3.unresolved?.includes('丽江') === true, '未收录城市 unresolved(不猜码,不造数)', t3)
+  assert(/fromStationTelecode/.test(trainStationUnresolvedHint(['丽江'])), '未收录指引带电报码发现路径(web 搜 kyfw 查询页 URL)')
+
+  // L2 管道行解析:合法行 / 行级签名(索引漂移整行跳过)/ malformed
+  const row = ['','预订','24000000G1375','G1375','SHH','KMM','SHH','KMM','07:35','15:27','07:52','Y','','','','上海南','昆明','0','','有','有','--','有','--','--','有','--','--','有',''].join('|')
+  const entry = buildTrainEntryUrl({ from: '上海', to: '昆明', date: '2026-12-01' })
+  assert(entry.ok, 'entry 构造成功')
+  const trains1 = parseLeftTicketQuery(JSON.stringify({ data: { result: [row], map: {} } }), entry.url ?? '')
+  assert(trains1.length === 1, '管道行解析命中', trains1)
+  assert(trains1[0]!.trainCode === 'G1375' && trains1[0]!.depTime === '07:35' && trains1[0]!.arrTime === '15:27' && trains1[0]!.durationMin === 472, '车次/时刻/历时归一化', trains1[0])
+  assert(trains1[0]!.fromStation === '上海南' && trains1[0]!.toStation === '昆明', '站名取自行内字段(15/16)', trains1[0])
+  assert(trains1[0]!.seats['商务座'] === '有' && trains1[0]!.seats['二等座'] === '有', '余票分桶(公开常识索引口径,D-13)', trains1[0]!.seats)
+  assert(!('price' in trains1[0]!), '列表接口无票价——不伪装价格(诚实面)')
+  const shifted = row.split('|').slice(1).join('|')
+  assert(parseLeftTicketQuery(JSON.stringify({ data: { result: [shifted] } }), entry.url ?? '').length === 0, '索引漂移行(签名失配)整行跳过,fail-visible')
+  assert(parseLeftTicketQuery('not json', entry.url ?? '').length === 0 && parseLeftTicketQuery('{"data":{"result":[]}}', entry.url ?? '').length === 0, 'malformed/空 一律返空(不抛错)')
+
+  // L3 闸面:过去日期在工具层拦截(cooldown 链路前)
+  __resetRateLimiterForTest()
+  const e1 = await sessionTrainSearch({ from: '不在码表', to: '也不在', date: '2026-12-01' })
+  assert(e1.ok === false && e1.verdict === 'error' && /fromStationTelecode/.test(e1.error ?? ''), '未收录电报码 → error + 发现路径指引', e1)
+  const e2 = await sessionTrainSearch({ from: '上海', to: '昆明', date: '2026-12-01' })
   assert(e2.ok === false && e2.verdict === 'cooldown', '节律闸:同站点 30s 内第二调 → cooldown(不发起导航)', e2)
 }
 
