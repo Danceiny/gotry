@@ -32,7 +32,7 @@ import {
 } from './resilience.ts'
 import { flyaiSearch, type FlyaiQuery } from './flyai.ts'
 import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
-import { sessionFlightSearch, type SessionFlightQuery } from './session-search.ts'
+import { sessionFlightSearch, sessionHotelSearch, type SessionFlightQuery, type SessionHotelQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
 import { verifyFlight, type FlightLiveQuery } from './opensky.ts'
 
@@ -97,6 +97,8 @@ const DEFAULT_HANDLERS = {
     checkAvail({ ratePkgId: p.ratePkgId }, { hbcliBin: p.hbcliBin, timeoutMs: p.timeoutMs }),
   /** 用户本人登录态会话检索(浏览器解译通道:扩展桥默认 + cdp 显式后备;ReadGuard+节律闸) */
   SESSION_FLIGHT_SEARCH: (p: SessionFlightQuery) => sessionFlightSearch(p),
+  /** 用户本人登录态会话酒店检索(2026-09-03 实装;同浏览器解译通道,风控红线同款) */
+  SESSION_HOTEL_SEARCH: (p: SessionHotelQuery) => sessionHotelSearch(p),
   /** 地名 → 坐标(open-meteo → nominatim 双源,免费) */
   WEATHER_GEOCODE: (p: { name: string; count?: number; timeoutMs?: number }) => geocodePlace(p.name, { count: p.count, timeoutMs: p.timeoutMs }),
   /** 预报(≤16 天,免费无 key) */
@@ -177,6 +179,12 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     isFailure: r => (r as { via?: string }).via === 'hbcli-error',
   },
   SESSION_FLIGHT_SEARCH: {
+    channel: 'browser',
+    retry: null,
+    breaker: null,
+    isFailure: defaultIsFailure,
+  },
+  SESSION_HOTEL_SEARCH: {
     channel: 'browser',
     retry: null,
     breaker: null,
