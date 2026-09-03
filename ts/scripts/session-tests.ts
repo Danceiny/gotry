@@ -358,21 +358,44 @@ console.log('K. 酒店适配器(buildHotelEntryUrl/走形解析/形状嗅探/城
   assert(hLijiang.ok && hLijiang.url!.includes('city=37'), '丽江=37(实测)', hLijiang)
 
   // K2 走形解析:domestic 形态(priceInfo 对象)/扁平形态/打码价/malformed
-  // K2b 携程现行真实形态(hotelInfo 包裹,一方校准 2026-09-03)——含价格子树探测
+  // K2b 携程现行真实形态(一方校准 2026-09-03:hotelInfo 包裹 + roomInfo[].priceInfo.price 官方价格路径)
   const realShape = JSON.stringify({
     initListData: { hotelList: [{
       hotelInfo: {
-        summary: { hotelId: '3732301', nameInfo: { name: 'Ibis Styles Dubai Jumeira', enName: 'Ibis Styles Dubai Jumeira' }, hotelStar: { star: 3 }, positionInfo: { address: 'Al Mina Road - Jumeirah 1' } },
+        summary: { hotelId: '3732301', nameInfo: { name: 'Ibis Styles Dubai Jumeira', names: ['Ibis Styles Dubai Jumeira'] }, hotelStar: { star: 3 }, positionInfo: { address: 'Al Mina Road - Jumeirah 1' } },
         commentInfo: { commentScore: '4.4' },
-        productInfo: { priceInfo: { price: 468 } },
+        roomInfo: [
+          { priceInfo: { price: 520 } },
+          { priceInfo: { price: 468, displayPrice: '¥468起' } },
+        ],
       },
     }] },
   })
   const realHotels = parseCtripHotelList(realShape)
   assert(realHotels.length === 1, '真实形态(hotelInfo 包裹)解析命中', realHotels)
   assert(realHotels[0]!.name === 'Ibis Styles Dubai Jumeira' && realHotels[0]!.hotelId === '3732301' && realHotels[0]!.star === 3 && realHotels[0]!.score === '4.4', '结构化字段(名/id/星/评分)', realHotels[0])
-  assert(realHotels[0]!.price === 468, '价格子树探测(productInfo.priceInfo.price)', realHotels[0])
+  assert(realHotels[0]!.price === 468, '多房型取最低价(roomInfo[].priceInfo.price 官方路径)', realHotels[0])
   assert(realHotels[0]!.jumpUrl === 'https://hotels.ctrip.com/hotel/3732301', '真实形态 jumpUrl 构造', realHotels[0])
+
+  // K2c 加密价形态(priceToken 在而无 price):不伪造任何价,条目保留(名/星/评分仍可用)
+  const encryptedShape = JSON.stringify({
+    hotelList: [{
+      hotelInfo: {
+        summary: { hotelId: '999', nameInfo: { names: ['Atlantis The Palm'] }, hotelStar: { star: 5 } },
+        commentInfo: { commentScore: '4.8' },
+        roomInfo: [{ priceInfo: { priceToken: 'ENCRYPTED_TOKEN', isHiddenPrice: false } }],
+      },
+    }],
+  })
+  const encHotels = parseCtripHotelList(encryptedShape)
+  assert(encHotels.length === 1, '加密价条目不丢弃(名/星/评分仍可呈现)', encHotels)
+  assert(encHotels[0]!.price === 0 && !encHotels[0]!.priceRaw, '加密价不伪造价格(价以 jumpUrl 落地页为准)', encHotels[0])
+
+  // K2d displayPrice 字符串兜底(无数值 price 时)
+  const displayShape = JSON.stringify({ hotelList: [{ hotelInfo: { summary: { hotelId: '888', nameInfo: { names: ['Rove Downtown'] } }, roomInfo: [{ priceInfo: { displayPrice: '¥7xx' } }] } }] })
+  const dispHotels = parseCtripHotelList(displayShape)
+  assert(dispHotels.length === 1 && dispHotels[0]!.priceRaw === '¥7xx' && dispHotels[0]!.price === 0, 'displayPrice 字符串价原样保留(打码口径)', dispHotels[0])
+
 
 
   const fixture = JSON.stringify({
