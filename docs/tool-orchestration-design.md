@@ -110,7 +110,10 @@
    或 patch 行示例)。doctor 只读、永不抛错的契约不变。
 2. **calendar 默认不挂载**(推荐,需拍板 D-9):gotry 对 calendar 的唯一诉求是工作窗口
    读取,而 persona (1) 的访谈本就首轮必问工作窗口——未配置的 calendar 是纯负资产
-   (多一个会报错的工具)。改为 `GOTRY_ENABLE_CALENDAR=1` opt-in + doctor 引导配置;
+   (多一个会报错的工具)。挂载与否由 **setup 状态面**管理:`~/.gotry/calendar.json`
+   (与扩展 manifest 同居 `~/.gotry`),`npx gotry setup calendar` 开启 / `--off` 恢复
+   默认 / `--status` 查看;**禁止环境变量控制产品行为**(founder 2026-09-03 纠偏:
+   可选依赖必须进 setup 状态管理,env 不是产品开关的归宿);doctor 引导配置;
    拍板备选:保留默认挂载 + doctor 引导(治标,模型仍会撞一次报错才知道)。
 3. **bootstrap 一次性摘要**:`npx gotry web`/headless 启动时跑一遍只读 doctor,
    有 degraded/missing 项就打一行摘要(不阻塞启动,不重复刷)——「初始化时可见」
@@ -272,4 +275,4 @@ WriteGate 让「加进来的东西」自动遵守同一套纪律——**生态�
 |---|---|---|---|
 | D-7 | 有额度工具的归属机制 | trial=导流层;正式用 user-key/user-session;产品统一 key 池暂缓至 M3 cohort | #107 |
 | D-8 | 编排策略 | 静态平铺 + 健康态驱动的动态建议(本设计);不解译器层自动改道 | #108 |
-| D-9 | dsh-calendar 分发 | 默认不挂载(GOTRY_ENABLE_CALENDAR opt-in)+ doctor 引导;备选保留挂载 + 引导 | #106 |
+| D-9 | dsh-calendar 分发 | 默认不挂载(setup 状态面 `~/.gotry/calendar.json`,`npx gotry setup calendar` on/off;**env 不作产品开关**)+ doctor 引导;备选保留挂载 + 引导 | #106 |

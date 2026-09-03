@@ -157,6 +157,10 @@ async function main(): Promise<void> {
     const executableArgs = [DEEP_MESSAGE]
     const childEnv: NodeJS.ProcessEnv = { ...process.env }
     childEnv.DSH_HOME = dshHome
+    // 可选宿主插件(calendar)挂载与否由 setup 状态面(~/.gotry/calendar.json)决定,
+    // 不吃 env(D-9 founder 纠偏)——E2E 隔离手段=HOME 指到临时目录(os.homedir()
+    // 尊重 $HOME),子进程看不到真实机器的 setup 态;dsh 配置面已由 DSH_HOME 单独隔离。
+    childEnv.HOME = dshHome
     childEnv.LLM_API_KEY = 'synthetic-e2e-key'
     childEnv.LLM_BASE_URL = 'http://127.0.0.1:' + relay.port + '/v1'
     childEnv.LLM_MODEL = 'synthetic-deadline-model'
