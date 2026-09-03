@@ -172,6 +172,7 @@ async function main(): Promise<void> {
     content_scripts: Array<{ matches: string[]; js: string[]; world?: string; run_at?: string }>
     key: string
     version: string
+    version_name?: string
   }
 
   const derivedId = createHash('sha256')
@@ -222,6 +223,14 @@ async function main(): Promise<void> {
   const backgroundJs = read('background.js')
   const contentMainJs = read('content-main.js')
   const contentBridgeJs = read('content-bridge.js')
+  await check('版本跟随主版本:manifest version_name = package.json version;version = 四段投影(0.0.1-rc.N → 0.0.1.N,founder 2026-09-03 拍板)', () => {
+    const pkgVersion = (JSON.parse(readFileSync(join(EXT_DIR, '..', 'package.json'), 'utf8')) as { version: string }).version
+    assert.equal(manifest.version_name, pkgVersion, 'version_name 应与 gotry 主版本逐字一致')
+    const m = /^(\d+)\.(\d+)\.(\d+)-rc\.(\d+)$/.exec(pkgVersion)
+    assert.ok(m, `主版本形态应为 x.y.z-rc.N,实际 ${pkgVersion}`)
+    assert.equal(manifest.version, `${m![1]}.${m![2]}.${m![3]}.${m![4]}`, 'version 应为主版本的四段投影(Chrome manifest 只收点分整数)')
+    assert.equal(manifest.content_scripts.length, 2)
+  })
   await check('防漂移:票据 cookie 名单(Node LOGIN_COOKIE_NAMES)= 扩展 SITES.ticketNames', () => {
     for (const name of LOGIN_COOKIE_NAMES) {
       assert.ok(backgroundJs.includes(`'${name}'`), `background.js 缺票据名 ${name}`)
@@ -448,7 +457,7 @@ async function main(): Promise<void> {
                   body: isHotel
                     ? JSON.stringify({ data: { hotelList: [{ hotelId: 442516, hotelName: 'Hotel X', star: 5, commentScore: 4.7, priceInfo: { avgPrice: 680 } }] } })
                     : isTrain
-                      ? JSON.stringify({ data: { result: ['|预订|24000000G1375|G1375|SHH|KMM|SHH|KMM|07:35|15:27|07:52|Y|||||上海南|昆明|0|||有|有|--|有|--|--|有|--|--|有|'], map: {} } })
+                      ? JSON.stringify({ data: { result: ['|预订|24000000G1375|G1375|SHH|KMM|SHH|KMM|07:35|15:27|07:52|Y|yp|x|x|loc|01|02|Y|0|--|--|--|--|--|--|有|--|--|有|有|有|有|--|ex|st|'], map: { SHH: '上海南', KMM: '昆明' } } })
                       : JSON.stringify({ data: { flightItineraryList: [] } }),
                   title: isHotel ? '酒店列表' : isTrain ? '12306 车票预订' : '机票列表',
                 }
