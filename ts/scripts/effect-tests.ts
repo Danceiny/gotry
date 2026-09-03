@@ -9,6 +9,8 @@
  *  7. mock 解译器:夹具回放确定性;未登记夹具=结构化拒绝
  *  8. SESSION 通道策略:永不重试、不熔断(风控红线),verdict 原样透传
  *  9. 真实 handler 离线冒烟:hbcli 不可达 → 静态包降级(永不抛错,证据链非空)
+ * 11. HBCLI×timeout(2026-09-02 迪拜 session:冷启动建后端 session 超 30s):
+ *     timeout 类失败重试 1 次即恢复;ENOENT/退码类仍永不重试(切换不是重试)
  *
  * 运行: cd ts && npx tsx scripts/effect-tests.ts
  */
@@ -280,4 +282,41 @@ assert.equal((m10b.result as { avail?: { avail?: boolean } }).avail?.avail, true
 assert.match(m10a.trace.evidence[0] ?? '', /\[效应:mock@.*夹具回放/, 'mock trace 标注')
 console.log('10c. mock 解译器夹具回放(预订链 CI 形态)OK')
 
-console.log('EFFECT INTERPRETER TESTS: 10/10 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 预订链读效应,纯离线)')
+// ---------------------------------------------------------------------------
+// 11. HBCLI×timeout 冷启动重试(2026-09-02 迪拜 session 复盘:hotel-list 首调
+//     30s 超时,LLM 手动立即重试即成功——上游建后端 session 可超时;策略改为
+//     「仅 timeout 类重试 1 次」,ENOENT/退码类维持「切换不是重试」)
+// ---------------------------------------------------------------------------
+__resetEffectBreakersForTest()
+let flakyCalls = 0
+const ipTimeout = makeProductionInterpreter({
+  sleep: sleep0,
+  breakers: new Map(),
+  handlers: {
+    HBCLI_HOTEL_SEARCH: async () => {
+      flakyCalls += 1
+      if (flakyCalls === 1) return { via: 'hbcli-error', exitCode: -1, result: null, evidence: '[实时API:hbcli@timeout@ts]', latencyMs: 1, error: 'timeout after 30000ms' }
+      return { via: 'hbcli-realtime', exitCode: 0, result: { hotels: [] }, evidence: '[实时API:hbcli@ts]', latencyMs: 1 }
+    },
+  },
+})
+const itp11 = await ipTimeout({ effect: 'HBCLI_HOTEL_SEARCH', params: { destination: '迪拜' } } satisfies GotryEffect)
+assert.equal(itp11.trace.attempts, 2, `timeout 重试一次(attempts=2),实际 ${itp11.trace.attempts}`)
+assert.equal((itp11.result as { via?: string } | null)?.via, 'hbcli-realtime', '重试后恢复实时')
+assert.equal(itp11.trace.breaker, 'closed', '恢复即成功,断路不计数')
+let hardCalls = 0
+const ipEnoent = makeProductionInterpreter({
+  sleep: sleep0,
+  breakers: new Map(),
+  handlers: {
+    HBCLI_HOTEL_SEARCH: async () => {
+      hardCalls += 1
+      return { via: 'hbcli-error', exitCode: -1, result: null, evidence: '[实时API:hbcli@spawn_error@ts]', latencyMs: 1, error: 'spawn hbcli ENOENT' }
+    },
+  },
+})
+const itp11b = await ipEnoent({ effect: 'HBCLI_HOTEL_SEARCH', params: { destination: '迪拜' } } satisfies GotryEffect)
+assert.equal(itp11b.trace.attempts, 1, 'ENOENT 类永不重试(切换不是重试契约不变)')
+console.log('11. HBCLI×timeout 冷启动重试(timeout→attempts=2 恢复实时;ENOENT→attempts=1)OK')
+
+console.log('EFFECT INTERPRETER TESTS: 11/11 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 预订链读效应/HBCLI timeout 重试,纯离线)')

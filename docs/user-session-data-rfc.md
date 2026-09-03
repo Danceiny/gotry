@@ -105,9 +105,9 @@ Comet 事故(Brave 2025-08 披露,Reddit 评论藏注入→跨站接管账户)�
 | 领域 | 主链路(P0 后) | 会话面动作 | 证据链标注 |
 |---|---|---|---|
 | 航班班次/票价 | **FlyAI `search-flight`(官方,无 key)**;OpenSky 观测;静态包对账 | 携程机票页嗅探,与 FlyAI **交叉验证**(P1 天然对账 oracle:双源同查询一致性断言) | `[实时API:flyai@ts]` / `[会话:ctrip-flight@ts]` |
-| 铁路 12306 | **FlyAI `search-train`(官方,无 key)** | G8 暂缓;仅 FlyAI 出现能力缺口时恢复评审 | `[实时API:flyai@ts]` |
+| 铁路 12306 | **FlyAI `search-train`(官方;匿名试用额度共享易达限,2026-09-02 勘误)** | **已实装(2026-09-03)**:kyfw leftTicket 后台标签被动嗅探(余票/时刻/历时,列表接口无票价如实呈现);公开查询面无登录闸;电报码与座位桶索引**第一方校准完成**(2026-09-03,官方 station_name.js 129 城 + queryLeftTicket cN 转换函数,快照防漂移测试锁定,曾纠出南宁 NIZ→NNZ 错码) | `[实时API:flyai@ts]` / `[会话:train-12306@ts]` |
 | 美团本地(民宿/门票) | ❌ 无官方通道(盲区) | 站内搜索嗅探 | `[会话:meituan@ts]` |
-| 酒店 | hbcli(hotel-be)+ FlyAI `search-hotel` | 会话面仅交叉验证 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` |
+| 酒店 | hbcli(hotel-be)+ FlyAI `search-hotel`(试用额度共享易达限,2026-09-02 勘误)| **已实装(2026-09-03)**:hotels.ctrip.com 后台标签被动嗅探(URL hint + 形状签名兜底),用户本人登录态真实价;城市码表 35 城实测校准(2026-09-03,页面 title 逐条验证;迪拜=220 等),接口路径一方确认(restapi/soa2/34951/fetchHotelList),价格字段路径随首个真会话终验 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` / `[会话:ctrip-hotel@ts]` |
 
 新标注语义(L4 契约增补):`[会话:site@ts]` = **用户本人会话内实时检索,非官方 API,价格/库存以站点页面为准**——与 `[实时API]`/`[静态包:估算]` 三分,新鲜度同实时、权威性低于官方 API(命中过滑块的查询结果要标 `degraded`)。
 

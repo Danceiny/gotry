@@ -1,13 +1,15 @@
 /**
  * bootstrap 自举层测试(bin/gotry-bootstrap.js,零网络安装、只探测/跳过开关)。
- * setup 收尾到只剩扩展是否就位(2026-09-02 商店上架后职责返交 #2:
- * hbcli / agent-reach / dsh-better-sidebar 由各自宿主生态自管,gotry 不再越界)。
+ * setup 面只剩扩展是否就位(2026-09-02 商店上架后职责返交 #2);可选依赖
+ * (hbcli / agent-reach / dsh-better-sidebar)的状态与补装由 doctor 面接管
+ * (founder 2026-09-02 拍板:不撒手,体检+引导;LLM key 仍归 dsh 宿主管)。
  * 守:
  *  1. --check-only:只探测报告不安装,exit 0,扩展就位节存在
  *  2. GOTRY_SETUP_SKIP=1 + --auto:跳过
  *  3. 显式模式 GOTRY_SETUP_SKIP=1:同样跳过
  *  4. GOTRY_SETUP_EXTENSION=0 单项跳过
  *  5. wizard --dry-run 与真实路径(probe 失败 exit 1)
+ *  8. doctor 子命令:体检清单/LLM key 让渡/报告落盘(状态面回归)
  *
  * 不测真实安装(浏览器商店一键装已上架,扩展就位检测走 runHealthWatch 的回环端口)。
  * 运行: cd ts && npx tsx scripts/bootstrap-tests.ts
@@ -15,6 +17,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const repoRoot = join(import.meta.dirname, '..', '..')
@@ -93,4 +96,20 @@ assert.equal(c7b.code, 0, `非法 --extension-from 值应回落 bundled 且 exit
 assert.ok(!c7b.out.includes('下载通道'), '非法值不应进入 github 通道')
 console.log('7. 扩展分发 github 通道(不可达基址即时降级 + 非法值回落 bundled)OK')
 
-console.log('BOOTSTRAP TESTS: 7/7 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / 显式跳过 + auto 跳过 + 单项跳过)')
+// 8. doctor 子命令(2026-09-02 迪拜 session 复盘:可选依赖不撒手——doctor 统一
+//    显示状态 + 精确补装指引;LLM key 显式让渡;报告落 gotry-state/doctor-report.md)
+const c8 = runBootstrap(['doctor'], {})
+assert.ok(c8.out.includes('[gotry-doctor]'), '应输出 [gotry-doctor] 标签')
+assert.ok(c8.out.includes('Agent Reach'), '体检应含 agent-reach 项')
+assert.ok(c8.out.includes('hbcli'), '体检应含 hbcli 项')
+assert.ok(c8.out.includes('FLYAI_API_KEY'), '体检应含 flyai key 项(试用额度降级面)')
+assert.ok(c8.out.includes('LLM key'), '体检应含 LLM key 让渡说明(doctor 不管 key)')
+assert.ok(c8.out.includes('doctor-report.md'), '应提示报告落盘路径')
+assert.ok([0, 1].includes(c8.code), `doctor exit 应为 0(就绪)或 1(有缺失),实际 ${c8.code}`)
+const reportPath = join(repoRoot, 'gotry-state', 'doctor-report.md')
+const report = readFileSync(reportPath, 'utf-8')
+assert.ok(report.includes('# GoTry 依赖体检报告'), '报告 markdown 应落盘可预览')
+assert.ok(report.includes('npx gotry doctor --fix'), '报告应带补装指引')
+console.log('8. doctor 子命令(体检清单 + LLM key 让渡 + 报告落盘)OK')
+
+console.log('BOOTSTRAP TESTS: 8/8 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / 显式跳过 + auto 跳过 + 单项跳过)')

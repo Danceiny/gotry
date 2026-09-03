@@ -31,12 +31,14 @@ GoTry —— dsh 运行时驱动
 用法:
   ./gotry web                          # dsh Web 浏览器界面 (默认)
   ./gotry "一句完整任务..."            # headless 一问一答
+  ./gotry doctor                       # 可选依赖体检(扩展/agent-reach/hbcli/flyai/sidebar)
+  ./gotry doctor --fix                 # 体检 + 补装
   ./gotry help                         # 此帮助
 
 环境前置:
   • Node 22.15+
   • 已 npm ci && npm --prefix ts ci && node scripts/build-dist.mjs
-  • .env 中 LLM_API_KEY (DeepSeek / OpenAI 兼容均可)
+  • LLM key 由 dsh 宿主 UI 配;gotry 不要求也不回显凭证
 
 详细文档: README.md
 EOF

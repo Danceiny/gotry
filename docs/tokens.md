@@ -104,7 +104,7 @@ NPM_TOKEN=npm_xxx TAG=latest ./scripts/publish-npm.sh  # 或临时注入 token
 
 ## agent-reach 渠道(全部选配,给即接,不催)
 
-> 运行时本体已在 gotry 安装期自动装入包内 `.venv`(官方 pip;`npx gotry setup` 可手动补装/重装)。下表只是**渠道凭证**,仍需逐渠道选配。
+> 运行时本体(python `.venv` + agent-reach)状态随时可查:**`npx gotry doctor`**(或在 dsh 对话里让助手调 `gotry_doctor` 工具);缺装时 **`npx gotry doctor --fix`** 一键补装(官方 pip,装入包内 `.venv`)。下表只是**渠道凭证**,仍需逐渠道选配。
 
 | 渠道 | 需要什么 | 获取步骤 | 给我格式 |
 |---|---|---|---|
@@ -128,9 +128,9 @@ NPM_TOKEN=npm_xxx TAG=latest ./scripts/publish-npm.sh  # 或临时注入 token
 | 免费 | 个人开发者每日配额(地理编码等各接口数千次/日,以控制台为准) |
 | 用法 | key 进 `.env` 的 `AMAP_KEY`;接法走高德 MCP Server(<https://developer.amap.com/api/mcp-server/getting-started>)或直接 REST |
 
-## 飞猪 FlyAI(官方 agent 通道——**无需任何 key 已实测可用**,2026-08-28)
+## 飞猪 FlyAI(官方 agent 通道;匿名试用额度**共享易达限**,2026-09-02 勘误)
 
-`npx -y @fly-ai/flyai-cli search-flight --origin 上海 --destination 丽江 --dep-date 2026-10-01` 即出真实票价(¥1790 起)。8 工具全只读(机/火/酒/POI/万豪/关键词/AI 语义)。`FLYAI_API_KEY` 为可选增强项——给即配,不给也能用;申请入口 README 未披露,待飞猪控制台开放。
+`npx -y @fly-ai/flyai-cli search-flight --origin 上海 --destination 丽江 --dep-date 2026-10-01` 即出真实票价。8 工具全只读(机/火/酒/POI/万豪/关键词/AI 语义)。**2026-09-02 迪拜 session 实况:匿名试用额度是共享池,达限后一律 429 "Trial limit reached"**——gotry 侧已归类 `needs-setup`(报错带申请指引,不再当检索失败盲重试)。稳定用法 = 到 <flyai.open.fliggy.com> 控制台申请正式 API Key,配 `FLYAI_API_KEY` 环境变量;`npx gotry doctor` 会显示 key 配置状态。无 key 期间机/火/酒检索以 `gotry_session_search`(账号会话)为主。
 
 ---
 

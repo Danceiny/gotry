@@ -5,7 +5,7 @@
  *   - 长轮询取活:POST /jobs(桥最多 hold 20s;每次响应/失败都重置 SW 30s 生命周期,任务秒级触达);
  *     断线每 5s 重试,chrome.alarms(30s)兜底唤醒防 SW 悬挂。
  *   - 三种 job:
- *       search       → 后台标签打开 job.url(仅 flights.ctrip.com 白名单),等 content hook 嗅探回包,收尾关自己的标签;
+ *       search       → 后台标签打开 job.url(per-site 白名单:flights/hotels.ctrip.com),等 content hook 嗅探回包,收尾关自己的标签;
  *       open-login   → 置前台打开登录入口页(登录页纪律 #34),标签留给用户,绝不代关;
  *       cookie-names → chrome.cookies 只读票据 cookie **名字**(值即取即弃,永不离开扩展——红线)。
  *   - 物理只读(ReadGuard 扩展车道形态):本 SW 绝不向站点发任何请求——检索请求由站点自己的
@@ -23,6 +23,24 @@ const SITES = {
     domain: 'ctrip.com',
     ticketNames: ['cticket', 'uid', 'uname', 'passport'],
   },
+  // 酒店(2026-09-03 实装):同一携程账号体系;检索走 hotels.ctrip.com 后台标签 + 被动嗅探
+  'ctrip-hotel': {
+    domain: 'ctrip.com',
+    ticketNames: ['cticket', 'uid', 'uname', 'passport'],
+  },
+  // 火车(2026-09-03 实装):12306 余票查询是公开面(登录只关系下单),无票据名可检;
+  // search job 照常经 per-site 白名单,扩展只读被动嗅探
+  'train-12306': {
+    domain: '12306.cn',
+    ticketNames: [],
+  },
+}
+
+/** 检索 URL 白名单(per-site;search job 只允许开各自站点域,其余一律拒) */
+const SITE_SEARCH_PREFIXES = {
+  'ctrip-flight': 'https://flights.ctrip.com/',
+  'ctrip-hotel': 'https://hotels.ctrip.com/',
+  'train-12306': 'https://kyfw.12306.cn/',
 }
 
 let activePort = null
@@ -112,8 +130,9 @@ async function handleJob(job) {
       return
     }
     if (job.kind === 'search') {
-      if (typeof job.url !== 'string' || !job.url.startsWith('https://flights.ctrip.com/')) {
-        await postResult(jobId, { ok: false, error: `search 只允许 flights.ctrip.com 域(收到 ${String(job.url).slice(0, 80)})` })
+      const allowedPrefix = SITE_SEARCH_PREFIXES[site]
+      if (!allowedPrefix || typeof job.url !== 'string' || !job.url.startsWith(allowedPrefix)) {
+        await postResult(jobId, { ok: false, error: `search 只允许 ${allowedPrefix ?? '已注册站点域'}(收到 ${String(job.url).slice(0, 80)})` })
         return
       }
       const tab = await chrome.tabs.create({ url: job.url, active: false })

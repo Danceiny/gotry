@@ -198,11 +198,19 @@ async function main() {
 
   // 12) 会话数据面工具(P3 切片1):官方通道 live + 会话工具 needs-login 合同(隔离 profile,零导航)
   {
-    const fa = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string }
+    const fa = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string; setup?: string }
     const faBlocked = fa.verdict === 'error' && /sentinel|block|trial limit/i.test(fa.error ?? '')
     // 端点不可达/超时(出口 IP 被拒或网络抖动)→ 工具以带证据链的 error 终态优雅降级,同样合法
     const faErrTerminal = fa.ok === false && fa.verdict === 'error' && /^flyai-error$/.test(String(fa.via ?? '')) && /\[实时API:flyai@error@/.test(String(fa.evidence ?? ''))
-    if (faBlocked) {
+    // 试用额度达限(2026-09-02 迪拜 session):共享配额耗尽是配置态不是代码故障——
+    // 归 needs-setup 且 setup 带配 key 指引;断言的是指引合同,不是上游配额可用性
+    const faNeedsSetup = fa.ok === false && fa.verdict === 'needs-setup'
+    if (faNeedsSetup) {
+      if (!/FLYAI_API_KEY/.test(String(fa.setup ?? '')) || !/勿重试|不要重试|请勿重试/.test(String(fa.setup ?? ''))) {
+        throw new Error(`FAIL: flyai needs-setup 应带配 key 指引与勿重试明示,实际 setup:${String(fa.setup ?? '').slice(0, 200)}`)
+      }
+      console.log('  WARN - flyai 匿名试用额度达限(needs-setup,配置态),setup 指引合同通过(hit 断言跳过)')
+    } else if (faBlocked) {
       console.log('  WARN - flyai 上游限流中(Sentinel/trial-limit 429),降级合同通过(hit 断言跳过)')
     } else if (faErrTerminal) {
       console.log('  WARN - flyai 端点不可达(超时/降级),证据链合同通过(hit 断言跳过)')
@@ -243,26 +251,46 @@ async function main() {
         ? '端点不可达降级'
         : `live hit(${fa.options?.length ?? 0} 条)`
     console.log(`session-face tools: flyai ${faOutcome}; session cdp 隔离门禁=needs-attach`)
-    // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 双合法终态(限流/端点降级 or hit)
-    const fh = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' } }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string }
+    // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 三合法终态(试用达限 needs-setup / 限流·端点降级 or hit)
+    const fh = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' } }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string; setup?: string }
     const fhBlocked = fh.verdict === 'error' && /sentinel|block|trial limit/i.test(fh.error ?? '')
     const fhErrTerminal = fh.ok === false && fh.verdict === 'error' && /^flyai-error$/.test(String(fh.via ?? '')) && /\[实时API:flyai@error@/.test(String(fh.evidence ?? ''))
-    if (fhBlocked || fhErrTerminal) {
+    const fhNeedsSetup = fh.ok === false && fh.verdict === 'needs-setup'
+    if (fhNeedsSetup) {
+      if (!/FLYAI_API_KEY/.test(String(fh.setup ?? ''))) {
+        throw new Error(`FAIL: flyai hotel needs-setup 应带配 key 指引,实际 setup:${String(fh.setup ?? '').slice(0, 200)}`)
+      }
+      console.log('  WARN - flyai hotel 试用额度达限(needs-setup,配置态),setup 指引合同通过(hit 断言跳过)')
+    } else if (fhBlocked || fhErrTerminal) {
       console.log('  WARN - flyai hotel 限流/端点降级,证据链合同通过(hit 断言跳过)')
     } else if (fh.ok !== true || fh.verdict !== 'hit' || (fh.hotels?.length ?? 0) < 1 || !/\[实时API:flyai@/.test(fh.evidence ?? '')) {
       throw new Error(`FAIL: flyai hotel 应 live hit,实际:${JSON.stringify(fh).slice(0, 220)}`)
     }
     const fhDest = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel' } }, null) as { ok?: boolean }
     if (fhDest.ok !== false) throw new Error('FAIL: hotel 缺目的地应参数闸拒绝')
+    // 会话酒店路由(2026-09-03 实装):未收录城市在 transport 前短路 → error + cityId 指引(offline 零桥零浏览器)
+    const sh = await byName('gotry_session_search').execute({ query: { kind: 'hotel', to: '不在码表的城市' } }, null) as { ok?: boolean; verdict?: string; summary?: string }
+    if (!(sh.ok === false && /city=/.test(String(sh.summary ?? '')))) {
+      throw new Error(`FAIL: 会话酒店未收录城市应带 cityId 指引,实际:${JSON.stringify(sh).slice(0, 200)}`)
+    }
+    console.log('  hotel kind 路由:未收录城市 → error + cityId 指引(transport 前短路)')
+    // 会话火车路由(2026-09-03 实装):未收录电报码在 transport 前短路 → error + 电报码发现指引(offline 零桥零浏览器)
+    const st = await byName('gotry_session_search').execute({ query: { kind: 'train', from: '不在码表', to: '也不在', date: '2026-12-01' } }, null) as { ok?: boolean; verdict?: string; summary?: string }
+    if (!(st.ok === false && /fromStationTelecode/.test(String(st.summary ?? '')))) {
+      throw new Error(`FAIL: 会话火车未收录电报码应带发现指引,实际:${JSON.stringify(st).slice(0, 200)}`)
+    }
+    console.log('  train kind 路由:未收录电报码 → error + 电报码指引(transport 前短路)')
     const fhPast = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-01-01', checkOut: '2026-01-03' } }, null) as { ok?: boolean; summary?: string }
     if (!(fhPast.ok === false && /不是未来合法区间/.test(String(fhPast.summary ?? '')))) {
       throw new Error(`FAIL: 酒店过去入住日应代码层预校验拒绝,实际:${JSON.stringify(fhPast).slice(0, 200)}`)
     }
-    const fhOutcome = fhBlocked
-      ? 'sentinel-限流降级'
-      : fhErrTerminal
-        ? '端点不可达降级'
-        : `${fh.hotels?.length ?? 0} 家`
+    const fhOutcome = fhNeedsSetup
+      ? '试用达限(needs-setup)'
+      : fhBlocked
+        ? 'sentinel-限流降级'
+        : fhErrTerminal
+          ? '端点不可达降级'
+          : `${fh.hotels?.length ?? 0} 家`
     console.log(`  hotel channel: ${fhOutcome}; 参数闸/过去日闸生效`)
   }
 

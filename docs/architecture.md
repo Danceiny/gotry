@@ -39,11 +39,12 @@ M3 最小可用产品,分发链路无已知堵点。
 工具面注册于 `ts/src/index.ts`(**清单与计数以代码为准,此处不落数字**——§11 保鲜清单第 4 条):
 
 - **判定类**:可行性、骨架校验、航班校验、**产物事实闸 `gotry_fact_gate`**(交付前必过,blocked 不得宣称「已验证方案」)
-- **检索类**:酒店(hbcli 桥)、天气、Anything 通用搜索、网页、视频字幕、GitHub、飞猪官方检索(机/火/酒)、会话检索
+- **检索类**:酒店(hbcli 桥 + **会话面 ctrip-hotel**:用户登录态真实价,被动嗅探)、天气、Anything 通用搜索、网页、视频字幕、GitHub、飞猪官方检索(机/火/酒)、会话检索(机/酒/火;火车=12306 公开查询面)
 - **记忆类**:动机、愿望池(入池/召回)、旅行时间线、同行人
 - **产物类**:产物 list/read(账本工单交付 + 工作目录 md,只读)
 - **账号类**:会话登录 `gotry_session_login`(在用户 Chrome 弹登录入口,票据 cookie 名零值过手)
 - **回合类**:`gotry_turn_handoff_list` 后台深度规划工单复访查询(只读;open=后台规划中/ETA,settled=交付物摘录,failed=诚实失败说明;收集结算由 `scripts/turn-handoff-collect.ts` 驱动,ADR-24 v2)
+- **自检类**:`gotry_doctor` 依赖体检(可选依赖统一状态面:扩展/agent-reach `.venv`/hbcli/FlyAI key/sidebar,逐项分级 ok/degraded/missing + 精确补装指引;安装只经用户终端 `npx gotry doctor --fix`;LLM key 归 dsh 宿主,刻意不管)。CLI 侧同源命令 `npx gotry doctor`,报告落 `gotry-state/doctor-report.md`;工具层 not-installed/needs-setup 报错统一指 doctor(2026-09-02 迪拜 session 复盘:阻断对已坏通道的盲目重试)
 - **外联**:AgentReach wrapper(上游装于 `.venv`,反射桥 `agent-reach-bridge.py` 直调上游注册表,零渠道知识)
 
 **工具面无预设路由优先级**(persona (19) 已删「三级路由」改平铺),证据链逐源标注。
@@ -433,6 +434,8 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 **D-13 会话适配器维护面(RFC user-session-data-rfc)**
 
 **部分清偿 2026-08-30**:action-cache + 金标准输入 + #21 字段 fixture scorer/双源 shape gate 已落;传输层定案扩展桥(§38 防漂移测试把 Node 常量与扩展代码锁死);Issue #67 增加 `--golden=static` 离线 comparator(OpenFlights 固定 route/carrier + manual 时刻/价格带,requested/effective/provenance/fallback 可审计,§44),但它不是实时可售性来源、也不降低携程 batchSearch 改版风险;真实 sf-01..08 会话证据仍依赖用户扩展连接,站点断时按既有渠道显式降级
+
+**部分清偿 2026-09-03(12306 第一方校准)**:rail-12306 适配器不再等「首个真会话后校准」——电报码表逐条核对自官方 `station_name.js` 全量站表(32 城起步集→129 城,曾借此纠出南宁 NIZ→NNZ 错码),座位桶索引与站名映射取自官方前端 `queryLeftTicket_end_js.js` 的 cN(result,map) 转换函数(旧公开常识索引与官方现行映射不符,首查前即纠);`data/stations-12306-verify.json` 快照 + session-tests L 段防漂移断言锁死,携程侧接口面校准仍待真会话
 
 **D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态)**
 

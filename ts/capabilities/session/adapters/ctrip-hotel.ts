@@ -1,0 +1,238 @@
+/**
+ * 携程酒店站点适配器(2026-09-03 迪拜 session 复盘:账号会话面此前只有机票,
+ * 用户要「携程找酒店」时被迫撞 flyai 429 与打码 web 读页;会话面酒店从
+ * 「备份」实装为通道之一,rfc §2.2 同款只读纪律)。
+ *
+ *   - entry:https://hotels.ctrip.com/hotels/list?city=<id>&checkin=&checkout=&adult=N
+ *   - networkHints:酒店检索 XHR 的 URL 形态(接口名公开资料多版并存,**首个真会话
+ *     后校准**——D-13 同款边界);URL hint 未命中时由 content-main 的**形状嗅探**
+ *     兜底(响应 JSON 含酒店清单签名即转发),对接口改名免疫
+ *   - 解析:走形(walk)JSON 找「名字 + 价格」签名的条目数组,归一化最小字段;
+ *     页面/接口 JSON 是不可信输入(RFC §3.5)——本层只归形状,语义判定在工具层
+ *
+ * 只读:适配器不含任何提交/预订语义;URL 直开即零 DOM 交互;ReadGuard 对酒店
+ * 页面照常生效(下单/支付面 URL 仍被物理拦截)。
+ */
+
+/** 城市码表(**实测校准 2026-09-03**:每条 id 均经 hotels.ctrip.com list 页
+ * <title> 验证——探测法曾纠出 104=平遥县(传猜成都)等 5 处错猜,表内只收
+ * 验证过的 id;词表外 unresolved 逐字保留,调用方可显式传 cityId 覆盖) */
+const HOTEL_CITY_CODES: Record<string, string> = {
+  上海: '2', 北京: '1', 广州: '32', 深圳: '30', 成都: '28',
+  杭州: '17', 南京: '12', 苏州: '14', 无锡: '13', 扬州: '15', 镇江: '16',
+  青岛: '7', 厦门: '25', 珠海: '31', 三亚: '43', 海口: '42',
+  桂林: '33', 昆明: '34', 大理: '36', 丽江: '37', 西双版纳: '35',
+  贵阳: '38', 拉萨: '41', 乌鲁木齐: '39', 太原: '105', 长春: '158', 南通: '82',
+  敦煌: '11', 舟山: '19', 张家界: '27', 黄山市: '23', 九江: '24', 武夷山: '26',
+  迪拜: '220',
+}
+
+export interface AdapterEntry {
+  ok: boolean
+  url?: string
+  /** 词表外城市逐字保留(调用方提示:web 搜携程酒店 list 页取 city id 后带 cityId 重试) */
+  unresolved?: string[]
+}
+
+export interface HotelEntryQuery {
+  /** 目的地(中文);词表外须配 cityId */
+  to: string
+  /** 显式城市 id(携程/trip.com 酒店 list 页 URL 的 city= 数字;覆盖码表) */
+  cityId?: number | string
+  /** YYYY-MM-DD */
+  checkIn?: string
+  /** YYYY-MM-DD(与 checkIn 成对) */
+  checkOut?: string
+  adults?: number
+}
+
+export function buildHotelEntryUrl(q: HotelEntryQuery): AdapterEntry {
+  const unresolved: string[] = []
+  const cityId = String(q.cityId ?? '').trim() || HOTEL_CITY_CODES[q.to.trim()]
+  if (!cityId) unresolved.push(q.to)
+  if (unresolved.length > 0) {
+    return { ok: false, unresolved }
+  }
+  const params = new URLSearchParams({ city: cityId })
+  if (q.checkIn) params.set('checkin', q.checkIn)
+  if (q.checkOut) params.set('checkout', q.checkOut)
+  if (q.adults && q.adults > 0) params.set('adult', String(q.adults))
+  return { ok: true, url: `https://hotels.ctrip.com/hotels/list?${params.toString()}` }
+}
+
+/** networkHints:酒店检索 XHR 的 URL 形态(restapi/soa2/34951/fetchHotelList
+ * 为 2026-09-03 自 list 页一方确认的现行接口;其余为多版并存口径;命中即读) */
+export const HOTEL_NETWORK_HINTS = [
+  /hotels\.ctrip\.com\/(hotels\/api|domestic\/pc\/api)/i,
+  /GetHotelListBySOA|GetHotelListByCity|HotelSearch|hotelsearch/i,
+  /restapi\/soa2\/\d+\/fetchHotelList/i,
+]
+
+/** 形状嗅探签名:URL hint 未命中时的兜底(对接口改名免疫);大小上限由调用方先把关 */
+export function looksLikeHotelListBody(body: string): boolean {
+  if (!body || body.length > 2_000_000) return false
+  return /"hotelList"|"hotelMatchInfos"|"hotelName"/.test(body)
+}
+
+/** 酒店 page 域(content_scripts 注入面与 background 白名单的对账源) */
+export const HOTEL_SITE_HOST = 'hotels.ctrip.com'
+
+export interface SessionHotelOption {
+  /** 酒店名 */
+  name: string
+  /** 数字价(数值不可得时为 0;真实价以 jumpUrl 落地页为准) */
+  price: number
+  /** 价格原串(打码/区间等不可数值化的形态原样保留) */
+  priceRaw?: string
+  star?: number
+  /** 点评分(上游形态有数字有字符串,原样归一为字符串缺省) */
+  score?: string
+  address?: string
+  hotelId?: string
+  /** 酒店详情页跳转(由人完成预订;gotry 不碰) */
+  jumpUrl?: string
+}
+
+interface WalkCandidate {
+  name: string
+  price?: number
+  priceRaw?: string
+  star?: number
+  score?: string
+  address?: string
+  hotelId?: string
+}
+
+/** 条目签名:像不像一家酒店(名字类字段必有 + 价格类字段至少其一) */
+function hotelSignature(o: Record<string, unknown>): WalkCandidate | null {
+  const name = (o.hotelName ?? o.name ?? o.hotelNameEn) as unknown
+  if (typeof name !== 'string' || !name.trim()) return null
+  let price: number | undefined
+  let priceRaw: string | undefined
+  // 顶层扁平价(数字/字符串直给;字符串价是打码/区间形态,原样保留不数值化)
+  if (typeof o.price === 'number' && o.price > 0) price = o.price
+  else if (typeof o.price === 'string' && o.price.trim()) priceRaw = o.price.trim()
+  const probe = (v: unknown, seen = new Set<unknown>()): void => {
+    if (v == null || typeof v !== 'object') return
+    if (seen.has(v)) return
+    seen.add(v)
+    for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
+      if (/^(avgPrice|totalPrice|price|amount|total|startPrice)$/i.test(k) && typeof child === 'number' && child > 0 && price === undefined) price = child
+      else if (/^(price|priceDisplay|amountText)$/i.test(k) && typeof child === 'string' && child.trim() && priceRaw === undefined) priceRaw = child.trim()
+      else probe(child, seen)
+    }
+  }
+  probe(o.priceInfo)
+  const flatPrice = o.totalPrice ?? o.avgPrice ?? o.minPrice
+  if (typeof flatPrice === 'number' && flatPrice > 0 && price === undefined) price = flatPrice
+  const flatRaw = o.priceText ?? o.priceDisplay
+  if (typeof flatRaw === 'string' && flatRaw.trim() && priceRaw === undefined) priceRaw = flatRaw.trim()
+  if (price === undefined && priceRaw === undefined) return null
+  const starRaw = o.star ?? o.level ?? o.hotelStar
+  const star = typeof starRaw === 'number' && starRaw > 0 ? starRaw : Number.isFinite(Number(starRaw)) && Number(starRaw) > 0 ? Number(starRaw) : undefined
+  const scoreRaw = o.score ?? o.commentScore ?? o.reviewScore
+  const score = scoreRaw == null ? undefined : String(scoreRaw)
+  const pos = o.position as Record<string, unknown> | undefined
+  const address = (typeof pos?.address === 'string' ? pos.address : undefined) ?? (typeof o.address === 'string' ? o.address : undefined)
+  const hotelId = (typeof o.hotelId === 'number' || typeof o.hotelId === 'string' ? String(o.hotelId) : undefined)
+    ?? (typeof o.hotelIdStr === 'string' ? o.hotelIdStr : undefined)
+  return { name: name.trim(), price, priceRaw, star, score, address, hotelId }
+}
+
+/** 结构化候选:携程现行 list 形态(**一方校准 2026-09-03**,取自 list 页官方
+ * 前端代码反查 + SSR initListData 实测):
+ *   - 条目 = hotelList[].hotelInfo{summary{hotelId,nameInfo{name,names[]},hotelStar{star},positionInfo},commentInfo{commentScore}}
+ *   - 价格 = roomInfo[].priceInfo.price(多房型取最低;页面 room_price 即读此);
+ *     priceToken 在而无 price = 加密价(fetchHotelListPrices 页面内存解密),
+ *     嗅探面拿不到明文——如实不报价,summary 指引到 jumpUrl 落地页
+ *   - displayPrice(如 "¥468")作 priceRaw 兜底;通用 price/amount 子树探测殿后
+ *   (直连复现 fetchHotelList 被 hotel-spider-defence 反爬 404——「让站点自己
+ *   发请求」正是会话桥的设计原因;官方前端为公开静态资产,路径自其中反查) */
+function ctripStructuredCandidate(item: Record<string, unknown>): WalkCandidate | null {
+  const info = item.hotelInfo as Record<string, unknown> | undefined
+  const summary = (info?.summary ?? item) as Record<string, unknown>
+  const nameInfo = summary.nameInfo as Record<string, unknown> | undefined
+  const names = nameInfo?.names
+  const nameRaw = nameInfo?.name ?? (Array.isArray(names) && names.length > 0 ? names[0] : undefined) ?? summary.hotelName ?? summary.name
+  if (typeof nameRaw !== 'string' || !nameRaw.trim()) return null
+  // 价格:roomInfo[].priceInfo 官方路径优先(数值 price 取 min;displayPrice/字符串价作 priceRaw)
+  let price: number | undefined
+  let priceRaw: string | undefined
+  let encrypted = false
+  const rooms = info?.roomInfo ?? item.roomInfo
+  if (Array.isArray(rooms)) {
+    for (const room of rooms) {
+      if (room == null || typeof room !== 'object') continue
+      const pi = (room as Record<string, unknown>).priceInfo as Record<string, unknown> | undefined
+      if (!pi) continue
+      if (typeof pi.price === 'number' && pi.price > 0) price = price === undefined ? pi.price : Math.min(price, pi.price)
+      if (typeof pi.price === 'string' && pi.price.trim() && !priceRaw) priceRaw = pi.price.trim()
+      if (typeof pi.displayPrice === 'string' && pi.displayPrice.trim() && !priceRaw) priceRaw = pi.displayPrice.trim()
+      if (pi.priceToken != null && pi.price === undefined) encrypted = true
+    }
+  }
+  // 兜底:条目子树 price/amount 探测(SSR 形态 productInfo.priceInfo.price 等)
+  if (price === undefined && !priceRaw) {
+    const priceProbe = (v: unknown, depth: number, seen: Set<unknown>): void => {
+      if (price !== undefined || depth > 6 || v == null || typeof v !== 'object' || seen.has(v)) return
+      seen.add(v)
+      for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
+        if (/^(price|avgPrice|totalPrice|minPrice|amount)$/i.test(k) && typeof child === 'number' && child > 0) { price = child; return }
+        if (/^(price|displayPrice|amountText)$/i.test(k) && typeof child === 'string' && child.trim()) { priceRaw = priceRaw ?? child.trim(); continue }
+        priceProbe(child, depth + 1, seen)
+      }
+    }
+    priceProbe(item, 0, new Set())
+  }
+  // 加密价(priceToken 在而无明文 price):条目保留,价如实为 0——不伪造任何价
+  if (price === undefined && !priceRaw && !encrypted) return null
+  const starOf = summary.hotelStar as Record<string, unknown> | undefined
+  const starRaw = starOf?.star ?? summary.star
+  const star = typeof starRaw === 'number' && starRaw > 0 ? starRaw : undefined
+  const scoreRaw = ((info?.commentInfo ?? summary.commentInfo) as Record<string, unknown> | undefined)?.commentScore
+  const pos = summary.positionInfo as Record<string, unknown> | undefined
+  const address = (typeof pos?.address === 'string' ? pos.address : undefined) ?? (typeof summary.address === 'string' ? summary.address : undefined)
+  const hotelId = summary.hotelId != null ? String(summary.hotelId) : undefined
+  return { name: nameRaw.trim(), price, priceRaw, star, score: scoreRaw == null ? undefined : String(scoreRaw), address, hotelId }
+}
+
+/** 走形:深找第一个酒店签名数组(纯函数,fixture 测试锚点);malformed 一律返空,不抛错 */
+export function parseCtripHotelList(body: string, opts: { maxItems?: number } = {}): SessionHotelOption[] {
+  let raw: unknown
+  try {
+    raw = JSON.parse(body)
+  } catch {
+    return []
+  }
+  const out: SessionHotelOption[] = []
+  const maxItems = opts.maxItems ?? 20
+  const walk = (node: unknown, depth: number, seen: Set<unknown>): void => {
+    if (out.length >= maxItems || depth > 12 || node == null || typeof node !== 'object' || seen.has(node)) return
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        if (out.length >= maxItems) return
+        if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
+        const cand = hotelSignature(item as Record<string, unknown>) ?? ctripStructuredCandidate(item as Record<string, unknown>)
+        if (!cand) continue
+        out.push({
+          name: cand.name,
+          price: cand.price ?? 0,
+          priceRaw: cand.priceRaw,
+          star: cand.star,
+          score: cand.score,
+          address: cand.address,
+          hotelId: cand.hotelId,
+          jumpUrl: cand.hotelId ? `https://hotels.ctrip.com/hotel/${cand.hotelId}` : undefined,
+        })
+      }
+      return
+    }
+    seen.add(node)
+    for (const child of Object.values(node as Record<string, unknown>)) {
+      walk(child, depth + 1, seen)
+      if (out.length >= maxItems) return
+    }
+  }
+  walk(raw, 0, new Set())
+  return out
+}
