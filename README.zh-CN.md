@@ -167,7 +167,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 
 ## 状态与限制
 
-当前版本:**v0.0.1-rc.17**(npm dist-tag `rc`;`latest` 仍指 rc.16,沿用 dsh-管-LLM 安装口径)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。
+当前版本:**v0.0.1-rc.18**(npm `latest` 与 `rc` 均指本版;2026-09-03 registry 回拉实测:干净安装/bin/dist 入口全通)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。
 
 **今天可用**(全栈回归全绿;每项都有确定性测试):
 
@@ -261,7 +261,7 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 
 **Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-**版本基线:`v0.0.1-rc.17`(npm dist-tag `rc`;`latest` 沿用 rc.16)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际枚举为准;发布流程见 `scripts/publish-npm.sh`。
+**版本基线:`v0.0.1-rc.18`(npm `latest`)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际枚举为准;发布流程见 `scripts/publish-npm.sh`。
 
 ---
 
