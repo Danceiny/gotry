@@ -18,6 +18,7 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { buildEntryUrl, NETWORK_HINTS, parseBatchSearch, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
+import { buildTrainEntryUrl, parseLeftTicketQuery, TRAIN_SITE_HOST, type SessionTrainOption } from './session/adapters/rail-12306.ts'
 import { EXTENSION_STORE_URL } from './session/extension-bridge.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
@@ -280,6 +281,148 @@ export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionH
       latencyMs: Date.now() - started,
       verdict,
       hotels,
+    }
+  } catch (e) {
+    return err('error', e instanceof Error ? e.message.slice(0, 200) : String(e))
+  } finally {
+    await t.close()
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// 火车会话检索(2026-09-03 实装;12306 余票查询是公开面——登录只关系下单,
+// 无账号数据过手,故无登录闸;扩展照样只读被动嗅探,证据链标注「公开查询面」)
+// ---------------------------------------------------------------------------
+
+export interface SessionTrainQuery {
+  from: string
+  to: string
+  /** YYYY-MM-DD */
+  date: string
+  /** 显式城市电报码(覆盖码表;kyfw 查询页 URL fs=城市,XXX 的三位码) */
+  fromStationTelecode?: string
+  toStationTelecode?: string
+  /** 隔离 profile 目录(测试必传;默认 /tmp 专用目录) */
+  profileDir?: string
+  headless?: boolean
+  /** ReadGuard 审计路径(测试传隔离 stateRoot 下) */
+  auditPath?: string
+  /** 等嗅探回包的上限,默认 25_000 */
+  timeoutMs?: number
+}
+
+export interface SessionTrainResult {
+  ok: boolean
+  via: 'session-train-12306' | 'session-train-12306-error'
+  evidence: string
+  latencyMs: number
+  verdict: SessionVerdict
+  trains?: SessionTrainOption[]
+  error?: string
+  /** needs-extension 时给出 Chrome Web Store URL(dsh UI 渲成可点链接) */
+  installUrl?: string
+  installAction?: 'add-to-chrome'
+}
+
+/** 车站电报码表未收录时的人话指引(纯函数,测试锚点) */
+export function trainStationUnresolvedHint(cities: string[]): string {
+  return `城市 ${cities.join('/')} 不在 12306 城市电报码表——web 搜「12306 ${cities[0] ?? ''} 余票」拿到 kyfw 查询页 URL 里的 fs=城市,XXX 三位码,带 fromStationTelecode/toStationTelecode 重试`
+}
+
+export async function sessionTrainSearch(q: SessionTrainQuery): Promise<SessionTrainResult> {
+  const started = Date.now()
+  const ts = new Date().toISOString()
+  const site = 'train-12306'
+  const err = (verdict: SessionVerdict, error: string): SessionTrainResult => ({
+    ok: false, via: 'session-train-12306-error', evidence: `[会话:${site}@error@${ts}] ${error}`, latencyMs: Date.now() - started, verdict, error,
+  })
+
+  // 节律闸:超间隔即拒,不发起导航
+  const last = lastCallAt.get(site) ?? 0
+  if (Date.now() - last < MIN_INTERVAL_MS) {
+    return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
+  }
+  lastCallAt.set(site, Date.now())
+
+  const entry = buildTrainEntryUrl({ from: q.from, to: q.to, date: q.date, fromStationTelecode: q.fromStationTelecode, toStationTelecode: q.toStationTelecode })
+  if (!entry.ok || !entry.url) {
+    return err('error', trainStationUnresolvedHint(entry.unresolved ?? [q.from, q.to]))
+  }
+
+  const mode = resolveTransportMode(q.profileDir)
+
+  if (mode === 'extension') {
+    // 无登录闸(公开查询面):直接发起检索 job
+    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs })
+    appendExtensionAudit(q.auditPath, {
+      kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
+      result: r.ok ? (r.timedOut ? 'timeout' : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
+    })
+    if (!r.ok) {
+      const verdict = classifyBridgeFailure(r.kind)
+      if (verdict === 'needs-extension') {
+        return { ok: false, via: 'session-train-12306-error', evidence: '[会话:train-12306-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: r.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+      }
+      return err(verdict, r.summary)
+    }
+    const title = r.title
+    const head = r.body.slice(0, 5000)
+    if (CHALLENGE_RE.test(title + head)) {
+      return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
+    }
+    const trains = parseLeftTicketQuery(r.body, entry.url)
+    const verdict: SessionVerdict = trains.length > 0 ? 'hit' : 'miss'
+    return {
+      ok: true,
+      via: 'session-train-12306',
+      evidence: `[会话:${site}@${ts}] ${trains.length} trains;transport=extension(公开查询面,被动嗅探,零系统弹窗;扩展零写行为=物理只读)`,
+      latencyMs: Date.now() - started,
+      verdict,
+      trains,
+    }
+  }
+
+  // cdp/persistent 车道:与机/酒同构
+  const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath, mode: mode === 'persistent' ? 'persistent' : 'cdp', newPage: true })
+  if (!t.ok) {
+    return err(classifyTransportFailure(t.summary, q.profileDir === undefined), t.summary)
+  }
+  try {
+    let settled = false
+    let body = ''
+    const heard = new Promise<void>((resolve) => {
+      t.page.on('response', async (res) => {
+        if (settled) return
+        const u = res.url()
+        if (!/leftTicket\/query/i.test(u)) return
+        try {
+          const text = await res.text()
+          if (text) {
+            body = text
+            settled = true
+            resolve()
+          }
+        } catch { /* 流式/竞态不可读则继续等下一个 */ }
+      })
+      setTimeout(() => resolve(), q.timeoutMs ?? 25_000)
+    })
+    await t.page.goto(entry.url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    await heard
+    const title = await t.page.title().catch(() => '')
+    const headHtml = (await t.page.content().catch(() => '')).slice(0, 5000)
+    if (CHALLENGE_RE.test(title + headHtml)) {
+      return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
+    }
+    const trains = parseLeftTicketQuery(body, entry.url)
+    const verdict: SessionVerdict = trains.length > 0 ? 'hit' : 'miss'
+    return {
+      ok: true,
+      via: 'session-train-12306',
+      evidence: `[会话:${site}@${ts}] ${trains.length} trains(公开查询面);guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}`,
+      latencyMs: Date.now() - started,
+      verdict,
+      trains,
     }
   } catch (e) {
     return err('error', e instanceof Error ? e.message.slice(0, 200) : String(e))
