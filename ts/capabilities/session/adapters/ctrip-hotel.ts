@@ -139,28 +139,53 @@ function hotelSignature(o: Record<string, unknown>): WalkCandidate | null {
   return { name: name.trim(), price, priceRaw, star, score, address, hotelId }
 }
 
-/** 结构化候选:携程现行 list 形态(**一方校准 2026-09-03**,取自 list 页 SSR
- * initListData 实测:hotelList[].hotelInfo.summary.nameInfo.name 等;价格字段
- * 在 SSR 载荷缺席——价格走交互式 fetchHotelList XHR,由扩展嗅探捕获,此处对
- * 条目子树做 price/amount 键探测,真会话后再钉死精确路径) */
+/** 结构化候选:携程现行 list 形态(**一方校准 2026-09-03**,取自 list 页官方
+ * 前端代码反查 + SSR initListData 实测):
+ *   - 条目 = hotelList[].hotelInfo{summary{hotelId,nameInfo{name,names[]},hotelStar{star},positionInfo},commentInfo{commentScore}}
+ *   - 价格 = roomInfo[].priceInfo.price(多房型取最低;页面 room_price 即读此);
+ *     priceToken 在而无 price = 加密价(fetchHotelListPrices 页面内存解密),
+ *     嗅探面拿不到明文——如实不报价,summary 指引到 jumpUrl 落地页
+ *   - displayPrice(如 "¥468")作 priceRaw 兜底;通用 price/amount 子树探测殿后
+ *   (直连复现 fetchHotelList 被 hotel-spider-defence 反爬 404——「让站点自己
+ *   发请求」正是会话桥的设计原因;官方前端为公开静态资产,路径自其中反查) */
 function ctripStructuredCandidate(item: Record<string, unknown>): WalkCandidate | null {
   const info = item.hotelInfo as Record<string, unknown> | undefined
   const summary = (info?.summary ?? item) as Record<string, unknown>
   const nameInfo = summary.nameInfo as Record<string, unknown> | undefined
-  const name = (nameInfo?.name ?? summary.hotelName ?? summary.name) as unknown
-  if (typeof name !== 'string' || !name.trim()) return null
+  const names = nameInfo?.names
+  const nameRaw = nameInfo?.name ?? (Array.isArray(names) && names.length > 0 ? names[0] : undefined) ?? summary.hotelName ?? summary.name
+  if (typeof nameRaw !== 'string' || !nameRaw.trim()) return null
+  // 价格:roomInfo[].priceInfo 官方路径优先(数值 price 取 min;displayPrice/字符串价作 priceRaw)
   let price: number | undefined
   let priceRaw: string | undefined
-  const priceProbe = (v: unknown, depth: number, seen: Set<unknown>): void => {
-    if (price !== undefined || depth > 6 || v == null || typeof v !== 'object' || seen.has(v)) return
-    seen.add(v)
-    for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
-      if (/price|amount/i.test(k) && typeof child === 'number' && child > 0) { price = child; return }
-      if (/price|amount/i.test(k) && typeof child === 'string' && child.trim()) { priceRaw = priceRaw ?? child.trim(); continue }
-      priceProbe(child, depth + 1, seen)
+  let encrypted = false
+  const rooms = info?.roomInfo ?? item.roomInfo
+  if (Array.isArray(rooms)) {
+    for (const room of rooms) {
+      if (room == null || typeof room !== 'object') continue
+      const pi = (room as Record<string, unknown>).priceInfo as Record<string, unknown> | undefined
+      if (!pi) continue
+      if (typeof pi.price === 'number' && pi.price > 0) price = price === undefined ? pi.price : Math.min(price, pi.price)
+      if (typeof pi.price === 'string' && pi.price.trim() && !priceRaw) priceRaw = pi.price.trim()
+      if (typeof pi.displayPrice === 'string' && pi.displayPrice.trim() && !priceRaw) priceRaw = pi.displayPrice.trim()
+      if (pi.priceToken != null && pi.price === undefined) encrypted = true
     }
   }
-  priceProbe(item, 0, new Set())
+  // 兜底:条目子树 price/amount 探测(SSR 形态 productInfo.priceInfo.price 等)
+  if (price === undefined && !priceRaw) {
+    const priceProbe = (v: unknown, depth: number, seen: Set<unknown>): void => {
+      if (price !== undefined || depth > 6 || v == null || typeof v !== 'object' || seen.has(v)) return
+      seen.add(v)
+      for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
+        if (/^(price|avgPrice|totalPrice|minPrice|amount)$/i.test(k) && typeof child === 'number' && child > 0) { price = child; return }
+        if (/^(price|displayPrice|amountText)$/i.test(k) && typeof child === 'string' && child.trim()) { priceRaw = priceRaw ?? child.trim(); continue }
+        priceProbe(child, depth + 1, seen)
+      }
+    }
+    priceProbe(item, 0, new Set())
+  }
+  // 加密价(priceToken 在而无明文 price):条目保留,价如实为 0——不伪造任何价
+  if (price === undefined && !priceRaw && !encrypted) return null
   const starOf = summary.hotelStar as Record<string, unknown> | undefined
   const starRaw = starOf?.star ?? summary.star
   const star = typeof starRaw === 'number' && starRaw > 0 ? starRaw : undefined
@@ -168,7 +193,7 @@ function ctripStructuredCandidate(item: Record<string, unknown>): WalkCandidate 
   const pos = summary.positionInfo as Record<string, unknown> | undefined
   const address = (typeof pos?.address === 'string' ? pos.address : undefined) ?? (typeof summary.address === 'string' ? summary.address : undefined)
   const hotelId = summary.hotelId != null ? String(summary.hotelId) : undefined
-  return { name: name.trim(), price, priceRaw, star, score: scoreRaw == null ? undefined : String(scoreRaw), address, hotelId }
+  return { name: nameRaw.trim(), price, priceRaw, star, score: scoreRaw == null ? undefined : String(scoreRaw), address, hotelId }
 }
 
 /** 走形:深找第一个酒店签名数组(纯函数,fixture 测试锚点);malformed 一律返空,不抛错 */
