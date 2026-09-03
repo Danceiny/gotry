@@ -128,9 +128,19 @@ try {
     assert.equal(terminal['error'], 'planner produced empty output')
   }
 
-  // 7) --all:只收 open(t4/t5),已终态的 t1/t2/t3 零重算
+  // 7) --all:只收 open(t4/t5),已终态的 t1/t2/t3 零重算。
+  // t4/t5 同毫秒创建会让「最新优先」断言 flaky(requestedAt 毫秒精度);
+  // 把 t5 钉到 now+5s,排序严格确定。
   const t4 = await writeTurnHandoffTicket(root, '批量规划一')
   const t5 = await writeTurnHandoffTicket(root, '批量规划二')
+  {
+    const dir = join(root, 'gotry-state', 'turn-handoffs')
+    const t5json = JSON.parse(readFileSync(join(dir, `${t5.id}.json`), 'utf8')) as { requestedAt: string }
+    writeFileSync(join(dir, `${t5.id}.json`), JSON.stringify({
+      ...t5json,
+      requestedAt: new Date(Date.now() + 5_000).toISOString(),
+    }))
+  }
   {
     const before = calls().length
     const r = runCollector(['--all', root], { GOTRY_HANDOFF_PLANNER_BIN: okPlanner })
