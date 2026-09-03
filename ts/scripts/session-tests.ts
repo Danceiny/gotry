@@ -6,6 +6,8 @@
  *   H   酒店通道(flyai search-hotel;纯 CLI,无浏览器窗口);
  *   I   账号会话授权闸(纯函数:每会话一次/拒绝=会话内吊销/allow/off/无审批通道,确定性);
  *   J   登录引导(无凭证语义/表格完备/票据名级检查;live opt-in 同 G)。
+ *   K   酒店会话面(2026-09-03 实装:entry URL/走形解析/形状嗅探/城市码指引/闸面;纯函数,transport 前短路)。
+ *   L   火车会话面(2026-09-03 实装:12306 管道行解析/行级签名防索引漂移/电报码指引/闸面;公开查询面)。
  * #21 字段 scorer/双源 gate 的无网络验收独立放在 scripts/session-benchmark.ts。
  * 隔离纪律:live 用 mktemp profile 与 stateRoot,绝不动共享状态与日常浏览器 profile;
  * 任何测试不自动弹浏览器窗口(用户 Chrome 只经 CDP attach 或用户手动运行 session-login)。
@@ -17,7 +19,9 @@ import { join } from 'node:path'
 
 import { classifyRequest, isSubmitText } from '../capabilities/session/read-guard.ts'
 import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
-import { sessionFlightSearch, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
+import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
+import { buildTrainEntryUrl, parseLeftTicketQuery, STATION_TELECODES } from '../capabilities/session/adapters/rail-12306.ts'
+import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
@@ -332,6 +336,170 @@ console.log('J. sessionLogin(登录引导:无凭证语义/表格完备/pending �
   } else {
     console.log('  SKIP - 登录 live 探针默认关(GOTRY_SESSION_LIVE=1 opt-in;工具面/桌面入口才真调)')
   }
+}
+
+
+// K. 酒店会话面(2026-09-03 实装,迪拜 session 复盘:会话面此前只有机票)
+console.log('K. 酒店适配器(buildHotelEntryUrl/走形解析/形状嗅探/城市码指引/节律与日期闸)')
+{
+  // K1 entry URL:cityId 覆盖 / 码表 / 未收录
+  const h1 = buildHotelEntryUrl({ to: '迪拜', cityId: 220, checkIn: '2026-12-01', checkOut: '2026-12-03', adults: 2 })
+  assert(h1.ok && h1.url === 'https://hotels.ctrip.com/hotels/list?city=220&checkin=2026-12-01&checkout=2026-12-03&adult=2', 'cityId 显式覆盖 + 参数序', h1)
+  const h2 = buildHotelEntryUrl({ to: '上海' })
+  assert(h2.ok && h2.url === 'https://hotels.ctrip.com/hotels/list?city=2', '码表内城市(上海=2,实测校准)', h2)
+  const h3 = buildHotelEntryUrl({ to: '不在码表的城市' })
+  assert(!h3.ok && h3.unresolved?.includes('不在码表的城市') === true, '未收录城市 unresolved(不猜 id,不造数)', h3)
+  assert(/city=/.test(hotelCityUnresolvedHint(['迪拜'])), '未收录指引带 cityId 发现路径(web 搜 list 页 URL)')
+
+  // K1b 实测校准抽查:迪拜=220/丽江=37/大理=36(2026-09-03 页面 title 验证)
+  const hDubai = buildHotelEntryUrl({ to: '迪拜' })
+  assert(hDubai.ok && hDubai.url!.includes('city=220'), '迪拜=220(实测,轨迹里 agent 构造的 id 正确)', hDubai)
+  const hLijiang = buildHotelEntryUrl({ to: '丽江' })
+  assert(hLijiang.ok && hLijiang.url!.includes('city=37'), '丽江=37(实测)', hLijiang)
+
+  // K2 走形解析:domestic 形态(priceInfo 对象)/扁平形态/打码价/malformed
+  // K2b 携程现行真实形态(一方校准 2026-09-03:hotelInfo 包裹 + roomInfo[].priceInfo.price 官方价格路径)
+  const realShape = JSON.stringify({
+    initListData: { hotelList: [{
+      hotelInfo: {
+        summary: { hotelId: '3732301', nameInfo: { name: 'Ibis Styles Dubai Jumeira', names: ['Ibis Styles Dubai Jumeira'] }, hotelStar: { star: 3 }, positionInfo: { address: 'Al Mina Road - Jumeirah 1' } },
+        commentInfo: { commentScore: '4.4' },
+        roomInfo: [
+          { priceInfo: { price: 520 } },
+          { priceInfo: { price: 468, displayPrice: '¥468起' } },
+        ],
+      },
+    }] },
+  })
+  const realHotels = parseCtripHotelList(realShape)
+  assert(realHotels.length === 1, '真实形态(hotelInfo 包裹)解析命中', realHotels)
+  assert(realHotels[0]!.name === 'Ibis Styles Dubai Jumeira' && realHotels[0]!.hotelId === '3732301' && realHotels[0]!.star === 3 && realHotels[0]!.score === '4.4', '结构化字段(名/id/星/评分)', realHotels[0])
+  assert(realHotels[0]!.price === 468, '多房型取最低价(roomInfo[].priceInfo.price 官方路径)', realHotels[0])
+  assert(realHotels[0]!.jumpUrl === 'https://hotels.ctrip.com/hotel/3732301', '真实形态 jumpUrl 构造', realHotels[0])
+
+  // K2c 加密价形态(priceToken 在而无 price):不伪造任何价,条目保留(名/星/评分仍可用)
+  const encryptedShape = JSON.stringify({
+    hotelList: [{
+      hotelInfo: {
+        summary: { hotelId: '999', nameInfo: { names: ['Atlantis The Palm'] }, hotelStar: { star: 5 } },
+        commentInfo: { commentScore: '4.8' },
+        roomInfo: [{ priceInfo: { priceToken: 'ENCRYPTED_TOKEN', isHiddenPrice: false } }],
+      },
+    }],
+  })
+  const encHotels = parseCtripHotelList(encryptedShape)
+  assert(encHotels.length === 1, '加密价条目不丢弃(名/星/评分仍可呈现)', encHotels)
+  assert(encHotels[0]!.price === 0 && !encHotels[0]!.priceRaw, '加密价不伪造价格(价以 jumpUrl 落地页为准)', encHotels[0])
+
+  // K2d displayPrice 字符串兜底(无数值 price 时)
+  const displayShape = JSON.stringify({ hotelList: [{ hotelInfo: { summary: { hotelId: '888', nameInfo: { names: ['Rove Downtown'] } }, roomInfo: [{ priceInfo: { displayPrice: '¥7xx' } }] } }] })
+  const dispHotels = parseCtripHotelList(displayShape)
+  assert(dispHotels.length === 1 && dispHotels[0]!.priceRaw === '¥7xx' && dispHotels[0]!.price === 0, 'displayPrice 字符串价原样保留(打码口径)', dispHotels[0])
+
+
+
+  const fixture = JSON.stringify({
+    data: { hotelList: [
+      { hotelId: 442516, hotelName: 'Dubai Marriott', star: 5, commentScore: 4.7, position: { address: 'Sheikh Zayed Rd' }, priceInfo: { avgPrice: 680, total: 1360 } },
+      { hotelId: '999', hotelName: 'Rove Downtown', priceInfo: { priceDisplay: '¥7xx' } },
+    ] },
+  })
+  const hotels1 = parseCtripHotelList(fixture)
+  assert(hotels1.length === 2, '走形解析命中 hotelList 数组', hotels1)
+  assert(hotels1[0]!.name === 'Dubai Marriott' && hotels1[0]!.price === 680 && hotels1[0]!.star === 5 && hotels1[0]!.score === '4.7', '归一化字段(名/价/星/评分)', hotels1[0])
+  assert(hotels1[0]!.jumpUrl === 'https://hotels.ctrip.com/hotel/442516', 'jumpUrl 由 hotelId 构造(预订由人完成)', hotels1[0])
+  assert(hotels1[1]!.price === 0 && hotels1[1]!.priceRaw === '¥7xx', '打码价原样保留不数值化(不伪装真价)', hotels1[1])
+  const hotels2 = parseCtripHotelList(JSON.stringify({ hotelMatchInfos: [{ name: 'Atlantis', price: 2100, score: '4.8', hotelId: '123' }] }))
+  assert(hotels2.length === 1 && hotels2[0]!.price === 2100, '扁平形态(顶层 price 数字)同样命中', hotels2)
+  assert(parseCtripHotelList('not json{').length === 0 && parseCtripHotelList('{"a":1}').length === 0, 'malformed/无签名 一律返空(不抛错)')
+
+  // K3 形状嗅探签名
+  assert(looksLikeHotelListBody('{"data":{"hotelList":[]}}') === true, '签名命中 hotelList')
+  assert(looksLikeHotelListBody('{"data":{"userList":[]}}') === false, '无签名不转发(防无关响应误投)')
+  assert(looksLikeHotelListBody('x'.repeat(2_000_001)) === false, '超大响应体不嗅探(上限把关)')
+
+  // K4 闸面:日期对闸(不发上游)/城市未收录 error/节律闸 cooldown(全在 transport 之前,零桥零浏览器)
+  const dPast = await sessionHotelSearch({ to: '上海', checkIn: '2026-01-01', checkOut: '2026-01-03' })
+  assert(dPast.ok === false && dPast.verdict === 'error' && /不是未来合法区间/.test(dPast.error ?? ''), '过去入住日代码层拒绝,不发上游', dPast)
+  const dPair = await sessionHotelSearch({ to: '上海', checkIn: '2026-12-01' })
+  assert(dPair.ok === false && /成对/.test(dPair.error ?? ''), 'checkIn/checkOut 须成对', dPair)
+  __resetRateLimiterForTest()
+  const e1 = await sessionHotelSearch({ to: '不在码表的城市' })
+  assert(e1.ok === false && e1.verdict === 'error' && /city=/.test(e1.error ?? ''), '未收录城市 → error + cityId 指引', e1)
+  const e2 = await sessionHotelSearch({ to: '上海' })
+  assert(e2.ok === false && e2.verdict === 'cooldown', '节律闸:同站点 30s 内第二调 → cooldown(不发起导航)', e2)
+}
+
+
+// L. 火车会话面(2026-09-03 实装,12306 公开查询面)纯函数:entry URL/管道行解析/电报码指引/闸面
+console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报码指引/节律闸)')
+{
+  // L1 entry URL:码表 / 显式电报码 / 未收录
+  const t1 = buildTrainEntryUrl({ from: '上海', to: '昆明', date: '2026-12-01' })
+  assert(t1.ok && t1.url!.includes('fs=%E4%B8%8A%E6%B5%B7%2CSHH') && t1.url!.includes('ts=%E6%98%86%E6%98%8E%2CKMM') && t1.url!.includes('date=2026-12-01'), '城市电报码(fs=城市名,SHH 形态)', t1)
+  const t2 = buildTrainEntryUrl({ from: '丽江', to: '大理', date: '2026-12-01', fromStationTelecode: 'EHM', toStationTelecode: 'KDM' })
+  assert(t2.ok && t2.url!.includes('%2CEHM') && t2.url!.includes('%2CKDM'), '显式电报码覆盖(码表外城市)', t2)
+  const t3 = buildTrainEntryUrl({ from: '敦煌', to: '西双版纳', date: '2026-12-01' })
+  assert(!t3.ok && t3.unresolved?.includes('敦煌') === true, '码表外城市 unresolved(官方站表亦无城市组,不猜码)', t3)
+  assert(/fromStationTelecode/.test(trainStationUnresolvedHint(['敦煌'])), '未收录指引带电报码发现路径(web 搜 kyfw 查询页 URL)')
+  // 电报码表防漂移:逐条锁定官方站表快照(data/stations-12306-verify.json,
+  // 2026-09-03 自 kyfw station_name.js 校准;曾纠出南宁 NIZ→NNZ)
+  {
+    const snap = JSON.parse(readFileSync(join(import.meta.dirname, '..', '..', 'data', 'stations-12306-verify.json'), 'utf-8')) as { cities: Record<string, { telecode: string }> }
+    const names = Object.keys(snap.cities)
+    assert(names.length >= 129, `快照覆盖 ${names.length} 城`)
+    let drift = 0
+    for (const [city, v] of Object.entries(snap.cities)) {
+      if (STATION_TELECODES[city] !== v.telecode) {
+        drift += 1
+        console.log(`  FAIL-detail - 电报码漂移: ${city} 表=${STATION_TELECODES[city]} 快照=${v.telecode}`)
+      }
+    }
+    assert(drift === 0, `电报码表 129 城与官方快照零漂移(漂移 ${drift} 处)`)
+    assert(Object.keys(STATION_TELECODES).length === names.length, '表与快照城市集合一致(无表外多城)')
+  }
+  const t4 = buildTrainEntryUrl({ from: '南宁', to: '丽江', date: '2026-12-01' })
+  assert(t4.ok && t4.url!.includes('%2CNNZ'), '南宁=NNZ(官方站表校准,曾错 NIZ)且丽江已入表=LHM', t4)
+
+  // L2 管道行解析(官方 cN 口径:站名走 data.map,座位桶 20-33 第一方校准;
+  // 行按官方索引程序化构造,杜绝手数偏移)
+  const makeRow = (seats: Record<number, string>): string => {
+    const c: string[] = new Array(56).fill('')
+    c[2] = '24000000G1375'; c[3] = 'G1375'; c[4] = 'SHH'; c[5] = 'KMM'; c[6] = 'SHH'; c[7] = 'KMM'
+    c[8] = '07:35'; c[9] = '15:27'; c[10] = '07:52'; c[11] = 'Y'
+    c[12] = 'yp'; c[13] = '20261201'; c[14] = 'x'; c[15] = 'loc'; c[16] = '01'; c[17] = '02'; c[18] = 'Y'; c[19] = '0'
+    for (const [k, v] of Object.entries(seats)) c[Number(k)] = v
+    return c.join('|')
+  }
+  const entry = buildTrainEntryUrl({ from: '上海', to: '昆明', date: '2026-12-01' })
+  assert(entry.ok, 'entry 构造成功')
+  // 官方 cN 索引探针:第 i 位座位桶写入其下标字串,解析结果必须 label→下标逐一相等
+  const probeSeats: Record<number, string> = {}
+  for (let i = 20; i <= 33; i++) probeSeats[i] = String(i)
+  const probeRow = makeRow(probeSeats)
+  const probe = parseLeftTicketQuery(JSON.stringify({ data: { result: [probeRow], map: { SHH: '上海南', KMM: '昆明' } } }), entry.url ?? '')
+  assert(probe.length === 1, '探针行解析', probe)
+  const expectSeats: Array<[string, string]> = [['其他(通勤)', '20'], ['高级软卧', '21'], ['其他', '22'], ['软卧(一等卧)', '23'], ['软座', '24'], ['特等座', '25'], ['无座', '26'], ['yp_b(上游席别)', '27'], ['硬卧(二等卧)', '28'], ['硬座', '29'], ['二等座', '30'], ['一等座', '31'], ['商务座', '32'], ['动卧', '33']]
+  for (const [label, idxVal] of expectSeats) {
+    assert(probe[0]!.seats[label] === idxVal, `座位桶 ${label} 下标=${idxVal}(官方 cN)`, probe[0]!.seats)
+  }
+  assert(probe[0]!.fromStation === '上海南' && probe[0]!.toStation === '昆明', '站名= data.map[电报码](官方 cN 口径,非行内索引)', probe[0])
+
+  const trains1 = parseLeftTicketQuery(JSON.stringify({ data: { result: [makeRow({ 25: '有', 26: '有', 28: '有', 29: '有', 30: '有', 31: '有', 32: '有' })], map: { SHH: '上海南', KMM: '昆明' } } }), entry.url ?? '')
+  assert(trains1.length === 1, '管道行解析命中', trains1)
+  assert(trains1[0]!.trainCode === 'G1375' && trains1[0]!.depTime === '07:35' && trains1[0]!.arrTime === '15:27' && trains1[0]!.durationMin === 472, '车次/时刻/历时归一化', trains1[0])
+  assert(trains1[0]!.seats['商务座'] === '有' && trains1[0]!.seats['二等座'] === '有' && trains1[0]!.seats['特等座'] === '有' && trains1[0]!.seats['硬卧(二等卧)'] === '有', '余票分桶(官方索引)', trains1[0]!.seats)
+  assert(!('price' in trains1[0]!), '列表接口无票价——不伪装价格(诚实面)')
+  const shifted = makeRow({ 25: '有' }).split('|').slice(1).join('|')
+  assert(parseLeftTicketQuery(JSON.stringify({ data: { result: [shifted], map: {} } }), entry.url ?? '').length === 0, '索引漂移行(签名失配)整行跳过,fail-visible')
+  assert(parseLeftTicketQuery('not json', entry.url ?? '').length === 0 && parseLeftTicketQuery('{"data":{"result":[]}}', entry.url ?? '').length === 0, 'malformed/空 一律返空(不抛错)')
+
+  // L3 闸面:过去日期在工具层拦截(cooldown 链路前)
+  __resetRateLimiterForTest()
+  const e1 = await sessionTrainSearch({ from: '不在码表', to: '也不在', date: '2026-12-01' })
+  assert(e1.ok === false && e1.verdict === 'error' && /fromStationTelecode/.test(e1.error ?? ''), '未收录电报码 → error + 发现路径指引', e1)
+  const e2 = await sessionTrainSearch({ from: '上海', to: '昆明', date: '2026-12-01' })
+  assert(e2.ok === false && e2.verdict === 'cooldown', '节律闸:同站点 30s 内第二调 → cooldown(不发起导航)', e2)
 }
 
 if (process.env.GOTRY_SESSION_TEST_FORCE_FAILURE === '1') {

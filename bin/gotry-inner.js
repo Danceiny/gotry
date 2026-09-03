@@ -82,7 +82,9 @@ if (help) {
 
 Usage:
   gotry web                          # dsh Web UI on http://127.0.0.1:3080
-  gotry setup                        # 安装可选外部依赖(hbcli 官方脚本 / agent-reach pip;装时已自动跑过)
+  gotry setup                        # 扩展就位检查/指引(商店一键装)
+  gotry doctor                       # 可选依赖体检:扩展/agent-reach/hbcli/flyai/sidebar 状态 + 补装指引
+  gotry doctor --fix                 # 体检 + 按报告补装(hbcli 官方脚本 / agent-reach pip / sidebar 插件)
   gotry "一段完整任务..."            # headless 一问一答
   gotry help                         # this help
 
@@ -91,15 +93,15 @@ Detail: https://github.com/Danceiny/gotry — README
   process.exit(0)
 }
 
-// mode 决定路径: 'web'/'setup'/'help' 是字面命令;否则第一段 args[0] 是任务本身的一部分
-const literal = new Set(['web', 'setup', 'help', '-h', '--help'])
+// mode 决定路径: 'web'/'setup'/'doctor'/'help' 是字面命令;否则第一段 args[0] 是任务本身的一部分
+const literal = new Set(['web', 'setup', 'doctor', 'help', '-h', '--help'])
 const isLiteral = literal.has(args[0])
 const mode = isLiteral ? args[0] : 'headless'
 const rest = isLiteral ? args.slice(1) : args
 
-// setup:外部依赖自举(hbcli/agent-reach),不需要 dsh runtime 与 LLM key,同步分发后即退
-if (mode === 'setup') {
-  const r = spawnSync(process.execPath, [join(here, 'gotry-bootstrap.js'), ...rest], { stdio: 'inherit' })
+// setup/doctor:外部依赖自举与体检,不需要 dsh runtime 与 LLM key,同步分发后即退
+if (mode === 'setup' || mode === 'doctor') {
+  const r = spawnSync(process.execPath, [join(here, 'gotry-bootstrap.js'), mode, ...rest], { stdio: 'inherit' })
   process.exit(r.status ?? (r.error ? 1 : 0))
 }
 

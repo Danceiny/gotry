@@ -1,0 +1,524 @@
+{
+ "schema": "gotry_stations_12306_verify_v1",
+ "source": "https://kyfw.12306.cn/otn/resources/js/framework/station_name.js",
+ "source_note": "12306 官方全量站表(3384 站);代表站规则=城市同名站,无同名站取城市组首站",
+ "calibrated_at": "2026-09-03",
+ "cities": {
+  "三亚": {
+   "telecode": "SEQ",
+   "representative_station": "三亚"
+  },
+  "上海": {
+   "telecode": "SHH",
+   "representative_station": "上海"
+  },
+  "上饶": {
+   "telecode": "SRG",
+   "representative_station": "上饶"
+  },
+  "东莞": {
+   "telecode": "RTQ",
+   "representative_station": "东莞"
+  },
+  "中卫": {
+   "telecode": "ZWJ",
+   "representative_station": "中卫"
+  },
+  "中山": {
+   "telecode": "ZSQ",
+   "representative_station": "中山"
+  },
+  "丽江": {
+   "telecode": "LHM",
+   "representative_station": "丽江"
+  },
+  "乌鲁木齐": {
+   "telecode": "WAR",
+   "representative_station": "乌鲁木齐"
+  },
+  "乐山": {
+   "telecode": "IVW",
+   "representative_station": "乐山"
+  },
+  "九江": {
+   "telecode": "JJG",
+   "representative_station": "九江"
+  },
+  "伊宁": {
+   "telecode": "YMR",
+   "representative_station": "伊宁"
+  },
+  "佛山": {
+   "telecode": "FSQ",
+   "representative_station": "佛山"
+  },
+  "保山": {
+   "telecode": "BAM",
+   "representative_station": "保山"
+  },
+  "六盘水": {
+   "telecode": "UMW",
+   "representative_station": "六盘水"
+  },
+  "兰州": {
+   "telecode": "LZJ",
+   "representative_station": "兰州"
+  },
+  "包头": {
+   "telecode": "BTC",
+   "representative_station": "包头"
+  },
+  "北京": {
+   "telecode": "BJP",
+   "representative_station": "北京"
+  },
+  "北海": {
+   "telecode": "BHZ",
+   "representative_station": "北海"
+  },
+  "十堰": {
+   "telecode": "SNN",
+   "representative_station": "十堰"
+  },
+  "南京": {
+   "telecode": "NJH",
+   "representative_station": "南京"
+  },
+  "南充": {
+   "telecode": "NCW",
+   "representative_station": "南充"
+  },
+  "南宁": {
+   "telecode": "NNZ",
+   "representative_station": "南宁"
+  },
+  "南昌": {
+   "telecode": "NCG",
+   "representative_station": "南昌"
+  },
+  "南通": {
+   "telecode": "NUH",
+   "representative_station": "南通"
+  },
+  "南阳": {
+   "telecode": "NFF",
+   "representative_station": "南阳"
+  },
+  "厦门": {
+   "telecode": "XMS",
+   "representative_station": "厦门"
+  },
+  "台州": {
+   "telecode": "TEU",
+   "representative_station": "台州"
+  },
+  "合肥": {
+   "telecode": "HFH",
+   "representative_station": "合肥"
+  },
+  "吉林": {
+   "telecode": "JLL",
+   "representative_station": "吉林"
+  },
+  "吐鲁番": {
+   "telecode": "TFR",
+   "representative_station": "吐鲁番"
+  },
+  "呼和浩特": {
+   "telecode": "HHC",
+   "representative_station": "呼和浩特"
+  },
+  "咸阳": {
+   "telecode": "XYY",
+   "representative_station": "咸阳"
+  },
+  "哈密": {
+   "telecode": "HMR",
+   "representative_station": "哈密"
+  },
+  "哈尔滨": {
+   "telecode": "HBB",
+   "representative_station": "哈尔滨"
+  },
+  "喀什": {
+   "telecode": "KSR",
+   "representative_station": "喀什"
+  },
+  "嘉兴": {
+   "telecode": "JXH",
+   "representative_station": "嘉兴"
+  },
+  "嘉峪关": {
+   "telecode": "JGJ",
+   "representative_station": "嘉峪关"
+  },
+  "大同": {
+   "telecode": "DTV",
+   "representative_station": "大同"
+  },
+  "大庆": {
+   "telecode": "DZX",
+   "representative_station": "大庆"
+  },
+  "大理": {
+   "telecode": "DKM",
+   "representative_station": "大理"
+  },
+  "大连": {
+   "telecode": "DLT",
+   "representative_station": "大连"
+  },
+  "天水": {
+   "telecode": "TSJ",
+   "representative_station": "天水"
+  },
+  "天津": {
+   "telecode": "TJP",
+   "representative_station": "天津"
+  },
+  "太原": {
+   "telecode": "TYV",
+   "representative_station": "太原"
+  },
+  "宁波": {
+   "telecode": "NGH",
+   "representative_station": "宁波"
+  },
+  "安顺": {
+   "telecode": "ASW",
+   "representative_station": "安顺"
+  },
+  "宜宾": {
+   "telecode": "YKE",
+   "representative_station": "宜宾"
+  },
+  "宜昌": {
+   "telecode": "YCN",
+   "representative_station": "宜昌"
+  },
+  "宝鸡": {
+   "telecode": "BJY",
+   "representative_station": "宝鸡"
+  },
+  "岳阳": {
+   "telecode": "YYQ",
+   "representative_station": "岳阳"
+  },
+  "常州": {
+   "telecode": "CZH",
+   "representative_station": "常州"
+  },
+  "常德": {
+   "telecode": "VGQ",
+   "representative_station": "常德"
+  },
+  "广州": {
+   "telecode": "GZQ",
+   "representative_station": "广州"
+  },
+  "库尔勒": {
+   "telecode": "KLR",
+   "representative_station": "库尔勒"
+  },
+  "延安": {
+   "telecode": "YWY",
+   "representative_station": "延安"
+  },
+  "开封": {
+   "telecode": "KFF",
+   "representative_station": "开封"
+  },
+  "张掖": {
+   "telecode": "ZYJ",
+   "representative_station": "张掖"
+  },
+  "徐州": {
+   "telecode": "XCH",
+   "representative_station": "徐州"
+  },
+  "德阳": {
+   "telecode": "DYW",
+   "representative_station": "德阳"
+  },
+  "惠州": {
+   "telecode": "HCQ",
+   "representative_station": "惠州"
+  },
+  "成都": {
+   "telecode": "CDW",
+   "representative_station": "成都"
+  },
+  "扬州": {
+   "telecode": "YLH",
+   "representative_station": "扬州"
+  },
+  "承德": {
+   "telecode": "CDP",
+   "representative_station": "承德"
+  },
+  "抚顺": {
+   "telecode": "FET",
+   "representative_station": "抚顺"
+  },
+  "拉萨": {
+   "telecode": "LSO",
+   "representative_station": "拉萨"
+  },
+  "揭阳": {
+   "telecode": "JYA",
+   "representative_station": "揭阳"
+  },
+  "新乡": {
+   "telecode": "XXF",
+   "representative_station": "新乡"
+  },
+  "无锡": {
+   "telecode": "WGH",
+   "representative_station": "无锡"
+  },
+  "日喀则": {
+   "telecode": "RKO",
+   "representative_station": "日喀则"
+  },
+  "昆明": {
+   "telecode": "KMM",
+   "representative_station": "昆明"
+  },
+  "普洱": {
+   "telecode": "PEM",
+   "representative_station": "普洱"
+  },
+  "景德镇": {
+   "telecode": "JCG",
+   "representative_station": "景德镇"
+  },
+  "曲靖": {
+   "telecode": "QJM",
+   "representative_station": "曲靖"
+  },
+  "杭州": {
+   "telecode": "HZH",
+   "representative_station": "杭州"
+  },
+  "林芝": {
+   "telecode": "LZO",
+   "representative_station": "林芝"
+  },
+  "柳州": {
+   "telecode": "LZZ",
+   "representative_station": "柳州"
+  },
+  "株洲": {
+   "telecode": "ZZQ",
+   "representative_station": "株洲"
+  },
+  "格尔木": {
+   "telecode": "GRO",
+   "representative_station": "格尔木"
+  },
+  "桂林": {
+   "telecode": "GLZ",
+   "representative_station": "桂林"
+  },
+  "梧州": {
+   "telecode": "WZZ",
+   "representative_station": "梧州"
+  },
+  "武汉": {
+   "telecode": "WHN",
+   "representative_station": "武汉"
+  },
+  "汉中": {
+   "telecode": "HOY",
+   "representative_station": "汉中"
+  },
+  "汕头": {
+   "telecode": "OTQ",
+   "representative_station": "汕头"
+  },
+  "沈阳": {
+   "telecode": "SYT",
+   "representative_station": "沈阳"
+  },
+  "泉州": {
+   "telecode": "QYS",
+   "representative_station": "泉州"
+  },
+  "泸州": {
+   "telecode": "LUE",
+   "representative_station": "泸州"
+  },
+  "洛阳": {
+   "telecode": "LYF",
+   "representative_station": "洛阳"
+  },
+  "济南": {
+   "telecode": "JNK",
+   "representative_station": "济南"
+  },
+  "深圳": {
+   "telecode": "SZQ",
+   "representative_station": "深圳"
+  },
+  "温州": {
+   "telecode": "RZH",
+   "representative_station": "温州"
+  },
+  "湛江": {
+   "telecode": "ZJZ",
+   "representative_station": "湛江"
+  },
+  "漳州": {
+   "telecode": "ZUS",
+   "representative_station": "漳州"
+  },
+  "潮州": {
+   "telecode": "CKQ",
+   "representative_station": "潮州"
+  },
+  "牡丹江": {
+   "telecode": "MDB",
+   "representative_station": "牡丹江"
+  },
+  "珠海": {
+   "telecode": "ZHQ",
+   "representative_station": "珠海"
+  },
+  "盐城": {
+   "telecode": "AFH",
+   "representative_station": "盐城"
+  },
+  "石家庄": {
+   "telecode": "SJP",
+   "representative_station": "石家庄"
+  },
+  "福州": {
+   "telecode": "FZS",
+   "representative_station": "福州"
+  },
+  "秦皇岛": {
+   "telecode": "QTP",
+   "representative_station": "秦皇岛"
+  },
+  "绍兴": {
+   "telecode": "SOH",
+   "representative_station": "绍兴"
+  },
+  "绵阳": {
+   "telecode": "MYW",
+   "representative_station": "绵阳"
+  },
+  "芜湖": {
+   "telecode": "WHH",
+   "representative_station": "芜湖"
+  },
+  "苏州": {
+   "telecode": "SZH",
+   "representative_station": "苏州"
+  },
+  "茂名": {
+   "telecode": "MDQ",
+   "representative_station": "茂名"
+  },
+  "莆田": {
+   "telecode": "PTS",
+   "representative_station": "莆田"
+  },
+  "衡阳": {
+   "telecode": "HYQ",
+   "representative_station": "衡阳"
+  },
+  "襄阳": {
+   "telecode": "XFN",
+   "representative_station": "襄阳"
+  },
+  "西宁": {
+   "telecode": "XNO",
+   "representative_station": "西宁"
+  },
+  "西安": {
+   "telecode": "XAY",
+   "representative_station": "西安"
+  },
+  "西昌": {
+   "telecode": "ECW",
+   "representative_station": "西昌"
+  },
+  "贵阳": {
+   "telecode": "GIW",
+   "representative_station": "贵阳"
+  },
+  "赣州": {
+   "telecode": "GZG",
+   "representative_station": "赣州"
+  },
+  "达州": {
+   "telecode": "RXW",
+   "representative_station": "达州"
+  },
+  "遵义": {
+   "telecode": "ZYE",
+   "representative_station": "遵义"
+  },
+  "郑州": {
+   "telecode": "ZZF",
+   "representative_station": "郑州"
+  },
+  "重庆": {
+   "telecode": "CUW",
+   "representative_station": "重庆"
+  },
+  "金华": {
+   "telecode": "JBH",
+   "representative_station": "金华"
+  },
+  "银川": {
+   "telecode": "YIJ",
+   "representative_station": "银川"
+  },
+  "镇江": {
+   "telecode": "ZJH",
+   "representative_station": "镇江"
+  },
+  "长春": {
+   "telecode": "CCT",
+   "representative_station": "长春"
+  },
+  "长沙": {
+   "telecode": "CSQ",
+   "representative_station": "长沙"
+  },
+  "阜阳": {
+   "telecode": "FYH",
+   "representative_station": "阜阳"
+  },
+  "青岛": {
+   "telecode": "QDK",
+   "representative_station": "青岛"
+  },
+  "鞍山": {
+   "telecode": "AST",
+   "representative_station": "鞍山"
+  },
+  "韶关": {
+   "telecode": "SNQ",
+   "representative_station": "韶关"
+  },
+  "香格里拉": {
+   "telecode": "EUM",
+   "representative_station": "香格里拉"
+  },
+  "香港": {
+   "telecode": "XJA",
+   "representative_station": "香港西九龙"
+  },
+  "齐齐哈尔": {
+   "telecode": "QHX",
+   "representative_station": "齐齐哈尔"
+  },
+  "龙岩": {
+   "telecode": "LYS",
+   "representative_station": "龙岩"
+  }
+ }
+}
