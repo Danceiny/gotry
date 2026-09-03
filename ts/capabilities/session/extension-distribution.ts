@@ -104,7 +104,9 @@ export function parseDistManifest(raw: string): ExtensionDistManifest {
   const tarballSha256 = obj.tarballSha256
   const zip = obj.zip
   const zipSha256 = obj.zipSha256
-  if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('dist-manifest.version 缺失或非 x.y.z')
+  // Chrome manifest version 形态:1-4 段点分整数(扩展版本跟随 gotry 主版本
+  // 0.0.1-rc.N → 四段投影 0.0.1.N,展示名走 version_name 原样)
+  if (typeof version !== 'string' || !/^\d+(\.\d+){1,3}$/.test(version)) throw new Error('dist-manifest.version 缺失或非 1-4 段点分整数')
   if (tarball !== DIST_ASSET_TARBALL) throw new Error(`dist-manifest.tarball 资产名漂移(期望 ${DIST_ASSET_TARBALL})`)
   if (zip !== DIST_ASSET_STORE_ZIP) throw new Error(`dist-manifest.zip 资产名漂移(期望 ${DIST_ASSET_STORE_ZIP})`)
   if (typeof tarballSha256 !== 'string' || !SHA256_RE.test(tarballSha256)) throw new Error('dist-manifest.tarballSha256 非 64-hex')

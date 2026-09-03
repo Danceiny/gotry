@@ -21,7 +21,7 @@
   window.__gotrySniffInstalled = true
 
   var FLIGHT_HINT_RE = /search\/api\/search\/batchSearch/
-  var HOTEL_HINT_RE = /hotels\.ctrip\.com\/(hotels\/api|domestic\/pc\/api)|GetHotelListBySOA|GetHotelListByCity|HotelSearch|hotelsearch/i
+  var HOTEL_HINT_RE = /hotels\.ctrip\.com\/(hotels\/api|domestic\/pc\/api)|GetHotelListBySOA|GetHotelListByCity|HotelSearch|hotelsearch|restapi\/soa2\/\d+\/fetchHotelList/i
   /** 火车(2026-09-03 实装):12306 余票查询 XHR(负载均衡变体 queryG/Z/A/U 全命中) */
   var TRAIN_HINT_RE = /leftTicket\/query/i
   /** 形状嗅探(酒店页兜底;与 Node 侧 looksLikeHotelListBody 签名一致) */

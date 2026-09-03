@@ -346,12 +346,35 @@ console.log('K. 酒店适配器(buildHotelEntryUrl/走形解析/形状嗅探/城
   const h1 = buildHotelEntryUrl({ to: '迪拜', cityId: 220, checkIn: '2026-12-01', checkOut: '2026-12-03', adults: 2 })
   assert(h1.ok && h1.url === 'https://hotels.ctrip.com/hotels/list?city=220&checkin=2026-12-01&checkout=2026-12-03&adult=2', 'cityId 显式覆盖 + 参数序', h1)
   const h2 = buildHotelEntryUrl({ to: '上海' })
-  assert(h2.ok && h2.url === 'https://hotels.ctrip.com/hotels/list?city=2', '码表内城市(上海=2,D-13 公开常识口径)', h2)
+  assert(h2.ok && h2.url === 'https://hotels.ctrip.com/hotels/list?city=2', '码表内城市(上海=2,实测校准)', h2)
   const h3 = buildHotelEntryUrl({ to: '不在码表的城市' })
   assert(!h3.ok && h3.unresolved?.includes('不在码表的城市') === true, '未收录城市 unresolved(不猜 id,不造数)', h3)
   assert(/city=/.test(hotelCityUnresolvedHint(['迪拜'])), '未收录指引带 cityId 发现路径(web 搜 list 页 URL)')
 
+  // K1b 实测校准抽查:迪拜=220/丽江=37/大理=36(2026-09-03 页面 title 验证)
+  const hDubai = buildHotelEntryUrl({ to: '迪拜' })
+  assert(hDubai.ok && hDubai.url!.includes('city=220'), '迪拜=220(实测,轨迹里 agent 构造的 id 正确)', hDubai)
+  const hLijiang = buildHotelEntryUrl({ to: '丽江' })
+  assert(hLijiang.ok && hLijiang.url!.includes('city=37'), '丽江=37(实测)', hLijiang)
+
   // K2 走形解析:domestic 形态(priceInfo 对象)/扁平形态/打码价/malformed
+  // K2b 携程现行真实形态(hotelInfo 包裹,一方校准 2026-09-03)——含价格子树探测
+  const realShape = JSON.stringify({
+    initListData: { hotelList: [{
+      hotelInfo: {
+        summary: { hotelId: '3732301', nameInfo: { name: 'Ibis Styles Dubai Jumeira', enName: 'Ibis Styles Dubai Jumeira' }, hotelStar: { star: 3 }, positionInfo: { address: 'Al Mina Road - Jumeirah 1' } },
+        commentInfo: { commentScore: '4.4' },
+        productInfo: { priceInfo: { price: 468 } },
+      },
+    }] },
+  })
+  const realHotels = parseCtripHotelList(realShape)
+  assert(realHotels.length === 1, '真实形态(hotelInfo 包裹)解析命中', realHotels)
+  assert(realHotels[0]!.name === 'Ibis Styles Dubai Jumeira' && realHotels[0]!.hotelId === '3732301' && realHotels[0]!.star === 3 && realHotels[0]!.score === '4.4', '结构化字段(名/id/星/评分)', realHotels[0])
+  assert(realHotels[0]!.price === 468, '价格子树探测(productInfo.priceInfo.price)', realHotels[0])
+  assert(realHotels[0]!.jumpUrl === 'https://hotels.ctrip.com/hotel/3732301', '真实形态 jumpUrl 构造', realHotels[0])
+
+
   const fixture = JSON.stringify({
     data: { hotelList: [
       { hotelId: 442516, hotelName: 'Dubai Marriott', star: 5, commentScore: 4.7, position: { address: 'Sheikh Zayed Rd' }, priceInfo: { avgPrice: 680, total: 1360 } },
