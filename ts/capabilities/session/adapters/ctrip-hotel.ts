@@ -14,11 +14,17 @@
  * 页面照常生效(下单/支付面 URL 仍被物理拦截)。
  */
 
-/** 城市码起步集(D-13:公开常识口径,首个真会话后校准;词表外逐字保留,
- * 调用方可显式传 cityId 覆盖——携程/trip.com 酒店 list 页 URL 里的 city= 数字) */
+/** 城市码表(**实测校准 2026-09-03**:每条 id 均经 hotels.ctrip.com list 页
+ * <title> 验证——探测法曾纠出 104=平遥县(传猜成都)等 5 处错猜,表内只收
+ * 验证过的 id;词表外 unresolved 逐字保留,调用方可显式传 cityId 覆盖) */
 const HOTEL_CITY_CODES: Record<string, string> = {
-  上海: '2',
-  北京: '1',
+  上海: '2', 北京: '1', 广州: '32', 深圳: '30', 成都: '28',
+  杭州: '17', 南京: '12', 苏州: '14', 无锡: '13', 扬州: '15', 镇江: '16',
+  青岛: '7', 厦门: '25', 珠海: '31', 三亚: '43', 海口: '42',
+  桂林: '33', 昆明: '34', 大理: '36', 丽江: '37', 西双版纳: '35',
+  贵阳: '38', 拉萨: '41', 乌鲁木齐: '39', 太原: '105', 长春: '158', 南通: '82',
+  敦煌: '11', 舟山: '19', 张家界: '27', 黄山市: '23', 九江: '24', 武夷山: '26',
+  迪拜: '220',
 }
 
 export interface AdapterEntry {
@@ -54,10 +60,12 @@ export function buildHotelEntryUrl(q: HotelEntryQuery): AdapterEntry {
   return { ok: true, url: `https://hotels.ctrip.com/hotels/list?${params.toString()}` }
 }
 
-/** networkHints:酒店检索 XHR 的 URL 形态(多版接口名并存;命中即读) */
+/** networkHints:酒店检索 XHR 的 URL 形态(restapi/soa2/34951/fetchHotelList
+ * 为 2026-09-03 自 list 页一方确认的现行接口;其余为多版并存口径;命中即读) */
 export const HOTEL_NETWORK_HINTS = [
   /hotels\.ctrip\.com\/(hotels\/api|domestic\/pc\/api)/i,
   /GetHotelListBySOA|GetHotelListByCity|HotelSearch|hotelsearch/i,
+  /restapi\/soa2\/\d+\/fetchHotelList/i,
 ]
 
 /** 形状嗅探签名:URL hint 未命中时的兜底(对接口改名免疫);大小上限由调用方先把关 */
@@ -131,6 +139,38 @@ function hotelSignature(o: Record<string, unknown>): WalkCandidate | null {
   return { name: name.trim(), price, priceRaw, star, score, address, hotelId }
 }
 
+/** 结构化候选:携程现行 list 形态(**一方校准 2026-09-03**,取自 list 页 SSR
+ * initListData 实测:hotelList[].hotelInfo.summary.nameInfo.name 等;价格字段
+ * 在 SSR 载荷缺席——价格走交互式 fetchHotelList XHR,由扩展嗅探捕获,此处对
+ * 条目子树做 price/amount 键探测,真会话后再钉死精确路径) */
+function ctripStructuredCandidate(item: Record<string, unknown>): WalkCandidate | null {
+  const info = item.hotelInfo as Record<string, unknown> | undefined
+  const summary = (info?.summary ?? item) as Record<string, unknown>
+  const nameInfo = summary.nameInfo as Record<string, unknown> | undefined
+  const name = (nameInfo?.name ?? summary.hotelName ?? summary.name) as unknown
+  if (typeof name !== 'string' || !name.trim()) return null
+  let price: number | undefined
+  let priceRaw: string | undefined
+  const priceProbe = (v: unknown, depth: number, seen: Set<unknown>): void => {
+    if (price !== undefined || depth > 6 || v == null || typeof v !== 'object' || seen.has(v)) return
+    seen.add(v)
+    for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
+      if (/price|amount/i.test(k) && typeof child === 'number' && child > 0) { price = child; return }
+      if (/price|amount/i.test(k) && typeof child === 'string' && child.trim()) { priceRaw = priceRaw ?? child.trim(); continue }
+      priceProbe(child, depth + 1, seen)
+    }
+  }
+  priceProbe(item, 0, new Set())
+  const starOf = summary.hotelStar as Record<string, unknown> | undefined
+  const starRaw = starOf?.star ?? summary.star
+  const star = typeof starRaw === 'number' && starRaw > 0 ? starRaw : undefined
+  const scoreRaw = ((info?.commentInfo ?? summary.commentInfo) as Record<string, unknown> | undefined)?.commentScore
+  const pos = summary.positionInfo as Record<string, unknown> | undefined
+  const address = (typeof pos?.address === 'string' ? pos.address : undefined) ?? (typeof summary.address === 'string' ? summary.address : undefined)
+  const hotelId = summary.hotelId != null ? String(summary.hotelId) : undefined
+  return { name: name.trim(), price, priceRaw, star, score: scoreRaw == null ? undefined : String(scoreRaw), address, hotelId }
+}
+
 /** 走形:深找第一个酒店签名数组(纯函数,fixture 测试锚点);malformed 一律返空,不抛错 */
 export function parseCtripHotelList(body: string, opts: { maxItems?: number } = {}): SessionHotelOption[] {
   let raw: unknown
@@ -147,7 +187,7 @@ export function parseCtripHotelList(body: string, opts: { maxItems?: number } = 
       for (const item of node) {
         if (out.length >= maxItems) return
         if (item == null || typeof item !== 'object' || Array.isArray(item)) continue
-        const cand = hotelSignature(item as Record<string, unknown>)
+        const cand = hotelSignature(item as Record<string, unknown>) ?? ctripStructuredCandidate(item as Record<string, unknown>)
         if (!cand) continue
         out.push({
           name: cand.name,
