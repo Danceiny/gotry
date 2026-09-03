@@ -6,7 +6,8 @@
  * 监听事件并经 chrome.runtime 转发给 Service Worker。
  *
  * 嗅探面(与 Node 侧 adapters/ctrip-flight.ts NETWORK_HINTS、adapters/ctrip-hotel.ts
- * HOTEL_NETWORK_HINTS 对账,run-all §38 防漂移断言守住):
+ * HOTEL_NETWORK_HINTS、adapters/rail-12306.ts TRAIN_NETWORK_HINTS 对账,run-all §38
+ * 防漂移断言守住):
  *   - 机票:search/api/search/batchSearch(精确接口)
  *   - 酒店(2026-09-03 实装):URL hint 多版接口名 + **形状嗅探兜底**——响应体
  *     JSON 含酒店清单签名即转发,对接口改名免疫(接口名公开资料多版并存,首个
@@ -21,10 +22,13 @@
 
   var FLIGHT_HINT_RE = /search\/api\/search\/batchSearch/
   var HOTEL_HINT_RE = /hotels\.ctrip\.com\/(hotels\/api|domestic\/pc\/api)|GetHotelListBySOA|GetHotelListByCity|HotelSearch|hotelsearch/i
+  /** 火车(2026-09-03 实装):12306 余票查询 XHR(负载均衡变体 queryG/Z/A/U 全命中) */
+  var TRAIN_HINT_RE = /leftTicket\/query/i
   /** 形状嗅探(酒店页兜底;与 Node 侧 looksLikeHotelListBody 签名一致) */
   var HOTEL_BODY_SIG_RE = /"hotelList"|"hotelMatchInfos"|"hotelName"/
   var HOTEL_BODY_MAX = 2_000_000
   var isHotelPage = /(^|\.)hotels\.ctrip\.com$/.test(location.hostname)
+  var isTrainPage = /(^|\.)12306\.cn$/.test(location.hostname)
 
   function dispatch(url, body) {
     try {
@@ -35,6 +39,9 @@
   function hotelPageWants(url) {
     return isHotelPage && (HOTEL_HINT_RE.test(url) || FLIGHT_HINT_RE.test(url))
   }
+  function trainPageWants(url) {
+    return isTrainPage && TRAIN_HINT_RE.test(url)
+  }
 
   var origFetch = window.fetch
   if (typeof origFetch === 'function') {
@@ -44,7 +51,7 @@
           var url = ''
           if (typeof input === 'string') url = input
           else if (input && typeof input.url === 'string') url = input.url
-          var urlHint = FLIGHT_HINT_RE.test(url) || hotelPageWants(url)
+          var urlHint = FLIGHT_HINT_RE.test(url) || hotelPageWants(url) || trainPageWants(url)
           var isPost = false
           try { isPost = String((init && init.method) || (input && input.method) || 'GET').toUpperCase() === 'POST' } catch { /* ignore */ }
           var capOk = true
@@ -78,7 +85,7 @@
     xhr.addEventListener('load', function () {
       try {
         if (!xhr.__gotryUrl) return
-        var urlHint = FLIGHT_HINT_RE.test(xhr.__gotryUrl) || hotelPageWants(xhr.__gotryUrl)
+        var urlHint = FLIGHT_HINT_RE.test(xhr.__gotryUrl) || hotelPageWants(xhr.__gotryUrl) || trainPageWants(xhr.__gotryUrl)
         if (!urlHint && !(isHotelPage && xhr.__gotryMethod === 'POST')) return
         var body = ''
         if (xhr.responseType === '' || xhr.responseType === 'text') body = xhr.responseText

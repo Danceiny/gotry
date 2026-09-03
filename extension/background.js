@@ -28,12 +28,19 @@ const SITES = {
     domain: 'ctrip.com',
     ticketNames: ['cticket', 'uid', 'uname', 'passport'],
   },
+  // 火车(2026-09-03 实装):12306 余票查询是公开面(登录只关系下单),无票据名可检;
+  // search job 照常经 per-site 白名单,扩展只读被动嗅探
+  'train-12306': {
+    domain: '12306.cn',
+    ticketNames: [],
+  },
 }
 
 /** 检索 URL 白名单(per-site;search job 只允许开各自站点域,其余一律拒) */
 const SITE_SEARCH_PREFIXES = {
   'ctrip-flight': 'https://flights.ctrip.com/',
   'ctrip-hotel': 'https://hotels.ctrip.com/',
+  'train-12306': 'https://kyfw.12306.cn/',
 }
 
 let activePort = null

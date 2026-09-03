@@ -874,7 +874,8 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),
     presentResult: (args, value) => {
-      const isHotel = String((args.query as { kind?: string })?.kind) === 'hotel'
+      const kindQ = String((args.query as { kind?: string })?.kind)
+      const isHotel = kindQ === 'hotel'
       const r = value as { ok?: boolean; options?: unknown[]; hotels?: unknown[] }
       const n = Math.max((r.options ?? []).length, (r.hotels ?? []).length)
       return { card: 'generic', title: `${isHotel ? '飞猪酒店' : '飞猪检索'}:${r.ok && n > 0 ? `${n} 条` : '降级'}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
@@ -930,21 +931,53 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_session_search',
     description:
-      'Search on the USER\'S OWN logged-in browser session (Ctrip: kind="flight" (default) or kind="hotel"; the account channel, not an anonymous instance). '
+      'Search on the USER\'S OWN browser session (Ctrip kind="flight"(default)/"hotel"; 12306 kind="train" — public query face, no login needed). '
       + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'Transport: GoTry Session Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
       + 'kind="flight": { from, to, date } — sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
       + 'kind="hotel": { to, cityId?, checkIn?, checkOut?, adults? } — cityId = the numeric city= in a hotels.ctrip.com list URL (web-search it when the destination is outside the built-in city table); hotel prices are the user\'s real logged-in prices. Evidence [会话:ctrip-hotel@ts]. '
+      + 'kind="train": { from, to, date, fromStationTelecode?, toStationTelecode? } — 12306 left-ticket query (public face): train codes, times, durations, seat availability; the list API carries NO prices (prices live on the 12306 page). Evidence [会话:train-12306@ts]. '
       + 'verdict needs-login = call gotry_session_login (opens the Ctrip login entry in the user\'s own foreground tab — no terminal, no credentials through GoTry); '
       + `needs-extension = one-time browser-extension install (Chrome Web Store one-click, installUrl is also surfaced as a clickable link in the verdict field for dsh UI to render) — the DEFAULT transport; cdp (chrome://inspect remote debugging) is a diagnostic fallback only via GOTRY_SESSION_TRANSPORT=cdp. `
       + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).',
     parameters: {
-      query: { type: 'json', required: true, description: 'kind=flight(默认): { from: "上海", to: "丽江", date: "2026-10-01" }; kind=hotel: { kind: "hotel", to: "迪拜", cityId?: 220, checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", adults?: 2 }' },
+      query: { type: 'json', required: true, description: 'kind=flight(默认): { from: "上海", to: "丽江", date: "2026-10-01" }; kind=hotel: { kind: "hotel", to: "迪拜", cityId?: 220, checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", adults?: 2 }; kind=train: { kind: "train", from: "上海", to: "昆明", date: "2026-10-01", fromStationTelecode?: "SHH", toStationTelecode?: "KMM" }' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; cityId?: number | string; checkIn?: string; checkOut?: string; adults?: number }>(args, 'from')
+      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; cityId?: number | string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string }>(args, 'from')
       // ---- 会话酒店(2026-09-03 实装;2026-09-02 迪拜 session:用户要携程找酒店,会话面却只有机票)----
+      // ---- 会话火车(2026-09-03 实装;12306 公开查询面,无登录闸)----
+      if (q.kind === 'train') {
+        if (!q.from || !q.to || !q.date) {
+          return { ok: false, summary: 'kind=train 需要 from/to(中文城市/车站名)与 date(YYYY-MM-DD);城市电报码表外带 fromStationTelecode/toStationTelecode(kyfw 查询页 URL 里的三位码)' } as const
+        }
+        const nowT = new Date()
+        const todayT = `${nowT.getFullYear()}-${String(nowT.getMonth() + 1).padStart(2, '0')}-${String(nowT.getDate()).padStart(2, '0')}`
+        if (q.date < todayT) {
+          return JSON.parse(JSON.stringify({
+            ok: false, verdict: 'error',
+            summary: `未发起查询:日期 ${q.date} 已是过去(今天 ${todayT}),过去不存在在售火车票。向用户确认日期后再查。`,
+          })) as Record<string, never>
+        }
+        const itpT = await interpretEffect({
+          effect: 'SESSION_TRAIN_SEARCH',
+          params: {
+            from: q.from, to: q.to, date: q.date,
+            fromStationTelecode: q.fromStationTelecode, toStationTelecode: q.toStationTelecode,
+            auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
+          },
+        })
+        if (!itpT.result) return declinedObservation('SESSION_TRAIN_SEARCH', itpT.trace)
+        const rT = itpT.result
+        const topT = (rT.trains ?? []).slice(0, 10).map(t => `${t.trainCode} ${t.depTime}→${t.arrTime}${t.arriveDayDiff ? `(+${t.arriveDayDiff}日)` : ''} 历时${Math.round(t.durationMin / 60 * 10) / 10}h ${t.canWebBuy === 'Y' ? '可订' : t.canWebBuy}${Object.entries(t.seats).filter(([, v]) => v && v !== '--' && v !== '无').slice(0, 3).map(([k, v]) => `${k}:${v}`).join(' ')}`)
+        const summaryT = rT.verdict === 'hit'
+          ? `${q.from}→${q.to} ${q.date} 余票(12306 公开查询面,${(rT.trains ?? []).length} 趟)前 ${topT.length} 条(列表接口不含票价,票价以 12306 落地页为准):\n${topT.join('\n')}\n${rT.evidence}`
+          : rT.verdict === 'cooldown'
+            ? `会话火车检索节律闸冷却中(两次会话检索需 ≥30s 间隔)——稍候重试或先用其他工具推进。${rT.evidence}`
+            : `会话火车检索未取回(${rT.verdict}):${rT.error ?? ''} ${rT.evidence}`
+        return JSON.parse(JSON.stringify({ ...rT, summary: summaryT })) as Record<string, never>
+      }
       if (q.kind === 'hotel') {
         if (!q.to) {
           return { ok: false, summary: 'kind=hotel 需要 to(目的地中文;城市码表外带 cityId=携程酒店 list 页 URL 里的 city= 数字)' } as const
@@ -967,7 +1000,7 @@ export function apply(ctx: Context, config: Config): void {
         return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
       }
       if (!q.from || !q.to || !q.date) {
-        return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD);酒店检索用 kind=hotel' } as const
+        return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD);酒店/火车检索分别用 kind=hotel / kind=train' } as const
       }
       // 效应解译层(ADR-18):SESSION 通道策略=永不重试/不熔断,节律闸在渠道内;
       // 解译器只做分发与证据拼装,verdict 语义(risk 型 needs-login/challenged)原样透传
@@ -992,11 +1025,13 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: args => {
       const q = (args.query as { kind?: string; from?: string; to?: string }) ?? {}
-      return { card: 'generic', title: q.kind === 'hotel' ? `会话酒店:${q.to ?? ''}` : `会话检索:${q.from ?? ''}`, kind: 'fetch', rawInput: args.query }
+      const callTitle = q.kind === 'hotel' ? `会话酒店:${q.to ?? ''}` : q.kind === 'train' ? `会话火车:${q.from ?? ''}` : `会话检索:${q.from ?? ''}`
+      return { card: 'generic', title: callTitle, kind: 'fetch', rawInput: args.query }
     },
     presentResult: (args, value) => {
       const r = value as { verdict?: string; options?: unknown[]; hotels?: unknown[]; installUrl?: string }
-      const isHotel = String((args.query as { kind?: string })?.kind) === 'hotel'
+      const kindQ = String((args.query as { kind?: string })?.kind)
+      const isHotel = kindQ === 'hotel'
       const n = Math.max((r.options ?? []).length, (r.hotels ?? []).length)
       const needsExt = r.verdict === 'needs-extension'
       const label = r.verdict === 'hit'
@@ -1008,7 +1043,8 @@ export function apply(ctx: Context, config: Config): void {
             : r.verdict ?? '降级'
       const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }]
       if (needsExt && r.installUrl) content.push({ type: 'text', text: `安装链接:${r.installUrl}` })
-      return { card: 'generic', title: `${isHotel ? '会话酒店' : '会话检索'}:${label}`, content }
+      const face = kindQ === 'hotel' ? '会话酒店' : kindQ === 'train' ? '会话火车' : '会话检索'
+      return { card: 'generic', title: `${face}:${label}`, content }
     },
   }))
 
