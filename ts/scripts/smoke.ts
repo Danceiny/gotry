@@ -198,7 +198,7 @@ async function main() {
 
   // 12) 会话数据面工具(P3 切片1):官方通道 live + 会话工具 needs-login 合同(隔离 profile,零导航)
   {
-    const fa = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string; setup?: string }
+    const fa = await byName('gotry_flyai_search').execute({ kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string; setup?: string }
     const faBlocked = fa.verdict === 'error' && /sentinel|block|trial limit/i.test(fa.error ?? '')
     // 端点不可达/超时(出口 IP 被拒或网络抖动)→ 工具以带证据链的 error 终态优雅降级,同样合法
     const faErrTerminal = fa.ok === false && fa.verdict === 'error' && /^flyai-error$/.test(String(fa.via ?? '')) && /\[实时API:flyai@error@/.test(String(fa.evidence ?? ''))
@@ -221,7 +221,7 @@ async function main() {
     // 指向隔离空目录，确定性验证 needs-attach/no-spend 合同。真实 attach 只走 #21 人在场验收。
     const prof = mkdtempSync(join(smokeRoot, 'sess-'))
     // 过去日期预校验(issue #24):代码层直接拒绝并指明修正方向,不发上游查询、不产生误导性 miss
-    const faPast = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' } }, null) as { ok?: boolean; summary?: string }
+    const faPast = await byName('gotry_flyai_search').execute({ kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' }, null) as { ok?: boolean; summary?: string }
     if (!(faPast.ok === false && /已是过去/.test(String(faPast.summary ?? '')))) {
       throw new Error(`FAIL: flyai 过去日期应代码层预校验拒绝,实际:${JSON.stringify(faPast).slice(0, 200)}`)
     }
@@ -252,7 +252,7 @@ async function main() {
         : `live hit(${fa.options?.length ?? 0} 条)`
     console.log(`session-face tools: flyai ${faOutcome}; session cdp 隔离门禁=needs-attach`)
     // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 三合法终态(试用达限 needs-setup / 限流·端点降级 or hit)
-    const fh = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' } }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string; setup?: string }
+    const fh = await byName('gotry_flyai_search').execute({ kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string; setup?: string }
     const fhBlocked = fh.verdict === 'error' && /sentinel|block|trial limit/i.test(fh.error ?? '')
     const fhErrTerminal = fh.ok === false && fh.verdict === 'error' && /^flyai-error$/.test(String(fh.via ?? '')) && /\[实时API:flyai@error@/.test(String(fh.evidence ?? ''))
     const fhNeedsSetup = fh.ok === false && fh.verdict === 'needs-setup'
@@ -266,8 +266,19 @@ async function main() {
     } else if (fh.ok !== true || fh.verdict !== 'hit' || (fh.hotels?.length ?? 0) < 1 || !/\[实时API:flyai@/.test(fh.evidence ?? '')) {
       throw new Error(`FAIL: flyai hotel 应 live hit,实际:${JSON.stringify(fh).slice(0, 220)}`)
     }
-    const fhDest = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel' } }, null) as { ok?: boolean }
+    const fhDest = await byName('gotry_flyai_search').execute({ kind: 'hotel' }, null) as { ok?: boolean }
     if (fhDest.ok !== false) throw new Error('FAIL: hotel 缺目的地应参数闸拒绝')
+    // D-30 迁移锁:legacy blob 形态({query:{...}} 包裹)在宿主权校验即被结构化拒绝——
+    // defineTool validateArgs 抛 ToolArgsError,guardToolExecute 兜成 ADR-13 ToolFailure(ok:false+evidence)
+    const faLegacy = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } } as never, null) as { ok?: boolean; summary?: string; evidence?: string }
+    if (!(faLegacy.ok === false && !!faLegacy.evidence && /内部错误|参数|schema|violat/i.test(String(faLegacy.summary ?? '')))) {
+      throw new Error(`FAIL: flyai legacy blob 形态应被 typed 契约结构化拒绝(ADR-13 ToolFailure),实际:${JSON.stringify(faLegacy).slice(0, 200)}`)
+    }
+    const faBadEnum = await byName('gotry_flyai_search').execute({ kind: 'plane' } as never, null) as { ok?: boolean; summary?: string; evidence?: string }
+    if (!(faBadEnum.ok === false && !!faBadEnum.evidence)) {
+      throw new Error(`FAIL: flyai kind 枚举外值应被宿主权校验拒绝,实际:${JSON.stringify(faBadEnum).slice(0, 200)}`)
+    }
+    console.log('  D-30 typed 契约:legacy blob/枚举外值 → 宿主权结构化拒绝(ToolFailure 形状保持)')
     // 会话酒店路由(2026-09-03 实装):未收录城市在 transport 前短路 → error + cityId 指引(offline 零桥零浏览器)
     const sh = await byName('gotry_session_search').execute({ query: { kind: 'hotel', to: '不在码表的城市' } }, null) as { ok?: boolean; verdict?: string; summary?: string }
     if (!(sh.ok === false && /city=/.test(String(sh.summary ?? '')))) {
@@ -280,7 +291,7 @@ async function main() {
       throw new Error(`FAIL: 会话火车未收录电报码应带发现指引,实际:${JSON.stringify(st).slice(0, 200)}`)
     }
     console.log('  train kind 路由:未收录电报码 → error + 电报码指引(transport 前短路)')
-    const fhPast = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-01-01', checkOut: '2026-01-03' } }, null) as { ok?: boolean; summary?: string }
+    const fhPast = await byName('gotry_flyai_search').execute({ kind: 'hotel', to: '大理', checkIn: '2026-01-01', checkOut: '2026-01-03' }, null) as { ok?: boolean; summary?: string }
     if (!(fhPast.ok === false && /不是未来合法区间/.test(String(fhPast.summary ?? '')))) {
       throw new Error(`FAIL: 酒店过去入住日应代码层预校验拒绝,实际:${JSON.stringify(fhPast).slice(0, 200)}`)
     }
