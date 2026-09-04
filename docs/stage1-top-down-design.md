@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-04 起,needs-extension 文案自适应(issue #117,D-24 清偿):按本地通道落位自动跳过开发者模式/本地通道指引——商店版用户只推商店一键装与「已装即可」;桥失败摘要与 doctor 扩展项同步自适应。
 - 2026-09-04 起,解译器迁移收尾(issue #115,D-23):anything/web/github/video/agent_reach/session_login 六渠道入效应注册表,23 工具外部依赖面全收敛 effect_interpreter.v1(没有策略表行就没有效应);工具面照旧平铺,证据链逐源标注不变。
 - 2026-09-04 起,启动一次性 doctor 摘要(issue #114):web/headless 启动时分离子进程后台只读体检,待处理项一行 stderr(全 ok 静默/零写盘/不阻塞/benchmark 豁免)——初始化可见取代会话中段撞错。
 - 2026-09-04 起,工具描述首行由通道注册表生成(issue #113):七个检索工具描述前置「服务意图 × 通道顺位」卡(与失败现场 routing 字段同表),doctor 补齐 patch 宿主插件 dsh-map-tools/dsh-tool-ask-user 两态(静默剔除面照亮;map-tools 全布局缺席待 founder 拍板补依赖)。

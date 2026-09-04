@@ -18,7 +18,7 @@
 import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -32,6 +32,8 @@ import {
   EXTENSION_ORIGINS,
   EXTENSION_STORE_URL,
   createSessionBridge,
+  localExtensionInstalled,
+  needsExtensionSummary,
   __resetSessionBridgeForTest,
   __setSessionBridgeForTest,
   type SessionJobHandle,
@@ -547,6 +549,28 @@ async function main(): Promise<void> {
     assert.equal(e.state, 'waiting_extension')
     assert.equal(e.quota_disposition, 'no_spend_waiting_user')
     assert.equal(e.retry_allowed, false)
+  })
+
+  // D-24 自适应文案(issue #117):按本地通道是否落位自动跳过开发者模式/本地通道指引
+  await check('needs-extension 自适应文案:本地已落位 → 双通道完整指引(含开发者模式)', () => {
+    const s = needsExtensionSummary({ localInstalled: true })
+    assert.match(s, /开发者模式「加载已解压的扩展程序」/, '本地通道在 → 保留开发者模式指引')
+    assert.ok(s.includes(EXTENSION_STORE_URL), '商店 URL 仍在')
+  })
+  await check('needs-extension 自适应文案:本地未落位(商店版用户/未装)→ 自动跳过 dev-mode 文案', () => {
+    const s = needsExtensionSummary({ localInstalled: false })
+    assert.doesNotMatch(s, /开发者模式/, '不再推开发者模式/本地通道(商店版用户不该被指导 load unpacked)')
+    assert.doesNotMatch(s, /加载已解压/, '不再出现 load unpacked 字样')
+    assert.match(s, /已从 Chrome 商店安装/, '给「已装商店版?」提示(打开 Chrome 即可,无需再装)')
+    assert.match(s, /应用商店一键装/, '未装用户仍得商店一键装指引')
+  })
+  await check('localExtensionInstalled:HOME 注入可测(manifest 存在=本地通道在)', () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'gotry-ext-home-'))
+    assert.equal(localExtensionInstalled(fakeHome), false, '空 HOME → 本地通道未落位')
+    mkdirSync(join(fakeHome, '.gotry', 'extension'), { recursive: true })
+    writeFileSync(join(fakeHome, '.gotry', 'extension', 'manifest.json'), '{}', 'utf-8')
+    assert.equal(localExtensionInstalled(fakeHome), true, 'manifest 落位 → true')
+    rmSync(fakeHome, { recursive: true, force: true })
   })
 
   await b.close()
