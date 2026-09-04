@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-04 起,typed 参数契约迁移第一刀(issue #112,D-30):最高流量工具 `gotry_flyai_search` 参数面 query blob → dsh typed ParameterSchemaSpec 平铺七字段(kind 枚举 required+六可选),模型可见逐字段 JSON Schema + execute 前宿主权校验,拒绝形状保持 ADR-13 ToolFailure(迁移锁 smoke §12/channel-registry-tests §8);余量工具与普通模型 canary 记 `architecture.md` §10 D-30。
 - 2026-09-04 起,行为契约 22 条(横评反哺,issue #121/#122):(1) 动机先行扩展同行人到达链访谈(见面/汇合类必问,问明落 `gotry_companion_save`,分链核算)+ 新增 (22) 到达账必达(红眼/落地即消耗航段显式给到达账);出处与评分卡见 `docs/persona-bench/`。
 - 2026-09-03 起,检索通道编排收敛为通道注册表 + 健康面(ADR-25,issue #106/#107/#108):persona 路由卡 `{{channel_routing_card}}` 与工具结果内 `routing` 建议由 `channel-registry.ts` 生成,本文涉及 persona (19) 工具枚举的表述以该卡为准;dsh-calendar 默认不挂载(D-9)。
 - S2 mock 切片 ✅ / S3 求解挂载 ✅ / S4 真 LLM ✅(MiniMax-M2,`bb880f3`)/ S5 编排+持久化 ✅(详见 `architecture.md` §9,那里是唯一的当前状态源);本文保留设计原文供追溯。**M1/M2 已退出；M3 工程面已就绪但真实种子用户 evidence 未收口，M3 Exit 仍开放；M4 由 founder 授权并行推进，不构成 M3 Exit 证明；M5/M6 仍受各自 Entry gate 约束。

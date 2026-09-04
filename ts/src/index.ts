@@ -811,17 +811,28 @@ export function apply(ctx: Context, config: Config): void {
     name: 'gotry_flyai_search',
     description:
       'Live travel search through the Fliggy official FlyAI channel (read-only, no key; booking/comparison happens by the HUMAN on the jumpUrl page). '
-      + 'kind="flight"|"train": { kind, from, to, date } (中文城市名, date YYYY-MM-DD) — real schedules & prices, split 直达/中转 in results. '
-      + 'kind="hotel": { kind:"hotel", to:"大理"(目的地中文), checkIn?, checkOut? (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords? }. '
+      + 'kind="flight"|"train": from/to 中文城市名 + date YYYY-MM-DD — real schedules & prices, split 直达/中转 in results. '
+      + 'kind="hotel": to=目的地中文(如 大理), checkIn/checkOut (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords?. '
       + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
       + 'Evidence [实时API:flyai@ts]. verdict=needs-setup (anonymous trial quota exhausted, upstream 429) is a CONFIG issue, not a search failure: surface the setup hint once, do NOT retry this tool this session — switch to gotry_session_search or web search. '
       + 'Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.',
+    // D-30 第一刀(issue #112):query json blob → 平铺 typed 契约。逐字段 schema 由 dsh
+    // parameterSchemaSpecToJsonSchema 投影为模型可见 JSON Schema,validateArgs 在 execute 前
+    // 宿主权校验——畸形参数(缺 kind/枚举外值/类型错/legacy blob 包裹)在入口即被结构化拒绝
+    // (ToolArgsError → guardToolExecute 兜成 ADR-13 ToolFailure,形状由迁移测试锁死)。
+    // 条件必填(机/火要 from/to/date,酒店要 to)不在 schema 强制,仍由 execute 结构化报错给方向。
     parameters: {
-      query: { type: 'json', required: true, description: 'kind=flight|train: { kind, from: "上海", to: "丽江", date: "2026-10-01" }; kind="hotel": { kind:"hotel", to:"大理", checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", keyWords?: "洱海" }' },
+      kind: { type: 'string', enum: ['flight', 'train', 'hotel'], required: true, description: '检索类型:flight 机票 / train 火车 / hotel 酒店' },
+      from: { type: 'string', description: '出发城市中文,如 上海——kind=flight|train 必填' },
+      to: { type: 'string', description: '到达城市中文,如 丽江;kind=hotel 时为目的地,如 大理(必填)' },
+      date: { type: 'string', description: '出发日期 YYYY-MM-DD——kind=flight|train 必填,须为今天或未来' },
+      checkIn: { type: 'string', description: '入住日期 YYYY-MM-DD,仅 kind=hotel;与 checkOut 成对可选(未定档期可不填先摸底)' },
+      checkOut: { type: 'string', description: '退房日期 YYYY-MM-DD,仅 kind=hotel;与 checkIn 成对' },
+      keyWords: { type: 'string', description: '酒店关键词,如 洱海——仅 kind=hotel 可选' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; checkIn?: string; checkOut?: string; keyWords?: string }>(args, 'from')
+    async execute(args, _exec) {
+      const q = args
       if (q.kind === 'hotel') {
         const dest = (q.to ?? '').trim()
         if (!dest) return { ok: false, summary: 'kind=hotel 需要 to(目的地中文,如 大理)' } as const
@@ -894,10 +905,9 @@ export function apply(ctx: Context, config: Config): void {
         ...(r.verdict !== 'hit' ? routingField(kind === 'train' ? 'search-train' : 'search-flight', 'flyai') : {}),
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `官方检索:${args.kind}`, kind: 'fetch', rawInput: args }),
     presentResult: (args, value) => {
-      const kindQ = String((args.query as { kind?: string })?.kind)
-      const isHotel = kindQ === 'hotel'
+      const isHotel = args.kind === 'hotel'
       const r = value as { ok?: boolean; options?: unknown[]; hotels?: unknown[] }
       const n = Math.max((r.options ?? []).length, (r.hotels ?? []).length)
       return { card: 'generic', title: `${isHotel ? '飞猪酒店' : '飞猪检索'}:${r.ok && n > 0 ? `${n} 条` : '降级'}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
