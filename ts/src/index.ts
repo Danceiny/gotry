@@ -31,11 +31,10 @@ import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, r
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
 import { wmoLabel } from '../capabilities/weather.ts'
-import { anythingSearch } from '../capabilities/anything.ts'
-import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
+// D-23 收编(issue #115):anything/web/github/video/agent_reach/session_login 六渠道改经
+// 效应注册表(退避/熔断/declined 面统一);能力层直接 import 仅留类型位(reach/reachStatus)
+import { reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { runDoctorChecks, renderDoctorReportMd } from '../capabilities/doctor.ts'
-import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
-import { sessionLogin } from '../capabilities/session-login.ts'
 import { EXTENSION_STORE_URL } from '../capabilities/session/extension-bridge.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 import { installModelOverride } from '../capabilities/model-override.ts'
@@ -964,7 +963,10 @@ export function apply(ctx: Context, config: Config): void {
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { evidence?: string }).evidence ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ waitSeconds?: number }>(args, 'waitSeconds')
-      const r = await sessionLogin({ waitMs: typeof q?.waitSeconds === 'number' ? q.waitSeconds * 1000 : undefined })
+      // D-23 收编(issue #115):登录引导入效应注册表(SESSION_LOGIN,浏览器族永不重试不熔断)
+      const itpL = await interpretEffect({ effect: 'SESSION_LOGIN', params: { waitSeconds: q?.waitSeconds } })
+      if (!itpL.result) return declinedObservation('SESSION_LOGIN', itpL.trace)
+      const r = itpL.result
       const summary = r.verdict === 'logged-in'
         ? `${r.site} 登录完成确认(票据 cookie 名已检出,只读名字)。说明:登录是在携程官网、用你自己的浏览器完成的——gotry 全程未接触任何密码/验证码/cookie 值。现在可以继续会话检索了。${r.evidence}`
         : r.verdict === 'pending'
@@ -1167,7 +1169,9 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.keyword) {
         return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', summary: 'keyword 必填', evidence: '[hbcli-anything@error] empty' })) as Record<string, never>
       }
-      const r = await anythingSearch(q)
+      const itpA = await interpretEffect({ effect: 'ANYTHING_SEARCH', params: q })
+      if (!itpA.result) return declinedObservation('ANYTHING_SEARCH', itpA.trace)
+      const r = itpA.result
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `anything:${r.via}`).catch(() => {})
       const top5 = (r.hits ?? []).slice(0, 5)
@@ -1218,7 +1222,9 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填', evidence: '[agent-reach:error] empty url' })) as Record<string, never>
       }
-      const r = await readUrl({ url: q.url, timeoutMs: q.timeoutMs })
+      const itpW = await interpretEffect({ effect: 'WEB_READ', params: { url: q.url, timeoutMs: q.timeoutMs } })
+      if (!itpW.result) return declinedObservation('WEB_READ', itpW.trace)
+      const r = itpW.result
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `agent-reach:${r.via}`).catch(() => {})
       const summary = r.ok
@@ -1254,7 +1260,9 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填' })) as Record<string, never>
       }
-      const r = await videoSubtitle({ url: q.url, lang: q.lang })
+      const itpV = await interpretEffect({ effect: 'VIDEO_SUBTITLE', params: { url: q.url, lang: q.lang } })
+      if (!itpV.result) return declinedObservation('VIDEO_SUBTITLE', itpV.trace)
+      const r = itpV.result
       const summary = r.verdict === 'found'
         ? `${q.url} 字幕提取成功 (${r.latencyMs}ms)\n${r.evidence}\n---\n${(r.subtitles ?? '').slice(0, 800)}`
         : r.verdict === 'not-installed'
@@ -1290,7 +1298,9 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.query) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'query 必填' })) as Record<string, never>
       }
-      const r = await githubSearch({ query: q.query, limit: q.limit })
+      const itpG = await interpretEffect({ effect: 'GITHUB_SEARCH', params: { query: q.query, limit: q.limit } })
+      if (!itpG.result) return declinedObservation('GITHUB_SEARCH', itpG.trace)
+      const r = itpG.result
       const summary = r.verdict === 'found'
         ? `${q.query} → ${r.repos?.length ?? 0} repos\n${(r.repos ?? []).map((x, i) => `  ${i + 1}. ${x.name} ★${x.stars ?? '?'} — ${(x.description ?? '').slice(0, 60)}`).join('\n')}\n${r.evidence}`
         : r.verdict === 'not-installed'
@@ -1330,12 +1340,17 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
     async execute(args, _exec: unknown) {
-      const q = unwrapQuery<{ action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }>(args, 'channel')
+      const q = unwrapQuery<{ action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }>(args)
       const started = Date.now()
       const dir = await ensureStateDir(config.stateRoot)
 
+      // D-23 收编(issue #115):status/reach 两分支收敛为单一 AGENT_REACH 效应——
+      // 解译器横切(trace/declined 面)统一,渲染逻辑留在工具层不变
+      const itpAR = await interpretEffect({ effect: 'AGENT_REACH', params: { action: q.action, channel: q.channel, method: q.method, args: q.args, timeoutMs: q.timeoutMs } })
+      if (!itpAR.result) return declinedObservation('AGENT_REACH', itpAR.trace)
+
       if (q.action === 'status' || (!q.action && !q.channel)) {
-        const st = await reachStatus(q.timeoutMs)
+        const st = itpAR.result as Awaited<ReturnType<typeof reachStatus>>
         await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'agent-reach:doctor').catch(() => {})
         const summary = st.via === 'agent-reach-cli'
           ? `Agent Reach doctor(上游 CLI,原样透传):\n${st.output}\n${st.evidence}`
@@ -1349,7 +1364,7 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.channel || !q.method) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'channel 与 method 必填(或 action=status);清单可先随便调一次,inventory 会带回上游渠道/方法表' })) as Record<string, never>
       }
-      const r = await reach({ channel: q.channel, method: q.method, args: q.args, timeoutMs: q.timeoutMs })
+      const r = itpAR.result as Awaited<ReturnType<typeof reach>>
       // 长结果干净截断:数组按条目边界保留(dsh 工具上限会拦腰断 JSON,模型只能看到半条)
       const dataStr = (v: unknown): unknown => {
         if (Array.isArray(v)) {
