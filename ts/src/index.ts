@@ -476,17 +476,15 @@ export function apply(ctx: Context, config: Config): void {
       + 'a previously handed-off plan («规划好了吗» / «上次那个行程»): open = still being worked in the '
       + 'background (ETA ' + '约 1 小时' + '), settled = deliverable ready (excerpt included, full text in the '
       + 'ticket\'s .deliverable.md), failed = honest failure note. Never fabricate a deliverable that is not here.',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层(同 session 刀法)
     parameters: {
-      query: {
-        type: 'json',
-        description: '{ ticketId?: "th-...(可选,只看这一单)" }',
-      },
+      ticketId: { type: 'string', description: '只看这一单,如 th-...(缺省列全部)' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
     },
-    async execute(args: { query?: unknown }) {
+    async execute(args, _exec: unknown) {
       const q = interpretArgs<{ ticketId?: string }>(args)
       const root = process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.'
       const all = await listTurnHandoffTickets(root)
@@ -510,7 +508,7 @@ export function apply(ctx: Context, config: Config): void {
         summary: `后台规划工单 ${tickets.length} 张:\n${lines.join('\n')}`,
       } as never
     },
-    presentCall: args => ({ card: 'generic', title: '后台规划工单查询', kind: 'search', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: '后台规划工单查询', kind: 'search', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -925,11 +923,12 @@ export function apply(ctx: Context, config: Config): void {
       + 'Transport: the GoTry Session Bridge browser extension (one-time install, ZERO Chrome system dialogs). '
       + `verdict logged-in (tickets detected) | pending (login tab opened, user not done yet — offer to re-check later) | needs-extension (one-time extension install: the verdict surfaces the Chrome Web Store installUrl as a clickable link for dsh UI to render — installation is a browser concern, not gotry's). `
       + 'Evidence [会话:<site>-login@ts].',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
-      query: { type: 'json', required: true, description: '可空对象 {}: { waitSeconds?: number }(等待用户完成登录的上限秒数,默认 90,至多 300)' },
+      waitSeconds: { type: 'integer', description: '等待用户完成登录的上限秒数,默认 90,至多 300;不传用默认' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { evidence?: string }).evidence ?? JSON.stringify(v).slice(0, 600)) }] },
-    async execute(args: { query?: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ waitSeconds?: number }>(args, 'waitSeconds')
       const r = await sessionLogin({ waitMs: typeof q?.waitSeconds === 'number' ? q.waitSeconds * 1000 : undefined })
       const summary = r.verdict === 'logged-in'
@@ -1288,18 +1287,20 @@ export function apply(ctx: Context, config: Config): void {
       'Action "status" runs the real `agent-reach doctor` (.venv/bin/agent-reach). ' +
       'Channels needing cookies/setup return the upstream check() guidance verbatim — do NOT give up there: hand the user the exact configure command, then offer to re-check. ' +
       'Evidence chain: [agent-reach:<channel>.<method>@ts].',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层。
+    // action 不设 enum:反射桥按 D-4a' 透传上游新增渠道/方法,gotry 零改动(生态开放面)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ action: "status" } 或 { action: "reach", channel: "<上游渠道名,如 web/v2ex/xueqiu>", method: "<上游方法名,如 read/get_hot_topics/get_stock_quote>", args?: "<空格分隔参数>" }',
-      },
+      action: { type: 'string', description: 'status(默认,无 channel 时)或 reach' },
+      channel: { type: 'string', description: '上游渠道名,如 web/v2ex/xueqiu(action=reach 时)' },
+      method: { type: 'string', description: '上游方法名,如 read/get_hot_topics/get_stock_quote' },
+      args: { type: 'string', description: '空格分隔参数' },
+      timeoutMs: { type: 'integer', description: '超时毫秒' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }>(args, 'channel')
       const started = Date.now()
       const dir = await ensureStateDir(config.stateRoot)
@@ -1353,10 +1354,10 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `Agent Reach:${String((args.query as { channel?: string; method?: string })?.channel ?? '')}.${String((args.query as { method?: string })?.method ?? 'status')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `Agent Reach:${String(args.channel ?? '')}.${String(args.method ?? 'status')}`, kind: 'fetch', rawInput: args }),
     presentResult: (args, value) => {
       const r = value as { verdict?: string; summary?: string }
-      const q = (args.query as { channel?: string; method?: string }) ?? {}
+      const q = (args as { channel?: string; method?: string }) ?? {}
       const icon = r.verdict === 'found' ? '✅' : r.verdict === 'needs-setup' ? '🔧' : r.verdict === 'not-installed' ? '📦' : '❌'
       return {
         card: 'generic',
@@ -1377,18 +1378,15 @@ export function apply(ctx: Context, config: Config): void {
       + 'Returns per-item status (ok/degraded/missing) with exact fix commands. '
       + 'Repair = `npx gotry doctor --fix` run BY THE USER in a terminal (this tool never installs anything); LLM keys are the dsh host\'s business and are deliberately out of scope. '
       + 'A markdown report is rendered for the workspace (gotry-state/doctor-report.md) so the sidebar workbench can preview it.',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ },{ 体检 } 或 { writeReport?: boolean(默认 true,把 markdown 报告写进 gotry-state/doctor-report.md,侧栏工作台可预览) }',
-      },
+      writeReport: { type: 'boolean', description: '默认 true,把 markdown 报告写进 gotry-state/doctor-report.md(侧栏工作台可预览)' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 900)) }],
     },
-    async execute(args: { query?: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ writeReport?: boolean }>(args, 'writeReport')
       const report = await runDoctorChecks({ stateRoot: config.stateRoot ?? '.' })
       // 报告落 gotry-state(侧栏工作台预览面);写失败不阻塞体检结论本身
@@ -1426,18 +1424,15 @@ export function apply(ctx: Context, config: Config): void {
       'in the working directory (trip plans etc.). READ-ONLY discovery. ' +
       'Use when the user asks to see/open/revisit a previously generated artifact ' +
       '(「看看刚才生成的行程」「上次的规划在哪」「打开那个 md」) — list first, then read with gotry_artifacts_read.',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ limit?: 20 }',
-      },
+      limit: { type: 'integer', description: '最多返回条数,默认 20' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ limit?: number }>(args, 'limit')
       const r = await listArtifacts({ stateRoot: config.stateRoot ?? '.', limit: q.limit })
       const lines = r.artifacts.map(a =>
@@ -1465,19 +1460,19 @@ export function apply(ctx: Context, config: Config): void {
       'Input: the path from gotry_artifacts_list, or a bare async ticket id (e.g. dp-xxxx). ' +
       'Optional offset (1-based) / limit window for paging large files. ' +
       'READ-ONLY; text artifacts only (md/txt/json/jsonl/csv/log/yaml).',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;path required → 宿主权入口拒畸形参数(同 flyai/hotel 刀法)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ path: "<list 返回的路径或工单 id>", offset?: 1, limit?: 400 }',
-      },
+      path: { type: 'string', required: true, description: 'list 返回的路径或工单 id' },
+      offset: { type: 'integer', description: '起始行号(1 起)' },
+      limit: { type: 'integer', description: '窗口行数,默认 400' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content ?? JSON.stringify(value).slice(0, 600)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ path?: string; offset?: number; limit?: number }>(args, 'path')
+    async execute(args, _exec) {
+      const q = args
+      if (!q.path) throw new Error('gotry_artifacts_read requires path')
       if (!q.path) return JSON.parse(JSON.stringify({ ok: false, error: 'path 必填(来自 gotry_artifacts_list)' })) as Record<string, never>
       const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', path: q.path, offset: q.offset, limit: q.limit })
       if (!r.ok) return JSON.parse(JSON.stringify(r)) as Record<string, never>
@@ -1486,7 +1481,7 @@ export function apply(ctx: Context, config: Config): void {
         summary: `${r.path}(${r.totalLines} 行)第 ${r.offset}-${r.offset + r.lines.length - 1} 行${r.windowed ? `(共 ${r.totalLines} 行,可翻页)` : ''}`,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `读产物:${String((args.query as { path?: string })?.path ?? '')}`, kind: 'read', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `读产物:${args.path ?? ''}`, kind: 'read', rawInput: args }),
     presentResult: (_args, value) => {
       const r = value as unknown as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; content?: string; error?: string }
       if (!r.ok) {
@@ -1521,18 +1516,20 @@ export function apply(ctx: Context, config: Config): void {
       + '「联程」without protected_connection=true; policy claims without 「截至 YYYY-MM-DD」; unconditional ✓ on unverified claims. '
       + 'Optional itinerary object enables machine invariants (hotel_nights + onboard_nights = total nights, O&D segments vs flight legs, '
       + 'budget floor ≥ sum of item minimums). verdict=blocked ⇒ fix or downgrade wording — never present as a verified plan.',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;markdown/path 二选一无公共 required
+    // → interpretArgs 容忍层;itinerary 保 object+additionalProperties:true(嵌套形状归一在闸内,
+    // #118 D-26 渲染原语切片再收紧),给模型「这是对象」的可见信号
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ markdown?: "<产物全文>", path?: "<产物路径(artifacts_list 返回的)>— 二选一", tripYear?: 2027, itinerary?: { trip_start, trip_end, stays: [{place,check_in,check_out}], onboard_nights, od_segments: [{from,to,date,mode,legs}], budget_items: [{label,min_cny,max_cny}], claimed_floor_cny? } }',
-      },
+      markdown: { type: 'string', description: '产物全文;与 path 二选一' },
+      path: { type: 'string', description: '产物路径(artifacts_list 返回的);与 markdown 二选一' },
+      tripYear: { type: 'integer', description: '行程年份,如 2027(日期归一用)' },
+      itinerary: { type: 'object', additionalProperties: true, description: '结构化行程 { trip_start, trip_end, stays:[{place,check_in,check_out}], onboard_nights, od_segments:[{from,to,date,mode,legs}], budget_items:[{label,min_cny,max_cny}], claimed_floor_cny? }' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ markdown?: string; path?: string; tripYear?: number; itinerary?: Record<string, unknown> }>(args, 'markdown')
       const avMap = await loadAirlineAirportMap()
       if (!avMap) {
@@ -1554,7 +1551,7 @@ export function apply(ctx: Context, config: Config): void {
         : `事实闸 BLOCKED(${report.violations.length} 违例,${report.traceable}/${report.claims_checked} claim 可回溯)——不得宣称「已验证方案」:\n${lines.join('\n')}\n修正路径:逐条改成 exact-date 源返回的事实,或降级为「未确认/当前不可售,到 D-xx 复核」;exact-date miss 的 route+date 不得用历史班期/相邻日期/航线页填充。`
       return JSON.parse(JSON.stringify({ ok: true, ...report, summary })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: '产物事实闸', kind: 'execute', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: '产物事实闸', kind: 'execute', rawInput: args }),
     presentResult: (_args, value) => {
       const r = value as { verdict?: string; violations?: unknown[]; summary?: string }
       return {
