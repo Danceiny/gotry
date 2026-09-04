@@ -35,6 +35,10 @@ import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
 import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
 import { verifyFlight, type FlightLiveQuery } from './opensky.ts'
+import { anythingSearch, type AnythingQuery } from './anything.ts'
+import { readUrl, reach, reachStatus } from './agent-reach.ts'
+import { githubSearch, videoSubtitle } from './agent-reach-deep.ts'
+import { sessionLogin } from './session-login.ts'
 
 // ---------------------------------------------------------------------------
 // 渠道 handler 注册表:effect 名(变体大写下划线,纯数据词表)→ 渠道实现
@@ -73,6 +77,20 @@ export interface HbCheckAvailEffectParams {
   timeoutMs?: number
 }
 
+/** agent-reach 反射桥参数(status=上游 doctor;reach=渠道×方法透传) */
+export interface AgentReachEffectParams {
+  action?: string
+  channel?: string
+  method?: string
+  args?: string
+  timeoutMs?: number
+}
+
+/** 账号会话登录引导参数(等待秒数;0 值凭证不过手) */
+export interface SessionLoginEffectParams {
+  waitSeconds?: number
+}
+
 /** 默认渠道实现(生产解译器的 dispatch 目标;全部满足「永不抛错」能力层契约) */
 const DEFAULT_HANDLERS = {
   /** 飞猪官方只读通道(机/火/酒店;spawn CLI) */
@@ -109,6 +127,21 @@ const DEFAULT_HANDLERS = {
   WEATHER_CLIMATE: (p: WeatherPoint & { month: number; timeoutMs?: number }) => getClimate({ latitude: p.latitude, longitude: p.longitude }, p.month, { timeoutMs: p.timeoutMs }),
   /** OpenSky ADS-B 实时印证(免费匿名,~400 credits/天) */
   OPENSKY_FLIGHT_VERIFY: (p: FlightLiveQuery) => verifyFlight(p),
+  /** hotel-be Anything 目的地/酒店候选(hbcli CLI;gotry_anything_search 同源,D-23 收编) */
+  ANYTHING_SEARCH: (p: AnythingQuery) => anythingSearch(p),
+  /** 网页读取兜底(r.jina.ai 免费公共源;gotry_web_search 同源,D-23 收编) */
+  WEB_READ: (p: { url: string; timeoutMs?: number }) => readUrl({ url: p.url, timeoutMs: p.timeoutMs }),
+  /** GitHub 仓库搜索(gh CLI;agent-reach-deep 执行面,gotry_github_search 同源,D-23 收编) */
+  GITHUB_SEARCH: (p: { query: string; limit?: number; timeoutMs?: number }) => githubSearch(p),
+  /** 视频字幕拉取(yt-dlp;agent-reach-deep 执行面,gotry_video_subtitle 同源,D-23 收编) */
+  VIDEO_SUBTITLE: (p: { url: string; lang?: string; timeoutMs?: number }) => videoSubtitle(p),
+  /** agent-reach 反射桥(status=上游 doctor;reach=渠道×方法透传,gotry_agent_reach 同源,D-23 收编) */
+  AGENT_REACH: (p: AgentReachEffectParams) =>
+    (p.action === 'status' || (!p.action && !p.channel))
+      ? reachStatus(p.timeoutMs)
+      : reach({ channel: p.channel ?? '', method: p.method ?? '', args: p.args, timeoutMs: p.timeoutMs }),
+  /** 账号会话登录引导(浏览器通道;票据名只读 0 值过手,gotry_session_login 同源,D-23 收编) */
+  SESSION_LOGIN: (p: SessionLoginEffectParams) => sessionLogin({ waitMs: typeof p.waitSeconds === 'number' ? p.waitSeconds * 1000 : undefined }),
 } as const
 
 export type EffectName = keyof typeof DEFAULT_HANDLERS
@@ -164,6 +197,12 @@ const HBCLI_RETRY: RetryPolicy = { maxAttempts: 2, baseDelayMs: 300, maxDelayMs:
  *   - SESSION:永不重试、不熔断——风控/挑战是「上游说不」,重试即红线;
  *     节律闸(≥30s)在渠道内(session-search §3.4),不在本层重复。
  *   - WEATHER/OPENSKY:免费源,瞬时网络抖动可重试,熔断防免费配额空转。
+ *   - ANYTHING:同 HBCLI 族(timeout 类瞬时重试 1 次;ENOENT/退码类永不);
+ *   - WEB_READ:r.jina.ai 免费公共源,瞬时抖动可重试,熔断防公共配额空转;
+ *   - GITHUB/VIDEO(gh/yt-dlp):verdict=timeout 瞬时重试 1 次;not-installed=配置态不重试;
+ *   - AGENT_REACH:反射桥透传(wrapper 不是 router)——永不重试不熔断,上游超时自管;
+ *   - SESSION_LOGIN:同 SESSION 浏览器族(风控红线)。
+ *   (D-23 收尾,issue #115:六渠道入表,没有策略表行就没有效应。)
  */
 const SPECS: Record<EffectName, ChannelSpec> = {
   FLYAI_SEARCH: {
@@ -226,6 +265,57 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     breaker: API_BREAKER,
     isRetryable: (_r, e) => e != null || ((_r ?? {}) as { verdict?: string }).verdict === 'unavailable',
     isFailure: r => (r as { via?: string }).via === 'opensky-error',
+  },
+  // --- D-23 收尾(issue #115):六渠道入注册表——没有策略表行就没有效应 ---
+  // ANYTHING:同 HBCLI 族(hbcli CLI):仅 timeout 类瞬时(冷启动建后端 session)重试 1 次;
+  // ENOENT/退码类永不(「切换不是重试」契约);熔断防上游空转
+  ANYTHING_SEARCH: {
+    channel: 'cli',
+    retry: HBCLI_RETRY,
+    isRetryable: (r) => hbcliTimeout(r),
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => (r as { via?: string }).via === 'hbcli-anything-error',
+  },
+  // WEB_READ:r.jina.ai 免费公共源(同 WEATHER/OPENSKY 族):瞬时网络抖动可重试,
+  // 熔断防公共配额空转;非法 URL 是用户输入错(isFailure 不含,不重试不熔断)
+  WEB_READ: {
+    channel: 'api',
+    retry: API_RETRY,
+    breaker: API_BREAKER,
+    isFailure: r => (r as { via?: string }).via === 'r.jina.ai-error',
+  },
+  // GITHUB/VIDEO(gh/yt-dlp CLI):verdict=timeout 瞬时重试 1 次(进程冷启动超时同 HBCLI
+  // 2026-09-02 实况);not-installed 是配置态(needs-setup 族,重试无意义),error 是上游说不;
+  // 两者都计入熔断(防坏环境空转)
+  GITHUB_SEARCH: {
+    channel: 'cli',
+    retry: HBCLI_RETRY,
+    isRetryable: (r) => (r as { verdict?: string }).verdict === 'timeout',
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => { const v = (r as { verdict?: string }).verdict; return v === 'error' || v === 'timeout' },
+  },
+  VIDEO_SUBTITLE: {
+    channel: 'cli',
+    retry: HBCLI_RETRY,
+    isRetryable: (r) => (r as { verdict?: string }).verdict === 'timeout',
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => { const v = (r as { verdict?: string }).verdict; return v === 'error' || v === 'timeout' },
+  },
+  // AGENT_REACH:反射桥透传(wrapper 不是 router,D-4a')——上游超时自管,重试会放大
+  // 上游配额消耗,永不重试不熔断;needs-setup/not-installed 是「上游说不」同 SESSION 族
+  AGENT_REACH: {
+    channel: 'cli',
+    retry: null,
+    breaker: null,
+    isFailure: r => (r as { verdict?: string }).verdict === 'error',
+  },
+  // SESSION_LOGIN:同 SESSION_* 浏览器族——风控/挑战红线,永不重试不熔断;
+  // pending 是「等用户」不是失败
+  SESSION_LOGIN: {
+    channel: 'browser',
+    retry: null,
+    breaker: null,
+    isFailure: defaultIsFailure,
   },
 }
 
