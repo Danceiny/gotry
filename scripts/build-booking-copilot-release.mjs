@@ -104,6 +104,13 @@ try {
   // Release consumers must resolve the complete DSH peer closure just like
   // the repository consumer. Keep strict resolution explicit at this seam.
   run('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--strict-peer-deps=true', '--legacy-peer-deps=false'], release)
+  // --ignore-scripts also skips node-pty's native build, so the linux
+  // spawn-helper never exists and every planner PTY spawn fails. Rebuild the
+  // one package that legitimately needs install scripts, then restore the
+  // prebuilt helper's executable bit.
+  run('npm', ['rebuild', 'node-pty', '--ignore-scripts=false', '--no-audit', '--no-fund'], release)
+  const dshSubprocessLocal = join(release, 'node_modules/@deepseek-ai/dsh-subprocess-local/scripts/ensure-spawn-helper.mjs')
+  if (existsSync(dshSubprocessLocal)) run('node', [dshSubprocessLocal], release)
   const packageJson = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
   writeFileSync(join(release, 'package.json'), `${JSON.stringify({
     name: packageJson.name,
