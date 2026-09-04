@@ -569,6 +569,7 @@ Round 7 将 benchmark opt-in 收敛为 minimal kernel，并把 system-prompt/roo
 |---|---|
 | `roadmap.md` | **时间线唯一来源**:M0-M6 里程碑三线视图与旧模型归并 |
 | `data-sources.md` | **数据源唯一权威面**:领域矩阵/四层架构/Google Place 链路/证据链契约/TREK 参考 |
+| `adapter-authoring-guide.md` | **Session 适配器作者手册**(D-13):四步法(探测→第一方金标准→双源 shape gate→漂移锁)/接入清单/纪律红线/携程真会话校准清单 |
 | `tokens.md` | **token 唯一权威面**:npm 三路径(web会话/granular bypass/OIDC)+ agent-reach 8 渠道获取表 + 统一 .env 存放 |
 | `tech-strategy.md` | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测体系/分工/持续优化回路/决策登记 |
 | 本文 | 技术:系统/模块/模型/循环/数据概要/ADR/演进/债务 |
