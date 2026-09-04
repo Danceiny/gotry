@@ -54,14 +54,15 @@ async function main() {
     return t
   }
 
-  // 1) 动机画像:evidence 缺失必须被拒绝(P0 反幻觉红线)
+  // 1) 动机画像:evidence 缺失必须被拒绝(P0 反幻觉红线;D-30 后由宿主权 schema 闸——
+  //    evidence required 进嵌套 schema,拒绝更前置,ToolFailure 形状不变)
   const motivation = byName('gotry_motivation_save')
   const rejectedMotivation = await motivation.execute(
     { profile: { weights: { escape_rest: 0.7 } } },
     null,
   ) as { ok?: boolean; summary?: string }
-  if (rejectedMotivation.ok !== false || !rejectedMotivation.summary?.includes('without evidence')) {
-    throw new Error(`FAIL: profile without evidence should have been rejected, actual ${JSON.stringify(rejectedMotivation).slice(0, 120)}`)
+  if (rejectedMotivation.ok !== false || !/evidence/i.test(rejectedMotivation.summary ?? '')) {
+    throw new Error(`FAIL: profile without evidence should have been rejected, actual ${JSON.stringify(rejectedMotivation).slice(0, 160)}`)
   }
   console.log(`motivation without evidence rejected: ${rejectedMotivation.summary.slice(0, 80)}...`)
   const saved = await motivation.execute({
@@ -112,18 +113,18 @@ async function main() {
     if (typeof byName(n).presentResult !== 'function') throw new Error(`FAIL: ${n} 缺 presentResult`)
   }
   const ar = byName('gotry_agent_reach')
-  const arView = ar.presentResult!({ query: { action: 'reach', channel: 'v2ex', method: 'get_hot_topics' } }, { verdict: 'found', summary: '10 topics' })
+  const arView = ar.presentResult!({ action: 'reach', channel: 'v2ex', method: 'get_hot_topics' }, { verdict: 'found', summary: '10 topics' })
   if (!arView?.title?.includes('✅') || !arView.title.includes('v2ex.get_hot_topics')) throw new Error(`FAIL: agent_reach 结果卡,实际 ${arView?.title}`)
   console.log(`result cards on 5 tools; agent_reach card: ${arView.title}`)
 
-  // 6) #12/#13 参数形态兼容:字符串 query 与裸对象都能落到 url(不再「url 必填」)
+  // 6) D-30 typed 契约后(#12/#13 形态兼容的演进终态):字符串 blob 形态被宿主权结构化拒绝
+  //    (url required 进 schema);平铺 url 进 execute 走正常抓取/降级,不再有「裸形态落 url」
   const ws = byName('gotry_web_search')
-  const r1 = await ws.execute({ query: 'not-a-url' } as never, null) as { summary?: string }
+  const r1 = await ws.execute({ query: 'not-a-url' } as never, null) as { ok?: boolean; summary?: string; evidence?: string }
+  if (!(r1.ok === false && !!r1.evidence)) throw new Error(`FAIL: 字符串 blob 形态应被宿主权结构化拒绝(ToolFailure),实际 ${JSON.stringify(r1).slice(0, 160)}`)
   const r2 = await ws.execute({ url: 'not-a-url' } as never, null) as { summary?: string }
-  for (const [name, r] of [['string', r1], ['bare-obj', r2]] as const) {
-    if (r.summary === 'url 必填') throw new Error(`FAIL: ${name} 形态未被 unwrapQuery 接住`)
-  }
-  console.log('unwrapQuery: string + bare-object shapes both accepted')
+  if (r2.summary === 'url 必填') throw new Error(`FAIL: 平铺 url 应进 execute 走降级,而非参数闸,实际 ${r2.summary}`)
+  console.log('D-30 typed 契约:web_search 字符串 blob → 宿主权拒绝;平铺 url → 正常降级')
 
   // 7) 骨架输出 schema 放宽回归:execute 正常返回三字段;guard 错误兜底(ok/summary)
   // 不再被 strict schema 拒(dsh 参数层拒错→guard 兜底→旧 strict schema 校验炸,
@@ -141,11 +142,11 @@ async function main() {
   // 8) D-10 切片 B:hotel 日期槽位接线——逐字表达代码层换算;unresolved 不猜(降级+note)
   {
     const hotel = byName('gotry_hotel_search')
-    const resolved = await hotel.execute({ query: { destination: '大理', checkIn: '2026-9-4', checkOut: '2026-09-06' } } as never, null) as { date_notes?: string[] }
+    const resolved = await hotel.execute({ destination: '大理', checkIn: '2026-9-4', checkOut: '2026-09-06' } as never, null) as { date_notes?: string[] }
     if (!resolved.date_notes?.some(n => n.includes('2026-9-4 → 2026-09-04'))) {
       throw new Error(`FAIL: 非规整 ISO 应产生 slot-resolved note,实际 ${JSON.stringify(resolved.date_notes)}`)
     }
-    const unresolved = await hotel.execute({ query: { destination: '大理', checkIn: '近期' } } as never, null) as { date_notes?: string[] }
+    const unresolved = await hotel.execute({ destination: '大理', checkIn: '近期' } as never, null) as { date_notes?: string[] }
     if (!unresolved.date_notes?.some(n => n.includes('日期未解析:近期'))) {
       throw new Error(`FAIL: 词表外表达应产生「日期未解析」note(不猜),实际 ${JSON.stringify(unresolved.date_notes)}`)
     }
@@ -198,7 +199,7 @@ async function main() {
 
   // 12) 会话数据面工具(P3 切片1):官方通道 live + 会话工具 needs-login 合同(隔离 profile,零导航)
   {
-    const fa = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string; setup?: string }
+    const fa = await byName('gotry_flyai_search').execute({ kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string; setup?: string }
     const faBlocked = fa.verdict === 'error' && /sentinel|block|trial limit/i.test(fa.error ?? '')
     // 端点不可达/超时(出口 IP 被拒或网络抖动)→ 工具以带证据链的 error 终态优雅降级,同样合法
     const faErrTerminal = fa.ok === false && fa.verdict === 'error' && /^flyai-error$/.test(String(fa.via ?? '')) && /\[实时API:flyai@error@/.test(String(fa.evidence ?? ''))
@@ -221,7 +222,7 @@ async function main() {
     // 指向隔离空目录，确定性验证 needs-attach/no-spend 合同。真实 attach 只走 #21 人在场验收。
     const prof = mkdtempSync(join(smokeRoot, 'sess-'))
     // 过去日期预校验(issue #24):代码层直接拒绝并指明修正方向,不发上游查询、不产生误导性 miss
-    const faPast = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' } }, null) as { ok?: boolean; summary?: string }
+    const faPast = await byName('gotry_flyai_search').execute({ kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' }, null) as { ok?: boolean; summary?: string }
     if (!(faPast.ok === false && /已是过去/.test(String(faPast.summary ?? '')))) {
       throw new Error(`FAIL: flyai 过去日期应代码层预校验拒绝,实际:${JSON.stringify(faPast).slice(0, 200)}`)
     }
@@ -233,7 +234,7 @@ async function main() {
       const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR
       process.env.CHROME_USER_DATA_DIR = prof
       try {
-        ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as typeof ss
+        ss = await byName('gotry_session_search').execute({ from: '上海', to: '丽江', date: '2026-10-01' }, null) as typeof ss
       } finally {
         if (previousChromeUserDataDir === undefined) delete process.env.CHROME_USER_DATA_DIR
         else process.env.CHROME_USER_DATA_DIR = previousChromeUserDataDir
@@ -252,7 +253,7 @@ async function main() {
         : `live hit(${fa.options?.length ?? 0} 条)`
     console.log(`session-face tools: flyai ${faOutcome}; session cdp 隔离门禁=needs-attach`)
     // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 三合法终态(试用达限 needs-setup / 限流·端点降级 or hit)
-    const fh = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' } }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string; setup?: string }
+    const fh = await byName('gotry_flyai_search').execute({ kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string; setup?: string }
     const fhBlocked = fh.verdict === 'error' && /sentinel|block|trial limit/i.test(fh.error ?? '')
     const fhErrTerminal = fh.ok === false && fh.verdict === 'error' && /^flyai-error$/.test(String(fh.via ?? '')) && /\[实时API:flyai@error@/.test(String(fh.evidence ?? ''))
     const fhNeedsSetup = fh.ok === false && fh.verdict === 'needs-setup'
@@ -266,21 +267,40 @@ async function main() {
     } else if (fh.ok !== true || fh.verdict !== 'hit' || (fh.hotels?.length ?? 0) < 1 || !/\[实时API:flyai@/.test(fh.evidence ?? '')) {
       throw new Error(`FAIL: flyai hotel 应 live hit,实际:${JSON.stringify(fh).slice(0, 220)}`)
     }
-    const fhDest = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel' } }, null) as { ok?: boolean }
+    const fhDest = await byName('gotry_flyai_search').execute({ kind: 'hotel' }, null) as { ok?: boolean }
     if (fhDest.ok !== false) throw new Error('FAIL: hotel 缺目的地应参数闸拒绝')
+    // D-30 迁移锁:legacy blob 形态({query:{...}} 包裹)在宿主权校验即被结构化拒绝——
+    // defineTool validateArgs 抛 ToolArgsError,guardToolExecute 兜成 ADR-13 ToolFailure(ok:false+evidence)
+    const faLegacy = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } } as never, null) as { ok?: boolean; summary?: string; evidence?: string }
+    if (!(faLegacy.ok === false && !!faLegacy.evidence && /内部错误|参数|schema|violat/i.test(String(faLegacy.summary ?? '')))) {
+      throw new Error(`FAIL: flyai legacy blob 形态应被 typed 契约结构化拒绝(ADR-13 ToolFailure),实际:${JSON.stringify(faLegacy).slice(0, 200)}`)
+    }
+    const faBadEnum = await byName('gotry_flyai_search').execute({ kind: 'plane' } as never, null) as { ok?: boolean; summary?: string; evidence?: string }
+    if (!(faBadEnum.ok === false && !!faBadEnum.evidence)) {
+      throw new Error(`FAIL: flyai kind 枚举外值应被宿主权校验拒绝,实际:${JSON.stringify(faBadEnum).slice(0, 200)}`)
+    }
+    console.log('  D-30 typed 契约:legacy blob/枚举外值 → 宿主权结构化拒绝(ToolFailure 形状保持)')
     // 会话酒店路由(2026-09-03 实装):未收录城市在 transport 前短路 → error + cityId 指引(offline 零桥零浏览器)
-    const sh = await byName('gotry_session_search').execute({ query: { kind: 'hotel', to: '不在码表的城市' } }, null) as { ok?: boolean; verdict?: string; summary?: string }
+    const sh = await byName('gotry_session_search').execute({ kind: 'hotel', to: '不在码表的城市' }, null) as { ok?: boolean; verdict?: string; summary?: string }
     if (!(sh.ok === false && /city=/.test(String(sh.summary ?? '')))) {
       throw new Error(`FAIL: 会话酒店未收录城市应带 cityId 指引,实际:${JSON.stringify(sh).slice(0, 200)}`)
     }
     console.log('  hotel kind 路由:未收录城市 → error + cityId 指引(transport 前短路)')
     // 会话火车路由(2026-09-03 实装):未收录电报码在 transport 前短路 → error + 电报码发现指引(offline 零桥零浏览器)
-    const st = await byName('gotry_session_search').execute({ query: { kind: 'train', from: '不在码表', to: '也不在', date: '2026-12-01' } }, null) as { ok?: boolean; verdict?: string; summary?: string }
+    const st = await byName('gotry_session_search').execute({ kind: 'train', from: '不在码表', to: '也不在', date: '2026-12-01' }, null) as { ok?: boolean; verdict?: string; summary?: string }
     if (!(st.ok === false && /fromStationTelecode/.test(String(st.summary ?? '')))) {
       throw new Error(`FAIL: 会话火车未收录电报码应带发现指引,实际:${JSON.stringify(st).slice(0, 200)}`)
     }
     console.log('  train kind 路由:未收录电报码 → error + 电报码指引(transport 前短路)')
-    const fhPast = await byName('gotry_flyai_search').execute({ query: { kind: 'hotel', to: '大理', checkIn: '2026-01-01', checkOut: '2026-01-03' } }, null) as { ok?: boolean; summary?: string }
+    // D-30 第二刀迁移锁:session 工具全字段可选(kind 缺省=flight),根 schema 开放无法宿主权拒 blob
+    // → interpretArgs 容忍层接住(设计 §4③):blob 归一后照常走业务闸——用 kind=hotel 缺 to 的
+    // 参数闸短路出确定性结构化报错(零 transport 零节律闸),证明容忍层归一语义不漂
+    const ssLegacy = await byName('gotry_session_search').execute({ query: { kind: 'hotel' } } as never, null) as { ok?: boolean; summary?: string; routing?: unknown }
+    if (!(ssLegacy.ok === false && !('routing' in ssLegacy) && /需要 to/.test(String(ssLegacy.summary ?? '')))) {
+      throw new Error(`FAIL: session legacy blob 应经容忍层归一走业务闸(结构化报错,无 routing),实际:${JSON.stringify(ssLegacy).slice(0, 200)}`)
+    }
+    console.log('  D-30 typed 契约:session legacy blob → 容忍层归一 + 结构化业务报错(全字段可选无法宿主权拒)')
+    const fhPast = await byName('gotry_flyai_search').execute({ kind: 'hotel', to: '大理', checkIn: '2026-01-01', checkOut: '2026-01-03' }, null) as { ok?: boolean; summary?: string }
     if (!(fhPast.ok === false && /不是未来合法区间/.test(String(fhPast.summary ?? '')))) {
       throw new Error(`FAIL: 酒店过去入住日应代码层预校验拒绝,实际:${JSON.stringify(fhPast).slice(0, 200)}`)
     }
@@ -343,7 +363,7 @@ async function main() {
     ledger.settleWorkflowRun('art-probe-1', '# 交付·账本权威\nD1 大理\nD2 洱海')
 
     const listTool = byName('gotry_artifacts_list')
-    const ledList = await listTool.execute({ query: {} }, null) as { ok?: boolean; artifacts?: Array<{ source?: string; id?: string; status?: string }>; total?: number }
+    const ledList = await listTool.execute({}, null) as { ok?: boolean; artifacts?: Array<{ source?: string; id?: string; status?: string }>; total?: number }
     const run = ledList.artifacts?.find(a => a.id === 'art-probe-1')
     if (!ledList.ok || !run || run.source !== 'async-run' || run.status !== 'settled') {
       throw new Error(`FAIL: artifacts list 应发现账本已交付工单,实际:${JSON.stringify(ledList).slice(0, 200)}`)
@@ -354,11 +374,11 @@ async function main() {
     }
 
     const readTool = byName('gotry_artifacts_read')
-    const r1 = await readTool.execute({ query: { path: 'art-probe-1' } }, null) as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string }
+    const r1 = await readTool.execute({ path: 'art-probe-1' }, null) as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string }
     if (!r1.ok || r1.lines?.[0]?.number !== 1 || !r1.lines?.[0]?.text.includes('交付·账本权威') || r1.lang !== 'markdown') {
       throw new Error(`FAIL: 裸工单 id 应从账本读出行号视图,实际:${JSON.stringify(r1).slice(0, 200)}`)
     }
-    const view = readTool.presentResult?.({ query: { path: 'art-probe-1' } }, r1) as { card?: string; path?: string; offset?: number; lines?: unknown[]; totalLines?: number; lang?: string }
+    const view = readTool.presentResult?.({ path: 'art-probe-1' }, r1) as { card?: string; path?: string; offset?: number; lines?: unknown[]; totalLines?: number; lang?: string }
     if (view?.card !== 'read' || view.path !== r1.path || view.offset !== 1 || view.lines?.length !== r1.lines?.length || view.totalLines !== r1.totalLines || view.lang !== 'markdown') {
       throw new Error(`FAIL: read 卡字段不齐,实际:${JSON.stringify(view).slice(0, 200)}`)
     }
@@ -397,16 +417,16 @@ async function main() {
     }
     const gate = byName('gotry_fact_gate')
     const passMd = ['# 行程片段', '## D3 7.18 香港 → 普吉', '- 国泰航空 CX771 08:05→10:35(已按 exact-date 检索记录)'].join('\n')
-    const pass = await gate.execute({ query: { markdown: passMd, tripYear: 2027 } }, null) as { verdict?: string; presentation?: string }
+    const pass = await gate.execute({ markdown: passMd, tripYear: 2027 }, null) as { verdict?: string; presentation?: string }
     if (pass.verdict !== 'pass' || pass.presentation !== 'verified_itinerary_allowed') {
       throw new Error(`FAIL: 可回溯产物应 pass,实际:${JSON.stringify(pass).slice(0, 300)}`)
     }
     const badMd = ['# 行程片段', '## D1 7.16 深圳 → 普吉', '- 香港快运 UO784 10:05→12:40 直飞 ✓'].join('\n')
-    const blocked = await gate.execute({ query: { markdown: badMd, tripYear: 2027 } }, null) as { verdict?: string; violations?: Array<{ kind?: string }>; summary?: string }
+    const blocked = await gate.execute({ markdown: badMd, tripYear: 2027 }, null) as { verdict?: string; violations?: Array<{ kind?: string }>; summary?: string }
     if (blocked.verdict !== 'blocked' || !blocked.violations?.some(v => v.kind === 'not_in_source')) {
       throw new Error(`FAIL: exact-date miss 被 UO784 填充必须 blocked(not_in_source),实际:${JSON.stringify(blocked).slice(0, 300)}`)
     }
-    const view = gate.presentResult?.({ query: {} }, blocked) as { title?: string }
+    const view = gate.presentResult?.({}, blocked) as { title?: string }
     if (!view?.title?.includes('blocked')) throw new Error(`FAIL: blocked 呈现卡标题应含 blocked,实际:${view?.title}`)
     console.log(`fact gate: registry 1+1(hit/miss);verified 措辞 pass;miss 填充 UO784 blocked(not_in_source) + 呈现卡`)
   }
