@@ -2,7 +2,7 @@
  * Real DeepSeek Harness subprocess proof for the embedded booking planner.
  *
  * A local OpenAI-compatible SSE fixture is the model transport; everything
- * between it and BookingPlannerDecisionV1 is the published dsh core, its SDK
+ * between it and BookingPlannerDecision is the published dsh core, its SDK
  * stdio server, the GoTry plugin, tool execution, session events and adapter.
  */
 
@@ -13,16 +13,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   createDshEmbeddedBookingPlanner,
-  createDshEmbeddedBookingPlannerV2,
   DSH_EMBEDDED_BOOKING_TOOL_NAMES,
 } from '../src/booking-surface/dsh-planner.ts'
-import type { BookingCopilotTaskStateV1 } from '../src/booking-surface/runtime.ts'
-import type { BookingWorkspaceSnapshotV1, UserTurnV1 } from '../src/booking-surface/contracts.ts'
-import type { BookingCopilotTaskStateV2 } from '../src/booking-surface/runtime-v2.ts'
-import type { BookingWorkspaceSnapshotV2 } from '../src/booking-surface/contracts-v2.ts'
+import type { BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
+import type { BookingCopilotTurn, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
 
 const action = {
-  schemaVersion: 'booking.surface.v1',
+  schemaVersion: 'booking.surface',
   kind: 'search.run',
   actionId: 'action-real-dsh-1',
   contextRef: 'ctx-real-dsh-1',
@@ -82,10 +79,10 @@ const modelServer = createServer((req, res) => {
       }])
       return
     }
-    if (modelCall === 3) {
+    if (modelCall === 4) {
       sse(res, [{
-        id: 'chatcmpl-booking-v2-continuation', object: 'chat.completion.chunk', created: 0, model: 'deepseek-v4-flash',
-        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call-booking-v2-continuation', type: 'function', function: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'v2 continuation handled', factRefs: [] } } }) } }] }, finish_reason: 'tool_calls' }],
+        id: 'chatcmpl-booking-continuation', object: 'chat.completion.chunk', created: 0, model: 'deepseek-v4-flash',
+        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call-booking-continuation', type: 'function', function: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } } }) } }] }, finish_reason: 'tool_calls' }],
       }])
       return
     }
@@ -108,8 +105,8 @@ const address = modelServer.address()
 assert.ok(typeof address === 'object' && address)
 const stateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-dsh-core-'))
 
-const workspace: BookingWorkspaceSnapshotV1 = {
-  schemaVersion: 'booking.surface.v1',
+const workspace: BookingWorkspaceSnapshot = {
+  schemaVersion: 'booking.surface',
   contextRef: action.contextRef,
   surface: 'tenant',
   revision: 0,
@@ -122,27 +119,29 @@ const workspace: BookingWorkspaceSnapshotV1 = {
   shortlistedOfferRefs: [],
   capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
 }
-const turn: UserTurnV1 = {
-  schemaVersion: 'booking.surface.v1',
+const turn: BookingCopilotTurn = {
+  schemaVersion: 'booking.surface',
   kind: 'user.turn',
   taskId: 'task-real-dsh-1',
-  workspace: {
-    ...workspace,
-    capabilities: { ...workspace.capabilities, allowedActions: [...workspace.capabilities.allowedActions] },
-  },
+  turnId: 'real-dsh-turn-1',
+  workspace,
   request: { text: '执行当前酒店搜索' },
 }
-const task: BookingCopilotTaskStateV1 = {
-  schemaVersion: 'booking.surface.v1',
+const availability = { initialized: true, recoveryStarted: false, availabilityPhase: 'need_offers' as const, activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] }
+const task: BookingCopilotTaskState = {
+  schemaVersion: 'booking.surface',
   taskId: 'task-real-dsh-1',
   contextRef: action.contextRef,
   surface: 'tenant',
   revision: 0,
   allowedActions: ['search.run'],
   userTurnCount: 1,
-  lastUserTurnDigest: 'digest-only',
+  lastTurnId: 'real-dsh-turn-1',
+  operationCount: 0,
   phase: 'planning',
   lastSequence: 0,
+  availability,
+  workspaceSnapshot: workspace,
 }
 
 let planner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
@@ -158,43 +157,26 @@ try {
     },
     maxTokens: 512,
   })
-  const decisions = await planner.plannerFactory(task).next({ turn, task })
+  const session = planner.plannerFactory(task)
+  const decisions = await session.next({ turn, task })
   assert.deepEqual(decisions, [{ kind: 'operation', action }])
   assert.equal(requests.length, 2, 'real dsh loop executes the typed tool then reaches idle')
   const toolNames = requests[0]!.body.tools.map((tool: any) => tool.function.name).sort()
-  assert.deepEqual(toolNames, [...DSH_EMBEDDED_BOOKING_TOOL_NAMES].sort(), 'real model request exposes exactly the seven embedded tools')
+  assert.deepEqual(toolNames, [...DSH_EMBEDDED_BOOKING_TOOL_NAMES].sort(), 'real model request exposes exactly the six embedded tools')
   assert.ok(!toolNames.some((name: string) => /gotry_book|payment|holder|guest/i.test(name)), 'real model request exposes no booking write or PII tool')
   const executableKeys = requests[0]!.body.tools.flatMap((tool: any) => objectKeys(tool.function.parameters))
   assert.ok(!executableKeys.some((key: string) => /^(book|payment|holder|guest|portalToken|supplierCost)$/i.test(key)), 'tool inputs expose no write or PII field')
   assert.equal(requests[0]!.headers.authorization, 'Bearer fixture-model-key')
   assert.ok(!JSON.stringify(requests).includes('must-not-enter-dsh'), 'BFF and portal credentials never enter the dsh model transport')
-  const v2Workspace: BookingWorkspaceSnapshotV2 = {
-    schemaVersion: 'booking.surface.v2', contextRef: 'ctx-real-dsh-v2', surface: 'tenant', revision: 1, locale: 'en-US', currency: 'AED',
-    searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
-    capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
-  }
-  const v2Task: BookingCopilotTaskStateV2 = {
-    schemaVersion: 'booking.surface.v2', taskId: 'task-real-dsh-v2', contextRef: v2Workspace.contextRef, surface: 'tenant', revision: 1,
-    allowedActions: ['search.run'], userTurnCount: 1, operationCount: 1, phase: 'planning', lastSequence: 1,
-    availability: { initialized: true, recoveryStarted: false, availabilityPhase: 'need_offers', activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] },
-    workspaceSnapshot: v2Workspace,
-  }
-  const v2Continuation = {
-    schemaVersion: 'booking.surface.v2' as const, kind: 'action.receipt.continuation' as const, taskId: v2Task.taskId, workspace: v2Workspace,
-    receipt: { schemaVersion: 'booking.surface.v2' as const, kind: 'action.receipt' as const, actionId: 'action-real-dsh-v2', contextRef: v2Workspace.contextRef, status: 'applied' as const, revision: 1,
+  const proseDecisions = await session.next({ turn, task })
+  assert.equal(proseDecisions[0]?.kind, 'error', 'assistant prose without a tool call never becomes a decision')
+  const continuation: BookingCopilotTurn = {
+    schemaVersion: 'booking.surface' as const, kind: 'action.receipt.continuation' as const, taskId: task.taskId, workspace,
+    receipt: { schemaVersion: 'booking.surface' as const, kind: 'action.receipt' as const, actionId: action.actionId, contextRef: workspace.contextRef, status: 'applied' as const, revision: 1,
       observation: { kind: 'search.state' as const, resultCount: 1 }, resultContract: { outcome: 'complete' as const, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } },
   }
-  const v2Planner = await createDshEmbeddedBookingPlannerV2({
-    stateRoot,
-    env: { PATH: process.env.PATH, DEEPSEEK_API_KEY: 'fixture-model-key', DEEPSEEK_BASE_URL: `http://127.0.0.1:${address.port}/v1` },
-    maxTokens: 512,
-  })
-  try {
-    const continuationDecisions = await v2Planner.plannerFactory(v2Task).next({ turn: v2Continuation, task: { ...v2Task, lastReceipt: v2Continuation.receipt } })
-    assert.deepEqual(continuationDecisions, [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'v2 continuation handled', factRefs: [] } }], 'real dsh v2 accepts action.receipt.continuation through the typed planner seam')
-  } finally {
-    await v2Planner.close()
-  }
+  const continuationDecisions = await session.next({ turn: continuation, task: { ...task, lastReceipt: continuation.kind === 'action.receipt.continuation' ? continuation.receipt : undefined } })
+  assert.deepEqual(continuationDecisions, [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } }], 'real dsh accepts action.receipt.continuation through the typed planner seam')
 } finally {
   await planner?.close()
   await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()))

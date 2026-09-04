@@ -198,7 +198,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 > **数据源唯一权威面 = `data-sources.md`**(2026-08-22 立):领域矩阵 × 四层架构(静态包/免费实时/hbcli 桥/OSM 生态) × Google Place 链路(hbcli→search OpenAPI→geography) × 证据链契约 × TREK 参考采纳。本节只留运行时概要。
 
 - 运行时:三条已实证路径——①TS 进程内(自研循环,~6ms/解);②真实 dsh headless+cordis 组合(pi-ai→MiniMax,`cordis.gotry-patch.yml`,68ea364);**(v0.0.1-rc.2 起第三条** Python CLI 桥下线,纯 TS)。环境三件套 `LLM_API_KEY/LLM_BASE_URL/LLM_MODEL`(兼容旧 DEEPSEEK_*)。
-- 复用落地:dsh(import,rc 已对齐)/loopx(import,0.5.1 运行中)/Z3(import,双绑定)/hotelbyte-cli(import+extend,place 链路见 data-sources.md §4)/travel_agent·ai-agent-book·TREK(reference,零代码——TREK 数据面模式采纳表见 data-sources.md §5)。
+- 复用落地:dsh(import,rc 已对齐)/loopx(import,0.5.1 运行中)/Z3(import,双绑定)/hotelbyte-cli(import+extend,place 链路见 data-sources.md §4)/T 系统·ai-agent-book·TREK(reference,零代码——TREK 数据面模式采纳表见 data-sources.md §5)。
 
 ## 7. 测试与验证策略
 
@@ -584,6 +584,7 @@ Round 7 将 benchmark opt-in 收敛为 minimal kernel，并把 system-prompt/roo
 | `dsh-plugins-shortlist.md` | dsh 社区插件选型(awesome-dsh-plugin 全量调研,issue #9) |
 | `deerflow-research.md` | DeerFlow 研究 → gotry 优化目标 T1-T4(issue #10) |
 | `maka-research.md` | Apache Maka(Incubating)研究 → 与 ADR-15 事务化状态基座逐项对照(durable-execution 机制/可采纳面,研究底稿供 founder 拍板) |
+| `enterprise-travel-reference-study.md` | **某企业级差旅 Agent 系统八维参考研究(2026-09-03,来源脱敏)**:双轨执行/写闭环→M5 设计输入(ADR-17/S4 接缝),合规收口装饰器/领域 skill→M6 输入,生产级状态→D-15 触发时参考,双模型/上下文压缩→不采纳(ADR-24 已覆盖);差异化保留清单与「不追求代码量等价」判定 |
 | `hotelbyte-skills-design.md` | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
 | `e2e-prompts.md` | dsh 端到端真 LLM 验证记录(§1-§11,wrapper/澄清卡/背景调查等) |
 | `memory-design.md` | **记忆域设计**:C 端六层重设计(M1-M6 现状映射/P1-P4 分期增量/铁律与验收),M4 交付「六层框架重设计」的正式文档 |

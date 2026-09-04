@@ -12,27 +12,43 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ensureLedger } from '../src/state-ledger.ts'
 import {
+  BOOKING_SURFACE_ALLOWED_ACTIONS,
   BOOKING_SURFACE_SCHEMA_SHA256,
   BOOKING_SURFACE_SCHEMA_VERSION,
-  type BookingCopilotTurnV1,
-  type BookingReadActionV1,
+  type BookingCopilotIngressMode,
+  type BookingIngressIdentityBinding,
+  type BookingIngressPrincipal,
+  type BookingReadAction,
+  type BookingSurface,
 } from '../src/booking-surface/contracts.ts'
-import { BookingCopilotTaskRuntime, type BookingCopilotTaskStateV1 } from '../src/booking-surface/runtime.ts'
-import {
-  startBookingCopilotServer,
-  type BookingPlannerDecisionV1,
-  type BookingPlannerSessionFactoryV1,
-} from '../src/booking-surface/server.ts'
+import { BookingCopilotTaskRuntime, type BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
+import { startBookingCopilotServer } from '../src/booking-surface/server.ts'
+import { type BookingPlannerDecision, type BookingPlannerSessionFactory } from '../src/booking-surface/runtime.ts'
 
 const API_KEY = 'test-only-cross-repo-key'
 const stateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-copilot-crossrepo-'))
 const ledger = ensureLedger(stateRoot)
 let sequence = 0
 
-const plannerFactory: BookingPlannerSessionFactoryV1 = (initialTask: BookingCopilotTaskStateV1) => {
+const principal: BookingIngressPrincipal = { subject: 'fixture-crossrepo-bff', scope: 'booking:read' }
+const ingressMode: BookingCopilotIngressMode = 'bff-ingress-binding'
+const ingressBinding = {
+  bind(input: { requestKey: string; surfaceHint: BookingSurface }): BookingIngressIdentityBinding {
+    const surface = input.surfaceHint
+    return {
+      taskId: `fixture-task-${input.requestKey}`,
+      turnId: `fixture-turn-${input.requestKey}`,
+      contextRef: `ctx-fixture-${input.requestKey}`,
+      surface,
+      allowedActions: [...BOOKING_SURFACE_ALLOWED_ACTIONS[surface]],
+    }
+  },
+}
+
+const plannerFactory: BookingPlannerSessionFactory = (initialTask: BookingCopilotTaskState) => {
   let receiptObserved = initialTask.lastReceipt !== undefined
   return {
-    async next({ turn, task }): Promise<readonly BookingPlannerDecisionV1[]> {
+    async next({ turn, task }): Promise<readonly BookingPlannerDecision[]> {
       if (turn.kind === 'action.receipt.continuation') {
         receiptObserved = true
         return [{
@@ -54,7 +70,7 @@ const plannerFactory: BookingPlannerSessionFactoryV1 = (initialTask: BookingCopi
           },
         }]
       }
-      const action: BookingReadActionV1 = task.surface === 'payment_link'
+      const action: BookingReadAction = task.surface === 'payment_link'
         ? {
             schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
             kind: 'hotel.select',
@@ -89,6 +105,9 @@ async function main(): Promise<void> {
     apiKey: API_KEY,
     runtime,
     plannerFactory,
+    ingressBinding,
+    principal,
+    ingressMode,
     host: '127.0.0.1',
     port: 0,
   })

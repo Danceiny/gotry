@@ -1,4 +1,4 @@
-import type { BookingReadActionKindV1 } from './contracts.ts'
+import type { BookingReadActionKind } from './contracts.ts'
 
 export const EMBEDDED_BOOKING_CAPABILITY_IDS = [
   'search-hotels',
@@ -9,24 +9,24 @@ export const EMBEDDED_BOOKING_CAPABILITY_IDS = [
   'observe-booking',
 ] as const
 
-export type EmbeddedBookingCapabilityIdV1 = (typeof EMBEDDED_BOOKING_CAPABILITY_IDS)[number]
+export type EmbeddedBookingCapabilityId = (typeof EMBEDDED_BOOKING_CAPABILITY_IDS)[number]
 
-export interface EmbeddedBookingCapabilityV1 {
-  id: EmbeddedBookingCapabilityIdV1
+export interface EmbeddedBookingCapability {
+  id: EmbeddedBookingCapabilityId
   effect: 'read'
-  actions: readonly BookingReadActionKindV1[]
+  actions: readonly BookingReadActionKind[]
 }
 
-export interface EmbeddedBookingProfileV1 {
+export interface EmbeddedBookingProfile {
   id: 'embedded-booking'
-  schemaVersion: 'booking.surface.v1'
-  capabilities: readonly EmbeddedBookingCapabilityV1[]
+  schemaVersion: 'booking.surface'
+  capabilities: readonly EmbeddedBookingCapability[]
 }
 
 /** Closed registry. No booking/payment/write capability exists in this profile. */
 export const embeddedBookingProfile = Object.freeze({
   id: 'embedded-booking',
-  schemaVersion: 'booking.surface.v1',
+  schemaVersion: 'booking.surface',
   capabilities: Object.freeze([
     Object.freeze({ id: 'search-hotels', effect: 'read', actions: Object.freeze(['search.patch', 'search.run']) }),
     Object.freeze({ id: 'refine-results', effect: 'read', actions: Object.freeze(['results.view.patch', 'hotel.focus', 'hotel.select']) }),
@@ -35,8 +35,8 @@ export const embeddedBookingProfile = Object.freeze({
     Object.freeze({ id: 'prepare-booking', effect: 'read', actions: Object.freeze(['offer.check', 'checkout.prepare']) }),
     Object.freeze({ id: 'observe-booking', effect: 'read', actions: Object.freeze(['order.observe']) }),
   ]),
-}) as EmbeddedBookingProfileV1
+}) as EmbeddedBookingProfile
 
-export function actionsForEmbeddedCapability(id: EmbeddedBookingCapabilityIdV1): readonly BookingReadActionKindV1[] {
+export function actionsForEmbeddedCapability(id: EmbeddedBookingCapabilityId): readonly BookingReadActionKind[] {
   return embeddedBookingProfile.capabilities.find((capability) => capability.id === id)?.actions ?? []
 }

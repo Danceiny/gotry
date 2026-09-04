@@ -11,37 +11,16 @@
       "import": "./dist/src/booking-surface/index.js",
       "default": "./dist/src/booking-surface/index.js"
     },
-    "./booking-surface/schema": "./schemas/booking.surface.v1.schema.json",
-    "./booking-surface/schema-v2": "./schemas/booking.surface.v2.schema.json",
-    "./booking-surface/contracts-v2": {
-      "types": "./ts/src/booking-surface/contracts-v2.ts",
-      "import": "./dist/src/booking-surface/contracts-v2.js",
-      "default": "./dist/src/booking-surface/contracts-v2.js"
-    },
-    "./booking-surface/validation-v2": {
-      "types": "./ts/src/booking-surface/validation-v2.ts",
-      "import": "./dist/src/booking-surface/validation-v2.js",
-      "default": "./dist/src/booking-surface/validation-v2.js"
-    },
+    "./booking-surface/schema": "./schemas/booking.surface.schema.json",
     "./booking-surface/runtime": {
       "types": "./ts/src/booking-surface/runtime.ts",
       "import": "./dist/src/booking-surface/runtime.js",
       "default": "./dist/src/booking-surface/runtime.js"
     },
-    "./booking-surface/runtime-v2": {
-      "types": "./ts/src/booking-surface/runtime-v2.ts",
-      "import": "./dist/src/booking-surface/runtime-v2.js",
-      "default": "./dist/src/booking-surface/runtime-v2.js"
-    },
     "./booking-surface/server": {
       "types": "./ts/src/booking-surface/server.ts",
       "import": "./dist/src/booking-surface/server.js",
       "default": "./dist/src/booking-surface/server.js"
-    },
-    "./booking-surface/server-v2": {
-      "types": "./ts/src/booking-surface/server-v2.ts",
-      "import": "./dist/src/booking-surface/server-v2.js",
-      "default": "./dist/src/booking-surface/server-v2.js"
     },
     "./booking-surface/dsh-planner": {
       "types": "./ts/src/booking-surface/dsh-planner.ts",
@@ -91,9 +70,8 @@
     "ts/src/time-anchor.ts",
     "ts/src/slot-spec.ts",
     "ts/src/travel-slots.ts",
+    "schemas/booking.surface.schema.json",
     "ts/src/booking-surface/",
-    "schemas/booking.surface.v1.schema.json",
-    "schemas/booking.surface.v2.schema.json",
     "ts/scripts/skeleton-check.ts",
     "ts/scripts/skeleton-integration-test.ts",
     "ts/scripts/async-collect.ts",
