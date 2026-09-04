@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BOOKING_SURFACE_SCHEMA_VERSION, type BookingCopilotTurn, BookingReadAction, type BookingSurfaceEvent } from './contracts.ts'
+import { BOOKING_SURFACE_SCHEMA_VERSION, type BookingCopilotTurn, type BookingReadAction, type BookingSurfaceEvent } from './contracts.ts'
 import {
   EMBEDDED_BOOKING_CAPABILITY_IDS,
   actionsForEmbeddedCapability,
