@@ -32,7 +32,7 @@ M3 最小可用产品,分发链路无已知堵点。
 | 运行时 | dsh 成品形态,DeepSeek 原生 |
 | 版本 | 见 `package.json` 与 `release-notes.md`;**`rc` dist-tag 已指向最新 rc(2026-09-02 #50② 完成),`@rc` 可用;用户引导仍优先 `@latest`** |
 | License | MIT |
-| 人格 | 行为契约 21 条;锚点卡与记忆 brief 注入 persona。**运行时组合唯一来源 = 仓根 `cordis.gotry-patch.yml`** |
+| 人格 | 行为契约 22 条;锚点卡与记忆 brief 注入 persona。**运行时组合唯一来源 = 仓根 `cordis.gotry-patch.yml`** |
 
 ### 1.2 能力面
 
@@ -396,6 +396,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：v1 
     修复双轨:① bin/gotry-inner.js 把 `LLM_MODEL` 映射为 `GOTRY_LLM_MODEL`,gotry-tools 插件(`capabilities/model-override.ts`)在 `agent/request` 瀑布挂根监听、post-next 覆盖 provider/model(内存态零持久化,进程退即散,不改写用户 ~/.dsh)——必须走这条是因为 dsh settings 分层为 schema 默认 < composition 配置 < 用户层,web UI 选过模型后单靠 composition patch 压不过;瀑布按注册序嵌套(先注册=最外层、post-next 最后生效),插件随 cordis patch 在根组装载先于任何 agent 创建,显式 .env 意图因此压过一切持久层选择;
     覆盖同时清掉继承的 reasoningEffort(与 installModelSelection 同语义,不错配上一模型的推理档);② 运行时 cordis patch 追加两条 by-id 覆盖(`agent-default-model` 默认模型 + `llm-deepseek` 目录单条目替换——显式指定模型多为中转场景,默认 v4-* 目录对其是误导,不硬编码上游 DEFAULT_MODELS 防漂移;cordis patch 语义核验:applyEntryPatches 对 by-id 浅层键赋值、config 整体替换,未知 id 仅 warn+skip 优雅退化)。默认路径保护:`LLM_MODEL` 不设时两轨均不动作,.env.example 默认行注释化,dsh 内置默认/用户 web 选择面不变。
   - E2E:`ts/scripts/model-override-e2e.ts` mock 中转四场景(指定模型→请求体 model 一致/指定+预置用户层→env 压过/不设→内置默认 deepseek-v4-flash/不设+用户层→用户选择保留;②④ 同一 settings 文件仅差 env,对照证明覆盖因果),隔离 DSH_HOME、要求 current tarball 的 clean installed-package bin,全绿；不再靠临时移动 vendored 依赖伪装 package mode。smoke §17 单元回归(未设零监听/无事件总线不抛/覆盖语义)。附查发现一项环境债:vendored 仓内形态 Node 兼容窗口断裂,记 D-27。
+- **行为契约横评反哺(2026-09-04,issue #121/#122)**:`docs/persona-bench/` 同题横评(Kimi 13 轮/飞猪单轮,founder 拍板)暴露的两条访谈/呈现缺口进契约——①(1) 动机先行扩展「同行人到达链」:行程涉及同行人(见面/汇合/结伴)时必问从哪出发/是否已订/有无自己的时间窗,问明落 `gotry_companion_save`,到达账与预算分链核算(横评 G4:两家都把「跟女朋友见面」做成了单人行程,飞猪预算表明写「单人」);②新增 (22) 到达账必达:红眼/凌晨起飞、或落地当天有硬安排的航段,必须显式给出当地到达时刻(含日期偏移)、时差、到达精力与前一晚落脚建议,时刻表正确≠行程可行(横评 G7:飞猪「约8小时」与自家「02:00-06:00+1」同页矛盾)。不改工具面、不新增工具;矩阵与评分卡见 `docs/persona-bench/README.md`。
 
 Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
 

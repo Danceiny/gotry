@@ -13,7 +13,7 @@ GoTry is an AI travel agent for **"departure to next departure."** You tell it w
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.15-blue)](https://www.npmjs.com/package/@danceiny/gotry)
 [![Docs](https://img.shields.io/badge/docs-architecture.md-blue)](docs/architecture.md)
 
-**[What GoTry Does](#what-gotry-does)** · **[How It Works](#how-it-works)** · **[Tools](#tools)** · **[Demo](#demo)** · **[Quick Start](#quick-start)** · **[Consent and Privacy](#consent-and-privacy)** · **[Trustworthy by Construction](#trustworthy-by-construction)** · **[Project Status](#project-status)** · **[Roadmap](#roadmap)** · **[For AI Agents](#for-ai-agents)** · **[Documentation](#documentation)** · **[License](#license)**
+**[What GoTry Does](#what-gotry-does)** · **[How It Works](#how-it-works)** · **[Tools](#tools)** · **[Demo](#demo)** · **[Benchmark](#how-mainstream-ai-answers-the-same-trip)** · **[Quick Start](#quick-start)** · **[Consent and Privacy](#consent-and-privacy)** · **[Trustworthy by Construction](#trustworthy-by-construction)** · **[Project Status](#project-status)** · **[Roadmap](#roadmap)** · **[For AI Agents](#for-ai-agents)** · **[Documentation](#documentation)** · **[License](#license)**
 
 > **Tip for newcomers:** one command is enough to feel the difference — `npx @danceiny/gotry web`, open `http://127.0.0.1:3080`, and say *"I want three relaxing days in Dali."* The agent interviews you first; then the solver, not the model, decides what is feasible. Full walkthrough: [`docs/user-guide.md`](docs/user-guide.md).
 
@@ -111,6 +111,21 @@ Engine verdict:
 ```
 
 > Tag guide: `[skeleton:openflights]` means "this route can be flown" was verified against the public route database; `[realtime:...]` marks data pulled live seconds ago; `[static-pack:estimate]` flags an off-season estimate — **verify before booking**. Tags are attached by the render layer, never by the model.
+
+## How Mainstream AI Answers the Same Trip
+
+GoTry's product persona is calibrated against evidence, not taste: the same real three-week multi-country workation prompt — with planted traps (no year given, a vague "some seaside town called Wan-xx", an ambiguity the user already resolved) — is fed verbatim to mainstream assistants, their answers archived word-for-word, and scored against a ground-truth rubric. Transcripts, rubric, and the contract feedback: [`docs/persona-bench/`](docs/persona-bench/).
+
+| Dimension | Generic chat assistant (Kimi, 13 real turns) | OTA agent (Fliggy open platform, single turn) | GoTry contract |
+|---|---|---|---|
+| Calendar grounding | ✗ 2025 calendar; three user corrections, three apology-refits | ✗ derived weekdays land on the 2025 calendar — contradicting its own answer on the same page | (2)(8)(9) + time-anchor card |
+| Constraint interview | ✗ zero questions; both load-bearing constraints surfaced by the user at turn 6 | △ asks sales qualifiers (budget / star level / sea view); zero must-asks | (1)(10) |
+| Feasibility & time accounting | ✗ density illusion, caught by the user | ✗ HK errands + same-day flight with no time budget; an "8h" flight contradicting its own arrival time | (4) + door-to-door true cost |
+| Fact provenance | △ destination research holds up | ✗ sells a defunct airline (retired 2020); every price unsourced | (3)(7)(13)(20) |
+| Structure completeness | △ decent comparison table only at turn 13 | ✓✓ full skeleton in one turn — completeness is table stakes | verified completeness (fact gate) |
+| Persona in one line | erudite but stateless chatter — the user ends up doing four jobs | a flawless-brochure OTA clerk — every section ends in a price table | trusted travel engineer: interview first, the solver decides, infeasible says infeasible |
+
+**Single best finding: two unrelated products derived their weekdays from the 2025 calendar.** Calendar grounding has to be a product mechanism (anchor card, assert once, never recompute) — not model luck. Cautionary deep-dive: [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md).
 
 ## Quick Start
 
@@ -249,6 +264,7 @@ Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outlin
 | [`docs/evaluation-foundation.md`](docs/evaluation-foundation.md) | Evaluation Phase 0 foundation |
 | [`docs/booking-saga-fsm.md`](docs/booking-saga-fsm.md) | Booking saga FSM (the M5 seam vocabulary) |
 | [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md) | A real AI-travel-planning failure postmortem (cautionary tale) |
+| [`docs/persona-bench/`](docs/persona-bench/) | Agent-persona benchmark — same real-trip prompt answered by mainstream AIs: transcripts, scoring rubric, and the persona it shapes |
 | [`docs/release-notes.md`](docs/release-notes.md) | Release decisions per version (the "why") |
 | [`CHANGELOG.md`](CHANGELOG.md) | Machine-derived changelog (Keep a Changelog + Conventional Commits) |
 | [`docs/tokens.md`](docs/tokens.md) | npm 2FA / release mechanics |

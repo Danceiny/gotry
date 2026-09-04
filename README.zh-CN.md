@@ -13,7 +13,7 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.15-blue)](https://www.npmjs.com/package/@danceiny/gotry)
 [![Docs](https://img.shields.io/badge/docs-architecture.md-blue)](docs/architecture.md)
 
-**[它做什么](#它做什么)** · **[工作原理](#工作原理)** · **[工具](#工具)** · **[一段对话](#一段对话)** · **[快速开始](#快速开始)** · **[账号会话:授权与隐私](#账号会话授权与隐私)** · **[构造上可信](#构造上可信)** · **[状态与限制](#状态与限制)** · **[路线图](#路线图)** · **[给 AI Agent](#给-ai-agent)** · **[文档](#文档)** · **[License](#license)**
+**[它做什么](#它做什么)** · **[工作原理](#工作原理)** · **[工具](#工具)** · **[一段对话](#一段对话)** · **[同题横评](#与主流-ai-同题横评产品人格从哪来)** · **[快速开始](#快速开始)** · **[账号会话:授权与隐私](#账号会话授权与隐私)** · **[构造上可信](#构造上可信)** · **[状态与限制](#状态与限制)** · **[路线图](#路线图)** · **[给 AI Agent](#给-ai-agent)** · **[文档](#文档)** · **[License](#license)**
 
 > **新读者提示**:一条命令就能感受差别——`npx @danceiny/gotry web`,打开 `http://127.0.0.1:3080`,说一句「我想去大理躺三天」。Agent 会先访谈你;然后由求解器(而非模型)判定什么可行。完整走查见 [`docs/user-guide.md`](docs/user-guide.md)。
 
@@ -111,6 +111,21 @@ GoTry: 收到。先把约束记下来——
 ```
 
 > 标签导读:`[骨架:openflights]` 说的是"这条航线能飞"已被公开航线数据校验;`[实时API:*]` 说的是刚从实时接口拉回的当下数据;`[静态包:估算]` 提醒价格是淡季档估算——**订前核实**。标签由渲染层附加,模型无权染指。
+
+## 与主流 AI 同题横评(产品人格从哪来)
+
+GoTry 的产品人格不靠拍脑袋:同一段真实的跨国 workation 行程 prompt(埋了考点——不给年份、模糊指代「万xx」、用户已自行消解的歧义)逐字投喂各家主流 AI,回答逐字存档、对照地面真值打分,再反向校准行为契约。transcript、评分卡与契约反哺:[`docs/persona-bench/`](docs/persona-bench/README.md)。
+
+| 维度 | 通用助手(Kimi,真实 13 轮) | OTA Agent(飞猪开放平台,单轮) | GoTry 契约 |
+|---|---|---|---|
+| 日历 grounding | ✗ 2025 年历;用户三次纠正、三次道歉式重排 | ✗ 派生星期落 2025 年历,与同页自答自相矛盾 | (2)(8)(9)+时间锚点卡 |
+| 约束访谈 | ✗ 零提问;两个要害约束第 6 轮才由用户说出 | △ 只问销售资质(预算/星级/靠海),必答题零命中 | (1)(10) |
+| 可行性与时间账 | ✗ 密度幻觉,被用户点破 | ✗ 香港办事+当天飞普吉无时间账;「约8小时」与自己的到达时刻矛盾 | (4)+门到门全成本 |
+| 事实可证性 | △ 目的地研究经得起对 | ✗ 停业航司(2020 年歇业)仍在售;价格全部无出处 | (3)(7)(13)(20) |
+| 结构完整性 | △ 第 13 轮才长出像样的对比表 | ✓✓ 单轮骨架最全——完整是基本盘 | 验证过的完整(事实闸) |
+| 人格一句话 | 博学但无状态的聊天者——用户被迫干四份工 | 版式完美的 OTA 导购——每段止于价格表 | 可信赖的行程工程师:访谈先行、求解器判决、不可行明说 |
+
+**单条最有价值的发现:两家互不相关的产品,要自己算的星期全落在 2025 年历上**——日历锚定必须是产品机制(锚点卡、一次断言、永不重算),不是模型运气。反面教材全文:[`docs/kimi-postmortem.md`](docs/kimi-postmortem.md)。
 
 ## 快速开始
 
@@ -249,6 +264,7 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 | [`docs/evaluation-foundation.md`](docs/evaluation-foundation.md) | 评测 Phase 0 基座 |
 | [`docs/booking-saga-fsm.md`](docs/booking-saga-fsm.md) | 预订 saga 状态机(M5 缝词汇) |
 | [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md) | 一次真实 AI 旅行规划失败复盘(反面教材) |
+| [`docs/persona-bench/`](docs/persona-bench/) | Agent 产品人格横评——同一真实行程 prompt 的各家回答存档、评分卡与人格提炼 |
 | [`docs/release-notes.md`](docs/release-notes.md) | 逐版本发布决策(「为什么」) |
 | [`CHANGELOG.md`](CHANGELOG.md) | 机器衍生的变更日志(Keep a Changelog + Conventional Commits) |
 | [`docs/tokens.md`](docs/tokens.md) | npm 2FA / 发布机制 |
