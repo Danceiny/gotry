@@ -5,16 +5,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureLedger } from '../src/state-ledger.ts'
-import { BookingCopilotTaskRuntime, type BookingReadActionV1, type UserTurnV1 } from '../src/booking-surface/runtime.ts'
-import type { BookingWorkspaceSnapshotV1 } from '../src/booking-surface/contracts.ts'
+import { BookingCopilotTaskRuntime } from '../src/booking-surface/runtime.ts'
+import type { BookingReadAction, BookingWorkspaceSnapshot, UserTurn } from '../src/booking-surface/contracts.ts'
 
 const taskId = 'task-operation-atomicity'
-const workspace: BookingWorkspaceSnapshotV1 = {
-  schemaVersion: 'booking.surface.v1', contextRef: 'ctx-operation-atomicity', surface: 'tenant', revision: 0,
+const workspace: BookingWorkspaceSnapshot = {
+  schemaVersion: 'booking.surface', contextRef: 'ctx-operation-atomicity', surface: 'tenant', revision: 0,
   locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
   capabilities: { surface: 'tenant', allowedActions: ['search.patch', 'search.run'] },
 }
-const base: BookingReadActionV1 = { schemaVersion: 'booking.surface.v1', kind: 'search.patch', actionId: 'action-operation-atomicity', contextRef: workspace.contextRef, expectedRevision: 0, reason: 'raw-reason-marker@example.invalid Bearer RAW_SECRET', factRefs: ['fact:opaque'], input: { patch: { destination: { query: 'raw-input-marker@example.invalid' } } } }
+const base: BookingReadAction = { schemaVersion: 'booking.surface', kind: 'search.patch', actionId: 'action-operation-atomicity', contextRef: workspace.contextRef, expectedRevision: 0, reason: 'raw-reason-marker', factRefs: ['fact:opaque'], input: { patch: { destination: { query: 'typed-input-marker' } } } }
 const child = process.argv.indexOf('--child') >= 0
 const replayMode = process.argv.indexOf('--replay') >= 0
 const root = child ? process.argv[process.argv.indexOf('--child') + 1]! : ''
@@ -29,7 +29,7 @@ if (replayMode) {
 }
 
 function waitFile(path: string, timeout = 30_000): Promise<void> { return new Promise((resolve, reject) => { const end = Date.now() + timeout; const tick = () => existsSync(path) ? resolve() : Date.now() > end ? reject(new Error(`timeout:${path}`)) : setTimeout(tick, 5); tick() }) }
-function action(which: string): BookingReadActionV1 {
+function action(which: string): BookingReadAction {
   return {
     ...base,
     kind: which === 'kind' ? 'search.run' : base.kind,
@@ -39,7 +39,7 @@ function action(which: string): BookingReadActionV1 {
     factRefs: which === 'fact-order' ? ['fact:other', 'fact:opaque'] : base.factRefs,
     input: which === 'kind' ? {} : which === 'input' ? { patch: { destination: { query: 'other' } } } : base.input,
     actionId: which === 'different' ? 'action-different' : base.actionId,
-  } as BookingReadActionV1
+  } as BookingReadAction
 }
 
 if (child) {
@@ -67,7 +67,7 @@ async function pair(root: string, left: string, right: string): Promise<Array<{ 
 
 async function run(kind: 'same' | 'conflict' | 'different', conflictVariant = 'conflict'): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), `gotry-operation-${kind}-`)); mkdirSync(root, { recursive: true }); const ledger = ensureLedger(root); const runtime = new BookingCopilotTaskRuntime(ledger)
-  const turn: UserTurnV1 = { schemaVersion: 'booking.surface.v1', kind: 'user.turn', taskId, workspace, request: { text: 'opaque' } }; runtime.startTask(turn)
+  const turn: UserTurn = { schemaVersion: 'booking.surface', kind: 'user.turn', taskId, turnId: 'operation-anchor-turn', workspace, request: { text: 'opaque' } }; runtime.startTask(turn)
   const result = await pair(root, kind === 'different' ? 'different' : 'left', kind === 'conflict' ? conflictVariant : 'right')
   const success = result.filter((r) => r.result === 'success'); assert.equal(success.length, kind === 'same' ? 2 : 1)
   if (kind === 'conflict') assert.equal(result.filter((r) => r.error === 'action_conflict').length, 1, JSON.stringify(result))
@@ -75,7 +75,8 @@ async function run(kind: 'same' | 'conflict' | 'different', conflictVariant = 'c
   if (kind === 'same') assert.deepEqual(success[0].event, success[1].event)
   assert.equal((ledger.db.prepare("SELECT COUNT(*) AS n FROM events WHERE kind = 'booking.copilot.action.issued'").get() as { n: number }).n, 1)
   const durable = ledger.db.prepare("SELECT payload FROM events WHERE kind = 'booking.copilot.action.issued'").get() as { payload: string }
-  assert.ok(!/raw-reason-marker|raw-input-marker|Bearer RAW_SECRET|@example|secret/i.test(durable.payload))
+  assert.ok(!/raw-reason-marker|@example|secret/i.test(durable.payload), 'action reason prose is never durable')
+  assert.match(durable.payload, /"reasonDigest"/, 'the redacted reason digest is durable')
   if (kind === 'same') {
     const event = success[0].event; ledger.close(); const tsx = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url))
     async function replayVariant(v: string) { const replayChild = spawn(process.execPath, [tsx, fileURLToPath(import.meta.url), '--replay', root, v], { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] }); let replayOutput = ''; replayChild.stdout.on('data', (b) => { replayOutput += b }); replayChild.stderr.on('data', (b) => { replayOutput += b }); await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => { replayChild.kill('SIGKILL'); reject(new Error('replay_timeout')) }, 10_000); replayChild.on('exit', (code) => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`replay_exit:${code}:${replayOutput}`)) }) }); return JSON.parse(replayOutput.trim().split('\n').at(-1)!) }
@@ -90,14 +91,15 @@ async function run(kind: 'same' | 'conflict' | 'different', conflictVariant = 'c
 if (!child) {
   for (let round = 0; round < 20; round++) { await run('same'); await run('conflict', ['conflict', 'kind', 'context', 'revision', 'fact-order', 'input'][round % 6]); await run('different') }
   const unsafeRoot = mkdtempSync(join(tmpdir(), 'gotry-operation-unsafe-')); const unsafeLedger = ensureLedger(unsafeRoot); const unsafeRuntime = new BookingCopilotTaskRuntime(unsafeLedger)
-  unsafeRuntime.startTask({ schemaVersion: 'booking.surface.v1', kind: 'user.turn', taskId, workspace, request: { text: 'opaque' } })
-  assert.throws(() => unsafeRuntime.issueOperation(taskId, { ...base, factRefs: ['attacker@example.invalid'] }), /unsafe_fact_ref/)
-  assert.throws(() => unsafeRuntime.issueOperation(taskId, { ...base, actionId: 'attacker@example.invalid' }), /unsafe_action_id/)
-  assert.throws(() => unsafeRuntime.issueOperation(taskId, { ...base, actionId: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature' }), /unsafe_action_id/)
+  unsafeRuntime.startTask({ schemaVersion: 'booking.surface', kind: 'user.turn', taskId, turnId: 'unsafe-anchor-turn', workspace, request: { text: 'opaque' } })
+  assert.throws(() => unsafeRuntime.issueOperation(taskId, { ...base, reason: 'raw prose marker@example.invalid' }), /invalid_action|unsafe/, 'email prose is rejected before an operation is issued')
+  assert.throws(() => unsafeRuntime.issueOperation(taskId, { ...base, factRefs: ['attacker@example.invalid'] }), /invalid_action|unsafe_fact_ref/)
+  assert.throws(() => unsafeRuntime.issueOperation(taskId, { ...base, actionId: 'attacker@example.invalid' }), /invalid_action|unsafe_action_id/)
+  assert.throws(() => unsafeRuntime.issueOperation(taskId, { ...base, actionId: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature' }), /invalid_action|unsafe_action_id/)
   assert.equal(unsafeLedger.countEvents(), 2); unsafeLedger.close(); rmSync(unsafeRoot, { recursive: true, force: true })
   for (const field of ['actionId', 'factRefs', 'expectedRevision'] as const) {
     const tamperRoot = mkdtempSync(join(tmpdir(), `gotry-operation-tamper-${field}-`)); const tamperLedger = ensureLedger(tamperRoot); const tamperRuntime = new BookingCopilotTaskRuntime(tamperLedger)
-    tamperRuntime.startTask({ schemaVersion: 'booking.surface.v1', kind: 'user.turn', taskId, workspace, request: { text: 'opaque' } }); tamperRuntime.issueOperation(taskId, base)
+    tamperRuntime.startTask({ schemaVersion: 'booking.surface', kind: 'user.turn', taskId, turnId: 'tamper-anchor-turn', workspace, request: { text: 'opaque' } }); tamperRuntime.issueOperation(taskId, base)
     const row = tamperLedger.db.prepare("SELECT seq, payload FROM events WHERE kind = 'booking.copilot.action.issued'").get() as { seq: number; payload: string }; const payload = JSON.parse(row.payload); payload.action[field] = field === 'factRefs' ? ['tampered'] : field === 'expectedRevision' ? 99 : 'tampered-action'
     tamperLedger.db.prepare('UPDATE events SET payload = ? WHERE seq = ?').run(JSON.stringify(payload), row.seq)
     assert.throws(() => new BookingCopilotTaskRuntime(tamperLedger).resumeTask(taskId), /ledger_corrupt/); tamperLedger.close(); rmSync(tamperRoot, { recursive: true, force: true })

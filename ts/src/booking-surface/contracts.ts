@@ -5,9 +5,9 @@
  * is limited to a user turn or an explanation and is never parsed as an action.
  */
 
-export const BOOKING_SURFACE_SCHEMA_VERSION = 'booking.surface.v1' as const
-/** SHA-256 of schemas/booking.surface.v1.schema.json; package proof pins drift. */
-export const BOOKING_SURFACE_SCHEMA_SHA256 = 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81' as const
+export const BOOKING_SURFACE_SCHEMA_VERSION = 'booking.surface' as const
+/** SHA-256 of schemas/booking.surface.schema.json; package proof pins drift. */
+export const BOOKING_SURFACE_SCHEMA_SHA256 = '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375' as const
 export const BOOKING_SURFACE_VERSION_HEADER = 'x-booking-surface-version' as const
 export const BOOKING_SURFACE_SCHEMA_SHA256_HEADER = 'x-booking-surface-schema-sha256' as const
 
@@ -17,364 +17,403 @@ export const BOOKING_SURFACES = [
   'storefront',
   'payment_link',
 ] as const
-export type BookingSurfaceV1 = (typeof BOOKING_SURFACES)[number]
+export type BookingSurface = (typeof BOOKING_SURFACES)[number]
 
-export const BOOKING_READ_ACTION_KINDS = [
-  'search.patch',
-  'search.run',
-  'results.view.patch',
-  'hotel.focus',
-  'hotel.select',
-  'offers.query',
-  'offers.view.patch',
-  'offers.compare',
-  'offer.select',
-  'offer.check',
-  'checkout.prepare',
-  'order.observe',
-] as const
-export type BookingReadActionKindV1 = (typeof BOOKING_READ_ACTION_KINDS)[number]
+/**
+ * Process composition modes are deliberately separate from the payload
+ * schema. The default accepts turns already bound by HotelByte's BFF; the
+ * second mode is reserved for an in-process BFF binding seam.
+ */
+export const BOOKING_COPILOT_INGRESS_MODES = ['bff-bound-turn-only', 'bff-ingress-binding'] as const
+export type BookingCopilotIngressMode = typeof BOOKING_COPILOT_INGRESS_MODES[number]
+export const BOOKING_COPILOT_ACCEPTED_TURN_KINDS = ['user.turn', 'action.receipt.continuation'] as const
+export const BOOKING_COPILOT_INGRESS_TURN_KIND = 'user.turn.ingress' as const
+/** Hard task-level operation budget. The counter is persisted in the ledger. */
+export const BOOKING_COPILOT_MAX_OPERATIONS = 20 as const
 
-export const BOOKING_RECEIPT_STATUSES = [
-  'applied',
-  'needs_input',
-  'partial',
-  'no_match',
-  'unavailable',
-  'changed',
-  'stale',
-  'unsupported',
-  'failed',
-] as const
-export type ActionReceiptStatusV1 = (typeof BOOKING_RECEIPT_STATUSES)[number]
+export const BOOKING_READ_ACTION_KINDS = ['search.patch','search.run','results.view.patch','hotel.focus','hotel.select','offers.query','offers.view.patch','offers.compare','offer.select','offer.check','checkout.prepare','order.observe'] as const
+export type BookingReadActionKind = typeof BOOKING_READ_ACTION_KINDS[number]
+/** Product-owned least-privilege action matrix. BFF bindings may narrow these lists, never expand them. */
+export const BOOKING_SURFACE_ALLOWED_ACTIONS: Record<BookingSurface, readonly BookingReadActionKind[]> = {
+  tenant: BOOKING_READ_ACTION_KINDS,
+  customer_portal: BOOKING_READ_ACTION_KINDS,
+  storefront: ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus'],
+  payment_link: ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'hotel.select'],
+}
+/** Stable product-matrix observation for UAT and server readiness proofs. */
+export function bookingSurfaceAllowedActions(surface: BookingSurface): BookingReadActionKind[] {
+  return [...BOOKING_SURFACE_ALLOWED_ACTIONS[surface]]
+}
 
-export const BOOKING_SURFACE_EVENT_KINDS = [
-  'status',
-  'question',
-  'operation',
-  'explanation',
-  'terminal',
-  'error',
-] as const
-export type BookingSurfaceEventKindV1 = (typeof BOOKING_SURFACE_EVENT_KINDS)[number]
+export type BookingRequestKey = string
+/** Runtime-owned idempotency key; this is not a browser request key. */
+export type BookingInternalDecisionKey = string
 
-export type ContextRefV1 = string
-export type FactRefV1 = string
-export type HotelRefV1 = string
-export type OfferRefV1 = string
-export type VerifiedOfferRefV1 = string
-export type OrderRefV1 = string
+export const BOOKING_BLOCKER_CODES = ['no_hotels_matched','hotel_not_visible','hotel_rates_failed','criterion_must_not_met','offer_target_not_reached','offer_unavailable'] as const
+export type BookingBlockerCode = typeof BOOKING_BLOCKER_CODES[number]
+export const BOOKING_GAP_CODES = ['byos_mapped_risk','check_avail_failed','check_avail_unverified','component_executor_unavailable','hotel_not_visible','hotel_rates_failed','offer_facts_changed','offer_not_loaded','offer_unavailable','order_not_found','order_outcome_not_observed','order_state_unknown','order_status_unavailable','requested_offers_not_loaded','search_failed','search_form_invalid','search_session_expired','search_terminal_timeout','stale_revision','surface_adapter_failed','undo_token_not_found','unhandled','unsupported','verified_offer_required','workspace_changed_during_action','criterion_must_not_met','no_hotels_matched','offer_target_not_reached'] as const
+export type BookingGapCode = typeof BOOKING_GAP_CODES[number]
+export type BookingBlockerScope = 'search' | 'offer' | 'availability' | 'checkout'
 
-export type CriterionStrengthV1 = 'must' | 'prefer'
-export interface CriterionV1<T> {
-  strength: CriterionStrengthV1
+export type CriterionStrength = 'must' | 'prefer'
+export interface Criterion<T> {
+  strength: CriterionStrength
   value: T
 }
 
-export interface MoneyV1 {
+export interface Money {
   /** Decimal string supplied by the authoritative page object; never recomputed by GoTry. */
   amount: string
   currency: string
-  sourceFactRef: FactRefV1
+  sourceFactRef: string
 }
 
-export interface OccupancyRoomV1 {
+export interface OccupancyRoom {
   adults: number
   childAges: number[]
 }
 
-export interface SearchCriteriaPatchV1 {
+export interface SearchCriteriaPatch {
   destination?: {
     query?: string
     placeRef?: string
   }
-  hotel?: CriterionV1<{
+  hotel?: Criterion<{
     name?: string
-    hotelRef?: HotelRefV1
+    hotelRef?: string
   }>
   stay?: {
     checkIn?: string
     checkOut?: string
   }
   occupancy?: {
-    rooms: OccupancyRoomV1[]
+    rooms: OccupancyRoom[]
   }
-  budget?: CriterionV1<{
-    min?: MoneyV1
-    max?: MoneyV1
+  budget?: Criterion<{
+    min?: Money
+    max?: Money
   }>
-  starRating?: CriterionV1<{
+  starRating?: Criterion<{
     min?: number
     max?: number
   }>
-  guestRating?: CriterionV1<{
+  guestRating?: Criterion<{
     min: number
   }>
-  facilities?: CriterionV1<{
+  facilities?: Criterion<{
     allOf: string[]
   }>
-  distance?: CriterionV1<{
+  distance?: Criterion<{
     anchorLabel?: string
     anchorRef?: string
     maxKm: number
   }>
 }
 
-export type ResultSortV1 =
+export type ResultSort =
   | 'recommended'
   | 'price_asc'
   | 'price_desc'
   | 'rating_desc'
   | 'distance_asc'
 
-export interface ResultsViewPatchV1 {
+export interface ResultsViewPatch {
   starRating?: { min?: number; max?: number } | null
   guestRatingMin?: number | null
   facilitiesAllOf?: string[] | null
   distance?: { anchorRef: string; maxKm: number } | null
-  price?: { min?: MoneyV1; max?: MoneyV1 } | null
-  sort?: ResultSortV1
+  price?: { min?: Money; max?: Money } | null
+  sort?: ResultSort
 }
 
-export interface OfferCriteriaV1 {
-  roomType?: CriterionV1<string[]>
-  bedType?: CriterionV1<string[]>
-  meals?: CriterionV1<string[]>
-  freeCancellation?: CriterionV1<boolean>
-  freeCancellationUntil?: CriterionV1<string>
-  totalPriceMax?: CriterionV1<MoneyV1>
-  roomsAvailableMin?: CriterionV1<number>
-  payAtProperty?: CriterionV1<boolean>
-  mobileRate?: CriterionV1<boolean>
+export interface OfferCriteria {
+  roomType?: Criterion<string[]>
+  bedType?: Criterion<string[]>
+  meals?: Criterion<string[]>
+  freeCancellation?: Criterion<boolean>
+  freeCancellationUntil?: Criterion<string>
+  totalPriceMax?: Criterion<Money>
+  roomsAvailableMin?: Criterion<number>
+  payAtProperty?: Criterion<boolean>
+  mobileRate?: Criterion<boolean>
   targetCount?: number
   sort?: 'best_match' | 'total_price_asc' | 'cancellation_latest'
 }
 
-export type EvidenceLevelV1 = 'listed' | 'rate_loaded' | 'checked'
+export type EvidenceLevel = 'listed' | 'rate_loaded' | 'checked'
 
-export interface SurfaceCapabilitiesV1 {
-  surface: BookingSurfaceV1
-  allowedActions: BookingReadActionKindV1[]
-}
-
-export interface SearchDraftSnapshotV1 {
+export interface SearchDraftSnapshot {
   destination?: { query?: string; placeRef?: string }
   stay?: { checkIn?: string; checkOut?: string }
-  occupancy?: { rooms: OccupancyRoomV1[] }
-  criteria?: SearchCriteriaPatchV1
+  occupancy?: { rooms: OccupancyRoom[] }
+  criteria?: SearchCriteriaPatch
 }
 
-export interface ResultViewSnapshotV1 {
+export interface ResultViewSnapshot {
   status: 'idle' | 'loading' | 'ready' | 'partial' | 'failed'
-  filters?: ResultsViewPatchV1
-  sort?: ResultSortV1
+  filters?: ResultsViewPatch
+  sort?: ResultSort
   resultCount?: number
   searchSessionRef?: string
 }
 
-export interface VisibleHotelFactV1 {
-  hotelRef: HotelRefV1
+export interface VisibleHotelFact {
+  hotelRef: string
   name: string
   starRating?: number
   guestRating?: number
   distanceKm?: number
   facilityCodes?: string[]
-  factRefs: FactRefV1[]
+  factRefs: string[]
 }
 
-export interface LoadedOfferFactV1 {
-  offerRef: OfferRefV1
-  hotelRef: HotelRefV1
-  evidenceLevel: EvidenceLevelV1
-  factRefs: FactRefV1[]
+export interface LoadedOfferFact {
+  offerRef: string
+  offerVersionRef: string
+  hotelRef: string
+  evidenceLevel: EvidenceLevel
+  factRefs: string[]
 }
 
-export interface BookingWorkspaceSnapshotV1 {
-  schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION
-  contextRef: ContextRefV1
-  surface: BookingSurfaceV1
-  revision: number
-  locale: string
-  currency: string
-  searchDraft: SearchDraftSnapshotV1
-  results: ResultViewSnapshotV1
-  visibleHotels: VisibleHotelFactV1[]
-  loadedOffers: LoadedOfferFactV1[]
-  focusedHotelRef?: HotelRefV1
-  shortlistedOfferRefs: OfferRefV1[]
-  selectedOfferRef?: OfferRefV1
-  verifiedOfferRef?: VerifiedOfferRefV1
-  capabilities: SurfaceCapabilitiesV1
+export interface VerifiedOfferCapability {
+  offerRef: string
+  offerVersionRef: string
+  verifiedOfferRef: string
+  expiresAt: string
 }
 
-/**
- * Browser bootstrap snapshot before the same-origin BFF binds an actor and
- * mints contextRef/capabilities. It deliberately cannot assert any identity or
- * capability field.
- */
-export type BookingWorkspaceIngressSnapshotV1 = Omit<
-  BookingWorkspaceSnapshotV1,
-  'contextRef' | 'surface' | 'capabilities'
->
+export interface CriterionBlocker {
+  blockerId: string
+  sourceActionId: string
+  sourceReceiptDigest: string
+  scope: BookingBlockerScope
+  code: BookingBlockerCode
+  criterionPath: string
+  strength: 'must'
+  valueDigest: string
+  valueLabel?: string
+  evidence: { factRefs: string[]; gapCodes: BookingGapCode[]; requested?: number; actual?: number }
+}
 
-interface BookingReadActionBaseV1<K extends BookingReadActionKindV1, I> {
+export interface RelaxationApproval {
+  taskId: string
+  contextRef: string
+  sourceTurnId: string
+  presentationRequestKey: string
+  optionDigest: string
+  approvalId: string
+  deliveryNonce: string
+  blockerId: string
+  sourceActionId: string
+  sourceReceiptDigest: string
+  scope: BookingBlockerScope
+  code: BookingBlockerCode
+  criterionPath: string
+  valueDigest: string
+  from: 'must'
+  to: 'prefer' | 'drop'
+  approved: true
+}
+
+export interface RelaxationApprovalRef {
+  approvalId: string
+  blockerId: string
+  contextRef: string
+  sourceTurnId: string
+  presentationRequestKey: string
+  sourceActionId: string
+  targetActionId: string
+  sourceRevision: number
+  targetActionKind: BookingReadActionKind
+  to: 'prefer' | 'drop'
+  expiresAt: string
+  nonce: string
+  sourceReceiptDigest: string
+  scope: BookingBlockerScope
+  code: BookingBlockerCode
+  criterionPath: string
+  valueDigest: string
+}
+
+interface BookingReadActionBase<K extends BookingReadActionKind, I> {
   schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION
   kind: K
   actionId: string
-  contextRef: ContextRefV1
+  contextRef: string
   expectedRevision: number
   reason: string
-  factRefs: FactRefV1[]
+  factRefs: string[]
   input: I
+  relaxationApprovalRef?: RelaxationApprovalRef
 }
 
-export type SearchPatchActionV1 = BookingReadActionBaseV1<'search.patch', { patch: SearchCriteriaPatchV1 }>
-export type SearchRunActionV1 = BookingReadActionBaseV1<'search.run', Record<string, never>>
-export type ResultsViewPatchActionV1 = BookingReadActionBaseV1<'results.view.patch', { patch: ResultsViewPatchV1 }>
-export type HotelFocusActionV1 = BookingReadActionBaseV1<'hotel.focus', { hotelRef: HotelRefV1 }>
-export type HotelSelectActionV1 = BookingReadActionBaseV1<'hotel.select', { hotelRef: HotelRefV1 }>
-export type OffersQueryActionV1 = BookingReadActionBaseV1<'offers.query', { hotelRefs: HotelRefV1[]; criteria: OfferCriteriaV1 }>
-export type OffersViewPatchActionV1 = BookingReadActionBaseV1<'offers.view.patch', { hotelRef: HotelRefV1; criteria: OfferCriteriaV1 }>
-export type OffersCompareActionV1 = BookingReadActionBaseV1<'offers.compare', { offerRefs: OfferRefV1[]; requestedCount: number }>
-export type OfferSelectActionV1 = BookingReadActionBaseV1<'offer.select', { offerRef: OfferRefV1 }>
-export type OfferCheckActionV1 = BookingReadActionBaseV1<'offer.check', { offerRef: OfferRefV1 }>
-export type CheckoutPrepareActionV1 = BookingReadActionBaseV1<'checkout.prepare', { offerRef: OfferRefV1; verifiedOfferRef: VerifiedOfferRefV1 }>
-export type OrderObserveActionV1 = BookingReadActionBaseV1<'order.observe', { orderRef: OrderRefV1 }>
+export type SearchPatchAction = BookingReadActionBase<'search.patch', { patch: SearchCriteriaPatch }>
+export type SearchRunAction = BookingReadActionBase<'search.run', Record<string, never>>
+export type ResultsViewPatchAction = BookingReadActionBase<'results.view.patch', { patch: ResultsViewPatch }>
+export type HotelFocusAction = BookingReadActionBase<'hotel.focus', { hotelRef: string }>
+export type HotelSelectAction = BookingReadActionBase<'hotel.select', { hotelRef: string }>
+export type OffersQueryAction = BookingReadActionBase<'offers.query', { hotelRefs: string[]; criteria: OfferCriteria }>
+export type OffersViewPatchAction = BookingReadActionBase<'offers.view.patch', { hotelRef: string; criteria: OfferCriteria }>
+export type OffersCompareAction = BookingReadActionBase<'offers.compare', { offerRefs: string[]; requestedCount: number }>
+export type OfferSelectAction = BookingReadActionBase<'offer.select', { offerRef: string; offerVersionRef: string }>
+export type OfferCheckAction = BookingReadActionBase<'offer.check', { offerRef: string; offerVersionRef: string }>
+export type CheckoutPrepareAction = BookingReadActionBase<'checkout.prepare', { offerRef: string; offerVersionRef: string; verifiedOfferRef: string }>
+export type OrderObserveAction = BookingReadActionBase<'order.observe', { orderRef: string }>
 
-export type BookingReadActionV1 =
-  | SearchPatchActionV1
-  | SearchRunActionV1
-  | ResultsViewPatchActionV1
-  | HotelFocusActionV1
-  | HotelSelectActionV1
-  | OffersQueryActionV1
-  | OffersViewPatchActionV1
-  | OffersCompareActionV1
-  | OfferSelectActionV1
-  | OfferCheckActionV1
-  | CheckoutPrepareActionV1
-  | OrderObserveActionV1
+export type BookingReadAction =
+  | SearchPatchAction
+  | SearchRunAction
+  | ResultsViewPatchAction
+  | HotelFocusAction
+  | HotelSelectAction
+  | OffersQueryAction
+  | OffersViewPatchAction
+  | OffersCompareAction
+  | OfferSelectAction
+  | OfferCheckAction
+  | CheckoutPrepareAction
+  | OrderObserveAction
 
-export type ActionObservationV1 =
-  | { kind: 'search.state'; searchSessionRef?: string; resultCount?: number }
-  | { kind: 'results.state'; matchedHotelRefs: HotelRefV1[]; visibleCount: number }
-  | { kind: 'hotel.focus'; hotelRef: HotelRefV1 }
-  | { kind: 'hotel.selection'; hotelRef: HotelRefV1 }
-  | { kind: 'offers.state'; hotelRefs: HotelRefV1[]; offerRefs: OfferRefV1[]; loadedHotelCount: number }
-  | { kind: 'offer.selection'; offerRef: OfferRefV1 }
-  | { kind: 'offer.availability'; offerRef: OfferRefV1; verifiedOfferRef?: VerifiedOfferRefV1; available: boolean; changedFactRefs: FactRefV1[] }
-  | { kind: 'checkout.handoff'; offerRef: OfferRefV1; verifiedOfferRef: VerifiedOfferRefV1; handoffRef: string }
-  | { kind: 'order.state'; orderRef: OrderRefV1; state: 'pending' | 'verified' | 'failed' | 'unknown' }
-  | { kind: 'gap'; code: string; factRefs: FactRefV1[] }
+export interface BookingWorkspaceSnapshot {
+  schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION
+  contextRef: string
+  surface: BookingSurface
+  revision: number
+  locale: string
+  currency: string
+  searchDraft: SearchDraftSnapshot
+  results: ResultViewSnapshot
+  visibleHotels: VisibleHotelFact[]
+  loadedOffers: LoadedOfferFact[]
+  focusedHotelRef?: string
+  shortlistedOfferRefs: string[]
+  selectedOfferRef?: string
+  verifiedOffer?: VerifiedOfferCapability
+  capabilities: { surface: BookingSurface; allowedActions: BookingReadActionKind[] }
+}
 
-export interface ResultContractV1 {
+export type BookingWorkspaceIngressSnapshot = Pick<
+  BookingWorkspaceSnapshot,
+  'schemaVersion' | 'revision' | 'locale' | 'currency' | 'searchDraft' | 'results' | 'visibleHotels' | 'loadedOffers' | 'focusedHotelRef' | 'shortlistedOfferRefs' | 'selectedOfferRef'
+>
+
+export type ActionObservation =
+  | { kind: 'search.state'; searchSessionRef?: string; resultCount?: number; gapCodes?: BookingGapCode[] }
+  | { kind: 'results.state'; matchedHotelRefs: string[]; visibleCount: number; gapCodes?: BookingGapCode[] }
+  | { kind: 'hotel.focus'; hotelRef: string }
+  | { kind: 'hotel.selection'; hotelRef: string }
+  | { kind: 'offers.state'; hotelRefs: string[]; offerRefs: string[]; loadedHotelCount: number; gapCodes?: BookingGapCode[] }
+  | { kind: 'offer.selection'; offerRef: string; offerVersionRef: string }
+  | { kind: 'offer.availability'; offerRef: string; checkedOfferVersionRef: string; currentOfferVersionRef?: string; verifiedOfferRef?: string; available: boolean; changedFactRefs: string[]; gapCodes?: BookingGapCode[] }
+  | { kind: 'checkout.handoff'; offerRef: string; offerVersionRef: string; verifiedOfferRef: string; handoffRef: string }
+  | { kind: 'order.state'; orderRef: string; state: 'pending' | 'verified' | 'failed' | 'unknown'; gapCodes?: BookingGapCode[] }
+  | { kind: 'gap'; code: BookingGapCode; factRefs: string[] }
+
+export interface ResultContract {
   outcome: 'complete' | 'partial' | 'empty'
   requestedCount?: number
   actualCount?: number
   hardCriteriaMet: boolean
-  factRefs: FactRefV1[]
-  gapCodes: string[]
+  factRefs: string[]
+  gapCodes: BookingGapCode[]
+  blockers: CriterionBlocker[]
+  relaxationsApplied: RelaxationApproval[]
 }
 
-export interface ActionReceiptV1 {
+export interface ActionReceipt {
   schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION
   kind: 'action.receipt'
   actionId: string
-  contextRef: ContextRefV1
-  status: ActionReceiptStatusV1
+  contextRef: string
+  status: 'applied' | 'needs_input' | 'partial' | 'no_match' | 'unavailable' | 'changed' | 'stale' | 'unsupported' | 'failed'
   revision: number
-  observation: ActionObservationV1
-  resultContract: ResultContractV1
+  observation: ActionObservation
+  resultContract: ResultContract
   undoToken?: string
 }
 
-export interface UserTurnV1 {
+export interface UserTurn {
   schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION
   kind: 'user.turn'
-  taskId?: string
-  workspace: BookingWorkspaceSnapshotV1
-  request: {
-    /** Transport-only natural language. It must never be persisted as executable state. */
-    text: string
-  }
+  taskId: string
+  turnId: string
+  workspace: BookingWorkspaceSnapshot
+  request: { text: string; approval?: RelaxationApproval }
 }
 
-export interface BookingCopilotIngressTurnV1 {
+/** Browser-to-BFF ingress. Identity is deliberately absent from this shape. */
+export interface IngressTurn {
   schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION
   kind: 'user.turn.ingress'
-  taskId?: string
-  /** Bootstrap may omit this field or send null. A browser cannot mint it. */
-  contextRef?: null
-  surfaceHint: BookingSurfaceV1
-  workspace: BookingWorkspaceIngressSnapshotV1
-  request: {
-    text: string
-  }
+  requestKey: BookingRequestKey
+  taskHandle?: string
+  surfaceHint: BookingSurface
+  workspace: BookingWorkspaceIngressSnapshot
+  request: { text: string }
 }
 
-export interface ActionReceiptContinuationV1 {
+export interface ReceiptContinuation {
   schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION
   kind: 'action.receipt.continuation'
   taskId: string
-  workspace: BookingWorkspaceSnapshotV1
-  receipt: ActionReceiptV1
+  workspace: BookingWorkspaceSnapshot
+  receipt: ActionReceipt
 }
 
-export type BookingCopilotTurnV1 = UserTurnV1 | ActionReceiptContinuationV1
+export type BookingCopilotTurn = UserTurn | IngressTurn | ReceiptContinuation
 
-interface BookingSurfaceEventBaseV1<K extends BookingSurfaceEventKindV1> {
+/** Typed BFF seam: implementations authenticate ingress and return only
+ * server-issued identity. The HTTP adapter constructs the internal UserTurn. */
+export interface BookingIngressIdentityBinding {
+  taskId: string
+  turnId: string
+  contextRef: string
+  /** Authoritative BFF surface; never copied from the browser hint. */
+  surface: BookingSurface
+  /** BFF-authorized closed action subset for this surface. */
+  allowedActions: BookingReadActionKind[]
+}
+
+export interface BookingIngressPrincipal {
+  subject: string
+  scope: string
+}
+
+export interface BookingIngressBinding {
+  bind(input: IngressTurn, principal: BookingIngressPrincipal): BookingIngressIdentityBinding | Promise<BookingIngressIdentityBinding>
+}
+
+export interface BookingQuestionEvent {
   schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION
   eventId: string
   taskId: string
-  contextRef: ContextRefV1
+  contextRef: string
   sequence: number
   emittedAt: string
-  kind: K
-}
-
-export type BookingStatusEventV1 = BookingSurfaceEventBaseV1<'status'> & {
-  status: 'submitted' | 'working' | 'waiting_receipt' | 'input_required'
-}
-
-export type BookingQuestionEventV1 = BookingSurfaceEventBaseV1<'question'> & {
+  kind: 'question'
   question: {
     questionId: string
     prompt: string
     missingFields: string[]
+    type: 'relaxation_approval_required'
+    blocker: CriterionBlocker
+    approvalOptions: Array<{ approval: RelaxationApproval }>
   }
 }
 
-export type BookingOperationEventV1 = BookingSurfaceEventBaseV1<'operation'> & {
-  action: BookingReadActionV1
+export interface BookingEventBase {
+  schemaVersion: typeof BOOKING_SURFACE_SCHEMA_VERSION
+  eventId: string
+  taskId: string
+  contextRef: string
+  sequence: number
+  emittedAt: string
 }
 
-export type BookingExplanationEventV1 = BookingSurfaceEventBaseV1<'explanation'> & {
-  explanation: {
-    text: string
-    factRefs: FactRefV1[]
-  }
-}
-
-export type BookingTerminalEventV1 = BookingSurfaceEventBaseV1<'terminal'> & {
-  terminal: {
-    status: 'completed' | 'stopped'
-    summary: string
-    factRefs: FactRefV1[]
-  }
-}
-
-export type BookingErrorEventV1 = BookingSurfaceEventBaseV1<'error'> & {
-  error: {
-    code: string
-    message: string
-    retryable: boolean
-  }
-}
-
-export type BookingSurfaceEventV1 =
-  | BookingStatusEventV1
-  | BookingQuestionEventV1
-  | BookingOperationEventV1
-  | BookingExplanationEventV1
-  | BookingTerminalEventV1
-  | BookingErrorEventV1
+export type BookingSurfaceEvent =
+  | (BookingEventBase & { kind: 'status'; status: 'submitted' | 'working' | 'waiting_receipt' | 'input_required' })
+  | BookingQuestionEvent
+  | (BookingEventBase & { kind: 'operation'; action: BookingReadAction })
+  | (BookingEventBase & { kind: 'explanation'; explanation: { text: string; factRefs: string[] } })
+  | (BookingEventBase & { kind: 'terminal'; terminal: { status: 'completed' | 'stopped'; summary: string; factRefs: string[] } })
+  | (BookingEventBase & { kind: 'error'; error: { code: string; message: string; retryable: boolean } })

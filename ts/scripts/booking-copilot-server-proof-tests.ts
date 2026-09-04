@@ -11,11 +11,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ensureLedger } from '../src/state-ledger.ts'
-import { BookingCopilotTaskRuntime, type BookingSurfaceEventV1 } from '../src/booking-surface/runtime.ts'
-import {
-  startBookingCopilotServer,
-  type BookingPlannerSessionFactoryV1,
-} from '../src/booking-surface/server.ts'
+import { BookingCopilotTaskRuntime, type BookingPlannerSessionFactory } from '../src/booking-surface/runtime.ts'
+import { startBookingCopilotServer } from '../src/booking-surface/server.ts'
+import type { BookingSurfaceEvent } from '../src/booking-surface/contracts.ts'
 import { BOOKING_SURFACE_SCHEMA_SHA256, BOOKING_SURFACE_SCHEMA_VERSION } from '../src/booking-surface/contracts.ts'
 
 const API_KEY = 'server-to-server-key'
@@ -32,7 +30,7 @@ const runtime = new BookingCopilotTaskRuntime(ledger, {
 
 let factoryCalls = 0
 let sessionTurns = 0
-const plannerFactory: BookingPlannerSessionFactoryV1 = (initialTask) => {
+const plannerFactory: BookingPlannerSessionFactory = (initialTask) => {
   factoryCalls += 1
   assert.equal(initialTask.taskId, 'task-http-1')
   return {
@@ -42,7 +40,7 @@ const plannerFactory: BookingPlannerSessionFactoryV1 = (initialTask) => {
         return [{
           kind: 'operation',
           action: {
-            schemaVersion: 'booking.surface.v1',
+            schemaVersion: 'booking.surface',
             kind: 'search.run',
             actionId: 'action-http-1',
             contextRef: task.contextRef,
@@ -78,6 +76,8 @@ const expectedProbe = {
   schemaVersion: SCHEMA_VERSION,
   schemaSha256: SCHEMA_SHA256,
   status: 'ready',
+  ingressMode: 'bff-bound-turn-only',
+  acceptedTurnKinds: ['user.turn', 'action.receipt.continuation'],
 }
 const runtimeReport = process.report?.getReport?.() as { header?: { glibcVersionRuntime?: string } } | undefined
 const runtimeGlibcVersion = runtimeReport?.header?.glibcVersionRuntime ?? ''
@@ -110,7 +110,7 @@ for (const path of ['/healthz', '/status']) {
 }
 
 const workspace = {
-  schemaVersion: 'booking.surface.v1',
+  schemaVersion: 'booking.surface',
   contextRef: 'ctx-http-1',
   surface: 'tenant',
   revision: 0,
@@ -127,9 +127,10 @@ const workspace = {
   },
 }
 const userTurn = {
-  schemaVersion: 'booking.surface.v1',
+  schemaVersion: 'booking.surface',
   kind: 'user.turn',
   taskId: 'task-http-1',
+  turnId: 'http-turn-1',
   workspace,
   request: { text: '执行当前搜索' },
 }
@@ -163,13 +164,18 @@ const wrongSchemaHash = await post(userTurn, `Bearer ${API_KEY}`, {
 assert.equal(wrongSchemaHash.status, 409, 'schema drift is rejected before planning')
 
 const directIngress = await post({
-  schemaVersion: 'booking.surface.v1',
+  schemaVersion: 'booking.surface',
   kind: 'user.turn.ingress',
+  requestKey: 'browser-request-1',
   surfaceHint: 'tenant',
-  workspace: { ...workspace, contextRef: undefined, surface: undefined, capabilities: undefined },
+  workspace: {
+    schemaVersion: 'booking.surface', revision: 0, locale: 'zh-CN', currency: 'AED',
+    searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
+  },
   request: { text: 'browser must use same-origin BFF' },
 })
-assert.equal(directIngress.status, 400, 'GoTry server rejects unbound browser ingress')
+assert.equal(directIngress.status, 503, 'GoTry server rejects unbound browser ingress')
+assert.equal((await directIngress.json()).error.code, 'trusted_ingress_binding_required')
 
 const tokenSmuggle = await post({ ...userTurn, portalToken: 'ST:must-not-cross-boundary' })
 assert.equal(tokenSmuggle.status, 400, 'strict planner turn rejects portal token fields')
@@ -180,16 +186,17 @@ assert.match(String(first.headers.get('content-type')), /text\/event-stream/)
 assert.equal(first.headers.get('x-booking-surface-version'), SCHEMA_VERSION)
 assert.equal(first.headers.get('x-booking-surface-schema-sha256'), SCHEMA_SHA256)
 
-function parseSse(body: string): BookingSurfaceEventV1[] {
+function parseSse(body: string): BookingSurfaceEvent[] {
   return body.trim().split('\n\n').map((frame) => {
     const data = frame.split('\n').find((line) => line.startsWith('data: '))
     assert.ok(data, `SSE frame has data: ${frame}`)
-    return JSON.parse(data.slice('data: '.length)) as BookingSurfaceEventV1
+    return JSON.parse(data.slice('data: '.length)) as BookingSurfaceEvent
   })
 }
 
 const firstEvents = parseSse(await first.text())
-assert.deepEqual(firstEvents.map((event) => event.kind), ['status', 'status', 'operation'])
+assert.deepEqual(firstEvents.map((event) => event.kind), ['status', 'status', 'operation', 'status'])
+assert.equal(firstEvents[3]!.kind === 'status' ? firstEvents[3].status : '', 'waiting_receipt', 'the operation leaves the task durably waiting for its receipt')
 assert.ok(firstEvents.every((event) => event.contextRef === workspace.contextRef), 'every typed event carries BFF-minted contextRef')
 const operation = firstEvents[2]
 assert.equal(operation?.kind, 'operation')
@@ -197,7 +204,7 @@ assert.equal(factoryCalls, 1)
 assert.equal(sessionTurns, 1)
 
 const receiptTurn = {
-  schemaVersion: 'booking.surface.v1',
+  schemaVersion: 'booking.surface',
   kind: 'action.receipt.continuation',
   taskId: 'task-http-1',
   workspace: {
@@ -206,14 +213,14 @@ const receiptTurn = {
     results: { status: 'ready', resultCount: 2, searchSessionRef: 'search-http-1' },
   },
   receipt: {
-    schemaVersion: 'booking.surface.v1',
+    schemaVersion: 'booking.surface',
     kind: 'action.receipt',
     actionId: 'action-http-1',
     contextRef: workspace.contextRef,
     status: 'applied',
     revision: 1,
     observation: { kind: 'search.state', searchSessionRef: 'search-http-1', resultCount: 2 },
-    resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [] },
+    resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
   },
 }
 const second = await post(receiptTurn)
@@ -227,15 +234,18 @@ assert.ok(secondEvents[0]!.sequence > firstEvents.at(-1)!.sequence, 'SSE sequenc
 
 await serverHandle.close()
 
-let recoveredLastReceipt = false
+const preRestartRuntime = new BookingCopilotTaskRuntime(ledger, {
+  idFactory: (prefix) => `${prefix}-probe-${++nextId}`,
+  now: () => '2026-08-30T12:01:00.000Z',
+})
+const recovered = preRestartRuntime.resumeTask('task-http-1')
+assert.equal(recovered?.lastReceipt?.actionId, 'action-http-1', 'new server process seam restores task from last typed receipt')
+assert.equal(recovered?.phase, 'terminal', 'the completed task stays durably terminal across restart')
 const restarted = await startBookingCopilotServer({
   apiKey: API_KEY,
-  runtime: new BookingCopilotTaskRuntime(ledger, {
-    idFactory: (prefix) => `${prefix}-restart-${++nextId}`,
-    now: () => '2026-08-30T12:01:00.000Z',
-  }),
+  runtime: preRestartRuntime,
   plannerFactory: (initialTask) => {
-    recoveredLastReceipt = initialTask.lastReceipt?.actionId === 'action-http-1'
+    assert.equal(initialTask.taskId, 'task-http-2')
     return { async next() { return [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'Recovered.', factRefs: [] } }] } }
   },
 })
@@ -249,12 +259,12 @@ const afterRestartResponse = await fetch(restartedEndpoint, {
     'x-booking-surface-version': SCHEMA_VERSION,
     'x-booking-surface-schema-sha256': SCHEMA_SHA256,
   },
-  body: JSON.stringify({ ...userTurn, workspace: receiptTurn.workspace }),
+  body: JSON.stringify({ ...userTurn, taskId: 'task-http-2', turnId: 'http-restart-turn-1', workspace: { ...workspace, contextRef: 'ctx-http-2' } }),
 })
 assert.equal(afterRestartResponse.status, 200)
-assert.equal(recoveredLastReceipt, true, 'new server process seam restores task from last typed receipt')
 const restartEvents = parseSse(await afterRestartResponse.text())
-assert.ok(restartEvents[0]!.sequence > secondEvents.at(-1)!.sequence, 'sequence resumes from durable ledger after server restart')
+assert.deepEqual(restartEvents.map((event) => event.kind), ['status', 'status', 'terminal'])
+assert.deepEqual(restartEvents.map((event) => event.sequence), [1, 2, 3], 'the restarted process allocates fresh task-scoped sequences after recovering the ledger')
 
 await restarted.close()
 ledger.close()
