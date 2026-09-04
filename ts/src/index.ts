@@ -41,7 +41,7 @@ import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
-import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
+import { factsFromFlyai, factsFromHotel, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
 import { noteChannelVerdict, recordChannelEvent } from '../capabilities/channel-health.ts'
@@ -890,6 +890,11 @@ export function apply(ctx: Context, config: Config): void {
         if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
         const r = itp.result
         await noteChannel('flyai', r.verdict)
+        // D-26(issue #118):exact-date 酒店检索 hit/miss 落账(摸底无档期不落,传输失败不落负事实)
+        await appendFacts(config.stateRoot ?? '.', factsFromHotel({
+          source: 'flyai-hotel', destination: dest, checkIn: q.checkIn, checkOut: q.checkOut,
+          verdict: r.verdict, options: r.hotels?.length ?? 0, evidence: r.evidence, fetchedAt: new Date().toISOString(),
+        }))
         const top = (r.hotels ?? []).slice(0, 8).map(o => `${o.name}${o.star ? `(${o.star})` : ''} ${o.priceRaw ?? '价待询'}${o.poi ? ` · ${o.poi}` : ''}`)
         const summary = r.verdict === 'hit'
           ? `${dest} 酒店(飞猪官方只读)前 ${top.length} 家(价格多为打码,真实价以 jumpUrl 为准):\n${top.join('\n')}\n${r.evidence}`
@@ -1079,6 +1084,13 @@ export function apply(ctx: Context, config: Config): void {
         if (!itp.result) return declinedObservation('SESSION_HOTEL_SEARCH', itp.trace)
         const r = itp.result
         await noteChannel('session:ctrip-hotel', r.verdict)
+        // D-26(issue #118):exact-date 会话酒店 hit/miss 落账(摸底无档期不落;cooldown 是节律闸非结论,不落)
+        if (r.verdict === 'hit' || r.verdict === 'miss') {
+          await appendFacts(config.stateRoot ?? '.', factsFromHotel({
+            source: 'session:ctrip-hotel', destination: q.to ?? '', checkIn: q.checkIn, checkOut: q.checkOut,
+            verdict: r.verdict, options: r.hotels?.length ?? 0, evidence: r.evidence, fetchedAt: new Date().toISOString(),
+          }))
+        }
         const top = (r.hotels ?? []).slice(0, 8).map(h => `${h.name}${h.star ? `(${h.star}星)` : ''} ${h.priceRaw ?? (h.price > 0 ? `¥${h.price}` : '价待询')}${h.score ? ` 评分${h.score}` : ''}`)
         const summary = r.verdict === 'hit'
           ? `${q.to} 酒店(携程,用户本人登录态,真实价)前 ${top.length} 家(预订以 jumpUrl 落地页为准):\n${top.join('\n')}\n${r.evidence}`

@@ -12,17 +12,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureLedger } from '../src/state-ledger.ts'
-import { BookingCopilotTaskRuntime, type UserTurnV1 } from '../src/booking-surface/runtime.ts'
-import type { BookingWorkspaceSnapshotV1 } from '../src/booking-surface/contracts.ts'
+import { BookingCopilotTaskRuntime } from '../src/booking-surface/runtime.ts'
+import type { BookingWorkspaceSnapshot, UserTurn } from '../src/booking-surface/contracts.ts'
 
 const taskId = 'task-event-sequence-atomicity'
-const workspace: BookingWorkspaceSnapshotV1 = {
-  schemaVersion: 'booking.surface.v1', contextRef: 'ctx-event-sequence-atomicity', surface: 'tenant', revision: 0,
+const workspace: BookingWorkspaceSnapshot = {
+  schemaVersion: 'booking.surface', contextRef: 'ctx-event-sequence-atomicity', surface: 'tenant', revision: 0,
   locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
   capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
 }
-const turn: UserTurnV1 = {
-  schemaVersion: 'booking.surface.v1', kind: 'user.turn', taskId,
+const turn: UserTurn = {
+  schemaVersion: 'booking.surface', kind: 'user.turn', taskId,
+  turnId: 'seq-anchor-turn',
   workspace, request: { text: 'opaque user turn' },
 }
 
@@ -101,7 +102,7 @@ if (child) {
   }
 
   try {
-    if (mode === 'user-turn') runtime.startTask(turn)
+    if (mode === 'user-turn') runtime.startTask({ ...turn, turnId: `seq-${variant}-turn` })
     const event = runtime.emitEvent(taskId, { kind: 'status', status: 'working' })
     console.log(JSON.stringify({ event: { sequence: event.sequence } }))
   } catch (error) {

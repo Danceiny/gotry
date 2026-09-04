@@ -9,8 +9,8 @@
  *   1. 解析 argv + .env(provider-neutral → DEEPSEEK_API_KEY/DEEPSEEK_BASE_URL)
  *   2. 定位 dsh runtime:
  *      a. repo checkout / npm 安装 → root package 解析锁定的 @deepseek-ai/dsh
- *      b. 非 benchmark 且 root 缺失时 → legacy vendored node_modules fallback(不走 npx:
- *         dsh cordis-loader 在子 cwd 求值 plugin name,必须绝对路径 patch)
+ *      b. legacy vendored fallback 已按 D-27 移除(issue #120)——root 缺失即
+ *         fail-closed 报错指重装,不再有「解析成功却跑不起来」的玄学形态
  *   3. 运行时生成 patch(os.tmpdir):把 gotry-tools 插件路径重写为按本包
  *      位置解析的绝对路径 —— 仓内 cordis.gotry-patch.yml 里的 name 行只是
  *      占位(本机绝对路径),随 tarball 分发后对其他机器必错。
@@ -39,8 +39,7 @@ const rootRequire = createRequire(join(repoRoot, 'package.json'))
 // --- 环境 .env 加载(provider-neutral) ---
 // npm 安装模式优先读用户当前目录的 .env(包目录内不该有凭证);repo 检出读仓根。
 const sourceDshEarly = resolveDshPackage(rootRequire)
-const vendoredDshEarly = !sourceDshEarly && existsSync(join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'))
-const envCandidates = sourceCheckoutMode || vendoredDshEarly
+const envCandidates = sourceCheckoutMode || sourceDshEarly
   ? [join(repoRoot, '.env')]
   : [join(process.cwd(), '.env'), join(repoRoot, '.env')]
 const envLines = []
@@ -112,8 +111,7 @@ if (!supportsNodeVersion(process.versions.node)) {
   process.exit(1)
 }
 
-// --- dsh runtime 定位:root manifest/require.resolve 优先;旧 vendored 仅作 legacy fallback ---
-const vendoredDsh = join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')
+// --- dsh runtime 定位(D-27 清偿,issue #120):仅 root manifest/依赖解析;legacy vendored 回退已移除 ---
 const installedPackageMode = !sourceCheckoutMode
 const selectedDsh = selectDshRuntime({
   repoRoot,
@@ -136,7 +134,7 @@ if (!dshBin) {
     console.error('[gotry] benchmark dsh runtime unavailable')
     process.exit(1)
   }
-  console.error(`[gotry] 找不到 dsh runtime(既无 vendored ${vendoredDsh},依赖里也没有 @deepseek-ai/dsh)。`)
+  console.error('[gotry] 找不到 dsh runtime(依赖里没有 @deepseek-ai/dsh;legacy vendored 回退已按 D-27 移除)。')
   console.error('repo checkout: npm ci && npm --prefix ts ci && node scripts/build-dist.mjs;npm 安装: npm install(检查 node_modules)。')
   process.exit(1)
 }
@@ -147,12 +145,12 @@ if (benchmarkEnvironmentConfig && !benchmarkRuntimeSupported(selectedDsh)) {
 
 // --- 运行时 patch:插件路径按本包位置重写为绝对路径 ---
 // 安装包始终指向 dist/ 纯 JS(Node 拒绝 strip node_modules 下的 .ts)。
-// repo 检出仅在 vendored runtime 或显式 tsx loader 可用时走 .ts；否则
+// repo 检出仅在显式 tsx loader 可用时走 .ts；否则
 // 使用当前 worktree 已构建的 dist，避免 Node strip-only 拒绝参数属性语法。
 const distEntry = join(repoRoot, 'dist/src/index.js')
 const tsEntry = join(repoRoot, 'ts/src/index.ts')
 const tsxLoaderActive = /(?:^|\s)--(?:import|loader)(?:=|\s)(?:"[^"]*tsx[^"]*"|'[^']*tsx[^']*'|\S*tsx\S*)/.test(process.env.NODE_OPTIONS ?? '')
-const sourceTypeScriptMode = !installedPackageMode && (dshSource === 'legacy-vendored' || tsxLoaderActive)
+const sourceTypeScriptMode = !installedPackageMode && tsxLoaderActive
 const pluginEntry = !sourceTypeScriptMode && existsSync(distEntry) ? distEntry : tsEntry
 const distModuleMode = pluginEntry === distEntry
 const staticPatch = join(repoRoot, 'cordis.gotry-patch.yml')
