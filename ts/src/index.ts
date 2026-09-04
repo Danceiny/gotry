@@ -280,11 +280,17 @@ export function apply(ctx: Context, config: Config): void {
       + 'structure { request: { motivation weights, hard constraints, window, budget, home hubs }, candidates: [ { id, label, services, transfers, stay, minDays } ] }. '
       + 'Returns per-candidate verdicts, unsat cores with minimal-modification suggestions, '
       + 'a wish-pool entry for infeasible aspirations, and a ready-to-show markdown answer.',
+    // D-30 第五刀(issue #112):payload json blob → 结构化对象(request/candidates 模型可见,
+    // 嵌套形状权威在 unified 引擎契约,工具面不越层强约束)
     parameters: {
       payload: {
-        type: 'json',
+        type: 'object',
+        additionalProperties: false,
         required: true,
-        description: 'The full engine payload: { request, candidates }.',
+        properties: {
+          request: { type: 'object', additionalProperties: true, required: true, description: '引擎请求:{ motivation weights, hard constraints, window, budget, home hubs }' },
+          candidates: { type: 'array', items: { type: 'object', additionalProperties: true }, required: true, description: '候选列表:[{ id, label, services, transfers, stay, minDays }]' },
+        },
       },
     },
     output: {
@@ -337,11 +343,18 @@ export function apply(ctx: Context, config: Config): void {
       + 'never the principal/sponsor distinction. MERGE semantics (T1): call again with just the NEW '
       + 'facts learned this turn (weights delta optional but MUST bring fresh evidence; evidence = user quotes); '
       + 'existing history is never deleted. Requires evidence on every call (P0 anti-fabrication rule).',
+    // D-30 第五刀(issue #112):profile blob → 结构化闭合对象;evidence(P0 反伪造红线)进嵌套
+    // schema 由宿主权闸——无证据的保存请求入口即被结构化拒绝(ToolFailure 形状)
     parameters: {
       profile: {
-        type: 'json',
+        type: 'object',
+        additionalProperties: false,
         required: true,
-        description: '{ weights: {escape_rest: 0.7, ...}, evidence: [user quotes...], hard: {wake_not_before, min_arrival_energy_pct} }',
+        properties: {
+          weights: { type: 'object', additionalProperties: true, description: '动机权重增量,如 { escape_rest: 0.7 }(可选,权重变更须伴新证据)' },
+          evidence: { type: 'array', items: { type: 'string' }, required: true, description: '本轮新事实的用户原话数组(P0:必带)' },
+          hard: { type: 'object', additionalProperties: true, description: '硬约束:{ wake_not_before, min_arrival_energy_pct }(可选)' },
+        },
       },
     },
     output: {
@@ -522,11 +535,19 @@ export function apply(ctx: Context, config: Config): void {
       + 'never a hard filter (「爸爸65轻度高血压」→ 不排高海拔/控制步行量;「晕车」→ 优先火车/备提示). '
       + 'evidence MUST be the user\'s verbatim words (append-only, traceable). '
       + 'NEGATIVE LIST: passport/ID/phone numbers are rejected on sight — such fields never enter storage.',
+    // D-30 第五刀(issue #112):companion blob → 结构化闭合对象;label/evidence required 由宿主权闸
+    // (evidence append-only 溯源 P0;additionalProperties:false 与负面清单同向——护照/证件号类
+    // 杂散字段入口即拒)
     parameters: {
       companion: {
-        type: 'json',
+        type: 'object',
+        additionalProperties: false,
         required: true,
-        description: '{ label: "爸爸", constraints: { mobility?: "步行≤4h", health?: ["轻度高血压"], prefs?: ["怕吵"] }, evidence: "<用户原话>" }',
+        properties: {
+          label: { type: 'string', required: true, description: '称呼,如 爸爸' },
+          constraints: { type: 'object', additionalProperties: true, description: '{ mobility?: "步行≤4h", health?: ["轻度高血压"], prefs?: ["怕吵"] }' },
+          evidence: { type: 'string', required: true, description: '用户原话(append-only 可溯源,P0)' },
+        },
       },
     },
     output: {
