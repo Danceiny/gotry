@@ -112,7 +112,7 @@ async function main() {
     if (typeof byName(n).presentResult !== 'function') throw new Error(`FAIL: ${n} 缺 presentResult`)
   }
   const ar = byName('gotry_agent_reach')
-  const arView = ar.presentResult!({ query: { action: 'reach', channel: 'v2ex', method: 'get_hot_topics' } }, { verdict: 'found', summary: '10 topics' })
+  const arView = ar.presentResult!({ action: 'reach', channel: 'v2ex', method: 'get_hot_topics' }, { verdict: 'found', summary: '10 topics' })
   if (!arView?.title?.includes('✅') || !arView.title.includes('v2ex.get_hot_topics')) throw new Error(`FAIL: agent_reach 结果卡,实际 ${arView?.title}`)
   console.log(`result cards on 5 tools; agent_reach card: ${arView.title}`)
 
@@ -362,7 +362,7 @@ async function main() {
     ledger.settleWorkflowRun('art-probe-1', '# 交付·账本权威\nD1 大理\nD2 洱海')
 
     const listTool = byName('gotry_artifacts_list')
-    const ledList = await listTool.execute({ query: {} }, null) as { ok?: boolean; artifacts?: Array<{ source?: string; id?: string; status?: string }>; total?: number }
+    const ledList = await listTool.execute({}, null) as { ok?: boolean; artifacts?: Array<{ source?: string; id?: string; status?: string }>; total?: number }
     const run = ledList.artifacts?.find(a => a.id === 'art-probe-1')
     if (!ledList.ok || !run || run.source !== 'async-run' || run.status !== 'settled') {
       throw new Error(`FAIL: artifacts list 应发现账本已交付工单,实际:${JSON.stringify(ledList).slice(0, 200)}`)
@@ -373,11 +373,11 @@ async function main() {
     }
 
     const readTool = byName('gotry_artifacts_read')
-    const r1 = await readTool.execute({ query: { path: 'art-probe-1' } }, null) as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string }
+    const r1 = await readTool.execute({ path: 'art-probe-1' }, null) as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string }
     if (!r1.ok || r1.lines?.[0]?.number !== 1 || !r1.lines?.[0]?.text.includes('交付·账本权威') || r1.lang !== 'markdown') {
       throw new Error(`FAIL: 裸工单 id 应从账本读出行号视图,实际:${JSON.stringify(r1).slice(0, 200)}`)
     }
-    const view = readTool.presentResult?.({ query: { path: 'art-probe-1' } }, r1) as { card?: string; path?: string; offset?: number; lines?: unknown[]; totalLines?: number; lang?: string }
+    const view = readTool.presentResult?.({ path: 'art-probe-1' }, r1) as { card?: string; path?: string; offset?: number; lines?: unknown[]; totalLines?: number; lang?: string }
     if (view?.card !== 'read' || view.path !== r1.path || view.offset !== 1 || view.lines?.length !== r1.lines?.length || view.totalLines !== r1.totalLines || view.lang !== 'markdown') {
       throw new Error(`FAIL: read 卡字段不齐,实际:${JSON.stringify(view).slice(0, 200)}`)
     }
@@ -416,16 +416,16 @@ async function main() {
     }
     const gate = byName('gotry_fact_gate')
     const passMd = ['# 行程片段', '## D3 7.18 香港 → 普吉', '- 国泰航空 CX771 08:05→10:35(已按 exact-date 检索记录)'].join('\n')
-    const pass = await gate.execute({ query: { markdown: passMd, tripYear: 2027 } }, null) as { verdict?: string; presentation?: string }
+    const pass = await gate.execute({ markdown: passMd, tripYear: 2027 }, null) as { verdict?: string; presentation?: string }
     if (pass.verdict !== 'pass' || pass.presentation !== 'verified_itinerary_allowed') {
       throw new Error(`FAIL: 可回溯产物应 pass,实际:${JSON.stringify(pass).slice(0, 300)}`)
     }
     const badMd = ['# 行程片段', '## D1 7.16 深圳 → 普吉', '- 香港快运 UO784 10:05→12:40 直飞 ✓'].join('\n')
-    const blocked = await gate.execute({ query: { markdown: badMd, tripYear: 2027 } }, null) as { verdict?: string; violations?: Array<{ kind?: string }>; summary?: string }
+    const blocked = await gate.execute({ markdown: badMd, tripYear: 2027 }, null) as { verdict?: string; violations?: Array<{ kind?: string }>; summary?: string }
     if (blocked.verdict !== 'blocked' || !blocked.violations?.some(v => v.kind === 'not_in_source')) {
       throw new Error(`FAIL: exact-date miss 被 UO784 填充必须 blocked(not_in_source),实际:${JSON.stringify(blocked).slice(0, 300)}`)
     }
-    const view = gate.presentResult?.({ query: {} }, blocked) as { title?: string }
+    const view = gate.presentResult?.({}, blocked) as { title?: string }
     if (!view?.title?.includes('blocked')) throw new Error(`FAIL: blocked 呈现卡标题应含 blocked,实际:${view?.title}`)
     console.log(`fact gate: registry 1+1(hit/miss);verified 措辞 pass;miss 填充 UO784 blocked(not_in_source) + 呈现卡`)
   }
