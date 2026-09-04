@@ -22,6 +22,9 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 
 /** 桥端口池(extension/manifest.json host_permissions 必须同面;§38 断言) */
@@ -41,6 +44,32 @@ export const EXTENSION_ORIGIN_STORE = `chrome-extension://${EXTENSION_ID_STORE}`
 export const EXTENSION_STORE_URL = `https://chromewebstore.google.com/detail/gotry-session-bridge/${EXTENSION_ID_STORE}`
 /** 桥信任的扩展 Origin 白名单:unpacked(固定 key)+ 商店版,双通道同一扩展同源信任 */
 export const EXTENSION_ORIGINS: readonly string[] = [EXTENSION_ORIGIN, EXTENSION_ORIGIN_STORE]
+
+/**
+ * 本地 unpacked 通道是否已落位(~/.gotry/extension/manifest.json)。
+ * 商店版没有本地文件面(装在 Chrome 里),离线不可探测——本函数只回答「本地通道在不在」,
+ * 商店版用户在这里恒 false,这正是 D-24 自适应文案的判定输入。
+ */
+export function localExtensionInstalled(home = homedir()): boolean {
+  return existsSync(join(home, '.gotry', 'extension', 'manifest.json'))
+}
+
+/**
+ * needs-extension 自适应摘要(issue #117,D-24 残量):
+ * - 本地 unpacked 已落位 → 完整双通道指引(商店 + GitHub/开发者模式本地通道);
+ * - 未落位(商店版用户,或完全未装)→ 只推商店一键装,并给「已装商店版?打开 Chrome 即可」
+ *   提示——**不再出现开发者模式/本地通道文案**(已装商店版的用户不该再被指导 load unpacked)。
+ * 纯函数(默认 HOME 可注入)。
+ */
+export function needsExtensionSummary(opts: { localInstalled?: boolean; home?: string } = {}): string {
+  const local = opts.localInstalled ?? localExtensionInstalled(opts.home)
+  if (local) {
+    return 'GoTry Session Bridge 扩展未连接(未安装或已停用)。推荐 Chrome 应用商店一键装(自动更新) '
+      + `${EXTENSION_STORE_URL} ;或 npx gotry setup 落位后 chrome://extensions 开发者模式「加载已解压的扩展程序」指向 ~/.gotry/extension`
+  }
+  return 'GoTry Session Bridge 扩展未连接。若你已从 Chrome 商店安装(自动更新):打开 Chrome 并确认扩展已启用即可自动连接,无需再装。'
+    + `若尚未安装:应用商店一键装 ${EXTENSION_STORE_URL} (装完零弹窗,浏览器自己当安装器)`
+}
 /** 扩展在线判定:/health 心跳 ≤30s 一次 + 轮询重连,1.5 倍容差 */
 export const EXTENSION_CONNECTED_WINDOW_MS = 45_000
 /** /jobs 长轮询 hold 上限(必须 < MV3 SW 30s 存活窗口) */
@@ -292,7 +321,8 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
             settle({
               ok: false,
               reason: 'extension-not-connected',
-              summary: `GoTry Session Bridge 扩展未连接(未安装或已停用)。一次性安装(装完零弹窗):推荐 Chrome 应用商店一键装(自动更新) ${EXTENSION_STORE_URL} ;或 npx gotry setup 落位后 chrome://extensions 开发者模式「加载已解压的扩展程序」指向 ~/.gotry/extension`,
+              // D-24 自适应文案(issue #117):按本地通道是否落位决定是否提及开发者模式
+              summary: needsExtensionSummary(),
             })
           }
         }, 250)
