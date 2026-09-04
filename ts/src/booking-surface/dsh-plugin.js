@@ -7,7 +7,7 @@
  * the sole executor after the parent adapter validates the canonical action.
  */
 
-import { dshBookingActionSchemaForKind, dshBookingActionSchemaForKindV2 } from './canonical-schema.js'
+import { dshBookingActionSchemaForKind } from './canonical-schema.js'
 
 export const name = 'gotry-embedded-booking'
 export const inject = ['tools']
@@ -21,7 +21,7 @@ function closedObject(properties, required = Object.keys(properties)) {
 }
 
 function actionSchema(kind) {
-  return { oneOf: [dshBookingActionSchemaForKind(kind), dshBookingActionSchemaForKindV2(kind)] }
+  return dshBookingActionSchemaForKind(kind)
 }
 
 const questionDecision = closedObject({
@@ -48,7 +48,7 @@ const errorDecision = closedObject({
 function toolDefinition(toolName, capabilityId, actionKinds) {
   const operationDecision = closedObject({
     kind: { type: 'string', const: 'operation' },
-    action: { oneOf: actionKinds.flatMap(actionSchema) },
+    action: { oneOf: actionKinds.map(actionSchema) },
   })
   return Object.freeze({
     name: toolName,
