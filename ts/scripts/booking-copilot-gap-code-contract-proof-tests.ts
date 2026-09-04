@@ -11,10 +11,10 @@
  */
 
 import assert from 'node:assert/strict'
-import { validateActionReceiptV1 } from '../src/booking-surface/validation.ts'
+import { validateBookingSurface } from '../src/booking-surface/validation.ts'
 
 const receiptBase = {
-  schemaVersion: 'booking.surface.v1',
+  schemaVersion: 'booking.surface',
   kind: 'action.receipt',
   actionId: 'offers-query-gap-contract',
   contextRef: 'ctx-gap-contract',
@@ -40,15 +40,15 @@ const oldRatesFailedReceipt = {
   ...receiptBase,
   status: 'partial',
   observation: ratesFailedObservation,
-  resultContract: { ...ratesFailedResult, gapCodes: ['hotel_rates_failed:hotel-1'] },
+  resultContract: { ...ratesFailedResult, gapCodes: ['hotel_rates_failed:hotel-1'], blockers: [], relaxationsApplied: [] },
 }
 const newRatesFailedReceipt = {
   ...oldRatesFailedReceipt,
-  resultContract: { ...ratesFailedResult, gapCodes: ['hotel_rates_failed'] },
+  resultContract: { ...ratesFailedResult, gapCodes: ['hotel_rates_failed'], blockers: [], relaxationsApplied: [] },
 }
 
-assert.equal(validateActionReceiptV1(oldRatesFailedReceipt).ok, false, 'legacy dynamic supplier gap code must fail validation')
-assert.deepEqual(validateActionReceiptV1(newRatesFailedReceipt), { ok: true }, 'fixed supplier gap code with hotel fact ref must validate')
+assert.equal(validateBookingSurface(oldRatesFailedReceipt).ok, false, 'legacy dynamic supplier gap code must fail validation')
+assert.deepEqual(validateBookingSurface(newRatesFailedReceipt), { ok: true }, 'fixed supplier gap code with hotel fact ref must validate')
 assert.deepEqual(newRatesFailedReceipt.resultContract.factRefs, ['hotel:hotel-1', 'hotel:hotel-2', 'offer:breakfast'])
 
 const oldNotVisibleReceipt = {
@@ -63,6 +63,8 @@ const oldNotVisibleReceipt = {
     hardCriteriaMet: false,
     factRefs: ['hotel:not-visible'],
     gapCodes: ['hotel_not_visible:not-visible'],
+    blockers: [],
+    relaxationsApplied: [],
   },
 }
 const newNotVisibleReceipt = {
@@ -70,8 +72,8 @@ const newNotVisibleReceipt = {
   resultContract: { ...oldNotVisibleReceipt.resultContract, gapCodes: ['hotel_not_visible'] },
 }
 
-assert.equal(validateActionReceiptV1(oldNotVisibleReceipt).ok, false, 'legacy dynamic visibility gap code must fail validation')
-assert.deepEqual(validateActionReceiptV1(newNotVisibleReceipt), { ok: true }, 'fixed visibility gap code with hotel fact ref must validate')
+assert.equal(validateBookingSurface(oldNotVisibleReceipt).ok, false, 'legacy dynamic visibility gap code must fail validation')
+assert.deepEqual(validateBookingSurface(newNotVisibleReceipt), { ok: true }, 'fixed visibility gap code with hotel fact ref must validate')
 assert.deepEqual(newNotVisibleReceipt.resultContract.factRefs, ['hotel:not-visible'])
 
 console.log('BOOKING COPILOT GAP CODE CONTRACT PROOF: dynamic legacy gap codes fail; fixed codes with hotel factRefs pass')

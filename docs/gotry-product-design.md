@@ -207,7 +207,7 @@
 
 **动机访谈是产品的第一界面。**
 
-- 形态:3-6 轮自然语言对话,产出 MotivationProfile(动机谱系+权重、节奏偏好、预算档、体力档、同行人、饮食/文化禁忌)。不是表单——是 agent 提问、用户自然回答,agent 从回答里抽取结构(借鉴 travel_agent 的 tool-owned 参数抽取实践,7.3)。
+- 形态:3-6 轮自然语言对话,产出 MotivationProfile(动机谱系+权重、节奏偏好、预算档、体力档、同行人、饮食/文化禁忌)。不是表单——是 agent 提问、用户自然回答,agent 从回答里抽取结构(借鉴 T 系统的 tool-owned 参数抽取实践,7.3;T 系统=某企业级差旅 Agent 生产系统,来源脱敏)。
 - 人文关怀的落点:**先听,再荐**。这个阶段没有任何推荐、任何搜索框。
 - 退出条件:用户说「就想去 X」——直接跳到 (3),动机仍然记录(「已知目的地」不等于「已知动机」)。
 - 尊重边界:用户可以拒绝回答任何问题;画像永远可编辑(红线 6)。
@@ -368,7 +368,7 @@ M3 上线。三条硬规则:
 ```
 入口层    App / Web /（未来）IM bot
             │
-Agent 层   PureAgent(ReAct 对话) + GraphDispatcher(确定性流程) + WriteGate
+Agent 层   ReAct 编排(对话) + 确定性流程 DAG 调度 + WriteGate(双执行形态,设计参考 T 系统)
             │
 领域层     TripState(长程状态) · 可行性引擎 · 记忆(动机画像/偏好/历史)
             │
@@ -377,20 +377,20 @@ Agent 层   PureAgent(ReAct 对话) + GraphDispatcher(确定性流程) + WriteGa
             机票/活动/POI/天气/签证 📍                     ← 外部供应商与公开数据
 ```
 
-### 7.2 双执行模式(借鉴 travel_agent 生产实践)
+### 7.2 双执行模式(借鉴 T 系统生产实践)
 
-生产级差旅 agent(travel_agent)验证过的分工,直接迁移到休闲旅行域:
+生产级差旅 agent(T 系统)验证过的分工,直接迁移到休闲旅行域:
 
-- **PureAgent(ReAct 工具循环)**:自然语言编排、开放式解释、动机访谈、随性问询——一切探索性、解释性、低风险的对话。
-- **GraphDispatcher(确定性 DAG)**:高置信、强流程、强确认的场景——预订确认、支付、退改、行程定稿。支持 pending state:发起确认后挂起,等用户下一轮明确答复再推进。
+- **ReAct 编排侧(工具循环)**:自然语言编排、开放式解释、动机访谈、随性问询——一切探索性、解释性、低风险的对话。
+- **确定性 DAG 调度侧**:高置信、强流程、强确认的场景——预订确认、支付、退改、行程定稿。支持 pending state:发起确认后挂起,等用户下一轮明确答复再推进。
 - **路由原则**:对话与探索走 Pure;交易与状态机走 Graph;边界场景(用户在确认流程中岔开提问)由 Graph 挂起、Pure 接管、答完回归。
 
 ### 7.3 工具层
 
 - 领域操作(trip/day/place/budget/booking/…)结构化为**带 schema、带细粒度 scope 的工具**——借鉴 TREK 的「应用为体、AI 为用」:先把领域操作建模干净,agent 才有可靠的手脚。
 - 工具返回**结构化证据**(来源、抓取时间、置信度),供透明层(第 6 章)直接消费——透明是从工具层开始设计的,不是展示层补的。
-- **tool-owned dates**(travel_agent 实践):日期/时间一律由工具解析,模型逐字传递用户原话,杜绝 LLM 算错日期这类低级事故。
-- 长会话可恢复:流式输出 + 断线续传 + 服务端会话状态(travel_agent 已验证的 SSE + 持久化模式)。
+- **tool-owned dates**(T 系统实践):日期/时间一律由工具解析,模型逐字传递用户原话,杜绝 LLM 算错日期这类低级事故。
+- 长会话可恢复:流式输出 + 断线续传 + 服务端会话状态(T 系统已验证的 SSE + 持久化模式)。
 
 ### 7.4 WriteGate
 
@@ -464,7 +464,7 @@ Agent 层   PureAgent(ReAct 对话) + GraphDispatcher(确定性流程) + WriteGa
 
 ### 7.9 评测(eval-driven)
 
-评测先于功能放量。三类评测集(参照 travel-agent-evaluation-set 的独立仓库实践):
+评测先于功能放量。三类评测集(参照 T 系统独立评测集仓库的实践,名称脱敏):
 
 | 评测集 | 度量 | 基线目标(M1) |
 |---|---|---|
@@ -571,7 +571,7 @@ Agent 层   PureAgent(ReAct 对话) + GraphDispatcher(确定性流程) + WriteGa
 | 1 | [layla.ai](https://layla.ai/) | 商业 AI 旅行规划(柏林,~25 人;2026-07 被 Expedia 收购);freemium + $49/年;AI+真人混合 | 赛道与定价锚点;**反面教材**:chat-only、缺地图/总览/引导(Trustpilot/Reddit 实测)→ GoTry 结构化行程的依据。来源:layla.ai、Skift 2026-07-31 报道、Expedia IR、Trustpilot |
 | 2 | [liketrek/TREK](https://github.com/liketrek/TREK) | 开源自托管旅行规划器(NestJS+React;AGPL v3);150+ MCP 工具、细粒度 scope、限流 | 「应用为体、AI 为用」:领域操作工具化 + 权限模型;功能 checklist(地图/拖拽/导入/协作);**代码不可直接商用(AGPL)** |
 | 3 | [huangruiteng/loopx](https://github.com/huangruiteng/loopx)(zread 页超时,读 GitHub README) | 长程任务状态内核与本地控制平面:objective/gates/todos/evidence/quota;「验证后才花费」 | TripState 长程状态模型(7.6):显式 user gate、evidence、quota-gated loop(C 端成本治理) |
-| 4 | `~/work/travel_agent`(字节内部差旅管家,生产运行) | PureAgent + GraphDispatcher 双执行、WriteGate、tool-owned dates、SSE 断线续传、Fornax eval、独立评测集 | 7.2 双执行模式、7.3 工具层实践、7.4 WriteGate、7.9 评测形态——生产验证过的直接迁移 |
+| 4 | 某企业级差旅 Agent 系统(T 系统,生产运行,来源脱敏) | ReAct 编排 + 确定性 DAG 双执行、WriteGate、tool-owned dates、SSE 断线续传、内部 eval 体系、独立评测集 | 7.2 双执行模式、7.3 工具层实践、7.4 WriteGate、7.9 评测形态——生产验证过的直接迁移 |
 | 5 | [bojieli/ai-agent-book](https://github.com/bojieli/ai-agent-book) | 《深入理解 AI Agent》开源书:上下文工程、记忆、工具/MCP、评测、多 agent;「Harness 工程才是竞争力」 | 7.6 记忆分层框架、7.7 上下文压缩、7.9 eval-driven 方法论 |
 | 6 | [旅行规划 AI Agent 论文解读(知乎)](https://zhuanlan.zhihu.com/p/11161530566)(微信原文被拦截,以此为主源) | TravelPlanner benchmark + LLM+Z3 混合求解论文解读 | 7.5 可行性引擎的直接依据:纯 LLM 4.4% vs 混合 93%+;unsat core → 最小修改建议 |
 | 7 | [Morph: LLM Cost Optimization](https://www.morphllm.com/llm-cost-optimization)(微信原文被拦截,以此为主源) | Agent 成本五杠杆与实测幅度 | 7.7 成本工程:路由 40-70%/压缩 50-70%/缓存 90%/批处理 50%/叠加 84-91% |

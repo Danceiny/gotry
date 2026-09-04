@@ -88,12 +88,14 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     : { id: 'node', label: 'Node 运行时', status: 'missing', detail: `Node ${nodeVersion} 过旧(gotry 需 ≥22.15)`, fix: '升级 Node.js 至 22.15+(https://nodejs.org)' })
 
   // 1. GoTry Session Bridge 扩展(账号会话通道的传输层;装在哪由 bootstrap setup 管理)
+  //    D-24 自适应(#117):离线只能探测本地 unpacked 通道;商店版无本地文件面——
+  //    missing detail 明示「商店版用户可忽略本项」,不再把商店版用户误导成本地通道缺失
   const extManifest = join(home, '.gotry', 'extension', 'manifest.json')
   items.push(existsSync(extManifest)
-    ? { id: 'extension', label: 'GoTry Session Bridge 扩展', status: 'ok', detail: `已就位(${extManifest})` }
+    ? { id: 'extension', label: 'GoTry Session Bridge 扩展', status: 'ok', detail: `已就位(本地通道:${extManifest})` }
     : {
         id: 'extension', label: 'GoTry Session Bridge 扩展', status: 'missing',
-        detail: '未安装——gotry_session_search / gotry_session_login(账号会话通道)不可用,其余工具不受影响',
+        detail: '本地通道未落位(~/.gotry/extension/manifest.json 不存在)。若你已从 Chrome 商店安装(自动更新,商店版 ID oeajpicc…),本项可忽略——会话检索可用性以运行时为准(gotry_session_search 的 verdict)。若未安装:应用商店一键装即可',
         fix: '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd',
       })
 
