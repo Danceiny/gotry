@@ -40,7 +40,7 @@ const validSearchDecision = {
   decision: {
     kind: 'operation',
     action: {
-      schemaVersion: 'booking.surface.v1',
+      schemaVersion: 'booking.surface',
       kind: 'search.patch',
       actionId: 'action-model-1',
       contextRef: 'ctx-model-1',
@@ -60,7 +60,7 @@ const validSearchDecision = {
 }
 assert.equal(validateSearchTool(validSearchDecision), true, JSON.stringify(validateSearchTool.errors))
 assert.equal(validateSearchTool({ decision: { kind: 'operation', action: {
-  schemaVersion: 'booking.surface.v2', kind: 'search.run', actionId: 'action-model-v2', contextRef: 'ctx-model-1', expectedRevision: 0,
+  schemaVersion: 'booking.surface', kind: 'search.run', actionId: 'action-model-v2', contextRef: 'ctx-model-1', expectedRevision: 0,
   reason: 'Run the authoritative workspace search.', factRefs: [], input: {},
 } } }), true, JSON.stringify(validateSearchTool.errors))
 assert.equal(validateSearchTool({

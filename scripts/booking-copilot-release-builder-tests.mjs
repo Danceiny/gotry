@@ -90,7 +90,7 @@ try {
   const provenance = JSON.parse(readFileSync(join(output, 'BUILD_PROVENANCE.json'), 'utf8'))
   assert.deepEqual(provenance, {
     schemaVersion: 'gotry.booking-copilot.release-provenance.v1',
-    bookingSurfaceSchemaVersion: 'booking.surface.v1',
+    bookingSurfaceSchemaVersion: 'booking.surface',
     artifactId: process.env.EXPECTED_GOTRY_ARTIFACT_ID,
     platform: 'linux',
     arch: process.arch,
@@ -108,8 +108,8 @@ try {
   } else console.log('BE contract: SKIP (no BOOKING_COPILOT_RELEASE_CONTRACT or HOTEL_BE_ROOT)')
   verifyManifest(output)
   assert.equal(
-    createHash('sha256').update(readFileSync(join(output, 'schemas/booking.surface.v2.schema.json'))).digest('hex'),
-    '45df62db1b19d30a4fd22ddc94eb550e8ff32d8a225558b5ff13ba303588fc03',
+    createHash('sha256').update(readFileSync(join(output, 'schemas/booking.surface.schema.json'))).digest('hex'),
+    '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375',
   )
   const manifestText = readFileSync(join(output, 'MANIFEST.sha256'), 'utf8')
   assert.doesNotMatch(manifestText, /\.worktree\.env|\.env(?:\.|$)|(?:^|\/)secrets?(?:[._/-]|$)/i)
@@ -153,8 +153,8 @@ try {
       signal: AbortSignal.timeout(5_000),
     })
     assert.equal(response.status, 200)
-    assert.equal(response.headers.get('x-booking-surface-version'), 'booking.surface.v1')
-    assert.equal(response.headers.get('x-booking-surface-schema-sha256'), 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81')
+    assert.equal(response.headers.get('x-booking-surface-version'), 'booking.surface')
+    assert.equal(response.headers.get('x-booking-surface-schema-sha256'), '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375')
     assert.equal(response.headers.get('x-gotry-artifact-id'), process.env.EXPECTED_GOTRY_ARTIFACT_ID)
     assert.equal(response.headers.get('x-gotry-node-version'), process.env.EXPECTED_NODE_VERSION)
     assert.equal(response.headers.get('x-gotry-node-modules-abi'), process.versions.modules)
@@ -163,14 +163,13 @@ try {
     assert.equal(response.headers.get('x-gotry-ingress-mode'), 'bff-bound-turn-only')
     assert.equal(response.headers.get('x-gotry-accepted-turn-kinds'), 'user.turn,action.receipt.continuation')
     assert.deepEqual(await response.json(), {
-      schemaSha256: 'd9c2194ec839bd1168e70e8a201581addc005039d9b299660e20650bbb65df81',
-      schemaVersion: 'booking.surface.v1',
+      schemaSha256: '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375',
+      schemaVersion: 'booking.surface',
       status: 'ready',
-      supportedSchemaVersions: ['booking.surface.v1', 'booking.surface.v2'],
       ingressMode: 'bff-bound-turn-only',
       acceptedTurnKinds: ['user.turn', 'action.receipt.continuation'],
     })
-    const v2Headers = {
+    const retiredHeaders = {
       Authorization: 'Bearer fixture-key',
       'content-type': 'application/json',
       accept: 'application/json',
@@ -179,7 +178,7 @@ try {
     }
     const ingressResponse = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, {
       method: 'POST',
-      headers: v2Headers,
+      headers: retiredHeaders,
       body: JSON.stringify({
         schemaVersion: 'booking.surface.v2',
         kind: 'user.turn.ingress',
@@ -200,12 +199,12 @@ try {
       }),
       signal: AbortSignal.timeout(5_000),
     })
-    assert.equal(ingressResponse.status, 503)
+    assert.equal(ingressResponse.status, 409)
     assert.deepEqual(await ingressResponse.json(), {
       error: {
-        code: 'trusted_ingress_binding_required',
-        mode: 'bff-bound-turn-only',
-        acceptedTurnKinds: ['user.turn', 'action.receipt.continuation'],
+        code: 'booking_surface_schema_mismatch',
+        expectedVersion: 'booking.surface',
+        expectedSchemaSha256: '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375',
       },
     })
     const releaseLedgerEventCount = () => {
@@ -214,16 +213,23 @@ try {
       return count.stdout.trim()
     }
     assert.equal(releaseLedgerEventCount(), '0', 'rejected release ingress creates no ledger event')
+    const canonicalHeaders = {
+      Authorization: 'Bearer fixture-key',
+      'content-type': 'application/json',
+      accept: 'application/json',
+      'x-booking-surface-version': 'booking.surface',
+      'x-booking-surface-schema-sha256': '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375',
+    }
     const escalatedBoundTurnResponse = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, {
       method: 'POST',
-      headers: v2Headers,
+      headers: canonicalHeaders,
       body: JSON.stringify({
-        schemaVersion: 'booking.surface.v2',
+        schemaVersion: 'booking.surface',
         kind: 'user.turn',
         taskId: 'release-escalated-task',
         turnId: 'release-escalated-turn',
         workspace: {
-          schemaVersion: 'booking.surface.v2',
+          schemaVersion: 'booking.surface',
           contextRef: 'release-escalated-context',
           surface: 'storefront',
           revision: 0,
@@ -245,14 +251,14 @@ try {
     assert.equal(releaseLedgerEventCount(), '0', 'surface-disallowed bound turn creates no ledger event')
     const boundTurnResponse = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, {
       method: 'POST',
-      headers: v2Headers,
+      headers: canonicalHeaders,
       body: JSON.stringify({
-        schemaVersion: 'booking.surface.v2',
+        schemaVersion: 'booking.surface',
         kind: 'user.turn',
         taskId: 'release-bound-task',
         turnId: 'release-bound-turn',
         workspace: {
-          schemaVersion: 'booking.surface.v2',
+          schemaVersion: 'booking.surface',
           contextRef: 'release-bound-context',
           surface: 'tenant',
           revision: 0,

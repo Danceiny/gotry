@@ -21,12 +21,12 @@
 | LLM 抽象 | M2 | 维持 + 评估迁移 | `@deepseek-ai/dsh-llm`(dsh 系) | 现适配器已 provider-neutral;dsh 基线规则:不自研 dsh 已给的。功能对齐(think 剥离/json_object)则迁 | §7-6 |
 | 机票数据源 | M2 Entry | bridge + 数据包 | 见 §2.1 | 无商业合作期免费/开源优先 | §7-1(创始人) |
 | 酒店数据 | M2 | import + extend | hotelbyte-cli(MIT,已决 T3) | 缺口以同风格扩展回馈上游 | 已决(G4) |
-| MCP 桥 | M2–M3 | bridge→import SDK | `@modelcontextprotocol/sdk`(MIT) | G5 关闭后桥 travel_agent;此前守 CLI/JSON 桥 ≤2(ADR-3) | G5(外部) |
+| MCP 桥 | M2–M3 | bridge→import SDK | `@modelcontextprotocol/sdk`(MIT) | G5 关闭后桥 T 系统(某企业级差旅 Agent 系统,脱敏);此前守 CLI/JSON 桥 ≤2(ADR-3) | G5(外部) |
 | 测试框架 | 全程 | **不 import** | 保持 node:assert + unittest | 零框架纪律够用;重放即行为回归已覆盖 promptfoo/deepeval 的核心价值,避免依赖膨胀。M3 面板不够再复议 | §7(默认维持) |
 | LLM 可观测 | M2 埋点/M3 系统 | 自研 schema + import 评估 | JSONL trace(自研);Langfuse(MIT,引入前核证) | 先延伸 bridge-latency 模式落 trace;面板需求(幻觉率/定稿率)真实出现再上系统 | §7-5 |
 | 最小 Web 面 | M3 | import 候选 | assistant-ui(MIT)+ Vercel AI SDK(引入前核证) | gates 选择题/透明卡片需要承载界面(D-4 赎回);UX 参考 Claude Code 权限询问(闭源 reference) | §7-3 |
-| 记忆层 | M4 | **自研核心优先** | mem0(Apache-2.0)备选 | travel_agent 六层仅 reference(内部资产红线);两条铁律(画像只进排序不进硬过滤、断言可溯源)实现量小;向量库推迟到证据出现 | §7-4 |
-| WriteGate | M3 设计/M5 实现 | **自研** | reference:Claude Code permission modes(闭源)+ travel_agent write-gate(内部,仅设计) | T6 要素:幂等键、pending state、未证明只读默认按写 | §7(设计稿 M3 W4) |
+| 记忆层 | M4 | **自研核心优先** | mem0(Apache-2.0)备选 | T 系统六层仅 reference(内部资产红线);两条铁律(画像只进排序不进硬过滤、断言可溯源)实现量小;向量库推迟到证据出现 | §7-4 |
+| WriteGate | M3 设计/M5 实现 | **自研** | reference:Claude Code permission modes(闭源)+ T 系统 write-gate(内部,仅设计) | T6 要素:幂等键、pending state、未证明只读默认按写 | §7(设计稿 M3 W4) |
 | Agent 运行时 | 全程 | import(已决) | dsh 跟 main | 创始人约束,不自研、不重写 | 已决(G2) |
 
 ### 2.1 数据源即能力:免费/开源优先路线
@@ -96,7 +96,7 @@ Owner 标签:【创始人】=拍板/走查/商业;【agent】=工程执行(loopx
 | LangGraph(MIT) | 图式状态机 | **仅 reference,不 import**——与 ADR-9 确定性循环、dsh 基线冲突 | reference |
 | mem0 / Letta(Apache-2.0) | 记忆分层与写入门禁 | M4 记忆域设计参考;mem0 为 import 备选 | reference / import 备选 |
 | Langfuse(MIT) | LLM trace/评测面板 | M3 W2 指标面板候选 | import 候选(§7-5) |
-| travel_agent(内部) | write-gate/六层 memory/tool-owned dates | **仅设计参考,代码与 schema 均不搬用**(内部资产红线) | reference |
+| T 系统(内部,脱敏) | write-gate/六层 memory/tool-owned dates | **仅设计参考,代码与 schema 均不搬用**(内部资产红线) | reference |
 
 ## 6. 持续优化回路(怎么持续变好)
 

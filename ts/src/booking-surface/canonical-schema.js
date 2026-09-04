@@ -1,5 +1,5 @@
 /**
- * Runtime projection of the canonical booking.surface.v1 JSON Schema.
+ * Runtime projection of the canonical booking.surface JSON Schema.
  *
  * dsh tools need self-contained JSON Schemas, while the canonical document is
  * organized with local $refs. This helper derives each action branch directly
@@ -9,10 +9,8 @@
 
 import { readFileSync } from 'node:fs'
 
-const schemaUrl = new URL('../../../schemas/booking.surface.v1.schema.json', import.meta.url)
-export const canonicalBookingSurfaceSchemaV1 = JSON.parse(readFileSync(schemaUrl, 'utf8'))
-const schemaV2Url = new URL('../../../schemas/booking.surface.v2.schema.json', import.meta.url)
-export const canonicalBookingSurfaceSchemaV2 = JSON.parse(readFileSync(schemaV2Url, 'utf8'))
+const schemaUrl = new URL('../../../schemas/booking.surface.schema.json', import.meta.url)
+export const canonicalBookingSurfaceSchema = JSON.parse(readFileSync(schemaUrl, 'utf8'))
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
@@ -20,14 +18,11 @@ function clone(value) {
 
 function definitionFromRef(ref, schema) {
   const prefix = '#/$defs/'
-  if (typeof ref !== 'string') {
+  if (typeof ref !== 'string' || !ref.startsWith(prefix)) {
     throw new Error(`booking_schema_external_ref_forbidden:${String(ref)}`)
   }
-  const externalV1 = 'https://gotry.dev/schemas/booking.surface.v1.schema.json#/$defs/'
-  const definitionSchema = ref.startsWith(prefix) ? schema : ref.startsWith(externalV1) ? canonicalBookingSurfaceSchemaV1 : undefined
-  if (!definitionSchema) throw new Error(`booking_schema_external_ref_forbidden:${String(ref)}`)
-  const name = ref.startsWith(prefix) ? ref.slice(prefix.length) : ref.slice(externalV1.length)
-  const definition = definitionSchema.$defs?.[name]
+  const name = ref.slice(prefix.length)
+  const definition = schema.$defs?.[name]
   if (!definition) throw new Error(`booking_schema_missing_definition:${name}`)
   return definition
 }
@@ -38,9 +33,8 @@ function inlineLocalRefs(value, schema, stack = []) {
   if (typeof value.$ref === 'string') {
     if (stack.includes(value.$ref)) throw new Error(`booking_schema_recursive_ref:${value.$ref}`)
     const { $ref, ...siblings } = value
-    const definitionSchema = typeof $ref === 'string' && $ref.startsWith('https://gotry.dev/schemas/booking.surface.v1.schema.json#/$defs/') ? canonicalBookingSurfaceSchemaV1 : schema
     return {
-      ...inlineLocalRefs(definitionFromRef($ref, schema), definitionSchema, [...stack, $ref]),
+      ...inlineLocalRefs(definitionFromRef($ref, schema), schema, [...stack, $ref]),
       ...inlineLocalRefs(siblings, schema, stack),
     }
   }
@@ -73,11 +67,7 @@ function canonicalActionSchemaForKind(kind, schema, definitionName) {
 }
 
 export function canonicalBookingActionSchemaForKind(kind) {
-  return canonicalActionSchemaForKind(kind, canonicalBookingSurfaceSchemaV1, 'BookingReadActionV1')
-}
-
-export function canonicalBookingActionSchemaForKindV2(kind) {
-  return canonicalActionSchemaForKind(kind, canonicalBookingSurfaceSchemaV2, 'Action')
+  return canonicalActionSchemaForKind(kind, canonicalBookingSurfaceSchema, 'Action')
 }
 
 const DSH_JSON_SCHEMA_KEYS = new Set([
@@ -106,8 +96,4 @@ function projectDshSchema(value) {
  */
 export function dshBookingActionSchemaForKind(kind) {
   return projectDshSchema(canonicalBookingActionSchemaForKind(kind))
-}
-
-export function dshBookingActionSchemaForKindV2(kind) {
-  return projectDshSchema(canonicalBookingActionSchemaForKindV2(kind))
 }
