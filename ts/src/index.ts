@@ -409,18 +409,22 @@ export function apply(ctx: Context, config: Config): void {
       + 'Muted wishes never surface. Surfacing records a recalled event in the memory-utility sidecar. '
       + 'action="confirm-outcome" records the user-confirmed real-world outcome (attribution helpful/harmful/neutral) — '
       + 'ONLY pass attribution the user explicitly stated; the agent must never self-attribute usefulness.',
+    // D-30 第四刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ action?: "recall"|"confirm-outcome", days?, budgetCny?, month?, wishId?, attribution?: "helpful"|"harmful"|"neutral", detail?, tripStart?: "行程起始(确认成行时挂时间线)" }',
-      },
+      action: { type: 'string', description: 'recall(默认,召回下一次出发建议)或 confirm-outcome(确认某条建议成/不成)' },
+      days: { type: 'integer', description: '回看天数窗(recall)' },
+      budgetCny: { type: 'number', description: '预算上限(recall 过滤)' },
+      month: { type: 'integer', description: '出行月份 1-12(recall)' },
+      wishId: { type: 'string', description: 'confirm-outcome 目标愿望 id' },
+      attribution: { type: 'string', enum: ['helpful', 'harmful', 'neutral'], description: 'confirm-outcome 归因' },
+      detail: { type: 'string', description: '一句话细节(用户原话)' },
+      tripStart: { type: 'string', description: '确认成行时挂时间线的行程起始日' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ action?: string; days?: number; budgetCny?: number; month?: number; wishId?: string; attribution?: 'helpful' | 'harmful' | 'neutral'; detail?: string; tripStart?: string }>(args, 'action')
       const ledger = ensureLedger(config.stateRoot)
       const now = new Date().toISOString()
@@ -463,7 +467,7 @@ export function apply(ctx: Context, config: Config): void {
         summary: `「下一次出发」候选(0..1):${String(match.entry['name'])}——成行条件 ${JSON.stringify(match.entry['conditions'])},本次窗口命中 ${match.score}/3 项(${match.hits.join('+')});效用状态 ${utility?.status ?? 'unknown'}`,
       } as never
     },
-    presentCall: args => ({ card: 'generic', title: '「下一次出发」召回', kind: 'search', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: '「下一次出发」召回', kind: 'search', rawInput: args }),
   }))
 
   // ADR-24 v2 复访交付面:用户回问「行程规划好了吗」时,模型用这个只读工具
@@ -552,19 +556,21 @@ export function apply(ctx: Context, config: Config): void {
       + '(「去年国庆去了大理」) — dates resolve via the time anchor (词表外日期会拒绝,请用户给绝对日期), evidence MUST be the user\'s verbatim words. '
       + 'Append-only and idempotent (same destination+start+source = same trip); overlapping same-destination trips are rejected for human adjudication. '
       + 'Past trips power origin resolution and 「去过不再推」 ranking — never a hard filter.',
+    // D-30 第四刀(issue #112):平铺 typed;destination/evidence required → 宿主权入口拒缺参
+    // (evidence 是 P0 溯源红线,进 schema 由宿主权闸,不再依赖 execute 散文报错)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ destination: "大理", start: "2025-10-01 或绝对日期表达", end?: 同上, companions?: ["爸爸"], evidence: "<用户原话>" }',
-      },
+      destination: { type: 'string', required: true, description: '目的地,如 大理' },
+      start: { type: 'string', required: true, description: '行程起始:YYYY-MM-DD 或绝对日期表达(解析不了 execute 结构化报错不猜)' },
+      end: { type: 'string', description: '行程结束,形态同 start(可选)' },
+      companions: { type: 'array', items: { type: 'string' }, description: '同行人,如 ["爸爸"]' },
+      evidence: { type: 'string', required: true, description: '用户原话(溯源 P0 红线)' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ destination?: string; start?: string; end?: string; companions?: string[]; evidence?: string }>(args, 'destination')
+    async execute(args, _exec: unknown) {
+      const q = args
       if (!q.destination) return { ok: false, summary: 'destination 必填' } as never
       if (!q.evidence) return { ok: false, summary: 'evidence 必填(用户原话,溯源 P0)' } as never
       const anchor = buildTimeAnchor(new Date())
@@ -580,7 +586,7 @@ export function apply(ctx: Context, config: Config): void {
       if (!res.appended && res.reason) return { ok: false, summary: res.reason } as never
       return { ok: true, appended: res.appended, trip_id: res.tripId, total: res.total, summary: res.appended ? `已入时间线:${q.destination} @ ${start}` : `已存在(幂等跳过):${res.tripId}` } as never
     },
-    presentCall: args => ({ card: 'generic', title: '记录旅行', kind: 'edit', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: '记录旅行', kind: 'edit', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -770,19 +776,18 @@ export function apply(ctx: Context, config: Config): void {
       + 'unavailable = API failure, gracefully degraded. '
       + 'Use to ground "is this flight actually flying right now?" in real data, complementing '
       + 'the OpenFlights skeleton (historical connectivity) and the static flight pack (planned schedule).',
+    // D-30 第四刀(issue #112):平铺 typed;callsign required → 宿主权即拒
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ callsign: "EK329", airport?: "OMDB", timeoutMs?: 10000 }',
-      },
+      callsign: { type: 'string', required: true, description: '航班呼号,如 EK329' },
+      airport: { type: 'string', description: '预期机场 IATA,如 OMDB(观测命中时展示)' },
+      timeoutMs: { type: 'integer', description: '超时毫秒,默认 10000' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 500)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ callsign: string; airport?: string; timeoutMs?: number }>(args, 'callsign')
+    async execute(args, _exec: unknown) {
+      const q = args
       const started = Date.now()
       if (!q.callsign) {
         return JSON.parse(JSON.stringify({ verdict: 'unavailable', evidence: '[校验不可用:无 callsign]', summary: 'callsign 必填' })) as Record<string, never>
@@ -804,7 +809,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `飞行校验:${String((args.query as { callsign?: string })?.callsign ?? '')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `飞行校验:${args.callsign ?? ''}`, kind: 'fetch', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -1115,19 +1120,20 @@ export function apply(ctx: Context, config: Config): void {
       'unavailable = hbcli failed (degraded, never blocks). ' +
       'Use as the first stop when the user mentions a place/city/hotel name and you need to ground it in real catalog data ' +
       '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region).',
+    // D-30 第四刀(issue #112):平铺 typed;keyword required → 宿主权即拒
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ keyword: "<搜索关键词>", contentType?: "city"|"hotel", parentDestinationId?: "?", timeoutMs?: 12000 }',
-      },
+      keyword: { type: 'string', required: true, description: '搜索关键词' },
+      contentType: { type: 'string', enum: ['city', 'hotel'], description: '内容类型(缺省由上游推断)' },
+      parentDestinationId: { type: 'string', description: '父目的地 id(上游形态)' },
+      timeoutMs: { type: 'integer', description: '超时毫秒,默认 12000' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ keyword: string; contentType?: 'city' | 'hotel'; parentDestinationId?: string | number; timeoutMs?: number }>(args, 'keyword')
+    async execute(args, _exec: unknown) {
+      const q = args
+      const rawQuery = String(q.keyword ?? '')
       const started = Date.now()
       if (!q.keyword) {
         return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', summary: 'keyword 必填', evidence: '[hbcli-anything@error] empty' })) as Record<string, never>
@@ -1148,7 +1154,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `Anything search:${String((args.query as { keyword?: string })?.keyword ?? '')}`, kind: 'search', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `Anything search:${args.keyword ?? ''}`, kind: 'search', rawInput: args }),
     presentResult: (_args, value) => {
       const r = value as { hits?: unknown[]; total_candidates?: number; verdict?: string; keyword?: string; summary?: string }
       const n = Array.isArray(r.hits) ? r.hits.length : (r.total_candidates ?? 0)
@@ -1168,19 +1174,17 @@ export function apply(ctx: Context, config: Config): void {
       'NOT a general-purpose search engine — only fetches a URL you already know. ' +
       'Three-valued: ok / error(非法 URL/超时)/not-reachable(r.jina.ai 不可用).' +
       'Contract with gotry capabilities/anything.ts: 同构(L4 证据链 + 降级不阻塞 + 三值)。',
+    // D-30 第四刀(issue #112):平铺 typed;url required → 宿主权即拒(字符串 blob 形态退役)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ url: "https://example.com", timeoutMs?: 20000 }',
-      },
+      url: { type: 'string', required: true, description: '完整 URL,https://…' },
+      timeoutMs: { type: 'integer', description: '超时毫秒,默认 20000' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content?.slice(0, 800) ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ url?: string; timeoutMs?: number }>(args, 'url')
+    async execute(args, _exec: unknown) {
+      const q = args
       const started = Date.now()
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填', evidence: '[agent-reach:error] empty url' })) as Record<string, never>
@@ -1197,7 +1201,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `读网页:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `读网页:${args.url ?? ''}`, kind: 'fetch', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -1207,19 +1211,17 @@ export function apply(ctx: Context, config: Config): void {
       'If yt-dlp is installed on this machine, returns the subtitle text (vtt, zh-Hans/zh/en preference). ' +
       'If NOT installed, degrades gracefully with install instructions — never blocks. ' +
       'Evidence chain: [agent-reach:yt-dlp@ts] / [@not-installed@ts].',
+    // D-30 第四刀(issue #112):平铺 typed;url required → 宿主权即拒
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ url: "https://www.youtube.com/watch?v=...", lang?: "zh-Hans,zh,en" }',
-      },
+      url: { type: 'string', required: true, description: '视频页 URL(youtube 等)' },
+      lang: { type: 'string', description: '字幕语言优先级,如 zh-Hans,zh,en' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ url?: string; lang?: string }>(args, 'url')
+    async execute(args, _exec: unknown) {
+      const q = args
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填' })) as Record<string, never>
       }
@@ -1235,7 +1237,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: r.latencyMs,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `视频字幕:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `视频字幕:${args.url ?? ''}`, kind: 'fetch', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -1245,19 +1247,17 @@ export function apply(ctx: Context, config: Config): void {
       'If gh is installed and authenticated, returns repos with name/description/stars/url. ' +
       'If NOT installed, degrades with install instructions — never blocks. ' +
       'Evidence chain: [agent-reach:gh@ts] / [@not-installed@ts].',
+    // D-30 第四刀(issue #112):平铺 typed;query required → 宿主权即拒(顶层字段与旧内层同名,形态从对象变字符串)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ query: "agent-reach", limit?: 5 }',
-      },
+      query: { type: 'string', required: true, description: 'GitHub 搜索关键词,如 agent-reach' },
+      limit: { type: 'integer', description: '结果数上限,默认 5' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ query?: string; limit?: number }>(args, 'query')
+    async execute(args, _exec: unknown) {
+      const q = args
       if (!q.query) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'query 必填' })) as Record<string, never>
       }
@@ -1273,7 +1273,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: r.latencyMs,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `GitHub 搜索:${String((args.query as { query?: string })?.query ?? '')}`, kind: 'search', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `GitHub 搜索:${args.query ?? ''}`, kind: 'search', rawInput: args }),
   }))
 
   registerGuarded(defineTool({

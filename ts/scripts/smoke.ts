@@ -116,14 +116,14 @@ async function main() {
   if (!arView?.title?.includes('✅') || !arView.title.includes('v2ex.get_hot_topics')) throw new Error(`FAIL: agent_reach 结果卡,实际 ${arView?.title}`)
   console.log(`result cards on 5 tools; agent_reach card: ${arView.title}`)
 
-  // 6) #12/#13 参数形态兼容:字符串 query 与裸对象都能落到 url(不再「url 必填」)
+  // 6) D-30 typed 契约后(#12/#13 形态兼容的演进终态):字符串 blob 形态被宿主权结构化拒绝
+  //    (url required 进 schema);平铺 url 进 execute 走正常抓取/降级,不再有「裸形态落 url」
   const ws = byName('gotry_web_search')
-  const r1 = await ws.execute({ query: 'not-a-url' } as never, null) as { summary?: string }
+  const r1 = await ws.execute({ query: 'not-a-url' } as never, null) as { ok?: boolean; summary?: string; evidence?: string }
+  if (!(r1.ok === false && !!r1.evidence)) throw new Error(`FAIL: 字符串 blob 形态应被宿主权结构化拒绝(ToolFailure),实际 ${JSON.stringify(r1).slice(0, 160)}`)
   const r2 = await ws.execute({ url: 'not-a-url' } as never, null) as { summary?: string }
-  for (const [name, r] of [['string', r1], ['bare-obj', r2]] as const) {
-    if (r.summary === 'url 必填') throw new Error(`FAIL: ${name} 形态未被 unwrapQuery 接住`)
-  }
-  console.log('unwrapQuery: string + bare-object shapes both accepted')
+  if (r2.summary === 'url 必填') throw new Error(`FAIL: 平铺 url 应进 execute 走降级,而非参数闸,实际 ${r2.summary}`)
+  console.log('D-30 typed 契约:web_search 字符串 blob → 宿主权拒绝;平铺 url → 正常降级')
 
   // 7) 骨架输出 schema 放宽回归:execute 正常返回三字段;guard 错误兜底(ok/summary)
   // 不再被 strict schema 拒(dsh 参数层拒错→guard 兜底→旧 strict schema 校验炸,
