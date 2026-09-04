@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { BookingCopilotTurn, BookingReadAction, BookingSurfaceEvent } from './contracts.ts'
+import { BOOKING_SURFACE_SCHEMA_VERSION, type BookingCopilotTurn, BookingReadAction, type BookingSurfaceEvent } from './contracts.ts'
 import {
   EMBEDDED_BOOKING_CAPABILITY_IDS,
   actionsForEmbeddedCapability,
@@ -252,6 +252,12 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   if (decision.kind === 'question') throw new Error('planner_question_runtime_owned')
   if (decision.kind !== 'operation') return asEventDraft(decision)
   if (!exactKeys(decision, ['kind', 'action'])) throw new Error('planner_invalid_typed_decision')
+  // schemaVersion is a closed constant per action kind; tolerate models that
+  // omit the echo instead of failing the whole turn on a redundant field.
+  const actionDraft = decision.action
+  if (isRecord(actionDraft) && typeof actionDraft.kind === 'string' && typeof actionDraft.schemaVersion !== 'string') {
+    actionDraft.schemaVersion = BOOKING_SURFACE_SCHEMA_VERSION
+  }
   const validation = validateBookingReadAction(decision.action)
   if (!validation.ok) throw new Error(`planner_invalid_action:${validation.errors.join('; ')}`)
   const action = decision.action as BookingReadAction
