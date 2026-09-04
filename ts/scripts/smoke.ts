@@ -141,11 +141,11 @@ async function main() {
   // 8) D-10 切片 B:hotel 日期槽位接线——逐字表达代码层换算;unresolved 不猜(降级+note)
   {
     const hotel = byName('gotry_hotel_search')
-    const resolved = await hotel.execute({ query: { destination: '大理', checkIn: '2026-9-4', checkOut: '2026-09-06' } } as never, null) as { date_notes?: string[] }
+    const resolved = await hotel.execute({ destination: '大理', checkIn: '2026-9-4', checkOut: '2026-09-06' } as never, null) as { date_notes?: string[] }
     if (!resolved.date_notes?.some(n => n.includes('2026-9-4 → 2026-09-04'))) {
       throw new Error(`FAIL: 非规整 ISO 应产生 slot-resolved note,实际 ${JSON.stringify(resolved.date_notes)}`)
     }
-    const unresolved = await hotel.execute({ query: { destination: '大理', checkIn: '近期' } } as never, null) as { date_notes?: string[] }
+    const unresolved = await hotel.execute({ destination: '大理', checkIn: '近期' } as never, null) as { date_notes?: string[] }
     if (!unresolved.date_notes?.some(n => n.includes('日期未解析:近期'))) {
       throw new Error(`FAIL: 词表外表达应产生「日期未解析」note(不猜),实际 ${JSON.stringify(unresolved.date_notes)}`)
     }
@@ -233,7 +233,7 @@ async function main() {
       const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR
       process.env.CHROME_USER_DATA_DIR = prof
       try {
-        ss = await byName('gotry_session_search').execute({ query: { from: '上海', to: '丽江', date: '2026-10-01' } }, null) as typeof ss
+        ss = await byName('gotry_session_search').execute({ from: '上海', to: '丽江', date: '2026-10-01' }, null) as typeof ss
       } finally {
         if (previousChromeUserDataDir === undefined) delete process.env.CHROME_USER_DATA_DIR
         else process.env.CHROME_USER_DATA_DIR = previousChromeUserDataDir
@@ -280,17 +280,25 @@ async function main() {
     }
     console.log('  D-30 typed 契约:legacy blob/枚举外值 → 宿主权结构化拒绝(ToolFailure 形状保持)')
     // 会话酒店路由(2026-09-03 实装):未收录城市在 transport 前短路 → error + cityId 指引(offline 零桥零浏览器)
-    const sh = await byName('gotry_session_search').execute({ query: { kind: 'hotel', to: '不在码表的城市' } }, null) as { ok?: boolean; verdict?: string; summary?: string }
+    const sh = await byName('gotry_session_search').execute({ kind: 'hotel', to: '不在码表的城市' }, null) as { ok?: boolean; verdict?: string; summary?: string }
     if (!(sh.ok === false && /city=/.test(String(sh.summary ?? '')))) {
       throw new Error(`FAIL: 会话酒店未收录城市应带 cityId 指引,实际:${JSON.stringify(sh).slice(0, 200)}`)
     }
     console.log('  hotel kind 路由:未收录城市 → error + cityId 指引(transport 前短路)')
     // 会话火车路由(2026-09-03 实装):未收录电报码在 transport 前短路 → error + 电报码发现指引(offline 零桥零浏览器)
-    const st = await byName('gotry_session_search').execute({ query: { kind: 'train', from: '不在码表', to: '也不在', date: '2026-12-01' } }, null) as { ok?: boolean; verdict?: string; summary?: string }
+    const st = await byName('gotry_session_search').execute({ kind: 'train', from: '不在码表', to: '也不在', date: '2026-12-01' }, null) as { ok?: boolean; verdict?: string; summary?: string }
     if (!(st.ok === false && /fromStationTelecode/.test(String(st.summary ?? '')))) {
       throw new Error(`FAIL: 会话火车未收录电报码应带发现指引,实际:${JSON.stringify(st).slice(0, 200)}`)
     }
     console.log('  train kind 路由:未收录电报码 → error + 电报码指引(transport 前短路)')
+    // D-30 第二刀迁移锁:session 工具全字段可选(kind 缺省=flight),根 schema 开放无法宿主权拒 blob
+    // → interpretArgs 容忍层接住(设计 §4③):blob 归一后照常走业务闸——用 kind=hotel 缺 to 的
+    // 参数闸短路出确定性结构化报错(零 transport 零节律闸),证明容忍层归一语义不漂
+    const ssLegacy = await byName('gotry_session_search').execute({ query: { kind: 'hotel' } } as never, null) as { ok?: boolean; summary?: string; routing?: unknown }
+    if (!(ssLegacy.ok === false && !('routing' in ssLegacy) && /需要 to/.test(String(ssLegacy.summary ?? '')))) {
+      throw new Error(`FAIL: session legacy blob 应经容忍层归一走业务闸(结构化报错,无 routing),实际:${JSON.stringify(ssLegacy).slice(0, 200)}`)
+    }
+    console.log('  D-30 typed 契约:session legacy blob → 容忍层归一 + 结构化业务报错(全字段可选无法宿主权拒)')
     const fhPast = await byName('gotry_flyai_search').execute({ kind: 'hotel', to: '大理', checkIn: '2026-01-01', checkOut: '2026-01-03' }, null) as { ok?: boolean; summary?: string }
     if (!(fhPast.ok === false && /不是未来合法区间/.test(String(fhPast.summary ?? '')))) {
       throw new Error(`FAIL: 酒店过去入住日应代码层预校验拒绝,实际:${JSON.stringify(fhPast).slice(0, 200)}`)
