@@ -319,4 +319,72 @@ const itp11b = await ipEnoent({ effect: 'HBCLI_HOTEL_SEARCH', params: { destinat
 assert.equal(itp11b.trace.attempts, 1, 'ENOENT 类永不重试(切换不是重试契约不变)')
 console.log('11. HBCLI×timeout 冷启动重试(timeout→attempts=2 恢复实时;ENOENT→attempts=1)OK')
 
-console.log('EFFECT INTERPRETER TESTS: 11/11 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 预订链读效应/HBCLI timeout 重试,纯离线)')
+// ---------------------------------------------------------------------------
+// 12. D-23 收尾(issue #115):六渠道入注册表——策略表行存在 + 横切语义正确
+//     (anything/web/github/video/agent_reach/session_login;没有策略表行就没有效应)
+// ---------------------------------------------------------------------------
+__resetEffectBreakersForTest()
+// 12a. 六效应注册在案:handler 注入 → 原样透传,trace.channel 与策略表一致
+const sixChannels: Array<[string, string, unknown]> = [
+  ['ANYTHING_SEARCH', 'cli', { ok: true, via: 'hbcli-anything', verdict: 'hit', evidence: 'e', latencyMs: 1 }],
+  ['WEB_READ', 'api', { ok: true, via: 'r.jina.ai', evidence: 'e', latencyMs: 1 }],
+  ['GITHUB_SEARCH', 'cli', { ok: true, verdict: 'found', evidence: 'e', latencyMs: 1 }],
+  ['VIDEO_SUBTITLE', 'cli', { ok: true, verdict: 'found', evidence: 'e', latencyMs: 1 }],
+  ['AGENT_REACH', 'cli', { ok: true, verdict: 'found', channel: 'v2ex', method: 'read', evidence: 'e', latencyMs: 1 }],
+  ['SESSION_LOGIN', 'browser', { ok: true, via: 'session-login', verdict: 'pending', evidence: 'e', latencyMs: 1 }],
+]
+for (const [fx, channel, obs] of sixChannels) {
+  const ip = makeProductionInterpreter({ sleep: sleep0, breakers: new Map(), handlers: { [fx]: async () => obs } })
+  const out = await ip({ effect: fx, params: {} } satisfies GotryEffect)
+  assert.equal(out.result, obs, `${fx} 透传原样`)
+  assert.equal(out.trace.channel, channel, `${fx} trace.channel=${channel}(策略表行在案)`)
+  assert.equal(out.trace.attempts, 1, `${fx} 成功单次执行`)
+}
+console.log('12a. 六渠道入表(透传 + trace.channel 与策略表一致)OK')
+
+// 12b. 永不重试族:AGENT_REACH / SESSION_LOGIN handler 恒抛错 → attempts=1(透传面不放大上游消耗)
+for (const fx of ['AGENT_REACH', 'SESSION_LOGIN']) {
+  const ip = makeProductionInterpreter({ sleep: sleep0, breakers: new Map(), handlers: { [fx]: async () => { throw new Error('upstream says no') } } })
+  const out = await ip({ effect: fx, params: {} } satisfies GotryEffect)
+  assert.equal(out.result, null, `${fx} 抛错 → result=null`)
+  assert.equal(out.trace.attempts, 1, `${fx} 永不重试(attempts=1)`)
+}
+console.log('12b. AGENT_REACH/SESSION_LOGIN 永不重试(反射桥透传/浏览器风控红线)OK')
+
+// 12c. WEB_READ 瞬时抖动重试 1 次(throw → 成功,attempts=2);GITHUB timeout 重试 / not-installed 不重试
+__resetEffectBreakersForTest()
+let webCalls = 0
+const ipWeb = makeProductionInterpreter({
+  sleep: sleep0, breakers: new Map(),
+  handlers: { WEB_READ: async () => { webCalls += 1; if (webCalls === 1) throw new Error('socket hang up'); return { ok: true, via: 'r.jina.ai', evidence: 'e', latencyMs: 1 } } },
+})
+const outWeb = await ipWeb({ effect: 'WEB_READ', params: { url: 'https://example.com' } } satisfies GotryEffect)
+assert.equal(outWeb.trace.attempts, 2, `WEB_READ 瞬时抖动重试 1 次,实际 ${outWeb.trace.attempts}`)
+let ghTimeoutCalls = 0
+const ipGhTimeout = makeProductionInterpreter({
+  sleep: sleep0, breakers: new Map(),
+  handlers: { GITHUB_SEARCH: async () => { ghTimeoutCalls += 1; if (ghTimeoutCalls === 1) return { ok: false, verdict: 'timeout', evidence: 'e', latencyMs: 1, stdout: '', stderr: '' }; return { ok: true, verdict: 'found', evidence: 'e', latencyMs: 1 } } },
+})
+const outGhT = await ipGhTimeout({ effect: 'GITHUB_SEARCH', params: { query: 'x' } } satisfies GotryEffect)
+assert.equal(outGhT.trace.attempts, 2, 'GITHUB timeout 类重试 1 次(冷启动同 HBCLI 实况)')
+let ghNiCalls = 0
+const ipGhNi = makeProductionInterpreter({
+  sleep: sleep0, breakers: new Map(),
+  handlers: { GITHUB_SEARCH: async () => { ghNiCalls += 1; return { ok: false, verdict: 'not-installed', evidence: 'e', latencyMs: 0 } } },
+})
+const outGhNi = await ipGhNi({ effect: 'GITHUB_SEARCH', params: { query: 'x' } } satisfies GotryEffect)
+assert.equal(outGhNi.trace.attempts, 1, 'not-installed 是配置态(needs-setup 族)不重试')
+console.log('12c. WEB_READ/GITHUB/VIDEO 策略行(timeout 重试/配置态不重试)OK')
+
+// 12d. mock 面:新效应夹具回放 + 未登记夹具结构化拒绝(与既有效应同语义)
+__resetEffectBreakersForTest()
+const mockIp = makeMockInterpreter({ ANYTHING_SEARCH: { ok: true, via: 'hbcli-anything', verdict: 'hit', evidence: '[实时API:hbcli-anything@ts]', latencyMs: 1 } })
+const outMock = await mockIp({ effect: 'ANYTHING_SEARCH', params: { keyword: '大理' } } satisfies GotryEffect)
+assert.equal((outMock.result as { verdict?: string }).verdict, 'hit', 'mock 夹具回放原样')
+assert.equal(outMock.trace.channel, 'mock', 'mock 通道标注')
+const outMockBad = await mockIp({ effect: 'SESSION_LOGIN', params: {} } satisfies GotryEffect)
+assert.equal(outMockBad.result, null, '未登记夹具 → result=null')
+assert.equal(outMockBad.trace.declined, 'unknown-effect', '未登记夹具 → 结构化拒绝')
+console.log('12d. mock 夹具回放/未登记拒绝(新效应同语义)OK')
+
+console.log('EFFECT INTERPRETER TESTS: 12/12 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 预订链读效应/HBCLI timeout 重试/D-23 六渠道入表,纯离线)')
