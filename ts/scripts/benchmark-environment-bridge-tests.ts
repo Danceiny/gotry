@@ -166,7 +166,7 @@ function toolCall(callId = 'call-1', options: { turn?: number; step?: number; ac
       step,
       callId,
       name: projection.toolName,
-      arguments: JSON.stringify({ query: { action, tool, arguments: {} } }),
+      arguments: JSON.stringify({ action, tool, arguments: {} }),
     },
   }
 }
@@ -847,7 +847,7 @@ try {
   assert.ok(bridge.execute, 'registered bridge exposes execute')
 
   const args = { city: 'Dubai', payload: '$(touch /tmp/nope)' }
-  const result = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: args } }, null)
+  const result = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: args }, null)
   assert.deepEqual(spawnSpecs[0]?.argv, [
     process.execPath, '-m', 'agent_env.cli', '--lang', 'en', 'call', 'lookup', JSON.stringify(args),
   ], 'call uses only the configured executable/prefix and fixed lookup subcommand argv')
@@ -865,27 +865,27 @@ try {
   assert.deepEqual(result, { ok: true, result: [{ city: 'Dubai' }] }, 'one-line JSON stdout becomes structured result')
 
   outcomes.push({ stdout: '{"result":{"city":"Dubai"}}' })
-  const unmappedResult = await bridge.execute!({ query: { action: 'call', tool: 'toString', arguments: { city: 'Dubai' } } }, null)
+  const unmappedResult = await bridge.execute!({ action: 'call', tool: 'toString', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(unmappedResult, { ok: true, result: { city: 'Dubai' } }, 'allowed tool without a positive mapping retains the recursive denylist only')
 
   outcomes.push({ stdout: '{"result":{"legacy":"value"}}' })
-  const legacyResult = await bridge.execute!({ query: { action: 'call', tool: 'constructor', arguments: { city: 'Dubai' } } }, null)
+  const legacyResult = await bridge.execute!({ action: 'call', tool: 'constructor', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(legacyResult, { ok: true, result: { legacy: 'value' } }, 'mapped constructor accepts its declared positive key')
 
   outcomes.push({ stdout: '{"result":{"city":"Dubai"}}' })
-  const constructorUnexpected = await bridge.execute!({ query: { action: 'call', tool: 'constructor', arguments: { city: 'Dubai' } } }, null)
+  const constructorUnexpected = await bridge.execute!({ action: 'call', tool: 'constructor', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(constructorUnexpected, { ok: false, error: 'forbidden_output' }, 'mapped constructor rejects undeclared positive keys')
 
   outcomes.push({ stdout: '{"result":{"nested":{"city":"Dubai"}}}' })
-  const nestedAllowedResult = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  const nestedAllowedResult = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(nestedAllowedResult, { ok: true, result: { nested: { city: 'Dubai' } } }, 'configured positive output allowlist accepts declared nested keys')
 
   outcomes.push({ stdout: '{"result":{"city":"Dubai","unexpected":"secret"}}' })
-  const unexpectedResult = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  const unexpectedResult = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(unexpectedResult, { ok: false, error: 'forbidden_output' }, 'configured positive output allowlist rejects unexpected keys without reflecting them')
 
   outcomes.push({ stdout: '{"result":[{"city":"Dubai","nested":{"unexpected":"secret"}}]}' })
-  const nestedUnexpectedResult = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  const nestedUnexpectedResult = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(nestedUnexpectedResult, { ok: false, error: 'forbidden_output' }, 'configured positive output allowlist recurses through arrays and objects')
 
   for (const forbidden of [
@@ -894,32 +894,32 @@ try {
     'loader_metadata', 'loaderMetadata', 'reference', 'gоld',
   ]) {
     outcomes.push({ stdout: JSON.stringify({ result: { nested: { [forbidden]: 'secret' } } }) })
-    const forbiddenResult = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+    const forbiddenResult = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
     assert.deepEqual(forbiddenResult, { ok: false, error: 'forbidden_output' }, `recursive no-oracle key ${forbidden} is rejected without reflecting its name`)
   }
 
   outcomes.push({ stdout: '{"result":"the hidden answer"}' })
-  const primitiveOutput = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  const primitiveOutput = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(primitiveOutput, { ok: false, error: 'invalid_output' }, 'primitive result strings cannot bypass the structured visible-output boundary')
 
   const beforeOversized = spawnSpecs.length
-  const oversized = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { blob: 'x'.repeat(65_537) } } }, null)
+  const oversized = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { blob: 'x'.repeat(65_537) } }, null)
   assert.deepEqual(oversized, { ok: false, error: 'invalid_arguments', reason: 'serialization_limit' })
   assert.equal(spawnSpecs.length, beforeOversized, 'oversized serialized arguments are rejected before spawn')
 
   const beforeDeep = spawnSpecs.length
   let deep: Record<string, unknown> = {}
   for (let index = 0; index < 13; index++) deep = { next: deep }
-  const deepResult = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: deep } }, null)
+  const deepResult = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: deep }, null)
   assert.deepEqual(deepResult, { ok: false, error: 'invalid_arguments', reason: 'serialization_limit' })
   assert.equal(spawnSpecs.length, beforeDeep, 'over-deep arguments are rejected before spawn')
 
   const beforeOverride = spawnSpecs.length
-  const overrideResult = await bridge.execute!({ query: {
+  const overrideResult = await bridge.execute!({
     action: 'call', tool: 'lookup', arguments: {
       city: 'Dubai', executable: '/tmp/evil', cwd: '/tmp/evil', argv: ['--unsafe'],
     },
-  } }, null)
+  }, null)
   assert.deepEqual(spawnSpecs[beforeOverride]?.argv, [
     process.execPath, '-m', 'agent_env.cli', '--lang', 'en', 'call', 'lookup', JSON.stringify({
       city: 'Dubai', executable: '/tmp/evil', cwd: '/tmp/evil', argv: ['--unsafe'],
@@ -928,39 +928,63 @@ try {
   assert.equal((overrideResult as { ok?: boolean }).ok, true, 'override-shaped arguments still use the configured bridge')
 
   outcomes.push({ stdout: '{"result":{"city":"Dubai"}}', lossy: true })
-  const truncated = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  const truncated = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(truncated, { ok: false, error: 'output_truncated' }, 'lossy stdout is rejected without parsing partial output')
 
   outcomes.push({ stdout: '{"result":{"city":"Dubai"}}', stderr: 'private runner diagnostic', exitCode: 17, signal: 'SIGTERM' })
-  const failed = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  const failed = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(failed, { ok: false, error: 'runner_failed', exit_code: 17, signal: 'SIGTERM' }, 'nonzero runner result is structured without stderr echo')
+
+  // Round 8(issue #100/#102):recoverable domain-error contract——封闭词表经 action=errors 可拉取,
+  // 每码带 recoverable + remedy;失败返回的扁平形状保持不变(benchmark 诊断面依赖)
+  const errorsTable = await bridge.execute!({ action: 'errors' }, null) as { ok?: boolean; errors?: Record<string, { recoverable: boolean; remedy: string }> }
+  assert.ok(errorsTable.ok === true && errorsTable.errors, 'errors 契约表可拉取')
+  for (const code of ['invalid_action', 'disallowed_tool', 'invalid_arguments', 'timed_out', 'output_truncated', 'invalid_json', 'invalid_output', 'runner_failed', 'spawn_failed', 'forbidden_output']) {
+    const row = errorsTable.errors?.[code]
+    assert.ok(row && typeof row.recoverable === 'boolean' && row.remedy.length > 0, `契约表应含 ${code}(recoverable+remedy)`)
+  }
+  assert.equal(errorsTable.errors?.invalid_arguments?.recoverable, true, '参数形态错=调用方可恢复')
+  assert.equal(errorsTable.errors?.forbidden_output?.recoverable, false, '策略边界=不可恢复')
 
   for (const stdout of ['not-json', '{"result":1}{"result":2}']) {
     outcomes.push({ stdout })
-    const malformed = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+    const malformed = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
     assert.deepEqual(malformed, { ok: false, error: 'invalid_json' }, 'malformed or multi-value JSON is rejected')
   }
 
   outcomes.push({ spawnError: true })
-  const spawnFailed = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  const spawnFailed = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(spawnFailed, { ok: false, error: 'spawn_failed' }, 'spawn infrastructure failure is structured')
 
   outcomes.push({ spawnReject: true })
-  const asyncSpawnFailed = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  const asyncSpawnFailed = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(asyncSpawnFailed, { ok: false, error: 'spawn_failed' }, 'DSH pid=-1 spawn rejection is distinct from a started runner failure')
 
   outcomes.push({ waitForAbort: true })
-  const timedOut = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  const timedOut = await bridge.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }, null)
   assert.deepEqual(timedOut, { ok: false, error: 'timed_out' }, 'deadline abort is surfaced as timed_out')
   assert.equal(timeoutSignal?.aborted, true, 'timeout abort signal is fired')
 
   const beforeInvalidArgs = spawnSpecs.length
-  assert.deepEqual(await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: ['not', 'plain'] } }, null), { ok: false, error: 'invalid_arguments' })
+  // Round 8 typed schema:arguments 非对象在宿主权校验即被拒(ToolArgsError),不再进 execute
+  let argsTypeRejected = ''
+  try {
+    await bridge.execute!({ action: 'call', tool: 'lookup', arguments: ['not', 'plain'] } as never, null)
+  } catch (e) {
+    argsTypeRejected = (e as Error).name
+  }
+  assert.equal(argsTypeRejected, 'ToolArgsError', 'arguments 非对象 → 宿主权 schema 结构化拒绝')
   assert.equal(spawnSpecs.length, beforeInvalidArgs, 'non-object arguments are rejected before spawn')
-  assert.deepEqual(await bridge.execute!({ query: { action: 'inspect' } }, null), { ok: false, error: 'invalid_action' }, 'unknown action is rejected structurally')
+  let actionRejected = ''
+  try {
+    await bridge.execute!({ action: 'inspect' } as never, null)
+  } catch (e) {
+    actionRejected = (e as Error).name
+  }
+  assert.equal(actionRejected, 'ToolArgsError', '枚举外 action → 宿主权 schema 结构化拒绝(ToolArgsError)')
 
   const beforeRejected = spawnSpecs.length
-  const rejected = await bridge.execute!({ query: { action: 'call', tool: 'delete_all', arguments: {} } }, null)
+  const rejected = await bridge.execute!({ action: 'call', tool: 'delete_all', arguments: {} }, null)
   assert.deepEqual(rejected, { ok: false, error: 'disallowed_tool' }, 'disallowed tool is rejected structurally')
   assert.equal(spawnSpecs.length, beforeRejected, 'disallowed tool is rejected before spawn')
 
@@ -1147,7 +1171,7 @@ try {
   const legacyBridge = legacyTools.find(tool => tool.name === 'gotry_benchmark_environment')
   assert.ok(legacyBridge?.execute, 'legacy config without allowed_output_keys registers the bridge')
   assert.deepEqual(
-    await legacyBridge!.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null),
+    await legacyBridge!.execute!({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } as never, null),
     { ok: true, result: { city: 'Dubai' } },
     'legacy config without allowed_output_keys still executes safe structured output',
   )

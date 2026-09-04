@@ -244,6 +244,21 @@ function serializedArguments(value: Record<string, unknown>): { json: string; re
   }
 }
 
+/** 可恢复 domain-error 契约(Round 8,issue #100/#102):封闭词表 + 逐码可恢复性与补救指引。
+ *  模型经 action=errors 拉取全表;失败返回的扁平形状保持不变(benchmark 诊断面依赖)。 */
+export const BRIDGE_ERROR_CONTRACT: Record<string, { recoverable: boolean; remedy: string }> = Object.freeze({
+  invalid_action: { recoverable: true, remedy: 'action 只允许 tools 或 call' },
+  disallowed_tool: { recoverable: true, remedy: '先 action=tools 列出 allowed_tools 清单,再从清单内选工具' },
+  invalid_arguments: { recoverable: true, remedy: 'arguments 必须是可序列化 JSON 对象(≤64KB、深度≤12);收窄后重试' },
+  timed_out: { recoverable: true, remedy: '上游超时;可原样重试一次或换其他工具' },
+  output_truncated: { recoverable: true, remedy: '输出超出上限;让被调工具收窄查询范围后重试' },
+  invalid_json: { recoverable: true, remedy: '上游输出不是合法 JSON;重试一次或换工具' },
+  invalid_output: { recoverable: true, remedy: '上游输出结构不符(如原始字符串);重试或换工具' },
+  runner_failed: { recoverable: true, remedy: '上游进程非零退出;可重试一次,持续失败换工具' },
+  spawn_failed: { recoverable: false, remedy: '可执行文件不可用——环境问题,调用方不可恢复' },
+  forbidden_output: { recoverable: false, remedy: '输出含未授权键(策略边界)——不可恢复,换工具或放弃' },
+})
+
 /** Register the opt-in model-facing bridge. */
 export function registerBenchmarkEnvironmentBridge(
   path: string,
@@ -256,22 +271,26 @@ export function registerBenchmarkEnvironmentBridge(
 
   register(defineTool({
     name: 'gotry_benchmark_environment',
-    description: 'When a prompt asks to run agent_env.cli, use action=call here with the mapped tool; arbitrary shell is not exposed.',
+    description: 'When a prompt asks to run agent_env.cli, use action=call here with the mapped tool; arbitrary shell is not exposed. '
+      + 'Recoverable domain-error contract: every failure returns { ok:false, error:<code>, ... } from a closed vocabulary; '
+      + 'call action=errors to fetch the per-code recoverable flag and remedy before retrying.',
+    // Round 8(issue #100/#102):generic typed schema——模型可见逐字段契约(与产品面 D-30 同刀法);
+    // arguments 保持 additionalProperties:true(被调工具的参数面由其自身契约定义)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ action: "tools" | "call", tool?: string, arguments?: object }',
-      },
+      action: { type: 'string', enum: ['tools', 'call', 'errors'], required: true, description: 'tools=列出可调工具;call=执行被映射工具;errors=拉取可恢复错误契约表' },
+      tool: { type: 'string', description: '被调工具名(必须在 allowed_tools 清单内;action=call 时必填)' },
+      arguments: { type: 'object', additionalProperties: true, description: '传给被调工具的参数对象(action=call 时可选;≤64KB、深度≤12)' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },
-    async execute(args: { query?: unknown }): Promise<Record<string, never>> {
-      const query = plainObject(args?.query) ? args.query : {}
-      if (query.action === 'tools') return jsonObject({ ok: true, tools: bridge.allowed_tools })
-      if (query.action !== 'call') return jsonObject({ ok: false, error: 'invalid_action' })
+    async execute(args): Promise<Record<string, never>> {
+      const action = args?.action
+      if (action === 'errors') return jsonObject({ ok: true, errors: BRIDGE_ERROR_CONTRACT })
+      if (action === 'tools') return jsonObject({ ok: true, tools: bridge.allowed_tools })
+      if (action !== 'call') return jsonObject({ ok: false, error: 'invalid_action' })
+      const query = args as unknown as { tool?: unknown; arguments?: unknown }
       if (typeof query.tool !== 'string' || !bridge.allowed_tools.includes(query.tool)) {
         return jsonObject({ ok: false, error: 'disallowed_tool' })
       }
