@@ -61,7 +61,7 @@ function assertRuntimeSelectionAndVersionGuards(): void {
   assert.deepEqual(sourcePriority, { source: 'root', version: '0.1.2-alpha.3' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
 
   const legacyFallback = runRuntimeProbe({ vendorVersion: '0.1.2-alpha.1' })
-  assert.deepEqual(legacyFallback, { source: 'legacy-vendored', version: '0.1.2-alpha.1' }, 'non-benchmark source checkout may use the legacy vendored dsh fallback')
+  assert.equal(legacyFallback, null, 'D-27 removal (#120): legacy vendored fallback no longer resolves even outside benchmark — fail-closed')
 
   const wrongBenchmarkVersion = runRuntimeProbe({ rootVersion: '0.1.2-alpha.1', vendorVersion: '0.1.2-alpha.1', benchmark: true })
   assert.deepEqual(wrongBenchmarkVersion, { source: 'root', version: '0.1.2-alpha.1' })

@@ -432,7 +432,6 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 | D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
 | D-23 效应解译器迁移未完成(ADR-18) | 见下方「D-23 效应解译器迁移未完成」 |
 | D-26 事实闸覆盖面缺口(ADR-19) | v1 闸覆盖航班+政策 claim;酒店 claim 未入抽取面(flyai hotel 打码价语义独立,不落 bookable facts);政策事实只有渲染侧+闸侧,生产端无实时签证/入境源——政策 claim 只能降级「未确认」或省掉;反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
-| D-27 vendored 仓内形态 Node 兼容窗口断裂 | 见下方「D-27 vendored 仓内形态 Node 兼容窗口断裂」 |
 | D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」 |
 | D-30 检索工具 typed 参数契约迁移完成待 canary(ADR-25 配套;2026-09-04 五刀 23/23 工具全 typed 化) | 普通模型性能的最大单项杠杆(tool-orchestration-design.md §4③):工具参数面曾是无类型 `query: json` blob,模型看不到逐字段 schema——dsh `defineTool` 原生支持 typed ParameterSchemaSpec(object/properties/enum/required + execute 前 validateArgs),blob 是本仓的选择不是上游限制。**已全部迁移**(刀法总纲:有 required 字段的工具宿主权拒 blob,全可选工具保留 interpretArgs 容忍层;motivation/companion/trip_log 的 evidence P0 红线进 schema 由宿主权闸;agent_reach 反射桥 action 保持开放)——迁移锁 smoke §1/§6/§12/channel-registry-tests §8。**余量**:普通模型 canary 一轮为证据(过闸才进发布面);fact_gate 的 itinerary 嵌套收紧归 #118 D-26 | `ts/src/index.ts` 参数面;dsh-tools schema;issue #102 同模式 |
 
@@ -470,11 +469,11 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 
 **部分清偿**:词汇层+生产/mock 解译器+韧性横切已落地,五工具(flyai/hotel/session/weather/flight_verify)与 realtime-pricing 默认查询口已走 `interpretEffect`;`anything/web_search/video_subtitle/github_search/agent_reach/session_login` 等其余渠道工具仍直连能力层(同款永不抛错契约,无退避/熔断/mock 面)。按渠道逐个搬,搬一个删一横切;全部走通即抄销 | `ts/capabilities/effect.ts`;`docs/effect-interpreter.md` §4;run-all §37
 
-**D-27 vendored 仓内形态 Node 兼容窗口断裂**
+**D-27 vendored 仓内形态 Node 兼容窗口断裂——✅ 已清偿(2026-09-04,issue #120)**
 
-**发现于 2026-08-30(issue #77 E2E 前置)，Round 5 部分清偿**:
+**发现于 2026-08-30(issue #77 E2E 前置)，Round 5 部分清偿,2026-09-04 全面清偿**:
 - `session-persistence-jsonl` 需 `node:zlib` 的 `createZstdDecompress`（Node ≥22.15，22.14 实测缺导出）；Round 5 已把 package engines、CLI 启动前闸与源码安装文档统一到 22.15+，并让 source checkout 优先解析 root alpha.3 closure；source 普通运行仍保持 `ts/dsh-runtime/` cwd 与状态连续性。
-- legacy `ts/dsh-runtime` alpha.1 只保留为非 benchmark 解析兼容；其 `.ts` 直载仍受 Node strip-only 限制，parameter properties（`ts/capabilities/resilience.ts:109` 与 `session/action-cache.ts:61`）在 Node 26 会触发 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。benchmark 对该 legacy runtime 在 spawn 前稳定拒绝，npm/dist 形态不受影响，且 legacy fallback 不承诺可运行。**剩余赎回**:若继续保留 legacy vendored 工作流，独立 PR 升级整套 vendor 或改两处 parameter properties 并真跑 smoke；不得把 legacy fallback 当 alpha.3 parity 证据 | `ts/capabilities/resilience.ts`;`ts/capabilities/session/action-cache.ts`
+- legacy `ts/dsh-runtime` alpha.1 曾保留为非 benchmark 解析兼容;其 `.ts` 直载受 Node strip-only 限制（parameter properties 触发 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`）。**清偿动作（issue #120,决策=移除运行时路径）**:`selectDshRuntime` 删除 legacy vendored 回退——dsh 解析只认 root manifest/依赖闭包,找不到即 fail-closed 并给明确重装指引;inner 的 vendoredDshEarly/`legacy-vendored` source 分支/报错文案同步移除,`DshRuntime.source` 收敛为 `'root'`;§48 e2e 断言改为「非 benchmark 也不再回退 vendored」。Round 5 的「不承诺可运行」口径就此落地为「不再解析」;残余的 `ts/dsh-runtime/vendor/` 闭包目录不属本清偿范围(锁一致性面,另行处置)。
 
 **D-28 外部 benchmark 驱动的 Agent 泛化证据缺口**
 
