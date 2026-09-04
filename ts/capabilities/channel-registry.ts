@@ -255,6 +255,26 @@ export function routingAdvice(intent: ChannelIntent, opts: RoutingAdviceOptions 
 }
 
 /**
+ * 工具描述首行生成(§3.3④,issue #113):某检索工具在注册表内服务的意图 →
+ * 「服务意图 × 当前通道顺位」卡,前置进工具描述——模型在选工具时(读描述)
+ * 与失败后(读 routing 字段)两个决策点拿到同一张表。顺位=证据级降序(与
+ * renderRoutingCard 同口径:通道状态变化不改变顺位表本身,只影响 routing
+ * 建议的可用性过滤)。注册表加行,描述首行自动一致,零手改。
+ * 非检索工具(不在表内)返回 '',描述保持原样。纯函数。
+ */
+export function toolRoutingHeadline(tool: string): string {
+  const intents = new Set<ChannelIntent>()
+  for (const c of CHANNELS) {
+    if (c.routable === false || c.tool !== tool) continue
+    for (const i of c.intents) intents.add(i)
+  }
+  if (intents.size === 0) return ''
+  const lines = [...intents].map(intent =>
+    `- ${INTENT_LABELS[intent]}: ${channelsForIntent(intent).map(c => `${c.label}(${c.tool}${c.hint ? ` ${c.hint}` : ''})`).join(' → ')}`)
+  return ['本工具服务的检索意图与通道顺位(证据级降序):', ...lines, 'verdict≠hit 时按结果内 routing 字段改道下一通道,勿盲试同通道。'].join('\n')
+}
+
+/**
  * persona 路由卡({{channel_routing_card}}):每意图一行顺位 + 额度口径脚注。
  * 确定性渲染(零 IO,时钟只进脚注);只列有 ≥2 条可选通道的意图——
  * 单通道意图没有路由选择,列了只是 token 噪声。

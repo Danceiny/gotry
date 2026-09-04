@@ -288,6 +288,16 @@ const doctorIcon = { ok: '✅', missing: '❌', degraded: '⚠️' }
 /** 修复指引入表:命令类才加反引号( prose 类如「到控制台申请 key」原样) */
 const fixCell = (fix) => (!fix ? '—' : /^(npx|hbcli|curl|pip|python|\$)/.test(fix) ? `\`${fix}\`` : fix)
 
+/** 启动一次性摘要行(issue #114,design §3.1③):全 ok 返回 null(静默零输出);
+ *  有待处理项给一行人话 + 指路(对话里 gotry_doctor 看详情 / 终端 npx gotry doctor)。
+ *  纯函数,bootstrap-tests 直接断言。 */
+function startupDoctorLine(items) {
+  const broken = (items ?? []).filter((i) => i.level && i.level !== 'ok')
+  if (broken.length === 0) return null
+  const human = (lv) => (lv === 'missing' ? '缺' : '半可用')
+  return `[gotry] doctor: ${broken.length} 项待处理(${broken.map((i) => `${i.label}=${human(i.level)}`).join('、')})——对话里让助手调 gotry_doctor 看详情与指引,或终端跑 npx gotry doctor`
+}
+
 /** 体检报告 markdown(与 ts/capabilities/doctor.ts renderDoctorReportMd 同形) */
 function renderDoctorReportMd(items) {
   const broken = items.filter((i) => i.level !== 'ok' && i.label !== 'LLM key')
@@ -315,8 +325,15 @@ function renderDoctorReportMd(items) {
 /** doctor 主流程:体检 → 打印 →(可选)fix → 报告落盘。
  *  exit 0=就绪(或仅剩有自动回退的降级项);exit 1=仍有缺失类问题。 */
 async function runDoctor() {
-  say('[gotry-doctor] GoTry 可选依赖体检(只读;LLM key 归 dsh 宿主管,不在范围)')
   let items = await doctorChecks()
+  // 启动一次性摘要(issue #114):inner 分离子进程带 --summary 调用——只读体检,
+  // 有待处理项打一行 stderr,零写盘零 header;全 ok 静默。与完整体检面(逐项/报告落盘/exit 语义)分离。
+  if (process.argv.includes('--summary')) {
+    const line = startupDoctorLine(items)
+    if (line) console.error(line)
+    return 0
+  }
+  say('[gotry-doctor] GoTry 可选依赖体检(只读;LLM key 归 dsh 宿主管,不在范围)')
   for (const i of items) {
     say(`  ${doctorIcon[i.level]} ${i.label}:${i.detail}`)
     if (i.level !== 'ok' && i.fix) say(`      ↳ 修复: ${i.fix}`)

@@ -31,11 +31,10 @@ import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, r
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
 import { wmoLabel } from '../capabilities/weather.ts'
-import { anythingSearch } from '../capabilities/anything.ts'
-import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
+// D-23 收编(issue #115):anything/web/github/video/agent_reach/session_login 六渠道改经
+// 效应注册表(退避/熔断/declined 面统一);能力层直接 import 仅留类型位(reach/reachStatus)
+import { reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { runDoctorChecks, renderDoctorReportMd } from '../capabilities/doctor.ts'
-import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
-import { sessionLogin } from '../capabilities/session-login.ts'
 import { EXTENSION_STORE_URL } from '../capabilities/session/extension-bridge.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 import { installModelOverride } from '../capabilities/model-override.ts'
@@ -46,7 +45,7 @@ import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
 import { noteChannelVerdict, recordChannelEvent } from '../capabilities/channel-health.ts'
-import { routingAdvice, renderRoutingCard, type ChannelIntent } from '../capabilities/channel-registry.ts'
+import { routingAdvice, renderRoutingCard, toolRoutingHeadline, type ChannelIntent } from '../capabilities/channel-registry.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
@@ -268,6 +267,14 @@ export function apply(ctx: Context, config: Config): void {
       t.execute = guardToolExecute(String(t.name), config.stateRoot ?? '.', t.execute as (args: never, exec: unknown) => never)
     }
     ctx.tools.register(t as unknown as ReturnType<typeof defineTool>)
+  }
+
+  // 工具描述首行生成(issue #113,L1):检索工具描述统一前置注册表生成的
+  // 「服务意图 × 通道顺位」卡——模型选工具时(读描述)与失败后(读 routing)
+  // 两个决策点拿到同一张表;注册表加行,描述自动一致。非检索工具原样返回。
+  const routed = (tool: string, desc: string): string => {
+    const head = toolRoutingHeadline(tool)
+    return head ? `${head}\n${desc}` : desc
   }
 
   registerGuarded(defineTool({
@@ -612,12 +619,12 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_hotel_search',
-    description:
+    description: routed('gotry_hotel_search',
       'Search hotels via hotelbyte-cli (real-time when hbcli credentials exist, falls back to the static pack with explicit evidence tagging). '
       + 'Input: destination city name + optional dates/adults. Dates accept verbatim natural expressions (下周五 / 8.20 / 下周五+3) — '
       + 'the code layer resolves them against the time anchor; unresolved expressions degrade to an undated search with an explicit '
       + 'date_notes entry instead of guessing. Output: hotel list with evidence chain ([realtime-API:hbcli] + fetch timestamp, '
-      + 'or [static-pack:estimate]) per the L4 invariant.',
+      + 'or [static-pack:estimate]) per the L4 invariant.'),
     // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(同 flyai 刀法)。
     parameters: {
       destination: { type: 'string', required: true, description: '目的地城市,如 大理' },
@@ -719,11 +726,11 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_weather_check',
-    description:
+    description: routed('gotry_weather_check',
       'Check weather for a destination: forecast (≤16 days) or historical climate (seasonality baseline). '
       + 'Free Open-Meteo API, no key required. Input: place name (Chinese ok) or lat/lng. '
       + 'Returns daily temp range, precipitation probability, weather code — with evidence chain tagging '
-      + '[实时API:open-meteo@ts]. Use to ground seasonal advice in real data instead of LLM guessing.',
+      + '[实时API:open-meteo@ts]. Use to ground seasonal advice in real data instead of LLM guessing.'),
     parameters: {
       // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(同 flyai 刀法)。
       place: { type: 'string', description: '城市名(中文可),如 大理;与 lat/lng 二选一,都没给 execute 结构化报错' },
@@ -788,7 +795,7 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_flight_verify',
-    description:
+    description: routed('gotry_flight_verify',
       'Verify whether a flight callsign is currently observable on the OpenSky ADS-B network. '
       + 'Free anonymous API (~400 credits/day, 4 req/s burst). Three-valued semantics: '
       + 'observed = strong positive (the aircraft is currently being broadcast); '
@@ -796,7 +803,7 @@ export function apply(ctx: Context, config: Config): void {
       + 'a missing signal does NOT disprove the flight); '
       + 'unavailable = API failure, gracefully degraded. '
       + 'Use to ground "is this flight actually flying right now?" in real data, complementing '
-      + 'the OpenFlights skeleton (historical connectivity) and the static flight pack (planned schedule).',
+      + 'the OpenFlights skeleton (historical connectivity) and the static flight pack (planned schedule).'),
     // D-30 第四刀(issue #112):平铺 typed;callsign required → 宿主权即拒
     parameters: {
       callsign: { type: 'string', required: true, description: '航班呼号,如 EK329' },
@@ -835,13 +842,13 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_flyai_search',
-    description:
+    description: routed('gotry_flyai_search',
       'Live travel search through the Fliggy official FlyAI channel (read-only, no key; booking/comparison happens by the HUMAN on the jumpUrl page). '
       + 'kind="flight"|"train": from/to 中文城市名 + date YYYY-MM-DD — real schedules & prices, split 直达/中转 in results. '
       + 'kind="hotel": to=目的地中文(如 大理), checkIn/checkOut (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords?. '
       + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
       + 'Evidence [实时API:flyai@ts]. verdict=needs-setup (anonymous trial quota exhausted, upstream 429) is a CONFIG issue, not a search failure: surface the setup hint once, do NOT retry this tool this session — switch to gotry_session_search or web search. '
-      + 'Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.',
+      + 'Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.'),
     // D-30 第一刀(issue #112):query json blob → 平铺 typed 契约。逐字段 schema 由 dsh
     // parameterSchemaSpecToJsonSchema 投影为模型可见 JSON Schema,validateArgs 在 execute 前
     // 宿主权校验——畸形参数(缺 kind/枚举外值/类型错/legacy blob 包裹)在入口即被结构化拒绝
@@ -956,7 +963,10 @@ export function apply(ctx: Context, config: Config): void {
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { evidence?: string }).evidence ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ waitSeconds?: number }>(args, 'waitSeconds')
-      const r = await sessionLogin({ waitMs: typeof q?.waitSeconds === 'number' ? q.waitSeconds * 1000 : undefined })
+      // D-23 收编(issue #115):登录引导入效应注册表(SESSION_LOGIN,浏览器族永不重试不熔断)
+      const itpL = await interpretEffect({ effect: 'SESSION_LOGIN', params: { waitSeconds: q?.waitSeconds } })
+      if (!itpL.result) return declinedObservation('SESSION_LOGIN', itpL.trace)
+      const r = itpL.result
       const summary = r.verdict === 'logged-in'
         ? `${r.site} 登录完成确认(票据 cookie 名已检出,只读名字)。说明:登录是在携程官网、用你自己的浏览器完成的——gotry 全程未接触任何密码/验证码/cookie 值。现在可以继续会话检索了。${r.evidence}`
         : r.verdict === 'pending'
@@ -989,7 +999,7 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_session_search',
-    description:
+    description: routed('gotry_session_search',
       'Search on the USER\'S OWN browser session (Ctrip kind="flight"(default)/"hotel"; 12306 kind="train" — public query face, no login needed). '
       + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'Transport: GoTry Session Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
@@ -998,7 +1008,7 @@ export function apply(ctx: Context, config: Config): void {
       + 'kind="train": from/to/date(YYYY-MM-DD) + fromStationTelecode?/toStationTelecode? (three-letter codes in the kyfw query URL, for cities outside the built-in table) — 12306 left-ticket query (public face): train codes, times, durations, seat availability; the list API carries NO prices (prices live on the 12306 page). Evidence [会话:train-12306@ts]. '
       + 'verdict needs-login = call gotry_session_login (opens the Ctrip login entry in the user\'s own foreground tab — no terminal, no credentials through GoTry); '
       + `needs-extension = one-time browser-extension install (Chrome Web Store one-click, installUrl is also surfaced as a clickable link in the verdict field for dsh UI to render) — the DEFAULT transport; cdp (chrome://inspect remote debugging) is a diagnostic fallback only via GOTRY_SESSION_TRANSPORT=cdp. `
-      + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).',
+      + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).'),
     // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(逐字段 schema 模型可见)。
     // 与 flyai 刀的差异:本工具三意图无公共 required 字段(kind 缺省=flight),根 schema 是
     // 隐式开放对象,宿主权无法用 required 拒 legacy blob——故保留 interpretArgs 容忍层
@@ -1133,14 +1143,14 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_anything_search',
-    description:
+    description: routed('gotry_anything_search',
       'Travel-domain search via hotel-byte CLI → hotel-be Anything (cities/hotels/destinations) — NOT general web search; for general internet facts use gotry_agent_reach. ' +
       'Mixed destinations (cities / metropolitan areas / high-level regions) + hotels in one call. ' +
       'Returns candidates with type, name, optional coordinates and hotel-id. ' +
       'Three-valued semantics: hit = ≥1 candidate; miss = 0 candidates (try synonyms or contentType=city/hotel); ' +
       'unavailable = hbcli failed (degraded, never blocks). ' +
       'Use as the first stop when the user mentions a place/city/hotel name and you need to ground it in real catalog data ' +
-      '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region).',
+      '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region).'),
     // D-30 第四刀(issue #112):平铺 typed;keyword required → 宿主权即拒
     parameters: {
       keyword: { type: 'string', required: true, description: '搜索关键词' },
@@ -1159,7 +1169,9 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.keyword) {
         return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', summary: 'keyword 必填', evidence: '[hbcli-anything@error] empty' })) as Record<string, never>
       }
-      const r = await anythingSearch(q)
+      const itpA = await interpretEffect({ effect: 'ANYTHING_SEARCH', params: q })
+      if (!itpA.result) return declinedObservation('ANYTHING_SEARCH', itpA.trace)
+      const r = itpA.result
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `anything:${r.via}`).catch(() => {})
       const top5 = (r.hits ?? []).slice(0, 5)
@@ -1189,12 +1201,12 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_web_search',
-    description:
+    description: routed('gotry_web_search',
       'Read any public URL as markdown (Jina Reader, free, no key). ' +
       'Use as the "last mile" web reader when hotel-be Anything or gotry tools lack the answer. ' +
       'NOT a general-purpose search engine — only fetches a URL you already know. ' +
       'Three-valued: ok / error(非法 URL/超时)/not-reachable(r.jina.ai 不可用).' +
-      'Contract with gotry capabilities/anything.ts: 同构(L4 证据链 + 降级不阻塞 + 三值)。',
+      'Contract with gotry capabilities/anything.ts: 同构(L4 证据链 + 降级不阻塞 + 三值)。'),
     // D-30 第四刀(issue #112):平铺 typed;url required → 宿主权即拒(字符串 blob 形态退役)
     parameters: {
       url: { type: 'string', required: true, description: '完整 URL,https://…' },
@@ -1210,7 +1222,9 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填', evidence: '[agent-reach:error] empty url' })) as Record<string, never>
       }
-      const r = await readUrl({ url: q.url, timeoutMs: q.timeoutMs })
+      const itpW = await interpretEffect({ effect: 'WEB_READ', params: { url: q.url, timeoutMs: q.timeoutMs } })
+      if (!itpW.result) return declinedObservation('WEB_READ', itpW.trace)
+      const r = itpW.result
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `agent-reach:${r.via}`).catch(() => {})
       const summary = r.ok
@@ -1246,7 +1260,9 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填' })) as Record<string, never>
       }
-      const r = await videoSubtitle({ url: q.url, lang: q.lang })
+      const itpV = await interpretEffect({ effect: 'VIDEO_SUBTITLE', params: { url: q.url, lang: q.lang } })
+      if (!itpV.result) return declinedObservation('VIDEO_SUBTITLE', itpV.trace)
+      const r = itpV.result
       const summary = r.verdict === 'found'
         ? `${q.url} 字幕提取成功 (${r.latencyMs}ms)\n${r.evidence}\n---\n${(r.subtitles ?? '').slice(0, 800)}`
         : r.verdict === 'not-installed'
@@ -1282,7 +1298,9 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.query) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'query 必填' })) as Record<string, never>
       }
-      const r = await githubSearch({ query: q.query, limit: q.limit })
+      const itpG = await interpretEffect({ effect: 'GITHUB_SEARCH', params: { query: q.query, limit: q.limit } })
+      if (!itpG.result) return declinedObservation('GITHUB_SEARCH', itpG.trace)
+      const r = itpG.result
       const summary = r.verdict === 'found'
         ? `${q.query} → ${r.repos?.length ?? 0} repos\n${(r.repos ?? []).map((x, i) => `  ${i + 1}. ${x.name} ★${x.stars ?? '?'} — ${(x.description ?? '').slice(0, 60)}`).join('\n')}\n${r.evidence}`
         : r.verdict === 'not-installed'
@@ -1322,12 +1340,17 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
     async execute(args, _exec: unknown) {
-      const q = unwrapQuery<{ action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }>(args, 'channel')
+      const q = unwrapQuery<{ action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }>(args)
       const started = Date.now()
       const dir = await ensureStateDir(config.stateRoot)
 
+      // D-23 收编(issue #115):status/reach 两分支收敛为单一 AGENT_REACH 效应——
+      // 解译器横切(trace/declined 面)统一,渲染逻辑留在工具层不变
+      const itpAR = await interpretEffect({ effect: 'AGENT_REACH', params: { action: q.action, channel: q.channel, method: q.method, args: q.args, timeoutMs: q.timeoutMs } })
+      if (!itpAR.result) return declinedObservation('AGENT_REACH', itpAR.trace)
+
       if (q.action === 'status' || (!q.action && !q.channel)) {
-        const st = await reachStatus(q.timeoutMs)
+        const st = itpAR.result as Awaited<ReturnType<typeof reachStatus>>
         await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'agent-reach:doctor').catch(() => {})
         const summary = st.via === 'agent-reach-cli'
           ? `Agent Reach doctor(上游 CLI,原样透传):\n${st.output}\n${st.evidence}`
@@ -1341,7 +1364,7 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.channel || !q.method) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'channel 与 method 必填(或 action=status);清单可先随便调一次,inventory 会带回上游渠道/方法表' })) as Record<string, never>
       }
-      const r = await reach({ channel: q.channel, method: q.method, args: q.args, timeoutMs: q.timeoutMs })
+      const r = itpAR.result as Awaited<ReturnType<typeof reach>>
       // 长结果干净截断:数组按条目边界保留(dsh 工具上限会拦腰断 JSON,模型只能看到半条)
       const dataStr = (v: unknown): unknown => {
         if (Array.isArray(v)) {

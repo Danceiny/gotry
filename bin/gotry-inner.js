@@ -488,6 +488,17 @@ const childStdio = mode === 'web'
 let benchmarkCapturedBytes = 0
 let benchmarkDiagnosticBuffer = Buffer.alloc(0)
 let benchmarkOutputTruncated = false
+// 启动一次性 doctor 摘要(issue #114,design §3.1③):分离子进程后台跑只读体检,
+// 有待处理项打一行 stderr(stderr 继承,不污染 stdout;benchmark 面保持零杂音)。
+// detached+unref:不阻塞不拖慢启动;inner 生命周期天然一次,不重复刷;失败静默。
+if (!benchmarkEnvironmentConfig) {
+  try {
+    spawn(process.execPath, [join(here, 'gotry-bootstrap.js'), 'doctor', '--summary'], {
+      detached: true,
+      stdio: ['ignore', 'ignore', 'inherit'],
+    }).unref()
+  } catch { /* 体检不可用不挡启动 */ }
+}
 child = spawn(process.execPath, [dshBin, ...binJs], {
   stdio: childStdio,
   env: childEnv,

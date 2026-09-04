@@ -16,7 +16,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -138,4 +138,23 @@ const c9f = runBootstrap(['calendar', '--status'], calEnv)
 assert.ok(c9f.out.includes('默认未挂载'), '关闭后回到默认态')
 console.log('9. calendar 子命令(setup 状态面 on/off/status + doctor 三态,HOME 隔离)OK')
 
-console.log('BOOTSTRAP TESTS: 9/9 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过)')
+// 10. 启动一次性 doctor 摘要(issue #114,design §3.1③):inner 在 dsh 启动前以分离
+//     子进程跑 `doctor --summary`——有待处理项一行 stderr,全 ok 静默;零 header 零写盘,
+//     恒 exit 0(不挡启动语义)。HOME 隔离到 tmp 保证缺失项确定性。
+{
+  const sumHome = mkdtempSync(join(tmpdir(), 'gotry-sum-test-'))
+  const r = spawnSync('node', [bootstrap, 'doctor', '--summary'], {
+    encoding: 'utf-8',
+    timeout: 60_000,
+    env: { ...process.env, HOME: sumHome },
+  })
+  assert.equal(r.status, 0, `doctor --summary 应恒 exit 0(不挡启动),实际 ${r.status}\n${r.stderr}`)
+  assert.ok(!r.stdout.includes('报告已写'), 'summary 模式零写盘(不落 doctor-report.md)')
+  assert.ok(!r.stdout.includes('[gotry-doctor]'), 'summary 模式零 header(stdout 静默)')
+  assert.match(r.stderr, /\[gotry\] doctor: \d+ 项待处理/, '隔离 HOME 有缺失项 → 一行摘要进 stderr')
+  assert.match(r.stderr, /gotry_doctor/, '摘要带对话内指路')
+  assert.match(r.stderr, /扩展=缺/, '缺失项人话=缺(降级类=半可用)')
+}
+console.log('10. 启动一次性 doctor 摘要(--summary:stderr 一行/零写盘/恒 exit 0)OK')
+
+console.log('BOOTSTRAP TESTS: 10/10 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要)')
