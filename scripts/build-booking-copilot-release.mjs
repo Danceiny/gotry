@@ -100,10 +100,6 @@ try {
     execFileSync('cp', ['-p', join(source, path), target], { env: childEnv })
   }
   execFileSync('cp', ['-a', join(source, 'dist'), join(release, 'dist')], { env: childEnv })
-  // The typed dist must load under the released runtime: a type-only symbol
-  // accidentally imported as a value survives tsc but crashes Node at boot.
-  execFileSync('/usr/bin/env', ['node', '--input-type=module', '-e',
-    `await import(${JSON.stringify('file://' + join(release, 'dist/src/booking-surface/startup.js'))})`], { env: childEnv })
   probeNode24()
   // Release consumers must resolve the complete DSH peer closure just like
   // the repository consumer. Keep strict resolution explicit at this seam.
@@ -115,6 +111,11 @@ try {
   run('npm', ['rebuild', 'node-pty', '--ignore-scripts=false', '--no-audit', '--no-fund'], release)
   const dshSubprocessLocal = join(release, 'node_modules/@deepseek-ai/dsh-subprocess-local/scripts/ensure-spawn-helper.mjs')
   if (existsSync(dshSubprocessLocal)) run('node', [dshSubprocessLocal], release)
+  // The typed dist must load under the released runtime: a type-only symbol
+  // accidentally imported as a value survives tsc but crashes Node at boot.
+  // Runs after npm ci so the production dependency closure is resolvable.
+  execFileSync('/usr/bin/env', ['node', '--input-type=module', '-e',
+    `await import(${JSON.stringify('file://' + join(release, 'dist/src/booking-surface/startup.js'))})`], { env: childEnv })
   const packageJson = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
   writeFileSync(join(release, 'package.json'), `${JSON.stringify({
     name: packageJson.name,
