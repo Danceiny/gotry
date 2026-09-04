@@ -1,6 +1,6 @@
 {
   "name": "@danceiny/gotry",
-  "version": "0.0.1-rc.18",
+  "version": "0.0.1-rc.19",
   "description": "GoTry — 从出发到下一次出发的 AI 旅行 Agent(dsh 插件)。npm/源码入口共用锁定的 dsh runtime + README 安装路径。",
   "type": "module",
   "main": "ts/src/index.ts",
