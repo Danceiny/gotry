@@ -152,8 +152,13 @@ apply(ctx, { stateRoot, timeoutMs: 30_000, hbcliBin: 'hbcli-not-on-path', sessio
 assert.equal(typeof variables.channel_routing_card, 'function', 'channel_routing_card 变量已注册')
 assert.match(variables.channel_routing_card!(), /检索通道顺位/, '卡片可渲染')
 const pastDate = await registered.find(t => t.name === 'gotry_flyai_search')!.execute(
-  { query: { kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' } }, null) as { routing?: unknown }
+  { kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' }, null) as { routing?: unknown }
 assert.ok(!('routing' in pastDate), '参数级预校验拒绝不带 routing(未发起检索,无改道语义)')
+// D-30 迁移锁(issue #112):typed 平铺契约下 legacy blob 包裹在宿主权校验即拒绝,
+// 拒绝形状保持 ADR-13 ToolFailure(guardToolExecute 兜底:ok:false + evidence)且不带 routing
+const legacyBlob = await registered.find(t => t.name === 'gotry_flyai_search')!.execute(
+  { query: { kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' } } as never, null) as { ok?: boolean; routing?: unknown; evidence?: string }
+assert.ok(legacyBlob.ok === false && !('routing' in legacyBlob) && !!legacyBlob.evidence, 'legacy blob → 结构化拒绝(ToolFailure,无 routing)')
 console.log('8. apply 接线 OK')
 
 await rm(stateRoot, { recursive: true, force: true })
