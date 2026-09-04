@@ -54,14 +54,15 @@ async function main() {
     return t
   }
 
-  // 1) 动机画像:evidence 缺失必须被拒绝(P0 反幻觉红线)
+  // 1) 动机画像:evidence 缺失必须被拒绝(P0 反幻觉红线;D-30 后由宿主权 schema 闸——
+  //    evidence required 进嵌套 schema,拒绝更前置,ToolFailure 形状不变)
   const motivation = byName('gotry_motivation_save')
   const rejectedMotivation = await motivation.execute(
     { profile: { weights: { escape_rest: 0.7 } } },
     null,
   ) as { ok?: boolean; summary?: string }
-  if (rejectedMotivation.ok !== false || !rejectedMotivation.summary?.includes('without evidence')) {
-    throw new Error(`FAIL: profile without evidence should have been rejected, actual ${JSON.stringify(rejectedMotivation).slice(0, 120)}`)
+  if (rejectedMotivation.ok !== false || !/evidence/i.test(rejectedMotivation.summary ?? '')) {
+    throw new Error(`FAIL: profile without evidence should have been rejected, actual ${JSON.stringify(rejectedMotivation).slice(0, 160)}`)
   }
   console.log(`motivation without evidence rejected: ${rejectedMotivation.summary.slice(0, 80)}...`)
   const saved = await motivation.execute({
