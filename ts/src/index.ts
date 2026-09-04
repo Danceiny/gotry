@@ -46,7 +46,7 @@ import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
 import { noteChannelVerdict, recordChannelEvent } from '../capabilities/channel-health.ts'
-import { routingAdvice, renderRoutingCard, type ChannelIntent } from '../capabilities/channel-registry.ts'
+import { routingAdvice, renderRoutingCard, toolRoutingHeadline, type ChannelIntent } from '../capabilities/channel-registry.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
@@ -268,6 +268,14 @@ export function apply(ctx: Context, config: Config): void {
       t.execute = guardToolExecute(String(t.name), config.stateRoot ?? '.', t.execute as (args: never, exec: unknown) => never)
     }
     ctx.tools.register(t as unknown as ReturnType<typeof defineTool>)
+  }
+
+  // 工具描述首行生成(issue #113,L1):检索工具描述统一前置注册表生成的
+  // 「服务意图 × 通道顺位」卡——模型选工具时(读描述)与失败后(读 routing)
+  // 两个决策点拿到同一张表;注册表加行,描述自动一致。非检索工具原样返回。
+  const routed = (tool: string, desc: string): string => {
+    const head = toolRoutingHeadline(tool)
+    return head ? `${head}\n${desc}` : desc
   }
 
   registerGuarded(defineTool({
@@ -612,12 +620,12 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_hotel_search',
-    description:
+    description: routed('gotry_hotel_search',
       'Search hotels via hotelbyte-cli (real-time when hbcli credentials exist, falls back to the static pack with explicit evidence tagging). '
       + 'Input: destination city name + optional dates/adults. Dates accept verbatim natural expressions (下周五 / 8.20 / 下周五+3) — '
       + 'the code layer resolves them against the time anchor; unresolved expressions degrade to an undated search with an explicit '
       + 'date_notes entry instead of guessing. Output: hotel list with evidence chain ([realtime-API:hbcli] + fetch timestamp, '
-      + 'or [static-pack:estimate]) per the L4 invariant.',
+      + 'or [static-pack:estimate]) per the L4 invariant.'),
     // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(同 flyai 刀法)。
     parameters: {
       destination: { type: 'string', required: true, description: '目的地城市,如 大理' },
@@ -719,11 +727,11 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_weather_check',
-    description:
+    description: routed('gotry_weather_check',
       'Check weather for a destination: forecast (≤16 days) or historical climate (seasonality baseline). '
       + 'Free Open-Meteo API, no key required. Input: place name (Chinese ok) or lat/lng. '
       + 'Returns daily temp range, precipitation probability, weather code — with evidence chain tagging '
-      + '[实时API:open-meteo@ts]. Use to ground seasonal advice in real data instead of LLM guessing.',
+      + '[实时API:open-meteo@ts]. Use to ground seasonal advice in real data instead of LLM guessing.'),
     parameters: {
       // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(同 flyai 刀法)。
       place: { type: 'string', description: '城市名(中文可),如 大理;与 lat/lng 二选一,都没给 execute 结构化报错' },
@@ -788,7 +796,7 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_flight_verify',
-    description:
+    description: routed('gotry_flight_verify',
       'Verify whether a flight callsign is currently observable on the OpenSky ADS-B network. '
       + 'Free anonymous API (~400 credits/day, 4 req/s burst). Three-valued semantics: '
       + 'observed = strong positive (the aircraft is currently being broadcast); '
@@ -796,7 +804,7 @@ export function apply(ctx: Context, config: Config): void {
       + 'a missing signal does NOT disprove the flight); '
       + 'unavailable = API failure, gracefully degraded. '
       + 'Use to ground "is this flight actually flying right now?" in real data, complementing '
-      + 'the OpenFlights skeleton (historical connectivity) and the static flight pack (planned schedule).',
+      + 'the OpenFlights skeleton (historical connectivity) and the static flight pack (planned schedule).'),
     // D-30 第四刀(issue #112):平铺 typed;callsign required → 宿主权即拒
     parameters: {
       callsign: { type: 'string', required: true, description: '航班呼号,如 EK329' },
@@ -835,13 +843,13 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_flyai_search',
-    description:
+    description: routed('gotry_flyai_search',
       'Live travel search through the Fliggy official FlyAI channel (read-only, no key; booking/comparison happens by the HUMAN on the jumpUrl page). '
       + 'kind="flight"|"train": from/to 中文城市名 + date YYYY-MM-DD — real schedules & prices, split 直达/中转 in results. '
       + 'kind="hotel": to=目的地中文(如 大理), checkIn/checkOut (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords?. '
       + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
       + 'Evidence [实时API:flyai@ts]. verdict=needs-setup (anonymous trial quota exhausted, upstream 429) is a CONFIG issue, not a search failure: surface the setup hint once, do NOT retry this tool this session — switch to gotry_session_search or web search. '
-      + 'Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.',
+      + 'Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.'),
     // D-30 第一刀(issue #112):query json blob → 平铺 typed 契约。逐字段 schema 由 dsh
     // parameterSchemaSpecToJsonSchema 投影为模型可见 JSON Schema,validateArgs 在 execute 前
     // 宿主权校验——畸形参数(缺 kind/枚举外值/类型错/legacy blob 包裹)在入口即被结构化拒绝
@@ -989,7 +997,7 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_session_search',
-    description:
+    description: routed('gotry_session_search',
       'Search on the USER\'S OWN browser session (Ctrip kind="flight"(default)/"hotel"; 12306 kind="train" — public query face, no login needed). '
       + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'Transport: GoTry Session Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
@@ -998,7 +1006,7 @@ export function apply(ctx: Context, config: Config): void {
       + 'kind="train": from/to/date(YYYY-MM-DD) + fromStationTelecode?/toStationTelecode? (three-letter codes in the kyfw query URL, for cities outside the built-in table) — 12306 left-ticket query (public face): train codes, times, durations, seat availability; the list API carries NO prices (prices live on the 12306 page). Evidence [会话:train-12306@ts]. '
       + 'verdict needs-login = call gotry_session_login (opens the Ctrip login entry in the user\'s own foreground tab — no terminal, no credentials through GoTry); '
       + `needs-extension = one-time browser-extension install (Chrome Web Store one-click, installUrl is also surfaced as a clickable link in the verdict field for dsh UI to render) — the DEFAULT transport; cdp (chrome://inspect remote debugging) is a diagnostic fallback only via GOTRY_SESSION_TRANSPORT=cdp. `
-      + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).',
+      + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).'),
     // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(逐字段 schema 模型可见)。
     // 与 flyai 刀的差异:本工具三意图无公共 required 字段(kind 缺省=flight),根 schema 是
     // 隐式开放对象,宿主权无法用 required 拒 legacy blob——故保留 interpretArgs 容忍层
@@ -1133,14 +1141,14 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_anything_search',
-    description:
+    description: routed('gotry_anything_search',
       'Travel-domain search via hotel-byte CLI → hotel-be Anything (cities/hotels/destinations) — NOT general web search; for general internet facts use gotry_agent_reach. ' +
       'Mixed destinations (cities / metropolitan areas / high-level regions) + hotels in one call. ' +
       'Returns candidates with type, name, optional coordinates and hotel-id. ' +
       'Three-valued semantics: hit = ≥1 candidate; miss = 0 candidates (try synonyms or contentType=city/hotel); ' +
       'unavailable = hbcli failed (degraded, never blocks). ' +
       'Use as the first stop when the user mentions a place/city/hotel name and you need to ground it in real catalog data ' +
-      '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region).',
+      '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region).'),
     // D-30 第四刀(issue #112):平铺 typed;keyword required → 宿主权即拒
     parameters: {
       keyword: { type: 'string', required: true, description: '搜索关键词' },
@@ -1189,12 +1197,12 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_web_search',
-    description:
+    description: routed('gotry_web_search',
       'Read any public URL as markdown (Jina Reader, free, no key). ' +
       'Use as the "last mile" web reader when hotel-be Anything or gotry tools lack the answer. ' +
       'NOT a general-purpose search engine — only fetches a URL you already know. ' +
       'Three-valued: ok / error(非法 URL/超时)/not-reachable(r.jina.ai 不可用).' +
-      'Contract with gotry capabilities/anything.ts: 同构(L4 证据链 + 降级不阻塞 + 三值)。',
+      'Contract with gotry capabilities/anything.ts: 同构(L4 证据链 + 降级不阻塞 + 三值)。'),
     // D-30 第四刀(issue #112):平铺 typed;url required → 宿主权即拒(字符串 blob 形态退役)
     parameters: {
       url: { type: 'string', required: true, description: '完整 URL,https://…' },

@@ -64,7 +64,7 @@ async function main() {
   if (rejectedMotivation.ok !== false || !/evidence/i.test(rejectedMotivation.summary ?? '')) {
     throw new Error(`FAIL: profile without evidence should have been rejected, actual ${JSON.stringify(rejectedMotivation).slice(0, 160)}`)
   }
-  console.log(`motivation without evidence rejected: ${rejectedMotivation.summary.slice(0, 80)}...`)
+  console.log(`motivation without evidence rejected: ${(rejectedMotivation.summary ?? '').slice(0, 80)}...`)
   const saved = await motivation.execute({
     profile: {
       weights: { escape_rest: 0.7, curiosity: 0.3 },
