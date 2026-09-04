@@ -100,6 +100,10 @@ try {
     execFileSync('cp', ['-p', join(source, path), target], { env: childEnv })
   }
   execFileSync('cp', ['-a', join(source, 'dist'), join(release, 'dist')], { env: childEnv })
+  // The typed dist must load under the released runtime: a type-only symbol
+  // accidentally imported as a value survives tsc but crashes Node at boot.
+  execFileSync('/usr/bin/env', ['node', '--input-type=module', '-e',
+    `await import(${JSON.stringify('file://' + join(release, 'dist/src/booking-surface/startup.js'))})`], { env: childEnv })
   probeNode24()
   // Release consumers must resolve the complete DSH peer closure just like
   // the repository consumer. Keep strict resolution explicit at this seam.
