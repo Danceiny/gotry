@@ -7,8 +7,10 @@
  *  4. noteChannelVerdict 映射:needs-setup→down/hit→清除/miss·error→不动/cooldown 过期
  *  5. persona 路由卡:确定性渲染,含改道规则与意图顺位行
  *  6. JSONL 持久面:record/readLatest 往返 + 坏行容忍 + limitDays 过滤
- *  7. doctor 集成:flyai 最近达限时间可见;calendar 三态(默认不挂载/opt-in 未配置/opt-in 已配置)
- *  8. apply 接线:channel_routing_card 变量已注册;参数级拒绝不带 routing 字段
+ *  7. doctor 集成:flyai 最近达限时间可见;calendar 三态(默认不挂载/opt-in 未配置/opt-in 已配置);
+ *     patch 宿主插件两态照亮(map-tools/ask-user,issue #113 L1 残量)
+ *  8. apply 接线:channel_routing_card 变量已注册;参数级拒绝不带 routing 字段;
+ *     工具描述首行生成(检索工具前置意图顺位卡,非检索工具原样,#113)
  *
  * 运行: cd ts && npx tsx scripts/channel-registry-tests.ts
  */
@@ -18,7 +20,7 @@ import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  CHANNELS, channelsForIntent, routingAdvice, renderRoutingCard,
+  CHANNELS, channelsForIntent, routingAdvice, renderRoutingCard, toolRoutingHeadline,
   INTENT_LABELS, type ChannelIntent, type ChannelQuotaClass, type EvidenceTier,
 } from '../capabilities/channel-registry.ts'
 import {
@@ -137,7 +139,14 @@ const d3 = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: emptyHome, env:
 assert.equal(d3.items.find(i => i.id === 'calendar')!.status, 'ok', 'setup 开启且已配置=ok')
 const d4 = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: emptyHome, env: {} })
 assert.ok(!/最近一次试用达限/.test(d4.items.find(i => i.id === 'flyai')!.detail), '无 stateRoot 不读持久面(向后兼容)')
-console.log('7. doctor 集成(flyai 配额可见 + calendar setup 状态面三态)OK')
+// patch 宿主插件两态照亮(issue #113):隔离环境两者皆 missing——静默剔除面进 doctor 可见
+const mapItem = d4.items.find(i => i.id === 'map-tools')!
+const askItem = d4.items.find(i => i.id === 'ask-user')!
+assert.equal(mapItem.status, 'missing', '隔离环境 map-tools=missing(静默剔除面可见)')
+assert.match(mapItem.detail, /静默剔除/, 'map-tools detail 说明静默剔除语义')
+assert.equal(askItem.status, 'missing', '隔离环境 ask-user=missing')
+assert.match(askItem.detail, /散文追问/, 'ask-user detail 说明退化面')
+console.log('7. doctor 集成(flyai 配额可见 + calendar setup 状态面三态 + 宿主插件两态)OK')
 
 // 8. apply 接线:变量注册 + 参数级拒绝不带 routing
 resetChannelHealth()
@@ -159,7 +168,16 @@ assert.ok(!('routing' in pastDate), '参数级预校验拒绝不带 routing(未�
 const legacyBlob = await registered.find(t => t.name === 'gotry_flyai_search')!.execute(
   { query: { kind: 'flight', from: '深圳', to: '普吉', date: '2026-01-01' } } as never, null) as { ok?: boolean; routing?: unknown; evidence?: string }
 assert.ok(legacyBlob.ok === false && !('routing' in legacyBlob) && !!legacyBlob.evidence, 'legacy blob → 结构化拒绝(ToolFailure,无 routing)')
-console.log('8. apply 接线 OK')
+// 工具描述首行生成(issue #113):检索工具前置注册表生成的意图顺位卡;非检索工具原样
+const flyaiTool = registered.find(t => t.name === 'gotry_flyai_search') as unknown as { name: string; description?: string }
+const doctorToolDesc = registered.find(t => t.name === 'gotry_doctor') as unknown as { name: string; description?: string }
+assert.ok(flyaiTool, 'flyai 工具已注册')
+assert.match(toolRoutingHeadline('gotry_flyai_search'), /机票: 飞猪官方 API\(gotry_flyai_search\) → 携程·用户登录态/, 'flyai 首行卡:机票顺位 flyai 在前(证据级)')
+assert.match(toolRoutingHeadline('gotry_session_search'), /火车: .*12306 公开查询面\(gotry_session_search kind=train\)/, 'session 首行卡带 kind 消歧')
+assert.equal(toolRoutingHeadline('gotry_doctor'), '', '非检索工具无首行卡(原样描述)')
+assert.ok(flyaiTool.description?.startsWith('本工具服务的检索意图与通道顺位'), 'flyai 描述已前置首行卡(接线生效)')
+assert.ok(!doctorToolDesc.description?.startsWith('本工具服务的检索意图'), 'doctor 描述无首行卡(接线不误伤)')
+console.log('8. apply 接线 + 描述首行生成 OK')
 
 await rm(stateRoot, { recursive: true, force: true })
 console.log('channel-registry-tests: 全部通过')

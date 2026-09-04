@@ -25,7 +25,7 @@ export type DoctorStatus = 'ok' | 'missing' | 'degraded'
 
 export interface DoctorItem {
   /** 稳定 id(报告/测试锚点) */
-  id: 'node' | 'extension' | 'agent-reach' | 'hbcli' | 'flyai' | 'sidebar' | 'llm-key' | 'calendar'
+  id: 'node' | 'extension' | 'agent-reach' | 'hbcli' | 'flyai' | 'sidebar' | 'llm-key' | 'calendar' | 'map-tools' | 'ask-user'
   /** 展示名 */
   label: string
   status: DoctorStatus
@@ -197,7 +197,40 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
           fix: `npx gotry setup calendar --off(恢复默认不挂载),或在 ${calProfilePatch} 覆盖 calendar 行 config 填 username(指引: npx gotry setup calendar --status)`,
         })
 
-  // 7. LLM key:显式让渡给 dsh 宿主(founder 2026-09-02:doctor 不管 key)
+  // 7. patch 分发面宿主插件(issue #113 L1 残量,design §3.1:初始化可见取代会话中段撞错)。
+  //    这类插件在 cordis patch 里是占位行,bin/gotry-inner.js 运行时解析——**解析失败整块
+  //    静默剔除,不挡启动**:模型只觉得「没有这个工具」,没人告诉它为什么。doctor 把两态照亮。
+  //    候选清单与 bin 解析逻辑同口径(map:repo vendored-node_modules / 包依赖;ask-user:dsh 闭包)。
+  const mapCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js'),
+    join(repoRoot, 'node_modules/dsh-map-tools/package.json'),
+    join(repoRoot, 'ts/node_modules/dsh-map-tools/package.json'),
+    join(home, '.dsh/profiles/web/node_modules/dsh-map-tools/package.json'),
+  ]
+  const mapHit = mapCandidates.find(p => existsSync(p))
+  items.push(mapHit
+    ? { id: 'map-tools', label: 'dsh-map-tools(地图/路线/POI)', status: 'ok', detail: `已就位(${mapHit})——地图工具可用(零 key,走 OSM/OSRM)` }
+    : {
+        id: 'map-tools', label: 'dsh-map-tools(地图/路线/POI)', status: 'missing',
+        detail: '未随包解析——启动时该 patch 条目被静默剔除,地图/路线/POI 工具不会出现在模型工具箱(缺地图不挡旅行规划,只少能力)',
+        fix: 'npx gotry doctor --fix 不覆盖此项:source 布局把 dsh-map-tools 放进 ts/dsh-runtime/node_modules(或 ts/node_modules);npm 布局重装 @danceiny/gotry(随发行版依赖提供)',
+      })
+
+  const askCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/vendor/deepseek-ai-dsh-tool-ask-user/package.json'),
+    join(repoRoot, 'node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
+    join(home, '.dsh/profiles/web/node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
+  ]
+  const askHit = askCandidates.find(p => existsSync(p))
+  items.push(askHit
+    ? { id: 'ask-user', label: 'dsh-tool-ask-user(结构化澄清卡)', status: 'ok', detail: `已就位(${askHit})——ask_user_question 澄清卡可用(web 原生卡片;headless+TTY 用 stdio 提供方)` }
+    : {
+        id: 'ask-user', label: 'dsh-tool-ask-user(结构化澄清卡)', status: 'missing',
+        detail: '未解析——启动时澄清卡注入被静默剔除,模型只能散文追问(人格契约 (5) 退化文本形态)',
+        fix: '重装 @danceiny/gotry——该依赖随 dsh 闭包自带,缺失多为安装不完整',
+      })
+
+  // 8. LLM key:显式让渡给 dsh 宿主(founder 2026-09-02:doctor 不管 key)
   items.push({ id: 'llm-key', label: 'LLM key', status: 'ok', detail: '由 dsh 宿主 UI 管理——不在 doctor 体检范围(gotry 不接触、不回显凭证)' })
 
   const broken = items.filter(i => i.status !== 'ok' && i.id !== 'llm-key')
