@@ -20,7 +20,7 @@ import {
   validateDshRuntimeClosure,
 } from '../ts/scripts/dsh-runtime-closure.ts'
 
-assert.equal(BOOKING_SURFACE_SCHEMA_VERSION, 'booking.surface.v1')
+assert.equal(BOOKING_SURFACE_SCHEMA_VERSION, 'booking.surface')
 assert.deepEqual([...BOOKING_READ_ACTION_KINDS].sort(), [
   'checkout.prepare', 'hotel.focus', 'hotel.select', 'offer.check', 'offer.select',
   'offers.compare', 'offers.query', 'offers.view.patch', 'order.observe',
@@ -33,7 +33,7 @@ assert.equal(typeof startBookingCopilotFromEnvironment, 'function')
 
 const schemaPath = fileURLToPath(import.meta.resolve('@danceiny/gotry/booking-surface/schema'))
 const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as { $id?: string }
-assert.equal(schema.$id, 'https://gotry.dev/schemas/booking.surface.v1.schema.json')
+assert.equal(schema.$id, 'https://gotry.dev/schemas/booking.surface.schema.json')
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CLEAN_CONSUMER_INSTALL_TIMEOUT_MS = 300_000
@@ -95,7 +95,7 @@ const report = JSON.parse(packReport.stdout) as Array<{ files: Array<{ path: str
 const files = new Map(report[0]!.files.map((entry) => [entry.path, entry]))
 for (const path of [
   'bin/gotry-booking-copilot.js',
-  'schemas/booking.surface.v1.schema.json',
+  'schemas/booking.surface.schema.json',
   'ts/src/booking-surface/contracts.ts',
   'dist/src/booking-surface/index.js',
   'dist/src/booking-surface/runtime.js',

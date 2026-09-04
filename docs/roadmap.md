@@ -6,11 +6,11 @@
 
 ---
 
-## 当前位置(2026-08-27)
+## 当前位置(2026-09-03)
 
 ### 发行状态
 
-**当前 npm latest = `0.0.1-rc.16`(已发布);`rc` dist-tag 已同步指向 rc.16。**
+**当前 npm latest = `0.0.1-rc.18`(已发布,2026-09-03 registry 回拉实测:559 包干净安装 / bin `--help` / dist 入口全通);`rc` dist-tag 同步指向 rc.18。**
 
 - 2026-08-30 上午 #50 核实 registry 无 rc.16(「已发布」口径勘误);**同日 13:00Z 补发落地**(npm time 实测 `0.0.1-rc.16` = 2026-08-30T13:00:38Z),GitHub Release 13:03Z 随建(#76 修复生效)。
 - 2026-09-02 #50② 收口:回拉实测 latest=rc.16(干净安装 489 包 / bin `--help` / dist 入口全通);`rc` 由滞留 rc.7 迁至 rc.16,杂散 `rc.5` 改指同名版本、`rc.11–rc.14` 各自同名自洽——五别名彻底删除需 npmjs web UI(granular token 对 DELETE dist-tag 端点 403,curl 复核同)。
@@ -34,6 +34,9 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 - **工具描述首行生成 + doctor 宿主插件覆盖面(2026-09-04,issue #113,L1 残量收口)**:七个检索工具描述统一前置 channel-registry 生成的「服务意图 × 通道顺位」卡(选工具与失败改道两决策点同表,注册表加行自动一致);doctor 补齐 patch 宿主插件 `dsh-map-tools`/`dsh-tool-ask-user` 两态照亮(此前解析失败整块静默剔除无人知)——实测暴露 source 布局 dsh-map-tools 全布局缺席,地图工具一直被静默丢弃,补依赖渠道留 founder 拍板。
 - **启动一次性 doctor 摘要(2026-09-04,issue #114,L2)**:web/headless 启动时分离子进程后台跑只读体检——待处理项一行 stderr、全 ok 静默、零写盘、不阻塞不重复刷、benchmark 面豁免;「初始化时可见」取代「会话中段撞错」。bootstrap-tests §10 钉行为。
 - **解译器迁移收尾(2026-09-04,issue #115,D-23 收口)**:anything/web/github/video/agent_reach/session_login 六渠道入效应注册表,23 工具外部依赖面全收敛 effect_interpreter.v1(策略行逐条拍板:timeout 类瞬时重试/配置态与风控类永不重试/反射桥透传零重试);工具面照旧平铺,证据链逐源标注不变;effect-tests §12 钉语义。
+- **商店版扩展检测·自适应文案(2026-09-04,issue #117,D-24 清偿)**:needs-extension 文案按本地通道落位自适应——商店版用户不再看到开发者模式/本地通道指引,只推商店一键装与「已装即可」提示;桥失败摘要与 doctor 扩展项同步自适应;extension-tests §38 钉行为。
+- **事实闸覆盖面·酒店入闸 + 渲染原语(2026-09-04,issue #118,D-26 收口)**:HotelFact 第三形态(exact-date 酒店检索 hit/miss 落账,flyai/session 两通道接线;摸底不落账、传输失败不落负事实、打码价不落数字价);gotry_fact_gate 酒店 claim 入闸(目的地+档期回溯,无事实 fail-closed);渲染原语单向生成——renderFlightFact/renderHotelFact 行内嵌 fact 锚点,闸侧锚点优先确定性回溯,手改锚点即违例。fact-gate-tests §10(56 pass)。政策生产端(实时签证 API)仍记 D-26 外部依赖。
+- **legacy vendored dsh 回退移除(2026-09-04,issue #120,D-27 清偿)**:决策=移除运行时路径——dsh 解析只认 root manifest/依赖闭包,找不到即 fail-closed 报错指重装(旧回退 Node 窗口已断,解析成功只会变玄学失败);inner vendoredDshEarly/legacy-vendored 分支同步移除,DshRuntime.source 收敛 'root';§48 e2e 断言改为「非 benchmark 也不再回退」。vendor 闭包目录不属本清偿范围(锁一致性面另行处置)。
 - **可下单事实闸(2026-08-30,issue #46,ADR-19)**:`gotry_bookable_fact.v1` 单一数据源 + 产物事实闸——flyai/session exact-date 检索结果 hit/miss 逐条落账(query_id 可重放),**exact-date miss 禁止用历史班期/相邻日期/航线页回填**;`gotry_fact_gate` 交付前必过(claim 反向抽取回溯 + 夜数/O&D/预算不变式),blocked 不得宣称「已验证方案」;persona (20) 红线化。run-all §39 locked golden 2027 E2E + smoke §16。覆盖面缺口记 D-26。
 - **npm 形态自定义端点修复(2026-08-30,issue #48)**:bin env 映射补 `LLM_BASE_URL → DEEPSEEK_BASE_URL`——rc.15 回拉实测暴露只映射 key 不映射 base,OpenAI 兼容端点 key 被发往 DeepSeek 官方端点必然 401。修复后三件套 `.env`(`LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL`)即全链通;显式 `DEEPSEEK_BASE_URL` 仍优先,默认官方路径零改变。dsh 侧(llm-deepseek)与仓内 `dsh-llm.ts` 拼接语义核验一致(`${base}/chat/completions`)。README 双语 + `.env.example` + bin help 同步。
 - **价表 v2 + 价格漂移长机制(2026-08-30,issue #49,ADR-20)**:
@@ -91,9 +94,11 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | **v0.0.1-rc.13** | **已发 npm,latest 直指本版**(registry 回拉实测通过) | 账号会话三连修复:登录自动检测(已登录零弹窗)+ 登录页置前可见性(`newPage` 纪律)+ 例行测试永不自动开窗;README 可读性一版(18 工具分组/账号会话隐私专节/状态重排) |
 | **v0.0.1-rc.14** | **已发 npm,latest 直指本版**(registry 回拉实测:干净安装/bin/npm 页英文 README) | 文档中英分开发布:`README.md`(英文,完整镜像)+ `README.zh-CN.md`(中文)互链,顶层 switcher;npm files 增补中文版 |
 | **v0.0.1-rc.15** | **已发 npm,latest 直指本版**(registry 回拉实测:干净安装/bin/插件加载全通) | issue #17 采纳:预订 saga 状态机具名化 `booking_saga_fsm.v1`(ADR-17,纯函数词汇层+§36 与账本物理对账)+ HITL 审批边/合规确定性边词汇;run-all 新增 §36 |
-| **v0.0.1-rc.16** | **已发 npm,latest 直指本版**(2026-08-30T13:00Z 补发落地;2026-09-02 回拉实测干净安装/bin 全通,#50② 同窗完成 dist-tag 治理) | issue #49 采纳:价表 provider-aware v2 + MiniMax 入表(ADR-20)+ 价格漂移监测长机制 + CHANGELOG 机制 + §38 扩展桥 zombie port 根治;run-all §41/§42 两闸。详见上方「架构面增量」 |
-| dev(未发) | 持续 main 直推 | issue 冲刺 14/14 交付(README 一致性/域边界/数据污染根除等),17 套 ALL GREEN |
-| 后续 | founder 侧 | 种子用户邀约;rc.16 补发 + dist-tag 卫生(rc tag→最新可用版、清杂散 rc.5/rc.11-rc.14)同一次浏览器 approve 窗口内做完(#50②③) |
+| **v0.0.1-rc.16** | **已发 npm**(2026-08-30T13:00Z 补发落地;2026-09-02 回拉实测干净安装/bin 全通,#50② 同窗完成 dist-tag 治理) | issue #49 采纳:价表 provider-aware v2 + MiniMax 入表(ADR-20)+ 价格漂移监测长机制 + CHANGELOG 机制 + §38 扩展桥 zombie port 根治;run-all §41/§42 两闸。详见上方「架构面增量」 |
+| **v0.0.1-rc.17** | **已发 npm**(2026-09-02) | Session Bridge Chrome Web Store 上架(D-25 清偿):一键装 + 自动更新;扩展安装职责返交浏览器(needs-extension 返 installUrl 可点链接,dsh UI 渲染);商店版/本地版双通道同信互通 |
+| **v0.0.1-rc.18** | **已发 npm,latest 直指本版**(2026-09-03 回拉实测:559 包干净安装/bin/dist 入口全通) | CLI 层「更像个插件」:缺 LLM key 不再 CLI 挡路(静默委托 dsh);`gotry setup` 收窄为只管扩展检查(不再代装 hbcli/agent-reach/sidebar);README 双语 + user-guide 卸 key 引导 |
+| dev(未发) | 持续 main 直推 | 迪拜 session 复盘修复(defeb5b:doctor 体检面/flyai 429 needs-setup)+ 会话面机/酒/火三通道收官(da6c138/5cf1e4a/7b31ad5)+ ADR-24 v2 turn 双出口与 handoff 收集闭环(PR #109) |
+| 后续 | founder 侧 | 种子用户邀约;**v0.0.1 正式版拍板**(去 -rc 后缀,发布闸五件见 AGENTS.md);rc.16 补发 + dist-tag 卫生已结(#50②③,杂散别名删除需 npmjs web UI) |
 
 **M3 工程面已推进但 Exit 未关闭；M4 自 2026-08-26 起由 founder 授权并行推进，不是 M3 Exit 证明。** M4 记忆域 T1 行为链已闭合（动态吸收→读回→效用→触达→度量），六层重设计已落地 `memory-design.md`，分期增量为 P1 旅行时间线→P2 同行人档案→P3 时间窗衰减→P4 双区会话后置。
   - **2026-08-28 会话数据面并行线(RFC `user-session-data-rfc.md`,loopx goal `gotry-session-data-goal`)**:P0 官方通道尽调(飞猪 FlyAI 无 key 只读,机/火检索官方主链路)+ P1 会话骨架(ReadGuard 物理只读/携程 batchSearch 嗅探/节律闸,登录态=存在前提)+ P2 action-cache 自愈层/美团骨架(a11y 兜底,匿名 403 实测)/金标准 20 查询/**#21 字段 fixture scorer+双源合同+waiting-attach no-spend 已落** + P3 工具面两工具(smoke §12,当时 17 工具)——与 M4 记忆域正交推进;

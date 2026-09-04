@@ -198,7 +198,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 > **数据源唯一权威面 = `data-sources.md`**(2026-08-22 立):领域矩阵 × 四层架构(静态包/免费实时/hbcli 桥/OSM 生态) × Google Place 链路(hbcli→search OpenAPI→geography) × 证据链契约 × TREK 参考采纳。本节只留运行时概要。
 
 - 运行时:三条已实证路径——①TS 进程内(自研循环,~6ms/解);②真实 dsh headless+cordis 组合(pi-ai→MiniMax,`cordis.gotry-patch.yml`,68ea364);**(v0.0.1-rc.2 起第三条** Python CLI 桥下线,纯 TS)。环境三件套 `LLM_API_KEY/LLM_BASE_URL/LLM_MODEL`(兼容旧 DEEPSEEK_*)。
-- 复用落地:dsh(import,rc 已对齐)/loopx(import,0.5.1 运行中)/Z3(import,双绑定)/hotelbyte-cli(import+extend,place 链路见 data-sources.md §4)/travel_agent·ai-agent-book·TREK(reference,零代码——TREK 数据面模式采纳表见 data-sources.md §5)。
+- 复用落地:dsh(import,rc 已对齐)/loopx(import,0.5.1 运行中)/Z3(import,双绑定)/hotelbyte-cli(import+extend,place 链路见 data-sources.md §4)/T 系统·ai-agent-book·TREK(reference,零代码——TREK 数据面模式采纳表见 data-sources.md §5)。
 
 ## 7. 测试与验证策略
 
@@ -404,6 +404,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：v1 
 - **工具描述首行生成 + doctor 宿主插件覆盖面(2026-09-04,issue #113,L1 残量收口)**:①`toolRoutingHeadline`(channel-registry)——检索工具描述统一前置注册表生成的「服务意图 × 当前通道顺位(证据级降序)」卡,七个检索工具(flyai/session/hotel/weather/flight_verify/anything/web)经 `routed()` 接线,模型选工具时(读描述)与失败后(读 routing)两个决策点拿到同一张表;注册表加行描述自动一致,非检索工具零误伤(channel-registry-tests §8 断言接线前缀)。②doctor 补齐 patch 分发面宿主插件两态——`dsh-map-tools`/`dsh-tool-ask-user`(此前只覆盖 calendar):这类插件运行时解析**失败即整块静默剔除,不挡启动**,模型只觉得「没有这个工具」没人说为什么;doctor 候选清单与 bin/gotry-inner.js 解析逻辑同口径(repo vendored-node_modules/包依赖/dsh 闭包),隔离环境 missing 断言进 channel-registry-tests §7。实测暴露:**当前 source 布局 dsh-map-tools 全布局缺席**(未 vendor、非 dsh/gotry 依赖)——地图工具一直被静默丢弃,doctor 现在照亮此面,补依赖渠道留 founder 拍板。
 - **启动一次性 doctor 摘要(2026-09-04,issue #114,L2)**:`npx gotry web`/headless 启动时(bin/gotry-inner.js 在 spawn dsh 前)以**分离子进程**后台跑只读体检(`gotry-bootstrap.js doctor --summary`)——有待处理项打一行 stderr(「N 项待处理(…=缺/半可用)——对话里让助手调 gotry_doctor 看详情,或终端 npx gotry doctor」),全 ok 静默零输出;零写盘零 header、detached+unref 不阻塞启动、恒 exit 0、benchmark 面豁免保持零杂音。inner 生命周期天然一次不重复刷。「初始化时可见」取代「会话中段撞错」(design §3.1③);bootstrap-tests §10以隔离 HOME 钉行为(stderr 一行/零写盘/恒 exit 0)。
 - **解译器迁移收尾(2026-09-04,issue #115,D-23 收口)**:六渠道入效应注册表——`ANYTHING_SEARCH`/`WEB_READ`/`GITHUB_SEARCH`/`VIDEO_SUBTITLE`/`AGENT_REACH`/`SESSION_LOGIN`,**23 工具的全部外部依赖面收敛到 effect_interpreter.v1**(退避/熔断/declined 面统一,没有策略表行就没有效应)。策略行逐条拍板:ANYTHING 同 HBCLI 族(timeout 瞬时重试 1 次);WEB_READ 同免费公共源族(瞬时抖动重试+熔断);GITHUB/VIDEO(verdict=timeout 重试 1 次,not-installed=配置态不重试);AGENT_REACH 反射桥透传永不重试不熔断(wrapper 不是 router,重试即放大上游配额消耗);SESSION_LOGIN 同浏览器风控族。工具面照旧平铺,证据链逐源标注不变(effect-tests §12 四组断言:入表透传/永不重试族/timeout 重试/ mock 同语义)。
+- **商店版扩展检测·自适应文案(2026-09-04,issue #117,D-24 清偿)**:needs-extension 文案按本地通道落位状态自适应——`needsExtensionSummary`/`localExtensionInstalled`(extension-bridge):本地 unpacked 已落位(`~/.gotry/extension/manifest.json` 在)→ 保留完整双通道指引(商店+GitHub+开发者模式);未落位(商店版用户/未装)→ **自动跳过开发者模式/本地通道文案**,只推商店一键装并给「已装商店版?打开 Chrome 即可」提示。桥失败摘要(extension-not-connected)同函数同语义;doctor 扩展项 detail 明示「商店版用户可忽略本项,以运行时 verdict 为准」;extension-channel 静态常量 `NEEDS_EXTENSION_HINT` 退役为自适应函数(静态文案无法感知安装状态正是 D-24 残量病灶)。extension-tests §38 三条新断言(31 段全绿)。
+- **事实闸覆盖面·酒店入闸 + 渲染原语(2026-09-04,issue #118,D-26 收口)**:①`HotelFact`(gotry_bookable_fact.v1 第三形态)——exact-date 酒店检索 hit/miss 落账(flyai-hotel/session:ctrip-hotel 两通道接线);纪律与机/火同源:摸底(未定档期)不落账、needs-setup/error 传输失败永不落负事实、**不落数字价**(上游打码价保真,只记在架家数)。②`gotry_fact_gate` 酒店 claim 入闸——断言可住性(有房/可订/已核验/✓)的行按目的地+档期回溯酒店事实,无事实 fail-closed(`unverifiable_hotel_claim`),exact-date miss 在册却写有房 = `not_in_source`。③**渲染原语单向生成**:`renderFlightFact`/`renderHotelFact` 每条事实行内嵌 `<!-- fact:<fact_id> -->` 锚点——产物经原语渲染即自带溯源锚,闸侧**锚点优先确定性回溯**(启发式让位),手改/伪造锚点 = `fact_anchor_unknown` 直接违例。fact-gate-tests §10 八断言(56 pass)。余量:政策事实生产端(实时签证 API)仍记 D-26 外部依赖。
 
 Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures/test-only aggregate admission plus a deterministic PR/nightly/weekly/milestone cadence policy/planner. It returns admission, `pass^k`, budgets, calibration, failure-registry, and cross-benchmark synthesis obligations only; it does not schedule or launch adapters, spend, generate a benchmark score, create an Agent optimization round, or support an uplift claim. No external runner, Python runtime dependency, baseline, or matched production evidence is included.
 
@@ -430,7 +432,6 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 | D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
 | D-23 效应解译器迁移未完成(ADR-18) | 见下方「D-23 效应解译器迁移未完成」 |
 | D-26 事实闸覆盖面缺口(ADR-19) | v1 闸覆盖航班+政策 claim;酒店 claim 未入抽取面(flyai hotel 打码价语义独立,不落 bookable facts);政策事实只有渲染侧+闸侧,生产端无实时签证/入境源——政策 claim 只能降级「未确认」或省掉;反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
-| D-27 vendored 仓内形态 Node 兼容窗口断裂 | 见下方「D-27 vendored 仓内形态 Node 兼容窗口断裂」 |
 | D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」 |
 | D-30 检索工具 typed 参数契约迁移完成待 canary(ADR-25 配套;2026-09-04 五刀 23/23 工具全 typed 化) | 普通模型性能的最大单项杠杆(tool-orchestration-design.md §4③):工具参数面曾是无类型 `query: json` blob,模型看不到逐字段 schema——dsh `defineTool` 原生支持 typed ParameterSchemaSpec(object/properties/enum/required + execute 前 validateArgs),blob 是本仓的选择不是上游限制。**已全部迁移**(刀法总纲:有 required 字段的工具宿主权拒 blob,全可选工具保留 interpretArgs 容忍层;motivation/companion/trip_log 的 evidence P0 红线进 schema 由宿主权闸;agent_reach 反射桥 action 保持开放)——迁移锁 smoke §1/§6/§12/channel-registry-tests §8。**余量**:普通模型 canary 一轮为证据(过闸才进发布面);fact_gate 的 itinerary 嵌套收紧归 #118 D-26 | `ts/src/index.ts` 参数面;dsh-tools schema;issue #102 同模式 |
 
@@ -468,11 +469,11 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 
 **部分清偿**:词汇层+生产/mock 解译器+韧性横切已落地,五工具(flyai/hotel/session/weather/flight_verify)与 realtime-pricing 默认查询口已走 `interpretEffect`;`anything/web_search/video_subtitle/github_search/agent_reach/session_login` 等其余渠道工具仍直连能力层(同款永不抛错契约,无退避/熔断/mock 面)。按渠道逐个搬,搬一个删一横切;全部走通即抄销 | `ts/capabilities/effect.ts`;`docs/effect-interpreter.md` §4;run-all §37
 
-**D-27 vendored 仓内形态 Node 兼容窗口断裂**
+**D-27 vendored 仓内形态 Node 兼容窗口断裂——✅ 已清偿(2026-09-04,issue #120)**
 
-**发现于 2026-08-30(issue #77 E2E 前置)，Round 5 部分清偿**:
+**发现于 2026-08-30(issue #77 E2E 前置)，Round 5 部分清偿,2026-09-04 全面清偿**:
 - `session-persistence-jsonl` 需 `node:zlib` 的 `createZstdDecompress`（Node ≥22.15，22.14 实测缺导出）；Round 5 已把 package engines、CLI 启动前闸与源码安装文档统一到 22.15+，并让 source checkout 优先解析 root alpha.3 closure；source 普通运行仍保持 `ts/dsh-runtime/` cwd 与状态连续性。
-- legacy `ts/dsh-runtime` alpha.1 只保留为非 benchmark 解析兼容；其 `.ts` 直载仍受 Node strip-only 限制，parameter properties（`ts/capabilities/resilience.ts:109` 与 `session/action-cache.ts:61`）在 Node 26 会触发 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。benchmark 对该 legacy runtime 在 spawn 前稳定拒绝，npm/dist 形态不受影响，且 legacy fallback 不承诺可运行。**剩余赎回**:若继续保留 legacy vendored 工作流，独立 PR 升级整套 vendor 或改两处 parameter properties 并真跑 smoke；不得把 legacy fallback 当 alpha.3 parity 证据 | `ts/capabilities/resilience.ts`;`ts/capabilities/session/action-cache.ts`
+- legacy `ts/dsh-runtime` alpha.1 曾保留为非 benchmark 解析兼容;其 `.ts` 直载受 Node strip-only 限制（parameter properties 触发 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`）。**清偿动作（issue #120,决策=移除运行时路径）**:`selectDshRuntime` 删除 legacy vendored 回退——dsh 解析只认 root manifest/依赖闭包,找不到即 fail-closed 并给明确重装指引;inner 的 vendoredDshEarly/`legacy-vendored` source 分支/报错文案同步移除,`DshRuntime.source` 收敛为 `'root'`;§48 e2e 断言改为「非 benchmark 也不再回退 vendored」。Round 5 的「不承诺可运行」口径就此落地为「不再解析」;残余的 `ts/dsh-runtime/vendor/` 闭包目录不属本清偿范围(锁一致性面,另行处置)。
 
 **D-28 外部 benchmark 驱动的 Agent 泛化证据缺口**
 
@@ -583,6 +584,7 @@ Round 7 将 benchmark opt-in 收敛为 minimal kernel，并把 system-prompt/roo
 | `dsh-plugins-shortlist.md` | dsh 社区插件选型(awesome-dsh-plugin 全量调研,issue #9) |
 | `deerflow-research.md` | DeerFlow 研究 → gotry 优化目标 T1-T4(issue #10) |
 | `maka-research.md` | Apache Maka(Incubating)研究 → 与 ADR-15 事务化状态基座逐项对照(durable-execution 机制/可采纳面,研究底稿供 founder 拍板) |
+| `enterprise-travel-reference-study.md` | **某企业级差旅 Agent 系统八维参考研究(2026-09-03,来源脱敏)**:双轨执行/写闭环→M5 设计输入(ADR-17/S4 接缝),合规收口装饰器/领域 skill→M6 输入,生产级状态→D-15 触发时参考,双模型/上下文压缩→不采纳(ADR-24 已覆盖);差异化保留清单与「不追求代码量等价」判定 |
 | `hotelbyte-skills-design.md` | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
 | `e2e-prompts.md` | dsh 端到端真 LLM 验证记录(§1-§11,wrapper/澄清卡/背景调查等) |
 | `memory-design.md` | **记忆域设计**:C 端六层重设计(M1-M6 现状映射/P1-P4 分期增量/铁律与验收),M4 交付「六层框架重设计」的正式文档 |
