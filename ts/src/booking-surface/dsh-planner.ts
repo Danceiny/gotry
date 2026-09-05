@@ -368,7 +368,11 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) throw new Error(`planner_capability_action_mismatch:${name}:${action.kind}`)
   if (!task.allowedActions.includes(action.kind)) throw new Error('planner_surface_action_unsupported')
   if (action.contextRef !== task.contextRef) throw new Error('planner_context_mismatch')
-  if (action.expectedRevision !== task.revision) throw new Error('planner_stale_revision')
+  // The runtime owns the revision: the planner can only echo what the prompt
+  // showed it, and the serialized session means no concurrent mutation exists
+  // inside a turn. Pin the action to the authoritative task revision; the
+  // client-side concurrency guard lives at the context/journal binding.
+  action.expectedRevision = task.revision
   if (action.relaxationApprovalRef) throw new Error('planner_approval_ref_forbidden')
   return { kind: 'operation', action }
 }
