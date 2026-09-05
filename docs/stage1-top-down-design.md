@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-05 起,指标面板第一切片(issue #138):`build-metrics-report.ts` 只读聚合既有侧车(事实闸 verdict 分布与 blocked 率/通道健康/事故面/桥延迟 >500ms 复审锚点/账本与 doctor 报告存在性)成单一 markdown;工程面,不构成 M3 Exit 证据(归 #22)。
 - 2026-09-04 起,事实闸覆盖面(issue #118,D-26 收口):HotelFact 第三形态(exact-date 酒店检索落账,摸底/传输失败/打码价纪律同机火)+ gotry_fact_gate 酒店 claim 入闸 + 渲染原语单向生成(renderFlightFact/renderHotelFact 内嵌 fact 锚点,闸侧锚点优先确定性回溯);政策生产端(实时签证 API)仍记 D-26 外部依赖。
 - 2026-09-04 起,legacy vendored dsh 回退移除(issue #120,D-27 清偿):dsh 解析只认 root manifest/依赖闭包,找不到即 fail-closed 报错指重装;DshRuntime.source 收敛 'root'。
 - 2026-09-04 起,事实闸覆盖面(issue #118,D-26 收口):HotelFact 第三形态(exact-date 酒店检索落账,摸底/传输失败/打码价纪律同机火)+ gotry_fact_gate 酒店 claim 入闸 + 渲染原语单向生成(renderFlightFact/renderHotelFact 内嵌 fact 锚点,闸侧锚点优先确定性回溯);政策生产端(实时签证 API)仍记 D-26 外部依赖。
