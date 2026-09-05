@@ -166,83 +166,117 @@ the source checkout. When `GOTRY_BRIDGE_E2E_BIN` is set, it additionally
 exercises that clean installed-package CLI. The standard regression creates a
 temporary clean consumer when the variable is absent, while CI prepares the
 same route explicitly because the historical root npm lock is not the publish
-consumer dependency closure. It
-verifies default-off behavior, environment isolation, private config
-rejection, real output truncation, a real deadline, global `both` mode being
-overridden to one native bridge schema, and source/installed requests exposing
-no other model tool. A clean-package projection fixture adds executable
-inline/reordered future plugins: default-off must actually load the poison,
-while benchmark opt-in must record zero loads and still reach the bridge.
-Missing/duplicate `gotry-tools`, missing/duplicate injection anchors, and a
-pre-existing config-path field must all stop before relay activity. Conformance cases additionally cover prose/no-call
-correction, one real native call followed by tagged JSON, one format-only
-retry, retry exhaustion, and parent stdout suppression. Unit contracts
-additionally cover live-agent rejection,
-same-name identity shadows, final-assembly/pre-step schema drift, agent
-cleanup without double disposal, and plugin-unload quarantine. It is not ChinaTravel
-treatment evidence. Round 2 executed one frozen, diagnostic-only treatment:
-the provider preflight and planner succeeded, but the runner returned 3 before
-evaluation because the agent described an intended CLI/tool action without a
-structured bridge call or parseable tagged JSON. Official scores therefore
-remain null ([Round 2 evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18215707)). Round 3 addressed that general prompt/tool/output conformance gap, but its new
-frozen treatment stopped after one runner spawn with planner/runner exit 1,
-zero released terminal bytes, no evaluator entry, and null official scores
-([Round 3 evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18232139)).
-Round 4's treatment at SHA `5ebddb2` had primary preflight pass, but the
-planner and runner both exited 1 after 30.968 seconds, released zero terminal
-bytes, never entered the evaluator, and produced null official scores. The
-product Node gate was v24.20.0 while that treatment used v26.3.0, so it is
-diagnostic-only and has no uplift claim. GitHub Node 22/24 §48 separately
-exposed a source default-off 30-second lifecycle hang. Round 5 is limited to
-removing the timer/keepalive preload; declaring all 216 packages in the
-root/package DSH `0.1.2-alpha.3` closure as exact direct dependencies;
-requiring the manifest, package lock, and root pnpm importer to expose the same
-216-name set; failing publish preverify on omissions, mixed versions, or ranges; resolving
-that locked runtime before the legacy vendored fallback in
-a source checkout; preserving source normal-mode state continuity under
-`ts/dsh-runtime/gotry-state/` while benchmark opt-in and npm-package runs use
-the invocation directory for isolation; rejecting a non-alpha.3 benchmark
-runtime before spawn; enforcing Node 22.15+; and adding a benchmark-only
-structured diagnostic pipe with allowlisted redacted reason codes while stdout
-remains fail-closed. The frozen treatment at code SHA `752e54c` stopped after
-140.715 seconds with `child_nonzero_exit`, zero terminal bytes, and null
-evaluator/official scores, so it remains diagnostic-only. The lock-consistency
-successor does not rewrite that UID attribution.
-Round 6 narrows the remaining `child_nonzero_exit` ambiguity without reading
-raw stderr. Benchmark conformance observes only the final structured
-`turn/end.reason` and maps allowlisted model codes or limited HTTP status values
-to closed auth, capacity, server, transport, stream, request, and generic
-runtime families; blocked, max-token, aborted, and interrupted are also closed
-enums. A per-session arbiter writes at most once and retains a more specific
-bridge/conformance failure over a later generic terminal error. Transient model
-errors that recover before the final turn end emit no failure. Free-form
-messages, paths, prompts, request IDs, and credentials are neither inspected
-nor reflected. This changes diagnostics only: stdout, retry policy, prompts,
-tools, evaluator behavior, and scoring remain unchanged. The frozen ChinaTravel
-treatment at code SHA `c61600b` used the clean-installed tarball SHA-256
-`8df65b69873034df282dfa126ab93171fa9f1d4177cf17c5f9c694e737ff1161`,
-UID `phase2_familiar_20250321040138918100_00001`, and
-`deepseek-v4-flash`. It stopped after 49.546 seconds with parent reason
-`child_runtime_error`, zero terminal bytes, and null evaluator/official scores.
-Leakage and local credential/endpoint scans were zero. This is diagnostic-only
-evidence and creates no benchmark or uplift claim; a later documentation-only
-successor does not rewrite the treatment attribution.
-No external benchmark closure is claimed.
+consumer dependency closure.
 
-Round 7 changes the benchmark opt-in to a minimal kernel at code SHA
+Covered behavior:
+
+- Default-off behavior, environment isolation, private config rejection, real
+  output truncation, a real deadline, global `both` mode being overridden to
+  one native bridge schema, and source/installed requests exposing no other
+  model tool.
+- Clean-package projection fixture with executable inline/reordered future
+  plugins: default-off must actually load the poison, while benchmark opt-in
+  must record zero loads and still reach the bridge.
+- Missing/duplicate `gotry-tools`, missing/duplicate injection anchors, and a
+  pre-existing config-path field must all stop before relay activity.
+- Conformance cases: prose/no-call correction, one real native call followed
+  by tagged JSON, one format-only retry, retry exhaustion, and parent stdout
+  suppression.
+- Unit contracts: live-agent rejection, same-name identity shadows,
+  final-assembly/pre-step schema drift, agent cleanup without double disposal,
+  and plugin-unload quarantine.
+
+None of this is ChinaTravel treatment evidence.
+
+## Round ledger
+
+All frozen treatments to date are diagnostic-only: official scores are null and
+no uplift or external benchmark closure is claimed.
+
+### Round 2 — first frozen treatment
+
+Provider preflight and planner succeeded, but the runner returned 3 before
+evaluation because the agent described an intended CLI/tool action without a
+structured bridge call or parseable tagged JSON. Official scores null
+([evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18215707)).
+
+### Round 3 — agent conformance
+
+Added the provider-neutral conformance layer (prompt CLI/shell/Python
+references mapped to the sole native bridge `query.action=call`; one fixed
+correction; tagged-JSON terminal gate). The new frozen treatment stopped after
+one runner spawn with planner/runner exit 1, zero released terminal bytes, no
+evaluator entry, and null official scores
+([evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18232139)).
+
+### Round 4 — startup composition isolation
+
+The CLI projects the config-verified top-level insert to exactly one
+`gotry-tools` item before any optional host plugin resolves; anchor/name
+uniqueness fails closed before relay. The treatment at SHA `5ebddb2` had
+primary preflight pass, but planner and runner both exited 1 after 30.968
+seconds, released zero terminal bytes, never entered the evaluator, and
+produced null official scores. The product Node gate was v24.20.0 while that
+treatment used v26.3.0, so it is diagnostic-only. GitHub Node 22/24 §48
+separately exposed a source default-off 30-second lifecycle hang.
+
+### Round 5 — headless lifecycle containment + runtime resolution
+
+Scope: remove the timer/keepalive preload; declare all 216 packages in the
+root/package DSH `0.1.2-alpha.3` closure as exact direct dependencies; require
+manifest, package lock, and root pnpm importer to expose the same 216-name
+set; fail publish preverify on omissions, mixed versions, or ranges; resolve
+the locked runtime before the legacy vendored fallback in a source checkout;
+preserve source normal-mode state continuity under `ts/dsh-runtime/gotry-state/`
+while benchmark opt-in and npm-package runs use the invocation directory;
+reject a non-alpha.3 benchmark runtime before spawn; enforce Node 22.15+; add
+a benchmark-only structured diagnostic pipe with allowlisted redacted reason
+codes while stdout remains fail-closed.
+
+The frozen treatment at code SHA `752e54c` stopped after 140.715 seconds with
+`child_nonzero_exit`, zero terminal bytes, and null evaluator/official scores.
+The lock-consistency successor does not rewrite that UID attribution.
+
+### Round 6 — structured terminal diagnostics
+
+Narrows the remaining `child_nonzero_exit` ambiguity without reading raw
+stderr. Benchmark conformance observes only the final structured
+`turn/end.reason` and maps allowlisted model codes or limited HTTP status
+values to closed auth, capacity, server, transport, stream, request, and
+generic runtime families; blocked, max-token, aborted, and interrupted are
+also closed enums. A per-session arbiter writes at most once and retains a
+more specific bridge/conformance failure over a later generic terminal error.
+Transient model errors that recover before the final turn end emit no failure.
+Free-form messages, paths, prompts, request IDs, and credentials are neither
+inspected nor reflected. Diagnostics only: stdout, retry policy, prompts,
+tools, evaluator behavior, and scoring are unchanged.
+
+The frozen ChinaTravel treatment at code SHA `c61600b` used the
+clean-installed tarball SHA-256
+`8df65b69873034df282dfa126ab93171fa9f1d4177cf17c5f9c694e737ff1161`, UID
+`phase2_familiar_20250321040138918100_00001`, and `deepseek-v4-flash`. It
+stopped after 49.546 seconds with parent reason `child_runtime_error`, zero
+terminal bytes, and null evaluator/official scores. Leakage and local
+credential/endpoint scans were zero. A later documentation-only successor does
+not rewrite the treatment attribution.
+
+### Round 7 — minimal kernel
+
+Benchmark opt-in is a minimal kernel at code SHA
 `edb9392896625adbb48abae4a2ecf968dbfc0349`: tool budget, model override, one
 native bridge, and isolation/conformance remain; product prompt variables,
-process guards, consent hooks, and ordinary GoTry tools are not installed.
-The default path is unchanged. The CLI projects a stable, task-agnostic
-persona and accepts exactly one canonical root `insert` item and one canonical
+process guards, consent hooks, and ordinary GoTry tools are not installed. The
+default path is unchanged. The CLI projects a stable, task-agnostic persona
+and accepts exactly one canonical root `insert` item and one canonical
 `system-prompt` item; missing, duplicate, quoted, reordered, flow, or other
-noncanonical root items fail closed. The treatment used tarball SHA-256
+noncanonical root items fail closed.
+
+The treatment used tarball SHA-256
 `506f20f01966663cb30231df72e7163661402a61cf6d96691972c72cebb24e79`, UID
 `e20241028160248698752` (`easy`), and `deepseek-v4-flash`. Preflight passed
 without fallback; after 80.463 seconds the runner exited 1 and terminal output
 was zero/invalid. The evaluator was not entered, official score was null, and
 the case is not countable. The allowlisted reason was
-`child_bridge_runner_failed`. No uplift or external benchmark closure is
-claimed. The next optimization question is a generic bridge-tool schema and a
-recoverable domain-error contract, without changing provider routing or
-scoring.
+`child_bridge_runner_failed`. The next optimization question is a generic
+bridge-tool schema and a recoverable domain-error contract, without changing
+provider routing or scoring.

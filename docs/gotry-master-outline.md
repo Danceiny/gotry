@@ -35,7 +35,7 @@
 |---|---|---|---|---|
 | D0 | 总纲(本文) | 全部 | v0.1 | 工作分解、复用矩阵、决策门 |
 | D1 | GoTry 产品设计 | P | v0.1 已存在 | 定位/主循环/透明机制/指标/路线图;§7 架构需按本文第 3 章修订 |
-| D2 | 技术架构设计 | T | 未启动 | harness 基线(dsh)、插件清单、桥接设计、数据模型 |
+| D2 | 技术架构设计 | T | ✅ 已以 `architecture.md` 形态存在(唯一技术权威面) | harness 基线(dsh)、插件清单、桥接设计、数据模型 |
 | D3 | 业务计划书 | B | 未启动 | 市场、GTM、财务逻辑(参照 stai-business-plan 体例) |
 | D4 | 评测方案与评测集 | T | 未启动 | 可行性/事实性/透明度三件套 + 成本维度 |
 | D5 | MVP 实施计划 | P+T | 未启动 | 对应产品 M1 的工程落地:范围、里程碑、验收 |
@@ -53,10 +53,10 @@
 | **loopx** | MIT | **import** | 长程任务控制平面:TripState 的 objective/gates/evidence/quota;**异步深度规划的执行面**(见 3.6) | Python CLI/JSON,由 dsh 插件经子进程调用;零依赖,桥接成本低 | TS↔Python 跨语言 → 桥接面收敛为 trip-state + async-planner 两个插件 |
 | **Z3** | MIT | **import** | 可行性引擎的约束求解器(不自研求解器) | Python 包(z3-solver),作为 feasibility 插件的库依赖 | 求解超时 → 约束规模上限 + 超时降级为规则校验 |
 | **ai-agent-book** | Apache-2.0 | **reference** | 评测方法、记忆与上下文工程的设计参考 | 不引代码 | 书的 demo code 太弱(创始人判断),仅作设计参考;memory 实现基座见 T 系统(3.5) |
-| **T 系统(某企业级差旅 Agent 生产系统,来源脱敏)** | 内部资产 | **bridge + reference** | ①bridge:机票/酒店/偏好/差标等 MCP 工具(内部差旅 MCP 桥,工具名脱敏)在 PoC/MVP 期运行时桥接(受 G5 约束);②reference:双执行、WriteGate、tool-owned dates、可恢复 SSE、**六层后端 memory(见 3.5)**——与 ai-agent-book 同级,**只作设计参考,代码与 schema 均不搬用**,GoTry 按 C 端休闲旅行域自行实现 | MCP 协议桥(运行时调用,不引代码) | 内部资产不可代码级使用(创始人明确);且企业差旅域语义(差标/审批/部门)与 C 端休闲本就不宜照搬 |
+| **T 系统(某企业级差旅 Agent 生产系统,来源脱敏)** | 内部资产 | **bridge + reference** | ①bridge:机票/酒店/偏好/差标等 MCP 工具(脱敏)在 PoC/MVP 期运行时桥接(受 G5 约束);②reference:双执行、WriteGate、tool-owned dates、可恢复 SSE、**六层后端 memory(见 3.5)**——**只作设计参考,代码与 schema 均不搬用**,GoTry 按 C 端休闲旅行域自行实现 | MCP 协议桥(运行时调用,不引代码) | 内部资产不可代码级使用(创始人明确);企业差旅域语义(差标/审批/部门)不宜照搬进 C 端 |
 | **hotel-be(自有)** | 自有资产 | **bridge** | 原子能力:城市/目的地搜索、酒店搜索/报价/详情/静态数据、订单 | **已决:以 CLI 方式开放(G4 已关)**,基座为 hotelbyte-cli,见下行 | CLI 命令缺口(如地理映射)→ 同风格扩展回馈上游 |
 | **hotelbyte-cli** | MIT | **import + extend** | capability-hotelbe 的基座:agent-native CLI(hbcli),全命令 `--json`、`@file` 载荷、凭证自动探测、自更新单二进制(Bun/TS) | dsh 插件经子进程调用 CLI;盘点命令缺口后以同风格扩展 | 能力对齐 → T3 先做命令缺口盘点 |
-| **Chrome Extensions(MV3)平台** | 平台能力 | **reference + 自研** | 会话数据面传输主载(issue #21 方案 C,2026-08-30 founder 定案):GoTry Session Bridge 扩展一次性安装,替代 Chrome 144+ 逐连接 CDP 权限框(实测不可产品化);playwright-mcp `--extension` 仅作设计对照,不引代码 | `extension/` 自研 MV3 四文件(零构建,manifest 固定 key=扩展 ID 稳定)↔ Node 回环桥(`session/extension-bridge.ts`,`node:http` 长轮询,零新依赖);授权=一次性安装 + origin 白名单 + 既有会话内授权闸不变 | Chrome 安全模型再收紧 → 车道分离(扩展/cdp/persistent)只动车道不动语义;CWS 已上架(2026-09-02,一键装+自动更新=推荐安装面;商店重签 key ⇒ 商店版 ID 独立,桥双 Origin 白名单同信),GitHub Releases/bundled 本地通道保留(免审核/离线兜底;native messaging 备选二期) |
+| **Chrome Extensions(MV3)平台** | 平台能力 | **reference + 自研** | 会话数据面传输主载(issue #21 方案 C,2026-08-30 founder 定案):GoTry Session Bridge 扩展一次性安装,替代 Chrome 144+ 逐连接 CDP 权限框(实测不可产品化);playwright-mcp `--extension` 仅作设计对照,不引代码 | `extension/` 自研 MV3 四文件(零构建,manifest 固定 key=扩展 ID)↔ Node 回环桥(`session/extension-bridge.ts`,`node:http` 长轮询,零新依赖);授权=一次性安装 + origin 白名单 + 会话内授权闸 | Chrome 安全模型再收紧 → 车道分离(扩展/cdp/persistent)只动车道不动语义;CWS 已上架(2026-09-02;商店重签 key ⇒ 商店版 ID 独立,桥双 Origin 白名单同信),GitHub Releases/bundled 通道保留;native messaging 备选二期 |
 | **TREK** | AGPL-3.0 | **reference + rewrite(照着重写)** | 行程规划器的设计蓝本:Day planner/地图/预算/协作的功能面;trip/day/place/budget 领域工具 schema(150+ 工具、细粒度 OAuth scope、限流) | **已决:照着重写**(G3 已关)——以功能面与 schema 设计为参考自行实现,不引代码、不自托管 | AGPL 禁止 import;重写纪律:参考设计与 schema,**不逐行翻译源码** |
 | **layla.ai** | 商业闭源 | reference | 竞品与定价锚点,无代码复用 | — | — |
 | 小红书 / 圆周轨迹 | 平台/闭源 | reference | 共享经验层(D1 §6.6)的形态参照与差异化对象:民间智慧密度高但非结构化 | 数据不可引;冷启动只做事实断言的人工提炼,不搬运内容(版权红线) | 形态可学,数据自建 |
@@ -120,8 +120,7 @@ dsh 内核(Cordis,import)
 
 **LLM 语义层是自研增量**(ai-agent-book 仅作设计参考):动机画像(跨年)、旅行复盘沉淀——写入走与 WriteGate 同级的审计路径,用户可见、可编辑(红线 6)。
 
-**设计参考阅读清单**(T 系统内部实现,路径脱敏,仅用于理解设计、非移植目标):偏好三级分解(hotel 偏好类型)、双区会话记忆三件套(session memory + hot context + notebook)、位置推断工具
-- 、敏感参数填充模块、请求级画像缓存(singleflight)——均为 T 系统内部实现,路径脱敏。
+**设计参考阅读清单**(T 系统内部实现,路径脱敏,仅用于理解设计、非移植目标):偏好三级分解(hotel 偏好类型)、双区会话记忆三件套(session memory + hot context + notebook)、位置推断工具、敏感参数填充模块、请求级画像缓存(singleflight)。
 
 ### 3.6 异步深度规划:「一小时后回来,不失望」
 
@@ -243,15 +242,3 @@ D1 需要 v0.2 修订:①§7.1 分层架构改写为 3.2 的 dsh 插件视图,§
 - [Eigent AI: DeepSeek Harness — Open-Source Agent Runtime](https://www.eigent.ai/blog/deepseek-harness-agent-runtime)
 - [hotelbyte-com/hotelbyte-cli(GitHub)](https://github.com/hotelbyte-com/hotelbyte-cli) — MIT,agent-native CLI(hbcli),全命令 `--json`、`@file` 载荷、凭证自动探测、自更新单二进制
 - T 系统 memory 蓝本(六层后端 memory,3.5 节列有结构清单;本地路径脱敏)
-
-## 修订史
-
-| 版本 | 日期 | 变更 |
-|---|---|---|
-| v0.1 | 2026-08-22 | 初稿:工作分解、复用矩阵、dsh 基线、决策门 |
-| v0.2 | 2026-08-22 | 吸纳创始人四项反馈:①memory 基线改为 T 系统六层 port,ai-agent-book 降为设计参考(3.5);②capability-hotelbe 定为 hotelbyte-cli CLI 方式(G4 关);③dsh 不锁版本 bet on it(G2 关);④新增异步深度规划「一小时后回来,不失望」(3.6)及工作包 P5/T7 |
-| v0.3 | 2026-08-22 | 创始人澄清:T 系统代码不能直接用,与 ai-agent-book 同为设计参考——废除 port 策略,复用策略收敛为 import/bridge/reference 三种;代码级复用仅限 open-source import |
-| v0.4 | 2026-08-22 | 创始人决策:G3 关闭——TREK 不卡 AGPL 法务,照着重写(reference + rewrite):以功能面与工具 schema 为参考自行实现;新增工作包 T8(结构化行程器) |
-| v0.5 | 2026-08-22 | 创始人判断落纲:①动机层 = 最大差异点 + B2B 复用接缝(新 3.7,两层为什么包裹,principal/sponsor 分离,原 3.7 顺延为 3.8);②新增「素材是憧憬的表达式,不是目的地指令」铁律(约束先于素材 + 意象检索 + 下一次出发清单);D1 同步增量(v0.2 部分);新增工作包 P6 |
-| v0.6 | 2026-08-22 | 创始人成本观落纲:全成本模型(D1 §6.5)——成本的真实单位是生命体验;门到门全成本(班次/前置缓冲/生物钟/接驳/到达状态/金钱);钱-时间-精力兑换率由动机设定;穷游不评判、只透明兑换;P1 卡片 schema 与 T1 PoC 约束集同步 |
-| v0.7 | 2026-08-22 | 创始人数据观落纲:共享经验层(D1 §6.6)——官方渠道不存在的数据(丽江/大理打车与管理差异案例),以结构化经验条目存在(断言+印证+时间衰减),回流挂 5.6;消费面挂卡片证据/可行性校准/动机匹配;冷启动含创始团队首批经验;新增工作包 P7 与矩阵行(小红书/圆周轨迹 = reference) |
