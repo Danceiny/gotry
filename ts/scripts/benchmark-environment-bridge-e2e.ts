@@ -153,7 +153,7 @@ function finalText(text: string): string {
     + sse({ id: 'bridge-final-stop', object: 'chat.completion.chunk', choices: [{ delta: {}, finish_reason: 'stop' }] }) + 'data: [DONE]\n\n'
 }
 function toolCall(callId = 'bridge-call-1'): string {
-  return sse({ id: `bridge-${callId}`, object: 'chat.completion.chunk', choices: [{ delta: { role: 'assistant', tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: TOOL, arguments: JSON.stringify({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }) } }] }, finish_reason: null }] })
+  return sse({ id: `bridge-${callId}`, object: 'chat.completion.chunk', choices: [{ delta: { role: 'assistant', tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: TOOL, arguments: JSON.stringify({ action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } }) } }] }, finish_reason: null }] })
     + sse({ id: 'bridge-call-stop', object: 'chat.completion.chunk', choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + 'data: [DONE]\n\n'
 }
 function names(body: Body): string[] {

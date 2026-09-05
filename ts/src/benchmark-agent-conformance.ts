@@ -227,10 +227,11 @@ export function createBenchmarkAgentConformance(projection: BenchmarkBridgeProje
         }
         if (typeof event.data.callId !== 'string') return
         const args = parseToolArguments(event.data.arguments)
-        const query = args && plainObject(args.query) ? args.query : undefined
-        if (query?.action === 'call'
-          && typeof query.tool === 'string'
-          && projection.allowedTools.includes(query.tool)) {
+        // Round 8(issue #100/#102):bridge 工具 typed 泛化后,模型出参为平铺形态
+        const flat = args && plainObject(args) ? args : undefined
+        if (flat?.action === 'call'
+          && typeof flat.tool === 'string'
+          && projection.allowedTools.includes(flat.tool)) {
           state.validCallIds.add(event.data.callId)
         }
         return
@@ -338,7 +339,7 @@ function systemSection(projection: BenchmarkBridgeProjection): { name: string; t
     text: [
       'Benchmark execution contract:',
       `- Translate every task instruction to use a CLI, shell, Python, or agent_env.cli into the native tool ${projection.toolName}; do not merely describe the intended command.`,
-      `- Call it with exactly {"query":{"action":"call","tool":"<one of: ${allowed}>","arguments":{...}}}.`,
+      `- Call it with exactly {"action":"call","tool":"<one of: ${allowed}>","arguments":{...}}.`,
       '- action:"tools" is discovery only and does not satisfy the required environment call.',
       `- After a successful tool result, reply only <${projection.terminal.tag}>{...one JSON object...}</${projection.terminal.tag}> with no prose or code fence.`,
       '- If a terminal-format correction arrives, reuse the existing result and do not call the tool again.',
