@@ -141,7 +141,7 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/src/index.ts` `bridge.ts` | dsh 插件(纯 TS unified 求解 + hbcli 桥 + 进程护栏,延迟计量) | ✅ smoke |
 | `ts/src/turn-policy.ts` `turn-deadline.ts` | Agent 每轮「路由 + wall-clock 双出口」:确定性分类(quick/sync/deep,零 LLM)→ TurnPolicy;越硬阈同步抑制 schema,converge=EXHAUSTED / handoff=落 `gotry_turn_handoff.v1` 工单+ETA 告知;benchmark 钉固定 policy | ✅ run-all §45 |
 | `py/gotry_feasibility/unified.py` | Python oracle(v0.0.1-rc.2 后**仅历史对照**,不再被产品运行时引用) | 保留 |
-| `py/gotry_demo/` | **已删 2026-08-22**(D-7 尾债:demo 规划书生成器曾调废弃 journey.solve_journey;产物 docs/demo-plan-2026-07-17.md 留 git 历史) | — |
+| `py/gotry_demo/` | **已删 2026-08-22**(D-7 尾债:demo 规划书生成器曾调废弃 journey.solve_journey;产物 docs/milestones/demo-plan-2026-07-17.md 留 git 历史) | — |
 | `ts/scripts/replay.ts` `replay-async.ts` | **验收夹具**:真实对话重放(13 轮→3 轮)与异步形态 | ✅ |
 | `ts/scripts/{engine,journey,unified,diff}-tests.ts` | 套件(8/5/4 断言+TS-vs-TS 同 spec 稳定性) | ✅(diff-test 顺序偶发为已知问题,v0.0.1-rc.2 后不再依赖 Python) |
 | `ts/src/time-anchor.ts` | **时间锚点层**(ADR-12,纯函数):锚点卡渲染(今天/相对周/月分段/季度/节日)+ 绝对月日解析;persona 与抽取链路的「今天」唯一来源 | ✅ time-eval §1 |
@@ -229,14 +229,14 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 14 | 记忆效用 sidecar(RFC S2/S3):三类事件 append-only,**归因只认 owner 确认**;wish 稳定 id + 休眠制;召回 0..1/轮 | 见 §8.14 | 多用户 AaaS 账本化(RFC §6.5)或出现第二个效用消费方时复审 | `memory-utility.ts`;`index.ts gotry_wish_pool_list`;smoke §10 |
 | 15 | 事务化状态基座(RFC `transactional-state-rfc`,业界 durable-execution 五件套收敛) | 见 §8.15 | 多用户 AaaS 化(RFC §6.5 claim/CAS 实装)或需要多写者/多端复制(cr-sqlite/Litestream,触发式=D-15)时复审 | `state-ledger.ts`;run-all §28/§29 |
 | 16 | 双形态架构冻结(本地+Web):**一套账本语义,两种宿主绑定**;`tenant_id` 一等字段;同步=事件复制非状态翻译 | 见 §8.16 | 永不复审(双形态是产品形态基座);同步协议与 claim/CAS 实装按触发器后置 | `state-ledger.ts` schema v2;run-all §28 双形态断言 |
-| 17 | 预订 saga 状态机具名化(issue #17 采纳,2026-08-29) | 见 §8.17 | M5 拍板 WriteGate 时复审(启封增量的 schema CHECK/seam 词汇/L4 自动类);若出现需要并行多写者的预订流,复审 keyed 单写者形态 | `ts/src/booking-saga.ts`;`docs/booking-saga-fsm.md`;run-all §36 |
-| 18 | 效应解译器 effect_interpreter.v1(issue #16 采纳,2026-08-29) | 见 §8.18 | 出现需要跨渠道比价聚合的产品裁决时复审「平铺」边界;写效应(预订/支付)入注册表时必须走 booking_saga_fsm.v1 边表(M5 Entry) | `ts/capabilities/effect.ts` `resilience.ts`;`docs/effect-interpreter.md`;run-all §37 |
+| 17 | 预订 saga 状态机具名化(issue #17 采纳,2026-08-29) | 见 §8.17 | M5 拍板 WriteGate 时复审(启封增量的 schema CHECK/seam 词汇/L4 自动类);若出现需要并行多写者的预订流,复审 keyed 单写者形态 | `ts/src/booking-saga.ts`;`docs/design/booking-saga-fsm.md`;run-all §36 |
+| 18 | 效应解译器 effect_interpreter.v1(issue #16 采纳,2026-08-29) | 见 §8.18 | 出现需要跨渠道比价聚合的产品裁决时复审「平铺」边界;写效应(预订/支付)入注册表时必须走 booking_saga_fsm.v1 边表(M5 Entry) | `ts/capabilities/effect.ts` `resilience.ts`;`docs/design/effect-interpreter.md`;run-all §37 |
 | 19 | 可下单事实单一数据源 + 产物事实闸(issue #46,2026-08-30) | 见 §8.19 | 出现第二类需闸产物(如酒店直订)时复审覆盖面;政策实时源接入后复审政策事实生产端;根治方向=产物只由渲染原语生成(结构化→markdown 单向),反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts`;`data/airline-airports.json`;run-all §39;smoke §16 |
-| 21 | 扩展分发三通道(issue #21 分发通道,2026-08-30;商店轨 2026-09-02 上架) | 见 §8.21 | ~~商店过审后复审 wizard 步骤~~(已触发:wizard 退化为离线健康探活等待;安装=浏览器的事、渲染=dsh UI 的事,§3.3 职责返交落地);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/extension-webstore-submission.md` |
+| 21 | 扩展分发三通道(issue #21 分发通道,2026-08-30;商店轨 2026-09-02 上架) | 见 §8.21 | ~~商店过审后复审 wizard 步骤~~(已触发:wizard 退化为离线健康探活等待;安装=浏览器的事、渲染=dsh UI 的事,§3.3 职责返交落地);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/ops/extension-webstore-submission.md` |
 | 22 | static golden 是**可审计 benchmark comparator**,不是实时航班源(issue #67) | 见 §8.22 | 出现可免私有凭证、许可清晰且稳定的官方 flight API,或 hbcli 发布 flight 合同时复审其为新 provider;static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`;`ts/data/sf-static-routes.json`;run-all §44 |
 | 23 | embedded Booking Copilot 双协议安全边界与 BFF request identity binding | 见 §8.23 | 出现离页自动写/支付必须另立 M5 WriteGate ADR；出现多写者/跨 host 触发 ADR-15/16 复审；所有消费方迁移 v2 后再退 v1 | `schemas/booking.surface.v2.schema.json`;`ts/src/booking-surface/contracts-v2.ts`;`runtime-v2.ts`;`server.ts`/`startup.ts`;v2 runtime/package/run-all proofs |
 | 24 | turn 预算 = 路由 + wall-clock 双出口:确定性分类 → converge/handoff;handoff 落独立工单待 loopx tick 收 | 见 §8.24 | 路由误分成系统性问题时(用户反馈「该当面答的被转后台」可观测),先扩 Tier 0 信号词表再考虑 Tier 2(结构化状态);handoff 工单积压需要真实收集器时启动 loopx tick 设计;评测端 60s 太紧先调 env pin | `ts/src/turn-policy.ts`;`ts/src/turn-deadline.ts`;`ts/src/index.ts` 装配;`ts/scripts/turn-policy-tests.ts`;`ts/scripts/agent-planning-turn-deadline-{tests,e2e}.ts`;`scripts/run-all-tests.sh` §45 |
-| 25 | 通道健康面与动态路由建议(issue #106/#107/#108,D-7/D-8/D-9 采纳 2026-09-03):工具面保持平铺(ADR-18 判定不动)、解译器不做隐藏改道;通道注册表单一数据来源生成 persona 卡/工具描述/doctor 行;检索 verdict≠hit 时结果内注入 `routing` 有序建议(可用性>证据级>效率字典序,健康态过滤),契约在失败现场教学;配额五分类(user-session/user-key/anonymous-trial/free-public/static)冻结归属语义;calendar 默认不挂载(D-9) | 解译器自动改道(拒绝:模型以为调 A 实际走 B,破坏调用可审计性)/静态反转优先级(拒绝:每个新用户先付扩展安装成本)/只靠 prose 教义(拒绝:prose 腐坏,普通模型读不动) | routing 建议误配成系统性问题时先修注册表数据;出现跨通道比价聚合产品裁决时与 ADR-18 一起复审;正式 key 池(产品统一申请)待 M3 真实 cohort 规模复审 | `ts/capabilities/channel-registry.ts` `channel-health.ts`;`docs/tool-orchestration-design.md`;run-all §50;smoke(flyai needs-setup→routing) |
+| 25 | 通道健康面与动态路由建议(issue #106/#107/#108,D-7/D-8/D-9 采纳 2026-09-03):工具面保持平铺(ADR-18 判定不动)、解译器不做隐藏改道;通道注册表单一数据来源生成 persona 卡/工具描述/doctor 行;检索 verdict≠hit 时结果内注入 `routing` 有序建议(可用性>证据级>效率字典序,健康态过滤),契约在失败现场教学;配额五分类(user-session/user-key/anonymous-trial/free-public/static)冻结归属语义;calendar 默认不挂载(D-9) | 解译器自动改道(拒绝:模型以为调 A 实际走 B,破坏调用可审计性)/静态反转优先级(拒绝:每个新用户先付扩展安装成本)/只靠 prose 教义(拒绝:prose 腐坏,普通模型读不动) | routing 建议误配成系统性问题时先修注册表数据;出现跨通道比价聚合产品裁决时与 ADR-18 一起复审;正式 key 池(产品统一申请)待 M3 真实 cohort 规模复审 | `ts/capabilities/channel-registry.ts` `channel-health.ts`;`docs/design/tool-orchestration-design.md`;run-all §50;smoke(flyai needs-setup→routing) |
 
 ### ADR 展开(表内「见 §8.x」的正文)
 
@@ -351,7 +351,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：v1 
 - **会话数据面 #21 首切片(2026-08-29)**:`session/benchmark.ts` 固化 required comparable fields 的 fixture scorer(缺字段计错、默认 90% 闸)与双源合同(按 journey/segments/时刻/班次对齐,价格只记差值不判等)；`needs-attach`/`needs-login` 为 waiting-user no-spend,challenge 与 ReadGuard 非零 fail-closed。纯 fixture 已进 run-all §25；真实 sf-01..08 仍等待 Chrome attach 权限确认与握手。
 - **扩展分发双通道(2026-08-30,issue #21,ADR-21)**:founder 指令「产物下载和安装也得做成更好的用户体验,可以用 github 作为分发渠道」。Chrome 平台约束**诚实前置**——非商店不可免「开发者模式加载已解压」的 3 次点击,GitHub 只能改善下载。双通道分工:
   - **GitHub Releases 下载通道(已落)**:`gotry setup --extension-from=github` 显式 opt-in(env `GOTRY_EXTENSION_SOURCE` 等效),默认仍 bundled 保离线确定性。
-  - **Chrome Web Store 通道(2026-08-30 提交,2026-09-02 过审上架 v0.1.0)**:一键装 + 自动更新的唯一平台路径,现为推荐安装方式。商店材料(单一用途声明/权限逐条理由/隐私披露/双语文案)与隐私政策落 `docs/extension-webstore-submission.md`、`docs/extension-privacy.md`。**上架实测**:商店用自己签名 key 重签、不认 manifest 固定 key——商店版 ID `oeajpiccmonococjcegddlooeeohlbgd` ≠ unpacked 固定 ID;桥 Origin 白名单改双通道同信(`EXTENSION_ORIGINS`,§38 回归),向导/README/工具文案全部商店优先(D-25 清偿)。
+  - **Chrome Web Store 通道(2026-08-30 提交,2026-09-02 过审上架 v0.1.0)**:一键装 + 自动更新的唯一平台路径,现为推荐安装方式。商店材料(单一用途声明/权限逐条理由/隐私披露/双语文案)与隐私政策落 `docs/ops/extension-webstore-submission.md`、`docs/ops/extension-privacy.md`。**上架实测**:商店用自己签名 key 重签、不认 manifest 固定 key——商店版 ID `oeajpiccmonococjcegddlooeeohlbgd` ≠ unpacked 固定 ID;桥 Origin 白名单改双通道同信(`EXTENSION_ORIGINS`,§38 回归),向导/README/工具文案全部商店优先(D-25 清偿)。
   - 回归:run-all §43(资产名/打包脚本防漂移、dist-manifest fail-closed、版本比较、回环 e2e)。
   - **注**:本条曾在 §1 出现两份内容矛盾的副本(一份「材料就绪未提交」、一份「已提交审核中」),2026-08-31 文档重构时以后者为准合并。
 - **会话传输层定案扩展桥(2026-08-30,#21 方案 C 升 PRIMARY)**:
@@ -466,7 +466,7 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 
 **D-23 效应解译器迁移未完成(ADR-18)**
 
-**部分清偿**:词汇层+生产/mock 解译器+韧性横切已落地,五工具(flyai/hotel/session/weather/flight_verify)与 realtime-pricing 默认查询口已走 `interpretEffect`;`anything/web_search/video_subtitle/github_search/agent_reach/session_login` 等其余渠道工具仍直连能力层(同款永不抛错契约,无退避/熔断/mock 面)。按渠道逐个搬,搬一个删一横切;全部走通即抄销 | `ts/capabilities/effect.ts`;`docs/effect-interpreter.md` §4;run-all §37
+**部分清偿**:词汇层+生产/mock 解译器+韧性横切已落地,五工具(flyai/hotel/session/weather/flight_verify)与 realtime-pricing 默认查询口已走 `interpretEffect`;`anything/web_search/video_subtitle/github_search/agent_reach/session_login` 等其余渠道工具仍直连能力层(同款永不抛错契约,无退避/熔断/mock 面)。按渠道逐个搬,搬一个删一横切;全部走通即抄销 | `ts/capabilities/effect.ts`;`docs/design/effect-interpreter.md` §4;run-all §37
 
 **D-27 vendored 仓内形态 Node 兼容窗口断裂——✅ 已清偿(2026-09-04,issue #120)**
 
@@ -544,14 +544,14 @@ Round 7 将 benchmark opt-in 收敛为 minimal kernel，并把 system-prompt/roo
 
 | # | 债务 | 状态 / 赎回时机 |
 |---|---|---|
-| D-28 Evaluation Phase 0→Phase 1 adapter admission | Evaluation Phase 0 foundation now includes contracts/registry/validators, unmatched diagnostic fixtures/test-only aggregate admission, and a deterministic cadence policy/planner. The planner has no scheduler, launch, spend, scorer, baseline, or uplift effect. | **open**: every adapter, external runner, baseline, and matched production-evidence path still requires a separate approved plan/PR plus the license/evaluator/source-fence controls in [`evaluation-foundation.md`](evaluation-foundation.md) |
+| D-28 Evaluation Phase 0→Phase 1 adapter admission | Evaluation Phase 0 foundation now includes contracts/registry/validators, unmatched diagnostic fixtures/test-only aggregate admission, and a deterministic cadence policy/planner. The planner has no scheduler, launch, spend, scorer, baseline, or uplift effect. | **open**: every adapter, external runner, baseline, and matched production-evidence path still requires a separate approved plan/PR plus the license/evaluator/source-fence controls in [`evaluation-foundation.md`](evaluation/evaluation-foundation.md) |
 | D-29 Booking Copilot 真实库存产品验收 | typed read-action/BFF/task ledger 与可复现 Linux 产物只证明工程边界；不证明供应商库存、不可订恢复或 Checkout/订单状态业务效果 | **open**:冻结三仓 exact SHA 后，在 tenant/customer/storefront/payment-link 四 surface 跑真实库存；至少一条 unavailable/changed 报价必须经重新搜索、新 CheckAvail、原 Checkout 恢复；Book 仍仅由 Checkout 授权，并以 QueryOrders/清理证据收口 |
 
 ## 11. 保鲜机制(文档与现实的同步纪律)
 
 **Booking Copilot v2 当前生命周期投影**：六个阶段为 `planning → submitted → working → waiting_receipt → input_required → terminal outcome`；公开类型保留七个 phase 字面值，其中终态结果分为 `terminal` 与 `error`。`action.receipt`、`approval.granted/consumed` 与 decision batch 是恢复和精确 SSE replay 的权威事件，BFF 生成并重用稳定 opaque `taskId + turnId` 身份对绑定 durable user turn replay，presentation key/随机 delivery nonce/option digest 绑定 approval。availability reducer 另有 `need_offers → waiting_offers → need_check → waiting_check → terminal` typed 子状态，并持久化 candidate/generation/attempt budget；它不改变外层六状态投影。v1 保持 legacy 两态 `planning → waiting_receipt` 投影；两协议共用 listener 与 task ownership，但不把 v1 宣称为 v2 生命周期投影。
 
-**状态面清单**(全仓只有这 6 处记载「当前状态」,其余文档一律状态让渡):① 本文 §1 当前形态;② 本文 §9 演进;③ 本文 §10 债务清单;④ `roadmap.md` 当前位置;⑤ `README.md` 当前形态;⑥ `stage1-top-down-design.md` 状态头。
+**状态面清单**(全仓只有这 6 处记载「当前状态」,其余文档一律状态让渡):① 本文 §1 当前形态;② 本文 §9 演进;③ 本文 §10 债务清单;④ `roadmap.md` 当前位置;⑤ `README.md` 当前形态;⑥ `design/stage1-top-down-design.md` 状态头。
 
 **同提交同步规则**:任何改变系统当前形态/状态/债务的提交,必须在同一提交内同步全部状态面——`bb880f3`(M1 exit)只改了 §1 与 ADR 表,四处状态面滞后了一个提交周期,本节由此而立。
 
@@ -566,39 +566,45 @@ Round 7 将 benchmark opt-in 收敛为 minimal kernel，并把 system-prompt/roo
 
 ## 12. 文档地图
 
+组织规范(目录税则/命名/头部块/生命周期)与总索引见 [`README.md`](README.md)。下表按目录分组:
+
 | 文档 | 关注点 |
 |---|---|
-| `roadmap.md` | **时间线唯一来源**:M0-M6 里程碑三线视图与旧模型归并 |
-| `data-sources.md` | **数据源唯一权威面**:领域矩阵/四层架构/Google Place 链路/证据链契约/TREK 参考 |
-| `adapter-authoring-guide.md` | **Session 适配器作者手册**(D-13):四步法(探测→第一方金标准→双源 shape gate→漂移锁)/接入清单/纪律红线/携程真会话校准清单 |
-| `external-event-seam.md` | **外部事件接缝设计**(#82 兼容方向/D-31):事件=健康面与愿望池的新生产者;信任分级与落地序列(触发式,消费既有接缝不建新运行时) |
-| `tokens.md` | **token 唯一权威面**:npm 三路径(web会话/granular bypass/OIDC)+ agent-reach 8 渠道获取表 + 统一 .env 存放 |
-| `tech-strategy.md` | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测体系/分工/持续优化回路/决策登记 |
 | 本文 | 技术:系统/模块/模型/循环/数据概要/ADR/演进/债务 |
+| `roadmap.md` | **时间线唯一来源**:M0-M6 里程碑三线视图与旧模型归并 |
 | `gotry-master-outline.md` | 程序:工作分解/复用矩阵/决策门(总纲) |
 | `gotry-product-design.md` | 产品:主循环/透明机制/全成本/共享经验 |
-| [`evaluation-foundation.md`](evaluation-foundation.md) | Evaluation Phase 0 contracts, registry ownership, aggregate admission, and non-uplift boundary |
-| `stage1-top-down-design.md` | Stage 1 详细设计与实现序 |
-| `kimi-postmortem.md` | 反例教材与地面真值提取 |
-| `demo-plan-2026-07-17.md` `demo-reconciliation.md` | demo 交付物与对账 |
-| `dsh-plugins-shortlist.md` | dsh 社区插件选型(awesome-dsh-plugin 全量调研,issue #9) |
-| `deerflow-research.md` | DeerFlow 研究 → gotry 优化目标 T1-T4(issue #10) |
-| `maka-research.md` | Apache Maka(Incubating)研究 → 与 ADR-15 事务化状态基座逐项对照(durable-execution 机制/可采纳面,研究底稿供 founder 拍板) |
-| `enterprise-travel-reference-study.md` | **某企业级差旅 Agent 系统八维参考研究(2026-09-03,来源脱敏)**:双轨执行/写闭环→M5 设计输入(ADR-17/S4 接缝),合规收口装饰器/领域 skill→M6 输入,生产级状态→D-15 触发时参考,双模型/上下文压缩→不采纳(ADR-24 已覆盖);差异化保留清单与「不追求代码量等价」判定 |
-| `hotelbyte-skills-design.md` | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
-| `e2e-prompts.md` | dsh 端到端真 LLM 验证记录(§1-§11,wrapper/澄清卡/背景调查等) |
-| `memory-design.md` | **记忆域设计**:C 端六层重设计(M1-M6 现状映射/P1-P4 分期增量/铁律与验收),M4 交付「六层框架重设计」的正式文档 |
-| `loopx-inspired-upgrades-rfc.md` | **RFC(accepted 2026-08-27)**:loopx 13 篇架构 RFC 的映射升级——四道接缝(S1 工具 packet 纪律/S2 记忆效用 sidecar/S3 wish 触达 0..1 纪律/S4 WriteGate L0-L4 词汇) |
-| `transactional-state-rfc.md` | **RFC(accepted 2026-08-28,ADR-15)**:事务化状态基座——业界 durable-execution 调研收敛五件套 + GoTry 落地架构 + TS-0..TS-5 执行计划与决策记录(D1-D5) |
-| `booking-saga-fsm.md` | **预订 saga 状态机设计(issue #17 采纳,ADR-17)**:booking_saga_fsm.v1 字母表/边表/拒绝闭集 + 三种边型词汇(deterministic/gate/external-event)+ HITL 审批的挂起-恢复形态 + M5 启封增量与不引入编排框架的判定记录 |
-| `effect-interpreter.md` | **效应解译器设计(issue #16 采纳,ADR-18)**:effect_interpreter.v1 词汇(效应值/EffectOutcome/trace)+ 渠道韧性策略表(退避/断路/节律依据逐行)+ 生产/mock 双解译器 + 为什么不做视觉 CUA 与自动多渠道路由的判定记录 + D-23 迁移面 || `user-session-data-rfc.md` | **RFC**:用户会话数据面——官方通道优先 + 用户会话补缺,四阶段落地(P0-P4)与决策门 |
-| `tool-orchestration-design.md` | **工具编排与通道健康面设计(proposal,2026-09-03)**:issue #106/#107/#108 收口——通道注册表(数据单一来源)+ 通道健康面(doctor 持久面 + 会话瞬态面)+ DP 编排=健康态驱动的动态建议;含「普通 LLM 下长久保持工具调用性能」与「开放生态可扩展性」两命题回答;拍板点 = decisions-needed D-7/D-8/D-9 |
+| `data-sources.md` | **数据源唯一权威面**:领域矩阵/四层架构/Google Place 链路/证据链契约/TREK 参考 |
+| `tech-strategy.md` | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测体系/分工/持续优化回路/决策登记 |
+| `tokens.md` | **token 唯一权威面**:npm 三路径(web会话/granular bypass/OIDC)+ agent-reach 8 渠道获取表 + 统一 .env 存放 |
 | `user-guide.md` | 面向使用者的上手指南(dsh 形态用法) |
 | `release-notes.md` | 发版记录(按版本归档,最新在上) |
 | `decisions-needed.md` | 待创始人拍板的决策清单 |
-| `m3-web-gap.md` | M3 Web 形态缺口(G-1..G-4 方向) |
-| `m4-calibration-questions.md` | M4 校准问题集 |
-| `extension-webstore-submission.md` · `extension-privacy.md` | Chrome Web Store 上架材料与隐私政策(ADR-21 通道 B) |
-| `maka-research.md` | MAKA 竞品/形态研究 |
-| `m2-capability-gap.md` · `m2-flight-data-options.md` | M2 期能力缺口与机票数据选型(历史备忘) |
-| `s1-walkthrough.md` · `g1-market-memo.md` | Stage 1 走查与 G1 首发市场备忘(历史备忘) |
+| `design/memory-design.md` | **记忆域设计**:C 端六层重设计(M1-M6 现状映射/P1-P4 分期增量/铁律与验收),M4 交付「六层框架重设计」的正式文档 |
+| `design/effect-interpreter.md` | **效应解译器设计(issue #16 采纳,ADR-18)**:effect_interpreter.v1 词汇(效应值/EffectOutcome/trace)+ 渠道韧性策略表(退避/断路/节律依据逐行)+ 生产/mock 双解译器 + 为什么不做视觉 CUA 与自动多渠道路由的判定记录 + D-23 迁移面 |
+| `design/booking-saga-fsm.md` | **预订 saga 状态机设计(issue #17 采纳,ADR-17)**:booking_saga_fsm.v1 字母表/边表/拒绝闭集 + 三种边型词汇(deterministic/gate/external-event)+ HITL 审批的挂起-恢复形态 + M5 启封增量与不引入编排框架的判定记录 |
+| `design/tool-orchestration-design.md` | **工具编排与通道健康面设计(proposal,2026-09-03)**:issue #106/#107/#108 收口——通道注册表(数据单一来源)+ 通道健康面(doctor 持久面 + 会话瞬态面)+ DP 编排=健康态驱动的动态建议;含「普通 LLM 下长久保持工具调用性能」与「开放生态可扩展性」两命题回答;拍板点 = decisions-needed D-7/D-8/D-9 |
+| `design/adapter-authoring-guide.md` | **Session 适配器作者手册**(D-13):四步法(探测→第一方金标准→双源 shape gate→漂移锁)/接入清单/纪律红线/携程真会话校准清单 |
+| `design/external-event-seam.md` | **外部事件接缝设计**(#82 兼容方向/D-31):事件=健康面与愿望池的新生产者;信任分级与落地序列(触发式,消费既有接缝不建新运行时) |
+| `design/hotelbyte-skills-design.md` | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
+| `design/stage1-top-down-design.md` | Stage 1 详细设计与实现序(其状态头 = §11 状态面⑥) |
+| `rfc/transactional-state-rfc.md` | **RFC(accepted 2026-08-28,ADR-15)**:事务化状态基座——业界 durable-execution 调研收敛五件套 + GoTry 落地架构 + TS-0..TS-5 执行计划与决策记录(D1-D5) |
+| `rfc/user-session-data-rfc.md` | **RFC(已立项 2026-08-28)**:用户会话数据面——官方通道优先 + 用户会话补缺,四阶段落地(P0-P4)与决策门(G7/G8/G9 已结算) |
+| `rfc/loopx-inspired-upgrades-rfc.md` | **RFC(accepted 2026-08-27)**:loopx 13 篇架构 RFC 的映射升级——四道接缝(S1 工具 packet 纪律/S2 记忆效用 sidecar/S3 wish 触达 0..1 纪律/S4 WriteGate L0-L4 词汇) |
+| `research/kimi-postmortem.md` | 反例教材与地面真值提取 |
+| `research/maka-research.md` | Apache Maka(Incubating)研究 → 与 ADR-15 事务化状态基座逐项对照(durable-execution 机制/可采纳面,研究底稿供 founder 拍板) |
+| `research/deerflow-research.md` | DeerFlow 研究 → gotry 优化目标 T1-T4(issue #10) |
+| `research/dsh-plugins-shortlist.md` | dsh 社区插件选型(awesome-dsh-plugin 全量调研,issue #9) |
+| `research/enterprise-travel-reference-study.md` | **某企业级差旅 Agent 系统八维参考研究(2026-09-03,来源脱敏)**:双轨执行/写闭环→M5 设计输入(ADR-17/S4 接缝),合规收口装饰器/领域 skill→M6 输入,生产级状态→D-15 触发时参考,双模型/上下文压缩→不采纳(ADR-24 已覆盖);差异化保留清单与「不追求代码量等价」判定 |
+| [`evaluation/evaluation-foundation.md`](evaluation/evaluation-foundation.md) | Evaluation Phase 0 contracts, registry ownership, aggregate admission, and non-uplift boundary |
+| `evaluation/benchmark-environment-bridge.md` | 外部 benchmark 桥(Phase 1 接缝,default-off)+ 逐轮工程台账 |
+| `evaluation/e2e-prompts.md` | dsh 端到端真 LLM 验证记录(§1-§11,wrapper/澄清卡/背景调查等) |
+| `evaluation/persona-bench/` | 产品人格横评:同一真实行程 prompt 各家回答存档/评分卡/人格反哺 |
+| `milestones/demo-plan-2026-07-17.md` `milestones/demo-reconciliation.md` | demo 交付物与对账 |
+| `milestones/m2-capability-gap.md` `milestones/m2-flight-data-options.md` | M2 期能力缺口与机票数据选型(历史备忘) |
+| `milestones/m3-web-gap.md` | M3 Web 形态缺口(G-1..G-4 方向) |
+| `milestones/m4-calibration-questions.md` | M4 校准问题集 |
+| `milestones/s1-walkthrough.md` `milestones/g1-market-memo.md` | Stage 1 走查与 G1 首发市场备忘(历史备忘) |
+| `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` | Chrome Web Store 上架材料与隐私政策(ADR-21 通道 B) |
+| `assets/` | archify 生成的系统架构图(工具产物,仓内无消费者) |
+| `superpowers/` | superpowers 工作流 plans/specs(评测计划,工具自管) |

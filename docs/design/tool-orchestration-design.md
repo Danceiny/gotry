@@ -1,9 +1,9 @@
 # 工具编排与通道健康面设计(issue #106/#107/#108 收口 + 两个核心命题)
 
 > 状态:proposal(2026-09-03)。采纳后按 §6 落地序列拆 PR,每条过全栈回归并同步六状态面;
-> 拍板点汇总在 §7 与 `decisions-needed.md` D-7/D-8/D-9。
+> 拍板点汇总在 §7 与 `../decisions-needed.md` D-7/D-8/D-9。
 > 关联:ADR-13(工具 envelope)/ADR-18(效应解译器)/ADR-19(事实分型)/ADR-24(turn 预算);
-> `effect-interpreter.md`;`data-sources.md`(数据源权威面);evaluation 轨 issue #96/#100/#102。
+> `effect-interpreter.md`;`../data-sources.md`(数据源权威面);evaluation 轨 issue #96/#100/#102。
 
 ## 0. 这份文档回答什么
 

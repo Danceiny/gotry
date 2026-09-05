@@ -1,7 +1,7 @@
 # RFC:GoTry 事务化状态基座(Transaction State Backbone)——业界调研与落地执行计划
 
 > 状态:**accepted**(2026-08-28 founder 指令「按你的建议来」——D1-D5 全部按建议执行;TS-0..TS-4 已落地,TS-5 触发式后置=D-15)
-> 上游权威:`architecture.md`(技术权威面)、`gotry-master-outline.md` §2 复用矩阵、`loopx-inspired-upgrades-rfc.md`(S4/§6.5)、`memory-design.md` §1.6、`tech-strategy.md` T6
+> 上游权威:`../architecture.md`(技术权威面)、`../gotry-master-outline.md` §2 复用矩阵、`loopx-inspired-upgrades-rfc.md`(S4/§6.5)、`../design/memory-design.md` §1.6、`../tech-strategy.md` T6
 > 作者:gotry-builder(2026-08-28,业界调研 + 仓内现状摸底驱动)
 > 纪律:单一文件承载单一关注点;版本历史归 git
 

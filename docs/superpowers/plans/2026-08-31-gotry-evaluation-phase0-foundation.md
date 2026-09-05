@@ -492,7 +492,7 @@ Insert it at these exact positions:
 3. `docs/architecture.md` §10 immediately before `## 11`, as this exact row:
 
 ```markdown
-| D-27 Evaluation Phase 0→Phase 1 adapter admission | Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures plus test-only aggregate admission; no adapter, external runner, Python runtime dependency, baseline, matched production evidence, or Agent uplift claim. | **open**: adapter admission requires a separate approved plan/PR and the license/evaluator/source-fence controls in [`evaluation-foundation.md`](evaluation-foundation.md) |
+| D-27 Evaluation Phase 0→Phase 1 adapter admission | Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched diagnostic fixtures plus test-only aggregate admission; no adapter, external runner, Python runtime dependency, baseline, matched production evidence, or Agent uplift claim. | **open**: adapter admission requires a separate approved plan/PR and the license/evaluator/source-fence controls in [`evaluation-foundation.md`](evaluation/evaluation-foundation.md) |
 ```
 
 4. `docs/roadmap.md` `## 当前位置(2026-08-27)` after its opening position paragraphs; do not move M3–M6 markers.
@@ -502,7 +502,7 @@ Insert it at these exact positions:
 In `docs/architecture.md` §12 add exactly:
 
 ```markdown
-| [`evaluation-foundation.md`](evaluation-foundation.md) | Evaluation Phase 0 contracts, registry ownership, aggregate admission, and non-uplift boundary |
+| [`evaluation-foundation.md`](evaluation/evaluation-foundation.md) | Evaluation Phase 0 contracts, registry ownership, aggregate admission, and non-uplift boundary |
 ```
 
 In `README.md` `## 🧪 Verify` add inside its Bash block:

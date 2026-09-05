@@ -1,5 +1,6 @@
 # hotelbyte-skills 架构设计(issue #5)
 
+> 状态:frozen(设计备忘,2026-08-25;issue #5)
 > 一句话:hotelbyte CLI 的能力知识从 gotry 代码里搬进一个**专用 skills 仓**,
 > 成为所有 agent(dsh 用户/cis-cli 式内部工具/未来的 hotel-fe 侧)复用的单一
 > 事实源;gotry 只留薄执行面。

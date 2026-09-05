@@ -1,5 +1,6 @@
 # Decisions Needed — 创始人拍板项汇总(2026-08-23)
 
+> 状态:living(拍板队列;已结算项原地标注归档)
 > 本文件是 **当前所有 founder 拍板才能解锁的事项**的入口;每条含路径、上下文、影响范围、我的建议。
 > 各项独立——你可以按优先级逐条回;我按你的回执推进。
 > 写完后由 gotry-builder-01 推进并归档,或回滚。
@@ -34,7 +35,7 @@
 
 ## D-2:M4 校准七题 ✅ **2026-08-24 auto-guess 5/7 题已吸收进数据包**(剩 2 题=founder 校口)
 
-**位置**: `docs/demo-reconciliation.md`(M4 校准 markdown 模板)
+**位置**: `docs/milestones/demo-reconciliation.md`(M4 校准 markdown 模板)
 
 **上下**: 对账模板 4 维度:
 1. 航段细节(具体班次/真实日期)
@@ -47,7 +48,7 @@
 **影响**: 答完 7 题 → engine M-1 (`work-window` 约束) / D-6 (红眼睡眠校准) 全部能转正;种子用户启动的引擎可信度飞跃。
 
 **founder 一句话拍**(答完即可):
-→ 在 `docs/m4-calibration-questions.md` 末尾 YAML 块填答 + commit YAML。
+→ 在 `docs/milestones/m4-calibration-questions.md` 末尾 YAML 块填答 + commit YAML。
 已挖 3 项(4b0aa43 已吸收);剩 4 题:f1/f4-SZX/Rawi-房型/总花费。**答 1 题即释放 1 个债**。
 
 ### gotry-builder-01 auto-guess(founder 授权: 「你代替我做决策」2026-08-24)
@@ -193,7 +194,7 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 |---|---|---|
 | D-1 License MIT | ✅ DONE 2026-08-23 | — |
 | D-2 M4 4 题 auto-guess | ✅ 7/7 真值吸收(2026-08-26 founder 提供剩余 4 题:f1~16:xx 起飞 23:00 落/f4 实际昆明→珠海+顺风车返深/Rawai 公寓首夜失败次日换酒店/EK329 后按摩店过夜);附带原则:校准永不阻塞,动态 follow 动机 | data/*.json meta.reconcil |
-| D-31 外部事件写入信任模型 | 触发式(等第一个真实 world2agent 回调方):本地探针免鉴权,远程回调需签名/通道绑定,拍板前远程面不开 | `docs/external-event-seam.md`;issue #119 |
+| D-31 外部事件写入信任模型 | 触发式(等第一个真实 world2agent 回调方):本地探针免鉴权,远程回调需签名/通道绑定,拍板前远程面不开 | `docs/design/external-event-seam.md`;issue #119 |
 | D-3 npm publish | ✅ 已打通 2026-08-22:`@danceiny/gotry@0.0.1-rc.5` PUT 200(gotry 裸名撞 go-try 改 scoped;founder 开 2FA + 恢复码当 OTP;发布命令全隔离 NPM_CONFIG_USERCONFIG);新包 npm 审查滞留后公开可见 | scripts/publish-npm.sh |
 | D-4a agent-reach 残余 | ✅ 100% follow rc.4 → 2026-08-22 wrapper 化(反射桥,删 13 渠道 switch);8 渠道需 cookie(xueqiu 实测也要,上游 check warn 自带 configure 指引;founder 0 工作记 pending) | pending/blocker loopx todo |
 | D-5 OpenSky | ✅ 保留 1 tick | — |
@@ -242,7 +243,7 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 
 ## D-7:有额度工具的配额归属机制 ✅ **2026-09-03 已落地(选项 A;founder「推进实现落地」)**
 
-**位置**: `docs/tool-orchestration-design.md` §3.2(配额五分类 + 归属建议)
+**位置**: `docs/design/tool-orchestration-design.md` §3.2(配额五分类 + 归属建议)
 
 **上下**: flyai 匿名试用共享池 429 达限(2026-09-02 迪拜 session 实测)暴露「额度归属」无定义。症状层已被 ADR-24 v2 根治(handoff 双出口);needs-setup verdict + 勿重试指引已落地(defeb5b)。开放问题:正式 key 的归属(用户自备 vs 产品统一申请)、配额耗尽的会话级降级策略。
 
@@ -261,7 +262,7 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 
 ## D-8:工具编排策略——静态平铺 + 健康态驱动的动态建议 ✅ **2026-09-03 已落地(选项 A;founder「推进实现落地」)**
 
-**位置**: `docs/tool-orchestration-design.md` §3.3(DP 形式化 + 工程形态)
+**位置**: `docs/design/tool-orchestration-design.md` §3.3(DP 形式化 + 工程形态)
 
 **上下**: issue 要求「可用性>可靠性>效率」的 DP 编排,并指出 flyai 额度尽时未意识到 session bridge 更强。历史判定(ADR-18 不采纳自动多渠道路由、persona (19) 平铺无预设优先级)与诉求表面冲突;triage 已标注待拍板。
 
@@ -280,7 +281,7 @@ founder 没给 — **不再问**。这 7 渠道记为 loopx pending blocker,谁�
 
 ## D-9:dsh-calendar 分发面 ✅ **2026-09-03 已落地(选项 A:默认不挂载;founder「推进实现落地」)**
 
-**位置**: `docs/tool-orchestration-design.md` §3.1
+**位置**: `docs/design/tool-orchestration-design.md` §3.1
 
 **上下**: dsh-calendar 在 gotry 分发面内(`cordis.gotry-patch.yml` 分发、`gotry-inner.js` 运行时解析注入),且代码注释明知「未配置时工具报错降级」——模型会话中段撞「未配置 username」是分发决策的直接后果(triage 的「零引用」结论只覆盖 persona/文档,未覆盖分发面)。gotry 对 calendar 的唯一诉求是工作窗口读取,而 persona (1) 访谈本就首轮必问工作窗口。
 

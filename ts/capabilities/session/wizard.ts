@@ -1,5 +1,5 @@
 /**
- * 会话扩展 onboarding wizard(RFC user-session-data-rfc.md §3.3,ADR-21 上架后重设)。
+ * 会话扩展 onboarding wizard(RFC docs/rfc/user-session-data-rfc.md §3.3,ADR-21 上架后重设)。
  *
  * 单一职责(2026-09-02 重设):**只做 Node 端两件事**——
  *   ① 扩展文件从源落位到 `~/.gotry/extension`(幂等)

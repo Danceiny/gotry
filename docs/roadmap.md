@@ -22,14 +22,14 @@ Evaluation Phase 0 foundation boundary: contracts/registry/validators/unmatched 
 
 > 以下均为**工程面交付,不构成任何里程碑 Exit 证据**(D-20 口径)。
 
-- **外部事件接缝设计(2026-09-04,issue #119/#82 兼容方向,D-31 决策点)**:`docs/external-event-seam.md`——外部事件作为健康面(站点断→通道态 down,routing/doctor 零改动生效)与愿望池召回的新生产者,消费既有接缝不建新运行时;不做 push/总线/常驻监听;D-31=事件写入信任模型,触发式拍板;落地序列三段(触发式)。
+- **外部事件接缝设计(2026-09-04,issue #119/#82 兼容方向,D-31 决策点)**:`docs/design/external-event-seam.md`——外部事件作为健康面(站点断→通道态 down,routing/doctor 零改动生效)与愿望池召回的新生产者,消费既有接缝不建新运行时;不做 push/总线/常驻监听;D-31=事件写入信任模型,触发式拍板;落地序列三段(触发式)。
 
 - **HotelByte Booking Copilot 产品验收并行线**:GoTry 以 v1/v2 共用单 BFF listener、task ownership 的 typed read actions 提供协作面，v2 为六个生命周期阶段、七个 phase 字面值（`terminal`/`error` 是两种终态结果）的 durable projection，生产 standalone 默认只接受 BFF 已绑定的 `user.turn`/receipt continuation，完整 principal + binding seam 才开放 `user.turn.ingress`，v1 保持 legacy 两态，`Book` 留在原 Checkout。Draft 候选已有 exact SHA/schema/Linux Node 24+ABI provenance 与实际进程 health identity/ingress mode；合并 gate 仍是 tenant/customer/storefront/payment-link 四 surface 真实库存、unavailable/changed 恢复链及 Checkout/QueryOrders/清理证据。该线不启封 M5，也不以离线合同或 CI 替代业务验收。
 - **效应解译器(2026-08-29,issue #16,ADR-18)**:`effect_interpreter.v1` 落地 L4 渠道边界——指数退避重试 / 断路器 / mock 解译器(纯离线 CI 面)收敛进解译层;五渠道工具 + realtime-pricing 已接,余下渠道增量迁移(D-23)。run-all §37。OTA 工具面照旧平铺,证据链逐源标注不变。
 - **通道注册表与健康面(2026-09-03,issue #106/#107/#108,ADR-25)**:检索通道单一数据来源(`channel-registry.ts`)——persona 路由卡 `{{channel_routing_card}}` 与 verdict≠hit 时结果内 `routing` 建议生成化(flyai 达限即改道 session,`hit` 即恢复);会话健康面 + doctor 配额可见(最近达限时间)+ dsh-calendar 默认不挂载(D-9;挂载走 setup 状态面 `npx gotry setup calendar`,不吃 env)。工具面照旧平铺,建议非派发。run-all §50;typed 参数契约迁移余量记 D-30。
 - **行为契约横评反哺(2026-09-04,issue #121/#122)**:persona 契约 (1) 扩展同行人到达链访谈(见面/汇合类行程同行人必问:从哪出发/是否已订/有无自己的时间窗,问明落 `gotry_companion_save`,到达账与预算分链核算)+ 新增 (22) 到达账必达(红眼/落地即消耗航段显式给到达账:当地到达时刻含日期偏移/时差/到达精力/前一晚落脚建议)。行为契约 21→22 条,随下个 npm 版本分发;出处为 `docs/persona-bench/` 同题横评 G4/G7,founder 拍板。
-- **适配器作者指南(2026-09-04,issue #116,D-13 文档面)**:`docs/adapter-authoring-guide.md`——12306 第一方校准法模板化(探测→第一方金标准 fixture→双源 shape gate ≥0.9→漂移锁)+ 文件级接入清单 + 八条纪律红线 + 携程真会话校准清单(执行依赖 founder 登录,挂 gotry-session-data-goal user todo);纯文档,arch §12 文档地图加行。
-- **外部事件接缝设计(2026-09-04,issue #119/#82 兼容方向,D-31 决策点)**:`docs/external-event-seam.md`——外部事件作为健康面(站点断→通道态 down,routing/doctor 零改动生效)与愿望池召回的新生产者,消费既有接缝不建新运行时;不做 push/总线/常驻监听;D-31=事件写入信任模型,触发式拍板;落地序列三段(触发式)。
+- **适配器作者指南(2026-09-04,issue #116,D-13 文档面)**:`docs/design/adapter-authoring-guide.md`——12306 第一方校准法模板化(探测→第一方金标准 fixture→双源 shape gate ≥0.9→漂移锁)+ 文件级接入清单 + 八条纪律红线 + 携程真会话校准清单(执行依赖 founder 登录,挂 gotry-session-data-goal user todo);纯文档,arch §12 文档地图加行。
+- **外部事件接缝设计(2026-09-04,issue #119/#82 兼容方向,D-31 决策点)**:`docs/design/external-event-seam.md`——外部事件作为健康面(站点断→通道态 down,routing/doctor 零改动生效)与愿望池召回的新生产者,消费既有接缝不建新运行时;不做 push/总线/常驻监听;D-31=事件写入信任模型,触发式拍板;落地序列三段(触发式)。
 - **typed 参数契约迁移(2026-09-04,issue #112,D-30,五刀收官)**:全部 23 个注册工具参数面 blob → dsh typed ParameterSchemaSpec 平铺/结构化字段,模型可见逐字段 JSON Schema——四高流量(flyai/session/hotel/weather)+ 七高频 + wish_pool/trip_log/flight_verify/anything/web/video/github + feasibility/motivation/companion;刀法总纲:有 required 字段的工具宿主权入口拒畸形参数(ToolFailure 形状不变;trip_log/motivation/companion 的 evidence P0 红线进 schema 由宿主权闸),全可选工具保留 interpretArgs 容忍层(blob 归一照走业务闸);agent_reach 的 action 不设 enum(反射桥开放面);迁移锁 smoke §1/§6/§12/channel-registry-tests §8。普通模型对参数形状不再靠猜。余量收口:普通模型 canary 已跑(2026-09-04,typed-contract-canary.ts 运行器,MiniMax-M2.7 10/10 一次成型 100%),**D-30 全面清偿**。
 - **工具描述首行生成 + doctor 宿主插件覆盖面(2026-09-04,issue #113,L1 残量收口)**:七个检索工具描述统一前置 channel-registry 生成的「服务意图 × 通道顺位」卡(选工具与失败改道两决策点同表,注册表加行自动一致);doctor 补齐 patch 宿主插件 `dsh-map-tools`/`dsh-tool-ask-user` 两态照亮(此前解析失败整块静默剔除无人知)——实测暴露 source 布局 dsh-map-tools 全布局缺席,地图工具一直被静默丢弃,补依赖渠道留 founder 拍板。
 - **启动一次性 doctor 摘要(2026-09-04,issue #114,L2)**:web/headless 启动时分离子进程后台跑只读体检——待处理项一行 stderr、全 ok 静默、零写盘、不阻塞不重复刷、benchmark 面豁免;「初始化时可见」取代「会话中段撞错」。bootstrap-tests §10 钉行为。
@@ -114,7 +114,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
   - **2026-08-30 同批 P3.7 双源 e2e 真跑批(goal 2,commit `60669f8`+PR #66 follow-up)**:founder 实问「flyai 只是一个 vendor,可以切别的?」→ **拒 vendor 锁**,official golden 改 pluggable(默认 `manual-golden`=`ts/data/sf-golden-manifest.json` 公开班期 + 价格带 + 软命中评分;`--golden=flyai` 显式切);`ts/scripts/sf-live-benchmark.ts` + `ts/scripts/sf-summary.ts` 重建 unified summary;
   - 本机实测 8 query:**7/8 verdict=hit / 6/6 manual-golden 软命中 100% / live <15s 7/7 / ReadGuard 0**;issue #21 验收清单「sf-01..08 完成真实双源 e2e + 字段准确率 ≥90% + live <15s」**全数达成**;evidence 落 `~/.gotry/evidence/session/sf-XX/<ts>.json` + sf-summary。后续 goal 3 vendor 接入由 founder 决定(hbcli / 携程开放 API / 内部 static 包兜底)。
   - **2026-08-30 同批扩展分发双通道(issue #21 分发通道,ADR-21)**:founder 指令「产物下载和安装也得做成更好的用户体验,可以用 github 作为分发渠道」——Chrome 平台约束(GitHub 只能改善下载,一键装+自动更新只有 Chrome Web Store)下双通道:GitHub Releases 下载通道已落(`gotry setup --extension-from=github` 显式 opt-in,稳定资产名三件套 + SHA256 + key 钉扎 + 失败显式降级 bundled,扩展更新与 npm rc 发版火车解耦;`scripts/package-extension.mjs` 只产产物,上传走发布确认制);
-  - Web Store 上架材料就绪未提交(单一用途/权限理由/隐私披露/文案 + 隐私政策,`docs/extension-webstore-submission.md`,注册与提交归 founder=D-25);run-all §43 + bootstrap-tests 8/8。
+  - Web Store 上架材料就绪未提交(单一用途/权限理由/隐私披露/文案 + 隐私政策,`docs/ops/extension-webstore-submission.md`,注册与提交归 founder=D-25);run-all §43 + bootstrap-tests 8/8。
   - **2026-09-02 Web Store 过审上架(D-25 清偿)**:[GoTry Session Bridge 商店页](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) v0.1.0 发布,一键装 + 自动更新通道打通,升为推荐安装方式。上架实测:商店用自己签名 key 重签、不认 manifest 固定 key,商店版扩展 ID(`oeajpiccmonococjcegddlooeeohlbgd`)与 unpacked 固定 ID 不同——桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,run-all §38 新增商店源断言);wizard/README/needs-extension 文案商店优先,wizard 升级为直达商店页(浏览器自己当安装器,GUI/终端面板收窄为极简兜底,对齐 Monica/ChatGPT 类头部插件安装形态),GitHub Releases 通道保留为免审核/更新更快面;「已装商店版 wizard 自动跳本地通道指引」残余转 D-24。
 
 **M4 Issue #20 证据切片(2026-08-29)**:paired cohort 合同与只读 synthetic fixture scorer 已落地,固定唯一匿名 subject、returning 晚于 first、active planning duration 扣除预声明 external waits、N/p50/p75/逐 pair reduction、experience reflux、偏好溯源/硬过滤红线与 P4 trigger 闸。合成 N=3 明确 `exit_evidence_eligible=false`;当前瓶颈是私有真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
@@ -163,7 +163,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 - **Exit**:回访用户规划时长较首访降 ≥50%;经验回流率有基线。
 
 ### M5:交易闭环
-- **Entry**:M4 exit + 供应链协议。**交付**:WriteGate 生产化——写权按 L0-L4 渐进授权(L2 建议/L3 具名 seam 确认带 receipt/L4 自动类),每级可回滚(RFC S4);预订/支付/退改;佣金披露(红线随行)。**设计基座已备(2026-08-29,issue #17 采纳/ADR-17)**:预订 saga 状态机词汇层(`booking_saga_fsm.v1`,`ts/src/booking-saga.ts` + `docs/booking-saga-fsm.md`)——字母表/四条边全函数边表/拒绝闭集/审计链校验,run-all §36 与账本物理对账;启封时任何 booking seam 只许走该边表;空 receipt 物理 CHECK、seam 命名词汇、L2/L4 接线与审批等待态为 M5 交付物。
+- **Entry**:M4 exit + 供应链协议。**交付**:WriteGate 生产化——写权按 L0-L4 渐进授权(L2 建议/L3 具名 seam 确认带 receipt/L4 自动类),每级可回滚(RFC S4);预订/支付/退改;佣金披露(红线随行)。**设计基座已备(2026-08-29,issue #17 采纳/ADR-17)**:预订 saga 状态机词汇层(`booking_saga_fsm.v1`,`ts/src/booking-saga.ts` + `docs/design/booking-saga-fsm.md`)——字母表/四条边全函数边表/拒绝闭集/审计链校验,run-all §36 与账本物理对账;启封时任何 booking seam 只许走该边表;空 receipt 物理 CHECK、seam 命名词汇、L2/L4 接线与审批等待态为 M5 交付物。
 - **Exit**:预订零误操作事故;单位经济实测(对齐 D1 §8)。
 
 ### M6:B2B 包裹

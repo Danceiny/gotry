@@ -1,6 +1,6 @@
 /**
  * 通道注册表 + 通道健康面测试(issue #106/#107/#108 编排设计落地,
- * docs/tool-orchestration-design.md §2/§3;全离线,隔离 tmp stateRoot):
+ * docs/design/tool-orchestration-design.md §2/§3;全离线,隔离 tmp stateRoot):
  *  1. 注册表封闭性:id 唯一/quotaClass·tier·intent 闭集/静态包不可路由
  *  2. 意图顺位:证据级降序(官方API > 会话 > 网页兜底),同 tier 按效率
  *  3. routingAdvice:down 通道被排除/发起通道被排除/limit 截断;hit 即恢复

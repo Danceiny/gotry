@@ -1,0 +1,151 @@
+# GoTry 文档规范与总索引
+
+> 定位:本目录的**组织规范与唯一索引**——新文档放哪、怎么命名、头部怎么写、生命周期怎么走,以及全部文档的一行式索引。
+> 上游:`AGENTS.md`(仓库契约);状态面纪律见 `architecture.md` §11。
+> 纪律:单一文件承载单一关注点,版本历史归 git,不设 vN 文件后缀。
+
+---
+
+## 1. 目录税则(按生命周期阶段分,不按主题分)
+
+| 目录 | 角色 | 进入条件 | 离开条件 |
+|---|---|---|---|
+| `docs/` 根 | **现行权威面 + living 队列** | 创始人/契约确认为唯一权威面(如「唯一技术权威面」「唯一时间线」) | 权威让渡给他文档后移入对应子目录 |
+| `design/` | 模块级设计文档(proposal/accepted/active) | 有上游 ADR/issue,描述某模块的词汇、不变量与判定 | 被权威面完全吸收后移 `milestones/` 或删除 |
+| `rfc/` | 提案原文(待拍板或已采纳) | 需要创始人拍板的方案,文件名以 `-rfc` 结尾 | 采纳后状态改 `accepted` 留存;拒绝改 `rejected` 留存 |
+| `research/` | 调研与复盘(冻结) | 时间戳敏感的调查、竞品研究、postmortem | 不离开;结论被采纳后正文吸收进权威面,原文冻结 |
+| `milestones/` | 里程碑备忘(历史记录) | 某里程碑的阶段产出、走查、对账、决策备忘 | 不离开;里程碑关闭即冻结 |
+| `evaluation/` | 评测体系(契约、台账、横评、验证记录) | 评测/benchmark/e2e/persona 横评相关材料 | 契约类可长期 living |
+| `ops/` | 发布与合规运营材料 | 商店上架、隐私政策等对外合规文本 | 长期 living |
+| `assets/` | 工具生成物(架构图、可视化产物) | archify 等工具输出 | 随工具重生成覆盖 |
+| `superpowers/` | superpowers 工作流自有命名空间(plans/specs) | 由 superpowers 技能自动写入 | 工具自管,手工文档勿入 |
+
+**决策规则**:先问「这篇文档的生命周期阶段是什么」,不问「它讲什么主题」。一篇 M5 的调研仍然进 `research/`,不进「m5/」。
+
+## 2. 命名规范
+
+- 一律 kebab-case 小写;禁止 `vN` 版本后缀(版本历史归 git)。
+- 权威面:裸主题名(`architecture.md`、`roadmap.md`),不带任何前后缀。
+- RFC:`<主题>-rfc.md`;设计:`<主题>-design.md` 或 `<角色>-guide.md`;调研:`<主题>-research.md`、复盘:`<主题>-postmortem.md`。
+- 里程碑备忘:`<里程碑号>-<主题>.md`(如 `m3-web-gap.md`);一次性计划/规格:`YYYY-MM-DD-<主题>.md`。
+- 存量文件名不追改(历史前缀即纪年);本规范约束新文档。
+
+## 3. 通用头部块(所有文档必带)
+
+```markdown
+# <标题>
+
+> 定位:一句话关注点(全仓唯一关注点,与他文档不重叠)
+> 状态:living | proposal | accepted | rejected | frozen(YYYY-MM-DD)
+> 上游:本文档服从的权威来源(ADR/总纲/契约)
+> 下游:本文档的消费方(代码模块/其他文档/人)
+```
+
+字段按需增删(如 `读者`、`日期`、`信源纪律`),但 `定位` 与 `状态` 不可省。
+
+## 4. 分类正文骨架
+
+| 类型 | 正文骨架 |
+|---|---|
+| 权威面(根) | 头部(含读者/纪律) → **目录表** → 编号 `## N.` 节 → 修订史归 git 不写文内 |
+| `design/` | 状态+上游 ADR/issue → 词汇/不变量/拒绝闭集 → 判定记录(「为什么不做什么」必留) |
+| `rfc/` | `§0 摘要与决策请求`(结论先行) → 问题 → 选项/调研 → 方案 → 落地计划(每阶段可叫停) → 决策门与风险登记 → 与仓库纪律勾稽 → 附录(来源) |
+| `research/` | 头部(含信源纪律:一手优先、二手标注) → 结论先行 → 正文 → 参考文献全表 |
+| `milestones/` | 里程碑号/段 + 呈决策门 → 产出正文;冻结后头部标 `frozen` |
+| `evaluation/` | **证据边界声明**(什么算/不算证据) → 契约/台账正文 |
+| `ops/` | 用途 + 最近更新日期 → 操作步骤/上架材料正文 |
+
+## 5. 生命周期规则
+
+- **RFC**:拍板前 `proposal`;拍板后改 `accepted`(保留原文不动,正文吸收进权威面);后续演进只改权威面。
+- **调研/里程碑备忘**:定稿即 `frozen(日期)`,之后只允许改头部状态,不改正文(历史保真)。
+- **权威面**:持续演进,`living`;任何改变系统形态/状态/债务的提交,按 `architecture.md` §11 同提交同步六处状态面。
+- **设计文档**:`proposal → accepted → active`;被权威面吸收后状态标注并让渡。
+
+## 6. 引用纪律
+
+- 移动/重命名任何文档,**同一提交内**更新:根 README 双语索引表、`architecture.md` §12 文档地图、引用它的代码注释与脚本串。
+- 文档间互链一律用相对路径 markdown 链接,不用裸文件名(裸文件名移动后无法机械校验)。
+- `AGENTS.md` 契约钉住的四条路径(`architecture.md`、`gotry-master-outline.md`、`tokens.md`、`release-notes.md`)与发布闸读的 `docs/release-notes.md` **不可移动**;确需移动须先改契约与 `scripts/publish-npm.sh`。
+
+## 7. 总索引
+
+### 根目录(现行权威面)
+
+| 文档 | 关注点 |
+|---|---|
+| [architecture.md](architecture.md) | 唯一技术权威面:系统/模块/ADR/演进/债务/保鲜机制 |
+| [gotry-master-outline.md](gotry-master-outline.md) | 总纲:工作分解/复用矩阵/决策门 |
+| [gotry-product-design.md](gotry-product-design.md) | 产品设计:主循环/透明机制/全成本模型 |
+| [roadmap.md](roadmap.md) | 唯一时间线:M0–M6 里程碑与当前位置 |
+| [tech-strategy.md](tech-strategy.md) | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测/决策登记 |
+| [data-sources.md](data-sources.md) | 唯一数据源权威面:领域矩阵/新鲜度/证据链契约 |
+| [user-guide.md](user-guide.md) | 终端用户使用指南 |
+| [release-notes.md](release-notes.md) | 逐版本发布决策(「为什么」,人写决策面) |
+| [tokens.md](tokens.md) | token 唯一权威面:npm 2FA/发布机制/渠道获取表 |
+| [decisions-needed.md](decisions-needed.md) | 待创始人拍板的决策队列 |
+
+### design/(模块设计)
+
+| 文档 | 关注点 |
+|---|---|
+| [design/memory-design.md](design/memory-design.md) | 记忆域设计:C 端六层重设计(M4 交付) |
+| [design/effect-interpreter.md](design/effect-interpreter.md) | 效应解译器设计(accepted,ADR-18):词汇/韧性策略表/判定记录 |
+| [design/booking-saga-fsm.md](design/booking-saga-fsm.md) | 预订 saga 状态机(accepted,ADR-17):字母表/边表/M5 缝词汇 |
+| [design/tool-orchestration-design.md](design/tool-orchestration-design.md) | 工具编排与通道健康面设计(proposal,issue #106/#107/#108) |
+| [design/adapter-authoring-guide.md](design/adapter-authoring-guide.md) | Session 适配器作者手册(D-13):四步法/漂移锁/红线 |
+| [design/external-event-seam.md](design/external-event-seam.md) | 外部事件驱动接缝设计(#82 方向/D-31,只设计不承诺实现) |
+| [design/hotelbyte-skills-design.md](design/hotelbyte-skills-design.md) | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
+| [design/stage1-top-down-design.md](design/stage1-top-down-design.md) | Stage 1 顶层设计(历史原文);**状态头是 §11 状态面⑥** |
+
+### rfc/(提案原文)
+
+| 文档 | 关注点 |
+|---|---|
+| [rfc/transactional-state-rfc.md](rfc/transactional-state-rfc.md) | 事务化状态基座 RFC(accepted 2026-08-28,ADR-15) |
+| [rfc/user-session-data-rfc.md](rfc/user-session-data-rfc.md) | 用户会话数据面 RFC(已立项 2026-08-28):官方通道优先+会话补缺 |
+| [rfc/loopx-inspired-upgrades-rfc.md](rfc/loopx-inspired-upgrades-rfc.md) | LoopX 映射升级 RFC(accepted 2026-08-27):四道接缝最小切片 |
+
+### research/(调研与复盘,冻结)
+
+| 文档 | 关注点 |
+|---|---|
+| [research/maka-research.md](research/maka-research.md) | Apache Maka 研究 → ADR-15 五件套逐项对照(底稿供拍板) |
+| [research/deerflow-research.md](research/deerflow-research.md) | DeerFlow 研究 → 优化目标 T1–T4(issue #10) |
+| [research/enterprise-travel-reference-study.md](research/enterprise-travel-reference-study.md) | 企业级差旅 Agent 八维参考研究(2026-09-03,来源脱敏) |
+| [research/dsh-plugins-shortlist.md](research/dsh-plugins-shortlist.md) | dsh 社区插件选型调研(issue #9) |
+| [research/kimi-postmortem.md](research/kimi-postmortem.md) | Kimi 行程对话复盘:反例教材与地面真值提取 |
+
+### milestones/(里程碑备忘,冻结)
+
+| 文档 | 关注点 |
+|---|---|
+| [milestones/demo-plan-2026-07-17.md](milestones/demo-plan-2026-07-17.md) | 首个可用 demo 交付(普吉岛 workation) |
+| [milestones/demo-reconciliation.md](milestones/demo-reconciliation.md) | Demo 对账书(P0-5) |
+| [milestones/g1-market-memo.md](milestones/g1-market-memo.md) | G1 首发市场锁定决策备忘 |
+| [milestones/m2-capability-gap.md](milestones/m2-capability-gap.md) | M2 段 1:hotelbyte-cli 命令缺口盘点 |
+| [milestones/m2-flight-data-options.md](milestones/m2-flight-data-options.md) | M2 段 2:机票免费数据源选型(§7-1 决策门材料) |
+| [milestones/m3-web-gap.md](milestones/m3-web-gap.md) | M3 段 1:最小 Web 面实测与差距清单 |
+| [milestones/m4-calibration-questions.md](milestones/m4-calibration-questions.md) | M4 校准发问清单 |
+| [milestones/s1-walkthrough.md](milestones/s1-walkthrough.md) | S1 契约走查结论 |
+
+### evaluation/(评测体系)
+
+| 文档 | 关注点 |
+|---|---|
+| [evaluation/evaluation-foundation.md](evaluation/evaluation-foundation.md) | Evaluation Phase 0:契约/注册表/准入与边界声明 |
+| [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.md) | 外部 benchmark 桥:Phase 1 接缝与逐轮工程台账 |
+| [evaluation/e2e-prompts.md](evaluation/e2e-prompts.md) | dsh e2e 端到端真 LLM 验证记录(持续更新) |
+| [evaluation/persona-bench/](evaluation/persona-bench/) | 产品人格横评:同一真实 prompt 各家回答存档/评分卡/人格提炼 |
+
+### ops/(发布与合规)
+
+| 文档 | 关注点 |
+|---|---|
+| [ops/extension-privacy.md](ops/extension-privacy.md) | Session Bridge 扩展隐私政策 |
+| [ops/extension-webstore-submission.md](ops/extension-webstore-submission.md) | Chrome Web Store 上架材料(ADR-21 通道 B) |
+
+### assets/ 与 superpowers/
+
+- `assets/`:archify 生成的系统架构图(`gotry-system-architecture.*`),由外部 archify 工具重生成,仓内无消费者。
+- `superpowers/`:superpowers 工作流的 plans/specs(评测计划 Phase 0 等),工具自管。

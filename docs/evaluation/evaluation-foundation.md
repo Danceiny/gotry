@@ -1,5 +1,9 @@
 # Evaluation Phase 0 foundation
 
+> Status: living contract (Phase 0).
+> Boundary: registry / case / run-receipt / failure-cluster v0 contracts plus deterministic validators only — no benchmark adapter install or execution, no external runner, no scores, no uplift claims.
+> Upstream: [multi-benchmark evaluation program spec](../superpowers/specs/2026-08-30-gotry-multi-benchmark-evaluation-program-design.md). Downstream: `scripts/evaluation-contract-tests.ts`.
+
 ## Scope
 
 Phase 0 provides registry, case, run-receipt, and failure-cluster v0 contracts plus deterministic validators. It installs and executes no benchmark adapter, external runner, or official evaluator.

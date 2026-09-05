@@ -1,5 +1,7 @@
 # External benchmark environment bridge
 
+> Status: living engineering ledger (Phase 1 treatment seam; default-off, not a product runtime dependency).
+
 This document covers the optional Phase 1 treatment seam for an external
 benchmark harness. It is not a product runtime dependency and does not itself
 schedule, launch, spend, score, or claim benchmark improvement.

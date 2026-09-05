@@ -4,7 +4,7 @@
 > 修正(同日 founder 指令):GoTry 未来要实现**多用户的 Agent as a Service**——shared-goal-authority-state-provider(claim/CAS/在线权威)不是范围外,是**多用户期的未来正题**,从未采纳清单移入 §6.5 远期采纳面
 > 作者:gotry-builder-01(loopx 治理平面)
 > 日期:2026-08-27
-> 上游权威:`architecture.md`(技术权威面)、`roadmap.md`(M0-M6 时间线)、`gotry-product-design.md`(产品面)
+> 上游权威:`../architecture.md`(技术权威面)、`../roadmap.md`(M0-M6 时间线)、`../gotry-product-design.md`(产品面)
 > 下游影响:每项切片在落地时按 §11 同步状态面,并按需登记为 ADR
 
 ## 0. 这是什么、不是什么

@@ -8,7 +8,7 @@
 
 | Agent | 素材形态 | transcript | 点评 |
 |---|---|---|---|
-| Kimi(月之暗面) | 真实 13 轮多轮对话(2026-08,`data/行程细化计划.docx`) | 未按本格式归档,素材即复盘 | [`docs/kimi-postmortem.md`](../kimi-postmortem.md) |
+| Kimi(月之暗面) | 真实 13 轮多轮对话(2026-08,`data/行程细化计划.docx`) | 未按本格式归档,素材即复盘 | [`docs/research/kimi-postmortem.md`](../../research/kimi-postmortem.md) |
 | 飞猪 AI 开放平台 | 单轮实测(2026-09-04,prompt 逐字投喂) | [`fliggy.md`](./fliggy.md) | 同文件 §点评 |
 
 素材不对称,如实声明:Kimi 侧可考察「状态与增量修订」维度,飞猪侧为单轮、该维度记 n/a。后续入册一律先跑本 prompt 单轮实测,另有真实多轮素材的单独标注。
@@ -97,11 +97,11 @@ G2/G3 不在 prompt 文本里——**正因不在,访谈才是必答题**。这 
 
 ## 6. Kimi 多轮复盘
 
-见 [`docs/kimi-postmortem.md`](../kimi-postmortem.md)。其结论在本横评框架下重述:Kimi 的失败不在知识、在架构(无状态、无访谈、无验证、无增量);它第 13 轮才长出的那张四方案对比表(到达时刻/当天还能玩吗/换乘次数),正是 GoTry 的出厂输出。
+见 [`docs/research/kimi-postmortem.md`](../../research/kimi-postmortem.md)。其结论在本横评框架下重述:Kimi 的失败不在知识、在架构(无状态、无访谈、无验证、无增量);它第 13 轮才长出的那张四方案对比表(到达时刻/当天还能玩吗/换乘次数),正是 GoTry 的出厂输出。
 
 ## 7. 对 GoTry 行为契约的反哺
 
-对照 [`cordis.gotry-patch.yml`](../../cordis.gotry-patch.yml) 21 条行为契约:
+对照 [`cordis.gotry-patch.yml`](../../../cordis.gotry-patch.yml) 21 条行为契约:
 
 - **已被横评实证的条目**(竞品失败=这些条目的存在性证明):(1) 动机先行、(2)(8)(9) 时间锚点三件套、(3)(13) 翻译不造数/外部事实先查工具、(4) 判定归引擎、(5) 待决=选择题、(7) 证据链、(10) 不重复问、(20) 事实闸。
 - **已落地(2026-09-04 founder 拍板认可;issue [#121](https://github.com/Danceiny/gotry/issues/121)/[#122](https://github.com/Danceiny/gotry/issues/122))**:

@@ -1,10 +1,11 @@
 # Session 适配器作者指南(D-13)
 
+> 状态:living(工程手册)
 > 定位:**给"要接入一个新站点/新通道"的人的工程手册**。适配器是本仓工具生态的扩展单元
-> (tool-orchestration-design §5③):新增站点不触核心,只加「适配器 + 注册表行 + 测试」。
+> (`tool-orchestration-design.md` §5③):新增站点不触核心,只加「适配器 + 注册表行 + 测试」。
 > 模板 = **12306 第一方校准法**(2026-09-03 实证落地:电报码表官方站表全量校准 129 城、
 > 座位桶索引对齐,曾纠出南宁 NIZ→NNZ 错码——见 `capabilities/session/adapters/rail-12306.ts`)。
-> 关联:`data-sources.md`(数据源权威面/站点矩阵)、`user-session-data-rfc.md`(会话面 RFC)、
+> 关联:`../data-sources.md`(数据源权威面/站点矩阵)、`../rfc/user-session-data-rfc.md`(会话面 RFC)、
 > `benchmark.ts`(双源 shape gate)、run-all §38/§41。
 
 ## 0. 一条铁律:适配器在传输层**只读**
