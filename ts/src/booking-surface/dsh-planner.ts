@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BOOKING_SURFACE_SCHEMA_VERSION, type BookingCopilotTurn, type BookingReadAction, type BookingSurfaceEvent } from './contracts.ts'
+import { BOOKING_READ_ACTION_KINDS, BOOKING_SURFACE_SCHEMA_VERSION, type BookingCopilotTurn, type BookingReadAction, type BookingSurfaceEvent } from './contracts.ts'
 import {
   EMBEDDED_BOOKING_CAPABILITY_IDS,
   actionsForEmbeddedCapability,
@@ -333,6 +333,16 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     envelope = { decision: envelope }
   }
   const decision = envelope.decision as Record<string, unknown>
+  // Models sometimes stringify the action or hoist its kind to the decision
+  // level; both carry the same typed payload, so unwrap before validating.
+  if (typeof decision.action === 'string' && decision.action.trim().startsWith('{')) {
+    try { decision.action = JSON.parse(decision.action) } catch { /* validation reports it */ }
+  }
+  if (typeof decision.kind === 'string' && (BOOKING_READ_ACTION_KINDS as readonly string[]).includes(decision.kind) && !isRecord(decision.action)) {
+    const { kind: actionKind, ...actionFields } = decision
+    decision.kind = 'operation'
+    decision.action = { ...actionFields, kind: actionKind }
+  }
   if (decision.kind === 'question') throw new Error('planner_question_runtime_owned')
   if (decision.kind !== 'operation') return asEventDraft(decision)
   if (!isRecord(decision.action)) throw new Error('planner_invalid_typed_decision')
@@ -379,7 +389,7 @@ export async function createDshEmbeddedBookingPlanner(
               const result = await runPort.run(plannerPrompt(turn, task), { sessionId })
               decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
             } catch (error) {
-              const retryable = attempt === 1 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned)/.test(error.message)
+              const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned)/.test(error.message)
               if (!retryable) throw error
               continue
             }
