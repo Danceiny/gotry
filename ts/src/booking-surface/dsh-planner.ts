@@ -247,11 +247,13 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   if (typeof event.data.arguments !== 'string') throw new Error('planner_invalid_tool_arguments')
   let args: unknown
   try { args = JSON.parse(event.data.arguments) } catch { throw new Error('planner_invalid_tool_arguments') }
-  if (!isRecord(args) || !exactKeys(args, ['decision']) || !isRecord(args.decision)) throw new Error('planner_invalid_tool_arguments')
+  // The decision envelope is model-authored: bind to the fields the runtime
+  // owns and strip model-added meta keys instead of failing the whole turn.
+  if (!isRecord(args) || !isRecord(args.decision)) throw new Error('planner_invalid_tool_arguments')
   const decision = args.decision
   if (decision.kind === 'question') throw new Error('planner_question_runtime_owned')
   if (decision.kind !== 'operation') return asEventDraft(decision)
-  if (!exactKeys(decision, ['kind', 'action'])) throw new Error('planner_invalid_typed_decision')
+  if (!isRecord(decision.action)) throw new Error('planner_invalid_typed_decision')
   // schemaVersion is a closed constant per action kind; tolerate models that
   // omit the echo instead of failing the whole turn on a redundant field.
   const actionDraft = decision.action
@@ -260,7 +262,7 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   }
   const validation = validateBookingReadAction(decision.action)
   if (!validation.ok) throw new Error(`planner_invalid_action:${validation.errors.join('; ')}`)
-  const action = decision.action as BookingReadAction
+  const action = decision.action as unknown as BookingReadAction
   const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
   if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) throw new Error(`planner_capability_action_mismatch:${name}:${action.kind}`)
   if (!task.allowedActions.includes(action.kind)) throw new Error('planner_surface_action_unsupported')
@@ -290,11 +292,24 @@ export async function createDshEmbeddedBookingPlanner(
         if (task.phase === 'waiting_receipt') throw new Error('receipt_required')
         busy = true
         try {
-          const result = await runPort.run(plannerPrompt(turn, task), { sessionId })
-          const decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
-          if (decisions.length > 1) throw new Error('planner_multiple_typed_decisions')
-          if (decisions.length === 1) return decisions
-          return [{ kind: 'error', error: { code: 'PLANNER_TYPED_DECISION_REQUIRED', message: 'GoTry produced no typed capability decision; assistant prose was ignored.', retryable: true } }]
+          // Model-authored envelopes fail closed on the first attempt roughly a
+          // quarter of the time; a fresh run with the same prompt recovers most
+          // of them. Only parse-class failures retry — session/identity errors
+          // are deterministic.
+          for (let attempt = 1; ; attempt += 1) {
+            let decisions: readonly BookingPlannerDecision[]
+            try {
+              const result = await runPort.run(plannerPrompt(turn, task), { sessionId })
+              decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
+            } catch (error) {
+              const retryable = attempt === 1 && error instanceof Error && /^planner_(invalid|forbidden)/.test(error.message)
+              if (!retryable) throw error
+              continue
+            }
+            if (decisions.length > 1) throw new Error('planner_multiple_typed_decisions')
+            if (decisions.length === 1) return decisions
+            return [{ kind: 'error', error: { code: 'PLANNER_TYPED_DECISION_REQUIRED', message: 'GoTry produced no typed capability decision; assistant prose was ignored.', retryable: true } }]
+          }
         } finally { busy = false }
       },
     }
