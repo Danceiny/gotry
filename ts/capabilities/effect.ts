@@ -36,6 +36,7 @@ import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, type Sessi
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
 import { verifyFlight, type FlightLiveQuery } from './opensky.ts'
 import { anythingSearch, type AnythingQuery } from './anything.ts'
+import { continentListUrl, countryPageUrl, extractVisaSection, fetchVisaPolicyPage, listCountryPaths, policyFactsFromMfa, type MfaPolicyFact, type VisaPolicyEffectParams } from './visa-policy.ts'
 import { readUrl, reach, reachStatus } from './agent-reach.ts'
 import { githubSearch, videoSubtitle } from './agent-reach-deep.ts'
 import { sessionLogin } from './session-login.ts'
@@ -91,6 +92,40 @@ export interface SessionLoginEffectParams {
   waitSeconds?: number
 }
 
+interface MfaPage { ok: boolean; html?: string; error?: string }
+
+/** C 档中国领事服务网抓取编排:country 直抓 / continent 列表遍历(≤limit,默认 10;抓取纪律=礼貌间隔,不并发) */
+async function fetchVisaPolicyEntries(p: VisaPolicyEffectParams): Promise<{ ok: boolean; via: string; evidence: string; latencyMs: number; facts: MfaPolicyFact[]; countries: string[]; error?: string }> {
+  const started = Date.now()
+  const fetchedAt = new Date().toISOString()
+  const countries: string[] = []
+  const facts: MfaPolicyFact[] = []
+  const targets: Array<{ continent: string; country: string }> = []
+  if (p.country) {
+    targets.push({ continent: p.continent ?? 'yz_645708', country: p.country })
+  } else if (p.continent) {
+    const listUrl = continentListUrl(p.continent)
+    if (!listUrl) return { ok: false, via: 'visa-policy-error', evidence: `[visa-policy@${fetchedAt}] 非法洲路径`, latencyMs: 0, facts: [], countries: [], error: 'invalid_continent' }
+    const page = await fetchVisaPolicyPage(listUrl, p.timeoutMs)
+    if (!page.ok || !page.html) return { ok: false, via: 'visa-policy-error', evidence: `[visa-policy@${fetchedAt}] 洲列表抓取失败: ${page.error ?? '?'}`, latencyMs: 0, facts: [], countries: [], error: page.error }
+    for (const c of listCountryPaths(page.html, p.continent).slice(0, Math.max(1, Math.min(10, p.limit ?? 10)))) targets.push({ continent: p.continent, country: c })
+  }
+  for (const t of targets) {
+    const url = countryPageUrl(t.continent, t.country)
+    if (!url) continue
+    const page: MfaPage = await fetchVisaPolicyPage(url, p.timeoutMs)
+    countries.push(t.country)
+    if (!page.ok || !page.html) continue
+    const section = extractVisaSection(page.html)
+    if (!section) continue
+    facts.push(...policyFactsFromMfa({ countryLabel: t.country, countryPath: t.country, section, fetchedAt }))
+  }
+  const evidence = facts.length > 0
+    ? `[visa-policy:cs-mfa@${fetchedAt}] ${facts.length} 条政策事实(抓取 ${countries.length} 国)`
+    : `[visa-policy@${fetchedAt}] 0 条(页面缺「签证入境」章节或抓取失败;不落负事实)`
+  return { ok: true, via: 'cs-mfa', evidence, latencyMs: Date.now() - started, facts, countries }
+}
+
 /** 默认渠道实现(生产解译器的 dispatch 目标;全部满足「永不抛错」能力层契约) */
 const DEFAULT_HANDLERS = {
   /** 飞猪官方只读通道(机/火/酒店;spawn CLI) */
@@ -142,6 +177,8 @@ const DEFAULT_HANDLERS = {
       : reach({ channel: p.channel ?? '', method: p.method ?? '', args: p.args, timeoutMs: p.timeoutMs }),
   /** 账号会话登录引导(浏览器通道;票据名只读 0 值过手,gotry_session_login 同源,D-23 收编) */
   SESSION_LOGIN: (p: SessionLoginEffectParams) => sessionLogin({ waitMs: typeof p.waitSeconds === 'number' ? p.waitSeconds * 1000 : undefined }),
+  /** 政策事实生产端 v1(issue #141,D-26):C 档中国领事服务网国家指南树(礼貌抓取:永不重试+断路器护站) */
+  VISA_POLICY_FETCH: (p: VisaPolicyEffectParams) => fetchVisaPolicyEntries(p),
 } as const
 
 export type EffectName = keyof typeof DEFAULT_HANDLERS
@@ -315,6 +352,14 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     channel: 'browser',
     retry: null,
     breaker: null,
+    isFailure: defaultIsFailure,
+  },
+  // VISA_POLICY(issue #141,D-26 v1):C 档中国领事服务网——政府权威源礼貌抓取:
+  // 永不重试(抓取纪律)+ 断路器防 hammering 政府站点;页面缺章节=无结论不落负事实
+  VISA_POLICY_FETCH: {
+    channel: 'api',
+    retry: null,
+    breaker: { failureThreshold: 2, openMs: 300_000 },
     isFailure: defaultIsFailure,
   },
 }
