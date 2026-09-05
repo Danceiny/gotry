@@ -263,8 +263,25 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   // schemaVersion is a closed constant per action kind; tolerate models that
   // omit the echo instead of failing the whole turn on a redundant field.
   const actionDraft = decision.action
-  if (isRecord(actionDraft) && typeof actionDraft.kind === 'string' && typeof actionDraft.schemaVersion !== 'string') {
-    actionDraft.schemaVersion = BOOKING_SURFACE_SCHEMA_VERSION
+  if (isRecord(actionDraft)) {
+    if (typeof actionDraft.kind === 'string' && typeof actionDraft.schemaVersion !== 'string') {
+      actionDraft.schemaVersion = BOOKING_SURFACE_SCHEMA_VERSION
+    }
+    // Deterministic type coercions for model-authored scalars: string digits
+    // for the revision token, a single fact as a one-element array, and a
+    // stringified JSON input object. The typed validation below still decides
+    // acceptance; these only fix representation, never semantics.
+    if (typeof actionDraft.expectedRevision === 'string' && /^-?\d+$/.test(actionDraft.expectedRevision)) {
+      actionDraft.expectedRevision = Number(actionDraft.expectedRevision)
+    }
+    if (typeof actionDraft.factRefs === 'string') {
+      actionDraft.factRefs = actionDraft.factRefs.trim() === '' ? [] : [actionDraft.factRefs]
+    } else if (actionDraft.factRefs === undefined || actionDraft.factRefs === null) {
+      actionDraft.factRefs = []
+    }
+    if (typeof actionDraft.input === 'string') {
+      try { actionDraft.input = JSON.parse(actionDraft.input) } catch { /* validation reports the malformed input */ }
+    }
   }
   const validation = validateBookingReadAction(decision.action)
   if (!validation.ok) throw new Error(`planner_invalid_action:${validation.errors.join('; ')}`)
