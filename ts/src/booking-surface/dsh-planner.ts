@@ -313,8 +313,22 @@ function repairActionRepresentation(action: unknown): void {
         mutated = true
       }
     }
-    if (!mutated) return
+    if (!mutated) break
   }
+  const final = validateBookingReadAction(action as unknown as BookingReadAction)
+  if (final.ok) return
+  const kindBlind = final.errors.every((e) => e.includes('/kind') || e.includes("property 'kind'"))
+  if (!kindBlind) return
+  let candidate: BookingReadAction | undefined
+  for (const kind of BOOKING_READ_ACTION_KINDS) {
+    const trial = { ...action, kind } as unknown as BookingReadAction
+    const trialValidation = validateBookingReadAction(trial)
+    if (trialValidation.ok) {
+      if (candidate) return
+      candidate = trial
+    }
+  }
+  if (candidate) Object.assign(action, candidate)
 }
 
 function parseToolDecision(event: unknown, task: BookingCopilotTaskState): BookingPlannerDecision | null {
@@ -395,6 +409,10 @@ export async function createDshEmbeddedBookingPlanner(
             }
             if (decisions.length > 1) throw new Error('planner_multiple_typed_decisions')
             if (decisions.length === 1) return decisions
+            // Prose-only responses surface as an empty decision list; a fresh
+            // run usually commits to the tool, so keep them inside the retry
+            // budget and only surface the typed error on the final attempt.
+            if (attempt < 3) continue
             return [{ kind: 'error', error: { code: 'PLANNER_TYPED_DECISION_REQUIRED', message: 'GoTry produced no typed capability decision; assistant prose was ignored.', retryable: true } }]
           }
         } finally { busy = false }
