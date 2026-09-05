@@ -290,7 +290,7 @@ function repairActionRepresentation(action: unknown): void {
       if (!pathPart || !messagePart) continue
       if (messagePart === 'must be array') {
         const current = actionValueAt(action, pathPart)
-        if (current === undefined || current === null || typeof current === 'string' || typeof current === 'number' || typeof current === 'boolean') {
+        if (!Array.isArray(current)) {
           actionAssignAt(action, pathPart, current === undefined || current === null || current === '' ? [] : [current])
           mutated = true
         }
@@ -402,7 +402,7 @@ export async function createDshEmbeddedBookingPlanner(
           // of them. Only parse-class failures retry — session/identity errors
           // are deterministic.
           for (let attempt = 1; ; attempt += 1) {
-            let decisions: readonly BookingPlannerDecision[]
+            let decisions: BookingPlannerDecision[]
             try {
               const result = await runPort.run(plannerPrompt(turn, task), { sessionId })
               decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
@@ -411,7 +411,12 @@ export async function createDshEmbeddedBookingPlanner(
               if (!retryable) throw error
               continue
             }
-            if (decisions.length > 1) throw new Error('planner_multiple_typed_decisions')
+            if (decisions.length > 1) {
+              // One typed operation per receipt-gated turn; models often emit
+              // a patch+run pair in one response. The first decision drives
+              // this turn and the receipt loop naturally requests the rest.
+              decisions = decisions.slice(0, 1)
+            }
             if (decisions.length === 1) return decisions
             // Prose-only responses surface as an empty decision list; a fresh
             // run usually commits to the tool, so keep them inside the retry
