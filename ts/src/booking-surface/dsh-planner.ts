@@ -246,6 +246,77 @@ function asEventDraft(value: Record<string, unknown>): BookingSurfaceEventDraft 
   return value as unknown as BookingSurfaceEventDraft
 }
 
+const ACTION_REPAIR_ROUNDS = 3
+
+function actionValueAt(action: Record<string, unknown>, path: string): unknown {
+  let node: unknown = action
+  for (const raw of path.split('/').filter(Boolean)) {
+    const key = raw.replace(/~1/g, '/').replace(/~0/g, '~')
+    if (!isRecord(node)) return undefined
+    node = node[key]
+  }
+  return node
+}
+
+function actionAssignAt(action: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split('/').filter(Boolean)
+  if (parts.length === 0) return
+  let node: Record<string, unknown> = action
+  for (const raw of parts.slice(0, -1)) {
+    const key = raw.replace(/~1/g, '/').replace(/~0/g, '~')
+    if (!isRecord(node[key])) node[key] = {}
+    node = node[key] as Record<string, unknown>
+  }
+  node[parts[parts.length - 1]!.replace(/~1/g, '/').replace(/~0/g, '~')] = value
+}
+
+/**
+ * Representation-only repair for model-authored actions, driven by the
+ * canonical schema's own validation errors: scalar where an array belongs,
+ * stringified numbers, stringified JSON objects, and the dropped
+ * schemaVersion echo. Each round applies deterministic fixes from the
+ * current error list, then revalidates; semantic mismatches survive the
+ * repair and still fail closed.
+ */
+function repairActionRepresentation(action: unknown): void {
+  if (!isRecord(action)) return
+  if (typeof action.schemaVersion !== 'string') action.schemaVersion = BOOKING_SURFACE_SCHEMA_VERSION
+  for (let round = 0; round < ACTION_REPAIR_ROUNDS; round += 1) {
+    const validation = validateBookingReadAction(action as unknown as BookingReadAction)
+    if (validation.ok) return
+    let mutated = false
+    for (const rawError of validation.errors) {
+      const [pathPart, messagePart] = String(rawError).split(': ')
+      if (!pathPart || !messagePart) continue
+      if (messagePart === 'must be array') {
+        const current = actionValueAt(action, pathPart)
+        if (current === undefined || current === null || typeof current === 'string' || typeof current === 'number' || typeof current === 'boolean') {
+          actionAssignAt(action, pathPart, current === undefined || current === null || current === '' ? [] : [current])
+          mutated = true
+        }
+      } else if ((messagePart === 'must be integer' || messagePart === 'must be number') && typeof actionValueAt(action, pathPart) === 'string') {
+        const raw = String(actionValueAt(action, pathPart)).trim()
+        if (/^-?\d+$/.test(raw)) {
+          actionAssignAt(action, pathPart, Number(raw))
+          mutated = true
+        }
+      } else if (messagePart === 'must be object') {
+        const current = actionValueAt(action, pathPart)
+        if (typeof current === 'string' && current.trim().startsWith('{')) {
+          try { actionAssignAt(action, pathPart, JSON.parse(current)); mutated = true } catch { /* leave for validation */ }
+        } else if (current === undefined || current === null) {
+          actionAssignAt(action, pathPart, {})
+          mutated = true
+        }
+      } else if (messagePart === 'must be equal to constant' && (pathPart === '/schemaVersion' || pathPart.endsWith('/schemaVersion'))) {
+        actionAssignAt(action, pathPart, BOOKING_SURFACE_SCHEMA_VERSION)
+        mutated = true
+      }
+    }
+    if (!mutated) return
+  }
+}
+
 function parseToolDecision(event: unknown, task: BookingCopilotTaskState): BookingPlannerDecision | null {
   if (!isRecord(event) || event.type !== 'tool/call' || !isRecord(event.data)) return null
   const name = event.data.name
@@ -255,34 +326,17 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   try { args = JSON.parse(event.data.arguments) } catch { throw new Error('planner_invalid_tool_arguments') }
   // The decision envelope is model-authored: bind to the fields the runtime
   // owns and strip model-added meta keys instead of failing the whole turn.
-  if (!isRecord(args) || !isRecord(args.decision)) throw new Error('planner_invalid_tool_arguments')
-  const decision = args.decision
+  if (!isRecord(args)) throw new Error('planner_invalid_tool_arguments')
+  let envelope: Record<string, unknown> = args
+  if (!isRecord(envelope.decision)) {
+    if (typeof envelope.kind !== 'string') throw new Error('planner_invalid_tool_arguments')
+    envelope = { decision: envelope }
+  }
+  const decision = envelope.decision as Record<string, unknown>
   if (decision.kind === 'question') throw new Error('planner_question_runtime_owned')
   if (decision.kind !== 'operation') return asEventDraft(decision)
   if (!isRecord(decision.action)) throw new Error('planner_invalid_typed_decision')
-  // schemaVersion is a closed constant per action kind; tolerate models that
-  // omit the echo instead of failing the whole turn on a redundant field.
-  const actionDraft = decision.action
-  if (isRecord(actionDraft)) {
-    if (typeof actionDraft.kind === 'string' && typeof actionDraft.schemaVersion !== 'string') {
-      actionDraft.schemaVersion = BOOKING_SURFACE_SCHEMA_VERSION
-    }
-    // Deterministic type coercions for model-authored scalars: string digits
-    // for the revision token, a single fact as a one-element array, and a
-    // stringified JSON input object. The typed validation below still decides
-    // acceptance; these only fix representation, never semantics.
-    if (typeof actionDraft.expectedRevision === 'string' && /^-?\d+$/.test(actionDraft.expectedRevision)) {
-      actionDraft.expectedRevision = Number(actionDraft.expectedRevision)
-    }
-    if (typeof actionDraft.factRefs === 'string') {
-      actionDraft.factRefs = actionDraft.factRefs.trim() === '' ? [] : [actionDraft.factRefs]
-    } else if (actionDraft.factRefs === undefined || actionDraft.factRefs === null) {
-      actionDraft.factRefs = []
-    }
-    if (typeof actionDraft.input === 'string') {
-      try { actionDraft.input = JSON.parse(actionDraft.input) } catch { /* validation reports the malformed input */ }
-    }
-  }
+  repairActionRepresentation(decision.action)
   const validation = validateBookingReadAction(decision.action)
   if (!validation.ok) throw new Error(`planner_invalid_action:${validation.errors.join('; ')}`)
   const action = decision.action as unknown as BookingReadAction
