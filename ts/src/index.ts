@@ -165,6 +165,25 @@ function readTimelineTrips(stateRoot: string): Array<{ destination: string; star
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
 
+/** Benchmark 治理面钉死预算(Round 9,#100/#102):官方任务形态(如 ChinaTravel
+ *  单查询 300s)超出内置 60/120s;预算仍必须「按 run 钉死」保证可复现——允许
+ *  owner 经 env 按次显式设定,缺省维持既有值,非法值启动即抛。 */
+function benchmarkPinnedPolicy(): { softMs: number; hardMs: number; exit: 'converge' } {
+  const parse = (name: string, fallback: number): number => {
+    const raw = process.env[name]
+    if (raw === undefined || raw === '') return fallback
+    const value = Number.parseInt(raw, 10)
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error(`invalid ${name}: ${JSON.stringify(raw)} (expected a positive safe integer)`)
+    }
+    return value
+  }
+  const softMs = parse('GOTRY_BENCHMARK_SOFT_MS', 60_000)
+  const hardMs = parse('GOTRY_BENCHMARK_HARD_MS', 120_000)
+  if (hardMs <= softMs) throw new Error(`GOTRY_BENCHMARK_HARD_MS (${hardMs}) must exceed GOTRY_BENCHMARK_SOFT_MS (${softMs})`)
+  return { softMs, hardMs, exit: 'converge' }
+}
+
 export function apply(ctx: Context, config: Config): void {
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
@@ -176,7 +195,7 @@ export function apply(ctx: Context, config: Config): void {
   installTurnDeadline(ctx, handoffChild
     ? { fixedPolicy: { softMs: 300_000, hardMs: 900_000, exit: 'converge' } }
     : rawBenchmarkEnvironmentConfigPath.trim()
-      ? { fixedPolicy: { softMs: 60_000, hardMs: 120_000, exit: 'converge' } }
+      ? { fixedPolicy: benchmarkPinnedPolicy() }
       : { stateRoot: process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.' })
   if (rawBenchmarkEnvironmentConfigPath.trim()) {
     // Benchmark mode is a deliberately minimal kernel: only the model
