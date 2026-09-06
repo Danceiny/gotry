@@ -278,6 +278,28 @@ async function doctorChecks() {
   const calOn = calState?.enabled === true
   const calConfigured = calOn && calendarProfileConfigured()
   items.push({ label: 'dsh-calendar(日历工作窗口)', ok: !calOn || calConfigured, level: !calOn ? 'ok' : calConfigured ? 'ok' : 'degraded', detail: calendarDetail(calState), fix: !calOn ? undefined : calConfigured ? undefined : '在 ~/.dsh/profiles/web/cordis.patch.yml 覆盖 calendar 行 config 填 username(或 npx gotry setup calendar --off 恢复默认不挂载)' })
+  // dsh-map-tools(patch 分发面宿主插件,issue #139):解析失败启动时整块静默剔除,
+  // doctor 把两态照亮。候选清单与 bin/gotry-inner.js 解析链、ts/capabilities/doctor.ts 同口径。
+  const mapCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js'),
+    join(repoRoot, 'node_modules/dsh-map-tools/package.json'),
+    join(repoRoot, 'ts/node_modules/dsh-map-tools/package.json'),
+    join(homedir(), '.dsh/profiles/web/node_modules/dsh-map-tools/package.json'),
+  ]
+  const mapHit = mapCandidates.find((p) => existsSync(p))
+  items.push(mapHit
+    ? { label: 'dsh-map-tools(地图/路线/POI)', ok: true, level: 'ok', detail: `已就位(${mapHit})——地图工具可用(零 key,走 OSM/OSRM)`, fix: undefined }
+    : { label: 'dsh-map-tools(地图/路线/POI)', ok: false, level: 'missing', detail: '未随包解析——启动时该 patch 条目被静默剔除,地图/路线/POI 工具不会出现在模型工具箱(缺地图不挡旅行规划,只少能力)', fix: 'npx gotry doctor --fix 不覆盖此项:source 布局把 dsh-map-tools 放进 ts/dsh-runtime/node_modules(或 ts/node_modules);npm 布局重装 @danceiny/gotry(随发行版依赖提供)' })
+  // dsh-tool-ask-user(结构化澄清卡,人格契约 (5) 的卡片形态载体)
+  const askCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/vendor/deepseek-ai-dsh-tool-ask-user/package.json'),
+    join(repoRoot, 'node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
+    join(homedir(), '.dsh/profiles/web/node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
+  ]
+  const askHit = askCandidates.find((p) => existsSync(p))
+  items.push(askHit
+    ? { label: 'dsh-tool-ask-user(结构化澄清卡)', ok: true, level: 'ok', detail: `已就位(${askHit})——ask_user_question 澄清卡可用(web 原生卡片;headless+TTY 用 stdio 提供方)`, fix: undefined }
+    : { label: 'dsh-tool-ask-user(结构化澄清卡)', ok: false, level: 'missing', detail: '未解析——启动时澄清卡注入被静默剔除,模型只能散文追问(人格契约 (5) 退化文本形态)', fix: '重装 @danceiny/gotry——该依赖随 dsh 闭包自带,缺失多为安装不完整' })
   // LLM key:显式让渡(founder 2026-09-02:doctor 不管 key)
   items.push({ label: 'LLM key', ok: true, level: 'ok', detail: '由 dsh 宿主 UI 管理——不在体检范围(gotry 不接触、不回显凭证)', fix: undefined })
   return items
