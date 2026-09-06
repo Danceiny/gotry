@@ -230,6 +230,36 @@ const unauthorisedDecisions = await unauthorised.plannerFactory(task).next({
 })
 assert.equal(unauthorisedDecisions[0]?.kind, 'error', 'text-channel decisions outside allowedActions stay non-executable')
 
+const unsafeRefPort: DshPlannerRunPort = {
+  async run() {
+    return {
+      finalResponse: '',
+      events: [{
+        type: 'tool/call',
+        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai'] } } }) },
+      }],
+    }
+  },
+  async close() {},
+}
+const unsafeRef = await createDshEmbeddedBookingPlanner({ runPort: unsafeRefPort })
+await assert.rejects(
+  unsafeRef.plannerFactory(task).next({
+    task,
+    turn: {
+      schemaVersion: 'booking.surface',
+      kind: 'user.turn',
+      taskId: task.taskId,
+      turnId: 'dsh-turn-6',
+      workspace,
+      request: { text: 'Find hotels' },
+    },
+  }),
+  /planner_invalid_action:unsafe_fact_ref/,
+  'model-invented unsafe refs retry as parse-class failures, not ledger-boundary crashes',
+)
+await unsafeRef.close()
+
 const plainProsePort: DshPlannerRunPort = {
   async run() {
     return { finalResponse: 'I would search hotels in Dubai for you.', events: [] }
@@ -305,5 +335,5 @@ await assert.rejects(
   /planner_identity_required/,
 )
 
-await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), plainProse.close(), forbidden.close(), terminalAdapter.close()])
+await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), forbidden.close(), terminalAdapter.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')

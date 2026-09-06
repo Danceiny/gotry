@@ -363,6 +363,12 @@ function recoverFinalResponseDecision(response: string, task: BookingCopilotTask
     console.error('[booking-copilot] finalResponse recovery rejected (invalid action):', JSON.stringify({ kind: action.kind, errors: validation.errors.slice(0, 6) }).slice(0, 600))
     return null
   }
+  try {
+    assertPlannerSafeRefs(action)
+  } catch (error) {
+    console.error('[booking-copilot] finalResponse recovery rejected (unsafe ref):', JSON.stringify({ actionId: action.actionId, factRefs: action.factRefs }).slice(0, 600))
+    return null
+  }
   const typed = action as unknown as BookingReadAction
   if (!task.allowedActions.includes(typed.kind)) return null
   if (typed.contextRef !== task.contextRef) return null
@@ -370,6 +376,23 @@ function recoverFinalResponseDecision(response: string, task: BookingCopilotTask
   typed.expectedRevision = task.revision
   console.error('[booking-copilot] recovered typed decision from finalResponse:', JSON.stringify({ kind: typed.kind, actionId: typed.actionId }).slice(0, 240))
   return { kind: 'operation', action: typed }
+}
+
+const PLANNER_SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
+
+function assertPlannerSafeRefs(action: Record<string, unknown>): void {
+  const actionId = action.actionId
+  if (typeof actionId !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(actionId)) {
+    throw new Error(`planner_invalid_action:unsafe_action_id:${String(actionId).slice(0, 60)}`)
+  }
+  const factRefs = action.factRefs
+  if (Array.isArray(factRefs)) {
+    for (const ref of factRefs) {
+      if (typeof ref !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(ref)) {
+        throw new Error(`planner_invalid_action:unsafe_fact_ref:${String(ref).slice(0, 60)}`)
+      }
+    }
+  }
 }
 
 function parseToolDecision(event: unknown, task: BookingCopilotTaskState): BookingPlannerDecision | null {
@@ -419,6 +442,11 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     console.error(`[booking-copilot] raw invalid action (${decision.action && typeof decision.action === 'object' ? (decision.action as Record<string, unknown>).kind : '?'}):`, JSON.stringify({ errors: validation.errors.slice(0, 8), action: decision.action }).slice(0, 1200))
     throw new Error(`planner_invalid_action:${validation.errors.join('; ')}`)
   }
+  // The runtime rejects opaque refs outside its safe charset at the ledger
+  // boundary, past the retry budget. Enforce the same charset here so a
+  // model-invented unsafe ref retries as a parse-class failure instead of
+  // failing the turn as PLANNER_FAILED.
+  assertPlannerSafeRefs(decision.action)
   const action = decision.action as unknown as BookingReadAction
   const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
   if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) throw new Error(`planner_capability_action_mismatch:${name}:${action.kind}`)
