@@ -336,10 +336,19 @@ function repairActionRepresentation(action: unknown): void {
 function parseToolDecision(event: unknown, task: BookingCopilotTaskState): BookingPlannerDecision | null {
   if (!isRecord(event) || event.type !== 'tool/call' || !isRecord(event.data)) return null
   const name = event.data.name
-  if (typeof name !== 'string' || !TOOL_NAMES.has(name)) throw new Error(`planner_forbidden_tool:${String(name)}`)
-  if (typeof event.data.arguments !== 'string') throw new Error('planner_invalid_tool_arguments')
+  if (typeof name !== 'string' || !TOOL_NAMES.has(name)) {
+    console.error(`[booking-copilot] raw invalid decision (forbidden_tool ${String(name)}):`, JSON.stringify(event).slice(0, 600))
+    throw new Error(`planner_forbidden_tool:${String(name)}`)
+  }
+  if (typeof event.data.arguments !== 'string') {
+    console.error('[booking-copilot] raw invalid decision (arguments not string):', JSON.stringify(event).slice(0, 600))
+    throw new Error('planner_invalid_tool_arguments')
+  }
   let args: unknown
-  try { args = JSON.parse(event.data.arguments) } catch { throw new Error('planner_invalid_tool_arguments') }
+  try { args = JSON.parse(event.data.arguments) } catch {
+    console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(event.data.arguments).slice(0, 600))
+    throw new Error('planner_invalid_tool_arguments')
+  }
   // The decision envelope is model-authored: bind to the fields the runtime
   // owns and strip model-added meta keys instead of failing the whole turn.
   if (!isRecord(args)) throw new Error('planner_invalid_tool_arguments')
@@ -361,10 +370,16 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   }
   if (decision.kind === 'question') throw new Error('planner_question_runtime_owned')
   if (decision.kind !== 'operation') return asEventDraft(decision)
-  if (!isRecord(decision.action)) throw new Error('planner_invalid_typed_decision')
+  if (!isRecord(decision.action)) {
+    console.error('[booking-copilot] raw invalid decision (action not object):', JSON.stringify(decision).slice(0, 800))
+    throw new Error('planner_invalid_typed_decision')
+  }
   repairActionRepresentation(decision.action)
   const validation = validateBookingReadAction(decision.action)
-  if (!validation.ok) throw new Error(`planner_invalid_action:${validation.errors.join('; ')}`)
+  if (!validation.ok) {
+    console.error(`[booking-copilot] raw invalid action (${decision.action && typeof decision.action === 'object' ? (decision.action as Record<string, unknown>).kind : '?'}):`, JSON.stringify({ errors: validation.errors.slice(0, 8), action: decision.action }).slice(0, 1200))
+    throw new Error(`planner_invalid_action:${validation.errors.join('; ')}`)
+  }
   const action = decision.action as unknown as BookingReadAction
   const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
   if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) throw new Error(`planner_capability_action_mismatch:${name}:${action.kind}`)
