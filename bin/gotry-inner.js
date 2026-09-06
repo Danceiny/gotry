@@ -432,9 +432,21 @@ if (calEntry && calEnabled) {
 // 两条目标在 headless/web profile 均有(dsh-base 声明 llm-deepseek、两 profile 均声明
 // agent-default-model)。llm-deepseek 目录整体替换为单条目:显式指定模型的场景多为
 // 中转/兼容端点,默认 v4-* 目录对其是误导;不硬编码上游 DEFAULT_MODELS 防漂移。
+let llmMaxTokens
 if (process.env.GOTRY_LLM_MODEL) {
+  const rawMax = process.env.LLM_MAX_TOKENS
+  if (rawMax !== undefined && rawMax !== '') {
+    llmMaxTokens = Number.parseInt(rawMax, 10)
+    if (!Number.isSafeInteger(llmMaxTokens) || llmMaxTokens <= 0) {
+      throw new Error(`invalid LLM_MAX_TOKENS: ${JSON.stringify(rawMax)} (expected a positive safe integer)`)
+    }
+  }
   const modelYaml = `'${process.env.GOTRY_LLM_MODEL.replace(/'/g, "''")}'`
-  patchRaw += `\n# LLM_MODEL 指定模型(issue #77):dsh 会话面默认模型 + 模型目录\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: ${modelYaml}\n- id: llm-deepseek\n  config:\n    models:\n      - id: ${modelYaml}\n        name: ${modelYaml}\n`
+  // LLM_MAX_TOKENS(Round 9,#100/#102):中转/兼容端点模型常带低于 dsh 未知模型
+  // 默认 256K 预算的输出上限(MiniMax 2013 实测);目录条目 maxTokens 元数据是
+  // dsh-llm-deepseek defaultMaxTokens 的官方通道(web UI 模型同源)。
+  const maxTokensYaml = llmMaxTokens === undefined ? '' : `\n        maxTokens: ${llmMaxTokens}`
+  patchRaw += `\n# LLM_MODEL 指定模型(issue #77):dsh 会话面默认模型 + 模型目录\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: ${modelYaml}\n- id: llm-deepseek\n  config:\n    models:\n      - id: ${modelYaml}\n        name: ${modelYaml}${maxTokensYaml}\n`
 }
 // Keep the patch private and short-lived. mkdtempSync creates a 0700 directory;
 // wx prevents accidental reuse/races if a process is started concurrently.
