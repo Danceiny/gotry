@@ -22,6 +22,7 @@
 
 > 以下均为**工程面交付,不构成任何里程碑 Exit 证据**(D-20 口径)。
 
+- **政策事实生产端 v1(2026-09-05,issue #141,D-26)**:VISA_POLICY_FETCH effect 注册表行——C 档中国领事服务网(cs.mfa.gov.cn)国家指南树,礼貌抓取(永不重试+断路器护站)→ PolicyFact(as_of+review_by+来源证据链)落账;founder 拍板 C 档免费权威源先行,Timatic/Sherpa° 后议。
 - **外部事件接缝设计(2026-09-04,issue #119/#82 兼容方向,D-31 决策点)**:`docs/design/external-event-seam.md`——外部事件作为健康面(站点断→通道态 down,routing/doctor 零改动生效)与愿望池召回的新生产者,消费既有接缝不建新运行时;不做 push/总线/常驻监听;D-31=事件写入信任模型,触发式拍板;落地序列三段(触发式)。
 
 - **HotelByte Booking Copilot 产品验收并行线**:GoTry 以单一 `booking.surface` 契约(2026-09-05 #133 收敛,原 v2 形态转正、v1 退役)的 typed read actions 提供协作面——六个生命周期阶段、七个 phase 字面值(`terminal`/`error` 是两种终态结果)的 durable projection,生产 standalone 默认只接受 BFF 已绑定的 `user.turn`/receipt continuation,完整 principal + binding seam 才开放 `user.turn.ingress`,`Book` 留在原 Checkout。Draft 候选已有 exact SHA/schema/Linux Node 24+ABI provenance 与实际进程 health identity/ingress mode;合并 gate 仍是 tenant/customer/storefront/payment-link 四 surface 真实库存、unavailable/changed 恢复链及 Checkout/QueryOrders/清理证据。该线不启封 M5,也不以离线合同或 CI 替代业务验收。
@@ -169,7 +170,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 ```
 你:remote 目标 + License 两个决策      ← 发布闸④⑤,种子用户的前置(发布 owner 等这两个答案)
 你:种子用户邀请(发起人即首个用户)      ← ./gotry 即入口(v0.0.1-rc2)
-工程:D-7 迁移(候选形态进 TS unified,清除洱海路由 hack)→ 指标面板(ADR-11 质量层)
+工程:D-7 迁移(候选形态进 TS unified,清除洱海路由 hack)→ 指标面板(ADR-11 质量层)(第一切片 2026-09-05 已落地:只读聚合呈现面 v1,#138;持续观测/可视化待后续切片)
 ```
 
 ## 旧模型映射(归并即退役)

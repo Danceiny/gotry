@@ -34,7 +34,7 @@
 | **地理/行政区划** | ❌ 无 | — | — | TREK 模式:bundled GeoJSON atlas(脚本构建,离线) |
 | **时区** | ⚠️ 手写在数据包(tz_offset_min/origin_tz_offset_min) | 静态 | — | M4:用时区库(`Intl`/`tz-lookup`)替代手写 |
 | **汇率** | ❌ 无(全 CNY 硬编码) | — | — | M4:exchangerate 免费层,或 hotel-be 若有 |
-| **签证/入境** | ❌ 无 | — | — | M5 前不接;靠 LLM 常识+提示用户核实 |
+| **签证/入境** | ✅ 政策事实生产端 v1(2026-09-05,issue #141):C 档中国领事服务网(cs.mfa.gov.cn)国家指南树,礼貌抓取(永不重试+断路器护站)→ 签证入境章节抽取 → PolicyFact(as_of + D+30 review_by + 来源证据链)落账 | 静态快照抓取 | `[实时API:cs-mfa@ts]` | Timatic/Sherpa° 后议(founder 拍板 C 档免费权威源先行) |
 
 ---
 

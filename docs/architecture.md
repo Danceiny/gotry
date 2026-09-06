@@ -57,6 +57,7 @@ M3 最小可用产品,分发链路无已知堵点。
   - 覆盖:扩展 / agent-reach `.venv` / hbcli / FlyAI key(含最近匿名试用达限时间)/ dsh-calendar 挂载态 / sidebar,逐项分级 ok/degraded/missing + 精确补装指引
   - 安装只经用户终端 `npx gotry doctor --fix`;LLM key 归 dsh 宿主,刻意不管
   - 工具层 not-installed/needs-setup 报错统一指 doctor(2026-09-02 迪拜 session 复盘:阻断对已坏通道的盲目重试)
+- **运维面**:质量指标只读聚合 `ts/scripts/build-metrics-report.ts`(2026-09-05,#138 第一切片)——事实闸 verdict 分布与 blocked 率/通道健康 down·cooldown(30 天窗)/事故面(7 天窗)/桥延迟 p50·p95·max(**>500ms 超限计数=§11 复审节奏触发锚点的可见面**)/账本与 doctor 报告存在性,聚成单一 markdown;全程只读零 SQLite 打开(`openDb` 建连即可能写 kv),默认 stdout、`--out` 才落盘;工程面交付,不构成 M3 Exit 证据(归 #22)
 - **外联**:AgentReach wrapper(上游装于 `.venv`,反射桥 `agent-reach-bridge.py` 直调上游注册表,零渠道知识)
 
 **工具面无预设静态路由优先级**(persona (19) 平铺保持);通道顺位由**通道注册表**生成、健康态过滤(D-8):
@@ -235,6 +236,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 17 | 预订 saga 状态机具名化(issue #17 采纳,2026-08-29) | 见 §8.17 | M5 拍板 WriteGate 时复审(启封增量的 schema CHECK/seam 词汇/L4 自动类);若出现需要并行多写者的预订流,复审 keyed 单写者形态 | `ts/src/booking-saga.ts`;`docs/design/booking-saga-fsm.md`;run-all §36 |
 | 18 | 效应解译器 effect_interpreter.v1(issue #16 采纳,2026-08-29) | 见 §8.18 | 出现需要跨渠道比价聚合的产品裁决时复审「平铺」边界;写效应(预订/支付)入注册表时必须走 booking_saga_fsm.v1 边表(M5 Entry) | `ts/capabilities/effect.ts` `resilience.ts`;`docs/design/effect-interpreter.md`;run-all §37 |
 | 19 | 可下单事实单一数据源 + 产物事实闸(issue #46,2026-08-30) | 见 §8.19 | 出现第二类需闸产物(如酒店直订)时复审覆盖面;政策实时源接入后复审政策事实生产端;根治方向=产物只由渲染原语生成(结构化→markdown 单向),反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts`;`data/airline-airports.json`;run-all §39;smoke §16 |
+| 20 | 价表 provider-aware v2 + 价格漂移长机制(issue #49,2026-08-30):封存价表 `gotry_llm_price_table_v2`(DeepSeek tiered + MiniMax flat,未知模型 fail-closed 不猜价)+ 四 provider 漂移监测,**永不自动 apply 价格**(调整走 PR + 人 review) | 发版时人工核价(滞后)/自动 apply(拒绝:官方 down 5% 曾被误认为我方 bug) | 监测误报成系统性问题、或价格源形态变化时复审 | `ts/data/llm-price-table.json`;`ts/scripts/price-drift-watch.ts`;run-all §41/§42 |
 | 21 | 扩展分发三通道(issue #21 分发通道,2026-08-30;商店轨 2026-09-02 上架) | 见 §8.21 | ~~商店过审后复审 wizard 步骤~~(已触发:wizard 退化为离线健康探活等待;安装=浏览器的事、渲染=dsh UI 的事,§3.3 职责返交落地);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/ops/extension-webstore-submission.md` |
 | 22 | static golden 是**可审计 benchmark comparator**,不是实时航班源(issue #67) | 见 §8.22 | 出现可免私有凭证、许可清晰且稳定的官方 flight API,或 hbcli 发布 flight 合同时复审其为新 provider;static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`;`ts/data/sf-static-routes.json`;run-all §44 |
 | 23 | embedded Booking Copilot 安全边界与 BFF request identity binding(单一 booking.surface 契约) | 见 §8.23 | 出现离页自动写/支付必须另立 M5 WriteGate ADR;出现多写者/跨 host 触发 ADR-15/16 复审;~~所有消费方迁移 v2 后再退 v1~~(**已触发 2026-09-05**:#133 收敛为单一契约,v1 退役,文件转正为无后缀 canonical 名) | `schemas/booking.surface.schema.json`;`ts/src/booking-surface/`(contracts/runtime/server/startup 等);run-all 证明面 |
@@ -379,6 +381,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **商店版扩展检测·自适应文案(2026-09-04,issue #117,D-24 清偿)**:needs-extension 文案按本地通道落位状态自适应(`needsExtensionSummary`/`localExtensionInstalled`):本地 unpacked 已落位 → 保留完整双通道指引;未落位(商店版用户/未装)→ 自动跳过开发者模式/本地通道文案,只推商店一键装。桥失败摘要同函数同语义;doctor 扩展项明示「商店版用户可忽略本项」;静态常量 `NEEDS_EXTENSION_HINT` 退役为自适应函数。extension-tests §38 三条新断言。
 - **事实闸覆盖面·酒店入闸 + 渲染原语(2026-09-04,issue #118,D-26 收口)**:①`HotelFact`(gotry_bookable_fact.v1 第三形态)——exact-date 酒店检索 hit/miss 落账(flyai-hotel/session:ctrip-hotel 两通道接线);纪律与机/火同源:摸底不落账、needs-setup/error 传输失败永不落负事实、不落数字价(上游打码价保真,只记在架家数)。②`gotry_fact_gate` 酒店 claim 入闸——断言可住性的行按目的地+档期回溯酒店事实,无事实 fail-closed(`unverifiable_hotel_claim`),exact-date miss 在册却写有房 = `not_in_source`。③**渲染原语单向生成**:`renderFlightFact`/`renderHotelFact` 每条事实行内嵌 `<!-- fact:<fact_id> -->` 锚点——产物经原语渲染即自带溯源锚,闸侧锚点优先确定性回溯(启发式让位),手改/伪造锚点 = `fact_anchor_unknown` 直接违例。fact-gate-tests §10 八断言。余量:政策事实生产端(实时签证 API)仍记 D-26 外部依赖。
 
+- **指标面板第一切片(2026-09-05,issue #138,ADR-11 质量层工程面)**:`ts/scripts/build-metrics-report.ts` 只读聚合既有落盘侧车(不新增数据源)——事实闸 verdict 分布与 blocked 率/通道健康 down·cooldown(30 天窗)/事故面(7 天窗)/桥延迟百分位与超预算计数(>500ms=复审触发锚点)/账本与 doctor 报告存在性→单一 markdown;坏行跳过同侧车纪律,空根成型,collect 全程零写入;评测三层运行结果仍由 run-all-tests.sh/CI 承载,v1 不重跑评测。持续观测/可视化面留后续切片(metrics-report-tests §1-6 全绿,run-all §51)
+
 ### 外部 benchmark 泛化(Round 1–7,Discussion #78,全部 diagnostic-only)
 
 > 工程合同全文见 `evaluation/benchmark-environment-bridge.md`;此处只留逐轮事实摘记。共同结论:official scores 全为 null,不声称 uplift 或 external benchmark closure。
@@ -412,7 +416,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | D-18 M3 Exit 真实 cohort 证据缺口 | 见下方「D-18 M3 Exit 真实 cohort 证据缺口」 |
 | D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地 2026-08-29**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit。赎回条件=私有 `observed_private` cohort 达 N≥5 并产出脱敏 summary;无真实样本时 waiting/backoff/no-spend,不扩 schema 假装进展。 |
 | D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`design/booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
-| D-26 事实闸覆盖面缺口(ADR-19) | **部分收口 2026-09-04(issue #118)**:酒店 claim 已入闸(HotelFact 第三形态 + 渲染原语锚点回溯)。残余:政策事实只有渲染侧+闸侧,生产端无实时签证/入境源——政策 claim 只能降级「未确认」或省掉;反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
+| D-26 事实闸覆盖面缺口(ADR-19) | **部分收口**:酒店 claim 已入闸(2026-09-04,issue #118,HotelFact 第三形态+渲染原语锚点回溯);政策事实生产端 v1 已落(2026-09-05,issue #141,C 档领事服务网 cs.mfa.gov.cn → PolicyFact 落账,Timatic/Sherpa° 后议)。残余:反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
 | D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」 |
 | D-29 Booking Copilot 真实库存产品验收 | typed read-action/BFF/task ledger 与可复现 Linux 产物只证明工程边界;不证明供应商库存、不可订恢复或 Checkout/订单状态业务效果 | **open**:冻结三仓 exact SHA 后,在 tenant/customer/storefront/payment-link 四 surface 跑真实库存;至少一条 unavailable/changed 报价必须经重新搜索、新 CheckAvail、原 Checkout 恢复;Book 仍仅由 Checkout 授权,并以 QueryOrders/清理证据收口 |
 

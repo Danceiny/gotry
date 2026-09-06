@@ -460,6 +460,10 @@ echo "=== 50. 通道注册表与健康面(docs/design/tool-orchestration-design.
 (cd ts && npx tsx scripts/channel-registry-tests.ts) || FAIL=1
 
 echo
+echo "=== 51. 指标面板只读聚合面(#138 第一切片:事实闸 verdict 分布与 blocked 率/通道健康 30 天窗/事故面 7 天窗/桥延迟百分位与 >500ms 复审锚点/坏行容忍/空根成型/stateRoot 零写入;全离线) ==="
+(cd ts && npx tsx scripts/metrics-report-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

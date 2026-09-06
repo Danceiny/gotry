@@ -80,16 +80,14 @@ const CASES: Case[] = [
   { label: '网页读取', tool: 'gotry_web_search', prompt: '帮我读一下 https://example.com 这个页面的内容' },
 ]
 
-// --- 真实 LLM 调用(OpenAI 兼容 chat/completions;强制单工具) ---
-async function callLlm(cfg: { key: string; base: string; model: string }, c: Case): Promise<{ args: unknown; raw: string }> {
-  const tool = byName(c.tool)
+// --- 真实 LLM 调用(OpenAI 兼容 chat/completions;支持多轮消息以覆盖自纠回路) ---
+type ChatMessage = Record<string, unknown>
+async function callLlmMessages(cfg: { key: string; base: string; model: string }, toolName: string, messages: ChatMessage[]): Promise<{ args: unknown; callId: string; textReply?: boolean; text?: string }> {
+  const tool = byName(toolName)
   const url = `${cfg.base.replace(/\/+$/, '')}/chat/completions`
   const body = {
     model: cfg.model,
-    messages: [
-      { role: 'system', content: '你是 GoTry 旅行助手。需要查数据时必须调用提供的工具,参数从用户话里取,不要编造。' },
-      { role: 'user', content: c.prompt },
-    ],
+    messages,
     tools: [{ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }],
     tool_choice: { type: 'function', function: { name: tool.name } },
     temperature: 0,
@@ -102,10 +100,15 @@ async function callLlm(cfg: { key: string; base: string; model: string }, c: Cas
   })
   const bodyText = await res.text()
   assert.equal(res.status, 200, `LLM HTTP ${res.status}: ${bodyText.slice(0, 200)}`)
-  const j = JSON.parse(bodyText) as { choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }> }
-  const argsRaw = j.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments
-  assert.ok(argsRaw, '模型未返回工具调用参数')
-  return { args: JSON.parse(argsRaw) as unknown, raw: argsRaw }
+  const j = JSON.parse(bodyText) as { choices?: Array<{ message?: { tool_calls?: Array<{ id?: string; function?: { arguments?: string } }> } }> }
+  const msg = j.choices?.[0]?.message as { tool_calls?: Array<{ id?: string; function?: { arguments?: string } }>; content?: string | null }
+  const tc = msg.tool_calls?.[0]
+  if (!tc?.function?.arguments) {
+    const text = String(msg.content ?? '')
+    assert.ok(/年份|日期|确认|2024|2025|2026/.test(text), `模型既未调工具也未按拒绝指引向用户确认: ${text.slice(0, 120)}`)
+    return { args: undefined as unknown, callId: 'text-reply', text, textReply: true }
+  }
+  return { args: JSON.parse(tc.function.arguments) as unknown, callId: tc.id ?? 'canary-call', textReply: false }
 }
 
 async function main() {
@@ -117,7 +120,10 @@ async function main() {
     const tool = byName(c.tool)
     process.stdout.write(`- ${c.label} → ${c.tool} … `)
     try {
-      const { args } = await callLlm(cfg, c)
+      const { args } = await callLlmMessages(cfg, c.tool, [
+        { role: 'system', content: '你是 GoTry 旅行助手。需要查数据时必须调用提供的工具,参数从用户话里取,不要编造。' },
+        { role: 'user', content: c.prompt },
+      ])
       const violations = validateJsonSchemaValue(tool.parameters as never, args)
       if (violations.length === 0) {
         pass++
@@ -131,6 +137,37 @@ async function main() {
       console.log(`FAIL ${(e as Error).message.slice(0, 140)}`)
     }
   }
+  // ---------------------------------------------------------------
+  // 验收②(issue #140):畸形/越界调用被宿主权拒绝后,模型按 violations 自纠。
+  // 确定性播种:预置一次带过去日期的被拒调用与结构化拒绝结果(tool 角色),
+  // 验证模型从拒绝中自纠出「schema 合规 + 日期非过去」的参数。只校验不执行(零副作用)。
+  // ---------------------------------------------------------------
+  {
+    const tool = byName('gotry_flyai_search')
+    const today = new Date().toISOString().slice(0, 10)
+    try {
+      const messages: ChatMessage[] = [
+        { role: 'system', content: '你是 GoTry 旅行助手。需要查数据时必须调用提供的工具,参数从用户话里取,不要编造。' },
+        { role: 'user', content: '帮我查一下 10 月 1 日从上海飞丽江的机票' },
+        { role: 'assistant', content: null, tool_calls: [{ id: 'seed-reject', type: 'function', function: { name: 'gotry_flyai_search', arguments: JSON.stringify({ kind: 'flight', from: '上海', to: '丽江', date: '2024-10-01' }) } }] },
+        { role: 'tool', tool_call_id: 'seed-reject', content: JSON.stringify({ ok: false, verdict: 'error', summary: `未发起查询:日期 2024-10-01 已是过去(今天 ${today}),过去不存在在售机票。多为用户时间表达未带年份所致——向用户确认年份(或按未来最近的同月日修正)后再查。` }) },
+      ]
+      const reply = await callLlmMessages(cfg, 'gotry_flyai_search', messages) as { args?: { date?: string }; callId: string; textReply?: boolean; text?: string }
+      const violations = reply.args ? validateJsonSchemaValue(tool.parameters as never, reply.args) : []
+      if (reply.textReply) {
+        assert.match(reply.text ?? '', /年份|日期|确认/, '文字形态应向用户确认年份/日期(契约允许的自纠)')
+        console.log('自纠回路(验收②):模型按拒绝指引转为向用户确认年份(文字形态,契约允许)')
+      } else {
+        assert.equal(violations.length, 0, `自纠出参 schema 违例: ${violations.join(';')}`)
+        assert.ok(reply.args && reply.args.date && reply.args.date >= today, `自纠后日期应为今天或未来,实际 ${JSON.stringify(reply.args).slice(0, 80)}`)
+        console.log(`自纠回路(验收②):模型按拒绝自纠出参 → PASS(${JSON.stringify(reply.args).slice(0, 100)})`)
+      }
+    } catch (e) {
+      failures.push(`验收② 自纠回路异常: ${(e as Error).message.slice(0, 140)}`)
+      console.log(`FAIL 自纠回路异常(计入失败,不中断报告): ${(e as Error).message.slice(0, 140)}`)
+    }
+  }
+
   const rate = Math.round((pass / CASES.length) * 100)
   console.log(`\n一次成型率:${pass}/${CASES.length} = ${rate}%(达标线 90%)`)
   if (failures.length) console.log('失败明细:\n' + failures.map(f => `  - ${f}`).join('\n'))
