@@ -182,7 +182,7 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
       processCwd: options.stateRoot ?? process.cwd(),
       cwd: options.stateRoot ?? process.cwd(),
       provider: options.provider ?? 'deepseek-official',
-      model: options.model ?? 'deepseek-v4-pro',
+      model: options.model ?? 'glm-4.6',
       maxTokens: options.maxTokens ?? 2_048,
       env: childEnv,
       ...(options.dshBin ? { dshBin: options.dshBin } : {}),
