@@ -424,6 +424,9 @@ export async function createDshEmbeddedBookingPlanner(
             try {
               const result = await runPort.run(plannerPrompt(turn, task), { sessionId })
               decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
+              if (decisions.length === 0) {
+                console.error(`[booking-copilot] prose-only planner response (attempt ${attempt}):`, JSON.stringify(result.events).slice(0, 800))
+              }
             } catch (error) {
               const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned)/.test(error.message)
               if (!retryable) throw error
