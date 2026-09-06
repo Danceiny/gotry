@@ -234,6 +234,7 @@ function plannerPrompt(turn: BookingCopilotTurn, task: BookingCopilotTaskState):
     'Never emit a question decision: questions are runtime-owned and the runtime turns them into hard failures. The user is on a live booking workbench: act immediately, never ask for confirmation or clarification.',
     'For composite hotel-search requests (destination plus amenities like breakfast, free cancellation, star rating, offer counts): do NOT ask anything. Emit ONE search.patch decision whose input.patch carries the destination and every explicitly stated criterion under criteria, then stop; the runtime receipts will gate the follow-up search.run.',
     'The workspace draft already carries dates, occupancy, and currency. Keep existing draft values for anything the request does not change; never invent values the request contradicts.',
+    'Reference only hotels and offers that appear in the workspace payload (visibleHotels/loadedOffers/results). Any other hotelRef or offerRef does not exist and will be rejected; to discover hotels, run search.run first and wait for its receipt.',
     JSON.stringify(payload),
   ].join('\n')
 }
