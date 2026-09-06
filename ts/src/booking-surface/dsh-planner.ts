@@ -291,7 +291,7 @@ function repairActionRepresentation(action: unknown): void {
       if (messagePart === 'must be array') {
         const current = actionValueAt(action, pathPart)
         if (!Array.isArray(current)) {
-          actionAssignAt(action, pathPart, current === undefined || current === null || current === '' ? [] : [current])
+          actionAssignAt(action, pathPart, current === undefined || current === null || current === '' ? [] : [String(current)])
           mutated = true
         }
       } else if ((messagePart === 'must be integer' || messagePart === 'must be number') && typeof actionValueAt(action, pathPart) === 'string') {
