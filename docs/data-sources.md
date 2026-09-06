@@ -264,6 +264,8 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 |---|---|
 | 2026-08-22 | 立 v1:领域矩阵现状盘点、四层架构图、Google Place 链路 founde 定案(hbcli→search OpenAPI→geography)、TREK 参考采纳表、证据链契约细则、M3-M5 数据侧演进 |
 | 2026-08-28 | 新增 §8 官方 agent 通道尽调(RFC P0):飞猪 FlyAI 无 key 实测可用(机/火只读搜索,会话面缺口收缩)+ 携程机票 XHR 嗅探 PoC(batchSearch 接口识别,零风控) |
+| 2026-08-28 | 新增 §8 官方 agent 通道尽调(RFC P0):飞猪 FlyAI 无 key 实测可用(机/火只读搜索,会话面缺口收缩)+ 携程机票 XHR 嗅探 PoC(batchSearch 接口识别,零风控) |
+| 2026-09-05 | 新增政策事实生产端 v1(issue #141,D-26):C 档中国领事服务网(cs.mfa.gov.cn)「了解目的地」国家指南树,礼貌抓取+签证章节解析→ PolicyFact 落账;founder 拍板 C 档免费权威源先行,Timatic/Sherpa° 后议 |
 | 2026-08-29 | issue #24 工具不可用三处修复:① flyai 上游语义失败(exit=0 + `data:null` + `message:"出发日期非法"`)由吞成 miss 改为带上游原话的 error 终态,工具层加过去日期预校验;② 天气地理编码双源化(Open-Meteo 主 + Nominatim 中文兜底,「普吉岛」0 结果/「普吉」错配西藏同名村);③ hbcli 静态包回退按目的地过滤命中块(不再整包倾倒),无命中明示无数据 |
 | 2026-08-29(第二批) | §2 酒店行/§8:飞猪 `search-hotel` 接入(kind=hotel,打码价 priceRaw 保真纪律)+ OTA 工具面平铺(去主/降级路由话术,persona (19) 重写)+ 账号会话授权闸落地(`tools/pre-execute`→ApprovalService 审批卡,`sessionAccess: ask\|off` 总闸,RFC 支柱④进代码;飞猪匿名通道不过闸);session-tests §H + smoke §12-13 |
 | 2026-08-29(v2 同日) | founder 实测反馈两刀:**①授权闸 v2**——逐调用弹卡=骚扰,改「每会话每站点首次调用弹卡、会话内记住;拒绝=本会话吊销不再弹」(`session-consent.ts` 会话态,sessionAccess `ask\|allow\|off`);**②登录态 seam 真落地**——`scripts/session-login.ts`(attach 用户 Chrome→开登录入口→人登录→只读轮询票据,needs-login 文案指向真脚本);**③测试不再自动开浏览器窗**(session-tests live 节 GOTRY_SESSION_LIVE=1 opt-in,「匿名窗口反复开携程/闪退」形态退役);session-tests §G/H/I + smoke §12-13 |
