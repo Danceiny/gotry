@@ -1,8 +1,9 @@
 # M4 校准发问清单(2026-08-23)
 
+> 状态:frozen(历史备忘,2026-08-23)
 > 给你(founder)的快速答卷页:5 道题,直接回答即可。每题答完,gotry-builder-01 立即吸收进引擎 + 数据源。
-> 来源:`docs/demo-reconciliation.md` 已挖出 f2/f3/f4 三个答案,**只剩 4 道题待 founder**。
-> 提交方式:粘贴 1-5 题答案到本文件 `/docs/m4-calibration-questions.md` 末尾的 "你的答案" 块(或在对话中直接发我)。
+> 来源:`demo-reconciliation.md` 已挖出 f2/f3/f4 三个答案,**只剩 4 道题待 founder**。
+> 提交方式:粘贴 1-5 题答案到本文件 `/docs/milestones/m4-calibration-questions.md` 末尾的 "你的答案" 块(或在对话中直接发我)。
 
 ---
 

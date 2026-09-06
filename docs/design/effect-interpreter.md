@@ -1,7 +1,7 @@
 # 效应解译器 effect_interpreter.v1(设计文档,issue #16 采纳,ADR-18)
 
 > 状态:accepted(2026-08-29)。词汇层+生产/mock 双解译器+垂直切片已落地;smoke/run-all §37 是锚点。
-> 关联:`architecture.md` §8 ADR-18;`data-sources.md`(数据源权威面);`tool-packet.ts`(ADR-13,工具边界同思想的先行件)。
+> 关联:`../architecture.md` §8 ADR-18;`../data-sources.md`(数据源权威面);`tool-packet.ts`(ADR-13,工具边界同思想的先行件)。
 
 ## 1. 问题(issue #16 原文拆解)
 

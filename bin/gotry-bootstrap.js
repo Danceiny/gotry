@@ -34,7 +34,7 @@
  *   node bin/gotry-bootstrap.js wizard       # 会话扩展 onboarding 闭环(issue #21 onboarding UX,§3.3):
  *                                           #   5 步编排 + 后台 health-watch 等扩展心跳,
  *                                           #   扩展一就位 stdout 翻绿并自动重放同 query。
- *                                           # 详见 docs/user-session-data-rfc.md §3.3 / RFC P3.6。
+ *                                           # 详见 docs/rfc/user-session-data-rfc.md §3.3 / RFC P3.6。
  *
  * 环境开关:
  *   GOTRY_SETUP_SKIP=1            全部跳过

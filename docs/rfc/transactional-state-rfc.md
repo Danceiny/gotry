@@ -1,7 +1,7 @@
 # RFC:GoTry 事务化状态基座(Transaction State Backbone)——业界调研与落地执行计划
 
 > 状态:**accepted**(2026-08-28 founder 指令「按你的建议来」——D1-D5 全部按建议执行;TS-0..TS-4 已落地,TS-5 触发式后置=D-15)
-> 上游权威:`architecture.md`(技术权威面)、`gotry-master-outline.md` §2 复用矩阵、`loopx-inspired-upgrades-rfc.md`(S4/§6.5)、`memory-design.md` §1.6、`tech-strategy.md` T6
+> 上游权威:`../architecture.md`(技术权威面)、`../gotry-master-outline.md` §2 复用矩阵、`loopx-inspired-upgrades-rfc.md`(S4/§6.5)、`../design/memory-design.md` §1.6、`../tech-strategy.md` T6
 > 作者:gotry-builder(2026-08-28,业界调研 + 仓内现状摸底驱动)
 > 纪律:单一文件承载单一关注点;版本历史归 git
 
@@ -117,7 +117,9 @@ collectDeepPlanning   → 每步:记 intent → 执行(LLM/求解)→ 记 done+r
                         LLM 调用不重复花钱);failed/intent 悬挂的重试
 ```
 
-async-collect 从「读 JSON 工单」升级为「恢复一个 journaled run」;驱动器(loopx tick / 人工 / 未来通知)任意切换,恢复语义不依赖驱动器——补上 tech-strategy 挂账的「异步调度无仓内实现」中**状态面**这一半(调度器本身仍是独立决策 D3)。回收终态同时写入 `gotry_async_terminal.v1` 事件结果并输出同形 JSON：不失望四条 4/4 才进入 `settled`/exit 0，任一未达进入 `failed`/exit 2；复诵沿用账本中的结构化终态，仍然零重算。
+async-collect 从「读 JSON 工单」升级为「恢复一个 journaled run」;驱动器(loopx tick / 人工 / 未来通知)任意切换,恢复语义不依赖驱动器——补上 tech-strategy 挂账的「异步调度无仓内实现」中**状态面**这一半(调度器本身仍是独立决策 D3)。
+
+回收终态同时写入 `gotry_async_terminal.v1` 事件结果并输出同形 JSON:不失望四条 4/4 才进入 `settled`/exit 0,任一未达进入 `failed`/exit 2;复诵沿用账本中的结构化终态,仍然零重算。
 
 ### 4.3 WriteGate 基座(M5 前置)
 

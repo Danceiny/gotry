@@ -11,7 +11,7 @@
  *   - 浏览器解译 = SESSION_* 效应(用户本人登录态的扩展桥车道,2026-08-29 起默认传输:
  *     MV3 GoTry Session Bridge + 本地桥长轮询,零系统弹窗;ReadGuard+授权闸不变,
  *     非 CUA 视觉点击——本仓已按零 Python 依赖与 a11y/DOM 优先判死后者,
- *     docs/effect-interpreter.md §4)。
+ *     docs/design/effect-interpreter.md §4)。
  *
  * 解译产物:`{ result, trace }`——result 是渠道自有 observation **原样透传**
  * (ADR-13 平铺 envelope 在工具层不受扰);trace 是解译层横切证据
@@ -224,7 +224,7 @@ const hbcliTimeout = (r: unknown): boolean => {
 const HBCLI_RETRY: RetryPolicy = { maxAttempts: 2, baseDelayMs: 300, maxDelayMs: 1_000 }
 
 /**
- * 渠道韧性策略表(权威面;docs/effect-interpreter.md §3 同表逐行有依据):
+ * 渠道韧性策略表(权威面;docs/design/effect-interpreter.md §3 同表逐行有依据):
  *   - FLYAI:瞬时代码级错误重试 1 次;连续 3 次 error(含 Sentinel)熔断 60s 保护配额;
  *     试用额度达限(429)归 needs-setup,永不重试;
  *   - HBCLI:仅 timeout 类失败重试 1 次(冷启动建后端 session 可超时,重试即恢复);

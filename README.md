@@ -116,7 +116,7 @@ Engine verdict:
 
 ## How Mainstream AI Answers the Same Trip
 
-GoTry's product persona is calibrated against evidence, not taste: the same real three-week multi-country workation prompt — with planted traps (no year given, a vague "some seaside town called Wan-xx", an ambiguity the user already resolved) — is fed verbatim to mainstream assistants, their answers archived word-for-word, and scored against a ground-truth rubric. Transcripts, rubric, and the contract feedback: [`docs/persona-bench/`](docs/persona-bench/).
+GoTry's product persona is calibrated against evidence, not taste: the same real three-week multi-country workation prompt — with planted traps (no year given, a vague "some seaside town called Wan-xx", an ambiguity the user already resolved) — is fed verbatim to mainstream assistants, their answers archived word-for-word, and scored against a ground-truth rubric. Transcripts, rubric, and the contract feedback: [`docs/persona-bench/`](docs/evaluation/persona-bench/).
 
 | Dimension | Generic chat assistant (Kimi, 13 real turns) | OTA agent (Fliggy open platform, single turn) | GoTry contract |
 |---|---|---|---|
@@ -127,7 +127,7 @@ GoTry's product persona is calibrated against evidence, not taste: the same real
 | Structure completeness | △ decent comparison table only at turn 13 | ✓✓ full skeleton in one turn — completeness is table stakes | verified completeness (fact gate) |
 | Persona in one line | erudite but stateless chatter — the user ends up doing four jobs | a flawless-brochure OTA clerk — every section ends in a price table | trusted travel engineer: interview first, the solver decides, infeasible says infeasible |
 
-**Single best finding: two unrelated products derived their weekdays from the 2025 calendar.** Calendar grounding has to be a product mechanism (anchor card, assert once, never recompute) — not model luck. Cautionary deep-dive: [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md).
+**Single best finding: two unrelated products derived their weekdays from the 2025 calendar.** Calendar grounding has to be a product mechanism (anchor card, assert once, never recompute) — not model luck. Cautionary deep-dive: [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md).
 
 ## Quick Start
 
@@ -203,7 +203,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 - **M3 Exit not closed** — engineering & distribution are ready, but real seed-user evidence (50–200 person cohort) has not been accumulated; automated tests prove contracts and formulas, not business pass
 - **Hotel session adapters** — Ctrip-hotel / Meituan logged-in surfaces await real login-state backfill; flights are done
 - **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host / calibration samples
-- **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim); the round-by-round engineering ledger lives in [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)
+- **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim); the round-by-round engineering ledger lives in [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
 - **Booking** — nothing bookable ships today; M5 opens only through WriteGate and the booking-saga FSM
 
 <details>
@@ -257,18 +257,19 @@ Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outlin
 
 | Document | Purpose |
 |---|---|
+| [`docs/README.md`](docs/README.md) | Docs conventions & full index (taxonomy, naming, lifecycle) |
 | [`docs/architecture.md`](docs/architecture.md) | System, ADRs, evolution, debt ledger (Chinese, authoritative) |
 | [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md) | Program master outline & reuse matrix |
 | [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | Product design: main loop, transparency, whole-cost model |
 | [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 timeline & current position |
 | [`docs/user-guide.md`](docs/user-guide.md) | End-user guide |
 | [`docs/data-sources.md`](docs/data-sources.md) | Data sources & evidence-chain policy |
-| [`docs/extension-privacy.md`](docs/extension-privacy.md) | Session Bridge extension privacy |
-| [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md) | External benchmark bridge — engineering ledger |
-| [`docs/evaluation-foundation.md`](docs/evaluation-foundation.md) | Evaluation Phase 0 foundation |
-| [`docs/booking-saga-fsm.md`](docs/booking-saga-fsm.md) | Booking saga FSM (the M5 seam vocabulary) |
-| [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md) | A real AI-travel-planning failure postmortem (cautionary tale) |
-| [`docs/persona-bench/`](docs/persona-bench/) | Agent-persona benchmark — same real-trip prompt answered by mainstream AIs: transcripts, scoring rubric, and the persona it shapes |
+| [`docs/ops/extension-privacy.md`](docs/ops/extension-privacy.md) | Session Bridge extension privacy |
+| [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md) | External benchmark bridge — engineering ledger |
+| [`docs/evaluation/evaluation-foundation.md`](docs/evaluation/evaluation-foundation.md) | Evaluation Phase 0 foundation |
+| [`docs/design/booking-saga-fsm.md`](docs/design/booking-saga-fsm.md) | Booking saga FSM (the M5 seam vocabulary) |
+| [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md) | A real AI-travel-planning failure postmortem (cautionary tale) |
+| [`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/) | Agent-persona benchmark — same real-trip prompt answered by mainstream AIs: transcripts, scoring rubric, and the persona it shapes |
 | [`docs/release-notes.md`](docs/release-notes.md) | Release decisions per version (the "why") |
 | [`CHANGELOG.md`](CHANGELOG.md) | Machine-derived changelog (Keep a Changelog + Conventional Commits) |
 | [`docs/tokens.md`](docs/tokens.md) | npm 2FA / release mechanics |

@@ -1,6 +1,6 @@
 /**
  * 通道健康面(channel health)——issue #106/#107/#108 编排设计
- * (docs/tool-orchestration-design.md §2.2)的会话瞬态态 + 持久事件面。
+ * (docs/design/tool-orchestration-design.md §2.2)的会话瞬态态 + 持久事件面。
  *
  * 两个粒度,均从既有 verdict 流派生,不新增运行时:
  *  - 会话瞬态面:进程内 Map。检索通道 verdict≠hit 时记状态

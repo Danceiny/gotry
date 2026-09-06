@@ -1,5 +1,5 @@
 /**
- * 会话扩展桥(extension-bridge,RFC user-session-data-rfc.md §2.2 通道 C——2026-08-29 founder 定案为 PRIMARY 传输)。
+ * 会话扩展桥(extension-bridge,RFC docs/rfc/user-session-data-rfc.md §2.2 通道 C——2026-08-29 founder 定案为 PRIMARY 传输)。
  *
  * 形态:Node http 服务,懒启动单例,只绑 127.0.0.1,端口池 8791-8795(与 extension/manifest.json
  * host_permissions 一一对应,防漂移测试守住);**零新依赖**(node:http 手写,对齐已退役 shell 薄壳

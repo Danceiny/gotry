@@ -116,7 +116,7 @@ GoTry: 收到。先把约束记下来——
 
 ## 与主流 AI 同题横评(产品人格从哪来)
 
-GoTry 的产品人格不靠拍脑袋:同一段真实的跨国 workation 行程 prompt(埋了考点——不给年份、模糊指代「万xx」、用户已自行消解的歧义)逐字投喂各家主流 AI,回答逐字存档、对照地面真值打分,再反向校准行为契约。transcript、评分卡与契约反哺:[`docs/persona-bench/`](docs/persona-bench/README.md)。
+GoTry 的产品人格不靠拍脑袋:同一段真实的跨国 workation 行程 prompt(埋了考点——不给年份、模糊指代「万xx」、用户已自行消解的歧义)逐字投喂各家主流 AI,回答逐字存档、对照地面真值打分,再反向校准行为契约。transcript、评分卡与契约反哺:[`docs/persona-bench/`](docs/evaluation/persona-bench/README.md)。
 
 | 维度 | 通用助手(Kimi,真实 13 轮) | OTA Agent(飞猪开放平台,单轮) | GoTry 契约 |
 |---|---|---|---|
@@ -127,7 +127,7 @@ GoTry 的产品人格不靠拍脑袋:同一段真实的跨国 workation 行程 p
 | 结构完整性 | △ 第 13 轮才长出像样的对比表 | ✓✓ 单轮骨架最全——完整是基本盘 | 验证过的完整(事实闸) |
 | 人格一句话 | 博学但无状态的聊天者——用户被迫干四份工 | 版式完美的 OTA 导购——每段止于价格表 | 可信赖的行程工程师:访谈先行、求解器判决、不可行明说 |
 
-**单条最有价值的发现:两家互不相关的产品,要自己算的星期全落在 2025 年历上**——日历锚定必须是产品机制(锚点卡、一次断言、永不重算),不是模型运气。反面教材全文:[`docs/kimi-postmortem.md`](docs/kimi-postmortem.md)。
+**单条最有价值的发现:两家互不相关的产品,要自己算的星期全落在 2025 年历上**——日历锚定必须是产品机制(锚点卡、一次断言、永不重算),不是模型运气。反面教材全文:[`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md)。
 
 ## 快速开始
 
@@ -201,7 +201,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 - **M3 Exit 未关闭** —— 工程与分发面就绪,但真实种子用户证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
 - **酒店会话适配** —— 携程酒店/美团登录态面等实测回填;机票已通
 - **界面语言** —— 英文仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
-- **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic(无分数、无 uplift 声明);逐轮工程台账见 [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)
+- **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic(无分数、无 uplift 声明);逐轮工程台账见 [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
 - **预订** —— 今天没有任何可下单路径;M5 只经 WriteGate 与 booking-saga 状态机启封
 
 <details>
@@ -255,18 +255,19 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 
 | 文档 | 内容 |
 |---|---|
+| [`docs/README.md`](docs/README.md) | 文档规范与总索引(目录税则 · 命名 · 生命周期) |
 | [`docs/architecture.md`](docs/architecture.md) | 系统 / ADR / 演进 / 债务清单(中文,权威) |
 | [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md) | 总纲:工作分解 · 复用矩阵 |
 | [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | 产品设计:主循环 · 透明机制 · 全成本模型 |
 | [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 时间线与当前位置 |
 | [`docs/user-guide.md`](docs/user-guide.md) | 终端用户使用指南 |
 | [`docs/data-sources.md`](docs/data-sources.md) | 数据源与证据链政策 |
-| [`docs/extension-privacy.md`](docs/extension-privacy.md) | Session Bridge 扩展隐私 |
-| [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md) | 外部 benchmark 桥——工程台账 |
-| [`docs/evaluation-foundation.md`](docs/evaluation-foundation.md) | 评测 Phase 0 基座 |
-| [`docs/booking-saga-fsm.md`](docs/booking-saga-fsm.md) | 预订 saga 状态机(M5 缝词汇) |
-| [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md) | 一次真实 AI 旅行规划失败复盘(反面教材) |
-| [`docs/persona-bench/`](docs/persona-bench/) | Agent 产品人格横评——同一真实行程 prompt 的各家回答存档、评分卡与人格提炼 |
+| [`docs/ops/extension-privacy.md`](docs/ops/extension-privacy.md) | Session Bridge 扩展隐私 |
+| [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md) | 外部 benchmark 桥——工程台账 |
+| [`docs/evaluation/evaluation-foundation.md`](docs/evaluation/evaluation-foundation.md) | 评测 Phase 0 基座 |
+| [`docs/design/booking-saga-fsm.md`](docs/design/booking-saga-fsm.md) | 预订 saga 状态机(M5 缝词汇) |
+| [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md) | 一次真实 AI 旅行规划失败复盘(反面教材) |
+| [`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/) | Agent 产品人格横评——同一真实行程 prompt 的各家回答存档、评分卡与人格提炼 |
 | [`docs/release-notes.md`](docs/release-notes.md) | 逐版本发布决策(「为什么」) |
 | [`CHANGELOG.md`](CHANGELOG.md) | 机器衍生的变更日志(Keep a Changelog + Conventional Commits) |
 | [`docs/tokens.md`](docs/tokens.md) | npm 2FA / 发布机制 |

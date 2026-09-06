@@ -1,7 +1,7 @@
 # 预订 saga 状态机(booking_saga_fsm.v1)——issue #17 采纳面的设计正式化
 
 > 状态:**accepted**(2026-08-29 founder 指令「现在就推进」,对 issue #17 评估中「真正值取的三点」的执行)
-> 上游权威:`architecture.md`(技术权威面/ADR-15/ADR-16/ADR-17)、`transactional-state-rfc.md`(§4.3 WriteGate 基座)、`gotry-master-outline.md` §2(复用矩阵)、`roadmap.md`(M5 Entry gate)
+> 上游权威:`../architecture.md`(技术权威面/ADR-15/ADR-16/ADR-17)、`../rfc/transactional-state-rfc.md`(§4.3 WriteGate 基座)、`../gotry-master-outline.md` §2(复用矩阵)、`../roadmap.md`(M5 Entry gate)
 > 执行锚点:`ts/src/booking-saga.ts`(纯函数词汇层)+ `ts/scripts/booking-saga-tests.ts`(run-all §36,25 断言)
 > 纪律:单一文件承载单一关注点;版本历史归 git;**本交付是 M5 的设计基座具名化,不是交易闭环的实现,不构成 M3/M5 Exit 证据**(D-20 纪律)
 

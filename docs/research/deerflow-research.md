@@ -1,5 +1,6 @@
 # DeerFlow 研究 → gotry 优化目标与方法(issue #10)
 
+> 状态:frozen(调研底稿,2026-08-25;issue #10)
 > 对象:[bytedance/deer-flow](https://github.com/bytedance/deer-flow)(DeerFlow 2.0,SuperAgent
 > harness;1.x 为经典深研框架,机制注处标版本)。本文只回答:**哪些机制值得 gotry 借,
 > 借成什么样,哪些明确不借**。所有目标映射到现有 issue/路线图,不新增空中楼阁。

@@ -1,6 +1,6 @@
 /**
  * 通道注册表(channel registry)——检索通道的**单一数据来源**
- * (docs/tool-orchestration-design.md §2.1,issue #106/#107/#108 编排设计)。
+ * (docs/design/tool-orchestration-design.md §2.1,issue #106/#107/#108 编排设计)。
  *
  * 每行描述一条通道:覆盖意图 / 配额类 / 证据级 / 工具名 / setup 成本。
  * persona 路由卡(renderRoutingCard → {{channel_routing_card}})、工具结果内的

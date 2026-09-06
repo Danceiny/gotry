@@ -219,7 +219,7 @@ export function apply(ctx: Context, config: Config): void {
   // 渲染成紧凑 brief 注入 persona;为空 = 首访。与当轮说法冲突时以用户为准。
   sp?.variable?.('motivation_brief', () => renderMotivationBrief(config.stateRoot ?? '.'))
 
-  // 通道路由卡(通道注册表生成,tool-orchestration-design.md §2.1/D-8):
+  // 通道路由卡(通道注册表生成,docs/design/tool-orchestration-design.md §2.1/D-8):
   // persona (19) 只留行为契约,机/火/酒通道顺位与额度口径查卡——prose 教义
   // 变查表教义,注册表加通道卡片自动一致。
   sp?.variable?.('channel_routing_card', () => renderRoutingCard())
@@ -1017,7 +1017,7 @@ export function apply(ctx: Context, config: Config): void {
     // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(逐字段 schema 模型可见)。
     // 与 flyai 刀的差异:本工具三意图无公共 required 字段(kind 缺省=flight),根 schema 是
     // 隐式开放对象,宿主权无法用 required 拒 legacy blob——故保留 interpretArgs 容忍层
-    // (tool-orchestration-design §4③「interpretArgs 留作旧形态容忍层」),blob 调用在
+    // (docs/design/tool-orchestration-design.md §4③「interpretArgs 留作旧形态容忍层」),blob 调用在
     // execute 内归一后走原条件闸,结构化报错不崩。flyai 因 kind required 仍在宿主权即拒。
     parameters: {
       kind: { type: 'string', enum: ['flight', 'hotel', 'train'], description: '默认 flight 机票;hotel 携程酒店(用户登录态真实价);train 12306 余票(公开面)' },

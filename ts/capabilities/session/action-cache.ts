@@ -1,5 +1,5 @@
 /**
- * action-cache 本地自愈层(RFC user-session-data-rfc.md §3.2 / §2.3;Stagehand 云端缓存的本地化):
+ * action-cache 本地自愈层(RFC docs/rfc/user-session-data-rfc.md §3.2 / §2.3;Stagehand 云端缓存的本地化):
  *
  * 目的:会话检索的查询模式高度重复(同站点同类型搜索),首跑用 LLM/规则定位,后续走
  * 缓存的确定性载荷零成本重放;站点改版 → DOM 指纹失配 → miss → 重新定位并回写。

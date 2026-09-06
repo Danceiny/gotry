@@ -1,5 +1,6 @@
 # dsh 社区插件选型(awesome-dsh-plugin.com 调研,issue #9)
 
+> 状态:frozen(选型调研,2026-08-29;issue #9;已集成项见正文标注)
 > 站点收录 2176 个 DeepSeek Harness 插件(schema.org ItemList 全量拉取,按 gotry
 > 路线图缺口关键词粗筛 8 类,入围 8 个逐一拉 README 核实)。本文只回答一个问题:
 > **哪些插件值得装进 gotry 的 dsh 宿主,补我们不愿自建的宿主层能力**。

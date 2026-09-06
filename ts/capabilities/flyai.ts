@@ -1,5 +1,5 @@
 /**
- * FlyAI 官方通道能力层(飞猪开放平台,data-sources.md §8 / RFC user-session-data-rfc.md P0):
+ * FlyAI 官方通道能力层(飞猪开放平台,data-sources.md §8 / RFC docs/rfc/user-session-data-rfc.md P0):
  *
  * 链路(同构 anything.ts 的 CLI spawn 模式):
  *   gotry capabilities/flyai.ts

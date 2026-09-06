@@ -1,5 +1,6 @@
 # M3 段 1:最小 Web 面实测与差距清单
 
+> 状态:frozen(历史备忘,2026-08-29)
 > 实测对象:`./gotry`(= dsh web profile + GoTry patch:人格+五工具+DeepSeek 原生)。
 > 实测方法:启动 HTTP 200 确认、标题/日志/间接证据(headless 已验五工具+人格全链,web 与 headless 共享同一组合)。
 > 判定基准:D1 产品设计的 L1 承诺(透明卡片/全成本/gates 选择题/证据链)。

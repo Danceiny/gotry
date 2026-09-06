@@ -1,5 +1,6 @@
 # M2 数据源桥:hotelbyte-cli 命令缺口盘点(段 1 产出)
 
+> 状态:frozen(历史备忘,2026-08-22)
 > 依据:tech-strategy §2.1(免费/开源优先)与 §2(酒店数据=import+extend hotelbyte-cli,已决 G4)。
 > 方法:克隆 hotelbyte-com/hotelbyte-cli 源码,枚举实际命令,对照 GoTry 能力层需求。
 

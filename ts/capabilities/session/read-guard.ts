@@ -1,5 +1,5 @@
 /**
- * ReadGuard:会话检索面的只读物理隔离(RFC user-session-data-rfc.md §3.3)。
+ * ReadGuard:会话检索面的只读物理隔离(RFC docs/rfc/user-session-data-rfc.md §3.3)。
  *
  * 写不是「被禁止的行为」,是「不存在的原语」——WriteGate(L0-L4)的检索态前置:
  *   ① 网络层:route 拦截——命中硬支付模式(任意方法)或写方法+写URL模式 → abort + 审计落盘;
