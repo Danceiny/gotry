@@ -81,7 +81,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - **双形态冻结**(ADR-16):本地 + Web 一套账本语义,`tenant_id` 一等字段,同步 = 事件复制而非状态翻译。
 - **预订 saga 词汇层**(ADR-17,`ts/src/booking-saga.ts`):状态字母表与 pending_writes CHECK 逐字一致。
 - **异步终态合同**:`gotry_async_terminal.v1` 将 4/4 映射为 `succeeded`/ledger `settled`/exit 0,非 4/4 映射为 `failed`/ledger `failed`/exit 2;终态复诵返回同一结构化结果与退出码且零重算。
-- **Booking Copilot v2 生命周期投影**:`planning → submitted → working → waiting_receipt → input_required → terminal outcome`;公开类型保留七个 phase 字面值(终态分 `terminal`/`error`)。availability reducer 另有 `need_offers → waiting_offers → need_check → waiting_check → terminal` typed 子状态,不改变外层六状态投影。v1 保持 legacy 两态投影;两协议共用 listener 与 task ownership。identity binding 与 approval 细节见 §8.23。
+- **Booking Copilot 生命周期投影**(单一 `booking.surface` 契约;2026-09-05 #133 收敛:原 v2 形态转正、v1 退役,双协议时代结束):`planning → submitted → working → waiting_receipt → input_required → terminal outcome`;公开类型保留七个 phase 字面值(终态分 `terminal`/`error`)。availability reducer 另有 `need_offers → waiting_offers → need_check → waiting_check → terminal` typed 子状态,不改变外层六状态投影。identity binding 与 approval 细节见 §8.23。
 
 ### 1.5 记忆域与时间感知
 
@@ -93,7 +93,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - 工具 execute 统一经 `guardToolExecute` 异常隔离 + 平铺观察 envelope(ADR-13)。
 - **turn 预算 = 路由 + wall-clock 双出口**(ADR-24 v2):每轮终结于「当面答完 / 转后台承诺 / 收敛作答」三态之一,不允许流死掉。确定性分类器(`ts/src/turn-policy.ts`,零 LLM)分 quick/sync/deep;越硬阈同步抑制工具 schema(`ts/src/turn-deadline.ts`);deep 出口落 `gotry_turn_handoff.v1` 工单并告知 ETA,收集闭环由 `scripts/turn-handoff-collect.ts` 兑现。设计与验证细节见 §8.24。
 - 外部依赖走**效应描述 + 解译器**(ADR-18):工具层只产纯数据效应值 `{effect, params}`,渠道访问/退避重试/断路器/编译期 mock 收敛到 `ts/capabilities/effect.ts` 与 `resilience.ts`。
-- **HotelByte embedded Booking Copilot 是只读协作面,不是 M5 写闸启封**:v1/v2 双协议共用 BFF listener 与 task ownership;生产 standalone 默认 `bff-bound-turn-only`,浏览器 `user.turn.ingress` 只在完整 authenticated principal/scope + BFF trusted binding 下开放;must blocker 只能由绑定 task/context/receipt/presentation key 的一次性 approval 放行。离页自动写/支付须另立 M5 WriteGate ADR;四 surface 真实库存验收未过前不得宣称产品验收(D-29)。全文见 §8.23。
+- **HotelByte embedded Booking Copilot 是只读协作面,不是 M5 写闸启封**:单一 `booking.surface` 契约(2026-09-05 #133 收敛,v1 退役),生产 standalone 默认 `bff-bound-turn-only`,浏览器 `user.turn.ingress` 只在完整 authenticated principal/scope + BFF trusted binding 下开放;must blocker 只能由绑定 task/context/receipt/presentation key 的一次性 approval 放行。离页自动写/支付须另立 M5 WriteGate ADR;四 surface 真实库存验收未过前不得宣称产品验收(D-29)。全文见 §8.23。
 - py 树仅剩 `gotry_feasibility` oracle,产品运行时零 Python 依赖(D-7 清偿)。
 - **外部 benchmark bridge 一律 default-off**(Phase 1 seam):owner-local config、固定 argv/allowlist、递归 no-oracle 键拒绝、cold-start + headless one-shot、native definition-only agent、启动组合隔离、结构化终态诊断——任一合同漂移 fail-closed。逐轮 frozen treatment 事实见 §9,合同全文见 `evaluation/benchmark-environment-bridge.md`。
 - 全栈回归见 `scripts/run-all-tests.sh` 分节(计数不落字)。
@@ -237,7 +237,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 19 | 可下单事实单一数据源 + 产物事实闸(issue #46,2026-08-30) | 见 §8.19 | 出现第二类需闸产物(如酒店直订)时复审覆盖面;政策实时源接入后复审政策事实生产端;根治方向=产物只由渲染原语生成(结构化→markdown 单向),反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts`;`data/airline-airports.json`;run-all §39;smoke §16 |
 | 21 | 扩展分发三通道(issue #21 分发通道,2026-08-30;商店轨 2026-09-02 上架) | 见 §8.21 | ~~商店过审后复审 wizard 步骤~~(已触发:wizard 退化为离线健康探活等待;安装=浏览器的事、渲染=dsh UI 的事,§3.3 职责返交落地);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/ops/extension-webstore-submission.md` |
 | 22 | static golden 是**可审计 benchmark comparator**,不是实时航班源(issue #67) | 见 §8.22 | 出现可免私有凭证、许可清晰且稳定的官方 flight API,或 hbcli 发布 flight 合同时复审其为新 provider;static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`;`ts/data/sf-static-routes.json`;run-all §44 |
-| 23 | embedded Booking Copilot 双协议安全边界与 BFF request identity binding | 见 §8.23 | 出现离页自动写/支付必须另立 M5 WriteGate ADR;出现多写者/跨 host 触发 ADR-15/16 复审;所有消费方迁移 v2 后再退 v1 | `schemas/booking.surface.v2.schema.json`;`ts/src/booking-surface/contracts-v2.ts`;`runtime-v2.ts`;`server.ts`/`startup.ts`;v2 runtime/package/run-all proofs |
+| 23 | embedded Booking Copilot 安全边界与 BFF request identity binding(单一 booking.surface 契约) | 见 §8.23 | 出现离页自动写/支付必须另立 M5 WriteGate ADR;出现多写者/跨 host 触发 ADR-15/16 复审;~~所有消费方迁移 v2 后再退 v1~~(**已触发 2026-09-05**:#133 收敛为单一契约,v1 退役,文件转正为无后缀 canonical 名) | `schemas/booking.surface.schema.json`;`ts/src/booking-surface/`(contracts/runtime/server/startup 等);run-all 证明面 |
 | 24 | turn 预算 = 路由 + wall-clock 双出口:确定性分类 → converge/handoff;handoff 落独立工单待 loopx tick 收 | 见 §8.24 | 路由误分成系统性问题时(用户反馈「该当面答的被转后台」可观测),先扩 Tier 0 信号词表再考虑 Tier 2(结构化状态);handoff 工单积压需要真实收集器时启动 loopx tick 设计;评测端 60s 太紧先调 env pin | `ts/src/turn-policy.ts`;`ts/src/turn-deadline.ts`;`ts/src/index.ts` 装配;`ts/scripts/turn-policy-tests.ts`;`ts/scripts/agent-planning-turn-deadline-{tests,e2e}.ts`;`scripts/run-all-tests.sh` §45 |
 | 25 | 通道健康面与动态路由建议(issue #106/#107/#108,D-7/D-8/D-9 采纳 2026-09-03):工具面保持平铺(ADR-18 判定不动)、解译器不做隐藏改道;通道注册表单一数据来源生成 persona 卡/工具描述/doctor 行;检索 verdict≠hit 时结果内注入 `routing` 有序建议(可用性>证据级>效率字典序,健康态过滤),契约在失败现场教学;配额五分类(user-session/user-key/anonymous-trial/free-public/static)冻结归属语义;calendar 默认不挂载(D-9) | 解译器自动改道(拒绝:模型以为调 A 实际走 B,破坏调用可审计性)/静态反转优先级(拒绝:每个新用户先付扩展安装成本)/只靠 prose 教义(拒绝:prose 腐坏,普通模型读不动) | routing 建议误配成系统性问题时先修注册表数据;出现跨通道比价聚合产品裁决时与 ADR-18 一起复审;正式 key 池(产品统一申请)待 M3 真实 cohort 规模复审 | `ts/capabilities/channel-registry.ts` `channel-health.ts`;`docs/design/tool-orchestration-design.md`;run-all §50;smoke(flyai needs-setup→routing) |
 
@@ -301,11 +301,13 @@ route/carrier 只取 OpenFlights 固定 revision;时刻/价格取 manual band �
 
 备选与取舍:`hbcli search-flight`——本机与上游均无此能力(N/A);携程免凭证开放 API——未找到且公开页 432(N/A);直接把 manual 改名 static——来源造假;仅保 manual——继续 vendor 锁。
 
-#### 8.23 ADR-23:embedded Booking Copilot 双协议安全边界与 BFF request identity binding
+#### 8.23 ADR-23:embedded Booking Copilot 安全边界与 BFF request identity binding
+
+> **状态更新(2026-09-05)**:复审条件「所有消费方迁移 v2 后再退 v1」**已触发**——#133(栈式合流 #134)把双协议收敛为单一 `booking.surface` 契约:v1-only runtime 删除,v2 栈转正为无后缀 canonical 文件(`contracts.ts`/`runtime.ts`/`server.ts`/`startup.ts`),`SCHEMA_VERSION='booking.surface'`,单一 HTTP 路径单一握手,ledger 去掉版本词表;JSON wire 字段名不变。以下为双协议时代的决策原文(边界设计仍然成立),当前形态以本条为准。
 
 Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
-- **双协议**:v1 保持兼容,v2 使用 closed typed contract;同一 listener、task ownership 与 ledger 按请求 version+schema hash dispatch。v1 保持 legacy 两态投影,不宣称为 v2 生命周期。
+- **协议形态(历史)**:v1 曾保持兼容,v2 曾以 closed typed contract 并行;同一 listener、task ownership 与 ledger 按请求 version+schema hash dispatch。**2026-09-05 起收敛为单一契约,v1 退役**。
 - **identity binding**:生产 standalone 的 `bff-bound-turn-only` 只接受已由 BFF 绑定的 internal `user.turn`/receipt continuation;v2 浏览器只提交安全 opaque `requestKey`/可选 `taskHandle`,只有完整 authenticated principal/scope + BFF trusted binding seam 才能把 `user.turn.ingress` 原子映射为服务端生成并持久绑定的 `taskId + turnId + contextRef + surface + allowedActions`。bound-turn-only 下 ingress 在任何 ledger/planner side effect 前返回 typed 503;taskHandle 在 actor scope 内只能绑定一个 task/context。
 - **approval 一次性**:must blocker 只能经 runtime 持久化并实际呈现的 option 放行;approval 逐字段绑定 task、context、source turn、source action、source receipt digest、canonical presentation key、随机 delivery nonce 与 option digest,只能消费一次。
 - **availability reducer(typed 恢复子状态机)**:一次 recovery 冻结最多 5 家候选酒店;每家 generation 最多 3 个当前 OfferRef,每家生命周期最多 2 次 CheckAvail、2 次 offers/HotelRates generation。`unavailable`、material `changed` 或不可确认 gap 使整个 generation 失效并要求 fresh query;partial evidence 只产生 inconclusive exhaustion,不能宣称市场无房。generation/attempt/candidate/receipt digest/workspace revision 随 ledger fold,重启与相同 replay 不增加预算;terminal 是吸收态。
@@ -341,7 +343,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
 - **当前主线 = M3 evidence 未收口;并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪,真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进;T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明,真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动,不得由并行实现倒推开闸。
-- **HotelByte Booking Copilot 产品验收并行线**:候选以 v1/v2 双协议兼容的 GoTry 作为既有搜索/报价/Checkout 工作台的 BFF-only typed read-action planner(边界见 §8.23)。该线不含 `Book`,不构成 M5 Entry;四 surface 真实库存与「不可订→重搜→新 CheckAvail→原 Checkout」证据尚未取得,见 D-29。
+- **HotelByte Booking Copilot 产品验收并行线**:候选以单一 `booking.surface` 契约(2026-09-05 #133 收敛,原 v2 形态转正、v1 退役)的 GoTry 作为既有搜索/报价/Checkout 工作台的 BFF-only typed read-action planner(边界见 §8.23)。该线不含 `Book`,不构成 M5 Entry;四 surface 真实库存与「不可订→重搜→新 CheckAvail→原 Checkout」证据尚未取得,见 D-29。
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面;业务达标只接受阈值冻结的 `real_seed_cohort`,fixture 恒 fail。真实 cohort 仍为空,等待 50–200 个脱敏样本,不宣称 M3 Exit。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
 - **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:`npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日 loopx 13 篇架构 RFC 通读映射,产出 `rfc/loopx-inspired-upgrades-rfc.md`——**founder 当日 accepted**,四切片 S1-S4 按序落地;同指令确立**多用户 Agent as a Service** 为未来方向(claim/CAS 类机制转入 RFC §6.5 远期采纳面)。S1 tool-packet envelope(ADR-13)已落地;S2/S3/S4 依次推进(D-12)。
