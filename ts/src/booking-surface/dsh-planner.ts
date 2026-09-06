@@ -48,6 +48,8 @@ export interface DshPlannerRunResult {
   finalResponse: string
   /** DeepSeek Harness Session events for this one receipt-to-idle interval. */
   events: readonly unknown[]
+  /** Harness wire notifications (LLM errors/retries land here); absent on test seams. */
+  notifications?: readonly unknown[]
 }
 
 export interface DshPlannerRunPort {
@@ -75,6 +77,7 @@ export interface DshEmbeddedBookingPlannerHandle {
 interface HarnessRunResultLike {
   finalResponse?: unknown
   events?: unknown
+  notifications?: unknown
 }
 
 interface HarnessLike {
@@ -199,6 +202,7 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
       return {
         finalResponse: typeof result.finalResponse === 'string' ? result.finalResponse : '',
         events: Array.isArray(result.events) ? result.events : [],
+        notifications: Array.isArray(result.notifications) ? result.notifications : [],
       }
     },
     async close() {
@@ -425,7 +429,11 @@ export async function createDshEmbeddedBookingPlanner(
               const result = await runPort.run(plannerPrompt(turn, task), { sessionId })
               decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
               if (decisions.length === 0) {
-                console.error(`[booking-copilot] prose-only planner response (attempt ${attempt}):`, JSON.stringify(result.events).slice(0, 800))
+                console.error(`[booking-copilot] empty planner decision (attempt ${attempt}):`, JSON.stringify({
+                  finalResponse: result.finalResponse,
+                  notifications: result.notifications ?? [],
+                  events: result.events,
+                }).slice(0, 2000))
               }
             } catch (error) {
               const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned)/.test(error.message)
