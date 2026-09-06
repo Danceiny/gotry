@@ -150,6 +150,18 @@ for (const invalid of [
   '<done>{"ok":</done>',
 ]) assert.equal(parseBenchmarkTerminal(invalid, projection.terminal).ok, false)
 assert.equal(parseBenchmarkTerminal(`<done>{"x":"${'y'.repeat(1024)}"}</done>`, projection.terminal).ok, false)
+// 推理模型思考块剥离(Round 9,#100/#102):<think>…</think> 在任意位置剥离
+// (当代推理模型即便被明令禁止也在前/后缀输出思考块),剥离后严格验收不变;
+// 非 think 的前后缀 prose 仍 fail-closed;未闭合 think 不剥仍拒
+for (const [raw, expectOk] of [
+  ['<think>plan it</think><done>{"ok":true}</done>', true],
+  ['<think>a</think>\n<THINK>b</THINK>\n<done>{"ok":true}</done>', true],
+  ['<done>{"ok":true}</done><think>after</think>', true],
+  ['<think>unclosed<done>{"ok":true}</done>', false],
+  ['prose<think>x</think><done>{"ok":true}</done>', false],
+] as const) {
+  assert.equal(parseBenchmarkTerminal(raw, projection.terminal).ok, expectOk, raw)
+}
 
 function turnStart(turn = 1) {
   return { type: 'turn/start', data: { turn } }

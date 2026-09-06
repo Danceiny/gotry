@@ -89,12 +89,19 @@ function invalidTerminal(): TerminalOutputValue {
   return { ok: false, error: 'invalid_terminal_output' }
 }
 
+/** 剥离推理模型的思考标签对(如 MiniMax/DeepSeek 的 <think>…</think>):当代模型
+ *  即便被明令「只回终态包」也会以思考块前缀输出——不剥则严格终态门对推理模型
+ *  结构性失效(Round 9 治理面实测)。只剥配对的推理标签本体,其余前后缀仍 fail-closed。 */
+function stripReasoningBlocks(raw: string): string {
+  return raw.replace(/<think>[\s\S]*?<\/think>\s*/gi, '')
+}
+
 /** Parse exactly one configured tag pair containing one JSON object. */
 export function parseBenchmarkTerminal(raw: string, config: TerminalOutputConfig): TerminalOutputValue {
   if (!validateTerminalOutputConfig(config)) return invalidTerminal()
   if (Buffer.byteLength(raw, 'utf8') > config.max_bytes) return invalidTerminal()
 
-  const trimmed = raw.trim()
+  const trimmed = stripReasoningBlocks(raw).trim()
   const opening = `<${config.tag}>`
   const closing = `</${config.tag}>`
   if (!trimmed.startsWith(opening) || !trimmed.endsWith(closing)) return invalidTerminal()

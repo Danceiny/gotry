@@ -68,7 +68,10 @@ The owner-local config also declares a generic tagged-JSON terminal envelope.
 The tag is a bounded identifier and `max_bytes` is capped at 1 MiB. A valid
 terminal response is exactly one matching tag pair whose body is one JSON
 object; prose, code fences, duplicate tags, arrays, primitives, trailing text,
-and oversized bodies fail closed. This is syntax conformance only: the
+and oversized bodies fail closed. Paired reasoning blocks (`<think>…</think>`,
+case-insensitive, any position) are stripped before this validation:
+contemporary reasoning models emit them even when instructed to answer with the
+envelope only; every other leading/trailing text still fails closed. This is syntax conformance only: the
 external adapter and official evaluator still own the business schema.
 
 If the model tries to stop without a real bridge call, or returns a malformed
