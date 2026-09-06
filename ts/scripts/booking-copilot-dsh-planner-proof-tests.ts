@@ -2,8 +2,10 @@
  * Embedded Booking planner adapter proof.
  *
  * The fake below stops at the DeepSeek Harness SDK event boundary: planner
- * decisions may only come from typed dsh tool/call events, never assistant
- * prose. A separate core proof boots the real dsh SDK runtime.
+ * decisions come from typed dsh tool/call events, or from assistant
+ * finalResponse text only after it passes the same authority path
+ * (validation, allowedActions, contextRef, runtime-owned revision). A
+ * separate core proof boots the real dsh SDK runtime.
  */
 
 import assert from 'node:assert/strict'
@@ -181,14 +183,14 @@ assert.equal(childEnv.PORTAL_TOKEN, undefined)
 assert.equal(childEnv.HOTELBYTE_TOKEN, undefined)
 assert.equal(childEnv.GOTRY_BOOKING_COPILOT_API_KEY, undefined)
 
-const proseOnlyPort: DshPlannerRunPort = {
+const textChannelPort: DshPlannerRunPort = {
   async run() {
     return { finalResponse: JSON.stringify({ kind: 'operation', action: searchRun }), events: [] }
   },
   async close() {},
 }
-const proseOnly = await createDshEmbeddedBookingPlanner({ runPort: proseOnlyPort })
-const proseDecisions = await proseOnly.plannerFactory(task).next({
+const textChannel = await createDshEmbeddedBookingPlanner({ runPort: textChannelPort })
+const textDecisions = await textChannel.plannerFactory(task).next({
   task,
   turn: {
     schemaVersion: 'booking.surface',
@@ -202,7 +204,51 @@ const proseDecisions = await proseOnly.plannerFactory(task).next({
     request: { text: 'JSON prose must stay prose' },
   },
 })
-assert.equal(proseDecisions[0]?.kind, 'error', 'JSON-looking assistant prose is never executable')
+assert.equal(textDecisions[0]?.kind, 'operation', 'text-channel typed decisions execute through the same authority path')
+assert.deepEqual((textDecisions[0] as { action?: { actionId?: string; expectedRevision?: number } }).action, { ...searchRun, expectedRevision: 0 })
+
+const unauthorisedPort: DshPlannerRunPort = {
+  async run() {
+    return { finalResponse: JSON.stringify({ kind: 'operation', action: hotelSelect }), events: [] }
+  },
+  async close() {},
+}
+const unauthorised = await createDshEmbeddedBookingPlanner({ runPort: unauthorisedPort })
+const unauthorisedDecisions = await unauthorised.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-4',
+    workspace: {
+      ...workspace,
+      capabilities: { ...workspace.capabilities, allowedActions: [...workspace.capabilities.allowedActions] },
+    },
+    request: { text: 'Select a hotel' },
+  },
+})
+assert.equal(unauthorisedDecisions[0]?.kind, 'error', 'text-channel decisions outside allowedActions stay non-executable')
+
+const plainProsePort: DshPlannerRunPort = {
+  async run() {
+    return { finalResponse: 'I would search hotels in Dubai for you.', events: [] }
+  },
+  async close() {},
+}
+const plainProse = await createDshEmbeddedBookingPlanner({ runPort: plainProsePort })
+const plainProseDecisions = await plainProse.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-5',
+    workspace,
+    request: { text: 'Find hotels' },
+  },
+})
+assert.equal(plainProseDecisions[0]?.kind, 'error', 'prose without a typed decision envelope is never executable')
 
 const forbiddenPort: DshPlannerRunPort = {
   async run() {
@@ -259,5 +305,5 @@ await assert.rejects(
   /planner_identity_required/,
 )
 
-await Promise.all([adapter.close(), proseOnly.close(), forbidden.close(), terminalAdapter.close()])
+await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), plainProse.close(), forbidden.close(), terminalAdapter.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')

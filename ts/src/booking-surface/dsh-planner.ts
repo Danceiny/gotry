@@ -338,6 +338,40 @@ function repairActionRepresentation(action: unknown): void {
   if (candidate) Object.assign(action, candidate)
 }
 
+function recoverFinalResponseDecision(response: string, task: BookingCopilotTaskState): BookingPlannerDecision | null {
+  const text = response.trim()
+  if (!text.includes('{')) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+    const candidate = fenced ? fenced[1]! : text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
+    try { parsed = JSON.parse(candidate) } catch { return null }
+  }
+  let envelope = parsed
+  if (isRecord(envelope) && isRecord(envelope.decision)) envelope = envelope.decision
+  if (!isRecord(envelope) || envelope.kind !== 'operation' || !isRecord(envelope.action)) return null
+  const action: Record<string, unknown> = { ...envelope.action }
+  if (typeof action.kind !== 'string' || !(BOOKING_READ_ACTION_KINDS as readonly string[]).includes(action.kind)) return null
+  if (typeof action === 'object' && typeof (action as Record<string, unknown>).schemaVersion !== 'string') {
+    ;(action as Record<string, unknown>).schemaVersion = 'booking.surface'
+  }
+  repairActionRepresentation(action)
+  const validation = validateBookingReadAction(action as unknown as BookingReadAction)
+  if (!validation.ok) {
+    console.error('[booking-copilot] finalResponse recovery rejected (invalid action):', JSON.stringify({ kind: action.kind, errors: validation.errors.slice(0, 6) }).slice(0, 600))
+    return null
+  }
+  const typed = action as unknown as BookingReadAction
+  if (!task.allowedActions.includes(typed.kind)) return null
+  if (typed.contextRef !== task.contextRef) return null
+  if (typed.relaxationApprovalRef) return null
+  typed.expectedRevision = task.revision
+  console.error('[booking-copilot] recovered typed decision from finalResponse:', JSON.stringify({ kind: typed.kind, actionId: typed.actionId }).slice(0, 240))
+  return { kind: 'operation', action: typed }
+}
+
 function parseToolDecision(event: unknown, task: BookingCopilotTaskState): BookingPlannerDecision | null {
   if (!isRecord(event) || event.type !== 'tool/call' || !isRecord(event.data)) return null
   const name = event.data.name
@@ -434,6 +468,11 @@ export async function createDshEmbeddedBookingPlanner(
                   notifications: result.notifications ?? [],
                   events: result.events,
                 }).slice(0, 2000))
+                // Models answer in the text channel with a fully typed
+                // decision envelope; dropping it fails turns the model
+                // actually solved. Same validation path as tool calls.
+                const recovered = recoverFinalResponseDecision(result.finalResponse, task)
+                if (recovered) return [recovered]
               }
             } catch (error) {
               const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned)/.test(error.message)
