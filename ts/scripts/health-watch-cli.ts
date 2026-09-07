@@ -8,6 +8,7 @@
  *   --timeout <ms>   最长等多久(默认 120_000)
  *   --interval <ms>  探活间隔(默认 5_000)
  *   --json           单行 JSON 输出(默认开,方便父进程解析)
+ *   GOTRY_ONBOARDING_BRIDGE_PORTS=<csv> 诊断/测试端口覆盖;`0` 表示隔离临时端口
  *
  * 退出码:0 = ready 或 timeout(语义由 JSON 字段区分,父进程据此 exit 0/1);非 0 = 异常。
  *
@@ -21,6 +22,7 @@ interface Args {
   timeoutMs: number
   intervalMs: number
   json: boolean
+  ports?: number[]
 }
 
 function parseArgs(argv: string[]): Args {
@@ -34,6 +36,13 @@ function parseArgs(argv: string[]): Args {
   }
   if (Number.isNaN(args.timeoutMs) || args.timeoutMs < 0) args.timeoutMs = 120_000
   if (Number.isNaN(args.intervalMs) || args.intervalMs < 1_000) args.intervalMs = 5_000
+  const rawPorts = process.env.GOTRY_ONBOARDING_BRIDGE_PORTS
+  if (rawPorts) {
+    const parsed = rawPorts.split(',').map((part) => Number.parseInt(part.trim(), 10))
+    if (parsed.every((port) => Number.isInteger(port) && port >= 0 && port <= 65535)) {
+      args.ports = parsed
+    }
+  }
   return args
 }
 
@@ -48,6 +57,7 @@ async function main(): Promise<void> {
     intervalMs: args.intervalMs,
     keepBridge: true,
     businessProbe,
+    ports: args.ports,
   })
   // Ctrl+C 转 cancelled
   process.on('SIGINT', () => { watch.cancel('SIGINT'); process.exit(0) })
