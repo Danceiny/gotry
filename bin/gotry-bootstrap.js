@@ -58,6 +58,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const AUTO = process.argv.includes('--auto')
@@ -73,9 +74,9 @@ const HBCLI_INSTALL_CMD = 'curl -fsSL https://github.com/hotelbyte-com/docs/rele
 const REACH_INSTALL_URL = 'git+https://github.com/Panniantong/Agent-Reach.git'
 
 /** 带超时的子进程(inherit stdio 让用户看见上游安装进度) */
-function run(cmd, args, { timeoutMs, cwd } = {}) {
+function run(cmd, args, { timeoutMs, cwd, env } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: 'inherit', cwd, env: process.env })
+    const child = spawn(cmd, args, { stdio: 'inherit', cwd, env: env ?? process.env })
     let done = false
     const timer = setTimeout(() => {
       if (!done) { done = true; try { child.kill('SIGKILL') } catch { /* ignore */ } }
@@ -143,34 +144,56 @@ async function setupReach() {
   return { ok: true }
 }
 
-async function setupSidebar() {  say('[gotry-setup] dsh-better-sidebar(dsh web 侧栏工作台,产物查看面 issue #25)')
-  const installed = existsSync(join(homedir(), '.dsh/profiles/web/node_modules/dsh-better-sidebar/package.json'))
-  if (installed) { say('  ✓ 已安装(~/.dsh/profiles/web)'); return { ok: true } }
+/** sidebar 落盘状态 = 与 doctor 检查同口径的唯一事实面(profile 里的 package.json) */
+function sidebarInstalled() {
+  return existsSync(join(homedir(), '.dsh/profiles/web/node_modules/dsh-better-sidebar/package.json'))
+}
+
+/** dsh plugin 在 profile 目录里跑 pnpm;pnpm ≥10.5 默认不执行依赖构建脚本,严格态
+ *  (pnpm 11 默认 / strict-dep-builds)下 ERR_PNPM_IGNORED_BUILDS 直接 exit 1——
+ *  但包本身已完整落盘(2026-09-08 实测:exit 1 而 167 包全部就位,doctor 复检即绿)。
+ *  对该调用降回警告态(env 只作用于这一次 spawn,不改用户全局 pnpm 配置);
+ *  老版本 pnpm 不认识此配置,零影响。 */
+const SIDEBAR_PNPM_ENV = { ...process.env, npm_config_strict_dep_builds: 'false' }
+
+async function setupSidebar(attemptInstall) {  say('[gotry-setup] dsh-better-sidebar(dsh web 侧栏工作台,产物查看面 issue #25)')
+  if (sidebarInstalled()) { say('  ✓ 已安装(~/.dsh/profiles/web)'); return { ok: true } }
   if (CHECK_ONLY) { say('  ✗ 未安装(--check-only 只报告)'); return { ok: true } }
   const SIDEBAR_PKG = 'dsh-better-sidebar@latest'
-  // dsh CLI:本包依赖里的 @deepseek-ai/dsh 优先;解析不到走 npx 自拉(官方安装途径同款)
-  const { createRequire } = await import('node:module')
+  // dsh CLI:本包依赖里的 @deepseek-ai/dsh 优先;解析不到走 npx 自拉(官方安装途径同款)。
+  // attemptInstall 注入位供测试模拟「安装器失败但状态落盘」(pnpm 忽略构建脚本策略)。
   const require_ = createRequire(join(repoRoot, 'package.json'))
-  let launched = false
-  try {
-    const dshBin = require_.resolve('@deepseek-ai/dsh/lib/bin.js')
-    say(`  安装中(dsh plugin → web profile): ${SIDEBAR_PKG}`)
-    const r = await run(process.execPath, [dshBin, 'plugin', '--profile', 'web', 'add', SIDEBAR_PKG], { timeoutMs: 300_000 })
-    launched = true
-    if (r.ok) {
-      say('  ✓ 安装完成(gotry web 刷新浏览器即见右侧工作台;工作区里的产物 md 可直接预览)')
-      return { ok: true }
-    }
-    say(`  ✗ dsh plugin 安装失败(${r.error})——尝试 npx 途径`)
-  } catch { /* 本包未携带 @deepseek-ai/dsh */ }
-  if (!launched) say('  本包未携带 @deepseek-ai/dsh,走 npx 途径安装')
-  const r2 = await run('npx', ['-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', 'web', 'add', SIDEBAR_PKG], { timeoutMs: 300_000 })
-  if (!r2.ok) {
-    say('  ✗ 安装失败——不影响 gotry:产物仍可在对话里说「看看我生成的行程」经 gotry_artifacts_list/read 查看;可稍后重试: npx gotry doctor --fix')
-    return { ok: false }
+  const defaultAttempt = async () => {
+    try {
+      const dshBin = require_.resolve('@deepseek-ai/dsh/lib/bin.js')
+      say(`  安装中(dsh plugin → web profile): ${SIDEBAR_PKG}`)
+      return await run(process.execPath, [dshBin, 'plugin', '--profile', 'web', 'add', SIDEBAR_PKG], { timeoutMs: 300_000, env: SIDEBAR_PNPM_ENV })
+    } catch { return { ok: false, noDsh: true } }
   }
-  say('  ✓ 安装完成(gotry web 刷新浏览器即见右侧工作台)')
-  return { ok: true }
+  const r = await (attemptInstall ?? defaultAttempt)()
+  if (r.ok) {
+    say('  ✓ 安装完成(gotry web 刷新浏览器即见右侧工作台;工作区里的产物 md 可直接预览)')
+    return { ok: true }
+  }
+  // exit 非 0 ≠ 没装上(pnpm 忽略构建脚本策略):先按落盘状态复核,再决定是否回退 npx 途径
+  if (sidebarInstalled()) {
+    say('  ✓ 安装完成(安装器 exit 非 0,但按落盘状态复核已就位;gotry web 刷新浏览器即见右侧工作台)')
+    say('  ⚠ pnpm 跳过了 node-pty(侧栏内嵌终端)的构建脚本——预览功能不受影响;如需内嵌终端:cd ~/.dsh/profiles/web && pnpm approve-builds 勾选 node-pty')
+    return { ok: true }
+  }
+  if (r.noDsh) say('  本包未携带 @deepseek-ai/dsh,走 npx 途径安装')
+  else say('  ✗ dsh plugin 安装失败且未落盘——尝试 npx 途径')
+  const r2 = await run('npx', ['-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', 'web', 'add', SIDEBAR_PKG], { timeoutMs: 300_000, env: SIDEBAR_PNPM_ENV })
+  if (r2.ok) {
+    say('  ✓ 安装完成(gotry web 刷新浏览器即见右侧工作台)')
+    return { ok: true }
+  }
+  if (sidebarInstalled()) {
+    say('  ✓ 安装完成(npx 途径 exit 非 0,但按落盘状态复核已就位)')
+    return { ok: true }
+  }
+  say('  ✗ 安装失败——不影响 gotry:产物仍可在对话里说「看看我生成的行程」经 gotry_artifacts_list/read 查看;可稍后重试: npx gotry doctor --fix')
+  return { ok: false }
 }
 
 // ---------------------------------------------------------------------------
@@ -269,9 +292,8 @@ async function doctorChecks() {
   // flyai key(匿名试用额度共享易达限;正式 key 即免)
   const flyaiKey = (process.env.FLYAI_API_KEY ?? '').trim()
   items.push({ label: 'FlyAI(飞猪官方检索)', ok: Boolean(flyaiKey), level: flyaiKey ? 'ok' : 'degraded', detail: flyaiKey ? 'FLYAI_API_KEY 已配(正式 key,无试用额度限制)' : '未配 FLYAI_API_KEY——走匿名试用额度(共享,易达限;达限报 "Trial limit reached")', fix: flyaiKey ? undefined : '到 flyai.open.fliggy.com 控制台申请正式 key,配进环境变量 FLYAI_API_KEY' })
-  // sidebar
-  const sidebarPkg = join(homedir(), '.dsh/profiles/web/node_modules/dsh-better-sidebar/package.json')
-  const sbOk = existsSync(sidebarPkg)
+  // sidebar(状态面与 setupSidebar 的落盘复核同一口径)
+  const sbOk = sidebarInstalled()
   items.push({ label: 'dsh-better-sidebar(侧栏工作台)', ok: sbOk, level: sbOk ? 'ok' : 'missing', detail: sbOk ? '已安装——web UI 右侧工作台可预览产物与 doctor 报告(gotry-state/doctor-report.md)' : '未安装——dsh web 无右侧工作台,产物与 doctor 报告只能在对话里看(gotry_artifacts_list)', fix: sbOk ? undefined : 'npx gotry doctor --fix' })
   // dsh-calendar(setup 状态面;默认不挂载=ok 是合法态,opt-in 未配置才 degraded)
   const calState = readCalendarState()
@@ -279,24 +301,42 @@ async function doctorChecks() {
   const calConfigured = calOn && calendarProfileConfigured()
   items.push({ label: 'dsh-calendar(日历工作窗口)', ok: !calOn || calConfigured, level: !calOn ? 'ok' : calConfigured ? 'ok' : 'degraded', detail: calendarDetail(calState), fix: !calOn ? undefined : calConfigured ? undefined : '在 ~/.dsh/profiles/web/cordis.patch.yml 覆盖 calendar 行 config 填 username(或 npx gotry setup calendar --off 恢复默认不挂载)' })
   // dsh-map-tools(patch 分发面宿主插件,issue #139):解析失败启动时整块静默剔除,
-  // doctor 把两态照亮。候选清单与 bin/gotry-inner.js 解析链、ts/capabilities/doctor.ts 同口径。
+  // doctor 把两态照亮。候选清单与 bin/gotry-inner.js 解析链、ts/capabilities/doctor.ts 同口径:
+  // tarball vendor 副本优先(随 files[] 分发,不进 npm 依赖——其 peerDependencies 要求
+  // dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族在 npm 严格 peer
+  // 解析下 ERESOLVE,依赖形态会弄坏 npx 安装),其余覆盖 source/提升/profile 布局。
+  const rootRequire = createRequire(join(repoRoot, 'package.json'))
   const mapCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js'),
     join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js'),
     join(repoRoot, 'node_modules/dsh-map-tools/package.json'),
     join(repoRoot, 'ts/node_modules/dsh-map-tools/package.json'),
     join(homedir(), '.dsh/profiles/web/node_modules/dsh-map-tools/package.json'),
   ]
-  const mapHit = mapCandidates.find((p) => existsSync(p))
+  let mapHit = mapCandidates.find((p) => existsSync(p))
+  // npm 提升布局:gotry 的依赖不在包目录 node_modules 里,而在同级提升位——
+  // 与 inner 的 require_.resolve 同机制(createRequire 从包位置向上走查)
+  if (!mapHit) { try { mapHit = rootRequire.resolve('dsh-map-tools') } catch { mapHit = undefined } }
   items.push(mapHit
     ? { label: 'dsh-map-tools(地图/路线/POI)', ok: true, level: 'ok', detail: `已就位(${mapHit})——地图工具可用(零 key,走 OSM/OSRM)`, fix: undefined }
-    : { label: 'dsh-map-tools(地图/路线/POI)', ok: false, level: 'missing', detail: '未随包解析——启动时该 patch 条目被静默剔除,地图/路线/POI 工具不会出现在模型工具箱(缺地图不挡旅行规划,只少能力)', fix: 'npx gotry doctor --fix 不覆盖此项:source 布局把 dsh-map-tools 放进 ts/dsh-runtime/node_modules(或 ts/node_modules);npm 布局重装 @danceiny/gotry(随发行版依赖提供)' })
+    : { label: 'dsh-map-tools(地图/路线/POI)', ok: false, level: 'missing', detail: '未随包解析——启动时该 patch 条目被静默剔除,地图/路线/POI 工具不会出现在模型工具箱(缺地图不挡旅行规划,只少能力)', fix: '重装 @danceiny/gotry(地图插件随包 vendor 分发,缺失多为安装不完整)' })
   // dsh-tool-ask-user(结构化澄清卡,人格契约 (5) 的卡片形态载体)
   const askCandidates = [
     join(repoRoot, 'ts/dsh-runtime/vendor/deepseek-ai-dsh-tool-ask-user/package.json'),
     join(repoRoot, 'node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
     join(homedir(), '.dsh/profiles/web/node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
   ]
-  const askHit = askCandidates.find((p) => existsSync(p))
+  let askHit = askCandidates.find((p) => existsSync(p))
+  // 与 inner 同口径:优先从 dsh 包上下文解析(pnpm 嵌套布局只有 dsh 看得见),再从包根上下文
+  // (npm/npx 提升布局),最后静态候选(source vendored / profile)
+  if (!askHit) {
+    try {
+      const reqFromDsh = createRequire(rootRequire.resolve('@deepseek-ai/dsh/lib/bin.js'))
+      askHit = reqFromDsh.resolve('@deepseek-ai/dsh-tool-ask-user')
+    } catch {
+      try { askHit = rootRequire.resolve('@deepseek-ai/dsh-tool-ask-user') } catch { askHit = undefined }
+    }
+  }
   items.push(askHit
     ? { label: 'dsh-tool-ask-user(结构化澄清卡)', ok: true, level: 'ok', detail: `已就位(${askHit})——ask_user_question 澄清卡可用(web 原生卡片;headless+TTY 用 stdio 提供方)`, fix: undefined }
     : { label: 'dsh-tool-ask-user(结构化澄清卡)', ok: false, level: 'missing', detail: '未解析——启动时澄清卡注入被静默剔除,模型只能散文追问(人格契约 (5) 退化文本形态)', fix: '重装 @danceiny/gotry——该依赖随 dsh 闭包自带,缺失多为安装不完整' })
@@ -728,7 +768,13 @@ if (WIZARD) {
   process.exit(0)
 }
 
-main().catch((e) => {
-  say(`[gotry-setup] 异常:${e.message}(不影响 gotry 本体;可重试 npx gotry setup)`)
-  process.exit(AUTO ? 0 : 1)
-})
+// 直接执行才跑 main(bootstrap-tests import 本模块做 setupSidebar 单测时不触发安装面;
+// bin/gotry-inner.js 始终以 `node …/gotry-bootstrap.js` 直接 spawn,不受影响)
+if (process.argv[1] && process.argv[1].endsWith('gotry-bootstrap.js')) {
+  main().catch((e) => {
+    say(`[gotry-setup] 异常:${e.message}(不影响 gotry 本体;可重试 npx gotry setup)`)
+    process.exit(AUTO ? 0 : 1)
+  })
+}
+
+export { setupSidebar, sidebarInstalled }

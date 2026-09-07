@@ -89,6 +89,7 @@
     "ts/capabilities/session/",
     "extension/",
     "ts/package.json",
+    "ts/dsh-runtime/vendor/dsh-map-tools",
     "cordis.gotry-patch.yml",
     "README.md",
     "README.zh-CN.md",

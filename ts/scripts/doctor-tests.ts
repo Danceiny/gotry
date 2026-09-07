@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { runDoctorChecks, renderDoctorReportMd, nodeOk } from '../capabilities/doctor.ts'
 import { apply } from '../src/index.ts'
 import type { Context } from '@deepseek-ai/cordis'
@@ -70,6 +70,43 @@ assert.match(md, /flyai\.open\.fliggy\.com 控制台申请正式 key/, 'prose �
 assert.ok(!md.includes('`到 flyai'), 'prose 类 fix 不应整体包反引号')
 assert.match(md, /LLM key/, '让渡面(LLM key)照常入表')
 console.log('5. 报告渲染 OK')
+
+// 5b. npm/npx 提升布局(2026-09-08 安装链修复):gotry 的依赖落在包目录外的同级提升位,
+//     existsSync 硬编码候选在该布局全 miss——map/ask-user 必须经 createRequire 解析链
+//     命中(此前把真实就位的 ask-user 误报 missing、map-tools 误报随包缺席)。
+{
+  const hoist = await mkdtemp(join(tmpdir(), 'gotry-doctor-hoist-'))
+  const pkgRoot = join(hoist, 'node_modules', '@danceiny', 'gotry')
+  await mkdir(pkgRoot, { recursive: true })
+  await writeFile(join(pkgRoot, 'package.json'), JSON.stringify({ name: '@danceiny/gotry', version: '0.0.1-test' }), 'utf-8')
+  // 提升位依赖(与真实 npx 缓存同形):裸名 map-tools + dsh 本体 + ask-user
+  const stubPkg = async (dir: string, main: string) => {
+    await mkdir(join(hoist, 'node_modules', dir, 'lib'), { recursive: true })
+    await writeFile(join(hoist, 'node_modules', dir, 'package.json'), JSON.stringify({ name: dir, version: '0.0.0-test', main }), 'utf-8')
+    await writeFile(join(hoist, 'node_modules', dir, main), '// stub\n', 'utf-8')
+  }
+  await stubPkg('dsh-map-tools', 'lib/index.js')
+  await stubPkg('@deepseek-ai/dsh', 'lib/bin.js')
+  await stubPkg('@deepseek-ai/dsh-tool-ask-user', 'lib/index.js')
+  const rb = await runDoctorChecks({ repoRoot: pkgRoot, homeDir: join(hoist, 'home-empty'), env: {} })
+  assert.equal(rb.items.find(i => i.id === 'map-tools')!.status, 'ok', '提升布局 map-tools 经包根解析链命中')
+  assert.equal(rb.items.find(i => i.id === 'ask-user')!.status, 'ok', '提升布局 ask-user 经 dsh 上下文解析链命中(误报修复)')
+  await rm(hoist, { recursive: true, force: true })
+}
+console.log('5b. npm 提升布局解析链(map-tools/ask-user 误报修复)OK')
+
+// 5c. 随包 vendor 布局:tarball 里 ts/dsh-runtime/vendor/dsh-map-tools 直接命中
+//     (npm 依赖形态因 peerDependencies ERESOLVE 不可用,vendor 是 npm 布局的分发面)
+{
+  const vend = await mkdtemp(join(tmpdir(), 'gotry-doctor-vendor-'))
+  const vendorEntry = join(vend, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js')
+  await mkdir(dirname(vendorEntry), { recursive: true })
+  await writeFile(vendorEntry, '// stub\n', 'utf-8')
+  const rc = await runDoctorChecks({ repoRoot: vend, homeDir: join(vend, 'home-empty'), env: {} })
+  assert.equal(rc.items.find(i => i.id === 'map-tools')!.status, 'ok', 'vendor 副本命中(map-tools 随 tarball 分发)')
+  await rm(vend, { recursive: true, force: true })
+}
+console.log('5c. 随包 vendor 布局(map-tools tarball 分发面)OK')
 
 // 6. MCP 工具面:gotry_doctor 注册 + isolated stateRoot 报告落盘
 const smokeRoot = await mkdtemp(join(tmpdir(), 'gotry-doctor-state-'))

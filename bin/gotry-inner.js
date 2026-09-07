@@ -365,13 +365,21 @@ if (benchmarkEnvironmentConfig) {
     process.exit(1)
   }
 }
-// dsh-map-tools 宿主插件(地图/路线/POI,零 key 走 OSM/OSRM):repo 用 vendored,
-// npm 用依赖解析;都找不到就整块剔除 patch 条目(缺地图不挡旅行规划)
+// dsh-map-tools 宿主插件(地图/路线/POI,零 key 走 OSM/OSRM):tarball 随包 vendor,
+// repo 工作副本走 runtime workspace 链接/依赖解析;都找不到就整块剔除 patch 条目
+// (缺地图不挡旅行规划)。不能改成 npm 依赖:其 peerDependencies 要求
+// dsh-settings/dsh-tools >=0.1.2-rc.1,与本包锁定的 0.1.2-alpha.3 家族在 npm
+// 严格 peer 解析下 ERESOLVE,会直接弄坏 npx 安装。
 let mapEntry = ''
 if (!benchmarkEnvironmentConfig) {
-  const vendoredMap = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js')
+  const vendoredMap = join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js')
+    // (随 tarball 分发;source 布局同一份文件)
+  const runtimeMap = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js')
+    // (ts/dsh-runtime pnpm workspace vendor/* 链接形态)
   if (existsSync(vendoredMap)) {
     mapEntry = vendoredMap
+  } else if (existsSync(runtimeMap)) {
+    mapEntry = runtimeMap
   } else {
     // npm 布局:子路径可能被 exports 挡(resolve 抛错不能留下旧值),裸包名返回真实入口
     try { mapEntry = require_.resolve('dsh-map-tools/lib/index.js') } catch { mapEntry = '' }

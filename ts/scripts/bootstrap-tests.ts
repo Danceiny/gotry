@@ -17,7 +17,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -159,4 +159,30 @@ console.log('9. calendar 子命令(setup 状态面 on/off/status + doctor 三态
 }
 console.log('10. 启动一次性 doctor 摘要(--summary:stderr 一行/零写盘/恒 exit 0)OK')
 
-console.log('BOOTSTRAP TESTS: 10/10 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要)')
+// 11. setupSidebar 落盘状态复核(2026-09-08 安装链修复):pnpm ≥10.5 在 profile 目录
+//     不执行依赖构建脚本,严格态(pnpm 11)下 ERR_PNPM_IGNORED_BUILDS exit 1——但包已
+//     完整落盘。安装器必须按落盘状态(与 doctor 同口径)判成功,不以 dsh→pnpm 两层
+//     转手的 exit code 误报失败。注入 attemptInstall 模拟「安装器失败但状态落盘」。
+{
+  const sbHome = mkdtempSync(join(tmpdir(), 'gotry-sidebar-test-'))
+  const prevHome = process.env.HOME
+  process.env.HOME = sbHome // os.homedir() 在 POSIX 尊重 $HOME
+  try {
+    const { setupSidebar } = await import(bootstrap)
+    // 模拟 pnpm 严格态:包完整落盘后 exit 1(ERR_PNPM_IGNORED_BUILDS)——落盘动作
+    // 发生在安装器内部,调用前 profile 是空的,才会走到「失败→复核」新路径
+    const r = await setupSidebar(async () => {
+      const sbPkgDir = join(sbHome, '.dsh/profiles/web/node_modules/dsh-better-sidebar')
+      mkdirSync(sbPkgDir, { recursive: true })
+      writeFileSync(join(sbPkgDir, 'package.json'), JSON.stringify({ name: 'dsh-better-sidebar', version: '0.18.0' }))
+      return { ok: false, error: 'exit 1' }
+    })
+    assert.equal(r.ok, true, '安装器 exit 非 0 但状态已落盘 → 按落盘判成功(不误报失败)')
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+  }
+}
+console.log('11. setupSidebar 落盘状态复核(pnpm 忽略构建脚本 exit 1 不再误报)OK')
+
+console.log('BOOTSTRAP TESTS: 11/11 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核)')

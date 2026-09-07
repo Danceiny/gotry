@@ -23,7 +23,20 @@ dsh 发布家族的全量 vendored 成员,pnpm workspace 方式参与安装
   `^0.1.2-alpha.1` 的 range 直接命中本地版本,干净克隆只依赖本仓文件 +
   公共 registry(第三方),不依赖内部镜像。
 
-## 升级/复现流程(下个版本照抄)
+## 非 dsh 家族成员:`vendor/dsh-map-tools`
+
+`dsh-map-tools`(dshmarket 第三方宿主插件,地图/路线/POI,零 key 走
+OSM/OSRM)与 dsh 家族不同源,进本目录的原因是 **npm 依赖形态被上游
+peerDependencies 否决**:它要求 `dsh-settings`/`dsh-tools`
+`>=0.1.2-rc.1`,而 gotry 锁定的运行时家族是 `0.1.2-alpha.3`
+(semver 上 alpha < rc)——npm/npx 严格 peer 解析直接 ERESOLVE
+(optionalDependencies 也不豁免),硬依赖会弄坏 `npx @danceiny/gotry`
+主安装路径。故以 vendor 副本随 tarball 分发(root `package.json`
+`files[]` 含本目录),`bin/gotry-inner.js` 解析链 vendor 优先;
+升级 = 从 npm 拉 `dsh-map-tools@<new>` 覆盖本目录(保留来源与
+license:MIT,上游 package.json 里无 devDependencies 需清理)。
+
+## 升级/复现流程(dsh 家族,下个版本照抄)
 
 1. `git clone --depth 1 --branch <tag> https://github.com/deepseek-ai/DeepSeek-Harness.git /tmp/dsh-<tag>`
 2. `cd /tmp/dsh-<tag> && pnpm install && pnpm build:official`
