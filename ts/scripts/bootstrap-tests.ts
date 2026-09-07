@@ -41,17 +41,53 @@ function runBootstrap(extraArgs: string[], extraEnv: Record<string, string>) {
 function runWizardWithFakeHealthWatch(outcome: { ready: boolean; attempts: number; waitedMs: number; reason?: string; timeoutMs?: number }) {
   const fakeBin = mkdtempSync(join(tmpdir(), 'gotry-bootstrap-npx-'))
   const fakeNpx = join(fakeBin, 'npx')
-  writeFileSync(fakeNpx, `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify(outcome) + '\n')})\nsetTimeout(() => {}, 50)\n`)
+  const callLog = join(fakeBin, 'npx-call.json')
+  const expectedScript = join(repoRoot, 'ts', 'scripts', 'health-watch-cli.ts')
+  const expectedCwd = join(repoRoot, 'ts')
+  const expectedArgs = ['--yes', 'tsx', expectedScript, '--timeout', String(outcome.timeoutMs ?? 600), '--interval', '200', '--json']
+  writeFileSync(fakeNpx, `#!/usr/bin/env node
+const fs = require('node:fs')
+const actual = { cwd: process.cwd(), argv: process.argv.slice(2) }
+fs.writeFileSync(process.env.GOTRY_FAKE_NPX_CALL_LOG, JSON.stringify(actual), 'utf8')
+const expected = JSON.parse(process.env.GOTRY_FAKE_NPX_EXPECTED)
+if (actual.cwd !== expected.cwd || JSON.stringify(actual.argv) !== JSON.stringify(expected.argv)) {
+  process.stderr.write('unexpected npx invocation: ' + JSON.stringify(actual) + '\\n')
+  process.exit(42)
+}
+process.stdout.write(${JSON.stringify(JSON.stringify(outcome) + '\n')})
+setTimeout(() => {}, 50)
+`)
   chmodSync(fakeNpx, 0o700)
   try {
-    return runBootstrap(['wizard'], {
+    const result = runBootstrap(['wizard'], {
       GOTRY_SETUP_EXTENSION: '0',
       GOTRY_ONBOARDING_TIMEOUT_MS: String(outcome.timeoutMs ?? 600),
       GOTRY_ONBOARDING_INTERVAL_MS: '200',
+      GOTRY_FAKE_NPX_CALL_LOG: callLog,
+      GOTRY_FAKE_NPX_EXPECTED: JSON.stringify({ cwd: expectedCwd, argv: expectedArgs }),
       PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
     })
+    const call = JSON.parse(readFileSync(callLog, 'utf-8'))
+    assert.deepEqual(call, { cwd: expectedCwd, argv: expectedArgs }, 'bootstrap 应用 production exact argv/path 调 health-watch CLI')
+    return result
   } finally {
     rmSync(fakeBin, { recursive: true, force: true })
+  }
+}
+
+function runHealthWatchCliSmoke() {
+  try {
+    const out = execFileSync('npx', ['tsx', 'scripts/health-watch-cli.ts', '--timeout', '0', '--interval', '1000', '--json'], {
+      cwd: join(repoRoot, 'ts'),
+      encoding: 'utf-8',
+      timeout: 10_000,
+      env: process.env,
+    })
+    const jsonLine = out.trim().split('\n').find((line) => line.startsWith('{')) ?? ''
+    return { code: 0, out, json: jsonLine ? JSON.parse(jsonLine) : null }
+  } catch (e) {
+    const err = e as { status?: number; stdout?: string; stderr?: string }
+    return { code: err.status ?? 1, out: `${err.stdout ?? ''}${err.stderr ?? ''}`, json: null }
   }
 }
 
@@ -100,7 +136,16 @@ assert.ok(c6.out.includes('未在 600ms 内就绪'), '应输出 not-ready timeou
 const c6Ready = runWizardWithFakeHealthWatch({ ready: true, attempts: 1, waitedMs: 0, timeoutMs: 600 })
 assert.equal(c6Ready.code, 0, `wizard(ready)应 exit 0,实际 ${c6Ready.code}\n${c6Ready.out}`)
 assert.ok(c6Ready.out.includes('扩展就绪'), 'ready 分支应输出扩展就绪')
-console.log('6. wizard 真实路径(隔离 watcher: not-ready exit 1 + ready exit 0)OK')
+console.log('6. wizard 真实路径(隔离 watcher: not-ready exit 1 + ready exit 0 + exact npx argv/path)OK')
+
+const c6Smoke = runHealthWatchCliSmoke()
+assert.equal(c6Smoke.code, 0, `真实 health-watch CLI smoke 应 exit 0,实际 ${c6Smoke.code}\n${c6Smoke.out}`)
+assert.deepEqual(
+  { ready: c6Smoke.json?.ready, reason: c6Smoke.json?.reason },
+  { ready: false, reason: 'timeout' },
+  `真实 health-watch CLI smoke 应返回 timeout JSON,实际 ${c6Smoke.out}`,
+)
+console.log('6b. health-watch-cli 真实 deterministic smoke(--timeout 0 --interval 1000 --json)OK')
 
 // 7. 扩展分发 github 通道(ADR-21):基址指不可达回环(127.0.0.1:1 拒连,离线确定性);显式模式不带 --auto——CI 环境里 AUTO+CI 会提前跳过全部节,断言面会落空
 //    → 显式降级 bundled + check-only 报告,exit 0;非法 --extension-from 值回落 bundled 不进网络通道。
