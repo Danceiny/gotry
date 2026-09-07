@@ -9,6 +9,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import type { ActionReceipt, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
 import type { BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
 import {
@@ -213,7 +214,7 @@ const sanitizedRefPort: DshPlannerRunPort = {
       finalResponse: '',
       events: [{
         type: 'tool/call',
-        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai'] } } }) },
+        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai', 'draft:destination.Dubai'] } } }) },
       }],
     }
   },
@@ -234,9 +235,82 @@ const sanitizedDecisions = await sanitizedRef.plannerFactory(task).next({
 assert.equal(sanitizedDecisions[0]?.kind, 'operation', 'sanitizer maps off-charset characters deterministically')
 assert.deepEqual(
   (sanitizedDecisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs,
-  ['draft:destination.Dubai'],
+  ['modelref:43b07dd7fc80f4a9889b6c672c450a911086293cab2ef4058b95b53559a2d100', 'draft:destination.Dubai'],
 )
 await sanitizedRef.close()
+
+const collisionRawRefs = ['fact://a/b', 'fact:..a?b'] as const
+const collisionResults: string[] = []
+for (const [index, rawRef] of collisionRawRefs.entries()) {
+  const collisionPlanner = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run() {
+        return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: `action-dsh-collision-${index}`, factRefs: [rawRef] } } }) } }] }
+      },
+      async close() {},
+    },
+  })
+  const decisions = await collisionPlanner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: `dsh-collision-${index}`, workspace, request: { text: 'Find hotels' } } })
+  const ref = (decisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs?.[0]
+  assert.match(ref ?? '', /^[A-Za-z0-9][A-Za-z0-9:._-]*$/, 'unsafe refs map to the runtime-safe pattern')
+  collisionResults.push(ref ?? '')
+  await collisionPlanner.close()
+}
+assert.notEqual(collisionResults[0], collisionResults[1], 'distinct unsafe raw refs retain collision-resistant aliases')
+assert.equal(
+  collisionRawRefs[0].replace(/#/g, ':').replace(/[^A-Za-z0-9:._-]/g, '.'),
+  collisionRawRefs[1].replace(/#/g, ':').replace(/[^A-Za-z0-9:._-]/g, '.'),
+  'the collision pair shares the legacy readable projection',
+)
+
+async function assertFactRefsRejected(factRefs: unknown[], message: string): Promise<void> {
+  const planner = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run() {
+        return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs } } }) } }] }
+      },
+      async close() {},
+    },
+  })
+  await assert.rejects(
+    planner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-ref-rejection', workspace, request: { text: 'Find hotels' } } }),
+    /planner_invalid_action/,
+    message,
+  )
+  await planner.close()
+}
+const firstAlias = 'modelref:'.concat(createHash('sha256').update(collisionRawRefs[0], 'utf8').digest('hex'))
+await assertFactRefsRejected([collisionRawRefs[0], firstAlias], 'unsafe raw ref cannot alias a same-action reserved modelref')
+await assertFactRefsRejected([collisionRawRefs[0], collisionRawRefs[0]], 'repair-time duplicate factRefs are rejected by canonical validation')
+await assertFactRefsRejected(['modelref:'.concat('a'.repeat(64))], 'direct modelref namespace input is reserved and rejected')
+
+const reservedRecovery = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return { finalResponse: JSON.stringify({ kind: 'operation', action: { ...searchRun, factRefs: ['modelref:'.concat('b'.repeat(64))] } }), events: [] }
+    },
+    async close() {},
+  },
+})
+const reservedRecoveryDecision = await reservedRecovery.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-reserved-recovery', workspace, request: { text: 'Find hotels' } } })
+assert.equal(reservedRecoveryDecision[0]?.kind, 'error', 'finalResponse recovery rejects direct reserved modelref aliases')
+await reservedRecovery.close()
+
+let stableRefCall = 0
+const stableRawRef = 'fact://same/raw'
+const stablePlanner = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      stableRefCall += 1
+      return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: `action-dsh-stable-${stableRefCall}`, factRefs: [stableRawRef] } } }) } }] }
+    },
+    async close() {},
+  },
+})
+const stableFirst = await stablePlanner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-stable-1', workspace, request: { text: 'Find hotels' } } })
+const stableSecond = await stablePlanner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-stable-2', workspace, request: { text: 'Find hotels again' } } })
+assert.equal((stableFirst[0] as { action?: { factRefs?: string[] } }).action?.factRefs?.[0], (stableSecond[0] as { action?: { factRefs?: string[] } }).action?.factRefs?.[0], 'same raw ref is stable across actions and turns')
+await stablePlanner.close()
 
 const unauthorisedPort: DshPlannerRunPort = {
   async run() {
@@ -288,7 +362,7 @@ const fragmentDecisions = await fragmentRef.plannerFactory(task).next({
 assert.equal(fragmentDecisions[0]?.kind, 'operation', 'JSON-pointer fragment factRefs repair into the safe charset')
 assert.deepEqual(
   (fragmentDecisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs,
-  [`fact:..turn_${task.lastTurnId}.request`],
+  [`modelref:c7819d3c0c375fe1bd389006338b99be890fa8e3ddd9390f243cba8b5c139d9a`],
 )
 await fragmentRef.close()
 

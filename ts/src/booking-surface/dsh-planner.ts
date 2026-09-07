@@ -407,9 +407,11 @@ function recoverFinalResponseDecision(response: string, task: BookingCopilotTask
     console.error('[booking-copilot] finalResponse recovery rejected (invalid action):', JSON.stringify({ kind: action.kind, errors: validation.errors.slice(0, 6) }).slice(0, 600))
     return null
   }
-  repairPlannerFactRefs(action)
+  const repairedRefs = repairPlannerFactRefs(action)
+  const repairedValidation = validateBookingReadAction(action as unknown as BookingReadAction)
+  if (!repairedValidation.ok) return null
   try {
-    assertPlannerSafeRefs(action)
+    assertPlannerSafeRefs(action, repairedRefs)
   } catch (error) {
     console.error('[booking-copilot] finalResponse recovery rejected (unsafe ref):', JSON.stringify({ actionId: action.actionId, factRefs: action.factRefs }).slice(0, 600))
     return null
@@ -426,17 +428,22 @@ function recoverFinalResponseDecision(response: string, task: BookingCopilotTask
 const PLANNER_SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
 
 // Models cite prompt facts in URI-ish syntax (`fact://turn_X/request`,
-// `turn_X#request`); characters outside the runtime ref charset are mapped
-// deterministically to '.' so repair succeeds without burning the retry
-// budget. Anything the sanitizer cannot make unique enough still fails the
-// safe-ref gate into the retry path.
-function repairPlannerFactRefs(action: Record<string, unknown>): void {
+// `turn_X#request`). Preserve already-safe refs exactly; unsafe refs enter the
+// reserved modelref namespace with the full SHA-256 of the raw UTF-8 value.
+function repairPlannerFactRefs(action: Record<string, unknown>): Set<string> {
   const factRefs = action.factRefs
-  if (!Array.isArray(factRefs)) return
-  action.factRefs = factRefs.map((ref) => (typeof ref === 'string' ? ref.replace(/#/g, ':').replace(/[^A-Za-z0-9:._-]/g, '.') : ref))
+  const repairedRefs = new Set<string>()
+  if (!Array.isArray(factRefs)) return repairedRefs
+  action.factRefs = factRefs.map((ref) => {
+    if (typeof ref !== 'string' || PLANNER_SAFE_REF_PATTERN.test(ref)) return ref
+    const alias = `modelref:${createHash('sha256').update(ref, 'utf8').digest('hex')}`
+    repairedRefs.add(alias)
+    return alias
+  })
+  return repairedRefs
 }
 
-function assertPlannerSafeRefs(action: Record<string, unknown>): void {
+function assertPlannerSafeRefs(action: Record<string, unknown>, repairedRefs: Set<string>): void {
   const actionId = action.actionId
   if (typeof actionId !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(actionId)) {
     throw new Error(`planner_invalid_action:unsafe_action_id:${String(actionId).slice(0, 60)}`)
@@ -444,7 +451,7 @@ function assertPlannerSafeRefs(action: Record<string, unknown>): void {
   const factRefs = action.factRefs
   if (Array.isArray(factRefs)) {
     for (const ref of factRefs) {
-      if (typeof ref !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(ref)) {
+      if (typeof ref !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(ref) || (ref.startsWith('modelref:') && !repairedRefs.has(ref)) || ref.length > 512) {
         throw new Error(`planner_invalid_action:unsafe_fact_ref:${String(ref).slice(0, 60)}`)
       }
     }
@@ -502,8 +509,13 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   // boundary, past the retry budget. Repair the common fragment syntax first,
   // then enforce the same charset here so remaining violations retry as
   // parse-class failures instead of failing the turn as PLANNER_FAILED.
-  repairPlannerFactRefs(decision.action)
-  assertPlannerSafeRefs(decision.action)
+  const repairedRefs = repairPlannerFactRefs(decision.action)
+  const repairedValidation = validateBookingReadAction(decision.action)
+  if (!repairedValidation.ok) {
+    console.error(`[booking-copilot] repaired action rejected:`, JSON.stringify({ errors: repairedValidation.errors.slice(0, 8) }).slice(0, 800))
+    throw new Error(`planner_invalid_action:${repairedValidation.errors.join('; ')}`)
+  }
+  assertPlannerSafeRefs(decision.action, repairedRefs)
   const action = decision.action as unknown as BookingReadAction
   const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
   if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) {

@@ -91,6 +91,68 @@ const action = (id: string, revision = 0, extra: Record<string, unknown> = {}) =
   contextRef: 'ctx-v2', expectedRevision: revision, reason: 'search current workspace', factRefs: [], input: {}, ...extra,
 })
 
+// Repaired planner fact refs are evidence citations, never capability tokens.
+// Even authority-looking values must not grant an action, a newer offer
+// version, or the verified tuple required to prepare Checkout.
+const repairedFactRef = `modelref:${'a'.repeat(64)}`
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-factref-action-authority-'))
+  const ledger = ensureLedger(root)
+  const rt = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2' })
+  const limitedWorkspace: BookingWorkspaceSnapshot = {
+    ...workspace(0),
+    capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
+  }
+  const t = rt.startTask({ ...turn('task-factref-action-authority'), workspace: limitedWorkspace })
+  const before = ledger.countEvents()
+  assert.throws(() => rt.issueOperation(t.taskId, {
+    ...action('factref-forged-action', 0, { factRefs: [repairedFactRef, 'checkout.prepare'] }),
+    kind: 'checkout.prepare' as const,
+    input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: 'verified-offer-a' },
+  }), /unsupported_action/, 'factRefs cannot add an action to the surface allowlist')
+  assert.equal(ledger.countEvents(), before, 'rejected factRef authority does not persist an operation')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-factref-offer-authority-'))
+  const ledger = ensureLedger(root)
+  const rt = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2' })
+  const offerWorkspace: BookingWorkspaceSnapshot = {
+    ...workspace(0),
+    visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }],
+    loadedOffers: [loadedOffer('offer-a', 'hotel-a', 'offer-a:v1')],
+  }
+  const t = rt.startTask({ ...turn('task-factref-offer-authority'), workspace: offerWorkspace })
+  const before = ledger.countEvents()
+  assert.throws(() => rt.issueOperation(t.taskId, {
+    ...action('factref-forged-version', 0, { factRefs: [repairedFactRef, 'offer-a:v2'] }),
+    kind: 'offer.check' as const,
+    input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v2' },
+  }), /offer_version_not_loaded/, 'factRefs cannot promote an unloaded offer version')
+  assert.equal(ledger.countEvents(), before, 'rejected factRef version does not persist an operation')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-factref-verified-authority-'))
+  const ledger = ensureLedger(root)
+  const rt = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  const offerWorkspace: BookingWorkspaceSnapshot = {
+    ...workspace(0),
+    visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }],
+    loadedOffers: [loadedOffer('offer-a', 'hotel-a', 'offer-a:v1')],
+    selectedOfferRef: 'offer-a',
+  }
+  const t = rt.startTask({ ...turn('task-factref-verified-authority'), workspace: offerWorkspace })
+  const before = ledger.countEvents()
+  assert.throws(() => rt.issueOperation(t.taskId, {
+    ...action('factref-forged-verified', 0, { factRefs: [repairedFactRef, 'verified-offer-a'] }),
+    kind: 'checkout.prepare' as const,
+    input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: 'verified-offer-a' },
+  }), /offer_version_not_loaded/, 'factRefs cannot create verified-offer authority')
+  assert.equal(ledger.countEvents(), before, 'rejected factRef verification does not persist an operation')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+
 let id = 0
 const runtime = new BookingCopilotTaskRuntime(ensureLedger(stateRoot), {
   idFactory: (prefix) => `${prefix}-${++id}`,
@@ -1299,4 +1361,4 @@ rmSync(forgedSourceRoot, { recursive: true, force: true }); rmSync(tamperRoot, {
 rmSync(crashRoot, { recursive: true, force: true }); rmSync(reverseRoot, { recursive: true, force: true }); rmSync(crossRoot, { recursive: true, force: true })
 rmSync(terminalRoot, { recursive: true, force: true })
 rmSync(offerRoot, { recursive: true, force: true })
-console.log('BOOKING COPILOT RUNTIME PROOF: task scope, receipt binding, approval authority/one-time, recovery, ingress/SSE session OK')
+console.log('BOOKING COPILOT RUNTIME PROOF: task scope, receipt binding, factRef non-authority, approval authority/one-time, recovery, ingress/SSE session OK')
