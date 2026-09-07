@@ -7,11 +7,21 @@ body:
       value: |
         感谢反馈！提 bug 前请先[搜索既有 issue](https://github.com/Danceiny/gotry/issues?q=) 避免重复。
         Thanks for reporting — please search existing issues first.
+        只有两项必填:**问题描述**和 **GoTry 版本**;其余尽量填,但留空也能提交。
   - type: textarea
     id: what-happened
     attributes:
       label: 发生了什么？ / What happened?
       description: 一句话说清问题本质。
+    validations:
+      required: true
+  - type: input
+    id: gotry-version
+    attributes:
+      label: GoTry 版本 / GoTry version
+      description: |
+        运行 `gotry --version` 获取(npm 形态 `npx @danceiny/gotry --version`);源码形态也可填 `git rev-parse --short HEAD`。
+      placeholder: "如 0.0.1-rc.19 / 源码填 commit 短哈希"
     validations:
       required: true
   - type: textarea
@@ -22,14 +32,10 @@ body:
         1. 运行 `./gotry web`
         2. 输入「我想去 …」
         3. 见到 …
-    validations:
-      required: true
   - type: textarea
     id: expected
     attributes:
       label: 期望行为 / Expected behavior
-    validations:
-      required: true
   - type: textarea
     id: evidence
     attributes:
@@ -43,15 +49,11 @@ body:
         - npm 形态(`npx @danceiny/gotry web`)
         - 源码形态(`./gotry web`)
         - 其他 / Other
-    validations:
-      required: true
   - type: input
     id: node-version
     attributes:
       label: Node 版本 / Node version
       placeholder: "v22.14.0"
-    validations:
-      required: true
   - type: textarea
     id: context
     attributes:

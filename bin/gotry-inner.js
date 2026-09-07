@@ -87,9 +87,16 @@ Usage:
   gotry doctor --fix                 # 体检 + 按报告补装(hbcli 官方脚本 / agent-reach pip / sidebar 插件)
   gotry "一段完整任务..."            # headless 一问一答
   gotry help                         # this help
+  gotry --version                    # 版本号(bug 报告必填项)
 
 Detail: https://github.com/Danceiny/gotry — README
 `)
+  process.exit(0)
+}
+
+// repoRoot 在 npm 安装与源码检出两种形态下都是包根,version 统一从这里取
+if (args[0] === '-v' || args[0] === '--version') {
+  console.log(JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8')).version)
   process.exit(0)
 }
 
