@@ -43,6 +43,9 @@ GoTry —— dsh 运行时驱动
 详细文档: README.md
 EOF
     ;;
+  --version|-v)
+    exec node "$ROOT/bin/gotry-inner.js" "$@"
+    ;;
   *)
     exec node "$ROOT/bin/gotry-inner.js" "$@"
     ;;
