@@ -4,6 +4,30 @@
 
 ---
 
+## v0.0.1-rc.19 · 2026-09-07
+
+### What's New
+
+- **修了 rc18 的 `invalid skill name "gotry_motivation_save"` 硬错误** — 在「查余额 + 规划旅行」的交界场景里,模型会把 gotry 的工具名当成宿主 skill 传给 skill 加载器,当场报错。现在人格契约写死了表层规则:gotry 的全部能力一律是工具调用(gotry_ 前缀),绝不进 skill 加载器;skill 调用报 invalid/unknown 就改回工具调用。
+- **地图/路线/POI 工具上线** — `dsh-map-tools` 正式进依赖(零 API key,走 OSM/OSRM 开放源)。此前这个插件一直被启动流程静默丢弃;现在 doctor 体检(对话内 `gotry_doctor` 与终端 `npx gotry doctor`)都会如实告诉你它是否就位。
+- **外部事件接缝(前两段)** — 新增只读通道探针 tick:站点断/上游不可达这类「带外事实」现在会写进通道健康面,检索改道建议与 doctor 即时受益,不用等用户撞上失败;愿望池召回也会否证「依赖通道当前不可用」的憧憬——不再硬推当下走不通的行程。
+- **booking planner 连续加固** — factRef 指针清洗泛化、截断 finalResponse 恢复、UI 预载 offers 容忍、surface-policy 违规重试等一组修复(#172-#188)。
+- **doctor 两面同口径** — 终端 CLI 与会话工具面现在报同一份体检清单(此前 CLI 缺 map-tools/ask-user 两项)。
+
+### For Developers
+
+- 通道健康面新增 `'ok'` 恢复事件语义(latest-wins 超越 down);外部事件接缝设计 `docs/design/external-event-seam.md` 三段中前两段落地,第三段(world2agent 远程桥)待 D-31 拍板。
+- run-all 新增 §52(通道探针)/§53(愿望池否证)/§54(persona 表层护栏);行为契约仍 22 条((16) 内部澄清)。
+- Node 下界仍为 22.15(低于此版本启动即拒)。
+
+### 安装
+
+- 没变化,跑 `npx @danceiny/gotry web`。
+
+---
+
+---
+
 ## v0.0.1-rc.18 · 2026-09-02
 
 ### What's New
