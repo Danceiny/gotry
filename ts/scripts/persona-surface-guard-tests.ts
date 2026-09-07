@@ -1,0 +1,33 @@
+/**
+ * persona 表层护栏测试(issue #192 回归锚;全离线,只读仓根 patch):
+ *  1. (16) 域边界含表层规则句——gotry 能力一律是工具调用,绝不把 gotry_* 传给
+ *     skill 加载器(dsh skill 面名合法域 ^[a-z0-9]+(-[a-z0-9]+)*$,下划线必抛
+ *     invalid skill name,rc18 真实用户踩坑);
+ *  2. 行为契约 22 条编号完整(防止后续编辑吞条目);
+ *  3. skill 失败后的行为指引存在(改回 tool call,不换名重试 skill)。
+ *
+ * 运行: cd ts && npx tsx scripts/persona-surface-guard-tests.ts
+ */
+
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+const patch = readFileSync(join(process.cwd(), '..', 'cordis.gotry-patch.yml'), 'utf-8')
+
+// 1. 表层规则句存在且仅一次
+const guard = '表层规则:gotry 的全部能力一律是【工具调用】'
+assert.equal((patch.match(new RegExp(guard, 'g')) ?? []).length, 1, '表层规则句应恰好出现一次')
+assert.ok(patch.includes('绝不把 gotry_* 名字传给 skill 加载器'), '应显式禁止 gotry_* 进 skill 加载器')
+
+// 2. 行为契约 22 条编号完整
+const markers = new Set([...patch.matchAll(/\((\d{1,2})\)/g)].map((m) => Number(m[1])))
+for (let i = 1; i <= 22; i += 1) {
+  assert.ok(markers.has(i), `行为契约 (${i}) 应存在`)
+}
+assert.equal(markers.size, 22, `契约条目应恰为 22 条,实际 ${markers.size}`)
+
+// 3. skill 用错面后的行为指引
+assert.ok(patch.includes('改回 tool call'), '应指引失败后改回 tool call')
+
+console.log('PERSONA SURFACE GUARD TESTS: 3/3 OK(表层规则句 / 22 条契约完整 / skill 失败行为指引)')

@@ -1,7 +1,7 @@
 /**
  * 预订 saga 状态机(booking_saga_fsm.v1)——issue #17 采纳三点的具名化落点。
  *
- * 立场(docs/booking-saga-fsm.md / ADR-17):不引入编排框架;预订 saga 的状态字母表与边表
+ * 立场(docs/design/booking-saga-fsm.md / ADR-17):不引入编排框架;预订 saga 的状态字母表与边表
  * 就是账本 pending_writes(status CHECK:pending|confirmed|compensated)的显式化。
  * 本模块是纯函数词汇层,零依赖、零行为、不接线任何 seam——M5 拍板 WriteGate 生产化时
  * 以此为唯一状态推进词汇(具名化 = 状态与边不再散落在 SQL 字符串里)。

@@ -1,6 +1,6 @@
 /**
  * 扩展健康检查 + 自动重放(issue #21 onboarding UX,P3.6 gotry-session-onboarding-goal,
- * RFC user-session-data-rfc.md §3.3)。
+ * RFC docs/rfc/user-session-data-rfc.md §3.3)。
  *
  * 动机:首次 `sessionFlightSearch` 遇 `needs-extension` 时,旧版要求用户装完扩展后**自己重跑命令**;
  * 本模块把「用户手工重跑」改成「后台有界轮询 + 扩展一就位自动重放同一 query_id」——

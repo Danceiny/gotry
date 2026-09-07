@@ -62,7 +62,7 @@ function assertRuntimeSelectionAndVersionGuards(): void {
   assert.deepEqual(sourcePriority, { source: 'root', version: '0.1.2-alpha.3' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
 
   const legacyFallback = runRuntimeProbe({ vendorVersion: '0.1.2-alpha.1' })
-  assert.deepEqual(legacyFallback, { source: 'legacy-vendored', version: '0.1.2-alpha.1' }, 'non-benchmark source checkout may use the legacy vendored dsh fallback')
+  assert.deepEqual(legacyFallback, null, 'non-benchmark source checkout fail-closes instead of using the removed legacy vendored dsh fallback')
 
   const wrongBenchmarkVersion = runRuntimeProbe({ rootVersion: '0.1.2-alpha.1', vendorVersion: '0.1.2-alpha.1', benchmark: true })
   assert.deepEqual(wrongBenchmarkVersion, { source: 'root', version: '0.1.2-alpha.1' })
@@ -154,7 +154,7 @@ function finalText(text: string): string {
     + sse({ id: 'bridge-final-stop', object: 'chat.completion.chunk', choices: [{ delta: {}, finish_reason: 'stop' }] }) + 'data: [DONE]\n\n'
 }
 function toolCall(callId = 'bridge-call-1', city = 'Dubai'): string {
-  return sse({ id: `bridge-${callId}`, object: 'chat.completion.chunk', choices: [{ delta: { role: 'assistant', tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: TOOL, arguments: JSON.stringify({ query: { action: 'call', tool: 'lookup', arguments: { city } } }) } }] }, finish_reason: null }] })
+  return sse({ id: `bridge-${callId}`, object: 'chat.completion.chunk', choices: [{ delta: { role: 'assistant', tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: TOOL, arguments: JSON.stringify({ action: 'call', tool: 'lookup', arguments: { city } }) } }] }, finish_reason: null }] })
     + sse({ id: 'bridge-call-stop', object: 'chat.completion.chunk', choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + 'data: [DONE]\n\n'
 }
 function names(body: Body): string[] {
@@ -305,9 +305,9 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     `${target} enabled runtime must expose exactly the benchmark tool; observed tool names=${JSON.stringify(enabledToolNames)}`,
   )
   const bridgeTool = enabled.requests.find(request => names(request).includes(TOOL))?.tools?.find(tool => names({ tools: [tool] }).includes(TOOL))
-  const querySchema = (bridgeTool?.function as Record<string, any> | undefined)?.parameters?.properties?.query
-  assert.ok(Array.isArray(querySchema?.oneOf), `${target} bridge query exposes oneOf schema`)
-  const lookupBranch = querySchema.oneOf.find((branch: any) => branch?.properties?.tool?.const === 'lookup')
+  const flatSchema = (bridgeTool?.function as Record<string, any> | undefined)?.parameters
+  assert.ok(Array.isArray(flatSchema?.oneOf), `${target} bridge exposes flat oneOf schema`)
+  const lookupBranch = flatSchema.oneOf.find((branch: any) => branch?.properties?.tool?.const === 'lookup')
   assert.deepEqual(lookupBranch?.required, ['action', 'tool', 'arguments'])
   assert.equal(lookupBranch?.additionalProperties, false)
   assert.deepEqual(lookupBranch?.properties?.arguments, LOOKUP_INPUT_SCHEMA)

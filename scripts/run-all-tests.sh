@@ -456,6 +456,26 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 (cd ts && npx tsx scripts/booking-copilot-bin-proof-tests.ts) || FAIL=1
 
 echo
+echo "=== 50. 通道注册表与健康面(docs/design/tool-orchestration-design.md,#106/#107/#108 编排设计:注册表封闭性/意图顺位=证据级×效率/routingAdvice 健康态驱动/flyai 达限即改道·hit 即恢复/verdict 映射闭集/persona 路由卡确定性/JSONL 持久面+坏行容忍/doctor 配额可见+calendar 三态;全离线) ==="
+(cd ts && npx tsx scripts/channel-registry-tests.ts) || FAIL=1
+
+echo
+echo "=== 51. 指标面板只读聚合面(#138 第一切片:事实闸 verdict 分布与 blocked 率/通道健康 30 天窗/事故面 7 天窗/桥延迟百分位与 >500ms 复审锚点/坏行容忍/空根成型/stateRoot 零写入;全离线) ==="
+(cd ts && npx tsx scripts/metrics-report-tests.ts) || FAIL=1
+
+echo
+echo "=== 52. 通道探针 tick(外部事件接缝第 1 段:evaluate 纯函数/latest-wins 'ok' 恢复语义/doctor 口径兼容/metrics ok 超越/CLI 探测面;全离线) ==="
+(cd ts && npx tsx scripts/channel-probe-tests.ts) || FAIL=1
+
+echo
+echo "=== 53. 愿望池通道否证(外部事件接缝第 2 段:conditions.channels/down 否证召回/健康不加分/旧调用零破坏/畸形忽略/0..1 集成;全离线) ==="
+(cd ts && npx tsx scripts/wish-channel-gate-tests.ts) || FAIL=1
+
+echo
+echo "=== 54. persona 表层护栏(#192 回归锚:表层规则句存在/22 条契约编号完整/skill 失败行为指引;全离线) ==="
+(cd ts && npx tsx scripts/persona-surface-guard-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

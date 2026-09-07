@@ -110,14 +110,14 @@ Owner 标签:【创始人】=拍板/走查/商业;【agent】=工程执行(loopx
 
 节奏:**nightly**=真 LLM 重放(预算闸);**每周**=对账会(种子期后);**每个 M-exit**=ADR 全表复审 + 债务表勾稽 + 状态面同步(§11)。loopx todos 只从 `architecture.md` §9/§10 与本文派生——优化事项不许只活在对话里。
 
-## 7. 决策登记(待创始人拍板)
+## 7. 决策登记(结算状态已刷新)
 
-| # | 决策项 | 建议时点 | 判据 | 建议 | 状态 |
-|---|---|---|---|---|---|
-| 1 | 机票数据源组合 | M2 Entry(即现在) | 班期/票价覆盖、免费额度、许可、证据标注成本 | Amadeus 测试层 + OpenFlights 静态 + bookedResources 自带;灰色库不入 | 待拍板 |
-| 2 | G1 市场锁定 | M3 Entry 前 | 总纲 B1 决策包(素材已齐) | 中国出境优先(证据链与供应链半径最短) | 待拍板 |
-| 3 | Web 面框架 | M3 entry | gate/卡片渲染匹配度、许可证核证、bundle 重量 | assistant-ui(MIT)+ AI SDK;不满足则自研最小面 | 待拍板 |
-| 4 | 记忆方案 | M4 entry | 两条铁律的实现成本、向量库是否真需要、运维面 | 自研核心(MotivationProfile 契约延伸),mem0 备选 | 待拍板 |
-| 5 | Langfuse 可观测 | M3 entry | JSONL trace 是否已够用、自托管成本 | 先 JSONL;面板需求确认后 import(核证许可证) | 待拍板 |
-| 6 | dsh-llm 迁移 | M2 中 | 与现适配器功能差(think 剥离/json_object)、dsh 基线规则 | 功能对齐则迁——不自研 dsh 已给的 | 待评估 |
-| 7 | 总纲 §2 拟增行 | 随上述批准回填 | 许可证明确、策略唯一(import/bridge/reference) | 拟增:`@modelcontextprotocol/sdk`(G5 关闭后,MIT)、assistant-ui(MIT,核证)、Langfuse(MIT,核证)、mem0(Apache-2.0,备选) | 随批 |
+| # | 决策项 | 建议 | 状态 |
+|---|---|---|---|
+| 1 | 机票数据源组合 | Amadeus 测试层 + OpenFlights 静态 + bookedResources 自带;灰色库不入 | ✅ 已决(三层组合=骨架+校验+锚点,M2 落地;Amadeus 后因关停换 FlyAI 官方通道) |
+| 2 | G1 市场锁定 | 中国出境优先(证据链与供应链半径最短) | ✅ 已决(2026-08-22,中国出境首发) |
+| 3 | Web 面框架 | assistant-ui(MIT)+ AI SDK;不满足则自研最小面 | ✅ 已决(未引框架——dsh web 为唯一产品面,D-4 清偿;薄壳 `shell/` 已删) |
+| 4 | 记忆方案 | 自研核心(MotivationProfile 契约延伸),mem0 备选 | ✅ 已决(自研六层,`design/memory-design.md`) |
+| 5 | Langfuse 可观测 | 先 JSONL;面板需求确认后 import(核证许可证) | ✅ 按建议执行(JSONL trace 已落;Langfuse 未引入,需求未出现) |
+| 6 | dsh-llm 迁移 | 功能对齐则迁——不自研 dsh 已给的 | 未迁(维持 provider-neutral 适配器;功能差未构成阻塞) |
+| 7 | 总纲 §2 拟增行 | 拟增:`@modelcontextprotocol/sdk`(G5 关闭后,MIT)、assistant-ui(MIT,核证)、Langfuse(MIT,核证)、mem0(Apache-2.0,备选) | 过半失效(3/4/5 的候选均未引入);新增 import 仍走本节登记纪律 |

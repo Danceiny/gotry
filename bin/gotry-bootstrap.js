@@ -23,15 +23,18 @@
  *                                           # 扩展改走 GitHub Releases 下载通道(ADR-21):
  *                                           #   dist-manifest → tar.gz → SHA256 → key 钉扎 → 原子交换;
  *                                           #   任何失败显式降级回包内副本(离线确定性不变)。
+ *   node bin/gotry-bootstrap.js calendar        # 可选日历挂载开关(D-9,setup 状态面):
+ *                                               #   默认写 ~/.gotry/calendar.json {"enabled":true};
+ *                                               #   --off 删除恢复默认不挂载;--status 只读查看。
  *   node bin/gotry-bootstrap.js doctor      # 可选依赖体检(2026-09-02 迪拜 session 复盘):
- *                                           #   扩展/agent-reach/.venv/hbcli/flyai key/sidebar
+ *                                           #   扩展/agent-reach/.venv/hbcli/flyai key/sidebar/calendar
  *                                           #   逐项只读检查 + 精确补装指引;
  *                                           #   报告落 gotry-state/doctor-report.md(侧栏工作台可预览)。
  *   node bin/gotry-bootstrap.js doctor --fix # 体检后按缺失项补装(复用下方三个安装器;LLM key 永不管)。
  *   node bin/gotry-bootstrap.js wizard       # 会话扩展 onboarding 闭环(issue #21 onboarding UX,§3.3):
  *                                           #   5 步编排 + 后台 health-watch 等扩展心跳,
  *                                           #   扩展一就位 stdout 翻绿并自动重放同 query。
- *                                           # 详见 docs/user-session-data-rfc.md §3.3 / RFC P3.6。
+ *                                           # 详见 docs/rfc/user-session-data-rfc.md §3.3 / RFC P3.6。
  *
  * 环境开关:
  *   GOTRY_SETUP_SKIP=1            全部跳过
@@ -51,7 +54,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -177,6 +180,61 @@ async function setupSidebar() {  say('[gotry-setup] dsh-better-sidebar(dsh web �
 
 const DOCTOR = process.argv.includes('doctor')
 const DOCTOR_FIX = process.argv.includes('--fix')
+// calendar 子命令(issue #106/D-9):可选日历挂载的 setup 状态管理面。
+// `gotry setup calendar`=开启;`--off`=关闭(删状态文件恢复默认);`--status`=只读查看。
+const CALENDAR_CMD = process.argv.includes('calendar')
+const CALENDAR_OFF = process.argv.includes('--off')
+const CALENDAR_STATUS = process.argv.includes('--status')
+
+// --- calendar setup 状态面(与扩展 manifest 同居 ~/.gotry;运行时 inner 与
+// doctor 两端同读这一份,禁止 env 控制产品行为——founder 2026-09-03 纠偏)---
+function calendarStatePath() { return join(homedir(), '.gotry', 'calendar.json') }
+function readCalendarState() {
+  try { return JSON.parse(readFileSync(calendarStatePath(), 'utf8')) } catch { return null }
+}
+function calendarProfileConfigured() {
+  try {
+    const patch = readFileSync(join(homedir(), '.dsh', 'profiles', 'web', 'cordis.patch.yml'), 'utf8')
+    return /calendar/.test(patch) && /username\s*:/.test(patch)
+  } catch { return false }
+}
+
+/** 挂载/配置双态人话(bootstrap doctor 与 calendar 子命令共用) */
+function calendarDetail(state) {
+  if (!state || state.enabled !== true) return '默认未挂载(D-9:未配置的日历工具不进工具箱;工作窗口由访谈覆盖,不影响任何检索)'
+  return calendarProfileConfigured()
+    ? `已挂载且已配置(${calendarStatePath()})`
+    : '已挂载但 calendar 未配置 username——日历工具会话中会报「未配置」'
+}
+
+async function runCalendar() {
+  say('[gotry-setup] dsh-calendar(可选日历,CalDAV 工作窗口读取;默认不挂载)')
+  if (CALENDAR_STATUS) {
+    const state = readCalendarState()
+    say(`  状态: ${calendarDetail(state)}`)
+    say(`  状态文件: ${calendarStatePath()}`)
+    say('  说明: 挂载=`npx gotry setup calendar`;关闭=`npx gotry setup calendar --off`;配置在 dsh profile 的 cordis.patch.yml 覆盖 calendar 行 config 填 username')
+    return 0
+  }
+  if (CALENDAR_OFF) {
+    try { rmSync(calendarStatePath()) } catch { /* 本就未开启 */ }
+    say('  ✓ 已关闭——恢复默认不挂载(状态文件已删除;如需再开: npx gotry setup calendar)')
+    return 0
+  }
+  mkdirSync(dirname(calendarStatePath()), { recursive: true })
+  writeFileSync(calendarStatePath(), `${JSON.stringify({ enabled: true, updatedAt: new Date().toISOString() }, null, 2)}\n`, 'utf8')
+  say(`  ✓ 已开启挂载(状态文件 ${calendarStatePath()};重启 gotry web/headless 生效)`)
+  if (calendarProfileConfigured()) {
+    say('  ✓ calendar 已在 dsh profile 配置 username——全部就绪')
+  } else {
+    say('  ⚠ 还差最后一步:在 dsh profile 的 cordis.patch.yml 覆盖 calendar 行的 config,填你的 CalDAV username,例如:')
+    say('      - id: dsh-calendar')
+    say('        config:')
+    say('          username: <你的日历账号>')
+    say('    未配置时日历工具会话中会报「未配置」;不需要日历时可用 --off 恢复默认不挂载。')
+  }
+  return 0
+}
 
 /** 逐项只读检查(永不抛错;LLM key 显式让渡给 dsh 宿主,不体检)。
  *  level 与 ts/capabilities/doctor.ts DoctorStatus 同构:ok / missing / degraded。 */
@@ -215,6 +273,33 @@ async function doctorChecks() {
   const sidebarPkg = join(homedir(), '.dsh/profiles/web/node_modules/dsh-better-sidebar/package.json')
   const sbOk = existsSync(sidebarPkg)
   items.push({ label: 'dsh-better-sidebar(侧栏工作台)', ok: sbOk, level: sbOk ? 'ok' : 'missing', detail: sbOk ? '已安装——web UI 右侧工作台可预览产物与 doctor 报告(gotry-state/doctor-report.md)' : '未安装——dsh web 无右侧工作台,产物与 doctor 报告只能在对话里看(gotry_artifacts_list)', fix: sbOk ? undefined : 'npx gotry doctor --fix' })
+  // dsh-calendar(setup 状态面;默认不挂载=ok 是合法态,opt-in 未配置才 degraded)
+  const calState = readCalendarState()
+  const calOn = calState?.enabled === true
+  const calConfigured = calOn && calendarProfileConfigured()
+  items.push({ label: 'dsh-calendar(日历工作窗口)', ok: !calOn || calConfigured, level: !calOn ? 'ok' : calConfigured ? 'ok' : 'degraded', detail: calendarDetail(calState), fix: !calOn ? undefined : calConfigured ? undefined : '在 ~/.dsh/profiles/web/cordis.patch.yml 覆盖 calendar 行 config 填 username(或 npx gotry setup calendar --off 恢复默认不挂载)' })
+  // dsh-map-tools(patch 分发面宿主插件,issue #139):解析失败启动时整块静默剔除,
+  // doctor 把两态照亮。候选清单与 bin/gotry-inner.js 解析链、ts/capabilities/doctor.ts 同口径。
+  const mapCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js'),
+    join(repoRoot, 'node_modules/dsh-map-tools/package.json'),
+    join(repoRoot, 'ts/node_modules/dsh-map-tools/package.json'),
+    join(homedir(), '.dsh/profiles/web/node_modules/dsh-map-tools/package.json'),
+  ]
+  const mapHit = mapCandidates.find((p) => existsSync(p))
+  items.push(mapHit
+    ? { label: 'dsh-map-tools(地图/路线/POI)', ok: true, level: 'ok', detail: `已就位(${mapHit})——地图工具可用(零 key,走 OSM/OSRM)`, fix: undefined }
+    : { label: 'dsh-map-tools(地图/路线/POI)', ok: false, level: 'missing', detail: '未随包解析——启动时该 patch 条目被静默剔除,地图/路线/POI 工具不会出现在模型工具箱(缺地图不挡旅行规划,只少能力)', fix: 'npx gotry doctor --fix 不覆盖此项:source 布局把 dsh-map-tools 放进 ts/dsh-runtime/node_modules(或 ts/node_modules);npm 布局重装 @danceiny/gotry(随发行版依赖提供)' })
+  // dsh-tool-ask-user(结构化澄清卡,人格契约 (5) 的卡片形态载体)
+  const askCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/vendor/deepseek-ai-dsh-tool-ask-user/package.json'),
+    join(repoRoot, 'node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
+    join(homedir(), '.dsh/profiles/web/node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
+  ]
+  const askHit = askCandidates.find((p) => existsSync(p))
+  items.push(askHit
+    ? { label: 'dsh-tool-ask-user(结构化澄清卡)', ok: true, level: 'ok', detail: `已就位(${askHit})——ask_user_question 澄清卡可用(web 原生卡片;headless+TTY 用 stdio 提供方)`, fix: undefined }
+    : { label: 'dsh-tool-ask-user(结构化澄清卡)', ok: false, level: 'missing', detail: '未解析——启动时澄清卡注入被静默剔除,模型只能散文追问(人格契约 (5) 退化文本形态)', fix: '重装 @danceiny/gotry——该依赖随 dsh 闭包自带,缺失多为安装不完整' })
   // LLM key:显式让渡(founder 2026-09-02:doctor 不管 key)
   items.push({ label: 'LLM key', ok: true, level: 'ok', detail: '由 dsh 宿主 UI 管理——不在体检范围(gotry 不接触、不回显凭证)', fix: undefined })
   return items
@@ -224,6 +309,16 @@ const doctorIcon = { ok: '✅', missing: '❌', degraded: '⚠️' }
 
 /** 修复指引入表:命令类才加反引号( prose 类如「到控制台申请 key」原样) */
 const fixCell = (fix) => (!fix ? '—' : /^(npx|hbcli|curl|pip|python|\$)/.test(fix) ? `\`${fix}\`` : fix)
+
+/** 启动一次性摘要行(issue #114,design §3.1③):全 ok 返回 null(静默零输出);
+ *  有待处理项给一行人话 + 指路(对话里 gotry_doctor 看详情 / 终端 npx gotry doctor)。
+ *  纯函数,bootstrap-tests 直接断言。 */
+function startupDoctorLine(items) {
+  const broken = (items ?? []).filter((i) => i.level && i.level !== 'ok')
+  if (broken.length === 0) return null
+  const human = (lv) => (lv === 'missing' ? '缺' : '半可用')
+  return `[gotry] doctor: ${broken.length} 项待处理(${broken.map((i) => `${i.label}=${human(i.level)}`).join('、')})——对话里让助手调 gotry_doctor 看详情与指引,或终端跑 npx gotry doctor`
+}
 
 /** 体检报告 markdown(与 ts/capabilities/doctor.ts renderDoctorReportMd 同形) */
 function renderDoctorReportMd(items) {
@@ -252,8 +347,15 @@ function renderDoctorReportMd(items) {
 /** doctor 主流程:体检 → 打印 →(可选)fix → 报告落盘。
  *  exit 0=就绪(或仅剩有自动回退的降级项);exit 1=仍有缺失类问题。 */
 async function runDoctor() {
-  say('[gotry-doctor] GoTry 可选依赖体检(只读;LLM key 归 dsh 宿主管,不在范围)')
   let items = await doctorChecks()
+  // 启动一次性摘要(issue #114):inner 分离子进程带 --summary 调用——只读体检,
+  // 有待处理项打一行 stderr,零写盘零 header;全 ok 静默。与完整体检面(逐项/报告落盘/exit 语义)分离。
+  if (process.argv.includes('--summary')) {
+    const line = startupDoctorLine(items)
+    if (line) console.error(line)
+    return 0
+  }
+  say('[gotry-doctor] GoTry 可选依赖体检(只读;LLM key 归 dsh 宿主管,不在范围)')
   for (const i of items) {
     say(`  ${doctorIcon[i.level]} ${i.label}:${i.detail}`)
     if (i.level !== 'ok' && i.fix) say(`      ↳ 修复: ${i.fix}`)
@@ -564,6 +666,9 @@ async function runInlineHealthWatch(timeoutMs) {
 }
 
 async function main() {
+  // calendar 子命令(issue #106/D-9):可选日历挂载的 setup 状态管理(on/off/status)
+  if (CALENDAR_CMD) process.exit(await runCalendar())
+
   // doctor 子命令(2026-09-02 迪拜 session 复盘):可选依赖体检 + 补装指引/补装执行;
   // 只读体检零副作用(--fix 才装),win32 也可跑体检(fix 面另有提示)。
   if (DOCTOR) process.exit(await runDoctor())

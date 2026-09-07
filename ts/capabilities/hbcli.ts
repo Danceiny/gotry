@@ -142,19 +142,66 @@ export async function callHbcliJson(
   return last!
 }
 
+/** 上游 i18n 名称容错读取(zh 优先,中文优先产品口径;回退 en/ar) */
+function i18nName(v: { zh?: string; en?: string; ar?: string } | string | undefined): string {
+  if (!v) return ''
+  if (typeof v === 'string') return v
+  return v.zh || v.en || v.ar || ''
+}
+
+/**
+ * 实时 hotelList 响应 → 模型可读紧凑行(id/名称/星级/最低价)。
+ * issue #195:render 面只透 summary,若 summary 不含数据,模型只看到
+ * 「实时返回」四个字——工具调用等于白调。id 必须在行内,hotel-rates 的入参
+ * 就来自这里。上游 wire:HotelListResp{list:[Hotel{id,name:{en,zh},star,minPrice:{amount,currency}}]}。
+ */
+function hotelLines(result: unknown, max = 8): string {
+  const list = (result as { list?: unknown } | null)?.list
+  if (!Array.isArray(list) || list.length === 0) return ''
+  const lines: string[] = []
+  for (const item of list.slice(0, max)) {
+    const h = item as {
+      id?: string | number
+      name?: { zh?: string; en?: string; ar?: string }
+      star?: number
+      minPrice?: { amount?: number; currency?: string }
+    }
+    const name = i18nName(h.name) || `hotel ${h.id ?? '?'}`
+    const star = typeof h.star === 'number' && h.star > 0 ? ` ${h.star}★` : ''
+    const price = h.minPrice && typeof h.minPrice.amount === 'number'
+      ? ` 低至 ${h.minPrice.amount}${h.minPrice.currency ? ` ${h.minPrice.currency}` : ''}`
+      : ''
+    lines.push(`- id=${h.id ?? '?'} ${name}${star}${price}`)
+  }
+  if (list.length > max) lines.push(`…(共 ${list.length} 家,仅列前 ${max})`)
+  return lines.join('\n')
+}
+
 /** 高层语义化封装:酒店列表查询(down-tier to 静态包 + 证据链标注) */
 export async function searchHotels(
   query: { destination: string; checkIn?: string; checkOut?: string; adults?: number },
   opts: HbcliCallOptions & { fallbackPath?: string } = {},
 ): Promise<HbcliCallResult & { hotels?: unknown; summary: string }> {
-  // 旗标对齐上游 CLI v0.3.0(命令树扁平化后):--destination-name + --room-occupancies;
-  // hotel-list 无日期旗标(房价按上游当前窗口),checkIn/checkOut 留给 hotel-rates 跟进
+  // 旗标对齐上游 CLI(hotelbyte-com/hotelbyte-cli):--destination-name + --room-occupancies;
+  // hotel-list 支持日期旗标(--check-in/--check-out,上游帮助文档在册)——issue #195 教训:
+  // 「日期不传上游」会让实时价退化为当前窗口价,用户要下周五的房给的是今天的价。
   const hbArgs = ['search', 'hotel-list', '--json', '--page-size', '10']
   if (query.destination) hbArgs.push('--destination-name', query.destination)
+  if (query.checkIn) hbArgs.push('--check-in', query.checkIn)
+  if (query.checkOut) hbArgs.push('--check-out', query.checkOut)
   if (query.adults) hbArgs.push('--room-occupancies', JSON.stringify([{ adultCount: query.adults, childrenAges: [] }]))
   const live = await callHbcliJson(hbArgs, opts)
   if (live.via === 'hbcli-realtime') {
-    return { ...live, hotels: live.result, summary: `${query.destination}:hbcli 实时返回${query.checkIn || query.checkOut ? '(日期不传上游 list,以当前窗口房价返回)' : ''}` }
+    // summary 即模型面(render 只透 summary):必须自带紧凑数据行 + 证据链,
+    // 否则模型只看到「实时返回」占位一句话(issue #195 实锤)。
+    const list = (live.result as { list?: unknown[] } | null)?.list
+    const n = Array.isArray(list) ? list.length : 0
+    const dateTag = query.checkIn
+      ? `入住 ${query.checkIn}${query.checkOut ? ` → 退房 ${query.checkOut}` : ''}`
+      : '未传日期(上游按当前窗口价)'
+    const lines = hotelLines(live.result)
+    const summary = `${query.destination}:hbcli 实时 ${n} 家(${dateTag})${lines ? `\n${lines}` : ''}\n${live.evidence}`
+    return { ...live, hotels: live.result, summary }
   }
   // 降级原因人话化(issue #24):hbcli 未安装时按 gotry setup 指引(npm 安装期已
   // 自动跑过官方脚本;PATH 未含 ~/.local/bin 时上方候选路径也已兜住),
@@ -176,7 +223,9 @@ export async function searchHotels(
         return {
           ...live,
           hotels: { stays: matched },
-          summary: `${query.destination}:hbcli 实时源不可用(${reason}),已降级到静态包(公开渠道估算,非实时),命中 ${matched.length} 个住宿块`,
+          // summary 即模型面:静态块内容(note/options/recommendation)直接内联,
+          // 模型不必再猜「命中 N 块」里有什么(issue #195)
+          summary: `${query.destination}:hbcli 实时源不可用(${reason}),已降级到静态包(公开渠道估算,非实时),命中 ${matched.length} 个住宿块:\n${JSON.stringify(matched).slice(0, 1600)}`,
         }
       }
       return {

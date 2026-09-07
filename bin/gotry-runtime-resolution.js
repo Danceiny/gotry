@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export const REQUIRED_BENCHMARK_DSH_VERSION = '0.1.2-alpha.3'
@@ -29,15 +29,14 @@ export function supportsNodeVersion(version) {
   return major > 22 || (major === 22 && minor >= 15)
 }
 
-export function selectDshRuntime({ repoRoot, rootResolver, benchmark }) {
+export function selectDshRuntime({ rootResolver }) {
   const root = resolveDshPackage(rootResolver)
   if (root) return { ...root, source: 'root' }
-  if (benchmark) return null
-
-  const vendoredBin = join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')
-  if (!existsSync(vendoredBin)) return null
-  const vendored = readDshPackage(vendoredBin)
-  return vendored ? { ...vendored, source: 'legacy-vendored' } : null
+  // D-27 清偿(issue #120):legacy vendored 回退路径已移除——该形态的 Node 兼容窗口
+  // 断裂(Round 5 起「不承诺可运行」),解析成功只会把「dsh 缺失」变成下游玄学失败。
+  // 唯一受支持形态 = root manifest / 依赖解析(216 精确依赖闭包);找不到即 fail-closed,
+  // 由调用方给明确重装指引。benchmark 原本就禁用回退,语义不变(入参保留以稳调用面)。
+  return null
 }
 
 export function benchmarkRuntimeSupported(runtime) {

@@ -27,12 +27,14 @@ import {
   dedupeFacts,
   detectBacktrack,
   factsFromFlyai,
+  factsFromHotel,
   flightClaimVerdict,
   itineraryInvariants,
   latestFactsForRouteDate,
   negativeFact,
   renderConnection,
   renderFlightFact,
+  renderHotelFact,
   renderNightsLine,
   renderPolicyFact,
   type FlightFact,
@@ -318,6 +320,47 @@ assert(goodReport.verdict === 'pass' && goodReport.presentation === 'verified_it
   `good artifact:6/6 航班 claim 全回溯,闸 pass(违例 ${goodReport.violations.length})`)
 assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query_id.includes('flyai:flight:')),
   'good artifact 的每个可下单事实均可回溯到 tool result/query id(验收⑧)')
+
+// ---------------------------------------------------------------------------
+// §10 酒店事实闸(D-26,issue #118):酒店 claim 入闸 + 渲染原语单向生成
+// ---------------------------------------------------------------------------
+{
+  const fetchedAt = '2026-09-04T00:00:00.000Z'
+  // 10a. 摸底(未定档期)不落账;needs-setup/error 传输失败不落负事实
+  assert(factsFromHotel({ source: 'flyai-hotel', destination: '大理', verdict: 'hit', options: 9, evidence: 'e', fetchedAt }).length === 0,
+    '摸底(无档期)酒店检索不落账(无 exact-date 语义)')
+  assert(factsFromHotel({ source: 'flyai-hotel', destination: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03', verdict: 'needs-setup', options: 0, evidence: 'e', fetchedAt }).length === 0
+    && factsFromHotel({ source: 'flyai-hotel', destination: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03', verdict: 'error', options: 0, evidence: 'e', fetchedAt }).length === 0,
+    'needs-setup/error 传输失败永不落负事实(ADR-19 不变量)')
+  // 10b. hit/miss 落账 + 打码纪律(不落数字价)
+  const hitFacts = factsFromHotel({ source: 'flyai-hotel', destination: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03', verdict: 'hit', options: 9, evidence: 'e', fetchedAt })
+  const missFacts = factsFromHotel({ source: 'session:ctrip-hotel', destination: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03', verdict: 'miss', options: 0, evidence: 'e', fetchedAt })
+  assert(hitFacts.length === 1 && hitFacts[0]!.bookability === 'bookable_exact_date' && hitFacts[0]!.options_masked === 9,
+    'exact-date hit → 正事实(在架家数,无数字价字段)')
+  assert(!('price' in (hitFacts[0] as unknown as Record<string, unknown>)), '酒店事实无 price 字段(打码价保真,不落数字价)')
+  assert(missFacts.length === 1 && missFacts[0]!.bookability === 'unavailable_exact_date', 'exact-date miss → 负事实')
+  // 10c. 渲染原语单向生成:renderHotelFact 行带锚点,闸锚点回溯 pass
+  const hotelLine = renderHotelFact(hitFacts[0]!)
+  assert(hotelLine.includes(`fact:${hitFacts[0]!.fact_id}`), 'renderHotelFact 行内嵌 fact 锚点')
+  const anchoredArtifact = ['## 住宿', hotelLine].join('\n')
+  const anchoredReport = gateArtifact(anchoredArtifact, [...hitFacts], map, { trip_year: 2026 })
+  assert(anchoredReport.verdict === 'pass' && anchoredReport.traceable === 1,
+    `锚点酒店行 → 锚点确定性回溯 pass(实际 ${anchoredReport.verdict}/traceable=${anchoredReport.traceable})`)
+  // 10d. 手改锚点 → fact_anchor_unknown(伪造即抓)
+  const forged = anchoredArtifact.replace(hitFacts[0]!.fact_id, '0123456789abcdef')
+  const forgedReport = gateArtifact(forged, [...hitFacts], map, { trip_year: 2026 })
+  assert(forgedReport.violations.some(v => v.kind === 'fact_anchor_unknown'), '手改/伪造锚点 → fact_anchor_unknown')
+  // 10e. 无锚点启发式:hit 在册 → traceable;exact-date miss 在册却写有房 → not_in_source + 无条件✓
+  const claimHit = gateArtifact('## 住宿\n- 大理 2026-10-01→2026-10-03 洱海民宿有房可订', [...hitFacts], map, { trip_year: 2026 })
+  assert(claimHit.verdict === 'pass' && claimHit.traceable === 1, '启发式酒店 claim 命中在册 hit → traceable')
+  const claimMiss = gateArtifact('## 住宿\n- 大理 2026-10-01→2026-10-03 洱海民宿有房可订 ✓', [...missFacts], map, { trip_year: 2026 })
+  assert(claimMiss.violations.some(v => v.kind === 'not_in_source'), 'exact-date miss 在册却写有房 → not_in_source')
+  assert(claimMiss.violations.some(v => v.kind === 'unconditional_check'), '对未核验酒店用 ✓ → unconditional_check')
+  // 10f. 无目的地上下文的可住断言 → fail-closed
+  const noCtx = gateArtifact('## 住宿\n- 住宿:湖景房有房可订 ✓', [], map, { trip_year: 2026 })
+  assert(noCtx.violations.some(v => v.kind === 'unverifiable_hotel_claim'), '缺目的地上下文 → unverifiable_hotel_claim(fail closed)')
+  console.log(`  ok - §10 酒店事实闸(D-26)八断言完成`)
+}
 
 console.log(`\nFACT GATE TESTS: ${pass} pass, ${fail} fail`)
 if (fail > 0) process.exit(1)

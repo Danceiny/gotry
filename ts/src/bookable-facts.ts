@@ -89,7 +89,34 @@ export interface PolicyFact {
   review_by?: string
 }
 
-export type BookableFact = FlightFact | PolicyFact
+export type BookableFact = FlightFact | PolicyFact | HotelFact
+
+/**
+ * 酒店事实(D-26,issue #118):exact-date 酒店检索(hit/miss)的唯一事实形态。
+ * 纪律与机/火同源:①未定档期的摸底检索不落账(无 exact-date 语义);
+ * ②needs-setup/error 是传输失败,永不落负事实;③价格上游打码(¥7xx)——
+ * 本事实**不落数字价**,只记在架家数,真实价以落地页为准(打码价保真纪律)。
+ */
+export interface HotelFact {
+  schema: typeof BOOKABLE_FACT_SCHEMA
+  /** 语义派生 id:sha(destination|checkIn|checkOut|query_id)——同查询重放幂等 */
+  fact_id: string
+  kind: 'hotel'
+  /** 目的地中文(flyai/session 的 to;闸侧 claim 匹配键) */
+  destination: string
+  check_in?: string   // YYYY-MM-DD
+  check_out?: string  // YYYY-MM-DD
+  verdict: 'hit' | 'miss'
+  bookability: Bookability
+  /** 在架条数(hit 时;价格打码不落数字价) */
+  options_masked: number
+  source: string      // flyai-hotel / session:ctrip-hotel
+  /** 可重放查询 id(如 flyai:hotel:大理:2026-10-01_2026-10-03) */
+  query_id: string
+  fetched_at: string
+  as_of: string
+  tier: EvidenceTier
+}
 
 // ---------------------------------------------------------------------------
 // id 与查询词(可重放:query_id 即重放凭证)
@@ -279,7 +306,7 @@ export function dedupeFacts<T extends BookableFact>(facts: T[]): T[] {
 /** route+date 的最新查询结论(同日多次查询:最新一次为准,避免「昨天 miss 今天 hit」陈旧否定) */
 export function latestFactsForRouteDate(facts: BookableFact[], origin: string, destination: string, date: string): FlightFact[] {
   const hits = facts.filter((f): f is FlightFact =>
-    f.kind !== 'policy'
+    (f.kind === 'flight' || f.kind === 'train')
     && f.route.origin === origin && f.route.destination === destination && f.date === date)
   const latestQueryTs = new Map<string, string>()
   for (const f of hits) {
@@ -311,7 +338,7 @@ export interface FlightClaim {
 export function flightClaimVerdict(facts: BookableFact[], claim: FlightClaim): { verdict: FlightClaimVerdict; fact?: FlightFact; reason: string } {
   const no = claim.flight_no.toUpperCase().replace(/\s+/g, '')
   const sameNo = facts.filter((f): f is FlightFact =>
-    f.kind !== 'policy' && f.flight_no.toUpperCase() === no && f.bookability === 'bookable_exact_date')
+    (f.kind === 'flight' || f.kind === 'train') && f.flight_no.toUpperCase() === no && f.bookability === 'bookable_exact_date')
   const routeMatched = sameNo.filter(f =>
     (!claim.origin || f.route.origin === claim.origin || f.route.origin_airport === claim.origin)
     && (!claim.destination || f.route.destination === claim.destination || f.route.dest_airport === claim.destination)
@@ -503,6 +530,12 @@ export function defaultReviewBy(tripDate: string): string {
  * 永不输出无条件 ✓;证据链(source/query_id/fetched_at)随行必达。
  */
 export function renderFlightFact(f: FlightFact): string {
+  return renderFlightFactInner(f) + ` <!-- fact:${f.fact_id} -->`
+}
+
+function renderFlightFactInner(f: FlightFact): string {
+  // 单向生成锚点(D-26):每条事实行内嵌 fact_id,闸侧锚点匹配 = 确定性回溯
+  const anchor = ` <!-- fact:${f.fact_id} -->`
   const route = `${f.route.origin}→${f.route.destination}`
   const evidence = `[${f.source}@${f.fetched_at} #${f.query_id}]`
   if (f.bookability === 'unavailable_exact_date') {
@@ -555,4 +588,74 @@ export function renderNightsLine(it: ItineraryFacts): string {
   const flightOd = it.od_segments.filter(s => s.mode === 'flight').length
   const flightLegs = it.od_segments.filter(s => s.mode === 'flight').reduce((acc, s) => acc + s.legs, 0)
   return `共 ${daysBetween(it.trip_start, it.trip_end) + 1} 天 ${totalNights} 晚 = ${hotelNights} 个酒店夜 + ${it.onboard_nights} 个机上夜;航班按 O&D ${flightOd} 段(共 ${flightLegs} 个 flight legs)`
+}
+
+// ---------------------------------------------------------------------------
+// 酒店事实(D-26,issue #118):exact-date 酒店检索 hit/miss 落账
+// 纪律:摸底(未定档期)不落账(无 exact-date 语义);needs-setup/error 传输失败永不落负事实
+// ---------------------------------------------------------------------------
+
+export function factsFromHotel(input: {
+  source: string
+  destination: string
+  checkIn?: string
+  checkOut?: string
+  verdict: 'hit' | 'miss' | 'needs-setup' | 'error'
+  options: number
+  evidence: string
+  fetchedAt: string
+}): HotelFact[] {
+  if (!input.checkIn || !input.checkOut) return []
+  if (input.verdict !== 'hit' && input.verdict !== 'miss') return []
+  const queryId = `hotel:${input.source}:${input.destination}:${input.checkIn}_${input.checkOut}`
+  return [{
+    schema: BOOKABLE_FACT_SCHEMA,
+    kind: 'hotel',
+    fact_id: makeFactId([input.destination, input.checkIn, input.checkOut, queryId]),
+    destination: input.destination,
+    check_in: input.checkIn,
+    check_out: input.checkOut,
+    verdict: input.verdict,
+    bookability: input.verdict === 'hit' ? 'bookable_exact_date' : 'unavailable_exact_date',
+    options_masked: input.options,
+    source: input.source,
+    query_id: queryId,
+    fetched_at: input.fetchedAt,
+    as_of: input.fetchedAt.slice(0, 10),
+    tier: 'live_inventory',
+  }]
+}
+
+/** 酒店 claim 回溯:同目的地+同档期的 exact-date 事实裁决(无事实=unverified,fail-closed) */
+export function hotelClaimVerdict(
+  facts: BookableFact[],
+  claim: { destination: string; check_in?: string; check_out?: string },
+): { verdict: 'traceable' | 'not_in_source' | 'unverified'; fact?: HotelFact; reason: string } {
+  const scoped = facts.filter((f): f is HotelFact =>
+    f.kind === 'hotel' && f.destination === claim.destination
+    && (!claim.check_in || f.check_in === claim.check_in)
+    && (!claim.check_out || f.check_out === claim.check_out))
+  if (scoped.length === 0) {
+    return {
+      verdict: 'unverified',
+      reason: `酒店 claim(${claim.destination}${claim.check_in ? ` ${claim.check_in}→${claim.check_out ?? '?'}` : ''})未经 exact-date 源核验——先检索再写结论`,
+    }
+  }
+  const hit = scoped.find(f => f.bookability === 'bookable_exact_date')
+  if (hit) return { verdict: 'traceable', fact: hit, reason: 'exact-date 命中' }
+  const latest = scoped[scoped.length - 1]!
+  return { verdict: 'not_in_source', fact: latest, reason: `该档期 exact-date 源正常返回 0 条(${latest.fetched_at})——不得写有房/可订` }
+}
+
+// ---------------------------------------------------------------------------
+// 渲染原语(单向生成,issue #118):事实 → 行,锚点内嵌 fact_id;
+// 产物经原语渲染即自带溯源锚,闸侧锚点匹配 = 确定性回溯,不靠行文猜测
+// ---------------------------------------------------------------------------
+
+
+export function renderHotelFact(f: HotelFact): string {
+  if (f.verdict !== 'hit') {
+    return `- ${f.destination} ${f.check_in}→${f.check_out}:exact-date 源 0 条在架(不可订) <!-- fact:${f.fact_id} -->`
+  }
+  return `- ${f.destination} ${f.check_in}→${f.check_out}:住宿已核验(在架 ${f.options_masked} 家;价格上游打码,真实价以落地页为准) <!-- fact:${f.fact_id} -->`
 }

@@ -10,15 +10,16 @@
  * 检索页无回包不是车道失败:与 CDP 车道同语义(到点无 hints 命中 ⇒ miss,页标题命挑战 ⇒ challenged)。
  */
 
-import { getOrCreateSessionBridge, EXTENSION_STORE_URL, type SessionJobHandle } from './extension-bridge.ts'
+import { getOrCreateSessionBridge, needsExtensionSummary, type SessionJobHandle } from './extension-bridge.ts'
 
-/** 一次性用户门文案(needs-extension 统一指引,与 bootstrap setupExtension 输出同口径) */
-export const NEEDS_EXTENSION_HINT =
-  '需要一次性安装 GoTry Session Bridge 浏览器扩展(装完零弹窗):'
-  + `推荐 Chrome 应用商店一键安装(自动更新) ${EXTENSION_STORE_URL} ;`
-  + '免审核、版本更新更快的 GitHub 通道:npx gotry setup --extension-from=github(自动下载落位 ~/.gotry/extension;'
-  + '手动下载 github.com/Danceiny/gotry/releases 标签 ext-* 的 gotry-session-bridge.tar.gz),'
-  + '再在 chrome://extensions 开发者模式「加载已解压的扩展程序」指向解压目录'
+/**
+ * needs-extension 用户门文案(D-24 自适应,issue #117):按本地通道是否落位自动跳过
+ * 开发者模式/本地通道指引——商店版用户只看到商店一键装与「已装即可」提示。
+ * 旧静态常量已退役:静态文案无法感知安装状态,正是 D-24 残量的病灶。
+ */
+export function needsExtensionHint(): string {
+  return needsExtensionSummary()
+}
 
 export type BridgeFailureKind = 'bridge-unavailable' | 'extension-not-connected' | 'timeout' | 'job-error'
 

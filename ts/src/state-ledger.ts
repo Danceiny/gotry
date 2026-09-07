@@ -1,5 +1,5 @@
 /**
- * 事务化状态账本(ADR-15,docs/transactional-state-rfc.md):
+ * 事务化状态账本(ADR-15,docs/rfc/transactional-state-rfc.md):
  * 「文件即权威」→「单文件 SQLite 账本即权威」。
  *
  *   - events 表 = 唯一权威(append-only;语义幂等键物理化为 UNIQUE 索引)

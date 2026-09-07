@@ -5,7 +5,7 @@ export type DshResolver = {
 export type DshRuntime = {
   bin: string
   version: string
-  source: 'root' | 'legacy-vendored'
+  source: 'root'
 }
 
 export const REQUIRED_BENCHMARK_DSH_VERSION: '0.1.2-alpha.3'

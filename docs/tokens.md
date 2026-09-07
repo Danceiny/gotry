@@ -30,16 +30,12 @@ XHS_COOKIES=             # 小红书 Cookie-Editor JSON
   - 实走通路径 = **PTY 终端下 `npm publish`**(rc.10 起为 expect 包 PTY)→ otplib 弹网页授权 → **founder 浏览器点一次 Approve** → PUT 自动重试成功。**「发布 = 一次浏览器 approve,由 founder 点击」自此为标准动作**(已同步 AGENTS.md 发布闸)
 - **以后每次发布**: `TAG=latest ./scripts/publish-npm.sh`(dist-tag 必须显式传,#50①:旧默认 rc.5 曾把新包发到陈旧通道);凭据走路径 A web 会话——`--otp=<恢复码>` 已被 npm 拒收,granular bypass token(路径 B)在 npm 收紧通道上,均不作主路径
 - **dist-tag 维护(#50②,2026-09-02 已执行)**:founder 指令窗内经 `.env` NPM_TOKEN(granular)执行 `npm dist-tag add @danceiny/gotry@0.0.1-rc.16 rc --registry=https://registry.npmjs.org/` 成功——`rc` 由滞留 rc.7 迁至 rc.16;**但 DELETE dist-tag 端点对该 token 403**(curl 直连复核同 403,granular token 无删除权)→ 杂散 `rc.5` 以 add 通道改指 `0.0.1-rc.5` 自洽,`rc.11–rc.14` 各指同名版本;五别名彻底删除需 npmjs web UI 一次 founder 登录(package → Settings → manage dist-tags)。**runbook 拆两档**:改指(add)token 可直做;删除必须 web UI
-- **⚠️ 登录时刻的三连批次**(2026-08-26 巡检发现,凭证就绪后一次做完):
-  1. 发布 rc.8(工件 /tmp 就绪)
-  2. `npm dist-tag add @danceiny/gotry@0.0.1-rc.8 latest` —— **latest 还指着 rc.5(坏包,缺 runtime)**,不带 @rc 的裸安装/npx 用户会中招
-  3. `npm deprecate @danceiny/gotry@0.0.1-rc.5 "broken: missing runtime; use @rc"`
 - **路径 A(推荐)**: `./scripts/publish-npm.sh login` → 浏览器点一次 Approve → 会话 token 只写 .npmrc.publish → 再跑一次脚本即发
 - 路径 B(**收紧中,不作主路径**): npmjs 网页建 granular token(允许 bypass 2FA + packages read-write)→ 存 .env 的 NPM_TOKEN——npm 政策 target 2027-01 禁 bypass-2FA direct publish,rc.15 发布日志已见 deprecation 警告
 
-### 你已给过的 token
-`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` → 已存 `.env` 的 `NPM_TOKEN`。
-`npm whoami` 返 `danceiny` ✓ 鉴权通;**publish 撞 403**(原因见下)。
+### 历史 token 备注
+
+2026-08-22/24 曾有一枚 legacy classic token 写进 `.env` 的 `NPM_TOKEN`(后失效,whoami 401);其明文曾误入 git 跟踪文档(私有仓),按 founder 指示不展开;要换随时 npmjs 网页 revoke。**教训已固化:docs 一律不明文存 token。**
 
 ### 403 的精确原因(npm 2026-07-31 政策,已实测验证)
 
@@ -139,14 +135,3 @@ NPM_TOKEN=npm_xxx TAG=latest ./scripts/publish-npm.sh  # 或临时注入 token
 - `.env` 在 `.gitignore` ✓(git 跟踪文件无 token,已验证)
 - `~/.npmrc` 全局**不放** npmjs token(上 tick 误写已清;公司 bnpm 的留着,那是内网必需)
 - git 历史里有一份 npm token 明文(2026-08-22/24 写进 decisions-needed.md 后推送,私有仓)——按 founder 指示**不再展开此话题**;要换随时 npmjs 网页 revoke
-
----
-
-## 修订史
-
-| 日期 | 变更 |
-|---|---|
-| 2026-09-02 | #50② 执行:rc dist-tag 迁至 rc.16;杂散别名自洽化(rc.5→同名版);DELETE 端点 403 留痕,删除改 web UI 档;rc.16 发布态勘误同步状态面 |
-| 2026-08-30 | #50:rc.15 网页批准发布实录固化为标准动作;路径 B 降级(收紧中)/路径 C 升中期主评估;新增 dist-tag 维护 runbook;发布命令改 TAG 显式传 |
-| 2026-08-24 | 立 v1:npm 三路径(A web 会话/B granular bypass/C OIDC)+ agent-reach 8 渠道获取表 + 统一 .env 存放 |
-| 2026-08-22 | 雪球行纠正:实测需 cookie(上游 check warn + configure 指引),非零门槛 |

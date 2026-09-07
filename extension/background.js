@@ -1,5 +1,5 @@
 /**
- * GoTry Session Bridge — MV3 Service Worker(RFC user-session-data-rfc.md §2.2 通道 C,2026-08-29 定案为 PRIMARY 传输)。
+ * GoTry Session Bridge — MV3 Service Worker(RFC docs/rfc/user-session-data-rfc.md §2.2 通道 C,2026-08-29 定案为 PRIMARY 传输)。
  *
  * 职责(与 Node 侧 session/extension-bridge.ts 配对,零构建纯 JS):
  *   - 长轮询取活:POST /jobs(桥最多 hold 20s;每次响应/失败都重置 SW 30s 生命周期,任务秒级触达);

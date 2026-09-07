@@ -65,6 +65,13 @@ function descriptorSchema(tools: readonly BenchmarkToolDescriptor[]): JsonSchema
         required: ['action'],
         additionalProperties: false,
       },
+      {
+        type: 'object',
+        description: 'List the frozen bridge error contract.',
+        properties: { action: { type: 'string', const: 'errors' } },
+        required: ['action'],
+        additionalProperties: false,
+      },
       ...tools.map<JsonSchemaNode>(tool => ({
         type: 'object',
         description: tool.description,
@@ -324,6 +331,19 @@ const FORBIDDEN_OUTPUT_KEY_FRAGMENTS = [
   'loadermetadata', 'oracle', 'reference', 'reward', 'score',
 ]
 
+export const BRIDGE_ERROR_CONTRACT: Record<string, { recoverable: boolean; remedy: string }> = Object.freeze({
+  invalid_action: { recoverable: true, remedy: 'action 只允许 tools、call 或 errors' },
+  disallowed_tool: { recoverable: true, remedy: '先 action=tools 列出 allowed_tools 清单,再从清单内选工具' },
+  invalid_arguments: { recoverable: true, remedy: 'arguments 必须是可序列化 JSON 对象(≤64KB、深度≤12);收窄后重试' },
+  timed_out: { recoverable: true, remedy: '上游超时;可原样重试一次或换其他工具' },
+  output_truncated: { recoverable: true, remedy: '输出超出上限;让被调工具收窄查询范围后重试' },
+  invalid_json: { recoverable: true, remedy: '上游输出不是合法 JSON;重试一次或换工具' },
+  invalid_output: { recoverable: true, remedy: '上游输出结构不符;重试或换工具' },
+  runner_failed: { recoverable: true, remedy: '上游进程非零退出;可重试一次,持续失败换工具' },
+  spawn_failed: { recoverable: false, remedy: '可执行文件不可用——环境问题,调用方不可恢复' },
+  forbidden_output: { recoverable: false, remedy: '输出含未授权键(策略边界)——不可恢复,换工具或放弃' },
+})
+
 function inspectOutput(value: unknown): 'ok' | 'forbidden_key' | 'structure_limit' {
   const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }]
   let nodes = 0
@@ -406,10 +426,7 @@ export function registerBenchmarkEnvironmentBridge(
   if (!subprocess) throw new Error('benchmark environment bridge subprocess unavailable')
 
   const parameters: Record<string, unknown> = deepFreezeJson({
-    type: 'object',
-    properties: { query: descriptorSchema(bridge.tools) },
-    required: ['query'],
-    additionalProperties: false,
+    oneOf: descriptorSchema(bridge.tools).oneOf,
   })
   assertSupportedJsonSchema(parameters)
 
@@ -424,12 +441,25 @@ export function registerBenchmarkEnvironmentBridge(
     async execute(args: unknown): Promise<Record<string, never>> {
       const violations = validateJsonSchemaValue(parameters, args, 'arguments')
       if (violations.length > 0) throw new ToolArgsError(violations)
-      const query = (args as { query: Record<string, unknown> }).query
+      const query = args as Record<string, unknown>
       const tool = query.tool
       const descriptor = bridge.tools.find(item => item.name === tool)
       if (query.action === 'tools') return jsonObject({ ok: true, tools: bridge.tools })
-      if (query.action !== 'call' || typeof tool !== 'string' || !descriptor || !plainObject(query.arguments)) throw new ToolArgsError(['invalid benchmark bridge arguments'])
+      if (query.action === 'errors') return jsonObject({ ok: true, errors: BRIDGE_ERROR_CONTRACT })
+      if (query.action !== 'call') {
+        return jsonObject({ ok: false, error: 'invalid_action' })
+      }
+      if (typeof tool !== 'string' || !descriptor) {
+        return jsonObject({ ok: false, error: 'disallowed_tool' })
+      }
+      if (!plainObject(query.arguments)) {
+        return jsonObject({ ok: false, error: 'invalid_arguments' })
+      }
       const callArguments = query.arguments
+      const argumentViolations = validateJsonSchemaValue(descriptor.input_schema, callArguments, 'arguments')
+      if (argumentViolations.length > 0) {
+        return jsonObject({ ok: false, error: 'invalid_arguments' })
+      }
       const serialized = serializedArguments(callArguments)
       if (serialized.reason) return jsonObject({ ok: false, error: 'invalid_arguments', reason: serialized.reason })
       const controller = new AbortController()

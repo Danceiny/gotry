@@ -144,7 +144,7 @@ async function main(): Promise<void> {
       { stateRoot, timeoutMs: 30_000, hbcliBin: 'hbcli', sessionAccess: 'ask' } as never)
     const tool = registered.find(t => t.name === 'gotry_hotel_search')
     assert.ok(tool, 'gotry_hotel_search 应已注册')
-    const obs = await tool.execute({ query: { destination: '深圳' } }, null) as Record<string, unknown>
+    const obs = await tool.execute({ destination: '深圳' }, null) as Record<string, unknown>
     assert.equal(obs.ok, true, '工具面应返回 ok 包络(永不抛错契约)')
     assert.ok(obs.via === 'hbcli-error' || obs.via === 'hbcli-realtime', `工具面 via 应与渠道一致,实际 ${obs.via}`)
     const ev = String(obs.evidence)
