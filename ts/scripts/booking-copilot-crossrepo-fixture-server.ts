@@ -60,6 +60,21 @@ const plannerFactory: BookingPlannerSessionFactory = (initialTask: BookingCopilo
           },
         }]
       }
+      // After the receipt-driven approval question, the next browser ingress
+      // carries the exact selected option. Let the planner issue the same
+      // typed read operation; the runtime owns the approval ref injection.
+      if (turn.kind === 'user.turn' && turn.request.approval) {
+        return [{ kind: 'operation', action: {
+          schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
+          kind: 'search.run',
+          actionId: 'cross-repo-action-2',
+          contextRef: task.contextRef,
+          expectedRevision: task.revision,
+          reason: 'Run the approved relaxed search.',
+          factRefs: [],
+          input: {},
+        } }]
+      }
       if (receiptObserved) {
         return [{
           kind: 'terminal',

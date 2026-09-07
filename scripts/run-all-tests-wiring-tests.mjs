@@ -33,6 +33,16 @@ assert.ok(
   executableLines.includes('(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/session-tests.ts) || FAIL=1'),
   'the active full-suite command must default optional live session probes off',
 )
+assert.match(
+  script,
+  /npx --yes --package=pnpm@11\.5\.0 pnpm --dir "\$package_e2e_install_dir" add/,
+  'the packaged runtime must name the pnpm package and executable separately',
+)
+assert.doesNotMatch(
+  script,
+  /npx --yes pnpm@11\.5\.0 --dir/,
+  'npx cannot execute the package specifier as a binary name',
+)
 const forcedSessionFailure = spawnSync(
   process.execPath,
   [join(root, 'ts', 'node_modules', 'tsx', 'dist', 'cli.mjs'), join(root, 'ts', 'scripts', 'session-tests.ts')],
@@ -45,4 +55,4 @@ const forcedSessionFailure = spawnSync(
 assert.notEqual(forcedSessionFailure.status, 0, 'a real session assertion failure must produce a non-zero process exit')
 assert.match(forcedSessionFailure.stdout, /forced session failure propagation proof/)
 
-console.log('RUN-ALL WIRING PROOF: dist-before-dependents/local-tsx-path/session-failure-propagation OK')
+console.log('RUN-ALL WIRING PROOF: dist-before-dependents/local-tsx-path/pnpm-package-bin/session-failure-propagation OK')

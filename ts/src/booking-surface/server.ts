@@ -27,6 +27,7 @@ import {
   type IngressTurn,
 } from './contracts.ts'
 import {
+  bookingDigest,
   BookingCopilotTaskRuntime,
   type BookingCopilotTaskState,
   type BookingIngressRequestBindingInput,
@@ -173,6 +174,12 @@ function validIngressBinding(binding: unknown, ingress: IngressTurn): binding is
   return validSurfaceActions(candidate.surface, candidate.allowedActions)
 }
 
+function validIngressApprovalAuthority(ingress: IngressTurn, binding: { taskId: string; contextRef: string }): boolean {
+  if (!ingress.request.approval) return true
+  return ingress.request.approval.taskId === binding.taskId
+    && ingress.request.approval.contextRef === binding.contextRef
+}
+
 function fallbackErrorEvent(task: BookingCopilotTaskState, code: string): BookingSurfaceEvent {
   return {
     schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
@@ -224,13 +231,17 @@ async function handleBookingCopilotRequest(req: IncomingMessage, res: ServerResp
       }
       const binding = await composition.ingressBinding.bind(ingress, composition.principal)
       if (!validIngressBinding(binding, ingress)) { sendJson(res, 502, { error: { code: 'invalid_ingress_binding' } }); return }
+      if (!validIngressApprovalAuthority(ingress, binding)) { sendJson(res, 400, { error: { code: 'invalid_ingress_approval_authority' } }); return }
       const boundWorkspace = {
         ...ingress.workspace,
         contextRef: binding.contextRef,
         surface: binding.surface,
         capabilities: { surface: binding.surface, allowedActions: [...binding.allowedActions] },
       } as BookingWorkspaceSnapshot
-      turn = { schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION, kind: 'user.turn', taskId: binding.taskId, turnId: binding.turnId, workspace: boundWorkspace, request: ingress.request }
+      const boundRequest = ingress.request.approval
+        ? { text: ingress.request.text, approval: { ...ingress.request.approval } }
+        : { text: ingress.request.text }
+      turn = { schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION, kind: 'user.turn', taskId: binding.taskId, turnId: binding.turnId, workspace: boundWorkspace, request: boundRequest }
       requestBinding = { requestKey: ingress.requestKey, principal: composition.principal, ...(ingress.taskHandle ? { taskHandle: ingress.taskHandle } : {}) }
       const boundValid = validateBookingSurface(turn)
       if (!boundValid.ok) { sendJson(res, 502, { error: { code: 'invalid_ingress_binding', details: boundValid.errors } }); return }
@@ -269,6 +280,7 @@ async function handleBookingCopilotRequest(req: IncomingMessage, res: ServerResp
       } else if (existing?.phase === 'terminal' || existing?.phase === 'error') {
         throw new Error('task_terminal')
       } else if (existing?.phase === 'waiting_receipt') {
+        if (turn.kind === 'user.turn' && turn.request.approval) composition.runtime.assertApprovalNotConsumed(existing.taskId, turn.request.approval)
         const workspace = turn.workspace as BookingWorkspaceSnapshot
         if (workspace.contextRef !== existing.contextRef || workspace.surface !== existing.surface || workspace.revision !== existing.revision || workspace.capabilities.surface !== existing.surface || !sameCapabilities(workspace.capabilities.allowedActions, existing.allowedActions)) throw new Error('task_conflict:workspace_mismatch')
         // A waiting task can only be replayed with the caller's stable turn
@@ -280,6 +292,7 @@ async function handleBookingCopilotRequest(req: IncomingMessage, res: ServerResp
         if (!replayEvents) throw new Error('receipt_required')
         task = existing
       } else {
+        if (existing && turn.kind === 'user.turn' && turn.request.approval) composition.runtime.assertApprovalNotConsumed(existing.taskId, turn.request.approval)
         task = composition.runtime.startTask(turn, requestBinding)
         if (turn.kind === 'user.turn' && turn.taskId) {
           replayKey = browserRequestKey ? `ingress:${task.taskId}:${browserRequestKey}` : `turn:${task.taskId}:${turn.turnId ?? task.userTurnCount}`
@@ -296,7 +309,8 @@ async function handleBookingCopilotRequest(req: IncomingMessage, res: ServerResp
     } else {
       const requestKey = replayKey ?? `turn:${task.taskId}:${task.userTurnCount}`
       activeDecisionKey = requestKey
-      const flightKey = JSON.stringify([task.taskId, requestKey])
+      const approval = turn.kind === 'user.turn' ? turn.request.approval : undefined
+      const flightKey = JSON.stringify([task.taskId, approval ? `approval:${bookingDigest(approval)}` : requestKey])
       const decisionEvents = await runDecisionSingleFlight(composition, flightKey, async () => {
         if (turn.kind === 'action.receipt.continuation' && task.awaitingApproval) {
           return composition.runtime.applyDecisionBatch(task.taskId, requestKey, [composition.runtime.approvalQuestion(task.taskId)], false)
