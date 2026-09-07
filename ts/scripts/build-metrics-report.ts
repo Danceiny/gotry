@@ -3,7 +3,7 @@
  *
  * 聚合既有落盘侧车(不新增任何数据源)→ 单一 markdown 报告:
  *   - 事实闸 verdict 分布 + blocked 牊(<stateRoot>/gotry-state/bookable-facts.jsonl)
- *   - 通道健康 down/cooldown(<stateRoot>/gotry-state/channel-health.jsonl,30 天窗,
+ *   - 通道健康 down/cooldown('ok' 恢复事件 latest-wins 超越;<stateRoot>/gotry-state/channel-health.jsonl,30 天窗,
  *     与 doctor 持久面 readLatestChannelEvents 同口径)
  *   - 事故面(<stateRoot>/gotry-state/incidents.jsonl,--days 窗,默认 7)
  *   - 桥延迟 p50/p95/max + >500ms 违约计数(<stateRoot>/gotry-state/bridge-latency.jsonl;
@@ -91,10 +91,21 @@ export function aggregateChannels(
   const cutoff = nowMs - (opts.windowDays ?? CHANNEL_WINDOW_DAYS) * 86_400_000
   const counts = new Map<string, number>()
   const newest = new Map<string, ChannelRow & { atMs: number }>()
+  // ok 超越(外部事件接缝第 1 段):通道最新事件若为 'ok'(本地探针恢复),
+  // 该通道从「当前 down/cooldown」展示面退出——down 计数(历史频率)保留。
+  const lastState = new Map<string, string>()
+  for (const raw of rows) {
+    const row = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+    if (typeof row.channel !== 'string' || !row.channel) continue
+    if (typeof row.state === 'string' && ['down', 'cooldown', 'ok'].includes(row.state)) {
+      lastState.set(row.channel, row.state)
+    }
+  }
   for (const raw of rows) {
     const row = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
     if (typeof row.channel !== 'string' || !row.channel) continue
     if (row.state !== 'down' && row.state !== 'cooldown') continue
+    if (lastState.get(row.channel) === 'ok') continue
     const at = typeof row.at === 'string' ? row.at : ''
     const atMs = Date.parse(at)
     if (Number.isFinite(atMs) && atMs < cutoff) continue
@@ -263,7 +274,7 @@ export function renderMetricsReport(s: MetricsSnapshot): string {
   }
   L.push('')
 
-  L.push(`## 通道健康(channel-health.jsonl,${s.channels.windowDays} 天窗;hit 即清除,此处只见 down/cooldown)`)
+  L.push(`## 通道健康(channel-health.jsonl,${s.channels.windowDays} 天窗;hit 即清除,此处只见当前处于 down/cooldown 的通道;'ok' 恢复事件已超越)`)
   L.push('')
   if (s.channels.latest.length === 0) {
     L.push('(空:窗口内无 down/cooldown 事件)')
