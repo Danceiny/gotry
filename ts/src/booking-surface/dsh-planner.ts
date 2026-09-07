@@ -186,7 +186,7 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
       cwd: options.stateRoot ?? process.cwd(),
       provider: options.provider ?? 'deepseek-official',
       model: options.model ?? 'glm-4.6',
-      maxTokens: options.maxTokens ?? 2_048,
+      maxTokens: options.maxTokens ?? 4_096,
       env: childEnv,
       ...(options.dshBin ? { dshBin: options.dshBin } : {}),
     })
@@ -346,8 +346,49 @@ function recoverFinalResponseDecision(response: string, task: BookingCopilotTask
     parsed = JSON.parse(text)
   } catch {
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-    const candidate = fenced ? fenced[1]! : text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
-    try { parsed = JSON.parse(candidate) } catch { return null }
+    const candidates: string[] = []
+    if (fenced) {
+      candidates.push(fenced[1]!)
+    } else {
+      candidates.push(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1))
+      candidates.push(text.slice(text.indexOf('{')))
+    }
+    for (const base of candidates) {
+      const attempts = [base]
+      // Reasoning-token budgets can cut the visible JSON before its closing
+      // braces; append the structurally missing closers and let the authority
+      // path judge the reconstructed payload.
+      let depth = 0
+      let inString = false
+      let escaped = false
+      for (const ch of base) {
+        if (inString) {
+          if (escaped) escaped = false
+          else if (ch === '\\') escaped = true
+          else if (ch === '"') inString = false
+          continue
+        }
+        if (ch === '"') inString = true
+        else if (ch === '{' || ch === '[') depth += 1
+        else if (ch === '}' || ch === ']') depth -= 1
+      }
+      if (depth > 0 && depth <= 4 && !inString) {
+        attempts.push(base.trimEnd().replace(/,+$/, '') + '}'.repeat(depth))
+      }
+      for (const candidate of attempts) {
+        try {
+          const attempted = JSON.parse(candidate)
+          // A repaired cut can yield valid JSON that lost the operation
+          // envelope; that is still a failed recovery for this candidate.
+          if (isRecord(attempted) && isRecord(attempted.decision) && attempted.decision.kind === 'operation') {
+            parsed = attempted
+            break
+          }
+        } catch { /* try the next reconstruction */ }
+      }
+      if (parsed !== undefined) break
+    }
+    if (parsed === undefined) return null
   }
   let envelope = parsed
   if (isRecord(envelope) && isRecord(envelope.decision)) envelope = envelope.decision
