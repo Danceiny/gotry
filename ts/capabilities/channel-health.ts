@@ -25,10 +25,19 @@
 
 export type ChannelHealthState = 'down' | 'cooldown'
 
+/**
+ * 持久事件面的状态全集:会话瞬态(down/cooldown)之外,持久面还接受 'ok'
+ * 恢复事件(外部事件接缝第 1 段,docs/design/external-event-seam.md §3.1/
+ * §6①)——本地探针 tick 探测通过后写 'ok',readLatestChannelEvents 按
+ * latest-wins 让它超越同通道更早的 down,消费方(doctor/metrics)据 state
+ * 判定当前健康。会话瞬态 Map 不接受 'ok'(进程内 hit 即清除,语义已存在)。
+ */
+export type ChannelEventState = ChannelHealthState | 'ok'
+
 export interface ChannelEvent {
   /** 通道 id(channel-registry.ts CHANNELS 的 id) */
   channel: string
-  state: ChannelHealthState
+  state: ChannelEventState
   /** 触发原因(小写连字符;人话渲染归消费方) */
   reason?: string
   /** ISO 时间戳 */
@@ -122,6 +131,9 @@ export async function recordChannelEvent(stateRoot: string, event: ChannelEvent)
 /**
  * 读最近事件(每通道取最新一条)——doctor(CLI 独立进程)的持久面输入。
  * 容忍坏行/空文件/缺文件;limitDays 过滤过旧事件(默认 30 天)。
+ * latest-wins:'ok' 恢复事件可超越同通道更早的 down/cooldown(外部事件接缝
+ * 第 1 段);消费方以 `state !== 'down'` 判当前健康,旧判定(`=== 'down'`)
+ * 不受影响。
  */
 export async function readLatestChannelEvents(stateRoot: string, opts: { limitDays?: number; now?: number } = {}): Promise<Map<string, ChannelEvent>> {
   const latest = new Map<string, ChannelEvent>()
@@ -136,7 +148,7 @@ export async function readLatestChannelEvents(stateRoot: string, opts: { limitDa
       try {
         const ev = JSON.parse(t) as ChannelEvent
         if (!ev || typeof ev.channel !== 'string' || typeof ev.state !== 'string') continue
-        if (!['down', 'cooldown'].includes(ev.state)) continue
+        if (!['down', 'cooldown', 'ok'].includes(ev.state)) continue
         const atMs = Date.parse(ev.at ?? '')
         if (Number.isFinite(atMs) && atMs < cutoff) continue
         latest.set(ev.channel, ev)

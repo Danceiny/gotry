@@ -464,6 +464,10 @@ echo "=== 51. 指标面板只读聚合面(#138 第一切片:事实闸 verdict �
 (cd ts && npx tsx scripts/metrics-report-tests.ts) || FAIL=1
 
 echo
+echo "=== 52. 通道探针 tick(外部事件接缝第 1 段:evaluate 纯函数/latest-wins 'ok' 恢复语义/doctor 口径兼容/metrics ok 超越/CLI 探测面;全离线) ==="
+(cd ts && npx tsx scripts/channel-probe-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

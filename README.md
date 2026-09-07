@@ -151,6 +151,8 @@ Requires Node ≥ 22.15. LLM credentials are managed by your dsh host UI — got
 
 > **Quality metrics (repo-side)** — `npx tsx ts/scripts/build-metrics-report.ts [--state-root <root>] [--out report.md] [--days 7]` aggregates the persisted sidecars (fact-gate verdict distribution & blocked rate, channel down/cooldown, incidents, bridge latency vs the 500 ms re-audit budget, ledger / doctor-report presence) into one read-only markdown report. No new dependencies, zero LLM; the state root is never written (only `--out` produces a file, outside the state root).
 
+> **Channel probe tick (out-of-band health)** — `npx tsx ts/scripts/channel-probe.ts --state-root <root>` runs one read-only probe round over headless-probeable channels (hbcli whoami / open-meteo / opensky; session surfaces are skipped, FlyAI is not probed by default to preserve the shared anonymous quota) and appends `down` / `'ok'` recovery events to `channel-health.jsonl` — routing advice and doctor pick them up with zero changes. Driven by cron/loopx; no resident process. Remote (world2agent) callback stays gated on D-31.
+
 ### Developer source install
 
 ```bash
