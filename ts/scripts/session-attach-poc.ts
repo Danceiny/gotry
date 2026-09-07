@@ -1,5 +1,5 @@
 /**
- * P0 PoC(RFC docs/user-session-data-rfc.md §4 P0-③):
+ * P0 PoC(RFC docs/rfc/user-session-data-rfc.md §4 P0-③):
  * 专用测试 profile 打开携程机票 URL 参数搜索页,嗅探站内搜索 XHR 并打印 JSON。
  * 只读:无 click/fill/submit;不进 CI;不动共享状态(profile 在 /tmp)。
  * 运行:npx tsx scripts/session-attach-poc.ts [from-to] [YYYY-MM-DD]

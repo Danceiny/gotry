@@ -31,20 +31,21 @@ import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, r
 import { buildTimeAnchor } from './time-anchor.ts'
 import { resolveSlotDate } from './slot-spec.ts'
 import { wmoLabel } from '../capabilities/weather.ts'
-import { anythingSearch } from '../capabilities/anything.ts'
-import { readUrl, reach, reachStatus } from '../capabilities/agent-reach.ts'
+// D-23 收编(issue #115):anything/web/github/video/agent_reach/session_login 六渠道改经
+// 效应注册表(退避/熔断/declined 面统一);能力层直接 import 仅留类型位(reach/reachStatus)
+import { reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { runDoctorChecks, renderDoctorReportMd } from '../capabilities/doctor.ts'
-import { videoSubtitle, githubSearch } from '../capabilities/agent-reach-deep.ts'
-import { sessionLogin } from '../capabilities/session-login.ts'
 import { EXTENSION_STORE_URL } from '../capabilities/session/extension-bridge.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
-import { factsFromFlyai, factsFromSession } from './bookable-facts.ts'
+import { factsFromFlyai, factsFromHotel, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
+import { noteChannelVerdict, recordChannelEvent, readLatestChannelEvents } from '../capabilities/channel-health.ts'
+import { routingAdvice, renderRoutingCard, toolRoutingHeadline, type ChannelIntent } from '../capabilities/channel-registry.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
@@ -164,6 +165,25 @@ function readTimelineTrips(stateRoot: string): Array<{ destination: string; star
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
 
+/** Benchmark 治理面钉死预算(Round 9,#100/#102):官方任务形态(如 ChinaTravel
+ *  单查询 300s)超出内置 60/120s;预算仍必须「按 run 钉死」保证可复现——允许
+ *  owner 经 env 按次显式设定,缺省维持既有值,非法值启动即抛。 */
+function benchmarkPinnedPolicy(): { softMs: number; hardMs: number; exit: 'converge' } {
+  const parse = (name: string, fallback: number): number => {
+    const raw = process.env[name]
+    if (raw === undefined || raw === '') return fallback
+    const value = Number.parseInt(raw, 10)
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error(`invalid ${name}: ${JSON.stringify(raw)} (expected a positive safe integer)`)
+    }
+    return value
+  }
+  const softMs = parse('GOTRY_BENCHMARK_SOFT_MS', 60_000)
+  const hardMs = parse('GOTRY_BENCHMARK_HARD_MS', 120_000)
+  if (hardMs <= softMs) throw new Error(`GOTRY_BENCHMARK_HARD_MS (${hardMs}) must exceed GOTRY_BENCHMARK_SOFT_MS (${softMs})`)
+  return { softMs, hardMs, exit: 'converge' }
+}
+
 export function apply(ctx: Context, config: Config): void {
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
@@ -175,7 +195,7 @@ export function apply(ctx: Context, config: Config): void {
   installTurnDeadline(ctx, handoffChild
     ? { fixedPolicy: { softMs: 300_000, hardMs: 900_000, exit: 'converge' } }
     : rawBenchmarkEnvironmentConfigPath.trim()
-      ? { fixedPolicy: { softMs: 60_000, hardMs: 120_000, exit: 'converge' } }
+      ? { fixedPolicy: benchmarkPinnedPolicy() }
       : { stateRoot: process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.' })
   if (rawBenchmarkEnvironmentConfigPath.trim()) {
     // Benchmark mode is a deliberately minimal kernel: only the model
@@ -218,6 +238,21 @@ export function apply(ctx: Context, config: Config): void {
   // 渲染成紧凑 brief 注入 persona;为空 = 首访。与当轮说法冲突时以用户为准。
   sp?.variable?.('motivation_brief', () => renderMotivationBrief(config.stateRoot ?? '.'))
 
+  // 通道路由卡(通道注册表生成,docs/design/tool-orchestration-design.md §2.1/D-8):
+  // persona (19) 只留行为契约,机/火/酒通道顺位与额度口径查卡——prose 教义
+  // 变查表教义,注册表加通道卡片自动一致。
+  sp?.variable?.('channel_routing_card', () => renderRoutingCard())
+
+  // 通道健康面接线(issue #107/#108):检索通道 verdict → 会话状态标记 +
+  // down/cooldown 事件落持久面(doctor CLI 进程消费)。落盘失败不阻塞检索。
+  const noteChannel = async (channel: string, verdict: string): Promise<void> => {
+    const ev = noteChannelVerdict(channel, verdict)
+    if (ev) await recordChannelEvent(config.stateRoot ?? '.', ev)
+  }
+  /** verdict≠hit 时在平铺 envelope 上追加 routing 建议(§3.3:失败现场教学) */
+  const routingField = (intent: ChannelIntent, excludeChannel: string) =>
+    ({ routing: routingAdvice(intent, { excludeChannel }) })
+
   // D-NEW 进程护栏(Z3 WASM crash 教训):dsh 0.1.1-rc.1 缺 uncaughtException
   // handler,插件异常穿透即杀进程。我们在 gotry 侧挂护栏:同步 fsync 写事故证据
   // (gotry-state/incidents.jsonl),handler 自身不再抛,不阻塞后续控制流。
@@ -253,6 +288,14 @@ export function apply(ctx: Context, config: Config): void {
     ctx.tools.register(t as unknown as ReturnType<typeof defineTool>)
   }
 
+  // 工具描述首行生成(issue #113,L1):检索工具描述统一前置注册表生成的
+  // 「服务意图 × 通道顺位」卡——模型选工具时(读描述)与失败后(读 routing)
+  // 两个决策点拿到同一张表;注册表加行,描述自动一致。非检索工具原样返回。
+  const routed = (tool: string, desc: string): string => {
+    const head = toolRoutingHeadline(tool)
+    return head ? `${head}\n${desc}` : desc
+  }
+
   registerGuarded(defineTool({
     name: 'gotry_feasibility_check',
     description:
@@ -263,11 +306,17 @@ export function apply(ctx: Context, config: Config): void {
       + 'structure { request: { motivation weights, hard constraints, window, budget, home hubs }, candidates: [ { id, label, services, transfers, stay, minDays } ] }. '
       + 'Returns per-candidate verdicts, unsat cores with minimal-modification suggestions, '
       + 'a wish-pool entry for infeasible aspirations, and a ready-to-show markdown answer.',
+    // D-30 第五刀(issue #112):payload json blob → 结构化对象(request/candidates 模型可见,
+    // 嵌套形状权威在 unified 引擎契约,工具面不越层强约束)
     parameters: {
       payload: {
-        type: 'json',
+        type: 'object',
+        additionalProperties: false,
         required: true,
-        description: 'The full engine payload: { request, candidates }.',
+        properties: {
+          request: { type: 'object', additionalProperties: true, required: true, description: '引擎请求:{ motivation weights, hard constraints, window, budget, home hubs }' },
+          candidates: { type: 'array', items: { type: 'object', additionalProperties: true }, required: true, description: '候选列表:[{ id, label, services, transfers, stay, minDays }]' },
+        },
       },
     },
     output: {
@@ -320,11 +369,18 @@ export function apply(ctx: Context, config: Config): void {
       + 'never the principal/sponsor distinction. MERGE semantics (T1): call again with just the NEW '
       + 'facts learned this turn (weights delta optional but MUST bring fresh evidence; evidence = user quotes); '
       + 'existing history is never deleted. Requires evidence on every call (P0 anti-fabrication rule).',
+    // D-30 第五刀(issue #112):profile blob → 结构化闭合对象;evidence(P0 反伪造红线)进嵌套
+    // schema 由宿主权闸——无证据的保存请求入口即被结构化拒绝(ToolFailure 形状)
     parameters: {
       profile: {
-        type: 'json',
+        type: 'object',
+        additionalProperties: false,
         required: true,
-        description: '{ weights: {escape_rest: 0.7, ...}, evidence: [user quotes...], hard: {wake_not_before, min_arrival_energy_pct} }',
+        properties: {
+          weights: { type: 'object', additionalProperties: true, description: '动机权重增量,如 { escape_rest: 0.7 }(可选,权重变更须伴新证据)' },
+          evidence: { type: 'array', items: { type: 'string' }, required: true, description: '本轮新事实的用户原话数组(P0:必带)' },
+          hard: { type: 'object', additionalProperties: true, description: '硬约束:{ wake_not_before, min_arrival_energy_pct }(可选)' },
+        },
       },
     },
     output: {
@@ -362,7 +418,7 @@ export function apply(ctx: Context, config: Config): void {
       entry: {
         type: 'json',
         required: true,
-        description: '{ name, reason?, conditions: { days, budget_cny, best_months }, muted?: boolean }',
+        description: '{ name, reason?, conditions: { days, budget_cny, best_months, channels? }, muted?: boolean }',
       },
     },
     output: {
@@ -390,20 +446,25 @@ export function apply(ctx: Context, config: Config): void {
       'Surface AT MOST ONE "next departure" wish whose fulfilment conditions match the user\'s current window '
       + '(0..1 rule: never more than one nudge per turn, never push when nothing matches — 憧憬不被拒绝,也不被硬推). '
       + 'Muted wishes never surface. Surfacing records a recalled event in the memory-utility sidecar. '
+      + 'A wish whose conditions.channels names a channel that is currently down (out-of-band health facts) is vetoed for this recall — 不推当下走不通的憧憬. '
       + 'action="confirm-outcome" records the user-confirmed real-world outcome (attribution helpful/harmful/neutral) — '
       + 'ONLY pass attribution the user explicitly stated; the agent must never self-attribute usefulness.',
+    // D-30 第四刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ action?: "recall"|"confirm-outcome", days?, budgetCny?, month?, wishId?, attribution?: "helpful"|"harmful"|"neutral", detail?, tripStart?: "行程起始(确认成行时挂时间线)" }',
-      },
+      action: { type: 'string', description: 'recall(默认,召回下一次出发建议)或 confirm-outcome(确认某条建议成/不成)' },
+      days: { type: 'integer', description: '回看天数窗(recall)' },
+      budgetCny: { type: 'number', description: '预算上限(recall 过滤)' },
+      month: { type: 'integer', description: '出行月份 1-12(recall)' },
+      wishId: { type: 'string', description: 'confirm-outcome 目标愿望 id' },
+      attribution: { type: 'string', enum: ['helpful', 'harmful', 'neutral'], description: 'confirm-outcome 归因' },
+      detail: { type: 'string', description: '一句话细节(用户原话)' },
+      tripStart: { type: 'string', description: '确认成行时挂时间线的行程起始日' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ action?: string; days?: number; budgetCny?: number; month?: number; wishId?: string; attribution?: 'helpful' | 'harmful' | 'neutral'; detail?: string; tripStart?: string }>(args, 'action')
       const ledger = ensureLedger(config.stateRoot)
       const now = new Date().toISOString()
@@ -427,11 +488,20 @@ export function apply(ctx: Context, config: Config): void {
         const r = ledger.confirmOutcome({ wishId: q.wishId, attribution: q.attribution, detail: q.detail, trip: tripInput })
         return { ok: true, recorded: r.recorded, wish_id: q.wishId, status: q.attribution, ...(r.trip ? { trip: r.trip } : {}) } as never
       }
-      // recall:0..1 条件匹配(判定归 wish-pool 纯函数),muted 永不召回,无命中不硬推
+      // recall:0..1 条件匹配(判定归 wish-pool 纯函数),muted 永不召回,无命中不硬推;
+      // 通道否证(接缝第 2 段):持久健康面里处于 down 的通道集合进 context——
+      // conditions.channels 命名依赖通道的愿望在被否证时不当场推荐(读不到健康面=不启用)。
       const pool = ledger.readWishPool()
       const candidates = pool.filter(e => !e.muted && typeof e.wish_id === 'string')
       const month = q.month ?? new Date().getMonth() + 1
-      const match = pickNudgeWish(candidates as WishPoolEntry[], { days: q.days, budgetCny: q.budgetCny, month })
+      let channelDown: ReadonlySet<string> | undefined
+      try {
+        const latest = await readLatestChannelEvents(config.stateRoot)
+        const down = new Set<string>()
+        for (const [ch, ev] of latest) if (ev.state === 'down') down.add(ch)
+        channelDown = down
+      } catch { /* 健康面缺席=不启用否证,召回行为与旧版一致 */ }
+      const match = pickNudgeWish(candidates as WishPoolEntry[], { days: q.days, budgetCny: q.budgetCny, month, channelDown })
       if (!match) {
         return { ok: true, suggestion: null, summary: `无可成行的憧憬匹配当前窗口(${candidates.length} 条在册,0..1 纪律:不硬推)` } as never
       }
@@ -446,7 +516,7 @@ export function apply(ctx: Context, config: Config): void {
         summary: `「下一次出发」候选(0..1):${String(match.entry['name'])}——成行条件 ${JSON.stringify(match.entry['conditions'])},本次窗口命中 ${match.score}/3 项(${match.hits.join('+')});效用状态 ${utility?.status ?? 'unknown'}`,
       } as never
     },
-    presentCall: args => ({ card: 'generic', title: '「下一次出发」召回', kind: 'search', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: '「下一次出发」召回', kind: 'search', rawInput: args }),
   }))
 
   // ADR-24 v2 复访交付面:用户回问「行程规划好了吗」时,模型用这个只读工具
@@ -459,17 +529,15 @@ export function apply(ctx: Context, config: Config): void {
       + 'a previously handed-off plan («规划好了吗» / «上次那个行程»): open = still being worked in the '
       + 'background (ETA ' + '约 1 小时' + '), settled = deliverable ready (excerpt included, full text in the '
       + 'ticket\'s .deliverable.md), failed = honest failure note. Never fabricate a deliverable that is not here.',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层(同 session 刀法)
     parameters: {
-      query: {
-        type: 'json',
-        description: '{ ticketId?: "th-...(可选,只看这一单)" }',
-      },
+      ticketId: { type: 'string', description: '只看这一单,如 th-...(缺省列全部)' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
     },
-    async execute(args: { query?: unknown }) {
+    async execute(args, _exec: unknown) {
       const q = interpretArgs<{ ticketId?: string }>(args)
       const root = process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.'
       const all = await listTurnHandoffTickets(root)
@@ -493,7 +561,7 @@ export function apply(ctx: Context, config: Config): void {
         summary: `后台规划工单 ${tickets.length} 张:\n${lines.join('\n')}`,
       } as never
     },
-    presentCall: args => ({ card: 'generic', title: '后台规划工单查询', kind: 'search', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: '后台规划工单查询', kind: 'search', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -503,11 +571,19 @@ export function apply(ctx: Context, config: Config): void {
       + 'never a hard filter (「爸爸65轻度高血压」→ 不排高海拔/控制步行量;「晕车」→ 优先火车/备提示). '
       + 'evidence MUST be the user\'s verbatim words (append-only, traceable). '
       + 'NEGATIVE LIST: passport/ID/phone numbers are rejected on sight — such fields never enter storage.',
+    // D-30 第五刀(issue #112):companion blob → 结构化闭合对象;label/evidence required 由宿主权闸
+    // (evidence append-only 溯源 P0;additionalProperties:false 与负面清单同向——护照/证件号类
+    // 杂散字段入口即拒)
     parameters: {
       companion: {
-        type: 'json',
+        type: 'object',
+        additionalProperties: false,
         required: true,
-        description: '{ label: "爸爸", constraints: { mobility?: "步行≤4h", health?: ["轻度高血压"], prefs?: ["怕吵"] }, evidence: "<用户原话>" }',
+        properties: {
+          label: { type: 'string', required: true, description: '称呼,如 爸爸' },
+          constraints: { type: 'object', additionalProperties: true, description: '{ mobility?: "步行≤4h", health?: ["轻度高血压"], prefs?: ["怕吵"] }' },
+          evidence: { type: 'string', required: true, description: '用户原话(append-only 可溯源,P0)' },
+        },
       },
     },
     output: {
@@ -537,19 +613,21 @@ export function apply(ctx: Context, config: Config): void {
       + '(「去年国庆去了大理」) — dates resolve via the time anchor (词表外日期会拒绝,请用户给绝对日期), evidence MUST be the user\'s verbatim words. '
       + 'Append-only and idempotent (same destination+start+source = same trip); overlapping same-destination trips are rejected for human adjudication. '
       + 'Past trips power origin resolution and 「去过不再推」 ranking — never a hard filter.',
+    // D-30 第四刀(issue #112):平铺 typed;destination/evidence required → 宿主权入口拒缺参
+    // (evidence 是 P0 溯源红线,进 schema 由宿主权闸,不再依赖 execute 散文报错)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ destination: "大理", start: "2025-10-01 或绝对日期表达", end?: 同上, companions?: ["爸爸"], evidence: "<用户原话>" }',
-      },
+      destination: { type: 'string', required: true, description: '目的地,如 大理' },
+      start: { type: 'string', required: true, description: '行程起始:YYYY-MM-DD 或绝对日期表达(解析不了 execute 结构化报错不猜)' },
+      end: { type: 'string', description: '行程结束,形态同 start(可选)' },
+      companions: { type: 'array', items: { type: 'string' }, description: '同行人,如 ["爸爸"]' },
+      evidence: { type: 'string', required: true, description: '用户原话(溯源 P0 红线)' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ destination?: string; start?: string; end?: string; companions?: string[]; evidence?: string }>(args, 'destination')
+    async execute(args, _exec: unknown) {
+      const q = args
       if (!q.destination) return { ok: false, summary: 'destination 必填' } as never
       if (!q.evidence) return { ok: false, summary: 'evidence 必填(用户原话,溯源 P0)' } as never
       const anchor = buildTimeAnchor(new Date())
@@ -565,30 +643,30 @@ export function apply(ctx: Context, config: Config): void {
       if (!res.appended && res.reason) return { ok: false, summary: res.reason } as never
       return { ok: true, appended: res.appended, trip_id: res.tripId, total: res.total, summary: res.appended ? `已入时间线:${q.destination} @ ${start}` : `已存在(幂等跳过):${res.tripId}` } as never
     },
-    presentCall: args => ({ card: 'generic', title: '记录旅行', kind: 'edit', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: '记录旅行', kind: 'edit', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
     name: 'gotry_hotel_search',
-    description:
+    description: routed('gotry_hotel_search',
       'Search hotels via hotelbyte-cli (real-time when hbcli credentials exist, falls back to the static pack with explicit evidence tagging). '
-      + 'Input: destination city name + optional dates/occupancy. Dates accept verbatim natural expressions (下周五 / 8.20 / 下周五+3) — '
+      + 'Input: destination city name + optional dates/adults. Dates accept verbatim natural expressions (下周五 / 8.20 / 下周五+3) — '
       + 'the code layer resolves them against the time anchor; unresolved expressions degrade to an undated search with an explicit '
       + 'date_notes entry instead of guessing. Output: hotel list with evidence chain ([realtime-API:hbcli] + fetch timestamp, '
-      + 'or [static-pack:estimate]) per the L4 invariant.',
+      + 'or [static-pack:estimate]) per the L4 invariant.'),
+    // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(同 flyai 刀法)。
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ destination: "<目的地城市>", checkIn?: "YYYY-MM-DD 或自然表达(下周五/8.20)", checkOut?: 同上, occupancy?: { adults: 2 } }',
-      },
+      destination: { type: 'string', required: true, description: '目的地城市,如 大理' },
+      checkIn: { type: 'string', description: '入住日:YYYY-MM-DD 或自然表达(下周五/8.20/下周五+3);解析不了降级无日期检索并记 date_notes' },
+      checkOut: { type: 'string', description: 'checkOut 退房日:YYYY-MM-DD 或自然表达,形态同 checkIn' },
+      adults: { type: 'integer', description: '成人数(顶层字段,默认 2)' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ destination?: string; checkIn?: string; checkOut?: string; adults?: number }>(args, 'destination')
+    async execute(args, _exec) {
+      const q = args
       if (!q.destination) throw new Error('gotry_hotel_search requires destination')
       const started = Date.now()
       const fallbackPath = join(import.meta.dirname, '..', '..', 'data', 'hotels_2026.json')
@@ -631,7 +709,7 @@ export function apply(ctx: Context, config: Config): void {
       } as never
       return JSON.parse(JSON.stringify(payload)) as never
     },
-    presentCall: args => ({ card: 'generic', title: `酒店搜索:${String((args.query as { destination?: string })?.destination ?? '')}`, kind: 'search', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `酒店搜索:${args.destination ?? ''}`, kind: 'search', rawInput: args }),
     presentResult: (_args, value) => {
       const r = value as { hotels?: unknown; via?: string; destination?: string; summary?: string }
       const h = r.hotels
@@ -677,24 +755,26 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_weather_check',
-    description:
+    description: routed('gotry_weather_check',
       'Check weather for a destination: forecast (≤16 days) or historical climate (seasonality baseline). '
       + 'Free Open-Meteo API, no key required. Input: place name (Chinese ok) or lat/lng. '
       + 'Returns daily temp range, precipitation probability, weather code — with evidence chain tagging '
-      + '[实时API:open-meteo@ts]. Use to ground seasonal advice in real data instead of LLM guessing.',
+      + '[实时API:open-meteo@ts]. Use to ground seasonal advice in real data instead of LLM guessing.'),
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ place: "<城市名>", month?: 8, mode?: "forecast"|"climate", days?: 7 }',
-      },
+      // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(同 flyai 刀法)。
+      place: { type: 'string', description: '城市名(中文可),如 大理;与 lat/lng 二选一,都没给 execute 结构化报错' },
+      lat: { type: 'number', description: '纬度(与 lng 成对;给了则跳过地理编码)' },
+      lng: { type: 'number', description: '经度(与 lat 成对)' },
+      month: { type: 'integer', description: '气候基线月份 1-12(mode=climate 或给了 month 未指 mode 时用)' },
+      mode: { type: 'string', enum: ['forecast', 'climate'], description: '默认 forecast' },
+      days: { type: 'integer', description: '预报天数(≤16,默认 7)' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ place?: string; lat?: number; lng?: number; month?: number; mode?: string; days?: number }>(args, 'place')
+    async execute(args, _exec) {
+      const q = args
       const started = Date.now()
       let lat: number | undefined = q.lat, lng: number | undefined = q.lng
       let placeLabel = q.place ?? `${q.lat},${q.lng}`
@@ -729,10 +809,10 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `天气:${String((args.query as { place?: string })?.place ?? '')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `天气:${args.place ?? `${args.lat ?? ''},${args.lng ?? ''}`}`, kind: 'fetch', rawInput: args }),
     presentResult: (args, value) => {
       const r = value as { summary?: string }
-      const place = String((args.query as { place?: string })?.place ?? '')
+      const place = String(args.place ?? '')
       const failed = String(r.summary ?? '').includes('降级') || String(r.summary ?? '').includes('unavailable')
       return {
         card: 'generic',
@@ -744,7 +824,7 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_flight_verify',
-    description:
+    description: routed('gotry_flight_verify',
       'Verify whether a flight callsign is currently observable on the OpenSky ADS-B network. '
       + 'Free anonymous API (~400 credits/day, 4 req/s burst). Three-valued semantics: '
       + 'observed = strong positive (the aircraft is currently being broadcast); '
@@ -752,20 +832,19 @@ export function apply(ctx: Context, config: Config): void {
       + 'a missing signal does NOT disprove the flight); '
       + 'unavailable = API failure, gracefully degraded. '
       + 'Use to ground "is this flight actually flying right now?" in real data, complementing '
-      + 'the OpenFlights skeleton (historical connectivity) and the static flight pack (planned schedule).',
+      + 'the OpenFlights skeleton (historical connectivity) and the static flight pack (planned schedule).'),
+    // D-30 第四刀(issue #112):平铺 typed;callsign required → 宿主权即拒
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ callsign: "EK329", airport?: "OMDB", timeoutMs?: 10000 }',
-      },
+      callsign: { type: 'string', required: true, description: '航班呼号,如 EK329' },
+      airport: { type: 'string', description: '预期机场 IATA,如 OMDB(观测命中时展示)' },
+      timeoutMs: { type: 'integer', description: '超时毫秒,默认 10000' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 500)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ callsign: string; airport?: string; timeoutMs?: number }>(args, 'callsign')
+    async execute(args, _exec: unknown) {
+      const q = args
       const started = Date.now()
       if (!q.callsign) {
         return JSON.parse(JSON.stringify({ verdict: 'unavailable', evidence: '[校验不可用:无 callsign]', summary: 'callsign 必填' })) as Record<string, never>
@@ -787,24 +866,35 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `飞行校验:${String((args.query as { callsign?: string })?.callsign ?? '')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `飞行校验:${args.callsign ?? ''}`, kind: 'fetch', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
     name: 'gotry_flyai_search',
-    description:
+    description: routed('gotry_flyai_search',
       'Live travel search through the Fliggy official FlyAI channel (read-only, no key; booking/comparison happens by the HUMAN on the jumpUrl page). '
-      + 'kind="flight"|"train": { kind, from, to, date } (中文城市名, date YYYY-MM-DD) — real schedules & prices, split 直达/中转 in results. '
-      + 'kind="hotel": { kind:"hotel", to:"大理"(目的地中文), checkIn?, checkOut? (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords? }. '
+      + 'kind="flight"|"train": from/to 中文城市名 + date YYYY-MM-DD — real schedules & prices, split 直达/中转 in results. '
+      + 'kind="hotel": to=目的地中文(如 大理), checkIn/checkOut (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords?. '
       + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
       + 'Evidence [实时API:flyai@ts]. verdict=needs-setup (anonymous trial quota exhausted, upstream 429) is a CONFIG issue, not a search failure: surface the setup hint once, do NOT retry this tool this session — switch to gotry_session_search or web search. '
-      + 'Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.',
+      + 'Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.'),
+    // D-30 第一刀(issue #112):query json blob → 平铺 typed 契约。逐字段 schema 由 dsh
+    // parameterSchemaSpecToJsonSchema 投影为模型可见 JSON Schema,validateArgs 在 execute 前
+    // 宿主权校验——畸形参数(缺 kind/枚举外值/类型错/legacy blob 包裹)在入口即被结构化拒绝
+    // (ToolArgsError → guardToolExecute 兜成 ADR-13 ToolFailure,形状由迁移测试锁死)。
+    // 条件必填(机/火要 from/to/date,酒店要 to)不在 schema 强制,仍由 execute 结构化报错给方向。
     parameters: {
-      query: { type: 'json', required: true, description: 'kind=flight|train: { kind, from: "上海", to: "丽江", date: "2026-10-01" }; kind="hotel": { kind:"hotel", to:"大理", checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", keyWords?: "洱海" }' },
+      kind: { type: 'string', enum: ['flight', 'train', 'hotel'], required: true, description: '检索类型:flight 机票 / train 火车 / hotel 酒店' },
+      from: { type: 'string', description: '出发城市中文,如 上海——kind=flight|train 必填' },
+      to: { type: 'string', description: '到达城市中文,如 丽江;kind=hotel 时为目的地,如 大理(必填)' },
+      date: { type: 'string', description: '出发日期 YYYY-MM-DD——kind=flight|train 必填,须为今天或未来' },
+      checkIn: { type: 'string', description: '入住日期 YYYY-MM-DD,仅 kind=hotel;与 checkOut 成对可选(未定档期可不填先摸底)' },
+      checkOut: { type: 'string', description: '退房日期 YYYY-MM-DD,仅 kind=hotel;与 checkIn 成对' },
+      keyWords: { type: 'string', description: '酒店关键词,如 洱海——仅 kind=hotel 可选' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; checkIn?: string; checkOut?: string; keyWords?: string }>(args, 'from')
+    async execute(args, _exec) {
+      const q = args
       if (q.kind === 'hotel') {
         const dest = (q.to ?? '').trim()
         if (!dest) return { ok: false, summary: 'kind=hotel 需要 to(目的地中文,如 大理)' } as const
@@ -828,13 +918,19 @@ export function apply(ctx: Context, config: Config): void {
         const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords } })
         if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
         const r = itp.result
+        await noteChannel('flyai', r.verdict)
+        // D-26(issue #118):exact-date 酒店检索 hit/miss 落账(摸底无档期不落,传输失败不落负事实)
+        await appendFacts(config.stateRoot ?? '.', factsFromHotel({
+          source: 'flyai-hotel', destination: dest, checkIn: q.checkIn, checkOut: q.checkOut,
+          verdict: r.verdict, options: r.hotels?.length ?? 0, evidence: r.evidence, fetchedAt: new Date().toISOString(),
+        }))
         const top = (r.hotels ?? []).slice(0, 8).map(o => `${o.name}${o.star ? `(${o.star})` : ''} ${o.priceRaw ?? '价待询'}${o.poi ? ` · ${o.poi}` : ''}`)
         const summary = r.verdict === 'hit'
           ? `${dest} 酒店(飞猪官方只读)前 ${top.length} 家(价格多为打码,真实价以 jumpUrl 为准):\n${top.join('\n')}\n${r.evidence}`
           : r.verdict === 'needs-setup'
             ? `${dest} 酒店检索未发起(配置问题,非检索失败):${r.error ?? ''}\n${r.setup ?? ''}\n状态体检可调 gotry_doctor。${r.evidence}`
             : `${dest} 酒店无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
-        return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+        return JSON.parse(JSON.stringify({ ...r, summary, ...(r.verdict !== 'hit' ? routingField('search-hotel', 'flyai') : {}) })) as Record<string, never>
       }
       const kind = q.kind === 'train' ? 'train' : 'flight'
       if (!q.from || !q.to || !q.date) {
@@ -855,6 +951,7 @@ export function apply(ctx: Context, config: Config): void {
       const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind, origin: q.from, destination: q.to, depDate: q.date } })
       if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
       const r = itp.result
+      await noteChannel('flyai', r.verdict)
       // issue #46 事实落账(ADR-19):exact-date 检索结论(hit 正事实 / miss 负事实)追加进
       // bookable-facts 侧车——产物事实闸(gotry_fact_gate)的唯一事实源;落盘失败不阻塞检索
       const avMap = await loadAirlineAirportMap()
@@ -870,12 +967,14 @@ export function apply(ctx: Context, config: Config): void {
           : r.verdict === 'needs-setup'
             ? `${q.from}→${q.to} ${q.date} ${label}检索未发起(配置问题,非检索失败):${r.error ?? ''}\n${r.setup ?? ''}\n状态体检可调 gotry_doctor。${r.evidence}`
             : `${q.from}→${q.to} ${q.date} ${label}检索失败(可能限流/网络):${r.error ?? ''} ${r.evidence}`
-      return JSON.parse(JSON.stringify({ ...r, kind, summary })) as Record<string, never>
+      return JSON.parse(JSON.stringify({
+        ...r, kind, summary,
+        ...(r.verdict !== 'hit' ? routingField(kind === 'train' ? 'search-train' : 'search-flight', 'flyai') : {}),
+      })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `官方检索:${String((args.query as { kind?: string })?.kind ?? 'flight')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `官方检索:${args.kind}`, kind: 'fetch', rawInput: args }),
     presentResult: (args, value) => {
-      const kindQ = String((args.query as { kind?: string })?.kind)
-      const isHotel = kindQ === 'hotel'
+      const isHotel = args.kind === 'hotel'
       const r = value as { ok?: boolean; options?: unknown[]; hotels?: unknown[] }
       const n = Math.max((r.options ?? []).length, (r.hotels ?? []).length)
       return { card: 'generic', title: `${isHotel ? '飞猪酒店' : '飞猪检索'}:${r.ok && n > 0 ? `${n} 条` : '降级'}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
@@ -891,13 +990,17 @@ export function apply(ctx: Context, config: Config): void {
       + 'Transport: the GoTry Session Bridge browser extension (one-time install, ZERO Chrome system dialogs). '
       + `verdict logged-in (tickets detected) | pending (login tab opened, user not done yet — offer to re-check later) | needs-extension (one-time extension install: the verdict surfaces the Chrome Web Store installUrl as a clickable link for dsh UI to render — installation is a browser concern, not gotry's). `
       + 'Evidence [会话:<site>-login@ts].',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
-      query: { type: 'json', required: true, description: '可空对象 {}: { waitSeconds?: number }(等待用户完成登录的上限秒数,默认 90,至多 300)' },
+      waitSeconds: { type: 'integer', description: '等待用户完成登录的上限秒数,默认 90,至多 300;不传用默认' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { evidence?: string }).evidence ?? JSON.stringify(v).slice(0, 600)) }] },
-    async execute(args: { query?: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ waitSeconds?: number }>(args, 'waitSeconds')
-      const r = await sessionLogin({ waitMs: typeof q?.waitSeconds === 'number' ? q.waitSeconds * 1000 : undefined })
+      // D-23 收编(issue #115):登录引导入效应注册表(SESSION_LOGIN,浏览器族永不重试不熔断)
+      const itpL = await interpretEffect({ effect: 'SESSION_LOGIN', params: { waitSeconds: q?.waitSeconds } })
+      if (!itpL.result) return declinedObservation('SESSION_LOGIN', itpL.trace)
+      const r = itpL.result
       const summary = r.verdict === 'logged-in'
         ? `${r.site} 登录完成确认(票据 cookie 名已检出,只读名字)。说明:登录是在携程官网、用你自己的浏览器完成的——gotry 全程未接触任何密码/验证码/cookie 值。现在可以继续会话检索了。${r.evidence}`
         : r.verdict === 'pending'
@@ -930,22 +1033,36 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_session_search',
-    description:
+    description: routed('gotry_session_search',
       'Search on the USER\'S OWN browser session (Ctrip kind="flight"(default)/"hotel"; 12306 kind="train" — public query face, no login needed). '
       + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'Transport: GoTry Session Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
-      + 'kind="flight": { from, to, date } — sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
-      + 'kind="hotel": { to, cityId?, checkIn?, checkOut?, adults? } — cityId = the numeric city= in a hotels.ctrip.com list URL (web-search it when the destination is outside the built-in city table); hotel prices are the user\'s real logged-in prices. Evidence [会话:ctrip-hotel@ts]. '
-      + 'kind="train": { from, to, date, fromStationTelecode?, toStationTelecode? } — 12306 left-ticket query (public face): train codes, times, durations, seat availability; the list API carries NO prices (prices live on the 12306 page). Evidence [会话:train-12306@ts]. '
+      + 'kind="flight": from/to 中文城市名 + date YYYY-MM-DD — sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
+      + 'kind="hotel": to=目的地中文, cityId? = the numeric city= in a hotels.ctrip.com list URL (web-search it when the destination is outside the built-in city table), checkIn?/checkOut? (YYYY-MM-DD), adults?; hotel prices are the user\'s real logged-in prices. Evidence [会话:ctrip-hotel@ts]. '
+      + 'kind="train": from/to/date(YYYY-MM-DD) + fromStationTelecode?/toStationTelecode? (three-letter codes in the kyfw query URL, for cities outside the built-in table) — 12306 left-ticket query (public face): train codes, times, durations, seat availability; the list API carries NO prices (prices live on the 12306 page). Evidence [会话:train-12306@ts]. '
       + 'verdict needs-login = call gotry_session_login (opens the Ctrip login entry in the user\'s own foreground tab — no terminal, no credentials through GoTry); '
       + `needs-extension = one-time browser-extension install (Chrome Web Store one-click, installUrl is also surfaced as a clickable link in the verdict field for dsh UI to render) — the DEFAULT transport; cdp (chrome://inspect remote debugging) is a diagnostic fallback only via GOTRY_SESSION_TRANSPORT=cdp. `
-      + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).',
+      + 'Rate-limited (≥30s between same-site calls; a challenged/timeout verdict means STOP — never retry, fall back to other tools).'),
+    // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(逐字段 schema 模型可见)。
+    // 与 flyai 刀的差异:本工具三意图无公共 required 字段(kind 缺省=flight),根 schema 是
+    // 隐式开放对象,宿主权无法用 required 拒 legacy blob——故保留 interpretArgs 容忍层
+    // (docs/design/tool-orchestration-design.md §4③「interpretArgs 留作旧形态容忍层」),blob 调用在
+    // execute 内归一后走原条件闸,结构化报错不崩。flyai 因 kind required 仍在宿主权即拒。
     parameters: {
-      query: { type: 'json', required: true, description: 'kind=flight(默认): { from: "上海", to: "丽江", date: "2026-10-01" }; kind=hotel: { kind: "hotel", to: "迪拜", cityId?: 220, checkIn?: "YYYY-MM-DD", checkOut?: "YYYY-MM-DD", adults?: 2 }; kind=train: { kind: "train", from: "上海", to: "昆明", date: "2026-10-01", fromStationTelecode?: "SHH", toStationTelecode?: "KMM" }' },
+      kind: { type: 'string', enum: ['flight', 'hotel', 'train'], description: '默认 flight 机票;hotel 携程酒店(用户登录态真实价);train 12306 余票(公开面)' },
+      from: { type: 'string', description: '出发城市中文(词表内),如 上海——kind=flight|train 必填' },
+      to: { type: 'string', description: '到达城市中文——kind=flight|train 必填;kind=hotel 时为目的地(必填)' },
+      date: { type: 'string', description: '出发日期 YYYY-MM-DD——kind=flight|train 必填,须为今天或未来' },
+      cityId: { type: 'integer', description: '携程酒店 city= 数字,仅 kind=hotel;目的地码表外时 web 搜 hotels.ctrip.com list URL 取 city=' },
+      checkIn: { type: 'string', description: '入住日 YYYY-MM-DD,仅 kind=hotel 可选' },
+      checkOut: { type: 'string', description: '退房日 YYYY-MM-DD,仅 kind=hotel 可选' },
+      adults: { type: 'integer', description: '成人数,仅 kind=hotel 可选' },
+      fromStationTelecode: { type: 'string', description: '出发站三位电报码,仅 kind=train;城市码表外时填(kyfw 查询页 URL 里)' },
+      toStationTelecode: { type: 'string', description: '到达站三位电报码,仅 kind=train,同上' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; cityId?: number | string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string }>(args, 'from')
+    async execute(args, _exec) {
+      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; cityId?: number | string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string }>(args)
       // ---- 会话酒店(2026-09-03 实装;2026-09-02 迪拜 session:用户要携程找酒店,会话面却只有机票)----
       // ---- 会话火车(2026-09-03 实装;12306 公开查询面,无登录闸)----
       if (q.kind === 'train') {
@@ -970,13 +1087,17 @@ export function apply(ctx: Context, config: Config): void {
         })
         if (!itpT.result) return declinedObservation('SESSION_TRAIN_SEARCH', itpT.trace)
         const rT = itpT.result
+        await noteChannel('session:12306-train', rT.verdict)
         const topT = (rT.trains ?? []).slice(0, 10).map(t => `${t.trainCode} ${t.depTime}→${t.arrTime} 历时${Math.round(t.durationMin / 60 * 10) / 10}h ${t.canWebBuy === 'Y' ? '可订' : t.canWebBuy}${Object.entries(t.seats).filter(([, v]) => v && v !== '--' && v !== '无').slice(0, 3).map(([k, v]) => `${k}:${v}`).join(' ')}`)
         const summaryT = rT.verdict === 'hit'
           ? `${q.from}→${q.to} ${q.date} 余票(12306 公开查询面,${(rT.trains ?? []).length} 趟)前 ${topT.length} 条(列表接口不含票价,票价以 12306 落地页为准):\n${topT.join('\n')}\n${rT.evidence}`
           : rT.verdict === 'cooldown'
             ? `会话火车检索节律闸冷却中(两次会话检索需 ≥30s 间隔)——稍候重试或先用其他工具推进。${rT.evidence}`
             : `会话火车检索未取回(${rT.verdict}):${rT.error ?? ''} ${rT.evidence}`
-        return JSON.parse(JSON.stringify({ ...rT, summary: summaryT })) as Record<string, never>
+        return JSON.parse(JSON.stringify({
+          ...rT, summary: summaryT,
+          ...(rT.verdict !== 'hit' ? routingField('search-train', 'session:12306-train') : {}),
+        })) as Record<string, never>
       }
       if (q.kind === 'hotel') {
         if (!q.to) {
@@ -991,13 +1112,24 @@ export function apply(ctx: Context, config: Config): void {
         })
         if (!itp.result) return declinedObservation('SESSION_HOTEL_SEARCH', itp.trace)
         const r = itp.result
+        await noteChannel('session:ctrip-hotel', r.verdict)
+        // D-26(issue #118):exact-date 会话酒店 hit/miss 落账(摸底无档期不落;cooldown 是节律闸非结论,不落)
+        if (r.verdict === 'hit' || r.verdict === 'miss') {
+          await appendFacts(config.stateRoot ?? '.', factsFromHotel({
+            source: 'session:ctrip-hotel', destination: q.to ?? '', checkIn: q.checkIn, checkOut: q.checkOut,
+            verdict: r.verdict, options: r.hotels?.length ?? 0, evidence: r.evidence, fetchedAt: new Date().toISOString(),
+          }))
+        }
         const top = (r.hotels ?? []).slice(0, 8).map(h => `${h.name}${h.star ? `(${h.star}星)` : ''} ${h.priceRaw ?? (h.price > 0 ? `¥${h.price}` : '价待询')}${h.score ? ` 评分${h.score}` : ''}`)
         const summary = r.verdict === 'hit'
           ? `${q.to} 酒店(携程,用户本人登录态,真实价)前 ${top.length} 家(预订以 jumpUrl 落地页为准):\n${top.join('\n')}\n${r.evidence}`
           : r.verdict === 'cooldown'
             ? `会话酒店检索节律闸冷却中(两次会话检索需 ≥30s 间隔)——稍候重试或先用其他工具推进。${r.evidence}`
             : `会话酒店检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
-        return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+        return JSON.parse(JSON.stringify({
+          ...r, summary,
+          ...(r.verdict !== 'hit' ? routingField('search-hotel', 'session:ctrip-hotel') : {}),
+        })) as Record<string, never>
       }
       if (!q.from || !q.to || !q.date) {
         return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD);酒店/火车检索分别用 kind=hotel / kind=train' } as const
@@ -1014,6 +1146,7 @@ export function apply(ctx: Context, config: Config): void {
       })
       if (!itp.result) return declinedObservation('SESSION_FLIGHT_SEARCH', itp.trace)
       const r = itp.result
+      await noteChannel('session:ctrip-flight', r.verdict)
       // issue #46 事实落账(ADR-19):会话面 exact-date 结论同样进事实注册表(独立 source 并列标注)
       const avMapS = await loadAirlineAirportMap()
       await appendFacts(config.stateRoot ?? '.', factsFromSession({ origin: q.from, destination: q.to, date: q.date }, r, new Date().toISOString(), avMapS?.city_alias))
@@ -1021,17 +1154,18 @@ export function apply(ctx: Context, config: Config): void {
       const summary = r.verdict === 'hit'
         ? `${q.from}→${q.to} ${q.date} 会话检索(携程,用户本人登录态)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
         : `会话检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
-      return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+      return JSON.parse(JSON.stringify({
+        ...r, summary,
+        ...(r.verdict !== 'hit' ? routingField('search-flight', 'session:ctrip-flight') : {}),
+      })) as Record<string, never>
     },
     presentCall: args => {
-      const q = (args.query as { kind?: string; from?: string; to?: string }) ?? {}
-      const callTitle = q.kind === 'hotel' ? `会话酒店:${q.to ?? ''}` : q.kind === 'train' ? `会话火车:${q.from ?? ''}` : `会话检索:${q.from ?? ''}`
-      return { card: 'generic', title: callTitle, kind: 'fetch', rawInput: args.query }
+      const callTitle = args.kind === 'hotel' ? `会话酒店:${args.to ?? ''}` : args.kind === 'train' ? `会话火车:${args.from ?? ''}` : `会话检索:${args.from ?? ''}`
+      return { card: 'generic', title: callTitle, kind: 'fetch', rawInput: args }
     },
     presentResult: (args, value) => {
       const r = value as { verdict?: string; options?: unknown[]; hotels?: unknown[]; installUrl?: string }
-      const kindQ = String((args.query as { kind?: string })?.kind)
-      const isHotel = kindQ === 'hotel'
+      const isHotel = args.kind === 'hotel'
       const n = Math.max((r.options ?? []).length, (r.hotels ?? []).length)
       const needsExt = r.verdict === 'needs-extension'
       const label = r.verdict === 'hit'
@@ -1043,39 +1177,42 @@ export function apply(ctx: Context, config: Config): void {
             : r.verdict ?? '降级'
       const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }]
       if (needsExt && r.installUrl) content.push({ type: 'text', text: `安装链接:${r.installUrl}` })
-      const face = kindQ === 'hotel' ? '会话酒店' : kindQ === 'train' ? '会话火车' : '会话检索'
+      const face = args.kind === 'hotel' ? '会话酒店' : args.kind === 'train' ? '会话火车' : '会话检索'
       return { card: 'generic', title: `${face}:${label}`, content }
     },
   }))
 
   registerGuarded(defineTool({
     name: 'gotry_anything_search',
-    description:
+    description: routed('gotry_anything_search',
       'Travel-domain search via hotel-byte CLI → hotel-be Anything (cities/hotels/destinations) — NOT general web search; for general internet facts use gotry_agent_reach. ' +
       'Mixed destinations (cities / metropolitan areas / high-level regions) + hotels in one call. ' +
       'Returns candidates with type, name, optional coordinates and hotel-id. ' +
       'Three-valued semantics: hit = ≥1 candidate; miss = 0 candidates (try synonyms or contentType=city/hotel); ' +
       'unavailable = hbcli failed (degraded, never blocks). ' +
       'Use as the first stop when the user mentions a place/city/hotel name and you need to ground it in real catalog data ' +
-      '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region).',
+      '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region).'),
+    // D-30 第四刀(issue #112):平铺 typed;keyword required → 宿主权即拒
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ keyword: "<搜索关键词>", contentType?: "city"|"hotel", parentDestinationId?: "?", timeoutMs?: 12000 }',
-      },
+      keyword: { type: 'string', required: true, description: '搜索关键词' },
+      contentType: { type: 'string', enum: ['city', 'hotel'], description: '内容类型(缺省由上游推断)' },
+      parentDestinationId: { type: 'string', description: '父目的地 id(上游形态)' },
+      timeoutMs: { type: 'integer', description: '超时毫秒,默认 12000' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ keyword: string; contentType?: 'city' | 'hotel'; parentDestinationId?: string | number; timeoutMs?: number }>(args, 'keyword')
+    async execute(args, _exec: unknown) {
+      const q = args
+      const rawQuery = String(q.keyword ?? '')
       const started = Date.now()
       if (!q.keyword) {
         return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', summary: 'keyword 必填', evidence: '[hbcli-anything@error] empty' })) as Record<string, never>
       }
-      const r = await anythingSearch(q)
+      const itpA = await interpretEffect({ effect: 'ANYTHING_SEARCH', params: q })
+      if (!itpA.result) return declinedObservation('ANYTHING_SEARCH', itpA.trace)
+      const r = itpA.result
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `anything:${r.via}`).catch(() => {})
       const top5 = (r.hits ?? []).slice(0, 5)
@@ -1091,7 +1228,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `Anything search:${String((args.query as { keyword?: string })?.keyword ?? '')}`, kind: 'search', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `Anything search:${args.keyword ?? ''}`, kind: 'search', rawInput: args }),
     presentResult: (_args, value) => {
       const r = value as { hits?: unknown[]; total_candidates?: number; verdict?: string; keyword?: string; summary?: string }
       const n = Array.isArray(r.hits) ? r.hits.length : (r.total_candidates ?? 0)
@@ -1105,30 +1242,30 @@ export function apply(ctx: Context, config: Config): void {
 
   registerGuarded(defineTool({
     name: 'gotry_web_search',
-    description:
+    description: routed('gotry_web_search',
       'Read any public URL as markdown (Jina Reader, free, no key). ' +
       'Use as the "last mile" web reader when hotel-be Anything or gotry tools lack the answer. ' +
       'NOT a general-purpose search engine — only fetches a URL you already know. ' +
       'Three-valued: ok / error(非法 URL/超时)/not-reachable(r.jina.ai 不可用).' +
-      'Contract with gotry capabilities/anything.ts: 同构(L4 证据链 + 降级不阻塞 + 三值)。',
+      'Contract with gotry capabilities/anything.ts: 同构(L4 证据链 + 降级不阻塞 + 三值)。'),
+    // D-30 第四刀(issue #112):平铺 typed;url required → 宿主权即拒(字符串 blob 形态退役)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ url: "https://example.com", timeoutMs?: 20000 }',
-      },
+      url: { type: 'string', required: true, description: '完整 URL,https://…' },
+      timeoutMs: { type: 'integer', description: '超时毫秒,默认 20000' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content?.slice(0, 800) ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ url?: string; timeoutMs?: number }>(args, 'url')
+    async execute(args, _exec: unknown) {
+      const q = args
       const started = Date.now()
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填', evidence: '[agent-reach:error] empty url' })) as Record<string, never>
       }
-      const r = await readUrl({ url: q.url, timeoutMs: q.timeoutMs })
+      const itpW = await interpretEffect({ effect: 'WEB_READ', params: { url: q.url, timeoutMs: q.timeoutMs } })
+      if (!itpW.result) return declinedObservation('WEB_READ', itpW.trace)
+      const r = itpW.result
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `agent-reach:${r.via}`).catch(() => {})
       const summary = r.ok
@@ -1140,7 +1277,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `读网页:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `读网页:${args.url ?? ''}`, kind: 'fetch', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -1150,23 +1287,23 @@ export function apply(ctx: Context, config: Config): void {
       'If yt-dlp is installed on this machine, returns the subtitle text (vtt, zh-Hans/zh/en preference). ' +
       'If NOT installed, degrades gracefully with install instructions — never blocks. ' +
       'Evidence chain: [agent-reach:yt-dlp@ts] / [@not-installed@ts].',
+    // D-30 第四刀(issue #112):平铺 typed;url required → 宿主权即拒
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ url: "https://www.youtube.com/watch?v=...", lang?: "zh-Hans,zh,en" }',
-      },
+      url: { type: 'string', required: true, description: '视频页 URL(youtube 等)' },
+      lang: { type: 'string', description: '字幕语言优先级,如 zh-Hans,zh,en' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ url?: string; lang?: string }>(args, 'url')
+    async execute(args, _exec: unknown) {
+      const q = args
       if (!q.url) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'url 必填' })) as Record<string, never>
       }
-      const r = await videoSubtitle({ url: q.url, lang: q.lang })
+      const itpV = await interpretEffect({ effect: 'VIDEO_SUBTITLE', params: { url: q.url, lang: q.lang } })
+      if (!itpV.result) return declinedObservation('VIDEO_SUBTITLE', itpV.trace)
+      const r = itpV.result
       const summary = r.verdict === 'found'
         ? `${q.url} 字幕提取成功 (${r.latencyMs}ms)\n${r.evidence}\n---\n${(r.subtitles ?? '').slice(0, 800)}`
         : r.verdict === 'not-installed'
@@ -1178,7 +1315,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: r.latencyMs,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `视频字幕:${String((args.query as { url?: string })?.url ?? '')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `视频字幕:${args.url ?? ''}`, kind: 'fetch', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -1188,23 +1325,23 @@ export function apply(ctx: Context, config: Config): void {
       'If gh is installed and authenticated, returns repos with name/description/stars/url. ' +
       'If NOT installed, degrades with install instructions — never blocks. ' +
       'Evidence chain: [agent-reach:gh@ts] / [@not-installed@ts].',
+    // D-30 第四刀(issue #112):平铺 typed;query required → 宿主权即拒(顶层字段与旧内层同名,形态从对象变字符串)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ query: "agent-reach", limit?: 5 }',
-      },
+      query: { type: 'string', required: true, description: 'GitHub 搜索关键词,如 agent-reach' },
+      limit: { type: 'integer', description: '结果数上限,默认 5' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ query?: string; limit?: number }>(args, 'query')
+    async execute(args, _exec: unknown) {
+      const q = args
       if (!q.query) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'query 必填' })) as Record<string, never>
       }
-      const r = await githubSearch({ query: q.query, limit: q.limit })
+      const itpG = await interpretEffect({ effect: 'GITHUB_SEARCH', params: { query: q.query, limit: q.limit } })
+      if (!itpG.result) return declinedObservation('GITHUB_SEARCH', itpG.trace)
+      const r = itpG.result
       const summary = r.verdict === 'found'
         ? `${q.query} → ${r.repos?.length ?? 0} repos\n${(r.repos ?? []).map((x, i) => `  ${i + 1}. ${x.name} ★${x.stars ?? '?'} — ${(x.description ?? '').slice(0, 60)}`).join('\n')}\n${r.evidence}`
         : r.verdict === 'not-installed'
@@ -1216,7 +1353,7 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: r.latencyMs,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `GitHub 搜索:${String((args.query as { query?: string })?.query ?? '')}`, kind: 'search', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `GitHub 搜索:${args.query ?? ''}`, kind: 'search', rawInput: args }),
   }))
 
   registerGuarded(defineTool({
@@ -1230,24 +1367,31 @@ export function apply(ctx: Context, config: Config): void {
       'Action "status" runs the real `agent-reach doctor` (.venv/bin/agent-reach). ' +
       'Channels needing cookies/setup return the upstream check() guidance verbatim — do NOT give up there: hand the user the exact configure command, then offer to re-check. ' +
       'Evidence chain: [agent-reach:<channel>.<method>@ts].',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层。
+    // action 不设 enum:反射桥按 D-4a' 透传上游新增渠道/方法,gotry 零改动(生态开放面)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ action: "status" } 或 { action: "reach", channel: "<上游渠道名,如 web/v2ex/xueqiu>", method: "<上游方法名,如 read/get_hot_topics/get_stock_quote>", args?: "<空格分隔参数>" }',
-      },
+      action: { type: 'string', description: 'status(默认,无 channel 时)或 reach' },
+      channel: { type: 'string', description: '上游渠道名,如 web/v2ex/xueqiu(action=reach 时)' },
+      method: { type: 'string', description: '上游方法名,如 read/get_hot_topics/get_stock_quote' },
+      args: { type: 'string', description: '空格分隔参数' },
+      timeoutMs: { type: 'integer', description: '超时毫秒' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }>(args, 'channel')
+    async execute(args, _exec: unknown) {
+      const q = unwrapQuery<{ action?: string; channel?: string; method?: string; args?: string; timeoutMs?: number }>(args)
       const started = Date.now()
       const dir = await ensureStateDir(config.stateRoot)
 
+      // D-23 收编(issue #115):status/reach 两分支收敛为单一 AGENT_REACH 效应——
+      // 解译器横切(trace/declined 面)统一,渲染逻辑留在工具层不变
+      const itpAR = await interpretEffect({ effect: 'AGENT_REACH', params: { action: q.action, channel: q.channel, method: q.method, args: q.args, timeoutMs: q.timeoutMs } })
+      if (!itpAR.result) return declinedObservation('AGENT_REACH', itpAR.trace)
+
       if (q.action === 'status' || (!q.action && !q.channel)) {
-        const st = await reachStatus(q.timeoutMs)
+        const st = itpAR.result as Awaited<ReturnType<typeof reachStatus>>
         await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'agent-reach:doctor').catch(() => {})
         const summary = st.via === 'agent-reach-cli'
           ? `Agent Reach doctor(上游 CLI,原样透传):\n${st.output}\n${st.evidence}`
@@ -1261,7 +1405,7 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.channel || !q.method) {
         return JSON.parse(JSON.stringify({ ok: false, summary: 'channel 与 method 必填(或 action=status);清单可先随便调一次,inventory 会带回上游渠道/方法表' })) as Record<string, never>
       }
-      const r = await reach({ channel: q.channel, method: q.method, args: q.args, timeoutMs: q.timeoutMs })
+      const r = itpAR.result as Awaited<ReturnType<typeof reach>>
       // 长结果干净截断:数组按条目边界保留(dsh 工具上限会拦腰断 JSON,模型只能看到半条)
       const dataStr = (v: unknown): unknown => {
         if (Array.isArray(v)) {
@@ -1295,10 +1439,10 @@ export function apply(ctx: Context, config: Config): void {
         latency_ms: Date.now() - started,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `Agent Reach:${String((args.query as { channel?: string; method?: string })?.channel ?? '')}.${String((args.query as { method?: string })?.method ?? 'status')}`, kind: 'fetch', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `Agent Reach:${String(args.channel ?? '')}.${String(args.method ?? 'status')}`, kind: 'fetch', rawInput: args }),
     presentResult: (args, value) => {
       const r = value as { verdict?: string; summary?: string }
-      const q = (args.query as { channel?: string; method?: string }) ?? {}
+      const q = (args as { channel?: string; method?: string }) ?? {}
       const icon = r.verdict === 'found' ? '✅' : r.verdict === 'needs-setup' ? '🔧' : r.verdict === 'not-installed' ? '📦' : '❌'
       return {
         card: 'generic',
@@ -1314,25 +1458,22 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_doctor',
     description:
-      'Check optional-dependency health for ALL gotry tools (read-only, never installs): GoTry Session Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key / dsh-better-sidebar. '
+      'Check optional-dependency health for ALL gotry tools (read-only, never installs): GoTry Session Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key + recent trial-quota exhaustion time / dsh-calendar mount state / dsh-better-sidebar. '
       + 'Call this when ANY gotry tool returns not-installed / needs-setup, when the user asks 「体检/依赖状态/工具为什么不可用」, or BEFORE leaning on a channel for a plan. '
       + 'Returns per-item status (ok/degraded/missing) with exact fix commands. '
       + 'Repair = `npx gotry doctor --fix` run BY THE USER in a terminal (this tool never installs anything); LLM keys are the dsh host\'s business and are deliberately out of scope. '
       + 'A markdown report is rendered for the workspace (gotry-state/doctor-report.md) so the sidebar workbench can preview it.',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ },{ 体检 } 或 { writeReport?: boolean(默认 true,把 markdown 报告写进 gotry-state/doctor-report.md,侧栏工作台可预览) }',
-      },
+      writeReport: { type: 'boolean', description: '默认 true,把 markdown 报告写进 gotry-state/doctor-report.md(侧栏工作台可预览)' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 900)) }],
     },
-    async execute(args: { query?: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ writeReport?: boolean }>(args, 'writeReport')
-      const report = await runDoctorChecks()
+      const report = await runDoctorChecks({ stateRoot: config.stateRoot ?? '.' })
       // 报告落 gotry-state(侧栏工作台预览面);写失败不阻塞体检结论本身
       let reportPath: string | undefined
       if (q?.writeReport !== false) {
@@ -1368,18 +1509,15 @@ export function apply(ctx: Context, config: Config): void {
       'in the working directory (trip plans etc.). READ-ONLY discovery. ' +
       'Use when the user asks to see/open/revisit a previously generated artifact ' +
       '(「看看刚才生成的行程」「上次的规划在哪」「打开那个 md」) — list first, then read with gotry_artifacts_read.',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ limit?: 20 }',
-      },
+      limit: { type: 'integer', description: '最多返回条数,默认 20' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ limit?: number }>(args, 'limit')
       const r = await listArtifacts({ stateRoot: config.stateRoot ?? '.', limit: q.limit })
       const lines = r.artifacts.map(a =>
@@ -1407,19 +1545,19 @@ export function apply(ctx: Context, config: Config): void {
       'Input: the path from gotry_artifacts_list, or a bare async ticket id (e.g. dp-xxxx). ' +
       'Optional offset (1-based) / limit window for paging large files. ' +
       'READ-ONLY; text artifacts only (md/txt/json/jsonl/csv/log/yaml).',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;path required → 宿主权入口拒畸形参数(同 flyai/hotel 刀法)
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ path: "<list 返回的路径或工单 id>", offset?: 1, limit?: 400 }',
-      },
+      path: { type: 'string', required: true, description: 'list 返回的路径或工单 id' },
+      offset: { type: 'integer', description: '起始行号(1 起)' },
+      limit: { type: 'integer', description: '窗口行数,默认 400' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content ?? JSON.stringify(value).slice(0, 600)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
-      const q = unwrapQuery<{ path?: string; offset?: number; limit?: number }>(args, 'path')
+    async execute(args, _exec) {
+      const q = args
+      if (!q.path) throw new Error('gotry_artifacts_read requires path')
       if (!q.path) return JSON.parse(JSON.stringify({ ok: false, error: 'path 必填(来自 gotry_artifacts_list)' })) as Record<string, never>
       const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', path: q.path, offset: q.offset, limit: q.limit })
       if (!r.ok) return JSON.parse(JSON.stringify(r)) as Record<string, never>
@@ -1428,7 +1566,7 @@ export function apply(ctx: Context, config: Config): void {
         summary: `${r.path}(${r.totalLines} 行)第 ${r.offset}-${r.offset + r.lines.length - 1} 行${r.windowed ? `(共 ${r.totalLines} 行,可翻页)` : ''}`,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `读产物:${String((args.query as { path?: string })?.path ?? '')}`, kind: 'read', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: `读产物:${args.path ?? ''}`, kind: 'read', rawInput: args }),
     presentResult: (_args, value) => {
       const r = value as unknown as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; content?: string; error?: string }
       if (!r.ok) {
@@ -1463,18 +1601,20 @@ export function apply(ctx: Context, config: Config): void {
       + '「联程」without protected_connection=true; policy claims without 「截至 YYYY-MM-DD」; unconditional ✓ on unverified claims. '
       + 'Optional itinerary object enables machine invariants (hotel_nights + onboard_nights = total nights, O&D segments vs flight legs, '
       + 'budget floor ≥ sum of item minimums). verdict=blocked ⇒ fix or downgrade wording — never present as a verified plan.',
+    // D-30 第三刀(issue #112):query blob → 平铺 typed;markdown/path 二选一无公共 required
+    // → interpretArgs 容忍层;itinerary 保 object+additionalProperties:true(嵌套形状归一在闸内,
+    // #118 D-26 渲染原语切片再收紧),给模型「这是对象」的可见信号
     parameters: {
-      query: {
-        type: 'json',
-        required: true,
-        description: '{ markdown?: "<产物全文>", path?: "<产物路径(artifacts_list 返回的)>— 二选一", tripYear?: 2027, itinerary?: { trip_start, trip_end, stays: [{place,check_in,check_out}], onboard_nights, od_segments: [{from,to,date,mode,legs}], budget_items: [{label,min_cny,max_cny}], claimed_floor_cny? } }',
-      },
+      markdown: { type: 'string', description: '产物全文;与 path 二选一' },
+      path: { type: 'string', description: '产物路径(artifacts_list 返回的);与 markdown 二选一' },
+      tripYear: { type: 'integer', description: '行程年份,如 2027(日期归一用)' },
+      itinerary: { type: 'object', additionalProperties: true, description: '结构化行程 { trip_start, trip_end, stays:[{place,check_in,check_out}], onboard_nights, od_segments:[{from,to,date,mode,legs}], budget_items:[{label,min_cny,max_cny}], claimed_floor_cny? }' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args: { query: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       const q = unwrapQuery<{ markdown?: string; path?: string; tripYear?: number; itinerary?: Record<string, unknown> }>(args, 'markdown')
       const avMap = await loadAirlineAirportMap()
       if (!avMap) {
@@ -1496,7 +1636,7 @@ export function apply(ctx: Context, config: Config): void {
         : `事实闸 BLOCKED(${report.violations.length} 违例,${report.traceable}/${report.claims_checked} claim 可回溯)——不得宣称「已验证方案」:\n${lines.join('\n')}\n修正路径:逐条改成 exact-date 源返回的事实,或降级为「未确认/当前不可售,到 D-xx 复核」;exact-date miss 的 route+date 不得用历史班期/相邻日期/航线页填充。`
       return JSON.parse(JSON.stringify({ ok: true, ...report, summary })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: '产物事实闸', kind: 'execute', rawInput: args.query }),
+    presentCall: args => ({ card: 'generic', title: '产物事实闸', kind: 'execute', rawInput: args }),
     presentResult: (_args, value) => {
       const r = value as { verdict?: string; violations?: unknown[]; summary?: string }
       return {

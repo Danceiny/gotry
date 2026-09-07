@@ -6,7 +6,7 @@
  *   - 断路器 CircuitBreaker:closed→open→half-open,连续失败达阈值即熔断,
  *     冷却后放行单探测——保护配额与上游,拒绝也是显式结构化观察(不抛错);
  *
- * 策略边界(issue #16 三个解译器主张在本仓的保守落法,详见 docs/effect-interpreter.md):
+ * 策略边界(issue #16 三个解译器主张在本仓的保守落法,详见 docs/design/effect-interpreter.md):
  *   - 重试只属于被判定「值得重试」的瞬时失败;风控/挑战/限流类上游明确说「不」的
  *     失败(如 FlyAI Sentinel)永不重试——重试是放大器,不是修复器;
  *   - 断路器状态是进程内瞬态(同 session-search 节律闸的先例),重启即重置;

@@ -9,8 +9,8 @@
  *   1. 解析 argv + .env(provider-neutral → DEEPSEEK_API_KEY/DEEPSEEK_BASE_URL)
  *   2. 定位 dsh runtime:
  *      a. repo checkout / npm 安装 → root package 解析锁定的 @deepseek-ai/dsh
- *      b. 非 benchmark 且 root 缺失时 → legacy vendored node_modules fallback(不走 npx:
- *         dsh cordis-loader 在子 cwd 求值 plugin name,必须绝对路径 patch)
+ *      b. legacy vendored fallback 已按 D-27 移除(issue #120)——root 缺失即
+ *         fail-closed 报错指重装,不再有「解析成功却跑不起来」的玄学形态
  *   3. 运行时生成 patch(os.tmpdir):把 gotry-tools 插件路径重写为按本包
  *      位置解析的绝对路径 —— 仓内 cordis.gotry-patch.yml 里的 name 行只是
  *      占位(本机绝对路径),随 tarball 分发后对其他机器必错。
@@ -20,7 +20,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import {
   benchmarkRuntimeSupported,
@@ -39,8 +39,7 @@ const rootRequire = createRequire(join(repoRoot, 'package.json'))
 // --- 环境 .env 加载(provider-neutral) ---
 // npm 安装模式优先读用户当前目录的 .env(包目录内不该有凭证);repo 检出读仓根。
 const sourceDshEarly = resolveDshPackage(rootRequire)
-const vendoredDshEarly = !sourceDshEarly && existsSync(join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js'))
-const envCandidates = sourceCheckoutMode || vendoredDshEarly
+const envCandidates = sourceCheckoutMode || sourceDshEarly
   ? [join(repoRoot, '.env')]
   : [join(process.cwd(), '.env'), join(repoRoot, '.env')]
 const envLines = []
@@ -83,6 +82,10 @@ if (help) {
 Usage:
   gotry web                          # dsh Web UI on http://127.0.0.1:3080
   gotry setup                        # 扩展就位检查/指引(商店一键装)
+<<<<<<< HEAD
+  gotry setup calendar               # 可选日历(CalDAV 工作窗口)挂载开关:默认关;--off 关闭;--status 查看
+=======
+>>>>>>> origin/main
   gotry doctor                       # 可选依赖体检:扩展/agent-reach/hbcli/flyai/sidebar 状态 + 补装指引
   gotry doctor --fix                 # 体检 + 按报告补装(hbcli 官方脚本 / agent-reach pip / sidebar 插件)
   gotry "一段完整任务..."            # headless 一问一答
@@ -118,8 +121,7 @@ if (!supportsNodeVersion(process.versions.node)) {
   process.exit(1)
 }
 
-// --- dsh runtime 定位:root manifest/require.resolve 优先;旧 vendored 仅作 legacy fallback ---
-const vendoredDsh = join(repoRoot, 'ts/dsh-runtime/node_modules/@deepseek-ai/dsh/lib/bin.js')
+// --- dsh runtime 定位(D-27 清偿,issue #120):仅 root manifest/依赖解析;legacy vendored 回退已移除 ---
 const installedPackageMode = !sourceCheckoutMode
 const selectedDsh = selectDshRuntime({
   repoRoot,
@@ -142,7 +144,7 @@ if (!dshBin) {
     console.error('[gotry] benchmark dsh runtime unavailable')
     process.exit(1)
   }
-  console.error(`[gotry] 找不到 dsh runtime(既无 vendored ${vendoredDsh},依赖里也没有 @deepseek-ai/dsh)。`)
+  console.error('[gotry] 找不到 dsh runtime(依赖里没有 @deepseek-ai/dsh;legacy vendored 回退已按 D-27 移除)。')
   console.error('repo checkout: npm ci && npm --prefix ts ci && node scripts/build-dist.mjs;npm 安装: npm install(检查 node_modules)。')
   process.exit(1)
 }
@@ -153,12 +155,12 @@ if (benchmarkEnvironmentConfig && !benchmarkRuntimeSupported(selectedDsh)) {
 
 // --- 运行时 patch:插件路径按本包位置重写为绝对路径 ---
 // 安装包始终指向 dist/ 纯 JS(Node 拒绝 strip node_modules 下的 .ts)。
-// repo 检出仅在 vendored runtime 或显式 tsx loader 可用时走 .ts；否则
+// repo 检出仅在显式 tsx loader 可用时走 .ts；否则
 // 使用当前 worktree 已构建的 dist，避免 Node strip-only 拒绝参数属性语法。
 const distEntry = join(repoRoot, 'dist/src/index.js')
 const tsEntry = join(repoRoot, 'ts/src/index.ts')
 const tsxLoaderActive = /(?:^|\s)--(?:import|loader)(?:=|\s)(?:"[^"]*tsx[^"]*"|'[^']*tsx[^']*'|\S*tsx\S*)/.test(process.env.NODE_OPTIONS ?? '')
-const sourceTypeScriptMode = !installedPackageMode && (dshSource === 'legacy-vendored' || tsxLoaderActive)
+const sourceTypeScriptMode = !installedPackageMode && tsxLoaderActive
 const pluginEntry = !sourceTypeScriptMode && existsSync(distEntry) ? distEntry : tsEntry
 const distModuleMode = pluginEntry === distEntry
 const staticPatch = join(repoRoot, 'cordis.gotry-patch.yml')
@@ -377,6 +379,10 @@ if (!benchmarkEnvironmentConfig) {
     // npm 布局:子路径可能被 exports 挡(resolve 抛错不能留下旧值),裸包名返回真实入口
     try { mapEntry = require_.resolve('dsh-map-tools/lib/index.js') } catch { mapEntry = '' }
     if (!mapEntry) { try { mapEntry = require_.resolve('dsh-map-tools') } catch { mapEntry = '' } }
+    if (!mapEntry) {
+      // ts/node_modules 回退(source 模式:dsh-map-tools 安装在 ts/package.json)
+      try { mapEntry = require_.resolve(join(repoRoot, 'ts/node_modules/dsh-map-tools')) } catch { mapEntry = '' }
+    }
   }
 }
 // 结构化澄清卡(T2):ask_user_question 工具 + user-questions 服务,从 dsh 包
@@ -408,8 +414,16 @@ if (mapEntry) {
   patchRaw = patchRaw.replace(/\n\s*- id: dsh-map-tools\n\s*name: 'placeholder\/dsh-map-tools'\n/, '\n')
 }
 
-// dsh-calendar 宿主插件(CalDAV 工作窗口读取;未配置时工具报错降级,不挡启动)。
-// 离线预算 E2E 显式禁用可选宿主插件，避免测试依赖真实 CalDAV 账号。
+// dsh-calendar 宿主插件(CalDAV 工作窗口读取)——D-9 拍板(issue #106):默认不挂载。
+// 未配置的日历工具是纯负资产(会话中段才撞「未配置 username」报错),gotry 对它的
+// 唯一诉求(工作窗口)由访谈首轮覆盖。挂载与否由 **setup 状态面**决定(founder
+// 2026-09-03 纠偏:禁止环境变量控制产品行为;可选依赖进 setup 状态管理,与扩展
+// manifest 同居 ~/.gotry)——`npx gotry setup calendar` 写 ~/.gotry/calendar.json,
+// `--off` 删除恢复默认;doctor 报告三态。
+let calEnabled = false
+try {
+  calEnabled = JSON.parse(readFileSync(join(homedir(), '.gotry', 'calendar.json'), 'utf-8'))?.enabled === true
+} catch { /* 缺文件/坏文件 = 默认不挂载 */ }
 let calEntry = ''
 if (!benchmarkEnvironmentConfig) {
   const vendoredCal = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-calendar/lib/index.js')
@@ -420,7 +434,7 @@ if (!benchmarkEnvironmentConfig) {
     if (!calEntry) { try { calEntry = require_.resolve('dsh-calendar') } catch { calEntry = '' } }
   }
 }
-if (calEntry && process.env.GOTRY_DISABLE_OPTIONAL_CALENDAR !== '1') {
+if (calEntry && calEnabled) {
   patchRaw = patchRaw.replace(/(name:\s*)'placeholder\/dsh-calendar'/, `$1'${calEntry}'`)
 } else {
   patchRaw = patchRaw.replace(/\n\s*- id: dsh-calendar\n\s*name: 'placeholder\/dsh-calendar'\n/, '\n')
@@ -432,9 +446,21 @@ if (calEntry && process.env.GOTRY_DISABLE_OPTIONAL_CALENDAR !== '1') {
 // 两条目标在 headless/web profile 均有(dsh-base 声明 llm-deepseek、两 profile 均声明
 // agent-default-model)。llm-deepseek 目录整体替换为单条目:显式指定模型的场景多为
 // 中转/兼容端点,默认 v4-* 目录对其是误导;不硬编码上游 DEFAULT_MODELS 防漂移。
+let llmMaxTokens
 if (process.env.GOTRY_LLM_MODEL) {
+  const rawMax = process.env.LLM_MAX_TOKENS
+  if (rawMax !== undefined && rawMax !== '') {
+    llmMaxTokens = Number.parseInt(rawMax, 10)
+    if (!Number.isSafeInteger(llmMaxTokens) || llmMaxTokens <= 0) {
+      throw new Error(`invalid LLM_MAX_TOKENS: ${JSON.stringify(rawMax)} (expected a positive safe integer)`)
+    }
+  }
   const modelYaml = `'${process.env.GOTRY_LLM_MODEL.replace(/'/g, "''")}'`
-  patchRaw += `\n# LLM_MODEL 指定模型(issue #77):dsh 会话面默认模型 + 模型目录\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: ${modelYaml}\n- id: llm-deepseek\n  config:\n    models:\n      - id: ${modelYaml}\n        name: ${modelYaml}\n`
+  // LLM_MAX_TOKENS(Round 9,#100/#102):中转/兼容端点模型常带低于 dsh 未知模型
+  // 默认 256K 预算的输出上限(MiniMax 2013 实测);目录条目 maxTokens 元数据是
+  // dsh-llm-deepseek defaultMaxTokens 的官方通道(web UI 模型同源)。
+  const maxTokensYaml = llmMaxTokens === undefined ? '' : `\n        maxTokens: ${llmMaxTokens}`
+  patchRaw += `\n# LLM_MODEL 指定模型(issue #77):dsh 会话面默认模型 + 模型目录\n- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: ${modelYaml}\n- id: llm-deepseek\n  config:\n    models:\n      - id: ${modelYaml}\n        name: ${modelYaml}${maxTokensYaml}\n`
 }
 // Keep the patch private and short-lived. mkdtempSync creates a 0700 directory;
 // wx prevents accidental reuse/races if a process is started concurrently.
@@ -486,6 +512,17 @@ const childStdio = mode === 'web'
 let benchmarkCapturedBytes = 0
 let benchmarkDiagnosticBuffer = Buffer.alloc(0)
 let benchmarkOutputTruncated = false
+// 启动一次性 doctor 摘要(issue #114,design §3.1③):分离子进程后台跑只读体检,
+// 有待处理项打一行 stderr(stderr 继承,不污染 stdout;benchmark 面保持零杂音)。
+// detached+unref:不阻塞不拖慢启动;inner 生命周期天然一次,不重复刷;失败静默。
+if (!benchmarkEnvironmentConfig) {
+  try {
+    spawn(process.execPath, [join(here, 'gotry-bootstrap.js'), 'doctor', '--summary'], {
+      detached: true,
+      stdio: ['ignore', 'ignore', 'inherit'],
+    }).unref()
+  } catch { /* 体检不可用不挡启动 */ }
+}
 child = spawn(process.execPath, [dshBin, ...binJs], {
   stdio: childStdio,
   env: childEnv,

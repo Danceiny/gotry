@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GoTry Session Bridge",
-  "version": "0.0.1.18",
+  "version": "0.0.1.19",
   "description": "GoTry 会话检索桥(issue #21):在你自己的登录态里只读嗅探检索回包(机票/酒店/火车)与登录票据 cookie 名;零凭证经手,登录在官网由你完成,检索只读不写。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnuzBX8rT8+RZKEUip5VRA0cY056pExy9PNdN9YCiuY3dgglRbcIBhjuFJoR6EX3/MaUv82vJVyItRVrowXLTwDk4WZof0vwFgKL0zBK304PC46pUaAKTSu1PgXeL1+j5KTAGz/9a9+RnPdbj7jND5rM/MOmBHNPVPpp1NlwxRGIgF9OxHSOfXORcH4Iyte1aJSFUJbFtNS/DaE5D+KjyupPLyIqVN/dCiKnNsTCEHQB9ngeli665PFp76hkccHQQZ4sVuMLS4zBPcazUsp1kcnW+xsQoUATkODTCY+Pzk3zUVF1QOESTjRCVnbNi8tkO43RMRs2q63gX/3inFivcEwIDAQAB",
   "permissions": [
@@ -46,5 +46,5 @@
       "run_at": "document_start"
     }
   ],
-  "version_name": "0.0.1-rc.18"
+  "version_name": "0.0.1-rc.19"
 }

@@ -15,6 +15,7 @@
 
 import {
   flightClaimVerdict,
+  hotelClaimVerdict,
   itineraryInvariants,
   latestFactsForRouteDate,
   type BookableFact,
@@ -62,12 +63,24 @@ export interface ExtractedAirportClaim {
   city: string
 }
 
+/** 酒店 claim(D-26):断言「有房/可订/已核验」的行——目的地与档期缺失时 fail-closed */
+export interface ExtractedHotelClaim {
+  line: number
+  text: string
+  destination?: string
+  check_in?: string
+  check_out?: string
+}
+
 export interface ExtractedClaims {
   flights: ExtractedFlightClaim[]
   policies: ExtractedPolicyClaim[]
   airports: ExtractedAirportClaim[]
   /** 含「直飞」断言且可解析航线的行(通用直飞规则:该日无任何在架直飞即违例) */
   direct_lines: Array<{ line: number; text: string; origin?: string; destination?: string; date?: string }>
+  hotels: ExtractedHotelClaim[]
+  /** 渲染原语锚点(fact:<id>):命中行只走确定性回溯,启发式让位 */
+  anchors: Map<number, string>
 }
 
 /** 航班号:2 位承运码 + 3-4 位数字(UO784/EK328/MF1538/CZ8582/9C8781/FD597) */
@@ -93,6 +106,14 @@ function hasDirectAssertion(line: string): boolean {
 }
 
 interface SectionCtx { origin?: string; destination?: string; date?: string }
+
+/** 行内第一个命中词表的城市中文名(酒店 claim 的目的地键;无命中=undefined) */
+function occ1(line: string, map: AirlineAirportMap): string | undefined {
+  for (const city of Object.keys(map.city_alias)) {
+    if (line.includes(city)) return city
+  }
+  return undefined
+}
 
 /** 从文本(小节标题或行)解析航线上下文:箭头紧邻城市对(方向最可靠)优先,否则按出现位置取前两个;日期 M.D 或 MM-DD */
 function routeCtxOf(text: string, map: AirlineAirportMap, defaultYear?: number): SectionCtx {
@@ -140,12 +161,19 @@ function routeCtxOf(text: string, map: AirlineAirportMap, defaultYear?: number):
  * 行内自带上下文优先。默认年份由 trip window 提供(远期行程的年份不含糊)。
  */
 export function extractClaims(markdown: string, map: AirlineAirportMap, opts?: { trip_year?: number }): ExtractedClaims {
-  const claims: ExtractedClaims = { flights: [], policies: [], airports: [], direct_lines: [] }
+  const claims: ExtractedClaims = { flights: [], policies: [], airports: [], direct_lines: [], hotels: [], anchors: new Map() }
   const lines = markdown.split('\n')
   let section: SectionCtx = {}
+  // 渲染原语锚点(单向生成):带 fact:<id> 的行只走锚点确定性回溯,启发式抽取让位
+  const ANCHOR = /fact:([0-9a-f]{16})/
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!
     const lineNo = i + 1
+    const anchorMatch = line.match(ANCHOR)
+    if (anchorMatch) {
+      claims.anchors.set(lineNo, anchorMatch[1]!.toLowerCase())
+      continue
+    }
     if (/^#{1,4}\s/.test(line)) {
       const ctx = routeCtxOf(line, map, opts?.trip_year)
       section = { origin: ctx.origin, destination: ctx.destination, date: ctx.date ?? section.date }
@@ -179,6 +207,19 @@ export function extractClaims(markdown: string, map: AirlineAirportMap, opts?: {
     if (POLICY_WORD.test(line)) {
       claims.policies.push({ line: lineNo, text: line.trim().slice(0, 160), has_as_of: AS_OF_WORD.test(line) })
     }
+    // 酒店 claim(D-26):断言可住性(有房/可订/已核验/✓)的行——目的地与档期缺失时 fail-closed
+    const HOTEL_ASSERT = /酒店|住宿|客栈|民宿/
+    const HOTEL_BOOKABLE = /有房|可订|在架|已核验|已验证|可住|✓|✅/
+    if (HOTEL_ASSERT.test(line) && HOTEL_BOOKABLE.test(line)) {
+      const stays = [...line.matchAll(/(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)/g)].map(m => m[1]!)
+      claims.hotels.push({
+        line: lineNo,
+        text: line.trim().slice(0, 160),
+        destination: occ1(line, map),
+        check_in: stays[0],
+        check_out: stays[1],
+      })
+    }
     // 航司→机场映射 claim:同一行出现承运码 + 机场码,且该城是双机场映射面
     for (const [city, carriers] of Object.entries(map.carrier_airport)) {
       const airports = [...new Set(Object.values(carriers))]
@@ -207,6 +248,8 @@ export type GateViolationKind =
   | 'legs_inconsistent'               // flight O&D 段与 legs 口径不一致
   | 'budget_floor_inconsistent'       // 预算下限话术低于分项最低合计
   | 'date_order'                      // 住宿/段日期越窗或倒挂
+  | 'unverifiable_hotel_claim'        // 酒店可住断言无 exact-date 事实回溯(D-26)
+  | 'fact_anchor_unknown'             // 渲染锚点 fact:<id> 在注册表不存在(锚点被手改/伪造)
 
 export interface GateViolation {
   kind: GateViolationKind
@@ -241,6 +284,43 @@ export function gateArtifact(
   const claims = extractClaims(markdown, map, opts)
   const violations: GateViolation[] = []
   let traceable = 0
+
+  // 渲染锚点优先(issue #118 单向生成):带 fact:<id> 的行确定性回溯注册表——
+  // 锚点在=按事实 bookability 判;锚点不存在=手改/伪造,直接违例。启发式对锚点行让位。
+  for (const [lineNo, factId] of claims.anchors) {
+    const f = facts.find(x => x.fact_id === factId)
+    if (!f) {
+      violations.push({ kind: 'fact_anchor_unknown', line: lineNo, detail: `渲染锚点 fact:${factId} 不在事实注册表——锚点被手改或伪造,产物不可信` })
+      continue
+    }
+    if (f.kind !== 'policy' && f.bookability === 'unavailable_exact_date') {
+      violations.push({ kind: 'not_in_source', line: lineNo, detail: `锚点事实为 exact-date 负事实(${(f as { fetched_at?: string }).fetched_at ?? ''})——负事实对应的可住/可订断言不得出现` })
+      continue
+    }
+    traceable++
+  }
+
+  // 酒店 claim(D-26):目的地+档期回溯酒店事实;无事实 fail-closed
+  for (const c of claims.hotels) {
+    if (claims.anchors.has(c.line)) continue
+    if (!c.destination) {
+      violations.push({ kind: 'unverifiable_hotel_claim', line: c.line, detail: `酒店可住断言缺目的地上下文,无法回溯 exact-date 事实——fail closed 按未核验处理` })
+      continue
+    }
+    const r = hotelClaimVerdict(facts, { destination: c.destination, check_in: c.check_in, check_out: c.check_out })
+    if (r.verdict === 'traceable') {
+      traceable++
+      continue
+    }
+    if (r.verdict === 'unverified') {
+      violations.push({ kind: 'unverifiable_hotel_claim', line: c.line, detail: r.reason })
+    } else {
+      violations.push({ kind: 'not_in_source', line: c.line, detail: r.reason })
+    }
+    if (CHECK_MARK.test(c.text)) {
+      violations.push({ kind: 'unconditional_check', line: c.line, detail: '对未核验酒店使用无条件 ✓/✅——只有 bookable_exact_date 才允许确定性标记' })
+    }
+  }
 
   for (const c of claims.flights) {
     if (c.carrier_only) {
@@ -334,7 +414,7 @@ export function gateArtifact(
     if (!line.includes('联程')) return
     const nos = [...line.matchAll(FLIGHT_NO)].map(m => m[1]!.toUpperCase())
     const matched = facts.filter((f): f is Extract<BookableFact, { kind: 'flight' | 'train' }> =>
-      f.kind !== 'policy' && nos.includes(f.flight_no.toUpperCase()))
+      (f.kind === 'flight' || f.kind === 'train') && nos.includes(f.flight_no.toUpperCase()))
     const allProtected = nos.length > 0
       && matched.length === nos.length
       && matched.every(f => f.protected_connection === true)

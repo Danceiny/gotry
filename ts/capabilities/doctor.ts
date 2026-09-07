@@ -16,15 +16,16 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { readLatestChannelEvents } from './channel-health.ts'
 
 export type DoctorStatus = 'ok' | 'missing' | 'degraded'
 
 export interface DoctorItem {
   /** 稳定 id(报告/测试锚点) */
-  id: 'node' | 'extension' | 'agent-reach' | 'hbcli' | 'flyai' | 'sidebar' | 'llm-key'
+  id: 'node' | 'extension' | 'agent-reach' | 'hbcli' | 'flyai' | 'sidebar' | 'llm-key' | 'calendar' | 'map-tools' | 'ask-user'
   /** 展示名 */
   label: string
   status: DoctorStatus
@@ -45,6 +46,8 @@ export interface DoctorOptions {
   repoRoot?: string
   homeDir?: string
   env?: NodeJS.ProcessEnv
+  /** 状态根(读通道健康事件 channel-health.jsonl;缺省不读) */
+  stateRoot?: string
 }
 
 /** hbcli 已知安装位(与 capabilities/hbcli.ts hbcliBinCandidates 同清单) */
@@ -85,12 +88,14 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     : { id: 'node', label: 'Node 运行时', status: 'missing', detail: `Node ${nodeVersion} 过旧(gotry 需 ≥22.15)`, fix: '升级 Node.js 至 22.15+(https://nodejs.org)' })
 
   // 1. GoTry Session Bridge 扩展(账号会话通道的传输层;装在哪由 bootstrap setup 管理)
+  //    D-24 自适应(#117):离线只能探测本地 unpacked 通道;商店版无本地文件面——
+  //    missing detail 明示「商店版用户可忽略本项」,不再把商店版用户误导成本地通道缺失
   const extManifest = join(home, '.gotry', 'extension', 'manifest.json')
   items.push(existsSync(extManifest)
-    ? { id: 'extension', label: 'GoTry Session Bridge 扩展', status: 'ok', detail: `已就位(${extManifest})` }
+    ? { id: 'extension', label: 'GoTry Session Bridge 扩展', status: 'ok', detail: `已就位(本地通道:${extManifest})` }
     : {
         id: 'extension', label: 'GoTry Session Bridge 扩展', status: 'missing',
-        detail: '未安装——gotry_session_search / gotry_session_login(账号会话通道)不可用,其余工具不受影响',
+        detail: '本地通道未落位(~/.gotry/extension/manifest.json 不存在)。若你已从 Chrome 商店安装(自动更新,商店版 ID oeajpicc…),本项可忽略——会话检索可用性以运行时为准(gotry_session_search 的 verdict)。若未安装:应用商店一键装即可',
         fix: '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd',
       })
 
@@ -138,12 +143,20 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
   }
 
   // 4. flyai(飞猪官方只读通道;匿名试用额度共享,易达限)
+  //    配额状态可见(通道健康持久面):最近一次达限时间进 detail——
+  //    「易达限却不可见」是 issue #107 的病灶之一。
   const flyaiKey = env.FLYAI_API_KEY?.trim()
+  const flyaiQuotaNote = !flyaiKey && opts.stateRoot
+    ? await (async () => {
+        const ev = (await readLatestChannelEvents(opts.stateRoot!)).get('flyai')
+        return ev?.state === 'down' ? `;最近一次试用达限: ${ev.at}(匿名共享池,正式 key 可解除)` : ''
+      })()
+    : ''
   items.push(flyaiKey
     ? { id: 'flyai', label: 'FlyAI(飞猪官方检索)', status: 'ok', detail: 'FLYAI_API_KEY 已配(正式 key,无试用额度限制)' }
     : {
         id: 'flyai', label: 'FlyAI(飞猪官方检索)', status: 'degraded',
-        detail: '未配 FLYAI_API_KEY——走匿名试用额度(共享,易达限;达限报 "Trial limit reached")',
+        detail: `未配 FLYAI_API_KEY——走匿名试用额度(共享,易达限;达限报 "Trial limit reached")${flyaiQuotaNote}`,
         fix: '到 flyai.open.fliggy.com 控制台申请正式 key,配进环境变量 FLYAI_API_KEY;无 key 期间机/火/酒检索请以 gotry_session_search(账号会话)为主',
       })
 
@@ -157,7 +170,69 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
         fix: 'npx gotry doctor --fix',
       })
 
-  // 6. LLM key:显式让渡给 dsh 宿主(founder 2026-09-02:doctor 不管 key)
+  // 6. dsh-calendar(patch 分发面宿主插件;D-9 拍板:默认不挂载)
+  //    未配置的日历工具是纯负资产(issue #106:会话中段才撞「未配置 username」),
+  //    工作窗口由 persona (1) 访谈覆盖;挂载与否由 **setup 状态面**决定
+  //    (`~/.gotry/calendar.json`,`npx gotry setup calendar` on/off——founder
+  //    2026-09-03 纠偏:禁止环境变量控制产品行为,可选依赖进 setup 状态管理)。
+  const calStatePath = join(home, '.gotry', 'calendar.json')
+  const calEnabled = (() => {
+    try { return JSON.parse(readFileSync(calStatePath, 'utf-8'))?.enabled === true } catch { return false }
+  })()
+  const calProfilePatch = join(home, '.dsh/profiles/web/cordis.patch.yml')
+  const calConfigured = calEnabled && existsSync(calProfilePatch) && (() => {
+    try {
+      const content = readFileSync(calProfilePatch, 'utf-8')
+      return /calendar/.test(content) && /username\s*:/.test(content)
+    } catch { return false }
+  })()
+  items.push(!calEnabled
+    ? {
+        id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'ok',
+        detail: '默认未挂载(D-9:未配置的日历工具不进工具箱;工作窗口由访谈覆盖,不影响任何检索)',
+      }
+    : calConfigured
+      ? { id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'ok', detail: `已挂载且已配置(${calStatePath})` }
+      : {
+          id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'degraded',
+          detail: '已挂载但 calendar 未配置 username——日历工具会话中会报「未配置」',
+          fix: `npx gotry setup calendar --off(恢复默认不挂载),或在 ${calProfilePatch} 覆盖 calendar 行 config 填 username(指引: npx gotry setup calendar --status)`,
+        })
+
+  // 7. patch 分发面宿主插件(issue #113 L1 残量,design §3.1:初始化可见取代会话中段撞错)。
+  //    这类插件在 cordis patch 里是占位行,bin/gotry-inner.js 运行时解析——**解析失败整块
+  //    静默剔除,不挡启动**:模型只觉得「没有这个工具」,没人告诉它为什么。doctor 把两态照亮。
+  //    候选清单与 bin 解析逻辑同口径(map:repo vendored-node_modules / 包依赖;ask-user:dsh 闭包)。
+  const mapCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js'),
+    join(repoRoot, 'node_modules/dsh-map-tools/package.json'),
+    join(repoRoot, 'ts/node_modules/dsh-map-tools/package.json'),
+    join(home, '.dsh/profiles/web/node_modules/dsh-map-tools/package.json'),
+  ]
+  const mapHit = mapCandidates.find(p => existsSync(p))
+  items.push(mapHit
+    ? { id: 'map-tools', label: 'dsh-map-tools(地图/路线/POI)', status: 'ok', detail: `已就位(${mapHit})——地图工具可用(零 key,走 OSM/OSRM)` }
+    : {
+        id: 'map-tools', label: 'dsh-map-tools(地图/路线/POI)', status: 'missing',
+        detail: '未随包解析——启动时该 patch 条目被静默剔除,地图/路线/POI 工具不会出现在模型工具箱(缺地图不挡旅行规划,只少能力)',
+        fix: 'npx gotry doctor --fix 不覆盖此项:source 布局把 dsh-map-tools 放进 ts/dsh-runtime/node_modules(或 ts/node_modules);npm 布局重装 @danceiny/gotry(随发行版依赖提供)',
+      })
+
+  const askCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/vendor/deepseek-ai-dsh-tool-ask-user/package.json'),
+    join(repoRoot, 'node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
+    join(home, '.dsh/profiles/web/node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
+  ]
+  const askHit = askCandidates.find(p => existsSync(p))
+  items.push(askHit
+    ? { id: 'ask-user', label: 'dsh-tool-ask-user(结构化澄清卡)', status: 'ok', detail: `已就位(${askHit})——ask_user_question 澄清卡可用(web 原生卡片;headless+TTY 用 stdio 提供方)` }
+    : {
+        id: 'ask-user', label: 'dsh-tool-ask-user(结构化澄清卡)', status: 'missing',
+        detail: '未解析——启动时澄清卡注入被静默剔除,模型只能散文追问(人格契约 (5) 退化文本形态)',
+        fix: '重装 @danceiny/gotry——该依赖随 dsh 闭包自带,缺失多为安装不完整',
+      })
+
+  // 8. LLM key:显式让渡给 dsh 宿主(founder 2026-09-02:doctor 不管 key)
   items.push({ id: 'llm-key', label: 'LLM key', status: 'ok', detail: '由 dsh 宿主 UI 管理——不在 doctor 体检范围(gotry 不接触、不回显凭证)' })
 
   const broken = items.filter(i => i.status !== 'ok' && i.id !== 'llm-key')

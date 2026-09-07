@@ -11,7 +11,7 @@
  *   - 浏览器解译 = SESSION_* 效应(用户本人登录态的扩展桥车道,2026-08-29 起默认传输:
  *     MV3 GoTry Session Bridge + 本地桥长轮询,零系统弹窗;ReadGuard+授权闸不变,
  *     非 CUA 视觉点击——本仓已按零 Python 依赖与 a11y/DOM 优先判死后者,
- *     docs/effect-interpreter.md §4)。
+ *     docs/design/effect-interpreter.md §4)。
  *
  * 解译产物:`{ result, trace }`——result 是渠道自有 observation **原样透传**
  * (ADR-13 平铺 envelope 在工具层不受扰);trace 是解译层横切证据
@@ -35,6 +35,11 @@ import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
 import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
 import { verifyFlight, type FlightLiveQuery } from './opensky.ts'
+import { anythingSearch, type AnythingQuery } from './anything.ts'
+import { continentListUrl, countryPageUrl, extractVisaSection, fetchVisaPolicyPage, listCountryPaths, policyFactsFromMfa, type MfaPolicyFact, type VisaPolicyEffectParams } from './visa-policy.ts'
+import { readUrl, reach, reachStatus } from './agent-reach.ts'
+import { githubSearch, videoSubtitle } from './agent-reach-deep.ts'
+import { sessionLogin } from './session-login.ts'
 
 // ---------------------------------------------------------------------------
 // 渠道 handler 注册表:effect 名(变体大写下划线,纯数据词表)→ 渠道实现
@@ -73,6 +78,54 @@ export interface HbCheckAvailEffectParams {
   timeoutMs?: number
 }
 
+/** agent-reach 反射桥参数(status=上游 doctor;reach=渠道×方法透传) */
+export interface AgentReachEffectParams {
+  action?: string
+  channel?: string
+  method?: string
+  args?: string
+  timeoutMs?: number
+}
+
+/** 账号会话登录引导参数(等待秒数;0 值凭证不过手) */
+export interface SessionLoginEffectParams {
+  waitSeconds?: number
+}
+
+interface MfaPage { ok: boolean; html?: string; error?: string }
+
+/** C 档中国领事服务网抓取编排:country 直抓 / continent 列表遍历(≤limit,默认 10;抓取纪律=礼貌间隔,不并发) */
+async function fetchVisaPolicyEntries(p: VisaPolicyEffectParams): Promise<{ ok: boolean; via: string; evidence: string; latencyMs: number; facts: MfaPolicyFact[]; countries: string[]; error?: string }> {
+  const started = Date.now()
+  const fetchedAt = new Date().toISOString()
+  const countries: string[] = []
+  const facts: MfaPolicyFact[] = []
+  const targets: Array<{ continent: string; country: string }> = []
+  if (p.country) {
+    targets.push({ continent: p.continent ?? 'yz_645708', country: p.country })
+  } else if (p.continent) {
+    const listUrl = continentListUrl(p.continent)
+    if (!listUrl) return { ok: false, via: 'visa-policy-error', evidence: `[visa-policy@${fetchedAt}] 非法洲路径`, latencyMs: 0, facts: [], countries: [], error: 'invalid_continent' }
+    const page = await fetchVisaPolicyPage(listUrl, p.timeoutMs)
+    if (!page.ok || !page.html) return { ok: false, via: 'visa-policy-error', evidence: `[visa-policy@${fetchedAt}] 洲列表抓取失败: ${page.error ?? '?'}`, latencyMs: 0, facts: [], countries: [], error: page.error }
+    for (const c of listCountryPaths(page.html, p.continent).slice(0, Math.max(1, Math.min(10, p.limit ?? 10)))) targets.push({ continent: p.continent, country: c })
+  }
+  for (const t of targets) {
+    const url = countryPageUrl(t.continent, t.country)
+    if (!url) continue
+    const page: MfaPage = await fetchVisaPolicyPage(url, p.timeoutMs)
+    countries.push(t.country)
+    if (!page.ok || !page.html) continue
+    const section = extractVisaSection(page.html)
+    if (!section) continue
+    facts.push(...policyFactsFromMfa({ countryLabel: t.country, countryPath: t.country, section, fetchedAt }))
+  }
+  const evidence = facts.length > 0
+    ? `[visa-policy:cs-mfa@${fetchedAt}] ${facts.length} 条政策事实(抓取 ${countries.length} 国)`
+    : `[visa-policy@${fetchedAt}] 0 条(页面缺「签证入境」章节或抓取失败;不落负事实)`
+  return { ok: true, via: 'cs-mfa', evidence, latencyMs: Date.now() - started, facts, countries }
+}
+
 /** 默认渠道实现(生产解译器的 dispatch 目标;全部满足「永不抛错」能力层契约) */
 const DEFAULT_HANDLERS = {
   /** 飞猪官方只读通道(机/火/酒店;spawn CLI) */
@@ -109,6 +162,23 @@ const DEFAULT_HANDLERS = {
   WEATHER_CLIMATE: (p: WeatherPoint & { month: number; timeoutMs?: number }) => getClimate({ latitude: p.latitude, longitude: p.longitude }, p.month, { timeoutMs: p.timeoutMs }),
   /** OpenSky ADS-B 实时印证(免费匿名,~400 credits/天) */
   OPENSKY_FLIGHT_VERIFY: (p: FlightLiveQuery) => verifyFlight(p),
+  /** hotel-be Anything 目的地/酒店候选(hbcli CLI;gotry_anything_search 同源,D-23 收编) */
+  ANYTHING_SEARCH: (p: AnythingQuery) => anythingSearch(p),
+  /** 网页读取兜底(r.jina.ai 免费公共源;gotry_web_search 同源,D-23 收编) */
+  WEB_READ: (p: { url: string; timeoutMs?: number }) => readUrl({ url: p.url, timeoutMs: p.timeoutMs }),
+  /** GitHub 仓库搜索(gh CLI;agent-reach-deep 执行面,gotry_github_search 同源,D-23 收编) */
+  GITHUB_SEARCH: (p: { query: string; limit?: number; timeoutMs?: number }) => githubSearch(p),
+  /** 视频字幕拉取(yt-dlp;agent-reach-deep 执行面,gotry_video_subtitle 同源,D-23 收编) */
+  VIDEO_SUBTITLE: (p: { url: string; lang?: string; timeoutMs?: number }) => videoSubtitle(p),
+  /** agent-reach 反射桥(status=上游 doctor;reach=渠道×方法透传,gotry_agent_reach 同源,D-23 收编) */
+  AGENT_REACH: (p: AgentReachEffectParams) =>
+    (p.action === 'status' || (!p.action && !p.channel))
+      ? reachStatus(p.timeoutMs)
+      : reach({ channel: p.channel ?? '', method: p.method ?? '', args: p.args, timeoutMs: p.timeoutMs }),
+  /** 账号会话登录引导(浏览器通道;票据名只读 0 值过手,gotry_session_login 同源,D-23 收编) */
+  SESSION_LOGIN: (p: SessionLoginEffectParams) => sessionLogin({ waitMs: typeof p.waitSeconds === 'number' ? p.waitSeconds * 1000 : undefined }),
+  /** 政策事实生产端 v1(issue #141,D-26):C 档中国领事服务网国家指南树(礼貌抓取:永不重试+断路器护站) */
+  VISA_POLICY_FETCH: (p: VisaPolicyEffectParams) => fetchVisaPolicyEntries(p),
 } as const
 
 export type EffectName = keyof typeof DEFAULT_HANDLERS
@@ -154,7 +224,7 @@ const hbcliTimeout = (r: unknown): boolean => {
 const HBCLI_RETRY: RetryPolicy = { maxAttempts: 2, baseDelayMs: 300, maxDelayMs: 1_000 }
 
 /**
- * 渠道韧性策略表(权威面;docs/effect-interpreter.md §3 同表逐行有依据):
+ * 渠道韧性策略表(权威面;docs/design/effect-interpreter.md §3 同表逐行有依据):
  *   - FLYAI:瞬时代码级错误重试 1 次;连续 3 次 error(含 Sentinel)熔断 60s 保护配额;
  *     试用额度达限(429)归 needs-setup,永不重试;
  *   - HBCLI:仅 timeout 类失败重试 1 次(冷启动建后端 session 可超时,重试即恢复);
@@ -164,6 +234,12 @@ const HBCLI_RETRY: RetryPolicy = { maxAttempts: 2, baseDelayMs: 300, maxDelayMs:
  *   - SESSION:永不重试、不熔断——风控/挑战是「上游说不」,重试即红线;
  *     节律闸(≥30s)在渠道内(session-search §3.4),不在本层重复。
  *   - WEATHER/OPENSKY:免费源,瞬时网络抖动可重试,熔断防免费配额空转。
+ *   - ANYTHING:同 HBCLI 族(timeout 类瞬时重试 1 次;ENOENT/退码类永不);
+ *   - WEB_READ:r.jina.ai 免费公共源,瞬时抖动可重试,熔断防公共配额空转;
+ *   - GITHUB/VIDEO(gh/yt-dlp):verdict=timeout 瞬时重试 1 次;not-installed=配置态不重试;
+ *   - AGENT_REACH:反射桥透传(wrapper 不是 router)——永不重试不熔断,上游超时自管;
+ *   - SESSION_LOGIN:同 SESSION 浏览器族(风控红线)。
+ *   (D-23 收尾,issue #115:六渠道入表,没有策略表行就没有效应。)
  */
 const SPECS: Record<EffectName, ChannelSpec> = {
   FLYAI_SEARCH: {
@@ -226,6 +302,65 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     breaker: API_BREAKER,
     isRetryable: (_r, e) => e != null || ((_r ?? {}) as { verdict?: string }).verdict === 'unavailable',
     isFailure: r => (r as { via?: string }).via === 'opensky-error',
+  },
+  // --- D-23 收尾(issue #115):六渠道入注册表——没有策略表行就没有效应 ---
+  // ANYTHING:同 HBCLI 族(hbcli CLI):仅 timeout 类瞬时(冷启动建后端 session)重试 1 次;
+  // ENOENT/退码类永不(「切换不是重试」契约);熔断防上游空转
+  ANYTHING_SEARCH: {
+    channel: 'cli',
+    retry: HBCLI_RETRY,
+    isRetryable: (r) => hbcliTimeout(r),
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => (r as { via?: string }).via === 'hbcli-anything-error',
+  },
+  // WEB_READ:r.jina.ai 免费公共源(同 WEATHER/OPENSKY 族):瞬时网络抖动可重试,
+  // 熔断防公共配额空转;非法 URL 是用户输入错(isFailure 不含,不重试不熔断)
+  WEB_READ: {
+    channel: 'api',
+    retry: API_RETRY,
+    breaker: API_BREAKER,
+    isFailure: r => (r as { via?: string }).via === 'r.jina.ai-error',
+  },
+  // GITHUB/VIDEO(gh/yt-dlp CLI):verdict=timeout 瞬时重试 1 次(进程冷启动超时同 HBCLI
+  // 2026-09-02 实况);not-installed 是配置态(needs-setup 族,重试无意义),error 是上游说不;
+  // 两者都计入熔断(防坏环境空转)
+  GITHUB_SEARCH: {
+    channel: 'cli',
+    retry: HBCLI_RETRY,
+    isRetryable: (r) => (r as { verdict?: string }).verdict === 'timeout',
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => { const v = (r as { verdict?: string }).verdict; return v === 'error' || v === 'timeout' },
+  },
+  VIDEO_SUBTITLE: {
+    channel: 'cli',
+    retry: HBCLI_RETRY,
+    isRetryable: (r) => (r as { verdict?: string }).verdict === 'timeout',
+    breaker: { failureThreshold: 3, openMs: 60_000 },
+    isFailure: r => { const v = (r as { verdict?: string }).verdict; return v === 'error' || v === 'timeout' },
+  },
+  // AGENT_REACH:反射桥透传(wrapper 不是 router,D-4a')——上游超时自管,重试会放大
+  // 上游配额消耗,永不重试不熔断;needs-setup/not-installed 是「上游说不」同 SESSION 族
+  AGENT_REACH: {
+    channel: 'cli',
+    retry: null,
+    breaker: null,
+    isFailure: r => (r as { verdict?: string }).verdict === 'error',
+  },
+  // SESSION_LOGIN:同 SESSION_* 浏览器族——风控/挑战红线,永不重试不熔断;
+  // pending 是「等用户」不是失败
+  SESSION_LOGIN: {
+    channel: 'browser',
+    retry: null,
+    breaker: null,
+    isFailure: defaultIsFailure,
+  },
+  // VISA_POLICY(issue #141,D-26 v1):C 档中国领事服务网——政府权威源礼貌抓取:
+  // 永不重试(抓取纪律)+ 断路器防 hammering 政府站点;页面缺章节=无结论不落负事实
+  VISA_POLICY_FETCH: {
+    channel: 'api',
+    retry: null,
+    breaker: { failureThreshold: 2, openMs: 300_000 },
+    isFailure: defaultIsFailure,
   },
 }
 

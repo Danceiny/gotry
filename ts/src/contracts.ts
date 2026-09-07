@@ -1,5 +1,5 @@
 /**
- * Stage 1 契约层(S1,docs/stage1-top-down-design.md §2)——顶层数据与工具面契约。
+ * Stage 1 契约层(S1,docs/design/stage1-top-down-design.md §2)——顶层数据与工具面契约。
  *
  * 自顶向下纪律:本文件是唯一权威契约。实现(mock 循环/求解器挂载/真 LLM)都向这里对齐;
  * 契约变更需走设计文档升版,不随实现漂移。

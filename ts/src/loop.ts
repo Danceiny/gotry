@@ -1,5 +1,5 @@
 /**
- * Stage 1 对话循环(S2 段1,docs/stage1-top-down-design.md §2.3)。
+ * Stage 1 对话循环(S2 段1,docs/design/stage1-top-down-design.md §2.3)。
  *
  * 自顶向下:循环只依赖两个端口——LlmPort(mock/真)与确定性工具(interview_next)。
  * 求解/渲染接线是 S2 后续段;本段验收:重放用户开场白,系统一轮内完成

@@ -88,7 +88,9 @@ Architecture, five layers:
 | **Artifacts** | `gotry_artifacts_list` / `gotry_artifacts_read` | Discover & view generated artifacts (async deliverables + working-dir markdown) as a line-numbered file view (read-only) |
 | **Factuality gate** | `gotry_fact_gate` | Pre-delivery gate for itinerary artifacts — see [fact gate](#how-it-works) above |
 | **General external** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | web / subtitles / GitHub / all-channel external info (via Agent-Reach) |
-| **Self-check** | `gotry_doctor` | Read-only health check of optional dependencies (extension / Agent-Reach .venv / hbcli / FlyAI key / sidebar) with exact repair guidance; installs only ever happen via the user running `npx gotry doctor --fix`. LLM keys are the dsh host's business — deliberately out of scope. Report lands in `gotry-state/doctor-report.md` (sidebar-workbench previewable) |
+| **Self-check** | `gotry_doctor` | Read-only health check of optional dependencies (extension / Agent-Reach .venv / hbcli / FlyAI key **+ recent trial-quota exhaustion time** / dsh-calendar mount state / sidebar / dsh-map-tools & dsh-tool-ask-user presence) with exact repair guidance; installs only ever happen via the user running `npx gotry doctor --fix`. LLM keys are the dsh host's business — deliberately out of scope. Report lands in `gotry-state/doctor-report.md` (sidebar-workbench previewable) |
+
+> **Channel routing**: retrieval tools stay flat (no hidden dispatch); the persona routing card and the `routing` suggestions attached to failed search results are **generated from one channel registry** (official API > user session > web fallback, filtered by per-session channel health). When a channel exhausts its quota the result says so and names the next channel — retry-blindness is a contract violation, not a prompt hope.
 
 ## Demo
 
@@ -114,7 +116,7 @@ Engine verdict:
 
 ## How Mainstream AI Answers the Same Trip
 
-GoTry's product persona is calibrated against evidence, not taste: the same real three-week multi-country workation prompt — with planted traps (no year given, a vague "some seaside town called Wan-xx", an ambiguity the user already resolved) — is fed verbatim to mainstream assistants, their answers archived word-for-word, and scored against a ground-truth rubric. Transcripts, rubric, and the contract feedback: [`docs/persona-bench/`](docs/persona-bench/).
+GoTry's product persona is calibrated against evidence, not taste: the same real three-week multi-country workation prompt — with planted traps (no year given, a vague "some seaside town called Wan-xx", an ambiguity the user already resolved) — is fed verbatim to mainstream assistants, their answers archived word-for-word, and scored against a ground-truth rubric. Transcripts, rubric, and the contract feedback: [`docs/persona-bench/`](docs/evaluation/persona-bench/).
 
 | Dimension | Generic chat assistant (Kimi, 13 real turns) | OTA agent (Fliggy open platform, single turn) | GoTry contract |
 |---|---|---|---|
@@ -125,7 +127,7 @@ GoTry's product persona is calibrated against evidence, not taste: the same real
 | Structure completeness | △ decent comparison table only at turn 13 | ✓✓ full skeleton in one turn — completeness is table stakes | verified completeness (fact gate) |
 | Persona in one line | erudite but stateless chatter — the user ends up doing four jobs | a flawless-brochure OTA clerk — every section ends in a price table | trusted travel engineer: interview first, the solver decides, infeasible says infeasible |
 
-**Single best finding: two unrelated products derived their weekdays from the 2025 calendar.** Calendar grounding has to be a product mechanism (anchor card, assert once, never recompute) — not model luck. Cautionary deep-dive: [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md).
+**Single best finding: two unrelated products derived their weekdays from the 2025 calendar.** Calendar grounding has to be a product mechanism (anchor card, assert once, never recompute) — not model luck. Cautionary deep-dive: [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md).
 
 ## Quick Start
 
@@ -141,11 +143,15 @@ npx @danceiny/gotry web
 |---|---|---|
 | Web chat (recommended) | `npx @danceiny/gotry web` | multi-turn planning with visualized reasoning → `:3080` |
 | Headless one-shot | `npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"` | scripts / CI / targeted debugging → stdout |
-| Dependency doctor | `npx @danceiny/gotry doctor` (`--fix` to repair) | optional channels misbehaving: checks extension / Agent-Reach / hbcli / FlyAI key / sidebar, prints exact repair guidance, writes `gotry-state/doctor-report.md` (previewable in the sidebar workbench) |
+| Dependency doctor | `npx @danceiny/gotry doctor` (`--fix` to repair) | optional channels misbehaving: checks extension / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar mount / dsh-map-tools & dsh-tool-ask-user presence, prints exact repair guidance, writes `gotry-state/doctor-report.md` (previewable in the sidebar workbench) |
 
 Requires Node ≥ 22.15. LLM credentials are managed by your dsh host UI — gotry itself never asks for or echoes them. OpenAI-compatible endpoints (MiniMax / relays / self-hosted gateways) are handled by the dsh model configuration. First cold start takes 6–15 s; if port `:3080` is taken, free it first; unexpected exits leave evidence in `gotry-state/incidents.jsonl` (nothing silent).
 
 > **Cost accounting** — `ts/data/llm-price-table.json` (schema `gotry_llm_price_table_v2`) is the single source of truth for nightly run cost. Adding a model or switching relays = a PR against this file (peak-conservative upper bounds only); unknown models **fail closed** — no guessed prices. Drift monitor: `npx tsx ts/scripts/price-drift-watch.ts` (offline baseline diff; `--fetch` for live official pages). It never auto-applies changes.
+
+> **Quality metrics (repo-side)** — `npx tsx ts/scripts/build-metrics-report.ts [--state-root <root>] [--out report.md] [--days 7]` aggregates the persisted sidecars (fact-gate verdict distribution & blocked rate, channel down/cooldown, incidents, bridge latency vs the 500 ms re-audit budget, ledger / doctor-report presence) into one read-only markdown report. No new dependencies, zero LLM; the state root is never written (only `--out` produces a file, outside the state root).
+
+> **Channel probe tick (out-of-band health)** — `npx tsx ts/scripts/channel-probe.ts --state-root <root>` runs one read-only probe round over headless-probeable channels (hbcli whoami / open-meteo / opensky; session surfaces are skipped, FlyAI is not probed by default to preserve the shared anonymous quota) and appends `down` / `'ok'` recovery events to `channel-health.jsonl` — routing advice and doctor pick them up with zero changes. Driven by cron/loopx; no resident process. Wish recall consumes the same facts: a wish whose `conditions.channels` names a currently-down channel is vetoed for that recall. Remote (world2agent) callback stays gated on D-31.
 
 ### Developer source install
 
@@ -188,21 +194,19 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 
 - **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed and regression-gated
 - **Realtime retrieval** — flights/trains/hotels (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`); exhausted FlyAI anonymous trial quota is classified `needs-setup` with key guidance (no blind retries)
-- **Dependency doctor** — `npx gotry doctor` (CLI) / `gotry_doctor` (in-chat tool): read-only health check of optional dependencies (extension / Agent-Reach / hbcli / FlyAI key / sidebar) with exact repair guidance; `--fix` installs; LLM keys stay with the dsh host
+- **Dependency doctor** — `npx gotry doctor` (CLI) / `gotry_doctor` (in-chat tool): read-only health check of optional dependencies (extension / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar mount / dsh-map-tools & dsh-tool-ask-user presence) with exact repair guidance; `--fix` installs; LLM keys stay with the dsh host
 - **Account-session search** — Ctrip flights **and hotels** + 12306 trains on your Chrome (hotels 2026-09-03: real logged-in prices via passive sniffing; trains 2026-09-03: public left-ticket query; interface surfaces calibrate with the first live session); observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
 - **Extension install on demand** — `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` is offered as a clickable link in the dsh UI when an account-session tool first needs it (one-click install + auto-update); the gotry side never runs a setup wizard
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English solve output via `GOTRY_LOCALE=en`
 - **Routed turn budgets** — every turn is classified (quick / sync / deep-planning) by a deterministic, zero-LLM router; time is the only budget and the deadline exit follows the task: quick and sync turns converge to an answer, deep-planning turns hand off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) instead of dying mid-stream; the ticket is collected in the background by `scripts/turn-handoff-collect.ts` (idempotent, recursion-guarded child planner) and surfaces in-chat via the read-only `gotry_turn_handoff_list` tool; exercised end-to-end through a packaged consumer install in CI
-- **HotelByte embedded Booking Copilot contract** — Draft-only BFF read actions now carry a presented hard-condition relaxation as one exact typed approval; task/context mismatch, stale, expired, or replayed evidence closes before workspace side effects, and the runtime—not the model—owns the one-time operation reference. This surface still exposes no `Book` capability.
 
 **Open limitations** (honest list):
 
 - **M3 Exit not closed** — engineering & distribution are ready, but real seed-user evidence (50–200 person cohort) has not been accumulated; automated tests prove contracts and formulas, not business pass
 - **Hotel session adapters** — Ctrip-hotel / Meituan logged-in surfaces await real login-state backfill; flights are done
 - **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host / calibration samples
-- **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim); the round-by-round engineering ledger lives in [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)
+- **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim); the round-by-round engineering ledger lives in [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
 - **Booking** — nothing bookable ships today; M5 opens only through WriteGate and the booking-saga FSM
-- **Booking Copilot product acceptance** — the tenant/customer approval loop has deterministic local evidence only; four-surface real inventory, repeated unavailable/changed recovery, existing Checkout, QueryOrders, and cleanup remain open gates, so the integration stays Draft and non-mergeable
 
 <details>
 <summary>Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
@@ -255,18 +259,19 @@ Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outlin
 
 | Document | Purpose |
 |---|---|
+| [`docs/README.md`](docs/README.md) | Docs conventions & full index (taxonomy, naming, lifecycle) |
 | [`docs/architecture.md`](docs/architecture.md) | System, ADRs, evolution, debt ledger (Chinese, authoritative) |
 | [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md) | Program master outline & reuse matrix |
 | [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | Product design: main loop, transparency, whole-cost model |
 | [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 timeline & current position |
 | [`docs/user-guide.md`](docs/user-guide.md) | End-user guide |
 | [`docs/data-sources.md`](docs/data-sources.md) | Data sources & evidence-chain policy |
-| [`docs/extension-privacy.md`](docs/extension-privacy.md) | Session Bridge extension privacy |
-| [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md) | External benchmark bridge — engineering ledger |
-| [`docs/evaluation-foundation.md`](docs/evaluation-foundation.md) | Evaluation Phase 0 foundation |
-| [`docs/booking-saga-fsm.md`](docs/booking-saga-fsm.md) | Booking saga FSM (the M5 seam vocabulary) |
-| [`docs/kimi-postmortem.md`](docs/kimi-postmortem.md) | A real AI-travel-planning failure postmortem (cautionary tale) |
-| [`docs/persona-bench/`](docs/persona-bench/) | Agent-persona benchmark — same real-trip prompt answered by mainstream AIs: transcripts, scoring rubric, and the persona it shapes |
+| [`docs/ops/extension-privacy.md`](docs/ops/extension-privacy.md) | Session Bridge extension privacy |
+| [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md) | External benchmark bridge — engineering ledger |
+| [`docs/evaluation/evaluation-foundation.md`](docs/evaluation/evaluation-foundation.md) | Evaluation Phase 0 foundation |
+| [`docs/design/booking-saga-fsm.md`](docs/design/booking-saga-fsm.md) | Booking saga FSM (the M5 seam vocabulary) |
+| [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md) | A real AI-travel-planning failure postmortem (cautionary tale) |
+| [`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/) | Agent-persona benchmark — same real-trip prompt answered by mainstream AIs: transcripts, scoring rubric, and the persona it shapes |
 | [`docs/release-notes.md`](docs/release-notes.md) | Release decisions per version (the "why") |
 | [`CHANGELOG.md`](CHANGELOG.md) | Machine-derived changelog (Keep a Changelog + Conventional Commits) |
 | [`docs/tokens.md`](docs/tokens.md) | npm 2FA / release mechanics |
