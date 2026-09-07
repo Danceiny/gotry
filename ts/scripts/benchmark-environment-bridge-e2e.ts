@@ -724,7 +724,7 @@ if (packaged) {
     writeFileSync(configPath, JSON.stringify({
       schema_version: 'gotry_benchmark_environment_bridge_v3', enabled: true,
       executable: process.execPath, cwd: missingServiceRoot, argv_prefix: ['-e', 'process.exit(0)'],
-      tools: [{ name: 'lookup', description: 'Lookup.', input_schema: LOOKUP_INPUT_SCHEMA, output_keys: [], domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: 'none' }] }], timeout_ms: 100, max_output_bytes: 4_096,
+      tools: [{ name: 'lookup', description: 'Lookup.', input_schema: LOOKUP_INPUT_SCHEMA, output_keys: ['marker'], domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: 'none' }] }], timeout_ms: 100, max_output_bytes: 4_096,
       terminal_output: { tag: 'benchmark_terminal', max_bytes: 4_096 },
       isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' },
     }))
