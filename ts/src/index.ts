@@ -1210,14 +1210,16 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.keyword) {
         return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', summary: 'keyword 必填', evidence: '[hbcli-anything@error] empty' })) as Record<string, never>
       }
-      const itpA = await interpretEffect({ effect: 'ANYTHING_SEARCH', params: q })
+      // hbcliBin 直通 config(缺省 'hbcli',能力层按已知安装位回退)——issue #195 教训:
+      // 此前 params 只透 q,config.hbcliBin 永远到不了能力层
+      const itpA = await interpretEffect({ effect: 'ANYTHING_SEARCH', params: { ...q, hbcliBin: config.hbcliBin } })
       if (!itpA.result) return declinedObservation('ANYTHING_SEARCH', itpA.trace)
       const r = itpA.result
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `anything:${r.via}`).catch(() => {})
       const top5 = (r.hits ?? []).slice(0, 5)
       const summary = r.verdict === 'hit'
-        ? `${q.keyword} → hit (${r.hits?.length ?? 0} 候选项)\n${top5.map((h, i) => `  ${i + 1}. [${h.type}] ${h.name}${h.latitude !== undefined && h.longitude !== undefined ? ` @ (${h.latitude.toFixed(3)},${h.longitude.toFixed(3)})` : ''}`).join('\n')}\n${r.evidence}`
+        ? `${q.keyword} → hit (${r.hits?.length ?? 0} 候选项)\n${top5.map((h, i) => `  ${i + 1}. [${h.type}] ${h.name}${h.star ? ` ${h.star}★` : ''}${h.latitude !== undefined && h.longitude !== undefined ? ` @ (${h.latitude.toFixed(3)},${h.longitude.toFixed(3)})` : ''}${h.hotelId ? ` hotelId=${h.hotelId}` : h.destinationId ? ` destinationId=${h.destinationId}` : ''}`).join('\n')}\n${r.evidence}`
         : r.verdict === 'miss'
           ? `${q.keyword} → miss (酒店-be 一切正常但无候选)\n${r.evidence}`
           : `${q.keyword} → unavailable (${r.error})\n${r.evidence}`

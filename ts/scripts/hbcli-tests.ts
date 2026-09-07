@@ -58,7 +58,36 @@ await writeFile(fallback, JSON.stringify({ meta: 'fake', stays: [{ id: 's1', not
   if (!argLine.includes('destination-name') || !argLine.includes('room-occupancies')) {
     throw new Error(`FAIL: v0.3.0 旗标未对齐,实际 ${argLine.slice(0, 200)}`)
   }
-  console.log('5. v0.3.0 旗标(--destination-name/--room-occupancies)对齐 OK')
+  // 日期旗标回归(issue #195):hotel-list 支持日期,不传会把实时价退化成当前窗口价
+  const rd = await searchHotels({ destination: '普吉', checkIn: '2026-09-18', checkOut: '2026-09-20' }, { hbcliBin: echoBin })
+  const dateLine = JSON.stringify(rd)
+  if (!dateLine.includes('check-in') || !dateLine.includes('2026-09-18') || !dateLine.includes('check-out')) {
+    throw new Error(`FAIL: 日期旗标未传上游,实际 ${dateLine.slice(0, 240)}`)
+  }
+  assert.ok(rd.summary.includes('入住 2026-09-18 → 退房 2026-09-20'), 'summary 应回显日期槽位')
+  console.log('5. 旗标对齐(--destination-name/--room-occupancies/--check-in/--check-out)OK')
+}
+
+// 5b. 实时 summary 自带数据行(issue #195:render 只透 summary,summary 必须含 id/名称/星级/价)
+{
+  const { writeFileSync, chmodSync } = await import('node:fs')
+  const listBin = join(tmp, 'hbcli-list')
+  writeFileSync(listBin, `#!/bin/sh
+cat <<'JSON'
+{"list":[{"id":461850557,"name":{"en":"Jumeirah Beach Hotel","zh":"朱美拉海滩酒店"},"star":5,"minPrice":{"amount":100,"currency":"USD"}}],"basic":{"sessionId":"s1"}}
+JSON
+`)
+  chmodSync(listBin, 0o755)
+  const rl = await searchHotels({ destination: '迪拜', checkIn: '2026-09-18', checkOut: '2026-09-20' }, { hbcliBin: listBin })
+  assert.equal(rl.via, 'hbcli-realtime')
+  assert.ok(rl.summary.includes('实时 1 家'), 'summary 应带家数')
+  assert.ok(rl.summary.includes('id=461850557'), '数据行应带 hotelId(hotel-rates 入参来源)')
+  assert.ok(rl.summary.includes('朱美拉海滩酒店'), '数据行应带 zh 名称')
+  assert.ok(rl.summary.includes('5★'), '数据行应带星级')
+  assert.ok(rl.summary.includes('100 USD'), '数据行应带最低价')
+  assert.match(rl.summary, /\[实时API:hbcli@/, 'summary 应带证据链时间戳')
+  assert.ok(rl.hotels !== null, 'hotels 结构化产物保留(UI/程序消费)')
+  console.log(`5b. 实时 summary 数据行 OK:${rl.summary.split('\n')[1]}`)
 }
 
 const r4 = await searchHotels({ destination: '普吉岛' }, { hbcliBin: failBin2, fallbackPath: fallback })

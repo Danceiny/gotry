@@ -3,9 +3,16 @@
  *
  * 链路(同构 hbcli.ts):
  *   gotry capabilities/anything.ts
- *     → spawn hbcli search anything [keywords...] --json <opts>
- *       → hotel-be /api/search/anything
+ *     → spawn hbcli --json search anything <kw> [opts]
+ *       → hotel-be /api/search/anything(httpdispatch 自动注册;httpdispatch 路由面)
  *         → search/service/geography.go func Anything (mixed 城市+酒店搜索)
+ *
+ * wire 契约(2026-09-07 对齐上游源码;SearchItem = FuzzySearchItem + hotel):
+ *   req  { keyword, contentType?, context.destinationId?, minHotelCount? }
+ *   resp { candidates: [{ type: 'city'|'place'|'hotel',
+ *                         region?:  { id, name:{en,zh,ar}, coordinates:{centerLat,centerLng}, countryCode, … },
+ *                         place?:   { latlngCoordinator },
+ *                         matchScore?, hotel?: { id, name:{en,zh,ar}, star, latlngCoordinator:{google|gaode:{lat,lng} } } }] }
  *
  * 三值语义:
  *   - hit:  命中候选(混合 city/hotel,maybe-coords)
@@ -22,33 +29,36 @@
  */
 
 import { spawn } from 'node:child_process'
+import { hbcliBinCandidates } from './hbcli.ts'
 
 export interface AnythingQuery {
   /** 多词以空格 join,与 hbcli argument-parser 一致;前后 trim。空则报错(unless contentType 强限定) */
   keyword: string
   /** 'city' | 'hotel' | undefined(混合) */
   contentType?: 'city' | 'hotel'
-  /** 限定子区域 ID(可选) */
+  /** 限定子区域 ID(上游 SearchReq.context.destinationId) */
   parentDestinationId?: string | number
   /** 默认 12_000 ms */
   timeoutMs?: number
-  /** 显式 hbcli 路径(默认 'hbcli',从 $PATH 找) */
+  /** 显式 hbcli 路径(默认 'hbcli',从 $PATH 找;默认名自动回退 ~/.local/bin 等已知安装位) */
   hbcliBin?: string
 }
 
 export interface AnythingHit {
   type: 'city' | 'hotel' | 'place'
-  /** FuzzySearchItem name(or hotel name);fallback 为 region.Name */
+  /** i18n name 解析(zh 优先,产品中文优先;回退 en/ar) */
   name: string
-  /** score / 0..1(若返回) */
+  /** matchScore(文本相关度,越高越匹配) */
   score?: number
-  /** lat/lng(若 region 给出) */
+  /** lat/lng(region.center 或 hotel/place latlngCoordinator,若给出) */
   latitude?: number
   longitude?: number
-  /** city id(若有) */
+  /** city id(region.id;酒店候选为所属 destinationId) */
   destinationId?: string
   /** hotel id(若有) */
   hotelId?: string
+  /** 星级(酒店候选,若返回) */
+  star?: number
 }
 
 export interface AnythingResult {
@@ -63,16 +73,46 @@ export interface AnythingResult {
   error?: string
 }
 
+/** 上游 i18n.I18N {en,zh,ar};tolerant 读取(字段可能缺省,老字符串形态也兜住) */
+type I18N = { en?: string; zh?: string; ar?: string } | string | undefined
+
+function i18nText(v: I18N): string {
+  if (!v) return ''
+  if (typeof v === 'string') return v
+  return v.zh || v.en || v.ar || ''
+}
+
+/** hotel-be Latlng:{lat,lng};google/gaode 双源取先非零者 */
+function latlngOf(coord: { google?: { lat?: number; lng?: number }; gaode?: { lat?: number; lng?: number } } | undefined): { latitude?: number; longitude?: number } {
+  for (const src of [coord?.google, coord?.gaode]) {
+    const lat = typeof src?.lat === 'number' ? src.lat : undefined
+    const lng = typeof src?.lng === 'number' ? src.lng : undefined
+    if (lat !== undefined && lng !== undefined && (lat !== 0 || lng !== 0)) return { latitude: lat, longitude: lng }
+  }
+  return {}
+}
+
 interface RawSearchResp {
   candidates?: RawSearchItem[]
 }
+/** hotel-be SearchItem wire 形状(FuzzySearchItem + hotel,2026-09-07 对齐源码) */
 interface RawSearchItem {
   type?: string
-  name?: string
-  label?: string
-  region?: { id?: string; name?: string; latitude?: number; longitude?: number; typeScore?: number; name_en?: string; name_zh?: string }
-  hotel?: { id?: string; name?: string; latitude?: number; longitude?: number }
-  score?: number
+  matchScore?: number
+  region?: {
+    id?: string | number
+    name?: I18N
+    countryCode?: string
+    coordinates?: { centerLat?: number; centerLng?: number }
+  }
+  place?: { latlngCoordinator?: { google?: { lat?: number; lng?: number }; gaode?: { lat?: number; lng?: number } } }
+  hotel?: {
+    id?: string | number
+    name?: I18N
+    star?: number
+    destinationId?: string | number
+    latlngCoordinator?: { google?: { lat?: number; lng?: number }; gaode?: { lat?: number; lng?: number } }
+  }
 }
 
 function sh(cmd: string, args: string[], opts: { timeoutMs: number; env: NodeJS.ProcessEnv }) {
@@ -115,8 +155,20 @@ function sh(cmd: string, args: string[], opts: { timeoutMs: number; env: NodeJS.
   })
 }
 
-const upperFirst = (s: string): string => (s ? s[0]!.toUpperCase() + s.slice(1) : s)
-const lowerFirst = (s: string): string => (s ? s[0]!.toLowerCase() + s.slice(1) : s)
+/** --json 必须在子命令前(cli.ts 全局旗标预扫描只认子命令前位置;JSON 错误也走结构化 stderr) */
+function buildArgs(keyword: string, q: AnythingQuery): string[] {
+  const args = ['--json', 'search', 'anything', keyword]
+  if (q.contentType) args.push('--content-type', q.contentType)
+  if (q.parentDestinationId !== undefined) args.push('--destination-id', String(q.parentDestinationId))
+  return args
+}
+
+/** 旧版 CLI 无 search anything 子命令时的可行动升级指引(issue #195:裸 unknown command 读起来像工具坏了) */
+function upgradeHint(stderr: string): string | null {
+  return /unknown command/i.test(stderr)
+    ? 'hbcli 版本过旧(无 search anything 子命令)——请升级:hbcli update,或重跑 npx gotry setup'
+    : null
+}
 
 /** Anything 通用搜索 — 任何搜索失败走降级;不抛错 */
 export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> {
@@ -131,27 +183,25 @@ export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> 
       error: 'keyword is required',
     }
   }
-  const bin = q.hbcliBin ?? 'hbcli'
-  const args = [bin, 'search', 'anything', kw]
-  if (q.contentType) args.push('--content-type', q.contentType)
-  if (q.parentDestinationId !== undefined) {
-    args.push('--parent-destination-id', String(q.parentDestinationId))
+  const args = buildArgs(kw, q)
+  // spawn 级失败(ENOENT)按已知安装位回退(hbcli.ts callHbcliJson 同款);其余失败无重试意义
+  const candidates = hbcliBinCandidates(q.hbcliBin ?? 'hbcli')
+  let r: { code: number; stdout: string; stderr: string; error?: string } = { code: -1, stdout: '', stderr: '' }
+  for (let i = 0; i < candidates.length; i++) {
+    r = await sh(candidates[i]!, args, { timeoutMs: q.timeoutMs ?? 12_000, env: process.env })
+    if (!(r.error && i < candidates.length - 1)) break
   }
-
-  const r = await sh(bin, args.slice(1), {
-    timeoutMs: q.timeoutMs ?? 12_000,
-    env: process.env,
-  })
   const latencyMs = Date.now() - started
 
   if (r.error || r.code !== 0) {
+    const raw = r.error ?? `${r.stderr.slice(0, 200)} (exit ${r.code})`
     return {
       ok: false,
       via: 'hbcli-anything-error',
-      evidence: `[实时API:hbcli-anything@error@${ts}] ${r.error ?? `exit ${r.code}`}`,
+      evidence: `[实时API:hbcli-anything@error@${ts}] ${raw}`,
       latencyMs,
       verdict: 'error',
-      error: r.error ?? `${r.stderr.slice(0, 200)} (exit ${r.code})`,
+      error: upgradeHint(r.stderr) ?? raw,
     }
   }
 
@@ -174,15 +224,19 @@ export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> 
   const hits: AnythingHit[] = rawItems.map((it) => {
     const region = it.region ?? {}
     const hotel = it.hotel ?? {}
-    const isHotel = it.type === 'hotel' || it.type === 'SupplierHotelList' || Boolean(hotel.id)
+    const isHotel = it.type === 'hotel' || Boolean(hotel.id)
+    const hotelCoords = latlngOf(hotel.latlngCoordinator)
+    const placeCoords = latlngOf(it.place?.latlngCoordinator)
+    const center = region.coordinates ?? {}
     return {
-      type: (isHotel ? 'hotel' : (it.type === 'place' || it.type === 'City' ? lowerFirst(it.type) : 'city')) as AnythingHit['type'],
-      name: it.name ?? region.name_en ?? region.name ?? hotel.name ?? '?',
-      score: it.score ?? region.typeScore,
-      latitude: hotel.latitude ?? region.latitude,
-      longitude: hotel.longitude ?? region.longitude,
-      destinationId: region.id,
-      hotelId: hotel.id,
+      type: (isHotel ? 'hotel' : (it.type === 'place' ? 'place' : 'city')) as AnythingHit['type'],
+      name: i18nText(hotel.name) || i18nText(region.name) || '?',
+      score: it.matchScore,
+      latitude: hotelCoords.latitude ?? placeCoords.latitude ?? (typeof center.centerLat === 'number' ? center.centerLat : undefined),
+      longitude: hotelCoords.longitude ?? placeCoords.longitude ?? (typeof center.centerLng === 'number' ? center.centerLng : undefined),
+      destinationId: hotel.destinationId !== undefined ? String(hotel.destinationId) : (region.id !== undefined ? String(region.id) : undefined),
+      hotelId: hotel.id !== undefined ? String(hotel.id) : undefined,
+      star: typeof hotel.star === 'number' && hotel.star > 0 ? hotel.star : undefined,
     }
   })
 
@@ -196,6 +250,3 @@ export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> 
     totalCandidates: rawItems.length,
   }
 }
-
-// noop exports to keep file shape consistent with hbcli.ts
-export const _ = { upperFirst }
