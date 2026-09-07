@@ -58,7 +58,7 @@ M3 最小可用产品,分发链路无已知堵点。
   - 安装只经用户终端 `npx gotry doctor --fix`;LLM key 归 dsh 宿主,刻意不管
   - 工具层 not-installed/needs-setup 报错统一指 doctor(2026-09-02 迪拜 session 复盘:阻断对已坏通道的盲目重试)
 - **运维面**:质量指标只读聚合 `ts/scripts/build-metrics-report.ts`(2026-09-05,#138 第一切片)——事实闸 verdict 分布与 blocked 率/通道健康 down·cooldown(30 天窗)/事故面(7 天窗)/桥延迟 p50·p95·max(**>500ms 超限计数=§11 复审节奏触发锚点的可见面**)/账本与 doctor 报告存在性,聚成单一 markdown;全程只读零 SQLite 打开(`openDb` 建连即可能写 kv),默认 stdout、`--out` 才落盘;工程面交付,不构成 M3 Exit 证据(归 #22)
-- **外驱面**:通道探针 tick `ts/scripts/channel-probe.ts`(2026-09-07,外部事件接缝第 1 段,#82 本地生产者)——只读探测无头可探通道(hbcli whoami / open-meteo / opensky;session 系不可探显式 skip,flyai 默认不探防空额度),异常写 `down` 事件、恢复写 `'ok'` 事件(latest-wins 超越 down)进 `channel-health.jsonl`,routing/doctor 零改动受益;loopx/cron 驱动一次一轮,非常驻;远程回调面仍待 D-31 拍板(seam 设计 §5)
+- **外驱面**:通道探针 tick `ts/scripts/channel-probe.ts`(2026-09-07,外部事件接缝第 1 段,#82 本地生产者)——只读探测无头可探通道(hbcli whoami / open-meteo / opensky;session 系不可探显式 skip,flyai 默认不探防空额度),异常写 `down` 事件、恢复写 `'ok'` 事件(latest-wins 超越 down)进 `channel-health.jsonl`,routing/doctor 零改动受益;loopx/cron 驱动一次一轮,非常驻;第 2 段愿望池消费同日落地(`conditions.channels` 可选条件+召回时 down 否证,`wish-channel-gate-tests` §53);远程回调面仍待 D-31 拍板(seam 设计 §5)
 - **外联**:AgentReach wrapper(上游装于 `.venv`,反射桥 `agent-reach-bridge.py` 直调上游注册表,零渠道知识)
 
 **工具面无预设静态路由优先级**(persona (19) 平铺保持);通道顺位由**通道注册表**生成、健康态过滤(D-8):
@@ -383,7 +383,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **事实闸覆盖面·酒店入闸 + 渲染原语(2026-09-04,issue #118,D-26 收口)**:①`HotelFact`(gotry_bookable_fact.v1 第三形态)——exact-date 酒店检索 hit/miss 落账(flyai-hotel/session:ctrip-hotel 两通道接线);纪律与机/火同源:摸底不落账、needs-setup/error 传输失败永不落负事实、不落数字价(上游打码价保真,只记在架家数)。②`gotry_fact_gate` 酒店 claim 入闸——断言可住性的行按目的地+档期回溯酒店事实,无事实 fail-closed(`unverifiable_hotel_claim`),exact-date miss 在册却写有房 = `not_in_source`。③**渲染原语单向生成**:`renderFlightFact`/`renderHotelFact` 每条事实行内嵌 `<!-- fact:<fact_id> -->` 锚点——产物经原语渲染即自带溯源锚,闸侧锚点优先确定性回溯(启发式让位),手改/伪造锚点 = `fact_anchor_unknown` 直接违例。fact-gate-tests §10 八断言。余量:政策事实生产端(实时签证 API)仍记 D-26 外部依赖。
 
 - **指标面板第一切片(2026-09-05,issue #138,ADR-11 质量层工程面)**:`ts/scripts/build-metrics-report.ts` 只读聚合既有落盘侧车(不新增数据源)——事实闸 verdict 分布与 blocked 率/通道健康 down·cooldown(30 天窗)/事故面(7 天窗)/桥延迟百分位与超预算计数(>500ms=复审触发锚点)/账本与 doctor 报告存在性→单一 markdown;坏行跳过同侧车纪律,空根成型,collect 全程零写入;评测三层运行结果仍由 run-all-tests.sh/CI 承载,v1 不重跑评测。持续观测/可视化面留后续切片(metrics-report-tests §1-6 全绿,run-all §51)
-- **外部事件接缝第 1 段(2026-09-07,issue #82 本地生产者)**:`ts/scripts/channel-probe.ts` 探针 tick 落地 seam 设计 §6①——只读探测(hbcli whoami/open-meteo/opensky;session 系 skip,flyai 默认不探防空额度),异常写 `down`、恢复写 `'ok'`(latest-wins 超越 down,消费方 `state !== 'down'` 判健康);channel-health 增 `ChannelEventState`('ok' 仅持久面),doctor flyai 达限注释与 metrics 通道面均按超越口径兼容;探测结果→事件为纯函数锚点(channel-probe-tests 5/5,run-all §52)。远程回调面(world2agent 桥)仍待 D-31 拍板,拍板包已贴 issue #82
+- **外部事件接缝第 1 段(2026-09-07,issue #82 本地生产者)**:`ts/scripts/channel-probe.ts` 探针 tick 落地 seam 设计 §6①——只读探测(hbcli whoami/open-meteo/opensky;session 系 skip,flyai 默认不探防空额度),异常写 `down`、恢复写 `'ok'`(latest-wins 超越 down,消费方 `state !== 'down'` 判健康);channel-health 增 `ChannelEventState`('ok' 仅持久面),doctor flyai 达限注释与 metrics 通道面均按超越口径兼容;探测结果→事件为纯函数锚点(channel-probe-tests 5/5,run-all §52)。同日第 2 段:愿望池消费——`conditions.channels` 可选条件 + 召回时命名通道处于 down 即否证成行条件(wish-channel-gate-tests 5/5,run-all §53;健康面缺席=行为与旧版一致)。远程回调面(world2agent 桥)仍待 D-31 拍板,拍板包已贴 issue #82
 
 ### 外部 benchmark 泛化(Round 1–9,Discussion #78,截至 Round 8 全部 diagnostic-only)
 

@@ -84,8 +84,8 @@ incident 同级);world2agent 远程回调需要签名/通道绑定——**等第
 
 1. **sensor 探针最小行** ✅(2026-09-07 落地:`ts/scripts/channel-probe.ts`,run-all §52):只读探针 tick(可由 loopx/cron 驱动)对关键通道做
    无副作用探测,异常时调 `recordChannelEvent`(down),恢复写 `'ok'`(latest-wins 超越)——routing/doctor 即时受益;
-2. **愿望池消费**:召回 context 纳入通道事件事实(条件含航线/目的地的愿望用
-   最新通道状态佐证);
+2. **愿望池消费** ✅(2026-09-07 落地:`conditions.channels` 可选条件 + 召回时
+   命名通道处于 down 即否证成行条件,run-all §53;「佐证」渲染面留后续切片):
 3. **world2agent 回调**:auth 模型拍板后接远程生产者(D-31)。
 
 ## 7. 与既有判定的兼容性

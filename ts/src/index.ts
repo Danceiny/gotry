@@ -44,7 +44,7 @@ import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromHotel, factsFromSession } from './bookable-facts.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
-import { noteChannelVerdict, recordChannelEvent } from '../capabilities/channel-health.ts'
+import { noteChannelVerdict, recordChannelEvent, readLatestChannelEvents } from '../capabilities/channel-health.ts'
 import { routingAdvice, renderRoutingCard, toolRoutingHeadline, type ChannelIntent } from '../capabilities/channel-registry.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
@@ -418,7 +418,7 @@ export function apply(ctx: Context, config: Config): void {
       entry: {
         type: 'json',
         required: true,
-        description: '{ name, reason?, conditions: { days, budget_cny, best_months }, muted?: boolean }',
+        description: '{ name, reason?, conditions: { days, budget_cny, best_months, channels? }, muted?: boolean }',
       },
     },
     output: {
@@ -446,6 +446,7 @@ export function apply(ctx: Context, config: Config): void {
       'Surface AT MOST ONE "next departure" wish whose fulfilment conditions match the user\'s current window '
       + '(0..1 rule: never more than one nudge per turn, never push when nothing matches — 憧憬不被拒绝,也不被硬推). '
       + 'Muted wishes never surface. Surfacing records a recalled event in the memory-utility sidecar. '
+      + 'A wish whose conditions.channels names a channel that is currently down (out-of-band health facts) is vetoed for this recall — 不推当下走不通的憧憬. '
       + 'action="confirm-outcome" records the user-confirmed real-world outcome (attribution helpful/harmful/neutral) — '
       + 'ONLY pass attribution the user explicitly stated; the agent must never self-attribute usefulness.',
     // D-30 第四刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
@@ -487,11 +488,20 @@ export function apply(ctx: Context, config: Config): void {
         const r = ledger.confirmOutcome({ wishId: q.wishId, attribution: q.attribution, detail: q.detail, trip: tripInput })
         return { ok: true, recorded: r.recorded, wish_id: q.wishId, status: q.attribution, ...(r.trip ? { trip: r.trip } : {}) } as never
       }
-      // recall:0..1 条件匹配(判定归 wish-pool 纯函数),muted 永不召回,无命中不硬推
+      // recall:0..1 条件匹配(判定归 wish-pool 纯函数),muted 永不召回,无命中不硬推;
+      // 通道否证(接缝第 2 段):持久健康面里处于 down 的通道集合进 context——
+      // conditions.channels 命名依赖通道的愿望在被否证时不当场推荐(读不到健康面=不启用)。
       const pool = ledger.readWishPool()
       const candidates = pool.filter(e => !e.muted && typeof e.wish_id === 'string')
       const month = q.month ?? new Date().getMonth() + 1
-      const match = pickNudgeWish(candidates as WishPoolEntry[], { days: q.days, budgetCny: q.budgetCny, month })
+      let channelDown: ReadonlySet<string> | undefined
+      try {
+        const latest = await readLatestChannelEvents(config.stateRoot)
+        const down = new Set<string>()
+        for (const [ch, ev] of latest) if (ev.state === 'down') down.add(ch)
+        channelDown = down
+      } catch { /* 健康面缺席=不启用否证,召回行为与旧版一致 */ }
+      const match = pickNudgeWish(candidates as WishPoolEntry[], { days: q.days, budgetCny: q.budgetCny, month, channelDown })
       if (!match) {
         return { ok: true, suggestion: null, summary: `无可成行的憧憬匹配当前窗口(${candidates.length} 条在册,0..1 纪律:不硬推)` } as never
       }
