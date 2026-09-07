@@ -281,6 +281,7 @@ async function doctorChecks() {
   // dsh-map-tools(patch 分发面宿主插件,issue #139):解析失败启动时整块静默剔除,
   // doctor 把两态照亮。候选清单与 bin/gotry-inner.js 解析链、ts/capabilities/doctor.ts 同口径。
   const mapCandidates = [
+    join(repoRoot, 'vendor/map-tools/lib/index.js'),
     join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js'),
     join(repoRoot, 'node_modules/dsh-map-tools/package.json'),
     join(repoRoot, 'ts/node_modules/dsh-map-tools/package.json'),

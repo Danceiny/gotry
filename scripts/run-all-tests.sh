@@ -476,6 +476,10 @@ echo "=== 54. persona 表层护栏(#192 回归锚:表层规则句存在/22 条�
 (cd ts && npx tsx scripts/persona-surface-guard-tests.ts) || FAIL=1
 
 echo
+echo "=== 55. map-tools 自带 payload(#202:MIT 携带/依赖根除/三面候选/7 工具注册/lock 零残留;全离线) ==="
+(cd ts && npx tsx scripts/map-payload-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

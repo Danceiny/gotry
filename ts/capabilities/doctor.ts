@@ -204,6 +204,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
   //    静默剔除,不挡启动**:模型只觉得「没有这个工具」,没人告诉它为什么。doctor 把两态照亮。
   //    候选清单与 bin 解析逻辑同口径(map:repo vendored-node_modules / 包依赖;ask-user:dsh 闭包)。
   const mapCandidates = [
+    join(repoRoot, 'vendor/map-tools/lib/index.js'),
     join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js'),
     join(repoRoot, 'node_modules/dsh-map-tools/package.json'),
     join(repoRoot, 'ts/node_modules/dsh-map-tools/package.json'),

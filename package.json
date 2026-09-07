@@ -96,7 +96,8 @@
     "ts/capabilities/session-consent.ts",
     "ts/capabilities/session-login.ts",
     "ts/capabilities/artifacts.ts",
-    "ts/capabilities/fact-log.ts"
+    "ts/capabilities/fact-log.ts",
+    "vendor/map-tools/"
   ],
   "engines": {
     "node": ">=22.15.0"

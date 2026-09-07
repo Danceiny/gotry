@@ -369,6 +369,10 @@ if (benchmarkEnvironmentConfig) {
 // npm 用依赖解析;都找不到就整块剔除 patch 条目(缺地图不挡旅行规划)
 let mapEntry = ''
 if (!benchmarkEnvironmentConfig) {
+  const payloadMap = join(repoRoot, 'vendor/map-tools/lib/index.js')
+  if (existsSync(payloadMap)) {
+    mapEntry = payloadMap
+  } else {
   const vendoredMap = join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js')
   if (existsSync(vendoredMap)) {
     mapEntry = vendoredMap
@@ -381,6 +385,7 @@ if (!benchmarkEnvironmentConfig) {
       try { mapEntry = require_.resolve(join(repoRoot, 'ts/node_modules/dsh-map-tools')) } catch { mapEntry = '' }
     }
   }
+}
 }
 // 结构化澄清卡(T2):ask_user_question 工具 + user-questions 服务,从 dsh 包
 // 上下文解析(pnpm 嵌套布局下只有 dsh 自己看得见这些依赖);失败整块剔除
