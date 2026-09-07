@@ -22,6 +22,8 @@ export const BENCHMARK_CONFORMANCE_STATE_UNAVAILABLE = 'BENCHMARK_CONFORMANCE_ST
 
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_.-]*$/
 const MAX_TERMINAL_BYTES = 1024 * 1024
+const BENCHMARK_TOOL_RESULT_SCHEMA_VERSION = 'gotry_benchmark_tool_result_v1'
+const BENCHMARK_DOMAIN_RECOVERIES = new Set(['none', 'retry_same', 'revise_arguments', 'choose_alternative'])
 
 export interface TerminalOutputConfig {
   tag: string
@@ -46,6 +48,8 @@ interface TurnState {
   retryCount: number
   retryMode: RetryMode
   successfulResultStep?: number
+  domainOutcomeStep?: number
+  lastBridgeResponseStep?: number
   bridgeCallFailed: boolean
   bridgeFailureCode?: string
   retryRedispatchAttempted: boolean
@@ -150,7 +154,9 @@ function assistantText(data: Record<string, unknown>): { text: string; interrupt
   return { text, interrupted: data.interrupted === true }
 }
 
-function bridgeResultStatus(data: Record<string, unknown>, callId: string): { ok: true } | { ok: false; code: string } | undefined {
+type BridgeResultStatus = { kind: 'result' } | { kind: 'domain' } | { kind: 'failure'; code: string }
+
+function bridgeResultStatus(data: Record<string, unknown>, callId: string): BridgeResultStatus | undefined {
   if (!plainObject(data.message) || !plainObject(data.message.source)) return undefined
   if (data.message.source.callId !== callId || !Array.isArray(data.message.content)) return undefined
   const block = data.message.content.find(candidate => plainObject(candidate)
@@ -164,8 +170,28 @@ function bridgeResultStatus(data: Record<string, unknown>, callId: string): { ok
   try {
     const parsed: unknown = JSON.parse(text)
     if (!plainObject(parsed)) return undefined
-    if (parsed.ok === true) return { ok: true }
+    const keys = Object.keys(parsed).sort().join(',')
+    if (parsed.ok === true && keys === 'ok,result' && (plainObject(parsed.result) || Array.isArray(parsed.result))) return { kind: 'result' }
+    if (parsed.ok === true && keys === 'ok,outcome' && plainObject(parsed.outcome)) {
+      const outcomeKeys = Object.keys(parsed.outcome).sort().join(',')
+      if (outcomeKeys === 'code,recovery,schema_version,status'
+        && parsed.outcome.schema_version === BENCHMARK_TOOL_RESULT_SCHEMA_VERSION
+        && (parsed.outcome.status === 'miss' || parsed.outcome.status === 'error')
+        && typeof parsed.outcome.code === 'string'
+        && IDENTIFIER.test(parsed.outcome.code)
+        && typeof parsed.outcome.recovery === 'string'
+        && BENCHMARK_DOMAIN_RECOVERIES.has(parsed.outcome.recovery)) return { kind: 'domain' }
+      return undefined
+    }
     if (parsed.ok === false && typeof parsed.error === 'string') {
+      const exactFailure = parsed.error === 'runner_failed'
+        ? (keys === 'error,ok' || (keys === 'error,exit_code,ok,signal'
+          && (parsed.exit_code === null || (typeof parsed.exit_code === 'number' && Number.isInteger(parsed.exit_code)))
+          && (parsed.signal === null || typeof parsed.signal === 'string')))
+        : parsed.error === 'invalid_arguments'
+          ? keys === 'error,ok,reason' && typeof parsed.reason === 'string'
+          : keys === 'error,ok'
+      if (!exactFailure) return undefined
       const code = parsed.error === 'timed_out'
         ? BENCHMARK_BRIDGE_TIMED_OUT
         : parsed.error === 'runner_failed'
@@ -175,7 +201,7 @@ function bridgeResultStatus(data: Record<string, unknown>, callId: string): { ok
             : parsed.error === 'output_truncated'
               ? BENCHMARK_BRIDGE_OUTPUT_TRUNCATED
             : BENCHMARK_BRIDGE_CALL_FAILED
-      return { ok: false, code }
+      return { kind: 'failure', code }
     }
     return undefined
   } catch {
@@ -249,10 +275,15 @@ export function createBenchmarkAgentConformance(projection: BenchmarkBridgeProje
         const callId = event.data.message.source.callId
         if (typeof callId !== 'string' || !state.validCallIds.has(callId)) return
         const resultStatus = bridgeResultStatus(event.data, callId)
-        if (resultStatus?.ok === true) {
+        if (typeof event.data.step === 'number') state.lastBridgeResponseStep = event.data.step
+        if (resultStatus?.kind === 'result') {
           state.successfulResultStep = typeof event.data.step === 'number'
             ? event.data.step
             : state.successfulResultStep
+        } else if (resultStatus?.kind === 'domain') {
+          state.domainOutcomeStep = typeof event.data.step === 'number'
+            ? event.data.step
+            : state.domainOutcomeStep
         } else {
           state.bridgeCallFailed = true
           state.bridgeFailureCode = resultStatus?.code ?? BENCHMARK_BRIDGE_CALL_FAILED
@@ -274,10 +305,10 @@ export function createBenchmarkAgentConformance(projection: BenchmarkBridgeProje
       if (state.retryRedispatchAttempted) {
         return { kind: 'reject', code: BENCHMARK_BRIDGE_RETRY_CALL_NOT_ALLOWED }
       }
-      if (state.successfulResultStep === undefined) {
-        if (state.bridgeCallFailed) {
-          return { kind: 'reject', code: state.bridgeFailureCode ?? BENCHMARK_BRIDGE_CALL_FAILED }
-        }
+      if (state.bridgeCallFailed && state.successfulResultStep === undefined) {
+        return { kind: 'reject', code: state.bridgeFailureCode ?? BENCHMARK_BRIDGE_CALL_FAILED }
+      }
+      if (state.successfulResultStep === undefined && state.domainOutcomeStep === undefined) {
         if (state.retryCount >= MAX_CONFORMANCE_RETRIES) {
           return { kind: 'reject', code: BENCHMARK_BRIDGE_CALL_REQUIRED }
         }
@@ -289,7 +320,7 @@ export function createBenchmarkAgentConformance(projection: BenchmarkBridgeProje
       const terminal = state.lastAssistant
       const terminalIsValid = terminal !== undefined
         && !terminal.interrupted
-        && terminal.step > state.successfulResultStep
+        && terminal.step > state.lastBridgeResponseStep!
         && parseBenchmarkTerminal(terminal.text, projection.terminal).ok
       if (terminalIsValid) return { kind: 'accept' }
       if (state.retryCount >= MAX_CONFORMANCE_RETRIES) {

@@ -205,7 +205,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 - **M3 Exit not closed** — engineering & distribution are ready, but real seed-user evidence (50–200 person cohort) has not been accumulated; automated tests prove contracts and formulas, not business pass
 - **Hotel session adapters** — Ctrip-hotel / Meituan logged-in surfaces await real login-state backfill; flights are done
 - **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host / calibration samples
-- **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim); the round-by-round engineering ledger lives in [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
+- **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim). The bridge now combines the generic `tools/call/errors` recovery surface with per-tool typed descriptors, exact result/domain/failure conformance, and a latest-response terminal fence; the round-by-round engineering ledger lives in [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
 - **Booking** — nothing bookable ships today; M5 opens only through WriteGate and the booking-saga FSM
 
 <details>

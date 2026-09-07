@@ -61,8 +61,8 @@
 
 - **ChinaTravel grounding-v3 canary**:首例可评分终态通过,第二例 planner 重复工具循环超 300s;当前只允许报告 `attempted=2/scored=1/timeout=1`,不得外推 5-query aggregate。
 - **Round 1(工具预算)**:每轮第 16 次注入收敛上下文、第 18 次最后 body、第 19 次起 `TOOL_BUDGET_EXHAUSTED`;run-all §45 覆盖离线 E2E,CI 以当前 SHA tarball 隔离 consumer 重放。**后续(ADR-24 v2)**:真实轨迹证明任何「到点杀 turn」都会复现同一失败,最终形态=「路由 + wall-clock 双出口」(确定性分类 quick/sync/deep;deep 硬阈落 handoff 工单并告知 ETA;收集闭环 `turn-handoff-collect.ts` + 只读复访工具 `gotry_turn_handoff_list`);设计全文见 `architecture.md` §8.24。
-- **Round 2–7(Phase 1 bridge)**:全部 frozen treatment 均为 diagnostic-only、official scores null、不声称 uplift。逐轮合同与结果(SHA/退出码/归因)见 `evaluation/benchmark-environment-bridge.md` 的 Round ledger;演进摘记见 `architecture.md` §9。
-  - 当前停在:Round 7 minimal kernel 的 frozen treatment(UID `e20241028160248698752`)以 `child_bridge_runner_failed` 收场;下一步=generic bridge tool schema 与可恢复 domain-error contract。
+- **Round 2–9(Phase 1 bridge)**:Round 2–8 frozen treatment 均为 diagnostic-only、official scores null、不声称 uplift；Round 9 通过模型输出上限、可配置预算与 paired-think normalization 让治理链路首次存活，但仍没有可归因 official score。逐轮合同与结果见 `evaluation/benchmark-environment-bridge.md` 的 Round ledger；演进摘记见 `architecture.md` §9。
+- **Round 10(per-tool typed result contract)**:保留单一 flat `tools|call|errors` 协议，以 owner-local descriptor 同源生成每工具 exact call schema 与 spawn 前 validator；强制非空 output key、有限 exact domain tuple、严格 result/domain/failure envelope，并以最新 bridge response 钉住 terminal 时序。该轮不改 provider/scorer/evaluator/default product path；冻结 treatment 与 score 仍须独立 evidence，未取得前禁止 uplift 声明。
 - **验收 evidence(2026-08-30)**:登录态 Chrome 连续两轮真跑——static official 均 8/8 hit、零 fallback;session 分别 3/8 与 5/8 hit,全部可评分 hit(3+5 条)均 13/13 = 100%,非 hit 明示 miss。**评分门通过不等于 8/8 可售性。**
 - 同轮清偿:真扩展在线时默认桥不退出的存量缺口——parked timer/socket 只在默认桥 `unref`,wizard `keepBridge` 不变;§38 24/24、§40 9/9。
 
