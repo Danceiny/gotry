@@ -100,7 +100,13 @@ async function startRelay(): Promise<Relay> {
       if (toolNames(body).includes(TOOL)) {
         plannerBodies.push(body)
         const plannerIndex = plannerBodies.length
-        const alreadyHandedOff = JSON.stringify(body).includes(HANDOFF)
+        // issue #205:已交接判定只认真实 role=tool 消息(persona (21) 的
+        // TURN_DEADLINE_HANDOFF 字面量也在 system 文本里,整包扫描会首轮误判
+        // 已交接 → 永不派发工具 → handoff 语义测试退化为纯文本收尾)。
+        const realToolMessages = (body.messages ?? []).filter(
+          message => message.role === 'tool'
+        )
+        const alreadyHandedOff = realToolMessages.some(message => JSON.stringify(message).includes(HANDOFF))
         // 首个 planner 响应拖过硬阈:首个工具派发必然越过 wall-clock 边界。
         // handoff 发生后,后续 planner 请求一律回 text-only final,收敛回路。
         const stall = !alreadyHandedOff && plannerIndex === 1 ? RELAY_STALL_MS : 0
