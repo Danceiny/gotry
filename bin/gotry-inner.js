@@ -82,10 +82,7 @@ if (help) {
 Usage:
   gotry web                          # dsh Web UI on http://127.0.0.1:3080
   gotry setup                        # 扩展就位检查/指引(商店一键装)
-<<<<<<< HEAD
   gotry setup calendar               # 可选日历(CalDAV 工作窗口)挂载开关:默认关;--off 关闭;--status 查看
-=======
->>>>>>> origin/main
   gotry doctor                       # 可选依赖体检:扩展/agent-reach/hbcli/flyai/sidebar 状态 + 补装指引
   gotry doctor --fix                 # 体检 + 按报告补装(hbcli 官方脚本 / agent-reach pip / sidebar 插件)
   gotry "一段完整任务..."            # headless 一问一答
