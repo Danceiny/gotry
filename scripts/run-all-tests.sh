@@ -468,6 +468,10 @@ echo "=== 52. 通道探针 tick(外部事件接缝第 1 段:evaluate 纯函数/l
 (cd ts && npx tsx scripts/channel-probe-tests.ts) || FAIL=1
 
 echo
+echo "=== 53. 愿望池通道否证(外部事件接缝第 2 段:conditions.channels/down 否证召回/健康不加分/旧调用零破坏/畸形忽略/0..1 集成;全离线) ==="
+(cd ts && npx tsx scripts/wish-channel-gate-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

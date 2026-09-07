@@ -23,7 +23,7 @@
 > 以下均为**工程面交付,不构成任何里程碑 Exit 证据**(D-20 口径)。
 
 - **政策事实生产端 v1(2026-09-05,issue #141,D-26)**:VISA_POLICY_FETCH effect 注册表行——C 档中国领事服务网(cs.mfa.gov.cn)国家指南树,礼貌抓取(永不重试+断路器护站)→ PolicyFact(as_of+review_by+来源证据链)落账;founder 拍板 C 档免费权威源先行,Timatic/Sherpa° 后议。
-- **外部事件接缝设计(2026-09-04,issue #119/#82 兼容方向,D-31 决策点)**:`docs/design/external-event-seam.md`——外部事件作为健康面(站点断→通道态 down,routing/doctor 零改动生效)与愿望池召回的新生产者,消费既有接缝不建新运行时;不做 push/总线/常驻监听;D-31=事件写入信任模型,触发式拍板;落地序列三段(触发式)——第 1 段(本地探针 tick + `'ok'` 恢复事件,channel-probe.ts)已于 2026-09-07 落地(run-all §52);D-31 拍板包已贴 issue #82。
+- **外部事件接缝设计(2026-09-04,issue #119/#82 兼容方向,D-31 决策点)**:`docs/design/external-event-seam.md`——外部事件作为健康面(站点断→通道态 down,routing/doctor 零改动生效)与愿望池召回的新生产者,消费既有接缝不建新运行时;不做 push/总线/常驻监听;D-31=事件写入信任模型,触发式拍板;落地序列三段(触发式)——第 1 段(本地探针 tick + `'ok'` 恢复事件,channel-probe.ts)与第 2 段(愿望池消费:`conditions.channels`+down 否证召回)已于 2026-09-07 落地(run-all §52/§53);D-31 拍板包已贴 issue #82。
 
 - **HotelByte Booking Copilot 产品验收并行线**:GoTry 以单一 `booking.surface` 契约(2026-09-05 #133 收敛,原 v2 形态转正、v1 退役)的 typed read actions 提供协作面——六个生命周期阶段、七个 phase 字面值(`terminal`/`error` 是两种终态结果)的 durable projection,生产 standalone 默认只接受 BFF 已绑定的 `user.turn`/receipt continuation,完整 principal + binding seam 才开放 `user.turn.ingress`,`Book` 留在原 Checkout。Draft 候选已有 exact SHA/schema/Linux Node 24+ABI provenance 与实际进程 health identity/ingress mode;合并 gate 仍是 tenant/customer/storefront/payment-link 四 surface 真实库存、unavailable/changed 恢复链及 Checkout/QueryOrders/清理证据。该线不启封 M5,也不以离线合同或 CI 替代业务验收。
 - **效应解译器(2026-08-29,issue #16,ADR-18)**:`effect_interpreter.v1` 落地 L4 渠道边界——指数退避重试 / 断路器 / mock 解译器(纯离线 CI 面)收敛进解译层;五渠道工具 + realtime-pricing 已接,余下渠道增量迁移(D-23)。run-all §37。OTA 工具面照旧平铺,证据链逐源标注不变。
