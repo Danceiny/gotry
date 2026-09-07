@@ -4,6 +4,28 @@
 
 ---
 
+## v0.0.1-rc.20 · 2026-09-08
+
+### What's New
+
+- **修好 `npx @danceiny/gotry doctor --fix` 的整个安装链** — rc.19 实测三红一误报,根因各不相同:
+  - **sidebar「1 项补装失败」是误报**:pnpm 11 的严格构建脚本策略让 dsh 安装器 exit 1,但 167 个包其实已完整落盘(复检本来就是绿的)。现在安装器按落盘状态判成功,并明示 node-pty(侧栏内嵌终端)的构建脚本被 pnpm 跳过、需要时用 `pnpm approve-builds` 补。
+  - **地图/路线/POI 工具这次真的可用了(npm 安装形态)**:rc.19 说「正式进依赖」实际只对源码布局生效——npm 布局从未装上。依赖这条路被上游堵死:dsh-map-tools 的 peer 要求 `>=0.1.2-rc.1` 的 dsh 家族,而 gotry 锁定 `0.1.2-alpha.3`(semver 上 alpha < rc),npm 严格 peer 解析直接拒装,硬上会弄坏 `npx @danceiny/gotry` 主安装路径。rc.20 改为**随包内置分发**——装 gotry 即得地图工具,零 API key(OSM/OSRM)。
+  - **ask-user 的 ❌ 是体检误报**:依赖一直在(npm 的提升布局里,运行时正常),体检的检查路径没覆盖该布局。现在体检与运行时解析同口径,说真话了。
+- **`gotry help` 不再打印合并冲突标记**(rc.19 带入的脏文本,顺带清偿)。
+
+### For Developers
+
+- **CI 双层修复(main 自 #197 起全红)**:①runner npm 升级后裸 `npm ci` 强制校验 peer,而 ts 的 lockfile 一直是 `--legacy-peer-deps` 模式生成——CI 与 CONTRIBUTING 显式带该旗标,并移除 dsh-map-tools 冗余依赖;②turn-deadline 的 5 个 tsc 错误 = 类型面隐性依赖 peer 意外物化(`session/event` 声明在 dsh-session 的 cordis Events augmentation 里,pnpm 隔离布局下 root 侧的 augmentation 合并进另一个 cordis 实例)——显式 `import type` + dsh-session@0.1.2-alpha.3 进 ts 依赖面,overrides 把 peer 闭包钉在 alpha.3 防 rc.1 混版本,ts lock 全量 resolved 指回 registry.npmjs.org。
+- doctor 两面(CLI + 会话工具)改 createRequire 解析链,覆盖 npm/npx 提升布局;map-tools 解析 vendor 优先。
+- 新增回归锚:doctor-tests §5b/5c(提升布局解析/vendor 布局)+ bootstrap-tests §11(安装器 exit 非 0 但落盘 = 按状态判成功)。
+
+### 安装
+
+- 没变化,跑 `npx @danceiny/gotry web`。rc.19 用户跑一次 `npx @danceiny/gotry doctor` 复检——地图/ask-user 两项应转绿。
+
+---
+
 ## v0.0.1-rc.19 · 2026-09-07
 
 ### What's New
