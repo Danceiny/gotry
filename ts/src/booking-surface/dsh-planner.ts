@@ -223,7 +223,10 @@ function plannerPrompt(turn: BookingCopilotTurn, task: BookingCopilotTaskState):
     phase: availability.availabilityPhase,
     activeHotelRef: availability.hotelRefs[availability.activeHotelOrdinal],
     criteria: availability.criteria,
-    hotels: availability.hotelRefs.map((hotelRef) => { const hotel = availability.hotels[hotelRef]!; return { hotelRef, status: hotel.status, currentOfferRefs: hotel.currentOfferRefs, generation: hotel.generation, checksRemaining: Math.max(0, 2 - hotel.checksIssued), queriesRemaining: Math.max(0, 2 - hotel.offerQueriesIssued), freshOffersRequired: hotel.freshOffersRequired } }),
+    // Workspace snapshots can carry loadedOffers for hotels the availability
+    // machine has not registered (the UI loads offers outside this state);
+    // skip those instead of asserting and 500ing the whole turn.
+    hotels: availability.hotelRefs.flatMap((hotelRef) => { const hotel = availability.hotels[hotelRef]; if (!hotel) return []; return [{ hotelRef, status: hotel.status, currentOfferRefs: hotel.currentOfferRefs, generation: hotel.generation, checksRemaining: Math.max(0, 2 - hotel.checksIssued), queriesRemaining: Math.max(0, 2 - hotel.offerQueriesIssued), freshOffersRequired: hotel.freshOffersRequired }] }),
     terminalCode: availability.terminal?.code,
   }
   const payload = {

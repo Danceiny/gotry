@@ -18,7 +18,7 @@ import {
   type DshPlannerRunPort,
 } from '../src/booking-surface/dsh-planner.ts'
 
-const availability = { initialized: true, recoveryStarted: false, availabilityPhase: 'need_offers' as const, activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] }
+const availability: import("../src/booking-surface/runtime.ts").BookingCopilotTaskState["availability"] = { initialized: true, recoveryStarted: false, availabilityPhase: 'need_offers' as const, activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] }
 const task: BookingCopilotTaskState = {
   schemaVersion: 'booking.surface',
   taskId: 'task-dsh-1',
@@ -315,6 +315,27 @@ await assert.rejects(
 )
 await unsafeRef.close()
 
+// A workspace with loadedOffers for a hotel absent from the availability
+// state (UI-loaded offers) must not crash the prompt projection.
+const foreignOfferWorkspace = {
+  ...workspace,
+  loadedOffers: [{ offerRef: "offer-ui-1", offerVersionRef: "offerv-ui-1", hotelRef: "hotel-ui-9", evidenceLevel: "rate_loaded" as const, factRefs: [] }],
+}
+const uiOffersPort: DshPlannerRunPort = {
+  async run(prompt) {
+    assert.ok(prompt.includes("hotel-ui-9"), "workspace loadedOffers reach the planner payload")
+    return { finalResponse: "", events: [] }
+  },
+  async close() {},
+}
+const uiOffers = await createDshEmbeddedBookingPlanner({ runPort: uiOffersPort })
+const uiOffersDecisions = await uiOffers.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: "booking.surface", kind: "user.turn", taskId: task.taskId, turnId: "dsh-turn-ui", workspace: foreignOfferWorkspace, request: { text: "Prepare the loaded offer" } },
+})
+assert.equal(uiOffersDecisions[0]?.kind, "error", "foreign loadedOffers reach the payload without crashing the projection")
+await uiOffers.close()
+
 const plainProsePort: DshPlannerRunPort = {
   async run() {
     return { finalResponse: 'I would search hotels in Dubai for you.', events: [] }
@@ -390,5 +411,5 @@ await assert.rejects(
   /planner_identity_required/,
 )
 
-await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), forbidden.close(), terminalAdapter.close()])
+await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')
