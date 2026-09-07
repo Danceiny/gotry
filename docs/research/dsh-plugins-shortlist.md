@@ -4,13 +4,14 @@
 > 站点收录 2176 个 DeepSeek Harness 插件(schema.org ItemList 全量拉取,按 gotry
 > 路线图缺口关键词粗筛 8 类,入围 8 个逐一拉 README 核实)。本文只回答一个问题:
 > **哪些插件值得装进 gotry 的 dsh 宿主,补我们不愿自建的宿主层能力**。
-> 集成方式一律 `dsh plugin add <name>`(宿主层安装,不进 gotry 依赖,不动 vendored runtime)。
+> 集成默认走 `dsh plugin add <name>`(宿主层安装,不进 gotry 依赖)；唯一例外是
+> `dsh-map-tools`：上游 rc peer 与 GoTry alpha.3 closure 不兼容，因此以 MIT payload 随包 vendor。
 
 ## 立即值得试(直接补已知缺口)
 
 | 插件 | 核实能力 | 补哪个缺口 |
 |---|---|---|
-| [HorusJiang/dsh-map-tools](https://github.com/HorusJiang/dsh-map-tools) | 驾车/公交/步行/骑行路线规划、地理编码、逆地理编码、POI 搜索——**原生工具**,模型直接调,无需 MCP | ✅ **已集成 2026-08-22**(v0.4.4,e2e 实测 map_driving_route 160.5km/119min 真调用) |
+| [HorusJiang/dsh-map-tools](https://github.com/HorusJiang/dsh-map-tools) | 驾车/公交/步行/骑行路线规划、地理编码、逆地理编码、POI 搜索——**原生工具**,模型直接调,无需 MCP | ✅ **已集成**(当前 v0.5.1 MIT payload 随包 vendor；7 个 `map_*` 工具由 clean-tarball proof 锁定) |
 | [STARDUSTLC666/dsh-calendar](https://github.com/STARDUSTLC666/dsh-calendar) | CalDAV 读写日历,重复日程自动展开,5 个面向模型的工具 | ✅ **已集成 2026-08-25**(v0.3.2,calendar_list/search/create/update/delete 注册;CalDAV 配置后工作窗口自动读取,等配置即插即用) |
 | [omdsh-dev/DSH-better-sidebar](https://dshmarket.com/zh/p/omdsh-dev/DSH-better-sidebar/) | dsh web 侧栏工作台:文件树+Markdown/Mermaid/PDF 预览+编辑器+Git 面板;三方 Tab API(registerTab/registerFileViewer);★3083/18.9 万周装(dshmarket #1 UI) | ✅ **已集成 2026-08-29**(v0.17.1,`gotry setup` 宿主层安装,issue #25 产物查看面;实测 web profile 加载,文件工作台可用;账本感知产物 Tab 待 client-half 阶段) |
 
@@ -37,6 +38,6 @@ M4 记忆(动机画像/偏好/跨会话状态)继续自建——这本来就是 
 
 ## 落地顺序建议
 
-1. dsh-map-tools(下一 tick 可试装 + e2e 验证路线/POI 工具真调用)
+1. dsh-map-tools(已随包 vendor，并由 §49b clean-tarball proof 验证 7 工具；无需另装外部 npm peer)
 2. dsh-calendar(M4 记忆启动时一起:日历=工作窗口的事实源)
 3. scheduler + lark-link(M5「下一次出发」闭环设计时)

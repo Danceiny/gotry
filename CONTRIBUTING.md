@@ -22,8 +22,8 @@ cd gotry
 
 # ① 装依赖(root = 产品面与锁定 DSH runtime,ts = 插件/测试面)
 npm ci
-cd ts && npm ci --legacy-peer-deps && cd ../..
-#    (--legacy-peer-deps:dsh 家族 peer 闭包由锁定的 runtime 提供,不物化进 ts/node_modules)
+cd ts && npm ci && cd ../..
+#    (完整 dsh alpha.3 peer closure 已由 ts/package.json overrides 精确锁定)
 
 # ② 构建源码检出的 JS runtime
 node scripts/build-dist.mjs

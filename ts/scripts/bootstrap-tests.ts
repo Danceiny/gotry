@@ -75,8 +75,14 @@ assert.ok(c5.out.includes('watch-extension-ready'), 'dry-run 应列 watch-extens
 console.log('5. wizard 子命令(--dry-run 零网络,2 步齐全 + 极简 stdout)OK')
 
 // 6. wizard 走真实路径但 timeout 极短(GOTRY_ONBOARDING_TIMEOUT_MS 缺省走 120s,降级由 inline 探活兜),
+//    端口 0 让子进程绑定隔离的临时桥,避免本机已在线扩展污染 timeout 负例(issue #209)。
 //    确认 stdout 至少含一次探活心跳 + 引导标题(不再断言 "3 步",纯 stdout 形态下标题文案已简化)
-const c6 = runBootstrap(['wizard'], { GOTRY_SETUP_EXTENSION: '0', GOTRY_ONBOARDING_TIMEOUT_MS: '600', GOTRY_ONBOARDING_INTERVAL_MS: '200' })
+const c6 = runBootstrap(['wizard'], {
+  GOTRY_SETUP_EXTENSION: '0',
+  GOTRY_ONBOARDING_TIMEOUT_MS: '600',
+  GOTRY_ONBOARDING_INTERVAL_MS: '200',
+  GOTRY_ONBOARDING_BRIDGE_PORTS: '0',
+})
 assert.equal(c6.code, 1, `wizard(超时)应 exit 1,实际 ${c6.code}\n${c6.out}`)
 assert.ok(c6.out.includes('gotry-wizard'), '应输出 [gotry-wizard] 标签')
 console.log('6. wizard 真实路径(扩展未就绪,exit 1 + 心跳)OK')

@@ -4,6 +4,12 @@
 
 ---
 
+## Unreleased
+
+- **TS 严格安装闭环(#202)** — 在 rc.20 已随包交付 MIT `dsh-map-tools` 的基础上，补齐 alpha.3 peer closure 的精确 overrides，使 `ts/` 裸 `npm ci` 不再依赖 `--legacy-peer-deps`；新增 clean tarball fail-closed 证明。此项尚未发布 tag 或 npm 版本。
+
+---
+
 ## v0.0.1-rc.20 · 2026-09-08
 
 ### What's New

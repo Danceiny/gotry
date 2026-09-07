@@ -433,9 +433,6 @@ else
   echo "FAIL: benchmark packaged runtime unavailable"
   FAIL=1
 fi
-cleanup_packaged_e2e_runtime
-trap - EXIT
-
 echo
 echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/closed read registry/task-scoped ledger/real dsh core/BFF-only SSE/production bin;local model fixture) ==="
 (node scripts/build-dist.mjs) || FAIL=1
@@ -454,6 +451,12 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 (cd ts && npx tsx scripts/booking-copilot-startup-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-core-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-bin-proof-tests.ts) || FAIL=1
+
+echo
+echo "=== 49b. dsh-map-tools vendored package proof(issue #202:clean tarball install + MIT license/provenance + alpha.3 settings closure + exactly seven map_* tools + network-free inline coordinates) ==="
+(GOTRY_MAP_TOOLS_E2E_BIN="$package_e2e_bin" "$TSX_BIN" ts/scripts/map-tools-vendor-package-proof.ts) || FAIL=1
+cleanup_packaged_e2e_runtime
+trap - EXIT
 
 echo
 echo "=== 50. 通道注册表与健康面(docs/design/tool-orchestration-design.md,#106/#107/#108 编排设计:注册表封闭性/意图顺位=证据级×效率/routingAdvice 健康态驱动/flyai 达限即改道·hit 即恢复/verdict 映射闭集/persona 路由卡确定性/JSONL 持久面+坏行容忍/doctor 配额可见+calendar 三态;全离线) ==="

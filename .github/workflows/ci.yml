@@ -73,11 +73,9 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Install ts dependencies
-        # --legacy-peer-deps 与 ts/package-lock.json 的生成模式一致:dsh 家族的
-        # peer 闭包(dsh-tools 的 peers 标 ^0.1.2-rc.1,与锁定的 alpha.3 家族在
-        # semver 上冲突)从不物化进 ts/node_modules——运行时由锁定的 dsh runtime
-        # 提供。runner npm 升级后裸 npm ci 开始强制校验 peer,main 全红(2026-09-08)。
-        run: npm ci --legacy-peer-deps --no-audit --no-fund
+        # ts/package.json 精确钉住完整 alpha.3 peer closure；裸 npm ci 是
+        # 合并闸，防止 lockfile 再次依赖 legacy peer 解析绕行。
+        run: npm ci --no-audit --no-fund
         working-directory: ts
 
       - name: Build dist (§25 publish-preverify packs the real dist)

@@ -155,8 +155,15 @@ export function startExtensionHealthWatch(opts: HealthWatchOptions = {}): Health
   const probe = opts.probe ?? (async () => {
     // 先确保桥存在 + keepBridge
     const bridge = await import('./extension-bridge.ts')
-    await bridge.getOrCreateSessionBridge({ keepBridge: opts.keepBridge === true })
-    return combinedProbe(opts, businessProbe)
+    const created = await bridge.getOrCreateSessionBridge({ keepBridge: opts.keepBridge === true, ports: opts.ports })
+    // The default path must keep scanning the canonical pool: another GoTry
+    // process may already own the extension-connected bridge. An explicit
+    // port override is an isolation boundary, so probe only the bridge that
+    // this process actually bound (including an ephemeral `0` request).
+    const probeOpts = created.ok && opts.ports
+      ? { ...opts, ports: [created.bridge.port] }
+      : opts
+    return combinedProbe(probeOpts, businessProbe)
   })
   const now = opts.now ?? Date.now
   const state: InternalState = { cancelled: false, readyCount: 0, resolveOutcome: null }
