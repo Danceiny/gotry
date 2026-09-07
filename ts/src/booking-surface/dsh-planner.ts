@@ -425,13 +425,15 @@ function recoverFinalResponseDecision(response: string, task: BookingCopilotTask
 
 const PLANNER_SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
 
-// Models cite prompt facts with JSON-pointer fragment syntax (`turn_X#request`);
-// `#` sits outside the runtime ref charset while `:` is inside, and the mapping
-// is deterministic, so repair instead of burning the retry budget.
+// Models cite prompt facts in URI-ish syntax (`fact://turn_X/request`,
+// `turn_X#request`); characters outside the runtime ref charset are mapped
+// deterministically to '.' so repair succeeds without burning the retry
+// budget. Anything the sanitizer cannot make unique enough still fails the
+// safe-ref gate into the retry path.
 function repairPlannerFactRefs(action: Record<string, unknown>): void {
   const factRefs = action.factRefs
   if (!Array.isArray(factRefs)) return
-  action.factRefs = factRefs.map((ref) => (typeof ref === 'string' ? ref.replace(/#/g, ':') : ref))
+  action.factRefs = factRefs.map((ref) => (typeof ref === 'string' ? ref.replace(/#/g, ':').replace(/[^A-Za-z0-9:._-]/g, '.') : ref))
 }
 
 function assertPlannerSafeRefs(action: Record<string, unknown>): void {

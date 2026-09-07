@@ -207,6 +207,37 @@ const textDecisions = await textChannel.plannerFactory(task).next({
 assert.equal(textDecisions[0]?.kind, 'operation', 'text-channel typed decisions execute through the same authority path')
 assert.deepEqual((textDecisions[0] as { action?: { actionId?: string; expectedRevision?: number } }).action, { ...searchRun, expectedRevision: 0 })
 
+const sanitizedRefPort: DshPlannerRunPort = {
+  async run() {
+    return {
+      finalResponse: '',
+      events: [{
+        type: 'tool/call',
+        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai'] } } }) },
+      }],
+    }
+  },
+  async close() {},
+}
+const sanitizedRef = await createDshEmbeddedBookingPlanner({ runPort: sanitizedRefPort })
+const sanitizedDecisions = await sanitizedRef.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-6b',
+    workspace,
+    request: { text: 'Find hotels' },
+  },
+})
+assert.equal(sanitizedDecisions[0]?.kind, 'operation', 'sanitizer maps off-charset characters deterministically')
+assert.deepEqual(
+  (sanitizedDecisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs,
+  ['draft:destination.Dubai'],
+)
+await sanitizedRef.close()
+
 const unauthorisedPort: DshPlannerRunPort = {
   async run() {
     return { finalResponse: JSON.stringify({ kind: 'operation', action: hotelSelect }), events: [] }
@@ -236,7 +267,7 @@ const fragmentRefPort: DshPlannerRunPort = {
       finalResponse: '',
       events: [{
         type: 'tool/call',
-        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [`turn_${task.lastTurnId}#request`] } } }) },
+        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [`fact://turn_${task.lastTurnId}/request`] } } }) },
       }],
     }
   },
@@ -257,7 +288,7 @@ const fragmentDecisions = await fragmentRef.plannerFactory(task).next({
 assert.equal(fragmentDecisions[0]?.kind, 'operation', 'JSON-pointer fragment factRefs repair into the safe charset')
 assert.deepEqual(
   (fragmentDecisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs,
-  [`turn_${task.lastTurnId}:request`],
+  [`fact:..turn_${task.lastTurnId}.request`],
 )
 await fragmentRef.close()
 
@@ -291,7 +322,7 @@ const unsafeRefPort: DshPlannerRunPort = {
       finalResponse: '',
       events: [{
         type: 'tool/call',
-        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai'] } } }) },
+        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [42] } } }) },
       }],
     }
   },
@@ -310,8 +341,8 @@ await assert.rejects(
       request: { text: 'Find hotels' },
     },
   }),
-  /planner_invalid_action:unsafe_fact_ref/,
-  'model-invented unsafe refs retry as parse-class failures, not ledger-boundary crashes',
+  /planner_invalid_action/,
+  'non-string factRef entries retry as parse-class failures, not ledger-boundary crashes',
 )
 await unsafeRef.close()
 
@@ -411,5 +442,5 @@ await assert.rejects(
   /planner_identity_required/,
 )
 
-await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close()])
+await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')
