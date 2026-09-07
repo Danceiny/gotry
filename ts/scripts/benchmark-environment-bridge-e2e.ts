@@ -167,12 +167,13 @@ function anyToolResultPresent(body: Body): boolean {
   return (body.messages ?? []).some(m => m.role === 'tool')
 }
 
-type CaseMode = 'disabled' | 'enabled' | 'domain-recovery' | 'unexpected-output' | 'invalid-path' | 'invalid-schema' | 'unsafe-config' | 'output-truncated' | 'timeout' | 'runner-failed' | 'spawn-failed' | 'web-mode' | 'debug-redaction'
+type CaseMode = 'disabled' | 'enabled' | 'domain-recovery' | 'domain-recovery-failed' | 'unexpected-output' | 'invalid-path' | 'invalid-schema' | 'unsafe-config' | 'output-truncated' | 'timeout' | 'runner-failed' | 'spawn-failed' | 'web-mode' | 'debug-redaction'
 
 async function runCase(mode: CaseMode, executableOverride?: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<{ exit: number | null; stdout: string; stderr: string; output: string; requests: Body[]; optionalResolutionHits: { calendar: number; map: number }; servedToolCalls: number; runnerArguments: Array<{ city?: unknown }> }> {
   const requests: Body[] = []
   let servedToolCalls = 0
   let spawnTarget = ''
+  const domainRecoveryMode = mode === 'domain-recovery' || mode === 'domain-recovery-failed'
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = []
     req.on('data', c => chunks.push(Buffer.from(c)))
@@ -181,7 +182,7 @@ async function runCase(mode: CaseMode, executableOverride?: string, extraEnv: No
       requests.push(body)
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       if (mode === 'spawn-failed' && names(body).includes(TOOL) && !anyToolResultPresent(body) && spawnTarget) rmSync(spawnTarget, { force: true })
-      if (mode === 'domain-recovery' && names(body).includes(TOOL) && anyToolResultPresent(body) && !toolResultPresent(body)) {
+      if (domainRecoveryMode && servedToolCalls === 1 && names(body).includes(TOOL) && anyToolResultPresent(body) && !toolResultPresent(body)) {
         servedToolCalls += 1
         res.end(toolCall('bridge-call-2', 'Singapore'))
       } else if (mode !== 'disabled' && mode !== 'invalid-path' && mode !== 'invalid-schema' && mode !== 'unsafe-config' && names(body).includes(TOOL) && !anyToolResultPresent(body)) {
@@ -204,7 +205,9 @@ async function runCase(mode: CaseMode, executableOverride?: string, extraEnv: No
   const runnerTrace = join(cwd, 'synthetic-runner-trace.jsonl')
   spawnTarget = join(cwd, 'synthetic-spawn-target.js')
   const configPath = join(cwd, mode === 'invalid-path' ? 'benchmark-env-config-\n.json' : 'benchmark-env-config.json')
-  const runnerBody = mode === 'domain-recovery'
+  const runnerBody = mode === 'domain-recovery-failed'
+    ? `if (args.city === 'Dubai') process.stdout.write(JSON.stringify({ schema_version: 'gotry_benchmark_tool_result_v1', status: 'miss', code: 'NOT_FOUND', recovery: 'revise_arguments' })); else { process.stderr.write('PRIVATE_RECOVERY_RUNNER_DIAGNOSTIC_DO_NOT_REFLECT'); process.exit(17) }`
+    : mode === 'domain-recovery'
     ? `if (args.city === 'Dubai') process.stdout.write(JSON.stringify({ schema_version: 'gotry_benchmark_tool_result_v1', status: 'miss', code: 'NOT_FOUND', recovery: 'revise_arguments' })); else process.stdout.write(JSON.stringify({ schema_version: 'gotry_benchmark_tool_result_v1', status: 'ok', result: { marker: '${MARKER}', leaked: [] } }))`
     : mode === 'timeout'
     ? `setTimeout(() => {}, 60_000)`
@@ -215,9 +218,9 @@ async function runCase(mode: CaseMode, executableOverride?: string, extraEnv: No
       : mode === 'unexpected-output'
         ? `process.stdout.write(JSON.stringify({ schema_version: 'gotry_benchmark_tool_result_v1', status: 'ok', result: { marker: '${MARKER}', leaked: [], unexpected: 'must-not-reflect' } }))`
       : `const forbidden = ['GOTRY_BENCHMARK_ENV_CONFIG', 'GOTRY_BENCHMARK_BRIDGE_PARENT_SECRET', 'LLM_API_KEY', 'LLM_BASE_URL', 'LLM_MODEL', 'DEEPSEEK_BASE_URL', 'GOTRY_LLM_MODEL', 'DATABASE_URL', 'SSH_AUTH_SOCK', 'AWS_PROFILE', 'HTTPS_PROXY']; const leaked = forbidden.filter(name => process.env[name] !== undefined); process.stdout.write(JSON.stringify({ schema_version: 'gotry_benchmark_tool_result_v1', status: 'ok', result: { marker: '${MARKER}', leaked } }))`
-  writeFileSync(runner, `if (process.argv.length !== 5 || process.argv[2] !== 'call' || process.argv[3] !== 'lookup' || (!${JSON.stringify(mode === 'domain-recovery')} && JSON.parse(process.argv[4]).city !== 'Dubai') || (${JSON.stringify(mode === 'domain-recovery')} && !['Dubai', 'Singapore'].includes(JSON.parse(process.argv[4]).city))) process.exit(2); const fs = require('node:fs'); const args = JSON.parse(process.argv[4]); fs.appendFileSync(${JSON.stringify(runnerTrace)}, JSON.stringify({ city: args.city }) + '\\n'); ${runnerBody}`)
+  writeFileSync(runner, `if (process.argv.length !== 5 || process.argv[2] !== 'call' || process.argv[3] !== 'lookup' || (!${JSON.stringify(domainRecoveryMode)} && JSON.parse(process.argv[4]).city !== 'Dubai') || (${JSON.stringify(domainRecoveryMode)} && !['Dubai', 'Singapore'].includes(JSON.parse(process.argv[4]).city))) process.exit(2); const fs = require('node:fs'); const args = JSON.parse(process.argv[4]); fs.appendFileSync(${JSON.stringify(runnerTrace)}, JSON.stringify({ city: args.city }) + '\\n'); ${runnerBody}`)
   writeFileSync(spawnTarget, '#!/usr/bin/env node\nprocess.exit(0)\n', { mode: 0o700 })
-  writeFileSync(configPath, JSON.stringify({ schema_version: mode === 'invalid-schema' ? 'invalid' : 'gotry_benchmark_environment_bridge_v3', enabled: true, executable: mode === 'spawn-failed' ? spawnTarget : process.execPath, cwd, argv_prefix: mode === 'spawn-failed' ? ['placeholder'] : [runner], tools: [{ name: 'lookup', description: 'Lookup.', input_schema: LOOKUP_INPUT_SCHEMA, output_keys: ['marker', 'leaked'], domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: mode === 'domain-recovery' ? 'revise_arguments' : 'none' }] }], timeout_ms: mode === 'timeout' ? 50 : 10_000, max_output_bytes: mode === 'output-truncated' ? 1_024 : 4_096, terminal_output: { tag: 'benchmark_terminal', max_bytes: 4_096 }, isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' } }))
+  writeFileSync(configPath, JSON.stringify({ schema_version: mode === 'invalid-schema' ? 'invalid' : 'gotry_benchmark_environment_bridge_v3', enabled: true, executable: mode === 'spawn-failed' ? spawnTarget : process.execPath, cwd, argv_prefix: mode === 'spawn-failed' ? ['placeholder'] : [runner], tools: [{ name: 'lookup', description: 'Lookup.', input_schema: LOOKUP_INPUT_SCHEMA, output_keys: ['marker', 'leaked'], domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: domainRecoveryMode ? 'revise_arguments' : 'none' }] }], timeout_ms: mode === 'timeout' ? 50 : 10_000, max_output_bytes: mode === 'output-truncated' ? 1_024 : 4_096, terminal_output: { tag: 'benchmark_terminal', max_bytes: 4_096 }, isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' } }))
   if (mode === 'unsafe-config') chmodSync(configPath, 0o666)
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -335,6 +338,13 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     return /status\\?":\\?"miss/.test(serialized) && /recovery\\?":\\?"revise_arguments/.test(serialized)
   })), `${target} declared typed miss reaches model history`)
   assert.match(recovered.stdout, /<benchmark_terminal>/, `${target} corrected second call reaches tagged terminal output`)
+  const failedRecovery = await runCase('domain-recovery-failed', executableOverride)
+  assert.equal(failedRecovery.exit, 1, `${target} infrastructure failure after a declared miss cannot be masked by the earlier domain outcome`)
+  assert.equal(failedRecovery.servedToolCalls, 2, `${target} failed recovery still exercises exactly two model-owned tool calls`)
+  assert.deepEqual(failedRecovery.runnerArguments, [{ city: 'Dubai' }, { city: 'Singapore' }], `${target} failed recovery reaches the revised second adapter invocation`)
+  assert.equal(failedRecovery.stdout, '', `${target} failed recovery releases no terminal stdout`)
+  assert.match(failedRecovery.stderr, /benchmark terminal output unavailable \(child_bridge_runner_failed\)/, `${target} failed recovery preserves the second runner failure classification`)
+  assert.equal(failedRecovery.output.includes('PRIVATE_RECOVERY_RUNNER_DIAGNOSTIC_DO_NOT_REFLECT'), false, `${target} failed recovery never reflects private runner stderr`)
   const debugRedaction = await runCase('debug-redaction', executableOverride)
   assert.equal(debugRedaction.exit, 0, `${target} benchmark debug mode preserves successful execution`)
   assert.equal(debugRedaction.output.includes('PRIVATE_QUERY_SENTINEL_DO_NOT_REFLECT'), false, `${target} benchmark debug output never reflects the private task`)

@@ -199,7 +199,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 - **M3 Exit 未关闭** —— 工程与分发面就绪,但真实种子用户证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
 - **酒店会话适配** —— 携程酒店/美团登录态面等实测回填;机票已通
 - **界面语言** —— 英文仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
-- **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic(无分数、无 uplift 声明)。Round 8 新增 typed、可恢复的 bridge 工具/结果合同及离线 unit/E2E 证据；冻结 treatment 尚未运行，provider routing、scorer、evaluator 与默认产品模式均未改变。逐轮工程台账见 [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)
+- **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic(无分数、无 uplift 声明)。Round 8 新增 typed、可恢复的 bridge 工具/结果合同，并补上非空输出键覆盖、domain/failure 精确分流与 latest-response terminal fence；已有离线 unit/E2E 证据，但冻结 treatment 尚未运行，provider routing、scorer、evaluator 与默认产品模式均未改变。逐轮工程台账见 [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)
 - **预订** —— 今天没有任何可下单路径;M5 只经 WriteGate 与 booking-saga 状态机启封
 
 <details>

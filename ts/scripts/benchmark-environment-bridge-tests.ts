@@ -173,8 +173,8 @@ function toolCall(callId = 'call-1', options: { turn?: number; step?: number; ac
     },
   }
 }
-function toolResult(callId = 'call-1', options: { turn?: number; step?: number; ok?: boolean; isError?: boolean; error?: string } = {}) {
-  const { turn = 1, step = 1, ok = true, isError = false, error = 'runner_failed' } = options
+function toolResult(callId = 'call-1', options: { turn?: number; step?: number; ok?: boolean; isError?: boolean; error?: string; outcome?: Record<string, unknown>; payload?: Record<string, unknown> } = {}) {
+  const { turn = 1, step = 1, ok = true, isError = false, error = 'runner_failed', outcome, payload } = options
   return {
     type: 'tool/result',
     data: {
@@ -186,11 +186,56 @@ function toolResult(callId = 'call-1', options: { turn?: number; step?: number; 
           type: 'tool-result',
           toolCallId: callId,
           isError,
-          content: [{ type: 'text', text: JSON.stringify(ok ? { ok: true, result: {} } : { ok: false, error }) }],
+          content: [{ type: 'text', text: JSON.stringify(payload ?? (outcome ? { ok: true, outcome } : ok ? { ok: true, result: {} } : { ok: false, error })) }],
         }],
       },
     },
   }
+}
+
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult('call-1', { outcome: { schema_version: 'gotry_benchmark_tool_result_v1', status: 'miss', code: 'NOT_FOUND', recovery: 'revise_arguments' } }))
+  assert.deepEqual(state.stopping(1), { kind: 'steer', mode: 'terminal' }, 'domain outcome alone permits tagged terminal')
+  state.observe(assistant('<done>{"status":"miss"}</done>', { step: 2 }))
+  assert.deepEqual(state.stopping(1), { kind: 'accept' }, 'domain-only tagged terminal is accepted')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult('call-1', { outcome: { schema_version: 'gotry_benchmark_tool_result_v1', status: 'miss', code: 'NOT_FOUND', recovery: 'revise_arguments' } }))
+  state.observe(toolCall('call-2', { step: 2 }))
+  state.observe(toolResult('call-2'))
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 3 }))
+  assert.deepEqual(state.stopping(1), { kind: 'accept' }, 'domain outcome followed by concrete result accepts')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult('call-1', { outcome: { schema_version: 'gotry_benchmark_tool_result_v1', status: 'miss', code: 'NOT_FOUND', recovery: 'revise_arguments' } }))
+  state.observe(toolCall('call-2', { step: 2 }))
+  state.observe(toolResult('call-2', { ok: false, error: 'runner_failed' }))
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_BRIDGE_RUNNER_FAILED }, 'infra failure overrides domain-only outcome')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult('call-1', { payload: { ok: true, result: {}, outcome: { status: 'miss' } } }))
+  state.observe(assistant('<done>{"status":"succeeded"}</done>'))
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_BRIDGE_CALL_FAILED }, 'ambiguous ok wrapper with result and outcome fails closed')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall())
+  state.observe(toolResult('call-1', { payload: { ok: true, outcome: {} } }))
+  state.observe(assistant('<done>{"status":"miss"}</done>'))
+  assert.deepEqual(state.stopping(1), { kind: 'reject', code: BENCHMARK_BRIDGE_CALL_FAILED }, 'malformed inner domain outcome fails closed')
 }
 function assistant(text: string, options: { turn?: number; step?: number; interrupted?: boolean } = {}) {
   const { turn = 1, step = 2, interrupted = false } = options
@@ -288,6 +333,30 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
   state.observe(toolResult('failed', { step: 2, ok: false }))
   state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 3 }))
   assert.deepEqual(state.stopping(1), { kind: 'accept' }, 'a later failed optional call does not erase an already paired successful result')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall('successful', { step: 1 }))
+  state.observe(toolResult('successful', { step: 1 }))
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 2 }))
+  state.observe(toolCall('domain', { step: 3 }))
+  state.observe(toolResult('domain', { step: 3, outcome: { schema_version: 'gotry_benchmark_tool_result_v1', status: 'miss', code: 'NOT_FOUND', recovery: 'revise_arguments' } }))
+  assert.deepEqual(state.stopping(1), { kind: 'steer', mode: 'terminal' }, 'a terminal before the latest domain response is stale')
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 4 }))
+  assert.deepEqual(state.stopping(1), { kind: 'accept' }, 'a fresh terminal after the latest domain response may reuse the earlier concrete result')
+}
+{
+  const state = createBenchmarkAgentConformance(projection)
+  state.observe(turnStart())
+  state.observe(toolCall('successful', { step: 1 }))
+  state.observe(toolResult('successful', { step: 1 }))
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 2 }))
+  state.observe(toolCall('failed', { step: 3 }))
+  state.observe(toolResult('failed', { step: 3, ok: false }))
+  assert.deepEqual(state.stopping(1), { kind: 'steer', mode: 'terminal' }, 'a terminal before a later optional failure is stale')
+  state.observe(assistant('<done>{"status":"succeeded"}</done>', { step: 4 }))
+  assert.deepEqual(state.stopping(1), { kind: 'accept' }, 'a fresh terminal may still converge after an optional failure when a concrete result exists')
 }
 {
   const state = createBenchmarkAgentConformance(projection)
@@ -949,6 +1018,33 @@ try {
   const primitiveOutput = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
   assert.deepEqual(primitiveOutput, { ok: false, error: 'invalid_output' }, 'primitive result strings cannot bypass the structured visible-output boundary')
 
+  outcomes.push({ stdout: okEnvelope(['PRIVATE_ARRAY_VALUE']) })
+  const primitiveArrayOutput = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(primitiveArrayOutput, { ok: false, error: 'forbidden_output' }, 'top-level primitive arrays cannot bypass the positive output-key boundary')
+  assert.equal(JSON.stringify(primitiveArrayOutput).includes('PRIVATE_ARRAY_VALUE'), false, 'rejected primitive array values are not reflected')
+
+  outcomes.push({ stdout: okEnvelope([["PRIVATE_NESTED_ARRAY_VALUE"]]) })
+  const nestedPrimitiveArrayOutput = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(nestedPrimitiveArrayOutput, { ok: false, error: 'forbidden_output' }, 'nested primitive arrays without a declared-key ancestor fail closed')
+  assert.equal(JSON.stringify(nestedPrimitiveArrayOutput).includes('PRIVATE_NESTED_ARRAY_VALUE'), false, 'rejected nested primitive array values are not reflected')
+
+  outcomes.push({ stdout: okEnvelope([{ city: 'Dubai' }, 'PRIVATE_MIXED_ARRAY_VALUE']) })
+  const mixedArrayOutput = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(mixedArrayOutput, { ok: false, error: 'forbidden_output' }, 'a valid record cannot mask an unkeyed primitive sibling')
+  assert.equal(JSON.stringify(mixedArrayOutput).includes('PRIVATE_MIXED_ARRAY_VALUE'), false, 'rejected mixed-array primitive values are not reflected')
+
+  outcomes.push({ stdout: okEnvelope([]) })
+  const emptyArrayOutput = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(emptyArrayOutput, { ok: true, result: [] }, 'an empty top-level result array is an explicit non-reflecting collection')
+
+  outcomes.push({ stdout: okEnvelope([{ city: 'Dubai' }]) })
+  const recordArrayOutput = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(recordArrayOutput, { ok: true, result: [{ city: 'Dubai' }] }, 'top-level arrays of records remain valid when every leaf is covered by a declared key')
+
+  outcomes.push({ stdout: okEnvelope({ city: ['Dubai'] }) })
+  const keyedPrimitiveArrayOutput = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai' } } }, null)
+  assert.deepEqual(keyedPrimitiveArrayOutput, { ok: true, result: { city: ['Dubai'] } }, 'primitive arrays remain valid below a declared output key')
+
   const beforeOversized = spawnSpecs.length
   const oversized = await bridge.execute!({ query: { action: 'call', tool: 'lookup', arguments: { city: 'Dubai', notes: 'x'.repeat(65_537) } } }, null)
   assert.deepEqual(oversized, { ok: false, error: 'invalid_arguments', reason: 'serialization_limit' })
@@ -1268,7 +1364,7 @@ try {
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, schema_version: 'gotry_benchmark_environment_bridge_v1' }), /benchmark environment bridge configuration unavailable/, 'v1 config cannot silently omit the Round 3 terminal semantics')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, tools: [validConfig.tools[0], validConfig.tools[0]] }), /benchmark environment bridge configuration unavailable/, 'duplicate tool descriptor fails hard')
   assert.throws(() => bridgeRegistrationFor(configWithTool(tool => { delete tool.output_keys })), /benchmark environment bridge configuration unavailable/, 'missing output_keys fails hard')
-  assert.equal(bridgeRegistrationFor(configWithTool(tool => { tool.output_keys = [] })), true, 'an explicit empty output allowlist remains valid for outcome-only tools')
+  assert.throws(() => bridgeRegistrationFor(configWithTool(tool => { tool.output_keys = [] })), /benchmark environment bridge configuration unavailable/, 'empty output allowlist fails closed at registration')
   assert.throws(() => bridgeRegistrationFor(configWithTool(tool => { tool.output_keys = ['city', 'city'] })), /benchmark environment bridge configuration unavailable/, 'duplicate output key fails hard')
   assert.throws(() => bridgeRegistrationFor(configWithTool(tool => { tool.output_keys = ['not a key'] })), /benchmark environment bridge configuration unavailable/, 'non-identifier output key fails hard')
   assert.throws(() => bridgeRegistrationFor(configWithTool(tool => { delete tool.domain_outcomes })), /benchmark environment bridge configuration unavailable/, 'missing domain_outcomes fails hard')

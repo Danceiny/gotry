@@ -120,8 +120,11 @@ commands are not exposed. In v3, `tools` is the single source for the model
 schema, discovery response, pre-spawn input validation, output-key allowlist,
 and declared `domain_outcomes`. Each input schema is bounded, object-rooted,
 closed (`required` plus `additionalProperties:false`), and uses only the
-supported typed subset. `output_keys` is required. `terminal_output` remains
-required and capped at 1 MiB.
+supported typed subset. `output_keys` is required and nonempty. Every primitive
+result leaf must sit below a declared output key: a top-level array of records
+and an empty collection are valid, while unkeyed primitive or mixed arrays fail
+closed without reflecting their values. `terminal_output` remains required and
+capped at 1 MiB.
 
 An adapter must return exactly one v1 envelope: `{schema_version,status:"ok",result}`
 or `{schema_version,status:"miss"|"error",code,recovery}`. The tuple must be
@@ -130,7 +133,11 @@ the model may choose to revise arguments and issue another call, but the bridge
 never retries automatically. Non-zero exit, spawn, timeout, truncation, and
 protocol failures remain infrastructure failures (`runner_failed` or their
 specific structured failure); a domain-looking JSON body on a non-zero exit
-does not change that classification.
+does not change that classification. Conformance keeps concrete result, domain
+outcome, and failure eligibility separate, and a tagged terminal must be newer
+than the latest paired bridge response. A domain-only path may converge; a later
+infrastructure failure cannot be hidden by that domain outcome, while an earlier
+concrete result may support a fresh terminal after an optional later failure.
 Timeout and output caps are enforced by the subprocess seam, with
 non-zero exit, timeout, truncation, invalid JSON, and disallowed tool returning
 a structured failure envelope. The subprocess receives only selected
@@ -256,8 +263,9 @@ scoring.
 Round 8 replaces that open question with the v3 typed descriptor and exact
 result-envelope contract described above. Offline unit coverage proves the
 closed schema subset, max/max+1 resource bounds, deep freeze, pre-spawn
-required/type/additional-property rejection, exact declared domain tuples, and
-nonzero-exit precedence. The loopback source E2E captures the native provider
+required/type/additional-property rejection, exact declared domain tuples,
+nonzero-exit precedence, declared-key coverage for primitive/mixed arrays, and
+latest-response terminal ordering. The loopback source E2E captures the native provider
 payload, then drives a declared miss, a model-authored argument revision, a
 second adapter invocation, and a tagged terminal; the bridge performs no
 automatic retry. This is contract evidence only. A frozen treatment has not

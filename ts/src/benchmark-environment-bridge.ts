@@ -213,7 +213,7 @@ function toolDescriptors(value: unknown): value is BenchmarkToolDescriptor[] {
       && typeof outcome.recovery === 'string' && RECOVERIES.has(outcome.recovery)
       && !outcomeKeys.has(outcome.code)
       && (outcomeKeys.add(outcome.code), true))) return false
-    return identifiers(item.output_keys, true)
+    return identifiers(item.output_keys)
   })
 }
 
@@ -347,19 +347,22 @@ function inspectOutput(value: unknown): 'ok' | 'forbidden_key' | 'structure_limi
 
 function inspectAllowedOutput(value: unknown, allowedKeys: string[]): boolean {
   const allowed = new Set(allowedKeys)
-  const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }]
+  const pending: Array<{ value: unknown; depth: number; coveredByDeclaredKey: boolean }> = [{ value, depth: 0, coveredByDeclaredKey: false }]
   let nodes = 0
   while (pending.length > 0) {
     const current = pending.pop()!
     if (++nodes > 10_000 || current.depth > 24) return false
     if (Array.isArray(current.value)) {
-      for (const child of current.value) pending.push({ value: child, depth: current.depth + 1 })
+      for (const child of current.value) pending.push({ value: child, depth: current.depth + 1, coveredByDeclaredKey: current.coveredByDeclaredKey })
       continue
     }
-    if (!plainObject(current.value)) continue
+    if (!plainObject(current.value)) {
+      if (!current.coveredByDeclaredKey) return false
+      continue
+    }
     for (const [key, child] of Object.entries(current.value)) {
       if (!allowed.has(key)) return false
-      pending.push({ value: child, depth: current.depth + 1 })
+      pending.push({ value: child, depth: current.depth + 1, coveredByDeclaredKey: true })
     }
   }
   return true
