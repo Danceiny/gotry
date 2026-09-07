@@ -19,6 +19,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- 自动生成 v0.0.1-rc.20 段… (b3e79c7)
+- v0.0.1-rc.20 段——安装链三修/地图工具 npm 形态真上线/CI 双层修复… (494a5bc)
+- §9 补 CI 双层修复条目——runner npm 严格化暴露的 ts 安装口径与类型依赖显式化(#208)… (f5c2c63)
+- P6 B2B 复用推演纪要起草(#137)… (d7c2f60)
+
+### Tests
+
+- keep package guard fixture valid… (911643e)
+
+### Chore
+
+- rc.20 版本 bump——root package.json 0.0.1-rc.19→0.0.1-rc.20;extension/manifest.json 跟随主版本(0.0.1.19→0.0.1.20… (1257d85)
+
+### Other
+
+- fix cli help conflict markers… (666c17c)
+
+## [0.0.1-rc.20] - 2026-09-08
+
+### Fixed
+
+- turn-deadline 类型依赖显式化——dsh-session 进 ts 依赖面… (a35680c)
+- ts 依赖安装回到 legacy-peer-deps 事实口径… (b299246)
+- handoff 判定只认真实 role=tool 消息——persona (21) 字面量不再误判已交接(#205)… (ebdba94)
+- npx doctor 安装链三修——rc.19 实测三项全红的根因各异… (f7e6265)
+- hbcli anything 链路打通 + hotel 实时数据进模型面 + persona 预算教义对齐 ADR-24 v2(#195)… (30657e6)
+- close typed bridge conformance gaps… (712b849)
+- make benchmark tool contracts typed and recoverable… (3e015ed)
+
+### Documentation
+
 - v0.0.1-rc.20 段——安装链三修/地图工具 npm 形态真上线/CI 双层修复… (494a5bc)
 - §9 补 CI 双层修复条目——runner npm 严格化暴露的 ts 安装口径与类型依赖显式化(#208)… (f5c2c63)
 - P6 B2B 复用推演纪要起草(#137)… (d7c2f60)
