@@ -170,6 +170,8 @@ function cross(value: unknown): string[] {
     for (const [i, option] of x.question.approvalOptions.entries()) {
       const result = validateApprovalAgainstBlocker(option?.approval, blocker)
       if (!result.ok) e.push(...result.errors.map(error => `$.question.approvalOptions[${i}].${error.slice(2)}`))
+      if (option?.approval?.taskId !== x.taskId) e.push(`$.question.approvalOptions[${i}].approval.taskId: must match event`)
+      if (option?.approval?.contextRef !== x.contextRef) e.push(`$.question.approvalOptions[${i}].approval.contextRef: must match event`)
     }
   }
   if (kinds.has(String(x.kind)) && x.relaxationApprovalRef) {

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const builder = join(root, 'scripts/build-booking-copilot-release.mjs')
+const SCHEMA_SHA256 = createHash('sha256').update(readFileSync(join(root, 'schemas/booking.surface.schema.json'))).digest('hex')
 const contract = process.env.BOOKING_COPILOT_RELEASE_CONTRACT
   || (process.env.HOTEL_BE_ROOT ? join(process.env.HOTEL_BE_ROOT, 'build/deploy/gotry-booking-copilot/release-contract.sh') : '')
 for (const name of ['EXPECTED_GOTRY_ARTIFACT_ID', 'EXPECTED_GOTRY_RELEASE_TUPLE', 'EXPECTED_NODE_VERSION', 'EXPECTED_NPM_VERSION']) {
@@ -109,7 +110,7 @@ try {
   verifyManifest(output)
   assert.equal(
     createHash('sha256').update(readFileSync(join(output, 'schemas/booking.surface.schema.json'))).digest('hex'),
-    '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375',
+    SCHEMA_SHA256,
   )
   const manifestText = readFileSync(join(output, 'MANIFEST.sha256'), 'utf8')
   assert.doesNotMatch(manifestText, /\.worktree\.env|\.env(?:\.|$)|(?:^|\/)secrets?(?:[._/-]|$)/i)
@@ -154,7 +155,7 @@ try {
     })
     assert.equal(response.status, 200)
     assert.equal(response.headers.get('x-booking-surface-version'), 'booking.surface')
-    assert.equal(response.headers.get('x-booking-surface-schema-sha256'), '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375')
+    assert.equal(response.headers.get('x-booking-surface-schema-sha256'), SCHEMA_SHA256)
     assert.equal(response.headers.get('x-gotry-artifact-id'), process.env.EXPECTED_GOTRY_ARTIFACT_ID)
     assert.equal(response.headers.get('x-gotry-node-version'), process.env.EXPECTED_NODE_VERSION)
     assert.equal(response.headers.get('x-gotry-node-modules-abi'), process.versions.modules)
@@ -163,7 +164,7 @@ try {
     assert.equal(response.headers.get('x-gotry-ingress-mode'), 'bff-bound-turn-only')
     assert.equal(response.headers.get('x-gotry-accepted-turn-kinds'), 'user.turn,action.receipt.continuation')
     assert.deepEqual(await response.json(), {
-      schemaSha256: '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375',
+      schemaSha256: SCHEMA_SHA256,
       schemaVersion: 'booking.surface',
       status: 'ready',
       ingressMode: 'bff-bound-turn-only',
@@ -204,7 +205,7 @@ try {
       error: {
         code: 'booking_surface_schema_mismatch',
         expectedVersion: 'booking.surface',
-        expectedSchemaSha256: '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375',
+        expectedSchemaSha256: SCHEMA_SHA256,
       },
     })
     const releaseLedgerEventCount = () => {
@@ -218,7 +219,7 @@ try {
       'content-type': 'application/json',
       accept: 'application/json',
       'x-booking-surface-version': 'booking.surface',
-      'x-booking-surface-schema-sha256': '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375',
+      'x-booking-surface-schema-sha256': SCHEMA_SHA256,
     }
     const escalatedBoundTurnResponse = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, {
       method: 'POST',

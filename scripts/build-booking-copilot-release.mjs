@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SCHEMA_VERSION = 'booking.surface'
-const SCHEMA_SHA256 = '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375'
+const SCHEMA_SOURCE = join(ROOT, 'schemas/booking.surface.schema.json')
+const SCHEMA_SHA256 = sha256(SCHEMA_SOURCE)
 const PROVENANCE_VERSION = 'gotry.booking-copilot.release-provenance.v1'
 function fail(message) { throw new Error(`booking-copilot-release: ${message}`) }
 

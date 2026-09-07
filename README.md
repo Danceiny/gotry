@@ -193,6 +193,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 - **Extension install on demand** — `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` is offered as a clickable link in the dsh UI when an account-session tool first needs it (one-click install + auto-update); the gotry side never runs a setup wizard
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English solve output via `GOTRY_LOCALE=en`
 - **Routed turn budgets** — every turn is classified (quick / sync / deep-planning) by a deterministic, zero-LLM router; time is the only budget and the deadline exit follows the task: quick and sync turns converge to an answer, deep-planning turns hand off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) instead of dying mid-stream; the ticket is collected in the background by `scripts/turn-handoff-collect.ts` (idempotent, recursion-guarded child planner) and surfaces in-chat via the read-only `gotry_turn_handoff_list` tool; exercised end-to-end through a packaged consumer install in CI
+- **HotelByte embedded Booking Copilot contract** — Draft-only BFF read actions now carry a presented hard-condition relaxation as one exact typed approval; task/context mismatch, stale, expired, or replayed evidence closes before workspace side effects, and the runtime—not the model—owns the one-time operation reference. This surface still exposes no `Book` capability.
 
 **Open limitations** (honest list):
 
@@ -201,6 +202,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 - **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host / calibration samples
 - **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim); the round-by-round engineering ledger lives in [`docs/benchmark-environment-bridge.md`](docs/benchmark-environment-bridge.md)
 - **Booking** — nothing bookable ships today; M5 opens only through WriteGate and the booking-saga FSM
+- **Booking Copilot product acceptance** — the tenant/customer approval loop has deterministic local evidence only; four-surface real inventory, repeated unavailable/changed recovery, existing Checkout, QueryOrders, and cleanup remain open gates, so the integration stays Draft and non-mergeable
 
 <details>
 <summary>Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>

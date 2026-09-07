@@ -1364,6 +1364,9 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 4000
+            },
+            "approval": {
+              "$ref": "#/$defs/Approval"
             }
           }
         }
