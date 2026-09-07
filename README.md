@@ -88,7 +88,7 @@ Architecture, five layers:
 | **Artifacts** | `gotry_artifacts_list` / `gotry_artifacts_read` | Discover & view generated artifacts (async deliverables + working-dir markdown) as a line-numbered file view (read-only) |
 | **Factuality gate** | `gotry_fact_gate` | Pre-delivery gate for itinerary artifacts — see [fact gate](#how-it-works) above |
 | **General external** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | web / subtitles / GitHub / all-channel external info (via Agent-Reach) |
-| **Self-check** | `gotry_doctor` | Read-only health check of optional dependencies (extension / Agent-Reach .venv / hbcli / FlyAI key **+ recent trial-quota exhaustion time** / dsh-calendar mount state / sidebar) with exact repair guidance; installs only ever happen via the user running `npx gotry doctor --fix`. LLM keys are the dsh host's business — deliberately out of scope. Report lands in `gotry-state/doctor-report.md` (sidebar-workbench previewable) |
+| **Self-check** | `gotry_doctor` | Read-only health check of optional dependencies (extension / Agent-Reach .venv / hbcli / FlyAI key **+ recent trial-quota exhaustion time** / dsh-calendar mount state / sidebar / dsh-map-tools & dsh-tool-ask-user presence) with exact repair guidance; installs only ever happen via the user running `npx gotry doctor --fix`. LLM keys are the dsh host's business — deliberately out of scope. Report lands in `gotry-state/doctor-report.md` (sidebar-workbench previewable) |
 
 > **Channel routing**: retrieval tools stay flat (no hidden dispatch); the persona routing card and the `routing` suggestions attached to failed search results are **generated from one channel registry** (official API > user session > web fallback, filtered by per-session channel health). When a channel exhausts its quota the result says so and names the next channel — retry-blindness is a contract violation, not a prompt hope.
 
@@ -143,7 +143,7 @@ npx @danceiny/gotry web
 |---|---|---|
 | Web chat (recommended) | `npx @danceiny/gotry web` | multi-turn planning with visualized reasoning → `:3080` |
 | Headless one-shot | `npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"` | scripts / CI / targeted debugging → stdout |
-| Dependency doctor | `npx @danceiny/gotry doctor` (`--fix` to repair) | optional channels misbehaving: checks extension / Agent-Reach / hbcli / FlyAI key / sidebar, prints exact repair guidance, writes `gotry-state/doctor-report.md` (previewable in the sidebar workbench) |
+| Dependency doctor | `npx @danceiny/gotry doctor` (`--fix` to repair) | optional channels misbehaving: checks extension / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar mount / dsh-map-tools & dsh-tool-ask-user presence, prints exact repair guidance, writes `gotry-state/doctor-report.md` (previewable in the sidebar workbench) |
 
 Requires Node ≥ 22.15. LLM credentials are managed by your dsh host UI — gotry itself never asks for or echoes them. OpenAI-compatible endpoints (MiniMax / relays / self-hosted gateways) are handled by the dsh model configuration. First cold start takes 6–15 s; if port `:3080` is taken, free it first; unexpected exits leave evidence in `gotry-state/incidents.jsonl` (nothing silent).
 
@@ -192,7 +192,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 
 - **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; the historical concurrency race is fixed and regression-gated
 - **Realtime retrieval** — flights/trains/hotels (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`); exhausted FlyAI anonymous trial quota is classified `needs-setup` with key guidance (no blind retries)
-- **Dependency doctor** — `npx gotry doctor` (CLI) / `gotry_doctor` (in-chat tool): read-only health check of optional dependencies (extension / Agent-Reach / hbcli / FlyAI key / sidebar) with exact repair guidance; `--fix` installs; LLM keys stay with the dsh host
+- **Dependency doctor** — `npx gotry doctor` (CLI) / `gotry_doctor` (in-chat tool): read-only health check of optional dependencies (extension / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar mount / dsh-map-tools & dsh-tool-ask-user presence) with exact repair guidance; `--fix` installs; LLM keys stay with the dsh host
 - **Account-session search** — Ctrip flights **and hotels** + 12306 trains on your Chrome (hotels 2026-09-03: real logged-in prices via passive sniffing; trains 2026-09-03: public left-ticket query; interface surfaces calibrate with the first live session); observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
 - **Extension install on demand** — `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` is offered as a clickable link in the dsh UI when an account-session tool first needs it (one-click install + auto-update); the gotry side never runs a setup wizard
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline; English solve output via `GOTRY_LOCALE=en`
