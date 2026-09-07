@@ -4,6 +4,12 @@
 
 ---
 
+## Unreleased
+
+- **地图插件安装修复(#202)** — 当前源码改为只随包交付 MIT `dsh-map-tools` payload，并移除会与 alpha.3 运行时产生 `ERESOLVE` 的外部 npm peer；尚未发布 tag 或 npm 版本。
+
+---
+
 ## v0.0.1-rc.19 · 2026-09-07
 
 ### What's New
