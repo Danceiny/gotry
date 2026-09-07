@@ -472,6 +472,10 @@ echo "=== 53. 愿望池通道否证(外部事件接缝第 2 段:conditions.chann
 (cd ts && npx tsx scripts/wish-channel-gate-tests.ts) || FAIL=1
 
 echo
+echo "=== 54. persona 表层护栏(#192 回归锚:表层规则句存在/22 条契约编号完整/skill 失败行为指引;全离线) ==="
+(cd ts && npx tsx scripts/persona-surface-guard-tests.ts) || FAIL=1
+
+echo
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

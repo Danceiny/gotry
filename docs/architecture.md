@@ -384,6 +384,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 - **指标面板第一切片(2026-09-05,issue #138,ADR-11 质量层工程面)**:`ts/scripts/build-metrics-report.ts` 只读聚合既有落盘侧车(不新增数据源)——事实闸 verdict 分布与 blocked 率/通道健康 down·cooldown(30 天窗)/事故面(7 天窗)/桥延迟百分位与超预算计数(>500ms=复审触发锚点)/账本与 doctor 报告存在性→单一 markdown;坏行跳过同侧车纪律,空根成型,collect 全程零写入;评测三层运行结果仍由 run-all-tests.sh/CI 承载,v1 不重跑评测。持续观测/可视化面留后续切片(metrics-report-tests §1-6 全绿,run-all §51)
 - **外部事件接缝第 1 段(2026-09-07,issue #82 本地生产者)**:`ts/scripts/channel-probe.ts` 探针 tick 落地 seam 设计 §6①——只读探测(hbcli whoami/open-meteo/opensky;session 系 skip,flyai 默认不探防空额度),异常写 `down`、恢复写 `'ok'`(latest-wins 超越 down,消费方 `state !== 'down'` 判健康);channel-health 增 `ChannelEventState`('ok' 仅持久面),doctor flyai 达限注释与 metrics 通道面均按超越口径兼容;探测结果→事件为纯函数锚点(channel-probe-tests 5/5,run-all §52)。同日第 2 段:愿望池消费——`conditions.channels` 可选条件 + 召回时命名通道处于 down 即否证成行条件(wish-channel-gate-tests 5/5,run-all §53;健康面缺席=行为与旧版一致)。远程回调面(world2agent 桥)仍待 D-31 拍板,拍板包已贴 issue #82
+- **persona 域边界表层规则(2026-09-07,issue #192 rc18 用户实修)**:rc18 真实会话中模型把 `gotry_motivation_save` 当宿主 skill 传给 skill 加载器(dsh skill 名合法域 `^[a-z0-9]+(-[a-z0-9]+)*$`,下划线必抛 invalid skill name 硬错误)——persona (16) 补表层规则:gotry 能力一律是工具调用(gotry_ 前缀),绝不进 skill 加载器,skill 调用 invalid/unknown 即改回 tool call;契约仍 22 条((16) 内部澄清,无新条目),persona-surface-guard-tests 3/3 钉回归(run-all §54)
 
 ### 外部 benchmark 泛化(Round 1–9,Discussion #78,截至 Round 8 全部 diagnostic-only)
 
