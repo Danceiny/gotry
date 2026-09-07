@@ -369,6 +369,10 @@ if (!benchmarkEnvironmentConfig) {
     // npm 布局:子路径可能被 exports 挡(resolve 抛错不能留下旧值),裸包名返回真实入口
     try { mapEntry = require_.resolve('dsh-map-tools/lib/index.js') } catch { mapEntry = '' }
     if (!mapEntry) { try { mapEntry = require_.resolve('dsh-map-tools') } catch { mapEntry = '' } }
+    if (!mapEntry) {
+      // ts/node_modules 回退(source 模式:dsh-map-tools 安装在 ts/package.json)
+      try { mapEntry = require_.resolve(join(repoRoot, 'ts/node_modules/dsh-map-tools')) } catch { mapEntry = '' }
+    }
   }
 }
 // 结构化澄清卡(T2):ask_user_question 工具 + user-questions 服务,从 dsh 包
