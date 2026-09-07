@@ -17,6 +17,7 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { readLatestChannelEvents } from './channel-health.ts'
@@ -202,20 +203,28 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
   // 7. patch 分发面宿主插件(issue #113 L1 残量,design §3.1:初始化可见取代会话中段撞错)。
   //    这类插件在 cordis patch 里是占位行,bin/gotry-inner.js 运行时解析——**解析失败整块
   //    静默剔除,不挡启动**:模型只觉得「没有这个工具」,没人告诉它为什么。doctor 把两态照亮。
-  //    候选清单与 bin 解析逻辑同口径(map:repo vendored-node_modules / 包依赖;ask-user:dsh 闭包)。
+  //    候选清单与 bin 解析逻辑同口径(map:tarball vendor 优先→runtime workspace→npm 提升解析;
+  //    ask-user:dsh 闭包上下文解析)。map 不能进 npm 依赖:其 peerDependencies 要求
+  //    dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族在 npm 严格
+  //    peer 解析下 ERESOLVE——依赖形态会弄坏 npx 主安装路径,故随包 vendor 分发。
+  const rootRequire = createRequire(join(repoRoot, 'package.json'))
   const mapCandidates = [
+    join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js'),
     join(repoRoot, 'ts/dsh-runtime/node_modules/dsh-map-tools/lib/index.js'),
     join(repoRoot, 'node_modules/dsh-map-tools/package.json'),
     join(repoRoot, 'ts/node_modules/dsh-map-tools/package.json'),
     join(home, '.dsh/profiles/web/node_modules/dsh-map-tools/package.json'),
   ]
-  const mapHit = mapCandidates.find(p => existsSync(p))
+  let mapHit: string | undefined = mapCandidates.find(p => existsSync(p))
+  // npm/npx 提升布局:gotry 的依赖在包目录外的同级提升位,existsSync 候选打不中——
+  // 与 inner 的 require_.resolve 同机制,从包位置向上走查解析
+  if (!mapHit) { try { mapHit = rootRequire.resolve('dsh-map-tools') } catch { mapHit = undefined } }
   items.push(mapHit
     ? { id: 'map-tools', label: 'dsh-map-tools(地图/路线/POI)', status: 'ok', detail: `已就位(${mapHit})——地图工具可用(零 key,走 OSM/OSRM)` }
     : {
         id: 'map-tools', label: 'dsh-map-tools(地图/路线/POI)', status: 'missing',
         detail: '未随包解析——启动时该 patch 条目被静默剔除,地图/路线/POI 工具不会出现在模型工具箱(缺地图不挡旅行规划,只少能力)',
-        fix: 'npx gotry doctor --fix 不覆盖此项:source 布局把 dsh-map-tools 放进 ts/dsh-runtime/node_modules(或 ts/node_modules);npm 布局重装 @danceiny/gotry(随发行版依赖提供)',
+        fix: '重装 @danceiny/gotry(地图插件随包 vendor 分发,缺失多为安装不完整)',
       })
 
   const askCandidates = [
@@ -223,7 +232,17 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     join(repoRoot, 'node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
     join(home, '.dsh/profiles/web/node_modules/@deepseek-ai/dsh-tool-ask-user/package.json'),
   ]
-  const askHit = askCandidates.find(p => existsSync(p))
+  let askHit: string | undefined = askCandidates.find(p => existsSync(p))
+  // 与 inner 同口径:优先从 dsh 包上下文解析(pnpm 嵌套布局只有 dsh 看得见闭包成员),
+  // 再从包根上下文(npm/npx 提升布局),最后静态候选(source vendored / profile)
+  if (!askHit) {
+    try {
+      const reqFromDsh = createRequire(rootRequire.resolve('@deepseek-ai/dsh/lib/bin.js'))
+      askHit = reqFromDsh.resolve('@deepseek-ai/dsh-tool-ask-user')
+    } catch {
+      try { askHit = rootRequire.resolve('@deepseek-ai/dsh-tool-ask-user') } catch { askHit = undefined }
+    }
+  }
   items.push(askHit
     ? { id: 'ask-user', label: 'dsh-tool-ask-user(结构化澄清卡)', status: 'ok', detail: `已就位(${askHit})——ask_user_question 澄清卡可用(web 原生卡片;headless+TTY 用 stdio 提供方)` }
     : {
