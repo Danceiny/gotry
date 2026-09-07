@@ -22,6 +22,10 @@ import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+// 类型面显式依赖:session/event、session/disposed 的事件表声明在 dsh-session 的
+// cordis Events augmentation 里——不显式导入时,该声明只在 peer 恰好物化进
+// ts/node_modules 的机器上可见(legacy-peer-deps 安装则缺,5 个 TS2345/TS7006)。
+import type {} from '@deepseek-ai/dsh-session'
 import type { ToolExecutionResult, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { classifyTurn, TURN_HANDOFF_ETA_LABEL, turnPolicyFor, type TurnPolicy } from './turn-policy.ts'
 
