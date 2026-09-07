@@ -82,7 +82,10 @@ if (help) {
 Usage:
   gotry web                          # dsh Web UI on http://127.0.0.1:3080
   gotry setup                        # 扩展就位检查/指引(商店一键装)
+<<<<<<< HEAD
   gotry setup calendar               # 可选日历(CalDAV 工作窗口)挂载开关:默认关;--off 关闭;--status 查看
+=======
+>>>>>>> origin/main
   gotry doctor                       # 可选依赖体检:扩展/agent-reach/hbcli/flyai/sidebar 状态 + 补装指引
   gotry doctor --fix                 # 体检 + 按报告补装(hbcli 官方脚本 / agent-reach pip / sidebar 插件)
   gotry "一段完整任务..."            # headless 一问一答
@@ -90,6 +93,12 @@ Usage:
 
 Detail: https://github.com/Danceiny/gotry — README
 `)
+  process.exit(0)
+}
+
+// repoRoot 在 npm 安装与源码检出两种形态下都是包根,version 统一从这里取
+if (args[0] === '-v' || args[0] === '--version') {
+  console.log(JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8')).version)
   process.exit(0)
 }
 

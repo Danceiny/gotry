@@ -122,6 +122,20 @@ const selectedPlannerTurn = selectedIngressRuntime.bindIngressTurn(selectedIngre
 assert.equal(selectedPlannerTurn.workspace.focusedHotelRef, 'hotel-selected')
 assert.equal(selectedPlannerTurn.workspace.selectedOfferRef, 'offer-selected')
 assert.equal(selectedPlannerTurn.workspace.verifiedOffer, undefined, 'initial ingress cannot assert verified availability authority')
+const selectedApproval: RelaxationApproval = {
+  taskId: selectedIngressTask.taskId, contextRef: selectedIngressTask.contextRef,
+  sourceTurnId: 'turn-source-ingress', presentationRequestKey: 'approval:task-selected-ingress:turn-source-ingress:action-source-ingress',
+  optionDigest: 'a'.repeat(64), approvalId: 'approval-selected-ingress', deliveryNonce: 'nonce-selected-ingress',
+  blockerId: 'blocker-selected-ingress', sourceActionId: 'action-source-ingress', sourceReceiptDigest: 'b'.repeat(64),
+  scope: 'offer', code: 'criterion_must_not_met', criterionPath: 'offers.totalPriceMax', valueDigest: 'c'.repeat(64),
+  from: 'must', to: 'prefer', approved: true,
+}
+const approvedSelectedIngress = { ...selectedIngress, request: { text: selectedIngress.request.text, approval: selectedApproval } }
+const approvedSelectedPlannerTurn = selectedIngressRuntime.bindIngressTurn(approvedSelectedIngress, selectedIngressTask, 'turn-approved-selected-ingress')
+assert.deepEqual(approvedSelectedPlannerTurn.request.approval, selectedApproval, 'runtime ingress binding preserves the exact canonical approval')
+assert.notEqual(approvedSelectedPlannerTurn.request.approval, selectedApproval, 'runtime ingress binding clones approval data before planner admission')
+assert.throws(() => selectedIngressRuntime.bindIngressTurn({ ...approvedSelectedIngress, request: { ...approvedSelectedIngress.request, approval: { ...selectedApproval, taskId: 'browser-forged-task' } } }, selectedIngressTask, 'turn-forged-selected-ingress'), /invalid_ingress_approval_authority/)
+assert.throws(() => selectedIngressRuntime.bindIngressTurn({ ...approvedSelectedIngress, request: { ...approvedSelectedIngress.request, approval: { ...selectedApproval, contextRef: 'browser-forged-context' } } }, selectedIngressTask, 'turn-forged-context-selected-ingress'), /invalid_ingress_approval_authority/)
 selectedIngressLedger.close(); rmSync(selectedIngressRoot, { recursive: true, force: true })
 const duplicateOfferWorkspace: BookingWorkspaceSnapshot = { ...workspace(0), visibleHotels: [{ hotelRef: 'hotel-dup-a', name: 'Hotel Dup A', factRefs: [] }, { hotelRef: 'hotel-dup-b', name: 'Hotel Dup B', factRefs: [] }], loadedOffers: [loadedOffer('duplicate-offer-ref', 'hotel-dup-a'), loadedOffer('duplicate-offer-ref', 'hotel-dup-b')] }
 const duplicateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-duplicate-offer-'))
@@ -399,6 +413,9 @@ const approvedOperation = runtime.issueOperation(task.taskId, action('action-v2-
 assert.equal(approvedOperation.action.relaxationApprovalRef?.targetActionId, 'action-v2-relaxed')
 assert.equal(approvedOperation.action.relaxationApprovalRef?.targetActionKind, 'search.run')
 assert.throws(() => runtime.issueOperation(task.taskId, action('action-v2-relaxed-again', 1)), /receipt_required/)
+// A replay with a fresh request key/turn id must fail closed after the
+// runtime has consumed the canonical approval, before planner admission.
+assert.throws(() => runtime.assertApprovalNotConsumed(task.taskId, approval), /approval_replayed/)
 
 const reopened = new BookingCopilotTaskRuntime(ensureLedger(stateRoot), { now: () => '2026-09-01T10:00:00.000Z' })
 assert.equal(reopened.resumeTask(task.taskId)?.lastReceipt?.actionId, 'action-v2')
@@ -425,13 +442,18 @@ let serverId = 0
 const serverRuntime = new BookingCopilotTaskRuntime(ensureLedger(serverRoot), { idFactory: (prefix) => `${prefix}-server-${++serverId}`, contextRefFactory: () => 'ctx-server' })
 let factoryCalls = 0
 let plannerCalls = 0
+let resolveApprovalPlannerEntered!: () => void
+const approvalPlannerEntered = new Promise<void>((resolve) => { resolveApprovalPlannerEntered = resolve })
+let releaseApprovalPlanner!: () => void
+const approvalPlannerRelease = new Promise<void>((resolve) => { releaseApprovalPlanner = resolve })
+let approvalPlannerDeferred = false
 const server = await startBookingCopilotServer({
   apiKey: 'v2-server-key',
   runtime: serverRuntime,
   principal: { subject: 'bff-principal-a', scope: 'booking:read' },
-  ingressBinding: { bind: () => ({ taskId: 'task-server', turnId: 'ingress-turn-1', contextRef: 'ctx-server', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] }) },
+  ingressBinding: { bind: (input) => ({ taskId: 'task-server', turnId: `turn-${input.requestKey}`, contextRef: 'ctx-server', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] }) },
   ingressMode: 'bff-ingress-binding',
-  plannerFactory: (initial: BookingCopilotTaskState) => { factoryCalls++; return { next: async ({ task: current }) => { plannerCalls++; const decision: BookingPlannerDecision = { kind: 'operation', action: { ...action(`server-action-${plannerCalls}`, current.revision), contextRef: current.contextRef } }; return [decision] } } },
+  plannerFactory: (initial: BookingCopilotTaskState) => { factoryCalls++; return { next: async ({ turn, task: current }) => { plannerCalls++; if (turn.kind === 'user.turn' && turn.request.approval && !approvalPlannerDeferred) { approvalPlannerDeferred = true; resolveApprovalPlannerEntered(); await approvalPlannerRelease } const decision: BookingPlannerDecision = { kind: 'operation', action: { ...action(`server-action-${plannerCalls}`, current.revision), contextRef: current.contextRef } }; return [decision] } } },
 })
 const endpoint = `http://127.0.0.1:${server.port}/a2a/booking-copilot/turn`
 const headers = { authorization: 'Bearer v2-server-key', 'content-type': 'application/json', 'x-booking-surface-version': BOOKING_SURFACE_SCHEMA_VERSION, 'x-booking-surface-schema-sha256': BOOKING_SURFACE_SCHEMA_SHA256 }
@@ -504,11 +526,49 @@ const deliveredQuestion = JSON.parse(deliveredQuestionMatch[1]!) as { question: 
 const approved = questionApproval.kind === 'question' ? questionApproval.question.approvalOptions[0]!.approval : undefined
 assert.ok(approved)
 assert.equal(deliveredQuestion.question.approvalOptions[0]!.approval.deliveryNonce, approved.deliveryNonce, 'SSE carries the durable unpredictable presentation nonce')
-const approvedTurn = { schemaVersion: 'booking.surface' as const, kind: 'user.turn' as const, taskId: 'task-server', turnId: 'approval-turn-1', workspace: { ...continuationWorkspace, revision: 2 }, request: { text: 'prefer a nearby match', approval: approved } }
-const approvedResponse = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(approvedTurn) })
+const serverEventCountBeforeApprovalIngress = serverRuntime['ledger'].countEvents()
+const forgedApprovalIngress = { ...ingress, requestKey: 'forged-approval-ingress-request-1', workspace: { ...ingress.workspace, revision: 2 }, request: { text: 'prefer a nearby match', approval: { ...approved, taskId: 'browser-forged-task', contextRef: 'browser-forged-context' } } }
+const forgedApprovalResponse = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(forgedApprovalIngress) })
+assert.equal(forgedApprovalResponse.status, 400, 'mismatched browser approval authority is rejected before planner/runtime side effects')
+assert.match(await forgedApprovalResponse.text(), /invalid_ingress_approval_authority/)
+assert.equal(plannerCalls, 2, 'forged approval ingress does not call the planner')
+assert.equal(serverRuntime['ledger'].countEvents(), serverEventCountBeforeApprovalIngress, 'forged approval ingress does not append ledger events')
+const approvedIngress = { ...ingress, requestKey: 'approval-ingress-request-1', workspace: { ...ingress.workspace, revision: 2 }, request: { text: 'prefer a nearby match', approval: { ...approved } } }
+const approvedResponsePromise = fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(approvedIngress) })
+await approvalPlannerEntered
+const concurrentApprovalPromises = ['approval-concurrent-a', 'approval-concurrent-b'].map((requestKey) => fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...approvedIngress, requestKey }) }))
+let concurrentApprovalResponses: Response[] | undefined
+let concurrentApprovalFailure: unknown
+let rejectConcurrentTimeout!: (reason?: unknown) => void
+const concurrentTimeout = setTimeout(() => rejectConcurrentTimeout(new Error('concurrent approval replay joined the in-flight planner')), 2_000)
+try {
+  concurrentApprovalResponses = await Promise.race([
+    Promise.all(concurrentApprovalPromises),
+    new Promise<never>((_resolve, reject) => { rejectConcurrentTimeout = reject }),
+  ])
+} catch (cause) {
+  concurrentApprovalFailure = cause
+} finally {
+  clearTimeout(concurrentTimeout)
+  releaseApprovalPlanner()
+}
+const approvedResponse = await approvedResponsePromise
+if (concurrentApprovalFailure) throw concurrentApprovalFailure
+assert.ok(concurrentApprovalResponses)
+assert.ok(concurrentApprovalResponses.every(({ status }) => status === 409), 'concurrent exact approvals with fresh keys fail closed before planner replay')
+for (const response of concurrentApprovalResponses) assert.match(await response.text(), /PLANNER_FAILED/, 'approval replay is fail-closed at the HTTP boundary')
 assert.equal(approvedResponse.status, 200)
 const approvedBody = await approvedResponse.text()
 assert.equal(plannerCalls, 3)
+assert.match(approvedBody, /event: operation/)
+assert.equal(plannerCalls, 3, 'concurrent approval retries never enter planner')
+assert.equal((serverRuntime['ledger'].db.prepare("SELECT COUNT(*) AS n FROM events WHERE kind = 'booking.copilot.approval.consumed' AND run_id = ?").get('task-server') as { n: number }).n, 1, 'approval is consumed exactly once')
+const approvedPayloadRows = serverRuntime['ledger'].db.prepare("SELECT payload FROM events WHERE kind = 'booking.copilot.user.turn.observed' AND run_id = ? ORDER BY seq DESC").all('task-server') as Array<{ payload: string }>
+const approvedPayload = JSON.parse(approvedPayloadRows[0]!.payload)
+assert.equal(approvedPayload.contextRef, 'ctx-server')
+const consumedApprovalRows = serverRuntime['ledger'].db.prepare("SELECT payload FROM events WHERE kind = 'booking.copilot.approval.granted' AND run_id = ? ORDER BY seq DESC").all('task-server') as Array<{ payload: string }>
+const consumedApprovalPayload = JSON.parse(consumedApprovalRows[0]!.payload)
+assert.deepEqual(consumedApprovalPayload.approval.approval, approved, 'exact ingress approval is forwarded unchanged into runtime approval consumption')
 const crashRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-crash-replay-'))
 const crashLedger = ensureLedger(crashRoot)
 const crashV2 = new BookingCopilotTaskRuntime(crashLedger)
@@ -1006,18 +1066,18 @@ const skippedActionRestart = new BookingCopilotTaskRuntime(ensureLedger(skippedA
 assert.throws(() => skippedActionRestart.resumeTask(skippedTask.taskId), /ledger_corrupt:task-legacy-skipped-action:action/, 'tampered skipped ACTION ordinal fails closed during legacy tail replay')
 skippedActionRestart['ledger'].close(); skippedActionLedger.close(); rmSync(skippedActionRoot, { recursive: true, force: true })
 
-const approvedReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(approvedTurn) })
+const approvedReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(approvedIngress) })
 assert.equal(approvedReplay.status, 200)
-assert.equal(await approvedReplay.text(), approvedBody, 'approved user-turn retry replays the durable batch while waiting for receipt')
-assert.equal(plannerCalls, 3, 'approved user-turn replay does not call planner or append')
-const alteredTextReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...approvedTurn, request: { ...approvedTurn.request, text: 'different request' } }) })
+assert.equal(await approvedReplay.text(), approvedBody, 'approved ingress retry replays the durable batch while waiting for receipt')
+assert.equal(plannerCalls, 3, 'approved ingress replay does not call planner or append')
+const alteredTextReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...approvedIngress, request: { ...approvedIngress.request, text: 'different request' } }) })
 assert.equal(alteredTextReplay.status, 409, 'altered request text cannot replay a waiting batch')
-const alteredContextReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...approvedTurn, workspace: { ...approvedTurn.workspace, contextRef: 'ctx-forged' } }) })
-assert.equal(alteredContextReplay.status, 409, 'cross-context request cannot replay a waiting batch')
-const alteredApprovalReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...approvedTurn, request: { ...approvedTurn.request, approval: { ...approved, to: 'drop' } } }) })
+const alteredContextReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...approvedIngress, contextRef: 'ctx-forged' }) })
+assert.equal(alteredContextReplay.status, 400, 'browser context injection is rejected at ingress schema boundary')
+const alteredApprovalReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...approvedIngress, request: { ...approvedIngress.request, approval: { ...approved, to: 'drop' } } }) })
 assert.equal(alteredApprovalReplay.status, 409, 'altered approval tuple cannot replay a waiting batch')
-const alteredCapabilitiesReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...approvedTurn, workspace: { ...approvedTurn.workspace, capabilities: { ...approvedTurn.workspace.capabilities, allowedActions: [approvedTurn.workspace.capabilities.allowedActions[0]!, approvedTurn.workspace.capabilities.allowedActions[0]!] } } }) })
-assert.ok([400, 409].includes(alteredCapabilitiesReplay.status), 'altered capabilities cannot replay a waiting batch')
+const alteredCapabilitiesReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...approvedIngress, workspace: { ...approvedIngress.workspace, capabilities: { surface: 'tenant', allowedActions: ['search.run', 'search.run'] } } }) })
+assert.equal(alteredCapabilitiesReplay.status, 400, 'browser capability injection is rejected at ingress schema boundary')
 const ingressReplay = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify({ ...ingress, workspace: { ...ingress.workspace, revision: 2 }, request: { text: 'prefer a nearby match' } }) })
 assert.equal(ingressReplay.status, 409, 'unbound ingress cannot replay an existing task')
 assert.equal(plannerCalls, 3)

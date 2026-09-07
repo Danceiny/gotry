@@ -2,8 +2,10 @@
  * Embedded Booking planner adapter proof.
  *
  * The fake below stops at the DeepSeek Harness SDK event boundary: planner
- * decisions may only come from typed dsh tool/call events, never assistant
- * prose. A separate core proof boots the real dsh SDK runtime.
+ * decisions come from typed dsh tool/call events, or from assistant
+ * finalResponse text only after it passes the same authority path
+ * (validation, allowedActions, contextRef, runtime-owned revision). A
+ * separate core proof boots the real dsh SDK runtime.
  */
 
 import assert from 'node:assert/strict'
@@ -16,7 +18,7 @@ import {
   type DshPlannerRunPort,
 } from '../src/booking-surface/dsh-planner.ts'
 
-const availability = { initialized: true, recoveryStarted: false, availabilityPhase: 'need_offers' as const, activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] }
+const availability: import("../src/booking-surface/runtime.ts").BookingCopilotTaskState["availability"] = { initialized: true, recoveryStarted: false, availabilityPhase: 'need_offers' as const, activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] }
 const task: BookingCopilotTaskState = {
   schemaVersion: 'booking.surface',
   taskId: 'task-dsh-1',
@@ -181,14 +183,14 @@ assert.equal(childEnv.PORTAL_TOKEN, undefined)
 assert.equal(childEnv.HOTELBYTE_TOKEN, undefined)
 assert.equal(childEnv.GOTRY_BOOKING_COPILOT_API_KEY, undefined)
 
-const proseOnlyPort: DshPlannerRunPort = {
+const textChannelPort: DshPlannerRunPort = {
   async run() {
     return { finalResponse: JSON.stringify({ kind: 'operation', action: searchRun }), events: [] }
   },
   async close() {},
 }
-const proseOnly = await createDshEmbeddedBookingPlanner({ runPort: proseOnlyPort })
-const proseDecisions = await proseOnly.plannerFactory(task).next({
+const textChannel = await createDshEmbeddedBookingPlanner({ runPort: textChannelPort })
+const textDecisions = await textChannel.plannerFactory(task).next({
   task,
   turn: {
     schemaVersion: 'booking.surface',
@@ -202,7 +204,188 @@ const proseDecisions = await proseOnly.plannerFactory(task).next({
     request: { text: 'JSON prose must stay prose' },
   },
 })
-assert.equal(proseDecisions[0]?.kind, 'error', 'JSON-looking assistant prose is never executable')
+assert.equal(textDecisions[0]?.kind, 'operation', 'text-channel typed decisions execute through the same authority path')
+assert.deepEqual((textDecisions[0] as { action?: { actionId?: string; expectedRevision?: number } }).action, { ...searchRun, expectedRevision: 0 })
+
+const sanitizedRefPort: DshPlannerRunPort = {
+  async run() {
+    return {
+      finalResponse: '',
+      events: [{
+        type: 'tool/call',
+        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai'] } } }) },
+      }],
+    }
+  },
+  async close() {},
+}
+const sanitizedRef = await createDshEmbeddedBookingPlanner({ runPort: sanitizedRefPort })
+const sanitizedDecisions = await sanitizedRef.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-6b',
+    workspace,
+    request: { text: 'Find hotels' },
+  },
+})
+assert.equal(sanitizedDecisions[0]?.kind, 'operation', 'sanitizer maps off-charset characters deterministically')
+assert.deepEqual(
+  (sanitizedDecisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs,
+  ['draft:destination.Dubai'],
+)
+await sanitizedRef.close()
+
+const unauthorisedPort: DshPlannerRunPort = {
+  async run() {
+    return { finalResponse: JSON.stringify({ kind: 'operation', action: hotelSelect }), events: [] }
+  },
+  async close() {},
+}
+const unauthorised = await createDshEmbeddedBookingPlanner({ runPort: unauthorisedPort })
+const unauthorisedDecisions = await unauthorised.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-4',
+    workspace: {
+      ...workspace,
+      capabilities: { ...workspace.capabilities, allowedActions: [...workspace.capabilities.allowedActions] },
+    },
+    request: { text: 'Select a hotel' },
+  },
+})
+assert.equal(unauthorisedDecisions[0]?.kind, 'error', 'text-channel decisions outside allowedActions stay non-executable')
+
+const fragmentRefPort: DshPlannerRunPort = {
+  async run() {
+    return {
+      finalResponse: '',
+      events: [{
+        type: 'tool/call',
+        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [`fact://turn_${task.lastTurnId}/request`] } } }) },
+      }],
+    }
+  },
+  async close() {},
+}
+const fragmentRef = await createDshEmbeddedBookingPlanner({ runPort: fragmentRefPort })
+const fragmentDecisions = await fragmentRef.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-7',
+    workspace,
+    request: { text: 'Find hotels' },
+  },
+})
+assert.equal(fragmentDecisions[0]?.kind, 'operation', 'JSON-pointer fragment factRefs repair into the safe charset')
+assert.deepEqual(
+  (fragmentDecisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs,
+  [`fact:..turn_${task.lastTurnId}.request`],
+)
+await fragmentRef.close()
+
+const truncatedPort: DshPlannerRunPort = {
+  async run() {
+    // Real UAT capture: a reasoning-token budget cut the visible JSON before
+    // its closing braces; the authority path must still judge the payload.
+    const truncated = JSON.stringify({ decision: { action: { ...searchRun, factRefs: ['turn_cap-request'] }, kind: 'operation' } }).replace(/}+$/, '')
+    return { finalResponse: truncated, events: [] }
+  },
+  async close() {},
+}
+const truncatedRecovery = await createDshEmbeddedBookingPlanner({ runPort: truncatedPort })
+const truncatedDecisions = await truncatedRecovery.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-8',
+    workspace,
+    request: { text: 'Find hotels' },
+  },
+})
+assert.equal(truncatedDecisions[0]?.kind, 'operation', 'truncated-but-reconstructable finalResponse recovers through the authority path')
+await truncatedRecovery.close()
+
+const unsafeRefPort: DshPlannerRunPort = {
+  async run() {
+    return {
+      finalResponse: '',
+      events: [{
+        type: 'tool/call',
+        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [42] } } }) },
+      }],
+    }
+  },
+  async close() {},
+}
+const unsafeRef = await createDshEmbeddedBookingPlanner({ runPort: unsafeRefPort })
+await assert.rejects(
+  unsafeRef.plannerFactory(task).next({
+    task,
+    turn: {
+      schemaVersion: 'booking.surface',
+      kind: 'user.turn',
+      taskId: task.taskId,
+      turnId: 'dsh-turn-6',
+      workspace,
+      request: { text: 'Find hotels' },
+    },
+  }),
+  /planner_invalid_action/,
+  'non-string factRef entries retry as parse-class failures, not ledger-boundary crashes',
+)
+await unsafeRef.close()
+
+// A workspace with loadedOffers for a hotel absent from the availability
+// state (UI-loaded offers) must not crash the prompt projection.
+const foreignOfferWorkspace = {
+  ...workspace,
+  loadedOffers: [{ offerRef: "offer-ui-1", offerVersionRef: "offerv-ui-1", hotelRef: "hotel-ui-9", evidenceLevel: "rate_loaded" as const, factRefs: [] }],
+}
+const uiOffersPort: DshPlannerRunPort = {
+  async run(prompt) {
+    assert.ok(prompt.includes("hotel-ui-9"), "workspace loadedOffers reach the planner payload")
+    return { finalResponse: "", events: [] }
+  },
+  async close() {},
+}
+const uiOffers = await createDshEmbeddedBookingPlanner({ runPort: uiOffersPort })
+const uiOffersDecisions = await uiOffers.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: "booking.surface", kind: "user.turn", taskId: task.taskId, turnId: "dsh-turn-ui", workspace: foreignOfferWorkspace, request: { text: "Prepare the loaded offer" } },
+})
+assert.equal(uiOffersDecisions[0]?.kind, "error", "foreign loadedOffers reach the payload without crashing the projection")
+await uiOffers.close()
+
+const plainProsePort: DshPlannerRunPort = {
+  async run() {
+    return { finalResponse: 'I would search hotels in Dubai for you.', events: [] }
+  },
+  async close() {},
+}
+const plainProse = await createDshEmbeddedBookingPlanner({ runPort: plainProsePort })
+const plainProseDecisions = await plainProse.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-5',
+    workspace,
+    request: { text: 'Find hotels' },
+  },
+})
+assert.equal(plainProseDecisions[0]?.kind, 'error', 'prose without a typed decision envelope is never executable')
 
 const forbiddenPort: DshPlannerRunPort = {
   async run() {
@@ -259,5 +442,5 @@ await assert.rejects(
   /planner_identity_required/,
 )
 
-await Promise.all([adapter.close(), proseOnly.close(), forbidden.close(), terminalAdapter.close()])
+await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')

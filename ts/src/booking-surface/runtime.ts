@@ -758,6 +758,16 @@ export class BookingCopilotTaskRuntime {
     if (!observed || observed.requestDigest !== bookingTurnDigest(turn) || observed.workspaceDigest !== bookingWorkspaceDigest(turn.workspace) || observed.workspaceSemanticDigest !== bookingWorkspaceSemanticDigest(turn.workspace) || observed.contextRef !== turn.workspace.contextRef) throw new Error('turn_conflict')
   }
 
+  /** Rejects a canonical approval after its durable runtime consumption. */
+  assertApprovalNotConsumed(taskId: string, approval: RelaxationApproval): void {
+    assertTaskId(taskId)
+    const rows = this.ledger.db.prepare(`SELECT payload FROM events WHERE tenant_id = ? AND run_id = ? AND kind = ?`).all(this.ledger.tenant, taskId, APPROVAL_CONSUMED) as Array<{ payload: string }>
+    for (const row of rows) {
+      const consumed = JSON.parse(row.payload) as ApprovalPayload
+      if (consumed.approval?.approval && bookingDigest(consumed.approval.approval) === bookingDigest(approval)) throw new Error('approval_replayed')
+    }
+  }
+
   /** Persists the per-requestKey receipt/replay binding after task creation. */
   persistRequestBinding(requestKey: string, turn: UserTurn, input: BookingIngressRequestBindingInput): void {
     assertRequestKey(requestKey)
@@ -775,6 +785,10 @@ export class BookingCopilotTaskRuntime {
   /** Binds the untrusted ingress snapshot to server-owned task/context/capabilities. */
   bindIngressTurn(turn: IngressTurn, task: BookingCopilotTaskState, turnId: string): UserTurn {
     assertSafeRef(turnId)
+    const approval = turn.request.approval
+    if (approval && (approval.taskId !== task.taskId || approval.contextRef !== task.contextRef)) {
+      throw new Error('invalid_ingress_approval_authority')
+    }
     return {
       schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId,
       workspace: {
@@ -782,7 +796,9 @@ export class BookingCopilotTaskRuntime {
         schemaVersion: 'booking.surface', contextRef: task.contextRef, surface: task.surface,
         capabilities: { surface: task.surface, allowedActions: [...task.allowedActions] },
       },
-      request: { text: turn.request.text },
+      request: approval
+        ? { text: turn.request.text, approval: { ...approval } }
+        : { text: turn.request.text },
     }
   }
 
@@ -836,7 +852,12 @@ export class BookingCopilotTaskRuntime {
           const checked = validateApprovalAgainstBlocker(approval, awaiting.blocker)
           const option = awaiting.options.find((candidate) => candidate.optionDigest === approval.optionDigest && bookingDigest(candidate) === bookingDigest(approval))
           if (!checked.ok || !option || approval.taskId !== existing.taskId || approval.contextRef !== existing.contextRef || approval.sourceTurnId !== awaiting.sourceTurnId || approval.presentationRequestKey !== awaiting.presentationRequestKey || approval.optionDigest !== approvalOptionDigest(approval) || (awaiting.approval && bookingDigest(approval) !== bookingDigest(awaiting.approval))) throw new Error('approval_mismatch')
-          if (awaiting.approval && bookingDigest(awaiting.approval) === bookingDigest(approval)) return existing
+          if (awaiting.approval && bookingDigest(awaiting.approval) === bookingDigest(approval)) {
+            // The canonical approval may only be advanced by its original
+            // turn identity. A fresh key must not join the in-flight planner
+            // and receive the operation batch before durable consumption.
+            throw new Error('approval_replayed')
+          }
           approvalState = { ...awaiting, approval }
           this.appendApproval(taskId, existing.contextRef, approvalState)
         } else if (existing.awaitingApproval) {

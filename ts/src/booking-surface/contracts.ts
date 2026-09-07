@@ -7,7 +7,7 @@
 
 export const BOOKING_SURFACE_SCHEMA_VERSION = 'booking.surface' as const
 /** SHA-256 of schemas/booking.surface.schema.json; package proof pins drift. */
-export const BOOKING_SURFACE_SCHEMA_SHA256 = '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375' as const
+export const BOOKING_SURFACE_SCHEMA_SHA256 = 'f9a73339c4c51280bfd63ba67c8b9f495fbbb796573b7a24d35de572f17f5127' as const
 export const BOOKING_SURFACE_VERSION_HEADER = 'x-booking-surface-version' as const
 export const BOOKING_SURFACE_SCHEMA_SHA256_HEADER = 'x-booking-surface-schema-sha256' as const
 
@@ -349,7 +349,7 @@ export interface IngressTurn {
   taskHandle?: string
   surfaceHint: BookingSurface
   workspace: BookingWorkspaceIngressSnapshot
-  request: { text: string }
+  request: { text: string; approval?: RelaxationApproval }
 }
 
 export interface ReceiptContinuation {

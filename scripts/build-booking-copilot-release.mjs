@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SCHEMA_VERSION = 'booking.surface'
-const SCHEMA_SHA256 = '29b2bf11abae6487ac32d9c3fc258ccc77e47639ec25b4137d33b253d4ff7375'
+const SCHEMA_SOURCE = join(ROOT, 'schemas/booking.surface.schema.json')
+const SCHEMA_SHA256 = sha256(SCHEMA_SOURCE)
 const PROVENANCE_VERSION = 'gotry.booking-copilot.release-provenance.v1'
 function fail(message) { throw new Error(`booking-copilot-release: ${message}`) }
 
@@ -104,6 +105,18 @@ try {
   // Release consumers must resolve the complete DSH peer closure just like
   // the repository consumer. Keep strict resolution explicit at this seam.
   run('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--strict-peer-deps=true', '--legacy-peer-deps=false'], release)
+  // --ignore-scripts also skips node-pty's native build, so the linux
+  // spawn-helper never exists and every planner PTY spawn fails. Rebuild the
+  // one package that legitimately needs install scripts, then restore the
+  // prebuilt helper's executable bit.
+  run('npm', ['rebuild', 'node-pty', '--ignore-scripts=false', '--no-audit', '--no-fund'], release)
+  const dshSubprocessLocal = join(release, 'node_modules/@deepseek-ai/dsh-subprocess-local/scripts/ensure-spawn-helper.mjs')
+  if (existsSync(dshSubprocessLocal)) run('node', [dshSubprocessLocal], release)
+  // The typed dist must load under the released runtime: a type-only symbol
+  // accidentally imported as a value survives tsc but crashes Node at boot.
+  // Runs after npm ci so the production dependency closure is resolvable.
+  execFileSync('/usr/bin/env', ['node', '--input-type=module', '-e',
+    `await import(${JSON.stringify('file://' + join(release, 'dist/src/booking-surface/startup.js'))})`], { env: childEnv })
   const packageJson = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
   writeFileSync(join(release, 'package.json'), `${JSON.stringify({
     name: packageJson.name,

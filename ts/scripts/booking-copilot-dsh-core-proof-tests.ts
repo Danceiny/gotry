@@ -46,6 +46,7 @@ function objectKeys(value: unknown): string[] {
 
 const requests: Array<{ headers: Record<string, string | string[] | undefined>; body: any }> = []
 let modelCall = 0
+let continuationServed = false
 const modelServer = createServer((req, res) => {
   const parts: Buffer[] = []
   req.on('data', (part: Buffer) => parts.push(part))
@@ -53,6 +54,17 @@ const modelServer = createServer((req, res) => {
     const body = JSON.parse(Buffer.concat(parts).toString('utf8'))
     requests.push({ headers: req.headers, body })
     modelCall += 1
+    // Script by request content, not call order: the prose-only retry budget
+    // issues additional runs whose scripted response must stay prose, not the
+    // continuation terminal.
+    if (!continuationServed && JSON.stringify(body).includes('action.receipt.continuation')) {
+      continuationServed = true
+      sse(res, [{
+        id: 'chatcmpl-booking-continuation', object: 'chat.completion.chunk', created: 0, model: 'deepseek-v4-flash',
+        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call-booking-continuation', type: 'function', function: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } } }) } }] }, finish_reason: 'tool_calls' }],
+      }])
+      return
+    }
     if (modelCall === 1) {
       sse(res, [{
         id: 'chatcmpl-booking-1',
@@ -76,13 +88,6 @@ const modelServer = createServer((req, res) => {
           finish_reason: 'tool_calls',
         }],
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      }])
-      return
-    }
-    if (modelCall === 4) {
-      sse(res, [{
-        id: 'chatcmpl-booking-continuation', object: 'chat.completion.chunk', created: 0, model: 'deepseek-v4-flash',
-        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call-booking-continuation', type: 'function', function: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } } }) } }] }, finish_reason: 'tool_calls' }],
       }])
       return
     }
