@@ -261,6 +261,30 @@ assert.deepEqual(
 )
 await fragmentRef.close()
 
+const truncatedPort: DshPlannerRunPort = {
+  async run() {
+    // Real UAT capture: a reasoning-token budget cut the visible JSON before
+    // its closing braces; the authority path must still judge the payload.
+    const truncated = JSON.stringify({ decision: { action: { ...searchRun, factRefs: ['turn_cap-request'] }, kind: 'operation' } }).replace(/}+$/, '')
+    return { finalResponse: truncated, events: [] }
+  },
+  async close() {},
+}
+const truncatedRecovery = await createDshEmbeddedBookingPlanner({ runPort: truncatedPort })
+const truncatedDecisions = await truncatedRecovery.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-8',
+    workspace,
+    request: { text: 'Find hotels' },
+  },
+})
+assert.equal(truncatedDecisions[0]?.kind, 'operation', 'truncated-but-reconstructable finalResponse recovers through the authority path')
+await truncatedRecovery.close()
+
 const unsafeRefPort: DshPlannerRunPort = {
   async run() {
     return {
@@ -366,5 +390,5 @@ await assert.rejects(
   /planner_identity_required/,
 )
 
-await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), forbidden.close(), terminalAdapter.close()])
+await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), forbidden.close(), terminalAdapter.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')
