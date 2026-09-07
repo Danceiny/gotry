@@ -504,8 +504,14 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   assertPlannerSafeRefs(decision.action)
   const action = decision.action as unknown as BookingReadAction
   const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
-  if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) throw new Error(`planner_capability_action_mismatch:${name}:${action.kind}`)
-  if (!task.allowedActions.includes(action.kind)) throw new Error('planner_surface_action_unsupported')
+  if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) {
+    console.error(`[booking-copilot] raw invalid decision (capability mismatch):`, JSON.stringify({ tool: name, actionKind: action.kind }).slice(0, 200))
+    throw new Error(`planner_capability_action_mismatch:${name}:${action.kind}`)
+  }
+  if (!task.allowedActions.includes(action.kind)) {
+    console.error(`[booking-copilot] raw invalid decision (surface policy):`, JSON.stringify({ actionKind: action.kind, allowed: task.allowedActions }).slice(0, 300))
+    throw new Error('planner_surface_action_unsupported')
+  }
   if (action.contextRef !== task.contextRef) throw new Error('planner_context_mismatch')
   // The runtime owns the revision: the planner can only echo what the prompt
   // showed it, and the serialized session means no concurrent mutation exists
@@ -558,7 +564,7 @@ export async function createDshEmbeddedBookingPlanner(
                 if (recovered) return [recovered]
               }
             } catch (error) {
-              const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned)/.test(error.message)
+              const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned|capability_action_mismatch|surface_action_unsupported)/.test(error.message)
               if (!retryable) throw error
               continue
             }
