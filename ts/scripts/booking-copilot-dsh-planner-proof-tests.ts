@@ -230,6 +230,37 @@ const unauthorisedDecisions = await unauthorised.plannerFactory(task).next({
 })
 assert.equal(unauthorisedDecisions[0]?.kind, 'error', 'text-channel decisions outside allowedActions stay non-executable')
 
+const fragmentRefPort: DshPlannerRunPort = {
+  async run() {
+    return {
+      finalResponse: '',
+      events: [{
+        type: 'tool/call',
+        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [`turn_${task.lastTurnId}#request`] } } }) },
+      }],
+    }
+  },
+  async close() {},
+}
+const fragmentRef = await createDshEmbeddedBookingPlanner({ runPort: fragmentRefPort })
+const fragmentDecisions = await fragmentRef.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-7',
+    workspace,
+    request: { text: 'Find hotels' },
+  },
+})
+assert.equal(fragmentDecisions[0]?.kind, 'operation', 'JSON-pointer fragment factRefs repair into the safe charset')
+assert.deepEqual(
+  (fragmentDecisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs,
+  [`turn_${task.lastTurnId}:request`],
+)
+await fragmentRef.close()
+
 const unsafeRefPort: DshPlannerRunPort = {
   async run() {
     return {
@@ -335,5 +366,5 @@ await assert.rejects(
   /planner_identity_required/,
 )
 
-await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), forbidden.close(), terminalAdapter.close()])
+await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), forbidden.close(), terminalAdapter.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')

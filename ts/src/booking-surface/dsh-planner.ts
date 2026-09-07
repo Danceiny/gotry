@@ -363,6 +363,7 @@ function recoverFinalResponseDecision(response: string, task: BookingCopilotTask
     console.error('[booking-copilot] finalResponse recovery rejected (invalid action):', JSON.stringify({ kind: action.kind, errors: validation.errors.slice(0, 6) }).slice(0, 600))
     return null
   }
+  repairPlannerFactRefs(action)
   try {
     assertPlannerSafeRefs(action)
   } catch (error) {
@@ -379,6 +380,15 @@ function recoverFinalResponseDecision(response: string, task: BookingCopilotTask
 }
 
 const PLANNER_SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
+
+// Models cite prompt facts with JSON-pointer fragment syntax (`turn_X#request`);
+// `#` sits outside the runtime ref charset while `:` is inside, and the mapping
+// is deterministic, so repair instead of burning the retry budget.
+function repairPlannerFactRefs(action: Record<string, unknown>): void {
+  const factRefs = action.factRefs
+  if (!Array.isArray(factRefs)) return
+  action.factRefs = factRefs.map((ref) => (typeof ref === 'string' ? ref.replace(/#/g, ':') : ref))
+}
 
 function assertPlannerSafeRefs(action: Record<string, unknown>): void {
   const actionId = action.actionId
@@ -443,9 +453,10 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     throw new Error(`planner_invalid_action:${validation.errors.join('; ')}`)
   }
   // The runtime rejects opaque refs outside its safe charset at the ledger
-  // boundary, past the retry budget. Enforce the same charset here so a
-  // model-invented unsafe ref retries as a parse-class failure instead of
-  // failing the turn as PLANNER_FAILED.
+  // boundary, past the retry budget. Repair the common fragment syntax first,
+  // then enforce the same charset here so remaining violations retry as
+  // parse-class failures instead of failing the turn as PLANNER_FAILED.
+  repairPlannerFactRefs(decision.action)
   assertPlannerSafeRefs(decision.action)
   const action = decision.action as unknown as BookingReadAction
   const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
