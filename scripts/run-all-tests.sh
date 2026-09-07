@@ -390,7 +390,7 @@ if [ -z "$package_e2e_bin" ]; then
     if [ "${#package_e2e_tarballs[@]}" -eq 1 ] \
       && [ -f "${package_e2e_tarballs[0]}" ] \
       && (cd "$package_e2e_install_dir" && npm init --yes >/dev/null) \
-      && npx --yes pnpm@11.5.0 --dir "$package_e2e_install_dir" add --ignore-scripts "${package_e2e_tarballs[0]}" >/dev/null \
+      && npx --yes --package=pnpm@11.5.0 pnpm --dir "$package_e2e_install_dir" add --ignore-scripts "${package_e2e_tarballs[0]}" >/dev/null \
       && npx tsx ts/scripts/pnpm-dsh-closure-proof.ts "$package_e2e_install_dir" \
       && [ -x "$package_e2e_install_dir/node_modules/.bin/gotry" ]; then
       package_e2e_bin="$package_e2e_install_dir/node_modules/.bin/gotry"
