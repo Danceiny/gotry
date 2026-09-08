@@ -19,7 +19,7 @@ import assert from 'node:assert/strict'
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const upstreamLicenseSha256 = 'b6bbb0c73a02cf8d2c304e9f208b41c32f0a810fabe366986e2b14ac3338f618'
 const upstreamVendorFileCount = 32
-const adaptedVendorAggregateSha256 = '5d7fcdb9b33434dbf622798dade12e8a568506bed1142f37432fbcf566202409'
+const adaptedVendorAggregateSha256 = '32a893ff7a51799d2b8b8f246cbf6d094c3f6054e9086c0c8b0cb2da8606ccb1'
 const expectedTools = [
   'map_bicycling_route',
   'map_driving_route',
@@ -196,38 +196,72 @@ try {
   assert.equal(dshTools.version, '0.1.2-alpha.3')
   assert.equal(dshSettings.version, '0.1.2-alpha.3')
   const settingsApi = await import(pathToFileURL(join(dirname(dshSettingsPackageJson), 'lib/index.js')).href) as {
-    installSettingsSection?: unknown
-    settingsNamespace?: (value: string) => string
+    SettingsProvider?: { prototype?: { installSection?: (...args: unknown[]) => void } }
   }
-  assert.equal(typeof settingsApi.installSettingsSection, 'function', 'real alpha.3 installSettingsSection export must be present')
-  assert.equal(typeof settingsApi.settingsNamespace, 'function', 'real alpha.3 settingsNamespace export must be present')
+  const installSection = settingsApi.SettingsProvider?.prototype?.installSection
+  assert.equal(
+    typeof installSection,
+    'function',
+    'real alpha.3 SettingsProvider.prototype.installSection must be present',
+  )
 
   const plugin = await import(pathToFileURL(join(vendorRoot, 'lib/index.js')).href)
-  const registered: Array<Record<string, unknown>> = []
+  type RegisteredTool = Record<string, unknown> & { name: string; execute?: unknown }
+  const registered = new Map<string, RegisteredTool>()
+  const registerEvents: string[] = []
+  const toolDisposeEvents: string[] = []
   const settingsRegistrations: unknown[][] = []
-  const settingsNamespaceValue = settingsApi.settingsNamespace!('dsh-map-tools')
+  const settingsWatchers: Array<() => void> = []
+  const settingsProviderDisposers: Array<() => void> = []
+  const contextDisposers: Array<() => void> = []
+  const settingsNamespaceValue = 'dsh-map-tools'
+  const activeToolNames = () => [...registered.keys()].sort()
+  const settingsProvider = {
+    ctx: {
+      effect(effect: () => (() => void) | void) {
+        const disposer = effect()
+        if (typeof disposer === 'function') settingsProviderDisposers.push(disposer)
+        return disposer
+      },
+    },
+    register: (...args: unknown[]) => {
+      settingsRegistrations.push(args)
+      return {
+        get: () => args[2] && typeof args[2] === 'object' ? (args[2] as { base?: unknown }).base : undefined,
+        watch: (callback: () => void) => {
+          settingsWatchers.push(callback)
+          return () => {
+            const index = settingsWatchers.indexOf(callback)
+            if (index >= 0) settingsWatchers.splice(index, 1)
+          }
+        },
+        update: async () => undefined,
+        replace: async () => undefined,
+      }
+    },
+    installSection: (...args: unknown[]) => installSection!.apply(settingsProvider, args),
+  }
   const context = {
     fiber: { state: 'active' },
+    effect(effect: () => (() => void) | void) {
+      const disposer = effect()
+      if (typeof disposer === 'function') contextDisposers.push(disposer)
+      return disposer
+    },
     tools: {
-      register(tool: Record<string, unknown>) {
-        registered.push(tool)
-        return () => undefined
+      register(tool: RegisteredTool) {
+        assert.ok(tool.name.startsWith('map_'), `unexpected map tool name: ${tool.name}`)
+        registered.set(tool.name, tool)
+        registerEvents.push(tool.name)
+        return () => {
+          registered.delete(tool.name)
+          toolDisposeEvents.push(tool.name)
+        }
       },
     },
     inject(dependencies: string[], callback: (scope: Record<string, unknown>) => void) {
       if (dependencies.includes('settings')) {
-        callback({
-          settings: {
-            register: (...args: unknown[]) => {
-              settingsRegistrations.push(args)
-              return {
-                get: () => args[2] && typeof args[2] === 'object' ? (args[2] as { base?: unknown }).base : undefined,
-                watch: () => () => undefined,
-              }
-            },
-          },
-          effect: (effect: () => (() => void) | void) => { effect() },
-        })
+        callback({ settings: settingsProvider })
       } else if (dependencies.includes('webServer')) {
         callback({ webServer: { register: () => undefined } })
       } else {
@@ -239,16 +273,31 @@ try {
     provider: 'osm', amapKey: '', timeoutMs: 1000, maxQps: 2,
     defaultMode: 'driving', language: 'zh',
   })
-  assert.deepEqual(registered.map(tool => tool.name).sort(), expectedTools, 'exactly seven map tools must register')
+  assert.deepEqual(activeToolNames(), expectedTools, 'exactly seven active map tools must register')
+  assert.equal(registerEvents.length, expectedTools.length * 2, 'installSection initial onChange must rebuild the map tools once')
+  assert.equal(toolDisposeEvents.length, expectedTools.length, 'installSection initial reload must dispose the first tool generation')
   assert.equal(settingsRegistrations.length, 1, 'alpha.3 settings section must register once')
-  assert.equal(settingsRegistrations[0][0], settingsNamespaceValue, 'settings namespace must be branded and stable')
+  assert.equal(settingsRegistrations[0][0], settingsNamespaceValue, 'settings namespace must be the stable plain string')
   assert.equal(settingsRegistrations[0][2] && typeof settingsRegistrations[0][2] === 'object', true, 'alpha.3 settings register options must be supplied')
   assert.deepEqual(Object.keys(settingsRegistrations[0][2] as object).sort(), ['base'], 'alpha.3 registration must carry the composition base')
+  assert.equal(settingsWatchers.length, 1, 'alpha.3 installSection must attach one settings watcher')
+  assert.equal(settingsProviderDisposers.length, 1, 'alpha.3 installSection must attach one provider-detach fallback effect')
 
+  settingsWatchers[0]()
+  assert.deepEqual(activeToolNames(), expectedTools, 'settings watch reload must keep exactly seven active map tools')
+  assert.equal(registerEvents.length, expectedTools.length * 3, 'settings watch must rebuild the map tools')
+  assert.equal(toolDisposeEvents.length, expectedTools.length * 2, 'settings watch reload must dispose the previous generation')
+
+  settingsProviderDisposers[0]()
+  assert.deepEqual(activeToolNames(), expectedTools, 'settings provider detach fallback must keep exactly seven active map tools')
+  assert.equal(registerEvents.length, expectedTools.length * 4, 'provider detach fallback must rebuild the map tools')
+  assert.equal(toolDisposeEvents.length, expectedTools.length * 3, 'provider detach fallback must dispose the previous generation')
+
+  const finalActiveTools = [...registered.values()]
   const originalFetch = globalThis.fetch
   globalThis.fetch = (async () => { throw new Error('network forbidden by package proof') }) as typeof fetch
   try {
-    const geocode = registered.find(tool => tool.name === 'map_geocode')
+    const geocode = registered.get('map_geocode')
     assert.ok(geocode, 'map_geocode must be registered')
     const result = await (geocode.execute as (args: unknown, execution: unknown) => Promise<unknown>)(
       { address: '116.397428,39.90923' },
@@ -259,6 +308,9 @@ try {
   } finally {
     globalThis.fetch = originalFetch
   }
+
+  for (const dispose of contextDisposers.splice(0).reverse()) dispose()
+  assert.equal(registered.size, 0, 'plugin unload must dispose the active map tool generation')
 
   console.log(JSON.stringify({
     proof: 'map-tools-vendor-package',
@@ -271,7 +323,14 @@ try {
     },
     artifactVendor: vendorRoot,
     dshClosure: { tools: dshTools.version, settings: dshSettings.version, ...lockedDsh },
-    tools: registered.map(tool => tool.name).sort(),
+    settingsLifecycle: {
+      registerEvents: registerEvents.length,
+      toolDisposeEvents: toolDisposeEvents.length,
+      watchedReloads: 1,
+      providerDetachFallbacks: 1,
+      pluginUnloadDisposed: true,
+    },
+    tools: finalActiveTools.map(tool => tool.name).sort(),
     inlineCoordinate: { provider: 'inline', network: 'forbidden' },
   }, null, 2))
 } finally {
