@@ -70,6 +70,13 @@ domain-only path; a later concrete result may recover it. In every case the
 accepted terminal response must occur after the latest bridge response, so a
 stale terminal cannot mask newer evidence.
 
+Round 11 makes the model-facing request schema one flat object: `action` is the
+`tools|call|errors` enum, `tool` is an enum derived from the frozen descriptor
+set, and `arguments` is a generic object. This is a wire/schema visibility
+change only. At execution time the bridge still validates `arguments` exactly
+against the selected frozen descriptor `input_schema`; generic model-facing
+arguments do not weaken the execution contract.
+
 The owner-local config also declares a generic tagged-JSON terminal envelope.
 The tag is a bounded identifier and `max_bytes` is capped at 1 MiB. A valid
 terminal response is exactly one matching tag pair whose body is one JSON
@@ -134,7 +141,8 @@ Example (placeholder paths only):
 The executable and cwd are absolute and fixed. Calls use an argv list with the
 configured prefix; arbitrary shell strings, shell interpolation, and arbitrary
 commands are not exposed. `tools` is a bounded, nonempty descriptor set and is
-the single source for discovery, model parameters, and pre-spawn validation.
+the single source for discovery, the model-visible tool-name enum, and exact
+pre-spawn validation.
 Each descriptor has a nonempty description, a closed and bounded object
 `input_schema`, a nonempty unique `output_keys` allowlist, and a finite list of
 exact `domain_outcomes`. Open nested objects, unknown schema keywords, duplicate
@@ -142,10 +150,13 @@ names/keys/outcomes, unbounded arrays, and free-text recovery values fail at
 config load. A v1/v2 file must be migrated explicitly; it is never accepted
 with ambiguous behavior.
 
-The model sees one flat top-level `oneOf`: exact `{action:"tools"}`, exact
-`{action:"errors"}`, or one descriptor-derived
-`{action:"call",tool:<const>,arguments:<input_schema>}` branch. Empty, nested
-legacy `query`, mixed-action, and extra-field objects fail before execution.
+The model sees one flat object root: `action` is the
+`tools|call|errors` enum, `tool` is the descriptor-derived name enum, and
+`arguments` is a generic object. Only `action` is universally required on this
+provider-facing wire. Before any subprocess starts, execution enforces the
+exact action shape and validates call arguments against the selected frozen
+descriptor `input_schema`; empty, nested legacy `query`, mixed-action,
+missing-call-field, and extra-field objects fail closed.
 `tools` returns the frozen descriptors. `errors` returns the complete closed
 bridge protocol/infrastructure failure inventory. Those failures use
 `{"ok":false,"error":"..."}` and are distinct from an adapter domain outcome,
@@ -364,3 +375,15 @@ domain or infrastructure fact.
 This round does not change provider routing, the scorer, the evaluator, or the
 default product path. A frozen treatment and any score/uplift claim require
 separate provenance-bound evidence.
+
+### Round 10 treatment diagnosis and Round 11 — flat model-facing wire
+
+The real `glm-5.3-flash` treatment on main `c843fae` diagnosed a provider/model
+visibility failure for the top-level `oneOf` bridge schema: the treatment made
+57 empty `{}` calls and produced no countable score. Round 11 therefore changes
+only the model-facing bridge wire to one flat object with `action` enum
+`tools|call|errors`, a descriptor-derived `tool` enum, and generic object
+`arguments`. Execution-time validation remains exact against the selected
+frozen descriptor `input_schema`. Provider routing, the scorer, evaluator,
+default product path, external data/oracle/query/trajectory inputs, private
+paths, and credentials are unchanged; no score or uplift is claimed.
