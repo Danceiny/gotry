@@ -1,0 +1,5 @@
+# dsh-map-tools bundle layer: registers the map tools plugin.
+# Installed via `dsh plugin add dsh-map-tools` (or from the plugin market).
+- insert:
+    - id: map-tools
+      name: dsh-map-tools
