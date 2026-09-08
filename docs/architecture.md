@@ -9,6 +9,7 @@
 
 - GoTry 是「从出发到下一次出发」的 AI 旅行 Agent:LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 - 当前形态:M3 最小可用、分发链路无堵点;M3 Exit 缺真实 cohort 证据(D-18),M4 记忆域经 founder 授权并行推进。
+- M4→M6 program 计划已落为 issue #225 living 任务图与 M5 WriteGate proposal;它只排依赖与验收,不改变 M4/M5/M6 Entry/Exit;#227 未解决前相关 PR 只可 draft。
 - 五层:L1 交互 / L2 编排(dsh 插件)/ L3 统一行程模型 + Z3 / L4 数据能力 / L5 loopx 治理。
 - 状态基座:单文件 SQLite 账本(ADR-15),本地+Web 一套账本语义(ADR-16);`tenant_id` 贯穿 append/read/fold/rebuild,旧 local 历史不猜租户;外部依赖全走效应解译器(ADR-18)。
 - 外部 benchmark:Round 1–10 frozen treatment 与 Round 11 wire 切片均不产生可归因 official score/uplift,Round 12 结构半场(config v4 closed body schema)已合入而冻结重跑未跑(D-28);逐轮事实见 §9,工程合同见 `evaluation/benchmark-environment-bridge.md`。
@@ -95,7 +96,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - 工具 execute 统一经 `guardToolExecute` 异常隔离 + 平铺观察 envelope(ADR-13)。
 - **turn 预算 = 路由 + wall-clock 双出口**(ADR-24 v2):每轮终结于「当面答完 / 转后台承诺 / 收敛作答」三态之一,不允许流死掉。确定性分类器(`ts/src/turn-policy.ts`,零 LLM)分 quick/sync/deep;越硬阈同步抑制工具 schema(`ts/src/turn-deadline.ts`);deep 出口落 `gotry_turn_handoff.v1` 工单并告知 ETA,收集闭环由 `scripts/turn-handoff-collect.ts` 兑现。设计与验证细节见 §8.24。
 - 外部依赖走**效应描述 + 解译器**(ADR-18):工具层只产纯数据效应值 `{effect, params}`,渠道访问/退避重试/断路器/编译期 mock 收敛到 `ts/capabilities/effect.ts` 与 `resilience.ts`。
-- **HotelByte embedded Booking Copilot 是只读协作面,不是 M5 写闸启封**:单一 `booking.surface` 契约(2026-09-05 #133 收敛,v1 退役),生产 standalone 默认 `bff-bound-turn-only`,浏览器 `user.turn.ingress` 只在完整 authenticated principal/scope + BFF trusted binding 下开放;must blocker 只能由绑定 task/context/receipt/presentation key 的一次性 approval 放行。离页自动写/支付须另立 M5 WriteGate ADR;四 surface 真实库存验收未过前不得宣称产品验收(D-29)。全文见 §8.23。
+- **HotelByte embedded Booking Copilot 是只读协作面,不是 M5 写闸启封**:单一 `booking.surface` 契约(2026-09-05 #133 收敛,v1 退役),生产 standalone 默认 `bff-bound-turn-only`,浏览器 `user.turn.ingress` 只在完整 authenticated principal/scope + BFF trusted binding 下开放;must blocker 只能由绑定 task/context/receipt/presentation key 的一次性 approval 放行。离页自动写/支付已有 M5 WriteGate proposal(`design/write-gate-production-design.md`),但 M4 Exit+供应链协议未满足前零交易实现;四 surface 真实库存验收未过前不得宣称产品验收(D-29)。全文见 §8.23。
 - py 树仅剩 `gotry_feasibility` oracle,产品运行时零 Python 依赖(D-7 清偿)。
 - **外部 benchmark bridge 一律 default-off**(Phase 1 seam):owner-local config、固定 argv/allowlist、递归 no-oracle 键拒绝、cold-start + headless one-shot、native definition-only agent、启动组合隔离、结构化终态诊断——任一合同漂移 fail-closed。单一 flat `action=tools|call|errors` 协议由 descriptor 同源生成每工具精确 call schema，并在 spawn 前复用同一 validator；adapter 输出只接受 exact result/domain/failure envelope，旧终态不得遮蔽更新的 bridge 事实。逐轮 frozen treatment 事实见 §9,合同全文见 `evaluation/benchmark-environment-bridge.md`。
 - **Z3 生命周期边界(#227)**:`ts/src/z3-shared.ts` 是唯一运行时入口:冷初始化 Promise 先缓存(并发只建一个 Context)、会话级互斥 `withZ3`、low-level native cleanup 局部队列(只包装当前 `z3-solver@5.2.0` 的 `dec_ref`/`*_dec_ref` 与 async native call,不改全局 `FinalizationRegistry`,不提前 free 仍可达对象)。GC/explicit release 的 cleanup 若撞上活跃 native check,延迟到 actual native idle 后 drain；fatal WASM/heap 错误先 poison,后续求解 fail-closed。回归锚点:run-all §30/§30b/§30c。
@@ -103,7 +104,7 @@ M3 最小可用产品,分发链路无已知堵点。
 
 ### 1.7 里程碑口径(Issue #19)
 
-M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20/#223 scorer 已落地并加严,#228 collector 提供显式同意的 lifecycle 观测与脱敏导出,但真实 `observed_private` N≥5 + source-review attestation 仍缺——**这些 M4 切片不构成 M3 Exit 证明**。M5/M6 仅在各自 Entry gate 满足后启动。
+M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20/#223/#238 scorer 已在 main 落地并加严,#228/#248 显式 opt-in planning lifecycle collector 也已在 main,但 collector 只产生隔离 candidate/synthetic 导出,不得替代真实 `observed_private` N≥5 repeat cohort + source-review attestation;issue #225 把 M4→M6 拆成 living 任务图,并记录 ledger/state-cli/Z3/map 基础修复已在 main(#229/#237/#243/#244/#245)。M5 首供应链已选 `hotelbyte-cli`(仅只读调查与契约准备,不代表供应链协议已签)。**这些计划/设计/candidate 导出不构成 M3/M4/M5/M6 Exit 证明**。M5/M6 仅在各自 Entry gate 满足后启动。
 
 证据面现状:`ts/scripts/product-metrics.ts`(M3 cohort)与 `ts/scripts/memory-value-report.ts`(M4 价值)固化了样本窗/纳排/分母/归因与阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;synthetic fixture **永不产生 business pass**。`ts/scripts/memory-lifecycle.ts` 只把显式 consent/stateRoot/HMAC 下的首访/回访 lifecycle 事件导出为 #223 scorer 输入,并保持 candidate/synthetic source_review,绝不制造 manual attestation。M4 observed-private 另需 `memory_value_source_review.v1` 人工 source-review attestation 合同,并以 `reviewed_summary_digest_sha256` 绑定本次评分 payload;缺少或 digest 不匹配时只可作为 candidate,不得把 `evidence_kind` 或 HMAC 字符串形状当 provenance。真实证据只进入被忽略的 `ts/gotry-state/evidence/`。
 
@@ -242,7 +243,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 20 | 价表 provider-aware v2 + 价格漂移长机制(issue #49,2026-08-30):封存价表 `gotry_llm_price_table_v2`(DeepSeek tiered + MiniMax flat,未知模型 fail-closed 不猜价)+ 四 provider 漂移监测,**永不自动 apply 价格**(调整走 PR + 人 review) | 发版时人工核价(滞后)/自动 apply(拒绝:官方 down 5% 曾被误认为我方 bug) | 监测误报成系统性问题、或价格源形态变化时复审 | `ts/data/llm-price-table.json`;`ts/scripts/price-drift-watch.ts`;run-all §41/§42 |
 | 21 | 扩展分发三通道(issue #21 分发通道,2026-08-30;商店轨 2026-09-02 上架) | 见 §8.21 | ~~商店过审后复审 wizard 步骤~~(已触发:wizard 退化为离线健康探活等待;安装=浏览器的事、渲染=dsh UI 的事,§3.3 职责返交落地);GitHub 不可达地区常态化时复审镜像默认值;出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`;`scripts/package-extension.mjs`;run-all §43;`docs/ops/extension-webstore-submission.md` |
 | 22 | static golden 是**可审计 benchmark comparator**,不是实时航班源(issue #67) | 见 §8.22 | 出现可免私有凭证、许可清晰且稳定的官方 flight API,或 hbcli 发布 flight 合同时复审其为新 provider;static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`;`ts/data/sf-static-routes.json`;run-all §44 |
-| 23 | embedded Booking Copilot 安全边界与 BFF request identity binding(单一 booking.surface 契约) | 见 §8.23 | 出现离页自动写/支付必须另立 M5 WriteGate ADR;出现多写者/跨 host 触发 ADR-15/16 复审;~~所有消费方迁移 v2 后再退 v1~~(**已触发 2026-09-05**:#133 收敛为单一契约,v1 退役,文件转正为无后缀 canonical 名) | `schemas/booking.surface.schema.json`;`ts/src/booking-surface/`(contracts/runtime/server/startup 等);run-all 证明面 |
+| 23 | embedded Booking Copilot 安全边界与 BFF request identity binding(单一 booking.surface 契约) | 见 §8.23 | 出现离页自动写/支付必须进入 M5 WriteGate proposal/ADR 后续实现;出现多写者/跨 host 触发 ADR-15/16 复审;~~所有消费方迁移 v2 后再退 v1~~(**已触发 2026-09-05**:#133 收敛为单一契约,v1 退役,文件转正为无后缀 canonical 名) | `schemas/booking.surface.schema.json`;`ts/src/booking-surface/`(contracts/runtime/server/startup 等);run-all 证明面 |
 | 24 | turn 预算 = 路由 + wall-clock 双出口:确定性分类 → converge/handoff;handoff 落独立工单待 loopx tick 收 | 见 §8.24 | 路由误分成系统性问题时(用户反馈「该当面答的被转后台」可观测),先扩 Tier 0 信号词表再考虑 Tier 2(结构化状态);handoff 工单积压需要真实收集器时启动 loopx tick 设计;评测端 60s 太紧先调 env pin | `ts/src/turn-policy.ts`;`ts/src/turn-deadline.ts`;`ts/src/index.ts` 装配;`ts/scripts/turn-policy-tests.ts`;`ts/scripts/agent-planning-turn-deadline-{tests,e2e}.ts`;`scripts/run-all-tests.sh` §45 |
 | 25 | 通道健康面与动态路由建议(issue #106/#107/#108,D-7/D-8/D-9 采纳 2026-09-03):工具面保持平铺(ADR-18 判定不动)、解译器不做隐藏改道;通道注册表单一数据来源生成 persona 卡/工具描述/doctor 行;检索 verdict≠hit 时结果内注入 `routing` 有序建议(可用性>证据级>效率字典序,健康态过滤),契约在失败现场教学;配额五分类(user-session/user-key/anonymous-trial/free-public/static)冻结归属语义;calendar 默认不挂载(D-9) | 解译器自动改道(拒绝:模型以为调 A 实际走 B,破坏调用可审计性)/静态反转优先级(拒绝:每个新用户先付扩展安装成本)/只靠 prose 教义(拒绝:prose 腐坏,普通模型读不动) | routing 建议误配成系统性问题时先修注册表数据;出现跨通道比价聚合产品裁决时与 ADR-18 一起复审;正式 key 池(产品统一申请)待 M3 真实 cohort 规模复审 | `ts/capabilities/channel-registry.ts` `channel-health.ts`;`docs/design/tool-orchestration-design.md`;run-all §50;smoke(flyai needs-setup→routing) |
 
@@ -318,7 +319,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **approval 一次性**:must blocker 只能经 runtime 持久化并实际呈现的 option 放行;approval 逐字段绑定 task、context、source turn、source action、source receipt digest、canonical presentation key、随机 delivery nonce 与 option digest,只能消费一次。
 - **availability reducer(typed 恢复子状态机)**:一次 recovery 冻结最多 5 家候选酒店;每家 generation 最多 3 个当前 OfferRef,每家生命周期最多 2 次 CheckAvail、2 次 offers/HotelRates generation。`unavailable`、material `changed` 或不可确认 gap 使整个 generation 失效并要求 fresh query;partial evidence 只产生 inconclusive exhaustion,不能宣称市场无房。generation/attempt/candidate/receipt digest/workspace revision 随 ledger fold,重启与相同 replay 不增加预算;terminal 是吸收态。
 
-明确拒绝的备选:独立聊天预订页;用 breaking v2 替换 v1;自由文本/JSON 执行;把 server outbox 意图当作已展示;在 embedded 面暴露 `Book`。当前能力不包含 portal token、PII 或供应商成本出站;离页自动写/支付须另立 M5 WriteGate ADR,多写者或跨 host 则按 ADR-15/16 复审。
+明确拒绝的备选:独立聊天预订页;用 breaking v2 替换 v1;自由文本/JSON 执行;把 server outbox 意图当作已展示;在 embedded 面暴露 `Book`。当前能力不包含 portal token、PII 或供应商成本出站;离页自动写/支付已让渡到 M5 WriteGate proposal(`design/write-gate-production-design.md`),多写者或跨 host 则按 ADR-15/16 复审。
 
 #### 8.24 ADR-24:turn 预算 = 路由 + wall-clock 双出口(turn-policy / turn-deadline)
 
@@ -360,7 +361,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **会话传输层定案扩展桥(2026-08-30,#21 方案 C 升 PRIMARY)**:founder 实测「Chrome attach 逐连接权限框根本无法使用」(chrome-devtools-mcp #825:每次连接必弹、无持久化批准)→ CDP 降显式 opt-in、扩展桥主载——`extension/`(MV3 零构建,固定 key=扩展 ID,SW 长轮询,MAIN-world 被动嗅探,cookie-names 只取名)+ `extension-bridge.ts`(`node:http` 回环桥,origin 白名单,零新依赖)+ 车道路由(扩展默认/cdp 显式/persistent 测试);登录快路径免标签页;守卫按车道分形(扩展=零写行为+hints 白名单,cdp=请求级 abort);`needs-extension` → `waiting_extension`(waiting-* 同族 no-spend);run-all §38 + bootstrap-tests;真实 sf-01..08 门禁降为「装一次扩展」。
 - **Issue #67 static golden(2026-08-30)**:`sf-live-benchmark` 的 vendor 闭集扩为 `manual|flyai|static`;`static` 由 OpenFlights 固定修订提供 route/carrier,由手工 manifest 提供估算时刻/价格带,requested/effective source、estimated fields、provenance、fallback reason 逐条写进 evidence。静态源异常时 stderr 告警后回退 manual;它不声称实时班期/价格/库存。run-all §44 固化 CLI fail-closed、八条覆盖、回退与 provider-independent 软评分。
 - **Issue #67 登录态真跑与桥退出语义(2026-08-30)**:连续两轮 static official 均 8/8 命中且零 fallback;session hit 数从 3/8 波动到 5/8,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 必须显式披露且不进软评分分母。真扩展在线场景触发的 CLI 不退出已以默认桥 parked timer/socket `unref` 修复;`keepBridge` wizard 轨通过 §40,§38 增子进程回归。
-- **M4 Issue #20/#223/#228 价值证据切片(2026-08-29;2026-09-08 加固与 collector)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。#223 追加逐层 exact schema、HMAC-SHA256 假名键、N=5/中位降幅=0.5 阈值冻结(raw ratio 比较,报告才 round)、source-review attestation 与 `reviewed_summary_digest_sha256` 绑定。#228 追加显式 opt-in lifecycle collector:stateRoot/consent/HMAC 必需、dataset key verifier 与 source/wait 冻结、写前完整投影校验、write-all + 原子发布 + 叶子/父目录 realpath 隔离,导出只给 candidate/synthetic source_review。合成数据明确不可关闭 M4,observed-private 缺人工核验合同或 digest 不匹配时也只可作为 candidate。下一阶段仍等待真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
+- **M4 Issue #20/#223/#238/#228 价值证据切片(2026-08-29;2026-09-08 scorer 加固与 collector)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。#223/#238 追加逐层 exact schema、HMAC-SHA256 假名键、N=5/中位降幅=0.5 阈值冻结(raw ratio 比较,报告才 round)、source-review attestation 与 `reviewed_summary_digest_sha256` 绑定。#228/#248 追加显式 opt-in lifecycle collector:stateRoot/consent/HMAC 必需、dataset key verifier 与 source/wait 冻结、写前完整投影校验、write-all + 原子发布 + 叶子/父目录 realpath 隔离,导出只给 candidate/synthetic source_review。合成数据明确不可关闭 M4,observed-private 缺人工核验合同或 digest 不匹配时也只可作为 candidate。下一阶段仍等待真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
+- **M4→M6 program 任务图(2026-09-08,issue #225)**:`docs/design/milestone-delivery-plan.md` 将已入 main 的 M4 scorer(#238)、explicit opt-in planning lifecycle collector(#248)、ledger tenant/fold/migration(#229/#237)、state-cli(#243)、Z3 生命周期(#244)与 map tools(#245)同仍 TODO 的真实 N≥5 repeat cohort、M5 首供应链 `hotelbyte-cli` 协议核验 + WriteGate、M6 P6 评审+试点条件拆成 owner/责任文件/依赖/E2E/否证/退出标准;`docs/design/write-gate-production-design.md` 仅作 M5 proposal,覆盖 request fingerprint/receipt/一次确认/崩溃恢复/HotelByte unknown 对账/补偿/佣金披露。该批不改 runtime,不启封交易或 B2B 实现,不改变 Exit。
 - **已知限制清算第一刀(2026-08-29,founder 指令「解决这些 known limitations」)**:
   - **Z3 WASM 生命周期复修(#227,2026-09-08)**:08-29 的单例+互斥仍留下两条 Node24 间歇面——`getZ3` 冷启动 Promise 在 await 后写缓存会并发创建多个 Context；`z3-solver@5.2.0` high-level `FinalizationRegistry` cleanup 直接触发 low-level native `dec_ref`/`*_dec_ref`,不经过 `withZ3`。本轮修复为:Promise 先缓存、启用 `enable_concurrent_dec_ref` fail-closed、局部包装 low-level cleanup 与 actual async native call,仅在活跃 session/native check 时排队 cleanup 并在 idle 后同步 drain；fatal WASM/heap 错误先 poison 并拒绝后续求解。反证覆盖:全局 `FinalizationRegistry` identity 不变、返回的 live Model/Ast 跨 session 仍可用、独立并发请求排队不误判 nested、in-flight native barrier 先进入后才允许 settle。run-all §30/§30b/§30c。
   - **薄壳遗留**(`shell/` 目录)物理删除,dsh web 确认为唯一产品面。
@@ -436,6 +438,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | D-26 事实闸覆盖面缺口(ADR-19) | **部分收口**:酒店 claim 已入闸(2026-09-04,issue #118,HotelFact 第三形态+渲染原语锚点回溯);政策事实生产端 v1 已落(2026-09-05,issue #141,C 档领事服务网 cs.mfa.gov.cn → PolicyFact 落账,Timatic/Sherpa° 后议)。残余:反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
 | D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」 |
 | D-29 Booking Copilot 真实库存产品验收 | typed read-action/BFF/task ledger 与可复现 Linux 产物只证明工程边界;不证明供应商库存、不可订恢复或 Checkout/订单状态业务效果 | **open**:冻结三仓 exact SHA 后,在 tenant/customer/storefront/payment-link 四 surface 跑真实库存;至少一条 unavailable/changed 报价必须经重新搜索、新 CheckAvail、原 Checkout 恢复;Book 仍仅由 Checkout 授权,并以 QueryOrders/清理证据收口 |
+| D-32 M4→M6 program 证据采集与 gate 闭合缺口 | issue #225 已把任务图落入 `docs/design/milestone-delivery-plan.md`;当前 open 项:① #227 Node24 Z3 间歇 heap corruption 阻断合并;② #223 固定 M4 scorer N≥5/≥50% 与 HMAC/strict schema;③ #228 显式 opt-in planning lifecycle 本地采集+脱敏导出(现无采集器,不得用历史 wish 日志伪造 cohort);④ 真实 N≥5 repeat cohort 与 reflux baseline;⑤ M5 首供应链 `hotelbyte-cli` 的协议/Buyer/路由/对账/UAT 核验(用户已选,但协议未签);⑥ #226 state-cli 租户边界;⑦ P6 founder review 与试点商业条件。#224 tenant ledger 隔离已关闭,但 M6 proof 仍需引用其最终证据。M5 proposal 见 `docs/design/write-gate-production-design.md`;未满足前不启封交易/B2B 实现。 |
 
 **[D-NEW] dsh 进程保活缺失**
 
@@ -560,7 +563,9 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | `release-notes.md` | 发版记录(按版本归档,最新在上) |
 | `decisions-needed.md` | 待创始人拍板的决策清单 |
 | `design/memory-design.md` | **记忆域设计**:C 端六层重设计(M1-M6 现状映射/P1-P4 分期增量/铁律与验收),M4 交付「六层框架重设计」的正式文档 |
-| `design/memory-lifecycle-collector.md` | **M4 planning lifecycle collector 使用合同**(#228):显式 opt-in CLI、隔离 stateRoot、HMAC/consent/source/wait 冻结、JSONL+manifest 原子持久化与 #223 scorer 导出链 |
+| `design/memory-lifecycle-collector.md` | **M4 planning lifecycle collector 使用合同**(#228/#248):显式 opt-in CLI、隔离 stateRoot、HMAC/consent/source/wait 冻结、JSONL+manifest 原子持久化与 #223/#238 scorer 导出链 |
+| `design/milestone-delivery-plan.md` | **M4→M6 living 任务图(issue #225)**:按真实依赖拆分 M4 #223/#238/#228/#248/#20、M5 #136 HotelByte 首供应链+WriteGate、M6 #224/#226/P6/试点与开源质量闸,逐项 owner/责任文件/E2E/否证/退出标准 |
+| `design/write-gate-production-design.md` | **M5 WriteGate 生产化 proposal(issue #225/#136)**:HotelByte request fingerprint/approval receipt/local outbox intent/supplier unknown/manual reconcile/cancel-vs-compensation/L4 revoke/commission disclosure;只设计不启封交易 |
 | `design/effect-interpreter.md` | **效应解译器设计(issue #16 采纳,ADR-18)**:effect_interpreter.v1 词汇(效应值/EffectOutcome/trace)+ 渠道韧性策略表(退避/断路/节律依据逐行)+ 生产/mock 双解译器 + 为什么不做视觉 CUA 与自动多渠道路由的判定记录 + D-23 迁移面 |
 | `design/booking-saga-fsm.md` | **预订 saga 状态机设计(issue #17 采纳,ADR-17)**:booking_saga_fsm.v1 字母表/边表/拒绝闭集 + 三种边型词汇(deterministic/gate/external-event)+ HITL 审批的挂起-恢复形态 + M5 启封增量与不引入编排框架的判定记录 |
 | `design/tool-orchestration-design.md` | **工具编排与通道健康面设计(proposal,2026-09-03)**:issue #106/#107/#108 收口——通道注册表(数据单一来源)+ 通道健康面(doctor 持久面 + 会话瞬态面)+ DP 编排=健康态驱动的动态建议;含「普通 LLM 下长久保持工具调用性能」与「开放生态可扩展性」两命题回答;拍板点 = decisions-needed D-7/D-8/D-9 |
@@ -584,6 +589,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | `milestones/m2-capability-gap.md` `milestones/m2-flight-data-options.md` | M2 期能力缺口与机票数据选型(历史备忘) |
 | `milestones/m3-web-gap.md` | M3 Web 形态缺口(G-1..G-4 方向) |
 | `milestones/m4-calibration-questions.md` | M4 校准问题集 |
+| `milestones/m6-b2b-reuse-walkthrough.md` | M6 P6 B2B 复用推演纪要(draft):traveler principal/sponsor/BFF principal 分词、复用率实测口径、tenant 对抗、披露插件 proposal;待 founder 评审 |
 | `milestones/s1-walkthrough.md` `milestones/g1-market-memo.md` | Stage 1 走查与 G1 首发市场备忘(历史备忘) |
 | `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` | Chrome Web Store 上架材料与隐私政策(ADR-21 通道 B) |
 | `assets/` | archify 生成的系统架构图(工具产物,仓内无消费者) |

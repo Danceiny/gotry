@@ -1,6 +1,6 @@
 # 参与开发 — Contributing
 
-> *How to set up, branch, test, and submit changes. `main` never takes direct pushes — every change lands as a reviewed Pull Request with the full suite green.*
+> *How to set up, branch, test, and submit changes. Project rule: `main` is updated through reviewed Pull Requests with local final-SHA evidence plus CI signal.*
 
 欢迎参与 GoTry！GoTry 是「从出发到下一次出发」的 AI 旅行 Agent——先用**数学求解器**回答「能不能、怎么去、真实成本多少」，而不是让模型猜。本文是唯一权威的贡献指南；快速上手见 [README](README.md)，技术权威面见 [`docs/architecture.md`](docs/architecture.md)。
 
@@ -38,11 +38,15 @@ cp .env.example .env      # 填 LLM_API_KEY(DeepSeek sk-... 或 OpenAI 兼容协
 
 ## 🧪 本地验证 — Verify before you push
 
-**提交前必跑，全绿才算完成**:
+**提交前必跑；脚本输出的节号/套件清单是唯一权威,文档不写死 `§1–N` 计数**:
 
 ```bash
-./scripts/run-all-tests.sh   # 全栈回归:§1-§34,含金标准/重放/账本/Z3 竞态/i18n/M3/M4 价值证据等全部套件
+cd ts && npx tsc --noEmit
+cd ..
+GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh   # 末行必须含 ALL SUITES GREEN
 ```
+
+每个 PR 描述都要贴**最终 SHA** 上的命令、exit code 和关键末行。CI(Node 22/24,typecheck + 全栈回归)只能补充本地证据,不能替代本地最终 SHA 复跑。
 
 天气回归使用受控 deterministic fixture；真实 Open-Meteo/Nominatim 仅属可变外围观测，不决定 merge gate。OpenSky/FlyAI 等 live 通道离线或被限流时对应套件有降级断言；会话面 live 嗅探默认可用 `GOTRY_SESSION_LIVE=0` 关闭。
 
@@ -62,7 +66,7 @@ cd ts && npx tsc --noEmit && npx tsx scripts/smoke.ts   # 类型 + 插件 smoke(
 
 ## 🌿 分支与提交 — Branch & Commit
 
-- **`main` 是唯一长期分支**，受保护：不直接推，一切改动走 Pull Request。没有 dev/staging。
+- **`main` 是唯一长期分支**，项目协作规则要求一切改动走 Pull Request。没有 dev/staging。
 - 从最新 `main` 切出 topic 分支，**一个分支只做一件事**，命名：`feat/` · `fix/` · `docs/` · `chore/`。
 
 ```bash
@@ -74,16 +78,17 @@ git checkout main && git pull && git checkout -b fix/your-topic
 - 格式 `type(scope): 一句话说清「为什么」`，如 `fix(D-17): Z3 WASM race 根治——单一实例+会话级互斥`。
 - **提交信息重点是动机**：为什么改，而不是改了什么（diff 自己会说话）。
 - **只暂存你负责的具名文件**：禁止 `git add -A` / `git commit -am` 席卷工作区——并行开发时工作区常混有他人在制品。
-- **测试红着不许合**：本地 `run-all-tests.sh` 全绿是开 PR 的前置条件。
+- **测试红着不许合**：本地最终 SHA 的 `run-all-tests.sh` 全绿是开 PR 的前置条件。
 
 ---
 
 ## 🔀 Pull Request 流程 — PR Workflow
 
-1. 本地全栈绿（§1-§34 全部通过）。
-2. 推分支、开 PR：描述写清「**为什么改 · 改了什么 · 测试证据**」（模板已内置）。
-3. CI 必须绿（typecheck + 全栈回归，Node 22/24 双版本），维护者 review 通过。
-4. **squash 合入** `main`（保持线性历史），合入即删分支。
+1. 在最终 SHA 本地跑 `cd ts && npx tsc --noEmit` 与 `GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh`,并记录 exit code 与 `ALL SUITES GREEN` 末行。
+2. 行为、用户可见或业务效果变化必须补一条最小 E2E 证据;纯文档/索引改动要给路径/链接检查或说明 N/A 的 burden-of-proof。
+3. 推分支、开 PR:描述写清「**为什么改 · 改了什么 · 最终 SHA 本地证据 · E2E 行 · N/A/跳过边界**」。
+4. CI(Node 22/24,typecheck + 全栈回归)必须绿,但只作为补充信号;维护者 review 通过。
+5. 维护者 squash 合入 `main`(保持线性历史),合入即删分支。
 
 ---
 
@@ -105,6 +110,7 @@ git checkout main && git pull && git checkout -b fix/your-topic
 - **红线进代码**:动机画像无 evidence 拒绝落盘；wish pool 条目强制 conditions；写操作（预订/支付类工具）必须过 WriteGate（确认前不得实现任何直接写）。
 - **行为或架构改动先立 ADR**（`architecture.md` §8,三个诞生渠道：失败/对账/里程碑复审）。
 - **状态面同步**:任何改变系统当前形态/状态/债务的提交，必须在**同一提交**内同步 `architecture.md` §11 列出的 6 处状态面。
+- **语义/架构/维护兼容**:语义变更要说明用户可见差异与最小 E2E;架构变更要说明 ADR/设计让渡;维护类改动要说明兼容面、回滚面与不改哪些文件。
 - **数据红线**:巡检/测试**不得写入共享运行时状态**（创始人真实数据在 `ts/dsh-runtime/gotry-state/`）——验证写路径一律用隔离 `stateRoot`。
 
 ---
