@@ -62,7 +62,20 @@ execution contract that translates prompt references to a CLI, shell, Python,
 or `agent_env.cli` into structured calls to the sole visible
 `gotry_benchmark_environment` tool. `action:"tools"` is discovery only. A
 countable turn must issue an allowed `action:"call"` and receive its paired
-successful tool result before it can stop.
+concrete result or declared domain outcome before it can stop. The call shape
+is flat; the retired nested `query` form is not accepted. A domain outcome may
+support a terminal response or a later model-authored argument revision, but
+the bridge does not retry. A later infrastructure failure invalidates a prior
+domain-only path; a later concrete result may recover it. In every case the
+accepted terminal response must occur after the latest bridge response, so a
+stale terminal cannot mask newer evidence.
+
+Round 11 makes the model-facing request schema one flat object: `action` is the
+`tools|call|errors` enum, `tool` is an enum derived from the frozen descriptor
+set, and `arguments` is a generic object. This is a wire/schema visibility
+change only. At execution time the bridge still validates `arguments` exactly
+against the selected frozen descriptor `input_schema`; generic model-facing
+arguments do not weaken the execution contract.
 
 The owner-local config also declares a generic tagged-JSON terminal envelope.
 The tag is a bounded identifier and `max_bytes` is capped at 1 MiB. A valid
@@ -71,21 +84,8 @@ object; prose, code fences, duplicate tags, arrays, primitives, trailing text,
 and oversized bodies fail closed. Paired reasoning blocks (`<think>…</think>`,
 case-insensitive, any position) are stripped before this validation:
 contemporary reasoning models emit them even when instructed to answer with the
-envelope only; every other leading/trailing text still fails closed.
-
-Round 12 (#215) tightened this from syntax-only conformance to an exact
-structural contract. The owner-local config carries a data-value-free closed
-`body_schema` (see the example below for the allowed dialect); GoTry projects
-the same structure contract — a deterministic outline of that schema — into
-both the system prompt and the single terminal correction, and fail-closed
-validates every accepted terminal body against it. Extra keys at any depth
-(including unsolicited root additions such as a budget block), missing
-required keys (such as a day row without `activities`), and wrong types are
-rejected as-is: no autofix, no key wrapping, no type coercion, and no
-rewriting of model output into a fake pass. The external adapter and official
-evaluator still own all value-level semantics (enums, patterns, cross-field
-rules); this gate only guarantees the released body has exactly the declared
-closed structure.
+envelope only; every other leading/trailing text still fails closed. This is syntax conformance only: the
+external adapter and official evaluator still own the business schema.
 
 If the model tries to stop without a real bridge call, or returns a malformed
 terminal response after a successful call, GoTry injects at most one fixed
@@ -101,7 +101,7 @@ Example (placeholder paths only):
 
 ```json
 {
-  "schema_version": "gotry_benchmark_environment_bridge_v4",
+  "schema_version": "gotry_benchmark_environment_bridge_v3",
   "enabled": true,
   "executable": "/OWNER-LOCAL/bin/node",
   "cwd": "/OWNER-LOCAL/harness",
@@ -109,17 +109,16 @@ Example (placeholder paths only):
   "tools": [
     {
       "name": "lookup",
-      "description": "Lookup one declared city.",
+      "description": "Look up one city.",
       "input_schema": {
         "type": "object",
-        "description": "Lookup arguments.",
         "properties": {
-          "city": { "type": "string", "enum": ["Dubai", "Abu Dhabi"], "description": "Declared city name." }
+          "city": { "type": "string", "description": "City name." }
         },
         "required": ["city"],
         "additionalProperties": false
       },
-      "output_keys": ["city"],
+      "output_keys": ["city", "country"],
       "domain_outcomes": [
         { "status": "miss", "code": "NOT_FOUND", "recovery": "revise_arguments" }
       ]
@@ -129,15 +128,7 @@ Example (placeholder paths only):
   "max_output_bytes": 65536,
   "terminal_output": {
     "tag": "output",
-    "max_bytes": 65536,
-    "body_schema": {
-      "type": "object",
-      "properties": {
-        "status": { "type": "string" }
-      },
-      "required": ["status"],
-      "additionalProperties": false
-    }
+    "max_bytes": 65536
   },
   "isolation": {
     "mode": "host-enforced",
@@ -149,20 +140,36 @@ Example (placeholder paths only):
 
 The executable and cwd are absolute and fixed. Calls use an argv list with the
 configured prefix; arbitrary shell strings, shell interpolation, and arbitrary
-commands are not exposed. Tools are declared as frozen descriptors (bounded
-unique names, exact `input_schema`, positive `output_keys`, closed
-`domain_outcomes`); every `action:"call"` is validated against its descriptor
-before spawn. `terminal_output` is required: its identifier-like `tag` defines
-the only accepted envelope and its positive `max_bytes` is capped at 1 MiB.
-Round 12 (#215) added the required `body_schema`: a data-value-free, closed
-structural schema — allowlisted keywords `type`/`properties`/`required`/
-`additionalProperties`/`items` only; `enum`/`const`/`example`/`default`,
-composition forms, and every other annotation face are rejected; every object
-node must be `additionalProperties: false`; byte, depth, node, and property
-counts are bounded. The required terminal body contract makes this schema v4;
-a v3 or older owner-local file must be updated explicitly rather than being
-accepted with ambiguous terminal behavior. Config load fails closed on any
-schema-dialect violation.
+commands are not exposed. `tools` is a bounded, nonempty descriptor set and is
+the single source for discovery, the model-visible tool-name enum, and exact
+pre-spawn validation.
+Each descriptor has a nonempty description, a closed and bounded object
+`input_schema`, a nonempty unique `output_keys` allowlist, and a finite list of
+exact `domain_outcomes`. Open nested objects, unknown schema keywords, duplicate
+names/keys/outcomes, unbounded arrays, and free-text recovery values fail at
+config load. A v1/v2 file must be migrated explicitly; it is never accepted
+with ambiguous behavior.
+
+The model sees one flat object root: `action` is the
+`tools|call|errors` enum, `tool` is the descriptor-derived name enum, and
+`arguments` is a generic object. Only `action` is universally required on this
+provider-facing wire. Before any subprocess starts, execution enforces the
+exact action shape and validates call arguments against the selected frozen
+descriptor `input_schema`; empty, nested legacy `query`, mixed-action,
+missing-call-field, and extra-field objects fail closed.
+`tools` returns the frozen descriptors. `errors` returns the complete closed
+bridge protocol/infrastructure failure inventory. Those failures use
+`{"ok":false,"error":"..."}` and are distinct from an adapter domain outcome,
+which uses `{"ok":true,"outcome":{...}}` after an exact declared exit-zero
+envelope. The bridge never retries either class automatically.
+
+For a concrete result, every visible object key, including keys below arrays
+and nested objects, must be listed by that descriptor's nonempty `output_keys`;
+every primitive leaf must therefore have a declared-key ancestor. Top-level
+record arrays may pass, while unkeyed primitive or mixed arrays fail closed as
+`{"ok":false,"error":"forbidden_output"}` without reflecting their values.
+`terminal_output` remains required: its identifier-like `tag` defines the only
+accepted envelope and its positive `max_bytes` is capped at 1 MiB.
 Timeout and output caps are enforced by the subprocess seam, with
 non-zero exit, timeout, truncation, invalid JSON, and disallowed tool returning
 a structured failure envelope. The subprocess receives only selected
@@ -171,9 +178,14 @@ all other ambient environment names are explicitly removed. Model arguments
 are serialized once and rejected before spawn when their UTF-8 size, depth, or
 structure count exceeds the bridge limits.
 
-Runner output must be one bounded JSON object. The bridge recursively rejects
-ASCII keys associated with gold, oracle, expected answer, reference, label,
-score, reward, ground truth, hidden query, or loader metadata, without
+Runner output must be one bounded, exact
+`gotry_benchmark_tool_result_v1` object: either
+`{schema_version,status:"ok",result}` or an exit-zero, descriptor-declared
+`{schema_version,status:"miss"|"error",code,recovery}`. Ambiguous or extra
+fields fail closed; a nonzero process exit always remains an infrastructure
+failure even if stdout resembles a domain envelope. The bridge recursively
+rejects ASCII keys associated with gold, oracle, expected answer, reference,
+label, score, reward, ground truth, hidden query, or loader metadata, without
 reflecting the key or value to the model. Non-ASCII keys and primitive
 top-level results are rejected, and output structure is bounded separately. A benchmark
 adapter may provide only the declared visible tool surface and must keep its
@@ -219,7 +231,12 @@ Covered behavior:
   pre-existing config-path field must all stop before relay activity.
 - Conformance cases: prose/no-call correction, one real native call followed
   by tagged JSON, one format-only retry, retry exhaustion, and parent stdout
-  suppression.
+  suppression; paired reasoning-block normalization; domain-only,
+  domain-to-result, domain-to-failure, and stale-terminal ordering.
+- Descriptor/result cases: flat `tools|errors|call` branches, the complete
+  bridge failure inventory, schema max/max+1 boundaries, exact adapter
+  envelopes, nonempty positive output keys, primitive/mixed arrays, and a
+  declared miss followed by a model-authored revised call.
 - Unit contracts: live-agent rejection, same-name identity shadows,
   final-assembly/pre-step schema drift, agent cleanup without double disposal,
   and plugin-unload quarantine.
@@ -319,15 +336,64 @@ the case is not countable. The allowlisted reason was
 bridge-tool schema and a recoverable domain-error contract, without changing
 provider routing or scoring.
 
+### Round 8 — generic bridge actions and recovery inventory
+
+The bridge query blob became one flat, typed control surface:
+`action=tools|call|errors`, with `tool` and structured `arguments` on calls.
+`action=errors` exposes the complete closed bridge protocol/infrastructure
+failure inventory with stable
+recovery guidance. This makes discovery, invocation, and recovery
+provider-neutral without changing the owner-local executable boundary.
+
+### Round 9 — benchmark governance budgets and terminal normalization
+
+Round 9 pins an explicit model output ceiling through `LLM_MAX_TOKENS` and
+allows each frozen benchmark run to set validated soft/hard budgets while
+preserving the 60/120-second defaults. It also removes a paired reasoning block
+before applying the otherwise unchanged strict terminal validator. The first
+diagnostic treatment survived the full chain and exercised the ChinaTravel
+tool surface, but did not yield an official, attributable benchmark score or
+external closure.
+
+### Round 10 — per-tool typed result contract hardening
+
+Round 10 keeps the single flat Round 8 protocol and derives one exact `call`
+schema per descriptor. The same closed/bounded `input_schema` is shown to the
+model and applied before spawn; empty or mixed protocol objects fail closed.
+Descriptors also require nonempty `output_keys` and finite exact
+`domain_outcomes`.
+
+Adapter stdout must be one exact `gotry_benchmark_tool_result_v1` envelope. A
+concrete result is accepted only when every primitive leaf sits below a
+declared output key. A declared domain outcome is an exit-zero transport
+success that the model may use to revise arguments; the bridge never retries.
+Nonzero exit, timeout, truncation, malformed JSON, and result/domain ambiguity
+remain infrastructure or conformance failures. Tagged terminal output must be
+newer than the latest bridge response, so an old terminal cannot hide a later
+domain or infrastructure fact.
+
+This round does not change provider routing, the scorer, the evaluator, or the
+default product path. A frozen treatment and any score/uplift claim require
+separate provenance-bound evidence.
+
+### Round 10 treatment diagnosis and Round 11 — flat model-facing wire
+
+The real `glm-5.3-flash` treatment on main `c843fae` diagnosed a provider/model
+visibility failure for the top-level `oneOf` bridge schema: the treatment made
+57 empty `{}` calls and produced no countable score. Round 11 therefore changes
+only the model-facing bridge wire to one flat object with `action` enum
+`tools|call|errors`, a descriptor-derived `tool` enum, and generic object
+`arguments`. Execution-time validation remains exact against the selected
+frozen descriptor `input_schema`. Provider routing, the scorer, evaluator,
+default product path, external data/oracle/query/trajectory inputs, private
+paths, and credentials are unchanged; no score or uplift is claimed.
+
 ### Round 12 — exact terminal schema projection (#215)
 
-Rounds 8–11 facts live in Discussion #78 (Round 10's top-level `oneOf` wire was
-provider-invisible; Round 11 restored the provider-compatible flat
-`action`/`tool`/`arguments` wire via #213/#214). With the wire usable, the
-frozen Round 11 treatment surfaced the next bottleneck: GoTry only told the
-model "one JSON object", so the model added root keys and wrote day rows as
-direct activities, and the official scorer rejected the body 22 times by
-convention without running.
+With the wire usable (Round 11), the frozen Round 11 treatment surfaced the
+next bottleneck: GoTry only told the model "one JSON object", so the model
+added root keys and wrote day rows as direct activities, and the official
+scorer rejected the body 22 times by convention without running.
 
 Round 12 closes the structural half (issue #215): the bridge config carries a
 data-value-free closed `body_schema`; the same structure contract is projected

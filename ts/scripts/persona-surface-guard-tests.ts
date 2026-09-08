@@ -1,10 +1,12 @@
 /**
- * persona 表层护栏测试(issue #192 回归锚;全离线,只读仓根 patch):
+ * persona 表层护栏测试(issue #192/#2 回归锚;全离线,只读仓根 patch):
  *  1. (16) 域边界含表层规则句——gotry 能力一律是工具调用,绝不把 gotry_* 传给
  *     skill 加载器(dsh skill 面名合法域 ^[a-z0-9]+(-[a-z0-9]+)*$,下划线必抛
  *     invalid skill name,rc18 真实用户踩坑);
  *  2. 行为契约 22 条编号完整(防止后续编辑吞条目);
- *  3. skill 失败后的行为指引存在(改回 tool call,不换名重试 skill)。
+ *  3. skill 失败后的行为指引存在(改回 tool call,不换名重试 skill);
+ *  4. (8) 候选时段示例枚举绑定锚点卡——澄清卡/访谈/选项不列已过节日
+ *     (#2 rc18 真实复发:卡把已过的春节/清明/五一当「想用的时候」示例)。
  *
  * 运行: cd ts && npx tsx scripts/persona-surface-guard-tests.ts
  */
@@ -30,4 +32,8 @@ assert.equal(markers.size, 22, `契约条目应恰为 22 条,实际 ${markers.si
 // 3. skill 用错面后的行为指引
 assert.ok(patch.includes('改回 tool call'), '应指引失败后改回 tool call')
 
-console.log('PERSONA SURFACE GUARD TESTS: 3/3 OK(表层规则句 / 22 条契约完整 / skill 失败行为指引)')
+// 4. #2 复发回归锚:澄清卡示例枚举同样过锚点卡(契约 (8) 内部澄清,条数不变)
+assert.ok(patch.includes('澄清卡/访谈/选项里向用户列出的候选时段示例'), '#2 回归:候选时段示例条款应存在')
+assert.ok(patch.includes('已过的节日不进示例枚举'), '应禁止已过节日进澄清卡示例枚举')
+
+console.log('PERSONA SURFACE GUARD TESTS: 4/4 OK(表层规则句 / 22 条契约完整 / skill 失败行为指引 / 澄清卡示例过锚点卡)')
