@@ -203,12 +203,16 @@ export class StateLedger {
   }
 
   readEvents(kind?: string, limit = 100): LedgerEventRow[] {
-    const where = kind ? 'WHERE tenant_id = ? AND kind = ?' : 'WHERE tenant_id = ?'
-    const rows = this.db.prepare(
-      `SELECT seq, tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id
-       FROM events ${where} ORDER BY seq DESC LIMIT ?`,
-    ).all(...(kind ? [this.tenant, kind, limit] : [this.tenant, limit])) as LedgerEventRow[]
-    return rows
+    const rows = kind
+      ? this.db.prepare(
+          `SELECT seq, tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id
+           FROM events WHERE tenant_id = ? AND kind = ? ORDER BY seq DESC LIMIT ?`,
+        ).all(this.tenant, kind, limit)
+      : this.db.prepare(
+          `SELECT seq, tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id
+           FROM events WHERE tenant_id = ? ORDER BY seq DESC LIMIT ?`,
+        ).all(this.tenant, limit)
+    return rows as LedgerEventRow[]
   }
 
   countEvents(): number {
@@ -670,7 +674,7 @@ export class StateLedger {
       for (const s of subjects) {
         const placeholders = s.kinds.map(() => '?').join(',')
         const info = this.db.prepare(
-          `DELETE FROM events WHERE subject_id = ? AND tenant_id = ? AND kind IN (${placeholders})`,
+          'DELETE FROM events WHERE subject_id = ? AND tenant_id = ? AND kind IN (' + placeholders + ')',
         ).run(s.subjectId, this.tenant, ...s.kinds)
         deleted += info.changes
       }
