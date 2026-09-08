@@ -58,15 +58,24 @@ fi
 if [ "$SKIP_CHANGELOG" = "0" ]; then
   echo ">> changelog 闸:重新生成 CHANGELOG.md(从上一 tag 到 HEAD)"
   CURRENT_VERSION="$(node -e "console.log(require('./package.json').version)")"
-  # 自动取上一 tag(同 build-changelog.ts 的逻辑)
-  PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | grep -v "^v${CURRENT_VERSION}\$" | head -1)"
-  [ -z "$PREV_TAG" ] && PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | tail -1)"
-  DATE="$(date +%Y-%m-%d)"
-  # 写入 CHANGELOG 前先 commit(否则 build-changelog 写盘后 git dirty 触发闸自检)
-  (cd ts && npx tsx scripts/build-changelog.ts --version "$CURRENT_VERSION" --date "$DATE" --since "$PREV_TAG" --write) || {
-    echo "!! build-changelog 失败;用 --skip-changelog 跳过(不推荐)"
-    exit 1
-  }
+  # 幂等保护:顶部已含当前版本段时跳过再生成——build-changelog 是前置插入,重跑必双写
+  # (rc.19×3 段/rc.16×5 段即发布脚本「首跑因 auth 失败停在半途、重跑无条件重建」累积;
+  #  强制重建用 --force-changelog)
+  FORCE_CHANGELOG=0
+  for arg in "$@"; do case "$arg" in --force-changelog) FORCE_CHANGELOG=1 ;; esac; done
+  if [ "$FORCE_CHANGELOG" = "0" ] && head -30 CHANGELOG.md | grep -q "^## \[${CURRENT_VERSION}\]"; then
+    echo ">> 顶部已含 ## [${CURRENT_VERSION}] 段,跳过再生成(幂等;--force-changelog 强制)"
+  else
+    # 自动取上一 tag(同 build-changelog.ts 的逻辑)
+    PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | grep -v "^v${CURRENT_VERSION}\$" | head -1)"
+    [ -z "$PREV_TAG" ] && PREV_TAG="$(git tag -l 'v*' --sort=-v:refname | tail -1)"
+    DATE="$(date +%Y-%m-%d)"
+    # 写入 CHANGELOG 前先 commit(否则 build-changelog 写盘后 git dirty 触发闸自检)
+    (cd ts && npx tsx scripts/build-changelog.ts --version "$CURRENT_VERSION" --date "$DATE" --since "$PREV_TAG" --write) || {
+      echo "!! build-changelog 失败;用 --skip-changelog 跳过(不推荐)"
+      exit 1
+    }
+  fi
   # 校验顶部含当前版本段
   if ! head -30 CHANGELOG.md | grep -q "^## \[${CURRENT_VERSION}\]"; then
     echo "!! CHANGELOG.md 顶部缺 ## [${CURRENT_VERSION}] 段;请重跑 build-changelog 或 --skip-changelog 绕过"
