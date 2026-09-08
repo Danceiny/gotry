@@ -141,7 +141,8 @@ Example (placeholder paths only):
 The executable and cwd are absolute and fixed. Calls use an argv list with the
 configured prefix; arbitrary shell strings, shell interpolation, and arbitrary
 commands are not exposed. `tools` is a bounded, nonempty descriptor set and is
-the single source for discovery, model parameters, and pre-spawn validation.
+the single source for discovery, the model-visible tool-name enum, and exact
+pre-spawn validation.
 Each descriptor has a nonempty description, a closed and bounded object
 `input_schema`, a nonempty unique `output_keys` allowlist, and a finite list of
 exact `domain_outcomes`. Open nested objects, unknown schema keywords, duplicate
@@ -149,10 +150,13 @@ names/keys/outcomes, unbounded arrays, and free-text recovery values fail at
 config load. A v1/v2 file must be migrated explicitly; it is never accepted
 with ambiguous behavior.
 
-The model sees one flat top-level `oneOf`: exact `{action:"tools"}`, exact
-`{action:"errors"}`, or one descriptor-derived
-`{action:"call",tool:<const>,arguments:<input_schema>}` branch. Empty, nested
-legacy `query`, mixed-action, and extra-field objects fail before execution.
+The model sees one flat object root: `action` is the
+`tools|call|errors` enum, `tool` is the descriptor-derived name enum, and
+`arguments` is a generic object. Only `action` is universally required on this
+provider-facing wire. Before any subprocess starts, execution enforces the
+exact action shape and validates call arguments against the selected frozen
+descriptor `input_schema`; empty, nested legacy `query`, mixed-action,
+missing-call-field, and extra-field objects fail closed.
 `tools` returns the frozen descriptors. `errors` returns the complete closed
 bridge protocol/infrastructure failure inventory. Those failures use
 `{"ok":false,"error":"..."}` and are distinct from an adapter domain outcome,
