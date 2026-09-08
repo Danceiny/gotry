@@ -119,7 +119,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
   - **2026-08-30 同批扩展分发双通道(issue #21 分发通道,ADR-21)**:founder 指令「产物下载和安装也得做成更好的用户体验,可以用 github 作为分发渠道」——Chrome 平台约束(GitHub 只能改善下载,一键装+自动更新只有 Chrome Web Store)下双通道:GitHub Releases 下载通道已落(`gotry setup --extension-from=github` 显式 opt-in,稳定资产名三件套 + SHA256 + key 钉扎 + 失败显式降级 bundled,扩展更新与 npm rc 发版火车解耦;`scripts/package-extension.mjs` 只产产物,上传走发布确认制);run-all §43 + bootstrap-tests 8/8。
   - **2026-09-02 Web Store 过审上架(D-25 清偿)**:[GoTry Session Bridge 商店页](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) v0.1.0 发布,一键装 + 自动更新通道打通,升为推荐安装方式。上架实测:商店用自己签名 key 重签、不认 manifest 固定 key,商店版扩展 ID(`oeajpiccmonococjcegddlooeeohlbgd`)与 unpacked 固定 ID 不同——桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,run-all §38 新增商店源断言);wizard/README/needs-extension 文案商店优先,GitHub Releases 通道保留为免审核/更新更快面;「已装商店版 wizard 自动跳本地通道指引」残余转 D-24。
 
-**M4 Issue #20 证据切片(2026-08-29)**:paired cohort 合同与只读 synthetic fixture scorer 已落地,固定唯一匿名 subject、returning 晚于 first、active planning duration 扣除预声明 external waits、N/p50/p75/逐 pair reduction、experience reflux、偏好溯源/硬过滤红线与 P4 trigger 闸。合成 N=3 明确 `exit_evidence_eligible=false`;当前瓶颈是私有真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
+**M4 Issue #20/#223 证据切片(2026-08-29;2026-09-08 加固)**:paired cohort 合同与只读 synthetic fixture scorer 已落地,固定唯一匿名 subject、returning 晚于 first、active planning duration 扣除预声明 external waits、N/p50/p75/逐 pair reduction、experience reflux、偏好溯源/硬过滤红线与 P4 trigger 闸。#223 将 public fixture 扩成指标正例 N=5,冻结 `minimum_pair_count_for_exit=5` 与 `target_median_reduction_ratio=0.5`(raw ratio 比较,报告才 round),并要求逐层 exact schema、HMAC-SHA256 假名键、source-review attestation 合同与 `reviewed_summary_digest_sha256` 绑定;synthetic 仍 `exit_evidence_eligible=false`,observed-private 缺人工核验合同或 digest 不匹配时也只可作为 candidate。当前瓶颈是私有真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
 
 **2026-08-29 第二批:OTA 平铺 + 账号授权闸(founder 口径「OTA 这些都是工具,不要区分什么主路径/降级路径;这要用到用户的账号,所以必须跟用户确认」)**:飞猪 `search-hotel` 接入(`gotry_flyai_search` kind=hotel,打码价保真);OTA 工具描述与 persona (19) 去「三级路由/主链路/交叉验证」层级,改平铺工具面(证据链逐源标注不变);账号会话工具授权闸进代码——v1 逐调用弹卡经 founder 实测(「每次都要弹,经常无法点击」)当批改 v2:**每会话每站点首次调用**弹 dsh 原生审批卡、批准后会话内记住;**拒绝=本会话吊销**(不再弹卡不再执行);无审批通道(headless)一律 fail-closed;
   - `sessionAccess: ask|allow|off` 总闸(`session-consent.ts`)。**④登录产品化(第 18 工具 `gotry_session_login`)**:needs-login 时 agent 直调——在用户 Chrome 弹携程登录页等用户在**携程官网**完成登录,无需终端;语义红线=登录永远发生在外部网站,gotry 永不经手密码/验证码/cookie 值(只读票据名,0 值过手;登录引导页不挂 ReadGuard——凭证流绝不被我们拦截,transport `guard:false` 唯一豁免面);③例行动回归永不自动开浏览器窗口(live 探针 GOTRY_SESSION_LIVE=1 opt-in);携程酒店/美团会话适配器仍等登录态 seam(独立 tick,见 data-sources §8)。
@@ -138,7 +138,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 | M1 | **Agent 形态成立** | LLM 进环(S1-S5) | 对话即界面(gates 选择题) | — | ✅(2026-08-22,`bb880f3`) |
 | M2 | 实时数据 | hotelbyte-cli 桥+航班源(免费/开源优先),静态包退役为夹具 | 证据链换血([估算]→[实时API]) | 数据源选型(免费/开源优先) | ✅(2026-08-22,`b0cfd97`) |
 | M3 | 最小可用产品 | 最小 Web 面(D-4 偿还)+ cohort evidence scorer | 透明卡片/动机访谈可体验;种子用户 50-200 人 | **G1 市场锁定必须在此前完成**;种子即洱海+普吉两类场景 | ← **evidence 未收口** |
-| M4 | 记忆与「下一次出发」 | 六层 memory 的 C 端域实现;wish pool 联动回访 | 北极星(下一次出发率)开始度量;对账七题=首批校准 | 订阅形态验证(¥49/年锚) | **founder 授权并行，非 M3 Exit**（#20 scorer 已落地；真实 `observed_private` N≥5 待） |
+| M4 | 记忆与「下一次出发」 | 六层 memory 的 C 端域实现;wish pool 联动回访 | 北极星(下一次出发率)开始度量;对账七题=首批校准 | 订阅形态验证(¥49/年锚) | **founder 授权并行，非 M3 Exit**（#20/#223 scorer 已加严；真实 `observed_private` N≥5 + source-review 待） |
 | M5 | 交易闭环 | WriteGate 上生产;预订/支付/退改 | 佣金披露上线;红线随行 | 三层收入全开(免费/Plus/佣金) | 未来，仅受 M5 Entry gate 开闸 |
 | M6 | B2B 包裹 | principal/sponsor 插件化,内核零改动跑通旅行社嵌入 | 两层为什么实证 | 「99% 复用」从论断变实测;B2B 试点 | 未来，仅受 M6 Entry gate 开闸 |
 
@@ -161,7 +161,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 - **Exit**:种子用户行程定稿率 ≥40%、NPS ≥40、POI 幻觉 <1%(评测三件套全绿)。
 
 ### M4:记忆与「下一次出发」(founder 授权并行;非 M3 Exit 证明)
-- **Entry**:正式里程碑 Entry 仍是 M3 exit；当前仅由 founder 授权并行工程切片，不改变 M3 Exit 判定。**交付**:C 端记忆域(六层框架重设计)、主动回访(可关闭)、北极星开始度量;对账七题答案=红眼模型与偏好的首批校准样本。Issue #20 scorer 已落地，真实 `observed_private` N≥5 repeat cohort 仍是 M4 Exit 前置。
+- **Entry**:正式里程碑 Entry 仍是 M3 exit；当前仅由 founder 授权并行工程切片，不改变 M3 Exit 判定。**交付**:C 端记忆域(六层框架重设计)、主动回访(可关闭)、北极星开始度量;对账七题答案=红眼模型与偏好的首批校准样本。Issue #20/#223 scorer 已加严，真实 `observed_private` N≥5 repeat cohort + 人工 source-review attestation 仍是 M4 Exit 前置。
 - **Exit**:回访用户规划时长较首访降 ≥50%;经验回流率有基线。
 
 ### M5:交易闭环

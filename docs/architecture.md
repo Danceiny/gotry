@@ -102,9 +102,9 @@ M3 最小可用产品,分发链路无已知堵点。
 
 ### 1.7 里程碑口径(Issue #19)
 
-M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20 scorer 已落地而真实 `observed_private` N≥5 仍缺——**这些 M4 切片不构成 M3 Exit 证明**。M5/M6 仅在各自 Entry gate 满足后启动。
+M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20/#223 scorer 已落地并加严而真实 `observed_private` N≥5 + source-review attestation 仍缺——**这些 M4 切片不构成 M3 Exit 证明**。M5/M6 仅在各自 Entry gate 满足后启动。
 
-证据面现状:`ts/scripts/product-metrics.ts`(M3 cohort)与 `ts/scripts/memory-value-report.ts`(M4 价值)固化了样本窗/纳排/分母/归因与阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;synthetic fixture **永不产生 business pass**。真实证据只进入被忽略的 `ts/gotry-state/evidence/`。
+证据面现状:`ts/scripts/product-metrics.ts`(M3 cohort)与 `ts/scripts/memory-value-report.ts`(M4 价值)固化了样本窗/纳排/分母/归因与阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;synthetic fixture **永不产生 business pass**。M4 observed-private 另需 `memory_value_source_review.v1` 人工 source-review attestation 合同,并以 `reviewed_summary_digest_sha256` 绑定本次评分 payload;缺少或 digest 不匹配时只可作为 candidate,不得把 `evidence_kind` 或 HMAC 字符串形状当 provenance。真实证据只进入被忽略的 `ts/gotry-state/evidence/`。
 
 评测边界:Phase 0 只有契约/注册表/校验器与确定性节奏策略(不调度、不花费、不出分、不声称 uplift);Phase 1 bridge 逐轮 frozen treatment 均为 diagnostic-only、official scores null(见 §9 与 D-28)。契约全文见 `evaluation/evaluation-foundation.md`。
 
@@ -347,7 +347,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
 - **Issue #202 地图插件 vendoring**:root/ts 严格 npm 安装不再解析外部 `dsh-map-tools` peer;`vendor/dsh-map-tools/` 携带上游 `0.5.1` MIT payload,其 vendored settings 接线使用 alpha.3 `installSettingsSection(ctx, settingsNamespace, schema, entry, hooks)` 形态并由 proof 验证。`bin/gotry-inner.js`、CLI bootstrap 与 `capabilities/doctor.ts` 同优先级解析仓内绝对入口;打包证明覆盖 unpack/import、32 文件 payload aggregate、7 个 `map_*` 注册及无网络 inline 坐标路径。
-- **当前主线 = M3 evidence 未收口;并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪,真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进;T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明,真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动,不得由并行实现倒推开闸。
+- **当前主线 = M3 evidence 未收口;并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪,真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进;T1 及后续记忆切片、Issue #20/#223 scorer 的落地都不构成 M3 Exit 证明,真实 `observed_private` N≥5 repeat cohort + source-review attestation 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动,不得由并行实现倒推开闸。
 - **HotelByte Booking Copilot 产品验收并行线**:候选以单一 `booking.surface` 契约(2026-09-05 #133 收敛,原 v2 形态转正、v1 退役)的 GoTry 作为既有搜索/报价/Checkout 工作台的 BFF-only typed read-action planner(边界见 §8.23)。该线不含 `Book`,不构成 M5 Entry;四 surface 真实库存与「不可订→重搜→新 CheckAvail→原 Checkout」证据尚未取得,见 D-29。
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面;业务达标只接受阈值冻结的 `real_seed_cohort`,fixture 恒 fail。真实 cohort 仍为空,等待 50–200 个脱敏样本,不宣称 M3 Exit。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
@@ -358,7 +358,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **会话传输层定案扩展桥(2026-08-30,#21 方案 C 升 PRIMARY)**:founder 实测「Chrome attach 逐连接权限框根本无法使用」(chrome-devtools-mcp #825:每次连接必弹、无持久化批准)→ CDP 降显式 opt-in、扩展桥主载——`extension/`(MV3 零构建,固定 key=扩展 ID,SW 长轮询,MAIN-world 被动嗅探,cookie-names 只取名)+ `extension-bridge.ts`(`node:http` 回环桥,origin 白名单,零新依赖)+ 车道路由(扩展默认/cdp 显式/persistent 测试);登录快路径免标签页;守卫按车道分形(扩展=零写行为+hints 白名单,cdp=请求级 abort);`needs-extension` → `waiting_extension`(waiting-* 同族 no-spend);run-all §38 + bootstrap-tests;真实 sf-01..08 门禁降为「装一次扩展」。
 - **Issue #67 static golden(2026-08-30)**:`sf-live-benchmark` 的 vendor 闭集扩为 `manual|flyai|static`;`static` 由 OpenFlights 固定修订提供 route/carrier,由手工 manifest 提供估算时刻/价格带,requested/effective source、estimated fields、provenance、fallback reason 逐条写进 evidence。静态源异常时 stderr 告警后回退 manual;它不声称实时班期/价格/库存。run-all §44 固化 CLI fail-closed、八条覆盖、回退与 provider-independent 软评分。
 - **Issue #67 登录态真跑与桥退出语义(2026-08-30)**:连续两轮 static official 均 8/8 命中且零 fallback;session hit 数从 3/8 波动到 5/8,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 必须显式披露且不进软评分分母。真扩展在线场景触发的 CLI 不退出已以默认桥 parked timer/socket `unref` 修复;`keepBridge` wizard 轨通过 §40,§38 增子进程回归。
-- **M4 Issue #20 价值证据切片(2026-08-29)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。合成数据明确不可关闭 M4;下一阶段只等真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
+- **M4 Issue #20 价值证据切片(2026-08-29;2026-09-08 #223 加固)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。#223 追加逐层 exact schema、HMAC-SHA256 假名键、N=5/中位降幅=0.5 阈值冻结(raw ratio 比较,报告才 round)、source-review attestation 与 `reviewed_summary_digest_sha256` 绑定:合成数据明确不可关闭 M4,observed-private 缺人工核验合同或 digest 不匹配时也只可作为 candidate。下一阶段仍等待真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
 - **已知限制清算第一刀(2026-08-29,founder 指令「解决这些 known limitations」)**:
   - **Z3 WASM race 根治**:历史债「三模块各自 init 的 WASM 实例并存 + `Promise.all` 同 Context 并发」双重根因,经 `ts/src/z3-shared.ts`(单一实例 / 单一 Context / 会话级互斥 `withZ3`)关闭;engine/journey/unified 三模块全部过门,engine.solve 弃 `Promise.all` 改串行。当年 rc.4 单例回滚的 Context mismatch 来自混用残留 Context,本次三入口同门无混用面。run-all §1 重试止血退役 + §30 并发回归闸。
   - **薄壳遗留**(`shell/` 目录)物理删除,dsh web 确认为唯一产品面。
@@ -429,7 +429,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | D-15 账本触发式后置面(ADR-15 TS-5) | Litestream 云备份 / cr-sqlite 多写者复制 / RFC(loopx) §6.5 claim-fence-receipt 多用户实装——仅在触发器出现时启动:第二真实用户 / 多机部署 / AaaS 立项 |
 | D-16 上游 dsh 发布面断裂 | 见下方「D-16 上游 dsh 发布面断裂」 |
 | D-18 M3 Exit 真实 cohort 证据缺口 | 见下方「D-18 M3 Exit 真实 cohort 证据缺口」 |
-| D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地 2026-08-29**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit。赎回条件=私有 `observed_private` cohort 达 N≥5 并产出脱敏 summary;无真实样本时 waiting/backoff/no-spend,不扩 schema 假装进展。 |
+| D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地并于 2026-09-08 #223 加固**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit;阈值冻结为 N≥5 与 median reduction ≥0.5(raw ratio 比较,报告才 round),逐层 exact schema 与 HMAC-SHA256 假名键 fail-closed,observed-private 还需 `memory_value_source_review.v1` 人工 source-review attestation 合同和匹配本次 summary 的 `reviewed_summary_digest_sha256`。赎回条件=私有 `observed_private` cohort 达 N≥5、source-review attestation 合同与 summary digest 绑定并产出脱敏 summary;无真实样本、缺人工核验或 digest 不匹配时保持 candidate/waiting/backoff/no-spend,不扩 schema 假装进展。 |
 | D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`design/booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
 | D-26 事实闸覆盖面缺口(ADR-19) | **部分收口**:酒店 claim 已入闸(2026-09-04,issue #118,HotelFact 第三形态+渲染原语锚点回溯);政策事实生产端 v1 已落(2026-09-05,issue #141,C 档领事服务网 cs.mfa.gov.cn → PolicyFact 落账,Timatic/Sherpa° 后议)。残余:反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
 | D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」 |
