@@ -136,6 +136,8 @@ try {
   const other = ensureLedger(root, 'tenant-b')
   const crossProp = other.requestPendingWrite({ idemKey: K1, seam: 'flight-order-confirm', payload: {} })
   assert(crossProp.created === true, '同 idem_key 跨租户互不可见:tenant-b 可建自己的 K1(tenant_id 一等字段,ADR-16)')
+  const sagaRows = other.db.prepare('SELECT tenant_id, idem_key, status FROM pending_writes WHERE idem_key = ? ORDER BY tenant_id').all(K1) as Array<{ tenant_id: string; idem_key: string; status: string }>
+  assert(sagaRows.map(r => `${r.tenant_id}:${r.status}`).join(',') === 'local:compensated,tenant-b:pending', '同 saga idem_key 的 pending_writes 行按 tenant 绑定,tenant-b 不覆盖 local')
   assert(sagaEventsOf(other, K1).map(e => e.kind).join(',') === 'write.pending' && other.readEvents('write.pending', 10).every(e => e.tenant_id === 'tenant-b'), 'tenant-b saga 审计事件 owner 不回落 local,readEvents 不串租户')
   const LOCAL_ONLY = 'booking:local-only'
   ledger.requestPendingWrite({ idemKey: LOCAL_ONLY, seam: 'flight-order-confirm', payload: {} })
