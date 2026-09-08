@@ -102,9 +102,9 @@
 | 文档 | 关注点 |
 |---|---|
 | [design/memory-design.md](design/memory-design.md) | 记忆域设计:C 端六层重设计(M4 交付) |
-| [design/memory-lifecycle-collector.md](design/memory-lifecycle-collector.md) | M4 lifecycle collector 使用合同:显式 opt-in、隔离 stateRoot、HMAC/consent、原子持久化与 #223/#238 scorer 导出 |
-| [design/milestone-delivery-plan.md](design/milestone-delivery-plan.md) | M4→M6 living 任务图(issue #225):#223/#238/#228/#248/#20、#136 HotelByte 首供应链、#224/#226/#227、#137 与开源质量闸 |
-| [design/write-gate-production-design.md](design/write-gate-production-design.md) | M5 WriteGate 生产化 proposal(issue #225/#136):HotelByte receipt/并发/崩溃恢复/unknown 对账/补偿/披露 |
+| [design/memory-lifecycle-collector.md](design/memory-lifecycle-collector.md) | M4 lifecycle collector 使用合同:显式 opt-in、隔离 stateRoot、HMAC/consent、原子持久化与 #223/#238 scorer 导出；仅产出 candidate/synthetic,不替代真实 cohort |
+| [design/milestone-delivery-plan.md](design/milestone-delivery-plan.md) | M4→M6 living 任务图(issue #225):#223/#238/#228/#248/#20、已入 main 的 #229/#237/#243/#244/#245 基础、#136 HotelByte 首供应链+WriteGate(#231/#232/#233)、#137 P6/试点与开源质量闸 |
+| [design/write-gate-production-design.md](design/write-gate-production-design.md) | M5 WriteGate 生产化 proposal(issue #225/#136):HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、query miss 保持 unknown、对账/补偿/披露 |
 | [design/effect-interpreter.md](design/effect-interpreter.md) | 效应解译器设计(accepted,ADR-18):词汇/韧性策略表/判定记录 |
 | [design/booking-saga-fsm.md](design/booking-saga-fsm.md) | 预订 saga 状态机(accepted,ADR-17):字母表/边表/M5 缝词汇 |
 | [design/tool-orchestration-design.md](design/tool-orchestration-design.md) | 工具编排与通道健康面设计(proposal,issue #106/#107/#108) |

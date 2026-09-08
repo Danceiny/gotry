@@ -201,7 +201,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline, persisted by the tenant-scoped SQLite ledger (`local` remains the default); English solve output via `GOTRY_LOCALE=en`
 - **M4 lifecycle evidence collector** — explicit opt-in CLI for first/returning planning flow observations: isolated `stateRoot`, consent and HMAC key are mandatory; dataset key/source/wait vocabulary are frozen; JSONL/manifest writes use write-all + atomic/no-overwrite publication; exports feed the #223 scorer as candidate/synthetic only, never manual attestation
 - **Routed turn budgets** — every turn is classified (quick / sync / deep-planning) by a deterministic, zero-LLM router; time is the only budget and the deadline exit follows the task: quick and sync turns converge to an answer, deep-planning turns hand off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) instead of dying mid-stream; the ticket is collected in the background by `scripts/turn-handoff-collect.ts` (idempotent, recursion-guarded child planner) and surfaces in-chat via the read-only `gotry_turn_handoff_list` tool; exercised end-to-end through a packaged consumer install in CI
-- **Ledger admin CLI** — `ts/scripts/state-cli.ts` now parses command/options/positionals fail-closed: unknown, duplicate, missing, or invalid numeric options do not touch the state root. `--tenant` is a ledger scope parameter, not authentication; `tick` / `export` / `whatif` are explicit local-only commands because they call local async settlement, write shared legacy filenames, or snapshot the whole DB.
+- **Ledger admin CLI** — `ts/scripts/state-cli.ts` parses command/options/positionals fail-closed: unknown, duplicate, missing, or invalid numeric options do not touch the state root. The `.5`/`+.5` decimal edge is covered by #241/PR243 and still awaits main integration evidence. `--tenant` is a ledger scope parameter, not authentication; `tick` / `export` / `whatif` are explicit local-only commands because they call local async settlement, write shared legacy filenames, or snapshot the whole DB.
 
 **Open limitations** (honest list):
 
@@ -268,7 +268,7 @@ Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outlin
 | [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md) | Program master outline & reuse matrix |
 | [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | Product design: main loop, transparency, whole-cost model |
 | [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 timeline & current position |
-| [`docs/design/milestone-delivery-plan.md`](docs/design/milestone-delivery-plan.md) | M4→M6 living task graph — owners, files, dependencies, E2E, falsifiers, exit criteria |
+| [`docs/design/milestone-delivery-plan.md`](docs/design/milestone-delivery-plan.md) | M4→M6 living task graph — responsibility surfaces, files, dependencies, E2E, falsifiers, exit criteria |
 | [`docs/design/write-gate-production-design.md`](docs/design/write-gate-production-design.md) | M5 WriteGate production proposal — receipt binding, recovery, reconciliation, compensation, disclosure |
 | [`docs/user-guide.md`](docs/user-guide.md) | End-user guide |
 | [`docs/data-sources.md`](docs/data-sources.md) | Data sources & evidence-chain policy |

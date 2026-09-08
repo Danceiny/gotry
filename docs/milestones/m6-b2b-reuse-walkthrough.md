@@ -2,7 +2,7 @@
 
 > 状态:draft(2026-09-08,issue #137/#225;**P6 exit = 本文通过创始人评审**,评审前 M6 entry gate 不满足;不得擅自 frozen)
 > 验收口径(总纲 §4 P6 行):选 1-2 个 B2B 形态,推演两层为什么的包裹与复用边界;红线随行口径;实测数字必须来自 M6 Entry 后的真实加载证明。
-> 输入:[`../gotry-master-outline.md`](../gotry-master-outline.md) §3.7、[`../research/enterprise-travel-reference-study.md`](../research/enterprise-travel-reference-study.md)、[`../architecture.md`](../architecture.md) ADR-16/23、issue #137/#224/#225。代码勘察基准:origin/main `d1d7b5a`(2026-09-08)。
+> 输入:[`../gotry-master-outline.md`](../gotry-master-outline.md) §3.7、[`../research/enterprise-travel-reference-study.md`](../research/enterprise-travel-reference-study.md)、[`../architecture.md`](../architecture.md) ADR-16/23、issue #137/#225/#229/#236/#237/#241/#242。代码勘察基准:origin/main `e8c338c`(2026-09-08)。
 
 ## 0. 结论先行
 
@@ -10,9 +10,9 @@
 2. **principal 必须分词**:M6 的 traveler principal 是“为什么出发”的主体;ADR-23 的 BFF/HTTP principal 是安全身份。两者不能复用类型名或语义。
 3. **变化面三插件位只是待 PoC 验证的假设**:入口、库存池、sponsor 配置/披露。现有 MotivationProfile + hard constraints 与 `motivation_save` evidence 守卫只能支持“下游复用可能成立”的假设;尚无 sponsor 类型、配置、库存池接口、披露槽位或 B2B E2E。
 4. **复用率不再写成口号**:M6 只能报告三件套——基准 SHA、内核文件集合 `git diff` 为零、runtime 实际加载模块的路径覆盖与 LOC 附属数字。该数字是工程复用指标,不代表 traveler 满意度或 sponsor 转化。
-5. **tenant/CLI 隔离是 M6 前置安全门**:#224 同业务 id 跨 tenant 读写/rebuild 隔离已关闭但 proof 仍需引用其最终证据;#226 state-cli 租户边界与 #227 Z3 稳定性未闭合前,不得把 sponsor plugin proof 当可合并证据。
+5. **tenant/CLI 隔离是 M6 前置安全门**:tenant ledger scope(#229)+ fold 回归(#237)+ state-cli 租户边界(#236)代码已入 main,ledger 验收 #230 已关闭;#241/PR243(606d1d2)补 CLI `.5`/`+.5` 小数边界但待主线集成;sponsor plugin proof 仍需在新 SHA 引用这些证据。#227 Z3 稳定性与 #242 dsh-map-tools map 回归未闭合前,不得把 sponsor plugin proof 当可合并证据。
 6. **披露插件保持 proposal**:sponsor 收益披露优先由 sponsor 插件注入渲染片段;若 M5 先要求 schema 预留,须保持内核对 sponsor 语义零依赖。
-7. **商业试点不归工程代签**:P6 founder review 与试点签约/商业条件是 owner 依赖;工程 proof 不能替代。
+7. **商业试点不归工程代签**:P6 founder review 与试点签约/商业条件是 business/legal 依赖;工程 proof 不能替代。
 
 ## 1. principal 分词:三个主体,三个边界
 
@@ -95,14 +95,14 @@ M6 exit 表述应是“内核 diff=0;runtime 复用率 X%(基准 SHA/分母/load
 
 | 对抗面 | 最小测试 | 失败判定 |
 |---|---|---|
-| tenant 隔离(#224) | 两租户同业务 id 写 event/wish/pending,各自 read/rebuild 只见自己 | tenant A 读到或重建 tenant B 投影 |
+| tenant 隔离(#229/#237) | 两租户同业务 id 写 event/wish/pending,各自 read/rebuild 只见自己 | tenant A 读到或重建 tenant B 投影 |
 | BFF principal 重放 | BFF actor 拿旧 requestKey/receipt 绑定新 traveler | request fingerprint 或 scope 不匹配仍放行 |
 | sponsor 库存注入 | sponsor A 库存进入 sponsor B tenant | channel/sponsor config 未按 tenant 过滤 |
 | traveler evidence | sponsor 文案生成动机权重 | 无 traveler evidence 的 `motivation_save` 通过 |
 | 收益披露 | sponsor 高佣金候选排序靠前 | 卡片未披露偏置/佣金来源 |
 | wish pool | sponsor 主动召回不满足 traveler conditions 的 wish | conditions 被 sponsor campaign 覆盖 |
 
-#224 是 M6 前置安全门且 issue 已关闭;M6 sponsor plugin proof 仍必须引用其最终 SHA/PR 证据。#226 state-cli 租户边界未关闭前,CLI 管理面仍不能作为多租户 proof 入口。
+tenant ledger scope(#229)+ fold 回归(#237)代码已入 main 且 ledger 验收 #230 已关闭;M6 sponsor plugin proof 仍必须在新 SHA 引用其证据。state-cli 租户边界(#236)代码已入 main,CLI 管理面按 local-only 边界运行;#241/PR243(606d1d2)补 `.5`/`+.5` 小数边界,当前 main #236 尚无该补丁。#227/#242 未闭合前这些基座仍是最终集成验收 TODO。
 
 ## 6. 红线随行口径
 
@@ -119,8 +119,8 @@ M6 Entry = M5 exit + P6 founder review。M6 对 M5 的真实依赖:
 1. WriteGate 生产化 receipt/outbox/unknown/manual reconcile 机制;
 2. 佣金/赞助披露在 C 端先有可验证口径;
 3. booking_saga_fsm 边表与 effect-interpreter 写 effect 策略;
-4. tenant 级账本隔离(#224)已过对抗测试并在 proof 中可引用,state-cli 租户边界(#226)仍待关闭;
-5. #227 Z3 Node24 间歇 heap corruption 已有可靠根因修复或充分澄清,不能用一次重跑绿作为 M6 proof 的稳定性证据。
+4. tenant 级账本隔离(#229/#237)与 state-cli 租户边界(#236)代码已入 main,ledger 验收 #230 已关闭;#241/PR243(606d1d2)CLI `.5`/`+.5` 小数边界待主线集成;
+5. #227 Z3 Node24 间歇 heap corruption 与 #242 dsh-map-tools map 回归已有可靠根因修复或充分澄清,不能用一次重跑绿作为 M6 proof 的稳定性证据。
 
 这些依赖意味着 M5 的设计要兼容 B2B,但不构成提前实现 M6 的理由。本纪要只保留推演和 proof 口径。
 
