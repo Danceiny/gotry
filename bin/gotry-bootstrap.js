@@ -123,6 +123,7 @@ async function setupHbcli() {
   say('    · 快速试用(官方沙箱演示账号): hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo')
   say('    · 正式接入: 向 HotelByte 申请专属 appKey/appSecret 后用同一命令替换')
   say('    · 门户账号(权限更大,酒店搜索无必要): hbcli auth login --username <email>')
+  say('  · 预订链端点(trade.* / search/checkAvail)只接受 OpenAPI ticket;portal ticket 会 401(issue #142)')
   say('  自检: hbcli auth whoami(api_key.configured=true 即就位)')
   return { ok: true }
 }
