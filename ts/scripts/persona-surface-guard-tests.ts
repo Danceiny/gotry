@@ -24,10 +24,10 @@ assert.ok(patch.includes('绝不把 gotry_* 名字传给 skill 加载器'), '应
 
 // 2. 行为契约 22 条编号完整
 const markers = new Set([...patch.matchAll(/\((\d{1,2})\)/g)].map((m) => Number(m[1])))
-for (let i = 1; i <= 22; i += 1) {
+for (let i = 1; i <= 23; i += 1) {
   assert.ok(markers.has(i), `行为契约 (${i}) 应存在`)
 }
-assert.equal(markers.size, 22, `契约条目应恰为 22 条,实际 ${markers.size}`)
+assert.equal(markers.size, 23, `契约条目应恰为 23 条,实际 ${markers.size}`)
 
 // 3. skill 用错面后的行为指引
 assert.ok(patch.includes('改回 tool call'), '应指引失败后改回 tool call')
@@ -36,4 +36,10 @@ assert.ok(patch.includes('改回 tool call'), '应指引失败后改回 tool cal
 assert.ok(patch.includes('澄清卡/访谈/选项里向用户列出的候选时段示例'), '#2 回归:候选时段示例条款应存在')
 assert.ok(patch.includes('已过的节日不进示例枚举'), '应禁止已过节日进澄清卡示例枚举')
 
-console.log('PERSONA SURFACE GUARD TESTS: 4/4 OK(表层规则句 / 22 条契约完整 / skill 失败行为指引 / 澄清卡示例过锚点卡)')
+// 5. #194 回归锚:子任务等待纪律((23) 新条)——子代理回执 id 不是 job id,
+//    job_output/job_kill 轮询子代理 = unknown job 硬错误(rc.19 npm 用户实踩)。
+assert.ok(patch.includes('(23)子任务等待纪律'), '#194 回归:子任务等待纪律条款应存在')
+assert.ok(patch.includes('对子代理绝不调用 job_output/job_kill'), '应禁止对子代理调用 job_output/job_kill')
+assert.ok(patch.includes("job_output/job_kill 只用于"), '应限定 job_output/job_kill 的适用面')
+
+console.log('PERSONA SURFACE GUARD TESTS: 5/5 OK(表层规则句 / 23 条契约完整 / skill 失败行为指引 / 澄清卡示例过锚点卡 / 子任务等待纪律)')
