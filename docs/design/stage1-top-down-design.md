@@ -2,6 +2,7 @@
 
 > **状态速览**:
 - 2026-09-08 起,ADR-16 tenant scope 修复(issue #224):账本 `insertEvent` 写当前 tenant,`readEvents`/fold/rebuild 全带 tenant 条件,legacy/v1 只迁入 `local`;跨租户同 id/idem_key、交错 update、A rebuild 不影响 B/local、跨进程 reopen 已由 ledger-tests/booking-saga-tests 钉住。历史已误写为 `local` 的非 local 事件不自动猜修。
+- 2026-09-08 起,state-cli 租户参数边界(issue #226):账本 CLI 集中解析 cmd/positional/`--state-root`/`--tenant`/`--limit`,未知/重复/缺值/非法 numeric 先于任何 state-root 副作用 fail-closed;`tick`/`export`/`whatif` 明确 local-only,`whatif` 仅是整库管理员 snapshot,不是租户导出。
 - 2026-09-06 起,Round 9 治理面(issue #100/#102):LLM_MAX_TOKENS 注入 llm-deepseek 目录 maxTokens(修真实中转模型 2013)+ GOTRY_BENCHMARK_SOFT_MS/HARD_MS 预算按 run 可配(缺省 60/120s 不变);治疗首次全链路存活,余量为预算内收敛。
 - 2026-09-08 起,Round 10 将 Round 8 的 flat `tools|call|errors` discovery/recovery 面与 owner-local per-tool v3 descriptor 合流：每工具 exact input schema 同时约束模型和 spawn，result/domain/failure envelope 与最新-response terminal fence fail-closed；provider/scorer/evaluator/default product path 不变，冻结 treatment 与 score 仍待独立证据。
 - 2026-09-08 起,Round 10 real `glm-5.3-flash` treatment（main `c843fae`）诊断出 provider/model visibility failure：顶层 `oneOf` wire schema 导致 57 次空 `{}` 调用，无 countable score；Round 11 仅将模型面对的 bridge wire 展平为 `action=tools|call|errors`、descriptor-derived `tool` enum 与 generic object `arguments`，执行时仍 exact 校验冻结 descriptor `input_schema`。
