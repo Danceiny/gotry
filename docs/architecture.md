@@ -10,7 +10,7 @@
 - GoTry 是「从出发到下一次出发」的 AI 旅行 Agent:LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 - 当前形态:M3 最小可用、分发链路无堵点;M3 Exit 缺真实 cohort 证据(D-18),M4 记忆域经 founder 授权并行推进。
 - 五层:L1 交互 / L2 编排(dsh 插件)/ L3 统一行程模型 + Z3 / L4 数据能力 / L5 loopx 治理。
-- 状态基座:单文件 SQLite 账本(ADR-15),本地+Web 一套账本语义(ADR-16);外部依赖全走效应解译器(ADR-18)。
+- 状态基座:单文件 SQLite 账本(ADR-15),本地+Web 一套账本语义(ADR-16);`tenant_id` 贯穿 append/read/fold/rebuild,旧 local 历史不猜租户;外部依赖全走效应解译器(ADR-18)。
 - 外部 benchmark:Round 1–10 frozen treatment 与 Round 11 wire 切片均不产生可归因 official score/uplift,Round 12 结构半场(config v4 closed body schema)已合入而冻结重跑未跑(D-28);逐轮事实见 §9,工程合同见 `evaluation/benchmark-environment-bridge.md`。
 - 找活干去 §10.1;时间线归 `roadmap.md`;文档组织规范归 `README.md`。
 
@@ -80,7 +80,7 @@ M3 最小可用产品,分发链路无已知堵点。
 
 - **可下单事实单一数据源**(ADR-19):`ts/src/bookable-facts.ts`(`gotry_bookable_fact.v1`,纯函数)——flyai/session exact-date 工具结果逐条落账,hit 正事实 / miss 负事实,query_id 可重放,IATA 归一;四层证据 tier **永不合并**。**exact-date miss =「未确认/当前不可售,到 D-xx 复核」**,禁止用历史班期/相邻日期/航线页回填。
 - **状态权威 = 单文件 SQLite 账本**(ADR-15,`ts/src/state-ledger.ts`):events append-only + 投影 fold 可重建 + 红线进事务 + 工单 durable 恢复(exactly-once)+ pending_writes saga。旧 JSON/JSONL 降级为单向导出视图。
-- **双形态冻结**(ADR-16):本地 + Web 一套账本语义,`tenant_id` 一等字段,同步 = 事件复制而非状态翻译。
+- **双形态冻结**(ADR-16):本地 + Web 一套账本语义,`tenant_id` 一等字段;`insertEvent` 写入当前 ledger owner,`readEvents`/投影 fold/rebuild 均先按 tenant 过滤,跨租户同 id/idem_key 不覆盖;同步 = 事件复制而非状态翻译。历史 v1/JSON 只可安全归入默认 `local`,已经错误写成 `local` 的非 local 事件无可靠反推租户,不得由迁移脚本猜修。
 - **预订 saga 词汇层**(ADR-17,`ts/src/booking-saga.ts`):状态字母表与 pending_writes CHECK 逐字一致。
 - **异步终态合同**:`gotry_async_terminal.v1` 将 4/4 映射为 `succeeded`/ledger `settled`/exit 0,非 4/4 映射为 `failed`/ledger `failed`/exit 2;终态复诵返回同一结构化结果与退出码且零重算。
 - **Booking Copilot 生命周期投影**(单一 `booking.surface` 契约;2026-09-05 #133 收敛:原 v2 形态转正、v1 退役,双协议时代结束):`planning → submitted → working → waiting_receipt → input_required → terminal outcome`;公开类型保留七个 phase 字面值(终态分 `terminal`/`error`)。availability reducer 另有 `need_offers → waiting_offers → need_check → waiting_check → terminal` typed 子状态,不改变外层六状态投影。identity binding 与 approval 细节见 §8.23。
@@ -233,7 +233,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 13 | 工具观察 envelope(RFC S1,effect-interpreter 映射):12 工具成功路径平铺 `ok:true` + 载荷,失败 `{ok:false,summary,evidence}`(guard 兜底同形,`ToolFailure` 编译期对齐);参数三形态归一唯一入口 `interpretArgs`(原 unwrapQuery 移居 `tool-packet.ts`) | 逐工具自由返回(形状漂移,每个新工具重新猜)/嵌套 envelope `{ok,value}`(渲染/调用方全要拆包,侵入大) | 出现第二个真实调用方(非 dsh 非 smoke)需要不同观察形状时复审 | `tool-packet.ts`;`incident-log.ts guardToolExecute`;smoke §9 |
 | 14 | 记忆效用 sidecar(RFC S2/S3):三类事件 append-only,**归因只认 owner 确认**;wish 稳定 id + 休眠制;召回 0..1/轮 | 见 §8.14 | 多用户 AaaS 账本化(RFC §6.5)或出现第二个效用消费方时复审 | `memory-utility.ts`;`index.ts gotry_wish_pool_list`;smoke §10 |
 | 15 | 事务化状态基座(RFC `rfc/transactional-state-rfc.md`,业界 durable-execution 五件套收敛) | 见 §8.15 | 多用户 AaaS 化(RFC §6.5 claim/CAS 实装)或需要多写者/多端复制(cr-sqlite/Litestream,触发式=D-15)时复审 | `state-ledger.ts`;run-all §28/§29 |
-| 16 | 双形态架构冻结(本地+Web):**一套账本语义,两种宿主绑定**;`tenant_id` 一等字段;同步=事件复制非状态翻译 | 见 §8.16 | 永不复审(双形态是产品形态基座);同步协议与 claim/CAS 实装按触发器后置 | `state-ledger.ts` schema v2;run-all §28 双形态断言 |
+| 16 | 双形态架构冻结(本地+Web):**一套账本语义,两种宿主绑定**;`tenant_id` 一等字段;append/read/fold/rebuild 全部以当前 ledger owner 为作用域;同步=事件复制非状态翻译 | 见 §8.16 | 永不复审(双形态是产品形态基座);同步协议与 claim/CAS 实装按触发器后置;历史 local 事件不可无证据自动反推租户 | `state-ledger.ts` schema v2;run-all §28 双形态断言 |
 | 17 | 预订 saga 状态机具名化(issue #17 采纳,2026-08-29) | 见 §8.17 | M5 拍板 WriteGate 时复审(启封增量的 schema CHECK/seam 词汇/L4 自动类);若出现需要并行多写者的预订流,复审 keyed 单写者形态 | `ts/src/booking-saga.ts`;`docs/design/booking-saga-fsm.md`;run-all §36 |
 | 18 | 效应解译器 effect_interpreter.v1(issue #16 采纳,2026-08-29) | 见 §8.18 | 出现需要跨渠道比价聚合的产品裁决时复审「平铺」边界;写效应(预订/支付)入注册表时必须走 booking_saga_fsm.v1 边表(M5 Entry) | `ts/capabilities/effect.ts` `resilience.ts`;`docs/design/effect-interpreter.md`;run-all §37 |
 | 19 | 可下单事实单一数据源 + 产物事实闸(issue #46,2026-08-30) | 见 §8.19 | 出现第二类需闸产物(如酒店直订)时复审覆盖面;政策实时源接入后复审政策事实生产端;根治方向=产物只由渲染原语生成(结构化→markdown 单向),反向抽取降为兜底 | `ts/src/bookable-facts.ts` `ts/src/artifact-gate.ts`;`data/airline-airports.json`;run-all §39;smoke §16 |
@@ -272,6 +272,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 #### 8.16 双形态架构冻结
 - **一套账本语义,两种宿主绑定**:本地 = better-sqlite3 直读文件;Web = 同一 schema 跑在每用户 SQLite 文件(或 Postgres,schema 同构)。
 - **`tenant_id` 从第一天就是一等字段**:events/投影/工单/pending_writes 全部带租户列,单用户期恒为 `'local'`,主键空间化防跨用户撞。
+- **执行边界(issue #224 修复)**:`insertEvent` 必写当前 ledger tenant;`readEvents(kind?)`、投影 fold 与 `rebuildProjections(toSeq?)` 必带 tenant 条件;`wish.updated` fold 查当前租户已有 item,跨租户同 `wish_id` 不串读。legacy JSON/JSONL 与 v1 DB 只迁入 `local`;已经被旧 bug 写成 `local` 的非 local 事件缺少可审计 owner,不可由 schema 迁移猜回,只能在有外部证据时另走人工 data-repair issue/PR。
 - **同步 = 账本事件的复制,而非状态的翻译**:events 行带 `tenant_id` + 幂等键,双端合并天然幂等。写必经账本,读必带租户上下文进不变量表。
 - 备选与取舍:本地与 Web 各长一套逻辑——多用户期合并只能推倒重来;云端权威 + 本地缓存——违反红线 6 本地优先;同步投影而非事件——投影是派生态,合并会分叉。
 
@@ -389,6 +390,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **子任务等待纪律(2026-09-08,issue #194 B-轨道)**:rc19 npm 真实会话(founder 截图+session zip 实证)——continuable 子代理 spawn 回执只给 durable id(uuid),模型按 jobs 纪律提示把它当 job id 调 `job_output`,`jobs-local expect()` 裸抛 `unknown job` isError 直达用户。根因两侧:注册侧 dsh-tool-subagent continuable 分支不进 jobs registry(仅 one-shot 后台注册 `subagent-N`);查询侧对未知 id 无可恢复指引。B-轨道修复:persona 新增 (23) 子任务等待纪律——子代理回执 id 不是 job id,禁对子代理调 job_output/job_kill,完成通知自动送达、追加输入用 send_message;契约 22→23 条。A-轨道(上游 deepseek-harness Discussions 报告,英文草稿已备于 #194 决策包评注)涉对外发布,留 founder 确认。persona-surface-guard-tests 5/5 钉回归(run-all §54)。
 - **安装链三修(2026-09-08,rc.19 `npx doctor --fix` 实测三 issue 收口)**:①sidebar 安装误报——pnpm ≥10.5 默认不执行依赖构建脚本,严格态(pnpm 11)下 `ERR_PNPM_IGNORED_BUILDS` exit 1 但 167 包已完整落盘;`setupSidebar` 改为**按落盘状态判成功**(与 doctor 检查同口径,profile package.json 为唯一事实面),对 dsh plugin 调用附 `npm_config_strict_dep_builds=false` 单次降级 + node-pty 构建被跳过的 approve-builds 指引,不再以 dsh→pnpm 两层转手的 exit code 误报「补装失败」。②map-tools npm 布局真缺——2026-09-04 遗留的「补依赖渠道拍板」落地为**随包 vendor 分发**(`ts/dsh-runtime/vendor/dsh-map-tools/` 进 files[],inner 解析链 vendor 优先;依赖形态被上游否决:其 peerDependencies 要求 `dsh-settings/dsh-tools >=0.1.2-rc.1` 而运行时锁定 `0.1.2-alpha.3`(semver alpha<rc),npm 严格 peer 解析 ERESOLVE、optionalDependencies 亦不豁免——硬依赖会弄坏 npx 主安装路径)。③ask-user 误报——npm/npx 提升布局下依赖落在包外同级提升位,doctor 两面的 existsSync 硬编码候选全 miss,改与 inner 同口径 createRequire 解析链(dsh 上下文优先→包根上下文→静态候选)。顺带清偿 bin/gotry-inner.js help 文本中已提交的合并冲突标记。doctor-tests §5b/5c + bootstrap-tests §11(run-all §7c/§15b)钉回归。
 - **CI 双层修复(2026-09-08,#208/#202;main 自 #197 起全红、rc.19 系带病发布)**:①`Install ts dependencies` 红根因 = runner npm 升级后裸 `npm ci` 强制校验 peer；#208 先以 `--legacy-peer-deps` 恢复流水线并移除 dsh-map-tools 冗余依赖，#202 再把 14 个递归 DSH peer 全部精确钉在 `0.1.2-alpha.3`，CI 与 CONTRIBUTING 回归裸 `npm ci`，lock 全量 resolved 指向 registry.npmjs.org。②typecheck 五连红(turn-deadline 的 session 事件)根因 = 类型面隐性依赖 peer 意外物化:`session/event`/`session/disposed` 声明在 dsh-session 的 cordis Events augmentation 里,pnpm 隔离布局下 root 侧同名包的 augmentation 合并进的是另一个 cordis 实例——显式 `import type` + `dsh-session@0.1.2-alpha.3` 进 ts dependencies，完整 alpha.3 closure 阻止 rc.1 混版本。
+- **账本 tenant scope 实装修复(2026-09-08,issue #224)**:独立审计复现 tenant-a/tenant-b 写愿望后 raw events 均落 `local`,`readEvents` 互看,目标租户 rebuild 清空,`wish.updated` fold 跨租户同 id 串读。修复为 `insertEvent` 写当前 tenant、`readEvents`/fold/rebuild 带 tenant 条件、legacy/v1 迁移只归 `local`；新增非 local owner、同 id/idem_key、交错 update、跨进程 reopen、A rebuild 不影响 B/local、重复 rebuild、booking saga audit owner 断言(run-all §28/§36)。历史已误写成 `local` 的非 local 事件不可无证据自动修复,边界见 §8.16。
 
 ### 外部 benchmark 泛化(Round 1–12,Discussion #78,official score 仍为空)
 
@@ -487,6 +489,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | D-17 Z3 WASM race(README Known limitation) | 已清偿,详见下方 |
 | D-20 六状态面里程碑口径漂移 | **已清偿 2026-08-29(Issue #19)**:六状态面统一为「M3 真实 evidence 未收口;M4 为 founder 授权并行,不是 M3 Exit 证明;M5/M6 仅受各自 Entry gate 开闸」。后续不得把工程交付、发布或并行切片等同于里程碑退出证据。 |
 | D-21 async 非 4/4 被误结算为成功 | 已清偿,详见下方 |
+| D-32 ledger tenant scope 只落 schema 未贯穿事件/fold | **已清偿 2026-09-08(issue #224)**:`insertEvent` 写当前 tenant,`readEvents`/fold/rebuild 全带 tenant 条件,`wish.updated` 同 id 查当前租户 item;legacy JSON/JSONL 与 v1 DB 只归 `local`。新增 run-all §28/§36 断言覆盖非 local owner、同 id/idem_key、交错 update、跨进程 reopen、A rebuild 不影响 B/local、重复 rebuild、booking saga 审计 owner。已被旧 bug 写成 `local` 的非 local 历史事件缺少可审计 owner,不得自动猜修;有外部证据时另走人工 data-repair issue/PR。 |
 
 **D-4 gate/卡片无承载界面**
 

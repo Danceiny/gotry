@@ -10,6 +10,7 @@
  *  8 one-shot 迁移:旧 JSON/JSONL → events;快照先行;重复 ensure 不重复导入
  *  9 durable 工单崩溃恢复:子进程 settle 前 exit 9 → 恢复零重算(exactly-once)
  * 10 pending_writes saga:幂等键去重/L3 确认一次/补偿/审计事件链/what-if 分叉隔离
+ * 11 ADR-16 tenant scope:append/read/fold/rebuild/迁移边界/同 id/跨进程 reopen 全隔离
  * 运行(在 ts/ 下):npx tsx scripts/ledger-tests.ts
  */
 
@@ -20,7 +21,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { TripState } from '../src/contracts.ts'
 import { persistAsyncTicket, type AsyncTicket } from '../src/loop.ts'
-import { ensureLedger, openLedgerIfExists } from '../src/state-ledger.ts'
+import { ensureLedger, ledgerDbPath, openLedgerIfExists, readWishPoolWithFallback } from '../src/state-ledger.ts'
 import { parseFlightPackToSpec } from '../src/unified.ts'
 
 type TerminalOutcome = {
@@ -166,6 +167,48 @@ assert(existsSync(join(mdir, 'pre-ledger-backup', 'wish-pool.json')), '迁移:�
 const migratedCount = m1.countEvents()
 ensureLedger(mroot)
 assert(m1.countEvents() === migratedCount, '重复 ensure 不重复导入(kv 旗标 + 幂等键双保险)')
+
+const tenantMroot = mkdtempSync(join(tmpdir(), 'gotry-migrate-tenant-boundary-'))
+const tenantMdir = join(tenantMroot, 'gotry-state')
+mkdirSync(tenantMdir, { recursive: true })
+writeFileSync(join(tenantMdir, 'wish-pool.json'), JSON.stringify([{ wish_id: 'wLOCALLEGACY', name: '本地旧愿望', conditions: { days: 2 }, added_at: '2026-08-01T00:00:00Z' }]))
+assert(readWishPoolWithFallback(tenantMroot, 'tenant-a').length === 0, '迁移边界:非 local 只读 fallback 不读取旧本地 JSON')
+const tenantFirst = ensureLedger(tenantMroot, 'tenant-a')
+const localLegacy = ensureLedger(tenantMroot)
+assert(tenantFirst.readWishPool().length === 0, '迁移边界:非 local 首次打开不把旧文件猜入该租户')
+assert(localLegacy.readWishPool()[0]?.wish_id === 'wLOCALLEGACY', '迁移边界:旧 JSON/JSONL 只可安全归入默认 local')
+assert(
+  (localLegacy.db.prepare('SELECT COUNT(*) AS n FROM events WHERE tenant_id != \'local\'').get() as { n: number }).n === 0,
+  '迁移边界:旧文件导入事件 tenant_id 全为 local,不伪造历史归属',
+)
+
+const v1root = mkdtempSync(join(tmpdir(), 'gotry-v1-tenant-migration-'))
+mkdirSync(join(v1root, 'gotry-state'), { recursive: true })
+const v1db = new Database(ledgerDbPath(v1root))
+v1db.exec(`
+  CREATE TABLE events (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    subject_id TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL,
+    idem_key TEXT,
+    run_id TEXT
+  );
+  CREATE UNIQUE INDEX events_idem ON events(idem_key) WHERE idem_key IS NOT NULL;
+`)
+v1db.prepare('INSERT INTO events (ts, actor, kind, subject_id, payload, idem_key, run_id) VALUES (?, ?, ?, ?, ?, ?, NULL)')
+  .run('2026-08-28T00:00:00.000Z', 'system:v1', 'wish.added', 'wV1', JSON.stringify({ wish: { wish_id: 'wV1', name: 'v1旧愿望', reason: '', conditions: { days: 4 }, added_at: '2026-08-28T00:00:00.000Z' } }), 'v1:wish')
+v1db.close()
+const v1Tenant = ensureLedger(v1root, 'tenant-a')
+const v1Local = ensureLedger(v1root)
+assert(v1Tenant.readWishPool().length === 0, 'schema v1→v2:非 local 打开旧 DB 不吸收 local 事件')
+assert(v1Local.readWishPool()[0]?.wish_id === 'wV1', 'schema v1→v2:旧 events 回填 local 后重建 local 投影')
+assert(
+  (v1Local.db.prepare('SELECT COUNT(*) AS n FROM events WHERE tenant_id = \'local\'').get() as { n: number }).n === 1,
+  'schema v1→v2:events tenant_id 回填为 local 且不丢 seq/idempotency',
+)
 
 // ---- 9:durable 工单崩溃恢复(exactly-once) ----------------------------------------
 
@@ -333,22 +376,85 @@ const forkCount = (forkDb.prepare('SELECT COUNT(*) AS n FROM events').get() as {
 forkDb.close()
 assert(ledger.countEvents() === forkCount - 1, 'what-if 分叉:副本写入不触正本(VACUUM INTO 预演)')
 
-// ---- 11:双形态(ADR-16):同一账本文件,tenant_id='local' 与 'u123' 两个租户互不串 --------
+// ---- 11:双形态(ADR-16):tenant scope 贯穿 append/read/fold/rebuild/API ----------------
 
-const localLedger = ensureLedger(root) // 默认 tenant='local'
-const u123 = ensureLedger(root, 'u123') // 同一文件,租户 'u123'
-localLedger.appendWish({ name: '本地愿望', reason: '', conditions: { days: 3 } })
-u123.appendWish({ name: '云端愿望', reason: '', conditions: { days: 7 } })
-assert(localLedger.readWishPool().some(w => String(w.name) === '本地愿望'), '本地租户读到自己的愿望')
-assert(!localLedger.readWishPool().some(w => String(w.name) === '云端愿望'), '本地租户读不到云端愿望(隔离)')
-assert(u123.readWishPool().some(w => String(w.name) === '云端愿望'), '云端租户读到自己的愿望')
-assert(!u123.readWishPool().some(w => String(w.name) === '本地愿望'), '云端租户读不到本地愿望(隔离)')
-assert(localLedger.tenant === 'local' && u123.tenant === 'u123', 'tenant_id 从第一天就是一等字段')
+const tenantRoot = mkdtempSync(join(tmpdir(), 'gotry-tenant-scope-'))
+const localLedger = ensureLedger(tenantRoot) // 默认 tenant='local'
+const tenantA = ensureLedger(tenantRoot, 'tenant-a')
+const tenantB = ensureLedger(tenantRoot, 'tenant-b')
+const localWish = localLedger.appendWish({ name: '同 id 愿望', reason: 'local0', conditions: { owner: 'local0' } })
+const wishA = tenantA.appendWish({ name: '同 id 愿望', reason: 'a0', conditions: { owner: 'a0' } })
+const wishB = tenantB.appendWish({ name: '同 id 愿望', reason: 'b0', conditions: { owner: 'b0' } })
+tenantA.appendWish({ name: '同 id 愿望', reason: 'a1', conditions: { owner: 'a1' } })
+tenantB.appendWish({ name: '同 id 愿望', reason: 'b1', conditions: { owner: 'b1' } })
+const utilA = tenantA.appendUtilityEvent({ wish_id: wishA.wish_id, kind: 'recalled', ts: '2026-09-08T00:00:00.000Z', ctx: 'same-ctx' })
+const utilB = tenantB.appendUtilityEvent({ wish_id: wishB.wish_id, kind: 'recalled', ts: '2026-09-08T00:00:00.000Z', ctx: 'same-ctx' })
+assert(localWish.wish_id === wishA.wish_id && wishA.wish_id === wishB.wish_id, '同业务 id/wish_id 可跨 local/tenant-a/tenant-b 并存')
+assert(utilA.appended === true && utilB.appended === true, '同 event_id/idempotency key 跨租户独立追加(UNIQUE tenant-scoped)')
+const tenantRows = localLedger.db.prepare('SELECT tenant_id, kind, subject_id, idem_key FROM events WHERE subject_id = ? ORDER BY tenant_id, seq').all(wishA.wish_id) as Array<{ tenant_id: string; kind: string; subject_id: string; idem_key: string | null }>
+assert(
+  tenantRows.filter(r => r.kind === 'wish.added').map(r => r.tenant_id).sort().join(',') === 'local,tenant-a,tenant-b'
+  && tenantRows.filter(r => r.kind === 'wish.updated').map(r => r.tenant_id).sort().join(',') === 'tenant-a,tenant-b',
+  '非 local 写入 events 保留真实 owner,默认 local 兼容不变',
+)
+assert(
+  tenantA.readEvents(undefined, 100).every(e => e.tenant_id === 'tenant-a')
+  && tenantB.readEvents(undefined, 100).every(e => e.tenant_id === 'tenant-b')
+  && localLedger.readEvents(undefined, 100).every(e => e.tenant_id === 'local'),
+  'readEvents 默认与 kind 过滤前均先按 ledger.tenant 隔离',
+)
+assert(tenantA.readEvents('wish.added', 10).length === 1 && tenantB.readEvents('wish.added', 10).length === 1, 'readEvents(kind) 也按租户过滤')
+assert(
+  !localLedger.readWishPool().some(w => (w.conditions as Record<string, unknown>).owner === 'a1')
+  && !tenantA.readWishPool().some(w => (w.conditions as Record<string, unknown>).owner === 'b1'),
+  '直写投影:默认 local/tenant-a/tenant-b 同 id 互不覆盖',
+)
+const localBeforeRebuild = JSON.stringify(localLedger.readWishPool())
+const aBeforeRebuild = JSON.stringify(tenantA.readWishPool())
+const bBeforeRebuild = JSON.stringify(tenantB.readWishPool())
+tenantA.rebuildProjections()
+assert(JSON.stringify(tenantA.readWishPool()) === aBeforeRebuild, 'tenant-a rebuild 只读自己的 events 并还原交错 update 后投影')
+assert(JSON.stringify(tenantB.readWishPool()) === bBeforeRebuild && JSON.stringify(localLedger.readWishPool()) === localBeforeRebuild, 'tenant-a rebuild 不改写 tenant-b/local 投影')
+tenantA.rebuildProjections()
+assert(JSON.stringify(tenantA.readWishPool()) === aBeforeRebuild, 'tenant-a 重复 rebuild 幂等')
+tenantB.rebuildProjections()
+assert(JSON.stringify(tenantB.readWishPool()) === bBeforeRebuild, 'tenant-b rebuild 在 tenant-a 同 item_id 存在时不串读 wish.updated fold 行')
+localLedger.rebuildProjections()
+assert(JSON.stringify(localLedger.readWishPool()) === localBeforeRebuild, '默认 local rebuild 兼容且不吸收非 local events')
+const reopenScript = `
+  import { ensureLedger } from './src/state-ledger.ts'
+  const root = ${JSON.stringify(tenantRoot)}
+  const a = ensureLedger(root, 'tenant-a')
+  const b = ensureLedger(root, 'tenant-b')
+  const local = ensureLedger(root)
+  const aWish = a.readWishPool()[0]
+  const bWish = b.readWishPool()[0]
+  const localWish = local.readWishPool()[0]
+  const ok = aWish?.name === '同 id 愿望'
+    && bWish?.name === '同 id 愿望'
+    && localWish?.name === '同 id 愿望'
+    && aWish?.conditions?.owner === 'a1'
+    && bWish?.conditions?.owner === 'b1'
+    && localWish?.conditions?.owner === 'local0'
+    && a.readEvents(undefined, 100).every(e => e.tenant_id === 'tenant-a')
+    && b.readEvents(undefined, 100).every(e => e.tenant_id === 'tenant-b')
+    && local.readEvents(undefined, 100).every(e => e.tenant_id === 'local')
+  if (!ok) {
+    console.error(JSON.stringify({ aWish, bWish, localWish, aEvents: a.readEvents(undefined, 100), bEvents: b.readEvents(undefined, 100), localEvents: local.readEvents(undefined, 100) }))
+    process.exit(1)
+  }
+`
+const reopenTenant = spawnSync('npx', ['tsx', '--eval', reopenScript], { encoding: 'utf-8', cwd: process.cwd(), env: process.env })
+assert(reopenTenant.status === 0, `跨进程 reopen 后租户事件/投影仍隔离(实际 ${reopenTenant.status}:${(reopenTenant.stderr ?? '').slice(0, 300)})`)
+assert(localLedger.tenant === 'local' && tenantA.tenant === 'tenant-a' && tenantB.tenant === 'tenant-b', 'tenant_id 从第一天就是一等字段')
 
 // ---- 收尾 --------------------------------------------------------------------------
 
 rmSync(root, { recursive: true, force: true })
 rmSync(mroot, { recursive: true, force: true })
+rmSync(tenantMroot, { recursive: true, force: true })
+rmSync(v1root, { recursive: true, force: true })
+rmSync(tenantRoot, { recursive: true, force: true })
 rmSync(wroot, { recursive: true, force: true })
 rmSync(successRoot, { recursive: true, force: true })
 console.log(`\nLEDGER TESTS: ${pass} ok, ${fail} fail`)

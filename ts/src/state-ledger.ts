@@ -29,10 +29,11 @@ import { appendTrip as gateTrip, type TimelineEvent } from './travel-timeline.ts
 import { upsertCompanion, type CompanionProfile, type CompanionConstraints } from './companions.ts'
 import type { WishPoolEntry } from './wish-pool.ts'
 
-const SCHEMA_VERSION = '1'
+const SCHEMA_VERSION = '2'
 
 export interface LedgerEventRow {
   seq: number
+  tenant_id: string
   ts: string
   actor: string
   kind: string
@@ -180,11 +181,12 @@ export class StateLedger {
     ts?: string
   }): number | null {
     const stmt = this.db.prepare(
-      `INSERT INTO events (ts, actor, kind, subject_id, payload, idem_key, run_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO events (tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     try {
       const info = stmt.run(
+        this.tenant,
         ev.ts ?? new Date().toISOString(),
         ev.actor,
         ev.kind,
@@ -201,11 +203,11 @@ export class StateLedger {
   }
 
   readEvents(kind?: string, limit = 100): LedgerEventRow[] {
-    const where = kind ? 'WHERE kind = ?' : ''
+    const where = kind ? 'WHERE tenant_id = ? AND kind = ?' : 'WHERE tenant_id = ?'
     const rows = this.db.prepare(
-      `SELECT seq, ts, actor, kind, subject_id, payload, idem_key, run_id
+      `SELECT seq, tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id
        FROM events ${where} ORDER BY seq DESC LIMIT ?`,
-    ).all(...(kind ? [kind, limit] : [limit])) as LedgerEventRow[]
+    ).all(...(kind ? [this.tenant, kind, limit] : [this.tenant, limit])) as LedgerEventRow[]
     return rows
   }
 
@@ -481,7 +483,7 @@ export class StateLedger {
       case 'wish.updated': {
         const id = String(p['wish_id'])
         const patch = (p['patch'] ?? {}) as Record<string, unknown>
-        const rows = this.db.prepare(`SELECT doc FROM projection_items WHERE subject = 'wish_pool' AND item_id = ?`).get(id) as { doc: string } | undefined
+        const rows = this.db.prepare(`SELECT doc FROM projection_items WHERE subject = 'wish_pool' AND item_id = ? AND tenant_id = ?`).get(id, this.tenant) as { doc: string } | undefined
         if (rows) {
           const doc = { ...JSON.parse(rows.doc), ...patch } as WishPoolEntry
           this.upsertItem('wish_pool', id, doc)
@@ -735,11 +737,11 @@ export function openDb(stateRoot: string, tenant = 'local'): StateLedger {
       }
       db.exec(SCHEMA)
       db.pragma('user_version = 2')
-      db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run('schema_version', '2')
+      db.prepare('INSERT INTO kv (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v').run('schema_version', SCHEMA_VERSION)
     })()
-    // v1 升级后:从 events 重建投影(v1 投影表已 DROP)
+    // v1 升级后:旧单用户事件只可安全归入 local;即使调用者打开非 local 租户,也只重建 local 投影。
     if (isV1) {
-      const ledger = new StateLedger(db, stateRoot, tenant)
+      const ledger = new StateLedger(db, stateRoot, 'local')
       ledger.rebuildProjections()
     }
   } else {
@@ -782,9 +784,13 @@ export function ensureLedger(stateRoot: string, tenant = 'local'): StateLedger {
       if (existsSync(join(dir, f))) copyFileSync(join(dir, f), join(backupDir, f))
     }
   }
-  const ledger = openDb(stateRoot, tenant)
-  if (hasLegacy) importLegacyInto(ledger, dir)
-  return ledger
+  if (hasLegacy) {
+    // 旧 JSON/JSONL 是单用户本地状态,没有可审计租户归属;迁移边界=只归入 local,绝不按调用 tenant 猜测或搬移。
+    const localLedger = openDb(stateRoot, 'local')
+    importLegacyInto(localLedger, dir)
+    return tenant === 'local' ? localLedger : openDb(stateRoot, tenant)
+  }
+  return openDb(stateRoot, tenant)
 }
 
 function importLegacyInto(ledger: StateLedger, dir: string): MigrationReport['imported'] {
@@ -863,32 +869,37 @@ function readLegacyJsonl<T>(stateRoot: string, name: string): T[] {
   }
 }
 
-export function readMotivationWithFallback(stateRoot: string): (MergedProfile & { updated_at?: string }) | null {
-  const ledger = openLedgerIfExists(stateRoot)
+export function readMotivationWithFallback(stateRoot: string, tenant = 'local'): (MergedProfile & { updated_at?: string }) | null {
+  const ledger = openLedgerIfExists(stateRoot, tenant)
   if (ledger) return ledger.readMotivation()
+  if (tenant !== 'local') return null
   return readLegacyJson<(MergedProfile & { updated_at?: string }) | null>(stateRoot, 'motivation-profile.json', null)
 }
 
-export function readWishPoolWithFallback(stateRoot: string): WishPoolEntry[] {
-  const ledger = openLedgerIfExists(stateRoot)
+export function readWishPoolWithFallback(stateRoot: string, tenant = 'local'): WishPoolEntry[] {
+  const ledger = openLedgerIfExists(stateRoot, tenant)
   if (ledger) return ledger.readWishPool()
+  if (tenant !== 'local') return []
   return readLegacyJson<WishPoolEntry[]>(stateRoot, 'wish-pool.json', [])
 }
 
-export function readUtilityEventsWithFallback(stateRoot: string): MemoryUtilityEvent[] {
-  const ledger = openLedgerIfExists(stateRoot)
+export function readUtilityEventsWithFallback(stateRoot: string, tenant = 'local'): MemoryUtilityEvent[] {
+  const ledger = openLedgerIfExists(stateRoot, tenant)
   if (ledger) return ledger.readUtilityEvents()
+  if (tenant !== 'local') return []
   return readLegacyJsonl<MemoryUtilityEvent>(stateRoot, 'memory-utility.jsonl')
 }
 
-export function readTripsWithFallback(stateRoot: string): TimelineEvent[] {
-  const ledger = openLedgerIfExists(stateRoot)
+export function readTripsWithFallback(stateRoot: string, tenant = 'local'): TimelineEvent[] {
+  const ledger = openLedgerIfExists(stateRoot, tenant)
   if (ledger) return ledger.readTrips()
+  if (tenant !== 'local') return []
   return readLegacyJsonl<TimelineEvent>(stateRoot, 'trips.jsonl')
 }
 
-export function readCompanionsWithFallback(stateRoot: string): CompanionProfile[] {
-  const ledger = openLedgerIfExists(stateRoot)
+export function readCompanionsWithFallback(stateRoot: string, tenant = 'local'): CompanionProfile[] {
+  const ledger = openLedgerIfExists(stateRoot, tenant)
   if (ledger) return ledger.readCompanions()
+  if (tenant !== 'local') return []
   return readLegacyJson<CompanionProfile[]>(stateRoot, 'companions.json', [])
 }
