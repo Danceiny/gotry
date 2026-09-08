@@ -956,29 +956,31 @@ try {
 
   const bridge = registered.find(tool => tool.name === 'gotry_benchmark_environment')!
   assert.ok(bridge.execute, 'registered bridge exposes execute')
+  // Round 11(issue #213):model-facing 参数面是 provider-compatible 平铺 object——
+  // action/tool/arguments 显式可见,不再以 top-level oneOf 作为唯一字段来源
+  // (glm-5.3-flash 对 oneOf 产出空参数,57 次调用全 INVALID_ARGS)。
   const parameters = bridge.parameters as {
-    oneOf?: Array<Record<string, any>>
+    type?: string
+    required?: string[]
+    additionalProperties?: boolean
+    properties: Record<string, any>
   }
-  assert.equal(Array.isArray(parameters.oneOf), true, 'v3 bridge exposes flat descriptor-derived model branches')
-  const lookupBranch = parameters.oneOf!.find(branch => branch?.properties?.tool?.const === 'lookup')!
-  assert.ok(lookupBranch, 'model schema contains the configured lookup tool branch')
-  assert.equal(lookupBranch.description, 'Lookup one declared city.', 'descriptor description reaches the model-visible call branch')
-  assert.deepEqual(lookupBranch.required, ['action', 'tool', 'arguments'])
-  assert.equal(lookupBranch.additionalProperties, false)
-  assert.deepEqual(lookupBranch.properties.arguments.required, ['city'])
-  assert.equal(lookupBranch.properties.arguments.additionalProperties, false)
-  assert.equal(lookupBranch.properties.arguments.properties.city.type, 'string')
-  assert.deepEqual(lookupBranch.properties.arguments.properties.city.enum, ['Dubai', 'Abu Dhabi'])
+  assert.equal(parameters.type, 'object', 'v3 bridge exposes an object-root model schema')
+  assert.equal(parameters.additionalProperties, false, 'flat schema fails closed on extra keys')
+  assert.deepEqual(parameters.required, ['action'], 'only action is required at the wire level')
+  assert.deepEqual(parameters.properties.action.enum, ['tools', 'call', 'errors'], 'action 协议面保持封闭枚举')
+  assert.equal(parameters.properties.tool.type, 'string', 'tool 名为自由字符串(由 execute 按 descriptor 校验)')
+  assert.equal(parameters.properties.arguments.type, 'object', 'arguments 为对象(逐工具 exact 校验在 execute 内)')
   assert.equal(Object.isFrozen(bridge.parameters), true, 'registered raw parameters are frozen')
-  assert.equal(Object.isFrozen(lookupBranch.properties.arguments.properties.city.enum), true, 'descriptor-derived nested schema is frozen')
-  assert.throws(() => { lookupBranch.properties.arguments.properties.city.enum.push('escape') }, TypeError)
 
   const beforeProtocolRejected = spawnSpecs.length
   await assert.rejects(() => bridge.execute!({ query: bridgeCall('lookup', { city: 'Dubai' }) }, null), /invalid arguments/, 'legacy nested query envelope is rejected by the flat protocol')
   await assert.rejects(() => bridge.execute!({}, null), /invalid arguments/, 'empty object is rejected by the flat protocol')
-  await assert.rejects(() => bridge.execute!({ action: 'tools', tool: 'lookup' }, null), /invalid arguments/, 'mixed action/tool fields are rejected by the flat protocol')
+  await assert.rejects(() => bridge.execute!({ action: 'nonsense' }, null), /invalid arguments/, 'unknown action value violates the flat action enum')
   await assert.rejects(() => bridge.execute!({ ...bridgeCall('lookup', { city: 'Dubai' }), extra: true }, null), /invalid arguments/, 'extra top-level fields are rejected by the flat protocol')
-  await assert.rejects(() => bridge.execute!(bridgeCall('lookup', { city: 'Sharjah' }), null), /invalid arguments/, 'invalid descriptor argument values are rejected by the flat protocol')
+  const invalidArgs = await bridge.execute!(bridgeCall('lookup', { city: 'Sharjah' }), null) as { ok?: boolean; error?: string }
+  assert.equal(invalidArgs.ok, false, 'invalid descriptor argument values fail the call')
+  assert.equal(invalidArgs.error, 'invalid_arguments', 'per-tool exact validation still rejects schema-external values (Round 10 semantics)')
   assert.equal(spawnSpecs.length, beforeProtocolRejected, 'flat protocol rejections happen before spawn')
 
   const args = { city: 'Dubai', payload: '$(touch /tmp/nope)' }
@@ -1072,10 +1074,9 @@ try {
   const beforeDeep = spawnSpecs.length
   let deep: Record<string, unknown> = {}
   for (let index = 0; index < 13; index++) deep = { next: deep }
-  await assert.rejects(
-    () => bridge.execute!(bridgeCall('lookup', { city: 'Dubai', ...deep }), null),
-    /invalid arguments/,
-  )
+  const deepResult = await bridge.execute!(bridgeCall('lookup', { city: 'Dubai', ...deep }), null) as { ok?: boolean; error?: string }
+  assert.equal(deepResult.ok, false, 'schema-invalid deep arguments fail the call (per-tool exact validation)')
+  assert.equal(deepResult.error, 'invalid_arguments', 'deep arguments are rejected as invalid_arguments')
   assert.equal(spawnSpecs.length, beforeDeep, 'schema-invalid deep arguments are rejected before spawn')
 
   const beforeOverride = spawnSpecs.length
@@ -1164,25 +1165,25 @@ try {
   assert.equal(timeoutSignal?.aborted, true, 'timeout abort signal is fired')
 
   const beforeInvalidArgs = spawnSpecs.length
+  // Round 11:wire 层 arguments 是泛型 object;逐工具 exact 校验在 execute 内
+  // 按 descriptor.input_schema 执行,失败返回 ok:false 结果(不 throw)。
+  // 非对象 arguments 在 wire 层即被 flat schema 拒绝(ToolArgsError 抛出)
   await assert.rejects(() => bridge.execute!(bridgeCall('lookup', ['not', 'plain']), null), /invalid arguments/)
-  assert.equal(spawnSpecs.length, beforeInvalidArgs, 'non-object arguments are rejected before spawn')
   for (const [label, argumentsValue] of [
     ['missing required city', {}],
     ['wrong city type', { city: 7 }],
     ['undeclared country', { city: 'Dubai', country: 'AE' }],
   ] as Array<[string, Record<string, unknown>]>) {
-    await assert.rejects(
-      () => bridge.execute!(bridgeCall('lookup', argumentsValue), null),
-      /invalid arguments/,
-      `${label} is rejected by the descriptor-derived runtime validator`,
-    )
+    const invalidCall = await bridge.execute!(bridgeCall('lookup', argumentsValue), null) as { ok?: boolean; error?: string }
+    assert.equal(invalidCall.ok, false, `${label} is rejected by the descriptor-derived runtime validator`)
+    assert.equal(invalidCall.error, 'invalid_arguments', `${label} rejects with invalid_arguments`)
   }
   assert.equal(spawnSpecs.length, beforeInvalidArgs, 'required, type, and closed-object argument failures all happen before spawn')
-  await assert.rejects(() => bridge.execute!({ action: 'inspect' }, null), /invalid arguments/)
+  await assert.rejects(() => bridge.execute!({ action: 'inspect' }, null), /invalid arguments/, 'unknown action violates the flat action enum')
 
   const beforeRejected = spawnSpecs.length
-  await assert.rejects(() => bridge.execute!(bridgeCall('delete_all', {}), null), /invalid arguments/)
-  assert.equal(spawnSpecs.length, beforeRejected, 'disallowed tool is rejected before spawn')
+  const disallowed = await bridge.execute!(bridgeCall('delete_all', {}), null) as { ok?: boolean; error?: string }
+  assert.equal(disallowed.ok, false, 'disallowed tool is rejected before spawn')
 
   const spacedConfigPath = join(root, ' benchmark-environment-config.json ')
   writeFileSync(spacedConfigPath, readFileSync(configPath))

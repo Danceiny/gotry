@@ -306,11 +306,13 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
   )
   const bridgeTool = enabled.requests.find(request => names(request).includes(TOOL))?.tools?.find(tool => names({ tools: [tool] }).includes(TOOL))
   const flatSchema = (bridgeTool?.function as Record<string, any> | undefined)?.parameters
-  assert.ok(Array.isArray(flatSchema?.oneOf), `${target} bridge exposes flat oneOf schema`)
-  const lookupBranch = flatSchema.oneOf.find((branch: any) => branch?.properties?.tool?.const === 'lookup')
-  assert.deepEqual(lookupBranch?.required, ['action', 'tool', 'arguments'])
-  assert.equal(lookupBranch?.additionalProperties, false)
-  assert.deepEqual(lookupBranch?.properties?.arguments, LOOKUP_INPUT_SCHEMA)
+  // Round 11(#213):model-facing 参数面为 provider-compatible 平铺 object——
+  // action 枚举显式可见,tool/arguments 为泛型面;逐工具 exact 校验在 execute 内。
+  assert.equal(flatSchema?.type, 'object', `${target} bridge exposes an object-root model schema`)
+  assert.deepEqual(flatSchema?.required, ['action'], 'only action is wire-required')
+  assert.equal(flatSchema?.additionalProperties, false, 'flat schema fails closed on extra keys')
+  assert.deepEqual(flatSchema?.properties?.action?.enum, ['tools', 'call', 'errors'], 'action enum is provider-visible')
+  assert.equal(flatSchema?.properties?.arguments?.type, 'object', 'arguments stays an object at the wire level')
   assert.equal(enabledToolNames.some(name => name.startsWith('calendar_') || name.startsWith('map_')), false, `${target} benchmark projection must not expose calendar/map tools`)
   assert.deepEqual(enabled.optionalResolutionHits, { calendar: 0, map: 0 }, `${target} benchmark mode must not resolve optional calendar/map plugins`)
   assert.ok(enabled.requests.some(toolResultPresent), `${target} marker must enter model history as tool result`)

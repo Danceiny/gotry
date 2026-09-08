@@ -55,37 +55,6 @@ export interface BenchmarkToolDescriptor {
   domain_outcomes: Array<{ status: 'miss' | 'error'; code: string; recovery: BenchmarkDomainRecovery }>
 }
 
-function descriptorSchema(tools: readonly BenchmarkToolDescriptor[]): JsonSchemaNode {
-  return {
-    oneOf: [
-      {
-        type: 'object',
-        description: 'List the frozen benchmark tool descriptors.',
-        properties: { action: { type: 'string', const: 'tools' } },
-        required: ['action'],
-        additionalProperties: false,
-      },
-      {
-        type: 'object',
-        description: 'List the frozen bridge error contract.',
-        properties: { action: { type: 'string', const: 'errors' } },
-        required: ['action'],
-        additionalProperties: false,
-      },
-      ...tools.map<JsonSchemaNode>(tool => ({
-        type: 'object',
-        description: tool.description,
-        properties: {
-          action: { type: 'string', const: 'call' },
-          tool: { type: 'string', const: tool.name },
-          arguments: tool.input_schema,
-        },
-        required: ['action', 'tool', 'arguments'],
-        additionalProperties: false,
-      })),
-    ],
-  }
-}
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -425,8 +394,20 @@ export function registerBenchmarkEnvironmentBridge(
   if (!bridge) throw new Error('benchmark environment bridge configuration unavailable')
   if (!subprocess) throw new Error('benchmark environment bridge subprocess unavailable')
 
+  // Round 11(issue #213):provider-compatible 平铺 object root——Round 10 的
+  // top-level oneOf 对部分模型(实测 glm-5.3-flash)不可见,57 次调用全部产生
+  // 空参数。平铺后 action/tool/arguments 显式可见;逐工具 exact 校验仍在
+  // execute 内按 frozen descriptor 的 input_schema fail-closed(Round 10 语义不变)。
   const parameters: Record<string, unknown> = deepFreezeJson({
-    oneOf: descriptorSchema(bridge.tools).oneOf,
+    type: 'object',
+    description: 'Run one frozen benchmark tool call. Start with action="tools" to list the available tools and their argument schemas.',
+    properties: {
+      action: { type: 'string', enum: ['tools', 'call', 'errors'], description: 'tools=列出可调工具及各自参数 schema;call=执行一个工具;errors=拉取可恢复错误契约表' },
+      tool: { type: 'string', description: 'Exact tool name from the action="tools" listing (required for action="call")' },
+      arguments: { type: 'object', description: 'Arguments object matching the called tool input schema exactly; schema-external keys fail closed (required for action=call)' },
+    },
+    required: ['action'],
+    additionalProperties: false,
   })
   assertSupportedJsonSchema(parameters)
 
