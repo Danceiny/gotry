@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-08 起,dsh-map-tools runtime 回归修复(issue #242):#239 误用 alpha.3 不存在的 `installSettingsSection/settingsNamespace` 导出使真实安装包插件 import 失败；现恢复普通 namespace 字符串与 `ctx.inject(['settings'], scope => scope.settings.installSection(...))` 接线,打包 proof 钉 7 个 `map_*` 工具、settings watch/reload/dispose 与禁网 inline 坐标路径。
 - 2026-09-08 起,ADR-16 tenant scope 修复(issue #224):账本 `insertEvent` 写当前 tenant,`readEvents`/fold/rebuild 全带 tenant 条件,legacy/v1 只迁入 `local`;跨租户同 id/idem_key、交错 update、A rebuild 不影响 B/local、跨进程 reopen 已由 ledger-tests/booking-saga-tests 钉住。历史已误写为 `local` 的非 local 事件不自动猜修。
 - 2026-09-08 起,state-cli 租户参数边界(issue #226):账本 CLI 集中解析 cmd/positional/`--state-root`/`--tenant`/`--limit`,未知/重复/缺值/非法 numeric 先于任何 state-root 副作用 fail-closed;`tick`/`export`/`whatif` 明确 local-only,`whatif` 仅是整库管理员 snapshot,不是租户导出。
 - 2026-09-06 起,Round 9 治理面(issue #100/#102):LLM_MAX_TOKENS 注入 llm-deepseek 目录 maxTokens(修真实中转模型 2013)+ GOTRY_BENCHMARK_SOFT_MS/HARD_MS 预算按 run 可配(缺省 60/120s 不变);治疗首次全链路存活,余量为预算内收敛。

@@ -54,7 +54,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - **账号类**:会话登录 `gotry_session_login`(在用户 Chrome 弹登录入口,票据 cookie 名零值过手)
 - **回合类**:`gotry_turn_handoff_list` 后台深度规划工单复访查询(只读;open=后台规划中/ETA,settled=交付物摘录,failed=诚实失败说明;收集结算由 `scripts/turn-handoff-collect.ts` 驱动,ADR-24 v2)
 - **自检类**:`gotry_doctor` 依赖体检;CLI 侧同源命令 `npx gotry doctor`,报告落 `gotry-state/doctor-report.md`
-  - 覆盖:扩展 / agent-reach `.venv` / hbcli / FlyAI key(含最近匿名试用达限时间)/ dsh-calendar 挂载态 / sidebar / 随包 MIT `dsh-map-tools` / `dsh-tool-ask-user`,逐项分级 ok/degraded/missing + 精确补装指引
+  - 覆盖:扩展 / agent-reach `.venv` / hbcli / FlyAI key(含最近匿名试用达限时间)/ dsh-calendar 挂载态 / sidebar / 随包 MIT `dsh-map-tools`(alpha.3 `SettingsProvider.prototype.installSection` 接线) / `dsh-tool-ask-user`,逐项分级 ok/degraded/missing + 精确补装指引
   - 安装只经用户终端 `npx gotry doctor --fix`;LLM key 归 dsh 宿主,刻意不管
   - 工具层 not-installed/needs-setup 报错统一指 doctor(2026-09-02 迪拜 session 复盘:阻断对已坏通道的盲目重试)
 - **运维面**:质量指标只读聚合 `ts/scripts/build-metrics-report.ts`(2026-09-05,#138 第一切片)——事实闸 verdict 分布与 blocked 率/通道健康 down·cooldown(30 天窗)/事故面(7 天窗)/桥延迟 p50·p95·max(**>500ms 超限计数=§11 复审节奏触发锚点的可见面**)/账本与 doctor 报告存在性,聚成单一 markdown;全程只读零 SQLite 打开(`openDb` 建连即可能写 kv),默认 stdout、`--out` 才落盘;工程面交付,不构成 M3 Exit 证据(归 #22)
@@ -346,7 +346,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 原则:**不跳阶段,不提前优化下阶段的事**;每阶段 Entry/Exit/gate 见 roadmap。旧 Stage 0-4 与总纲 Phase、产品 M1-M3 已归并映射到 M0-M6(映射表在 roadmap)。
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
-- **Issue #202 地图插件 vendoring**:root/ts 严格 npm 安装不再解析外部 `dsh-map-tools` peer;`vendor/dsh-map-tools/` 携带上游 `0.5.1` MIT payload,其 vendored settings 接线使用 alpha.3 `installSettingsSection(ctx, settingsNamespace, schema, entry, hooks)` 形态并由 proof 验证。`bin/gotry-inner.js`、CLI bootstrap 与 `capabilities/doctor.ts` 同优先级解析仓内绝对入口;打包证明覆盖 unpack/import、32 文件 payload aggregate、7 个 `map_*` 注册及无网络 inline 坐标路径。
+- **Issue #202/#242 地图插件 vendoring 回归修复**:root/ts 严格 npm 安装不再解析外部 `dsh-map-tools` peer;`vendor/dsh-map-tools/` 携带上游 `0.5.1` MIT payload,其 vendored settings 接线使用 alpha.3 已发布的 `SettingsProvider.prototype.installSection(owner, ns, schema, entry, hooks)` 方法和普通字符串 namespace,由 proof 验证。`bin/gotry-inner.js`、CLI bootstrap 与 `capabilities/doctor.ts` 同优先级解析仓内绝对入口;打包证明覆盖 unpack/import、32 文件 payload aggregate、7 个 `map_*` 注册、settings watch/reload/dispose 生命周期及无网络 inline 坐标路径。
 - **当前主线 = M3 evidence 未收口;并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪,真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进;T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明,真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动,不得由并行实现倒推开闸。
 - **HotelByte Booking Copilot 产品验收并行线**:候选以单一 `booking.surface` 契约(2026-09-05 #133 收敛,原 v2 形态转正、v1 退役)的 GoTry 作为既有搜索/报价/Checkout 工作台的 BFF-only typed read-action planner(边界见 §8.23)。该线不含 `Book`,不构成 M5 Entry;四 surface 真实库存与「不可订→重搜→新 CheckAvail→原 Checkout」证据尚未取得,见 D-29。
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面;业务达标只接受阈值冻结的 `real_seed_cohort`,fixture 恒 fail。真实 cohort 仍为空,等待 50–200 个脱敏样本,不宣称 M3 Exit。
@@ -496,7 +496,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 **D-4 gate/卡片无承载界面**
 
-**词表内赎回 2026-08-22**:feasibility + 酒店/天气/Anything/AgentReach 五工具 presentResult 结果卡(可行性:候选判定+预算行;酒店:N 家(实时/静态);天气:ok/降级;Anything:N hits;AgentReach:✅/🔧/📦/❌ verdict)+ 12 工具 kind 图标分类(search/fetch/execute/edit,零 other);**地图位已解 2026-08-22**:宿主插件 dsh-map-tools v0.5.1(7 个 map_* 原生工具:驾/公/步/骑路线+地理编码+POI,零 key 走 OSRM,高德可后配)。当前 source/package 优先使用随包 `ts/dsh-runtime/vendor/dsh-map-tools/` MIT payload，旧 source/npm 布局只作兼容回退；外部 npm 依赖因 rc peer 与 alpha.3 closure 冲突而移除，§49b 对 clean tarball、7 工具和零网络坐标路径 fail-closed；patch 条目占位、payload 缺失时整块剔除不挡启动;root `./gotry` 统一走 inner。
+**词表内赎回 2026-08-22**:feasibility + 酒店/天气/Anything/AgentReach 五工具 presentResult 结果卡(可行性:候选判定+预算行;酒店:N 家(实时/静态);天气:ok/降级;Anything:N hits;AgentReach:✅/🔧/📦/❌ verdict)+ 12 工具 kind 图标分类(search/fetch/execute/edit,零 other);**地图位已解 2026-08-22**:宿主插件 dsh-map-tools v0.5.1(7 个 map_* 原生工具:驾/公/步/骑路线+地理编码+POI,零 key 走 OSRM,高德可后配)。当前 source/package 优先使用随包 `ts/dsh-runtime/vendor/dsh-map-tools/` MIT payload，settings 接线走真实 alpha.3 `SettingsProvider.prototype.installSection` + 普通 namespace 字符串；旧 source/npm 布局只作兼容回退；外部 npm 依赖因 rc peer 与 alpha.3 closure 冲突而移除，§49b 对 clean tarball、7 工具、settings watch/reload/dispose 和零网络坐标路径 fail-closed；patch 条目占位、payload 缺失时整块剔除不挡启动;root `./gotry` 统一走 inner。
 
 **D-4a'(agent-reach 100% follow)**
 

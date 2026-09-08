@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { Config as ConfigType } from './config.js';
-/** Namespace the settings page keys this plugin's card to. */
+/** Namespace the settings page keys this plugin's card to (plain string for DSH 0.1.2-alpha.3). */
 export declare const MAP_TOOLS_NS = "dsh-map-tools";
 /**
  * Wire the settings section so the card renders. The values live in the

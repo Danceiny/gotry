@@ -191,7 +191,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 
 - **Z3 求解引擎** —— 可行性判决 + 门到门全成本;历史并发竞态已根治并进回归闸
 - **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`);飞猪匿名试用额度达限归类 `needs-setup` 并带配 key 指引(不盲重试)
-- **依赖体检** —— `npx gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):可选依赖(扩展 / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar / dsh-map-tools / dsh-tool-ask-user)只读体检 + 精确补装指引；地图工具以 MIT payload 随包交付，不再引入与 alpha.3 冲突的外部 npm peer；`--fix` 补装;LLM key 仍归 dsh 宿主管
+- **依赖体检** —— `npx gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):可选依赖(扩展 / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar / dsh-map-tools / dsh-tool-ask-user)只读体检 + 精确补装指引；地图工具以 MIT payload 随包交付，不再引入与 alpha.3 冲突的外部 npm peer，设置卡接线走真实 alpha.3 `SettingsProvider.prototype.installSection` 方法与普通 namespace 字符串；`--fix` 补装;LLM key 仍归 dsh 宿主管
 - **账号会话检索** —— 你本人登录态查携程机票/酒店 + 12306 火车(酒/火 2026-09-03 实装:酒店为被动嗅探登录态真实价,火车为 12306 公开余票查询面;接口面随首个真会话校准);观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
 - **扩展按需装** —— `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 这边不跑 setup wizard、不开 chrome://extensions、不动剪贴板
 - **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
