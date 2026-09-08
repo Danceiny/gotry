@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.1-rc.21] - 2026-09-08
+
+### Added
+
+- require hbcli >= 0.0.3 (issue #142)… (#221)
+- exact terminal schema projection… (#217)
+
+### Fixed
+
+- 子任务等待纪律——子代理回执 id 不是 job id,禁 job_output 轮询(#194 B-轨道)… (#219)
+- 澄清卡示例过锚点卡——候选时段枚举禁列已过节日(#2 rc18 复发)… (#218)
+- login/rmtag 子命令豁免发布 TAG 闸——web 会话流程修复 + dist-tag 维护面… (3fdf957)
+- flatten benchmark bridge wire for providers… (#214)
+- changelog 闸幂等——顶部已是当前版本段时跳过再生成… (1a0a43e)
+- prevent fact ref alias collisions… (#212)
+- restore strict installs and isolate wizard probes… (#211)
+
+### Documentation
+
+- 加 star 数徽章与 Star History 曲线——让仓库主页能展示项目增长轨迹… (4c7aa22)
+- 固化 dist-tag 删除通道穷尽验证——granular token 四路全 403/405… (b31db76)
+- 去重历史段——rc.19×3、rc.16×5 收敛为各一段… (c37fd1e)
+- 去重 rc.20 段——发布脚本 token 缺失首跑后重跑,二次生成重复段(rc.19 亦有两段历史重复,后续再清)… (cdeddc8)
+
 ## [0.0.1-rc.20] - 2026-09-08
 
 ### Fixed
