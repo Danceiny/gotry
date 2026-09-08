@@ -49,6 +49,10 @@
   - 封存价表 v1(DeepSeek V4 only)升 v2(provider-aware,`gotry_llm_price_table_v2`);MiniMax M2/M2.1/M3 入表;`ts/scripts/price-drift-watch.ts` 覆盖四家主流 provider,默认离线对照 baseline 比对输出 PR-就绪 Markdown diff,**永不自动 apply 价格**(ADR-11 纪律——founder 实测「自动 apply 易把官方 down 5% 误认为我的 bug」)。fetch/解析失败 → SKIP + reason,零写未知数据。
   - run-all §41 合同验证 8/8。同批 CHANGELOG 机制(`ts/scripts/build-changelog.ts` + `CHANGELOG.md`,`publish-npm.sh` 闸自动跑 + `gh release create`)与 §38 扩展桥 zombie port 根治。
 
+### M4/M6 本地基线稳定性(#227)
+
+- **Z3 WASM 生命周期复修已接入回归闸**:Node24 全栈 §30 间歇 heap corruption 的新增修复面为冷初始化 Promise 先缓存 + `z3-solver@5.2.0` low-level native cleanup 局部队列 + actual native check barrier + fatal poison。确定性守卫进入 run-all §30b,多进程重复进入 §30c；长稳证据仍按 PR/本地执行报告逐 SHA 给出,不得用单次 scratch 绿替代。
+
 ### M3 真实证据并行线(Issue #22)
 
 - manifest 冻结样本窗口、纳排、分母、归因与 Exit 阈值;脱敏 cohort/nightly schema 和确定性 scorer 已有 synthetic fixture 守门。
@@ -111,7 +115,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
     - 「文件即权威」升级为「单文件 SQLite 账本即权威」——
     - events append-only + 投影 fold 重建 + 红线(evidence/conditions)进事务 + confirm-outcome 单事务 + 异步工单 durable 恢复(exactly-once；`gotry_async_terminal.v1` 将 4/4 映射为 `succeeded`/ledger `settled`/exit 0，将非 4/4 映射为 `failed`/ledger `failed`/exit 2，终态复诵零重算且保持同一退出码)+ pending_writes saga(WriteGate M5 的 L2/L3 基座,D4 定为 M5 Entry 前置);
   - 旧 JSON/JSONL 降级为单向导出视图(红线 6),首写自动迁移+快照;run-all §28/§29,多用户账本化(RFC §6.5)触发式后置(D-15)。**同日 ADR-16 双形态架构冻结**:本地+Web 一套账本语义、tenant_id 一等字段(schema v2)、同步=事件复制非状态翻译——防「将来大规模重构」的核心冻结,founder 拍板「要的」。
-  - **2026-08-29 已知限制清算第一刀(founder 指令「解决这些 known limitations」)**:Z3 WASM race 根治(`z3-shared.ts` 单一实例+会话级互斥,run-all §1 重试止血退役+§30 并发回归闸),薄壳遗留(`shell/`)物理删除——README Known limitations 中两条就此清偿,余两条同批推进:实时票价桥已接入(flyai overlay+env 闸,run-all §31),i18n 工程面落地(run-all §32:en 零缺键/zh 金标准逐字节),人格与工具卡的校准后补齐挂 M4。
+  - **2026-08-29 已知限制清算第一刀(founder 指令「解决这些 known limitations」)**:Z3 WASM race 首轮收敛为 `z3-shared.ts` 单一实例+会话级互斥(run-all §1 重试止血退役+§30 并发回归闸),薄壳遗留(`shell/`)物理删除——README Known limitations 中两条就此清偿。**2026-09-08 #227 复修**:Node24 暴露 high-level FinalizationRegistry native cleanup 越过互斥与冷初始化缓存竞态,补 low-level cleanup 队列/actual native barrier/fatal poison 并进 run-all §30b/§30c。余两条同批推进:实时票价桥已接入(flyai overlay+env 闸,run-all §31),i18n 工程面落地(run-all §32:en 零缺键/zh 金标准逐字节),人格与工具卡的校准后补齐挂 M4。
   - **2026-08-30 会话传输层定案扩展桥(issue #21 方案 C,founder「逐连接权限框根本无法使用」实测定案)**:Chrome 144+ 每 CDP 连接必弹权限框且无持久化批准 → CDP 降显式 opt-in,自研 `extension/` GoTry Session Bridge(MV3 一次性安装,固定 key 扩展 ID)+ `node:http` 回环桥升 PRIMARY——系统弹窗每会话 0 次;登录快路径免标签页秒回;`needs-extension`=waiting no-spend;run-all §38 全离线 23 断言;真实 sf-01..08 双源跑批门禁降为「装一次扩展」,与 #16/#22 同属等外部输入的 no-spend 等待面。
   - **2026-08-30 同批 onboarding UX(issue #21 P3.6,后于 2026-09-02 商店上架后撤销)**:5 步 GUI 编排 wizard 曾把用户侧降到 3 次点击;商店上架后按「职责返交」撤销——安装回浏览器、渲染回 dsh UI,wizard 退化为离线健康探活等待(run-all §40;全文见 `rfc/user-session-data-rfc.md` §3.3)。
   - **2026-08-30 同批 P3.7 双源 e2e 真跑批(goal 2,commit `60669f8`+PR #66 follow-up)**:founder 实问「flyai 只是一个 vendor,可以切别的?」→ **拒 vendor 锁**,official golden 改 pluggable(默认 `manual-golden`;`--golden=flyai` 显式切);`ts/scripts/sf-live-benchmark.ts` + `ts/scripts/sf-summary.ts` 重建 unified summary;

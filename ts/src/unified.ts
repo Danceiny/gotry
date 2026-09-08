@@ -249,6 +249,10 @@ function evaluateOptionMove(segId: string, mv: MoveSpecTS): LegReport & { d2d_mi
   }
 }
 
+function releaseZ3(resource: { release?: () => void } | null | undefined): void {
+  if (typeof resource?.release === 'function') resource.release()
+}
+
 /** 航班链形态求解:按 Option 选择,锚点命名约束,core 剥竖线(D-2 修复) */
 export async function solveUnified(spec: JourneySpecTS): Promise<{
   feasible: boolean
@@ -345,50 +349,76 @@ async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
   }
 
   const s = new Solver()
-  for (const sel of Object.values(allSels)) s.add(exactlyOne(sel))
-  for (const [name, expr] of Object.entries(assertions)) s.addAndTrack(expr, name)
+  let sOpen = true
+  const closeS = () => {
+    if (sOpen) {
+      releaseZ3(s)
+      sOpen = false
+    }
+  }
+  try {
+    for (const sel of Object.values(allSels)) s.add(exactlyOne(sel))
+    for (const [name, expr] of Object.entries(assertions)) s.addAndTrack(expr, name)
 
-  const report = async (model: any): Promise<Array<LegReport & { leg: string }>> => {
-    const out: Array<LegReport & { leg: string }> = []
-    for (const seg of spec.segments) {
-      for (let i = 0; i < allSels[seg.id].length; i++) {
-        const v = await maybeAwait(model.eval(allSels[seg.id][i], true))
-        if (String(v) !== 'true') continue
-        const o = seg.options[i]
-        out.push({ leg: seg.id, ...evaluateOptionMove(seg.id, o.move!) })
-        break
+    const report = async (model: any): Promise<Array<LegReport & { leg: string }>> => {
+      const out: Array<LegReport & { leg: string }> = []
+      for (const seg of spec.segments) {
+        for (let i = 0; i < allSels[seg.id].length; i++) {
+          const v = await maybeAwait(model.eval(allSels[seg.id][i], true))
+          if (String(v) !== 'true') continue
+          const o = seg.options[i]
+          out.push({ leg: seg.id, ...evaluateOptionMove(seg.id, o.move!) })
+          break
+        }
+      }
+      return out
+    }
+
+    async function maybeAwait<T>(v: T | Promise<T>): Promise<T> {
+      return v instanceof Promise ? await v : v
+    }
+
+    if (String(await s.check()) !== 'unsat') {
+      const model = s.model()
+      try {
+        const legs = await report(model)
+        const money = legs.reduce((a, l) => a + l.price_cny, 0)
+        const redFlags = legs
+          .filter(l => spec.segments.find(sg => sg.id === l.leg)?.options.some(o => o.move?.redEye) && l.energy_pct < 50)
+          .map(l => i18nT('un.redflag_redeye', { leg: l.leg, pct: l.energy_pct }))
+        return { feasible: true, money_cny: money, legs, red_flags: redFlags, work_window_exclusions: exclusions, skeleton_notes: skeletonNotes.length ? skeletonNotes : undefined }
+      } finally {
+        releaseZ3(model)
       }
     }
-    return out
-  }
 
-  async function maybeAwait<T>(v: T | Promise<T>): Promise<T> {
-    return v instanceof Promise ? await v : v
-  }
-
-  if (String(await s.check()) !== 'unsat') {
-    const legs = await report(s.model())
-    const money = legs.reduce((a, l) => a + l.price_cny, 0)
-    const redFlags = legs
-      .filter(l => spec.segments.find(sg => sg.id === l.leg)?.options.some(o => o.move?.redEye) && l.energy_pct < 50)
-      .map(l => i18nT('un.redflag_redeye', { leg: l.leg, pct: l.energy_pct }))
-    return { feasible: true, money_cny: money, legs, red_flags: redFlags, work_window_exclusions: exclusions, skeleton_notes: skeletonNotes.length ? skeletonNotes : undefined }
-  }
-
-  const core = coreOf(s).sort()
-  const suggestions: Array<{ relax: string; money_cny: number }> = []
-  for (const name of core) {
-    const s2 = new Solver()
-    for (const sel of Object.values(allSels)) s2.add(exactlyOne(sel))
-    for (const [n2, expr] of Object.entries(assertions)) {
-      if (n2 !== name) s2.addAndTrack(expr, n2)
+    const core = coreOf(s).sort()
+    const suggestions: Array<{ relax: string; money_cny: number }> = []
+    closeS()
+    for (const name of core) {
+      const s2 = new Solver()
+      try {
+        for (const sel of Object.values(allSels)) s2.add(exactlyOne(sel))
+        for (const [n2, expr] of Object.entries(assertions)) {
+          if (n2 !== name) s2.addAndTrack(expr, n2)
+        }
+        if (String(await s2.check()) !== 'unsat') {
+          const model = s2.model()
+          try {
+            const legs = await report(model)
+            suggestions.push({ relax: name, money_cny: legs.reduce((a, l) => a + l.price_cny, 0) })
+          } finally {
+            releaseZ3(model)
+          }
+        }
+      } finally {
+        releaseZ3(s2)
+      }
     }
-    if (String(await s2.check()) !== 'unsat') {
-      const legs = await report(s2.model())
-      suggestions.push({ relax: name, money_cny: legs.reduce((a, l) => a + l.price_cny, 0) })
-    }
+    return { feasible: false, unsat_core: core, suggestions }
+  } finally {
+    closeS()
   }
-  return { feasible: false, unsat_core: core, suggestions }
   })
 }
 

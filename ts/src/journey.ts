@@ -89,6 +89,10 @@ function exactlyOne(z3: any, sels: any[]): any {
   return Sum(...sels.map(s => If(s, Int.val(1), Int.val(0)))).eq(Int.val(1))
 }
 
+function releaseZ3(resource: { release?: () => void } | null | undefined): void {
+  if (typeof resource?.release === 'function') resource.release()
+}
+
 export async function solveJourney(req: JourneyRequestSpec): Promise<JourneyResult> {
   // 会话级互斥门:判定段从 here 到 return 独占共享实例,防同 Context 并发 unwind。
   return withZ3('journey.solveJourney', async z3 => {
@@ -137,43 +141,69 @@ export async function solveJourney(req: JourneyRequestSpec): Promise<JourneyResu
   }
 
   const s = new Solver()
-  for (const sel of Object.values(allSels)) s.add(exactlyOne(z3, sel))
-  for (const [name, expr] of Object.entries(assertions)) s.addAndTrack(expr, name)
-
-  if (String(await s.check()) !== 'unsat') {
-    const chosen = await extract(s.model())
-    const legReports = legSpecs.map(leg => evaluateLeg(leg, chosen.get(leg.id)!))
-    const money = legReports.reduce((a, r) => a + r.price_cny, 0)
-    const redFlags = [
-      ...legSpecs.map((leg, i) => leg.redEye && legReports[i].energy_pct < 50
-        ? `${leg.id} 落地精力仅 ${legReports[i].energy_pct}%(红眼后直奔事务,当日不宜安排重要会议)` : '')
-        .filter(Boolean),
-      ...legSpecs.map((leg, i) => !leg.redEye && legReports[i].wakeMin >= 0 && legReports[i].wakeMin < 6 * 60
-        ? `${leg.id} 起床 ${legReports[i].wake}(早于 6:00,生物钟代价)` : '')
-        .filter(Boolean),
-    ]
-    return { feasible: true, money_cny: money, legs: legReports, red_flags: redFlags }
-  }
-
-  const core = coreOf(s).sort()
-  const suggestions: JourneyResult['suggestions'] = []
-  for (const name of core) {
-    const s2 = new Solver()
-    for (const sel of Object.values(allSels)) s2.add(exactlyOne(z3, sel))
-    for (const [n2, expr] of Object.entries(assertions)) {
-      if (n2 !== name) s2.addAndTrack(expr, n2)
-    }
-    if (String(await s2.check()) !== 'unsat') {
-      const chosen = await extract(s2.model())
-      const rep = legSpecs.map(leg => evaluateLeg(leg, chosen.get(leg.id)!))
-      suggestions.push({
-        relax: name,
-        money_cny: rep.reduce((a, r) => a + r.price_cny, 0),
-        legs: rep.map((r, i) => ({ ...r, leg: legSpecs[i].id })),
-      })
+  let sOpen = true
+  const closeS = () => {
+    if (sOpen) {
+      releaseZ3(s)
+      sOpen = false
     }
   }
-  return { feasible: false, unsat_core: core, suggestions }
+  try {
+    for (const sel of Object.values(allSels)) s.add(exactlyOne(z3, sel))
+    for (const [name, expr] of Object.entries(assertions)) s.addAndTrack(expr, name)
+
+    if (String(await s.check()) !== 'unsat') {
+      const model = s.model()
+      try {
+        const chosen = await extract(model)
+        const legReports = legSpecs.map(leg => evaluateLeg(leg, chosen.get(leg.id)!))
+        const money = legReports.reduce((a, r) => a + r.price_cny, 0)
+        const redFlags = [
+          ...legSpecs.map((leg, i) => leg.redEye && legReports[i].energy_pct < 50
+            ? `${leg.id} 落地精力仅 ${legReports[i].energy_pct}%(红眼后直奔事务,当日不宜安排重要会议)` : '')
+            .filter(Boolean),
+          ...legSpecs.map((leg, i) => !leg.redEye && legReports[i].wakeMin >= 0 && legReports[i].wakeMin < 6 * 60
+            ? `${leg.id} 起床 ${legReports[i].wake}(早于 6:00,生物钟代价)` : '')
+            .filter(Boolean),
+        ]
+        return { feasible: true, money_cny: money, legs: legReports, red_flags: redFlags }
+      } finally {
+        releaseZ3(model)
+      }
+    }
+
+    const core = coreOf(s).sort()
+    const suggestions: JourneyResult['suggestions'] = []
+    closeS()
+    for (const name of core) {
+      const s2 = new Solver()
+      try {
+        for (const sel of Object.values(allSels)) s2.add(exactlyOne(z3, sel))
+        for (const [n2, expr] of Object.entries(assertions)) {
+          if (n2 !== name) s2.addAndTrack(expr, n2)
+        }
+        if (String(await s2.check()) !== 'unsat') {
+          const model = s2.model()
+          try {
+            const chosen = await extract(model)
+            const rep = legSpecs.map(leg => evaluateLeg(leg, chosen.get(leg.id)!))
+            suggestions.push({
+              relax: name,
+              money_cny: rep.reduce((a, r) => a + r.price_cny, 0),
+              legs: rep.map((r, i) => ({ ...r, leg: legSpecs[i].id })),
+            })
+          } finally {
+            releaseZ3(model)
+          }
+        }
+      } finally {
+        releaseZ3(s2)
+      }
+    }
+    return { feasible: false, unsat_core: core, suggestions }
+  } finally {
+    closeS()
+  }
   })
 }
 

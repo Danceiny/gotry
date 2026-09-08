@@ -98,6 +98,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - **HotelByte embedded Booking Copilot 是只读协作面,不是 M5 写闸启封**:单一 `booking.surface` 契约(2026-09-05 #133 收敛,v1 退役),生产 standalone 默认 `bff-bound-turn-only`,浏览器 `user.turn.ingress` 只在完整 authenticated principal/scope + BFF trusted binding 下开放;must blocker 只能由绑定 task/context/receipt/presentation key 的一次性 approval 放行。离页自动写/支付须另立 M5 WriteGate ADR;四 surface 真实库存验收未过前不得宣称产品验收(D-29)。全文见 §8.23。
 - py 树仅剩 `gotry_feasibility` oracle,产品运行时零 Python 依赖(D-7 清偿)。
 - **外部 benchmark bridge 一律 default-off**(Phase 1 seam):owner-local config、固定 argv/allowlist、递归 no-oracle 键拒绝、cold-start + headless one-shot、native definition-only agent、启动组合隔离、结构化终态诊断——任一合同漂移 fail-closed。单一 flat `action=tools|call|errors` 协议由 descriptor 同源生成每工具精确 call schema，并在 spawn 前复用同一 validator；adapter 输出只接受 exact result/domain/failure envelope，旧终态不得遮蔽更新的 bridge 事实。逐轮 frozen treatment 事实见 §9,合同全文见 `evaluation/benchmark-environment-bridge.md`。
+- **Z3 生命周期边界(#227)**:`ts/src/z3-shared.ts` 是唯一运行时入口:冷初始化 Promise 先缓存(并发只建一个 Context)、会话级互斥 `withZ3`、low-level native cleanup 局部队列(只包装当前 `z3-solver@5.2.0` 的 `dec_ref`/`*_dec_ref` 与 async native call,不改全局 `FinalizationRegistry`,不提前 free 仍可达对象)。GC/explicit release 的 cleanup 若撞上活跃 native check,延迟到 actual native idle 后 drain；fatal WASM/heap 错误先 poison,后续求解 fail-closed。回归锚点:run-all §30/§30b/§30c。
 - 全栈回归见 `scripts/run-all-tests.sh` 分节(计数不落字)。
 
 ### 1.7 里程碑口径(Issue #19)
@@ -360,7 +361,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **Issue #67 登录态真跑与桥退出语义(2026-08-30)**:连续两轮 static official 均 8/8 命中且零 fallback;session hit 数从 3/8 波动到 5/8,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 必须显式披露且不进软评分分母。真扩展在线场景触发的 CLI 不退出已以默认桥 parked timer/socket `unref` 修复;`keepBridge` wizard 轨通过 §40,§38 增子进程回归。
 - **M4 Issue #20 价值证据切片(2026-08-29)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。合成数据明确不可关闭 M4;下一阶段只等真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
 - **已知限制清算第一刀(2026-08-29,founder 指令「解决这些 known limitations」)**:
-  - **Z3 WASM race 根治**:历史债「三模块各自 init 的 WASM 实例并存 + `Promise.all` 同 Context 并发」双重根因,经 `ts/src/z3-shared.ts`(单一实例 / 单一 Context / 会话级互斥 `withZ3`)关闭;engine/journey/unified 三模块全部过门,engine.solve 弃 `Promise.all` 改串行。当年 rc.4 单例回滚的 Context mismatch 来自混用残留 Context,本次三入口同门无混用面。run-all §1 重试止血退役 + §30 并发回归闸。
+  - **Z3 WASM 生命周期复修(#227,2026-09-08)**:08-29 的单例+互斥仍留下两条 Node24 间歇面——`getZ3` 冷启动 Promise 在 await 后写缓存会并发创建多个 Context；`z3-solver@5.2.0` high-level `FinalizationRegistry` cleanup 直接触发 low-level native `dec_ref`/`*_dec_ref`,不经过 `withZ3`。本轮修复为:Promise 先缓存、启用 `enable_concurrent_dec_ref` fail-closed、局部包装 low-level cleanup 与 actual async native call,仅在活跃 session/native check 时排队 cleanup 并在 idle 后同步 drain；fatal WASM/heap 错误先 poison 并拒绝后续求解。反证覆盖:全局 `FinalizationRegistry` identity 不变、返回的 live Model/Ast 跨 session 仍可用、独立并发请求排队不误判 nested、in-flight native barrier 先进入后才允许 settle。run-all §30/§30b/§30c。
   - **薄壳遗留**(`shell/` 目录)物理删除,dsh web 确认为唯一产品面。
   - **实时票价接入**:`ts/src/realtime-pricing.ts`——dated 航班链段经 FlyAI 官方只读通道按航班号精确匹配覆写 spec 价格,证据链 `[实时API:flyai@ts]` 并进 skeleton_notes;miss/error/打码价/无匹配一律降级回静态包,永不抛错。`realtimeSolvePort`(env 闸 `GOTRY_REALTIME_PRICING`,默认关)接线 replay-real——**静态包由唯一来源变为显式降级**,run-all §31。
   - **i18n 英文面工程层**:`i18n.ts` 消息目录——zh-CN 默认且与金标准逐字节一致,`GOTRY_LOCALE=en` 切英文、en 缺键回退 zh;覆盖求解确定性面(候选/航班链 answer_md、放宽建议、排除理由、wish 理由)。run-all §32;工具卡与人格对话面挂 M4 校准样本随补。
@@ -520,7 +521,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 **D-17 Z3 WASM race(README Known limitation)**
 
-**已清偿 2026-08-29**(`z3-shared.ts`):双重根因一并关闭——①三模块(engine/journey/unified)各自 `init()` 使单进程并存 2-3 份 WASM 实例(内存放大,系统压力下 2GB 堆分配失败的 OOM 形态);②`engine.solve` 用 `Promise.all` 多候选并发共享同一 Context,z3 async 会话交错即栈损坏(`mk_bool_var memory access out of bounds`,run-all §1 长期靠「重试一次」止血)。现三入口经 `withZ3` 会话级互斥(单实例单 Context,门内禁嵌套),rc.4 当年单例回滚的「Context mismatch」源于残留自建 Context 混用,现无混用面;run-all §1 止血退役,新增 §30 并发回归闸(进程内三形态同轮并发 ×12 与顺序基线逐项对账)。锚点:`z3-shared.ts`;run-all §30。
+**复修清偿 2026-09-08(issue #227)**:08-29 的单例+互斥修掉三模块多实例与显式并发,但 Node24 全栈 run-all §30 仍出现间歇 `Aborted(Runtime error: The application has corrupted its heap memory area (address zero)!)`。新增根因证据:① 冷启动并发 `getZ3()` 在 await 后缓存 Promise,可创建多个 high-level Context 对象；② `z3-solver@5.2.0` high-level `FinalizationRegistry` cleanup 直接调用 native `dec_ref`/`*_dec_ref`,会在 GC 时机越过 `withZ3` 与 actual native check 并发。修复锚点:`z3-shared.ts` Promise 先缓存 + `enable_concurrent_dec_ref` fail-closed + low-level cleanup 局部队列 + actual async native barrier + fatal poison；engine/journey/unified 显式 release Solver/Optimize/Model 以降低 GC 压力但不提前 free 活对象。反证锚点:`z3-lifecycle-tests.ts`/`z3-lifecycle-fault-tests.ts`/`z3-race-repeat-tests.ts`;run-all §30/§30b/§30c。
 
 **D-21 async 非 4/4 被误结算为成功**
 

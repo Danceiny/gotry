@@ -193,6 +193,15 @@ echo "=== 30. Z3 WASM race 回归(engine/journey/unified 三形态同轮并发�
 (cd ts && npx tsx scripts/z3-race-tests.ts) || FAIL=1
 
 echo
+echo "=== 30b. Z3 生命周期局部守门(#227:冷初始化单 Context/低层 cleanup 队列/actual-native barrier/活对象保留/排队合同) ==="
+(cd ts && npx tsx scripts/z3-lifecycle-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/z3-lifecycle-fault-tests.ts) || FAIL=1
+
+echo
+echo "=== 30c. Z3 race 独立进程重复(#227:多进程重复保存原始 stdout/stderr) ==="
+(cd ts && npx tsx scripts/z3-race-repeat-tests.ts) || FAIL=1
+
+echo
 echo "=== 31. 实时票价 overlay(flyai 实时桥 + 静态降级三值语义;纯离线注入,hit 覆写/error 降级/日期词表闸/求解集成) ==="
 (cd ts && npx tsx scripts/realtime-pricing-tests.ts | tail -1) || FAIL=1
 

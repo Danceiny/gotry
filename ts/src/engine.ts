@@ -140,11 +140,16 @@ class Encoding {
 
   async solverWith(skip: ReadonlySet<string> = new Set()): Promise<any> {
     const s = new this.z3.Solver()
-    s.add(this.structure)
-    for (const name of CONSTRAINT_LABEL_KEYS) {
-      if (!skip.has(name)) s.addAndTrack(this.assertions[name], name)
+    try {
+      s.add(this.structure)
+      for (const name of CONSTRAINT_LABEL_KEYS) {
+        if (!skip.has(name)) s.addAndTrack(this.assertions[name], name)
+      }
+      return s
+    } catch (error) {
+      releaseZ3(s)
+      throw error
     }
-    return s
   }
 
   async extract(model: any): Promise<Choice> {
@@ -165,6 +170,10 @@ class Encoding {
   }
 }
 
+function releaseZ3(resource: { release?: () => void } | null | undefined): void {
+  if (typeof resource?.release === 'function') resource.release()
+}
+
 async function maybeAwait<T>(v: T | Promise<T>): Promise<T> {
   return v instanceof Promise ? await v : v
 }
@@ -183,18 +192,39 @@ async function unsatCoreOf(s: any): Promise<string[]> {
 async function cheapestPlan(enc: Encoding, skip: ReadonlySet<string>, z3: Z3Ctx): Promise<{ choice: Choice; cost: TrueCost } | null> {
   /** 放宽 skip 约束下的最省钱方案:getLower 取最优值,等值回代提模(与 Python _cheapest_plan 同)。 */
   const opt = new z3.Optimize()
-  opt.add(enc.structure)
-  for (const name of CONSTRAINT_LABEL_KEYS) {
-    if (!skip.has(name)) opt.add(enc.assertions[name])
+  let optOpen = true
+  const closeOpt = () => {
+    if (optOpen) {
+      releaseZ3(opt)
+      optOpen = false
+    }
   }
-  const obj = opt.minimize(enc.moneyExpr)
-  if (await isUnsat(opt)) return null
-  const best = Number(String(await maybeAwait(opt.getLower(obj))))
-  const s = await enc.solverWith(skip)
-  s.add(enc.moneyExpr.eq(z3.Int.val(best)))
-  if (await isUnsat(s)) return null
-  const choice = await enc.extract(s.model())
-  return { choice, cost: evaluateChoice(enc.cand, enc.req, choice) }
+  try {
+    opt.add(enc.structure)
+    for (const name of CONSTRAINT_LABEL_KEYS) {
+      if (!skip.has(name)) opt.add(enc.assertions[name])
+    }
+    const obj = opt.minimize(enc.moneyExpr)
+    if (await isUnsat(opt)) return null
+    const best = Number(String(await maybeAwait(opt.getLower(obj))))
+    closeOpt()
+    const s = await enc.solverWith(skip)
+    try {
+      s.add(enc.moneyExpr.eq(z3.Int.val(best)))
+      if (await isUnsat(s)) return null
+      const model = s.model()
+      try {
+        const choice = await enc.extract(model)
+        return { choice, cost: evaluateChoice(enc.cand, enc.req, choice) }
+      } finally {
+        releaseZ3(model)
+      }
+    } finally {
+      releaseZ3(s)
+    }
+  } finally {
+    closeOpt()
+  }
 }
 
 function suggestText(relax: string[], cand: Candidate, req: TravelRequest, choice: Choice, cost: TrueCost): string {
@@ -224,64 +254,99 @@ export async function solveCandidate(cand: Candidate, req: TravelRequest): Promi
   }
 
   const s = await enc.solverWith()
-  if (!(await isUnsat(s))) {
-    verdict.feasible = true
-    verdict.choice = await enc.extract(s.model())
-    verdict.trueCost = evaluateChoice(cand, req, verdict.choice)
+  let sOpen = true
+  const closeS = () => {
+    if (sOpen) {
+      releaseZ3(s)
+      sOpen = false
+    }
+  }
+  try {
+    if (!(await isUnsat(s))) {
+      verdict.feasible = true
+      const model = s.model()
+      try {
+        verdict.choice = await enc.extract(model)
+      } finally {
+        releaseZ3(model)
+      }
+      verdict.trueCost = evaluateChoice(cand, req, verdict.choice)
+      return verdict
+    }
+
+    const core = (await unsatCoreOf(s)).sort()
+    verdict.unsatCore = core
+    closeS()
+
+    // 单条放宽(days 仍是数据:放宽 duration 时换长窗口口径重新编码)
+    for (const name of core) {
+      const skip = new Set([name])
+      const enc2 = name === 'duration' ? new Encoding(z3, cand, req, cand.minDaysForPurpose) : enc
+      const s2 = await enc2.solverWith(skip)
+      try {
+        if (!(await isUnsat(s2))) {
+          const model = s2.model()
+          try {
+            const choice = await enc2.extract(model)
+            const cost = evaluateChoice(cand, req, choice)
+            verdict.suggestions.push({ relax: [name], text: suggestText([name], cand, req, choice, cost), resulting: { days: choice.days, ...trueCostToDict(cost) } })
+          } finally {
+            releaseZ3(model)
+          }
+        }
+      } finally {
+        releaseZ3(s2)
+      }
+    }
+
+    // 组合 core:放宽 duration 换长口径 → 取新口径 core 叠加 → 收缩
+    if (core.includes('duration')) {
+      const longEnc = new Encoding(z3, cand, req, cand.minDaysForPurpose)
+      const s2 = await longEnc.solverWith(new Set(['duration']))
+      try {
+        if (await isUnsat(s2)) {
+          const core2 = await unsatCoreOf(s2)
+          let joint = ['duration', ...core2.filter(n => n !== 'duration')]
+          for (const name of joint.filter(n => n !== 'duration')) {
+            const trial = new Set(joint.filter(n => n !== name))
+            const trialSolver = await longEnc.solverWith(trial)
+            try {
+              if (!(await isUnsat(trialSolver))) joint = [...trial]
+            } finally {
+              releaseZ3(trialSolver)
+            }
+          }
+          const plan = await cheapestPlan(longEnc, new Set(joint), z3)
+          if (plan) {
+            verdict.suggestions.push({
+              relax: joint,
+              text: suggestText(joint, cand, req, plan.choice, plan.cost),
+              resulting: { days: plan.choice.days, ...trueCostToDict(plan.cost) },
+            })
+          }
+        }
+      } finally {
+        releaseZ3(s2)
+      }
+    }
+
+    // 憧憬不被拒绝:放宽时长能救活 → wish pool + 成行条件(最省钱口径)
+    if (verdict.suggestions.some(sg => sg.relax.includes('duration'))) {
+      const longEnc = new Encoding(z3, cand, req, cand.minDaysForPurpose)
+      const plan = await cheapestPlan(longEnc, new Set(['duration', 'budget']), z3)
+      const conditions: Record<string, unknown> = { days: cand.minDaysForPurpose }
+      if (plan) conditions['budget_cny'] = plan.cost.moneyCny
+      if (cand.bestMonths.length) conditions['best_months'] = cand.bestMonths
+      verdict.wishPool = {
+        name: cand.name,
+        conditions,
+        reason: t('sg.wish_reason_engine', { weights: JSON.stringify(req.motivation.weights), days: req.windowDays }),
+      }
+    }
     return verdict
+  } finally {
+    closeS()
   }
-
-  const core = (await unsatCoreOf(s)).sort()
-  verdict.unsatCore = core
-
-  // 单条放宽(days 仍是数据:放宽 duration 时换长窗口口径重新编码)
-  for (const name of core) {
-    const skip = new Set([name])
-    const enc2 = name === 'duration' ? new Encoding(z3, cand, req, cand.minDaysForPurpose) : enc
-    const s2 = await enc2.solverWith(skip)
-    if (!(await isUnsat(s2))) {
-      const choice = await enc2.extract(s2.model())
-      const cost = evaluateChoice(cand, req, choice)
-      verdict.suggestions.push({ relax: [name], text: suggestText([name], cand, req, choice, cost), resulting: { days: choice.days, ...trueCostToDict(cost) } })
-    }
-  }
-
-  // 组合 core:放宽 duration 换长口径 → 取新口径 core 叠加 → 收缩
-  if (core.includes('duration')) {
-    const longEnc = new Encoding(z3, cand, req, cand.minDaysForPurpose)
-    const s2 = await longEnc.solverWith(new Set(['duration']))
-    if (await isUnsat(s2)) {
-      const core2 = await unsatCoreOf(s2)
-      let joint = ['duration', ...core2.filter(n => n !== 'duration')]
-      for (const name of joint.filter(n => n !== 'duration')) {
-        const trial = new Set(joint.filter(n => n !== name))
-        if (!(await isUnsat(await longEnc.solverWith(trial)))) joint = [...trial]
-      }
-      const plan = await cheapestPlan(longEnc, new Set(joint), z3)
-      if (plan) {
-        verdict.suggestions.push({
-          relax: joint,
-          text: suggestText(joint, cand, req, plan.choice, plan.cost),
-          resulting: { days: plan.choice.days, ...trueCostToDict(plan.cost) },
-        })
-      }
-    }
-  }
-
-  // 憧憬不被拒绝:放宽时长能救活 → wish pool + 成行条件(最省钱口径)
-  if (verdict.suggestions.some(sg => sg.relax.includes('duration'))) {
-    const longEnc = new Encoding(z3, cand, req, cand.minDaysForPurpose)
-    const plan = await cheapestPlan(longEnc, new Set(['duration', 'budget']), z3)
-    const conditions: Record<string, unknown> = { days: cand.minDaysForPurpose }
-    if (plan) conditions['budget_cny'] = plan.cost.moneyCny
-    if (cand.bestMonths.length) conditions['best_months'] = cand.bestMonths
-    verdict.wishPool = {
-      name: cand.name,
-      conditions,
-      reason: t('sg.wish_reason_engine', { weights: JSON.stringify(req.motivation.weights), days: req.windowDays }),
-    }
-  }
-  return verdict
   })
 }
 
