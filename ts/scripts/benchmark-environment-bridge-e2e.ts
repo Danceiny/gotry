@@ -168,6 +168,10 @@ function anyToolResultPresent(body: Body): boolean {
 }
 
 type CaseMode = 'disabled' | 'enabled' | 'domain-recovery' | 'domain-recovery-failed' | 'unexpected-output' | 'invalid-path' | 'invalid-schema' | 'unsafe-config' | 'output-truncated' | 'timeout' | 'runner-failed' | 'spawn-failed' | 'web-mode' | 'debug-redaction'
+// Round 12(#215):bridge config 显式携带无数据值 closed terminal body schema;
+// 覆盖两个 e2e 终态形态 {"status":"succeeded"} 与 {payload:"…"}。
+const BRIDGE_E2E_BODY_SCHEMA = { type: 'object', properties: { status: { type: 'string' }, payload: { type: 'string' } }, required: [], additionalProperties: false }
+const TERMINAL_OUTLINE = 'object{?status:string,?payload:string}'
 
 async function runCase(mode: CaseMode, executableOverride?: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<{ exit: number | null; stdout: string; stderr: string; output: string; requests: Body[]; optionalResolutionHits: { calendar: number; map: number }; servedToolCalls: number; runnerArguments: Array<{ city?: unknown }> }> {
   const requests: Body[] = []
@@ -220,7 +224,7 @@ async function runCase(mode: CaseMode, executableOverride?: string, extraEnv: No
       : `const forbidden = ['GOTRY_BENCHMARK_ENV_CONFIG', 'GOTRY_BENCHMARK_BRIDGE_PARENT_SECRET', 'LLM_API_KEY', 'LLM_BASE_URL', 'LLM_MODEL', 'DEEPSEEK_BASE_URL', 'GOTRY_LLM_MODEL', 'DATABASE_URL', 'SSH_AUTH_SOCK', 'AWS_PROFILE', 'HTTPS_PROXY']; const leaked = forbidden.filter(name => process.env[name] !== undefined); process.stdout.write(JSON.stringify({ schema_version: 'gotry_benchmark_tool_result_v1', status: 'ok', result: { marker: '${MARKER}', leaked } }))`
   writeFileSync(runner, `if (process.argv.length !== 5 || process.argv[2] !== 'call' || process.argv[3] !== 'lookup' || (!${JSON.stringify(domainRecoveryMode)} && JSON.parse(process.argv[4]).city !== 'Dubai') || (${JSON.stringify(domainRecoveryMode)} && !['Dubai', 'Singapore'].includes(JSON.parse(process.argv[4]).city))) process.exit(2); const fs = require('node:fs'); const args = JSON.parse(process.argv[4]); fs.appendFileSync(${JSON.stringify(runnerTrace)}, JSON.stringify({ city: args.city }) + '\\n'); ${runnerBody}`)
   writeFileSync(spawnTarget, '#!/usr/bin/env node\nprocess.exit(0)\n', { mode: 0o700 })
-  writeFileSync(configPath, JSON.stringify({ schema_version: mode === 'invalid-schema' ? 'invalid' : 'gotry_benchmark_environment_bridge_v3', enabled: true, executable: mode === 'spawn-failed' ? spawnTarget : process.execPath, cwd, argv_prefix: mode === 'spawn-failed' ? ['placeholder'] : [runner], tools: [{ name: 'lookup', description: 'Lookup.', input_schema: LOOKUP_INPUT_SCHEMA, output_keys: ['marker', 'leaked'], domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: domainRecoveryMode ? 'revise_arguments' : 'none' }] }], timeout_ms: mode === 'timeout' ? 50 : 10_000, max_output_bytes: mode === 'output-truncated' ? 1_024 : 4_096, terminal_output: { tag: 'benchmark_terminal', max_bytes: 4_096 }, isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' } }))
+  writeFileSync(configPath, JSON.stringify({ schema_version: mode === 'invalid-schema' ? 'invalid' : 'gotry_benchmark_environment_bridge_v4', enabled: true, executable: mode === 'spawn-failed' ? spawnTarget : process.execPath, cwd, argv_prefix: mode === 'spawn-failed' ? ['placeholder'] : [runner], tools: [{ name: 'lookup', description: 'Lookup.', input_schema: LOOKUP_INPUT_SCHEMA, output_keys: ['marker', 'leaked'], domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: domainRecoveryMode ? 'revise_arguments' : 'none' }] }], timeout_ms: mode === 'timeout' ? 50 : 10_000, max_output_bytes: mode === 'output-truncated' ? 1_024 : 4_096, terminal_output: { tag: 'benchmark_terminal', max_bytes: 4_096, body_schema: BRIDGE_E2E_BODY_SCHEMA }, isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' } }))
   if (mode === 'unsafe-config') chmodSync(configPath, 0o666)
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -527,7 +531,7 @@ async function assertPackagedPatchProjection(executable: string): Promise<void> 
   }
 }
 
-type ConformanceMode = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'large' | 'exhausted' | 'recovered' | 'post-failure' | 'unknown'
+type ConformanceMode = 'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 'large' | 'exhausted' | 'recovered' | 'post-failure' | 'unknown' | 'schema'
 const LARGE_TERMINAL_PAYLOAD = 'x'.repeat(80 * 1024)
 
 function taggedTerminal(valid: boolean): string {
@@ -538,11 +542,16 @@ function conformanceResponse(mode: ConformanceMode, request: Body, plannerCount:
   const hasToolResult = (request.messages ?? []).some(message => message.role === 'tool')
   if (mode === 'a' && plannerCount === 1 && !hasToolResult) return finalText('assistant prose without a call')
   const call = mode === 'a' && plannerCount === 2
-    || ['b', 'd', 'f', 'large'].includes(mode) && plannerCount === 1
+    || ['b', 'd', 'f', 'large', 'schema'].includes(mode) && plannerCount === 1
   if (call && !hasToolResult) return toolCall()
   if (mode === 'f' && plannerCount === 3) return toolCall('bridge-call-retry')
   if (mode === 'large' && hasToolResult) {
     return finalText(`<benchmark_terminal>${JSON.stringify({ payload: LARGE_TERMINAL_PAYLOAD })}</benchmark_terminal>`)
+  }
+  if (mode === 'schema') {
+    // Round 11 真实失败形态:结构合法信封内多出 root 键(extra budget)——
+    // 信封解析通过,exact body schema 必须拒绝,且纠正后仍不 autofix。
+    return finalText('<benchmark_terminal>{"status":"succeeded","budget":{"total_cost":1}}</benchmark_terminal>')
   }
   const valid = mode === 'a' ? hasToolResult : mode === 'b' ? plannerCount >= 3 : mode === 'e' ? true : false
   return finalText(mode === 'c' || mode === 'd' ? 'bad benchmark body' : taggedTerminal(valid))
@@ -590,10 +599,10 @@ async function runConformanceCase(mode: ConformanceMode, executableOverride?: st
   const configPath = join(cwd, 'benchmark-env-config.json')
   writeFileSync(runner, `const fs = require('node:fs'); const path = ${JSON.stringify(runnerCount)}; const count = fs.existsSync(path) ? Number(fs.readFileSync(path, 'utf8')) : 0; fs.writeFileSync(path, String(count + 1)); process.stdout.write(JSON.stringify({ schema_version: 'gotry_benchmark_tool_result_v1', status: 'ok', result: { marker: '${MARKER}' } }))`)
   writeFileSync(configPath, JSON.stringify({
-    schema_version: 'gotry_benchmark_environment_bridge_v3', enabled: true,
+    schema_version: 'gotry_benchmark_environment_bridge_v4', enabled: true,
     executable: process.execPath, cwd, argv_prefix: [runner],
     tools: [{ name: 'lookup', description: 'Lookup.', input_schema: LOOKUP_INPUT_SCHEMA, output_keys: ['marker'], domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: 'none' }] }], timeout_ms: 2_000, max_output_bytes: 4_096,
-    terminal_output: { tag: 'benchmark_terminal', max_bytes: mode === 'large' ? 128 * 1024 : 4_096 },
+    terminal_output: { tag: 'benchmark_terminal', max_bytes: mode === 'large' ? 128 * 1024 : 4_096, body_schema: BRIDGE_E2E_BODY_SCHEMA },
     isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' },
   }))
   const env: NodeJS.ProcessEnv = {
@@ -672,11 +681,26 @@ async function assertOutputConformance(executableOverride?: string): Promise<voi
   assert.equal(a.servedToolCalls, 1, 'A exposes exactly one bridge call')
   assert.equal(a.runnerInvocations, 1, 'A executes the bridge subprocess exactly once')
   assert.ok(a.stdout.includes('<benchmark_terminal>'), 'A forwards only tagged terminal output')
+  // Round 12(#215):system prompt 投影 exact body schema outline(结构合同单一来源)。
+  assert.ok(
+    a.requests.some(request => JSON.stringify(request).includes(`matching exactly ${TERMINAL_OUTLINE}`)),
+    'A system prompt projects the exact terminal schema outline',
+  )
 
   const b = await runConformanceCase('b', executableOverride)
   assert.equal(b.exit, 0, 'B malformed terminal correction then valid terminal exits 0')
   assert.equal(b.servedToolCalls, 1, `B exposes exactly one bridge call; request shapes=${JSON.stringify(b.requests.map(request => ({ tools: names(request), roles: (request.messages ?? []).map(message => message.role) })))}`)
   assert.equal(b.runnerInvocations, 1, 'B format-only correction does not rerun the bridge subprocess')
+  assert.ok(
+    b.requests.some(request => JSON.stringify(request).includes('BENCHMARK_CONFORMANCE_TERMINAL') && JSON.stringify(request).includes(`matching exactly ${TERMINAL_OUTLINE}`)),
+    'B terminal correction projects the same schema outline as the system prompt',
+  )
+
+  const schema = await runConformanceCase('schema', executableOverride)
+  assert.notEqual(schema.exit, 0, 'schema-invalid terminal body (extra root key) is rejected after the single correction')
+  assert.match(schema.stderr, /benchmark terminal output unavailable \(child_conformance_failure\)/, 'schema-invalid terminal emits the stable conformance reason code')
+  assert.equal(schema.runnerInvocations, 1, 'schema-invalid terminal still executed the bridge exactly once')
+  assert.equal(schema.stdout.includes('<benchmark_terminal>'), false, 'schema-invalid terminal body is never released to stdout')
 
   for (const mode of ['c', 'd'] as const) {
     const result = await runConformanceCase(mode, executableOverride)
@@ -724,10 +748,10 @@ if (packaged) {
   try {
     const configPath = join(missingServiceRoot, 'bridge.json')
     writeFileSync(configPath, JSON.stringify({
-      schema_version: 'gotry_benchmark_environment_bridge_v3', enabled: true,
+      schema_version: 'gotry_benchmark_environment_bridge_v4', enabled: true,
       executable: process.execPath, cwd: missingServiceRoot, argv_prefix: ['-e', 'process.exit(0)'],
       tools: [{ name: 'lookup', description: 'Lookup.', input_schema: LOOKUP_INPUT_SCHEMA, output_keys: ['marker'], domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: 'none' }] }], timeout_ms: 100, max_output_bytes: 4_096,
-      terminal_output: { tag: 'benchmark_terminal', max_bytes: 4_096 },
+      terminal_output: { tag: 'benchmark_terminal', max_bytes: 4_096, body_schema: BRIDGE_E2E_BODY_SCHEMA },
       isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' },
     }))
     assert.throws(

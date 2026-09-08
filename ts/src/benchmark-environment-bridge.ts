@@ -14,7 +14,9 @@ import {
   type TerminalOutputConfig,
 } from './benchmark-agent-conformance.ts'
 
-const SCHEMA_VERSION = 'gotry_benchmark_environment_bridge_v3'
+// v4(#215 Round 12):terminal_output 携带 closed body schema(结构关键字白名单,
+// 禁数据值注解面);v3 及更早配置缺该面,按契约不兼容 fail-closed。
+const SCHEMA_VERSION = 'gotry_benchmark_environment_bridge_v4'
 export const BENCHMARK_TOOL_RESULT_SCHEMA_VERSION = 'gotry_benchmark_tool_result_v1'
 export const BENCHMARK_DOMAIN_RECOVERIES = ['none', 'retry_same', 'revise_arguments', 'choose_alternative'] as const
 type BenchmarkDomainRecovery = typeof BENCHMARK_DOMAIN_RECOVERIES[number]
