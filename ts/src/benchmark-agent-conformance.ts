@@ -25,9 +25,35 @@ const MAX_TERMINAL_BYTES = 1024 * 1024
 const BENCHMARK_TOOL_RESULT_SCHEMA_VERSION = 'gotry_benchmark_tool_result_v1'
 const BENCHMARK_DOMAIN_RECOVERIES = new Set(['none', 'retry_same', 'revise_arguments', 'choose_alternative'])
 
+// Round 12(issue #215):terminal body schema 是「无数据值的 closed 结构合同」——
+// 只允许结构关键字(type/properties/required/additionalProperties/items),enum/
+// const/example/default 等可夹带数据值的注解面一律禁止,对象必须 additionalProperties:
+// false,大小/深度/节点数有界。校验语义 fail-closed:不补键、不删多余键、不转类型。
+const TERMINAL_BODY_SCHEMA_MAX_BYTES = 16 * 1024
+const TERMINAL_BODY_SCHEMA_MAX_DEPTH = 8
+const TERMINAL_BODY_SCHEMA_MAX_NODES = 256
+const TERMINAL_BODY_SCHEMA_MAX_PROPERTIES = 256
+const TERMINAL_BODY_SCALAR_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'null'])
+const TERMINAL_BODY_VALUE_MAX_NODES = 10_000
+const TERMINAL_BODY_VALUE_MAX_DEPTH = 24
+
+/** Structural-only, closed JSON schema for the terminal body (no data-bearing keywords). */
+export type TerminalBodySchema = {
+  type: 'object'
+  properties: Record<string, TerminalBodySchema>
+  required: string[]
+  additionalProperties: false
+} | {
+  type: 'array'
+  items: TerminalBodySchema
+} | {
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'null'
+}
+
 export interface TerminalOutputConfig {
   tag: string
   max_bytes: number
+  body_schema: TerminalBodySchema
 }
 
 export type TerminalOutputValue =
@@ -80,13 +106,113 @@ function plainObject(value: unknown): value is Record<string, unknown> {
 export function validateTerminalOutputConfig(value: unknown): value is TerminalOutputConfig {
   if (!plainObject(value)) return false
   const keys = Object.keys(value).sort()
-  return JSON.stringify(keys) === JSON.stringify(['max_bytes', 'tag'])
+  return JSON.stringify(keys) === JSON.stringify(['body_schema', 'max_bytes', 'tag'])
     && typeof value.tag === 'string'
     && IDENTIFIER.test(value.tag)
     && typeof value.max_bytes === 'number'
     && Number.isInteger(value.max_bytes)
     && value.max_bytes >= 1
     && value.max_bytes <= MAX_TERMINAL_BYTES
+    && validateTerminalBodySchema(value.body_schema)
+}
+
+/** Accept only the closed structural dialect: exact keyword sets per node, bounded size. */
+export function validateTerminalBodySchema(value: unknown): value is TerminalBodySchema {
+  let serialized: string
+  try {
+    serialized = JSON.stringify(value)
+  } catch {
+    return false
+  }
+  if (typeof serialized !== 'string' || Buffer.byteLength(serialized, 'utf8') > TERMINAL_BODY_SCHEMA_MAX_BYTES) return false
+  const pending: Array<{ node: unknown; depth: number }> = [{ node: value, depth: 0 }]
+  const seen = new Set<object>()
+  let nodes = 0
+  let properties = 0
+  while (pending.length > 0) {
+    const { node, depth } = pending.pop()!
+    if (!plainObject(node) || seen.has(node) || ++nodes > TERMINAL_BODY_SCHEMA_MAX_NODES || depth > TERMINAL_BODY_SCHEMA_MAX_DEPTH) return false
+    seen.add(node)
+    const type = node.type
+    if (type === 'object') {
+      if (!exactKeys(node, ['type', 'properties', 'required', 'additionalProperties'])
+        || !plainObject(node.properties)
+        || !Array.isArray(node.required)
+        || node.additionalProperties !== false) return false
+      const entries = Object.entries(node.properties)
+      properties += entries.length
+      if (properties > TERMINAL_BODY_SCHEMA_MAX_PROPERTIES
+        || entries.some(([key, child]) => key.length === 0 || key.length > 64 || !plainObject(child))) return false
+      if (node.required.length > entries.length
+        || new Set(node.required).size !== node.required.length
+        || node.required.some(key => typeof key !== 'string' || !Object.hasOwn(node.properties as Record<string, unknown>, key))) return false
+      for (const [, child] of entries) pending.push({ node: child, depth: depth + 1 })
+      continue
+    }
+    if (type === 'array') {
+      if (!exactKeys(node, ['type', 'items']) || !plainObject(node.items)) return false
+      pending.push({ node: node.items, depth: depth + 1 })
+      continue
+    }
+    if (typeof type !== 'string' || !TERMINAL_BODY_SCALAR_TYPES.has(type) || !exactKeys(node, ['type'])) return false
+  }
+  return plainObject(value) && value.type === 'object'
+}
+
+function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every(key => allowed.includes(key))
+}
+
+/** Strict structural validation: exact keys, exact types, no coercion, no autofix. */
+export function validateTerminalBodyValue(value: unknown, schema: TerminalBodySchema): boolean {
+  const pending: Array<{ value: unknown; schema: TerminalBodySchema; depth: number }> = [{ value, schema, depth: 0 }]
+  let nodes = 0
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    if (++nodes > TERMINAL_BODY_VALUE_MAX_NODES || current.depth > TERMINAL_BODY_VALUE_MAX_DEPTH) return false
+    const { schema: node } = current
+    if (node.type === 'object') {
+      const record = current.value
+      if (!plainObject(record)) return false
+      const properties = node.properties as Record<string, TerminalBodySchema>
+      for (const key of node.required) {
+        if (!Object.hasOwn(record, key)) return false
+      }
+      for (const [key, child] of Object.entries(record)) {
+        const childSchema = properties[key]
+        if (!childSchema) return false
+        pending.push({ value: child, schema: childSchema, depth: current.depth + 1 })
+      }
+      continue
+    }
+    if (node.type === 'array') {
+      if (!Array.isArray(current.value)) return false
+      for (const item of current.value) pending.push({ value: item, schema: node.items, depth: current.depth + 1 })
+      continue
+    }
+    if (node.type === 'string') { if (typeof current.value !== 'string') return false; continue }
+    if (node.type === 'boolean') { if (typeof current.value !== 'boolean') return false; continue }
+    if (node.type === 'null') { if (current.value !== null) return false; continue }
+    if (node.type === 'integer') { if (typeof current.value !== 'number' || !Number.isSafeInteger(current.value)) return false; continue }
+    if (typeof current.value !== 'number' || !Number.isFinite(current.value)) return false
+  }
+  return true
+}
+
+/** Deterministic single-source structural outline projected into system prompt and correction alike. */
+export function terminalSchemaOutline(schema: TerminalBodySchema): string {
+  const render = (node: TerminalBodySchema, depth: number): string => {
+    if (depth > TERMINAL_BODY_SCHEMA_MAX_DEPTH) return '…'
+    if (node.type === 'object') {
+      const properties = node.properties as Record<string, TerminalBodySchema>
+      const required = new Set(node.required)
+      const parts = Object.entries(properties).map(([key, child]) => `${required.has(key) ? '' : '?'}${key}:${render(child, depth + 1)}`)
+      return `object{${parts.join(',')}}`
+    }
+    if (node.type === 'array') return `array<${render(node.items, depth + 1)}>`
+    return node.type
+  }
+  return render(schema, 0)
 }
 
 function invalidTerminal(): TerminalOutputValue {
@@ -116,7 +242,11 @@ export function parseBenchmarkTerminal(raw: string, config: TerminalOutputConfig
 
   try {
     const value: unknown = JSON.parse(body)
-    return plainObject(value) ? { ok: true, value } : invalidTerminal()
+    if (!plainObject(value)) return invalidTerminal()
+    // Round 12(#215):同一份 closed body schema 在接受终态前 fail-closed 校验——
+    // 结构不合法的终态永不进入正式计分链,不做任何 autofix。
+    if (!validateTerminalBodyValue(value, config.body_schema)) return invalidTerminal()
+    return { ok: true, value }
   } catch {
     return invalidTerminal()
   }
@@ -363,7 +493,7 @@ function requireDisposer(value: unknown, capability: string): Disposer {
 function correctionMessage(mode: Exclude<RetryMode, 'none'>, projection: BenchmarkBridgeProjection) {
   const text = mode === 'call'
     ? `BENCHMARK_CONFORMANCE_CALL: Execute exactly one native ${projection.toolName} action:"call" now. Describing an intended CLI, shell, or Python command does not execute it.`
-    : `BENCHMARK_CONFORMANCE_TERMINAL: Reuse the existing successful tool result. Do not call any tool. Reply only <${projection.terminal.tag}>{"result":"..."}</${projection.terminal.tag}> with one JSON object.`
+    : `BENCHMARK_CONFORMANCE_TERMINAL: Reuse the existing successful tool result. Do not call any tool. Reply only <${projection.terminal.tag}> with one JSON object matching exactly ${terminalSchemaOutline(projection.terminal.body_schema)} — no extra keys, no missing keys, exact types.`
   return createUserMessage({
     content: [{ type: 'text' as const, text }],
     source: { kind: 'plugin' as const, plugin: 'gotry-benchmark-agent-conformance' },
@@ -372,6 +502,7 @@ function correctionMessage(mode: Exclude<RetryMode, 'none'>, projection: Benchma
 
 function systemSection(projection: BenchmarkBridgeProjection): { name: string; text: string } {
   const allowed = projection.allowedTools.join(', ')
+  const outline = terminalSchemaOutline(projection.terminal.body_schema)
   return {
     name: 'benchmark:agent-conformance',
     text: [
@@ -379,7 +510,7 @@ function systemSection(projection: BenchmarkBridgeProjection): { name: string; t
       `- Translate every task instruction to use a CLI, shell, Python, or agent_env.cli into the native tool ${projection.toolName}; do not merely describe the intended command.`,
       `- Call it with exactly {"action":"call","tool":"<one of: ${allowed}>","arguments":{...}}.`,
       '- action:"tools" is discovery only and does not satisfy the required environment call.',
-      `- After a successful tool result, reply only <${projection.terminal.tag}>{...one JSON object...}</${projection.terminal.tag}> with no prose or code fence.`,
+      `- After a successful tool result, reply only <${projection.terminal.tag}> with one JSON object matching exactly ${outline} — no extra keys, no missing keys, exact types; no prose or code fence.`,
       '- If a terminal-format correction arrives, reuse the existing result and do not call the tool again.',
     ].join('\n'),
   }
