@@ -1,18 +1,18 @@
 # M6 B2B 复用推演纪要(P6,待创始人评审)
 
-> 状态:draft(2026-09-08,issue #137/#225;**P6 exit = 本文通过创始人评审**,评审前 M6 entry gate 不满足;不得擅自 frozen)
+> 状态:draft(2026-09-08,issue #137/#225;**P6 Exit 仅在 founder 明确 `YES 批准整体方案` 或明确批准修改稿时成立**;NO/提出修改仍为 TODO,不得擅自 frozen。P6 批准不等于 M6 Entry,M5 Exit 仍是硬前置)
 > 验收口径(总纲 §4 P6 行):选 1-2 个 B2B 形态,推演两层为什么的包裹与复用边界;红线随行口径;实测数字必须来自 M6 Entry 后的真实加载证明。
-> 输入:[`../gotry-master-outline.md`](../gotry-master-outline.md) §3.7、[`../research/enterprise-travel-reference-study.md`](../research/enterprise-travel-reference-study.md)、[`../architecture.md`](../architecture.md) ADR-16/23、issue #137/#225/#229/#236/#237/#241/#242。代码勘察基准:origin/main `e8c338c`(2026-09-08)。
+> 输入:[`../gotry-master-outline.md`](../gotry-master-outline.md) §3.7、[`../research/enterprise-travel-reference-study.md`](../research/enterprise-travel-reference-study.md)、[`../architecture.md`](../architecture.md) ADR-16/23、issue #137/#225/#229/#236/#237/#241/#242/#227。
 
 ## 0. 结论先行
 
 1. **B2B 形态仍选两个**:旅行社嵌入(主,对应 M6 工程 proof 与试点形态)+ 目的地文旅(辅,验证 sponsor 配置面不是旅行社硬编码)。
 2. **principal 必须分词**:M6 的 traveler principal 是“为什么出发”的主体;ADR-23 的 BFF/HTTP principal 是安全身份。两者不能复用类型名或语义。
 3. **变化面三插件位只是待 PoC 验证的假设**:入口、库存池、sponsor 配置/披露。现有 MotivationProfile + hard constraints 与 `motivation_save` evidence 守卫只能支持“下游复用可能成立”的假设;尚无 sponsor 类型、配置、库存池接口、披露槽位或 B2B E2E。
-4. **复用率不再写成口号**:M6 只能报告三件套——基准 SHA、内核文件集合 `git diff` 为零、runtime 实际加载模块的路径覆盖与 LOC 附属数字。该数字是工程复用指标,不代表 traveler 满意度或 sponsor 转化。
-5. **tenant/CLI 隔离是 M6 前置安全门**:tenant ledger scope(#229)+ fold 回归(#237)+ state-cli 租户边界(#236)代码已入 main,ledger 验收 #230 已关闭;#241/PR243(606d1d2)补 CLI `.5`/`+.5` 小数边界但待主线集成;sponsor plugin proof 仍需在新 SHA 引用这些证据。#227 Z3 稳定性与 #242 dsh-map-tools map 回归未闭合前,不得把 sponsor plugin proof 当可合并证据。
+4. **复用 proof 不再写成口号**:M6 只能报告固定冻结 `kernel-set` 的零 diff、runtime 实际加载 coverage、预声明功能路径 coverage 与附属 loaded LOC ratio。不得按某次 run 已加载模块缩小 `kernel-set`;这些工程指标不代表 traveler 满意度或 sponsor 转化。
+5. **tenant/CLI 隔离基座已入 main**:tenant ledger scope(#229)+fold(#237)、state-cli(#236/#241/#243)及 Z3/map 稳定性修复均已合入,#227/#241/#242 已关闭。M6 sponsor plugin proof 仍须在自己的最终 SHA 引用实际运行证据,但这些已关闭 issue 不新增 M6 Entry 条件。
 6. **披露插件保持 proposal**:sponsor 收益披露优先由 sponsor 插件注入渲染片段;若 M5 先要求 schema 预留,须保持内核对 sponsor 语义零依赖。
-7. **商业试点不归工程代签**:P6 founder review 与试点签约/商业条件是 business/legal 依赖;工程 proof 不能替代。
+7. **商业试点不归工程代签**:P6 founder 批准与真实试点签约/商业条件是 business/legal 依赖;工程 proof 不能替代。未签原因只能解释整体为何仍 TODO,不能满足 M6 Exit。
 
 ## 1. principal 分词:三个主体,三个边界
 
@@ -79,14 +79,14 @@
 
 复用率数字必须带可复跑定义:
 
-1. **基准 SHA**:例如 `origin/main@<sha>`;本 draft 使用勘察基准 `d1d7b5a`,但 M6 proof 必须用当时 main 的实际 SHA。
-2. **内核文件集合**:§3 的复用面文件列表冻结为 `kernel-set.txt`;M6 proof 跑 `git diff <baseline> -- $(cat kernel-set.txt)` 必须为空。若旅行社插件必须改 `ts/src/model.ts`、`ts/src/unified.ts` 或核心卡片 schema,零内核改动假设即不成立,必须重新评审;不得通过放宽 `kernel-set.txt` 藏改动。
-3. **runtime 加载集合**:以真实 B2B one-shot/headless 运行产生 `loaded-modules.json`。分母只含该 run 实际加载的 GoTry runtime 模块,不含未加载源码、测试、docs、node_modules 或 vendor。
-4. **行数公式**:`kernel_loaded_loc / total_gotry_loaded_loc`。`kernel_loaded_loc` 来自 loaded module 与 kernel-set 交集;`total_gotry_loaded_loc` = loaded GoTry runtime 模块行数 + sponsor 插件行数。
-5. **覆盖率**:`loaded kernel files / kernel-set files used by normal B2C planning`。若 B2B run 没走事实闸/WriteGate/async,不能把这些文件计入复用率分子。
+1. **基准 SHA**:本次文档勘察基准为 `origin/main@c1f0ca2`;M6 proof 必须重新绑定执行当时 main 的实际 SHA。
+2. **固定冻结内核集合**:§3 的复用面文件列表在实现前冻结为 `kernel-set.txt`;M6 proof 跑 `git diff <baseline> -- $(cat kernel-set.txt)` 必须为空。该集合用于零 diff 断言,不得按某次 run 的实际加载情况缩小;若旅行社插件必须改核心文件,零内核改动假设即不成立,必须重新评审。
+3. **runtime 实际加载 coverage**:真实 B2B one-shot/headless run 产生 `loaded-modules.json`,证明该次运行实际加载并复用了哪些冻结内核路径;不得反向改写 `kernel-set.txt`。
+4. **预声明功能路径 coverage**:把该场景应经过的事实闸、WriteGate、async、账本等功能路径预先列出,逐项证明 run 是否实际走到;未走到的路径不能计为已复用。
+5. **附属 LOC 指标**:`kernel_loaded_loc / total_gotry_loaded_loc` 可作为附属观测,但不能代替前两份 coverage,也不能据此缩小固定 `kernel-set`。
 6. **用户效果另算**:该数字只证明“工程没改内核”。traveler 动机满足度、NPS、转化、sponsor 收益都需要另有 cohort/试点证据。
 
-M6 exit 表述应是“内核 diff=0;runtime 复用率 X%(基准 SHA/分母/loaded modules 附件);旅行社嵌入 E2E N 步通过;试点商业条件 Y”,而不是“99% 复用”一句话。
+M6 Exit 工程半面应写为“固定 `kernel-set` diff=0;runtime 实际加载 coverage 与预声明功能路径 coverage 完整;旅行社嵌入 E2E 通过”;商业半面必须是真实试点签约。未签原因只解释 TODO,不能替代签约。
 
 复用 proof 的 schema 与生成脚本由后续 `m6-reuse-proof-schema` 任务负责(见 [`../design/milestone-delivery-plan.md`](../design/milestone-delivery-plan.md) M6-3):提前冻结 `kernel-set.txt`、`loaded-modules.json` 与 runtime trace schema,避免实现者临时发明分母。
 
@@ -102,7 +102,7 @@ M6 exit 表述应是“内核 diff=0;runtime 复用率 X%(基准 SHA/分母/load
 | 收益披露 | sponsor 高佣金候选排序靠前 | 卡片未披露偏置/佣金来源 |
 | wish pool | sponsor 主动召回不满足 traveler conditions 的 wish | conditions 被 sponsor campaign 覆盖 |
 
-tenant ledger scope(#229)+ fold 回归(#237)代码已入 main 且 ledger 验收 #230 已关闭;M6 sponsor plugin proof 仍必须在新 SHA 引用其证据。state-cli 租户边界(#236)代码已入 main,CLI 管理面按 local-only 边界运行;#241/PR243(606d1d2)补 `.5`/`+.5` 小数边界,当前 main #236 尚无该补丁。#227/#242 未闭合前这些基座仍是最终集成验收 TODO。
+tenant ledger scope(#229/#237)、state-cli 租户与小数边界(#236/#241/#243)、Z3/map 稳定性基座均已入 main,#227/#241/#242 已关闭。M6 sponsor plugin proof 仍必须在自己的最终 SHA 引用这些能力的实际运行证据。
 
 ## 6. 红线随行口径
 
@@ -114,24 +114,25 @@ tenant ledger scope(#229)+ fold 回归(#237)代码已入 main 且 ledger 验收 
 
 ## 7. 与 M5 的依赖(gate 关系)
 
-M6 Entry = M5 exit + P6 founder review。M6 对 M5 的真实依赖:
+M6 Entry = M5 Exit + P6 founder 明确批准,两项缺一不可。P6 批准可先完成,但不单独开启 M6 实现。M6 对 M5 的真实依赖:
 
 1. WriteGate 生产化 receipt/outbox/unknown/manual reconcile 机制;
 2. 佣金/赞助披露在 C 端先有可验证口径;
 3. booking_saga_fsm 边表与 effect-interpreter 写 effect 策略;
-4. tenant 级账本隔离(#229/#237)与 state-cli 租户边界(#236)代码已入 main,ledger 验收 #230 已关闭;#241/PR243(606d1d2)CLI `.5`/`+.5` 小数边界待主线集成;
-5. #227 Z3 Node24 间歇 heap corruption 与 #242 dsh-map-tools map 回归已有可靠根因修复或充分澄清,不能用一次重跑绿作为 M6 proof 的稳定性证据。
+4. tenant 级账本隔离(#229/#237)与 state-cli 租户/小数边界(#236/#241/#243)已入 main;
+5. #227 Z3 生命周期与 #242 dsh-map-tools map 回归已在集成候选上通过 Node24 typecheck、3×240、full 与 CI 后合入并关闭;M6 proof 仍须绑定自己的最终 SHA,但不把已关闭 issue 另列为 Entry。
 
 这些依赖意味着 M5 的设计要兼容 B2B,但不构成提前实现 M6 的理由。本纪要只保留推演和 proof 口径。
 
-## 8. 待创始人评审的开放问题
+## 8. 待创始人审批的整体方案
 
-1. 两个 B2B 形态是否维持“旅行社主 + 目的地文旅辅”。
-2. sponsor 披露槽位采用插件注入还是内核 schema 可空预留;本文倾向插件注入。
-3. §4 复用率公式是否替代 roadmap/issue 中“99% 复用”口号。
-4. M6 报告是否采用“工程证据/商业证据分栏”呈现;无论分栏与否,试点签约仍属于 M6 整体 Exit,不能移出。
-5. tenant 对抗测试是否作为 P6 通过前必须项,还是作为 M6 Entry 后第一项;本文倾向前置。
+推荐整体批准以下一组边界:旅行社嵌入为主、目的地文旅为辅;赞助/库存/披露以插件注入;traveler、sponsor、BFF 三主体隔离;固定冻结 `kernel-set` 零 diff,并分别提交 runtime 实际加载 coverage 与预声明功能路径 coverage;M6 Exit 商业半面以真实试点签约收口。
+
+- [ ] `YES 批准整体方案`
+- [ ] `修改为:________________`
+
+只有明确 YES 或对修改稿明确批准才满足 P6 Exit。具名 pilot 主体、范围与合同字段仍为 TODO;P6 批准不等于 M6 Entry,实现仍等 M5 Exit。
 
 ---
 
-评审通过后,本文才可转 `frozen(日期)`;评审前保持 draft。实现开闸仍等 M5 Exit。
+批准后本文才可转 `frozen(日期)`;批准前保持 draft。实现开闸仍等 M5 Exit。
