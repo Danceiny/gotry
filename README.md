@@ -199,13 +199,14 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 - **Account-session search** — Ctrip flights **and hotels** + 12306 trains on your Chrome (hotels 2026-09-03: real logged-in prices via passive sniffing; trains 2026-09-03: public left-ticket query; interface surfaces calibrate with the first live session); observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
 - **Extension install on demand** — `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` is offered as a clickable link in the dsh UI when an account-session tool first needs it (one-click install + auto-update); the gotry side never runs a setup wizard
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline, persisted by the tenant-scoped SQLite ledger (`local` remains the default); English solve output via `GOTRY_LOCALE=en`
+- **M4 lifecycle evidence collector** — explicit opt-in CLI for first/returning planning flow observations: isolated `stateRoot`, consent and HMAC key are mandatory; dataset key/source/wait vocabulary are frozen; JSONL/manifest writes use write-all + atomic/no-overwrite publication; exports feed the #223 scorer as candidate/synthetic only, never manual attestation
 - **Routed turn budgets** — every turn is classified (quick / sync / deep-planning) by a deterministic, zero-LLM router; time is the only budget and the deadline exit follows the task: quick and sync turns converge to an answer, deep-planning turns hand off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) instead of dying mid-stream; the ticket is collected in the background by `scripts/turn-handoff-collect.ts` (idempotent, recursion-guarded child planner) and surfaces in-chat via the read-only `gotry_turn_handoff_list` tool; exercised end-to-end through a packaged consumer install in CI
 - **Ledger admin CLI** — `ts/scripts/state-cli.ts` now parses command/options/positionals fail-closed: unknown, duplicate, missing, or invalid numeric options do not touch the state root. `--tenant` is a ledger scope parameter, not authentication; `tick` / `export` / `whatif` are explicit local-only commands because they call local async settlement, write shared legacy filenames, or snapshot the whole DB.
 
 **Open limitations** (honest list):
 
 - **M3 Exit not closed** — engineering & distribution are ready, but real seed-user evidence (50–200 person cohort) has not been accumulated; automated tests prove contracts and formulas, not business pass
-- **M4 value evidence not closed** — the paired-cohort scorer is schema-hardened (N=5 and median reduction=0.5 frozen with raw-ratio comparison, HMAC pseudonyms, no undeclared fields, source-review attestation plus summary digest binding required for observed-private evidence), but no real repeat cohort has landed yet
+- **M4 value evidence not closed** — the paired-cohort scorer is schema-hardened (N=5 and median reduction=0.5 frozen with raw-ratio comparison, HMAC pseudonyms, no undeclared fields, source-review attestation plus summary digest binding required for observed-private evidence) and the #228 collector can produce isolated candidate/synthetic lifecycle exports, but no real repeat cohort has landed yet
 - **Hotel session adapters** — Ctrip-hotel / Meituan logged-in surfaces await real login-state backfill; flights are done
 - **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host / calibration samples
 - **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim). After the Round 10 `glm-5.3-flash` visibility diagnosis on main `c843fae` (57 empty `{}` calls), Round 11 keeps execution validation exact against frozen descriptors while exposing a flat model-facing `tools/call/errors` wire with descriptor-derived tool names and generic object arguments; the round-by-round engineering ledger lives in [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
@@ -214,7 +215,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 <details>
 <summary>Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
 
-The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web; append/read/fold/rebuild are tenant-scoped, and legacy local rows are not re-attributed without external evidence); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate); the M4 paired-cohort value evidence contract is hardened (synthetic data is never Exit evidence; observed-private data also needs a manual source-review attestation contract bound to the current summary digest and cannot rely on `evidence_kind` self-reporting); the async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22, #223, and #224.
+The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web; append/read/fold/rebuild are tenant-scoped, and legacy local rows are not re-attributed without external evidence); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate); the M4 paired-cohort value evidence contract is hardened (synthetic data is never Exit evidence; observed-private data also needs a manual source-review attestation contract bound to the current summary digest and cannot rely on `evidence_kind` self-reporting); the #228 collector is only an explicit-consent, isolated-stateRoot path to produce those scorer inputs; the async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22, #223, #224, and #228.
 
 </details>
 
@@ -226,7 +227,7 @@ The authoritative state lives in the docs, not this README: transactional state 
 | M1 | Agent form established | LLM in the loop; chat as interface; gates as choice cards | ✅ 2026-08-22 |
 | M2 | Realtime data | hotelbyte bridge + flight sources; evidence chain switches to realtime tags | ✅ 2026-08-22 |
 | M3 | MVP | minimal web face + 50–200 seed users (Erhai / Phuket scenarios) | **← current — evidence open** |
-| M4 | Memory & "next departure" | six-layer memory C-end domain; paired-cohort value evidence | founder-authorized parallel |
+| M4 | Memory & "next departure" | six-layer memory C-end domain; paired-cohort value evidence + explicit lifecycle collector | founder-authorized parallel |
 | M5 | Transaction loop | WriteGate in production; booking / payment / refunds | entry-gated |
 | M6 | B2B embedding | principal/sponsor plugin with zero kernel changes | entry-gated |
 
@@ -241,7 +242,7 @@ npx tsx scripts/evaluation-contract-tests.ts   # evaluation Phase 0 contracts (o
 npx tsx scripts/evaluation-cadence-tests.ts    # deterministic cadence policy/planner
 ```
 
-The suite covers golden engines, dialogue replay, cross-process async work-orders, plugin smoke, realtime bridges, process guards, i18n, memory domain, the Z3 concurrency gate, the fact gate, and a packaged-consumer turn-deadline E2E, among others; the authoritative section list is whatever `scripts/run-all-tests.sh` enumerates. The live session benchmark (`npx tsx scripts/sf-live-benchmark.ts --golden=static`) is opt-in, requires your connected Chrome session, and never runs in CI.
+The suite covers golden engines, dialogue replay, cross-process async work-orders, plugin smoke, realtime bridges, process guards, i18n, memory domain, the M4 lifecycle collector, the Z3 concurrency gate, the fact gate, and a packaged-consumer turn-deadline E2E, among others; the authoritative section list is whatever `scripts/run-all-tests.sh` enumerates. The live session benchmark (`npx tsx scripts/sf-live-benchmark.ts --golden=static`) is opt-in, requires your connected Chrome session, and never runs in CI.
 
 ## Contributing
 
@@ -272,6 +273,7 @@ Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outlin
 | [`docs/ops/extension-privacy.md`](docs/ops/extension-privacy.md) | Session Bridge extension privacy |
 | [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md) | External benchmark bridge — engineering ledger |
 | [`docs/evaluation/evaluation-foundation.md`](docs/evaluation/evaluation-foundation.md) | Evaluation Phase 0 foundation |
+| [`docs/design/memory-lifecycle-collector.md`](docs/design/memory-lifecycle-collector.md) | M4 lifecycle collector CLI usage and persistence contract |
 | [`docs/design/booking-saga-fsm.md`](docs/design/booking-saga-fsm.md) | Booking saga FSM (the M5 seam vocabulary) |
 | [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md) | A real AI-travel-planning failure postmortem (cautionary tale) |
 | [`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/) | Agent-persona benchmark — same real-trip prompt answered by mainstream AIs: transcripts, scoring rubric, and the persona it shapes |

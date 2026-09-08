@@ -444,6 +444,10 @@ echo "=== 54. persona 表层护栏(#192 回归锚:表层规则句存在/22 条�
 (cd ts && npx tsx scripts/persona-surface-guard-tests.ts) || FAIL=1
 
 echo
+
+echo "=== 55. M4 planning lifecycle collector(issue #228:显式 stateRoot+consent+HMAC key/首返配对/等待边界/reflux+preference/source_review candidate/子进程 scorer 链;全离线) ==="
+(cd ts && npx tsx scripts/memory-lifecycle-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
