@@ -52,7 +52,7 @@ Architecture, five layers:
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ L1  chat-as-interface; gates are in-message choice cards       │
-│ L2  orchestration  dsh runtime + GoTry plugin (ReAct); 21 tools│
+│ L2  orchestration  dsh runtime + GoTry plugin (tool count: code)│
 │ L3  domain  unified itinerary model + Z3 feasibility engine    │
 │ L4  data  static packs + hotelbyte-cli bridge + OpenFlights    │
 │ L5  governance  LoopX (objective / gates / evidence / quota)   │
@@ -61,7 +61,7 @@ Architecture, five layers:
 
 | Layer | Module | Role |
 |---|---|---|
-| L2 | `ts/src/index.ts` (dsh plugin) | 21 tools, time-anchor & memory-brief variables; execute isolation + consent gate + per-turn tool budget + process guards |
+| L2 | `ts/src/index.ts` (dsh plugin) | Tool registry (count lives in code and `scripts/run-all-tests.sh` output), time-anchor & memory-brief variables; execute isolation + consent gate + per-turn tool budget + process guards |
 | L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | single solving entry (candidate enumeration + flight-chain Z3) |
 | L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | effect interpreter (backoff retry / circuit breaker / mock interpreter) + realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
 | L5 | loopx governance | objective / gates / evidence / quota |
@@ -70,7 +70,7 @@ Architecture, five layers:
 
 ## Tools
 
-22 tools in six groups:
+The GoTry plugin exposes its tools in groups (the exact count lives in the code and the full regression script, not in this README):
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -189,7 +189,7 @@ One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.
 
 ## Project Status
 
-Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; registry pull-verified 2026-09-03: clean install / bin / dist entry all pass). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims.
+Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; registry pull-verified 2026-09-03: clean install / bin / dist entry all pass). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims. The M4→M6 program plan is now a living task graph in [`docs/design/milestone-delivery-plan.md`](docs/design/milestone-delivery-plan.md); it records the `hotelbyte-cli` first-supplier decision for M5 contract preparation, but does not open M4/M5/M6 gates.
 
 **Working today** (full-stack regression green; every item has deterministic tests):
 
@@ -201,12 +201,12 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline, persisted by the tenant-scoped SQLite ledger (`local` remains the default); English solve output via `GOTRY_LOCALE=en`
 - **M4 lifecycle evidence collector** — explicit opt-in CLI for first/returning planning flow observations: isolated `stateRoot`, consent and HMAC key are mandatory; dataset key/source/wait vocabulary are frozen; JSONL/manifest writes use write-all + atomic/no-overwrite publication; exports feed the #223 scorer as candidate/synthetic only, never manual attestation
 - **Routed turn budgets** — every turn is classified (quick / sync / deep-planning) by a deterministic, zero-LLM router; time is the only budget and the deadline exit follows the task: quick and sync turns converge to an answer, deep-planning turns hand off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) instead of dying mid-stream; the ticket is collected in the background by `scripts/turn-handoff-collect.ts` (idempotent, recursion-guarded child planner) and surfaces in-chat via the read-only `gotry_turn_handoff_list` tool; exercised end-to-end through a packaged consumer install in CI
-- **Ledger admin CLI** — `ts/scripts/state-cli.ts` now parses command/options/positionals fail-closed: unknown, duplicate, missing, or invalid numeric options do not touch the state root. `--tenant` is a ledger scope parameter, not authentication; `tick` / `export` / `whatif` are explicit local-only commands because they call local async settlement, write shared legacy filenames, or snapshot the whole DB.
+- **Ledger admin CLI** — `ts/scripts/state-cli.ts` parses command/options/positionals fail-closed: unknown, duplicate, missing, or invalid numeric options do not touch the state root. The `.5`/`+.5` decimal edge is covered by #241/PR243 and still awaits main integration evidence. `--tenant` is a ledger scope parameter, not authentication; `tick` / `export` / `whatif` are explicit local-only commands because they call local async settlement, write shared legacy filenames, or snapshot the whole DB.
 
 **Open limitations** (honest list):
 
 - **M3 Exit not closed** — engineering & distribution are ready, but real seed-user evidence (50–200 person cohort) has not been accumulated; automated tests prove contracts and formulas, not business pass
-- **M4 value evidence not closed** — the paired-cohort scorer is schema-hardened (N=5 and median reduction=0.5 frozen with raw-ratio comparison, HMAC pseudonyms, no undeclared fields, source-review attestation plus summary digest binding required for observed-private evidence) and the #228 collector can produce isolated candidate/synthetic lifecycle exports, but no real repeat cohort has landed yet
+- **M4→M6 gates remain evidence-bound** — the M4 scorer hardening is on main (#223/#238) and the #228/#248 explicit opt-in lifecycle collector can produce isolated candidate/synthetic exports, while ledger/CLI/Z3/map foundations are on main (#229/#237/#243/#244/#245); no real `observed_private` N≥5 repeat cohort has landed yet. M5 first-supplier preparation targets `hotelbyte-cli` but Entry remains M4 Exit + supplier protocol (#136); M6 still waits for M5 Exit + P6 founder review and real pilot (#137)
 - **Hotel session adapters** — Ctrip-hotel / Meituan logged-in surfaces await real login-state backfill; flights are done
 - **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host / calibration samples
 - **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim). After the Round 10 `glm-5.3-flash` visibility diagnosis on main `c843fae` (57 empty `{}` calls), Round 11 keeps execution validation exact against frozen descriptors while exposing a flat model-facing `tools/call/errors` wire with descriptor-derived tool names and generic object arguments; the round-by-round engineering ledger lives in [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
@@ -227,9 +227,9 @@ The authoritative state lives in the docs, not this README: transactional state 
 | M1 | Agent form established | LLM in the loop; chat as interface; gates as choice cards | ✅ 2026-08-22 |
 | M2 | Realtime data | hotelbyte bridge + flight sources; evidence chain switches to realtime tags | ✅ 2026-08-22 |
 | M3 | MVP | minimal web face + 50–200 seed users (Erhai / Phuket scenarios) | **← current — evidence open** |
-| M4 | Memory & "next departure" | six-layer memory C-end domain; paired-cohort value evidence + explicit lifecycle collector | founder-authorized parallel |
-| M5 | Transaction loop | WriteGate in production; booking / payment / refunds | entry-gated |
-| M6 | B2B embedding | principal/sponsor plugin with zero kernel changes | entry-gated |
+| M4 | Memory & "next departure" | six-layer memory C-end domain; paired-cohort value evidence + explicit lifecycle collector | founder-authorized parallel; #223/#238 + #228/#248 in main; real N≥5 open |
+| M5 | Transaction loop | WriteGate in production; booking / payment / refunds; first supplier target: `hotelbyte-cli` | entry-gated: M4 Exit + supplier protocol |
+| M6 | B2B embedding | traveler principal / sponsor plugin with measured zero-kernel-diff proof | entry-gated: M5 Exit + P6 founder review |
 
 The single authoritative timeline — entry/exit conditions, deliverables, and gates per milestone — is [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -242,11 +242,11 @@ npx tsx scripts/evaluation-contract-tests.ts   # evaluation Phase 0 contracts (o
 npx tsx scripts/evaluation-cadence-tests.ts    # deterministic cadence policy/planner
 ```
 
-The suite covers golden engines, dialogue replay, cross-process async work-orders, plugin smoke, realtime bridges, process guards, i18n, memory domain, the M4 lifecycle collector, the Z3 concurrency gate, the fact gate, and a packaged-consumer turn-deadline E2E, among others; the authoritative section list is whatever `scripts/run-all-tests.sh` enumerates. The live session benchmark (`npx tsx scripts/sf-live-benchmark.ts --golden=static`) is opt-in, requires your connected Chrome session, and never runs in CI.
+The suite covers golden engines, dialogue replay, cross-process async work-orders, plugin smoke, realtime bridges, process guards, i18n, memory domain, the M4 lifecycle collector, the Z3 concurrency gate, the fact gate, and a packaged-consumer turn-deadline E2E, among others; the authoritative section list is whatever `scripts/run-all-tests.sh` enumerates. The live session benchmark (`npx tsx scripts/sf-live-benchmark.ts --golden=static`) is opt-in, requires your connected Chrome session, and never runs in CI. For PRs, local final-SHA evidence is required; CI is additional signal, not a substitute.
 
 ## Contributing
 
-Branch off latest `main` (`feat/ · fix/ · docs/ · chore/`), full suite green locally, open a Pull Request — `main` never takes direct pushes. CI (Node 22/24, typecheck + all suites) plus maintainer review, then squash-merge. **Red tests never merge.** Full guide: [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports / feature suggestions: use the issue templates (search existing issues first).
+Branch off latest `main` (`feat/ · fix/ · docs/ · chore/`), run local final-SHA typecheck + full regression, then open a Pull Request. Project process requires PR review for `main`; do not infer that GitHub branch protection has been configured. CI (Node 22/24, typecheck + all suites) is additional signal, not a replacement for local evidence; maintainer review still decides the squash-merge. **Red tests never merge.** Full guide: [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports / feature suggestions: use the issue templates (search existing issues first).
 
 ## For AI Agents
 
@@ -268,6 +268,8 @@ Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outlin
 | [`docs/gotry-master-outline.md`](docs/gotry-master-outline.md) | Program master outline & reuse matrix |
 | [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | Product design: main loop, transparency, whole-cost model |
 | [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 timeline & current position |
+| [`docs/design/milestone-delivery-plan.md`](docs/design/milestone-delivery-plan.md) | M4→M6 living task graph — responsibility surfaces, files, dependencies, E2E, falsifiers, exit criteria |
+| [`docs/design/write-gate-production-design.md`](docs/design/write-gate-production-design.md) | M5 WriteGate production proposal — receipt binding, recovery, reconciliation, compensation, disclosure |
 | [`docs/user-guide.md`](docs/user-guide.md) | End-user guide |
 | [`docs/data-sources.md`](docs/data-sources.md) | Data sources & evidence-chain policy |
 | [`docs/ops/extension-privacy.md`](docs/ops/extension-privacy.md) | Session Bridge extension privacy |
