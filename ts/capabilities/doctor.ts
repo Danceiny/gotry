@@ -69,11 +69,44 @@ function probe(bin: string, args: string[], timeoutMs = 8_000): Promise<boolean>
   })
 }
 
+/** 探测命令 stdout(--version),失败返回 null */
+function probeStdout(bin: string, args: string[], timeoutMs = 8_000): Promise<string | null> {
+  return new Promise((resolveProbe) => {
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'ignore'], env: process.env })
+    let out = ''
+    let done = false
+    const timer = setTimeout(() => {
+      if (!done) { done = true; try { child.kill('SIGKILL') } catch { /* ignore */ } resolveProbe(null) }
+    }, timeoutMs)
+    child.on('error', () => { if (!done) { done = true; clearTimeout(timer); resolveProbe(null) } })
+    child.stdout?.on('data', (d) => { out += d.toString() })
+    child.on('exit', (code) => { if (!done) { done = true; clearTimeout(timer); resolveProbe(code === 0 ? out.trim() : null) } })
+  })
+}
+
+/** 解析语义化版本号 "1.2.3" → [1,2,3];失败 null */
+function parseVersion(v: string | null): [number, number, number] | null {
+  const m = String(v || '').match(/(\d+)\.(\d+)\.(\d+)/)
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+}
+
+function versionAtLeast(v: [number, number, number] | null, min: string): boolean {
+  const a = v; const b = parseVersion(min)
+  if (!a || !b) return false
+  for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i] }
+  return true
+}
+
 /** Node ≥ 22.15(与 bin/gotry-inner.js supportsNodeVersion 同口径) */
 export function nodeOk(version: string): boolean {
   const [maj = '0', min = '0'] = version.split('.')
   return Number(maj) > 22 || (Number(maj) === 22 && Number(min) >= 15)
 }
+
+/** hbcli 最低版本(可用 GOTRY_MIN_HBCLI_VERSION 覆盖)。0.0.3 修了 portal-ticket
+ * fallback bug(issue #142)——低于该版本的 hbcli 会把 literal "stored-ticket"
+ * 当 bearer 发到 hotel-be,让 trade.* / search/checkAvail 全部 401。 */
+const MIN_HBCLI_VERSION = process.env.GOTRY_MIN_HBCLI_VERSION ?? '0.0.3'
 
 /** 单项检查:全部只读、永不抛错;env/homeDir/repoRoot 可注入(测试确定性) */
 export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorReport> {
@@ -121,20 +154,31 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
 
   // 3. hbcli(酒店实时源;静态包自动降级,缺了不致命)
   //    裸名 'hbcli' 靠 PATH 解析(existsSync 对裸名是 cwd 相对,无意义)——先探测再落位
+  //    版本 < MIN_HBCLI_VERSION 视为 missing(issue #142:portal-ticket fallback 401)
   let hbPresent = ''
   for (const p of hbcliCandidates(home)) {
     if (p !== 'hbcli' && existsSync(p)) { hbPresent = p; break }
     if (p === 'hbcli' && await probe(p, ['version'])) { hbPresent = 'hbcli(PATH)'; break }
   }
   if (hbPresent) {
-    const whoami = await probe(hbPresent === 'hbcli(PATH)' ? 'hbcli' : hbPresent, ['auth', 'whoami'])
-    items.push(whoami
-      ? { id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'ok', detail: `已安装且凭证有效(${hbPresent})` }
-      : {
-          id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'degraded',
-          detail: '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)',
-          fix: 'hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)',
-        })
+    const hbCmd = hbPresent === 'hbcli(PATH)' ? 'hbcli' : hbPresent
+    const v = parseVersion(await probeStdout(hbCmd, ['--version']))
+    if (v && !versionAtLeast(v, MIN_HBCLI_VERSION)) {
+      items.push({
+        id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'missing',
+        detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——trade.* / search/checkAvail 会 401(issue #142)`,
+        fix: 'npm install -g staicli --registry=https://registry.npmjs.org/',
+      })
+    } else {
+      const whoami = await probe(hbCmd, ['auth', 'whoami'])
+      items.push(whoami
+        ? { id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'ok', detail: `已安装且凭证有效(${hbPresent}, v${v ? v.join('.') : '?'})` }
+        : {
+            id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'degraded',
+            detail: '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)',
+            fix: 'hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)',
+          })
+    }
   } else {
     items.push({
       id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'missing',

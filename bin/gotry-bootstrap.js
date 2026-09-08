@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * gotry 外部依赖自举(founder 2026-08-29 指令:安装 gotry 时按上游本身的方式装好外部依赖):
- *   hbcli(hotelbyte-cli)  → 官方 install.sh(原生二进制,~/.local/bin/hbcli)
+ *   hbcli(hotelbyte-cli)  → npm 优先(staicli@npmjs;Node ≥ 20),原生二进制 install.sh 兜底
  *   agent-reach            → 官方 pip 安装 git+ upstream(包内 .venv,与 z3-solver 同址原则)
  *   flyai                  → 无需安装(npx 每次自拉 @fly-ai/flyai-cli)
  *   dsh-better-sidebar     → dsh 宿主层插件市场组件(dshmarket.com #1 UI,18.9 万周装):
@@ -70,7 +70,9 @@ const WIZARD_DRY_RUN = process.argv.includes('--dry-run')
 const EXT_FROM_ARG = (process.argv.find((a) => a.startsWith('--extension-from=')) ?? '').split('=')[1]
 const EXTENSION_FROM = EXT_FROM_ARG === 'github' || EXT_FROM_ARG === 'bundled' ? EXT_FROM_ARG : process.env.GOTRY_EXTENSION_SOURCE === 'github' ? 'github' : 'bundled'
 
-const HBCLI_INSTALL_CMD = 'curl -fsSL https://github.com/hotelbyte-com/docs/releases/latest/download/install.sh | bash'
+// hbcli 安装通道:npm 优先(staicli@npmjs 双轨;显式 registry 防 bnpm 404),install.sh 兜底
+const HBCLI_NPM_INSTALL_CMD = 'npm install -g staicli --registry=https://registry.npmjs.org/'
+const HBCLI_INSTALL_CMD = HBCLI_NPM_INSTALL_CMD
 const REACH_INSTALL_URL = 'git+https://github.com/Panniantong/Agent-Reach.git'
 
 /** 带超时的子进程(inherit stdio 让用户看见上游安装进度) */
@@ -99,20 +101,58 @@ function probe(cmd, args, timeoutMs = 10_000) {
 
 const say = (s) => console.log(s)
 
+/** hbcli 最低版本(可用 GOTRY_MIN_HBCLI_VERSION 覆盖)。
+ * 0.0.3 修了 portal-ticket fallback bug(issue #142):低于该版本的 hbcli
+ * 会把 literal "stored-ticket" 当 bearer 发到 hotel-be,让 trade.* /
+ * search/checkAvail 等 @permission: openapi 端点全部 401。 */
+const MIN_HBCLI_VERSION = process.env.GOTRY_MIN_HBCLI_VERSION ?? '0.0.3'
+
+function parseVersion(v) {
+  const m = String(v || '').match(/(\d+)\.(\d+)\.(\d+)/)
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+}
+
+function versionAtLeast(v, min) {
+  const a = parseVersion(v); const b = parseVersion(min)
+  if (!a || !b) return false
+  for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i] }
+  return true
+}
+
+async function hbcliVersion(bin) {
+  const cmd = bin === 'hbcli(PATH)' ? 'hbcli' : bin
+  return new Promise((resolve) => {
+    const child = spawn(cmd, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    let out = ''
+    let done = false
+    const timer = setTimeout(() => { if (!done) { done = true; try { child.kill('SIGKILL') } catch { /* ignore */ } resolve(null) } }, 10_000)
+    child.on('error', () => { if (!done) { done = true; clearTimeout(timer); resolve(null) } })
+    child.stdout?.on('data', (d) => { out += d.toString() })
+    child.on('exit', (code) => { if (!done) { done = true; clearTimeout(timer); resolve(code === 0 ? parseVersion(out.trim()) : null) } })
+  })
+}
+
 async function setupHbcli() {
-  say('[gotry-setup] hbcli(hotelbyte-cli,可选酒店实时源)')
+  say(`[gotry-setup] hbcli(hotelbyte-cli,可选酒店实时源;需 ≥ v${MIN_HBCLI_VERSION},低于会踩 issue #142 的 401)`)
   const candidates = ['hbcli', join(homedir(), '.local/bin/hbcli'), join(homedir(), '.staicli/current/hbcli')]
   const present = candidates.some((p) => existsSync(p)) && (await probe(candidates[0], ['version']) || await probe(candidates[1], ['version']) || await probe(candidates[2], ['version']))
   const credFile = join(homedir(), '.staicli', 'credentials.json')
   if (present) {
-    say('  ✓ 已安装')
+    const hit = candidates.find((p) => existsSync(p)) || 'hbcli'
+    const v = await hbcliVersion(hit)
+    if (v && !versionAtLeast(v, MIN_HBCLI_VERSION)) {
+      say(`  ✗ 版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——@permission: openapi 端点(trade.* / search/checkAvail)会 401(issue #142)`)
+      say(`    升级: npm install -g staicli --registry=https://registry.npmjs.org/`)
+      return { ok: CHECK_ONLY ? true : false }
+    }
+    say(`  ✓ 已安装(v${v ? v.join('.') : '?'})`)
     if (existsSync(credFile)) say('  ✓ 凭证已配置(自检: hbcli auth whoami)')
     else say('  ✗ 凭证未配置——酒店检索将用内置静态包(非实时),账号配置见下方指引')
     if (CHECK_ONLY) say('  (--check-only 只报告,不安装)')
     return { ok: true }
   }
   if (CHECK_ONLY) { say('  ✗ 未安装(--check-only 只报告)'); return { ok: true } }
-  say(`  安装中(官方脚本): ${HBCLI_INSTALL_CMD}`)
+  say(`  安装中(npm,staicli@npmjs): ${HBCLI_INSTALL_CMD}`)
   const r = await run('bash', ['-c', HBCLI_INSTALL_CMD], { timeoutMs: 120_000 })
   if (!r.ok) { say(`  ✗ 安装失败(${r.error})——不影响 gotry,酒店检索将用内置静态包;可稍后重试: npx gotry setup`); return { ok: false } }
   const binDir = join(homedir(), '.local/bin')
@@ -278,14 +318,19 @@ async function doctorChecks() {
   const reachOk = existsSync(reachBin)
   const reachLevel = reachOk ? 'ok' : existsSync(venvPython) ? 'degraded' : 'missing'
   items.push({ label: 'Agent Reach(网页/社媒读取)', ok: reachOk, level: reachLevel, detail: reachOk ? `已安装(${reachBin})` : reachLevel === 'degraded' ? '.venv 在但缺 agent-reach 包——gotry_agent_reach / gotry_web_search 读页会失败' : '未装配——gotry_agent_reach / gotry_web_search(读网页)/ gotry_video_subtitle / gotry_github_search 全部不可用', fix: reachOk ? undefined : 'npx gotry doctor --fix' })
-  // hbcli(裸名靠 PATH 探测;绝对路径 existsSync)
+  // hbcli(裸名靠 PATH 探测;绝对路径 existsSync;版本 < MIN_HBCLI_VERSION 视为 missing,见 issue #142)
   let hbBin = ''
   for (const p of ['hbcli', join(homedir(), '.local/bin/hbcli'), join(homedir(), '.staicli/current/hbcli')]) {
     if (p === 'hbcli') { if (await probe(p, ['version'])) { hbBin = 'hbcli(PATH)'; break } } else if (existsSync(p)) { hbBin = p; break }
   }
   if (hbBin) {
-    const whoami = await probe(hbBin === 'hbcli(PATH)' ? 'hbcli' : hbBin, ['auth', 'whoami'])
-    items.push({ label: 'hbcli(酒店实时源)', ok: whoami, level: whoami ? 'ok' : 'degraded', detail: whoami ? `已安装且凭证有效(${hbBin})` : '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)', fix: whoami ? undefined : 'hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)' })
+    const v = await hbcliVersion(hbBin)
+    if (v && !versionAtLeast(v, MIN_HBCLI_VERSION)) {
+      items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——trade.* / search/checkAvail 会 401(issue #142)`, fix: 'npm install -g staicli --registry=https://registry.npmjs.org/' })
+    } else {
+      const whoami = await probe(hbBin === 'hbcli(PATH)' ? 'hbcli' : hbBin, ['auth', 'whoami'])
+      items.push({ label: 'hbcli(酒店实时源)', ok: whoami, level: whoami ? 'ok' : 'degraded', detail: whoami ? `已安装且凭证有效(${hbBin}, v${v ? v.join('.') : '?'})` : '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)', fix: whoami ? undefined : 'hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)' })
+    }
   } else {
     items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: '未安装——酒店检索降级静态包(公开渠道估算,非实时,仅覆盖内置场景)', fix: 'npx gotry doctor --fix' })
   }
