@@ -196,6 +196,8 @@ const strictCases: Array<{ name: string; args: string[]; pattern: RegExp }> = [
   { name: '非 log 的 limit', args: ['stats', parseRoot, '--limit', '3'], pattern: /stats 不支持 --limit/ },
   { name: '单横杠未知选项', args: ['stats', parseRoot, '-x'], pattern: /未知选项 -x/ },
   { name: 'rebuild 小数 seq', args: ['rebuild', '1.5'], pattern: /toSeq 必须是非负整数:1\.5/ },
+  { name: 'rebuild 省略整数位小数 seq', args: ['rebuild', '.5'], pattern: /toSeq 必须是非负整数:\.5/ },
+  { name: 'rebuild 正号省略整数位小数 seq', args: ['rebuild', '+.5'], pattern: /toSeq 必须是非负整数:\+\.5/ },
   { name: 'rebuild 负数 seq', args: ['rebuild', '-1'], pattern: /toSeq 必须是非负整数:-1/ },
   { name: '非法 seq', args: ['rewind', parseRoot, '1.5'], pattern: /seq 必须是非负整数/ },
   { name: '负数 seq', args: ['rewind', parseRoot, '-3'], pattern: /seq 必须是非负整数/ },
@@ -209,9 +211,12 @@ for (const c of strictCases) {
 }
 const numericParent = mkdtempSync(join(tmpdir(), 'gotry-cli-numeric-parent-'))
 const numericRoot = join(numericParent, '1.5')
+const dotNumericRoot = join(numericParent, '.5')
 const numericMig = cli(['migrate', '--state-root', numericRoot])
 const numericRebuild = cli(['rebuild', '--state-root', numericRoot, '1'])
-assert(numericMig.status === 0 && numericRebuild.status === 0, '数字样式 root 通过 --state-root 明示仍可用')
+const dotNumericMig = cli(['migrate', '--state-root', dotNumericRoot])
+const dotNumericRebuild = cli(['rebuild', '--state-root', dotNumericRoot, '1'])
+assert(numericMig.status === 0 && numericRebuild.status === 0 && dotNumericMig.status === 0 && dotNumericRebuild.status === 0, '数字/小数样式 root 通过 --state-root 明示仍可用')
 
 // local-only:非 local 的 tick/export/whatif 必须在 mkdir/openDb/solve/写文件前拒绝。
 const guardRoot = mkdtempSync(join(tmpdir(), 'gotry-cli-guard-'))
