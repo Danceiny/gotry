@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * gotry 外部依赖自举(founder 2026-08-29 指令:安装 gotry 时按上游本身的方式装好外部依赖):
- *   hbcli(hotelbyte-cli)  → 官方 install.sh(原生二进制,~/.local/bin/hbcli)
+ *   hbcli(hotelbyte-cli)  → npm 优先(staicli@npmjs;Node ≥ 20),原生二进制 install.sh 兜底
  *   agent-reach            → 官方 pip 安装 git+ upstream(包内 .venv,与 z3-solver 同址原则)
  *   flyai                  → 无需安装(npx 每次自拉 @fly-ai/flyai-cli)
  *   dsh-better-sidebar     → dsh 宿主层插件市场组件(dshmarket.com #1 UI,18.9 万周装):
@@ -70,7 +70,9 @@ const WIZARD_DRY_RUN = process.argv.includes('--dry-run')
 const EXT_FROM_ARG = (process.argv.find((a) => a.startsWith('--extension-from=')) ?? '').split('=')[1]
 const EXTENSION_FROM = EXT_FROM_ARG === 'github' || EXT_FROM_ARG === 'bundled' ? EXT_FROM_ARG : process.env.GOTRY_EXTENSION_SOURCE === 'github' ? 'github' : 'bundled'
 
-const HBCLI_INSTALL_CMD = 'curl -fsSL https://github.com/hotelbyte-com/docs/releases/latest/download/install.sh | bash'
+// hbcli 安装通道:npm 优先(staicli@npmjs 双轨;显式 registry 防 bnpm 404),install.sh 兜底
+const HBCLI_NPM_INSTALL_CMD = 'npm install -g staicli --registry=https://registry.npmjs.org/'
+const HBCLI_INSTALL_CMD = HBCLI_NPM_INSTALL_CMD
 const REACH_INSTALL_URL = 'git+https://github.com/Panniantong/Agent-Reach.git'
 
 /** 带超时的子进程(inherit stdio 让用户看见上游安装进度) */
@@ -140,7 +142,7 @@ async function setupHbcli() {
     const v = await hbcliVersion(hit)
     if (v && !versionAtLeast(v, MIN_HBCLI_VERSION)) {
       say(`  ✗ 版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——@permission: openapi 端点(trade.* / search/checkAvail)会 401(issue #142)`)
-      say(`    升级: curl -fsSL https://github.com/hotelbyte-com/docs/releases/latest/download/install.sh | bash`)
+      say(`    升级: npm install -g staicli --registry=https://registry.npmjs.org/`)
       return { ok: CHECK_ONLY ? true : false }
     }
     say(`  ✓ 已安装(v${v ? v.join('.') : '?'})`)
@@ -150,7 +152,7 @@ async function setupHbcli() {
     return { ok: true }
   }
   if (CHECK_ONLY) { say('  ✗ 未安装(--check-only 只报告)'); return { ok: true } }
-  say(`  安装中(官方脚本): ${HBCLI_INSTALL_CMD}`)
+  say(`  安装中(npm,staicli@npmjs): ${HBCLI_INSTALL_CMD}`)
   const r = await run('bash', ['-c', HBCLI_INSTALL_CMD], { timeoutMs: 120_000 })
   if (!r.ok) { say(`  ✗ 安装失败(${r.error})——不影响 gotry,酒店检索将用内置静态包;可稍后重试: npx gotry setup`); return { ok: false } }
   const binDir = join(homedir(), '.local/bin')
@@ -324,7 +326,7 @@ async function doctorChecks() {
   if (hbBin) {
     const v = await hbcliVersion(hbBin)
     if (v && !versionAtLeast(v, MIN_HBCLI_VERSION)) {
-      items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——trade.* / search/checkAvail 会 401(issue #142)`, fix: 'curl -fsSL https://github.com/hotelbyte-com/docs/releases/latest/download/install.sh | bash' })
+      items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——trade.* / search/checkAvail 会 401(issue #142)`, fix: 'npm install -g staicli --registry=https://registry.npmjs.org/' })
     } else {
       const whoami = await probe(hbBin === 'hbcli(PATH)' ? 'hbcli' : hbBin, ['auth', 'whoami'])
       items.push({ label: 'hbcli(酒店实时源)', ok: whoami, level: whoami ? 'ok' : 'degraded', detail: whoami ? `已安装且凭证有效(${hbBin}, v${v ? v.join('.') : '?'})` : '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)', fix: whoami ? undefined : 'hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)' })

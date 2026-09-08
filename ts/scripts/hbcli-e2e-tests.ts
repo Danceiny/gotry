@@ -36,7 +36,7 @@ const SANDBOX_APP_SECRET = 'hotelbyte_api_demo'
 
 const GUIDANCE = [
   'staicli(hbcli)账号配置指引:',
-  '  1. 安装 CLI(若缺):npx gotry setup(官方 install.sh → ~/.local/bin/hbcli)',
+  '  1. 安装 CLI(若缺):npx gotry setup(npm 装 staicli@npmjs → PATH 的 hbcli)',
   '  2. 快速试用(沙箱演示账号,来自 hotel-be 种子,user/domain/predefined_user_demo.go):',
   '     hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo',
   '  3. 正式接入:向 HotelByte 申请专属 appKey/appSecret(hbk_*/hbs_*),替换第 2 步凭证;',

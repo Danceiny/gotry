@@ -167,7 +167,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
       items.push({
         id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'missing',
         detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——trade.* / search/checkAvail 会 401(issue #142)`,
-        fix: 'curl -fsSL https://github.com/hotelbyte-com/docs/releases/latest/download/install.sh | bash',
+        fix: 'npm install -g staicli --registry=https://registry.npmjs.org/',
       })
     } else {
       const whoami = await probe(hbCmd, ['auth', 'whoami'])
