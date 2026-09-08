@@ -8,8 +8,10 @@
 # 用法:
 #   TAG=latest ./scripts/publish-npm.sh   # dist-tag 必须显式传(issue #50①:曾默认 rc.5,
 #                                          忘传会把新包发到陈旧 dist-tag,表面成功实则 latest 不可见)
-#   ./scripts/publish-npm.sh login        # 走 web 会话(浏览器点一次 Approve),
-#                                          会话 token 也只写 .npmrc.publish
+#   ./scripts/publish-npm.sh login        # 只建 web 会话(浏览器点一次 Approve)即退出——
+#                                          会话 token 只写 .npmrc.publish,后续发布/dist-tag
+#                                          维护自动复用(automation token 删不动 dist-tag 时用它)
+#   ./scripts/publish-npm.sh rmtag <t>…   # 删杂散 dist-tag(#50③ 维护面;需先 login 建会话)
 #   ./scripts/publish-npm.sh --skip-changelog   # 跳过 changelog 闸(应急;publish-npm.sh 不应绕过)
 #
 # 2026-08-30 changelog 闸(issue owner 拍板):发布前必跑
@@ -20,11 +22,18 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 NPMRC="$ROOT/.npmrc.publish"
-# dist-tag 必须显式传入,未传即拒发(issue #50① 脚枪根治:默认值 rc.5 曾把新包发到陈旧通道)
-if [ -z "${TAG:-}" ]; then
-  echo "!! TAG 未指定,拒绝发布。用法:TAG=latest ./scripts/publish-npm.sh(dist-tag 是显式意图,无默认值)" >&2
-  exit 1
-fi
+# dist-tag 必须显式传入,未传即拒发(issue #50① 脚枪根治:默认值 rc.5 曾把新包发到陈旧通道)。
+# 豁免 login/rmtag:纯认证/维护子命令不发布任何东西,不应被发布意图闸拦截
+# (2026-09-08 实测:`publish-npm.sh login` 裸跑被此闸拒绝,web 会话流程走不通)。
+case "${1:-}" in
+  login|rmtag) ;;
+  *)
+    if [ -z "${TAG:-}" ]; then
+      echo "!! TAG 未指定,拒绝发布。用法:TAG=latest ./scripts/publish-npm.sh(dist-tag 是显式意图,无默认值)" >&2
+      exit 1
+    fi
+    ;;
+esac
 NPM_CONFIG_USERCONFIG="$NPMRC"
 export NPM_CONFIG_USERCONFIG
 
@@ -50,8 +59,25 @@ else
 fi
 
 if [ "${1:-}" = "login" ]; then
-  echo ">> web 登录:会话 token 只写 $NPMRC(全局 ~/.npmrc 不动)。浏览器点 Approve 后即可发布。"
+  echo ">> web 登录:会话 token 只写 $NPMRC(全局 ~/.npmrc 不动)。浏览器点 Approve 后本命令即完成。"
   npm login --auth-type=web --registry=https://registry.npmjs.org/
+  # login 是终态子命令:认证完成即退出,不顺势滑进发布流程(发布恒走 TAG=… 的显式形态)
+  exit 0
+fi
+
+if [ "${1:-}" = "rmtag" ]; then
+  # dist-tag 维护面(#50③):automation token 对 dist-tag DELETE 是 403,删除需 web 会话
+  # (先跑 login 子命令建立)。走本仓隔离 userconfig,不碰全局 ~/.npmrc。
+  shift
+  if [ $# -eq 0 ]; then
+    echo "!! rmtag 需要至少一个通道名。用法:./scripts/publish-npm.sh rmtag rc.5 rc.11 …" >&2
+    exit 1
+  fi
+  for t in "$@"; do
+    echo ">> dist-tag rm @danceiny/gotry $t"
+    NPM_CONFIG_USERCONFIG="$NPMRC" npm dist-tag rm "@danceiny/gotry" "$t" --registry=https://registry.npmjs.org/
+  done
+  exit 0
 fi
 
 # ---- changelog 闸:发布前必跑 build-changelog + 校验顶部段 ----
