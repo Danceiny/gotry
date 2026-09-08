@@ -29,7 +29,8 @@ const legs = parseFlightPackLegs(pack)
 const baseEngine = await solve(req, candidates) as Record<string, unknown>
 const baseJourney = await solveJourney({ legs })
 
-const ROUNDS = 12
+const ROUNDS = Number(process.env.GOTRY_Z3_RACE_ROUNDS ?? '12')
+assert.ok(Number.isInteger(ROUNDS) && ROUNDS > 0, 'GOTRY_Z3_RACE_ROUNDS must be a positive integer')
 for (let round = 0; round < ROUNDS; round++) {
   const [eng, jny, uni] = await Promise.all([
     solve(req, candidates),
