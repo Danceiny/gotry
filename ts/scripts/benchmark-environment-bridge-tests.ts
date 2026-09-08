@@ -25,7 +25,11 @@ import {
   createBenchmarkAgentConformance,
   installBenchmarkAgentConformance,
   parseBenchmarkTerminal,
+  terminalSchemaOutline,
+  validateTerminalBodySchema,
+  validateTerminalBodyValue,
   validateTerminalOutputConfig,
+  type TerminalBodySchema,
 } from '../src/benchmark-agent-conformance.ts'
 import {
   BENCHMARK_CHILD_DIAGNOSTIC_MAX_BYTES,
@@ -125,10 +129,23 @@ type FakeOutcome = {
 }
 
 assert.equal(MAX_CONFORMANCE_RETRIES, 1)
+// Round 12(#215):terminal body schema 是 closed 结构合同。既有信封/协议用例沿用
+// 一个宽松但 closed 的 fixture(全部键可选),schema 严格性由 Round 12 专段的
+// ChinaTravel-like closed schema 覆盖。
+const OK_BODY_SCHEMA: TerminalBodySchema = {
+  type: 'object',
+  properties: {
+    ok: { type: 'boolean' },
+    status: { type: 'string' },
+    x: { type: 'string' },
+  },
+  required: [],
+  additionalProperties: false,
+}
 const projection = {
   toolName: 'gotry_benchmark_environment',
   allowedTools: ['lookup'],
-  terminal: { tag: 'done', max_bytes: 1024 },
+  terminal: { tag: 'done', max_bytes: 1024, body_schema: OK_BODY_SCHEMA },
 } as const
 
 assert.equal(validateTerminalOutputConfig(projection.terminal), true)
@@ -139,6 +156,8 @@ for (const invalid of [
   { tag: 'done', max_bytes: 0 },
   { tag: 'done', max_bytes: 1024 * 1024 + 1 },
   { tag: 'done', max_bytes: 1024, extra: true },
+  { tag: 'done', max_bytes: 1024 },
+  { tag: 'done', max_bytes: 1024, body_schema: { type: 'object', properties: {}, required: [], additionalProperties: true } },
 ]) assert.equal(validateTerminalOutputConfig(invalid), false)
 
 assert.deepEqual(parseBenchmarkTerminal(' \n<done>{"ok":true}</done>\n', projection.terminal), { ok: true, value: { ok: true } })
@@ -165,6 +184,119 @@ for (const [raw, expectOk] of [
   ['prose<think>x</think><done>{"ok":true}</done>', false],
 ] as const) {
   assert.equal(parseBenchmarkTerminal(raw, projection.terminal).ok, expectOk, raw)
+}
+
+// Round 12 RED tests (issue #215): exact terminal schema projection. The bridge
+// config carries a data-value-free closed body schema; the same structure contract
+// is projected into the system prompt and the single terminal correction; the
+// terminal body is fail-closed validated against it — no autofix, no coercion.
+{
+  const travelSchema: TerminalBodySchema = {
+    type: 'object',
+    properties: {
+      people_number: { type: 'integer' },
+      start_city: { type: 'string' },
+      target_city: { type: 'string' },
+      itinerary: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            day: { type: 'integer' },
+            activities: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  type: { type: 'string' },
+                  start_time: { type: 'string' },
+                  cost: { type: 'number' },
+                  transports: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: { start: { type: 'string' }, mode: { type: 'string' } },
+                      required: ['start', 'mode'],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ['type', 'start_time', 'cost', 'transports'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['day', 'activities'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['people_number', 'start_city', 'target_city', 'itinerary'],
+    additionalProperties: false,
+  }
+  const travelConfig = { tag: 'done', max_bytes: 65_536, body_schema: travelSchema }
+  assert.equal(validateTerminalOutputConfig(travelConfig), true, 'ChinaTravel-like closed schema is a valid terminal config')
+
+  const legalBody = {
+    people_number: 2,
+    start_city: 'Dubai',
+    target_city: 'Chengdu',
+    itinerary: [{ day: 1, activities: [{ type: 'attraction', start_time: '09:00', cost: 0, transports: [{ start: 'hotel', mode: 'walk' }] }] }],
+  }
+
+  // Schema dialect: structural keywords only; data-bearing annotation faces are rejected.
+  assert.equal(validateTerminalBodySchema(travelSchema), true)
+  const mutate = (fn: (schema: Record<string, any>) => void): unknown => {
+    const copy = JSON.parse(JSON.stringify(travelSchema))
+    fn(copy)
+    return copy
+  }
+  for (const [label, schema] of [
+    ['extra root key', mutate(s => { s.description = 'the plan' })],
+    ['enum on scalar', mutate(s => { s.properties.people_number.enum = [2] })],
+    ['const on scalar', mutate(s => { s.properties.start_city.const = 'Dubai' })],
+    ['default on scalar', mutate(s => { s.properties.target_city.default = 'Chengdu' })],
+    ['examples key', mutate(s => { s.properties.itinerary.examples = [] })],
+    ['pattern on scalar', mutate(s => { s.properties.start_city.pattern = '^[A-Z]' })],
+    ['open object', mutate(s => { s.additionalProperties = true })],
+    ['missing additionalProperties', mutate(s => { delete s.additionalProperties })],
+    ['array without items', mutate(s => { s.properties.itinerary = { type: 'array' } })],
+    ['object without required', mutate(s => { delete s.required })],
+    ['unknown type', mutate(s => { s.properties.people_number.type = 'float' })],
+    ['allOf composition', mutate(s => { s.allOf = [] })],
+  ] as const) {
+    assert.equal(validateTerminalBodySchema(schema), false, `schema dialect rejects: ${label}`)
+  }
+
+  // Value validation: legal ChinaTravel-like hierarchy passes; the five Round 11
+  // failure classes stay rejected without any autofix.
+  assert.equal(validateTerminalBodyValue(legalBody, travelSchema), true, 'legal ChinaTravel-like hierarchy passes')
+  assert.equal(parseBenchmarkTerminal(`<done>${JSON.stringify(legalBody)}</done>`, travelConfig).ok, true, 'legal body parses through the terminal gate')
+  for (const [label, body] of [
+    ['extra root key (Round 11 budget/total_cost case)', { ...legalBody, budget: { total_cost: 1 } }],
+    ['itinerary item written as direct activity (missing day)', { ...legalBody, itinerary: [{ type: 'attraction', start_time: '09:00', cost: 0, transports: [] }] }],
+    ['missing activities array', { ...legalBody, itinerary: [{ day: 1 }] }],
+    ['wrong type (string day)', { ...legalBody, itinerary: [{ day: '1', activities: [] }] }],
+    ['nested extra field', { ...legalBody, itinerary: [{ day: 1, activities: [{ type: 'attraction', start_time: '09:00', cost: 0, transports: [], unexpected: 1 }] }] }],
+  ] as const) {
+    assert.equal(validateTerminalBodyValue(body, travelSchema), false, `value validation rejects: ${label}`)
+    assert.equal(parseBenchmarkTerminal(`<done>${JSON.stringify(body)}</done>`, travelConfig).ok, false, `terminal gate rejects: ${label}`)
+  }
+
+  // Envelope byte limit still fails closed for a schema-valid but oversized body.
+  assert.equal(parseBenchmarkTerminal(`<done>${' '.repeat(2000)}${JSON.stringify({ ok: true })}</done>`, projection.terminal).ok, false, 'schema-valid body over max_bytes still rejects')
+
+  // Single-source projection: the outline is deterministic and appears verbatim in
+  // both the system section and the one terminal correction.
+  const outline = terminalSchemaOutline(travelSchema)
+  assert.equal(outline, terminalSchemaOutline(JSON.parse(JSON.stringify(travelSchema))), 'outline is deterministic')
+  assert.equal(
+    outline,
+    'object{people_number:integer,start_city:string,target_city:string,itinerary:array<object{day:integer,activities:array<object{type:string,start_time:string,cost:number,transports:array<object{start:string,mode:string}>}>}>}',
+    'outline renders the exact structural contract',
+  )
+  assert.match(outline, /object\{/, 'outline renders object nodes')
+  assert.ok(!outline.includes('optional') && !outline.includes('?'), 'all keys required render without optional markers')
 }
 
 function turnStart(turn = 1) {
@@ -438,6 +570,9 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
   assert.match(assembled.sections[0]!.text, /\"action\":\"call\"/)
   assert.match(assembled.sections[0]!.text, /<done>/)
   assert.equal(assembled.sections[0]!.text.includes('/tmp/'), false)
+  // Round 12(#215):system section 与 terminal 纠正投影同一份结构合同(单一来源)。
+  const round12Outline = terminalSchemaOutline(OK_BODY_SCHEMA)
+  assert.ok(assembled.sections[0]!.text.includes(`matching exactly ${round12Outline}`), 'system section projects the terminal body schema outline')
 
   // Intermediate retry/request errors never write; only final completed observes recovery.
   rootListeners.get('session/event')![0]!(session, turnEnd())
@@ -649,7 +784,7 @@ try {
 
   const configPath = join(root, 'bridge.json')
   writeFileSync(configPath, JSON.stringify({
-    schema_version: 'gotry_benchmark_environment_bridge_v3',
+    schema_version: 'gotry_benchmark_environment_bridge_v4',
     enabled: true,
     executable: process.execPath,
     cwd: root,
@@ -661,7 +796,7 @@ try {
     ],
     timeout_ms: 20,
     max_output_bytes: 4_096,
-    terminal_output: { tag: 'done', max_bytes: 4_096 },
+    terminal_output: { tag: 'done', max_bytes: 4_096, body_schema: OK_BODY_SCHEMA },
     isolation: {
       mode: 'host-enforced',
       writes: 'forbidden',
@@ -1299,7 +1434,7 @@ try {
   }
 
   const validConfig = {
-    schema_version: 'gotry_benchmark_environment_bridge_v3',
+    schema_version: 'gotry_benchmark_environment_bridge_v4',
     enabled: true,
     executable: process.execPath,
     cwd: root,
@@ -1320,7 +1455,7 @@ try {
     }],
     timeout_ms: 20,
     max_output_bytes: 4_096,
-    terminal_output: { tag: 'done', max_bytes: 4_096 },
+    terminal_output: { tag: 'done', max_bytes: 4_096, body_schema: OK_BODY_SCHEMA },
     isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' },
   }
   type MutableConfig = Record<string, any>
@@ -1414,6 +1549,8 @@ try {
     'v3 rejects an open annotation-only input schema',
   )
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, schema_version: 'gotry_benchmark_environment_bridge_v1' }), /benchmark environment bridge configuration unavailable/, 'v1 config cannot silently omit the Round 3 terminal semantics')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, schema_version: 'gotry_benchmark_environment_bridge_v3' }), /benchmark environment bridge configuration unavailable/, 'v3 config cannot silently omit the Round 12 terminal body schema (#215)')
+  assert.throws(() => bridgeRegistrationFor({ ...validConfig, terminal_output: { ...validConfig.terminal_output, body_schema: { ...validConfig.terminal_output.body_schema, additionalProperties: true } } }), /benchmark environment bridge configuration unavailable/, 'non-closed terminal body schema fails the config load closed')
   assert.throws(() => bridgeRegistrationFor({ ...validConfig, tools: [validConfig.tools[0], validConfig.tools[0]] }), /benchmark environment bridge configuration unavailable/, 'duplicate tool descriptor fails hard')
   assert.throws(() => bridgeRegistrationFor(configWithTool(tool => { delete tool.output_keys })), /benchmark environment bridge configuration unavailable/, 'missing output_keys fails hard')
   assert.throws(() => bridgeRegistrationFor(configWithTool(tool => { tool.output_keys = [] })), /benchmark environment bridge configuration unavailable/, 'empty output allowlist fails closed at registration')

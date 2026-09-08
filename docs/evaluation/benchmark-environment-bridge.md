@@ -387,3 +387,22 @@ only the model-facing bridge wire to one flat object with `action` enum
 frozen descriptor `input_schema`. Provider routing, the scorer, evaluator,
 default product path, external data/oracle/query/trajectory inputs, private
 paths, and credentials are unchanged; no score or uplift is claimed.
+
+### Round 12 — exact terminal schema projection (#215)
+
+With the wire usable (Round 11), the frozen Round 11 treatment surfaced the
+next bottleneck: GoTry only told the model "one JSON object", so the model
+added root keys and wrote day rows as direct activities, and the official
+scorer rejected the body 22 times by convention without running.
+
+Round 12 closes the structural half (issue #215): the bridge config carries a
+data-value-free closed `body_schema`; the same structure contract is projected
+as one deterministic outline into the system prompt and the single terminal
+correction; every accepted terminal body is fail-closed validated against it —
+extra root keys, missing `day`/`activities`, wrong types, and nested extra
+fields are rejected with no autofix. Config face bumped to v4; v3 and older
+configs fail closed. Source tests + source/packaged E2E cover the legal
+ChinaTravel-like hierarchy, the five Round 11 rejection classes, and the
+single-source projection. The frozen rerun (same case, model, and budget;
+only legal terminals reach the pinned official scorer) is the remaining
+segment and has not run at this SHA; no treatment or uplift is claimed.

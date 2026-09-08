@@ -11,7 +11,7 @@
 - 当前形态:M3 最小可用、分发链路无堵点;M3 Exit 缺真实 cohort 证据(D-18),M4 记忆域经 founder 授权并行推进。
 - 五层:L1 交互 / L2 编排(dsh 插件)/ L3 统一行程模型 + Z3 / L4 数据能力 / L5 loopx 治理。
 - 状态基座:单文件 SQLite 账本(ADR-15),本地+Web 一套账本语义(ADR-16);外部依赖全走效应解译器(ADR-18)。
-- 外部 benchmark:Round 1–10 frozen treatment 与 Round 11 wire 切片均不产生可归因 official score/uplift(D-28);逐轮事实见 §9,工程合同见 `evaluation/benchmark-environment-bridge.md`。
+- 外部 benchmark:Round 1–10 frozen treatment 与 Round 11 wire 切片均不产生可归因 official score/uplift,Round 12 结构半场(config v4 closed body schema)已合入而冻结重跑未跑(D-28);逐轮事实见 §9,工程合同见 `evaluation/benchmark-environment-bridge.md`。
 - 找活干去 §10.1;时间线归 `roadmap.md`;文档组织规范归 `README.md`。
 
 **目录**
@@ -389,7 +389,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **安装链三修(2026-09-08,rc.19 `npx doctor --fix` 实测三 issue 收口)**:①sidebar 安装误报——pnpm ≥10.5 默认不执行依赖构建脚本,严格态(pnpm 11)下 `ERR_PNPM_IGNORED_BUILDS` exit 1 但 167 包已完整落盘;`setupSidebar` 改为**按落盘状态判成功**(与 doctor 检查同口径,profile package.json 为唯一事实面),对 dsh plugin 调用附 `npm_config_strict_dep_builds=false` 单次降级 + node-pty 构建被跳过的 approve-builds 指引,不再以 dsh→pnpm 两层转手的 exit code 误报「补装失败」。②map-tools npm 布局真缺——2026-09-04 遗留的「补依赖渠道拍板」落地为**随包 vendor 分发**(`ts/dsh-runtime/vendor/dsh-map-tools/` 进 files[],inner 解析链 vendor 优先;依赖形态被上游否决:其 peerDependencies 要求 `dsh-settings/dsh-tools >=0.1.2-rc.1` 而运行时锁定 `0.1.2-alpha.3`(semver alpha<rc),npm 严格 peer 解析 ERESOLVE、optionalDependencies 亦不豁免——硬依赖会弄坏 npx 主安装路径)。③ask-user 误报——npm/npx 提升布局下依赖落在包外同级提升位,doctor 两面的 existsSync 硬编码候选全 miss,改与 inner 同口径 createRequire 解析链(dsh 上下文优先→包根上下文→静态候选)。顺带清偿 bin/gotry-inner.js help 文本中已提交的合并冲突标记。doctor-tests §5b/5c + bootstrap-tests §11(run-all §7c/§15b)钉回归。
 - **CI 双层修复(2026-09-08,#208/#202;main 自 #197 起全红、rc.19 系带病发布)**:①`Install ts dependencies` 红根因 = runner npm 升级后裸 `npm ci` 强制校验 peer；#208 先以 `--legacy-peer-deps` 恢复流水线并移除 dsh-map-tools 冗余依赖，#202 再把 14 个递归 DSH peer 全部精确钉在 `0.1.2-alpha.3`，CI 与 CONTRIBUTING 回归裸 `npm ci`，lock 全量 resolved 指向 registry.npmjs.org。②typecheck 五连红(turn-deadline 的 session 事件)根因 = 类型面隐性依赖 peer 意外物化:`session/event`/`session/disposed` 声明在 dsh-session 的 cordis Events augmentation 里,pnpm 隔离布局下 root 侧同名包的 augmentation 合并进的是另一个 cordis 实例——显式 `import type` + `dsh-session@0.1.2-alpha.3` 进 ts dependencies，完整 alpha.3 closure 阻止 rc.1 混版本。
 
-### 外部 benchmark 泛化(Round 1–11,Discussion #78,official score 仍为空)
+### 外部 benchmark 泛化(Round 1–12,Discussion #78,official score 仍为空)
 
 > 工程合同全文见 `evaluation/benchmark-environment-bridge.md`;此处只留逐轮事实摘记。共同结论:official scores 全为 null,不声称 uplift 或 external benchmark closure。
 
@@ -403,6 +403,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **Round 8(generic flat bridge action + protocol failure inventory)**:`gotry_benchmark_environment` 参数面 query blob → typed 三字段(`action` 枚举 tools/call/errors required + `tool` + `arguments` additionalProperties:true),`BRIDGE_ERROR_CONTRACT` 封闭的 bridge protocol/infrastructure failure 词表(10 码 × recoverable/remedy)经 `action=errors` 可拉取;conformance 契约面同刀法平铺。栈式经 #148→#151 合入(feat 线)。**Round 9(治理面预算与输出上限,#100/#102)**:owner-local 治理环境按 registry 钉定修订自建(ChinaTravel `b071db25` + sandbox en 数据 + 官方 `agent_env` 适配器)后实测钉死两处基础设施真因——① LLM_MODEL 显式覆盖到中转模型时 dsh 按未知模型 256K 预算发 `max_tokens`,MiniMax(输出上限 196608)2013 拒绝,即 Rounds 2-7 `child_nonzero_exit/0 terminal bytes` 的真实根因之一:`bin/gotry-inner.js` 的 llm-deepseek 目录条目现支持 `LLM_MAX_TOKENS` 注入 `maxTokens` 元数据(dsh-llm-deepseek `defaultMaxTokens` 官方通道);② 治理面钉死预算 60/120s 对官方任务形态(单查询 300s)过紧:`GOTRY_BENCHMARK_SOFT_MS/HARD_MS` 按 run 显式设定,缺省不变、非法值/区间倒置启动即抛(钉死可复现语义不变)。修复后治疗首次全链路存活(22 请求/约 20 次桥调用/65536 上限生效,MiniMax-M2.7 真实探索 ChinaTravel 工具面),余量为预算内收敛(诊断实测:当代推理模型即便被明令禁止仍以 `<think>` 前缀输出,严格终态门对其结构性失效——终态验收现于验证前剥离配对推理块,严格性本体不变,bridge-tests 断言锁死),不构成 external benchmark closure。
 - **Round 10(per-tool typed result contract hardening; real `glm-5.3-flash` treatment, main `c843fae`)**:在 Round 8 的单一 flat `tools|call|errors` 协议上，将 owner-local v3 descriptor 的 closed/bounded `input_schema` 同源投影为每工具独立 `call` 分支并在执行前复用；`output_keys` 强制非空，`domain_outcomes` 限定为 finite exact tuple。adapter 只接受 exact `gotry_benchmark_tool_result_v1`：concrete result 的每个 primitive leaf 必须位于声明键下，domain outcome 必须 exit 0，非零退出仍是 infrastructure failure；conformance 以最新 bridge response 为 tagged terminal 时序下界，domain 后失败拒绝、后续 concrete result 可恢复。真实 treatment 暴露 provider/model visibility failure：模型面对顶层 `oneOf` wire schema 未形成可见、可用的工具调用，产生 57 次空 `{}` 调用；没有 countable score。该诊断不改 provider、scorer、evaluator 或默认产品路径；冻结 treatment 与 score 只能由后续独立证据给出。
 - **Round 11(flat model-facing bridge wire)**:仅收窄模型可见的 benchmark bridge wire：请求为 flat object，`action` 为 `tools|call|errors` 枚举，`tool` 为从冻结 descriptor 派生的工具名枚举，`arguments` 为 generic object。执行时仍对所选 descriptor 的 exact frozen `input_schema` 做校验；descriptor、adapter result/failure contract、provider/scorer/evaluator、默认产品路径与评分口径均不变。本轮不提供 score/uplift 证据。
+- **Round 12(exact terminal schema projection,#215)**:Round 11 冻结治疗暴露新瓶颈——GoTry 只说「输出一个 JSON object」,模型自加 root 键、把 itinerary 行写成直接 activity,official scorer 按约定拒绝 22 处未运行。结构半场收口(#217 合入):bridge config v4 携带无数据值 closed `body_schema`(结构关键字白名单,enum/const/example/default 与组合形一律拒绝);同一份结构合同以确定性 outline 投影进 system prompt 与唯一一次 terminal 纠正;接受的终态 body 逐节点 fail-closed 校验——多 root 键/缺 day·activities/错类型/嵌套多余键原样拒绝,零 autofix;v3 及更旧 config fail-closed。source 测试+source/packaged E2E 覆盖合法 ChinaTravel-like 层级、五类拒绝与单一来源投影;冻结重跑(同 case/同 model/同预算,仅合法终态进 pinned official scorer)为剩余段,本 SHA 未跑,不声称 treatment 或 uplift。工程合同 `evaluation/benchmark-environment-bridge.md` Round 12 段。
 
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
@@ -457,7 +458,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 **D-28 外部 benchmark 驱动的 Agent 泛化证据缺口**
 
-- **现状**:ChinaTravel grounding-v3 的冻结 5-query canary 只完成 1 个可评分终态,第二例在 planner 重复工具调用中触发 300s timeout——当前没有合法 5-query 聚合。Round 1–11 逐轮事实见 §9「外部 benchmark 泛化」；Round 10 的 `glm-5.3-flash` treatment 在 main `c843fae` 诊断为顶层 `oneOf` 可见性失败（57 次空 `{}` 调用、无 countable score），Round 11 仅调整模型面对的 flat wire，当前仍没有可归因的 official score/uplift。
+- **现状**:ChinaTravel grounding-v3 的冻结 5-query canary 只完成 1 个可评分终态,第二例在 planner 重复工具调用中触发 300s timeout——当前没有合法 5-query 聚合。Round 1–12 逐轮事实见 §9「外部 benchmark 泛化」；Round 10 的 `glm-5.3-flash` treatment 在 main `c843fae` 诊断为顶层 `oneOf` 可见性失败（57 次空 `{}` 调用、无 countable score），Round 11 仅调整模型面对的 flat wire，Round 12 收口结构半场（config v4 closed body schema），当前仍没有可归因的 official score/uplift。
 - **子债:Phase 0→Phase 1 adapter admission(open)**:Phase 0 foundation 已含契约/注册表/校验器、unmatched diagnostic fixtures 与确定性节奏 planner(无调度/花费/打分/基线/uplift 效力);每个 adapter、external runner、baseline 与 matched production-evidence 路径仍需单独批准的 plan/PR,并过 [`evaluation-foundation.md`](evaluation/evaluation-foundation.md) 的 license/evaluator/source-fence 控制。
 - **赎回顺序**:source/installed startup+conformance 合同与全回归通过 → 新冻结 case 在 no-oracle 边界下 `exit=0`、非空 terminal、planner<300s 且 evaluator 执行 → 原 manifest 5/5 终态且 schema/forbidden/七指标完整 → 按 registry 扩展其他公开 benchmark 并在 3–5 个独立优化 PR 后综合归因;在匹配 evidence 前不声称分数提升或 external closure。
 
