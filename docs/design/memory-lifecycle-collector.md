@@ -11,52 +11,67 @@
 
 - `--state-root <dir>`:隔离状态根;真实路径或任一受管父/叶子符号链接若指向 `.git` 或 `ts/dsh-runtime` 形态会 fail-closed。
 - `--consent <statement>`:操作者显式同意声明;落盘仅保存 HMAC consent ref。
-- `GOTRY_MEMORY_LIFECYCLE_HMAC_KEY`:至少 32 字符的本地密钥;不落盘、不输出。数据集创建后会保存域分离 verifier,换 key 读写/导出均拒绝。
+- `GOTRY_MEMORY_LIFECYCLE_HMAC_KEY`:至少 32 字符的本地密钥;示例用本机生成的 64 位 hex(32 bytes 熵),只进入 shell 变量,不落盘、不输出。数据集创建后会保存域分离 verifier,换 key 读写/导出均拒绝。
 
 CLI 使用真实系统时间,没有 `--at`;测试态需要时间注入时调用纯函数接口。
 
 ## 2. 命令
 
 ```bash
-export GOTRY_MEMORY_LIFECYCLE_HMAC_KEY='32+ chars kept outside git'
+STATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gotry-m4-collector.XXXXXX")"
+EXPORT_PATH="$STATE_ROOT/export.json"
+CONSENT_STATEMENT='operator reviewed issue #228 scope'
+export GOTRY_MEMORY_LIFECYCLE_HMAC_KEY="$(
+  node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))"
+)"
 
 npx tsx ts/scripts/memory-lifecycle.ts init \
-  --state-root /tmp/gotry-m4-collector \
-  --consent 'operator reviewed issue #228 scope' \
+  --state-root "$STATE_ROOT" \
+  --consent "$CONSENT_STATEMENT" \
   --source synthetic_fixture \
   --dataset m4-demo \
   --wait-code tool_latency \
   --wait-code user_pause
 
 npx tsx ts/scripts/memory-lifecycle.ts start \
-  --state-root /tmp/gotry-m4-collector --consent 'operator reviewed issue #228 scope' \
+  --state-root "$STATE_ROOT" --consent "$CONSENT_STATEMENT" \
   --subject 'local subject handle' --flow first-planning --eligible-planning
 
 npx tsx ts/scripts/memory-lifecycle.ts wait-start \
-  --state-root /tmp/gotry-m4-collector --consent 'operator reviewed issue #228 scope' \
+  --state-root "$STATE_ROOT" --consent "$CONSENT_STATEMENT" \
   --subject 'local subject handle' --flow first-planning --wait w1 --code tool_latency
 npx tsx ts/scripts/memory-lifecycle.ts wait-end \
-  --state-root /tmp/gotry-m4-collector --consent 'operator reviewed issue #228 scope' \
+  --state-root "$STATE_ROOT" --consent "$CONSENT_STATEMENT" \
   --subject 'local subject handle' --flow first-planning --wait w1
 
 npx tsx ts/scripts/memory-lifecycle.ts complete \
-  --state-root /tmp/gotry-m4-collector --consent 'operator reviewed issue #228 scope' \
+  --state-root "$STATE_ROOT" --consent "$CONSENT_STATEMENT" \
   --subject 'local subject handle' --flow first-planning
 
+npx tsx ts/scripts/memory-lifecycle.ts start \
+  --state-root "$STATE_ROOT" --consent "$CONSENT_STATEMENT" \
+  --subject 'local subject handle' --flow returning-planning --eligible-planning
+
+npx tsx ts/scripts/memory-lifecycle.ts complete \
+  --state-root "$STATE_ROOT" --consent "$CONSENT_STATEMENT" \
+  --subject 'local subject handle' --flow returning-planning
+
 npx tsx ts/scripts/memory-lifecycle.ts record-reflux \
-  --state-root /tmp/gotry-m4-collector --consent 'operator reviewed issue #228 scope' \
+  --state-root "$STATE_ROOT" --consent "$CONSENT_STATEMENT" \
   --experience er-hai-memory --kind recalled --evidence 'local evidence handle'
 
 npx tsx ts/scripts/memory-lifecycle.ts record-preference \
-  --state-root /tmp/gotry-m4-collector --consent 'operator reviewed issue #228 scope' \
+  --state-root "$STATE_ROOT" --consent "$CONSENT_STATEMENT" \
   --assertion slow-pace --evidence 'local evidence handle' --consumer ranking
 
 npx tsx ts/scripts/memory-lifecycle.ts export \
-  --state-root /tmp/gotry-m4-collector --consent 'operator reviewed issue #228 scope' \
-  --out /tmp/gotry-m4-collector/export.json
+  --state-root "$STATE_ROOT" --consent "$CONSENT_STATEMENT" \
+  --out "$EXPORT_PATH"
 
-npx tsx ts/scripts/memory-value-report.ts /tmp/gotry-m4-collector/export.json
+npx tsx ts/scripts/memory-value-report.ts "$EXPORT_PATH"
 ```
+
+上例是一次性 `synthetic_fixture` 演示:`STATE_ROOT` 和 HMAC key 都可随临时根丢弃。私有 `observed_private` 数据集必须在仓库外生成并持久保存首次使用的 64 位 hex key(如密钥管理器或本机安全存储),后续对同一 `stateRoot` 先恢复同一个 `GOTRY_MEMORY_LIFECYCLE_HMAC_KEY`;不要把每次执行都生成新 key 的写法套到已有私有 dataset,否则 manifest verifier 会拒绝读写/导出。
 
 `observed_private` 只表示输入来自私有观测;collector 导出仍是 `source_review.state=candidate`,不会生成 `manual_attested`、`reviewer_ref` 或 `attestation_ref`。M4 Exit 仍需要真实 `observed_private` N≥5 repeat cohort 及人工 source-review attestation 合同。
 
