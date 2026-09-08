@@ -112,7 +112,7 @@ function parseSequence(raw: string, label: string): number {
 }
 
 function looksLikeNumeric(raw: string): boolean {
-  return /^[+-]?\d/.test(raw)
+  return /^[+-]?(?:\d|\.\d)/.test(raw)
 }
 
 function rootAndArgs(cmd: string, positional: string[], explicitRoot?: string): { root: string; args: string[] } {
