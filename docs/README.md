@@ -102,6 +102,7 @@
 | 文档 | 关注点 |
 |---|---|
 | [design/memory-design.md](design/memory-design.md) | 记忆域设计:C 端六层重设计(M4 交付) |
+| [design/memory-lifecycle-collector.md](design/memory-lifecycle-collector.md) | M4 lifecycle collector 使用合同:显式 opt-in、隔离 stateRoot、HMAC/consent、原子持久化与 #223 scorer 导出 |
 | [design/effect-interpreter.md](design/effect-interpreter.md) | 效应解译器设计(accepted,ADR-18):词汇/韧性策略表/判定记录 |
 | [design/booking-saga-fsm.md](design/booking-saga-fsm.md) | 预订 saga 状态机(accepted,ADR-17):字母表/边表/M5 缝词汇 |
 | [design/tool-orchestration-design.md](design/tool-orchestration-design.md) | 工具编排与通道健康面设计(proposal,issue #106/#107/#108) |

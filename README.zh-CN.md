@@ -195,11 +195,13 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 - **账号会话检索** —— 你本人登录态查携程机票/酒店 + 12306 火车(酒/火 2026-09-03 实装:酒店为被动嗅探登录态真实价,火车为 12306 公开余票查询面;接口面随首个真会话校准);观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
 - **扩展按需装** —— `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 这边不跑 setup wizard、不开 chrome://extensions、不动剪贴板
 - **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
+- **M4 lifecycle 证据采集器** —— 显式 opt-in CLI 记录首访/回访 planning flow:隔离 `stateRoot`、consent 与 HMAC key 必需;dataset key/source/wait 词汇冻结;JSONL/manifest 走 write-all + 原子/no-overwrite 发布;导出只作为 #223 scorer 的 candidate/synthetic 输入,绝不生成人工签核
 - **按任务路由的回合预算** —— 每轮先由确定性路由器(零 LLM)分类 quick / sync / deep-planning;时间才是唯一预算,且到点出口跟任务走:quick/sync 收敛作答,deep-planning 转后台落 `gotry_turn_handoff.v1` 工单(ETA 约 1 小时)而不是让会话流死掉;工单由 `scripts/turn-handoff-collect.ts` 在后台收集结算(幂等、带递归防护的子规划会话),回访时经只读工具 `gotry_turn_handoff_list` 查询状态与交付物;经打包消费者安装的 E2E 在 CI 里实测
 
 **已知限制**(诚实清单):
 
 - **M3 Exit 未关闭** —— 工程与分发面就绪,但真实种子用户证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
+- **M4 value evidence 未关闭** —— #20/#223 scorer 已加严,#228 collector 可产出隔离 candidate/synthetic lifecycle 导出,但真实 `observed_private` N≥5 repeat cohort 与人工 source-review attestation 仍未进入私有证据面
 - **酒店会话适配** —— 携程酒店/美团登录态面等实测回填;机票已通
 - **界面语言** —— 英文仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
 - **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic（无分数、无 uplift 声明）。Round 10 的 `glm-5.3-flash`（main `c843fae`）已诊断为可见性失败（57 次空 `{}` 调用）；Round 11 仅把模型面对的 wire 展平为 `tools/call/errors`、descriptor 派生工具名枚举和 generic object 参数，执行时仍对冻结 descriptor 做 exact 校验；逐轮工程台账见 [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
@@ -208,7 +210,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 <details>
 <summary>更深的工程状态(账本合同 / 证据合同 / 里程碑口径)</summary>
 
-状态权威面在文档,不在 README:事务化状态账本(ADR-15)+ 双形态冻结(ADR-16:本地+Web 一套账本语义);M3 真实 cohort 证据合同已立(fixture 不充当 Exit,真实 50–200 人样本即开 Exit);M4 paired-cohort 价值证据合同(合成数据不充当 Exit 证据);异步工单终态合同(`gotry_async_terminal.v1`:4/4 → succeeded / ledger settled / exit 0)。细则见 [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 与 #19–#22。
+状态权威面在文档,不在 README:事务化状态账本(ADR-15)+ 双形态冻结(ADR-16:本地+Web 一套账本语义);M3 真实 cohort 证据合同已立(fixture 不充当 Exit,真实 50–200 人样本即开 Exit);M4 paired-cohort 价值证据合同已按 #223 加严,#228 collector 只是显式 consent + 隔离 stateRoot 的 scorer 输入生产路径(合成/candidate 不充当 Exit 证据);异步工单终态合同(`gotry_async_terminal.v1`:4/4 → succeeded / ledger settled / exit 0)。细则见 [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 与 #19–#22/#223/#228。
 
 </details>
 
@@ -220,7 +222,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 | M1 | Agent 形态成立 | LLM 进环;对话即界面;gates 选择题 | ✅ 2026-08-22 |
 | M2 | 实时数据 | hotelbyte 桥 + 航班源;证据链换实时标签 | ✅ 2026-08-22 |
 | M3 | 最小可用产品 | 最小 Web 面 + 50–200 种子用户(洱海/普吉场景) | **← 当前 —— evidence 未收口** |
-| M4 | 记忆与「下一次出发」 | 六层记忆 C 端域;paired-cohort 价值证据 | founder 授权并行 |
+| M4 | 记忆与「下一次出发」 | 六层记忆 C 端域;paired-cohort 价值证据 + 显式 lifecycle collector | founder 授权并行 |
 | M5 | 交易闭环 | WriteGate 上生产;预订 / 支付 / 退改 | entry gate 启封 |
 | M6 | B2B 包裹 | principal/sponsor 插件,内核零改动 | entry gate 启封 |
 
@@ -235,7 +237,7 @@ npx tsx scripts/evaluation-contract-tests.ts   # 评测 Phase 0 合同(离线)
 npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 ```
 
-套件覆盖金标准引擎、对话重放、跨进程异步工单、插件 smoke、实时桥、进程护栏、i18n、记忆域、Z3 并发闸、事实闸、打包消费者工具预算 E2E 等;权威分节以 `scripts/run-all-tests.sh` 实际枚举为准。真实会话 benchmark(`npx tsx scripts/sf-live-benchmark.ts --golden=static`)为 opt-in,需你的 Chrome 会话扩展在线,永不进 CI。
+套件覆盖金标准引擎、对话重放、跨进程异步工单、插件 smoke、实时桥、进程护栏、i18n、记忆域、M4 lifecycle collector、Z3 并发闸、事实闸、打包消费者工具预算 E2E 等;权威分节以 `scripts/run-all-tests.sh` 实际枚举为准。真实会话 benchmark(`npx tsx scripts/sf-live-benchmark.ts --golden=static`)为 opt-in,需你的 Chrome 会话扩展在线,永不进 CI。
 
 ## 参与开发
 
@@ -266,6 +268,7 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 | [`docs/ops/extension-privacy.md`](docs/ops/extension-privacy.md) | Session Bridge 扩展隐私 |
 | [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md) | 外部 benchmark 桥——工程台账 |
 | [`docs/evaluation/evaluation-foundation.md`](docs/evaluation/evaluation-foundation.md) | 评测 Phase 0 基座 |
+| [`docs/design/memory-lifecycle-collector.md`](docs/design/memory-lifecycle-collector.md) | M4 lifecycle collector CLI 用法与持久化合同 |
 | [`docs/design/booking-saga-fsm.md`](docs/design/booking-saga-fsm.md) | 预订 saga 状态机(M5 缝词汇) |
 | [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md) | 一次真实 AI 旅行规划失败复盘(反面教材) |
 | [`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/) | Agent 产品人格横评——同一真实行程 prompt 的各家回答存档、评分卡与人格提炼 |
