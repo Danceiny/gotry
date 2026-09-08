@@ -8,18 +8,20 @@
 ## 0. 摘要
 
 1. **Entry gate 为两项**:M5 在 M4 Exit + 供应链协议同时满足后才能实现;本文不改变 roadmap Exit/Entry。
-2. **首供应链**:M5 首接 `hotelbyte-cli`(公开 MIT CLI,hotel-be 内部资产只 bridge/reference)。供应链协议尚未取得签署/授权证据;当前为只读接口调查与契约准备。
+2. **首供应链**:M5 首接 `hotelbyte-cli`(公开 MIT CLI,hotel-be 内部资产只 bridge/reference)。当前未取得供应链协议签署/内部授权证据;仅进行只读接口调查与契约准备。
 3. **核心不变量**:任何 booking/payment/refund 类写 effect 必须先有 `pending_writes` L2 intent,再有一次性的可信 L3 receipt;没有 receipt 就没有外部副作用。
 4. **receipt 由可信人类确认回调授权,不由模型工具调用授权**:nonce/challenge 在呈现前由服务端准备并绑定不可变请求;receipt 发行与消费通道只接受可信宿主 UI 确认回调,模型只能请求展示。准备/呈现 → 可信确认 → 原子消费 + outbox,prepared challenge 不构成授权。
-5. **request fingerprint 绑定请求而非按钮**:必含 actor、tenant、traveler principal、供应商、商品/报价、金额、币种、条款 digest、有效期、展示版本与 nonce。
-6. **本地 outbox 不等于外部 exactly-once**:GoTry 保证同一 ledger intent 只消费一次并只登记一个 write effect intent;外部副作用是否重复依赖供应商幂等/可查重。unknown 禁止盲重试。
+5. **request fingerprint 绑定请求而非按钮**:必含 actor、tenant、traveler principal、供应商、商品/报价、金额、币种、条款 digest、有效期、展示版本与 nonce;并绑定实际 supplier request 的 canonical payload digest(覆盖 holder/guests 中影响履约的字段),或显式绑定既有 immutable `payload_digest`。敏感字段本身不公开落账;展示/确认后替换旅客或联系人必须零写。
+6. **本地 outbox 不等于外部 exactly-once**:receipt 消费事务只产生一个本地 outbox intent;dispatcher 通过数据库原子 claim 获得唯一派发权,并在任何 supplier/network 调用前持久化 `dispatching` 与 immutable attempt id/fencing metadata,并发 worker 只有一个有权派发。**只有原子 claim/`dispatching` 事务尚未提交时,intent 才仍是 `queued`,可由别的 worker claim;一旦 `dispatching` 与 immutable attempt id 已持久化,之后无论 crash 被认为在外呼前还是后、是否存在网络日志、lease 是否过期,都不能自动重领、续派或重放 book——记录缺失只是 evidence absence,不证明未外呼。**已持久化 dispatching 的 crash/timeout/lease expiry 统一进入 `unknown`,只允许使用同一 attempt/`customerReferenceNo` 做 query 或 manual reconcile。GoTry 保证同一 ledger intent 只消费一次并只登记一个 write effect intent、同一 `attempt_id` 只 book 一次;外部副作用是否重复依赖供应商幂等/可查重。unknown 禁止盲重试。fencing/lease 只能保护本地状态转移,不能撤回已发往供应商的请求;lease 过期不能推导无副作用,也不能把已持久化 dispatching 的 intent 回到 queued 再 book。
 7. **供应商 unknown 是一等结果**:超时、进程退出、非 JSON 或连接断开后可能已产生外部副作用;进入查单或人工对账,用户可见文案不得写成失败或退款。query-orders miss 在恢复窗口内仍为 unknown,不能变 reconciled_failed 再重订。
 8. **取消 ≠ 补偿 ≠ 退款到账**:pending 未执行的取消只是 local cancel;confirmed 后的退改才是真实补偿;HotelByte 的取消单、退款单、钱包退款与手续费必须分开投影。
+9. **外呼前派发点重验(#231/#232 收紧)**:排队后的 effect 在任何 supplier/network 调用前重新检查授权、quote/receipt 有效期、当前 immutable request digest、路由/Buyer 与撤回状态。过期/变更/撤回时 supplier write=0,回到重新报价/可信确认;已进入 unknown 的请求继续 query,不能借过期重订。此项与第 6 条的原子 claim/attempt fencing 同为 proposal 设计,不启封 runtime。
 
 ## 1. 非目标与红线
 
 - 不实现生产预订、支付、出票、退款或供应商 adapter。
 - 不新增运行时框架;仍复用 ADR-15 单 SQLite 账本、ADR-17 `booking_saga_fsm.v1` 与 ADR-18 effect interpreter。
+- 本文 §5.3/§5.4 的原子 claim、`dispatching`/attempt id/fencing、外呼前重验与 §12 派发否证均为 #231/#232 未来实现的 proposal 设计与验收口径,当前不落代码、不执行测试,不得伪称已实现或已执行。
 - 不用 sandbox fixture 宣称 M5 Exit;fixture 只能证明闸语义。
 - 不把供应商 API 的“请求已发出”或 CLI `exit 0` 写成“预订成功”;success 必须来自供应商 confirmation、`result.status=verified` 或可查单结果。
 - 不在公开审计日志存证件号、手机号、邮箱、银行卡、cookie、OTP、支付 token、订单原号或原始对话。
@@ -79,7 +81,7 @@ M5 设计不能只依赖版本字符串,必须区分本地后端快照、公开 
 | `PreparedChallenge` | 呈现前由服务端准备的一次性呈现挑战 | `challenge_id`,`idem_key`,`request_fingerprint_sha256`,`presentation_key`,`delivery_nonce_digest`,`actor_ref`,`tenant_id`,`seam`,`prepared_at`,`expires_at`,`status=prepared\|confirmed\|consumed\|expired`;nonce 在呈现前生成并绑定不可变请求;`prepared` 不构成授权,未确认的 challenge 不能消费 |
 | `ApprovalReceipt` | L3 一次性确认凭证,仅在可信人类确认回调后由服务端发行 | `receipt_id`,`challenge_id`,`idem_key`,`request_fingerprint_sha256`,`actor_ref`,`tenant_id`,`principal_ref`,`amount_total`,`currency`,`terms_digest`,`valid_until`,`approved_at`,`presentation_key`,`delivery_nonce_digest`;由服务端账本在可信确认回调后生成,不接受模型/客户端拼装 |
 | `ApprovalClaim` | receipt/nonce 一次消费权威 | 独立表 `approval_claims(tenant_id, receipt_id PRIMARY KEY, challenge_id, idem_key, nonce_digest, request_fingerprint_sha256, issued_at, consumed_at)`;`receipt_id` 全局唯一,`challenge_id`/`nonce_digest` 唯一;与 outbox intent 同一 SQLite 事务落账 |
-| `WriteEffectIntent` | outbox 中待执行的外部副作用意图 | `effect_name`,`idem_key`,`receipt_id`,`supplier_attempt_key`,`request_fingerprint_sha256`,`attempt_budget`,`next_action` |
+| `WriteEffectIntent` | outbox 中待执行的外部副作用意图 | `tenant_id`,`effect_name`,`idem_key`,`receipt_id`,`supplier_attempt_key`,`request_fingerprint_sha256`,`attempt_budget`,`next_action`;派发态 `dispatch_status=queued\|dispatching\|dispatched\|rejected`、immutable `attempt_id`、`fencing_token`、`claimed_by`、`lease_until`、`reject_reason`;`attempt_id` 在任何 supplier/network 调用前持久化且不可变;`rejected` 为 outbox/dispatch 层的不可派发终态(外呼前重验失败),**不是** `pending_writes` 的新状态 |
 | `SupplierOutcome` | 供应商结果投影 | `success | failed | unknown | reconciled_success | reconciled_failed | cancel_submitted | refund_pending | refunded | compensated_failed`,附供应商 receipt/refund digest |
 | `RedactedAuditEvent` | 可分享审计面 | HMAC 假名主体 + digest + 金额/币种/条款版本;不含 PII/secret/raw supplier payload |
 
@@ -108,6 +110,8 @@ request fingerprint 必须由代码 canonicalize,并在展示卡、approval rece
 | `valid_until` | 报价/授权有效期,必须早于供应商 quote expiry | 过期拒绝确认 |
 | `presentation_key` | 用户实际看到的卡片版本 digest | 卡片重排/删字段需要重确认 |
 | `delivery_nonce_digest` | 服务端在呈现前生成并持久绑定不可变请求的 nonce/challenge digest;用户看到的 fingerprint 已含此 nonce | nonce 不匹配、未呈现即确认、确认后改 fingerprint 均拒绝 |
+
+**supplier payload digest 绑定(#231/#232 收紧)**:`request_fingerprint_sha256` 必须绑定实际 supplier request 的 canonical payload digest——覆盖 holder/guests 对象中影响履约的字段(入住人身份/人数/房型/日期等),或显式绑定既有 immutable `payload_digest`。不能只比较金额/房型而允许在展示/确认后更换旅客或预订联系人;展示或确认后替换 holder/guests 或联系人必须零 supplier write,需要新 quote/intent/receipt。敏感字段(证件号/手机号/邮箱/支付 token)本身不公开落账,只以其 digest 或 HMAC 假名进入 fingerprint 与审计面(见 §11)。
 
 ## 5. 状态机与执行序列
 
@@ -143,15 +147,38 @@ receipt 发行与消费通道只接受由可信宿主 UI/交互确认回调派�
 
 并发场景下,两个确认请求只有一个能把 `consumed_at` 从 NULL 更新为非空并写出一个 effect intent;另一个返回 `already-confirmed`、`approval-claimed` 或 `absorbed-compensated`,不得再次执行 supplier effect。
 
-### 5.3 outbox:崩溃恢复与“本地一次”口径
+### 5.3 outbox:崩溃恢复与"本地一次"口径
 
 - **确认前崩溃**:仍是 pending,用户可重新确认;旧 nonce 若未消费,按有效期处理。
-- **确认事务后、supplier 前崩溃**:outbox intent 存在但未 attempt;worker 重启后执行该 intent。
+- **确认事务后、supplier 前崩溃**:outbox intent 存在(`dispatch_status=queued`)但未 attempt;worker 重启后按 §5.4 原子 claim 执行该 intent。
+- **claim 持久化后、网络前崩溃**:`dispatch_status=dispatching` 与 immutable `attempt_id`/`fencing_token` 一旦持久化,之后无论 crash 被认为在外呼前还是后、是否有网络日志、lease 是否过期,都不能自动重领、续派或重放 book——记录缺失只是 evidence absence,不证明未外呼;统一进入 `unknown`,只允许用同一 `attempt_id`/`customerReferenceNo` 做 query 或 manual reconcile。只有原子 claim/`dispatching` 事务**尚未提交**时,intent 才仍是 `queued`,可由别的 worker claim。
 - **supplier 调用中崩溃/超时/非 JSON/进程退出**:状态进入 `unknown`,先按 supplier attempt key、`customerReferenceNo` 或查单 API 对账;禁止直接重放 write effect。
 - **supplier success 后、投影前崩溃**:通过供应商 receipt/order lookup fold 为 success;若 lookup 不可用则 manual reconcile。
 - **supplier failed 明确返回**:记录 failed outcome;如供应商确认未产生外部副作用,可按用户选择重新生成新 quote/intent。
+- **lease 过期**:dispatching 记录的 `lease_until` 过期**不能推导无副作用**,也不能把已持久化 dispatching 的 intent 回到 `queued` 再 book;一律进入 unknown/query/manual reconcile,按 attempt id 对账。lease 过期且迟到供应商成功仍只 book 一次(fold 为 `reconciled_success`)。
 
 供应商若不支持稳定查单键或人工对账 SLA,该供应商不能进入自动 production WriteGate;只能保持人工处理或不接入。
+
+### 5.4 派发权与 attempt fencing(原子领取,#231/#232 收紧)
+
+receipt 消费事务(§5.2)只产生一个本地 outbox intent(`dispatch_status=queued`);真正发起 supplier/network 调用前,dispatcher 必须先在一个数据库原子 claim 中获得该 intent 的**唯一派发权**,并在同一事务内持久化派发态与不可变 attempt 元数据:
+
+- **原子 claim**:`UPDATE write_effect_intents SET dispatch_status='dispatching', attempt_id=?, fencing_token=?, claimed_by=?, lease_until=? WHERE tenant_id=? AND idem_key=? AND dispatch_status='queued'`(或等价 conditional update；也可使用已在可信事务内验证 tenant 归属的全局唯一 `effect_id`),影响行数为 1 才算领取成功;后续 fold/query 同样限定 `tenant_id + idem_key`。并发 worker 只有赢得 claim 的那一个有权派发,其余落败且不得发起 supplier 调用。fencing token 单调递增,用于拒绝旧 lease 的越权写。
+- **调用前持久化**:`dispatching`、immutable `attempt_id`、`fencing_token` 必须在**任何 supplier/network 调用前**持久化(与 claim 同事务落账)。`attempt_id` 一旦持久化即不可变;对账一律引用同一 `attempt_id`,不得另起;持久化后不得续派或重放 book。
+- **崩溃分割**:只有原子 claim/`dispatching` 事务**尚未提交**时,intent 才仍是 `queued`,可由别的 worker claim。一旦 `dispatching` 与 immutable `attempt_id` 已持久化,之后无论 crash 在外呼前还是后、是否有网络日志、lease 是否过期,都不能自动重领、续派或重放 book——记录缺失只是 evidence absence,不证明未外呼;统一进入 unknown/query/manual reconcile。数据库 fencing token 不能阻止一个已发往供应商的请求;fencing/lease 只能保护本地状态转移,不能撤回已发请求,也不得以 lease 到期推导无副作用或把 persisted dispatching 回到 queued。
+- **本地一次口径**:GoTry 保证同一 ledger intent 只消费一次、只登记一个 write effect intent、同一 `attempt_id` 只 book 一次;外部副作用是否重复依赖供应商幂等/可查重,unknown 禁止盲重试。
+
+### 5.5 外呼前派发点重验(#231/#232 收紧)
+
+赢得 claim 后、发起任何 supplier/network 调用前,dispatcher 必须在同一派发点重新检查:
+
+1. **授权**:receipt 仍有效、`approval_claims.consumed_at` 仍指向本 intent、未跨 intent 重放。
+2. **quote/receipt 有效期**:`valid_until` 未过,且不晚于供应商 quote expiry。
+3. **当前 immutable request digest**:`request_fingerprint_sha256`(含 §4 的 supplier payload digest)与持久化发行记录逐字节一致;holder/guests/联系人/路由/金额/条款未在展示或确认后被替换。
+4. **路由/Buyer**:供应商、Buyer、供应路由与发行记录一致;身份隔离未漂移。
+5. **撤回状态**:未触发 L4 revoke 或显式撤回(§9)。
+
+任一项过期/变更/撤回且**尚未外呼**:**supplier write=0**,在 outbox/dispatch(或 challenge)层记录本地拒绝原因,把旧 effect 置为不可派发终态(`dispatch_status=rejected` + `reject_reason`),**不得**把它回到 `queued`;再由用户/系统另行创建新 quote/新 intent/新可信确认。**已进入 unknown 的请求继续 query/manual reconcile,授权过期也不能使它回到 queued 或重订。**层级约束:拒绝原因只存在于 outbox/dispatch/challenge 层,ADR-17 `pending_writes` 的 `pending|confirmed|compensated` 三态字母表不扩展(不给 `pending_writes` 加 `stale`/`cancelled`);未派发或 preflight 拒绝一律零 supplier write,不投影成 supplier failed/cancel 订单/refund。此项是 proposal 设计,不启封 runtime。
 
 ## 6. HotelByte adapter 准入矩阵
 
@@ -239,12 +266,23 @@ M6 sponsor 披露槽位仍保持 proposal:优先由 sponsor 插件注入渲染�
 | actor/tenant/principal | tenant A actor 确认 A 的 intent | tenant B 用同 idem_key/receipt 确认;BFF principal 当 traveler principal | 跨租户/跨 principal 全拒;审计只见 HMAC |
 | 一次确认 | 双并发确认同一 idem_key | 两个进程同时提交 receipt | 仅一条 `approval_claims.consumed_at`,仅一条 `write.confirmed`,仅一条 local effect intent |
 | 崩溃恢复 | 确认事务后 kill,重启 worker | claim 消费/outbox/pending 转移三种顺序崩溃注入 | 不丢 claim、不重复登记 effect intent、不二次消费;终态可 fold |
+| 派发权唯一(#231/#232) | 双 dispatcher 竞争同一 queued intent | 两个 worker 同时 claim 同一 intent | 仅一个 claim 成功(`dispatch_status=dispatching`、`attempt_id` 唯一);落败者无 supplier 调用 |
+| 派发 tenant 边界(#231/#232) | tenant A/B 各有相同 `idem_key` 的 queued intent | A worker 仅凭 `idem_key` claim/fold/query 到 B intent | claim/fold/query 均限定 `tenant_id + idem_key`(或已验证归属的全局 `effect_id`);跨 tenant 影响行数=0、supplier write=0 |
+| attempt fencing 时序(#231/#232) | claim 事务未提交时 intent 仍 queued,可被别的 worker claim;dispatching+attempt 持久化后 crash(外呼前/后)、lease 过期 | claim 未持久化即外呼;把已持久化 dispatching 的 intent 回到 queued 再 book | 只有 claim 事务未提交才回 queued;dispatching+attempt 持久化后任何 crash 都不得 book/续派,统一 unknown,按 attempt id fold;lease 过期不回 queued |
+| persisted-dispatching crash 无网络日志(#231/#232 反证) | — | 无网络日志即推断未外呼并 book/续派 | 仍不得 book,进入 unknown/query/manual reconcile |
+| lease/fencing/授权过期回 queued(#231/#232 反证) | — | lease expiry/fencing 失效/授权过期把 unknown 或 persisted dispatching 回 queued 再 book | 不能回 queued;unknown 继续 query,preflight 失效零写并另建新 intent |
+| 外呼前重验(#231/#232) | quote/receipt 有效、digest 不变、路由/Buyer 一致、未撤回 | quote 过期/digest 变更/路由或 Buyer 变更/已撤回仍外呼;把旧 effect 回 queued | 过期/变更/撤回且未外呼:旧 effect 置 `rejected`(outbox 层)零写,另建新 quote/intent/receipt,不回 queued;已 unknown 继续 query,授权过期也不回 queued 或重订 |
+| queue/preflight 本地拒绝层级(#231/#232 反证) | preflight 发现过期/变更/撤回且未外呼,旧 effect 不可派发 | 给 `pending_writes` 加 `stale`/`cancelled` 状态;未派发过期投影成 supplier failed/cancel/refund | 拒绝只记在 outbox/dispatch/challenge 层,ADR-17 `pending_writes` `pending\|confirmed\|compensated` 三态不变,零 supplier failure/refund 投影 |
+| fingerprint 绑定 supplier payload(#231/#232) | holder/guests 履约字段纳入 supplier payload digest | 展示/确认后替换旅客或联系人仍 book | 替换后零写,需新 quote/intent/receipt |
+| lease 过期+迟到 success(#231/#232) | dispatching lease 过期后供应商迟到建单 | lease 过期即推断无副作用并重订;迟到 success 二次 book | 仅一次 book,按 attempt id fold 为 `reconciled_success` |
 | HotelByte unknown | CLI timeout/non-json/exit0 pending fixture | 自动重试同 write effect 或并发重订 | unknown + query/manual reconcile;禁止盲重试 |
 | query-orders | customerReferenceNo 查到成功/多条;窗口内 miss 保持 unknown | 窗口内 miss 变 reconciled_failed 再重订;supplierReferenceNo 解码猜测;越权 supplier 穿透 | 只按授权查询面投影;miss 在恢复窗口内不否定外部副作用 |
 | 取消 vs 补偿 | pending cancel;confirmed cancel/refund pending/refunded | pending cancel 写成 refund;compensated 显示钱已退 | 文案与账本分词一致;confirmed 补偿有 receipt/outcome |
 | L4 revoke | policy scope 内自动写一次,撤回后再触发 | revoke 后仍出 outbox;超 scope 自动写 | 撤回阻断未来;超 scope 降 L3 |
 | 佣金披露 | 确认卡含佣金/无佣金/赞助来源 | 披露未知仍允许;披露变化沿用旧 receipt | 披露 digest 入 fingerprint |
 | 审计脱敏 | 生成 redacted audit report | 错误含 email/token/order raw id | 可分享报告无 PII/secret |
+
+> **派发否证执行口径**:上表标 `(#231/#232)` 的派发权唯一、tenant 边界、attempt fencing 时序、persisted-dispatching crash 无网络日志、lease/fencing/授权过期回 queued、外呼前重验、queue/preflight 本地拒绝层级、fingerprint 绑定 supplier payload、lease 过期+迟到 success 各行,是 #231/#232 未来实现时**必须执行**的最小否证验收;当前为 proposal,这些测试**均未执行**,不得伪称已通过。最小否证清单:① 双 dispatcher 竞争同一 intent 只发一次,且 A/B 相同 `idem_key` 只能各自 claim/fold/query 本 tenant intent,跨 tenant 影响行数=0、supplier write=0;② 只有 claim 事务未提交才回 queued——attempt 持久化后/网络前与网络后/投影前任何 crash(无网络日志亦然)都不盲重放、不 book,统一 unknown;③ queue/preflight 本地拒绝零写,旧 effect 置 `rejected` 不回 queued,且不改变 ADR-17 `pending_writes` `pending|confirmed|compensated` 三态、不投影 supplier failure/refund;④ 确认后更改 holder/guests 或 Buyer 零写;⑤ lease/fencing/授权过期不能把 unknown 或 persisted dispatching 回 queued;lease 过期且迟到供应商成功仍仅一次 book。
 
 ## 13. 与既有设计的让渡关系
 
