@@ -19,7 +19,7 @@ import assert from 'node:assert/strict'
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const upstreamLicenseSha256 = 'b6bbb0c73a02cf8d2c304e9f208b41c32f0a810fabe366986e2b14ac3338f618'
 const upstreamVendorFileCount = 32
-const upstreamVendorAggregateSha256 = 'd82a38adace8bfe574dcecb4222da5c994a1b9e8792f78dc2dad3a7f50c9925a'
+const adaptedVendorAggregateSha256 = '5d7fcdb9b33434dbf622798dade12e8a568506bed1142f37432fbcf566202409'
 const expectedTools = [
   'map_bicycling_route',
   'map_driving_route',
@@ -177,7 +177,7 @@ try {
   }
   const vendorTree = vendorAggregate(vendorRoot)
   assert.equal(vendorTree.count, upstreamVendorFileCount, 'vendored payload file count drifted')
-  assert.equal(vendorTree.sha256, upstreamVendorAggregateSha256, 'vendored payload aggregate drifted')
+  assert.equal(vendorTree.sha256, adaptedVendorAggregateSha256, 'vendored payload aggregate drifted')
   const vendorPackage = JSON.parse(readFileSync(join(vendorRoot, 'package.json'), 'utf8')) as {
     name?: string
     version?: string
@@ -189,35 +189,45 @@ try {
   assert.equal(sha256(join(vendorRoot, 'LICENSE')), upstreamLicenseSha256, 'upstream MIT license changed')
 
   const packageRequire = createRequire(join(packageRoot, 'package.json'))
-  const dshTools = JSON.parse(readFileSync(packageRequire.resolve('@deepseek-ai/dsh-tools/package.json'), 'utf8')) as { version: string }
-  const dshSettings = JSON.parse(readFileSync(packageRequire.resolve('@deepseek-ai/dsh-settings/package.json'), 'utf8')) as { version: string }
+  const dshToolsPackageJson = packageRequire.resolve('@deepseek-ai/dsh-tools/package.json')
+  const dshSettingsPackageJson = packageRequire.resolve('@deepseek-ai/dsh-settings/package.json')
+  const dshTools = JSON.parse(readFileSync(dshToolsPackageJson, 'utf8')) as { version: string }
+  const dshSettings = JSON.parse(readFileSync(dshSettingsPackageJson, 'utf8')) as { version: string }
   assert.equal(dshTools.version, '0.1.2-alpha.3')
   assert.equal(dshSettings.version, '0.1.2-alpha.3')
-  const settingsApi = await import(pathToFileURL(packageRequire.resolve('@deepseek-ai/dsh-settings')).href) as {
-    SettingsProvider?: { prototype?: { installSection?: unknown } }
+  const settingsApi = await import(pathToFileURL(join(dirname(dshSettingsPackageJson), 'lib/index.js')).href) as {
+    installSettingsSection?: unknown
+    settingsNamespace?: (value: string) => string
   }
-  assert.equal(
-    typeof settingsApi.SettingsProvider?.prototype?.installSection,
-    'function',
-    'real alpha.3 SettingsProvider.installSection API must be present',
-  )
+  assert.equal(typeof settingsApi.installSettingsSection, 'function', 'real alpha.3 installSettingsSection export must be present')
+  assert.equal(typeof settingsApi.settingsNamespace, 'function', 'real alpha.3 settingsNamespace export must be present')
 
   const plugin = await import(pathToFileURL(join(vendorRoot, 'lib/index.js')).href)
   const registered: Array<Record<string, unknown>> = []
-  const settingsCalls: unknown[][] = []
+  const settingsRegistrations: unknown[][] = []
+  const settingsNamespaceValue = settingsApi.settingsNamespace!('dsh-map-tools')
   const context = {
+    fiber: { state: 'active' },
     tools: {
       register(tool: Record<string, unknown>) {
         registered.push(tool)
         return () => undefined
       },
     },
-    effect(effect: () => (() => void) | void) {
-      effect()
-    },
     inject(dependencies: string[], callback: (scope: Record<string, unknown>) => void) {
       if (dependencies.includes('settings')) {
-        callback({ settings: { installSection: (...args: unknown[]) => { settingsCalls.push(args) } } })
+        callback({
+          settings: {
+            register: (...args: unknown[]) => {
+              settingsRegistrations.push(args)
+              return {
+                get: () => args[2] && typeof args[2] === 'object' ? (args[2] as { base?: unknown }).base : undefined,
+                watch: () => () => undefined,
+              }
+            },
+          },
+          effect: (effect: () => (() => void) | void) => { effect() },
+        })
       } else if (dependencies.includes('webServer')) {
         callback({ webServer: { register: () => undefined } })
       } else {
@@ -230,9 +240,10 @@ try {
     defaultMode: 'driving', language: 'zh',
   })
   assert.deepEqual(registered.map(tool => tool.name).sort(), expectedTools, 'exactly seven map tools must register')
-  assert.equal(settingsCalls.length, 1, 'alpha.3 settings section must be installed once')
-  assert.equal(settingsCalls[0][1], 'dsh-map-tools', 'settings namespace must be stable')
-  assert.equal(typeof settingsCalls[0][4], 'object', 'alpha.3 installSection hooks must be supplied')
+  assert.equal(settingsRegistrations.length, 1, 'alpha.3 settings section must register once')
+  assert.equal(settingsRegistrations[0][0], settingsNamespaceValue, 'settings namespace must be branded and stable')
+  assert.equal(settingsRegistrations[0][2] && typeof settingsRegistrations[0][2] === 'object', true, 'alpha.3 settings register options must be supplied')
+  assert.deepEqual(Object.keys(settingsRegistrations[0][2] as object).sort(), ['base'], 'alpha.3 registration must carry the composition base')
 
   const originalFetch = globalThis.fetch
   globalThis.fetch = (async () => { throw new Error('network forbidden by package proof') }) as typeof fetch
@@ -256,7 +267,7 @@ try {
     vendored: {
       sourcePackage: 'dsh-map-tools@0.5.1',
       licenseSha256: upstreamLicenseSha256, vendorFileCount: vendorTree.count,
-      vendorAggregateSha256: vendorTree.sha256,
+      adaptedVendorAggregateSha256: vendorTree.sha256,
     },
     artifactVendor: vendorRoot,
     dshClosure: { tools: dshTools.version, settings: dshSettings.version, ...lockedDsh },

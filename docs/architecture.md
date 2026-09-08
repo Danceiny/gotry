@@ -346,6 +346,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 原则:**不跳阶段,不提前优化下阶段的事**;每阶段 Entry/Exit/gate 见 roadmap。旧 Stage 0-4 与总纲 Phase、产品 M1-M3 已归并映射到 M0-M6(映射表在 roadmap)。
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
+- **Issue #202 地图插件 vendoring**:root/ts 严格 npm 安装不再解析外部 `dsh-map-tools` peer;`vendor/dsh-map-tools/` 携带上游 `0.5.1` MIT payload,其 vendored settings 接线使用 alpha.3 `installSettingsSection(ctx, settingsNamespace, schema, entry, hooks)` 形态并由 proof 验证。`bin/gotry-inner.js`、CLI bootstrap 与 `capabilities/doctor.ts` 同优先级解析仓内绝对入口;打包证明覆盖 unpack/import、32 文件 payload aggregate、7 个 `map_*` 注册及无网络 inline 坐标路径。
 - **当前主线 = M3 evidence 未收口;并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪,真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进;T1 及后续记忆切片、Issue #20 scorer 的落地都不构成 M3 Exit 证明,真实 `observed_private` N≥5 repeat cohort 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动,不得由并行实现倒推开闸。
 - **HotelByte Booking Copilot 产品验收并行线**:候选以单一 `booking.surface` 契约(2026-09-05 #133 收敛,原 v2 形态转正、v1 退役)的 GoTry 作为既有搜索/报价/Checkout 工作台的 BFF-only typed read-action planner(边界见 §8.23)。该线不含 `Book`,不构成 M5 Entry;四 surface 真实库存与「不可订→重搜→新 CheckAvail→原 Checkout」证据尚未取得,见 D-29。
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面;业务达标只接受阈值冻结的 `real_seed_cohort`,fixture 恒 fail。真实 cohort 仍为空,等待 50–200 个脱敏样本,不宣称 M3 Exit。
