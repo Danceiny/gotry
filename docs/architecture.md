@@ -87,7 +87,7 @@ M3 最小可用产品,分发链路无已知堵点。
 
 ### 1.5 记忆域与时间感知
 
-- **记忆域六层**(设计见 `design/memory-design.md`):动机 brief 读回 persona、效用 sidecar(归因只认 owner 确认)、愿望池 0..1 召回(`gotry_wish_pool_list`)、旅行时间线(`gotry_trip_log`)、同行人档案(`gotry_companion_save`)、时间窗衰减(只降不删/地板 0.1/动机零衰减)。度量与触达:`scripts/memory-metrics.ts` 只读投影 + `scripts/nudge-digest.ts` 主动回访(`GOTRY_NUDGE_ENABLED=false` 可全局关闭)。
+- **记忆域六层**(设计见 `design/memory-design.md`):动机 brief 读回 persona、效用 sidecar(归因只认 owner 确认)、愿望池 0..1 召回(`gotry_wish_pool_list`)、旅行时间线(`gotry_trip_log`)、同行人档案(`gotry_companion_save`)、时间窗衰减(只降不删/地板 0.1/动机零衰减)。度量与触达:`scripts/memory-metrics.ts` 只读投影 + `scripts/nudge-digest.ts` 主动回访(`GOTRY_NUDGE_ENABLED=false` 可全局关闭)。M4 planning lifecycle 观测另有显式 opt-in CLI `ts/scripts/memory-lifecycle.ts` + 纯逻辑 `ts/src/memory-lifecycle.ts`:只写隔离 `stateRoot`,consent/HMAC 必需,导出 candidate/synthetic scorer 输入,不接真实会话。
 - **时间感知**:确定性锚点层 `ts/src/time-anchor.ts` + 槽位抽取 `travel-slots.ts` + 槽位→日期解析 `slot-spec.ts`。**算术进代码,LLM 查卡不自算**。
 
 ### 1.6 工程不变量
@@ -103,9 +103,9 @@ M3 最小可用产品,分发链路无已知堵点。
 
 ### 1.7 里程碑口径(Issue #19)
 
-M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20/#223 scorer 已落地并加严而真实 `observed_private` N≥5 + source-review attestation 仍缺——**这些 M4 切片不构成 M3 Exit 证明**。M5/M6 仅在各自 Entry gate 满足后启动。
+M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20/#223 scorer 已落地并加严,#228 collector 提供显式同意的 lifecycle 观测与脱敏导出,但真实 `observed_private` N≥5 + source-review attestation 仍缺——**这些 M4 切片不构成 M3 Exit 证明**。M5/M6 仅在各自 Entry gate 满足后启动。
 
-证据面现状:`ts/scripts/product-metrics.ts`(M3 cohort)与 `ts/scripts/memory-value-report.ts`(M4 价值)固化了样本窗/纳排/分母/归因与阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;synthetic fixture **永不产生 business pass**。M4 observed-private 另需 `memory_value_source_review.v1` 人工 source-review attestation 合同,并以 `reviewed_summary_digest_sha256` 绑定本次评分 payload;缺少或 digest 不匹配时只可作为 candidate,不得把 `evidence_kind` 或 HMAC 字符串形状当 provenance。真实证据只进入被忽略的 `ts/gotry-state/evidence/`。
+证据面现状:`ts/scripts/product-metrics.ts`(M3 cohort)与 `ts/scripts/memory-value-report.ts`(M4 价值)固化了样本窗/纳排/分母/归因与阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;synthetic fixture **永不产生 business pass**。`ts/scripts/memory-lifecycle.ts` 只把显式 consent/stateRoot/HMAC 下的首访/回访 lifecycle 事件导出为 #223 scorer 输入,并保持 candidate/synthetic source_review,绝不制造 manual attestation。M4 observed-private 另需 `memory_value_source_review.v1` 人工 source-review attestation 合同,并以 `reviewed_summary_digest_sha256` 绑定本次评分 payload;缺少或 digest 不匹配时只可作为 candidate,不得把 `evidence_kind` 或 HMAC 字符串形状当 provenance。真实证据只进入被忽略的 `ts/gotry-state/evidence/`。
 
 评测边界:Phase 0 只有契约/注册表/校验器与确定性节奏策略(不调度、不花费、不出分、不声称 uplift);Phase 1 bridge 逐轮 frozen treatment 均为 diagnostic-only、official scores null(见 §9 与 D-28)。契约全文见 `evaluation/evaluation-foundation.md`。
 
@@ -159,6 +159,7 @@ L5 治理:loopx(objective/gate/evidence/quota,验证后才花费)
 | `ts/src/slot-spec.ts` | **槽位→日期解析层**(D-10 切片 A):锚点卡词表 + 绝对表达 + 「+N」后缀 → YYYY-MM-DD;词表外 unresolved 逐字保留(ADR-12 边界:不做开放式解析);spec 日期一致性闸 | ✅ time-eval §5 |
 | `ts/src/tool-packet.ts` | **工具观察 envelope**(RFC S1/ADR-13):GotryObservation 平封形状 + ToolFailure + interpretArgs 参数三形态归一唯一入口 | ✅ smoke §9 |
 | `ts/src/memory-utility.ts` | **记忆效用 sidecar**(RFC S2/ADR-14):recalled/applied/verified_outcome 事件 + 幂等追加 + 只读投影;归因只认 owner 确认 | ✅ smoke §10 |
+| `ts/src/memory-lifecycle.ts` `ts/scripts/memory-lifecycle.ts` | **M4 planning lifecycle collector**(#228):显式 stateRoot/consent/HMAC 才写;dataset key verifier + source/wait 冻结;首返 flow/wait/reflux/preference HMAC 假名化;JSONL+manifest write-all/原子发布/路径隔离;导出接 #223 scorer candidate/synthetic,不造 manual attestation | ✅ run-all §55 |
 | `ts/src/memory-decay.ts` | **时间窗衰减原语**(memory-design P3):30/90/180/365d 分级因子(地板 0.1)+ 种类权重 + 新鲜置信度;动机层零衰减为构造性保证 | ✅ run-all §23 |
 | `ts/src/companions.ts` | **同行人档案**(memory-design P2):upsert 合并 + 负面清单守卫(证件/电话零入库);约束只进排序 | ✅ run-all §21 |
 | `ts/src/travel-timeline.ts` | **旅行时间线**(memory-design P1):trips.jsonl append-only + 幂等/重叠冲突即停 + verified↔timeline 交叉一致 | ✅ run-all §20 |
@@ -348,7 +349,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 - **M0 ✅ / M1 ✅(bb880f3)/ M2 ✅(b0cfd97)**:M2 交付 = §7-1 三层组合(骨架+校验+锚点)+ hbcli 桥 + dsh 端到端(DeepSeek 原生,人格+五工具)+ 一键入口 `./gotry`;G1/S1/§7-1 三 gate 由创始人指令结算。
 - **Issue #202/#242 地图插件 vendoring 回归修复**:root/ts 严格 npm 安装不再解析外部 `dsh-map-tools` peer;`vendor/dsh-map-tools/` 携带上游 `0.5.1` MIT payload,其 vendored settings 接线使用 alpha.3 已发布的 `SettingsProvider.prototype.installSection(owner, ns, schema, entry, hooks)` 方法和普通字符串 namespace,由 proof 验证。`bin/gotry-inner.js`、CLI bootstrap 与 `capabilities/doctor.ts` 同优先级解析仓内绝对入口;打包证明覆盖 unpack/import、32 文件 payload aggregate、7 个 `map_*` 注册、settings watch/reload/dispose 生命周期及无网络 inline 坐标路径。
-- **当前主线 = M3 evidence 未收口;并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪,真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进;T1 及后续记忆切片、Issue #20/#223 scorer 的落地都不构成 M3 Exit 证明,真实 `observed_private` N≥5 repeat cohort + source-review attestation 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动,不得由并行实现倒推开闸。
+- **当前主线 = M3 evidence 未收口;并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪,真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进;T1 及后续记忆切片、Issue #20/#223 scorer、Issue #228 显式 lifecycle collector 都不构成 M3 Exit 证明,真实 `observed_private` N≥5 repeat cohort + source-review attestation 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动,不得由并行实现倒推开闸。
 - **HotelByte Booking Copilot 产品验收并行线**:候选以单一 `booking.surface` 契约(2026-09-05 #133 收敛,原 v2 形态转正、v1 退役)的 GoTry 作为既有搜索/报价/Checkout 工作台的 BFF-only typed read-action planner(边界见 §8.23)。该线不含 `Book`,不构成 M5 Entry;四 surface 真实库存与「不可订→重搜→新 CheckAvail→原 Checkout」证据尚未取得,见 D-29。
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面;业务达标只接受阈值冻结的 `real_seed_cohort`,fixture 恒 fail。真实 cohort 仍为空,等待 50–200 个脱敏样本,不宣称 M3 Exit。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
@@ -359,7 +360,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **会话传输层定案扩展桥(2026-08-30,#21 方案 C 升 PRIMARY)**:founder 实测「Chrome attach 逐连接权限框根本无法使用」(chrome-devtools-mcp #825:每次连接必弹、无持久化批准)→ CDP 降显式 opt-in、扩展桥主载——`extension/`(MV3 零构建,固定 key=扩展 ID,SW 长轮询,MAIN-world 被动嗅探,cookie-names 只取名)+ `extension-bridge.ts`(`node:http` 回环桥,origin 白名单,零新依赖)+ 车道路由(扩展默认/cdp 显式/persistent 测试);登录快路径免标签页;守卫按车道分形(扩展=零写行为+hints 白名单,cdp=请求级 abort);`needs-extension` → `waiting_extension`(waiting-* 同族 no-spend);run-all §38 + bootstrap-tests;真实 sf-01..08 门禁降为「装一次扩展」。
 - **Issue #67 static golden(2026-08-30)**:`sf-live-benchmark` 的 vendor 闭集扩为 `manual|flyai|static`;`static` 由 OpenFlights 固定修订提供 route/carrier,由手工 manifest 提供估算时刻/价格带,requested/effective source、estimated fields、provenance、fallback reason 逐条写进 evidence。静态源异常时 stderr 告警后回退 manual;它不声称实时班期/价格/库存。run-all §44 固化 CLI fail-closed、八条覆盖、回退与 provider-independent 软评分。
 - **Issue #67 登录态真跑与桥退出语义(2026-08-30)**:连续两轮 static official 均 8/8 命中且零 fallback;session hit 数从 3/8 波动到 5/8,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 必须显式披露且不进软评分分母。真扩展在线场景触发的 CLI 不退出已以默认桥 parked timer/socket `unref` 修复;`keepBridge` wizard 轨通过 §40,§38 增子进程回归。
-- **M4 Issue #20 价值证据切片(2026-08-29;2026-09-08 #223 加固)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。#223 追加逐层 exact schema、HMAC-SHA256 假名键、N=5/中位降幅=0.5 阈值冻结(raw ratio 比较,报告才 round)、source-review attestation 与 `reviewed_summary_digest_sha256` 绑定:合成数据明确不可关闭 M4,observed-private 缺人工核验合同或 digest 不匹配时也只可作为 candidate。下一阶段仍等待真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
+- **M4 Issue #20/#223/#228 价值证据切片(2026-08-29;2026-09-08 加固与 collector)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。#223 追加逐层 exact schema、HMAC-SHA256 假名键、N=5/中位降幅=0.5 阈值冻结(raw ratio 比较,报告才 round)、source-review attestation 与 `reviewed_summary_digest_sha256` 绑定。#228 追加显式 opt-in lifecycle collector:stateRoot/consent/HMAC 必需、dataset key verifier 与 source/wait 冻结、写前完整投影校验、write-all + 原子发布 + 叶子/父目录 realpath 隔离,导出只给 candidate/synthetic source_review。合成数据明确不可关闭 M4,observed-private 缺人工核验合同或 digest 不匹配时也只可作为 candidate。下一阶段仍等待真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
 - **已知限制清算第一刀(2026-08-29,founder 指令「解决这些 known limitations」)**:
   - **Z3 WASM 生命周期复修(#227,2026-09-08)**:08-29 的单例+互斥仍留下两条 Node24 间歇面——`getZ3` 冷启动 Promise 在 await 后写缓存会并发创建多个 Context；`z3-solver@5.2.0` high-level `FinalizationRegistry` cleanup 直接触发 low-level native `dec_ref`/`*_dec_ref`,不经过 `withZ3`。本轮修复为:Promise 先缓存、启用 `enable_concurrent_dec_ref` fail-closed、局部包装 low-level cleanup 与 actual async native call,仅在活跃 session/native check 时排队 cleanup 并在 idle 后同步 drain；fatal WASM/heap 错误先 poison 并拒绝后续求解。反证覆盖:全局 `FinalizationRegistry` identity 不变、返回的 live Model/Ast 跨 session 仍可用、独立并发请求排队不误判 nested、in-flight native barrier 先进入后才允许 settle。run-all §30/§30b/§30c。
   - **薄壳遗留**(`shell/` 目录)物理删除,dsh web 确认为唯一产品面。
@@ -430,7 +431,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | D-15 账本触发式后置面(ADR-15 TS-5) | Litestream 云备份 / cr-sqlite 多写者复制 / RFC(loopx) §6.5 claim-fence-receipt 多用户实装——仅在触发器出现时启动:第二真实用户 / 多机部署 / AaaS 立项 |
 | D-16 上游 dsh 发布面断裂 | 见下方「D-16 上游 dsh 发布面断裂」 |
 | D-18 M3 Exit 真实 cohort 证据缺口 | 见下方「D-18 M3 Exit 真实 cohort 证据缺口」 |
-| D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地并于 2026-09-08 #223 加固**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit;阈值冻结为 N≥5 与 median reduction ≥0.5(raw ratio 比较,报告才 round),逐层 exact schema 与 HMAC-SHA256 假名键 fail-closed,observed-private 还需 `memory_value_source_review.v1` 人工 source-review attestation 合同和匹配本次 summary 的 `reviewed_summary_digest_sha256`。赎回条件=私有 `observed_private` cohort 达 N≥5、source-review attestation 合同与 summary digest 绑定并产出脱敏 summary;无真实样本、缺人工核验或 digest 不匹配时保持 candidate/waiting/backoff/no-spend,不扩 schema 假装进展。 |
+| D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地并于 2026-09-08 #223/#228 加固**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit;阈值冻结为 N≥5 与 median reduction ≥0.5(raw ratio 比较,报告才 round),逐层 exact schema 与 HMAC-SHA256 假名键 fail-closed,observed-private 还需 `memory_value_source_review.v1` 人工 source-review attestation 合同和匹配本次 summary 的 `reviewed_summary_digest_sha256`。#228 collector 只提供显式同意、隔离 stateRoot 的首访/回访 lifecycle 采集与 candidate/synthetic 脱敏导出,不提升 source_review。赎回条件=私有 `observed_private` cohort 达 N≥5、source-review attestation 合同与 summary digest 绑定并产出脱敏 summary;无真实样本、缺人工核验或 digest 不匹配时保持 candidate/waiting/backoff/no-spend,不扩 schema 假装进展。 |
 | D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`design/booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
 | D-26 事实闸覆盖面缺口(ADR-19) | **部分收口**:酒店 claim 已入闸(2026-09-04,issue #118,HotelFact 第三形态+渲染原语锚点回溯);政策事实生产端 v1 已落(2026-09-05,issue #141,C 档领事服务网 cs.mfa.gov.cn → PolicyFact 落账,Timatic/Sherpa° 后议)。残余:反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
 | D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」 |
@@ -559,6 +560,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | `release-notes.md` | 发版记录(按版本归档,最新在上) |
 | `decisions-needed.md` | 待创始人拍板的决策清单 |
 | `design/memory-design.md` | **记忆域设计**:C 端六层重设计(M1-M6 现状映射/P1-P4 分期增量/铁律与验收),M4 交付「六层框架重设计」的正式文档 |
+| `design/memory-lifecycle-collector.md` | **M4 planning lifecycle collector 使用合同**(#228):显式 opt-in CLI、隔离 stateRoot、HMAC/consent/source/wait 冻结、JSONL+manifest 原子持久化与 #223 scorer 导出链 |
 | `design/effect-interpreter.md` | **效应解译器设计(issue #16 采纳,ADR-18)**:effect_interpreter.v1 词汇(效应值/EffectOutcome/trace)+ 渠道韧性策略表(退避/断路/节律依据逐行)+ 生产/mock 双解译器 + 为什么不做视觉 CUA 与自动多渠道路由的判定记录 + D-23 迁移面 |
 | `design/booking-saga-fsm.md` | **预订 saga 状态机设计(issue #17 采纳,ADR-17)**:booking_saga_fsm.v1 字母表/边表/拒绝闭集 + 三种边型词汇(deterministic/gate/external-event)+ HITL 审批的挂起-恢复形态 + M5 启封增量与不引入编排框架的判定记录 |
 | `design/tool-orchestration-design.md` | **工具编排与通道健康面设计(proposal,2026-09-03)**:issue #106/#107/#108 收口——通道注册表(数据单一来源)+ 通道健康面(doctor 持久面 + 会话瞬态面)+ DP 编排=健康态驱动的动态建议;含「普通 LLM 下长久保持工具调用性能」与「开放生态可扩展性」两命题回答;拍板点 = decisions-needed D-7/D-8/D-9 |

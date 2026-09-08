@@ -68,7 +68,7 @@ Trip Notebook(durable,后台 LLM 提取,负面清单执行)+ Hot Context(30min �
 
 ## 5. 与里程碑/验收的挂钩
 
-- **M4 exit**:「回访规划时长较首访降 ≥50%」← 读回链(e2e §13 已证机制)+ Issue #20 paired-cohort scorer(合同与 fixture 已落地,真实 repeat cohort 未到);「经验回流率有基线」← memory-metrics(过程面)+ Issue #20 experience reflux 观测面。P1 落地后回流率分子从「owner 口头确认」升级为「timeline 行程」——基线质变。
+- **M4 exit**:「回访规划时长较首访降 ≥50%」← 读回链(e2e §13 已证机制)+ Issue #20/#223 paired-cohort scorer + #228 lifecycle collector(合同、采集路径与 synthetic/candidate 导出已接入,真实 repeat cohort 未到);「经验回流率有基线」← memory-metrics(过程面)+ Issue #20/#228 experience reflux 观测面。P1 落地后回流率分子从「owner 口头确认」升级为「timeline 行程」——基线质变。
 - **M5 技术线 T7**:偏好断言 100% 可溯源;「画像不进硬过滤」守卫用例——本设计 §1.2/1.3 即其验收定义。
 - **多用户 AaaS**:全部层以 append-only + 稳定主键落地,账本化(RFC §6.5)只换存储面。
 
@@ -85,11 +85,15 @@ Trip Notebook(durable,后台 LLM 提取,负面清单执行)+ Hot Context(30min �
 - **experience reflux**:按 experience_id 统计 recalled 与 verified_outcome 的交集,基线 = verified/recalled;每条事件必须有 evidence_ref。
 - **偏好红线**:报告 traceable ratio 与 hard-filter violation count;100% 可溯源且 0 hard filter 才满足验收。
 - **P4 闸**:没有 real usage 或 multi-user trigger 时必须保持 `closed`。
-- **证据等级**:`synthetic_fixture` 只能证明合同与算法,`exit_evidence_eligible=false`;私有 `observed_private` cohort 也不能靠 `evidence_kind` 自报、HMAC 字符串形状或 evidence_ref 形状直接关闭 Exit。Observed 输入必须逐层 exact schema、全部 subject/flow/pair/experience/assertion/evidence ref 使用 `hmac-sha256:<64lowerhex>` 假名,且携带 `memory_value_source_review.v1` 人工 source-review attestation 合同;该合同必须含 `reviewed_summary_digest_sha256`,并与 scorer 对 `source_review` 之外评分 payload 的 canonical JSON SHA-256 一致,旧 attestation 不能覆盖改过的 summary。缺少或不匹配 attestation 时报告只可作为 candidate,指标可计算但 `exit_ready=false`。真实证据留在 `ts/gotry-state/evidence/m4/` 的 manifest/paired-cohort/summary,不得提交原始用户材料;scorer 只验证 attestation 合同形状与 summary digest 绑定,原始材料核验责任仍归人工 review。
+- **证据等级**:`synthetic_fixture` 只能证明合同与算法,`exit_evidence_eligible=false`;私有 `observed_private` cohort 也不能靠 `evidence_kind` 自报、HMAC 字符串形状或 evidence_ref 形状直接关闭 Exit。Observed 输入必须逐层 exact schema、全部 subject/flow/pair/experience/assertion/evidence ref 使用 `hmac-sha256:<64lowerhex>` 假名,且携带 `memory_value_source_review.v1` 人工 source-review attestation 合同;该合同必须含 `reviewed_summary_digest_sha256`,并与 scorer 对 `source_review` 之外评分 payload 的 canonical JSON SHA-256 一致,旧 attestation 不能覆盖改过的 summary。缺少或不匹配 attestation 时报告只可作为 candidate,指标可计算但 `exit_ready=false`。#228 collector 导出的 observed_private 仍只给 candidate source_review,绝不生成 reviewer/attestation 字段。真实证据留在 `ts/gotry-state/evidence/m4/` 的 manifest/paired-cohort/summary,不得提交原始用户材料;scorer 只验证 attestation 合同形状与 summary digest 绑定,原始材料核验责任仍归人工 review。
 - **兼容迁移**:2026-09-08 起,旧 observed manifest 若缺 `source_review.reviewed_summary_digest_sha256`、使用明文/非 HMAC id、带未声明字段或试图降低阈值,CLI 以 contract-invalid/exit 2 拒绝;私有证据生产者必须重新脱敏、计算本次 summary digest 并补齐 source-review attestation 后再复跑。公开 synthetic fixture 从 N=3 调整为 N=5 指标正例,但 business eligibility 仍恒 false。
 
 复跑夹具:
 
 ```bash
-cd ts && npx tsx scripts/memory-value-report.ts data/memory-value-fixture.json
+cd ts
+npx tsx scripts/memory-value-report.ts data/memory-value-fixture.json
+npx tsx scripts/memory-lifecycle-tests.ts
 ```
+
+Collector 用法与持久化不变量见 `memory-lifecycle-collector.md`。
