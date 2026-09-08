@@ -136,6 +136,7 @@ try {
   const other = ensureLedger(root, 'tenant-b')
   const crossProp = other.requestPendingWrite({ idemKey: K1, seam: 'flight-order-confirm', payload: {} })
   assert(crossProp.created === true, '同 idem_key 跨租户互不可见:tenant-b 可建自己的 K1(tenant_id 一等字段,ADR-16)')
+  assert(sagaEventsOf(other, K1).map(e => e.kind).join(',') === 'write.pending' && other.readEvents('write.pending', 10).every(e => e.tenant_id === 'tenant-b'), 'tenant-b saga 审计事件 owner 不回落 local,readEvents 不串租户')
   const LOCAL_ONLY = 'booking:local-only'
   ledger.requestPendingWrite({ idemKey: LOCAL_ONLY, seam: 'flight-order-confirm', payload: {} })
   const crossMissing = other.confirmPendingWrite(LOCAL_ONLY, 'PNR-CROSS')
