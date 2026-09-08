@@ -3,7 +3,7 @@
  * 已与驱动器解耦,随时可换 loopx tick):
  *   migrate [root]                      one-shot 迁移:旧 JSON/JSONL → 账本 events
  *                                       (导入前自动快照到 gotry-state/pre-ledger-backup/)
- *   export [root]                       账本 → 旧文件名视图(红线 6:可见可导出;单向,不回流)
+ *   export [root]                       local-only:账本 → 旧文件名视图(红线 6:可见可导出;单向,不回流)
  *   log [root] [--limit N]              事件账本尾部(append-only 审计面)
  *   stats [root]                        各面计数
  *   rebuild [root] [toSeq]              DROP 投影 → fold 重放(可截到 toSeq;账本/投影
@@ -13,12 +13,19 @@
  *   forget [root] wish|companion|motivation <id>
  *                                       物理硬删该主体全部事件 + 审计一行 + 重建投影
  *                                       (红线 6「可删除」;D5 默认物理删)
- *   tick [root]                         回收全部 pending 工单(durable 恢复语义)
- *   whatif [root] <dest.db>             VACUUM INTO 分叉副本(WriteGate what-if 预演,不触正本)
+ *   tick [root]                         local-only:回收全部 pending 工单(durable 恢复语义)
+ *   whatif [root] <dest.db>             local-only:VACUUM INTO 整库分叉副本(管理员 snapshot;
+ *                                       不是租户 export,不触正本)
  *   pw-list [root]                      pending_writes 清单
  *   pw-request [root] <idemKey> <seam> <payloadJson>   登记待确认外部写(L2)
  *   pw-confirm [root] <idemKey> <receipt>              具名 seam 确认(L3,携 receipt)
  *   pw-compensate [root] <idemKey> <note>              saga 补偿
+ *
+ * 选项(可放在命令前或命令后,也可夹在位置参数之间):
+ *   --state-root <root>   显式 state root;省略时按命令沿用位置参数 root 或默认 '.'。
+ *   --tenant <tenant>     账本租户 scope(默认 local);这是范围参数,不是认证/授权。
+ *   --limit <N>           仅 log 支持;N 必须是正整数。
+ *
  * root 默认 '.';运行:cd ts && npx tsx scripts/state-cli.ts <cmd> ...
  */
 
@@ -29,23 +36,193 @@ import { collectDeepPlanning, makeJournaledSolvePort, settleAsyncTicket, type As
 import { solveUnified } from '../src/unified.ts'
 import type { TripState } from '../src/contracts.ts'
 
-const [cmd, ...rest] = process.argv.slice(2)
+const HELP = `用法: npx tsx scripts/state-cli.ts [--state-root <root>] [--tenant <tenant>] <cmd> [args...]
+命令:
+  migrate [root]
+  export [root]                         # local-only:导出共享 legacy 文件名视图
+  log [root] [--limit N]
+  stats [root]
+  rebuild [root] [toSeq]
+  rewind [root] <seq>
+  forget [root] wish|companion|motivation <id>
+  tick [root]                           # local-only:回收本地 pending 工单
+  whatif [root] <dest.db>               # local-only:整库管理员 snapshot,不是租户 export
+  pw-list [root]
+  pw-request [root] <idemKey> <seam> <payloadJson>
+  pw-confirm [root] <idemKey> <receipt>
+  pw-compensate [root] <idemKey> <note>
+选项:
+  --state-root <root>   显式 state root;保留位置参数 root 用法
+  --tenant <tenant>     默认 local;仅是账本 scope,不是认证/授权
+  --limit <N>           仅 log 支持,N 为正整数
+边界:tick/export/whatif 只支持 --tenant local;非 local 会在创建目录、打开账本、求解或写文件前拒绝。
+提示:root 路径若像数字/负数或以 '-' 开头,请用 --state-root <root> 明示。`
 
-function rootOf(args: string[]): string {
-  const i = args.indexOf('--state-root')
-  if (i >= 0 && args[i + 1]) return args[i + 1]
-  const first = args.find(a => !a.startsWith('--') && !/^[\d]+$/.test(a))
-  return first ?? '.'
+const COMMANDS = new Set([
+  'migrate',
+  'export',
+  'log',
+  'stats',
+  'rebuild',
+  'rewind',
+  'forget',
+  'tick',
+  'whatif',
+  'pw-list',
+  'pw-request',
+  'pw-confirm',
+  'pw-compensate',
+])
+const OPTION_NAMES = new Set(['--state-root', '--tenant', '--limit'])
+const LOCAL_ONLY_COMMANDS = new Set(['export', 'tick', 'whatif'])
+const SUBJECTS = new Set(['wish', 'companion', 'motivation'])
+
+type OptionName = '--state-root' | '--tenant' | '--limit'
+
+interface ParsedCli {
+  cmd?: string
+  root: string
+  tenant: string
+  limit: number
+  positional: string[]
 }
 
-function tenantOf(args: string[]): string {
-  const i = args.indexOf('--tenant')
-  return i >= 0 && args[i + 1] ? args[i + 1] : 'local'
+function usageError(message: string): never {
+  console.error(message)
+  console.error(HELP)
+  process.exit(1)
 }
 
-function arg(name: string, fallback?: string): string | undefined {
-  const i = process.argv.indexOf(name)
-  return i >= 0 ? process.argv[i + 1] : fallback
+function isOptionName(token: string): token is OptionName {
+  return OPTION_NAMES.has(token)
+}
+
+function parsePositiveInteger(raw: string, label: string): number {
+  if (!/^\d+$/.test(raw)) usageError(`${label} 必须是正整数:${raw}`)
+  const n = Number(raw)
+  if (!Number.isSafeInteger(n) || n <= 0) usageError(`${label} 必须是正整数:${raw}`)
+  return n
+}
+
+function parseSequence(raw: string, label: string): number {
+  if (!/^\d+$/.test(raw)) usageError(`${label} 必须是非负整数:${raw}`)
+  const n = Number(raw)
+  if (!Number.isSafeInteger(n)) usageError(`${label} 超出安全整数范围:${raw}`)
+  return n
+}
+
+function looksLikeNumeric(raw: string): boolean {
+  return /^[+-]?\d/.test(raw)
+}
+
+function rootAndArgs(cmd: string, positional: string[], explicitRoot?: string): { root: string; args: string[] } {
+  if (explicitRoot !== undefined) return { root: explicitRoot, args: positional }
+
+  switch (cmd) {
+    case 'migrate':
+    case 'export':
+    case 'log':
+    case 'stats':
+    case 'tick':
+    case 'pw-list': {
+      if (positional.length > 1) usageError(`${cmd} 只接受一个可选 root 位置参数`)
+      return { root: positional[0] ?? '.', args: [] }
+    }
+    case 'rebuild':
+    case 'rewind': {
+      const rootIndex = positional.findIndex(p => !looksLikeNumeric(p))
+      if (rootIndex < 0) return { root: '.', args: positional }
+      const root = positional[rootIndex]!
+      return { root, args: positional.filter((_, i) => i !== rootIndex) }
+    }
+    case 'forget':
+    case 'whatif':
+    case 'pw-request':
+    case 'pw-confirm':
+    case 'pw-compensate': {
+      if (positional.length === 0) return { root: '.', args: [] }
+      return { root: positional[0]!, args: positional.slice(1) }
+    }
+    default:
+      return { root: '.', args: positional }
+  }
+}
+
+function validateArgs(cmd: string, args: string[], limitRaw?: string): number {
+  if (limitRaw !== undefined && cmd !== 'log') usageError(`${cmd} 不支持 --limit`)
+  const limit = limitRaw === undefined ? 20 : parsePositiveInteger(limitRaw, '--limit')
+
+  switch (cmd) {
+    case 'migrate':
+    case 'export':
+    case 'log':
+    case 'stats':
+    case 'tick':
+    case 'pw-list':
+      if (args.length !== 0) usageError(`${cmd} 不接受额外位置参数:${args.join(' ')}`)
+      break
+    case 'rebuild':
+      if (args.length > 1) usageError('rebuild 最多接受一个 toSeq')
+      if (args[0] !== undefined) parseSequence(args[0], 'toSeq')
+      break
+    case 'rewind':
+      if (args.length !== 1) usageError('rewind 需要且只接受一个 seq')
+      parseSequence(args[0]!, 'seq')
+      break
+    case 'forget':
+      if (args.length !== 2) usageError('forget 需要 subject 与 id;省略 root 时请用 --state-root . 明示')
+      if (!SUBJECTS.has(args[0]!)) usageError(`未知主体 ${args[0]}(wish|companion|motivation)`)
+      break
+    case 'whatif':
+      if (args.length !== 1) usageError('whatif 需要 dest.db;省略 root 时请用 --state-root . 明示')
+      break
+    case 'pw-request':
+      if (args.length !== 3) usageError('pw-request 需要 idemKey、seam 与 payloadJson;省略 root 时请用 --state-root . 明示')
+      break
+    case 'pw-confirm':
+      if (args.length !== 2) usageError('pw-confirm 需要 idemKey 与 receipt;省略 root 时请用 --state-root . 明示')
+      break
+    case 'pw-compensate':
+      if (args.length !== 2) usageError('pw-compensate 需要 idemKey 与 note;省略 root 时请用 --state-root . 明示')
+      break
+  }
+  return limit
+}
+
+function parseCli(argv: string[]): ParsedCli {
+  let cmd: string | undefined
+  const positional: string[] = []
+  const options = new Map<OptionName, string>()
+
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i]!
+    if (token.startsWith('--')) {
+      if (!isOptionName(token)) usageError(`未知选项 ${token}`)
+      if (options.has(token)) usageError(`重复选项 ${token}`)
+      const value = argv[i + 1]
+      if (value === undefined || value === '' || value.startsWith('--')) usageError(`${token} 缺少值`)
+      options.set(token, value)
+      i++
+      continue
+    }
+    if (token.startsWith('-') && !looksLikeNumeric(token)) usageError(`未知选项 ${token}`)
+    if (cmd === undefined) cmd = token
+    else positional.push(token)
+  }
+
+  if (cmd === undefined) usageError('缺少命令')
+  if (!COMMANDS.has(cmd)) return { cmd, root: '.', tenant: 'local', limit: 20, positional }
+
+  const tenant = options.get('--tenant') ?? 'local'
+  if (tenant.trim() === '') usageError('--tenant 缺少值')
+  const explicitRoot = options.get('--state-root')
+  if (explicitRoot !== undefined && explicitRoot.trim() === '') usageError('--state-root 缺少值')
+  const { root, args } = rootAndArgs(cmd, positional, explicitRoot)
+  const limit = validateArgs(cmd, args, options.get('--limit'))
+  if (LOCAL_ONLY_COMMANDS.has(cmd) && tenant !== 'local') {
+    usageError(`${cmd} 仅支持 --tenant local；该命令未实现租户隔离,已在创建目录、打开账本、求解或写文件前拒绝。`)
+  }
+  return { cmd, root, tenant, limit, positional: args }
 }
 
 function atomicWrite(path: string, text: string): void {
@@ -54,12 +231,11 @@ function atomicWrite(path: string, text: string): void {
   renameSync(tmp, path)
 }
 
-const HELP = '用法见文件头注释(npx tsx scripts/state-cli.ts <cmd> [root] ...)'
+const parsed = parseCli(process.argv.slice(2))
+const { cmd, root, tenant } = parsed
 
 switch (cmd) {
   case 'migrate': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
     const before = openLedgerIfExists(root, tenant)?.countEvents() ?? 0
     const ledger = ensureLedger(root, tenant)
     const backupDir = join(root, 'gotry-state', 'pre-ledger-backup')
@@ -67,8 +243,6 @@ switch (cmd) {
     break
   }
   case 'export': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
     const ledger = ensureLedger(root, tenant)
     const dir = join(root === '.' ? process.cwd() : root, 'gotry-state')
     mkdirSync(dir, { recursive: true })
@@ -86,19 +260,14 @@ switch (cmd) {
     break
   }
   case 'log': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
-    const limit = Number(arg('--limit', '20'))
     const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.log('(无账本——未迁移 root,旧文件形态)'); break }
-    for (const e of ledger.readEvents(undefined, limit)) {
+    for (const e of ledger.readEvents(undefined, parsed.limit)) {
       console.log(`${String(e.seq).padStart(5)}  ${e.ts}  ${e.actor.padEnd(28)} ${e.kind.padEnd(24)} ${e.subject_id}${e.idem_key ? `  #${e.idem_key}` : ''}`)
     }
     break
   }
   case 'stats': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
     const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.log('(无账本——未迁移 root)'); break }
     console.log(`events=${ledger.countEvents()} wishes=${ledger.readWishPool().length} companions=${ledger.readCompanions().length} trips=${ledger.readTrips().length} utility=${ledger.readUtilityEvents().length} pendingRuns=${ledger.pendingWorkflowRuns().length} pendingWrites=${ledger.listPendingWrites().length}`)
@@ -106,37 +275,30 @@ switch (cmd) {
   }
   case 'rebuild':
   case 'rewind': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
     const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.error('无账本'); process.exit(1) }
-    const toSeqRaw = rest.find(a => /^\d+$/.test(a))
-    const r = ledger.rebuildProjections(toSeqRaw ? Number(toSeqRaw) : undefined)
+    const toSeqRaw = parsed.positional[0]
+    const toSeq = toSeqRaw === undefined ? undefined : parseSequence(toSeqRaw, 'seq')
+    const r = ledger.rebuildProjections(toSeq)
     console.log(`fold 重建完成${toSeqRaw ? `(至 seq ${toSeqRaw};rebuild 无参即回最新)` : '(全量)'}:重放 ${r.events} 事件 → 愿望 ${r.wishes} / 同行人 ${r.companions}`)
     break
   }
   case 'forget': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
     const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.error('无账本'); process.exit(1) }
-    const subject = rest.find(a => !a.startsWith('--') && a !== root)
-    const id = rest[rest.indexOf(subject!) + 1]
-    if (!subject || id === undefined) { console.error(HELP); process.exit(1) }
+    const [subject, id] = parsed.positional
     const map: Record<string, { kinds: string[]; subjectId: string }> = {
-      wish: { kinds: ['wish.imported', 'wish.added', 'wish.updated', 'memory_utility.event'], subjectId: id },
-      companion: { kinds: ['companion.imported', 'companion.saved'], subjectId: id },
+      wish: { kinds: ['wish.imported', 'wish.added', 'wish.updated', 'memory_utility.event'], subjectId: id! },
+      companion: { kinds: ['companion.imported', 'companion.saved'], subjectId: id! },
       motivation: { kinds: ['motivation.imported', 'motivation.patch'], subjectId: 'motivation' },
     }
-    const spec = map[subject]
+    const spec = map[subject!]
     if (!spec) { console.error(`未知主体 ${subject}(wish|companion|motivation)`); process.exit(1) }
     const r = ledger.forgetSubject([spec])
     console.log(`已物理硬删 ${r.deleted} 条事件并重建投影(审计一行留痕;红线 6「可删除」)`)
     break
   }
   case 'tick': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
     const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.log('(无账本,无待办)'); break }
     const pending = ledger.pendingWorkflowRuns()
@@ -153,20 +315,15 @@ switch (cmd) {
     break
   }
   case 'whatif': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
     const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.error('无账本'); process.exit(1) }
-    const dest = rest.find(a => a !== root && !a.startsWith('--'))
-    if (!dest) { console.error(HELP); process.exit(1) }
+    const dest = parsed.positional[0]!
     mkdirSync(dirname(dest), { recursive: true })
     ledger.forkWhatIf(dest)
     console.log(`what-if 分叉已生成:${dest}(预演在副本,正本零改动)`)
     break
   }
   case 'pw-list': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
     const ledger = openLedgerIfExists(root, tenant)
     if (!ledger) { console.log('(无账本)'); break }
     for (const w of ledger.listPendingWrites()) {
@@ -177,11 +334,8 @@ switch (cmd) {
   case 'pw-request':
   case 'pw-confirm':
   case 'pw-compensate': {
-    const root = rootOf(rest)
-    const tenant = tenantOf(rest)
     const ledger = ensureLedger(root, tenant)
-    const positional = rest.filter(a => a !== root && !a.startsWith('--'))
-    if (positional.length < (cmd === 'pw-request' ? 3 : 2)) { console.error(HELP); process.exit(1) }
+    const positional = parsed.positional
     if (cmd === 'pw-request') {
       const r = ledger.requestPendingWrite({ idemKey: positional[0]!, seam: positional[1]!, payload: JSON.parse(positional[2]!) as unknown })
       console.log(`登记:${JSON.stringify(r)}(L2:只登记不执行)`)

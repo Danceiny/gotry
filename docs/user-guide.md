@@ -52,17 +52,28 @@ node scripts/build-dist.mjs                      # 构建源码 runtime
 字段(画像已在系统提示里);你之前许过的「下一次出发」愿望若条件命中,它至多
 提 1 条,不命中就不打扰。
 
-## 你的数据在哪(可见、可编辑、可删除)
+## 你的数据在哪(可见、可导出、可删除)
 
-数据目录由运行形态决定:源码普通运行落在 `ts/dsh-runtime/gotry-state/`，npm 包运行落在调用目录的 `gotry-state/`，benchmark opt-in 使用隔离调用目录，避免写入共享状态。
+数据目录由运行形态决定:源码普通运行落在 `ts/dsh-runtime/gotry-state/`，npm 包运行落在调用目录的 `gotry-state/`，benchmark opt-in 使用隔离调用目录，避免写入共享状态。权威写面是同目录的 `gotry-state.db` SQLite 账本；下面这些 JSON/JSONL 文件是兼容旧形态的导出视图，便于你查看与备份，**不会反向回流进账本**。
 
-| 文件 | 内容 |
+| 视图/文件 | 内容 |
 |---|---|
 | `motivation-profile.json` | 动机画像(权重/硬约束,每条带你的原话证据) |
 | `wish-pool.json` | 「下一次出发」清单(带成行条件;muted=休眠不删除) |
 | `memory-utility.jsonl` | 愿望效用事件(召回/确认;归因只认你亲口说的) |
 
-不想要了,删文件即可;想改画像,直接编辑(下次会话生效)。
+开发者排障或备份时可用仓内账本 CLI(示例均用隔离 root):
+
+```bash
+cd ts
+npx tsx scripts/state-cli.ts stats --state-root <root>
+npx tsx scripts/state-cli.ts export --state-root <root>       # 仅 local:DB → legacy 视图
+npx tsx scripts/state-cli.ts forget --state-root <root> wish <wish_id>
+```
+
+`--tenant <tenant>` 只是账本 scope 参数,不是认证或授权。`tick` / `export` / `whatif` 三个命令只支持 `--tenant local`: `tick` 会调用本地异步结算路径,`export` 会写共享 legacy 文件名,`whatif` 是整库管理员 snapshot 而不是租户导出；传入非 local 时会在创建目录、打开数据库、求解或写文件前拒绝。
+
+想删除某个愿望/同行人/动机画像,优先用 `state-cli forget` 或在对话里要求 GoTry 清理；不要把手改 legacy 视图当作账本更新。
 
 **想看生成的文件(行程 md、工单交付)不用去翻目录**,两条路:
 
