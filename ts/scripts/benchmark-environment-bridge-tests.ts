@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { apply, type Config } from '../src/index.ts'
 import {
+  BRIDGE_ERROR_CONTRACT,
   BENCHMARK_TOOL_RESULT_SCHEMA_VERSION,
   registerBenchmarkEnvironmentBridge,
 } from '../src/benchmark-environment-bridge.ts'
@@ -957,28 +958,40 @@ try {
   const bridge = registered.find(tool => tool.name === 'gotry_benchmark_environment')!
   assert.ok(bridge.execute, 'registered bridge exposes execute')
   const parameters = bridge.parameters as {
-    oneOf?: Array<Record<string, any>>
+    type?: string
+    properties?: Record<string, any>
+    required?: string[]
+    additionalProperties?: boolean
+    oneOf?: unknown
   }
-  assert.equal(Array.isArray(parameters.oneOf), true, 'v3 bridge exposes flat descriptor-derived model branches')
-  const lookupBranch = parameters.oneOf!.find(branch => branch?.properties?.tool?.const === 'lookup')!
-  assert.ok(lookupBranch, 'model schema contains the configured lookup tool branch')
-  assert.equal(lookupBranch.description, 'Lookup one declared city.', 'descriptor description reaches the model-visible call branch')
-  assert.deepEqual(lookupBranch.required, ['action', 'tool', 'arguments'])
-  assert.equal(lookupBranch.additionalProperties, false)
-  assert.deepEqual(lookupBranch.properties.arguments.required, ['city'])
-  assert.equal(lookupBranch.properties.arguments.additionalProperties, false)
-  assert.equal(lookupBranch.properties.arguments.properties.city.type, 'string')
-  assert.deepEqual(lookupBranch.properties.arguments.properties.city.enum, ['Dubai', 'Abu Dhabi'])
+  assert.equal(parameters.type, 'object', 'flat bridge uses an object root for model-facing parameters')
+  assert.equal(parameters.oneOf, undefined, 'model-facing wire has no top-level oneOf')
+  assert.deepEqual(parameters.required, ['action'], 'action is the only universally required wire field')
+  assert.equal(parameters.additionalProperties, false)
+  assert.deepEqual(parameters.properties?.action?.enum, ['tools', 'call', 'errors'])
+  assert.deepEqual(parameters.properties?.tool?.enum, ['lookup', 'constructor', 'toString'], 'tool enum exposes frozen descriptor names')
+  assert.equal(parameters.properties?.arguments?.type, 'object', 'arguments remains a generic object on the open wire')
+  assert.equal(parameters.properties?.arguments?.additionalProperties, true)
   assert.equal(Object.isFrozen(bridge.parameters), true, 'registered raw parameters are frozen')
-  assert.equal(Object.isFrozen(lookupBranch.properties.arguments.properties.city.enum), true, 'descriptor-derived nested schema is frozen')
-  assert.throws(() => { lookupBranch.properties.arguments.properties.city.enum.push('escape') }, TypeError)
+  assert.equal(Object.isFrozen(parameters.properties?.tool?.enum), true, 'descriptor-derived tool enum is frozen')
+  assert.throws(() => { parameters.properties?.tool?.enum.push('escape') }, TypeError)
 
   const beforeProtocolRejected = spawnSpecs.length
   await assert.rejects(() => bridge.execute!({ query: bridgeCall('lookup', { city: 'Dubai' }) }, null), /invalid arguments/, 'legacy nested query envelope is rejected by the flat protocol')
   await assert.rejects(() => bridge.execute!({}, null), /invalid arguments/, 'empty object is rejected by the flat protocol')
   await assert.rejects(() => bridge.execute!({ action: 'tools', tool: 'lookup' }, null), /invalid arguments/, 'mixed action/tool fields are rejected by the flat protocol')
+  await assert.rejects(() => bridge.execute!({ action: 'tools', arguments: {} }, null), /invalid arguments/, 'tools rejects mixed arguments')
+  await assert.rejects(() => bridge.execute!({ action: 'errors', tool: 'lookup' }, null), /invalid arguments/, 'errors rejects mixed tool fields')
+  await assert.rejects(() => bridge.execute!({ action: 'errors', arguments: {} }, null), /invalid arguments/, 'errors rejects mixed arguments')
   await assert.rejects(() => bridge.execute!({ ...bridgeCall('lookup', { city: 'Dubai' }), extra: true }, null), /invalid arguments/, 'extra top-level fields are rejected by the flat protocol')
+  await assert.rejects(() => bridge.execute!({ action: 'call' }, null), /invalid arguments/, 'call without tool or arguments is rejected')
+  await assert.rejects(() => bridge.execute!({ action: 'call', tool: 'lookup' }, null), /invalid arguments/, 'call without arguments is rejected')
+  await assert.rejects(() => bridge.execute!({ action: 'call', arguments: { city: 'Dubai' } }, null), /invalid arguments/, 'call without tool is rejected')
   await assert.rejects(() => bridge.execute!(bridgeCall('lookup', { city: 'Sharjah' }), null), /invalid arguments/, 'invalid descriptor argument values are rejected by the flat protocol')
+  await assert.rejects(() => bridge.execute!({ action: 'call', tool: 'lookup', arguments: {} }, null), /invalid arguments/, 'missing required descriptor arguments are rejected by the flat protocol')
+  for (const tool of ['lookup', 'constructor', 'toString']) {
+    await assert.rejects(() => bridge.execute!(bridgeCall(tool, { city: 'Sharjah' }), null), /invalid arguments/, `${tool} rejects invalid descriptor arguments`)
+  }
   assert.equal(spawnSpecs.length, beforeProtocolRejected, 'flat protocol rejections happen before spawn')
 
   const args = { city: 'Dubai', payload: '$(touch /tmp/nope)' }
@@ -1102,11 +1115,22 @@ try {
   const errorsTable = await bridge.execute!({ action: 'errors' }, null) as { ok?: boolean; errors?: Record<string, { recoverable: boolean; remedy: string }> }
   assert.ok(errorsTable.ok === true && errorsTable.errors, 'bridge failure contract is discoverable')
   for (const code of ['invalid_action', 'disallowed_tool', 'invalid_arguments', 'timed_out', 'output_truncated', 'invalid_json', 'invalid_output', 'runner_failed', 'spawn_failed', 'forbidden_output']) {
-    const row = errorsTable.errors?.[code]
+    const row: { recoverable: boolean; remedy: string } | undefined = errorsTable.errors?.[code]
     assert.ok(row && typeof row.recoverable === 'boolean' && row.remedy.length > 0, `failure contract contains ${code} with recovery guidance`)
   }
   assert.equal(errorsTable.errors?.invalid_arguments?.recoverable, true, 'invalid caller arguments are recoverable')
   assert.equal(errorsTable.errors?.forbidden_output?.recoverable, false, 'policy-boundary output is not recoverable')
+  assert.deepEqual(errorsTable, { ok: true, errors: BRIDGE_ERROR_CONTRACT }, 'errors action returns the exact closed failure contract')
+
+  const toolsTable = await bridge.execute!({ action: 'tools' }, null)
+  assert.deepEqual(toolsTable, {
+    ok: true,
+    tools: [
+      { name: 'lookup', description: 'Lookup one declared city.', input_schema: lookupInputSchema(), output_keys: ['city', 'nested'], domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: 'revise_arguments' }, { status: 'error', code: 'AMBIGUOUS', recovery: 'choose_alternative' }] },
+      { name: 'constructor', description: 'Construct one declared city.', input_schema: lookupInputSchema(), output_keys: ['legacy'], domain_outcomes: [{ status: 'error', code: 'INVALID', recovery: 'retry_same' }] },
+      { name: 'toString', description: 'Stringify one declared city.', input_schema: lookupInputSchema(), output_keys: ['city', 'nested'], domain_outcomes: [] },
+    ],
+  }, 'tools action returns every exact frozen descriptor, including its input schema')
 
   for (const stdout of ['not-json', '{"result":1}{"result":2}']) {
     outcomes.push({ stdout })

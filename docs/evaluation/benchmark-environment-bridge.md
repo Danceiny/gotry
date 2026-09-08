@@ -70,6 +70,13 @@ domain-only path; a later concrete result may recover it. In every case the
 accepted terminal response must occur after the latest bridge response, so a
 stale terminal cannot mask newer evidence.
 
+Round 11 makes the model-facing request schema one flat object: `action` is the
+`tools|call|errors` enum, `tool` is an enum derived from the frozen descriptor
+set, and `arguments` is a generic object. This is a wire/schema visibility
+change only. At execution time the bridge still validates `arguments` exactly
+against the selected frozen descriptor `input_schema`; generic model-facing
+arguments do not weaken the execution contract.
+
 The owner-local config also declares a generic tagged-JSON terminal envelope.
 The tag is a bounded identifier and `max_bytes` is capped at 1 MiB. A valid
 terminal response is exactly one matching tag pair whose body is one JSON
@@ -364,3 +371,15 @@ domain or infrastructure fact.
 This round does not change provider routing, the scorer, the evaluator, or the
 default product path. A frozen treatment and any score/uplift claim require
 separate provenance-bound evidence.
+
+### Round 10 treatment diagnosis and Round 11 — flat model-facing wire
+
+The real `glm-5.3-flash` treatment on main `c843fae` diagnosed a provider/model
+visibility failure for the top-level `oneOf` bridge schema: the treatment made
+57 empty `{}` calls and produced no countable score. Round 11 therefore changes
+only the model-facing bridge wire to one flat object with `action` enum
+`tools|call|errors`, a descriptor-derived `tool` enum, and generic object
+`arguments`. Execution-time validation remains exact against the selected
+frozen descriptor `input_schema`. Provider routing, the scorer, evaluator,
+default product path, external data/oracle/query/trajectory inputs, private
+paths, and credentials are unchanged; no score or uplift is claimed.

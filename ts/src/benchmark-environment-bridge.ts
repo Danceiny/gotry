@@ -5,7 +5,6 @@ import {
   assertSupportedJsonSchema,
   validateJsonSchemaValue,
   ToolArgsError,
-  type JsonSchemaNode,
   type ObjectJsonSchema,
   type ToolDefinition,
 } from '@deepseek-ai/dsh-tools'
@@ -53,38 +52,6 @@ export interface BenchmarkToolDescriptor {
   input_schema: ObjectJsonSchema
   output_keys: string[]
   domain_outcomes: Array<{ status: 'miss' | 'error'; code: string; recovery: BenchmarkDomainRecovery }>
-}
-
-function descriptorSchema(tools: readonly BenchmarkToolDescriptor[]): JsonSchemaNode {
-  return {
-    oneOf: [
-      {
-        type: 'object',
-        description: 'List the frozen benchmark tool descriptors.',
-        properties: { action: { type: 'string', const: 'tools' } },
-        required: ['action'],
-        additionalProperties: false,
-      },
-      {
-        type: 'object',
-        description: 'List the frozen bridge error contract.',
-        properties: { action: { type: 'string', const: 'errors' } },
-        required: ['action'],
-        additionalProperties: false,
-      },
-      ...tools.map<JsonSchemaNode>(tool => ({
-        type: 'object',
-        description: tool.description,
-        properties: {
-          action: { type: 'string', const: 'call' },
-          tool: { type: 'string', const: tool.name },
-          arguments: tool.input_schema,
-        },
-        required: ['action', 'tool', 'arguments'],
-        additionalProperties: false,
-      })),
-    ],
-  }
 }
 
 function plainObject(value: unknown): value is Record<string, unknown> {
@@ -426,7 +393,15 @@ export function registerBenchmarkEnvironmentBridge(
   if (!subprocess) throw new Error('benchmark environment bridge subprocess unavailable')
 
   const parameters: Record<string, unknown> = deepFreezeJson({
-    oneOf: descriptorSchema(bridge.tools).oneOf,
+    type: 'object',
+    description: 'Flat benchmark bridge wire: choose an action, then provide the mapped tool and its arguments.',
+    properties: {
+      action: { type: 'string', enum: ['tools', 'call', 'errors'], description: 'tools=列出可调工具;call=执行工具;errors=拉取错误契约' },
+      tool: { type: 'string', enum: bridge.tools.map(item => item.name), description: 'action=call 时选择的冻结工具名' },
+      arguments: { type: 'object', additionalProperties: true, description: 'action=call 时传给工具的参数对象' },
+    },
+    required: ['action'],
+    additionalProperties: false,
   })
   assertSupportedJsonSchema(parameters)
 
@@ -444,10 +419,20 @@ export function registerBenchmarkEnvironmentBridge(
       const query = args as Record<string, unknown>
       const tool = query.tool
       const descriptor = bridge.tools.find(item => item.name === tool)
-      if (query.action === 'tools') return jsonObject({ ok: true, tools: bridge.tools })
-      if (query.action === 'errors') return jsonObject({ ok: true, errors: BRIDGE_ERROR_CONTRACT })
+      const keys = Object.keys(query)
+      if (query.action === 'tools') {
+        if (keys.length !== 1) throw new ToolArgsError(['arguments: tools action accepts no tool or arguments'])
+        return jsonObject({ ok: true, tools: bridge.tools })
+      }
+      if (query.action === 'errors') {
+        if (keys.length !== 1) throw new ToolArgsError(['arguments: errors action accepts no tool or arguments'])
+        return jsonObject({ ok: true, errors: BRIDGE_ERROR_CONTRACT })
+      }
       if (query.action !== 'call') {
         return jsonObject({ ok: false, error: 'invalid_action' })
+      }
+      if (keys.length !== 3 || !Object.hasOwn(query, 'tool') || !Object.hasOwn(query, 'arguments')) {
+        throw new ToolArgsError(['arguments: call action requires exactly tool and arguments'])
       }
       if (typeof tool !== 'string' || !descriptor) {
         return jsonObject({ ok: false, error: 'disallowed_tool' })
@@ -457,9 +442,7 @@ export function registerBenchmarkEnvironmentBridge(
       }
       const callArguments = query.arguments
       const argumentViolations = validateJsonSchemaValue(descriptor.input_schema, callArguments, 'arguments')
-      if (argumentViolations.length > 0) {
-        return jsonObject({ ok: false, error: 'invalid_arguments' })
-      }
+      if (argumentViolations.length > 0) throw new ToolArgsError(argumentViolations)
       const serialized = serializedArguments(callArguments)
       if (serialized.reason) return jsonObject({ ok: false, error: 'invalid_arguments', reason: serialized.reason })
       const controller = new AbortController()

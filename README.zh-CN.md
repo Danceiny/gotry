@@ -201,7 +201,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 - **M3 Exit 未关闭** —— 工程与分发面就绪,但真实种子用户证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
 - **酒店会话适配** —— 携程酒店/美团登录态面等实测回填;机票已通
 - **界面语言** —— 英文仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
-- **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic（无分数、无 uplift 声明）。bridge 现已合并通用 `tools/call/errors` 恢复面、逐工具 typed descriptor、严格 result/domain/failure 分流与 latest-response terminal fence；逐轮工程台账见 [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
+- **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic（无分数、无 uplift 声明）。Round 10 的 `glm-5.3-flash`（main `c843fae`）已诊断为可见性失败（57 次空 `{}` 调用）；Round 11 仅把模型面对的 wire 展平为 `tools/call/errors`、descriptor 派生工具名枚举和 generic object 参数，执行时仍对冻结 descriptor 做 exact 校验；逐轮工程台账见 [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
 - **预订** —— 今天没有任何可下单路径;M5 只经 WriteGate 与 booking-saga 状态机启封
 
 <details>
