@@ -1,6 +1,21 @@
 {
   "schema": "memory_value_fixture.v1",
   "evidence_kind": "synthetic_fixture",
+  "source_review": {
+    "schema_version": "memory_value_source_review.v1",
+    "state": "not_required_for_synthetic",
+    "reviewed_at": null,
+    "reviewer_ref": null,
+    "attestation_ref": null,
+    "private_source_digest_sha256": null,
+    "reviewed_summary_digest_sha256": null,
+    "checks": {
+      "raw_private_material_excluded": false,
+      "paired_cohort_source_reviewed": false,
+      "summary_matches_private_source": false,
+      "no_synthetic_or_test_subjects": false
+    }
+  },
   "measurement_policy": {
     "quantile_method": "nearest_rank",
     "predeclared_external_wait_codes": [
@@ -12,10 +27,10 @@
   },
   "pairs": [
     {
-      "pair_id": "pair-a",
-      "subject_ref": "subject-fixture-a",
+      "pair_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000001",
+      "subject_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000101",
       "first": {
-        "flow_id": "flow-a-first",
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000201",
         "eligible_planning_index": 1,
         "eligible": true,
         "status": "completed",
@@ -30,7 +45,7 @@
         ]
       },
       "returning": {
-        "flow_id": "flow-a-returning",
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000202",
         "eligible_planning_index": 2,
         "eligible": true,
         "status": "completed",
@@ -46,10 +61,10 @@
       }
     },
     {
-      "pair_id": "pair-b",
-      "subject_ref": "subject-fixture-b",
+      "pair_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000002",
+      "subject_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000102",
       "first": {
-        "flow_id": "flow-b-first",
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000203",
         "eligible_planning_index": 1,
         "eligible": true,
         "status": "completed",
@@ -64,7 +79,7 @@
         ]
       },
       "returning": {
-        "flow_id": "flow-b-returning",
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000204",
         "eligible_planning_index": 2,
         "eligible": true,
         "status": "completed",
@@ -80,10 +95,10 @@
       }
     },
     {
-      "pair_id": "pair-c",
-      "subject_ref": "subject-fixture-c",
+      "pair_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000003",
+      "subject_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000103",
       "first": {
-        "flow_id": "flow-c-first",
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000205",
         "eligible_planning_index": 1,
         "eligible": true,
         "status": "completed",
@@ -98,7 +113,7 @@
         ]
       },
       "returning": {
-        "flow_id": "flow-c-returning",
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000206",
         "eligible_planning_index": 2,
         "eligible": true,
         "status": "completed",
@@ -112,42 +127,86 @@
           }
         ]
       }
+    },
+    {
+      "pair_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000004",
+      "subject_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000104",
+      "first": {
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000207",
+        "eligible_planning_index": 1,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-04T10:00:00Z",
+        "completed_at": "2026-08-04T10:12:00Z",
+        "external_waits": []
+      },
+      "returning": {
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000208",
+        "eligible_planning_index": 2,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-11T10:00:00Z",
+        "completed_at": "2026-08-11T10:06:00Z",
+        "external_waits": []
+      }
+    },
+    {
+      "pair_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000005",
+      "subject_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000105",
+      "first": {
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000209",
+        "eligible_planning_index": 1,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-05T10:00:00Z",
+        "completed_at": "2026-08-05T10:15:00Z",
+        "external_waits": []
+      },
+      "returning": {
+        "flow_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000210",
+        "eligible_planning_index": 2,
+        "eligible": true,
+        "status": "completed",
+        "started_at": "2026-08-12T10:00:00Z",
+        "completed_at": "2026-08-12T10:07:30Z",
+        "external_waits": []
+      }
     }
   ],
   "experience_reflux_events": [
     {
-      "experience_id": "experience-a",
+      "experience_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000501",
       "kind": "recalled",
-      "evidence_ref": "fixture:experience-a:recall"
+      "evidence_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000601"
     },
     {
-      "experience_id": "experience-a",
+      "experience_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000501",
       "kind": "verified_outcome",
-      "evidence_ref": "fixture:experience-a:verification"
+      "evidence_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000602"
     },
     {
-      "experience_id": "experience-b",
+      "experience_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000502",
       "kind": "recalled",
-      "evidence_ref": "fixture:experience-b:recall"
+      "evidence_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000603"
     }
   ],
   "preference_assertions": [
     {
-      "assertion_id": "preference-a",
-      "evidence_ref": "fixture:utterance:a",
+      "assertion_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000801",
+      "evidence_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000701",
       "consumer": "ranking",
       "hard_filter": false
     },
     {
-      "assertion_id": "preference-b",
-      "evidence_ref": "fixture:utterance:b",
+      "assertion_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000802",
+      "evidence_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000702",
       "consumer": "ranking",
       "hard_filter": false
     },
     {
-      "assertion_id": "preference-c",
-      "evidence_ref": "fixture:tool-result:c",
-      "consumer": "ranking",
+      "assertion_id": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000803",
+      "evidence_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000703",
+      "consumer": "explanation",
       "hard_filter": false
     }
   ],

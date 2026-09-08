@@ -80,11 +80,13 @@ Trip Notebook(durable,后台 LLM 提取,负面清单执行)+ Hot Context(30min �
 
 `ts/scripts/memory-value-report.ts` 只读评分 `memory_value_fixture.v1`:
 
-- **paired cohort**:每个 pair 只接受唯一匿名 subject 的首次与下一次 `eligible + completed` planning flow;returning flow 必须晚于 first flow 完成。active planning duration = wall clock − 预声明且互不重叠的 external waits。分位数固定 nearest-rank,报告 N、首访/回访 p50/p75 与逐 pair reduction p50/p75。
+- **paired cohort**:每个 pair 只接受唯一匿名 subject 的首次与下一次 `eligible + completed` planning flow;returning flow 必须晚于 first flow 完成。active planning duration = wall clock − 预声明且互不重叠的 external waits。分位数固定 nearest-rank,报告 N、首访/回访 p50/p75 与逐 pair reduction p50/p75;阈值比较使用未舍入 raw ratio,只在报告展示时 round。
+- **Exit 阈值冻结**:M4 Exit 最小样本数固定为 `minimum_pair_count_for_exit=5`,中位降幅固定为 `target_median_reduction_ratio=0.5`;输入不能降低阈值,非冻结参数由 scorer fail-closed 拒绝。
 - **experience reflux**:按 experience_id 统计 recalled 与 verified_outcome 的交集,基线 = verified/recalled;每条事件必须有 evidence_ref。
 - **偏好红线**:报告 traceable ratio 与 hard-filter violation count;100% 可溯源且 0 hard filter 才满足验收。
 - **P4 闸**:没有 real usage 或 multi-user trigger 时必须保持 `closed`。
-- **证据等级**:`synthetic_fixture` 只能证明合同与算法,`exit_evidence_eligible=false`;仅私有 `observed_private` cohort 可参与 M4 Exit。真实证据留在 `ts/gotry-state/evidence/m4/` 的 manifest/paired-cohort/summary,不得提交原始用户材料。
+- **证据等级**:`synthetic_fixture` 只能证明合同与算法,`exit_evidence_eligible=false`;私有 `observed_private` cohort 也不能靠 `evidence_kind` 自报、HMAC 字符串形状或 evidence_ref 形状直接关闭 Exit。Observed 输入必须逐层 exact schema、全部 subject/flow/pair/experience/assertion/evidence ref 使用 `hmac-sha256:<64lowerhex>` 假名,且携带 `memory_value_source_review.v1` 人工 source-review attestation 合同;该合同必须含 `reviewed_summary_digest_sha256`,并与 scorer 对 `source_review` 之外评分 payload 的 canonical JSON SHA-256 一致,旧 attestation 不能覆盖改过的 summary。缺少或不匹配 attestation 时报告只可作为 candidate,指标可计算但 `exit_ready=false`。真实证据留在 `ts/gotry-state/evidence/m4/` 的 manifest/paired-cohort/summary,不得提交原始用户材料;scorer 只验证 attestation 合同形状与 summary digest 绑定,原始材料核验责任仍归人工 review。
+- **兼容迁移**:2026-09-08 起,旧 observed manifest 若缺 `source_review.reviewed_summary_digest_sha256`、使用明文/非 HMAC id、带未声明字段或试图降低阈值,CLI 以 contract-invalid/exit 2 拒绝;私有证据生产者必须重新脱敏、计算本次 summary digest 并补齐 source-review attestation 后再复跑。公开 synthetic fixture 从 N=3 调整为 N=5 指标正例,但 business eligibility 仍恒 false。
 
 复跑夹具:
 

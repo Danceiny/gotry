@@ -205,6 +205,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 **Open limitations** (honest list):
 
 - **M3 Exit not closed** — engineering & distribution are ready, but real seed-user evidence (50–200 person cohort) has not been accumulated; automated tests prove contracts and formulas, not business pass
+- **M4 value evidence not closed** — the paired-cohort scorer is schema-hardened (N=5 and median reduction=0.5 frozen with raw-ratio comparison, HMAC pseudonyms, no undeclared fields, source-review attestation plus summary digest binding required for observed-private evidence), but no real repeat cohort has landed yet
 - **Hotel session adapters** — Ctrip-hotel / Meituan logged-in surfaces await real login-state backfill; flights are done
 - **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host / calibration samples
 - **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim). After the Round 10 `glm-5.3-flash` visibility diagnosis on main `c843fae` (57 empty `{}` calls), Round 11 keeps execution validation exact against frozen descriptors while exposing a flat model-facing `tools/call/errors` wire with descriptor-derived tool names and generic object arguments; the round-by-round engineering ledger lives in [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
@@ -213,7 +214,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 <details>
 <summary>Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
 
-The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web; append/read/fold/rebuild are tenant-scoped, and legacy local rows are not re-attributed without external evidence); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate); the M4 paired-cohort value evidence contract (synthetic data is never Exit evidence); the async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22 and #224.
+The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web; append/read/fold/rebuild are tenant-scoped, and legacy local rows are not re-attributed without external evidence); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate); the M4 paired-cohort value evidence contract is hardened (synthetic data is never Exit evidence; observed-private data also needs a manual source-review attestation contract bound to the current summary digest and cannot rely on `evidence_kind` self-reporting); the async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22, #223, and #224.
 
 </details>
 
