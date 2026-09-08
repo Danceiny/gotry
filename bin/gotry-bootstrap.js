@@ -113,7 +113,8 @@ function parseVersion(v) {
 }
 
 function versionAtLeast(v, min) {
-  const a = parseVersion(v); const b = parseVersion(min)
+  // v 可能是 hbcliVersion 已解析的数组,也可能是原始字符串——两者都接受
+  const a = Array.isArray(v) ? v : parseVersion(v); const b = parseVersion(min)
   if (!a || !b) return false
   for (let i = 0; i < 3; i++) { if (a[i] !== b[i]) return a[i] > b[i] }
   return true
