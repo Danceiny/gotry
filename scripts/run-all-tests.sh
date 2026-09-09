@@ -74,7 +74,7 @@ echo
 echo "=== 7d. hbcli 全流程端到端(仅 GOTRY_HBCLI_LIVE=1 显式启用真实 UAT;默认零 binary/网络/凭证探测) ==="
 (cd ts && GOTRY_HBCLI_LIVE="${GOTRY_HBCLI_LIVE:-0}" npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
 
-echo "=== 7e. hbcli live opt-in 隔离证明(可发现 fixture + blocked network:默认 binary=0/network=0/credential=0) ==="
+echo "=== 7f. hbcli live opt-in 隔离证明(可发现 fixture + blocked network:默认 binary=0/network=0/credential=0) ==="
 (cd ts && npx tsx scripts/hbcli-live-optin-tests.ts) || FAIL=1
 
 echo
