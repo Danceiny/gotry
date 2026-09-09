@@ -100,6 +100,69 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/**
+ * Extract the first balanced top-level JSON object from a string that may
+ * contain several concatenated objects (provider duplication artifact).
+ * Returns null when the string does not start with (ignoring whitespace) a
+ * '{' that closes into a complete object. String literals and escapes are
+ * respected so braces inside strings do not affect balance tracking.
+ */
+function firstBalancedJsonObject(input: string): string | null {
+  const start = input.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < input.length; i += 1) {
+    const ch = input[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return input.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
+/**
+ * Escape raw control characters (0x00-0x1F) inside JSON string literals.
+ * Models intermittently emit bare newlines/tabs inside string values; the
+ * strict JSON grammar rejects them. Only characters INSIDE string literals
+ * are touched — structural whitespace outside strings is untouched.
+ */
+function escapeRawControlCharsInStrings(input: string): string {
+  let out = ''
+  let inString = false
+  let escaped = false
+  for (const ch of input) {
+    if (inString) {
+      if (escaped) { out += ch; escaped = false; continue }
+      if (ch === '\\') { out += ch; escaped = true; continue }
+      if (ch === '"') { out += ch; inString = false; continue }
+      const code = ch.charCodeAt(0)
+      if (code < 0x20) {
+        if (ch === '\n') out += '\\n'
+        else if (ch === '\r') out += '\\r'
+        else if (ch === '\t') out += '\\t'
+        else out += '\\u' + code.toString(16).padStart(4, '0')
+        continue
+      }
+      out += ch
+      continue
+    }
+    if (ch === '"') { inString = true; out += ch; continue }
+    out += ch
+  }
+  return out
+}
+
 function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   return Object.keys(value).length === allowed.length && Object.keys(value).every((key) => allowed.includes(key))
 }
@@ -583,8 +646,30 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   let args: unknown
   if (typeof rawArgs === 'string') {
     try { args = JSON.parse(rawArgs) } catch {
-      console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(rawArgs).slice(0, 600))
-      throw new Error('planner_invalid_tool_arguments')
+      // Models (observed on glm-5.3-flash and MiniMax) sometimes emit the
+      // tool-call arguments as SEVERAL concatenated JSON objects — each one
+      // complete and semantically identical. JSON.parse rejects the whole
+      // string. Recover deterministically: take the first balanced top-level
+      // object; the trailing duplicates are dropped (representation-only).
+      const first = firstBalancedJsonObject(rawArgs)
+      if (first === null) {
+        console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(rawArgs).slice(0, 600))
+        throw new Error('planner_invalid_tool_arguments')
+      }
+      try {
+        args = JSON.parse(first)
+        console.error('[booking-copilot] repaired duplicated tool arguments (kept first of N concatenated objects)')
+      } catch {
+        // Raw control characters (bare newlines) inside string literals also
+        // break the strict JSON grammar; escape them and retry once.
+        try {
+          args = JSON.parse(escapeRawControlCharsInStrings(first))
+          console.error('[booking-copilot] repaired tool arguments (deduplicated + escaped raw control chars)')
+        } catch {
+          console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(rawArgs).slice(0, 600))
+          throw new Error('planner_invalid_tool_arguments')
+        }
+      }
     }
   } else if (isRecord(rawArgs)) {
     // Some providers hand back an already-parsed arguments object.
