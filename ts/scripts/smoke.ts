@@ -457,7 +457,7 @@ async function main() {
 
     // 15b) dsh Host presenter 契约(issue #285):
     //   - list 的 presentResult 是 SearchPathsResultView(card:'search' shape:'paths');
-    //     当前 Web client 不会按自定义 gotry_artifacts_* 名称消费该 presenter;
+    //     DSH Web 的 public Client adapter separately consumes the runtime block;
     //   - read 的 presentCall 加 locations:[{path,line:1}],editor 视图在 call 阶段就 follow-along;
     //   - read 的 presentResult 是 ReadResultView(path/offset/lines/totalLines/lang 齐全),
     //     Host content[0] 是 source 身份行(显示「从哪个产物读」,避免把旧摘要当新内容)。

@@ -1751,9 +1751,9 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         : '无在册产物(异步深度规划交付与工作目录 md 文件都会出现在这里)'
       return JSON.parse(JSON.stringify({ ok: true, artifacts: r.artifacts, total: r.total, truncated: r.truncated, summary })) as Record<string, never>
     },
-    // Host presentationMeta is persisted with the ToolResult. The installed Web client
-    // does not key custom gotry_artifacts_* names to its native search card; Web preview
-    // is provided by the installed workspace/sidebar surface.
+    // Host presentationMeta remains persisted with the ToolResult for Host-side
+    // consumers; the packaged public Client separately renders the runtime block
+    // for these custom wire names in DSH Web.
     presentResult: (_args, result: ToolResult) => {
       if (result.isError || typeof result.meta !== 'object' || result.meta === null || Array.isArray(result.meta)) return undefined
       const meta = result.meta as { shape?: unknown; paths?: unknown; truncated?: unknown; total?: unknown }
