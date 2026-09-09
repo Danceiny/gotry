@@ -7,10 +7,10 @@
  * ReadResultView / GenericCallView.locations),并跑一次隔离 select → preview →
  * modify → view-updated 文件读取循环。
  *
- * 本脚本不伪称完成 Web renderer E2E:安装的 Web renderer 只为内建工具名 read/glob
- * 注册 keyed view,不会消费 GoTry Host 的 presentResult。它证明的是 DSH host
- * 装载 → 真实 execute → 持久化 meta → Host presenter contract;真实侧栏文件点击
- * 通过已安装 dsh-better-sidebar 的 sidebar_open / 文件树路径另行观察并记录。
+ * 本脚本不代替 Web renderer E2E:它证明的是 DSH host 装载 → 真实 execute →
+ * 持久化 meta → Host presenter contract。fresh-profile Web custom-card 路径由
+ * 显式命令 `npx tsx scripts/dsh-artifact-web-e2e.ts` 另行覆盖；该浏览器命令
+ * 不属于跨平台 full suite。
  *
  * 隔离:全临时目录;不写 gotry-state;结束即删。
  */
@@ -213,7 +213,7 @@ async function main(): Promise<void> {
 
   // ── 清理 ────────────────────────────────────────────────────────────────
   rmSync(home, { recursive: true, force: true })
-  console.log('\nDSH ARTIFACT HOST CONTRACT PROOF: list/read metadata, source identity, view-updated loop, guardrails OK; Web custom-card E2E TODO')
+  console.log('\nDSH ARTIFACT HOST CONTRACT PROOF: list/read metadata, source identity, view-updated loop, guardrails OK; fresh-profile Web custom-card path covered separately by `npx tsx scripts/dsh-artifact-web-e2e.ts` (not part of the cross-platform full suite)')
 }
 
 await main()
