@@ -117,6 +117,20 @@
 3. **bootstrap 一次性摘要**:`npx gotry web`/headless 启动时跑一遍只读 doctor,
    有 degraded/missing 项就打一行摘要(不阻塞启动,不重复刷)——「初始化时可见」
    取代「会话中段撞错」。
+3a. **#258 web 启动交互式 onboarding(M4 UX proof)**:在 `npx gotry web` 且仅交互式
+   TTY + 存在「可自动安装」缺项(hbcli 二进制 / agent-reach `.venv` / dsh-better-sidebar)
+   时,在上述后台摘要**之前**问一次「现在配置可选能力吗」。`y` 复用 `doctor --fix` 的
+   幂等安装器(setupHbcli/setupReach/setupSidebar,**不建第二套**),`n` 立即继续启动 web;
+   结果三态展示——`installed`(本机自动安装)/`needs-user-action`(Chrome 商店、hbcli 登录、
+   FlyAI key、calendar profile 等用户/上游授权,永不冒充自动完成)/`unavailable`(带具体原因,
+   如随包 vendor 缺失需重装 gotry)。部分失败不挡 web 且给可重试命令(`npx gotry doctor --fix`);
+   再跑不重装已健康项(安装器存在性短路 + doctor 复检,幂等)。CI / benchmark / 非 TTY / 全健康 /
+   `GOTRY_SETUP_SKIP=1` / `GOTRY_ONBOARDING_SKIP=1` / `--no-onboarding` 均**零 prompt 零安装仍启 web**;
+   永不在 postinstall 或 detached 后台任务里安装。后台摘要行仅在 onboarding 未 prompt 时保留
+   (不重复)。纯函数(classify/plan/skipReason)与 runOnboardingFix(注入安装器)/promptOnboarding
+   (注入流)导出供 `bootstrap-tests.ts` 隔离单测——合成 items + 注入 fakes,永不跑真安装器/开浏览器/写
+   `ts/dsh-runtime/gotry-state`。**边界声明**:本项是带确定性测试的 M4 UX proof,证明安装/修复契约
+   与 prompt/skip 行为,**不**满足 #20 真实 repeat-cohort Exit 证据;fixture/本地安装证明不作 M4 Exit 证据。
 4. **glob/grep 超时**:dsh 宿主内置工具,gotry 侧无动作锚点——维持 triage 结论,
    上游另立 issue(若仍复现)。本仓不为此设代理层(复用矩阵:harness 层是 dsh 本体)。
 
@@ -269,6 +283,10 @@ WriteGate 让「加进来的东西」自动遵守同一套纪律——**生态�
   #116(适配器作者指南 + 携程真会话校准,D-13)/ #117(商店版扩展检测,D-24 清偿)/
   #118(事实闸酒店 claim + 渲染原语单向生成,D-26 收口)/ #119(外部事件接缝设计,#82)/
   #120(legacy vendored 处置,D-27 清偿)。
+- **#258(web 启动交互式 onboarding,M4 UX proof)**:在 #114 后台摘要之上加一次显式可选
+  能力配置 prompt(见 §3.1③a),复用 `doctor --fix` 幂等安装器、三态结果、严格跳过契约;
+  纯函数 + 注入安装器隔离单测。**不满足 #20 真实 repeat-cohort Exit 证据**(M4 UX proof,
+  非业务 Exit);待 owner/architect 全栈回归与 root review 闸。
 
 > 拍板记录:D-7/D-8/D-9 已于 2026-09-03 按「推进实现落地」采纳落地(issues #106/#107/#108 同日关闭);
 > 触发式后置项(D-15/D-18/D-19/D-22/D-29、M5 WriteGate、产品统一 key 池)不在本序列——赎回时机见 architecture §10。

@@ -19,10 +19,18 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname, delimiter } from 'node:path'
 
 const repoRoot = join(import.meta.dirname, '..', '..')
 const bootstrap = join(repoRoot, 'bin', 'gotry-bootstrap.js')
+
+// runOnboardingFix 返回元素形状(动态 import 的 .js 模块无类型,显式标注以过 noImplicitAny)
+interface OnboardingFixResult {
+  label: string
+  status: 'installed' | 'needs-user-action' | 'unavailable'
+  reason?: string
+  retry?: string
+}
 
 function runBootstrap(extraArgs: string[], extraEnv: Record<string, string>) {
   try {
@@ -191,4 +199,216 @@ console.log('10. 启动一次性 doctor 摘要(--summary:stderr 一行/零写盘
 }
 console.log('11. setupSidebar 落盘状态复核(pnpm 忽略构建脚本 exit 1 不再误报)OK')
 
-console.log('BOOTSTRAP TESTS: 11/11 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核)')
+// --- issue #258 web 启动交互式 onboarding(隔离 HOME/state + 注入 fakes,永不跑真安装器/开浏览器)---
+// 合成 doctor items(与 bin/gotry-bootstrap.js doctorChecks 的 label/level 同形),供 12-17 复用。
+// 真实 doctor 不会同帧返回同一 label 的两态(hbcli 是单条 missing 或 degraded),故此处 hbcli
+// 只取 missing 一态;degraded 分类在 12 里用独立 item 单测,避免 label-keyed Map 碰撞。
+const onboardingItems = [
+  { label: 'Node 运行时', level: 'ok', detail: 'Node 22.x', fix: undefined },
+  { label: 'GoTry Session Bridge 扩展', level: 'missing', detail: '未安装', fix: 'https://chromewebstore...' },
+  { label: 'Agent Reach(网页/社媒读取)', level: 'missing', detail: '未装配', fix: 'npx gotry doctor --fix' },
+  { label: 'hbcli(酒店实时源)', level: 'missing', detail: '未安装', fix: 'npx gotry doctor --fix' },
+  { label: 'FlyAI(飞猪官方检索)', level: 'degraded', detail: '未配 FLYAI_API_KEY', fix: '到 flyai 控制台申请 key' },
+  { label: 'dsh-better-sidebar(侧栏工作台)', level: 'missing', detail: '未安装', fix: 'npx gotry doctor --fix' },
+  { label: 'dsh-calendar(日历工作窗口)', level: 'degraded', detail: '已挂载未配置 username', fix: 'cordis.patch.yml 覆盖 config' },
+  { label: 'dsh-map-tools(地图/路线/POI)', level: 'missing', detail: '未随包解析', fix: '重装 @danceiny/gotry' },
+  { label: 'dsh-tool-ask-user(结构化澄清卡)', level: 'missing', detail: '未解析', fix: '重装 @danceiny/gotry' },
+  { label: 'LLM key', level: 'ok', detail: '由 dsh 宿主管', fix: undefined },
+]
+const hbcliDegraded = { label: 'hbcli(酒店实时源)', level: 'degraded', detail: '凭证未配置', fix: 'hbcli auth set-credentials ...' }
+
+// 12. onboarding 纯函数分类与计划:classifyDoctorGap / buildOnboardingPlan(合成 items,不依赖真机)
+{
+  const { classifyDoctorGap, buildOnboardingPlan } = await import(bootstrap)
+  assert.equal(classifyDoctorGap(onboardingItems[0]), 'ok')
+  assert.equal(classifyDoctorGap(onboardingItems[1]), 'user-action')   // 扩展 = 浏览器商店
+  assert.equal(classifyDoctorGap(onboardingItems[2]), 'auto')         // reach = pip 可装
+  assert.equal(classifyDoctorGap(onboardingItems[3]), 'auto')         // hbcli missing = npm 可装
+  assert.equal(classifyDoctorGap(hbcliDegraded), 'user-action')       // hbcli degraded = 凭证(用户操作)
+  assert.equal(classifyDoctorGap(onboardingItems[4]), 'user-action')   // flyai = 上游 key
+  assert.equal(classifyDoctorGap(onboardingItems[5]), 'auto')         // sidebar = dsh plugin 可装
+  assert.equal(classifyDoctorGap(onboardingItems[6]), 'user-action')  // calendar = profile 配置
+  assert.equal(classifyDoctorGap(onboardingItems[7]), 'unavailable')  // map-tools = 重装 gotry
+  assert.equal(classifyDoctorGap(onboardingItems[8]), 'unavailable')  // ask-user = 重装 gotry
+  assert.equal(classifyDoctorGap(onboardingItems[9]), 'ok')           // LLM key 永远 ok
+  const plan = buildOnboardingPlan(onboardingItems)
+  assert.equal(plan.promptable, true, '有可自动安装缺项 → promptable')
+  assert.equal(plan.auto.length, 3, 'auto = reach + hbcli-missing + sidebar')
+  assert.equal(plan.userAction.length, 3, 'user-action = 扩展 + flyai + calendar')
+  assert.equal(plan.unavailable.length, 2, 'unavailable = map-tools + ask-user')
+  // 全健康 → promptable=false(不弹问)
+  const planOk = buildOnboardingPlan(onboardingItems.map((i) => ({ ...i, level: 'ok' })))
+  assert.equal(planOk.promptable, false)
+  assert.equal(planOk.auto.length, 0)
+  assert.equal(planOk.userAction.length, 0)
+  assert.equal(planOk.unavailable.length, 0)
+}
+console.log('12. onboarding 分类与计划(classifyDoctorGap/buildOnboardingPlan,合成 items + 全健康)OK')
+
+// 13. onboardingSkipReason(纯函数):非 TTY / CI / benchmark / opt-out / non-web 全跳过,可 prompt 态返回 null
+{
+  const { onboardingSkipReason } = await import(bootstrap)
+  assert.equal(onboardingSkipReason({ mode: 'headless' }), 'non-web-mode')
+  assert.equal(onboardingSkipReason({ mode: 'web', benchmark: true }), 'benchmark')
+  assert.equal(onboardingSkipReason({ mode: 'web', env: { GOTRY_SETUP_SKIP: '1' }, isTTY: true }), 'GOTRY_SETUP_SKIP=1')
+  assert.equal(onboardingSkipReason({ mode: 'web', env: { GOTRY_ONBOARDING_SKIP: '1' }, isTTY: true }), 'GOTRY_ONBOARDING_SKIP=1')
+  assert.equal(onboardingSkipReason({ mode: 'web', env: { CI: '1' }, isTTY: true }), 'CI')
+  assert.equal(onboardingSkipReason({ mode: 'web', env: {}, argv: ['x', '--no-onboarding'], isTTY: true }), '--no-onboarding')
+  assert.equal(onboardingSkipReason({ mode: 'web', env: {}, isTTY: false }), 'non-tty')
+  assert.equal(onboardingSkipReason({ mode: 'web', env: {}, isTTY: true }), null, '可 prompt')
+  // bootstrap 直接调用(mode 缺省)只检 env/argv/isTTY —— 用于 onboarding 子命令自身的防御
+  assert.equal(onboardingSkipReason({ env: {}, isTTY: true }), null)
+  assert.equal(onboardingSkipReason({ env: {}, isTTY: false }), 'non-tty')
+}
+console.log('13. onboardingSkipReason(非 TTY/CI/benchmark/--no-onboarding/SKIP 跳过 + 可 prompt)OK')
+
+// 14. runOnboardingFix yes 路径:注入 fakes → auto 全 installed,user-action/unavailable 不动(不跑真安装器)
+{
+  const { buildOnboardingPlan, runOnboardingFix } = await import(bootstrap)
+  const plan = buildOnboardingPlan(onboardingItems)
+  const calls: string[] = []
+  const fakeInstallers = {
+    hbcli: async () => { calls.push('hbcli'); return { ok: true } },
+    reach: async () => { calls.push('reach'); return { ok: true } },
+    sidebar: async () => { calls.push('sidebar'); return { ok: true } },
+  }
+  const fakeRecheck = async () => onboardingItems.map((i) => ({ ...i, level: 'ok' }))
+  const results = await runOnboardingFix(plan, { installers: fakeInstallers, recheck: fakeRecheck })
+  assert.deepEqual(calls.slice().sort(), ['hbcli', 'reach', 'sidebar'], '三个 auto 安装器各调一次')
+  assert.equal(calls.length, 3, '不重复安装,无额外调用')
+  const byLabel = new Map(results.map((r: OnboardingFixResult) => [r.label, r]) as Array<[string, OnboardingFixResult]>)
+  assert.equal(byLabel.get('Agent Reach(网页/社媒读取)')!.status, 'installed')
+  assert.equal(byLabel.get('hbcli(酒店实时源)')!.status, 'installed')
+  assert.equal(byLabel.get('dsh-better-sidebar(侧栏工作台)')!.status, 'installed')
+  assert.equal(byLabel.get('GoTry Session Bridge 扩展')!.status, 'needs-user-action')
+  assert.equal(byLabel.get('FlyAI(飞猪官方检索)')!.status, 'needs-user-action')
+  assert.equal(byLabel.get('dsh-calendar(日历工作窗口)')!.status, 'needs-user-action')
+  assert.equal(byLabel.get('dsh-map-tools(地图/路线/POI)')!.status, 'unavailable')
+  assert.equal(byLabel.get('dsh-tool-ask-user(结构化澄清卡)')!.status, 'unavailable')
+}
+console.log('14. runOnboardingFix yes 路径(注入 fakes → auto=installed,余者不动,不跑真安装器)OK')
+
+// 15. partial failure:hbcli 安装器失败 → 'unavailable' + 重试命令;reach/sidebar 仍 installed,不挡 web
+{
+  const { buildOnboardingPlan, runOnboardingFix } = await import(bootstrap)
+  const plan = buildOnboardingPlan(onboardingItems)
+  const fakeInstallers = {
+    hbcli: async () => ({ ok: false, error: 'npm install timeout' }),
+    reach: async () => ({ ok: true }),
+    sidebar: async () => ({ ok: true }),
+  }
+  // 复检:hbcli 仍 missing(安装失败未装上),reach/sidebar 已 ok
+  const fakeRecheck = async () => onboardingItems.map((i) => i.label.startsWith('hbcli') ? i : { ...i, level: 'ok' })
+  const results = await runOnboardingFix(plan, { installers: fakeInstallers, recheck: fakeRecheck })
+  const byLabel = new Map(results.map((r: OnboardingFixResult) => [r.label, r]) as Array<[string, OnboardingFixResult]>)
+  const hbcliRes = byLabel.get('hbcli(酒店实时源)')!
+  assert.equal(hbcliRes.status, 'unavailable', '安装失败 → unavailable(诚实,不冒充 installed)')
+  assert.match(hbcliRes.reason!, /npm install timeout/, '失败原因透传')
+  assert.equal(hbcliRes.retry, 'npx gotry doctor --fix', '给可重试命令')
+  assert.equal(byLabel.get('Agent Reach(网页/社媒读取)')!.status, 'installed', '部分失败不挡其余')
+  assert.equal(byLabel.get('dsh-better-sidebar(侧栏工作台)')!.status, 'installed')
+}
+console.log('15. partial failure(一项失败 → unavailable+重试命令,不挡其余已装项)OK')
+
+// 16. idempotent retry:首次修复后复检全健康 → 新计划 promptable=false → 再跑零安装器调用(幂等)
+{
+  const { buildOnboardingPlan, runOnboardingFix } = await import(bootstrap)
+  const plan1 = buildOnboardingPlan(onboardingItems)
+  const calls: string[] = []
+  const fakeInstallers = {
+    hbcli: async () => { calls.push('hbcli'); return { ok: true } },
+    reach: async () => { calls.push('reach'); return { ok: true } },
+    sidebar: async () => { calls.push('sidebar'); return { ok: true } },
+  }
+  const allOk = async () => onboardingItems.map((i) => ({ ...i, level: 'ok' }))
+  await runOnboardingFix(plan1, { installers: fakeInstallers, recheck: allOk })
+  // 再跑:复检全 ok → 新计划无 auto → 不调任何安装器
+  const plan2 = buildOnboardingPlan(await allOk())
+  assert.equal(plan2.promptable, false, '全健康 → 不再 prompt')
+  assert.equal(plan2.auto.length, 0)
+  const callsBefore = calls.length
+  const results2 = await runOnboardingFix(plan2, { installers: fakeInstallers, recheck: allOk })
+  assert.equal(calls.length, callsBefore, '已健康项不重装(幂等,零安装器调用)')
+  assert.equal(results2.length, 0, '无缺项 → 无结果')
+}
+console.log('16. idempotent retry(已健康项不再重装,安装器零调用)OK')
+
+// 17. promptOnboarding yes/no/默认-no(注入流,不读真 stdin,不开浏览器)
+{
+  const { buildOnboardingPlan, promptOnboarding } = await import(bootstrap)
+  const { PassThrough } = await import('node:stream')
+  const plan = buildOnboardingPlan(onboardingItems)
+  const sink = { write: () => true }
+  // yes
+  const yesIn = new PassThrough()
+  const yesOut: string[] = []
+  const yesP = promptOnboarding(plan, { input: yesIn, output: { write: (s: string) => { yesOut.push(s); return true } } })
+  yesIn.end('y\n')
+  assert.equal(await yesP, 'yes')
+  assert.ok(yesOut.join('').includes('y/N'), 'prompt 文案含 y/N')
+  assert.ok(yesOut.join('').includes('Agent Reach'), 'prompt 列出可自动配置项')
+  // no
+  const noIn = new PassThrough()
+  const noP = promptOnboarding(plan, { input: noIn, output: sink })
+  noIn.end('n\n')
+  assert.equal(await noP, 'no')
+  // 默认 no(空行)
+  const emptyIn = new PassThrough()
+  const emptyP = promptOnboarding(plan, { input: emptyIn, output: sink })
+  emptyIn.end('\n')
+  assert.equal(await emptyP, 'no', '空行默认 = no(立即继续 web)')
+}
+console.log('17. promptOnboarding yes/no/默认-no(注入流,不读真 stdin)OK')
+
+// 18. onboarding CLI 跳过:非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_ONBOARDING_SKIP → 零 prompt 零安装,恒 exit 0
+//     execFileSync 的 stdin 是 pipe(非 TTY),自然走 non-tty 跳过;CI/SKIP env 各自短路。
+{
+  const isolated = mkdtempSync(join(tmpdir(), 'gotry-onboard-skip-'))
+  const r1 = runBootstrap(['onboarding'], { HOME: isolated })
+  assert.equal(r1.code, 0, `非 TTY onboarding 应 exit 0\n${r1.out}`)
+  assert.ok(!r1.out.includes('y/N'), '非 TTY 不应 prompt')
+  assert.ok(!r1.out.includes('开始自动配置'), '非 TTY 不应安装')
+  const r2 = runBootstrap(['onboarding'], { HOME: isolated, CI: '1' })
+  assert.equal(r2.code, 0); assert.ok(!r2.out.includes('y/N'))
+  const r3 = runBootstrap(['onboarding'], { HOME: isolated, GOTRY_SETUP_SKIP: '1' })
+  assert.equal(r3.code, 0); assert.ok(!r3.out.includes('y/N'))
+  const r4 = runBootstrap(['onboarding'], { HOME: isolated, GOTRY_ONBOARDING_SKIP: '1' })
+  assert.equal(r4.code, 0); assert.ok(!r4.out.includes('y/N'))
+}
+console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_ONBOARDING_SKIP,零 prompt 零安装)OK')
+
+// 19. onboarding --scan:隔离 HOME + 受控 PATH → 确定性只读计划(零 prompt 零安装,不写 gotry-state)
+//     PATH 不能直接置空(execFileSync 用 child env.PATH 解析 'node',空则 ENOENT)——
+//     故前置 node bin 目录(execPath dirname)再接一个空目录:node 可解析、hbcli/python3 不可达;
+//     隔离 HOME 排除真机 extension/sidebar/calendar;reach 依赖 worktree 的 repoRoot/.venv
+//     (本 fresh checkout 无 .venv → missing → auto);map-tools/ask-user 随包 vendor 就位 → ok。
+{
+  const isolated = mkdtempSync(join(tmpdir(), 'gotry-onboard-scan-'))
+  const emptyPath = mkdtempSync(join(tmpdir(), 'gotry-empty-path-'))
+  const safePath = `${dirname(process.execPath)}${delimiter}${emptyPath}`
+  const r = runBootstrap(['onboarding', '--scan'], {
+    HOME: isolated,
+    PATH: safePath,
+    FLYAI_API_KEY: '',
+    GOTRY_SETUP_HBCLI: '',
+    GOTRY_SETUP_REACH: '',
+    GOTRY_SETUP_SIDEBAR: '',
+  })
+  assert.equal(r.code, 0, `--scan 应 exit 0\n${r.out}`)
+  assert.ok(!r.out.includes('y/N'), '--scan 不应 prompt')
+  assert.ok(!r.out.includes('开始自动配置'), '--scan 不应安装')
+  const plan = JSON.parse(r.out.trim().split('\n').pop()!)
+  assert.equal(plan.promptable, true)
+  const autoLabels: string[] = plan.auto.map((g: { label: string }) => g.label)
+  assert.ok(autoLabels.includes('dsh-better-sidebar(侧栏工作台)'), 'sidebar missing(隔离 HOME)→ auto')
+  assert.ok(autoLabels.includes('hbcli(酒店实时源)'), 'hbcli missing(空 PATH)→ auto')
+  assert.ok(autoLabels.includes('Agent Reach(网页/社媒读取)'), 'reach missing(fresh checkout 无 .venv)→ auto')
+  const userActionLabels: string[] = plan.userAction.map((g: { label: string }) => g.label)
+  assert.ok(userActionLabels.includes('GoTry Session Bridge 扩展'), '扩展 missing(隔离 HOME)→ user-action(浏览器商店)')
+  assert.ok(userActionLabels.includes('FlyAI(飞猪官方检索)'), 'flyai 无 key → user-action')
+  assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-map-tools')), 'map-tools 随包就位 → 非 unavailable')
+  assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-tool-ask-user')), 'ask-user 随包就位 → 非 unavailable')
+}
+console.log('19. onboarding --scan(隔离 HOME + 受控 PATH,确定性只读计划,零 prompt 零安装)OK')
+
+console.log('BOOTSTRAP TESTS: 19/19 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan)')

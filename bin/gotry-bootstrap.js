@@ -244,6 +244,9 @@ async function setupSidebar(attemptInstall) {  say('[gotry-setup] dsh-better-sid
 
 const DOCTOR = process.argv.includes('doctor')
 const DOCTOR_FIX = process.argv.includes('--fix')
+// onboarding 子命令(issue #258):`gotry web` 启动前的一次性显式可选能力配置 prompt。
+// inner 以 `onboarding --result-file=…` 同步 inherit 调用;`--scan` 只读查看计划(测试/调试)。
+const ONBOARDING = process.argv.includes('onboarding')
 // calendar 子命令(issue #106/D-9):可选日历挂载的 setup 状态管理面。
 // `gotry setup calendar`=开启;`--off`=关闭(删状态文件恢复默认);`--status`=只读查看。
 const CALENDAR_CMD = process.argv.includes('calendar')
@@ -475,6 +478,231 @@ async function runDoctor() {
   // 降级类(凭证未配/flyai 试用)不挡 exit 0——降级有自动回退路径,缺失类才挡
   const stillMissing = items.filter((i) => i.level === 'missing').length
   return stillMissing === 0 ? 0 : 1
+}
+
+// ---------------------------------------------------------------------------
+// onboarding(issue #258):`npx gotry web` 启动前的一次性显式可选能力配置 prompt。
+//  契约:仅交互式 TTY + 有「可自动安装」缺项时问一次;y → 复用 doctor --fix 的幂等
+//  安装器(setupHbcli/setupReach/setupSidebar,不建第二套);n → 立即继续 web。
+//  CI/benchmark/非 TTY/全健康/GOTRY_SETUP_SKIP=1/GOTRY_ONBOARDING_SKIP=1/--no-onboarding
+//  均零 prompt 零安装,仍启 web;永不 postinstall 或后台任务里安装。结果三态:
+//  installed / needs-user-action / unavailable,各带具体原因;浏览器商店/凭证/账号/
+//  key/上游授权永不冒充自动完成。部分失败不挡 web 且给重试命令;再跑不重装已健康项
+//  (安装器自带存在性短路 + doctor 复检)。纯函数(classify/plan/skipReason)与
+//  runOnboardingFix(注入安装器)均导出供 bootstrap-tests 隔离单测,不跑真安装器。
+// ---------------------------------------------------------------------------
+
+/** 安装器 id 映射:doctor item label → 安装器 id(与 GOTRY_SETUP_* env 同名)。纯函数。 */
+function installerIdFor(label) {
+  if (typeof label !== 'string') return null
+  if (label.startsWith('Agent Reach')) return 'reach'
+  if (label.startsWith('hbcli')) return 'hbcli'
+  if (label.startsWith('dsh-better-sidebar')) return 'sidebar'
+  return null
+}
+
+/** 该安装器是否被 GOTRY_SETUP_*=0 显式 opt-out(与 runDoctor 同口径)。纯函数。 */
+function installerEnabled(id) {
+  if (id === 'hbcli') return process.env.GOTRY_SETUP_HBCLI !== '0'
+  if (id === 'reach') return process.env.GOTRY_SETUP_REACH !== '0'
+  if (id === 'sidebar') return process.env.GOTRY_SETUP_SIDEBAR !== '0'
+  return true
+}
+
+/**
+ * 把单个 doctor item 分到 onboarding 桶(纯函数,与 ts/capabilities/doctor.ts 同口径)。
+ *  auto = 本机可自动安装(setupHbcli/setupReach/setupSidebar 且未被 env opt-out);
+ *  user-action = 浏览器商店/凭证/账号/key/上游授权/手动配置——必须用户本人操作;
+ *  unavailable = 本仓无自动安装面(重装 gotry / Node 升级 / env opt-out / 安装器不自动升级项)。
+ *  LLM key 永远 ok,不进任何桶。
+ */
+function classifyDoctorGap(item) {
+  if (!item || !item.level || item.level === 'ok') return 'ok'
+  const label = item.label ?? ''
+  if (label === 'LLM key') return 'ok'
+  if (label.startsWith('Agent Reach')) return installerEnabled('reach') ? 'auto' : 'unavailable'
+  // hbcli:二进制缺失(missing)= auto(setupHbcli 装);凭证未配(degraded)= user-action;
+  // 旧版本(missing,安装器不自动升级)= auto 分桶但安装会失败 → 结果兜底 unavailable,诚实不冒充。
+  if (label.startsWith('hbcli')) return item.level === 'degraded' ? 'user-action' : (installerEnabled('hbcli') ? 'auto' : 'unavailable')
+  if (label.startsWith('dsh-better-sidebar')) return installerEnabled('sidebar') ? 'auto' : 'unavailable'
+  if (label.startsWith('GoTry Session Bridge')) return 'user-action' // 浏览器商店一键装
+  if (label.startsWith('FlyAI')) return 'user-action' // 上游控制台申请 key
+  if (label.startsWith('dsh-calendar')) return 'user-action' // profile cordis.patch.yml 配置
+  if (label.startsWith('dsh-map-tools')) return 'unavailable' // 随包 vendor,缺失即重装 gotry
+  if (label.startsWith('dsh-tool-ask-user')) return 'unavailable' // 随 dsh 闭包,缺失即重装 gotry
+  if (label.startsWith('Node')) return 'unavailable' // 手动升级运行时
+  return 'unavailable'
+}
+
+/**
+ * 由 doctor items 构建 onboarding 计划(纯函数)。
+ *  promptable = 存在可自动安装缺项(决定是否问那一次)。
+ */
+function buildOnboardingPlan(items) {
+  const auto = []
+  const userAction = []
+  const unavailable = []
+  for (const item of items ?? []) {
+    const bucket = classifyDoctorGap(item)
+    if (bucket === 'ok') continue
+    const entry = { label: item.label, level: item.level, detail: item.detail, fix: item.fix }
+    if (bucket === 'auto') auto.push(entry)
+    else if (bucket === 'user-action') userAction.push(entry)
+    else unavailable.push(entry)
+  }
+  return { promptable: auto.length > 0, auto, userAction, unavailable }
+}
+
+/**
+ * onboarding 跳过原因(纯函数;inner 与 bootstrap 共用,确保两边判定一致且可单测)。
+ *  返回原因字符串则跳过(零 prompt 零安装),null 则可继续。mode/benchmark 仅 inner
+ *  提供;bootstrap 直接调用时 mode 缺省(不检 non-web),只检 env/argv/isTTY。
+ */
+function onboardingSkipReason({ mode, benchmark, env = process.env, argv = process.argv, isTTY = process.stdin?.isTTY } = {}) {
+  if (mode !== undefined && mode !== 'web') return 'non-web-mode'
+  if (benchmark) return 'benchmark'
+  if (env.GOTRY_SETUP_SKIP === '1') return 'GOTRY_SETUP_SKIP=1'
+  if (env.GOTRY_ONBOARDING_SKIP === '1') return 'GOTRY_ONBOARDING_SKIP=1'
+  if (env.CI) return 'CI'
+  if (Array.isArray(argv) && argv.includes('--no-onboarding')) return '--no-onboarding'
+  if (!isTTY) return 'non-tty'
+  return null
+}
+
+/** 读取 stdin 一行(对 TTY 与注入流均工作;finish 后 pause,不干扰后续 dsh web 的 stdin)。 */
+function readOneLine(input) {
+  return new Promise((resolve) => {
+    let buf = ''
+    let done = false
+    const finish = (line) => {
+      if (done) return
+      done = true
+      input.removeListener('data', onData)
+      input.removeListener('end', onEnd)
+      try { input.pause?.() } catch { /* ignore */ }
+      resolve(line ?? '')
+    }
+    const onData = (chunk) => {
+      buf += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
+      const nl = buf.indexOf('\n')
+      if (nl >= 0) finish(buf.slice(0, nl).replace(/\r$/, ''))
+    }
+    const onEnd = () => finish(buf)
+    input.on('data', onData)
+    input.on('end', onEnd)
+    try { input.resume?.() } catch { /* ignore */ }
+  })
+}
+
+/**
+ * 交互 prompt:打印缺项概览 + 一次询问,读一行返回 'yes' | 'no'。
+ *  input/output 可注入(测试);默认 process.stdin/process.stdout。
+ */
+async function promptOnboarding(plan, opts = {}) {
+  const input = opts.input ?? process.stdin
+  const output = opts.output ?? process.stdout
+  output.write('\n[gotry] 启动前检测到可选能力缺项,其中可自动配置:\n')
+  for (const g of plan.auto) output.write(`  • ${g.label} —— ${g.detail}\n`)
+  if (plan.userAction.length || plan.unavailable.length) {
+    output.write('需你本人操作(浏览器商店 / 凭证 / key / 重装),gotry 不自动处理:\n')
+    for (const g of plan.userAction) output.write(`  • ${g.label} —— ${g.detail}\n`)
+    for (const g of plan.unavailable) output.write(`  • ${g.label} —— ${g.detail}\n`)
+  }
+  output.write('\n现在自动配置可安装项吗?(y/N,随后继续启动 web) ')
+  const answer = await readOneLine(input)
+  return /^\s*y(es)?\s*$/i.test(answer) ? 'yes' : 'no'
+}
+
+/**
+ * 执行安装(复用 setupHbcli/setupReach/setupSidebar,不建第二套)。
+ *  installers/recheck 可注入(测试用 fakes,永不跑真安装器)。返回逐项结果:
+ *  installed / needs-user-action / unavailable(失败带重试命令)。部分失败不抛、不挡 web。
+ */
+const ONBOARDING_DEFAULT_INSTALLERS = { hbcli: setupHbcli, reach: setupReach, sidebar: setupSidebar }
+
+async function runOnboardingFix(plan, opts = {}) {
+  const installers = { ...ONBOARDING_DEFAULT_INSTALLERS, ...(opts.installers ?? {}) }
+  const recheck = opts.recheck ?? doctorChecks
+  const attempts = {}
+  for (const gap of plan.auto) {
+    const id = installerIdFor(gap.label)
+    const installer = id ? installers[id] : null
+    if (!installer) { attempts[gap.label] = { ok: false, error: 'no installer mapped for this gap' }; continue }
+    try {
+      const r = await installer()
+      attempts[gap.label] = { ok: r?.ok === true, error: r?.error }
+    } catch (e) {
+      attempts[gap.label] = { ok: false, error: e?.message ?? String(e) }
+    }
+  }
+  // 复检决定 auto 项最终状态(安装器自带存在性短路 → 已健康项不重装;幂等)
+  const rechecked = await recheck()
+  const byLabel = new Map(rechecked.map((i) => [i.label, i]))
+  const results = []
+  for (const gap of plan.auto) {
+    const item = byLabel.get(gap.label)
+    if (item && item.level === 'ok') {
+      results.push({ label: gap.label, status: 'installed', reason: item.detail ?? '已就位' })
+    } else {
+      const a = attempts[gap.label]
+      results.push({ label: gap.label, status: 'unavailable', reason: a?.error ?? item?.detail ?? 'install failed', retry: 'npx gotry doctor --fix' })
+    }
+  }
+  for (const gap of plan.userAction) {
+    results.push({ label: gap.label, status: 'needs-user-action', reason: gap.fix ?? gap.detail ?? '需用户本人操作' })
+  }
+  for (const gap of plan.unavailable) {
+    results.push({ label: gap.label, status: 'unavailable', reason: gap.detail ?? '本仓无自动安装面' })
+  }
+  return results
+}
+
+/**
+ * `onboarding` 子命令(inner 以 `onboarding --result-file=…` 同步 inherit 调用;
+ *  亦可直接 `node gotry-bootstrap.js onboarding --scan` 只读查看计划)。
+ *  恒 exit 0(永不挡 web);result JSON 写到 --result-file 告知 inner 是否 prompt 过。
+ */
+async function runOnboarding(args) {
+  const resultFile = (args.find((a) => a.startsWith('--result-file=')) ?? '').slice('--result-file='.length) || null
+  const scanOnly = args.includes('--scan')
+  const writeResult = (r) => { if (resultFile) { try { writeFileSync(resultFile, JSON.stringify(r)) } catch { /* 坏 result 不挡 */ } } }
+
+  if (scanOnly) {
+    const plan = buildOnboardingPlan(await doctorChecks())
+    say(JSON.stringify(plan))
+    return 0
+  }
+
+  const skipReason = onboardingSkipReason()
+  if (skipReason) {
+    writeResult({ prompted: false, skipped: skipReason })
+    return 0
+  }
+
+  const plan = buildOnboardingPlan(await doctorChecks())
+  if (!plan.promptable) {
+    // 无可自动安装缺项(全健康 / 仅 user-action / 仅 unavailable):不 prompt,
+    // 缺口交给后台摘要行(design §3.1③,#114),避免重复。
+    writeResult({ prompted: false, plan })
+    return 0
+  }
+
+  const answer = await promptOnboarding(plan)
+  if (answer === 'yes') {
+    say('[gotry] 开始自动配置可安装项(复用 doctor --fix 幂等安装器)…')
+    const results = await runOnboardingFix(plan)
+    say('')
+    say('[gotry] 配置结果:')
+    for (const r of results) {
+      const tag = r.status === 'installed' ? '✅ installed' : r.status === 'needs-user-action' ? '↪ needs-user-action' : '✗ unavailable'
+      say(`  ${tag}  ${r.label} —— ${r.reason}${r.retry ? `(重试: ${r.retry})` : ''}`)
+    }
+    writeResult({ prompted: true, answered: 'yes', results })
+  } else {
+    say('  跳过——随时可跑: npx gotry doctor --fix(随后继续启动 web)')
+    writeResult({ prompted: true, answered: 'no' })
+  }
+  return 0
 }
 
 const EXTENSION_FILES = ['manifest.json', 'background.js', 'content-main.js', 'content-bridge.js', 'README.md']
@@ -759,6 +987,9 @@ async function main() {
   // 只读体检零副作用(--fix 才装),win32 也可跑体检(fix 面另有提示)。
   if (DOCTOR) process.exit(await runDoctor())
 
+  // onboarding 子命令(issue #258):web 启动前的交互式可选能力配置(恒 exit 0,不挡 web)。
+  if (ONBOARDING) process.exit(await runOnboarding(process.argv.slice(2)))
+
 // wizard 子命令(2026-09-02 商店上架后退化):**只走 stdout 提示 + 健康探活等待**;
 // 不 spawn 任何 GUI 工具(不动 pbcopy / osascript / open / xdg-open / zenity),
 // 不打开 chrome://extensions,不动扩展路径——浏览器自己当安装器,gotry 不越界。
@@ -823,4 +1054,8 @@ if (process.argv[1] && process.argv[1].endsWith('gotry-bootstrap.js')) {
   })
 }
 
-export { setupSidebar, sidebarInstalled }
+export {
+  setupSidebar, sidebarInstalled,
+  classifyDoctorGap, buildOnboardingPlan, onboardingSkipReason,
+  runOnboardingFix, promptOnboarding, runOnboarding,
+}
