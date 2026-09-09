@@ -289,6 +289,8 @@ export function gateArtifact(
 
   // 渲染锚点优先(issue #118 单向生成):带 fact:<id> 的行确定性回溯注册表——
   // 锚点在=按事实 bookability 判;锚点不存在=手改/伪造,直接违例。启发式对锚点行让位。
+  const lines = markdown.split('\n')
+  const AS_OF_PATTERN = /截至\s*(\d{4}-\d{2}-\d{2})/
   for (const [lineNo, factId] of claims.anchors) {
     const f = facts.find(x => x.fact_id === factId)
     if (!f) {
@@ -298,6 +300,23 @@ export function gateArtifact(
     if (f.kind !== 'policy' && f.bookability === 'unavailable_exact_date') {
       violations.push({ kind: 'not_in_source', line: lineNo, detail: `锚点事实为 exact-date 负事实(${(f as { fetched_at?: string }).fetched_at ?? ''})——负事实对应的可住/可订断言不得出现` })
       continue
+    }
+    // 内容指纹(issue #273):锚点行渲染的 as_of 必须与事实 as_of 一致——
+    // 改锚点行日期而保留 fact_id = 手改锚点;与未知锚点同源 fail-closed。
+    if (f.kind === 'policy') {
+      const rendered = lines[lineNo - 1] ?? ''
+      const m = rendered.match(AS_OF_PATTERN)
+      const renderedAsOf = m?.[1]
+      if (!renderedAsOf || renderedAsOf !== f.as_of) {
+        violations.push({
+          kind: 'fact_anchor_unknown',
+          line: lineNo,
+          detail: renderedAsOf
+            ? `锚点行 as_of ${renderedAsOf} ≠ 事实 ${f.as_of}——内容指纹不符,锚点被手改`
+            : `锚点行缺少截至日期——事实 ${f.as_of} 的内容指纹不符,锚点被手改`,
+        })
+        continue
+      }
     }
     traceable++
   }
