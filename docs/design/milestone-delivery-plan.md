@@ -2,7 +2,7 @@
 
 > 定位:把 M4→M5→M6 拆成可分 worktree 交付的 living program 任务图,逐项写明责任面、责任文件、依赖、交付物、最小 E2E、否证与退出标准。
 > 状态:living(2026-09-08 建立;2026-09-09 follow-up 收紧 #231/#232 派发设计并同步已入 main 事实;issue #225。本文是计划与责任图,不替代 M3/M4/M5/M6 的 Exit 证据)。本次 follow-up 在 M5-1/M5-2/M5-3 写入原子 claim + 调用前持久化 `dispatching`/immutable attempt id/fencing、tenant-scoped claim/fold/query、外呼前重验、`RequestFingerprint` 绑定 holder/guests supplier payload digest 及未来最小否证(均未执行);并同步 #238/#243/#244/#245/#248/#240 已入 main、#227/#241/#242 已关闭。
-> 上游:[`../roadmap.md`](../roadmap.md)、[`../architecture.md`](../architecture.md) §1/§9/§10/§11、[`../gotry-master-outline.md`](../gotry-master-outline.md) §3.5/§3.7、issue #20/#22/#136/#137/#225/#223/#227/#228/#230/#231/#232/#233/#234/#235/#241/#242。
+> 上游:[`../roadmap.md`](../roadmap.md)、[`../architecture.md`](../architecture.md) §1/§9/§10/§11、[`../gotry-master-outline.md`](../gotry-master-outline.md) §3.5/§3.7、issue #20/#22/#136/#137/#225/#223/#227/#228/#230/#231/#232/#233/#234/#235/#241/#242/#254/#255/#257。
 > 下游:独立 Claude Code worktree 任务、架构复验、PR 描述与贡献闸。
 
 ## 0. 速览
@@ -43,18 +43,21 @@ M5 Exit + P6 founder review (#137) ───────────────
 | M4-2 | DONE(入 main) | #228/#248 | `m4m6-collector-20260908` | 显式 opt-in lifecycle 采集/脱敏导出已入 main;仅生成 candidate/synthetic |
 | M4-3 | TODO | #20 | 证据责任面 | 真实 `observed_private` N≥5 repeat cohort + reflux baseline |
 | M5-0 | TODO | #136 | supply/legal + adapter 责任面 | hotelbyte-cli 协议核验;未取得签署/内部授权证据 |
-| M5-1 | TODO | #225/#136 | docs/program-225 | 本 follow-up PR 合入后成为 WriteGate 实现前设计输入;不启封交易 |
+| M5-1 | DONE(入 main) | #225/#136 | docs/program-225 | WriteGate proposal 已入 main(PR #249 merge 293bbb6),仅设计输入;实现/UAT/M5 Entry 仍 TODO(#136/#231/#232/#233),交易运行时不启封 |
 | M5-2 | TODO | #231 | m5-core worktree | 持久化可信审批与原子 outbox;M5 Entry 后实现 |
 | M5-3 | TODO | #232 | m5-adapter worktree | hotelbyte-cli trade adapter、unknown/query/reconcile |
 | M5-4 | TODO | #233 | m5-refund worktree | cancel/refund/wallet outcome + commission/披露 |
 | M6-0 | DONE(入 main) | #229/#237/#230 | ledger 集成线 | tenant ledger/fold 代码及验收已入 main |
 | M6-0b | DONE(入 main) | #236/#241/#243 | state-cli 集成线 | tenant CLI 与小数边界已入 main并关闭 |
-| M6-1 | TODO | #225/#137 | docs/program-225 | 本 follow-up PR 合入后提供 P6 审批底稿;founder 尚未批准 |
+| M6-1 | DONE(入 main) | #225/#137 | docs/program-225 | P6 审批底稿已入 main(PR #249 merge 293bbb6);#137 founder YES 仍 TODO,M6 Entry 仍等 M5 Exit |
 | M6-2 | TODO | #137 | founder review | 仅 founder 明确 YES 批准整体方案或批准修改稿才满足 P6 Exit |
 | M6-3 | TODO | #234 | m6-proof worktree | kernel-set / loaded-modules / runtime trace schema 与生成脚本 |
 | M6-4 | TODO | #235 | m6-plugin worktree | M5 Exit + P6 founder 批准后的 sponsor plugin E2E |
 | M6-5 | TODO | #137 | sales/legal | B2B 试点签约/商业条件;仍属 M6 Exit,不能移出 |
 | Q-1 | DONE(入 main) | #225/#240 | docs/program-225 | 贡献闸文档已随 #240 入 main |
+| Q-2 | TODO | #254 | data-repair 责任面 | 人工修复被旧 bug 误记为 `local` 的历史 tenant 事件;quality/follow-up 线,非 M5/M6 Entry 阻断 |
+| Q-3 | TODO | #255 | design/memory 责任面 | 跟踪 P4 会话双区记忆真实使用与多用户触发条件;quality/follow-up 线,非 M5/M6 Entry 阻断 |
+| Q-4 | DONE(入 main) | #257 | packaging 责任面 | 已随 PR #264(merge bd45d42)入 main 关闭:排除 vendor 目录下生成的 node_modules 进 npm tarball;quality/follow-up 线,非 M5/M6 Entry 阻断 |
 
 ## 3. M4 任务块
 
@@ -119,7 +122,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 - **输出**:可信 receipt 发行/消费权威、request fingerprint(绑定实际 supplier request canonical payload digest 或既有 `payload_digest`,敏感字段不公开落账)、approval_claims 持久化、本地 outbox intent(不宣称外部 exactly-once)、dispatcher 原子 claim + 调用前持久化 `dispatching`/immutable attempt id/fencing、外呼前重验(授权/quote-receipt 有效期/immutable digest/路由 Buyer/撤回)、lease 过期不推导无副作用且不重置未执行、HotelByte unknown/query miss/对账/补偿/披露矩阵与准入矩阵。
 - **最小 E2E**:文档链接/路径检查;六状态面引用一致。
 - **否证**:文档暗示 M5 已开闸;把 outbox 写成外部 exactly-once;query miss 在恢复窗口内变 reconciled_failed;receipt 接受客户端/模型拼装;遗漏 HotelByte 30s/unknown/query-orders/Buyer/selector/OTP/portal 优先缺口;遗漏原子 claim/调用前 attempt 持久化/外呼前重验/lease 过期不重置;把派发否证写成已执行。
-- **退出标准**:本 follow-up PR 合入后成为 M5 实现前设计输入;不改变 M5 Entry。
+- **退出标准**:WriteGate proposal 已随 PR #249(merge 293bbb6)入 main,仅作 M5 实现前设计输入;实现/UAT/M5 Entry 仍为 TODO(#136/#231/#232/#233),交易运行时不启封。
 
 ### M5-2 — #231 持久化可信审批与原子 outbox
 
@@ -172,7 +175,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 - **输出**:traveler principal/sponsor/BFF principal 分词;把“单点已证明/构造性隔离”校准为 PoC 假设;复用 proof 需要基准 SHA、core 文件集合、core diff、runtime trace、功能路径覆盖;tenant 对抗;披露插件 proposal;P6 founder review 与试点签约保留在 M6 Exit。
 - **最小 E2E**:文档链接/路径检查。
 - **否证**:宣称 frozen/通过评审;靠 LOC 复用率;用 sponsor 收益覆盖 traveler 动机;把商业试点移出 M6 Exit。
-- **退出标准**:PR 合入后仅作为 P6 审批底稿;只有 founder 明确批准才满足 P6 Exit,M6 Entry 仍等 M5 Exit。
+- **退出标准**:P6 审批底稿已随 PR #249(merge 293bbb6)入 main,仅作审批底稿;#137 founder 明确 YES 仍为 TODO,只有 founder 明确批准才满足 P6 Exit,M6 Entry 仍等 M5 Exit。
 
 ### M6-2 — #137 P6 founder review
 
@@ -215,6 +218,27 @@ M5 Exit + P6 founder review (#137) ───────────────
 - **否证**:PR 仍允许只贴 CI;模板缺 E2E;继续写死 `§1–49` 等计数;声称 branch protection 已配置。
 - **退出标准**:新 PR 可按模板给出可复验证据。
 
+### Q-2 — #254 历史 tenant 事件人工修复(data-repair,quality/follow-up)
+
+- **责任面**:data-repair 责任面,非 M5/M6 Entry 阻断。
+- **责任文件**:按修复 PR 定;边界见 `../architecture.md` §8.16 与 D-32——已被旧 bug 写成 `local` 的非 local 历史事件缺可审计 owner,不可由 schema 迁移猜修,只能在有外部证据时另走人工 data-repair issue/PR。
+- **输出**:对存在外部证据的误记事件,经人工 data-repair PR 还原正确 tenant;无证据的不猜修。
+- **退出标准**:修复 PR 合入并留证据化记录;不改 M5/M6 Entry。
+
+### Q-3 — #255 P4 会话双区记忆使用跟踪(design/memory,quality/follow-up)
+
+- **责任面**:design/memory 责任面,非 M5/M6 Entry 阻断。
+- **责任文件**:按跟踪 PR 定;`design/memory-design.md`。
+- **输出**:跟踪 P4 会话双区记忆的真实使用与多用户触发条件,为未来 D-15 触发面提供观测输入。
+- **退出标准**:跟踪结论入设计文档;不改 M5/M6 Entry。
+
+### Q-4 — #257 vendor node_modules npm tarball 排除(packaging,quality/follow-up)
+
+- **责任面**:packaging 责任面,非 M5/M6 Entry 阻断。
+- **责任文件**:按 packaging PR 定;npm pack 白名单/忽略规则与 pack proof 相关文件。
+- **输出**:排除 vendor 目录下生成的 `node_modules` 进 npm tarball,避免发布物膨胀与误打包。
+- **退出标准**:已随 PR #264(merge bd45d42)入 main,#257 关闭;打包产物验证不含 vendor `node_modules`;不改 M5/M6 Entry。
+
 
 ## 7. 当前全局状态清单
 
@@ -224,15 +248,20 @@ M5 Exit + P6 founder review (#137) ───────────────
 4. DONE(入 main):#228/#248 显式 opt-in M4 planning lifecycle 本地采集与脱敏导出;仅为 candidate/synthetic。
 5. TODO:#20 真实 `observed_private` N≥5 repeat cohort 与 reflux baseline。
 6. TODO:#136 HotelByte 供应链协议、Buyer/环境/路由、字段、人工对账与 UAT 核验(未取得签署/内部授权证据)。
-7. TODO:#231 M5 Entry 后可信审批 receipt + 原子 outbox core。
-8. TODO:#232 M5 HotelByte trade adapter unknown/query/reconcile。
-9. TODO:#233 M5 cancel/refund/wallet outcome 与 commission/disclosure。
-10. DONE(入 main):#229/#237 tenant ledger 隔离 + fold 回归与 #230 验收。
-11. DONE(入 main):#236 state-cli 租户边界与 #241/#243 `.5`/`+.5` 小数边界已合入并关闭。
-12. TODO:#137 P6 founder 明确批准整体方案或批准修改稿。
-13. TODO:#234 M6 复用 proof schema/生成脚本。
-14. TODO:#235 M6 sponsor plugin 零内核 diff + runtime trace proof。
-15. TODO:#137 B2B 试点商业条件/签约。
+7. DONE(入 main,仅设计输入):#225/#136 M5-1 WriteGate proposal 已随 PR #249(merge 293bbb6)入 main;实现/UAT/M5 Entry 仍在 #136/#231/#232/#233。
+8. TODO:#231 M5 Entry 后可信审批 receipt + 原子 outbox core。
+9. TODO:#232 M5 HotelByte trade adapter unknown/query/reconcile。
+10. TODO:#233 M5 cancel/refund/wallet outcome 与 commission/disclosure。
+11. DONE(入 main):#229/#237 tenant ledger 隔离 + fold 回归与 #230 验收。
+12. DONE(入 main):#236 state-cli 租户边界与 #241/#243 `.5`/`+.5` 小数边界已合入并关闭。
+13. DONE(入 main,仅审批底稿):#225/#137 M6-1 P6 draft/proof 口径已随 PR #249(merge 293bbb6)入 main;#137 founder YES 与 M6 Entry 仍为 TODO。
+14. TODO:#137 P6 founder 明确批准整体方案或批准修改稿。
+15. TODO:#234 M6 复用 proof schema/生成脚本。
+16. TODO:#235 M6 sponsor plugin 零内核 diff + runtime trace proof。
+17. TODO:#137 B2B 试点商业条件/签约。
+18. TODO(quality/follow-up,非 M5/M6 Entry 阻断):#254 人工修复被误记为 `local` 的历史 tenant 事件。
+19. TODO(quality/follow-up,非 M5/M6 Entry 阻断):#255 跟踪 P4 会话双区记忆真实使用与多用户触发条件。
+20. DONE(入 main,quality/follow-up,非 M5/M6 Entry 阻断):#257 已随 PR #264(merge bd45d42)入 main 关闭——排除 vendor 目录下生成的 node_modules 进 npm tarball。
 
 ## 8. 明确不做
 

@@ -564,7 +564,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | `decisions-needed.md` | 待创始人拍板的决策清单 |
 | `design/memory-design.md` | **记忆域设计**:C 端六层重设计(M1-M6 现状映射/P1-P4 分期增量/铁律与验收),M4 交付「六层框架重设计」的正式文档 |
 | `design/memory-lifecycle-collector.md` | **M4 planning lifecycle collector 使用合同**(#228/#248):显式 opt-in CLI、隔离 stateRoot、HMAC/consent/source/wait 冻结、JSONL+manifest 原子持久化与 #223/#238 scorer 导出链;仅产出 candidate/synthetic,不替代真实 cohort |
-| `design/milestone-delivery-plan.md` | **M4→M6 living 任务图(issue #225)**:按真实依赖拆分 M4 #223/#238/#228/#248/#20、已入 main 的 ledger/state-cli/Z3/map 基础(#229/#237/#243/#244/#245)、M5 #136 HotelByte 首供应链+WriteGate(#231/#232/#233)、M6 #224/#226/P6/试点与开源质量闸,逐项责任面/责任文件/E2E/否证/退出标准 |
+| `design/milestone-delivery-plan.md` | **M4→M6 living 任务图(issue #225)**:按真实依赖拆分 M4 #223/#238/#228/#248/#20、已入 main 的 ledger/state-cli/Z3/map 基础(#229/#237/#243/#244/#245)、M5 #136 HotelByte 首供应链+WriteGate(#231/#232/#233)、M6 #234/#235/P6/试点与开源质量闸,逐项责任面/责任文件/E2E/否证/退出标准;另跟踪 quality/follow-up 线 #254/#255(#257 已经 PR #264 关闭)(非 M5/M6 Entry 阻断) |
 | `design/write-gate-production-design.md` | **M5 WriteGate 生产化 proposal(issue #225/#136)**:HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、本地 outbox intent(不宣称外部 exactly-once)、query miss 保持 unknown、supplier unknown/manual reconcile/cancel-vs-compensation/L4 revoke/commission disclosure;只设计不启封交易 |
 | `design/effect-interpreter.md` | **效应解译器设计(issue #16 采纳,ADR-18)**:effect_interpreter.v1 词汇(效应值/EffectOutcome/trace)+ 渠道韧性策略表(退避/断路/节律依据逐行)+ 生产/mock 双解译器 + 为什么不做视觉 CUA 与自动多渠道路由的判定记录 + D-23 迁移面 |
 | `design/booking-saga-fsm.md` | **预订 saga 状态机设计(issue #17 采纳,ADR-17)**:booking_saga_fsm.v1 字母表/边表/拒绝闭集 + 三种边型词汇(deterministic/gate/external-event)+ HITL 审批的挂起-恢复形态 + M5 启封增量与不引入编排框架的判定记录 |
