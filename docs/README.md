@@ -160,6 +160,7 @@
 |---|---|
 | [ops/extension-privacy.md](ops/extension-privacy.md) | Session Bridge 扩展隐私政策 |
 | [ops/extension-webstore-submission.md](ops/extension-webstore-submission.md) | Chrome Web Store 上架材料(ADR-21 通道 B) |
+| [ops/external-pr-workflow.md](ops/external-pr-workflow.md) | 外部 PR(含自动化机器人)接收/核验/裁决工作流(维护者侧) |
 
 ### assets/ 与 superpowers/
 
