@@ -16,7 +16,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcessByStdio } from 'node:child_process'
+import { Readable } from 'node:stream'
 import { promisify } from 'node:util'
 import { execFile as execFileCallback } from 'node:child_process'
 import puppeteer from 'puppeteer-core'
@@ -28,6 +29,7 @@ const TIMEOUT_MS = 120_000
 
 type WireBody = { messages?: Array<Record<string, unknown>>; tools?: Array<Record<string, unknown>> }
 type Relay = { port: number; bodies: WireBody[]; servedTools: string[]; close: () => Promise<void> }
+type WebServerProcess = ChildProcessByStdio<null, Readable, Readable>
 
 function sse(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`
@@ -149,7 +151,7 @@ async function run(command: string, args: string[], options: { cwd: string; env?
   return result.stdout
 }
 
-function waitForLine(child: ChildProcessWithoutNullStreams, pattern: RegExp, timeoutMs: number): Promise<{ url: string; output: string }> {
+function waitForLine(child: WebServerProcess, pattern: RegExp, timeoutMs: number): Promise<{ url: string; output: string }> {
   return new Promise((resolve, reject) => {
     let output = ''
     const timer = setTimeout(() => { reject(new Error(`timed out waiting for ${pattern}; output=${output.slice(-4000)}`)) }, timeoutMs)
@@ -183,7 +185,7 @@ async function main(): Promise<void> {
   const relay = await startRelay()
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null
   let page: any = null
-  let server: ChildProcessWithoutNullStreams | null = null
+  let server: WebServerProcess | null = null
   let passed = false
   let serverOutput = ''
   const assertions: Record<string, unknown> = {
@@ -216,10 +218,11 @@ async function main(): Promise<void> {
       LLM_BASE_URL: `http://127.0.0.1:${relay.port}/v1`,
       LLM_MODEL: 'synthetic-artifact-web',
     }
-    server = spawn(process.execPath, [installedBin, 'web', '--no-open', '--port', '0'], { cwd: workspaceDir, env, stdio: ['ignore', 'pipe', 'pipe'] })
-    server.stdout.on('data', chunk => { serverOutput += chunk.toString() })
-    server.stderr.on('data', chunk => { serverOutput += chunk.toString() })
-    const urlResult = await waitForLine(server, /dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s)]+)/, TIMEOUT_MS)
+    const child = spawn(process.execPath, [installedBin, 'web', '--no-open', '--port', '0'], { cwd: workspaceDir, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    server = child
+    child.stdout.on('data', chunk => { serverOutput += chunk.toString() })
+    child.stderr.on('data', chunk => { serverOutput += chunk.toString() })
+    const urlResult = await waitForLine(child, /dsh web: (http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s)]+)/, TIMEOUT_MS)
     serverOutput += urlResult.output
     assertions.server = { authenticatedUrlCaptured: true, urlHost: new URL(urlResult.url).host, port: new URL(urlResult.url).port }
 
@@ -318,7 +321,7 @@ async function main(): Promise<void> {
     }))
     assert.equal(firstSnapshot.listCards, 1)
     assert.ok(firstSnapshot.readCards >= 1)
-    assert.ok(firstSnapshot.paths.some(path => path?.endsWith('trip-2027.md')))
+    assert.ok(firstSnapshot.paths.some((path: string | null) => path?.endsWith('trip-2027.md')))
     assert.ok(firstSnapshot.selected?.endsWith('trip-2027.md'))
     assert.match(firstSnapshot.identity || '', /来源|source/)
     assertions.firstTurn = firstSnapshot
