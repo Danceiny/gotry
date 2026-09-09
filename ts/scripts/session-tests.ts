@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { classifyRequest, isSubmitText } from '../capabilities/session/read-guard.ts'
-import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
+import { buildEntryUrl, parseBatchSearch, parseBatchSearchResult } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQuery, STATION_TELECODES } from '../capabilities/session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, looksLikeDidaRatesBody } from '../capabilities/session/adapters/dida-portal.ts'
@@ -68,6 +68,72 @@ assert(parsed.length === 1, 'malformed 项跳过,1 个有效行程')
 assert(parsed[0]?.flightNo === 'HO5577' && parsed[0]?.price === 2980, 'flightNo + priceList 最小 adultPrice')
 assert(parsed[0]?.depDateTime === '2026-10-01 07:35:00' && parsed[0]?.durationMin === 200, '时刻与时长字段')
 assert(parseBatchSearch('not-json').length === 0, '非 JSON 返空不抛错')
+
+// B2. issue #279 结构化解析(malformed 不抛 + 形状异常归 error,合法空归 miss,非空归 hit)
+console.log('B2. parseBatchSearchResult(issue #279 形状异常归 error,合法空归 miss,命中归 hit)')
+{
+  const fixtureHit = JSON.stringify({ data: { flightItineraryList: [{
+    flightSegments: [{ airlineName: '吉祥航空', duration: 200, flightList: [{ flightNo: 'HO5577', departureAirportName: '虹桥', arrivalAirportName: '三义', departureDateTime: '2026-10-01 07:35:00', arrivalDateTime: '2026-10-01 10:55:00' }] }],
+    priceList: [{ adultPrice: 3240 }, { adultPrice: 2980 }],
+  }] } })
+  const rHit = parseBatchSearchResult(fixtureHit)
+  assert(rHit.verdict === 'hit' && rHit.options.length === 1 && rHit.options[0]?.flightNo === 'HO5577' && rHit.options[0]?.price === 2980, '命中 fixture → hit + 1 option + 最低价', rHit)
+  const rMiss = parseBatchSearchResult(JSON.stringify({ data: { flightItineraryList: [] } }))
+  assert(rMiss.verdict === 'miss' && rMiss.options.length === 0, '已识别合法空(数组存在且空) → miss(不为 hit 也不为 error)', rMiss)
+  // 不抛错 + 形状未识别 → error(关键:不可静默收敛为 miss,把未知响应误判为「这条线路没航班」)
+  const malformed: Array<[string, string]> = [
+    ['JSON null body', 'null'],
+    ['非对象根(数字)', '123'],
+    ['非对象根(数组)', '[1,2,3]'],
+    ['空对象', '{}'],
+    ['缺 data 字段', JSON.stringify({ foo: 1 })],
+    ['data 非对象(null)', JSON.stringify({ data: null })],
+    ['data 是数组', JSON.stringify({ data: [] })],
+    ['flightItineraryList 非数组(对象)', JSON.stringify({ data: { flightItineraryList: { foo: 1 } } })],
+    ['flightItineraryList 非数组(字符串)', JSON.stringify({ data: { flightItineraryList: 'abc' } })],
+    ['flightItineraryList 非数组(数字)', JSON.stringify({ data: { flightItineraryList: 42 } })],
+    ['非 JSON 文本', 'not-json{'],
+    ['空字符串', ''],
+  ]
+  for (const [label, body] of malformed) {
+    let verdict: 'hit' | 'miss' | 'error' = 'error'
+    let optionsLen = -1
+    let threw = false
+    try {
+      const r = parseBatchSearchResult(body)
+      verdict = r.verdict
+      optionsLen = r.options.length
+    } catch {
+      threw = true
+    }
+    assert(!threw && verdict === 'error' && optionsLen === 0, `${label} → verdict=error(不抛,不为 miss)`, { verdict, optionsLen, threw })
+  }
+  // priceList 非数组:item 行字段虽合法,但整行结构不可信 → error,不暴露 options
+  const priceMalformed = JSON.stringify({ data: { flightItineraryList: [{
+    flightSegments: [{ flightList: [{ flightNo: 'HO1', departureDateTime: '2026-10-01 07:35:00' }] }],
+    priceList: 'not-an-array',
+  }] } })
+  const rPm = parseBatchSearchResult(priceMalformed)
+  assert(rPm.verdict === 'error' && rPm.options.length === 0, 'priceList 显式非数组 → error 且不暴露 options', rPm)
+  // 已识别列表非空 + 行全部畸形 → error(没有可呈现的航段,不伪装成 miss)
+  const allBadRows = JSON.stringify({ data: { flightItineraryList: [
+    { flightSegments: [{}] },
+    'not-an-object-row',
+    null,
+  ] } })
+  const rAb = parseBatchSearchResult(allBadRows)
+  assert(rAb.verdict === 'error' && rAb.options.length === 0, '非空列表行全畸形 → error(不伪装成 miss)', rAb)
+  // 混合列表保留有效项,忽略畸形兄弟行
+  const mixed = JSON.stringify({ data: { flightItineraryList: [
+    { flightSegments: [{}], priceList: [{ adultPrice: 'bad' }] },
+    { flightSegments: [{ flightList: [{ flightNo: 'HO2', departureDateTime: '2026-10-01 08:00:00' }] }], priceList: [] },
+  ] } })
+  const rMixed = parseBatchSearchResult(mixed)
+  assert(rMixed.verdict === 'hit' && rMixed.options.length === 1 && rMixed.options[0]?.flightNo === 'HO2' && rMixed.options[0]?.price === 0, '混合列表 → 保留有效项并忽略畸形兄弟行', rMixed)
+  // 兼容性:旧 API parseBatchSearch 与新 API options 字段逐项一致
+  const compatParsed = parseBatchSearch(fixtureHit)
+  assert(compatParsed.length === rHit.options.length && compatParsed[0]?.flightNo === rHit.options[0]?.flightNo && compatParsed[0]?.price === rHit.options[0]?.price, '旧 API parseBatchSearch 返回的 options 字段与新 API 一致(兼容性)', { compat: compatParsed[0], new: rHit.options[0] })
+}
 
 // C. adapter entry URL
 console.log('C. buildEntryUrl(城市码表)')
@@ -243,7 +309,7 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
   const next = async (): Promise<ConsentDecision> => ({ kind: 'allow' })
   const agentA = { id: 'agent-A' } as unknown as object
   const agentB = { id: 'agent-B' } as unknown as object
-  const sess = (a: object = agentA) => ({ name: 'gotry_session_search', agent: a, callId: 'c1' })
+  const sess = (a: object = agentA) => ({ name: 'gotry_session_search', agent: a, callId: 'c1', kind: 'flight' })
   const other = () => ({ name: 'gotry_anything_search', agent: agentA })
   const mkStore = () => new WeakMap<object, { granted: Set<string>; denied: Set<string> }>()
   const mkGate = (access: SessionAccess, seam?: ApprovalSeam) =>
@@ -251,7 +317,7 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
 
   // I1 无审批通道(headless/极简宿主):账号工具 → ask(交运行时 fail-closed);非账号工具放行
   const gateBare = createConsentGate({ access: () => 'ask' })
-  const d1 = await gateBare({ name: 'gotry_session_search', agent: undefined }, next)
+  const d1 = await gateBare({ name: 'gotry_session_search', agent: undefined, kind: 'flight' }, next)
   assert(d1.kind === 'ask', '无审批通道 → ask(交运行时 fail-closed;denies 责任在 registry)', d1)
   assert((await gateBare({ name: 'gotry_anything_search', agent: undefined }, next)).kind === 'allow', '非账号工具不过闸,原样放行')
 
@@ -276,7 +342,7 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
     assert(d1.kind === 'deny' && /拒绝/.test(String(d1.kind === 'deny' ? d1.reason : '')), '拒绝 → deny + 明示「本会话内生效」', d1)
     const d2 = await gate(sess(), next)
     assert(d2.kind === 'deny' && requests === 1, '拒绝后再次调用 → 直接 deny,不再弹卡(拒绝=吊销)', { d2 })
-    const dB = await gate({ name: 'gotry_session_search', agent: agentB }, next)
+    const dB = await gate({ name: 'gotry_session_search', agent: agentB, kind: 'flight' }, next)
     assert(dB.kind === 'deny' && requests === 2, '另一会话不受此前拒绝影响——会重新发起一次审批请求(seam 本例仍拒)', { dB, requests })
   }
 
@@ -292,6 +358,43 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
   {
     const gate = mkGate('allow')
     assert((await gate(sess(), next)).kind === 'allow', 'sessionAccess=allow → 配置明示预授权,直接放行')
+  }
+
+  // I6 site-bound(#308):授权与拒绝均按 site(kind)分桶,跨站不得互授;同站复用放行;
+  //    unknown/malformed kind 失败关闭(不扩权);flat args 与 wrapped args 一致。
+  {
+    let requests = 0
+    const seam: ApprovalSeam = { request: async () => { requests += 1; return 'allowed-once' } }
+    const store = mkStore()
+    const gate = createConsentGate({ access: () => 'ask', approval: () => seam, store })
+
+    // 6a flat args:首次 dida 弹卡 + 放行;同会话再调 ctrip-flight 必须再弹卡(跨站不互授)
+    const r1 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-dida', kind: 'dida' }, next)
+    assert(r1.kind === 'allow' && requests === 1, 'flat args:首次 dida 弹卡 + 放行', { r1, requests })
+    const r2 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-ctrip', kind: 'flight' }, next)
+    assert(r2.kind === 'allow' && requests === 2, 'flat args:ctrip-flight 跨站必须再弹卡', { r2, requests })
+
+    // 6b 同站(flight)二次调用:免弹卡直接放行
+    const r3 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-ctrip-2', kind: 'flight' }, next)
+    assert(r3.kind === 'allow' && requests === 2, 'flat args:ctrip-flight 同站复用,免弹卡', { r3, requests })
+
+    // 6c wrapped args:{ query: { kind: 'hotel' } } 形态必须同样识别为 ctrip-hotel
+    const r4 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-hotel', kind: 'hotel' }, next)
+    assert(r4.kind === 'allow' && requests === 3, 'kind=hotel → ctrip-hotel 站点弹卡(独立分桶)', { r4, requests })
+
+    // 6d 拒绝隔离:拒绝 ctrip-flight 后,同会话调 dida 仍须弹卡(deny 不跨站污染)
+    let rejReq = 0
+    const seamRej: ApprovalSeam = { request: async () => { rejReq += 1; return 'rejected' } }
+    const gateRej = createConsentGate({ access: () => 'ask', approval: () => seamRej, store })
+    const agentRej = { id: 'agent-rej' } as unknown as object
+    const d1 = await gateRej({ name: 'gotry_session_search', agent: agentRej, callId: 'r1', kind: 'flight' }, next)
+    assert(d1.kind === 'deny' && rejReq === 1, '拒绝 ctrip-flight → deny(弹卡一次)', { d1, rejReq })
+    const d2 = await gateRej({ name: 'gotry_session_search', agent: agentRej, callId: 'r2', kind: 'dida' }, next)
+    assert(d2.kind === 'deny' && rejReq === 2, '拒绝不跨站污染:同会话 dida 仍须弹卡(被拒后)', { d2, rejReq })
+
+    // 6e unknown kind 失败关闭(不弹卡,不让过;无审批通道语义但带 agent 时更稳)
+    const rU = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-xx', kind: 'not-a-kind' }, next)
+    assert(rU.kind === 'deny', 'unknown kind → fail-closed deny(不扩权)', rU)
   }
 }
 

@@ -27,7 +27,7 @@ async function main() {
   const variables: Record<string, () => string> = {}
   // pre-execute 监听器捕获:账号会话授权闸(RFC 支柱④进代码)在 apply() 里经 ctx.on 挂注册表
   type PreDecision = { kind: 'allow' | 'deny' | 'ask'; reason?: string }
-  const preExecutes: Array<(exec: { name?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>> = []
+  const preExecutes: Array<(exec: { name?: string; kind?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>> = []
   const ctx = {
     tools: { register: (t: unknown) => registered.push(t as ToolLike) },
     systemPrompt: { variable: (name: string, provider: () => string) => { variables[name] = provider } },
@@ -328,14 +328,14 @@ async function main() {
     const gate = preExecutes.at(-1)
     if (!gate) throw new Error('FAIL: tools/pre-execute 授权闸未注册')
     const next = async () => ({ kind: 'allow' as const })
-    const ask = await gate({ name: 'gotry_session_search' }, next) as { kind?: string; reason?: string }
+    const ask = await gate({ name: 'gotry_session_search', kind: 'flight' }, next) as { kind?: string; reason?: string }
     if (ask.kind !== 'ask' || !/只读检索/.test(String(ask.reason ?? ''))) {
       throw new Error(`FAIL: 会话工具无审批通道时应交 ask(运行时原生结算),实际:${JSON.stringify(ask)}`)
     }
     const pass = await gate({ name: 'gotry_anything_search' }, next)
     if (pass.kind !== 'allow') throw new Error(`FAIL: 非会话工具应原样放行,实际:${JSON.stringify(pass)}`)
     cfg.sessionAccess = 'off'
-    const deny = await gate({ name: 'gotry_session_search' }, next) as { kind?: string; reason?: string }
+    const deny = await gate({ name: 'gotry_session_search', kind: 'flight' }, next) as { kind?: string; reason?: string }
     if (deny.kind !== 'deny' || !/sessionAccess=off/.test(String((deny as { reason?: string }).reason ?? ''))) {
       throw new Error(`FAIL: sessionAccess=off 应 fail-closed deny,实际:${JSON.stringify(deny)}`)
     }

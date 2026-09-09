@@ -34,7 +34,7 @@ import { wmoLabel } from '../capabilities/weather.ts'
 // D-23 收编(issue #115):anything/web/github/video/agent_reach/session_login 六渠道改经
 // 效应注册表(退避/熔断/declined 面统一);能力层直接 import 仅留类型位(reach/reachStatus)
 import { reach, reachStatus } from '../capabilities/agent-reach.ts'
-import { runDoctorChecks, renderDoctorReportMd } from '../capabilities/doctor.ts'
+import { runDoctorChecks, renderDoctorReportMd, runDoctorRepair, createRepairApprovalGate, type DoctorRepairOptions } from '../capabilities/doctor.ts'
 import { EXTENSION_STORE_URL } from '../capabilities/session/extension-bridge.ts'
 import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
 import { installModelOverride } from '../capabilities/model-override.ts'
@@ -196,7 +196,14 @@ function normalizeHotelGateHandoff(message: unknown): string {
     .replace(/请向用户确认/g, '请提供')
 }
 
-export function apply(ctx: Context, config: Config): void {
+export interface ApplyTestSeams {
+  doctor?: {
+    check?: typeof runDoctorChecks
+    repair?: DoctorRepairOptions
+  }
+}
+
+export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}): void {
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
   // 预算,复杂度决定出口结构(converge/handoff)。benchmark opt-in 钉死
@@ -280,11 +287,34 @@ export function apply(ctx: Context, config: Config): void {
   // 会话态收归 capabilities/session-consent.ts。防御:极简宿主/mock ctx 无事件总线时跳过。
   const ctxOn = (ctx as unknown as { on?: unknown }).on
   if (typeof ctxOn === 'function') {
-    ctx.on('tools/pre-execute', createConsentGate({
+    const gate = createConsentGate({
       access: () => config.sessionAccess ?? 'ask',
       approval: approvalFromContext(ctx),
-    }))
+    })
+    // site 绑定(#308):dsh pre-execute 实际派发的 exec 已含归一化后的 arguments
+    // (ToolExecutionInput.arguments: unknown),这里在派发闸前按 dsh 同源方式归一化 kind
+    // 并把 wrapped args(query.*)同步解开,确保闸拿到与 execute 相同的 site 选择依据。
+    // 复合工具未声明 kind 仍走闸的 fail-closed 路径(防御:旧 listener 形态 name-only)。
+    const KIND_HINT: Record<string, string> = { gotry_session_search: 'flight' }
+    ctx.on('tools/pre-execute', async (exec, next) => {
+      const ex = exec as { name?: string; arguments?: unknown; kind?: string }
+      const args = ex.arguments
+      const fromArgs = (typeof args === 'object' && args)
+        ? (args as { kind?: unknown; query?: { kind?: unknown } }).kind
+          ?? (args as { query?: { kind?: unknown } }).query?.kind
+        : undefined
+      const kind = ex.kind ?? (typeof fromArgs === 'string' ? fromArgs : undefined) ?? KIND_HINT[ex.name ?? '']
+      return gate({ ...ex, kind }, next)
+    })
   }
+
+  // issue #284 修复闸:gotry_doctor.action='repair' 走同一审批缝(scope-keyed,
+  // WeakMap<agent>)——同 agent + 同 scope 复用批准,不同 scope 重问,rejected/cancelled
+  // = 本会话吊销,unavailable 通道不记。同口径 session-consent,不增新持久面。
+  // 注册早于 gotry_doctor(下方),保证工具面闭包捕获当前会话的闸实例。
+  const repairApprovalGate = createRepairApprovalGate({
+    approval: approvalFromContext(ctx),
+  })
 
   // LLM_MODEL → dsh 会话面模型覆盖(issue #77;机制与分层见
   // capabilities/model-override.ts 头注)。GOTRY_LLM_MODEL 未设时零行为变化。
@@ -1531,13 +1561,19 @@ export function apply(ctx: Context, config: Config): void {
   registerGuarded(defineTool({
     name: 'gotry_doctor',
     description:
-      'Check optional-dependency health for ALL gotry tools (read-only, never installs): GoTry Session Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key + recent trial-quota exhaustion time / dsh-calendar mount state / dsh-better-sidebar. '
+      'Check optional-dependency health for ALL gotry tools (read-only by default). Coverage: GoTry Session Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key + recent trial-quota exhaustion time / dsh-calendar mount state / dsh-better-sidebar / dsh-map-tools / dsh-tool-ask-user. '
       + 'Call this when ANY gotry tool returns not-installed / needs-setup, when the user asks 「体检/依赖状态/工具为什么不可用」, or BEFORE leaning on a channel for a plan. '
       + 'Returns per-item status (ok/degraded/missing) with exact fix commands. '
-      + 'Repair = `npx @danceiny/gotry doctor --fix` run BY THE USER in a terminal (this tool never installs anything); LLM keys are the dsh host\'s business and are deliberately out of scope. '
+      + 'Action=diagnose (default): pure read-only — never installs anything, only renders the report. '
+      + 'Action=repair: optional autonomous repair — only attempts items the user named via `items` (stable doctor item ids, e.g. ["agent-reach","sidebar"]); empty/missing items means repair every auto-repairable gap. Items requiring browser-store install / credentials / API key / profile config / package reinstall / Node upgrade are NEVER auto-installed — they are reported as needs-user-action / unavailable and require the user to handle them. '
+      + 'Repair flow is observable: diagnosis → scope-keyed plan (selected auto-repairable items + skipped) → runtime approval card (per agent, per scope; same agent+scope reuses approval, different scope re-asks) → execute installer → recheck → per-item installed/failed with retry command. '
+      + 'Rejected/cancelled = no execution; unavailable approval channel = no execution (clear structured outcome). LLM keys are the dsh host\'s business and are deliberately out of scope. '
       + 'A markdown report is rendered for the workspace (gotry-state/doctor-report.md) so the sidebar workbench can preview it.',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
+    // issue #284 增量:action + items 两参数;默认 diagnose 保持读-only 不变(向后兼容)
     parameters: {
+      action: { type: 'string', enum: ['diagnose', 'repair'], description: '默认 diagnose;repair 时按 items 范围补装可选依赖,user-action / unavailable 项永不冒充 auto' },
+      items: { type: 'array', items: { type: 'string', enum: ['node', 'extension', 'agent-reach', 'hbcli', 'flyai', 'sidebar', 'llm-key', 'calendar', 'map-tools', 'ask-user'] }, description: 'repair 时的 doctor item id 范围;空 = 全部 auto-repairable' },
       writeReport: { type: 'boolean', description: '默认 true,把 markdown 报告写进 gotry-state/doctor-report.md(侧栏工作台可预览)' },
     },
     output: {
@@ -1545,29 +1581,126 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 900)) }],
     },
     async execute(args, _exec: unknown) {
-      const q = unwrapQuery<{ writeReport?: boolean }>(args, 'writeReport')
-      const report = await runDoctorChecks({ stateRoot: config.stateRoot ?? '.' })
-      // 报告落 gotry-state(侧栏工作台预览面);写失败不阻塞体检结论本身
+      const q = unwrapQuery<{ action?: 'diagnose' | 'repair'; items?: string[]; writeReport?: boolean }>(args, 'action')
+      const action = q?.action === 'repair' ? 'repair' : 'diagnose'
+      const check = seams.doctor?.check ?? runDoctorChecks
+      const report = await check({ stateRoot: config.stateRoot ?? '.' })
+
+      // repair 时必须把复检后的报告写盘，避免侧栏仍显示修复前状态。
       let reportPath: string | undefined
-      if (q?.writeReport !== false) {
+      const writeReport = async (current: typeof report): Promise<void> => {
+        if (q?.writeReport === false) return
         try {
           const { writeFile } = await import('node:fs/promises')
           const dir = await ensureStateDir(config.stateRoot)
           reportPath = join(dir, 'doctor-report.md')
-          await writeFile(reportPath, renderDoctorReportMd(report), 'utf-8')
+          await writeFile(reportPath, renderDoctorReportMd(current), 'utf-8')
         } catch { reportPath = undefined }
       }
       const icon = (s: string) => (s === 'ok' ? '✅' : s === 'degraded' ? '⚠️' : '❌')
-      const lines = report.items.map(i => `${icon(i.status)} ${i.label}:${i.detail}${i.fix ? `\n   ↳ 修复: ${i.fix}` : ''}`)
-      const summary = `${report.summary}\n${lines.join('\n')}${reportPath ? `\n报告已写: ${reportPath}(侧栏工作台可直接预览)` : '\n(报告写盘失败,仅本对话展示)'}`
-      return JSON.parse(JSON.stringify({ ok: true, verdict: report.ok ? 'all-clear' : 'needs-attention', items: report.items, report_path: reportPath, evidence: `[doctor@${new Date().toISOString()}]`, summary })) as Record<string, never>
+      const reportLines = (current: typeof report) => current.items.map(i => `${icon(i.status)} ${i.label}:${i.detail}${i.fix ? `\n   ↳ 修复: ${i.fix}` : ''}`)
+
+      if (action === 'diagnose') {
+        await writeReport(report)
+        const diagSummary = `${report.summary}\n${reportLines(report).join('\n')}${reportPath ? `\n报告已写: ${reportPath}(侧栏工作台可直接预览)` : '\n(报告写盘失败,仅本对话展示)'}`
+        // 读-only 路径:保持向后兼容,模型拿到的 verdict/items 与 issue #284 之前一致
+        return JSON.parse(JSON.stringify({
+          ok: true,
+          action: 'diagnose',
+          verdict: report.ok ? 'all-clear' : 'needs-attention',
+          items: report.items,
+          report_path: reportPath,
+          evidence: `[doctor@${new Date().toISOString()}]`,
+          summary: diagSummary,
+        })) as Record<string, never>
+      }
+
+      // action='repair':从诊断 → 选定 auto-repairable → scope-keyed 审批 → 真执行(走 bootstrap.runOnboardingFix)→ 复检。
+      // 范围过滤:items 非空时只考虑这些 id(未知 id 静默剔除,落 skipped 不冒充 auto)。
+      // runDoctorRepair 内部懒加载 bin/gotry-bootstrap.js,自适应 status→level 适配 + 真实安装器。
+      const requestedItems = Array.isArray(q?.items) && q!.items!.length > 0 ? new Set(q!.items!) : null
+      const scopedReport = requestedItems
+        ? { ...report, items: report.items.filter((i) => requestedItems.has(i.id)) }
+        : report
+      const exec = _exec as { agent?: object; callId?: string; signal?: AbortSignal } | undefined
+      // 生产 repair 让 bootstrap 安装编排复用本工具的同一诊断注册表做终态复检；
+      // fixture 若显式提供 recheck，则保留其隔离实现，再单独取一次工具报告。
+      let recheck: typeof report | undefined
+      const injectedRepair = seams.doctor?.repair
+      const repairOptions: DoctorRepairOptions = {
+        ...injectedRepair,
+        recheck: injectedRepair?.recheck ?? (async () => {
+          recheck = await check({ stateRoot: config.stateRoot ?? '.' })
+          return recheck.items.map((item) => ({
+            label: item.label,
+            level: item.status,
+            detail: item.detail,
+            fix: item.fix,
+          }))
+        }),
+      }
+      const repair = await runDoctorRepair(
+        scopedReport,
+        (scopeKey, reason) => repairApprovalGate.request(exec?.agent, scopeKey, reason, { callId: exec?.callId, signal: exec?.signal }),
+        repairOptions,
+      )
+      if (repair.approval === 'granted' && !recheck) {
+        recheck = await check({ stateRoot: config.stateRoot ?? '.' })
+      }
+      const finalReport = recheck ?? report
+      await writeReport(finalReport)
+      const diagSummary = `${report.summary}\n${reportLines(report).join('\n')}`
+      // 整合诊断 + 修复双视角 summary(模型可分清哪段是体检、哪段是修复)
+      const repairLines: string[] = []
+      for (const r of repair.repairs) {
+        repairLines.push(`${r.status === 'installed' ? '✅' : '❌'} ${r.label}: ${r.reason}${r.nextAction ? ` → ${r.nextAction}` : ''}`)
+      }
+      for (const s of repair.skipped) {
+        repairLines.push(`⏭  ${s.label}: ${s.reason}(bucket=${s.bucket})`)
+      }
+      const recheckSummary = recheck
+        ? `\n\n[recheck] ${recheck.summary}\n${reportLines(recheck).join('\n')}`
+        : ''
+      const reportSummary = reportPath ? `\n报告已写: ${reportPath}(侧栏工作台可直接预览)` : '\n(报告写盘失败,仅本对话展示)'
+      const combinedSummary = `${diagSummary}\n\n[repair] verdict=${repair.verdict}, approval=${repair.approval}, plan=${repair.selected.length} 项 auto / ${repair.skipped.length} 项 skipped\n${repairLines.join('\n')}\n${repair.summary}${recheckSummary}${reportSummary}`
+      return JSON.parse(JSON.stringify({
+        ok: repair.ok,
+        action: 'repair',
+        verdict: repair.verdict,
+        diagnosis: report,
+        recheck,
+        plan: {
+          selected: repair.selected,
+          needs_user_action: repair.skipped.filter((s) => s.bucket === 'user-action').map((s) => ({ id: s.id, label: s.label, reason: s.reason })),
+          unavailable: repair.skipped.filter((s) => s.bucket === 'unavailable').map((s) => ({ id: s.id, label: s.label, reason: s.reason })),
+          scope_key: repair.scopeKey,
+        },
+        approval: repair.approval,
+        repairs: repair.repairs,
+        skipped: repair.skipped,
+        evidence: `[doctor@${new Date().toISOString()}]`,
+        summary: combinedSummary,
+        report_path: reportPath,
+      })) as Record<string, never>
     },
-    presentCall: _args => ({ card: 'generic', title: '🩺 依赖体检', kind: 'execute', rawInput: {} }),
+    presentCall: args => {
+      const q = unwrapQuery<{ action?: string }>(args, 'action')
+      const a = q?.action === 'repair'
+      return { card: 'generic', title: a ? '🩺 依赖体检+修复(待批准)' : '🩺 依赖体检', kind: 'execute', rawInput: args }
+    },
     presentResult: (_args, value) => {
-      const r = value as { verdict?: string; summary?: string }
+      const r = value as { verdict?: string; summary?: string; action?: string; approval?: string }
+      const deniedLabel = r.approval === 'cancelled'
+        ? '↩️ 已取消'
+        : r.approval === 'unavailable'
+          ? '⚠️ 无审批通道'
+          : '🚫 已拒绝'
+      const title = r.action === 'repair'
+        ? `🩺 修复:${r.verdict === 'repaired' ? '✅ 已就位' : r.verdict === 'partial-repair' ? '⚠️ 部分成功' : r.verdict === 'repair-blocked' ? '❌ 复检未通过' : r.verdict === 'approval-denied' ? deniedLabel : '🔧 无可补装项'}`
+        : `🩺 依赖体检:${r.verdict === 'all-clear' ? '✅ 全部就绪' : '🔧 有项待处理'}`
       return {
         card: 'generic',
-        title: `🩺 依赖体检:${r.verdict === 'all-clear' ? '✅ 全部就绪' : '🔧 有项待处理'}`,
+        title,
         content: [{ type: 'text', text: String(r.summary ?? '') }],
       }
     },

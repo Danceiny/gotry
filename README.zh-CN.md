@@ -89,7 +89,7 @@ GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多�
 | **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成的产物(异步交付 + 工作目录 markdown),行号文件视图,只读 |
 | **事实闸** | `gotry_fact_gate` | 行程产物交付前闸——见上文[工作原理](#工作原理)中的定义 |
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页/字幕/GitHub/全渠道外部信息(经 Agent-Reach) |
-| **自检** | `gotry_doctor` | 可选依赖只读体检(扩展 / Agent-Reach .venv / hbcli / FlyAI key **+ 最近一次匿名试用达限时间** / dsh-calendar 挂载态 / sidebar),逐项状态 + 精确补装指引;安装只经用户在终端跑 `npx @danceiny/gotry doctor --fix` 完成。LLM key 归 dsh 宿主管,doctor 刻意不管。报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
+| **自检** | `gotry_doctor` | 默认只读体检。显式 `action: "repair"` 时先展示可自动修复项,按范围请求批准,复用 `doctor --fix` / web onboarding 的同一套幂等安装器,并以安装后复检判定结果。浏览器商店安装、凭证/API key、profile、包重装与 Node 升级仍由用户处理;拒绝、取消或无审批通道时零执行。报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
 
 > **通道路由**:检索工具面保持平铺(无隐藏派发);persona 路由卡与检索失败结果内附的 `routing` 建议**由通道注册表单一生成**(官方 API > 用户会话 > 网页兜底,按会话健康面过滤)。某通道额度耗尽时,结果会明说并指名下一通道——盲重试是契约违例,不靠 prompt 碰运气。
 
@@ -187,13 +187,13 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 
 ## 状态与限制
 
-当前版本:**v0.0.1-rc.22**(npm `latest`;`rc` dist-tag 指 rc.20;2026-09-09 镜像 registry 回拉实测:npx 安装 / bin 解析 / web 启动全通)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。
+当前版本:**v0.0.1-rc.22**(npm `latest`;`rc` dist-tag 指 rc.20;2026-09-09 镜像 registry 回拉实测:npx 安装 / bin 解析 / web 启动全通)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。公开执行与债务归属按 [#270 台账合同](docs/ops/external-pr-workflow.md) §0 留下 issue 启动、Draft PR、exact-head review 与 merge/destination 回执;本地或 fixture 证明不打开真实 gate。
 
 **今天可用**(全栈回归全绿;每项都有确定性测试):
 
 - **Z3 求解引擎** —— 可行性判决 + 门到门全成本;历史并发竞态已根治并进回归闸
 - **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`);飞猪匿名试用额度达限归类 `needs-setup` 并带配 key 指引(不盲重试)
-- **依赖体检** —— `npx @danceiny/gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):可选依赖(扩展 / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar / dsh-map-tools / dsh-tool-ask-user)只读体检 + 精确补装指引；地图工具以 MIT payload 随包交付，不引入与历史锁定家族冲突的外部 npm peer，设置卡接线走真实 `SettingsProvider.prototype.installSection` 方法(0.1.2-alpha.3 与 0.1.5-alpha.1 均已发布)与普通 namespace 字符串；`--fix` 补装;LLM key 仍归 dsh 宿主管
+- **依赖体检** —— `npx @danceiny/gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):默认只读;显式对话内修复会展示范围计划、按同一会话 scope 请求一次批准、调用既有 bootstrap 幂等安装器,并按安装后复检逐项报告。需人工配置的项目保持人工处理,LLM key 仍归 dsh 宿主管
 - **账号会话检索** —— 你本人登录态查携程机票/酒店 + 12306 火车(酒/火 2026-09-03 实装:酒店为被动嗅探登录态真实价,火车为 12306 公开余票查询面;接口面随首个真会话校准);观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
 - **扩展按需装** —— `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 这边不跑 setup wizard、不开 chrome://extensions、不动剪贴板
 - **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
@@ -245,7 +245,7 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 
 ## 参与开发
 
-从最新 `main` 切出 `feat/ · fix/ · docs/ · chore/` 分支,本地全栈绿后开 Pull Request——`main` 不直接推。CI 在 Node 22/24 跑 typecheck + 全部套件，在 Node 22/24/26 跑 focused dist 兼容闸；与维护者 review 双绿后 squash 合入。**测试红着不许合。** 完整指南:[CONTRIBUTING.md](CONTRIBUTING.md)。Bug/功能建议:用 issue 模板(先搜既有 issue)。
+从最新 `main` 切出 `feat/ · fix/ · docs/ · chore/` 分支,本地全栈绿后开 Pull Request——`main` 不直接推。CI 在 Node 22/24 跑 typecheck + 全部套件，在 Node 22/24/26 跑 focused dist 兼容闸；维护者核对被审 exact head 后选择仓库允许的合入方式,并记录 destination SHA。**测试红着不许合。** 完整指南:[CONTRIBUTING.md](CONTRIBUTING.md)。Bug/功能建议:用 issue 模板(先搜既有 issue)。
 
 ## 给 AI Agent
 
@@ -298,7 +298,7 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 
 **Built with**: DeepSeek Harness 0.1.5-alpha.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-**版本基线:`v0.0.1-rc.18`(npm `latest`)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际枚举为准;发布流程见 `scripts/publish-npm.sh`。
+**版本基线:`v0.0.1-rc.22`(npm `latest`)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际枚举为准;发布流程见 `scripts/publish-npm.sh`。
 
 ---
 

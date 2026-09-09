@@ -16,6 +16,11 @@
  *   - 授权状态存 Weak<agent>——会话结束即遗忘,绝不跨会话持久化(明示授权不默认延续)。
  * 审计:批准/拒绝事件由 dsh ApprovalService 落 session log(approval/asked + decided),
  * 本模块不重复建账。站点白名单 = ACCOUNT_TOOLS 注册表(新会话适配器接入时登记)。
+ *
+ * site 绑定(2026-09-10 #308):同一工具多个 kind(例如 gotry_session_search → flight/hotel/dida/train)
+ * 必须按归一化后的 kind 选 site,授权与拒绝均按 site 分桶;一个站点的批准/拒绝
+ * 不能静默成为另一站点的批准/拒绝。train 是 12306 公开查询面(无账号面),放行;
+ * unknown/malformed kind 失败关闭(deny,不扩权),防止新站点未登记就放行。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -33,14 +38,33 @@ export interface ApprovalSeam {
   request(r: { agent?: unknown; toolName: string; callId?: string; reason?: string; signal?: AbortSignal }): Promise<ApprovalOutcome>
 }
 
-/** 账号面工具 → 站点(白名单登记处;新会话适配器接入时在此登记) */
+/**
+ * 工具级 site 表(无 kind 维度时使用):key=工具名,value=站点。
+ * 复合工具(同一名字下多 kind)在 SITE_FOR_KIND 中显式登记。
+ */
 export const ACCOUNT_TOOLS: Record<string, string> = {
   gotry_session_search: 'ctrip-flight',
 }
 
 const SITE_LABEL: Record<string, string> = {
   'ctrip-flight': '携程机票',
+  'ctrip-hotel': '携程酒店',
   'dida-portal': 'Dida 供应商门户',
+  'train-12306': '12306 余票(公开查询面)',
+}
+
+/**
+ * 复合工具 × kind → site(#308:site 绑定)。
+ * 仅对显式登记的 kind 放行,未知 kind → 失败关闭(防止未登记站点扩权)。
+ * 12306 公开查询面(kind=train)无账号数据,等于非账号工具,故不放行闸。
+ */
+export const SITE_FOR_KIND: Record<string, Record<string, string>> = {
+  gotry_session_search: {
+    flight: 'ctrip-flight',
+    hotel: 'ctrip-hotel',
+    dida: 'dida-portal',
+    train: 'train-12306',
+  },
 }
 
 interface AuthState {
@@ -57,8 +81,50 @@ export interface ConsentGateOptions {
   store?: WeakMap<object, AuthState>
 }
 
-export type ConsentExec = { name?: string; agent?: object; callId?: string }
+export type ConsentExec = { name?: string; agent?: object; callId?: string; arguments?: unknown; kind?: string }
 export type ConsentGate = (exec: ConsentExec, next: () => Promise<ConsentDecision>) => Promise<ConsentDecision>
+
+/**
+ * 从 exec.arguments 中归一化 kind(扁平/包装两种形态),与 tool execute 的 unwrapQuery
+ * 同源(LLM 偶尔把 flat args 包进 query;直接读顶层 kind 漏掉时回到 query.kind)。
+ * 纯函数,测试锚点。返回 undefined 时调用方按「未指定 kind」走工具级表(已废止)
+ * 或直接拒绝(#308:复合工具强制 kind 必填)。
+ */
+export function normalizedKind(args: unknown): string | undefined {
+  if (!args || typeof args !== 'object') return undefined
+  const a = args as { kind?: unknown; query?: { kind?: unknown } }
+  if (typeof a.kind === 'string' && a.kind.length > 0) return a.kind
+  if (a.query && typeof a.query === 'object' && typeof (a.query as { kind?: unknown }).kind === 'string') {
+    const k = (a.query as { kind: string }).kind
+    return k.length > 0 ? k : undefined
+  }
+  return undefined
+}
+
+/**
+ * 解析 site(#308):对复合工具(kind 必填,未知 kind → fail-closed);对未在
+ * SITE_FOR_KIND 登记的工具走原 ACCOUNT_TOOLS 表保持兼容。无 site → 放行(非账号面工具)。
+ */
+export function resolveSiteForExec(exec: ConsentExec): { site: string } | { failClosed: true; reason: string } | null {
+  const name = exec.name
+  if (!name) return null
+  const map = SITE_FOR_KIND[name]
+  if (map) {
+    const kind = normalizedKind(exec.arguments) ?? exec.kind
+    if (!kind) {
+      return { failClosed: true, reason: `工具 ${name} 必须显式声明 kind(flight / hotel / dida / train)以选择站点;未声明不发起授权` }
+    }
+    const site = map[kind]
+    if (!site) {
+      return { failClosed: true, reason: `工具 ${name} 收到未知 kind=${kind};只支持 ${Object.keys(map).join('/')},未知 kind 失败关闭` }
+    }
+    if (site === 'train-12306') return null
+    return { site }
+  }
+  const site = ACCOUNT_TOOLS[name]
+  if (!site) return null
+  return { site }
+}
 
 function reasonFor(toolName: string, site: string): string {
   return `工具 ${toolName} 将使用你本人已登录的浏览器会话，在「${SITE_LABEL[site] ?? site}」进行只读检索`
@@ -69,20 +135,23 @@ function reasonFor(toolName: string, site: string): string {
 /**
  * 账号会话授权闸:挂 dsh `tools/pre-execute` waterfall。
  * 契约:
- *   - 非账号面工具 → next() 放行(零开销);
+ *   - 非账号面工具 / 公开查询面(train) → next() 放行(零开销);
  *   - off → 拒绝(随时可关);
- *   - 会话内已拒绝 → 拒绝且不弹卡(拒绝=本会话吊销);
+ *   - 会话内已拒绝 → 拒绝且不弹卡(拒绝=本会话吊销;按 site 分桶,跨站不互授);
  *   - 会话内已批准 / allow 预授权 → 放行;
- *   - 其余 → ApprovalService.request();allowed-once 记入会话 granted;
- *     rejected/cancelled 记入会话 denied(本会话不在请求);
+ *   - 复合工具未声明 kind 或未知 kind → fail-closed deny(不扩权);
+ *   - 其余 → ApprovalService.request();allowed-once 按 site 入会话 granted;
+ *     rejected/cancelled 按 site 入会话 denied(本会话不在请求);
  *     无审批通道 → deny(fail-closed,headless 无用户 = 无授权)。
  */
 export function createConsentGate(opts: ConsentGateOptions): ConsentGate {
   const store = opts.store ?? new WeakMap<object, AuthState>()
   const approvalOf = opts.approval ?? (() => undefined)
   return async (exec, next) => {
-    const site = exec.name && ACCOUNT_TOOLS[exec.name]
-    if (!site) return next()
+    const resolved = resolveSiteForExec(exec)
+    if (!resolved) return next()
+    if ('failClosed' in resolved) return { kind: 'deny', reason: resolved.reason }
+    const { site } = resolved
     if ((opts.access() ?? 'ask') === 'off') {
       return { kind: 'deny', reason: `工具 ${exec.name} 已被配置关闭（sessionAccess=off）。如需重新启用账号会话检索，请到配置中重新开启 sessionAccess。` }
     }

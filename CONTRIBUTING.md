@@ -20,10 +20,10 @@
 git clone https://github.com/Danceiny/gotry
 cd gotry
 
-# ① 装依赖(root = 产品面与锁定 DSH runtime,ts = 插件/测试面)
-npm ci
-cd ts && npm ci && cd ../..
-#    (完整 dsh 0.1.5-alpha.1 peer closure 已由 ts/package.json overrides 精确锁定)
+# ① 装依赖
+#    root 钉产品面与 DSH runtime 闭包;ts 用子壳跑(cd 不外溢,后续命令仍留在仓根)。
+npm ci --strict-peer-deps
+(cd ts && npm ci --strict-peer-deps)
 
 # ② 构建源码检出的 JS runtime
 node scripts/build-dist.mjs
@@ -32,7 +32,7 @@ node scripts/build-dist.mjs
 cp .env.example .env      # 填 LLM_API_KEY(DeepSeek sk-... 或 OpenAI 兼容协议)
 ```
 
-> **为什么是两份依赖**:root `package.json` 是 npm 包形态（`@danceiny/gotry`）的发布清单，也把源码与发布形态共用的 230 个 DSH `0.1.5-alpha.1` runtime 包全部锁成精确直接依赖；manifest、package-lock 与 root pnpm importer 必须暴露同一 230 项名称集合，publish preverify 会拒绝漏钉、混版和 range。`ts/package.json` 是插件源码与全部测试套件的开发清单。源码普通运行的 dsh cwd 保持在 `ts/dsh-runtime/`，真实运行状态继续落 `ts/dsh-runtime/gotry-state/`；benchmark opt-in 与 npm 包运行使用调用目录隔离。`ts/dsh-runtime/vendor/` 的 0.1.2-alpha.1 legacy 树只保留为非 benchmark 解析兼容，不承诺可运行，也不再是推荐安装路径；`node_modules/` 与运行时 `gotry-state/` 仍被忽略。
+> **为什么是两份依赖**:root `package.json` 是 npm 包形态（`@danceiny/gotry`）的发布清单，也把源码与发布形态共用的 230 个 DSH `0.1.5-alpha.1` runtime 包全部锁成精确直接依赖；manifest、package-lock 与 root pnpm importer 必须暴露同一 230 项名称集合，publish preverify 会拒绝漏钉、混版和 range。`ts/package.json` 是插件源码与全部测试套件的开发清单。源码普通运行的 dsh cwd 保持在 `ts/dsh-runtime/`，真实运行状态继续落 `ts/dsh-runtime/gotry-state/`；benchmark opt-in 与 npm 包运行使用调用目录隔离。`ts/dsh-runtime/vendor/` 的 legacy 目录仅作锁一致性证据保留，运行时只走 root 依赖闭包解析；`node_modules/` 与运行时 `gotry-state/` 仍被忽略。
 
 ---
 
@@ -41,15 +41,28 @@ cp .env.example .env      # 填 LLM_API_KEY(DeepSeek sk-... 或 OpenAI 兼容协
 **提交前必跑；脚本输出的节号/套件清单是唯一权威,文档不写死 `§1–N` 计数**:
 
 ```bash
-cd ts && npx tsc --noEmit
-cd ..
+(cd ts && npx tsc --noEmit)
 node scripts/build-dist-compat-tests.mjs        # 当前 Node 的 exact dist/ESM/import proof
 GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh   # 末行必须含 ALL SUITES GREEN
 ```
 
 每个 PR 描述都要贴**最终 SHA** 上的命令、exit code 和关键末行。CI 在 Node 22/24 跑 typecheck + 全栈回归，并在 Node 22/24/26 跑 focused dist 兼容闸；它只能补充本地证据,不能替代本地最终 SHA 复跑。
 
-天气回归使用受控 deterministic fixture；真实 Open-Meteo/Nominatim 仅属可变外围观测，不决定 merge gate。OpenSky/FlyAI 等 live 通道离线或被限流时对应套件有降级断言；会话面 live 嗅探默认可用 `GOTRY_SESSION_LIVE=0` 关闭。
+天气回归使用受控 deterministic fixture；真实 Open-Meteo/Nominatim 仅属可变外围观测，不决定 merge gate。OpenSky/FlyAI 等 live 通道离线或被限流时对应套件有降级断言；会话面 live 嗅探默认可用 `GOTRY_SESSION_LIVE=0` 关闭。HotelByte 供应商 UAT 不受该开关控制，默认离线且不探测本机 `hbcli` 或凭证。
+
+HotelByte 离线回归（默认包含在全栈入口）:
+
+```bash
+GOTRY_HBCLI_LIVE=0 ./scripts/run-all-tests.sh
+```
+
+真实 UAT 只在明确授权的环境运行（会使用隔离临时凭证面并请求 HotelByte UAT，不属于默认回归）:
+
+```bash
+cd ts && GOTRY_HBCLI_LIVE=1 npx tsx scripts/hbcli-e2e-tests.ts
+```
+
+`GOTRY_HOTELBYTE_SKILLS_LIVE=1` 仅启用 §17 的远端 `hotelbyte-skills` 契约读取；未设置、`0` 或其他值只跑本地工具描述契约，不读取 GitHub keychain。`GOTRY_SESSION_LIVE` 不会打开 HotelByte UAT。
 
 单独跑某个套件:
 
@@ -85,11 +98,11 @@ git checkout main && git pull && git checkout -b fix/your-topic
 
 ## 🔀 Pull Request 流程 — PR Workflow
 
-1. 在最终 SHA 本地跑 `cd ts && npx tsc --noEmit` 与 `GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh`,并记录 exit code 与 `ALL SUITES GREEN` 末行。
+1. 在最终 SHA 本地跑 `(cd ts && npx tsc --noEmit)` 与 `GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh`,并记录 exit code 与 `ALL SUITES GREEN` 末行。
 2. 行为、用户可见或业务效果变化必须补一条最小 E2E 证据;纯文档/索引改动要给路径/链接检查或说明 N/A 的 burden-of-proof。
 3. 推分支、开 PR:描述写清「**为什么改 · 改了什么 · 最终 SHA 本地证据 · E2E 行 · N/A/跳过边界**」。
 4. CI 的 Node 22/24 typecheck + 全栈回归与 Node 22/24/26 focused dist 兼容闸必须绿,但只作为补充信号;维护者 review 通过。
-5. 维护者 squash 合入 `main`(保持线性历史),合入即删分支。
+5. 合入方式与 head 守卫见 [`docs/ops/external-pr-workflow.md`](docs/ops/external-pr-workflow.md):维护者选择仓库允许的合并方式、核对 exact head、并记录 destination SHA。
 
 ---
 

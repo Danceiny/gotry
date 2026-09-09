@@ -1,6 +1,9 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-10 起,#270 按 `../ops/external-pr-workflow.md` §0 统一公开 issue 启动→Draft PR→exact-head review→merge/destination 回执,并让 `../architecture.md` §10.1 活跃债务指向公开 tracker/触发器;founder 授权的仓内 Claude lane 不受外部机器人 T0/T1 否决,但仍过正常评审。本地/fixture 证明不改变 #20/#22/#136/#137 的真实 gate。
+- 2026-09-10 起,#284 `gotry_doctor action=repair` 形成诊断→item 范围计划→会话 scope 审批→既有 bootstrap 幂等安装器→实际复检链;拒绝/取消/无审批通道零执行,user-action/unavailable 不越权,侧栏报告写复检态。隔离 fixture 工具 E2E 属 M4 UX 工程证据,不计入 #20 真实 repeat cohort 或 M5/M6 gate。
+- 2026-09-10 起,#279 携程机票 batchSearch 解析/搜索边界区分合法空 `miss`、有效 `hit` 与 malformed `error`,扩展/CDP 两车道保留 challenge 优先级;隔离 fixture 仅证明本地解析/编排,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
 - 2026-09-09 起,#283 酒店日期闸复用共享 `parseAbsoluteDate` 的真实日历校验,并在酒店消费边界拒缺失日期、溢出和错误顺序；失败不 dispatch 并返回 `input_required`。权威说明见 `docs/architecture.md` §1.2/§10 D-36 与 issue #283；该隔离工程证据不构成真实供应商准入。
 - 2026-09-09 起,#290 公开契约兼容:persona 经 `personaPrefix` / `personaSuffix` 投射(legacy `persona:` 不投影);桥 handler 结构性归类(`timed_out` / `spawn_failed` / `runner_failed`);详见 `docs/architecture.md` §9。不宣称 release/publication、M5/M6 entry、Windows 执行或真实 supplier/HotelByte 准入。
 - 2026-09-09 起,#271 Phase A 进程事故观察：GoTry-owned `uncaughtExceptionMonitor` 按 origin 写 durable incidents JSONL，宿主保持 fatal handler/退出裁决；native Node24 ESM dist 反例覆盖 writer fsync/close、monitor/no-monitor、host handler 与结构化工具失败。child close/spawn error、SIGINT、后代进程和上游 dsh supervisor 仍为开放 TODO。
@@ -17,6 +20,7 @@
 - 2026-09-05 起,指标面板第一切片(issue #138):`build-metrics-report.ts` 只读聚合既有侧车(事实闸 verdict 分布与 blocked 率/通道健康/事故面/桥延迟 >500ms 复审锚点/账本与 doctor 报告存在性)成单一 markdown;工程面,不构成 M3 Exit 证据(归 #22)。
 - 2026-09-05 起,政策事实生产端 v1(issue #141,D-26):VISA_POLICY_FETCH effect 注册表行,C 档中国领事服务网国家指南树,礼貌抓取→PolicyFact 落账;founder 拍板 C 档路线,Timatic/Sherpa° 后议。
 - 2026-09-04 起,事实闸覆盖面(issue #118,D-26 收口):HotelFact 第三形态(exact-date 酒店检索落账,摸底/传输失败/打码价纪律同机火)+ gotry_fact_gate 酒店 claim 入闸 + 渲染原语单向生成(renderFlightFact/renderHotelFact 内嵌 fact 锚点,闸侧锚点优先确定性回溯);政策生产端(实时签证 API)仍记 D-26 外部依赖。
+- 2026-09-10 起,事实闸覆盖面政策渲染锚点闭合(issue #273,D-26 残余收口切片):renderPolicyFact 行内嵌 fact 锚点(与机/火/酒店同源 typed-anchor),闸侧锚点确定性回溯,手改/伪造锚点 = fact_anchor_unknown;POLICY_WORD 补「海关申报」(与「入境申报」同性质但被原 regex 漏掉),手写政策行缺 as_of → policy_without_as_of。fact-gate-tests §11 五断言。
 - 2026-09-04 起,legacy vendored dsh 回退移除(issue #120,D-27 清偿):dsh 解析只认 root manifest/依赖闭包,找不到即 fail-closed 报错指重装;DshRuntime.source 收敛 'root'。
 - 2026-09-04 起,needs-extension 文案自适应(issue #117,D-24 清偿):按本地通道落位自动跳过开发者模式/本地通道指引——商店版用户只推商店一键装与「已装即可」;桥失败摘要与 doctor 扩展项同步自适应。
 - 2026-09-09 起,会话检索面新增 dida 供应商门户适配器(`gotry_session_search kind=dida`,SESSION_DIDA_SEARCH 效应注册表行)——解译器平铺纪律照旧,无新策略表形态;详见 `../architecture.md` §9。本设计原文(Stage 0-4 求解/编排)不受影响,状态让渡回 architecture §9。
