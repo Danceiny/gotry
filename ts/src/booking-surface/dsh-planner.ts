@@ -412,6 +412,19 @@ function repairActionRepresentation(action: unknown): void {
           }
           mutated = true
         }
+      } else if (messagePart.includes("required property 'adults'") && pathPart.startsWith('/input/patch/occupancy/rooms/')) {
+        // Occupancy items invented without the schema's adults field carry no
+        // valid room information. Dropping them is representation-only: the
+        // invention is not user-stated criteria (occupancy otherwise flows
+        // from the workspace draft).
+        const rooms = actionValueAt(action, '/input/patch/occupancy/rooms')
+        if (Array.isArray(rooms)) {
+          const kept = rooms.filter((room) => !(isRecord(room) && room.adults === undefined))
+          if (kept.length !== rooms.length) {
+            actionAssignAt(action, '/input/patch/occupancy/rooms', kept)
+            mutated = true
+          }
+        }
       } else if ((messagePart === 'must be integer' || messagePart === 'must be number') && typeof actionValueAt(action, pathPart) === 'string') {
         const raw = String(actionValueAt(action, pathPart)).trim()
         if (/^-?\d+$/.test(raw)) {
@@ -701,8 +714,17 @@ export async function createDshEmbeddedBookingPlanner(
                 if (recovered) return [recovered]
               }
             } catch (error) {
-              const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned|capability_action_mismatch|surface_action_unsupported)/.test(error.message)
+              const message = error instanceof Error ? error.message : String(error)
+              const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned|capability_action_mismatch|surface_action_unsupported)/.test(message)
               if (!retryable) throw error
+              // Self-correction: replay the concrete schema rejection into the
+              // SAME session. A blind re-prompt with identical input
+              // reproduces the identical invalid output; models repair
+              // deterministically when shown the exact rejection.
+              await runPort.run(
+                `Your previous tool call was rejected by schema validation:\n${message.slice(0, 500)}\nEmit ONE corrected tool call that satisfies the declared parameter schema exactly. Preserve every user-stated criterion; fix only the shape.`,
+                { sessionId },
+              ).catch(() => {})
               continue
             }
             if (decisions.length > 1) {
@@ -712,10 +734,13 @@ export async function createDshEmbeddedBookingPlanner(
               decisions = decisions.slice(0, 1)
             }
             if (decisions.length === 1) return decisions
-            // Prose-only responses surface as an empty decision list; a fresh
-            // run usually commits to the tool, so keep them inside the retry
-            // budget and only surface the typed error on the final attempt.
-            if (attempt < 3) continue
+            // Prose-only responses surface as an empty decision list; nudge
+            // the same session toward the tool call and only surface the
+            // typed error on the final attempt.
+            if (attempt < 3) {
+              await runPort.run('Your previous response contained no booking capability tool call. Emit exactly one booking capability tool call for the request, matching its declared parameter schema.', { sessionId }).catch(() => {})
+              continue
+            }
             return [{ kind: 'error', error: { code: 'PLANNER_TYPED_DECISION_REQUIRED', message: 'GoTry produced no typed capability decision; assistant prose was ignored.', retryable: true } }]
           }
         } finally { busy = false }
