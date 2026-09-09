@@ -52,6 +52,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - **判定类**:可行性、骨架校验、航班校验、**产物事实闸 `gotry_fact_gate`**(交付前必过,blocked 不得宣称「已验证方案」)
 - **检索类**:酒店(`gotry_hotel_search` hbcli 桥 + **会话面 ctrip-hotel**:用户登录态真实价,被动嗅探)、天气、Anything 通用搜索、网页、视频字幕、GitHub、飞猪官方检索(机/火/酒)、会话检索(机/酒/火;火车=12306 公开查询面;**dida 供应商门户**:hotel-be portal integration 迁移线,2026-09-09)
 - **酒店日期输入闸(issue #283,D-36)**:共享 `time-anchor.ts` 的 `parseAbsoluteDate` 使用 `isRealIsoDate` 拒绝不存在的日历日,酒店消费边界再拒缺失日期、算术溢出和退房不晚于入住,有效日期才进入 `HBCLI_HOTEL_SEARCH`。失败统一返回 `verdict=input_required` 且不 dispatch hbcli;有效日期和既有供应商失败后的明确静态降级保持兼容。隔离 fixture 只证明工程边界,不构成真实供应商准入。
+- **携程机票 malformed 响应闸(issue #279)**:结构化 batchSearch 解析把合法空列表判为 `miss`、含有效航段判为 `hit`、畸形未知形状判为 `error`;兼容的 `parseBatchSearch` 仍永不抛错并在错误时返回 `[]`。扩展与 CDP 两车道均先判挑战再把 parser error 映射为结构化 `error`,不暴露 options。
 - **记忆类**:动机、愿望池(入池/召回)、旅行时间线、同行人
 - **产物类**:产物 list/read(账本工单交付 + 工作目录 md,只读)
 - **账号类**:会话登录 `gotry_session_login`(在用户 Chrome 弹登录入口,票据 cookie 名零值过手)
@@ -413,6 +414,10 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **DSH alpha.1 公开契约兼容注(2026-09-09,issue #290)**:在 230 包闭包之上修复目标 public 契约差异。①system-prompt Config:`dsh-system-prompt` 公开/读取 `personaPrefix` 与 `personaSuffix`,legacy `persona:` 键不投影;`bin/gotry-inner.js` `projectBenchmarkPatch` 与 `projectBenchmarkSystemPrompt`、`cordis.gotry-patch.yml` 的 `system-prompt` 块、`ts/src/booking-surface/dsh-planner.ts` 的 booking-copilot 内嵌 planner 投射均改写 `personaPrefix: >-`(embedded booking persona 文本);e2e 与 proof 单测断言 captured benchmark-tool planner 请求携带每个稳定句 exactly once(title 请求在另一 contract 之外)。②`SubprocessHandle` 公开契约:目标 `0.1.5-alpha.1` SubprocessHandle 不暴露 `pid`,仅含 `collected`/`done`/`terminate?`/`waitForExit`;bridge call handler 分阶段归类——`timeout` 优先 → rejected start/provider `done` 路径归 `spawn_failed` → resolved nonzero exitCode 与 post-start `collected.readFrom` 失败归 `runner_failed`;bridge.ts 接口移除旧 `pid` 哨兵,测试 fakeHandle 同步去掉 `pid: -1` 字段、描述改为「public done rejection is classified as spawn/provider failure」并新增「collected output reading failure after a resolved done is runner_failed, not spawn_failed」反例。Secret/tool 隔离与 #286 budget/room/date planner 行为保留;不宣称 release/publication、M5/M6 entry、Windows 执行或真实 supplier/HotelByte 准入。
 - **doctor 自助修复(2026-09-10,issue #284,M4 UX 工程面;M4 不计 Exit)**:`gotry_doctor` 显式 `action: 'repair'` 按稳定 item id 只选择 auto-repairable 缺项(agent-reach / hbcli-missing / sidebar),浏览器商店、凭证/API key、profile、包重装与 Node 升级保持 user-action/unavailable。生产执行懒加载 `bin/gotry-bootstrap.js` 并调用既有 `buildOnboardingPlan`/`runOnboardingFix`,因此沿用 `setupHbcli`/`setupReach`/`setupSidebar` 的幂等、超时与进程清理边界。scope-keyed 审批闸在同 agent+同 scope 复用批准,不同 scope 重问,rejected/cancelled 本会话记忆且零执行,unavailable 不缓存。工具结果完整返回 diagnosis → selected/skipped plan → approval → repairs → recheck;安装器退出成功但复检仍坏即 `failed` 并给 `nextAction`,侧栏报告写复检态。`doctor-tests` §7–§13 以隔离 stateRoot、fixture installer 与实际工具注册/审批/真实 bootstrap 编排跨过工具边界,不触碰真实安装和共享状态。默认 `diagnose` 路径保持只读兼容。(D-37 清偿)
 
+### #279 携程机票 malformed 响应隔离修复(2026-09-10)
+
+三态解析合同为合法 `flightItineraryList: []` → `miss`;非空列表至少一条有效航段 → `hit` 并忽略畸形兄弟;JSON/root/data/list/显式非数组 `priceList` 或非空列表全无有效行 → `error`。兼容 API `parseBatchSearch(body): SessionFlightOption[]` 永不抛错,错误返 `[]`;扩展/CDP 搜索均在 challenge 检测后把 parser error 映射为既有结构化 `error`,不带 options。`flight-malformed-tests.ts` 用声明 `capabilities: ['ctrip-flight']` 的隔离扩展轮询器证明 null、非数组 list/price、全畸形、合法空、命中、混合与 challenge;这是本地解析/编排证据,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
+
 ### 外部 benchmark 泛化(Round 1–12,Discussion #78,official score 仍为空)
 
 > 工程合同全文见 `evaluation/benchmark-environment-bridge.md`;此处只留逐轮事实摘记。共同结论:official scores 全为 null,不声称 uplift 或 external benchmark closure。
@@ -521,6 +526,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | D-35 Node 26 dist 构建 API 移除 | **已清偿 2026-09-09(issue #265)**:移除 Node 已删除的 `stripTypeScriptTypes(...,{mode:'transform'})` 路径,改由根 manifest + npm/pnpm 双锁精确固定 TypeScript 5.9.3 并显式产出 ESM。Node 22/24 保留 typecheck + 全栈 CI,另以 Node 22/24/26 focused matrix 验证 exact source→dist、资产字节、无相对 `.ts`/CommonJS wrapper、入口与关键动态 import；Node 24 独立 pnpm frozen-lock job 防直接依赖的 `.pnpm` 解析布局回归。clean-archive release builder 先在隔离 source 内严格 `npm ci --include=dev`,再从提交锁派生剥除 build-only TypeScript entry 的最终 runtime manifest/lock 并严格 `npm ci --omit=dev`;builder proof 拒绝 TypeScript 出现在 runtime package/deps/manifest。该 M4 工程质量证据不关闭 #20/#136/#137 的真实 gate。 |
 | D-36 酒店日期闸缺位(hotel-date-gate) | **已清偿 2026-09-09(issue #283)**:实现与边界详见 §1.2;共享 `parseAbsoluteDate` 拒非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`,有效日期与静态降级兼容。隔离 fixture 证据不构成真实供应商准入。 |
 | D-37 `gotry_doctor` 只能给指引、不能在对话内修复 | **已清偿 2026-09-10(issue #284)**:显式 `action=repair` 形成诊断→范围计划→会话审批→既有 bootstrap 幂等安装器→实际复检链;拒绝/取消/无审批通道零执行,user-action/unavailable 不越权,安装退出不替代健康复检。隔离 fixture 工具 E2E 只证明工程边界,不构成 #20 真实 repeat cohort 或任何 M5/M6 准入。详见 §9。 |
+| #279 携程机票 malformed 响应 | **已清偿 2026-09-10**:三态 parser/search 边界与隔离扩展 fixture 见 §9;本地证据不替代 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission |
 
 **D-4 gate/卡片无承载界面**
 

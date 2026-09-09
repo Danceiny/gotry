@@ -187,6 +187,10 @@ echo "=== 25. 会话数据面 P1-P2(ReadGuard/携程解析/节律闸 + #21 字�
 (cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/session-tests.ts) || FAIL=1
 
 echo
+echo "=== 25b. #279 机票 malformed 隔离扩展 fixture(纯离线,no-spend) ==="
+(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/flight-malformed-tests.ts) || FAIL=1
+
+echo
 echo "=== 26. action-cache 自愈层(会话数据面 P2:变量化key/指纹被动失效/miss回写/TTL/LRU/损坏容错,纯函数) ==="
 (cd ts && npx tsx scripts/action-cache-tests.ts) || FAIL=1
 
