@@ -12,6 +12,7 @@
  *  - 根 pnpm lock 闭包 + root importer 与 manifest 集合/版本/包数一致;
  *  - ts/package.json 显式声明 @deepseek-ai/dsh-sdk-client@目标(GoTry 直接 import,
  *    不再由上游 main 图传递到达),且其所有显式 dsh* 依赖精确锁定目标版本;
+ *  - ts/package.json overrides 的名称集合与根 230 包集合完全一致，值全部精确目标版本;
  *  - ts/package-lock.json 每个真实 DSH 条目(按最后包名段过滤,排除嵌套非 dsh 依赖)
  *    精确锁定目标版本,包数 = 目标,名称集合与根 230 完全一致,拒绝嵌套/混合版本;
  *  - ts/ 实际安装树:用 ts 包的 createRequire 上下文解析每个 dsh 包 package.json,
@@ -145,7 +146,25 @@ for (const name of tsExplicitDsh) {
   )
 }
 
-// 7. ts/package-lock.json:每个真实 DSH 条目(按包名过滤,排除嵌套非 dsh 依赖)必须
+// 7. ts/package.json overrides 必须精确覆盖根 manifest 的完整 230 包集合。
+//    这组 override 是修复 sdk-client peer range 漂移到 alpha.2 的关键约束；只验证
+//    三个显式依赖或最终 lock 会遗漏 manifest 层的防漂移策略。
+const tsOverrides = tsPkg.overrides ?? {}
+const tsOverrideDshNames = dshDependencyNames(tsOverrides)
+assert.deepEqual(
+  tsOverrideDshNames,
+  rootDshNames,
+  'ts/package.json overrides 的 DSH 名称集合必须与根 230 包集合完全一致',
+)
+for (const name of tsOverrideDshNames) {
+  assert.equal(
+    tsOverrides[name],
+    TARGET_VERSION,
+    `ts/package.json override 版本漂移:${name}@${tsOverrides[name]}(expected ${TARGET_VERSION})`,
+  )
+}
+
+// 8. ts/package-lock.json:每个真实 DSH 条目(按包名过滤,排除嵌套非 dsh 依赖)必须
 //    精确锁定目标版本,包数 = 目标,名称集合与根 230 完全一致。
 //    关键:lock 路径前缀 `node_modules/@deepseek-ai/dsh-skill-filesystem/node_modules/chokidar`
 //    的最后包名段是 `chokidar`(非 dsh),不能按路径前缀过滤,必须按最后包名段过滤。
@@ -196,7 +215,7 @@ for (const name of rootDshNameSet) {
   assert.ok(tsLockDshNames.has(name), `根 230 dsh 包不在 ts lock 中:${name}`)
 }
 
-// 8. ts/ 实际安装树:用 ts 包的 createRequire 上下文解析每个 dsh 包的 package.json,
+// 9. ts/ 实际安装树:用 ts 包的 createRequire 上下文解析每个 dsh 包的 package.json,
 //    读取版本,断言全精确目标版本;解析路径必须直接位于 ts/node_modules/@deepseek-ai/
 //    下(非嵌套),拒绝混合版本。
 const tsRequire = createRequire(join(tsDir, 'package.json'))
@@ -230,5 +249,5 @@ assert.equal(
 
 console.log(
   `DSH TARGET CLOSURE PROOF: root ${npmClosure.names.length} npm / ${pnpmClosure.names.length} pnpm / ${pnpmImporter.names.length} importer, ` +
-    `ts ${tsExplicitDsh.length} explicit / ${tsLockDshNames.size} lock / ${tsInstalledNames.size} installed at ${TARGET_VERSION}`,
+    `ts ${tsExplicitDsh.length} explicit / ${tsOverrideDshNames.length} overrides / ${tsLockDshNames.size} lock / ${tsInstalledNames.size} installed at ${TARGET_VERSION}`,
 )

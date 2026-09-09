@@ -12,15 +12,12 @@
  * terminate() + await waitForExit(有界 abort 信号),断言父进程结果和子进程 PID
  * 都已消失(进程组信号终止整个组)。
  *
- * 真实 PTY 验证在每个支持平台(Linux/darwin/win32)都执行:spawnTerminal 启动 node 子进程,
+ * 真实 PTY 验证在 CI 支持平台(Linux/macOS)都执行:spawnTerminal 启动 node 子进程,
  * 子进程向 stdout 写入 'pty-line\n' 并正常退出;断言 PTY 输出包含 'pty-line' 且 exitCode=0。
- * node-pty 的 native PTY 后端通过 pty.node 的 N-API 工作,不经 spawn-helper 间接寻址——
- * 每平台预构建都带 `pty.node`(Darwin 加 `spawn-helper` 作为 setuid launchd 助手;
- * Linux/Windows 预构建仅 `pty.node`,不携带 spawn-helper,因为 PTY fork 由 libc/glibc
- * 与 Windows ConPTY 直接提供)。本证明在每平台都跑真实 PTY 行为;filesystem 上
- * spawn-helper 存在性与 0755 模式断言仅在 Darwin 下生效——非 Darwin 报告
- * "helper not-applicable" 事实,同时真实 PTY 行为(输出+成功退出)仍被验证,
- * 不在 Linux 上伪造、不复制、不 stat 实际不存在的 helper。
+ * 目标 node-pty 包的 Darwin 预构建同时带 `pty.node` 与 `spawn-helper`，Linux x64/arm64
+ * 预构建只带 `pty.node`。本证明在两个平台都跑真实 PTY 行为；filesystem 上
+ * spawn-helper 存在性与 0755 模式断言仅在 Darwin 下生效。Linux 报告
+ * "helper not-applicable"，同时仍验证真实 PTY 输出与成功退出，不 stat 不存在的文件。
  *
  * finally 中 await ctx.fiber.dispose() 并移除临时文件。不向子进程传递整个环境变量。
  *
@@ -44,7 +41,7 @@ let childPid: number
 let childGoneAfter = false
 let parentOutcome: { exitCode: number | null; signal: NodeJS.Signals | null }
 let rangeEmpty: boolean
-let ptyExitCode = 0
+let ptyExitCode: number | null = null
 let ptyOutput = ''
 let helperFact: string
 let helperMode: number | null
@@ -132,8 +129,10 @@ try {
   term.output.on('data', (d: Buffer) => {
     ptyOutput += d.toString()
   })
-  ptyExitCode = (await term.done).exitCode ?? 0
+  const termOutcome = await term.done
+  ptyExitCode = termOutcome.exitCode
   assert.equal(ptyExitCode, 0, `PTY 必须正常退出(exitCode=${ptyExitCode})`)
+  assert.equal(termOutcome.signal, null, `PTY 正常退出不得携带 signal(当前 ${termOutcome.signal})`)
   assert.ok(
     ptyOutput.includes('pty-line'),
     `PTY 输出必须包含 pty-line(当前 ${JSON.stringify(ptyOutput)})`,
@@ -141,12 +140,9 @@ try {
   await term.terminate()
 
   // 9. node-pty spawn-helper 文件系统断言仅在 Darwin 下生效。
-  //    真实平台事实:darwin-{x64,arm64}/prebuilds 同时带 pty.node 与 spawn-helper
-  //    (spawn-helper 是 macOS 下 setuid launchd 助手,确保 fork 出的子进程能继承
-  //    一个可控的 controlling terminal 上下文,需 0755);linux-{x64,arm64}/prebuilds
-  //    仅带 pty.node(Linux PTY fork 由 libc/glibc 直接提供,不需要单独 helper);
-  //    windows/{x64,arm64}/prebuilds 携带 conpty/(ConPTY 接口)。
-  //    本证明不构造、不复制、不 stat 实际不存在的 helper——这是事实陈述而非弱化断言。
+  //    已检查的目标包事实:darwin-{x64,arm64}/prebuilds 同时带 pty.node 与
+  //    spawn-helper，linux-{x64,arm64}/prebuilds 仅带 pty.node。本证明不构造、
+  //    不复制、不 stat 实际不存在的 helper。
   helperMode = null
   if (process.platform === 'darwin') {
     const ptyEntry = fileURLToPath(import.meta.resolve('node-pty'))
@@ -164,7 +160,7 @@ try {
     )
     helperFact = `helper=darwin 0o${helperMode.toString(8)}`
   } else {
-    helperFact = `helper=not-applicable:${process.platform}-${process.arch} prebuilds 不携带 spawn-helper(Linux PTY fork 由 libc/glibc 直接提供,Windows 由 ConPTY),真实 PTY 行为(PTY 输出='pty-line' present, exitCode=0)已被独立验证`
+    helperFact = `helper=not-applicable:${process.platform}-${process.arch}; real PTY output='pty-line' present, exitCode=0`
     assert.ok(
       ptyExitCode === 0 && ptyOutput.includes('pty-line'),
       '非 Darwin 平台必须仍证明真实 PTY 行为:PTY 输出包含 pty-line 且 exitCode=0',
