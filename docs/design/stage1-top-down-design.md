@@ -17,6 +17,7 @@
 - 2026-09-05 起,指标面板第一切片(issue #138):`build-metrics-report.ts` 只读聚合既有侧车(事实闸 verdict 分布与 blocked 率/通道健康/事故面/桥延迟 >500ms 复审锚点/账本与 doctor 报告存在性)成单一 markdown;工程面,不构成 M3 Exit 证据(归 #22)。
 - 2026-09-05 起,政策事实生产端 v1(issue #141,D-26):VISA_POLICY_FETCH effect 注册表行,C 档中国领事服务网国家指南树,礼貌抓取→PolicyFact 落账;founder 拍板 C 档路线,Timatic/Sherpa° 后议。
 - 2026-09-04 起,事实闸覆盖面(issue #118,D-26 收口):HotelFact 第三形态(exact-date 酒店检索落账,摸底/传输失败/打码价纪律同机火)+ gotry_fact_gate 酒店 claim 入闸 + 渲染原语单向生成(renderFlightFact/renderHotelFact 内嵌 fact 锚点,闸侧锚点优先确定性回溯);政策生产端(实时签证 API)仍记 D-26 外部依赖。
+- 2026-09-10 起,事实闸覆盖面政策渲染锚点闭合(issue #273,D-26 残余收口切片):renderPolicyFact 行内嵌 fact 锚点(与机/火/酒店同源 typed-anchor),闸侧锚点确定性回溯,手改/伪造锚点 = fact_anchor_unknown;POLICY_WORD 补「海关申报」(与「入境申报」同性质但被原 regex 漏掉),手写政策行缺 as_of → policy_without_as_of。fact-gate-tests §11 五断言。
 - 2026-09-04 起,legacy vendored dsh 回退移除(issue #120,D-27 清偿):dsh 解析只认 root manifest/依赖闭包,找不到即 fail-closed 报错指重装;DshRuntime.source 收敛 'root'。
 - 2026-09-04 起,needs-extension 文案自适应(issue #117,D-24 清偿):按本地通道落位自动跳过开发者模式/本地通道指引——商店版用户只推商店一键装与「已装即可」;桥失败摘要与 doctor 扩展项同步自适应。
 - 2026-09-09 起,会话检索面新增 dida 供应商门户适配器(`gotry_session_search kind=dida`,SESSION_DIDA_SEARCH 效应注册表行)——解译器平铺纪律照旧,无新策略表形态;详见 `../architecture.md` §9。本设计原文(Stage 0-4 求解/编排)不受影响,状态让渡回 architecture §9。

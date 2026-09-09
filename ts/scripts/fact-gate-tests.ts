@@ -31,6 +31,7 @@ import {
   flightClaimVerdict,
   itineraryInvariants,
   latestFactsForRouteDate,
+  makeFactId,
   negativeFact,
   renderConnection,
   renderFlightFact,
@@ -187,7 +188,7 @@ assert(badViol.some(v => v.kind === 'budget_floor_inconsistent' && /35,500/.test
 
 console.log('§7 政策 as_of 与复核 gate')
 const policy: PolicyFact = {
-  schema: BOOKABLE_FACT_SCHEMA, fact_id: 'policy-th-00000000', kind: 'policy',
+  schema: BOOKABLE_FACT_SCHEMA, fact_id: makeFactId(['policy', '泰国入境', 'web:policy:泰国免签']), kind: 'policy',
   subject: '泰国入境(中国护照)', statement: '免签停留(口径以泰方公告为准);UAE 居民返程应优先校验 residence visa / Emirates ID 而非游客免签口径',
   source: 'web:official', query_id: 'web:policy:泰国免签', fetched_at: FETCHED, as_of: '2026-08-29',
 }
@@ -312,12 +313,12 @@ const goodArtifact = [
   '',
   '## 政策',
   renderPolicyFact(policy, fixture.meta.trip_window[0]),
-  renderPolicyFact({ ...policy, fact_id: 'policy-uae-0000000', subject: '迪拜入境(UAE 居民返程)', statement: '优先校验 residence visa / Emirates ID;游客免签口径不适用居民返程' }, fixture.meta.trip_window[0]),
+  renderPolicyFact({ ...policy, fact_id: makeFactId(['policy', '迪拜入境', 'web:policy:uae-resident']), subject: '迪拜入境(UAE 居民返程)', statement: '优先校验 residence visa / Emirates ID;游客免签口径不适用居民返程' }, fixture.meta.trip_window[0]),
 ].join('\n')
-const goodReport = gateArtifact(goodArtifact, registry, map, { trip_year: tripYear, itinerary: fixture.good_itinerary })
+const goodReport = gateArtifact(goodArtifact, [...registry, policy, { ...policy, fact_id: makeFactId(['policy', '迪拜入境', 'web:policy:uae-resident']), subject: '迪拜入境(UAE 居民返程)', statement: '优先校验 residence visa / Emirates ID;游客免签口径不适用居民返程' }], map, { trip_year: tripYear, itinerary: fixture.good_itinerary })
 assert(goodReport.verdict === 'pass' && goodReport.presentation === 'verified_itinerary_allowed'
-  && goodReport.traceable === 6 && goodReport.violations.length === 0,
-  `good artifact:6/6 航班 claim 全回溯,闸 pass(违例 ${goodReport.violations.length})`)
+  && goodReport.traceable === 8 && goodReport.violations.length === 0,
+  `good artifact:6 航班 + 2 政策 claim 全回溯,闸 pass(违例 ${goodReport.violations.length},traceable=${goodReport.traceable})`)
 assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query_id.includes('flyai:flight:')),
   'good artifact 的每个可下单事实均可回溯到 tool result/query id(验收⑧)')
 
@@ -360,6 +361,34 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   const noCtx = gateArtifact('## 住宿\n- 住宿:湖景房有房可订 ✓', [], map, { trip_year: 2026 })
   assert(noCtx.violations.some(v => v.kind === 'unverifiable_hotel_claim'), '缺目的地上下文 → unverifiable_hotel_claim(fail closed)')
   console.log(`  ok - §10 酒店事实闸(D-26)八断言完成`)
+}
+
+// ---------------------------------------------------------------------------
+// §11 政策渲染锚点 + 海关申报关键词覆盖(issue #273,D-26 残余收口)
+// ---------------------------------------------------------------------------
+{
+  const policyUaE = { ...policy, fact_id: makeFactId(['policy', '迪拜入境', 'web:policy:uae-resident']), subject: '迪拜入境(UAE 居民返程)', statement: '优先校验 residence visa / Emirates ID;游客免签口径不适用居民返程' }
+  const policyLine11 = renderPolicyFact(policy, fixture.meta.trip_window[0])
+  // 11a. 渲染器输出自带 fact 锚点(确定性回溯,与航班/酒店同源)
+  assert(policyLine11.includes(`<!-- fact:${policy.fact_id} -->`), 'renderPolicyFact 行内嵌 fact 锚点(issue #273 typed-anchor 闭合)')
+  // 11b. 锚点 policy 走确定性回溯 = traceable(锚点行启发式让位)
+  const anchoredPolicyArtifact = ['## 政策', policyLine11].join('\n')
+  const anchoredPolicyReport = gateArtifact(anchoredPolicyArtifact, [policy], map, { trip_year: tripYear })
+  assert(anchoredPolicyReport.verdict === 'pass' && anchoredPolicyReport.traceable === 1,
+    `政策锚点行 → 锚点确定性回溯 pass(实际 ${anchoredPolicyReport.verdict}/traceable=${anchoredPolicyReport.traceable})`)
+  // 11c. 手改锚点 → fact_anchor_unknown(伪造即抓,与酒店锚点一致)
+  const forgedPolicyArtifact = anchoredPolicyArtifact.replace(policy.fact_id, '0123456789abcdef')
+  const forgedPolicyReport = gateArtifact(forgedPolicyArtifact, [policy], map, { trip_year: tripYear })
+  assert(forgedPolicyReport.violations.some(v => v.kind === 'fact_anchor_unknown'), '手改政策锚点 → fact_anchor_unknown(与酒店锚点同源 fail-closed)')
+  // 11d. 海关申报 缺 as_of → policy_without_as_of(red→green:原 regex 漏掉,新增关键词后 fail-closed)
+  const customsNoAsOf = gateArtifact('| 美国 | 海关申报需在线填写(现行 30 日内单次) |', registry, map, { trip_year: tripYear })
+  assert(customsNoAsOf.violations.some(v => v.kind === 'policy_without_as_of'),
+    '「海关申报」缺 as_of → policy_without_as_of(D-26 残余:边界关键词覆盖)')
+  // 11e. 海关申报 带「截至 YYYY-MM-DD」过闸(确保新增关键词不影响已守纪产物)
+  const customsAsOf = gateArtifact('| 美国 | 海关申报需在线填写(截至 2026-08-29 现行 30 日内单次) |', registry, map, { trip_year: tripYear })
+  assert(!customsAsOf.violations.some(v => v.kind === 'policy_without_as_of'),
+    '「海关申报」带截至日期过闸(关键词扩展不误伤)')
+  console.log(`  ok - §11 政策渲染锚点 + 海关申报关键词 fail-closed 五断言完成`)
 }
 
 console.log(`\nFACT GATE TESTS: ${pass} pass, ${fail} fail`)

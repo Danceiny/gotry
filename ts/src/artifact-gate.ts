@@ -92,7 +92,9 @@ const CARRIER_ZH: Record<string, string> = {
   东航: 'MU', 南航: 'CZ', 国航: 'CA', 厦航: 'MF', 春秋: '9C', 祥鹏: '8L',
   亚航: 'FD', 越捷: 'VZ', 国泰: 'CX', 港航: 'HX', 香港快运: 'UO', 阿联酋: 'EK', 泰航: 'TG',
 }
-const POLICY_WORD = /免签|落地签|签证|入境申报|过境免/
+/** 「政策」关键词(issue #273,D-26 残余收口):覆盖签证/免签/落地签/海关/过境五大类;
+ * 海关申报 与 入境申报 同性质但被原 regex 漏掉,补一个 demonstrative miss。 */
+const POLICY_WORD = /免签|落地签|签证|入境申报|海关申报|过境免/
 /** as_of 必须是「截至 + 具体日期」——「现行 60 天」不算时间边界(issue #46 政策行) */
 const AS_OF_WORD = /截至\s*\d{4}[-/年]\d{1,2}|as[_ ]?of\s*\d{4}/i
 const CHECK_MARK = /[✓✅]/
