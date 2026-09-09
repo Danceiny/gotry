@@ -75,6 +75,10 @@ echo "=== 7d. hbcli 全流程端到端(隔离 STAICLI_HOME+沙箱账号真打 UA
 (cd ts && npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
 
 echo
+echo "=== 7e. hbcli release-contract 离线钉版(staicli@0.0.3 integrity + command schema + honest unknown/query-miss outcome 分类;无 supplier 请求,纯离线假二进制;为 #232 钉版准备,非交易实现) ==="
+(cd ts && npx tsx scripts/hbcli-release-contract-tests.ts) || FAIL=1
+
+echo
 echo "=== 8. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 + guardToolExecute 异常隔离,3 断言) ==="
 (cd ts && npx tsx scripts/incident-tests.ts) || FAIL=1
 
@@ -185,6 +189,10 @@ echo
 echo "=== 25. 会话数据面 P1-P2(ReadGuard/携程解析/节律闸 + #21 字段 fixture scorer/双源合同/waiting-attach no-spend + live FlyAI/会话;GOTRY_SESSION_LIVE=0 关闭全部 live 端点) ==="
 (cd ts && npx tsx scripts/session-benchmark.ts) || FAIL=1
 (cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/session-tests.ts) || FAIL=1
+
+echo
+echo "=== 25b. #279 机票 malformed 隔离扩展 fixture(纯离线,no-spend) ==="
+(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/flight-malformed-tests.ts) || FAIL=1
 
 echo
 echo "=== 26. action-cache 自愈层(会话数据面 P2:变量化key/指纹被动失效/miss回写/TTL/LRU/损坏容错,纯函数) ==="
