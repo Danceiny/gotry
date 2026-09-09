@@ -248,8 +248,8 @@ try {
   }
   console.log('INTEG 5 OK: host fatal handler retains exit policy')
 
-  // Integration 6: non-Error rejection reasons cannot break the observer;
-  // the host still receives the original reason and owns exit code 23.
+  // Integration 6: a thrown non-Error with hostile message/stack accessors
+  // cannot break the observer; the host receives the original object identity.
   {
     const stateRoot = join(tmp, 'host-non-error')
     const hostMarker = join(stateRoot, 'host-handler.marker')
@@ -258,21 +258,24 @@ try {
       import { installProcessGuards } from ${JSON.stringify(distModule)}
       import { writeFileSync } from 'node:fs'
       installProcessGuards(${JSON.stringify(stateRoot)})
+      const original = Object.create(null)
+      Object.defineProperty(original, 'message', { enumerable: true, get() { throw new Error('message getter') } })
+      Object.defineProperty(original, 'stack', { enumerable: true, get() { throw new Error('stack getter') } })
       process.on('uncaughtException', (_error, origin) => {
-        writeFileSync(${JSON.stringify(hostMarker)}, origin)
+        writeFileSync(${JSON.stringify(hostMarker)}, _error === original ? origin : 'wrong-identity')
         process.exitCode = 23
       })
-      setTimeout(() => Promise.reject(Object.create(null)), 20)
+      setTimeout(() => { throw original }, 20)
       setTimeout(() => {}, 100)
     `, stateRoot)
-    assert.equal(result.code, 23, `non-Error rejection bypassed host handler: ${result.stderr}`)
+    assert.equal(result.code, 23, `non-Error throw bypassed host handler: ${result.stderr}`)
     assert.equal(result.signal, null)
-    assert.equal((await readFile(hostMarker, 'utf8')), 'unhandledRejection')
+    assert.equal((await readFile(hostMarker, 'utf8')), 'uncaughtException')
     const incident = JSON.parse((await readFile(resolveIncidentsPath(stateRoot), 'utf8')).trim())
-    assert.equal(incident.kind, 'unhandledRejection')
+    assert.equal(incident.kind, 'uncaughtException')
     assert.equal(typeof incident.message, 'string')
   }
-  console.log('INTEG 6 OK: non-Error rejection safe formatting + host exit policy')
+  console.log('INTEG 6 OK: non-Error throw safe formatting + original host identity/exit policy')
 
   // Unit 4: tool business errors remain structured and do not escape.
   {
@@ -284,13 +287,16 @@ try {
     const syncBoom = guardToolExecute<Record<string, never>, Record<string, unknown>>('synthetic-tool-sync', tmp, () => { throw new Error('boom-sync') })
     const r2 = await syncBoom({}, undefined)
     assert.equal(r2.ok, false)
+    const nonErrorBoom = guardToolExecute<Record<string, never>, Record<string, unknown>>('synthetic-tool-nonerror', tmp, () => { throw Object.create(null) })
+    const r3 = await nonErrorBoom({}, undefined)
+    assert.equal(r3.ok, false)
     const toolErrs = (await readFile(resolveIncidentsPath(tmp), 'utf8')).trim().split('\n').filter(Boolean)
       .map((line) => JSON.parse(line) as { kind?: string }).filter((line) => line.kind === 'tool_execute_error')
-    assert.equal(toolErrs.length, 2)
+    assert.equal(toolErrs.length, 3)
   }
   console.log('UNIT 4 OK: guardToolExecute 保持结构化业务失败')
 } finally {
   await rm(tmp, { recursive: true, force: true })
 }
 
-console.log('INCIDENT TESTS: 10/10 OK')
+console.log('INCIDENT TESTS: all focused checks OK')
