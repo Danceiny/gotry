@@ -17,7 +17,7 @@ import { join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolResult } from '@deepseek-ai/dsh-tools'
 import { ensureStateDir, recordLatency } from './bridge.ts'
 import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
@@ -70,6 +70,13 @@ export const name = 'gotry-tools'
 // time. Declaring it as a required injection would make the whole plugin
 // depend on a service that is only needed for explicit benchmark opt-in.
 export const inject = ['tools', 'systemPrompt']
+
+function sessionCwd(exec: unknown): string | undefined {
+  const candidate = exec as { agent?: { session?: { header?: { cwd?: unknown } } } } | null
+  return typeof candidate?.agent?.session?.header?.cwd === 'string'
+    ? candidate.agent.session.header.cwd
+    : undefined
+}
 
 export interface Config {
   /** 状态根目录(动机画像、wish pool、延迟日志) */
@@ -1722,10 +1729,22 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
+      presentationMeta: (_args, value) => {
+        const r = value as { artifacts?: Array<{ path?: string }>; total?: number; truncated?: boolean }
+        const paths = Array.isArray(r.artifacts)
+          ? r.artifacts.map(a => String(a.path ?? '')).filter(Boolean)
+          : []
+        return {
+          shape: 'paths',
+          paths,
+          truncated: Boolean(r.truncated),
+          total: r.total ?? paths.length,
+        }
+      },
     },
-    async execute(args, _exec: unknown) {
+    async execute(args, exec: unknown) {
       const q = unwrapQuery<{ limit?: number }>(args, 'limit')
-      const r = await listArtifacts({ stateRoot: config.stateRoot ?? '.', limit: q.limit })
+      const r = await listArtifacts({ stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec), limit: q.limit })
       const lines = r.artifacts.map(a =>
         `- [${a.source}] ${a.title}${a.status ? `(${a.status})` : ''} — ${a.path}${a.updated ? ` @ ${a.updated.slice(0, 16).replace('T', ' ')}` : ''}`)
       const summary = r.artifacts.length
@@ -1733,21 +1752,23 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         : '无在册产物(异步深度规划交付与工作目录 md 文件都会出现在这里)'
       return JSON.parse(JSON.stringify({ ok: true, artifacts: r.artifacts, total: r.total, truncated: r.truncated, summary })) as Record<string, never>
     },
-    // dsh SearchPathsResultView(path list + truncated/total):让客户端 deliverables 路径列表
-    // 直接绑到工作区文件,UI 可点开任一路径走 gotry_artifacts_read(issue #285 的「会话里的
-    // 产物入口打开真实文件」接线点)。capable UI 渲染为可点击的 path 列表;无 search 卡能力
-    // 的 UI 走 fallback content(summary 文本),与本工具契约不冲突。
-    presentResult: (_args, value) => {
-      const r = value as { summary?: string; total?: number; truncated?: boolean; artifacts?: Array<{ path?: string }> }
-      const paths = Array.isArray(r.artifacts) ? r.artifacts.map(a => String(a.path ?? '')).filter(Boolean) : []
+    // Host presentationMeta is persisted with the ToolResult. The installed Web client
+    // does not key custom gotry_artifacts_* names to its native search card; Web preview
+    // is provided by the installed workspace/sidebar surface.
+    presentResult: (_args, result: ToolResult) => {
+      if (result.isError || typeof result.meta !== 'object' || result.meta === null || Array.isArray(result.meta)) return undefined
+      const meta = result.meta as { shape?: unknown; paths?: unknown; truncated?: unknown; total?: unknown }
+      if (meta.shape !== 'paths' || !Array.isArray(meta.paths) || !meta.paths.every(p => typeof p === 'string') ||
+          typeof meta.truncated !== 'boolean' || typeof meta.total !== 'number' || !Number.isInteger(meta.total) || meta.total < 0) {
+        return undefined
+      }
       return {
         card: 'search' as const,
         shape: 'paths' as const,
-        title: `产物:${r.total ?? paths.length} 项在册${r.truncated ? '(已截断)' : ''}`,
-        paths,
-        truncated: Boolean(r.truncated),
-        total: r.total ?? paths.length,
-        content: [{ type: 'text', text: String(r.summary ?? '') }],
+        title: `产物:${meta.total} 项在册${meta.truncated ? '(已截断)' : ''}`,
+        paths: meta.paths,
+        truncated: meta.truncated,
+        total: meta.total,
       }
     },
   }))
@@ -1768,25 +1789,35 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content ?? JSON.stringify(value).slice(0, 600)) }],
+      presentationMeta: (_args, value) => {
+        const r = value as { path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; source?: string }
+        return {
+          path: String(r.path ?? ''),
+          offset: r.offset ?? 1,
+          lines: Array.isArray(r.lines) ? r.lines.map(line => ({ number: line.number, text: line.text })) : [],
+          totalLines: r.totalLines ?? 0,
+          ...(r.lang ? { lang: r.lang } : {}),
+          ...(r.source ? { source: r.source } : {}),
+        }
+      },
     },
-    async execute(args, _exec) {
+    async execute(args, exec) {
       const q = args
       if (!q.path) throw new Error('gotry_artifacts_read requires path')
       if (!q.path) return JSON.parse(JSON.stringify({ ok: false, error: 'path 必填(来自 gotry_artifacts_list)' })) as Record<string, never>
-      const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', path: q.path, offset: q.offset, limit: q.limit })
+      const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec), path: q.path, offset: q.offset, limit: q.limit })
       if (!r.ok) return JSON.parse(JSON.stringify(r)) as Record<string, never>
       // 身份/来源展示(issue #285 第 1 条「显示身份/来源」):行号视图保留 read 卡的
       // path/offset/lines/totalLines/lang;fallback content 用 source label 前缀,
       // 让无法渲染 read 卡的 UI 也能区分「本会话选了哪个产物」,避免把旧摘要当新内容。
       return JSON.parse(JSON.stringify({
         ...r,
-        source: r.path.startsWith(config.stateRoot ?? '.') ? 'state-root' : 'cwd',
+        source: r.source,
         summary: `${r.path}(${r.totalLines} 行)第 ${r.offset}-${r.offset + r.lines.length - 1} 行${r.windowed ? `(共 ${r.totalLines} 行,可翻页)` : ''}`,
       })) as Record<string, never>
     },
-    // presentCall 的 locations 让 editor 视图在 call 阶段就能「跟随」到目标文件 —
-    // GenericCallView.locations:FileLocation[] 是 dsh 官方契约,UI 桥直接读 path+line
-    // 做 follow-along(issue #285 的「与所选产物对应」,call 阶段就锁住身份)。
+    // Keep the standard location payload for Host consumers. The Web client only
+    // renders its built-in keyed tools, so this is not claimed as native custom-card E2E.
     presentCall: args => ({
       card: 'generic',
       title: `读产物:${args.path ?? ''}`,
@@ -1794,26 +1825,33 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       rawInput: args,
       ...(args.path ? { locations: [{ path: String(args.path), line: 1 }] } : {}),
     }),
-    presentResult: (_args, value) => {
-      const r = value as unknown as { ok?: boolean; path?: string; source?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; content?: string; error?: string; summary?: string }
-      if (!r.ok) {
-        return { card: 'generic', title: '读产物失败', content: [{ type: 'text', text: String(r.error ?? '') }] }
+    presentResult: (_args, result: ToolResult) => {
+      if (result.isError || typeof result.meta !== 'object' || result.meta === null || Array.isArray(result.meta)) return undefined
+      const meta = result.meta as { path?: unknown; source?: unknown; offset?: unknown; lines?: unknown; totalLines?: unknown; lang?: unknown }
+      if (typeof meta.path !== 'string' || meta.path === '' || typeof meta.offset !== 'number' || !Number.isInteger(meta.offset) || meta.offset < 1 ||
+          !Array.isArray(meta.lines) || !meta.lines.every(line => typeof line === 'object' && line !== null && !Array.isArray(line) &&
+            typeof (line as { number?: unknown }).number === 'number' && Number.isInteger((line as { number: number }).number) &&
+            typeof (line as { text?: unknown }).text === 'string') ||
+          typeof meta.totalLines !== 'number' || !Number.isInteger(meta.totalLines) || meta.totalLines < 0) {
+        return undefined
       }
-      // dsh ReadResultView:UI 渲染为行号文件视图。content 数组第二项是行号内容,
-      // 第一项是 source label 身份行(同步/工作目录/账本),capable UI 仍按 path/offset/lines
-      // 渲染行号视图;无 read 卡能力的 UI 走 fallback content,首行就是「从哪个产物读」。
-      const identityLine = `source: ${r.source ?? 'unknown'} · path: ${r.path ?? ''} · ${r.totalLines ?? 0} lines`
+      const source = typeof meta.source === 'string' ? meta.source : 'unknown'
+      const identityLine = `source: ${source} · path: ${meta.path} · ${meta.totalLines} lines`
+      const rawContent = result.content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('\n')
       return {
         card: 'read' as const,
-        title: r.path?.split('/').pop() ?? r.path ?? '',
-        path: r.path ?? '',
-        offset: r.offset ?? 1,
-        lines: r.lines ?? [],
-        totalLines: r.totalLines ?? 0,
-        lang: r.lang,
+        title: meta.path.split('/').pop() ?? meta.path,
+        path: meta.path,
+        offset: meta.offset,
+        lines: meta.lines as Array<{ number: number; text: string }>,
+        totalLines: meta.totalLines,
+        ...(typeof meta.lang === 'string' ? { lang: meta.lang } : {}),
         content: [
           { type: 'text', text: identityLine },
-          { type: 'text', text: r.content ?? '' },
+          { type: 'text', text: rawContent },
         ],
       }
     },
@@ -1847,7 +1885,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args, _exec: unknown) {
+    async execute(args, exec: unknown) {
       const q = unwrapQuery<{ markdown?: string; path?: string; tripYear?: number; itinerary?: Record<string, unknown> }>(args, 'markdown')
       const avMap = await loadAirlineAirportMap()
       if (!avMap) {
@@ -1855,7 +1893,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       }
       let markdown = q.markdown
       if (!markdown && q.path) {
-        const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', path: q.path })
+        const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec), path: q.path })
         if (!r.ok) return JSON.parse(JSON.stringify({ ok: false, summary: `产物读取失败:${String((r as { error?: string }).error ?? '')}` })) as Record<string, never>
         markdown = r.content
       }

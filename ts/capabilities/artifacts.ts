@@ -13,7 +13,7 @@
  * 文本类(md/txt/json/jsonl/csv/log/yaml/yml)——本工具是「产物查看」,不是通用文件浏览器。
  */
 
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 
@@ -31,6 +31,7 @@ export interface ArtifactEntry {
 
 export interface ArtifactReadView {
   ok: true
+  source: 'state-root' | 'cwd'
   path: string
   offset: number
   lines: Array<{ number: number; text: string }>
@@ -100,6 +101,8 @@ async function listDeliverableFiles(root: string, limit: number): Promise<Artifa
     const p = join(dir, n)
     const st = await stat(p).catch(() => null)
     if (!st?.isFile()) continue
+    const canonical = await realpath(p).catch(() => null)
+    if (!canonical || !underRoot(canonical, root) || hasDeniedSegment(canonical)) continue
     entries.push({
       source: 'async-run',
       id: n.replace(/\.deliverable\.md$/, ''),
@@ -127,6 +130,8 @@ async function listCwdMarkdown(cwd: string, limit: number): Promise<ArtifactEntr
     const p = join(cwd, d.name)
     const st = await stat(p).catch(() => null)
     if (!st) continue
+    const canonical = await realpath(p).catch(() => null)
+    if (!canonical || !underRoot(canonical, cwd) || hasDeniedSegment(canonical)) continue
     entries.push({
       source: 'cwd-file',
       id: d.name,
@@ -147,10 +152,12 @@ export async function listArtifacts(opts: {
   const limit = Math.max(1, Math.min(opts.limit ?? 20, MAX_LIST))
   const root = rootOf(opts.stateRoot)
   const cwd = opts.cwd ? resolve(opts.cwd) : process.cwd()
+  const canonicalRoot = await realpath(root).catch(() => root)
+  const canonicalCwd = await realpath(cwd).catch(() => cwd)
 
   const seenPath = new Set<string>()
   const merged: ArtifactEntry[] = []
-  for (const e of [...listRunsFromLedger(root, 'local', limit), ...(await listDeliverableFiles(root, limit)), ...(await listCwdMarkdown(cwd, limit))]) {
+  for (const e of [...listRunsFromLedger(canonicalRoot, 'local', limit), ...(await listDeliverableFiles(canonicalRoot, limit)), ...(await listCwdMarkdown(canonicalCwd, limit))]) {
     if (seenPath.has(e.path)) continue
     seenPath.add(e.path)
     merged.push(e)
@@ -158,7 +165,7 @@ export async function listArtifacts(opts: {
   merged.sort((a, b) => String(b.updated ?? '').localeCompare(String(a.updated ?? '')))
 
   const total = merged.length
-  return { artifacts: merged.slice(0, limit), total, truncated: total > limit, roots: [root, cwd] }
+  return { artifacts: merged.slice(0, limit), total, truncated: total > limit, roots: [canonicalRoot, canonicalCwd] }
 }
 
 /**
@@ -177,6 +184,8 @@ export async function readArtifact(opts: {
 }): Promise<ArtifactReadView | { ok: false; error: string; hint?: string }> {
   const root = rootOf(opts.stateRoot)
   const cwd = opts.cwd ? resolve(opts.cwd) : process.cwd()
+  const canonicalRoot = await realpath(root).catch(() => root)
+  const canonicalCwd = await realpath(cwd).catch(() => cwd)
   const raw = String(opts.path ?? '').trim()
   if (!raw) return { ok: false, error: 'path 必填(来自 gotry_artifacts_list 的 path,或异步工单 id)' }
 
@@ -202,19 +211,28 @@ export async function readArtifact(opts: {
   // 2) 路径形态:目录白名单 + 扩展名白名单
   if (text === null) {
     const candidates = isAbsolute(raw) ? [resolve(raw)] : [resolve(cwd, raw), resolve(root, raw), resolve(root, 'gotry-state', 'async', raw)]
-    const allowed = candidates.find(p => (underRoot(p, cwd) || underRoot(p, root)) && !hasDeniedSegment(p))
+    const inScope = (p: string) => (underRoot(p, cwd) || underRoot(p, root)) && !hasDeniedSegment(p)
+    // Prefer an existing candidate so a cwd miss does not mask a valid state-root file.
+    const allowed = candidates.find(p => inScope(p) && existsSync(p)) ?? candidates.find(inScope)
     if (!allowed) {
       return { ok: false, error: `路径越界:${raw}`, hint: `只读 ${root} 与 dsh 工作目录内的文本产物` }
     }
-    const ext = allowed.slice(allowed.lastIndexOf('.') + 1).toLowerCase()
+    const canonical = await realpath(allowed).catch(() => null)
+    if (!canonical) {
+      return { ok: false, error: `文件不存在:${raw}`, hint: '先 gotry_artifacts_list 看在册产物' }
+    }
+    if (!(underRoot(canonical, canonicalCwd) || underRoot(canonical, canonicalRoot)) || hasDeniedSegment(canonical)) {
+      return { ok: false, error: `路径越界:${raw}`, hint: `只读 ${root} 与 dsh 工作目录内的文本产物` }
+    }
+    const ext = canonical.slice(canonical.lastIndexOf('.') + 1).toLowerCase()
     if (!TEXT_EXT_LANG[ext]) {
       return { ok: false, error: `不支持的文件类型 .${ext}`, hint: `白名单:${Object.keys(TEXT_EXT_LANG).join('/')}` }
     }
-    const st = await stat(allowed).catch(() => null)
+    const st = await stat(canonical).catch(() => null)
     if (!st?.isFile()) return { ok: false, error: `文件不存在:${raw}`, hint: '先 gotry_artifacts_list 看在册产物' }
     if (st.size > MAX_BYTES) return { ok: false, error: `文件过大(${st.size} bytes > ${MAX_BYTES})` }
-    filePath = allowed
-    text = await readFile(allowed, 'utf-8')
+    filePath = canonical
+    text = await readFile(canonical, 'utf-8')
   }
 
   const allLines = text.split('\n')
@@ -224,6 +242,7 @@ export async function readArtifact(opts: {
   const ext = filePath.slice(filePath.lastIndexOf('.') + 1).toLowerCase()
   return {
     ok: true,
+    source: underRoot(filePath, canonicalRoot) ? 'state-root' : 'cwd',
     path: filePath,
     offset,
     lines: slice.map((t, i) => ({ number: offset + i, text: t })),

@@ -126,23 +126,17 @@ const cwd = mkdtempSync(join(tmpdir(), 'gotry-artifacts-cap-cwd-'))
     // macOS 上 /etc/passwd 是符号链接到 /private/etc/passwd;symlink 自身仍 out-of-root
   }
   const r = await readArtifact({ stateRoot, cwd, path: 'symlink-out.md' })
-  // symlink 解析后命中白名单外文件 + 文本类扩展名;但 read 之前 hasDeniedSegment 不会拦
-  // (它拦的是路径段而非 resolve 后的真实路径);fs.readFile 应得 /etc/passwd 全文。
-  // 验收「越界不被当成可读」靠的不是 hasDeniedSegment,而是 isAbsolute 的 allowRoot 过滤。
-  // 这里路径是相对 cwd,resolve(cwd, 'symlink-out.md') 落在 cwd 内,允许通过。
-  // 因此断言不是 ok:false,而是 ok:true + 真实读到 /etc/passwd(行号视图应大且非 markdown)
-  assert.equal(r.ok, true, '相对路径 symlink 解析落 cwd 边界内')
-  if (r.ok) {
-    assert.equal(r.lang, 'markdown', '/etc/passwd 无扩展名 → TEXT_EXT_LANG 查不到 → lang 默认为 undefined?见 TEXT_EXT_LANG')
-  }
-  // 真正测越界:用绝对 symlink 指向 /etc,resolve 后越出 cwd/stateRoot
+  assert.equal(r.ok, false, '相对路径 symlink 解析后越出 cwd 必须被拒')
+  if (!r.ok) assert.ok(r.error.includes('越界'), `symlink 越界错误应含「越界」,实际 ${r.error}`)
+
+  // 绝对 symlink 指向目录也必须按 canonical target 做边界检查。
   const absLink = join(stateRoot, 'abs-link.md')
   try {
     symlinkSync('/etc', absLink)
     const r2 = await readArtifact({ stateRoot, cwd, path: absLink })
     assert.equal(r2.ok, false, '绝对 symlink 越界必须被拒')
     if (!r2.ok) {
-      assert.ok(r2.error.includes('越界') || r2.error.includes('不支持的文件类型'), `error 应含「越界」或「不支持的文件类型」,实际 ${r2.error}`)
+      assert.ok(r2.error.includes('越界'), `error 应含「越界」,实际 ${r2.error}`)
     }
   } catch { /* 非 POSIX fs 跳过 */ }
   console.log('7) symlink 越界 OK')

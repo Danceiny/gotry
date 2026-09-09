@@ -79,7 +79,7 @@ npx tsx scripts/state-cli.ts forget --state-root <root> wish <wish_id>
 
 **想看生成的文件(行程 md、工单交付)不用去翻目录**,两条路:
 
-1. 对话里直接说「看看我生成的行程 / 打开上次的规划」——GoTry 会用 `gotry_artifacts_list` 列出在册产物(dsh 侧栏直接把路径列表绑到工作区文件,点开任一条走 read),再用 `gotry_artifacts_read` 以**带行号的文件视图**打开(只读,支持翻页;**首行会显示「source + 完整 path」**,避免把旧摘要当新内容)。可读范围 = 你的 gotry stateRoot + dsh 工作目录(排除 `node_modules`/`.git`);**只读文本类**(`md/txt/json/jsonl/csv/log/yaml/yml`),超过 2 MB、跨出允许目录、扩展名不在白名单、或路径是符号链接越界——都会返回带 `hint` 的 `ok: false`(例如「路径越界」「不支持的文件类型 .db」「文件过大」),不会变成任意本地文件暴露入口;
+1. 对话里直接说「看看我生成的行程 / 打开上次的规划」——GoTry 会用 `gotry_artifacts_list` 列出在册产物，再用 `gotry_artifacts_read` 以**带行号的文件视图**读取(只读,支持翻页;**首行会显示「source + 完整 path」**,避免把旧摘要当新内容)。Host 会持久化 `presentationMeta`；当前安装的 DSH Web client 不会把自定义 `gotry_artifacts_*` 名称映射成内建 search/read 卡，实际文件预览走已安装的 workspace/sidebar 文件树。可读范围 = 你的 gotry stateRoot + **会话工作目录**(排除 `node_modules`/`.git`);**只读文本类**(`md/txt/json/jsonl/csv/log/yaml/yml`),超过 2 MB、跨出允许目录、扩展名不在白名单、或路径是符号链接越界——都会返回带 `hint` 的 `ok: false`;
 2. **dsh web 侧栏工作台**(dsh-better-sidebar,dsh-market 第一 UI 组件):`gotry web` 页面右侧展开工作台,文件树里点开工作区里的行程 md/工单交付,即见产品级渲染(表格/图表/PDF 都支持)。装法:`npx @danceiny/gotry doctor --fix`(体检报告 `gotry-state/doctor-report.md` 也在这个工作台里预览);未装也不影响路 1。
 
 ## 进阶:headless 一问一答
