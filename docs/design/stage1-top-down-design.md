@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-10 起,#270 按 `../ops/external-pr-workflow.md` §0 统一公开 issue 启动→Draft PR→exact-head review→merge/destination 回执,并让 `../architecture.md` §10.1 活跃债务指向公开 tracker/触发器;founder 授权的仓内 Claude lane 不受外部机器人 T0/T1 否决,但仍过正常评审。本地/fixture 证明不改变 #20/#22/#136/#137 的真实 gate。
 - 2026-09-09 起,#283 酒店日期闸复用共享 `parseAbsoluteDate` 的真实日历校验,并在酒店消费边界拒缺失日期、溢出和错误顺序；失败不 dispatch 并返回 `input_required`。权威说明见 `docs/architecture.md` §1.2/§10 D-36 与 issue #283；该隔离工程证据不构成真实供应商准入。
 - 2026-09-09 起,#290 公开契约兼容:persona 经 `personaPrefix` / `personaSuffix` 投射(legacy `persona:` 不投影);桥 handler 结构性归类(`timed_out` / `spawn_failed` / `runner_failed`);详见 `docs/architecture.md` §9。不宣称 release/publication、M5/M6 entry、Windows 执行或真实 supplier/HotelByte 准入。
 - 2026-09-09 起,#271 Phase A 进程事故观察：GoTry-owned `uncaughtExceptionMonitor` 按 origin 写 durable incidents JSONL，宿主保持 fatal handler/退出裁决；native Node24 ESM dist 反例覆盖 writer fsync/close、monitor/no-monitor、host handler 与结构化工具失败。child close/spawn error、SIGINT、后代进程和上游 dsh supervisor 仍为开放 TODO。

@@ -51,9 +51,9 @@ founder 控制的同一扩展,桥侧白名单双收;端口池(8791-8795)与 host
 
 1. ~~Chrome Web Store 开发者注册(一次性 $5,Google 账号)。~~
 2. ~~`node scripts/package-extension.mjs` 产 store zip;准备 128×128 图标与 1280×800 截图(商店后台单独上传)。~~
-3. ~~新建 item → 上传 zip → 粘贴上文文案/权限理由/隐私披露 → 隐私政策 URL 指向 `docs/extension-privacy.md` 的 GitHub 链接。~~
+3. ~~新建 item → 上传 zip → 粘贴上文文案/权限理由/隐私披露 → 隐私政策 URL 指向仓库隐私文档。~~ 当前读者入口为 [extension-privacy.md](extension-privacy.md);此路径修正不表示商店后台 URL 已更新。
 4. ~~提交审核~~ → 过审发布(v0.1.0)。
-5. 过审后落地:桥 Origin 白名单双通道同信(已落,`EXTENSION_ORIGINS` + §38);wizard/README 文案商店优先(已落);「已装商店版自动跳过 dev-mode 三步」的 wizard 检测仍后置(D-24 残余)。GitHub Releases 通道(A 轨)保留为免审核/版本化/回滚/镜像通道。
+5. 过审后落地:桥 Origin 白名单双通道同信(已落,`EXTENSION_ORIGINS` + §38);Node 侧保留 extension 文件/`manifest.key` 预检,`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时以 `installUrl`/`installAction` 交 dsh UI,旧 wizard 不再承担安装职责。GitHub Releases 通道(A 轨)保留为免审核/版本化/回滚/镜像通道。
 
 ## 后续发版(商店通道)
 

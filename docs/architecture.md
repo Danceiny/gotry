@@ -14,6 +14,7 @@
 - 状态基座:单文件 SQLite 账本(ADR-15),本地+Web 一套账本语义(ADR-16);`tenant_id` 贯穿 append/read/fold/rebuild,旧 local 历史不猜租户;外部依赖全走效应解译器(ADR-18)。
 - 外部 benchmark:Round 1–10 frozen treatment 与 Round 11 wire 切片均不产生可归因 official score/uplift,Round 12 结构半场(config v4 closed body schema)已合入而冻结重跑未跑(D-28);逐轮事实见 §9,工程合同见 `evaluation/benchmark-environment-bridge.md`。
 - **#290 兼容注(2026-09-09)**:目标 `dsh-system-prompt` Config 公开 `personaPrefix` / `personaSuffix`,legacy `persona:` 不投影;桥 handler 结构性归类错误:`timed_out` 是 deadline 中止,`spawn_failed` 是同步 spawn 或 rejected 公开 `done`,`runner_failed` 是 resolved 非零退出或 resolved 之后读取 collected output 失败。详见 §9 #290 条目。不宣称 release/publication、M5/M6 entry、Windows 执行或真实 supplier/HotelByte 准入。
+- **公开交付台账(#270)**:所有执行 lane 以 issue 启动、Draft PR、exact-head review、merge/destination 回执留档;founder 授权的仓内 Claude Code/worktree 不适用外部机器人 T0/T1 一票否决,但仍过正常 review 与证据闸。公开合同见 `ops/external-pr-workflow.md` §0;本地/fixture 证明不改变 #20/#22/#136/#137 的真实 gate。
 - 找活干去 §10.1;时间线归 `roadmap.md`;文档组织规范归 `README.md`。
 
 **目录**
@@ -108,7 +109,7 @@ M3 最小可用产品,分发链路无已知堵点。
 
 ### 1.7 里程碑口径(Issue #19)
 
-M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20/#223/#238 scorer 已在 main 落地并加严,#228/#248 显式 opt-in planning lifecycle collector 也已在 main,但 collector 只产生隔离 candidate/synthetic 导出,不得替代真实 `observed_private` N≥5 repeat cohort + source-review attestation;issue #225 把 M4→M6 拆成 living 任务图,并记录 ledger/state-cli/Z3/map 基础修复已在 main(#229/#237/#243/#244/#245)。M5 首供应链已选 `hotelbyte-cli`(仅只读调查与契约准备,不代表供应链协议已签)。**这些计划/设计/candidate 导出不构成 M3/M4/M5/M6 Exit 证明**。M5/M6 仅在各自 Entry gate 满足后启动。
+M3 工程与分发面已就绪,**但真实种子用户 evidence 未收口,M3 Exit 仍开放**。M4 由 founder 授权并行推进,Issue #20/#223/#238 scorer 已在 main 落地并加严,#228/#248 显式 opt-in planning lifecycle collector 也已在 main,但 collector 只产生隔离 candidate/synthetic 导出,不得替代真实 `observed_private` N≥5 repeat cohort + source-review attestation;issue #225 把 M4→M6 拆成 living 任务图,并记录 ledger/state-cli/Z3/map 基础修复已在 main(#229/#237/#243/#244/#245)。M5 首供应链已选 `hotelbyte-cli`(仅只读调查与契约准备,不代表供应链协议已签)。**这些计划/设计/candidate 导出不构成 M3/M4/M5/M6 Exit 证明**。准入前仅可推进 #136/#137 明确授权的设计、只读调查、fixture 与 failing-before;交易运行时、供应商写入和真实 B2B 路径仅在各自 Entry gate 满足后启动。
 
 证据面现状:`ts/scripts/product-metrics.ts`(M3 cohort)与 `ts/scripts/memory-value-report.ts`(M4 价值)固化了样本窗/纳排/分母/归因与阈值,输入只接受 HMAC-SHA256 假名键且未知字段 fail-closed;synthetic fixture **永不产生 business pass**。`ts/scripts/memory-lifecycle.ts` 只把显式 consent/stateRoot/HMAC 下的首访/回访 lifecycle 事件导出为 #223 scorer 输入,并保持 candidate/synthetic source_review,绝不制造 manual attestation。M4 observed-private 另需 `memory_value_source_review.v1` 人工 source-review attestation 合同,并以 `reviewed_summary_digest_sha256` 绑定本次评分 payload;缺少或 digest 不匹配时只可作为 candidate,不得把 `evidence_kind` 或 HMAC 字符串形状当 provenance。真实证据只进入被忽略的 `ts/gotry-state/evidence/`。
 
@@ -367,6 +368,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **Issue #67 登录态真跑与桥退出语义(2026-08-30)**:连续两轮 static official 均 8/8 命中且零 fallback;session hit 数从 3/8 波动到 5/8,全部可评分 hit(3+5 条)均 13/13=100%,非 hit 必须显式披露且不进软评分分母。真扩展在线场景触发的 CLI 不退出已以默认桥 parked timer/socket `unref` 修复;`keepBridge` wizard 轨通过 §40,§38 增子进程回归。
 - **M4 Issue #20/#223/#238/#228 价值证据切片(2026-08-29;2026-09-08 scorer 加固与 collector)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。#223/#238 追加逐层 exact schema、HMAC-SHA256 假名键、N=5/中位降幅=0.5 阈值冻结(raw ratio 比较,报告才 round)、source-review attestation 与 `reviewed_summary_digest_sha256` 绑定。#228/#248 追加显式 opt-in lifecycle collector:stateRoot/consent/HMAC 必需、dataset key verifier 与 source/wait 冻结、写前完整投影校验、write-all + 原子发布 + 叶子/父目录 realpath 隔离,导出只给 candidate/synthetic source_review。合成数据明确不可关闭 M4,observed-private 缺人工核验合同或 digest 不匹配时也只可作为 candidate。下一阶段仍等待真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
 - **M4→M6 program 任务图(2026-09-08,issue #225)**:`docs/design/milestone-delivery-plan.md` 将已入 main 的 M4 scorer(#238)、explicit opt-in planning lifecycle collector(#248)、ledger tenant/fold/migration(#229/#237)、state-cli(#243)、Z3 生命周期(#244)与 map tools(#245)同仍 TODO 的真实 N≥5 repeat cohort、M5 首供应链 `hotelbyte-cli` 协议核验 + WriteGate、M6 P6 评审+试点条件拆成 owner/责任文件/依赖/E2E/否证/退出标准;`docs/design/write-gate-production-design.md` 仅作 M5 proposal,覆盖 request fingerprint/receipt/一次确认/崩溃恢复/HotelByte unknown 对账/补偿/佣金披露。该批不改 runtime,不启封交易或 B2B 实现,不改变 Exit。
+- **M4→M6 公开交付台账(2026-09-10,issue #270)**:issue 启动记录范围/base/执行路由与闸,Draft PR 公布 exact head/漂移/本地证据/TODO,review 绑定 head,merge 记录方法/merge SHA/destination;founder 授权的仓内 Claude lane 免外部机器人 T0/T1 否决但不免正常评审。债务 owner/trigger 见 §10,本地与 fixture 证据不替代 #20/#22/#136/#137 的真实准入。
 - **已知限制清算第一刀(2026-08-29,founder 指令「解决这些 known limitations」)**:
   - **Z3 WASM 生命周期复修(#227,2026-09-08)**:08-29 的单例+互斥仍留下两条 Node24 间歇面——`getZ3` 冷启动 Promise 在 await 后写缓存会并发创建多个 Context；`z3-solver@5.2.0` high-level `FinalizationRegistry` cleanup 直接触发 low-level native `dec_ref`/`*_dec_ref`,不经过 `withZ3`。本轮修复为:Promise 先缓存、启用 `enable_concurrent_dec_ref` fail-closed、局部包装 low-level cleanup 与 actual async native call,仅在活跃 session/native check 时排队 cleanup 并在 idle 后同步 drain；fatal WASM/heap 错误先 poison 并拒绝后续求解。反证覆盖:全局 `FinalizationRegistry` identity 不变、返回的 live Model/Ast 跨 session 仍可用、独立并发请求排队不误判 nested、in-flight native barrier 先进入后才允许 settle。run-all §30/§30b/§30c。
   - **薄壳遗留**(`shell/` 目录)物理删除,dsh web 确认为唯一产品面。
@@ -434,22 +436,19 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 ### 10.1 未清偿(工作面)
 
-| # | 债务 | 状态 / 赎回时机 |
-|---|---|---|
-| [D-NEW] dsh 进程保活缺失 | 见下方「[D-NEW] dsh 进程保活缺失」 |
-| D-9 节日锚点表硬编码 | **2026-08-28 扩表清偿**:SPRING_FESTIVAL 覆盖 2026-2031(2029-02-13/2030-02-03/2031-01-23),time-eval §1b 回归闸(2030 锚点断言 2031 春节)。**跨 2031 前必须再扩表**,否则春节锚点静默缺失 |
-| D-12 loopx RFC 映射升级四接缝 | **已全部落地(RFC accepted 2026-08-27)**:S1 tool-packet envelope(ADR-13);S2+S3 记忆效用 sidecar + wish 触达 0..1(ADR-14);S4 WriteGate L0-L4 渐进授权词汇进 roadmap M5 交付物(2026-08-28);多用户 AaaS 方向见 RFC §6.5 远期采纳面 |
-| D-13 会话适配器维护面(RFC user-session-data-rfc) | 见下方「D-13 会话适配器维护面」 |
-| D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态) | 见下方「D-24 会话扩展 onboarding UX 缺口」 |
-| D-15 账本触发式后置面(ADR-15 TS-5) | Litestream 云备份 / cr-sqlite 多写者复制 / RFC(loopx) §6.5 claim-fence-receipt 多用户实装——仅在触发器出现时启动:第二真实用户 / 多机部署 / AaaS 立项 |
-| D-16 上游 dsh 发布面断裂 | 见下方「D-16 上游 dsh 发布面断裂」 |
-| D-18 M3 Exit 真实 cohort 证据缺口 | 见下方「D-18 M3 Exit 真实 cohort 证据缺口」 |
-| D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地并于 2026-09-08 #223/#228 加固**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit;阈值冻结为 N≥5 与 median reduction ≥0.5(raw ratio 比较,报告才 round),逐层 exact schema 与 HMAC-SHA256 假名键 fail-closed,observed-private 还需 `memory_value_source_review.v1` 人工 source-review attestation 合同和匹配本次 summary 的 `reviewed_summary_digest_sha256`。#228 collector 只提供显式同意、隔离 stateRoot 的首访/回访 lifecycle 采集与 candidate/synthetic 脱敏导出,不提升 source_review。赎回条件=私有 `observed_private` cohort 达 N≥5、source-review attestation 合同与 summary digest 绑定并产出脱敏 summary;无真实样本、缺人工核验或 digest 不匹配时保持 candidate/waiting/backoff/no-spend,不扩 schema 假装进展。 |
-| D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`design/booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径 |
-| D-26 事实闸覆盖面缺口(ADR-19) | **部分收口**:酒店 claim 已入闸(2026-09-04,issue #118,HotelFact 第三形态+渲染原语锚点回溯);政策事实生产端 v1 已落(2026-09-05,issue #141,C 档领事服务网 cs.mfa.gov.cn → PolicyFact 落账,Timatic/Sherpa° 后议)。残余:反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审 | `ts/src/artifact-gate.ts`;run-all §39 |
-| D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」 |
-| D-29 Booking Copilot 真实库存产品验收 | typed read-action/BFF/task ledger 与可复现 Linux 产物只证明工程边界;#282 另以注入 runPort proof 固定 planner 纠偏与三次预算,仍不证明供应商库存、不可订恢复或 Checkout/订单状态业务效果 | **open**:冻结三仓 exact SHA 后,在 tenant/customer/storefront/payment-link 四 surface 跑真实库存;至少一条 unavailable/changed 报价必须经重新搜索、新 CheckAvail、原 Checkout 恢复;Book 仍仅由 Checkout 授权,并以 QueryOrders/清理证据收口 |
-| D-33 M4→M6 program 证据采集与 gate 闭合缺口 | issue #225 已把任务图落入 `docs/design/milestone-delivery-plan.md`;M4 scorer(#238)、显式 opt-in collector(#248)、tenant ledger/CLI 与 Z3/map 稳定性基座均已入 main,#227/#241/#242 已关闭。真实缺口仍是:① M3 50–200 人 cohort 与 M4 `observed_private` N≥5 repeat cohort/reflux baseline;② M5 首供应链 `hotelbyte-cli` 的协议/Buyer/路由/对账/UAT 签署或内部授权证据;③ P6 founder 明确批准与真实试点签约;④ Entry 后实现 #231/#232/#233/#234/#235。M5 proposal 见 `docs/design/write-gate-production-design.md`;未满足前不启封交易/B2B 实现。 |
+| 债务 | 状态 / 赎回时机 |
+|---|---|
+| [D-NEW] dsh 进程保活缺失 | 见下方「[D-NEW] dsh 进程保活缺失」(公开追踪 = [#271](https://github.com/Danceiny/gotry/issues/271)) |
+| D-9 节日锚点表硬编码 | **2026-08-28 扩表清偿**:SPRING_FESTIVAL 覆盖 2026-2031(2029-02-13/2030-02-03/2031-01-23),time-eval §1b 回归闸(2030 锚点断言 2031 春节)。**跨 2031 前必须再扩表**,否则春节锚点静默缺失(公开追踪 = [#274](https://github.com/Danceiny/gotry/issues/274)) |
+| D-13 会话适配器维护面(RFC user-session-data-rfc) | 见下方「D-13 会话适配器维护面」(公开追踪 = [#272](https://github.com/Danceiny/gotry/issues/272)) |
+| D-15 账本触发式后置面(ADR-15 TS-5) | Litestream 云备份 / cr-sqlite 多写者复制 / RFC(loopx) §6.5 claim-fence-receipt 多用户实装——仅在触发器出现时启动:第二真实用户 / 多机部署 / AaaS 立项(公开追踪 = [#275](https://github.com/Danceiny/gotry/issues/275)) |
+| D-18 M3 Exit 真实 cohort 证据缺口 | 见下方「D-18 M3 Exit 真实 cohort 证据缺口」(公开追踪 = [#22](https://github.com/Danceiny/gotry/issues/22)) |
+| D-19 M4 真实 repeat cohort 缺口 | **证据合同已落地并于 2026-09-08 #223/#228 加固**:Issue #20 fixture scorer 固定 paired/active-planning/reflux/溯源/P4 口径,synthetic fixture 不得充当 Exit;阈值冻结为 N≥5 与 median reduction ≥0.5(raw ratio 比较,报告才 round),逐层 exact schema 与 HMAC-SHA256 假名键 fail-closed,observed-private 还需 `memory_value_source_review.v1` 人工 source-review attestation 合同和匹配本次 summary 的 `reviewed_summary_digest_sha256`。#228 collector 只提供显式同意、隔离 stateRoot 的首访/回访 lifecycle 采集与 candidate/synthetic 脱敏导出,不提升 source_review。赎回条件=私有 `observed_private` cohort 达 N≥5、source-review attestation 合同与 summary digest 绑定并产出脱敏 summary;无真实样本、缺人工核验或 digest 不匹配时保持 candidate/waiting/backoff/no-spend,不扩 schema 假装进展。(公开追踪 = [#20](https://github.com/Danceiny/gotry/issues/20)) |
+| D-22 pending_writes 空 receipt 无物理 CHECK(booking_saga_fsm.v1 已知边界) | 词汇层审计链已兜住(`sagaTraceViolations` 对空 receipt 报违例,run-all §36);**赎回时机 = M5 Entry 拍板**:pending_writes 随 schema 升版加 `receipt 非空 CHECK` + 具名 seam 词汇冻结(`design/booking-saga-fsm.md` §4),未到 M5 Entry 不动写路径(M5 Entry 由 [#136](https://github.com/Danceiny/gotry/issues/136) 治理;successor = [#231](https://github.com/Danceiny/gotry/issues/231)) |
+| D-26 事实闸覆盖面缺口(ADR-19) | **部分收口**:酒店 claim 已入闸(2026-09-04,issue #118,HotelFact 第三形态+渲染原语锚点回溯);政策事实生产端 v1 已落(2026-09-05,issue #141,C 档领事服务网 cs.mfa.gov.cn → PolicyFact 落账,Timatic/Sherpa° 后议)。残余:反向抽取为正则启发式,不保证 100% claim 召回,根治方向=产物只由渲染原语单向生成;M5 WriteGate 接线预订类写工具时复审。代码依据:`ts/src/artifact-gate.ts`;run-all §39。(公开追踪 = [#273](https://github.com/Danceiny/gotry/issues/273)) |
+| D-28 外部 benchmark 驱动的 Agent 泛化证据缺口 | 见下方「D-28 外部 benchmark 驱动的 Agent 泛化证据缺口」(公开追踪 = [#203](https://github.com/Danceiny/gotry/issues/203)) |
+| D-29 Booking Copilot 真实库存产品验收 | typed read-action/BFF/task ledger 与可复现 Linux 产物只证明工程边界;#282 另以注入 runPort proof 固定 planner 纠偏与三次预算,仍不证明供应商库存、不可订恢复或 Checkout/订单状态业务效果。**open**:冻结三仓 exact SHA 后,在 tenant/customer/storefront/payment-link 四 surface 跑真实库存;至少一条 unavailable/changed 报价必须经重新搜索、新 CheckAvail、原 Checkout 恢复;Book 仍仅由 Checkout 授权,并以 QueryOrders/清理证据收口(公开追踪 = [#142](https://github.com/Danceiny/gotry/issues/142)) |
+| D-33 M4→M6 program 证据采集与 gate 闭合缺口 | issue [#225](https://github.com/Danceiny/gotry/issues/225) 已把任务图落入 `docs/design/milestone-delivery-plan.md`;M4 scorer(#238)、显式 opt-in collector(#248)、tenant ledger/CLI 与 Z3/map 稳定性基座均已入 main,#227/#241/#242 已关闭。真实缺口仍是:① M3 50–200 人 cohort 与 M4 `observed_private` N≥5 repeat cohort/reflux baseline;② M5 首供应链 `hotelbyte-cli` 的协议/Buyer/路由/对账/UAT 签署或内部授权证据;③ P6 founder 明确批准与真实试点签约;④ 后继按各 issue 的准入范围执行:[#136](https://github.com/Danceiny/gotry/issues/136)/[#137](https://github.com/Danceiny/gotry/issues/137) 明确授权的设计、只读调查、fixture 与 failing-before 可在 Entry 前推进,交易运行时、供应商写入与真实 B2B 路径须相应 Entry。M5 proposal 见 `docs/design/write-gate-production-design.md`;未满足前不启封交易/B2B 实现。(治理追踪 = [#270](https://github.com/Danceiny/gotry/issues/270);真 gate = [#20](https://github.com/Danceiny/gotry/issues/20)/[#22](https://github.com/Danceiny/gotry/issues/22)/[#136](https://github.com/Danceiny/gotry/issues/136)/[#137](https://github.com/Danceiny/gotry/issues/137);successors = [#231](https://github.com/Danceiny/gotry/issues/231)/[#232](https://github.com/Danceiny/gotry/issues/232)/[#233](https://github.com/Danceiny/gotry/issues/233)/[#234](https://github.com/Danceiny/gotry/issues/234)/[#235](https://github.com/Danceiny/gotry/issues/235)) |
 
 **[D-NEW] dsh 进程保活缺失**
 
@@ -462,17 +461,6 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 - **部分清偿 2026-08-30**:action-cache + 金标准输入 + #21 字段 fixture scorer/双源 shape gate 已落;传输层定案扩展桥(§38 防漂移测试把 Node 常量与扩展代码锁死);Issue #67 增加 `--golden=static` 离线 comparator(OpenFlights 固定 route/carrier + manual 时刻/价格带,requested/effective/provenance/fallback 可审计,§44),但它不是实时可售性来源、也不降低携程 batchSearch 改版风险;真实 sf-01..08 会话证据仍依赖用户扩展连接,站点断时按既有渠道显式降级。
 - **部分清偿 2026-09-03(12306 第一方校准)**:rail-12306 适配器不再等「首个真会话后校准」——电报码表逐条核对自官方 `station_name.js` 全量站表(32 城起步集→129 城,曾借此纠出南宁 NIZ→NNZ 错码),座位桶索引与站名映射取自官方前端 `queryLeftTicket_end_js.js` 的 cN(result,map) 转换函数(旧公开常识索引与官方现行映射不符,首查前即纠);`data/stations-12306-verify.json` 快照 + session-tests L 段防漂移断言锁死,携程侧接口面校准仍待真会话。
-
-**D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态)**
-
-- **部分清偿 2026-08-30(founder 实测)**:实证「能装≠装到能用」,降到 **3 次点击 + 0 次终端命令**(5 步 wizard + 剪贴板 + GUI 面板 + health-watch 自动重放);`ts/capabilities/session/{wizard,health-watch}.ts` + `ts/scripts/health-watch-cli.ts` + bootstrap `wizard` 子命令 + run-all §40。
-- **2026-09-02 商店上架 + 职责返交**:wizard 撤销 5 步形态,`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时返回 `verdict.installUrl`,dsh UI 直接渲可点链接——用户侧进一步降到 1 次点击(Chrome 商店「添加至 Chrome」)+ dsh 自动 retry,gotry CLI 完全不介入。
-
-**D-16 上游 dsh 发布面断裂(Round 5 工程面已清偿)**
-
-- **已验证解法②并落地 2026-08-28(记忆域 lane)**:D-16 前提有误——npmjs 上 dsh-scope **有完整 0.1.x**(0.1.1-rc.2 在列;lane 查的是滞后的内部 bnpm 镜像)。根 dependencies 已显式钉 `dsh-scope@0.1.1-rc.2`,干净安装实测:ERESOLVE 仅降级为 warning、ledger/index/dsh-tools 全部 import OK、五导出齐。rc.10 已发布(founder 确认制下 agent 执行:web 登录 + 浏览器二次验证,恢复码被 npm 拒收改用 web OTP 通道)。
-- **2026-08-29 增补**:dsh 家族 0.1.2-alpha.1 未发 npm 时,以 `ts/dsh-runtime/vendor/` 全量源码 tarball 暂时解除 repo 工作副本堵点。
-- **Round 5 清偿**:root manifest、package-lock 与 root pnpm importer 把公开 npm `0.1.2-alpha.3` closure 的 216 个 `@deepseek-ai/dsh*` 包全部声明为精确直接依赖,publish preverify 永久拒绝名称集合漂移、漏钉、混版与 range;source/package runtime root-first 解析。source 普通运行保留 `ts/dsh-runtime/` cwd 与状态连续性,package/benchmark 使用调用目录隔离。legacy alpha.1 vendor 不再承载 benchmark 或推荐源码安装路径,只保留解析兼容且不承诺可运行。发布 GoTry 新版本仍受 founder 确认制与独立发布闸约束,本轮不发布。
 
 **D-18 M3 Exit 真实 cohort 证据缺口**
 
@@ -504,9 +492,12 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | D-23 效应解译器迁移未完成(ADR-18) | **已清偿 2026-09-04(issue #115)**:六渠道入效应注册表,23 工具外部依赖面全收敛 effect_interpreter.v1(没有策略表行就没有效应);effect-tests §12 四组断言 |
 | D-27 vendored 仓内形态 Node 兼容窗口断裂 | **已清偿 2026-09-04(issue #120)**:`selectDshRuntime` 删除 legacy vendored 回退,dsh 解析只认 root manifest/依赖闭包,找不到即 fail-closed 指重装;`DshRuntime.source` 收敛 `'root'`;§48 e2e 断言改为「非 benchmark 也不再回退 vendored」。残余 `ts/dsh-runtime/vendor/` 目录属锁一致性面,另行处置 |
 | D-32 state-cli 租户参数串位与未隔离命令扩面 | **已清偿 2026-09-08(issue #226/#241)**:集中 parser 剥离 flag 值,拒绝未知/重复/缺值/非法 numeric(含 `.5`/`+.5`);`tick`/`export`/`whatif` 对非 local 在 mkdir/openDb/solve/write 前 fail-closed;跨进程 §29 覆盖零目录创建、root hash 不变、合法顺序等价与 tenant scope 读面。#241/#243 已入 main并关闭 |
-| D-26 扩展在线时默认桥钉住 CLI | 已清偿,详见下方 |
+| D-26-bridge 扩展在线时默认桥钉住 CLI(历史归档别称,详见下方) | 已清偿,详见下方 |
 | D-25 扩展商店上架(ADR-21 分发 B 轨) | 已清偿,详见下方 |
-| D-14 playwright-core 分发面(RFC) | **基本清偿 2026-08-30**:传输主载改自研扩展桥(零新依赖,node:http);puppeteer-core 降为 cdp 显式后备车道的可选依赖(动态导入+缺包优雅降级);`extension/` 进 npm files 白名单,`gotry setup` 负责落位与加载指引。**残余**:D-16 上游发布面断裂修复前,session 面在 npm 干净安装下的端到端实测未完成 |
+| D-14 playwright-core 分发面(RFC) | **基本清偿 2026-08-30**:传输主载改自研扩展桥(零新依赖,node:http);puppeteer-core 降为 cdp 显式后备车道的可选依赖(动态导入+缺包优雅降级);`extension/` 进 npm files 白名单,`gotry setup` 负责落位与加载指引。**残余**:D-16 上游发布面断裂修复前,session 面在 npm 干净安装下的端到端实测未完成(残余追踪 = #272) |
+| D-12 loopx RFC 映射升级四接缝 | **已全部落地(RFC accepted 2026-08-27)**:S1 tool-packet envelope(ADR-13);S2+S3 记忆效用 sidecar + wish 触达 0..1(ADR-14);S4 WriteGate L0-L4 渐进授权词汇进 roadmap M5 交付物(2026-08-28);多用户 AaaS 方向见 RFC §6.5 远期采纳面 |
+| D-16 上游 dsh 发布面断裂 | 见下方「D-16 上游 dsh 发布面断裂」 |
+| D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态) | 见下方「D-24 会话扩展 onboarding UX 缺口」 |
 | D-17 Z3 WASM race(README Known limitation) | 已清偿,详见下方 |
 | D-20 六状态面里程碑口径漂移 | **已清偿 2026-08-29(Issue #19)**:六状态面统一为「M3 真实 evidence 未收口;M4 为 founder 授权并行,不是 M3 Exit 证明;M5/M6 仅受各自 Entry gate 开闸」。后续不得把工程交付、发布或并行切片等同于里程碑退出证据。 |
 | D-21 async 非 4/4 被误结算为成功 | 已清偿,详见下方 |
@@ -514,6 +505,17 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | D-34 可选能力 onboarding 缺口(#258/#267) | **已清偿 2026-09-09(#258;#267 = #266 合并后的 post-merge 加固)**:交互式 `gotry web` 启动前无可选能力配置面;现由 per-launch onboarding 复用 `doctor --fix` 幂等安装器。#267 补齐 awaited POSIX onboarding process group、bootstrap installer bounded process group、outer grace > installer TERM+SIGKILL budget、0700/0600-wx result 通道与 §21c/§21f/§21g stubborn installer 信号/timeout fixture。M4 UX 质量线,不计入 #20 Exit。详见 §9 |
 | D-35 Node 26 dist 构建 API 移除 | **已清偿 2026-09-09(issue #265)**:移除 Node 已删除的 `stripTypeScriptTypes(...,{mode:'transform'})` 路径,改由根 manifest + npm/pnpm 双锁精确固定 TypeScript 5.9.3 并显式产出 ESM。Node 22/24 保留 typecheck + 全栈 CI,另以 Node 22/24/26 focused matrix 验证 exact source→dist、资产字节、无相对 `.ts`/CommonJS wrapper、入口与关键动态 import；Node 24 独立 pnpm frozen-lock job 防直接依赖的 `.pnpm` 解析布局回归。clean-archive release builder 先在隔离 source 内严格 `npm ci --include=dev`,再从提交锁派生剥除 build-only TypeScript entry 的最终 runtime manifest/lock 并严格 `npm ci --omit=dev`;builder proof 拒绝 TypeScript 出现在 runtime package/deps/manifest。该 M4 工程质量证据不关闭 #20/#136/#137 的真实 gate。 |
 | D-36 酒店日期闸缺位(hotel-date-gate) | **已清偿 2026-09-09(issue #283)**:实现与边界详见 §1.2;共享 `parseAbsoluteDate` 拒非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`,有效日期与静态降级兼容。隔离 fixture 证据不构成真实供应商准入。 |
+
+**D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态)**
+
+- **部分清偿 2026-08-30(founder 实测)**:实证「能装≠装到能用」,降到 **3 次点击 + 0 次终端命令**(5 步 wizard + 剪贴板 + GUI 面板 + health-watch 自动重放);`ts/capabilities/session/{wizard,health-watch}.ts` + `ts/scripts/health-watch-cli.ts` + bootstrap `wizard` 子命令 + run-all §40。
+- **2026-09-02 商店上架 + 职责返交**:wizard 撤销 5 步形态,`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时返回 `verdict.installUrl`,dsh UI 直接渲可点链接——用户侧进一步降到 1 次点击(Chrome 商店「添加至 Chrome」)+ dsh 自动 retry,gotry CLI 完全不介入。
+
+**D-16 上游 dsh 发布面断裂(Round 5 工程面已清偿)**
+
+- **已验证解法②并落地 2026-08-28(记忆域 lane)**:D-16 前提有误——npmjs 上 dsh-scope **有完整 0.1.x**(0.1.1-rc.2 在列;lane 查的是滞后的内部 bnpm 镜像)。根 dependencies 已显式钉 `dsh-scope@0.1.1-rc.2`,干净安装实测:ERESOLVE 仅降级为 warning、ledger/index/dsh-tools 全部 import OK、五导出齐。rc.10 已发布(founder 确认制下 agent 执行:web 登录 + 浏览器二次验证,恢复码被 npm 拒收改用 web OTP 通道)。
+- **2026-08-29 增补**:dsh 家族 0.1.2-alpha.1 未发 npm 时,以 `ts/dsh-runtime/vendor/` 全量源码 tarball 暂时解除 repo 工作副本堵点。
+- **Round 5 清偿**:root manifest、package-lock 与 root pnpm importer 把公开 npm `0.1.2-alpha.3` closure 的 216 个 `@deepseek-ai/dsh*` 包全部声明为精确直接依赖,publish preverify 永久拒绝名称集合漂移、漏钉、混版与 range;source/package runtime root-first 解析。source 普通运行保留 `ts/dsh-runtime/` cwd 与状态连续性,package/benchmark 使用调用目录隔离。legacy alpha.1 vendor 不再承载 benchmark 或推荐源码安装路径,只保留解析兼容且不承诺可运行。发布 GoTry 新版本仍受 founder 确认制与独立发布闸约束,本轮不发布。
 
 **D-4 gate/卡片无承载界面**
 
@@ -531,13 +533,13 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 **已清偿 2026-08-27(三切片)**:A `slot-spec.ts` 解析层(锚点卡词表/绝对/+N → 绝对日期,词表外 unresolved;time-eval §5);B 工具面接线(`gotry_hotel_search` 日期槽位收逐字表达,unresolved 降级无日期搜索+date_notes,smoke §8);C spec 链路一致性闸(runTurn 求解前比对,分歧不求解、追问确认,replay 尾段)。**ADR-12 复审结论:设计成立**,解析范围必须有界(只解析锚点卡词表,不做开放式中文相对日期解析——被拒备选即维护黑洞)。**闸范围边界(2026-08-28 真模型巡检修正)**:槽位 v1 只有 trip 级主日期,闸仅校验恰好一个带日期段的 spec;多段行程逐段日期无槽位真值,不判(金标准六段行程曾被全段误判分歧拦死求解,巡检抓出后收窄,多段旁路回归进 replay 尾段)。
 
-**D-26 扩展在线时默认桥钉住 CLI**
+**D-26-bridge 扩展在线时默认桥钉住 CLI**(历史归档别称;§10.1 活跃 D-26 = 事实闸覆盖面缺口,公开追踪 = #273)
 
 **已清偿 2026-08-30**:`server.unref()` 不会自动解开已接受 socket 与 parked 长轮询 timer,导致 `SMOKE OK` 后进程仍存活;默认桥对两者 `unref`,active submit timer 与 `keepBridge=true` 保持引用。§38 子进程红→绿 + §40 9/9 + 真扩展 smoke exit 0 守住。
 
 **D-25 扩展商店上架(ADR-21 分发 B 轨)**
 
-**已清偿 2026-09-02**:Chrome Web Store 过审发布 v0.1.0([商店页](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)),一键装 + 自动更新通道打通。上架实测坐实材料预案——商店用自己签名 key 重签、不认 manifest 固定 key,商店版 ID 与 unpacked 固定 ID 不同;影响面按预案收口:桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,§38 新增商店源断言),扩展代码/manifest 零改动。wizard/README/needs-extension 文案全部商店优先;「已装商店版自动跳过 dev-mode 三步」检测残余转 D-24。
+**已清偿 2026-09-02**:Chrome Web Store 过审发布 v0.1.0([商店页](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)),一键装 + 自动更新通道打通。上架实测坐实材料预案——商店用自己签名 key 重签、不认 manifest 固定 key,商店版 ID 与 unpacked 固定 ID 不同;影响面按预案收口:桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,§38 新增商店源断言),扩展代码/manifest 零改动。Node 侧保留 extension 文件/`manifest.key` 预检,`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时以 `installUrl`/`installAction` 交 dsh UI,旧 wizard 不再承担安装职责;#117 自适应文案已清偿 D-24。
 
 **D-17 Z3 WASM race(README Known limitation)**
 

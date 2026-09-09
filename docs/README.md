@@ -103,12 +103,12 @@
 |---|---|
 | [design/memory-design.md](design/memory-design.md) | 记忆域设计:C 端六层重设计(M4 交付) |
 | [design/memory-lifecycle-collector.md](design/memory-lifecycle-collector.md) | M4 lifecycle collector 使用合同:显式 opt-in、隔离 stateRoot、HMAC/consent、原子持久化与 #223/#238 scorer 导出；仅产出 candidate/synthetic,不替代真实 cohort |
-| [design/milestone-delivery-plan.md](design/milestone-delivery-plan.md) | M4→M6 living 任务图(issue #225):#223/#238/#228/#248/#20、已入 main 的 #229/#237/#243/#244/#245 基础、#136 HotelByte 首供应链+WriteGate(#231/#232/#233)、#137 P6/试点与开源质量闸,quality/follow-up 线 #254/#255(#257 已经 PR #264 关闭)(非 M5/M6 Entry 阻断) |
+| [design/milestone-delivery-plan.md](design/milestone-delivery-plan.md) | M4→M6 living 任务图(issue #225):#20/#22/#136/#137 真实 gate、#231–#235 后继与 #270 公开交付台账;预准入只含获授权的设计/只读/fixture/failing-before 工作 |
 | [design/write-gate-production-design.md](design/write-gate-production-design.md) | M5 WriteGate 生产化 proposal(issue #225/#136):HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、query miss 保持 unknown、对账/补偿/披露 |
 | [design/effect-interpreter.md](design/effect-interpreter.md) | 效应解译器设计(accepted,ADR-18):词汇/韧性策略表/判定记录 |
 | [design/booking-saga-fsm.md](design/booking-saga-fsm.md) | 预订 saga 状态机(accepted,ADR-17):字母表/边表/M5 缝词汇 |
 | [design/tool-orchestration-design.md](design/tool-orchestration-design.md) | 工具编排与通道健康面设计(proposal,issue #106/#107/#108) |
-| [design/adapter-authoring-guide.md](design/adapter-authoring-guide.md) | Session 适配器作者手册(D-13):四步法/漂移锁/红线 |
+| [design/adapter-authoring-guide.md](design/adapter-authoring-guide.md) | Session 适配器作者手册(D-13,#272):四步法/漂移锁/红线 |
 | [design/external-event-seam.md](design/external-event-seam.md) | 外部事件驱动接缝设计(#82 方向/D-31,只设计不承诺实现) |
 | [design/hotelbyte-skills-design.md](design/hotelbyte-skills-design.md) | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
 | [design/stage1-top-down-design.md](design/stage1-top-down-design.md) | Stage 1 顶层设计(历史原文);**状态头是 §11 状态面⑥** |
@@ -159,8 +159,8 @@
 | 文档 | 关注点 |
 |---|---|
 | [ops/extension-privacy.md](ops/extension-privacy.md) | Session Bridge 扩展隐私政策 |
-| [ops/extension-webstore-submission.md](ops/extension-webstore-submission.md) | Chrome Web Store 上架材料(ADR-21 通道 B) |
-| [ops/external-pr-workflow.md](ops/external-pr-workflow.md) | 外部 PR(含自动化机器人)接收/核验/裁决工作流(维护者侧) |
+| [ops/extension-webstore-submission.md](ops/extension-webstore-submission.md) | Chrome Web Store 上架材料与现行 dsh UI 安装交接(ADR-21 通道 B) |
+| [ops/external-pr-workflow.md](ops/external-pr-workflow.md) | 公开 issue→PR→review→merge 台账;另载外部 PR(含自动化机器人)分诊/核验/裁决规则 |
 
 ### assets/ 与 superpowers/
 

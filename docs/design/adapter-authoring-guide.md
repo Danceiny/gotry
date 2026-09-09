@@ -79,7 +79,7 @@ doctor 行全部由注册表生成,表外通道=对模型不可见且不可审�
    陈述,不混写"无结果或失败"。
 8. **效果注册表纪律**:退避/熔断策略行逐条拍板(透传面永不重试;timeout 类才可重试)。
 
-## 4. 携程接口面真会话校准清单(D-13 遗留,执行依赖 founder 登录)
+## 4. 携程接口面真会话校准清单(D-13 遗留,执行依赖 founder 登录,公开追踪 = #272)
 
 > 前置:`scripts/session-login.ts` 完成携程真登录(顺带同窗口登录美团)——该 founder
 > 动作已挂在 `gotry-session-data-goal` 的 user todo,校准执行与它同窗口做。
@@ -90,8 +90,10 @@ doctor 行全部由注册表生成,表外通道=对模型不可见且不可审�
   覆盖率抽查);`roomInfo[].priceInfo.price` 路径回归(2026-09-03 第一方校准 a0cd1ad)。
 - [ ] **meituan-local**(民宿/门票):登录后 NETWORK_HINTS 实测 + 熔断冷却参数校准
   (gotry-session-data-goal P2 项)。
-- [ ] **金标准 20 查询跑批**:sf-01..20 双源对照,字段级 ≥90%、live <15s 复核
-  (RFC 验收口径)。
+- [ ] **金标准 20 查询跑批**(分组以 `ts/data/session-golden-20.json` 为准):8 sf(`flight`,
+  sf-01..sf-08)+ 8 mt(4 `meituan-hotel` mt-01..mt-04 + 4 `meituan-minsu` mt-05..mt-08)
+  + 4 fa(2 `flyai-flight` fa-01..fa-02 + 2 `flyai-train` fa-03..fa-04);sf-01..08 历史
+  实测见 `../data-sources.md`(字段级 ≥90%、live <15s 仍为统一复核门,RFC 验收口径)。
 - [ ] **cookie 票据名单校准**:两侧登录后核对 `LOGIN_COOKIE_NAMES` 全覆盖、零误报。
 - [ ] 校准结论回写 `../data-sources.md`(领域矩阵行)。
 
