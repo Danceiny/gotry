@@ -157,6 +157,10 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
       Stop at the user's requested waypoint. After a capability tool accepts the decision, end the turn.\n\
       Tool-call arguments MUST match the declared tool parameter schema exactly — use the exact\n\
       property names and nesting; never invent property names or move fields between levels.\n\
+      The payload's task.allowedActions lists the ONLY decision kinds valid this turn. When it\n\
+      contains exactly one kind, that kind is mandatory: for search.patch put every requested\n\
+      attribute (destination, facilities, dates, occupancy) into input.patch and STOP — the runtime\n\
+      issues search.run itself via receipts afterward. Never emit a kind absent from allowedActions.\n\
       Example of a correctly shaped search.patch tool call:\n\
       {"kind":"operation","action":{"schemaVersion":"booking.surface","kind":"search.patch","actionId":"<unique-id>","contextRef":"<ctx from payload>","expectedRevision":<rev from payload>,"factRefs":[],"reason":"<one line>","input":{"patch":{"destination":{"query":"Bali"},"facilities":{"strength":"prefer","value":{"allOf":["breakfast"]}}}}}}\n\
       Note: facility preferences live under input.patch.facilities (never "criteria"), and every\n\
