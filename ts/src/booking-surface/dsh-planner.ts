@@ -422,7 +422,9 @@ function repairActionRepresentation(action: unknown): void {
         const current = actionValueAt(action, pathPart)
         if (typeof current === 'string' && current.trim().startsWith('{')) {
           try { actionAssignAt(action, pathPart, JSON.parse(current)); mutated = true } catch { /* leave for validation */ }
-        } else if (current === undefined || current === null) {
+        } else if (current === undefined || current === null || current === '') {
+          // Empty input is a meaningful shape for zero-argument actions
+          // (e.g. search.run's SearchRunInput: maxProperties 0).
           actionAssignAt(action, pathPart, {})
           mutated = true
         }
