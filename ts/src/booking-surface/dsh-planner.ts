@@ -121,6 +121,7 @@ export function buildDshPlannerEnvironment(
   if (apiKey) target.DEEPSEEK_API_KEY = apiKey
   if (baseUrl) target.DEEPSEEK_BASE_URL = baseUrl
   if (model) target.DEEPSEEK_MODEL = model
+  if (source.DEEPSEEK_MAX_TOKENS) target.DEEPSEEK_MAX_TOKENS = source.DEEPSEEK_MAX_TOKENS
   return target
 }
 
@@ -202,7 +203,11 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
       // (e.g. MiniMax official) reject the hardcoded name and the DSH loop then
       // yields no decisions at all (PLANNER_TYPED_DECISION_REQUIRED).
       model: options.model ?? childEnv.DEEPSEEK_MODEL ?? 'glm-4.6',
-      maxTokens: options.maxTokens ?? 4_096,
+      // Reasoning models spend the budget on <think> before the tool call; a
+      // 4k cap truncates the arguments JSON mid-stream and poisons the whole
+      // turn. 16k (env-tunable) leaves room for reasoning + typed decision.
+      maxTokens: options.maxTokens
+        ?? (childEnv.DEEPSEEK_MAX_TOKENS ? Number(childEnv.DEEPSEEK_MAX_TOKENS) : 16_384),
       env: childEnv,
       ...(options.dshBin ? { dshBin: options.dshBin } : {}),
     })
