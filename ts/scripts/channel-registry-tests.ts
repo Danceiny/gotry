@@ -131,7 +131,7 @@ assert.match(d1.items.find(i => i.id === 'calendar')!.detail, /默认未挂载/,
 await writeFile(calStatePath, JSON.stringify({ enabled: true }), 'utf-8')
 const d2 = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: emptyHome, env: {} })
 assert.equal(d2.items.find(i => i.id === 'calendar')!.status, 'degraded', 'setup 开启但未配置 username=degraded')
-assert.match(d2.items.find(i => i.id === 'calendar')!.fix ?? '', /npx gotry setup calendar/, 'fix 指向 setup 状态面')
+assert.match(d2.items.find(i => i.id === 'calendar')!.fix ?? '', /npx @danceiny\/gotry setup calendar/, 'fix 指向 setup 状态面')
 const profileDir = join(emptyHome, '.dsh/profiles/web')
 await mkdir(profileDir, { recursive: true })
 await writeFile(join(profileDir, 'cordis.patch.yml'), '- id: dsh-calendar\n  config:\n    username: someone\n', 'utf-8')

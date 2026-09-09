@@ -65,7 +65,7 @@ function ensureExtensionFiles(source: string, target: string, dryRun: boolean): 
   if (dryRun) return { step: 'ensure-extension-files', status: 'skip', summary: '[dry-run] skip 扩展落位' }
   try {
     if (!existsSync(source) || !existsSync(join(source, 'manifest.json'))) {
-      return { step: 'ensure-extension-files', status: 'fail', summary: `源扩展目录缺失 manifest.json: ${source}(先跑 npx gotry setup 落位)` }
+      return { step: 'ensure-extension-files', status: 'fail', summary: `源扩展目录缺失 manifest.json: ${source}(先跑 npx @danceiny/gotry setup 落位)` }
     }
     mkdirSync(target, { recursive: true })
     const required = ['manifest.json', 'background.js', 'content-main.js', 'content-bridge.js']
@@ -90,7 +90,7 @@ async function watchExtensionReady(dryRun: boolean, sourceDir: string, extension
     const srcStat = statSync(sourceDir)
     const dstStat = statSync(extensionDir)
     if (srcStat.mtimeMs > dstStat.mtimeMs) {
-      return { step: 'watch-extension-ready', status: 'fail', summary: `扩展文件可能过期(源比落位新);重跑 npx gotry setup` }
+      return { step: 'watch-extension-ready', status: 'fail', summary: `扩展文件可能过期(源比落位新);重跑 npx @danceiny/gotry setup` }
     }
     const manifest = JSON.parse(await (await import('node:fs/promises')).readFile(join(extensionDir, 'manifest.json'), 'utf8'))
     if (typeof manifest.key !== 'string' || manifest.key.length < 100) {
