@@ -3,7 +3,8 @@
  * docs/design/tool-orchestration-design.md §2/§3;全离线,隔离 tmp stateRoot):
  *  1. 注册表封闭性:id 唯一/quotaClass·tier·intent 闭集/静态包不可路由
  *  2. 意图顺位:证据级降序(官方API > 会话 > 网页兜底),同 tier 按效率
- *  3. routingAdvice:down 通道被排除/发起通道被排除/limit 截断;hit 即恢复
+ *  3. routingAdvice:down 通道被排除/发起通道被排除/limit 截断;hit 即恢复;
+ *     Dida down 时推进到下一个健康酒店通道
  *  4. noteChannelVerdict 映射:needs-setup→down/hit→清除/miss·error→不动/cooldown 过期
  *  5. persona 路由卡:确定性渲染,含改道规则与意图顺位行
  *  6. JSONL 持久面:record/readLatest 往返 + 坏行容忍 + limitDays 过滤
@@ -54,7 +55,7 @@ console.log('1. 注册表封闭性 OK')
 resetChannelHealth()
 assert.deepEqual(channelsForIntent('search-flight').map(c => c.id), ['flyai', 'session:ctrip-flight', 'web-read'], '机票顺位')
 assert.deepEqual(channelsForIntent('search-train').map(c => c.id), ['flyai', 'session:12306-train', 'web-read'], '火车顺位')
-assert.deepEqual(channelsForIntent('search-hotel').map(c => c.id), ['flyai', 'hbcli-hotel', 'session:ctrip-hotel', 'web-read'], '酒店顺位')
+assert.deepEqual(channelsForIntent('search-hotel').map(c => c.id), ['flyai', 'hbcli-hotel', 'session:ctrip-hotel', 'session:dida-portal', 'web-read'], '酒店完整顺位(Dida 登记后仍钉全序)')
 assert.deepEqual(channelsForIntent('weather').map(c => c.id), ['open-meteo'], '单通道意图')
 console.log('2. 意图顺位(证据级 > 效率)OK')
 
@@ -71,7 +72,17 @@ assert.ok(!excl.alternatives.some(a => a.channel === 'session:ctrip-flight'), '�
 assert.equal(routingAdvice('search-flight', { limit: 1, now: NOW }).alternatives.length, 1, 'limit 截断')
 noteChannelVerdict('flyai', 'hit', { now: NOW })
 assert.equal(routingAdvice('search-flight', { now: NOW }).alternatives[0]!.channel, 'flyai', 'hit 即恢复(#107:补 key 不被陈旧状态锁死)')
-console.log('3. routingAdvice(down 排除/发起排除/limit/hit 恢复)OK')
+
+// Dida 已是酒店 session 通道的一员:#297 后先让更高顺位通道不可用,证明 Dida
+// 成为当前首选；再把 Dida 标 down,必须推进到注册表中的后继 web-read。
+resetChannelHealth()
+for (const channel of ['flyai', 'hbcli-hotel', 'session:ctrip-hotel']) {
+  noteChannelVerdict(channel, 'needs-setup', { now: NOW })
+}
+assert.equal(routingAdvice('search-hotel', { now: NOW }).alternatives[0]!.channel, 'session:dida-portal', '前三个酒店通道 down 后 Dida 升为首荐')
+noteChannelVerdict('session:dida-portal', 'needs-login', { now: NOW })
+assert.equal(routingAdvice('search-hotel', { now: NOW }).alternatives[0]!.channel, 'web-read', 'Dida down 后推进到后继健康酒店通道')
+console.log('3. routingAdvice(down 排除/发起排除/limit/hit 恢复 + Dida down→后继)OK')
 
 // 4. noteChannelVerdict 映射闭集
 resetChannelHealth()
