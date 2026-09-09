@@ -328,11 +328,27 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     assert.equal(enabledPrompt.includes(variable), false, `${target} benchmark persona must not retain ${variable}`)
   }
   assert.equal(enabledPrompt.includes('gotry_feasibility_check'), false, `${target} benchmark persona must not retain ordinary GoTry tool instructions`)
-  assert.ok(enabled.requests.length > 0 && enabled.requests.some(request => {
+  // Persona invariant: every request that exposes the benchmark tool (a
+  // planner request) must carry each stable sentence exactly once. The
+  // separate session-title request does NOT expose the benchmark tool and is
+  // intentionally not required to carry the persona — dsh-system-prompt
+  // 0.1.5-alpha.1 emits a distinct system prompt for it (auto-title). This
+  // is the precise observed public protocol invariant under target closure,
+  // not a relaxed `some` over the full request stream.
+  const SENTENCE_A = 'You are GoTry, a task-agnostic travel planning assistant.'
+  const SENTENCE_B = 'Use only the current conversation and tools available in this benchmark session.'
+  const plannerRequests = enabled.requests.filter(request => names(request).includes(TOOL))
+  assert.ok(
+    plannerRequests.length > 0,
+    `${target} must emit at least one planner request exposing the benchmark tool; requests=${enabled.requests.length}; schemas=${JSON.stringify(enabled.requests.map(names))}`,
+  )
+  for (const request of plannerRequests) {
     const prompt = JSON.stringify(request)
-    return (prompt.match(/You are GoTry, a task-agnostic travel planning assistant\./g) ?? []).length === 1
-      && (prompt.match(/Use only the current conversation and tools available in this benchmark session\./g) ?? []).length === 1
-  }), `${target} benchmark persona has each stable sentence exactly once per request`)
+    const aCount = (prompt.match(new RegExp(SENTENCE_A.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
+    const bCount = (prompt.match(new RegExp(SENTENCE_B.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
+    assert.equal(aCount, 1, `${target} planner request must carry stable sentence A exactly once (observed=${aCount}); prompt head=${prompt.slice(0, 400)}`)
+    assert.equal(bCount, 1, `${target} planner request must carry stable sentence B exactly once (observed=${bCount}); prompt head=${prompt.slice(0, 400)}`)
+  }
   assert.match(enabled.output, /benchmark_terminal/)
   const recovered = await runCase('domain-recovery', executableOverride)
   assert.equal(recovered.exit, 0, `${target} model-driven domain miss recovery exits successfully; output=${recovered.output.slice(-2_000)}`)
@@ -517,15 +533,15 @@ async function assertPackagedPatchProjection(executable: string): Promise<void> 
     await runRejectedPatch('duplicate benchmark config anchor', basePatch.replace("        hbcliBin: 'hbcli'", "        hbcliBin: 'hbcli'\n        hbcliBin: 'hbcli'"))
     await runRejectedPatch('pre-existing benchmark config path', basePatch.replace("        hbcliBin: 'hbcli'", "        hbcliBin: 'hbcli'\n        benchmarkEnvironmentConfigPath: '/not/used'"), ['/not/used'])
     await runRejectedPatch('missing system-prompt anchor', basePatch.replace(/^- id: system-prompt[\s\S]*$/m, ''))
-    await runRejectedPatch('duplicate system-prompt anchor', `${basePatch}\n- id: system-prompt\n  config:\n    persona: >-\n      duplicate\n`)
-    await runRejectedPatch('quoted system-prompt duplicate', `${basePatch}\n- id: 'system-prompt'\n  config:\n    persona: >-\n      quoted duplicate\n`)
+    await runRejectedPatch('duplicate system-prompt anchor', `${basePatch}\n- id: system-prompt\n  config:\n    personaPrefix: >-\n      duplicate\n`)
+    await runRejectedPatch('quoted system-prompt duplicate', `${basePatch}\n- id: 'system-prompt'\n  config:\n    personaPrefix: >-\n      quoted duplicate\n`)
     const systemPromptMutationSentinel = 'ROUND7_SYSTEM_PROMPT_MUTATION_SENTINEL_DO_NOT_REFLECT'
-    await runRejectedPatch('quoted mapping-key system-prompt duplicate', `${basePatch}\n- "id": system-prompt\n  config:\n    persona: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
-    await runRejectedPatch('flow quoted-key system-prompt duplicate', `${basePatch}\n- { "id": system-prompt, config: { persona: ${systemPromptMutationSentinel} } }\n`, [systemPromptMutationSentinel])
-    await runRejectedPatch('reordered system-prompt duplicate', `${basePatch}\n- name: reordered-system-prompt\n  id: system-prompt\n  config:\n    persona: >-\n      reordered duplicate\n`)
-    await runRejectedPatch('flow system-prompt duplicate', `${basePatch}\n- { id: system-prompt, config: { persona: flow duplicate } }\n`)
-    await runRejectedPatch('noncanonical insert id root item', `${basePatch}\n- id: insert\n  config:\n    persona: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
-    await runRejectedPatch('malformed system-prompt persona', basePatch.replace(/^    persona: >-$/m, '    persona: plain'))
+    await runRejectedPatch('quoted mapping-key system-prompt duplicate', `${basePatch}\n- "id": system-prompt\n  config:\n    personaPrefix: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('flow quoted-key system-prompt duplicate', `${basePatch}\n- { "id": system-prompt, config: { personaPrefix: ${systemPromptMutationSentinel} } }\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('reordered system-prompt duplicate', `${basePatch}\n- name: reordered-system-prompt\n  id: system-prompt\n  config:\n    personaPrefix: >-\n      reordered duplicate\n`)
+    await runRejectedPatch('flow system-prompt duplicate', `${basePatch}\n- { id: system-prompt, config: { personaPrefix: flow duplicate } }\n`)
+    await runRejectedPatch('noncanonical insert id root item', `${basePatch}\n- id: insert\n  config:\n    personaPrefix: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('malformed system-prompt persona', basePatch.replace(/^    personaPrefix: >-$/m, '    personaPrefix: plain'))
   } finally {
     rmSync(probeParent, { recursive: true, force: true })
   }

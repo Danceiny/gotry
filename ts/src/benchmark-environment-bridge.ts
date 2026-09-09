@@ -260,8 +260,6 @@ interface CollectedText {
 }
 
 interface SubprocessHandle {
-  /** DSH reports -1 when process creation itself failed. */
-  readonly pid: number
   collected: { stdout: CollectedText; stderr: CollectedText }
   done: Promise<{ exitCode: number | null; signal?: string | null }>
   terminate?: () => void
@@ -506,7 +504,7 @@ export function registerBenchmarkEnvironmentBridge(
         return jsonObject({ ok: true, result: visibleResult })
       } catch {
         if (controller.signal.aborted) return jsonObject({ ok: false, error: 'timed_out' })
-        return jsonObject({ ok: false, error: !handle || handle.pid === -1 ? 'spawn_failed' : 'runner_failed' })
+        return jsonObject({ ok: false, error: 'spawn_failed' })
       } finally {
         clearTimeout(timer)
       }
