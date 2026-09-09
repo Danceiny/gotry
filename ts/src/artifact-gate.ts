@@ -252,6 +252,7 @@ export type GateViolationKind =
   | 'date_order'                      // 住宿/段日期越窗或倒挂
   | 'unverifiable_hotel_claim'        // 酒店可住断言无 exact-date 事实回溯(D-26)
   | 'fact_anchor_unknown'             // 渲染锚点 fact:<id> 在注册表不存在(锚点被手改/伪造)
+  | 'unverified_price_claim'          // 硬价缺少可比较的权威来源或可靠绑定(issue #300)
   | 'price_contradicted'              // 行内可靠硬价格与 exact-date 事实价格冲突(issue #300)
 
 export interface GateViolation {
@@ -280,44 +281,96 @@ function lineTimesContradict(text: string, dep?: string, arr?: string): boolean 
 
 interface HardPrice {
   amount: number
-  currency: 'CNY'
+  currency: string
+  start: number
 }
 
 /**
- * 只抽取行内可可靠绑定的硬价。起价/约价/模糊值和其它币种不进入比较，
- * 不做汇率换算，也不把酒店 priceRaw 带入这里(issue #300)。
+ * 只抽取行内可可靠绑定的硬价。起价/约价/模糊值不进入比较，不支持的币种
+ * 只进入未核验分支；不做汇率换算，也不把酒店 priceRaw 带入这里(issue #300)。
  */
 function hardPricesInLine(text: string): HardPrice[] {
   const prices: HardPrice[] = []
-  const pattern = /(?:¥\s*(\d+(?:\.\d+)?)(?![\dA-Za-z])|\bCNY\s*(\d+(?:\.\d+)?)(?![\dA-Za-z]))/gi
+  const amount = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`
+  const pattern = new RegExp(String.raw`(?:¥\s*(${amount})(?![\dA-Za-z])|\b([A-Z]{3})\s*(${amount})(?![\dA-Za-z]))`, 'gi')
   for (const match of text.matchAll(pattern)) {
-    const amountText = match[1] ?? match[2]
+    const amountText = match[1] ?? match[3]
     if (!amountText || match.index === undefined) continue
     const before = text.slice(Math.max(0, match.index - 8), match.index)
     const after = text.slice(match.index + match[0].length, match.index + match[0].length + 8)
     if (/(?:约|大约|约为|起价|起步|from)\s*$/i.test(before)
       || /^\s*(?:起|起价|起步|左右|上下|以上|\+)/i.test(after)) continue
-    prices.push({ amount: Number(amountText), currency: 'CNY' })
+    prices.push({
+      amount: Number(amountText.replaceAll(',', '')),
+      currency: match[1] ? 'CNY' : match[2]!.toUpperCase(),
+      start: match.index,
+    })
   }
   return prices
 }
 
-function addPriceContradiction(
+function flightTrainPriceScope(text: string, fact: Extract<BookableFact, { kind: 'flight' | 'train' }>): string {
+  const no = fact.flight_no.toUpperCase()
+  const noStart = text.toUpperCase().indexOf(no)
+  if (noStart < 0) return ''
+  const afterNo = text.slice(noStart + no.length)
+  const nextFlight = afterNo.match(FLIGHT_NO)
+  const anchor = text.indexOf('<!-- fact:', noStart + no.length)
+  let end = text.length
+  if (nextFlight?.index !== undefined) end = Math.min(end, noStart + no.length + nextFlight.index)
+  if (anchor >= 0) end = Math.min(end, anchor)
+  return text.slice(noStart, end)
+}
+
+function addPriceVerification(
   violations: GateViolation[],
   line: number,
-  text: string,
+  fullText: string,
+  visibleText: string,
   fact: Extract<BookableFact, { kind: 'flight' | 'train' }>,
 ): boolean {
-  if (fact.bookability !== 'bookable_exact_date' || fact.price === undefined || !Number.isFinite(fact.price)) return false
+  const fullScope = flightTrainPriceScope(fullText, fact)
+  const visibleScope = flightTrainPriceScope(visibleText, fact)
+  const allPrices = hardPricesInLine(fullScope)
+  const visiblePrices = hardPricesInLine(visibleScope)
+  const hasAnchor = fullText.includes('<!-- fact:')
+
+  // Heuristic claims retain the existing 120-character extraction window. If a
+  // hard price only appears outside it, it cannot be safely bound to this claim.
+  if (!hasAnchor && allPrices.some(p => p.start >= visibleScope.length)) {
+    violations.push({
+      kind: 'unverified_price_claim',
+      line,
+      detail: `${fact.flight_no} 行内硬价格未锚定且超出 120 字抽取窗口——无法作为 exact-date 事实核验,按未核验处理`,
+    })
+    return true
+  }
+
+  if (allPrices.length === 0) return false
   const factCurrency = fact.currency?.toUpperCase()
-  if (!factCurrency) return false
-  for (const rendered of hardPricesInLine(text)) {
-    // ¥ is treated as CNY only against a CNY fact. No FX or ambiguous-currency guess.
-    if (rendered.currency !== factCurrency || rendered.amount === fact.price) continue
+  for (const rendered of visiblePrices) {
+    if (fact.price === undefined || !Number.isFinite(fact.price) || factCurrency !== 'CNY') {
+      violations.push({
+        kind: 'unverified_price_claim',
+        line,
+        detail: `${fact.flight_no} 行内硬价格 ${rendered.currency} ${rendered.amount} 缺少可比较的权威 exact-date 事实价格——按未核验处理,不作汇率或币种猜测`,
+      })
+      return true
+    }
+    // ¥/CNY only compare against a CNY fact. No FX or ambiguous-currency guess.
+    if (rendered.currency !== factCurrency) {
+      violations.push({
+        kind: 'unverified_price_claim',
+        line,
+        detail: `${fact.flight_no} 行内硬价格 ${rendered.currency} ${rendered.amount} 不支持直接比较事实 ${factCurrency} ${fact.price}——按未核验处理,不作汇率换算`,
+      })
+      return true
+    }
+    if (rendered.amount === fact.price) continue
     violations.push({
       kind: 'price_contradicted',
       line,
-      detail: `${fact.flight_no} 行内硬价格 CNY ${rendered.amount} ≠ exact-date 事实 ${factCurrency} ${fact.price}——价格事实矛盾,不得改写工具返回价格`,
+      detail: `${fact.flight_no} 行内硬价格 ${rendered.currency} ${rendered.amount} ≠ exact-date 事实 ${factCurrency} ${fact.price}——价格事实矛盾,不得改写工具返回价格`,
     })
     return true
   }
@@ -365,7 +418,7 @@ export function gateArtifact(
         continue
       }
     }
-    if ((f.kind === 'flight' || f.kind === 'train') && addPriceContradiction(violations, lineNo, lines[lineNo - 1] ?? '', f)) continue
+    if ((f.kind === 'flight' || f.kind === 'train') && addPriceVerification(violations, lineNo, lines[lineNo - 1] ?? '', lines[lineNo - 1] ?? '', f)) continue
     traceable++
   }
 
@@ -425,7 +478,7 @@ export function gateArtifact(
         })
         continue
       }
-      if (r.fact && addPriceContradiction(violations, c.line, c.text, r.fact)) continue
+      if (r.fact && addPriceVerification(violations, c.line, lines[c.line - 1] ?? '', c.text, r.fact)) continue
       traceable++
       continue
     }
