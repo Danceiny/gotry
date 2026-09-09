@@ -22,6 +22,8 @@
 
 > 以下均为**工程面交付,不构成任何里程碑 Exit 证据**(D-20 口径)。
 
+- **#271 Phase A 进程事故观察(2026-09-09)**:GoTry-owned `uncaughtExceptionMonitor` 记录 uncaught/rejection 并保留宿主 fatal 退出语义；single-fd append+fsync+close writer 失败返回 `false`；native Node24 ESM dist 反例覆盖 monitor/no-monitor、既有 host handler、fsync/close 与工具结构化失败。child close/spawn error、SIGINT、后代进程与上游 dsh supervisor 仍为开放 TODO，不改变 M3/M4-M6 真实证据 gate。
+
 - **Node 26 dist 构建兼容闸(2026-09-09,issue #265)**:支持下界保持 `>=22.15.0`;根构建脚本用精确 TypeScript 5.9.3 生成 ESM,focused CI 在 Node 22/24/26 核对 exact dist/资产/关键 import,Node 22/24 继续承担 typecheck + 全栈回归。该项仅属 M4 开源/发布质量线,不计入 #20 的真实 repeat-cohort,不满足 #136 的供应协议/内部授权或 #137 的 P6 批准与真实试点；三项真实证据 gate 仍开放。
 
 - **dsh-map-tools runtime 回归修复(2026-09-08,issue #242)**:#239 把 settings 接线改到 alpha.3 不存在的 `installSettingsSection/settingsNamespace` 导出,导致真实安装包插件 import 失败；现恢复普通 namespace 字符串 + `ctx.inject(['settings'], scope => scope.settings.installSection(...))`,并由 clean-tarball proof 覆盖 7 个 `map_*` 工具、settings watch/reload/dispose 与禁网 inline 坐标路径。
