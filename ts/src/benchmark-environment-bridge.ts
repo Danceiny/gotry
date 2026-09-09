@@ -260,8 +260,6 @@ interface CollectedText {
 }
 
 interface SubprocessHandle {
-  /** DSH reports -1 when process creation itself failed. */
-  readonly pid: number
   collected: { stdout: CollectedText; stderr: CollectedText }
   done: Promise<{ exitCode: number | null; signal?: string | null }>
   terminate?: () => void
@@ -461,22 +459,44 @@ export function registerBenchmarkEnvironmentBridge(
         }
         env.PYTHONDONTWRITEBYTECODE = '1'
         env.PYTHONNOUSERSITE = '1'
-        handle = subprocess.spawn({
-          argv: [bridge.executable, ...bridge.argv_prefix, 'call', tool, serialized.json!],
-          cwd: bridge.cwd,
-          stdio: {
-            stdin: 'ignore',
-            stdout: { maxBytes: bridge.max_output_bytes },
-            stderr: { maxBytes: bridge.max_output_bytes },
-          },
-          graceMs: Math.min(1_000, bridge.timeout_ms),
-          env,
-          signal: controller.signal,
-        })
-        const status = await handle.done
+        try {
+          handle = subprocess.spawn({
+            argv: [bridge.executable, ...bridge.argv_prefix, 'call', tool, serialized.json!],
+            cwd: bridge.cwd,
+            stdio: {
+              stdin: 'ignore',
+              stdout: { maxBytes: bridge.max_output_bytes },
+              stderr: { maxBytes: bridge.max_output_bytes },
+            },
+            graceMs: Math.min(1_000, bridge.timeout_ms),
+            env,
+            signal: controller.signal,
+          })
+        } catch {
+          if (controller.signal.aborted) return jsonObject({ ok: false, error: 'timed_out' })
+          return jsonObject({ ok: false, error: 'spawn_failed' })
+        }
+        let status: { exitCode: number | null; signal?: string | null }
+        try {
+          status = await handle!.done
+        } catch {
+          if (controller.signal.aborted) return jsonObject({ ok: false, error: 'timed_out' })
+          return jsonObject({ ok: false, error: 'spawn_failed' })
+        }
         if (controller.signal.aborted) return jsonObject({ ok: false, error: 'timed_out' })
-        const stdout = handle.collected.stdout.readFrom(0)
-        const stderr = handle.collected.stderr.readFrom(0)
+        let stdout: { text: string; lossy?: boolean }
+        let stderr: { text: string; lossy?: boolean }
+        try {
+          stdout = handle!.collected.stdout.readFrom(0)
+          stderr = handle!.collected.stderr.readFrom(0)
+        } catch {
+          return jsonObject({
+            ok: false,
+            error: 'runner_failed',
+            exit_code: status.exitCode,
+            signal: status.signal ?? null,
+          })
+        }
         if (stdout.lossy || stderr.lossy) return jsonObject({ ok: false, error: 'output_truncated' })
         if (status.exitCode !== 0) {
           return jsonObject({
@@ -504,9 +524,6 @@ export function registerBenchmarkEnvironmentBridge(
         if (!plainObject(visibleResult) && !Array.isArray(visibleResult)) return jsonObject({ ok: false, error: 'invalid_output' })
         if (!inspectAllowedOutput(visibleResult, descriptor.output_keys)) return jsonObject({ ok: false, error: 'forbidden_output' })
         return jsonObject({ ok: true, result: visibleResult })
-      } catch {
-        if (controller.signal.aborted) return jsonObject({ ok: false, error: 'timed_out' })
-        return jsonObject({ ok: false, error: !handle || handle.pid === -1 ? 'spawn_failed' : 'runner_failed' })
       } finally {
         clearTimeout(timer)
       }

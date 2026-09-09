@@ -126,6 +126,7 @@ type FakeOutcome = {
   spawnError?: boolean
   spawnReject?: boolean
   waitForAbort?: boolean
+  readFailure?: boolean
 }
 
 assert.equal(MAX_CONFORMANCE_RETRIES, 1)
@@ -608,8 +609,18 @@ function assistant(text: string, options: { turn?: number; step?: number; interr
 function fakeHandle(outcome: FakeOutcome) {
   const stdout = outcome.stdout ?? ''
   const stderr = outcome.stderr ?? ''
-  const reader = { readFrom: (_offset: number) => ({ text: stdout, nextOffset: Buffer.byteLength(stdout), lossy: outcome.lossy ?? false }) }
-  const errorReader = { readFrom: (_offset: number) => ({ text: stderr, nextOffset: Buffer.byteLength(stderr), lossy: false }) }
+  const reader = {
+    readFrom: (_offset: number) => {
+      if (outcome.readFailure) throw new Error('collected output reading failed')
+      return { text: stdout, nextOffset: Buffer.byteLength(stdout), lossy: outcome.lossy ?? false }
+    },
+  }
+  const errorReader = {
+    readFrom: (_offset: number) => {
+      if (outcome.readFailure) throw new Error('collected output reading failed')
+      return { text: stderr, nextOffset: Buffer.byteLength(stderr), lossy: false }
+    },
+  }
   let rejectDone: ((error: Error) => void) | undefined
   const done = outcome.spawnReject
     ? Promise.reject(new Error('spawn rejected'))
@@ -617,7 +628,6 @@ function fakeHandle(outcome: FakeOutcome) {
     ? new Promise<{ exitCode: number | null; signal: string | null }>((_resolve, reject) => { rejectDone = reject })
     : Promise.resolve({ exitCode: outcome.exitCode ?? 0, signal: outcome.signal ?? null })
   return {
-    pid: outcome.spawnReject ? -1 : 4242,
     stdin: undefined,
     stdout: undefined,
     stderr: undefined,
@@ -1315,7 +1325,11 @@ try {
 
   outcomes.push({ spawnReject: true })
   const asyncSpawnFailed = await bridge.execute!(bridgeCall('lookup', { city: 'Dubai' }), null)
-  assert.deepEqual(asyncSpawnFailed, { ok: false, error: 'spawn_failed' }, 'DSH pid=-1 spawn rejection is distinct from a started runner failure')
+  assert.deepEqual(asyncSpawnFailed, { ok: false, error: 'spawn_failed' }, 'public done rejection is classified as spawn/provider failure')
+
+  outcomes.push({ stdout: okEnvelope({ city: 'Dubai' }), readFailure: true })
+  const postSuccessCollectFailed = await bridge.execute!(bridgeCall('lookup', { city: 'Dubai' }), null)
+  assert.deepEqual(postSuccessCollectFailed, { ok: false, error: 'runner_failed', exit_code: 0, signal: null }, 'collected output reading failure after a resolved done is runner_failed, not spawn_failed')
 
   outcomes.push({ waitForAbort: true })
   const timedOut = await bridge.execute!(bridgeCall('lookup', { city: 'Dubai' }), null)
