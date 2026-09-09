@@ -6,7 +6,7 @@
 
 ---
 
-## 当前位置(2026-09-09)
+## 当前位置(2026-09-10)
 
 ### 发行状态
 
@@ -26,6 +26,8 @@
 - **#282 Booking planner 纠偏(2026-09-09)**:planner 保留非空 occupancy 房间与 childAges,缺 `adults` 交给 schema 纠偏;每次 run(含纠偏)均计入最多三次调用,有效 correction 立即返回,provider error 不静默吞掉。focused proof 是注入 runPort 的工程证据,不改变 M3/M4-M6 或真实 Booking UAT gate。
 
 - **酒店日期输入闸(2026-09-09,issue #283)**:详见 `docs/architecture.md` §1.2 与 §10 D-36。共享 `parseAbsoluteDate` 拒绝非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`;隔离 fixture 证据不构成真实供应商准入。
+
+- **doctor 对话内自助修复(2026-09-10,issue #284)**:`gotry_doctor action=repair` 按 item id 形成可见计划,经会话 scope 审批后复用 `doctor --fix`/web onboarding 的 bootstrap 幂等安装器并实际复检;拒绝、取消、无审批通道和 user-action/unavailable 均不执行。隔离工具 E2E 只证明 M4 UX 工程边界,不计入 #20 真实 repeat cohort 或 M5/M6 gate。
 
 - **Node 26 dist 构建兼容闸(2026-09-09,issue #265)**:支持下界保持 `>=22.15.0`;根构建脚本用精确 TypeScript 5.9.3 生成 ESM,focused CI 在 Node 22/24/26 核对 exact dist/资产/关键 import,Node 22/24 继续承担 typecheck + 全栈回归。该项仅属 M4 开源/发布质量线,不计入 #20 的真实 repeat-cohort,不满足 #136 的供应协议/内部授权或 #137 的 P6 批准与真实试点；三项真实证据 gate 仍开放。
 
