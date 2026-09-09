@@ -16,7 +16,7 @@ import { openSession } from './session/transport.ts'
 import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure } from './session/extension-channel.ts'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { buildEntryUrl, NETWORK_HINTS, parseBatchSearch, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
+import { buildEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQuery, TRAIN_SITE_HOST, type SessionTrainOption } from './session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
@@ -651,8 +651,12 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     if (CHALLENGE_RE.test(title + head)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
-    const options = parseBatchSearch(r.body)
-    const verdict: SessionVerdict = options.length > 0 ? 'hit' : 'miss'
+    const parsed = parseBatchSearchResult(r.body)
+    if (parsed.verdict === 'error') {
+      return err('error', `batchSearch 响应形状异常(非合法空响应;options=0 不视为 miss):body ${r.body.length}B 头 ${r.body.slice(0, 80)}`)
+    }
+    const options = parsed.options
+    const verdict: SessionVerdict = parsed.verdict === 'hit' ? 'hit' : 'miss'
     return {
       ok: true,
       via: 'session-ctrip-flight',
@@ -709,8 +713,12 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     if (CHALLENGE_RE.test(title + headHtml)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
-    const options = parseBatchSearch(body)
-    const verdict: SessionVerdict = options.length > 0 ? 'hit' : 'miss'
+    const parsed = parseBatchSearchResult(body)
+    if (parsed.verdict === 'error') {
+      return err('error', `batchSearch 响应形状异常(非合法空响应;options=0 不视为 miss):body ${body.length}B 头 ${body.slice(0, 80)}`)
+    }
+    const options = parsed.options
+    const verdict: SessionVerdict = parsed.verdict === 'hit' ? 'hit' : 'miss'
     return {
       ok: true,
       via: 'session-ctrip-flight',

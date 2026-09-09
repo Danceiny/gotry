@@ -56,52 +56,115 @@ export interface SessionFlightOption {
   aircraft?: string
 }
 
-interface RawBatch {
-  status?: number
-  data?: {
-    flightItineraryList?: Array<{
-      flightSegments?: Array<{
-        airlineName?: string
-        duration?: number
-        flightList?: Array<{
-          flightNo?: string
-          departureAirportName?: string
-          arrivalAirportName?: string
-          departureDateTime?: string
-          arrivalDateTime?: string
-          aircraftName?: string
-        }>
-      }>
-      priceList?: Array<{ adultPrice?: number }>
-    }>
-  }
+/** 解析结果的三态判语(issue #279):空响应不再一律 miss——已识别合法空 = miss,
+ * 形状未识别(malformed/unknown)= error,选项命中 = hit。误把任意 [] 判 miss 会把未知
+ * 响应错误收敛为「这条线路没有航班」,这是上游接口改版/协议变动期的常见陷阱 */
+export type BatchSearchVerdict = 'hit' | 'miss' | 'error'
+
+export interface BatchSearchResult {
+  options: SessionFlightOption[]
+  verdict: BatchSearchVerdict
+}
+
+/** 安全取字符串字段(任意来源字段都可能是 null/undefined/数字/对象) */
+function asString(v: unknown): string {
+  return typeof v === 'string' ? v : ''
+}
+
+/** 安全取正数(无法解析按 0 返,绝不伪造价格) */
+function asPositiveNumber(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
 }
 
 /** 解析 batchSearch 响应(纯函数,fixture 测试锚点);malformed 一律返空,不抛错 */
 export function parseBatchSearch(body: string): SessionFlightOption[] {
-  let raw: RawBatch
+  return parseBatchSearchResult(body).options
+}
+
+/**
+ * 结构化解析(issue #279):返回选项 + 三态判语。
+ *   - `hit`  = 已识别合法结构 + 至少一个有效行程
+ *   - `miss` = 已识别合法空(data.flightItineraryList 是空数组)
+ *   - `error`= 形状未识别(JSON 解析失败 / 非对象根 / data 缺失或非对象 /
+ *              flightItineraryList 不是数组 / 非空数组没有可用行程)——未知响应
+ *              不可静默收敛为 miss
+ * 绝不发明价格、航班号、机场、时刻;混合数组保留有效项,全畸形数组报 error。
+ */
+export function parseBatchSearchResult(body: string): BatchSearchResult {
+  let raw: unknown
   try {
-    raw = JSON.parse(body) as RawBatch
+    raw = JSON.parse(body)
   } catch {
-    return []
+    return { options: [], verdict: 'error' }
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { options: [], verdict: 'error' }
+  }
+  const data = (raw as { data?: unknown }).data
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+    return { options: [], verdict: 'error' }
+  }
+  const list = (raw as { data: { flightItineraryList?: unknown } }).data.flightItineraryList
+  if (!Array.isArray(list)) {
+    return { options: [], verdict: 'error' }
   }
   const out: SessionFlightOption[] = []
-  for (const it of raw.data?.flightItineraryList ?? []) {
-    const seg = it.flightSegments?.[0]
-    const fl = seg?.flightList?.[0]
-    if (!fl?.flightNo || !fl.departureDateTime) continue
-    const prices = (it.priceList ?? []).map((p) => Number(p.adultPrice ?? 0)).filter((n) => n > 0)
+  for (const it of list) {
+    if (it === null || typeof it !== 'object' || Array.isArray(it)) continue
+    const item = it as { flightSegments?: unknown; priceList?: unknown }
+    const segs = item.flightSegments
+    if (!Array.isArray(segs) || segs.length === 0) continue
+    const seg = segs[0]
+    if (seg === null || typeof seg !== 'object' || Array.isArray(seg)) continue
+    const segObj = seg as { airlineName?: unknown; duration?: unknown; flightList?: unknown }
+    const fl = segObj.flightList
+    if (!Array.isArray(fl) || fl.length === 0) continue
+    const flight = fl[0]
+    if (flight === null || typeof flight !== 'object' || Array.isArray(flight)) continue
+    const f = flight as {
+      flightNo?: unknown
+      departureAirportName?: unknown
+      arrivalAirportName?: unknown
+      departureDateTime?: unknown
+      arrivalDateTime?: unknown
+      aircraftName?: unknown
+    }
+    if (typeof f.flightNo !== 'string' || !f.flightNo) continue
+    if (typeof f.departureDateTime !== 'string' || !f.departureDateTime) continue
+    // 缺 priceList 延续旧合同为「有航班、价格未知」;显式非数组与畸形价项
+    // 属未知响应,整项跳过。若响应里没有其他有效项,最终判 error 而非 miss。
+    if (item.priceList !== undefined && !Array.isArray(item.priceList)) continue
+    const priceList = item.priceList ?? []
+    const prices: number[] = []
+    let malformedPrice = false
+    for (const p of priceList) {
+      if (p === null || typeof p !== 'object' || Array.isArray(p)) {
+        malformedPrice = true
+        break
+      }
+      const adultPrice = (p as { adultPrice?: unknown }).adultPrice
+      if (adultPrice === undefined) continue
+      if (typeof adultPrice !== 'number' || !Number.isFinite(adultPrice)) {
+        malformedPrice = true
+        break
+      }
+      if (adultPrice > 0) prices.push(adultPrice)
+    }
+    if (malformedPrice) continue
     out.push({
-      flightNo: fl.flightNo,
-      airline: seg?.airlineName ?? '',
-      depDateTime: fl.departureDateTime ?? '',
-      arrDateTime: fl.arrivalDateTime ?? '',
-      depAirport: fl.departureAirportName ?? '',
-      arrAirport: fl.arrivalAirportName ?? '',
-      durationMin: Number(seg?.duration ?? 0) || 0,
+      flightNo: f.flightNo,
+      airline: asString(segObj.airlineName),
+      depDateTime: asString(f.departureDateTime),
+      arrDateTime: asString(f.arrivalDateTime),
+      depAirport: asString(f.departureAirportName),
+      arrAirport: asString(f.arrivalAirportName),
+      durationMin: asPositiveNumber(segObj.duration),
       price: prices.length > 0 ? Math.min(...prices) : 0,
-      aircraft: fl.aircraftName,
+      aircraft: typeof f.aircraftName === 'string' ? f.aircraftName : undefined,
     })
   }
-  return out
+  return {
+    options: out,
+    verdict: out.length > 0 ? 'hit' : list.length === 0 ? 'miss' : 'error',
+  }
 }
