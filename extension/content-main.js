@@ -24,11 +24,17 @@
   var HOTEL_HINT_RE = /hotels\.ctrip\.com\/(hotels\/api|domestic\/pc\/api)|GetHotelListBySOA|GetHotelListByCity|HotelSearch|hotelsearch|restapi\/soa2\/\d+\/fetchHotelList/i
   /** 火车(2026-09-03 实装):12306 余票查询 XHR(负载均衡变体 queryG/Z/A/U 全命中) */
   var TRAIN_HINT_RE = /leftTicket\/query/i
+  /** Dida 供应商门户(2026-09-09 实装):portal-webapi 实时价/价格监控
+   * (与 Node 侧 DIDA_NETWORK_HINTS 对账,run-all §38 防漂移断言守住) */
+  var DIDA_HINT_RE = /portal-webapi\.dida\.com\/HotelPriceAPI\/SearchRealTime|portal-webapi\.dida\.com\/HotelPriceAPI\/SearchMonitor/i
+  /** 形状嗅探签名(dida 实时价信封;与 Node 侧 looksLikeDidaRatesBody 签名一致) */
+  var DIDA_BODY_SIG_RE = /"HotelPriceList"|"RatePlanList"/
   /** 形状嗅探(酒店页兜底;与 Node 侧 looksLikeHotelListBody 签名一致) */
   var HOTEL_BODY_SIG_RE = /"hotelList"|"hotelMatchInfos"|"hotelName"/
   var HOTEL_BODY_MAX = 2_000_000
   var isHotelPage = /(^|\.)hotels\.ctrip\.com$/.test(location.hostname)
   var isTrainPage = /(^|\.)12306\.cn$/.test(location.hostname)
+  var isDidaPage = /(^|\.)portal\.dida\.com$/.test(location.hostname)
 
   function dispatch(url, body) {
     try {
@@ -42,6 +48,9 @@
   function trainPageWants(url) {
     return isTrainPage && TRAIN_HINT_RE.test(url)
   }
+  function didaPageWants(url) {
+    return isDidaPage && DIDA_HINT_RE.test(url)
+  }
 
   var origFetch = window.fetch
   if (typeof origFetch === 'function') {
@@ -51,7 +60,7 @@
           var url = ''
           if (typeof input === 'string') url = input
           else if (input && typeof input.url === 'string') url = input.url
-          var urlHint = FLIGHT_HINT_RE.test(url) || hotelPageWants(url) || trainPageWants(url)
+          var urlHint = FLIGHT_HINT_RE.test(url) || hotelPageWants(url) || trainPageWants(url) || didaPageWants(url)
           var isPost = false
           try { isPost = String((init && init.method) || (input && input.method) || 'GET').toUpperCase() === 'POST' } catch { /* ignore */ }
           var capOk = true
@@ -63,7 +72,7 @@
             var clone = res.clone()
             clone.text().then(function (t) {
               try {
-                if (urlHint || (t.length <= HOTEL_BODY_MAX && HOTEL_BODY_SIG_RE.test(t))) dispatch(url, t)
+                if (urlHint || (t.length <= HOTEL_BODY_MAX && HOTEL_BODY_SIG_RE.test(t)) || (t.length <= HOTEL_BODY_MAX && DIDA_BODY_SIG_RE.test(t))) dispatch(url, t)
               } catch { /* 嗅探失败不影响站点自身 */ }
             }).catch(function () { /* 流不可读则跳过 */ })
           }
@@ -85,14 +94,14 @@
     xhr.addEventListener('load', function () {
       try {
         if (!xhr.__gotryUrl) return
-        var urlHint = FLIGHT_HINT_RE.test(xhr.__gotryUrl) || hotelPageWants(xhr.__gotryUrl) || trainPageWants(xhr.__gotryUrl)
+        var urlHint = FLIGHT_HINT_RE.test(xhr.__gotryUrl) || hotelPageWants(xhr.__gotryUrl) || trainPageWants(xhr.__gotryUrl) || didaPageWants(xhr.__gotryUrl)
         if (!urlHint && !(isHotelPage && xhr.__gotryMethod === 'POST')) return
         var body = ''
         if (xhr.responseType === '' || xhr.responseType === 'text') body = xhr.responseText
         else if (xhr.responseType === 'json') body = JSON.stringify(xhr.response)
         else return
         if (!body) return
-        if (urlHint || (body.length <= HOTEL_BODY_MAX && HOTEL_BODY_SIG_RE.test(body))) dispatch(xhr.__gotryUrl, body)
+        if (urlHint || (body.length <= HOTEL_BODY_MAX && HOTEL_BODY_SIG_RE.test(body)) || (body.length <= HOTEL_BODY_MAX && DIDA_BODY_SIG_RE.test(body))) dispatch(xhr.__gotryUrl, body)
       } catch { /* 嗅探失败不影响站点 */ }
     })
     return origSend.apply(this, arguments)

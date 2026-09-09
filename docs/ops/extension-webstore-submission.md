@@ -69,3 +69,10 @@ founder 控制的同一扩展,桥侧白名单双收;端口池(8791-8795)与 host
 | 审核成本 | 注册 + 审核 | 无 | 无 |
 | 版本化/回滚/镜像 | ✗(商店节奏) | ✓(Release 资产 + SHA256) | ✗ |
 | 扩展 ID | `oeajpiccmonococjcegddlooeeohlbgd` | `olpgkofjhhiiiahdkkbcninhjmegghfe` | `olpgkofjhhiiiahdkkbcninhjmegghfe` |
+
+## 2026-09-09 待提审变更(dida 供应商门户)
+
+- `manifest.json` 变更:host_permissions 新增 `https://*.dida.com/*` 与 `https://dida.com/*`;两组 content_scripts 新增 `https://portal.dida.com/*`。
+- 触发:`gotry_session_search kind=dida`(hotel-be portal integration 迁移线)需要 dida 域注入与票据 cookie 名只读权限。
+- 提审节奏归 founder;提审前商店版用户调 dida 会得到 needs-extension(与全新站点一致),不影响既有 ctrip/12306 车道。
+- unpacked/GitHub Releases 通道不受商店审核影响,`feat/session-dida-portal` 分支合并即生效。
