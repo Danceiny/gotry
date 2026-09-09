@@ -80,7 +80,7 @@ GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多�
 | | `gotry_weather_check` | Open-Meteo 预报≤16 天 + 历史气候基线 |
 | | `gotry_flight_verify` | OpenSky ADS-B 航班实时观测(三值) |
 | | `gotry_skeleton_check` | OpenFlights 168 对枢纽通航性(三值) |
-| **库存与目录** | `gotry_hotel_search` | hotel-byte 实时桥(须有效入住/退房日期——issue #283 输入闸校验),降级静态包(证据标注) |
+| **库存与目录** | `gotry_hotel_search` | hotel-byte 实时桥(需提供有效入住/退房日期,缺失时先追问),供应商不可用时降级为明确标注的静态结果 |
 | | `gotry_anything_search` | 城市/酒店/地标混合目录(hotel-be Anything) |
 | **判定引擎** | `gotry_feasibility_check` | 门到门真成本可行性(Z3),逐候选判定 |
 | **记忆与触达** | `gotry_motivation_save` | 动机画像落盘(evidence 强制,反幻觉) |
