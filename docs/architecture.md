@@ -591,6 +591,6 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | `milestones/m4-calibration-questions.md` | M4 校准问题集 |
 | `milestones/m6-b2b-reuse-walkthrough.md` | M6 P6 B2B 复用推演纪要(draft):traveler principal/sponsor/BFF principal 分词、复用率实测口径、tenant 对抗、披露插件 proposal;待 founder 评审 |
 | `milestones/s1-walkthrough.md` `milestones/g1-market-memo.md` | Stage 1 走查与 G1 首发市场备忘(历史备忘) |
-| `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` | Chrome Web Store 上架材料与隐私政策(ADR-21 通道 B) |
+| `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` · `ops/external-pr-workflow.md` | Chrome Web Store 上架材料与隐私政策(ADR-21 通道 B);外部 PR(含自动化机器人)维护者侧工作流 |
 | `assets/` | archify 生成的系统架构图(工具产物,仓内无消费者) |
 | `superpowers/` | superpowers 工作流 plans/specs(评测计划,工具自管) |
