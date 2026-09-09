@@ -96,6 +96,7 @@
 | [release-notes.md](release-notes.md) | 逐版本发布决策(「为什么」,人写决策面) |
 | [tokens.md](tokens.md) | token 唯一权威面:npm 2FA/发布机制/渠道获取表 |
 | [decisions-needed.md](decisions-needed.md) | 待创始人拍板的决策队列 |
+| [debt-archive.md](debt-archive.md) | 已清偿债务存档(追加式留证;开着的债见 architecture.md §10.1) |
 
 ### design/(模块设计)
 
