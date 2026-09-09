@@ -29,7 +29,7 @@ import { pickNudgeWish, type WishPoolEntry } from './wish-pool.ts'
 import { resolveTimelineDate } from './travel-timeline.ts'
 import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, readTripsWithFallback, readWishPoolWithFallback } from './state-ledger.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
-import { resolveSlotDate } from './slot-spec.ts'
+import { evaluateHotelStayDates } from './hotel-date-gate.ts'
 import { wmoLabel } from '../capabilities/weather.ts'
 // D-23 收编(issue #115):anything/web/github/video/agent_reach/session_login 六渠道改经
 // 效应注册表(退避/熔断/declined 面统一);能力层直接 import 仅留类型位(reach/reachStatus)
@@ -651,14 +651,18 @@ export function apply(ctx: Context, config: Config): void {
     description: routed('gotry_hotel_search',
       'Search hotels via hotelbyte-cli (real-time when hbcli credentials exist, falls back to the static pack with explicit evidence tagging). '
       + 'Input: destination city name + optional dates/adults. Dates accept verbatim natural expressions (下周五 / 8.20 / 下周五+3) — '
-      + 'the code layer resolves them against the time anchor; unresolved expressions degrade to an undated search with an explicit '
-      + 'date_notes entry instead of guessing. Output: hotel list with evidence chain ([realtime-API:hbcli] + fetch timestamp, '
+      + 'the code layer resolves them against the time anchor. **Dates are required for a supplier search** (issue #283): missing, blank, '
+      + 'single-side, unresolvable, or checkOut ≤ checkIn returns an actionable input_required result WITHOUT spawning the vendor CLI; '
+      + 'only after a complete valid stay window is fixed do we forward to hbcli. '
+      + 'Output: hotel list with evidence chain ([realtime-API:hbcli] + fetch timestamp, '
       + 'or [static-pack:estimate]) per the L4 invariant.'),
     // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(同 flyai 刀法)。
     parameters: {
       destination: { type: 'string', required: true, description: '目的地城市,如 大理' },
-      checkIn: { type: 'string', description: '入住日:YYYY-MM-DD 或自然表达(下周五/8.20/下周五+3);解析不了降级无日期检索并记 date_notes' },
-      checkOut: { type: 'string', description: 'checkOut 退房日:YYYY-MM-DD 或自然表达,形态同 checkIn' },
+      // issue #283 闸:日期字段对模型面仍是契约必填(required 标在 description,schema 不强制,
+      // 让 gate 产出更可行动的错误——dsh schema 拒绝信息太泛)
+      checkIn: { type: 'string', description: '入住日:YYYY-MM-DD 或自然表达(下周五/8.20/下周五+3);REQUIRED——缺失/空白/无法解析由 date-gate 返回 input_required,不查' },
+      checkOut: { type: 'string', description: 'checkOut 退房日:YYYY-MM-DD 或自然表达,形态同 checkIn;REQUIRED——必须晚于入住日,否则不查' },
       adults: { type: 'integer', description: '成人数(顶层字段,默认 2)' },
     },
     output: {
@@ -670,25 +674,38 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.destination) throw new Error('gotry_hotel_search requires destination')
       const started = Date.now()
       const fallbackPath = join(import.meta.dirname, '..', '..', 'data', 'hotels_2026.json')
-      // D-10 切片 B:日期槽位接受逐字自然表达(下周五/8.20/+N),代码层换算(slot-spec);
-      // unresolved 不猜——降级为无日期搜索并显式记 note,由模型向用户追问
-      const anchor = buildTimeAnchor(new Date())
-      const dateNotes: string[] = []
-      const resolveDate = (expr?: string): string | undefined => {
-        if (!expr) return undefined
-        const r = resolveSlotDate(expr, anchor)
-        if (!r.date) {
-          dateNotes.push(`日期未解析:${r.raw}——请向用户确认具体日期`)
-          return undefined
-        }
-        if (r.raw !== r.date) dateNotes.push(`slot-resolved: ${r.raw} → ${r.date}`)
-        return r.date
+      // issue #283 闸:完整、有效且退房晚于入住才能派发 hbcli;失败直接返回
+      // input_required,不发供应商命令,不把当前窗口查询当所需日期结果。
+      // 复用既有 time-anchor/slot-spec:词表内自然表达 → 绝对日期;
+      // 词表外 → unresolved,闸失败,不再走「无日期降级」伪装默认窗口价。
+      const gate = evaluateHotelStayDates(q.checkIn, q.checkOut)
+      if (!gate.ok) {
+        // 闸失败:不调用 interpretEffect,不调 hbcli;延迟日志不写(no spawn)。
+        // 顶层 summary 与 verdict/message 三字段联动,presentResult 能直接渲成
+        // 「酒店:迪拜 input_required」行动卡(替代旧版的「无结果」空卡),
+        // 引导模型向用户追问具体日期——而不是伪装成「无房可订」。
+        const summary = `酒店 ${q.destination ?? ''} 闸拒绝(${gate.reason}):${gate.message}`
+        return {
+          ok: false,
+          verdict: gate.verdict,
+          reason: gate.reason,
+          missing: gate.missing,
+          raw: gate.raw,
+          destination: q.destination,
+          message: gate.message,
+          summary,
+          evidence: gate.evidence,
+          latency_ms: Date.now() - started,
+        } as never
       }
+      // 闸通过:绝对日期已就位;slot 解析过程产生的原话 → 绝对日期 注记回显
+      // (工具层 date_notes 与既有 D-10 切片 B 形态兼容)
+      const dateNotes = [...gate.notes]
       // 效应解译层(ADR-18):渠道选择/韧性(重试/熔断)在解译器,result 原样透传——
       // 断路拒绝时返回平铺失败面(不发起查询,不伪装成 miss)
       const itp = await interpretEffect({
         effect: 'HBCLI_HOTEL_SEARCH',
-        params: { destination: q.destination, checkIn: resolveDate(q.checkIn), checkOut: resolveDate(q.checkOut), adults: q.adults, hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs, fallbackPath },
+        params: { destination: q.destination, checkIn: gate.checkIn, checkOut: gate.checkOut, adults: q.adults, hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs, fallbackPath },
       })
       if (!itp.result) return declinedObservation('HBCLI_HOTEL_SEARCH', itp.trace)
       const resp = itp.result
@@ -711,7 +728,18 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: args => ({ card: 'generic', title: `酒店搜索:${args.destination ?? ''}`, kind: 'search', rawInput: args }),
     presentResult: (_args, value) => {
-      const r = value as { hotels?: unknown; via?: string; destination?: string; summary?: string }
+      // issue #283 闸失败:渲染为「input_required」行动卡,summary/message 直传;
+      // 不再退化成「无结果」空卡——闸拒绝的可行动语义必须显式进 UI,
+      // 引导模型向用户追问 checkIn/checkOut 字段
+      const r = value as { hotels?: unknown; via?: string; destination?: string; summary?: string; verdict?: string; reason?: string; missing?: string[]; message?: string }
+      if (r.verdict === 'input_required') {
+        const missingZh = (r.missing ?? []).map(m => m === 'checkIn' ? '入住日' : '退房日').join('+')
+        return {
+          card: 'generic',
+          title: `酒店:${r.destination ?? ''} 缺日期(${r.reason ?? 'input_required'})`,
+          content: [{ type: 'text', text: `需要补充 ${missingZh || '日期字段'} 后才能查询供应商。\n${String(r.summary ?? r.message ?? '')}` }],
+        }
+      }
       const h = r.hotels
       const liveCount = Array.isArray(h) ? h.length : 0
       // 静态包是 {meta, stays} 对象而非数组(issue #24:此前计数恒 0 → UI 显示「无结果」)
