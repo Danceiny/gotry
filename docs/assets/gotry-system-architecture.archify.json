@@ -111,7 +111,7 @@
       "id": "travel-core",
       "type": "backend",
       "label": "确定性行程内核",
-      "sublabel": "TS 枚举/评估/选择 · solveUnified/Z3 航班链",
+      "sublabel": "TS 枚举/评估/选择 · 控制面 Z3",
       "pos": [
         820,
         320
@@ -281,7 +281,7 @@
       "id": "plugin-solves",
       "from": "gotry-plugin",
       "to": "travel-core",
-      "label": "候选枚举/评估/选择 · 航班链 Z3",
+      "label": "TS 候选枚举/评估/选择",
       "variant": "emphasis",
       "labelAt": [
         800,
@@ -322,7 +322,7 @@
       "id": "worker-solves",
       "from": "async-worker",
       "to": "travel-core",
-      "label": "solveUnified · 航班链 Z3",
+      "label": "脚本/控制面 → solveUnified · 航班链 Z3",
       "variant": "dashed",
       "fromSide": "bottom",
       "toSide": "top"
@@ -381,7 +381,8 @@
       "title": "职责分界",
       "items": [
         "LLM 负责理解与解释;普通候选由 TypeScript 枚举、评估、选择",
-        "显式航班链由 solveUnified 使用 Z3;py/gotry_feasibility 仅历史对照 oracle"
+        "脚本/控制面调用 solveUnified 使用 Z3;py/gotry_feasibility 仅历史对照 oracle,与产品/运行时/工具链零依赖",
+        "入口: async-collect.ts · state-cli.ts · replay.ts"
       ]
     },
     {

@@ -5040,11 +5040,11 @@
         <path data-edge-from="user" data-edge-to="local-runtime" data-edge-label="Web / CLI" data-edge-key="0" data-edge-id="user-enters" data-composition-points="180,358;240,358" d="M 180 358 L 240 358" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="local-runtime" data-edge-to="llm-provider" data-edge-label="HTTPS 模型调用" data-edge-key="1" data-edge-id="runtime-calls-llm" data-composition-points="360,320;360,156" d="M 360 320 L 360 156" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="local-runtime" data-edge-to="gotry-plugin" data-edge-label="gotry_tools 调用" data-edge-key="2" data-edge-id="runtime-invokes-tools" data-composition-points="480,358;530,358" d="M 480 358 L 530 358" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="gotry-plugin" data-edge-to="travel-core" data-edge-label="候选枚举/评估/选择 · 航班链 Z3" data-edge-key="3" data-edge-id="plugin-solves" data-composition-points="780,358;820,358" d="M 780 358 L 820 358" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="gotry-plugin" data-edge-to="travel-core" data-edge-label="TS 候选枚举/评估/选择" data-edge-key="3" data-edge-id="plugin-solves" data-composition-points="780,358;820,358" d="M 780 358 L 820 358" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="travel-core" data-edge-to="fact-gate" data-edge-label="行程产物 · 交付前过闸" data-edge-key="4" data-edge-id="core-to-gate" data-composition-points="1070,358;1110,358" d="M 1070 358 L 1110 358" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <path data-edge-from="gotry-plugin" data-edge-to="state-ledger" data-edge-label="事务读写(租户域)" data-edge-key="5" data-edge-id="plugin-uses-ledger" data-composition-points="655,320;655,156" d="M 655 320 L 655 156" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="async-worker" data-edge-to="state-ledger" data-edge-label="恢复 / 落账" data-edge-key="6" data-edge-id="worker-uses-ledger" data-composition-points="820,118;780,118" d="M 820 118 L 780 118" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="async-worker" data-edge-to="travel-core" data-edge-label="solveUnified · 航班链 Z3" data-edge-key="7" data-edge-id="worker-solves" data-composition-points="940,156;940,180;961,180;961,296;945,296;945,320" d="M 940 156 L 940 172 Q 940 180 948 180 L 953 180 Q 961 180 961 188 L 961 288 Q 961 296 953 296 L 953 296 Q 945 296 945 304 L 945 320" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="async-worker" data-edge-to="travel-core" data-edge-label="脚本/控制面 → solveUnified · 航班链 Z3" data-edge-key="7" data-edge-id="worker-solves" data-composition-points="940,156;940,180;961,180;961,296;945,296;945,320" d="M 940 156 L 940 172 Q 940 180 948 180 L 953 180 Q 961 180 961 188 L 961 288 Q 961 296 953 296 L 953 296 Q 945 296 945 304 L 945 320" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="gotry-plugin" data-edge-to="capability-adapters" data-edge-label="只读工具调用" data-edge-key="8" data-edge-id="plugin-calls-adapters" data-composition-points="655,396;655,560" d="M 655 396 L 655 560" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="capability-adapters" data-edge-to="external-sources" data-edge-label="CLI / HTTPS / CDP · 写请求 fail-closed" data-edge-key="9" data-edge-id="adapters-query-sources" data-composition-points="780,598;820,598" d="M 780 598 L 820 598" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
         <path data-edge-from="loopx" data-edge-to="async-worker" data-edge-label="tick / 配额驱动" data-edge-key="10" data-edge-id="loopx-drives-worker" data-composition-points="1110,118;1060,118" d="M 1110 118 L 1060 118" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
@@ -5102,15 +5102,15 @@
         <text data-detail="fine" x="655" y="388" class="t-backend" font-size="7" text-anchor="middle">Cordis plugin</text>
         </g>
 
-        <g id="node-travel-core" data-node-id="travel-core" data-node-label="确定性行程内核" tabindex="0" role="button" aria-label="聚焦确定性行程内核，TS 枚举/评估/选择 · solveUnified/Z3 航班链, 同步主链 · L1–L3 对话到判决" aria-pressed="false" data-node-kind="backend" data-node-sublabel="TS 枚举/评估/选择 · solveUnified/Z3 航班链" data-node-tag="L3" data-node-context="同步主链 · L1–L3 对话到判决">
-          <title>确定性行程内核 · TS 枚举/评估/选择 · solveUnified/Z3 航班链 · 同步主链 · L1–L3 对话到判决 · L3</title>
+        <g id="node-travel-core" data-node-id="travel-core" data-node-label="确定性行程内核" tabindex="0" role="button" aria-label="聚焦确定性行程内核，TS 枚举/评估/选择 · 控制面 Z3, 同步主链 · L1–L3 对话到判决" aria-pressed="false" data-node-kind="backend" data-node-sublabel="TS 枚举/评估/选择 · 控制面 Z3" data-node-tag="L3" data-node-context="同步主链 · L1–L3 对话到判决">
+          <title>确定性行程内核 · TS 枚举/评估/选择 · 控制面 Z3 · 同步主链 · L1–L3 对话到判决 · L3</title>
           <rect x="820" y="320" width="250" height="76" rx="6" class="c-mask"/>
           <rect x="820" y="320" width="250" height="76" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(826 326) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
           <text data-node-label="" data-detail-anchor="" x="945" y="356" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">确定性行程内核</text>
-        <text data-detail="context" x="945" y="372" class="t-muted" font-size="9" text-anchor="middle">TS 枚举/评估/选择 · solveUnified/Z3 航班链</text>
+        <text data-detail="context" x="945" y="372" class="t-muted" font-size="9" text-anchor="middle">TS 枚举/评估/选择 · 控制面 Z3</text>
         <text data-detail="fine" x="945" y="388" class="t-backend" font-size="7" text-anchor="middle">L3</text>
         </g>
 
@@ -5205,9 +5205,9 @@
           <rect x="461.6" y="400" width="86.8" height="14" rx="3" class="c-mask"/>
           <text x="505" y="410" class="t-backend" font-size="8" text-anchor="middle">gotry_tools 调用</text>
         </g>
-        <g data-detail="context" data-edge-from="gotry-plugin" data-edge-to="travel-core" data-edge-label="候选枚举/评估/选择 · 航班链 Z3" data-edge-key="3" data-edge-id="plugin-solves">
-          <rect x="723" y="400" width="154" height="14" rx="3" class="c-mask"/>
-          <text x="800" y="410" class="t-backend" font-size="8" text-anchor="middle">候选枚举/评估/选择 · 航班链 Z3</text>
+        <g data-detail="context" data-edge-from="gotry-plugin" data-edge-to="travel-core" data-edge-label="TS 候选枚举/评估/选择" data-edge-key="3" data-edge-id="plugin-solves">
+          <rect x="744.6" y="400" width="110.8" height="14" rx="3" class="c-mask"/>
+          <text x="800" y="410" class="t-backend" font-size="8" text-anchor="middle">TS 候选枚举/评估/选择</text>
         </g>
         <g data-detail="context" data-edge-from="travel-core" data-edge-to="fact-gate" data-edge-label="行程产物 · 交付前过闸" data-edge-key="4" data-edge-id="core-to-gate">
           <rect x="1034.6" y="400" width="110.8" height="14" rx="3" class="c-mask"/>
@@ -5221,9 +5221,9 @@
           <rect x="768.6" y="54" width="62.8" height="14" rx="3" class="c-mask"/>
           <text x="800" y="64" class="t-messagebus" font-size="8" text-anchor="middle">恢复 / 落账</text>
         </g>
-        <g data-detail="context" data-edge-from="async-worker" data-edge-to="travel-core" data-edge-label="solveUnified · 航班链 Z3" data-edge-key="7" data-edge-id="worker-solves">
-          <rect x="887.9" y="160" width="125.19999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="950.5" y="170" class="t-messagebus" font-size="8" text-anchor="middle">solveUnified · 航班链 Z3</text>
+        <g data-detail="context" data-edge-from="async-worker" data-edge-to="travel-core" data-edge-label="脚本/控制面 → solveUnified · 航班链 Z3" data-edge-key="7" data-edge-id="worker-solves">
+          <rect x="854.3" y="160" width="192.4" height="14" rx="3" class="c-mask"/>
+          <text x="950.5" y="170" class="t-messagebus" font-size="8" text-anchor="middle">脚本/控制面 → solveUnified · 航班链 Z3</text>
         </g>
         <g data-detail="context" data-edge-from="gotry-plugin" data-edge-to="capability-adapters" data-edge-label="只读工具调用" data-edge-key="8" data-edge-id="plugin-calls-adapters">
           <rect x="621.2" y="468" width="67.6" height="14" rx="3" class="c-mask"/>
@@ -5453,7 +5453,8 @@
         </div>
         <ul>
           <li>&bull; LLM 负责理解与解释;普通候选由 TypeScript 枚举、评估、选择</li>
-          <li>&bull; 显式航班链由 solveUnified 使用 Z3;py/gotry_feasibility 仅历史对照 oracle</li>
+          <li>&bull; 脚本/控制面调用 solveUnified 使用 Z3;py/gotry_feasibility 仅历史对照 oracle,与产品/运行时/工具链零依赖</li>
+          <li>&bull; 入口: async-collect.ts · state-cli.ts · replay.ts</li>
         </ul>
       </div>
 

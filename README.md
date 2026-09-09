@@ -39,8 +39,8 @@ flowchart LR
   subgraph NUM["Deterministic TypeScript kernel — ordinary choice path"]
     C["Candidate enumeration<br/>solveChoiceSegment"] --> D["Evaluate each choice<br/>evaluateChoice · true-cost checks"] --> V["Choice verdict<br/>feasible / infeasible · recommendation"]
   end
-  subgraph Z3PATH["Explicit flight-chain path"]
-    Z["solveUnified<br/>flight-chain constraints · Z3"]
+  subgraph Z3PATH["Separate script/control-plane entry"]
+    Z["solveUnified<br/>script/control-plane flight-chain · Z3"]
   end
   subgraph GATE["Gates &amp; memory"]
     E["Evidence chain<br/>every number carries a source tag"] --> F{"Fact gate"}
@@ -50,7 +50,7 @@ flowchart LR
   end
   B --> C
   V --> E
-  B -.->|"explicit flight-chain request"| Z
+  B -.->|"separate script/control-plane entry"| Z
   Z --> E
   V -.->|"infeasible today"| I
   I -.->|"conditions met — enumerate again"| C
@@ -109,7 +109,7 @@ Architecture, five layers:
 | Layer | Module | Role |
 |---|---|---|
 | L2 | `ts/src/index.ts` (dsh plugin) | Tool registry (count lives in code and `scripts/run-all-tests.sh` output), time-anchor & memory-brief variables; execute isolation + consent gate + per-turn tool budget + process guards |
-| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | ordinary candidate enumeration/evaluation/choice; `solveUnified` is the separate flight-chain Z3 path |
+| L3 | `ts/src/unified.ts` | ordinary candidate enumeration/evaluation/choice; `solveUnified` is the separate flight-chain Z3 path. `py/gotry_feasibility/` is a historical comparison oracle only, with zero product/runtime/toolchain dependency |
 | L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | effect interpreter (backoff retry / circuit breaker / mock interpreter) + realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
 | L5 | loopx governance | objective / gates / evidence / quota |
 
@@ -129,7 +129,7 @@ The GoTry plugin exposes its tools in groups (the exact count lives in the code 
 | | `gotry_skeleton_check` | OpenFlights 168-hub-pair connectivity (three-valued) |
 | **Inventory & catalog** | `gotry_hotel_search` | hotel-byte realtime bridge (requires valid check-in/check-out dates and asks for missing dates), with clearly labeled static results when the supplier is unavailable |
 | | `gotry_anything_search` | mixed city/hotel/POI catalog (hotel-be Anything) |
-| **Decision engine** | `gotry_feasibility_check` | Ordinary path: deterministic TypeScript candidate enumeration/evaluation and per-candidate verdicts; explicit flight-chain requests use Z3 |
+| **Decision engine** | `gotry_feasibility_check` | Registered path: deterministic TypeScript candidate enumeration/evaluation and per-candidate verdicts |
 | **Memory & reachability** | `gotry_motivation_save` | Persist motivation profile (evidence mandatory, anti-fabrication) |
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | "next departure" wish pool + 0..1 conditional recall |
 | | `gotry_companion_save` · `gotry_trip_log` | companion profile / travel timeline |

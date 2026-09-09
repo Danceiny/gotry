@@ -39,8 +39,8 @@ flowchart LR
   subgraph NUM["确定性 TypeScript 内核——普通候选路径"]
     C["候选枚举<br/>solveChoiceSegment"] --> D["逐个评估选择<br/>evaluateChoice · 真成本检查"] --> V["选择判决<br/>可行 / 不可行 · 推荐"]
   end
-  subgraph Z3PATH["显式航班链路径"]
-    Z["solveUnified<br/>航班链约束 · Z3"]
+  subgraph Z3PATH["独立脚本/控制面入口"]
+    Z["solveUnified<br/>脚本/控制面航班链 · Z3"]
   end
   subgraph GATE["闸与记忆"]
     E["证据链<br/>每个数字带来源标签"] --> F{"事实闸"}
@@ -50,7 +50,7 @@ flowchart LR
   end
   B --> C
   V --> E
-  B -.->|"显式航班链请求"| Z
+  B -.->|"独立脚本/控制面入口"| Z
   Z --> E
   V -.->|"今天装不下"| I
   I -.->|"条件满足,重新枚举"| C
@@ -109,7 +109,7 @@ stateDiagram-v2
 | 层 | 模块 | 角色 |
 |---|---|---|
 | L2 | `ts/src/index.ts`(dsh 插件) | 注册 21 工具,挂时间锚点/记忆 brief 变量;execute 异常隔离 + 授权闸 + 每轮工具预算 + 进程护栏 |
-| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | 普通候选枚举/评估/选择; `solveUnified` 是独立航班链 Z3 路径 |
+| L3 | `ts/src/unified.ts` | 普通候选枚举/评估/选择; `solveUnified` 是独立航班链 Z3 路径。`py/gotry_feasibility/` 仅是历史对照 oracle,与产品/运行时/工具链零依赖 |
 | L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | 效应解译层(退避重试/断路器/mock 解译器)+ 实时库存桥 + OpenFlights 骨架(三值语义) |
 | L5 | loopx 治理面 | objective / gates / evidence / quota |
 
@@ -129,7 +129,7 @@ stateDiagram-v2
 | | `gotry_skeleton_check` | OpenFlights 168 对枢纽通航性(三值) |
 | **库存与目录** | `gotry_hotel_search` | hotel-byte 实时桥(需提供有效入住/退房日期,缺失时先追问),供应商不可用时降级为明确标注的静态结果 |
 | | `gotry_anything_search` | 城市/酒店/地标混合目录(hotel-be Anything) |
-| **判定引擎** | `gotry_feasibility_check` | 普通路径:确定性的 TypeScript 候选枚举/评估与逐候选判决;显式航班链请求使用 Z3 |
+| **判定引擎** | `gotry_feasibility_check` | 注册工具路径:确定性的 TypeScript 候选枚举/评估与逐候选判决 |
 | **记忆与触达** | `gotry_motivation_save` | 动机画像落盘(evidence 强制,反幻觉) |
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | 「下一次出发」愿望池 + 0..1 条件召回 |
 | | `gotry_companion_save` · `gotry_trip_log` | 同行人档案 / 旅行时间线 |
