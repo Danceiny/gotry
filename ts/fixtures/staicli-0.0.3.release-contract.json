@@ -1,0 +1,76 @@
+{
+  "schema_version": "gotry_staicli_release_contract.v1",
+  "artifact": {
+    "registry_tarball": "https://registry.npmjs.org/staicli/-/staicli-0.0.3.tgz",
+    "filename": "staicli-0.0.3.tgz",
+    "integrity": "sha512-xGzw6KBQ4r5l+CXDbU/35p2nh6ia4t7Hjh+D34IxQEgtaOOkt9iUATmxlFwcspmXCo6NuHoYFhCJ/rJ3rso5fg==",
+    "sha256": "f327ba271ad3779a72d2b97fb37861366b1d81b4173b60046eca9a07ed558ed2",
+    "package": {
+      "name": "staicli",
+      "version": "0.0.3",
+      "main": "dist/cli.js",
+      "bin": {
+        "hbcli": "dist/cli.js"
+      }
+    }
+  },
+  "safe_help": {
+    "top": {
+      "argv": ["--help"],
+      "exit_code": 0,
+      "stdout_sha256": "3acfc60127adae8175dcb4770d7c0090338eefba148bb862a2545a97d81f766e",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "required_lines": [
+        "Usage: hbcli [options] [command]",
+        "--json",
+        "--env <env>",
+        "  auth            Authentication and credentials",
+        "  search          Search hotels, destinations, and rates",
+        "  trade           Bookings and order management"
+      ]
+    },
+    "search": {
+      "argv": ["search", "--help"],
+      "exit_code": 0,
+      "stdout_sha256": "271c310cc0a4479baa0c9e943126812e2ff35b30978b33787f61bba17ece7e8f",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "required_lines": [
+        "Usage: hbcli search [options] [command]",
+        "hotel-list [options]",
+        "hotel-rates [options]",
+        "destinations [options]",
+        "check-avail [options]"
+      ]
+    },
+    "trade": {
+      "argv": ["trade", "--help"],
+      "exit_code": 0,
+      "stdout_sha256": "81243a7df6ff4970a5472f1986ee1e5401d3c945424b3865a829cdcd4bb31ae5",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "required_lines": [
+        "Usage: hbcli trade [options] [command]",
+        "book [options]",
+        "cancel [options]",
+        "query-orders [options]"
+      ]
+    },
+    "auth": {
+      "argv": ["auth", "--help"],
+      "exit_code": 0,
+      "stdout_sha256": "26d86f972e20f003b37d98691a6dd2bf0967e371b583e80e13719485c40d021f",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "required_lines": [
+        "Usage: hbcli auth [options] [command]",
+        "set-credentials [options]",
+        "login [options]",
+        "whoami"
+      ]
+    }
+  },
+  "unsupported_selector": {
+    "argv": ["search", "hotel-list", "--tenant-entity-id", "x"],
+    "exit_code": 1,
+    "stderr_sha256": "e7fa0a960a4d31e462578ebd5badc57955e6f9b08d1dd0b36038f53d39677ecd",
+    "stderr_contains": "error: unknown option '--tenant-entity-id'"
+  }
+}

@@ -72,14 +72,18 @@ echo "=== 7c. 外部依赖自举(check-only 探测/跳过开关/postinstall 非�
 
 echo
 echo "=== 7d. hbcli 全流程端到端(仅 GOTRY_HBCLI_LIVE=1 显式启用真实 UAT;默认零 binary/网络/凭证探测) ==="
-(cd ts && GOTRY_HBCLI_LIVE="${GOTRY_HBCLI_LIVE:-0}" npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
+(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" GOTRY_HBCLI_LIVE="${GOTRY_HBCLI_LIVE:-0}" GOTRY_HOTELBYTE_SKILLS_LIVE="${GOTRY_HOTELBYTE_SKILLS_LIVE:-0}" npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
 
 echo "=== 7f. hbcli live opt-in 隔离证明(可发现 fixture + blocked network:默认 binary=0/network=0/credential=0) ==="
-(cd ts && npx tsx scripts/hbcli-live-optin-tests.ts) || FAIL=1
+(cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hbcli-live-optin-tests.ts) || FAIL=1
 
 echo
-echo "=== 7e. hbcli release-contract 离线钉版(staicli@0.0.3 integrity + command schema + honest unknown/query-miss outcome 分类;无 supplier 请求,纯离线假二进制;为 #232 钉版准备,非交易实现) ==="
-(cd ts && npx tsx scripts/hbcli-release-contract-tests.ts) || FAIL=1
+echo "=== 7e. hbcli release-contract(staicli@0.0.3 actual tarball bytes + packaged help/parser; test-only, no supplier request) ==="
+if [ -n "${STAICLI_TARBALL:-}" ]; then
+  (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hbcli-release-contract-tests.ts "$STAICLI_TARBALL") || FAIL=1
+else
+  echo "SKIP: STAICLI_TARBALL not set; targeted artifact proof requires a local staicli-0.0.3.tgz path"
+fi
 
 echo
 echo "=== 8. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 + guardToolExecute 异常隔离,3 断言) ==="
@@ -123,7 +127,7 @@ echo "=== 16. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 
 echo
 echo "=== 17. hotelbyte-skills 契约对齐(本地描述离线校验;远端读取仅 GOTRY_HOTELBYTE_SKILLS_LIVE=1) ==="
-(cd ts && GOTRY_HOTELBYTE_SKILLS_LIVE="${GOTRY_HOTELBYTE_SKILLS_LIVE:-0}" npx tsx scripts/skills-contract-tests.ts) || FAIL=1
+(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" GOTRY_HBCLI_LIVE="${GOTRY_HBCLI_LIVE:-0}" GOTRY_HOTELBYTE_SKILLS_LIVE="${GOTRY_HOTELBYTE_SKILLS_LIVE:-0}" npx tsx scripts/skills-contract-tests.ts) || FAIL=1
 
 echo
 echo "=== 18. T1 记忆合并守门(M4,纯函数:追加不删史/P0 权重校验/幂等) ==="
@@ -154,6 +158,11 @@ echo "=== 23b. 发布前离线预验证(pack→解 tarball→依赖声明完整�
 (cd ts && npx tsx scripts/publish-preverify.ts) || FAIL=1
 (cd ts && npx tsx scripts/dsh-runtime-closure-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/dsh-target-closure-proof.ts) || FAIL=1
+
+echo
+echo "=== 23a. Issue #289 DSH model-request retry contracts + native loopback request proof ==="
+(cd ts && npx tsx scripts/issue-289-model-retry-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/issue-289-model-retry-real-tests.ts) || FAIL=1
 
 echo
 echo "=== 23c. Session V3 确定性迁移证明(#268:隔离临时目录文件字节——V2 编解码器编码→JSONL 写盘→catalog 读盘分类 migration-required→V3 恢复→独立 V3 继任者写盘→validation:current 完全解码→迁移后源文件字节比较不变) ==="
@@ -212,6 +221,10 @@ echo "=== 28. 事务化状态账本(ADR-15:事务原子性/红线进事务/幂�
 echo
 echo "=== 29. 账本 CLI e2e(migrate 快照/stats/log/export 视图单向/forget 物理硬删带审计/pw-* saga 面) ==="
 (cd ts && npx tsx scripts/state-cli-tests.ts | tail -1) || FAIL=1
+
+echo
+echo "=== 29b. 账本 tenant 修复计划(#254:只读 inventory/dry-run before-after/无证据零搬移/跨租户同 idem_key 同 wish_id 拒绝/重复 dry-run 幂等/正本零写) ==="
+(cd ts && npx tsx scripts/ledger-repair-plan-tests.ts | tail -1) || FAIL=1
 
 echo
 echo "=== 30. Z3 WASM race 回归(engine/journey/unified 三形态同轮并发压测;修复验证面,run-all §1 止血移除的闸) ==="

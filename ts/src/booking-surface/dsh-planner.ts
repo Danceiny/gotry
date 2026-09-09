@@ -100,6 +100,72 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function structurallyEqualJson(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    return left.every((value, index) => structurallyEqualJson(value, right[index]))
+  }
+  if (isRecord(left) || isRecord(right)) {
+    if (!isRecord(left) || !isRecord(right)) return false
+    const leftKeys = Object.keys(left)
+    const rightKeys = Object.keys(right)
+    if (leftKeys.length !== rightKeys.length) return false
+    return leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && structurallyEqualJson(left[key], right[key]))
+  }
+  return false
+}
+
+/**
+ * Recover only a complete sequence of two or more identical top-level JSON
+ * objects. The scanner finds object boundaries without treating braces or
+ * escaped quotes inside JSON strings as structure; JSON.parse remains the
+ * authority for each complete segment.
+ */
+function parseRepeatedJsonObjects(input: string): Record<string, unknown> | null {
+  const trimmed = input.trim()
+  if (!trimmed.startsWith('{')) return null
+  const objects: Record<string, unknown>[] = []
+  let offset = 0
+  while (offset < trimmed.length) {
+    if (trimmed[offset] !== '{') return null
+    let depth = 0
+    let inString = false
+    let escaped = false
+    let end = -1
+    for (let index = offset; index < trimmed.length; index += 1) {
+      const ch = trimmed[index]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (ch === '\\') escaped = true
+        else if (ch === '"') inString = false
+        continue
+      }
+      if (ch === '"') inString = true
+      else if (ch === '{') depth += 1
+      else if (ch === '}') {
+        depth -= 1
+        if (depth === 0) {
+          end = index + 1
+          break
+        }
+        if (depth < 0) return null
+      }
+    }
+    if (end === -1) return null
+    let parsed: unknown
+    try { parsed = JSON.parse(trimmed.slice(offset, end)) } catch { return null }
+    if (!isRecord(parsed)) return null
+    objects.push(parsed)
+    offset = end
+    while (offset < trimmed.length && /\s/.test(trimmed[offset]!)) offset += 1
+    if (offset < trimmed.length && trimmed[offset] !== '{') return null
+  }
+  if (objects.length < 2) return null
+  const first = objects[0]!
+  return objects.every((object) => structurallyEqualJson(object, first)) ? first : null
+}
+
 function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   return Object.keys(value).length === allowed.length && Object.keys(value).every((key) => allowed.includes(key))
 }
@@ -583,8 +649,13 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   let args: unknown
   if (typeof rawArgs === 'string') {
     try { args = JSON.parse(rawArgs) } catch {
-      console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(rawArgs).slice(0, 600))
-      throw new Error('planner_invalid_tool_arguments')
+      const repeated = parseRepeatedJsonObjects(rawArgs)
+      if (repeated === null) {
+        console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(rawArgs).slice(0, 600))
+        throw new Error('planner_invalid_tool_arguments')
+      }
+      args = repeated
+      console.error('[booking-copilot] repaired duplicated tool arguments (validated identical complete objects)')
     }
   } else if (isRecord(rawArgs)) {
     // Some providers hand back an already-parsed arguments object.
