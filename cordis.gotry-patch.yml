@@ -1,7 +1,7 @@
 # GoTry × dsh 成品组合(DeepSeek 原生——创始人官方 key)
 # 用法(在仓库根或 gotry 安装目录):
 #   DEEPSEEK_API_KEY=<key> dsh web --patch ./cordis.gotry-patch.yml
-#   (从 npm 安装: npx gotry web 自动应用本 patch)
+#   (从 npm 安装: npx @danceiny/gotry web 自动应用本 patch)
 - insert:
     - id: gotry-tools
       name: 'placeholder/ts/src/index.ts'   # 占位:bin/gotry-inner.js 运行时

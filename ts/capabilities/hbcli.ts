@@ -207,7 +207,7 @@ export async function searchHotels(
   // 自动跑过官方脚本;PATH 未含 ~/.local/bin 时上方候选路径也已兜住),
   // 裸 "spawn hbcli ENOENT" 读起来像工具坏了——实际静态包降级是设计行为
   const rawReason = live.error ?? live.via
-  const reason = /ENOENT/i.test(rawReason) ? '未安装 hbcli(可选实时源;npx gotry setup 可按官方脚本安装)' : rawReason
+  const reason = /ENOENT/i.test(rawReason) ? '未安装 hbcli(可选实时源;npx @danceiny/gotry setup 可按官方脚本安装)' : rawReason
   // 降级:读静态包,按目的地过滤命中的住宿块(issue #24)——整包倾倒会把无关场景
   // (深圳/普吉/曼谷/云南/大理混装)灌给模型且不指明哪块相关;包内无该目的地时明示
   // 「无数据」而不是伪装成可用结果。

@@ -316,8 +316,8 @@ export function renderMetricsReport(s: MetricsSnapshot): string {
 
   L.push('## 账本与体检报告')
   L.push('')
-  L.push(`- 账本 gotry-state.db:${s.ledger.exists ? `存在(${fmtBytes(s.ledger.bytes)},更新 ${s.ledger.mtime};明细经 \`npx gotry state\` 查看,指标面不打开 SQLite)` : '不存在(该 stateRoot 无账本)'}`)
-  L.push(`- doctor 报告 doctor-report.md:${s.doctorReport.exists ? `存在(更新 ${s.doctorReport.mtime})` : '不存在(跑 `npx gotry doctor` 生成)'}`)
+  L.push(`- 账本 gotry-state.db:${s.ledger.exists ? `存在(${fmtBytes(s.ledger.bytes)},更新 ${s.ledger.mtime};明细经 \`npx @danceiny/gotry state\` 查看,指标面不打开 SQLite)` : '不存在(该 stateRoot 无账本)'}`)
+  L.push(`- doctor 报告 doctor-report.md:${s.doctorReport.exists ? `存在(更新 ${s.doctorReport.mtime})` : '不存在(跑 `npx @danceiny/gotry doctor` 生成)'}`)
   L.push('')
   L.push('## 评测三层入口(ADR-11;运行结果由 run-all-tests.sh / CI 承载,v1 不在此重跑)')
   L.push('')

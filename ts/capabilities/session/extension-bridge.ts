@@ -65,7 +65,7 @@ export function needsExtensionSummary(opts: { localInstalled?: boolean; home?: s
   const local = opts.localInstalled ?? localExtensionInstalled(opts.home)
   if (local) {
     return 'GoTry Session Bridge 扩展未连接(未安装或已停用)。推荐 Chrome 应用商店一键装(自动更新) '
-      + `${EXTENSION_STORE_URL} ;或 npx gotry setup 落位后 chrome://extensions 开发者模式「加载已解压的扩展程序」指向 ~/.gotry/extension`
+      + `${EXTENSION_STORE_URL} ;或 npx @danceiny/gotry setup 落位后 chrome://extensions 开发者模式「加载已解压的扩展程序」指向 ~/.gotry/extension`
   }
   return 'GoTry Session Bridge 扩展未连接。若你已从 Chrome 商店安装(自动更新):打开 Chrome 并确认扩展已启用即可自动连接,无需再装。'
     + `若尚未安装:应用商店一键装 ${EXTENSION_STORE_URL} (装完零弹窗,浏览器自己当安装器)`

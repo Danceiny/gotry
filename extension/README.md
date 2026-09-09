@@ -26,7 +26,7 @@
 不经商店审核,版本化 tarball + SHA256 校验,与 npm 发版节奏解耦,更新比商店快:
 
 ```bash
-npx gotry setup --extension-from=github   # 自动下载校验并落位 ~/.gotry/extension
+npx @danceiny/gotry setup --extension-from=github   # 自动下载校验并落位 ~/.gotry/extension
 ```
 
 (或手动:从 [github.com/Danceiny/gotry/releases](https://github.com/Danceiny/gotry/releases) 标签 `ext-*` 下载 `gotry-session-bridge.tar.gz` 解压到任意固定位置。)
@@ -36,7 +36,7 @@ npx gotry setup --extension-from=github   # 自动下载校验并落位 ~/.gotry
 ### 方式三:npm 包内副本本地加载(离线确定性)
 
 ```bash
-npx gotry setup   # 把包内扩展落位到 ~/.gotry/extension
+npx @danceiny/gotry setup   # 把包内扩展落位到 ~/.gotry/extension
 ```
 
 再按方式二的 `chrome://extensions` 三步加载该目录。
@@ -47,4 +47,4 @@ npx gotry setup   # 把包内扩展落位到 ~/.gotry/extension
 
 - 商店版扩展 ID 固定为 `oeajpiccmonococjcegddlooeeohlbgd`(商店用自己的签名 key,与 unpacked 版 ID 不同,二者都是同一扩展,本机 gotry 桥双通道同信);
 - 本地加载(unpacked)版扩展 ID 应为固定的 `olpgkofjhhiiiahdkkbcninhjmegghfe`(manifest 带 `key`,跨机器稳定)——若不一致,说明 manifest 被改动过,不要加载;
-- gotry 侧运行 `npx gotry` 后发起一次会话检索,扩展图标应出现(无需点击);桥状态可看 `curl http://127.0.0.1:8791/status`(仅本机回环)。
+- gotry 侧运行 `npx @danceiny/gotry` 后发起一次会话检索,扩展图标应出现(无需点击);桥状态可看 `curl http://127.0.0.1:8791/status`(仅本机回环)。

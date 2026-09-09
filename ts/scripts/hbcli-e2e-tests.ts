@@ -11,7 +11,7 @@
  *   - stateRoot 同样走临时目录,结束即删。
  *
  * SKIP 语义(同 §17 先例:能跑则跑,环境缺前置不红):
- *   - hbcli 未安装 → SKIP + 安装指引(npx gotry setup);
+ *   - hbcli 未安装 → SKIP + 安装指引(npx @danceiny/gotry setup);
  *   - UAT(api-test.hotelbyte.com)不可达 → SKIP + 原因。
  * UAT 当前库存态(2026-08-30 实测):目的地/酒店参考数据为空,hotel-list 按名
  * 查询返回业务层 404——通道/鉴权/搜索编排(供应商 provenance+correlationId)均
@@ -36,7 +36,7 @@ const SANDBOX_APP_SECRET = 'hotelbyte_api_demo'
 
 const GUIDANCE = [
   'staicli(hbcli)账号配置指引:',
-  '  1. 安装 CLI(若缺):npx gotry setup(npm 装 staicli@npmjs → PATH 的 hbcli)',
+  '  1. 安装 CLI(若缺):npx @danceiny/gotry setup(npm 装 staicli@npmjs → PATH 的 hbcli)',
   '  2. 快速试用(沙箱演示账号,来自 hotel-be 种子,user/domain/predefined_user_demo.go):',
   '     hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo',
   '  3. 正式接入:向 HotelByte 申请专属 appKey/appSecret(hbk_*/hbs_*),替换第 2 步凭证;',
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   console.log(GUIDANCE.join('\n'))
   const bin = probeBin()
   if (!bin) {
-    console.log(`SKIP: 未安装 hbcli(候选 ${hbcliBinCandidates('hbcli').join(' / ')} 均不可执行)——npx gotry setup 可按官方脚本安装`)
+    console.log(`SKIP: 未安装 hbcli(候选 ${hbcliBinCandidates('hbcli').join(' / ')} 均不可执行)——npx @danceiny/gotry setup 可按官方脚本安装`)
     return
   }
   if (!(await uatReachable())) {
