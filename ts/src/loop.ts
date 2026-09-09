@@ -108,6 +108,11 @@ export interface PlanningWindowCheck {
   error?: string
 }
 
+export interface PlanningWindowOptions {
+  /** Registered feasibility tool opts into the dated-candidate default future floor. */
+  defaultDatedFuture?: boolean
+}
+
 function isoDateInBounds(date: string, bounds: { start: string; end: string }): boolean {
   const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!m || !isRealIsoDate(Number(m[1]), Number(m[2]), Number(m[3]))) return false
@@ -127,11 +132,12 @@ export function applyPlanningWindow(
   spec: JourneySpecTS,
   window: PlanningWindow | null,
   anchor: TimeAnchor,
+  options: PlanningWindowOptions = {},
 ): PlanningWindowCheck {
   // Dated recommendations are future-oriented even without optional named-year context.
   // Fully dateless legacy calculations remain untouched; historical bypass is explicit.
   if (window?.intent === 'historical') return { spec, rejected: [] }
-  const implicitFutureFloor = !window && hasDatedCandidates(spec)
+  const implicitFutureFloor = !window && options.defaultDatedFuture === true && hasDatedCandidates(spec)
   if (!window && !implicitFutureFloor) return { spec, rejected: [] }
 
   const currentYear = Number(anchor.today.slice(0, 4))

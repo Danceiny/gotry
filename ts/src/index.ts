@@ -418,7 +418,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       const req = parseRequest(payload['request'] as Record<string, unknown>)
       const cands = (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate)
       const spec = segmentsFromCandidate(req, cands)
-      const planningCheck = applyPlanningWindow(spec, planning, anchor)
+      const planningCheck = applyPlanningWindow(spec, planning, anchor, { defaultDatedFuture: true })
       if (planningCheck.error) {
         return feasibilityValidationFailure('planning_window_rejected', planningCheck.error, planningCheck.rejected)
       }
