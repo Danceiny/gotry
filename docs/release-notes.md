@@ -38,7 +38,7 @@
 ### What's New
 
 - **修了 rc18 的 `invalid skill name "gotry_motivation_save"` 硬错误** — 在「查余额 + 规划旅行」的交界场景里,模型会把 gotry 的工具名当成宿主 skill 传给 skill 加载器,当场报错。现在人格契约写死了表层规则:gotry 的全部能力一律是工具调用(gotry_ 前缀),绝不进 skill 加载器;skill 调用报 invalid/unknown 就改回工具调用。
-- **地图/路线/POI 工具上线** — `dsh-map-tools` 正式进依赖(零 API key,走 OSM/OSRM 开放源)。此前这个插件一直被启动流程静默丢弃;现在 doctor 体检(对话内 `gotry_doctor` 与终端 `npx gotry doctor`)都会如实告诉你它是否就位。
+- **地图/路线/POI 工具上线** — `dsh-map-tools` 正式进依赖(零 API key,走 OSM/OSRM 开放源)。此前这个插件一直被启动流程静默丢弃;现在 doctor 体检(对话内 `gotry_doctor` 与终端 `npx @danceiny/gotry doctor`)都会如实告诉你它是否就位。
 - **外部事件接缝(前两段)** — 新增只读通道探针 tick:站点断/上游不可达这类「带外事实」现在会写进通道健康面,检索改道建议与 doctor 即时受益,不用等用户撞上失败;愿望池召回也会否证「依赖通道当前不可用」的憧憬——不再硬推当下走不通的行程。
 - **booking planner 连续加固** — factRef 指针清洗泛化、截断 finalResponse 恢复、UI 预载 offers 容忍、surface-policy 违规重试等一组修复(#172-#188)。
 - **doctor 两面同口径** — 终端 CLI 与会话工具面现在报同一份体检清单(此前 CLI 缺 map-tools/ask-user 两项)。
@@ -82,7 +82,7 @@
 - **GoTry Session Bridge 上架 [Chrome Web Store](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)** — 浏览器扩展已通过 Google 审核发布，一键装、自动更新、零系统弹窗。
 - **插件安装回到浏览器的事** — 之前 gotry 在终端里既开浏览器又动剪贴板又弹原生面板，让安装体验变得很糟糕。现在直接打开浏览器商店点「添加至 Chrome」就完成了。`gotry session` 工具在会话检索里碰到扩展未装的状态，会把商店链接直接呈现给你，点一下就到。
 - **携程会话面安装少踩坑** — 之前如果没装扩展就调用携程会话检索会卡住；现在扩展一装好，对话会立刻自动继续。
-- **GitHub Releases 通道保留** — 想自己控制更新节奏、或不想通过商店审核，照样可以在终端用 `npx gotry setup --extension-from=github` 拉取最新版本。
+- **GitHub Releases 通道保留** — 想自己控制更新节奏、或不想通过商店审核，照样可以在终端用 `npx @danceiny/gotry setup --extension-from=github` 拉取最新版本。
 
 ### For Developers
 
@@ -194,7 +194,7 @@ rc.8 是首次带「记忆域 + 时间感硬化」骨架的发布；rc.7 是在�
 
 - 当前推荐装法：`npx -y @danceiny/gotry@latest`（或 `@rc`）
 - 携程会话检索需装浏览器扩展 —— 见上面 rc.17 那段
-- 一切外部依赖安装统一收口到 `npx gotry setup`
+- 一切外部依赖安装统一收口到 `npx @danceiny/gotry setup`
 
 ---
 

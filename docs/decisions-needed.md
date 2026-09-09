@@ -26,7 +26,7 @@
 
 | # | 事项 | 决策 | 结算 |
 |---|---|---|---|
-| D-9 | dsh-calendar 分发面 | **默认不挂载**;挂载与否进 setup 状态面(`~/.gotry/calendar.json`,`npx gotry setup calendar` on/off),禁止环境变量控制产品行为(founder 2026-09-03 纠偏);doctor 增宿主插件节 | ✅ 2026-09-03(ADR-25,run-all §50) |
+| D-9 | dsh-calendar 分发面 | **默认不挂载**;挂载与否进 setup 状态面(`~/.gotry/calendar.json`,`npx @danceiny/gotry setup calendar` on/off),禁止环境变量控制产品行为(founder 2026-09-03 纠偏);doctor 增宿主插件节 | ✅ 2026-09-03(ADR-25,run-all §50) |
 | D-8 | 工具编排策略 | **静态平铺 + 健康态驱动的动态建议**:工具面平铺不变、解译器不做隐藏派发;通道健康面 + verdict≠hit 时结果内注入 `routing` 顺位表(可用性>证据级>效率);persona (19) 收缩为注册表生成片段 | ✅ 2026-09-03(同上) |
 | D-7 | 有额度工具的配额归属 | **分层归属**:匿名 trial 池=首次体验导流层,正式使用升级 user-key/user-session;产品统一 key 池暂缓,M3 真实 cohort 规模出现时复审;doctor 增配额探测 | ✅ 2026-09-03(同上) |
 | D-2 | M4 校准七题 | auto-guess 5/7 + founder 提供剩余 4 题(2026-08-26):f1~16:xx 起飞 23:00 落/f4 实际昆明→珠海+顺风车返深/Rawai 公寓首夜失败次日换酒店/EK329 后按摩店过夜;附带原则:校准永不阻塞,动态 follow 动机 | ✅ 真值吸收进 data/*.json meta.reconcil |

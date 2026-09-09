@@ -11,6 +11,8 @@ npx @danceiny/gotry web
 # LLM key 由 dsh 宿主 UI 配置,gotry CLI 不出声
 ```
 
+> 任何 npm 兼容 registry(npmjs / npmmirror / 公司内部镜像)都能跑这条命令;镜像 `latest` 滞后时钉精确版本即可(如 `npx @danceiny/gotry@0.0.1-rc.22 web`)。注意:**在 gotry 仓库目录内**请改用源码入口 `./gotry web`——仓内裸名 npx 会被 npm exec 误判为「本地已装」,报 `sh: gotry: command not found`。
+
 **源码(开发者)**:
 
 ```bash
@@ -78,7 +80,7 @@ npx tsx scripts/state-cli.ts forget --state-root <root> wish <wish_id>
 **想看生成的文件(行程 md、工单交付)不用去翻目录**,两条路:
 
 1. 对话里直接说「看看我生成的行程 / 打开上次的规划」——GoTry 会用 `gotry_artifacts_list` 列出在册产物,再用 `gotry_artifacts_read` 以行号视图打开(只读,支持翻页);
-2. **dsh web 侧栏工作台**(dsh-better-sidebar,dsh-market 第一 UI 组件):`gotry web` 页面右侧展开工作台,文件树里点开工作区里的行程 md/工单交付,即见产品级渲染(表格/图表/PDF 都支持)。装法:`npx gotry doctor --fix`(体检报告 `gotry-state/doctor-report.md` 也在这个工作台里预览);未装也不影响路 1。
+2. **dsh web 侧栏工作台**(dsh-better-sidebar,dsh-market 第一 UI 组件):`gotry web` 页面右侧展开工作台,文件树里点开工作区里的行程 md/工单交付,即见产品级渲染(表格/图表/PDF 都支持)。装法:`npx @danceiny/gotry doctor --fix`(体检报告 `gotry-state/doctor-report.md` 也在这个工作台里预览);未装也不影响路 1。
 
 ## 进阶:headless 一问一答
 
