@@ -153,7 +153,7 @@ echo "=== 23c. Session V3 确定性迁移证明(#268:隔离临时目录文件字
 (cd ts && npx tsx scripts/dsh-session-v3-migration-proof.ts) || FAIL=1
 
 echo
-echo "=== 23d. dsh-subprocess-local 确定性证明(#268:仅公共 API 挂载 Cordis/provider+真实活跃父进程 spawn 非分离子进程+收集 stdout 观察 CHILD_PID+公共 terminate/waitForExit+进程组信号终止整组→子进程 PID 消失+真实 PTY 输出+node-pty spawn-helper 0755;平台中立,不调用私有方法,不传整个环境变量) ==="
+echo "=== 23d. dsh-subprocess-local 确定性证明(#268:仅公共 API 挂载 Cordis/provider+真实活跃父进程 spawn 非分离子进程+收集 stdout 观察 CHILD_PID+公共 terminate/waitForExit+进程组信号终止整组→子进程 PID 消失+真实 spawnTerminal 每平台输出 'pty-line' 与 exitCode=0;Darwin 预构建下额外断言 node-pty spawn-helper 0755 模式;非 Darwin 平台 helper 不适用,仅报告 platform-pty 事实而不伪造 stat 不存在的 helper;平台中立,不调用私有方法,不传整个环境变量) ==="
 (cd ts && npx tsx scripts/dsh-subprocess-local-proof.ts) || FAIL=1
 
 echo

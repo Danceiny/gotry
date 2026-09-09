@@ -98,9 +98,10 @@ jobs:
           fi
           grep -Fq "Node 24 is required" "$error_file"
 
-      # Root npm ci now materializes the pinned DSH closure. Keep exercising the
-      # publish shape from a clean consumer so package E2E cannot borrow source
-      # files or node_modules from the developer tree.
+      # Root npm ci --strict-peer-deps materializes the pinned DSH closure and
+      # fail-closes on any peer mismatch. Keep exercising the publish shape from
+      # a clean consumer so package E2E cannot borrow source files or
+      # node_modules from the developer tree.
       - name: Prepare packaged tool-budget E2E runtime
         shell: bash
         run: |
