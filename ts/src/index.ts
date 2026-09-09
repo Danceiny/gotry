@@ -280,10 +280,25 @@ export function apply(ctx: Context, config: Config): void {
   // 会话态收归 capabilities/session-consent.ts。防御:极简宿主/mock ctx 无事件总线时跳过。
   const ctxOn = (ctx as unknown as { on?: unknown }).on
   if (typeof ctxOn === 'function') {
-    ctx.on('tools/pre-execute', createConsentGate({
+    const gate = createConsentGate({
       access: () => config.sessionAccess ?? 'ask',
       approval: approvalFromContext(ctx),
-    }))
+    })
+    // site 绑定(#308):dsh pre-execute 实际派发的 exec 已含归一化后的 arguments
+    // (ToolExecutionInput.arguments: unknown),这里在派发闸前按 dsh 同源方式归一化 kind
+    // 并把 wrapped args(query.*)同步解开,确保闸拿到与 execute 相同的 site 选择依据。
+    // 复合工具未声明 kind 仍走闸的 fail-closed 路径(防御:旧 listener 形态 name-only)。
+    const KIND_HINT: Record<string, string> = { gotry_session_search: 'flight' }
+    ctx.on('tools/pre-execute', async (exec, next) => {
+      const ex = exec as { name?: string; arguments?: unknown; kind?: string }
+      const args = ex.arguments
+      const fromArgs = (typeof args === 'object' && args)
+        ? (args as { kind?: unknown; query?: { kind?: unknown } }).kind
+          ?? (args as { query?: { kind?: unknown } }).query?.kind
+        : undefined
+      const kind = ex.kind ?? (typeof fromArgs === 'string' ? fromArgs : undefined) ?? KIND_HINT[ex.name ?? '']
+      return gate({ ...ex, kind }, next)
+    })
   }
 
   // LLM_MODEL → dsh 会话面模型覆盖(issue #77;机制与分层见

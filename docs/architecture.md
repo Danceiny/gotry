@@ -76,6 +76,7 @@ M3 最小可用产品,分发链路无已知堵点。
 ### 1.3 账号会话与授权闸
 
 - **授权闸**:`tools/pre-execute` 监听器(`session-consent.ts`)在**每会话每站点首次调用**时经 dsh 原生 ApprovalService 请求授权。allowed-once 记入会话 granted 集,会话内后续调用免弹;**用户拒绝 = 本会话吊销**,不再弹卡也不再执行。无审批通道 / headless 一律 **fail-closed 拒绝**。
+- **site 绑定(2026-09-10,#308 修复)**:同一工具多个 kind(`gotry_session_search` → flight / hotel / dida / train)按 dsh 归一化后的 `arguments.kind`(或 wrapped `query.kind`)映射到 `SITE_FOR_KIND`,授权与拒绝均按 site 分桶;一个站点的批准/拒绝不能静默成为另一站点的批准/拒绝。12306 公开查询面(kind=train)无账号数据,等同非账号工具放行;未声明 kind 或未知 kind 失败关闭(deny,不扩权)。同站缓存仍生效,off/allow/拒绝/cancel 四态与原合同逐字一致。
 - **开关**:插件 config `sessionAccess: ask|allow|off`(随时可关 / 明示预授权 / 总闸关闭)——RFC 支柱④「用户明示授权 + 站点白名单 + 随时可关」进代码。
 - **登录**:`capabilities/session-login.ts` 在用户 Chrome 弹登录入口,登录**永远在外部网站完成**;登录引导页不挂 ReadGuard 是唯一豁免面(检索面不变量不变)。
 - **只读不变量**:ReadGuard 方法×URL 双因子写拦截 + 审计 + fail-closed;节律闸;证据链 `[会话:*]`。
