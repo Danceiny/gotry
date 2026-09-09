@@ -200,7 +200,7 @@ One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.
 
 ## Project Status
 
-Current release: **v0.0.1-rc.22** (npm `latest`; the `rc` dist-tag points at rc.20. Registry pull-verified 2026-09-09 against a mirror: npx install, bin resolution, and `web` startup all pass). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims. The M4→M6 program plan is now a living task graph in [`docs/design/milestone-delivery-plan.md`](docs/design/milestone-delivery-plan.md); it records the `hotelbyte-cli` first-supplier decision for M5 contract preparation, but does not open M4/M5/M6 gates.
+Current release: **v0.0.1-rc.22** (npm `latest`; the `rc` dist-tag points at rc.20. Registry pull-verified 2026-09-09 against a mirror: npx install, bin resolution, and `web` startup all pass). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims. The M4→M6 program plan is now a living task graph in [`docs/design/milestone-delivery-plan.md`](docs/design/milestone-delivery-plan.md); it records the `hotelbyte-cli` first-supplier decision for M5 contract preparation, but does not open M4/M5/M6 gates. Public execution and debt ownership follow [the #270 ledger contract](docs/ops/external-pr-workflow.md) §0: issue start, Draft PR, exact-head review, and merge/destination receipt; local or fixture proof never opens the real gates.
 
 **Working today** (full-stack regression green; every item has deterministic tests):
 
@@ -262,7 +262,7 @@ The suite covers golden engines, dialogue replay, cross-process async work-order
 
 ## Contributing
 
-Branch off latest `main` (`feat/ · fix/ · docs/ · chore/`), run local final-SHA typecheck + full regression, then open a Pull Request. Project process requires PR review for `main`; do not infer that GitHub branch protection has been configured. CI runs typecheck + all suites on Node 22/24 and the focused dist compatibility proof on Node 22/24/26; it is additional signal, not a replacement for local evidence. Maintainer review still decides the squash-merge. **Red tests never merge.** Full guide: [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports / feature suggestions: use the issue templates (search existing issues first).
+Branch off latest `main` (`feat/ · fix/ · docs/ · chore/`), run local final-SHA typecheck + full regression, then open a Pull Request. Project process requires PR review for `main`; do not infer that GitHub branch protection has been configured. CI runs typecheck + all suites on Node 22/24 and the focused dist compatibility proof on Node 22/24/26; it is additional signal, not a replacement for local evidence. A maintainer chooses a repository-allowed merge method after checking the reviewed exact head and records the destination SHA. **Red tests never merge.** Full guide: [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports / feature suggestions: use the issue templates (search existing issues first).
 
 ## For AI Agents
 

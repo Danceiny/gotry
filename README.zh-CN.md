@@ -187,7 +187,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 
 ## 状态与限制
 
-当前版本:**v0.0.1-rc.22**(npm `latest`;`rc` dist-tag 指 rc.20;2026-09-09 镜像 registry 回拉实测:npx 安装 / bin 解析 / web 启动全通)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。
+当前版本:**v0.0.1-rc.22**(npm `latest`;`rc` dist-tag 指 rc.20;2026-09-09 镜像 registry 回拉实测:npx 安装 / bin 解析 / web 启动全通)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。公开执行与债务归属按 [#270 台账合同](docs/ops/external-pr-workflow.md) §0 留下 issue 启动、Draft PR、exact-head review 与 merge/destination 回执;本地或 fixture 证明不打开真实 gate。
 
 **今天可用**(全栈回归全绿;每项都有确定性测试):
 
@@ -245,7 +245,7 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 
 ## 参与开发
 
-从最新 `main` 切出 `feat/ · fix/ · docs/ · chore/` 分支,本地全栈绿后开 Pull Request——`main` 不直接推。CI 在 Node 22/24 跑 typecheck + 全部套件，在 Node 22/24/26 跑 focused dist 兼容闸；与维护者 review 双绿后 squash 合入。**测试红着不许合。** 完整指南:[CONTRIBUTING.md](CONTRIBUTING.md)。Bug/功能建议:用 issue 模板(先搜既有 issue)。
+从最新 `main` 切出 `feat/ · fix/ · docs/ · chore/` 分支,本地全栈绿后开 Pull Request——`main` 不直接推。CI 在 Node 22/24 跑 typecheck + 全部套件，在 Node 22/24/26 跑 focused dist 兼容闸；维护者核对被审 exact head 后选择仓库允许的合入方式,并记录 destination SHA。**测试红着不许合。** 完整指南:[CONTRIBUTING.md](CONTRIBUTING.md)。Bug/功能建议:用 issue 模板(先搜既有 issue)。
 
 ## 给 AI Agent
 
@@ -298,7 +298,7 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 
 **Built with**: DeepSeek Harness 0.1.5-alpha.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-**版本基线:`v0.0.1-rc.18`(npm `latest`)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际枚举为准;发布流程见 `scripts/publish-npm.sh`。
+**版本基线:`v0.0.1-rc.22`(npm `latest`)。** 当前 checkout 的权威验证闸以 `scripts/run-all-tests.sh` 实际枚举为准;发布流程见 `scripts/publish-npm.sh`。
 
 ---
 
