@@ -703,7 +703,13 @@ assert.equal(malformedRuns, 3, 'repeated malformed output consumes exactly three
 
 let providerRuns = 0
 const providerErrorPort: DshPlannerRunPort = {
-  async run() { providerRuns += 1; throw new Error('provider_transport_failure') },
+  async run() {
+    providerRuns += 1
+    if (providerRuns === 1) {
+      return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, input: { patch: { occupancy: { rooms: [{ childAges: [4] }] } } } } } }) } }] }
+    }
+    throw new Error('provider_transport_failure')
+  },
   async close() {},
 }
 const providerError = await createDshEmbeddedBookingPlanner({ runPort: providerErrorPort })
@@ -712,7 +718,7 @@ await assert.rejects(
   /provider_transport_failure/,
   'provider failures remain visible to the caller',
 )
-assert.equal(providerRuns, 1, 'provider failures are not silently retried')
+assert.equal(providerRuns, 2, 'provider failures on a counted correction are not silently swallowed or retried')
 
 await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close(), indexKeyedRooms.close(), occupancyRepair.close(), proseRecovery.close(), malformed.close(), providerError.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')
