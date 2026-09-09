@@ -27,7 +27,7 @@ async function main() {
   const variables: Record<string, () => string> = {}
   // pre-execute 监听器捕获:账号会话授权闸(RFC 支柱④进代码)在 apply() 里经 ctx.on 挂注册表
   type PreDecision = { kind: 'allow' | 'deny' | 'ask'; reason?: string }
-  const preExecutes: Array<(exec: { name?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>> = []
+  const preExecutes: Array<(exec: { name?: string; kind?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>> = []
   const ctx = {
     tools: { register: (t: unknown) => registered.push(t as ToolLike) },
     systemPrompt: { variable: (name: string, provider: () => string) => { variables[name] = provider } },
