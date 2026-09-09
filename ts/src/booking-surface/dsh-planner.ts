@@ -174,7 +174,7 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
   config:\n\
     includeHarnessIdentity: false\n\
     includeRuntimeContext: false\n\
-    persona: >-
+    personaPrefix: >-
       You are GoTry's embedded booking planner inside an existing HotelByte booking workspace.\n\
       The page and its typed receipts are authoritative. Select exactly one of the six booking\n\
       capability tools per turn and put exactly one typed decision in that tool call. Never emit\n\
@@ -681,14 +681,16 @@ export async function createDshEmbeddedBookingPlanner(
         if (task.phase === 'waiting_receipt') throw new Error('receipt_required')
         busy = true
         try {
-          // Model-authored envelopes fail closed on the first attempt roughly a
-          // quarter of the time; a fresh run with the same prompt recovers most
-          // of them. Only parse-class failures retry — session/identity errors
-          // are deterministic.
-          for (let attempt = 1; ; attempt += 1) {
-            let decisions: BookingPlannerDecision[]
+          // Every provider call, including a self-correction prompt, consumes
+          // one bounded planner attempt. A correction is parsed through the
+          // same authority path and returned when it is valid.
+          let attempt = 0
+          let nextPrompt = plannerPrompt(turn, task, options.now)
+          while (attempt < 3) {
+            attempt += 1
+            let decisions: BookingPlannerDecision[] = []
             try {
-              const result = await runPort.run(plannerPrompt(turn, task, options.now), { sessionId })
+              const result = await runPort.run(nextPrompt, { sessionId })
               decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
               if (decisions.length === 0) {
                 console.error(`[booking-copilot] empty planner decision (attempt ${attempt}):`, JSON.stringify({
@@ -703,8 +705,14 @@ export async function createDshEmbeddedBookingPlanner(
                 if (recovered) return [recovered]
               }
             } catch (error) {
-              const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned|capability_action_mismatch|surface_action_unsupported)/.test(error.message)
+              const message = error instanceof Error ? error.message : String(error)
+              const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned|capability_action_mismatch|surface_action_unsupported)/.test(message)
               if (!retryable) throw error
+              // Self-correction: replay the concrete schema rejection into the
+              // SAME session. The next counted call receives the concrete
+              // rejection and can repair the invalid payload without losing
+              // any user-stated criteria.
+              nextPrompt = `Your previous tool call was rejected by schema validation:\n${message.slice(0, 500)}\nEmit ONE corrected tool call that satisfies the declared parameter schema exactly. Preserve every user-stated criterion; fix only the shape.`
               continue
             }
             if (decisions.length > 1) {
@@ -714,12 +722,16 @@ export async function createDshEmbeddedBookingPlanner(
               decisions = decisions.slice(0, 1)
             }
             if (decisions.length === 1) return decisions
-            // Prose-only responses surface as an empty decision list; a fresh
-            // run usually commits to the tool, so keep them inside the retry
-            // budget and only surface the typed error on the final attempt.
-            if (attempt < 3) continue
+            // Prose-only responses surface as an empty decision list; nudge
+            // the same session toward the tool call and only surface the
+            // typed error on the final attempt.
+            if (attempt < 3) {
+              nextPrompt = 'Your previous response contained no booking capability tool call. Emit exactly one booking capability tool call for the request, matching its declared parameter schema.'
+              continue
+            }
             return [{ kind: 'error', error: { code: 'PLANNER_TYPED_DECISION_REQUIRED', message: 'GoTry produced no typed capability decision; assistant prose was ignored.', retryable: true } }]
           }
+          return [{ kind: 'error', error: { code: 'PLANNER_ATTEMPT_BUDGET_EXHAUSTED', message: 'GoTry exhausted the planner attempt budget without a decision.', retryable: true } }]
         } finally { busy = false }
       },
     }

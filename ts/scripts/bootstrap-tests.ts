@@ -17,6 +17,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync, spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, delimiter } from 'node:path'
@@ -42,9 +43,9 @@ interface OnboardingResult {
   plan?: { promptable: boolean; auto: unknown[]; userAction: unknown[]; unavailable: unknown[] }
 }
 
-function runBootstrap(extraArgs: string[], extraEnv: Record<string, string>) {
+function runBootstrap(extraArgs: string[], extraEnv: Record<string, string>, bootstrapPath: string = bootstrap) {
   try {
-    const out = execFileSync('node', [bootstrap, ...extraArgs], {
+    const out = execFileSync('node', [bootstrapPath, ...extraArgs], {
       encoding: 'utf-8',
       timeout: 60_000,
       env: { ...process.env, ...extraEnv },
@@ -136,7 +137,7 @@ assert.ok([0, 1].includes(c8.code), `doctor exit 应为 0(就绪)或 1(有缺失
 const reportPath = join(repoRoot, 'gotry-state', 'doctor-report.md')
 const report = readFileSync(reportPath, 'utf-8')
 assert.ok(report.includes('# GoTry 依赖体检报告'), '报告 markdown 应落盘可预览')
-assert.ok(report.includes('npx gotry doctor --fix'), '报告应带补装指引')
+assert.ok(report.includes('npx @danceiny/gotry doctor --fix'), '报告应带补装指引')
 console.log('8. doctor 子命令(体检清单 + LLM key 让渡 + 报告落盘)OK')
 
 // 9. calendar 子命令(issue #106/D-9:setup 状态面,禁止 env 控制产品行为)。
@@ -216,10 +217,10 @@ console.log('11. setupSidebar 落盘状态复核(pnpm 忽略构建脚本 exit 1 
 const onboardingItems = [
   { label: 'Node 运行时', level: 'ok', detail: 'Node 22.x', fix: undefined },
   { label: 'GoTry Session Bridge 扩展', level: 'missing', detail: '未安装', fix: 'https://chromewebstore...' },
-  { label: 'Agent Reach(网页/社媒读取)', level: 'missing', detail: '未装配', fix: 'npx gotry doctor --fix' },
-  { label: 'hbcli(酒店实时源)', level: 'missing', detail: '未安装', fix: 'npx gotry doctor --fix' },
+  { label: 'Agent Reach(网页/社媒读取)', level: 'missing', detail: '未装配', fix: 'npx @danceiny/gotry doctor --fix' },
+  { label: 'hbcli(酒店实时源)', level: 'missing', detail: '未安装', fix: 'npx @danceiny/gotry doctor --fix' },
   { label: 'FlyAI(飞猪官方检索)', level: 'degraded', detail: '未配 FLYAI_API_KEY', fix: '到 flyai 控制台申请 key' },
-  { label: 'dsh-better-sidebar(侧栏工作台)', level: 'missing', detail: '未安装', fix: 'npx gotry doctor --fix' },
+  { label: 'dsh-better-sidebar(侧栏工作台)', level: 'missing', detail: '未安装', fix: 'npx @danceiny/gotry doctor --fix' },
   { label: 'dsh-calendar(日历工作窗口)', level: 'degraded', detail: '已挂载未配置 username', fix: 'cordis.patch.yml 覆盖 config' },
   { label: 'dsh-map-tools(地图/路线/POI)', level: 'missing', detail: '未随包解析', fix: '重装 @danceiny/gotry' },
   { label: 'dsh-tool-ask-user(结构化澄清卡)', level: 'missing', detail: '未解析', fix: '重装 @danceiny/gotry' },
@@ -327,7 +328,7 @@ console.log('14. runOnboardingFix yes 路径(注入 fakes → auto=installed,余
   const hbcliRes = byLabel.get('hbcli(酒店实时源)')!
   assert.equal(hbcliRes.status, 'unavailable', '安装失败 → unavailable(诚实,不冒充 installed)')
   assert.match(hbcliRes.reason!, /npm install timeout/, '失败原因透传')
-  assert.equal(hbcliRes.retry, 'npx gotry doctor --fix', '给可重试命令')
+  assert.equal(hbcliRes.retry, 'npx @danceiny/gotry doctor --fix', '给可重试命令')
   assert.equal(byLabel.get('Agent Reach(网页/社媒读取)')!.status, 'installed', '部分失败不挡其余')
   assert.equal(byLabel.get('dsh-better-sidebar(侧栏工作台)')!.status, 'installed')
 }
@@ -400,14 +401,26 @@ console.log('17. promptOnboarding yes/no/默认-no(注入流,不读真 stdin)OK'
 }
 console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_ONBOARDING_SKIP,零 prompt 零安装)OK')
 
-// 19. onboarding --scan:隔离 HOME + 受控 PATH → 确定性只读计划(零 prompt 零安装,不写 gotry-state)
+// 19. onboarding --scan:临时包 fixture + 隔离 HOME + 受控 PATH → 确定性只读计划(零 prompt 零安装,不写 gotry-state)
 //     PATH 不能直接置空(execFileSync 用 child env.PATH 解析 'node',空则 ENOENT)——
 //     故前置 node bin 目录(execPath dirname)再接一个空目录:node 可解析、hbcli/python3 不可达;
-//     隔离 HOME 排除真机 extension/sidebar/calendar;reach 依赖 worktree 的 repoRoot/.venv
-//     (本 fresh checkout 无 .venv → missing → auto);map-tools/ask-user 随包 vendor 就位 → ok。
+//     隔离 HOME 排除真机 extension/sidebar/calendar。reach 检测键在 repoRoot/.venv,而 bootstrap 的
+//     repoRoot 取自自身文件位置——HOME 隔离不了它:开发者 worktree 常已装 agent-reach(.venv 就位
+//     → reach=ok,不进 auto 桶),「fresh checkout 无 .venv」假设不可依赖(2026-09-09 实测创始机
+//     即中招)。故照 §21 的临时安装包 fixture 模式:bin/ 拷贝 + 随包 vendor 负载(map-tools/
+//     ask-user)软链进 fixture,repoRoot 指 fixture → .venv 恒缺失(reach missing → auto),
+//     payload 仍「随包就位」(非 unavailable),任意机器确定性。
 {
   const isolated = mkdtempSync(join(tmpdir(), 'gotry-onboard-scan-'))
   const emptyPath = mkdtempSync(join(tmpdir(), 'gotry-empty-path-'))
+  const fixture = mkdtempSync(join(tmpdir(), 'gotry-onboard-pkg-'))
+  mkdirSync(join(fixture, 'bin'), { recursive: true })
+  copyFileSync(bootstrap, join(fixture, 'bin', 'gotry-bootstrap.js'))
+  copyFileSync(join(repoRoot, 'package.json'), join(fixture, 'package.json'))
+  const vendorDir = join(fixture, 'ts', 'dsh-runtime', 'vendor')
+  mkdirSync(vendorDir, { recursive: true })
+  symlinkSync(join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools'), join(vendorDir, 'dsh-map-tools'))
+  symlinkSync(join(repoRoot, 'ts/dsh-runtime/vendor/deepseek-ai-dsh-tool-ask-user'), join(vendorDir, 'deepseek-ai-dsh-tool-ask-user'))
   const safePath = `${dirname(process.execPath)}${delimiter}${emptyPath}`
   const r = runBootstrap(['onboarding', '--scan'], {
     HOME: isolated,
@@ -416,7 +429,7 @@ console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_O
     GOTRY_SETUP_HBCLI: '',
     GOTRY_SETUP_REACH: '',
     GOTRY_SETUP_SIDEBAR: '',
-  })
+  }, join(fixture, 'bin', 'gotry-bootstrap.js'))
   assert.equal(r.code, 0, `--scan 应 exit 0\n${r.out}`)
   assert.ok(!r.out.includes('y/N'), '--scan 不应 prompt')
   assert.ok(!r.out.includes('开始自动配置'), '--scan 不应安装')
@@ -425,14 +438,14 @@ console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_O
   const autoLabels: string[] = plan.auto.map((g: { label: string }) => g.label)
   assert.ok(autoLabels.includes('dsh-better-sidebar(侧栏工作台)'), 'sidebar missing(隔离 HOME)→ auto')
   assert.ok(autoLabels.includes('hbcli(酒店实时源)'), 'hbcli missing(空 PATH)→ auto')
-  assert.ok(autoLabels.includes('Agent Reach(网页/社媒读取)'), 'reach missing(fresh checkout 无 .venv)→ auto')
+  assert.ok(autoLabels.includes('Agent Reach(网页/社媒读取)'), 'reach missing(fixture 无 .venv)→ auto')
   const userActionLabels: string[] = plan.userAction.map((g: { label: string }) => g.label)
   assert.ok(userActionLabels.includes('GoTry Session Bridge 扩展'), '扩展 missing(隔离 HOME)→ user-action(浏览器商店)')
   assert.ok(userActionLabels.includes('FlyAI(飞猪官方检索)'), 'flyai 无 key → user-action')
   assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-map-tools')), 'map-tools 随包就位 → 非 unavailable')
   assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-tool-ask-user')), 'ask-user 随包就位 → 非 unavailable')
 }
-console.log('19. onboarding --scan(隔离 HOME + 受控 PATH,确定性只读计划,零 prompt 零安装)OK')
+console.log('19. onboarding --scan(临时包 fixture + 隔离 HOME + 受控 PATH,确定性只读计划,零 prompt 零安装)OK')
 
 // --- issue #258 E2E launch-boundary(orchestrateWebLaunch × 注入依赖,跨 inner→onboarding→web 边界)---
 // 20. 生产编排缝覆盖:orchestrateWebLaunch 是 inner 启动 web 的真实编排(跳过判定 → onboarding →
@@ -546,7 +559,7 @@ console.log('19. onboarding --scan(隔离 HOME + 受控 PATH,确定性只读计�
     const byLabel = new Map((r.onboardingResult!.results! as OnboardingFixResult[]).map((x) => [x.label, x] as [string, OnboardingFixResult]))
     assert.equal(byLabel.get('hbcli(酒店实时源)')!.status, 'unavailable', 'hbcli 安装失败 → unavailable(诚实)')
     assert.match(byLabel.get('hbcli(酒店实时源)')!.reason!, /npm install timeout/, '失败原因透传')
-    assert.equal(byLabel.get('hbcli(酒店实时源)')!.retry, 'npx gotry doctor --fix', '给重试命令')
+    assert.equal(byLabel.get('hbcli(酒店实时源)')!.retry, 'npx @danceiny/gotry doctor --fix', '给重试命令')
     assert.equal(byLabel.get('Agent Reach(网页/社媒读取)')!.status, 'installed', '部分失败不挡其余')
     assert.equal(byLabel.get('dsh-better-sidebar(侧栏工作台)')!.status, 'installed')
   }
@@ -661,7 +674,7 @@ function buildPkgFixture(tmpRoot: string) {
   copyFileSync(join(repoRoot, 'bin', 'gotry-runtime-resolution.js'), join(pkgBin, 'gotry-runtime-resolution.js'))
   copyFileSync(join(repoRoot, 'cordis.gotry-patch.yml'), join(pkgRoot, 'cordis.gotry-patch.yml'))
   writeFileSync(join(pkgDist, 'index.js'), 'export {}\n')
-  writeFileSync(join(dshDir, 'package.json'), `${JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.2-alpha.3', type: 'module' })}\n`)
+  writeFileSync(join(dshDir, 'package.json'), `${JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.5-alpha.1', type: 'module' })}\n`)
   const markerPath = join(tmpRoot, 'dsh-web-launch.log')
   // 假 dsh:写标记后逗留 1.5s 再 exit——若 detached doctor --summary 被误启动,会在此窗口向 stderr(继承)露面。
   writeFileSync(join(dshDir, 'lib', 'bin.js'),
@@ -782,6 +795,14 @@ function childClosedMessage(label: string, stdoutRef: { s: string }, expected: s
   return new Error(`${label}: 子进程在观察到 ${expected} 前退出(code=${code},signal=${signal})\nstdout:\n${stdoutRef.s.slice(-800)}`)
 }
 
+const fixtureReaps = new WeakMap<FixtureChild, Promise<void>>()
+
+function rejectAfterFixtureReap(child: FixtureChild, reject: (reason?: unknown) => void, error: unknown) {
+  void reapFixture(child)
+    .catch(() => undefined)
+    .then(() => reject(error))
+}
+
 // 等待 stdout 出现真实 onboarding prompt(证明 bootstrap 真的跑了 prompt 路径);超时 FAIL(非 skip)。
 function waitForPrompt(child: FixtureChild, stdoutRef: { s: string }, label: string, ms = 30_000) {
   return new Promise<void>((resolve, reject) => {
@@ -796,16 +817,16 @@ function waitForPrompt(child: FixtureChild, stdoutRef: { s: string }, label: str
       return true
     }
     const onError = (error: Error) => {
-      if (cleanup()) reject(error)
+      if (cleanup()) rejectAfterFixtureReap(child, reject, error)
     }
     const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (cleanup()) reject(childClosedMessage(label, stdoutRef, 'onboarding prompt', code, signal))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, childClosedMessage(label, stdoutRef, 'onboarding prompt', code, signal))
     }
     const onData = () => {
       if (stdoutRef.s.includes('现在自动配置可安装项吗') && cleanup()) resolve()
     }
     const t = setTimeout(() => {
-      if (cleanup()) reject(new Error(`${label}: 未在 ${ms}ms 内观察到 onboarding prompt\nstdout:\n${stdoutRef.s.slice(-800)}`))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, new Error(`${label}: 未在 ${ms}ms 内观察到 onboarding prompt\nstdout:\n${stdoutRef.s.slice(-800)}`))
     }, ms)
     child.stdout!.on('data', onData)
     child.once('error', onError)
@@ -827,16 +848,16 @@ function waitForStdout(child: FixtureChild, stdoutRef: { s: string }, needle: st
       return true
     }
     const onError = (error: Error) => {
-      if (cleanup()) reject(error)
+      if (cleanup()) rejectAfterFixtureReap(child, reject, error)
     }
     const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (cleanup()) reject(childClosedMessage(label, stdoutRef, needle, code, signal))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, childClosedMessage(label, stdoutRef, needle, code, signal))
     }
     const onData = () => {
       if (stdoutRef.s.includes(needle) && cleanup()) resolve()
     }
     const t = setTimeout(() => {
-      if (cleanup()) reject(new Error(`${label}: 未在 ${ms}ms 内观察到 ${needle}\nstdout:\n${stdoutRef.s.slice(-800)}`))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, new Error(`${label}: 未在 ${ms}ms 内观察到 ${needle}\nstdout:\n${stdoutRef.s.slice(-800)}`))
     }, ms)
     child.stdout!.on('data', onData)
     child.once('error', onError)
@@ -861,17 +882,17 @@ function waitForFileText(child: FixtureChild, filePath: string, needle: string, 
       try { return readFileSync(filePath, 'utf-8') } catch { return '' }
     }
     const onError = (error: Error) => {
-      if (cleanup()) reject(error)
+      if (cleanup()) rejectAfterFixtureReap(child, reject, error)
     }
     const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (cleanup()) reject(new Error(`${label}: 子进程在观察到 ${needle} 前退出(code=${code},signal=${signal})\ninstaller-log:\n${current().slice(-800)}\nstdout:\n${stdoutRef.s.slice(-800)}`))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, new Error(`${label}: 子进程在观察到 ${needle} 前退出(code=${code},signal=${signal})\ninstaller-log:\n${current().slice(-800)}\nstdout:\n${stdoutRef.s.slice(-800)}`))
     }
     const poll = () => {
       if (current().includes(needle) && cleanup()) resolve()
     }
     const interval = setInterval(poll, 50)
     const t = setTimeout(() => {
-      if (cleanup()) reject(new Error(`${label}: 未在 ${ms}ms 内观察到 ${needle}\ninstaller-log:\n${current().slice(-800)}\nstdout:\n${stdoutRef.s.slice(-800)}`))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, new Error(`${label}: 未在 ${ms}ms 内观察到 ${needle}\ninstaller-log:\n${current().slice(-800)}\nstdout:\n${stdoutRef.s.slice(-800)}`))
     }, ms)
     child.once('error', onError)
     child.once('close', onClose)
@@ -881,6 +902,28 @@ function waitForFileText(child: FixtureChild, filePath: string, needle: string, 
 
 function pidAlive(pid: number) {
   try { process.kill(pid, 0); return true } catch { return false }
+}
+
+function processGroupId(pid: number) {
+  if (process.platform === 'win32') return null
+  try {
+    const groupId = Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' }).trim())
+    return Number.isInteger(groupId) && groupId > 1 ? groupId : null
+  } catch {
+    return null
+  }
+}
+
+async function waitForGone(label: string, pid: number, ms = 1_000) {
+  const deadline = Date.now() + ms
+  while (pidAlive(pid)) {
+    if (Date.now() >= deadline) throw new Error(`${label}: pid=${pid} 在 ${ms}ms 内仍存活`)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+}
+
+function processGroupAlive(groupId: number) {
+  try { process.kill(-groupId, 0); return true } catch { return false }
 }
 
 // 创建完成 promise(必须在事件触发前创建,故在 spawn 后立即调用)。21a/21c 用 close 等流排空;
@@ -912,12 +955,83 @@ function runFixture(child: FixtureChild, mode: 'close' | 'exit', _label: string,
 
 // 清理兜底:kill/reap 进程组 + 关闭流。幂等。任一超时/断言失败/正常退出后调用,确保无悬挂 grandchild。
 async function reapFixture(child: FixtureChild) {
-  if (child.pid) { try { process.kill(-child.pid, 'SIGKILL') } catch { /* dead */ } }
-  try { child.stdin!.destroy() } catch { /* ignore */ }
-  await waitForChildCloseEvent(child, 1_000)
-  try { child.stdout!.destroy() } catch { /* ignore */ }
-  try { child.stderr!.destroy() } catch { /* ignore */ }
+  const existing = fixtureReaps.get(child)
+  if (existing) return existing
+  const reap = (async () => {
+    if (child.pid) { try { process.kill(-child.pid, 'SIGKILL') } catch { /* dead */ } }
+    try { child.stdin!.destroy() } catch { /* ignore */ }
+    await waitForChildCloseEvent(child, 1_000)
+    try { child.stdout!.destroy() } catch { /* ignore */ }
+    try { child.stderr!.destroy() } catch { /* ignore */ }
+  })()
+  fixtureReaps.set(child, reap)
+  return reap
 }
+
+// 20g. prompt waiter 超时本身必须完成进程组清理,不能把 kill/reap 责任留给调用方 finally。
+//     父进程先启动并报告同组 grandchild;清理验证等待父/后代都消失,不依赖固定 sleep 调度。
+if (process.platform === 'win32') {
+  console.log('20g. prompt waiter timeout → process-group grandchild reap(SKIP on win32:POSIX process groups 不适用)')
+} else {
+  const child = spawn(process.execPath, ['-e', [
+    "const { spawn } = require('node:child_process')",
+    "const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
+    "process.stdout.write('grandchild-ready ' + grandchild.pid + '\\n')",
+    'setInterval(() => {}, 1000)',
+  ].join(';')], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    detached: true,
+  })
+  const stdoutRef = { s: '' }
+  child.stdout!.on('data', (chunk: Buffer) => { stdoutRef.s += chunk.toString('utf8') })
+  try {
+    await waitForStdout(child, stdoutRef, 'grandchild-ready ', '20g', 1_000)
+    const grandchildPid = Number(stdoutRef.s.match(/grandchild-ready (\d+)/)?.[1])
+    assert.ok(Number.isInteger(grandchildPid) && grandchildPid > 1, `20g: 必须报告有效 grandchild pid\n${stdoutRef.s}`)
+    assert.equal(pidAlive(grandchildPid), true, `20g: grandchild(pid=${grandchildPid}) 必须在 waiter 前存活`)
+    const parentGroup = processGroupId(child.pid!)
+    const grandchildGroup = processGroupId(grandchildPid)
+    assert.ok(parentGroup, `20g: 无法读取 parent(pid=${child.pid!}) PGID`)
+    assert.equal(grandchildGroup, parentGroup, `20g: parent/grandchild 必须同组(parent=${parentGroup},grandchild=${grandchildGroup})`)
+    await assert.rejects(waitForPrompt(child, stdoutRef, '20g', 0), /未在 0ms 内观察到 onboarding prompt/)
+    await waitForGone('20g parent', child.pid!, 1_000)
+    await waitForGone('20g grandchild', grandchildPid, 1_000)
+    assert.equal(pidAlive(child.pid!), false, '20g: prompt waiter 失败后 parent 必须消失')
+    assert.equal(pidAlive(grandchildPid), false, '20g: prompt waiter 失败后 grandchild 必须消失')
+    assert.equal(processGroupAlive(parentGroup!), false, `20g: process group(${parentGroup}) 必须无残留成员`)
+  } finally {
+    await reapFixture(child)
+  }
+}
+console.log('20g. prompt waiter timeout → active same-group grandchild + bounded parent/descendant reap OK')
+
+// 20h. cleanup timeout/stream destroy failure 不能吞掉原始 waiter 错误或制造 unhandled rejection。
+{
+  const fakeChild = new EventEmitter() as unknown as FixtureChild
+  const failingStream = Object.assign(new EventEmitter(), {
+    destroy() { throw new Error('synthetic cleanup stream failure') },
+  })
+  Object.assign(fakeChild, {
+    pid: 2_147_483_647,
+    stdin: failingStream,
+    stdout: failingStream,
+    stderr: failingStream,
+  })
+  const stdoutRef = { s: '' }
+  let unhandled: unknown = null
+  const onUnhandled = (reason: unknown) => { unhandled = reason }
+  process.once('unhandledRejection', onUnhandled)
+  const started = Date.now()
+  try {
+    await assert.rejects(waitForPrompt(fakeChild, stdoutRef, '20h', 0), /未在 0ms 内观察到 onboarding prompt/)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(unhandled, null, '20h: cleanup timeout/failure 不得产生 unhandled rejection')
+    assert.ok(Date.now() - started < 1_500, '20h: cleanup timeout 必须有界返回')
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+  }
+}
+console.log('20h. waiter 原始错误 + cleanup timeout/failure bounded and handled OK')
 
 // 21a. TTY eligible,喂 "n":真实 prompt 恰好一次 → 拒绝 → web 启动,摘要抑制,无 result 目录残留
 {
@@ -1297,4 +1411,4 @@ console.log('22. win32 platform boundary(hbcli/reach/sidebar → unavailable + �
 }
 console.log('23. result 通道排他写入(预存文件不被覆盖 + symlink 不跟随 victim,mode 0600 + flag wx)OK')
 
-console.log('BOOTSTRAP TESTS: 23/23 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+env opt-out+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan / 编排缝 orchestrateWebLaunch × 6 / 临时安装包 spawned inner 21a TTY-eligible 真实 prompt→n→web + 摘要抑制 + 无残留 / 21b non-TTY 零 prompt / 21c POSIX 信号清理 SIGTERM→清 result+patch 目录 + 无残留子进程 / 21f yes-path installer 子树信号清理 / 21g yes-path timeout installer 子树清理 / 21d timeout 诊断 + 无残留 / 21e dsh-lifecycle 信号转发 / win32 平台边界 / result 通道排他写入)')
+console.log('BOOTSTRAP TESTS: 25/25 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+env opt-out+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan / 编排缝 orchestrateWebLaunch × 6 / prompt waiter failure deterministic process-group reap / waiter 原始错误 + cleanup timeout/failure handled / 临时安装包 spawned inner 21a TTY-eligible 真实 prompt→n→web + 摘要抑制 + 无残留 / 21b non-TTY 零 prompt / 21c POSIX 信号清理 SIGTERM→清 result+patch 目录 + 无残留子进程 / 21f yes-path installer 子树信号清理 / 21g yes-path timeout installer 子树清理 / 21d timeout 诊断 + 无残留 / 21e dsh-lifecycle 信号转发 / win32 平台边界 / result 通道排他写入)')

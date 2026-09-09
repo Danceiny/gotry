@@ -2,7 +2,7 @@
  *
  * Covers default-off, explicit opt-in, and fail-closed configuration paths.
  * A local developer run exercises the source checkout. The packaged consumer
- * path is built from the current root @deepseek-ai/dsh 0.1.2-alpha.3 closure;
+ * path is built from the current root @deepseek-ai/dsh 0.1.5-alpha.1 closure;
  * version/source counterexamples use isolated synthetic fixtures.
  */
 import assert from 'node:assert/strict'
@@ -58,15 +58,15 @@ function runRuntimeProbe(options: RuntimeProbe): { source: string; version: stri
 }
 
 function assertRuntimeSelectionAndVersionGuards(): void {
-  const sourcePriority = runRuntimeProbe({ rootVersion: '0.1.2-alpha.3', vendorVersion: '0.1.2-alpha.1' })
-  assert.deepEqual(sourcePriority, { source: 'root', version: '0.1.2-alpha.3' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
+  const sourcePriority = runRuntimeProbe({ rootVersion: '0.1.5-alpha.1', vendorVersion: '0.1.2-alpha.1' })
+  assert.deepEqual(sourcePriority, { source: 'root', version: '0.1.5-alpha.1' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
 
   const legacyFallback = runRuntimeProbe({ vendorVersion: '0.1.2-alpha.1' })
   assert.deepEqual(legacyFallback, null, 'non-benchmark source checkout fail-closes instead of using the removed legacy vendored dsh fallback')
 
   const wrongBenchmarkVersion = runRuntimeProbe({ rootVersion: '0.1.2-alpha.1', vendorVersion: '0.1.2-alpha.1', benchmark: true })
   assert.deepEqual(wrongBenchmarkVersion, { source: 'root', version: '0.1.2-alpha.1' })
-  assert.equal(benchmarkRuntimeSupported(wrongBenchmarkVersion), false, 'benchmark mode rejects a non-alpha.3 dsh runtime before spawn')
+  assert.equal(benchmarkRuntimeSupported(wrongBenchmarkVersion), false, 'benchmark mode rejects a non-target dsh runtime before spawn')
   assert.equal(runRuntimeProbe({ vendorVersion: '0.1.2-alpha.1', benchmark: true }), null, 'benchmark mode never falls back to legacy vendored dsh')
 
   assert.equal(supportsNodeVersion('22.14.0'), false, 'Node 22.14 is rejected before dsh resolution/spawn')
@@ -292,6 +292,33 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     `${target} default-off must reach the relay without exposing benchmark tool; exit=${disabled.exit}; requests=${disabled.requests.length}; output=${disabled.output.slice(-2_000)}`,
   )
   assert.ok(disabled.optionalResolutionHits.calendar > 0 || disabled.optionalResolutionHits.map > 0, `${target} default-off must retain optional plugin resolution as a counter-proof`)
+  const ordinaryPlannerRequests = disabled.requests.filter(request => names(request).some(name => name.startsWith('gotry_')))
+  assert.ok(
+    ordinaryPlannerRequests.length > 0,
+    `${target} default-off must surface at least one ordinary planner request exposing a gotry_* tool (auxiliary title requests are excluded); requests=${disabled.requests.length}; tool surfaces=${JSON.stringify(disabled.requests.map(names))}; output=${disabled.output.slice(-2_000)}`,
+  )
+  const ORDINARY_IDENTITY_SENTENCE = '你是 GoTry——从出发到下一次出发的 AI 旅行伙伴'
+  const CANONICAL_RAW_VARIABLES = ['{{current_date}}', '{{time_anchor_card}}', '{{motivation_brief}}', '{{channel_routing_card}}']
+  const EXPANDED_DATE_PATTERN = /今天是\s*\d{4}-\d{2}-\d{2}/
+  for (const request of ordinaryPlannerRequests) {
+    const prompt = JSON.stringify(request)
+    assert.ok(
+      prompt.includes(ORDINARY_IDENTITY_SENTENCE),
+      `${target} ordinary planner request must carry the canonical Chinese GoTry identity sentence; prompt head=${prompt.slice(0, 600)}`,
+    )
+    for (const variable of CANONICAL_RAW_VARIABLES) {
+      assert.equal(
+        prompt.includes(variable),
+        false,
+        `${target} ordinary planner request must not retain raw ${variable}; prompt head=${prompt.slice(0, 600)}`,
+      )
+    }
+    assert.match(
+      prompt,
+      EXPANDED_DATE_PATTERN,
+      `${target} ordinary planner request must show the expanded "今天是 YYYY-MM-DD" shape from the canonical {{current_date}} variable; prompt head=${prompt.slice(0, 600)}`,
+    )
+  }
   const enabled = await runCase('enabled', executableOverride)
   assert.equal(
     enabled.exit,
@@ -328,11 +355,27 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     assert.equal(enabledPrompt.includes(variable), false, `${target} benchmark persona must not retain ${variable}`)
   }
   assert.equal(enabledPrompt.includes('gotry_feasibility_check'), false, `${target} benchmark persona must not retain ordinary GoTry tool instructions`)
-  assert.ok(enabled.requests.length > 0 && enabled.requests.some(request => {
+  // Persona invariant: every request that exposes the benchmark tool (a
+  // planner request) must carry each stable sentence exactly once. The
+  // separate session-title request does NOT expose the benchmark tool and is
+  // intentionally not required to carry the persona — dsh-system-prompt
+  // 0.1.5-alpha.1 emits a distinct system prompt for it (auto-title). This
+  // is the precise observed public protocol invariant under target closure,
+  // not a relaxed `some` over the full request stream.
+  const SENTENCE_A = 'You are GoTry, a task-agnostic travel planning assistant.'
+  const SENTENCE_B = 'Use only the current conversation and tools available in this benchmark session.'
+  const plannerRequests = enabled.requests.filter(request => names(request).includes(TOOL))
+  assert.ok(
+    plannerRequests.length > 0,
+    `${target} must emit at least one planner request exposing the benchmark tool; requests=${enabled.requests.length}; schemas=${JSON.stringify(enabled.requests.map(names))}`,
+  )
+  for (const request of plannerRequests) {
     const prompt = JSON.stringify(request)
-    return (prompt.match(/You are GoTry, a task-agnostic travel planning assistant\./g) ?? []).length === 1
-      && (prompt.match(/Use only the current conversation and tools available in this benchmark session\./g) ?? []).length === 1
-  }), `${target} benchmark persona has each stable sentence exactly once per request`)
+    const aCount = (prompt.match(new RegExp(SENTENCE_A.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
+    const bCount = (prompt.match(new RegExp(SENTENCE_B.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
+    assert.equal(aCount, 1, `${target} planner request must carry stable sentence A exactly once (observed=${aCount}); prompt head=${prompt.slice(0, 400)}`)
+    assert.equal(bCount, 1, `${target} planner request must carry stable sentence B exactly once (observed=${bCount}); prompt head=${prompt.slice(0, 400)}`)
+  }
   assert.match(enabled.output, /benchmark_terminal/)
   const recovered = await runCase('domain-recovery', executableOverride)
   assert.equal(recovered.exit, 0, `${target} model-driven domain miss recovery exits successfully; output=${recovered.output.slice(-2_000)}`)
@@ -517,15 +560,15 @@ async function assertPackagedPatchProjection(executable: string): Promise<void> 
     await runRejectedPatch('duplicate benchmark config anchor', basePatch.replace("        hbcliBin: 'hbcli'", "        hbcliBin: 'hbcli'\n        hbcliBin: 'hbcli'"))
     await runRejectedPatch('pre-existing benchmark config path', basePatch.replace("        hbcliBin: 'hbcli'", "        hbcliBin: 'hbcli'\n        benchmarkEnvironmentConfigPath: '/not/used'"), ['/not/used'])
     await runRejectedPatch('missing system-prompt anchor', basePatch.replace(/^- id: system-prompt[\s\S]*$/m, ''))
-    await runRejectedPatch('duplicate system-prompt anchor', `${basePatch}\n- id: system-prompt\n  config:\n    persona: >-\n      duplicate\n`)
-    await runRejectedPatch('quoted system-prompt duplicate', `${basePatch}\n- id: 'system-prompt'\n  config:\n    persona: >-\n      quoted duplicate\n`)
+    await runRejectedPatch('duplicate system-prompt anchor', `${basePatch}\n- id: system-prompt\n  config:\n    personaPrefix: >-\n      duplicate\n`)
+    await runRejectedPatch('quoted system-prompt duplicate', `${basePatch}\n- id: 'system-prompt'\n  config:\n    personaPrefix: >-\n      quoted duplicate\n`)
     const systemPromptMutationSentinel = 'ROUND7_SYSTEM_PROMPT_MUTATION_SENTINEL_DO_NOT_REFLECT'
-    await runRejectedPatch('quoted mapping-key system-prompt duplicate', `${basePatch}\n- "id": system-prompt\n  config:\n    persona: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
-    await runRejectedPatch('flow quoted-key system-prompt duplicate', `${basePatch}\n- { "id": system-prompt, config: { persona: ${systemPromptMutationSentinel} } }\n`, [systemPromptMutationSentinel])
-    await runRejectedPatch('reordered system-prompt duplicate', `${basePatch}\n- name: reordered-system-prompt\n  id: system-prompt\n  config:\n    persona: >-\n      reordered duplicate\n`)
-    await runRejectedPatch('flow system-prompt duplicate', `${basePatch}\n- { id: system-prompt, config: { persona: flow duplicate } }\n`)
-    await runRejectedPatch('noncanonical insert id root item', `${basePatch}\n- id: insert\n  config:\n    persona: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
-    await runRejectedPatch('malformed system-prompt persona', basePatch.replace(/^    persona: >-$/m, '    persona: plain'))
+    await runRejectedPatch('quoted mapping-key system-prompt duplicate', `${basePatch}\n- "id": system-prompt\n  config:\n    personaPrefix: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('flow quoted-key system-prompt duplicate', `${basePatch}\n- { "id": system-prompt, config: { personaPrefix: ${systemPromptMutationSentinel} } }\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('reordered system-prompt duplicate', `${basePatch}\n- name: reordered-system-prompt\n  id: system-prompt\n  config:\n    personaPrefix: >-\n      reordered duplicate\n`)
+    await runRejectedPatch('flow system-prompt duplicate', `${basePatch}\n- { id: system-prompt, config: { personaPrefix: flow duplicate } }\n`)
+    await runRejectedPatch('noncanonical insert id root item', `${basePatch}\n- id: insert\n  config:\n    personaPrefix: >-\n      ${systemPromptMutationSentinel}\n`, [systemPromptMutationSentinel])
+    await runRejectedPatch('malformed system-prompt persona', basePatch.replace(/^    personaPrefix: >-$/m, '    personaPrefix: plain'))
   } finally {
     rmSync(probeParent, { recursive: true, force: true })
   }

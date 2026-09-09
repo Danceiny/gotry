@@ -139,18 +139,25 @@ async function main() {
   }
   console.log(`skeleton flat-args: connected=${skFlat.connected}`)
 
-  // 8) D-10 切片 B:hotel 日期槽位接线——逐字表达代码层换算;unresolved 不猜(降级+note)
+  // 8) issue #283 闸:D-10 切片 B 接入点(逐字自然表达代码层换算;闸后保持 slot-resolved
+  //    note 回显语义不变;闸失败路径走 input_required 不再无日期降级)
   {
     const hotel = byName('gotry_hotel_search')
+    // 8a) 非规整 ISO「2026-9-4」由 slot-spec 归一为「2026-09-04」,进 hbcli 的 argv 与 date_notes 回显
     const resolved = await hotel.execute({ destination: '大理', checkIn: '2026-9-4', checkOut: '2026-09-06' } as never, null) as { date_notes?: string[] }
     if (!resolved.date_notes?.some(n => n.includes('2026-9-4 → 2026-09-04'))) {
       throw new Error(`FAIL: 非规整 ISO 应产生 slot-resolved note,实际 ${JSON.stringify(resolved.date_notes)}`)
     }
-    const unresolved = await hotel.execute({ destination: '大理', checkIn: '近期' } as never, null) as { date_notes?: string[] }
-    if (!unresolved.date_notes?.some(n => n.includes('日期未解析:近期'))) {
-      throw new Error(`FAIL: 词表外表达应产生「日期未解析」note(不猜),实际 ${JSON.stringify(unresolved.date_notes)}`)
+    // 8b) 词表外表达(只给单侧 checkIn)→ 闸拒(input_required);issue #283 起,unresolved
+    //     不再走无日期降级——退化为「当前窗口价」是用户语义丢失的红线
+    const unresolved = await hotel.execute({ destination: '大理', checkIn: '近期' } as never, null) as {
+      ok?: boolean; verdict?: string; reason?: string; missing?: string[]
     }
-    console.log('hotel date slots: verbatim resolved in code layer; unresolved degrades with explicit note')
+    if (unresolved.ok !== false || unresolved.verdict !== 'input_required' || unresolved.reason !== 'check_out_missing') {
+      throw new Error(`FAIL: 词表外/单侧日期闸应拒,实际 ${JSON.stringify(unresolved).slice(0, 200)}`)
+    }
+    if (!unresolved.missing?.includes('checkOut')) throw new Error(`FAIL: 闸失败应指出缺 checkOut,实际 ${JSON.stringify(unresolved.missing)}`)
+    console.log('hotel date slots: verbatim resolved in code layer; unresolved/single-side rejected by date-gate (issue #283)')
   }
 
   // 9) RFC S1 observation envelope:成功路径平铺 ok:true;guard 兜底即失败分支同形

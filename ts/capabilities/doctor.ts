@@ -1,5 +1,5 @@
 /**
- * 可选依赖体检(doctor)——工具层与 CLI(npx gotry doctor)共用的状态面。
+ * 可选依赖体检(doctor)——工具层与 CLI(npx @danceiny/gotry doctor)共用的状态面。
  *
  * 背景(2026-09-02 迪拜 session 轨迹复盘):8953be5 把 hbcli/agent-reach 装配从
  * setup 挪出后,工具层仍按「包内 .venv 已装配」运行 → gotry_agent_reach /
@@ -142,13 +142,13 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     items.push({
       id: 'agent-reach', label: 'Agent Reach(网页/社媒读取)', status: 'degraded',
       detail: '.venv 存在但缺 agent-reach 包——gotry_agent_reach / gotry_web_search 读页会失败',
-      fix: `npx gotry doctor --fix(或在包根执行: ${venvPython} -m pip install git+https://github.com/Panniantong/Agent-Reach.git)`,
+      fix: `npx @danceiny/gotry doctor --fix(或在包根执行: ${venvPython} -m pip install git+https://github.com/Panniantong/Agent-Reach.git)`,
     })
   } else {
     items.push({
       id: 'agent-reach', label: 'Agent Reach(网页/社媒读取)', status: 'missing',
       detail: '未安装——gotry_agent_reach / gotry_web_search(读网页)/ gotry_video_subtitle / gotry_github_search 全部不可用',
-      fix: 'npx gotry doctor --fix',
+      fix: 'npx @danceiny/gotry doctor --fix',
     })
   }
 
@@ -183,7 +183,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     items.push({
       id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'missing',
       detail: '未安装——酒店检索降级静态包(公开渠道估算,非实时,仅覆盖内置场景)',
-      fix: 'npx gotry doctor --fix',
+      fix: 'npx @danceiny/gotry doctor --fix',
     })
   }
 
@@ -212,13 +212,13 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     : {
         id: 'sidebar', label: 'dsh-better-sidebar(侧栏工作台)', status: 'missing',
         detail: '未安装——dsh web 无右侧工作台,产物与 doctor 报告只能在对话里看(gotry_artifacts_list)',
-        fix: 'npx gotry doctor --fix',
+        fix: 'npx @danceiny/gotry doctor --fix',
       })
 
   // 6. dsh-calendar(patch 分发面宿主插件;D-9 拍板:默认不挂载)
   //    未配置的日历工具是纯负资产(issue #106:会话中段才撞「未配置 username」),
   //    工作窗口由 persona (1) 访谈覆盖;挂载与否由 **setup 状态面**决定
-  //    (`~/.gotry/calendar.json`,`npx gotry setup calendar` on/off——founder
+  //    (`~/.gotry/calendar.json`,`npx @danceiny/gotry setup calendar` on/off——founder
   //    2026-09-03 纠偏:禁止环境变量控制产品行为,可选依赖进 setup 状态管理)。
   const calStatePath = join(home, '.gotry', 'calendar.json')
   const calEnabled = (() => {
@@ -241,16 +241,17 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
       : {
           id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'degraded',
           detail: '已挂载但 calendar 未配置 username——日历工具会话中会报「未配置」',
-          fix: `npx gotry setup calendar --off(恢复默认不挂载),或在 ${calProfilePatch} 覆盖 calendar 行 config 填 username(指引: npx gotry setup calendar --status)`,
+          fix: `npx @danceiny/gotry setup calendar --off(恢复默认不挂载),或在 ${calProfilePatch} 覆盖 calendar 行 config 填 username(指引: npx @danceiny/gotry setup calendar --status)`,
         })
 
   // 7. patch 分发面宿主插件(issue #113 L1 残量,design §3.1:初始化可见取代会话中段撞错)。
   //    这类插件在 cordis patch 里是占位行,bin/gotry-inner.js 运行时解析——**解析失败整块
   //    静默剔除,不挡启动**:模型只觉得「没有这个工具」,没人告诉它为什么。doctor 把两态照亮。
   //    候选清单与 bin 解析逻辑同口径(map:tarball vendor 优先→runtime workspace→npm 提升解析;
-  //    ask-user:dsh 闭包上下文解析)。map 不能进 npm 依赖:其 peerDependencies 要求
-  //    dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族在 npm 严格
-  //    peer 解析下 ERESOLVE——依赖形态会弄坏 npx 主安装路径,故随包 vendor 分发。
+  //    ask-user:dsh 闭包上下文解析)。map 保持随包 vendor 分发而非 npm 依赖:历史上游
+  //    peerDependencies 要求 dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族
+  //    在 npm 严格 peer 解析下 ERESOLVE;当前锁定 0.1.5-alpha.1 家族,vendored 副本已对齐
+  //    0.1.5-alpha.1,继续以 vendor 形态复用适配补丁,避免弄坏 npx 主安装路径。
   const rootRequire = createRequire(join(repoRoot, 'package.json'))
   const mapCandidates = [
     join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js'),
@@ -301,7 +302,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
   const broken = items.filter(i => i.status !== 'ok' && i.id !== 'llm-key')
   const summary = broken.length === 0
     ? `体检通过:${items.length} 项全部就绪(可选依赖齐,LLM key 归 dsh 宿主管)。`
-    : `体检发现 ${broken.length} 项待处理:${broken.map(i => `${i.label}(${i.status === 'missing' ? '未装' : '半可用'})`).join('、')}。补装:终端跑 npx gotry doctor --fix,或按各项 fix 指引逐项处理。`
+    : `体检发现 ${broken.length} 项待处理:${broken.map(i => `${i.label}(${i.status === 'missing' ? '未装' : '半可用'})`).join('、')}。补装:终端跑 npx @danceiny/gotry doctor --fix,或按各项 fix 指引逐项处理。`
   return { ok: broken.length === 0, items, summary }
 }
 
@@ -314,7 +315,7 @@ export function renderDoctorReportMd(report: DoctorReport, now = new Date()): st
   const lines = [
     '# GoTry 依赖体检报告(doctor)',
     '',
-    `> 生成于 ${now.toISOString()};重新生成:终端 \`npx gotry doctor\`,或在对话里让助手调 gotry_doctor。`,
+    `> 生成于 ${now.toISOString()};重新生成:终端 \`npx @danceiny/gotry doctor\`,或在对话里让助手调 gotry_doctor。`,
     '',
     '| 状态 | 依赖 | 现状 | 修复指引 |',
     '|---|---|---|---|',
@@ -324,8 +325,8 @@ export function renderDoctorReportMd(report: DoctorReport, now = new Date()): st
     '',
     '---',
     '',
-    '- `npx gotry doctor` 随时可重跑(只读,不改任何东西);',
-    '- `npx gotry doctor --fix` 按上表补装(hbcli 官方脚本 / agent-reach pip / dsh-better-sidebar 插件);',
+    '- `npx @danceiny/gotry doctor` 随时可重跑(只读,不改任何东西);',
+    '- `npx @danceiny/gotry doctor --fix` 按上表补装(hbcli 官方脚本 / agent-reach pip / dsh-better-sidebar 插件);',
     '- LLM key 由 dsh 宿主 UI 管理,gotry 永不体检、不回显。',
     '',
   ]

@@ -110,20 +110,20 @@
 2. **calendar 默认不挂载**(推荐,需拍板 D-9):gotry 对 calendar 的唯一诉求是工作窗口
    读取,而 persona (1) 的访谈本就首轮必问工作窗口——未配置的 calendar 是纯负资产
    (多一个会报错的工具)。挂载与否由 **setup 状态面**管理:`~/.gotry/calendar.json`
-   (与扩展 manifest 同居 `~/.gotry`),`npx gotry setup calendar` 开启 / `--off` 恢复
+   (与扩展 manifest 同居 `~/.gotry`),`npx @danceiny/gotry setup calendar` 开启 / `--off` 恢复
    默认 / `--status` 查看;**禁止环境变量控制产品行为**(founder 2026-09-03 纠偏:
    可选依赖必须进 setup 状态管理,env 不是产品开关的归宿);doctor 引导配置;
    拍板备选:保留默认挂载 + doctor 引导(治标,模型仍会撞一次报错才知道)。
-3. **bootstrap 一次性摘要**:`npx gotry web`/headless 启动时跑一遍只读 doctor,
+3. **bootstrap 一次性摘要**:`npx @danceiny/gotry web`/headless 启动时跑一遍只读 doctor,
    有 degraded/missing 项就打一行摘要(不阻塞启动,不重复刷)——「初始化时可见」
    取代「会话中段撞错」。
-3a. **#258/#267 web 启动交互式 onboarding(M4 UX proof;#267 = #266 合并后的 post-merge 加固)**:在 `npx gotry web` 且仅交互式
+3a. **#258/#267 web 启动交互式 onboarding(M4 UX proof;#267 = #266 合并后的 post-merge 加固)**:在 `npx @danceiny/gotry web` 且仅交互式
    TTY + 存在「可自动安装」缺项(hbcli 二进制 / agent-reach `.venv` / dsh-better-sidebar)
    时,在上述后台摘要**之前**问一次「现在配置可选能力吗」。`y` 复用 `doctor --fix` 的
    幂等安装器(setupHbcli/setupReach/setupSidebar,**不建第二套**),`n` 立即继续启动 web;
    结果三态展示——`installed`(本机自动安装)/`needs-user-action`(Chrome 商店、hbcli 登录、
    FlyAI key、calendar profile 等用户/上游授权,永不冒充自动完成)/`unavailable`(带具体原因,
-   如随包 vendor 缺失需重装 gotry)。部分失败不挡 web 且给可重试命令(`npx gotry doctor --fix`);
+   如随包 vendor 缺失需重装 gotry)。部分失败不挡 web 且给可重试命令(`npx @danceiny/gotry doctor --fix`);
    再跑不重装已健康项(安装器存在性短路 + doctor 复检,幂等)。**无 auto 缺项但有需用户操作/
    不可用缺项时**(如 win32 上 hbcli/agent-reach/sidebar 无自动安装面,或仅凭证/key/重装缺口):
    不 prompt 不安装,但渲染分类计划(`needs-user-action` / `unavailable` 逐项带具体原因,win32
@@ -310,4 +310,4 @@ WriteGate 让「加进来的东西」自动遵守同一套纪律——**生态�
 |---|---|---|---|
 | D-7 | 有额度工具的归属机制 | trial=导流层;正式用 user-key/user-session;产品统一 key 池暂缓至 M3 cohort | #107 |
 | D-8 | 编排策略 | 静态平铺 + 健康态驱动的动态建议(本设计);不解译器层自动改道 | #108 |
-| D-9 | dsh-calendar 分发 | 默认不挂载(setup 状态面 `~/.gotry/calendar.json`,`npx gotry setup calendar` on/off;**env 不作产品开关**)+ doctor 引导;备选保留挂载 + 引导 | #106 |
+| D-9 | dsh-calendar 分发 | 默认不挂载(setup 状态面 `~/.gotry/calendar.json`,`npx @danceiny/gotry setup calendar` on/off;**env 不作产品开关**)+ doctor 引导;备选保留挂载 + 引导 | #106 |

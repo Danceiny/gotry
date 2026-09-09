@@ -239,7 +239,7 @@ async function setupHbcli() {
   if (CHECK_ONLY) { say('  ✗ 未安装(--check-only 只报告)'); return { ok: true } }
   say(`  安装中(npm,staicli@npmjs): ${HBCLI_INSTALL_CMD}`)
   const r = await run('bash', ['-c', HBCLI_INSTALL_CMD], { timeoutMs: 120_000 })
-  if (!r.ok) { say(`  ✗ 安装失败(${r.error})——不影响 gotry,酒店检索将用内置静态包;可稍后重试: npx gotry setup`); return { ok: false } }
+  if (!r.ok) { say(`  ✗ 安装失败(${r.error})——不影响 gotry,酒店检索将用内置静态包;可稍后重试: npx @danceiny/gotry setup`); return { ok: false } }
   const binDir = join(homedir(), '.local/bin')
   if (!process.env.PATH.split(':').includes(binDir)) {
     say(`  ⚠ ${binDir} 不在当前 PATH —— gotry 工具已内建候选路径回退,无需手动处理;其他程序可用: export PATH="${binDir}:$PATH"`)
@@ -258,13 +258,13 @@ async function setupReach() {
   if (existsSync(venvBin)) { say('  ✓ 已安装(.venv)'); return { ok: true } }
   if (CHECK_ONLY) { say('  ✗ 未安装(--check-only 只报告)'); return { ok: true } }
   const hasPy = await probe('python3', ['--version'], 10_000)
-  if (!hasPy) { say('  ✗ 跳过:未找到 python3(agent-reach 需 Python 3;装好后重跑 npx gotry setup)'); return { ok: false } }
+  if (!hasPy) { say('  ✗ 跳过:未找到 python3(agent-reach 需 Python 3;装好后重跑 npx @danceiny/gotry setup)'); return { ok: false } }
   say(`  创建 .venv 并安装上游(${REACH_INSTALL_URL})`)
   const venv = await run('python3', ['-m', 'venv', join(repoRoot, '.venv')], { timeoutMs: 120_000 })
   if (!venv.ok) { say(`  ✗ venv 创建失败(${venv.error})——不影响 gotry,gotry_agent_reach 将返回 not-installed 指引`); return { ok: false } }
   const pip = join(repoRoot, '.venv/bin/pip')
   const inst = await run(pip, ['install', '-q', REACH_INSTALL_URL], { timeoutMs: 300_000 })
-  if (!inst.ok) { say(`  ✗ pip 安装失败(${inst.error})——可稍后重试: npx gotry setup`); return { ok: false } }
+  if (!inst.ok) { say(`  ✗ pip 安装失败(${inst.error})——可稍后重试: npx @danceiny/gotry setup`); return { ok: false } }
   say('  ✓ 安装完成(渠道凭证选配见 docs/tokens.md: .venv/bin/agent-reach configure --from-browser chrome --platform <渠道>)')
   return { ok: true }
 }
@@ -317,7 +317,7 @@ async function setupSidebar(attemptInstall) {  say('[gotry-setup] dsh-better-sid
     say('  ✓ 安装完成(npx 途径 exit 非 0,但按落盘状态复核已就位)')
     return { ok: true }
   }
-  say('  ✗ 安装失败——不影响 gotry:产物仍可在对话里说「看看我生成的行程」经 gotry_artifacts_list/read 查看;可稍后重试: npx gotry doctor --fix')
+  say('  ✗ 安装失败——不影响 gotry:产物仍可在对话里说「看看我生成的行程」经 gotry_artifacts_list/read 查看;可稍后重试: npx @danceiny/gotry doctor --fix')
   return { ok: false }
 }
 
@@ -365,12 +365,12 @@ async function runCalendar() {
     const state = readCalendarState()
     say(`  状态: ${calendarDetail(state)}`)
     say(`  状态文件: ${calendarStatePath()}`)
-    say('  说明: 挂载=`npx gotry setup calendar`;关闭=`npx gotry setup calendar --off`;配置在 dsh profile 的 cordis.patch.yml 覆盖 calendar 行 config 填 username')
+    say('  说明: 挂载=`npx @danceiny/gotry setup calendar`;关闭=`npx @danceiny/gotry setup calendar --off`;配置在 dsh profile 的 cordis.patch.yml 覆盖 calendar 行 config 填 username')
     return 0
   }
   if (CALENDAR_OFF) {
     try { rmSync(calendarStatePath()) } catch { /* 本就未开启 */ }
-    say('  ✓ 已关闭——恢复默认不挂载(状态文件已删除;如需再开: npx gotry setup calendar)')
+    say('  ✓ 已关闭——恢复默认不挂载(状态文件已删除;如需再开: npx @danceiny/gotry setup calendar)')
     return 0
   }
   mkdirSync(dirname(calendarStatePath()), { recursive: true })
@@ -406,7 +406,7 @@ async function doctorChecks() {
   const reachBin = join(repoRoot, '.venv/bin/agent-reach')
   const reachOk = existsSync(reachBin)
   const reachLevel = reachOk ? 'ok' : existsSync(venvPython) ? 'degraded' : 'missing'
-  items.push({ label: 'Agent Reach(网页/社媒读取)', ok: reachOk, level: reachLevel, detail: reachOk ? `已安装(${reachBin})` : reachLevel === 'degraded' ? '.venv 在但缺 agent-reach 包——gotry_agent_reach / gotry_web_search 读页会失败' : '未装配——gotry_agent_reach / gotry_web_search(读网页)/ gotry_video_subtitle / gotry_github_search 全部不可用', fix: reachOk ? undefined : 'npx gotry doctor --fix' })
+  items.push({ label: 'Agent Reach(网页/社媒读取)', ok: reachOk, level: reachLevel, detail: reachOk ? `已安装(${reachBin})` : reachLevel === 'degraded' ? '.venv 在但缺 agent-reach 包——gotry_agent_reach / gotry_web_search 读页会失败' : '未装配——gotry_agent_reach / gotry_web_search(读网页)/ gotry_video_subtitle / gotry_github_search 全部不可用', fix: reachOk ? undefined : 'npx @danceiny/gotry doctor --fix' })
   // hbcli(裸名靠 PATH 探测;绝对路径 existsSync;版本 < MIN_HBCLI_VERSION 视为 missing,见 issue #142)
   let hbBin = ''
   for (const p of ['hbcli', join(homedir(), '.local/bin/hbcli'), join(homedir(), '.staicli/current/hbcli')]) {
@@ -421,24 +421,25 @@ async function doctorChecks() {
       items.push({ label: 'hbcli(酒店实时源)', ok: whoami, level: whoami ? 'ok' : 'degraded', detail: whoami ? `已安装且凭证有效(${hbBin}, v${v ? v.join('.') : '?'})` : '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)', fix: whoami ? undefined : 'hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)' })
     }
   } else {
-    items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: '未安装——酒店检索降级静态包(公开渠道估算,非实时,仅覆盖内置场景)', fix: 'npx gotry doctor --fix' })
+    items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: '未安装——酒店检索降级静态包(公开渠道估算,非实时,仅覆盖内置场景)', fix: 'npx @danceiny/gotry doctor --fix' })
   }
   // flyai key(匿名试用额度共享易达限;正式 key 即免)
   const flyaiKey = (process.env.FLYAI_API_KEY ?? '').trim()
   items.push({ label: 'FlyAI(飞猪官方检索)', ok: Boolean(flyaiKey), level: flyaiKey ? 'ok' : 'degraded', detail: flyaiKey ? 'FLYAI_API_KEY 已配(正式 key,无试用额度限制)' : '未配 FLYAI_API_KEY——走匿名试用额度(共享,易达限;达限报 "Trial limit reached")', fix: flyaiKey ? undefined : '到 flyai.open.fliggy.com 控制台申请正式 key,配进环境变量 FLYAI_API_KEY' })
   // sidebar(状态面与 setupSidebar 的落盘复核同一口径)
   const sbOk = sidebarInstalled()
-  items.push({ label: 'dsh-better-sidebar(侧栏工作台)', ok: sbOk, level: sbOk ? 'ok' : 'missing', detail: sbOk ? '已安装——web UI 右侧工作台可预览产物与 doctor 报告(gotry-state/doctor-report.md)' : '未安装——dsh web 无右侧工作台,产物与 doctor 报告只能在对话里看(gotry_artifacts_list)', fix: sbOk ? undefined : 'npx gotry doctor --fix' })
+  items.push({ label: 'dsh-better-sidebar(侧栏工作台)', ok: sbOk, level: sbOk ? 'ok' : 'missing', detail: sbOk ? '已安装——web UI 右侧工作台可预览产物与 doctor 报告(gotry-state/doctor-report.md)' : '未安装——dsh web 无右侧工作台,产物与 doctor 报告只能在对话里看(gotry_artifacts_list)', fix: sbOk ? undefined : 'npx @danceiny/gotry doctor --fix' })
   // dsh-calendar(setup 状态面;默认不挂载=ok 是合法态,opt-in 未配置才 degraded)
   const calState = readCalendarState()
   const calOn = calState?.enabled === true
   const calConfigured = calOn && calendarProfileConfigured()
-  items.push({ label: 'dsh-calendar(日历工作窗口)', ok: !calOn || calConfigured, level: !calOn ? 'ok' : calConfigured ? 'ok' : 'degraded', detail: calendarDetail(calState), fix: !calOn ? undefined : calConfigured ? undefined : '在 ~/.dsh/profiles/web/cordis.patch.yml 覆盖 calendar 行 config 填 username(或 npx gotry setup calendar --off 恢复默认不挂载)' })
+  items.push({ label: 'dsh-calendar(日历工作窗口)', ok: !calOn || calConfigured, level: !calOn ? 'ok' : calConfigured ? 'ok' : 'degraded', detail: calendarDetail(calState), fix: !calOn ? undefined : calConfigured ? undefined : '在 ~/.dsh/profiles/web/cordis.patch.yml 覆盖 calendar 行 config 填 username(或 npx @danceiny/gotry setup calendar --off 恢复默认不挂载)' })
   // dsh-map-tools(patch 分发面宿主插件,issue #139):解析失败启动时整块静默剔除,
   // doctor 把两态照亮。候选清单与 bin/gotry-inner.js 解析链、ts/capabilities/doctor.ts 同口径:
-  // tarball vendor 副本优先(随 files[] 分发,不进 npm 依赖——其 peerDependencies 要求
-  // dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族在 npm 严格 peer
-  // 解析下 ERESOLVE,依赖形态会弄坏 npx 安装),其余覆盖 source/提升/profile 布局。
+  // tarball vendor 副本优先(随 files[] 分发,不进 npm 依赖——历史上游 peerDependencies
+  // 要求 dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族在 npm 严格 peer
+  // 解析下 ERESOLVE;当前锁定 0.1.5-alpha.1 家族,vendored 副本已对齐 0.1.5-alpha.1,
+  // 保持 vendored 形态复用适配补丁),其余覆盖 source/提升/profile 布局。
   const rootRequire = createRequire(join(repoRoot, 'package.json'))
   const mapCandidates = [
     join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js'),
@@ -485,13 +486,13 @@ const doctorIcon = { ok: '✅', missing: '❌', degraded: '⚠️' }
 const fixCell = (fix) => (!fix ? '—' : /^(npx|hbcli|curl|pip|python|\$)/.test(fix) ? `\`${fix}\`` : fix)
 
 /** 启动一次性摘要行(issue #114,design §3.1③):全 ok 返回 null(静默零输出);
- *  有待处理项给一行人话 + 指路(对话里 gotry_doctor 看详情 / 终端 npx gotry doctor)。
+ *  有待处理项给一行人话 + 指路(对话里 gotry_doctor 看详情 / 终端 npx @danceiny/gotry doctor)。
  *  纯函数,bootstrap-tests 直接断言。 */
 function startupDoctorLine(items) {
   const broken = (items ?? []).filter((i) => i.level && i.level !== 'ok')
   if (broken.length === 0) return null
   const human = (lv) => (lv === 'missing' ? '缺' : '半可用')
-  return `[gotry] doctor: ${broken.length} 项待处理(${broken.map((i) => `${i.label}=${human(i.level)}`).join('、')})——对话里让助手调 gotry_doctor 看详情与指引,或终端跑 npx gotry doctor`
+  return `[gotry] doctor: ${broken.length} 项待处理(${broken.map((i) => `${i.label}=${human(i.level)}`).join('、')})——对话里让助手调 gotry_doctor 看详情与指引,或终端跑 npx @danceiny/gotry doctor`
 }
 
 /** 体检报告 markdown(与 ts/capabilities/doctor.ts renderDoctorReportMd 同形) */
@@ -500,18 +501,18 @@ function renderDoctorReportMd(items) {
   const lines = [
     '# GoTry 依赖体检报告(doctor)',
     '',
-    `> 生成于 ${new Date().toISOString()};重新生成:终端 \`npx gotry doctor\`,或在对话里让助手调 gotry_doctor。`,
+    `> 生成于 ${new Date().toISOString()};重新生成:终端 \`npx @danceiny/gotry doctor\`,或在对话里让助手调 gotry_doctor。`,
     '',
     '| 状态 | 依赖 | 现状 | 修复指引 |',
     '|---|---|---|---|',
     ...items.map((i) => `| ${doctorIcon[i.level]} | ${i.label} | ${i.detail} | ${fixCell(i.fix)} |`),
     '',
-    `**结论**:${broken.length === 0 ? '全部就绪(可选依赖齐,LLM key 归 dsh 宿主管)。' : `${broken.length} 项待处理:${broken.map((i) => i.label).join('、')}。补装: npx gotry doctor --fix`}`,
+    `**结论**:${broken.length === 0 ? '全部就绪(可选依赖齐,LLM key 归 dsh 宿主管)。' : `${broken.length} 项待处理:${broken.map((i) => i.label).join('、')}。补装: npx @danceiny/gotry doctor --fix`}`,
     '',
     '---',
     '',
-    '- `npx gotry doctor` 随时可重跑(只读,不改任何东西);',
-    '- `npx gotry doctor --fix` 按上表补装(hbcli 官方脚本 / agent-reach pip / dsh-better-sidebar 插件);',
+    '- `npx @danceiny/gotry doctor` 随时可重跑(只读,不改任何东西);',
+    '- `npx @danceiny/gotry doctor --fix` 按上表补装(hbcli 官方脚本 / agent-reach pip / dsh-better-sidebar 插件);',
     '- LLM key 由 dsh 宿主 UI 管理,gotry 永不体检、不回显。',
     '',
   ]
@@ -544,7 +545,7 @@ async function runDoctor() {
       if (process.env.GOTRY_SETUP_REACH !== '0') results.push(await setupReach())
       if (process.env.GOTRY_SETUP_SIDEBAR !== '0') results.push(await setupSidebar())
       const failedFix = results.filter((r) => !r.ok).length
-      say(failedFix === 0 ? '[gotry-doctor] 补装完成;下面是补装后复检。' : `[gotry-doctor] ${failedFix} 项补装失败——见上方安装器输出;可重跑 npx gotry doctor --fix`)
+      say(failedFix === 0 ? '[gotry-doctor] 补装完成;下面是补装后复检。' : `[gotry-doctor] ${failedFix} 项补装失败——见上方安装器输出;可重跑 npx @danceiny/gotry doctor --fix`)
       items = await doctorChecks()
       for (const i of items) {
         say(`  ${doctorIcon[i.level]} ${i.label}:${i.detail}`)
@@ -566,7 +567,7 @@ async function runDoctor() {
 }
 
 // ---------------------------------------------------------------------------
-// onboarding(issue #258):`npx gotry web` 启动前的显式可选能力配置 prompt——每次符合条件的启动
+// onboarding(issue #258):`npx @danceiny/gotry web` 启动前的显式可选能力配置 prompt——每次符合条件的启动
 //  评估一次、至多问一次,无跨启动持久确认(不写「已问过」标记,每次 web 启动独立判定)。
 //  契约:仅交互式 TTY + 有「可自动安装」缺项时问一次;y → 复用 doctor --fix 的幂等
 //  安装器(setupHbcli/setupReach/setupSidebar,不建第二套);n → 立即继续 web。
@@ -605,7 +606,7 @@ function doctorFixAutoSupported(platform = process.platform) {
 }
 
 /** win32 上本可 auto 的缺项降为 unavailable 时的具体原因(诚实,不冒充 auto / 不给无效的
- *  `npx gotry doctor --fix` 指引)。纯函数。 */
+ *  `npx @danceiny/gotry doctor --fix` 指引)。纯函数。 */
 function platformAutoUnavailableReason(id) {
   if (id === 'hbcli') return 'Windows 暂不支持 hbcli 自动安装(staicli 上游无 win 安装面);请按 doctor 指引手动配置或切到 macOS/Linux'
   if (id === 'reach') return 'Windows 暂不支持 agent-reach 自动安装(pip venv 上游无 win 安装面);请按 doctor 指引手动配置或切到 macOS/Linux'
@@ -663,7 +664,7 @@ function buildOnboardingPlan(items, opts = {}) {
     else if (bucket === 'user-action') userAction.push(entry)
     else {
       // win32 平台把本可 auto 的缺项降为 unavailable 时,给具体平台原因(诚实,不冒充 auto,
-      // 也不给 win32 上无效的 `npx gotry doctor --fix` 指引);env opt-out / 随包缺失等保持原 detail。
+      // 也不给 win32 上无效的 `npx @danceiny/gotry doctor --fix` 指引);env opt-out / 随包缺失等保持原 detail。
       const id = installerIdFor(item.label)
       if (id && !doctorFixAutoSupported(platform) && installerEnabled(id, env)) {
         entry.detail = platformAutoUnavailableReason(id)
@@ -749,7 +750,7 @@ function renderClassifiedPlan(plan, output) {
     output.write('本机暂不支持自动安装(平台限制 / 重装 gotry / Node 升级):\n')
     for (const g of plan.unavailable) output.write(`  • ${g.label} —— ${g.detail}\n`)
   }
-  output.write('详情与指引:对话里让助手调 gotry_doctor,或终端跑 npx gotry doctor\n')
+  output.write('详情与指引:对话里让助手调 gotry_doctor,或终端跑 npx @danceiny/gotry doctor\n')
 }
 
 /**
@@ -784,7 +785,7 @@ async function runOnboardingFix(plan, opts = {}) {
       results.push({ label: gap.label, status: 'installed', reason: item.detail ?? '已就位' })
     } else {
       const a = attempts[gap.label]
-      results.push({ label: gap.label, status: 'unavailable', reason: a?.error ?? item?.detail ?? 'install failed', retry: 'npx gotry doctor --fix' })
+      results.push({ label: gap.label, status: 'unavailable', reason: a?.error ?? item?.detail ?? 'install failed', retry: 'npx @danceiny/gotry doctor --fix' })
     }
   }
   for (const gap of plan.userAction) {
@@ -866,7 +867,7 @@ async function runOnboarding(args, opts = {}) {
     writeResult(result)
     return result
   }
-  say('  跳过——随时可跑: npx gotry doctor --fix(随后继续启动 web)')
+  say('  跳过——随时可跑: npx @danceiny/gotry doctor --fix(随后继续启动 web)')
   const result = { prompted: true, answered: 'no' }
   writeResult(result)
   return result
@@ -919,7 +920,7 @@ async function setupExtension() {
   const srcDir = join(repoRoot, 'extension')
   const srcManifest = join(srcDir, 'manifest.json')
   if (!existsSync(srcManifest)) {
-    say(`  ✗ 包内未找到扩展文件(${srcDir})——不影响 gotry:会话检索降级,重装 npx gotry 可恢复`)
+    say(`  ✗ 包内未找到扩展文件(${srcDir})——不影响 gotry:会话检索降级,重装 npx @danceiny/gotry 可恢复`)
     return { ok: false }
   }
   const srcVersion = readManifestVersion(srcManifest)
@@ -939,7 +940,7 @@ async function setupExtension() {
   say(`  ✓ 已落位 ${dstDir}(v${srcVersion};manifest 带固定 key,unpacked 扩展 ID 恒为 olpgkofjhhiiiahdkkbcninhjmegghfe)`)
   say('  推荐(免下面三步):Chrome 应用商店一键安装 GoTry Session Bridge(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd')
   say('  本地加载(每台浏览器一次,约 30 秒):Chrome 打开 chrome://extensions → 右上角开启「开发者模式」→「加载已解压的扩展程序」→ 选择 ~/.gotry/extension')
-  say('  获取/更新本地通道扩展可走 GitHub Releases:npx gotry setup --extension-from=github(自动下载校验落位;手动下载: github.com/Danceiny/gotry/releases 标签 ext-*)')
+  say('  获取/更新本地通道扩展可走 GitHub Releases:npx @danceiny/gotry setup --extension-from=github(自动下载校验落位;手动下载: github.com/Danceiny/gotry/releases 标签 ext-*)')
   say('  装好即生效,零系统弹窗;扩展卡片开关=总闸(与 gotry 授权闸 sessionAccess 双重控制)')
   return { ok: true }
 }
@@ -1231,7 +1232,7 @@ if (WIZARD) {
   else say('[gotry-setup] GoTry Session Bridge 扩展:GOTRY_SETUP_EXTENSION=0 跳过')
   const failed = results.filter((r) => !r.ok).length
   if (failed > 0) {
-    say(`[gotry-setup] ${failed} 项未就绪——gotry 本体不受影响;可稍后重跑: npx gotry setup`)
+    say(`[gotry-setup] ${failed} 项未就绪——gotry 本体不受影响;可稍后重跑: npx @danceiny/gotry setup`)
     process.exit(AUTO ? 0 : 1)
   }
   say('[gotry-setup] 扩展就绪检查完成。')
@@ -1242,7 +1243,7 @@ if (WIZARD) {
 // bin/gotry-inner.js 始终以 `node …/gotry-bootstrap.js` 直接 spawn,不受影响)
 if (process.argv[1] && process.argv[1].endsWith('gotry-bootstrap.js')) {
   main().catch((e) => {
-    say(`[gotry-setup] 异常:${e.message}(不影响 gotry 本体;可重试 npx gotry setup)`)
+    say(`[gotry-setup] 异常:${e.message}(不影响 gotry 本体;可重试 npx @danceiny/gotry setup)`)
     process.exit(AUTO ? 0 : 1)
   })
 }

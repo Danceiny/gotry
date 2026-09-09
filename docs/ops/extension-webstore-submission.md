@@ -58,7 +58,7 @@ founder 控制的同一扩展,桥侧白名单双收;端口池(8791-8795)与 host
 ## 后续发版(商店通道)
 
 - 商店版更新:升 `extension/manifest.json` 的 `version` → `node scripts/package-extension.mjs` → devconsole 上传新 zip 提审。
-- GitHub 通道更新:`ext-*` 标签 release 资产三件套(tar.gz/store-zip/dist-manifest),用户侧 `npx gotry setup --extension-from=github` 拉取。
+- GitHub 通道更新:`ext-*` 标签 release 资产三件套(tar.gz/store-zip/dist-manifest),用户侧 `npx @danceiny/gotry setup --extension-from=github` 拉取。
 
 ## 三通道关系
 

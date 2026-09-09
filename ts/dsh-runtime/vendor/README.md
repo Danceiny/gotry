@@ -27,12 +27,16 @@ dsh 发布家族的全量 vendored 成员,pnpm workspace 方式参与安装
 
 `dsh-map-tools`(dshmarket 第三方宿主插件,地图/路线/POI,零 key 走
 OSM/OSRM)与 dsh 家族不同源,进本目录的原因是 **npm 依赖形态被上游
-peerDependencies 否决**:它要求 `dsh-settings`/`dsh-tools`
-`>=0.1.2-rc.1`,而 gotry 锁定的运行时家族是 `0.1.2-alpha.3`
+peerDependencies 否决**:历史上游要求 `dsh-settings`/`dsh-tools`
+`>=0.1.2-rc.1`,而 gotry 历史锁定的运行时家族是 `0.1.2-alpha.3`
 (semver 上 alpha < rc)——npm/npx 严格 peer 解析直接 ERESOLVE
 (optionalDependencies 也不豁免),硬依赖会弄坏 `npx @danceiny/gotry`
-主安装路径。故以 vendor 副本随 tarball 分发(root `package.json`
-`files[]` 含本目录),`bin/gotry-inner.js` 解析链 vendor 优先;
+主安装路径。当前锁定 `0.1.5-alpha.1` 家族后,`>=0.1.2-rc.1` 已被满足,
+但 vendored 副本 peerDependencies 已对齐 `0.1.5-alpha.1`,继续保持
+vendored 形态复用同一份适配补丁与七工具接线,避免在 npm 依赖面引入
+额外硬依赖而弄坏 `npx @danceiny/gotry` 主安装路径。故以 vendor
+副本随 tarball 分发(root `package.json` `files[]` 含本目录),
+`bin/gotry-inner.js` 解析链 vendor 优先;
 升级 = 从 npm 拉 `dsh-map-tools@<new>` 覆盖本目录(保留来源与
 license:MIT,上游 package.json 里无 devDependencies 需清理)。
 

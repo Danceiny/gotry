@@ -252,6 +252,9 @@ function projectBenchmarkPatch(raw, entryPath, configPath) {
 // can make dsh fail while assembling the first request.  Require the exact
 // source shape before replacing it; malformed or ambiguous prompt config must
 // fail closed rather than being partially interpreted.
+// Target dsh-system-prompt Config exposes only personaPrefix / personaSuffix;
+// the legacy `persona:` key does not project through. Validate against the
+// current personaPrefix key.
 function projectBenchmarkSystemPrompt(lines) {
   const rootStarts = lines.map((line, index) => /^-\s+/.test(line) ? index : -1).filter(index => index >= 0)
   const rootItems = rootStarts.map((itemStart, index) => lines.slice(itemStart, rootStarts[index + 1] ?? lines.length))
@@ -264,7 +267,12 @@ function projectBenchmarkSystemPrompt(lines) {
   while (end < lines.length && (lines[end].trim() === '' || /^\s/.test(lines[end]) || lines[end].trim().startsWith('#'))) end += 1
   const item = lines.slice(start, end)
   const configIndexes = item.map((line, index) => /^ {2}config:\s*$/.test(line) ? index : -1).filter(index => index >= 0)
-  const personaIndexes = item.map((line, index) => /^ {4}persona:\s*>-\s*$/.test(line) ? index : -1).filter(index => index >= 0)
+  const personaIndexes = item.map((line, index) => /^ {4}personaPrefix:\s*>-\s*$/.test(line) ? index : -1).filter(index => index >= 0)
+  // Reject any leftover legacy `persona:` field under config: — it would be
+  // silently dropped by the target Config and leave the kernel persona-less.
+  // The minimal kernel must project through personaPrefix only.
+  const legacyPersonaIndexes = item.map((line, index) => /^ {4}persona:\s*>-\s*$/.test(line) ? index : -1).filter(index => index >= 0)
+  if (legacyPersonaIndexes.length !== 0) throw new Error('benchmark system-prompt legacy persona key not allowed under target 0.1.5-alpha.1')
   if (configIndexes.length !== 1 || personaIndexes.length !== 1 || personaIndexes[0] <= configIndexes[0]) {
     throw new Error('benchmark system-prompt config violation')
   }
@@ -272,7 +280,7 @@ function projectBenchmarkSystemPrompt(lines) {
   const blockEnd = item.slice(persona + 1).findIndex(line => line.trim() !== '' && !/^\s{6,}/.test(line))
   const contentEnd = blockEnd < 0 ? item.length : persona + 1 + blockEnd
   if (contentEnd === persona + 1 || item.slice(persona + 1, contentEnd).some(line => line.trim() !== '' && !/^\s{6,}/.test(line))) {
-    throw new Error('benchmark system-prompt persona violation')
+    throw new Error('benchmark system-prompt personaPrefix block violation')
   }
   const before = item.slice(1, configIndexes[0]).filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
   const between = item.slice(configIndexes[0] + 1, persona).filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
@@ -281,7 +289,7 @@ function projectBenchmarkSystemPrompt(lines) {
   const replacement = [
     '- id: system-prompt',
     '  config:',
-    '    persona: >-',
+    '    personaPrefix: >-',
     '      You are GoTry, a task-agnostic travel planning assistant.',
     '      Use only the current conversation and tools available in this benchmark session.',
   ]
@@ -371,9 +379,10 @@ if (benchmarkEnvironmentConfig) {
 }
 // dsh-map-tools 宿主插件(地图/路线/POI,零 key 走 OSM/OSRM):tarball 随包 vendor,
 // repo 工作副本走 runtime workspace 链接/依赖解析;都找不到就整块剔除 patch 条目
-// (缺地图不挡旅行规划)。不能改成 npm 依赖:其 peerDependencies 要求
-// dsh-settings/dsh-tools >=0.1.2-rc.1,与本包锁定的 0.1.2-alpha.3 家族在 npm
-// 严格 peer 解析下 ERESOLVE,会直接弄坏 npx 安装。
+// (缺地图不挡旅行规划)。保持 vendored 形态而非 npm 依赖:历史上游 peerDependencies
+// (dsh-settings/dsh-tools >=0.1.2-rc.1)与锁定的 0.1.2-alpha.3 家族在 npm 严格 peer
+// 解析下 ERESOLVE;当前锁定 0.1.5-alpha.1 家族,vendored 副本 peerDependencies 已
+// 对齐 0.1.5-alpha.1,继续以 vendored 形态复用同一份适配补丁与七工具接线。
 let mapEntry = ''
 if (!benchmarkEnvironmentConfig) {
   const vendoredMap = join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js')
@@ -427,7 +436,7 @@ if (mapEntry) {
 // 未配置的日历工具是纯负资产(会话中段才撞「未配置 username」报错),gotry 对它的
 // 唯一诉求(工作窗口)由访谈首轮覆盖。挂载与否由 **setup 状态面**决定(founder
 // 2026-09-03 纠偏:禁止环境变量控制产品行为;可选依赖进 setup 状态管理,与扩展
-// manifest 同居 ~/.gotry)——`npx gotry setup calendar` 写 ~/.gotry/calendar.json,
+// manifest 同居 ~/.gotry)——`npx @danceiny/gotry setup calendar` 写 ~/.gotry/calendar.json,
 // `--off` 删除恢复默认;doctor 报告三态。
 let calEnabled = false
 try {

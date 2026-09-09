@@ -175,7 +175,7 @@ export const CHANNELS: readonly ChannelEntry[] = [
     evidenceTag: '[agent-reach:web.read@ts]',
     tier: 'best-effort',
     efficiencyRank: 3,
-    setup: 'gotry .venv 装 agent-reach(npx gotry doctor --fix)',
+    setup: 'gotry .venv 装 agent-reach(npx @danceiny/gotry doctor --fix)',
   },
   {
     id: 'static-hotel',

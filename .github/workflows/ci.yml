@@ -71,12 +71,12 @@ jobs:
             ts/package-lock.json
 
       - name: Install root dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-audit --no-fund --strict-peer-deps
 
       - name: Install ts dependencies
-        # ts/package.json 精确钉住完整 alpha.3 peer closure；裸 npm ci 是
-        # 合并闸，防止 lockfile 再次依赖 legacy peer 解析绕行。
-        run: npm ci --no-audit --no-fund
+        # ts/package.json 精确钉住完整 0.1.5-alpha.1 peer closure；显式
+        # npm ci --strict-peer-deps 是合并闸，防止 lockfile 再次依赖宽松 peer 解析绕行。
+        run: npm ci --no-audit --no-fund --strict-peer-deps
         working-directory: ts
 
       - name: Build dist (§25 publish-preverify packs the real dist)
@@ -98,9 +98,10 @@ jobs:
           fi
           grep -Fq "Node 24 is required" "$error_file"
 
-      # Root npm ci now materializes the pinned DSH closure. Keep exercising the
-      # publish shape from a clean consumer so package E2E cannot borrow source
-      # files or node_modules from the developer tree.
+      # Root npm ci --strict-peer-deps materializes the pinned DSH closure and
+      # fail-closes on any peer mismatch. Keep exercising the publish shape from
+      # a clean consumer so package E2E cannot borrow source files or
+      # node_modules from the developer tree.
       - name: Prepare packaged tool-budget E2E runtime
         shell: bash
         run: |
@@ -111,7 +112,7 @@ jobs:
           tarballs=("$package_dir"/*.tgz)
           test "${#tarballs[@]}" -eq 1
           (cd "$install_dir" && npm init --yes >/dev/null)
-          npx --yes pnpm@11.5.0 --dir "$install_dir" add --ignore-scripts "${tarballs[0]}"
+          npx --yes pnpm@11.5.0 --dir "$install_dir" add --ignore-scripts --strict-peer-dependencies "${tarballs[0]}"
           npx tsx ts/scripts/pnpm-dsh-closure-proof.ts "$install_dir"
           test -x "$install_dir/node_modules/.bin/gotry"
           echo "GOTRY_BUDGET_E2E_BIN=$install_dir/node_modules/.bin/gotry" >> "$GITHUB_ENV"
@@ -150,7 +151,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install root dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-audit --no-fund --strict-peer-deps
 
       - name: Build dist
         run: node scripts/build-dist.mjs
@@ -171,7 +172,8 @@ jobs:
           node-version: 24
 
       - name: Install the root package-manager layout
-        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+        # #268:pnpm 侧也显式严格 peer,不依赖本地 .npmrc,与 npm ci 闸口对称。
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts --strict-peer-dependencies
 
       - name: Verify direct compiler resolution and dist compatibility
         run: node scripts/build-dist-compat-tests.mjs
