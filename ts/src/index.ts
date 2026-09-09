@@ -293,10 +293,9 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       access: () => config.sessionAccess ?? 'ask',
       approval: approvalFromContext(ctx),
     })
-    // site 绑定(#308):dsh pre-execute 实际派发的 exec 已含归一化后的 arguments
-    // (ToolExecutionInput.arguments: unknown),这里在派发闸前按 dsh 同源方式归一化 kind
-    // 并把 wrapped args(query.*)同步解开,确保闸拿到与 execute 相同的 site 选择依据。
-    // 复合工具未声明 kind 仍走闸的 fail-closed 路径(防御:旧 listener 形态 name-only)。
+    // site 绑定(#308):dsh pre-execute 实际派发的 arguments 原样进入 gate;
+    // gate 与 execute 共用 resolveSessionSearchKind/interpretArgs,因此 wrapped
+    // query.*、缺省 flight、unknown/malformed 的选择与授权和效应路径保持一致。
     ctx.on('tools/pre-execute', gate)
   }
 

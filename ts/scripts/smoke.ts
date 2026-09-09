@@ -31,7 +31,8 @@ async function main() {
   const effectSummaries: string[] = []
   // pre-execute 监听器捕获:账号会话授权闸(RFC 支柱④进代码)在 apply() 里经 ctx.on 挂注册表
   type PreDecision = { kind: 'allow' | 'deny' | 'ask'; reason?: string }
-  const preExecutes: Array<(exec: { name?: string; kind?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>> = []
+  type PreExecute = { name?: string; agent?: object; callId?: string; arguments?: unknown }
+  const preExecutes: Array<(exec: PreExecute, next: () => Promise<PreDecision>) => Promise<PreDecision>> = []
   const ctx = {
     tools: { register: (t: unknown) => registered.push(t as ToolLike) },
     systemPrompt: { variable: (name: string, provider: () => string) => { variables[name] = provider } },
@@ -41,7 +42,7 @@ async function main() {
         return 'allowed-once'
       },
     } : undefined,
-    on: (event: string, fn: (exec: { name?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>) => {
+    on: (event: string, fn: (exec: PreExecute, next: () => Promise<PreDecision>) => Promise<PreDecision>) => {
       if (event === 'tools/pre-execute') preExecutes.push(fn)
       return () => {}
     },
@@ -345,9 +346,7 @@ async function main() {
   // 总闸 off → fail-closed deny(随时可关);其他工具原样放行。授权完整语义(批准记忆/
   // 拒绝吊销/allow)由 session-tests §I 纯函数覆盖;此处验证闸确实挂上了注册表。
   {
-    // Keep the shared pre-execute typing owned by the channel-registry lane;
-    // this fixture exercises the runtime hook's actual ToolExecutionInput shape.
-    const gate = preExecutes.at(-1) as unknown as (exec: { name?: string; agent?: object; callId?: string; arguments?: unknown }, next: () => Promise<PreDecision>) => Promise<PreDecision>
+    const gate = preExecutes.at(-1)
     if (!gate) throw new Error('FAIL: tools/pre-execute 授权闸未注册')
     const next = async () => ({ kind: 'allow' as const })
     const ask = await gate({ name: 'gotry_session_search', arguments: { from: '上海' } }, next) as { kind?: string; reason?: string }
