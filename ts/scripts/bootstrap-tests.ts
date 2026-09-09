@@ -42,9 +42,9 @@ interface OnboardingResult {
   plan?: { promptable: boolean; auto: unknown[]; userAction: unknown[]; unavailable: unknown[] }
 }
 
-function runBootstrap(extraArgs: string[], extraEnv: Record<string, string>) {
+function runBootstrap(extraArgs: string[], extraEnv: Record<string, string>, bootstrapPath: string = bootstrap) {
   try {
-    const out = execFileSync('node', [bootstrap, ...extraArgs], {
+    const out = execFileSync('node', [bootstrapPath, ...extraArgs], {
       encoding: 'utf-8',
       timeout: 60_000,
       env: { ...process.env, ...extraEnv },
@@ -136,7 +136,7 @@ assert.ok([0, 1].includes(c8.code), `doctor exit 应为 0(就绪)或 1(有缺失
 const reportPath = join(repoRoot, 'gotry-state', 'doctor-report.md')
 const report = readFileSync(reportPath, 'utf-8')
 assert.ok(report.includes('# GoTry 依赖体检报告'), '报告 markdown 应落盘可预览')
-assert.ok(report.includes('npx gotry doctor --fix'), '报告应带补装指引')
+assert.ok(report.includes('npx @danceiny/gotry doctor --fix'), '报告应带补装指引')
 console.log('8. doctor 子命令(体检清单 + LLM key 让渡 + 报告落盘)OK')
 
 // 9. calendar 子命令(issue #106/D-9:setup 状态面,禁止 env 控制产品行为)。
@@ -216,10 +216,10 @@ console.log('11. setupSidebar 落盘状态复核(pnpm 忽略构建脚本 exit 1 
 const onboardingItems = [
   { label: 'Node 运行时', level: 'ok', detail: 'Node 22.x', fix: undefined },
   { label: 'GoTry Session Bridge 扩展', level: 'missing', detail: '未安装', fix: 'https://chromewebstore...' },
-  { label: 'Agent Reach(网页/社媒读取)', level: 'missing', detail: '未装配', fix: 'npx gotry doctor --fix' },
-  { label: 'hbcli(酒店实时源)', level: 'missing', detail: '未安装', fix: 'npx gotry doctor --fix' },
+  { label: 'Agent Reach(网页/社媒读取)', level: 'missing', detail: '未装配', fix: 'npx @danceiny/gotry doctor --fix' },
+  { label: 'hbcli(酒店实时源)', level: 'missing', detail: '未安装', fix: 'npx @danceiny/gotry doctor --fix' },
   { label: 'FlyAI(飞猪官方检索)', level: 'degraded', detail: '未配 FLYAI_API_KEY', fix: '到 flyai 控制台申请 key' },
-  { label: 'dsh-better-sidebar(侧栏工作台)', level: 'missing', detail: '未安装', fix: 'npx gotry doctor --fix' },
+  { label: 'dsh-better-sidebar(侧栏工作台)', level: 'missing', detail: '未安装', fix: 'npx @danceiny/gotry doctor --fix' },
   { label: 'dsh-calendar(日历工作窗口)', level: 'degraded', detail: '已挂载未配置 username', fix: 'cordis.patch.yml 覆盖 config' },
   { label: 'dsh-map-tools(地图/路线/POI)', level: 'missing', detail: '未随包解析', fix: '重装 @danceiny/gotry' },
   { label: 'dsh-tool-ask-user(结构化澄清卡)', level: 'missing', detail: '未解析', fix: '重装 @danceiny/gotry' },
@@ -327,7 +327,7 @@ console.log('14. runOnboardingFix yes 路径(注入 fakes → auto=installed,余
   const hbcliRes = byLabel.get('hbcli(酒店实时源)')!
   assert.equal(hbcliRes.status, 'unavailable', '安装失败 → unavailable(诚实,不冒充 installed)')
   assert.match(hbcliRes.reason!, /npm install timeout/, '失败原因透传')
-  assert.equal(hbcliRes.retry, 'npx gotry doctor --fix', '给可重试命令')
+  assert.equal(hbcliRes.retry, 'npx @danceiny/gotry doctor --fix', '给可重试命令')
   assert.equal(byLabel.get('Agent Reach(网页/社媒读取)')!.status, 'installed', '部分失败不挡其余')
   assert.equal(byLabel.get('dsh-better-sidebar(侧栏工作台)')!.status, 'installed')
 }
@@ -400,14 +400,26 @@ console.log('17. promptOnboarding yes/no/默认-no(注入流,不读真 stdin)OK'
 }
 console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_ONBOARDING_SKIP,零 prompt 零安装)OK')
 
-// 19. onboarding --scan:隔离 HOME + 受控 PATH → 确定性只读计划(零 prompt 零安装,不写 gotry-state)
+// 19. onboarding --scan:临时包 fixture + 隔离 HOME + 受控 PATH → 确定性只读计划(零 prompt 零安装,不写 gotry-state)
 //     PATH 不能直接置空(execFileSync 用 child env.PATH 解析 'node',空则 ENOENT)——
 //     故前置 node bin 目录(execPath dirname)再接一个空目录:node 可解析、hbcli/python3 不可达;
-//     隔离 HOME 排除真机 extension/sidebar/calendar;reach 依赖 worktree 的 repoRoot/.venv
-//     (本 fresh checkout 无 .venv → missing → auto);map-tools/ask-user 随包 vendor 就位 → ok。
+//     隔离 HOME 排除真机 extension/sidebar/calendar。reach 检测键在 repoRoot/.venv,而 bootstrap 的
+//     repoRoot 取自自身文件位置——HOME 隔离不了它:开发者 worktree 常已装 agent-reach(.venv 就位
+//     → reach=ok,不进 auto 桶),「fresh checkout 无 .venv」假设不可依赖(2026-09-09 实测创始机
+//     即中招)。故照 §21 的临时安装包 fixture 模式:bin/ 拷贝 + 随包 vendor 负载(map-tools/
+//     ask-user)软链进 fixture,repoRoot 指 fixture → .venv 恒缺失(reach missing → auto),
+//     payload 仍「随包就位」(非 unavailable),任意机器确定性。
 {
   const isolated = mkdtempSync(join(tmpdir(), 'gotry-onboard-scan-'))
   const emptyPath = mkdtempSync(join(tmpdir(), 'gotry-empty-path-'))
+  const fixture = mkdtempSync(join(tmpdir(), 'gotry-onboard-pkg-'))
+  mkdirSync(join(fixture, 'bin'), { recursive: true })
+  copyFileSync(bootstrap, join(fixture, 'bin', 'gotry-bootstrap.js'))
+  copyFileSync(join(repoRoot, 'package.json'), join(fixture, 'package.json'))
+  const vendorDir = join(fixture, 'ts', 'dsh-runtime', 'vendor')
+  mkdirSync(vendorDir, { recursive: true })
+  symlinkSync(join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools'), join(vendorDir, 'dsh-map-tools'))
+  symlinkSync(join(repoRoot, 'ts/dsh-runtime/vendor/deepseek-ai-dsh-tool-ask-user'), join(vendorDir, 'deepseek-ai-dsh-tool-ask-user'))
   const safePath = `${dirname(process.execPath)}${delimiter}${emptyPath}`
   const r = runBootstrap(['onboarding', '--scan'], {
     HOME: isolated,
@@ -416,7 +428,7 @@ console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_O
     GOTRY_SETUP_HBCLI: '',
     GOTRY_SETUP_REACH: '',
     GOTRY_SETUP_SIDEBAR: '',
-  })
+  }, join(fixture, 'bin', 'gotry-bootstrap.js'))
   assert.equal(r.code, 0, `--scan 应 exit 0\n${r.out}`)
   assert.ok(!r.out.includes('y/N'), '--scan 不应 prompt')
   assert.ok(!r.out.includes('开始自动配置'), '--scan 不应安装')
@@ -425,14 +437,14 @@ console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_O
   const autoLabels: string[] = plan.auto.map((g: { label: string }) => g.label)
   assert.ok(autoLabels.includes('dsh-better-sidebar(侧栏工作台)'), 'sidebar missing(隔离 HOME)→ auto')
   assert.ok(autoLabels.includes('hbcli(酒店实时源)'), 'hbcli missing(空 PATH)→ auto')
-  assert.ok(autoLabels.includes('Agent Reach(网页/社媒读取)'), 'reach missing(fresh checkout 无 .venv)→ auto')
+  assert.ok(autoLabels.includes('Agent Reach(网页/社媒读取)'), 'reach missing(fixture 无 .venv)→ auto')
   const userActionLabels: string[] = plan.userAction.map((g: { label: string }) => g.label)
   assert.ok(userActionLabels.includes('GoTry Session Bridge 扩展'), '扩展 missing(隔离 HOME)→ user-action(浏览器商店)')
   assert.ok(userActionLabels.includes('FlyAI(飞猪官方检索)'), 'flyai 无 key → user-action')
   assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-map-tools')), 'map-tools 随包就位 → 非 unavailable')
   assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-tool-ask-user')), 'ask-user 随包就位 → 非 unavailable')
 }
-console.log('19. onboarding --scan(隔离 HOME + 受控 PATH,确定性只读计划,零 prompt 零安装)OK')
+console.log('19. onboarding --scan(临时包 fixture + 隔离 HOME + 受控 PATH,确定性只读计划,零 prompt 零安装)OK')
 
 // --- issue #258 E2E launch-boundary(orchestrateWebLaunch × 注入依赖,跨 inner→onboarding→web 边界)---
 // 20. 生产编排缝覆盖:orchestrateWebLaunch 是 inner 启动 web 的真实编排(跳过判定 → onboarding →
@@ -546,7 +558,7 @@ console.log('19. onboarding --scan(隔离 HOME + 受控 PATH,确定性只读计�
     const byLabel = new Map((r.onboardingResult!.results! as OnboardingFixResult[]).map((x) => [x.label, x] as [string, OnboardingFixResult]))
     assert.equal(byLabel.get('hbcli(酒店实时源)')!.status, 'unavailable', 'hbcli 安装失败 → unavailable(诚实)')
     assert.match(byLabel.get('hbcli(酒店实时源)')!.reason!, /npm install timeout/, '失败原因透传')
-    assert.equal(byLabel.get('hbcli(酒店实时源)')!.retry, 'npx gotry doctor --fix', '给重试命令')
+    assert.equal(byLabel.get('hbcli(酒店实时源)')!.retry, 'npx @danceiny/gotry doctor --fix', '给重试命令')
     assert.equal(byLabel.get('Agent Reach(网页/社媒读取)')!.status, 'installed', '部分失败不挡其余')
     assert.equal(byLabel.get('dsh-better-sidebar(侧栏工作台)')!.status, 'installed')
   }
