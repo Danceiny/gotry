@@ -287,6 +287,29 @@ function actionAssignAt(action: Record<string, unknown>, path: string, value: un
 }
 
 /**
+ * Some models (observed on MiniMax-M2) wrap the typed decision one level
+ * deeper than the canonical envelope: {kind:"action", input:{kind:"search.patch",
+ * reason, ...payload}}. Hoist the inner decision deterministically — every
+ * field comes from the model itself, so this stays representation-only.
+ */
+function unwrapNestedDecisionEnvelope(action: Record<string, unknown>): void {
+  for (let hop = 0; hop < 2; hop += 1) {
+    if (action.kind !== 'action' || !isRecord(action.input)) return
+    const inner = action.input
+    if (typeof inner.kind !== 'string' || inner.kind === 'action') return
+    const payload: Record<string, unknown> = { ...inner }
+    const kind = String(payload.kind)
+    delete payload.kind
+    const reason = typeof payload.reason === 'string' ? payload.reason : undefined
+    delete payload.reason
+    const unwrapped: Record<string, unknown> = { ...action, kind, input: payload }
+    if (reason !== undefined && unwrapped.reason === undefined) unwrapped.reason = reason
+    for (const key of Object.keys(action)) delete action[key]
+    Object.assign(action, unwrapped)
+  }
+}
+
+/**
  * Representation-only repair for model-authored actions, driven by the
  * canonical schema's own validation errors: scalar where an array belongs,
  * stringified numbers, stringified JSON objects, and the dropped
@@ -297,6 +320,7 @@ function actionAssignAt(action: Record<string, unknown>, path: string, value: un
 function repairActionRepresentation(action: unknown): void {
   if (!isRecord(action)) return
   if (typeof action.schemaVersion !== 'string') action.schemaVersion = BOOKING_SURFACE_SCHEMA_VERSION
+  unwrapNestedDecisionEnvelope(action)
   for (let round = 0; round < ACTION_REPAIR_ROUNDS; round += 1) {
     const validation = validateBookingReadAction(action as unknown as BookingReadAction)
     if (validation.ok) return
