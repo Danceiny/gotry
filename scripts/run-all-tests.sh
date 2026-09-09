@@ -214,6 +214,10 @@ echo "=== 29. 账本 CLI e2e(migrate 快照/stats/log/export 视图单向/forget
 (cd ts && npx tsx scripts/state-cli-tests.ts | tail -1) || FAIL=1
 
 echo
+echo "=== 29b. 账本 tenant 修复计划(#254:只读 inventory/dry-run before-after/无证据零搬移/跨租户同 idem_key 同 wish_id 拒绝/重复 dry-run 幂等/正本零写) ==="
+(cd ts && npx tsx scripts/ledger-repair-plan-tests.ts | tail -1) || FAIL=1
+
+echo
 echo "=== 30. Z3 WASM race 回归(engine/journey/unified 三形态同轮并发压测;修复验证面,run-all §1 止血移除的闸) ==="
 (cd ts && npx tsx scripts/z3-race-tests.ts) || FAIL=1
 

@@ -443,6 +443,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 ### 10.1 未清偿(工作面)
 
+> **#254 当前边界(2026-09-10)**:只读 inventory/dry-run 计划切片已补足 source mutation fail-closed、未 checkpoint WAL 可见性与 v1 零目录写证明;真实 apply、backup、rollback、失败恢复、目标 tenant 可见性与 repair receipt 仍按既有 #254 编号子项跟踪,不得由本切片推断完成,也不构成 M5/M6 gate 证据。
+
 | 债务 | 状态 / 赎回时机 |
 |---|---|
 | [D-NEW] dsh 进程保活缺失 | 见下方「[D-NEW] dsh 进程保活缺失」(公开追踪 = [#271](https://github.com/Danceiny/gotry/issues/271)) |
