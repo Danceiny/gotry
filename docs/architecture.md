@@ -105,6 +105,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - **turn 预算 = 路由 + wall-clock 双出口**(ADR-24 v2):每轮终结于「当面答完 / 转后台承诺 / 收敛作答」三态之一,不允许流死掉。确定性分类器(`ts/src/turn-policy.ts`,零 LLM)分 quick/sync/deep;越硬阈同步抑制工具 schema(`ts/src/turn-deadline.ts`);deep 出口落 `gotry_turn_handoff.v1` 工单并告知 ETA,收集闭环由 `scripts/turn-handoff-collect.ts` 兑现。设计与验证细节见 §8.24。
 - 外部依赖走**效应描述 + 解译器**(ADR-18):工具层只产纯数据效应值 `{effect, params}`,渠道访问/退避重试/断路器/编译期 mock 收敛到 `ts/capabilities/effect.ts` 与 `resilience.ts`。
 - **HotelByte embedded Booking Copilot 是只读协作面,不是 M5 写闸启封**:单一 `booking.surface` 契约(2026-09-05 #133 收敛,v1 退役),生产 standalone 默认 `bff-bound-turn-only`,浏览器 `user.turn.ingress` 只在完整 authenticated principal/scope + BFF trusted binding 下开放;must blocker 只能由绑定 task/context/receipt/presentation key 的一次性 approval 放行。离页自动写/支付已有 M5 WriteGate proposal(`design/write-gate-production-design.md`),但 M4 Exit+供应链协议未满足前零交易实现;四 surface 真实库存验收未过前不得宣称产品验收(D-29)。全文见 §8.23。
+- **Booking dispatch diagnostics (#329)**:同步 HTTP 409 turn-dispatch rejection 只记录现有 typed `code` 与 exact closed `reason`;带 suffix 或未知错误统一为 `UNCLASSIFIED`。证明为隔离子进程的离线 HTTP/stderr 字节测试,不构成 provider reliability、HotelByte UAT 或 M3/M4/M5/M6 准入。
 - py 树仅剩 `gotry_feasibility` oracle,产品运行时零 Python 依赖(D-7 清偿)。
 - **外部 benchmark bridge 一律 default-off**(Phase 1 seam):owner-local config、固定 argv/allowlist、递归 no-oracle 键拒绝、cold-start + headless one-shot、native definition-only agent、启动组合隔离、结构化终态诊断——任一合同漂移 fail-closed。单一 flat `action=tools|call|errors` 协议由 descriptor 同源生成每工具精确 call schema，并在 spawn 前复用同一 validator；adapter 输出只接受 exact result/domain/failure envelope，旧终态不得遮蔽更新的 bridge 事实。逐轮 frozen treatment 事实见 §9,合同全文见 `evaluation/benchmark-environment-bridge.md`。
 - **Z3 生命周期边界(#227)**:`ts/src/z3-shared.ts` 是唯一运行时入口:冷初始化 Promise 先缓存(并发只建一个 Context)、会话级互斥 `withZ3`、low-level native cleanup 局部队列(只包装当前 `z3-solver@5.2.0` 的 `dec_ref`/`*_dec_ref` 与 async native call,不改全局 `FinalizationRegistry`,不提前 free 仍可达对象)。GC/explicit release 的 cleanup 若撞上活跃 native check,延迟到 actual native idle 后 drain；fatal WASM/heap 错误先 poison,后续求解 fail-closed。回归锚点:run-all §30/§30b/§30c。
@@ -420,6 +421,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **doctor 自助修复(2026-09-10,issue #284,M4 UX 工程面;M4 不计 Exit)**:`gotry_doctor` 显式 `action: 'repair'` 按稳定 item id 只选择 auto-repairable 缺项(agent-reach / hbcli-missing / sidebar),浏览器商店、凭证/API key、profile、包重装与 Node 升级保持 user-action/unavailable。生产执行懒加载 `bin/gotry-bootstrap.js` 并调用既有 `buildOnboardingPlan`/`runOnboardingFix`,因此沿用 `setupHbcli`/`setupReach`/`setupSidebar` 的幂等、超时与进程清理边界。scope-keyed 审批闸在同 agent+同 scope 复用批准,不同 scope 重问,rejected/cancelled 本会话记忆且零执行,unavailable 不缓存。工具结果完整返回 diagnosis → selected/skipped plan → approval → repairs → recheck;安装器退出成功但复检仍坏即 `failed` 并给 `nextAction`,侧栏报告写复检态。`doctor-tests` §7–§13 以隔离 stateRoot、fixture installer 与实际工具注册/审批/真实 bootstrap 编排跨过工具边界,不触碰真实安装和共享状态。默认 `diagnose` 路径保持只读兼容。(D-38 清偿)
 - **严格重复 tool-call 参数恢复(2026-09-10,PR #327 修订)**:嵌入式 planner 的 JSON 参数恢复只接受至少两个完整、仅空白分隔且深结构相等的顶层对象；所有输入必须被消费，冲突/不完整/带前后垃圾/非对象序列/单个非法对象均拒绝。公共路径 proof 覆盖字符串花括号与转义；这是确定性离线 fixture 证据，不是 provider reliability、HotelByte UAT 或 M3/M4/M5/M6 业务准入。
 
+- **安全 dispatch 日志(#329,2026-09-10)**:同步 HTTP 409 turn-dispatch catch 使用闭合 reason vocabulary,只对完整固定 token 做区分,未知值与带 suffix 的 token 统一为 `UNCLASSIFIED`;stderr 结构化行只含现有 typed `code` 与 `reason`,HTTP typed response/status 不变。公共 HTTP 请求与子进程 stderr 字节 proof 为确定性离线证据,不替代真实 provider、HotelByte UAT 或 M3/M4/M5/M6 准入。
+
 ### 外部 benchmark 泛化(Round 1–12,Discussion #78,official score 仍为空)
 
 > 工程合同全文见 `evaluation/benchmark-environment-bridge.md`;此处只留逐轮事实摘记。共同结论:official scores 全为 null,不声称 uplift 或 external benchmark closure。
@@ -444,6 +447,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 本轮已清偿的 #279 携程机票 malformed 响应闸留在 [`debt-archive.md`](debt-archive.md),完整行为与证据边界见 §9；不改变现有 D-36 酒店日期闸与 D-37 Dida/CfT cookie debt 编号。
 
 PR #327 修订的严格重复 tool-call 参数恢复属于 planner 解析边界收敛，不新增开放债务；其公共路径 proof 仍只覆盖离线 fixture，不替代真实 provider、HotelByte UAT 或里程碑准入证据。
+
+issue #329 的 dispatch 日志收敛属于安全边界加固，不新增开放债务；公共 HTTP/子进程 stderr proof 只证明 deterministic offline contract,不替代真实 provider、HotelByte UAT 或里程碑准入证据。
 
 ### 10.1 未清偿(工作面)
 
