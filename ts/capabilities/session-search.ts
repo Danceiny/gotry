@@ -19,6 +19,7 @@ import { dirname } from 'node:path'
 import { buildEntryUrl, NETWORK_HINTS, parseBatchSearch, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQuery, TRAIN_SITE_HOST, type SessionTrainOption } from './session/adapters/rail-12306.ts'
+import { buildDidaEntryUrl, parseDidaRates, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
 import { EXTENSION_STORE_URL } from './session/extension-bridge.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
@@ -281,6 +282,171 @@ export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionH
       latencyMs: Date.now() - started,
       verdict,
       hotels,
+    }
+  } catch (e) {
+    return err('error', e instanceof Error ? e.message.slice(0, 200) : String(e))
+  } finally {
+    await t.close()
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Dida 供应商门户会话检索(2026-09-09 实装;hotel-be portal integration 迁移线:
+// 员工登录经 hotel-be portal 自动填充跳板在 dida 官网由人完成,gotry 只在用户
+// 本人 Chrome 登录态里被动嗅探 portal 自己的实时价回包。与机/酒/火同构:
+// 节律闸/登录闸(票据 cookie 名)/needs-extension 映射/挑战红线/证据链。
+// SPA 边界:find 页加载即自发的 SearchMonitor/SearchRealTime 才可嗅;页内点击
+// 触发的检索属用户本人的浏览行为,被动面只收页自发请求——零 DOM 交互不变量。
+// ---------------------------------------------------------------------------
+
+export interface SessionDidaQuery {
+  /** 显式覆盖入口 URL(深链参数校准后使用;须落在 portal.dida.com 域内) */
+  entryUrl?: string
+  /** 隔离 profile 目录(测试必传;默认 /tmp 专用目录) */
+  profileDir?: string
+  headless?: boolean
+  /** ReadGuard 审计路径(测试传隔离 stateRoot 下) */
+  auditPath?: string
+  /** 等嗅探回包的上限,默认 30_000(dida SPA 加载较慢) */
+  timeoutMs?: number
+  /** 允许匿名实例(默认 false——员工本人 dida 会话是本面的存在前提) */
+  allowAnonymous?: boolean
+}
+
+export interface SessionDidaResult {
+  ok: boolean
+  via: 'session-dida-portal' | 'session-dida-portal-error'
+  evidence: string
+  latencyMs: number
+  verdict: SessionVerdict
+  rates?: SessionDidaRateOption[]
+  error?: string
+  /** needs-extension 时给出 Chrome Web Store URL(dsh UI 渲成可点链接) */
+  installUrl?: string
+  installAction?: 'add-to-chrome'
+}
+
+/** 员工侧登录指引(纯函数,测试锚点):账密永不经 gotry——酒店 platform
+ * 凭据在 hotel-be portal「自动登录」跳板完成,dida 侧人只补验证码 */
+export function didaLoginHint(): string {
+  return '未检出你的 dida 登录态——在 hotel-be portal「供应商门户」页对该凭据点「自动登录」完成跳板登录(账密自动填充,你只补验证码);或调用 gotry_session_login(site=dida-portal)打开 dida 登录入口。登录在 dida 官网完成;gotry 永不经手密码/验证码/cookie 值'
+}
+
+export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDidaResult> {
+  const started = Date.now()
+  const ts = new Date().toISOString()
+  const site = 'dida-portal'
+  const err = (verdict: SessionVerdict, error: string): SessionDidaResult => ({
+    ok: false, via: 'session-dida-portal-error', evidence: `[会话:${site}@error@${ts}] ${error}`, latencyMs: Date.now() - started, verdict, error,
+  })
+
+  // 节律闸:超间隔即拒,不发起导航
+  const last = lastCallAt.get(site) ?? 0
+  if (Date.now() - last < MIN_INTERVAL_MS) {
+    return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
+  }
+  lastCallAt.set(site, Date.now())
+
+  const entry = buildDidaEntryUrl({ entryUrl: q.entryUrl })
+  if (!entry.ok || !entry.url) {
+    return err('error', 'entry URL 必须落在 https://portal.dida.com/ 域内')
+  }
+
+  const mode = resolveTransportMode(q.profileDir)
+
+  if (mode === 'extension') {
+    // ① 登录态快查:票据 cookie 名存在性(名字级;协议面不存在值字段)。
+    // 20s 窗口:桥常在本调用前才拉起,扩展 SW 可能已按 MV3 30s 节律休眠——
+    // job 在桥上按 capability 排队等轮询者,窗口覆盖一次 alarm 唤醒周期。
+    const login = await extensionCookieNames({ site, domain: DIDA_SITE_DOMAIN, ticketNames: DIDA_LOGIN_COOKIE_NAMES, timeoutMs: 20_000 })
+    if (!login.ok) {
+      const verdict = classifyBridgeFailure(login.kind)
+      if (verdict === 'needs-extension') {
+        return { ok: false, via: 'session-dida-portal-error', evidence: '[会话:dida-portal-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: login.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+      }
+      return err(verdict, login.summary)
+    }
+    if (login.tickets.length === 0 && !q.allowAnonymous) {
+      return err('needs-login', didaLoginHint())
+    }
+    // ② 检索 job:后台标签 + 被动嗅探(URL hint + 形状兜底;扩展零写行为)
+    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs })
+    appendExtensionAudit(q.auditPath, {
+      kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
+      result: r.ok ? (r.timedOut ? 'timeout' : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
+    })
+    if (!r.ok) {
+      const verdict = classifyBridgeFailure(r.kind)
+      if (verdict === 'needs-extension') {
+        return { ok: false, via: 'session-dida-portal-error', evidence: '[会话:dida-portal-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: r.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+      }
+      return err(verdict, r.summary)
+    }
+    const title = r.title
+    const head = r.body.slice(0, 5000)
+    if (CHALLENGE_RE.test(title + head)) {
+      return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
+    }
+    const rates = parseDidaRates(r.body)
+    const verdict: SessionVerdict = rates.length > 0 ? 'hit' : 'miss'
+    return {
+      ok: true,
+      via: 'session-dida-portal',
+      evidence: `[会话:${site}@${ts}] ${rates.length} rates;transport=extension(被动嗅探,零系统弹窗;扩展零写行为=物理只读)${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
+      latencyMs: Date.now() - started,
+      verdict,
+      rates,
+    }
+  }
+
+  // cdp/persistent 车道:与机/酒同构——挂监听等 DIDA hints 回包
+  const t = await openSession({ profileDir: q.profileDir, headless: q.headless, auditPath: q.auditPath, mode: mode === 'persistent' ? 'persistent' : 'cdp', newPage: true })
+  if (!t.ok) {
+    return err(classifyTransportFailure(t.summary, q.profileDir === undefined), t.summary)
+  }
+  try {
+    const loggedIn = async (): Promise<boolean> => {
+      const cookies = await t.browser.cookies().catch(() => [])
+      return cookies.some((c) => c.domain.includes(DIDA_SITE_DOMAIN) && DIDA_LOGIN_COOKIE_NAMES.includes(c.name))
+    }
+    if (!(await loggedIn()) && !q.allowAnonymous) {
+      return err('needs-login', didaLoginHint())
+    }
+    let settled = false
+    let body = ''
+    const heard = new Promise<void>((resolve) => {
+      t.page.on('response', async (res) => {
+        if (settled) return
+        const u = res.url()
+        if (!DIDA_NETWORK_HINTS.some((re) => re.test(u))) return
+        try {
+          const text = await res.text()
+          if (text) {
+            body = text
+            settled = true
+            resolve()
+          }
+        } catch { /* 流式/竞态不可读则继续等下一个 */ }
+      })
+      setTimeout(() => resolve(), q.timeoutMs ?? 30_000)
+    })
+    await t.page.goto(entry.url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    await heard
+    const title = await t.page.title().catch(() => '')
+    const headHtml = (await t.page.content().catch(() => '')).slice(0, 5000)
+    if (CHALLENGE_RE.test(title + headHtml)) {
+      return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
+    }
+    const rates = parseDidaRates(body)
+    const verdict: SessionVerdict = rates.length > 0 ? 'hit' : 'miss'
+    return {
+      ok: true,
+      via: 'session-dida-portal',
+      evidence: `[会话:${site}@${ts}] ${rates.length} rates;guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
+      latencyMs: Date.now() - started,
+      verdict,
+      rates,
     }
   } catch (e) {
     return err('error', e instanceof Error ? e.message.slice(0, 200) : String(e))

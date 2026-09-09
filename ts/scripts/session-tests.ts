@@ -21,7 +21,8 @@ import { classifyRequest, isSubmitText } from '../capabilities/session/read-guar
 import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQuery, STATION_TELECODES } from '../capabilities/session/adapters/rail-12306.ts'
-import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
+import { buildDidaEntryUrl, parseDidaRates, looksLikeDidaRatesBody } from '../capabilities/session/adapters/dida-portal.ts'
+import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, didaLoginHint, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
@@ -500,6 +501,72 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
   assert(e1.ok === false && e1.verdict === 'error' && /fromStationTelecode/.test(e1.error ?? ''), '未收录电报码 → error + 发现路径指引', e1)
   const e2 = await sessionTrainSearch({ from: '上海', to: '昆明', date: '2026-12-01' })
   assert(e2.ok === false && e2.verdict === 'cooldown', '节律闸:同站点 30s 内第二调 → cooldown(不发起导航)', e2)
+}
+
+
+// ---------------------------------------------------------------------------
+// M. Dida 供应商门户会话面(2026-09-09 实装;entry 守域/信封走形/形状签名/闸面;
+//    纯函数 + transport 前短路,离线确定性——扩展桥不在测试里拉起)
+// ---------------------------------------------------------------------------
+console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
+{
+  // M1 entry:默认 find 页;覆盖 URL 必须落在 portal.dida.com 域内
+  const d1 = buildDidaEntryUrl()
+  assert(d1.ok && d1.url === 'https://portal.dida.com/hotel/find', 'entry 默认=find 页', d1)
+  const d2 = buildDidaEntryUrl({ entryUrl: 'https://portal.dida.com/hotel/find?city=Bangkok' })
+  assert(d2.ok && d2.url === 'https://portal.dida.com/hotel/find?city=Bangkok', 'entry 覆盖(域内)放行', d2)
+  const d3 = buildDidaEntryUrl({ entryUrl: 'https://evil.example.com/hotel/find' })
+  assert(!d3.ok, 'entry 覆盖(域外)拒绝——fail-closed', d3)
+  const d4 = buildDidaEntryUrl({ entryUrl: 'http://portal.dida.com/hotel/find' })
+  assert(!d4.ok, 'entry 覆盖(http 明文)拒绝', d4)
+
+  // M2 走形:SearchRealTime 信封(hotel-be models.go 口径)→ 展平报价
+  const envelope = JSON.stringify({
+    Message: 'ok', Success: true, MessageCode: 20000,
+    Data: {
+      ReferenceNo: 'REF-ROOT',
+      HotelPriceList: [
+        {
+          Hotel: { HotelID: 24110, Name: 'Atlantis The Palm' },
+          RoomTypeList: [
+            { DidaRoomTypeID: 701, DidaRoomTypeName_CN: '海景大床房', DidaRoomTypeName_EN: 'Sea View King', RatePlanList: [
+              { RatePlanID: 'RP-1', Price: 1580.5, TotalPrice: 4741.5, Currency: 'CNY', MealType: 'Breakfast', BreakfastType: 'ABF', BedType: 'King', PaymentType: 'Prepay', Inventory: 3, RoomCount: 5, ReferenceNo: 'REF-A' },
+              { RatePlanID: 'RP-2', Price: 1710, TotalPrice: 5130, Currency: 'CNY', PaymentType: 'PayAtHotel', Inventory: 0, ReferenceNo: 'REF-B' },
+            ] },
+          ],
+          RoomList: [
+            { DidaRoomTypeID: 702, DidaRoomTypeName_EN: 'Suite', RatePlanList: [
+              { RatePlanID: 'RP-3', Price: 3200, TotalPrice: 9600, Currency: 'USD', ReferenceNo: 'REF-C' },
+            ] },
+          ],
+        },
+        { Hotel: { HotelID: 24111, Name: 'Burj Al Arab' }, RoomTypeList: [] },
+      ],
+    },
+  })
+  const rates = parseDidaRates(envelope)
+  assert(rates.length === 3, '信封走形:RoomTypeList+RoomList 逐计划展平', rates)
+  assert(rates[0]!.hotelId === '24110' && rates[0]!.hotelName === 'Atlantis The Palm' && rates[0]!.roomName === '海景大床房', '酒店/房型字段映射(中文名优先)', rates[0])
+  assert(rates[0]!.price === 1580.5 && rates[0]!.totalPrice === 4741.5 && rates[0]!.currency === 'CNY', '价/总价/币种', rates[0])
+  assert(rates[0]!.inventory === 3 && rates[0]!.referenceNo === 'REF-A' && rates[0]!.paymentType === 'Prepay', '库存/引用号/支付类型', rates[0])
+  assert(rates[1]!.ratePlanId === 'RP-2' && rates[1]!.inventory === 0, 'inventory=0 如实保留(不伪装可订)', rates[1])
+  assert(rates[2]!.roomName === 'Suite' && rates[2]!.currency === 'USD', 'RoomList 同构展平', rates[2])
+  assert(parseDidaRates('not json').length === 0 && parseDidaRates('{"a":1}').length === 0 && parseDidaRates('[]').length === 0, 'malformed/无信封/裸空数组 一律返空(不抛错)')
+  assert(parseDidaRates(envelope, { maxItems: 2 }).length === 2, 'maxItems 截断')
+
+  // M3 形状签名(与 content-main DIDA_BODY_SIG_RE 逐字对账)
+  assert(looksLikeDidaRatesBody('"HotelPriceList":[]'), '签名命中 HotelPriceList')
+  assert(looksLikeDidaRatesBody('"RatePlanList":[]'), '签名命中 RatePlanList')
+  assert(!looksLikeDidaRatesBody(''), '空体不命中')
+  assert(!looksLikeDidaRatesBody('x'.repeat(2_000_001)), '超上限不命中')
+
+  // M4 闸面(transport 前短路):entry 域外 → error;同站点二调 → cooldown
+  __resetRateLimiterForTest()
+  const q1 = await sessionDidaSearch({ entryUrl: 'https://evil.example.com/x' })
+  assert(q1.ok === false && q1.verdict === 'error', 'entry 域外 → error(不发起导航)', q1)
+  const q2 = await sessionDidaSearch({})
+  assert(q2.ok === false && q2.verdict === 'cooldown', '节律闸:30s 内二调 → cooldown', q2)
+  assert(typeof didaLoginHint() === 'string' && /自动登录/.test(didaLoginHint()), '登录指引指向 hotel-be portal 跳板(账密永不经 gotry)')
 }
 
 if (process.env.GOTRY_SESSION_TEST_FORCE_FAILURE === '1') {
