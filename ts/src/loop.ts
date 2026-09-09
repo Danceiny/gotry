@@ -114,6 +114,10 @@ function isoDateInBounds(date: string, bounds: { start: string; end: string }): 
   return date >= bounds.start && date <= bounds.end
 }
 
+function hasDatedCandidates(spec: JourneySpecTS): boolean {
+  return spec.segments.some(segment => segment.date !== undefined || segment.options.some(option => option.date !== undefined))
+}
+
 /**
  * Enforce a named-year future window at the planner boundary. Historical
  * lookup/backtesting remains an explicit bypass; an expired named year fails
@@ -124,10 +128,14 @@ export function applyPlanningWindow(
   window: PlanningWindow | null,
   anchor: TimeAnchor,
 ): PlanningWindowCheck {
-  if (!window || window.intent === 'historical') return { spec, rejected: [] }
+  // Dated recommendations are future-oriented even without optional named-year context.
+  // Fully dateless legacy calculations remain untouched; historical bypass is explicit.
+  if (window?.intent === 'historical') return { spec, rejected: [] }
+  const implicitFutureFloor = !window && hasDatedCandidates(spec)
+  if (!window && !implicitFutureFloor) return { spec, rejected: [] }
 
   const currentYear = Number(anchor.today.slice(0, 4))
-  if (window.requestedYear < currentYear) {
+  if (window && window.requestedYear < currentYear) {
     return {
       spec,
       rejected: [],
@@ -135,8 +143,10 @@ export function applyPlanningWindow(
     }
   }
 
-  const bounds = planningWindowBounds(window, anchor)
-  if (!bounds) return { spec, rejected: [], error: `无法建立 ${window.requestedYear} 年的未来规划窗口。` }
+  const bounds = window
+    ? planningWindowBounds(window, anchor)
+    : { start: anchor.today, end: '9999-12-31' }
+  if (!bounds) return { spec, rejected: [], error: `无法建立 ${window!.requestedYear} 年的未来规划窗口。` }
 
   const rejected: PlanningWindowRejection[] = []
   const guardedSegments = spec.segments.map(segment => ({
@@ -153,7 +163,9 @@ export function applyPlanningWindow(
     return {
       spec: { ...spec, segments: guardedSegments },
       rejected,
-      error: `${window.requestedYear} 年未来规划窗口为 ${bounds.start} 至 ${bounds.end};没有带明确日期且落在窗口内的可接受方案。`,
+      error: implicitFutureFloor
+        ? `带日期的未来推荐必须不早于当前规划参考日 ${bounds.start};没有带明确日期且在未来窗口内的可接受方案。`
+        : `${window!.requestedYear} 年未来规划窗口为 ${bounds.start} 至 ${bounds.end};没有带明确日期且落在窗口内的可接受方案。`,
     }
   }
   return { spec: { ...spec, segments: guardedSegments }, rejected }

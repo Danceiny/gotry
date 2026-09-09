@@ -1,7 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
-- 2026-09-10 起,Issue #2 命名年份的未来规划在 `time-anchor.ts` 派生本轮参考日,`loop.ts` 与注册工具 `gotry_feasibility_check` 均在求解前过滤过去/无明确日期/跨年候选;无规划对象的 dated 候选也默认受宿主时钟未来下界约束,过期年份不滚年,显式历史/回测需明确 `historical` 模式,否定过去推荐和多年份歧义不误判为历史。`time-eval-tests.ts` §6 与 `smoke.ts` registered execute fixture 以注入时钟验证,仅为隔离工程证据,不替代供应商或真实业务准入。
+- 2026-09-10 起,Issue #2 命名年份的未来规划在 `time-anchor.ts` 派生本轮参考日,`loop.ts` 与注册工具 `gotry_feasibility_check` 均在求解前过滤候选日期;带日期候选即使省略 planning 也默认受宿主时钟 future 下界约束,显式 future 年份再施加年末上界,预期拒绝返回结构化 validation result 而不进入 incident。完全 dateless 仍保持旧可行性计算,过期年份不滚年,历史/回测需明确 `historical` 模式,否定过去推荐和多年份歧义不误判为历史。`time-eval-tests.ts` §6 与 `smoke.ts` registered execute fixture 以注入时钟验证,仅为隔离工程证据,不替代供应商或真实业务准入。
 - 2026-09-10 起,PR #327 修订收紧 embedded planner 的重复 tool-call 参数恢复:普通单对象继续走 `JSON.parse`,仅恢复至少两个完整、仅空白分隔且深结构相等的顶层对象；前缀/尾部垃圾/截断/冲突/非对象序列/单个非法对象 fail-closed,字符串花括号与转义由边界扫描正确处理。公共 runPort fixture 仅是确定性本地证据,不构成真实 provider reliability、HotelByte UAT、M3/M4 cohort 或 M5/M6 admission。
 - 2026-09-10 起,#270 按 `../ops/external-pr-workflow.md` §0 统一公开 issue 启动→Draft PR→exact-head review→merge/destination 回执,并让 `../architecture.md` §10.1 活跃债务指向公开 tracker/触发器;founder 授权的仓内 Claude lane 不受外部机器人 T0/T1 否决,但仍过正常评审。本地/fixture 证明不改变 #20/#22/#136/#137 的真实 gate。
 - 2026-09-10 起,#284 `gotry_doctor action=repair` 形成诊断→item 范围计划→会话 scope 审批→既有 bootstrap 幂等安装器→实际复检链;拒绝/取消/无审批通道零执行,user-action/unavailable 不越权,侧栏报告写复检态。隔离 fixture 工具 E2E 属 M4 UX 工程证据,不计入 #20 真实 repeat cohort 或 M5/M6 gate。

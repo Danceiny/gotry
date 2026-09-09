@@ -99,6 +99,13 @@ interface FeasibilityResult {
   verdicts?: Array<Record<string, unknown>>
 }
 
+interface FeasibilityValidationFailure extends Record<string, Json> {
+  ok: false
+  code: 'invalid_planning_context' | 'planning_window_rejected'
+  summary: string
+  rejected: Array<{ segmentId: string; optionId: string; date: string }>
+}
+
 interface MotivationProfileInput {
   weights?: Record<string, number>
   evidence?: string[]
@@ -222,6 +229,14 @@ function parseFeasibilityPlanning(raw: unknown, anchor: ReturnType<typeof buildT
   }
   // referenceDate is always the host clock; the payload cannot supply a stale now.
   return { intent, requestedYear: Number(requestedYear), referenceDate: anchor.today }
+}
+
+function feasibilityValidationFailure(
+  code: FeasibilityValidationFailure['code'],
+  summary: string,
+  rejected?: FeasibilityValidationFailure['rejected'],
+): FeasibilityValidationFailure {
+  return { ok: false, code, summary, rejected: rejected ?? [] }
 }
 
 export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}): void {
@@ -371,7 +386,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
           candidates: { type: 'array', items: { type: 'object', additionalProperties: true }, required: true, description: '候选列表:[{ id, label, date?, services, transfers, stay, minDays }]' },
           planning: {
             type: 'object', additionalProperties: false,
-            description: '显式规划上下文;future 会按宿主时钟过滤日期,historical 只用于明确历史/回测查询',
+            description: '可选显式规划上下文;dated 候选省略时默认按宿主时钟作 future 下界过滤,指定 future 年份再加年末上界,historical 仅用于明确历史/回测查询;完全 dateless 输入保持旧可行性计算',
             properties: {
               intent: { type: 'string', enum: ['future', 'historical'], required: true },
               requested_year: { type: 'integer', required: true, description: '用户明确请求的四位年份,不传宿主当前年份' },
@@ -393,12 +408,20 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       const started = Date.now()
       const payload = args.payload as Record<string, unknown>
       const anchor = buildTimeAnchor(clock())
-      const planning = parseFeasibilityPlanning(payload['planning'], anchor)
+      let planning: PlanningWindow | null
+      try {
+        planning = parseFeasibilityPlanning(payload['planning'], anchor)
+      } catch (error) {
+        const summary = error instanceof Error ? error.message : 'planning context is invalid'
+        return feasibilityValidationFailure('invalid_planning_context', summary)
+      }
       const req = parseRequest(payload['request'] as Record<string, unknown>)
       const cands = (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate)
       const spec = segmentsFromCandidate(req, cands)
       const planningCheck = applyPlanningWindow(spec, planning, anchor)
-      if (planningCheck.error) throw new Error(planningCheck.error)
+      if (planningCheck.error) {
+        return feasibilityValidationFailure('planning_window_rejected', planningCheck.error, planningCheck.rejected)
+      }
       const result = solveChoiceSegment(planningCheck.spec, req) as Record<string, unknown>
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'feasibility_check:in-process-unified').catch(() => {})
