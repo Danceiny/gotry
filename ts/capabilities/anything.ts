@@ -166,7 +166,7 @@ function buildArgs(keyword: string, q: AnythingQuery): string[] {
 /** 旧版 CLI 无 search anything 子命令时的可行动升级指引(issue #195:裸 unknown command 读起来像工具坏了) */
 function upgradeHint(stderr: string): string | null {
   return /unknown command/i.test(stderr)
-    ? 'hbcli 版本过旧(无 search anything 子命令)——请升级:hbcli update,或重跑 npx gotry setup'
+    ? 'hbcli 版本过旧(无 search anything 子命令)——请升级:hbcli update,或重跑 npx @danceiny/gotry setup'
     : null
 }
 

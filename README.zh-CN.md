@@ -89,7 +89,7 @@ GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多�
 | **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成的产物(异步交付 + 工作目录 markdown),行号文件视图,只读 |
 | **事实闸** | `gotry_fact_gate` | 行程产物交付前闸——见上文[工作原理](#工作原理)中的定义 |
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页/字幕/GitHub/全渠道外部信息(经 Agent-Reach) |
-| **自检** | `gotry_doctor` | 可选依赖只读体检(扩展 / Agent-Reach .venv / hbcli / FlyAI key **+ 最近一次匿名试用达限时间** / dsh-calendar 挂载态 / sidebar),逐项状态 + 精确补装指引;安装只经用户在终端跑 `npx gotry doctor --fix` 完成。LLM key 归 dsh 宿主管,doctor 刻意不管。报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
+| **自检** | `gotry_doctor` | 可选依赖只读体检(扩展 / Agent-Reach .venv / hbcli / FlyAI key **+ 最近一次匿名试用达限时间** / dsh-calendar 挂载态 / sidebar),逐项状态 + 精确补装指引;安装只经用户在终端跑 `npx @danceiny/gotry doctor --fix` 完成。LLM key 归 dsh 宿主管,doctor 刻意不管。报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
 
 > **通道路由**:检索工具面保持平铺(无隐藏派发);persona 路由卡与检索失败结果内附的 `routing` 建议**由通道注册表单一生成**(官方 API > 用户会话 > 网页兜底,按会话健康面过滤)。某通道额度耗尽时,结果会明说并指名下一通道——盲重试是契约违例,不靠 prompt 碰运气。
 
@@ -148,6 +148,8 @@ npx @danceiny/gotry web
 
 前置:Node ≥ 22.15。LLM 凭证由 dsh 宿主 UI 配,OpenAI 兼容端点(MiniMax/中转/自建网关)走 dsh 的模型设置。首启 6–15 秒属正常冷启动;`:3080` 被占先腾端口;异常退出会留证据到 `gotry-state/incidents.jsonl`(不静默)。
 
+> **registry 兼容与运行位置** —— 命令与 registry 无关:npmjs / npmmirror / 公司内部镜像等任何 npm 兼容源都行,只要该源已同步本包;镜像 `latest` 滞后时钉精确版本,如 `npx @danceiny/gotry@0.0.1-rc.22 web`。一个例外:**在 gotry 仓库根**(或任何 package.json 同名为 `@danceiny/gotry` 的项目里)跑裸名 npx 会报 `sh: gotry: command not found`——npm exec 把 spec 误判为「本地已装」,跳过 bin 路径装配即用 `sh` 执行。仓内请走源码入口 `./gotry web`。
+
 > **成本核算** —— `ts/data/llm-price-table.json`(schema `gotry_llm_price_table_v2`)是 nightly 成本核算的唯一事实源。新增模型或换中转=对该文件提 PR(peak 保守上界只高不低);未知模型 **fail-closed 不猜价**。漂移监测:`npx tsx ts/scripts/price-drift-watch.ts`(默认离线对照 baseline;`--fetch` 拉官方页)。**永不自动 apply 价格**。
 
 ### 开发者源码安装
@@ -185,13 +187,13 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 
 ## 状态与限制
 
-当前版本:**v0.0.1-rc.18**(npm `latest` 与 `rc` 均指本版;2026-09-03 registry 回拉实测:干净安装/bin/dist 入口全通)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。
+当前版本:**v0.0.1-rc.22**(npm `latest`;`rc` dist-tag 指 rc.20;2026-09-09 镜像 registry 回拉实测:npx 安装 / bin 解析 / web 启动全通)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。
 
 **今天可用**(全栈回归全绿;每项都有确定性测试):
 
 - **Z3 求解引擎** —— 可行性判决 + 门到门全成本;历史并发竞态已根治并进回归闸
 - **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`);飞猪匿名试用额度达限归类 `needs-setup` 并带配 key 指引(不盲重试)
-- **依赖体检** —— `npx gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):可选依赖(扩展 / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar / dsh-map-tools / dsh-tool-ask-user)只读体检 + 精确补装指引；地图工具以 MIT payload 随包交付，不引入与历史锁定家族冲突的外部 npm peer，设置卡接线走真实 `SettingsProvider.prototype.installSection` 方法(0.1.2-alpha.3 与 0.1.5-alpha.1 均已发布)与普通 namespace 字符串；`--fix` 补装;LLM key 仍归 dsh 宿主管
+- **依赖体检** —— `npx @danceiny/gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):可选依赖(扩展 / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar / dsh-map-tools / dsh-tool-ask-user)只读体检 + 精确补装指引；地图工具以 MIT payload 随包交付，不引入与历史锁定家族冲突的外部 npm peer，设置卡接线走真实 `SettingsProvider.prototype.installSection` 方法(0.1.2-alpha.3 与 0.1.5-alpha.1 均已发布)与普通 namespace 字符串；`--fix` 补装;LLM key 仍归 dsh 宿主管
 - **账号会话检索** —— 你本人登录态查携程机票/酒店 + 12306 火车(酒/火 2026-09-03 实装:酒店为被动嗅探登录态真实价,火车为 12306 公开余票查询面;接口面随首个真会话校准);观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
 - **扩展按需装** —— `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 这边不跑 setup wizard、不开 chrome://extensions、不动剪贴板
 - **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)

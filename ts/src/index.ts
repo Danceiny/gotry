@@ -1397,7 +1397,7 @@ export function apply(ctx: Context, config: Config): void {
         await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'agent-reach:doctor').catch(() => {})
         const summary = st.via === 'agent-reach-cli'
           ? `Agent Reach doctor(上游 CLI,原样透传):\n${st.output}\n${st.evidence}`
-          : `Agent Reach 未装配(.venv 缺失)——可选依赖,机/酒/网页社媒读取之外的工具不受影响。\n补装:终端跑 npx gotry doctor --fix;整体依赖状态可调 gotry_doctor 工具查看。\n${st.evidence}`
+          : `Agent Reach 未装配(.venv 缺失)——可选依赖,机/酒/网页社媒读取之外的工具不受影响。\n补装:终端跑 npx @danceiny/gotry doctor --fix;整体依赖状态可调 gotry_doctor 工具查看。\n${st.evidence}`
         return JSON.parse(JSON.stringify({
           ok: st.ok, via: st.via, output: st.output, evidence: st.evidence, summary,
           latency_ms: Date.now() - started,
@@ -1432,7 +1432,7 @@ export function apply(ctx: Context, config: Config): void {
         : r.verdict === 'needs-setup'
           ? `${q.channel}.${q.method} → 需配置(上游 check() 原话): ${r.setup ?? ''}\n${r.evidence}`
           : r.verdict === 'not-installed'
-            ? `${q.channel}.${q.method} → 上游未装配(可选依赖): ${r.setup ?? ''}\n整体依赖状态可调 gotry_doctor 查看;补装: npx gotry doctor --fix\n${r.evidence}`
+            ? `${q.channel}.${q.method} → 上游未装配(可选依赖): ${r.setup ?? ''}\n整体依赖状态可调 gotry_doctor 查看;补装: npx @danceiny/gotry doctor --fix\n${r.evidence}`
             : `${q.channel}.${q.method} → ${r.error ?? 'error'}${r.inventory ? `\n上游清单: ${JSON.stringify(r.inventory).slice(0, 1200)}` : ''}\n${r.evidence}`
       return JSON.parse(JSON.stringify({
         ok: r.ok, channel: r.channel, method: q.method, verdict: r.verdict,
@@ -1463,7 +1463,7 @@ export function apply(ctx: Context, config: Config): void {
       'Check optional-dependency health for ALL gotry tools (read-only, never installs): GoTry Session Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key + recent trial-quota exhaustion time / dsh-calendar mount state / dsh-better-sidebar. '
       + 'Call this when ANY gotry tool returns not-installed / needs-setup, when the user asks 「体检/依赖状态/工具为什么不可用」, or BEFORE leaning on a channel for a plan. '
       + 'Returns per-item status (ok/degraded/missing) with exact fix commands. '
-      + 'Repair = `npx gotry doctor --fix` run BY THE USER in a terminal (this tool never installs anything); LLM keys are the dsh host\'s business and are deliberately out of scope. '
+      + 'Repair = `npx @danceiny/gotry doctor --fix` run BY THE USER in a terminal (this tool never installs anything); LLM keys are the dsh host\'s business and are deliberately out of scope. '
       + 'A markdown report is rendered for the workspace (gotry-state/doctor-report.md) so the sidebar workbench can preview it.',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {

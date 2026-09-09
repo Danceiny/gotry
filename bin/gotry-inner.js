@@ -436,7 +436,7 @@ if (mapEntry) {
 // 未配置的日历工具是纯负资产(会话中段才撞「未配置 username」报错),gotry 对它的
 // 唯一诉求(工作窗口)由访谈首轮覆盖。挂载与否由 **setup 状态面**决定(founder
 // 2026-09-03 纠偏:禁止环境变量控制产品行为;可选依赖进 setup 状态管理,与扩展
-// manifest 同居 ~/.gotry)——`npx gotry setup calendar` 写 ~/.gotry/calendar.json,
+// manifest 同居 ~/.gotry)——`npx @danceiny/gotry setup calendar` 写 ~/.gotry/calendar.json,
 // `--off` 删除恢复默认;doctor 报告三态。
 let calEnabled = false
 try {
