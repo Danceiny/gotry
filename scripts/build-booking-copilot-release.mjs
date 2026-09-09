@@ -87,6 +87,10 @@ try {
   writeFileSync(childEnv.NPM_CONFIG_USERCONFIG, '')
   execFileSync('git', [...gitArgs, 'archive', '-o', archivePath, artifactId], { cwd: ROOT, env: childEnv, stdio: 'ignore' })
   execFileSync('tar', ['-xf', archivePath, '-C', source], { env: childEnv, stdio: 'ignore' })
+  // The archive is deliberately tracked-source-only. Materialize the exact
+  // root build compiler inside that isolated source tree before building; the
+  // resulting dev dependency tree is never copied into the release payload.
+  run('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--strict-peer-deps=true', '--legacy-peer-deps=false'], source)
   run(process.execPath, ['scripts/build-dist.mjs'], source)
 
   mkdirSync(release, { recursive: true })
@@ -101,10 +105,35 @@ try {
     execFileSync('cp', ['-p', join(source, path), target], { env: childEnv })
   }
   execFileSync('cp', ['-a', join(source, 'dist'), join(release, 'dist')], { env: childEnv })
+
+  // Install production dependencies against the final runtime manifest. The
+  // committed lock marks TypeScript devOptional because some UI packages have
+  // an optional TypeScript peer; npm would otherwise retain that build-only
+  // compiler even with --omit=dev. Let pinned npm derive the production lock
+  // from the committed lock after the build-only declaration is absent.
+  const sourcePackageJson = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
+  const runtimePackageJson = {
+    name: sourcePackageJson.name,
+    version: sourcePackageJson.version,
+    type: 'module',
+    bin: { 'gotry-booking-copilot': 'bin/gotry-booking-copilot.js' },
+    dependencies: sourcePackageJson.dependencies,
+    engines: { node: '24.x' },
+  }
+  const sourceLock = JSON.parse(readFileSync(join(source, 'package-lock.json'), 'utf8'))
+  if (sourcePackageJson.devDependencies?.typescript !== '5.9.3') fail('build TypeScript declaration is not exactly 5.9.3')
+  if (sourceLock.packages?.['node_modules/typescript']?.version !== '5.9.3') fail('build TypeScript lock entry is not exactly 5.9.3')
+  writeFileSync(join(release, 'package.json'), `${JSON.stringify(runtimePackageJson, null, 2)}\n`)
+
   probeNode24()
+  run('npm', ['install', '--package-lock-only', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--strict-peer-deps=true', '--legacy-peer-deps=false'], release)
+  const runtimeLock = JSON.parse(readFileSync(join(release, 'package-lock.json'), 'utf8'))
+  if (runtimeLock.packages?.['']?.devDependencies !== undefined) fail('runtime lock retained build-only devDependencies')
+  if (runtimeLock.packages?.['node_modules/typescript'] !== undefined) fail('runtime lock retained build-only TypeScript')
   // Release consumers must resolve the complete DSH peer closure just like
   // the repository consumer. Keep strict resolution explicit at this seam.
   run('npm', ['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', '--strict-peer-deps=true', '--legacy-peer-deps=false'], release)
+  if (existsSync(join(release, 'node_modules', 'typescript'))) fail('build-only TypeScript leaked into the release runtime')
   // --ignore-scripts also skips node-pty's native build, so the linux
   // spawn-helper never exists and every planner PTY spawn fails. Rebuild the
   // one package that legitimately needs install scripts, then restore the
@@ -117,15 +146,6 @@ try {
   // Runs after npm ci so the production dependency closure is resolvable.
   execFileSync('/usr/bin/env', ['node', '--input-type=module', '-e',
     `await import(${JSON.stringify('file://' + join(release, 'dist/src/booking-surface/startup.js'))})`], { env: childEnv })
-  const packageJson = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
-  writeFileSync(join(release, 'package.json'), `${JSON.stringify({
-    name: packageJson.name,
-    version: packageJson.version,
-    type: 'module',
-    bin: { 'gotry-booking-copilot': 'bin/gotry-booking-copilot.js' },
-    dependencies: packageJson.dependencies,
-    engines: { node: '24.x' },
-  }, null, 2)}\n`)
   rmSync(join(release, 'package-lock.json'))
 
   const schema = join(release, 'schemas/booking.surface.schema.json')
