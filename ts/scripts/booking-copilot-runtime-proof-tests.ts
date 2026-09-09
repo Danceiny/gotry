@@ -150,20 +150,20 @@ async function assertDispatchRejectionStderr(): Promise<void> {
   child.stdout.on('data', (chunk: Buffer) => { stdoutChunks.push(Buffer.from(chunk)) })
   child.stderr.on('data', (chunk: Buffer) => { stderrChunks.push(Buffer.from(chunk)) })
   const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })))
-  const deadline = Date.now() + 10_000
-  while (!Buffer.concat(stdoutChunks).toString('utf8').includes('READY ')) {
-    if (Date.now() > deadline) { child.kill('SIGKILL'); throw new Error(`dispatch_log_child_not_ready:${Buffer.concat(stderrChunks).toString('utf8')}`) }
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-  const port = Number(Buffer.concat(stdoutChunks).toString('utf8').match(/READY (\d+)/)?.[1])
-  assert.ok(Number.isInteger(port) && port > 0)
-  const headers = { authorization: 'Bearer fixture-dispatch-log-key', 'content-type': 'application/json', 'x-booking-surface-version': BOOKING_SURFACE_SCHEMA_VERSION, 'x-booking-surface-schema-sha256': BOOKING_SURFACE_SCHEMA_SHA256 }
   const cases = [
     ['task-329-known', 'WORKSPACE_MISMATCH', 'workspace_mismatch'],
     ['task-329-unknown', 'PLANNER_FAILED', 'UNCLASSIFIED'],
     ['task-329-suffixed', 'WORKSPACE_MISMATCH', 'UNCLASSIFIED'],
   ] as const
   try {
+    const deadline = Date.now() + 10_000
+    while (!Buffer.concat(stdoutChunks).toString('utf8').includes('READY ')) {
+      if (Date.now() > deadline) throw new Error(`dispatch_log_child_not_ready:${Buffer.concat(stderrChunks).toString('utf8')}`)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const port = Number(Buffer.concat(stdoutChunks).toString('utf8').match(/READY (\d+)/)?.[1])
+    assert.ok(Number.isInteger(port) && port > 0)
+    const headers = { authorization: 'Bearer fixture-dispatch-log-key', 'content-type': 'application/json', 'x-booking-surface-version': BOOKING_SURFACE_SCHEMA_VERSION, 'x-booking-surface-schema-sha256': BOOKING_SURFACE_SCHEMA_SHA256 }
     for (const [taskId, expectedCode, expectedReason] of cases) {
       const response = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, { method: 'POST', headers, body: JSON.stringify(turn(taskId)) })
       assert.equal(response.status, 409, `${taskId} keeps the dispatch conflict status`)
@@ -175,6 +175,16 @@ async function assertDispatchRejectionStderr(): Promise<void> {
     }
   } finally {
     child.kill('SIGTERM')
+    let timeout: NodeJS.Timeout | undefined
+    const gracefullyExited = await Promise.race([
+      exit,
+      new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), 1_000) }),
+    ])
+    if (timeout) clearTimeout(timeout)
+    if (gracefullyExited === null) {
+      child.kill('SIGKILL')
+      await exit
+    }
   }
   const childExit = await exit
   assert.deepEqual(childExit, { code: 0, signal: null }, 'dispatch log fixture shuts down cleanly')
