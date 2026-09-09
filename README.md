@@ -75,7 +75,7 @@ The GoTry plugin exposes its tools in groups (the exact count lives in the code 
 | Group | Tool | What it does |
 |---|---|---|
 | **Realtime retrieval (OTA/official, read-only)** | `gotry_flyai_search` | Live flight/train/hotel quotes via the Fliggy official channel (masked hotel prices upstream; real prices on the jumpUrl page; exhausted anonymous trial quota degrades as `needs-setup` with key guidance, never silent retries) |
-| | `gotry_session_search` | Ctrip flights **and hotels** + 12306 trains + Dida supplier-portal realtime hotel rates on the **user's own Chrome session** (consent-gated, physically read-only; hotels = `kind:"hotel"` + optional `cityId`, real logged-in prices; trains = `kind:"train"`, public query face — codes/times/seat availability, no prices in the list API) |
+| | `gotry_session_search` | Ctrip flights **and hotels** + 12306 trains + Dida supplier-portal realtime hotel rates on the **user's own Chrome session** (all kinds consent-gated, physically read-only; omitted `kind` defaults to `flight`, query-wrapped args use query-first selection, unknown/malformed kinds fail closed; hotels = `kind:"hotel"` + optional `cityId`, real logged-in prices; trains = `kind:"train"`, public query face — codes/times/seat availability, no prices in the list API) |
 | | `gotry_session_login` | Login bootstrap: auto-detects existing login first; otherwise opens the login entry in the user's Chrome (**zero terminal**) |
 | | `gotry_weather_check` | Open-Meteo forecast ≤16 d + historical climate baseline |
 | | `gotry_flight_verify` | OpenSky ADS-B live flight observation (three-valued) |

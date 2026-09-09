@@ -10,6 +10,7 @@ import { apply } from '../src/index.ts'
 import type { FlightFact } from '../src/bookable-facts.ts'
 import { installModelOverride, type AgentRequestConfig } from '../capabilities/model-override.ts'
 import { offlineSessionFlightResult, sessionLiveEnabled } from '../capabilities/session-search.ts'
+import { interpretEffect } from '../capabilities/effect.ts'
 
 interface ToolLike {
   name: string
@@ -25,12 +26,21 @@ async function main() {
   const smokeRoot = mkdtempSync(join(tmpdir(), 'gotry-smoke-'))
   const registered: ToolLike[] = []
   const variables: Record<string, () => string> = {}
+  const approvalReasons: string[] = []
+  const selectedEffects: string[] = []
+  const effectSummaries: string[] = []
   // pre-execute 监听器捕获:账号会话授权闸(RFC 支柱④进代码)在 apply() 里经 ctx.on 挂注册表
   type PreDecision = { kind: 'allow' | 'deny' | 'ask'; reason?: string }
   const preExecutes: Array<(exec: { name?: string; kind?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>> = []
   const ctx = {
     tools: { register: (t: unknown) => registered.push(t as ToolLike) },
     systemPrompt: { variable: (name: string, provider: () => string) => { variables[name] = provider } },
+    get: (name: string) => name === 'approval' ? {
+      request: async (request: { reason?: string }) => {
+        approvalReasons.push(String(request.reason ?? ''))
+        return 'allowed-once'
+      },
+    } : undefined,
     on: (event: string, fn: (exec: { name?: string }, next: () => Promise<PreDecision>) => Promise<PreDecision>) => {
       if (event === 'tools/pre-execute') preExecutes.push(fn)
       return () => {}
@@ -44,7 +54,17 @@ async function main() {
     hbcliBin: 'hbcli-not-on-path',  // 强制走降级路径的确定性验证
     sessionAccess: 'ask',
   }
-  apply(ctx, cfg)
+  const fixtureEffect = async (fx: { effect: string }) => {
+    if (fx.effect === 'SESSION_DIDA_SEARCH') {
+      selectedEffects.push(fx.effect)
+      return {
+        result: { ok: true, via: 'session-dida-portal', evidence: '[fixture:session-dida]', latencyMs: 0, verdict: 'hit', rates: [] },
+        trace: { effect: fx.effect, channel: 'fixture', attempts: 1, backoffMs: 0, breaker: 'off', evidence: ['[fixture:session-effect]'] },
+      }
+    }
+    return interpretEffect(fx as never)
+  }
+  apply(ctx, cfg, { effect: fixtureEffect as never })
 
   console.log(`registered tools: ${registered.map(t => t.name).join(', ')}`)
 
@@ -325,19 +345,50 @@ async function main() {
   // 总闸 off → fail-closed deny(随时可关);其他工具原样放行。授权完整语义(批准记忆/
   // 拒绝吊销/allow)由 session-tests §I 纯函数覆盖;此处验证闸确实挂上了注册表。
   {
-    const gate = preExecutes.at(-1)
+    // Keep the shared pre-execute typing owned by the channel-registry lane;
+    // this fixture exercises the runtime hook's actual ToolExecutionInput shape.
+    const gate = preExecutes.at(-1) as unknown as (exec: { name?: string; agent?: object; callId?: string; arguments?: unknown }, next: () => Promise<PreDecision>) => Promise<PreDecision>
     if (!gate) throw new Error('FAIL: tools/pre-execute 授权闸未注册')
     const next = async () => ({ kind: 'allow' as const })
-    const ask = await gate({ name: 'gotry_session_search', kind: 'flight' }, next) as { kind?: string; reason?: string }
+    const ask = await gate({ name: 'gotry_session_search', arguments: { from: '上海' } }, next) as { kind?: string; reason?: string }
     if (ask.kind !== 'ask' || !/只读检索/.test(String(ask.reason ?? ''))) {
       throw new Error(`FAIL: 会话工具无审批通道时应交 ask(运行时原生结算),实际:${JSON.stringify(ask)}`)
     }
+    if (!/携程机票/.test(String(ask.reason ?? ''))) {
+      throw new Error(`FAIL: 缺省 kind 必须选择 flight 站点,实际:${JSON.stringify(ask)}`)
+    }
+    const conflictArgs = { kind: 'flight', query: { kind: 'dida' } }
+    const conflict = await gate({
+      name: 'gotry_session_search',
+      callId: 'conflict-site',
+      arguments: conflictArgs,
+    }, next) as { kind?: string; reason?: string }
+    if (conflict.kind !== 'ask' || !/Dida 供应商门户/.test(String(conflict.reason ?? ''))) {
+      throw new Error(`FAIL: actual registered pre-execute hook must follow query-first selected site,实际:${JSON.stringify(conflict)}`)
+    }
+    const effectAgent = {}
+    const sessionTool = byName('gotry_session_search')
+    const pipeline = await gate({
+      name: 'gotry_session_search', agent: effectAgent, callId: 'conflict-effect', arguments: conflictArgs,
+    }, async () => {
+      const result = await sessionTool.execute(conflictArgs, null)
+      effectSummaries.push(result && typeof result === 'object' && 'summary' in result ? String((result as { summary?: string }).summary ?? '') : '')
+      return { kind: 'allow' as const }
+    })
+    if (pipeline.kind !== 'allow' || approvalReasons.length !== 1 || selectedEffects.length !== 1 || selectedEffects[0] !== 'SESSION_DIDA_SEARCH' || !effectSummaries[0]?.startsWith('Dida 门户实时价')) {
+      throw new Error(`FAIL: pre-execute→approval→selected effect fixture 未锁定 Dida,实际:${JSON.stringify({ pipeline, approvalReasons, selectedEffects, effectSummaries })}`)
+    }
+    console.log(`consent pipeline fixture: query-first conflict → approval=${approvalReasons.length}, effect=${selectedEffects[0]}, summary=${effectSummaries[0]}`)
     const pass = await gate({ name: 'gotry_anything_search' }, next)
     if (pass.kind !== 'allow') throw new Error(`FAIL: 非会话工具应原样放行,实际:${JSON.stringify(pass)}`)
     cfg.sessionAccess = 'off'
-    const deny = await gate({ name: 'gotry_session_search', kind: 'flight' }, next) as { kind?: string; reason?: string }
+    const deny = await gate({ name: 'gotry_session_search', arguments: { kind: 'flight' } }, next) as { kind?: string; reason?: string }
     if (deny.kind !== 'deny' || !/sessionAccess=off/.test(String((deny as { reason?: string }).reason ?? ''))) {
       throw new Error(`FAIL: sessionAccess=off 应 fail-closed deny,实际:${JSON.stringify(deny)}`)
+    }
+    const trainDeny = await gate({ name: 'gotry_session_search', arguments: { kind: 'train' } }, next) as { kind?: string; reason?: string }
+    if (trainDeny.kind !== 'deny' || !/sessionAccess=off/.test(String(trainDeny.reason ?? ''))) {
+      throw new Error(`FAIL: sessionAccess=off 不得绕过 train,实际:${JSON.stringify(trainDeny)}`)
     }
     cfg.sessionAccess = 'ask'
     console.log('consent gate: session tool → approval-card ask(每会话一次/拒绝即会话内吊销); off → fail-closed deny; other tools pass through')

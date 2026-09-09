@@ -24,6 +24,7 @@
 - 2026-09-04 起,legacy vendored dsh 回退移除(issue #120,D-27 清偿):dsh 解析只认 root manifest/依赖闭包,找不到即 fail-closed 报错指重装;DshRuntime.source 收敛 'root'。
 - 2026-09-04 起,needs-extension 文案自适应(issue #117,D-24 清偿):按本地通道落位自动跳过开发者模式/本地通道指引——商店版用户只推商店一键装与「已装即可」;桥失败摘要与 doctor 扩展项同步自适应。
 - 2026-09-09 起,会话检索面新增 dida 供应商门户适配器(`gotry_session_search kind=dida`,SESSION_DIDA_SEARCH 效应注册表行)——解译器平铺纪律照旧,无新策略表形态;详见 `../architecture.md` §9。本设计原文(Stage 0-4 求解/编排)不受影响,状态让渡回 architecture §9。
+- 2026-09-10 起,#308 forward fix 固化会话 kind 选择：gate 与 execute 共用 `interpretArgs` query-first 语义,缺省为 flight,unknown/malformed fail-closed;train 公开查询面仍受 sessionAccess 的 off/ask/allow 与按站点拒绝/取消约束。回归入口为 session-tests §I + smoke §13。
 - 2026-09-04 起,解译器迁移收尾(issue #115,D-23):anything/web/github/video/agent_reach/session_login 六渠道入效应注册表,23 工具外部依赖面全收敛 effect_interpreter.v1(没有策略表行就没有效应);工具面照旧平铺,证据链逐源标注不变。
 - 2026-09-04 起,启动一次性 doctor 摘要(issue #114):web/headless 启动时分离子进程后台只读体检,待处理项一行 stderr(全 ok 静默/零写盘/不阻塞/benchmark 豁免)——初始化可见取代会话中段撞错。
 - 2026-09-04 起,工具描述首行由通道注册表生成(issue #113):七个检索工具描述前置「服务意图 × 通道顺位」卡(与失败现场 routing 字段同表),doctor 补齐 patch 宿主插件 dsh-map-tools/dsh-tool-ask-user 两态；map-tools 当前由 `ts/dsh-runtime/vendor/dsh-map-tools/` 以 MIT payload 随包交付，外部 npm 依赖因 rc peer 与 alpha.3 closure 冲突而移除。
