@@ -172,7 +172,7 @@ node scripts/build-dist.mjs                       # build the JS runtime
 ./gotry web                                       # in-repo entry, same UX
 ```
 
-The source entry and the npm package resolve the same 230-package DeepSeek Harness `0.1.5-alpha.1` closure (exact direct dependencies; publish preverify rejects omissions, mixed versions, and ranges). Source normal runs keep their state under `ts/dsh-runtime/gotry-state/`; benchmark opt-in and npm-package runs use the invocation directory for isolation.
+The source entry and the npm package resolve the same 230-package DeepSeek Harness `0.1.5-alpha.1` closure (exact direct dependencies; publish preverify rejects omissions, mixed versions, and ranges). Source normal runs keep their state under `ts/dsh-runtime/gotry-state/`; benchmark opt-in and npm-package runs use the invocation directory for isolation. Per [issue #290](https://github.com/Danceiny/gotry/issues/290), both source and npm paths now project product persona through `personaPrefix` / `personaSuffix` (legacy `persona:` does not project) and the bridge handler classifies failures structurally: `timed_out` for deadline abort, `spawn_failed` for synchronous spawn or rejected public `done`, `runner_failed` for resolved nonzero exit or post-success collected-output read failure.
 
 ## Consent and Privacy
 

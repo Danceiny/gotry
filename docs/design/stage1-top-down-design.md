@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-09 起,#290 公开契约兼容:persona 经 `personaPrefix` / `personaSuffix` 投射(legacy `persona:` 不投影);桥 handler 结构性归类(`timed_out` / `spawn_failed` / `runner_failed`);详见 `docs/architecture.md` §9。不宣称 release/publication、M5/M6 entry、Windows 执行或真实 supplier/HotelByte 准入。
 - 2026-09-09 起,#271 Phase A 进程事故观察：GoTry-owned `uncaughtExceptionMonitor` 按 origin 写 durable incidents JSONL，宿主保持 fatal handler/退出裁决；native Node24 ESM dist 反例覆盖 writer fsync/close、monitor/no-monitor、host handler 与结构化工具失败。child close/spawn error、SIGINT、后代进程和上游 dsh supervisor 仍为开放 TODO。
 - 2026-09-09 起,#282 Booking planner 纠偏：嵌入式 read-action planner 保留非空 occupancy 房间及 childAges，缺 `adults` 继续 schema 校验；纠偏提示计入同一最多三次 provider budget，valid correction 沿同一 authority path 返回，provider failure 透传。focused proof 使用注入 runPort，真实供应商库存/UAT 仍开放。
 - 2026-09-09 起,Node 26 dist 构建兼容(issue #265,M4 开源/发布质量线):支持下界保持 `>=22.15.0`;根构建只用精确 TypeScript 5.9.3 生成 ESM,CI 在 Node 22/24 保持 typecheck + 全栈回归并另以 Node 22/24/26 focused proof 核对 exact source→dist、JS/Python/data 资产、无相对 `.ts` specifier/无 CommonJS emit wrapper、skeleton-check 与关键动态 import。该项不计入 #20 的真实 repeat-cohort,也不满足 #136 供应协议/内部授权或 #137 P6 批准与真实试点；三项 gate 仍开放。
