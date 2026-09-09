@@ -117,20 +117,30 @@
 3. **bootstrap 一次性摘要**:`npx gotry web`/headless 启动时跑一遍只读 doctor,
    有 degraded/missing 项就打一行摘要(不阻塞启动,不重复刷)——「初始化时可见」
    取代「会话中段撞错」。
-3a. **#258 web 启动交互式 onboarding(M4 UX proof)**:在 `npx gotry web` 且仅交互式
+3a. **#258/#267 web 启动交互式 onboarding(M4 UX proof;#267 = #266 合并后的 post-merge 加固)**:在 `npx gotry web` 且仅交互式
    TTY + 存在「可自动安装」缺项(hbcli 二进制 / agent-reach `.venv` / dsh-better-sidebar)
    时,在上述后台摘要**之前**问一次「现在配置可选能力吗」。`y` 复用 `doctor --fix` 的
    幂等安装器(setupHbcli/setupReach/setupSidebar,**不建第二套**),`n` 立即继续启动 web;
    结果三态展示——`installed`(本机自动安装)/`needs-user-action`(Chrome 商店、hbcli 登录、
    FlyAI key、calendar profile 等用户/上游授权,永不冒充自动完成)/`unavailable`(带具体原因,
    如随包 vendor 缺失需重装 gotry)。部分失败不挡 web 且给可重试命令(`npx gotry doctor --fix`);
-   再跑不重装已健康项(安装器存在性短路 + doctor 复检,幂等)。CI / benchmark / 非 TTY / 全健康 /
-   `GOTRY_SETUP_SKIP=1` / `GOTRY_ONBOARDING_SKIP=1` / `--no-onboarding` 均**零 prompt 零安装仍启 web**;
-   永不在 postinstall 或 detached 后台任务里安装。后台摘要行仅在 onboarding 未 prompt 时保留
-   (不重复)。纯函数(classify/plan/skipReason)与 runOnboardingFix(注入安装器)/promptOnboarding
-   (注入流)导出供 `bootstrap-tests.ts` 隔离单测——合成 items + 注入 fakes,永不跑真安装器/开浏览器/写
-   `ts/dsh-runtime/gotry-state`。**边界声明**:本项是带确定性测试的 M4 UX proof,证明安装/修复契约
-   与 prompt/skip 行为,**不**满足 #20 真实 repeat-cohort Exit 证据;fixture/本地安装证明不作 M4 Exit 证据。
+   再跑不重装已健康项(安装器存在性短路 + doctor 复检,幂等)。**无 auto 缺项但有需用户操作/
+   不可用缺项时**(如 win32 上 hbcli/agent-reach/sidebar 无自动安装面,或仅凭证/key/重装缺口):
+   不 prompt 不安装,但渲染分类计划(`needs-user-action` / `unavailable` 逐项带具体原因,win32
+   给平台原因而非无效的 `doctor --fix` 指引),标记 `reported`;inner 据此抑制重复的 detached
+   后台摘要(分类计划已展示缺口)。CI / benchmark / 非 TTY / 全健康 / `GOTRY_SETUP_SKIP=1` /
+   `GOTRY_ONBOARDING_SKIP=1` / `--no-onboarding` 均**零 prompt 零安装仍启 web**;
+   永不在 postinstall 或 detached 后台任务里安装。后台摘要行仅在 onboarding 未 prompt 且未 reported
+   时保留(不重复)。`installerEnabled` 接受注入 env,classifyDoctorGap/buildOnboardingPlan/runOnboarding
+   全链不依赖 ambient `GOTRY_SETUP_*`(生产 CLI 路径仍取 process.env 默认)。**#267 加固**:web-onboarding
+   子调用由 `spawnSync` 改 awaited POSIX process-group `spawn`,使 JS 能服务 SIGINT/SIGTERM——信号路径终止当前活跃子进程/进程组并清
+   私有 result 目录 + patch 目录(幂等),正常/错误路径亦清;bootstrap installer `run()` 使用自己的 bounded process-group lifecycle,inner outer grace 显式大于 installer TERM+SIGKILL budget,避免 stubborn installer 孤儿化;结果通道改 0700 `mkdtemp` 私有目录 + `result.json`
+   `mode 0600 + flag wx`(排他写入,防 symlink 互换)。纯函数(classify/plan/
+   skipReason)与 runOnboardingFix(注入安装器)/promptOnboarding/renderClassifiedPlan(注入流)导出供
+   `bootstrap-tests.ts` 隔离单测——合成 items + 注入 fakes,永不跑真安装器/开浏览器/写
+   `ts/dsh-runtime/gotry-state`;§21 用临时安装包 fixture + 假 dsh + fixture-local TTY preload 跨过**真实**
+   inner→bootstrap onboarding→dsh-web 进程边界(观察到 prompt 恰好一次),§21c/§21f/§21g POSIX 信号/timeout 测试覆盖 prompt-wait、accepted-install parent SIGTERM 与 accepted-install onboarding timeout,证明 stubborn installer 子树、result+patch 目录均有界清理。**边界声明**:本项是带确定性测试的 M4 UX proof,证明安装/修复契约
+   与 prompt/skip/reported 行为,**不**满足 #20 真实 repeat-cohort Exit 证据;fixture/本地安装证明不作 M4 Exit 证据。
 4. **glob/grep 超时**:dsh 宿主内置工具,gotry 侧无动作锚点——维持 triage 结论,
    上游另立 issue(若仍复现)。本仓不为此设代理层(复用矩阵:harness 层是 dsh 本体)。
 
@@ -283,10 +293,13 @@ WriteGate 让「加进来的东西」自动遵守同一套纪律——**生态�
   #116(适配器作者指南 + 携程真会话校准,D-13)/ #117(商店版扩展检测,D-24 清偿)/
   #118(事实闸酒店 claim + 渲染原语单向生成,D-26 收口)/ #119(外部事件接缝设计,#82)/
   #120(legacy vendored 处置,D-27 清偿)。
-- **#258(web 启动交互式 onboarding,M4 UX proof)**:在 #114 后台摘要之上加一次显式可选
+- **#258/#267(web 启动交互式 onboarding,M4 UX proof;#267 = #266 合并后的 post-merge 加固)**:在 #114 后台摘要之上加一次显式可选
   能力配置 prompt(见 §3.1③a),复用 `doctor --fix` 幂等安装器、三态结果、严格跳过契约;
-  纯函数 + 注入安装器隔离单测。**不满足 #20 真实 repeat-cohort Exit 证据**(M4 UX proof,
-  非业务 Exit);待 owner/architect 全栈回归与 root review 闸。
+  无 auto 缺项时渲染分类计划 + `reported` 抑制重复摘要(win32 等无自动安装面场景用户仍可见分类);
+  `installerEnabled` 注入 env,纯函数 + 注入安装器隔离单测。#267 加固:web-onboarding 子调用改 awaited
+  POSIX process-group `spawn`(SIGINT/SIGTERM 可服务,信号路径清 result+patch 目录),bootstrap installer `run()` 同步进 bounded process-group lifecycle,outer grace 覆盖 installer TERM+SIGKILL budget;结果通道 0700 `mkdtemp` + `0600/wx`,
+  bootstrap-tests §21 跨过真实 inner→bootstrap onboarding 进程边界,§21c/§21f/§21g 覆盖 prompt-wait、accepted-install parent signal 与 accepted-install timeout。**不满足 #20 真实 repeat-cohort Exit 证据**
+  (M4 UX proof,非业务 Exit);D-34 清偿。
 
 > 拍板记录:D-7/D-8/D-9 已于 2026-09-03 按「推进实现落地」采纳落地(issues #106/#107/#108 同日关闭);
 > 触发式后置项(D-15/D-18/D-19/D-22/D-29、M5 WriteGate、产品统一 key 池)不在本序列——赎回时机见 architecture §10。
