@@ -60,8 +60,9 @@ export type ConsentExec = { name?: string; agent?: object; callId?: string }
 export type ConsentGate = (exec: ConsentExec, next: () => Promise<ConsentDecision>) => Promise<ConsentDecision>
 
 function reasonFor(toolName: string, site: string): string {
-  return `${toolName} 将使用你本人已登录的浏览器会话做「${SITE_LABEL[site] ?? site}」只读检索`
-    + '(ReadGuard 物理只读:写请求网络层中止,agent 永不碰凭证与验证码);本次批准在你本会话内有效'
+  return `工具 ${toolName} 将使用你本人已登录的浏览器会话，在「${SITE_LABEL[site] ?? site}」进行只读检索`
+    + '（ReadGuard 物理只读：写请求在网络层即中止，agent 永不接触凭证与验证码）；'
+    + '本次批准仅在本会话内有效，会话结束即失效，不会跨会话延续。'
 }
 
 /**
@@ -82,11 +83,11 @@ export function createConsentGate(opts: ConsentGateOptions): ConsentGate {
     const site = exec.name && ACCOUNT_TOOLS[exec.name]
     if (!site) return next()
     if ((opts.access() ?? 'ask') === 'off') {
-      return { kind: 'deny', reason: `${exec.name} 已被配置关闭(sessionAccess=off);需要账号会话检索时由用户开启` }
+      return { kind: 'deny', reason: `工具 ${exec.name} 已被配置关闭（sessionAccess=off）。如需重新启用账号会话检索，请到配置中重新开启 sessionAccess。` }
     }
     const state = (exec.agent && store.get(exec.agent)) || undefined
     if (state?.denied.has(site)) {
-      return { kind: 'deny', reason: `你在本会话已拒绝过「${SITE_LABEL[site] ?? site}」的账号会话检索——本会话不再请求授权,请改走其他工具推进` }
+      return { kind: 'deny', reason: `你已在本会话拒绝过「${SITE_LABEL[site] ?? site}」的账号会话检索。为避免反复打扰，本会话不再请求授权，请改用其他工具继续推进。` }
     }
     if (state?.granted.has(site) || (opts.access() === 'allow' && exec.agent)) return next()
     const approval = opts.approval?.()
@@ -103,9 +104,9 @@ export function createConsentGate(opts: ConsentGateOptions): ConsentGate {
     }
     if (outcome === 'rejected' || outcome === 'cancelled') {
       remember(store, exec.agent, site, 'deny')
-      return { kind: 'deny', reason: `你拒绝了 ${exec.name} 的账号会话授权(本会话内生效);不再重复请求,请改走其他工具推进` }
+      return { kind: 'deny', reason: `你刚刚拒绝了工具 ${exec.name} 的账号会话授权（本次拒绝仅在本会话内生效）。为避免反复打扰，本会话不再重复请求授权，请改用其他工具继续推进。` }
     }
-    return { kind: 'deny', reason: `${exec.name} 需要你授权,但当前没有可用的审批通道(headless 一问一答无审批界面;请在 web 会话中使用账号会话检索)` }
+    return { kind: 'deny', reason: `工具 ${exec.name} 需要你授权，但当前没有可用的审批通道。在 headless 一问一答场景下没有审批界面，请改用 web 会话来使用账号会话检索。` }
   }
 }
 
