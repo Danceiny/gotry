@@ -10,9 +10,10 @@
 
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 
@@ -53,6 +54,55 @@ function vendorAggregate(root: string): { count: number; sha256: string } {
     digest.update('\0')
   }
   return { count: files.length, sha256: digest.digest('hex') }
+}
+
+function assertPackagingExcludesNodeModules(): void {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'gotry-pack-excl-'))
+  try {
+    const archiveTar = join(tempRoot, 'head.tar')
+    execFileSync('git', ['archive', '--format=tar', '--output', archiveTar, 'HEAD'], { cwd: repoRoot })
+    const checkoutDir = join(tempRoot, 'checkout')
+    mkdirSync(checkoutDir)
+    execFileSync('tar', ['-xf', archiveTar, '-C', checkoutDir])
+    copyFileSync(join(repoRoot, 'package.json'), join(checkoutDir, 'package.json'))
+
+    const vendorBinDir = join(checkoutDir, 'ts/dsh-runtime/vendor/dsh-map-tools/node_modules/.bin')
+    mkdirSync(vendorBinDir, { recursive: true })
+    for (const name of ['cordis', 'tsc', 'tsserver', 'vitest']) {
+      const binPath = join(vendorBinDir, name)
+      writeFileSync(binPath, '#!/usr/bin/env node\n')
+      chmodSync(binPath, 0o755)
+    }
+
+    const packDir = join(tempRoot, 'pack')
+    mkdirSync(packDir)
+    const packOutput = execFileSync('npm', [
+      'pack', '--ignore-scripts', '--json', '--pack-destination', packDir,
+    ], { cwd: checkoutDir, encoding: 'utf8' })
+    const packInfo = JSON.parse(packOutput) as Array<{ filename: string }>
+    assert.equal(packInfo.length, 1, 'temp npm pack must produce one artifact')
+    const tarball = join(packDir, packInfo[0].filename)
+    assert.ok(existsSync(tarball), `temp packed artifact missing: ${tarball}`)
+
+    const entries = execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' }).trimEnd().split('\n')
+    const nodeModulesEntries = entries.filter(path =>
+      path.startsWith('package/ts/dsh-runtime/vendor/dsh-map-tools/node_modules'),
+    )
+    assert.equal(
+      nodeModulesEntries.length, 0,
+      `npm pack must exclude vendor node_modules: found ${nodeModulesEntries.join(', ')}`,
+    )
+
+    const extractDir = join(tempRoot, 'extracted')
+    mkdirSync(extractDir)
+    execFileSync('tar', ['-xzf', tarball, '-C', extractDir])
+    const packedVendorRoot = join(extractDir, 'package/ts/dsh-runtime/vendor/dsh-map-tools')
+    const packedAggregate = vendorAggregate(packedVendorRoot)
+    assert.equal(packedAggregate.count, upstreamVendorFileCount, 'packed vendor file count drifted')
+    assert.equal(packedAggregate.sha256, adaptedVendorAggregateSha256, 'packed vendor aggregate drifted')
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
 }
 
 function assertAlpha3LockClosure(): { packages: number; version: string } {
@@ -159,6 +209,7 @@ const cleanInstalledBin = process.env.GOTRY_MAP_TOOLS_E2E_BIN
 const { packageRoot, proofRoot } = prepareProofPackage(cleanInstalledBin)
 
 try {
+  assertPackagingExcludesNodeModules()
   const lockedDsh = assertAlpha3LockClosure()
   const vendorRoot = join(packageRoot, 'ts/dsh-runtime/vendor/dsh-map-tools')
   const requiredFiles = [

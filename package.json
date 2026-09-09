@@ -90,6 +90,7 @@
     "extension/",
     "ts/package.json",
     "ts/dsh-runtime/vendor/dsh-map-tools",
+    "!ts/dsh-runtime/vendor/dsh-map-tools/node_modules",
     "ts/scripts/map-tools-vendor-package-proof.ts",
     "cordis.gotry-patch.yml",
     "README.md",
