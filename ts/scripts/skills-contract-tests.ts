@@ -4,10 +4,11 @@
  *   的两面——本测试抓取远端契约,断言关键参数形态/域边界措辞在 gotry 工具描述
  *   里可找到对应,防止 skills 仓演进后 gotry 静默漂移。
  *
- *   有 GitHub 凭证(keychain)→ 真校验;无凭证/网络不可达 → SKIP(退出码 0,
- *   不让 CI/离线环境红:对齐检查是「能跑则跑」,不是硬门槛)。
+ *   本地工具描述形态始终离线校验;远端 GitHub 契约读取必须显式设置
+ *   GOTRY_HOTELBYTE_SKILLS_LIVE=1。无凭证/网络不可达 → SKIP(退出码 0)。
  *
  * 运行: cd ts && npx tsx scripts/skills-contract-tests.ts
+ * 远端契约校验: cd ts && GOTRY_HOTELBYTE_SKILLS_LIVE=1 npx tsx scripts/skills-contract-tests.ts
  */
 
 import assert from 'node:assert/strict'
@@ -29,6 +30,18 @@ async function main(): Promise<void> {
   }
   const anythingDesc = desc('gotry_anything_search')
   const hotelsDesc = desc('gotry_hotel_search')
+
+  // Keep the deterministic contract surface in the offline gate. The remote
+  // repository adds provenance, but must not be needed for default regression.
+  assert.ok(anythingDesc.includes('contentType'), 'gotry_anything_search 描述应含 contentType')
+  assert.ok(/agent[-_]reach/.test(anythingDesc), 'gotry_anything_search 描述应引域边界(agent[-_]reach)')
+  for (const p of ['destination', 'checkIn', 'checkOut']) {
+    assert.ok(hotelsDesc.includes(p), `gotry_hotel_search 描述应含 ${p}`)
+  }
+  if (process.env.GOTRY_HOTELBYTE_SKILLS_LIVE !== '1') {
+    console.log('SKILLS CONTRACT TESTS: 本地工具描述 2/2 OK;远端 hotelbyte-skills 校验 SKIP(默认离线,显式 GOTRY_HOTELBYTE_SKILLS_LIVE=1 才读取 GitHub 凭证/网络)')
+    return
+  }
 
   // 2) 取 keychain 凭证;没有就 SKIP
   let token = ''
