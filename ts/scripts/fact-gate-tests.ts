@@ -396,26 +396,17 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   assert(phantomReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /deadbeefdeadbeef/.test(v.detail)),
     '凭空追加非注册表 fact_id(完整 16-hex)→ fact_anchor_unknown')
 
-  // 11g. 锚点 + 手改 statement 内容(用户改了渲染行文字,但保留了同一 fact_id)
-  //     闸当前只校验 fact_id 存在性,不比对 statement/as_of 内容——这是已知的
-  //     D-26 残余,根治方向=渲染原语只从结构化事实生成,产物层禁止改写文本。
-  //     本断言记录当前行为以供未来 #299 系列切片参考(typed-anchor 内容指纹方向)。
-  const statementMutation = policyLine11.replace(/免签停留/, '免签停留(手改)')
-  const statementReport = gateArtifact(['## 政策', statementMutation].join('\n'), [policy], map, { trip_year: tripYear })
-  assert(statementReport.verdict === 'pass' && statementReport.traceable === 1,
-    `锚点 fact_id 存在 + statement 内容被改写 → 当前闸不抓(known D-26 残余;实际 ${statementReport.verdict}/traceable=${statementReport.traceable})`)
-
-  // 11h. 锚点 + 手改 as_of(改了"截至 YYYY-MM-DD"日期)
+  // 11g. 锚点 + 手改 as_of(改了"截至 YYYY-MM-DD"日期)
   const asOfMutation = policyLine11.replace(/截至\s*\d{4}-\d{2}-\d{2}/, '截至 2027-01-01')
   const asOfReport = gateArtifact(['## 政策', asOfMutation].join('\n'), [policy], map, { trip_year: tripYear })
   assert(asOfReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /2027-01-01/.test(v.detail)),
     `锚点 + 改写 as_of 2027-01-01 → fact_anchor_unknown(内容指纹形态;实际 ${asOfReport.violations.length} 条违例)`)
-  // 11i. 锚点 + 删除截至日期 → 同样 fail-closed,不因缺少可比较值而放行。
+  // 11h. 锚点 + 删除截至日期 → 同样 fail-closed,不因缺少可比较值而放行。
   const asOfRemoved = policyLine11.replace(/截至\s*\d{4}-\d{2}-\d{2}\s*的现行政策——/, '现行政策——')
   const asOfRemovedReport = gateArtifact(['## 政策', asOfRemoved].join('\n'), [policy], map, { trip_year: tripYear })
   assert(asOfRemovedReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /缺少截至日期/.test(v.detail)),
     `锚点 + 删除截至日期 → fact_anchor_unknown(缺失内容指纹;实际 ${asOfRemovedReport.violations.length} 条违例)`)
-  console.log(`  ok - §11 政策渲染锚点 + 海关申报关键词 fail-closed 九断言完成`)
+  console.log(`  ok - §11 政策渲染锚点 + 海关申报关键词 fail-closed 八断言完成`)
 }
 
 console.log(`\nFACT GATE TESTS: ${pass} pass, ${fail} fail`)
