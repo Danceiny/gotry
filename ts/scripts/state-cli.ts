@@ -20,18 +20,25 @@
  *   pw-request [root] <idemKey> <seam> <payloadJson>   登记待确认外部写(L2)
  *   pw-confirm [root] <idemKey> <receipt>              具名 seam 确认(L3,携 receipt)
  *   pw-compensate [root] <idemKey> <note>              saga 补偿
+ *   repair-plan [root] [--mapping <file>] [--format text|json]
+ *                                       只读 inventory + dry-run tenant 修复计划(#254):
+ *                                       正本零写(只在临时副本上读),无显式证据映射的
+ *                                       事件一律原地保留;真实 apply 在单独 owner gate 后
  *
  * 选项(可放在命令前或命令后,也可夹在位置参数之间):
  *   --state-root <root>   显式 state root;省略时按命令沿用位置参数 root 或默认 '.'。
  *   --tenant <tenant>     账本租户 scope(默认 local);这是范围参数,不是认证/授权。
  *   --limit <N>           仅 log 支持;N 必须是正整数。
+ *   --mapping <file>      仅 repair-plan 支持;人工确认的证据映射 JSON 数组。
+ *   --format text|json    仅 repair-plan 支持;默认 text。
  *
  * root 默认 '.';运行:cd ts && npx tsx scripts/state-cli.ts <cmd> ...
  */
 
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { ensureLedger, openLedgerIfExists } from '../src/state-ledger.ts'
+import { ensureLedger, ledgerDbPath, ledgerExists, openLedgerIfExists } from '../src/state-ledger.ts'
+import { formatRepairPlan, loadEvidenceMappingFile, planLedgerRepair } from '../src/ledger-repair-plan.ts'
 import { collectDeepPlanning, makeJournaledSolvePort, settleAsyncTicket, type AsyncTicket } from '../src/loop.ts'
 import { solveUnified } from '../src/unified.ts'
 import type { TripState } from '../src/contracts.ts'
@@ -51,11 +58,15 @@ const HELP = `用法: npx tsx scripts/state-cli.ts [--state-root <root>] [--tena
   pw-request [root] <idemKey> <seam> <payloadJson>
   pw-confirm [root] <idemKey> <receipt>
   pw-compensate [root] <idemKey> <note>
+  repair-plan [root] [--mapping <file>] [--format text|json]   # 只读 dry-run,零写
 选项:
   --state-root <root>   显式 state root;保留位置参数 root 用法
   --tenant <tenant>     默认 local;仅是账本 scope,不是认证/授权
   --limit <N>           仅 log 支持,N 为正整数
+  --mapping <file>      仅 repair-plan 支持,人工确认的证据映射 JSON 数组
+  --format text|json    仅 repair-plan 支持,默认 text
 边界:tick/export/whatif 只支持 --tenant local;非 local 会在创建目录、打开账本、求解或写文件前拒绝。
+      repair-plan 全程只读:不建库、不迁移 schema、不改任何 ledger/projection。
 提示:root 路径若像数字/负数或以 '-' 开头,请用 --state-root <root> 明示。`
 
 const COMMANDS = new Set([
@@ -72,18 +83,21 @@ const COMMANDS = new Set([
   'pw-request',
   'pw-confirm',
   'pw-compensate',
+  'repair-plan',
 ])
-const OPTION_NAMES = new Set(['--state-root', '--tenant', '--limit'])
+const OPTION_NAMES = new Set(['--state-root', '--tenant', '--limit', '--mapping', '--format'])
 const LOCAL_ONLY_COMMANDS = new Set(['export', 'tick', 'whatif'])
 const SUBJECTS = new Set(['wish', 'companion', 'motivation'])
 
-type OptionName = '--state-root' | '--tenant' | '--limit'
+type OptionName = '--state-root' | '--tenant' | '--limit' | '--mapping' | '--format'
 
 interface ParsedCli {
   cmd?: string
   root: string
   tenant: string
   limit: number
+  mapping?: string
+  format: 'text' | 'json'
   positional: string[]
 }
 
@@ -124,7 +138,8 @@ function rootAndArgs(cmd: string, positional: string[], explicitRoot?: string): 
     case 'log':
     case 'stats':
     case 'tick':
-    case 'pw-list': {
+    case 'pw-list':
+    case 'repair-plan': {
       if (positional.length > 1) usageError(`${cmd} 只接受一个可选 root 位置参数`)
       return { root: positional[0] ?? '.', args: [] }
     }
@@ -148,9 +163,13 @@ function rootAndArgs(cmd: string, positional: string[], explicitRoot?: string): 
   }
 }
 
-function validateArgs(cmd: string, args: string[], limitRaw?: string): number {
+function validateArgs(cmd: string, args: string[], limitRaw?: string, mappingRaw?: string, formatRaw?: string): { limit: number; format: 'text' | 'json' } {
   if (limitRaw !== undefined && cmd !== 'log') usageError(`${cmd} 不支持 --limit`)
+  if (mappingRaw !== undefined && cmd !== 'repair-plan') usageError(`${cmd} 不支持 --mapping`)
+  if (formatRaw !== undefined && cmd !== 'repair-plan') usageError(`${cmd} 不支持 --format`)
   const limit = limitRaw === undefined ? 20 : parsePositiveInteger(limitRaw, '--limit')
+  if (formatRaw !== undefined && formatRaw !== 'text' && formatRaw !== 'json') usageError(`--format 只支持 text|json:${formatRaw}`)
+  const format: 'text' | 'json' = formatRaw === 'json' ? 'json' : 'text'
 
   switch (cmd) {
     case 'migrate':
@@ -159,6 +178,7 @@ function validateArgs(cmd: string, args: string[], limitRaw?: string): number {
     case 'stats':
     case 'tick':
     case 'pw-list':
+    case 'repair-plan':
       if (args.length !== 0) usageError(`${cmd} 不接受额外位置参数:${args.join(' ')}`)
       break
     case 'rebuild':
@@ -186,7 +206,7 @@ function validateArgs(cmd: string, args: string[], limitRaw?: string): number {
       if (args.length !== 2) usageError('pw-compensate 需要 idemKey 与 note;省略 root 时请用 --state-root . 明示')
       break
   }
-  return limit
+  return { limit, format }
 }
 
 function parseCli(argv: string[]): ParsedCli {
@@ -211,18 +231,18 @@ function parseCli(argv: string[]): ParsedCli {
   }
 
   if (cmd === undefined) usageError('缺少命令')
-  if (!COMMANDS.has(cmd)) return { cmd, root: '.', tenant: 'local', limit: 20, positional }
+  if (!COMMANDS.has(cmd)) return { cmd, root: '.', tenant: 'local', limit: 20, format: 'text', positional }
 
   const tenant = options.get('--tenant') ?? 'local'
   if (tenant.trim() === '') usageError('--tenant 缺少值')
   const explicitRoot = options.get('--state-root')
   if (explicitRoot !== undefined && explicitRoot.trim() === '') usageError('--state-root 缺少值')
   const { root, args } = rootAndArgs(cmd, positional, explicitRoot)
-  const limit = validateArgs(cmd, args, options.get('--limit'))
+  const { limit, format } = validateArgs(cmd, args, options.get('--limit'), options.get('--mapping'), options.get('--format'))
   if (LOCAL_ONLY_COMMANDS.has(cmd) && tenant !== 'local') {
     usageError(`${cmd} 仅支持 --tenant local；该命令未实现租户隔离,已在创建目录、打开账本、求解或写文件前拒绝。`)
   }
-  return { cmd, root, tenant, limit, positional: args }
+  return { cmd, root, tenant, limit, mapping: options.get('--mapping'), format, positional: args }
 }
 
 function atomicWrite(path: string, text: string): void {
@@ -346,6 +366,24 @@ switch (cmd) {
       const r = ledger.compensatePendingWrite(positional[0]!, positional[1]!)
       console.log(`补偿:${JSON.stringify(r)}`)
     }
+    break
+  }
+  case 'repair-plan': {
+    // 全程只读:不用 ensureLedger/openLedgerIfExists(它们会建库、迁移 v1 schema、
+    // 重建投影);planLedgerRepair 把 db 复制到临时目录再只读读取,正本一次都不打开。
+    if (!ledgerExists(root)) { console.error(`无账本(未迁移 root):${ledgerDbPath(root)}`); process.exit(1) }
+    let mappings: unknown
+    if (parsed.mapping !== undefined) {
+      try {
+        mappings = loadEvidenceMappingFile(parsed.mapping)
+      } catch (e) {
+        // fail-closed:映射不可读/非法 JSON 一律拒绝,绝不退化成「无映射照跑」
+        console.error(e instanceof Error ? e.message : String(e))
+        process.exit(1)
+      }
+    }
+    const plan = planLedgerRepair({ stateRoot: root, sourceTenant: tenant, mappings })
+    console.log(parsed.format === 'json' ? JSON.stringify(plan, null, 2) : formatRepairPlan(plan))
     break
   }
   default:
