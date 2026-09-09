@@ -75,6 +75,10 @@ echo "=== 7d. hbcli 全流程端到端(隔离 STAICLI_HOME+沙箱账号真打 UA
 (cd ts && npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
 
 echo
+echo "=== 7e. hbcli release-contract 离线钉版(staicli@0.0.3 integrity + command schema + honest unknown/query-miss outcome 分类;无 supplier 请求,纯离线假二进制;为 #232 钉版准备,非交易实现) ==="
+(cd ts && npx tsx scripts/hbcli-release-contract-tests.ts) || FAIL=1
+
+echo
 echo "=== 8. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 + guardToolExecute 异常隔离,3 断言) ==="
 (cd ts && npx tsx scripts/incident-tests.ts) || FAIL=1
 
