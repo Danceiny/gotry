@@ -1575,12 +1575,20 @@ export function apply(ctx: Context, config: Config): void {
         : '无在册产物(异步深度规划交付与工作目录 md 文件都会出现在这里)'
       return JSON.parse(JSON.stringify({ ok: true, artifacts: r.artifacts, total: r.total, truncated: r.truncated, summary })) as Record<string, never>
     },
-    presentCall: () => ({ card: 'generic', title: '列出产物', kind: 'search' }),
+    // dsh SearchPathsResultView(path list + truncated/total):让客户端 deliverables 路径列表
+    // 直接绑到工作区文件,UI 可点开任一路径走 gotry_artifacts_read(issue #285 的「会话里的
+    // 产物入口打开真实文件」接线点)。capable UI 渲染为可点击的 path 列表;无 search 卡能力
+    // 的 UI 走 fallback content(summary 文本),与本工具契约不冲突。
     presentResult: (_args, value) => {
-      const r = value as { summary?: string; total?: number }
+      const r = value as { summary?: string; total?: number; truncated?: boolean; artifacts?: Array<{ path?: string }> }
+      const paths = Array.isArray(r.artifacts) ? r.artifacts.map(a => String(a.path ?? '')).filter(Boolean) : []
       return {
-        card: 'generic',
-        title: `产物:${r.total ?? 0} 项在册`,
+        card: 'search' as const,
+        shape: 'paths' as const,
+        title: `产物:${r.total ?? paths.length} 项在册${r.truncated ? '(已截断)' : ''}`,
+        paths,
+        truncated: Boolean(r.truncated),
+        total: r.total ?? paths.length,
         content: [{ type: 'text', text: String(r.summary ?? '') }],
       }
     },
@@ -1609,18 +1617,34 @@ export function apply(ctx: Context, config: Config): void {
       if (!q.path) return JSON.parse(JSON.stringify({ ok: false, error: 'path 必填(来自 gotry_artifacts_list)' })) as Record<string, never>
       const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', path: q.path, offset: q.offset, limit: q.limit })
       if (!r.ok) return JSON.parse(JSON.stringify(r)) as Record<string, never>
+      // 身份/来源展示(issue #285 第 1 条「显示身份/来源」):行号视图保留 read 卡的
+      // path/offset/lines/totalLines/lang;fallback content 用 source label 前缀,
+      // 让无法渲染 read 卡的 UI 也能区分「本会话选了哪个产物」,避免把旧摘要当新内容。
       return JSON.parse(JSON.stringify({
         ...r,
+        source: r.path.startsWith(config.stateRoot ?? '.') ? 'state-root' : 'cwd',
         summary: `${r.path}(${r.totalLines} 行)第 ${r.offset}-${r.offset + r.lines.length - 1} 行${r.windowed ? `(共 ${r.totalLines} 行,可翻页)` : ''}`,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `读产物:${args.path ?? ''}`, kind: 'read', rawInput: args }),
+    // presentCall 的 locations 让 editor 视图在 call 阶段就能「跟随」到目标文件 —
+    // GenericCallView.locations:FileLocation[] 是 dsh 官方契约,UI 桥直接读 path+line
+    // 做 follow-along(issue #285 的「与所选产物对应」,call 阶段就锁住身份)。
+    presentCall: args => ({
+      card: 'generic',
+      title: `读产物:${args.path ?? ''}`,
+      kind: 'read',
+      rawInput: args,
+      ...(args.path ? { locations: [{ path: String(args.path), line: 1 }] } : {}),
+    }),
     presentResult: (_args, value) => {
-      const r = value as unknown as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; content?: string; error?: string }
+      const r = value as unknown as { ok?: boolean; path?: string; source?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; content?: string; error?: string; summary?: string }
       if (!r.ok) {
         return { card: 'generic', title: '读产物失败', content: [{ type: 'text', text: String(r.error ?? '') }] }
       }
-      // dsh read 卡:UI 渲染为行号文件视图(issue #25 的「插件能力查看 artifacts」落点)
+      // dsh ReadResultView:UI 渲染为行号文件视图。content 数组第二项是行号内容,
+      // 第一项是 source label 身份行(同步/工作目录/账本),capable UI 仍按 path/offset/lines
+      // 渲染行号视图;无 read 卡能力的 UI 走 fallback content,首行就是「从哪个产物读」。
+      const identityLine = `source: ${r.source ?? 'unknown'} · path: ${r.path ?? ''} · ${r.totalLines ?? 0} lines`
       return {
         card: 'read' as const,
         title: r.path?.split('/').pop() ?? r.path ?? '',
@@ -1629,7 +1653,10 @@ export function apply(ctx: Context, config: Config): void {
         lines: r.lines ?? [],
         totalLines: r.totalLines ?? 0,
         lang: r.lang,
-        content: [{ type: 'text', text: r.content ?? '' }],
+        content: [
+          { type: 'text', text: identityLine },
+          { type: 'text', text: r.content ?? '' },
+        ],
       }
     },
   }))

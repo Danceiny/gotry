@@ -398,8 +398,39 @@ async function main() {
     if (badPath.ok) throw new Error('FAIL: 越界路径必须被拒')
     const badExt = await readArtifact({ stateRoot: smokeRoot, cwd: cwdDir, path: 'gotry-state/gotry-state.db' })
     if (badExt.ok) throw new Error('FAIL: 白名单外扩展名(.db)必须被拒')
+
+    // 15b) dsh 卡片契约(issue #285):
+    //   - list 的 presentResult 是 SearchPathsResultView(card:'search' shape:'paths'),
+    //     客户端 deliverables 列表直接绑到工作区文件,UI 点开任一路径走 read;
+    //   - read 的 presentCall 加 locations:[{path,line:1}],editor 视图在 call 阶段就 follow-along;
+    //   - read 的 presentResult 是 ReadResultView(path/offset/lines/totalLines/lang 齐全),
+    //     fallback content[0] 是 source 身份行(显示「从哪个产物读」,避免把旧摘要当新内容)。
+    const listPayload = await listTool.execute({ limit: 5 }, null) as { ok?: boolean; artifacts?: Array<{ path?: string }>; total?: number; truncated?: boolean }
+    const listView = listTool.presentResult?.({}, listPayload) as { card?: string; shape?: string; paths?: string[]; truncated?: boolean; total?: number; title?: string; content?: Array<{ text?: string }> }
+    if (listView?.card !== 'search' || listView?.shape !== 'paths') {
+      throw new Error(`FAIL: list 卡片应为 card='search' shape='paths',实际:${JSON.stringify({ card: listView?.card, shape: listView?.shape }).slice(0, 200)}`)
+    }
+    if (!Array.isArray(listView.paths) || listView.paths.length !== (listPayload.artifacts?.length ?? 0)) {
+      throw new Error(`FAIL: list paths 长度应等于 artifacts 长度,实际 ${listView.paths?.length} vs ${listPayload.artifacts?.length}`)
+    }
+    if (listView.truncated !== Boolean(listPayload.truncated) || listView.total !== (listPayload.total ?? 0)) {
+      throw new Error(`FAIL: list truncated/total 应与 execute 返回一致,实际 truncated=${listView.truncated} total=${listView.total} vs ${listPayload.truncated}/${listPayload.total}`)
+    }
+    const readCall = (readTool as unknown as { presentCall?: (a: Record<string, unknown>) => { card?: string; kind?: string; locations?: Array<{ path?: string; line?: number }> } }).presentCall?.({ path: 'trip-2027-probe.md' }) as { card?: string; kind?: string; locations?: Array<{ path?: string; line?: number }> }
+    if (readCall?.kind !== 'read' || !Array.isArray(readCall.locations) || readCall.locations[0]?.path !== 'trip-2027-probe.md') {
+      throw new Error(`FAIL: read presentCall 应 kind='read' + locations[0].path='trip-2027-probe.md',实际:${JSON.stringify(readCall).slice(0, 200)}`)
+    }
+    // 复用 r1(账本已交付工单,绝对 path),断言 read 卡片字段 + identity 源行
+    const readView = readTool.presentResult?.({ path: 'art-probe-1' }, r1) as { card?: string; path?: string; offset?: number; lines?: unknown[]; totalLines?: number; lang?: string; content?: Array<{ type?: string; text?: string }> }
+    if (readView?.card !== 'read' || readView.path !== r1.path || readView.totalLines !== r1.totalLines || readView.lang !== 'markdown') {
+      throw new Error(`FAIL: read 卡片字段不齐,实际:${JSON.stringify(readView).slice(0, 200)}`)
+    }
+    const identityText = readView.content?.[0]?.text ?? ''
+    if (!identityText.includes('source:') || !identityText.includes(r1.path ?? '')) {
+      throw new Error(`FAIL: read fallback content[0] 应含 source 身份行 + 完整 path,实际:${identityText.slice(0, 200)}`)
+    }
     rmSync(cwdDir, { recursive: true, force: true })
-    console.log(`artifacts: ledger run + cwd md discovered; read window(${r2.ok ? r2.lines.length : '?'} lines @10) + read card; path/ext guardrails hold`)
+    console.log(`artifacts: ledger run + cwd md discovered; read window(${r2.ok ? r2.lines.length : '?'} lines @10) + read card; list→SearchPathsResultView + read locations + source identity; path/ext guardrails hold`)
   }
 
   // 16) 产物事实闸(issue #46,第 21 工具):事实落账(hit 正事实 + miss 负事实,隔离 stateRoot)
