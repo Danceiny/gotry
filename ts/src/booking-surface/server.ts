@@ -300,7 +300,11 @@ async function handleBookingCopilotRequest(req: IncomingMessage, res: ServerResp
         }
       }
     }
-  } catch (error) { sendJson(res, 409, { error: { code: normalizeBookingErrorCode(error) } }); return }
+  } catch (error) {
+    // The typed code alone hides the failing contract check from operators;
+    // log the raw error so continuation rejections are diagnosable.
+    console.error('[booking-copilot] turn dispatch rejected:', error instanceof Error ? error.message : String(error))
+    sendJson(res, 409, { error: { code: normalizeBookingErrorCode(error) } }); return }
 
   res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-content-type-options': 'nosniff', [BOOKING_SURFACE_VERSION_HEADER]: BOOKING_SURFACE_SCHEMA_VERSION, [BOOKING_SURFACE_SCHEMA_SHA256_HEADER]: BOOKING_SURFACE_SCHEMA_SHA256 })
   try {
