@@ -30,6 +30,33 @@ GoTry turns "I want to go somewhere" into "can I — and how, at what true cost?
 
 One planning pass is a pipeline. The model owns the two language-heavy ends; the solver owns everything numeric:
 
+```mermaid
+flowchart LR
+  U(["Traveler: 'I want three relaxing days in Dali'"]) --> A
+  subgraph LANG["LLM owns — language"]
+    A["Motivation interview<br/>working window · bookings · departure city"] --> B["Fact extraction<br/>working-hours &amp; leave semantics"]
+  end
+  subgraph NUM["Solver owns — numbers"]
+    C["Feasibility verdict<br/>Z3: feasible? why? smallest fix"] --> D["Door-to-door true cost<br/>real duration · penalties · arrival energy"]
+  end
+  subgraph GATE["Gates &amp; memory"]
+    E["Evidence chain<br/>every number carries a source tag"] --> F{"Fact gate"}
+    F -->|"all claims trace to exact-date tools"| G["Verified itinerary delivered"]
+    F -->|"unverifiable"| H["Blocked — never posed as verified"]
+    I[("Wish pool<br/>saved with recall conditions")]
+  end
+  B --> C
+  C --> D --> E
+  C -.->|"infeasible today"| I
+  I -.->|"conditions met — re-solve"| C
+  classDef llm fill:#1f6feb22,stroke:#1f6feb,color:#1f6feb;
+  classDef solver fill:#2ea04322,stroke:#2ea043,color:#2ea043;
+  classDef gate fill:#d2992222,stroke:#d29922,color:#9e6a03;
+  class A,B llm;
+  class C,D solver;
+  class E,F,G,H,I gate;
+```
+
 | Stage | Who | Output |
 |---|---|---|
 | Motivation interview | LLM | Mandatory questions: working window / booked resources / departure city |
@@ -47,17 +74,31 @@ Vocabulary you will meet in a GoTry answer:
 - **Wish pool** — "next departure" storage. An infeasible dream is saved with explicit conditions (e.g. "5+ days, off-season") and recalled when they can be met.
 - **Fact gate** — pre-delivery check on itinerary artifacts: every bookable claim (flight no. / time / airport / price / policy) must trace to an exact-date tool result; unverifiable means blocked — never presented as a verified plan. Render primitives attach a typed anchor to each fact row so the gate verifies a deterministic fact_id (and for policies, that the rendered `as_of` agrees with the registry) — hand-edited or unknown anchors fail closed.
 
+The wish pool lifecycle:
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> Interviewed: motivation captured (evidence mandatory)
+  Interviewed --> Feasible: solver verdict — feasible
+  Interviewed --> Wished: infeasible today
+  Wished --> Wished: recall vetoed — named channel down
+  Wished --> Recalled: conditions met — window · budget · season
+  Recalled --> Interviewed: re-solve with realtime data
+  Feasible --> [*]: fact-gated delivery
+```
+
 Architecture, five layers:
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│ L1  chat-as-interface; gates are in-message choice cards       │
-│ L2  orchestration  dsh runtime + GoTry plugin (tool count: code)│
-│ L3  domain  unified itinerary model + Z3 feasibility engine    │
-│ L4  data  static packs + hotelbyte-cli bridge + OpenFlights    │
-│ L5  governance  LoopX (objective / gates / evidence / quota)   │
-└──────────────────────────────────────────────────────────────┘
-```
+<a href="docs/assets/gotry-system-architecture.html">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/gotry-system-architecture.dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/gotry-system-architecture.light.png" />
+    <img alt="GoTry system architecture — sync path from chat through the Z3 kernel to the fact gate, plus the state/async control plane and the read-only data layer" src="docs/assets/gotry-system-architecture.light.png" />
+  </picture>
+</a>
+
+> Generated from [`docs/assets/gotry-system-architecture.archify.json`](docs/assets/gotry-system-architecture.archify.json) with [archify](https://github.com/tt-a1i/archify) (showcase-validated: 9/9 artifact checks + browser evidence). Open [`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html) locally for the interactive version — guided views, pan/zoom, relationship tracing. Labels are Chinese-first, matching the authoritative [`docs/architecture.md`](docs/architecture.md).
 
 | Layer | Module | Role |
 |---|---|---|
@@ -91,9 +132,30 @@ The GoTry plugin exposes its tools in groups (the exact count lives in the code 
 | **General external** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | web / subtitles / GitHub / all-channel external info (via Agent-Reach) |
 | **Self-check** | `gotry_doctor` | Read-only health check by default. With explicit `action: "repair"`, it shows the selected auto-repairable gaps, requests approval for that scope, reuses the same idempotent installers as `doctor --fix` / web onboarding, and rechecks health before reporting success. Browser-store installs, credentials/API keys, profile changes, package reinstalls, and Node upgrades stay as user actions; rejection, cancellation, or no approval channel executes nothing. Report lands in `gotry-state/doctor-report.md` (sidebar-workbench previewable) |
 
-> **Channel routing**: retrieval tools stay flat (no hidden dispatch); the persona routing card and the `routing` suggestions attached to failed search results are **generated from one channel registry** (official API > user session > web fallback, filtered by per-session channel health). When a channel exhausts its quota the result says so and names the next channel — retry-blindness is a contract violation, not a prompt hope.
+> **Channel routing**: retrieval tools stay flat (no hidden dispatch); the persona routing card and the `routing` suggestions attached to failed search results are **generated from one channel registry** (official API > user session > web fallback, filtered by per-session channel health). The registry returns an ordered suggestion list; the model or user chooses the next tool. No automatic dispatch, execution, or fallback happens inside the registry.
+
+```mermaid
+flowchart LR
+  I["Intent + failed channel"] --> R["channel registry<br/>routingAdvice()"]
+  R -->|"ordered alternatives[]<br/>tier / efficiency / health filtered"| A["routing suggestions<br/>tool · channel · why"]
+  A --> M{"Model or user<br/>chooses next tool"}
+  M --> F["gotry_flyai_search"]
+  M --> C["gotry_session_search"]
+  M --> W["gotry_web_search · Agent-Reach"]
+  R -.-> N["Registry does not dispatch,<br/>execute, or fall back"]
+  classDef api fill:#2ea04322,stroke:#2ea043,color:#2ea043;
+  classDef sess fill:#1f6feb22,stroke:#1f6feb,color:#1f6feb;
+  classDef web fill:#6e768122,stroke:#6e7681,color:#6e7681;
+  class F api;
+  class C sess;
+  class W web;
+```
 
 ## Demo
+
+<a href="docs/assets/demo.en.webm"><img src="docs/assets/demo.en.svg" alt="Illustrative animation-harness capture of a representative transcript — the traveler asks for recovery days at Erhai Lake; the Z3 solver rules it infeasible for a 2-day window, banks it in the wish pool, and returns two feasible lakes with evidence tags" width="880" /></a>
+
+*Illustrative animation-harness capture of a representative, condensed transcript — not a real `gotry web` product UI E2E; [open as video](docs/assets/demo.en.webm) (static copy below is authoritative):*
 
 ```
 > Two or three days staring at Erhai Lake, leaving from Shanghai, budget 3000, annual leave — no work.
@@ -127,6 +189,8 @@ GoTry's product persona is calibrated against evidence, not taste: the same real
 | Fact provenance | △ destination research holds up | ✗ sells a defunct airline (retired 2020); every price unsourced | (3)(7)(13)(20) |
 | Structure completeness | △ decent comparison table only at turn 13 | ✓✓ full skeleton in one turn — completeness is table stakes | verified completeness (fact gate) |
 | Persona in one line | erudite but stateless chatter — the user ends up doing four jobs | a flawless-brochure OTA clerk — every section ends in a price table | trusted travel engineer: interview first, the solver decides, infeasible says infeasible |
+
+> **Evidence boundary:** this is a qualitative comparison, not a scorecard or performance claim. The Kimi and Fliggy columns summarize archived real-world transcripts with different protocols (13 turns versus one turn). The GoTry column summarizes repository behavior contracts and deterministic/fixture evidence; it is not a comparable real-world benchmark result. No ranking, uplift, or numerical positioning is asserted. Comparable benchmark evidence would require the same prompt, models, channel conditions, sample sizes, rubric, and published scoring.
 
 **Single best finding: two unrelated products derived their weekdays from the 2025 calendar.** Calendar grounding has to be a product mechanism (anchor card, assert once, never recompute) — not model luck. Cautionary deep-dive: [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md).
 
@@ -238,6 +302,18 @@ The authoritative state lives in the docs, not this README: transactional state 
 </details>
 
 ## Roadmap
+
+```mermaid
+timeline
+  title From departure to next departure
+  M0 ✅ : Deterministic pipeline — dual engines reconciled
+  M1 ✅ : Agent form — chat as interface
+  M2 ✅ : Realtime data — evidence tags go live
+  M3 ◀ current : MVP — web face + 50–200 seed users, evidence open
+  M4 : Memory &amp; next departure — wish pool · cohort evidence
+  M5 : Transaction loop — WriteGate-gated booking
+  M6 : B2B embedding — zero-kernel-diff sponsor plugin
+```
 
 | # | Milestone | Scope | Status |
 |---|---|---|---|
