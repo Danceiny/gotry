@@ -22,7 +22,7 @@
           "fact-gate",
           "llm-provider"
         ],
-        "note": "模型负责访谈与解释,Z3 负责判决;交付前过事实闸,可下单 claim 必须回溯到 exact-date 工具结果。"
+        "note": "模型负责访谈与解释;普通候选路径由 TypeScript 枚举、评估、选择;显式航班链路径由 solveUnified 使用 Z3;交付前过事实闸,可下单 claim 必须回溯到 exact-date 工具结果。"
       },
       {
         "id": "evidence-path",
@@ -111,7 +111,7 @@
       "id": "travel-core",
       "type": "backend",
       "label": "确定性行程内核",
-      "sublabel": "unified.ts · 枚举 + Z3 · 门到门全成本",
+      "sublabel": "TS 枚举/评估/选择 · solveUnified/Z3 航班链",
       "pos": [
         820,
         320
@@ -281,7 +281,7 @@
       "id": "plugin-solves",
       "from": "gotry-plugin",
       "to": "travel-core",
-      "label": "枚举 + Z3 求解",
+      "label": "候选枚举/评估/选择 · 航班链 Z3",
       "variant": "emphasis",
       "labelAt": [
         800,
@@ -322,7 +322,7 @@
       "id": "worker-solves",
       "from": "async-worker",
       "to": "travel-core",
-      "label": "solveUnified",
+      "label": "solveUnified · 航班链 Z3",
       "variant": "dashed",
       "fromSide": "bottom",
       "toSide": "top"
@@ -380,8 +380,8 @@
       "dot": "cyan",
       "title": "职责分界",
       "items": [
-        "LLM 负责理解与解释;算术与判定全在 TypeScript 内核",
-        "候选枚举 + 多段航班链 Z3;py/gotry_feasibility 仅历史对照 oracle"
+        "LLM 负责理解与解释;普通候选由 TypeScript 枚举、评估、选择",
+        "显式航班链由 solveUnified 使用 Z3;py/gotry_feasibility 仅历史对照 oracle"
       ]
     },
     {

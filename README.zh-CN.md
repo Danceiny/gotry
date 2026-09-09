@@ -5,7 +5,7 @@
 > **身体和灵魂,更多旅行,更少旅游。**
 > *Body and soul — more travel, less tourism.*
 
-**GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:你用一句话说想去哪、为什么想出发;它先问清楚你的工作窗口和已订资源,再用 **Z3 数学求解器**给你一份经过形式化验证的行程方案——是算出来的,不是模型猜的。
+**GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**:你用一句话说想去哪、为什么想出发;它先问清楚你的工作窗口和已订资源,再给你一份确定性的行程判决——普通候选由 TypeScript 内核枚举并评估,显式航班链路径才使用 Z3,不是模型猜的。
 
 [![GitHub Stars](https://img.shields.io/github/stars/Danceiny/gotry?style=social)](https://github.com/Danceiny/gotry/stargazers)
 [![CI](https://github.com/Danceiny/gotry/actions/workflows/ci.yml/badge.svg)](https://github.com/Danceiny/gotry/actions/workflows/ci.yml)
@@ -23,12 +23,12 @@
 GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多少」。当答案是「这周末不行」时,目的地连同成行条件进愿望池接住,而不是被丢掉。
 
 - **给旅行者** —— 一个先问对人问题(工作窗口/已订资源/出发城市/预算)的对话规划器,然后逐目的地给判决:可行/不可行、为什么、以及**让它可行的最小改动**。
-- **给 Agent 工程师** —— 一个「LLM 只负责听懂、翻译、解释」的落地样本:判定与算术在 Z3 求解器里,交付物里每个数字都带来源标签,写操作从设计上就是被闸住的。
+- **给 Agent 工程师** —— 一个「LLM 只负责听懂、翻译、解释」的落地样本:普通候选沿确定性的 TypeScript 枚举、评估、选择路径;独立的显式航班链路径使用 Z3。交付物里每个数字都带来源标签,写操作从设计上就是被闸住的。
 - **证据内建** —— 估算绝不冒充实时。标签由渲染层附加、模型无权染指;降级时标签如实更换。回溯不到 exact-date 工具结果的可下单 claim,交付前就被拦下。
 
 ## 工作原理
 
-一次规划是一条流水线:模型只占语言密集的两端,数值全部归求解器:
+一次规划是一条流水线:模型只占语言密集的两端;普通候选路径由确定性的 TypeScript 内核处理,显式航班链路径使用 Z3:
 
 ```mermaid
 flowchart LR
@@ -36,8 +36,11 @@ flowchart LR
   subgraph LANG["LLM 负责——语言"]
     A["动机访谈<br/>工作窗口 · 已订资源 · 出发城市"] --> B["事实抽取<br/>工时与休假语义"]
   end
-  subgraph NUM["求解器负责——数值"]
-    C["可行性判决<br/>Z3:行不行 · 为什么 · 最小改动"] --> D["门到门全成本<br/>真实时长 · 惩罚 · 到达精力"]
+  subgraph NUM["确定性 TypeScript 内核——普通候选路径"]
+    C["候选枚举<br/>solveChoiceSegment"] --> D["逐个评估选择<br/>evaluateChoice · 真成本检查"] --> V["选择判决<br/>可行 / 不可行 · 推荐"]
+  end
+  subgraph Z3PATH["显式航班链路径"]
+    Z["solveUnified<br/>航班链约束 · Z3"]
   end
   subgraph GATE["闸与记忆"]
     E["证据链<br/>每个数字带来源标签"] --> F{"事实闸"}
@@ -46,9 +49,11 @@ flowchart LR
     I[("愿望池<br/>带显式召回条件")]
   end
   B --> C
-  C --> D --> E
-  C -.->|"今天装不下"| I
-  I -.->|"条件满足,重新求解"| C
+  V --> E
+  B -.->|"显式航班链请求"| Z
+  Z --> E
+  V -.->|"今天装不下"| I
+  I -.->|"条件满足,重新枚举"| C
   classDef llm fill:#1f6feb22,stroke:#1f6feb,color:#1f6feb;
   classDef solver fill:#2ea04322,stroke:#2ea043,color:#2ea043;
   classDef gate fill:#d2992222,stroke:#d29922,color:#9e6a03;
@@ -61,8 +66,9 @@ flowchart LR
 |---|---|---|
 | 动机访谈 | LLM | 必问项:工作窗口 / 已订资源 / 出发城市 |
 | 事实抽取 | LLM | 工作窗口生效 + 休假语义识别 |
-| 可行性判决 | **Z3 求解器** | 哪些候选可行/不可行、为什么、**最小改动让它可行** |
-| 门到门全成本 | 求解器 | 真实飞行时长(含时差)+ 早起惩罚 + 接驳代价 + 到达精力 % |
+| 候选选择判决 | **TypeScript 选择内核** | 普通路径:枚举候选、逐个评估选择,再输出逐候选可行/不可行判决与推荐 |
+| 显式航班链求解 | **Z3 求解器** | 独立的 `solveUnified` 多段航班链约束路径;候选形态不经过它 |
+| 门到门全成本 | TypeScript `evaluateChoice` / 显式 Z3 路径 | 普通候选在 TypeScript 评估路径计算真成本;显式航班链路径报告 Z3 结果 |
 | 证据链 | 渲染层 | 每个数字都带来源标签 |
 | 交付闸 | 事实闸 | 可下单 claim 必须回溯到 exact-date 工具结果,否则产物 blocked |
 | 记忆 | 领域层 | 当下不可行 → 愿望池,附显式召回条件 |
@@ -80,7 +86,7 @@ flowchart LR
 stateDiagram-v2
   direction LR
   [*] --> 已访谈: 动机落盘(evidence 强制)
-  已访谈 --> 可行: 求解器判决——可行
+  已访谈 --> 可行: 确定性选择判决——可行
   已访谈 --> 愿望池: 今天装不下
   愿望池 --> 愿望池: 召回被否——指名通道宕机
   愿望池 --> 已召回: 条件满足——窗口 · 预算 · 淡季
@@ -94,16 +100,16 @@ stateDiagram-v2
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/gotry-system-architecture.dark.png" />
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/gotry-system-architecture.light.png" />
-    <img alt="GoTry 系统架构——同步主链从对话经 Z3 内核到事实闸,外加状态与异步控制面、只读数据层" src="docs/assets/gotry-system-architecture.light.png" />
+    <img alt="GoTry 系统架构——同步主链从对话经 TypeScript 候选枚举、评估与选择到事实闸,另示显式航班链 Z3 路径,外加状态与异步控制面、只读数据层" src="docs/assets/gotry-system-architecture.light.png" />
   </picture>
 </a>
 
-> 由 [`docs/assets/gotry-system-architecture.archify.json`](docs/assets/gotry-system-architecture.archify.json) 经 [archify](https://github.com/tt-a1i/archify) 生成(showcase 校验:9/9 构件检查 + 浏览器实测)。本地打开 [`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html) 可得交互版——引导视图 · 缩放平移 · 关系追踪。
+> 由 [`docs/assets/gotry-system-architecture.archify.json`](docs/assets/gotry-system-architecture.archify.json) 经 [archify](https://github.com/tt-a1i/archify) 生成(showcase 校验:9/9 构件检查 + 浏览器实测)。本地打开 [`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html) 可得交互版——引导视图 · 缩放平移 · 关系追踪。同步主链明确区分普通 TypeScript 候选枚举/评估/选择,以及独立的显式航班链 `solveUnified` Z3 路径。
 
 | 层 | 模块 | 角色 |
 |---|---|---|
 | L2 | `ts/src/index.ts`(dsh 插件) | 注册 21 工具,挂时间锚点/记忆 brief 变量;execute 异常隔离 + 授权闸 + 每轮工具预算 + 进程护栏 |
-| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | 唯一求解入口(候选枚举 + 航班链 Z3) |
+| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | 普通候选枚举/评估/选择; `solveUnified` 是独立航班链 Z3 路径 |
 | L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | 效应解译层(退避重试/断路器/mock 解译器)+ 实时库存桥 + OpenFlights 骨架(三值语义) |
 | L5 | loopx 治理面 | objective / gates / evidence / quota |
 
@@ -123,7 +129,7 @@ stateDiagram-v2
 | | `gotry_skeleton_check` | OpenFlights 168 对枢纽通航性(三值) |
 | **库存与目录** | `gotry_hotel_search` | hotel-byte 实时桥(需提供有效入住/退房日期,缺失时先追问),供应商不可用时降级为明确标注的静态结果 |
 | | `gotry_anything_search` | 城市/酒店/地标混合目录(hotel-be Anything) |
-| **判定引擎** | `gotry_feasibility_check` | 门到门真成本可行性(Z3),逐候选判定 |
+| **判定引擎** | `gotry_feasibility_check` | 普通路径:确定性的 TypeScript 候选枚举/评估与逐候选判决;显式航班链请求使用 Z3 |
 | **记忆与触达** | `gotry_motivation_save` | 动机画像落盘(evidence 强制,反幻觉) |
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | 「下一次出发」愿望池 + 0..1 条件召回 |
 | | `gotry_companion_save` · `gotry_trip_log` | 同行人档案 / 旅行时间线 |
@@ -153,7 +159,7 @@ flowchart LR
 
 ## 一段对话
 
-<a href="docs/assets/demo.zh-CN.webm"><img src="docs/assets/demo.zh-CN.svg" alt="说明性 animation-harness 动画——代表性对话截取:旅行者说想去洱海休整两天;Z3 求解器判定 2 天窗口不可行、放进愿望池,并给出两个可行湖泊与证据标签" width="880" /></a>
+<a href="docs/assets/demo.zh-CN.webm"><img src="docs/assets/demo.zh-CN.svg" alt="说明性 animation-harness 动画——代表性对话截取:旅行者说想去洱海休整两天;确定性的 TypeScript 选择内核判定 2 天窗口不可行、放进愿望池,并给出两个可行湖泊与证据标签" width="880" /></a>
 
 *说明性 animation-harness 对代表性精简对话的录制——不是 `gotry web` 产品 UI 的真实 E2E;动画内联播放,[点此看视频版](docs/assets/demo.zh-CN.webm);下方静态文本为准:*
 
@@ -240,7 +246,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 
 ## 构造上可信
 
-1. **模型只翻译,求解器才判决** —— LLM 永远不产出可行性判决与算术;那些由 Z3 基于抽取事实计算。
+1. **模型只翻译,确定性代码才判决** —— LLM 永远不产出可行性判决与算术;普通候选由 TypeScript 枚举/评估/选择路径处理,显式航班链约束由 `solveUnified` 和 Z3 基于抽取事实计算。
 2. **每个数字带来源标签** —— 由渲染层附加,模型无权染指;降级时如实更换,估算绝不冒充实时。
 3. **不存在写路径** —— 预订/支付类工具必须先过 WriteGate 才允许实现;未来的预订缝已被 `booking_saga_fsm.v1` 边表钉住。
 4. **登录永不碰凭证** —— 登录发生在外部网站;gotry 只读 cookie 名;授权每会话问一次、可吊销。
@@ -255,7 +261,8 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 
 **今天可用**(全栈回归全绿;每项都有确定性测试):
 
-- **Z3 求解引擎** —— 可行性判决 + 门到门全成本;历史并发竞态已根治并进回归闸
+- **确定性选择内核** —— 普通候选枚举、`evaluateChoice`、真成本检查、逐候选判决与推荐
+- **显式航班链 Z3 路径** —— `solveUnified` 处理独立的多段约束路径;历史并发竞态已根治并进回归闸
 - **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`);飞猪匿名试用额度达限归类 `needs-setup` 并带配 key 指引(不盲重试)
 - **依赖体检** —— `npx @danceiny/gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):默认只读;显式对话内修复会展示范围计划、按同一会话 scope 请求一次批准、调用既有 bootstrap 幂等安装器,并按安装后复检逐项报告。需人工配置的项目保持人工处理,LLM key 仍归 dsh 宿主管
 - **账号会话检索** —— 你本人登录态查携程机票/酒店 + 12306 火车(酒/火 2026-09-03 实装:酒店为被动嗅探登录态真实价,火车为 12306 公开余票查询面;接口面随首个真会话校准);观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
