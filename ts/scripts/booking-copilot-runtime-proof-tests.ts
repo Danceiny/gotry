@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { ensureLedger } from '../src/state-ledger.ts'
 import {
   BookingCopilotTaskRuntime,
@@ -90,6 +93,114 @@ const action = (id: string, revision = 0, extra: Record<string, unknown> = {}) =
   schemaVersion: 'booking.surface' as const, kind: 'search.run' as const, actionId: id,
   contextRef: 'ctx-v2', expectedRevision: revision, reason: 'search current workspace', factRefs: [], input: {}, ...extra,
 })
+
+const DISPATCH_LOG_HOSTILE_MARKERS = [
+  'ISSUE_329_USER_MARKER',
+  'task-hostile-329',
+  '/tmp/issue-329-secret-path',
+  'sk_test_329_FAKE_ONLY',
+  'fixture-dispatch-log-key',
+]
+
+async function runDispatchLogChild(): Promise<void> {
+  const childRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-dispatch-log-child-'))
+  class DispatchFixtureRuntime extends BookingCopilotTaskRuntime {
+    resumeTask(taskId: string): BookingCopilotTaskState | null {
+      if (taskId === 'task-329-known') throw new Error('workspace_mismatch')
+      if (taskId === 'task-329-unknown') throw new Error(`unknown_dispatch_reason:${DISPATCH_LOG_HOSTILE_MARKERS.join(':')}`)
+      if (taskId === 'task-329-suffixed') throw new Error(`workspace_mismatch:${DISPATCH_LOG_HOSTILE_MARKERS.join(':')}`)
+      return super.resumeTask(taskId)
+    }
+  }
+  const childLedger = ensureLedger(childRoot)
+  const runtime = new DispatchFixtureRuntime(childLedger, { contextRefFactory: () => 'ctx-v2' })
+  const server = await startBookingCopilotServer({
+    apiKey: 'fixture-dispatch-log-key',
+    runtime,
+    plannerFactory: () => ({ next: async () => [] }),
+  })
+  process.stdout.write(`READY ${server.port}\n`)
+  const shutdown = async () => {
+    await server.close()
+    childLedger.close()
+    rmSync(childRoot, { recursive: true, force: true })
+    process.exit(0)
+  }
+  process.once('SIGTERM', () => { void shutdown() })
+  await new Promise<void>(() => {})
+}
+
+if (process.argv[2] === '--dispatch-log-child') {
+  await runDispatchLogChild()
+  process.exit(0)
+}
+
+async function assertDispatchRejectionStderr(): Promise<void> {
+  const script = fileURLToPath(import.meta.url)
+  const tsx = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url))
+  const child = spawn(process.execPath, [tsx, script, '--dispatch-log-child'], {
+    cwd: process.cwd(), env: {
+      GOTRY_SESSION_LIVE: '0',
+      GOTRY_HBCLI_LIVE: '0',
+      GOTRY_HOTELBYTE_SKILLS_LIVE: '0',
+    }, stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const stdoutChunks: Buffer[] = []
+  const stderrChunks: Buffer[] = []
+  child.stdout.on('data', (chunk: Buffer) => { stdoutChunks.push(Buffer.from(chunk)) })
+  child.stderr.on('data', (chunk: Buffer) => { stderrChunks.push(Buffer.from(chunk)) })
+  const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })))
+  const cases = [
+    ['task-329-known', 'WORKSPACE_MISMATCH', 'workspace_mismatch'],
+    ['task-329-unknown', 'PLANNER_FAILED', 'UNCLASSIFIED'],
+    ['task-329-suffixed', 'WORKSPACE_MISMATCH', 'UNCLASSIFIED'],
+  ] as const
+  try {
+    const deadline = Date.now() + 10_000
+    while (!Buffer.concat(stdoutChunks).toString('utf8').includes('READY ')) {
+      if (Date.now() > deadline) throw new Error(`dispatch_log_child_not_ready:${Buffer.concat(stderrChunks).toString('utf8')}`)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const port = Number(Buffer.concat(stdoutChunks).toString('utf8').match(/READY (\d+)/)?.[1])
+    assert.ok(Number.isInteger(port) && port > 0)
+    const headers = { authorization: 'Bearer fixture-dispatch-log-key', 'content-type': 'application/json', 'x-booking-surface-version': BOOKING_SURFACE_SCHEMA_VERSION, 'x-booking-surface-schema-sha256': BOOKING_SURFACE_SCHEMA_SHA256 }
+    for (const [taskId, expectedCode, expectedReason] of cases) {
+      const response = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, { method: 'POST', headers, body: JSON.stringify(turn(taskId)) })
+      assert.equal(response.status, 409, `${taskId} keeps the dispatch conflict status`)
+      const responseText = JSON.stringify(await response.json())
+      assert.equal(responseText, JSON.stringify({ error: { code: expectedCode } }), `${taskId} keeps the typed safe response body`)
+      for (const marker of DISPATCH_LOG_HOSTILE_MARKERS) {
+        assert.equal(responseText.includes(marker), false, `${taskId} response omits ${marker}`)
+      }
+    }
+  } finally {
+    child.kill('SIGTERM')
+    let timeout: NodeJS.Timeout | undefined
+    const gracefullyExited = await Promise.race([
+      exit,
+      new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), 1_000) }),
+    ])
+    if (timeout) clearTimeout(timeout)
+    if (gracefullyExited === null) {
+      child.kill('SIGKILL')
+      await exit
+    }
+  }
+  const childExit = await exit
+  assert.deepEqual(childExit, { code: 0, signal: null }, 'dispatch log fixture shuts down cleanly')
+  const stderrBytes = Buffer.concat(stderrChunks)
+  const stderr = stderrBytes.toString('utf8')
+  const entries = stderr.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as Record<string, string>)
+  assert.equal(entries.length, cases.length, 'child stderr contains one structured entry per dispatch rejection')
+  assert.ok(entries.every((entry) => Object.keys(entry).sort().join(',') === 'code,reason'), 'stderr entries contain only code and reason')
+  assert.deepEqual(entries, cases.map(([, code, reason]) => ({ code, reason })), 'known and unclassified reasons are exact and ordered')
+  for (const marker of DISPATCH_LOG_HOSTILE_MARKERS) {
+    assert.equal(stderrBytes.includes(Buffer.from(marker)), false, `stderr bytes omit ${marker}`)
+  }
+  console.log(`BOOKING DISPATCH LOG PROOF: HTTP 409/child stderr bytes OK (stderr_sha256=${createHash('sha256').update(stderrBytes).digest('hex')})`)
+}
+
+await assertDispatchRejectionStderr()
 
 // Repaired planner fact refs are evidence citations, never capability tokens.
 // Even authority-looking values must not grant an action, a newer offer

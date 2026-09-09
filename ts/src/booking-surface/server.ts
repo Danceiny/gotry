@@ -34,7 +34,7 @@ import {
   type BookingPlannerSessionFactory,
 } from './runtime.ts'
 import { validateBookingSurface } from './validation.ts'
-import { normalizeBookingErrorCode, safeBookingErrorMessage } from './error-codes.ts'
+import { extractBookingDispatchReason, normalizeBookingErrorCode, safeBookingErrorMessage } from './error-codes.ts'
 
 export interface BookingCopilotComposition {
   runtime: BookingCopilotTaskRuntime
@@ -300,7 +300,11 @@ async function handleBookingCopilotRequest(req: IncomingMessage, res: ServerResp
         }
       }
     }
-  } catch (error) { sendJson(res, 409, { error: { code: normalizeBookingErrorCode(error) } }); return }
+  } catch (error) {
+    const code = normalizeBookingErrorCode(error)
+    console.error(JSON.stringify({ code, reason: extractBookingDispatchReason(error) }))
+    sendJson(res, 409, { error: { code } }); return
+  }
 
   res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-content-type-options': 'nosniff', [BOOKING_SURFACE_VERSION_HEADER]: BOOKING_SURFACE_SCHEMA_VERSION, [BOOKING_SURFACE_SCHEMA_SHA256_HEADER]: BOOKING_SURFACE_SCHEMA_SHA256 })
   try {

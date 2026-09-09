@@ -27,6 +27,81 @@ export const BOOKING_TYPED_ERROR_CODES = [
 
 export type BookingTypedErrorCode = typeof BOOKING_TYPED_ERROR_CODES[number]
 
+/** Exact, closed reasons safe to expose in dispatch diagnostics. */
+export const BOOKING_DISPATCH_REJECTION_REASONS = [
+  'approval_expired',
+  'approval_mismatch',
+  'approval_not_awaiting',
+  'approval_not_presented',
+  'approval_replayed',
+  'approval_required',
+  'availability_attempt_mismatch',
+  'availability_attempt_unknown',
+  'availability_criteria_changed',
+  'availability_criteria_invalid',
+  'availability_criteria_mismatch',
+  'availability_criteria_required',
+  'availability_duplicate_offer_ref',
+  'availability_duplicate_offer_version_ref',
+  'availability_expected_revision_missing',
+  'availability_generation_mismatch',
+  'availability_hotel_limit_exceeded',
+  'availability_hotel_not_active',
+  'availability_hotel_unknown',
+  'availability_observation_required',
+  'availability_offer_limit_exceeded',
+  'availability_offers_count_mismatch',
+  'availability_offers_hotel_mismatch',
+  'availability_offers_observation_required',
+  'availability_offers_receipt_incoherent',
+  'availability_offers_unreported',
+  'availability_offers_workspace_mismatch',
+  'availability_query_not_reserved',
+  'availability_query_provenance_mismatch',
+  'availability_query_receipt_mismatch',
+  'availability_receipt_digest_mismatch',
+  'availability_receipt_incoherent',
+  'availability_stale_receipt',
+  'availability_terminal',
+  'booking_malformed_workspace',
+  'context_mismatch',
+  'invalid_task_id',
+  'receipt_action_mismatch',
+  'receipt_conflict',
+  'receipt_observation_action_mismatch',
+  'receipt_relaxation_unauthorized',
+  'receipt_required',
+  'receipt_source_action_mismatch',
+  'receipt_source_digest_mismatch',
+  'receipt_target_mismatch',
+  'receipt_verified_offer_expired',
+  'reanchor_turn_required',
+  'request_conflict',
+  'request_key_invalidated',
+  'revision_mismatch',
+  'revision_regression',
+  'task_not_found',
+  'task_terminal',
+  'turn_conflict',
+  'unexpected_receipt',
+  'unsafe_opaque_ref',
+  'workspace_mismatch',
+] as const
+
+export type BookingDispatchRejectionReason = typeof BOOKING_DISPATCH_REJECTION_REASONS[number]
+export const BOOKING_DISPATCH_UNKNOWN_REASON = 'UNCLASSIFIED' as const
+export type BookingDispatchLogReason = BookingDispatchRejectionReason | typeof BOOKING_DISPATCH_UNKNOWN_REASON
+
+const DISPATCH_REJECTION_REASON_SET = new Set<string>(BOOKING_DISPATCH_REJECTION_REASONS)
+
+/** Returns a reason only when the complete boundary error is one known token. */
+export function extractBookingDispatchReason(error: unknown): BookingDispatchLogReason {
+  const message = typeof error === 'string' ? error : error instanceof Error ? error.message : undefined
+  return message !== undefined && DISPATCH_REJECTION_REASON_SET.has(message)
+    ? message as BookingDispatchRejectionReason
+    : BOOKING_DISPATCH_UNKNOWN_REASON
+}
+
 const ALIASES: Record<string, BookingTypedErrorCode> = {
   payload_too_large: 'PAYLOAD_TOO_LARGE',
   task_not_found: 'TASK_NOT_FOUND',
