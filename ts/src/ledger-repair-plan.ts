@@ -132,6 +132,7 @@ export const REASON = {
 } as const
 
 export const REPAIR_MAPPING_ROOT_NOT_ARRAY = 'mapping_root_not_array'
+export const REPAIR_SOURCE_CHANGED = 'source_changed_during_copy_or_read'
 
 // ---- 只读句柄 ----------------------------------------------------------------
 
@@ -147,27 +148,72 @@ const DB_SIDECARS = ['', '-wal', '-shm'] as const
  * 修复巡检工具来说,「读一下就在现场留下文件」是不可接受的。
  *
  * 所以零写在这里是**结构性**的:正本自始至终没有被任何 SQLite 连接打开过,
- * 只被 copyFileSync 读了一遍。sidecar 一并复制,保证未 checkpoint 的 WAL 数据
+ * 只被文件系统读取用于复制与指纹对账。sidecar 一并复制,保证未 checkpoint 的 WAL 数据
  * 也在视图内(直接只拷主库会读到陈旧状态)。
  *
- * 前提:复制期间账本无并发写入。修复巡检本就应在静默的账本上做。
+ * 复制前后以及只读回调结束后都会对 db/-wal/-shm 做内容指纹对账。账本在复制或
+ * 盘点期间发生变化时,本模块 fail-closed,不把可能混合了不同时间点的副本呈现为
+ * 可用计划;调用方应在静默/不可变的账本副本上重试。
  */
+export class LedgerSourceChangedError extends Error {
+  readonly code = REPAIR_SOURCE_CHANGED
+
+  constructor(phase: 'copy' | 'read') {
+    super(`账本正本在${phase === 'copy' ? '复制' : '只读盘点'}期间发生变化,已拒绝生成计划(${REPAIR_SOURCE_CHANGED});请在静默或不可变副本上重试`)
+    this.name = 'LedgerSourceChangedError'
+  }
+}
+
+function sourceComponentDigest(path: string): string {
+  try {
+    const bytes = readFileSync(path)
+    return `present:${bytes.length}:${createHash('sha256').update(bytes).digest('hex')}`
+  } catch (error) {
+    if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'
+    throw error
+  }
+}
+
+/** 只读快照:存在性 + 字节摘要,覆盖主库及两个 WAL sidecar。 */
+function sourceDigest(src: string): string {
+  return DB_SIDECARS.map(suffix => `${suffix}\0${sourceComponentDigest(src + suffix)}`).join('\n')
+}
+
 export function withImmutableLedgerCopy<T>(stateRoot: string, fn: (db: Database.Database) => T): T {
   const src = ledgerDbPath(stateRoot)
   if (!ledgerExists(stateRoot)) throw new Error(`账本不存在(未迁移 root):${src}`)
+  const beforeCopy = sourceDigest(src)
   const scratch = mkdtempSync(join(tmpdir(), 'gotry-repair-plan-'))
   try {
     const dest = join(scratch, 'ledger-copy.db')
     for (const suffix of DB_SIDECARS) {
-      if (existsSync(src + suffix)) copyFileSync(src + suffix, dest + suffix)
+      if (!existsSync(src + suffix)) continue
+      try {
+        copyFileSync(src + suffix, dest + suffix)
+      } catch (error) {
+        if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new LedgerSourceChangedError('copy')
+        }
+        throw error
+      }
     }
+    if (sourceDigest(src) !== beforeCopy) throw new LedgerSourceChangedError('copy')
     // 副本上再叠一层 readonly:即便有 bug 想写,也在 SQLite 引擎层被拒。
     const db = new Database(dest, { readonly: true, fileMustExist: true })
+    let result!: T
+    let callbackThrew = false
+    let callbackError: unknown
     try {
-      return fn(db)
+      result = fn(db)
+    } catch (error) {
+      callbackThrew = true
+      callbackError = error
     } finally {
       db.close()
     }
+    if (sourceDigest(src) !== beforeCopy) throw new LedgerSourceChangedError('read')
+    if (callbackThrew) throw callbackError
+    return result
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }

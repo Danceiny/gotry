@@ -38,6 +38,7 @@
 - **dsh-map-tools runtime 回归修复(2026-09-08,issue #242)**:#239 把 settings 接线改到 alpha.3 不存在的 `installSettingsSection/settingsNamespace` 导出,导致真实安装包插件 import 失败；现恢复普通 namespace 字符串 + `ctx.inject(['settings'], scope => scope.settings.installSection(...))`,并由 clean-tarball proof 覆盖 7 个 `map_*` 工具、settings watch/reload/dispose 与禁网 inline 坐标路径。
 
 - **账本 tenant scope 修复(2026-09-08,issue #224)**:ADR-16 的 `tenant_id` 一等字段从 schema/投影约束推进到事件写入、readEvents、fold 与 rebuild 的执行边界;跨租户同 `wish_id`/idem_key 不覆盖,A rebuild 不影响 B/local,跨进程 reopen 可复验。legacy JSON/JSONL 与 v1 DB 只归默认 `local`;已误写成 `local` 的非 local 历史事件不可无证据自动反推,需另行人工 data-repair issue/PR。该修复只闭合本地+Web 一套账本语义,不启封 M6 B2B 插件或 M5 写路径。
+- **#254 只读 tenant 修复计划切片(2026-09-10)**:`repair-plan` 仅在临时 db/`-wal`/`-shm` 副本上盘点;源文件在复制或读取期间变化即 fail-closed,隔离测试证明未 checkpoint WAL 可见与 v1 零目录写。该工程切片不执行 apply/迁移/backup/rollback,这些仍是既有 #254 的编号后续子项,不改变 M5/M6 真实证据 gate。
 
 - **政策事实生产端 v1(2026-09-05,issue #141,D-26)**:VISA_POLICY_FETCH effect 注册表行——C 档中国领事服务网(cs.mfa.gov.cn)国家指南树,礼貌抓取(永不重试+断路器护站)→ PolicyFact(as_of+review_by+来源证据链)落账;founder 拍板 C 档免费权威源先行,Timatic/Sherpa° 后议。
 - **外部事件接缝设计(2026-09-04,issue #119/#82 兼容方向,D-31 决策点)**:`docs/design/external-event-seam.md`——外部事件作为健康面(站点断→通道态 down,routing/doctor 零改动生效)与愿望池召回的新生产者,消费既有接缝不建新运行时;不做 push/总线/常驻监听;D-31=事件写入信任模型,触发式拍板;落地序列三段(触发式)——第 1 段(本地探针 tick + `'ok'` 恢复事件,channel-probe.ts)与第 2 段(愿望池消费:`conditions.channels`+down 否证召回)已于 2026-09-07 落地(run-all §52/§53);D-31 拍板包已贴 issue #82。

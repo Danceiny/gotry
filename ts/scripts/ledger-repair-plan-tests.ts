@@ -9,22 +9,31 @@
  *   C. **CLI seam**:repair-plan 路由、fail-closed 参数、输出稳定。
  *
  * 全部使用 mkdtemp 隔离 stateRoot,绝不触碰 ts/dsh-runtime/gotry-state/ 真实产品数据。
- * 运行(在 ts/ 下):npx tsx scripts/ledger-repair-plan-tests.ts
+ * 当前断言数:76;运行(在 ts/ 下):npx tsx scripts/ledger-repair-plan-tests.ts
  */
 
 import Database from 'better-sqlite3'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { ensureLedger, ledgerDbPath } from '../src/state-ledger.ts'
-import { REASON, REPAIR_MAPPING_ROOT_NOT_ARRAY, formatRepairPlan, planLedgerRepair, type RepairPlan } from '../src/ledger-repair-plan.ts'
+import { REASON, REPAIR_MAPPING_ROOT_NOT_ARRAY, REPAIR_SOURCE_CHANGED, formatRepairPlan, planLedgerRepair, withImmutableLedgerCopy, type RepairPlan } from '../src/ledger-repair-plan.ts'
 
 let pass = 0
 let fail = 0
 function assert(cond: boolean, msg: string): void {
   if (cond) { pass++; console.log(`  ok - ${msg}`) } else { fail++; console.error(`  FAIL - ${msg}`) }
+}
+
+function expectSourceChange(fn: () => void, label: string): void {
+  try {
+    fn()
+    assert(false, `${label} 应 fail-closed`)
+  } catch (e) {
+    assert(e instanceof Error && (e as { code?: string }).code === REPAIR_SOURCE_CHANGED, `${label} → ${REPAIR_SOURCE_CHANGED}`)
+  }
 }
 
 /** 目录内容哈希:文件名 + 大小 + 字节。多出 -wal/-shm 会改变哈希 = 判定为写。 */
@@ -274,7 +283,45 @@ CREATE UNIQUE INDEX events_idem ON events(idem_key) WHERE idem_key IS NOT NULL;`
   assert(plan.notes.some(n => n.includes('v1 形态')), '报告显式提示 v1 形态与其边界')
 }
 
-console.log('\n== H. tenant scope:非 local 源租户只看自己 ==')
+console.log('\n== H. 未 checkpoint WAL:副本包含 WAL 可见事件 ==')
+{
+  const root = newRoot('wal')
+  const dbPath = seedLedger(root, [
+    { tenant: 'local', kind: 'wish.added', subject: 'w-main', idem: 'k-main' },
+  ])
+  const writer = new Database(dbPath)
+  writer.pragma('journal_mode = WAL')
+  writer.prepare(
+    `INSERT INTO events (tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+  ).run('local', '2026-09-01T00:00:00.000Z', 'test:wal', 'wish.added', 'w-wal', '{}', 'k-wal')
+  assert(existsSync(`${dbPath}-wal`), '夹具保持未 checkpoint 的 -wal sidecar')
+  const before = snapshotDir(stateDir(root))
+  const plan = planLedgerRepair({ stateRoot: root })
+  assert(plan.totals.candidates === 2, '只读副本可见主库 + 未 checkpoint WAL 的 2 条事件')
+  assert(plan.entries.some(e => e.subjectId === 'w-wal'), 'WAL 中事件进入计划视图')
+  assert(snapshotDir(stateDir(root)) === before, '读取未 checkpoint WAL 后正本目录零写')
+  writer.close()
+}
+
+console.log('\n== I. 并发变化:复制/读取期间 source mutation fail-closed ==')
+{
+  const root = newRoot('mutation')
+  const dbPath = seedLedger(root, [
+    { tenant: 'local', kind: 'wish.added', subject: 'w-before', idem: 'k-before' },
+  ])
+  expectSourceChange(() => withImmutableLedgerCopy(root, db => {
+    // Deterministic stand-in for a concurrent writer after the immutable copy is opened.
+    insertRaw(dbPath, [{ tenant: 'local', kind: 'wish.added', subject: 'w-during-read', idem: 'k-during-read' }])
+    db.prepare('SELECT count(*) AS n FROM events').get()
+  }), 'source 在只读回调期间变化')
+  const probe = new Database(dbPath, { readonly: true })
+  const count = (probe.prepare('SELECT count(*) AS n FROM events').get() as { n: number }).n
+  probe.close()
+  assert(count === 2, '反例只改变隔离夹具正本,未被计划副本隐式吸收')
+}
+
+console.log('\n== J. tenant scope:非 local 源租户只看自己 ==')
 {
   const root = newRoot('scope')
   seedLedger(root, [
@@ -287,7 +334,7 @@ console.log('\n== H. tenant scope:非 local 源租户只看自己 ==')
   assert(p.entries.every(e => e.beforeTenant === 'tenant-a'), '候选不串到 local')
 }
 
-console.log('\n== I. CLI seam ==')
+console.log('\n== K. CLI seam ==')
 {
   const root = newRoot('cli')
   seedLedger(root, [

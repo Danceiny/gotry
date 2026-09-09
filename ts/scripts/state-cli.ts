@@ -66,7 +66,8 @@ const HELP = `用法: npx tsx scripts/state-cli.ts [--state-root <root>] [--tena
   --mapping <file>      仅 repair-plan 支持,人工确认的证据映射 JSON 数组
   --format text|json    仅 repair-plan 支持,默认 text
 边界:tick/export/whatif 只支持 --tenant local;非 local 会在创建目录、打开账本、求解或写文件前拒绝。
-      repair-plan 全程只读:不建库、不迁移 schema、不改任何 ledger/projection。
+  repair-plan 全程只读:不建库、不迁移 schema、不改任何 ledger/projection。
+      db/-wal/-shm 在复制或读取期间若有变化会 fail-closed;请对静默或不可变副本重试。
 提示:root 路径若像数字/负数或以 '-' 开头,请用 --state-root <root> 明示。`
 
 const COMMANDS = new Set([
@@ -382,8 +383,14 @@ switch (cmd) {
         process.exit(1)
       }
     }
-    const plan = planLedgerRepair({ stateRoot: root, sourceTenant: tenant, mappings })
-    console.log(parsed.format === 'json' ? JSON.stringify(plan, null, 2) : formatRepairPlan(plan))
+    try {
+      const plan = planLedgerRepair({ stateRoot: root, sourceTenant: tenant, mappings })
+      console.log(parsed.format === 'json' ? JSON.stringify(plan, null, 2) : formatRepairPlan(plan))
+    } catch (e) {
+      // source db/WAL/SHM changed during the read: never present a mixed-time plan.
+      console.error(e instanceof Error ? e.message : String(e))
+      process.exit(1)
+    }
     break
   }
   default:

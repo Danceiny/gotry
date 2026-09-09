@@ -85,6 +85,7 @@ M3 最小可用产品,分发链路无已知堵点。
 
 - **可下单事实单一数据源**(ADR-19):`ts/src/bookable-facts.ts`(`gotry_bookable_fact.v1`,纯函数)——flyai/session exact-date 工具结果逐条落账,hit 正事实 / miss 负事实,query_id 可重放,IATA 归一;四层证据 tier **永不合并**。**exact-date miss =「未确认/当前不可售,到 D-xx 复核」**,禁止用历史班期/相邻日期/航线页回填。
 - **状态权威 = 单文件 SQLite 账本**(ADR-15,`ts/src/state-ledger.ts`):events append-only + 投影 fold 可重建 + 红线进事务 + 工单 durable 恢复(exactly-once)+ pending_writes saga。旧 JSON/JSONL 降级为单向导出视图。`state-cli` 操作面集中严格解析 cmd/positional/`--state-root`/`--tenant`/`--limit`,未知/重复/缺值/非法 numeric(含 `.5`/`+.5`)在触碰账本前 fail-closed;`--tenant` 只是 scope,不是认证授权。
+- **#254 只读修复计划切片(2026-09-10)**:`repair-plan` 只在临时副本读取 db/`-wal`/`-shm`,复制前后及只读回调后发现正本内容变化即 fail-closed;显式证据映射才产生搬移计划,不提供 apply/迁移/rollback,不改变 M5/M6 gate。
 - **双形态冻结**(ADR-16):本地 + Web 一套账本语义,`tenant_id` 一等字段;`insertEvent` 写入当前 ledger owner,`readEvents`/投影 fold/rebuild 均先按 tenant 过滤,跨租户同 id/idem_key 不覆盖;同步 = 事件复制而非状态翻译。历史 v1/JSON 只可安全归入默认 `local`,已经错误写成 `local` 的非 local 事件无可靠反推租户,不得由迁移脚本猜修。
 - **预订 saga 词汇层**(ADR-17,`ts/src/booking-saga.ts`):状态字母表与 pending_writes CHECK 逐字一致。
 - **异步终态合同**:`gotry_async_terminal.v1` 将 4/4 映射为 `succeeded`/ledger `settled`/exit 0,非 4/4 映射为 `failed`/ledger `failed`/exit 2;终态复诵返回同一结构化结果与退出码且零重算。
@@ -361,6 +362,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
 - **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:`npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日 loopx 13 篇架构 RFC 通读映射,产出 `rfc/loopx-inspired-upgrades-rfc.md`——**founder 当日 accepted**,四切片 S1-S4 按序落地;同指令确立**多用户 Agent as a Service** 为未来方向(claim/CAS 类机制转入 RFC §6.5 远期采纳面)。S1 tool-packet envelope(ADR-13)已落地;S2/S3/S4 依次推进(D-12)。
 - **事务化状态基座落地(2026-08-28,ADR-15)**:业界 durable-execution 调研收敛五件套 → `rfc/transactional-state-rfc.md` 立例、founder 当日 accepted;TS-0..TS-4 一次落地(账本 + 五状态工具写路径 + 读路径回退 + state-cli 操作面 + durable 工单崩溃恢复 exactly-once(§28 子进程 exit 9 实证)+ `gotry_async_terminal.v1` 终态合同 + pending_writes saga,run-all §28/§29);TS-5 触发式后置=D-15。同日 **ADR-16 双形态冻结**:tenant_id 一等字段(schema v2),同步=事件复制非状态翻译;§28 双形态断言。
+- **#254 只读 tenant 修复计划切片(2026-09-10)**:`state-cli repair-plan` 以 db/`-wal`/`-shm` 内容指纹守住复制与读取期间的静默前提;变化即拒绝混合时间点计划。隔离回归覆盖未 checkpoint WAL 可见性、确定性并发变化反例与 v1 目录零写。apply/backup/rollback/真实修复回执仍是 #254 的显式后续子项,不改变 M5/M6 Entry/Exit。
 - **会话数据面 #21 首切片(2026-08-29)**:`session/benchmark.ts` 固化 required comparable fields 的 fixture scorer(缺字段计错、默认 90% 闸)与双源合同(按 journey/segments/时刻/班次对齐,价格只记差值不判等);`needs-attach`/`needs-login` 为 waiting-user no-spend,challenge 与 ReadGuard 非零 fail-closed。纯 fixture 已进 run-all §25;真实 sf-01..08 仍等待 Chrome attach 权限确认与握手。
 - **扩展分发双通道(2026-08-30,issue #21,ADR-21)**:founder 指令「产物下载和安装也得做成更好的用户体验,可以用 github 作为分发渠道」。Chrome 平台约束**诚实前置**——非商店不可免「开发者模式加载已解压」的 3 次点击,GitHub 只能改善下载。GitHub Releases 下载通道已落(`gotry setup --extension-from=github` 显式 opt-in,默认仍 bundled 保离线确定性);Chrome Web Store 2026-09-02 过审上架 v0.1.0(一键装+自动更新,现为推荐安装方式;材料与隐私政策见 `ops/` 两篇)。回归:run-all §43。注:本条曾在 §1 出现两份内容矛盾的副本,2026-08-31 文档重构时以「已提交审核中」为准合并。
 - **会话传输层定案扩展桥(2026-08-30,#21 方案 C 升 PRIMARY)**:founder 实测「Chrome attach 逐连接权限框根本无法使用」(chrome-devtools-mcp #825:每次连接必弹、无持久化批准)→ CDP 降显式 opt-in、扩展桥主载——`extension/`(MV3 零构建,固定 key=扩展 ID,SW 长轮询,MAIN-world 被动嗅探,cookie-names 只取名)+ `extension-bridge.ts`(`node:http` 回环桥,origin 白名单,零新依赖)+ 车道路由(扩展默认/cdp 显式/persistent 测试);登录快路径免标签页;守卫按车道分形(扩展=零写行为+hints 白名单,cdp=请求级 abort);`needs-extension` → `waiting_extension`(waiting-* 同族 no-spend);run-all §38 + bootstrap-tests;真实 sf-01..08 门禁降为「装一次扩展」。
@@ -437,6 +439,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 > `D-24` 曾被会话扩展 onboarding 与事实闸覆盖面重复占用;事实闸债务现已迁至 `D-26`,编号冲突解除。
 
 ### 10.1 未清偿(工作面)
+
+> **#254 当前边界(2026-09-10)**:只读 inventory/dry-run 计划切片已补足 source mutation fail-closed、未 checkpoint WAL 可见性与 v1 零目录写证明;真实 apply、backup、rollback、失败恢复、目标 tenant 可见性与 repair receipt 仍按既有 #254 编号子项跟踪,不得由本切片推断完成,也不构成 M5/M6 gate 证据。
 
 | # | 债务 | 状态 / 赎回时机 |
 |---|---|---|
