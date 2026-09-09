@@ -49,6 +49,7 @@ import { routingAdvice, renderRoutingCard, toolRoutingHeadline, type ChannelInte
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
+import { installSubagentJobIdGuard } from './subagent-job-id-guard.ts'
 
 /** 航司→机场映射表(issue #46 冲突检测面;data/airline-airports.json,as_of 快照) */
 let airlineAirportMapCache: AirlineAirportMap | null = null
@@ -287,6 +288,9 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   // (headless 无用户在场)一律 fail-closed 拒绝。sessionAccess: ask(默认)|allow|off。
   // v1 教训(2026-08-29 founder 实测「每次都要弹,经常无法点击」):逐调用弹卡 = 骚扰,
   // 会话态收归 capabilities/session-consent.ts。防御:极简宿主/mock ctx 无事件总线时跳过。
+  // issue #194 A-轨道 guard 先注册；生产 Cordis 的 prepend 保证它在授权闸
+  // 前运行，smoke 的轻量事件采集器也继续把授权闸作为最后一个观察项。
+  installSubagentJobIdGuard(ctx)
   const ctxOn = (ctx as unknown as { on?: unknown }).on
   if (typeof ctxOn === 'function') {
     const gate = createConsentGate({

@@ -199,6 +199,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 - **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
 - **M4 lifecycle 证据采集器** —— 显式 opt-in CLI 记录首访/回访 planning flow:隔离 `stateRoot`、consent 与 HMAC key 必需;dataset key/source/wait 词汇冻结;JSONL/manifest 走 write-all + 原子/no-overwrite 发布;导出只作为 #223 scorer 的 candidate/synthetic 输入,绝不生成人工签核
 - **按任务路由的回合预算** —— 每轮先由确定性路由器(零 LLM)分类 quick / sync / deep-planning;时间才是唯一预算,且到点出口跟任务走:quick/sync 收敛作答,deep-planning 转后台落 `gotry_turn_handoff.v1` 工单(ETA 约 1 小时)而不是让会话流死掉;工单由 `scripts/turn-handoff-collect.ts` 在后台收集结算(幂等、带递归防护的子规划会话),回访时经只读工具 `gotry_turn_handoff_list` 查询状态与交付物;经打包消费者安装的 E2E 在 CI 里实测
+- **子代理/jobs id 安全闸(#194)** —— typed pre-execute guard 在 dsh jobs registry 前识别 continuable 子代理 durable id,返回 completion notice / `list_agents` / `send_message` 可恢复指引;one-shot、无关 id 与非 owner id 保留 dsh 原生 jobs 行为。上游 unknown-id 通用 contract 仍开放,本地 guard 不修改 vendored dsh。
 - **Node 构建兼容(#265)** —— 支持下界保持 Node ≥22.15。根 dist 构建使用精确锁定、仅构建期使用的 TypeScript 5.9.3 并生成 ESM；CI 在 Node 22/24 跑 typecheck + 全栈回归，在 Node 22/24/26 跑生成文件集合/ESM/import focused proof。
 
 **已知限制**(诚实清单):

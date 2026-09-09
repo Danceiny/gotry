@@ -177,6 +177,10 @@ echo "=== 23e. dsh-http-proxy 本地 SSE + 中毒代理反例(#268:真实 fetch 
 (cd ts && npx tsx scripts/dsh-http-proxy-sse-proof.ts) || FAIL=1
 
 echo
+echo "=== 23f. Issue #194 continuable subagent durable id 与 jobs id 边界(真实 dsh ToolRuntime 调用链+可恢复 pre-execute guard+direct-child ownership) ==="
+(cd ts && npx tsx scripts/issue-194-job-id-guard-tests.ts) || FAIL=1
+
+echo
 echo "=== 24. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
 NUDGE_FIXTURE=$(mktemp -d)
 mkdir -p "$NUDGE_FIXTURE/gotry-state"
