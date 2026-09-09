@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-10 起,Issue #2 命名年份的未来规划在 `time-anchor.ts` 派生本轮参考日,`loop.ts` 与注册工具 `gotry_feasibility_check` 均在求解前过滤过去/无明确日期/跨年候选;当前年限制为参考日至年末,过期年份不滚年,显式历史/回测旁路保留,否定过去推荐和多年份歧义不误判为历史。`time-eval-tests.ts` §6 与 `smoke.ts` registered execute fixture 以注入时钟验证,仅为隔离工程证据,不替代供应商或真实业务准入。
 - 2026-09-10 起,#270 按 `../ops/external-pr-workflow.md` §0 统一公开 issue 启动→Draft PR→exact-head review→merge/destination 回执,并让 `../architecture.md` §10.1 活跃债务指向公开 tracker/触发器;founder 授权的仓内 Claude lane 不受外部机器人 T0/T1 否决,但仍过正常评审。本地/fixture 证明不改变 #20/#22/#136/#137 的真实 gate。
 - 2026-09-10 起,#284 `gotry_doctor action=repair` 形成诊断→item 范围计划→会话 scope 审批→既有 bootstrap 幂等安装器→实际复检链;拒绝/取消/无审批通道零执行,user-action/unavailable 不越权,侧栏报告写复检态。隔离 fixture 工具 E2E 属 M4 UX 工程证据,不计入 #20 真实 repeat cohort 或 M5/M6 gate。
 - 2026-09-10 起,#279 携程机票 batchSearch 解析/搜索边界区分合法空 `miss`、有效 `hit` 与 malformed `error`,扩展/CDP 两车道保留 challenge 优先级;隔离 fixture 仅证明本地解析/编排,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。

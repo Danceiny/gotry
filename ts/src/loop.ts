@@ -8,6 +8,7 @@
 
 import type { InterviewQuestion, TripState, TravelerProfile, Turn, CalendarState, SolveResult } from './contracts.ts'
 import type { JourneySpecTS } from './unified.ts'
+import { buildTimeAnchor, isRealIsoDate, planningWindowBounds, parsePlanningWindow, type PlanningWindow, type TimeAnchor } from './time-anchor.ts'
 import type { TravelSlotExtraction } from './travel-slots.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
 
@@ -91,6 +92,80 @@ export function validateSpec(spec: JourneySpecTS): string | null {
         }
       }
     }
+  }
+  return null
+}
+
+export interface PlanningWindowRejection {
+  segmentId: string
+  optionId: string
+  date: string
+}
+
+export interface PlanningWindowCheck {
+  spec: JourneySpecTS
+  rejected: PlanningWindowRejection[]
+  error?: string
+}
+
+function isoDateInBounds(date: string, bounds: { start: string; end: string }): boolean {
+  const m = date.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m || !isRealIsoDate(Number(m[1]), Number(m[2]), Number(m[3]))) return false
+  return date >= bounds.start && date <= bounds.end
+}
+
+/**
+ * Enforce a named-year future window at the planner boundary. Historical
+ * lookup/backtesting remains an explicit bypass; an expired named year fails
+ * instead of being silently rolled into a different year.
+ */
+export function applyPlanningWindow(
+  spec: JourneySpecTS,
+  window: PlanningWindow | null,
+  anchor: TimeAnchor,
+): PlanningWindowCheck {
+  if (!window || window.intent === 'historical') return { spec, rejected: [] }
+
+  const currentYear = Number(anchor.today.slice(0, 4))
+  if (window.requestedYear < currentYear) {
+    return {
+      spec,
+      rejected: [],
+      error: `${window.requestedYear} 年已结束(当前规划参考日 ${anchor.today}),不会自动改用其他年份;如需历史查询请明确说明“历史/回测”。`,
+    }
+  }
+
+  const bounds = planningWindowBounds(window, anchor)
+  if (!bounds) return { spec, rejected: [], error: `无法建立 ${window.requestedYear} 年的未来规划窗口。` }
+
+  const rejected: PlanningWindowRejection[] = []
+  const guardedSegments = spec.segments.map(segment => ({
+    ...segment,
+    options: segment.options.filter(option => {
+      const date = option.date ?? segment.date
+      if (date && isoDateInBounds(date, bounds)) return true
+      rejected.push({ segmentId: segment.id, optionId: option.id, date: date ?? '未提供明确日期' })
+      return false
+    }),
+  }))
+
+  if (guardedSegments.some(segment => segment.options.length === 0)) {
+    return {
+      spec: { ...spec, segments: guardedSegments },
+      rejected,
+      error: `${window.requestedYear} 年未来规划窗口为 ${bounds.start} 至 ${bounds.end};没有带明确日期且落在窗口内的可接受方案。`,
+    }
+  }
+  return { spec: { ...spec, segments: guardedSegments }, rejected }
+}
+
+function latestPlanningWindow(history: Turn[], userMsg: string, anchor: TimeAnchor): PlanningWindow | null {
+  const turns = [...history, { role: 'user' as const, text: userMsg }]
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const turn = turns[i]
+    if (turn?.role !== 'user') continue
+    const parsed = parsePlanningWindow(turn.text, anchor)
+    if (parsed) return parsed
   }
   return null
 }
@@ -231,7 +306,9 @@ export async function runTurn(
   llm: LlmPort,
   history: Turn[] = [],
   solve: SolvePort | null = null,
+  now: Date = new Date(),
 ): Promise<{ reply: string; state: TripState }> {
+  const anchor = buildTimeAnchor(now)
   const facts = await llm.extractFacts([...history, { role: 'user', text: userMsg }], state)
 
   const conflicts: string[] = []
@@ -287,7 +364,22 @@ export async function runTurn(
 
   // 约束齐备(无阻塞问题)→ 翻译 spec → **校验闸 + 日期一致性闸** → 求解 → 渲染
   if (blocking.length === 0 && solve) {
-    const spec = await llm.extractSpec([...history, { role: 'user', text: userMsg }], state)
+    const extractedSpec = await llm.extractSpec([...history, { role: 'user', text: userMsg }], state)
+    const planning = latestPlanningWindow(history, userMsg, anchor)
+    const planningCheck = extractedSpec ? applyPlanningWindow(extractedSpec, planning, anchor) : null
+    if (planningCheck?.error) {
+      state.spec = undefined
+      state.solve = undefined
+      parts.push(`⚠️ ${planningCheck.error}`)
+      return { reply: parts.join('\n\n'), state }
+    }
+    if (planningCheck?.rejected.length) {
+      const rejected = planningCheck.rejected
+        .map(r => `${r.segmentId}/${r.optionId}(${r.date})`)
+        .join('、')
+      parts.push(`已排除规划窗口外的候选:${rejected}`)
+    }
+    const spec = planningCheck?.spec ?? extractedSpec
     // 场景路由:erhai 候选标记 → 候选求解(洱海金标准的引擎判定)——纯 TS unify 路径
     if (spec && (spec as unknown as { note?: string }).note === 'erhai-candidates') {
       const { readFile } = await import('node:fs/promises')
@@ -311,11 +403,10 @@ export async function runTurn(
         // D-10 切片 C:spec↔槽位日期一致性闸(ADR-10 翻译≠造数的执行点)。
         // LLM 翻译的 spec 日期与代码层换算的槽位日期分歧时不求解、不猜,追问确认——
         // 日期是求解关键输入,错日期 = 错判决。槽位缺失/unresolved 不参与(不造假阳性)。
-        const ext = await llm.extractSlots([...history, { role: 'user', text: userMsg }])
+        const ext = await llm.extractSlots([...history, { role: 'user', text: userMsg }], now)
         if (ext) {
           const { resolveSlots, specDateMismatches } = await import('./slot-spec.ts')
-          const { buildTimeAnchor } = await import('./time-anchor.ts')
-          const mismatches = specDateMismatches(spec, resolveSlots(ext, buildTimeAnchor()))
+          const mismatches = specDateMismatches(spec, resolveSlots(ext, anchor))
           if (mismatches.length > 0) {
             const lines = mismatches.map(m => `- ${m.specAt}:翻译说 ${m.specDate},你的原话换算是 ${m.slotDate}(${m.field})`)
             parts.push(`⚠️ 日期分歧,确认后我再算(以你为准):\n${lines.join('\n')}`)

@@ -65,7 +65,10 @@ async function main() {
     }
     return interpretEffect(fx as never)
   }
-  apply(ctx, cfg, { effect: fixtureEffect as never })
+  apply(ctx, cfg, {
+    effect: fixtureEffect as never,
+    clock: () => new Date(2026, 8, 10, 12),
+  })
 
   console.log(`registered tools: ${registered.map(t => t.name).join(', ')}`)
 
@@ -107,6 +110,37 @@ async function main() {
   }
   console.log(`\nfeasibility: recommended=${result.recommended}, via=${result.via}, latency=${result.latency_ms}ms\n`)
   console.log(result.answer_md)
+
+  // Issue #2:实际注册工具 execute → parseCandidate → segmentsFromCandidate → solve。
+  // 规划上下文的 reference date 来自 apply 注入的宿主时钟,不来自 payload。
+  const datedCandidates = (payload.candidates as Record<string, unknown>[]).slice(0, 3).map((candidate, i) => ({
+    ...candidate,
+    date: i === 0 ? '2026-09-01' : i === 1 ? '2026-10-01' : '2027-01-01',
+  }))
+  const futurePayload = {
+    ...payload,
+    candidates: datedCandidates,
+    planning: { intent: 'future', requested_year: 2026 },
+  }
+  const futureResult = await feasibility.execute({ payload: futurePayload }, null) as {
+    ok?: boolean
+    recommended?: string | null
+    verdicts?: Array<Record<string, unknown>>
+  }
+  const pastId = String((datedCandidates[0] as Record<string, unknown>)?.['id'])
+  const validId = String((datedCandidates[1] as Record<string, unknown>)?.['id'])
+  const nextYearId = String((datedCandidates[2] as Record<string, unknown>)?.['id'])
+  if (futureResult.ok !== true || futureResult.recommended !== validId
+    || futureResult.verdicts?.some(v => v['candidate_id'] === pastId || v['candidate_id'] === nextYearId)) {
+    throw new Error(`FAIL: registered Issue #2 path accepted a past candidate: ${JSON.stringify(futureResult).slice(0, 240)}`)
+  }
+  const expiredResult = await feasibility.execute({
+    payload: { ...futurePayload, planning: { intent: 'future', requested_year: 2025 } },
+  }, null) as { ok?: boolean; summary?: string; error?: string }
+  if (expiredResult.ok !== false || !/2025 年已结束/.test(JSON.stringify(expiredResult))) {
+    throw new Error(`FAIL: registered Issue #2 path did not reject expired year: ${JSON.stringify(expiredResult).slice(0, 240)}`)
+  }
+  console.log(`Issue #2 registered execute path: past=${pastId} rejected, valid=${validId} recommended, expired 2025 rejected`)
 
   // 3) wish pool:把不可行的憧憬连同成行条件放入「下一次出发」
   const wish = byName('gotry_wish_pool_add')
