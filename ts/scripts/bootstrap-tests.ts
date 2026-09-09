@@ -782,6 +782,12 @@ function childClosedMessage(label: string, stdoutRef: { s: string }, expected: s
   return new Error(`${label}: 子进程在观察到 ${expected} 前退出(code=${code},signal=${signal})\nstdout:\n${stdoutRef.s.slice(-800)}`)
 }
 
+const fixtureReaps = new WeakMap<FixtureChild, Promise<void>>()
+
+function rejectAfterFixtureReap(child: FixtureChild, reject: (reason?: unknown) => void, error: unknown) {
+  void reapFixture(child).finally(() => reject(error))
+}
+
 // 等待 stdout 出现真实 onboarding prompt(证明 bootstrap 真的跑了 prompt 路径);超时 FAIL(非 skip)。
 function waitForPrompt(child: FixtureChild, stdoutRef: { s: string }, label: string, ms = 30_000) {
   return new Promise<void>((resolve, reject) => {
@@ -796,16 +802,16 @@ function waitForPrompt(child: FixtureChild, stdoutRef: { s: string }, label: str
       return true
     }
     const onError = (error: Error) => {
-      if (cleanup()) reject(error)
+      if (cleanup()) rejectAfterFixtureReap(child, reject, error)
     }
     const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (cleanup()) reject(childClosedMessage(label, stdoutRef, 'onboarding prompt', code, signal))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, childClosedMessage(label, stdoutRef, 'onboarding prompt', code, signal))
     }
     const onData = () => {
       if (stdoutRef.s.includes('现在自动配置可安装项吗') && cleanup()) resolve()
     }
     const t = setTimeout(() => {
-      if (cleanup()) reject(new Error(`${label}: 未在 ${ms}ms 内观察到 onboarding prompt\nstdout:\n${stdoutRef.s.slice(-800)}`))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, new Error(`${label}: 未在 ${ms}ms 内观察到 onboarding prompt\nstdout:\n${stdoutRef.s.slice(-800)}`))
     }, ms)
     child.stdout!.on('data', onData)
     child.once('error', onError)
@@ -827,16 +833,16 @@ function waitForStdout(child: FixtureChild, stdoutRef: { s: string }, needle: st
       return true
     }
     const onError = (error: Error) => {
-      if (cleanup()) reject(error)
+      if (cleanup()) rejectAfterFixtureReap(child, reject, error)
     }
     const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (cleanup()) reject(childClosedMessage(label, stdoutRef, needle, code, signal))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, childClosedMessage(label, stdoutRef, needle, code, signal))
     }
     const onData = () => {
       if (stdoutRef.s.includes(needle) && cleanup()) resolve()
     }
     const t = setTimeout(() => {
-      if (cleanup()) reject(new Error(`${label}: 未在 ${ms}ms 内观察到 ${needle}\nstdout:\n${stdoutRef.s.slice(-800)}`))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, new Error(`${label}: 未在 ${ms}ms 内观察到 ${needle}\nstdout:\n${stdoutRef.s.slice(-800)}`))
     }, ms)
     child.stdout!.on('data', onData)
     child.once('error', onError)
@@ -861,17 +867,17 @@ function waitForFileText(child: FixtureChild, filePath: string, needle: string, 
       try { return readFileSync(filePath, 'utf-8') } catch { return '' }
     }
     const onError = (error: Error) => {
-      if (cleanup()) reject(error)
+      if (cleanup()) rejectAfterFixtureReap(child, reject, error)
     }
     const onClose = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (cleanup()) reject(new Error(`${label}: 子进程在观察到 ${needle} 前退出(code=${code},signal=${signal})\ninstaller-log:\n${current().slice(-800)}\nstdout:\n${stdoutRef.s.slice(-800)}`))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, new Error(`${label}: 子进程在观察到 ${needle} 前退出(code=${code},signal=${signal})\ninstaller-log:\n${current().slice(-800)}\nstdout:\n${stdoutRef.s.slice(-800)}`))
     }
     const poll = () => {
       if (current().includes(needle) && cleanup()) resolve()
     }
     const interval = setInterval(poll, 50)
     const t = setTimeout(() => {
-      if (cleanup()) reject(new Error(`${label}: 未在 ${ms}ms 内观察到 ${needle}\ninstaller-log:\n${current().slice(-800)}\nstdout:\n${stdoutRef.s.slice(-800)}`))
+      if (cleanup()) rejectAfterFixtureReap(child, reject, new Error(`${label}: 未在 ${ms}ms 内观察到 ${needle}\ninstaller-log:\n${current().slice(-800)}\nstdout:\n${stdoutRef.s.slice(-800)}`))
     }, ms)
     child.once('error', onError)
     child.once('close', onClose)
@@ -912,12 +918,36 @@ function runFixture(child: FixtureChild, mode: 'close' | 'exit', _label: string,
 
 // 清理兜底:kill/reap 进程组 + 关闭流。幂等。任一超时/断言失败/正常退出后调用,确保无悬挂 grandchild。
 async function reapFixture(child: FixtureChild) {
-  if (child.pid) { try { process.kill(-child.pid, 'SIGKILL') } catch { /* dead */ } }
-  try { child.stdin!.destroy() } catch { /* ignore */ }
-  await waitForChildCloseEvent(child, 1_000)
-  try { child.stdout!.destroy() } catch { /* ignore */ }
-  try { child.stderr!.destroy() } catch { /* ignore */ }
+  const existing = fixtureReaps.get(child)
+  if (existing) return existing
+  const reap = (async () => {
+    if (child.pid) { try { process.kill(-child.pid, 'SIGKILL') } catch { /* dead */ } }
+    try { child.stdin!.destroy() } catch { /* ignore */ }
+    await waitForChildCloseEvent(child, 1_000)
+    try { child.stdout!.destroy() } catch { /* ignore */ }
+    try { child.stderr!.destroy() } catch { /* ignore */ }
+  })()
+  fixtureReaps.set(child, reap)
+  return reap
 }
+
+// 20g. prompt waiter 超时本身必须完成进程组清理,不能把 kill/reap 责任留给调用方 finally。
+{
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    detached: true,
+  })
+  const stdoutRef = { s: '' }
+  child.stdout!.on('data', (chunk: Buffer) => { stdoutRef.s += chunk.toString('utf8') })
+  try {
+    await assert.rejects(waitForPrompt(child, stdoutRef, '20g', 10), /未在 10ms 内观察到 onboarding prompt/)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.equal(pidAlive(child.pid!), false, '20g: prompt waiter 失败后必须已清理子进程组')
+  } finally {
+    await reapFixture(child)
+  }
+}
+console.log('20g. prompt waiter timeout → deterministic process-group reap OK')
 
 // 21a. TTY eligible,喂 "n":真实 prompt 恰好一次 → 拒绝 → web 启动,摘要抑制,无 result 目录残留
 {
@@ -1297,4 +1327,4 @@ console.log('22. win32 platform boundary(hbcli/reach/sidebar → unavailable + �
 }
 console.log('23. result 通道排他写入(预存文件不被覆盖 + symlink 不跟随 victim,mode 0600 + flag wx)OK')
 
-console.log('BOOTSTRAP TESTS: 23/23 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+env opt-out+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan / 编排缝 orchestrateWebLaunch × 6 / 临时安装包 spawned inner 21a TTY-eligible 真实 prompt→n→web + 摘要抑制 + 无残留 / 21b non-TTY 零 prompt / 21c POSIX 信号清理 SIGTERM→清 result+patch 目录 + 无残留子进程 / 21f yes-path installer 子树信号清理 / 21g yes-path timeout installer 子树清理 / 21d timeout 诊断 + 无残留 / 21e dsh-lifecycle 信号转发 / win32 平台边界 / result 通道排他写入)')
+console.log('BOOTSTRAP TESTS: 24/24 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+env opt-out+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan / 编排缝 orchestrateWebLaunch × 6 / prompt waiter failure deterministic process-group reap / 临时安装包 spawned inner 21a TTY-eligible 真实 prompt→n→web + 摘要抑制 + 无残留 / 21b non-TTY 零 prompt / 21c POSIX 信号清理 SIGTERM→清 result+patch 目录 + 无残留子进程 / 21f yes-path installer 子树信号清理 / 21g yes-path timeout installer 子树清理 / 21d timeout 诊断 + 无残留 / 21e dsh-lifecycle 信号转发 / win32 平台边界 / result 通道排他写入)')
