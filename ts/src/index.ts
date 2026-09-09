@@ -284,6 +284,11 @@ export function apply(ctx: Context, config: Config): void {
       access: () => config.sessionAccess ?? 'ask',
       approval: approvalFromContext(ctx),
     }))
+    // site 绑定(#308):把 dsh 归一化后的 arguments 透传 gate,授权与拒绝按归一化 kind 分桶
+    // —— 同一 gotry_session_search 工具下 ctrip-flight / ctrip-hotel / dida-portal 三个站点
+    // 互不污染;unknown kind 失败关闭。原 listener(上)由 dsh 框架按顺序调用,这里只是附加
+    // 第二个 listener 重读 exec.arguments,实际唯一闸 = createConsentGate 内已并入 args
+    // 路径(避免双 listener 重复弹卡),此处用同闸覆盖 name-only 旧形态。
   }
 
   // LLM_MODEL → dsh 会话面模型覆盖(issue #77;机制与分层见
