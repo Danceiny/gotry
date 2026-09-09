@@ -331,6 +331,62 @@ async function main(): Promise<void> {
     await revealArtifactCalls()
     await page.waitForFunction(() => document.querySelectorAll('[data-gotry-artifact-card="read"]').length >= 2, { timeout: 60_000 })
     await page.waitForFunction(() => [...document.querySelectorAll('[data-gotry-artifact-card="read"]')].some(node => node.textContent?.includes('Day 6: revision requested')), { timeout: 60_000 })
+    // The artifact card has the fresh read result, but the public DSH file
+    // preview intentionally keeps its old page until the user acknowledges
+    // the changed-file banner. Exercise that visible reload control instead
+    // of treating the custom card or hidden DOM as sidebar evidence.
+    await page.waitForSelector('[data-textpreview-changed]', { timeout: 60_000 })
+    const staleRightPreview = await page.$eval('[data-textpreview-state="text"]', (node: Element) => {
+      const rect = node.getBoundingClientRect()
+      const body = node.querySelector('[data-textpreview-body]')
+      return {
+        visible: rect.width > 0 && rect.height > 0,
+        changedBanner: Boolean(node.querySelector('[data-textpreview-changed]')),
+        includesDay6: body?.textContent?.includes('Day 6: revision requested') || false,
+      }
+    })
+    assert.equal(staleRightPreview.visible, true, 'right file preview is not visibly rendered before reload')
+    assert.equal(staleRightPreview.changedBanner, true, 'right file preview did not show the changed-file banner')
+    assert.equal(staleRightPreview.includesDay6, false, 'right file preview unexpectedly contained Day 6 before reload')
+    const reloadButton = await page.$('[data-textpreview-changed] [data-textpreview-reload-now]')
+    assert.ok(reloadButton, 'right file preview reload control missing')
+    const reloadControl = await page.$eval('[data-textpreview-changed] [data-textpreview-reload-now]', (node: Element) => {
+      const rect = node.getBoundingClientRect()
+      return {
+        visible: rect.width > 0 && rect.height > 0,
+        text: node.textContent?.trim() || '',
+        ariaLabel: node.getAttribute('aria-label'),
+      }
+    })
+    assert.equal(reloadControl.visible, true, 'right file preview reload control is not visible')
+    assert.match(reloadControl.text, /重新载入|Reload/)
+    await reloadButton.click()
+    await page.waitForFunction(() => {
+      const preview = document.querySelector('[data-textpreview-state="text"]')
+      const body = preview?.querySelector('[data-textpreview-body]')
+      return Boolean(preview && body?.textContent?.includes('Day 6: revision requested'))
+    }, { timeout: 60_000 })
+    await page.$eval('[data-textpreview-body]', (node: Element) => {
+      const body = node as HTMLElement
+      body.scrollTop = body.scrollHeight
+    })
+    const rightPreviewAfterReload = await page.$eval('[data-textpreview-state="text"]', (node: Element) => {
+      const rect = node.getBoundingClientRect()
+      const body = node.querySelector('[data-textpreview-body]') as HTMLElement | null
+      const day6 = [...(node.querySelectorAll('[data-textpreview-line]'))].find(line => line.textContent?.includes('Day 6: revision requested'))
+      const day6Rect = day6?.getBoundingClientRect()
+      return {
+        visible: rect.width > 0 && rect.height > 0,
+        changedBanner: Boolean(node.querySelector('[data-textpreview-changed]')),
+        bodyIncludesDay6: body?.textContent?.includes('Day 6: revision requested') || false,
+        day6Visible: Boolean(day6Rect && day6Rect.width > 0 && day6Rect.height > 0 && day6Rect.top < window.innerHeight && day6Rect.bottom > 0),
+        bodyText: body?.textContent || '',
+      }
+    })
+    assert.equal(rightPreviewAfterReload.visible, true, 'right file preview is not visibly rendered after reload')
+    assert.equal(rightPreviewAfterReload.changedBanner, false, 'right file preview still shows the changed-file banner after reload')
+    assert.equal(rightPreviewAfterReload.bodyIncludesDay6, true, 'right file preview body does not contain Day 6 after reload')
+    assert.equal(rightPreviewAfterReload.day6Visible, true, 'right file preview Day 6 is not visible after reload')
     // DSH may collapse a completed turn after the last tool result arrives;
     // reopen the real process disclosure and place the revised card in view so
     // the receipt proves visible, not merely hidden-DOM, refreshed evidence.
@@ -354,7 +410,7 @@ async function main(): Promise<void> {
     assert.equal(finalSnapshot.updated, true)
     assert.ok(finalSnapshot.versions.filter(Boolean).length >= 2)
     assert.ok(finalSnapshot.updatedLine?.includes('Day 6'))
-    assertions.secondTurn = finalSnapshot
+    assertions.secondTurn = { ...finalSnapshot, rightPreview: rightPreviewAfterReload, reloadControl }
     assert.deepEqual(relay.servedTools, ['gotry_artifacts_list', 'gotry_artifacts_read', 'read', 'edit', 'gotry_artifacts_read'])
     assertions.relay = { toolCalls: relay.servedTools, bodyCount: relay.bodies.length }
     const screenshotPath = join(outputDir, 'artifact-web-e2e.png')
