@@ -16,7 +16,7 @@ export interface TimeAnchor {
   today: string
   /** 今天星期几,如「周四」 */
   todayWeekdayZh: string
-  /** 时区标注,如 UTC+8 / UTC+5:30 */
+  /** 时区标注,固定为 UTC±HH:MM,如 UTC+08:00 / UTC+05:30 */
   tzLabel: string
   /** 注入 prompt 的多行锚点卡文本 */
   card: string
@@ -47,13 +47,16 @@ const SPRING_FESTIVAL: Record<number, string> = {
   2031: '2031-01-23',
 }
 
-function tzLabelOf(d: Date): string {
-  const offsetMin = -d.getTimezoneOffset()
-  const sign = offsetMin >= 0 ? '+' : '-'
-  const abs = Math.abs(offsetMin)
+export function formatUtcOffsetLabel(utcOffsetMinutes: number): string {
+  const sign = utcOffsetMinutes >= 0 ? '+' : '-'
+  const abs = Math.abs(utcOffsetMinutes)
   const h = Math.floor(abs / 60)
   const m = abs % 60
-  return `UTC${sign}${m === 0 ? h : `${h}:${String(m).padStart(2, '0')}`}`
+  return `UTC${sign}${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+function tzLabelOf(d: Date): string {
+  return formatUtcOffsetLabel(-d.getTimezoneOffset())
 }
 
 function weekdayOf(d: Date): string {
