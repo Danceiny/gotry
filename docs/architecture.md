@@ -54,6 +54,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - **产物类**:产物 list/read(账本工单交付 + 工作目录 md,只读)
 - **账号类**:会话登录 `gotry_session_login`(在用户 Chrome 弹登录入口,票据 cookie 名零值过手)
 - **回合类**:`gotry_turn_handoff_list` 后台深度规划工单复访查询(只读;open=后台规划中/ETA,settled=交付物摘录,failed=诚实失败说明;收集结算由 `scripts/turn-handoff-collect.ts` 驱动,ADR-24 v2)
+- **Booking planner 只读约束(#282)**:嵌入式 planner 保留所有非空 occupancy 房间与儿童年龄条件;缺 `adults` 继续走 schema 校验和同 session 纠偏,不做语义删除。每次 provider run(含纠偏提示)计入最多三次预算,有效纠正结果沿同一 authority path 返回,provider failure 不静默吞掉。证据限于注入 `runPort` 的离线工程 proof,不替代真实供应商库存/UAT 或 M5 gate。
 - **自检类**:`gotry_doctor` 依赖体检;CLI 侧同源命令 `npx gotry doctor`,报告落 `gotry-state/doctor-report.md`
   - 覆盖:扩展 / agent-reach `.venv` / hbcli / FlyAI key(含最近匿名试用达限时间)/ dsh-calendar 挂载态 / sidebar / 随包 MIT `dsh-map-tools`(alpha.3 `SettingsProvider.prototype.installSection` 接线) / `dsh-tool-ask-user`,逐项分级 ok/degraded/missing + 精确补装指引
   - 安装只经用户终端显式触发:`npx gotry doctor --fix`,或交互式 `gotry web` 启动前的 per-launch onboarding prompt(#258/#267,每次符合条件的启动评估一次、至多问一次,无跨启动持久确认;复用同一套幂等安装器,不建第二套);CI/非 TTY/全健康/opt-out 零 prompt 零安装。LLM key 归 dsh 宿主,刻意不管
@@ -353,7 +354,6 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **Issue #202/#242 地图插件 vendoring 回归修复**:root/ts 严格 npm 安装不再解析外部 `dsh-map-tools` peer;`vendor/dsh-map-tools/` 携带上游 `0.5.1` MIT payload,其 vendored settings 接线使用 alpha.3 已发布的 `SettingsProvider.prototype.installSection(owner, ns, schema, entry, hooks)` 方法和普通字符串 namespace,由 proof 验证。`bin/gotry-inner.js`、CLI bootstrap 与 `capabilities/doctor.ts` 同优先级解析仓内绝对入口;打包证明覆盖 unpack/import、32 文件 payload aggregate、7 个 `map_*` 注册、settings watch/reload/dispose 生命周期及无网络 inline 坐标路径。
 - **当前主线 = M3 evidence 未收口;并行线 = founder 授权的 M4 记忆域**:M3 工程与分发面已就绪,真实种子用户的定稿率/NPS/POI 幻觉率证据仍是 Exit 缺口。M4 自 2026-08-26 起获 founder 授权并行推进;T1 及后续记忆切片、Issue #20/#223 scorer、Issue #228 显式 lifecycle collector 都不构成 M3 Exit 证明,真实 `observed_private` N≥5 repeat cohort + source-review attestation 仍缺。M5 交易与 M6 B2B 仅在各自 Entry gate 满足后启动,不得由并行实现倒推开闸。
 - **HotelByte Booking Copilot 产品验收并行线**:候选以单一 `booking.surface` 契约(2026-09-05 #133 收敛,原 v2 形态转正、v1 退役)的 GoTry 作为既有搜索/报价/Checkout 工作台的 BFF-only typed read-action planner(边界见 §8.23)。该线不含 `Book`,不构成 M5 Entry;四 surface 真实库存与「不可订→重搜→新 CheckAvail→原 Checkout」证据尚未取得,见 D-29。
-- **Booking planner 纠偏(#282,2026-09-09)**:嵌入式 planner 保留所有非空 occupancy 房间与儿童年龄条件;缺 `adults` 继续走 schema 校验和同 session 纠偏,不做语义删除。每次 provider run(含纠偏提示)计入最多三次预算,有效纠正结果沿同一 authority path 返回,provider failure 不静默吞掉。证据限于注入 `runPort` 的离线工程 proof,不替代真实供应商库存/UAT 或 M5 gate。
 - **M3 真实证据并行线(Issue #22)**:v1 manifest、脱敏 cohort/nightly schema、确定性 scorer 与 fixture 守门已进入工程面;业务达标只接受阈值冻结的 `real_seed_cohort`,fixture 恒 fail。真实 cohort 仍为空,等待 50–200 个脱敏样本,不宣称 M3 Exit。
 - **时间感优化(2026-08-27,外部时间评测驱动)**:时间锚点层(算术进代码,LLM 查卡不自算)+ 槽位抽取 v1(逐字保留)+ 25 题评测集与评分脚本落地,ADR-11 质量层首块兑现(原定 M3,迟到的落地);真模型(deepseek-chat)25/25。slot→spec 求解桥接未做(D-10)。
 - **tsc 存量清零 + loopx RFC 专项(2026-08-27)**:`npx tsc --noEmit` 14 错清零(D-11 清偿,1bf9671);同日 loopx 13 篇架构 RFC 通读映射,产出 `rfc/loopx-inspired-upgrades-rfc.md`——**founder 当日 accepted**,四切片 S1-S4 按序落地;同指令确立**多用户 Agent as a Service** 为未来方向(claim/CAS 类机制转入 RFC §6.5 远期采纳面)。S1 tool-packet envelope(ADR-13)已落地;S2/S3/S4 依次推进(D-12)。

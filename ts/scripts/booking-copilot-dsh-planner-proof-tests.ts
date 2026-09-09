@@ -654,7 +654,7 @@ const occupancyRepairPort: DshPlannerRunPort = {
 const occupancyRepair = await createDshEmbeddedBookingPlanner({ runPort: occupancyRepairPort })
 const occupancyRepairDecision = await occupancyRepair.plannerFactory(task).next({
   task,
-  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-282-occupancy', workspace, request: { text: '请保留两个房间和各自的儿童年龄：第一间2成人1儿童6岁，第二间1儿童4岁' } },
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-282-occupancy', workspace, request: { text: '请保留两个房间和各自的儿童年龄：第一间2成人1儿童6岁，第二间1成人1儿童4岁' } },
 })
 assert.equal(occupancyRepairRuns, 2, 'missing adults triggers one counted correction call')
 assert.deepEqual(

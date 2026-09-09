@@ -707,9 +707,9 @@ export async function createDshEmbeddedBookingPlanner(
               const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned|capability_action_mismatch|surface_action_unsupported)/.test(message)
               if (!retryable) throw error
               // Self-correction: replay the concrete schema rejection into the
-              // SAME session. A blind re-prompt with identical input
-              // reproduces the identical invalid output; models repair
-              // deterministically when shown the exact rejection.
+              // SAME session. The next counted call receives the concrete
+              // rejection and can repair the invalid payload without losing
+              // any user-stated criteria.
               nextPrompt = `Your previous tool call was rejected by schema validation:\n${message.slice(0, 500)}\nEmit ONE corrected tool call that satisfies the declared parameter schema exactly. Preserve every user-stated criterion; fix only the shape.`
               continue
             }
