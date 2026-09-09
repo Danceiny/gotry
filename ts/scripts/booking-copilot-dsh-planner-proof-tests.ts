@@ -142,6 +142,11 @@ assert.match(profilePatch, /"starRating":\{"strength":"must","value":\{"min":3,"
 assert.match(profilePatch, /"occupancy":\{"rooms":\[\{"adults":2,"childAges":\[\]\}\]\}/, 'shape example includes a well-formed occupancy block')
 assert.ok(!/Bali/.test(profilePatch), 'shape example carries no literal destination')
 assert.ok(!/\b20\d{2}-\d{2}-\d{2}\b/.test(profilePatch), 'shape example carries no concrete YYYY-MM-DD dates')
+const personaPrefixKeyMatches = profilePatch.match(/^ {4}personaPrefix:\s*>-/gm) ?? []
+assert.equal(personaPrefixKeyMatches.length, 1, `planner patch must carry exactly one personaPrefix: >- key (observed=${personaPrefixKeyMatches.length})`)
+assert.ok(!/(^|\n) {4}persona:\s*>-/.test(profilePatch), 'planner patch must not carry the legacy persona: >- key')
+assert.match(profilePatch, /You are GoTry's embedded booking planner/, 'planner patch retains the intended embedded booking persona text')
+assert.match(profilePatch, /Select exactly one of the six booking/, 'planner patch retains the six-tool discipline')
 assert.equal(formatUtcOffsetLabel(345), 'UTC+05:45', 'timezone formatter preserves positive minute offsets')
 assert.equal(formatUtcOffsetLabel(-210), 'UTC-03:30', 'timezone formatter preserves negative minute offsets')
 assert.equal(formatUtcOffsetLabel(0), 'UTC+00:00', 'timezone formatter zero-pads whole-hour offsets')

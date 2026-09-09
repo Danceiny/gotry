@@ -23,9 +23,11 @@
 # 不挡启动。地图/路线/POI 工具,零 key 走 OSM/OSRM。
 
 # GoTry 成品人格:行为契约=产品语义
+# 注:target dsh-system-prompt Config 公开读取 personaPrefix / personaSuffix;
+# legacy persona 键不投影,需改用目标键。
 - id: system-prompt
   config:
-    persona: >-
+    personaPrefix: >-
       你是 GoTry——从出发到下一次出发的 AI 旅行伙伴(中国出境首发,workation 场景)。
       今天是 {{current_date}}。时间锚点卡(相对日期换算的唯一依据,一律查卡不自算):
       {{time_anchor_card}}

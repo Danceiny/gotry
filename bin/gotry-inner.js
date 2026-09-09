@@ -252,6 +252,9 @@ function projectBenchmarkPatch(raw, entryPath, configPath) {
 // can make dsh fail while assembling the first request.  Require the exact
 // source shape before replacing it; malformed or ambiguous prompt config must
 // fail closed rather than being partially interpreted.
+// Target dsh-system-prompt Config exposes only personaPrefix / personaSuffix;
+// the legacy `persona:` key does not project through. Validate against the
+// current personaPrefix key.
 function projectBenchmarkSystemPrompt(lines) {
   const rootStarts = lines.map((line, index) => /^-\s+/.test(line) ? index : -1).filter(index => index >= 0)
   const rootItems = rootStarts.map((itemStart, index) => lines.slice(itemStart, rootStarts[index + 1] ?? lines.length))
@@ -264,7 +267,12 @@ function projectBenchmarkSystemPrompt(lines) {
   while (end < lines.length && (lines[end].trim() === '' || /^\s/.test(lines[end]) || lines[end].trim().startsWith('#'))) end += 1
   const item = lines.slice(start, end)
   const configIndexes = item.map((line, index) => /^ {2}config:\s*$/.test(line) ? index : -1).filter(index => index >= 0)
-  const personaIndexes = item.map((line, index) => /^ {4}persona:\s*>-\s*$/.test(line) ? index : -1).filter(index => index >= 0)
+  const personaIndexes = item.map((line, index) => /^ {4}personaPrefix:\s*>-\s*$/.test(line) ? index : -1).filter(index => index >= 0)
+  // Reject any leftover legacy `persona:` field under config: — it would be
+  // silently dropped by the target Config and leave the kernel persona-less.
+  // The minimal kernel must project through personaPrefix only.
+  const legacyPersonaIndexes = item.map((line, index) => /^ {4}persona:\s*>-\s*$/.test(line) ? index : -1).filter(index => index >= 0)
+  if (legacyPersonaIndexes.length !== 0) throw new Error('benchmark system-prompt legacy persona key not allowed under target 0.1.5-alpha.1')
   if (configIndexes.length !== 1 || personaIndexes.length !== 1 || personaIndexes[0] <= configIndexes[0]) {
     throw new Error('benchmark system-prompt config violation')
   }
@@ -272,7 +280,7 @@ function projectBenchmarkSystemPrompt(lines) {
   const blockEnd = item.slice(persona + 1).findIndex(line => line.trim() !== '' && !/^\s{6,}/.test(line))
   const contentEnd = blockEnd < 0 ? item.length : persona + 1 + blockEnd
   if (contentEnd === persona + 1 || item.slice(persona + 1, contentEnd).some(line => line.trim() !== '' && !/^\s{6,}/.test(line))) {
-    throw new Error('benchmark system-prompt persona violation')
+    throw new Error('benchmark system-prompt personaPrefix block violation')
   }
   const before = item.slice(1, configIndexes[0]).filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
   const between = item.slice(configIndexes[0] + 1, persona).filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
@@ -281,7 +289,7 @@ function projectBenchmarkSystemPrompt(lines) {
   const replacement = [
     '- id: system-prompt',
     '  config:',
-    '    persona: >-',
+    '    personaPrefix: >-',
     '      You are GoTry, a task-agnostic travel planning assistant.',
     '      Use only the current conversation and tools available in this benchmark session.',
   ]

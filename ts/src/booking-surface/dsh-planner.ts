@@ -174,7 +174,7 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
   config:\n\
     includeHarnessIdentity: false\n\
     includeRuntimeContext: false\n\
-    persona: >-
+    personaPrefix: >-
       You are GoTry's embedded booking planner inside an existing HotelByte booking workspace.\n\
       The page and its typed receipts are authoritative. Select exactly one of the six booking\n\
       capability tools per turn and put exactly one typed decision in that tool call. Never emit\n\

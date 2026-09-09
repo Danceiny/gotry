@@ -159,7 +159,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 ./gotry web                                       # 仓内入口,与 npm 形态同 UX
 ```
 
-源码入口与 npm 包解析同一组 230 个精确直接依赖的 DSH `0.1.5-alpha.1` closure(publish preverify 拒绝漏钉、混版和 range)。源码普通运行状态落在 `ts/dsh-runtime/gotry-state/`;benchmark opt-in 与 npm 包运行用调用目录隔离。
+源码入口与 npm 包解析同一组 230 个精确直接依赖的 DSH `0.1.5-alpha.1` closure(publish preverify 拒绝漏钉、混版和 range)。源码普通运行状态落在 `ts/dsh-runtime/gotry-state/`;benchmark opt-in 与 npm 包运行用调用目录隔离。按 [issue #290](https://github.com/Danceiny/gotry/issues/290),源码与 npm 路径均通过 `personaPrefix` / `personaSuffix` 投射产品人格(legacy `persona:` 不再投影);桥 handler 按阶段结构性归类错误:`timed_out` 是 deadline 中止,`spawn_failed` 是同步 spawn 或 rejected 公开 `done`,`runner_failed` 是 resolved non-zero 退出或 resolved 之后读取 collected output 失败。
 
 ## 账号会话:授权与隐私
 

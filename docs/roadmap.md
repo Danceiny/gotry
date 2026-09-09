@@ -31,6 +31,8 @@
 
 - **DSH runtime closure 精确迁移 0.1.5-alpha.1(2026-09-09,issue #268)**:root/ts 双 manifest + npm/pnpm 双锁从 `0.1.2-alpha.3`(216 包闭包)精确迁移到 `0.1.5-alpha.1`(230 包闭包:15 新增 sentinel + 移除 `dsh-tool-subagent-report`);全部 230 个 `@deepseek-ai/dsh*` 包钉死精确版本——拒绝 `^0.1.5-alpha.1` 匹配 `0.1.5-alpha.2` 的 semver 预发布漂移;CI `npm ci --strict-peer-deps` / pnpm `--strict-peer-dependencies` 显式严格。run-all §23a-§23e 五个确定性证明（subprocess-local 仅公共 API+进程组信号终止后代 PID 消失、session V3 隔离文件字节迁移、http-proxy 回环 SSE+中毒反例、target-closure root+ts 三层 230 验证）。设置行为不变；历史 `0.1.2-alpha.3` 证据在 §9/stage1/release-notes 旧条目中保留,不批量替换。此项尚未发布 tag 或 npm 版本；这些确定性证明不构成 M5/M6 准入。
 
+- **#290 兼容注(2026-09-09)**:源码与 npm 路径通过 `personaPrefix` / `personaSuffix` 投射产品人格(legacy `persona:` 不投影);桥 handler 结构性归类错误(`timed_out` / `spawn_failed` / `runner_failed`);详见 `docs/architecture.md` §9。不宣称 release/publication、M5/M6 entry、Windows 执行或真实 supplier/HotelByte 准入。
+
 - **dsh-map-tools runtime 回归修复(2026-09-08,issue #242)**:#239 把 settings 接线改到 alpha.3 不存在的 `installSettingsSection/settingsNamespace` 导出,导致真实安装包插件 import 失败；现恢复普通 namespace 字符串 + `ctx.inject(['settings'], scope => scope.settings.installSection(...))`,并由 clean-tarball proof 覆盖 7 个 `map_*` 工具、settings watch/reload/dispose 与禁网 inline 坐标路径。
 
 - **账本 tenant scope 修复(2026-09-08,issue #224)**:ADR-16 的 `tenant_id` 一等字段从 schema/投影约束推进到事件写入、readEvents、fold 与 rebuild 的执行边界;跨租户同 `wish_id`/idem_key 不覆盖,A rebuild 不影响 B/local,跨进程 reopen 可复验。legacy JSON/JSONL 与 v1 DB 只归默认 `local`;已误写成 `local` 的非 local 历史事件不可无证据自动反推,需另行人工 data-repair issue/PR。该修复只闭合本地+Web 一套账本语义,不启封 M6 B2B 插件或 M5 写路径。
