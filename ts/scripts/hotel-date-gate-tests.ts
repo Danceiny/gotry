@@ -480,6 +480,13 @@ try {
     if (!body.includes('入住日') || !body.includes('退房日')) throw new Error(`FAIL[14]: 内容应指明需补哪些字段,实际 ${body}`)
     if (!body.includes('2026-09-18') && !body.includes('2026-09-20')) throw new Error(`FAIL[14]: 内容应给具体日期示例,实际 ${body}`)
     if (body.includes('闸拒') || body.includes('check_') || body.includes('ISO')) throw new Error(`FAIL[14]: 内容不应暴露工程词,实际 ${body}`)
+    // P2 措辞修正:presentResult 卡文案直接对用户说话,不再绕一道
+    // 「请告诉用户/请告诉 gotry/请向用户确认」转给模型;date-gate.message
+    // 里残留的字段指引也归一为直接对用户措辞,但保留日期示例等可行动细节。
+    if (!body.includes('请补充') && !body.includes('请提供')) throw new Error(`FAIL[14]: 内容应使用直接对用户措辞(请补充/请提供),实际 ${body}`)
+    if (body.includes('请告诉用户')) throw new Error(`FAIL[14]: 内容不应再含模型转手措辞「请告诉用户」,实际 ${body}`)
+    if (body.includes('请告诉 gotry')) throw new Error(`FAIL[14]: 内容不应再含模型转手措辞「请告诉 gotry」,实际 ${body}`)
+    if (body.includes('请向用户确认')) throw new Error(`FAIL[14]: 内容不应再含模型转手措辞「请向用户确认」,实际 ${body}`)
     assertNoSpawn('presentResult sanity', suite.fixtureLogPath)
     console.log('14) presentResult 闸失败卡:title「酒店:曼谷 需要入住日和退房日」+ body 给具体日期示例,无工程词 OK')
   }

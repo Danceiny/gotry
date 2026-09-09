@@ -184,6 +184,18 @@ function benchmarkPinnedPolicy(): { softMs: number; hardMs: number; exit: 'conve
   return { softMs, hardMs, exit: 'converge' }
 }
 
+/** 把 hotel-date-gate.message 里的模型转手措辞(请告诉用户 / 请告诉 gotry /
+ *  请向用户确认)归一为直接对用户措辞(请补充 / 请提供)。仅做这一类短语的字面
+ *  替换,日期示例等可行动细节保留不动;只服务 hotel_search input_required 卡
+ *  单点,不动 date-gate 契约、不动其它 presentResult 路径。 */
+function normalizeHotelGateHandoff(message: unknown): string {
+  const raw = String(message ?? '')
+  if (!raw) return ''
+  return raw
+    .replace(/请告诉\s*(?:用户|gotry)\s*/g, '请补充 ')
+    .replace(/请向用户确认/g, '请提供')
+}
+
 export function apply(ctx: Context, config: Config): void {
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
@@ -741,7 +753,9 @@ export function apply(ctx: Context, config: Config): void {
         return {
           card: 'generic',
           title: `酒店:${r.destination ?? ''} 需要${fieldText}`,
-          content: [{ type: 'text', text: `请告诉用户补充 ${fieldText}(${dateHint})后再次查询。\n${String(r.message ?? '')}` }],
+          // P2 措辞修正:直接对用户说话的句式,不再绕一道「请告诉.../请向用户确认」转给模型;
+          // gate.message 里残留的字段指引也归一为直接对用户措辞,保留日期示例等可行动细节。
+          content: [{ type: 'text', text: `请补充 ${fieldText}(${dateHint})后再次查询。\n${normalizeHotelGateHandoff(r.message)}` }],
         }
       }
       const h = r.hotels
