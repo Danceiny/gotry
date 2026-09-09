@@ -71,8 +71,11 @@ echo "=== 7c. 外部依赖自举(check-only 探测/跳过开关/postinstall 非�
 (cd ts && npx tsx scripts/bootstrap-tests.ts) || FAIL=1
 
 echo
-echo "=== 7d. hbcli 全流程端到端(隔离 STAICLI_HOME+沙箱账号真打 UAT:取票/实时通道/降级诚实/解译策略/工具面全链;无 bin 或无网 SKIP) ==="
-(cd ts && npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
+echo "=== 7d. hbcli 全流程端到端(仅 GOTRY_HBCLI_LIVE=1 显式启用真实 UAT;默认零 binary/网络/凭证探测) ==="
+(cd ts && GOTRY_HBCLI_LIVE="${GOTRY_HBCLI_LIVE:-0}" npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
+
+echo "=== 7e. hbcli live opt-in 隔离证明(可发现 fixture + blocked network:默认 binary=0/network=0/credential=0) ==="
+(cd ts && npx tsx scripts/hbcli-live-optin-tests.ts) || FAIL=1
 
 echo
 echo "=== 8. 进程护栏(D-NEW,incident-log + uncaughtException 写盘 + guardToolExecute 异常隔离,3 断言) ==="
@@ -115,8 +118,8 @@ echo "=== 16. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 (cd ts && npx tsx scripts/diff-test.ts | tail -1) || FAIL=1
 
 echo
-echo "=== 17. hotelbyte-skills 契约对齐(有凭证真校验,离线 SKIP) ==="
-(cd ts && npx tsx scripts/skills-contract-tests.ts) || FAIL=1
+echo "=== 17. hotelbyte-skills 契约对齐(本地描述离线校验;远端读取仅 GOTRY_HOTELBYTE_SKILLS_LIVE=1) ==="
+(cd ts && GOTRY_HOTELBYTE_SKILLS_LIVE="${GOTRY_HOTELBYTE_SKILLS_LIVE:-0}" npx tsx scripts/skills-contract-tests.ts) || FAIL=1
 
 echo
 echo "=== 18. T1 记忆合并守门(M4,纯函数:追加不删史/P0 权重校验/幂等) ==="

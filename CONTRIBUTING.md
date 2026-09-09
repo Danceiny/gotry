@@ -48,7 +48,21 @@ GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh   # 末行必须含 ALL SUITES G
 
 每个 PR 描述都要贴**最终 SHA** 上的命令、exit code 和关键末行。CI 在 Node 22/24 跑 typecheck + 全栈回归，并在 Node 22/24/26 跑 focused dist 兼容闸；它只能补充本地证据,不能替代本地最终 SHA 复跑。
 
-天气回归使用受控 deterministic fixture；真实 Open-Meteo/Nominatim 仅属可变外围观测，不决定 merge gate。OpenSky/FlyAI 等 live 通道离线或被限流时对应套件有降级断言；会话面 live 嗅探默认可用 `GOTRY_SESSION_LIVE=0` 关闭。
+天气回归使用受控 deterministic fixture；真实 Open-Meteo/Nominatim 仅属可变外围观测，不决定 merge gate。OpenSky/FlyAI 等 live 通道离线或被限流时对应套件有降级断言；会话面 live 嗅探默认可用 `GOTRY_SESSION_LIVE=0` 关闭。HotelByte 供应商 UAT 不受该开关控制，默认离线且不探测本机 `hbcli` 或凭证。
+
+HotelByte 离线回归（默认包含在全栈入口）:
+
+```bash
+GOTRY_HBCLI_LIVE=0 ./scripts/run-all-tests.sh
+```
+
+真实 UAT 只在明确授权的环境运行（会使用隔离临时凭证面并请求 HotelByte UAT，不属于默认回归）:
+
+```bash
+cd ts && GOTRY_HBCLI_LIVE=1 npx tsx scripts/hbcli-e2e-tests.ts
+```
+
+`GOTRY_HOTELBYTE_SKILLS_LIVE=1` 仅启用 §17 的远端 `hotelbyte-skills` 契约读取；未设置、`0` 或其他值只跑本地工具描述契约，不读取 GitHub keychain。`GOTRY_SESSION_LIVE` 不会打开 HotelByte UAT。
 
 单独跑某个套件:
 

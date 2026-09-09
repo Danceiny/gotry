@@ -17,7 +17,7 @@
  * 查询返回业务层 404——通道/鉴权/搜索编排(供应商 provenance+correlationId)均
  * 真实工作,故断言「通道真实性 + 降级诚实性」而非「有库存返回」。
  *
- * 运行: cd ts && npx tsx scripts/hbcli-e2e-tests.ts
+ * 运行(显式 UAT opt-in): cd ts && GOTRY_HBCLI_LIVE=1 npx tsx scripts/hbcli-e2e-tests.ts
  */
 
 import { spawnSync } from 'node:child_process'
@@ -65,6 +65,13 @@ async function uatReachable(): Promise<boolean> {
 }
 
 async function main(): Promise<void> {
+  // This guard must stay before guidance-dependent probes, binary discovery,
+  // network reachability, STAICLI_HOME setup, and every credential operation.
+  // GOTRY_SESSION_LIVE intentionally does not control this supplier path.
+  if (process.env.GOTRY_HBCLI_LIVE !== '1') {
+    console.log('SKIP: HotelByte UAT 已关闭(默认离线);如需真实 UAT 请显式设置 GOTRY_HBCLI_LIVE=1——本路径未探测 hbcli/网络/凭证')
+    return
+  }
   console.log(GUIDANCE.join('\n'))
   const bin = probeBin()
   if (!bin) {
