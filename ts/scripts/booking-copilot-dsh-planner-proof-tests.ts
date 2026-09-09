@@ -450,9 +450,11 @@ const foreignOfferWorkspace = {
   ...workspace,
   loadedOffers: [{ offerRef: "offer-ui-1", offerVersionRef: "offerv-ui-1", hotelRef: "hotel-ui-9", evidenceLevel: "rate_loaded" as const, factRefs: [] }],
 }
+let uiOffersRuns = 0
 const uiOffersPort: DshPlannerRunPort = {
   async run(prompt) {
-    assert.ok(prompt.includes("hotel-ui-9"), "workspace loadedOffers reach the planner payload")
+    uiOffersRuns += 1
+    if (uiOffersRuns === 1) assert.ok(prompt.includes("hotel-ui-9"), "workspace loadedOffers reach the planner payload")
     return { finalResponse: "", events: [] }
   },
   async close() {},
@@ -594,5 +596,129 @@ assert.deepEqual(
   'index-keyed rooms object becomes an ordered array with the empty room dropped and empty childAges normalized to []',
 )
 
-await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close(), indexKeyedRooms.close()])
+// Regression for #282: a non-empty room that carries child ages but omits
+// adults is a semantic validation failure, not disposable representation.
+// The provider must repair that room in the next counted session call.
+let occupancyRepairRuns = 0
+const occupancyRepairPort: DshPlannerRunPort = {
+  async run(prompt) {
+    occupancyRepairRuns += 1
+    if (occupancyRepairRuns === 1) {
+      return {
+        finalResponse: '',
+        events: [{
+          type: 'tool/call',
+          data: {
+            name: 'booking_search_hotels',
+            arguments: JSON.stringify({
+              decision: {
+                kind: 'operation',
+                action: {
+                  ...searchRun,
+                  kind: 'search.patch',
+                  actionId: 'action-dsh-282-occupancy-invalid',
+                  reason: 'Preserve both requested rooms and their child ages.',
+                  input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } },
+                },
+              },
+            }),
+          },
+        }],
+      }
+    }
+    assert.match(prompt, /schema validation/, 'occupancy correction is sent as the next counted prompt')
+    return {
+      finalResponse: '',
+      events: [{
+        type: 'tool/call',
+        data: {
+          name: 'booking_search_hotels',
+          arguments: JSON.stringify({
+            decision: {
+              kind: 'operation',
+              action: {
+                ...searchRun,
+                kind: 'search.patch',
+                actionId: 'action-dsh-282-occupancy-valid',
+                reason: 'Preserve both requested rooms and their child ages.',
+                input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } },
+              },
+            },
+          }),
+        },
+      }],
+    }
+  },
+  async close() {},
+}
+const occupancyRepair = await createDshEmbeddedBookingPlanner({ runPort: occupancyRepairPort })
+const occupancyRepairDecision = await occupancyRepair.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-282-occupancy', workspace, request: { text: '请保留两个房间和各自的儿童年龄：第一间2成人1儿童6岁，第二间1成人1儿童4岁' } },
+})
+assert.equal(occupancyRepairRuns, 2, 'missing adults triggers one counted correction call')
+assert.deepEqual(
+  occupancyRepairDecision[0]?.kind === 'operation' ? occupancyRepairDecision[0].action.input : undefined,
+  { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } },
+  'corrected occupancy preserves both non-empty rooms and child criteria',
+)
+
+// A prose-only first response receives the same bounded correction treatment
+// as a malformed typed call; a valid second response is returned immediately.
+let proseRecoveryRuns = 0
+const proseRecoveryPort: DshPlannerRunPort = {
+  async run(prompt) {
+    proseRecoveryRuns += 1
+    if (proseRecoveryRuns === 1) return { finalResponse: '我会为你搜索酒店。', events: [] }
+    assert.match(prompt, /no booking capability tool call/, 'prose correction is sent as the next counted prompt')
+    return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: searchRun } }) } }] }
+  },
+  async close() {},
+}
+const proseRecovery = await createDshEmbeddedBookingPlanner({ runPort: proseRecoveryPort })
+const proseRecoveryDecision = await proseRecovery.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-282-prose', workspace, request: { text: 'Find hotels' } },
+})
+assert.equal(proseRecoveryRuns, 2, 'prose correction uses the second counted call')
+assert.deepEqual(proseRecoveryDecision, [{ kind: 'operation', action: searchRun }], 'valid correction is returned instead of discarded')
+
+// Repeated malformed responses stop at the three-call budget. A provider
+// failure propagates on the first call instead of being silently swallowed.
+let malformedRuns = 0
+const malformedPort: DshPlannerRunPort = {
+  async run() {
+    malformedRuns += 1
+    return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, input: { patch: { occupancy: { rooms: [{ childAges: [4] }] } } } } } }) } }] }
+  },
+  async close() {},
+}
+const malformed = await createDshEmbeddedBookingPlanner({ runPort: malformedPort })
+await assert.rejects(
+  malformed.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-282-malformed', workspace, request: { text: 'Find hotels' } } }),
+  /planner_invalid_action/,
+  'repeated malformed output fails closed',
+)
+assert.equal(malformedRuns, 3, 'repeated malformed output consumes exactly three calls')
+
+let providerRuns = 0
+const providerErrorPort: DshPlannerRunPort = {
+  async run() {
+    providerRuns += 1
+    if (providerRuns === 1) {
+      return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, input: { patch: { occupancy: { rooms: [{ childAges: [4] }] } } } } } }) } }] }
+    }
+    throw new Error('provider_transport_failure')
+  },
+  async close() {},
+}
+const providerError = await createDshEmbeddedBookingPlanner({ runPort: providerErrorPort })
+await assert.rejects(
+  providerError.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-282-provider', workspace, request: { text: 'Find hotels' } } }),
+  /provider_transport_failure/,
+  'provider failures remain visible to the caller',
+)
+assert.equal(providerRuns, 2, 'provider failures on a counted correction are not silently swallowed or retried')
+
+await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close(), indexKeyedRooms.close(), occupancyRepair.close(), proseRecovery.close(), malformed.close(), providerError.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')

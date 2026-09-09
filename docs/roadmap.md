@@ -23,6 +23,7 @@
 > 以下均为**工程面交付,不构成任何里程碑 Exit 证据**(D-20 口径)。
 
 - **#271 Phase A 进程事故观察(2026-09-09)**:GoTry-owned `uncaughtExceptionMonitor` 记录 uncaught/rejection 并保留宿主 fatal 退出语义；single-fd append+fsync+close writer 失败返回 `false`；native Node24 ESM dist 反例覆盖 monitor/no-monitor、既有 host handler、fsync/close 与工具结构化失败。child close/spawn error、SIGINT、后代进程与上游 dsh supervisor 仍为开放 TODO，不改变 M3/M4-M6 真实证据 gate。
+- **#282 Booking planner 纠偏(2026-09-09)**:planner 保留非空 occupancy 房间与 childAges,缺 `adults` 交给 schema 纠偏;每次 run(含纠偏)均计入最多三次调用,有效 correction 立即返回,provider error 不静默吞掉。focused proof 是注入 runPort 的工程证据,不改变 M3/M4-M6 或真实 Booking UAT gate。
 
 - **Node 26 dist 构建兼容闸(2026-09-09,issue #265)**:支持下界保持 `>=22.15.0`;根构建脚本用精确 TypeScript 5.9.3 生成 ESM,focused CI 在 Node 22/24/26 核对 exact dist/资产/关键 import,Node 22/24 继续承担 typecheck + 全栈回归。该项仅属 M4 开源/发布质量线,不计入 #20 的真实 repeat-cohort,不满足 #136 的供应协议/内部授权或 #137 的 P6 批准与真实试点；三项真实证据 gate 仍开放。
 
