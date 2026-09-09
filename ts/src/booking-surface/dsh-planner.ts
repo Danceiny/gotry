@@ -117,8 +117,10 @@ export function buildDshPlannerEnvironment(
   for (const key of passthrough) if (source[key]) target[key] = source[key]!
   const apiKey = source.DEEPSEEK_API_KEY ?? source.LLM_API_KEY
   const baseUrl = source.DEEPSEEK_BASE_URL ?? source.LLM_BASE_URL
+  const model = source.DEEPSEEK_MODEL ?? source.LLM_MODEL
   if (apiKey) target.DEEPSEEK_API_KEY = apiKey
   if (baseUrl) target.DEEPSEEK_BASE_URL = baseUrl
+  if (model) target.DEEPSEEK_MODEL = model
   return target
 }
 
@@ -185,7 +187,11 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
       processCwd: options.stateRoot ?? process.cwd(),
       cwd: options.stateRoot ?? process.cwd(),
       provider: options.provider ?? 'deepseek-official',
-      model: options.model ?? 'glm-4.6',
+      // Model must follow the operator-configured env (DEEPSEEK_MODEL / LLM_MODEL)
+      // instead of a hardcoded default: providers without a glm-4.6 mapping
+      // (e.g. MiniMax official) reject the hardcoded name and the DSH loop then
+      // yields no decisions at all (PLANNER_TYPED_DECISION_REQUIRED).
+      model: options.model ?? childEnv.DEEPSEEK_MODEL ?? 'glm-4.6',
       maxTokens: options.maxTokens ?? 4_096,
       env: childEnv,
       ...(options.dshBin ? { dshBin: options.dshBin } : {}),
