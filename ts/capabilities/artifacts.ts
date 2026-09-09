@@ -13,6 +13,7 @@
  * 文本类(md/txt/json/jsonl/csv/log/yaml/yml)——本工具是「产物查看」,不是通用文件浏览器。
  */
 
+import { createHash } from 'node:crypto'
 import { readdir, readFile, realpath, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join, resolve, sep } from 'node:path'
@@ -37,6 +38,8 @@ export interface ArtifactReadView {
   lines: Array<{ number: number; text: string }>
   totalLines: number
   lang?: string
+  /** Short content fingerprint shown by the Web Client to distinguish refreshes. */
+  version: string
   content: string
   windowed: boolean
 }
@@ -248,6 +251,7 @@ export async function readArtifact(opts: {
     lines: slice.map((t, i) => ({ number: offset + i, text: t })),
     totalLines: allLines.length,
     lang: TEXT_EXT_LANG[ext] ?? 'text',
+    version: createHash('sha256').update(text).digest('hex').slice(0, 12),
     content: slice.join('\n'),
     windowed: allLines.length > offset - 1 + slice.length,
   }

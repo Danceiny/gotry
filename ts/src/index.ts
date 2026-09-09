@@ -1790,7 +1790,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content ?? JSON.stringify(value).slice(0, 600)) }],
       presentationMeta: (_args, value) => {
-        const r = value as { path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; source?: string }
+        const r = value as { path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; source?: string; version?: string }
         return {
           path: String(r.path ?? ''),
           offset: r.offset ?? 1,
@@ -1798,6 +1798,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
           totalLines: r.totalLines ?? 0,
           ...(r.lang ? { lang: r.lang } : {}),
           ...(r.source ? { source: r.source } : {}),
+          ...(r.version ? { version: r.version } : {}),
         }
       },
     },

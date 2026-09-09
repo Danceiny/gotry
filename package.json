@@ -6,6 +6,7 @@
   "main": "ts/src/index.ts",
   "exports": {
     ".": "./ts/src/index.ts",
+    "./client": "./client/client.js",
     "./booking-surface": {
       "types": "./ts/src/booking-surface/index.ts",
       "import": "./dist/src/booking-surface/index.js",
@@ -38,8 +39,17 @@
     "gotry": "bin/gotry-inner.js",
     "gotry-booking-copilot": "bin/gotry-booking-copilot.js"
   },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-tool"
+      ]
+    }
+  },
   "files": [
     "dist/",
+    "client/",
     "data/*.json",
     "bin/",
     "ts/src/index.ts",
