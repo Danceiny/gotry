@@ -49,9 +49,10 @@ dsh plugin --profile web add github:HorusJiang/dsh-map-tools
 
 > **GoTry vendored patch notice**: this directory preserves the upstream
 > `dsh-map-tools@0.5.1` MIT provenance, but GoTry's vendored adaptation is
-> evidenced only against the root-locked **DeepSeek Harness 0.1.2-alpha.3**
-> closure. Its settings wiring uses alpha.3's published
-> `SettingsProvider.prototype.installSection` method plus a plain string namespace;
+> evidenced only against the root-locked **DeepSeek Harness 0.1.5-alpha.1**
+> closure (0.1.2-alpha.3 historically compatible too). Its settings wiring uses
+> the `SettingsProvider.prototype.installSection` method plus a plain string namespace
+> (both published in 0.1.2-alpha.3 and 0.1.5-alpha.1);
 > this is not an upstream compatibility claim for other Harness releases.
 
 Restart `dsh web` after install (or wait for HMR), then use the `map_*` tools in a session.

@@ -248,9 +248,10 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
   //    这类插件在 cordis patch 里是占位行,bin/gotry-inner.js 运行时解析——**解析失败整块
   //    静默剔除,不挡启动**:模型只觉得「没有这个工具」,没人告诉它为什么。doctor 把两态照亮。
   //    候选清单与 bin 解析逻辑同口径(map:tarball vendor 优先→runtime workspace→npm 提升解析;
-  //    ask-user:dsh 闭包上下文解析)。map 不能进 npm 依赖:其 peerDependencies 要求
-  //    dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族在 npm 严格
-  //    peer 解析下 ERESOLVE——依赖形态会弄坏 npx 主安装路径,故随包 vendor 分发。
+  //    ask-user:dsh 闭包上下文解析)。map 保持随包 vendor 分发而非 npm 依赖:历史上游
+  //    peerDependencies 要求 dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族
+  //    在 npm 严格 peer 解析下 ERESOLVE;当前锁定 0.1.5-alpha.1 家族,vendored 副本已对齐
+  //    0.1.5-alpha.1,继续以 vendor 形态复用适配补丁,避免弄坏 npx 主安装路径。
   const rootRequire = createRequire(join(repoRoot, 'package.json'))
   const mapCandidates = [
     join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js'),

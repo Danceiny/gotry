@@ -49,16 +49,16 @@
   "homepage": "https://github.com/HorusJiang/dsh-map-tools#readme",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-settings": "0.1.2-alpha.3",
-    "@deepseek-ai/dsh-tools": "0.1.2-alpha.3"
+    "@deepseek-ai/dsh-settings": "0.1.5-alpha.1",
+    "@deepseek-ai/dsh-tools": "0.1.5-alpha.1"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.2"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-settings": "0.1.2-alpha.3",
-    "@deepseek-ai/dsh-tools": "0.1.2-alpha.3",
+    "@deepseek-ai/dsh-settings": "0.1.5-alpha.1",
+    "@deepseek-ai/dsh-tools": "0.1.5-alpha.1",
     "@deepseek-ai/schemastery": "^3.18.2",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0",
@@ -76,7 +76,8 @@
     },
     "compatibility": {
       "dshReleases": {
-        "0.1.2-alpha.3": "compatible"
+        "0.1.2-alpha.3": "compatible",
+        "0.1.5-alpha.1": "compatible"
       }
     }
   },

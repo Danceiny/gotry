@@ -146,6 +146,19 @@ echo
 echo "=== 23b. 发布前离线预验证(pack→解 tarball→依赖声明完整→入口文件→import 面静态检查;rc.9 教训的永久闸;原误标 25 与会话面重号,当日修正) ==="
 (cd ts && npx tsx scripts/publish-preverify.ts) || FAIL=1
 (cd ts && npx tsx scripts/dsh-runtime-closure-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/dsh-target-closure-proof.ts) || FAIL=1
+
+echo
+echo "=== 23c. Session V3 确定性迁移证明(#268:隔离临时目录文件字节——V2 编解码器编码→JSONL 写盘→catalog 读盘分类 migration-required→V3 恢复→独立 V3 继任者写盘→validation:current 完全解码→迁移后源文件字节比较不变) ==="
+(cd ts && npx tsx scripts/dsh-session-v3-migration-proof.ts) || FAIL=1
+
+echo
+echo "=== 23d. dsh-subprocess-local 确定性证明(#268:仅公共 API 挂载 Cordis/provider+真实活跃父进程 spawn 非分离子进程+收集 stdout 观察 CHILD_PID+公共 terminate/waitForExit+进程组信号终止整组→子进程 PID 消失+真实 PTY 输出+node-pty spawn-helper 0755;平台中立,不调用私有方法,不传整个环境变量) ==="
+(cd ts && npx tsx scripts/dsh-subprocess-local-proof.ts) || FAIL=1
+
+echo
+echo "=== 23e. dsh-http-proxy 本地 SSE + 中毒代理反例(#268:真实 fetch 回环 SSE=200+中毒命中=0+proxyRouteFor 回环直接/非回环代理+proxyEnvironmentForChild NODE_USE_ENV_PROXY/NO_PROXY+finally await disposer+await 两服务器关闭+全局路由恢复直接) ==="
+(cd ts && npx tsx scripts/dsh-http-proxy-sse-proof.ts) || FAIL=1
 
 echo
 echo "=== 24. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
