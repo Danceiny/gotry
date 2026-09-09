@@ -11,6 +11,7 @@
  *  5) 行号窗口:offset/limit 行号正确
  *  6) 越界路径:ok:false + error 含「越界」
  *  7) symlink 越界:ok:false
+ *  7b) 裸工单 id symlink/超大 deliverable:仍经过 canonical/root/size 护栏
  *  8) 不支持扩展名:.db → ok:false + error 含「不支持的文件类型」
  *  9) 不存在文件:ok:false
  *  10) 超大文件:>2MB → ok:false
@@ -140,6 +141,31 @@ const cwd = mkdtempSync(join(tmpdir(), 'gotry-artifacts-cap-cwd-'))
     }
   } catch { /* 非 POSIX fs 跳过 */ }
   console.log('7) symlink 越界 OK')
+}
+
+// 7b) 裸工单 id 的兼容文件视图也必须经过同一组 canonical/root/size 护栏。
+{
+  mkdirSync(join(stateRoot, 'gotry-state', 'async'), { recursive: true })
+  const bareLink = join(stateRoot, 'gotry-state', 'async', 'evil.deliverable.md')
+  let bareLinkCreated = false
+  try {
+    symlinkSync('/etc/hosts', bareLink)
+    bareLinkCreated = true
+  } catch { /* 非 POSIX fs 跳过 */ }
+  if (bareLinkCreated) {
+    const r = await readArtifact({ stateRoot, cwd, path: 'evil' })
+    assert.equal(r.ok, false, '裸工单 id symlink 指向 root 外时必须被拒')
+    if (!r.ok) assert.ok(r.error.includes('越界'), `裸工单 id symlink 越界错误应含「越界」,实际 ${r.error}`)
+  }
+
+  const bareBig = join(stateRoot, 'gotry-state', 'async', 'oversized.deliverable.md')
+  writeFileSync(bareBig, 'x'.repeat(2 * 1024 * 1024 + 1))
+  const oversized = await readArtifact({ stateRoot, cwd, path: 'oversized' })
+  assert.equal(oversized.ok, false, '裸工单 id 超大文件必须被拒')
+  if (!oversized.ok) assert.ok(oversized.error.includes('过大'), `裸工单 id 超大错误应含「过大」,实际 ${oversized.error}`)
+  rmSync(bareLink, { force: true })
+  rmSync(bareBig, { force: true })
+  console.log('7b) 裸工单 id symlink/超大 deliverable 护栏 OK')
 }
 
 // 8) 不支持扩展名

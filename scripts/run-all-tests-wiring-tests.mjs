@@ -33,6 +33,12 @@ assert.ok(
   executableLines.includes('(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/session-tests.ts) || FAIL=1'),
   'the active full-suite command must default optional live session probes off',
 )
+for (const artifactSuite of ['artifact-client-contract-tests.ts', 'artifacts-capability-tests.ts', 'dsh-artifact-e2e.ts']) {
+  assert.ok(
+    executableLines.includes(`(cd ts && npx tsx scripts/${artifactSuite}) || FAIL=1`),
+    `${artifactSuite} must be registered in the deterministic full suite`,
+  )
+}
 assert.match(
   script,
   /npx --yes --package=pnpm@11\.5\.0 pnpm --dir "\$package_e2e_install_dir" add/,

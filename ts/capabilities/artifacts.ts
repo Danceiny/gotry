@@ -206,7 +206,21 @@ export async function readArtifact(opts: {
       filePath = asyncDeliverablePath(root, raw)
     } else {
       const p = asyncDeliverablePath(root, raw)
-      if (existsSync(p)) { filePath = p; text = await readFile(p, 'utf-8') }
+      const canonical = await realpath(p).catch(() => null)
+      if (canonical) {
+        if (!underRoot(canonical, canonicalRoot) || hasDeniedSegment(canonical)) {
+          return { ok: false, error: `路径越界:${raw}`, hint: `只读 ${root} 与 dsh 工作目录内的文本产物` }
+        }
+        const ext = canonical.slice(canonical.lastIndexOf('.') + 1).toLowerCase()
+        if (!TEXT_EXT_LANG[ext]) {
+          return { ok: false, error: `不支持的文件类型 .${ext}`, hint: `白名单:${Object.keys(TEXT_EXT_LANG).join('/')}` }
+        }
+        const st = await stat(canonical).catch(() => null)
+        if (!st?.isFile()) return { ok: false, error: `文件不存在:${raw}`, hint: '先 gotry_artifacts_list 看在册产物' }
+        if (st.size > MAX_BYTES) return { ok: false, error: `文件过大(${st.size} bytes > ${MAX_BYTES})` }
+        filePath = canonical
+        text = await readFile(canonical, 'utf-8')
+      }
     }
     if (text === null) return { ok: false, error: `工单 ${raw} 无 deliverable(未交付或不存在)`, hint: '先 gotry_artifacts_list 看在册产物' }
   }
