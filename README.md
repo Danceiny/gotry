@@ -80,7 +80,7 @@ The GoTry plugin exposes its tools in groups (the exact count lives in the code 
 | | `gotry_weather_check` | Open-Meteo forecast ≤16 d + historical climate baseline |
 | | `gotry_flight_verify` | OpenSky ADS-B live flight observation (three-valued) |
 | | `gotry_skeleton_check` | OpenFlights 168-hub-pair connectivity (three-valued) |
-| **Inventory & catalog** | `gotry_hotel_search` | hotel-byte realtime bridge, degrades to static pack (tagged) |
+| **Inventory & catalog** | `gotry_hotel_search` | hotel-byte realtime bridge (requires valid check-in/check-out dates and asks for missing dates), with clearly labeled static results when the supplier is unavailable |
 | | `gotry_anything_search` | mixed city/hotel/POI catalog (hotel-be Anything) |
 | **Decision engine** | `gotry_feasibility_check` | Door-to-door true-cost feasibility (Z3), per-candidate verdicts |
 | **Memory & reachability** | `gotry_motivation_save` | Persist motivation profile (evidence mandatory, anti-fabrication) |
