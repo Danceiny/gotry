@@ -158,7 +158,7 @@ interface RetryWorld {
   close(): Promise<void>
 }
 
-async function startWorld(sequence: readonly ResponseSpec[], policy: ResolvedNormalRetryPolicy, timeoutMs = 40): Promise<RetryWorld> {
+async function startWorld(sequence: readonly ResponseSpec[], policy: ResolvedNormalRetryPolicy, timeoutMs = 1000): Promise<RetryWorld> {
   const fixture = await startProviderFixture()
   fixture.setSequence(sequence)
   const ctx = new Context()
@@ -207,6 +207,13 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 500): Promise<voi
   const deadline = Date.now() + timeoutMs
   while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 2))
   assert.ok(predicate(), `condition did not settle within ${timeoutMs}ms`)
+}
+
+async function settleWithin<T>(promise: Promise<T>, timeoutMs = 2500): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`agent did not settle within ${timeoutMs}ms`)), timeoutMs)),
+  ])
 }
 
 type Terminal = 'completed' | 'error' | 'cancelled'
@@ -266,7 +273,7 @@ async function finite429Proof(): Promise<void> {
 }
 
 async function timeoutTerminalProof(): Promise<void> {
-  const world = await startWorld([{ kind: 'failure', code: 'TIMEOUT' }], normalPolicy({ maxRetries: 1 }), 20)
+  const world = await startWorld([{ kind: 'failure', code: 'TIMEOUT' }], normalPolicy({ maxRetries: 1 }), 200)
   try {
     const terminal = await runAgentTurn(world)
     assert.equal(terminal, 'error')
@@ -303,8 +310,8 @@ async function cancelBackoffProof(): Promise<void> {
     const run = runAgentTurn(world)
     await waitUntil(() => world.fixture.requestCount === 1 && retryEvents(world).length === 1)
     world.agent.cancel({ kind: 'user' }, { keepInbox: true })
-    assert.equal(await run, 'cancelled')
-    await new Promise(resolve => setTimeout(resolve, 150))
+    assert.equal(await settleWithin(run), 'cancelled')
+    await new Promise(resolve => setTimeout(resolve, 2000))
     assert.equal(world.fixture.requestCount, 1, 'abort during backoff prevents every follow-up request')
     assert.equal(eventsOf(world).filter(event => event.type === 'llm/retry-started').length, 0)
     console.log(`OK issue-289 host cancel requests=${world.fixture.requestCount} started=0 terminal=cancelled`)
