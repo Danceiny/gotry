@@ -7,7 +7,8 @@
  * the sole executor after the parent adapter validates the canonical action.
  */
 
-import { dshBookingActionSchemaForKind } from './canonical-schema.js'
+import Ajv2020 from 'ajv/dist/2020.js'
+import { canonicalBookingSurfaceSchema, dshBookingActionSchemaForKind } from './canonical-schema.js'
 
 export const name = 'gotry-embedded-booking'
 export const inject = ['tools']
@@ -50,6 +51,12 @@ function toolDefinition(toolName, capabilityId, actionKinds) {
     kind: { type: 'string', const: 'operation' },
     action: { oneOf: actionKinds.map(actionSchema) },
   })
+  const parameters = closedObject({
+    decision: {
+      oneOf: [operationDecision, questionDecision, explanationDecision, terminalDecision, errorDecision],
+    },
+  })
+  const validateArgs = new Ajv2020({ allErrors: true, strict: false }).compile(parameters)
   return Object.freeze({
     name: toolName,
     description: `Emit exactly one typed ${capabilityId} decision for the existing Booking workspace. This capability never books, pays, edits holder/guest data, or calls a supplier.`,
@@ -69,6 +76,15 @@ function toolDefinition(toolName, capabilityId, actionKinds) {
       },
     },
     async execute(args) {
+      // Native self-correction boundary: when the model's tool call violates
+      // the canonical decision schema, throw with the exact Ajv errors. The
+      // dsh agent loop feeds tool failures back to the model as tool results,
+      // so the model repairs its own shape inside the same turn — no schema
+      // knowledge duplicated outside this plugin.
+      if (!validateArgs(args)) {
+        const errors = (validateArgs.errors ?? []).map((e) => `${e.instancePath || '/'}: ${e.message}`).join('; ')
+        throw new Error(`decision_schema_violation: ${errors}`)
+      }
       const decision = args.decision
       return {
         accepted: true,
