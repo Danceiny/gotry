@@ -149,6 +149,11 @@ echo "=== 23b. 发布前离线预验证(pack→解 tarball→依赖声明完整�
 (cd ts && npx tsx scripts/dsh-target-closure-proof.ts) || FAIL=1
 
 echo
+echo "=== 23a. Issue #289 DSH model-request retry contracts + native loopback request proof ==="
+(cd ts && npx tsx scripts/issue-289-model-retry-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/issue-289-model-retry-real-tests.ts) || FAIL=1
+
+echo
 echo "=== 23c. Session V3 确定性迁移证明(#268:隔离临时目录文件字节——V2 编解码器编码→JSONL 写盘→catalog 读盘分类 migration-required→V3 恢复→独立 V3 继任者写盘→validation:current 完全解码→迁移后源文件字节比较不变) ==="
 (cd ts && npx tsx scripts/dsh-session-v3-migration-proof.ts) || FAIL=1
 
