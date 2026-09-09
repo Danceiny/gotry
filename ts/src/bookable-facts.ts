@@ -574,11 +574,15 @@ export function renderConnection(legA: FlightFact, legB: FlightFact): string {
 /**
  * 政策事实行:恒为「截至 as_of 的现行政策」表述 + 复核 gate,永不用无条件 ✓。
  * 远期(出发日晚于 as_of)必须附 review_by(默认 D-30)。
+ *
+ * 行尾内嵌 `<!-- fact:<fact_id> -->` 锚点(issue #273,ADR-19 typed-anchor 单向生成):
+ * 产物经渲染原语生成即自带溯源锚,闸侧锚点确定性回溯;手改/伪造锚点 = fact_anchor_unknown。
+ * 与 renderFlightFact / renderHotelFact 同源:启发式 POLICY_WORD 仅覆盖手写/历史产物。
  */
 export function renderPolicyFact(p: PolicyFact, tripStart?: string): string {
   const review = p.review_by ?? (tripStart ? defaultReviewBy(tripStart) : undefined)
   const reviewNote = review ? `;远期政策须复核——到 ${review} 再核验一次` : ''
-  return `- ${p.subject}:截至 ${p.as_of} 的现行政策——${p.statement}${reviewNote} [${p.source}@${p.fetched_at} #${p.query_id}]`
+  return `- ${p.subject}:截至 ${p.as_of} 的现行政策——${p.statement}${reviewNote} [${p.source}@${p.fetched_at} #${p.query_id}] <!-- fact:${p.fact_id} -->`
 }
 
 /** 从结构化行程渲染夜数口径行(机器反算,唯一口径) */

@@ -14,7 +14,9 @@
     "http://127.0.0.1:8793/*",
     "http://127.0.0.1:8794/*",
     "http://127.0.0.1:8795/*",
-    "https://*.ctrip.com/*"
+    "https://*.ctrip.com/*",
+    "https://*.dida.com/*",
+    "https://dida.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -25,7 +27,8 @@
         "https://flights.ctrip.com/*",
         "https://hotels.ctrip.com/*",
         "https://kyfw.12306.cn/*",
-        "https://www.12306.cn/*"
+        "https://www.12306.cn/*",
+        "https://portal.dida.com/*"
       ],
       "js": [
         "content-main.js"
@@ -38,7 +41,8 @@
         "https://flights.ctrip.com/*",
         "https://hotels.ctrip.com/*",
         "https://kyfw.12306.cn/*",
-        "https://www.12306.cn/*"
+        "https://www.12306.cn/*",
+        "https://portal.dida.com/*"
       ],
       "js": [
         "content-bridge.js"

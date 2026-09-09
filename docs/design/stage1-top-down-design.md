@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-10 起,#284 `gotry_doctor action=repair` 形成诊断→item 范围计划→会话 scope 审批→既有 bootstrap 幂等安装器→实际复检链;拒绝/取消/无审批通道零执行,user-action/unavailable 不越权,侧栏报告写复检态。隔离 fixture 工具 E2E 属 M4 UX 工程证据,不计入 #20 真实 repeat cohort 或 M5/M6 gate。
 - 2026-09-09 起,#283 酒店日期闸复用共享 `parseAbsoluteDate` 的真实日历校验,并在酒店消费边界拒缺失日期、溢出和错误顺序；失败不 dispatch 并返回 `input_required`。权威说明见 `docs/architecture.md` §1.2/§10 D-36 与 issue #283；该隔离工程证据不构成真实供应商准入。
 - 2026-09-09 起,#290 公开契约兼容:persona 经 `personaPrefix` / `personaSuffix` 投射(legacy `persona:` 不投影);桥 handler 结构性归类(`timed_out` / `spawn_failed` / `runner_failed`);详见 `docs/architecture.md` §9。不宣称 release/publication、M5/M6 entry、Windows 执行或真实 supplier/HotelByte 准入。
 - 2026-09-09 起,#271 Phase A 进程事故观察：GoTry-owned `uncaughtExceptionMonitor` 按 origin 写 durable incidents JSONL，宿主保持 fatal handler/退出裁决；native Node24 ESM dist 反例覆盖 writer fsync/close、monitor/no-monitor、host handler 与结构化工具失败。child close/spawn error、SIGINT、后代进程和上游 dsh supervisor 仍为开放 TODO。
@@ -17,8 +18,10 @@
 - 2026-09-05 起,指标面板第一切片(issue #138):`build-metrics-report.ts` 只读聚合既有侧车(事实闸 verdict 分布与 blocked 率/通道健康/事故面/桥延迟 >500ms 复审锚点/账本与 doctor 报告存在性)成单一 markdown;工程面,不构成 M3 Exit 证据(归 #22)。
 - 2026-09-05 起,政策事实生产端 v1(issue #141,D-26):VISA_POLICY_FETCH effect 注册表行,C 档中国领事服务网国家指南树,礼貌抓取→PolicyFact 落账;founder 拍板 C 档路线,Timatic/Sherpa° 后议。
 - 2026-09-04 起,事实闸覆盖面(issue #118,D-26 收口):HotelFact 第三形态(exact-date 酒店检索落账,摸底/传输失败/打码价纪律同机火)+ gotry_fact_gate 酒店 claim 入闸 + 渲染原语单向生成(renderFlightFact/renderHotelFact 内嵌 fact 锚点,闸侧锚点优先确定性回溯);政策生产端(实时签证 API)仍记 D-26 外部依赖。
+- 2026-09-10 起,事实闸覆盖面政策渲染锚点闭合(issue #273,D-26 残余收口切片):renderPolicyFact 行内嵌 fact 锚点(与机/火/酒店同源 typed-anchor),闸侧锚点确定性回溯,手改/伪造锚点 = fact_anchor_unknown;POLICY_WORD 补「海关申报」(与「入境申报」同性质但被原 regex 漏掉),手写政策行缺 as_of → policy_without_as_of。fact-gate-tests §11 五断言。
 - 2026-09-04 起,legacy vendored dsh 回退移除(issue #120,D-27 清偿):dsh 解析只认 root manifest/依赖闭包,找不到即 fail-closed 报错指重装;DshRuntime.source 收敛 'root'。
 - 2026-09-04 起,needs-extension 文案自适应(issue #117,D-24 清偿):按本地通道落位自动跳过开发者模式/本地通道指引——商店版用户只推商店一键装与「已装即可」;桥失败摘要与 doctor 扩展项同步自适应。
+- 2026-09-09 起,会话检索面新增 dida 供应商门户适配器(`gotry_session_search kind=dida`,SESSION_DIDA_SEARCH 效应注册表行)——解译器平铺纪律照旧,无新策略表形态;详见 `../architecture.md` §9。本设计原文(Stage 0-4 求解/编排)不受影响,状态让渡回 architecture §9。
 - 2026-09-04 起,解译器迁移收尾(issue #115,D-23):anything/web/github/video/agent_reach/session_login 六渠道入效应注册表,23 工具外部依赖面全收敛 effect_interpreter.v1(没有策略表行就没有效应);工具面照旧平铺,证据链逐源标注不变。
 - 2026-09-04 起,启动一次性 doctor 摘要(issue #114):web/headless 启动时分离子进程后台只读体检,待处理项一行 stderr(全 ok 静默/零写盘/不阻塞/benchmark 豁免)——初始化可见取代会话中段撞错。
 - 2026-09-04 起,工具描述首行由通道注册表生成(issue #113):七个检索工具描述前置「服务意图 × 通道顺位」卡(与失败现场 routing 字段同表),doctor 补齐 patch 宿主插件 dsh-map-tools/dsh-tool-ask-user 两态；map-tools 当前由 `ts/dsh-runtime/vendor/dsh-map-tools/` 以 MIT payload 随包交付，外部 npm 依赖因 rc peer 与 alpha.3 closure 冲突而移除。

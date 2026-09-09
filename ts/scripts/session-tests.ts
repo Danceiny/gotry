@@ -21,7 +21,8 @@ import { classifyRequest, isSubmitText } from '../capabilities/session/read-guar
 import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQuery, STATION_TELECODES } from '../capabilities/session/adapters/rail-12306.ts'
-import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
+import { buildDidaEntryUrl, parseDidaRates, looksLikeDidaRatesBody } from '../capabilities/session/adapters/dida-portal.ts'
+import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, didaLoginHint, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
@@ -242,7 +243,7 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
   const next = async (): Promise<ConsentDecision> => ({ kind: 'allow' })
   const agentA = { id: 'agent-A' } as unknown as object
   const agentB = { id: 'agent-B' } as unknown as object
-  const sess = (a: object = agentA) => ({ name: 'gotry_session_search', agent: a, callId: 'c1' })
+  const sess = (a: object = agentA) => ({ name: 'gotry_session_search', agent: a, callId: 'c1', kind: 'flight' })
   const other = () => ({ name: 'gotry_anything_search', agent: agentA })
   const mkStore = () => new WeakMap<object, { granted: Set<string>; denied: Set<string> }>()
   const mkGate = (access: SessionAccess, seam?: ApprovalSeam) =>
@@ -250,7 +251,7 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
 
   // I1 无审批通道(headless/极简宿主):账号工具 → ask(交运行时 fail-closed);非账号工具放行
   const gateBare = createConsentGate({ access: () => 'ask' })
-  const d1 = await gateBare({ name: 'gotry_session_search', agent: undefined }, next)
+  const d1 = await gateBare({ name: 'gotry_session_search', agent: undefined, kind: 'flight' }, next)
   assert(d1.kind === 'ask', '无审批通道 → ask(交运行时 fail-closed;denies 责任在 registry)', d1)
   assert((await gateBare({ name: 'gotry_anything_search', agent: undefined }, next)).kind === 'allow', '非账号工具不过闸,原样放行')
 
@@ -275,7 +276,7 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
     assert(d1.kind === 'deny' && /拒绝/.test(String(d1.kind === 'deny' ? d1.reason : '')), '拒绝 → deny + 明示「本会话内生效」', d1)
     const d2 = await gate(sess(), next)
     assert(d2.kind === 'deny' && requests === 1, '拒绝后再次调用 → 直接 deny,不再弹卡(拒绝=吊销)', { d2 })
-    const dB = await gate({ name: 'gotry_session_search', agent: agentB }, next)
+    const dB = await gate({ name: 'gotry_session_search', agent: agentB, kind: 'flight' }, next)
     assert(dB.kind === 'deny' && requests === 2, '另一会话不受此前拒绝影响——会重新发起一次审批请求(seam 本例仍拒)', { dB, requests })
   }
 
@@ -291,6 +292,43 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
   {
     const gate = mkGate('allow')
     assert((await gate(sess(), next)).kind === 'allow', 'sessionAccess=allow → 配置明示预授权,直接放行')
+  }
+
+  // I6 site-bound(#308):授权与拒绝均按 site(kind)分桶,跨站不得互授;同站复用放行;
+  //    unknown/malformed kind 失败关闭(不扩权);flat args 与 wrapped args 一致。
+  {
+    let requests = 0
+    const seam: ApprovalSeam = { request: async () => { requests += 1; return 'allowed-once' } }
+    const store = mkStore()
+    const gate = createConsentGate({ access: () => 'ask', approval: () => seam, store })
+
+    // 6a flat args:首次 dida 弹卡 + 放行;同会话再调 ctrip-flight 必须再弹卡(跨站不互授)
+    const r1 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-dida', kind: 'dida' }, next)
+    assert(r1.kind === 'allow' && requests === 1, 'flat args:首次 dida 弹卡 + 放行', { r1, requests })
+    const r2 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-ctrip', kind: 'flight' }, next)
+    assert(r2.kind === 'allow' && requests === 2, 'flat args:ctrip-flight 跨站必须再弹卡', { r2, requests })
+
+    // 6b 同站(flight)二次调用:免弹卡直接放行
+    const r3 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-ctrip-2', kind: 'flight' }, next)
+    assert(r3.kind === 'allow' && requests === 2, 'flat args:ctrip-flight 同站复用,免弹卡', { r3, requests })
+
+    // 6c wrapped args:{ query: { kind: 'hotel' } } 形态必须同样识别为 ctrip-hotel
+    const r4 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-hotel', kind: 'hotel' }, next)
+    assert(r4.kind === 'allow' && requests === 3, 'kind=hotel → ctrip-hotel 站点弹卡(独立分桶)', { r4, requests })
+
+    // 6d 拒绝隔离:拒绝 ctrip-flight 后,同会话调 dida 仍须弹卡(deny 不跨站污染)
+    let rejReq = 0
+    const seamRej: ApprovalSeam = { request: async () => { rejReq += 1; return 'rejected' } }
+    const gateRej = createConsentGate({ access: () => 'ask', approval: () => seamRej, store })
+    const agentRej = { id: 'agent-rej' } as unknown as object
+    const d1 = await gateRej({ name: 'gotry_session_search', agent: agentRej, callId: 'r1', kind: 'flight' }, next)
+    assert(d1.kind === 'deny' && rejReq === 1, '拒绝 ctrip-flight → deny(弹卡一次)', { d1, rejReq })
+    const d2 = await gateRej({ name: 'gotry_session_search', agent: agentRej, callId: 'r2', kind: 'dida' }, next)
+    assert(d2.kind === 'deny' && rejReq === 2, '拒绝不跨站污染:同会话 dida 仍须弹卡(被拒后)', { d2, rejReq })
+
+    // 6e unknown kind 失败关闭(不弹卡,不让过;无审批通道语义但带 agent 时更稳)
+    const rU = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-xx', kind: 'not-a-kind' }, next)
+    assert(rU.kind === 'deny', 'unknown kind → fail-closed deny(不扩权)', rU)
   }
 }
 
@@ -500,6 +538,72 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
   assert(e1.ok === false && e1.verdict === 'error' && /fromStationTelecode/.test(e1.error ?? ''), '未收录电报码 → error + 发现路径指引', e1)
   const e2 = await sessionTrainSearch({ from: '上海', to: '昆明', date: '2026-12-01' })
   assert(e2.ok === false && e2.verdict === 'cooldown', '节律闸:同站点 30s 内第二调 → cooldown(不发起导航)', e2)
+}
+
+
+// ---------------------------------------------------------------------------
+// M. Dida 供应商门户会话面(2026-09-09 实装;entry 守域/信封走形/形状签名/闸面;
+//    纯函数 + transport 前短路,离线确定性——扩展桥不在测试里拉起)
+// ---------------------------------------------------------------------------
+console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
+{
+  // M1 entry:默认 find 页;覆盖 URL 必须落在 portal.dida.com 域内
+  const d1 = buildDidaEntryUrl()
+  assert(d1.ok && d1.url === 'https://portal.dida.com/hotel/find', 'entry 默认=find 页', d1)
+  const d2 = buildDidaEntryUrl({ entryUrl: 'https://portal.dida.com/hotel/find?city=Bangkok' })
+  assert(d2.ok && d2.url === 'https://portal.dida.com/hotel/find?city=Bangkok', 'entry 覆盖(域内)放行', d2)
+  const d3 = buildDidaEntryUrl({ entryUrl: 'https://evil.example.com/hotel/find' })
+  assert(!d3.ok, 'entry 覆盖(域外)拒绝——fail-closed', d3)
+  const d4 = buildDidaEntryUrl({ entryUrl: 'http://portal.dida.com/hotel/find' })
+  assert(!d4.ok, 'entry 覆盖(http 明文)拒绝', d4)
+
+  // M2 走形:SearchRealTime 信封(hotel-be models.go 口径)→ 展平报价
+  const envelope = JSON.stringify({
+    Message: 'ok', Success: true, MessageCode: 20000,
+    Data: {
+      ReferenceNo: 'REF-ROOT',
+      HotelPriceList: [
+        {
+          Hotel: { HotelID: 24110, Name: 'Atlantis The Palm' },
+          RoomTypeList: [
+            { DidaRoomTypeID: 701, DidaRoomTypeName_CN: '海景大床房', DidaRoomTypeName_EN: 'Sea View King', RatePlanList: [
+              { RatePlanID: 'RP-1', Price: 1580.5, TotalPrice: 4741.5, Currency: 'CNY', MealType: 'Breakfast', BreakfastType: 'ABF', BedType: 'King', PaymentType: 'Prepay', Inventory: 3, RoomCount: 5, ReferenceNo: 'REF-A' },
+              { RatePlanID: 'RP-2', Price: 1710, TotalPrice: 5130, Currency: 'CNY', PaymentType: 'PayAtHotel', Inventory: 0, ReferenceNo: 'REF-B' },
+            ] },
+          ],
+          RoomList: [
+            { DidaRoomTypeID: 702, DidaRoomTypeName_EN: 'Suite', RatePlanList: [
+              { RatePlanID: 'RP-3', Price: 3200, TotalPrice: 9600, Currency: 'USD', ReferenceNo: 'REF-C' },
+            ] },
+          ],
+        },
+        { Hotel: { HotelID: 24111, Name: 'Burj Al Arab' }, RoomTypeList: [] },
+      ],
+    },
+  })
+  const rates = parseDidaRates(envelope)
+  assert(rates.length === 3, '信封走形:RoomTypeList+RoomList 逐计划展平', rates)
+  assert(rates[0]!.hotelId === '24110' && rates[0]!.hotelName === 'Atlantis The Palm' && rates[0]!.roomName === '海景大床房', '酒店/房型字段映射(中文名优先)', rates[0])
+  assert(rates[0]!.price === 1580.5 && rates[0]!.totalPrice === 4741.5 && rates[0]!.currency === 'CNY', '价/总价/币种', rates[0])
+  assert(rates[0]!.inventory === 3 && rates[0]!.referenceNo === 'REF-A' && rates[0]!.paymentType === 'Prepay', '库存/引用号/支付类型', rates[0])
+  assert(rates[1]!.ratePlanId === 'RP-2' && rates[1]!.inventory === 0, 'inventory=0 如实保留(不伪装可订)', rates[1])
+  assert(rates[2]!.roomName === 'Suite' && rates[2]!.currency === 'USD', 'RoomList 同构展平', rates[2])
+  assert(parseDidaRates('not json').length === 0 && parseDidaRates('{"a":1}').length === 0 && parseDidaRates('[]').length === 0, 'malformed/无信封/裸空数组 一律返空(不抛错)')
+  assert(parseDidaRates(envelope, { maxItems: 2 }).length === 2, 'maxItems 截断')
+
+  // M3 形状签名(与 content-main DIDA_BODY_SIG_RE 逐字对账)
+  assert(looksLikeDidaRatesBody('"HotelPriceList":[]'), '签名命中 HotelPriceList')
+  assert(looksLikeDidaRatesBody('"RatePlanList":[]'), '签名命中 RatePlanList')
+  assert(!looksLikeDidaRatesBody(''), '空体不命中')
+  assert(!looksLikeDidaRatesBody('x'.repeat(2_000_001)), '超上限不命中')
+
+  // M4 闸面(transport 前短路):entry 域外 → error;同站点二调 → cooldown
+  __resetRateLimiterForTest()
+  const q1 = await sessionDidaSearch({ entryUrl: 'https://evil.example.com/x' })
+  assert(q1.ok === false && q1.verdict === 'error', 'entry 域外 → error(不发起导航)', q1)
+  const q2 = await sessionDidaSearch({})
+  assert(q2.ok === false && q2.verdict === 'cooldown', '节律闸:30s 内二调 → cooldown', q2)
+  assert(typeof didaLoginHint() === 'string' && /自动登录/.test(didaLoginHint()), '登录指引指向 hotel-be portal 跳板(账密永不经 gotry)')
 }
 
 if (process.env.GOTRY_SESSION_TEST_FORCE_FAILURE === '1') {

@@ -32,7 +32,7 @@ import {
 } from './resilience.ts'
 import { flyaiSearch, type FlyaiQuery } from './flyai.ts'
 import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
-import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery } from './session-search.ts'
+import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery, type SessionDidaQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
 import { verifyFlight, type FlightLiveQuery } from './opensky.ts'
 import { anythingSearch, type AnythingQuery } from './anything.ts'
@@ -154,6 +154,8 @@ const DEFAULT_HANDLERS = {
   SESSION_HOTEL_SEARCH: (p: SessionHotelQuery) => sessionHotelSearch(p),
   /** 12306 余票会话检索(2026-09-03 实装;公开查询面,无登录闸;同浏览器解译通道) */
   SESSION_TRAIN_SEARCH: (p: SessionTrainQuery) => sessionTrainSearch(p),
+  /** Dida 供应商门户实时价会话检索(2026-09-09 实装;hotel-be portal integration 迁移线) */
+  SESSION_DIDA_SEARCH: (p: SessionDidaQuery) => sessionDidaSearch(p),
   /** 地名 → 坐标(open-meteo → nominatim 双源,免费) */
   WEATHER_GEOCODE: (p: { name: string; count?: number; timeoutMs?: number }) => geocodePlace(p.name, { count: p.count, timeoutMs: p.timeoutMs }),
   /** 预报(≤16 天,免费无 key) */
@@ -288,6 +290,12 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     isFailure: defaultIsFailure,
   },
   SESSION_TRAIN_SEARCH: {
+    channel: 'browser',
+    retry: null,
+    breaker: null,
+    isFailure: defaultIsFailure,
+  },
+  SESSION_DIDA_SEARCH: {
     channel: 'browser',
     retry: null,
     breaker: null,
