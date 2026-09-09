@@ -137,6 +137,26 @@ interface QueuedJob {
   timer: ReturnType<typeof setTimeout> | null
 }
 
+/**
+ * capability 路由(2026-09-09):/jobs 轮询体里的 capabilities(扩展 SITES 键清单)
+ * 从「上报即弃」升级为**路由依据**——扩展只领自己声明的站点的 job。
+ * 背景:同机多 Chrome(日常 + 测试/多 profile)各自装着同一扩展的不同版本时,
+ * 旧版扩展会领走新站点 job 并答 ok:true 空 names(cookie-names 语义里 conf 缺失
+ * 返 []),把「未登录」伪造成普查结论。按 site ∈ capabilities 匹配后,新站点 job
+ * 只会落到认识它的扩展手里;capabilities 缺省(理论上不存在,当前扩展全部上报)
+ * 视为 match-all,向前兼容。
+ */
+interface ParkedPoller {
+  res: ServerResponse
+  timer: ReturnType<typeof setTimeout>
+  capabilities: Set<string> | null
+}
+
+function jobMatches(entry: ExtensionJob, capabilities: Set<string> | null): boolean {
+  if (capabilities == null || capabilities.size === 0) return true
+  return capabilities.has(entry.site)
+}
+
 function readBody(req: IncomingMessage, cap: number): Promise<string | { err: string }> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = []
@@ -165,20 +185,22 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
   const now = opts.now ?? Date.now
   const queue: QueuedJob[] = []
   const inFlight = new Map<string, QueuedJob>()
-  const parked: Array<{ res: ServerResponse; timer: ReturnType<typeof setTimeout> }> = []
+  const parked: ParkedPoller[] = []
   let lastSeenAt = 0
   let closed = false
   let port = 0
   const extensionConnected = (): boolean => lastSeenAt > 0 && now() - lastSeenAt < EXTENSION_CONNECTED_WINDOW_MS
 
-  /** 领走队首 job(移入 inFlight——回包按 jobId 路由,queued 与 inFlight 两处都可找到) */
-  function takeQueued(): QueuedJob | null {
-    const next = queue.shift()
-    if (next) inFlight.set(next.job.jobId, next)
-    return next ?? null
+  /** 领走首个 capability 匹配的 job(移入 inFlight——回包按 jobId 路由,两处都可找到) */
+  function takeMatching(capabilities: Set<string> | null): QueuedJob | null {
+    const idx = queue.findIndex((q) => jobMatches(q.job, capabilities))
+    if (idx < 0) return null
+    const [next] = queue.splice(idx, 1)
+    inFlight.set(next.job.jobId, next)
+    return next
   }
 
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     if (closed) { res.statusCode = 503; res.end(); return }
     const urlPath = (req.url ?? '').split('?')[0]
     const origin = req.headers.origin
@@ -218,19 +240,32 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
       return
     }
     if (isPost && urlPath === '/jobs') {
-      const next = takeQueued()
+      // 轮询体携带 {extensionVersion, capabilities: SITES 键清单}——按站点 capability
+      // 路由(见 ParkedPoller 注);体缺失/非 JSON 视为 match-all,向前兼容旧扩展。
+      const pollerCaps = await readBody(req, 64 * 1024).then((body): Set<string> | null => {
+        if (typeof body !== 'string') return null
+        try {
+          const parsed = JSON.parse(body) as { capabilities?: unknown }
+          return Array.isArray(parsed.capabilities) ? new Set(parsed.capabilities.filter((c): c is string => typeof c === 'string')) : null
+        } catch {
+          return null
+        }
+      })
+      const next = takeMatching(pollerCaps)
       if (next) { finish(200, { job: next.job }); return }
       // 长轮询:hold ≤ JOBS_LONG_POLL_MS(必须 < MV3 SW 30s 存活窗口,每次响应都续命);
       // 新 job 提交时即时唤醒 parked 取活者(见 submit→dispatchToParked)
+      const poller: ParkedPoller = { res, timer: null as unknown as ReturnType<typeof setTimeout>, capabilities: pollerCaps }
       const parkTimer = setTimeout(() => {
         const i = parked.findIndex((p) => p.res === res)
         if (i >= 0) parked.splice(i, 1)
         finish(200, { job: null })
       }, JOBS_LONG_POLL_MS)
+      poller.timer = parkTimer
       // 默认桥是惰性能力:外部扩展的 parked 轮询不得在主流程结束后钉住 CLI。
       // keepBridge wizard 反过来要靠它守住进程,因此只对默认形态 unref。
       if (!opts.keepBridge) parkTimer.unref()
-      parked.push({ res, timer: parkTimer })
+      parked.push(poller)
       res.on('close', () => {
         const i = parked.findIndex((p) => p.res === res)
         if (i >= 0) parked.splice(i, 1)
@@ -277,10 +312,11 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
     entry.resolve({ ok: true, result: parsed })
   }
 
-  /** 新 job 入队时即时派发给 parked 取活者(否则要白等一个 20s 长轮询周期) */
+  /** 新 job 入队时即时派发给 capability 匹配的 parked 取活者(否则要白等一个 20s 长轮询周期) */
   function dispatchToParked(entry: QueuedJob): boolean {
-    const p = parked.shift()
-    if (!p) return false
+    const i = parked.findIndex((p) => jobMatches(entry.job, p.capabilities))
+    if (i < 0) return false
+    const [p] = parked.splice(i, 1)
     clearTimeout(p.timer)
     inFlight.set(entry.job.jobId, entry)
     p.res.statusCode = 200
