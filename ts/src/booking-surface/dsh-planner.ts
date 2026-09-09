@@ -412,19 +412,6 @@ function repairActionRepresentation(action: unknown): void {
           }
           mutated = true
         }
-      } else if (messagePart.includes("required property 'adults'") && pathPart.startsWith('/input/patch/occupancy/rooms/')) {
-        // Occupancy items invented without the schema's adults field carry no
-        // valid room information. Dropping them is representation-only: the
-        // invention is not user-stated criteria (occupancy otherwise flows
-        // from the workspace draft).
-        const rooms = actionValueAt(action, '/input/patch/occupancy/rooms')
-        if (Array.isArray(rooms)) {
-          const kept = rooms.filter((room) => !(isRecord(room) && room.adults === undefined))
-          if (kept.length !== rooms.length) {
-            actionAssignAt(action, '/input/patch/occupancy/rooms', kept)
-            mutated = true
-          }
-        }
       } else if ((messagePart === 'must be integer' || messagePart === 'must be number') && typeof actionValueAt(action, pathPart) === 'string') {
         const raw = String(actionValueAt(action, pathPart)).trim()
         if (/^-?\d+$/.test(raw)) {
@@ -692,14 +679,16 @@ export async function createDshEmbeddedBookingPlanner(
         if (task.phase === 'waiting_receipt') throw new Error('receipt_required')
         busy = true
         try {
-          // Model-authored envelopes fail closed on the first attempt roughly a
-          // quarter of the time; a fresh run with the same prompt recovers most
-          // of them. Only parse-class failures retry — session/identity errors
-          // are deterministic.
-          for (let attempt = 1; ; attempt += 1) {
-            let decisions: BookingPlannerDecision[]
+          // Every provider call, including a self-correction prompt, consumes
+          // one bounded planner attempt. A correction is parsed through the
+          // same authority path and returned when it is valid.
+          let attempt = 0
+          let nextPrompt = plannerPrompt(turn, task, options.now)
+          while (attempt < 3) {
+            attempt += 1
+            let decisions: BookingPlannerDecision[] = []
             try {
-              const result = await runPort.run(plannerPrompt(turn, task, options.now), { sessionId })
+              const result = await runPort.run(nextPrompt, { sessionId })
               decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
               if (decisions.length === 0) {
                 console.error(`[booking-copilot] empty planner decision (attempt ${attempt}):`, JSON.stringify({
@@ -721,10 +710,7 @@ export async function createDshEmbeddedBookingPlanner(
               // SAME session. A blind re-prompt with identical input
               // reproduces the identical invalid output; models repair
               // deterministically when shown the exact rejection.
-              await runPort.run(
-                `Your previous tool call was rejected by schema validation:\n${message.slice(0, 500)}\nEmit ONE corrected tool call that satisfies the declared parameter schema exactly. Preserve every user-stated criterion; fix only the shape.`,
-                { sessionId },
-              ).catch(() => {})
+              nextPrompt = `Your previous tool call was rejected by schema validation:\n${message.slice(0, 500)}\nEmit ONE corrected tool call that satisfies the declared parameter schema exactly. Preserve every user-stated criterion; fix only the shape.`
               continue
             }
             if (decisions.length > 1) {
@@ -738,11 +724,12 @@ export async function createDshEmbeddedBookingPlanner(
             // the same session toward the tool call and only surface the
             // typed error on the final attempt.
             if (attempt < 3) {
-              await runPort.run('Your previous response contained no booking capability tool call. Emit exactly one booking capability tool call for the request, matching its declared parameter schema.', { sessionId }).catch(() => {})
+              nextPrompt = 'Your previous response contained no booking capability tool call. Emit exactly one booking capability tool call for the request, matching its declared parameter schema.'
               continue
             }
             return [{ kind: 'error', error: { code: 'PLANNER_TYPED_DECISION_REQUIRED', message: 'GoTry produced no typed capability decision; assistant prose was ignored.', retryable: true } }]
           }
+          return [{ kind: 'error', error: { code: 'PLANNER_ATTEMPT_BUDGET_EXHAUSTED', message: 'GoTry exhausted the planner attempt budget without a decision.', retryable: true } }]
         } finally { busy = false }
       },
     }
