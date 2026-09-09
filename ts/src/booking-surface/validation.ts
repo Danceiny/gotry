@@ -3,6 +3,8 @@ import { Ajv2020, type ValidateFunction } from 'ajv/dist/2020.js'
 import { BOOKING_READ_ACTION_KINDS, BOOKING_BLOCKER_CODES, BOOKING_GAP_CODES } from './contracts.ts'
 
 const schema = JSON.parse(readFileSync(new URL('../../../schemas/booking.surface.schema.json', import.meta.url), 'utf8')) as Record<string, unknown>
+/** Canonical schema bytes (single source of truth) for prompt/tool derivations elsewhere. */
+export const bookingSurfaceSchema = schema
 const ajv = new Ajv2020({ allErrors: true, strict: true })
 ajv.addSchema(schema)
 const validate: ValidateFunction = ajv.compile(schema)

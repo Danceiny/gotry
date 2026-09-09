@@ -14,8 +14,10 @@ import type { ActionReceipt, BookingWorkspaceSnapshot } from '../src/booking-sur
 import type { BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
 import {
   DSH_EMBEDDED_BOOKING_TOOL_NAMES,
+  buildDshEmbeddedBookingPatch,
   buildDshPlannerEnvironment,
   createDshEmbeddedBookingPlanner,
+  formatUtcOffsetLabel,
   type DshPlannerRunPort,
 } from '../src/booking-surface/dsh-planner.ts'
 
@@ -62,8 +64,10 @@ const searchRun = {
 } as const
 const hotelSelect = { ...searchRun, kind: 'hotel.select', actionId: 'action-dsh-select-1', reason: 'Select the requested hotel.', input: { hotelRef: 'hotel-1' } } as const
 
+const profilePatch = buildDshEmbeddedBookingPatch('/tmp/gotry-booking-dsh-plugin.js')
 const prompts: string[] = []
 const sessionIds: string[] = []
+const frozenNow = new Date(2026, 8, 9, 10, 30, 0, 0)
 let runIndex = 0
 const runPort: DshPlannerRunPort = {
   async run(prompt, options) {
@@ -104,7 +108,7 @@ const runPort: DshPlannerRunPort = {
   async close() {},
 }
 
-const adapter = await createDshEmbeddedBookingPlanner({ runPort })
+const adapter = await createDshEmbeddedBookingPlanner({ runPort, now: frozenNow })
 const session = adapter.plannerFactory(task)
 const first = await session.next({
   task,
@@ -121,6 +125,23 @@ const first = await session.next({
   },
 })
 assert.deepEqual(first, [{ kind: 'operation', action: searchRun }], 'typed dsh tool call becomes one operation')
+
+assert.match(prompts[0]!, /Time anchor: today is 2026-09-09 \(周三, UTC[+-]\d{2}:\d{2}\)/, 'planner prompt uses the injected host-local date anchor')
+assert.match(prompts[0]!, /process host-local anchor used only for relative-date parsing/, 'planner prompt identifies host-local time as a parsing anchor')
+assert.match(prompts[0]!, /do not treat it as the traveler\/user timezone/, 'planner prompt does not masquerade host time as user timezone')
+for (const field of ['destination', 'hotel', 'stay', 'occupancy', 'budget', 'starRating', 'guestRating', 'facilities']) {
+  assert.match(prompts[0]!, new RegExp(`\\b${field}\\b`), `planner prompt names SearchCriteriaPatch field ${field}`)
+}
+assert.ok(!/under criteria/i.test(prompts[0]!), 'planner prompt does not revive the stale under-criteria routing wording')
+assert.ok(!profilePatch.includes('2026-09-10') && !profilePatch.includes('2026-09-13'), 'shape example no longer carries stale concrete 2026 dates')
+assert.ok(!/under criteria/i.test(profilePatch), 'planner persona does not revive the stale under-criteria routing wording')
+assert.match(profilePatch, /Shape-only example/i, 'planner persona marks the example as shape-only')
+assert.match(profilePatch, /do not copy literal/i, 'planner persona tells the model not to copy placeholder sample values')
+assert.match(profilePatch, /"stay":\{"checkIn":"<computed YYYY-MM-DD from the host-local time anchor>","checkOut":"<computed YYYY-MM-DD from nights\/check-in>"\}/, 'shape example keeps the stay object shape')
+assert.match(profilePatch, /"starRating":\{"strength":"must","value":\{"min":3,"max":3\}\}/, 'shape example keeps the starRating criterion shape')
+assert.equal(formatUtcOffsetLabel(345), 'UTC+05:45', 'timezone formatter preserves positive minute offsets')
+assert.equal(formatUtcOffsetLabel(-210), 'UTC-03:30', 'timezone formatter preserves negative minute offsets')
+assert.equal(formatUtcOffsetLabel(0), 'UTC+00:00', 'timezone formatter zero-pads whole-hour offsets')
 
 const receipt: ActionReceipt = {
   schemaVersion: 'booking.surface',
