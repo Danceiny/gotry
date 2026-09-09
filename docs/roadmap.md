@@ -25,6 +25,8 @@
 - **#271 Phase A 进程事故观察(2026-09-09)**:GoTry-owned `uncaughtExceptionMonitor` 记录 uncaught/rejection 并保留宿主 fatal 退出语义；single-fd append+fsync+close writer 失败返回 `false`；native Node24 ESM dist 反例覆盖 monitor/no-monitor、既有 host handler、fsync/close 与工具结构化失败。child close/spawn error、SIGINT、后代进程与上游 dsh supervisor 仍为开放 TODO，不改变 M3/M4-M6 真实证据 gate。
 - **#282 Booking planner 纠偏(2026-09-09)**:planner 保留非空 occupancy 房间与 childAges,缺 `adults` 交给 schema 纠偏;每次 run(含纠偏)均计入最多三次调用,有效 correction 立即返回,provider error 不静默吞掉。focused proof 是注入 runPort 的工程证据,不改变 M3/M4-M6 或真实 Booking UAT gate。
 
+- **#279 携程机票 malformed 响应闸(2026-09-10)**:合法空列表= `miss`,有效命中= `hit`,未知/畸形形状= `error`;兼容 `parseBatchSearch` 永不抛错,扩展/CDP 均不把 parser error 伪装成 miss。隔离扩展 fixture 仅证明本地解析/编排,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
+
 - **酒店日期输入闸(2026-09-09,issue #283)**:详见 `docs/architecture.md` §1.2 与 §10 D-36。共享 `parseAbsoluteDate` 拒绝非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`;隔离 fixture 证据不构成真实供应商准入。
 - **#270 公开交付与债务台账(2026-09-10)**:所有执行 lane 公开记录 issue 启动、Draft PR、exact-head review 与 merge/destination 回执;founder 授权的仓内 Claude lane 不适用外部机器人 T0/T1 否决,但仍过正常评审。§10.1 活跃债务均有公开 tracker/触发器;本地与 fixture 证明不替代 #20/#22/#136/#137 的真实准入。
 
