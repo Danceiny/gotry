@@ -139,6 +139,7 @@ const PLANNER_EXAMPLE_PATCH: SearchCriteriaPatch = {
     checkIn: '<computed YYYY-MM-DD from the host-local time anchor>',
     checkOut: '<computed YYYY-MM-DD from nights/check-in>',
   },
+  occupancy: { rooms: [{ adults: 2, childAges: [] }] },
   starRating: { strength: 'must', value: { min: 3, max: 3 } },
   facilities: { strength: 'prefer', value: { allOf: ['breakfast'] } },
 }
@@ -317,8 +318,9 @@ function actionValueAt(action: Record<string, unknown>, path: string): unknown {
   let node: unknown = action
   for (const raw of path.split('/').filter(Boolean)) {
     const key = raw.replace(/~1/g, '/').replace(/~0/g, '~')
-    if (!isRecord(node)) return undefined
-    node = node[key]
+    if (isRecord(node)) node = node[key]
+    else if (Array.isArray(node) && /^\d+$/.test(key)) node = node[Number(key)]
+    else return undefined
   }
   return node
 }
@@ -326,13 +328,32 @@ function actionValueAt(action: Record<string, unknown>, path: string): unknown {
 function actionAssignAt(action: Record<string, unknown>, path: string, value: unknown): void {
   const parts = path.split('/').filter(Boolean)
   if (parts.length === 0) return
-  let node: Record<string, unknown> = action
+  let node: unknown = action
   for (const raw of parts.slice(0, -1)) {
     const key = raw.replace(/~1/g, '/').replace(/~0/g, '~')
-    if (!isRecord(node[key])) node[key] = {}
-    node = node[key] as Record<string, unknown>
+    if (isRecord(node)) {
+      const child = node[key]
+      if (isRecord(child) || Array.isArray(child)) {
+        node = child
+      } else {
+        node[key] = {}
+        node = node[key] as Record<string, unknown>
+      }
+    } else if (Array.isArray(node) && /^\d+$/.test(key)) {
+      const child = node[Number(key)]
+      if (isRecord(child) || Array.isArray(child)) {
+        node = child
+      } else {
+        node[Number(key)] = {}
+        node = node[Number(key)] as Record<string, unknown>
+      }
+    } else {
+      return
+    }
   }
-  node[parts[parts.length - 1]!.replace(/~1/g, '/').replace(/~0/g, '~')] = value
+  const lastKey = parts[parts.length - 1]!.replace(/~1/g, '/').replace(/~0/g, '~')
+  if (isRecord(node)) node[lastKey] = value
+  else if (Array.isArray(node) && /^\d+$/.test(lastKey)) node[Number(lastKey)] = value
 }
 
 /**
@@ -380,7 +401,15 @@ function repairActionRepresentation(action: unknown): void {
       if (messagePart === 'must be array') {
         const current = actionValueAt(action, pathPart)
         if (!Array.isArray(current)) {
-          actionAssignAt(action, pathPart, current === undefined || current === null || current === '' ? [] : [String(current)])
+          if (isRecord(current) && Object.keys(current).length > 0 && Object.keys(current).every((key) => /^\d+$/.test(key))) {
+            // Model serialized an array as an index-keyed object ({"0":{...}}).
+            // Numeric-key ordering is preserved and information-free empty-object
+            // items are discarded.
+            const values = Object.keys(current).sort((a, b) => Number(a) - Number(b)).map((key) => (current as Record<string, unknown>)[key]).filter((item) => !(isRecord(item) && Object.keys(item).length === 0))
+            actionAssignAt(action, pathPart, values)
+          } else {
+            actionAssignAt(action, pathPart, current === undefined || current === null || current === '' || (isRecord(current) && Object.keys(current).length === 0) ? [] : [String(current)])
+          }
           mutated = true
         }
       } else if ((messagePart === 'must be integer' || messagePart === 'must be number') && typeof actionValueAt(action, pathPart) === 'string') {

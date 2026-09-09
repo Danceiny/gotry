@@ -139,6 +139,9 @@ assert.match(profilePatch, /Shape-only example/i, 'planner persona marks the exa
 assert.match(profilePatch, /do not copy literal/i, 'planner persona tells the model not to copy placeholder sample values')
 assert.match(profilePatch, /"stay":\{"checkIn":"<computed YYYY-MM-DD from the host-local time anchor>","checkOut":"<computed YYYY-MM-DD from nights\/check-in>"\}/, 'shape example keeps the stay object shape')
 assert.match(profilePatch, /"starRating":\{"strength":"must","value":\{"min":3,"max":3\}\}/, 'shape example keeps the starRating criterion shape')
+assert.match(profilePatch, /"occupancy":\{"rooms":\[\{"adults":2,"childAges":\[\]\}\]\}/, 'shape example includes a well-formed occupancy block')
+assert.ok(!/Bali/.test(profilePatch), 'shape example carries no literal destination')
+assert.ok(!/\b20\d{2}-\d{2}-\d{2}\b/.test(profilePatch), 'shape example carries no concrete YYYY-MM-DD dates')
 assert.equal(formatUtcOffsetLabel(345), 'UTC+05:45', 'timezone formatter preserves positive minute offsets')
 assert.equal(formatUtcOffsetLabel(-210), 'UTC-03:30', 'timezone formatter preserves negative minute offsets')
 assert.equal(formatUtcOffsetLabel(0), 'UTC+00:00', 'timezone formatter zero-pads whole-hour offsets')
@@ -537,5 +540,59 @@ await assert.rejects(
   /planner_identity_required/,
 )
 
-await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close()])
+// Regression: MiniMax-M3 serializes arrays as index-keyed objects and emits
+// information-free empty room objects. The repair pass must convert
+// {"0":{"adults":2,"childAges":{}},"1":{}} into rooms [{adults:2,childAges:[]}]
+// in index order, dropping the empty room, and must not leak the empty
+// childAges object as a stringified singleton. Drives the same runPort ->
+// tool/call -> parseToolDecision boundary the real adapter uses.
+const indexKeyedRoomsPort: DshPlannerRunPort = {
+  async run() {
+    return {
+      finalResponse: '',
+      events: [{
+        type: 'tool/call',
+        data: {
+          name: 'booking_search_hotels',
+          arguments: JSON.stringify({
+            decision: {
+              kind: 'operation',
+              action: {
+                schemaVersion: 'booking.surface',
+                kind: 'search.patch',
+                actionId: 'action-dsh-index-keyed-rooms',
+                contextRef: task.contextRef,
+                expectedRevision: 0,
+                reason: 'Patch occupancy from an index-keyed model payload.',
+                factRefs: [],
+                input: { patch: { occupancy: { rooms: { '0': { adults: 2, childAges: {} }, '1': {} } } } },
+              },
+            },
+          }),
+        },
+      }],
+    }
+  },
+  async close() {},
+}
+const indexKeyedRooms = await createDshEmbeddedBookingPlanner({ runPort: indexKeyedRoomsPort })
+const indexKeyedDecisions = await indexKeyedRooms.plannerFactory(task).next({
+  task,
+  turn: {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: task.taskId,
+    turnId: 'dsh-turn-index-keyed-rooms',
+    workspace: { ...workspace, capabilities: { ...workspace.capabilities, allowedActions: [...workspace.capabilities.allowedActions] } },
+    request: { text: 'Two adults, one room' },
+  },
+})
+assert.equal(indexKeyedDecisions[0]?.kind, 'operation', 'index-keyed occupancy rooms repair yields an executable search.patch')
+assert.deepEqual(
+  (indexKeyedDecisions[0] as { action?: { input?: { patch?: { occupancy?: { rooms?: unknown[] } } } } }).action?.input?.patch?.occupancy?.rooms,
+  [{ adults: 2, childAges: [] }],
+  'index-keyed rooms object becomes an ordered array with the empty room dropped and empty childAges normalized to []',
+)
+
+await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close(), indexKeyedRooms.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')
