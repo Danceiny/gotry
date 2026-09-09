@@ -30,6 +30,7 @@ export interface LoginTarget {
 export const LOGIN_TARGETS: Record<string, LoginTarget> = {
   'ctrip-flight': { domain: 'ctrip.com', names: ['cticket', 'uid', 'uname', 'passport'], label: '携程机票', entryUrl: 'https://flights.ctrip.com/' },
   'meituan-hotel': { domain: 'meituan.com', names: ['lt', 'u', 'token', 'n'], label: '美团酒店', entryUrl: 'https://hotel.meituan.com/' },
+  'dida-portal': { domain: 'dida.com', names: ['CN_M_DidaTravel'], label: 'Dida 供应商门户', entryUrl: 'https://portal.dida.com/login' },
 }
 
 interface CookieLike {

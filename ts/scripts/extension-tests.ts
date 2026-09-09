@@ -48,6 +48,7 @@ import { sessionLogin } from '../capabilities/session-login.ts'
 import { LOGIN_COOKIE_NAMES, NETWORK_HINTS, SITE_DOMAIN } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { HOTEL_NETWORK_HINTS, HOTEL_SITE_HOST, buildHotelEntryUrl } from '../capabilities/session/adapters/ctrip-hotel.ts'
 import { TRAIN_NETWORK_HINTS, TRAIN_SITE_HOST } from '../capabilities/session/adapters/rail-12306.ts'
+import { DIDA_NETWORK_HINTS, DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_HOST } from '../capabilities/session/adapters/dida-portal.ts'
 import { evaluateDoubleSource, type SessionComparableRecord } from '../capabilities/session/benchmark.ts'
 
 const EXT_DIR = fileURLToPath(new URL('../../extension/', import.meta.url))
@@ -77,11 +78,11 @@ interface FakeJob {
 }
 
 /** 假扩展客户端:一次长轮询取活 + 回包(Origin=固定扩展源,过桥白名单) */
-async function claimOnce(port: number, respond: ((job: FakeJob) => Record<string, unknown> | null) | null, signal?: AbortSignal): Promise<{ job: FakeJob | null }> {
+async function claimOnce(port: number, respond: ((job: FakeJob) => Record<string, unknown> | null) | null, signal?: AbortSignal, capabilities?: string[]): Promise<{ job: FakeJob | null }> {
   const r = await fetch(`http://127.0.0.1:${port}/jobs`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
-    body: JSON.stringify({ extensionVersion: 'test' }),
+    body: JSON.stringify({ extensionVersion: 'test', ...(capabilities ? { capabilities } : {}) }),
     signal,
   })
   const data = (await r.json()) as { job: FakeJob | null }
@@ -211,10 +212,10 @@ async function main(): Promise<void> {
     assert.ok(manifest.host_permissions.includes('https://*.ctrip.com/*'))
   })
 
-  await check('防漂移:content_scripts 双 world 挂 ctrip 双站+12306(MAIN 嗅探 + ISOLATED 桥;2026-09-03 酒/火实装)', () => {
+  await check('防漂移:content_scripts 双 world 挂 ctrip 双站+12306+dida(MAIN 嗅探 + ISOLATED 桥;2026-09-03 酒/火实装,2026-09-09 dida 实装)', () => {
     assert.equal(manifest.content_scripts.length, 2)
     for (const cs of manifest.content_scripts) {
-      assert.deepEqual(cs.matches, ['https://flights.ctrip.com/*', `https://${HOTEL_SITE_HOST}/*`, `https://${TRAIN_SITE_HOST}/*`, 'https://www.12306.cn/*'])
+      assert.deepEqual(cs.matches, ['https://flights.ctrip.com/*', `https://${HOTEL_SITE_HOST}/*`, `https://${TRAIN_SITE_HOST}/*`, 'https://www.12306.cn/*', `https://${DIDA_SITE_HOST}/*`])
       assert.equal(cs.run_at, 'document_start')
     }
     const worlds = manifest.content_scripts.map((cs) => cs.world ?? 'ISOLATED').sort()
@@ -261,9 +262,25 @@ async function main(): Promise<void> {
     assert.ok(backgroundJs.includes('https://kyfw.12306.cn/'), 'background 应含火车检索白名单(2026-09-03 实装)')
     assert.ok(backgroundJs.includes("'ctrip-hotel'"), 'background SITES 应注册 ctrip-hotel')
     assert.ok(backgroundJs.includes("'train-12306'"), 'background SITES 应注册 train-12306')
+    assert.ok(backgroundJs.includes("'dida-portal'"), 'background SITES 应注册 dida-portal(2026-09-09 实装)')
+    assert.ok(backgroundJs.includes('https://portal.dida.com/'), 'background 应含 dida 检索白名单')
     assert.ok(contentMainJs.includes('gotry-ctrip-sniff'))
     assert.ok(contentBridgeJs.includes('gotry-ctrip-sniff'))
     assert.ok(contentBridgeJs.includes('gotry-page'))
+  })
+  await check('防漂移(Dida):DIDA_NETWORK_HINTS(Node)= content-main 嗅探面;票据名= background SITES;manifest 覆盖 portal.dida.com', () => {
+    for (const hint of DIDA_NETWORK_HINTS) {
+      assert.ok(stripRe(contentMainJs).includes(stripRe(hint.source)), `content-main.js 缺 dida hint ${hint.source}`)
+    }
+    assert.ok(contentMainJs.includes('portal\\.dida\\.com'), 'content-main.js 应感知 dida 页域')
+    for (const name of DIDA_LOGIN_COOKIE_NAMES) {
+      assert.ok(backgroundJs.includes(`'${name}'`), `background.js 缺 dida 票据名 ${name}`)
+    }
+    assert.ok(backgroundJs.includes("domain: 'dida.com'"), 'background.js dida 站点域应与 LOGIN_TARGETS.domain 对账')
+    const manifestAny = JSON.parse(readFileSync(join(EXT_DIR, 'manifest.json'), 'utf8')) as { host_permissions: string[]; content_scripts: Array<{ matches: string[] }> }
+    assert.ok(manifestAny.host_permissions.includes('https://*.dida.com/*'), 'manifest host_permissions 应含 dida 域')
+    assert.ok(manifestAny.content_scripts.every((b) => b.matches.includes(`https://${DIDA_SITE_HOST}/*`)), 'manifest 两组 content_scripts 均应注入 portal.dida.com')
+    assert.ok(stripRe(contentMainJs).includes('"HotelPriceList"|"RatePlanList"'), 'dida 形状签名两侧必须逐字一致')
   })
   await check('物理只读形态:扩展全部 fetch 只指向桥回环端口;不用 chrome.debugger', () => {
     for (const [name, src] of [['background', backgroundJs], ['content-main', contentMainJs], ['content-bridge', contentBridgeJs]] as const) {
@@ -544,6 +561,37 @@ async function main(): Promise<void> {
     query_id: 'sf-01', route_segments: [], journey_type: 'direct', currency: '', price: 0, source: '',
     fetched_at: '', verdict, latency_ms: 0, read_guard_blocked: 0,
   })
+  await check('capability 路由:站点 job 只派给声明该站点的轮询者(同机多 Chrome 旧版扩展不毒领新站点 job)', async () => {
+    const lane = await mustBridge([0])
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    try {
+      // 旧版扩展(caps 无 dida-portal,模拟商店版)先 parked
+      const oldExtP = claimOnce(lane.port, null, undefined, ['ctrip-flight', 'ctrip-hotel', 'train-12306']).catch(() => ({ job: null }))
+      await pause(200)
+      // dida job 提交:不得派给旧版扩展(它不声明 dida-portal)
+      const submitP = lane.submit({ kind: 'cookie-names', site: 'dida-portal' }, { timeoutMs: 3_000 })
+      await pause(200)
+      const stoleByOld = await Promise.race([oldExtP.then(() => true), pause(400).then(() => false)])
+      assert.ok(!stoleByOld, '旧版扩展(capability 不含 dida-portal)不得领走 dida job')
+      // 新版扩展声明 dida-portal → 立即领到
+      const newExtGot = await claimOnce(lane.port, (job) => {
+        assert.equal(job.kind, 'cookie-names')
+        return { ok: true, kind: 'cookie-names', names: ['CN_M_DidaTravel'] }
+      }, undefined, ['ctrip-flight', 'ctrip-hotel', 'train-12306', 'dida-portal'])
+      assert.ok(newExtGot.job && newExtGot.job.site === 'dida-portal', `声明 dida-portal 的扩展领到 job: ${JSON.stringify(newExtGot.job)}`)
+      const outcome = await submitP
+      assert.ok(outcome.ok && outcome.result.names?.includes('CN_M_DidaTravel'), `job 结果正确回传: ${JSON.stringify(outcome)}`)
+      // 正向:capability 匹配的 parked 轮询者即时收到新提交的 ctrip job
+      const ctripP = lane.submit({ kind: 'cookie-names', site: 'ctrip-flight' }, { timeoutMs: 3_000 })
+      await pause(100)
+      const parkedOld = await Promise.race([oldExtP, pause(500).then(() => null)])
+      assert.ok(parkedOld && parkedOld.job && parkedOld.job.site === 'ctrip-flight', `旧版扩展领走自己 capability 内的 job: ${JSON.stringify(parkedOld?.job)}`)
+      await ctripP.catch(() => ({ ok: false } as const))
+    } finally {
+      await lane.close()
+    }
+  })
+
   await check('双源合同:needs-extension → waiting_extension(no_spend_waiting_user,waiting-* 同族)', () => {
     const e = evaluateDoubleSource({ session: waitingRecord('needs-extension') })
     assert.equal(e.state, 'waiting_extension')

@@ -40,6 +40,7 @@ export const ACCOUNT_TOOLS: Record<string, string> = {
 
 const SITE_LABEL: Record<string, string> = {
   'ctrip-flight': '携程机票',
+  'dida-portal': 'Dida 供应商门户',
 }
 
 interface AuthState {

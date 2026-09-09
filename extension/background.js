@@ -34,6 +34,13 @@ const SITES = {
     domain: '12306.cn',
     ticketNames: [],
   },
+  // Dida 供应商门户(2026-09-09 实装;hotel-be portal integration 迁移线):
+  // 员工登录态(HttpOnly 会话 cookie 只读名字,值即取即弃);检索走 portal.dida.com
+  // 后台标签 + 被动嗅探 portal-webapi 实时价
+  'dida-portal': {
+    domain: 'dida.com',
+    ticketNames: ['CN_M_DidaTravel'],
+  },
 }
 
 /** 检索 URL 白名单(per-site;search job 只允许开各自站点域,其余一律拒) */
@@ -41,6 +48,7 @@ const SITE_SEARCH_PREFIXES = {
   'ctrip-flight': 'https://flights.ctrip.com/',
   'ctrip-hotel': 'https://hotels.ctrip.com/',
   'train-12306': 'https://kyfw.12306.cn/',
+  'dida-portal': 'https://portal.dida.com/',
 }
 
 let activePort = null

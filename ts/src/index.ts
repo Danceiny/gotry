@@ -1039,6 +1039,7 @@ export function apply(ctx: Context, config: Config): void {
       + 'Transport: GoTry Session Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
       + 'kind="flight": from/to 中文城市名 + date YYYY-MM-DD — sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
       + 'kind="hotel": to=目的地中文, cityId? = the numeric city= in a hotels.ctrip.com list URL (web-search it when the destination is outside the built-in city table), checkIn?/checkOut? (YYYY-MM-DD), adults?; hotel prices are the user\'s real logged-in prices. Evidence [会话:ctrip-hotel@ts]. '
+      + 'kind="dida": Dida supplier-portal realtime hotel rates on the employee\'s own logged-in session (hotel-be portal integration line) — no from/to needed; the portal find page\'s own requests are sniffed passively. Rates carry ratePlanId/referenceNo for the server-side booking chain. Evidence [会话:dida-portal@ts]. '
       + 'kind="train": from/to/date(YYYY-MM-DD) + fromStationTelecode?/toStationTelecode? (three-letter codes in the kyfw query URL, for cities outside the built-in table) — 12306 left-ticket query (public face): train codes, times, durations, seat availability; the list API carries NO prices (prices live on the 12306 page). Evidence [会话:train-12306@ts]. '
       + 'verdict needs-login = call gotry_session_login (opens the Ctrip login entry in the user\'s own foreground tab — no terminal, no credentials through GoTry); '
       + `needs-extension = one-time browser-extension install (Chrome Web Store one-click, installUrl is also surfaced as a clickable link in the verdict field for dsh UI to render) — the DEFAULT transport; cdp (chrome://inspect remote debugging) is a diagnostic fallback only via GOTRY_SESSION_TRANSPORT=cdp. `
@@ -1049,7 +1050,7 @@ export function apply(ctx: Context, config: Config): void {
     // (docs/design/tool-orchestration-design.md §4③「interpretArgs 留作旧形态容忍层」),blob 调用在
     // execute 内归一后走原条件闸,结构化报错不崩。flyai 因 kind required 仍在宿主权即拒。
     parameters: {
-      kind: { type: 'string', enum: ['flight', 'hotel', 'train'], description: '默认 flight 机票;hotel 携程酒店(用户登录态真实价);train 12306 余票(公开面)' },
+      kind: { type: 'string', enum: ['flight', 'hotel', 'train', 'dida'], description: '默认 flight 机票;hotel 携程酒店(用户登录态真实价);train 12306 余票(公开面);dida 供应商门户实时价(员工登录态)' },
       from: { type: 'string', description: '出发城市中文(词表内),如 上海——kind=flight|train 必填' },
       to: { type: 'string', description: '到达城市中文——kind=flight|train 必填;kind=hotel 时为目的地(必填)' },
       date: { type: 'string', description: '出发日期 YYYY-MM-DD——kind=flight|train 必填,须为今天或未来' },
@@ -1063,6 +1064,30 @@ export function apply(ctx: Context, config: Config): void {
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args, _exec) {
       const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; cityId?: number | string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string }>(args)
+      // ---- Dida 供应商门户(2026-09-09 实装;hotel-be portal integration 迁移线)----
+      if (q.kind === 'dida') {
+        const itpD = await interpretEffect({
+          effect: 'SESSION_DIDA_SEARCH',
+          params: {
+            auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
+          },
+        })
+        if (!itpD.result) return declinedObservation('SESSION_DIDA_SEARCH', itpD.trace)
+        const rD = itpD.result
+        await noteChannel('session:dida-portal', rD.verdict)
+        const topD = (rD.rates ?? []).slice(0, 8).map(x => `${x.hotelName ?? x.hotelId ?? '?'} ${x.roomName ?? ''} ${x.ratePlanId ?? ''} ${x.currency ?? ''}${x.price} 库存${x.inventory ?? '?'}${x.referenceNo ? ` ref=${x.referenceNo.slice(0, 12)}…` : ''}`)
+        const summaryD = rD.verdict === 'hit'
+          ? `Dida 门户实时价(员工本人登录态,被动嗅探)前 ${topD.length} 条(预订由服务端适配器凭 referenceNo 续链,gotry 不碰下单):\n${topD.join('\n')}\n${rD.evidence}`
+          : rD.verdict === 'cooldown'
+            ? `会话检索节律闸冷却中(两次会话检索需 ≥30s 间隔)——稍候重试或先用其他工具推进。${rD.evidence}`
+            : rD.verdict === 'needs-login'
+              ? `${rD.error ?? ''} ${rD.evidence}`
+              : `Dida 门户会话检索未取回(${rD.verdict}):${rD.error ?? ''} ${rD.evidence}`
+        return JSON.parse(JSON.stringify({
+          ...rD, summary: summaryD,
+          ...(rD.verdict !== 'hit' ? routingField('search-hotel', 'session:dida-portal') : {}),
+        })) as Record<string, never>
+      }
       // ---- 会话酒店(2026-09-03 实装;2026-09-02 迪拜 session:用户要携程找酒店,会话面却只有机票)----
       // ---- 会话火车(2026-09-03 实装;12306 公开查询面,无登录闸)----
       if (q.kind === 'train') {
@@ -1160,7 +1185,7 @@ export function apply(ctx: Context, config: Config): void {
       })) as Record<string, never>
     },
     presentCall: args => {
-      const callTitle = args.kind === 'hotel' ? `会话酒店:${args.to ?? ''}` : args.kind === 'train' ? `会话火车:${args.from ?? ''}` : `会话检索:${args.from ?? ''}`
+      const callTitle = args.kind === 'hotel' ? `会话酒店:${args.to ?? ''}` : args.kind === 'train' ? `会话火车:${args.from ?? ''}` : args.kind === 'dida' ? '会话酒店:Dida 门户实时价' : `会话检索:${args.from ?? ''}`
       return { card: 'generic', title: callTitle, kind: 'fetch', rawInput: args }
     },
     presentResult: (args, value) => {

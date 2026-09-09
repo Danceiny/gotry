@@ -112,6 +112,18 @@ export const CHANNELS: readonly ChannelEntry[] = [
     hint: 'kind=hotel',
   },
   {
+    id: 'session:dida-portal',
+    label: 'Dida 供应商门户·用户登录态',
+    tool: 'gotry_session_search',
+    intents: ['search-hotel'],
+    quotaClass: 'user-session',
+    evidenceTag: '[会话:dida-portal@ts]',
+    tier: 'session',
+    efficiencyRank: 2,
+    setup: '一次性装 Session Bridge 扩展 + 授权卡 + hotel-be portal 自动登录跳板(dida 官网由人完成登录)',
+    hint: 'kind=dida',
+  },
+  {
     id: 'session:12306-train',
     label: '12306 公开查询面',
     tool: 'gotry_session_search',
