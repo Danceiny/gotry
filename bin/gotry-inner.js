@@ -29,7 +29,7 @@ import {
   selectDshRuntime,
   supportsNodeVersion,
 } from './gotry-runtime-resolution.js'
-import { onboardingSkipReason } from './gotry-bootstrap.js'
+import { onboardingSkipReason, orchestrateWebLaunch } from './gotry-bootstrap.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..')
@@ -483,12 +483,96 @@ const cleanupPatch = () => {
   rmSync(patchDir, { recursive: true, force: true })
 }
 process.once('exit', cleanupPatch)
-let child = null
-const terminateOnSignal = (signal, listener) => {
-  cleanupPatch()
-  if (child && !child.killed) child.kill(signal)
-  process.off(signal, listener)
-  process.kill(process.pid, signal)
+// 信号转发(issue #267 P1):spawnSync 阻塞 JS,信号处理器无法服务、finally 也跑不到。
+// 故 web-onboarding 子调用改 awaited spawn。SIGINT/SIGTERM 转发在 onboarding **之前**注册一次,
+// 并贯穿后续 dsh web 子进程的整个生命周期——服务管理器只向父进程发 SIGTERM 时,无论当前活跃的是
+// onboarding 子进程组还是 dsh 子,都收到同一信号。收到信号时:终止当前活跃子进程/进程组,
+// 等待 bounded close/reap,清 patch + 私有 result 目录(均幂等),移除本监听器,再向自己重发信号恢复原生终止语义。
+// signalHandling 护栏防递归/重复处理(重发信号不再二次进入本回调)。setup/doctor 的 spawnSync 不在此窗口,保持不变。
+let child = null                  // dsh web 子进程(launchWeb 后)
+let onboardingChild = null        // onboarding 子进程(运行中时);POSIX 下独立进程组
+let onboardingChildGroupPid = null
+let onboardingResultDir = null    // 私有结果目录;信号/正常/错误路径都清
+// outer grace 必须大于 bootstrap installer cleanup budget(2s TERM + 1s SIGKILL wait)。
+// 否则 stubborn installer 忽略 TERM 时,inner 可能先杀 bootstrap,导致 bootstrap 来不及 SIGKILL
+// 它自己 detached 出去的 installer 进程组。
+const ONBOARDING_TERM_GRACE_MS = 5_000
+const ONBOARDING_KILL_WAIT_MS = 1_000
+const cleanupOnboardingResult = () => {
+  if (!onboardingResultDir) return
+  const d = onboardingResultDir
+  onboardingResultDir = null
+  try { rmSync(d, { recursive: true, force: true }) } catch { /* ignore */ }
+}
+const onboardingChildTimeoutMs = (() => {
+  const raw = process.env.GOTRY_ONBOARDING_CHILD_TIMEOUT_MS
+  if (raw === undefined || raw === '') return 300_000
+  if (!/^[1-9]\d*$/.test(raw)) return 300_000
+  const n = Number(raw)
+  return Number.isSafeInteger(n) && n > 0 ? n : 300_000
+})()
+let signalHandling = false
+const signalListeners = new Map()
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+const waitForChildClose = (proc, ms) => new Promise(resolve => {
+  if (!proc) { resolve(false); return }
+  let done = false
+  const finish = value => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    proc.off('close', onClose)
+    proc.off('error', onError)
+    resolve(value)
+  }
+  const onClose = () => finish(true)
+  const onError = () => finish(true)
+  const timer = setTimeout(() => finish(false), ms)
+  proc.once('close', onClose)
+  proc.once('error', onError)
+})
+const signalChild = (proc, sig, groupPid = null) => {
+  if (!proc) return
+  if (process.platform !== 'win32' && groupPid) {
+    try { process.kill(-groupPid, sig); return } catch { /* fallback */ }
+  }
+  try { proc.kill(sig) } catch { /* ignore */ }
+}
+const terminateChildBounded = async (proc, sig, groupPid = null, graceMs = ONBOARDING_TERM_GRACE_MS, killMs = ONBOARDING_KILL_WAIT_MS) => {
+  if (!proc) return
+  signalChild(proc, sig, groupPid)
+  const closed = await waitForChildClose(proc, graceMs)
+  if (closed) return
+  signalChild(proc, 'SIGKILL', groupPid)
+  await waitForChildClose(proc, killMs)
+}
+const registerSignalForwarding = () => {
+  if (signalListeners.size) return
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    const listener = () => {
+      if (signalHandling) return            // 防递归:重发信号不再二次进入
+      signalHandling = true
+      void (async () => {
+        const active = onboardingChild || child
+        const groupPid = onboardingChild ? onboardingChildGroupPid : null
+        cleanupPatch()
+        cleanupOnboardingResult()
+        await terminateChildBounded(active, sig, groupPid)
+        for (const [s, l] of signalListeners) process.off(s, l)
+        signalListeners.clear()
+        process.kill(process.pid, sig)       // 移除监听器后重发 → 原生终止语义
+        await sleep(2_000)
+        process.exit(128 + (sig === 'SIGINT' ? 2 : 15))
+      })()
+    }
+    process.on(sig, listener)
+    signalListeners.set(sig, listener)
+  }
+}
+
+const unregisterSignalForwarding = () => {
+  for (const [s, l] of signalListeners) process.off(s, l)
+  signalListeners.clear()
 }
 // LLM key 由 dsh 宿主管理(凭证是用户资产,UI 在 dsh 里;gotry 不拦截启动期,
 // 不在用户面前展示任何 key 配置引导),此处直接放手 spawn dsh。
@@ -521,13 +605,17 @@ const childStdio = mode === 'web'
 let benchmarkCapturedBytes = 0
 let benchmarkDiagnosticBuffer = Buffer.alloc(0)
 let benchmarkOutputTruncated = false
-// issue #258:`gotry web` 启动前的一次性交互式 onboarding(仅交互式 TTY + 有可自动安装
+// issue #258:`gotry web` 启动前的交互式 onboarding——每次符合条件的启动评估一次、至多问一次,
+// 无跨启动持久确认(每次 web 启动独立判定;不写「已问过」标记)。仅交互式 TTY + 有可自动安装
 // 缺项时问一次;y 复用 doctor --fix 幂等安装器,不建第二套;n 立即继续 web)。
 // CI/benchmark/非 TTY/全健康/GOTRY_SETUP_SKIP=1/GOTRY_ONBOARDING_SKIP=1/--no-onboarding
-// 均零 prompt 零安装,仍启 web;永不 postinstall 或后台任务里安装。
-// bootstrap 以 `onboarding --result-file=…` 同步 inherit 跑;result JSON 告知是否 prompt
-// 过,用以抑制重复的启动摘要行(design §3.1③,#114)。
-let onboardingPrompted = false
+// 均零 prompt 零安装,仍启 web;永不 postinstall 或后台任务里安装。无 auto 但有需用户操作/
+// 不可用缺项时(如 win32 平台不支持自动安装),onboarding 渲染分类计划与原因、不 prompt 不安装,
+// 标记 reported;orchestrateWebLaunch 据此抑制重复的 detached doctor 摘要(design §3.1③,#114)。
+// 编排走 orchestrateWebLaunch(显式注入依赖的 E2E 边界缝,bootstrap-tests 跨边界单测同款):
+// bootstrap 以 `onboarding --result-file=…` 异步 inherit 跑(awaited spawn,POSIX 下独立进程组——
+// 使 JS 能服务 SIGINT/SIGTERM 并在信号路径清 patch+result 目录、reap installer 子树);result JSON 告知是否 prompt /
+// reported,用以抑制重复的启动摘要行。yes/no/失败/跳过/已 reported 均继续到 launchWeb(spawn dsh web)。
 const onboardingSkip = onboardingSkipReason({
   mode,
   benchmark: Boolean(benchmarkEnvironmentConfig),
@@ -535,38 +623,86 @@ const onboardingSkip = onboardingSkipReason({
   argv: process.argv,
   isTTY: process.stdin.isTTY,
 })
-if (!onboardingSkip) {
-  let resultFile = null
-  try {
-    resultFile = join(tmpdir(), `gotry-onboarding-${process.pid}-${Date.now()}.json`)
-    spawnSync(process.execPath, [join(here, 'gotry-bootstrap.js'), 'onboarding', `--result-file=${resultFile}`], {
-      stdio: 'inherit',
-      timeout: 300_000,
-    })
-    // onboarding 永不挡 web:忽略 exit code;仅读 result 判断是否 prompt 过
-    if (existsSync(resultFile)) {
-      try { onboardingPrompted = JSON.parse(readFileSync(resultFile, 'utf-8'))?.prompted === true }
-      catch { /* 坏 result 不挡 */ }
+// 一次性注册信号转发,覆盖 onboarding + dsh child 全生命周期(dsh close/error 时注销)。
+registerSignalForwarding()
+await orchestrateWebLaunch({
+  onboardingSkip,
+  runOnboarding: async () => {
+    // result 通道硬化:不在 os.tmpdir 下放可预测文件名——mkdtempSync 建 0700 私有目录,
+    // result.json 放其内;bootstrap 以 mode 0600 + flag wx 写(存在路径/符号链接永不覆盖,
+    // 防 symlink 互换攻击)。子调用改 awaited spawn(非 spawnSync)使 JS 能服务信号;
+    // 信号/正常/错误路径都清目录(幂等),详见上方 registerSignalForwarding/cleanupOnboardingResult。
+    let resultDir = null
+    try {
+      resultDir = mkdtempSync(join(tmpdir(), 'gotry-onboarding-'))
+      onboardingResultDir = resultDir
+      const resultFile = join(resultDir, 'result.json')
+      // 信号转发在 onboarding 之前注册一次,贯穿后续 dsh web 整个生命周期(见上方 registerSignalForwarding);
+      // onboarding 正常结束后不注销——服务管理器只向父进程发信号时,当前活跃子进程(onboarding 或 dsh)均收到。
+      registerSignalForwarding()
+      const detachedOnboarding = process.platform !== 'win32'
+      const oc = spawn(process.execPath, [join(here, 'gotry-bootstrap.js'), 'onboarding', `--result-file=${resultFile}`], {
+        stdio: 'inherit',
+        detached: detachedOnboarding,
+      })
+      onboardingChild = oc
+      onboardingChildGroupPid = detachedOnboarding ? oc.pid : null
+      // onboarding 永不挡 web:保留 spawnSync 原有的 300s 上限(可经 GOTRY_ONBOARDING_CHILD_TIMEOUT_MS 注入以供
+      // 确定性测试,生产默认 300_000)。超时即 SIGTERM(2s 后 SIGKILL 兜底),settle 恰好一次于 close/error/timeout;
+      // 之后继续 web(prompted:false),不留进程/目录(finally 清 result,信号路径清 patch+result)。
+      await new Promise((resolve) => {
+        let done = false
+        let killTimer = null
+        const timer = setTimeout(() => {
+          process.stderr.write(`[gotry] onboarding child timeout after ${onboardingChildTimeoutMs}ms; continuing to web\n`)
+          signalChild(oc, 'SIGTERM', onboardingChildGroupPid)
+          killTimer = setTimeout(() => { if (!done) signalChild(oc, 'SIGKILL', onboardingChildGroupPid) }, ONBOARDING_TERM_GRACE_MS)
+        }, onboardingChildTimeoutMs)
+        const finish = () => { if (done) return; done = true; clearTimeout(timer); if (killTimer) clearTimeout(killTimer); resolve() }
+        oc.once('close', finish)
+        oc.once('error', (error) => {
+          process.stderr.write(`[gotry] onboarding child spawn failed: ${error.code || error.name || 'error'}; continuing to web\n`)
+          finish()
+        })
+      })
+      if (signalHandling) await new Promise(() => {})
+      onboardingChild = null
+      onboardingChildGroupPid = null
+      if (existsSync(resultFile)) {
+        try { return JSON.parse(readFileSync(resultFile, 'utf-8')) }
+        catch { return { prompted: false } }
+      }
+      return { prompted: false }
+    } catch {
+      process.stderr.write('[gotry] onboarding setup failed; continuing to web\n')
+      return { prompted: false }
+    } finally {
+      onboardingChild = null
+      onboardingChildGroupPid = null
+      if (resultDir) { try { rmSync(resultDir, { recursive: true, force: true }) } catch { /* ignore */ } }
+      onboardingResultDir = null
     }
-  } catch { /* onboarding 不可用不挡 web */ } finally {
-    if (resultFile) { try { rmSync(resultFile, { force: true }) } catch { /* ignore */ } }
-  }
-}
-// 启动一次性 doctor 摘要(issue #114,design §3.1③):分离子进程后台跑只读体检,
-// 有待处理项打一行 stderr(stderr 继承,不污染 stdout;benchmark 面保持零杂音)。
-// onboarding 已 prompt 时抑制重复摘要行(已向用户展示缺项与结果)。
-if (!benchmarkEnvironmentConfig && !onboardingPrompted) {
-  try {
-    spawn(process.execPath, [join(here, 'gotry-bootstrap.js'), 'doctor', '--summary'], {
-      detached: true,
-      stdio: ['ignore', 'ignore', 'inherit'],
-    }).unref()
-  } catch { /* 体检不可用不挡启动 */ }
-}
-child = spawn(process.execPath, [dshBin, ...binJs], {
-  stdio: childStdio,
-  env: childEnv,
-  cwd: dshCwd,
+  },
+  // 启动一次性 doctor 摘要(issue #114,design §3.1③):分离子进程后台跑只读体检,
+  // 有待处理项打一行 stderr(stderr 继承,不污染 stdout;benchmark 面保持零杂音)。
+  // onboarding 已 prompt 时 orchestrateWebLaunch 已抑制本回调(不重复)。
+  runSummary: () => {
+    if (benchmarkEnvironmentConfig) return
+    try {
+      spawn(process.execPath, [join(here, 'gotry-bootstrap.js'), 'doctor', '--summary'], {
+        detached: true,
+        stdio: ['ignore', 'ignore', 'inherit'],
+      }).unref()
+    } catch { /* 体检不可用不挡启动 */ }
+  },
+  // dsh web 启动边界:launchWeb 即 inner 跨过 onboarding 后到达的 web 启动标记。
+  launchWeb: async () => {
+    child = spawn(process.execPath, [dshBin, ...binJs], {
+      stdio: childStdio,
+      env: childEnv,
+      cwd: dshCwd,
+    })
+  },
 })
 if (benchmarkStdout) {
   const maxBytes = Math.max(1, Number(benchmarkTerminalConfig?.max_bytes ?? 1))
@@ -606,6 +742,8 @@ const reportBenchmarkFailure = reason => {
 
 child.on('close', (code, signal) => {
   cleanupPatch()
+  if (signalHandling) return
+  unregisterSignalForwarding()
   if (benchmarkStdout) {
     const captured = Buffer.concat(benchmarkStdout).toString('utf8')
     if (code !== 0 || signal || benchmarkOutputTruncated) {
@@ -663,6 +801,8 @@ child.on('close', (code, signal) => {
 })
 child.on('error', (e) => {
   cleanupPatch()
+  if (signalHandling) return
+  unregisterSignalForwarding()
   if (benchmarkEnvironmentConfig) {
     reportBenchmarkFailure('child_spawn_failure')
     return

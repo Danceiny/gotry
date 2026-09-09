@@ -9,7 +9,7 @@
 
 - GoTry 是「从出发到下一次出发」的 AI 旅行 Agent:LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 - 当前形态:M3 最小可用、分发链路无堵点;M3 Exit 缺真实 cohort 证据(D-18),M4 记忆域经 founder 授权并行推进。
-- M4 评分与显式同意采集、tenant CLI 边界、Z3 生命周期及全栈稳定性修复均已进入 main;M4→M6 living 任务图与 M5 WriteGate 仍只排依赖和验收。真实 M3/M4 cohort、供应协议/内部授权、P6 批准与真实试点仍为 TODO,各里程碑 Entry/Exit 不变。
+- M4 评分与显式同意采集、tenant CLI 边界、Z3 生命周期及全栈稳定性修复均已进入 main;#258/#267 web onboarding 只是 M4 UX 工程面,其 POSIX onboarding/installer 进程组与 accepted-install signal/timeout 清理不提升 #20 Exit。M4→M6 living 任务图与 M5 WriteGate 仍只排依赖和验收。真实 M3/M4 cohort、供应协议/内部授权、P6 批准与真实试点仍为 TODO,各里程碑 Entry/Exit 不变。
 - 五层:L1 交互 / L2 编排(dsh 插件)/ L3 统一行程模型 + Z3 / L4 数据能力 / L5 loopx 治理。
 - 状态基座:单文件 SQLite 账本(ADR-15),本地+Web 一套账本语义(ADR-16);`tenant_id` 贯穿 append/read/fold/rebuild,旧 local 历史不猜租户;外部依赖全走效应解译器(ADR-18)。
 - 外部 benchmark:Round 1–10 frozen treatment 与 Round 11 wire 切片均不产生可归因 official score/uplift,Round 12 结构半场(config v4 closed body schema)已合入而冻结重跑未跑(D-28);逐轮事实见 §9,工程合同见 `evaluation/benchmark-environment-bridge.md`。
@@ -56,7 +56,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - **回合类**:`gotry_turn_handoff_list` 后台深度规划工单复访查询(只读;open=后台规划中/ETA,settled=交付物摘录,failed=诚实失败说明;收集结算由 `scripts/turn-handoff-collect.ts` 驱动,ADR-24 v2)
 - **自检类**:`gotry_doctor` 依赖体检;CLI 侧同源命令 `npx gotry doctor`,报告落 `gotry-state/doctor-report.md`
   - 覆盖:扩展 / agent-reach `.venv` / hbcli / FlyAI key(含最近匿名试用达限时间)/ dsh-calendar 挂载态 / sidebar / 随包 MIT `dsh-map-tools`(alpha.3 `SettingsProvider.prototype.installSection` 接线) / `dsh-tool-ask-user`,逐项分级 ok/degraded/missing + 精确补装指引
-  - 安装只经用户终端 `npx gotry doctor --fix`;LLM key 归 dsh 宿主,刻意不管
+  - 安装只经用户终端显式触发:`npx gotry doctor --fix`,或交互式 `gotry web` 启动前的 per-launch onboarding prompt(#258/#267,每次符合条件的启动评估一次、至多问一次,无跨启动持久确认;复用同一套幂等安装器,不建第二套);CI/非 TTY/全健康/opt-out 零 prompt 零安装。LLM key 归 dsh 宿主,刻意不管
   - 工具层 not-installed/needs-setup 报错统一指 doctor(2026-09-02 迪拜 session 复盘:阻断对已坏通道的盲目重试)
 - **运维面**:质量指标只读聚合 `ts/scripts/build-metrics-report.ts`(2026-09-05,#138 第一切片)——事实闸 verdict 分布与 blocked 率/通道健康 down·cooldown(30 天窗)/事故面(7 天窗)/桥延迟 p50·p95·max(**>500ms 超限计数=§11 复审节奏触发锚点的可见面**)/账本与 doctor 报告存在性,聚成单一 markdown;全程只读零 SQLite 打开(`openDb` 建连即可能写 kv),默认 stdout、`--out` 才落盘;工程面交付,不构成 M3 Exit 证据(归 #22)
 - **外驱面**:通道探针 tick `ts/scripts/channel-probe.ts`(2026-09-07,外部事件接缝第 1 段,#82 本地生产者)——只读探测无头可探通道(hbcli whoami / open-meteo / opensky;session 系不可探显式 skip,flyai 默认不探防空额度),异常写 `down` 事件、恢复写 `'ok'` 事件(latest-wins 超越 down)进 `channel-health.jsonl`,routing/doctor 零改动受益;loopx/cron 驱动一次一轮,非常驻;第 2 段愿望池消费同日落地(`conditions.channels` 可选条件+召回时 down 否证,`wish-channel-gate-tests` §53);远程回调面仍待 D-31 拍板(seam 设计 §5)
@@ -397,6 +397,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **CI 双层修复(2026-09-08,#208/#202;main 自 #197 起全红、rc.19 系带病发布)**:①`Install ts dependencies` 红根因 = runner npm 升级后裸 `npm ci` 强制校验 peer；#208 先以 `--legacy-peer-deps` 恢复流水线并移除 dsh-map-tools 冗余依赖，#202 再把 14 个递归 DSH peer 全部精确钉在 `0.1.2-alpha.3`，CI 与 CONTRIBUTING 回归裸 `npm ci`，lock 全量 resolved 指向 registry.npmjs.org。②typecheck 五连红(turn-deadline 的 session 事件)根因 = 类型面隐性依赖 peer 意外物化:`session/event`/`session/disposed` 声明在 dsh-session 的 cordis Events augmentation 里,pnpm 隔离布局下 root 侧同名包的 augmentation 合并进的是另一个 cordis 实例——显式 `import type` + `dsh-session@0.1.2-alpha.3` 进 ts dependencies，完整 alpha.3 closure 阻止 rc.1 混版本。
 - **账本 tenant scope 实装修复(2026-09-08,issue #224)**:独立审计复现 tenant-a/tenant-b 写愿望后 raw events 均落 `local`,`readEvents` 互看,目标租户 rebuild 清空,`wish.updated` fold 跨租户同 id 串读。修复为 `insertEvent` 写当前 tenant、`readEvents`/fold/rebuild 带 tenant 条件、legacy/v1 迁移只归 `local`；新增非 local owner、同 id/idem_key、交错 update、跨进程 reopen、A rebuild 不影响 B/local、重复 rebuild、booking saga audit owner 断言(run-all §28/§36)。历史已误写成 `local` 的非 local 事件不可无证据自动修复,边界见 §8.16。
 - **state-cli 租户参数与未隔离命令边界(2026-09-08,issue #226/#241)**:账本 CLI 的 `rootOf`/`tenantOf`/业务 positional 串位收敛为一次集中解析;`--state-root`/`--tenant`/`--limit` 可前后等价,未知/重复/缺值/非法 numeric(含 `.5`/`+.5`)在触碰 state root 前拒绝。`tick`/`export`/`whatif` 明确 local-only:非 local 不再可能调用默认 local 异步结算、覆盖共享 legacy 文件名,或把整库 snapshot 冒充租户导出;`--tenant` 仍只是账本 scope,不是认证授权。#241/#243 已入 main并关闭。
+- **web 启动交互式 onboarding(2026-09-09,issue #258/#267,M4 UX proof;#267 = #266 合并后的 post-merge 加固)**:`npx gotry web` 启动前的显式可选能力配置(每次符合条件的启动评估一次、至多问一次,无跨启动持久确认——不写「已问过」标记),复用 `doctor --fix` 的幂等安装器(setupHbcli/setupReach/setupSidebar,不建第二套)。仅交互式 TTY + 有可自动安装缺项时问一次;y → 安装并给三态结果(installed/needs-user-action/unavailable,各带具体原因);n → 立即继续 web。无可自动安装项但有需用户操作/不可用缺项时(如 win32 平台不支持自动安装),渲染分类计划与具体原因、不 prompt 不安装,标记 `reported` 让 inner 抑制重复的 detached doctor 摘要。CI/benchmark/非 TTY/全健康/`GOTRY_SETUP_SKIP=1`/`GOTRY_ONBOARDING_SKIP=1`/`--no-onboarding` 均零 prompt 零安装仍启 web;永不 postinstall 或后台任务里安装。`installerEnabled` 接受注入 env,classifyDoctorGap/buildOnboardingPlan/runOnboarding 全链不依赖 ambient `GOTRY_SETUP_*`。**#267 加固**:web-onboarding 子调用改 awaited POSIX process-group `spawn`(JS 可服务 SIGINT/SIGTERM,信号路径清 result+patch 目录),bootstrap installer `run()` 同步进 bounded process-group lifecycle;outer grace 显式覆盖 installer TERM+SIGKILL budget。结果通道改 0700 `mkdtemp` + `0600/wx` 排他写入;落地 `bin/gotry-{inner,bootstrap}.js` `orchestrateWebLaunch`/`runOnboarding`/`renderClassifiedPlan`;bootstrap-tests §12/§20/§21/§22/§23 确定性单测——§21 用临时安装包 fixture + 假 dsh + fixture-local TTY preload 跨过**真实** inner→bootstrap onboarding→dsh-web 进程边界(观察到 prompt 恰好一次),§21c prompt-wait SIGTERM 清理,§21f accepted-install parent SIGTERM 清 stubborn installer,§21g accepted-install onboarding timeout 清 installer 并继续 web。**M4 UX 质量线,不计入 #20 真实 `observed_private` cohort Exit**(D-34 清偿)。
 
 ### 外部 benchmark 泛化(Round 1–12,Discussion #78,official score 仍为空)
 
@@ -498,6 +499,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 | D-20 六状态面里程碑口径漂移 | **已清偿 2026-08-29(Issue #19)**:六状态面统一为「M3 真实 evidence 未收口;M4 为 founder 授权并行,不是 M3 Exit 证明;M5/M6 仅受各自 Entry gate 开闸」。后续不得把工程交付、发布或并行切片等同于里程碑退出证据。 |
 | D-21 async 非 4/4 被误结算为成功 | 已清偿,详见下方 |
 | D-32 ledger tenant scope 只落 schema 未贯穿事件/fold | **已清偿 2026-09-08(issue #224)**:`insertEvent` 写当前 tenant,`readEvents`/fold/rebuild 全带 tenant 条件,`wish.updated` 同 id 查当前租户 item;legacy JSON/JSONL 与 v1 DB 只归 `local`。新增 run-all §28/§36 断言覆盖非 local owner、同 id/idem_key、交错 update、跨进程 reopen、A rebuild 不影响 B/local、重复 rebuild、booking saga 审计 owner。已被旧 bug 写成 `local` 的非 local 历史事件缺少可审计 owner,不得自动猜修;有外部证据时另走人工 data-repair issue/PR。 |
+| D-34 可选能力 onboarding 缺口(#258/#267) | **已清偿 2026-09-09(#258;#267 = #266 合并后的 post-merge 加固)**:交互式 `gotry web` 启动前无可选能力配置面;现由 per-launch onboarding 复用 `doctor --fix` 幂等安装器。#267 补齐 awaited POSIX onboarding process group、bootstrap installer bounded process group、outer grace > installer TERM+SIGKILL budget、0700/0600-wx result 通道与 §21c/§21f/§21g stubborn installer 信号/timeout fixture。M4 UX 质量线,不计入 #20 Exit。详见 §9 |
 
 **D-4 gate/卡片无承载界面**
 

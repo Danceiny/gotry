@@ -75,16 +75,98 @@ const HBCLI_NPM_INSTALL_CMD = 'npm install -g staicli --registry=https://registr
 const HBCLI_INSTALL_CMD = HBCLI_NPM_INSTALL_CMD
 const REACH_INSTALL_URL = 'git+https://github.com/Panniantong/Agent-Reach.git'
 
-/** 带超时的子进程(inherit stdio 让用户看见上游安装进度) */
+let activeInstallerChild = null
+let activeInstallerGroupPid = null
+let installerSignalHandling = false
+const installerSignalListeners = new Map()
+const INSTALLER_TERM_GRACE_MS = 2_000
+const INSTALLER_KILL_WAIT_MS = 1_000
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const waitChildClose = (child, ms) => new Promise((resolve) => {
+  if (!child) { resolve(false); return }
+  let done = false
+  const finish = (value) => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    child.off('close', onClose)
+    child.off('error', onError)
+    resolve(value)
+  }
+  const onClose = () => finish(true)
+  const onError = () => finish(true)
+  const timer = setTimeout(() => finish(false), ms)
+  child.once('close', onClose)
+  child.once('error', onError)
+})
+const signalInstallerChild = (child, signal, groupPid = null) => {
+  if (!child) return
+  if (process.platform !== 'win32' && groupPid) {
+    try { process.kill(-groupPid, signal); return } catch { /* fallback */ }
+  }
+  try { child.kill(signal) } catch { /* ignore */ }
+}
+const terminateInstallerChild = async (child, signal, groupPid = null, graceMs = INSTALLER_TERM_GRACE_MS, killMs = INSTALLER_KILL_WAIT_MS) => {
+  if (!child) return
+  signalInstallerChild(child, signal, groupPid)
+  const closed = await waitChildClose(child, graceMs)
+  if (closed) return
+  signalInstallerChild(child, 'SIGKILL', groupPid)
+  await waitChildClose(child, killMs)
+}
+const registerInstallerSignalForwarding = () => {
+  if (installerSignalListeners.size) return
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    const listener = () => {
+      if (installerSignalHandling) return
+      installerSignalHandling = true
+      void (async () => {
+        await terminateInstallerChild(activeInstallerChild, sig, activeInstallerGroupPid)
+        for (const [s, l] of installerSignalListeners) process.off(s, l)
+        installerSignalListeners.clear()
+        process.kill(process.pid, sig)
+        await wait(2_000)
+        process.exit(128 + (sig === 'SIGINT' ? 2 : 15))
+      })()
+    }
+    process.on(sig, listener)
+    installerSignalListeners.set(sig, listener)
+  }
+}
+const unregisterInstallerSignalForwarding = () => {
+  for (const [s, l] of installerSignalListeners) process.off(s, l)
+  installerSignalListeners.clear()
+  installerSignalHandling = false
+}
+
+/** 带超时的子进程(inherit stdio 让用户看见上游安装进度);POSIX 下用进程组约束 installer 子树 */
 function run(cmd, args, { timeoutMs, cwd, env } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: 'inherit', cwd, env: env ?? process.env })
+    const detachedInstaller = process.platform !== 'win32'
+    const child = spawn(cmd, args, { stdio: 'inherit', cwd, env: env ?? process.env, detached: detachedInstaller })
+    activeInstallerChild = child
+    activeInstallerGroupPid = detachedInstaller ? child.pid : null
+    registerInstallerSignalForwarding()
     let done = false
-    const timer = setTimeout(() => {
-      if (!done) { done = true; try { child.kill('SIGKILL') } catch { /* ignore */ } }
+    let timer = null
+    const finish = (result) => {
+      if (done) return
+      done = true
+      if (timer) clearTimeout(timer)
+      activeInstallerChild = null
+      activeInstallerGroupPid = null
+      unregisterInstallerSignalForwarding()
+      resolve(result)
+    }
+    timer = setTimeout(() => {
+      void (async () => {
+        if (done) return
+        await terminateInstallerChild(child, 'SIGTERM', activeInstallerGroupPid)
+        finish({ ok: false, error: 'timeout' })
+      })()
     }, timeoutMs)
-    child.on('error', (e) => { if (!done) { done = true; clearTimeout(timer); resolve({ ok: false, error: e.message }) } })
-    child.on('exit', (code) => { if (!done) { done = true; clearTimeout(timer); resolve({ ok: code === 0, error: code === 0 ? undefined : `exit ${code}` }) } })
+    child.on('error', (e) => finish({ ok: false, error: e.message }))
+    child.on('close', (code, signal) => finish({ ok: code === 0, error: code === 0 ? undefined : signal ? `signal ${signal}` : `exit ${code}` }))
   })
 }
 
@@ -93,7 +175,9 @@ function probe(cmd, args, timeoutMs = 10_000) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: 'ignore' })
     let done = false
-    const timer = setTimeout(() => { if (!done) { done = true; try { child.kill('SIGKILL') } catch { /* ignore */ } resolve(false) } }, timeoutMs)
+    const timer = setTimeout(() => {
+      if (!done) { done = true; try { child.kill('SIGKILL') } catch { /* ignore */ } resolve(false) }
+    }, timeoutMs)
     child.on('error', () => { if (!done) { done = true; clearTimeout(timer); resolve(false) } })
     child.on('exit', (code) => { if (!done) { done = true; clearTimeout(timer); resolve(code === 0) } })
   })
@@ -244,8 +328,9 @@ async function setupSidebar(attemptInstall) {  say('[gotry-setup] dsh-better-sid
 
 const DOCTOR = process.argv.includes('doctor')
 const DOCTOR_FIX = process.argv.includes('--fix')
-// onboarding 子命令(issue #258):`gotry web` 启动前的一次性显式可选能力配置 prompt。
-// inner 以 `onboarding --result-file=…` 同步 inherit 调用;`--scan` 只读查看计划(测试/调试)。
+// onboarding 子命令(issue #258):`gotry web` 启动前的显式可选能力配置 prompt——每次符合条件的
+// 启动评估一次、至多问一次,无跨启动持久确认。inner 以 `onboarding --result-file=…` 同步 inherit
+// 调用;`--scan` 只读查看计划(测试/调试)。
 const ONBOARDING = process.argv.includes('onboarding')
 // calendar 子命令(issue #106/D-9):可选日历挂载的 setup 状态管理面。
 // `gotry setup calendar`=开启;`--off`=关闭(删状态文件恢复默认);`--status`=只读查看。
@@ -450,8 +535,8 @@ async function runDoctor() {
     if (i.level !== 'ok' && i.fix) say(`      ↳ 修复: ${i.fix}`)
   }
   if (DOCTOR_FIX) {
-    if (process.platform === 'win32') {
-      say('[gotry-doctor] --fix 在 Windows 暂不支持自动安装(hbcli/agent-reach 上游无 win 安装面);请按各项修复指引手动处理')
+    if (!doctorFixAutoSupported()) {
+      say('[gotry-doctor] --fix 在 Windows 暂不支持自动安装(hbcli/agent-reach/sidebar 上游无 win 安装面);请按各项修复指引手动处理')
     } else {
       say('[gotry-doctor] 开始补装缺失项(--fix)…')
       const results = []
@@ -481,7 +566,8 @@ async function runDoctor() {
 }
 
 // ---------------------------------------------------------------------------
-// onboarding(issue #258):`npx gotry web` 启动前的一次性显式可选能力配置 prompt。
+// onboarding(issue #258):`npx gotry web` 启动前的显式可选能力配置 prompt——每次符合条件的启动
+//  评估一次、至多问一次,无跨启动持久确认(不写「已问过」标记,每次 web 启动独立判定)。
 //  契约:仅交互式 TTY + 有「可自动安装」缺项时问一次;y → 复用 doctor --fix 的幂等
 //  安装器(setupHbcli/setupReach/setupSidebar,不建第二套);n → 立即继续 web。
 //  CI/benchmark/非 TTY/全健康/GOTRY_SETUP_SKIP=1/GOTRY_ONBOARDING_SKIP=1/--no-onboarding
@@ -501,12 +587,30 @@ function installerIdFor(label) {
   return null
 }
 
-/** 该安装器是否被 GOTRY_SETUP_*=0 显式 opt-out(与 runDoctor 同口径)。纯函数。 */
-function installerEnabled(id) {
-  if (id === 'hbcli') return process.env.GOTRY_SETUP_HBCLI !== '0'
-  if (id === 'reach') return process.env.GOTRY_SETUP_REACH !== '0'
-  if (id === 'sidebar') return process.env.GOTRY_SETUP_SIDEBAR !== '0'
+/** 该安装器是否被 GOTRY_SETUP_*=0 显式 opt-out(与 runDoctor 同口径)。纯函数。
+ *  env 可注入:测试与可复用逻辑不依赖 ambient GOTRY_SETUP_*,生产 CLI 路径仍取 process.env。 */
+function installerEnabled(id, env = process.env) {
+  if (id === 'hbcli') return env.GOTRY_SETUP_HBCLI !== '0'
+  if (id === 'reach') return env.GOTRY_SETUP_REACH !== '0'
+  if (id === 'sidebar') return env.GOTRY_SETUP_SIDEBAR !== '0'
   return true
+}
+
+/** doctor --fix 自动安装的平台支持面(共享契约):win32 上 hbcli(staicli)/agent-reach(pip venv)
+ *  上游无 win 安装面,dsh-better-sidebar(dsh plugin → pnpm)在 win32 同样不自动跑——runDoctor
+ *  的 --fix 守卫与 onboarding 的 auto 分桶复用同一条边界,不在 win32 把这些缺项分到 auto
+ *  (否则 prompt 了却装不上,不诚实)。纯函数,可注入 platform 供确定性单测。 */
+function doctorFixAutoSupported(platform = process.platform) {
+  return platform !== 'win32'
+}
+
+/** win32 上本可 auto 的缺项降为 unavailable 时的具体原因(诚实,不冒充 auto / 不给无效的
+ *  `npx gotry doctor --fix` 指引)。纯函数。 */
+function platformAutoUnavailableReason(id) {
+  if (id === 'hbcli') return 'Windows 暂不支持 hbcli 自动安装(staicli 上游无 win 安装面);请按 doctor 指引手动配置或切到 macOS/Linux'
+  if (id === 'reach') return 'Windows 暂不支持 agent-reach 自动安装(pip venv 上游无 win 安装面);请按 doctor 指引手动配置或切到 macOS/Linux'
+  if (id === 'sidebar') return 'Windows 暂不支持 dsh-better-sidebar 自动安装(dsh plugin → pnpm 在 win32 不自动跑);请按 doctor 指引手动配置或切到 macOS/Linux'
+  return 'Windows 暂不支持自动安装;请按 doctor 指引手动配置'
 }
 
 /**
@@ -516,15 +620,22 @@ function installerEnabled(id) {
  *  unavailable = 本仓无自动安装面(重装 gotry / Node 升级 / env opt-out / 安装器不自动升级项)。
  *  LLM key 永远 ok,不进任何桶。
  */
-function classifyDoctorGap(item) {
+function classifyDoctorGap(item, opts = {}) {
+  const platform = opts.platform ?? process.platform
+  const env = opts.env ?? process.env
   if (!item || !item.level || item.level === 'ok') return 'ok'
   const label = item.label ?? ''
   if (label === 'LLM key') return 'ok'
-  if (label.startsWith('Agent Reach')) return installerEnabled('reach') ? 'auto' : 'unavailable'
-  // hbcli:二进制缺失(missing)= auto(setupHbcli 装);凭证未配(degraded)= user-action;
-  // 旧版本(missing,安装器不自动升级)= auto 分桶但安装会失败 → 结果兜底 unavailable,诚实不冒充。
-  if (label.startsWith('hbcli')) return item.level === 'degraded' ? 'user-action' : (installerEnabled('hbcli') ? 'auto' : 'unavailable')
-  if (label.startsWith('dsh-better-sidebar')) return installerEnabled('sidebar') ? 'auto' : 'unavailable'
+  const autoSupported = doctorFixAutoSupported(platform)
+  if (label.startsWith('Agent Reach')) return installerEnabled('reach', env) && autoSupported ? 'auto' : 'unavailable'
+  // hbcli:二进制缺失(missing)= auto(setupHbcli 装;win32 → unavailable,上游无 win 安装面);
+  // 凭证未配(degraded)= user-action(平台无关);旧版本(missing,安装器不自动升级)= auto 分桶
+  // 但安装会失败 → 结果兜底 unavailable,诚实不冒充。
+  if (label.startsWith('hbcli')) {
+    if (item.level === 'degraded') return 'user-action'
+    return installerEnabled('hbcli', env) && autoSupported ? 'auto' : 'unavailable'
+  }
+  if (label.startsWith('dsh-better-sidebar')) return installerEnabled('sidebar', env) && autoSupported ? 'auto' : 'unavailable'
   if (label.startsWith('GoTry Session Bridge')) return 'user-action' // 浏览器商店一键装
   if (label.startsWith('FlyAI')) return 'user-action' // 上游控制台申请 key
   if (label.startsWith('dsh-calendar')) return 'user-action' // profile cordis.patch.yml 配置
@@ -538,17 +649,27 @@ function classifyDoctorGap(item) {
  * 由 doctor items 构建 onboarding 计划(纯函数)。
  *  promptable = 存在可自动安装缺项(决定是否问那一次)。
  */
-function buildOnboardingPlan(items) {
+function buildOnboardingPlan(items, opts = {}) {
+  const platform = opts.platform ?? process.platform
+  const env = opts.env ?? process.env
   const auto = []
   const userAction = []
   const unavailable = []
   for (const item of items ?? []) {
-    const bucket = classifyDoctorGap(item)
+    const bucket = classifyDoctorGap(item, { platform, env })
     if (bucket === 'ok') continue
     const entry = { label: item.label, level: item.level, detail: item.detail, fix: item.fix }
     if (bucket === 'auto') auto.push(entry)
     else if (bucket === 'user-action') userAction.push(entry)
-    else unavailable.push(entry)
+    else {
+      // win32 平台把本可 auto 的缺项降为 unavailable 时,给具体平台原因(诚实,不冒充 auto,
+      // 也不给 win32 上无效的 `npx gotry doctor --fix` 指引);env opt-out / 随包缺失等保持原 detail。
+      const id = installerIdFor(item.label)
+      if (id && !doctorFixAutoSupported(platform) && installerEnabled(id, env)) {
+        entry.detail = platformAutoUnavailableReason(id)
+      }
+      unavailable.push(entry)
+    }
   }
   return { promptable: auto.length > 0, auto, userAction, unavailable }
 }
@@ -614,6 +735,24 @@ async function promptOnboarding(plan, opts = {}) {
 }
 
 /**
+ * 渲染分类计划(无可自动安装项时):把 needs-user-action / unavailable 逐项带具体原因打印,
+ * 不 prompt 不安装。用于 win32 等无 auto 安装面、或仅凭证/key/重装缺口的交互式启动——
+ * 让用户看见分类与原因,而非只剩后台一行摘要。output 可注入(测试)。
+ */
+function renderClassifiedPlan(plan, output) {
+  output.write('\n[gotry] 启动前检测到可选能力缺项(无可自动安装项,以下需你本人操作或本机暂不支持):\n')
+  if (plan.userAction.length) {
+    output.write('需你本人操作(浏览器商店 / 凭证 / key / 配置),gotry 不自动处理:\n')
+    for (const g of plan.userAction) output.write(`  • ${g.label} —— ${g.detail}\n`)
+  }
+  if (plan.unavailable.length) {
+    output.write('本机暂不支持自动安装(平台限制 / 重装 gotry / Node 升级):\n')
+    for (const g of plan.unavailable) output.write(`  • ${g.label} —— ${g.detail}\n`)
+  }
+  output.write('详情与指引:对话里让助手调 gotry_doctor,或终端跑 npx gotry doctor\n')
+}
+
+/**
  * 执行安装(复用 setupHbcli/setupReach/setupSidebar,不建第二套)。
  *  installers/recheck 可注入(测试用 fakes,永不跑真安装器)。返回逐项结果:
  *  installed / needs-user-action / unavailable(失败带重试命令)。部分失败不抛、不挡 web。
@@ -661,48 +800,102 @@ async function runOnboardingFix(plan, opts = {}) {
  * `onboarding` 子命令(inner 以 `onboarding --result-file=…` 同步 inherit 调用;
  *  亦可直接 `node gotry-bootstrap.js onboarding --scan` 只读查看计划)。
  *  恒 exit 0(永不挡 web);result JSON 写到 --result-file 告知 inner 是否 prompt 过。
+ *
+ *  opts(注入位,供 bootstrap-tests 在进程内跨 inner→onboarding→web 边界跑真实 onboarding 逻辑,
+ *  永不跑真安装器/开浏览器):input/output(注入流替 stdin/stdout)、isTTY/env/argv(覆盖跳过判定)、
+ *  scan(注入 doctor items 替真机探测)、installers/recheck(注入假安装器/复检)、platform(注入平台)。
+ *  返回 result 对象({ prompted, answered?, results?, skipped?, plan? });CLI 仍恒 exit 0。
  */
-async function runOnboarding(args) {
+async function runOnboarding(args, opts = {}) {
   const resultFile = (args.find((a) => a.startsWith('--result-file=')) ?? '').slice('--result-file='.length) || null
   const scanOnly = args.includes('--scan')
-  const writeResult = (r) => { if (resultFile) { try { writeFileSync(resultFile, JSON.stringify(r)) } catch { /* 坏 result 不挡 */ } } }
+  const input = opts.input ?? process.stdin
+  const output = opts.output ?? process.stdout
+  const isTTY = opts.isTTY ?? process.stdin?.isTTY
+  const env = opts.env ?? process.env
+  const argv = opts.argv ?? process.argv
+  const scan = opts.scan ?? doctorChecks
+  const platform = opts.platform ?? process.platform
+  // result 通道硬化:mode 0600 + flag wx——存在路径/符号链接永不覆盖(inner 在 0700
+  // mkdtemp 私有目录下传 result.json,这里 wx 防该确切路径被预置/符号链接互换攻击)。
+  const writeResult = (r) => { if (resultFile) { try { writeFileSync(resultFile, JSON.stringify(r), { mode: 0o600, flag: 'wx' }) } catch { /* 坏 result 不挡 web */ } } }
 
   if (scanOnly) {
-    const plan = buildOnboardingPlan(await doctorChecks())
+    const plan = buildOnboardingPlan(await scan(), { platform, env })
     say(JSON.stringify(plan))
-    return 0
+    return { prompted: false, scan: true, plan }
   }
 
-  const skipReason = onboardingSkipReason()
+  const skipReason = onboardingSkipReason({ env, argv, isTTY })
   if (skipReason) {
-    writeResult({ prompted: false, skipped: skipReason })
-    return 0
+    const result = { prompted: false, skipped: skipReason }
+    writeResult(result)
+    return result
   }
 
-  const plan = buildOnboardingPlan(await doctorChecks())
+  const plan = buildOnboardingPlan(await scan(), { platform, env })
   if (!plan.promptable) {
-    // 无可自动安装缺项(全健康 / 仅 user-action / 仅 unavailable):不 prompt,
-    // 缺口交给后台摘要行(design §3.1③,#114),避免重复。
-    writeResult({ prompted: false, plan })
-    return 0
+    // 无可自动安装缺项。两类:
+    //  (1) 有需用户操作/不可用项(如 win32 平台不支持自动安装,或仅凭证/key/重装缺口):
+    //      渲染分类计划与具体原因,不 prompt 不安装;标记 reported 让 inner 抑制重复的
+    //      detached doctor 摘要(design §3.1③,#114)——用户已看见分类,不再叠一行摘要。
+    //  (2) 全健康:静默(后台摘要亦静默),不渲染。
+    const reportable = plan.userAction.length + plan.unavailable.length
+    if (reportable > 0) {
+      renderClassifiedPlan(plan, output)
+      const result = { prompted: false, reported: true, plan }
+      writeResult(result)
+      return result
+    }
+    const result = { prompted: false, plan }
+    writeResult(result)
+    return result
   }
 
-  const answer = await promptOnboarding(plan)
+  const answer = await promptOnboarding(plan, { input, output })
   if (answer === 'yes') {
     say('[gotry] 开始自动配置可安装项(复用 doctor --fix 幂等安装器)…')
-    const results = await runOnboardingFix(plan)
+    const results = await runOnboardingFix(plan, { installers: opts.installers, recheck: opts.recheck })
     say('')
     say('[gotry] 配置结果:')
     for (const r of results) {
       const tag = r.status === 'installed' ? '✅ installed' : r.status === 'needs-user-action' ? '↪ needs-user-action' : '✗ unavailable'
       say(`  ${tag}  ${r.label} —— ${r.reason}${r.retry ? `(重试: ${r.retry})` : ''}`)
     }
-    writeResult({ prompted: true, answered: 'yes', results })
-  } else {
-    say('  跳过——随时可跑: npx gotry doctor --fix(随后继续启动 web)')
-    writeResult({ prompted: true, answered: 'no' })
+    const result = { prompted: true, answered: 'yes', results }
+    writeResult(result)
+    return result
   }
-  return 0
+  say('  跳过——随时可跑: npx gotry doctor --fix(随后继续启动 web)')
+  const result = { prompted: true, answered: 'no' }
+  writeResult(result)
+  return result
+}
+
+/**
+ * web 模式的 onboarding + 启动编排(issue #258 E2E 边界缝):
+ *  跳过判定 →(可选)onboarding →(可选)后台 doctor 摘要 → dsh web 启动。抽成显式注入依赖的
+ *  函数,使 bootstrap-tests 能在不 spawn 真 dsh / 不跑真安装器的前提下,断言 inner 的真实编排跨过
+ *  inner→onboarding→web 启动边界(yes/no/非 TTY/部分失败/summary 抑制均到达 web 启动标记)。
+ *  生产侧 inner 传入真实依赖(spawnSync 跑 bootstrap onboarding 子进程、spawn detached 跑 doctor
+ *  --summary、spawn 跑 dsh web);launchWeb 即 web 启动边界标记。
+ *  摘要抑制契约:onboarding 已 prompt(用户交互过)或已 reported(渲染过分类计划,如 win32 无 auto
+ *  安装面)时,抑制重复的 detached doctor 摘要;跳过态(非 TTY/CI/opt-out)与全健康态仍走摘要
+ *  (全健康时摘要本身静默)。返回 onboardingPrompted 供 inner 复用(本函数内已处理摘要抑制,返回值仅信息性)。
+ */
+async function orchestrateWebLaunch({ onboardingSkip, runOnboarding, runSummary, launchWeb }) {
+  let onboardingPrompted = false
+  let onboardingResult = null
+  if (!onboardingSkip) {
+    try { onboardingResult = await runOnboarding() } catch { /* onboarding 不可用不挡 web */ }
+    onboardingPrompted = onboardingResult?.prompted === true
+  }
+  // onboarding 已 prompt 或已 reported(渲染过分类计划)时抑制重复后台摘要(design §3.1③,#114)
+  if (!onboardingPrompted && !onboardingResult?.reported) {
+    try { runSummary() } catch { /* 体检不可用不挡启动 */ }
+  }
+  await launchWeb()
+  return { launched: true, onboardingPrompted, onboardingResult }
 }
 
 const EXTENSION_FILES = ['manifest.json', 'background.js', 'content-main.js', 'content-bridge.js', 'README.md']
@@ -988,7 +1181,7 @@ async function main() {
   if (DOCTOR) process.exit(await runDoctor())
 
   // onboarding 子命令(issue #258):web 启动前的交互式可选能力配置(恒 exit 0,不挡 web)。
-  if (ONBOARDING) process.exit(await runOnboarding(process.argv.slice(2)))
+  if (ONBOARDING) { await runOnboarding(process.argv.slice(2)); process.exit(0) }
 
 // wizard 子命令(2026-09-02 商店上架后退化):**只走 stdout 提示 + 健康探活等待**;
 // 不 spawn 任何 GUI 工具(不动 pbcopy / osascript / open / xdg-open / zenity),
@@ -1057,5 +1250,6 @@ if (process.argv[1] && process.argv[1].endsWith('gotry-bootstrap.js')) {
 export {
   setupSidebar, sidebarInstalled,
   classifyDoctorGap, buildOnboardingPlan, onboardingSkipReason,
-  runOnboardingFix, promptOnboarding, runOnboarding,
+  runOnboardingFix, promptOnboarding, renderClassifiedPlan, runOnboarding, orchestrateWebLaunch,
+  doctorFixAutoSupported, platformAutoUnavailableReason, installerEnabled,
 }
