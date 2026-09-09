@@ -4,7 +4,8 @@
 > 状态:living
 > 上游:[AGENTS.md](../../AGENTS.md)(仓库契约)、CONTRIBUTING.md(Pull Request 流程)
 > 下游:维护者与执行 agent 处理外部 PR 时的操作面;GitHub CI(`.github/workflows/ci.yml`)
-> 最近更新:2026-09-09
+> 最近更新:2026-09-10
+> 边界:founder 已授权的仓内 Claude Code/worktree 是内部执行 lane,不进入外部机器人 T0/T1 一票否决;它仍须按 §0 公开交付记录并过正常评审闸。
 
 ## 速览
 
@@ -14,6 +15,16 @@
 - 外部贡献者给不出的「最终 SHA 本地证据」由维护者代跑补齐;CI 绿只是补充信号。
 - 裁决三态:合入 / 请改 / 关闭;每态都在 PR 内留证据化评论,关闭也须说明理由。合入方法按仓库实际允许的合并方式选择,不强制 squash 或线性历史。
 - 首例即 #250(自动化安全扫描器):核验为误报(动态值早已 `?` 参数绑定),founder 裁定作为防御性加固合入(2026-09-09);§3 技术分析即该案沉淀。
+
+---
+
+## 0. 公开交付台账(所有执行 lane 共用)
+
+- **Issue 启动**:记录验收标准、依赖、base SHA、分支/worktree、具名文件范围、执行路由与最终闸。
+- **Draft PR**:链接 issue,记录 exact head、变更文件、与当前 `origin/main` 的冲突/漂移、本地命令与 exit code、E2E 边界;未过闸时顶部保留编号 TODO。
+- **Review**:每条结论绑定被审 head;修复回指对应 finding,新 head 重跑适用闸。
+- **Merge**:记录被审 head、实际合入方法、merge SHA、destination SHA 验证与下一个开放 tracker。
+- **安全边界**:公开依赖/版本/测试/PR 事实;私有告警原文、exploit 细节、凭证与主机信息只留在 GitHub Security。
 
 ---
 
