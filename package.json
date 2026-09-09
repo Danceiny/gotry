@@ -43,6 +43,7 @@
     "data/*.json",
     "bin/",
     "ts/src/index.ts",
+    "ts/src/subagent-job-id-guard.ts",
     "ts/src/benchmark-environment-bridge.ts",
     "ts/src/benchmark-tool-isolation.ts",
     "ts/src/benchmark-agent-conformance.ts",

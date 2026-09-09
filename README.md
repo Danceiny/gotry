@@ -5,7 +5,7 @@
 > **Body and soul — more travel, less tourism.**
 > *身体和灵魂,更多旅行,更少旅游。*
 
-GoTry is an AI travel agent for **"departure to next departure."** You tell it where you want to go and why; it interviews you about your working hours and existing bookings, then hands you a **formally verified itinerary** — computed by a Z3 solver, not guessed by a model.
+GoTry is an AI travel agent for **"departure to next departure."** You tell it where you want to go and why; it interviews you about your working hours and existing bookings, then hands you a deterministic itinerary verdict — ordinary candidate choices are enumerated and evaluated by the TypeScript kernel, while explicit flight-chain cases use the Z3 solver, not model guesses.
 
 [![GitHub Stars](https://img.shields.io/github/stars/Danceiny/gotry?style=social)](https://github.com/Danceiny/gotry/stargazers)
 [![CI](https://github.com/Danceiny/gotry/actions/workflows/ci.yml/badge.svg)](https://github.com/Danceiny/gotry/actions/workflows/ci.yml)
@@ -23,19 +23,52 @@ GoTry is an AI travel agent for **"departure to next departure."** You tell it w
 GoTry turns "I want to go somewhere" into "can I — and how, at what true cost?" When the answer is "not this weekend," the destination is caught in a wish pool with its conditions instead of being dropped.
 
 - **For travelers** — a conversational planner that asks the questions that actually matter (working window, booked resources, departure city, budget), then returns a verdict per destination: feasible or not, why, and the **smallest change that makes it feasible**.
-- **For agent builders** — a working example of an agent where the LLM only listens, translates, and explains. Decisions and arithmetic live in a Z3 solver; every deliverable number carries a provenance tag; write operations are gated by design.
+- **For agent builders** — a working example of an agent where the LLM only listens, translates, and explains. Ordinary candidate decisions follow deterministic TypeScript enumeration, evaluation, and choice; the separate explicit flight-chain path uses Z3. Every deliverable number carries a provenance tag; write operations are gated by design.
 - **Evidence built in** — an estimate never poses as realtime. Tags are attached by the render layer, never by the model, and switch honestly on degradation. Bookable claims that cannot trace to an exact-date tool result are blocked before delivery.
 
 ## How It Works
 
-One planning pass is a pipeline. The model owns the two language-heavy ends; the solver owns everything numeric:
+One planning pass is a pipeline. The model owns the two language-heavy ends; the ordinary choice path is deterministic TypeScript, while the explicit flight-chain path uses Z3:
+
+```mermaid
+flowchart LR
+  U(["Traveler: 'I want three relaxing days in Dali'"]) --> A
+  subgraph LANG["LLM owns — language"]
+    A["Motivation interview<br/>working window · bookings · departure city"] --> B["Fact extraction<br/>working-hours &amp; leave semantics"]
+  end
+  subgraph NUM["Deterministic TypeScript kernel — ordinary choice path"]
+    C["Candidate enumeration<br/>solveChoiceSegment"] --> D["Evaluate each choice<br/>evaluateChoice · true-cost checks"] --> V["Choice verdict<br/>feasible / infeasible · recommendation"]
+  end
+  subgraph Z3PATH["Separate script/control-plane entry"]
+    Z["solveUnified<br/>script/control-plane flight-chain · Z3"]
+  end
+  subgraph GATE["Gates &amp; memory"]
+    E["Evidence chain<br/>every number carries a source tag"] --> F{"Fact gate"}
+    F -->|"all claims trace to exact-date tools"| G["Verified itinerary delivered"]
+    F -->|"unverifiable"| H["Blocked — never posed as verified"]
+    I[("Wish pool<br/>saved with recall conditions")]
+  end
+  B --> C
+  V --> E
+  B -.->|"separate script/control-plane entry"| Z
+  Z --> E
+  V -.->|"infeasible today"| I
+  I -.->|"conditions met — enumerate again"| C
+  classDef llm fill:#1f6feb22,stroke:#1f6feb,color:#1f6feb;
+  classDef solver fill:#2ea04322,stroke:#2ea043,color:#2ea043;
+  classDef gate fill:#d2992222,stroke:#d29922,color:#9e6a03;
+  class A,B llm;
+  class C,D solver;
+  class E,F,G,H,I gate;
+```
 
 | Stage | Who | Output |
 |---|---|---|
 | Motivation interview | LLM | Mandatory questions: working window / booked resources / departure city |
 | Fact extraction | LLM | Working-hours semantics, leave semantics |
-| Feasibility verdict | **Z3 solver** | Which destinations are feasible / infeasible, why, and the smallest change that makes them feasible |
-| Door-to-door true cost | Solver | Real flight duration (incl. time zones) + early-wake penalty + transfer cost + arrival energy |
+| Candidate choice verdict | **TypeScript choice kernel** | Ordinary path: enumerate candidates, evaluate each choice, then emit per-candidate feasible/infeasible verdicts and a recommendation |
+| Explicit flight-chain solve | **Z3 solver** | A separate `solveUnified` path for multi-leg flight-chain constraints; candidate mode bypasses it |
+| Door-to-door true cost | TypeScript `evaluateChoice` / explicit Z3 path | Ordinary choices compute true cost in the TypeScript evaluation path; the explicit flight-chain path reports its Z3 result |
 | Evidence chain | Render layer | Every number carries a source tag |
 | Delivery gate | Fact gate | Bookable claims must trace to exact-date tool results, or the artifact is blocked |
 | Memory | Domain layer | Infeasible today → wish pool, with explicit recall conditions |
@@ -47,22 +80,36 @@ Vocabulary you will meet in a GoTry answer:
 - **Wish pool** — "next departure" storage. An infeasible dream is saved with explicit conditions (e.g. "5+ days, off-season") and recalled when they can be met.
 - **Fact gate** — pre-delivery check on itinerary artifacts: every bookable claim (flight no. / time / airport / price / policy) must trace to an exact-date tool result; unverifiable means blocked — never presented as a verified plan. Render primitives attach a typed anchor to each fact row so the gate verifies a deterministic fact_id (and for policies, that the rendered `as_of` agrees with the registry) — hand-edited or unknown anchors fail closed.
 
+The wish pool lifecycle:
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> Interviewed: motivation captured (evidence mandatory)
+  Interviewed --> Feasible: deterministic choice verdict — feasible
+  Interviewed --> Wished: infeasible today
+  Wished --> Wished: recall vetoed — named channel down
+  Wished --> Recalled: conditions met — window · budget · season
+  Recalled --> Interviewed: re-solve with realtime data
+  Feasible --> [*]: fact-gated delivery
+```
+
 Architecture, five layers:
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│ L1  chat-as-interface; gates are in-message choice cards       │
-│ L2  orchestration  dsh runtime + GoTry plugin (tool count: code)│
-│ L3  domain  unified itinerary model + Z3 feasibility engine    │
-│ L4  data  static packs + hotelbyte-cli bridge + OpenFlights    │
-│ L5  governance  LoopX (objective / gates / evidence / quota)   │
-└──────────────────────────────────────────────────────────────┘
-```
+<a href="docs/assets/gotry-system-architecture.html">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/gotry-system-architecture.dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/gotry-system-architecture.light.png" />
+    <img alt="GoTry system architecture — sync path from chat through TypeScript candidate enumeration, evaluation, and choice to the fact gate, with the explicit flight-chain Z3 path shown separately, plus the state/async control plane and the read-only data layer" src="docs/assets/gotry-system-architecture.light.png" />
+  </picture>
+</a>
+
+> Generated from [`docs/assets/gotry-system-architecture.archify.json`](docs/assets/gotry-system-architecture.archify.json) with [archify](https://github.com/tt-a1i/archify) (showcase-validated: 9/9 artifact checks + browser evidence). Open [`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html) locally for the interactive version — guided views, pan/zoom, relationship tracing. The sync path distinguishes ordinary TypeScript candidate enumeration/evaluation/choice from the separate explicit flight-chain `solveUnified` Z3 path. Labels are Chinese-first, matching the authoritative [`docs/architecture.md`](docs/architecture.md).
 
 | Layer | Module | Role |
 |---|---|---|
 | L2 | `ts/src/index.ts` (dsh plugin) | Tool registry (count lives in code and `scripts/run-all-tests.sh` output), time-anchor & memory-brief variables; execute isolation + consent gate + per-turn tool budget + process guards |
-| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | single solving entry (candidate enumeration + flight-chain Z3) |
+| L3 | `ts/src/unified.ts` | ordinary candidate enumeration/evaluation/choice; `solveUnified` is the separate flight-chain Z3 path. `py/gotry_feasibility/` is a historical comparison oracle only, with zero product/runtime/toolchain dependency |
 | L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | effect interpreter (backoff retry / circuit breaker / mock interpreter) + realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
 | L5 | loopx governance | objective / gates / evidence / quota |
 
@@ -82,7 +129,7 @@ The GoTry plugin exposes its tools in groups (the exact count lives in the code 
 | | `gotry_skeleton_check` | OpenFlights 168-hub-pair connectivity (three-valued) |
 | **Inventory & catalog** | `gotry_hotel_search` | hotel-byte realtime bridge (requires valid check-in/check-out dates and asks for missing dates), with clearly labeled static results when the supplier is unavailable |
 | | `gotry_anything_search` | mixed city/hotel/POI catalog (hotel-be Anything) |
-| **Decision engine** | `gotry_feasibility_check` | Door-to-door true-cost feasibility (Z3), per-candidate verdicts |
+| **Decision engine** | `gotry_feasibility_check` | Registered path: deterministic TypeScript candidate enumeration/evaluation and per-candidate verdicts |
 | **Memory & reachability** | `gotry_motivation_save` | Persist motivation profile (evidence mandatory, anti-fabrication) |
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | "next departure" wish pool + 0..1 conditional recall |
 | | `gotry_companion_save` · `gotry_trip_log` | companion profile / travel timeline |
@@ -91,9 +138,30 @@ The GoTry plugin exposes its tools in groups (the exact count lives in the code 
 | **General external** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | web / subtitles / GitHub / all-channel external info (via Agent-Reach) |
 | **Self-check** | `gotry_doctor` | Read-only health check by default. With explicit `action: "repair"`, it shows the selected auto-repairable gaps, requests approval for that scope, reuses the same idempotent installers as `doctor --fix` / web onboarding, and rechecks health before reporting success. Browser-store installs, credentials/API keys, profile changes, package reinstalls, and Node upgrades stay as user actions; rejection, cancellation, or no approval channel executes nothing. Report lands in `gotry-state/doctor-report.md` (sidebar-workbench previewable) |
 
-> **Channel routing**: retrieval tools stay flat (no hidden dispatch); the persona routing card and the `routing` suggestions attached to failed search results are **generated from one channel registry** (official API > user session > web fallback, filtered by per-session channel health). When a channel exhausts its quota the result says so and names the next channel — retry-blindness is a contract violation, not a prompt hope.
+> **Channel routing**: retrieval tools stay flat (no hidden dispatch); the persona routing card and the `routing` suggestions attached to failed search results are **generated from one channel registry** (official API > user session > web fallback, filtered by per-session channel health). The registry returns an ordered suggestion list; the model or user chooses the next tool. No automatic dispatch, execution, or fallback happens inside the registry.
+
+```mermaid
+flowchart LR
+  I["Intent + failed channel"] --> R["channel registry<br/>routingAdvice()"]
+  R -->|"ordered alternatives[]<br/>tier / efficiency / health filtered"| A["routing suggestions<br/>tool · channel · why"]
+  A --> M{"Model or user<br/>chooses next tool"}
+  M --> F["gotry_flyai_search"]
+  M --> C["gotry_session_search"]
+  M --> W["gotry_web_search · Agent-Reach"]
+  R -.-> N["Registry does not dispatch,<br/>execute, or fall back"]
+  classDef api fill:#2ea04322,stroke:#2ea043,color:#2ea043;
+  classDef sess fill:#1f6feb22,stroke:#1f6feb,color:#1f6feb;
+  classDef web fill:#6e768122,stroke:#6e7681,color:#6e7681;
+  class F api;
+  class C sess;
+  class W web;
+```
 
 ## Demo
+
+<a href="docs/assets/demo.en.webm"><img src="docs/assets/demo.en.svg" alt="Illustrative animation-harness capture of a representative transcript — the traveler asks for recovery days at Erhai Lake; the deterministic TypeScript choice kernel rules it infeasible for a 2-day window, banks it in the wish pool, and returns two feasible lakes with evidence tags" width="880" /></a>
+
+*Illustrative animation-harness capture of a representative, condensed transcript — not a real `gotry web` product UI E2E; [open as video](docs/assets/demo.en.webm) (static copy below is authoritative):*
 
 ```
 > Two or three days staring at Erhai Lake, leaving from Shanghai, budget 3000, annual leave — no work.
@@ -127,6 +195,8 @@ GoTry's product persona is calibrated against evidence, not taste: the same real
 | Fact provenance | △ destination research holds up | ✗ sells a defunct airline (retired 2020); every price unsourced | (3)(7)(13)(20) |
 | Structure completeness | △ decent comparison table only at turn 13 | ✓✓ full skeleton in one turn — completeness is table stakes | verified completeness (fact gate) |
 | Persona in one line | erudite but stateless chatter — the user ends up doing four jobs | a flawless-brochure OTA clerk — every section ends in a price table | trusted travel engineer: interview first, the solver decides, infeasible says infeasible |
+
+> **Evidence boundary:** this is a qualitative comparison, not a scorecard or performance claim. The Kimi and Fliggy columns summarize archived real-world transcripts with different protocols (13 turns versus one turn). The GoTry column summarizes repository behavior contracts and deterministic/fixture evidence; it is not a comparable real-world benchmark result. No ranking, uplift, or numerical positioning is asserted. Comparable benchmark evidence would require the same prompt, models, channel conditions, sample sizes, rubric, and published scoring.
 
 **Single best finding: two unrelated products derived their weekdays from the 2025 calendar.** Calendar grounding has to be a product mechanism (anchor card, assert once, never recompute) — not model luck. Cautionary deep-dive: [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md).
 
@@ -189,7 +259,7 @@ One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.
 
 ## Trustworthy by Construction
 
-1. **The model translates; the solver decides.** The LLM never produces feasibility verdicts or arithmetic — those are computed by Z3 against the extracted facts.
+1. **The model translates; deterministic code decides.** The LLM never produces feasibility verdicts or arithmetic. Ordinary candidate verdicts come from TypeScript enumeration/evaluation/choice; explicit flight-chain constraints use `solveUnified` and Z3 against the extracted facts.
 2. **Every number carries a source tag** — attached by the render layer, never the model. Tags switch honestly on degradation; an estimate never poses as realtime.
 3. **No write path exists.** Booking/payment-class tools must pass WriteGate before any implementation ships; the future booking seam is already pinned by the `booking_saga_fsm.v1` edge table.
 4. **Login never touches credentials.** Login happens on the external website; GoTry reads cookie names only; consent is asked once per session and revocable.
@@ -204,7 +274,8 @@ Current release: **v0.0.1-rc.22** (npm `latest`; the `rc` dist-tag points at rc.
 
 **Working today** (full-stack regression green; every item has deterministic tests):
 
-- **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; solver calls are gated by a single shared Context, serialized sessions, and the #227 local native-cleanup barrier
+- **Deterministic choice kernel** — ordinary candidate enumeration, `evaluateChoice`, true-cost checks, per-candidate verdicts, and recommendation
+- **Explicit flight-chain Z3 path** — `solveUnified` handles the separate multi-leg constraint path; solver calls are gated by a single shared Context, serialized sessions, and the #227 local native-cleanup barrier
 - **Realtime retrieval** — flights/trains/hotels (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`); exhausted FlyAI anonymous trial quota is classified `needs-setup` with key guidance (no blind retries)
 - **Dependency doctor** — `npx @danceiny/gotry doctor` (CLI) / `gotry_doctor` (in-chat tool): diagnosis stays read-only by default; explicit in-chat repair shows a scoped plan, asks once per session scope, runs the existing idempotent bootstrap installers, and reports each item from a post-install health check. Manual setup items stay manual, and LLM keys stay with the dsh host
 - **Account-session search** — Ctrip flights **and hotels** + 12306 trains + Dida supplier portal (hotel-be portal-integration line, 2026-09-09) on your Chrome (hotels 2026-09-03: real logged-in prices via passive sniffing; trains 2026-09-03: public left-ticket query; interface surfaces calibrate with the first live session); observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
@@ -213,12 +284,14 @@ Current release: **v0.0.1-rc.22** (npm `latest`; the `rc` dist-tag points at rc.
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline, persisted by the tenant-scoped SQLite ledger (`local` remains the default); English solve output via `GOTRY_LOCALE=en`
 - **M4 lifecycle evidence collector** — explicit opt-in CLI for first/returning planning flow observations: isolated `stateRoot`, consent and HMAC key are mandatory; dataset key/source/wait vocabulary are frozen; JSONL/manifest writes use write-all + atomic/no-overwrite publication; exports feed the #223 scorer as candidate/synthetic only, never manual attestation
 - **Routed turn budgets** — every turn is classified (quick / sync / deep-planning) by a deterministic, zero-LLM router; time is the only budget and the deadline exit follows the task: quick and sync turns converge to an answer, deep-planning turns hand off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) instead of dying mid-stream; the ticket is collected in the background by `scripts/turn-handoff-collect.ts` (idempotent, recursion-guarded child planner) and surfaces in-chat via the read-only `gotry_turn_handoff_list` tool; exercised end-to-end through a packaged consumer install in CI
+- **Subagent/jobs id safety (#194)** — a typed pre-execute guard recognizes a continuable subagent durable id before dsh's jobs registry and returns a recoverable completion-notice / `list_agents` / `send_message` hint; one-shot, unrelated, and non-owner ids retain native jobs behavior. The upstream unknown-id contract remains open and this local guard does not modify vendored dsh.
 - **Ledger admin CLI** — `ts/scripts/state-cli.ts` parses command/options/positionals fail-closed: unknown, duplicate, missing, or invalid numeric options (including `.5`/`+.5`) do not touch the state root. The #241/#243 boundary is on main and closed. `--tenant` is a ledger scope parameter, not authentication; `tick` / `export` / `whatif` are explicit local-only commands because they call local async settlement, write shared legacy filenames, or snapshot the whole DB.
 - **Read-only tenant repair plan (#254)** — `repair-plan` inventories and dry-runs only on a temporary copy of the DB plus `-wal`/`-shm`; source content changes during copy/read fail closed, and only explicit evidence mappings can produce move entries. Apply, migration, backup, rollback, and real repair receipts remain numbered follow-ups on #254; this slice does not open any M5/M6 gate.
 - **Node build compatibility (#265)** — the supported lower bound remains Node ≥22.15. Root dist builds use the exact build-only TypeScript 5.9.3 compiler and emit ESM; CI keeps typecheck + the full suite on Node 22/24 and runs a focused exact-file/ESM/import proof on Node 22/24/26.
 - **Booking planner repair (#282)** — the embedded read-action planner preserves every non-empty occupancy room and child criterion, counts correction prompts within a three-call budget, returns a valid correction through the same validation path, and propagates provider failures; focused evidence uses an injected runPort and does not claim live supplier or UAT results.
 - **Future named-year planning window (Issue #2)** — the registered `gotry_feasibility_check` boundary derives the reference date from the host clock. Any dated recommendation defaults to a future floor even when optional planning context is omitted; explicit future years add a year-end bound, expired years never roll forward, and explicit historical mode is required for historical calculations. Rejections are structured validation results without incident logging; dateless legacy feasibility remains dateless. Negated past language and conflicting years do not grant a historical bypass. Deterministic proofs use an injected clock and isolated fixtures.
 - **Strict duplicate tool-call repair (#327 revision)** — the embedded planner keeps ordinary single-object `JSON.parse` behavior and recovers only fully consumed, whitespace-separated repetitions of at least two structurally identical top-level JSON objects; conflicting, truncated, prefixed, suffixed, non-object, or single-invalid inputs fail closed. The public-path fixture covers braces and escapes inside strings; it is deterministic local evidence, not provider reliability, HotelByte UAT, M3/M4 cohort, or M5/M6 admission evidence.
+- **Safe Booking dispatch diagnostics (#329)** — the synchronous HTTP 409 dispatch catch emits only a typed error code and an exact closed reason; unknown or suffixed errors become `UNCLASSIFIED`. The child-process HTTP/stderr proof is deterministic and offline only; it is not provider reliability, HotelByte UAT, or M3–M6 admission evidence.
 
 **Open limitations** (honest list):
 
@@ -239,6 +312,18 @@ The authoritative state lives in the docs, not this README: transactional state 
 </details>
 
 ## Roadmap
+
+```mermaid
+timeline
+  title From departure to next departure
+  M0 ✅ : Deterministic pipeline — dual engines reconciled
+  M1 ✅ : Agent form — chat as interface
+  M2 ✅ : Realtime data — evidence tags go live
+  M3 ◀ current : MVP — web face + 50–200 seed users, evidence open
+  M4 : Memory &amp; next departure — wish pool · cohort evidence
+  M5 : Transaction loop — WriteGate-gated booking
+  M6 : B2B embedding — zero-kernel-diff sponsor plugin
+```
 
 | # | Milestone | Scope | Status |
 |---|---|---|---|

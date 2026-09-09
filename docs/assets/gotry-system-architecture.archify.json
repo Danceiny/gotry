@@ -6,25 +6,45 @@
     "locale": "zh-CN",
     "output": "gotry-system-architecture.html",
     "quality_profile": "showcase",
-    "viewBox": [1360, 800],
+    "viewBox": [
+      1380,
+      700
+    ],
     "views": [
       {
-        "id": "conversation-path",
+        "id": "sync-path",
         "label": "同步对话主链",
-        "focus": ["user", "local-runtime", "gotry-plugin", "travel-core"],
-        "note": "用户从 Web 或 headless 入口进入 dsh，模型调用 GoTry 工具，确定性内核负责算术与判定。"
+        "focus": [
+          "user",
+          "local-runtime",
+          "gotry-plugin",
+          "travel-core",
+          "fact-gate",
+          "llm-provider"
+        ],
+        "note": "模型负责访谈与解释;普通候选路径由 TypeScript 枚举、评估、选择;显式航班链路径由 solveUnified 使用 Z3;交付前过事实闸,可下单 claim 必须回溯到 exact-date 工具结果。"
       },
       {
         "id": "evidence-path",
         "label": "证据与能力链",
-        "focus": ["gotry-plugin", "capability-adapters", "external-sources"],
-        "note": "实时 CLI/API 与本地降级数据共同支撑方案；Session/CDP 仅在用户登录态可用时接入。"
+        "focus": [
+          "gotry-plugin",
+          "capability-adapters",
+          "external-sources"
+        ],
+        "note": "实时 CLI/API/CDP 只读取数,本地降级包显式标注;Session 通道需用户登录态与授权卡。"
       },
       {
         "id": "async-control",
         "label": "状态与异步控制面",
-        "focus": ["gotry-plugin", "state-ledger", "async-worker", "travel-core"],
-        "note": "SQLite 保存权威状态；异步工单由独立 worker 恢复并调用统一求解入口。"
+        "focus": [
+          "gotry-plugin",
+          "state-ledger",
+          "async-worker",
+          "loopx",
+          "travel-core"
+        ],
+        "note": "SQLite 账本是权威状态;异步工单由 LoopX/CLI/tick 驱动,恢复后仍走统一求解入口。"
       }
     ]
   },
@@ -34,78 +54,191 @@
       "type": "external",
       "label": "用户",
       "sublabel": "浏览器 / 终端",
-      "pos": [40, 350],
-      "size": [150, 70]
+      "pos": [
+        30,
+        320
+      ],
+      "size": [
+        150,
+        76
+      ]
     },
     {
       "id": "local-runtime",
       "type": "frontend",
       "label": "gotry + dsh / Cordis",
-      "sublabel": "CLI 启动 · Web :3080 · Agent Host",
-      "pos": [270, 350],
-      "size": [220, 70],
-      "tag": "imported runtime"
+      "sublabel": "CLI · Web :3080 · Agent Host",
+      "pos": [
+        240,
+        320
+      ],
+      "size": [
+        240,
+        76
+      ],
+      "tag": "L1–L2 host"
     },
     {
       "id": "llm-provider",
       "type": "external",
       "label": "LLM Provider",
-      "sublabel": "DeepSeek / OpenAI-compatible",
-      "pos": [270, 90],
-      "size": [220, 70]
+      "sublabel": "DeepSeek / OpenAI 兼容 · key 归宿主",
+      "pos": [
+        240,
+        80
+      ],
+      "size": [
+        240,
+        76
+      ]
     },
     {
       "id": "gotry-plugin",
       "type": "backend",
-      "label": "gotry-tools",
-      "sublabel": "工具注册 · persona / memory 注入",
-      "pos": [610, 350],
-      "size": [200, 70],
+      "label": "gotry-tools 插件",
+      "sublabel": "工具注册 · persona 注入 · 授权闸 · 预算",
+      "pos": [
+        530,
+        320
+      ],
+      "size": [
+        250,
+        76
+      ],
       "tag": "Cordis plugin"
     },
     {
       "id": "travel-core",
       "type": "backend",
       "label": "确定性行程内核",
-      "sublabel": "unified.ts / model.ts · 枚举 / Z3",
-      "pos": [950, 350],
-      "size": [240, 70],
-      "tag": "TS runtime"
+      "sublabel": "TS 枚举/评估/选择 · 控制面 Z3",
+      "pos": [
+        820,
+        320
+      ],
+      "size": [
+        250,
+        76
+      ],
+      "tag": "L3"
+    },
+    {
+      "id": "fact-gate",
+      "type": "security",
+      "label": "事实闸 / WriteGate 缝",
+      "sublabel": "claim 回溯 exact-date · 写路径未启封",
+      "pos": [
+        1110,
+        320
+      ],
+      "size": [
+        240,
+        76
+      ],
+      "tag": "delivery gate"
     },
     {
       "id": "state-ledger",
       "type": "database",
       "label": "State Ledger",
-      "sublabel": "SQLite WAL · events / workflows",
-      "pos": [610, 90],
-      "size": [210, 70],
+      "sublabel": "SQLite WAL · events/workflows · 租户域",
+      "pos": [
+        530,
+        80
+      ],
+      "size": [
+        250,
+        76
+      ],
       "tag": "authoritative"
     },
     {
       "id": "async-worker",
       "type": "messagebus",
       "label": "异步工单 Worker",
-      "sublabel": "async-collect / state-cli tick",
-      "pos": [950, 90],
-      "size": [240, 70],
+      "sublabel": "async-collect · turn-handoff · tick",
+      "pos": [
+        820,
+        80
+      ],
+      "size": [
+        240,
+        76
+      ],
       "tag": "off sync path"
+    },
+    {
+      "id": "loopx",
+      "type": "cloud",
+      "label": "LoopX 治理",
+      "sublabel": "objective · gates · evidence · quota",
+      "pos": [
+        1110,
+        80
+      ],
+      "size": [
+        240,
+        76
+      ],
+      "tag": "L5"
     },
     {
       "id": "capability-adapters",
       "type": "backend",
       "label": "读取与检索适配器",
-      "sublabel": "CLI / API / CDP / Agent-Reach",
-      "pos": [610, 610],
-      "size": [240, 70]
+      "sublabel": "effect 解释器 · ReadGuard 物理只读",
+      "pos": [
+        530,
+        560
+      ],
+      "size": [
+        250,
+        76
+      ],
+      "tag": "L4"
     },
     {
       "id": "external-sources",
       "type": "external",
       "label": "旅行数据与证据源",
-      "sublabel": "HotelByte · FlyAI · Open APIs · 用户 Chrome · 本地降级包",
-      "pos": [950, 610],
-      "size": [370, 70],
+      "sublabel": "FlyAI · HotelByte · OpenFlights · Chrome · 降级包",
+      "pos": [
+        820,
+        560
+      ],
+      "size": [
+        530,
+        76
+      ],
       "tag": "Session 需登录态"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "同步主链 · L1–L3 对话到判决",
+      "wraps": [
+        "local-runtime",
+        "gotry-plugin",
+        "travel-core",
+        "fact-gate"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "状态与异步控制面",
+      "wraps": [
+        "state-ledger",
+        "async-worker"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "数据与证据 · L4 只读取数",
+      "wraps": [
+        "capability-adapters",
+        "external-sources"
+      ]
     }
   ],
   "connections": [
@@ -114,7 +247,11 @@
       "from": "user",
       "to": "local-runtime",
       "label": "Web / CLI",
-      "variant": "emphasis"
+      "variant": "emphasis",
+      "labelAt": [
+        210,
+        410
+      ]
     },
     {
       "id": "runtime-calls-llm",
@@ -123,27 +260,50 @@
       "label": "HTTPS 模型调用",
       "variant": "dashed",
       "fromSide": "top",
-      "toSide": "bottom"
+      "toSide": "bottom",
+      "labelAt": [
+        380,
+        238
+      ]
     },
     {
       "id": "runtime-invokes-tools",
       "from": "local-runtime",
       "to": "gotry-plugin",
       "label": "gotry_tools 调用",
-      "variant": "emphasis"
+      "variant": "emphasis",
+      "labelAt": [
+        505,
+        410
+      ]
     },
     {
       "id": "plugin-solves",
       "from": "gotry-plugin",
       "to": "travel-core",
-      "label": "可行性 / 骨架 / 深度求解",
-      "variant": "emphasis"
+      "label": "TS 候选枚举/评估/选择",
+      "variant": "emphasis",
+      "labelAt": [
+        800,
+        410
+      ]
+    },
+    {
+      "id": "core-to-gate",
+      "from": "travel-core",
+      "to": "fact-gate",
+      "label": "行程产物 · 交付前过闸",
+      "variant": "emphasis",
+      "labelAt": [
+        1090,
+        410
+      ]
     },
     {
       "id": "plugin-uses-ledger",
       "from": "gotry-plugin",
       "to": "state-ledger",
-      "label": "事务读写",
+      "label": "事务读写(租户域)",
       "fromSide": "top",
       "toSide": "bottom"
     },
@@ -151,18 +311,21 @@
       "id": "worker-uses-ledger",
       "from": "async-worker",
       "to": "state-ledger",
-      "label": "读取 / 落账",
-      "variant": "dashed"
+      "label": "恢复 / 落账",
+      "variant": "dashed",
+      "labelAt": [
+        800,
+        64
+      ]
     },
     {
       "id": "worker-solves",
       "from": "async-worker",
       "to": "travel-core",
-      "label": "solveUnified",
+      "label": "脚本/控制面 → solveUnified · 航班链 Z3",
       "variant": "dashed",
       "fromSide": "bottom",
-      "toSide": "top",
-      "labelAt": [1070, 174]
+      "toSide": "top"
     },
     {
       "id": "plugin-calls-adapters",
@@ -170,14 +333,46 @@
       "to": "capability-adapters",
       "label": "只读工具调用",
       "fromSide": "bottom",
-      "toSide": "top"
+      "toSide": "top",
+      "labelAt": [
+        655,
+        478
+      ]
     },
     {
       "id": "adapters-query-sources",
       "from": "capability-adapters",
       "to": "external-sources",
-      "label": "CLI / HTTPS / CDP",
-      "variant": "dashed"
+      "label": "CLI / HTTPS / CDP · 写请求 fail-closed",
+      "variant": "dashed",
+      "labelAt": [
+        800,
+        664
+      ]
+    },
+    {
+      "id": "loopx-drives-worker",
+      "from": "loopx",
+      "to": "async-worker",
+      "label": "tick / 配额驱动",
+      "variant": "dashed",
+      "labelAt": [
+        1085,
+        64
+      ]
+    },
+    {
+      "id": "loopx-governs-gate",
+      "from": "loopx",
+      "to": "fact-gate",
+      "label": "证据与准入口径",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1230,
+        238
+      ]
     }
   ],
   "cards": [
@@ -185,24 +380,26 @@
       "dot": "cyan",
       "title": "职责分界",
       "items": [
-        "LLM 负责理解与解释；TypeScript 负责算术与判定",
-        "普通候选枚举，多段航班链用 Z3；Python feasibility 仅历史对照"
+        "LLM 负责理解与解释;普通候选由 TypeScript 枚举、评估、选择",
+        "脚本/控制面调用 solveUnified 使用 Z3;py/gotry_feasibility 仅历史对照 oracle,与产品/运行时/工具链零依赖",
+        "入口: async-collect.ts · state-cli.ts · replay.ts"
       ]
     },
     {
       "dot": "emerald",
       "title": "证据与安全",
       "items": [
-        "实时能力标注来源；本地数据只作证据或显式降级",
-        "Session 需用户 Chrome 登录态；ReadGuard 对写请求 fail-closed"
+        "来源标签由渲染层附加,降级如实换签;估算绝不冒充实时",
+        "Session 用用户本人 Chrome 登录态,只读 cookie 名;ReadGuard 对写请求 fail-closed",
+        "预订/支付类写路径必须先过 WriteGate——今天不存在可下单路径"
       ]
     },
     {
       "dot": "amber",
       "title": "状态与异步",
       "items": [
-        "SQLite events / workflows 是权威；JSON / Markdown 仅作视图",
-        "异步 worker 由 LoopX / CLI / tick 独立驱动"
+        "SQLite events/workflows 是权威,JSON / Markdown 仅视图",
+        "deep-planning 到点落工单(ETA≈1h),worker 幂等结算回聊;测试只用隔离 stateRoot"
       ]
     }
   ]
