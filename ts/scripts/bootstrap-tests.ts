@@ -17,6 +17,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync, spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, delimiter } from 'node:path'
@@ -797,7 +798,9 @@ function childClosedMessage(label: string, stdoutRef: { s: string }, expected: s
 const fixtureReaps = new WeakMap<FixtureChild, Promise<void>>()
 
 function rejectAfterFixtureReap(child: FixtureChild, reject: (reason?: unknown) => void, error: unknown) {
-  void reapFixture(child).finally(() => reject(error))
+  void reapFixture(child)
+    .catch(() => undefined)
+    .then(() => reject(error))
 }
 
 // 等待 stdout 出现真实 onboarding prompt(证明 bootstrap 真的跑了 prompt 路径);超时 FAIL(非 skip)。
@@ -901,6 +904,28 @@ function pidAlive(pid: number) {
   try { process.kill(pid, 0); return true } catch { return false }
 }
 
+function processGroupId(pid: number) {
+  if (process.platform === 'win32') return null
+  try {
+    const groupId = Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' }).trim())
+    return Number.isInteger(groupId) && groupId > 1 ? groupId : null
+  } catch {
+    return null
+  }
+}
+
+async function waitForGone(label: string, pid: number, ms = 1_000) {
+  const deadline = Date.now() + ms
+  while (pidAlive(pid)) {
+    if (Date.now() >= deadline) throw new Error(`${label}: pid=${pid} 在 ${ms}ms 内仍存活`)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+  }
+}
+
+function processGroupAlive(groupId: number) {
+  try { process.kill(-groupId, 0); return true } catch { return false }
+}
+
 // 创建完成 promise(必须在事件触发前创建,故在 spawn 后立即调用)。21a/21c 用 close 等流排空;
 // mode='exit' 在 exit 后立即 destroy 流(有 detached grandchild 持 stderr 管道,避免悬挂)。带超时兜底:
 // 超时则 SIGKILL 整个进程组 + destroy 流并 resolve(timedOut:true)——由调用方断言,永不 reject。
@@ -944,22 +969,69 @@ async function reapFixture(child: FixtureChild) {
 }
 
 // 20g. prompt waiter 超时本身必须完成进程组清理,不能把 kill/reap 责任留给调用方 finally。
-{
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+//     父进程先启动并报告同组 grandchild;清理验证等待父/后代都消失,不依赖固定 sleep 调度。
+if (process.platform === 'win32') {
+  console.log('20g. prompt waiter timeout → process-group grandchild reap(SKIP on win32:POSIX process groups 不适用)')
+} else {
+  const child = spawn(process.execPath, ['-e', [
+    "const { spawn } = require('node:child_process')",
+    "const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })",
+    "process.stdout.write('grandchild-ready ' + grandchild.pid + '\\n')",
+    'setInterval(() => {}, 1000)',
+  ].join(';')], {
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true,
   })
   const stdoutRef = { s: '' }
   child.stdout!.on('data', (chunk: Buffer) => { stdoutRef.s += chunk.toString('utf8') })
   try {
-    await assert.rejects(waitForPrompt(child, stdoutRef, '20g', 10), /未在 10ms 内观察到 onboarding prompt/)
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.equal(pidAlive(child.pid!), false, '20g: prompt waiter 失败后必须已清理子进程组')
+    await waitForStdout(child, stdoutRef, 'grandchild-ready ', '20g', 1_000)
+    const grandchildPid = Number(stdoutRef.s.match(/grandchild-ready (\d+)/)?.[1])
+    assert.ok(Number.isInteger(grandchildPid) && grandchildPid > 1, `20g: 必须报告有效 grandchild pid\n${stdoutRef.s}`)
+    assert.equal(pidAlive(grandchildPid), true, `20g: grandchild(pid=${grandchildPid}) 必须在 waiter 前存活`)
+    const parentGroup = processGroupId(child.pid!)
+    const grandchildGroup = processGroupId(grandchildPid)
+    assert.ok(parentGroup, `20g: 无法读取 parent(pid=${child.pid!}) PGID`)
+    assert.equal(grandchildGroup, parentGroup, `20g: parent/grandchild 必须同组(parent=${parentGroup},grandchild=${grandchildGroup})`)
+    await assert.rejects(waitForPrompt(child, stdoutRef, '20g', 0), /未在 0ms 内观察到 onboarding prompt/)
+    await waitForGone('20g parent', child.pid!, 1_000)
+    await waitForGone('20g grandchild', grandchildPid, 1_000)
+    assert.equal(pidAlive(child.pid!), false, '20g: prompt waiter 失败后 parent 必须消失')
+    assert.equal(pidAlive(grandchildPid), false, '20g: prompt waiter 失败后 grandchild 必须消失')
+    assert.equal(processGroupAlive(parentGroup!), false, `20g: process group(${parentGroup}) 必须无残留成员`)
   } finally {
     await reapFixture(child)
   }
 }
-console.log('20g. prompt waiter timeout → deterministic process-group reap OK')
+console.log('20g. prompt waiter timeout → active same-group grandchild + bounded parent/descendant reap OK')
+
+// 20h. cleanup timeout/stream destroy failure 不能吞掉原始 waiter 错误或制造 unhandled rejection。
+{
+  const fakeChild = new EventEmitter() as unknown as FixtureChild
+  const failingStream = Object.assign(new EventEmitter(), {
+    destroy() { throw new Error('synthetic cleanup stream failure') },
+  })
+  Object.assign(fakeChild, {
+    pid: 2_147_483_647,
+    stdin: failingStream,
+    stdout: failingStream,
+    stderr: failingStream,
+  })
+  const stdoutRef = { s: '' }
+  let unhandled: unknown = null
+  const onUnhandled = (reason: unknown) => { unhandled = reason }
+  process.once('unhandledRejection', onUnhandled)
+  const started = Date.now()
+  try {
+    await assert.rejects(waitForPrompt(fakeChild, stdoutRef, '20h', 0), /未在 0ms 内观察到 onboarding prompt/)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    assert.equal(unhandled, null, '20h: cleanup timeout/failure 不得产生 unhandled rejection')
+    assert.ok(Date.now() - started < 1_500, '20h: cleanup timeout 必须有界返回')
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+  }
+}
+console.log('20h. waiter 原始错误 + cleanup timeout/failure bounded and handled OK')
 
 // 21a. TTY eligible,喂 "n":真实 prompt 恰好一次 → 拒绝 → web 启动,摘要抑制,无 result 目录残留
 {
@@ -1339,4 +1411,4 @@ console.log('22. win32 platform boundary(hbcli/reach/sidebar → unavailable + �
 }
 console.log('23. result 通道排他写入(预存文件不被覆盖 + symlink 不跟随 victim,mode 0600 + flag wx)OK')
 
-console.log('BOOTSTRAP TESTS: 24/24 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+env opt-out+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan / 编排缝 orchestrateWebLaunch × 6 / prompt waiter failure deterministic process-group reap / 临时安装包 spawned inner 21a TTY-eligible 真实 prompt→n→web + 摘要抑制 + 无残留 / 21b non-TTY 零 prompt / 21c POSIX 信号清理 SIGTERM→清 result+patch 目录 + 无残留子进程 / 21f yes-path installer 子树信号清理 / 21g yes-path timeout installer 子树清理 / 21d timeout 诊断 + 无残留 / 21e dsh-lifecycle 信号转发 / win32 平台边界 / result 通道排他写入)')
+console.log('BOOTSTRAP TESTS: 25/25 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+env opt-out+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan / 编排缝 orchestrateWebLaunch × 6 / prompt waiter failure deterministic process-group reap / waiter 原始错误 + cleanup timeout/failure handled / 临时安装包 spawned inner 21a TTY-eligible 真实 prompt→n→web + 摘要抑制 + 无残留 / 21b non-TTY 零 prompt / 21c POSIX 信号清理 SIGTERM→清 result+patch 目录 + 无残留子进程 / 21f yes-path installer 子树信号清理 / 21g yes-path timeout installer 子树清理 / 21d timeout 诊断 + 无残留 / 21e dsh-lifecycle 信号转发 / win32 平台边界 / result 通道排他写入)')
