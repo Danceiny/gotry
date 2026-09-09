@@ -499,17 +499,32 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     console.error('[booking-copilot] raw invalid decision (arguments not string):', JSON.stringify(event).slice(0, 600))
     throw new Error('planner_invalid_tool_arguments')
   }
+  let rawArgs: unknown = event.data.arguments
   let args: unknown
-  try { args = JSON.parse(event.data.arguments) } catch {
-    console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(event.data.arguments).slice(0, 600))
+  if (typeof rawArgs === 'string') {
+    try { args = JSON.parse(rawArgs) } catch {
+      console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(rawArgs).slice(0, 600))
+      throw new Error('planner_invalid_tool_arguments')
+    }
+  } else if (isRecord(rawArgs)) {
+    // Some providers hand back an already-parsed arguments object.
+    args = rawArgs
+  } else {
+    console.error('[booking-copilot] raw invalid decision (arguments type):', JSON.stringify(event).slice(0, 600))
     throw new Error('planner_invalid_tool_arguments')
   }
   // The decision envelope is model-authored: bind to the fields the runtime
   // owns and strip model-added meta keys instead of failing the whole turn.
-  if (!isRecord(args)) throw new Error('planner_invalid_tool_arguments')
+  if (!isRecord(args)) {
+    console.error('[booking-copilot] raw invalid decision (arguments not object):', JSON.stringify(args).slice(0, 600))
+    throw new Error('planner_invalid_tool_arguments')
+  }
   let envelope: Record<string, unknown> = args
   if (!isRecord(envelope.decision)) {
-    if (typeof envelope.kind !== 'string') throw new Error('planner_invalid_tool_arguments')
+    if (typeof envelope.kind !== 'string') {
+      console.error('[booking-copilot] raw invalid decision (no decision/kind):', JSON.stringify(args).slice(0, 800))
+      throw new Error('planner_invalid_tool_arguments')
+    }
     envelope = { decision: envelope }
   }
   const decision = envelope.decision as Record<string, unknown>
