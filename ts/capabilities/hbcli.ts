@@ -16,36 +16,6 @@ import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-/**
- * Supplier outcome 分类(#232 §7 honest unknown semantics):supplier result 是否可信决定
- *   success — exit 0 + JSON 可解析 + result 非空(数据真实可达)
- *   failed  — 进程退出码非 0 且有 stderr 错误信息(失败有据)
- *   unknown — 超时 / kill / 退出 0 但 stdout 非 JSON 或 result 为空 / spawn 异常(无法确定 outcome)
- * 与 `via`(渠道面:realtime/error/cache)正交;`via` 保留向后兼容,新消费者用 `outcome` 做 unknown 投影。
- */
-export type HbcliOutcome = 'success' | 'failed' | 'unknown'
-
-/**
- * staicli@0.0.3 钉版分布完整性(NPM registry tarball sha512;不可硬绑 master;
- * 与 #136/#232 owner 评论 2026-09-08 锚定同一字符串,只为「源码 vs 实际发布物
- * 不一致时 evidence 失锚」提供断言源;不替代真实安装回拉,仅做事实钉版)。
- */
-export const STAICLI_0_0_3_INTEGRITY = 'sha512-xGzw6KBQ4r5l+CXDbU/35p2nh6ia4t7Hjh+D34IxQEgtaOOkt9iUATmxlFwcspmXCo6NuHoYFhCJ/rJ3rso5fg=='
-
-/**
- * staicli 发布物命令 schema 钉版(#232 §6 adapter 准入矩阵 CLI source 维度):
- *   - 顶层子命令必须包含 `search` 与 `trade`;
- *   - 全局旗标固定前缀 `--json` + `--env=<uat|prod|dev>`(#232 §6「不假定 flag 任意位置等价」);
- *   - 不得假定 tenant selector (`--tenant-entity-id`) 已支持(0.0.3 实包无此参数)。
- */
-export const STAICLI_COMMAND_SCHEMA = Object.freeze({
-  version: '0.0.3',
-  topLevelSubcommands: Object.freeze(['search', 'trade', 'auth'] as const),
-  globalFlagPrefix: Object.freeze(['--json', '--env='] as const),
-  selectorUnsupported: Object.freeze(['--tenant-entity-id'] as const),
-  integrity: STAICLI_0_0_3_INTEGRITY,
-} as const)
-
 export interface HbcliCallOptions {
   /** hbcli 二进制路径(默认 'hbcli',依赖 PATH;~/.local/bin 等已知安装位自动回退) */
   hbcliBin?: string
@@ -60,8 +30,6 @@ export interface HbcliCallOptions {
 export interface HbcliCallResult {
   /** 是否走了实时 hbcli */
   via: 'hbcli-realtime' | 'hbcli-cache' | 'hbcli-error'
-  /** supplier outcome 分类(#232 §7 honest unknown);`via` 正交,向后兼容 */
-  outcome: HbcliOutcome
   /** hbcli 退码 0=成功 */
   exitCode: number
   /** 解析后的 JSON(若 --json 模式输出可解析;否则为空) */
@@ -104,9 +72,8 @@ function attemptHbcli(
       if (!settled) {
         settled = true
         child.kill('SIGKILL')
-        // timeout → outcome=unknown:进程被外力 kill,无法判定 supplier 端是否已收到/已处理
         resolve({
-          via: 'hbcli-error', outcome: 'unknown', exitCode: -1, result: null,
+          via: 'hbcli-error', exitCode: -1, result: null,
           evidence: `[实时API:hbcli@timeout@${new Date().toISOString()}]`,
           latencyMs: Date.now() - started, error: `timeout after ${opts.timeoutMs}ms`,
         })
@@ -121,9 +88,8 @@ function attemptHbcli(
       const latencyMs = Date.now() - started
       if (code !== 0) {
         // 不抛错,降级返回。证据链显式标注:实时 API 调用失败+原因+时间戳。
-        // exit≠0 + stderr 有内容 → outcome=failed(进程退出明确报错)
         resolve({
-          via: 'hbcli-error', outcome: 'failed', exitCode: code ?? -1, result: null,
+          via: 'hbcli-error', exitCode: code ?? -1, result: null,
           evidence: `[实时API:hbcli@error@${new Date().toISOString()}]`,
           stderr: stderr.slice(0, 2000),
           latencyMs, error: stderr.trim().slice(0, 200) || `exit ${code}`,
@@ -137,10 +103,8 @@ function attemptHbcli(
       if (jsonStr) {
         try { result = JSON.parse(jsonStr) } catch { /* 非 JSON 输出,留给调用方处理 */ }
       }
-      // exit 0 但 stdout 非 JSON 或 result 为空 → outcome=unknown(exit0 ≠ success,#232 §7)
-      const outcome: HbcliOutcome = result !== null ? 'success' : 'unknown'
       resolve({
-        via: 'hbcli-realtime', outcome, exitCode: 0, result,
+        via: 'hbcli-realtime', exitCode: 0, result,
         evidence: `[实时API:hbcli@${new Date().toISOString()}]`,
         stdout: stdout.slice(0, 2000), latencyMs,
       })
@@ -150,9 +114,8 @@ function attemptHbcli(
       settled = true
       clearTimeout(timer)
       // ENOENT (二进制不存在) 等也走降级路径;spawnError 供上层按候选路径重试
-      // spawn 异常 → outcome=unknown(无法判定 supplier 端状态;与 timeout 同口径)
       resolve({
-        via: 'hbcli-error', outcome: 'unknown', exitCode: -1, result: null,
+        via: 'hbcli-error', exitCode: -1, result: null,
         evidence: `[实时API:hbcli@spawn_error@${new Date().toISOString()}]`,
         latencyMs: Date.now() - started, error: (e as Error).message, spawnError: true,
       })
