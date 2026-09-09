@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, fileURLToPath, join, resolve } from 'node:path'
 
 interface ReleaseManifest {
   schema_version: string
@@ -51,7 +51,7 @@ interface ReleaseManifest {
   }
 }
 
-const manifestPath = resolve(dirname(new URL(import.meta.url).pathname), '..', 'fixtures', 'staicli-0.0.3.release-contract.json')
+const manifestPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'staicli-0.0.3.release-contract.json')
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as ReleaseManifest
 const tarballPath = process.argv[2] ?? process.env.STAICLI_TARBALL
 
@@ -79,7 +79,7 @@ function verifyTarball(path: string): Buffer {
   return bytes
 }
 
-function runNode(entry: string, argv: string[], home: string): { status: number | null; stdout: string; stderr: string } {
+function runNode(entry: string, argv: string[], home: string): { status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; error?: Error } {
   mkdirSync(home, { recursive: true })
   const result = spawnSync(process.execPath, [entry, ...argv], {
     cwd: home,
@@ -89,12 +89,16 @@ function runNode(entry: string, argv: string[], home: string): { status: number 
       PATH: process.env.PATH ?? '',
     },
     encoding: 'utf8',
+    timeout: 10_000,
+    killSignal: 'SIGKILL',
   })
-  return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
+  return { status: result.status, signal: result.signal, stdout: result.stdout ?? '', stderr: result.stderr ?? '', error: result.error }
 }
 
 function assertRecordedCommand(name: string, entry: string, command: { argv: string[]; exit_code: number; stdout_sha256: string; stderr_sha256: string; required_lines: string[] }, home: string): void {
   const result = runNode(entry, command.argv, home)
+  assert.equal(result.error, undefined, `${name} spawn failed: ${result.error?.message ?? 'unknown error'}`)
+  assert.equal(result.signal, null, `${name} exceeded the 10s subprocess bound`)
   assert.equal(result.status, command.exit_code, `${name} exit code must match recorded artifact evidence`)
   assert.equal(sha256Text(result.stdout), command.stdout_sha256, `${name} stdout must match recorded artifact evidence`)
   assert.equal(sha256Text(result.stderr), command.stderr_sha256, `${name} stderr must match recorded artifact evidence`)
@@ -121,7 +125,13 @@ try {
   console.log('2. one-byte tarball corruption rejected by integrity verification')
 
   // 3. Extract with tar only; npm is not invoked, and package scripts cannot run.
-  const extraction = spawnSync('tar', ['-xzf', tarballPath, '-C', unpacked], { encoding: 'utf8' })
+  const extraction = spawnSync('tar', ['-xzf', tarballPath, '-C', unpacked], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    killSignal: 'SIGKILL',
+  })
+  assert.equal(extraction.error, undefined, `tar spawn failed: ${extraction.error?.message ?? 'unknown error'}`)
+  assert.equal(extraction.signal, null, 'tar extraction exceeded the 10s subprocess bound')
   assert.equal(extraction.status, 0, `tar extraction failed: ${extraction.stderr ?? ''}`)
   const packageJson = JSON.parse(readFileSync(join(extractedPackage, 'package.json'), 'utf8')) as { name: string; version: string; main: string; bin: Record<string, string> }
   assert.equal(packageJson.name, manifest.artifact.package.name)
@@ -140,6 +150,8 @@ try {
 
   // 5. The actual Commander parser, not a copied schema, rejects the unsupported selector.
   const selector = runNode(entry, manifest.unsupported_selector.argv, join(isolatedHome, 'selector'))
+  assert.equal(selector.error, undefined, `selector parser spawn failed: ${selector.error?.message ?? 'unknown error'}`)
+  assert.equal(selector.signal, null, 'selector parser exceeded the 10s subprocess bound')
   assert.equal(selector.status, manifest.unsupported_selector.exit_code)
   assert.equal(sha256Text(selector.stderr), manifest.unsupported_selector.stderr_sha256)
   assert.ok(selector.stderr.includes(manifest.unsupported_selector.stderr_contains))

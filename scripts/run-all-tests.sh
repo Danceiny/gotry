@@ -72,15 +72,15 @@ echo "=== 7c. 外部依赖自举(check-only 探测/跳过开关/postinstall 非�
 
 echo
 echo "=== 7d. hbcli 全流程端到端(仅 GOTRY_HBCLI_LIVE=1 显式启用真实 UAT;默认零 binary/网络/凭证探测) ==="
-(cd ts && GOTRY_HBCLI_LIVE="${GOTRY_HBCLI_LIVE:-0}" npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
+(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" GOTRY_HBCLI_LIVE="${GOTRY_HBCLI_LIVE:-0}" GOTRY_HOTELBYTE_SKILLS_LIVE="${GOTRY_HOTELBYTE_SKILLS_LIVE:-0}" npx tsx scripts/hbcli-e2e-tests.ts) || FAIL=1
 
 echo "=== 7f. hbcli live opt-in 隔离证明(可发现 fixture + blocked network:默认 binary=0/network=0/credential=0) ==="
-(cd ts && npx tsx scripts/hbcli-live-optin-tests.ts) || FAIL=1
+(cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hbcli-live-optin-tests.ts) || FAIL=1
 
 echo
 echo "=== 7e. hbcli release-contract(staicli@0.0.3 actual tarball bytes + packaged help/parser; test-only, no supplier request) ==="
 if [ -n "${STAICLI_TARBALL:-}" ]; then
-  (cd ts && npx tsx scripts/hbcli-release-contract-tests.ts "$STAICLI_TARBALL") || FAIL=1
+  (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hbcli-release-contract-tests.ts "$STAICLI_TARBALL") || FAIL=1
 else
   echo "SKIP: STAICLI_TARBALL not set; targeted artifact proof requires a local staicli-0.0.3.tgz path"
 fi
@@ -127,7 +127,7 @@ echo "=== 16. 双路径稳定性(纯 TS,unified vs unified 同 spec) ==="
 
 echo
 echo "=== 17. hotelbyte-skills 契约对齐(本地描述离线校验;远端读取仅 GOTRY_HOTELBYTE_SKILLS_LIVE=1) ==="
-(cd ts && GOTRY_HOTELBYTE_SKILLS_LIVE="${GOTRY_HOTELBYTE_SKILLS_LIVE:-0}" npx tsx scripts/skills-contract-tests.ts) || FAIL=1
+(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" GOTRY_HBCLI_LIVE="${GOTRY_HBCLI_LIVE:-0}" GOTRY_HOTELBYTE_SKILLS_LIVE="${GOTRY_HOTELBYTE_SKILLS_LIVE:-0}" npx tsx scripts/skills-contract-tests.ts) || FAIL=1
 
 echo
 echo "=== 18. T1 记忆合并守门(M4,纯函数:追加不删史/P0 权重校验/幂等) ==="
