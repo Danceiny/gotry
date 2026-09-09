@@ -64,6 +64,96 @@ const searchRun = {
 } as const
 const hotelSelect = { ...searchRun, kind: 'hotel.select', actionId: 'action-dsh-select-1', reason: 'Select the requested hotel.', input: { hotelRef: 'hotel-1' } } as const
 
+function toolArgumentsPort(argumentsText: string): DshPlannerRunPort {
+  return {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [{
+          type: 'tool/call',
+          data: { name: 'booking_search_hotels', arguments: argumentsText },
+        }],
+      }
+    },
+    async close() {},
+  }
+}
+
+async function runToolArgumentsCase(argumentsText: string, turnId: string) {
+  const planner = await createDshEmbeddedBookingPlanner({ runPort: toolArgumentsPort(argumentsText) })
+  try {
+    return await planner.plannerFactory(task).next({
+      task,
+      turn: {
+        schemaVersion: 'booking.surface',
+        kind: 'user.turn',
+        taskId: task.taskId,
+        turnId,
+        workspace,
+        request: { text: 'Find hotels' },
+      },
+    })
+  } finally {
+    await planner.close()
+  }
+}
+
+const repeatedToolArguments = JSON.stringify({
+  decision: {
+    kind: 'operation',
+    action: {
+      ...searchRun,
+      reason: 'Preserve braces } {, escaped quotes " and a backslash \\ inside a JSON string.',
+    },
+  },
+})
+const repeatedDecision = await runToolArgumentsCase(`${repeatedToolArguments}${repeatedToolArguments}`, 'dsh-duplicate-identical')
+assert.equal(repeatedDecision[0]?.kind, 'operation', 'identical complete JSON object repetitions are accepted through runPort -> tool/call')
+assert.equal(
+  repeatedDecision[0]?.kind === 'operation' ? repeatedDecision[0].action.reason : undefined,
+  'Preserve braces } {, escaped quotes " and a backslash \\ inside a JSON string.',
+  'balanced recovery respects braces and escapes inside JSON strings',
+)
+
+const spacedRepeatedDecision = await runToolArgumentsCase(`${repeatedToolArguments}\n \t ${repeatedToolArguments}`, 'dsh-duplicate-whitespace')
+assert.equal(spacedRepeatedDecision[0]?.kind, 'operation', 'identical repetitions separated by whitespace are accepted')
+
+await assert.rejects(
+  runToolArgumentsCase(`${repeatedToolArguments}${JSON.stringify({
+    decision: {
+      kind: 'operation',
+      action: { ...searchRun, actionId: 'action-dsh-conflict' },
+    },
+  })}`, 'dsh-duplicate-conflict'),
+  /planner_invalid_tool_arguments/,
+  'structurally different complete objects are rejected instead of selecting the first action',
+)
+await assert.rejects(
+  runToolArgumentsCase(`${repeatedToolArguments}${repeatedToolArguments.slice(0, -1)}`, 'dsh-duplicate-truncated'),
+  /planner_invalid_tool_arguments/,
+  'a truncated later object is rejected',
+)
+await assert.rejects(
+  runToolArgumentsCase(`model preface ${repeatedToolArguments}${repeatedToolArguments}`, 'dsh-duplicate-prefix'),
+  /planner_invalid_tool_arguments/,
+  'arbitrary prefix is rejected',
+)
+await assert.rejects(
+  runToolArgumentsCase(`${repeatedToolArguments} trailing garbage`, 'dsh-duplicate-tail'),
+  /planner_invalid_tool_arguments/,
+  'garbage suffix is rejected',
+)
+await assert.rejects(
+  runToolArgumentsCase('{"decision":{"kind":"operation","action":{"reason":"raw\nline"}}}', 'dsh-single-invalid-control'),
+  /planner_invalid_tool_arguments/,
+  'a single invalid object is not repaired by escaping raw control characters',
+)
+await assert.rejects(
+  runToolArgumentsCase('[] []', 'dsh-non-object-sequence'),
+  /planner_invalid_tool_arguments/,
+  'a non-object JSON sequence is rejected',
+)
+
 const profilePatch = buildDshEmbeddedBookingPatch('/tmp/gotry-booking-dsh-plugin.js')
 const prompts: string[] = []
 const sessionIds: string[] = []
