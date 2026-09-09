@@ -1,5 +1,5 @@
 /**
- * 冒烟:不启动完整 dsh 运行时,验证插件注册 + execute + 桥接 + Python 引擎全链路。
+ * 冒烟:不启动完整 dsh 运行时,验证插件注册 + execute + 纯 TS 求解器及隔离能力夹具。
  * 运行(在 ts/ 下):npx tsx scripts/smoke.ts
  */
 
@@ -98,7 +98,7 @@ async function main() {
   }, null)
   console.log(`motivation saved -> ${JSON.stringify(saved).slice(0, 80)}...`)
 
-  // 2) 可行性引擎:洱海金标准用例,经桥接跑 Python Z3
+  // 2) 可行性引擎:洱海金标准用例,经注册工具跑纯 TS 求解路径
   const payload = JSON.parse(await readFile(join('..', 'data', 'golden_erhai.json'), 'utf-8'))
   const feasibility = byName('gotry_feasibility_check')
   const result = await feasibility.execute({ payload }, null) as {

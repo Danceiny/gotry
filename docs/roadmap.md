@@ -29,6 +29,8 @@
 
 - **#279 携程机票 malformed 响应闸(2026-09-10)**:合法空列表= `miss`,有效命中= `hit`,未知/畸形形状= `error`;兼容 `parseBatchSearch` 永不抛错,扩展/CDP 均不把 parser error 伪装成 miss。隔离扩展 fixture 仅证明本地解析/编排,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
 
+- **#327 严格重复 tool-call 参数修订(2026-09-10)**:Booking planner 保留普通单对象解析；恢复只接受完整消费的、至少两个、仅空白分隔且深结构相等的顶层 JSON 对象。公共 `runPort → tool/call` fixture 覆盖一致重复、冲突/截断/前缀/尾部垃圾拒绝及字符串花括号/转义；不宣称真实 provider reliability、HotelByte UAT、M3/M4 cohort 或 M5/M6 admission。
+
 - **酒店日期输入闸(2026-09-09,issue #283)**:详见 `docs/architecture.md` §1.2 与 §10 D-36。共享 `parseAbsoluteDate` 拒绝非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`;隔离 fixture 证据不构成真实供应商准入。
 - **#270 公开交付与债务台账(2026-09-10)**:所有执行 lane 公开记录 issue 启动、Draft PR、exact-head review 与 merge/destination 回执;founder 授权的仓内 Claude lane 不适用外部机器人 T0/T1 否决,但仍过正常评审。§10.1 活跃债务均有公开 tracker/触发器;本地与 fixture 证明不替代 #20/#22/#136/#137 的真实准入。
 
