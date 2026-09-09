@@ -292,7 +292,7 @@ interface HardPrice {
 function hardPricesInLine(text: string): HardPrice[] {
   const prices: HardPrice[] = []
   const amount = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`
-  const pattern = new RegExp(String.raw`(?:¥\s*(${amount})(?![\dA-Za-z])|\b([A-Z]{3})\s*(${amount})(?![\dA-Za-z]))`, 'gi')
+  const pattern = new RegExp(String.raw`(?:¥\s*(${amount})(?![\dA-Za-z,])|\b([A-Z]{3})\s*(${amount})(?![\dA-Za-z,]))`, 'gi')
   for (const match of text.matchAll(pattern)) {
     const amountText = match[1] ?? match[3]
     if (!amountText || match.index === undefined) continue
@@ -316,8 +316,12 @@ function flightTrainPriceScope(text: string, fact: Extract<BookableFact, { kind:
   const afterNo = text.slice(noStart + no.length)
   const nextFlight = afterNo.match(FLIGHT_NO)
   const anchor = text.indexOf('<!-- fact:', noStart + no.length)
+  const evidence = afterNo.search(/\[[^\]\n]*#[^\]\n]*\]/)
   let end = text.length
   if (nextFlight?.index !== undefined) end = Math.min(end, noStart + no.length + nextFlight.index)
+  // The rendered fare is before its evidence chain; amounts after it are
+  // unrelated fees/budget text even when an anchor follows later on the line.
+  if (evidence >= 0) end = Math.min(end, noStart + no.length + evidence)
   if (anchor >= 0) end = Math.min(end, anchor)
   return text.slice(noStart, end)
 }

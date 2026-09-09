@@ -163,6 +163,14 @@ const farePlusBudget = gateArtifact(`${uo724Rendered}；总预算¥1000`, [uo724
 assert(farePlusBudget.verdict === 'pass' && farePlusBudget.traceable === 1 && farePlusBudget.violations.length === 0,
   'UO724 自身票价后追加总预算¥1000不串价,仍 pass')
 
+const anchor = uo724Rendered.indexOf('<!-- fact:')
+const budgetBeforeAnchor = gateArtifact(`${uo724Rendered.slice(0, anchor)}；总预算¥1000${uo724Rendered.slice(anchor)}`, [uo724], map, { trip_year: tripYear })
+assert(budgetBeforeAnchor.verdict === 'pass' && budgetBeforeAnchor.violations.length === 0,
+  '证据链后的总预算即使位于锚点前也不串为UO724票价')
+const baggageBeforeAnchor = gateArtifact(`${uo724Rendered.slice(0, anchor)}；行李费¥50${uo724Rendered.slice(anchor)}`, [uo724], map, { trip_year: tripYear })
+assert(baggageBeforeAnchor.verdict === 'pass' && baggageBeforeAnchor.violations.length === 0,
+  '证据链后的行李费即使位于锚点前也不串为UO724票价')
+
 for (const [label, renderedPrice] of [['¥999', '¥999'], ['CNY 999', 'CNY 999']] as const) {
   const contradicted = gateArtifact(uo724Rendered.replace('¥793', renderedPrice), [uo724], map, { trip_year: tripYear })
   const priceViolation = contradicted.violations.find(v => v.kind === 'price_contradicted')
@@ -181,6 +189,9 @@ const commaFareFact: FlightFact = { ...uo724, fact_id: makeFactId(['flight-price
 const commaFare = gateArtifact(renderFlightFact(commaFareFact).replace('¥1793', '¥1,793'), [commaFareFact], map, { trip_year: tripYear })
 assert(commaFare.verdict === 'pass' && commaFare.traceable === 1 && commaFare.violations.length === 0,
   '完整解析千分位¥1,793,与事实1793一致 pass')
+const malformedComma = gateArtifact(uo724Rendered.replace('¥793', '¥1,79'), [uo724], map, { trip_year: tripYear })
+assert(malformedComma.verdict === 'pass' && !malformedComma.violations.some(v => v.kind === 'price_contradicted'),
+  '畸形千分位¥1,79整体不作硬价比较,不得截断为CNY1')
 
 const missingSourcePrice = gateArtifact(uo724Rendered.replace('¥793', '¥999'), [{ ...uo724, price: undefined }], map, { trip_year: tripYear })
 assert(missingSourcePrice.verdict === 'blocked'
