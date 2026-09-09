@@ -252,6 +252,7 @@ export type GateViolationKind =
   | 'date_order'                      // 住宿/段日期越窗或倒挂
   | 'unverifiable_hotel_claim'        // 酒店可住断言无 exact-date 事实回溯(D-26)
   | 'fact_anchor_unknown'             // 渲染锚点 fact:<id> 在注册表不存在(锚点被手改/伪造)
+  | 'price_contradicted'              // 行内可靠硬价格与 exact-date 事实价格冲突(issue #300)
 
 export interface GateViolation {
   kind: GateViolationKind
@@ -275,6 +276,52 @@ function lineTimesContradict(text: string, dep?: string, arr?: string): boolean 
   const times = [...text.matchAll(/(?<!\d)(\d{1,2}:\d{2})(?!\d)/g)].map(m => m[1]!)
   if (times.length === 0) return false
   return !times.some(t => t === dep || t === arr)
+}
+
+interface HardPrice {
+  amount: number
+  currency: 'CNY'
+}
+
+/**
+ * 只抽取行内可可靠绑定的硬价。起价/约价/模糊值和其它币种不进入比较，
+ * 不做汇率换算，也不把酒店 priceRaw 带入这里(issue #300)。
+ */
+function hardPricesInLine(text: string): HardPrice[] {
+  const prices: HardPrice[] = []
+  const pattern = /(?:¥\s*(\d+(?:\.\d+)?)(?![\dA-Za-z])|\bCNY\s*(\d+(?:\.\d+)?)(?![\dA-Za-z]))/gi
+  for (const match of text.matchAll(pattern)) {
+    const amountText = match[1] ?? match[2]
+    if (!amountText || match.index === undefined) continue
+    const before = text.slice(Math.max(0, match.index - 8), match.index)
+    const after = text.slice(match.index + match[0].length, match.index + match[0].length + 8)
+    if (/(?:约|大约|约为|起价|起步|from)\s*$/i.test(before)
+      || /^\s*(?:起|起价|起步|左右|上下|以上|\+)/i.test(after)) continue
+    prices.push({ amount: Number(amountText), currency: 'CNY' })
+  }
+  return prices
+}
+
+function addPriceContradiction(
+  violations: GateViolation[],
+  line: number,
+  text: string,
+  fact: Extract<BookableFact, { kind: 'flight' | 'train' }>,
+): boolean {
+  if (fact.bookability !== 'bookable_exact_date' || fact.price === undefined || !Number.isFinite(fact.price)) return false
+  const factCurrency = fact.currency?.toUpperCase()
+  if (!factCurrency) return false
+  for (const rendered of hardPricesInLine(text)) {
+    // ¥ is treated as CNY only against a CNY fact. No FX or ambiguous-currency guess.
+    if (rendered.currency !== factCurrency || rendered.amount === fact.price) continue
+    violations.push({
+      kind: 'price_contradicted',
+      line,
+      detail: `${fact.flight_no} 行内硬价格 CNY ${rendered.amount} ≠ exact-date 事实 ${factCurrency} ${fact.price}——价格事实矛盾,不得改写工具返回价格`,
+    })
+    return true
+  }
+  return false
 }
 
 export function gateArtifact(
@@ -318,6 +365,7 @@ export function gateArtifact(
         continue
       }
     }
+    if ((f.kind === 'flight' || f.kind === 'train') && addPriceContradiction(violations, lineNo, lines[lineNo - 1] ?? '', f)) continue
     traceable++
   }
 
@@ -377,6 +425,7 @@ export function gateArtifact(
         })
         continue
       }
+      if (r.fact && addPriceContradiction(violations, c.line, c.text, r.fact)) continue
       traceable++
       continue
     }

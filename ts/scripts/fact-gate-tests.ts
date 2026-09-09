@@ -150,6 +150,45 @@ const codeshare: FlightFact = { ...szxDxb[0]!, fact_id: 'cs-demo000000000', flig
 const csLine = renderFlightFact(codeshare)
 assert(csLine.includes('营销 阿联酋航空') && csLine.includes('实际承运 中国南方航空'), 'codeshare 渲染同时输出营销与实际承运(不混用)')
 
+// ---- §4b 价格事实闸(issue #300;flight/train 共用原语,不处理酒店打码价) ---------
+
+console.log('§4b 行内硬价格与 exact-date 事实对账')
+const uo724Rendered = renderFlightFact(uo724)
+const priceOk = gateArtifact(uo724Rendered, [uo724], map, { trip_year: tripYear })
+assert(priceOk.verdict === 'pass' && priceOk.traceable === 1
+  && !priceOk.violations.some(v => v.kind === 'price_contradicted'),
+  'renderFlightFact(UO724 793 CNY) → gateArtifact 无冲突 pass')
+
+for (const [label, renderedPrice] of [['¥999', '¥999'], ['CNY 999', 'CNY 999']] as const) {
+  const contradicted = gateArtifact(uo724Rendered.replace('¥793', renderedPrice), [uo724], map, { trip_year: tripYear })
+  const priceViolation = contradicted.violations.find(v => v.kind === 'price_contradicted')
+  assert(contradicted.verdict === 'blocked' && priceViolation !== undefined
+    && /UO724/.test(priceViolation.detail) && /CNY 999/.test(priceViolation.detail) && /CNY 793/.test(priceViolation.detail),
+    `UO724 行内 ${label} ≠ 事实 CNY 793 → blocked/price_contradicted(含可读对账详情)`)
+}
+
+const trainPriceFact: FlightFact = { ...uo724, kind: 'train', fact_id: makeFactId(['train-price', 'G1234']), flight_no: 'G1234' }
+const trainContradicted = gateArtifact(renderFlightFact(trainPriceFact).replace('¥793', '¥794'), [trainPriceFact], map, { trip_year: tripYear })
+assert(trainContradicted.verdict === 'blocked'
+  && trainContradicted.violations.some(v => v.kind === 'price_contradicted' && /G1234/.test(v.detail)),
+  'train fact 同样经共享价格原语对账,不复制 flight 专用实现')
+
+for (const [label, nonComparablePrice] of [
+  ['缺失', '价待询'],
+  ['非数字', '¥7xx'],
+  ['模糊起价', '约¥999 起'],
+  ['不同币种', 'USD 999'],
+] as const) {
+  const nonComparable = gateArtifact(uo724Rendered.replace('¥793', nonComparablePrice), [uo724], map, { trip_year: tripYear })
+  assert(nonComparable.verdict === 'pass' && !nonComparable.violations.some(v => v.kind === 'price_contradicted'),
+    `${label}价格不作可靠硬价比较,保留既有 claim/anchor 语义不误判 price_contradicted`)
+}
+
+const hotelPriceRaw = factsFromHotel({ source: 'flyai-hotel', destination: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03', verdict: 'hit', options: 9, evidence: 'priceRaw=¥799', fetchedAt: '2026-09-04T00:00:00.000Z' })
+const hotelMaskedPrice = gateArtifact('## 住宿\n- 大理 2026-10-01→2026-10-03 酒店有房可订 priceRaw=¥799', hotelPriceRaw, map, { trip_year: 2026 })
+assert(hotelMaskedPrice.verdict === 'pass' && !hotelMaskedPrice.violations.some(v => v.kind === 'price_contradicted'),
+  '酒店 priceRaw 打码/原值行不进入航班/火车硬价格对账')
+
 // ---- §5 验收⑤:联程措辞闸 --------------------------------------------------------
 
 console.log('§5 protected_connection 与联程措辞')
