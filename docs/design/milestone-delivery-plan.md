@@ -3,18 +3,19 @@
 > 定位:把 M4→M5→M6 拆成可分 worktree 交付的 living program 任务图,逐项写明责任面、责任文件、依赖、交付物、最小 E2E、否证与退出标准。
 > 状态:living(2026-09-08 建立;2026-09-09 follow-up 收紧 #231/#232 派发设计并同步已入 main 事实;issue #225。本文是计划与责任图,不替代 M3/M4/M5/M6 的 Exit 证据)。本次 follow-up 在 M5-1/M5-2/M5-3 写入原子 claim + 调用前持久化 `dispatching`/immutable attempt id/fencing、tenant-scoped claim/fold/query、外呼前重验、`RequestFingerprint` 绑定 holder/guests supplier payload digest 及未来最小否证(均未执行);并同步 #238/#243/#244/#245/#248/#240 已入 main、#227/#241/#242 已关闭。
 > 上游:[`../roadmap.md`](../roadmap.md)、[`../architecture.md`](../architecture.md) §1/§9/§10/§11、[`../gotry-master-outline.md`](../gotry-master-outline.md) §3.5/§3.7、issue #20/#22/#136/#137/#225/#223/#227/#228/#230/#231/#232/#233/#234/#235/#241/#242/#254/#255/#257。
-> 下游:独立 Claude Code worktree 任务、架构复验、PR 描述与贡献闸。
+> 下游:独立 Claude Code worktree 任务、架构复验、PR 描述与贡献闸;公开交付记录按 [`../ops/external-pr-workflow.md`](../ops/external-pr-workflow.md) §0。
 
 ## 0. 速览
 
 1. **当前 program 总状态:TODO**。M3 真实 seed cohort 未闭合;M4 真实 `observed_private` N≥5 repeat cohort 未到;M5/M6 Entry gate 均未满足。
 2. **状态只用 DONE/TODO**;阻断原因写在任务块的“阻断/依赖”字段。
 3. **基座代码状态不是 Exit 证据**:tenant ledger/fold/state-cli、Z3/map 稳定性、M4 scorer(#238)与 opt-in lifecycle collector(#248)均已进入 main;#227/#241/#242 已关闭。工程基座已验证不替代真实 cohort、供应协议/内部授权、P6 批准或试点签约。
-4. **仍 open 的真实门与实现任务**:#20/#22 真实 cohort、#136 供应协议/内部授权、#137 P6 批准与真实试点均为 TODO;#231/#232/#233/#234/#235 仅在各自 Entry 后实现。
+4. **仍 open 的真实门与实现任务**:#20/#22 真实 cohort、#136 供应协议/内部授权、#137 P6 批准与真实试点均为 TODO。准入前只允许 #136/#137 已授权的设计、只读调查、fixture 与 failing-before 测试;交易运行时、供应商写入和真实 B2B 路径仍须各自 Entry。
 5. **M5 首供应链**:`hotelbyte-cli`(公开 MIT CLI;hotel-be 内部资产只 bridge/reference,不复制代码)。当前未取得供应协议签署/内部授权证据;仅进行只读接口调查与契约准备。
 6. **M5 Entry 为两项**:M4 Exit + 供应链协议。WriteGate 设计可推进;交易实现、真实 book/cancel/refund/UAT 在 Entry 未满足前保持 TODO。
 7. **M6 只到 draft + proof 口径**:[`../milestones/m6-b2b-reuse-walkthrough.md`](../milestones/m6-b2b-reuse-walkthrough.md) 仍待 founder 评审;零内核 diff 是工程指标,不是 traveler 效果代理。
 8. **基线稳定性已收口**:#227 在集成候选上通过 Node24 typecheck、3×240、full 与 CI 后合入并关闭;#242 修复也已入 main并关闭。
+9. **公开可追溯性(#270)**:工程与文档 lane 按 issue 启动 → Draft PR → exact-head review → merge/destination 回执留档;本地/fixture 证据不代替 #20/#136/#137 的真实准入。
 
 ## 1. 依赖图(不制造管理步骤)
 

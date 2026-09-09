@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { classifyRequest, isSubmitText } from '../capabilities/session/read-guard.ts'
-import { buildEntryUrl, parseBatchSearch } from '../capabilities/session/adapters/ctrip-flight.ts'
+import { buildEntryUrl, parseBatchSearch, parseBatchSearchResult } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQuery, STATION_TELECODES } from '../capabilities/session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, looksLikeDidaRatesBody } from '../capabilities/session/adapters/dida-portal.ts'
@@ -68,6 +68,72 @@ assert(parsed.length === 1, 'malformed 项跳过,1 个有效行程')
 assert(parsed[0]?.flightNo === 'HO5577' && parsed[0]?.price === 2980, 'flightNo + priceList 最小 adultPrice')
 assert(parsed[0]?.depDateTime === '2026-10-01 07:35:00' && parsed[0]?.durationMin === 200, '时刻与时长字段')
 assert(parseBatchSearch('not-json').length === 0, '非 JSON 返空不抛错')
+
+// B2. issue #279 结构化解析(malformed 不抛 + 形状异常归 error,合法空归 miss,非空归 hit)
+console.log('B2. parseBatchSearchResult(issue #279 形状异常归 error,合法空归 miss,命中归 hit)')
+{
+  const fixtureHit = JSON.stringify({ data: { flightItineraryList: [{
+    flightSegments: [{ airlineName: '吉祥航空', duration: 200, flightList: [{ flightNo: 'HO5577', departureAirportName: '虹桥', arrivalAirportName: '三义', departureDateTime: '2026-10-01 07:35:00', arrivalDateTime: '2026-10-01 10:55:00' }] }],
+    priceList: [{ adultPrice: 3240 }, { adultPrice: 2980 }],
+  }] } })
+  const rHit = parseBatchSearchResult(fixtureHit)
+  assert(rHit.verdict === 'hit' && rHit.options.length === 1 && rHit.options[0]?.flightNo === 'HO5577' && rHit.options[0]?.price === 2980, '命中 fixture → hit + 1 option + 最低价', rHit)
+  const rMiss = parseBatchSearchResult(JSON.stringify({ data: { flightItineraryList: [] } }))
+  assert(rMiss.verdict === 'miss' && rMiss.options.length === 0, '已识别合法空(数组存在且空) → miss(不为 hit 也不为 error)', rMiss)
+  // 不抛错 + 形状未识别 → error(关键:不可静默收敛为 miss,把未知响应误判为「这条线路没航班」)
+  const malformed: Array<[string, string]> = [
+    ['JSON null body', 'null'],
+    ['非对象根(数字)', '123'],
+    ['非对象根(数组)', '[1,2,3]'],
+    ['空对象', '{}'],
+    ['缺 data 字段', JSON.stringify({ foo: 1 })],
+    ['data 非对象(null)', JSON.stringify({ data: null })],
+    ['data 是数组', JSON.stringify({ data: [] })],
+    ['flightItineraryList 非数组(对象)', JSON.stringify({ data: { flightItineraryList: { foo: 1 } } })],
+    ['flightItineraryList 非数组(字符串)', JSON.stringify({ data: { flightItineraryList: 'abc' } })],
+    ['flightItineraryList 非数组(数字)', JSON.stringify({ data: { flightItineraryList: 42 } })],
+    ['非 JSON 文本', 'not-json{'],
+    ['空字符串', ''],
+  ]
+  for (const [label, body] of malformed) {
+    let verdict: 'hit' | 'miss' | 'error' = 'error'
+    let optionsLen = -1
+    let threw = false
+    try {
+      const r = parseBatchSearchResult(body)
+      verdict = r.verdict
+      optionsLen = r.options.length
+    } catch {
+      threw = true
+    }
+    assert(!threw && verdict === 'error' && optionsLen === 0, `${label} → verdict=error(不抛,不为 miss)`, { verdict, optionsLen, threw })
+  }
+  // priceList 非数组:item 行字段虽合法,但整行结构不可信 → error,不暴露 options
+  const priceMalformed = JSON.stringify({ data: { flightItineraryList: [{
+    flightSegments: [{ flightList: [{ flightNo: 'HO1', departureDateTime: '2026-10-01 07:35:00' }] }],
+    priceList: 'not-an-array',
+  }] } })
+  const rPm = parseBatchSearchResult(priceMalformed)
+  assert(rPm.verdict === 'error' && rPm.options.length === 0, 'priceList 显式非数组 → error 且不暴露 options', rPm)
+  // 已识别列表非空 + 行全部畸形 → error(没有可呈现的航段,不伪装成 miss)
+  const allBadRows = JSON.stringify({ data: { flightItineraryList: [
+    { flightSegments: [{}] },
+    'not-an-object-row',
+    null,
+  ] } })
+  const rAb = parseBatchSearchResult(allBadRows)
+  assert(rAb.verdict === 'error' && rAb.options.length === 0, '非空列表行全畸形 → error(不伪装成 miss)', rAb)
+  // 混合列表保留有效项,忽略畸形兄弟行
+  const mixed = JSON.stringify({ data: { flightItineraryList: [
+    { flightSegments: [{}], priceList: [{ adultPrice: 'bad' }] },
+    { flightSegments: [{ flightList: [{ flightNo: 'HO2', departureDateTime: '2026-10-01 08:00:00' }] }], priceList: [] },
+  ] } })
+  const rMixed = parseBatchSearchResult(mixed)
+  assert(rMixed.verdict === 'hit' && rMixed.options.length === 1 && rMixed.options[0]?.flightNo === 'HO2' && rMixed.options[0]?.price === 0, '混合列表 → 保留有效项并忽略畸形兄弟行', rMixed)
+  // 兼容性:旧 API parseBatchSearch 与新 API options 字段逐项一致
+  const compatParsed = parseBatchSearch(fixtureHit)
+  assert(compatParsed.length === rHit.options.length && compatParsed[0]?.flightNo === rHit.options[0]?.flightNo && compatParsed[0]?.price === rHit.options[0]?.price, '旧 API parseBatchSearch 返回的 options 字段与新 API 一致(兼容性)', { compat: compatParsed[0], new: rHit.options[0] })
+}
 
 // C. adapter entry URL
 console.log('C. buildEntryUrl(城市码表)')

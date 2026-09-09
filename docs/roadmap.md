@@ -10,7 +10,7 @@
 
 ### 发行状态
 
-**当前 npm latest = `0.0.1-rc.18`(已发布,2026-09-03 registry 回拉实测:559 包干净安装 / bin `--help` / dist 入口全通);`rc` dist-tag 同步指向 rc.18。**
+**当前 npm dist-tags(2026-09-10 只读观察):`latest=0.0.1-rc.22`,`rc=0.0.1-rc.20`。本行不把 `npm view` 观察当作干净回拉验证;历史 rc.18 回拉证据保留在下表对应版本行。**
 
 - 2026-08-30 上午 #50 核实 registry 无 rc.16(「已发布」口径勘误);**同日 13:00Z 补发落地**(npm time 实测 `0.0.1-rc.16` = 2026-08-30T13:00:38Z),GitHub Release 13:03Z 随建(#76 修复生效)。
 - 2026-09-02 #50② 收口:回拉实测 latest=rc.16(干净安装 489 包 / bin `--help` / dist 入口全通);`rc` 由滞留 rc.7 迁至 rc.16,杂散 `rc.5` 改指同名版本、`rc.11–rc.14` 各自同名自洽——五别名彻底删除需 npmjs web UI(granular token 对 DELETE dist-tag 端点 403,curl 复核同)。
@@ -25,7 +25,10 @@
 - **#271 Phase A 进程事故观察(2026-09-09)**:GoTry-owned `uncaughtExceptionMonitor` 记录 uncaught/rejection 并保留宿主 fatal 退出语义；single-fd append+fsync+close writer 失败返回 `false`；native Node24 ESM dist 反例覆盖 monitor/no-monitor、既有 host handler、fsync/close 与工具结构化失败。child close/spawn error、SIGINT、后代进程与上游 dsh supervisor 仍为开放 TODO，不改变 M3/M4-M6 真实证据 gate。
 - **#282 Booking planner 纠偏(2026-09-09)**:planner 保留非空 occupancy 房间与 childAges,缺 `adults` 交给 schema 纠偏;每次 run(含纠偏)均计入最多三次调用,有效 correction 立即返回,provider error 不静默吞掉。focused proof 是注入 runPort 的工程证据,不改变 M3/M4-M6 或真实 Booking UAT gate。
 
+- **#279 携程机票 malformed 响应闸(2026-09-10)**:合法空列表= `miss`,有效命中= `hit`,未知/畸形形状= `error`;兼容 `parseBatchSearch` 永不抛错,扩展/CDP 均不把 parser error 伪装成 miss。隔离扩展 fixture 仅证明本地解析/编排,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
+
 - **酒店日期输入闸(2026-09-09,issue #283)**:详见 `docs/architecture.md` §1.2 与 §10 D-36。共享 `parseAbsoluteDate` 拒绝非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`;隔离 fixture 证据不构成真实供应商准入。
+- **#270 公开交付与债务台账(2026-09-10)**:所有执行 lane 公开记录 issue 启动、Draft PR、exact-head review 与 merge/destination 回执;founder 授权的仓内 Claude lane 不适用外部机器人 T0/T1 否决,但仍过正常评审。§10.1 活跃债务均有公开 tracker/触发器;本地与 fixture 证明不替代 #20/#22/#136/#137 的真实准入。
 
 - **doctor 对话内自助修复(2026-09-10,issue #284)**:`gotry_doctor action=repair` 按 item id 形成可见计划,经会话 scope 审批后复用 `doctor --fix`/web onboarding 的 bootstrap 幂等安装器并实际复检;拒绝、取消、无审批通道和 user-action/unavailable 均不执行。隔离工具 E2E 只证明 M4 UX 工程边界,不计入 #20 真实 repeat cohort 或 M5/M6 gate。
 
@@ -140,7 +143,7 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
   - **2026-08-30 同批 P3.7 双源 e2e 真跑批(goal 2,commit `60669f8`+PR #66 follow-up)**:founder 实问「flyai 只是一个 vendor,可以切别的?」→ **拒 vendor 锁**,official golden 改 pluggable(默认 `manual-golden`;`--golden=flyai` 显式切);`ts/scripts/sf-live-benchmark.ts` + `ts/scripts/sf-summary.ts` 重建 unified summary;
   - 本机实测 8 query:**7/8 verdict=hit / 6/6 manual-golden 软命中 100% / live <15s 7/7 / ReadGuard 0**;issue #21 验收清单「sf-01..08 完成真实双源 e2e + 字段准确率 ≥90% + live <15s」**全数达成**;evidence 落 `~/.gotry/evidence/session/sf-XX/<ts>.json` + sf-summary。后续 goal 3 vendor 接入由 founder 决定(hbcli / 携程开放 API / 内部 static 包兜底)。
   - **2026-08-30 同批扩展分发双通道(issue #21 分发通道,ADR-21)**:founder 指令「产物下载和安装也得做成更好的用户体验,可以用 github 作为分发渠道」——Chrome 平台约束(GitHub 只能改善下载,一键装+自动更新只有 Chrome Web Store)下双通道:GitHub Releases 下载通道已落(`gotry setup --extension-from=github` 显式 opt-in,稳定资产名三件套 + SHA256 + key 钉扎 + 失败显式降级 bundled,扩展更新与 npm rc 发版火车解耦;`scripts/package-extension.mjs` 只产产物,上传走发布确认制);run-all §43 + bootstrap-tests 8/8。
-  - **2026-09-02 Web Store 过审上架(D-25 清偿)**:[GoTry Session Bridge 商店页](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) v0.1.0 发布,一键装 + 自动更新通道打通,升为推荐安装方式。上架实测:商店用自己签名 key 重签、不认 manifest 固定 key,商店版扩展 ID(`oeajpiccmonococjcegddlooeeohlbgd`)与 unpacked 固定 ID 不同——桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,run-all §38 新增商店源断言);wizard/README/needs-extension 文案商店优先,GitHub Releases 通道保留为免审核/更新更快面;「已装商店版 wizard 自动跳本地通道指引」残余转 D-24。
+  - **2026-09-02 Web Store 过审上架(D-25 清偿)**:[GoTry Session Bridge 商店页](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) v0.1.0 发布,一键装 + 自动更新通道打通,升为推荐安装方式。上架实测:商店用自己签名 key 重签、不认 manifest 固定 key,商店版扩展 ID(`oeajpiccmonococjcegddlooeeohlbgd`)与 unpacked 固定 ID 不同——桥 Origin 白名单双通道同信(`EXTENSION_ORIGINS`,run-all §38 新增商店源断言);GitHub Releases 通道保留为免审核/更新更快面;Node 侧保留 extension 文件/`manifest.key` 预检,`needs-extension` 的 `installUrl`/`installAction` 交 dsh UI,旧 wizard 不再承担安装职责;#117 自适应文案已清偿 D-24。
 
 **M4 Issue #20/#223/#228 证据切片(2026-08-29;2026-09-08 加固与 collector)**:paired cohort 合同与只读 synthetic fixture scorer 已落地,固定唯一匿名 subject、returning 晚于 first、active planning duration 扣除预声明 external waits、N/p50/p75/逐 pair reduction、experience reflux、偏好溯源/硬过滤红线与 P4 trigger 闸。#223 将 public fixture 扩成指标正例 N=5,冻结 `minimum_pair_count_for_exit=5` 与 `target_median_reduction_ratio=0.5`(raw ratio 比较,报告才 round),并要求逐层 exact schema、HMAC-SHA256 假名键、source-review attestation 合同与 `reviewed_summary_digest_sha256` 绑定。#228 collector 追加显式 opt-in CLI/纯逻辑模块:隔离 `stateRoot`、consent/HMAC 必需、source/wait/key 冻结、写前完整投影校验、JSONL+manifest write-all/原子发布/realpath 隔离,导出仅 candidate/synthetic。synthetic 仍 `exit_evidence_eligible=false`,observed-private 缺人工核验合同或 digest 不匹配时也只可作为 candidate。当前瓶颈是私有真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
 
