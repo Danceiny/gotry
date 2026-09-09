@@ -28,6 +28,8 @@
 - **酒店日期输入闸(2026-09-09,issue #283)**:详见 `docs/architecture.md` §1.2 与 §10 D-36。共享 `parseAbsoluteDate` 拒绝非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`;隔离 fixture 证据不构成真实供应商准入。
 - **#270 公开交付与债务台账(2026-09-10)**:所有执行 lane 公开记录 issue 启动、Draft PR、exact-head review 与 merge/destination 回执;founder 授权的仓内 Claude lane 不适用外部机器人 T0/T1 否决,但仍过正常评审。§10.1 活跃债务均有公开 tracker/触发器;本地与 fixture 证明不替代 #20/#22/#136/#137 的真实准入。
 
+- **doctor 对话内自助修复(2026-09-10,issue #284)**:`gotry_doctor action=repair` 按 item id 形成可见计划,经会话 scope 审批后复用 `doctor --fix`/web onboarding 的 bootstrap 幂等安装器并实际复检;拒绝、取消、无审批通道和 user-action/unavailable 均不执行。隔离工具 E2E 只证明 M4 UX 工程边界,不计入 #20 真实 repeat cohort 或 M5/M6 gate。
+
 - **Node 26 dist 构建兼容闸(2026-09-09,issue #265)**:支持下界保持 `>=22.15.0`;根构建脚本用精确 TypeScript 5.9.3 生成 ESM,focused CI 在 Node 22/24/26 核对 exact dist/资产/关键 import,Node 22/24 继续承担 typecheck + 全栈回归。该项仅属 M4 开源/发布质量线,不计入 #20 的真实 repeat-cohort,不满足 #136 的供应协议/内部授权或 #137 的 P6 批准与真实试点；三项真实证据 gate 仍开放。
 
 - **DSH runtime closure 精确迁移 0.1.5-alpha.1(2026-09-09,issue #268)**:root/ts 双 manifest + npm/pnpm 双锁从 `0.1.2-alpha.3`(216 包闭包)精确迁移到 `0.1.5-alpha.1`(230 包闭包:15 新增 sentinel + 移除 `dsh-tool-subagent-report`);全部 230 个 `@deepseek-ai/dsh*` 包钉死精确版本——拒绝 `^0.1.5-alpha.1` 匹配 `0.1.5-alpha.2` 的 semver 预发布漂移;CI `npm ci --strict-peer-deps` / pnpm `--strict-peer-dependencies` 显式严格。run-all §23a-§23e 五个确定性证明（subprocess-local 仅公共 API+进程组信号终止后代 PID 消失、session V3 隔离文件字节迁移、http-proxy 回环 SSE+中毒反例、target-closure root+ts 三层 230 验证）。设置行为不变；历史 `0.1.2-alpha.3` 证据在 §9/stage1/release-notes 旧条目中保留,不批量替换。此项尚未发布 tag 或 npm 版本；这些确定性证明不构成 M5/M6 准入。

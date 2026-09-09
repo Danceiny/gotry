@@ -7,7 +7,7 @@
  * founder 拍板:可选依赖不撒手——doctor 统一显示状态、给精确补装指引。
  *
  * 契约(与 capabilities/* 同构):
- *   - 只读:check 绝不安装、绝不写盘(--fix 安装面只在 CLI bootstrap,经用户显式调用);
+ *   - `runDoctorChecks` 永远只读;显式 repair 另经会话 scope 审批后复用 bootstrap 幂等安装器;
  *   - 永不抛错:单项检查失败降级为 status='degraded',不拖垮整体报告;
  *   - 可注入:repoRoot/homeDir/env 可替换(CI/离线确定性测试);
  *   - LLM key 永不体检——那是 dsh 宿主的管辖面(founder 2026-09-02 明确)。
@@ -308,6 +308,232 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
 
 /** 修复指引入表:命令类才加反引号(prose 类如「到控制台申请 key」原样) */
 const fixCell = (fix?: string) => (!fix ? '—' : /^(npx|hbcli|curl|pip|python|\$)/.test(fix) ? `\`${fix}\`` : fix)
+
+// ---------------------------------------------------------------------------
+// 自助修复(repair,issue #284):gotry_doctor 显式 `action: 'repair'` 时,按用户
+// 传入的 items 范围只尝试 auto-repairable 缺项;user-action / unavailable 永
+// 不冒充 auto。**生产路径必须经 bootstrap.runOnboardingFix**(复用 real
+// setupHbcli / setupReach / setupSidebar + 内部 doctorChecks 复检)—
+// capability 层不写第二套安装面。**安装器退出 ≠ 健康**:per-item 终态由
+// runOnboardingFix 内部 post-install recheck 决定。tests 注入 installers /
+// recheck / bridge 跑 fakes,永不真安装。
+// ---------------------------------------------------------------------------
+
+export type DoctorRepairApproval = 'granted' | 'rejected' | 'cancelled' | 'unavailable' | 'not-needed'
+export type DoctorRepairItemStatus = 'installed' | 'failed'
+export type DoctorRepairVerdict = 'repaired' | 'partial-repair' | 'repair-blocked' | 'no-repair-needed' | 'approval-denied'
+
+/** bootstrap 内部 doctorItems 形状(同 runOnboardingFix 接受):与 DoctorItem 区别
+ *  在 status 字段名为 level。**`toBootstrapItem` 是 status→level 边界适配点**—
+ *  直传 DoctorItem 会让 bootstrap.classifyDoctorGap 因 `!item.level` 把所有项分
+ *  到 'ok',plan 永远空。这是修 #284 blocker #2 的关键一行。 */
+interface BootstrapItem { label: string; level: 'ok' | 'missing' | 'degraded'; detail: string; fix?: string }
+interface BootstrapRunResult { label: string; status: 'installed' | 'needs-user-action' | 'unavailable'; reason?: string; retry?: string }
+interface BootstrapPlan { promptable: boolean; auto: BootstrapItem[]; userAction: BootstrapItem[]; unavailable: BootstrapItem[] }
+
+export interface DoctorRepairOutcome { id: string; label: string; status: DoctorRepairItemStatus; reason: string; nextAction?: string }
+export interface DoctorRepairSkipped { id: string; label: string; bucket: 'user-action' | 'unavailable'; reason: string }
+export interface DoctorRepairResult {
+  ok: boolean
+  verdict: DoctorRepairVerdict
+  approval: DoctorRepairApproval
+  /** 本次计划选中的自动修复项；审批拒绝/取消/缺席时仍保留，便于审计计划边界 */
+  selected: Array<{ id: string; label: string }>
+  /** selected 的稳定排序去重 key；同会话批准缓存以此为粒度 */
+  scopeKey: string
+  repairs: DoctorRepairOutcome[]
+  skipped: DoctorRepairSkipped[]
+  summary: string
+}
+
+export interface DoctorRepairOptions {
+  /** 注入 runOnboardingFix 假实现(默认 = bootstrap.runOnboardingFix 真导出) */
+  runOnboardingFix?: (plan: BootstrapPlan, opts: { installers?: Record<string, () => Promise<{ ok: boolean; error?: string }>>; recheck?: () => Promise<BootstrapItem[]> }) => Promise<BootstrapRunResult[]>
+  /** 假安装器(key 为 hbcli / reach / sidebar;传给 bootstrap.runOnboardingFix as opts.installers) */
+  installers?: Record<string, () => Promise<{ ok: boolean; error?: string }>>
+  /** 假复检(返回 bootstrap 形状数组)—决定最终判定。**签名同 bootstrap.runOnboardingFix** */
+  recheck?: () => Promise<BootstrapItem[]>
+  /** 高级注入:覆盖 classifyDoctorGap / buildOnboardingPlan(默认 = bootstrap 真实导出) */
+  bridge?: { classifyDoctorGap?: (i: BootstrapItem, opts?: { platform?: string; env?: NodeJS.ProcessEnv }) => string; buildOnboardingPlan?: (items: BootstrapItem[], opts?: { platform?: string; env?: NodeJS.ProcessEnv }) => BootstrapPlan }
+  platform?: string
+  env?: NodeJS.ProcessEnv
+}
+
+/** 稳定 scope key(item ids 排序去重逗号串,空 = '')—批准缓存 / 审计 / 测试断言 */
+export function scopeKeyFor(ids: readonly string[]): string {
+  if (!Array.isArray(ids) || ids.length === 0) return ''
+  return [...new Set(ids)].sort().join(',')
+}
+
+/** DoctorItem → bootstrap 形状:status 改名为 level(关键适配,见 BootstrapItem 注释) */
+function toBootstrapItem(i: DoctorItem): BootstrapItem {
+  return { label: i.label, level: i.status, detail: i.detail, fix: i.fix }
+}
+
+const KNOWN_IDS = new Set(['node', 'extension', 'agent-reach', 'hbcli', 'flyai', 'sidebar', 'llm-key', 'calendar', 'map-tools', 'ask-user'])
+
+interface BootstrapBridge {
+  classifyDoctorGap: (i: BootstrapItem, opts?: { platform?: string; env?: NodeJS.ProcessEnv }) => string
+  buildOnboardingPlan: (items: BootstrapItem[], opts?: { platform?: string; env?: NodeJS.ProcessEnv }) => BootstrapPlan
+  runOnboardingFix: (plan: BootstrapPlan, opts: { installers?: Record<string, () => Promise<{ ok: boolean; error?: string }>>; recheck?: () => Promise<BootstrapItem[]> }) => Promise<BootstrapRunResult[]>
+}
+let cachedBootstrap: BootstrapBridge | null = null
+async function loadBootstrapBridge(): Promise<BootstrapBridge> {
+  if (cachedBootstrap) return cachedBootstrap
+  const url = new URL('../../bin/gotry-bootstrap.js', import.meta.url)
+  const mod = await import(url.href) as BootstrapBridge
+  cachedBootstrap = mod
+  return mod
+}
+
+/** approval 状态(WeakMap<agent> 收口 + scope 维度粒度):granted 用 Set<string>;
+ *  denied 用 Map<scopeKey, 'rejected' | 'cancelled'>——**保留具体结果**,后续同 scope
+ *  重复请求返回同一 outcome(cancelled 不被静默合并成 rejected,issue #284 加固点)。 */
+export type RepairApprovalState = { granted: Set<string>; denied: Map<string, 'rejected' | 'cancelled'> }
+
+/** dsh 原生 ApprovalSeam 透传(沿用 session-consent 的 ApprovalOutcome 闭集) */
+export type RawApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+export interface RawApprovalSeam { request: (r: { agent?: unknown; toolName: string; callId?: string; reason?: string; signal?: AbortSignal }) => Promise<RawApprovalOutcome> }
+
+export interface RepairApprovalGateOptions {
+  approval?: () => RawApprovalSeam | undefined
+  store?: WeakMap<object, RepairApprovalState>
+}
+
+export function createRepairApprovalGate(opts: RepairApprovalGateOptions) {
+  const store = opts.store ?? new WeakMap<object, RepairApprovalState>()
+  const getState = (agent: object | undefined): RepairApprovalState => {
+    if (!agent) return { granted: new Set(), denied: new Map() }
+    let s = store.get(agent)
+    if (!s) { s = { granted: new Set(), denied: new Map() }; store.set(agent, s) }
+    return s
+  }
+  const has = (agent: object | undefined, scopeKey: string): DoctorRepairApproval => {
+    if (!scopeKey) return 'not-needed'
+    const s = getState(agent)
+    if (s.granted.has(scopeKey)) return 'granted'
+    return s.denied.get(scopeKey) ?? 'not-needed' // 保留具体 rejected/cancelled
+  }
+  const request = async (
+    agent: object | undefined,
+    scopeKey: string,
+    reason: string,
+    requestMeta: { callId?: string; signal?: AbortSignal } = {},
+  ): Promise<DoctorRepairApproval> => {
+    const cached = has(agent, scopeKey)
+    if (cached !== 'not-needed') return cached
+    const seam = opts.approval?.()
+    if (!seam || typeof seam.request !== 'function' || !agent) return 'unavailable'
+    let raw: RawApprovalOutcome
+    try { raw = await seam.request({ agent, toolName: 'gotry_doctor', callId: requestMeta.callId, reason, signal: requestMeta.signal }) } catch { raw = 'unavailable' }
+    const mapped: DoctorRepairApproval =
+      raw === 'allowed-once' ? 'granted' :
+      raw === 'rejected' || raw === 'cancelled' ? raw : 'unavailable'
+    const s = getState(agent)
+    if (mapped === 'granted') s.granted.add(scopeKey)
+    else if (mapped === 'rejected' || mapped === 'cancelled') s.denied.set(scopeKey, mapped)
+    // unavailable 不记(通道回来还能再问一次)
+    return mapped
+  }
+  return { has, request, store }
+}
+
+/** 修复运行(主入口):diagnosis → bootstrap.buildOnboardingPlan(status→level 适配)
+ *  → scope-keyed 审批 → bootstrap.runOnboardingFix(真安装器 + 内部复检)
+ *  → per-item verdict。**生产**:不传 opts,走 bootstrap 真实导出。
+ *  **tests**:注入 installers / recheck / bridge 跑 fakes,永不真安装命令。
+ *  user-action / unavailable 项绝不进 selected(分类器守住),scope 过滤后被剔除
+ *  的项从 selected 排除(永不装)。 */
+export async function runDoctorRepair(
+  report: DoctorReport,
+  approve: (scopeKey: string, reason: string) => Promise<DoctorRepairApproval>,
+  opts: DoctorRepairOptions = {},
+): Promise<DoctorRepairResult> {
+  // 1. 选 bridge:tests 注入覆盖;生产用 bootstrap 真实导出(懒加载并缓存)
+  const bridge: BootstrapBridge = opts.bridge
+    ? { ...await loadBootstrapBridge(), ...opts.bridge } as BootstrapBridge
+    : await loadBootstrapBridge()
+  const runInstalls = opts.runOnboardingFix ?? bridge.runOnboardingFix
+
+  // 2. status→level 适配(关键)—直传 DoctorItem 会让 bootstrap.classifyDoctorGap
+  //    因 !item.level 把所有项分到 ok,plan 始终为空(原版真 bug)。
+  const bItems = (report.items ?? []).map(toBootstrapItem)
+  const plan = bridge.buildOnboardingPlan(bItems, { platform: opts.platform, env: opts.env })
+
+  const labelToId = new Map<string, string>()
+  for (const i of report.items ?? []) if (i?.id && i?.label) labelToId.set(i.label, i.id)
+
+  // 3. selected = plan.auto ∩ 已知 doctor item id(防御:未知 id 静默剔除不冒充 auto)
+  const selected = (plan.auto ?? [])
+    .filter((g) => KNOWN_IDS.has(labelToId.get(g.label) ?? ''))
+    .map((g) => ({ id: labelToId.get(g.label)!, label: g.label }))
+
+  const skipped: DoctorRepairSkipped[] = [
+    ...(plan.userAction ?? []).map((g) => ({ id: labelToId.get(g.label) ?? '', label: g.label, bucket: 'user-action' as const, reason: g.fix ?? g.detail ?? '需用户本人操作' })),
+    ...(plan.unavailable ?? []).map((g) => ({ id: labelToId.get(g.label) ?? '', label: g.label, bucket: 'unavailable' as const, reason: g.detail ?? '本仓无自动安装面' })),
+  ]
+  const scopeKey = scopeKeyFor(selected.map((s) => s.id))
+
+  // 4. 无 selected → 早退(零审批请求,零副作用)
+  if (selected.length === 0) {
+    const healthy = (report.items ?? []).every((item) => item.status === 'ok')
+    return {
+      ok: healthy, verdict: 'no-repair-needed', approval: 'not-needed',
+      selected, scopeKey,
+      repairs: [], skipped,
+      summary: healthy
+        ? '诊断:所选项目已经全部就位,无需修复。'
+        : '诊断:无可自动补装的缺项(其余项需用户本人操作或本机暂不支持)。',
+    }
+  }
+
+  // 5. scope-keyed 审批(rejected 与 cancelled 在 denial 缓存里分开记)
+  const approval = await approve(scopeKey, `将自动补装 ${selected.length} 项可选依赖:${selected.map((s) => s.label).join('、')};复用 doctor --fix 幂等安装器。`)
+  if (approval !== 'granted') {
+    return {
+      ok: false, verdict: 'approval-denied', approval,
+      selected, scopeKey,
+      repairs: [], skipped,
+      summary: approval === 'rejected' ? '修复未执行:用户拒绝了这次补装(本会话吊销,不再询问)。'
+        : approval === 'cancelled' ? '修复未执行:用户取消了这次补装(本会话吊销,不再询问)。'
+        : '修复未执行:当前无可用审批通道(headless / 无 UI)。',
+    }
+  }
+
+  // 6. 真执行:bootstrap.runOnboardingFix(默认 installers = real setupHbcli/etc.;
+  //    默认 recheck = bootstrap 内置 doctorChecks,与 runDoctorChecks 同源)。tests 注入 fakes。
+  const fullPlan: BootstrapPlan = {
+    promptable: true, auto: plan.auto ?? [], userAction: plan.userAction ?? [], unavailable: plan.unavailable ?? [],
+  }
+  const runResults = await runInstalls(fullPlan, {
+    ...(opts.installers ? { installers: opts.installers } : {}),
+    ...(opts.recheck ? { recheck: opts.recheck } : {}),
+  })
+
+  // 7. per-item 终态:bootstrap 已含内部复检的 installed / needs-user-action / unavailable;
+  //    needs-user-action 与 unavailable 都视为 failed(给重试命令)。
+  const repairs: DoctorRepairOutcome[] = selected.map((s) => {
+    const r = runResults.find((x) => x.label === s.label)
+    if (r?.status === 'installed') return { id: s.id, label: s.label, status: 'installed', reason: r.reason ?? '已就位' }
+    return {
+      id: s.id, label: s.label, status: 'failed',
+      reason: r?.reason ?? '安装器未确认成功',
+      nextAction: r?.retry ?? 'npx @danceiny/gotry doctor --fix',
+    }
+  })
+
+  const failed = repairs.filter((r) => r.status === 'failed').length
+  const installed = repairs.length - failed
+  const verdict: DoctorRepairVerdict = failed === 0 ? 'repaired' : installed === 0 ? 'repair-blocked' : 'partial-repair'
+  return {
+    ok: failed === 0, verdict, approval, selected, scopeKey, repairs, skipped,
+    summary: failed === 0
+      ? `修复完成:${installed} 项已就位(其余项见 skipped,需要时手动处理)。`
+      : installed === 0
+        ? `修复失败:${failed} 项复检仍未就位(${repairs.filter((r) => r.status === 'failed').map((r) => r.label).join('、')});重试: npx @danceiny/gotry doctor --fix。`
+        : `修复部分成功:${installed}/${selected.length} 项已就位,${failed} 项失败(${repairs.filter((r) => r.status === 'failed').map((r) => r.label).join('、')});重试: npx @danceiny/gotry doctor --fix。`,
+  }
+}
 
 /** 报告 → 侧栏可预览 markdown(写盘由调用方决定;本函数纯渲染) */
 export function renderDoctorReportMd(report: DoctorReport, now = new Date()): string {

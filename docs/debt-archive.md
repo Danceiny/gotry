@@ -11,7 +11,7 @@
 - 新条目只能随 M-exit 勾销从 `architecture.md` §10.1 迁入,迁入后不改写(版本历史归 git)。
 - 要接的活不在本文件;工作面始终是 `architecture.md` §10.1。
 
-> 编号备注:`D-24` 曾被会话扩展 onboarding 与事实闸覆盖面重复占用;事实闸债务(仍在 §10.1 工作面)沿用 `D-26`,本存档中的「D-26-bridge」为旧桥钉住 CLI 债的历史归档别称,与活跃 D-26 无关。
+> 编号备注:`D-24` 曾被会话扩展 onboarding 与事实闸覆盖面重复占用;事实闸债务(仍在 §10.1 工作面)沿用 `D-26`,本存档中的「D-26-bridge」为旧桥钉住 CLI 债的历史归档别称,与活跃 D-26 无关。`D-37` 曾双占:CfT HttpOnly cookie 债(开着的,在 §10.1)与本存档的 doctor 修复债(#284)同号,后者按本行标题区分。
 
 ## 存档表
 
@@ -47,6 +47,7 @@
 | D-34 可选能力 onboarding 缺口(#258/#267) | **已清偿 2026-09-09(#258;#267 = #266 合并后的 post-merge 加固)**:交互式 `gotry web` 启动前无可选能力配置面;现由 per-launch onboarding 复用 `doctor --fix` 幂等安装器。#267 补齐 awaited POSIX onboarding process group、bootstrap installer bounded process group、outer grace > installer TERM+SIGKILL budget、0700/0600-wx result 通道与 §21c/§21f/§21g stubborn installer 信号/timeout fixture。M4 UX 质量线,不计入 #20 Exit。详见 [`architecture.md` §9](architecture.md#9-演进时间线唯一来源-roadmapmd-的-m0-m6此处只保留原则与现状) |
 | D-35 Node 26 dist 构建 API 移除 | **已清偿 2026-09-09(issue #265)**:移除 Node 已删除的 `stripTypeScriptTypes(...,{mode:'transform'})` 路径,改由根 manifest + npm/pnpm 双锁精确固定 TypeScript 5.9.3 并显式产出 ESM。Node 22/24 保留 typecheck + 全栈 CI,另以 Node 22/24/26 focused matrix 验证 exact source→dist、资产字节、无相对 `.ts`/CommonJS wrapper、入口与关键动态 import；Node 24 独立 pnpm frozen-lock job 防直接依赖的 `.pnpm` 解析布局回归。clean-archive release builder 先在隔离 source 内严格 `npm ci --include=dev`,再从提交锁派生剥除 build-only TypeScript entry 的最终 runtime manifest/lock 并严格 `npm ci --omit=dev`;builder proof 拒绝 TypeScript 出现在 runtime package/deps/manifest。该 M4 工程质量证据不关闭 #20/#136/#137 的真实 gate。 |
 | D-36 酒店日期闸缺位(hotel-date-gate) | **已清偿 2026-09-09(issue #283)**:实现与边界详见 [`architecture.md`](architecture.md) §1.2;共享 `parseAbsoluteDate` 拒非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`,有效日期与静态降级兼容。隔离 fixture 证据不构成真实供应商准入。 |
+| D-37 `gotry_doctor` 只能给指引、不能在对话内修复 | **已清偿 2026-09-10(issue #284)**:显式 `action=repair` 形成诊断→范围计划→会话审批→既有 bootstrap 幂等安装器→实际复检链;拒绝/取消/无审批通道零执行,user-action/unavailable 不越权,安装退出不替代健康复检。隔离 fixture 工具 E2E 只证明工程边界,不构成 #20 真实 repeat cohort 或任何 M5/M6 准入。详见 [`architecture.md` §9](architecture.md#9-演进时间线唯一来源-roadmapmd-的-m0-m6此处只保留原则与现状)。 |
 
 **D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态)**
 
