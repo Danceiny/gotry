@@ -216,7 +216,7 @@ echo "=== 30c. Z3 race 独立进程重复(#227:多进程重复保存原始 stdou
 (cd ts && npx tsx scripts/z3-race-repeat-tests.ts) || FAIL=1
 
 echo
-echo "=== 30d. 酒店日期输入闸(#283:founder 截图实证 gotry_hotel_search 空/缺/单侧/无法解析/倒序/同日日期仍发起 hbcli 按当前窗口价返回;闸失败 → input_required 不调 hbcli 不写 bridge-latency;通过 → 真实 apply→execute→临时 fixture hbcli 收到精确 argv;隔离 stateRoot + 临时 fixture hbcli,finally 中清理,无 HotelByte/凭证/共享用户数据写入;13 断言) ==="
+echo "=== 30d. 酒店日期输入闸(#283:founder 截图实证 gotry_hotel_search 空/缺/单侧/无法解析/倒序/同日日期仍发起 hbcli 按当前窗口价返回;闸失败 → input_required 不调 hbcli 不写 bridge-latency;通过 → 真实 apply→execute→临时 fixture hbcli 收到精确 argv;隔离 stateRoot + 临时 fixture hbcli,finally 中清理,无 HotelByte/凭证/共享用户数据写入;闸终消费层严格校验拦截 +N 算术溢出(NaN-NaN-NaN)与 JS 自动进位跨千年(10000-01-01)归 unresolved,不调 hbcli;断言数见脚本尾部自报) ==="
 (cd ts && npx tsx scripts/hotel-date-gate-tests.ts) || FAIL=1
 
 echo

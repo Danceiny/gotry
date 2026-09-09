@@ -119,19 +119,45 @@ export function buildTimeAnchor(now: Date = new Date()): TimeAnchor {
   return { today, todayWeekdayZh: weekdayOf(now), tzLabel: tzLabelOf(now), card }
 }
 
+/** 严格 ISO 校验:YYYY-MM-DD 必须落在真实日历(2026-02-30/2026-13-01 一律拒)。
+ *  复用 Date 月末自动进位:同年/月/day 还原回同一串 = 真日历;否则越界。
+ *  同时拒掉非有限值(NaN/Infinity)与越界月日(1-12/1-31)。
+ *  供 parseAbsoluteDate 词表口径 + hotel-date-gate 终消费层 复用。 */
+export function isRealIsoDate(y: number, m: number, d: number): boolean {
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return false
+  if (m < 1 || m > 12) return false
+  if (d < 1 || d > 31) return false
+  const dt = new Date(y, m - 1, d)
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d
+}
+
 /**
  * 绝对月日表达 → YYYY-MM-DD(年缺省时按锚点年)。只识别**绝对**表达:
  * ISO(2026-08-01)、数字点分(8.1 / 9.10)、中文(8月5日 / 8月5号)。
+ * 严格校验真日历存在性:2026-02-30 / 2026-13-01 / 2025-02-29 等一律返回 null——
+ * 词表外不一致日期不冒充合法,闸会归 unresolved 拒绝发供应商查询(issue #283 红线)。
  * 相对/模糊表达(下周一/明天/本周三/下个月中旬/近期/Aug-5 英文月名)一律返回 null——
  * 逐字保留给下游,本层不做换算也不做过期判定(与评测 golden 对齐:英文月日不判过期)。
  */
 export function parseAbsoluteDate(expr: string, anchorYear: number): string | null {
   const t = expr.trim()
   let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
-  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  if (m) {
+    const y = Number(m[1]); const mo = Number(m[2]); const d = Number(m[3])
+    if (!isRealIsoDate(y, mo, d)) return null
+    return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  }
   m = t.match(/^(\d{1,2})[./](\d{1,2})(?:日|号)?$/)
-  if (m) return `${anchorYear}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+  if (m) {
+    const mo = Number(m[1]); const d = Number(m[2])
+    if (!isRealIsoDate(anchorYear, mo, d)) return null
+    return `${anchorYear}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+  }
   m = t.match(/^(\d{1,2})月(\d{1,2})[日号]?$/)
-  if (m) return `${anchorYear}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+  if (m) {
+    const mo = Number(m[1]); const d = Number(m[2])
+    if (!isRealIsoDate(anchorYear, mo, d)) return null
+    return `${anchorYear}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+  }
   return null
 }

@@ -681,10 +681,9 @@ export function apply(ctx: Context, config: Config): void {
       const gate = evaluateHotelStayDates(q.checkIn, q.checkOut)
       if (!gate.ok) {
         // 闸失败:不调用 interpretEffect,不调 hbcli;延迟日志不写(no spawn)。
-        // 顶层 summary 与 verdict/message 三字段联动,presentResult 能直接渲成
-        // 「酒店:迪拜 input_required」行动卡(替代旧版的「无结果」空卡),
-        // 引导模型向用户追问具体日期——而不是伪装成「无房可订」。
-        const summary = `酒店 ${q.destination ?? ''} 闸拒绝(${gate.reason}):${gate.message}`
+        // summary 用「需要 X 信息才能查询酒店」开头的可行动句式,presentResult 直接
+        // 渲成「酒店:<dest> 缺日期」行动卡(替代旧版「无结果」空卡)。
+        const summary = `需要补充${(gate.missing ?? []).map(m => m === 'checkIn' ? '入住日' : '退房日').join('和')}才能查询酒店「${q.destination ?? ''}」:${gate.message}`
         return {
           ok: false,
           verdict: gate.verdict,
@@ -728,16 +727,21 @@ export function apply(ctx: Context, config: Config): void {
     },
     presentCall: args => ({ card: 'generic', title: `酒店搜索:${args.destination ?? ''}`, kind: 'search', rawInput: args }),
     presentResult: (_args, value) => {
-      // issue #283 闸失败:渲染为「input_required」行动卡,summary/message 直传;
-      // 不再退化成「无结果」空卡——闸拒绝的可行动语义必须显式进 UI,
-      // 引导模型向用户追问 checkIn/checkOut 字段
+      // 闸失败:渲染为「input_required」行动卡,引导模型向用户追问日期;
+      // 不再退化为「无结果」空卡——闸拒绝的可行动语义必须显式进 UI。
+      // UI 面禁用内部工程词(check_in_blank / 闸拒绝 / ISO 字符串),只露「入住日/退房日」
+      // 与具体日期示例供模型追问。
       const r = value as { hotels?: unknown; via?: string; destination?: string; summary?: string; verdict?: string; reason?: string; missing?: string[]; message?: string }
       if (r.verdict === 'input_required') {
-        const missingZh = (r.missing ?? []).map(m => m === 'checkIn' ? '入住日' : '退房日').join('+')
+        const missingLabels = (r.missing ?? []).map(m => m === 'checkIn' ? '入住日' : '退房日')
+        const fieldText = missingLabels.length ? missingLabels.join('和') : '入住日和退房日'
+        const dateHint = !missingLabels.length || missingLabels.length === 2
+          ? '例如 2026-09-18 / 2026-09-20'
+          : missingLabels[0] === '入住日' ? '例如 2026-09-18' : '例如 2026-09-20'
         return {
           card: 'generic',
-          title: `酒店:${r.destination ?? ''} 缺日期(${r.reason ?? 'input_required'})`,
-          content: [{ type: 'text', text: `需要补充 ${missingZh || '日期字段'} 后才能查询供应商。\n${String(r.summary ?? r.message ?? '')}` }],
+          title: `酒店:${r.destination ?? ''} 需要${fieldText}`,
+          content: [{ type: 'text', text: `请告诉用户补充 ${fieldText}(${dateHint})后再次查询。\n${String(r.message ?? '')}` }],
         }
       }
       const h = r.hotels
