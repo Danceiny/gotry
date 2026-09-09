@@ -58,7 +58,7 @@ M3 最小可用产品,分发链路无已知堵点。
   - 覆盖:扩展 / agent-reach `.venv` / hbcli / FlyAI key(含最近匿名试用达限时间)/ dsh-calendar 挂载态 / sidebar / 随包 MIT `dsh-map-tools`(`SettingsProvider.prototype.installSection` 接线,0.1.2-alpha.3 与 0.1.5-alpha.1 均已发布) / `dsh-tool-ask-user`,逐项分级 ok/degraded/missing + 精确补装指引
   - 安装只经用户终端显式触发:`npx gotry doctor --fix`,或交互式 `gotry web` 启动前的 per-launch onboarding prompt(#258/#267,每次符合条件的启动评估一次、至多问一次,无跨启动持久确认;复用同一套幂等安装器,不建第二套);CI/非 TTY/全健康/opt-out 零 prompt 零安装。LLM key 归 dsh 宿主,刻意不管
   - 工具层 not-installed/needs-setup 报错统一指 doctor(2026-09-02 迪拜 session 复盘:阻断对已坏通道的盲目重试)
-- **运维面**:质量指标只读聚合 `ts/scripts/build-metrics-report.ts`(2026-09-05,#138 第一切片)——事实闸 verdict 分布与 blocked 率/通道健康 down·cooldown(30 天窗)/事故面(7 天窗)/桥延迟 p50·p95·max(**>500ms 超限计数=§11 复审节奏触发锚点的可见面**)/账本与 doctor 报告存在性,聚成单一 markdown;全程只读零 SQLite 打开(`openDb` 建连即可能写 kv),默认 stdout、`--out` 才落盘;工程面交付,不构成 M3 Exit 证据(归 #22)
+- **运维面**:质量指标只读聚合 `ts/scripts/build-metrics-report.ts`(2026-09-05,#138 第一切片)——事实闸 verdict 分布与 blocked 率/通道健康 down·cooldown(30 天窗)/事故面(7 天窗；fatal 由 `uncaughtExceptionMonitor` 观测并保留宿主退出语义)/桥延迟 p50·p95·max(**>500ms 超限计数=§11 复审节奏触发锚点的可见面**)/账本与 doctor 报告存在性,聚成单一 markdown;全程只读零 SQLite 打开(`openDb` 建连即可能写 kv),默认 stdout、`--out` 才落盘;工程面交付,不构成 M3 Exit 证据(归 #22)
 - **外驱面**:通道探针 tick `ts/scripts/channel-probe.ts`(2026-09-07,外部事件接缝第 1 段,#82 本地生产者)——只读探测无头可探通道(hbcli whoami / open-meteo / opensky;session 系不可探显式 skip,flyai 默认不探防空额度),异常写 `down` 事件、恢复写 `'ok'` 事件(latest-wins 超越 down)进 `channel-health.jsonl`,routing/doctor 零改动受益;loopx/cron 驱动一次一轮,非常驻;第 2 段愿望池消费同日落地(`conditions.channels` 可选条件+召回时 down 否证,`wish-channel-gate-tests` §53);远程回调面仍待 D-31 拍板(seam 设计 §5)
 - **外联**:AgentReach wrapper(上游装于 `.venv`,反射桥 `agent-reach-bridge.py` 直调上游注册表,零渠道知识)
 
@@ -370,6 +370,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
   - **实时票价接入**:`ts/src/realtime-pricing.ts`——dated 航班链段经 FlyAI 官方只读通道按航班号精确匹配覆写 spec 价格,证据链 `[实时API:flyai@ts]` 并进 skeleton_notes;miss/error/打码价/无匹配一律降级回静态包,永不抛错。`realtimeSolvePort`(env 闸 `GOTRY_REALTIME_PRICING`,默认关)接线 replay-real——**静态包由唯一来源变为显式降级**,run-all §31。
   - **i18n 英文面工程层**:`i18n.ts` 消息目录——zh-CN 默认且与金标准逐字节一致,`GOTRY_LOCALE=en` 切英文、en 缺键回退 zh;覆盖求解确定性面(候选/航班链 answer_md、放宽建议、排除理由、wish 理由)。run-all §32;工具卡与人格对话面挂 M4 校准样本随补。
 - **贡献基建(2026-08-29,开源协作面)**:GitHub Actions CI(node 22/24 矩阵:typecheck + 全栈回归,`GOTRY_SESSION_LIVE=0`);`CONTRIBUTING.md` + issue/PR 模板;lockfile(root/ts 双份)与 dsh-runtime 三 manifest 入 git,resolved 全量从内部镜像改指 registry.npmjs.org(integrity 逐包验证);贡献流程改 PR 制。
+- **#271 Phase A 进程事故观察(2026-09-09)**:GoTry-owned `uncaughtExceptionMonitor` 按 origin 同步记录 uncaught/rejection，宿主仍拥有 fatal handler 与退出策略；incident writer 以单一 fd append+fsync+close，任一耐久化失败返回 `false` 且不再抛。native Node24 ESM 反例覆盖 monitor/no-monitor 的非零退出、现有 host handler exit code、writer fsync/close 与 tool structured failure。child close/spawn error、SIGINT、后代进程和上游 dsh supervisor 仍是 #271 未覆盖边界。
 - **Node 26 dist 构建兼容闸(2026-09-09,issue #265)**:Node 26 移除 `stripTypeScriptTypes(...,{ mode:'transform' })` 后,dist 构建改走根声明的精确 TypeScript 5.9.3 `transpileModule` + 显式 ESM emit；focused proof 在 Node 22/24/26 核对 source→dist 精确集合、JS/Python/data 资产字节、无相对 `.ts` specifier/无 CommonJS emit wrapper，并执行 skeleton-check 与关键变量动态 import。clean-archive release 先装锁定的 build dev tree,再以剥除 build-only entry 的最终 runtime manifest/lock 严格安装,防 npm optional-peer 把 TypeScript 带回产物。Node 22/24 原 typecheck + 全栈 CI 保持独立。该工程质量证据不改变 #20/#136/#137 的真实准入图。
 - **onboarding wizard(2026-08-30,#21 · 2026-09-02 职责返交重设)**:首版闭环 `npx gotry setup wizard`(5 步编排 + 复制扩展路径 + 直达 `chrome://extensions` + 跨平台 GUI 面板 + health-watch 探活 + 扩展就位后自动重放)把用户侧降到 3 次点击 + 0 终端命令。**2026-09-02 商店上架后撤销**:gotry 越界管起了浏览器(`open`/`pbcopy`/`osascript`)与 dsh 渲染层(stdout 文字墙代替 verdict)——LLM 由 dsh 管、扩展由浏览器商店管、CLI 自举由 `gotry setup` 管,三条职责返交。wizard 退化为**离线健康探活等待**(纯 stdout,不动 spawn);`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时返回 `verdict.installUrl` 给 dsh UI 直接渲可点链接。落地 `ts/capabilities/session/wizard.ts` + `health-watch.ts` + `scripts/health-watch-cli.ts`;run-all §40。
 - **价表 provider-aware v2 + 价格漂移监测(2026-08-30,issue #49,ADR-20)**:封存价表从 `gotry_llm_price_table_v1`(DeepSeek V4 only)升 `v2`(`providers.<id>.models.<model>` 平铺 + `family`/`price_strategy`/`source_url`/`aliases`);MiniMax M2/M2.1/M3 入表;`ts/scripts/price-drift-watch.ts` 监测四家主流 provider(DeepSeek/MiniMax/OpenAI/Anthropic),**永不自动 apply 价格**(ADR-11 纪律)。同批 CHANGELOG 自动化:`ts/scripts/build-changelog.ts` + `CHANGELOG.md`。run-all §41/§42。
@@ -446,9 +447,10 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 **[D-NEW] dsh 进程保活缺失**
 
-**部分赎回(gotry 侧,2026-08-22)**:
-- plugins/apply 内 installProcessGuards 挂 uncaughtException + unhandledRejection;incident-log.ts 同步 fsync append-only,handler 不调 process.exit——被崩溃穿透时仍能留下证据(JSONL incidents.jsonl),不阻塞 dsh 控制流。incident-tests 2/2 绿。
-- 12 工具 execute 统一经 guardToolExecute 异常隔离:抛错/拒绝降级结构化错误返回 LLM + tool_execute_error 落盘,不再穿透 cordis 到 dsh 主循环(incident 套 3/3);残余仅 vendored dsh 自身容错,记 M3。
+**Phase A 部分赎回(gotry 侧,2026-09-09,#271)**:
+- `installProcessGuards` 只挂 `uncaughtExceptionMonitor`，按 Node origin 记录 `uncaughtException` / `unhandledRejection`；不安装吞 fatal 的 handler、不调用 `process.exit`、不隐式重启，宿主已有 handler 与 Node/dsh 退出策略继续裁决。
+- `recordIncident` 用单一 fd 完成 append、`fsync`、`close`，仅在全链成功时返回 `true`，失败返回 `false` 且正确回收 fd。native Node24 ESM dist 反例已覆盖 monitor/no-monitor、host handler exit code、writer fsync/close；`guardToolExecute` 继续把工具异常降为结构化失败并落盘。
+- 仍开放的 #271 边界：child close/spawn error、SIGINT、后代进程和上游 dsh supervisor 的存活/重启语义；Phase A 只记录 GoTry-owned fatal 证据，不宣称这些边界已清偿。
 
 **D-13 会话适配器维护面(RFC user-session-data-rfc)**
 

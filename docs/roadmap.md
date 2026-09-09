@@ -22,6 +22,8 @@
 
 > 以下均为**工程面交付,不构成任何里程碑 Exit 证据**(D-20 口径)。
 
+- **#271 Phase A 进程事故观察(2026-09-09)**:GoTry-owned `uncaughtExceptionMonitor` 记录 uncaught/rejection 并保留宿主 fatal 退出语义；single-fd append+fsync+close writer 失败返回 `false`；native Node24 ESM dist 反例覆盖 monitor/no-monitor、既有 host handler、fsync/close 与工具结构化失败。child close/spawn error、SIGINT、后代进程与上游 dsh supervisor 仍为开放 TODO，不改变 M3/M4-M6 真实证据 gate。
+
 - **Node 26 dist 构建兼容闸(2026-09-09,issue #265)**:支持下界保持 `>=22.15.0`;根构建脚本用精确 TypeScript 5.9.3 生成 ESM,focused CI 在 Node 22/24/26 核对 exact dist/资产/关键 import,Node 22/24 继续承担 typecheck + 全栈回归。该项仅属 M4 开源/发布质量线,不计入 #20 的真实 repeat-cohort,不满足 #136 的供应协议/内部授权或 #137 的 P6 批准与真实试点；三项真实证据 gate 仍开放。
 
 - **DSH runtime closure 精确迁移 0.1.5-alpha.1(2026-09-09,issue #268)**:root/ts 双 manifest + npm/pnpm 双锁从 `0.1.2-alpha.3`(216 包闭包)精确迁移到 `0.1.5-alpha.1`(230 包闭包:15 新增 sentinel + 移除 `dsh-tool-subagent-report`);全部 230 个 `@deepseek-ai/dsh*` 包钉死精确版本——拒绝 `^0.1.5-alpha.1` 匹配 `0.1.5-alpha.2` 的 semver 预发布漂移;CI `npm ci --strict-peer-deps` / pnpm `--strict-peer-dependencies` 显式严格。run-all §23a-§23e 五个确定性证明（subprocess-local 仅公共 API+进程组信号终止后代 PID 消失、session V3 隔离文件字节迁移、http-proxy 回环 SSE+中毒反例、target-closure root+ts 三层 230 验证）。设置行为不变；历史 `0.1.2-alpha.3` 证据在 §9/stage1/release-notes 旧条目中保留,不批量替换。此项尚未发布 tag 或 npm 版本,不合并、不打标签、不改 dist-tag,不声称 M5/M6。
