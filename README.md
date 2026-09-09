@@ -172,7 +172,7 @@ node scripts/build-dist.mjs                       # build the JS runtime
 ./gotry web                                       # in-repo entry, same UX
 ```
 
-The source entry and the npm package resolve the same 216-package DeepSeek Harness `0.1.2-alpha.3` closure (exact direct dependencies; publish preverify rejects omissions, mixed versions, and ranges). Source normal runs keep their state under `ts/dsh-runtime/gotry-state/`; benchmark opt-in and npm-package runs use the invocation directory for isolation.
+The source entry and the npm package resolve the same 230-package DeepSeek Harness `0.1.5-alpha.1` closure (exact direct dependencies; publish preverify rejects omissions, mixed versions, and ranges). Source normal runs keep their state under `ts/dsh-runtime/gotry-state/`; benchmark opt-in and npm-package runs use the invocation directory for isolation.
 
 ## Consent and Privacy
 
@@ -204,7 +204,7 @@ Current release: **v0.0.1-rc.18** (npm `latest` and `rc` both point here; regist
 
 - **Z3 solving engine** — feasibility verdicts + door-to-door whole-cost; solver calls are gated by a single shared Context, serialized sessions, and the #227 local native-cleanup barrier
 - **Realtime retrieval** — flights/trains/hotels (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`); exhausted FlyAI anonymous trial quota is classified `needs-setup` with key guidance (no blind retries)
-- **Dependency doctor** — `npx gotry doctor` (CLI) / `gotry_doctor` (in-chat tool): read-only health check of optional dependencies (extension / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar mount / dsh-map-tools & dsh-tool-ask-user presence) with exact repair guidance; map tools ship as a bundled MIT payload rather than an incompatible external npm peer, and the settings card uses the real alpha.3 `SettingsProvider.prototype.installSection` method with a plain namespace string; `--fix` installs; LLM keys stay with the dsh host
+- **Dependency doctor** — `npx gotry doctor` (CLI) / `gotry_doctor` (in-chat tool): read-only health check of optional dependencies (extension / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar mount / dsh-map-tools & dsh-tool-ask-user presence) with exact repair guidance; map tools ship as a bundled MIT payload rather than an incompatible external npm peer, and the settings card uses the real `SettingsProvider.prototype.installSection` method (published in 0.1.2-alpha.3 and 0.1.5-alpha.1) with a plain namespace string; `--fix` installs; LLM keys stay with the dsh host
 - **Account-session search** — Ctrip flights **and hotels** + 12306 trains on your Chrome (hotels 2026-09-03: real logged-in prices via passive sniffing; trains 2026-09-03: public left-ticket query; interface surfaces calibrate with the first live session); observed runs scored every landed hit 13/13 with zero write attempts, while non-hits stay explicit `miss` records — no live-availability claim beyond that
 - **Extension install on demand** — `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` is offered as a clickable link in the dsh UI when an account-session tool first needs it (one-click install + auto-update); the gotry side never runs a setup wizard
 - **Memory & reachability** — motivation profile / wish pool / companions / travel timeline, persisted by the tenant-scoped SQLite ledger (`local` remains the default); English solve output via `GOTRY_LOCALE=en`
@@ -312,6 +312,6 @@ Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outlin
 
 ---
 
-**Built with**: DeepSeek Harness 0.1.2-alpha.3 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
+**Built with**: DeepSeek Harness 0.1.5-alpha.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
 **Version baseline: `v0.0.1-rc.18` (npm `latest`).** The authoritative verification gates for the current checkout are enumerated by `scripts/run-all-tests.sh`; release flow: `scripts/publish-npm.sh`.

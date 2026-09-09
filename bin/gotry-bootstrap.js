@@ -436,9 +436,10 @@ async function doctorChecks() {
   items.push({ label: 'dsh-calendar(日历工作窗口)', ok: !calOn || calConfigured, level: !calOn ? 'ok' : calConfigured ? 'ok' : 'degraded', detail: calendarDetail(calState), fix: !calOn ? undefined : calConfigured ? undefined : '在 ~/.dsh/profiles/web/cordis.patch.yml 覆盖 calendar 行 config 填 username(或 npx gotry setup calendar --off 恢复默认不挂载)' })
   // dsh-map-tools(patch 分发面宿主插件,issue #139):解析失败启动时整块静默剔除,
   // doctor 把两态照亮。候选清单与 bin/gotry-inner.js 解析链、ts/capabilities/doctor.ts 同口径:
-  // tarball vendor 副本优先(随 files[] 分发,不进 npm 依赖——其 peerDependencies 要求
-  // dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族在 npm 严格 peer
-  // 解析下 ERESOLVE,依赖形态会弄坏 npx 安装),其余覆盖 source/提升/profile 布局。
+  // tarball vendor 副本优先(随 files[] 分发,不进 npm 依赖——历史上游 peerDependencies
+  // 要求 dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族在 npm 严格 peer
+  // 解析下 ERESOLVE;当前锁定 0.1.5-alpha.1 家族,vendored 副本已对齐 0.1.5-alpha.1,
+  // 保持 vendored 形态复用适配补丁),其余覆盖 source/提升/profile 布局。
   const rootRequire = createRequire(join(repoRoot, 'package.json'))
   const mapCandidates = [
     join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js'),
