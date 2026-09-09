@@ -89,7 +89,7 @@ GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多�
 | **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成的产物(异步交付 + 工作目录 markdown),行号文件视图,只读 |
 | **事实闸** | `gotry_fact_gate` | 行程产物交付前闸——见上文[工作原理](#工作原理)中的定义 |
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页/字幕/GitHub/全渠道外部信息(经 Agent-Reach) |
-| **自检** | `gotry_doctor` | 可选依赖只读体检(扩展 / Agent-Reach .venv / hbcli / FlyAI key **+ 最近一次匿名试用达限时间** / dsh-calendar 挂载态 / sidebar),逐项状态 + 精确补装指引;安装只经用户在终端跑 `npx @danceiny/gotry doctor --fix` 完成。LLM key 归 dsh 宿主管,doctor 刻意不管。报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
+| **自检** | `gotry_doctor` | 默认只读体检。显式 `action: "repair"` 时先展示可自动修复项,按范围请求批准,复用 `doctor --fix` / web onboarding 的同一套幂等安装器,并以安装后复检判定结果。浏览器商店安装、凭证/API key、profile、包重装与 Node 升级仍由用户处理;拒绝、取消或无审批通道时零执行。报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
 
 > **通道路由**:检索工具面保持平铺(无隐藏派发);persona 路由卡与检索失败结果内附的 `routing` 建议**由通道注册表单一生成**(官方 API > 用户会话 > 网页兜底,按会话健康面过滤)。某通道额度耗尽时,结果会明说并指名下一通道——盲重试是契约违例,不靠 prompt 碰运气。
 
@@ -193,7 +193,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 
 - **Z3 求解引擎** —— 可行性判决 + 门到门全成本;历史并发竞态已根治并进回归闸
 - **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`);飞猪匿名试用额度达限归类 `needs-setup` 并带配 key 指引(不盲重试)
-- **依赖体检** —— `npx @danceiny/gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):可选依赖(扩展 / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar / dsh-map-tools / dsh-tool-ask-user)只读体检 + 精确补装指引；地图工具以 MIT payload 随包交付，不引入与历史锁定家族冲突的外部 npm peer，设置卡接线走真实 `SettingsProvider.prototype.installSection` 方法(0.1.2-alpha.3 与 0.1.5-alpha.1 均已发布)与普通 namespace 字符串；`--fix` 补装;LLM key 仍归 dsh 宿主管
+- **依赖体检** —— `npx @danceiny/gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):默认只读;显式对话内修复会展示范围计划、按同一会话 scope 请求一次批准、调用既有 bootstrap 幂等安装器,并按安装后复检逐项报告。需人工配置的项目保持人工处理,LLM key 仍归 dsh 宿主管
 - **账号会话检索** —— 你本人登录态查携程机票/酒店 + 12306 火车(酒/火 2026-09-03 实装:酒店为被动嗅探登录态真实价,火车为 12306 公开余票查询面;接口面随首个真会话校准);观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
 - **扩展按需装** —— `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 这边不跑 setup wizard、不开 chrome://extensions、不动剪贴板
 - **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
