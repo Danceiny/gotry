@@ -117,8 +117,11 @@ export function buildDshPlannerEnvironment(
   for (const key of passthrough) if (source[key]) target[key] = source[key]!
   const apiKey = source.DEEPSEEK_API_KEY ?? source.LLM_API_KEY
   const baseUrl = source.DEEPSEEK_BASE_URL ?? source.LLM_BASE_URL
+  const model = source.DEEPSEEK_MODEL ?? source.LLM_MODEL
   if (apiKey) target.DEEPSEEK_API_KEY = apiKey
   if (baseUrl) target.DEEPSEEK_BASE_URL = baseUrl
+  if (model) target.DEEPSEEK_MODEL = model
+  if (source.DEEPSEEK_MAX_TOKENS) target.DEEPSEEK_MAX_TOKENS = source.DEEPSEEK_MAX_TOKENS
   return target
 }
 
@@ -147,12 +150,22 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
   config:\n\
     includeHarnessIdentity: false\n\
     includeRuntimeContext: false\n\
-    persona: >-\n\
+    persona: >-
       You are GoTry's embedded booking planner inside an existing HotelByte booking workspace.\n\
       The page and its typed receipts are authoritative. Select exactly one of the six booking\n\
       capability tools per turn and put exactly one typed decision in that tool call. Never emit\n\
       Book, payment, holder, guest, portal token, supplier cost, or an action in assistant text.\n\
       Stop at the user's requested waypoint. After a capability tool accepts the decision, end the turn.\n\
+      Tool-call arguments MUST match the declared tool parameter schema exactly — use the exact\n\
+      property names and nesting; never invent property names or move fields between levels.\n\
+      The payload's task.allowedActions lists the ONLY decision kinds valid this turn. When it\n\
+      contains exactly one kind, that kind is mandatory: for search.patch put every requested\n\
+      attribute (destination, facilities, dates, occupancy) into input.patch and STOP — the runtime\n\
+      issues search.run itself via receipts afterward. Never emit a kind absent from allowedActions.\n\
+      Example of a correctly shaped search.patch tool call:\n\
+      {"kind":"operation","action":{"schemaVersion":"booking.surface","kind":"search.patch","actionId":"<unique-id>","contextRef":"<ctx from payload>","expectedRevision":<rev from payload>,"factRefs":[],"reason":"<one line>","input":{"patch":{"destination":{"query":"Bali"},"facilities":{"strength":"prefer","value":{"allOf":["breakfast"]}}}}}}\n\
+      Note: facility preferences live under input.patch.facilities (never "criteria"), and every\n\
+      facilities entry is an object {"strength":"must|prefer","value":{"allOf":["<token>"]}}.\n\
     workspaceContext: false\n\
     skills:\n\
       enabled: false\n\
@@ -185,8 +198,16 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
       processCwd: options.stateRoot ?? process.cwd(),
       cwd: options.stateRoot ?? process.cwd(),
       provider: options.provider ?? 'deepseek-official',
-      model: options.model ?? 'glm-4.6',
-      maxTokens: options.maxTokens ?? 4_096,
+      // Model must follow the operator-configured env (DEEPSEEK_MODEL / LLM_MODEL)
+      // instead of a hardcoded default: providers without a glm-4.6 mapping
+      // (e.g. MiniMax official) reject the hardcoded name and the DSH loop then
+      // yields no decisions at all (PLANNER_TYPED_DECISION_REQUIRED).
+      model: options.model ?? childEnv.DEEPSEEK_MODEL ?? 'glm-4.6',
+      // Reasoning models spend the budget on <think> before the tool call; a
+      // 4k cap truncates the arguments JSON mid-stream and poisons the whole
+      // turn. 16k (env-tunable) leaves room for reasoning + typed decision.
+      maxTokens: options.maxTokens
+        ?? (childEnv.DEEPSEEK_MAX_TOKENS ? Number(childEnv.DEEPSEEK_MAX_TOKENS) : 16_384),
       env: childEnv,
       ...(options.dshBin ? { dshBin: options.dshBin } : {}),
     })
@@ -281,6 +302,29 @@ function actionAssignAt(action: Record<string, unknown>, path: string, value: un
 }
 
 /**
+ * Some models (observed on MiniMax-M2) wrap the typed decision one level
+ * deeper than the canonical envelope: {kind:"action", input:{kind:"search.patch",
+ * reason, ...payload}}. Hoist the inner decision deterministically — every
+ * field comes from the model itself, so this stays representation-only.
+ */
+function unwrapNestedDecisionEnvelope(action: Record<string, unknown>): void {
+  for (let hop = 0; hop < 2; hop += 1) {
+    if (action.kind !== 'action' || !isRecord(action.input)) return
+    const inner = action.input
+    if (typeof inner.kind !== 'string' || inner.kind === 'action') return
+    const payload: Record<string, unknown> = { ...inner }
+    const kind = String(payload.kind)
+    delete payload.kind
+    const reason = typeof payload.reason === 'string' ? payload.reason : undefined
+    delete payload.reason
+    const unwrapped: Record<string, unknown> = { ...action, kind, input: payload }
+    if (reason !== undefined && unwrapped.reason === undefined) unwrapped.reason = reason
+    for (const key of Object.keys(action)) delete action[key]
+    Object.assign(action, unwrapped)
+  }
+}
+
+/**
  * Representation-only repair for model-authored actions, driven by the
  * canonical schema's own validation errors: scalar where an array belongs,
  * stringified numbers, stringified JSON objects, and the dropped
@@ -291,6 +335,7 @@ function actionAssignAt(action: Record<string, unknown>, path: string, value: un
 function repairActionRepresentation(action: unknown): void {
   if (!isRecord(action)) return
   if (typeof action.schemaVersion !== 'string') action.schemaVersion = BOOKING_SURFACE_SCHEMA_VERSION
+  unwrapNestedDecisionEnvelope(action)
   for (let round = 0; round < ACTION_REPAIR_ROUNDS; round += 1) {
     const validation = validateBookingReadAction(action as unknown as BookingReadAction)
     if (validation.ok) return
@@ -469,17 +514,32 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     console.error('[booking-copilot] raw invalid decision (arguments not string):', JSON.stringify(event).slice(0, 600))
     throw new Error('planner_invalid_tool_arguments')
   }
+  let rawArgs: unknown = event.data.arguments
   let args: unknown
-  try { args = JSON.parse(event.data.arguments) } catch {
-    console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(event.data.arguments).slice(0, 600))
+  if (typeof rawArgs === 'string') {
+    try { args = JSON.parse(rawArgs) } catch {
+      console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(rawArgs).slice(0, 600))
+      throw new Error('planner_invalid_tool_arguments')
+    }
+  } else if (isRecord(rawArgs)) {
+    // Some providers hand back an already-parsed arguments object.
+    args = rawArgs
+  } else {
+    console.error('[booking-copilot] raw invalid decision (arguments type):', JSON.stringify(event).slice(0, 600))
     throw new Error('planner_invalid_tool_arguments')
   }
   // The decision envelope is model-authored: bind to the fields the runtime
   // owns and strip model-added meta keys instead of failing the whole turn.
-  if (!isRecord(args)) throw new Error('planner_invalid_tool_arguments')
+  if (!isRecord(args)) {
+    console.error('[booking-copilot] raw invalid decision (arguments not object):', JSON.stringify(args).slice(0, 600))
+    throw new Error('planner_invalid_tool_arguments')
+  }
   let envelope: Record<string, unknown> = args
   if (!isRecord(envelope.decision)) {
-    if (typeof envelope.kind !== 'string') throw new Error('planner_invalid_tool_arguments')
+    if (typeof envelope.kind !== 'string') {
+      console.error('[booking-copilot] raw invalid decision (no decision/kind):', JSON.stringify(args).slice(0, 800))
+      throw new Error('planner_invalid_tool_arguments')
+    }
     envelope = { decision: envelope }
   }
   const decision = envelope.decision as Record<string, unknown>
