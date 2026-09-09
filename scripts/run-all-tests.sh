@@ -22,6 +22,7 @@ else
 fi
 (node scripts/run-all-tests-wiring-tests.mjs) || FAIL=1
 (node scripts/build-dist.mjs) || FAIL=1
+(node scripts/build-dist-compat-tests.mjs) || FAIL=1
 
 echo
 echo "=== 1. TS engine(洱海金标准,8 断言) ==="

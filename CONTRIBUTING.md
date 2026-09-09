@@ -43,10 +43,11 @@ cp .env.example .env      # 填 LLM_API_KEY(DeepSeek sk-... 或 OpenAI 兼容协
 ```bash
 cd ts && npx tsc --noEmit
 cd ..
+node scripts/build-dist-compat-tests.mjs        # 当前 Node 的 exact dist/ESM/import proof
 GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh   # 末行必须含 ALL SUITES GREEN
 ```
 
-每个 PR 描述都要贴**最终 SHA** 上的命令、exit code 和关键末行。CI(Node 22/24,typecheck + 全栈回归)只能补充本地证据,不能替代本地最终 SHA 复跑。
+每个 PR 描述都要贴**最终 SHA** 上的命令、exit code 和关键末行。CI 在 Node 22/24 跑 typecheck + 全栈回归，并在 Node 22/24/26 跑 focused dist 兼容闸；它只能补充本地证据,不能替代本地最终 SHA 复跑。
 
 天气回归使用受控 deterministic fixture；真实 Open-Meteo/Nominatim 仅属可变外围观测，不决定 merge gate。OpenSky/FlyAI 等 live 通道离线或被限流时对应套件有降级断言；会话面 live 嗅探默认可用 `GOTRY_SESSION_LIVE=0` 关闭。
 
@@ -87,7 +88,7 @@ git checkout main && git pull && git checkout -b fix/your-topic
 1. 在最终 SHA 本地跑 `cd ts && npx tsc --noEmit` 与 `GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh`,并记录 exit code 与 `ALL SUITES GREEN` 末行。
 2. 行为、用户可见或业务效果变化必须补一条最小 E2E 证据;纯文档/索引改动要给路径/链接检查或说明 N/A 的 burden-of-proof。
 3. 推分支、开 PR:描述写清「**为什么改 · 改了什么 · 最终 SHA 本地证据 · E2E 行 · N/A/跳过边界**」。
-4. CI(Node 22/24,typecheck + 全栈回归)必须绿,但只作为补充信号;维护者 review 通过。
+4. CI 的 Node 22/24 typecheck + 全栈回归与 Node 22/24/26 focused dist 兼容闸必须绿,但只作为补充信号;维护者 review 通过。
 5. 维护者 squash 合入 `main`(保持线性历史),合入即删分支。
 
 ---

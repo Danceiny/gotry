@@ -1,6 +1,7 @@
 name: CI
 
 # 全栈回归是唯一合并闸(§1-§49):typecheck + post-DSH 插件 smoke + 全部测试套件,Node 22/24 双版本。
+# Node 26 先作为 build-dist 兼容闸:package.json engines 是开放上界,发布构建不能调用已移除的 Node API。
 # 依赖来自公共 npm registry(lockfile 已全部 resolved 到 registry.npmjs.org)。
 # 真 LLM 巡检(replay-real / time-eval --real)消耗真实 key,不进 CI,由维护者本地执行。
 
@@ -129,3 +130,48 @@ jobs:
 
       - name: Full-stack regression (§1-§49)
         run: bash scripts/run-all-tests.sh
+
+  dist-compatibility:
+    name: Node ${{ matrix.node-version }} focused dist compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24, 26]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build dist
+        run: node scripts/build-dist.mjs
+
+      - name: Verify exact dist and ESM runtime compatibility
+        run: node scripts/build-dist-compat-tests.mjs
+
+  pnpm-dist-compatibility:
+    name: Node 24 pnpm frozen-lock dist compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install the root package-manager layout
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Verify direct compiler resolution and dist compatibility
+        run: node scripts/build-dist-compat-tests.mjs

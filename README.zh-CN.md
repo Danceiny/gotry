@@ -197,11 +197,13 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 - **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
 - **M4 lifecycle 证据采集器** —— 显式 opt-in CLI 记录首访/回访 planning flow:隔离 `stateRoot`、consent 与 HMAC key 必需;dataset key/source/wait 词汇冻结;JSONL/manifest 走 write-all + 原子/no-overwrite 发布;导出只作为 #223 scorer 的 candidate/synthetic 输入,绝不生成人工签核
 - **按任务路由的回合预算** —— 每轮先由确定性路由器(零 LLM)分类 quick / sync / deep-planning;时间才是唯一预算,且到点出口跟任务走:quick/sync 收敛作答,deep-planning 转后台落 `gotry_turn_handoff.v1` 工单(ETA 约 1 小时)而不是让会话流死掉;工单由 `scripts/turn-handoff-collect.ts` 在后台收集结算(幂等、带递归防护的子规划会话),回访时经只读工具 `gotry_turn_handoff_list` 查询状态与交付物;经打包消费者安装的 E2E 在 CI 里实测
+- **Node 构建兼容(#265)** —— 支持下界保持 Node ≥22.15。根 dist 构建使用精确锁定、仅构建期使用的 TypeScript 5.9.3 并生成 ESM；CI 在 Node 22/24 跑 typecheck + 全栈回归，在 Node 22/24/26 跑生成文件集合/ESM/import focused proof。
 
 **已知限制**(诚实清单):
 
 - **M3 Exit 未关闭** —— 工程与分发面就绪,但真实种子用户证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
-- **M4 value evidence 未关闭** —— #20/#223 scorer 已加严,#228 collector 可产出隔离 candidate/synthetic lifecycle 导出,但真实 `observed_private` N≥5 repeat cohort 与人工 source-review attestation 仍未进入私有证据面
+- **M4→M6 真实证据门仍开放** —— #20/#223 scorer 已加严,#228 collector 可产出隔离 candidate/synthetic lifecycle 导出,但 #20 所需真实 `observed_private` N≥5 repeat cohort 与人工 source-review attestation 仍未进入私有证据面；M5 仍等待 #136 的供应协议/内部授权，M6 仍等待 #137 的 P6 批准与真实签约试点
+- **Node 26 dist 闸只属发布质量证据** —— #265 不计入 #20，也不满足 #136 或 #137 的上述真实证据门
 - **酒店会话适配** —— 携程酒店/美团登录态面等实测回填;机票已通
 - **界面语言** —— 英文仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
 - **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic（无分数、无 uplift 声明）。Round 10 的 `glm-5.3-flash`（main `c843fae`）已诊断为可见性失败（57 次空 `{}` 调用）；Round 11 仅把模型面对的 wire 展平为 `tools/call/errors`、descriptor 派生工具名枚举和 generic object 参数，执行时仍对冻结 descriptor 做 exact 校验；逐轮工程台账见 [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
@@ -241,7 +243,7 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 
 ## 参与开发
 
-从最新 `main` 切出 `feat/ · fix/ · docs/ · chore/` 分支,本地全栈绿后开 Pull Request——`main` 不直接推。CI(Node 22/24,typecheck + 全部套件)与维护者 review 双绿后 squash 合入。**测试红着不许合。** 完整指南:[CONTRIBUTING.md](CONTRIBUTING.md)。Bug/功能建议:用 issue 模板(先搜既有 issue)。
+从最新 `main` 切出 `feat/ · fix/ · docs/ · chore/` 分支,本地全栈绿后开 Pull Request——`main` 不直接推。CI 在 Node 22/24 跑 typecheck + 全部套件，在 Node 22/24/26 跑 focused dist 兼容闸；与维护者 review 双绿后 squash 合入。**测试红着不许合。** 完整指南:[CONTRIBUTING.md](CONTRIBUTING.md)。Bug/功能建议:用 issue 模板(先搜既有 issue)。
 
 ## 给 AI Agent
 
