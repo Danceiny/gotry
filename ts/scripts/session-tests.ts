@@ -309,7 +309,7 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
   const next = async (): Promise<ConsentDecision> => ({ kind: 'allow' })
   const agentA = { id: 'agent-A' } as unknown as object
   const agentB = { id: 'agent-B' } as unknown as object
-  const sess = (a: object = agentA) => ({ name: 'gotry_session_search', agent: a, callId: 'c1', kind: 'flight' })
+  const sess = (a: object = agentA) => ({ name: 'gotry_session_search', agent: a, callId: 'c1', arguments: { kind: 'flight' } })
   const other = () => ({ name: 'gotry_anything_search', agent: agentA })
   const mkStore = () => new WeakMap<object, { granted: Set<string>; denied: Set<string> }>()
   const mkGate = (access: SessionAccess, seam?: ApprovalSeam) =>
@@ -317,8 +317,8 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
 
   // I1 无审批通道(headless/极简宿主):账号工具 → ask(交运行时 fail-closed);非账号工具放行
   const gateBare = createConsentGate({ access: () => 'ask' })
-  const d1 = await gateBare({ name: 'gotry_session_search', agent: undefined, kind: 'flight' }, next)
-  assert(d1.kind === 'ask', '无审批通道 → ask(交运行时 fail-closed;denies 责任在 registry)', d1)
+  const d1 = await gateBare({ name: 'gotry_session_search', agent: undefined, arguments: { from: '上海' } }, next)
+  assert(d1.kind === 'ask' && /携程机票/.test(String(d1.reason ?? '')), '缺省 kind → flight 默认并交运行时 fail-closed ask', d1)
   assert((await gateBare({ name: 'gotry_anything_search', agent: undefined }, next)).kind === 'allow', '非账号工具不过闸,原样放行')
 
   // I2 批准一次 → 会话内记住:第二次免弹卡直接放行(审批请求计数恒 1)
@@ -342,7 +342,7 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
     assert(d1.kind === 'deny' && /拒绝/.test(String(d1.kind === 'deny' ? d1.reason : '')), '拒绝 → deny + 明示「本会话内生效」', d1)
     const d2 = await gate(sess(), next)
     assert(d2.kind === 'deny' && requests === 1, '拒绝后再次调用 → 直接 deny,不再弹卡(拒绝=吊销)', { d2 })
-    const dB = await gate({ name: 'gotry_session_search', agent: agentB, kind: 'flight' }, next)
+    const dB = await gate({ name: 'gotry_session_search', agent: agentB, arguments: { kind: 'flight' } }, next)
     assert(dB.kind === 'deny' && requests === 2, '另一会话不受此前拒绝影响——会重新发起一次审批请求(seam 本例仍拒)', { dB, requests })
   }
 
@@ -351,6 +351,8 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
     const gate = mkGate('off')
     const d = await gate(sess(), next)
     assert(d.kind === 'deny' && /sessionAccess=off/.test(String(d.kind === 'deny' ? d.reason : '')), 'off → 不弹卡直接 deny', d)
+    const train = await gate({ name: 'gotry_session_search', agent: agentA, arguments: { kind: 'train' } }, next)
+    assert(train.kind === 'deny' && /sessionAccess=off/.test(String(train.kind === 'deny' ? train.reason : '')), 'off → train 公开查询面同样 deny(不绕过总闸)', train)
     assert((await gate(other(), next)).kind === 'allow', 'off 只关账号面工具,其余放行')
   }
 
@@ -358,10 +360,25 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
   {
     const gate = mkGate('allow')
     assert((await gate(sess(), next)).kind === 'allow', 'sessionAccess=allow → 配置明示预授权,直接放行')
+    assert((await gate({ name: 'gotry_session_search', agent: agentA, arguments: { kind: 'train' } }, next)).kind === 'allow', 'sessionAccess=allow → train 也按总闸预授权放行')
+  }
+
+  // I5b train 的 ask/拒绝隔离:公开查询面仍必须走同一站点授权桶。
+  {
+    let requests = 0
+    const seam: ApprovalSeam = { request: async () => { requests += 1; return requests === 1 ? 'rejected' : 'allowed-once' } }
+    const trainAgent = { id: 'agent-train' } as unknown as object
+    const gate = createConsentGate({ access: () => 'ask', approval: () => seam })
+    const rejected = await gate({ name: 'gotry_session_search', agent: trainAgent, arguments: { kind: 'flight' } }, next)
+    assert(rejected.kind === 'deny' && requests === 1, 'ask 首次 flight 拒绝 → deny + 请求数恰为 1', rejected)
+    const allowed = await gate({ name: 'gotry_session_search', agent: trainAgent, arguments: { kind: 'train' } }, next)
+    assert(allowed.kind === 'allow' && requests === 2, '拒绝 flight 不污染 train:另一站点恰再请求一次并允许', allowed)
+    const cached = await gate({ name: 'gotry_session_search', agent: trainAgent, arguments: { kind: 'train' } }, next)
+    assert(cached.kind === 'allow' && requests === 2, 'train 同站批准缓存:后续调用不再请求', cached)
   }
 
   // I6 site-bound(#308):授权与拒绝均按 site(kind)分桶,跨站不得互授;同站复用放行;
-  //    unknown/malformed kind 失败关闭(不扩权);flat args 与 wrapped args 一致。
+  //    unknown/malformed kind 失败关闭(不扩权);query-first 冲突形态与 flat args 一致。
   {
     let requests = 0
     const seam: ApprovalSeam = { request: async () => { requests += 1; return 'allowed-once' } }
@@ -369,17 +386,17 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
     const gate = createConsentGate({ access: () => 'ask', approval: () => seam, store })
 
     // 6a flat args:首次 dida 弹卡 + 放行;同会话再调 ctrip-flight 必须再弹卡(跨站不互授)
-    const r1 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-dida', kind: 'dida' }, next)
+    const r1 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-dida', arguments: { kind: 'dida' } }, next)
     assert(r1.kind === 'allow' && requests === 1, 'flat args:首次 dida 弹卡 + 放行', { r1, requests })
-    const r2 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-ctrip', kind: 'flight' }, next)
+    const r2 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-ctrip', arguments: { kind: 'flight' } }, next)
     assert(r2.kind === 'allow' && requests === 2, 'flat args:ctrip-flight 跨站必须再弹卡', { r2, requests })
 
     // 6b 同站(flight)二次调用:免弹卡直接放行
-    const r3 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-ctrip-2', kind: 'flight' }, next)
+    const r3 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-ctrip-2', arguments: { kind: 'flight' } }, next)
     assert(r3.kind === 'allow' && requests === 2, 'flat args:ctrip-flight 同站复用,免弹卡', { r3, requests })
 
     // 6c wrapped args:{ query: { kind: 'hotel' } } 形态必须同样识别为 ctrip-hotel
-    const r4 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-hotel', kind: 'hotel' }, next)
+    const r4 = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-hotel', arguments: { query: { kind: 'hotel' }, kind: 'flight' } }, next)
     assert(r4.kind === 'allow' && requests === 3, 'kind=hotel → ctrip-hotel 站点弹卡(独立分桶)', { r4, requests })
 
     // 6d 拒绝隔离:拒绝 ctrip-flight 后,同会话调 dida 仍须弹卡(deny 不跨站污染)
@@ -387,14 +404,16 @@ console.log('I. createConsentGate(账号会话授权:每会话一次/拒绝吊�
     const seamRej: ApprovalSeam = { request: async () => { rejReq += 1; return 'rejected' } }
     const gateRej = createConsentGate({ access: () => 'ask', approval: () => seamRej, store })
     const agentRej = { id: 'agent-rej' } as unknown as object
-    const d1 = await gateRej({ name: 'gotry_session_search', agent: agentRej, callId: 'r1', kind: 'flight' }, next)
+    const d1 = await gateRej({ name: 'gotry_session_search', agent: agentRej, callId: 'r1', arguments: { kind: 'flight' } }, next)
     assert(d1.kind === 'deny' && rejReq === 1, '拒绝 ctrip-flight → deny(弹卡一次)', { d1, rejReq })
-    const d2 = await gateRej({ name: 'gotry_session_search', agent: agentRej, callId: 'r2', kind: 'dida' }, next)
+    const d2 = await gateRej({ name: 'gotry_session_search', agent: agentRej, callId: 'r2', arguments: { kind: 'dida' } }, next)
     assert(d2.kind === 'deny' && rejReq === 2, '拒绝不跨站污染:同会话 dida 仍须弹卡(被拒后)', { d2, rejReq })
 
     // 6e unknown kind 失败关闭(不弹卡,不让过;无审批通道语义但带 agent 时更稳)
-    const rU = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-xx', kind: 'not-a-kind' }, next)
+    const rU = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-xx', arguments: { kind: 'not-a-kind' } }, next)
     assert(rU.kind === 'deny', 'unknown kind → fail-closed deny(不扩权)', rU)
+    const rMalformed = await gate({ name: 'gotry_session_search', agent: agentA, callId: 'c-malformed', arguments: { kind: 42 } }, next)
+    assert(rMalformed.kind === 'deny', 'malformed kind → fail-closed deny(不把异常降成 flight)', rMalformed)
   }
 }
 

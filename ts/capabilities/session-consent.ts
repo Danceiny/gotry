@@ -18,12 +18,13 @@
  * 本模块不重复建账。站点白名单 = ACCOUNT_TOOLS 注册表(新会话适配器接入时登记)。
  *
  * site 绑定(2026-09-10 #308):同一工具多个 kind(例如 gotry_session_search → flight/hotel/dida/train)
- * 必须按归一化后的 kind 选 site,授权与拒绝均按 site 分桶;一个站点的批准/拒绝
- * 不能静默成为另一站点的批准/拒绝。train 是 12306 公开查询面(无账号面),放行;
- * unknown/malformed kind 失败关闭(deny,不扩权),防止新站点未登记就放行。
+ * 必须按与 execute 同源的 interpretArgs 选 site(包装 query 优先);授权与拒绝均按 site
+ * 分桶。缺省 kind 保持工具合同的 flight 默认值;unknown/malformed kind 失败关闭(deny,
+ * 不扩权),防止新站点未登记就放行。train 虽是 12306 公开查询面,仍经过本闸的 off/ask/allow。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { interpretArgs } from '../src/tool-packet.ts'
 
 export type SessionAccess = 'ask' | 'allow' | 'off'
 export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
@@ -56,7 +57,7 @@ const SITE_LABEL: Record<string, string> = {
 /**
  * 复合工具 × kind → site(#308:site 绑定)。
  * 仅对显式登记的 kind 放行,未知 kind → 失败关闭(防止未登记站点扩权)。
- * 12306 公开查询面(kind=train)无账号数据,等于非账号工具,故不放行闸。
+ * 12306 公开查询面(kind=train)仍受本工具的会话授权总闸约束,不因公开查询而绕过 off/ask/allow。
  */
 export const SITE_FOR_KIND: Record<string, Record<string, string>> = {
   gotry_session_search: {
@@ -81,28 +82,45 @@ export interface ConsentGateOptions {
   store?: WeakMap<object, AuthState>
 }
 
-export type ConsentExec = { name?: string; agent?: object; callId?: string; arguments?: unknown; kind?: string }
+export type ConsentExec = { name?: string; agent?: object; callId?: string; arguments?: unknown }
 export type ConsentGate = (exec: ConsentExec, next: () => Promise<ConsentDecision>) => Promise<ConsentDecision>
 
+/** 会话检索工具支持的 kind;gate 与 execute 共用此选择结果。 */
+export const SESSION_SEARCH_KINDS = ['flight', 'hotel', 'train', 'dida'] as const
+export type SessionSearchKind = typeof SESSION_SEARCH_KINDS[number]
+
+export type SessionSearchKindSelection =
+  | { ok: true; kind: SessionSearchKind }
+  | { ok: false; reason: string }
+
 /**
- * 从 exec.arguments 中归一化 kind(扁平/包装两种形态),与 tool execute 的 unwrapQuery
- * 同源(LLM 偶尔把 flat args 包进 query;直接读顶层 kind 漏掉时回到 query.kind)。
- * 纯函数,测试锚点。返回 undefined 时调用方按「未指定 kind」走工具级表(已废止)
- * 或直接拒绝(#308:复合工具强制 kind 必填)。
+ * Select the kind exactly as the session tool execute path does.
+ * `interpretArgs` is intentionally the only query-wrapper normalizer: a
+ * wrapped query wins over conflicting flat fields, and omitted kind keeps the
+ * documented flight default. Explicit malformed/unknown kinds fail closed.
  */
-export function normalizedKind(args: unknown): string | undefined {
-  if (!args || typeof args !== 'object') return undefined
-  const a = args as { kind?: unknown; query?: { kind?: unknown } }
-  if (typeof a.kind === 'string' && a.kind.length > 0) return a.kind
-  if (a.query && typeof a.query === 'object' && typeof (a.query as { kind?: unknown }).kind === 'string') {
-    const k = (a.query as { kind: string }).kind
-    return k.length > 0 ? k : undefined
+export function resolveSessionSearchKind(args: unknown): SessionSearchKindSelection {
+  if (args === undefined) return { ok: true, kind: 'flight' }
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    return { ok: false, reason: 'gotry_session_search 参数必须是对象;无法安全选择 kind,已失败关闭' }
   }
-  return undefined
+  const selected = interpretArgs<{ kind?: unknown }>(args as { query?: unknown } & Record<string, unknown>)
+  if (!selected || typeof selected !== 'object' || Array.isArray(selected)) {
+    return { ok: false, reason: 'gotry_session_search 参数包装形态无效;无法安全选择 kind,已失败关闭' }
+  }
+  if (!Object.prototype.hasOwnProperty.call(selected, 'kind')) return { ok: true, kind: 'flight' }
+  const kind = (selected as { kind?: unknown }).kind
+  if (typeof kind !== 'string' || kind.length === 0) {
+    return { ok: false, reason: 'gotry_session_search 收到 malformed kind;无法安全选择站点,已失败关闭' }
+  }
+  if (!(SESSION_SEARCH_KINDS as readonly string[]).includes(kind)) {
+    return { ok: false, reason: `gotry_session_search 收到未知 kind=${kind};只支持 ${SESSION_SEARCH_KINDS.join('/')},未知 kind 失败关闭` }
+  }
+  return { ok: true, kind: kind as SessionSearchKind }
 }
 
 /**
- * 解析 site(#308):对复合工具(kind 必填,未知 kind → fail-closed);对未在
+ * 解析 site(#308):对复合工具(缺省 kind=flight,未知/malformed kind → fail-closed);对未在
  * SITE_FOR_KIND 登记的工具走原 ACCOUNT_TOOLS 表保持兼容。无 site → 放行(非账号面工具)。
  */
 export function resolveSiteForExec(exec: ConsentExec): { site: string } | { failClosed: true; reason: string } | null {
@@ -110,15 +128,10 @@ export function resolveSiteForExec(exec: ConsentExec): { site: string } | { fail
   if (!name) return null
   const map = SITE_FOR_KIND[name]
   if (map) {
-    const kind = normalizedKind(exec.arguments) ?? exec.kind
-    if (!kind) {
-      return { failClosed: true, reason: `工具 ${name} 必须显式声明 kind(flight / hotel / dida / train)以选择站点;未声明不发起授权` }
-    }
-    const site = map[kind]
-    if (!site) {
-      return { failClosed: true, reason: `工具 ${name} 收到未知 kind=${kind};只支持 ${Object.keys(map).join('/')},未知 kind 失败关闭` }
-    }
-    if (site === 'train-12306') return null
+    const selected = resolveSessionSearchKind(exec.arguments)
+    if (!selected.ok) return { failClosed: true, reason: selected.reason }
+    const site = map[selected.kind]
+    if (!site) return { failClosed: true, reason: `工具 ${name} 的 kind=${selected.kind} 未登记站点;失败关闭` }
     return { site }
   }
   const site = ACCOUNT_TOOLS[name]
@@ -135,11 +148,11 @@ function reasonFor(toolName: string, site: string): string {
 /**
  * 账号会话授权闸:挂 dsh `tools/pre-execute` waterfall。
  * 契约:
- *   - 非账号面工具 / 公开查询面(train) → next() 放行(零开销);
+ *   - 非账号面工具 → next() 放行(零开销);
  *   - off → 拒绝(随时可关);
  *   - 会话内已拒绝 → 拒绝且不弹卡(拒绝=本会话吊销;按 site 分桶,跨站不互授);
  *   - 会话内已批准 / allow 预授权 → 放行;
- *   - 复合工具未声明 kind 或未知 kind → fail-closed deny(不扩权);
+ *   - 复合工具未知/malformed kind → fail-closed deny(不扩权),缺省 kind=flight;
  *   - 其余 → ApprovalService.request();allowed-once 按 site 入会话 granted;
  *     rejected/cancelled 按 site 入会话 denied(本会话不在请求);
  *     无审批通道 → deny(fail-closed,headless 无用户 = 无授权)。

@@ -36,7 +36,7 @@ import { wmoLabel } from '../capabilities/weather.ts'
 import { reach, reachStatus } from '../capabilities/agent-reach.ts'
 import { runDoctorChecks, renderDoctorReportMd, runDoctorRepair, createRepairApprovalGate, type DoctorRepairOptions } from '../capabilities/doctor.ts'
 import { EXTENSION_STORE_URL } from '../capabilities/session/extension-bridge.ts'
-import { createConsentGate, approvalFromContext } from '../capabilities/session-consent.ts'
+import { createConsentGate, approvalFromContext, resolveSessionSearchKind } from '../capabilities/session-consent.ts'
 import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
@@ -201,6 +201,8 @@ export interface ApplyTestSeams {
     check?: typeof runDoctorChecks
     repair?: DoctorRepairOptions
   }
+  /** Isolated test-only effect interpreter; production keeps interpretEffect. */
+  effect?: typeof interpretEffect
 }
 
 export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}): void {
@@ -291,21 +293,10 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       access: () => config.sessionAccess ?? 'ask',
       approval: approvalFromContext(ctx),
     })
-    // site 绑定(#308):dsh pre-execute 实际派发的 exec 已含归一化后的 arguments
-    // (ToolExecutionInput.arguments: unknown),这里在派发闸前按 dsh 同源方式归一化 kind
-    // 并把 wrapped args(query.*)同步解开,确保闸拿到与 execute 相同的 site 选择依据。
-    // 复合工具未声明 kind 仍走闸的 fail-closed 路径(防御:旧 listener 形态 name-only)。
-    const KIND_HINT: Record<string, string> = { gotry_session_search: 'flight' }
-    ctx.on('tools/pre-execute', async (exec, next) => {
-      const ex = exec as { name?: string; arguments?: unknown; kind?: string }
-      const args = ex.arguments
-      const fromArgs = (typeof args === 'object' && args)
-        ? (args as { kind?: unknown; query?: { kind?: unknown } }).kind
-          ?? (args as { query?: { kind?: unknown } }).query?.kind
-        : undefined
-      const kind = ex.kind ?? (typeof fromArgs === 'string' ? fromArgs : undefined) ?? KIND_HINT[ex.name ?? '']
-      return gate({ ...ex, kind }, next)
-    })
+    // site 绑定(#308):dsh pre-execute 实际派发的 arguments 原样进入 gate;
+    // gate 与 execute 共用 resolveSessionSearchKind/interpretArgs,因此 wrapped
+    // query.*、缺省 flight、unknown/malformed 的选择与授权和效应路径保持一致。
+    ctx.on('tools/pre-execute', gate)
   }
 
   // issue #284 修复闸:gotry_doctor.action='repair' 走同一审批缝(scope-keyed,
@@ -1139,10 +1130,13 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args, _exec) {
-      const q = unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; cityId?: number | string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string }>(args)
+      const selectedKind = resolveSessionSearchKind(args)
+      if (!selectedKind.ok) return { ok: false, summary: selectedKind.reason } as const
+      const q = { ...unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; cityId?: number | string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string }>(args), kind: selectedKind.kind }
+      const runSessionEffect = seams.effect ?? interpretEffect
       // ---- Dida 供应商门户(2026-09-09 实装;hotel-be portal integration 迁移线)----
       if (q.kind === 'dida') {
-        const itpD = await interpretEffect({
+        const itpD = await runSessionEffect({
           effect: 'SESSION_DIDA_SEARCH',
           params: {
             auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
@@ -1178,7 +1172,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
             summary: `未发起查询:日期 ${q.date} 已是过去(今天 ${todayT}),过去不存在在售火车票。向用户确认日期后再查。`,
           })) as Record<string, never>
         }
-        const itpT = await interpretEffect({
+        const itpT = await runSessionEffect({
           effect: 'SESSION_TRAIN_SEARCH',
           params: {
             from: q.from, to: q.to, date: q.date,
@@ -1204,7 +1198,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         if (!q.to) {
           return { ok: false, summary: 'kind=hotel 需要 to(目的地中文;城市码表外带 cityId=携程酒店 list 页 URL 里的 city= 数字)' } as const
         }
-        const itp = await interpretEffect({
+        const itp = await runSessionEffect({
           effect: 'SESSION_HOTEL_SEARCH',
           params: {
             to: q.to, cityId: q.cityId, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults,
@@ -1237,7 +1231,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       }
       // 效应解译层(ADR-18):SESSION 通道策略=永不重试/不熔断,节律闸在渠道内;
       // 解译器只做分发与证据拼装,verdict 语义(risk 型 needs-login/challenged)原样透传
-      const itp = await interpretEffect({
+      const itp = await runSessionEffect({
         effect: 'SESSION_FLIGHT_SEARCH',
         params: {
           from: q.from, to: q.to, date: q.date,
@@ -1261,12 +1255,17 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       })) as Record<string, never>
     },
     presentCall: args => {
-      const callTitle = args.kind === 'hotel' ? `会话酒店:${args.to ?? ''}` : args.kind === 'train' ? `会话火车:${args.from ?? ''}` : args.kind === 'dida' ? '会话酒店:Dida 门户实时价' : `会话检索:${args.from ?? ''}`
+      const selected = resolveSessionSearchKind(args)
+      const kind = selected.ok ? selected.kind : undefined
+      const raw = args as { to?: unknown; from?: unknown }
+      const callTitle = kind === 'hotel' ? `会话酒店:${raw.to ?? ''}` : kind === 'train' ? `会话火车:${raw.from ?? ''}` : kind === 'dida' ? '会话酒店:Dida 门户实时价' : `会话检索:${raw.from ?? ''}`
       return { card: 'generic', title: callTitle, kind: 'fetch', rawInput: args }
     },
     presentResult: (args, value) => {
+      const selected = resolveSessionSearchKind(args)
+      const kind = selected.ok ? selected.kind : undefined
       const r = value as { verdict?: string; options?: unknown[]; hotels?: unknown[]; installUrl?: string }
-      const isHotel = args.kind === 'hotel'
+      const isHotel = kind === 'hotel'
       const n = Math.max((r.options ?? []).length, (r.hotels ?? []).length)
       const needsExt = r.verdict === 'needs-extension'
       const label = r.verdict === 'hit'
@@ -1278,7 +1277,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
             : r.verdict ?? '降级'
       const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }]
       if (needsExt && r.installUrl) content.push({ type: 'text', text: `安装链接:${r.installUrl}` })
-      const face = args.kind === 'hotel' ? '会话酒店' : args.kind === 'train' ? '会话火车' : '会话检索'
+      const face = kind === 'hotel' ? '会话酒店' : kind === 'train' ? '会话火车' : kind === 'dida' ? '会话酒店:Dida' : '会话检索'
       return { card: 'generic', title: `${face}:${label}`, content }
     },
   }))
