@@ -1,17 +1,24 @@
 # Decisions Needed — 创始人拍板项汇总
 
+> 定位:当前所有需 founder 拍板才能解锁的事项入口;每条含路径、上下文、影响范围、建议,各项独立、按优先级逐条回。
 > 状态:living(拍板队列;已结算项原地标注归档)
-> 本文件是 **当前所有 founder 拍板才能解锁的事项**的入口;每条含路径、上下文、影响范围、建议。
+> 上游:拍板触发的设计/里程碑文档——[`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md)(P6 walkthrough)、[`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md)(M4→M6 任务图)、[`design/external-event-seam.md`](design/external-event-seam.md)(D-31 接缝)。
+> 下游:按回执推进的实现/Exit 证据与 issue gate 更新;founder YES 只满足对应决策门,不自动改写里程碑 Entry。
 > 各项独立——你可以按优先级逐条回;按回执推进。
 
-**速览:当前无待拍板项。** D-1~D-9、D-4a 均已结算;D-31 为触发式(等第一个真实 world2agent 回调方再拍,见下)。
+**速览:当前 1 项待拍板——#137 P6 founder review(整体方案批准)。** P6 明确 YES 仍不满足 M6 Entry:M5 Exit(M4 Exit + 供应链协议)仍是前置门,P6 批准不旁路 M5。D-1~D-9、D-4a 均已结算;D-31 为触发式(等第一个真实 world2agent 回调方再拍,见下),当前非开放运行时面。
 
 ## 未决
 
+### #137 P6 founder review(整体方案批准)
+
+**当前待拍板**:founder 尚未明确批准 M6 整体方案或修改稿。只有明确 YES 或对修改稿明确批准才满足 P6 Exit。**P6 YES 仍不满足 M6 Entry**——M5 Exit(M4 Exit + 供应链协议)仍是前置门,P6 批准不旁路 M5;两者并列前置,任一未满足则 M6 不开闸。
+**位置**:[`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md)(draft,待 founder 评审);issue #137;任务图见 [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) M6-1/M6-2。
+
 ### D-31 外部事件写入信任模型
 
-**触发式**:等第一个真实 world2agent 回调方出现再拍。本地探针免鉴权,远程回调需签名/通道绑定;拍板前远程面不开。
-**位置**:`docs/design/external-event-seam.md`;issue #119。
+**触发式**:等第一个真实 world2agent 回调方出现再拍。本地探针免鉴权,远程回调需签名/通道绑定;拍板前远程面不开。开放触发跟踪见 issue #82;issue #119 为已关闭的设计记录。
+**位置**:[`design/external-event-seam.md`](design/external-event-seam.md);开放触发跟踪 issue #82;设计记录 issue #119(已关闭)。
 
 ---
 
