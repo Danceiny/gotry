@@ -328,6 +328,18 @@ async function main(): Promise<void> {
     await revealArtifactCalls()
     await page.waitForFunction(() => document.querySelectorAll('[data-gotry-artifact-card="read"]').length >= 2, { timeout: 60_000 })
     await page.waitForFunction(() => [...document.querySelectorAll('[data-gotry-artifact-card="read"]')].some(node => node.textContent?.includes('Day 6: revision requested')), { timeout: 60_000 })
+    // DSH may collapse a completed turn after the last tool result arrives;
+    // reopen the real process disclosure and place the revised card in view so
+    // the receipt proves visible, not merely hidden-DOM, refreshed evidence.
+    await revealArtifactCalls()
+    await page.evaluate(() => {
+      const cards = document.querySelectorAll('[data-gotry-artifact-card="read"]')
+      cards[cards.length - 1]?.scrollIntoView({ block: 'center' })
+    })
+    assert.equal(await page.$eval('[data-gotry-artifact-card="read"]:last-of-type', (node: Element) => {
+      const rect = node.getBoundingClientRect()
+      return rect.width > 0 && rect.height > 0
+    }), true, 'updated artifact read card is not visibly rendered')
     const finalSnapshot = await page.evaluate(() => ({
       readCards: document.querySelectorAll('[data-gotry-artifact-card="read"]').length,
       updated: [...document.querySelectorAll('[data-gotry-artifact-card="read"]')].some(node => node.textContent?.includes('Day 6: revision requested')),
