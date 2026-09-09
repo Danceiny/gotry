@@ -29,6 +29,7 @@ import {
   selectDshRuntime,
   supportsNodeVersion,
 } from './gotry-runtime-resolution.js'
+import { onboardingSkipReason } from './gotry-bootstrap.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..')
@@ -81,6 +82,9 @@ if (help) {
 
 Usage:
   gotry web                          # dsh Web UI on http://127.0.0.1:3080
+    # (interactive TTY) 启动前若发现可自动安装的可选能力,问一次是否配置;
+    # 确认复用 doctor --fix 幂等安装,拒绝立即继续。CI/非 TTY/全健康不弹问。
+    # 跳过该问: --no-onboarding 或 GOTRY_ONBOARDING_SKIP=1
   gotry setup                        # 扩展就位检查/指引(商店一键装)
   gotry setup calendar               # 可选日历(CalDAV 工作窗口)挂载开关:默认关;--off 关闭;--status 查看
   gotry doctor                       # 可选依赖体检:扩展/agent-reach/hbcli/flyai/sidebar 状态 + 补装指引
@@ -517,10 +521,41 @@ const childStdio = mode === 'web'
 let benchmarkCapturedBytes = 0
 let benchmarkDiagnosticBuffer = Buffer.alloc(0)
 let benchmarkOutputTruncated = false
+// issue #258:`gotry web` 启动前的一次性交互式 onboarding(仅交互式 TTY + 有可自动安装
+// 缺项时问一次;y 复用 doctor --fix 幂等安装器,不建第二套;n 立即继续 web)。
+// CI/benchmark/非 TTY/全健康/GOTRY_SETUP_SKIP=1/GOTRY_ONBOARDING_SKIP=1/--no-onboarding
+// 均零 prompt 零安装,仍启 web;永不 postinstall 或后台任务里安装。
+// bootstrap 以 `onboarding --result-file=…` 同步 inherit 跑;result JSON 告知是否 prompt
+// 过,用以抑制重复的启动摘要行(design §3.1③,#114)。
+let onboardingPrompted = false
+const onboardingSkip = onboardingSkipReason({
+  mode,
+  benchmark: Boolean(benchmarkEnvironmentConfig),
+  env: process.env,
+  argv: process.argv,
+  isTTY: process.stdin.isTTY,
+})
+if (!onboardingSkip) {
+  let resultFile = null
+  try {
+    resultFile = join(tmpdir(), `gotry-onboarding-${process.pid}-${Date.now()}.json`)
+    spawnSync(process.execPath, [join(here, 'gotry-bootstrap.js'), 'onboarding', `--result-file=${resultFile}`], {
+      stdio: 'inherit',
+      timeout: 300_000,
+    })
+    // onboarding 永不挡 web:忽略 exit code;仅读 result 判断是否 prompt 过
+    if (existsSync(resultFile)) {
+      try { onboardingPrompted = JSON.parse(readFileSync(resultFile, 'utf-8'))?.prompted === true }
+      catch { /* 坏 result 不挡 */ }
+    }
+  } catch { /* onboarding 不可用不挡 web */ } finally {
+    if (resultFile) { try { rmSync(resultFile, { force: true }) } catch { /* ignore */ } }
+  }
+}
 // 启动一次性 doctor 摘要(issue #114,design §3.1③):分离子进程后台跑只读体检,
 // 有待处理项打一行 stderr(stderr 继承,不污染 stdout;benchmark 面保持零杂音)。
-// detached+unref:不阻塞不拖慢启动;inner 生命周期天然一次,不重复刷;失败静默。
-if (!benchmarkEnvironmentConfig) {
+// onboarding 已 prompt 时抑制重复摘要行(已向用户展示缺项与结果)。
+if (!benchmarkEnvironmentConfig && !onboardingPrompted) {
   try {
     spawn(process.execPath, [join(here, 'gotry-bootstrap.js'), 'doctor', '--summary'], {
       detached: true,
