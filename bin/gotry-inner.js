@@ -371,9 +371,10 @@ if (benchmarkEnvironmentConfig) {
 }
 // dsh-map-tools 宿主插件(地图/路线/POI,零 key 走 OSM/OSRM):tarball 随包 vendor,
 // repo 工作副本走 runtime workspace 链接/依赖解析;都找不到就整块剔除 patch 条目
-// (缺地图不挡旅行规划)。不能改成 npm 依赖:其 peerDependencies 要求
-// dsh-settings/dsh-tools >=0.1.2-rc.1,与本包锁定的 0.1.2-alpha.3 家族在 npm
-// 严格 peer 解析下 ERESOLVE,会直接弄坏 npx 安装。
+// (缺地图不挡旅行规划)。保持 vendored 形态而非 npm 依赖:历史上游 peerDependencies
+// (dsh-settings/dsh-tools >=0.1.2-rc.1)与锁定的 0.1.2-alpha.3 家族在 npm 严格 peer
+// 解析下 ERESOLVE;当前锁定 0.1.5-alpha.1 家族,vendored 副本 peerDependencies 已
+// 对齐 0.1.5-alpha.1,继续以 vendored 形态复用同一份适配补丁与七工具接线。
 let mapEntry = ''
 if (!benchmarkEnvironmentConfig) {
   const vendoredMap = join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js')

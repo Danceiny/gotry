@@ -1,5 +1,5 @@
 import { Config as ConfigSchema } from './config.js';
-/** Namespace the settings page keys this plugin's card to (plain string for DSH 0.1.2-alpha.3). */
+/** Namespace the settings page keys this plugin's card to (plain string for DSH 0.1.5-alpha.1, unchanged from 0.1.2-alpha.3). */
 export const MAP_TOOLS_NS = 'dsh-map-tools';
 /**
  * Wire the settings section so the card renders. The values live in the

@@ -2,7 +2,7 @@
  *
  * Covers default-off, explicit opt-in, and fail-closed configuration paths.
  * A local developer run exercises the source checkout. The packaged consumer
- * path is built from the current root @deepseek-ai/dsh 0.1.2-alpha.3 closure;
+ * path is built from the current root @deepseek-ai/dsh 0.1.5-alpha.1 closure;
  * version/source counterexamples use isolated synthetic fixtures.
  */
 import assert from 'node:assert/strict'
@@ -58,15 +58,15 @@ function runRuntimeProbe(options: RuntimeProbe): { source: string; version: stri
 }
 
 function assertRuntimeSelectionAndVersionGuards(): void {
-  const sourcePriority = runRuntimeProbe({ rootVersion: '0.1.2-alpha.3', vendorVersion: '0.1.2-alpha.1' })
-  assert.deepEqual(sourcePriority, { source: 'root', version: '0.1.2-alpha.3' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
+  const sourcePriority = runRuntimeProbe({ rootVersion: '0.1.5-alpha.1', vendorVersion: '0.1.2-alpha.1' })
+  assert.deepEqual(sourcePriority, { source: 'root', version: '0.1.5-alpha.1' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
 
   const legacyFallback = runRuntimeProbe({ vendorVersion: '0.1.2-alpha.1' })
   assert.deepEqual(legacyFallback, null, 'non-benchmark source checkout fail-closes instead of using the removed legacy vendored dsh fallback')
 
   const wrongBenchmarkVersion = runRuntimeProbe({ rootVersion: '0.1.2-alpha.1', vendorVersion: '0.1.2-alpha.1', benchmark: true })
   assert.deepEqual(wrongBenchmarkVersion, { source: 'root', version: '0.1.2-alpha.1' })
-  assert.equal(benchmarkRuntimeSupported(wrongBenchmarkVersion), false, 'benchmark mode rejects a non-alpha.3 dsh runtime before spawn')
+  assert.equal(benchmarkRuntimeSupported(wrongBenchmarkVersion), false, 'benchmark mode rejects a non-target dsh runtime before spawn')
   assert.equal(runRuntimeProbe({ vendorVersion: '0.1.2-alpha.1', benchmark: true }), null, 'benchmark mode never falls back to legacy vendored dsh')
 
   assert.equal(supportsNodeVersion('22.14.0'), false, 'Node 22.14 is rejected before dsh resolution/spawn')

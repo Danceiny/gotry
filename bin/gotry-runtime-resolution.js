@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-export const REQUIRED_BENCHMARK_DSH_VERSION = '0.1.2-alpha.3'
+export const REQUIRED_BENCHMARK_DSH_VERSION = '0.1.5-alpha.1'
 
 export function readDshPackage(bin) {
   try {
@@ -34,7 +34,7 @@ export function selectDshRuntime({ rootResolver }) {
   if (root) return { ...root, source: 'root' }
   // D-27 清偿(issue #120):legacy vendored 回退路径已移除——该形态的 Node 兼容窗口
   // 断裂(Round 5 起「不承诺可运行」),解析成功只会把「dsh 缺失」变成下游玄学失败。
-  // 唯一受支持形态 = root manifest / 依赖解析(216 精确依赖闭包);找不到即 fail-closed,
+  // 唯一受支持形态 = root manifest / 依赖解析(230 精确依赖闭包);找不到即 fail-closed,
   // 由调用方给明确重装指引。benchmark 原本就禁用回退,语义不变(入参保留以稳调用面)。
   return null
 }

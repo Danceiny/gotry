@@ -49,8 +49,8 @@ dsh plugin --profile web add github:HorusJiang/dsh-map-tools
 
 > **GoTry vendored patch notice**：本目录保留上游 `dsh-map-tools@0.5.1` 的 MIT
 > provenance，但 GoTry 的 vendored adaptation 只对 root 锁定的
-> **DeepSeek Harness 0.1.2-alpha.3** closure 提供兼容证据。其 settings 接线
-> 使用 alpha.3 已发布的 `SettingsProvider.prototype.installSection` 方法和普通字符串 namespace；
+> **DeepSeek Harness 0.1.5-alpha.1** closure 提供兼容证据（0.1.2-alpha.3 历史亦兼容）。其 settings 接线
+> 使用 `SettingsProvider.prototype.installSection` 方法和普通字符串 namespace（0.1.2-alpha.3 与 0.1.5-alpha.1 均已发布）；
 > 这不是对上游包其他 Harness 版本兼容性的声明。
 
 安装后**重启 `dsh web`**（或等待 HMR 热加载），在会话中即可使用 `map_*` 工具。
