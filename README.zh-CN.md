@@ -30,6 +30,33 @@ GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多�
 
 一次规划是一条流水线:模型只占语言密集的两端,数值全部归求解器:
 
+```mermaid
+flowchart LR
+  U(["旅行者:「我想去大理躺三天」"]) --> A
+  subgraph LANG["LLM 负责——语言"]
+    A["动机访谈<br/>工作窗口 · 已订资源 · 出发城市"] --> B["事实抽取<br/>工时与休假语义"]
+  end
+  subgraph NUM["求解器负责——数值"]
+    C["可行性判决<br/>Z3:行不行 · 为什么 · 最小改动"] --> D["门到门全成本<br/>真实时长 · 惩罚 · 到达精力"]
+  end
+  subgraph GATE["闸与记忆"]
+    E["证据链<br/>每个数字带来源标签"] --> F{"事实闸"}
+    F -->|"全部可回溯到 exact-date 工具"| G["交付已验证行程"]
+    F -->|"回溯不到"| H["blocked——绝不冒充已验证"]
+    I[("愿望池<br/>带显式召回条件")]
+  end
+  B --> C
+  C --> D --> E
+  C -.->|"今天装不下"| I
+  I -.->|"条件满足,重新求解"| C
+  classDef llm fill:#1f6feb22,stroke:#1f6feb,color:#1f6feb;
+  classDef solver fill:#2ea04322,stroke:#2ea043,color:#2ea043;
+  classDef gate fill:#d2992222,stroke:#d29922,color:#9e6a03;
+  class A,B llm;
+  class C,D solver;
+  class E,F,G,H,I gate;
+```
+
 | 阶段 | 由谁做 | 给你什么 |
 |---|---|---|
 | 动机访谈 | LLM | 必问项:工作窗口 / 已订资源 / 出发城市 |
@@ -47,17 +74,31 @@ GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多�
 - **愿望池** —— 「下一次出发」的存储。装不下的憧憬带显式条件(如「5 天+、淡季」)入池,条件满足时被召回。
 - **事实闸** —— 行程产物交付前闸:每条可下单 claim(航班号/时刻/机场/价格/政策)必须回溯到 exact-date 工具结果;回溯不到即 blocked——绝不宣称「已验证方案」。
 
+愿望池生命周期:
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> 已访谈: 动机落盘(evidence 强制)
+  已访谈 --> 可行: 求解器判决——可行
+  已访谈 --> 愿望池: 今天装不下
+  愿望池 --> 愿望池: 召回被否——指名通道宕机
+  愿望池 --> 已召回: 条件满足——窗口 · 预算 · 淡季
+  已召回 --> 已访谈: 带实时数据重新求解
+  可行 --> [*]: 事实闸交付
+```
+
 架构五层:
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│ L1  对话即界面  chat-as-UI; gates 是消息内选择题                 │
-│ L2  编排  dsh 运行时 + GoTry 插件(ReAct);21 个工具            │
-│ L3  领域  统一行程模型 + Z3 可行性引擎                          │
-│ L4  数据  静态数据包 + hotelbyte-cli 实时桥 + OpenFlights 骨架 │
-│ L5  治理  LoopX(objective / gates / evidence / quota)         │
-└──────────────────────────────────────────────────────────────┘
-```
+<a href="docs/assets/gotry-system-architecture.html">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/gotry-system-architecture.dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/gotry-system-architecture.light.png" />
+    <img alt="GoTry 系统架构——同步主链从对话经 Z3 内核到事实闸,外加状态与异步控制面、只读数据层" src="docs/assets/gotry-system-architecture.light.png" />
+  </picture>
+</a>
+
+> 由 [`docs/assets/gotry-system-architecture.archify.json`](docs/assets/gotry-system-architecture.archify.json) 经 [archify](https://github.com/tt-a1i/archify) 生成(showcase 校验:9/9 构件检查 + 浏览器实测)。本地打开 [`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html) 可得交互版——引导视图 · 缩放平移 · 关系追踪。
 
 | 层 | 模块 | 角色 |
 |---|---|---|
@@ -93,7 +134,31 @@ GoTry 把「想去哪」变成「能不能——怎么去、真实代价是多�
 
 > **通道路由**:检索工具面保持平铺(无隐藏派发);persona 路由卡与检索失败结果内附的 `routing` 建议**由通道注册表单一生成**(官方 API > 用户会话 > 网页兜底,按会话健康面过滤)。某通道额度耗尽时,结果会明说并指名下一通道——盲重试是契约违例,不靠 prompt 碰运气。
 
+```mermaid
+flowchart TD
+  Q["需要实时数据"] --> H{"通道注册表<br/>按会话健康面过滤"}
+  H -->|"1 · 官方 API 可用"| F["gotry_flyai_search<br/>Open-Meteo · OpenSky"]
+  H -->|"2 · 额度耗尽 / 宕机"| S{"会话已授权 +<br/>扩展已连接?"}
+  S -->|是| C["gotry_session_search<br/>用户本人 Chrome——物理只读"]
+  S -->|"否 / needs-extension"| W["网页兜底<br/>gotry_web_search · Agent-Reach"]
+  F -->|"降级——标签如实更换"| W
+  C -->|"miss"| W
+  F --> R
+  C --> R
+  W --> R["结果明说哪个通道失败、下一个是谁——<br/>盲重试是契约违例"]
+  classDef api fill:#2ea04322,stroke:#2ea043,color:#2ea043;
+  classDef sess fill:#1f6feb22,stroke:#1f6feb,color:#1f6feb;
+  classDef web fill:#6e768122,stroke:#6e7681,color:#6e7681;
+  class F api;
+  class C sess;
+  class W web;
+```
+
 ## 一段对话
+
+<a href="docs/assets/demo.zh-CN.webm"><img src="docs/assets/demo.zh-CN.svg" alt="动画演示——旅行者说想去洱海休整两天;Z3 求解器判定 2 天窗口不可行、放进愿望池,并给出两个可行湖泊与证据标签" width="880" /></a>
+
+*代表性对话(有精简;下方静态文本为准)——动画内联播放,[点此看视频版](docs/assets/demo.zh-CN.webm):*
 
 ```
 > 我想去洱海边发呆两三天,上海出发,预算 3000,年假别让我办公。
@@ -127,6 +192,20 @@ GoTry 的产品人格不靠拍脑袋:同一段真实的跨国 workation 行程 p
 | 事实可证性 | △ 目的地研究经得起对 | ✗ 停业航司(2020 年歇业)仍在售;价格全部无出处 | (3)(7)(13)(20) |
 | 结构完整性 | △ 第 13 轮才长出像样的对比表 | ✓✓ 单轮骨架最全——完整是基本盘 | 验证过的完整(事实闸) |
 | 人格一句话 | 博学但无状态的聊天者——用户被迫干四份工 | 版式完美的 OTA 导购——每段止于价格表 | 可信赖的行程工程师:访谈先行、求解器判决、不可行明说 |
+
+```mermaid
+quadrantChart
+  title 产品人格定位——同题真实行程 prompt(persona-bench)
+  x-axis 无状态聊天 --> 工程化可信
+  y-axis 导购话术 --> 可行性诚实
+  quadrant-1 GoTry 的及格线
+  quadrant-2 严谨但无结构
+  quadrant-3 两者皆无
+  quadrant-4 版式完美的导购
+  通用助手 — Kimi 13 轮: [0.30, 0.45]
+  OTA Agent — 飞猪单轮: [0.55, 0.15]
+  GoTry 契约: [0.85, 0.85]
+```
 
 **单条最有价值的发现:两家互不相关的产品,要自己算的星期全落在 2025 年历上**——日历锚定必须是产品机制(锚点卡、一次断言、永不重算),不是模型运气。反面教材全文:[`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md)。
 
@@ -219,6 +298,18 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 </details>
 
 ## 路线图
+
+```mermaid
+timeline
+  title 从出发到下一次出发
+  M0 ✅ : 确定性管道——双引擎对账
+  M1 ✅ : Agent 形态——对话即界面
+  M2 ✅ : 实时数据——证据链换实时标签
+  M3 ◀ 当前 : MVP——最小 Web 面 + 50–200 种子用户,evidence 未收口
+  M4 : 记忆与「下一次出发」——愿望池 · cohort 证据
+  M5 : 交易闭环——WriteGate 闸下的预订
+  M6 : B2B 包裹——内核零改动的 sponsor 插件
+```
 
 | # | 里程碑 | 范围 | 状态 |
 |---|---|---|---|
