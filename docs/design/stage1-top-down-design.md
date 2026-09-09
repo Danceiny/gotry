@@ -3,6 +3,7 @@
 > **状态速览**:
 - 2026-09-10 起,#270 按 `../ops/external-pr-workflow.md` §0 统一公开 issue 启动→Draft PR→exact-head review→merge/destination 回执,并让 `../architecture.md` §10.1 活跃债务指向公开 tracker/触发器;founder 授权的仓内 Claude lane 不受外部机器人 T0/T1 否决,但仍过正常评审。本地/fixture 证明不改变 #20/#22/#136/#137 的真实 gate。
 - 2026-09-10 起,#284 `gotry_doctor action=repair` 形成诊断→item 范围计划→会话 scope 审批→既有 bootstrap 幂等安装器→实际复检链;拒绝/取消/无审批通道零执行,user-action/unavailable 不越权,侧栏报告写复检态。隔离 fixture 工具 E2E 属 M4 UX 工程证据,不计入 #20 真实 repeat cohort 或 M5/M6 gate。
+- 2026-09-10 起,#279 携程机票 batchSearch 解析/搜索边界区分合法空 `miss`、有效 `hit` 与 malformed `error`,扩展/CDP 两车道保留 challenge 优先级;隔离 fixture 仅证明本地解析/编排,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
 - 2026-09-09 起,#283 酒店日期闸复用共享 `parseAbsoluteDate` 的真实日历校验,并在酒店消费边界拒缺失日期、溢出和错误顺序；失败不 dispatch 并返回 `input_required`。权威说明见 `docs/architecture.md` §1.2/§10 D-36 与 issue #283；该隔离工程证据不构成真实供应商准入。
 - 2026-09-09 起,#290 公开契约兼容:persona 经 `personaPrefix` / `personaSuffix` 投射(legacy `persona:` 不投影);桥 handler 结构性归类(`timed_out` / `spawn_failed` / `runner_failed`);详见 `docs/architecture.md` §9。不宣称 release/publication、M5/M6 entry、Windows 执行或真实 supplier/HotelByte 准入。
 - 2026-09-09 起,#271 Phase A 进程事故观察：GoTry-owned `uncaughtExceptionMonitor` 按 origin 写 durable incidents JSONL，宿主保持 fatal handler/退出裁决；native Node24 ESM dist 反例覆盖 writer fsync/close、monitor/no-monitor、host handler 与结构化工具失败。child close/spawn error、SIGINT、后代进程和上游 dsh supervisor 仍为开放 TODO。

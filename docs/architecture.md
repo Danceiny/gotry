@@ -53,6 +53,7 @@ M3 最小可用产品,分发链路无已知堵点。
 - **判定类**:可行性、骨架校验、航班校验、**产物事实闸 `gotry_fact_gate`**(交付前必过,blocked 不得宣称「已验证方案」)
 - **检索类**:酒店(`gotry_hotel_search` hbcli 桥 + **会话面 ctrip-hotel**:用户登录态真实价,被动嗅探)、天气、Anything 通用搜索、网页、视频字幕、GitHub、飞猪官方检索(机/火/酒)、会话检索(机/酒/火;火车=12306 公开查询面;**dida 供应商门户**:hotel-be portal integration 迁移线,2026-09-09)
 - **酒店日期输入闸(issue #283,D-36)**:共享 `time-anchor.ts` 的 `parseAbsoluteDate` 使用 `isRealIsoDate` 拒绝不存在的日历日,酒店消费边界再拒缺失日期、算术溢出和退房不晚于入住,有效日期才进入 `HBCLI_HOTEL_SEARCH`。失败统一返回 `verdict=input_required` 且不 dispatch hbcli;有效日期和既有供应商失败后的明确静态降级保持兼容。隔离 fixture 只证明工程边界,不构成真实供应商准入。
+- **携程机票 malformed 响应闸(issue #279)**:结构化 batchSearch 解析把合法空列表判为 `miss`、含有效航段判为 `hit`、畸形未知形状判为 `error`;兼容的 `parseBatchSearch` 仍永不抛错并在错误时返回 `[]`。扩展与 CDP 两车道均先判挑战再把 parser error 映射为结构化 `error`,不暴露 options。
 - **记忆类**:动机、愿望池(入池/召回)、旅行时间线、同行人
 - **产物类**:产物 list/read(账本工单交付 + 工作目录 md,只读)
 - **账号类**:会话登录 `gotry_session_login`(在用户 Chrome 弹登录入口,票据 cookie 名零值过手)
@@ -370,6 +371,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **M4 Issue #20/#223/#238/#228 价值证据切片(2026-08-29;2026-09-08 scorer 加固与 collector)**:paired-cohort 合同、active-planning 扣 wait 口径、experience-reflux 与偏好/P4 红线被一个只读 scorer + 合成 fixture 固化并接入 run-all §34。#223/#238 追加逐层 exact schema、HMAC-SHA256 假名键、N=5/中位降幅=0.5 阈值冻结(raw ratio 比较,报告才 round)、source-review attestation 与 `reviewed_summary_digest_sha256` 绑定。#228/#248 追加显式 opt-in lifecycle collector:stateRoot/consent/HMAC 必需、dataset key verifier 与 source/wait 冻结、写前完整投影校验、write-all + 原子发布 + 叶子/父目录 realpath 隔离,导出只给 candidate/synthetic source_review。合成数据明确不可关闭 M4,observed-private 缺人工核验合同或 digest 不匹配时也只可作为 candidate。下一阶段仍等待真实 `observed_private` N≥5 repeat cohort,无样本时 waiting/backoff/no-spend。
 - **M4→M6 program 任务图(2026-09-08,issue #225)**:`docs/design/milestone-delivery-plan.md` 将已入 main 的 M4 scorer(#238)、explicit opt-in planning lifecycle collector(#248)、ledger tenant/fold/migration(#229/#237)、state-cli(#243)、Z3 生命周期(#244)与 map tools(#245)同仍 TODO 的真实 N≥5 repeat cohort、M5 首供应链 `hotelbyte-cli` 协议核验 + WriteGate、M6 P6 评审+试点条件拆成 owner/责任文件/依赖/E2E/否证/退出标准;`docs/design/write-gate-production-design.md` 仅作 M5 proposal,覆盖 request fingerprint/receipt/一次确认/崩溃恢复/HotelByte unknown 对账/补偿/佣金披露。该批不改 runtime,不启封交易或 B2B 实现,不改变 Exit。
 - **M4→M6 公开交付台账(2026-09-10,issue #270)**:issue 启动记录范围/base/执行路由与闸,Draft PR 公布 exact head/漂移/本地证据/TODO,review 绑定 head,merge 记录方法/merge SHA/destination;founder 授权的仓内 Claude lane 免外部机器人 T0/T1 否决但不免正常评审。债务 owner/trigger 见 §10,本地与 fixture 证据不替代 #20/#22/#136/#137 的真实准入。
+- **#279 携程机票 malformed 响应隔离修复(2026-09-10)**:三态解析合同为合法 `flightItineraryList: []` → `miss`;非空列表至少一条有效航段 → `hit` 并忽略畸形兄弟;JSON/root/data/list/显式非数组 `priceList` 或非空列表全无有效行 → `error`。兼容 API `parseBatchSearch(body): SessionFlightOption[]` 永不抛错,错误返 `[]`;扩展/CDP 搜索均在 challenge 检测后把 parser error 映射为既有结构化 `error`,不带 options。`flight-malformed-tests.ts` 用声明 `capabilities: ['ctrip-flight']` 的隔离扩展轮询器证明 null、非数组 list/price、全畸形、合法空、命中、混合与 challenge;这是本地解析/编排证据,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
 - **已知限制清算第一刀(2026-08-29,founder 指令「解决这些 known limitations」)**:
   - **Z3 WASM 生命周期复修(#227,2026-09-08)**:08-29 的单例+互斥仍留下两条 Node24 间歇面——`getZ3` 冷启动 Promise 在 await 后写缓存会并发创建多个 Context；`z3-solver@5.2.0` high-level `FinalizationRegistry` cleanup 直接触发 low-level native `dec_ref`/`*_dec_ref`,不经过 `withZ3`。本轮修复为:Promise 先缓存、启用 `enable_concurrent_dec_ref` fail-closed、局部包装 low-level cleanup 与 actual async native call,仅在活跃 session/native check 时排队 cleanup 并在 idle 后同步 drain；fatal WASM/heap 错误先 poison 并拒绝后续求解。反证覆盖:全局 `FinalizationRegistry` identity 不变、返回的 live Model/Ast 跨 session 仍可用、独立并发请求排队不误判 nested、in-flight native barrier 先进入后才允许 settle。run-all §30/§30b/§30c。
   - **薄壳遗留**(`shell/` 目录)物理删除,dsh web 确认为唯一产品面。
@@ -435,6 +437,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 > 债务只能在本表诞生,不许只活在代码注释里(§11 M-exit 清单第 3 条)。
 > **§10.1 = 仍然开着的债**(要接的活从这里来);已清偿债务移入 [`debt-archive.md`](debt-archive.md) 存档,不在本文保留。
+
+本轮已清偿的 #279 携程机票 malformed 响应闸留在 [`debt-archive.md`](debt-archive.md),完整行为与证据边界见 §9；不改变现有 D-36 酒店日期闸与 D-37 Dida/CfT cookie debt 编号。
 
 ### 10.1 未清偿(工作面)
 
