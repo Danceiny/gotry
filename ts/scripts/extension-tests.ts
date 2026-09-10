@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -50,10 +51,54 @@ import { HOTEL_NETWORK_HINTS, HOTEL_SITE_HOST, buildHotelEntryUrl } from '../cap
 import { TRAIN_NETWORK_HINTS, TRAIN_SITE_HOST } from '../capabilities/session/adapters/rail-12306.ts'
 import { DIDA_NETWORK_HINTS, DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_HOST } from '../capabilities/session/adapters/dida-portal.ts'
 import { evaluateDoubleSource, type SessionComparableRecord } from '../capabilities/session/benchmark.ts'
+import { factsFromSessionTrain } from '../src/bookable-facts.ts'
 
 const EXT_DIR = fileURLToPath(new URL('../../extension/', import.meta.url))
 const UNREF_CHILD = fileURLToPath(new URL('./fixtures/extension-bridge-unref-child.mjs', import.meta.url))
 const read = (f: string): string => readFileSync(join(EXT_DIR, f), 'utf8')
+
+async function contentMainRelativeResponseUrlProof(source: string): Promise<Array<{ url: string; body: string }>> {
+  const events: Array<{ url: string; body: string }> = []
+  const window = {
+    __gotrySniffInstalled: false,
+    fetch: async function (_input?: unknown, _init?: unknown) {
+      return {
+        url: 'https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=2026-12-01&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM',
+        headers: { get: () => null },
+        clone: () => ({ text: async () => '{"data":{"result":[]}}' }),
+      }
+    },
+    dispatchEvent: (event: { detail?: { url?: string; body?: string } }) => {
+      events.push({ url: String(event.detail?.url ?? ''), body: String(event.detail?.body ?? '') })
+    },
+  }
+  class FixtureXhr {
+    responseType = ''
+    responseText = '{"data":{"result":[]}}'
+    response = this.responseText
+    responseURL = 'https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=2026-12-01&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM'
+    private listeners: Array<() => void> = []
+    addEventListener(event: string, handler: () => void): void {
+      if (event === 'load') this.listeners.push(handler)
+    }
+    open(_method: string, _url: string): void {}
+    send(_body?: unknown): void {
+      for (const handler of this.listeners) handler()
+    }
+  }
+  class FixtureCustomEvent {
+    detail: { url?: string; body?: string }
+    constructor(_type: string, init: { detail: { url?: string; body?: string } }) { this.detail = init.detail }
+  }
+  ;(window as { addEventListener?: () => void }).addEventListener = () => {}
+  runInNewContext(source, { window, location: { hostname: 'kyfw.12306.cn' }, XMLHttpRequest: FixtureXhr, CustomEvent: FixtureCustomEvent })
+  await window.fetch('/otn/leftTicket/queryG', {})
+  const xhr = new FixtureXhr()
+  xhr.open('GET', '/otn/leftTicket/queryG')
+  xhr.send()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  return events
+}
 
 let passed = 0
 async function check(label: string, assertion: () => void | Promise<void>): Promise<void> {
@@ -266,7 +311,19 @@ async function main(): Promise<void> {
     assert.ok(backgroundJs.includes('https://portal.dida.com/'), 'background 应含 dida 检索白名单')
     assert.ok(contentMainJs.includes('gotry-ctrip-sniff'))
     assert.ok(contentBridgeJs.includes('gotry-ctrip-sniff'))
+    assert.ok(contentBridgeJs.includes('url: d.url'), 'content bridge 应转发嗅探响应 URL')
+    assert.ok(backgroundJs.includes('url: String(msg.url ??'), 'background 应保留嗅探响应 URL')
+    assert.ok(contentMainJs.includes('typeof res.url === \'string\''), 'content-main fetch 应读取浏览器 response.url')
+    assert.ok(contentMainJs.includes('typeof xhr.responseURL === \'string\''), 'content-main XHR 应读取浏览器 responseURL')
     assert.ok(contentBridgeJs.includes('gotry-page'))
+  })
+  await check('相对 12306 输入 → fetch/XHR 均转发同一响应的绝对 URL 与 body', async () => {
+    const events = await contentMainRelativeResponseUrlProof(contentMainJs)
+    const expectedUrl = 'https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=2026-12-01&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM'
+    assert.deepEqual(events, [
+      { url: expectedUrl, body: '{"data":{"result":[]}}' },
+      { url: expectedUrl, body: '{"data":{"result":[]}}' },
+    ])
   })
   await check('防漂移(Dida):DIDA_NETWORK_HINTS(Node)= content-main 嗅探面;票据名= background SITES;manifest 覆盖 portal.dida.com', () => {
     for (const hint of DIDA_NETWORK_HINTS) {
@@ -470,14 +527,22 @@ async function main(): Promise<void> {
                 const isHotel = u.startsWith(`https://${HOTEL_SITE_HOST}/`)
                 const isTrain = u.startsWith('https://kyfw.12306.cn/')
                 assert.ok(u.startsWith('https://flights.ctrip.com/') || isHotel || isTrain, `search job 只允许已注册站点域,实际 ${u}`)
+                const requestedUrl = new URL(u)
+                const requestedDate = requestedUrl.searchParams.get('date') ?? '2026-12-01'
+                const wrongRoute = requestedUrl.searchParams.get('fs')?.endsWith(',BJP') === true
+                const wrongDateEmpty = requestedDate === '2026-12-02'
+                const trainResponseUrl = wrongRoute
+                  ? `https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=${requestedDate}&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM`
+                  : `https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=${wrongDateEmpty ? '2026-12-01' : requestedDate}&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM`
                 return {
                   ok: true,
                   kind: 'search',
                   body: isHotel
                     ? JSON.stringify({ data: { hotelList: [{ hotelId: 442516, hotelName: 'Hotel X', star: 5, commentScore: 4.7, priceInfo: { avgPrice: 680 } }] } })
                     : isTrain
-                      ? JSON.stringify({ data: { result: ['|预订|24000000G1375|G1375|SHH|KMM|SHH|KMM|07:35|15:27|07:52|Y|yp|x|x|loc|01|02|Y|0|--|--|--|--|--|--|有|--|--|有|有|有|有|--|ex|st|'], map: { SHH: '上海南', KMM: '昆明' } } })
+                      ? JSON.stringify({ data: { result: wrongDateEmpty ? [] : ['|预订|24000000G1375|G1375|SHH|KMM|SHH|KMM|07:35|15:27|07:52|Y|yp|20261201|x|loc|01|02|Y|0|--|--|--|--|--|--|有|--|--|有|有|有|有|--|ex|st|'], map: { SHH: '上海南', KMM: '昆明' } } })
                       : JSON.stringify({ data: { flightItineraryList: [] } }),
+                  url: isTrain ? trainResponseUrl : u,
                   title: isHotel ? '酒店列表' : isTrain ? '12306 车票预订' : '机票列表',
                 }
               }
@@ -496,6 +561,7 @@ async function main(): Promise<void> {
       assert.ok(search.ok)
       assert.equal(search.ok ? search.timedOut : true, false)
       assert.ok(search.ok ? search.body.includes('flightItineraryList') : false)
+      assert.equal(search.ok ? search.url : '', 'https://flights.ctrip.com/online/list/oneway-sha-ljg?depdate=2026-12-01', '响应 URL 穿过 background/result/channel')
 
       // 酒店车道(2026-09-03 实装):per-site 白名单放行 hotels.ctrip.com,嗅探回包走形解析出结构化酒店
       const hotelLane = await extensionSearchJob({ site: 'ctrip-hotel', url: `https://${HOTEL_SITE_HOST}/hotels/list?city=220&checkin=2026-12-01&checkout=2026-12-03`, timeoutMs: 3_000 })
@@ -519,6 +585,18 @@ async function main(): Promise<void> {
       assert.equal(trainSession.trains?.[0]?.depTime, '07:35')
       assert.equal(trainSession.trains?.[0]?.durationMin, 472)
       assert.ok(trainSession.trains?.[0]?.jumpUrl?.includes('kyfw.12306.cn'), 'jumpUrl=查询落地页(人选车完成预订)')
+      assert.equal(trainSession.collection?.response.url, 'https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=2026-12-01&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM', '火车响应 URL 穿过扩展桥并绑定 collection')
+
+      __resetRateLimiterForTest()
+      const wrongRoute = await sessionTrainSearch({ from: '北京', to: '上海', date: '2026-12-03', timeoutMs: 3_000 })
+      assert.equal(wrongRoute.collection, undefined, 'wrong-route response URL → no collection')
+      assert.equal(factsFromSessionTrain({ from: '北京', to: '上海', date: '2026-12-03' }, wrongRoute).length, 0, 'wrong-route collector result → zero facts')
+
+      __resetRateLimiterForTest()
+      const wrongDateEmpty = await sessionTrainSearch({ from: '上海', to: '昆明', date: '2026-12-02', timeoutMs: 3_000 })
+      assert.equal(wrongDateEmpty.outcome.kind, 'recognized-empty', 'wrong-date seam keeps parsed empty presentation')
+      assert.equal(wrongDateEmpty.collection, undefined, 'wrong-date empty response URL → no collection')
+      assert.equal(factsFromSessionTrain({ from: '上海', to: '昆明', date: '2026-12-02' }, wrongDateEmpty).length, 0, 'wrong-date empty collector result → zero facts')
 
       const login = await sessionLogin({ site: 'ctrip-flight' })
       assert.equal(login.verdict, 'logged-in')

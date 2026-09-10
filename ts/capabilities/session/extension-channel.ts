@@ -71,6 +71,8 @@ export interface ExtensionSearchOutcome {
   ok: true
   /** NETWORK_HINTS 命中的响应原文;未命中/超时为空 */
   body: string
+  /** Exact NETWORK_HINTS response URL selected for body;未命中/超时为空 */
+  url: string
   /** 页标题(challenged 判定素材) */
   title: string
   /** 到点未见 hints 命中(站点无回包/风控拦截页) */
@@ -90,6 +92,7 @@ export async function extensionSearchJob(q: { site: string; url: string; timeout
   return {
     ok: true,
     body: typeof outcome.result.body === 'string' ? outcome.result.body : '',
+    url: typeof outcome.result.url === 'string' ? outcome.result.url : '',
     title: typeof outcome.result.title === 'string' ? outcome.result.title : '',
     timedOut: outcome.result.timeout === true,
   }

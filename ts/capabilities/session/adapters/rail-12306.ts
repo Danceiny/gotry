@@ -169,15 +169,63 @@ export interface AdapterEntry {
   unresolved?: string[]
 }
 
-export function buildTrainEntryUrl(q: TrainEntryQuery): AdapterEntry {
+export interface TrainQueryTelecodes {
+  fromStationTelecode: string
+  toStationTelecode: string
+  date: string
+}
+
+export interface TrainResponseBinding extends TrainQueryTelecodes {
+  /** Exact URL observed on the response whose body was parsed. */
+  url: string
+}
+
+export type TrainResponseUrlValidation =
+  | { ok: true; binding: TrainResponseBinding }
+  | { ok: false; reason: string }
+
+export function resolveTrainQueryTelecodes(q: TrainEntryQuery): { ok: true; telecodes: TrainQueryTelecodes } | { ok: false; unresolved: string[] } {
   const unresolved: string[] = []
   const fromTc = (q.fromStationTelecode ?? '').trim().toUpperCase() || STATION_TELECODES[q.from.trim()]
   const toTc = (q.toStationTelecode ?? '').trim().toUpperCase() || STATION_TELECODES[q.to.trim()]
   if (!fromTc) unresolved.push(q.from)
   if (!toTc) unresolved.push(q.to)
-  if (unresolved.length > 0 || !/^\d{4}-\d{2}-\d{2}$/.test(q.date)) {
-    return { ok: false, unresolved: unresolved.length > 0 ? unresolved : [q.date] }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(q.date)) unresolved.push(q.date)
+  if (unresolved.length > 0 || !fromTc || !toTc) return { ok: false, unresolved }
+  return { ok: true, telecodes: { fromStationTelecode: fromTc, toStationTelecode: toTc, date: q.date } }
+}
+
+/** Bind a parsed body to the exact 12306 query request that this invocation built. */
+export function validateTrainQueryResponseUrl(observedUrl: string, expected: TrainQueryTelecodes): TrainResponseUrlValidation {
+  let parsed: URL
+  try {
+    parsed = new URL(observedUrl)
+  } catch {
+    return { ok: false, reason: 'response URL malformed' }
   }
+  if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== TRAIN_SITE_HOST || parsed.port) {
+    return { ok: false, reason: 'response URL host/protocol is not the 12306 HTTPS host' }
+  }
+  if (!/^\/otn\/leftTicket\/query[A-Za-z0-9_-]*$/i.test(parsed.pathname)
+    || !TRAIN_NETWORK_HINTS.some((hint) => hint.test(parsed.pathname))) {
+    return { ok: false, reason: 'response URL is not an allowed leftTicket query endpoint' }
+  }
+  const exactParam = (name: string): string | undefined => {
+    const values = parsed.searchParams.getAll(name)
+    return values.length === 1 ? values[0] : undefined
+  }
+  if (exactParam('leftTicketDTO.train_date') !== expected.date
+    || exactParam('leftTicketDTO.from_station') !== expected.fromStationTelecode
+    || exactParam('leftTicketDTO.to_station') !== expected.toStationTelecode) {
+    return { ok: false, reason: 'response URL query route/date does not match the invocation' }
+  }
+  return { ok: true, binding: { url: observedUrl, ...expected } }
+}
+
+export function buildTrainEntryUrl(q: TrainEntryQuery): AdapterEntry {
+  const resolved = resolveTrainQueryTelecodes(q)
+  if (!resolved.ok) return { ok: false, unresolved: resolved.unresolved }
+  const { fromStationTelecode: fromTc, toStationTelecode: toTc } = resolved.telecodes
   const fs = encodeURIComponent(`${q.from.trim()},${fromTc}`)
   const ts = encodeURIComponent(`${q.to.trim()},${toTc}`)
   return { ok: true, url: `https://kyfw.12306.cn/otn/leftTicket/init?linktypeid=dc&fs=${fs}&ts=${ts}&date=${q.date}&flag=N,N,Y` }
@@ -199,6 +247,8 @@ export interface SessionTrainOption {
   arrTime: string
   /** 历时(分钟) */
   durationMin: number
+  /** 12306 train-origin date(YYYY-MM-DD);validated and preserved, not passenger query date */
+  startTrainDate?: string
   /** Y=可预订 / N=不可 / 其他上游原话 */
   canWebBuy: string
   /** 余票分桶(第一方校准索引,见 SEAT_BUCKETS;值原样:数字 / 有 / 无 / --) */
@@ -231,24 +281,56 @@ const SEAT_BUCKETS: Array<{ index: number; field: string; label: string }> = [
 const TRAIN_CODE_RE = /^[GDCZTKYLSF]\d{1,5}[A-Z]?$/i
 const HHMM_RE = /^\d{2}:\d{2}$/
 
+export const TRAIN_QUERY_PARSE_SCHEMA = 'gotry_session_train_parse.v1' as const
+
+export type TrainQueryParseOutcome =
+  | { kind: 'recognized-nonempty'; trains: SessionTrainOption[] }
+  | { kind: 'recognized-empty'; trains: [] }
+  | { kind: 'malformed'; reason: string }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
 /** 历时 "07:52" → 分钟 */
 function lishiToMin(s: string | undefined): number {
   const m = /^(\d{1,3}):(\d{2})$/.exec((s ?? '').trim())
   if (!m) return 0
+  if (Number(m[2]) > 59) return 0
   return Number(m[1]) * 60 + Number(m[2])
 }
 
+function normalizeStartTrainDate(value: string): string | undefined {
+  if (!/^\d{8}$/.test(value)) return undefined
+  const normalized = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+  const parsed = new Date(`${normalized}T00:00:00.000Z`)
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized) return undefined
+  return normalized
+}
+
 /** 行级签名:车次码形态 + 时刻形态不符即整行跳过(索引漂移 fail-visible,不造数) */
-function rowToOption(row: string, stationMap: Record<string, string> | undefined, entryUrl: string): SessionTrainOption | null {
+function rowToOption(row: string, stationMap: Record<string, unknown> | undefined, entryUrl: string): SessionTrainOption | null {
   const f = row.split('|')
   if (f.length < 34) return null
   const trainCode = (f[3] ?? '').trim()
   const depTime = (f[8] ?? '').trim()
   const arrTime = (f[9] ?? '').trim()
-  if (!TRAIN_CODE_RE.test(trainCode) || !HHMM_RE.test(depTime) || !HHMM_RE.test(arrTime)) return null
+  const durationMin = lishiToMin(f[10])
+  const startTrainDateRaw = (f[13] ?? '').trim()
+  const startTrainDate = normalizeStartTrainDate(startTrainDateRaw)
+  const validHm = (value: string): boolean => HHMM_RE.test(value)
+    && Number(value.slice(0, 2)) <= 23 && Number(value.slice(3, 5)) <= 59
+  if (!TRAIN_CODE_RE.test(trainCode) || !validHm(depTime) || !validHm(arrTime)
+    || durationMin <= 0 || !startTrainDate || !(f[6] ?? '').trim() || !(f[7] ?? '').trim()) return null
   // 官方 cN 口径:站名 = data.map[电报码](map 缺失/缺键时退电报码原样,不猜名)
-  const fromStation = stationMap?.[f[6] ?? ''] ?? (f[6] ?? '')
-  const toStation = stationMap?.[f[7] ?? ''] ?? (f[7] ?? '')
+  const stationName = (code: string): string | null => {
+    if (!stationMap || !Object.prototype.hasOwnProperty.call(stationMap, code)) return code
+    const mapped = stationMap[code]
+    return typeof mapped === 'string' && mapped.trim() ? mapped.trim() : null
+  }
+  const fromStation = stationName((f[6] ?? '').trim())
+  const toStation = stationName((f[7] ?? '').trim())
+  if (!fromStation || !toStation) return null
   const seats: Record<string, string> = {}
   for (const b of SEAT_BUCKETS) {
     const v = (f[b.index] ?? '').trim()
@@ -260,34 +342,51 @@ function rowToOption(row: string, stationMap: Record<string, string> | undefined
     toStation,
     depTime,
     arrTime,
-    durationMin: lishiToMin(f[10]),
+    durationMin,
+    startTrainDate,
     canWebBuy: (f[11] ?? '').trim(),
     seats,
     jumpUrl: entryUrl,
   }
 }
 
-/** 解析 leftTicket/query 响应(纯函数,fixture 测试锚点;字段索引与站名映射
- * 全部对齐 12306 官方前端 cN(result,map)——见 SEAT_BUCKETS 注释);
- * malformed 一律返空,不抛错 */
-export function parseLeftTicketQuery(body: string, entryUrl: string, opts: { maxItems?: number } = {}): SessionTrainOption[] {
-  let raw: { data?: { result?: unknown; map?: Record<string, string> } }
+/** 解析 leftTicket/query 响应的 typed outcome。
+ * recognized-empty 只代表明确存在的 data.result=[];
+ * recognized-nonempty 要求批次每一行都通过签名校验,任一畸形行即整个批次
+ * malformed,不暴露部分候选。transport/runtime failure 不在此纯解析函数伪造。
+ */
+export function parseLeftTicketQueryResult(body: string, entryUrl: string, opts: { maxItems?: number } = {}): TrainQueryParseOutcome {
+  let raw: unknown
   try {
-    raw = JSON.parse(body) as typeof raw
+    raw = JSON.parse(body) as unknown
   } catch {
-    return []
+    return { kind: 'malformed', reason: 'response body is not valid JSON' }
   }
-  const rows = raw.data?.result
-  if (!Array.isArray(rows)) return []
-  const map = (raw.data?.map && typeof raw.data.map === 'object') ? raw.data.map : undefined
+  if (!isRecord(raw) || !isRecord(raw.data)) return { kind: 'malformed', reason: 'response root/data is not an object' }
+  const rows = raw.data.result
+  if (!Array.isArray(rows)) return { kind: 'malformed', reason: 'data.result is not an array' }
+  if (raw.data.map !== undefined && !isRecord(raw.data.map)) {
+    return { kind: 'malformed', reason: 'data.map is not an object' }
+  }
+  if (rows.length === 0) return { kind: 'recognized-empty', trains: [] }
+  const map = raw.data.map as Record<string, unknown> | undefined
   const out: SessionTrainOption[] = []
   for (const r of rows) {
-    if (typeof r !== 'string') continue
+    if (typeof r !== 'string') return { kind: 'malformed', reason: 'data.result contains a non-string row' }
     const opt = rowToOption(r, map, entryUrl)
-    if (opt) {
-      out.push(opt)
-      if (out.length >= (opts.maxItems ?? 30)) break
-    }
+    if (!opt) return { kind: 'malformed', reason: 'data.result contains a malformed or unrecognized row' }
+    if (out.length < (opts.maxItems ?? 30)) out.push(opt)
   }
-  return out
+  return { kind: 'recognized-nonempty', trains: out }
+}
+
+/** 兼容旧调用方:typed outcome 之外仍保留旧的数组投影,错误与 genuine empty 均为 []。 */
+export function parseLeftTicketQuery(body: string, entryUrl: string, opts: { maxItems?: number } = {}): SessionTrainOption[] {
+  const outcome = parseLeftTicketQueryResult(body, entryUrl, opts)
+  return outcome.kind === 'recognized-nonempty' ? outcome.trains : []
+}
+
+/** Positive availability is deliberately a small closed set, not canWebBuy alone. */
+export function hasRecognizedAvailableSeat(option: SessionTrainOption): boolean {
+  return Object.values(option.seats).some(value => value === '有' || /^[1-9]\d*$/.test(value))
 }

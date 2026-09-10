@@ -20,6 +20,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import { hasRecognizedAvailableSeat, validateTrainQueryResponseUrl, type SessionTrainOption } from '../capabilities/session/adapters/rail-12306.ts'
 
 export const BOOKABLE_FACT_SCHEMA = 'gotry_bookable_fact.v1' as const
 
@@ -182,6 +183,25 @@ export interface SessionLikeResult {
   options?: SessionLikeOption[]
 }
 
+/** 12306 exact-date fact freshness rule: capture must be non-future and <=15 minutes old. */
+export const TRAIN_FACT_FRESHNESS_RULE = 'captured_at_non_future_and_max_age_15m' as const
+export const TRAIN_FACT_MAX_AGE_MS = 15 * 60 * 1000
+
+export interface SessionTrainFactResult {
+  outcome: {
+    kind: 'recognized-nonempty' | 'recognized-empty' | 'malformed' | 'transport-runtime-error'
+    trains?: SessionTrainOption[]
+  }
+  collection?: {
+    requested: { from: string; to: string; date: string }
+    request: { fromStationTelecode: string; toStationTelecode: string; date: string }
+    response: { url: string; fromStationTelecode: string; toStationTelecode: string; date: string }
+    batchId: string
+    queryId: string
+    fetchedAt: string
+  }
+}
+
 const YMD = /^\d{4}-\d{2}-\d{2}$/
 
 function hmOf(dateTime: string | undefined): string | undefined {
@@ -289,6 +309,67 @@ export function factsFromSession(q: { origin: string; destination: string; date:
   return facts
 }
 
+function trainCollectionIsFresh(
+  q: { from: string; to: string; date: string },
+  r: SessionTrainFactResult,
+  now: Date,
+): r is SessionTrainFactResult & { collection: NonNullable<SessionTrainFactResult['collection']> } {
+  const c = r.collection
+  if (!c || !c.batchId.trim() || !c.queryId.trim() || c.queryId !== `session:12306-train:${c.batchId}`) return false
+  if (c.requested.from !== q.from || c.requested.to !== q.to || c.requested.date !== q.date) return false
+  if (!c.request || !c.response
+    || c.request.date !== c.requested.date
+    || c.response.fromStationTelecode !== c.request.fromStationTelecode
+    || c.response.toStationTelecode !== c.request.toStationTelecode
+    || c.response.date !== c.request.date
+    || !validateTrainQueryResponseUrl(c.response.url, c.request).ok) return false
+  const fetchedMs = Date.parse(c.fetchedAt)
+  const nowMs = now.getTime()
+  if (!Number.isFinite(fetchedMs) || !Number.isFinite(nowMs)) return false
+  return fetchedMs <= nowMs && nowMs - fetchedMs <= TRAIN_FACT_MAX_AGE_MS
+}
+
+/** 12306 typed outcome → exact-date train facts.
+ * The converter never invents collection identity or timestamps: both must come
+ * from the session invocation binding. Only recognized-empty can create a
+ * negative fact. A recognized row needs Y plus a closed-set available seat token.
+ */
+export function factsFromSessionTrain(
+  q: { from: string; to: string; date: string },
+  r: SessionTrainFactResult,
+  now: Date = new Date(),
+): FlightFact[] {
+  if (!trainCollectionIsFresh(q, r, now)) return []
+  const c = r.collection
+  const source = 'session:12306-train'
+  const fetchedAt = c.fetchedAt
+  if (r.outcome.kind === 'recognized-empty') {
+    return [negativeFact(c.queryId, 'train', q.from, q.to, q.date, source, fetchedAt)]
+  }
+  if (r.outcome.kind !== 'recognized-nonempty') return []
+  const facts: FlightFact[] = []
+  for (const o of r.outcome.trains ?? []) {
+    if (o.canWebBuy !== 'Y' || !hasRecognizedAvailableSeat(o)) continue
+    facts.push({
+      schema: BOOKABLE_FACT_SCHEMA,
+      fact_id: makeFactId(['train', q.from, q.to, q.date, o.trainCode, c.queryId]),
+      kind: 'train',
+      route: { origin: q.from, destination: q.to },
+      date: q.date,
+      flight_no: o.trainCode,
+      dep_local: o.depTime,
+      arr_local: o.arrTime,
+      tier: 'live_inventory',
+      bookability: 'bookable_exact_date',
+      source,
+      query_id: c.queryId,
+      fetched_at: fetchedAt,
+      as_of: fetchedAt.slice(0, 10),
+    })
+  }
+  return facts
+}
+
 // ---------------------------------------------------------------------------
 // 注册表(纯函数视图;持久化在 capabilities/fact-log.ts)
 // ---------------------------------------------------------------------------
@@ -374,9 +455,9 @@ export function flightClaimVerdict(facts: BookableFact[], claim: FlightClaim): {
 // 判定原语①b:车次 claim 可述性(rail-only,fail closed;issue #299)
 //   闸侧 `extractClaims` 已把 G/D/C/Z + 3–4 位 token 收集为 train claim;
 //   本裁决只在 train 事实里查同号 bookable_exact_date,缺事实/缺上下文/
-// 路线未查均 fail-closed。当前支持的事实生产端是 `factsFromFlyai kind:'train'`,
-// 其结果经 index.ts 真实工具路径追加到事实日志; `gotry_session_search kind=train`
-// 仍待 typed parser outcome + seat availability/freshness contract 后再接注册表。
+// 路线未查均 fail-closed。支持的事实生产端是 `factsFromFlyai kind:'train'`
+// 与 `factsFromSessionTrain`,两者均经真实工具路径追加到事实日志; session
+// 结果必须先通过 typed parser outcome + seat availability/freshness contract。
 // 不得用历史班期或 static-schedule 凑合格回溯。
 // ---------------------------------------------------------------------------
 
@@ -393,7 +474,7 @@ export interface RailClaim {
   date?: string
 }
 
-const TRAIN_FACT_SOURCES = new Set(['flyai'])
+const TRAIN_FACT_SOURCES = new Set(['flyai', 'session:12306-train'])
 
 function isStructuredTrainFact(f: BookableFact): f is FlightFact {
   return f.kind === 'train'

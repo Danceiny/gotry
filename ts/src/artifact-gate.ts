@@ -56,8 +56,9 @@ export interface ExtractedFlightClaim extends FlightClaim {
  * 闸侧不与航班 claim 合并;`railClaimVerdict` 只在 train 事实里查同号回溯,
  * 缺事实/缺上下文 fail-closed(`rail_claim_unverified`),不得用历史班期或
  * static-schedule 凑合格回溯。`gotry_flyai_search kind:'train'` 经
- * `factsFromFlyai` 沿现有 typed fact log 接线;12306 session 仍待
- * typed parser outcome + seat availability/freshness contract,列表不含票价;
+ * `factsFromFlyai` 与 12306 `sessionTrainSearch` 均沿现有 typed fact log 接线;
+ * session 事实须通过 typed parser outcome + seat availability/freshness contract,
+ * 列表不含票价;
  * 不新增 RailFact 渲染器,真实供应商可售性仍需独立证据。 */
 export interface ExtractedRailClaim extends RailClaim {
   line: number
