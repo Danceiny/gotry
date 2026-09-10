@@ -167,9 +167,17 @@ const anchor = uo724Rendered.indexOf('<!-- fact:')
 const budgetBeforeAnchor = gateArtifact(`${uo724Rendered.slice(0, anchor)}；总预算¥1000${uo724Rendered.slice(anchor)}`, [uo724], map, { trip_year: tripYear })
 assert(budgetBeforeAnchor.verdict === 'pass' && budgetBeforeAnchor.violations.length === 0,
   '证据链后的总预算即使位于锚点前也不串为UO724票价')
-const baggageBeforeAnchor = gateArtifact(`${uo724Rendered.slice(0, anchor)}；行李费¥50${uo724Rendered.slice(anchor)}`, [uo724], map, { trip_year: tripYear })
-assert(baggageBeforeAnchor.verdict === 'pass' && baggageBeforeAnchor.violations.length === 0,
-  '证据链后的行李费即使位于锚点前也不串为UO724票价')
+const baggageBeforeSourceAndAnchor = gateArtifact(uo724Rendered.replace(' [flyai@', '；行李费¥50 [flyai@'), [uo724], map, { trip_year: tripYear })
+assert(baggageBeforeSourceAndAnchor.verdict === 'pass' && baggageBeforeSourceAndAnchor.traceable === 1
+  && baggageBeforeSourceAndAnchor.violations.length === 0,
+  'canonical票价后的行李费即使位于source与锚点之前也不串为UO724票价')
+const labelledMoneyField = gateArtifact(uo724Rendered.replace(' [flyai@', '；总计¥1000 [flyai@'), [uo724], map, { trip_year: tripYear })
+assert(labelledMoneyField.verdict === 'pass' && labelledMoneyField.traceable === 1
+  && labelledMoneyField.violations.length === 0,
+  'canonical票价后的通用标签金额不被当作第二票价')
+const explicitFareLabel = gateArtifact(uo724Rendered.replace('¥793', '票价¥793'), [uo724], map, { trip_year: tripYear })
+assert(explicitFareLabel.verdict === 'pass' && explicitFareLabel.traceable === 1 && explicitFareLabel.violations.length === 0,
+  '显式票价标签仍属于可靠 fare role')
 
 for (const [label, renderedPrice] of [['¥999', '¥999'], ['CNY 999', 'CNY 999']] as const) {
   const contradicted = gateArtifact(uo724Rendered.replace('¥793', renderedPrice), [uo724], map, { trip_year: tripYear })
@@ -190,8 +198,9 @@ const commaFare = gateArtifact(renderFlightFact(commaFareFact).replace('¥1793',
 assert(commaFare.verdict === 'pass' && commaFare.traceable === 1 && commaFare.violations.length === 0,
   '完整解析千分位¥1,793,与事实1793一致 pass')
 const malformedComma = gateArtifact(uo724Rendered.replace('¥793', '¥1,79'), [uo724], map, { trip_year: tripYear })
-assert(malformedComma.verdict === 'pass' && !malformedComma.violations.some(v => v.kind === 'price_contradicted'),
-  '畸形千分位¥1,79整体不作硬价比较,不得截断为CNY1')
+assert(malformedComma.verdict === 'blocked' && malformedComma.traceable === 0
+  && malformedComma.violations.some(v => v.kind === 'unverified_price_claim' && /畸形|未核验|完整/.test(v.detail)),
+  'canonical fare 畸形千分位¥1,79必须blocked/unverified,不得消失或截断为CNY1')
 
 const missingSourcePrice = gateArtifact(uo724Rendered.replace('¥793', '¥999'), [{ ...uo724, price: undefined }], map, { trip_year: tripYear })
 assert(missingSourcePrice.verdict === 'blocked'

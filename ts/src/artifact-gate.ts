@@ -309,6 +309,62 @@ function hardPricesInLine(text: string): HardPrice[] {
   return prices
 }
 
+interface MalformedHardPrice {
+  currency: string
+  token: string
+  start: number
+}
+
+/**
+ * 票价 role 不是「同一行所有金额」:canonical 字段是第一个分隔字段;
+ * 后续字段只有显式票价标签才重新进入候选。这样预算/费用等其它字段
+ * 即使位于 source evidence 之前也不会被当成 fare,而不需要维护同义词黑名单。
+ */
+function fareRoleScopes(text: string): Array<{ text: string; offset: number }> {
+  const fields = text.split(/[；;|，]/)
+  const scopes: Array<{ text: string; offset: number }> = []
+  let offset = 0
+  for (const [index, field] of fields.entries()) {
+    if (index === 0 || /(?:票价|机票价|fare|price)/i.test(field)) scopes.push({ text: field, offset })
+    offset += field.length + 1
+  }
+  return scopes
+}
+
+function hardPricesInFareRole(text: string): HardPrice[] {
+  const prices: HardPrice[] = []
+  for (const scope of fareRoleScopes(text)) {
+    for (const price of hardPricesInLine(scope.text)) {
+      prices.push({ ...price, start: price.start + scope.offset })
+    }
+  }
+  return prices
+}
+
+/**
+ * A malformed grouped number is still a visible hard-money claim. Detect it
+ * only in the selected fare role; fuzzy/non-numeric values such as ¥7xx keep
+ * their existing non-comparable semantics.
+ */
+function malformedHardPricesInFareRole(text: string): MalformedHardPrice[] {
+  const amount = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`
+  const token = String.raw`\d[\d,]*(?:\.\d+)?`
+  const pattern = new RegExp(String.raw`(?:¥\s*|\b([A-Z]{3})\s*)(${token})(?![\dA-Za-z])`, 'gi')
+  const malformed: MalformedHardPrice[] = []
+  for (const scope of fareRoleScopes(text)) {
+    for (const match of scope.text.matchAll(pattern)) {
+      const raw = match[2]
+      if (!raw || !raw.includes(',') || new RegExp(`^(?:${amount})$`).test(raw)) continue
+      malformed.push({
+        currency: match[1] ? match[1].toUpperCase() : 'CNY',
+        token: raw,
+        start: (match.index ?? 0) + scope.offset,
+      })
+    }
+  }
+  return malformed
+}
+
 function flightTrainPriceScope(text: string, fact: Extract<BookableFact, { kind: 'flight' | 'train' }>): string {
   const no = fact.flight_no.toUpperCase()
   const noStart = text.toUpperCase().indexOf(no)
@@ -335,9 +391,20 @@ function addPriceVerification(
 ): boolean {
   const fullScope = flightTrainPriceScope(fullText, fact)
   const visibleScope = flightTrainPriceScope(visibleText, fact)
-  const allPrices = hardPricesInLine(fullScope)
-  const visiblePrices = hardPricesInLine(visibleScope)
+  const allPrices = hardPricesInFareRole(fullScope)
+  const visiblePrices = hardPricesInFareRole(visibleScope)
+  const malformedPrices = malformedHardPricesInFareRole(fullScope)
   const hasAnchor = fullText.includes('<!-- fact:')
+
+  if (malformedPrices.length > 0) {
+    const malformed = malformedPrices[0]!
+    violations.push({
+      kind: 'unverified_price_claim',
+      line,
+      detail: `${fact.flight_no} fare role 含畸形硬价格 ${malformed.currency} ${malformed.token}——数字分组不完整,按未核验处理,不得截断或当作完整票价比较`,
+    })
+    return true
+  }
 
   // Heuristic claims retain the existing 120-character extraction window. If a
   // hard price only appears outside it, it cannot be safely bound to this claim.
