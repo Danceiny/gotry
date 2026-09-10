@@ -18,6 +18,7 @@
  */
 
 import { startBookingCopilotModule } from './backend/modules/booking-copilot.ts'
+import { startBookingExecutorModule } from './backend/modules/booking-executor.ts'
 import { startSessionSearchModule } from './backend/modules/session-search.ts'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,6 +39,10 @@ export async function startGotryBackendFromEnvironment(
   modules.push(startSessionSearchModule({
     apiKey: () => env.GOTRY_BACKEND_SESSION_API_KEY ?? '',
     auditPath: env.GOTRY_SESSION_AUDIT_PATH,
+  }))
+  modules.push(startBookingExecutorModule({
+    apiKey: () => env.GOTRY_BACKEND_BOOKING_API_KEY ?? '',
+    evidenceDir: () => env.GOTRY_BACKEND_EVIDENCE_DIR ?? '/var/lib/gotry-backend/booking-evidence',
   }))
   const port = Number(env.GOTRY_BACKEND_PORT ?? env.GOTRY_BOOKING_COPILOT_PORT ?? 3082)
   const handle = await createBackendServer({
