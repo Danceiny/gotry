@@ -26,7 +26,7 @@
   var TRAIN_HINT_RE = /leftTicket\/query/i
   /** Dida 供应商门户(2026-09-09 实装):portal-webapi 实时价/价格监控
    * (与 Node 侧 DIDA_NETWORK_HINTS 对账,run-all §38 防漂移断言守住) */
-  var DIDA_HINT_RE = /portal-webapi\.dida\.com\/HotelPriceAPI\/SearchRealTime|portal-webapi\.dida\.com\/HotelPriceAPI\/SearchMonitor/i
+  var DIDA_HINT_RE = /portal-webapi\.dida\.com\/HotelPriceAPI\/SearchRealTime|portal-webapi\.dida\.com\/HotelPriceAPI\/SearchMonitor|portal-webapi\.dida\.com\/HotelRecommendAPI\/SearchHomepageRecommendHotels|portal-webapi\.dida\.com\/HotelRecommendAPI\/SearchHomepageRecommendPrices|portal-webapi\.dida\.com\/PopularDestinationAPI\/SearchHotels|portal-webapi\.dida\.com\/PopularDestinationAPI\/SearchHotelPrices/i
   /** 形状嗅探签名(dida 实时价信封;与 Node 侧 looksLikeDidaRatesBody 签名一致) */
   var DIDA_BODY_SIG_RE = /"HotelPriceList"|"RatePlanList"/
   /** 形状嗅探(酒店页兜底;与 Node 侧 looksLikeHotelListBody 签名一致) */
