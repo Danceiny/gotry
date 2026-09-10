@@ -18,7 +18,7 @@
 
 | 层 | C 端语义 | 载体 | 状态 |
 |---|---|---|---|
-| **M1 用户基础** | 常驻城市/时区/工作窗口 | motivation-profile.hard + 会话内声明 | ✅ 工作窗口/时区已入画像;**常驻城市持久化残余 →** [#338](https://github.com/Danceiny/gotry/issues/338)(此残余不回收 §4 已交付的 P1/P2/P3,也不构成 [#20](https://github.com/Danceiny/gotry/issues/20) 的真实准入) |
+| **M1 用户基础** | 常驻城市/时区/工作窗口 | tenant-scoped `homeCityPreference { value, evidence, updated_at }` + `{{motivation_brief}}` | ✅ 工作窗口/时区已入画像;常驻城市显式写入并作为软默认读回:当轮显式 origin 优先,显式 null 清除,missing/malformed/unbound typed preference 要求明确出发地,不 hard-filter 确定性候选。#20 真实 cohort gate 保持开放 |
 | **M2 动机与偏好画像** | 动机权重谱系(跨年)、体力档、节奏档、预算档 | motivation-profile.weights/hard + `{{motivation_brief}}` 读回 | ✅ 核心落地(T1:提取归 LLM/守门归代码/读回注入)+ **P3 时间窗衰减已落地(§4)**;**城市场景分级的证据化残余 →** [#339](https://github.com/Danceiny/gotry/issues/339) |
 | **M3 预算标准** | 预算档(动机访谈校准 + 历史行为) | budgetTier gate → profile | ✅ gate 校准;**实际成交与规划估算偏差回流残余 →** [#340](https://github.com/Danceiny/gotry/issues/340)(**写入闸由 [#136](https://github.com/Danceiny/gotry/issues/136)/[#231](https://github.com/Danceiny/gotry/issues/231)/[#232](https://github.com/Danceiny/gotry/issues/232)/[#233](https://github.com/Danceiny/gotry/issues/233) 治理,真实交易落地前不实现**) |
 | **M4 旅行时间线** | 去过哪/何时/和谁(出发地三级解析的地基) | `gotry-state/trips.jsonl`(§4 P1) | ✅ 已落地 2026-08-28(§4 P1) |
