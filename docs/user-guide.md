@@ -1,110 +1,118 @@
-# GoTry 使用指南
+[English](user-guide.md) | [简体中文](user-guide.zh-CN.md)
 
-> 一行启动,浏览器对话。LLM 负责听懂你,数学求解器负责判定与算术——每个数字带证据来源。
+# GoTry User Guide
 
-## 启动(两种)
+> One line to start, chat in the browser. The LLM handles understanding you; the math solver handles verdicts and arithmetic — every number carries its evidence source.
 
-**npm(推荐,免克隆)**:
+## Getting Started (Two Ways)
+
+**npm (recommended, no clone)**:
 
 ```bash
 npx @danceiny/gotry web
-# LLM key 由 dsh 宿主 UI 配置,gotry CLI 不出声
+# the LLM key is configured in the dsh host UI; the gotry CLI stays silent
 ```
 
-> 任何 npm 兼容 registry(npmjs / npmmirror / 公司内部镜像)都能跑这条命令;镜像 `latest` 滞后时钉精确版本即可(如 `npx @danceiny/gotry@0.0.1-rc.22 web`)。注意:**在 gotry 仓库目录内**请改用源码入口 `./gotry web`——仓内裸名 npx 会被 npm exec 误判为「本地已装」,报 `sh: gotry: command not found`。
+> Any npm-compatible registry (npmjs / npmmirror / a company-internal mirror) can run this command; when a mirror's `latest` lags, pin an exact version (e.g. `npx @danceiny/gotry@0.0.1-rc.22 web`). Note: **inside the gotry repo directory**, use the source entry `./gotry web` instead — a bare-name npx inside the repo gets misjudged by npm exec as "already installed locally" and reports `sh: gotry: command not found`.
 
-**源码(开发者)**:
+**Source (developers)**:
 
 ```bash
 git clone https://github.com/Danceiny/gotry && cd gotry
-npm ci && npm --prefix ts ci                     # root/TS 锁定闭包
-node scripts/build-dist.mjs                      # 构建源码 runtime
+npm ci && npm --prefix ts ci                     # root/TS pinned closure
+node scripts/build-dist.mjs                      # build the source runtime
 ./gotry web
 ```
 
-浏览器开 **http://127.0.0.1:3080**(dsh 界面,首次冷启动 6-15 秒)。
+Open **http://127.0.0.1:3080** in your browser (the dsh UI; first cold start takes 6-15 seconds).
 
-## 怎么用:对话即界面
+## How to Use It: The Conversation Is the Interface
 
-没有表单、没有导航——直接像跟人说话一样输入。GoTry 会先问清缺失的关键信息
-(工作窗口/已订资源),每道待决问题都是**带 trade-off 的选择题**;写操作永远先问你。
+No forms, no navigation — just type as if talking to a person. GoTry first asks about
+missing key information (work windows / already-booked resources); every open question
+is a **multiple-choice question with trade-offs**; write operations always ask you first.
 
-### 试一试:不可行的憧憬被接住
+### Try It: An Infeasible Dream Gets Caught
 
 ```
 我想去洱海边发呆,就这周末,我在上海,预算3000,别让我早起。年假了不用办公,还没订任何东西。
 ```
 
-预期:引擎判定「2 天装不下洱海式放空(冲突:duration)」→ 洱海**不说不**,进
-「下一次出发」清单(成行条件:5 天+/春秋),当场给你**可行**的替代(千岛湖/太湖,
-含起床时间、到达精力、门到门全成本、证据链)。
+Expected: the engine rules that "2 days cannot fit an Erhai-style unwind (conflict:
+duration)" → Erhai **does not get a no**; it enters the "next departure" list
+(go conditions: 5+ days / spring or autumn), and you immediately get **feasible**
+alternatives (Qiandao Lake / Taihu Lake) with wake-up time, arrival energy,
+door-to-door all-in cost, and the evidence chain.
 
-### 试一试:多段行程与工作窗口
+### Try It: A Multi-Leg Trip with Work Windows
 
 ```
 7.17周五22:40落地深圳,7.18早上去香港办银行开户;争取当天飞普吉岛,8.10周一凌晨从深圳起飞去迪拜上班前到。请给我做机票和酒店的行程规划。
 ```
 
-预期:引擎按段判定班次(工作窗口生效,撞班的航班被排除并说明理由),红眼段
-算「到达精力」而不只看票价;你之前订过的资源会被当硬锚点,不推倒重排。
+Expected: the engine judges each leg's schedule (work windows take effect; conflicting
+flights are excluded with reasons); for red-eye legs it computes "arrival energy"
+instead of only looking at ticket price; resources you booked before are treated as
+hard anchors — nothing gets replanned from scratch.
 
-### 试一试:回访(跨会话记忆)
+### Try It: A Return Visit (Cross-Session Memory)
 
-第二次打开 GoTry 说「想出去走走」:它**不再重复问**工作窗口/预算这些答过的
-字段(画像已在系统提示里);你之前许过的「下一次出发」愿望若条件命中,它至多
-提 1 条,不命中就不打扰。
+Open GoTry a second time and say "想出去走走": it **does not re-ask** the fields you
+already answered, like work windows or budget (the profile is already in the system
+prompt); if a "next departure" wish you made earlier has its conditions hit, it
+mentions at most 1 — and does not disturb you when nothing hits.
 
-## 你的数据在哪(可见、可导出、可删除)
+## Where Your Data Lives (Visible, Exportable, Deletable)
 
-数据目录由运行形态决定:源码普通运行落在 `ts/dsh-runtime/gotry-state/`，npm 包运行落在调用目录的 `gotry-state/`，benchmark opt-in 使用隔离调用目录，避免写入共享状态。权威写面是同目录的 `gotry-state.db` SQLite 账本；下面这些 JSON/JSONL 文件是兼容旧形态的导出视图，便于你查看与备份，**不会反向回流进账本**。
+The data directory depends on how you run it: a normal source run lands in `ts/dsh-runtime/gotry-state/`; an npm-package run lands in `gotry-state/` under the invoking directory; benchmark opt-in uses an isolated invoking directory to avoid writing shared state. The authoritative write surface is the `gotry-state.db` SQLite ledger in the same directory; the JSON/JSONL files below are export views for compatibility with the old form, convenient for viewing and backup — **they never flow back into the ledger**.
 
-| 视图/文件 | 内容 |
+| View/file | Contents |
 |---|---|
-| `motivation-profile.json` | 动机画像(权重/硬约束,每条带你的原话证据) |
-| `wish-pool.json` | 「下一次出发」清单(带成行条件;muted=休眠不删除) |
-| `memory-utility.jsonl` | 愿望效用事件(召回/确认;归因只认你亲口说的) |
+| `motivation-profile.json` | Motivation profile (weights/hard constraints, each entry carrying evidence in your own words) |
+| `wish-pool.json` | The "next departure" list (with go conditions; muted = dormant, not deleted) |
+| `memory-utility.jsonl` | Wish utility events (recall/confirmation; attribution only counts what you said yourself) |
 
-开发者排障或备份时可用仓内账本 CLI(示例均用隔离 root):
+For troubleshooting or backup, developers can use the in-repo ledger CLI (all examples use an isolated root):
 
 ```bash
 cd ts
 npx tsx scripts/state-cli.ts stats --state-root <root>
-npx tsx scripts/state-cli.ts export --state-root <root>       # 仅 local:DB → legacy 视图
+npx tsx scripts/state-cli.ts export --state-root <root>       # local only: DB → legacy views
 npx tsx scripts/state-cli.ts forget --state-root <root> wish <wish_id>
 ```
 
-`--tenant <tenant>` 只是账本 scope 参数,不是认证或授权。`tick` / `export` / `whatif` 三个命令只支持 `--tenant local`: `tick` 会调用本地异步结算路径,`export` 会写共享 legacy 文件名,`whatif` 是整库管理员 snapshot 而不是租户导出；传入非 local 时会在创建目录、打开数据库、求解或写文件前拒绝。
+`--tenant <tenant>` is only a ledger scope parameter, not authentication or authorization. The three commands `tick` / `export` / `whatif` only support `--tenant local`: `tick` invokes the local async settlement path, `export` writes shared legacy filenames, and `whatif` is a whole-database admin snapshot rather than a tenant export; passing anything other than local is refused before creating directories, opening the database, solving, or writing files.
 
-想删除某个愿望/同行人/动机画像,优先用 `state-cli forget` 或在对话里要求 GoTry 清理；不要把手改 legacy 视图当作账本更新。
+To delete a wish / companion / motivation profile, prefer `state-cli forget` or ask GoTry to clean up in conversation; do not treat hand-editing a legacy view as a ledger update.
 
-**想看生成的文件(行程 md、工单交付)不用去翻目录**,两条路:
+**To view generated files (itinerary md, work-order deliverables) you don't have to dig through directories** — two paths:
 
-1. 对话里直接说「看看我生成的行程 / 打开上次的规划」——GoTry 会用 `gotry_artifacts_list` 列出在册产物，再用 `gotry_artifacts_read` 以**带行号的文件视图**读取(只读,支持翻页;**首行会显示「source + 完整 path」**,并显示内容版本避免把旧摘要当新内容)。公开 `./client` adapter 在 DSH Web 中按 runtime `block` 渲染自定义 list/read 卡，路径可点击；实际 fresh-profile list→select/open→read→edit→updated-read 证据由 `ts/scripts/dsh-artifact-web-e2e.ts` 生成。workspace/sidebar 文件树仍可作为额外预览面。可读范围 = 你的 gotry stateRoot + **会话工作目录**(排除 `node_modules`/`.git`);**只读文本类**(`md/txt/json/jsonl/csv/log/yaml/yml`),超过 2 MB、跨出允许目录、扩展名不在白名单、或路径是符号链接越界——都会返回带 `hint` 的 `ok: false`;
-2. **dsh web 侧栏工作台**(dsh-better-sidebar,dsh-market 第一 UI 组件):`gotry web` 页面右侧展开工作台,文件树里点开工作区里的行程 md/工单交付,即见产品级渲染(表格/图表/PDF 都支持)。装法:`npx @danceiny/gotry doctor --fix`(体检报告 `gotry-state/doctor-report.md` 也在这个工作台里预览);未装也不影响路 1。
+1. Just say in conversation "看看我生成的行程 / 打开上次的规划" — GoTry lists registered artifacts with `gotry_artifacts_list`, then reads them with `gotry_artifacts_read` as a **line-numbered file view** (read-only, paginated; **the first line shows "source + full path"**, and shows the content version so a stale summary is not mistaken for new content). The public `./client` adapter renders custom list/read cards per runtime `block` in DSH Web, with clickable paths; the actual fresh-profile list→select/open→read→edit→updated-read evidence is generated by `ts/scripts/dsh-artifact-web-e2e.ts`. The workspace/sidebar file tree remains an extra preview surface. Readable scope = your gotry stateRoot + the **session working directory** (excluding `node_modules`/`.git`); **read-only text types** (`md/txt/json/jsonl/csv/log/yaml/yml`) — over 2 MB, outside the allowed directories, an extension not on the whitelist, or a symlink-escaping path all return `ok: false` with a `hint`;
+2. **The dsh web sidebar workbench** (dsh-better-sidebar, the first UI component of dsh-market): expand the workbench on the right side of the `gotry web` page and click an itinerary md / work-order deliverable in the file tree to see product-grade rendering (tables/charts/PDF all supported). Install: `npx @danceiny/gotry doctor --fix` (the doctor report `gotry-state/doctor-report.md` is also previewed in this workbench); not installing it does not affect path 1.
 
-## 进阶:headless 一问一答
+## Advanced: Headless One-Shot Q&A
 
 ```bash
-npx @danceiny/gotry "我想从深圳休整两天,预算3000,别早起"   # stdout 拿判定+证据链
+npx @danceiny/gotry "我想从深圳休整两天,预算3000,别早起"   # stdout gets the verdict + evidence chain
 npx @danceiny/gotry help
 ```
 
-## 你看到的每个数字
+## Every Number You See
 
-| 你看到 | 来源 | 含义 |
+| What you see | Source | Meaning |
 |---|---|---|
-| ¥850/人 | 求解器 | 门到门全成本(票+接驳+住宿+当地) |
-| 06:35 起床 | 引擎计算 | 家→枢纽+提前值机+班期倒推 |
-| 到达精力 84% | 精力模型 | 100 − 起床惩罚 − 接驳消耗(公式,非拍脑袋) |
-| [实时API:open-meteo] | Open-Meteo | 天气/气候,判定前必查 |
-| [骨架:openflights] | OpenFlights | 航线通航三值验证(否定≠证伪) |
-| [静态包:估算] | 人工调研 | 价格是估算,下单前核实 |
+| ¥850/person | Solver | Door-to-door all-in cost (ticket + transfers + lodging + local) |
+| 06:35 wake-up | Engine computation | Home→hub + early check-in + schedule back-calculation |
+| Arrival energy 84% | Energy model | 100 − wake-up penalty − transfer drain (a formula, not a guess) |
+| [实时API:open-meteo] | Open-Meteo | Weather/climate, always checked before a verdict |
+| [骨架:openflights] | OpenFlights | Three-valued route reachability verification (negative ≠ falsified) |
+| [静态包:估算] | Manual research | Prices are estimates; verify before booking |
 
-行程产物里的航班号/时刻/机场/价格/政策另有交付前闸:agent 交付含这些「可下单事实」的产物前必须调 `gotry_fact_gate` 对账——每条都要回溯到**精确日期检索**的工具结果(查到什么、哪天没查到,都会落账)。查不到的班次会标「未确认/当前不可售,到 D-xx 复核」,不会拿历史班期或相邻日期填上;闸不过,agent 不得宣称「已验证方案」。
+Flight numbers / schedules / airports / prices / policies in itinerary artifacts have an additional pre-delivery gate: before delivering an artifact containing such "bookable facts", the agent must reconcile them with `gotry_fact_gate` — each one must trace back to an **exact-date retrieval** tool result (what was found, and on which day something was not found, all go on the ledger). A schedule that cannot be found is marked "unconfirmed / currently not sellable, recheck at D-xx" — historical schedules or adjacent dates are never used to fill the gap; if the gate does not pass, the agent must not claim a "verified plan".
 
-## 已知限制
+## Known Limitations
 
-- 中文优先(中国出境首发场景);英文界面在后续版本
-- 机票价格为估算口径时已明确标注,实时票价在后续里程碑
-- 连续跑多个求解可能偶发 z3 WASM 内存错误(重试即可,已登记已知问题)
-- 遇到 bug:`gotry-state/incidents.jsonl` 里有事故证据,提 issue 时附上
+- Chinese first (the launch scenario is China outbound travel); an English UI comes in a later version
+- Flight prices are explicitly labeled when they are estimates; real-time fares come in a later milestone
+- Running many solves in a row can occasionally hit a z3 WASM memory error (just retry; registered as a known issue)
+- When you hit a bug: `gotry-state/incidents.jsonl` contains incident evidence — attach it when filing an issue

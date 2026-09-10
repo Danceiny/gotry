@@ -69,9 +69,9 @@ Architecture — the sync path from chat through the kernel to the fact gate, pl
   </picture>
 </a>
 
-> Interactive version: [`docs/assets/gotry-system-architecture.en.html`](docs/assets/gotry-system-architecture.en.html) (archify, showcase-validated). Layers: L2 dsh plugin · L3 `ts/src/unified.ts` kernel · L4 effect interpreter + realtime bridges · L5 loopx governance. ADRs: [`docs/architecture.md`](docs/architecture.md) (Chinese).
+> Interactive version: [`docs/assets/gotry-system-architecture.en.html`](docs/assets/gotry-system-architecture.en.html) (archify, showcase-validated). Layers: L2 dsh plugin · L3 `ts/src/unified.ts` kernel · L4 effect interpreter + realtime bridges · L5 loopx governance. ADRs: [`docs/architecture.md`](docs/architecture.md).
 
-23 registered tools in groups: realtime retrieval (Fliggy official channel + your own Chrome session, read-only) · catalog · decision engine · memory · artifacts · fact gate · external search · `gotry_doctor` self-check. No hidden dispatch — a channel registry returns an ordered suggestion list; the model or user chooses. Per-tool contracts: [`docs/tools.md`](docs/tools.md) (Chinese-first).
+23 registered tools in groups: realtime retrieval (Fliggy official channel + your own Chrome session, read-only) · catalog · decision engine · memory · artifacts · fact gate · external search · `gotry_doctor` self-check. No hidden dispatch — a channel registry returns an ordered suggestion list; the model or user chooses. Per-tool contracts: [`docs/tools.md`](docs/tools.md).
 
 ## Demo
 
@@ -180,10 +180,10 @@ Documents ship as bilingual pairs (`x.md` English + `x.zh-CN.md` 中文); diverg
 
 | Document | Purpose |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | System, ADRs, evolution, debt (Chinese, authoritative) |
+| [`docs/architecture.md`](docs/architecture.md) | System, ADRs, evolution, debt (authoritative) |
 | [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 timeline & current position |
 | [`docs/user-guide.md`](docs/user-guide.md) | End-user guide |
-| [`docs/tools.md`](docs/tools.md) | Tool reference: contracts, routing, onboarding (Chinese-first) |
+| [`docs/tools.md`](docs/tools.md) | Tool reference: contracts, routing, onboarding |
 | [`docs/data-sources.md`](docs/data-sources.md) | Data sources & evidence-chain policy |
 | [`docs/release-notes.md`](docs/release-notes.md) | Release decisions per version (the "why") |
 | [`CHANGELOG.md`](CHANGELOG.md) | Machine-derived changelog |

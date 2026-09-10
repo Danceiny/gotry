@@ -1,69 +1,71 @@
-# Decisions Needed — 创始人拍板项汇总
+[English](decisions-needed.md) | [简体中文](decisions-needed.zh-CN.md)
 
-> 定位:当前所有需 founder 拍板才能解锁的事项入口;每条含路径、上下文、影响范围、建议,各项独立、按优先级逐条回。
-> 状态:living(拍板队列;已结算项原地标注归档)
-> 上游:拍板触发的设计/里程碑文档——[`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md)(P6 walkthrough)、[`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md)(M4→M6 任务图)、[`design/external-event-seam.md`](design/external-event-seam.md)(D-31 接缝)。
-> 下游:按回执推进的实现/Exit 证据与 issue gate 更新;founder YES 只满足对应决策门,不自动改写里程碑 Entry。
-> 各项独立——你可以按优先级逐条回;按回执推进。
+# Decisions Needed — Founder Decision Items Summary
 
-**速览:当前 1 项待拍板——#137 P6 founder review(整体方案批准)。** P6 明确 YES 仍不满足 M6 Entry:M5 Exit 仍是前置门,P6 批准不旁路 M5。M5 Entry 的进入条件在 #136 跟踪。D-1~D-9、D-4a 均已结算;D-31 为触发式(等第一个真实 world2agent 回调方再拍,见下),当前非开放运行时面。
+> Position: the entry point for all matters that currently need a founder decision to unblock; each item includes path, context, scope of impact, and a recommendation; items are independent — reply one by one in priority order.
+> Status: living (decision queue; settled items are annotated and archived in place)
+> Upstream: the design/milestone documents that triggered the decisions — [`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md) (P6 walkthrough), [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) (M4→M6 task graph), [`design/external-event-seam.md`](design/external-event-seam.md) (D-31 seam).
+> Downstream: implementation/Exit evidence advanced per receipt, and issue gate updates; a founder YES only satisfies the corresponding decision gate — it does not auto-rewrite milestone Entry.
+> Items are independent — you can reply one by one in priority order; work advances per receipt.
 
-## 未决
+**At a glance: 1 item currently pending — #137 P6 founder review (overall plan approval).** An explicit P6 YES still does not satisfy M6 Entry: M5 Exit remains a precondition gate, and P6 approval does not bypass M5. The entry conditions for M5 Entry are tracked in #136. D-1~D-9 and D-4a are all settled; D-31 is trigger-based (decide only when the first real world2agent callback party appears; see below) and is not currently an open runtime surface.
 
-### #137 P6 founder review(整体方案批准)
+## Pending
 
-**当前待拍板**:founder 尚未明确批准 M6 整体方案或修改稿。只有明确 YES 或对修改稿明确批准才满足 P6 Exit。**P6 YES 仍不满足 M6 Entry**——M5 Exit 仍是前置门,P6 批准不旁路 M5;两者并列前置,任一未满足则 M6 不开闸。
-**位置**:[`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md)(draft,待 founder 评审);issue #137;任务图见 [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) M6-1/M6-2。
+### #137 P6 founder review (overall plan approval)
 
-### D-31 外部事件写入信任模型
+**Currently pending**: the founder has not yet explicitly approved the overall M6 plan or a revised draft. Only an explicit YES, or explicit approval of a revised draft, satisfies P6 Exit. **A P6 YES still does not satisfy M6 Entry** — M5 Exit remains a precondition gate, and P6 approval does not bypass M5; the two are parallel preconditions, and if either is unmet M6 does not open.
+**Location**: [`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md) (draft, awaiting founder review); issue #137; task graph in [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) M6-1/M6-2.
 
-**触发式**:等第一个真实 world2agent 回调方出现再拍。本地探针免鉴权,远程回调需签名/通道绑定;拍板前远程面不开。开放触发跟踪见 issue #82;issue #119 为已关闭的设计记录。
-**位置**:[`design/external-event-seam.md`](design/external-event-seam.md);开放触发跟踪 issue #82;设计记录 issue #119(已关闭)。
+### D-31 External-Event Write Trust Model
+
+**Trigger-based**: decide only when the first real world2agent callback party appears. Local probes need no auth; remote callbacks require signature/channel binding; the remote surface stays closed until decided. Open-trigger tracking: issue #82; issue #119 is the closed design record.
+**Location**: [`design/external-event-seam.md`](design/external-event-seam.md); open-trigger tracking issue #82; design record issue #119 (closed).
 
 ---
 
-## 已结算(归档,新置顶的决策在最上)
+## Settled (Archived; Newly Pinned Decisions on Top)
 
-| # | 事项 | 决策 | 结算 |
+| # | Item | Decision | Settled |
 |---|---|---|---|
-| D-9 | dsh-calendar 分发面 | **默认不挂载**;挂载与否进 setup 状态面(`~/.gotry/calendar.json`,`npx @danceiny/gotry setup calendar` on/off),禁止环境变量控制产品行为(founder 2026-09-03 纠偏);doctor 增宿主插件节 | ✅ 2026-09-03(ADR-25,run-all §50) |
-| D-8 | 工具编排策略 | **静态平铺 + 健康态驱动的动态建议**:工具面平铺不变、解译器不做隐藏派发;通道健康面 + verdict≠hit 时结果内注入 `routing` 顺位表(可用性>证据级>效率);persona (19) 收缩为注册表生成片段 | ✅ 2026-09-03(同上) |
-| D-7 | 有额度工具的配额归属 | **分层归属**:匿名 trial 池=首次体验导流层,正式使用升级 user-key/user-session;产品统一 key 池暂缓,M3 真实 cohort 规模出现时复审;doctor 增配额探测 | ✅ 2026-09-03(同上) |
-| D-2 | M4 校准七题 | auto-guess 5/7 + founder 提供剩余 4 题(2026-08-26):f1~16:xx 起飞 23:00 落/f4 实际昆明→珠海+顺风车返深/Rawai 公寓首夜失败次日换酒店/EK329 后按摩店过夜;附带原则:校准永不阻塞,动态 follow 动机 | ✅ 真值吸收进 data/*.json meta.reconcil |
-| D-6 | OSM 兜底 | **删 OSM 计划**——Anything/agent-reach 已统一,OSM 是兜底的兜底,过度工程;M4 scale-up 视 HBc 配额再议 | ✅ 2026-08-24 |
-| D-5 | OpenSky 实时观测 | 保留 1 tick | ✅ |
-| D-4a | agent-reach 残余渠道 | 100% follow → wrapper 化(反射桥,删 13 渠道 switch);8 渠道需 cookie(founder 0 工作记 pending,谁有 cookie 接谁) | ✅ 2026-08-22/23 |
-| D-4 | hotel-be Anything 通用搜索接入 | 选 A:复用 hotel-be 既有 Anything + hbcli 当统一 transport | ✅ 2026-08-23 三仓 commit 闭环 |
-| D-3 | npm publish | 已打通 2026-08-22:`@danceiny/gotry` scoped 发布(gotry 裸名撞 go-try);founder 开 2FA + 恢复码当 OTP;发布命令全隔离 NPM_CONFIG_USERCONFIG | ✅ scripts/publish-npm.sh |
+| D-9 | dsh-calendar distribution surface | **Not mounted by default**; mount state goes into the setup state surface (`~/.gotry/calendar.json`, `npx @danceiny/gotry setup calendar` on/off); environment variables are forbidden from controlling product behavior (founder correction 2026-09-03); doctor gains a host-plugin section | ✅ 2026-09-03 (ADR-25, run-all §50) |
+| D-8 | Tool orchestration strategy | **Static flat layout + health-driven dynamic suggestions**: the tool surface stays flat, the interpreter does no hidden dispatch; when the channel health surface + verdict≠hit, a `routing` ranking table is injected into results (availability > evidence level > efficiency); persona (19) shrinks to a registry-generated fragment | ✅ 2026-09-03 (same as above) |
+| D-7 | Quota ownership for quota-bearing tools | **Layered ownership**: the anonymous trial pool = the first-experience acquisition layer; formal use upgrades to user-key/user-session; the unified product key pool is deferred, to be reviewed when the M3 real cohort reaches scale; doctor gains quota probing | ✅ 2026-09-03 (same as above) |
+| D-2 | M4 calibration seven questions | auto-guess 5/7 + founder supplied the remaining 4 questions (2026-08-26): f1 ~16:xx departure, 23:00 landing / f4 actual Kunming→Zhuhai + ride-share back to Shenzhen / Rawai apartment first-night failure, hotel change the next day / massage-parlor overnight after EK329; attached principle: calibration never blocks, dynamically follow motivations | ✅ ground truth absorbed into data/*.json meta.reconcil |
+| D-6 | OSM fallback | **OSM plan deleted** — Anything/agent-reach already unified it; OSM is a fallback of a fallback, over-engineering; revisit at M4 scale-up depending on HBc quota | ✅ 2026-08-24 |
+| D-5 | OpenSky real-time observation | keep 1 tick | ✅ |
+| D-4a | agent-reach residual channels | 100% follow → wrapper-ized (reflection bridge, deleted the 13-channel switch); 8 channels need cookies (founder 0 work logged as pending; whoever has the cookies takes the channel) | ✅ 2026-08-22/23 |
+| D-4 | hotel-be Anything general search integration | Option A: reuse hotel-be's existing Anything + hbcli as the unified transport | ✅ 2026-08-23 three-repo commit loop closed |
+| D-3 | npm publish | Working since 2026-08-22: `@danceiny/gotry` scoped publish (the bare gotry name collides with go-try); founder enabled 2FA + recovery codes as OTP; publish commands fully isolate NPM_CONFIG_USERCONFIG | ✅ scripts/publish-npm.sh |
 | D-1 | License | **MIT** | ✅ 2026-08-23 |
 
-## 已结算详情(留有后续操作价值的三项)
+## Settled Details (The Three Items with Follow-Up Operational Value)
 
-### D-2 校准真值(YAML 快照,已吸收进引擎)
+### D-2 Calibration Ground Truth (YAML Snapshot, Absorbed into the Engine)
 
 ```yaml
-# f1 实际 HKG→HKT 班次
-f1_actual: "HX741 20:20"          # (b)HX741 晚班:Kimi 7.18 当天飞撞早高峰,CX773 12:15 太紧
-# f4 8.9 KMG→SZX 实际到达时间
-f4_szx_arrival: "22:00"             # 中间值 — EK328/DZ6252 跨日,给 EK329 红眼留 4h 缓冲
-# Rawai 房型 + 价格档(你长住+工作型)
-rawai_room_type: "Studio"          # (a) 单房舒适档;非套间
-rawai_nightly_price: 400           # 约 ¥400/晚
-# 8.10 凌晨 EK329 落地→躺床上
-szt_arrival_hours: 1.5             # SZX→南山车程(你住南山)
-# 8.10 凌晨红眼→办公室精力自评(0-100,基线 D-6 落地模型)
-energy_8_10: 80                    # 估算:红眼 11h 落地精力 75% + 1.5h 路上补眠 10% 80%;>70 算"可行"
-# 全程总花费拆分(2 周 普吉+云南+迪拜往返;Kimi 7.18-8.10)
+# f1 actual HKG→HKT flight
+f1_actual: "HX741 20:20"          # (b) HX741 evening flight: flying on Kimi 7.18 same day hits the morning peak; CX773 12:15 is too tight
+# f4 8.9 KMG→SZX actual arrival time
+f4_szx_arrival: "22:00"             # middle value — EK328/DZ6252 cross midnight, leaving a 4h buffer for the EK329 red-eye
+# Rawai room type + price tier (your long-stay + work style)
+rawai_room_type: "Studio"          # (a) single-room comfort tier; not a suite
+rawai_nightly_price: 400           # about ¥400/night
+# 8.10 early morning: EK329 lands → into bed
+szt_arrival_hours: 1.5             # SZX→Nanshan drive time (you live in Nanshan)
+# 8.10 early-morning red-eye → office energy self-rating (0-100, baseline D-6 landing model)
+energy_8_10: 80                    # estimate: red-eye 11h landing energy 75% + 1.5h road catch-up sleep 10% 80%; >70 counts as "feasible"
+# total trip spend breakdown (2 weeks Phuket + Yunnan + Dubai round trip; Kimi 7.18-8.10)
 total_spend_breakdown:
   flights_international: 4000     # SZX-HKG 1k + HKG-OMDB 1.6k + OMDB-HKT 0.5k + KMG-SZX 0.9k
-  accommodation_2w: 4200          # Rawai 6 晚*¥400 + 甲米周末 2 晚*¥600 + 云南 5 晚*¥300
-  ground_transport: 1200           # 普吉+甲米包车 + 云南段包车 + 机场接送
+  accommodation_2w: 4200          # Rawai 6 nights*¥400 + Krabi weekend 2 nights*¥600 + Yunnan 5 nights*¥300
+  ground_transport: 1200           # Phuket + Krabi chartered car + Yunnan leg chartered car + airport transfers
   meals_2w: 1500
   activities_diving_hot_spring: 1000
-  total: 11900                      # 上 4 项加总(实测典型预算 ≈¥12k,落在 demo 预算分层 ¥12.6k/¥16.3k 中间)
+  total: 11900                      # sum of the 4 items above (measured typical budget ≈¥12k, between the demo budget tiers ¥12.6k/¥16.3k)
 ```
 
-### D-4 架构链路(实测通)
+### D-4 Architecture Chain (Verified Live)
 
 ```
 dsh LLM
@@ -74,10 +76,10 @@ dsh LLM
           └─(混合 城市+酒店 search)─→ candidates[]
 ```
 
-落地位置:`hotel-be/search/service/geography.go`(@path 注解暴露 `/api/search/anything`)、`hotelbyte-cli/src/commands/search.ts`(anything 子命令)、`gotry/ts/capabilities/anything.ts` + `ts/scripts/anything-tests.ts`(5/5)+ `ts/src/index.ts` 挂工具。遗留(不挡 go-live):hotel-be `registerInternalServices` 可加 `SearchSrv` 走 internal 路径(M4 scale-up 后再说);Anything 无 `lat/lng` fallback(`region.latitude` 已够用)。
+Landing spots: `hotel-be/search/service/geography.go` (the @path annotation exposes `/api/search/anything`), `hotelbyte-cli/src/commands/search.ts` (anything subcommand), `gotry/ts/capabilities/anything.ts` + `ts/scripts/anything-tests.ts` (5/5) + `ts/src/index.ts` tool registration. Leftovers (not blocking go-live): hotel-be `registerInternalServices` could add `SearchSrv` on the internal path (after M4 scale-up); Anything has no `lat/lng` fallback (`region.latitude` is sufficient).
 
-### D-7/D-8/D-9 选项记录(2026-09-03,设计全文 `docs/design/tool-orchestration-design.md`)
+### D-7/D-8/D-9 Option Records (2026-09-03; Full Design Text in `docs/design/tool-orchestration-design.md`)
 
-- **D-7 配额归属**:选 A 分层归属。否决 B(产品统一 key 池——成本/滥用面/上游 ToS 三个未定量立即到期)与 C(维持现状,配额不可见)。起因:flyai 匿名试用共享池 429 达限(2026-09-02 迪拜 session 实测)暴露「额度归属」无定义。
-- **D-8 编排策略**:选 A 静态平铺+动态建议。否决 B(解译器层自动改道——模型调 A 实际走 B,破坏调用可审计性,推翻 ADR-18 判定记录)与 C(反转静态优先级——每个新用户先付一次扩展安装成本)。A 下「session bridge 优先级」从常量变为健康面投影:flyai 健康时首荐 flyai(零摩擦),429 当刻 session 升首荐并附安装/登录指引。
-- **D-9 calendar 分发**:选 A 默认不挂载。否决 B(保留默认挂载+doctor 引导——治标:模型仍会先撞一次报错)。起因:dsh-calendar 在 gotry 分发面内且未配置时工具报错降级,模型会话中段撞「未配置 username」;gotry 对 calendar 的唯一诉求是工作窗口读取,而 persona (1) 访谈本就首轮必问工作窗口。
+- **D-7 quota ownership**: chose A, layered ownership. Rejected B (unified product key pool — three unknowns come due immediately: cost / abuse surface / upstream ToS) and C (status quo, quotas invisible). Trigger: the flyai anonymous trial shared pool hit its 429 limit (measured in the 2026-09-02 Dubai session), exposing that "quota ownership" was undefined.
+- **D-8 orchestration strategy**: chose A, static flat layout + dynamic suggestions. Rejected B (interpreter-layer automatic rerouting — the model calls A but actually goes through B, breaking call auditability and overturning the ADR-18 decision record) and C (reversing the static priority — every new user pays the extension-install cost once up front). Under A, "session bridge priority" changes from a constant to a projection of the health surface: when flyai is healthy it is recommended first (zero friction); at the moment of a 429, session is promoted to first recommendation with install/login guidance attached.
+- **D-9 calendar distribution**: chose A, not mounted by default. Rejected B (keep default mounting + doctor guidance — treating the symptom: the model would still hit one error first). Trigger: dsh-calendar sits inside the gotry distribution surface and, when unconfigured, the tool errors and degrades; mid-session the model hits "username not configured"; gotry's only need for calendar is reading the work window, and the persona (1) interview always asks about the work window in the first round anyway.

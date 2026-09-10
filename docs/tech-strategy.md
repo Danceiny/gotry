@@ -1,123 +1,125 @@
-# GoTry 技术选型与半年迭代路线(M2–M4)
+[English](tech-strategy.md) | [简体中文](tech-strategy.zh-CN.md)
 
-> 定位:**选型理由、评测体系、分工与持续优化回路的唯一来源**。时间线权威仍归 `roadmap.md`(M0-M6 的 Entry/Exit),本文只管「用什么、谁来做、怎么持续变好」。
-> 约束:复用遵循总纲 §2 三策略——import=许可证明确的 OSS;bridge=进程外运行时桥;reference=仅借鉴设计;**不存在中间态**。创始人两条刚性约束优先:harness 以 dsh 为参考基线、不自研 agent 运行时;参考过的开源项目一律不重写。
-> 纪律:**新增 import 先经 §7 决策登记,创始人批准后回填总纲 §2 复用矩阵,再动工。**
+# GoTry Technology Selection and Six-Month Iteration Roadmap (M2–M4)
+
+> Positioning: **the single source of selection rationale, evaluation system, division of labor, and the continuous improvement loop**. Timeline authority remains with `roadmap.md` (Entry/Exit for M0–M6); this document only covers "what to use, who builds it, and how to keep getting better".
+> Constraints: reuse follows the master outline §2 three strategies — import = OSS with a clear license; bridge = out-of-process runtime bridge; reference = design borrowing only; **there is no middle state**. The founder's two hard constraints take priority: the harness takes dsh as the reference baseline, no self-built agent runtime; open-source projects once referenced are never rewritten.
+> Discipline: **a new import must first go through §7 decision registration, be backfilled into the master outline §2 reuse matrix after founder approval, and only then may work begin.**
 
 ---
 
-## 1. 评审结论摘要(2026-08-22,M1 exit 后)
+## 1. Review Conclusions Summary (2026-08-22, after M1 exit)
 
-架构设计健康:代码与文档高度一致,分层纪律在测试里有真实执行锚点。真正的系统性风险是**文档保鲜曾无机制**(已由 `architecture.md` §11 补上);主要工程缺口是 deprecated 层仍承重(D-7)与对话循环曾不进 CI(D-8)。
+The architecture design is healthy: code and docs are highly consistent, and layering discipline has real enforcement anchors in tests. The real systemic risk was **doc freshness having no mechanism** (now covered by `architecture.md` §11); the main engineering gaps are the deprecated layer still bearing load (D-7) and the dialogue loop previously not in CI (D-8).
 
-**强项(保持)**:算术/求解分层 + 双实现差分,正确性核心的验证强度远超同阶段项目;契约先行、mock 先行、重放即行为级回归(各 agent harness 的核心实践,已内生);ADR 预登记淘汰条件 + 锚点列;红线在代码里执行(evidence 缺失即 throw);ADR-10 证明「失败→当天立 ADR→校验闸落代码」的学习闭环工作。
+**Strengths (keep)**: arithmetic/solving layering + dual-implementation diffing — the verification strength of the correctness core far exceeds projects at the same stage; contract-first, mock-first, replay-as-behavioral-regression (core practices of every agent harness, already intrinsic); ADR pre-registered retirement conditions + anchor column; red lines enforced in code (throw on missing evidence); ADR-10 proves the learning loop "failure → same-day ADR → validation gate lands in code" works.
 
-**缺口(全部挂账)**:① 状态分裂→§11 保鲜机制(已落地);② deprecated 层仍承重→D-7(M2 W2 赎回);③ 对话循环不进 CI→D-8(批 0 赎回);④ 契约分裂(contracts.ts 五工具草案 vs 插件三工具;`TripState.wishes`/`Gate.answer` 无读写)→M2 W1;⑤ 工程卫生(zod 死依赖/SPEC_SYSTEM 死代码/命名残留/无 pyproject/z3 版本不齐/wish-pool 无去重)→批 0;⑥ 异步调度无仓内实现→M3 W5;⑦ WriteGate 零代码(M5 有意留白,设计稿前置 M3 W4);⑧ 可观测缺失(M3 三指标无度量基建)→M2 W5 埋 schema、M3 W2 上系统。
+**Gaps (all on the books)**: ① state fragmentation → §11 freshness mechanism (landed); ② deprecated layer still bearing load → D-7 (redeemed M2 W2); ③ dialogue loop not in CI → D-8 (redeemed in batch 0); ④ contract split (contracts.ts five-tool draft vs plugin three tools; `TripState.wishes`/`Gate.answer` have no readers/writers) → M2 W1; ⑤ engineering hygiene (zod dead dependency / SPEC_SYSTEM dead code / naming residue / no pyproject / z3 version mismatch / wish-pool no dedup) → batch 0; ⑥ async scheduling has no in-repo implementation → M3 W5; ⑦ WriteGate zero code (M5 intentionally left blank, design draft brought forward to M3 W4); ⑧ observability missing (M3's three metrics have no measurement infrastructure) → M2 W5 schema instrumentation, M3 W2 system.
 
-## 2. 能力缺口 → 选型矩阵
+## 2. Capability Gaps → Selection Matrix
 
-| 能力缺口 | 里程碑 | 策略 | 候选(许可证) | 理由 | 决策门 |
+| Capability gap | Milestone | Strategy | Candidates (license) | Rationale | Decision gate |
 |---|---|---|---|---|---|
-| LLM 抽象 | M2 | 维持 + 评估迁移 | `@deepseek-ai/dsh-llm`(dsh 系) | 现适配器已 provider-neutral;dsh 基线规则:不自研 dsh 已给的。功能对齐(think 剥离/json_object)则迁 | §7-6 |
-| 机票数据源 | M2 Entry | bridge + 数据包 | 见 §2.1 | 无商业合作期免费/开源优先 | §7-1(创始人) |
-| 酒店数据 | M2 | import + extend | hotelbyte-cli(MIT,已决 T3) | 缺口以同风格扩展回馈上游 | 已决(G4) |
-| MCP 桥 | M2–M3 | bridge→import SDK | `@modelcontextprotocol/sdk`(MIT) | G5 关闭后桥 T 系统(某企业级差旅 Agent 系统,脱敏);此前守 CLI/JSON 桥 ≤2(ADR-3) | G5(外部) |
-| 测试框架 | 全程 | **不 import** | 保持 node:assert + unittest | 零框架纪律够用;重放即行为回归已覆盖 promptfoo/deepeval 的核心价值,避免依赖膨胀。M3 面板不够再复议 | §7(默认维持) |
-| LLM 可观测 | M2 埋点/M3 系统 | 自研 schema + import 评估 | JSONL trace(自研);Langfuse(MIT,引入前核证) | 先延伸 bridge-latency 模式落 trace;面板需求(幻觉率/定稿率)真实出现再上系统 | §7-5 |
-| 最小 Web 面 | M3 | import 候选 | assistant-ui(MIT)+ Vercel AI SDK(引入前核证) | gates 选择题/透明卡片需要承载界面(D-4 赎回);UX 参考 Claude Code 权限询问(闭源 reference) | §7-3 |
-| 记忆层 | M4 | **自研核心优先** | mem0(Apache-2.0)备选 | T 系统六层仅 reference(内部资产红线);两条铁律(画像只进排序不进硬过滤、断言可溯源)实现量小;向量库推迟到证据出现 | §7-4 |
-| WriteGate | M3 设计/M5 实现 | **自研** | reference:Claude Code permission modes(闭源)+ T 系统 write-gate(内部,仅设计) | T6 要素:幂等键、pending state、未证明只读默认按写 | §7(设计稿 M3 W4) |
-| Agent 运行时 | 全程 | import(已决) | dsh 跟 main | 创始人约束,不自研、不重写 | 已决(G2) |
+| LLM abstraction | M2 | maintain + evaluate migration | `@deepseek-ai/dsh-llm` (dsh family) | current adapter already provider-neutral; dsh baseline rule: don't self-build what dsh already provides. Migrate on feature parity (think stripping/json_object) | §7-6 |
+| Flight data source | M2 Entry | bridge + data pack | see §2.1 | free/open-source first during the no-commercial-partnership period | §7-1 (founder) |
+| Hotel data | M2 | import + extend | hotelbyte-cli (MIT, decided T3) | extend gaps in the same style and contribute back upstream | decided (G4) |
+| MCP bridge | M2–M3 | bridge→import SDK | `@modelcontextprotocol/sdk` (MIT) | after G5 closes, bridge the T system (an enterprise-grade travel Agent system, de-identified); until then keep CLI/JSON bridge ≤2 (ADR-3) | G5 (external) |
+| Test framework | throughout | **do not import** | keep node:assert + unittest | zero-framework discipline suffices; replay-as-behavioral-regression already covers the core value of promptfoo/deepeval, avoiding dependency bloat. Revisit if the M3 panel falls short | §7 (default maintain) |
+| LLM observability | M2 instrumentation / M3 system | self-built schema + import evaluation | JSONL trace (self-built); Langfuse (MIT, verify before introducing) | first extend the bridge-latency pattern to land trace; bring in a system only when panel needs (hallucination rate/finalization rate) genuinely appear | §7-5 |
+| Minimal web surface | M3 | import candidate | assistant-ui (MIT) + Vercel AI SDK (verify before introducing) | gates multiple-choice / transparency cards need a host UI (D-4 redemption); UX references Claude Code permission prompts (closed-source reference) | §7-3 |
+| Memory layer | M4 | **self-built core first** | mem0 (Apache-2.0) as fallback | T system six layers are reference-only (internal asset red line); the two iron rules (profile enters ranking only, not hard filtering; assertions traceable) are small to implement; vector store deferred until evidence appears | §7-4 |
+| WriteGate | M3 design / M5 implementation | **self-built** | reference: Claude Code permission modes (closed-source) + T system write-gate (internal, design only) | T6 elements: idempotency key, pending state, unproven read-only defaults to write | §7 (design draft M3 W4) |
+| Agent runtime | throughout | import (decided) | dsh tracking main | founder constraint: no self-build, no rewrite | decided (G2) |
 
-### 2.1 数据源即能力:免费/开源优先路线
+### 2.1 Data Sources as Capability: The Free/Open-Source First Route
 
-数据源是 L4 能力层的一部分,不是外部依赖的注脚。无商业合作期(现在 → M5 之前)的组合:
+Data sources are part of the L4 capability layer, not a footnote to external dependencies. The mix during the no-commercial-partnership period (now → before M5):
 
-1. **免费额度官方 API**:Amadeus Self-Service 测试层(免费月度额度,sandbox 数据)、aviationstack 免费层等——班期/票价的真实样本,量小但真;
-2. **公开数据集**:OpenFlights(机场/航线静态)、OpenSky Network(实时 ADS-B 位置,免费社区 API)、GTFS(海外地面交通)——静态骨架与校验源;
-3. **用户已订资源自带**:`bookedResources` 模式——用户把已出票的行程单交给系统,围绕真实锚点规划。这在产品上是「半自助行程」场景,在数据上是零成本的真实锚点源;
-4. **人工提炼静态包**(现状沿用):demo 期数据包模式,证据标注分级保持诚实。
+1. **Free-tier official APIs**: Amadeus Self-Service test tier (free monthly quota, sandbox data), aviationstack free tier, etc. — real samples of schedules/fares, small in volume but real;
+2. **Public datasets**: OpenFlights (airport/route static), OpenSky Network (real-time ADS-B positions, free community API), GTFS (overseas ground transport) — static skeleton and validation sources;
+3. **User's already-booked resources**: the `bookedResources` pattern — users hand over ticketed itineraries, and the system plans around real anchors. Product-wise this is the "semi-self-service itinerary" scenario; data-wise it is a zero-cost source of real anchors;
+4. **Manually distilled static packs** (status quo continues): the demo-phase data pack pattern, with graded evidence labeling to stay honest.
 
-证据链标注在数据短缺期是护城河:`[实时API]`/`[公开数据集]`/`[估算]` 三级标注让数据质量对用户透明——这正是 GoTry 透明机制的差异化。**商业供应链后置 M5**:有交易量才有谈判筹码,且 WriteGate 上线前本来不需要订座级数据。国内铁路(12306)无官方开放 API,灰色库不入,走静态包+人工提炼。
+Evidence chain labeling is a moat during data scarcity: the three-level labels `[实时API]`/`[公开数据集]`/`[估算]` make data quality transparent to users — exactly GoTry's transparency differentiation. **Commercial supply chain deferred to M5**: negotiating leverage requires transaction volume, and booking-grade data is not needed before WriteGate ships anyway. Domestic rail (12306) has no official open API; gray-market databases are not admitted — use static packs + manual distillation.
 
-## 3. 半年迭代路线与分工(2026-09 → 2027-02)
+## 3. Six-Month Iteration Roadmap and Division of Labor (2026-09 → 2027-02)
 
-Owner 标签:【创始人】=拍板/走查/商业;【agent】=工程执行(loopx 派单,可多 agent 并行,守具名暂存纪律);【外部】=审批/合作依赖。假设:创始人+agent 协作,不跳阶段、不提前优化下阶段的事。
+Owner labels: 【Founder】 = final calls/walkthroughs/business; 【agent】 = engineering execution (loopx dispatches work orders; multiple agents may run in parallel, observing named-staging discipline); 【external】 = approval/partnership dependencies. Assumption: founder + agent collaboration, no stage-skipping, no premature optimization of the next stage's work.
 
-### 批 0(2026-08 本周)
-- 【agent】已完成:M1 exit 状态同步(`3ed6194`)、ADR 保鲜机制(`0bfacff`)、本文。
-- 【agent】已完成(历史快照):hygiene 批(删 zod 死依赖与 SPEC_SYSTEM 死代码、`createDeepSeekLlm` 改 provider-neutral 名、wish-pool 去重、pyproject.toml + 锁 z3 与 TS 同版);replay+smoke 进 `run-all-tests.sh`(**D-8 清偿**,2026-08 月内闭环)。
-- 【agent】已完成(历史快照):M2 W0 dsh 真实运行时组合(`ts/cordis.gotry-patch.yml` + `ts/dsh-runtime/`,`538018f`/`5acedb3`),早期 MiniMax 流协议 blocker 已解除;M2 已退出,见 `roadmap.md` 历史节点(exit `b0cfd97`,§7-1 三层组合全链落地)。
+### Batch 0 (week of 2026-08)
+- 【agent】 Done: M1 exit state sync (`3ed6194`), ADR freshness mechanism (`0bfacff`), this document.
+- 【agent】 Done (historical snapshot): hygiene batch (removed zod dead dependency and SPEC_SYSTEM dead code, renamed `createDeepSeekLlm` to a provider-neutral name, wish-pool dedup, pyproject.toml + pinned z3 to the same version as TS); replay+smoke entered `run-all-tests.sh` (**D-8 cleared**, closed within the month of 2026-08).
+- 【agent】 Done (historical snapshot): M2 W0 real dsh runtime assembly (`ts/cordis.gotry-patch.yml` + `ts/dsh-runtime/`, `538018f`/`5acedb3`), the early MiniMax stream protocol blocker resolved; M2 has exited, see the `roadmap.md` historical node (exit `b0cfd97`, §7-1 three-layer mix landed end-to-end).
 
-### M2 实时数据(9–10 月,约 8 周)
-- **W0 dsh 真实运行时接通**【agent】:gotry-tools 在真实 dsh 里端到端跑通;MiniMax 流协议适配落 `dsh-llm.ts`。
-- **W1 契约转正**【创始人走查 + agent 接线】:S1 三走查点(Gate 只允许选择题/workWindow 必带 evidence/assumptions 三分类);五工具注册表与插件三工具名对齐;`TripState.wishes`/`Gate.answer` 接线或删除(不留无读写的类型)。
-- **W2 D-7 迁移**【agent】:TS unified 补候选形态求解(对齐 `unified.py solve_choice_segment`,差分护航)→ dsh 插件与 `cli.py` 切到 unified → engine/journey 退纯 oracle。**D-7 清偿日 = ADR-5 兑现日**。
-- **W3 酒店桥**【agent】:hotelbyte-cli import+extend(T3),缺口同风格扩展回馈上游。
-- **W4 航班桥**【agent,前置 §7-1】:按 §2.1 组合落地航班能力插件;**ADR-6 兑现**——静态包退役为测试夹具。
-- **W5 观测埋点**【agent】:LLM trace JSONL(schema:prompt 摘要/响应/延迟/token/校验闸结果);dsh-llm 迁移评估(§7-6)。
-- **Exit 勾稽**:同一 JourneySpec 实时 vs 静态的求解差异可度量、可归因 + §11 保鲜清单过一遍。
+### M2 Real-Time Data (Sep–Oct, ~8 weeks)
+- **W0 real dsh runtime hookup** 【agent】: gotry-tools runs end-to-end in real dsh; MiniMax stream protocol adaptation lands in `dsh-llm.ts`.
+- **W1 contract ratification** 【founder walkthrough + agent wiring】: S1 three walkthrough points (Gate only allows multiple choice / workWindow must carry evidence / assumptions three-way classification); align the five-tool registry with the plugin three tool names; wire or delete `TripState.wishes`/`Gate.answer` (leave no types without readers/writers).
+- **W2 D-7 migration** 【agent】: TS unified adds candidate-form solving (align with `unified.py solve_choice_segment`, diffing as escort) → dsh plugin and `cli.py` switch to unified → engine/journey demote to pure oracle. **D-7 clearance day = ADR-5 cash-in day**.
+- **W3 hotel bridge** 【agent】: hotelbyte-cli import+extend (T3), gaps extended in the same style and contributed back upstream.
+- **W4 flight bridge** 【agent, precondition §7-1】: land the flight capability plugin per the §2.1 mix; **ADR-6 cash-in** — the static pack retires to test fixture.
+- **W5 observability instrumentation** 【agent】: LLM trace JSONL (schema: prompt digest/response/latency/token/validation gate result); dsh-llm migration evaluation (§7-6).
+- **Exit cross-check**: solving differences between real-time vs static on the same JourneySpec are measurable and attributable + run through the §11 freshness checklist once.
 
-### M3 最小可用产品(11–1 月,约 10 周)
-- **硬前置**:G1 市场锁定【创始人】——总纲 B1 决策包素材已齐(**历史快照**:G1 已于 2026-08-22 锁定为中国出境首发,见 §7 决策 2 与 `gotry-master-outline.md` G1 行;此处文字保留为编写时的策略语境)。
-- **W1 最小 Web 面**【agent,前置 §7-3】:透明卡片+动机访谈+gates 选择题的可体验形态,**D-4 清偿**。
-- **W2 指标面板**【agent,前置 §7-5】:幻觉率/定稿率/NPS 度量上线(评测质量层,§4);种子数据回流进评测集。
-- **W3 种子用户**【创始人+agent】:50–200 人邀请制,洱海+普吉两类场景。
-- **W4 WriteGate 设计稿**【agent 起草,创始人评审】:幂等键/pending state/未证明只读默认按写;产出 ADR 候选。
-- **W5 S5 后半**【agent】:loopx tick 真驱动异步调度,AGENTS.md 人肉清扫规则退役。
-- **Exit 勾稽**:定稿率 ≥40%、NPS ≥40、POI 幻觉 <1%(评测三件套全绿)。
+### M3 Minimum Viable Product (Nov–Jan, ~10 weeks)
+- **Hard precondition**: G1 market lock 【founder】 — master outline B1 decision package materials are complete (**historical snapshot**: G1 was locked on 2026-08-22 as China outbound first launch, see §7 decision 2 and the `gotry-master-outline.md` G1 row; the text here is kept as the strategy context at the time of writing).
+- **W1 minimal web surface** 【agent, precondition §7-3】: an experienceable form of transparency cards + motivation interview + gates multiple choice, **D-4 cleared**.
+- **W2 metrics panel** 【agent, precondition §7-5】: hallucination rate/finalization rate/NPS measurement online (evaluation quality layer, §4); seed data flows back into the evaluation set.
+- **W3 seed users** 【founder+agent】: 50–200 people invite-only, Erhai + Phuket two scenario types.
+- **W4 WriteGate design draft** 【agent drafts, founder reviews】: idempotency key / pending state / unproven read-only defaults to write; produce ADR candidates.
+- **W5 S5 second half** 【agent】: loopx tick truly drives async scheduling, the AGENTS.md manual-sweep rule retires.
+- **Exit cross-check**: finalization rate ≥40%, NPS ≥40, POI hallucination <1% (evaluation trio all green).
 
-### M4 记忆与「下一次出发」 entry(2 月)
-- 记忆选型决策(§7-4)【创始人】;北极星(下一次出发率)度量上线【agent】;对账七题=红眼模型与偏好的首批校准样本,**D-6 赎回**【agent】。
-- **半年底状态**:M4 进行中;M5(WriteGate 生产化/交易闭环)设计就绪。
+### M4 Memory and "Next Departure" Entry (Feb)
+- Memory selection decision (§7-4) 【founder】; north star (next-departure rate) measurement online 【agent】; the reconciliation seven questions = first calibration samples for the red-eye model and preferences, **D-6 redemption** 【agent】.
+- **Half-year-end state**: M4 in progress; M5 (WriteGate productionization / transaction loop) design-ready.
 
-## 4. 评测体系(ADR-11 落地)
+## 4. Evaluation System (ADR-11 Landing)
 
-评测是 agent 产品的一等架构件,不是事后工具。三层各司其职:
+Evaluation is a first-class architectural component of an agent product, not an afterthought tool. Three layers, each with its own job:
 
-| 层 | 防什么 | 形态 | 现状 |
+| Layer | Guards against | Form | Status |
 |---|---|---|---|
-| 回归层 | 退化(改坏了) | 单元(20/20)+ 差分(TS↔Python)+ 重放夹具(mock) | ✅ `run-all-tests.sh`;replay 批 0 进 CI |
-| 质量层 | 漂移(不知不觉变烂) | 评测集 + 指标面板:POI 幻觉率、定稿率、不失望四条、NPS | M3 W2 上线;此前 replay 终态断言兜底 |
-| 巡检层 | 「mock 绿而真智能烂」 | nightly 真 LLM 重放(`replay-real.ts`),带预算闸与结果归档 | 批 0 挂 loopx todo;ADR-10 的教训制度化 |
+| Regression layer | regression (breaking things) | unit (20/20) + diffing (TS↔Python) + replay fixtures (mock) | ✅ `run-all-tests.sh`; replay entered CI in batch 0 |
+| Quality layer | drift (quietly getting worse) | evaluation set + metrics panel: POI hallucination rate, finalization rate, four no-disappointment items, NPS | online M3 W2; until then replay terminal-state assertions as backstop |
+| Patrol layer | "mock green but real intelligence bad" | nightly real LLM replay (`replay-real.ts`), with budget gate and result archival | batch 0 filed as loopx todo; the ADR-10 lesson institutionalized |
 
-纪律:评测集只增不改语义(改语义=新用例);每个 M-exit 必须过对应层级,指标不进架构文档等于不存在。评测数据回流路径:种子用户会话(脱敏)→ 评测集候选 → 对账后入册。
+Discipline: the evaluation set only grows, never changes semantics (changing semantics = new case); every M-exit must pass the corresponding layer; a metric not in the architecture doc does not exist. Evaluation data reflow path: seed user sessions (de-identified) → evaluation set candidates → enrolled after reconciliation.
 
-## 5. harness 实践吸收矩阵(reference 面,代码引入一律走 §7)
+## 5. Harness Practice Absorption Matrix (reference plane; all code introduction goes through §7)
 
-| 来源 | 实践 | GoTry 落点 | 策略 |
+| Source | Practice | GoTry landing point | Strategy |
 |---|---|---|---|
-| Claude Code(闭源) | permission modes | WriteGate 设计稿(M3 W4):未证明只读默认按写、确认 UX | reference |
-| Claude Code(闭源) | hooks(事件点挂执行) | loopx tick 接线、S5 后半异步调度 | reference |
-| Claude Code(闭源) | context compaction | M3+ 长会话(多段行程反复改)的上下文压缩 | reference |
-| Claude Code(闭源) | CLAUDE.md 契约 | 已有 AGENTS.md,持续加厚(保鲜/暂存纪律即两例) | reference |
-| OpenHands(MIT) | 评测 harness/trajectory 回放 | §4 巡检层与评测集组织的参考 | reference(需代码时再评估 import) |
-| Aider / OpenCode | 工具面组织、编辑协议 | dsh 插件工具面演进参考 | reference |
-| LangGraph(MIT) | 图式状态机 | **仅 reference,不 import**——与 ADR-9 确定性循环、dsh 基线冲突 | reference |
-| mem0 / Letta(Apache-2.0) | 记忆分层与写入门禁 | M4 记忆域设计参考;mem0 为 import 备选 | reference / import 备选 |
-| Langfuse(MIT) | LLM trace/评测面板 | M3 W2 指标面板候选 | import 候选(§7-5) |
-| T 系统(内部,脱敏) | write-gate/六层 memory/tool-owned dates | **仅设计参考,代码与 schema 均不搬用**(内部资产红线) | reference |
+| Claude Code (closed-source) | permission modes | WriteGate design draft (M3 W4): unproven read-only defaults to write, confirmation UX | reference |
+| Claude Code (closed-source) | hooks (execution at event points) | loopx tick wiring, S5 second-half async scheduling | reference |
+| Claude Code (closed-source) | context compaction | M3+ long-session (multi-segment itinerary repeated edits) context compaction | reference |
+| Claude Code (closed-source) | CLAUDE.md contract | AGENTS.md already exists, keep thickening (freshness/staging discipline are two examples) | reference |
+| OpenHands (MIT) | evaluation harness/trajectory replay | reference for the §4 patrol layer and evaluation set organization | reference (evaluate import when code is needed) |
+| Aider / OpenCode | tool surface organization, edit protocol | reference for dsh plugin tool surface evolution | reference |
+| LangGraph (MIT) | graph-style state machine | **reference only, no import** — conflicts with the ADR-9 deterministic loop and the dsh baseline | reference |
+| mem0 / Letta (Apache-2.0) | memory layering and write gating | M4 memory domain design reference; mem0 as import fallback | reference / import fallback |
+| Langfuse (MIT) | LLM trace/evaluation panel | M3 W2 metrics panel candidate | import candidate (§7-5) |
+| T system (internal, de-identified) | write-gate/six-layer memory/tool-owned dates | **design reference only; no code or schema copied** (internal asset red line) | reference |
 
-## 6. 持续优化回路(怎么持续变好)
+## 6. Continuous Improvement Loop (How to Keep Getting Better)
 
 ```
-真实使用(种子用户/对账/巡检报警)
-  → 对账(demo-reconciliation 模式,三类去向:数据误差改数据 / 模型缺项记 ADR / 产品缺项进 loopx todo)
-  → 落地(ADR 进 §8 表带锚点;债务进 §10 表带赎回时机;产品项进 loopx)
-  → 验证(回归层全绿 + 巡检层 nightly + 质量层面板)
-  → M-exit 保鲜清单勾稽,进入下一里程碑
+real usage (seed users / reconciliation / patrol alarms)
+  → reconciliation (demo-reconciliation pattern, three destinations: data error → fix data / model gap → record ADR / product gap → loopx todo)
+  → landing (ADRs enter the §8 table with anchors; debt enters the §10 table with redemption timing; product items enter loopx)
+  → verification (regression layer all green + patrol layer nightly + quality layer panel)
+  → M-exit freshness checklist cross-check, enter the next milestone
 ```
 
-节奏:**nightly**=真 LLM 重放(预算闸);**每周**=对账会(种子期后);**每个 M-exit**=ADR 全表复审 + 债务表勾稽 + 状态面同步(§11)。loopx todos 只从 `architecture.md` §9/§10 与本文派生——优化事项不许只活在对话里。
+Cadence: **nightly** = real LLM replay (budget gate); **weekly** = reconciliation meeting (post-seed phase); **every M-exit** = full ADR table review + debt table cross-check + state-plane sync (§11). loopx todos derive only from `architecture.md` §9/§10 and this document — optimization items must not live only in conversations.
 
-## 7. 决策登记(结算状态已刷新)
+## 7. Decision Log (Settlement Status Refreshed)
 
-| # | 决策项 | 建议 | 状态 |
+| # | Decision item | Recommendation | Status |
 |---|---|---|---|
-| 1 | 机票数据源组合 | Amadeus 测试层 + OpenFlights 静态 + bookedResources 自带;灰色库不入 | ✅ 已决(三层组合=骨架+校验+锚点,M2 落地;Amadeus 后因关停换 FlyAI 官方通道) |
-| 2 | G1 市场锁定 | 中国出境优先(证据链与供应链半径最短) | ✅ 已决(2026-08-22,中国出境首发) |
-| 3 | Web 面框架 | assistant-ui(MIT)+ AI SDK;不满足则自研最小面 | ✅ 已决(未引框架——dsh web 为唯一产品面,D-4 清偿;薄壳 `shell/` 已删) |
-| 4 | 记忆方案 | 自研核心(MotivationProfile 契约延伸),mem0 备选 | ✅ 已决(自研六层,`design/memory-design.md`) |
-| 5 | Langfuse 可观测 | 先 JSONL;面板需求确认后 import(核证许可证) | ✅ 按建议执行(JSONL trace 已落;Langfuse 未引入,需求未出现) |
-| 6 | dsh-llm 迁移 | 功能对齐则迁——不自研 dsh 已给的 | 未迁(维持 provider-neutral 适配器;功能差未构成阻塞) |
-| 7 | 总纲 §2 拟增行 | 拟增:`@modelcontextprotocol/sdk`(G5 关闭后,MIT)、assistant-ui(MIT,核证)、Langfuse(MIT,核证)、mem0(Apache-2.0,备选) | 过半失效(3/4/5 的候选均未引入);新增 import 仍走本节登记纪律 |
+| 1 | Flight data source mix | Amadeus test tier + OpenFlights static + bookedResources user-supplied; gray-market databases not admitted | ✅ Decided (three-layer mix = skeleton + validation + anchors, landed M2; Amadeus later replaced by the FlyAI official channel after shutdown) |
+| 2 | G1 market lock | China outbound first (shortest evidence chain and supply chain radius) | ✅ Decided (2026-08-22, China outbound first launch) |
+| 3 | Web surface framework | assistant-ui (MIT) + AI SDK; if insufficient, self-build a minimal surface | ✅ Decided (no framework introduced — dsh web is the only product surface, D-4 cleared; thin shell `shell/` deleted) |
+| 4 | Memory solution | self-built core (MotivationProfile contract extension), mem0 as fallback | ✅ Decided (self-built six layers, `design/memory-design.md`) |
+| 5 | Langfuse observability | JSONL first; import after the panel need is confirmed (verify license) | ✅ Executed per recommendation (JSONL trace landed; Langfuse not introduced, need has not appeared) |
+| 6 | dsh-llm migration | migrate on feature parity — don't self-build what dsh already provides | Not migrated (maintaining the provider-neutral adapter; the feature gap is not blocking) |
+| 7 | Master outline §2 proposed additions | proposed: `@modelcontextprotocol/sdk` (after G5 closes, MIT), assistant-ui (MIT, verify), Langfuse (MIT, verify), mem0 (Apache-2.0, fallback) | Majority lapsed (candidates in 3/4/5 all not introduced); new imports still follow this section's registration discipline |

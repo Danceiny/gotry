@@ -12,7 +12,7 @@
 [![npm](https://img.shields.io/npm/v/@danceiny/gotry)](https://www.npmjs.com/package/@danceiny/gotry)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.15-blue)](https://www.npmjs.com/package/@danceiny/gotry)
-[![Docs](https://img.shields.io/badge/docs-architecture.md-blue)](docs/architecture.md)
+[![Docs](https://img.shields.io/badge/docs-architecture.md-blue)](docs/architecture.zh-CN.md)
 
 **[它做什么](#它做什么)** · **[工作原理](#工作原理)** · **[一段对话](#一段对话)** · **[同题横评](#同题横评)** · **[快速开始](#快速开始)** · **[隐私与可信](#隐私与可信)** · **[状态与路线图](#状态与路线图)** · **[参与开发](#参与开发)** · **[文档](#文档)**
 
@@ -69,9 +69,9 @@ flowchart LR
   </picture>
 </a>
 
-> 交互版:[`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html)(archify 生成,showcase 校验通过)。分层:L2 dsh 插件 · L3 `ts/src/unified.ts` 内核 · L4 效应解译 + 实时桥 · L5 loopx 治理。ADR:[`docs/architecture.md`](docs/architecture.md)。
+> 交互版:[`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html)(archify 生成,showcase 校验通过)。分层:L2 dsh 插件 · L3 `ts/src/unified.ts` 内核 · L4 效应解译 + 实时桥 · L5 loopx 治理。ADR:[`docs/architecture.md`](docs/architecture.zh-CN.md)。
 
-23 个注册工具分组:实时检索(飞猪官方通道 + 你本人登录态 Chrome,只读)· 目录 · 判定引擎 · 记忆 · 产物 · 事实闸 · 外部检索 · `gotry_doctor` 自检。无隐藏派发——通道注册表只返回有序建议列表,由模型或用户选择。逐工具契约:[`docs/tools.md`](docs/tools.md)。
+23 个注册工具分组:实时检索(飞猪官方通道 + 你本人登录态 Chrome,只读)· 目录 · 判定引擎 · 记忆 · 产物 · 事实闸 · 外部检索 · `gotry_doctor` 自检。无隐藏派发——通道注册表只返回有序建议列表,由模型或用户选择。逐工具契约:[`docs/tools.md`](docs/tools.zh-CN.md)。
 
 ## 一段对话
 
@@ -124,7 +124,7 @@ npx @danceiny/gotry doctor     # 可选渠道体检(--fix 补装)
 npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一问一答
 ```
 
-前置 Node ≥ 22.15。LLM key 由 dsh 宿主 UI 配(OpenAI 兼容端点同),gotry 不问也不回显。任何 npm 兼容 registry 皆可;镜像 `latest` 滞后时钉精确版本。仓内请走源码入口 `./gotry web`(裸名 npx 在仓内会失败)。符合条件的启动可能提供一次可选能力检查;CI / 非 TTY 不询问、不安装。onboarding 细节与运维脚本:[`docs/tools.md`](docs/tools.md)。源码安装:`npm ci && npm --prefix ts ci && node scripts/build-dist.mjs`——与 npm 包同一组钉死的 DSH `0.1.5-alpha.1` closure。全栈验证:`./scripts/run-all-tests.sh`。
+前置 Node ≥ 22.15。LLM key 由 dsh 宿主 UI 配(OpenAI 兼容端点同),gotry 不问也不回显。任何 npm 兼容 registry 皆可;镜像 `latest` 滞后时钉精确版本。仓内请走源码入口 `./gotry web`(裸名 npx 在仓内会失败)。符合条件的启动可能提供一次可选能力检查;CI / 非 TTY 不询问、不安装。onboarding 细节与运维脚本:[`docs/tools.md`](docs/tools.zh-CN.md)。源码安装:`npm ci && npm --prefix ts ci && node scripts/build-dist.mjs`——与 npm 包同一组钉死的 DSH `0.1.5-alpha.1` closure。全栈验证:`./scripts/run-all-tests.sh`。
 
 ## 隐私与可信
 
@@ -166,13 +166,13 @@ timeline
   M6 : B2B 包裹——内核零改动的 sponsor 插件
 ```
 
-里程碑进出闸:[`docs/roadmap.md`](docs/roadmap.md) · 工程状态:[`docs/architecture.md`](docs/architecture.md) · 逐版本决策:[`docs/release-notes.md`](docs/release-notes.md) + [CHANGELOG.md](CHANGELOG.md)。
+里程碑进出闸:[`docs/roadmap.md`](docs/roadmap.zh-CN.md) · 工程状态:[`docs/architecture.md`](docs/architecture.zh-CN.md) · 逐版本决策:[`docs/release-notes.md`](docs/release-notes.zh-CN.md) + [CHANGELOG.md](CHANGELOG.md)。
 
 ## 参与开发
 
-从最新 `main` 切 `feat/ · fix/ · docs/ · chore/` 分支,typecheck + 全栈回归全绿后开 PR。**测试红着不许合。** 指南:[CONTRIBUTING.md](CONTRIBUTING.md)。
+从最新 `main` 切 `feat/ · fix/ · docs/ · chore/` 分支,typecheck + 全栈回归全绿后开 PR。**测试红着不许合。** 指南:[CONTRIBUTING.md](CONTRIBUTING.zh-CN.md)。
 
-AI agent:[`AGENTS.md`](AGENTS.md) 是绑定契约——入场先清扫异步工单 · 算术只在 evaluate 层、求解只在 `unified.*` · 绝不写共享状态(`ts/dsh-runtime/gotry-state/`)· 同提交同步 `architecture.md` §11 六状态面 · 只暂存具名文件,禁止 `git add -A`。
+AI agent:[`AGENTS.md`](AGENTS.zh-CN.md) 是绑定契约——入场先清扫异步工单 · 算术只在 evaluate 层、求解只在 `unified.*` · 绝不写共享状态(`ts/dsh-runtime/gotry-state/`)· 同提交同步 `architecture.md` §11 六状态面 · 只暂存具名文件,禁止 `git add -A`。
 
 ## 文档
 
@@ -180,14 +180,14 @@ AI agent:[`AGENTS.md`](AGENTS.md) 是绑定契约——入场先清扫异步工�
 
 | 文档 | 内容 |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | 系统 / ADR / 演进 / 债务(权威) |
-| [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 时间线与当前位置 |
-| [`docs/user-guide.md`](docs/user-guide.md) | 终端用户使用指南 |
-| [`docs/tools.md`](docs/tools.md) | 工具参考面:契约 · 路由 · onboarding |
-| [`docs/data-sources.md`](docs/data-sources.md) | 数据源与证据链政策 |
-| [`docs/release-notes.md`](docs/release-notes.md) | 逐版本发布决策(「为什么」) |
+| [`docs/architecture.md`](docs/architecture.zh-CN.md) | 系统 / ADR / 演进 / 债务(权威) |
+| [`docs/roadmap.md`](docs/roadmap.zh-CN.md) | M0–M6 时间线与当前位置 |
+| [`docs/user-guide.md`](docs/user-guide.zh-CN.md) | 终端用户使用指南 |
+| [`docs/tools.md`](docs/tools.zh-CN.md) | 工具参考面:契约 · 路由 · onboarding |
+| [`docs/data-sources.md`](docs/data-sources.zh-CN.md) | 数据源与证据链政策 |
+| [`docs/release-notes.md`](docs/release-notes.zh-CN.md) | 逐版本发布决策(「为什么」) |
 | [`CHANGELOG.md`](CHANGELOG.md) | 机器衍生变更日志 |
-| [`docs/README.md`](docs/README.md) | 文档规范与总索引 |
+| [`docs/README.md`](docs/README.zh-CN.md) | 文档规范与总索引 |
 
 ## License
 

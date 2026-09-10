@@ -1,0 +1,112 @@
+[English](user-guide.md) | [简体中文](user-guide.zh-CN.md)
+
+# GoTry 使用指南
+
+> 一行启动,浏览器对话。LLM 负责听懂你,数学求解器负责判定与算术——每个数字带证据来源。
+
+## 启动(两种)
+
+**npm(推荐,免克隆)**:
+
+```bash
+npx @danceiny/gotry web
+# LLM key 由 dsh 宿主 UI 配置,gotry CLI 不出声
+```
+
+> 任何 npm 兼容 registry(npmjs / npmmirror / 公司内部镜像)都能跑这条命令;镜像 `latest` 滞后时钉精确版本即可(如 `npx @danceiny/gotry@0.0.1-rc.22 web`)。注意:**在 gotry 仓库目录内**请改用源码入口 `./gotry web`——仓内裸名 npx 会被 npm exec 误判为「本地已装」,报 `sh: gotry: command not found`。
+
+**源码(开发者)**:
+
+```bash
+git clone https://github.com/Danceiny/gotry && cd gotry
+npm ci && npm --prefix ts ci                     # root/TS 锁定闭包
+node scripts/build-dist.mjs                      # 构建源码 runtime
+./gotry web
+```
+
+浏览器开 **http://127.0.0.1:3080**(dsh 界面,首次冷启动 6-15 秒)。
+
+## 怎么用:对话即界面
+
+没有表单、没有导航——直接像跟人说话一样输入。GoTry 会先问清缺失的关键信息
+(工作窗口/已订资源),每道待决问题都是**带 trade-off 的选择题**;写操作永远先问你。
+
+### 试一试:不可行的憧憬被接住
+
+```
+我想去洱海边发呆,就这周末,我在上海,预算3000,别让我早起。年假了不用办公,还没订任何东西。
+```
+
+预期:引擎判定「2 天装不下洱海式放空(冲突:duration)」→ 洱海**不说不**,进
+「下一次出发」清单(成行条件:5 天+/春秋),当场给你**可行**的替代(千岛湖/太湖,
+含起床时间、到达精力、门到门全成本、证据链)。
+
+### 试一试:多段行程与工作窗口
+
+```
+7.17周五22:40落地深圳,7.18早上去香港办银行开户;争取当天飞普吉岛,8.10周一凌晨从深圳起飞去迪拜上班前到。请给我做机票和酒店的行程规划。
+```
+
+预期:引擎按段判定班次(工作窗口生效,撞班的航班被排除并说明理由),红眼段
+算「到达精力」而不只看票价;你之前订过的资源会被当硬锚点,不推倒重排。
+
+### 试一试:回访(跨会话记忆)
+
+第二次打开 GoTry 说「想出去走走」:它**不再重复问**工作窗口/预算这些答过的
+字段(画像已在系统提示里);你之前许过的「下一次出发」愿望若条件命中,它至多
+提 1 条,不命中就不打扰。
+
+## 你的数据在哪(可见、可导出、可删除)
+
+数据目录由运行形态决定:源码普通运行落在 `ts/dsh-runtime/gotry-state/`，npm 包运行落在调用目录的 `gotry-state/`，benchmark opt-in 使用隔离调用目录，避免写入共享状态。权威写面是同目录的 `gotry-state.db` SQLite 账本；下面这些 JSON/JSONL 文件是兼容旧形态的导出视图，便于你查看与备份，**不会反向回流进账本**。
+
+| 视图/文件 | 内容 |
+|---|---|
+| `motivation-profile.json` | 动机画像(权重/硬约束,每条带你的原话证据) |
+| `wish-pool.json` | 「下一次出发」清单(带成行条件;muted=休眠不删除) |
+| `memory-utility.jsonl` | 愿望效用事件(召回/确认;归因只认你亲口说的) |
+
+开发者排障或备份时可用仓内账本 CLI(示例均用隔离 root):
+
+```bash
+cd ts
+npx tsx scripts/state-cli.ts stats --state-root <root>
+npx tsx scripts/state-cli.ts export --state-root <root>       # 仅 local:DB → legacy 视图
+npx tsx scripts/state-cli.ts forget --state-root <root> wish <wish_id>
+```
+
+`--tenant <tenant>` 只是账本 scope 参数,不是认证或授权。`tick` / `export` / `whatif` 三个命令只支持 `--tenant local`: `tick` 会调用本地异步结算路径,`export` 会写共享 legacy 文件名,`whatif` 是整库管理员 snapshot 而不是租户导出；传入非 local 时会在创建目录、打开数据库、求解或写文件前拒绝。
+
+想删除某个愿望/同行人/动机画像,优先用 `state-cli forget` 或在对话里要求 GoTry 清理；不要把手改 legacy 视图当作账本更新。
+
+**想看生成的文件(行程 md、工单交付)不用去翻目录**,两条路:
+
+1. 对话里直接说「看看我生成的行程 / 打开上次的规划」——GoTry 会用 `gotry_artifacts_list` 列出在册产物，再用 `gotry_artifacts_read` 以**带行号的文件视图**读取(只读,支持翻页;**首行会显示「source + 完整 path」**,并显示内容版本避免把旧摘要当新内容)。公开 `./client` adapter 在 DSH Web 中按 runtime `block` 渲染自定义 list/read 卡，路径可点击；实际 fresh-profile list→select/open→read→edit→updated-read 证据由 `ts/scripts/dsh-artifact-web-e2e.ts` 生成。workspace/sidebar 文件树仍可作为额外预览面。可读范围 = 你的 gotry stateRoot + **会话工作目录**(排除 `node_modules`/`.git`);**只读文本类**(`md/txt/json/jsonl/csv/log/yaml/yml`),超过 2 MB、跨出允许目录、扩展名不在白名单、或路径是符号链接越界——都会返回带 `hint` 的 `ok: false`;
+2. **dsh web 侧栏工作台**(dsh-better-sidebar,dsh-market 第一 UI 组件):`gotry web` 页面右侧展开工作台,文件树里点开工作区里的行程 md/工单交付,即见产品级渲染(表格/图表/PDF 都支持)。装法:`npx @danceiny/gotry doctor --fix`(体检报告 `gotry-state/doctor-report.md` 也在这个工作台里预览);未装也不影响路 1。
+
+## 进阶:headless 一问一答
+
+```bash
+npx @danceiny/gotry "我想从深圳休整两天,预算3000,别早起"   # stdout 拿判定+证据链
+npx @danceiny/gotry help
+```
+
+## 你看到的每个数字
+
+| 你看到 | 来源 | 含义 |
+|---|---|---|
+| ¥850/人 | 求解器 | 门到门全成本(票+接驳+住宿+当地) |
+| 06:35 起床 | 引擎计算 | 家→枢纽+提前值机+班期倒推 |
+| 到达精力 84% | 精力模型 | 100 − 起床惩罚 − 接驳消耗(公式,非拍脑袋) |
+| [实时API:open-meteo] | Open-Meteo | 天气/气候,判定前必查 |
+| [骨架:openflights] | OpenFlights | 航线通航三值验证(否定≠证伪) |
+| [静态包:估算] | 人工调研 | 价格是估算,下单前核实 |
+
+行程产物里的航班号/时刻/机场/价格/政策另有交付前闸:agent 交付含这些「可下单事实」的产物前必须调 `gotry_fact_gate` 对账——每条都要回溯到**精确日期检索**的工具结果(查到什么、哪天没查到,都会落账)。查不到的班次会标「未确认/当前不可售,到 D-xx 复核」,不会拿历史班期或相邻日期填上;闸不过,agent 不得宣称「已验证方案」。
+
+## 已知限制
+
+- 中文优先(中国出境首发场景);英文界面在后续版本
+- 机票价格为估算口径时已明确标注,实时票价在后续里程碑
+- 连续跑多个求解可能偶发 z3 WASM 内存错误(重试即可,已登记已知问题)
+- 遇到 bug:`gotry-state/incidents.jsonl` 里有事故证据,提 issue 时附上
