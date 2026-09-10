@@ -43,7 +43,8 @@ import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
-import { factsFromFlyai, factsFromHotel, factsFromSession } from './bookable-facts.ts'
+import { factsFromFlyai, factsFromHotel, factsFromSession, factsFromSessionTrain } from './bookable-facts.ts'
+import { hasRecognizedAvailableSeat } from '../capabilities/session/adapters/rail-12306.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
 import { noteChannelVerdict, recordChannelEvent, readLatestChannelEvents } from '../capabilities/channel-health.ts'
@@ -1382,10 +1383,11 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         if (!itpT.result) return declinedObservation('SESSION_TRAIN_SEARCH', itpT.trace)
         const rT = itpT.result
         await noteChannel('session:12306-train', rT.verdict)
-        // #299 follow-up:12306 当前 parser 只由 trains.length 归约 hit/miss,
-        // malformed/empty body 与真实不可售尚未有 typed outcome + seat availability/
-        // freshness contract,故本路径不注册事实、不生成 train negative fact。
-        const topT = (rT.trains ?? []).slice(0, 10).map(t => `${t.trainCode} ${t.depTime}→${t.arrTime} 历时${Math.round(t.durationMin / 60 * 10) / 10}h ${t.canWebBuy === 'Y' ? '可订' : t.canWebBuy}${Object.entries(t.seats).filter(([, v]) => v && v !== '--' && v !== '无').slice(0, 3).map(([k, v]) => `${k}:${v}`).join(' ')}`)
+        // #355:only the invocation-produced binding may enter the fact log;
+        // malformed/transport/challenge states remain no-fact, and Y alone is
+        // not rendered as bookable without a recognized available seat token.
+        await appendFacts(config.stateRoot ?? '.', factsFromSessionTrain({ from: q.from, to: q.to, date: q.date }, rT, clock()))
+        const topT = (rT.trains ?? []).slice(0, 10).map(t => `${t.trainCode} ${t.depTime}→${t.arrTime} 历时${Math.round(t.durationMin / 60 * 10) / 10}h ${t.canWebBuy === 'Y' && hasRecognizedAvailableSeat(t) ? '可订' : '余票待确认'}${Object.entries(t.seats).filter(([, v]) => v && v !== '--' && v !== '无').slice(0, 3).map(([k, v]) => `${k}:${v}`).join(' ')}`)
         const summaryT = rT.verdict === 'hit'
           ? `${q.from}→${q.to} ${q.date} 余票(12306 公开查询面,${(rT.trains ?? []).length} 趟)前 ${topT.length} 条(列表接口不含票价,票价以 12306 落地页为准):\n${topT.join('\n')}\n${rT.evidence}`
           : rT.verdict === 'cooldown'

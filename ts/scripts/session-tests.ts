@@ -20,13 +20,13 @@ import { join } from 'node:path'
 import { classifyRequest, isSubmitText } from '../capabilities/session/read-guard.ts'
 import { buildEntryUrl, parseBatchSearch, parseBatchSearchResult } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
-import { buildTrainEntryUrl, parseLeftTicketQuery, STATION_TELECODES } from '../capabilities/session/adapters/rail-12306.ts'
+import { buildTrainEntryUrl, hasRecognizedAvailableSeat, parseLeftTicketQuery, parseLeftTicketQueryResult, STATION_TELECODES } from '../capabilities/session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, looksLikeDidaRatesBody } from '../capabilities/session/adapters/dida-portal.ts'
 import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, didaLoginHint, __resetRateLimiterForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
-import { factsFromHotel } from '../src/bookable-facts.ts'
+import { factsFromHotel, factsFromSessionTrain, TRAIN_FACT_FRESHNESS_RULE, TRAIN_FACT_MAX_AGE_MS } from '../src/bookable-facts.ts'
 
 let pass = 0
 let fail = 0
@@ -595,11 +595,11 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
 
   // L2 管道行解析(官方 cN 口径:站名走 data.map,座位桶 20-33 第一方校准;
   // 行按官方索引程序化构造,杜绝手数偏移)
-  const makeRow = (seats: Record<number, string>): string => {
+  const makeRow = (seats: Record<number, string>, canWebBuy = 'Y', serviceDate = '20261201'): string => {
     const c: string[] = new Array(56).fill('')
     c[2] = '24000000G1375'; c[3] = 'G1375'; c[4] = 'SHH'; c[5] = 'KMM'; c[6] = 'SHH'; c[7] = 'KMM'
-    c[8] = '07:35'; c[9] = '15:27'; c[10] = '07:52'; c[11] = 'Y'
-    c[12] = 'yp'; c[13] = '20261201'; c[14] = 'x'; c[15] = 'loc'; c[16] = '01'; c[17] = '02'; c[18] = 'Y'; c[19] = '0'
+    c[8] = '07:35'; c[9] = '15:27'; c[10] = '07:52'; c[11] = canWebBuy
+    c[12] = 'yp'; c[13] = serviceDate; c[14] = 'x'; c[15] = 'loc'; c[16] = '01'; c[17] = '02'; c[18] = 'Y'; c[19] = '0'
     for (const [k, v] of Object.entries(seats)) c[Number(k)] = v
     return c.join('|')
   }
@@ -616,6 +616,7 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
     assert(probe[0]!.seats[label] === idxVal, `座位桶 ${label} 下标=${idxVal}(官方 cN)`, probe[0]!.seats)
   }
   assert(probe[0]!.fromStation === '上海南' && probe[0]!.toStation === '昆明', '站名= data.map[电报码](官方 cN 口径,非行内索引)', probe[0])
+  assert(parseLeftTicketQueryResult(JSON.stringify({ data: { result: [probeRow], map: { SHH: '上海南', KMM: '昆明' } } }), entry.url ?? '').kind === 'recognized-nonempty', 'typed parser:有效非空批次 → recognized-nonempty')
 
   const trains1 = parseLeftTicketQuery(JSON.stringify({ data: { result: [makeRow({ 25: '有', 26: '有', 28: '有', 29: '有', 30: '有', 31: '有', 32: '有' })], map: { SHH: '上海南', KMM: '昆明' } } }), entry.url ?? '')
   assert(trains1.length === 1, '管道行解析命中', trains1)
@@ -624,7 +625,52 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
   assert(!('price' in trains1[0]!), '列表接口无票价——不伪装价格(诚实面)')
   const shifted = makeRow({ 25: '有' }).split('|').slice(1).join('|')
   assert(parseLeftTicketQuery(JSON.stringify({ data: { result: [shifted], map: {} } }), entry.url ?? '').length === 0, '索引漂移行(签名失配)整行跳过,fail-visible')
-  assert(parseLeftTicketQuery('not json', entry.url ?? '').length === 0 && parseLeftTicketQuery('{"data":{"result":[]}}', entry.url ?? '').length === 0, 'malformed/空 一律返空(不抛错)')
+  assert(parseLeftTicketQuery('not json', entry.url ?? '').length === 0 && parseLeftTicketQuery('{"data":{"result":[]}}', entry.url ?? '').length === 0, '兼容数组投影:malformed/空 一律返空(不抛错)')
+
+  // L2b. #355 typed outcome + train fact counterexamples.  The converter
+  // consumes invocation binding only; no caller timestamp/query metadata.
+  const requested = { from: '上海', to: '昆明', date: '2026-12-01' }
+  const now = new Date('2026-09-10T12:00:00.000Z')
+  const binding = { requested, batchId: 'fixture-hit-batch', queryId: 'session:12306-train:fixture-hit-batch', fetchedAt: '2026-09-10T11:59:00.000Z' }
+  const available = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [makeRow({ 30: '有' })], map: { SHH: '上海', KMM: '昆明' } } }), entry.url ?? '')
+  assert(available.kind === 'recognized-nonempty' && available.trains.length === 1 && hasRecognizedAvailableSeat(available.trains[0]!), 'counterexample:valid available row → recognized row + closed-set seat')
+  const hitFacts = factsFromSessionTrain(requested, { outcome: available, collection: binding }, now)
+  assert(hitFacts.length === 1 && hitFacts[0]!.kind === 'train' && hitFacts[0]!.bookability === 'bookable_exact_date' && !('price' in hitFacts[0]!), 'valid available row → one bookable train fact, price absent')
+  const empty = parseLeftTicketQueryResult('{"data":{"result":[]}}', entry.url ?? '')
+  assert(empty.kind === 'recognized-empty', 'counterexample:explicit data.result=[] → recognized-empty')
+  assert(factsFromSessionTrain(requested, { outcome: empty, collection: { ...binding, batchId: 'fixture-empty-batch', queryId: 'session:12306-train:fixture-empty-batch' } }, now).length === 1, 'genuine empty alone → one negative fact')
+  const malformedBodies: Array<[string, string]> = [
+    ['malformed JSON', 'not json'],
+    ['malformed root', '123'],
+    ['malformed result', '{"data":{"result":{}}}'],
+  ]
+  for (const [label, body] of malformedBodies) {
+    const outcome = parseLeftTicketQueryResult(body, entry.url ?? '')
+    assert(outcome.kind === 'malformed' && factsFromSessionTrain(requested, { outcome, collection: binding }, now).length === 0, `${label} → typed malformed + zero facts`, outcome)
+  }
+  const badRow = makeRow({ 30: '有' }).split('|').slice(1).join('|')
+  const shortRow = makeRow({ 30: '有' }).split('|').slice(0, 20).join('|')
+  const mixedOutcome = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [makeRow({ 30: '有' }), badRow], map: { SHH: '上海', KMM: '昆明' } } }), entry.url ?? '')
+  assert(mixedOutcome.kind === 'malformed' && factsFromSessionTrain(requested, { outcome: mixedOutcome, collection: binding }, now).length === 0, 'mixed valid/malformed batch → fail closed, zero candidates')
+  for (const [label, row] of [['nonobject row', null], ['short row', shortRow]] as const) {
+    const body = JSON.stringify({ data: { result: [row], map: { SHH: '上海', KMM: '昆明' } } })
+    const outcome = parseLeftTicketQueryResult(body, entry.url ?? '')
+    assert(outcome.kind === 'malformed' && factsFromSessionTrain(requested, { outcome, collection: binding }, now).length === 0, `${label} → malformed + zero facts`)
+  }
+  const transport = { outcome: { kind: 'transport-runtime-error' as const, reason: 'fixture transport error' }, collection: undefined }
+  assert(factsFromSessionTrain(requested, transport, now).length === 0, 'transport/runtime error → zero facts')
+  const yNoSeat = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [makeRow({ 30: '0', 31: '无', 32: '--' })], map: { SHH: '上海', KMM: '昆明' } } }), entry.url ?? '')
+  assert(yNoSeat.kind === 'recognized-nonempty' && factsFromSessionTrain(requested, { outcome: yNoSeat, collection: binding }, now).length === 0, 'canWebBuy=Y but no available seat → zero positive/negative facts')
+  const incoherentBuy = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [makeRow({ 30: '有' }, 'N')], map: { SHH: '上海', KMM: '昆明' } } }), entry.url ?? '')
+  assert(incoherentBuy.kind === 'recognized-nonempty' && factsFromSessionTrain(requested, { outcome: incoherentBuy, collection: binding }, now).length === 0, 'seat available but incoherent buy flag → zero facts')
+  assert(factsFromSessionTrain(requested, { outcome: available, collection: { ...binding, requested: { ...requested, from: '南京' } } }, now).length === 0, 'route mismatch binding → zero facts')
+  assert(factsFromSessionTrain(requested, { outcome: available, collection: { ...binding, requested: { ...requested, date: '2026-12-02' } } }, now).length === 0, 'date mismatch binding → zero facts')
+  assert(factsFromSessionTrain(requested, { outcome: available, collection: { ...binding, queryId: 'session:12306-train:other-batch' } }, now).length === 0, 'mismatched caller query identity → zero facts')
+  const rowDateMismatch = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [makeRow({ 30: '有' }, 'Y', '20261202')], map: { SHH: '上海', KMM: '昆明' } } }), entry.url ?? '')
+  assert(rowDateMismatch.kind === 'recognized-nonempty' && factsFromSessionTrain(requested, { outcome: rowDateMismatch, collection: binding }, now).length === 0, 'row service date mismatch → zero facts')
+  const staleBinding = { ...binding, fetchedAt: new Date(now.getTime() - TRAIN_FACT_MAX_AGE_MS - 1).toISOString() }
+  const futureBinding = { ...binding, fetchedAt: new Date(now.getTime() + 1).toISOString() }
+  assert(factsFromSessionTrain(requested, { outcome: available, collection: staleBinding }, now).length === 0 && factsFromSessionTrain(requested, { outcome: available, collection: futureBinding }, now).length === 0, `stale/future fetchedAt → zero facts (${TRAIN_FACT_FRESHNESS_RULE})`)
 
   // L3 闸面:过去日期在工具层拦截(cooldown 链路前)
   __resetRateLimiterForTest()

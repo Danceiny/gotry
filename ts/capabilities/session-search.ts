@@ -16,9 +16,10 @@ import { openSession } from './session/transport.ts'
 import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure } from './session/extension-channel.ts'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { buildEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
-import { buildTrainEntryUrl, parseLeftTicketQuery, TRAIN_SITE_HOST, type SessionTrainOption } from './session/adapters/rail-12306.ts'
+import { buildTrainEntryUrl, parseLeftTicketQueryResult, TRAIN_SITE_HOST, type SessionTrainOption, type TrainQueryParseOutcome } from './session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
 import { EXTENSION_STORE_URL } from './session/extension-bridge.ts'
 
@@ -485,10 +486,28 @@ export interface SessionTrainResult {
   latencyMs: number
   verdict: SessionVerdict
   trains?: SessionTrainOption[]
+  /** Typed parser/runtime outcome. `trains` remains a compatibility projection. */
+  outcome: TrainSessionOutcome
+  /** Created by this search invocation; facts must use this binding, not caller metadata. */
+  collection?: TrainCollectionBinding
   error?: string
   /** needs-extension 时给出 Chrome Web Store URL(dsh UI 渲成可点链接) */
   installUrl?: string
   installAction?: 'add-to-chrome'
+}
+
+export type TrainSessionOutcome = TrainQueryParseOutcome | {
+  kind: 'transport-runtime-error'
+  reason: string
+}
+
+export interface TrainCollectionBinding {
+  /** Route/date captured by the actual session invocation. */
+  requested: { from: string; to: string; date: string }
+  /** Per-invocation identity; never derived by the fact converter. */
+  batchId: string
+  queryId: string
+  fetchedAt: string
 }
 
 /** 车站电报码表未收录时的人话指引(纯函数,测试锚点) */
@@ -501,8 +520,43 @@ export async function sessionTrainSearch(q: SessionTrainQuery): Promise<SessionT
   const ts = new Date().toISOString()
   const site = 'train-12306'
   const err = (verdict: SessionVerdict, error: string): SessionTrainResult => ({
-    ok: false, via: 'session-train-12306-error', evidence: `[会话:${site}@error@${ts}] ${error}`, latencyMs: Date.now() - started, verdict, error,
+    ok: false, via: 'session-train-12306-error', evidence: `[会话:${site}@error@${ts}] ${error}`, latencyMs: Date.now() - started, verdict,
+    outcome: { kind: 'transport-runtime-error', reason: error }, error,
   })
+
+  const parsedResult = (body: string, evidence: string, guardSuffix = ''): SessionTrainResult => {
+    const outcome = parseLeftTicketQueryResult(body, entry.url!, { maxItems: 30 })
+    if (outcome.kind === 'malformed') {
+      return {
+        ok: false,
+        via: 'session-train-12306-error',
+        evidence: `${evidence} typed-parse=malformed`,
+        latencyMs: Date.now() - started,
+        verdict: 'error',
+        outcome,
+        error: `12306 leftTicket/query 响应未通过 typed contract:${outcome.reason}`,
+      }
+    }
+    const fetchedAt = new Date().toISOString()
+    const batchId = randomUUID()
+    const collection: TrainCollectionBinding = {
+      requested: { from: q.from, to: q.to, date: q.date },
+      batchId,
+      queryId: `session:12306-train:${batchId}`,
+      fetchedAt,
+    }
+    const trains = outcome.trains
+    return {
+      ok: true,
+      via: 'session-train-12306',
+      evidence: `${evidence} ${guardSuffix}`.trim(),
+      latencyMs: Date.now() - started,
+      verdict: outcome.kind === 'recognized-nonempty' ? 'hit' : 'miss',
+      outcome,
+      collection,
+      trains,
+    }
+  }
 
   // 节律闸:超间隔即拒,不发起导航
   const last = lastCallAt.get(site) ?? 0
@@ -528,7 +582,7 @@ export async function sessionTrainSearch(q: SessionTrainQuery): Promise<SessionT
     if (!r.ok) {
       const verdict = classifyBridgeFailure(r.kind)
       if (verdict === 'needs-extension') {
-        return { ok: false, via: 'session-train-12306-error', evidence: '[会话:train-12306-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: r.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+        return { ok: false, via: 'session-train-12306-error', evidence: '[会话:train-12306-needs-extension@ts]', latencyMs: Date.now() - started, verdict, outcome: { kind: 'transport-runtime-error', reason: r.summary }, error: r.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
       }
       return err(verdict, r.summary)
     }
@@ -537,16 +591,7 @@ export async function sessionTrainSearch(q: SessionTrainQuery): Promise<SessionT
     if (CHALLENGE_RE.test(title + head)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
-    const trains = parseLeftTicketQuery(r.body, entry.url)
-    const verdict: SessionVerdict = trains.length > 0 ? 'hit' : 'miss'
-    return {
-      ok: true,
-      via: 'session-train-12306',
-      evidence: `[会话:${site}@${ts}] ${trains.length} trains;transport=extension(公开查询面,被动嗅探,零系统弹窗;扩展零写行为=物理只读)`,
-      latencyMs: Date.now() - started,
-      verdict,
-      trains,
-    }
+    return parsedResult(r.body, `[会话:${site}@${ts}] transport=extension(公开查询面,被动嗅探,零系统弹窗;扩展零写行为=物理只读)`)
   }
 
   // cdp/persistent 车道:与机/酒同构
@@ -580,16 +625,7 @@ export async function sessionTrainSearch(q: SessionTrainQuery): Promise<SessionT
     if (CHALLENGE_RE.test(title + headHtml)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
-    const trains = parseLeftTicketQuery(body, entry.url)
-    const verdict: SessionVerdict = trains.length > 0 ? 'hit' : 'miss'
-    return {
-      ok: true,
-      via: 'session-train-12306',
-      evidence: `[会话:${site}@${ts}] ${trains.length} trains(公开查询面);guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}`,
-      latencyMs: Date.now() - started,
-      verdict,
-      trains,
-    }
+    return parsedResult(body, `[会话:${site}@${ts}] 12306 公开查询面`, `guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}`)
   } catch (e) {
     return err('error', e instanceof Error ? e.message.slice(0, 200) : String(e))
   } finally {
