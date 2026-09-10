@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { fileURLToPath } from 'node:url'
 
 import {
@@ -55,6 +56,49 @@ import { factsFromSessionTrain } from '../src/bookable-facts.ts'
 const EXT_DIR = fileURLToPath(new URL('../../extension/', import.meta.url))
 const UNREF_CHILD = fileURLToPath(new URL('./fixtures/extension-bridge-unref-child.mjs', import.meta.url))
 const read = (f: string): string => readFileSync(join(EXT_DIR, f), 'utf8')
+
+async function contentMainRelativeResponseUrlProof(source: string): Promise<Array<{ url: string; body: string }>> {
+  const events: Array<{ url: string; body: string }> = []
+  const window = {
+    __gotrySniffInstalled: false,
+    fetch: async function (_input?: unknown, _init?: unknown) {
+      return {
+        url: 'https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=2026-12-01&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM',
+        headers: { get: () => null },
+        clone: () => ({ text: async () => '{"data":{"result":[]}}' }),
+      }
+    },
+    dispatchEvent: (event: { detail?: { url?: string; body?: string } }) => {
+      events.push({ url: String(event.detail?.url ?? ''), body: String(event.detail?.body ?? '') })
+    },
+  }
+  class FixtureXhr {
+    responseType = ''
+    responseText = '{"data":{"result":[]}}'
+    response = this.responseText
+    responseURL = 'https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=2026-12-01&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM'
+    private listeners: Array<() => void> = []
+    addEventListener(event: string, handler: () => void): void {
+      if (event === 'load') this.listeners.push(handler)
+    }
+    open(_method: string, _url: string): void {}
+    send(_body?: unknown): void {
+      for (const handler of this.listeners) handler()
+    }
+  }
+  class FixtureCustomEvent {
+    detail: { url?: string; body?: string }
+    constructor(_type: string, init: { detail: { url?: string; body?: string } }) { this.detail = init.detail }
+  }
+  ;(window as { addEventListener?: () => void }).addEventListener = () => {}
+  runInNewContext(source, { window, location: { hostname: 'kyfw.12306.cn' }, XMLHttpRequest: FixtureXhr, CustomEvent: FixtureCustomEvent })
+  await window.fetch('/otn/leftTicket/queryG', {})
+  const xhr = new FixtureXhr()
+  xhr.open('GET', '/otn/leftTicket/queryG')
+  xhr.send()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  return events
+}
 
 let passed = 0
 async function check(label: string, assertion: () => void | Promise<void>): Promise<void> {
@@ -269,7 +313,17 @@ async function main(): Promise<void> {
     assert.ok(contentBridgeJs.includes('gotry-ctrip-sniff'))
     assert.ok(contentBridgeJs.includes('url: d.url'), 'content bridge 应转发嗅探响应 URL')
     assert.ok(backgroundJs.includes('url: String(msg.url ??'), 'background 应保留嗅探响应 URL')
+    assert.ok(contentMainJs.includes('typeof res.url === \'string\''), 'content-main fetch 应读取浏览器 response.url')
+    assert.ok(contentMainJs.includes('typeof xhr.responseURL === \'string\''), 'content-main XHR 应读取浏览器 responseURL')
     assert.ok(contentBridgeJs.includes('gotry-page'))
+  })
+  await check('相对 12306 输入 → fetch/XHR 均转发同一响应的绝对 URL 与 body', async () => {
+    const events = await contentMainRelativeResponseUrlProof(contentMainJs)
+    const expectedUrl = 'https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=2026-12-01&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM'
+    assert.deepEqual(events, [
+      { url: expectedUrl, body: '{"data":{"result":[]}}' },
+      { url: expectedUrl, body: '{"data":{"result":[]}}' },
+    ])
   })
   await check('防漂移(Dida):DIDA_NETWORK_HINTS(Node)= content-main 嗅探面;票据名= background SITES;manifest 覆盖 portal.dida.com', () => {
     for (const hint of DIDA_NETWORK_HINTS) {

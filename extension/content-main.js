@@ -72,7 +72,8 @@
             var clone = res.clone()
             clone.text().then(function (t) {
               try {
-                if (urlHint || (t.length <= HOTEL_BODY_MAX && HOTEL_BODY_SIG_RE.test(t)) || (t.length <= HOTEL_BODY_MAX && DIDA_BODY_SIG_RE.test(t))) dispatch(url, t)
+                var responseUrl = typeof res.url === 'string' ? res.url : ''
+                if (urlHint || (t.length <= HOTEL_BODY_MAX && HOTEL_BODY_SIG_RE.test(t)) || (t.length <= HOTEL_BODY_MAX && DIDA_BODY_SIG_RE.test(t))) dispatch(responseUrl, t)
               } catch { /* 嗅探失败不影响站点自身 */ }
             }).catch(function () { /* 流不可读则跳过 */ })
           }
@@ -101,7 +102,8 @@
         else if (xhr.responseType === 'json') body = JSON.stringify(xhr.response)
         else return
         if (!body) return
-        if (urlHint || (body.length <= HOTEL_BODY_MAX && HOTEL_BODY_SIG_RE.test(body)) || (body.length <= HOTEL_BODY_MAX && DIDA_BODY_SIG_RE.test(body))) dispatch(xhr.__gotryUrl, body)
+        var responseUrl = typeof xhr.responseURL === 'string' ? xhr.responseURL : ''
+        if (urlHint || (body.length <= HOTEL_BODY_MAX && HOTEL_BODY_SIG_RE.test(body)) || (body.length <= HOTEL_BODY_MAX && DIDA_BODY_SIG_RE.test(body))) dispatch(responseUrl, body)
       } catch { /* 嗅探失败不影响站点 */ }
     })
     return origSend.apply(this, arguments)
