@@ -595,11 +595,11 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
 
   // L2 管道行解析(官方 cN 口径:站名走 data.map,座位桶 20-33 第一方校准;
   // 行按官方索引程序化构造,杜绝手数偏移)
-  const makeRow = (seats: Record<number, string>, canWebBuy = 'Y', serviceDate = '20261201'): string => {
+  const makeRow = (seats: Record<number, string>, canWebBuy = 'Y', startTrainDate = '20261201'): string => {
     const c: string[] = new Array(56).fill('')
     c[2] = '24000000G1375'; c[3] = 'G1375'; c[4] = 'SHH'; c[5] = 'KMM'; c[6] = 'SHH'; c[7] = 'KMM'
     c[8] = '07:35'; c[9] = '15:27'; c[10] = '07:52'; c[11] = canWebBuy
-    c[12] = 'yp'; c[13] = serviceDate; c[14] = 'x'; c[15] = 'loc'; c[16] = '01'; c[17] = '02'; c[18] = 'Y'; c[19] = '0'
+    c[12] = 'yp'; c[13] = startTrainDate; c[14] = 'x'; c[15] = 'loc'; c[16] = '01'; c[17] = '02'; c[18] = 'Y'; c[19] = '0'
     for (const [k, v] of Object.entries(seats)) c[Number(k)] = v
     return c.join('|')
   }
@@ -629,7 +629,7 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
   const malformedLimitedFields: Array<[string, string, Record<string, unknown>]> = [
     ['invalid departure minute', makeRow({ 30: '有' }).replace('07:35', '07:99'), { SHH: '上海', KMM: '昆明' }],
     ['invalid arrival minute', makeRow({ 30: '有' }).replace('15:27', '15:99'), { SHH: '上海', KMM: '昆明' }],
-    ['invalid calendar service date', makeRow({ 30: '有' }, 'Y', '20261399'), { SHH: '上海', KMM: '昆明' }],
+    ['invalid calendar start train date', makeRow({ 30: '有' }, 'Y', '20261399'), { SHH: '上海', KMM: '昆明' }],
     ['non-string station map value', makeRow({ 30: '有' }), { SHH: 123, KMM: '昆明' }],
   ]
   for (const [label, row, map] of malformedLimitedFields) {
@@ -680,8 +680,9 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
   assert(factsFromSessionTrain(requested, { outcome: available, collection: { ...binding, requested: { ...requested, from: '南京' } } }, now).length === 0, 'route mismatch binding → zero facts')
   assert(factsFromSessionTrain(requested, { outcome: available, collection: { ...binding, requested: { ...requested, date: '2026-12-02' } } }, now).length === 0, 'date mismatch binding → zero facts')
   assert(factsFromSessionTrain(requested, { outcome: available, collection: { ...binding, queryId: 'session:12306-train:other-batch' } }, now).length === 0, 'mismatched caller query identity → zero facts')
-  const rowDateMismatch = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [makeRow({ 30: '有' }, 'Y', '20261202')], map: { SHH: '上海', KMM: '昆明' } } }), entry.url ?? '')
-  assert(rowDateMismatch.kind === 'recognized-nonempty' && factsFromSessionTrain(requested, { outcome: rowDateMismatch, collection: binding }, now).length === 0, 'row service date mismatch → zero facts')
+  const priorOriginDate = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [makeRow({ 30: '有' }, 'Y', '20261130')], map: { SHH: '上海', KMM: '昆明' } } }), entry.url ?? '')
+  assert(priorOriginDate.kind === 'recognized-nonempty' && priorOriginDate.trains[0]!.startTrainDate === '2026-11-30'
+    && factsFromSessionTrain(requested, { outcome: priorOriginDate, collection: binding }, now).length === 1, 'startTrainDate 前一日且 passenger query date 命中 → 保留并产出事实')
   const staleBinding = { ...binding, fetchedAt: new Date(now.getTime() - TRAIN_FACT_MAX_AGE_MS - 1).toISOString() }
   const futureBinding = { ...binding, fetchedAt: new Date(now.getTime() + 1).toISOString() }
   assert(factsFromSessionTrain(requested, { outcome: available, collection: staleBinding }, now).length === 0 && factsFromSessionTrain(requested, { outcome: available, collection: futureBinding }, now).length === 0, `stale/future fetchedAt → zero facts (${TRAIN_FACT_FRESHNESS_RULE})`)

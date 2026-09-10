@@ -341,7 +341,7 @@ export function factsFromSessionTrain(
   if (r.outcome.kind !== 'recognized-nonempty') return []
   const facts: FlightFact[] = []
   for (const o of r.outcome.trains ?? []) {
-    if (o.serviceDate !== q.date || o.canWebBuy !== 'Y' || !hasRecognizedAvailableSeat(o)) continue
+    if (o.canWebBuy !== 'Y' || !hasRecognizedAvailableSeat(o)) continue
     facts.push({
       schema: BOOKABLE_FACT_SCHEMA,
       fact_id: makeFactId(['train', q.from, q.to, q.date, o.trainCode, c.queryId]),

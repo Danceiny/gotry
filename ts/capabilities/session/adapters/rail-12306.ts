@@ -199,8 +199,8 @@ export interface SessionTrainOption {
   arrTime: string
   /** 历时(分钟) */
   durationMin: number
-  /** 12306 行内服务日期(YYYY-MM-DD);用于 exact-date fail-closed 绑定 */
-  serviceDate?: string
+  /** 12306 train-origin date(YYYY-MM-DD);validated and preserved, not passenger query date */
+  startTrainDate?: string
   /** Y=可预订 / N=不可 / 其他上游原话 */
   canWebBuy: string
   /** 余票分桶(第一方校准索引,见 SEAT_BUCKETS;值原样:数字 / 有 / 无 / --) */
@@ -252,7 +252,7 @@ function lishiToMin(s: string | undefined): number {
   return Number(m[1]) * 60 + Number(m[2])
 }
 
-function normalizeServiceDate(value: string): string | undefined {
+function normalizeStartTrainDate(value: string): string | undefined {
   if (!/^\d{8}$/.test(value)) return undefined
   const normalized = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
   const parsed = new Date(`${normalized}T00:00:00.000Z`)
@@ -268,12 +268,12 @@ function rowToOption(row: string, stationMap: Record<string, unknown> | undefine
   const depTime = (f[8] ?? '').trim()
   const arrTime = (f[9] ?? '').trim()
   const durationMin = lishiToMin(f[10])
-  const serviceDateRaw = (f[13] ?? '').trim()
-  const serviceDate = normalizeServiceDate(serviceDateRaw)
+  const startTrainDateRaw = (f[13] ?? '').trim()
+  const startTrainDate = normalizeStartTrainDate(startTrainDateRaw)
   const validHm = (value: string): boolean => HHMM_RE.test(value)
     && Number(value.slice(0, 2)) <= 23 && Number(value.slice(3, 5)) <= 59
   if (!TRAIN_CODE_RE.test(trainCode) || !validHm(depTime) || !validHm(arrTime)
-    || durationMin <= 0 || !serviceDate || !(f[6] ?? '').trim() || !(f[7] ?? '').trim()) return null
+    || durationMin <= 0 || !startTrainDate || !(f[6] ?? '').trim() || !(f[7] ?? '').trim()) return null
   // 官方 cN 口径:站名 = data.map[电报码](map 缺失/缺键时退电报码原样,不猜名)
   const stationName = (code: string): string | null => {
     if (!stationMap || !Object.prototype.hasOwnProperty.call(stationMap, code)) return code
@@ -295,7 +295,7 @@ function rowToOption(row: string, stationMap: Record<string, unknown> | undefine
     depTime,
     arrTime,
     durationMin,
-    serviceDate,
+    startTrainDate,
     canWebBuy: (f[11] ?? '').trim(),
     seats,
     jumpUrl: entryUrl,

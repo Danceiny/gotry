@@ -106,6 +106,9 @@ async function main() {
         }
       }
       const common = { requested: { from, to, date }, batchId: `fixture-${date}`, queryId: `session:12306-train:fixture-${date}`, fetchedAt: '2026-09-10T11:59:00.000Z' }
+      const collection = date === '2027-11-15'
+        ? { ...common, requested: { from, to, date: '2027-11-14' } }
+        : common
       if (date === '2027-11-13') {
         return {
           result: { ok: false, via: 'session-train-12306-error', evidence: '[fixture:session-train-malformed]', latencyMs: 0, verdict: 'error', outcome: { kind: 'malformed', reason: 'fixture malformed root' }, error: 'fixture malformed root' },
@@ -125,10 +128,10 @@ async function main() {
           trace: { effect: fx.effect, channel: 'fixture', attempts: 1, backoffMs: 0, breaker: 'off', evidence: ['[fixture:session-train-empty]'] },
         }
       }
-      const train = { trainCode: 'G1375', fromStation: '上海', toStation: '昆明', depTime: '07:35', arrTime: '15:27', durationMin: 472, serviceDate: date, canWebBuy: 'Y', seats: { '二等座': '有' }, jumpUrl: 'fixture://12306' }
+      const train = { trainCode: 'G1375', fromStation: '上海', toStation: '昆明', depTime: '07:35', arrTime: '15:27', durationMin: 472, startTrainDate: date === '2027-11-11' ? '2027-11-10' : date, canWebBuy: 'Y', seats: { '二等座': '有' }, jumpUrl: 'fixture://12306' }
       const outcome = { kind: 'recognized-nonempty' as const, trains: [train] }
       return {
-        result: { ok: true, via: 'session-train-12306', evidence: '[fixture:session-train-hit]', latencyMs: 0, verdict: 'hit', outcome, collection: common, trains: [train] },
+        result: { ok: true, via: 'session-train-12306', evidence: '[fixture:session-train-hit]', latencyMs: 0, verdict: 'hit', outcome, collection, trains: [train] },
         trace: { effect: fx.effect, channel: 'fixture', attempts: 1, backoffMs: 0, breaker: 'off', evidence: ['[fixture:session-train-hit]'] },
       }
     }
@@ -719,6 +722,9 @@ async function main() {
     const trainEmpty = await sessionTrain.execute({ kind: 'train', from: '上海', to: '昆明', date: '2027-11-12' }, null) as { ok?: boolean; verdict?: string; outcome?: { kind?: string } }
     const trainMalformed = await sessionTrain.execute({ kind: 'train', from: '上海', to: '昆明', date: '2027-11-13' }, null) as { ok?: boolean; verdict?: string; outcome?: { kind?: string } }
     const trainTransport = await sessionTrain.execute({ kind: 'train', from: '上海', to: '昆明', date: '2027-11-14' }, null) as { ok?: boolean; verdict?: string; outcome?: { kind?: string } }
+    const trainTampered = await sessionTrain.execute({ kind: 'train', from: '上海', to: '昆明', date: '2027-11-15' }, null) as {
+      ok?: boolean; verdict?: string; outcome?: { kind?: string }; collection?: { queryId?: string; requested?: { date?: string } }; trains?: unknown[]
+    }
     if (trainHit.ok !== true || trainHit.verdict !== 'hit' || trainHit.outcome?.kind !== 'recognized-nonempty' || !trainHit.collection?.queryId || (trainHit.trains?.length ?? 0) !== 1) {
       throw new Error(`FAIL: registered session train hit typed result,实际:${JSON.stringify(trainHit).slice(0, 600)}`)
     }
@@ -731,13 +737,17 @@ async function main() {
     if (trainTransport.ok !== false || trainTransport.verdict !== 'error' || trainTransport.outcome?.kind !== 'transport-runtime-error') {
       throw new Error(`FAIL: registered session train transport error,实际:${JSON.stringify(trainTransport).slice(0, 400)}`)
     }
+    if (trainTampered.ok !== true || trainTampered.verdict !== 'hit' || trainTampered.outcome?.kind !== 'recognized-nonempty'
+      || trainTampered.collection?.requested?.date !== '2027-11-14' || (trainTampered.trains?.length ?? 0) !== 1) {
+      throw new Error(`FAIL: tampered collection fixture should remain hit-shaped but carry mismatched binding,实际:${JSON.stringify(trainTampered).slice(0, 600)}`)
+    }
     const sessionFactBytes = await readFile(join(smokeRoot, 'gotry-state', 'bookable-facts.jsonl'), 'utf8')
     const sessionFacts = sessionFactBytes.split('\n').filter(Boolean).map(line => JSON.parse(line) as FlightFact)
     const sessionTrainFacts = sessionFacts.filter(f => f.source === 'session:12306-train')
     if (sessionTrainFacts.length !== 2
       || !sessionTrainFacts.some(f => f.query_id === trainHit.collection!.queryId && f.bookability === 'bookable_exact_date' && f.kind === 'train')
       || !sessionTrainFacts.some(f => f.query_id === 'session:12306-train:fixture-2027-11-12' && f.bookability === 'unavailable_exact_date')
-      || sessionFacts.some(f => /2027-11-13|2027-11-14/.test(f.query_id))) {
+      || sessionFacts.some(f => /2027-11-13|2027-11-14|2027-11-15/.test(f.query_id))) {
       throw new Error(`FAIL: session train isolated fact bytes 应仅含 hit+empty,实际:${JSON.stringify(sessionTrainFacts).slice(0, 900)}`)
     }
     const sessionHitFact = sessionTrainFacts.find(f => f.query_id === trainHit.collection!.queryId)!
@@ -749,7 +759,7 @@ async function main() {
     if (sessionGate.verdict !== 'pass' || (sessionGate.violations?.length ?? 0) !== 0) {
       throw new Error(`FAIL: session train anchor 经 gotry_fact_gate 应 pass,实际:${JSON.stringify(sessionGate).slice(0, 700)}`)
     }
-    console.log(`fact gate: registered session train hit/miss/malformed/transport → ${sessionTrainFacts.length} isolated facts → anchored canonical line → pass`)
+    console.log(`fact gate: registered session train previous-origin-date hit/miss/malformed/transport/tampered-binding → ${sessionTrainFacts.length} isolated facts → anchored canonical line → pass`)
   }
 
   // 17) LLM_MODEL 会话面覆盖(issue #77):未设 GOTRY_LLM_MODEL 不挂监听(默认路径
