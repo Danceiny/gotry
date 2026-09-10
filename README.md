@@ -345,6 +345,24 @@ The single authoritative timeline — entry/exit conditions, deliverables, and g
 
 ## Verify
 
+### Packaged Web retry/cancel proof (#289)
+
+Prerequisites: Node 24, a locally installed Google Chrome, and dependencies
+installed from both the root and `ts/` lockfiles. From `ts/`, run:
+
+```bash
+GOTRY_SESSION_LIVE=0 npx --no-install tsx scripts/issue-289-web-retry-e2e.ts
+```
+
+This builds and installs a GoTry package, exercises the public Web UI against
+a localhost OpenAI-compatible fake relay, and uses fresh HOME, DSH_HOME,
+workspace, and Chrome-profile isolation. The proof drives the public New
+session and Stop controls; reviewable screenshots, JSON assertions, receipt,
+and redacted logs are written under
+`.omx/artifacts/issue-289-web-retry-e2e/`. It covers the current packaged
+public Web path only; the historical rc.22 incident event remains tracked in
+[issue #289](https://github.com/Danceiny/gotry/issues/289).
+
 ```bash
 ./scripts/run-all-tests.sh                     # full-stack suite (pure TS, no Python needed)
 cd ts
