@@ -304,9 +304,13 @@ export function dedupeFacts<T extends BookableFact>(facts: T[]): T[] {
 }
 
 /** route+date 的最新查询结论(同日多次查询:最新一次为准,避免「昨天 miss 今天 hit」陈旧否定) */
-export function latestFactsForRouteDate(facts: BookableFact[], origin: string, destination: string, date: string): FlightFact[] {
+export function latestFactsForRouteDate(
+  facts: BookableFact[], origin: string, destination: string, date: string,
+  kind?: 'flight' | 'train',
+): FlightFact[] {
   const hits = facts.filter((f): f is FlightFact =>
     (f.kind === 'flight' || f.kind === 'train')
+    && (!kind || f.kind === kind)
     && f.route.origin === origin && f.route.destination === destination && f.date === date)
   const latestQueryTs = new Map<string, string>()
   for (const f of hits) {
@@ -319,7 +323,7 @@ export function latestFactsForRouteDate(facts: BookableFact[], origin: string, d
 }
 
 // ---------------------------------------------------------------------------
-// 判定原语①:航班 claim 可述性(fail closed)
+// 判定原语①:航班 claim 可述性(fail closed,flight-only)
 // ---------------------------------------------------------------------------
 
 export type FlightClaimVerdict =
@@ -335,10 +339,16 @@ export interface FlightClaim {
   date?: string
 }
 
+/**
+ * 航班 claim 裁决(flight-only):注册表只接受 `kind:'flight'` 的同号事实
+ * ——train 事实走 `railClaimVerdict` 独立裁决,不得混入航班 not_in_source
+ * 路径(issue #299)。中文高铁/动车/城际/直达代码(G/D/C/Z + 3–4 位)在
+ * 闸侧 `extractClaims` 已分流到 `trains` claim,本函数无需再做扩展。
+ */
 export function flightClaimVerdict(facts: BookableFact[], claim: FlightClaim): { verdict: FlightClaimVerdict; fact?: FlightFact; reason: string } {
   const no = claim.flight_no.toUpperCase().replace(/\s+/g, '')
   const sameNo = facts.filter((f): f is FlightFact =>
-    (f.kind === 'flight' || f.kind === 'train') && f.flight_no.toUpperCase() === no && f.bookability === 'bookable_exact_date')
+    f.kind === 'flight' && f.flight_no.toUpperCase() === no && f.bookability === 'bookable_exact_date')
   const routeMatched = sameNo.filter(f =>
     (!claim.origin || f.route.origin === claim.origin || f.route.origin_airport === claim.origin)
     && (!claim.destination || f.route.destination === claim.destination || f.route.dest_airport === claim.destination)
@@ -346,7 +356,7 @@ export function flightClaimVerdict(facts: BookableFact[], claim: FlightClaim): {
   if (routeMatched.length > 0) return { verdict: 'traceable', fact: routeMatched[0], reason: `回溯 ${routeMatched[0]!.query_id}` }
   // 无同号可下单事实:该 route+date 是否查过?
   if (claim.origin && claim.destination && claim.date) {
-    const scoped = latestFactsForRouteDate(facts, claim.origin, claim.destination, claim.date)
+    const scoped = latestFactsForRouteDate(facts, claim.origin, claim.destination, claim.date, 'flight')
     if (scoped.length > 0) {
       return {
         verdict: 'not_in_source',
@@ -358,6 +368,66 @@ export function flightClaimVerdict(facts: BookableFact[], claim: FlightClaim): {
     return { verdict: 'route_unqueried', reason: `${claim.origin}→${claim.destination} ${claim.date} 从未经 exact-date 源核验` }
   }
   return { verdict: 'route_unqueried', reason: `航班 ${no} 无可回溯的 exact-date 事实(缺 route/date 上下文)` }
+}
+
+// ---------------------------------------------------------------------------
+// 判定原语①b:车次 claim 可述性(rail-only,fail closed;issue #299)
+//   闸侧 `extractClaims` 已把 G/D/C/Z + 3–4 位 token 收集为 train claim;
+//   本裁决只在 train 事实里查同号 bookable_exact_date,缺事实/缺上下文/
+// 路线未查均 fail-closed。当前支持的事实生产端是 `factsFromFlyai kind:'train'`,
+// 其结果经 index.ts 真实工具路径追加到事实日志; `gotry_session_search kind=train`
+// 仍待 typed parser outcome + seat availability/freshness contract 后再接注册表。
+// 不得用历史班期或 static-schedule 凑合格回溯。
+// ---------------------------------------------------------------------------
+
+export type RailClaimVerdict =
+  | 'traceable'          // 注册表内有 bookable_exact_date 的该 train 事实(同号+同 route+同 date)
+  | 'not_in_source'      // 该 route+date 查过 exact-date,结果里没有它——最强违例
+  | 'route_unqueried'    // 该 route+date 从未查过 exact-date——无证据断言
+  | 'rail_claim_unverified' // 缺 route/date 上下文,或缺同号事实且 route/date 无 exact-date 证据
+
+export interface RailClaim {
+  flight_no: string
+  origin?: string
+  destination?: string
+  date?: string
+}
+
+const TRAIN_FACT_SOURCES = new Set(['flyai'])
+
+function isStructuredTrainFact(f: BookableFact): f is FlightFact {
+  return f.kind === 'train'
+    && f.schema === BOOKABLE_FACT_SCHEMA
+    && TRAIN_FACT_SOURCES.has(f.source)
+    && f.query_id.trim().length > 0
+    && f.tier === 'live_inventory'
+}
+
+export function railClaimVerdict(facts: BookableFact[], claim: RailClaim): { verdict: RailClaimVerdict; fact?: FlightFact; reason: string } {
+  const no = claim.flight_no.toUpperCase().replace(/\s+/g, '')
+  const sameNo = facts.filter((f): f is FlightFact =>
+    isStructuredTrainFact(f)
+      && f.flight_no.toUpperCase() === no
+      && f.bookability === 'bookable_exact_date')
+  const routeMatched = sameNo.filter(f =>
+    (!claim.origin || f.route.origin === claim.origin || f.route.origin_airport === claim.origin)
+    && (!claim.destination || f.route.destination === claim.destination || f.route.dest_airport === claim.destination)
+    && (!claim.date || f.date === claim.date))
+  if (routeMatched.length > 0) return { verdict: 'traceable', fact: routeMatched[0], reason: `回溯 ${routeMatched[0]!.query_id}` }
+  if (claim.origin && claim.destination && claim.date) {
+    const scoped = latestFactsForRouteDate(facts, claim.origin, claim.destination, claim.date, 'train')
+      .filter(isStructuredTrainFact)
+    if (scoped.length > 0) {
+      return {
+        verdict: 'not_in_source',
+        reason: scoped.some(f => f.bookability === 'unavailable_exact_date')
+          ? `${claim.origin}→${claim.destination} ${claim.date} train exact-date 源返回 0 条(${scoped[0]!.query_id})——不得用历史班期/相邻日期填充`
+          : `${claim.origin}→${claim.destination} ${claim.date} train exact-date 源在架 ${scoped.filter(f => f.bookability === 'bookable_exact_date').map(f => f.flight_no).join('/')}——无 ${no}`,
+      }
+    }
+    return { verdict: 'route_unqueried', reason: `${claim.origin}→${claim.destination} ${claim.date} train 路线从未经 exact-date 源核验` }
+  }
+  return { verdict: 'rail_claim_unverified', reason: `车次 ${no} 无可回溯的 exact-date 事实(缺 route/date 上下文,或无同号 train 事实)` }
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +475,7 @@ export function checkSameDayDeparture(
   c: SameDayDepartureConstraint,
 ): SameDayDepartureVerdict {
   const earliest = hmToMin(c.errand_end_local) + c.airport_transit_min + c.checkin_deadline_min
-  const scoped = latestFactsForRouteDate(facts, q.origin, q.destination, q.date)
+  const scoped = latestFactsForRouteDate(facts, q.origin, q.destination, q.date, 'flight')
   const nonstopBookable = scoped.filter(f => f.bookability === 'bookable_exact_date' && f.nonstop !== false)
   const feasible: FlightFact[] = []
   const excluded: Array<{ flight_no: string; reason: string }> = []

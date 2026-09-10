@@ -18,10 +18,12 @@ import {
   hotelClaimVerdict,
   itineraryInvariants,
   latestFactsForRouteDate,
+  railClaimVerdict,
   type BookableFact,
   type FlightClaim,
   type FlightClaimVerdict,
   type ItineraryFacts,
+  type RailClaim,
 } from './bookable-facts.ts'
 
 export const ARTIFACT_GATE_SCHEMA = 'gotry_artifact_gate.v1' as const
@@ -49,6 +51,18 @@ export interface ExtractedFlightClaim extends FlightClaim {
   carrier_only?: string
 }
 
+/** 车次 claim(issue #299):中文高铁/动车/城际/直达代码(G/D/C/Z + 3–4 位)。
+ * 闸侧不与航班 claim 合并;`railClaimVerdict` 只在 train 事实里查同号回溯,
+ * 缺事实/缺上下文 fail-closed(`rail_claim_unverified`),不得用历史班期或
+ * static-schedule 凑合格回溯。`gotry_flyai_search kind:'train'` 经
+ * `factsFromFlyai` 沿现有 typed fact log 接线;12306 session 仍待
+ * typed parser outcome + seat availability/freshness contract,列表不含票价;
+ * 不新增 RailFact 渲染器,真实供应商可售性仍需独立证据。 */
+export interface ExtractedRailClaim extends RailClaim {
+  line: number
+  text: string
+}
+
 export interface ExtractedPolicyClaim {
   line: number
   text: string
@@ -74,6 +88,7 @@ export interface ExtractedHotelClaim {
 
 export interface ExtractedClaims {
   flights: ExtractedFlightClaim[]
+  trains: ExtractedRailClaim[]
   policies: ExtractedPolicyClaim[]
   airports: ExtractedAirportClaim[]
   /** 含「直飞」断言且可解析航线的行(通用直飞规则:该日无任何在架直飞即违例) */
@@ -83,8 +98,14 @@ export interface ExtractedClaims {
   anchors: Map<number, string>
 }
 
-/** 航班号:2 位承运码 + 3-4 位数字(UO784/EK328/MF1538/CZ8582/9C8781/FD597) */
+/** 航班号:2 位承运码 + 3-4 位数字(UO784/EK328/MF1538/CZ8582/9C8781/FD597)。
+ * 中文高铁/动车/城际/直达代码(G/D/C/Z + 3–4 位)由 `TRAIN_NO` 单独收集,
+ * 不进入航班 claim,issue #299。 */
 const FLIGHT_NO = /(?<![A-Za-z0-9])([A-Z0-9]{2}\d{3,4})(?![\d])/g
+/** 车次号:中文 G/D/C/Z + 3-4 位数字(G1234/D3112/C2001/Z1/Z9999)。issue #299:
+ * 闸侧 train claim 集合与航班 claim 完全分离,`flightClaimVerdict` 不再吞 train
+ * 事实,`railClaimVerdict` 只在 train 事实里查同号回溯。 */
+const TRAIN_NO = /(?<![A-Za-z0-9])([GDCZ]\d{3,4})(?![A-Za-z0-9])/g
 /** 承运级直飞断言:「8L 直飞」「FZ 直飞香港」——无航班号的航线存在性断言 */
 const CARRIER_DIRECT = /(?<![A-Za-z0-9])([A-Z0-9]{2})(?!\d)(?:\s|[一-龥]){0,6}直飞/g
 /** 中文承运名 → 二字码(承运级断言覆盖;只列闸需要的常见出境承运) */
@@ -169,7 +190,7 @@ function routeCtxOf(text: string, map: AirlineAirportMap, defaultYear?: number):
  * 行内自带上下文优先。默认年份由 trip window 提供(远期行程的年份不含糊)。
  */
 export function extractClaims(markdown: string, map: AirlineAirportMap, opts?: { trip_year?: number }): ExtractedClaims {
-  const claims: ExtractedClaims = { flights: [], policies: [], airports: [], direct_lines: [], hotels: [], anchors: new Map() }
+  const claims: ExtractedClaims = { flights: [], trains: [], policies: [], airports: [], direct_lines: [], hotels: [], anchors: new Map() }
   const lines = markdown.split('\n')
   let section: SectionCtx = {}
   // 渲染原语锚点(单向生成):带 fact:<id> 的行只走锚点确定性回溯,启发式抽取让位
@@ -210,8 +231,18 @@ export function extractClaims(markdown: string, map: AirlineAirportMap, opts?: {
     const destination = own.destination ?? section.destination
     const date = own.date ?? section.date
 
+    const trainNos = new Set([...line.matchAll(TRAIN_NO)].map(m => m[1]!.toUpperCase()))
+    for (const trainNo of trainNos) {
+      claims.trains.push({ line: lineNo, text: line.trim().slice(0, 120), flight_no: trainNo, origin, destination, date })
+    }
     for (const m of line.matchAll(FLIGHT_NO)) {
-      claims.flights.push({ line: lineNo, text: line.trim().slice(0, 120), flight_no: m[1]!.toUpperCase(), origin, destination, date })
+      const code = m[1]!.toUpperCase()
+      // 闸侧 train/flight 分离:中文高铁/动车/城际/直达前缀不得进入航班 claim。
+      // FLIGHT_NO 也会把 G1234 这类单字母车次整体匹配出来;只跳过同一行
+      // TRAIN_NO 实际命中的完整 token。不能按首字母跳过,否则合法双字母航司
+      // CZ8582 会被误删。
+      if (trainNos.has(code)) continue
+      claims.flights.push({ line: lineNo, text: line.trim().slice(0, 120), flight_no: code, origin, destination, date })
     }
     for (const m of line.matchAll(CARRIER_DIRECT)) {
       const carrier = m[1]!.toUpperCase()
@@ -291,6 +322,7 @@ export type GateViolationKind =
   | 'budget_floor_inconsistent'       // 预算下限话术低于分项最低合计
   | 'date_order'                      // 住宿/段日期越窗或倒挂
   | 'unverifiable_hotel_claim'        // 酒店可住断言无 exact-date 事实回溯(D-26)
+  | 'rail_claim_unverified'           // 车次 claim 无 train exact-date 事实回溯(issue #299)
   | 'fact_anchor_unknown'             // 渲染锚点 fact:<id> 在注册表不存在(锚点被手改/伪造)
   | 'unverified_price_claim'          // 硬价缺少可比较的权威来源或可靠绑定(issue #300)
   | 'price_contradicted'              // 行内可靠硬价格与 exact-date 事实价格冲突(issue #300)
@@ -549,6 +581,18 @@ export function gateArtifact(
       violations.push({ kind: 'fact_anchor_unknown', line: lineNo, detail: `渲染锚点 fact:${factId} 不在事实注册表——锚点被手改或伪造,产物不可信` })
       continue
     }
+    if (f.kind === 'train') {
+      const rail = railClaimVerdict(facts, {
+        flight_no: f.flight_no,
+        origin: f.route.origin,
+        destination: f.route.destination,
+        date: f.date,
+      })
+      if (rail.verdict !== 'traceable') {
+        violations.push({ kind: 'rail_claim_unverified', line: lineNo, detail: `${f.flight_no}: 锚点未通过 train exact-date 回溯(${rail.verdict})——${rail.reason}` })
+        continue
+      }
+    }
     if (f.kind !== 'policy' && f.bookability === 'unavailable_exact_date') {
       violations.push({ kind: 'not_in_source', line: lineNo, detail: `锚点事实为 exact-date 负事实(${(f as { fetched_at?: string }).fetched_at ?? ''})——负事实对应的可住/可订断言不得出现` })
       continue
@@ -611,7 +655,7 @@ export function gateArtifact(
         && (!c.date || f.date === c.date))
       if (!hasCarrier) {
         const scoped = c.origin && c.destination && c.date
-          ? latestFactsForRouteDate(facts, c.origin, c.destination, c.date)
+          ? latestFactsForRouteDate(facts, c.origin, c.destination, c.date, 'flight')
           : []
         violations.push({
           kind: scoped.length > 0 ? 'not_in_source' : 'carrier_direct_unverified',
@@ -645,6 +689,31 @@ export function gateArtifact(
     }
   }
 
+  // 车次 claim 独立于航班 claim:同 route/date 的航班事实不能证明车次存在,
+  // 也不能把缺失车次写成通用 not_in_source。只有 train kind 的结构化
+  // exact-date 事实才可回溯;不存在 renderRailFact 或 static schedule 降级。
+  for (const c of claims.trains) {
+    if (claims.anchors.has(c.line)) continue
+    const r = railClaimVerdict(facts, c)
+    if (r.verdict === 'traceable') {
+      if (lineTimesContradict(c.text, r.fact?.dep_local, r.fact?.arr_local)) {
+        violations.push({
+          kind: 'rail_claim_unverified',
+          line: c.line,
+          detail: `${c.flight_no} 时刻与 train exact-date 快照不符(快照 ${r.fact?.dep_local}→${r.fact?.arr_local} ${r.fact?.date})——不得改写结构化车次事实`,
+        })
+        continue
+      }
+      if (r.fact && addPriceVerification(violations, c.line, lines[c.line - 1] ?? '', c.text, r.fact)) continue
+      traceable++
+      continue
+    }
+    violations.push({ kind: 'rail_claim_unverified', line: c.line, detail: `${c.flight_no}: ${r.verdict}——${r.reason}` })
+    if (CHECK_MARK.test(c.text)) {
+      violations.push({ kind: 'unconditional_check', line: c.line, detail: `对未核验车次 ${c.flight_no} 使用无条件 ✓/✅——只有 train bookable_exact_date 才允许确定性标记` })
+    }
+  }
+
   // 通用直飞规则:该行未点名承运时,要求该 route+date 存在任一在架直飞;
   // 「该日可售仅有中转/0 条」却写直飞 = 无证据分支(issue #46「DMK→KMG 可考虑 8L 直飞」行同款)
   for (const d of claims.direct_lines) {
@@ -653,7 +722,7 @@ export function gateArtifact(
       violations.push({ kind: 'route_unqueried', line: d.line, detail: `直飞断言缺 route/date 上下文,无法回溯——fail closed 按未核验处理` })
       continue
     }
-    const scoped = latestFactsForRouteDate(facts, d.origin, d.destination, d.date)
+    const scoped = latestFactsForRouteDate(facts, d.origin, d.destination, d.date, 'flight')
     if (scoped.length === 0) {
       violations.push({ kind: 'route_unqueried', line: d.line, detail: `${d.origin}→${d.destination} ${d.date} 的直飞断言从未经 exact-date 源核验` })
       continue
@@ -691,7 +760,10 @@ export function gateArtifact(
   // 只有全部航腿同票保护才允许称联程;分票/自助转机必须显式标红
   markdown.split('\n').forEach((line, i) => {
     if (!line.includes('联程')) return
-    const nos = [...line.matchAll(FLIGHT_NO)].map(m => m[1]!.toUpperCase())
+    const trainNos = new Set([...line.matchAll(TRAIN_NO)].map(m => m[1]!.toUpperCase()))
+    const nos = [...line.matchAll(FLIGHT_NO)]
+      .map(m => m[1]!.toUpperCase())
+      .filter(no => !trainNos.has(no))
     const matched = facts.filter((f): f is Extract<BookableFact, { kind: 'flight' | 'train' }> =>
       (f.kind === 'flight' || f.kind === 'train') && nos.includes(f.flight_no.toUpperCase()))
     const allProtected = nos.length > 0
@@ -716,7 +788,7 @@ export function gateArtifact(
   return {
     schema: ARTIFACT_GATE_SCHEMA,
     verdict: violations.length > 0 ? 'blocked' : 'pass',
-    claims_checked: claims.flights.length + claims.policies.length + claims.airports.length,
+    claims_checked: claims.flights.length + claims.trains.length + claims.policies.length + claims.airports.length,
     traceable,
     violations,
     presentation: violations.length > 0 ? 'verified_label_forbidden' : 'verified_itinerary_allowed',
