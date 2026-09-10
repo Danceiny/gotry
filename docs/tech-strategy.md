@@ -46,8 +46,8 @@ Owner 标签:【创始人】=拍板/走查/商业;【agent】=工程执行(loopx
 
 ### 批 0(2026-08 本周)
 - 【agent】已完成:M1 exit 状态同步(`3ed6194`)、ADR 保鲜机制(`0bfacff`)、本文。
-- 【agent】进行中:hygiene 批(删 zod 死依赖与 SPEC_SYSTEM 死代码、`createDeepSeekLlm` 改 provider-neutral 名、wish-pool 去重、pyproject.toml + 锁 z3 与 TS 同版);replay+smoke 进 `run-all-tests.sh`(**D-8 清偿**)。
-- 【agent,并行会话已启动】M2 W0:dsh 真实运行时组合(`ts/cordis.gotry-patch.yml` + `ts/dsh-runtime/`,`538018f`/`5acedb3`),当前 blocker = MiniMax 流协议。
+- 【agent】已完成(历史快照):hygiene 批(删 zod 死依赖与 SPEC_SYSTEM 死代码、`createDeepSeekLlm` 改 provider-neutral 名、wish-pool 去重、pyproject.toml + 锁 z3 与 TS 同版);replay+smoke 进 `run-all-tests.sh`(**D-8 清偿**,2026-08 月内闭环)。
+- 【agent】已完成(历史快照):M2 W0 dsh 真实运行时组合(`ts/cordis.gotry-patch.yml` + `ts/dsh-runtime/`,`538018f`/`5acedb3`),早期 MiniMax 流协议 blocker 已解除;M2 已退出,见 `roadmap.md` 历史节点(exit `b0cfd97`,§7-1 三层组合全链落地)。
 
 ### M2 实时数据(9–10 月,约 8 周)
 - **W0 dsh 真实运行时接通**【agent】:gotry-tools 在真实 dsh 里端到端跑通;MiniMax 流协议适配落 `dsh-llm.ts`。
@@ -59,7 +59,7 @@ Owner 标签:【创始人】=拍板/走查/商业;【agent】=工程执行(loopx
 - **Exit 勾稽**:同一 JourneySpec 实时 vs 静态的求解差异可度量、可归因 + §11 保鲜清单过一遍。
 
 ### M3 最小可用产品(11–1 月,约 10 周)
-- **硬前置**:G1 市场锁定【创始人】——总纲 B1 决策包素材已齐。
+- **硬前置**:G1 市场锁定【创始人】——总纲 B1 决策包素材已齐(**历史快照**:G1 已于 2026-08-22 锁定为中国出境首发,见 §7 决策 2 与 `gotry-master-outline.md` G1 行;此处文字保留为编写时的策略语境)。
 - **W1 最小 Web 面**【agent,前置 §7-3】:透明卡片+动机访谈+gates 选择题的可体验形态,**D-4 清偿**。
 - **W2 指标面板**【agent,前置 §7-5】:幻觉率/定稿率/NPS 度量上线(评测质量层,§4);种子数据回流进评测集。
 - **W3 种子用户**【创始人+agent】:50–200 人邀请制,洱海+普吉两类场景。
