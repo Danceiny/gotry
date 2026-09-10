@@ -193,16 +193,14 @@ Documents ship as bilingual pairs (`x.md` English + `x.zh-CN.md` 中文); diverg
 
 **MIT** — same as upstream dsh. See [LICENSE](LICENSE).
 
-<a href="https://www.star-history.com/?repos=danceiny%2Fgotry&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&legend=top-left" />
- </picture>
-</a>
-
----
-
 **Built with**: DeepSeek Harness 0.1.5-alpha.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
 **Version baseline: `v0.0.1-rc.22` (npm `latest`).** Verification gates: `scripts/run-all-tests.sh`; release flow: `scripts/publish-npm.sh`.
+
+<a href="https://www.star-history.com/?repos=danceiny%2Fgotry&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&theme=light&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&legend=top-left" />
+ </picture>
+</a>

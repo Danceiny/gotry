@@ -193,16 +193,14 @@ AI agent：[`AGENTS.md`](AGENTS.zh-CN.md) 是绑定契约——入场先清扫�
 
 **MIT**——与上游 dsh 一致。文本见 [LICENSE](LICENSE)。
 
-<a href="https://www.star-history.com/?repos=danceiny%2Fgotry&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&legend=top-left" />
- </picture>
-</a>
-
----
-
 **Built with**: DeepSeek Harness 0.1.5-alpha.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
 **版本基线：`v0.0.1-rc.22`（npm `latest`）。** 验证闸：`scripts/run-all-tests.sh`；发布流程：`scripts/publish-npm.sh`。
+
+<a href="https://www.star-history.com/?repos=danceiny%2Fgotry&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&theme=light&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&legend=top-left" />
+ </picture>
+</a>
