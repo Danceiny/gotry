@@ -74,5 +74,6 @@ founder 控制的同一扩展,桥侧白名单双收;端口池(8791-8795)与 host
 
 - `manifest.json` 变更:host_permissions 新增 `https://*.dida.com/*` 与 `https://dida.com/*`;两组 content_scripts 新增 `https://portal.dida.com/*`。
 - 触发:`gotry_session_search kind=dida`(hotel-be portal integration 迁移线)需要 dida 域注入与票据 cookie 名只读权限。
-- 提审节奏归 founder;提审前商店版用户调 dida 会得到 needs-extension(与全新站点一致),不影响既有 ctrip/12306 车道。
-- unpacked/GitHub Releases 通道不受商店审核影响,`feat/session-dida-portal` 分支合并即生效。
+- **商店提交流程由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪**;**founder 决策 whether / when / 升哪个 version**(founder-confirm 制,见 `tech-strategy.md` §11 与 `AGENTS.md` 发布纪律);**版本打包 / devconsole 上传 / 状态跟踪 / 验证**由 release executor 在仓库发布纪律下执行;founder 仅完成账户侧必要的本人审批/2FA。提审前商店版用户调 dida 会得到 needs-extension(与全新站点一致),不影响既有 ctrip/12306 车道。
+- unpacked/GitHub Releases 通道不受商店审核影响,`feat/session-dida-portal` 分支合并即生效(PR #297 已 merge,代码与 manifest 已就位)。
+- **当前证据边界**:仓库尚无此次提审或商店回拉验证回执;外部状态由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪。

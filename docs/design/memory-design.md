@@ -18,12 +18,12 @@
 
 | 层 | C 端语义 | 载体 | 状态 |
 |---|---|---|---|
-| **M1 用户基础** | 常驻城市/时区/工作窗口 | motivation-profile.hard + 会话内声明 | ✅ 简版(工作窗口/时区已入画像;常驻城市现为逐行程声明,**缺持久化**) |
-| **M2 动机与偏好画像** | 动机权重谱系(跨年)、体力档、节奏档、预算档 | motivation-profile.weights/hard + `{{motivation_brief}}` 读回 | ✅ 核心落地(T1:提取归 LLM/守门归代码/读回注入);**缺**:时间窗衰减(行为偏好应衰减,动机不衰减)、城市场景分级 |
-| **M3 预算标准** | 预算档(动机访谈校准 + 历史行为) | budgetTier gate → profile | ✅ 简版(gate 校准);**缺**:历史成交与估算偏差回流 |
-| **M4 旅行时间线** | 去过哪/何时/和谁(出发地三级解析的地基) | **未建** | ❌ 增量 P1 |
-| **M5 同行人档案** | 同行人+约束(高血压/晕车/体力),敏感填充形态 | TripState.companions(会话内) | ⚠️ 简版;**缺持久化**——增量 P2 |
-| **M6 会话双区记忆** | Trip Notebook(durable)+ Hot Context(分层过期) | dsh 会话自有 transcript | ❌ 增量 P3(依赖真实使用模式) |
+| **M1 用户基础** | 常驻城市/时区/工作窗口 | motivation-profile.hard + 会话内声明 | ✅ 工作窗口/时区已入画像;**常驻城市持久化残余 →** [#338](https://github.com/Danceiny/gotry/issues/338)(此残余不回收 §4 已交付的 P1/P2/P3,也不构成 [#20](https://github.com/Danceiny/gotry/issues/20) 的真实准入) |
+| **M2 动机与偏好画像** | 动机权重谱系(跨年)、体力档、节奏档、预算档 | motivation-profile.weights/hard + `{{motivation_brief}}` 读回 | ✅ 核心落地(T1:提取归 LLM/守门归代码/读回注入)+ **P3 时间窗衰减已落地(§4)**;**城市场景分级的证据化残余 →** [#339](https://github.com/Danceiny/gotry/issues/339) |
+| **M3 预算标准** | 预算档(动机访谈校准 + 历史行为) | budgetTier gate → profile | ✅ gate 校准;**实际成交与规划估算偏差回流残余 →** [#340](https://github.com/Danceiny/gotry/issues/340)(**写入闸由 [#136](https://github.com/Danceiny/gotry/issues/136)/[#231](https://github.com/Danceiny/gotry/issues/231)/[#232](https://github.com/Danceiny/gotry/issues/232)/[#233](https://github.com/Danceiny/gotry/issues/233) 治理,真实交易落地前不实现**) |
+| **M4 旅行时间线** | 去过哪/何时/和谁(出发地三级解析的地基) | `gotry-state/trips.jsonl`(§4 P1) | ✅ 已落地 2026-08-28(§4 P1) |
+| **M5 同行人档案** | 同行人+约束(高血压/晕车/体力),敏感填充形态 | `gotry-state/companions.json`(§4 P2) | ✅ 已落地 2026-08-28(§4 P2) |
+| **M6 会话双区记忆** | Trip Notebook(durable)+ Hot Context(分层过期) | dsh 会话自有 transcript | ❌ **P4(非 P3)**,依赖真实使用模式数据;闸由 [#255](https://github.com/Danceiny/gotry/issues/255) 跟踪,真实使用模式或多用户触发前保持关闭 |
 
 **参考框架之外的 GoTry 增量**(T 系统/ai-agent-book 都没有的,本域原创):
 

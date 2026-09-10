@@ -1,6 +1,8 @@
 # GoTry Evaluation Phase 0 Foundation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Sol supplies the disk brief and reviews; exactly one Luna writer executes this one Task in the worktree with `fork_turns=none`.
+>
+> **生命周期 / 当前状态(2026-09-10 增注)**:本文件是 **历史执行计划**(Historical executed plan,2026-08-31 编写,Phase 0 期间唯一执行);下方的未勾选 step 框为保留的**历史执行步骤清单**,**不**等同于当前未认领的 TODO。Phase 0 基础已交付;后续 Phase 1 状态在 `docs/evaluation/evaluation-foundation.md` 与 `docs/evaluation/benchmark-environment-bridge.md`,Phase 1 ledger 由 [#203](https://github.com/Danceiny/gotry/issues/203) 跟踪。
 
 **Goal:** Add deterministic TypeScript contracts for seven benchmark metadata records, safe cases, diagnostic run receipts, aggregate-only matched-pair admission, and failure clusters without an adapter, external runner, Python runtime dependency, baseline/result claim, or Agent uplift claim.
 

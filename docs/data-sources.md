@@ -21,19 +21,19 @@
 
 ## 2. 领域矩阵(现状 × 目标)
 
-| 领域 | 现状(v0.0.1-rc.3) | 新鲜度 | 证据链 | 目标(按里程碑) |
+| 领域 | 现状 | 新鲜度 | 证据链 | 目标(按里程碑) |
 |---|---|---|---|---|
 | **航线通航性** | ✅ OpenFlights 骨架 168 枢纽对(ODbL,`data/openflights-skeleton.json`) | 静态(月级) | `[骨架:openflights]` | 保持;扩枢纽集;Amadeus 已关停不回 |
-| **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`(公开渠道调研,5 段链) | 静态(2026-07 调研) | `[静态包:估算]` | M4:aviationstack 校验层(§7-1 已批三层组合);票价 M5 |
+| **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`(公开渠道调研,5 段链)+ FlyAI 官方免费通道(`capabilities/flyai.ts`,已落地 P1,2026-08-28)+ 会话通道(`session-search.ts` + 携程适配器,扩展桥 PRIMARY);OpenFlights 骨架作为通航性金标准 | 实时(FlyAI / 会话)/ 静态(降级) | `[实时API:flyai@ts]` / `[会话:ctrip-flight@ts]` / `[骨架:openflights]` / `[静态包:估算]` | 票价:见 M5(airline price 路径),当前路径 = FlyAI + 会话(扩展桥)交叉验证;**aviationstack 已不在路径**(从校验层移出,免费层 + 官方接口已覆盖原目标) |
 | **航班实时观测** | ✅ OpenSky 已接(`capabilities/opensky.ts` + `gotry_flight_verify` 工具;`/api/states/all` 当前 ADS-B 全球观测,~400 credits/天) | 实时 | `[实时API:opensky]` | ✅ 已落地(2026-08-22) |
 | **酒店库存/报价** | ✅ hbcli 桥(实时——2026-08-30 全流程 E2E 实测通道/鉴权/搜索编排全通,run-all §7d)+ 飞猪 `search-hotel`(打码价保真)+ 静态包按目的地过滤回退 | 实时/静态 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` / `[静态包:估算]` | 保持;UAT 目的地/库存数据补齐后 hotel-list 即回实时(通道已证);OTA 工具面平铺(无主/降级路由,按查询取用) |
-| **酒店点评/评分** | ✅ **复用 hotel-be Anything**(内含酒店 + 城市/区域混合 candidate)+ M4 scale-up:Google Place 评分/照片 | Any(hit/miss),M4:geography | `hbcli-anything` | M3:DONE(founder 校准 Anything 复用);M4:Google Place scale-up 路径(geography GetPlaceReviews) |
-| **POI/地点搜索** | ✅ Anything(混合 城市+酒店+place 候选) + OSM Nominatim 兜底 | Any | `hbcli-anything` / M4 `osm-nominatim` | M3:DONE;TREK 同款,免费兜底 |
+| **酒店点评/评分** | ✅ **复用 hotel-be Anything**(内含酒店 + 城市/区域混合 candidate);M4 Google Place scale-up 路径为闸后置(geography 仓个人 key + 配额封顶),残余 → [#345](https://github.com/Danceiny/gotry/issues/345)(first review/photo pull trigger 未到时不实现) | Any(hit/miss),M4:geography | `hbcli-anything` | M3:DONE(founder 校准 Anything 复用);M4:Google Place scale-up 路径(geography GetPlaceReviews) |
+| **POI/地点搜索** | ✅ Anything(混合 城市+酒店+place 候选) + OSM 兜底(`dsh-map-tools` 内嵌 Nominatim/Photon 免费回退,`ts/scripts/map-tools-vendor-package-proof.ts` 已 vendored 证) | Any | `hbcli-anything` / M4 `osm-nominatim` | M3:DONE;TREK 同款,免费兜底 |
 | **天气/季节性** | ✅ Open-Meteo 已接(`capabilities/weather.ts`:预报≤16 天+历史气候基线;免费无 key;工具 `gotry_weather_check`);地理编码双源:Open-Meteo(主,人口/行政级排序防同名小地压主城)+ OSM Nominatim(中文兜底——open-meteo 中文名覆盖有洞,issue #24 实测「普吉岛」0 结果) | 实时 | `[实时API:open-meteo@ts]` / 兜底 `[实时API:nominatim@ts]` | 保持;WMO 码已映射中文 |
-| **地面交通(接驳/铁路)** | ⚠️ 段内 transfer 硬编码在数据包(minutes/priceCny) | 静态 | `[静态包:估算]` | M4:OSRM 免费自托管(路线/时长);12306 无开放 API 不接 |
-| **地理/行政区划** | ❌ 无 | — | — | TREK 模式:bundled GeoJSON atlas(脚本构建,离线) |
-| **时区** | ⚠️ 手写在数据包(tz_offset_min/origin_tz_offset_min) | 静态 | — | M4:用时区库(`Intl`/`tz-lookup`)替代手写 |
-| **汇率** | ❌ 无(全 CNY 硬编码) | — | — | M4:exchangerate 免费层,或 hotel-be 若有 |
+| **地面交通(接驳/铁路)** | ⚠️ 段内 transfer 硬编码在数据包(minutes/priceCny);**`dsh-map-tools` vendored 路由/时长能力存在**(OSRM via dsh-map-tools 走**公开 OSRM 回退**,非自托管);deterministic planner 仍消费静态 minutes/price,运行时未合入,残余 → [#341](https://github.com/Danceiny/gotry/issues/341)(当前工程排期,#338 后执行) | 静态(运行时) | `[静态包:估算]` | 当前排期:OSRM via `dsh-map-tools` 入 deterministic planner;12306 无开放 API 不接 |
+| **地理/行政区划** | ⚠️ 在线地图由 `dsh-map-tools` Nominatim/Photon 兜底(已 vendored,运行时免费);**bundled GeoJSON atlas 尚未构建**(offline-first 需求触发后再实现),残余 → [#342](https://github.com/Danceiny/gotry/issues/342) | 实时(在线) | `[实时API:nominatim@ts]` | TREK 模式:bundled GeoJSON atlas(脚本构建,离线) |
+| **时区** | ⚠️ 手写在数据包(tz_offset_min/origin_tz_offset_min);**IANA tz offset 替换为当前核心模型残余**——中国出境首发已经跨区,由 [#343](https://github.com/Danceiny/gotry/issues/343) 承接独立实现 | 静态 | — | IANA tz offset(`Intl`/`tz-lookup`)替代手写 |
+| **汇率** | ❌ 无(全 CNY 硬编码);**multi-currency FX 仍属触发后置**——中国出境首发当前以 CNY 出境结算路径为主,首条真实非 CNY booking 触发后再实现,残余 → [#344](https://github.com/Danceiny/gotry/issues/344) | — | — | 多币种 FX(Exchangerate.host 等免费层或 hotel-be) |
 | **签证/入境** | ✅ 政策事实生产端 v1(2026-09-05,issue #141):C 档中国领事服务网(cs.mfa.gov.cn)国家指南树,礼貌抓取(永不重试+断路器护站)→ 签证入境章节抽取 → PolicyFact(as_of + D+30 review_by + 来源证据链)落账 | 静态快照抓取 | `[实时API:cs-mfa@ts]` | Timatic/Sherpa° 后议(founder 拍板 C 档免费权威源先行) |
 
 ---
@@ -61,10 +61,12 @@
         ┌──────────────┬───────────┼──────────────┬─────────────────┐
         ▼              ▼           ▼              ▼                 ▼
    ┌─────────┐   ┌──────────┐ ┌─────────┐  ┌────────────┐  ┌──────────────┐
-   │静态包    │   │免费实时   │ │hbcli 桥 │  │OSM 生态     │  │[M5]付费       │
-   │data/*.  │   │OpenSky   │ │hotel-be │  │Nominatim/  │  │aviationstack │
-   │json     │   │Open-Meteo│ │search   │  │Overpass/   │  │(校验层,已批)  │
-   │金标准    │   │          │ │OpenAPI  │  │OSRM        │  │              │
+   │静态包    │   │免费实时   │ │hbcli 桥 │  │OSM 生态     │  │FlyAI 官方    │
+   │data/*.  │   │OpenSky   │ │hotel-be │  │(dsh-map-   │  │免费通道       │
+   │json     │   │Open-Meteo│ │search   │  │tools 内嵌   │  │(机票/酒店/   │
+   │金标准    │   │          │ │OpenAPI  │  │Nominatim/  │  │POI/铁路,已   │
+   │         │   │          │ │         │  │Photon/     │  │落地 P1)      │
+   │         │   │          │ │         │  │OSRM)       │  │              │
    └─────────┘   └──────────┘ └────┬────┘  └────────────┘  └──────────────┘
                                     │ 内网 HTTP
                             ┌───────▼────────────────┐
@@ -188,12 +190,18 @@ TREK 是自托管协作旅行规划器,数据面成熟度最高,可借鉴的模�
 
 ## 7. 演进(与 roadmap 对齐,本文只列数据侧)
 
-- **M3 末(当前)**:
+- **M3 末(历史节点,2026-08 月内)**:
   - Open-Meteo 接入 ✅(`capabilities/weather.ts` + `gotry_weather_check`);OpenSky 挂到插件工具面 ✅(`capabilities/opensky.ts` + `gotry_flight_verify`)。
   - **LLM 价表 v2 + 价格漂移长机制(2026-08-30,issue #49)**:`ts/data/llm-price-table.json` provider-aware(DeepSeek tiered_peak_offpeak + MiniMax flat_no_offpeak,MiniMax M2/M2.1/M3 入表),ADR-11「peak only-high-not-low」是单一真理,unknown model → fail-closed 不猜价;`ts/scripts/price-drift-watch.ts` 覆盖 DeepSeek/MiniMax/OpenAI/Anthropic 四家,默认离线对照 baseline fixture 输出 PR-就绪 Markdown diff,`--fetch` 拉官方页,**永不自动 apply 价格**(走 PR + 人 review);run-all §41。
-- **M4**:`capabilities/place.ts` 双轨(hbcli-place + OSM 兜底);OSRM 时长估算进 transfer;时区库替代手写;汇率免费层。
-- **hotel-be 侧依赖(gate)**:search 模块 place OpenAPI + geography 白名单 + `hbcli search place`——三段都在 hotel-be 仓,由该仓 lane 推进;gotry 侧等 `hbcli search place --json` 可用即零改动接上(能力层已留降级位)。
-- **M5**:票价(aviationstack 校验层升级);KDE Itinerary 式预订导入(bookedResources 数据源)。
+- **M4(当前)**:见 `roadmap.md` M4 节点;数据侧新增 = FlyAI 官方通道接入 + 会话数据面 P1(扩展桥 PRIMARY)+ 政策事实生产端 v1(#141);§7 仅列**数据源面**增量,产品/UI 增量以 `roadmap.md` 为权威。
+- **M4 当前工程残余**:
+  - **#341 OSRM via dsh-map-tools 入 deterministic planner**(`dsh-map-tools` 走公开 OSRM 回退,非自托管);排在 #338 后执行。
+  - **#343 IANA tz offset 替换手写**(`Intl`/`tz-lookup`);中国出境首发已跨区,属当前核心模型残余,不挂未来触发。
+- **触发后置残余**:
+  - **#345 三仓门**:GoTry 专用 paid Place/reviews 链——hotel-be `search` 模块新增 place OpenAPI endpoint(转调 geography,带配额封顶),hotel-be `geography` 把 `SearchPlace`/`GetPlaceReviews` 加入 `InternalExposedMethods` 白名单;hotelbyte-cli 新增 `search place` / `search place-reviews` 命令 + `--json`;GoTry 侧新增 `capabilities/place.ts`(hbcliPlaceSearch,失败降级 OSM Nominatim 兜底)。**触发 = first review/photo pull need**(founder + 用量)——触发前不开闸,触发后才动三仓。#276 = hotel-be 内部 `SearchSrv` 在 M4 规模下的扩容路径,**独立**于 #345 三仓门,不得合并。
+  - **#342 bundled GeoJSON atlas**(脚本构建、离线);触发 = offline-first 需求。
+  - **#344 多币种 FX**;触发 = first real non-CNY booking(中国出境首发当前以 CNY 出境结算路径为主)。
+- **M5**:票价路径 = FlyAI + 会话(扩展桥)交叉验证,aviationstack 已不在路径(免费层 + 官方接口已覆盖原目标);KDE Itinerary 式预订导入(bookedResources 数据源)。
 
 ---
 
