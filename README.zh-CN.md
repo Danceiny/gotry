@@ -263,6 +263,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 - **M4 lifecycle 证据采集器** —— 显式 opt-in CLI 记录 planning flow:隔离 `stateRoot`、consent 与 HMAC key 必需;导出只作为 #223 scorer 的 candidate/synthetic 输入,绝不生成人工签核
 - **按任务路由的回合预算** —— 每轮由确定性路由器(零 LLM)分类 quick / sync / deep-planning;时间是唯一预算:quick/sync 收敛作答,deep-planning 转后台落 `gotry_turn_handoff.v1` 工单(ETA 约 1 小时)而不是让会话流死掉;工单由 `scripts/turn-handoff-collect.ts` 后台收集结算,经只读工具 `gotry_turn_handoff_list` 可查;经打包消费者安装的 E2E 在 CI 里实测
 - **账本管理 CLI 与租户修复计划** —— `ts/scripts/state-cli.ts` 解析 fail-closed(未知/重复/非法选项不碰 state root);`repair-plan` 只在临时 DB 副本上盘点与 dry-run——apply/迁移/回滚仍是 #254 的编号后续
+- **航班/酒店锚点字段指纹([#363](https://github.com/Danceiny/gotry/issues/363),父 [#273](https://github.com/Danceiny/gotry/issues/273))** —— 带锚点的航班行从渲染文本重新抽取 `flight_no` token,必须严格等于 `fact.flight_no`;酒店行必须逐字包含 `fact.destination` + `fact.check_in` + `fact.check_out`;任一漂移即 `fact_anchor_unknown` fail-closed。字段指纹补位而不替代整行严格比对与既有价格分类;`gotry_fact_gate` 注册执行面无新增路径。确定性隔离证据;不关闭 #273,也不打开 M5/M6
 - **近期 fail-closed 加固** —— 供应商 malformed 响应(#279 携程会话、#352 FlyAI)、政策锚点全文指纹(#359)、booking planner 修复(#282)、严格重复工具调用修复(#327)、安全派发诊断(#329)、IANA 时区合同(#343)、常住地软默认(#338)、子代理/jobs id 安全闸(#194)、Node ≥22.15 构建兼容(#265)。每项均为确定性隔离证据——均不打开 M4/M5/M6 gate。完整轨迹见 [CHANGELOG.md](CHANGELOG.md)
 
 **已知限制**(诚实清单):

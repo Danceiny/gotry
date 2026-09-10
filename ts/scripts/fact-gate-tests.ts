@@ -978,5 +978,145 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   console.log(`  ok - §14 政策锚点全字段内容指纹(#359 / D-26)完成(canonical + 5 failing-before + 2 legitimate + direct itinerary-only API + 多行归属 + trailing/dup/malformed/prefix 锚点结构攻击)`)
 }
 
+// ---------------------------------------------------------------------------
+// §15 航班/酒店锚点字段指纹(issue #363,D-26 残余收口)
+// 父 #273 锚点仅证明「注册表有事实」;保持 fact_id/registry/anchor 不动而
+// 改写可见 flight_no(flight)/destination+档期(hotel)原 main 静默 pass,
+// 根反例验收正是此形态。闸侧改为字段指纹(flight:渲染行 flight_no token
+// 严格 == 事实 flight_no;hotel:渲染行严格含事实 destination+check_in
+// +check_out),借用/未知/重复锚点仍由既有 fact_anchor_unknown 路径负责。
+// 不引入 whole-line equality(根 contract 第 2 条);§4b 价格兼容形态、
+// 政策/列车 canonical、§10c 锚点酒店等既有形态不被吞并。
+// ---------------------------------------------------------------------------
+{
+  const fetchedAt = '2026-09-04T00:00:00.000Z'
+  // 与 §4b 共用 2027-07-17 UO724(price 793)以保证 price 替换形态一致;
+  // 不用 registry.find — 主 fixture 中存在另一 2027-07-18 UO724(price 810),
+  // find 默认拿第一条,会让 §4b 既有断言失去对齐基准。
+  const flightFact = uo724
+  const hotelFacts = factsFromHotel({
+    source: 'flyai-hotel', destination: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03',
+    verdict: 'hit', options: 9, evidence: 'synthetic', fetchedAt,
+  })
+
+  const flightCanonical = renderFlightFact(flightFact)
+  const hotelCanonical = renderHotelFact(hotelFacts[0]!)
+
+  // 15a. canonical 航班行(从渲染原语产出)→ 闸 pass,traceable=1
+  const fOk = gateArtifact(['## 航班', flightCanonical].join('\n'), [flightFact], map, { trip_year: tripYear })
+  assert(fOk.verdict === 'pass' && fOk.traceable === 1
+    && !fOk.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `canonical flight 锚点行 → pass(实际 ${fOk.verdict}/traceable=${fOk.traceable})`)
+
+  // 15b. canonical 酒店行(从渲染原语产出)→ 闸 pass,traceable=1
+  const hOk = gateArtifact(['## 住宿', hotelCanonical].join('\n'), hotelFacts, map, { trip_year: 2026 })
+  assert(hOk.verdict === 'pass' && hOk.traceable === 1
+    && !hOk.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `canonical hotel 锚点行 → pass(实际 ${hOk.verdict}/traceable=${hOk.traceable})`)
+
+  // 15c. flight_no 改写(UO724 → UO999),保留 fact_id/anchor/registry →
+  //     fact_anchor_unknown(根反例:visible flight_no 改写必须 fail-closed)
+  const fTampered = flightCanonical.replace('UO724', 'UO999')
+  const fTamperedReport = gateArtifact(['## 航班', fTampered].join('\n'), [flightFact], map, { trip_year: tripYear })
+  assert(fTamperedReport.verdict === 'blocked' && fTamperedReport.traceable === 0
+    && fTamperedReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /flight_no 字段指纹不符|UO999/.test(v.detail)),
+    `flight_no UO724→UO999 改写保留锚点 → blocked/fact_anchor_unknown(实际 ${fTamperedReport.verdict}/${fTamperedReport.traceable}/violations=${fTamperedReport.violations.length})`)
+
+  // 15d. hotel destination 改写(大理 → 丽江),保留 fact_id/anchor/registry →
+  //     fact_anchor_unknown(根反例)
+  const hDestTampered = hotelCanonical.replace('大理', '丽江')
+  const hDestReport = gateArtifact(['## 住宿', hDestTampered].join('\n'), hotelFacts, map, { trip_year: 2026 })
+  assert(hDestReport.verdict === 'blocked' && hDestReport.traceable === 0
+    && hDestReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /hotel 锚点行字段指纹不符|destination/.test(v.detail)),
+    `hotel destination 大理→丽江 改写保留锚点 → blocked/fact_anchor_unknown(实际 ${hDestReport.verdict}/${hDestReport.traceable})`)
+
+  // 15e. hotel date 改写(2026-10-01 → 2026-12-25),保留 fact_id/anchor/registry →
+  //     fact_anchor_unknown(根反例)
+  const hDateTampered = hotelCanonical.replace('2026-10-01', '2026-12-25')
+  const hDateReport = gateArtifact(['## 住宿', hDateTampered].join('\n'), hotelFacts, map, { trip_year: 2026 })
+  assert(hDateReport.verdict === 'blocked' && hDateReport.traceable === 0
+    && hDateReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /hotel 锚点行字段指纹不符|check_in/.test(v.detail)),
+    `hotel date 2026-10-01→2026-12-25 改写保留锚点 → blocked/fact_anchor_unknown(实际 ${hDateReport.verdict}/${hDateReport.traceable})`)
+
+  // 15f. 同时改 destination + check_in(check_out 不变)→ 同样 fail-closed
+  const hBothTampered = hotelCanonical.replace('大理', '丽江').replace('2026-10-01', '2026-12-25')
+  const hBothReport = gateArtifact(['## 住宿', hBothTampered].join('\n'), hotelFacts, map, { trip_year: 2026 })
+  assert(hBothReport.verdict === 'blocked' && hBothReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `hotel destination + check_in 联合改写保留锚点 → blocked/fact_anchor_unknown(实际 ${hBothReport.verdict})`)
+
+  // 15g. 价格兼容(§4b 既有契约保留):flight 锚点行在 flight_no/route/承运/时刻
+  //     不动的前提下追加 总预算/行李费/总计/显式票价/千分位 等形态,不应被新
+  //     字段指纹吞并(根 contract 第 2 条)。
+  const priceCompatCases = [
+    ['尾随总预算', `${flightCanonical}；总预算¥1000`],
+    ['证据链前裸金额', flightCanonical.replace(' [flyai@', '；¥999 [flyai@')],
+    ['显式票价标签', flightCanonical.replace('¥793', '票价¥793')],
+    ['分隔后显式票价', flightCanonical.replace('¥793', '；总预算¥1000；票价¥793')],
+  ] as const
+  for (const [label, line] of priceCompatCases) {
+    const r = gateArtifact(['## 航班', line].join('\n'), [flightFact], map, { trip_year: tripYear })
+    assert(!r.violations.some(v => v.kind === 'fact_anchor_unknown'),
+      `flight 字段指纹 §4b 兼容:${label} 不被 fact_anchor_unknown 吞并(实际 ${r.violations.length} 违例)`)
+  }
+
+  // 15h. 价格矛盾(¥999 替换 ¥793)依然走 price_contradicted,不退化为
+  //     fact_anchor_unknown;§4b 既有的 price_contradicted/unverified_price_claim
+  //     分类与排序保留(根 contract 第 2 条)。
+  const priceContradicted = flightCanonical.replace('¥793', '¥999')
+  const pcReport = gateArtifact(['## 航班', priceContradicted].join('\n'), [flightFact], map, { trip_year: tripYear })
+  assert(pcReport.verdict === 'blocked'
+    && pcReport.violations.some(v => v.kind === 'price_contradicted')
+    && !pcReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `flight 价格矛盾保持 price_contradicted 分类,不退化为 fact_anchor_unknown(实际 ${pcReport.violations.length} 违例)`)
+
+  // 15i. 整行改写(flight_no + 价格同时改)→ 字段指纹先抓 flight_no,分类为
+  //     fact_anchor_unknown(fact 字段级别 fail-closed 优先于价格对账)
+  const allTampered = flightCanonical.replace('UO724', 'UO999').replace('¥793', '¥1000')
+  const allReport = gateArtifact(['## 航班', allTampered].join('\n'), [flightFact], map, { trip_year: tripYear })
+  assert(allReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `flight 字段 + 价格联合改写 → fact_anchor_unknown(flight_no 字段优先,实际 ${allReport.violations.length} 违例)`)
+
+  // 15j. 借用合法 fact_id/anchor + 整行伪造 flight_no 改动:
+  //     用同一 fact 的 fact_id 但 visible flight_no 是无事实的乱码。
+  //     既有锚点存在 = 注册表内 fact;新字段指纹再校验 visible flight_no == fact.flight_no。
+  const borrowedAnchor = `## 航班\n- HKG→HKT 2027-07-18 XX9999(未知) 07:55→10:30 直飞 ¥810 [flyai@${flightFact.fetched_at} #${flightFact.query_id}] <!-- fact:${flightFact.fact_id} -->`
+  const borrowedReport = gateArtifact(borrowedAnchor, [flightFact], map, { trip_year: tripYear })
+  assert(borrowedReport.verdict === 'blocked' && borrowedReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `借用合法 fact_id 写入乱码 flight_no → fact_anchor_unknown(实际 ${borrowedReport.verdict})`)
+
+  // 15k. duplicate anchor 仅由 policy 路径守护(§14k,结构守门);flight/hotel
+  //     路径未引入 duplicate anchor 检测,这里跳过——本切片不扩张 duplicate-anchor
+  //     覆盖面,只确保 flight_no/destination/check_in/check_out 字段指纹守门。
+
+  // 15l. 凭空追加非注册表 fact_id(伪造 anchor)→ 既有 fact_anchor_unknown 路径
+  //     不被新字段指纹吞并
+  const phantomAnchor = `## 航班\n- HKG→HKT 2027-07-17 UO724(香港快运航空) 07:55→10:30 直飞 ¥810 [flyai@${flightFact.fetched_at} #${flightFact.query_id}] <!-- fact:deadbeefdeadbeef -->`
+  const phantomReport = gateArtifact(phantomAnchor, [flightFact], map, { trip_year: tripYear })
+  assert(phantomReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /deadbeefdeadbeef/.test(v.detail)),
+    `flight 凭空追加非注册表 fact_id → fact_anchor_unknown(实际 ${phantomReport.violations.length} 违例)`)
+
+  // 15m. 列车 canonical 形态保留:同 /etc. §9b 既有契约不被新字段指纹吞并
+  const gTrain = factsFromFlyai(
+    { kind: 'train', origin: '香港', destination: '普吉', date: '2027-07-17' },
+    { verdict: 'hit', options: [{ no: 'G1234', depDateTime: '2027-07-17T09:00:00', arrDateTime: '2027-07-17T13:00:00' }] },
+    FETCHED,
+    alias,
+  )[0]!
+  const trainRendered = renderFlightFact(gTrain)
+  const trainReport = gateArtifact(['## 车次', trainRendered].join('\n'), [gTrain], map, { trip_year: tripYear })
+  assert(trainReport.verdict === 'pass' && trainReport.traceable === 1
+    && !trainReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `train canonical 形态保留(实际 ${trainReport.verdict}/traceable=${trainReport.traceable})`)
+
+  // 15n. 政策锚点形态保留(根 contract 第 2 条):政策行不受新字段指纹影响
+  const policyLine15 = renderPolicyFact(policy)
+  const policyReport15 = gateArtifact(['## 政策', policyLine15].join('\n'), [policy], map, { trip_year: tripYear })
+  assert(policyReport15.verdict === 'pass' && policyReport15.traceable === 1
+    && !policyReport15.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `policy 锚点形态保留(实际 ${policyReport15.verdict}/traceable=${policyReport15.traceable})`)
+
+  console.log(`  ok - §15 航班/酒店锚点字段指纹(#363 / D-26)完成(canonical + 5 root 反例 + §4b 价格兼容 + 价格矛盾分类保留 + 借用/dup/phantom + 列车/政策兼容)`)
+}
+
 console.log(`\nFACT GATE TESTS: ${pass} pass, ${fail} fail`)
 if (fail > 0) process.exit(1)
