@@ -20,6 +20,7 @@ import {
   latestFactsForRouteDate,
   railClaimVerdict,
   renderFlightFact,
+  renderHotelFact,
   renderPolicyFact,
   type BookableFact,
   type FlightClaim,
@@ -610,6 +611,60 @@ export function gateArtifact(
       })
       if (rail.verdict !== 'traceable') {
         violations.push({ kind: 'rail_claim_unverified', line: lineNo, detail: `${f.flight_no}: 锚点未通过 train exact-date 回溯(${rail.verdict})——${rail.reason}` })
+        continue
+      }
+    }
+    // 航班锚点行字段指纹(issue #363,D-26 残余收口):锚点存在 ≠ 可见
+    // 内容与事实一致——flight_no 是「锚点 + 渲染原语」之间唯一可手改的
+    // 关键字段,保留 fact_id/anchor/registry 而改 flight_no(UO724→UO999)
+    // 仍会被「同号回溯」路径误判为 traceable,根反例验收正是此形态。
+    // 闸侧改用字段指纹:从渲染行重新抽 flight_no token,必须严格 ==
+    // 事实 flight_no。同一字段不引入 whole-line equality;承运/时刻/route/
+    // 日期/价格/打码段的兼容(§4b + §9 + §10 + §11)继续由既有判定
+    // 原语负责,不被新指纹吞并。同一行 trip-test 不命中即 fail-closed。
+    if (f.kind === 'flight') {
+      const rendered = lines[lineNo - 1] ?? ''
+      const canonicalFlightNo = f.flight_no.toUpperCase()
+      const renderedFlightNo = (() => {
+        for (const m of rendered.matchAll(FLIGHT_NO)) {
+          const code = m[1]?.toUpperCase()
+          if (code) return code
+        }
+        return undefined
+      })()
+      if (!renderedFlightNo || renderedFlightNo !== canonicalFlightNo) {
+        violations.push({
+          kind: 'fact_anchor_unknown',
+          line: lineNo,
+          detail: `flight 锚点行 flight_no 字段指纹不符——锚点存在但 visible flight_no 与事实 ${canonicalFlightNo} 不一致(渲染抽到 ${renderedFlightNo ?? '∅'});保留 fact_id/registry/anchor 改写可见航班号不被允许,期望行内含 ${canonicalFlightNo}`,
+        })
+        continue
+      }
+    }
+    // 酒店锚点行字段指纹(issue #363,D-26 残余收口):destination + 档期
+    // 是「锚点 + 渲染原语」之间可手改的关键字段;保留 fact_id/anchor/
+    // registry 改写 目的地(大理→丽江)或 档期(2026-10-01→2026-12-25)
+    // 仍会被 hotelClaimVerdict 的同目的地同档期回溯判为 traceable,
+    // 根反例验收正是此形态。闸侧改为字段指纹:渲染行必须严格包含
+    // 事实的 destination(精确子串)+ check_in(精确子串)+ check_out
+    // (精确子串)三项;任一缺失或不一致 → fact_anchor_unknown fail-closed。
+    // 不引入 whole-line equality;价格打码/承运/时刻/政策的兼容形态
+    // 继续由既有判定原语负责。打码语义(options_masked = 9)与酒店事实
+    // 无 price 字段不变。
+    if (f.kind === 'hotel') {
+      const rendered = lines[lineNo - 1] ?? ''
+      const expectedDestination = f.destination
+      const expectedCheckIn = f.check_in
+      const expectedCheckOut = f.check_out
+      const missingDestination = !!expectedDestination && !rendered.includes(expectedDestination)
+      const missingCheckIn = !!expectedCheckIn && !rendered.includes(expectedCheckIn)
+      const missingCheckOut = !!expectedCheckOut && !rendered.includes(expectedCheckOut)
+      if (missingDestination || missingCheckIn || missingCheckOut) {
+        violations.push({
+          kind: 'fact_anchor_unknown',
+          line: lineNo,
+          detail: `hotel 锚点行字段指纹不符——锚点存在但 visible destination=${expectedDestination ?? '∅'}/check_in=${expectedCheckIn ?? '∅'}/check_out=${expectedCheckOut ?? '∅'} 与事实字段不严格一致(渲染行=${JSON.stringify(rendered)});保留 fact_id/registry/anchor 改写可见目的地或档期不被允许`,
+        })
         continue
       }
     }
