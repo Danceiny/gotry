@@ -283,6 +283,18 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
     return { kind: q.kind, latencyMs, ok: true, via: 'flyai', verdict, evidence: `[实时API:flyai@${ts}] ${hotels.length}/${items.length} hotel options`, hotels }
   }
   const options = parseTransportItems(items)
+  if (items.length > 0 && options.length === 0) {
+    const error = `FlyAI transport itemList malformed: ${items.length} item(s), 0 valid typed transport entries`
+    return {
+      ...base,
+      latencyMs,
+      ok: false,
+      via: 'flyai-error',
+      verdict: 'error',
+      evidence: `[实时API:flyai@error@${ts}] transport itemList malformed (0/${items.length} valid typed transport entries)`,
+      error,
+    }
+  }
   const verdict: FlyaiResult['verdict'] = options.length > 0 ? 'hit' : 'miss'
   return { kind: q.kind, latencyMs, ok: true, via: 'flyai', verdict, evidence: `[实时API:flyai@${ts}] ${options.length}/${items.length} ${q.kind} options`, options }
 }
@@ -291,6 +303,7 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
 function parseTransportItems(items: RawItem[]): FlyaiOption[] {
   const options: FlyaiOption[] = []
   for (const it of items) {
+    if (!it || typeof it !== 'object') continue
     const seg = it.journeys?.[0]?.segments?.[0]
     if (!seg?.marketingTransportNo || !seg.depDateTime) continue
     const rawPrice = it.ticketPrice ?? it.price ?? ''

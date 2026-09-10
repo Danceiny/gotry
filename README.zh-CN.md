@@ -264,6 +264,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 - **确定性选择内核** —— 普通候选枚举、`evaluateChoice`、真成本检查、逐候选判决与推荐
 - **显式航班链 Z3 路径** —— `solveUnified` 处理独立的多段约束路径;历史并发竞态已根治并进回归闸
 - **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`);飞猪匿名试用额度达限归类 `needs-setup` 并带配 key 指引(不盲重试)
+- **FlyAI malformed transport 响应 fail closed (#352)** —— `gotry_flyai_search` 保留可识别的精确空 `itemList`=`miss`;非空列表若没有有效 typed transport 条目则返回结构化 `error`,不得生成负库存事实;存在有效兄弟时保留并以 `n/N` evidence 暴露比例。维护中的假 CLI 回归仅是离线证据,不证明真实 provider/UAT。
 - **依赖体检** —— `npx @danceiny/gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):默认只读;显式对话内修复会展示范围计划、按同一会话 scope 请求一次批准、调用既有 bootstrap 幂等安装器,并按安装后复检逐项报告。需人工配置的项目保持人工处理,LLM key 仍归 dsh 宿主管
 - **账号会话检索** —— 你本人登录态查携程机票/酒店 + 12306 火车(酒/火 2026-09-03 实装:酒店为被动嗅探登录态真实价,火车为 12306 公开余票查询面;接口面随首个真会话校准);观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
 - **扩展按需装** —— `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 这边不跑 setup wizard、不开 chrome://extensions、不动剪贴板
