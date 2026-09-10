@@ -17,9 +17,9 @@ import { runTurn, type SolvePort } from '../src/loop.ts'
 import { parseFlightPackToSpec, solveUnified } from '../src/unified.ts'
 import { mergeProfileWorkWindow, WorkWindowPrecedenceError } from '../src/flight-pack-adapter.ts'
 import { FLIGHT_PACK_VERSION } from '../src/flight-pack-contract.ts'
-import type { TripState, WorkWindowProfile } from '../src/contracts.ts'
+import type { ScheduledWorkWindowProfile, TripState, WorkWindowProfile } from '../src/contracts.ts'
 
-const schedule: WorkWindowProfile = {
+const schedule: ScheduledWorkWindowProfile = {
   startMin: 600,
   endMin: 1140,
   workdays: [0, 1, 2, 3, 4],
@@ -56,6 +56,9 @@ function assertPrecedence(): void {
   const preserved = mergeProfileWorkWindow(parsed, undefined)
   assert.deepEqual(preserved.workWindow, parsed.workWindow, 'v2 pack window survives omitted profile')
 
+  const vacation = mergeProfileWorkWindow(parsed, { vacation: true })
+  assert.equal(vacation.workWindow, undefined, 'explicit vacation clears v2 work window')
+
   const withoutPackWindow = parseFlightPackToSpec({ ...v2Pack, meta: {} })
   assert.throws(
     () => mergeProfileWorkWindow(withoutPackWindow, schedule),
@@ -77,9 +80,14 @@ function assertPrecedence(): void {
   const v1Merged = mergeProfileWorkWindow(v1, { ...schedule, homeTzOffsetMin: 240 })
   assert.equal(v1Merged.workWindow?.homeTzOffsetMin, 240)
   assert.equal(mergeProfileWorkWindow(v1, undefined).workWindow, undefined)
+  assert.equal(mergeProfileWorkWindow(v1, { vacation: true }).workWindow, undefined, 'explicit vacation clears v1 work window')
 }
 
-async function assertDshRunTurn(packPath: string, profileWindow: WorkWindowProfile): Promise<void> {
+async function assertDshRunTurn(
+  packPath: string,
+  profileWindow: WorkWindowProfile,
+  expectation: { homeZone?: string; feasible: boolean; hasExclusion: boolean },
+): Promise<void> {
   const previousFetch = globalThis.fetch
   const previousEnv = {
     key: process.env['LLM_API_KEY'],
@@ -116,13 +124,19 @@ async function assertDshRunTurn(packPath: string, profileWindow: WorkWindowProfi
       new Date('2026-07-01T00:00:00Z'),
     )
     assert.equal(calls, 3)
-    assert.equal(result.state.spec?.workWindow?.homeZone, 'America/Los_Angeles')
-    assert.equal(result.state.solve?.feasible, false, 'Tokyo Sat 06:30 projects to LA Fri 14:30')
-    const exclusion = result.state.solve?.work_window_exclusions?.find(e => e.option === 's1')
-    assert.ok(exclusion)
-    assert.match(exclusion!.reason, /周五/)
-    assert.match(exclusion!.reason, /14:30/)
-    assert.match(result.reply, /工作窗口/)
+    assert.equal(result.state.spec?.workWindow?.homeZone, expectation.homeZone)
+    assert.equal(result.state.solve?.feasible, expectation.feasible)
+    const exclusions = result.state.solve?.work_window_exclusions ?? []
+    if (expectation.hasExclusion) {
+      const exclusion = exclusions.find(e => e.option === 's1')
+      assert.ok(exclusion)
+      assert.match(exclusion!.reason, /周五/)
+      assert.match(exclusion!.reason, /14:30/)
+      assert.match(result.reply, /工作窗口/)
+    } else {
+      assert.equal(exclusions.length, 0)
+      assert.doesNotMatch(result.reply, /工作窗口/)
+    }
   } finally {
     globalThis.fetch = previousFetch
     if (previousEnv.key === undefined) delete process.env['LLM_API_KEY']
@@ -151,8 +165,15 @@ try {
   const packPath = join(root, 'flights_2026.json')
   await writeFile(packPath, JSON.stringify(v2Pack), 'utf8')
   assertPrecedence()
-  await assertDshRunTurn(packPath, { ...schedule, homeTzOffsetMin: 777 })
-  await assertDshRunTurn(packPath, schedule)
+  await assertDshRunTurn(packPath, { ...schedule, homeTzOffsetMin: 777 }, {
+    homeZone: 'America/Los_Angeles', feasible: false, hasExclusion: true,
+  })
+  await assertDshRunTurn(packPath, schedule, {
+    homeZone: 'America/Los_Angeles', feasible: false, hasExclusion: true,
+  })
+  await assertDshRunTurn(packPath, { vacation: true }, {
+    homeZone: undefined, feasible: true, hasExclusion: false,
+  })
   await assertMockEntry(packPath)
   assert.equal((await readFile(packPath, 'utf8')).includes('America/Los_Angeles'), true)
   console.log('ISSUE 343 REAL-ENTRY E2E: precedence, runTurn, mock, v1/v2 typed contract OK')

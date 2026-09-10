@@ -21,6 +21,10 @@ export class WorkWindowPrecedenceError extends Error {
  * Legacy v1 keeps the adapter's historical numeric replacement behavior.
  */
 export function mergeProfileWorkWindow(spec: JourneySpecTS, profileWindow: WorkWindowProfile | undefined): JourneySpecTS {
+  // Vacation is an explicit profile fact, not an omitted schedule. It clears
+  // any pack window for both versions before the version-specific merge.
+  if (profileWindow?.vacation === true) return { ...spec, workWindow: undefined }
+
   if (spec[FLIGHT_PACK_VERSION] === 2) {
     if (!profileWindow) return spec
     const packWindow = spec.workWindow
