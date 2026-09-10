@@ -33,6 +33,7 @@ import {
   latestFactsForRouteDate,
   makeFactId,
   negativeFact,
+  policyCanonicalBody,
   railClaimVerdict,
   renderConnection,
   renderFlightFact,
@@ -302,7 +303,7 @@ assert(policyLine.includes('截至 2026-08-29 的现行政策') && policyLine.in
   '政策行恒带「截至 as_of」+ D-30 复核日期(2027-06-16),永不用无条件 ✓')
 const policyBad = gateArtifact('| 泰国 | 中国护照免签(现行60天/次),停留2周无问题 |', registry, map, { trip_year: tripYear })
 assert(policyBad.violations.some(v => v.kind === 'policy_without_as_of'), '「现行60天」无具体 as_of 日期 = policy_without_as_of(现行 ≠ 时间边界)')
-const policyGood = gateArtifact(policyLine, registry, map, { trip_year: tripYear })
+const policyGood = gateArtifact(policyLine, registry, map, { trip_year: tripYear, tripStart: fixture.meta.trip_window[0] })
 assert(!policyGood.violations.some(v => v.kind === 'policy_without_as_of'), '带「截至 YYYY-MM-DD」的政策行过闸')
 
 // ---- §8 回头路检测 --------------------------------------------------------------
@@ -420,7 +421,7 @@ const goodArtifact = [
   renderPolicyFact(policy, fixture.meta.trip_window[0]),
   renderPolicyFact({ ...policy, fact_id: makeFactId(['policy', '迪拜入境', 'web:policy:uae-resident']), subject: '迪拜入境(UAE 居民返程)', statement: '优先校验 residence visa / Emirates ID;游客免签口径不适用居民返程' }, fixture.meta.trip_window[0]),
 ].join('\n')
-const goodReport = gateArtifact(goodArtifact, [...registry, policy, { ...policy, fact_id: makeFactId(['policy', '迪拜入境', 'web:policy:uae-resident']), subject: '迪拜入境(UAE 居民返程)', statement: '优先校验 residence visa / Emirates ID;游客免签口径不适用居民返程' }], map, { trip_year: tripYear, itinerary: fixture.good_itinerary })
+const goodReport = gateArtifact(goodArtifact, [...registry, policy, { ...policy, fact_id: makeFactId(['policy', '迪拜入境', 'web:policy:uae-resident']), subject: '迪拜入境(UAE 居民返程)', statement: '优先校验 residence visa / Emirates ID;游客免签口径不适用居民返程' }], map, { trip_year: tripYear, itinerary: fixture.good_itinerary, tripStart: fixture.meta.trip_window[0] })
 assert(goodReport.verdict === 'pass' && goodReport.presentation === 'verified_itinerary_allowed'
   && goodReport.traceable === 8 && goodReport.violations.length === 0,
   `good artifact:6 航班 + 2 政策 claim 全回溯,闸 pass(违例 ${goodReport.violations.length},traceable=${goodReport.traceable})`)
@@ -582,6 +583,7 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   // 11a. 渲染器输出自带 fact 锚点(确定性回溯,与航班/酒店同源)
   assert(policyLine11.includes(`<!-- fact:${policy.fact_id} -->`), 'renderPolicyFact 行内嵌 fact 锚点(issue #273 typed-anchor 闭合)')
   // 11b. 锚点 policy 走确定性回溯 = traceable(锚点行启发式让位)
+  //      历史 #273 形态:renderer 给 tripStart,闸侧仅 { trip_year } —— 兼容性保留。
   const anchoredPolicyArtifact = ['## 政策', policyLine11].join('\n')
   const anchoredPolicyReport = gateArtifact(anchoredPolicyArtifact, [policy], map, { trip_year: tripYear })
   assert(anchoredPolicyReport.verdict === 'pass' && anchoredPolicyReport.traceable === 1,
@@ -614,7 +616,7 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   // 11h. 锚点 + 删除截至日期 → 同样 fail-closed,不因缺少可比较值而放行。
   const asOfRemoved = policyLine11.replace(/截至\s*\d{4}-\d{2}-\d{2}\s*的现行政策——/, '现行政策——')
   const asOfRemovedReport = gateArtifact(['## 政策', asOfRemoved].join('\n'), [policy], map, { trip_year: tripYear })
-  assert(asOfRemovedReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /缺少截至日期/.test(v.detail)),
+  assert(asOfRemovedReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /缺少截至日期|内容指纹不符/.test(v.detail)),
     `锚点 + 删除截至日期 → fact_anchor_unknown(缺失内容指纹;实际 ${asOfRemovedReport.violations.length} 条违例)`)
   console.log(`  ok - §11 政策渲染锚点 + 海关申报关键词 fail-closed 八断言完成`)
 }
@@ -728,6 +730,252 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   assert(!narrow.violations.some(v => v.kind === 'policy_without_as_of'),
     '窄词表边界:「过境」单独不被命中(只命中「过境免」)')
   console.log(`  ok - §13 政策关键词扩词完成(13 个 fixture-only policy term,占位字符串,无真实政策内容)`)
+}
+
+// ---------------------------------------------------------------------------
+// §14 政策渲染锚点全字段内容指纹(issue #359,D-26 残余收口):
+//     父 #273 要求 anchored policy 行「fact_id + as_of」与事实一致;
+//     改 subject / statement / source / fetched_at / query_id 而保留
+//     fact_id + as_of 在原 main 会被静默 pass——issue #359 收口。
+//     收口形态 = 闸侧用单一 canonical body 全文比对(不靠宽松 substring
+//     匹配),subject/statement/source/fetched_at/query_id 任一不一致
+//     → fact_anchor_unknown,与未知锚点同源 fail-closed。
+//     legitimate review_by(事实自带)与 tripStart 派生的复核提醒两种合法
+//     形态保留,不得通过删除提醒或删除正例得到 green。
+// ---------------------------------------------------------------------------
+{
+  const factIdBase = makeFactId(['policy-359', '泰国免签'])
+  const basePolicy: PolicyFact = {
+    schema: BOOKABLE_FACT_SCHEMA, fact_id: factIdBase, kind: 'policy',
+    subject: '泰国入境(中国护照)', statement: '免签停留(口径以泰方公告为准);UAE 居民返程应优先校验 residence visa / Emirates ID 而非游客免签口径',
+    source: 'web:official', query_id: 'web:policy:泰国免签',
+    fetched_at: FETCHED, as_of: '2026-08-29',
+  }
+  const canonicalLine = renderPolicyFact(basePolicy)
+  const baseArtifact = ['## 政策', canonicalLine].join('\n')
+
+  // 14a. canonical positive:渲染行 = canonical body + 锚点 → pass,traceable=1
+  const positive = gateArtifact(baseArtifact, [basePolicy], map, { trip_year: tripYear })
+  assert(positive.verdict === 'pass' && positive.traceable === 1 && positive.violations.length === 0,
+    `canonical 锚点行 → pass(实际 ${positive.verdict}/traceable=${positive.traceable}/violations=${positive.violations.length})`)
+  // 14a-renderer-only:policyCanonicalBody 与 renderPolicyFact 在 canonical body 段一致
+  assert(policyCanonicalBody(basePolicy) === canonicalLine.replace(/\s*<!--\s*fact:[\da-f]+\s*-->$/, ''),
+    'policyCanonicalBody 与 renderPolicyFact 在非锚点段严格一致(单一权威面)')
+
+  // 14b. failing-before #359:改 subject 而保留 fact_id+as_of → blocked
+  const changedSubject = canonicalLine.replace('泰国入境(中国护照)', '另一对象的政策')
+  const subjReport = gateArtifact(['## 政策', changedSubject].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(subjReport.verdict === 'blocked' && subjReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /另一对象的政策/.test(v.detail)),
+    `改 subject 保留 fact_id+as_of → blocked/fact_anchor_unknown(实际 ${subjReport.verdict}/${subjReport.violations.length} 违例)`)
+
+  // 14c. failing-before #359:改 statement 而保留 fact_id+as_of → blocked
+  const changedStatement = canonicalLine.replace('免签停留', '不免签停留')
+  const stmtReport = gateArtifact(['## 政策', changedStatement].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(stmtReport.verdict === 'blocked' && stmtReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /不免签停留/.test(v.detail)),
+    `改 statement 保留 fact_id+as_of → blocked/fact_anchor_unknown(实际 ${stmtReport.verdict}/${stmtReport.violations.length} 违例)`)
+
+  // 14d. failing-before #359:相反方向 statement(从「免签」改成「不免签」)→ blocked
+  const oppositeStatement = canonicalLine.replace('免签停留', '不免签,需提前办签证')
+  const oppReport = gateArtifact(['## 政策', oppositeStatement].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(oppReport.verdict === 'blocked' && oppReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /不免签/.test(v.detail)),
+    `相反 statement 保留 fact_id+as_of → blocked/fact_anchor_unknown(实际 ${oppReport.verdict}/${oppReport.violations.length} 违例)`)
+
+  // 14e. failing-before #359:改 source / fetched_at / query_id(任一 provenance 字段)→ blocked
+  const changedSource = canonicalLine.replace('[web:official@', '[synthetic:official@')
+  const srcReport = gateArtifact(['## 政策', changedSource].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(srcReport.verdict === 'blocked' && srcReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /synthetic:official/.test(v.detail)),
+    `改 source 保留 fact_id+as_of → blocked/fact_anchor_unknown(实际 ${srcReport.verdict}/${srcReport.violations.length} 违例)`)
+
+  const changedFetched = canonicalLine.replace(FETCHED, '2026-09-01T00:00:00.000Z')
+  const fetchReport = gateArtifact(['## 政策', changedFetched].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(fetchReport.verdict === 'blocked' && fetchReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /2026-09-01/.test(v.detail)),
+    `改 fetched_at 保留 fact_id+as_of → blocked/fact_anchor_unknown(实际 ${fetchReport.verdict}/${fetchReport.violations.length} 违例)`)
+
+  const changedQueryId = canonicalLine.replace('#web:policy:泰国免签', '#synthetic:policy:泰国免签')
+  const qidReport = gateArtifact(['## 政策', changedQueryId].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(qidReport.verdict === 'blocked' && qidReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /synthetic:policy/.test(v.detail)),
+    `改 query_id 保留 fact_id+as_of → blocked/fact_anchor_unknown(实际 ${qidReport.verdict}/${qidReport.violations.length} 违例)`)
+
+  // 14f. legitimate review_by(事实自带):policy.review_by 设置 → 行带复核提醒,闸侧需 tripStart 或 review_by
+  //     与 canonical 同步才能 pass。tripStart=undefined 时,canonical 也会用 p.review_by,
+  //     与 renderer 输出严格一致 → pass。
+  const reviewByPolicy: PolicyFact = { ...basePolicy, review_by: '2027-06-16' }
+  const reviewByLine = renderPolicyFact(reviewByPolicy)
+  const reviewByReport = gateArtifact(['## 政策', reviewByLine].join('\n'), [reviewByPolicy], map, { trip_year: tripYear })
+  assert(reviewByReport.verdict === 'pass' && reviewByReport.traceable === 1,
+    `legitimate review_by 事实 → 闸 pass(实际 ${reviewByReport.verdict}/traceable=${reviewByReport.traceable})`)
+  // 反向:review_by 改动(保留 fact_id+as_of,改 review_by)→ blocked
+  const reviewByTampered = reviewByLine.replace('2027-06-16', '2027-12-31')
+  const reviewByTamperedReport = gateArtifact(['## 政策', reviewByTampered].join('\n'), [reviewByPolicy], map, { trip_year: tripYear })
+  assert(reviewByTamperedReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /2027-12-31/.test(v.detail)),
+    `改 review_by 保留 fact_id+as_of → fact_anchor_unknown(实际 ${reviewByTamperedReport.violations.length} 违例)`)
+
+  // 14g. legitimate tripStart-derived reminder:renderer 给的 tripStart 与闸侧 opts.tripStart
+  //     一致时,cannonical body 完全匹配 → pass。
+  //     兼容性回退:renderer 用的是 renderer 自身的 defaultReviewBy(tripStart) 时,
+  //     即使闸侧未传 opts.tripStart 也应 pass —— 这是历史 #273 形态。
+  const tripStart = '2027-07-16'
+  const tripStartLine = renderPolicyFact(basePolicy, tripStart)
+  const tripStartReport = gateArtifact(['## 政策', tripStartLine].join('\n'), [basePolicy], map, { trip_year: tripYear, tripStart })
+  assert(tripStartReport.verdict === 'pass' && tripStartReport.traceable === 1,
+    `legitimate tripStart-derived reminder(显式 opts) → 闸 pass(实际 ${tripStartReport.verdict}/traceable=${tripStartReport.traceable})`)
+  const tripStartCompat = gateArtifact(['## 政策', tripStartLine].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(tripStartCompat.verdict === 'pass' && tripStartCompat.traceable === 1,
+    `legitimate tripStart-derived reminder(无 opts 兼容性回退) → 闸 pass(实际 ${tripStartCompat.verdict}/traceable=${tripStartCompat.traceable})`)
+  // 反向:闸侧 opts.tripStart 与 renderer 不一致(不是 renderer 默认 reminder 日期)→ blocked
+  const tripStartWrongOpts = gateArtifact(['## 政策', tripStartLine].join('\n'), [basePolicy], map, { trip_year: tripYear, tripStart: '2028-01-01' })
+  assert(tripStartWrongOpts.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `tripStart 与闸侧 opts.tripStart 不一致 → fact_anchor_unknown(实际 ${tripStartWrongOpts.violations.length} 违例)`)
+
+  // 14g-compat. 兼容性回退接受的具体形态:context-free canonical(no-reminder)、
+  //   context-free reminder(renderer 默认 defaultReviewBy)、
+  //   context-free reminder(f.review_by 已知)。
+  //   以及不接受的具体形态:任意 body 文本、错 reminder 日期、前缀垃圾、缺锚点。
+  const noReminderLine = renderPolicyFact(basePolicy)
+  const compat1 = gateArtifact(['## 政策', noReminderLine].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(compat1.verdict === 'pass' && compat1.traceable === 1,
+    `context-free canonical no-reminder → pass(实际 ${compat1.verdict})`)
+  const knownReviewByLine = renderPolicyFact({ ...basePolicy, review_by: '2027-09-01' })
+  const compat2 = gateArtifact(['## 政策', knownReviewByLine].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(compat2.verdict === 'pass' && compat2.traceable === 1,
+    `context-free canonical reminder(review_by 已知)→ pass(实际 ${compat2.verdict})`)
+  // context-free 不接受的形态:body 里塞相反政策
+  const compatBadBody = noReminderLine.replace('免签停留', '不免签停留')
+  const compatBadBodyReport = gateArtifact(['## 政策', compatBadBody].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(compatBadBodyReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `context-free 不接受 body 篡改 → fact_anchor_unknown(实际 ${compatBadBodyReport.violations.length} 违例)`)
+  // context-free 不接受的形态:把 reminder 短语追加到锚点之后(行尾非空文本)→ 结构
+  //   守门 fail-closed。真正的「ISO 日期合法性」校验见下一条(2026-02-30)。
+  const compatBadDate = noReminderLine + ';远期政策须复核——到 1999-01-01 再核验一次'
+  const compatBadDateReport = gateArtifact(['## 政策', compatBadDate].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(compatBadDateReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `context-free 不接受 reminder 追加到锚点之后 → fact_anchor_unknown(实际 ${compatBadDateReport.violations.length} 违例)`)
+  // context-free 不接受的形态:reminder 日期是 renderer 永远不会产出的非法阳历日
+  //   (2026-02-30 → Date.UTC 滚到 3 月 2 日,renderer 自己都不会写)。闸侧的 realIso
+  //   检查先否决,重建行 ≠ 原行 → 落到严格比对 → fail-closed。
+  // 这里手搓一行等价于 `renderPolicyFact({ ...basePolicy, review_by: '2026-02-30' })`
+  // 的形态,但用真实拼接的等价字符串绕过 renderer 自身的 Date 解析(防止被 renderer
+  // 自身提前抛错):在 basePolicy 的裸 body 后插入非法日期的 reminder 段。
+  const compatBadIso = `- ${basePolicy.subject}:截至 ${basePolicy.as_of} 的现行政策——${basePolicy.statement};远期政策须复核——到 2026-02-30 再核验一次 [${basePolicy.source}@${basePolicy.fetched_at} #${basePolicy.query_id}] <!-- fact:${basePolicy.fact_id} -->`
+  const compatBadIsoReport = gateArtifact(['## 政策', compatBadIso].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(compatBadIsoReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `context-free 不接受非法阳历日(2026-02-30)→ fact_anchor_unknown(实际 ${compatBadIsoReport.violations.length} 违例)`)
+  // context-free 不接受的形态:review_by 改动(renderer 接受 review_by 但闸侧事实
+  //   未带 review_by 时,兼容性回退允许任意合法 ISO 日期 —— 见根 contract 第 4 条。
+  //   若闸侧事实**自身**带 review_by,则 reminder 日期必须 == f.review_by,改了就 fail。)
+  // 这里 fact 是 basePolicy(无 review_by),渲染时假装加 review_by 后再改日期:
+  //   闸侧只看事实,无 review_by → 回退接受任意合法 ISO 日期。
+  const compatReviewByTampered = renderPolicyFact({ ...basePolicy, review_by: '2027-09-01' }).replace('2027-09-01', '2027-12-31')
+  const compatReviewByTamperedReport = gateArtifact(['## 政策', compatReviewByTampered].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(compatReviewByTamperedReport.verdict === 'pass' && compatReviewByTamperedReport.traceable === 1,
+    `事实无 review_by 时 context-free 接受任意合法 ISO 日期 → pass(实际 ${compatReviewByTamperedReport.verdict})`)
+  // 反向:事实带 review_by 时,改 reminder 日期 → 必须 fail-closed(根 contract 第 2 条)。
+  const fReviewBy: PolicyFact = { ...basePolicy, review_by: '2027-06-16' }
+  const lReviewByTampered = renderPolicyFact(fReviewBy).replace('2027-06-16', '2027-12-31')
+  const reviewByTamperedFactReport = gateArtifact(['## 政策', lReviewByTampered].join('\n'), [fReviewBy], map, { trip_year: tripYear })
+  assert(reviewByTamperedFactReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `事实带 review_by 时改 reminder 日期 → fact_anchor_unknown(实际 ${reviewByTamperedFactReport.violations.length} 违例)`)
+  // context-free 不接受的形态:trailing-after-anchor
+  const compatTrailing = `${noReminderLine} 反而是落地签`
+  const compatTrailingReport = gateArtifact(['## 政策', compatTrailing].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(compatTrailingReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `context-free 不接受 trailing-after-anchor → fact_anchor_unknown(实际 ${compatTrailingReport.violations.length} 违例)`)
+
+  // 14g-itin. itinerary.trip_start 提供后,context-free 不再回退 —— reminder 必须匹配
+  //   itinerary 实际提供的日期;no-reminder canonical 在 itinerary 存在时仍合法
+  //   (renderer 没给 tripStart 时不出现 reminder 段)。
+  const itReportMismatch = gateArtifact(
+    ['## 政策', tripStartLine].join('\n'),
+    [basePolicy],
+    map,
+    { trip_year: tripYear, itinerary: { ...fixture.good_itinerary, trip_start: '2027-08-01', trip_end: '2027-08-01' } },
+  )
+  assert(itReportMismatch.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `itinerary.trip_start 与 renderer reminder 不一致 → fact_anchor_unknown(实际 ${itReportMismatch.violations.length} 违例)`)
+  const itReportNoReminder = gateArtifact(
+    ['## 政策', noReminderLine].join('\n'),
+    [basePolicy],
+    map,
+    { trip_year: tripYear, itinerary: {
+      trip_start: '2027-08-01',
+      trip_end: '2027-08-01',
+      stays: [],
+      onboard_nights: 0,
+      od_segments: [],
+      budget_items: [],
+    } },
+  )
+  assert(itReportNoReminder.verdict === 'pass' && itReportNoReminder.traceable === 1,
+    `itinerary 存在时 canonical no-reminder 仍合法 → pass(实际 ${itReportNoReminder.verdict})`)
+
+  // 14g-direct(issue #359 最终维修):闸侧直接 `gateArtifact` 公共 API,opts 仅含
+  //   `itinerary.trip_start` 而不复制到 `opts.tripStart`,渲染行由
+  //   `renderPolicyFact(basePolicy, itinerary.trip_start)` 产出 → 闸必须 pass。
+  //   这是根反例验收核心:`effectiveTripStart` 优先级(explicit `opts.tripStart`
+  //   → `opts.itinerary.trip_start` → undefined)让调用方不再需要在两个字段间
+  //   复制同一天;已注册的 `index.ts` 工具桥接继续兼容(显式 tripStart 优先)。
+  const directItinerary = { trip_start: tripStart, trip_end: tripStart, stays: [], onboard_nights: 0, od_segments: [], budget_items: [] }
+  const directRenderedLine = renderPolicyFact(basePolicy, directItinerary.trip_start)
+  assert(directRenderedLine === tripStartLine,
+    'direct-API 形式:renderPolicyFact(basePolicy, itinerary.trip_start) === 已固定的 tripStartLine(回归门)')
+  const itDirectReport = gateArtifact(
+    ['## 政策', directRenderedLine].join('\n'),
+    [basePolicy],
+    map,
+    { trip_year: tripYear, itinerary: directItinerary },
+  )
+  assert(itDirectReport.verdict === 'pass' && itDirectReport.traceable === 1,
+    `直接 gateArtifact 公共 API(opts 仅含 itinerary.trip_start,无 opts.tripStart)→ pass(实际 ${itDirectReport.verdict}/traceable=${itDirectReport.traceable})`)
+  // 反向:itinerary 提供的日期 ≠ renderer reminder 日期 → fail-closed;
+  //   这是有效 API 形式的边界,证明 effectiveTripStart 不会被「任意 trip_start」
+  //   蒙混。
+  const itineraryMismatchDirect = gateArtifact(
+    ['## 政策', directRenderedLine].join('\n'),
+    [basePolicy],
+    map,
+    { trip_year: tripYear, itinerary: { ...directItinerary, trip_start: '2027-12-31', trip_end: '2027-12-31' } },
+  )
+  assert(itineraryMismatchDirect.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `直接 API 形式下 itinerary.trip_start 与 renderer reminder 不一致 → fact_anchor_unknown(实际 ${itineraryMismatchDirect.violations.length} 违例)`)
+
+  // 14h. 父 #273 已有形态保留:as_of 改动(11g/11h)仍走 fact_anchor_unknown(同一收敛口径)
+  const asOfShifted = canonicalLine.replace(/截至\s*\d{4}-\d{2}-\d{2}/, '截至 2027-01-01')
+  const asOfReport = gateArtifact(['## 政策', asOfShifted].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(asOfReport.violations.some(v => v.kind === 'fact_anchor_unknown' && /2027-01-01/.test(v.detail)),
+    `父 #273 as_of 改动形态保留(实际 ${asOfReport.violations.length} 违例)`)
+
+  // 14i. 同一 fact 出现在多行:仅改 subject 行 fail-closed,其他行不动
+  const multi = ['## 政策', canonicalLine, canonicalLine.replace('泰国入境(中国护照)', '另一对象的政策')].join('\n')
+  const multiReport = gateArtifact(multi, [basePolicy], map, { trip_year: tripYear })
+  assert(multiReport.verdict === 'blocked' && multiReport.violations.filter(v => v.kind === 'fact_anchor_unknown').length === 1,
+    `多行同 fact:仅篡改行 fail-closed(实际违例 ${multiReport.violations.length},fact_anchor_unknown=${multiReport.violations.filter(v => v.kind === 'fact_anchor_unknown').length})`)
+
+  // 14j. trailing-after-anchor 攻击:借用合法 fact_id + 锚点,在锚点后追加相反政策正文 →
+  //     闸侧应识别「锚点后仍有非空文本」并 fail-closed,而不是只比对锚点前 canonical body。
+  const trailing = `${canonicalLine} 反而是落地签,需提前办签证`
+  const trailingReport = gateArtifact(['## 政策', trailing].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(trailingReport.verdict === 'blocked' && trailingReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `trailing-after-anchor 攻击 → fact_anchor_unknown(实际 ${trailingReport.verdict}/${trailingReport.violations.length} 违例)`)
+
+  // 14k. duplicate anchor:同一行内两个 `<!-- fact:` → fail-closed
+  const dupAnchor = canonicalLine.replace(`<!-- fact:${basePolicy.fact_id} -->`, `<!-- fact:${basePolicy.fact_id} --> <!-- fact:${basePolicy.fact_id} -->`)
+  const dupReport = gateArtifact(['## 政策', dupAnchor].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(dupReport.verdict === 'blocked' && dupReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `duplicate anchor → fact_anchor_unknown(实际 ${dupReport.verdict}/${dupReport.violations.length} 违例)`)
+
+  // 14l. malformed anchor(没有空格的格式):canonical 是 ` <!-- fact:<id> -->`,缺空格不算同形
+  const malformedAnchor = canonicalLine.replace(`<!-- fact:${basePolicy.fact_id} -->`, `<!--fact:${basePolicy.fact_id}-->`)
+  const malformedReport = gateArtifact(['## 政策', malformedAnchor].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(malformedReport.verdict === 'blocked' && malformedReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `malformed anchor(无空格) → fact_anchor_unknown(实际 ${malformedReport.verdict}/${malformedReport.violations.length} 违例)`)
+
+  // 14m. 前置非空文本:同一行在锚点前塞了原文之外的字符 → fail-closed
+  const prefixAdded = `前缀: ${canonicalLine}`
+  const prefixReport = gateArtifact(['## 政策', prefixAdded].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(prefixReport.verdict === 'blocked' && prefixReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `prefix non-empty → fact_anchor_unknown(实际 ${prefixReport.verdict}/${prefixReport.violations.length} 违例)`)
+
+  console.log(`  ok - §14 政策锚点全字段内容指纹(#359 / D-26)完成(canonical + 5 failing-before + 2 legitimate + direct itinerary-only API + 多行归属 + trailing/dup/malformed/prefix 锚点结构攻击)`)
 }
 
 console.log(`\nFACT GATE TESTS: ${pass} pass, ${fail} fail`)
