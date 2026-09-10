@@ -92,9 +92,15 @@ const CARRIER_ZH: Record<string, string> = {
   东航: 'MU', 南航: 'CZ', 国航: 'CA', 厦航: 'MF', 春秋: '9C', 祥鹏: '8L',
   亚航: 'FD', 越捷: 'VZ', 国泰: 'CX', 港航: 'HX', 香港快运: 'UO', 阿联酋: 'EK', 泰航: 'TG',
 }
-/** 「政策」关键词(issue #273,D-26 残余收口):覆盖签证/免签/落地签/海关/过境五大类;
- * 海关申报 与 入境申报 同性质但被原 regex 漏掉,补一个 demonstrative miss。 */
-const POLICY_WORD = /免签|落地签|签证|入境申报|海关申报|过境免/
+/** Finite hotel-category vocabulary shared by heading activation and row recognition (issue #301). */
+const LODGING_VOCAB_RE = /酒店|住宿|客栈|民宿|度假村|青旅|青年旅舍|别墅|公寓/
+/** Markdown ATX heading level 1–6 (根实测 #347:5/6 级 lodging heading 必须激活) */
+const HEADING_ATX = /^(#{1,6})\s+(.+)$/
+/** 「政策」关键词(issue #273 父 + 子 #302):覆盖签证/免签/落地签/海关/过境五大类 + 子 #302 显式列举的政策词有限并集;
+ * 海关申报 与 入境申报 同性质但被原 regex 漏掉,补一个 demonstrative miss。
+ * 子 #302 扩词边界:仅 EVUS/ETA/eVisa/疫苗/疫苗接种/健康申报/隔离/工作签/居留/返程签/护照有效期/黄皮书/保险;拉丁 token
+ * 大小写不敏感但不嵌入更长 Latin 词(REVUS ≠ EVUS);不做 NLP/同义词/任意政策词表扩展。 */
+const POLICY_WORD = /免签|落地签|签证|入境申报|海关申报|过境免|疫苗|疫苗接种|健康申报|隔离|工作签|居留|返程签|护照有效期|黄皮书|保险|(?<![A-Za-z])(?:EVUS|ETA|eVisa)(?![A-Za-z])/i
 /** as_of 必须是「截至 + 具体日期」——「现行 60 天」不算时间边界(issue #46 政策行) */
 const AS_OF_WORD = /截至\s*\d{4}[-/年]\d{1,2}|as[_ ]?of\s*\d{4}/i
 const CHECK_MARK = /[✓✅]/
@@ -107,7 +113,7 @@ function hasDirectAssertion(line: string): boolean {
   return !(before.endsWith('无') || before.endsWith('不') || before.endsWith('没有') || before.endsWith('未见'))
 }
 
-interface SectionCtx { origin?: string; destination?: string; date?: string }
+interface SectionCtx { origin?: string; destination?: string; date?: string; /** 当前行是否在 lodging heading 上下文中(issue #301 无 token 行入闸) */ lodging?: boolean; /** 活动 lodging heading 的 ATX 层级栈(浅→深);同/更高级 non-lodging heading 弹出栈顶 */ lodgingDepths?: number[] }
 
 /** 行内第一个命中词表的城市中文名(酒店 claim 的目的地键;无命中=undefined) */
 function occ1(line: string, map: AirlineAirportMap): string | undefined {
@@ -176,9 +182,27 @@ export function extractClaims(markdown: string, map: AirlineAirportMap, opts?: {
       claims.anchors.set(lineNo, anchorMatch[1]!.toLowerCase())
       continue
     }
-    if (/^#{1,4}\s/.test(line)) {
+    if (HEADING_ATX.test(line)) {
       const ctx = routeCtxOf(line, map, opts?.trip_year)
-      section = { origin: ctx.origin, destination: ctx.destination, date: ctx.date ?? section.date }
+      // lodging heading 上下文栈(issue #301 真实反例:无 token 行入闸):
+      //  - lodging heading:在该层级压栈(更深栈顶替代外层语义,栈整体保留)
+      //  - 同级/更高级 non-lodging heading:弹栈直到空
+      //  - 更深的 non-lodging heading:继承栈
+      const headingMatch = line.match(HEADING_ATX)!
+      const headingLevel = headingMatch[1]!.length
+      const headingText = headingMatch[2]!
+      const isLodgingHeading = LODGING_VOCAB_RE.test(headingText)
+      const depths = (section.lodgingDepths ?? []).slice()
+      if (isLodgingHeading) {
+        // 同级 lodging heading 替换该层栈,更深的栈项保留
+        while (depths.length > 0 && depths[depths.length - 1]! >= headingLevel) depths.pop()
+        depths.push(headingLevel)
+      } else {
+        // 同级/更高级 non-lodging heading 弹出栈顶直至更浅或空
+        while (depths.length > 0 && depths[depths.length - 1]! >= headingLevel) depths.pop()
+      }
+      const lodging = depths.length > 0
+      section = { origin: ctx.origin, destination: ctx.destination, date: ctx.date ?? section.date, lodging, lodgingDepths: depths }
       continue
     }
     const own = routeCtxOf(line, map, opts?.trip_year)
@@ -209,10 +233,26 @@ export function extractClaims(markdown: string, map: AirlineAirportMap, opts?: {
     if (POLICY_WORD.test(line)) {
       claims.policies.push({ line: lineNo, text: line.trim().slice(0, 160), has_as_of: AS_OF_WORD.test(line) })
     }
-    // 酒店 claim(D-26):断言可住性(有房/可订/已核验/✓)的行——目的地与档期缺失时 fail-closed
-    const HOTEL_ASSERT = /酒店|住宿|客栈|民宿/
+    // 酒店 claim(D-26 + 子 #301 扩词):断言可住性(有房/可订/已核验/✓)的行——目的地与档期缺失时 fail-closed
+    // 父 #273 已有 酒店|住宿|客栈|民宿;子 #301 扩词覆盖 度假村/青旅/青年旅舍/别墅/公寓 五类非关键词住宿
+    // category(精品酒店 由 酒店 承接,不重复声明);lodging heading(§住宿/§酒店/§青旅 等,ATX 1–6)下完全无住宿类
+    // token 的可住断言也由 section.lodging 升为 hotel claim。行内匹配分两路:
+    //   (a) 行内含 LODGING_VOCAB_RE 词表 token → 需 HOTEL_BOOKABLE 短语/标记
+    //   (b) 行内无 token 但 lodging context 激活 → 需 HOTEL_BOOKABILITY 短语(有房/可订/.../可住),
+    //       单独的 ✓/✅ 不构成 bookability(例:`靠近地铁 ✓` 在 §住宿 下不是可订断言)。
+    //       检测到可订短语且带 ✓,未核验时再加 unconditional_check。
+    // 同级/更高级 non-lodging heading 退出上下文,更深 heading 继承;lodging depth 栈保留外层活动层级。
+    // 行内/heading 词汇同源 = LODGING_VOCAB_RE,不可漂移。无住宿类关键词仍走兜底 →
+    // unverifiable_hotel_claim(§10f 既有证据)。route/date section context 对航班逻辑不动;
+    // anchored 行由 `if (claims.anchors.has(c.line)) continue` 提前让位。
+    const HOTEL_BOOKABILITY = /有房|可订|在架|已核验|已验证|可住/
     const HOTEL_BOOKABLE = /有房|可订|在架|已核验|已验证|可住|✓|✅/
-    if (HOTEL_ASSERT.test(line) && HOTEL_BOOKABLE.test(line)) {
+    const hasCategoryToken = LODGING_VOCAB_RE.test(line)
+    const inLodgingSection = !!section.lodging
+    const isBookabilityClaim = hasCategoryToken
+      ? HOTEL_BOOKABLE.test(line)
+      : inLodgingSection && HOTEL_BOOKABILITY.test(line)
+    if (isBookabilityClaim) {
       const stays = [...line.matchAll(/(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)/g)].map(m => m[1]!)
       claims.hotels.push({
         line: lineNo,
@@ -539,6 +579,10 @@ export function gateArtifact(
     if (claims.anchors.has(c.line)) continue
     if (!c.destination) {
       violations.push({ kind: 'unverifiable_hotel_claim', line: c.line, detail: `酒店可住断言缺目的地上下文,无法回溯 exact-date 事实——fail closed 按未核验处理` })
+      // 无目的地时也检查无条件 ✓:对未核验住宿仍不应打确定性标记
+      if (CHECK_MARK.test(c.text)) {
+        violations.push({ kind: 'unconditional_check', line: c.line, detail: '对未核验酒店使用无条件 ✓/✅——只有 bookable_exact_date 才允许确定性标记' })
+      }
       continue
     }
     const r = hotelClaimVerdict(facts, { destination: c.destination, check_in: c.check_in, check_out: c.check_out })
