@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply } from '../src/index.ts'
-import type { FlightFact } from '../src/bookable-facts.ts'
+import { renderFlightFact, type FlightFact } from '../src/bookable-facts.ts'
 import { installModelOverride, type AgentRequestConfig } from '../capabilities/model-override.ts'
 import { offlineSessionFlightResult, sessionLiveEnabled } from '../capabilities/session-search.ts'
 import { interpretEffect } from '../capabilities/effect.ts'
@@ -56,12 +56,41 @@ async function main() {
     hbcliBin: 'hbcli-not-on-path',  // 强制走降级路径的确定性验证
     sessionAccess: 'ask',
   }
-  const fixtureEffect = async (fx: { effect: string }) => {
+  const fixtureEffect = async (fx: { effect: string; params?: { kind?: string } }) => {
     if (fx.effect === 'SESSION_DIDA_SEARCH') {
       selectedEffects.push(fx.effect)
       return {
         result: { ok: true, via: 'session-dida-portal', evidence: '[fixture:session-dida]', latencyMs: 0, verdict: 'hit', rates: [] },
         trace: { effect: fx.effect, channel: 'fixture', attempts: 1, backoffMs: 0, breaker: 'off', evidence: ['[fixture:session-effect]'] },
+      }
+    }
+    if (fx.effect === 'FLYAI_SEARCH') {
+      selectedEffects.push(fx.effect)
+      if (fx.params?.kind !== 'train') {
+        return {
+          result: {
+            ok: false,
+            via: 'flyai-error',
+            evidence: '[实时API:flyai@error@fixture-offline]',
+            latencyMs: 0,
+            verdict: 'error',
+            kind: fx.params?.kind === 'hotel' ? 'hotel' : 'flight',
+            error: 'offline smoke fixture; real FlyAI provider not invoked',
+          },
+          trace: { effect: fx.effect, channel: 'fixture', attempts: 1, backoffMs: 0, breaker: 'off', evidence: ['[fixture:flyai-offline]'] },
+        }
+      }
+      return {
+        result: {
+          ok: true,
+          via: 'flyai',
+          evidence: '[fixture:flyai-train]',
+          latencyMs: 0,
+          verdict: 'hit',
+          kind: 'train',
+          options: [{ no: 'G1375', name: '高铁', depDateTime: '2027-11-11T07:35:00+08:00', arrDateTime: '2027-11-11T15:27:00+08:00', depStation: '上海', arrStation: '昆明', durationMin: 472, price: 0 }],
+        },
+        trace: { effect: fx.effect, channel: 'fixture', attempts: 1, backoffMs: 0, breaker: 'off', evidence: ['[fixture:flyai-train]'] },
       }
     }
     return interpretEffect(fx as never)
@@ -456,7 +485,8 @@ async function main() {
       effectSummaries.push(result && typeof result === 'object' && 'summary' in result ? String((result as { summary?: string }).summary ?? '') : '')
       return { kind: 'allow' as const }
     })
-    if (pipeline.kind !== 'allow' || approvalReasons.length !== 1 || selectedEffects.length !== 1 || selectedEffects[0] !== 'SESSION_DIDA_SEARCH' || !effectSummaries[0]?.startsWith('Dida 门户实时价')) {
+    const didaEffects = selectedEffects.filter(effect => effect === 'SESSION_DIDA_SEARCH')
+    if (pipeline.kind !== 'allow' || approvalReasons.length !== 1 || didaEffects.length !== 1 || didaEffects[0] !== 'SESSION_DIDA_SEARCH' || !effectSummaries[0]?.startsWith('Dida 门户实时价')) {
       throw new Error(`FAIL: pre-execute→approval→selected effect fixture 未锁定 Dida,实际:${JSON.stringify({ pipeline, approvalReasons, selectedEffects, effectSummaries })}`)
     }
     console.log(`consent pipeline fixture: query-first conflict → approval=${approvalReasons.length}, effect=${selectedEffects[0]}, summary=${effectSummaries[0]}`)
@@ -614,6 +644,32 @@ async function main() {
     const view = gate.presentResult?.({}, blocked) as { title?: string }
     if (!view?.title?.includes('blocked')) throw new Error(`FAIL: blocked 呈现卡标题应含 blocked,实际:${view?.title}`)
     console.log(`fact gate: registry 1+1(hit/miss);verified 措辞 pass;miss 填充 UO784 blocked(not_in_source) + 呈现卡`)
+
+    // 16b) #299 FlyAI train 的真实注册工具 seam:
+    //      gotry_flyai_search execute → factsFromFlyai → appendFacts → loadFactRegistry
+    //      → canonical renderer(anchor) → gotry_fact_gate execute;不触碰真实 provider。
+    const flyaiTrain = byName('gotry_flyai_search')
+    const searchedTrain = await flyaiTrain.execute({ kind: 'train', from: '上海', to: '昆明', date: '2027-11-11' }, null) as { kind?: string; verdict?: string }
+    if (searchedTrain.kind !== 'train' || searchedTrain.verdict !== 'hit') {
+      throw new Error(`FAIL: FlyAI train fixture 应经注册工具返回 hit,实际:${JSON.stringify(searchedTrain).slice(0, 300)}`)
+    }
+    const trainRegistry = (await loadFactRegistry(smokeRoot)).filter((f): f is FlightFact => f.kind === 'train' && f.query_id === 'flyai:train:上海-昆明:2027-11-11')
+    if (trainRegistry.length !== 1 || trainRegistry[0]!.bookability !== 'bookable_exact_date' || trainRegistry[0]!.source !== 'flyai') {
+      throw new Error(`FAIL: FlyAI train fixture 应经真实工具 seam 落 typed fact,实际:${JSON.stringify(trainRegistry).slice(0, 500)}`)
+    }
+    const trainMarkdown = `# 车次片段\n## D1 11.11 上海 → 昆明\n${renderFlightFact(trainRegistry[0]!)}`
+    if (!trainMarkdown.includes(`<!-- fact:${trainRegistry[0]!.fact_id} -->`)
+      || !trainMarkdown.includes('车次')
+      || trainMarkdown.includes('直飞')
+      || trainMarkdown.includes('¥')
+      || trainMarkdown.includes('价待询')) {
+      throw new Error(`FAIL: train canonical renderer 应只携带车次语义与 typed anchor,不得直飞/价格:${trainMarkdown}`)
+    }
+    const trainGate = await gate.execute({ markdown: trainMarkdown, tripYear: 2027 }, null) as { verdict?: string; violations?: unknown[] }
+    if (trainGate.verdict !== 'pass' || (trainGate.violations?.length ?? 0) !== 0) {
+      throw new Error(`FAIL: FlyAI train canonical anchor 经 gotry_fact_gate 应 pass,实际:${JSON.stringify(trainGate).slice(0, 500)}`)
+    }
+    console.log('fact gate: registered FlyAI train → typed log → canonical anchor → gotry_fact_gate pass')
   }
 
   // 17) LLM_MODEL 会话面覆盖(issue #77):未设 GOTRY_LLM_MODEL 不挂监听(默认路径

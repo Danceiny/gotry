@@ -33,6 +33,7 @@ import {
   latestFactsForRouteDate,
   makeFactId,
   negativeFact,
+  railClaimVerdict,
   renderConnection,
   renderFlightFact,
   renderHotelFact,
@@ -45,10 +46,12 @@ import {
 } from '../src/bookable-facts.ts'
 import {
   ARTIFACT_GATE_SCHEMA,
+  extractClaims,
   gateArtifact,
   type AirlineAirportMap,
   type GateViolationKind,
 } from '../src/artifact-gate.ts'
+import { parseLeftTicketQuery } from '../capabilities/session/adapters/rail-12306.ts'
 
 let pass = 0
 let fail = 0
@@ -78,7 +81,7 @@ const fixture = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'data', 
 }
 const FETCHED = '2026-08-29T09:51:00.000Z'
 
-// 全部 fixture 查询经生产同款转换器进注册表(miss 落负事实);fixture 只产航班事实
+// golden fixture 查询经生产同款转换器进注册表(miss 落负事实);#299 train fixtures 在 §9b 单独构造
 const registry: FlightFact[] = dedupeFacts(fixture.queries.flatMap(q =>
   factsFromFlyai({ kind: q.kind, origin: q.origin, destination: q.destination, date: q.date },
     { verdict: q.verdict, options: q.options }, FETCHED, alias)))
@@ -204,10 +207,10 @@ for (const [label, renderedPrice] of [['¥999', '¥999'], ['CNY 999', 'CNY 999']
 }
 
 const trainPriceFact: FlightFact = { ...uo724, kind: 'train', fact_id: makeFactId(['train-price', 'G1234']), flight_no: 'G1234' }
-const trainContradicted = gateArtifact(renderFlightFact(trainPriceFact).replace('¥793', '¥794'), [trainPriceFact], map, { trip_year: tripYear })
+const trainContradicted = gateArtifact(renderFlightFact(trainPriceFact).replace(' [flyai@', ' ¥794 [flyai@'), [trainPriceFact], map, { trip_year: tripYear })
 assert(trainContradicted.verdict === 'blocked'
-  && trainContradicted.violations.some(v => v.kind === 'price_contradicted' && /G1234/.test(v.detail)),
-  'train fact 同样经共享价格原语对账,不复制 flight 专用实现')
+  && trainContradicted.violations.some(v => v.kind === 'fact_anchor_unknown' && /canonical renderer/.test(v.detail)),
+  'train canonical row 不自带价格,手工追加硬价破坏规范锚点后 fail-closed')
 
 const commaFareFact: FlightFact = { ...uo724, fact_id: makeFactId(['flight-price-comma', 'UO724']), price: 1793 }
 const commaFare = gateArtifact(renderFlightFact(commaFareFact).replace('¥1793', '¥1,793'), [commaFareFact], map, { trip_year: tripYear })
@@ -423,6 +426,111 @@ assert(goodReport.verdict === 'pass' && goodReport.presentation === 'verified_it
   `good artifact:6 航班 + 2 政策 claim 全回溯,闸 pass(违例 ${goodReport.violations.length},traceable=${goodReport.traceable})`)
 assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query_id.includes('flyai:flight:')),
   'good artifact 的每个可下单事实均可回溯到 tool result/query id(验收⑧)')
+
+// ---------------------------------------------------------------------------
+// §9b 混合机票/车次 claim(issue #299):分类独立 + rail fail-closed
+// ---------------------------------------------------------------------------
+{
+  const czFlight = factsFromFlyai(
+    { kind: 'flight', origin: '香港', destination: '普吉', date: '2027-07-17' },
+    { verdict: 'hit', options: [{ no: 'CZ8582', depDateTime: '2027-07-17T08:00:00', arrDateTime: '2027-07-17T12:00:00' }] },
+    FETCHED,
+    alias,
+  )[0]!
+  const gTrain = factsFromFlyai(
+    { kind: 'train', origin: '香港', destination: '普吉', date: '2027-07-17' },
+    { verdict: 'hit', options: [{ no: 'G1234', depDateTime: '2027-07-17T09:00:00', arrDateTime: '2027-07-17T13:00:00' }] },
+    FETCHED,
+    alias,
+  )[0]!
+  const nineCFlight = factsFromFlyai(
+    { kind: 'flight', origin: '香港', destination: '普吉', date: '2027-07-17' },
+    { verdict: 'hit', options: [{ no: '9C8781', depDateTime: '2027-07-17T10:00:00', arrDateTime: '2027-07-17T14:00:00' }] },
+    FETCHED,
+    alias,
+  )[0]!
+  const otherTrainFacts = ['D3112', 'C2001', 'Z9999'].flatMap(no => factsFromFlyai(
+    { kind: 'train', origin: '香港', destination: '普吉', date: '2027-07-17' },
+    { verdict: 'hit', options: [{ no, depDateTime: '2027-07-17T09:00:00', arrDateTime: '2027-07-17T13:00:00' }] },
+    FETCHED,
+    alias,
+  ))
+  const mixedText = '### 段｜香港→普吉(7.17)\n- CZ8582 08:00→12:00；9C8781 10:00→14:00；G1234 09:00→13:00；D3112 09:10→13:10；C2001 09:20→13:20；Z9999 09:30→13:30'
+  const mixedClaims = extractClaims(mixedText, map, { trip_year: tripYear })
+  assert(['CZ8582', '9C8781'].every(no => mixedClaims.flights.some(c => c.flight_no === no))
+    && !mixedClaims.flights.some(c => ['G1234', 'D3112', 'C2001', 'Z9999'].includes(c.flight_no)),
+    '混合产物:合法双字母航司 CZ8582/9C8781 保留,单字母车次不进入 flights')
+  assert(mixedClaims.trains.length === 4
+    && ['G1234', 'D3112', 'C2001', 'Z9999'].every(no => mixedClaims.trains.some(c => c.flight_no === no)),
+    '混合产物:G/D/C/Z 完整车次进入独立 trains claim 集合')
+  const codeBoundaryClaims = extractClaims('CA1234 MU1234 CZ8582 G1234 D3112 C2001 Z9999', map, { trip_year: tripYear })
+  assert(['CA1234', 'MU1234', 'CZ8582'].every(no => codeBoundaryClaims.flights.some(c => c.flight_no === no))
+    && !codeBoundaryClaims.flights.some(c => ['G1234', 'D3112', 'C2001', 'Z9999'].includes(c.flight_no))
+    && ['G1234', 'D3112', 'C2001', 'Z9999'].every(no => codeBoundaryClaims.trains.some(c => c.flight_no === no)),
+  '边界分类:CA/MU/CZ 双字母航司保留,G/D/C/Z 完整车次仅进入 trains')
+
+  const flightOnly = gateArtifact(mixedText, [czFlight, nineCFlight], map, { trip_year: tripYear })
+  assert(flightOnly.verdict === 'blocked'
+    && flightOnly.violations.some(v => v.kind === 'rail_claim_unverified' && v.detail.startsWith('G1234'))
+    && !flightOnly.violations.some(v => v.kind === 'not_in_source' && v.detail.startsWith('G1234'))
+    && flightOnly.traceable === 2,
+  '缺 train source 时仅 rail_claim_unverified;航班 authority 独立且 CZ8582/9C8781 仍 traceable')
+  assert(flightClaimVerdict([gTrain], { flight_no: 'CZ8582', origin: 'HKG', destination: 'HKT', date: '2027-07-17' }).verdict === 'route_unqueried',
+    'flightClaimVerdict 只看 kind=flight,同 route/date train 事实不制造 flight not_in_source')
+  assert(railClaimVerdict([czFlight, gTrain], { flight_no: 'G1234', origin: 'HKG', destination: 'HKT', date: '2027-07-17' }).verdict === 'traceable',
+    'railClaimVerdict 只看 kind=train + exact date + route/code + bookable + structured source')
+  assert(railClaimVerdict([gTrain], { flight_no: 'G1234' }).verdict === 'rail_claim_unverified'
+    && gateArtifact('- G1234 09:00→13:00', [gTrain], map, { trip_year: tripYear }).violations.some(v => v.kind === 'rail_claim_unverified'),
+  '无 route/date 的 unanchored rail claim 即使同号事实存在也 fail-closed')
+  const newerTrainMiss = negativeFact(
+    'flyai:train:香港-普吉:2027-07-17', 'train', '香港', '普吉', '2027-07-17', 'flyai', '2026-08-30T00:00:00.000Z', alias,
+  )
+  assert(railClaimVerdict([gTrain, newerTrainMiss], { flight_no: 'G1234', origin: 'HKG', destination: 'HKT', date: '2027-07-17' }).verdict === 'not_in_source',
+  '旧 train hit + 新 train miss/unavailable 批次不得继续 traceable')
+  assert(railClaimVerdict([
+    { ...gTrain, fetched_at: '2026-08-28T00:00:00.000Z' },
+    { ...czFlight, fetched_at: '2026-08-30T00:00:00.000Z' },
+  ], { flight_no: 'D3112', origin: 'HKG', destination: 'HKT', date: '2027-07-17' }).verdict === 'not_in_source'
+    && flightClaimVerdict([
+      { ...czFlight, fetched_at: '2026-08-28T00:00:00.000Z' },
+      { ...gTrain, fetched_at: '2026-08-30T00:00:00.000Z' },
+    ], { flight_no: 'MU9999', origin: 'HKG', destination: 'HKT', date: '2027-07-17' }).verdict === 'not_in_source',
+  '最新批次按 kind 隔离:更新的 flight 不遮蔽 train,更新的 train 不遮蔽 flight')
+  assert(railClaimVerdict([{ ...gTrain, source: 'static-schedule', query_id: 'static:train:HKG-HKT:2027-07-17' }], { flight_no: 'G1234', origin: 'HKG', destination: 'HKT', date: '2027-07-17' }).verdict === 'route_unqueried',
+    'static-schedule train 不是 rail structured source,不得伪造 traceable')
+
+  const railGood = gateArtifact(mixedText, [czFlight, nineCFlight, gTrain, ...otherTrainFacts], map, { trip_year: tripYear })
+  assert(railGood.verdict === 'pass' && railGood.traceable === 6 && railGood.violations.length === 0,
+    '显式 kind=train exact-date fixture 仅经 rail verdict 回溯,混合产物 pass')
+  const trainRendered = renderFlightFact(gTrain)
+  const trainRenderedGate = gateArtifact(trainRendered, [gTrain], map, { trip_year: tripYear })
+  assert(trainRendered.includes(`<!-- fact:${gTrain.fact_id} -->`)
+    && trainRendered.includes('车次')
+    && !trainRendered.includes('直飞')
+    && !trainRendered.includes('¥')
+    && !trainRendered.includes('价待询')
+    && trainRenderedGate.verdict === 'pass' && trainRenderedGate.traceable === 1,
+  'train canonical renderer 保留 typed anchor,只写车次语义且不伪造直飞/价格,可经 gate 回溯')
+  const trainAnchorTamperCases = [
+    ['车次', trainRendered.replace('G1234', 'G9999')],
+    ['出发时间', trainRendered.replace('09:00', '06:00')],
+    ['日期', trainRendered.replace('2027-07-17', '2027-11-12')],
+    ['route', trainRendered.replace(`${gTrain.route.origin}→${gTrain.route.destination}`, `${gTrain.route.origin}→DIFF`)],
+  ] as const
+  assert(trainAnchorTamperCases.every(([, tampered]) => {
+    const report = gateArtifact(tampered, [gTrain], map, { trip_year: tripYear })
+    return report.verdict === 'blocked' && report.violations.some(v => v.kind === 'fact_anchor_unknown')
+  }), 'train canonical anchor 篡改车次/出发时间/日期/route 均被 fact_anchor_unknown 拒绝')
+
+  assert(factsFromFlyai(
+    { kind: 'train', origin: '上海', destination: '昆明', date: '2027-12-01' },
+    { verdict: 'error' }, FETCHED, alias,
+  ).length === 0,
+  'train source error 不落负事实;通道无结论不是 rail evidence')
+  assert(parseLeftTicketQuery('not json', 'https://kyfw.12306.cn/otn/leftTicket/init').length === 0
+    && parseLeftTicketQuery('{"data":{"result":[]}}', 'https://kyfw.12306.cn/otn/leftTicket/init').length === 0,
+  '12306 malformed/empty body 只返回空解析结果,不转成 train negative fact')
+}
 
 // ---------------------------------------------------------------------------
 // §10 酒店事实闸(D-26,issue #118):酒店 claim 入闸 + 渲染原语单向生成

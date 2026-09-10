@@ -249,6 +249,7 @@ function feasibilityValidationFailure(
 
 export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}): void {
   const clock = seams.clock ?? (() => new Date())
+  const runFlyaiEffect = seams.effect ?? interpretEffect
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
   // 预算,复杂度决定出口结构(converge/handoff)。benchmark opt-in 钉死
@@ -1048,7 +1049,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
             return { ok: false, summary: 'checkOut 需 YYYY-MM-DD(与 checkIn 成对)' } as const
           }
         }
-        const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords } })
+        const itp = await runFlyaiEffect({ effect: 'FLYAI_SEARCH', params: { kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords } })
         if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
         const r = itp.result
         await noteChannel('flyai', r.verdict)
@@ -1081,7 +1082,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
             + `多为用户时间表达未带年份所致——向用户确认年份(或按未来最近的同月日修正)后再查。`,
         })) as Record<string, never>
       }
-      const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind, origin: q.from, destination: q.to, depDate: q.date } })
+      const itp = await runFlyaiEffect({ effect: 'FLYAI_SEARCH', params: { kind, origin: q.from, destination: q.to, depDate: q.date } })
       if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
       const r = itp.result
       await noteChannel('flyai', r.verdict)
@@ -1249,6 +1250,9 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         if (!itpT.result) return declinedObservation('SESSION_TRAIN_SEARCH', itpT.trace)
         const rT = itpT.result
         await noteChannel('session:12306-train', rT.verdict)
+        // #299 follow-up:12306 当前 parser 只由 trains.length 归约 hit/miss,
+        // malformed/empty body 与真实不可售尚未有 typed outcome + seat availability/
+        // freshness contract,故本路径不注册事实、不生成 train negative fact。
         const topT = (rT.trains ?? []).slice(0, 10).map(t => `${t.trainCode} ${t.depTime}→${t.arrTime} 历时${Math.round(t.durationMin / 60 * 10) / 10}h ${t.canWebBuy === 'Y' ? '可订' : t.canWebBuy}${Object.entries(t.seats).filter(([, v]) => v && v !== '--' && v !== '无').slice(0, 3).map(([k, v]) => `${k}:${v}`).join(' ')}`)
         const summaryT = rT.verdict === 'hit'
           ? `${q.from}→${q.to} ${q.date} 余票(12306 公开查询面,${(rT.trains ?? []).length} 趟)前 ${topT.length} 条(列表接口不含票价,票价以 12306 落地页为准):\n${topT.join('\n')}\n${rT.evidence}`
