@@ -511,5 +511,116 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   console.log(`  ok - §11 政策渲染锚点 + 海关申报关键词 fail-closed 八断言完成`)
 }
 
+// ---------------------------------------------------------------------------
+// §12 酒店非关键词 category + lodging heading depth(issues #301,#273)
+// ---------------------------------------------------------------------------
+{
+  const fetchedAt = '2026-09-04T00:00:00.000Z'
+  // 12a. 5 类非关键词住宿 category,缺档期事实 → unverifiable_hotel_claim + unconditional_check
+  //     精品酒店 沿用现有 酒店 token,本切片不重复声明
+  for (const cat of ['度假村', '青旅', '青年旅舍', '别墅', '公寓']) {
+    const claim = gateArtifact(`## 住宿\n- 大理 2026-10-01→2026-10-03 ${cat}有房可订 ✓`, [], map, { trip_year: 2026 })
+    assert(claim.violations.some(v => v.kind === 'unverifiable_hotel_claim'),
+      `${cat} 缺档期事实 → unverifiable_hotel_claim`)
+    assert(claim.violations.some(v => v.kind === 'unconditional_check'),
+      `${cat} 缺事实 + ✓ → unconditional_check`)
+  }
+  // 12b. 命中在册 hit 时 traceable pass(非关键词 category 也走通)
+  const daliHit = factsFromHotel({ source: 'flyai-hotel', destination: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03', verdict: 'hit', options: 9, evidence: 'e', fetchedAt })
+  const daliTrace = gateArtifact('## 住宿\n- 大理 2026-10-01→2026-10-03 度假村有房可订', [...daliHit], map, { trip_year: 2026 })
+  assert(daliTrace.verdict === 'pass' && daliTrace.traceable === 1,
+    `度假村 命中在册 hit → traceable pass(实际 ${daliTrace.verdict}/traceable=${daliTrace.traceable})`)
+  // 12c. legacy 兜底保留:行内含 住宿 token 的 住宿:湖景房有房可订 ✓ 仍入闸
+  const lake = gateArtifact('## 住宿\n- 住宿:湖景房有房可订 ✓', [], map, { trip_year: 2026 })
+  assert(lake.violations.some(v => v.kind === 'unverifiable_hotel_claim'),
+    'legacy 行内 住宿:湖景房有房可订 ✓ 兜底保留(行内 token)')
+
+  // 12d. ATX 1–6 lodging heading 激活
+  for (const [level, hashes] of [[1, '#'], [2, '##'], [3, '###'], [4, '####'], [5, '#####'], [6, '######']] as const) {
+    const r = gateArtifact(`${hashes} 住宿\n- 湖景房有房可订 ✓`, [], map, { trip_year: 2026 })
+    assert(r.violations.some(v => v.kind === 'unverifiable_hotel_claim'),
+      `ATX ${level} lodging heading 激活(contextual 行入闸)`)
+  }
+  // 12e. 住宿 heading 下更深 non-lodging 子标题保留外层 lodging context
+  const deeperNonLodging = gateArtifact('## 住宿\n### 湖景房\n- 有房可订', [], map, { trip_year: 2026 })
+  assert(deeperNonLodging.violations.some(v => v.kind === 'unverifiable_hotel_claim'),
+    '更深 non-lodging 子标题继承 lodging context(## 住宿 → ### 湖景房)')
+  // 12f. 住宿 heading 下更深 lodging 子标题保留外层 context(栈不丢外层)
+  const deeperLodging = gateArtifact('## 住宿\n#### 酒店\n### 湖景房\n- 有房可订', [], map, { trip_year: 2026 })
+  const fViolations = deeperLodging.violations.filter(v => v.kind === 'unverifiable_hotel_claim')
+  assert(fViolations.length === 1 && fViolations[0]!.line === 4,
+    `更深 lodging 子标题栈保留外层(实际 ${fViolations.length} 条,line=${fViolations.map(v => v.line).join(',')})`)
+  // 12g. 同级 non-lodging heading 退出(精确 line 归属)
+  const sameLevelExit = gateArtifact('## 住宿\n- 湖景房有房可订 ✓\n## 航班\n- 湖景房有房可订', [], map, { trip_year: 2026 })
+  const gViolations = sameLevelExit.violations.filter(v => v.kind === 'unverifiable_hotel_claim')
+  assert(gViolations.length === 1 && gViolations[0]!.line === 2,
+    `同级 non-lodging heading 退出(实际 ${gViolations.length} 条,line=${gViolations.map(v => v.line).join(',')})`)
+  // 12h. 更高 non-lodging heading 退出
+  const higherExit = gateArtifact('## 住宿\n- 湖景房有房可订 ✓\n# 航班\n- 湖景房有房可订', [], map, { trip_year: 2026 })
+  const hViolations = higherExit.violations.filter(v => v.kind === 'unverifiable_hotel_claim')
+  assert(hViolations.length === 1 && hViolations[0]!.line === 2,
+    `更高 non-lodging heading 退出(实际 ${hViolations.length} 条,line=${hViolations.map(v => v.line).join(',')})`)
+  // 12i. 同级 lodging heading 替换该层(栈仍能激活后续)
+  const sameLevelLodging = gateArtifact('## 住宿\n- 湖景房有房可订 ✓\n## 酒店\n- 湖景房有房可订', [], map, { trip_year: 2026 })
+  assert(sameLevelLodging.violations.filter(v => v.kind === 'unverifiable_hotel_claim').length === 2,
+    `同级 lodging heading 替换该层,后续行仍入闸(实际 ${sameLevelLodging.violations.length} 条)`)
+  // 12j. 无任何 heading 时,裸「湖景房有房可订」不进 hotel claim
+  const noHeader = gateArtifact('- 湖景房有房可订 ✓', [], map, { trip_year: 2026 })
+  assert(!noHeader.violations.some(v => v.kind === 'unverifiable_hotel_claim'),
+    '无 heading 上下文时裸「湖景房有房可订 ✓」不升为 hotel claim')
+  // 12k. lodging heading 下裸 ✓/✅ 不构成 bookability(根实测 #347 反馈补)
+  const bareCheck = gateArtifact('## 住宿\n- 靠近地铁 ✓', [], map, { trip_year: 2026 })
+  assert(!bareCheck.violations.some(v => v.kind === 'unverifiable_hotel_claim'),
+    'lodging heading 下裸 ✓/✅ 不构成 bookability(靠近地铁 ✓ 不入闸)')
+  // 12l. contextual 可订短语不带 ✓ 也入闸;带 ✓ 才加 unconditional_check
+  const ctxNoCheck = gateArtifact('## 住宿\n- 湖景房有房可订', [], map, { trip_year: 2026 })
+  assert(ctxNoCheck.violations.some(v => v.kind === 'unverifiable_hotel_claim') && !ctxNoCheck.violations.some(v => v.kind === 'unconditional_check'),
+    'contextual 可订短语不带 ✓ → unverifiable_hotel_claim only')
+  const ctxCheck = gateArtifact('## 住宿\n- 湖景房有房可订 ✓', [], map, { trip_year: 2026 })
+  assert(ctxCheck.violations.some(v => v.kind === 'unverifiable_hotel_claim') && ctxCheck.violations.some(v => v.kind === 'unconditional_check'),
+    'contextual 可订短语带 ✓ → 两违例(无 unconditional_check → 漏报)')
+  console.log(`  ok - §12 完成(booking heading depth + contextual bookability phrase 分流)`)
+}
+
+// ---------------------------------------------------------------------------
+// §13 政策关键词扩词(issue #302,父 #273,D-26 残余收口切片)
+//     扩词仅限父 issue 显式列举的有限并集,不做 NLP/同义词扩展。
+//     测试 fixture = 语法占位,不对现实政策内容做任何断言。仅验证
+//     POLICY_WORD regex + AS_OF_WORD 时间边界,不引入 country/rule/value。
+// ---------------------------------------------------------------------------
+{
+  const policyTerms: ReadonlyArray<string> = [
+    'EVUS', 'ETA', 'eVisa', '疫苗', '疫苗接种', '健康申报', '隔离', '工作签', '居留', '返程签', '护照有效期', '黄皮书', '保险',
+  ]
+  const fixtureAsOf = '2026-08-29'
+  // 13a. 13 个 policy term 缺 as_of → policy_without_as_of(占位字符串)
+  for (const term of policyTerms) {
+    const missingLine = `| fixture | ${term} 政策断言测试占位 |`
+    const blocked = gateArtifact(missingLine, registry, map, { trip_year: tripYear })
+    assert(blocked.violations.some(v => v.kind === 'policy_without_as_of'),
+      `政策词 ${term} 缺 as_of → policy_without_as_of`)
+  }
+  // 13b. 13 个 term 带「截至 2026-08-29」过闸(占位字符串)
+  for (const term of policyTerms) {
+    const okLine = `| fixture | ${term} 政策断言测试占位(截至 ${fixtureAsOf}) |`
+    const passed = gateArtifact(okLine, registry, map, { trip_year: tripYear })
+    assert(!passed.violations.some(v => v.kind === 'policy_without_as_of'),
+      `政策词 ${term} 带截至日期过闸(关键词扩展不误伤)`)
+  }
+  // 13c. 拉丁 token 大小写不敏感(EVUS/Evus/evus 同命中)
+  const mixedCase = gateArtifact(`| fixture | evus 政策断言测试占位 |`, registry, map, { trip_year: tripYear })
+  assert(mixedCase.violations.some(v => v.kind === 'policy_without_as_of'),
+    '拉丁 token 大小写不敏感(evus → policy_without_as_of)')
+  // 13d. 拉丁 token 不嵌入更长拉丁词(REVUS 不会被 EVUS 误抓)
+  const embeddedNo = gateArtifact(`| fixture | REVUSIN 政策断言测试占位 |`, registry, map, { trip_year: tripYear })
+  assert(!embeddedNo.violations.some(v => v.kind === 'policy_without_as_of'),
+    '拉丁 token 边界(REVUS 不被 EVUS 嵌入匹配)→ 不误伤')
+  // 13e. 不扩词到宽 NLP/同义词/自由政策词表(如「过境」单独不被命中,只命中过境免)
+  const narrow = gateArtifact(`| fixture | 过境 政策断言测试占位 |`, registry, map, { trip_year: tripYear })
+  assert(!narrow.violations.some(v => v.kind === 'policy_without_as_of'),
+    '窄词表边界:「过境」单独不被命中(只命中「过境免」)')
+  console.log(`  ok - §13 政策关键词扩词完成(13 个 fixture-only policy term,占位字符串,无真实政策内容)`)
+}
+
 console.log(`\nFACT GATE TESTS: ${pass} pass, ${fail} fail`)
 if (fail > 0) process.exit(1)
