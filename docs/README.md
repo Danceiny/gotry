@@ -106,6 +106,7 @@
 | [design/memory-lifecycle-collector.md](design/memory-lifecycle-collector.md) | M4 lifecycle collector 使用合同:显式 opt-in、隔离 stateRoot、HMAC/consent、原子持久化与 #223/#238 scorer 导出；仅产出 candidate/synthetic,不替代真实 cohort |
 | [design/milestone-delivery-plan.md](design/milestone-delivery-plan.md) | M4→M6 living 任务图(issue #225):#20/#22/#136/#137 真实 gate、#231–#235 后继与 #270 公开交付台账;预准入只含获授权的设计/只读/fixture/failing-before 工作 |
 | [design/write-gate-production-design.md](design/write-gate-production-design.md) | M5 WriteGate 生产化 proposal(issue #225/#136):HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、query miss 保持 unknown、对账/补偿/披露 |
+| [design/fact-writegate-seam.md](design/fact-writegate-seam.md) | fact-anchor × M5 WriteGate 接缝(issue #303,#273 子切片):读路径闸与写路径闸的契约、five-step 最小链、non-success 写 receipt fail-closed、依赖 #136/#231,M5 Entry 前不启封 |
 | [design/effect-interpreter.md](design/effect-interpreter.md) | 效应解译器设计(accepted,ADR-18):词汇/韧性策略表/判定记录 |
 | [design/booking-saga-fsm.md](design/booking-saga-fsm.md) | 预订 saga 状态机(accepted,ADR-17):字母表/边表/M5 缝词汇 |
 | [design/tool-orchestration-design.md](design/tool-orchestration-design.md) | 工具编排与通道健康面设计(proposal,issue #106/#107/#108) |
