@@ -207,10 +207,10 @@ for (const [label, renderedPrice] of [['¥999', '¥999'], ['CNY 999', 'CNY 999']
 }
 
 const trainPriceFact: FlightFact = { ...uo724, kind: 'train', fact_id: makeFactId(['train-price', 'G1234']), flight_no: 'G1234' }
-const trainContradicted = gateArtifact(renderFlightFact(trainPriceFact).replace('¥793', '¥794'), [trainPriceFact], map, { trip_year: tripYear })
+const trainContradicted = gateArtifact(renderFlightFact(trainPriceFact).replace(' [flyai@', ' ¥794 [flyai@'), [trainPriceFact], map, { trip_year: tripYear })
 assert(trainContradicted.verdict === 'blocked'
   && trainContradicted.violations.some(v => v.kind === 'price_contradicted' && /G1234/.test(v.detail)),
-  'train fact 同样经共享价格原语对账,不复制 flight 专用实现')
+  'train canonical row 不自带价格,但手工追加硬价仍经共享价格原语拦截,不复制 flight 专用实现')
 
 const commaFareFact: FlightFact = { ...uo724, fact_id: makeFactId(['flight-price-comma', 'UO724']), price: 1793 }
 const commaFare = gateArtifact(renderFlightFact(commaFareFact).replace('¥1793', '¥1,793'), [commaFareFact], map, { trip_year: tripYear })
@@ -479,6 +479,14 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
     'flightClaimVerdict 只看 kind=flight,同 route/date train 事实不制造 flight not_in_source')
   assert(railClaimVerdict([czFlight, gTrain], { flight_no: 'G1234', origin: 'HKG', destination: 'HKT', date: '2027-07-17' }).verdict === 'traceable',
     'railClaimVerdict 只看 kind=train + exact date + route/code + bookable + structured source')
+  assert(railClaimVerdict([gTrain], { flight_no: 'G1234' }).verdict === 'rail_claim_unverified'
+    && gateArtifact('- G1234 09:00→13:00', [gTrain], map, { trip_year: tripYear }).violations.some(v => v.kind === 'rail_claim_unverified'),
+  '无 route/date 的 unanchored rail claim 即使同号事实存在也 fail-closed')
+  const newerTrainMiss = negativeFact(
+    'flyai:train:香港-普吉:2027-07-17', 'train', '香港', '普吉', '2027-07-17', 'flyai', '2026-08-30T00:00:00.000Z', alias,
+  )
+  assert(railClaimVerdict([gTrain, newerTrainMiss], { flight_no: 'G1234', origin: 'HKG', destination: 'HKT', date: '2027-07-17' }).verdict === 'not_in_source',
+  '旧 train hit + 新 train miss/unavailable 批次不得继续 traceable')
   assert(railClaimVerdict([
     { ...gTrain, fetched_at: '2026-08-28T00:00:00.000Z' },
     { ...czFlight, fetched_at: '2026-08-30T00:00:00.000Z' },
@@ -494,6 +502,15 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   const railGood = gateArtifact(mixedText, [czFlight, nineCFlight, gTrain, ...otherTrainFacts], map, { trip_year: tripYear })
   assert(railGood.verdict === 'pass' && railGood.traceable === 6 && railGood.violations.length === 0,
     '显式 kind=train exact-date fixture 仅经 rail verdict 回溯,混合产物 pass')
+  const trainRendered = renderFlightFact(gTrain)
+  const trainRenderedGate = gateArtifact(trainRendered, [gTrain], map, { trip_year: tripYear })
+  assert(trainRendered.includes(`<!-- fact:${gTrain.fact_id} -->`)
+    && trainRendered.includes('车次')
+    && !trainRendered.includes('直飞')
+    && !trainRendered.includes('¥')
+    && !trainRendered.includes('价待询')
+    && trainRenderedGate.verdict === 'pass' && trainRenderedGate.traceable === 1,
+  'train canonical renderer 保留 typed anchor,只写车次语义且不伪造直飞/价格,可经 gate 回溯')
 
   assert(factsFromFlyai(
     { kind: 'train', origin: '上海', destination: '昆明', date: '2027-12-01' },

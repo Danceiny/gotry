@@ -405,29 +405,26 @@ function isStructuredTrainFact(f: BookableFact): f is FlightFact {
 
 export function railClaimVerdict(facts: BookableFact[], claim: RailClaim): { verdict: RailClaimVerdict; fact?: FlightFact; reason: string } {
   const no = claim.flight_no.toUpperCase().replace(/\s+/g, '')
-  const sameNo = facts.filter((f): f is FlightFact =>
-    isStructuredTrainFact(f)
-      && f.flight_no.toUpperCase() === no
-      && f.bookability === 'bookable_exact_date')
-  const routeMatched = sameNo.filter(f =>
-    (!claim.origin || f.route.origin === claim.origin || f.route.origin_airport === claim.origin)
-    && (!claim.destination || f.route.destination === claim.destination || f.route.dest_airport === claim.destination)
-    && (!claim.date || f.date === claim.date))
-  if (routeMatched.length > 0) return { verdict: 'traceable', fact: routeMatched[0], reason: `回溯 ${routeMatched[0]!.query_id}` }
-  if (claim.origin && claim.destination && claim.date) {
-    const scoped = latestFactsForRouteDate(facts, claim.origin, claim.destination, claim.date, 'train')
-      .filter(isStructuredTrainFact)
-    if (scoped.length > 0) {
-      return {
-        verdict: 'not_in_source',
-        reason: scoped.some(f => f.bookability === 'unavailable_exact_date')
-          ? `${claim.origin}→${claim.destination} ${claim.date} train exact-date 源返回 0 条(${scoped[0]!.query_id})——不得用历史班期/相邻日期填充`
-          : `${claim.origin}→${claim.destination} ${claim.date} train exact-date 源在架 ${scoped.filter(f => f.bookability === 'bookable_exact_date').map(f => f.flight_no).join('/')}——无 ${no}`,
-      }
-    }
-    return { verdict: 'route_unqueried', reason: `${claim.origin}→${claim.destination} ${claim.date} train 路线从未经 exact-date 源核验` }
+  if (!claim.origin || !claim.destination || !claim.date) {
+    return { verdict: 'rail_claim_unverified', reason: `车次 ${no} 无可回溯的 exact-date 事实(缺完整 route/date 上下文)` }
   }
-  return { verdict: 'rail_claim_unverified', reason: `车次 ${no} 无可回溯的 exact-date 事实(缺 route/date 上下文,或无同号 train 事实)` }
+  // 先按 train kind 选择该 route+date 的最新查询批次,再在该批次匹配车次。
+  // 这样旧 hit 不会越过更新的 miss/unavailable,flight 批次也不能遮蔽 train 批次。
+  const scoped = latestFactsForRouteDate(facts, claim.origin, claim.destination, claim.date, 'train')
+    .filter(isStructuredTrainFact)
+  const sameNo = scoped.filter(f =>
+    f.flight_no.toUpperCase() === no
+      && f.bookability === 'bookable_exact_date')
+  if (sameNo.length > 0) return { verdict: 'traceable', fact: sameNo[0], reason: `回溯 ${sameNo[0]!.query_id}` }
+  if (scoped.length > 0) {
+    return {
+      verdict: 'not_in_source',
+      reason: scoped.some(f => f.bookability === 'unavailable_exact_date')
+        ? `${claim.origin}→${claim.destination} ${claim.date} train exact-date 源返回 0 条(${scoped[0]!.query_id})——不得用历史班期/相邻日期填充`
+        : `${claim.origin}→${claim.destination} ${claim.date} train exact-date 源在架 ${scoped.filter(f => f.bookability === 'bookable_exact_date').map(f => f.flight_no).join('/')}——无 ${no}`,
+    }
+  }
+  return { verdict: 'route_unqueried', reason: `${claim.origin}→${claim.destination} ${claim.date} train 路线从未经 exact-date 源核验` }
 }
 
 // ---------------------------------------------------------------------------
@@ -596,8 +593,9 @@ export function defaultReviewBy(tripDate: string): string {
 }
 
 /**
- * 航班事实行。bookable_exact_date 才允许完整班次行;其余一律 fail-closed 措辞。
- * 永不输出无条件 ✓;证据链(source/query_id/fetched_at)随行必达。
+ * 航班/车次事实行。bookable_exact_date 才允许完整班次行;其余一律 fail-closed 措辞。
+ * train 复用此 canonical renderer 但只输出车次语义,不输出直飞或价格;永不输出无条件 ✓;
+ * 证据链(source/query_id/fetched_at)随行必达。
  */
 export function renderFlightFact(f: FlightFact): string {
   return renderFlightFactInner(f) + ` <!-- fact:${f.fact_id} -->`
@@ -608,12 +606,23 @@ function renderFlightFactInner(f: FlightFact): string {
   const anchor = ` <!-- fact:${f.fact_id} -->`
   const route = `${f.route.origin}→${f.route.destination}`
   const evidence = `[${f.source}@${f.fetched_at} #${f.query_id}]`
+  if (f.kind === 'train' && f.bookability === 'unavailable_exact_date') {
+    const review = f.review_by ?? defaultReviewBy(f.date)
+    return `- ${route} ${f.date} 车次${f.flight_no ? ` ${f.flight_no}` : ''}:**未确认/当前不可售**——exact-date 源 ${f.source} 于 ${f.fetched_at.slice(0, 10)} 返回 0 条;到 ${review} 复核,不得用历史班期/相邻日期填充 ${evidence}`
+  }
+  if (f.kind === 'train' && f.bookability !== 'bookable_exact_date') {
+    return `- ${route} ${f.date} 车次${f.flight_no ? ` ${f.flight_no}` : ''}:**未核验**(${f.bookability})——仅作参考,不得作为可下单方案呈现 ${evidence}`
+  }
   if (f.bookability === 'unavailable_exact_date') {
     const review = f.review_by ?? defaultReviewBy(f.date)
     return `- ${route} ${f.date}:**未确认/当前不可售**——exact-date 源 ${f.source} 于 ${f.fetched_at.slice(0, 10)} 返回 0 条;到 ${review} 复核,不得用历史班期/相邻日期填充 ${evidence}`
   }
   if (f.bookability !== 'bookable_exact_date') {
     return `- ${route} ${f.date} ${f.flight_no || ''}:**未核验**(${f.bookability})——仅作参考,不得作为可下单方案呈现 ${evidence}`
+  }
+  if (f.kind === 'train') {
+    const times = f.dep_local && f.arr_local ? ` ${f.dep_local}→${f.arr_local}` : ''
+    return `- ${route} ${f.date} 车次 ${f.flight_no}${times} ${evidence}`
   }
   const carrier = f.operating_carrier && f.operating_carrier !== f.marketing_carrier
     ? `营销 ${f.marketing_carrier ?? '?'} / 实际承运 ${f.operating_carrier}`

@@ -643,8 +643,12 @@ async function main() {
       throw new Error(`FAIL: FlyAI train fixture 应经真实工具 seam 落 typed fact,实际:${JSON.stringify(trainRegistry).slice(0, 500)}`)
     }
     const trainMarkdown = `# 车次片段\n## D1 11.11 上海 → 昆明\n${renderFlightFact(trainRegistry[0]!)}`
-    if (!trainMarkdown.includes(`<!-- fact:${trainRegistry[0]!.fact_id} -->`)) {
-      throw new Error('FAIL: train canonical renderer 应携带 typed fact anchor')
+    if (!trainMarkdown.includes(`<!-- fact:${trainRegistry[0]!.fact_id} -->`)
+      || !trainMarkdown.includes('车次')
+      || trainMarkdown.includes('直飞')
+      || trainMarkdown.includes('¥')
+      || trainMarkdown.includes('价待询')) {
+      throw new Error(`FAIL: train canonical renderer 应只携带车次语义与 typed anchor,不得直飞/价格:${trainMarkdown}`)
     }
     const trainGate = await gate.execute({ markdown: trainMarkdown, tripYear: 2027 }, null) as { verdict?: string; violations?: unknown[] }
     if (trainGate.verdict !== 'pass' || (trainGate.violations?.length ?? 0) !== 0) {
