@@ -113,6 +113,7 @@ interface RawItem {
       seatClassName?: string
     }>
   }>
+  adultPrice?: string
   ticketPrice?: string
   /** 机/火与酒店条目的顶层 price(未鉴权态为打码串,机/火如 "1xxx",酒店如 "¥7xx") */
   price?: string
@@ -149,6 +150,27 @@ function positiveFiniteNumber(value: unknown): number | undefined {
     ? value
     : typeof value === 'string' && value.trim() ? Number(value.trim()) : Number.NaN
   return Number.isFinite(number) && number > 0 ? number : undefined
+}
+
+function positiveFiniteDuration(value: unknown): number | undefined {
+  if (typeof value === 'number') return positiveFiniteNumber(value)
+  const text = nonEmptyText(value)
+  if (!text) return undefined
+  const minutes = /^(\d+(?:\.\d+)?)\s*分钟$/.exec(text)?.[1]
+  return positiveFiniteNumber(minutes ?? text)
+}
+
+function parseTransportPrice(value: unknown): { price: number; priceRaw?: string } | undefined {
+  const raw = nonEmptyText(value)
+  if (!raw) return undefined
+  const bare = raw.replace(/^¥\s*/, '')
+  if (/^\d+(?:\.\d+)?$/.test(bare)) {
+    const price = Number(bare)
+    return Number.isFinite(price) && price > 0 ? { price } : undefined
+  }
+  // 未鉴权态可能返回 1xxx/¥7xx；保留原值，但绝不把模糊串猜成数字。
+  if (/^\d+x+$/.test(bare)) return { price: 0, priceRaw: raw }
+  return undefined
 }
 
 /**
@@ -348,32 +370,37 @@ function parseTransportItems(items: unknown[]): ParsedItems<FlyaiOption> {
       continue
     }
     const no = nonEmptyText(seg.marketingTransportNo)
-    const name = nonEmptyText(seg.marketingTransportName)
+    const name = optionalText(seg.marketingTransportName)
     const depDateTime = nonEmptyText(seg.depDateTime)
     const arrDateTime = nonEmptyText(seg.arrDateTime)
     const depStation = nonEmptyText(seg.depStationName)
     const arrStation = nonEmptyText(seg.arrStationName)
-    const durationMin = positiveFiniteNumber(seg.duration)
-    const rawPrice = nonEmptyText(it.ticketPrice ?? it.price)
+    const durationMin = positiveFiniteDuration(seg.duration)
+    const rawPriceValue = it.adultPrice !== undefined
+      ? it.adultPrice
+      : it.ticketPrice !== undefined
+        ? it.ticketPrice
+        : it.price
+    const parsedPrice = parseTransportPrice(rawPriceValue)
     const seatClass = optionalText(seg.seatClassName)
     const jumpUrl = optionalText(it.jumpUrl)
-    if (!no || !name || !depDateTime || !arrDateTime || !depStation || !arrStation || durationMin === undefined || !rawPrice
+    if (!no || !depDateTime || !arrDateTime || !depStation || !arrStation || durationMin === undefined || !parsedPrice
+      || (seg.marketingTransportName !== undefined && name === undefined)
       || (seg.seatClassName !== undefined && seatClass === undefined)
       || (it.jumpUrl !== undefined && jumpUrl === undefined)) {
       malformedCount += 1
       continue
     }
-    const numericPrice = Number(rawPrice)
     options.push({
       no,
-      name,
+      name: name ?? '',
       depDateTime,
       arrDateTime,
       depStation,
       arrStation,
       durationMin,
-      price: Number.isFinite(numericPrice) && numericPrice > 0 ? numericPrice : 0,
-      priceRaw: /^\d+$/.test(rawPrice) ? undefined : rawPrice || undefined,
+      price: parsedPrice.price,
+      priceRaw: parsedPrice.priceRaw,
       seatClass: seatClass ?? undefined,
       jumpUrl: jumpUrl ?? undefined,
     })

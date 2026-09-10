@@ -6,7 +6,7 @@
  *  3. 非空 transport itemList 只要有 malformed sibling → registered effect error,不落负事实
  *     (flight/train 各一条有效+畸形 fixture;无 partial-completeness hit)
  *  4. 非空 hotel itemList 有 malformed sibling → registered effect error,不落酒店事实
- *  5. transport/hotel 字段类型与空白校验不接受 truthy 数字/对象
+ *  5. transport/hotel 字段类型与空白校验不接受 truthy 数字/对象,并覆盖 official Alibaba shape
  *  6. 完整合法 flight/train/hotel → verdict=hit;有效空列表仍 miss
  *  7. exit≠0 → verdict=error
  *  8. 试用额度达限(exit 1 + MCP HTTP 429 "Trial limit reached",2026-09-02 迪拜
@@ -163,7 +163,80 @@ assert.equal(typedHotelMalformed.verdict, 'error', '对象 hotel name 应判 err
 assert.equal(typedHotelMalformed.hotels, undefined, '字段类型 malformed 不应暴露 hotels')
 console.log('7. typed transport/hotel 字段拒绝 truthy 数字、对象与空白OK')
 
-// 8. 完整合法 flight → hit,字段解析
+// 8. official Alibaba shape → adultPrice、带“分钟”时长与 train 缺名称兼容
+const officialFlightBin = await fakeCli('flyai-official-flight', 0, JSON.stringify({
+  data: { itemList: [{
+    adultPrice: '¥400.0',
+    journeys: [{ journeyType: '直达', segments: [{
+      depStationName: '首都国际机场', depDateTime: '2026-03-28 21:00:00',
+      arrStationName: '浦东国际机场', arrDateTime: '2026-03-28 23:20:00',
+      duration: '140分钟', marketingTransportName: '国航', marketingTransportNo: 'CA1883', seatClassName: '经济舱',
+    }] }],
+    jumpUrl: 'https://example.test/flight',
+  }] },
+}))
+const officialFlight = await registeredSearch({ ...base, cliBin: officialFlightBin, timeoutMs: 5000 })
+assert.equal(officialFlight.verdict, 'hit', 'official flight shape 应保持 hit')
+assert.equal(officialFlight.options?.[0]?.price, 400, 'official adultPrice 应解析为 400')
+assert.equal(officialFlight.options?.[0]?.durationMin, 140, 'official 中文分钟时长应解析为 140')
+const officialTrainBin = await fakeCli('flyai-official-train', 0, JSON.stringify({
+  data: { itemList: [{
+    adultPrice: '¥553.0',
+    journeys: [{ journeyType: '直达', segments: [{
+      depStationName: '北京南', depDateTime: '2026-03-15 08:00:00',
+      arrStationName: '上海虹桥', arrDateTime: '2026-03-15 12:28:00',
+      duration: '268分钟', marketingTransportNo: 'G11', seatClassName: '二等座',
+    }] }],
+    jumpUrl: 'https://example.test/train',
+  }] },
+}))
+const officialTrain = await registeredSearch({ ...trainBase, cliBin: officialTrainBin, timeoutMs: 5000 })
+assert.equal(officialTrain.verdict, 'hit', 'official train shape 应保持 hit')
+assert.equal(officialTrain.options?.[0]?.price, 553, 'official train adultPrice 应解析为 553')
+assert.equal(officialTrain.options?.[0]?.durationMin, 268, 'official train 中文分钟时长应解析为 268')
+assert.equal(officialTrain.options?.[0]?.name, '', '缺 marketingTransportName 不猜名称且保留空字符串')
+console.log('8. official flight/train shape → adultPrice/分钟时长/缺名称兼容OK')
+
+// 9. official typed fields:invalid price/duration/name type → structured error
+const invalidPriceBin = await fakeCli('flyai-invalid-price', 0, JSON.stringify({
+  data: { itemList: [{
+    adultPrice: 'not-a-price',
+    journeys: [{ segments: [{
+      marketingTransportNo: 'CA1883', marketingTransportName: '国航',
+      depDateTime: '2026-03-28 21:00:00', arrDateTime: '2026-03-28 23:20:00',
+      depStationName: '首都国际机场', arrStationName: '浦东国际机场', duration: '140分钟',
+    }] }],
+  }] },
+}))
+const invalidPrice = await registeredSearch({ ...base, cliBin: invalidPriceBin, timeoutMs: 5000 })
+assert.equal(invalidPrice.verdict, 'error', '非法文本价格应判 error')
+const invalidDurationBin = await fakeCli('flyai-invalid-duration', 0, JSON.stringify({
+  data: { itemList: [{
+    adultPrice: '¥400.0',
+    journeys: [{ segments: [{
+      marketingTransportNo: 'CA1883', marketingTransportName: '国航',
+      depDateTime: '2026-03-28 21:00:00', arrDateTime: '2026-03-28 23:20:00',
+      depStationName: '首都国际机场', arrStationName: '浦东国际机场', duration: { value: 140 },
+    }] }],
+  }] },
+}))
+const invalidDuration = await registeredSearch({ ...base, cliBin: invalidDurationBin, timeoutMs: 5000 })
+assert.equal(invalidDuration.verdict, 'error', '对象时长应判 error')
+const invalidNameBin = await fakeCli('flyai-invalid-name', 0, JSON.stringify({
+  data: { itemList: [{
+    adultPrice: '¥553.0',
+    journeys: [{ segments: [{
+      depStationName: '北京南', depDateTime: '2026-03-15 08:00:00',
+      arrStationName: '上海虹桥', arrDateTime: '2026-03-15 12:28:00',
+      duration: '268分钟', marketingTransportNo: 'G11', marketingTransportName: 123,
+    }] }],
+  }] },
+}))
+const invalidName = await registeredSearch({ ...trainBase, cliBin: invalidNameBin, timeoutMs: 5000 })
+assert.equal(invalidName.verdict, 'error', '数字 marketingTransportName 应判 error')
+console.log('9. official typed 字段非法 price/duration/name → errorOK')
+
+// 10. 完整合法 flight → hit,字段解析
 const hitBin = await fakeCli('flyai-hit', 0, hitPayload)
 const h = await flyaiSearch({ ...base, cliBin: hitBin, timeoutMs: 5000 })
 assert.equal(h.ok, true, '完整合法 flight ok=true')
@@ -173,9 +246,9 @@ assert.equal(h.options![0]!.no, '9C6617')
 assert.equal(h.options![0]!.price, 580, '价格数值解析')
 assert.equal(h.options![0]!.depStation, '浦东T2')
 assert.match(h.evidence, /1\/1 flight options/, 'hit 证据链 1/1')
-console.log('8. 完整合法 flight → hit(9C6617 ¥580)OK')
+console.log('10. 完整合法 flight → hit(9C6617 ¥580)OK')
 
-// 9. 完整合法 train → hit,共享 transport typed 合同
+// 11. 完整合法 train → hit,共享 transport typed 合同
 const trainHitBin = await fakeCli('flyai-train-hit', 0, JSON.stringify({
   data: {
     itemList: [{
@@ -193,9 +266,9 @@ assert.equal(trainHit.ok, true, '完整合法 train ok=true')
 assert.equal(trainHit.verdict, 'hit', '完整合法 train 应判 hit')
 assert.equal(trainHit.options?.length, 1, '完整合法 train 产出 1 个选项')
 assert.equal(trainHit.options?.[0]?.no, 'G201')
-console.log('9. 完整合法 train → hit(G201)OK')
+console.log('11. 完整合法 train → hit(G201)OK')
 
-// 10. 完整合法 hotel → hit,保持酒店语义
+// 12. 完整合法 hotel → hit,保持酒店语义
 const hotelHitBin = await fakeCli('flyai-hotel-hit', 0, JSON.stringify({ data: { itemList: [{ name: '大理A 酒店', star: '高档型', price: '¥7xx', rate: null, address: 'addr', interestsPoi: '近洱海', shId: 'hotel-a', detailUrl: 'https://example.test/hotel-a' }] } }))
 const hotelHit = await flyaiSearch({ ...hotelBase, cliBin: hotelHitBin, timeoutMs: 5000 })
 assert.equal(hotelHit.ok, true, '完整合法 hotel ok=true')
@@ -203,16 +276,16 @@ assert.equal(hotelHit.verdict, 'hit', '完整合法 hotel 应判 hit')
 assert.equal(hotelHit.hotels?.length, 1, '1 个酒店选项')
 assert.equal(hotelHit.hotels?.[0]?.name, '大理A 酒店')
 assert.equal(hotelHit.hotels?.[0]?.priceRaw, '¥7xx', '酒店打码价原值保留')
-console.log('10. 完整合法 hotel → hit(打码价保真)OK')
+console.log('12. 完整合法 hotel → hit(打码价保真)OK')
 
-// 11. exit≠0 → error
+// 13. exit≠0 → error
 const failBin = await fakeCli('flyai-fail', 1, '')
 const f = await flyaiSearch({ ...base, cliBin: failBin, timeoutMs: 5000 })
 assert.equal(f.ok, false)
 assert.equal(f.verdict, 'error', '非零退出应判 error')
-console.log('11. 非零退出 → error OK')
+console.log('13. 非零退出 → error OK')
 
-// 12. 试用额度达限(2026-09-02 迪拜 session 实况:exit 1 + MCP HTTP 429 Trial limit
+// 14. 试用额度达限(2026-09-02 迪拜 session 实况:exit 1 + MCP HTTP 429 Trial limit
 //    reached)→ needs-setup 而非通用 error——阻断 LLM 拿同一把 429 跨轮盲重试
 const trialBin = join(tmp, 'flyai-trial')
 await writeFile(trialBin, `#!/bin/sh\necho 'search-hotel: MCP HTTP 429: Body: {"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"Trial limit reached. Please visit the console at flyai.open.fliggy.com to get a formal API Key"}}' >&2\nexit 1\n`, { mode: 0o755 })
