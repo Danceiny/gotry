@@ -252,6 +252,8 @@ export type GateViolationKind =
   | 'date_order'                      // 住宿/段日期越窗或倒挂
   | 'unverifiable_hotel_claim'        // 酒店可住断言无 exact-date 事实回溯(D-26)
   | 'fact_anchor_unknown'             // 渲染锚点 fact:<id> 在注册表不存在(锚点被手改/伪造)
+  | 'unverified_price_claim'          // 硬价缺少可比较的权威来源或可靠绑定(issue #300)
+  | 'price_contradicted'              // 行内可靠硬价格与 exact-date 事实价格冲突(issue #300)
 
 export interface GateViolation {
   kind: GateViolationKind
@@ -275,6 +277,216 @@ function lineTimesContradict(text: string, dep?: string, arr?: string): boolean 
   const times = [...text.matchAll(/(?<!\d)(\d{1,2}:\d{2})(?!\d)/g)].map(m => m[1]!)
   if (times.length === 0) return false
   return !times.some(t => t === dep || t === arr)
+}
+
+interface HardPrice {
+  amount: number
+  currency: string
+  token: string
+  start: number
+}
+
+/**
+ * 只抽取行内可可靠绑定的硬价。起价/约价/模糊值不进入比较，不支持的币种
+ * 只进入未核验分支；不做汇率换算，也不把酒店 priceRaw 带入这里(issue #300)。
+ */
+function hardPricesInLine(text: string): HardPrice[] {
+  const prices: HardPrice[] = []
+  const amount = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`
+  const pattern = new RegExp(String.raw`(?:¥\s*(${amount})(?![\dA-Za-z,])|\b([A-Z]{3})\s*(${amount})(?![\dA-Za-z,]))`, 'gi')
+  for (const match of text.matchAll(pattern)) {
+    const amountText = match[1] ?? match[3]
+    if (!amountText || match.index === undefined) continue
+    const before = text.slice(Math.max(0, match.index - 8), match.index)
+    const after = text.slice(match.index + match[0].length, match.index + match[0].length + 8)
+    if (/(?:约|大约|约为|起价|起步|from)\s*$/i.test(before)
+      || /^\s*(?:起|起价|起步|左右|上下|以上|\+)/i.test(after)) continue
+    prices.push({
+      amount: Number(amountText.replaceAll(',', '')),
+      currency: match[1] ? 'CNY' : match[2]!.toUpperCase(),
+      token: amountText,
+      start: match.index,
+    })
+  }
+  return prices
+}
+
+interface MalformedHardPrice {
+  currency: string
+  token: string
+  start: number
+}
+
+/**
+ * 先识别完整 token 之外的畸形逗号数字;¥7xx 等既有非数字/模糊值不在此列。
+ */
+function malformedHardPricesInLine(text: string): MalformedHardPrice[] {
+  const amount = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`
+  const token = String.raw`\d[\d,]*(?:\.\d+)?`
+  const pattern = new RegExp(String.raw`(?:¥\s*|\b([A-Z]{3})\s*)(${token})(?![\dA-Za-z])`, 'gi')
+  const malformed: MalformedHardPrice[] = []
+  for (const match of text.matchAll(pattern)) {
+    const raw = match[2]
+    if (!raw || !raw.includes(',') || new RegExp(`^(?:${amount})$`).test(raw)) continue
+    malformed.push({ currency: match[1] ? match[1].toUpperCase() : 'CNY', token: raw, start: match.index ?? 0 })
+  }
+  return malformed
+}
+
+interface MoneyField {
+  text: string
+  offset: number
+  index: number
+}
+
+interface AmbiguousHardPrice {
+  currency: string
+  token: string
+  start: number
+}
+
+interface FareRoleAnalysis {
+  prices: HardPrice[]
+  malformed: MalformedHardPrice[]
+  ambiguous: AmbiguousHardPrice[]
+}
+
+function moneyFields(text: string): MoneyField[] {
+  const fields = text.split(/[；;|，]/)
+  const scopes: MoneyField[] = []
+  let offset = 0
+  for (const [index, field] of fields.entries()) {
+    scopes.push({ text: field, offset, index })
+    offset += field.length + 1
+  }
+  return scopes
+}
+
+const EXPLICIT_FARE_LABEL = /(?:票价|机票价|fare|price)\s*[:：]?\s*$/i
+const PREVIOUS_MONEY_TOKEN = /(?:¥\s*|\b[A-Z]{3}\s*)\d[\d,]*(?:\.\d+)?\s*$/i
+
+/**
+ * 分类 money role,而不是把「同一行」当成 fare:
+ * canonical 是第一个 money token 所在的首字段;后续 token 只有显式
+ * fare label 才可比。其它有文字标签的字段忽略;裸 token 或前面只是
+ * 另一个金额的 token 无可靠归属,必须 fail closed。
+ */
+function analyzeFareRoles(text: string): FareRoleAnalysis {
+  const analysis: FareRoleAnalysis = { prices: [], malformed: [], ambiguous: [] }
+  for (const field of moneyFields(text)) {
+    const prices = hardPricesInLine(field.text)
+    const malformed = malformedHardPricesInLine(field.text)
+    const tokens = [
+      ...prices.map(price => ({ kind: 'complete' as const, start: price.start, price, malformed: undefined })),
+      ...malformed.map(item => ({ kind: 'malformed' as const, start: item.start, price: undefined, malformed: item })),
+    ].sort((a, b) => a.start - b.start)
+    for (const [tokenIndex, token] of tokens.entries()) {
+      const prefix = field.text.slice(0, token.start).trim()
+      const canonical = field.index === 0 && tokenIndex === 0
+      const explicitFare = EXPLICIT_FARE_LABEL.test(prefix)
+      const reliableFare = canonical || explicitFare
+      if (reliableFare) {
+        if (token.price) analysis.prices.push({ ...token.price, start: token.price.start + field.offset })
+        if (token.malformed) analysis.malformed.push({ ...token.malformed, start: token.malformed.start + field.offset })
+        continue
+      }
+      // A bare token, or a token immediately following another money token,
+      // is ambiguous; any other textual prefix accounts for a non-fare field.
+      if (prefix.length === 0 || PREVIOUS_MONEY_TOKEN.test(prefix)) {
+        const currency = token.price?.currency ?? token.malformed?.currency ?? 'CNY'
+        const raw = token.price?.token ?? token.malformed?.token ?? ''
+        analysis.ambiguous.push({ currency, token: raw, start: token.start + field.offset })
+      }
+    }
+  }
+  return analysis
+}
+
+function flightTrainPriceScope(text: string, fact: Extract<BookableFact, { kind: 'flight' | 'train' }>): string {
+  const no = fact.flight_no.toUpperCase()
+  const noStart = text.toUpperCase().indexOf(no)
+  if (noStart < 0) return ''
+  const afterNo = text.slice(noStart + no.length)
+  const nextFlight = afterNo.match(FLIGHT_NO)
+  const anchor = text.indexOf('<!-- fact:', noStart + no.length)
+  const evidence = afterNo.search(/\[[^\]\n]*#[^\]\n]*\]/)
+  let end = text.length
+  if (nextFlight?.index !== undefined) end = Math.min(end, noStart + no.length + nextFlight.index)
+  // The rendered fare is before its evidence chain; amounts after it are
+  // unrelated fees/budget text even when an anchor follows later on the line.
+  if (evidence >= 0) end = Math.min(end, noStart + no.length + evidence)
+  if (anchor >= 0) end = Math.min(end, anchor)
+  return text.slice(noStart, end)
+}
+
+function addPriceVerification(
+  violations: GateViolation[],
+  line: number,
+  fullText: string,
+  visibleText: string,
+  fact: Extract<BookableFact, { kind: 'flight' | 'train' }>,
+): boolean {
+  const fullScope = flightTrainPriceScope(fullText, fact)
+  const visibleScope = flightTrainPriceScope(visibleText, fact)
+  const fullAnalysis = analyzeFareRoles(fullScope)
+  const visibleAnalysis = analyzeFareRoles(visibleScope)
+  const allPrices = fullAnalysis.prices
+  const visiblePrices = visibleAnalysis.prices
+  const hasAnchor = fullText.includes('<!-- fact:')
+
+  if (fullAnalysis.malformed.length > 0 || fullAnalysis.ambiguous.length > 0) {
+    const malformed = fullAnalysis.malformed[0]
+    const ambiguous = fullAnalysis.ambiguous[0]
+    violations.push({
+      kind: 'unverified_price_claim',
+      line,
+      detail: malformed
+        ? `${fact.flight_no} fare role 含畸形硬价格 ${malformed.currency} ${malformed.token}——数字分组不完整,按未核验处理,不得截断或当作完整票价比较`
+        : `${fact.flight_no} 行内硬价格 ${ambiguous?.currency ?? 'CNY'} ${ambiguous?.token ?? ''} 无可靠 fare role 归属——按未核验处理,不得把裸金额当作 exact-date 票价`,
+    })
+    return true
+  }
+
+  // Heuristic claims retain the existing 120-character extraction window. If a
+  // hard price only appears outside it, it cannot be safely bound to this claim.
+  if (!hasAnchor && allPrices.some(p => p.start >= visibleScope.length)) {
+    violations.push({
+      kind: 'unverified_price_claim',
+      line,
+      detail: `${fact.flight_no} 行内硬价格未锚定且超出 120 字抽取窗口——无法作为 exact-date 事实核验,按未核验处理`,
+    })
+    return true
+  }
+
+  if (allPrices.length === 0) return false
+  const factCurrency = fact.currency?.toUpperCase()
+  for (const rendered of visiblePrices) {
+    if (fact.price === undefined || !Number.isFinite(fact.price) || factCurrency !== 'CNY') {
+      violations.push({
+        kind: 'unverified_price_claim',
+        line,
+        detail: `${fact.flight_no} 行内硬价格 ${rendered.currency} ${rendered.amount} 缺少可比较的权威 exact-date 事实价格——按未核验处理,不作汇率或币种猜测`,
+      })
+      return true
+    }
+    // ¥/CNY only compare against a CNY fact. No FX or ambiguous-currency guess.
+    if (rendered.currency !== factCurrency) {
+      violations.push({
+        kind: 'unverified_price_claim',
+        line,
+        detail: `${fact.flight_no} 行内硬价格 ${rendered.currency} ${rendered.amount} 不支持直接比较事实 ${factCurrency} ${fact.price}——按未核验处理,不作汇率换算`,
+      })
+      return true
+    }
+    if (rendered.amount === fact.price) continue
+    violations.push({
+      kind: 'price_contradicted',
+      line,
+      detail: `${fact.flight_no} 行内硬价格 ${rendered.currency} ${rendered.amount} ≠ exact-date 事实 ${factCurrency} ${fact.price}——价格事实矛盾,不得改写工具返回价格`,
+    })
+    return true
+  }
+  return false
 }
 
 export function gateArtifact(
@@ -318,6 +530,7 @@ export function gateArtifact(
         continue
       }
     }
+    if ((f.kind === 'flight' || f.kind === 'train') && addPriceVerification(violations, lineNo, lines[lineNo - 1] ?? '', lines[lineNo - 1] ?? '', f)) continue
     traceable++
   }
 
@@ -377,6 +590,7 @@ export function gateArtifact(
         })
         continue
       }
+      if (r.fact && addPriceVerification(violations, c.line, lines[c.line - 1] ?? '', c.text, r.fact)) continue
       traceable++
       continue
     }
