@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -263,11 +263,293 @@ async function runParentSignalCase(signal: 'SIGINT' | 'SIGTERM'): Promise<Record
   return result
 }
 
+const PRODUCT_EXTERNAL_BOUND_MS = 8_000
+
+function forceKillGroup(pid: number | null): void {
+  if (!pid || process.platform === 'win32') return
+  try { process.kill(-pid, 'SIGKILL') } catch { /* already gone */ }
+}
+
+function writeProductFixture(root: string, options: { writeTerminalOutput: boolean; mode: 'web' | 'headless' } = { writeTerminalOutput: false, mode: 'web' }): { entrypoint: string; leaderPid: string; leaderExit: string; ready: string; descendantPid: string; marker: string; configPath?: string } {
+  const binDir = join(root, 'bin')
+  const tsSrcDir = join(root, 'ts', 'src')
+  const tsCapabilitiesDir = join(root, 'ts', 'capabilities')
+  const dshDir = join(root, 'node_modules', '@deepseek-ai', 'dsh')
+  mkdirSync(binDir, { recursive: true })
+  mkdirSync(tsSrcDir, { recursive: true })
+  mkdirSync(tsCapabilitiesDir, { recursive: true })
+  mkdirSync(join(dshDir, 'lib'), { recursive: true })
+
+  for (const file of ['gotry-inner.js', 'gotry-bootstrap.js', 'gotry-runtime-resolution.js', 'gotry-process-liveness.js']) {
+    copyFileSync(join(repoRoot, 'bin', file), join(binDir, file))
+  }
+  copyFileSync(join(repoRoot, 'ts', 'capabilities', 'incident-log.ts'), join(tsCapabilitiesDir, 'incident-log.ts'))
+  copyFileSync(join(repoRoot, 'ts', 'src', 'tool-packet.ts'), join(tsSrcDir, 'tool-packet.ts'))
+  copyFileSync(join(repoRoot, 'cordis.gotry-patch.yml'), join(root, 'cordis.gotry-patch.yml'))
+  // Symlink dist so benchmark mode loads its bridge/diagnostic/conformance modules
+  // without needing a tsx loader inside the fixture (gotry-inner spawns node directly).
+  // The fixture is a fresh private stateRoot; only the read-only built JS is reused.
+  try { symlinkSync(join(repoRoot, 'dist'), join(root, 'dist'), 'dir') } catch { /* dist already present or unsupported */ }
+  writeFileSync(join(tsSrcDir, 'index.ts'), 'export {}\n')
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'gotry-issue271-fixture', type: 'module', version: '0.0.0' }) + '\n')
+  writeFileSync(join(dshDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', type: 'module', version: dshVersion }) + '\n')
+
+  let configPath: string | undefined
+  if (options.writeTerminalOutput) {
+    const lookupInputSchema = { type: 'object', properties: { city: { type: 'string', description: 'A city name' } }, required: ['city'], additionalProperties: false }
+    const terminalBodySchema = { type: 'object', properties: { status: { type: 'string' }, payload: { type: 'string' } }, required: [], additionalProperties: false }
+    const benchmarkConfig = {
+      schema_version: 'gotry_benchmark_environment_bridge_v4',
+      enabled: true,
+      executable: process.execPath,
+      cwd: root,
+      argv_prefix: ['true'],
+      tools: [{
+        name: 'lookup',
+        description: 'Stub lookup tool for inherited-pipe liveness proof',
+        input_schema: lookupInputSchema,
+        output_keys: ['marker', 'leaked'],
+        domain_outcomes: [{ status: 'miss', code: 'NOT_FOUND', recovery: 'none' }],
+      }],
+      timeout_ms: 10_000,
+      max_output_bytes: 4_096,
+      terminal_output: { tag: 'benchmark_terminal', max_bytes: 4_096, body_schema: terminalBodySchema },
+      isolation: { mode: 'host-enforced', writes: 'forbidden', network: 'denied' },
+    }
+    configPath = join(root, 'benchmark-env-config.json')
+    writeFileSync(configPath, JSON.stringify(benchmarkConfig) + '\n')
+  }
+
+  const leaderPid = join(root, 'dsh-leader.pid')
+  const leaderExit = join(root, 'dsh-leader.exit')
+  const ready = join(root, 'fixture.ready')
+  const descendantPid = join(root, 'descendant.pid')
+  const marker = join(root, 'unsafe.marker')
+  const descendantCode = [
+    "import { writeFileSync } from 'node:fs'",
+    `const marker = ${JSON.stringify(marker)}`,
+    "if (process.env.GOTRY_271_RESIST_TERM === '1') { process.on('SIGTERM', () => {}); process.on('SIGINT', () => {}) }",
+    "setTimeout(() => writeFileSync(marker, 'unsafe-continuation'), Number(process.env.GOTRY_271_MARKER_DELAY_MS ?? '300'))",
+    'setInterval(() => {}, 60_000)',
+  ].join(';')
+  writeFileSync(join(dshDir, 'lib', 'bin.js'), [
+    "import { spawn } from 'node:child_process'",
+    "import { writeFileSync } from 'node:fs'",
+    `const leaderPid = ${JSON.stringify(leaderPid)}`,
+    `const leaderExit = ${JSON.stringify(leaderExit)}`,
+    `const ready = ${JSON.stringify(ready)}`,
+    `const descendantPid = ${JSON.stringify(descendantPid)}`,
+    `const descendant = spawn(process.execPath, ['--input-type=module', '-e', ${JSON.stringify(descendantCode)}], { stdio: 'inherit', env: process.env })`,
+    options.writeTerminalOutput
+      ? "if (process.env.GOTRY_271_LEADER_TERMINAL === '1') process.stdout.write('<benchmark_terminal>{\\\"status\\\":\\\"succeeded\\\"}</benchmark_terminal>\\n')"
+      : '',
+    'writeFileSync(leaderPid, String(process.pid))',
+    'writeFileSync(descendantPid, String(descendant.pid))',
+    'writeFileSync(ready, \'ready\')',
+    "process.on('exit', () => writeFileSync(leaderExit, 'exit'))",
+    "setTimeout(() => { writeFileSync(leaderExit, 'exit'); process.exit(Number(process.env.GOTRY_271_LEADER_EXIT ?? '1')) }, 60)",
+    '',
+  ].filter(Boolean).join('\n'))
+  return { entrypoint: join(binDir, 'gotry-inner.js'), leaderPid, leaderExit, ready, descendantPid, marker, configPath }
+}
+
+async function runProductEntrypointCase(name: 'failure-inherited-pipe' | 'normal-zero-inherited-pipe' | 'term-resistant-inherited-pipe', exitCode: number, resistant: boolean): Promise<Record<string, unknown>> {
+  const root = mkdtempSync(join(tmpdir(), `gotry-271-followup-${name}-`))
+  const fixture = writeProductFixture(root)
+  const parent = spawn(node24, [fixture.entrypoint, 'web', '--no-open'], {
+    cwd: root,
+    env: {
+      ...privateEnv(root),
+      GOTRY_ONBOARDING_SKIP: '1',
+      GOTRY_SESSION_LIVE: '0',
+      GOTRY_HBCLI_LIVE: '0',
+      GOTRY_HOTELBYTE_SKILLS_LIVE: '0',
+      GOTRY_271_LEADER_EXIT: String(exitCode),
+      GOTRY_271_RESIST_TERM: resistant ? '1' : '0',
+      GOTRY_271_MARKER_DELAY_MS: resistant ? '7000' : '300',
+    },
+    detached: process.platform !== 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  parent.stdout?.setEncoding('utf8')
+  parent.stdout?.on('data', (chunk) => { stdout += chunk })
+  parent.stderr?.setEncoding('utf8')
+  parent.stderr?.on('data', (chunk) => { stderr += chunk })
+
+  const startedAt = Date.now()
+  const deadline = startedAt + PRODUCT_EXTERNAL_BOUND_MS
+  const remainingBound = () => Math.max(1, deadline - Date.now())
+  let outcome: CloseOutcome | { timedOut: true }
+  let before: Record<string, unknown> = {}
+  try {
+    await waitForFile(fixture.ready, remainingBound())
+    await waitForFile(fixture.leaderExit, remainingBound())
+    const leader = Number(readFileSync(fixture.leaderPid, 'utf8'))
+    const descendant = Number(readFileSync(fixture.descendantPid, 'utf8'))
+    before = {
+      leaderExitObserved: true,
+      leaderPid: leader,
+      descendantPid: descendant,
+      descendantAlive: pidAlive(descendant),
+      processGroupEmpty: isOwnedProcessGroupEmpty(leader),
+      closeDelayedBoundary: pidAlive(descendant),
+    }
+    outcome = await waitForClose(parent, remainingBound())
+    if ('timedOut' in outcome) {
+      const snapshot = {
+        case: name,
+        externalBoundMs: PRODUCT_EXTERNAL_BOUND_MS,
+        parent: outcome,
+        before,
+        marker: existsSync(fixture.marker),
+        incidentLines: incidentLines(root),
+        stderr: stderr.slice(-4_000),
+      }
+      throw new Error(`product entrypoint liveness regression: ${JSON.stringify(snapshot)}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    const afterLeader = Number(readFileSync(fixture.leaderPid, 'utf8'))
+    const afterDescendant = Number(readFileSync(fixture.descendantPid, 'utf8'))
+    const lines = incidentLines(root)
+    const after = {
+      parentAlive: pidAlive(parent.pid ?? -1),
+      leader: { code: exitCode, signal: null },
+      descendantAlive: pidAlive(afterDescendant),
+      processGroupEmpty: isOwnedProcessGroupEmpty(afterLeader),
+      marker: existsSync(fixture.marker),
+    }
+    assert.equal(outcome.code, exitCode, `${name} product must preserve leader exit code: ${JSON.stringify(outcome)}`)
+    assert.equal(outcome.signal, null, `${name} product must preserve a normal leader exit: ${JSON.stringify(outcome)}`)
+    assert.equal(after.parentAlive, false, `${name} product parent must be gone within the external bound`)
+    assert.equal(after.descendantAlive, false, `${name} must reap the inherited-pipe descendant`)
+    assert.equal(after.processGroupEmpty, true, `${name} owned dsh group must be empty`)
+    assert.equal(after.marker, false, `${name} must not run the post-failure marker`)
+    if (exitCode !== 0) {
+      assert.equal(lines.length, 1, `${name} product must append exactly one incident`)
+      assert.match(lines[0]!, new RegExp(`gotry spawn exit: web code=${exitCode} signal=null`))
+    } else {
+      assert.equal(lines.length, 0, `${name} clean exit must not invent an incident`)
+    }
+    return {
+      case: name,
+      productEntrypoint: fixture.entrypoint,
+      externalBoundMs: PRODUCT_EXTERNAL_BOUND_MS,
+      elapsedMs: Date.now() - startedAt,
+      parent: outcome,
+      stderr: stderr.slice(-4_000),
+      incidentLines: lines,
+      before,
+      after,
+    }
+  } finally {
+    forceKillGroup(parent.pid ?? null)
+    forceKillGroup(Number(existsSync(fixture.leaderPid) ? readFileSync(fixture.leaderPid, 'utf8') : 0))
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+async function runBenchmarkSuccessCase(name: 'benchmark-inherited-pipe-resist-term', resistant: boolean): Promise<Record<string, unknown>> {
+  const root = mkdtempSync(join(tmpdir(), `gotry-271-followup-${name}-`))
+  const fixture = writeProductFixture(root, { writeTerminalOutput: true, mode: 'headless' })
+  if (!fixture.configPath) throw new Error('benchmark fixture must produce a config path')
+  const parent = spawn(node24, [fixture.entrypoint, 'bridge smoke'], {
+    cwd: root,
+    env: {
+      ...privateEnv(root),
+      GOTRY_BENCHMARK_ENV_CONFIG: fixture.configPath,
+      GOTRY_271_LEADER_EXIT: '0',
+      GOTRY_271_LEADER_TERMINAL: '1',
+      GOTRY_271_RESIST_TERM: resistant ? '1' : '0',
+      GOTRY_271_MARKER_DELAY_MS: resistant ? '7000' : '300',
+    },
+    detached: process.platform !== 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  parent.stdout?.setEncoding('utf8')
+  parent.stdout?.on('data', (chunk) => { stdout += chunk })
+  parent.stderr?.setEncoding('utf8')
+  parent.stderr?.on('data', (chunk) => { stderr += chunk })
+
+  const startedAt = Date.now()
+  const deadline = startedAt + PRODUCT_EXTERNAL_BOUND_MS
+  const remainingBound = () => Math.max(1, deadline - Date.now())
+  let outcome: CloseOutcome | { timedOut: true }
+  let before: Record<string, unknown> = {}
+  try {
+    await waitForFile(fixture.ready, remainingBound())
+    await waitForFile(fixture.leaderExit, remainingBound())
+    const leader = Number(readFileSync(fixture.leaderPid, 'utf8'))
+    const descendant = Number(readFileSync(fixture.descendantPid, 'utf8'))
+    before = {
+      leaderExitObserved: true,
+      leaderPid: leader,
+      descendantPid: descendant,
+      descendantAlive: pidAlive(descendant),
+      processGroupEmpty: isOwnedProcessGroupEmpty(leader),
+      closeDelayedBoundary: pidAlive(descendant),
+    }
+    outcome = await waitForClose(parent, remainingBound())
+    if ('timedOut' in outcome) {
+      const snapshot = {
+        case: name,
+        externalBoundMs: PRODUCT_EXTERNAL_BOUND_MS,
+        parent: outcome,
+        before,
+        marker: existsSync(fixture.marker),
+        stdoutTail: stdout.slice(-2_000),
+        stderr: stderr.slice(-4_000),
+      }
+      throw new Error(`benchmark success liveness regression: ${JSON.stringify(snapshot)}`)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    const afterLeader = Number(readFileSync(fixture.leaderPid, 'utf8'))
+    const afterDescendant = Number(readFileSync(fixture.descendantPid, 'utf8'))
+    const after = {
+      parentAlive: pidAlive(parent.pid ?? -1),
+      leader: { code: 0, signal: null },
+      descendantAlive: pidAlive(afterDescendant),
+      processGroupEmpty: isOwnedProcessGroupEmpty(afterLeader),
+      marker: existsSync(fixture.marker),
+    }
+    assert.equal(outcome.code, 0, `${name} benchmark must preserve leader exit 0: ${JSON.stringify(outcome)}`)
+    assert.equal(outcome.signal, null, `${name} benchmark must preserve a normal leader exit: ${JSON.stringify(outcome)}`)
+    assert.equal(after.parentAlive, false, `${name} product parent must be gone within the external bound`)
+    assert.equal(after.descendantAlive, false, `${name} must reap the inherited-pipe descendant`)
+    assert.equal(after.processGroupEmpty, true, `${name} owned dsh group must be empty`)
+    assert.equal(after.marker, false, `${name} must not run the post-failure marker`)
+    assert.match(stdout, /<benchmark_terminal>/, `${name} must surface the captured terminal tag on parent stdout`)
+    return {
+      case: name,
+      productEntrypoint: fixture.entrypoint,
+      configPath: fixture.configPath,
+      externalBoundMs: PRODUCT_EXTERNAL_BOUND_MS,
+      elapsedMs: Date.now() - startedAt,
+      parent: outcome,
+      stdoutTail: stdout.slice(-2_000),
+      stderr: stderr.slice(-4_000),
+      before,
+      after,
+    }
+  } finally {
+    forceKillGroup(parent.pid ?? null)
+    forceKillGroup(Number(existsSync(fixture.leaderPid) ? readFileSync(fixture.leaderPid, 'utf8') : 0))
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
 const results = [
   await runDshFailureCase('child-crash'),
   await runDshFailureCase('rejected-promise'),
   await runSpawnErrorCase(),
   await runParentSignalCase('SIGINT'),
   await runParentSignalCase('SIGTERM'),
+  await runProductEntrypointCase('failure-inherited-pipe', 7, false),
+  await runProductEntrypointCase('normal-zero-inherited-pipe', 0, false),
+  await runProductEntrypointCase('term-resistant-inherited-pipe', 7, true),
+  await runBenchmarkSuccessCase('benchmark-inherited-pipe-resist-term', true),
 ]
 console.log(`ISSUE 271 LIVENESS: ${JSON.stringify(results)}`)

@@ -732,23 +732,36 @@ const reportBenchmarkFailure = reason => {
 }
 
 let childLifecycleHandled = false
+let childCleanupPromise = null
+// `close` may be delayed by a descendant which inherited dsh's stdio pipe.
+// Always start bounded TERM→KILL cleanup from `exit` so the owned group is
+// reaped before any close/parser wait. The benchmark zero-success close path
+// still parses the already-captured stdout buffer unchanged; cleanup runs
+// fire-and-forget in the background and stays bounded by ONBOARDING bounds.
+const startChildCleanup = () => {
+  if (childCleanupPromise || !child) return childCleanupPromise
+  childCleanupPromise = terminateOwnedChild({
+    child,
+    groupPid: childGroupPid,
+    signal: 'SIGTERM',
+    termGraceMs: ONBOARDING_TERM_GRACE_MS,
+    killWaitMs: ONBOARDING_KILL_WAIT_MS,
+  })
+  return childCleanupPromise
+}
+child.on('exit', (code, signal) => {
+  void startChildCleanup()
+})
 child.on('close', async (code, signal) => {
   if (childLifecycleHandled) return
   childLifecycleHandled = true
   cleanupPatch()
   if (signalHandling) return
   unregisterSignalForwarding()
-  if ((code !== 0 || signal) && child) {
-    // The dsh leader can close before descendants do. Reap the owned group
-    // before any terminal branch, including benchmark diagnostics.
-    await terminateOwnedChild({
-      child,
-      groupPid: childGroupPid,
-      signal: 'SIGTERM',
-      termGraceMs: ONBOARDING_TERM_GRACE_MS,
-      killWaitMs: ONBOARDING_KILL_WAIT_MS,
-    })
-  }
+  // Non-benchmark web/headless children are owned through both normal and
+  // anomalous exits. The promise was normally started by `exit`; retaining
+  // this close fallback covers runtimes that report close without exit.
+  if (!benchmarkStdout || code !== 0 || signal) await startChildCleanup()
   if (benchmarkStdout) {
     const captured = Buffer.concat(benchmarkStdout).toString('utf8')
     if (code !== 0 || signal || benchmarkOutputTruncated) {
@@ -815,6 +828,7 @@ child.on('error', async (e) => {
   cleanupPatch()
   if (signalHandling) return
   unregisterSignalForwarding()
+  await startChildCleanup()
   try {
     const incidentModule = distModuleMode && existsSync(join(repoRoot, 'dist/capabilities/incident-log.js'))
       ? join(repoRoot, 'dist/capabilities/incident-log.js')
