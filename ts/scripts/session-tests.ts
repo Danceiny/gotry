@@ -626,6 +626,16 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
   const shifted = makeRow({ 25: '有' }).split('|').slice(1).join('|')
   assert(parseLeftTicketQuery(JSON.stringify({ data: { result: [shifted], map: {} } }), entry.url ?? '').length === 0, '索引漂移行(签名失配)整行跳过,fail-visible')
   assert(parseLeftTicketQuery('not json', entry.url ?? '').length === 0 && parseLeftTicketQuery('{"data":{"result":[]}}', entry.url ?? '').length === 0, '兼容数组投影:malformed/空 一律返空(不抛错)')
+  const malformedLimitedFields: Array<[string, string, Record<string, unknown>]> = [
+    ['invalid departure minute', makeRow({ 30: '有' }).replace('07:35', '07:99'), { SHH: '上海', KMM: '昆明' }],
+    ['invalid arrival minute', makeRow({ 30: '有' }).replace('15:27', '15:99'), { SHH: '上海', KMM: '昆明' }],
+    ['invalid calendar service date', makeRow({ 30: '有' }, 'Y', '20261399'), { SHH: '上海', KMM: '昆明' }],
+    ['non-string station map value', makeRow({ 30: '有' }), { SHH: 123, KMM: '昆明' }],
+  ]
+  for (const [label, row, map] of malformedLimitedFields) {
+    const outcome = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [row], map } }), entry.url ?? '')
+    assert(outcome.kind === 'malformed', `${label} → malformed typed outcome`, outcome)
+  }
 
   // L2b. #355 typed outcome + train fact counterexamples.  The converter
   // consumes invocation binding only; no caller timestamp/query metadata.

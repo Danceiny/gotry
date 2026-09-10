@@ -254,11 +254,14 @@ function lishiToMin(s: string | undefined): number {
 
 function normalizeServiceDate(value: string): string | undefined {
   if (!/^\d{8}$/.test(value)) return undefined
-  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+  const normalized = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`
+  const parsed = new Date(`${normalized}T00:00:00.000Z`)
+  if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized) return undefined
+  return normalized
 }
 
 /** 行级签名:车次码形态 + 时刻形态不符即整行跳过(索引漂移 fail-visible,不造数) */
-function rowToOption(row: string, stationMap: Record<string, string> | undefined, entryUrl: string): SessionTrainOption | null {
+function rowToOption(row: string, stationMap: Record<string, unknown> | undefined, entryUrl: string): SessionTrainOption | null {
   const f = row.split('|')
   if (f.length < 34) return null
   const trainCode = (f[3] ?? '').trim()
@@ -267,12 +270,19 @@ function rowToOption(row: string, stationMap: Record<string, string> | undefined
   const durationMin = lishiToMin(f[10])
   const serviceDateRaw = (f[13] ?? '').trim()
   const serviceDate = normalizeServiceDate(serviceDateRaw)
-  if (!TRAIN_CODE_RE.test(trainCode) || !HHMM_RE.test(depTime) || !HHMM_RE.test(arrTime)
-    || Number(depTime.slice(0, 2)) > 23 || Number(arrTime.slice(0, 2)) > 23
+  const validHm = (value: string): boolean => HHMM_RE.test(value)
+    && Number(value.slice(0, 2)) <= 23 && Number(value.slice(3, 5)) <= 59
+  if (!TRAIN_CODE_RE.test(trainCode) || !validHm(depTime) || !validHm(arrTime)
     || durationMin <= 0 || !serviceDate || !(f[6] ?? '').trim() || !(f[7] ?? '').trim()) return null
   // 官方 cN 口径:站名 = data.map[电报码](map 缺失/缺键时退电报码原样,不猜名)
-  const fromStation = stationMap?.[f[6] ?? ''] ?? (f[6] ?? '')
-  const toStation = stationMap?.[f[7] ?? ''] ?? (f[7] ?? '')
+  const stationName = (code: string): string | null => {
+    if (!stationMap || !Object.prototype.hasOwnProperty.call(stationMap, code)) return code
+    const mapped = stationMap[code]
+    return typeof mapped === 'string' && mapped.trim() ? mapped.trim() : null
+  }
+  const fromStation = stationName((f[6] ?? '').trim())
+  const toStation = stationName((f[7] ?? '').trim())
+  if (!fromStation || !toStation) return null
   const seats: Record<string, string> = {}
   for (const b of SEAT_BUCKETS) {
     const v = (f[b.index] ?? '').trim()
@@ -311,7 +321,7 @@ export function parseLeftTicketQueryResult(body: string, entryUrl: string, opts:
     return { kind: 'malformed', reason: 'data.map is not an object' }
   }
   if (rows.length === 0) return { kind: 'recognized-empty', trains: [] }
-  const map = raw.data.map as Record<string, string> | undefined
+  const map = raw.data.map as Record<string, unknown> | undefined
   const out: SessionTrainOption[] = []
   for (const r of rows) {
     if (typeof r !== 'string') return { kind: 'malformed', reason: 'data.result contains a non-string row' }
