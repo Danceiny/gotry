@@ -1,0 +1,406 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "GoTry System Architecture",
+    "locale": "en",
+    "output": "gotry-system-architecture.en.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1380,
+      700
+    ],
+    "views": [
+      {
+        "id": "sync-path",
+        "label": "Sync conversation path",
+        "focus": [
+          "user",
+          "local-runtime",
+          "gotry-plugin",
+          "travel-core",
+          "fact-gate",
+          "llm-provider"
+        ],
+        "note": "Model interviews and explains; TS kernel enumerates/evaluates/chooses; flight-chain uses Z3; fact gate demands exact-date evidence."
+      },
+      {
+        "id": "evidence-path",
+        "label": "Evidence & capability chain",
+        "focus": [
+          "gotry-plugin",
+          "capability-adapters",
+          "external-sources"
+        ],
+        "note": "Realtime CLI/API/CDP reads only; fallback packs are labeled; Session channel needs the user's login state and consent."
+      },
+      {
+        "id": "async-control",
+        "label": "State & async control plane",
+        "focus": [
+          "gotry-plugin",
+          "state-ledger",
+          "async-worker",
+          "loopx",
+          "travel-core"
+        ],
+        "note": "SQLite ledger is authoritative; async work orders run via LoopX/CLI/tick and resume through the same solving entry."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Traveler",
+      "sublabel": "Browser / terminal",
+      "pos": [
+        30,
+        320
+      ],
+      "size": [
+        150,
+        76
+      ]
+    },
+    {
+      "id": "local-runtime",
+      "type": "frontend",
+      "label": "gotry + dsh / Cordis",
+      "sublabel": "CLI · Web :3080 · agent host",
+      "pos": [
+        240,
+        320
+      ],
+      "size": [
+        240,
+        76
+      ],
+      "tag": "L1–L2 host"
+    },
+    {
+      "id": "llm-provider",
+      "type": "external",
+      "label": "LLM Provider",
+      "sublabel": "DeepSeek / OpenAI-compat · key in host",
+      "pos": [
+        240,
+        80
+      ],
+      "size": [
+        240,
+        76
+      ]
+    },
+    {
+      "id": "gotry-plugin",
+      "type": "backend",
+      "label": "gotry-tools plugin",
+      "sublabel": "registry · persona · consent · budget",
+      "pos": [
+        530,
+        320
+      ],
+      "size": [
+        250,
+        76
+      ],
+      "tag": "Cordis plugin"
+    },
+    {
+      "id": "travel-core",
+      "type": "backend",
+      "label": "Deterministic travel kernel",
+      "sublabel": "TS choice kernel · Z3 control path",
+      "pos": [
+        820,
+        320
+      ],
+      "size": [
+        250,
+        76
+      ],
+      "tag": "L3"
+    },
+    {
+      "id": "fact-gate",
+      "type": "security",
+      "label": "Fact gate / WriteGate seam",
+      "sublabel": "claims trace to exact-date · writes sealed",
+      "pos": [
+        1110,
+        320
+      ],
+      "size": [
+        240,
+        76
+      ],
+      "tag": "delivery gate"
+    },
+    {
+      "id": "state-ledger",
+      "type": "database",
+      "label": "State Ledger",
+      "sublabel": "SQLite WAL · events/workflows · tenants",
+      "pos": [
+        530,
+        80
+      ],
+      "size": [
+        250,
+        76
+      ],
+      "tag": "authoritative"
+    },
+    {
+      "id": "async-worker",
+      "type": "messagebus",
+      "label": "Async work-order worker",
+      "sublabel": "async-collect · turn-handoff · tick",
+      "pos": [
+        820,
+        80
+      ],
+      "size": [
+        240,
+        76
+      ],
+      "tag": "off sync path"
+    },
+    {
+      "id": "loopx",
+      "type": "cloud",
+      "label": "LoopX governance",
+      "sublabel": "objective · gates · evidence · quota",
+      "pos": [
+        1110,
+        80
+      ],
+      "size": [
+        240,
+        76
+      ],
+      "tag": "L5"
+    },
+    {
+      "id": "capability-adapters",
+      "type": "backend",
+      "label": "Read/retrieval adapters",
+      "sublabel": "effect interpreter · ReadGuard read-only",
+      "pos": [
+        530,
+        560
+      ],
+      "size": [
+        250,
+        76
+      ],
+      "tag": "L4"
+    },
+    {
+      "id": "external-sources",
+      "type": "external",
+      "label": "Travel data & evidence sources",
+      "sublabel": "FlyAI · HotelByte · OpenFlights · Chrome · fallback packs",
+      "pos": [
+        820,
+        560
+      ],
+      "size": [
+        530,
+        76
+      ],
+      "tag": "Session needs login"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Sync path · L1–L3 chat to verdict",
+      "wraps": [
+        "local-runtime",
+        "gotry-plugin",
+        "travel-core",
+        "fact-gate"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "State & async control plane",
+      "wraps": [
+        "state-ledger",
+        "async-worker"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Data & evidence · L4 read-only",
+      "wraps": [
+        "capability-adapters",
+        "external-sources"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "user-enters",
+      "from": "user",
+      "to": "local-runtime",
+      "label": "Web / CLI",
+      "variant": "emphasis",
+      "labelAt": [
+        210,
+        410
+      ]
+    },
+    {
+      "id": "runtime-calls-llm",
+      "from": "local-runtime",
+      "to": "llm-provider",
+      "label": "HTTPS model call",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        380,
+        238
+      ]
+    },
+    {
+      "id": "runtime-invokes-tools",
+      "from": "local-runtime",
+      "to": "gotry-plugin",
+      "label": "gotry_tools call",
+      "variant": "emphasis",
+      "labelAt": [
+        505,
+        410
+      ]
+    },
+    {
+      "id": "plugin-solves",
+      "from": "gotry-plugin",
+      "to": "travel-core",
+      "label": "TS enumerate / evaluate / choose",
+      "variant": "emphasis",
+      "labelAt": [
+        800,
+        410
+      ]
+    },
+    {
+      "id": "core-to-gate",
+      "from": "travel-core",
+      "to": "fact-gate",
+      "label": "artifact · pre-delivery gate",
+      "variant": "emphasis",
+      "labelAt": [
+        1090,
+        410
+      ]
+    },
+    {
+      "id": "plugin-uses-ledger",
+      "from": "gotry-plugin",
+      "to": "state-ledger",
+      "label": "transactional R/W (tenant scope)",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "worker-uses-ledger",
+      "from": "async-worker",
+      "to": "state-ledger",
+      "label": "resume / settle",
+      "variant": "dashed",
+      "labelAt": [
+        800,
+        64
+      ]
+    },
+    {
+      "id": "worker-solves",
+      "from": "async-worker",
+      "to": "travel-core",
+      "label": "control path → solveUnified · Z3",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "plugin-calls-adapters",
+      "from": "gotry-plugin",
+      "to": "capability-adapters",
+      "label": "read-only tool calls",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        655,
+        478
+      ]
+    },
+    {
+      "id": "adapters-query-sources",
+      "from": "capability-adapters",
+      "to": "external-sources",
+      "label": "CLI / HTTPS / CDP · writes fail closed",
+      "variant": "dashed",
+      "labelAt": [
+        800,
+        664
+      ]
+    },
+    {
+      "id": "loopx-drives-worker",
+      "from": "loopx",
+      "to": "async-worker",
+      "label": "tick / quota driven",
+      "variant": "dashed",
+      "labelAt": [
+        1085,
+        64
+      ]
+    },
+    {
+      "id": "loopx-governs-gate",
+      "from": "loopx",
+      "to": "fact-gate",
+      "label": "evidence & admission policy",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1230,
+        238
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Division of labor",
+      "items": [
+        "LLM explains; the TypeScript kernel enumerates, evaluates, chooses",
+        "solveUnified (Z3) serves the script/control plane; py is a historical oracle only",
+        "Entries: async-collect.ts · state-cli.ts · replay.ts"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Evidence & safety",
+      "items": [
+        "Render-layer source tags switch honestly on degradation; estimates never pose as realtime",
+        "Session reads the user's own Chrome session (cookie names only); ReadGuard fails writes closed",
+        "Booking/payment write paths must pass WriteGate first — nothing bookable today"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "State & async",
+      "items": [
+        "SQLite events/workflows are authoritative; JSON / Markdown are views",
+        "Deep-planning hands off to a work order (ETA ≈1h), settled idempotently; tests use isolated stateRoots"
+      ]
+    }
+  ]
+}
