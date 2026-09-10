@@ -634,6 +634,17 @@ export function gateArtifact(
     // `itinerary.trip_start` 时优先严格比对对应 reminder,不退到回退集合。
     if (f.kind === 'policy') {
       const rendered = lines[lineNo - 1] ?? ''
+      // Precedence(issue #359 direct-API contract):explicit `opts.tripStart` →
+      // `opts.itinerary.trip_start` → undefined。policy 分支渲染上下文相关
+      // canonical 行(严格比对 + 结构失败诊断)全部走同一个
+      // `effectiveTripStart`,不再要求调用方在 `opts.tripStart` 与
+      // `itinerary.trip_start` 之间复制同一天。原来由 `index.ts` 桥接
+      // itinerary → tripStart 的注册路径仍然兼容(显式 tripStart 优先,语义不变)。
+      const explicitTripStart = typeof opts?.tripStart === 'string' && opts.tripStart.length > 0 ? opts.tripStart : undefined
+      const itineraryTripStart = typeof opts?.itinerary?.trip_start === 'string' && opts.itinerary.trip_start.length > 0
+        ? opts.itinerary!.trip_start
+        : undefined
+      const effectiveTripStart: string | undefined = explicitTripStart ?? itineraryTripStart
       const anchorRe = /<!-- fact:([0-9a-f]{16}) -->/
       const m = rendered.match(anchorRe)
       const noSecondAnchor = !m || m.index === undefined
@@ -646,7 +657,7 @@ export function gateArtifact(
       const exactAnchorId = m && m.index !== undefined && m[1] === f.fact_id
       const structureOk = exactlyOneAnchor && exactAnchorId && !trailingNonEmpty
       if (!structureOk) {
-        const canonical = renderPolicyFact(f, opts?.tripStart)
+        const canonical = renderPolicyFact(f, effectiveTripStart)
         violations.push({
           kind: 'fact_anchor_unknown',
           line: lineNo,
@@ -654,8 +665,7 @@ export function gateArtifact(
         })
         continue
       }
-      const hasExplicitTripContext = opts?.tripStart !== undefined
-        || (typeof opts?.itinerary?.trip_start === 'string' && opts.itinerary.trip_start.length > 0)
+      const hasExplicitTripContext = effectiveTripStart !== undefined
       if (!hasExplicitTripContext) {
         // 兼容性回退(legacy public callers):仅当事实无 `review_by` 时,接受
         // renderer 产出的两个固定 canonical 形态——不手动拆 body/provenance。
@@ -699,7 +709,7 @@ export function gateArtifact(
         traceable++
         continue
       }
-      const canonical = renderPolicyFact(f, opts?.tripStart)
+      const canonical = renderPolicyFact(f, effectiveTripStart)
       if (rendered !== canonical) {
         violations.push({
           kind: 'fact_anchor_unknown',

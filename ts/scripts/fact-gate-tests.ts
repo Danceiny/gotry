@@ -908,6 +908,36 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   assert(itReportNoReminder.verdict === 'pass' && itReportNoReminder.traceable === 1,
     `itinerary 存在时 canonical no-reminder 仍合法 → pass(实际 ${itReportNoReminder.verdict})`)
 
+  // 14g-direct(issue #359 最终维修):闸侧直接 `gateArtifact` 公共 API,opts 仅含
+  //   `itinerary.trip_start` 而不复制到 `opts.tripStart`,渲染行由
+  //   `renderPolicyFact(basePolicy, itinerary.trip_start)` 产出 → 闸必须 pass。
+  //   这是根反例验收核心:`effectiveTripStart` 优先级(explicit `opts.tripStart`
+  //   → `opts.itinerary.trip_start` → undefined)让调用方不再需要在两个字段间
+  //   复制同一天;已注册的 `index.ts` 工具桥接继续兼容(显式 tripStart 优先)。
+  const directItinerary = { trip_start: tripStart, trip_end: tripStart, stays: [], onboard_nights: 0, od_segments: [], budget_items: [] }
+  const directRenderedLine = renderPolicyFact(basePolicy, directItinerary.trip_start)
+  assert(directRenderedLine === tripStartLine,
+    'direct-API 形式:renderPolicyFact(basePolicy, itinerary.trip_start) === 已固定的 tripStartLine(回归门)')
+  const itDirectReport = gateArtifact(
+    ['## 政策', directRenderedLine].join('\n'),
+    [basePolicy],
+    map,
+    { trip_year: tripYear, itinerary: directItinerary },
+  )
+  assert(itDirectReport.verdict === 'pass' && itDirectReport.traceable === 1,
+    `直接 gateArtifact 公共 API(opts 仅含 itinerary.trip_start,无 opts.tripStart)→ pass(实际 ${itDirectReport.verdict}/traceable=${itDirectReport.traceable})`)
+  // 反向:itinerary 提供的日期 ≠ renderer reminder 日期 → fail-closed;
+  //   这是有效 API 形式的边界,证明 effectiveTripStart 不会被「任意 trip_start」
+  //   蒙混。
+  const itineraryMismatchDirect = gateArtifact(
+    ['## 政策', directRenderedLine].join('\n'),
+    [basePolicy],
+    map,
+    { trip_year: tripYear, itinerary: { ...directItinerary, trip_start: '2027-12-31', trip_end: '2027-12-31' } },
+  )
+  assert(itineraryMismatchDirect.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `直接 API 形式下 itinerary.trip_start 与 renderer reminder 不一致 → fact_anchor_unknown(实际 ${itineraryMismatchDirect.violations.length} 违例)`)
+
   // 14h. 父 #273 已有形态保留:as_of 改动(11g/11h)仍走 fact_anchor_unknown(同一收敛口径)
   const asOfShifted = canonicalLine.replace(/截至\s*\d{4}-\d{2}-\d{2}/, '截至 2027-01-01')
   const asOfReport = gateArtifact(['## 政策', asOfShifted].join('\n'), [basePolicy], map, { trip_year: tripYear })
@@ -945,7 +975,7 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   assert(prefixReport.verdict === 'blocked' && prefixReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
     `prefix non-empty → fact_anchor_unknown(实际 ${prefixReport.verdict}/${prefixReport.violations.length} 违例)`)
 
-  console.log(`  ok - §14 政策锚点全字段内容指纹(#359 / D-26)完成(canonical + 5 failing-before + 2 legitimate + 多行归属 + trailing/dup/malformed/prefix 锚点结构攻击)`)
+  console.log(`  ok - §14 政策锚点全字段内容指纹(#359 / D-26)完成(canonical + 5 failing-before + 2 legitimate + direct itinerary-only API + 多行归属 + trailing/dup/malformed/prefix 锚点结构攻击)`)
 }
 
 console.log(`\nFACT GATE TESTS: ${pass} pass, ${fail} fail`)
