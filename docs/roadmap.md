@@ -36,6 +36,8 @@
 - **#329 安全 dispatch 日志(2026-09-10)**:同步 HTTP 409 turn-dispatch rejection 只写 typed `code` 与 exact closed `reason`;unknown 或带 suffix 的错误统一为 `UNCLASSIFIED`,既有 HTTP response/status 不变。子进程 HTTP/stderr 字节 proof 只属确定性离线工程证据,不构成真实 provider reliability、HotelByte UAT 或 M3/M4/M5/M6 admission。
 - **#341 地面接驳第一切片(2026-09-10)**:`gotry_feasibility_check` 对显式坐标、`mode=driving` 的具名静态 `taxi` transfer 通过注册公开 `map_driving_route` 委托路线估算,把 distance/duration 与 host-observed `asOf`/cache/provenance 作为确定性输入事实;`bus`/`bus_plus_taxi` 不替换分钟,静态 transfer price 保留并标 `[静态包:估算]`。cache hit 直接复用,过期条目重新查询;provider miss/error 或过期重查失败、非法坐标、不支持模式与绑定不一致均明确保留静态值。live traffic、transit/rail、fare 与地址解析不在本切片内,既有 #20/M5/M6 gate 不变。
 
+- **Issue #338 持久默认出发地(2026-09-10)**:`gotry_motivation_save` patch 接受 `homeCity` 与 optional `homeCityEvidence`(单条非空 evidence 可省略,多条须显式 exact 绑定);账本持久化 `homeCityPreference { value, evidence, updated_at }`。`{{motivation_brief}}` 仅把完整 typed preference 作为软默认读回,当轮显式 origin 优先,缺失/畸形或 evidence 不在 pool 时要求明确出发地;默认不 hard-filter 或改变确定性候选/推荐。#20 真实 cohort gate 仍开放。
+
 - **酒店日期输入闸(2026-09-09,issue #283)**:详见 `docs/architecture.md` §1.2 与 §10 D-36。共享 `parseAbsoluteDate` 拒绝非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`;隔离 fixture 证据不构成真实供应商准入。
 - **#270 公开交付与债务台账(2026-09-10)**:所有执行 lane 公开记录 issue 启动、Draft PR、exact-head review 与 merge/destination 回执;founder 授权的仓内 Claude lane 不适用外部机器人 T0/T1 否决,但仍过正常评审。§10.1 活跃债务均有公开 tracker/触发器;本地与 fixture 证明不替代 #20/#22/#136/#137 的真实准入。
 

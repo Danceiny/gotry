@@ -28,6 +28,7 @@ import { projectUtility } from './memory-utility.ts'
 import { pickNudgeWish, type WishPoolEntry } from './wish-pool.ts'
 import { resolveTimelineDate } from './travel-timeline.ts'
 import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, readTripsWithFallback, readWishPoolWithFallback } from './state-ledger.ts'
+import { isValidHomeCityPreference, resolveDefaultOrigin, type MergedProfile, type ProfilePatch } from './memory-capture.ts'
 import { applyPlanningWindow } from './loop.ts'
 import { buildTimeAnchor, type PlanningWindow } from './time-anchor.ts'
 import { evaluateHotelStayDates } from './hotel-date-gate.ts'
@@ -127,6 +128,17 @@ interface MotivationProfileInput {
   weights?: Record<string, number>
   evidence?: string[]
   hard?: Record<string, unknown>
+  /**
+   * 持久化用户常驻城市/默认出发地(issue #338)。
+   *   - string = 设置默认城市(用户原话指明常驻)
+   *   - null   = 显式清除(审计一行留痕,用于遗忘/迁居)
+   *   - undefined = 字段未传,保持当前值不动
+   * 改值须伴新 evidence(同 weights/hard 的 P0 守卫);evidence 恰好一条且非空时
+   * 可省略 homeCityEvidence,多条 evidence 必须显式绑定。
+   */
+  homeCity?: string | null
+  /** homeCity 对应的本次用户原话;仅与 homeCity 一起传入。 */
+  homeCityEvidence?: string
 }
 
 interface WishPoolEntryInput {
@@ -155,6 +167,22 @@ function renderMotivationBrief(stateRoot: string): string {
   if (weights.length) lines.push(`- 动机权重: ${weights.map(([k, v]) => `${k}=${v}`).join(', ')}(证据 ${p.evidence?.length ?? 0} 条)`)
   const hard = Object.entries(p.hard ?? {})
   if (hard.length) lines.push(`- 硬约束: ${hard.map(([k, v]) => `${k}=${String(v)}`).join(', ')}`)
+  // 持久默认城市(issue #338):生产 brief 复用纯 resolver 的 precedence
+  // 契约;这里仍只负责读回渲染,不把 resolver 接入 feasibility/evaluate。
+  const profile = p as MergedProfile
+  const homeResolution = resolveDefaultOrigin(undefined, profile)
+  const homePref = profile.homeCityPreference
+  const typedPreferenceIsValid = isValidHomeCityPreference(profile)
+  const hasHomeCityData = Object.prototype.hasOwnProperty.call(profile, 'homeCity')
+    || Object.prototype.hasOwnProperty.call(profile, 'homeCityPreference')
+  if (homeResolution.source === 'home_default' && homeResolution.origin && typedPreferenceIsValid && homePref) {
+    const evidence = homeResolution.homeCityEvidence?.[0] ?? ''
+    lines.push(`- 常驻城市: ${homeResolution.origin}(原话证据:${evidence};记录于 ${homePref.updated_at})——本轮未指明出发地时作为软默认;本轮显式出发地优先;不进可行性硬约束,不删候选`)
+  } else if (typedPreferenceIsValid && homePref?.value === null) {
+    lines.push(`- 常驻城市: 已显式清除(原话证据:${homePref.evidence};记录于 ${homePref.updated_at})——已无持久软默认;每次行程必须由用户明确出发地,不猜测`)
+  } else if (hasHomeCityData) {
+    lines.push('- 常驻城市: 无可验证的持久默认——本轮请明确出发地;不从旧画像或全局 evidence 猜测')
+  }
   // 旅行时间线(memory-design P1):去过的地方不再主动推荐,除非用户点名
   const trips = readTimelineTrips(stateRoot)
   if (trips.length) {
@@ -167,10 +195,11 @@ function renderMotivationBrief(stateRoot: string): string {
   }
   lines.push(`- 愿望池: 用 gotry_wish_pool_list 按条件召回(0..1),勿直接堆砌`)
   if (p.updated_at) lines.push(`- 更新于: ${p.updated_at}`)
-  return weights.length || hard.length ? lines.join('\n') : ''
+  return weights.length || hard.length || hasHomeCityData ? lines.join('\n') : ''
 }
 
-/** 时间线摘要(brief 用):最近 3 次行程(目的地+年月);账本优先,未迁移回退文件 */
+/**
+ * 时间线摘要(brief 用):最近 3 次行程(目的地+年月);账本优先,未迁移回退文件 */
 /** 同行人摘要(brief 用):label + 约束串 */
 function readCompanions(stateRoot: string): Array<{ label: string; brief: string }> {
   return readCompanionsWithFallback(stateRoot)
@@ -529,6 +558,9 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       + 'existing history is never deleted. Requires evidence on every call (P0 anti-fabrication rule).',
     // D-30 第五刀(issue #112):profile blob → 结构化闭合对象;evidence(P0 反伪造红线)进嵌套
     // schema 由宿主权闸——无证据的保存请求入口即被结构化拒绝(ToolFailure 形状)
+    // issue #338:homeCity 字段(string=设置,null=显式清除,undefined=不动);单条非空
+    // evidence 可省略 binding,多条 evidence 必须显式 homeCityEvidence。
+    // dsh 参数 schema 仅支持单值 type,string|null 用 oneOf 表达。
     parameters: {
       profile: {
         type: 'object',
@@ -538,6 +570,17 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
           weights: { type: 'object', additionalProperties: true, description: '动机权重增量,如 { escape_rest: 0.7 }(可选,权重变更须伴新证据)' },
           evidence: { type: 'array', items: { type: 'string' }, required: true, description: '本轮新事实的用户原话数组(P0:必带)' },
           hard: { type: 'object', additionalProperties: true, description: '硬约束:{ wake_not_before, min_arrival_energy_pct }(可选)' },
+          homeCity: {
+            oneOf: [
+              { type: 'string', description: '设置持久常驻城市/默认出发地(用户原话指明常驻),如 "上海"' },
+              { type: 'null', description: '显式清除常驻城市(用于遗忘/迁居)' },
+            ],
+            description: '持久常驻城市/默认出发地(string=设置,null=显式清除);改值须伴新 evidence(P0);恰一条非空可省略 binding,多条须显式;不删候选/不压当轮 origin',
+          },
+          homeCityEvidence: {
+            type: 'string',
+            description: 'homeCity 对应的 exact 用户原话;显式传入时必须逐字出现在本次 profile.evidence 中且为新证据(同值同绑定重复调用例外为幂等);evidence 恰好一条非空时可省略并绑定该条,多条时必须显式传入',
+          },
         },
       },
     },
@@ -546,17 +589,48 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: `动机画像已保存:${String((value as { path?: string }).path ?? '')}` }],
     },
-    async execute(args: { profile: unknown }, _exec: unknown) {
+    async execute(args, _exec: unknown) {
       // T1 接线:本工具是增量补丁语义(契约 18——模型每轮把对话新事实带进来),
       // 经 mergeProfile 守门合并进既有画像(追加不删史/幂等/权重变更须伴新证据),
       // 不再整档覆盖。首次调用(无档案)= 全量建立。
       // ADR-15:守门+事件+投影在账本单事务内完成,evidence 红线拒绝即回滚,账本无痕。
-      const incoming = (args.profile ?? {}) as { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown> }
+      // issue #338:homeCity 同走 mergeProfile 守门(null=显式清除)。单条非空
+      // evidence 可提供省略的 unambiguous binding;多条 evidence 不按数组位置推断。
+      const incoming = (args.profile ?? {}) as { weights?: Record<string, number>; evidence?: string[]; hard?: Record<string, unknown>; homeCity?: string | null; homeCityEvidence?: string }
       if (!incoming.evidence?.length) {
         throw new Error('refusing to save a motivation profile without evidence (P0 anti-fabrication rule)')
       }
+      // issue #338:trim 后空白拒绝(零事件落账)。空白字符串「无值」≠
+      // 「显式清除」——后者是 null,前者是没有声明。不擅自解释,显式拒收。
+      if (typeof incoming.homeCity === 'string' && incoming.homeCity.trim().length === 0) {
+        throw new Error('gotry_motivation_save.homeCity 是空白字符串,既不是声明也不是清除;请明确传城市名或 null')
+      }
+      let boundHomeCityEvidence: string | undefined
+      if (incoming.homeCity !== undefined) {
+        if (incoming.homeCityEvidence !== undefined) {
+          if (typeof incoming.homeCityEvidence !== 'string' || incoming.homeCityEvidence.trim().length === 0) {
+            throw new Error('gotry_motivation_save.homeCityEvidence 为空白;homeCity 必须绑定本次 evidence 中的一条 exact 用户原话')
+          }
+          if (!incoming.evidence.some(e => e === incoming.homeCityEvidence)) {
+            throw new Error('gotry_motivation_save.homeCityEvidence 必须逐字匹配本次 profile.evidence 中的一条用户原话')
+          }
+          boundHomeCityEvidence = incoming.homeCityEvidence
+        } else if (incoming.evidence.length === 1 && typeof incoming.evidence[0] === 'string' && incoming.evidence[0].trim().length > 0) {
+          boundHomeCityEvidence = incoming.evidence[0]
+        } else {
+          throw new Error('gotry_motivation_save.homeCityEvidence 缺失或有歧义;evidence 恰好一条非空时可省略,多条 evidence 必须显式绑定 exact 用户原话')
+        }
+      } else if (incoming.homeCityEvidence !== undefined) {
+        throw new Error('gotry_motivation_save.homeCityEvidence 只能与 homeCity 一起传入')
+      }
       const ledger = ensureLedger(config.stateRoot)
-      const res = ledger.appendMotivationPatch({ weights: incoming.weights, evidence: incoming.evidence, hard: incoming.hard })
+      const res = ledger.appendMotivationPatch({
+        weights: incoming.weights,
+        evidence: incoming.evidence,
+        hard: incoming.hard,
+        homeCity: incoming.homeCity,
+        homeCityEvidence: boundHomeCityEvidence,
+      } as ProfilePatch)
       const profileJson = JSON.parse(JSON.stringify(res.profile)) as JsonObject
       return res.saved
         ? { ok: true, saved: true, path: ledger.dbPath, profile: profileJson, summary: '画像已合并入账本(单事务)' }

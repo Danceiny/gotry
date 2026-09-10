@@ -144,6 +144,10 @@ echo "=== 18. T1 记忆合并守门(M4,纯函数:追加不删史/P0 权重校验
 (cd ts && npx tsx scripts/memory-capture-tests.ts) || FAIL=1
 
 echo
+echo "=== 18b. Issue #338 持久默认出发地 E2E(fresh stateRoot/真实 system-prompt 读回+exact evidence 绑定/显式优先/幂等/跨租户/显式清除/重建/不压算术;隔离临时 stateRoot 全离线) ==="
+(cd ts && GOTRY_SESSION_LIVE=0 npx tsx scripts/issue-338-home-city-e2e.ts) || FAIL=1
+
+echo
 echo "=== 19. 时间感评测(时间锚点卡 + 槽位过期校验 + 评分器 + mock 回放管道,确定性;真模型巡检走 --real) ==="
 (cd ts && npx tsx scripts/time-eval-tests.ts) || FAIL=1
 
