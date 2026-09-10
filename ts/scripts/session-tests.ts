@@ -642,6 +642,10 @@ console.log('L. 火车适配器(buildTrainEntryUrl/parseLeftTicketQuery/电报�
   const requested = { from: '上海', to: '昆明', date: '2026-12-01' }
   const now = new Date('2026-09-10T12:00:00.000Z')
   const binding = { requested, batchId: 'fixture-hit-batch', queryId: 'session:12306-train:fixture-hit-batch', fetchedAt: '2026-09-10T11:59:00.000Z' }
+  for (const [label, row, map] of malformedLimitedFields) {
+    const outcome = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [row], map } }), entry.url ?? '')
+    assert(outcome.kind === 'malformed' && factsFromSessionTrain(requested, { outcome, collection: binding }, now).length === 0, `${label} → malformed + zero facts`, outcome)
+  }
   const available = parseLeftTicketQueryResult(JSON.stringify({ data: { result: [makeRow({ 30: '有' })], map: { SHH: '上海', KMM: '昆明' } } }), entry.url ?? '')
   assert(available.kind === 'recognized-nonempty' && available.trains.length === 1 && hasRecognizedAvailableSeat(available.trains[0]!), 'counterexample:valid available row → recognized row + closed-set seat')
   const hitFacts = factsFromSessionTrain(requested, { outcome: available, collection: binding }, now)
