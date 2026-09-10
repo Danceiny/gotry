@@ -52,6 +52,7 @@ M3 最小可用产品,分发链路无已知堵点。
 工具面注册于 `ts/src/index.ts`(**清单与计数以代码为准,此处不落数字**——§11 保鲜清单第 4 条):
 
 - **判定类**:可行性、骨架校验、航班校验、**产物事实闸 `gotry_fact_gate`**(交付前必过,blocked 不得宣称「已验证方案」)
+- **可行性日期边界(Issue #2)**:`gotry_feasibility_check` 对任何带日期候选默认按宿主时钟施加 future 下界;显式 `planning.intent=future` 的请求年份再施加年末上界,过期年份不滚年,预期拒绝返回结构化 validation result 而非 incident。完全 dateless 输入保持旧可行性计算;历史计算必须显式 `planning.intent=historical`。
 - **检索类**:酒店(`gotry_hotel_search` hbcli 桥 + **会话面 ctrip-hotel**:用户登录态真实价,被动嗅探)、天气、Anything 通用搜索、网页、视频字幕、GitHub、飞猪官方检索(机/火/酒)、会话检索(机/酒/火;火车=12306 公开查询面;**dida 供应商门户**:hotel-be portal integration 迁移线,2026-09-09)
 - **酒店日期输入闸(issue #283,D-36)**:共享 `time-anchor.ts` 的 `parseAbsoluteDate` 使用 `isRealIsoDate` 拒绝不存在的日历日,酒店消费边界再拒缺失日期、算术溢出和退房不晚于入住,有效日期才进入 `HBCLI_HOTEL_SEARCH`。失败统一返回 `verdict=input_required` 且不 dispatch hbcli;有效日期和既有供应商失败后的明确静态降级保持兼容。隔离 fixture 只证明工程边界,不构成真实供应商准入。
 - **携程机票 malformed 响应闸(issue #279)**:结构化 batchSearch 解析把合法空列表判为 `miss`、含有效航段判为 `hit`、畸形未知形状判为 `error`;兼容的 `parseBatchSearch` 仍永不抛错并在错误时返回 `[]`。扩展与 CDP 两车道均先判挑战再把 parser error 映射为结构化 `error`,不暴露 options。
@@ -98,7 +99,7 @@ M3 最小可用产品,分发链路无已知堵点。
 ### 1.5 记忆域与时间感知
 
 - **记忆域六层**(设计见 `design/memory-design.md`):动机 brief 读回 persona、效用 sidecar(归因只认 owner 确认)、愿望池 0..1 召回(`gotry_wish_pool_list`)、旅行时间线(`gotry_trip_log`)、同行人档案(`gotry_companion_save`)、时间窗衰减(只降不删/地板 0.1/动机零衰减)。度量与触达:`scripts/memory-metrics.ts` 只读投影 + `scripts/nudge-digest.ts` 主动回访(`GOTRY_NUDGE_ENABLED=false` 可全局关闭)。M4 planning lifecycle 观测另有显式 opt-in CLI `ts/scripts/memory-lifecycle.ts` + 纯逻辑 `ts/src/memory-lifecycle.ts`:只写隔离 `stateRoot`,consent/HMAC 必需,导出 candidate/synthetic scorer 输入,不接真实会话。
-- **时间感知**:确定性锚点层 `ts/src/time-anchor.ts` + 槽位抽取 `travel-slots.ts` + 槽位→日期解析 `slot-spec.ts`。**算术进代码,LLM 查卡不自算**。
+- **时间感知**:确定性锚点层 `ts/src/time-anchor.ts` + 槽位抽取 `travel-slots.ts` + 槽位→日期解析 `slot-spec.ts`。**算术进代码,LLM 查卡不自算**。命名年份的未来规划在 `loop.ts` 的求解入口按本轮锚点过滤候选:当前年从参考日到年末,未来年为全年;过期年份明确拒绝,历史/回测意图旁路,不把参考日持久化到 `TripState`。
 
 ### 1.6 工程不变量
 
@@ -423,7 +424,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **DSH runtime closure 迁移 0.1.5-alpha.1(2026-09-09,issue #268)**:root/ts 双 manifest + npm/pnpm 双锁从 `0.1.2-alpha.3`(216 包闭包)精确迁移到 `0.1.5-alpha.1`(230 包闭包:15 新增 sentinel + 移除 `dsh-tool-subagent-report`)。全部 230 个 `@deepseek-ai/dsh*` 包钉死精确版本——拒绝 `^0.1.5-alpha.1` 会匹配 `0.1.5-alpha.2` 的 semver 预发布漂移;CI `npm ci --strict-peer-deps` / pnpm `--strict-peer-dependencies` 显式严格,不依赖本地配置。run-all §23a-§23e 五个确定性证明(subprocess-local:仅公共 API 挂载 Cordis/provider + 真实活跃父进程 spawn 非分离子进程 + 公共 terminate/waitForExit 进程组信号终止整组 → 后代 PID 消失 + 真实 spawnTerminal 跨平台验证 PTY 输出 'pty-line' 与 exitCode=0 + Darwin 预构建下额外断言 node-pty spawn-helper 0755 模式,非 Darwin 平台 helper 不适用、报告 platform-pty 事实而不伪造 stat 不存在的 helper;session V3:隔离临时目录文件字节——V2 编解码器编码 → JSONL 写盘 → catalog 读盘分类 migration-required → V3 恢复 → 独立 V3 继任者写盘 → validation:current 完全解码 → 迁移后源字节比较不变;http-proxy:真实 fetch 回环 SSE=200 + 中毒命中=0 + finally await disposer + await 两服务器关闭 + 全局路由恢复直接;target-closure:root 230 npm/pnpm/importer + ts 三层 230 lock/installed,createRequire 解析拒绝嵌套/混合版本)。设置行为不变;历史 0.1.2-alpha.3 证据在 §9/roadmap/stage1/release-notes 旧条目中保留,不批量替换。此项尚未发布 tag 或 npm 版本；这些确定性证明不构成 M5/M6 准入。
 - **DSH alpha.1 公开契约兼容注(2026-09-09,issue #290)**:在 230 包闭包之上修复目标 public 契约差异。①system-prompt Config:`dsh-system-prompt` 公开/读取 `personaPrefix` 与 `personaSuffix`,legacy `persona:` 键不投影;`bin/gotry-inner.js` `projectBenchmarkPatch` 与 `projectBenchmarkSystemPrompt`、`cordis.gotry-patch.yml` 的 `system-prompt` 块、`ts/src/booking-surface/dsh-planner.ts` 的 booking-copilot 内嵌 planner 投射均改写 `personaPrefix: >-`(embedded booking persona 文本);e2e 与 proof 单测断言 captured benchmark-tool planner 请求携带每个稳定句 exactly once(title 请求在另一 contract 之外)。②`SubprocessHandle` 公开契约:目标 `0.1.5-alpha.1` SubprocessHandle 不暴露 `pid`,仅含 `collected`/`done`/`terminate?`/`waitForExit`;bridge call handler 分阶段归类——`timeout` 优先 → rejected start/provider `done` 路径归 `spawn_failed` → resolved nonzero exitCode 与 post-start `collected.readFrom` 失败归 `runner_failed`;bridge.ts 接口移除旧 `pid` 哨兵,测试 fakeHandle 同步去掉 `pid: -1` 字段、描述改为「public done rejection is classified as spawn/provider failure」并新增「collected output reading failure after a resolved done is runner_failed, not spawn_failed」反例。Secret/tool 隔离与 #286 budget/room/date planner 行为保留;不宣称 release/publication、M5/M6 entry、Windows 执行或真实 supplier/HotelByte 准入。
 - **doctor 自助修复(2026-09-10,issue #284,M4 UX 工程面;M4 不计 Exit)**:`gotry_doctor` 显式 `action: 'repair'` 按稳定 item id 只选择 auto-repairable 缺项(agent-reach / hbcli-missing / sidebar),浏览器商店、凭证/API key、profile、包重装与 Node 升级保持 user-action/unavailable。生产执行懒加载 `bin/gotry-bootstrap.js` 并调用既有 `buildOnboardingPlan`/`runOnboardingFix`,因此沿用 `setupHbcli`/`setupReach`/`setupSidebar` 的幂等、超时与进程清理边界。scope-keyed 审批闸在同 agent+同 scope 复用批准,不同 scope 重问,rejected/cancelled 本会话记忆且零执行,unavailable 不缓存。工具结果完整返回 diagnosis → selected/skipped plan → approval → repairs → recheck;安装器退出成功但复检仍坏即 `failed` 并给 `nextAction`,侧栏报告写复检态。`doctor-tests` §7–§13 以隔离 stateRoot、fixture installer 与实际工具注册/审批/真实 bootstrap 编排跨过工具边界,不触碰真实安装和共享状态。默认 `diagnose` 路径保持只读兼容。(D-38 清偿)
-- **严格重复 tool-call 参数恢复(2026-09-10,PR #327 修订)**:嵌入式 planner 的 JSON 参数恢复只接受至少两个完整、仅空白分隔且深结构相等的顶层对象；所有输入必须被消费，冲突/不完整/带前后垃圾/非对象序列/单个非法对象均拒绝。公共路径 proof 覆盖字符串花括号与转义；这是确定性离线 fixture 证据，不是 provider reliability、HotelByte UAT 或 M3/M4/M5/M6 业务准入。
+- **Issue #2 未来年度规划窗口(2026-09-10)**:命名年份的未来意图在 `time-anchor.ts` 派生本轮 `referenceDate`;注册工具 `gotry_feasibility_check` 对任何带日期候选默认施加宿主时钟 future 下界,显式 `planning.intent=future` 的请求年份再限制至年末。已结束年份不自动滚年,预期拒绝返回结构化校验结果而不进入 incident;完全 dateless 输入保持旧可行性计算,历史/回测必须明确 `historical` 模式。loop 继续只对显式命名年份规划应用窗口,否定过去推荐和多年份歧义不授予 historical 旁路。`time-eval-tests.ts` §6 与 `smoke.ts` 的 registered execute fixture 分别验证规划循环和实际 registered execute;参考日来自注入/宿主时钟,证据为隔离 fixture,不构成供应商或真实业务准入。
+- **严格重复 tool-call 参数恢复(2026-09-10,PR #327 修订)**:嵌入式 planner 的 JSON 参数恢复只接受至少两个完整、仅空白分隔且深结构相等的顶层对象；所有输入必须被消费，冲突/不完整/带前后垃圾/非对象序列/单个非法对象均拒绝。公共路径 proof 覆盖字符串花括号与转义；这是确定性离线 fixture 证据，不是 provider reliability、HotelByte UAT 或 M3/M4 业务准入。
 
 - **安全 dispatch 日志(#329,2026-09-10)**:同步 HTTP 409 turn-dispatch catch 使用闭合 reason vocabulary,只对完整固定 token 做区分,未知值与带 suffix 的 token 统一为 `UNCLASSIFIED`;stderr 结构化行只含现有 typed `code` 与 `reason`,HTTP typed response/status 不变。公共 HTTP 请求与子进程 stderr 字节 proof 为确定性离线证据,不替代真实 provider、HotelByte UAT 或 M3/M4/M5/M6 准入。
 
@@ -449,6 +451,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 > **§10.1 = 仍然开着的债**(要接的活从这里来);已清偿债务移入 [`debt-archive.md`](debt-archive.md) 存档,不在本文保留。
 
 本轮已清偿的 #279 携程机票 malformed 响应闸留在 [`debt-archive.md`](debt-archive.md),完整行为与证据边界见 §9；不改变现有 D-36 酒店日期闸与 D-37 Dida/CfT cookie debt 编号。
+Issue #2 的日期下界与命名年份窗口现由时间锚点与 planner/registered tool 入口确定性执行:带日期候选默认 future floor,显式 future 年份叠加上界,校验拒绝为结构化结果;完全 dateless 与显式 historical 语义保持不变。不新增并行时间引擎或 Python 运行时,因此不作为未清偿债务重复登记。
 
 PR #327 修订的严格重复 tool-call 参数恢复属于 planner 解析边界收敛，不新增开放债务；其公共路径 proof 仍只覆盖离线 fixture，不替代真实 provider、HotelByte UAT 或里程碑准入证据。
 

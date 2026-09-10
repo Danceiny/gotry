@@ -28,7 +28,8 @@ import { projectUtility } from './memory-utility.ts'
 import { pickNudgeWish, type WishPoolEntry } from './wish-pool.ts'
 import { resolveTimelineDate } from './travel-timeline.ts'
 import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, readTripsWithFallback, readWishPoolWithFallback } from './state-ledger.ts'
-import { buildTimeAnchor } from './time-anchor.ts'
+import { applyPlanningWindow } from './loop.ts'
+import { buildTimeAnchor, type PlanningWindow } from './time-anchor.ts'
 import { evaluateHotelStayDates } from './hotel-date-gate.ts'
 import { wmoLabel } from '../capabilities/weather.ts'
 // D-23 收编(issue #115):anything/web/github/video/agent_reach/session_login 六渠道改经
@@ -104,6 +105,13 @@ interface FeasibilityResult {
   answer_md?: string
   recommended?: string | null
   verdicts?: Array<Record<string, unknown>>
+}
+
+interface FeasibilityValidationFailure extends Record<string, Json> {
+  ok: false
+  code: 'invalid_planning_context' | 'planning_window_rejected'
+  summary: string
+  rejected: Array<{ segmentId: string; optionId: string; date: string }>
 }
 
 interface MotivationProfileInput {
@@ -211,9 +219,36 @@ export interface ApplyTestSeams {
   }
   /** Isolated test-only effect interpreter; production keeps interpretEffect. */
   effect?: typeof interpretEffect
+  /** Test-only clock injection; production derives the reference date from Date. */
+  clock?: () => Date
+}
+
+function parseFeasibilityPlanning(raw: unknown, anchor: ReturnType<typeof buildTimeAnchor>): PlanningWindow | null {
+  if (raw === undefined) return null
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('planning must be an object')
+  const planning = raw as Record<string, unknown>
+  const intent = planning['intent']
+  const requestedYear = planning['requested_year']
+  if (intent !== 'future' && intent !== 'historical') {
+    throw new Error('planning.intent must be future or historical')
+  }
+  if (!Number.isInteger(requestedYear) || Number(requestedYear) < 1_000 || Number(requestedYear) > 9_999) {
+    throw new Error('planning.requested_year must be a four-digit integer')
+  }
+  // referenceDate is always the host clock; the payload cannot supply a stale now.
+  return { intent, requestedYear: Number(requestedYear), referenceDate: anchor.today }
+}
+
+function feasibilityValidationFailure(
+  code: FeasibilityValidationFailure['code'],
+  summary: string,
+  rejected?: FeasibilityValidationFailure['rejected'],
+): FeasibilityValidationFailure {
+  return { ok: false, code, summary, rejected: rejected ?? [] }
 }
 
 export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}): void {
+  const clock = seams.clock ?? (() => new Date())
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
   // 预算,复杂度决定出口结构(converge/handoff)。benchmark opt-in 钉死
@@ -359,7 +394,15 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         required: true,
         properties: {
           request: { type: 'object', additionalProperties: true, required: true, description: '引擎请求:{ motivation weights, hard constraints, window, budget, home hubs }' },
-          candidates: { type: 'array', items: { type: 'object', additionalProperties: true }, required: true, description: '候选列表:[{ id, label, services, transfers, stay, minDays }]' },
+          candidates: { type: 'array', items: { type: 'object', additionalProperties: true }, required: true, description: '候选列表:[{ id, label, date?, services, transfers, stay, minDays }]' },
+          planning: {
+            type: 'object', additionalProperties: false,
+            description: '可选显式规划上下文;dated 候选省略时默认按宿主时钟作 future 下界过滤,指定 future 年份再加年末上界,historical 仅用于明确历史/回测查询;完全 dateless 输入保持旧可行性计算',
+            properties: {
+              intent: { type: 'string', enum: ['future', 'historical'], required: true },
+              requested_year: { type: 'integer', required: true, description: '用户明确请求的四位年份,不传宿主当前年份' },
+            },
+          },
         },
       },
     },
@@ -375,10 +418,22 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       // 路径——候选形态枚举求解,~6ms/次)。unified 内部有 try-catch 护栏覆盖 wasm 异常。
       const started = Date.now()
       const payload = args.payload as Record<string, unknown>
+      const anchor = buildTimeAnchor(clock())
+      let planning: PlanningWindow | null
+      try {
+        planning = parseFeasibilityPlanning(payload['planning'], anchor)
+      } catch (error) {
+        const summary = error instanceof Error ? error.message : 'planning context is invalid'
+        return feasibilityValidationFailure('invalid_planning_context', summary)
+      }
       const req = parseRequest(payload['request'] as Record<string, unknown>)
       const cands = (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate)
       const spec = segmentsFromCandidate(req, cands)
-      const result = solveChoiceSegment(spec, req) as Record<string, unknown>
+      const planningCheck = applyPlanningWindow(spec, planning, anchor, { defaultDatedFuture: true })
+      if (planningCheck.error) {
+        return feasibilityValidationFailure('planning_window_rejected', planningCheck.error, planningCheck.rejected)
+      }
+      const result = solveChoiceSegment(planningCheck.spec, req) as Record<string, unknown>
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'feasibility_check:in-process-unified').catch(() => {})
       return { ok: true, ...result, latency_ms: Date.now() - started, via: 'in-process-unified' }

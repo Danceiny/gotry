@@ -25,7 +25,8 @@
 - **#271 Phase A 进程事故观察(2026-09-09)**:GoTry-owned `uncaughtExceptionMonitor` 记录 uncaught/rejection 并保留宿主 fatal 退出语义；single-fd append+fsync+close writer 失败返回 `false`；native Node24 ESM dist 反例覆盖 monitor/no-monitor、既有 host handler、fsync/close 与工具结构化失败。child close/spawn error、SIGINT、后代进程与上游 dsh supervisor 仍为开放 TODO，不改变 M3/M4-M6 真实证据 gate。
 - **#282 Booking planner 纠偏(2026-09-09)**:planner 保留非空 occupancy 房间与 childAges,缺 `adults` 交给 schema 纠偏;每次 run(含纠偏)均计入最多三次调用,有效 correction 立即返回,provider error 不静默吞掉。focused proof 是注入 runPort 的工程证据,不改变 M3/M4-M6 或真实 Booking UAT gate。
 
-- **#194 A-轨道 GoTry 缓解(2026-09-10)**:在 dsh jobs tool 进入 registry 前增加 typed `tools/pre-execute` direct-child guard;continuable durable id 返回 completion notice/`list_agents`/`send_message` 恢复指引,非 owner/one-shot/未命中保留原生 jobs 错误。上游 dsh unknown-id 通用 recoverable contract 仍开放,不改 vendor、不关闭 issue;验证入口为 `ts/scripts/issue-194-job-id-guard-tests.ts`。
+ - **Issue #2 未来年度规划窗口(2026-09-10)**:命名年份的未来意图由本轮时间锚点派生;注册工具 `gotry_feasibility_check` 对任何带日期候选即使省略 planning 也默认过滤参考日前日期,显式 future 年份再限制至年末。预期日期拒绝返回结构化 validation result,过期请求不滚年,完全 dateless 保持旧计算,历史/回测必须显式 historical;loop 仅对显式命名年份规划应用窗口,否定过去推荐和多年份歧义不误判为历史。`time-eval-tests.ts` §6 + `smoke.ts` 的 registered execute fixture 以注入时钟验证,隔离证据不构成真实供应商准入。
+ - **#194 A-轨道 GoTry 缓解(2026-09-10)**:在 dsh jobs tool 进入 registry 前增加 typed `tools/pre-execute` direct-child guard;continuable durable id 返回 completion notice/`list_agents`/`send_message` 恢复指引,非 owner/one-shot/未命中保留原生 jobs 错误。上游 dsh unknown-id 通用 recoverable contract 仍开放,不改 vendor、不关闭 issue;验证入口为 `ts/scripts/issue-194-job-id-guard-tests.ts`。
 
 - **#279 携程机票 malformed 响应闸(2026-09-10)**:合法空列表= `miss`,有效命中= `hit`,未知/畸形形状= `error`;兼容 `parseBatchSearch` 永不抛错,扩展/CDP 均不把 parser error 伪装成 miss。隔离扩展 fixture 仅证明本地解析/编排,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
 

@@ -22,6 +22,24 @@ export interface TimeAnchor {
   card: string
 }
 
+export type PlanningDateIntent = 'future' | 'historical'
+
+/**
+ * Named-year planning context. It is derived per turn from the current
+ * TimeAnchor; it is deliberately not part of TripState so a later turn cannot
+ * inherit a stale planning reference date.
+ */
+export interface PlanningWindow {
+  referenceDate: string
+  requestedYear: number
+  intent: PlanningDateIntent
+}
+
+export interface PlanningWindowBounds {
+  start: string
+  end: string
+}
+
 const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六'] as const
 
 export function ymd(d: Date): string {
@@ -117,6 +135,47 @@ export function buildTimeAnchor(now: Date = new Date()): TimeAnchor {
   ].join('\n')
 
   return { today, todayWeekdayZh: weekdayOf(now), tzLabel: tzLabelOf(now), card }
+}
+
+/**
+ * Extract the smallest named-year intent needed by the planning guard.
+ * Historical bypass is intentionally narrow: a negated warning about past
+ * dates is not historical lookup, and multiple eligible years are ambiguous.
+ */
+export function parsePlanningWindow(text: string, anchor: TimeAnchor): PlanningWindow | null {
+  const historical = /(?:回测|复盘|backtest|historical)|(?:历史|过去).{0,8}(?:查询|查|检索|回看|回测|复盘)|(?:查询|查|检索|回看).{0,8}(?:历史|过去)/i.test(text)
+  const matches: Array<{ year: number; start: number; end: number }> = []
+  for (const m of text.matchAll(/(?<!\d)(\d{4})\s*年/g)) {
+    const start = m.index ?? 0
+    matches.push({ year: Number(m[1]), start, end: start + m[0].length })
+  }
+  for (const m of text.matchAll(/\b(?:in|within|by)\s+(\d{4})\b/gi)) {
+    const start = m.index ?? 0
+    matches.push({ year: Number(m[1]), start, end: start + m[0].length })
+  }
+  if (matches.some(m => !Number.isInteger(m.year) || m.year < 1_000 || m.year > 9_999)) return null
+  if (historical && matches.length !== 1) return null
+
+  const planningCue = /计划|规划|安排|打算|希望|想在|要在|完成|出行|旅行|预订|预定/i
+  const eligible = matches.filter(m => {
+    const before = text.slice(Math.max(0, m.start - 24), m.start)
+    const after = text.slice(m.end, m.end + 24)
+    return planningCue.test(before) || /^\s*(?:内|以内|完成|出行|旅行|预订|预定)/i.test(after)
+  })
+  const selected = eligible.length === 1 ? eligible[0] : (historical && matches.length === 1 ? matches[0] : null)
+  if (!selected) return null
+  return { referenceDate: anchor.today, requestedYear: selected.year, intent: historical ? 'historical' : 'future' }
+}
+
+export function planningWindowBounds(window: PlanningWindow, anchor: TimeAnchor): PlanningWindowBounds | null {
+  if (window.intent === 'historical') return null
+  const currentYear = Number(anchor.today.slice(0, 4))
+  if (window.requestedYear < currentYear) return null
+  const year = String(window.requestedYear).padStart(4, '0')
+  return {
+    start: window.requestedYear === currentYear ? anchor.today : `${year}-01-01`,
+    end: `${year}-12-31`,
+  }
 }
 
 /** 严格 ISO 校验:YYYY-MM-DD 必须落在真实日历(2026-02-30/2026-13-01 一律拒)。
