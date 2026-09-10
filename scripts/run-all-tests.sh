@@ -383,6 +383,10 @@ echo "=== 44. sf-live static golden(issue #67:CLI vendor 闭集/OpenFlights 固�
 (cd ts && npx tsx scripts/sf-soft-score-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/sf-live-cli-tests.ts) || FAIL=1
 
+echo
+echo "=== 44b. sf-summary offline evidence selection(issue #335/#272:canonical filename batch/chronology/source provenance/missing-corrupt fail-closed/legacy unknown;temporary evidence roots only) ==="
+(cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/sf-summary-tests.ts) || FAIL=1
+
 package_e2e_bin="${GOTRY_BRIDGE_E2E_BIN:-${GOTRY_BUDGET_E2E_BIN:-}}"
 package_e2e_dir=""
 package_e2e_install_dir=""
