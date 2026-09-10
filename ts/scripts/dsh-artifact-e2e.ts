@@ -1,0 +1,219 @@
+/**
+ * dsh artifact view isolated Host contract proof (issue #285).
+ *
+ * 真实执行:在临时 stateRoot/cwd 下装载 gotry-tools 插件,触发 gotry_artifacts_list
+ * + gotry_artifacts_read 的 execute + output.presentationMeta + presentResult,断言
+ * DSH 0.1.5-alpha.1 的 Host ToolResult contract(SearchPathsResultView /
+ * ReadResultView / GenericCallView.locations),并跑一次隔离 select → preview →
+ * modify → view-updated 文件读取循环。
+ *
+ * 本脚本不代替 Web renderer E2E:它证明的是 DSH host 装载 → 真实 execute →
+ * 持久化 meta → Host presenter contract。fresh-profile Web custom-card 路径由
+ * 显式命令 `npx tsx scripts/dsh-artifact-web-e2e.ts` 另行覆盖；该浏览器命令
+ * 不属于跨平台 full suite。
+ *
+ * 隔离:全临时目录;不写 gotry-state;结束即删。
+ */
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import type { Context } from '@deepseek-ai/cordis'
+import { apply } from '../src/index.ts'
+
+interface PresentResultView {
+  card?: string
+  shape?: string
+  title?: string
+  paths?: string[]
+  total?: number
+  truncated?: boolean
+  path?: string
+  offset?: number
+  lines?: Array<{ number: number; text: string }>
+  totalLines?: number
+  lang?: string
+  content?: Array<{ type?: string; text?: string }>
+}
+interface PresentCallView {
+  card?: string
+  kind?: string
+  title?: string
+  locations?: Array<{ path?: string; line?: number }>
+  rawInput?: unknown
+}
+interface ToolDef {
+  name: string
+  description?: string
+  execute: (args: Record<string, unknown>, exec: unknown) => Promise<unknown>
+  output: {
+    render: (args: Record<string, unknown>, result: unknown) => Array<{ type?: string; text?: string }>
+    presentationMeta?: (args: Record<string, unknown>, result: unknown) => unknown
+  }
+  presentResult?: (args: Record<string, unknown>, result: { isError: boolean; content: Array<{ type?: string; text?: string }>; meta?: unknown }) => PresentResultView | undefined
+  presentCall?: (args: Record<string, unknown>) => PresentCallView | undefined
+}
+
+function toolResult(tool: ToolDef, args: Record<string, unknown>, value: unknown): { isError: false; content: Array<{ type?: string; text?: string }>; meta?: unknown } {
+  return {
+    isError: false,
+    content: tool.output.render(args, value),
+    meta: tool.output.presentationMeta?.(args, value),
+  }
+}
+
+async function main(): Promise<void> {
+  // ── 1) 隔离环境 ─────────────────────────────────────────────────────────────
+  const home = mkdtempSync(join(tmpdir(), 'gotry-285-home-'))
+  const stateRoot = join(home, 'state')
+  const cwd = join(home, 'workspace')
+  mkdirSync(stateRoot, { recursive: true })
+  mkdirSync(cwd, { recursive: true })
+
+  // fixture:一个工作区 md,以及后续追加新内容
+  const fixturePath = join(cwd, 'trip-2027.md')
+  writeFileSync(fixturePath, [
+    '# 行程 2027',
+    '',
+    'Day 1: 北京 → 曼谷',
+    'Day 2: 曼谷 → 清迈',
+    'Day 3: 清迈 → 清莱',
+    'Day 4: 清莱 → 曼谷',
+    'Day 5: 曼谷 → 北京',
+  ].join('\n'))
+
+  // ── 2) 装载 gotry-tools 插件(同 dsh host 装载路径:apply(ctx, config))─────
+  const registered: ToolDef[] = []
+  const sections: Array<{ name: string; text: string }> = []
+  const variables: Record<string, () => string> = {}
+  const preExecutes: Array<(exec: { name?: string }, next: () => Promise<{ kind: string }>) => Promise<{ kind: string }>> = []
+  const ctx = {
+    tools: { register: (t: unknown) => registered.push(t as ToolDef) },
+    systemPrompt: {
+      section: (s: { name: string; text: string }) => { sections.push(s) },
+      variable: (name: string, provider: () => string) => { variables[name] = provider },
+    },
+    on: (event: string, fn: (exec: { name?: string }, next: () => Promise<{ kind: string }>) => Promise<{ kind: string }>) => {
+      if (event === 'tools/pre-execute') preExecutes.push(fn)
+      return () => undefined
+    },
+  } as unknown as Context
+
+  apply(ctx, {
+    stateRoot,
+    timeoutMs: 30_000,
+    hbcliBin: 'hbcli-not-on-path',
+    sessionAccess: 'off',
+  })
+  const exec = { agent: { session: { header: { cwd } } } }
+  const byName = (n: string): ToolDef => {
+    const t = registered.find(t => t.name === n)
+    if (!t) throw new Error(`FAIL: 插件装载后未找到 ${n},已注册: ${registered.map(t => t.name).join(',')}`)
+    return t
+  }
+
+  // ── 3) select 阶段:gotry_artifacts_list 真实 execute + presentResult ─────
+  const listTool = byName('gotry_artifacts_list')
+  const listPayload = await listTool.execute({ limit: 20 }, exec) as {
+    ok?: boolean
+    artifacts?: Array<{ source?: string; path?: string; title?: string }>
+    total?: number
+    truncated?: boolean
+    summary?: string
+  }
+  assert.equal(listPayload.ok, true, 'list execute 应 ok')
+  assert.ok(Array.isArray(listPayload.artifacts) && listPayload.artifacts.length >= 1, 'list 应发现 fixture md')
+  const fixtureEntry = listPayload.artifacts!.find(a => a.path?.endsWith('/trip-2027.md'))
+  assert.ok(fixtureEntry, `list 应包含 trip-2027.md,实际: ${listPayload.artifacts!.map(a => a.path).join(',')}`)
+  console.log(`[1/4] SELECT  list.execute → ${listPayload.artifacts!.length} 项 (含 fixture trip-2027.md)`)
+
+  const listView = listTool.presentResult?.({}, toolResult(listTool, {}, listPayload))
+  assert.equal(listView?.card, 'search', 'list card 应为 "search" (SearchPathsResultView)')
+  assert.equal(listView?.shape, 'paths', 'list shape 应为 "paths" (SearchPathsResultView)')
+  assert.ok(Array.isArray(listView?.paths), 'list paths 应为数组(UI 渲染 deliverables 列表直接绑路径)')
+  assert.deepEqual(listView?.paths, listPayload.artifacts!.map(a => a.path), 'list paths 数组应与 artifacts 顺序一致')
+  assert.equal(listView?.total, listPayload.total, 'list total 应与 execute 一致')
+  assert.equal(listView?.truncated, Boolean(listPayload.truncated), 'list truncated 应与 execute 一致')
+  const listFallback = listTool.output.render({}, listPayload)
+  assert.ok((listFallback[0]?.text ?? '').length > 0, 'list output.render 应带 summary,供无 search 卡能力的 UI fallback')
+  console.log(`[1/4] CONTRACT list → SearchPathsResultView{ card:'search', shape:'paths', paths:[${listView!.paths!.length}], total=${listView!.total}, truncated=${listView!.truncated} }`)
+
+  // ── 4) preview 阶段:gotry_artifacts_read 真实 execute + presentResult ───
+  const readTool = byName('gotry_artifacts_read')
+  const readCall = readTool.presentCall?.({ path: 'trip-2027.md' })
+  assert.equal(readCall?.kind, 'read', 'read presentCall kind 应为 "read"(editor follow-along)')
+  assert.ok(Array.isArray(readCall?.locations), 'read presentCall locations 应为数组')
+  assert.equal(readCall?.locations?.[0]?.path, 'trip-2027.md', 'read locations[0].path 应等于目标路径')
+  assert.equal(readCall?.locations?.[0]?.line, 1, 'read locations[0].line 应为 1(call 阶段就锁住身份)')
+  console.log(`[2/4] PREVIEW read.presentCall → GenericCallView{ kind:'read', locations:[{path:'trip-2027.md',line:1}] }`)
+
+  const read1Payload = await readTool.execute({ path: 'trip-2027.md' }, exec) as {
+    ok?: boolean
+    source?: string
+    path?: string
+    offset?: number
+    lines?: Array<{ number: number; text: string }>
+    totalLines?: number
+    lang?: string
+    content?: string
+    windowed?: boolean
+  }
+  assert.equal(read1Payload.ok, true, 'read 应 ok')
+  assert.equal(read1Payload.source, 'cwd', 'read 在 cwd 中应分类为 cwd source')
+  assert.equal(read1Payload.totalLines, 7, 'fixture 7 行(标题+空行+5 day+空尾)')
+  assert.equal(read1Payload.lines?.[0]?.number, 1, '首行 number 应为 1(file line numbering 保留)')
+  assert.ok(read1Payload.lines?.[0]?.text.includes('行程 2027'), '首行应为标题')
+  assert.equal(read1Payload.lang, 'markdown', '扩展名映射 lang=markdown')
+  console.log(`[2/4] PREVIEW read.execute → { source:'${read1Payload.source}', totalLines:${read1Payload.totalLines}, lines:[${read1Payload.lines?.length}], lang:'${read1Payload.lang}' }`)
+
+  const read1View = readTool.presentResult?.({ path: 'trip-2027.md' }, toolResult(readTool, { path: 'trip-2027.md' }, read1Payload))
+  assert.equal(read1View?.card, 'read', 'read card 应为 "read" (ReadResultView)')
+  assert.equal(read1View?.path, read1Payload.path, 'read view path 应等于 execute path')
+  assert.equal(read1View?.offset, read1Payload.offset, 'read view offset 应保留(call→result 一致)')
+  assert.equal(read1View?.lines?.length, read1Payload.lines?.length, 'read view lines 长度应等于 execute lines')
+  assert.equal(read1View?.totalLines, read1Payload.totalLines, 'read view totalLines 应等于 execute totalLines')
+  assert.equal(read1View?.lang, 'markdown', 'read view lang 应为 markdown')
+  const identity = read1View?.content?.[0]?.text ?? ''
+  assert.ok(identity.includes('source:'), 'read fallback content[0] 应含 source 身份行')
+  assert.ok(identity.includes('cwd'), `read identity 应明示 source=cwd,实际: ${identity}`)
+  assert.ok(identity.includes(read1Payload.path ?? ''), 'read identity 应含完整 path(便于 UI 高亮与跳转)')
+  assert.ok((read1View?.content?.[1]?.text ?? '').includes('行程 2027'), 'read fallback content[1] 应为正文')
+  console.log(`[2/4] CONTRACT read → ReadResultView{ card:'read', path:'${read1View!.path}', totalLines:${read1View!.totalLines}, identity:'${identity.slice(0, 80)}...' }`)
+
+  // ── 5) modify 阶段:写入新内容到 fixture(模拟 agent/用户在侧栏修产物)──
+  appendFileSync(fixturePath, '\nDay 6: 曼谷 → 普吉\nDay 7: 普吉 → 曼谷\nDay 8: 曼谷 → 北京')
+  console.log(`[3/4] MODIFY  fixture 追加 3 行,模拟产物版本变更`)
+
+  // ── 6) view-updated 阶段:再 read,断言看到新版本 ───────────────────────
+  const read2Payload = await readTool.execute({ path: 'trip-2027.md' }, exec) as {
+    ok?: boolean
+    totalLines?: number
+    lines?: Array<{ number: number; text: string }>
+  }
+  assert.equal(read2Payload.ok, true, 'view-updated read 应 ok')
+  assert.equal(read2Payload.totalLines, 10, '新版本 totalLines 应为 10(原 7 + 3)')
+  assert.ok(read2Payload.lines?.[0]?.text.includes('行程 2027'), 'view-updated 首行仍为标题')
+  assert.ok(read2Payload.lines?.some(l => l.text.includes('Day 6')), 'view-updated 应包含新追加 Day 6')
+  const read2View = readTool.presentResult?.({ path: 'trip-2027.md' }, toolResult(readTool, { path: 'trip-2027.md' }, read2Payload))
+  assert.equal(read2View?.totalLines, 10, 'view-updated ReadResultView totalLines 应等于 10')
+  assert.ok((read2View?.content?.[1]?.text ?? '').includes('Day 6'), 'view-updated fallback content 应含 Day 6(UI 重新打开产物拿到最新版本)')
+  console.log(`[3/4] VIEW-UPDATED read.execute → { totalLines:${read2Payload.totalLines}, lines:[${read2Payload.lines?.length}] },ReadResultView.content 含 Day 6`)
+
+  // ── 7) 边界:越界路径 / 非白名单扩展名 / 不存在文件 ────────────────────
+  const outOfScope = await readTool.execute({ path: '../../../../etc/passwd' }, exec) as { ok?: boolean; error?: string }
+  assert.equal(outOfScope.ok, false, '越界路径必须被拒')
+  assert.ok(/scope|outside|workspace|越界/i.test(outOfScope.error ?? ''), `越界错误信息应明示 scope,实际: ${outOfScope.error}`)
+  console.log(`[4/4] GUARDRAIL 越界路径拒 ok=false,error 含 scope 类字样`)
+
+  const notFound = await readTool.execute({ path: 'never-written.md' }, exec) as { ok?: boolean; error?: string }
+  assert.equal(notFound.ok, false, '不存在文件应 ok=false(不静默 ok)')
+  assert.ok(/not found|不存在/i.test(notFound.error ?? ''), `不存在错误信息应明示 not found,实际: ${notFound.error}`)
+  console.log(`[4/4] GUARDRAIL 不存在文件拒 ok=false,error 含 not-found 类字样`)
+
+  // ── 清理 ────────────────────────────────────────────────────────────────
+  rmSync(home, { recursive: true, force: true })
+  console.log('\nDSH ARTIFACT HOST CONTRACT PROOF: list/read metadata, source identity, view-updated loop, guardrails OK; fresh-profile Web custom-card path covered separately by `npx tsx scripts/dsh-artifact-web-e2e.ts` (not part of the cross-platform full suite)')
+}
+
+await main()

@@ -161,6 +161,8 @@ rc 序列总览(细节见 release-notes.md,版本历史归 git):
 
 **2026-08-29 产物面最小切片(issue #25)**:第 19/20 工具 `gotry_artifacts_list`/`gotry_artifacts_read`——账本工单交付与工作目录产物在 dsh 内可发现、可读(read 卡行号文件视图,只读,smoke §13);面板第二切片同日:dsh-market 选型 **dsh-better-sidebar**(18.9 万周装,#1 UI)经 `gotry setup` 宿主层安装,dsh web 侧栏工作台直接渲染工作区产物(自建 webui 撤回);账本感知产物 Tab 下一阶段。
 
+**2026-09-10 产物视图进入 M4 队列切片(issue #285)**:Host 持久化 `presentationMeta`；公开 `./client` adapter 注册 `gotry_artifacts_list/read` 的 DSH Web keyed cards，按 runtime `block` 显示可点击路径、行号、source identity 与 content version。workspace/sidebar 文件树保留为额外预览面。读范围白名单 = stateRoot 根 + 会话 dsh 工作目录(排除 node_modules/.git),扩展名白名单 = 文本类(md/txt/json/jsonl/csv/log/yaml/yml);跨 root / symlink 越界 / 缺失文件 / 超大文件(>2MB)统一返回 ok:false + error + hint。本层只读,WriteGate 红线不涉及。验收证据 = `scripts/artifacts-capability-tests.ts` 12 项隔离 fixture proof + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof + smoke §15/§15b。
+
 **2026-08-27 时间感优化落地**(外部时间评测驱动,ADR-12):时间锚点层 + 槽位抽取 v1 + 25 题评测集进仓,真模型 25/25;细节见 architecture.md §1/§9 与 ADR-12。
 
 (历史)**M2 已退出**(b0cfd97):§7-1 三层组合全链落地——OpenFlights 骨架(168 枢纽对,三值语义,求解消费+用户渲染双层)+ OpenSky 校验桥 + bookedResources 锚点 + hbcli 酒店桥(gotry_hotel_search,实时/静态降级);dsh 运行时端到端(DeepSeek 原生,人格+五工具);一键成品入口 `./gotry` 经全新场景验收(带爸妈云南行:人格问对问题→引擎三候选判决→证据链→三道选择题)。G1 已决(中国出境首发)、S1 已冻结、§7-1 已批——均由创始人「按推荐方案执行」指令结算。**当前 = M3 最小可用产品**:最小 Web 面(D-4)+ 种子用户 50-200 人(发起人即首个用户,`./gotry` 即入口)。
