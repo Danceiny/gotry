@@ -90,6 +90,7 @@
 - `sf-live-benchmark` 新增 `--golden=static`:以 OpenFlights ODbL 固定修订提供航线/承运人,以 `sf-golden-manifest.json` 提供估算时刻与价格带。
 - evidence 分开记录请求源与实际源(`requested_source`/`effective_source`)、estimated fields、provenance 与 fallback reason;快照或路由异常会向 stderr 明示后回退 `manual-golden`。
 - **这是可复跑的 benchmark 对照源,不是实时班期、票价或库存**;真实会话侧仍须用户 Chrome 扩展连接。离线守门列入 run-all §44,不改变 M3/M4 里程碑口径。
+- **Issue #335 offline summary child slice**: `sf-summary --evidence-root` 先盘点 canonical producer filename 的共同批次名,按该批次采集时间选最新 coherent batch,保留每条独立 `started_at` 与 source/fallback/provenance;missing/corrupt/invalid 的最新批次 fail-closed,无批次历史记录为 unknown/ineligible。run-all §44b 只证明 synthetic/offline contract,不证明 #272 live session、实时库存或 packaged connected/degraded evidence。
 
 ### Agent evaluation 反馈闭环(Discussion #78)
 
