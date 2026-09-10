@@ -63,11 +63,78 @@ export interface BookingCopilotServerHandle {
   close(): Promise<void>
 }
 
-interface BookingCopilotRuntimeIdentity {
+export interface BookingCopilotRuntimeIdentity {
   nodeVersion: string
   nodeModulesAbi: string
   releaseTuple: string
   glibcVersion: string
+}
+
+/** gotry-backend 模块挂载用的流量处理依赖(startBookingCopilotServer 与 backend 模块共用) */
+export interface BookingCopilotTrafficDeps {
+  apiKey: string
+  composition: BookingCopilotComposition
+  maxBodyBytes: number
+  artifactId?: string
+  ingressMode: BookingCopilotIngressMode
+  runningIdentity: BookingCopilotRuntimeIdentity
+}
+
+/**
+ * 单请求处理闭包(startBookingCopilotServer 的 createServer 回调原样摘出):
+ * 探活(/healthz /status)+ 唯一 turn 路由 + 鉴权 + schema 头校验。
+ * gotry-backend 的 booking-copilot 模块复用同一闭包,保证两条挂载路径行为逐字一致。
+ */
+export function bookingCopilotTrafficHandler(deps: BookingCopilotTrafficDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  const { apiKey, composition, maxBodyBytes, artifactId, ingressMode, runningIdentity } = deps
+  return async (req, res) => {
+    const isProbe = req.method === 'GET' && (req.url === '/healthz' || req.url === '/status')
+    if (!isProbe && (req.method !== 'POST' || req.url !== '/a2a/booking-copilot/turn')) {
+      sendJson(res, 404, { error: { code: 'not_found' } })
+      return
+    }
+    const auth = String(req.headers.authorization ?? '')
+    if (!safeSecretEqual(auth, `Bearer ${apiKey}`)) {
+      sendJson(res, 401, { error: { code: 'unauthorized' } })
+      return
+    }
+    if (isProbe) {
+      res.setHeader(BOOKING_SURFACE_VERSION_HEADER, BOOKING_SURFACE_SCHEMA_VERSION)
+      res.setHeader(BOOKING_SURFACE_SCHEMA_SHA256_HEADER, BOOKING_SURFACE_SCHEMA_SHA256)
+      if (artifactId) res.setHeader('X-GoTry-Artifact-ID', artifactId)
+      res.setHeader('X-GoTry-Node-Version', runningIdentity.nodeVersion)
+      res.setHeader('X-GoTry-Node-Modules-ABI', runningIdentity.nodeModulesAbi)
+      res.setHeader('X-GoTry-Release-Tuple', runningIdentity.releaseTuple)
+      if (runningIdentity.glibcVersion) res.setHeader('X-GoTry-Glibc-Version', runningIdentity.glibcVersion)
+      const acceptedTurnKinds = ingressMode === 'bff-ingress-binding'
+        ? [...BOOKING_COPILOT_ACCEPTED_TURN_KINDS, 'user.turn.ingress' as const]
+        : [...BOOKING_COPILOT_ACCEPTED_TURN_KINDS]
+      const healthBody: Record<string, unknown> = {
+        schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
+        schemaSha256: BOOKING_SURFACE_SCHEMA_SHA256,
+        status: 'ready',
+        ingressMode,
+        acceptedTurnKinds,
+      }
+      res.setHeader('X-GoTry-Ingress-Mode', ingressMode)
+      res.setHeader('X-GoTry-Accepted-Turn-Kinds', acceptedTurnKinds.join(','))
+      sendJson(res, 200, healthBody)
+      return
+    }
+    const schemaVersion = String(req.headers[BOOKING_SURFACE_VERSION_HEADER] ?? '')
+    const schemaHash = String(req.headers[BOOKING_SURFACE_SCHEMA_SHA256_HEADER] ?? '')
+    if (schemaVersion !== BOOKING_SURFACE_SCHEMA_VERSION || schemaHash !== BOOKING_SURFACE_SCHEMA_SHA256) {
+      sendJson(res, 409, {
+        error: {
+          code: 'booking_surface_schema_mismatch',
+          expectedVersion: BOOKING_SURFACE_SCHEMA_VERSION,
+          expectedSchemaSha256: BOOKING_SURFACE_SCHEMA_SHA256,
+        },
+      })
+      return
+    }
+    await handleBookingCopilotRequest(req, res, composition, maxBodyBytes)
+  }
 }
 
 const sessionsByComposition = new WeakMap<BookingCopilotComposition, Map<string, ReturnType<BookingPlannerSessionFactory>>>()
@@ -91,7 +158,7 @@ async function runDecisionSingleFlight(composition: BookingCopilotComposition, k
   try { return await current } finally { if (flights.get(key) === current) flights.delete(key) }
 }
 
-function runtimeIdentity(): BookingCopilotRuntimeIdentity {
+export function runtimeIdentity(): BookingCopilotRuntimeIdentity {
   const report = process.report?.getReport?.() as { header?: { glibcVersionRuntime?: string } } | undefined
   const header = report?.header
   const glibcVersion = header?.glibcVersionRuntime ?? ''
@@ -370,53 +437,15 @@ export function startBookingCopilotServer(options: BookingCopilotServerOptions):
   const maxBodyBytes = options.maxBodyBytes ?? 1_000_000
   const runningIdentity = runtimeIdentity()
 
-  const server = createServer(async (req, res) => {
-    const isProbe = req.method === 'GET' && (req.url === '/healthz' || req.url === '/status')
-    if (!isProbe && (req.method !== 'POST' || req.url !== '/a2a/booking-copilot/turn')) {
-      sendJson(res, 404, { error: { code: 'not_found' } })
-      return
-    }
-    const auth = String(req.headers.authorization ?? '')
-    if (!safeSecretEqual(auth, `Bearer ${options.apiKey}`)) {
-      sendJson(res, 401, { error: { code: 'unauthorized' } })
-      return
-    }
-    if (isProbe) {
-      res.setHeader(BOOKING_SURFACE_VERSION_HEADER, BOOKING_SURFACE_SCHEMA_VERSION)
-      res.setHeader(BOOKING_SURFACE_SCHEMA_SHA256_HEADER, BOOKING_SURFACE_SCHEMA_SHA256)
-      if (options.artifactId) res.setHeader('X-GoTry-Artifact-ID', options.artifactId)
-      res.setHeader('X-GoTry-Node-Version', runningIdentity.nodeVersion)
-      res.setHeader('X-GoTry-Node-Modules-ABI', runningIdentity.nodeModulesAbi)
-      res.setHeader('X-GoTry-Release-Tuple', runningIdentity.releaseTuple)
-      if (runningIdentity.glibcVersion) res.setHeader('X-GoTry-Glibc-Version', runningIdentity.glibcVersion)
-      const acceptedTurnKinds = ingressMode === 'bff-ingress-binding'
-        ? [...BOOKING_COPILOT_ACCEPTED_TURN_KINDS, 'user.turn.ingress' as const]
-        : [...BOOKING_COPILOT_ACCEPTED_TURN_KINDS]
-      const healthBody: Record<string, unknown> = {
-        schemaVersion: BOOKING_SURFACE_SCHEMA_VERSION,
-        schemaSha256: BOOKING_SURFACE_SCHEMA_SHA256,
-        status: 'ready',
-        ingressMode,
-        acceptedTurnKinds,
-      }
-      res.setHeader('X-GoTry-Ingress-Mode', ingressMode)
-      res.setHeader('X-GoTry-Accepted-Turn-Kinds', acceptedTurnKinds.join(','))
-      sendJson(res, 200, healthBody)
-      return
-    }
-    const schemaVersion = String(req.headers[BOOKING_SURFACE_VERSION_HEADER] ?? '')
-    const schemaHash = String(req.headers[BOOKING_SURFACE_SCHEMA_SHA256_HEADER] ?? '')
-    if (schemaVersion !== BOOKING_SURFACE_SCHEMA_VERSION || schemaHash !== BOOKING_SURFACE_SCHEMA_SHA256) {
-      sendJson(res, 409, {
-        error: {
-          code: 'booking_surface_schema_mismatch',
-          expectedVersion: BOOKING_SURFACE_SCHEMA_VERSION,
-          expectedSchemaSha256: BOOKING_SURFACE_SCHEMA_SHA256,
-        },
-      })
-      return
-    }
-    await handleBookingCopilotRequest(req, res, composition, maxBodyBytes)
+  const server = createServer((req, res) => {
+    void bookingCopilotTrafficHandler({
+      apiKey: options.apiKey,
+      composition,
+      maxBodyBytes,
+      ...(options.artifactId !== undefined ? { artifactId: options.artifactId } : {}),
+      ingressMode,
+      runningIdentity,
+    })(req, res)
   })
 
   return new Promise((resolve, reject) => {

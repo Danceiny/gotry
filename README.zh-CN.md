@@ -62,23 +62,12 @@ flowchart LR
   class E,F,G,H,I gate;
 ```
 
-| 阶段 | 由谁做 | 给你什么 |
-|---|---|---|
-| 动机访谈 | LLM | 必问项:工作窗口 / 已订资源 / 出发城市 |
-| 事实抽取 | LLM | 工作窗口生效 + 休假语义识别 |
-| 候选选择判决 | **TypeScript 选择内核** | 普通路径:枚举候选、逐个评估选择,再输出逐候选可行/不可行判决与推荐 |
-| 显式航班链求解 | **Z3 求解器** | 独立的 `solveUnified` 多段航班链约束路径;候选形态不经过它 |
-| 门到门全成本 | TypeScript `evaluateChoice` / 显式 Z3 路径 | 普通候选在 TypeScript 评估路径计算真成本;显式航班链路径报告 Z3 结果 |
-| 证据链 | 渲染层 | 每个数字都带来源标签 |
-| 交付闸 | 事实闸 | 可下单 claim 必须回溯到 exact-date 工具结果,否则产物 blocked |
-| 记忆 | 领域层 | 当下不可行 → 愿望池,附显式召回条件 |
-
 在 GoTry 的回答里会遇到的词汇:
 
 - **证据标签** —— `[骨架:openflights]` 航线存在性经公开航线库校验;`[实时API:...]` 刚从实时接口拉回数秒;`[静态包:估算]` 调研估算——非实时,下单前请核实。降级时标签如实更换。
 - **门到门全成本** —— 票价之外,这段旅程真正从你身上拿走的东西:跨时区的真实时长、早起惩罚、接驳、落地时的精力余额。
 - **愿望池** —— 「下一次出发」的存储。装不下的憧憬带显式条件(如「5 天+、淡季」)入池,条件满足时被召回。
-- **事实闸** —— 行程产物交付前闸:每条可下单 claim(航班号/时刻/机场/价格/政策)必须回溯到 exact-date 工具结果;回溯不到即 blocked——绝不宣称「已验证方案」。
+- **事实闸** —— 行程产物交付前闸:每条可下单 claim(航班号/时刻/机场/价格/政策)必须回溯到 exact-date 工具结果;回溯不到即 blocked——绝不宣称「已验证方案」。航班与铁路 claim 分开归类;事实锚点带指纹,价格/政策在篡改或漂移时一律 fail closed([#273](https://github.com/Danceiny/gotry/issues/273) 及关联 issue)。不声称实时可售,也不构成 M5/M6 入场证据。
 
 愿望池生命周期:
 
@@ -121,13 +110,13 @@ stateDiagram-v2
 
 | 组 | 工具 | 干什么 |
 |---|---|---|
-| **实时检索(OTA/官方只读)** | `gotry_flyai_search` | 机票/火车/酒店实时报价(飞猪官方通道;酒店价格为上游打码展示,真实价以 jumpUrl 为准;匿名试用额度达限归类 `needs-setup` 并带配 key 指引,不盲重试) |
-| | `gotry_session_search` | 在**用户本人登录态**里查携程机票/酒店 + 12306 火车(kind=flight|hotel|train;授权后,只读;酒店为登录态真实价,火车为公开余票查询面) |
+| **实时检索(OTA/官方只读)** | `gotry_flyai_search` | 机票/火车/酒店实时报价(飞猪官方通道;酒店价格为上游打码展示;匿名试用额度达限归类 `needs-setup` 并带配 key 指引,不盲重试) |
+| | `gotry_session_search` | 在**用户本人登录态**里查携程机票/酒店 + 12306 火车 + Dida 供应商门户酒店实时价(kind=flight/hotel/train;授权后,物理只读;未知 kind fail closed) |
 | | `gotry_session_login` | 登录引导:自动检测已登录与否,未登录才在用户 Chrome 弹登录入口(**零终端**) |
 | | `gotry_weather_check` | Open-Meteo 预报≤16 天 + 历史气候基线 |
 | | `gotry_flight_verify` | OpenSky ADS-B 航班实时观测(三值) |
 | | `gotry_skeleton_check` | OpenFlights 168 对枢纽通航性(三值) |
-| **库存与目录** | `gotry_hotel_search` | hotel-byte 实时桥(需提供有效入住/退房日期,缺失时先追问),供应商不可用时降级为明确标注的静态结果 |
+| **库存与目录** | `gotry_hotel_search` | hotel-byte 实时桥(缺入住/退房日期先追问),供应商不可用时降级为明确标注的静态结果 |
 | | `gotry_anything_search` | 城市/酒店/地标混合目录(hotel-be Anything) |
 | **判定引擎** | `gotry_feasibility_check` | 注册工具路径:确定性的 TypeScript 候选枚举/评估与逐候选判决 |
 | **记忆与触达** | `gotry_motivation_save` | 动机画像落盘(evidence 强制,反幻觉) |
@@ -136,9 +125,9 @@ stateDiagram-v2
 | **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成的产物(异步交付 + 工作目录 markdown),行号文件视图,只读 |
 | **事实闸** | `gotry_fact_gate` | 行程产物交付前闸——见上文[工作原理](#工作原理)中的定义 |
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页/字幕/GitHub/全渠道外部信息(经 Agent-Reach) |
-| **自检** | `gotry_doctor` | 默认只读体检。显式 `action: "repair"` 时先展示可自动修复项,按范围请求批准,复用 `doctor --fix` / web onboarding 的同一套幂等安装器,并以安装后复检判定结果。浏览器商店安装、凭证/API key、profile、包重装与 Node 升级仍由用户处理;拒绝、取消或无审批通道时零执行。报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
+| **自检** | `gotry_doctor` | 默认只读体检。显式 `action: "repair"` 时展示范围计划、请求批准,复用 `doctor --fix` / web onboarding 的同一套幂等安装器,并以安装后复检判定结果;浏览器商店安装、凭证与 Node 升级仍由用户处理。报告落 `gotry-state/doctor-report.md` |
 
-> **通道路由**:检索工具面保持平铺(无隐藏派发);persona 路由卡与检索失败结果内附的 `routing` 建议**由通道注册表单一生成**(官方 API > 用户会话 > 网页兜底,按会话健康面过滤)。注册表返回有序建议列表,由模型或用户选择下一工具;注册表自身不自动派发、不执行,也不自动兜底。
+> **通道路由**:检索工具面保持平铺(无隐藏派发);persona 路由卡与检索失败结果内附的 `routing` 建议来自单一通道注册表(官方 API > 用户会话 > 网页兜底,按会话健康面过滤)——注册表只返回**有序建议列表**,由模型或用户选择下一工具;注册表自身不派发、不执行,也不自动兜底。
 
 ```mermaid
 flowchart LR
@@ -181,7 +170,7 @@ GoTry: 收到。先把约束记下来——
 [静态包:估算] G7315/G7316 价格按 7-8 月淡季估算
 ```
 
-> 标签导读:`[骨架:openflights]` 说的是"这条航线能飞"已被公开航线数据校验;`[实时API:*]` 说的是刚从实时接口拉回的当下数据;`[静态包:估算]` 提醒价格是淡季档估算——**订前核实**。标签由渲染层附加,模型无权染指。
+> 标签导读:`[骨架:openflights]`——"这条航线能飞"已被公开航线数据校验;`[实时API:*]`——刚从实时接口拉回的当下数据;`[静态包:估算]`——淡季档估算,**订前核实**。标签由渲染层附加,模型无权染指。
 
 ## 与主流 AI 同题横评(产品人格从哪来)
 
@@ -214,13 +203,15 @@ npx @danceiny/gotry web
 |---|---|---|
 | Web 对话(推荐) | `npx @danceiny/gotry web` | 持续多轮规划,看推理可视化 → `:3080` |
 | headless 一问一答 | `npx @danceiny/gotry "我想从深圳休整两天,预算 3000"` | 脚本 / CI / 定向调试 → stdout |
-| 依赖体检 | `npx @danceiny/gotry doctor`(`--fix` 补装) | 可选渠道不好使时:体检扩展 / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar / dsh-map-tools / dsh-tool-ask-user,逐项给精确修复指引,报告落 `gotry-state/doctor-report.md`(侧栏工作台可预览) |
+| 依赖体检 | `npx @danceiny/gotry doctor`(`--fix` 补装) | 可选渠道不好使时:体检扩展 / Agent-Reach / hbcli / FlyAI key / sidebar / calendar / 地图工具,逐项给精确修复指引,报告落 `gotry-state/doctor-report.md` |
 
 前置:Node ≥ 22.15。LLM 凭证由 dsh 宿主 UI 配,OpenAI 兼容端点(MiniMax/中转/自建网关)走 dsh 的模型设置。首启 6–15 秒属正常冷启动;`:3080` 被占先腾端口;异常退出会留证据到 `gotry-state/incidents.jsonl`(不静默)。
 
-> **registry 兼容与运行位置** —— 命令与 registry 无关:npmjs / npmmirror / 公司内部镜像等任何 npm 兼容源都行,只要该源已同步本包;镜像 `latest` 滞后时钉精确版本,如 `npx @danceiny/gotry@0.0.1-rc.22 web`。一个例外:**在 gotry 仓库根**(或任何 package.json 同名为 `@danceiny/gotry` 的项目里)跑裸名 npx 会报 `sh: gotry: command not found`——npm exec 把 spec 误判为「本地已装」,跳过 bin 路径装配即用 `sh` 执行。仓内请走源码入口 `./gotry web`。
+> **registry 兼容与运行位置** —— 命令与 registry 无关:npmjs / npmmirror / 公司内部镜像等任何 npm 兼容源都行,只要该源已同步本包;镜像 `latest` 滞后时钉精确版本,如 `npx @danceiny/gotry@0.0.1-rc.22 web`。一个例外:**在 gotry 仓库根**(或任何 package.json 同名为 `@danceiny/gotry` 的项目里)跑裸名 npx 会报 `sh: gotry: command not found`——仓内请走源码入口 `./gotry web`。
 
-> **成本核算** —— `ts/data/llm-price-table.json`(schema `gotry_llm_price_table_v2`)是 nightly 成本核算的唯一事实源。新增模型或换中转=对该文件提 PR(peak 保守上界只高不低);未知模型 **fail-closed 不猜价**。漂移监测:`npx tsx ts/scripts/price-drift-watch.ts`(默认离线对照 baseline;`--fetch` 拉官方页)。**永不自动 apply 价格**。
+> **每次启动的 onboarding(`gotry web`,#258/#267)** —— 符合条件的交互式启动最多询问一次可选能力检查:`y` 复用 `doctor --fix` 的同一套幂等安装器,并逐项报告 `installed` / `needs-user-action` / `unavailable`(附具体原因);`n` 直接进 web。CI、benchmark、非 TTY、`GOTRY_SETUP_SKIP=1`、`GOTRY_ONBOARDING_SKIP=1` 下不询问也不安装;`postinstall` 与 detached 后台任务里永远零安装。这是确定性隔离测试支撑的 M4 UX 证明——**不计入 #20 真实复购 cohort 证据**。
+
+> **运维脚本(仓内,只读)** —— nightly 成本核算的唯一事实源是 `ts/data/llm-price-table.json`(只经 PR 变更;未知模型 fail-closed 不猜价;`price-drift-watch.ts` 只报告漂移、永不自动 apply);`build-metrics-report.ts` 把事实闸/通道/事故 sidecar 聚合成一份 markdown 报告;`channel-probe.ts` 以 cron 驱动只读通道探测,产出的 `down`/恢复事件直接供路由建议、doctor 与愿望池召回消费。
 
 ### 开发者源码安装
 
@@ -231,7 +222,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 ./gotry web                                       # 仓内入口,与 npm 形态同 UX
 ```
 
-源码入口与 npm 包解析同一组 230 个精确直接依赖的 DSH `0.1.5-alpha.1` closure(publish preverify 拒绝漏钉、混版和 range)。源码普通运行状态落在 `ts/dsh-runtime/gotry-state/`;benchmark opt-in 与 npm 包运行用调用目录隔离。按 [issue #290](https://github.com/Danceiny/gotry/issues/290),源码与 npm 路径均通过 `personaPrefix` / `personaSuffix` 投射产品人格(legacy `persona:` 不再投影);桥 handler 按阶段结构性归类错误:`timed_out` 是 deadline 中止,`spawn_failed` 是同步 spawn 或 rejected 公开 `done`,`runner_failed` 是 resolved non-zero 退出或 resolved 之后读取 collected output 失败。
+源码入口与 npm 包解析同一组 230 个精确直接依赖的 DSH `0.1.5-alpha.1` closure(publish preverify 拒绝漏钉、混版和 range)。源码运行状态落在 `ts/dsh-runtime/gotry-state/`;benchmark opt-in 与 npm 包运行用调用目录隔离。
 
 ## 账号会话:授权与隐私
 
@@ -242,7 +233,7 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 3. **物理只读** —— ReadGuard 在网络层中止一切写请求(下单/支付在传输层不可达);agent 永不接触凭证与验证码,遇验证码立即停、交还给你。
 4. **绝不劫持你的浏览器** —— 检索/登录只开自己的独立标签页,登录页置前台、留在你那;例行动测试永不自动开浏览器窗。
 
-前置(一次性):[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) Chrome 应用商店一键装(自动更新)。账号会话工具首次需要扩展时,**由 dsh 宿主 UI 把商店 URL 作为可点链接渲染**;gotry 这边不会跑任何 setup wizard、也不会让你手动加载已解压扩展。装完**零系统弹窗**——扩展只被动转发站点自己发出的检索响应(构造上只读;cookie 只读名字,值永不离开浏览器);后台 health-watch 探活,扩展一就位自动重放你的检索。未安装时工具返回 `needs-extension` 并把商店链接置于 verdict,不消耗执行配额。
+前置(一次性):[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) Chrome 应用商店一键装(自动更新,无 setup wizard,不需手动加载已解压扩展)。账号会话工具首次需要扩展时,**由 dsh 宿主 UI 把商店 URL 作为可点链接渲染**;未安装时工具返回 `needs-extension` 并附上链接,不消耗执行配额。扩展只被动转发站点自己发出的检索响应——构造上只读,cookie 值永不离开浏览器。
 
 ## 构造上可信
 
@@ -251,37 +242,38 @@ node scripts/build-dist.mjs                       # 构建 JS runtime
 3. **不存在写路径** —— 预订/支付类工具必须先过 WriteGate 才允许实现;未来的预订缝已被 `booking_saga_fsm.v1` 边表钉住。
 4. **登录永不碰凭证** —— 登录发生在外部网站;gotry 只读 cookie 名;授权每会话问一次、可吊销。
 5. **检索物理只读** —— ReadGuard 在网络层中止写请求;验证码让 agent 停下、把控制权交还给你。
-6. **回溯不到就是 blocked** —— 事实闸拒绝交付任何可下单 claim 无法回溯到 exact-date 工具结果的行程——绝不宣称「已验证方案」。
+6. **回溯不到就是 blocked** —— 事实闸拒绝交付任何可下单 claim 无法回溯到 exact-date 工具结果的行程——绝不宣称「已验证方案」。锚定的事实/政策行与注册事实做指纹比对,篡改或未知锚点一律 fail closed。
 7. **价格 fail-closed** —— 未知模型不猜价;价表只经 PR 变更;漂移监测只报告、永不自动 apply。
 8. **你的数据是你的** —— 产品状态在 `gotry-state/`;自动化测试与 smoke 用隔离 state root,永不写创始人的真实产品数据。
 
 ## 状态与限制
 
-当前版本:**v0.0.1-rc.22**(npm `latest`;`rc` dist-tag 指 rc.20;2026-09-09 镜像 registry 回拉实测:npx 安装 / bin 解析 / web 启动全通)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。公开执行与债务归属按 [#270 台账合同](docs/ops/external-pr-workflow.md) §0 留下 issue 启动、Draft PR、exact-head review 与 merge/destination 回执;本地或 fixture 证明不打开真实 gate。
+当前版本:**v0.0.1-rc.22**(npm `latest`;`rc` dist-tag 指 rc.20;2026-09-09 镜像 registry 回拉实测:npx 安装 / bin 解析 / web 启动全通)。评测处于 Phase 0 基座——确定性合同、校验器与节奏策略;无外部 benchmark 分数、无花费、无 uplift 声明。M4→M6 程序计划是 [`docs/design/milestone-delivery-plan.md`](docs/design/milestone-delivery-plan.md) 里的活任务图(记录了 M5 合同准备的 `hotelbyte-cli` 首选供应商决策,但不打开任何 gate);公开执行与债务归属按 [#270 台账合同](docs/ops/external-pr-workflow.md) §0。
 
 **今天可用**(全栈回归全绿;每项都有确定性测试):
 
 - **确定性选择内核** —— 普通候选枚举、`evaluateChoice`、真成本检查、逐候选判决与推荐
-- **显式航班链 Z3 路径** —— `solveUnified` 处理独立的多段约束路径;历史并发竞态已根治并进回归闸
+- **显式航班链 Z3 路径** —— `solveUnified` 处理独立的多段约束路径;求解调用由单一共享 Context、串行会话与 #227 本地 native 清理屏障把守
+- **有界地面接驳切片(#341)** —— 显式起讫坐标 + `mode=driving` 走注册的 `map_driving_route` 公共工具;只有精确静态 `taxi` 接驳可拿路径估算分钟数(静态价仍标 `[静态包:估算]`);实时路况、公交轨交与车费不在这条切片内
 - **实时检索** —— 机票/火车/酒店(飞猪官方通道)、目的地/酒店目录、天气、航班观测、通航性校验;实时票价可覆写求解价(`GOTRY_REALTIME_PRICING=1`);飞猪匿名试用额度达限归类 `needs-setup` 并带配 key 指引(不盲重试)
-- **FlyAI malformed 响应 fail closed (#352)** —— `gotry_flyai_search` 保留可识别的精确空 `itemList`=`miss`;机/火/酒店非空列表中的每一项都必须通过 typed 校验,任一 malformed sibling 都使整体返回结构化 `error`,不得生成负库存事实。维护中的假 CLI 回归仅是离线证据,不证明真实 provider/UAT。
-- **依赖体检** —— `npx @danceiny/gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):默认只读;显式对话内修复会展示范围计划、按同一会话 scope 请求一次批准、调用既有 bootstrap 幂等安装器,并按安装后复检逐项报告。需人工配置的项目保持人工处理,LLM key 仍归 dsh 宿主管
-- **账号会话检索** —— 你本人登录态查携程机票/酒店 + 12306 火车(酒/火 2026-09-03 实装:酒店为被动嗅探登录态真实价,火车为 12306 公开余票查询面;接口面随首个真会话校准);观测轮次中所有可评分 hit 全过、ReadGuard 零写,非 hit 保持显式 `miss` 记录——不作超出此口径的实时可售声明
-- **扩展按需装** —— `[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)` 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 这边不跑 setup wizard、不开 chrome://extensions、不动剪贴板
-- **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线;英文输出一键切换(`GOTRY_LOCALE=en`)
-- **M4 lifecycle 证据采集器** —— 显式 opt-in CLI 记录首访/回访 planning flow:隔离 `stateRoot`、consent 与 HMAC key 必需;dataset key/source/wait 词汇冻结;JSONL/manifest 走 write-all + 原子/no-overwrite 发布;导出只作为 #223 scorer 的 candidate/synthetic 输入,绝不生成人工签核
-- **按任务路由的回合预算** —— 每轮先由确定性路由器(零 LLM)分类 quick / sync / deep-planning;时间才是唯一预算,且到点出口跟任务走:quick/sync 收敛作答,deep-planning 转后台落 `gotry_turn_handoff.v1` 工单(ETA 约 1 小时)而不是让会话流死掉;工单由 `scripts/turn-handoff-collect.ts` 在后台收集结算(幂等、带递归防护的子规划会话),回访时经只读工具 `gotry_turn_handoff_list` 查询状态与交付物;经打包消费者安装的 E2E 在 CI 里实测
-- **子代理/jobs id 安全闸(#194)** —— typed pre-execute guard 在 dsh jobs registry 前识别 continuable 子代理 durable id,返回 completion notice / `list_agents` / `send_message` 可恢复指引;one-shot、无关 id 与非 owner id 保留 dsh 原生 jobs 行为。上游 unknown-id 通用 contract 仍开放,本地 guard 不修改 vendored dsh。
-- **Node 构建兼容(#265)** —— 支持下界保持 Node ≥22.15。根 dist 构建使用精确锁定、仅构建期使用的 TypeScript 5.9.3 并生成 ESM；CI 在 Node 22/24 跑 typecheck + 全栈回归，在 Node 22/24/26 跑生成文件集合/ESM/import focused proof。
+- **账号会话检索** —— 你本人登录态查携程机票/酒店 + 12306 火车 + Dida 供应商门户酒店实时价(酒店:被动嗅探登录态真实价;火车:公开余票查询面);事实全部 typed 且绑定单次调用——可识别空是唯一负事实,malformed 行零记录,列表接口不提供价格;不作超出此口径的实时可售声明
+- **依赖体检** —— `npx @danceiny/gotry doctor`(CLI)/ `gotry_doctor`(对话内工具):默认只读;显式修复展示范围计划、请求一次批准、调用既有幂等安装器,并按安装后复检逐项报告。需人工配置的项目保持人工,LLM key 仍归 dsh 宿主管
+- **扩展按需装** —— [GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) 由 dsh 宿主 UI 在账号会话工具首次需要时以可点链接给出(Chrome 商店一键装 + 自动更新);gotry 不跑 setup wizard
+- **记忆与触达** —— 动机画像 / 愿望池 / 同行人 / 旅行时间线,由租户作用域 SQLite 账本持久化;英文求解输出一键切换(`GOTRY_LOCALE=en`)
+- **M4 lifecycle 证据采集器** —— 显式 opt-in CLI 记录 planning flow:隔离 `stateRoot`、consent 与 HMAC key 必需;导出只作为 #223 scorer 的 candidate/synthetic 输入,绝不生成人工签核
+- **按任务路由的回合预算** —— 每轮由确定性路由器(零 LLM)分类 quick / sync / deep-planning;时间是唯一预算:quick/sync 收敛作答,deep-planning 转后台落 `gotry_turn_handoff.v1` 工单(ETA 约 1 小时)而不是让会话流死掉;工单由 `scripts/turn-handoff-collect.ts` 后台收集结算,经只读工具 `gotry_turn_handoff_list` 可查;经打包消费者安装的 E2E 在 CI 里实测
+- **账本管理 CLI 与租户修复计划** —— `ts/scripts/state-cli.ts` 解析 fail-closed(未知/重复/非法选项不碰 state root);`repair-plan` 只在临时 DB 副本上盘点与 dry-run——apply/迁移/回滚仍是 #254 的编号后续
+- **航班/酒店锚点字段指纹([#363](https://github.com/Danceiny/gotry/issues/363),父 [#273](https://github.com/Danceiny/gotry/issues/273))** —— 带锚点的航班行从渲染文本重新抽取 `flight_no` token,必须严格等于 `fact.flight_no`;酒店行必须逐字包含 `fact.destination` + `fact.check_in` + `fact.check_out`;任一漂移即 `fact_anchor_unknown` fail-closed。字段指纹补位而不替代整行严格比对与既有价格分类;`gotry_fact_gate` 注册执行面无新增路径。确定性隔离证据;不关闭 #273,也不打开 M5/M6
+- **近期 fail-closed 加固** —— 供应商 malformed 响应(#279 携程会话、#352 FlyAI)、政策锚点全文指纹(#359)、booking planner 修复(#282)、严格重复工具调用修复(#327)、安全派发诊断(#329)、IANA 时区合同(#343)、常住地软默认(#338)、子代理/jobs id 安全闸(#194)、Node ≥22.15 构建兼容(#265)。每项均为确定性隔离证据——均不打开 M4/M5/M6 gate。完整轨迹见 [CHANGELOG.md](CHANGELOG.md)
 
 **已知限制**(诚实清单):
 
 - **M3 Exit 未关闭** —— 工程与分发面就绪,但真实种子用户证据(50–200 人 cohort)尚未积累;自动化测试证明的是合同与公式,不是 business pass
-- **M4→M6 真实证据门仍开放** —— #20/#223 scorer 已加严,#228 collector 可产出隔离 candidate/synthetic lifecycle 导出,但 #20 所需真实 `observed_private` N≥5 repeat cohort 与人工 source-review attestation 仍未进入私有证据面；M5 仍等待 #136 的供应协议/内部授权，M6 仍等待 #137 的 P6 批准与真实签约试点
-- **Node 26 dist 闸只属发布质量证据** —— #265 不计入 #20，也不满足 #136 或 #137 的上述真实证据门
+- **M4→M6 真实证据门仍开放** —— scorer 加严(#238)、opt-in lifecycle collector(#248)、租户 CLI 与 Z3/地图稳定性基座已在 main,但 #20 所需真实 `observed_private` N≥5 repeat cohort 仍未落地;M5 仍等待 #136 的供应协议/内部授权,M6 仍等待 #137 的 P6 批准与真实签约试点。本地或 fixture 证明——包括 #258/#267 web onboarding UX 证明与 Node 26 dist 闸——永不打开这些真实 gate
 - **酒店会话适配** —— 携程酒店/美团登录态面等实测回填;机票已通
+- **#272 实时证据仍开放** —— #335 只加固了确定性离线摘要选择;授权的真实浏览器/会话校准与打包形态 connected/degraded 证据仍未完成
 - **界面语言** —— 英文仅覆盖求解确定性输出层;dsh 宿主界面与对话面属宿主/校准件
-- **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic（无分数、无 uplift 声明）。Round 10 的 `glm-5.3-flash`（main `c843fae`）已诊断为可见性失败（57 次空 `{}` 调用）；Round 11 仅把模型面对的 wire 展平为 `tools/call/errors`、descriptor 派生工具名枚举和 generic object 参数，执行时仍对冻结 descriptor 做 exact 校验；逐轮工程台账见 [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
+- **外部 benchmark 泛化** —— 迄今所有冻结外部运行均仅 diagnostic(无分数、无 uplift 声明);逐轮工程台账见 [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
 - **预订** —— 今天没有任何可下单路径;M5 只经 WriteGate 与 booking-saga 状态机启封
 
 <details>
@@ -308,12 +300,12 @@ timeline
 | # | 里程碑 | 范围 | 状态 |
 |---|---|---|---|
 | M0 | 确定性管道 | 引擎双实现 + 真实数据包 + 对账框架 | ✅ |
-| M1 | Agent 形态成立 | LLM 进环;对话即界面;gates 选择题 | ✅ 2026-08-22 |
-| M2 | 实时数据 | hotelbyte 桥 + 航班源;证据链换实时标签 | ✅ 2026-08-22 |
+| M1 | Agent 形态成立 | LLM 进环;对话即界面;gates 选择题 | ✅ |
+| M2 | 实时数据 | hotelbyte 桥 + 航班源;证据链换实时标签 | ✅ |
 | M3 | 最小可用产品 | 最小 Web 面 + 50–200 种子用户(洱海/普吉场景) | **← 当前 —— evidence 未收口** |
-| M4 | 记忆与「下一次出发」 | 六层记忆 C 端域;paired-cohort 价值证据 + 显式 lifecycle collector | founder 授权并行 |
-| M5 | 交易闭环 | WriteGate 上生产;预订 / 支付 / 退改 | entry gate 启封 |
-| M6 | B2B 包裹 | principal/sponsor 插件,内核零改动 | entry gate 启封 |
+| M4 | 记忆与「下一次出发」 | 六层记忆 C 端域;paired-cohort 价值证据 + 显式 lifecycle collector | founder 授权并行;真实 N≥5 cohort 未收口 |
+| M5 | 交易闭环 | WriteGate 上生产;预订 / 支付 / 退改;首选供应商目标 `hotelbyte-cli` | entry gate 启封:M4 Exit + 供应协议 |
+| M6 | B2B 包裹 | principal/sponsor 插件,内核零改动 | entry gate 启封:M5 Exit + P6 创始人评审 |
 
 唯一权威时间线(逐里程碑的进入/退出条件、交付物与 gate):[`docs/roadmap.md`](docs/roadmap.md)。
 
@@ -326,7 +318,7 @@ npx tsx scripts/evaluation-contract-tests.ts   # 评测 Phase 0 合同(离线)
 npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 ```
 
-套件覆盖金标准引擎、对话重放、跨进程异步工单、插件 smoke、实时桥、进程护栏、i18n、记忆域、M4 lifecycle collector、Z3 并发闸、事实闸、打包消费者工具预算 E2E 等;权威分节以 `scripts/run-all-tests.sh` 实际枚举为准。真实会话 benchmark(`npx tsx scripts/sf-live-benchmark.ts --golden=static`)为 opt-in,需你的 Chrome 会话扩展在线,永不进 CI。
+套件覆盖金标准引擎、对话重放、跨进程异步工单、插件 smoke、实时桥、事故观测与进程护栏、i18n、记忆域、M4 lifecycle collector、Z3 并发闸、事实闸、打包消费者回合截止 E2E 等;权威分节以 `scripts/run-all-tests.sh` 实际枚举为准。打包 Web 重试/取消证明(#289)在 `ts/` 下经 `GOTRY_SESSION_LIVE=0 npx --no-install tsx scripts/issue-289-web-retry-e2e.ts` 运行(需 Node 24 + 本机 Chrome;可审产物落 `.omx/artifacts/issue-289-web-retry-e2e/`)。真实会话 benchmark(`npx tsx scripts/sf-live-benchmark.ts --golden=static`)为 opt-in,需你的 Chrome 会话扩展在线,永不进 CI。PR 要求本地 final-SHA 证据;CI 是附加信号,不是替代。
 
 ## 参与开发
 
@@ -355,15 +347,10 @@ npx tsx scripts/evaluation-cadence-tests.ts    # 确定性节奏策略/planner
 | [`docs/user-guide.md`](docs/user-guide.md) | 终端用户使用指南 |
 | [`docs/data-sources.md`](docs/data-sources.md) | 数据源与证据链政策 |
 | [`docs/ops/extension-privacy.md`](docs/ops/extension-privacy.md) | Session Bridge 扩展隐私 |
-| [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md) | 外部 benchmark 桥——工程台账 |
-| [`docs/evaluation/evaluation-foundation.md`](docs/evaluation/evaluation-foundation.md) | 评测 Phase 0 基座 |
-| [`docs/design/memory-lifecycle-collector.md`](docs/design/memory-lifecycle-collector.md) | M4 lifecycle collector CLI 用法与持久化合同 |
-| [`docs/design/booking-saga-fsm.md`](docs/design/booking-saga-fsm.md) | 预订 saga 状态机(M5 缝词汇) |
 | [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md) | 一次真实 AI 旅行规划失败复盘(反面教材) |
 | [`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/) | Agent 产品人格横评——同一真实行程 prompt 的各家回答存档、评分卡与人格提炼 |
 | [`docs/release-notes.md`](docs/release-notes.md) | 逐版本发布决策(「为什么」) |
 | [`CHANGELOG.md`](CHANGELOG.md) | 机器衍生的变更日志(Keep a Changelog + Conventional Commits) |
-| [`docs/tokens.md`](docs/tokens.md) | npm 2FA / 发布机制 |
 
 ## License
 
