@@ -267,10 +267,12 @@ export class StateLedger {
     saved: boolean
     profile: MergedProfile & { updated_at?: string }
   } {
+    // 事件边界 ISO:事件行的 ts 就是 homeCityPreference.updated_at 的源头,
+    // fold 路径会读同一字段回放——rebuildProjections 必须能复现该值。
     const ts = new Date().toISOString()
     const run = this.db.transaction((): { saved: boolean; profile: MergedProfile & { updated_at?: string } } => {
       const current = this.readMotivation()
-      const merged = mergeProfile(current, patch)
+      const merged = mergeProfile(current, patch, ts)
       if (!merged) {
         const unchanged = { ...(current ?? { weights: {}, evidence: [], hard: {} }), updated_at: current?.updated_at ?? ts } as MergedProfile & { updated_at?: string }
         return { saved: false, profile: unchanged }
@@ -468,7 +470,8 @@ export class StateLedger {
       }
       case 'motivation.patch': {
         const current = this.readMotivation()
-        const merged = mergeProfile(current, p['patch'] as ProfilePatch)
+        // 重建路径:时间戳 = 事件行 row.ts(账本事实);不在 fold 里再读时钟
+        const merged = mergeProfile(current, p['patch'] as ProfilePatch, row.ts)
         if (merged) {
           const doc = { ...merged, updated_at: row.ts }
           this.db.prepare(

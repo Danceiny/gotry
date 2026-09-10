@@ -108,6 +108,7 @@ M3 最小可用产品,分发链路无已知堵点。
 ### 1.5 记忆域与时间感知
 
 - **记忆域六层**(设计见 `design/memory-design.md`):动机 brief 读回 persona、效用 sidecar(归因只认 owner 确认)、愿望池 0..1 召回(`gotry_wish_pool_list`)、旅行时间线(`gotry_trip_log`)、同行人档案(`gotry_companion_save`)、时间窗衰减(只降不删/地板 0.1/动机零衰减)。度量与触达:`scripts/memory-metrics.ts` 只读投影 + `scripts/nudge-digest.ts` 主动回访(`GOTRY_NUDGE_ENABLED=false` 可全局关闭)。M4 planning lifecycle 观测另有显式 opt-in CLI `ts/scripts/memory-lifecycle.ts` + 纯逻辑 `ts/src/memory-lifecycle.ts`:只写隔离 `stateRoot`,consent/HMAC 必需,导出 candidate/synthetic scorer 输入,不接真实会话。
+- **持久常驻城市/默认出发地(Issue #338)**:写入 patch 接受 `homeCity` 与 optional `homeCityEvidence`(单条非空 evidence 可省略,多条须显式 exact 绑定);投影保存 `homeCityPreference { value, evidence, updated_at }`。`{{motivation_brief}}` 只将完整 typed preference 读回为软默认,当轮显式出发地优先;typed 缺失/畸形或 evidence 不在 pool 时只要求澄清。默认不 hard-filter 或改变确定性 candidates/recommendation,`resolveDefaultOrigin` 仅是纯 precedence contract。
 - **时间感知**:确定性锚点层 `ts/src/time-anchor.ts` + 槽位抽取 `travel-slots.ts` + 槽位→日期解析 `slot-spec.ts`。**算术进代码,LLM 查卡不自算**。命名年份的未来规划在 `loop.ts` 的求解入口按本轮锚点过滤候选:当前年从参考日到年末,未来年为全年;过期年份明确拒绝,历史/回测意图旁路,不把参考日持久化到 `TripState`。
 
 ### 1.6 工程不变量
@@ -120,7 +121,6 @@ M3 最小可用产品,分发链路无已知堵点。
 - py 树仅剩 `gotry_feasibility` oracle,产品运行时零 Python 依赖(D-7 清偿)。
 - **外部 benchmark bridge 一律 default-off**(Phase 1 seam):owner-local config、固定 argv/allowlist、递归 no-oracle 键拒绝、cold-start + headless one-shot、native definition-only agent、启动组合隔离、结构化终态诊断——任一合同漂移 fail-closed。单一 flat `action=tools|call|errors` 协议由 descriptor 同源生成每工具精确 call schema，并在 spawn 前复用同一 validator；adapter 输出只接受 exact result/domain/failure envelope，旧终态不得遮蔽更新的 bridge 事实。逐轮 frozen treatment 事实见 §9,合同全文见 `evaluation/benchmark-environment-bridge.md`。
 - **Z3 生命周期边界(#227)**:`ts/src/z3-shared.ts` 是唯一运行时入口:冷初始化 Promise 先缓存(并发只建一个 Context)、会话级互斥 `withZ3`、low-level native cleanup 局部队列(只包装当前 `z3-solver@5.2.0` 的 `dec_ref`/`*_dec_ref` 与 async native call,不改全局 `FinalizationRegistry`,不提前 free 仍可达对象)。GC/explicit release 的 cleanup 若撞上活跃 native check,延迟到 actual native idle 后 drain；fatal WASM/heap 错误先 poison,后续求解 fail-closed。回归锚点:run-all §30/§30b/§30c。
-- 全栈回归见 `scripts/run-all-tests.sh` 分节(计数不落字)。
 - **Node 构建支持面(#265)**:下界保持 `>=22.15.0`;dist 只用根 `devDependencies` 精确锁定的 TypeScript 5.9.3 转译为 ESM,不依赖全局包、`ts/node_modules`、hoist 或 Python,发布运行时不携带 TypeScript。CI 在 Node 22/24 跑 typecheck + 全栈回归,在 Node 22/24/26 跑 exact 文件集合/ESM/动态 import focused proof。该项只属 M4 开源/发布质量线,不计入 #20 的真实 repeat-cohort,也不满足 #136 供应协议/内部授权或 #137 P6 批准与真实试点；三项 gate 保持 open。
 
 ### 1.7 里程碑口径(Issue #19)
@@ -448,6 +448,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **安全 dispatch 日志(#329,2026-09-10)**:同步 HTTP 409 turn-dispatch catch 使用闭合 reason vocabulary,只对完整固定 token 做区分,未知值与带 suffix 的 token 统一为 `UNCLASSIFIED`;stderr 结构化行只含现有 typed `code` 与 `reason`,HTTP typed response/status 不变。公共 HTTP 请求与子进程 stderr 字节 proof 为确定性离线证据,不替代真实 provider、HotelByte UAT 或 M3/M4/M5/M6 准入。
 
 - **Issue #343 时区演进**:flight-pack v2 以显式 IANA zone 与 local date 生成 UTC instant,由确定性模型使用 UTC instant 计算耗时并以已知 instant 投影 home-zone work window;未知 zone 与 DST gap/overlap 在边界拒收。dsh/mock adapter 保留 pack `homeZone`,profile 只提供 schedule,explicit vacation 移除 work-window restriction,numeric v1 保持兼容；该离线确定性契约不代表 live schedules/prices/availability/inventory。
+- **Issue #338 持久默认出发地(2026-09-10)**:写入 patch 接受 `homeCity` 与 optional `homeCityEvidence`(单条非空 evidence 可省略,多条须显式 exact 绑定),事件投影保存 `homeCityPreference { value, evidence, updated_at }`;`{{motivation_brief}}` 只把完整 typed preference 读回为软上下文,当轮显式出发地优先。typed 缺失/畸形、evidence 不在 pool 或非法时间戳均按 missing 要求明确出发地。
 
 ### 外部 benchmark 泛化(Round 1–12,Discussion #78,official score 仍为空)
 
@@ -478,6 +479,8 @@ PR #327 修订的严格重复 tool-call 参数恢复属于 planner 解析边界�
 issue #329 的 dispatch 日志收敛属于安全边界加固，不新增开放债务；公共 HTTP/子进程 stderr proof 只证明 deterministic offline contract,不替代真实 provider、HotelByte UAT 或里程碑准入证据。
 
 Issue #343 的时区处理属于模型层 deterministic 边界,不新增开放债务:`ts/src/tz-resolver.ts` 解析 v2 IANA zone 与 local date,`ts/src/model.ts` 以 UTC instant 计算耗时,adapter 保留 v2 pack `homeZone` 并只合并 profile schedule;explicit vacation 移除 work-window restriction,numeric v1 保持兼容。该契约不代表 live schedules/prices/availability/inventory。
+
+Issue #338 当前形态:写入 patch 接受 `homeCity` 与 optional `homeCityEvidence`(单条非空可省略,多条须显式 exact),持久化为 `homeCityPreference { value, evidence, updated_at }`;`{{motivation_brief}}` 仅以完整 typed preference 提供软默认,当轮显式 origin 优先,缺失/畸形或 unbound evidence 返回 missing。`resolveDefaultOrigin` 只承担纯 precedence contract;默认不 hard-filter 或改变确定性候选/推荐。
 
 ### 10.1 未清偿(工作面)
 

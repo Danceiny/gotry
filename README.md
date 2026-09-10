@@ -108,8 +108,8 @@ Architecture, five layers:
 
 | Layer | Module | Role |
 |---|---|---|
-| L2 | `ts/src/index.ts` (dsh plugin) + `bin/gotry-inner.js` | Tool registry (count lives in code and `scripts/run-all-tests.sh` output), time-anchor & memory-brief variables; execute isolation + consent gate + per-turn tool budget + process guards; launcher-owned dsh child process-group cleanup |
-| L3 | `ts/src/unified.ts` · `py/gotry_feasibility/` | ordinary candidate enumeration/evaluation/choice; `solveUnified` is the separate flight-chain Z3 path. `py/gotry_feasibility/` is a historical comparison oracle only, with zero product/runtime/toolchain dependency |
+| L2 | `ts/src/index.ts` (dsh plugin) + `bin/gotry-inner.js` | Tool registry, time-anchor & memory-brief variables; execute isolation + consent gate + per-turn tool budget + process guards; launcher-owned dsh child process-group cleanup |
+| L3 | `ts/src/unified.ts` | ordinary candidate enumeration/evaluation/choice; `solveUnified` is the separate flight-chain Z3 path. `py/gotry_feasibility/` is a historical comparison oracle only, with zero product/runtime/toolchain dependency |
 | L4 | `ts/capabilities/effect.ts` · `hbcli.ts` · `skeleton-check.ts` | effect interpreter (backoff retry / circuit breaker / mock interpreter) + realtime inventory bridge + OpenFlights skeleton (three-valued semantics) |
 | L5 | loopx governance | objective / gates / evidence / quota |
 
@@ -117,7 +117,7 @@ Architecture, five layers:
 
 ## Tools
 
-The GoTry plugin exposes its tools in groups (the exact count lives in the code and the full regression script, not in this README):
+The GoTry plugin exposes its tools in groups:
 
 | Group | Tool | What it does |
 |---|---|---|
@@ -266,13 +266,13 @@ One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.
 5. **Retrieval is physically read-only.** A ReadGuard aborts write requests at the network layer; a captcha stops the agent and hands control back to you.
 6. **Unverifiable means blocked.** The fact gate refuses to deliver any itinerary whose bookable claims cannot trace to exact-date tool results — it is never presented as a verified plan.
 7. **Prices fail closed.** Unknown models get no guessed price; the price table changes only by PR; the drift monitor reports, never auto-applies.
-8. **Your data is yours.** Product state lives under `gotry-state/`; automated tests and smoke runs use isolated state roots and never write the founder's real product data.
+8. **Your data is yours.** Product state lives under `gotry-state/`; validation paths use isolated state roots and never write the founder's real product data.
 
 ## Project Status
 
 Current release: **v0.0.1-rc.22** (npm `latest`; the `rc` dist-tag points at rc.20. Registry pull-verified 2026-09-09 against a mirror: npx install, bin resolution, and `web` startup all pass). Evaluation is at Phase 0 foundation — deterministic contracts, validators, and a cadence policy; no external benchmark scores, no spend, no uplift claims. The M4→M6 program plan is now a living task graph in [`docs/design/milestone-delivery-plan.md`](docs/design/milestone-delivery-plan.md); it records the `hotelbyte-cli` first-supplier decision for M5 contract preparation, but does not open M4/M5/M6 gates. Public execution and debt ownership follow [the #270 ledger contract](docs/ops/external-pr-workflow.md) §0: issue start, Draft PR, exact-head review, and merge/destination receipt; local or fixture proof never opens the real gates.
 
-**Working today** (full-stack regression green; every item has deterministic tests):
+**Working today**:
 
 - **Deterministic choice kernel** — ordinary candidate enumeration, `evaluateChoice`, true-cost checks, per-candidate verdicts, and recommendation
 - **Bounded ground-transfer slice (#341)** — explicit origin/destination coordinates with `mode=driving` delegate through the registered public `map_driving_route` tool; only an exact static `taxi` destination transfer may receive route-estimated minutes, while its static price remains `[静态包:估算]`. Per-apply cache age, host-observed `asOf`, provenance, provider errors, invalid coordinates, unsupported modes, and binding mismatches are explicit; live traffic, transit/rail, and fares remain outside this slice
@@ -295,6 +295,7 @@ Current release: **v0.0.1-rc.22** (npm `latest`; the `rc` dist-tag points at rc.
 - **Strict duplicate tool-call repair (#327 revision)** — the embedded planner keeps ordinary single-object `JSON.parse` behavior and recovers only fully consumed, whitespace-separated repetitions of at least two structurally identical top-level JSON objects; conflicting, truncated, prefixed, suffixed, non-object, or single-invalid inputs fail closed. The public-path fixture covers braces and escapes inside strings; it is deterministic local evidence, not provider reliability, HotelByte UAT, M3/M4 cohort, or M5/M6 admission evidence.
 - **Safe Booking dispatch diagnostics (#329)** — the synchronous HTTP 409 dispatch catch emits only a typed error code and an exact closed reason; unknown or suffixed errors become `UNCLASSIFIED`. The child-process HTTP/stderr proof is deterministic and offline only; it is not provider reliability, HotelByte UAT, or M3–M6 admission evidence.
 - **IANA timezone contract (#343)** — flight-pack v2 resolves explicit IANA zones and local dates to UTC instants, rejects unknown zones and DST gaps/overlaps, and uses UTC instants for elapsed duration. The dsh/mock adapter path retains the v2 pack `homeZone`; profiles supply schedule fields only, explicit vacation removes the trip work-window restriction, and numeric v1 behavior remains compatible. This deterministic contract does not prove live schedules, prices, availability, or inventory; see [`docs/data-sources.md`](docs/data-sources.md).
+- **Persistent home-city default (#338)** — `gotry_motivation_save` accepts typed `homeCity` plus optional `homeCityEvidence` (evidence is always required; when exactly one nonblank new evidence entry exists, only the `homeCityEvidence` binding field may be omitted; multiple new evidence entries require an explicit exact `homeCityEvidence` binding); the tenant-scoped ledger persists `homeCityPreference { value, evidence, updated_at }` and `{{motivation_brief}}` reads a complete preference as a soft default. Explicit current-trip origin wins; missing/malformed preference or unbound evidence asks for the origin, while explicit null clears the active default. `resolveDefaultOrigin(currentTripOrigin, profile)` is the pure precedence contract (explicit > home_default > missing); the default does not hard-filter or alter deterministic candidates/recommendation. Origin is **never** inferred from IP, browser language, timezone, travel history, or model guess. The #20 real-cohort gate remains open.
 
 **Open limitations** (honest list):
 
