@@ -38,7 +38,7 @@
 
 M3 最小可用产品,分发链路无已知堵点。
 
-**时区面(Issue #343,2026-09-10)**:候选 v2 路径走 `ts/src/tz-resolver.ts`(IANA + 当地日期 → 真实 UTC instant),DST gap/overlap 与未知 zone 在 parse 边界拒收;v1 数值口径在所有现存 pack 自然消亡前保留兼容编译。`ts/src/model.ts` 的 `doorToDoorFromMove` 是门到门算术唯一权威入口(v2 用真实 UTC instant,v1 用墙上分钟差 - tzOffsetMin,字节不变)。home zone 工作窗口通过 `readWallParts(homeZone, depUtcMs)` 直接投影已知 instant 到 home zone 墙时(权威),不再用 dep-local date 当 home date。当前证据为离线定向测试,全仓前台回归仍是合入闸。
+**时区面(Issue #343,2026-09-10)**:候选 v2 路径走 `ts/src/tz-resolver.ts`(IANA + 当地日期 → 真实 UTC instant),DST gap/overlap 与未知 zone 在 parse 边界拒收;v1 数值口径在所有现存 pack 自然消亡前保留兼容编译。`ts/src/model.ts` 的 `doorToDoorFromMove` 是门到门算术唯一权威入口(v2 用真实 UTC instant,v1 用墙上分钟差 - tzOffsetMin,字节不变)。home zone 工作窗口通过 `readWallParts(homeZone, depUtcMs)` 直接投影已知 instant 到 home zone 墙时(权威),不再用 dep-local date 当 home date。真实入口 adapter 只合并 profile 的 startMin/endMin/workdays 并保留 v2 pack 的 homeZone;#343 真实 provider/session calibration 仍为 TODO,不扩展通用时区 NLP。当前证据为离线定向测试,全仓前台回归仍是合入闸。
 
 ### 1.1 交付形态与入口
 
@@ -441,7 +441,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 - **安全 dispatch 日志(#329,2026-09-10)**:同步 HTTP 409 turn-dispatch catch 使用闭合 reason vocabulary,只对完整固定 token 做区分,未知值与带 suffix 的 token 统一为 `UNCLASSIFIED`;stderr 结构化行只含现有 typed `code` 与 `reason`,HTTP typed response/status 不变。公共 HTTP 请求与子进程 stderr 字节 proof 为确定性离线证据,不替代真实 provider、HotelByte UAT 或 M3/M4/M5/M6 准入。
 
-- **Issue #343 IANA tz offset 替换手写残余(2026-09-10)**:中国出境首发已跨区,`tz_offset_min/origin_tz_offset_min` 单值在手写包中无法表达 DST 与跨日。候选实现:`ts/src/tz-resolver.ts` 单一职责纯函数 `resolveOffsetForLocalDate(zone, ymd, hhmm)`(缓存 `Intl.DateTimeFormat`,零新依赖);DST spring-forward gap / fall-back overlap / 未知 zone 显式拒收(`gap_nonexistent` / `overlap_ambiguous` / `unknown_zone`),绝不静默回退到机器时区或 `+08:00`。`ts/src/unified.ts` 增 `parseFlightPackToSpecV2`(`{version:2}` pack → leg-level `iana_dep_zone`/`iana_arr_zone` + option-level `dep_local_date`/`arr_local_date`);`tzOffsetMin/originTzOffsetMin` 在解析期确定性写入,`WorkWindowSpec` 增 `homeZone` 选项,`workWindowBlocks` 在 v2 路径按已知 `depUtcMs` 直接投影 home zone。v1 数值口径(=无 `version` 或 `version:1`)原样保留。当前证据限于 33 项 focused tz-resolver、18 项 sanity、unified 4/4 与隔离 smoke;root counterexamples 已纳入 focused path,全仓前台回归仍待执行。其公共路径 proof 只覆盖离线 fixture,不替代实时班期/票价/可售库存。
+- **Issue #343 IANA tz offset 替换手写残余(2026-09-10)**:中国出境首发已跨区,`tz_offset_min/origin_tz_offset_min` 单值在手写包中无法表达 DST 与跨日。候选实现:`ts/src/tz-resolver.ts` 单一职责纯函数 `resolveOffsetForLocalDate(zone, ymd, hhmm)`(缓存 `Intl.DateTimeFormat`,零新依赖);DST spring-forward gap / fall-back overlap / 未知 zone 显式拒收(`gap_nonexistent` / `overlap_ambiguous` / `unknown_zone`),绝不静默回退到机器时区或 `+08:00`。`ts/src/unified.ts` 增 `parseFlightPackToSpecV2`(`{version:2}` pack → leg-level `iana_dep_zone`/`iana_arr_zone` + option-level `dep_local_date`/`arr_local_date`);`tzOffsetMin/originTzOffsetMin` 在解析期确定性写入,`WorkWindowSpec` 增 `homeZone` 选项,`workWindowBlocks` 在 v2 路径按已知 `depUtcMs` 直接投影 home zone。真实入口 adapter 只合并 profile schedule 并保留 pack homeZone;#343 真实 provider/session calibration 仍为 TODO,不扩展通用时区 NLP。v1 数值口径(=无 `version` 或 `version:1`)原样保留。当前证据限于 33 项 focused tz-resolver、18 项 sanity、unified 4/4 与隔离 smoke;root counterexamples 已纳入 focused path,全仓前台回归仍待执行。其公共路径 proof 只覆盖离线 fixture,不替代实时班期/票价/可售库存。
 
 ### 外部 benchmark 泛化(Round 1–12,Discussion #78,official score 仍为空)
 
@@ -471,7 +471,7 @@ PR #327 修订的严格重复 tool-call 参数恢复属于 planner 解析边界�
 
 issue #329 的 dispatch 日志收敛属于安全边界加固，不新增开放债务；公共 HTTP/子进程 stderr proof 只证明 deterministic offline contract,不替代真实 provider、HotelByte UAT 或里程碑准入证据。
 
-Issue #343 的 IANA tz offset 替换手写残余属于模型层 deterministic 边界候选收敛(`ts/src/tz-resolver.ts` + `ts/src/model.ts` 的 `doorToDoorFromMove` 唯一权威入口 + `parseFlightPackToSpecV2` 工作窗口 home-zone 已知 instant 直接投影);`data/flights_2026.json` v1 数值口径仍 4/4 兼容编译。当前只记录离线 focused/sanity/unified/smoke 证据；root source review 与一次前台全仓回归仍是本候选的 TODO,不替代实时班期、票价或可售库存。
+Issue #343 的 IANA tz offset 替换手写残余属于模型层 deterministic 边界候选收敛(`ts/src/tz-resolver.ts` + `ts/src/model.ts` 的 `doorToDoorFromMove` 唯一权威入口 + `parseFlightPackToSpecV2` 工作窗口 home-zone 已知 instant 直接投影);真实入口 adapter 只合并 profile schedule 并保留 pack homeZone,#343 真实 provider/session calibration 仍为 TODO,不扩展通用时区 NLP。`data/flights_2026.json` v1 数值口径仍 4/4 兼容编译。当前只记录离线 focused/sanity/unified/smoke 证据；root source review 与一次前台全仓回归仍是本候选的 TODO,不替代实时班期、票价或可售库存。
 
 ### 10.1 未清偿(工作面)
 

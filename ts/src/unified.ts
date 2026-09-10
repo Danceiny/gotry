@@ -12,6 +12,7 @@ import type { LegReport } from './journey.ts'
 import { withZ3 } from './z3-shared.ts'
 import { t as i18nT } from './i18n.ts'
 import { resolveOffsetForLocalDate, describeResolveFailure, isKnownZoneLoose, readWallParts, wallPartsToIso } from './tz-resolver.ts'
+import { FLIGHT_PACK_VERSION } from './flight-pack-contract.ts'
 
 export interface AnchorsSpec {
   arriveByMin?: number
@@ -99,6 +100,8 @@ export interface JourneySpecTS {
   workWindow?: WorkWindowSpec
   /** 骨架层开关(§7-1):true 时对带 route 提示的段做通航性三值标注 */
   skeletonHub?: boolean
+  /** Internal only; symbol-keyed so JSON/public tool schemas never expose pack version. */
+  readonly [FLIGHT_PACK_VERSION]?: 1 | 2
 }
 
 // Z3 运行时收敛到 z3-shared(单一 WASM 实例 + 单一 Context + 会话级互斥)——
@@ -203,6 +206,7 @@ export function parseFlightPackToSpecV1(pack: Record<string, unknown>): JourneyS
       endMin: Number(ww['end_min']),
       workdays: (ww['workdays'] as number[] | undefined) ?? [0, 1, 2, 3, 4],
     } : undefined,
+    [FLIGHT_PACK_VERSION]: 1,
   }
   // M-1:班次的星期标注挂到 Option(缺省=不受工作窗口约束)
   for (const l of pack['legs'] as Array<Record<string, unknown>>) {
@@ -340,7 +344,7 @@ export function parseFlightPackToSpecV2(pack: Record<string, unknown>): JourneyS
     }
   }
 
-  return { segments: legs, workWindow }
+  return { segments: legs, workWindow, [FLIGHT_PACK_VERSION]: 2 }
 }
 
 const WEEKDAY_IDX: Record<string, number> = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 }

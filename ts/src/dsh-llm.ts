@@ -12,6 +12,7 @@ import type { InterviewQuestion, TravelerProfile, TripState, Turn, CalendarState
 import { parseFlightPackToSpec, type JourneySpecTS } from './unified.ts'
 import { buildTimeAnchor } from './time-anchor.ts'
 import { buildSlotSystem, flagExpiredSlots, normalizeExtraction, type TravelSlotExtraction } from './travel-slots.ts'
+import { mergeProfileWorkWindow } from './flight-pack-adapter.ts'
 
 // 惰性读取(env 在调用时取值):模块顶常量会在 .env 加载前冻结(ESM import 提升),
 // 脚本先 loadEnv 再 import 也救不了——401 错配(key 发往默认端点)的存量隐患由此根除。
@@ -82,10 +83,10 @@ function parseJsonBlock(text: string): Record<string, unknown> | null {
 
 const FACTS_SYSTEM = `你是旅行规划的事实抽取器。从对话中抽取两类事实并以 JSON 返回:
 {"calendar": {"year": 数字, "assertedWeekdays": {"YYYY-MM-DD": "mon|tue|wed|thu|fri|sat|sun"}},
- "profile": {"workWindow": {"homeTzOffsetMin": 数字, "startMin": 数字, "endMin": 数字, "workdays": [0,1,2,3,4], "evidence": "用户原话"},
+ "profile": {"workWindow": {"homeTzOffsetMin": 数字(仅 legacy v1;用户未明确时可省略), "startMin": 数字, "endMin": 数字, "workdays": [0,1,2,3,4], "evidence": "用户原话"},
               "companions": ["..."], "budgetTier": "economy|comfort|convenience",
               "bookedResources": [{"kind": "flight|hotel", "ref": "...", "window": "..."}]}}
-只放用户明确说过的事实;没有的字段省略。分钟数从 HH:MM 换算;UTC+4 → homeTzOffsetMin=240。
+只放用户明确说过的事实;没有的字段省略。分钟数从 HH:MM 换算;用户未明确说 numeric offset 时不要猜、不要输出 homeTzOffsetMin;v2 pack 的 IANA home zone 属于数据层权威。
 **休假语义(关键)**:用户说「请假/年假/不用办公/休假」→ workWindow 输出 {"vacation": true}(不是省略!省略会触发重复追问);只有用户明确给了工作时间才输出完整 workWindow 对象。只输出 JSON。`
 
 const SKELETON_SYSTEM = `你是行程骨架抽取器。从对话中抽取行程的**骨架**——段(移动)与锚点,不包含任何班次数据(班次来自数据层,你不要编造时刻/价格/航班号)。
@@ -155,12 +156,7 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
         const a = anchorsById.get(seg.id) as { arriveByMin?: number } | undefined
         if (a?.arriveByMin !== undefined) seg.anchors = { arriveByMin: a.arriveByMin }
       }
-      packSpec.workWindow = state.profile.workWindow ? {
-        homeTzOffsetMin: state.profile.workWindow.homeTzOffsetMin,
-        startMin: state.profile.workWindow.startMin,
-        endMin: state.profile.workWindow.endMin,
-        workdays: state.profile.workWindow.workdays,
-      } : undefined
+      packSpec = mergeProfileWorkWindow(packSpec, state.profile.workWindow)
       packSpec.budgetCny = 9000
       return packSpec
     },

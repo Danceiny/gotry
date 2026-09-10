@@ -17,7 +17,8 @@ export interface CalendarState {
 }
 
 export interface WorkWindowProfile {
-  homeTzOffsetMin: number
+  /** Legacy v1 only; v2 pack metadata owns the IANA home zone. */
+  homeTzOffsetMin?: number
   startMin: number
   endMin: number
   workdays: number[]

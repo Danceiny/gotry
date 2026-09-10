@@ -509,6 +509,9 @@ echo "=== 55. M4 planning lifecycle collector(issue #228:显式 stateRoot+consen
 echo "=== 56. tz-resolver + IANA planning offsets(issue #343:China 出境/回程/DST gap/overlap/未知 zone/v1+v2 解析/legacy 兼容/反向日界线/跨日真实 UTC instant;纯离线) ==="
 (cd ts && npx tsx scripts/tz-resolver-tests.ts) || FAIL=1
 
+echo "=== 57. issue #343 real-entry adapter precedence(parse→merge→solve→render;dsh fetch fixture + mock shared helper;纯离线) ==="
+(cd ts && npx tsx scripts/issue343-real-entry-e2e.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
