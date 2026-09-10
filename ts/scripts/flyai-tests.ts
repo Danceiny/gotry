@@ -19,9 +19,12 @@ import assert from 'node:assert/strict'
 import { writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { flyaiSearch } from '../capabilities/flyai.ts'
+import type { Context } from '@deepseek-ai/cordis'
+import { flyaiSearch, type FlyaiQuery } from '../capabilities/flyai.ts'
 import { makeProductionInterpreter } from '../capabilities/effect.ts'
-import { factsFromFlyai, factsFromHotel } from '../src/bookable-facts.ts'
+import { loadFactRegistry } from '../capabilities/fact-log.ts'
+import { apply, type Config } from '../src/index.ts'
+import { factsFromFlyai, factsFromHotel, type FlightFact } from '../src/bookable-facts.ts'
 
 const tmp = await mkdtemp(join(tmpdir(), 'flyai-test-'))
 async function fakeCli(name: string, code: number, payload: string): Promise<string> {
@@ -40,6 +43,110 @@ async function registeredSearch(q: Parameters<typeof flyaiSearch>[0]): Promise<A
   assert.ok(observation.result, 'registered FlyAI effect 应返回结构化 observation')
   return observation.result as Awaited<ReturnType<typeof flyaiSearch>>
 }
+
+interface RegisteredFlyaiTool {
+  name: string
+  execute: (args: Record<string, unknown>, exec: unknown) => Promise<unknown>
+}
+
+const registeredStateRoot = await mkdtemp(join(tmpdir(), 'flyai-registered-e2e-'))
+let registeredCliBin = ''
+const registeredTools: RegisteredFlyaiTool[] = []
+const registeredBreakers = new Map()
+const registeredContext = {
+  tools: { register: (tool: unknown) => registeredTools.push(tool as RegisteredFlyaiTool) },
+  systemPrompt: { variable: () => {} },
+  on: () => () => {},
+  get: () => undefined,
+} as unknown as Context
+const isolatedConfig: Config = {
+  stateRoot: registeredStateRoot,
+  timeoutMs: 5000,
+  hbcliBin: 'hbcli-not-on-path',
+  sessionAccess: 'off',
+}
+const registeredProductionEffect = makeProductionInterpreter({
+  breakers: registeredBreakers,
+  sleep: async () => {},
+  handlers: {
+    FLYAI_SEARCH: async (params: unknown) => flyaiSearch({ ...(params as FlyaiQuery), cliBin: registeredCliBin, timeoutMs: 5000 }),
+  },
+})
+apply(registeredContext, isolatedConfig, { effect: registeredProductionEffect as never })
+const registeredFlyaiTool = registeredTools.find(tool => tool.name === 'gotry_flyai_search')
+assert.ok(registeredFlyaiTool, 'apply 应注册 gotry_flyai_search')
+
+async function registeredToolSearch(name: string, args: Record<string, unknown>, itemList: unknown[]): Promise<Record<string, unknown>> {
+  registeredCliBin = await fakeCli(`registered-${name}`, 0, JSON.stringify({ data: { itemList } }))
+  return await registeredFlyaiTool!.execute(args, null) as Record<string, unknown>
+}
+
+async function assertRegisteredFactLogEmpty(label: string): Promise<void> {
+  const facts = await loadFactRegistry(registeredStateRoot)
+  assert.equal(facts.length, 0, `${label} 不得落 positive/negative fact`)
+  registeredBreakers.clear()
+}
+
+// 1. 真正 registered tool E2E:apply → gotry_flyai_search → production effect/parser → fact sidecar
+const registeredMalformedCases: Array<{ name: string; args: Record<string, unknown>; itemList: unknown[] }> = [
+  { name: 'all-malformed-flight', args: { kind: 'flight', from: '北京', to: '上海', date: '2027-04-01' }, itemList: [{}] },
+  { name: 'all-malformed-train', args: { kind: 'train', from: '北京', to: '上海', date: '2027-04-02' }, itemList: [null] },
+  { name: 'all-malformed-hotel', args: { kind: 'hotel', to: '大理', checkIn: '2027-04-03', checkOut: '2027-04-05' }, itemList: [{ name: 42 }] },
+]
+for (const testCase of registeredMalformedCases) {
+  const result = await registeredToolSearch(testCase.name, testCase.args, testCase.itemList)
+  assert.equal(result.ok, false, `${testCase.name} 应返回 structured error(ok=false)`)
+  assert.equal(result.verdict, 'error', `${testCase.name} 应经 registered tool 返回 error`)
+  assert.match(String(result.evidence ?? ''), /flyai@error|malformed/i, `${testCase.name} 应保留结构化 error evidence`)
+  await assertRegisteredFactLogEmpty(testCase.name)
+}
+const registeredMixedCases: Array<{ name: string; args: Record<string, unknown>; itemList: unknown[] }> = [
+  {
+    name: 'mixed-flight',
+    args: { kind: 'flight', from: '北京', to: '上海', date: '2027-04-06' },
+    itemList: [{ adultPrice: '¥400.0', journeys: [{ segments: [{ marketingTransportNo: 'CA1883', marketingTransportName: '国航', depDateTime: '2027-04-06 21:00:00', arrDateTime: '2027-04-06 23:20:00', depStationName: '首都国际机场', arrStationName: '浦东国际机场', duration: '140分钟' }] }] }, {}],
+  },
+  {
+    name: 'mixed-train',
+    args: { kind: 'train', from: '北京', to: '上海', date: '2027-04-07' },
+    itemList: [{ adultPrice: '¥553.0', journeys: [{ segments: [{ marketingTransportNo: 'G11', depDateTime: '2027-04-07 08:00:00', arrDateTime: '2027-04-07 12:28:00', depStationName: '北京南', arrStationName: '上海虹桥', duration: '268分钟' }] }] }, null],
+  },
+  {
+    name: 'mixed-hotel',
+    args: { kind: 'hotel', to: '大理', checkIn: '2027-04-08', checkOut: '2027-04-10' },
+    itemList: [{ name: '大理A 酒店', star: '高档型', price: '¥7xx', shId: 'hotel-a', detailUrl: 'https://example.test/hotel-a' }, { name: null }],
+  },
+]
+for (const testCase of registeredMixedCases) {
+  const result = await registeredToolSearch(testCase.name, testCase.args, testCase.itemList)
+  assert.equal(result.ok, false, `${testCase.name} 应返回 structured error(ok=false)`)
+  assert.equal(result.verdict, 'error', `${testCase.name} 应经 registered tool 返回整体 error`)
+  assert.match(String(result.evidence ?? ''), /flyai@error|malformed/i, `${testCase.name} 应保留结构化 error evidence`)
+  await assertRegisteredFactLogEmpty(testCase.name)
+}
+const registeredMiss = await registeredToolSearch(
+  'exact-empty-flight',
+  { kind: 'flight', from: '深圳', to: '普吉', date: '2027-04-11' },
+  [],
+)
+assert.equal(registeredMiss.verdict, 'miss', `registered exact empty list 应返回 miss: ${JSON.stringify(registeredMiss)}`)
+const factsAfterMiss = await loadFactRegistry(registeredStateRoot)
+assert.equal(factsAfterMiss.length, 1, 'registered miss 只应产生一条 exact-date negative fact')
+assert.equal(factsAfterMiss[0]?.kind, 'flight')
+assert.equal(factsAfterMiss[0]?.bookability, 'unavailable_exact_date')
+const registeredHit = await registeredToolSearch(
+  'official-train-hit',
+  { kind: 'train', from: '北京', to: '上海', date: '2027-04-12' },
+  [{ adultPrice: '¥553.0', journeys: [{ journeyType: '直达', segments: [{ depStationName: '北京南', depDateTime: '2027-04-12 08:00:00', arrStationName: '上海虹桥', arrDateTime: '2027-04-12 12:28:00', duration: '268分钟', marketingTransportNo: 'G11', seatClassName: '二等座' }] }], jumpUrl: 'https://example.test/train' }],
+)
+assert.equal(registeredHit.verdict, 'hit', 'registered official train batch 应返回 hit')
+const factsAfterHit = await loadFactRegistry(registeredStateRoot)
+const typedPositive = factsAfterHit.find((f): f is FlightFact => f.kind === 'train' && f.query_id.endsWith(':2027-04-12'))
+assert.ok(typedPositive, 'registered hit 应产生 typed positive fact')
+assert.equal(typedPositive?.bookability, 'bookable_exact_date')
+assert.equal(typedPositive?.flight_no, 'G11')
+await rm(registeredStateRoot, { recursive: true, force: true })
+console.log('1. registered E2E → mixed/all-malformed zero facts / empty miss negative / official train hit positiveOK')
 
 // 1. Sentinel 限流:合法 JSON 的非业务形状 → error(不是静默 miss)
 const sentinelBin = await fakeCli('flyai-sentinel', 0, '{"message":"SentinelBlockException: flow control"}')
