@@ -39,6 +39,10 @@ echo "=== 3. TS unified(统一模型+时区+工作窗口,4 断言) ==="
 (cd ts && npx tsx scripts/unified-tests.ts) || FAIL=1
 
 echo
+echo "=== 3b. Issue #341 ground-transfer bounded public-map seam ==="
+(cd ts && GOTRY_SESSION_LIVE=0 npx tsx scripts/ground-transfer-tests.ts) || FAIL=1
+
+echo
 echo "=== 4. 对话循环重放(mock,ADR-8/9/10 行为级回归,带终态断言) ==="
 (cd ts && npx tsx scripts/replay.ts | tail -3) || FAIL=1
 
