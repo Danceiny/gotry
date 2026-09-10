@@ -672,6 +672,7 @@ function buildPkgFixture(tmpRoot: string) {
   copyFileSync(join(repoRoot, 'bin', 'gotry-inner.js'), join(pkgBin, 'gotry-inner.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-bootstrap.js'), join(pkgBin, 'gotry-bootstrap.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-runtime-resolution.js'), join(pkgBin, 'gotry-runtime-resolution.js'))
+  copyFileSync(join(repoRoot, 'bin', 'gotry-process-liveness.js'), join(pkgBin, 'gotry-process-liveness.js'))
   copyFileSync(join(repoRoot, 'cordis.gotry-patch.yml'), join(pkgRoot, 'cordis.gotry-patch.yml'))
   writeFileSync(join(pkgDist, 'index.js'), 'export {}\n')
   writeFileSync(join(dshDir, 'package.json'), `${JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.5-alpha.1', type: 'module' })}\n`)

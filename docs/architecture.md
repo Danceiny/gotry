@@ -9,6 +9,7 @@
 
 - GoTry 是「从出发到下一次出发」的 AI 旅行 Agent:LLM 负责理解与解释,确定性组件负责判定与算术,写操作永远有闸。
 - 当前形态:M3 最小可用、分发链路无堵点;M3 Exit 缺真实 cohort 证据(D-18),M4 记忆域经 founder 授权并行推进。
+- dsh 外层生命周期由 GoTry launcher 负责：child 在独立 POSIX process group 中运行，异常 close/error 与 parent-only SIGINT/SIGTERM 经过有界 TERM→KILL 并确认 direct child/group 清空；这不覆盖 dsh SDK transport 或其内部 supervisor 的更深层 owner 契约。
 - M4 评分与显式同意采集、tenant CLI 边界、Z3 生命周期及全栈稳定性修复均已进入 main;#258/#267 web onboarding 只是 M4 UX 工程面,其 POSIX onboarding/installer 进程组与 accepted-install signal/timeout 清理不提升 #20 Exit。M4→M6 living 任务图与 M5 WriteGate 仍只排依赖和验收。真实 M3/M4 cohort、供应协议/内部授权、P6 批准与真实试点仍为 TODO,各里程碑 Entry/Exit 不变。
 - 五层:L1 交互 / L2 编排(dsh 插件)/ L3 统一行程模型 + Z3 / L4 数据能力 / L5 loopx 治理。
 - 状态基座:单文件 SQLite 账本(ADR-15),本地+Web 一套账本语义(ADR-16);`tenant_id` 贯穿 append/read/fold/rebuild,旧 local 历史不猜租户;外部依赖全走效应解译器(ADR-18)。
@@ -382,6 +383,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
   - **i18n 英文面工程层**:`i18n.ts` 消息目录——zh-CN 默认且与金标准逐字节一致,`GOTRY_LOCALE=en` 切英文、en 缺键回退 zh;覆盖求解确定性面(候选/航班链 answer_md、放宽建议、排除理由、wish 理由)。run-all §32;工具卡与人格对话面挂 M4 校准样本随补。
 - **贡献基建(2026-08-29,开源协作面)**:GitHub Actions CI(node 22/24 矩阵:typecheck + 全栈回归,`GOTRY_SESSION_LIVE=0`);`CONTRIBUTING.md` + issue/PR 模板;lockfile(root/ts 双份)与 dsh-runtime 三 manifest 入 git,resolved 全量从内部镜像改指 registry.npmjs.org(integrity 逐包验证);贡献流程改 PR 制。
 - **#271 Phase A 进程事故观察(2026-09-09)**:GoTry-owned `uncaughtExceptionMonitor` 按 origin 同步记录 uncaught/rejection，宿主仍拥有 fatal handler 与退出策略；incident writer 以单一 fd append+fsync+close，任一耐久化失败返回 `false` 且不再抛。native Node24 ESM 反例覆盖 monitor/no-monitor 的非零退出、现有 host handler exit code、writer fsync/close 与 tool structured failure。child close/spawn error、SIGINT、后代进程和上游 dsh supervisor 仍是 #271 未覆盖边界。
+- **#271 外层 dsh liveness 收口(2026-09-10,GoTry-owned)**:`bin/gotry-inner.js` 以独立 POSIX 进程组启动 dsh child；child 非零/信号关闭与父进程 SIGINT/SIGTERM 均走有界 TERM→KILL，并等待 direct child 与整个 group 为空，再保留原始退出/信号语义。child close/error 的 incident 写入在退出前同步完成。`ts/scripts/issue-271-liveness-tests.ts` 以 Node24、fresh HOME/DSH_HOME/stateRoot 和真实安装的 dsh `0.1.5-alpha.1` 覆盖 child crash、rejected promise、subprocess spawn ENOENT、parent-only SIGINT/SIGTERM，并核对 stderr、incident 行、post-failure marker 与 descendant/group 清理。只证明 GoTry 外层 owner；dsh SDK 直接 transport 与 dsh 内部 supervisor 的更深层契约仍未在本切片宣称清偿，不改上游 vendor/lock。
 - **#282 Booking planner 纠偏(2026-09-09)**:`dsh-planner.ts` 不再删除缺 `adults` 的非空 occupancy 房间;schema 纠偏提示占用下一次计数调用,有效结果立即返回,总 provider 调用不超过三次且 provider failure 透传。focused proof 覆盖 occupancy 保留、prose/invalid 纠偏、三次上限与 provider error;仅为注入 runPort 的工程证据,真实库存/UAT 仍属 D-29。
 - **酒店日期输入闸(2026-09-09,issue #283,D-36)**:已清偿的日期闸详见 §1.2;该工程证据不改变 M3/M4-M6 真实准入或 Booking 库存业务效果。
 - **Node 26 dist 构建兼容闸(2026-09-09,issue #265)**:Node 26 移除 `stripTypeScriptTypes(...,{ mode:'transform' })` 后,dist 构建改走根声明的精确 TypeScript 5.9.3 `transpileModule` + 显式 ESM emit；focused proof 在 Node 22/24/26 核对 source→dist 精确集合、JS/Python/data 资产字节、无相对 `.ts` specifier/无 CommonJS emit wrapper，并执行 skeleton-check 与关键变量动态 import。clean-archive release 先装锁定的 build dev tree,再以剥除 build-only entry 的最终 runtime manifest/lock 严格安装,防 npm optional-peer 把 TypeScript 带回产物。Node 22/24 原 typecheck + 全栈 CI 保持独立。该工程质量证据不改变 #20/#136/#137 的真实准入图。
@@ -474,7 +476,8 @@ issue #329 的 dispatch 日志收敛属于安全边界加固，不新增开放�
 **Phase A 部分赎回(gotry 侧,2026-09-09,#271)**:
 - `installProcessGuards` 只挂 `uncaughtExceptionMonitor`，按 Node origin 记录 `uncaughtException` / `unhandledRejection`；不安装吞 fatal 的 handler、不调用 `process.exit`、不隐式重启，宿主已有 handler 与 Node/dsh 退出策略继续裁决。
 - `recordIncident` 用单一 fd 完成 append、`fsync`、`close`，仅在全链成功时返回 `true`，失败返回 `false` 且正确回收 fd。native Node24 ESM dist 反例已覆盖 monitor/no-monitor、host handler exit code、writer fsync/close；`guardToolExecute` 继续把工具异常降为结构化失败并落盘。
-- 仍开放的 #271 边界：child close/spawn error、SIGINT、后代进程和上游 dsh supervisor 的存活/重启语义；Phase A 只记录 GoTry-owned fatal 证据，不宣称这些边界已清偿。
+- **外层边界已部分赎回(2026-09-10,#271)**：GoTry launcher 对 dsh child 建立独立 POSIX process group；child close/error 先完成 bounded descendant cleanup 与既有 incident writer，再按原始非零语义退出；父进程单独收到 SIGINT/SIGTERM 时，先清理该 group、移除 handler，再向自身重发原信号。focused proof 的四类真实安装包形态、stderr/incident、marker、direct child/group 空性见 `ts/scripts/issue-271-liveness-tests.ts` 和 run-all §23f。
+- 仍开放的 #271 边界：dsh SDK 直接 transport 所拥有的 runtime child、dsh 内部 supervisor 的存活/重启语义，以及未在本切片执行的真实 host deployment contract。上游 dsh 文档已将无法执行 JavaScript 的退出/逃逸后代责任置于 external supervisor；本切片不改 vendor/lock、不安装隐式 daemon、不宣称上游 supervisor 已修复。Phase A 的 fatal observer 与本 Phase B 的外层 owner 证据均不提升 M3/M4-M6 真实 gate。
 
 **D-13 会话适配器维护面(RFC user-session-data-rfc)**
 
