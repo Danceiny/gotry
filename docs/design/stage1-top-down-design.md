@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+ - Issue #343 当前状态:flight-pack v2 以显式 IANA zone 与 local date 解析 UTC instant,拒收未知 zone 与 DST gap/overlap,以 UTC instant 计算耗时;dsh/mock adapter 保留 pack `homeZone`,profile 只提供 schedule,explicit vacation 移除 work-window restriction,numeric v1 保持兼容。该确定性契约不代表 live schedules/prices/availability/inventory,边界见 `../data-sources.md`。
  - 2026-09-10 起,Issue #2 命名年份的未来规划在 `time-anchor.ts` 派生本轮参考日;注册工具 `gotry_feasibility_check` 对带日期候选即使省略 planning 也默认施加宿主时钟 future 下界,显式 future 年份再施加年末上界,预期拒绝返回结构化 validation result 而不进入 incident。完全 dateless 仍保持旧可行性计算,过期年份不滚年,历史/回测需明确 `historical` 模式;loop 仅对显式命名年份规划应用窗口,否定过去推荐和多年份歧义不误判为历史。`time-eval-tests.ts` §6 与 `smoke.ts` registered execute fixture 以注入时钟验证,仅为隔离工程证据,不替代供应商或真实业务准入。
  - 2026-09-10 起,产物视图进入 M4 队列(issue #285):Host 持久化 `presentationMeta`;公开 `./client` adapter 通过 `window.__ModuleLoader__.load` 注册 `gotry_artifacts_list/read` 的 `tool.call.toolview` keyed cards,按 runtime `block` 显示可点击路径、行号、source identity 与 content version,workspace/sidebar 作为额外预览面。读范围白名单 = stateRoot 根 + 会话工作目录(排除 node_modules/.git),扩展名白名单 = 文本类;跨 root / symlink 越界 / 缺失文件 / 超大文件(>2MB)统一返回 ok:false + error + hint。本层只读,WriteGate 红线不涉及。验收证据 = `scripts/artifacts-capability-tests.ts` 12 项隔离 fixture proof + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof + smoke §15/§15b。
 - 2026-09-10 起,PR #327 修订收紧 embedded planner 的重复 tool-call 参数恢复:普通单对象继续走 `JSON.parse`,仅恢复至少两个完整、仅空白分隔且深结构相等的顶层对象；前缀/尾部垃圾/截断/冲突/非对象序列/单个非法对象 fail-closed,字符串花括号与转义由边界扫描正确处理。公共 runPort fixture 仅是确定性本地证据,不构成真实 provider reliability、HotelByte UAT、M3/M4 cohort 或 M5/M6 admission。
@@ -151,7 +152,6 @@ loop:
 
 - **ADR-8(mock-LLM 先行)**:对话循环的架构验证用确定性剧本 LLM,不依赖真实模型;智能质量与架构正确性解耦。淘汰条件:S4 完成后 mock 保留为回归夹具。
 - **ADR-9(访谈确定性)**:`interview_next` 由缺失字段驱动(配置化问题库),LLM 只润色问句——Kimi 的「从不访谈」病根是即兴,确定性驱动是解药。
-- **ADR-19+ Issue #343(IANA tz canonical,2026-09-10)**:候选航班包时区权威 = IANA zone + 当地日期 → 真实 UTC instant(缓存 `Intl.DateTimeFormat`,无新依赖),DST gap/overlap 与未知 zone 在 parse 边界拒收;门到门算术唯一权威 = `ts/src/model.ts` 的 `doorToDoorFromMove`,v2 用真实 UTC instant,v1 用 `(arrMin-depMin)-tzOffsetMin` 字节不变;home zone 工作窗口用 `readWallParts(homeZone, depUtcMs)` 直接投影已知 instant(权威,不重走 ±14h 扫描)。真实入口 adapter 只合并 profile schedule 并保留 pack homeZone,#343 真实 provider/session calibration 仍为 TODO,不扩展通用时区 NLP。`{version:2}` 显式 opt-in,`data/flights_2026.json` v1 维持不动;当前证据限于离线 focused/sanity/unified/smoke,全仓前台回归仍待执行。public path 不替代实时班期/票价/可售库存。
 
 ## 5. 与债务/阶段的关系
 
