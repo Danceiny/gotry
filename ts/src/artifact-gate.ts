@@ -282,6 +282,7 @@ function lineTimesContradict(text: string, dep?: string, arr?: string): boolean 
 interface HardPrice {
   amount: number
   currency: string
+  token: string
   start: number
 }
 
@@ -303,6 +304,7 @@ function hardPricesInLine(text: string): HardPrice[] {
     prices.push({
       amount: Number(amountText.replaceAll(',', '')),
       currency: match[1] ? 'CNY' : match[2]!.toUpperCase(),
+      token: amountText,
       start: match.index,
     })
   }
@@ -316,53 +318,88 @@ interface MalformedHardPrice {
 }
 
 /**
- * 票价 role 不是「同一行所有金额」:canonical 字段是第一个分隔字段;
- * 后续字段只有显式票价标签才重新进入候选。这样预算/费用等其它字段
- * 即使位于 source evidence 之前也不会被当成 fare,而不需要维护同义词黑名单。
+ * 先识别完整 token 之外的畸形逗号数字;¥7xx 等既有非数字/模糊值不在此列。
  */
-function fareRoleScopes(text: string): Array<{ text: string; offset: number }> {
+function malformedHardPricesInLine(text: string): MalformedHardPrice[] {
+  const amount = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`
+  const token = String.raw`\d[\d,]*(?:\.\d+)?`
+  const pattern = new RegExp(String.raw`(?:¥\s*|\b([A-Z]{3})\s*)(${token})(?![\dA-Za-z])`, 'gi')
+  const malformed: MalformedHardPrice[] = []
+  for (const match of text.matchAll(pattern)) {
+    const raw = match[2]
+    if (!raw || !raw.includes(',') || new RegExp(`^(?:${amount})$`).test(raw)) continue
+    malformed.push({ currency: match[1] ? match[1].toUpperCase() : 'CNY', token: raw, start: match.index ?? 0 })
+  }
+  return malformed
+}
+
+interface MoneyField {
+  text: string
+  offset: number
+  index: number
+}
+
+interface AmbiguousHardPrice {
+  currency: string
+  token: string
+  start: number
+}
+
+interface FareRoleAnalysis {
+  prices: HardPrice[]
+  malformed: MalformedHardPrice[]
+  ambiguous: AmbiguousHardPrice[]
+}
+
+function moneyFields(text: string): MoneyField[] {
   const fields = text.split(/[；;|，]/)
-  const scopes: Array<{ text: string; offset: number }> = []
+  const scopes: MoneyField[] = []
   let offset = 0
   for (const [index, field] of fields.entries()) {
-    if (index === 0 || /(?:票价|机票价|fare|price)/i.test(field)) scopes.push({ text: field, offset })
+    scopes.push({ text: field, offset, index })
     offset += field.length + 1
   }
   return scopes
 }
 
-function hardPricesInFareRole(text: string): HardPrice[] {
-  const prices: HardPrice[] = []
-  for (const scope of fareRoleScopes(text)) {
-    for (const price of hardPricesInLine(scope.text)) {
-      prices.push({ ...price, start: price.start + scope.offset })
-    }
-  }
-  return prices
-}
+const EXPLICIT_FARE_LABEL = /(?:票价|机票价|fare|price)\s*[:：]?\s*$/i
+const PREVIOUS_MONEY_TOKEN = /(?:¥\s*|\b[A-Z]{3}\s*)\d[\d,]*(?:\.\d+)?\s*$/i
 
 /**
- * A malformed grouped number is still a visible hard-money claim. Detect it
- * only in the selected fare role; fuzzy/non-numeric values such as ¥7xx keep
- * their existing non-comparable semantics.
+ * 分类 money role,而不是把「同一行」当成 fare:
+ * canonical 是第一个 money token 所在的首字段;后续 token 只有显式
+ * fare label 才可比。其它有文字标签的字段忽略;裸 token 或前面只是
+ * 另一个金额的 token 无可靠归属,必须 fail closed。
  */
-function malformedHardPricesInFareRole(text: string): MalformedHardPrice[] {
-  const amount = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`
-  const token = String.raw`\d[\d,]*(?:\.\d+)?`
-  const pattern = new RegExp(String.raw`(?:¥\s*|\b([A-Z]{3})\s*)(${token})(?![\dA-Za-z])`, 'gi')
-  const malformed: MalformedHardPrice[] = []
-  for (const scope of fareRoleScopes(text)) {
-    for (const match of scope.text.matchAll(pattern)) {
-      const raw = match[2]
-      if (!raw || !raw.includes(',') || new RegExp(`^(?:${amount})$`).test(raw)) continue
-      malformed.push({
-        currency: match[1] ? match[1].toUpperCase() : 'CNY',
-        token: raw,
-        start: (match.index ?? 0) + scope.offset,
-      })
+function analyzeFareRoles(text: string): FareRoleAnalysis {
+  const analysis: FareRoleAnalysis = { prices: [], malformed: [], ambiguous: [] }
+  for (const field of moneyFields(text)) {
+    const prices = hardPricesInLine(field.text)
+    const malformed = malformedHardPricesInLine(field.text)
+    const tokens = [
+      ...prices.map(price => ({ kind: 'complete' as const, start: price.start, price, malformed: undefined })),
+      ...malformed.map(item => ({ kind: 'malformed' as const, start: item.start, price: undefined, malformed: item })),
+    ].sort((a, b) => a.start - b.start)
+    for (const [tokenIndex, token] of tokens.entries()) {
+      const prefix = field.text.slice(0, token.start).trim()
+      const canonical = field.index === 0 && tokenIndex === 0
+      const explicitFare = EXPLICIT_FARE_LABEL.test(prefix)
+      const reliableFare = canonical || explicitFare
+      if (reliableFare) {
+        if (token.price) analysis.prices.push({ ...token.price, start: token.price.start + field.offset })
+        if (token.malformed) analysis.malformed.push({ ...token.malformed, start: token.malformed.start + field.offset })
+        continue
+      }
+      // A bare token, or a token immediately following another money token,
+      // is ambiguous; any other textual prefix accounts for a non-fare field.
+      if (prefix.length === 0 || PREVIOUS_MONEY_TOKEN.test(prefix)) {
+        const currency = token.price?.currency ?? token.malformed?.currency ?? 'CNY'
+        const raw = token.price?.token ?? token.malformed?.token ?? ''
+        analysis.ambiguous.push({ currency, token: raw, start: token.start + field.offset })
+      }
     }
   }
-  return malformed
+  return analysis
 }
 
 function flightTrainPriceScope(text: string, fact: Extract<BookableFact, { kind: 'flight' | 'train' }>): string {
@@ -391,17 +428,21 @@ function addPriceVerification(
 ): boolean {
   const fullScope = flightTrainPriceScope(fullText, fact)
   const visibleScope = flightTrainPriceScope(visibleText, fact)
-  const allPrices = hardPricesInFareRole(fullScope)
-  const visiblePrices = hardPricesInFareRole(visibleScope)
-  const malformedPrices = malformedHardPricesInFareRole(fullScope)
+  const fullAnalysis = analyzeFareRoles(fullScope)
+  const visibleAnalysis = analyzeFareRoles(visibleScope)
+  const allPrices = fullAnalysis.prices
+  const visiblePrices = visibleAnalysis.prices
   const hasAnchor = fullText.includes('<!-- fact:')
 
-  if (malformedPrices.length > 0) {
-    const malformed = malformedPrices[0]!
+  if (fullAnalysis.malformed.length > 0 || fullAnalysis.ambiguous.length > 0) {
+    const malformed = fullAnalysis.malformed[0]
+    const ambiguous = fullAnalysis.ambiguous[0]
     violations.push({
       kind: 'unverified_price_claim',
       line,
-      detail: `${fact.flight_no} fare role 含畸形硬价格 ${malformed.currency} ${malformed.token}——数字分组不完整,按未核验处理,不得截断或当作完整票价比较`,
+      detail: malformed
+        ? `${fact.flight_no} fare role 含畸形硬价格 ${malformed.currency} ${malformed.token}——数字分组不完整,按未核验处理,不得截断或当作完整票价比较`
+        : `${fact.flight_no} 行内硬价格 ${ambiguous?.currency ?? 'CNY'} ${ambiguous?.token ?? ''} 无可靠 fare role 归属——按未核验处理,不得把裸金额当作 exact-date 票价`,
     })
     return true
   }

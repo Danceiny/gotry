@@ -178,6 +178,22 @@ assert(labelledMoneyField.verdict === 'pass' && labelledMoneyField.traceable ===
 const explicitFareLabel = gateArtifact(uo724Rendered.replace('¥793', '票价¥793'), [uo724], map, { trip_year: tripYear })
 assert(explicitFareLabel.verdict === 'pass' && explicitFareLabel.traceable === 1 && explicitFareLabel.violations.length === 0,
   '显式票价标签仍属于可靠 fare role')
+const explicitFareField = gateArtifact(uo724Rendered.replace('¥793', '；总预算¥1000；票价¥793'), [uo724], map, { trip_year: tripYear })
+assert(explicitFareField.verdict === 'pass' && explicitFareField.traceable === 1 && explicitFareField.violations.length === 0,
+  '分隔后的预算字段不遮蔽后续显式票价字段')
+for (const [label, renderedAmount] of [
+  ['分隔后裸金额', '；¥999'],
+  ['分隔后畸形金额', '；¥1,79'],
+] as const) {
+  const ambiguous = gateArtifact(uo724Rendered.replace('¥793', renderedAmount), [uo724], map, { trip_year: tripYear })
+  assert(ambiguous.verdict === 'blocked' && ambiguous.traceable === 0
+    && ambiguous.violations.some(v => v.kind === 'unverified_price_claim'),
+    `${label}无可靠 fare role 必须blocked/unverified`)
+}
+const additionalUnlabelledAmount = gateArtifact(uo724Rendered.replace(' [flyai@', '；¥999 [flyai@'), [uo724], map, { trip_year: tripYear })
+assert(additionalUnlabelledAmount.verdict === 'blocked' && additionalUnlabelledAmount.traceable === 0
+  && additionalUnlabelledAmount.violations.some(v => v.kind === 'unverified_price_claim'),
+  'canonical票价之外追加裸金额不得因候选列表为空而放行')
 
 for (const [label, renderedPrice] of [['¥999', '¥999'], ['CNY 999', 'CNY 999']] as const) {
   const contradicted = gateArtifact(uo724Rendered.replace('¥793', renderedPrice), [uo724], map, { trip_year: tripYear })
