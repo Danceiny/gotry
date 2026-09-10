@@ -17,7 +17,7 @@ import { join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { defineTool, type ToolResult } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolResult, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { ensureStateDir, recordLatency } from './bridge.ts'
 import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
@@ -51,6 +51,14 @@ import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } f
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
 import { installSubagentJobIdGuard } from './subagent-job-id-guard.ts'
+import {
+  createGroundTransferResolver,
+  createPublicMapDrivingRouteProvider,
+  exposeGroundTransferEvidence,
+  resolveGroundTransferPayload,
+  type GroundTransferProvider,
+  type GroundTransferResolution,
+} from '../capabilities/ground-transfer.ts'
 
 /** 航司→机场映射表(issue #46 冲突检测面;data/airline-airports.json,as_of 快照) */
 let airlineAirportMapCache: AirlineAirportMap | null = null
@@ -105,6 +113,7 @@ interface FeasibilityResult {
   answer_md?: string
   recommended?: string | null
   verdicts?: Array<Record<string, unknown>>
+  ground_transfer?: GroundTransferResolution
 }
 
 interface FeasibilityValidationFailure extends Record<string, Json> {
@@ -221,6 +230,8 @@ export interface ApplyTestSeams {
   effect?: typeof interpretEffect
   /** Test-only clock injection; production derives the reference date from Date. */
   clock?: () => Date
+  /** Isolated public map-tool result seam; production uses nested dsh dispatch. */
+  groundTransfer?: { provider?: GroundTransferProvider }
 }
 
 function parseFeasibilityPlanning(raw: unknown, anchor: ReturnType<typeof buildTimeAnchor>): PlanningWindow | null {
@@ -250,6 +261,10 @@ function feasibilityValidationFailure(
 export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}): void {
   const clock = seams.clock ?? (() => new Date())
   const runFlyaiEffect = seams.effect ?? interpretEffect
+  const groundTransferResolver = createGroundTransferResolver({
+    provider: seams.groundTransfer?.provider ?? createPublicMapDrivingRouteProvider(ctx),
+    clock,
+  })
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
   // 预算,复杂度决定出口结构(converge/handoff)。benchmark opt-in 钉死
@@ -404,6 +419,33 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
               requested_year: { type: 'integer', required: true, description: '用户明确请求的四位年份,不传宿主当前年份' },
             },
           },
+          ground_transfer: {
+            type: 'object',
+            additionalProperties: false,
+            description: '可选显式地面接驳覆盖:仅 destination 位置、显式经纬度和 mode=driving;路线只改绑定 transfer 的分钟,价格仍来自静态包;缓存 TTL 由能力层固定',
+            properties: {
+              candidate_id: { type: 'string', description: '要绑定的候选 id;不会按相似度推断' },
+              transfer_index: { type: 'integer', description: 'dest_transfers 的零基位置;不会按 mode 推断' },
+              position: { type: 'string', description: '当前切片固定为 destination' },
+              mode: { type: 'string', description: '当前只接受 driving;其它/缺省模式显式回退静态分钟' },
+              origin: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  longitude: { type: 'number' },
+                  latitude: { type: 'number' },
+                },
+              },
+              destination: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  longitude: { type: 'number' },
+                  latitude: { type: 'number' },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -429,12 +471,28 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       }
       const req = parseRequest(payload['request'] as Record<string, unknown>)
       const cands = (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate)
-      const spec = segmentsFromCandidate(req, cands)
+      const execution = _exec && typeof _exec === 'object' ? _exec as ToolRunContext : undefined
+      let solverCandidates = cands
+      let groundTransferEvidence: GroundTransferResolution | undefined
+      if (payload['ground_transfer'] !== undefined) {
+        const prepared = await resolveGroundTransferPayload(
+          payload['ground_transfer'],
+          cands,
+          groundTransferResolver,
+          { signal: execution?.signal, execution },
+        )
+        solverCandidates = prepared.candidates
+        groundTransferEvidence = prepared.resolution
+      }
+      const spec = segmentsFromCandidate(req, solverCandidates)
       const planningCheck = applyPlanningWindow(spec, planning, anchor, { defaultDatedFuture: true })
       if (planningCheck.error) {
         return feasibilityValidationFailure('planning_window_rejected', planningCheck.error, planningCheck.rejected)
       }
-      const result = solveChoiceSegment(planningCheck.spec, req) as Record<string, unknown>
+      const solved = solveChoiceSegment(planningCheck.spec, req) as Record<string, unknown>
+      const result = groundTransferEvidence
+        ? exposeGroundTransferEvidence(solved, groundTransferEvidence)
+        : solved
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'feasibility_check:in-process-unified').catch(() => {})
       return { ok: true, ...result, latency_ms: Date.now() - started, via: 'in-process-unified' }
