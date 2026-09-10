@@ -5,7 +5,7 @@
 > **Body and soul — more travel, less tourism.**
 > *身体和灵魂,更多旅行,更少旅游。*
 
-GoTry is an AI travel agent for **"departure to next departure."** You say where and why; it interviews you about your working window, then hands you a deterministic verdict — ordinary choices are enumerated and evaluated by a TypeScript kernel, explicit flight chains by Z3. No model guesses.
+GoTry is an AI travel agent for **"departure to next departure."** You say where you want to go and why; it asks what needs asking, then lets code — not the model — make the call: can you go, how, and at what true cost. Every number comes with a source; nothing is hallucinated.
 
 [![GitHub Stars](https://img.shields.io/github/stars/Danceiny/gotry?style=social)](https://github.com/Danceiny/gotry/stargazers)
 [![CI](https://github.com/Danceiny/gotry/actions/workflows/ci.yml/badge.svg)](https://github.com/Danceiny/gotry/actions/workflows/ci.yml)
@@ -18,10 +18,10 @@ GoTry is an AI travel agent for **"departure to next departure."** You say where
 
 ## What GoTry Does
 
-Turns "I want to go somewhere" into "can I — how, at what true cost?" If the answer is "not this weekend," the destination waits in a wish pool with explicit recall conditions instead of being dropped.
+Turns "I want to go somewhere" into "can I go, how, and at what true cost?" If this weekend won't work, GoTry doesn't drop the idea — the destination is parked in a wish pool with the exact conditions that would reopen it.
 
-- **For travelers** — a planner that asks what actually matters (working window, departure city, budget), then answers per destination: feasible or not, why, and the **smallest change that makes it feasible**.
-- **For agent builders** — the LLM only listens, translates, and explains; the kernel enumerates, evaluates, chooses. Every delivered number carries a provenance tag; writes are gated by design.
+- **For travelers** — it asks the right questions first (which days you can leave, departing from where, on what budget), then gives every destination a straight answer: yes, no, or why — plus the smallest change that turns a no into a yes.
+- **For agent builders** — the LLM only listens, translates, and explains; numbers are computed and verdicts made by code. Every delivered number carries a source tag; writes are gated by design.
 
 ## How It Works
 

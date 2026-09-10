@@ -8,11 +8,11 @@
 
 ## Unreleased
 
-- **持久默认出发地(#338,2026-09-10)** — `gotry_motivation_save` 接受 typed `homeCity` 与 optional/explicit exact `homeCityEvidence` 绑定(单条非空 evidence 可省略,多条须显式);账本持久化 `homeCityPreference { value, evidence, updated_at }`，并通过 `{{motivation_brief}}` 作为软默认读回。显式当轮出发地优先，显式 null 清除活跃默认。
-- **产物视图进入 M4 队列(issue #285,2026-09-10)** — `gotry_artifacts_list/read` 在 Host 层持久化标准 `presentationMeta` 并输出 `SearchPathsResultView`/`ReadResultView` 所需字段与 `FileLocation`;**公开 `./client` adapter 通过 `window.__ModuleLoader__.load` 在 DSH Web 中按 runtime `block` 渲染自定义 list/read keyed cards**(wire name `tool.call.toolview`,key = `gotry_artifacts_list` / `gotry_artifacts_read`,见 `client/client.js`),路径可点击、首行显示 source + 完整 path + 行号预览 + source identity + content version;workspace/sidebar 文件树保留为**额外**预览面。读范围白名单 = stateRoot 根 + 会话 dsh 工作目录(排除 node_modules/.git),扩展名白名单 = 文本类;跨 root / symlink 越界 / 缺失文件 / 超大文件(>2MB)统一返回 ok:false + error + hint。本层只读,WriteGate 红线不涉及。验收证据 = `scripts/artifacts-capability-tests.ts` 12 项隔离 fixture proof + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof(覆盖改写后正确 preview 的 changed-file notice 与 reload 后更新可见)+ smoke §15/§15b。此项尚未发布 tag 或 npm 版本;当前最终交付目标 = PR #305 / destination `48c794c58b02d543be01f3bec98a056447dfeb85`。
-- **M4→M6 公开交付与债务台账(#270)** — 架构债务行统一指向公开 tracker 或具体触发条件,D-12/D-16/D-24 归档;issue→Draft PR→exact-head review→merge/destination 回执成为通用公开交付契约。本地/fixture 证据仍不构成 #20/#136/#137 的真实准入。
-- **DSH runtime closure 迁移到 0.1.5-alpha.1(#268)** — 把 root-pinned DSH 运行时依赖从 `0.1.2-alpha.3`(216 包闭包)精确迁到 `0.1.5-alpha.1`(230 包闭包)。精确钉死目标版本,绝不跟随可变 `alpha` dist-tag(当前指向 `0.1.5-alpha.2`)。230 = 15 新增(`dsh-api-workspace-files`/`dsh-client-file-upload`/`dsh-client-resources`/`dsh-client-ui-open-in-app`/`dsh-client-ui-sidebar-files`/`dsh-client-ui-sidebar-right`/`dsh-client-ui-sidebar-textpreview`/`dsh-host-open-in-app`/`dsh-http-proxy`/`dsh-package-manifest`/`dsh-session-format`/`dsh-session-format-catalog`/`dsh-session-format-v0-to-v1`/`dsh-session-format-v1-to-v2`/`dsh-session-format-v2-to-v3`)+ 移除 `dsh-tool-subagent-report`;增减集由重新生成的 npm 与 pnpm 锁文件确认。`ts/package.json` overrides 由 14 扩到 230,把完整 peer 闭包钉在 `0.1.5-alpha.1`,阻止 `^0.1.5-alpha.1` 插入符号把传递 peer 漂到 `0.1.5-alpha.2`。新增失败前置条件契约测试 `dsh-target-closure-proof.ts`(读仓库实态,起始 216/alpha.3 闭包上必败,迁移后必过),接入 run-all §23b。API 审计(`tsc --noEmit` + smoke + map-tools clean-tarball proof)未重现任何目标不兼容:`SettingsProvider.prototype.installSection` 接缝、7 个 `map_*` 工具、settings watch/reload/dispose、Session V3 单向迁移、agent/session/inbox/steer 接缝在 `0.1.5-alpha.1` 均存活,无行为改动。历史 `0.1.2-alpha.3` 证据在 §9/roadmap/stage1/release-notes 旧条目中保留,不批量替换;设置行为不变。此项尚未发布 tag 或 npm 版本；这些确定性证明不构成 M5/M6 准入。
-- **TS 严格安装闭环(#202)** — 在 rc.20 已随包交付 MIT `dsh-map-tools` 的基础上，补齐 alpha.3 peer closure 的精确 overrides，使 `ts/` 裸 `npm ci` 不再依赖 `--legacy-peer-deps`；新增 clean tarball fail-closed 证明。此项尚未发布 tag 或 npm 版本。
+- **持久默认出发地（#338,2026-09-10）** — `gotry_motivation_save` 接受 typed `homeCity` 与 optional/explicit exact `homeCityEvidence` 绑定（单条非空 evidence 可省略，多条须显式）；账本持久化 `homeCityPreference { value, evidence, updated_at }`，并通过 `{{motivation_brief}}` 作为软默认读回。显式当轮出发地优先，显式 null 清除活跃默认。
+- **产物视图进入 M4 队列（issue #285,2026-09-10）** — `gotry_artifacts_list/read` 在 Host 层持久化标准 `presentationMeta` 并输出 `SearchPathsResultView`/`ReadResultView` 所需字段与 `FileLocation`；**公开 `./client` adapter 通过 `window.__ModuleLoader__.load` 在 DSH Web 中按 runtime `block` 渲染自定义 list/read keyed cards**（wire name `tool.call.toolview`，key = `gotry_artifacts_list` / `gotry_artifacts_read`，见 `client/client.js`），路径可点击、首行显示 source + 完整 path + 行号预览 + source identity + content version；workspace/sidebar 文件树保留为**额外**预览面。读范围白名单 = stateRoot 根 + 会话 dsh 工作目录（排除 node_modules/.git），扩展名白名单 = 文本类；跨 root / symlink 越界 / 缺失文件 / 超大文件（>2MB）统一返回 ok:false + error + hint。本层只读，WriteGate 红线不涉及。验收证据 = `scripts/artifacts-capability-tests.ts` 12 项隔离 fixture proof + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof（覆盖改写后正确 preview 的 changed-file notice 与 reload 后更新可见）+ smoke §15/§15b。此项尚未发布 tag 或 npm 版本；当前最终交付目标 = PR #305 / destination `48c794c58b02d543be01f3bec98a056447dfeb85`。
+- **M4→M6 公开交付与债务台账（#270）** — 架构债务行统一指向公开 tracker 或具体触发条件，D-12/D-16/D-24 归档；issue→Draft PR→exact-head review→merge/destination 回执成为通用公开交付契约。本地/fixture 证据仍不构成 #20/#136/#137 的真实准入。
+- **DSH runtime closure 迁移到 0.1.5-alpha.1（#268）** — 把 root-pinned DSH 运行时依赖从 `0.1.2-alpha.3`（216 包闭包）精确迁到 `0.1.5-alpha.1`（230 包闭包）。精确钉死目标版本，绝不跟随可变 `alpha` dist-tag（当前指向 `0.1.5-alpha.2`）。230 = 15 新增（`dsh-api-workspace-files`/`dsh-client-file-upload`/`dsh-client-resources`/`dsh-client-ui-open-in-app`/`dsh-client-ui-sidebar-files`/`dsh-client-ui-sidebar-right`/`dsh-client-ui-sidebar-textpreview`/`dsh-host-open-in-app`/`dsh-http-proxy`/`dsh-package-manifest`/`dsh-session-format`/`dsh-session-format-catalog`/`dsh-session-format-v0-to-v1`/`dsh-session-format-v1-to-v2`/`dsh-session-format-v2-to-v3`）+ 移除 `dsh-tool-subagent-report`；增减集由重新生成的 npm 与 pnpm 锁文件确认。`ts/package.json` overrides 由 14 扩到 230，把完整 peer 闭包钉在 `0.1.5-alpha.1`，阻止 `^0.1.5-alpha.1` 插入符号把传递 peer 漂到 `0.1.5-alpha.2`。新增失败前置条件契约测试 `dsh-target-closure-proof.ts`（读仓库实态，起始 216/alpha.3 闭包上必败，迁移后必过），接入 run-all §23b。API 审计（`tsc --noEmit` + smoke + map-tools clean-tarball proof）未重现任何目标不兼容：`SettingsProvider.prototype.installSection` 接缝、7 个 `map_*` 工具、settings watch/reload/dispose、Session V3 单向迁移、agent/session/inbox/steer 接缝在 `0.1.5-alpha.1` 均存活，无行为改动。历史 `0.1.2-alpha.3` 证据在 §9/roadmap/stage1/release-notes 旧条目中保留，不批量替换；设置行为不变。此项尚未发布 tag 或 npm 版本；这些确定性证明不构成 M5/M6 准入。
+- **TS 严格安装闭环（#202）** — 在 rc.20 已随包交付 MIT `dsh-map-tools` 的基础上，补齐 alpha.3 peer closure 的精确 overrides，使 `ts/` 裸 `npm ci` 不再依赖 `--legacy-peer-deps`；新增 clean tarball fail-closed 证明。此项尚未发布 tag 或 npm 版本。
 
 ---
 
@@ -20,21 +20,21 @@
 
 ### What's New
 
-- **修好 `npx @danceiny/gotry doctor --fix` 的整个安装链** — rc.19 实测三红一误报,根因各不相同:
-  - **sidebar「1 项补装失败」是误报**:pnpm 11 的严格构建脚本策略让 dsh 安装器 exit 1,但 167 个包其实已完整落盘(复检本来就是绿的)。现在安装器按落盘状态判成功,并明示 node-pty(侧栏内嵌终端)的构建脚本被 pnpm 跳过、需要时用 `pnpm approve-builds` 补。
-  - **地图/路线/POI 工具这次真的可用了(npm 安装形态)**:rc.19 说「正式进依赖」实际只对源码布局生效——npm 布局从未装上。依赖这条路被上游堵死:dsh-map-tools 的 peer 要求 `>=0.1.2-rc.1` 的 dsh 家族,而 gotry 锁定 `0.1.2-alpha.3`(semver 上 alpha < rc),npm 严格 peer 解析直接拒装,硬上会弄坏 `npx @danceiny/gotry` 主安装路径。rc.20 改为**随包内置分发**——装 gotry 即得地图工具,零 API key(OSM/OSRM)。
-  - **ask-user 的 ❌ 是体检误报**:依赖一直在(npm 的提升布局里,运行时正常),体检的检查路径没覆盖该布局。现在体检与运行时解析同口径,说真话了。
-- **`gotry help` 不再打印合并冲突标记**(rc.19 带入的脏文本,顺带清偿)。
+- **修好 `npx @danceiny/gotry doctor --fix` 的整个安装链** — rc.19 实测三红一误报，根因各不相同：
+  - **sidebar「1 项补装失败」是误报**：pnpm 11 的严格构建脚本策略让 dsh 安装器 exit 1，但 167 个包其实已完整落盘（复检本来就是绿的）。现在安装器按落盘状态判成功，并明示 node-pty（侧栏内嵌终端）的构建脚本被 pnpm 跳过、需要时用 `pnpm approve-builds` 补。
+  - **地图/路线/POI 工具这次真的可用了（npm 安装形态）**：rc.19 说「正式进依赖」实际只对源码布局生效——npm 布局从未装上。依赖这条路被上游堵死：dsh-map-tools 的 peer 要求 `>=0.1.2-rc.1` 的 dsh 家族，而 gotry 锁定 `0.1.2-alpha.3`（semver 上 alpha < rc），npm 严格 peer 解析直接拒装，硬上会弄坏 `npx @danceiny/gotry` 主安装路径。rc.20 改为**随包内置分发**——装 gotry 即得地图工具，零 API key（OSM/OSRM）。
+  - **ask-user 的 ❌ 是体检误报**：依赖一直在（npm 的提升布局里，运行时正常），体检的检查路径没覆盖该布局。现在体检与运行时解析同口径，说真话了。
+- **`gotry help` 不再打印合并冲突标记**（rc.19 带入的脏文本，顺带清偿）。
 
 ### For Developers
 
-- **CI 双层修复(main 自 #197 起全红)**:①runner npm 升级后裸 `npm ci` 强制校验 peer,而 ts 的 lockfile 一直是 `--legacy-peer-deps` 模式生成——CI 与 CONTRIBUTING 显式带该旗标,并移除 dsh-map-tools 冗余依赖;②turn-deadline 的 5 个 tsc 错误 = 类型面隐性依赖 peer 意外物化(`session/event` 声明在 dsh-session 的 cordis Events augmentation 里,pnpm 隔离布局下 root 侧的 augmentation 合并进另一个 cordis 实例)——显式 `import type` + dsh-session@0.1.2-alpha.3 进 ts 依赖面,overrides 把 peer 闭包钉在 alpha.3 防 rc.1 混版本,ts lock 全量 resolved 指回 registry.npmjs.org。
-- doctor 两面(CLI + 会话工具)改 createRequire 解析链,覆盖 npm/npx 提升布局;map-tools 解析 vendor 优先。
-- 新增回归锚:doctor-tests §5b/5c(提升布局解析/vendor 布局)+ bootstrap-tests §11(安装器 exit 非 0 但落盘 = 按状态判成功)。
+- **CI 双层修复（main 自 #197 起全红）**：①runner npm 升级后裸 `npm ci` 强制校验 peer，而 ts 的 lockfile 一直是 `--legacy-peer-deps` 模式生成——CI 与 CONTRIBUTING 显式带该旗标，并移除 dsh-map-tools 冗余依赖；②turn-deadline 的 5 个 tsc 错误 = 类型面隐性依赖 peer 意外物化（`session/event` 声明在 dsh-session 的 cordis Events augmentation 里，pnpm 隔离布局下 root 侧的 augmentation 合并进另一个 cordis 实例）——显式 `import type` + dsh-session@0.1.2-alpha.3 进 ts 依赖面，overrides 把 peer 闭包钉在 alpha.3 防 rc.1 混版本，ts lock 全量 resolved 指回 registry.npmjs.org。
+- doctor 两面（CLI + 会话工具）改 createRequire 解析链，覆盖 npm/npx 提升布局；map-tools 解析 vendor 优先。
+- 新增回归锚：doctor-tests §5b/5c（提升布局解析/vendor 布局）+ bootstrap-tests §11（安装器 exit 非 0 但落盘 = 按状态判成功）。
 
 ### 安装
 
-- 没变化,跑 `npx @danceiny/gotry web`。rc.19 用户跑一次 `npx @danceiny/gotry doctor` 复检——地图/ask-user 两项应转绿。
+- 没变化，跑 `npx @danceiny/gotry web`。rc.19 用户跑一次 `npx @danceiny/gotry doctor` 复检——地图/ask-user 两项应转绿。
 
 ---
 
@@ -42,21 +42,21 @@
 
 ### What's New
 
-- **修了 rc18 的 `invalid skill name "gotry_motivation_save"` 硬错误** — 在「查余额 + 规划旅行」的交界场景里,模型会把 gotry 的工具名当成宿主 skill 传给 skill 加载器,当场报错。现在人格契约写死了表层规则:gotry 的全部能力一律是工具调用(gotry_ 前缀),绝不进 skill 加载器;skill 调用报 invalid/unknown 就改回工具调用。
-- **地图/路线/POI 工具上线** — `dsh-map-tools` 正式进依赖(零 API key,走 OSM/OSRM 开放源)。此前这个插件一直被启动流程静默丢弃;现在 doctor 体检(对话内 `gotry_doctor` 与终端 `npx @danceiny/gotry doctor`)都会如实告诉你它是否就位。
-- **外部事件接缝(前两段)** — 新增只读通道探针 tick:站点断/上游不可达这类「带外事实」现在会写进通道健康面,检索改道建议与 doctor 即时受益,不用等用户撞上失败;愿望池召回也会否证「依赖通道当前不可用」的憧憬——不再硬推当下走不通的行程。
-- **booking planner 连续加固** — factRef 指针清洗泛化、截断 finalResponse 恢复、UI 预载 offers 容忍、surface-policy 违规重试等一组修复(#172-#188)。
-- **doctor 两面同口径** — 终端 CLI 与会话工具面现在报同一份体检清单(此前 CLI 缺 map-tools/ask-user 两项)。
+- **修了 rc18 的 `invalid skill name "gotry_motivation_save"` 硬错误** — 在「查余额 + 规划旅行」的交界场景里，模型会把 gotry 的工具名当成宿主 skill 传给 skill 加载器，当场报错。现在人格契约写死了表层规则：gotry 的全部能力一律是工具调用（gotry_ 前缀），绝不进 skill 加载器；skill 调用报 invalid/unknown 就改回工具调用。
+- **地图/路线/POI 工具上线** — `dsh-map-tools` 正式进依赖（零 API key，走 OSM/OSRM 开放源）。此前这个插件一直被启动流程静默丢弃；现在 doctor 体检（对话内 `gotry_doctor` 与终端 `npx @danceiny/gotry doctor`）都会如实告诉你它是否就位。
+- **外部事件接缝（前两段）** — 新增只读通道探针 tick：站点断/上游不可达这类「带外事实」现在会写进通道健康面，检索改道建议与 doctor 即时受益，不用等用户撞上失败；愿望池召回也会否证「依赖通道当前不可用」的憧憬——不再硬推当下走不通的行程。
+- **booking planner 连续加固** — factRef 指针清洗泛化、截断 finalResponse 恢复、UI 预载 offers 容忍、surface-policy 违规重试等一组修复（#172-#188）。
+- **doctor 两面同口径** — 终端 CLI 与会话工具面现在报同一份体检清单（此前 CLI 缺 map-tools/ask-user 两项）。
 
 ### For Developers
 
-- 通道健康面新增 `'ok'` 恢复事件语义(latest-wins 超越 down);外部事件接缝设计 `docs/design/external-event-seam.md` 三段中前两段落地,第三段(world2agent 远程桥)待 D-31 拍板。
-- run-all 新增 §52(通道探针)/§53(愿望池否证)/§54(persona 表层护栏);行为契约仍 22 条((16) 内部澄清)。
-- Node 下界仍为 22.15(低于此版本启动即拒)。
+- 通道健康面新增 `'ok'` 恢复事件语义（latest-wins 超越 down）；外部事件接缝设计 `docs/design/external-event-seam.md` 三段中前两段落地，第三段（world2agent 远程桥）待 D-31 拍板。
+- run-all 新增 §52（通道探针）/§53（愿望池否证）/§54（persona 表层护栏）；行为契约仍 22 条（（16） 内部澄清）。
+- Node 下界仍为 22.15（低于此版本启动即拒）。
 
 ### 安装
 
-- 没变化,跑 `npx @danceiny/gotry web`。
+- 没变化，跑 `npx @danceiny/gotry web`。
 
 ---
 
@@ -203,9 +203,9 @@ rc.8 是首次带「记忆域 + 时间感硬化」骨架的发布；rc.7 是在�
 
 ---
 
-## 还没解决的(仍可能影响你)
+## 还没解决的（仍可能影响你）
 
-- **真实用户样本证据还没收完** — M3(内部里程碑代号,「产品基本可用」)要算真正完成,需要跨多个真实种子用户跑出来的定稿率、NPS、地理问答幻觉率;当前为 0。
-- **会话面只覆盖携程(机/酒/火)** — 美团本地仍是盲区(匿名 403,登录态是硬前置)。
-- **英文界面还存在小尾巴** — 切换到英文后,还有极少数角落的中文没有翻译完。
-- **实时价格默认是关的** —— 打开后端到端比静态包慢一点;不在意的就开着。
+- **真实用户样本证据还没收完** — M3（内部里程碑代号，「产品基本可用」）要算真正完成，需要跨多个真实种子用户跑出来的定稿率、NPS、地理问答幻觉率；当前为 0。
+- **会话面只覆盖携程（机/酒/火）** — 美团本地仍是盲区（匿名 403，登录态是硬前置）。
+- **英文界面还存在小尾巴** — 切换到英文后，还有极少数角落的中文没有翻译完。
+- **实时价格默认是关的** —— 打开后端到端比静态包慢一点；不在意的就开着。
