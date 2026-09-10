@@ -51,6 +51,12 @@ export function buildDidaEntryUrl(q: DidaEntryQuery = {}): DidaEntry {
 export const DIDA_NETWORK_HINTS = [
   /portal-webapi\.dida\.com\/HotelPriceAPI\/SearchRealTime/i,
   /portal-webapi\.dida\.com\/HotelPriceAPI\/SearchMonitor/i,
+  // 2026-09-10 UAT 实测校准:find 页加载态自发的是推荐流(非 SearchRealTime——
+  // 那是用户点「预订」后的实时价接口)。推荐酒店 + 推荐价格两个接口成对出现。
+  /portal-webapi\.dida\.com\/HotelRecommendAPI\/SearchHomepageRecommendHotels/i,
+  /portal-webapi\.dida\.com\/HotelRecommendAPI\/SearchHomepageRecommendPrices/i,
+  /portal-webapi\.dida\.com\/PopularDestinationAPI\/SearchHotels/i,
+  /portal-webapi\.dida\.com\/PopularDestinationAPI\/SearchHotelPrices/i,
 ]
 
 /** 形状嗅探签名:URL hint 未命中时的兜底(实时价信封报价签名,对接口改名免疫);
@@ -58,6 +64,72 @@ export const DIDA_NETWORK_HINTS = [
 export function looksLikeDidaRatesBody(body: string): boolean {
   if (!body || body.length > 2_000_000) return false
   return /"HotelPriceList"|"RatePlanList"/.test(body)
+}
+
+// ── 现行加载态接口(2026-09-10 校准):推荐酒店 + 推荐价格 ──────────────────
+
+export interface DidaRecommendHotel {
+  hotelId: string
+  name: string
+  nameEN?: string
+}
+
+/** 解析推荐酒店列表(Data.Hotels[]:HotelID/Name/Name_CN/Name_EN;Current 页加载态无价) */
+export function parseDidaRecommendHotels(body: string, opts: { maxItems?: number } = {}): DidaRecommendHotel[] {
+  let raw: unknown
+  try { raw = JSON.parse(body) } catch { return [] }
+  const hotels = (raw as { Data?: { Hotels?: unknown } })?.Data?.Hotels
+  if (!Array.isArray(hotels)) return []
+  const out: DidaRecommendHotel[] = []
+  for (const item of hotels.slice(0, opts.maxItems ?? 60)) {
+    if (item == null || typeof item !== 'object') continue
+    const h = item as Record<string, unknown>
+    const hotelId = h.HotelID != null ? String(h.HotelID) : ''
+    const name = typeof h.Name_CN === 'string' && h.Name_CN.trim() ? h.Name_CN : (typeof h.Name === 'string' ? h.Name : '')
+    if (!hotelId || !name) continue
+    out.push({ hotelId, name, nameEN: typeof h.Name_EN === 'string' ? h.Name_EN : undefined })
+  }
+  return out
+}
+
+export interface DidaPriceEntry {
+  hotelId: string
+  price: number
+  originalPrice?: number
+  currency?: string
+  /** 单晚起始价对应日期(YYYY-MM-DD) */
+  priceDate?: string
+  checkInDate?: string
+  checkOutDate?: string
+}
+
+// (parser types continue below)
+
+/** 解析价格列表:兼容 Recommend Prices(HotelId/Date)与 PopularDestination(HotelID/CheckInDate)两种键形 */
+export function parseDidaPrices(body: string): DidaPriceEntry[] {
+  let raw: unknown
+  try { raw = JSON.parse(body) } catch { return [] }
+  const prices = (raw as { Data?: { Prices?: unknown } })?.Data?.Prices
+  if (!Array.isArray(prices)) return []
+  const out: DidaPriceEntry[] = []
+  for (const item of prices) {
+    if (item == null || typeof item !== 'object') continue
+    const p = item as Record<string, unknown>
+    const hotelId = p.HotelId != null ? String(p.HotelId) : (p.HotelID != null ? String(p.HotelID) : '')
+    const price = typeof p.Price === 'number' ? p.Price : NaN
+    if (!hotelId || !Number.isFinite(price) || price <= 0) continue
+    const dateOf = (v: unknown): string | undefined => (typeof v === 'string' && v.length >= 10 ? v.slice(0, 10) : undefined)
+    out.push({
+      hotelId,
+      price,
+      originalPrice: typeof p.OriginalPrice === 'number' ? p.OriginalPrice : undefined,
+      currency: typeof p.Currency === 'string' ? p.Currency : undefined,
+      priceDate: dateOf(p.Date),
+      checkInDate: dateOf(p.CheckInDate),
+      checkOutDate: dateOf(p.CheckOutDate),
+    })
+  }
+  return out
 }
 
 /** 单条报价(一房一价一计划;语义判定在工具层,本层只归形状——页面 JSON 是不可信输入) */
@@ -82,6 +154,8 @@ export interface SessionDidaRateOption {
   referenceNo?: string
   /** 酒店详情落地页(由人完成预订;gotry 不碰) */
   jumpUrl?: string
+  /** 推荐价对应日期(YYYY-MM-DD;推荐流单晚起始价) */
+  priceDate?: string
 }
 
 interface RateCandidate {

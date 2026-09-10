@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto'
 import { buildEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, validateTrainQueryResponseUrl, TRAIN_SITE_HOST, type SessionTrainOption, type TrainQueryParseOutcome, type TrainResponseBinding } from './session/adapters/rail-12306.ts'
-import { buildDidaEntryUrl, parseDidaRates, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
+import { buildDidaEntryUrl, parseDidaRates, parseDidaRecommendHotels, parseDidaPrices, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
 import { EXTENSION_STORE_URL } from './session/extension-bridge.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
@@ -420,23 +420,24 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
     if (!(await loggedIn()) && !q.allowAnonymous) {
       return err('needs-login', didaLoginHint())
     }
-    let settled = false
-    let body = ''
+    // 窗口式收集(2026-09-10 校准):find 页加载自发推荐流(酒店+价格两个接口)
+    // 与可能的实时价接口——按接口分类收 body,窗口结束统一合并解析。
+    const bodies = { hotels: '', recommendPrices: '', realtime: '' }
+    const collect = (text: string, url: string): void => {
+      if (/SearchHomepageRecommendHotels/i.test(url)) bodies.hotels = text
+      else if (/SearchHomepageRecommendPrices/i.test(url)) bodies.recommendPrices = text
+      else if (/HotelPriceAPI\/SearchRealTime/i.test(url)) bodies.realtime = text
+    }
     const heard = new Promise<void>((resolve) => {
       t.page.on('response', async (res) => {
-        if (settled) return
         const u = res.url()
         if (!DIDA_NETWORK_HINTS.some((re) => re.test(u))) return
         try {
           const text = await res.text()
-          if (text) {
-            body = text
-            settled = true
-            resolve()
-          }
+          if (text) collect(text, u)
         } catch { /* 流式/竞态不可读则继续等下一个 */ }
       })
-      setTimeout(() => resolve(), q.timeoutMs ?? 30_000)
+      setTimeout(resolve, q.timeoutMs ?? 30_000)
     })
     await t.page.goto(entry.url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
     await heard
@@ -445,12 +446,28 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
     if (CHALLENGE_RE.test(title + headHtml)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
-    const rates = parseDidaRates(body)
+    const hotels = parseDidaRecommendHotels(bodies.hotels)
+    const recommendPrices = parseDidaPrices(bodies.recommendPrices)
+    const realtimeRates = parseDidaRates(bodies.realtime)
+    const pricesByHotel = new Map(recommendPrices.map((p) => [p.hotelId, p]))
+    const rates: SessionDidaRateOption[] = [...realtimeRates]
+    for (const h of hotels) {
+      const p = pricesByHotel.get(h.hotelId)
+      rates.push({
+        hotelId: h.hotelId,
+        hotelName: h.name,
+        price: p?.price ?? 0,
+        ...(p?.currency ? { currency: p.currency } : {}),
+        ...(p?.priceDate ? { priceDate: p.priceDate } : {}),
+      })
+    }
+    // 有推荐酒店或有实时价即视为通道产出;纯无价酒店如实标注价格待询
+    const priced = rates.filter((r) => r.price > 0).length
     const verdict: SessionVerdict = rates.length > 0 ? 'hit' : 'miss'
     return {
       ok: true,
       via: 'session-dida-portal',
-      evidence: `[会话:${site}@${ts}] ${rates.length} rates;guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
+      evidence: `[会话:${site}@${ts}] ${rates.length} hotels(${priced} priced);guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
       latencyMs: Date.now() - started,
       verdict,
       rates,
