@@ -93,6 +93,7 @@
 | [tech-strategy.md](tech-strategy.md) | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测/决策登记 |
 | [data-sources.md](data-sources.md) | 唯一数据源权威面:领域矩阵/新鲜度/证据链契约 |
 | [user-guide.md](user-guide.md) | 终端用户使用指南 |
+| [tools.md](tools.md) | 工具参考面:23 个注册工具的分组与逐工具契约/通道路由/web onboarding/运维脚本面 |
 | [release-notes.md](release-notes.md) | 逐版本发布决策(「为什么」,人写决策面) |
 | [tokens.md](tokens.md) | token 唯一权威面:npm 2FA/发布机制/渠道获取表 |
 | [decisions-needed.md](decisions-needed.md) | 待创始人拍板的决策队列 |
