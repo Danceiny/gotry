@@ -1,94 +1,96 @@
-# 外部 PR 工作流(维护者侧)
+[English](external-pr-workflow.md) | [简体中文](external-pr-workflow.zh-CN.md)
 
-> 定位:外部贡献者(含自动化机器人)PR 的接收、核验、评审、裁决与归档操作流程——贡献者侧规范见 [CONTRIBUTING.md](../../CONTRIBUTING.md),本文不重复。
-> 状态:living
-> 上游:[AGENTS.md](../../AGENTS.md)(仓库契约)、CONTRIBUTING.md(Pull Request 流程)
-> 下游:维护者与执行 agent 处理外部 PR 时的操作面;GitHub CI(`.github/workflows/ci.yml`)
-> 最近更新:2026-09-10
-> 边界:founder 已授权的仓内 Claude Code/worktree 是内部执行 lane,不进入外部机器人 T0/T1 一票否决;它仍须按 §0 公开交付记录并过正常评审闸。
+# External PR Workflow (Maintainer Side)
 
-## 速览
+> Position: operating procedure for receiving, verifying, reviewing, adjudicating, and archiving PRs from external contributors (including automation bots) — the contributor-side rules are in [CONTRIBUTING.md](../../CONTRIBUTING.md) and are not repeated here.
+> Status: living
+> Upstream: [AGENTS.md](../../AGENTS.md) (repository contract), CONTRIBUTING.md (Pull Request process)
+> Downstream: the operating surface for maintainers and execution agents handling external PRs; GitHub CI (`.github/workflows/ci.yml`)
+> Last updated: 2026-09-10
+> Boundary: in-repo Claude Code/worktree lanes authorized by founder are internal execution lanes; they do not enter the external-bot T0/T1 veto. They must still publish a delivery record per §0 and pass the normal review gates.
 
-- 外部 PR 先按 provenance 分诊(人工 / 机器人 / 嫌疑垃圾)再进评审;机器人 PR 默认怀疑,不当成普通贡献。
-- 供应链预检是硬闸:凡触碰 `.github/`、依赖清单、构建发布链的 diff,一票否决,不进代码评审。
-- 声称核验先于代码评审:机器人 PR 声称的漏洞必须在源码上证伪或证实,不以扫描器结论为真。
-- 外部贡献者给不出的「最终 SHA 本地证据」由维护者代跑补齐;CI 绿只是补充信号。
-- 裁决三态:合入 / 请改 / 关闭;每态都在 PR 内留证据化评论,关闭也须说明理由。合入方法按仓库实际允许的合并方式选择,不强制 squash 或线性历史。
-- 首例即 #250(自动化安全扫描器):核验为误报(动态值早已 `?` 参数绑定),founder 裁定作为防御性加固合入(2026-09-09);§3 技术分析即该案沉淀。
+## At a glance
 
----
-
-## 0. 公开交付台账(所有执行 lane 共用)
-
-- **Issue 启动**:记录验收标准、依赖、base SHA、分支/worktree、具名文件范围、执行路由与最终闸。
-- **Draft PR**:链接 issue,记录 exact head、变更文件、与当前 `origin/main` 的冲突/漂移、本地命令与 exit code、E2E 边界;未过闸时顶部保留编号 TODO。
-- **Review**:每条结论绑定被审 head;修复回指对应 finding,新 head 重跑适用闸。
-- **Merge**:记录被审 head、实际合入方法、merge SHA、destination SHA 验证与下一个开放 tracker。
-- **安全边界**:公开依赖/版本/测试/PR 事实;私有告警原文、exploit 细节、凭证与主机信息只留在 GitHub Security。
+- External PRs are triaged by provenance first (human / bot / suspected spam) before entering review; bot PRs are distrusted by default and are not treated as ordinary contributions.
+- The supply-chain precheck is a hard gate: any diff touching `.github/`, dependency manifests, or the build/release chain is an outright veto and does not enter code review.
+- Claim verification precedes code review: a vulnerability claimed by a bot PR must be falsified or confirmed against source; scanner conclusions are not taken as true.
+- The final-SHA local evidence that external contributors cannot produce is run on their behalf by the maintainer; green CI is only a supplementary signal.
+- Three adjudication outcomes: merge / request changes / close; every outcome leaves an evidence-backed comment in the PR, and a close must also state its reason. The merge method follows the merge methods the repository actually allows; squash or linear history is not mandated.
+- The first case was #250 (automated security scanner): verified as a false positive (dynamic values were already `?`-parameter-bound); founder ruled to merge it as defensive hardening (2026-09-09); the §3 technical analysis is the distillation of that case.
 
 ---
 
-## 1. 接收与分诊(T0)
+## 0. Public delivery ledger (shared by all execution lanes)
 
-PR 出现在本仓(含 fork 跨仓 PR)后,先判定来源类型;分型决定后续严格度。
+- **Issue kickoff**: record acceptance criteria, dependencies, base SHA, branch/worktree, named-file scope, execution routing, and the final gate.
+- **Draft PR**: link the issue; record exact head, changed files, conflicts/drift against current `origin/main`, local commands and exit codes, and E2E boundaries; keep the numbered TODO at the top while gates are unmet.
+- **Review**: bind every conclusion to the reviewed head; fixes point back to the corresponding finding; a new head re-runs applicable gates.
+- **Merge**: record the reviewed head, the actual merge method, the merge SHA, destination-SHA verification, and the next open tracker.
+- **Security boundary**: publish dependency/version/test/PR facts; raw private alert text, exploit details, credentials, and host information stay only in GitHub Security.
 
-| 分型 | 判据 | 默认姿态 |
+---
+
+## 1. Intake and triage (T0)
+
+After a PR appears in this repository (including cross-repo fork PRs), classify its source type first; the type determines the strictness that follows.
+
+| Type | Criteria | Default stance |
 |---|---|---|
-| 人工外部贡献 | 作者为真人、描述按模板填写、diff 与描述相符 | 正常评审,CONTRIBUTING.md 闸门全适用 |
-| 自动化机器人 | Dependabot / 安全扫描器(semgrep 系)/ AI agent 生成痕迹(模板化正文、规则 ID 表、固定落款链接) | 默认怀疑:先核验声称,再谈代码 |
-| 嫌疑垃圾 | 改动无意义(空白/重命名刷屏)、正文与 diff 不符、夹带外链 | 直接关闭,视情况举报 |
+| Human external contribution | Author is a real person, description follows the template, diff matches the description | Normal review; all CONTRIBUTING.md gates apply |
+| Automation bot | Dependabot / security scanners (semgrep family) / AI-agent generation marks (templated body, rule-ID tables, fixed sign-off links) | Distrust by default: verify claims first, discuss code after |
+| Suspected spam | Meaningless changes (whitespace/rename flooding), body inconsistent with the diff, smuggled external links | Close directly; report where warranted |
 
-机器人 PR 的正文本身按「声称」对待:扫描器结论、威胁模型叙述都未经本仓验证;AI agent 生成的描述尤其可能与 diff 不符。
+A bot PR's body is itself treated as a claim: scanner conclusions and threat-model narratives are unverified in this repository; AI-agent-generated descriptions are especially likely to mismatch the diff.
 
-## 2. 供应链安全预检(T1,硬闸)
+## 2. Supply-chain security precheck (T1, hard gate)
 
-在读代码逻辑之前先过 diff 清单;以下任一命中即一票否决(关闭并在评论中列明命中项):
+Before reading code logic, run the diff checklist; any single hit below is an outright veto (close and list the hits in a comment):
 
-- 改动 `.github/`(workflows、模板)、`scripts/publish-*`、构建发布链(`build-dist` 等);
-- 改动依赖清单或锁文件(`package.json` / `package-lock.json` / `pnpm-*`)且非 Dependabot 例行升级;
-- 引入新的网络出口、子进程执行、`eval` 类动态执行;
-- 夹带与声称无关的文件,或零宽字符/同形字等不可见内容。
+- Changes to `.github/` (workflows, templates), `scripts/publish-*`, or the build/release chain (`build-dist` etc.);
+- Changes to dependency manifests or lockfiles (`package.json` / `package-lock.json` / `pnpm-*`) that are not routine Dependabot upgrades;
+- Introduction of new network egress, subprocess execution, or `eval`-style dynamic execution;
+- Smuggled-in files unrelated to the claim, or invisible content such as zero-width characters/homoglyphs.
 
-预检通过后,diff 里只应剩「声称范围内」的文件;发现超范围文件,回到 T0 改判嫌疑垃圾。
+After the precheck passes, the diff should contain only files within the claimed scope; any out-of-scope file sends it back to T0 for reclassification as suspected spam.
 
-## 3. 声称核验(T2,机器人 PR 专属)
+## 3. Claim verification (T2, bot PRs only)
 
-安全类声称逐条到源码证伪或证实。本仓已确认的误报模式(遇同款直接引用本节):
+Security claims are falsified or confirmed one by one against source code. Confirmed false-positive patterns in this repository (cite this section directly when the same pattern appears):
 
-| 误报模式 | 为什么安全 | 默认取舍(裁决可推翻) |
+| False-positive pattern | Why it is safe | Default call (adjudication may override) |
 |---|---|---|
-| 模板字符串插值进 SQL,但插的是编译期常量(如 `readEvents` 的静态 where 分支) | 插值内容无用户输入;全部动态值经 `?` 占位符绑定(better-sqlite3 `prepare().all()/run()`) | 复制展开成分支重复 SQL——无安全增益,劣化可维护性 |
-| `IN (${placeholders})`,placeholders 是按数组长度生成的 `?` 串 | 这是参数绑定的标准姿势,正是防注入的正解 | 改成 `+` 拼接——零安全价值,且拼接恰是注入规则更应警惕的形态 |
-| 「移除 exploit primitive」类兜底话术 | 扫描器无数据流证据时的保守措辞,不构成本仓风险 | 为消扫描器告警而重构正确代码 |
+| Template-string interpolation into SQL, but interpolating compile-time constants (e.g. the static where branch in `readEvents`) | The interpolated content carries no user input; all dynamic values are bound via `?` placeholders (better-sqlite3 `prepare().all()/run()`) | Duplicating the expansion into branch-repeated SQL — no security gain, degraded maintainability |
+| `IN (${placeholders})` where placeholders is a `?` string generated from array length | This is the standard form of parameter binding — exactly the right injection defense | Rewriting as `+` concatenation — zero security value, and concatenation is exactly the shape injection rules should watch for |
+| "Remove exploit primitive" style boilerplate hedging | Conservative wording when the scanner lacks data-flow evidence; not a risk in this repository | Refactoring correct code just to silence a scanner alert |
 
-技术判定与裁决相互独立:「为什么安全」是核验结论,不随合入或关闭改变。是否合入「消告警式加固」是维护者裁量——为扫描器降噪或鼓励外部贡献,可推翻默认取舍予以合入(首例 #250 即 founder 合入);默认立场是不为告警静默而重构正确代码。
+Technical verdict and adjudication are independent: "why it is safe" is the verification conclusion and does not change with a merge or a close. Whether to merge alert-silencing hardening is maintainer discretion — to reduce scanner noise or to encourage external contribution, the default call may be overridden and merged (first case #250 was merged by founder); the default stance is not to refactor correct code to silence alerts.
 
-兼容/升级类声称(Dependabot):看上游 changelog 与破坏性说明,核对 semver 与 `engines` 约束。
+Compatibility/upgrade claims (Dependabot): read the upstream changelog and breaking-change notes; check semver and `engines` constraints.
 
-核验结论无论正误都写进 PR 评论:误报要说清证据——哪几行、值从哪来、绑定在哪。
+The verification conclusion goes into the PR comment whether it confirms or rejects: a false positive must state its evidence — which lines, where the values come from, where the binding happens.
 
-## 4. 评审与测试(T3)
+## 4. Review and testing (T3)
 
-- 外部贡献者常无法提供 CONTRIBUTING 要求的「最终 SHA 本地证据」——由维护者代跑补齐并贴进 PR:`cd ts && npx tsc --noEmit` + `GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh`。
-- 涉 model/unified 层或账本的改动,按 AGENTS.md 分层纪律跑对应全栈回归;纯文档类按 PR 模板以 N/A + burden-of-proof 代替。
-- 分层纪律、红线(WriteGate / evidence / conditions)、deprecated 层禁用,照 CONTRIBUTING.md 清单逐条过。
-- fork PR 的 CI 由 `pull_request:` 触发自动跑(Node 22/24);CI 是补充信号,不替代本地证据。
+- External contributors often cannot provide the final-SHA local evidence CONTRIBUTING requires — the maintainer runs it on their behalf and pastes it into the PR: `cd ts && npx tsc --noEmit` + `GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh`.
+- Changes touching the model/unified layers or the ledger run the corresponding full-stack regression per the AGENTS.md layering discipline; pure-doc changes substitute N/A + burden-of-proof per the PR template.
+- Layering discipline, red lines (WriteGate / evidence / conditions), and deprecated-layer bans go item by item through the CONTRIBUTING.md checklist.
+- CI for fork PRs runs automatically via the `pull_request:` trigger (Node 22/24); CI is a supplementary signal, not a replacement for local evidence.
 
-## 5. 裁决与礼仪(T4)
+## 5. Adjudication and etiquette (T4)
 
-| 裁决 | 条件 | 动作 |
+| Adjudication | Conditions | Action |
 |---|---|---|
-| 合入 | 真修复,或核验无真实漏洞但维护者裁定接受的防御性加固;行为保持、测试绿、预检干净 | 按仓库允许的合并方法合入 main(仓库未强制 squash 或线性历史);尽可能自删分支,PR 记录须载最终 commit/SHA |
-| 请改 | 方向对但实现或证据不齐 | 列出具体缺口;机器人 PR 不迭代,一般直接按关闭处理 |
-| 关闭 | 误报 / 超范围 / 劣化代码 / 嫌疑垃圾 | 证据化关闭评论:为什么误报、本仓对应不变量、欢迎人工后续 |
+| Merge | A real fix, or defensive hardening where verification found no real vulnerability but the maintainer ruled to accept it; behavior preserved, tests green, precheck clean | Merge into main with a repository-allowed merge method (the repository does not mandate squash or linear history); delete the branch where possible; the PR record must carry the final commit/SHA |
+| Request changes | Right direction but incomplete implementation or evidence | List the specific gaps; bot PRs are not iterated on and are generally handled as closes |
+| Close | False positive / out of scope / degrades code / suspected spam | Evidence-backed closing comment: why it is a false positive, this repo's corresponding invariant, and a welcome for human follow-up |
 
-**合入方法实际政策**:仓库允许 GitHub 提供的合并方法(merge commit / squash / rebase),不预设 squash 或线性历史。首例 #250 维护者选用 **merge commit + exact-head guard**——先确认被合入的 PR head 正是已核验提交,再把最终 main commit/SHA 记录回 PR,避免 head 漂移或来源歧义;合入后尽可能自删分支;PR 记录(评论或合并信息)必须载最终 commit/SHA,供后续勾稽与回溯。
+**Actual merge-method policy**: the repository allows the merge methods GitHub provides (merge commit / squash / rebase) and does not presuppose squash or linear history. For first case #250 the maintainer chose **merge commit + exact-head guard** — first confirm the merged PR head is exactly the verified commit, then record the final main commit/SHA back into the PR, preventing head drift or provenance ambiguity; delete the branch after merging where possible; the PR record (comment or merge information) must carry the final commit/SHA for later cross-checking and traceability.
 
-关闭礼仪四段式:感谢动机 → 给证据 → 给不变量 → 留 invite(人工修复类贡献始终欢迎)。模板化 bot 通常不会回复;评论的首要读者是后续遇到同款 PR 的维护者与真人工贡献者。
+Closing etiquette in four parts: thank the motive → give the evidence → give the invariant → leave an invite (human fix-style contributions are always welcome). Templated bots usually never reply; the primary readers of the comment are future maintainers and genuine human contributors who hit the same kind of PR.
 
-同一 bot 对同一地址重复报同款误报:直接关闭,评论引用先前处置的 PR 号,不重复展开论证。
+When the same bot repeats the same false-positive report against the same target: close directly and cite the PR number of the earlier disposition in the comment; do not re-argue at length.
 
-## 6. 归档(T5)
+## 6. Archival (T5)
 
-- 合入产生的版本叙事归 CHANGELOG(commit log 自动衍生)与 `release-notes.md`(人写「为什么」),本文不逐案维护。
-- 处置留档在各自 PR 评论;只有出现新误报模式或新预检规则时,才更新本文 §2/§3 对应条目。
+- Version narratives arising from merges belong to CHANGELOG (derived automatically from the commit log) and `release-notes.md` (human-written why); this document does not maintain them case by case.
+- Dispositions are archived in each PR's comments; only when a new false-positive pattern or a new precheck rule appears should the corresponding §2/§3 entries here be updated.

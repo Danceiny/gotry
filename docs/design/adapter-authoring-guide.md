@@ -1,105 +1,108 @@
-# Session 适配器作者指南(D-13)
+[English](adapter-authoring-guide.md) | [简体中文](adapter-authoring-guide.zh-CN.md)
 
-> 状态:living(工程手册)
-> 定位:**给"要接入一个新站点/新通道"的人的工程手册**。适配器是本仓工具生态的扩展单元
-> (`tool-orchestration-design.md` §5③):新增站点不触核心,只加「适配器 + 注册表行 + 测试」。
-> 模板 = **12306 第一方校准法**(2026-09-03 实证落地:电报码表官方站表全量校准 129 城、
-> 座位桶索引对齐,曾纠出南宁 NIZ→NNZ 错码——见 `capabilities/session/adapters/rail-12306.ts`)。
-> 关联:`../data-sources.md`(数据源权威面/站点矩阵)、`../rfc/user-session-data-rfc.md`(会话面 RFC)、
-> `benchmark.ts`(双源 shape gate)、run-all §38/§41。
+# Session Adapter Authoring Guide (D-13)
 
-## 0. 一条铁律:适配器在传输层**只读**
+> Status: living (engineering handbook)
+> Positioning: **the engineering handbook for whoever is onboarding a new site/new channel**. The adapter is this repo's extension unit for the tool ecosystem
+> (`tool-orchestration-design.md` §5③): adding a site never touches the core — you only add "an adapter + a registry row + tests".
+> Template = **the 12306 first-party calibration method** (empirically landed 2026-09-03: telecode table fully calibrated against the official station table for all 129 cities,
+> seat-bucket index aligned; it once caught the Nanning NIZ→NNZ wrong code — see `capabilities/session/adapters/rail-12306.ts`).
+> Related: `../data-sources.md` (data-source authority surface/site matrix), `../rfc/user-session-data-rfc.md` (session-plane RFC),
+> `benchmark.ts` (double-source shape gate), run-all §38/§41.
 
-扩展桥(GoTry Session Bridge)从不替站点发请求——它只被动转发**站点自己的查询响应**
-(`session-bridge.v1` job 协议);gotry 永不接触凭证/验证码,挑战页即停(`challenged`)。
-任何"帮用户把请求发出去"的设计都是越界,评审直接拒。
+## 0. One iron rule: adapters are **read-only** at the transport layer
 
-## 1. 四步法(12306 模板)
+The extension bridge (GoTry Session Bridge) never issues requests on a site's behalf — it only passively forwards **the site's own query responses**
+(the `session-bridge.v1` job protocol); gotry never touches credentials/CAPTCHAs, and a challenge page means stop (`challenged`).
+Any design that "sends the user's requests out for them" is overreach and is rejected at review.
 
-### 第一步:探测(发现站点的公开查询面)
+## 1. The four-step method (12306 template)
 
-- 找站点**公开查询接口**(12306 余票查询、携程酒店 list 页)——不需要登录的面优先,
-  登录态面走授权闸(见 §3 纪律 3)。
-- 沉淀 **NETWORK_HINTS 词表**(如 `ctrip-flight.ts` 的 `NETWORK_HINTS`):用于扩展侧
-  判断"这个响应是检索结果"(URL/字段名/主机名匹配),词表越准误报越少。
-- 记录请求参数与响应 shape 的**人工核验笔记**(后续 fixture 的溯源材料)。
-- 站点专有词汇(电报码/城市 id/座位桶)先抄官方站面,标 `as_of` 日期。
+### Step 1: Probe (discover the site's public query surface)
 
-### 第二步:第一方金标准 fixture
+- Find the site's **public query interface** (12306 ticket-availability query, Ctrip (携程) hotel list page) — surfaces that need no login come first;
+  logged-in surfaces go through the authorization gate (see §3 discipline 3).
+- Distill the **NETWORK_HINTS vocabulary** (e.g. the `NETWORK_HINTS` in `ctrip-flight.ts`): the extension side uses it to decide
+  "this response is a search result" (URL/field-name/hostname matching); the more accurate the vocabulary, the fewer false positives.
+- Record **manually verified notes** on request parameters and response shape (provenance material for later fixtures).
+- For site-specific vocabulary (telecodes/city ids/seat buckets), copy from the official site surface first and mark the `as_of` date.
 
-- 用**真会话**实测一次,把响应冻结为 fixture,**逐字段可溯源**
-  (参照 `ts/data/golden-trip-2027-facts.json` 的 fixture meta 思想:来源/取数时刻/审计值)。
-- 站点专有映射**全量对照官方站表**,不做抽样(12306 电报码 129 城全量校准就是这么
-  抓出 NIZ→NNZ 的)。映射常量进适配器(`STATION_TELECODES` 形态),与官方站表
-  逐条核对后冻结。
-- 枚举映射(座位桶 `cN`→席别、座型码)同样逐项对照,锁进适配器常量。
+### Step 2: First-party golden-standard fixture
 
-### 第三步:双源 shape gate
+- Measure once in a **real session** and freeze the response into a fixture, **traceable field by field**
+  (following the fixture-meta idea of `ts/data/golden-trip-2027-facts.json`: source/capture time/audited value).
+- Site-specific mappings are **checked in full against the official station table**, no sampling (this is exactly how the full 12306 telecode
+  calibration over 129 cities caught NIZ→NNZ). Mapping constants go into the adapter (the `STATION_TELECODES` shape),
+  verified item by item against the official station table, then frozen.
+- Enumeration mappings (seat bucket `cN`→seat class, seat-type codes) are likewise checked item by item and locked into adapter constants.
 
-- 实现站点结果 → `SessionComparableRecord`(`benchmark.ts`,`session-double-source.v1`)
-  的映射,必填字段见 `REQUIRED_COMPARABLE_FIELDS`。
-- 用 `scoreSessionFixture` 对 fixture 打分:**字段级准确率 ≥ 0.9 才算校准通过**
-  (`SESSION_FIELD_ACCURACY_THRESHOLD`)——"看着对"不算,字段对才算。
-- verdict 八值分型(`hit/miss/error/challenged/cooldown/needs-login/needs-extension/…`)
-  必须逐个给出判定依据并在测试里各有一例;**传输失败永不落负事实**(ADR-19)。
+### Step 3: Double-source shape gate
 
-### 第四步:漂移锁
+- Implement the site-result → `SessionComparableRecord` mapping (`benchmark.ts`, `session-double-source.v1`);
+  required fields are listed in `REQUIRED_COMPARABLE_FIELDS`.
+- Score the fixture with `scoreSessionFixture`: **field-level accuracy ≥ 0.9 is required for calibration to pass**
+  (`SESSION_FIELD_ACCURACY_THRESHOLD`) — "looks right" does not count; only field-level correctness counts.
+- Each of the eight-value verdict taxonomy (`hit/miss/error/challenged/cooldown/needs-login/needs-extension/…`)
+  must have its judging rationale given one by one and one example each in tests; **transport failures never land negative facts** (ADR-19).
 
-- 站点专有映射 = **防漂移断言**进测试(数量断言 + 抽样关键字段断言,如
-  "电报码表 ≥129 城 且 南宁=NNZ"):站点改版会在 CI 红,而不是在用户会话里哑败。
-- fixture 评分 ≥0.9 断言进 run-all(§38 扩展桥/§41 会话面锚点同族)。
-- 会随时间腐烂的事实(政策/班期)带 `review_by` 复核 gate(ADR-19 纪律)。
+### Step 4: Drift lock
 
-## 2. 新适配器接入清单(文件级)
+- Site-specific mappings become **anti-drift assertions** in tests (count assertions + sampled key-field assertions, e.g.
+  "telecode table ≥129 cities and Nanning=NNZ"): a site redesign turns CI red instead of failing silently inside a user session.
+- The fixture score ≥0.9 assertion goes into run-all (same family as the §38 extension bridge / §41 session-plane anchors).
+- Facts that rot over time (policies/schedules) carry a `review_by` recheck gate (ADR-19 discipline).
 
-| 动作 | 文件 |
+## 2. New-adapter onboarding checklist (file level)
+
+| Action | File |
 |---|---|
-| 适配器本体(词汇表/URL 构造/响应归一) | `ts/capabilities/session/adapters/<site>.ts` |
-| 效应注册表:handler + 策略表行(D-23 后:没有策略表行就没有效应) | `ts/capabilities/effect.ts`(`DEFAULT_HANDLERS` + `SPECS`) |
-| 通道注册表行(id/意图/配额类/证据级/setup) | `ts/capabilities/channel-registry.ts`(`CHANNELS`) |
-| 工具分支或检索入口 + verdict 分型渲染 | `ts/src/index.ts` |
-| fixtures + 评分断言 + 漂移锁 | `ts/scripts/session-*-tests.ts` / fixtures 目录 |
-| 数据源矩阵行 + 校准实录 | `docs/data-sources.md` |
+| Adapter body (vocabulary/URL construction/response normalization) | `ts/capabilities/session/adapters/<site>.ts` |
+| Effect registry: handler + policy-table row (after D-23: no policy-table row, no effect) | `ts/capabilities/effect.ts` (`DEFAULT_HANDLERS` + `SPECS`) |
+| Channel registry row (id/intent/quota class/evidence level/setup) | `ts/capabilities/channel-registry.ts` (`CHANNELS`) |
+| Tool branch or retrieval entry + verdict-taxonomy rendering | `ts/src/index.ts` |
+| fixtures + scoring assertions + drift lock | `ts/scripts/session-*-tests.ts` / fixtures directory |
+| Data-source matrix row + calibration record | `docs/data-sources.md` |
 
-不加策略表行/注册表行的"顺手接一个通道"在评审即打回:通道健康面、routing 建议、
-doctor 行全部由注册表生成,表外通道=对模型不可见且不可审计。
+"Casually wiring in a channel" without a policy-table row/registry row is rejected at review: the channel health surface, routing advice,
+and doctor rows are all generated from the registry; an off-table channel is invisible to the model and unauditable.
 
-## 3. 纪律清单(红线,逐条评审)
+## 3. Discipline checklist (red lines, reviewed item by item)
 
-1. **只读传输**:扩展 never issues requests(§0 铁律);适配器不写任何站点状态。
-2. **节律闸**:同站点两次检索 ≥30s(`session-search` 内建),适配器不得绕过。
-3. **授权闸**:登录态面必须过 `sessionAccess` 审批卡(每会话每站点首次弹卡、拒绝即
-   本会话吊销);公开查询面(12306)不需要。
-4. **challenged 即停**:验证码/风控页 = 上游说不,永不重试(效应策略表 `retry: null`)。
-5. **凭证零过手**:登录只读票据 cookie **名**(`LOGIN_COOKIE_NAMES`),永不读值;
-   登录永远发生在站点官网,`gotry_session_login` 只做引导与确认。
-6. **打码价保真**:上游打码的价格(`priceRaw` "¥7xx")原样保留、不得切零伪装真价;
-   数字价仅在站点明示时落字段(hotel fact 不落数字价,D-26)。
-7. **证据链逐源标注**:每条结果带 `[会话:<site>@ts]` 同款 evidence;负事实/error 分开
-   陈述,不混写"无结果或失败"。
-8. **效果注册表纪律**:退避/熔断策略行逐条拍板(透传面永不重试;timeout 类才可重试)。
+1. **Read-only transport**: the extension never issues requests (§0 iron rule); adapters write no site state.
+2. **Cadence gate**: two searches on the same site ≥30s apart (built into `session-search`); adapters must not bypass it.
+3. **Authorization gate**: logged-in surfaces must pass the `sessionAccess` approval card (first card per session per site; a rejection
+   revokes for the rest of that session); public query surfaces (12306) do not need it.
+4. **Challenged means stop**: CAPTCHA/risk-control pages = the upstream said no; never retry (effect policy-table `retry: null`).
+5. **Zero credential handling**: login stores only the read-only ticket cookie **names** (`LOGIN_COOKIE_NAMES`), never their values;
+   login always happens on the site's official web page — `gotry_session_login` only guides and confirms.
+6. **Masked-price fidelity**: upstream-masked prices (`priceRaw` "¥7xx") are preserved as-is and never zeroed out to fake a real price;
+   a numeric price lands in a field only when the site states it explicitly (hotel facts carry no numeric price, D-26).
+7. **Evidence chain annotated per source**: every result carries the same-style evidence `[会话:<site>@ts]`; negative facts and errors
+   are stated separately — never merged into "no results or failure".
+8. **Effect-registry discipline**: backoff/breaker policy rows are decided explicitly one by one (pass-through surfaces never retry;
+   only timeout-class failures may retry).
 
-## 4. 携程接口面真会话校准清单(D-13 遗留,执行依赖 founder 登录,公开追踪 = #272)
+## 4. Ctrip (携程) interface-surface real-session calibration checklist (D-13 leftover; execution depends on founder login; public tracking = #272)
 
-> 前置:`scripts/session-login.ts` 完成携程真登录(顺带同窗口登录美团)——该 founder
-> 动作已挂在 `gotry-session-data-goal` 的 user todo,校准执行与它同窗口做。
+> Prerequisite: `scripts/session-login.ts` completes the real Ctrip login (and logs into Meituan (美团) in the same window) — that founder
+> action is attached to the user todo of `gotry-session-data-goal`; run the calibration in the same window as it.
 
-- [ ] **ctrip-flight**:`batchSearch` 响应 shape 逐字段对照 fixture(字段名/价格字段/
-  时刻时区),双源评分 ≥0.9。
-- [ ] **ctrip-hotel**:list 页 `cityId` 码表扩容核对(码表外城市走 web 搜索指引的
-  覆盖率抽查);`roomInfo[].priceInfo.price` 路径回归(2026-09-03 第一方校准 a0cd1ad)。
-- [ ] **meituan-local**(民宿/门票):登录后 NETWORK_HINTS 实测 + 熔断冷却参数校准
-  (gotry-session-data-goal P2 项)。
-- [ ] **金标准 20 查询跑批**(分组以 `ts/data/session-golden-20.json` 为准):8 sf(`flight`,
-  sf-01..sf-08)+ 8 mt(4 `meituan-hotel` mt-01..mt-04 + 4 `meituan-minsu` mt-05..mt-08)
-  + 4 fa(2 `flyai-flight` fa-01..fa-02 + 2 `flyai-train` fa-03..fa-04);sf-01..08 历史
-  实测见 `../data-sources.md`(字段级 ≥90%、live <15s 仍为统一复核门,RFC 验收口径)。
-- [ ] **cookie 票据名单校准**:两侧登录后核对 `LOGIN_COOKIE_NAMES` 全覆盖、零误报。
-- [ ] 校准结论回写 `../data-sources.md`(领域矩阵行)。
+- [ ] **ctrip-flight**: compare the `batchSearch` response shape field by field against the fixture (field names/price fields/
+  timezone of times); double-source score ≥0.9.
+- [ ] **ctrip-hotel**: verify the list-page `cityId` code-table expansion (coverage spot-checks for cities outside the code table via
+  web-search guidance); regression on the `roomInfo[].priceInfo.price` path (2026-09-03 first-party calibration a0cd1ad).
+- [ ] **meituan-local** (homestays/attraction tickets): after login, live-test NETWORK_HINTS + calibrate breaker cooldown parameters
+  (gotry-session-data-goal P2 item).
+- [ ] **Golden-standard 20-query batch run** (grouping per `ts/data/session-golden-20.json`): 8 sf (`flight`,
+  sf-01..sf-08) + 8 mt (4 `meituan-hotel` mt-01..mt-04 + 4 `meituan-minsu` mt-05..mt-08)
+  + 4 fa (2 `flyai-flight` fa-01..fa-02 + 2 `flyai-train` fa-03..fa-04); historical live results for sf-01..08 are in
+  `../data-sources.md` (field-level ≥90% and live <15s remain the unified recheck gate — RFC acceptance criteria).
+- [ ] **Cookie ticket name-list calibration**: after logging in on both sides, verify `LOGIN_COOKIE_NAMES` full coverage and zero false positives.
+- [ ] Write calibration conclusions back to `../data-sources.md` (domain matrix row).
 
-## 5. 参考:既有样板
+## 5. References: existing exemplars
 
-- **rail-12306.ts**:电报码/座位桶第一方校准模板(本指南的四步法来源)。
-- **ctrip-flight.ts / ctrip-hotel.ts**:NETWORK_HINTS + 登录态面 + 授权闸样板。
-- **meituan-local.ts**:半成品骨架(a11y 兜底方向,待登录实测)。
-- **session/benchmark.ts**:双源 shape gate 的 scorer 与阈值。
+- **rail-12306.ts**: the telecode/seat-bucket first-party calibration template (source of this guide's four-step method).
+- **ctrip-flight.ts / ctrip-hotel.ts**: NETWORK_HINTS + logged-in surface + authorization-gate exemplars.
+- **meituan-local.ts**: half-finished skeleton (a11y fallback direction, pending logged-in live testing).
+- **session/benchmark.ts**: the double-source shape gate's scorer and threshold.

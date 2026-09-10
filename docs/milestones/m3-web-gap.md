@@ -1,37 +1,39 @@
-# M3 段 1:最小 Web 面实测与差距清单
+[English](m3-web-gap.md) | [简体中文](m3-web-gap.zh-CN.md)
 
-> 状态:frozen(历史备忘,2026-08-29)
-> 实测对象:`./gotry`(= dsh web profile + GoTry patch:人格+五工具+DeepSeek 原生)。
-> 实测方法:启动 HTTP 200 确认、标题/日志/间接证据(headless 已验五工具+人格全链,web 与 headless 共享同一组合)。
-> 判定基准:D1 产品设计的 L1 承诺(透明卡片/全成本/gates 选择题/证据链)。
+# M3 segment 1: minimal web surface live test and gap list
 
-## 一、实测结果
+> Status: frozen (historical memo, 2026-08-29)
+> Test subject: `./gotry` (= dsh web profile + GoTry patch: persona + five tools + native DeepSeek).
+> Test method: startup HTTP 200 confirmation, title/logs/indirect evidence (headless has verified the full five-tool + persona chain; web and headless share the same wiring).
+> Judgment baseline: D1 product design's L1 promises (transparency cards / full cost / gates as multiple-choice / evidence chain).
 
-| 项 | 状态 | 说明 |
+## 1. Live test results
+
+| Item | Status | Note |
 |---|---|---|
-| Web 界面启动 | ✅ HTTP 200,localhost:3080 | 标题「DeepSeek Harness」 |
-| GoTry 插件加载 | ✅(headless 同组合已验五工具+人格) | web/headless 共享 cordis 组合 |
-| 骨架校验可达 | ✅(启动日志见 [骨架:openflights] 输出) | 插件 import 链活着 |
-| 对话能力 | ✅ headless 已验(云南带爸妈全链) | web 是同一模型的 UI 壳 |
+| Web UI startup | ✅ HTTP 200, localhost:3080 | Title "DeepSeek Harness" |
+| GoTry plugin loading | ✅ (same wiring verified in headless: five tools + persona) | web/headless share the cordis wiring |
+| Skeleton validation reachable | ✅ (see [骨架:openflights] output in the startup logs) | the plugin import chain is alive |
+| Conversation capability | ✅ verified in headless (Yunnan-with-parents full chain) | web is a UI shell over the same model |
 
-## 二、与产品预期的差距(D-4 的具体化)
+## 2. Gaps vs product expectations (concretizing D-4)
 
-| # | 差距 | 严重度 | M3 内赎回方式 |
+| # | Gap | Severity | How M3 redeems it |
 |---|---|---|---|
-| G-1 | **标题是「DeepSeek Harness」不是「GoTry」**——用户看到的是别人的产品 | 高(品牌) | dsh web 支持 title 定制或加登录页/封面;或 M3 自建薄壳(下条) |
-| G-2 | **dsh web 是编码 agent 界面,非旅行产品界面**:对话流可用,但透明卡片/markdown 表格的渲染是通用 chat 质量,非产品级(无卡片化选择题/无地图位/无预算条) | 高(产品体验) | 方向 A:深用 dsh 的 `presentCall`/`presentResult` 卡片机制(工具已实现但样式是 generic);方向 B(tech-strategy §7-3):assistant-ui+Vercel AI SDK 自建 3-5 页薄壳。**2026-08-29 校正:自建薄壳试验(零依赖 webui/)因 UI 品质不达产品级撤回(founder 判定),工作台面改走宿主组件 dsh-better-sidebar(见 G-3)** |
-| G-3 | **异步「一小时后回来」在 web 模式的呈现**:dsh 无产品化的工单进度视图 | 中 | 短期:对话内文字进度;中期:gotry-state/async 的只读状态页(一条 /status 路由)。**2026-08-29 最小切片已落地(issue #25)**:`gotry_artifacts_list/read` 在 dsh 内发现+行号阅读工单交付与工作目录 md(read 卡);**2026-09-10 #285** 增加公开 `./client` keyed Web cards，fresh-profile E2E 覆盖 list→select/open→read→edit→updated-read；完整账本感知「产物 Tab」仍不是本切片。dsh web 右侧工作台(文件树/Markdown/Mermaid/PDF 预览)继续作为额外工作区预览面 |
-| G-4 | 会话/状态是 dsh 的 session,非 TripState 的产品视图(wish pool/动机画像无处可看) | 中 | 自建壳的三个页面:对话/wish pool/动机画像(TripState 已有 JSON);或经 better-sidebar 三方 Tab API(registerTab,client-half)挂只读页 |
-| G-5 | 无移动端 | 低(M3 种子用户是邀请制桌面优先可接受) | M4 后 |
+| G-1 | **The title is "DeepSeek Harness", not "GoTry"** — users see someone else's product | High (brand) | dsh web supports title customization or adding a login/cover page; or M3 builds its own thin shell (next row) |
+| G-2 | **dsh web is a coding-agent UI, not a travel-product UI**: the conversation flow works, but transparency card/markdown table rendering is generic chat quality, not product grade (no card-style multiple-choice gates / no map slot / no budget bar) | High (product experience) | Direction A: go deep on dsh's `presentCall`/`presentResult` card mechanism (tools implemented but styling is generic); Direction B (tech-strategy §7-3): build a 3-5 page thin shell with assistant-ui + Vercel AI SDK. **2026-08-29 correction: the self-built thin-shell experiment (zero-dependency webui/) was withdrawn because UI quality fell below product grade (founder verdict); the workbench surface now goes through the host component dsh-better-sidebar (see G-3)** |
+| G-3 | **Presentation of async "come back in an hour" in web mode**: dsh has no productized work-order progress view | Medium | Short term: in-conversation text progress; mid term: a read-only status page for gotry-state/async (a single /status route). **2026-08-29 minimal slice landed (issue #25)**: `gotry_artifacts_list/read` inside dsh discovers and reads work-order deliverables and working-directory md files with line numbers (read card); **2026-09-10 #285** added public keyed Web cards under `./client`, with fresh-profile E2E covering list→select/open→read→edit→updated-read; a full ledger-aware "Artifacts tab" is still not part of this slice. The dsh web right-side workbench (file tree/Markdown/Mermaid/PDF preview) continues as an additional workspace preview surface |
+| G-4 | Session/state is dsh's session, not a product view of TripState (wish pool / motivation profile are visible nowhere) | Medium | Three pages of the self-built shell: conversation / wish pool / motivation profile (TripState already has the JSON); or mount read-only pages via better-sidebar's third-party Tab API (registerTab, client-half) |
+| G-5 | No mobile | Low (M3 seed users are invite-only; desktop-first is acceptable) | After M4 |
 
-## 三、建议(呈 §7-3 决策)
+## 3. Recommendation (for the §7-3 decision)
 
-**方向 B(自建薄壳)为 M3 主线**——理由:
-1. dsh web 的通用性是双刃剑:能跑≠像产品;品牌(G-1)与体验(G-2)在别人的壳里改不动;
-2. GoTry 的 L1 承诺(透明卡片/选择题/地图位)需要的定制深度超过 presentCall 卡片能给的;
-3. 薄壳很薄:对话(桥到 dsh headless 或直接用 LlmPort)+ wish pool/动机画像两个只读页——**核心全部复用,只有壳是新的**;
-4. dsh 仍是运行时底座(headless 模式继续作为引擎入口),壳与底座经 LlmPort 契约解耦——与「不自研 agent 运行时」的创始人约束不冲突(壳是 UI 不是运行时)。
+**Direction B (self-built thin shell) is the M3 mainline** — reasons:
+1. dsh web's generality is double-edged: runnable ≠ product-like; brand (G-1) and experience (G-2) cannot be changed inside someone else's shell;
+2. GoTry's L1 promises (transparency cards / multiple-choice gates / map slot) need a customization depth beyond what presentCall cards can give;
+3. The shell is thin: conversation (bridged to dsh headless, or using LlmPort directly) + two read-only pages for wish pool / motivation profile — **everything core is reused; only the shell is new**;
+4. dsh remains the runtime base (headless mode continues as the engine entry); shell and base decouple via the LlmPort contract — no conflict with the founder's "no in-house agent runtime" constraint (the shell is UI, not a runtime).
 
-**若创始人选方向 A(留在 dsh web)**:M3 只做 G-1(标题/品牌)与 presentCall 卡片样式打磨,接受通用 chat 形态——更快但产品感弱。
+**If the founder picks Direction A (stay on dsh web)**: M3 does only G-1 (title/brand) and presentCall card styling polish, accepting the generic chat form — faster but weaker product feel.
 
-来源:启动实测(localhost:3080)+ headless 同组合验收(b0cfd97)。
+Sources: live startup test (localhost:3080) + headless same-wiring acceptance (b0cfd97).

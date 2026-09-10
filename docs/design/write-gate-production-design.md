@@ -1,308 +1,309 @@
-# WriteGate 生产化设计提案(issue #225 / M5)
+[English](write-gate-production-design.md) | [简体中文](write-gate-production-design.zh-CN.md)
 
-> 定位:M5 交易闭环前的 WriteGate 生产化 proposal,定义授权 receipt、一次确认、供应商未知态、对账/补偿、佣金披露与 HotelByte 首供应链接入边界。
-> 状态:proposal(2026-09-08;只设计,不启封任何预订/支付实现)
-> 上游:[`../roadmap.md`](../roadmap.md) M5、[`../architecture.md`](../architecture.md) ADR-15/17/18/23、[`../rfc/transactional-state-rfc.md`](../rfc/transactional-state-rfc.md) §4.3、[`booking-saga-fsm.md`](booking-saga-fsm.md)、[`effect-interpreter.md`](effect-interpreter.md)、[`milestone-delivery-plan.md`](milestone-delivery-plan.md)、issue #136/#225。
-> 下游:M5 Entry 后的 WriteGate core/outbox/supplier adapter 实现 PR;B2B sponsor 披露面见 [`../milestones/m6-b2b-reuse-walkthrough.md`](../milestones/m6-b2b-reuse-walkthrough.md)。
+# WriteGate Productionization Design Proposal (issue #225 / M5)
 
-## 0. 摘要
+> Positioning: a WriteGate productionization proposal ahead of closing the M5 transactional loop; it defines approval receipts, one-time confirmation, supplier unknown state, reconciliation/compensation, commission disclosure, and the integration boundary for HotelByte as the first supply chain.
+> Status: proposal (2026-09-08; design only; unseals no booking/payment implementation)
+> Upstream: [`../roadmap.md`](../roadmap.md) M5, [`../architecture.md`](../architecture.md) ADR-15/17/18/23, [`../rfc/transactional-state-rfc.md`](../rfc/transactional-state-rfc.md) §4.3, [`booking-saga-fsm.md`](booking-saga-fsm.md), [`effect-interpreter.md`](effect-interpreter.md), [`milestone-delivery-plan.md`](milestone-delivery-plan.md), issues #136/#225.
+> Downstream: implementation PRs for the WriteGate core/outbox/supplier adapter after M5 Entry; the B2B sponsor disclosure surface is covered in [`../milestones/m6-b2b-reuse-walkthrough.md`](../milestones/m6-b2b-reuse-walkthrough.md).
 
-1. **Entry gate 为两项**:M5 在 M4 Exit + 供应链协议同时满足后才能实现;本文不改变 roadmap Exit/Entry。
-2. **首供应链**:M5 首接 `hotelbyte-cli`(公开 MIT CLI,hotel-be 内部资产只 bridge/reference)。当前未取得供应链协议签署/内部授权证据;仅进行只读接口调查与契约准备。
-3. **核心不变量**:任何 booking/payment/refund 类写 effect 必须先有 `pending_writes` L2 intent,再有一次性的可信 L3 receipt;没有 receipt 就没有外部副作用。
-4. **receipt 由可信人类确认回调授权,不由模型工具调用授权**:nonce/challenge 在呈现前由服务端准备并绑定不可变请求;receipt 发行与消费通道只接受可信宿主 UI 确认回调,模型只能请求展示。准备/呈现 → 可信确认 → 原子消费 + outbox,prepared challenge 不构成授权。
-5. **request fingerprint 绑定请求而非按钮**:必含 actor、tenant、traveler principal、供应商、商品/报价、金额、币种、条款 digest、有效期、展示版本与 nonce;并绑定实际 supplier request 的 canonical payload digest(覆盖 holder/guests 中影响履约的字段),或显式绑定既有 immutable `payload_digest`。敏感字段本身不公开落账;展示/确认后替换旅客或联系人必须零写。
-6. **本地 outbox 不等于外部 exactly-once**:receipt 消费事务只产生一个本地 outbox intent;dispatcher 通过数据库原子 claim 获得唯一派发权,并在任何 supplier/network 调用前持久化 `dispatching` 与 immutable attempt id/fencing metadata,并发 worker 只有一个有权派发。**只有原子 claim/`dispatching` 事务尚未提交时,intent 才仍是 `queued`,可由别的 worker claim;一旦 `dispatching` 与 immutable attempt id 已持久化,之后无论 crash 被认为在外呼前还是后、是否存在网络日志、lease 是否过期,都不能自动重领、续派或重放 book——记录缺失只是 evidence absence,不证明未外呼。**已持久化 dispatching 的 crash/timeout/lease expiry 统一进入 `unknown`,只允许使用同一 attempt/`customerReferenceNo` 做 query 或 manual reconcile。GoTry 保证同一 ledger intent 只消费一次并只登记一个 write effect intent、同一 `attempt_id` 只 book 一次;外部副作用是否重复依赖供应商幂等/可查重。unknown 禁止盲重试。fencing/lease 只能保护本地状态转移,不能撤回已发往供应商的请求;lease 过期不能推导无副作用,也不能把已持久化 dispatching 的 intent 回到 queued 再 book。
-7. **供应商 unknown 是一等结果**:超时、进程退出、非 JSON 或连接断开后可能已产生外部副作用;进入查单或人工对账,用户可见文案不得写成失败或退款。query-orders miss 在恢复窗口内仍为 unknown,不能变 reconciled_failed 再重订。
-8. **取消 ≠ 补偿 ≠ 退款到账**:pending 未执行的取消只是 local cancel;confirmed 后的退改才是真实补偿;HotelByte 的取消单、退款单、钱包退款与手续费必须分开投影。
-9. **外呼前派发点重验(#231/#232 收紧)**:排队后的 effect 在任何 supplier/network 调用前重新检查授权、quote/receipt 有效期、当前 immutable request digest、路由/Buyer 与撤回状态。过期/变更/撤回时 supplier write=0,回到重新报价/可信确认;已进入 unknown 的请求继续 query,不能借过期重订。此项与第 6 条的原子 claim/attempt fencing 同为 proposal 设计,不启封 runtime。
+## 0. Abstract
 
-## 1. 非目标与红线
+1. **The Entry gate has two items**: M5 can be implemented only after M4 Exit and the supply chain agreement are both satisfied; this document does not change roadmap Exit/Entry.
+2. **First supply chain**: M5 first integrates `hotelbyte-cli` (a public MIT CLI; hotel-be internal assets are only bridged/referenced). Currently there is no evidence of a signed supply chain agreement or internal authorization; only read-only interface investigation and contract preparation are under way.
+3. **Core invariant**: any booking/payment/refund-class write effect must first have a `pending_writes` L2 intent, then a one-time trusted L3 receipt; no receipt, no external side effect.
+4. **The receipt is authorized by a trusted human confirmation callback, not by a model tool call**: the nonce/challenge is prepared server-side before presentation and bound to the immutable request; the receipt issuance and consumption channels accept only trusted host UI confirmation callbacks — the model can only request presentation. Preparation/presentation → trusted confirmation → atomic consumption + outbox; a prepared challenge does not constitute authorization.
+5. **The request fingerprint binds the request, not the button**: it must include actor, tenant, traveler principal, supplier, product/offer, amount, currency, terms digest, validity period, presentation version, and nonce; it must also bind the canonical payload digest of the actual supplier request (covering fulfillment-affecting fields in holder/guests), or explicitly bind the existing immutable `payload_digest`. Sensitive fields themselves are never written to the public ledger; replacing the traveler or contact after presentation/confirmation must result in zero writes.
+6. **A local outbox is not external exactly-once**: the receipt consumption transaction produces exactly one local outbox intent; the dispatcher obtains sole dispatch rights through an atomic database claim, and persists `dispatching` plus immutable attempt id/fencing metadata before any supplier/network call, so that among concurrent workers only one has the right to dispatch. **Only while the atomic claim/`dispatching` transaction has not yet committed does the intent remain `queued` and claimable by another worker; once `dispatching` and the immutable attempt id are persisted, no matter whether the crash is deemed to have happened before or after the outbound call, whether network logs exist, or whether the lease has expired, the intent can no longer be re-claimed, re-dispatched, or re-booked — missing records only mean evidence absence and do not prove no outbound call.** A crash/timeout/lease expiry with persisted `dispatching` uniformly enters `unknown`; only query or manual reconcile with the same attempt/`customerReferenceNo` is allowed. GoTry guarantees that the same ledger intent is consumed once and registers exactly one write effect intent, and that the same `attempt_id` books at most once; whether external side effects duplicate depends on supplier idempotency/queryability. Blind retries are forbidden while unknown. Fencing/lease can only protect local state transitions; they cannot recall a request already sent to the supplier; lease expiry does not imply no side effect, nor may an intent with persisted `dispatching` return to queued and book again.
+7. **Supplier unknown is a first-class outcome**: after timeout, process exit, non-JSON responses, or connection loss, an external side effect may already exist; enter order query or manual reconciliation, and the user-visible copy must not read as failure or refund. A query-orders miss stays unknown within the recovery window and must not become reconciled_failed followed by rebooking.
+8. **Cancel ≠ compensation ≠ refund received**: canceling a pending, unexecuted suggestion is only a local cancel; refund/change after confirmation is real compensation; HotelByte's cancellation order, refund order, wallet refund, and fees must be projected separately.
+9. **Pre-dispatch re-validation at the dispatch point (#231/#232 tightening)**: a queued effect is re-checked before any supplier/network call for authorization, quote/receipt validity, the current immutable request digest, routing/Buyer, and revocation status. On expiry/change/revocation, supplier write=0 and the flow returns to re-quoting/trusted confirmation; a request already in unknown keeps being queried and must not be rebooked on the grounds of expiry. This item and the atomic claim/attempt fencing of item 6 are both proposal designs and unseal no runtime.
 
-- 不实现生产预订、支付、出票、退款或供应商 adapter。
-- 不新增运行时框架;仍复用 ADR-15 单 SQLite 账本、ADR-17 `booking_saga_fsm.v1` 与 ADR-18 effect interpreter。
-- 本文 §5.3/§5.4 的原子 claim、`dispatching`/attempt id/fencing、外呼前重验与 §12 派发否证均为 #231/#232 未来实现的 proposal 设计与验收口径,当前不落代码、不执行测试,不得伪称已实现或已执行。
-- 不用 sandbox fixture 宣称 M5 Exit;fixture 只能证明闸语义。
-- 不把供应商 API 的“请求已发出”或 CLI `exit 0` 写成“预订成功”;success 必须来自供应商 confirmation、`result.status=verified` 或可查单结果。
-- 不在公开审计日志存证件号、手机号、邮箱、银行卡、cookie、OTP、支付 token、订单原号或原始对话。
-- 不复制 hotel-be 内部代码;HotelByte 只能经公开 MIT `hotelbyte-cli`、子进程 bridge 与供应链协议进入 GoTry。
+## 1. Non-goals and red lines
 
-## 2. HotelByte 首供应链事实与未证前提
+- Do not implement production booking, payment, ticketing, refunds, or supplier adapters.
+- Do not add a runtime framework; continue reusing the ADR-15 single SQLite ledger, ADR-17 `booking_saga_fsm.v1`, and the ADR-18 effect interpreter.
+- The atomic claim, `dispatching`/attempt id/fencing, and pre-dispatch re-validation of §5.3/§5.4, together with the §12 dispatch falsification, are proposal designs and acceptance criteria for future implementation under #231/#232; today no code lands and no tests run, and they must not be claimed as implemented or executed.
+- Do not claim M5 Exit with sandbox fixtures; fixtures can only prove gate semantics.
+- Do not record a supplier API "request sent" or a CLI `exit 0` as "booking succeeded"; success must come from supplier confirmation, `result.status=verified`, or a queryable order result.
+- Do not store ID numbers, phone numbers, emails, bank cards, cookies, OTPs, payment tokens, original order numbers, or raw conversations in public audit logs.
+- Do not copy hotel-be internal code; HotelByte enters GoTry only through the public MIT `hotelbyte-cli`, a subprocess bridge, and the supply chain agreement.
 
-### 2.1 版本与发布物(必须区分三者)
+## 2. HotelByte first supply chain facts and unproven premises
 
-M5 设计不能只依赖版本字符串,必须区分本地后端快照、公开 CLI 源码与实际 npm 发布物。
+### 2.1 Versions and release artifacts (all three must be distinguished)
 
-| 物 | 标识 | 含义 |
+M5 design cannot rely on version strings alone; it must distinguish the local backend snapshot, the public CLI source, and the actual npm release artifact.
+
+| Artifact | Identifier | Meaning |
 |---|---|---|
-| hotel-be 本地参考 | `16467805bb454df89fc894a7823da674348566e3` | 内部后端快照,只 bridge/reference,不复制代码 |
-| CLI gitlink 旧源码 | `hotelbyte-com/hotelbyte-cli` `d62030bb9c132e5797e07371c5af0d2b97fdb819`,`staicli@0.0.2` | 历史源码快照,不作当前发布物依据 |
-| CLI 0.0.3 发版 commit | `41b5c1a8cc85f736aed753705c8c4b83b7666b4a`;PR [#12](https://github.com/hotelbyte-com/hotelbyte-cli/pull/12) `fba0d9f32e22281217f0c754142aa78cf9091847` 加 Node/npm 分发 | 0.0.3 发版点,含占位票 fallback 修复 |
-| CLI 当前 master | `e3bae224d8cee0bb34795198eafcf689a1620df6`,PR [#13](https://github.com/hotelbyte-com/hotelbyte-cli/pull/13) 401 清票重试 + 按调用读凭据目录,仍声明 0.0.3 | master 含 #13,但 npm 0.0.3 tarball 不含 #13 |
-| npm 实际发布物 | [staicli@0.0.3](https://registry.npmjs.org/staicli/0.0.3),发布 2026-09-08T14:21:22.665Z;integrity `sha512-xGzw6KBQ4r5l+CXDbU/35p2nh6ia4t7Hjh+D34IxQEgtaOOkt9iUATmxlFwcspmXCo6NuHoYFhCJ/rJ3rso5fg==`;registry 无 gitHead | adapter 必须钉此发布物,不得硬绑当前 master |
-| GoTry bootstrap 要求 | main `2626167` [`bin/gotry-bootstrap.js`](https://github.com/Danceiny/gotry/blob/2626167a0617c12dacb145307c3db2a566b1ffe8/bin/gotry-bootstrap.js#L104) 默认 `hbcli>=0.0.3`(环境可覆盖) | 仅安装检查,不证明 trade 鉴权 |
+| hotel-be local reference | `16467805bb454df89fc894a7823da674348566e3` | internal backend snapshot; bridge/reference only, no code copying |
+| CLI gitlink old source | `hotelbyte-com/hotelbyte-cli` `d62030bb9c132e5797e07371c5af0d2b97fdb819`, `staicli@0.0.2` | historical source snapshot; not the basis for the current release artifact |
+| CLI 0.0.3 release commit | `41b5c1a8cc85f736aed753705c8c4b83b7666b4a`; PR [#12](https://github.com/hotelbyte-com/hotelbyte-cli/pull/12) `fba0d9f32e22281217f0c754142aa78cf9091847` adds Node/npm distribution | the 0.0.3 release point; includes the placeholder-ticket fallback fix |
+| CLI current master | `e3bae224d8cee0bb34795198eafcf689a1620df6`; PR [#13](https://github.com/hotelbyte-com/hotelbyte-cli/pull/13) adds 401 ticket-clearing retry + per-invocation credential home reading, still declares 0.0.3 | master contains #13, but the npm 0.0.3 tarball does not contain #13 |
+| npm actual release artifact | [staicli@0.0.3](https://registry.npmjs.org/staicli/0.0.3), published 2026-09-08T14:21:22.665Z; integrity `sha512-xGzw6KBQ4r5l+CXDbU/35p2nh6ia4t7Hjh+D34IxQEgtaOOkt9iUATmxlFwcspmXCo6NuHoYFhCJ/rJ3rso5fg==`; the registry has no gitHead | the adapter must pin this release artifact and must not hard-bind to current master |
+| GoTry bootstrap requirement | main `2626167` [`bin/gotry-bootstrap.js`](https://github.com/Danceiny/gotry/blob/2626167a0617c12dacb145307c3db2a566b1ffe8/bin/gotry-bootstrap.js#L104) defaults to `hbcli>=0.0.3` (environment can override) | an installation check only; it does not prove trade authentication |
 
-公开 CLI 仓 tags/releases 为空,docs 仓原生 release 仅 0.0.2/0.0.1,`staicli-v0.0.3` API 404:可确认 npm 0.0.3 实包,不能称原生 0.0.3 发版。adapter 须记录实际 bin/package digest 及能力,不硬绑 master。
+The public CLI repo has no tags/releases; the docs repo has native releases only for 0.0.2/0.0.1; the `staicli-v0.0.3` API returns 404. This confirms the actual npm 0.0.3 package but not a native 0.0.3 release. The adapter must record the actual bin/package digest and capabilities, and must not hard-bind to master.
 
-### 2.2 真实入口(当前调查,未等于协议)
+### 2.2 Real entry points (current investigation; not yet the agreement)
 
-| 阶段 | CLI/API | 设计含义 |
+| Stage | CLI/API | Design implication |
 |---|---|---|
-| rate | `search hotel-rates` → `/api/search/hotelRates` | 保存 `sessionId`/`ratePkgId`;后续 check/book 依赖同 session 语义 |
-| availability | `search check-avail` → `/api/search/checkAvail` | 可用 `status=1`;必须保留原币种金额、取消政策、报价来源 |
-| book | `trade book` → `/api/trade/book` | 需要 `sessionId`/`ratePkgId`/`holder`/`guests`;后端校验 session 缓存 CheckAvail |
-| query | `trade query-orders --customer-reference-nos` → `/api/trade/queryOrders` | 权限过滤后的平台订单查询;OpenAPI 用户不能 supplier 穿透 |
-| cancel | `trade cancel` → `/api/trade/cancel` | 需要 `customerReferenceNo` + 响应给客户的 `supplierReferenceNo`;CLI 没有 refund 命令 |
+| rate | `search hotel-rates` → `/api/search/hotelRates` | persist `sessionId`/`ratePkgId`; later check/book depends on same-session semantics |
+| availability | `search check-avail` → `/api/search/checkAvail` | available is `status=1`; the original-currency amount, cancellation policy, and offer source must be preserved |
+| book | `trade book` → `/api/trade/book` | requires `sessionId`/`ratePkgId`/`holder`/`guests`; the backend validates against the session-cached CheckAvail |
+| query | `trade query-orders --customer-reference-nos` → `/api/trade/queryOrders` | a permission-filtered platform order query; OpenAPI users cannot penetrate through to the supplier |
+| cancel | `trade cancel` → `/api/trade/cancel` | requires `customerReferenceNo` plus the customer-facing `supplierReferenceNo` from the response; the CLI has no refund command |
 
-`trade.ts` 相对旧快照未变:`customerReferenceNo` 可选;无 tenant selector/refund 命令/OTP 参数/timeout 旗标;HTTP 仍 30 秒 abort。
+Relative to the old snapshot, `trade.ts` is unchanged: `customerReferenceNo` is optional; there is no tenant selector/refund command/OTP parameter/timeout flag; HTTP still aborts at 30 seconds.
 
-### 2.3 鉴权与交易能力缺口
+### 2.3 Authentication and trade capability gaps
 
-1. **portal 优先未修复**:npm 0.0.3 与当前 master 仍优先可用 portal 票,`trade`/`checkAvail` 共用 `run→makeClient`,没有 endpoint 级 OpenAPI 身份选择;0.0.3 只跳过 stored-ticket 占位并 fallback,不能称强制 OpenAPI。隔离 credential home + 固定 Buyer/环境仍必要。见 [helpers](https://github.com/hotelbyte-com/hotelbyte-cli/blob/e3bae224d8cee0bb34795198eafcf689a1620df6/src/commands/helpers.ts#L40)、[check-avail](https://github.com/hotelbyte-com/hotelbyte-cli/blob/e3bae224d8cee0bb34795198eafcf689a1620df6/src/commands/search.ts#L105)。
-2. **读鉴权重试不得复用于交易**:npm 0.0.3 `run` 单次;master 的 401 清票重试仍可能再选 portal,audience 选择未修复(见 [retry](https://github.com/hotelbyte-com/hotelbyte-cli/blob/e3bae224d8cee0bb34795198eafcf689a1620df6/src/commands/helpers.ts#L88))。交易 adapter 不得把未来读鉴权重试策略无条件复用于交易。
-3. **#142 已更正历史 401 归因**:历史 401 已更正为选票错误,不是未开通权限;issue 关闭也不代表真实预订/退款 UAT。
+1. **Portal-first is not fixed**: npm 0.0.3 and current master still prefer an available portal ticket; `trade`/`checkAvail` share `run→makeClient`, and there is no endpoint-level OpenAPI identity selection; 0.0.3 only skips the stored-ticket placeholder and falls back, which cannot be called enforced OpenAPI. An isolated credential home plus a fixed Buyer/environment remains necessary. See [helpers](https://github.com/hotelbyte-com/hotelbyte-cli/blob/e3bae224d8cee0bb34795198eafcf689a1620df6/src/commands/helpers.ts#L40), [check-avail](https://github.com/hotelbyte-com/hotelbyte-cli/blob/e3bae224d8cee0bb34795198eafcf689a1620df6/src/commands/search.ts#L105).
+2. **Read-auth retry must not be reused for trade**: npm 0.0.3 `run` is single-shot; master's 401 ticket-clearing retry may still select portal again — audience selection is not fixed (see [retry](https://github.com/hotelbyte-com/hotelbyte-cli/blob/e3bae224d8cee0bb34795198eafcf689a1620df6/src/commands/helpers.ts#L88)). The trade adapter must not unconditionally reuse any future read-auth retry strategy for trade.
+3. **#142 corrected the historical 401 attribution**: the historical 401 was corrected to a rate-selection error, not missing entitlement; and the issue being closed does not mean real booking/refund UAT either.
 
-### 2.4 必须保留为 TODO 的前提
+### 2.4 Premises that must remain TODO
 
-1. **协议未取得签署/授权证据**:Buyer、环境、供应路由、佣金/售后字段、人工对账 SLA、真实 UAT 范围仍待核验。
-2. **`customerReferenceNo` 不是永久幂等**:CLI 可选但 GoTry 必须强制持久化。后端以 Buyer+ref 重用在途/成功单,Cancelled/Failed 允许同 ref 再建;同授权 intent 只绑定不可变 attempt,新订单须新授权。
-3. **30s CLI abort + 长恢复窗口**:CLI HttpClient 默认 30 秒 abort;后端恢复 180 秒 Phase1 再最长 10 分钟 Phase2,迟到订单可自动取消。GoTry timeout/进程退出/非 JSON = unknown,先查单并遵守恢复窗口。
-4. **身份隔离未具备通用 selector**:当前 CLI/后端未找到 `tenantEntityId` selector 或 `DistributorOption`;M5 首接只能固定一个授权 Buyer/供应路由。M6 或多 route 前必须由上游提供真实 selector + session/order 绑定 + 错配拒绝。
-5. **取消/退款字段不能简化**:`supplierReferenceNo` 可能是平台订单号,不得自行解码;`cancel.serviceFee` 不是客户退款金额;订单、取消、退款单、钱包退款是不同 outcome。
-6. **UAT ONLINE Book 有 OTP/全退政策要求**:CLI 无 test/OTP 通道。不得绕过、不得读 OTP、不得做真实交易。
-7. **现有 GoTry 只读 hbcli 桥不可复用为交易边界**:`ts/capabilities/hbcli.ts` spawn 继承 `process.env`,默认 uat/token env 注入,超时 SIGKILL,只看 exit 0 再尝试 JSON,读失败可静态回退;交易 adapter 必须新建受控 env/credential home/identity boundary。
+1. **No signed/authorized evidence exists for the agreement**: Buyer, environment, supply routes, commission/after-sales fields, the manual reconciliation SLA, and the real UAT scope all remain to be verified.
+2. **`customerReferenceNo` is not permanently idempotent**: it is optional in the CLI, but GoTry must enforce persistence. The backend reuses in-flight/succeeded orders by Buyer+ref, and Cancelled/Failed allows re-creating with the same ref; the same authorization intent binds only to an immutable attempt, and a new order requires new authorization.
+3. **30s CLI abort plus a long recovery window**: the CLI HttpClient aborts after 30 seconds by default; the backend recovers for 180 seconds in Phase1 and then up to 10 minutes in Phase2, and late orders may be auto-canceled. GoTry treats timeout/process exit/non-JSON as unknown; query orders first and respect the recovery window.
+4. **Identity isolation has no general selector yet**: no `tenantEntityId` selector or `DistributorOption` has been found in the current CLI/backend; M5 first integration can only pin one authorized Buyer/supply route. Before M6 or multi-route, upstream must provide a real selector plus session/order binding plus mismatch rejection.
+5. **Cancel/refund fields cannot be simplified**: `supplierReferenceNo` may be a platform order number and must not be decoded locally; `cancel.serviceFee` is not the customer refund amount; order, cancellation, refund order, and wallet refund are distinct outcomes.
+6. **UAT ONLINE Book has OTP/fully-refundable policy requirements**: the CLI has no test/OTP channel. Do not bypass it, do not read OTPs, and do not perform real transactions.
+7. **The existing GoTry read-only hbcli bridge cannot be reused as the trade boundary**: `ts/capabilities/hbcli.ts` spawn inherits `process.env`, injects default uat/token env, SIGKILLs on timeout, only checks exit 0 before attempting JSON, and can statically fall back on read failure; the trade adapter must build a new controlled env/credential home/identity boundary.
 
-## 3. 词汇与对象
+## 3. Vocabulary and objects
 
-| 词汇 | 责任 | 必填字段/约束 |
+| Term | Responsibility | Required fields/constraints |
 |---|---|---|
-| `WriteIntent` | L2 建议态,只登记不执行 | `idem_key`,`tenant_id`,`actor_ref`,`principal_ref`,`seam`,`payload_digest`,`created_at`,`expires_at`;现有入口为 `requestPendingWrite` |
-| `RequestFingerprint` | 用户看到并授权的规范请求 | canonical JSON 后 SHA-256;字段见 §4;在呈现前由服务端计算并冻结,确认后不可变 |
-| `PreparedChallenge` | 呈现前由服务端准备的一次性呈现挑战 | `challenge_id`,`idem_key`,`request_fingerprint_sha256`,`presentation_key`,`delivery_nonce_digest`,`actor_ref`,`tenant_id`,`seam`,`prepared_at`,`expires_at`,`status=prepared\|confirmed\|consumed\|expired`;nonce 在呈现前生成并绑定不可变请求;`prepared` 不构成授权,未确认的 challenge 不能消费 |
-| `ApprovalReceipt` | L3 一次性确认凭证,仅在可信人类确认回调后由服务端发行 | `receipt_id`,`challenge_id`,`idem_key`,`request_fingerprint_sha256`,`actor_ref`,`tenant_id`,`principal_ref`,`amount_total`,`currency`,`terms_digest`,`valid_until`,`approved_at`,`presentation_key`,`delivery_nonce_digest`;由服务端账本在可信确认回调后生成,不接受模型/客户端拼装 |
-| `ApprovalClaim` | receipt/nonce 一次消费权威 | 独立表 `approval_claims(tenant_id, receipt_id PRIMARY KEY, challenge_id, idem_key, nonce_digest, request_fingerprint_sha256, issued_at, consumed_at)`;`receipt_id` 全局唯一,`challenge_id`/`nonce_digest` 唯一;与 outbox intent 同一 SQLite 事务落账 |
-| `WriteEffectIntent` | outbox 中待执行的外部副作用意图 | `tenant_id`,`effect_name`,`idem_key`,`receipt_id`,`supplier_attempt_key`,`request_fingerprint_sha256`,`attempt_budget`,`next_action`;派发态 `dispatch_status=queued\|dispatching\|dispatched\|rejected`、immutable `attempt_id`、`fencing_token`、`claimed_by`、`lease_until`、`reject_reason`;`attempt_id` 在任何 supplier/network 调用前持久化且不可变;`rejected` 为 outbox/dispatch 层的不可派发终态(外呼前重验失败),**不是** `pending_writes` 的新状态 |
-| `SupplierOutcome` | 供应商结果投影 | `success | failed | unknown | reconciled_success | reconciled_failed | cancel_submitted | refund_pending | refunded | compensated_failed`,附供应商 receipt/refund digest |
-| `RedactedAuditEvent` | 可分享审计面 | HMAC 假名主体 + digest + 金额/币种/条款版本;不含 PII/secret/raw supplier payload |
+| `WriteIntent` | L2 suggestion state; registers only, never executes | `idem_key`,`tenant_id`,`actor_ref`,`principal_ref`,`seam`,`payload_digest`,`created_at`,`expires_at`; the existing entry point is `requestPendingWrite` |
+| `RequestFingerprint` | the canonical request the user sees and authorizes | SHA-256 over canonical JSON; fields in §4; computed and frozen server-side before presentation, immutable after confirmation |
+| `PreparedChallenge` | a one-time presentation challenge prepared server-side before presentation | `challenge_id`,`idem_key`,`request_fingerprint_sha256`,`presentation_key`,`delivery_nonce_digest`,`actor_ref`,`tenant_id`,`seam`,`prepared_at`,`expires_at`,`status=prepared\|confirmed\|consumed\|expired`; the nonce is generated before presentation and bound to the immutable request; `prepared` does not constitute authorization, and an unconfirmed challenge cannot be consumed |
+| `ApprovalReceipt` | the L3 one-time confirmation credential, issued by the server only after a trusted human confirmation callback | `receipt_id`,`challenge_id`,`idem_key`,`request_fingerprint_sha256`,`actor_ref`,`tenant_id`,`principal_ref`,`amount_total`,`currency`,`terms_digest`,`valid_until`,`approved_at`,`presentation_key`,`delivery_nonce_digest`; generated by the server-side ledger after the trusted confirmation callback; model/client assembly is not accepted |
+| `ApprovalClaim` | the one-time consumption authority for receipt/nonce | standalone table `approval_claims(tenant_id, receipt_id PRIMARY KEY, challenge_id, idem_key, nonce_digest, request_fingerprint_sha256, issued_at, consumed_at)`; `receipt_id` globally unique, `challenge_id`/`nonce_digest` unique; recorded in the same SQLite transaction as the outbox intent |
+| `WriteEffectIntent` | a pending external side effect intent in the outbox | `tenant_id`,`effect_name`,`idem_key`,`receipt_id`,`supplier_attempt_key`,`request_fingerprint_sha256`,`attempt_budget`,`next_action`; dispatch state `dispatch_status=queued\|dispatching\|dispatched\|rejected`, immutable `attempt_id`, `fencing_token`, `claimed_by`, `lease_until`, `reject_reason`; `attempt_id` is persisted before any supplier/network call and is immutable; `rejected` is an undispatchable terminal state at the outbox/dispatch layer (pre-dispatch re-validation failure), **not** a new `pending_writes` state |
+| `SupplierOutcome` | the projection of the supplier result | `success | failed | unknown | reconciled_success | reconciled_failed | cancel_submitted | refund_pending | refunded | compensated_failed`, with supplier receipt/refund digests attached |
+| `RedactedAuditEvent` | the shareable audit surface | HMAC pseudonymous subjects + digests + amount/currency/terms version; no PII/secrets/raw supplier payloads |
 
-receipt/nonce 一次消费权威用独立表 `approval_claims`。`receipt_id`/`challenge_id`/`nonce_digest` 的单次消费语义与 events 的业务幂等 `idem_key` 不同层,独立表让 unique 约束直接表达“一个 challenge 只能确认一次、一个 receipt 只能被一个 intent 消费”,且崩溃恢复时 claim 与 outbox 同事务回放。
+The one-time consumption authority for receipt/nonce uses the standalone `approval_claims` table. The single-consumption semantics of `receipt_id`/`challenge_id`/`nonce_digest` live at a different layer from the events' business idempotency `idem_key`; a standalone table lets unique constraints directly express "one challenge can be confirmed only once, and one receipt can be consumed by only one intent", and during crash recovery the claim replays in the same transaction as the outbox.
 
-`pending_writes.status` 继续只用 ADR-17 的 `pending | confirmed | compensated`。供应商 `unknown` 不塞进 saga 状态字母表,而是 `SupplierOutcome` 投影:本地已经消费 receipt 并进入 confirmed,但外部世界尚未可判。这样不推翻 `booking_saga_fsm.v1`,又能诚实表达对账状态。
+`pending_writes.status` continues to use only ADR-17's `pending | confirmed | compensated`. Supplier `unknown` is not stuffed into the saga state alphabet; instead it becomes a `SupplierOutcome` projection: locally the receipt has already been consumed and the state has entered confirmed, but the external world is not yet decidable. This does not overturn `booking_saga_fsm.v1` while honestly expressing reconciliation status.
 
-## 4. Request fingerprint 字段
+## 4. Request fingerprint fields
 
-request fingerprint 必须由代码 canonicalize,并在展示卡、approval receipt、supplier write effect 三处同源引用。
+The request fingerprint must be canonicalized by code and referenced from the same source in all three places: the presentation card, the approval receipt, and the supplier write effect.
 
-| 字段 | 说明 | 变更后果 |
+| Field | Description | Consequence of change |
 |---|---|---|
-| `schema` | `gotry_write_request_fingerprint.v1` | 不匹配即拒绝确认 |
-| `tenant_id` | 账本租户;M6 前也必须存在 | tenant 不同即不同请求 |
-| `actor_ref` | 发起确认的人或 L4 策略,HMAC 假名 | actor 变化需要重确认 |
-| `principal_ref` | traveler principal,HMAC 假名;B2B 中不等同 sponsor/BFF principal | principal 变化需要重确认 |
-| `sponsor_ref` | 可选,HMAC 假名;仅 B2B/合作库存 | sponsor 变化需要重披露 |
-| `seam` | 具名 seam,如 `hotelbyte-hotel-book-confirm` | 未登记 seam fail-closed |
-| `supplier` | vendor/channel + CLI/API version + Buyer/route digest | vendor 或身份路由变化需要重确认 |
-| `product_ref` | `sessionId`/`ratePkgId`/offer digest;不存 PII | offer 变化需要重确认 |
-| `travel_terms` | 入离店、人数、房型、早餐、取消政策、税费等 digest | 条款变化需要重确认 |
-| `amount_total` | 用户授权总金额,最小货币单位;保留原币种 | 金额变化需要重确认 |
-| `currency` | ISO 4217 或供应商原币种映射 | 币种变化需要重确认 |
-| `commission_disclosure` | 佣金/赞助/返利口径 digest,可为 none 但必须显式 | 披露变化需要重确认 |
-| `valid_until` | 报价/授权有效期,必须早于供应商 quote expiry | 过期拒绝确认 |
-| `presentation_key` | 用户实际看到的卡片版本 digest | 卡片重排/删字段需要重确认 |
-| `delivery_nonce_digest` | 服务端在呈现前生成并持久绑定不可变请求的 nonce/challenge digest;用户看到的 fingerprint 已含此 nonce | nonce 不匹配、未呈现即确认、确认后改 fingerprint 均拒绝 |
+| `schema` | `gotry_write_request_fingerprint.v1` | mismatch rejects confirmation |
+| `tenant_id` | ledger tenant; must exist even before M6 | a different tenant means a different request |
+| `actor_ref` | the human or L4 policy initiating confirmation, HMAC pseudonym | an actor change requires re-confirmation |
+| `principal_ref` | the traveler principal, HMAC pseudonym; in B2B not the same as the sponsor/BFF principal | a principal change requires re-confirmation |
+| `sponsor_ref` | optional, HMAC pseudonym; B2B/partner inventory only | a sponsor change requires re-disclosure |
+| `seam` | a named seam, e.g. `hotelbyte-hotel-book-confirm` | an unregistered seam fails closed |
+| `supplier` | vendor/channel + CLI/API version + Buyer/route digest | a vendor or identity-route change requires re-confirmation |
+| `product_ref` | `sessionId`/`ratePkgId`/offer digest; no PII stored | an offer change requires re-confirmation |
+| `travel_terms` | digest of check-in/check-out, party size, room type, breakfast, cancellation policy, taxes/fees, etc. | a terms change requires re-confirmation |
+| `amount_total` | the user-authorized total amount in the smallest currency unit; original currency preserved | an amount change requires re-confirmation |
+| `currency` | ISO 4217 or the supplier's original-currency mapping | a currency change requires re-confirmation |
+| `commission_disclosure` | digest of the commission/sponsorship/rebate terms; may be none but must be explicit | a disclosure change requires re-confirmation |
+| `valid_until` | the offer/authorization validity period; must precede the supplier quote expiry | expiry rejects confirmation |
+| `presentation_key` | digest of the card version the user actually saw | card re-layout or field removal requires re-confirmation |
+| `delivery_nonce_digest` | the nonce/challenge digest generated by the server before presentation and durably bound to the immutable request; the fingerprint the user sees already contains this nonce | nonce mismatch, confirmation without presentation, or a fingerprint change after confirmation are all rejected |
 
-**supplier payload digest 绑定(#231/#232 收紧)**:`request_fingerprint_sha256` 必须绑定实际 supplier request 的 canonical payload digest——覆盖 holder/guests 对象中影响履约的字段(入住人身份/人数/房型/日期等),或显式绑定既有 immutable `payload_digest`。不能只比较金额/房型而允许在展示/确认后更换旅客或预订联系人;展示或确认后替换 holder/guests 或联系人必须零 supplier write,需要新 quote/intent/receipt。敏感字段(证件号/手机号/邮箱/支付 token)本身不公开落账,只以其 digest 或 HMAC 假名进入 fingerprint 与审计面(见 §11)。
+**Supplier payload digest binding (#231/#232 tightening)**: `request_fingerprint_sha256` must bind the canonical payload digest of the actual supplier request — covering the fulfillment-affecting fields in the holder/guests objects (guest identity/party size/room type/dates, etc.) — or explicitly bind the existing immutable `payload_digest`. Comparing only amount/room type must not allow swapping the traveler or the booking contact after presentation/confirmation; replacing holder/guests or the contact after presentation or confirmation must result in zero supplier writes and requires a new quote/intent/receipt. Sensitive fields (ID numbers/phone numbers/emails/payment tokens) themselves are never written to the public ledger; only their digests or HMAC pseudonyms enter the fingerprint and the audit surface (see §11).
 
-## 5. 状态机与执行序列
+## 5. State machine and execution sequence
 
-### 5.1 L2:建议态与呈现前准备
+### 5.1 L2: suggestion state and pre-presentation preparation
 
-1. planner 生成可写建议时,调用现有 `requestPendingWrite`。若后续实现需要新 facade,须在实现 PR 中显式定义并补 ADR 让渡。
-2. `payload` 内只存可展示语义与 digest;敏感旅客/支付字段不进账本。
-3. 同一 `tenant_id + idem_key` 重复提议是 no-op,返回既有 pending/confirmed/compensated 状态。
-4. 展示卡必须包含总价、币种、条款摘要、有效期、取消规则、佣金/赞助披露与“确认只消费一次”。
-5. **呈现前准备**:`RequestFingerprint` 与 `delivery_nonce` 由服务端在呈现给用户之前计算/生成,写入 `PreparedChallenge`(`status=prepared`)并绑定不可变请求。用户看到的 fingerprint 已含此 nonce;确认后不得再改 fingerprint 或 nonce。`prepared` 不构成授权,只能被一次可信确认回调升级。
+1. When the planner generates a writable suggestion, it calls the existing `requestPendingWrite`. If a later implementation needs a new facade, it must be explicitly defined in the implementation PR with an ADR documenting the handover.
+2. `payload` stores only presentable semantics and digests; sensitive traveler/payment fields never enter the ledger.
+3. A repeated proposal with the same `tenant_id + idem_key` is a no-op and returns the existing pending/confirmed/compensated state.
+4. The presentation card must include the total price, currency, terms summary, validity period, cancellation rules, commission/sponsorship disclosure, and "confirmation consumes exactly once".
+5. **Pre-presentation preparation**: the server computes/generates the `RequestFingerprint` and `delivery_nonce` before presenting to the user, writes the `PreparedChallenge` (`status=prepared`), and binds them to the immutable request. The fingerprint the user sees already contains this nonce; after confirmation neither the fingerprint nor the nonce may change. `prepared` does not constitute authorization and can only be escalated by one trusted confirmation callback.
 
-### 5.2 L3:可信人类确认与原子消费
+### 5.2 L3: trusted human confirmation and atomic consumption
 
-**授权来源(模型工具调用不等于人确认)**:
+**Authorization source (a model tool call is not human confirmation)**:
 
-receipt 发行与消费通道只接受由可信宿主 UI/交互确认回调派生的 approval authority。回调必须带服务端绑定的 actor/tenant/seam/presentation challenge;模型/planner 在同一已鉴权会话内可以请求展示可写卡片,但**不能调用 receipt 发行或确认消费通道**。同一合法 actor、合法 snapshot 下,模型发起的确认必须被拒绝且不产生 outbox;只有真人回调才可授权。字段匹配不等于用户许可。
+The receipt issuance and consumption channels accept only approval authority derived from trusted host UI/interaction confirmation callbacks. The callback must carry the server-bound actor/tenant/seam/presentation challenge; the model/planner may request presentation of a writable card within the same authenticated session, but **must not call the receipt issuance or confirmation consumption channels**. With the same legitimate actor and legitimate snapshot, a model-initiated confirmation must be rejected and must not produce an outbox; only a real human callback can authorize. Field matching is not user permission.
 
-**顺序:准备/呈现 → 可信确认 → 原子消费 + outbox**:
+**Order: preparation/presentation → trusted confirmation → atomic consumption + outbox**:
 
-1. **准备/呈现**:服务端在呈现前生成 `PreparedChallenge`(nonce + fingerprint + presentation_key,`status=prepared`),卡片按此记录渲染。
-2. **可信确认**:可信宿主确认回调引用 `challenge_id`;服务端校验回调绑定(actor/tenant/seam/presentation challenge 与 `PreparedChallenge` 一致),把 `PreparedChallenge.status` 置为 `confirmed` 并发行 `ApprovalReceipt`(`approval_claims.consumed_at` 仍为空)。未确认的 challenge 不能消费。
-3. **原子消费 + outbox**:在同一 SQLite 事务内:
-   - 读取 pending intent 与 `approval_claims` 发行记录,校验 tenant/actor/principal/seam/receipt_id/challenge_id 一致;
-   - 重算 request fingerprint,与发行记录 `request_fingerprint_sha256` 逐字节一致;
-   - 校验 `valid_until` 未过、`presentation_key` 与呈现版本一致、`nonce_digest` 未被消费;
-   - `UPDATE approval_claims SET consumed_at=? WHERE receipt_id=? AND consumed_at IS NULL`,影响行数为 1(原子单次消费);跨 intent 重放同一 receipt/nonce/challenge 返回 `approval-claimed`,不得执行 supplier effect;
-   - `UPDATE pending_writes ... WHERE status='pending' AND receipt_id=?`,影响行数为 1;
-   - 追加 `write.confirmed` 与 `WriteEffectIntent` outbox intent(携带 `receipt_id`)。
+1. **Preparation/presentation**: the server generates the `PreparedChallenge` before presentation (nonce + fingerprint + presentation_key, `status=prepared`); the card renders from this record.
+2. **Trusted confirmation**: the trusted host confirmation callback references `challenge_id`; the server validates the callback binding (actor/tenant/seam/presentation challenge consistent with the `PreparedChallenge`), sets `PreparedChallenge.status` to `confirmed`, and issues the `ApprovalReceipt` (`approval_claims.consumed_at` still empty). Unconfirmed challenges cannot be consumed.
+3. **Atomic consumption + outbox**: within one SQLite transaction:
+   - read the pending intent and the `approval_claims` issuance record; verify tenant/actor/principal/seam/receipt_id/challenge_id consistency;
+   - recompute the request fingerprint; it must match the issuance record's `request_fingerprint_sha256` byte for byte;
+   - verify `valid_until` has not passed, `presentation_key` matches the presented version, and `nonce_digest` is unconsumed;
+   - run `UPDATE approval_claims SET consumed_at=? WHERE receipt_id=? AND consumed_at IS NULL` with 1 affected row (atomic single consumption); replaying the same receipt/nonce/challenge across intents returns `approval-claimed` and must not execute a supplier effect;
+   - run `UPDATE pending_writes ... WHERE status='pending' AND receipt_id=?` with 1 affected row;
+   - append `write.confirmed` and the `WriteEffectIntent` outbox intent (carrying `receipt_id`).
 
-**拒绝项**:旧 nonce、重新呈现后用旧 challenge 确认、确认后再改 fingerprint/nonce、模型发起的确认、跨 intent 重放——一律 fail-closed,无 outbox、无 supplier effect。
+**Rejections**: an old nonce, confirming with an old challenge after re-presentation, changing fingerprint/nonce after confirmation, a model-initiated confirmation, cross-intent replay — all fail closed, with no outbox and no supplier effect.
 
-`approval_claims` 消费、`pending_writes` 状态转移与 `WriteEffectIntent` outbox 落账必须在同一 SQLite 事务。崩溃注入须覆盖三种顺序:claim 消费后未写 outbox、outbox 写后未转移 pending、转移后未写 claim——任一中断重启都不能产生重复 effect intent 或二次消费。`PreparedChallenge` 长期 `prepared` 未确认的按 `expires_at` 过期,过期 challenge 不能确认或消费。
+The `approval_claims` consumption, the `pending_writes` state transition, and the `WriteEffectIntent` outbox append must live in one SQLite transaction. Crash injection must cover three orderings: claim consumed but outbox not written; outbox written but pending not transitioned; transitioned but claim not written — after a restart from any interruption, no duplicate effect intent or second consumption may appear. A `PreparedChallenge` that stays `prepared` unconfirmed expires per `expires_at`; expired challenges cannot be confirmed or consumed.
 
-并发场景下,两个确认请求只有一个能把 `consumed_at` 从 NULL 更新为非空并写出一个 effect intent;另一个返回 `already-confirmed`、`approval-claimed` 或 `absorbed-compensated`,不得再次执行 supplier effect。
+Under concurrency, of two confirmation requests only one can move `consumed_at` from NULL to non-NULL and write out one effect intent; the other returns `already-confirmed`, `approval-claimed`, or `absorbed-compensated` and must not execute the supplier effect again.
+### 5.3 outbox: crash recovery and the "local once" accounting
 
-### 5.3 outbox:崩溃恢复与"本地一次"口径
+- **Crash before confirmation**: still pending; the user can confirm again; an unconsumed old nonce is handled per its validity period.
+- **Crash after the confirmation transaction, before the supplier call**: the outbox intent exists (`dispatch_status=queued`) but is not attempted; after a worker restarts, it executes the intent via the §5.4 atomic claim.
+- **Crash after claim persistence, before the network call**: once `dispatch_status=dispatching` and the immutable `attempt_id`/`fencing_token` are persisted, no matter whether the crash is deemed to have happened before or after the outbound call, whether network logs exist, or whether the lease has expired, the intent can no longer be re-claimed, re-dispatched, or re-booked — missing records only mean evidence absence and do not prove no outbound call; it uniformly enters `unknown`, and only query or manual reconcile with the same `attempt_id`/`customerReferenceNo` is allowed. Only while the atomic claim/`dispatching` transaction has **not yet committed** does the intent remain `queued`, claimable by another worker.
+- **Crash/timeout/non-JSON/process exit during the supplier call**: the state enters `unknown`; reconcile first via the supplier attempt key, `customerReferenceNo`, or the order query API; directly replaying the write effect is forbidden.
+- **Crash after supplier success, before projection**: fold to success via the supplier receipt/order lookup; if lookup is unavailable, manual reconcile.
+- **Explicit supplier failed return**: record the failed outcome; if the supplier confirms that no external side effect occurred, a new quote/intent can be regenerated at the user's choice.
+- **Lease expiry**: an expired `lease_until` on the dispatching record **does not imply no side effect**, nor may an intent with persisted dispatching return to `queued` and book again; it uniformly enters unknown/query/manual reconcile, reconciled by attempt id. If the lease expires and a late supplier success arrives, it still books only once (folded to `reconciled_success`).
 
-- **确认前崩溃**:仍是 pending,用户可重新确认;旧 nonce 若未消费,按有效期处理。
-- **确认事务后、supplier 前崩溃**:outbox intent 存在(`dispatch_status=queued`)但未 attempt;worker 重启后按 §5.4 原子 claim 执行该 intent。
-- **claim 持久化后、网络前崩溃**:`dispatch_status=dispatching` 与 immutable `attempt_id`/`fencing_token` 一旦持久化,之后无论 crash 被认为在外呼前还是后、是否有网络日志、lease 是否过期,都不能自动重领、续派或重放 book——记录缺失只是 evidence absence,不证明未外呼;统一进入 `unknown`,只允许用同一 `attempt_id`/`customerReferenceNo` 做 query 或 manual reconcile。只有原子 claim/`dispatching` 事务**尚未提交**时,intent 才仍是 `queued`,可由别的 worker claim。
-- **supplier 调用中崩溃/超时/非 JSON/进程退出**:状态进入 `unknown`,先按 supplier attempt key、`customerReferenceNo` 或查单 API 对账;禁止直接重放 write effect。
-- **supplier success 后、投影前崩溃**:通过供应商 receipt/order lookup fold 为 success;若 lookup 不可用则 manual reconcile。
-- **supplier failed 明确返回**:记录 failed outcome;如供应商确认未产生外部副作用,可按用户选择重新生成新 quote/intent。
-- **lease 过期**:dispatching 记录的 `lease_until` 过期**不能推导无副作用**,也不能把已持久化 dispatching 的 intent 回到 `queued` 再 book;一律进入 unknown/query/manual reconcile,按 attempt id 对账。lease 过期且迟到供应商成功仍只 book 一次(fold 为 `reconciled_success`)。
+If a supplier does not support a stable order query key or a manual reconciliation SLA, that supplier cannot enter the automated production WriteGate; it can only stay on manual handling or remain unintegrated.
 
-供应商若不支持稳定查单键或人工对账 SLA,该供应商不能进入自动 production WriteGate;只能保持人工处理或不接入。
+### 5.4 Dispatch rights and attempt fencing (atomic claim, #231/#232 tightening)
 
-### 5.4 派发权与 attempt fencing(原子领取,#231/#232 收紧)
+The receipt consumption transaction (§5.2) produces only one local outbox intent (`dispatch_status=queued`); before actually initiating any supplier/network call, the dispatcher must first obtain the **sole dispatch right** for that intent in one atomic database claim, and persist the dispatch state and immutable attempt metadata in the same transaction:
 
-receipt 消费事务(§5.2)只产生一个本地 outbox intent(`dispatch_status=queued`);真正发起 supplier/network 调用前,dispatcher 必须先在一个数据库原子 claim 中获得该 intent 的**唯一派发权**,并在同一事务内持久化派发态与不可变 attempt 元数据:
+- **Atomic claim**: `UPDATE write_effect_intents SET dispatch_status='dispatching', attempt_id=?, fencing_token=?, claimed_by=?, lease_until=? WHERE tenant_id=? AND idem_key=? AND dispatch_status='queued'` (or an equivalent conditional update; a globally unique `effect_id` whose tenant ownership has been verified inside a trusted transaction may also be used); the claim succeeds only with 1 affected row; subsequent fold/query is likewise scoped to `tenant_id + idem_key`. Among concurrent workers only the one that wins the claim has the right to dispatch; the losers fail and must not initiate supplier calls. The fencing token increases monotonically and is used to reject unauthorized writes from stale leases.
+- **Persist before calling**: `dispatching`, the immutable `attempt_id`, and the `fencing_token` must be persisted **before any supplier/network call** (recorded in the same transaction as the claim). The `attempt_id` is immutable once persisted; reconciliation always references the same `attempt_id` and must not start another; after persistence no re-dispatch or book replay is allowed.
+- **Crash partitioning**: only while the atomic claim/`dispatching` transaction has **not yet committed** does the intent remain `queued`, claimable by another worker. Once `dispatching` and the immutable `attempt_id` are persisted, no matter whether the crash happened before or after the outbound call, whether network logs exist, or whether the lease expired, the intent can no longer be re-claimed, re-dispatched, or re-booked — missing records only mean evidence absence and do not prove no outbound call; it uniformly enters unknown/query/manual reconcile. A database fencing token cannot stop a request already sent to the supplier; fencing/lease can only protect local state transitions, cannot recall a request already sent, and lease expiry must not be used to infer no side effect or to return persisted dispatching to queued.
+- **Local once accounting**: GoTry guarantees that the same ledger intent is consumed once, registers exactly one write effect intent, and that the same `attempt_id` books at most once; whether external side effects duplicate depends on supplier idempotency/queryability, and blind retries are forbidden while unknown.
 
-- **原子 claim**:`UPDATE write_effect_intents SET dispatch_status='dispatching', attempt_id=?, fencing_token=?, claimed_by=?, lease_until=? WHERE tenant_id=? AND idem_key=? AND dispatch_status='queued'`(或等价 conditional update；也可使用已在可信事务内验证 tenant 归属的全局唯一 `effect_id`),影响行数为 1 才算领取成功;后续 fold/query 同样限定 `tenant_id + idem_key`。并发 worker 只有赢得 claim 的那一个有权派发,其余落败且不得发起 supplier 调用。fencing token 单调递增,用于拒绝旧 lease 的越权写。
-- **调用前持久化**:`dispatching`、immutable `attempt_id`、`fencing_token` 必须在**任何 supplier/network 调用前**持久化(与 claim 同事务落账)。`attempt_id` 一旦持久化即不可变;对账一律引用同一 `attempt_id`,不得另起;持久化后不得续派或重放 book。
-- **崩溃分割**:只有原子 claim/`dispatching` 事务**尚未提交**时,intent 才仍是 `queued`,可由别的 worker claim。一旦 `dispatching` 与 immutable `attempt_id` 已持久化,之后无论 crash 在外呼前还是后、是否有网络日志、lease 是否过期,都不能自动重领、续派或重放 book——记录缺失只是 evidence absence,不证明未外呼;统一进入 unknown/query/manual reconcile。数据库 fencing token 不能阻止一个已发往供应商的请求;fencing/lease 只能保护本地状态转移,不能撤回已发请求,也不得以 lease 到期推导无副作用或把 persisted dispatching 回到 queued。
-- **本地一次口径**:GoTry 保证同一 ledger intent 只消费一次、只登记一个 write effect intent、同一 `attempt_id` 只 book 一次;外部副作用是否重复依赖供应商幂等/可查重,unknown 禁止盲重试。
+### 5.5 Pre-dispatch re-validation at the dispatch point (#231/#232 tightening)
 
-### 5.5 外呼前派发点重验(#231/#232 收紧)
+After winning the claim and before initiating any supplier/network call, the dispatcher must re-check the following at the same dispatch point:
 
-赢得 claim 后、发起任何 supplier/network 调用前,dispatcher 必须在同一派发点重新检查:
+1. **Authorization**: the receipt is still valid, `approval_claims.consumed_at` still points to this intent, and there has been no cross-intent replay.
+2. **Quote/receipt validity**: `valid_until` has not passed and is no later than the supplier quote expiry.
+3. **Current immutable request digest**: `request_fingerprint_sha256` (including the §4 supplier payload digest) matches the persisted issuance record byte for byte; holder/guests/contact/routing/amount/terms were not swapped after presentation or confirmation.
+4. **Routing/Buyer**: supplier, Buyer, and supply route match the issuance record; identity isolation has not drifted.
+5. **Revocation status**: no L4 revoke or explicit revocation has been triggered (§9).
 
-1. **授权**:receipt 仍有效、`approval_claims.consumed_at` 仍指向本 intent、未跨 intent 重放。
-2. **quote/receipt 有效期**:`valid_until` 未过,且不晚于供应商 quote expiry。
-3. **当前 immutable request digest**:`request_fingerprint_sha256`(含 §4 的 supplier payload digest)与持久化发行记录逐字节一致;holder/guests/联系人/路由/金额/条款未在展示或确认后被替换。
-4. **路由/Buyer**:供应商、Buyer、供应路由与发行记录一致;身份隔离未漂移。
-5. **撤回状态**:未触发 L4 revoke 或显式撤回(§9)。
+If any item is expired/changed/revoked and the call has **not yet gone out**: **supplier write=0**; record the local rejection reason at the outbox/dispatch (or challenge) layer, set the old effect to an undispatchable terminal state (`dispatch_status=rejected` + `reject_reason`), and **never** return it to `queued`; the user/system then separately creates a new quote/new intent/new trusted confirmation. **A request already in unknown keeps being queried and manually reconciled; authorization expiry must not return it to queued or rebook it.** Layer constraint: the rejection reason exists only at the outbox/dispatch/challenge layer; ADR-17's `pending|confirmed|compensated` three-state alphabet for `pending_writes` is not extended (no `stale`/`cancelled` is added to `pending_writes`); undispatched or preflight-rejected cases always have zero supplier writes and are not projected as supplier failed/canceled orders/refunds. This item is a proposal design and unseals no runtime.
 
-任一项过期/变更/撤回且**尚未外呼**:**supplier write=0**,在 outbox/dispatch(或 challenge)层记录本地拒绝原因,把旧 effect 置为不可派发终态(`dispatch_status=rejected` + `reject_reason`),**不得**把它回到 `queued`;再由用户/系统另行创建新 quote/新 intent/新可信确认。**已进入 unknown 的请求继续 query/manual reconcile,授权过期也不能使它回到 queued 或重订。**层级约束:拒绝原因只存在于 outbox/dispatch/challenge 层,ADR-17 `pending_writes` 的 `pending|confirmed|compensated` 三态字母表不扩展(不给 `pending_writes` 加 `stale`/`cancelled`);未派发或 preflight 拒绝一律零 supplier write,不投影成 supplier failed/cancel 订单/refund。此项是 proposal 设计,不启封 runtime。
+## 6. HotelByte adapter admission matrix
 
-## 6. HotelByte adapter 准入矩阵
-
-| 维度 | 必须设计/验证 | 最小 fixture E2E | 真实 UAT gate |
+| Dimension | Must design/verify | Minimal fixture E2E | Real UAT gate |
 |---|---|---|---|
-| CLI source | 钉 npm `staicli@0.0.3` 发布物(integrity 见 §2.1),不硬绑 master;固定 `--json --env=uat` 前缀,不假定 flag 任意位置等价 | `trade book --help` exit0;`--tenant-entity-id` exit1 unknown option;版本/integrity 漂移 fail-closed | 使用协议授权的发布物;master 含 #13 但 npm tarball 不含,不得混用 |
-| credential boundary | 隔离 credential home + 受控 env;不继承 GoTry 全 `process.env` | fake home 不存在时零凭据读取;错误脱敏 | 固定 Buyer/环境/路由由协议授权 |
-| quote snapshot | `sessionId`/`ratePkgId`/check-avail status/金额/币种/取消政策/来源 digest | check-avail fixture status=1/0/changed | 真实 quote 有有效期与取消条款 |
-| booking | 强制 `customerReferenceNo` 持久化;同 intent 不可变 attempt | `verified`/`pending`/`failed`/exit0-but-pending 均正确投影 | UAT Book 在合法全退政策下执行;OTP 不由 GoTry 读取 |
-| unknown | 30s abort/timeout/non-json/kill 均 unknown | unknown 后只 query/manual reconcile,不重订 | 遵守 180s + 最长10min 恢复窗口 |
-| query-orders | 只按 `customerReferenceNo` 查权限内平台订单 | query success/miss/multiple/permission-denied | 人工对账字段足够,无需原始聊天 |
-| cancel | 需要 `customerReferenceNo + supplierReferenceNo`;CLI 无 refund | cancel submitted/failed/serviceFee not refund | 取消、退款单、钱包退款有真实字段来源 |
-| multi-route | 当前无 selector,只能固定一个 Buyer/route | `--tenant-entity-id` 负例 fail-closed | 上游提供 selector/session/order 绑定前不得多 route |
+| CLI source | pin the npm `staicli@0.0.3` release artifact (integrity in §2.1), no hard-binding to master; fix the `--json --env=uat` prefix; do not assume flags are position-independent | `trade book --help` exit0; `--tenant-entity-id` exit1 unknown option; version/integrity drift fails closed | use the release artifact authorized by the agreement; master contains #13 but the npm tarball does not — do not mix them |
+| credential boundary | isolated credential home + controlled env; do not inherit GoTry's full `process.env` | zero credential reads when the fake home is absent; errors redacted | fixed Buyer/environment/route authorized by the agreement |
+| quote snapshot | `sessionId`/`ratePkgId`/check-avail status/amount/currency/cancellation policy/source digest | check-avail fixtures with status=1/0/changed | a real quote has a validity period and cancellation terms |
+| booking | enforce `customerReferenceNo` persistence; immutable attempt per intent | `verified`/`pending`/`failed`/exit0-but-pending all projected correctly | UAT Book runs under a legal fully-refundable policy; OTP is never read by GoTry |
+| unknown | 30s abort/timeout/non-json/kill all map to unknown | after unknown, only query/manual reconcile, no rebooking | respect the 180s + up-to-10min recovery window |
+| query-orders | query permission-scoped platform orders only by `customerReferenceNo` | query success/miss/multiple/permission-denied | manual reconciliation fields are sufficient; no raw chat needed |
+| cancel | requires `customerReferenceNo + supplierReferenceNo`; the CLI has no refund | cancel submitted/failed/serviceFee is not refund | cancellation, refund order, and wallet refund have real field sources |
+| multi-route | no selector currently; only one fixed Buyer/route | `--tenant-entity-id` negative case fails closed | no multi-route before upstream provides selector/session/order binding |
 
-## 7. 供应商未知态与人工对账
+## 7. Supplier unknown state and manual reconciliation
 
-unknown 的用户文案必须是“结果未知,正在对账”,不是“失败”也不是“已退款”。
+The user copy for unknown must be "outcome unknown, reconciling" — not "failed" and not "refunded".
 
-**query-orders miss 不等于未发生**:HotelByte 后端有长恢复窗口(180s Phase1 再最长 10min Phase2,迟到订单可自动取消)。恢复窗口内 `query-orders` 返回空只能保持 `unknown`,不能变为 `reconciled_failed` 再重订。只有满足以下权威否定证据之一,才能把 unknown 收敛为 `reconciled_failed`:协议约定的稳定终态失败、供应商明确已取消、绑定 Buyer/attempt 的明确无订单证明、或恢复窗口结束且查单仍空并经人工对账确认。
+**A query-orders miss does not mean it did not happen**: the HotelByte backend has a long recovery window (180s Phase1 plus up to 10min Phase2; late orders may be auto-canceled). An empty `query-orders` result within the recovery window can only stay `unknown`; it must not become `reconciled_failed` followed by rebooking. unknown converges to `reconciled_failed` only when one of the following authoritative negative evidences holds: an agreement-defined stable terminal failure, an explicit supplier cancellation, an explicit no-order proof bound to the Buyer/attempt, or the recovery window ending with queries still empty and manual reconciliation confirming it.
 
-| 场景 | 账本状态 | 用户文案 | 后续动作 |
+| Scenario | Ledger state | User copy | Follow-up action |
 |---|---|---|---|
-| pending 未确认取消 | `compensated` | 已取消本地建议,没有下单/扣款 | 无供应商动作 |
-| 确认后 CLI timeout/abort/non-json | `confirmed` + `SupplierOutcome.unknown` | 供应商结果未知,不要重复下单;已进入对账 | `query-orders` 或人工对账 |
-| 窗口内 query miss | `confirmed` + `unknown`(不变) | 仍在对账,供应商可能迟到建单;不要重订 | 等恢复窗口/再查单/人工对账 |
-| 窗口后 query 仍空 + 人工确认无单 | `confirmed` + `reconciled_failed` | 未产生订单/扣款;可重新报价 | 新 intent + 新 receipt |
-| 查单发现成功(含迟到建单) | `confirmed` + `reconciled_success` | 预订已确认,给出供应商回执摘要 | 后续取消走补偿 |
-| 迟到订单被供应商自动取消 | `confirmed` + `reconciled_failed` 或 `cancel_submitted`(按供应商回执) | 订单已由供应商取消,按其规则处理 | 展示取消回执;如需重订走新 intent |
-| cancel 已提交但退款未到账 | `compensated` + `refund_pending` | 已提交退改,退款状态待更新 | 后续查单/钱包恢复投影 |
-| refund 到账 | `compensated` + `refunded` | 已按供应商规则退款到账 | 展示金额/币种/手续费来源 |
+| cancel while pending, unconfirmed | `compensated` | local suggestion canceled; no order placed / no charge | no supplier action |
+| after confirmation, CLI timeout/abort/non-json | `confirmed` + `SupplierOutcome.unknown` | supplier outcome unknown; do not place the order again; reconciliation has started | `query-orders` or manual reconciliation |
+| query miss within the window | `confirmed` + `unknown` (unchanged) | still reconciling; the supplier may create the order late; do not rebook | wait out the recovery window / query again / manual reconciliation |
+| query still empty after the window + manual confirmation of no order | `confirmed` + `reconciled_failed` | no order/charge was produced; a new quote is possible | new intent + new receipt |
+| query finds success (including a late-created order) | `confirmed` + `reconciled_success` | the booking is confirmed; show the supplier receipt summary | later cancellation goes through compensation |
+| late order auto-canceled by the supplier | `confirmed` + `reconciled_failed` or `cancel_submitted` (per the supplier receipt) | the order was canceled by the supplier; handle it per its rules | show the cancellation receipt; rebooking goes through a new intent |
+| cancel submitted but the refund has not arrived | `compensated` + `refund_pending` | the refund/change was submitted; refund status pending update | later order query / wallet restore projection |
+| refund received | `compensated` + `refunded` | the refund has arrived per the supplier's rules | show the amount/currency/fee source |
 
-**反例 E2E(必须覆盖)**:timeout → 窗口内 query miss → 迟到 success(unknown 升 reconciled_success,不重订);timeout → 窗口内 query miss → 迟到 auto-cancel(收敛为 reconciled_failed 或 cancel_submitted,不重订);timeout → 窗口后 query 仍空 → 人工确认无单(才允许 reconciled_failed + 新 intent)。任一反例中,unknown 期间都不得发起第二个同类订单。
+**Negative E2E cases (must be covered)**: timeout → query miss within the window → late success (unknown upgrades to reconciled_success, no rebooking); timeout → query miss within the window → late auto-cancel (converges to reconciled_failed or cancel_submitted, no rebooking); timeout → query still empty after the window → manual confirmation of no order (only then is reconciled_failed + a new intent allowed). In every negative case, no second order of the same kind may be initiated during the unknown period.
 
-人工对账需要最小字段:tenant、idem_key、`customerReferenceNo`、supplier attempt key、request fingerprint digest、时间窗、金额/币种、供应商候选 digest。不得要求人工查看用户原始聊天或 cookie。
+Manual reconciliation needs these minimal fields: tenant, idem_key, `customerReferenceNo`, supplier attempt key, request fingerprint digest, time window, amount/currency, and supplier candidate digests. Requiring a human to inspect raw user chat or cookies is not allowed.
 
-## 8. 取消、补偿与退款分词
+## 8. Cancel, compensation, and refund term separation
 
-- `pending → compensated`:**取消本地建议**。外部副作用未发生,不得写“退款”。
-- `confirmed → compensated`:**真实补偿流程**。必须有供应商取消/退款/改签 receipt 或明确失败原因。
-- HotelByte `trade cancel` 不是 refund 全链闭合;取消、退款单、钱包退款、手续费、客户退款金额必须分开 outcome。
-- unknown 期间不允许用户发起第二个同类订单;只能选择“等待对账 / 人工联系 / 放弃并承认风险”。若供应商协议允许按 `customerReferenceNo` 安全取消 unknown 请求,也必须记录为 external compensation attempt。
+- `pending → compensated`: **cancel the local suggestion**. No external side effect has occurred; do not write "refund".
+- `confirmed → compensated`: **a real compensation flow**. It requires a supplier cancellation/refund/rebooking receipt or an explicit failure reason.
+- HotelByte `trade cancel` does not close the full refund chain; cancellation, refund order, wallet refund, fees, and the customer refund amount must be separate outcomes.
+- During unknown the user may not initiate a second order of the same kind; the options are only "wait for reconciliation / contact a human / give up and accept the risk". If the supplier agreement allows safely canceling the unknown request by `customerReferenceNo`, it must still be recorded as an external compensation attempt.
 
-## 9. L4 自动类与撤回
+## 9. L4 automation and revocation
 
-L4 不是“无确认”,而是“用户预先确认一条可撤回策略”。策略本身需要 L3 receipt:
+L4 is not "no confirmation" but "the user pre-confirms a revocable policy". The policy itself needs an L3 receipt:
 
-- scope:供应商、目的地/日期范围、金额上限、币种、人数、库存类型、有效期。
-- guard:每笔自动写仍重算 request fingerprint;超 scope 即降级 L3。
-- revoke:撤回是账本事件,立即阻断未来 effect intent;已执行的 effect 只能走补偿,不能被撤回抹除。
-- audit:每笔自动写的 receipt 标注 `approval_mode='l4_policy'`、policy digest、当次 request fingerprint。
-- expiry:策略必须到期;续期需要新 receipt。
+- scope: supplier, destination/date range, amount cap, currency, party size, inventory type, validity period.
+- guard: every automatic write still recomputes the request fingerprint; out of scope, downgrade to L3.
+- revoke: revocation is a ledger event that immediately blocks future effect intents; an executed effect can only go through compensation and cannot be erased by revocation.
+- audit: the receipt of every automatic write is annotated with `approval_mode='l4_policy'`, the policy digest, and that run's request fingerprint.
+- expiry: the policy must expire; renewal requires a new receipt.
 
-## 10. 佣金/赞助披露
+## 10. Commission/sponsorship disclosure
 
-每个可写卡片在确认前必须披露:
+Before confirmation, every writable card must disclose:
 
-1. 用户支付总价与币种。
-2. GoTry/合作方是否获得佣金、返利、赞助或优先展示收益。
-3. 披露来源:供应商字段、合同规则、或“无收益”。未知不得默认为无。
-4. B2B 下 sponsor 收益和 traveler 动机分开呈现;披露 sponsor 收益不等于满足 traveler 动机。
-5. 披露 digest 纳入 request fingerprint;披露变化使旧 receipt 失效。
+1. The total price the user pays and its currency.
+2. Whether GoTry/partners receive commissions, rebates, sponsorship, or preferred-placement benefits.
+3. The disclosure source: supplier fields, contract rules, or "no benefit". Unknown must not default to none.
+4. In B2B, sponsor benefits and traveler motivations are presented separately; disclosing sponsor benefits does not satisfy traveler motivations.
+5. The disclosure digest enters the request fingerprint; a disclosure change invalidates the old receipt.
 
-M6 sponsor 披露槽位仍保持 proposal:优先由 sponsor 插件注入渲染片段,避免内核感知 sponsor。若 M5 C 端先行需要 schema 预留,必须保持 B2C 空值显式可审计。
+The M6 sponsor disclosure slot remains a proposal: prefer injecting render fragments from a sponsor plugin, keeping the kernel unaware of sponsors. If M5's consumer-first path needs a schema reservation, the B2C empty value must remain explicit and auditable.
 
-## 11. 审计与脱敏
+## 11. Audit and redaction
 
-| 数据 | 公开/可提交 | 私有/本地 | 禁止 |
+| Data | Public/committable | Private/local | Forbidden |
 |---|---|---|---|
-| tenant/actor/principal/sponsor | HMAC-SHA256 假名 | salt/key 私有 | 姓名、邮箱、手机号 |
-| request | SHA-256 digest + 可展示摘要 | 供应商原 payload 可本地加密保存 | cookie、OTP、支付 token |
-| receipt | receipt id + digest + 金额/币种/有效期 | 原始 approval event 可本地保存 | 原始聊天全文 |
-| supplier outcome | success/failed/unknown + supplier receipt digest | 查单截图/订单号可本地加密 | 未脱敏订单号进 git |
-| errors | reason code + redacted evidence | 详细日志本地 | 反射用户秘密或 raw supplier response |
+| tenant/actor/principal/sponsor | HMAC-SHA256 pseudonyms | salt/key private | names, emails, phone numbers |
+| request | SHA-256 digest + presentable summary | the raw supplier payload may be stored encrypted locally | cookies, OTPs, payment tokens |
+| receipt | receipt id + digest + amount/currency/validity | the raw approval event may be stored locally | full raw chat transcripts |
+| supplier outcome | success/failed/unknown + supplier receipt digest | order query screenshots/order numbers may be stored encrypted locally | unredacted order numbers entering git |
+| errors | reason code + redacted evidence | detailed logs stay local | echoing user secrets or raw supplier responses |
 
-所有错误输出必须优先 reason code,不得把供应商 raw response 直接塞进 LLM 可见文本。
+All error output must lead with a reason code; a supplier raw response must not be pasted directly into LLM-visible text.
 
-## 12. 验收矩阵
+## 12. Acceptance matrix
 
-| 类别 | 正例 E2E | 负例/否证 | 通过条件 |
+| Category | Positive E2E | Negative/falsification | Pass criteria |
 |---|---|---|---|
-| receipt 绑定 | 同一 pending intent 展示后确认;receipt digest 与 request fingerprint 一致 | 金额 +1、币种改、条款 digest 改、presentation_key 改、nonce 复用 | 正例 confirmed + one local effect intent;负例 fail-closed 且无 supplier effect |
-| 授权来源 | 可信宿主 UI 确认回调带 actor/tenant/seam/challenge;服务端发行 receipt | 同一合法 actor + 合法 snapshot 下模型发起确认;客户端自带 receipt_id/nonce/fingerprint | 模型确认被拒且无 outbox;仅真人回调授权;字段匹配≠许可 |
-| nonce 时序 | nonce/fingerprint 在呈现前由服务端准备并绑定不可变请求 | 呈现后才生成 nonce;确认后再改 fingerprint;重新呈现后用旧 challenge 确认 | 用户所见 fingerprint 含 nonce;确认后不可变;旧/重呈现 challenge 拒绝 |
-| receipt 发行权威 | 可信确认回调引用 challenge_id,服务端发行 receipt 并绑定 pending | 跨 intent 重放同一 receipt/challenge;prepared challenge 直接消费 | 仅账本发行记录有效;prepared 不授权;跨 intent 重放返回 approval-claimed 且无 effect |
-| actor/tenant/principal | tenant A actor 确认 A 的 intent | tenant B 用同 idem_key/receipt 确认;BFF principal 当 traveler principal | 跨租户/跨 principal 全拒;审计只见 HMAC |
-| 一次确认 | 双并发确认同一 idem_key | 两个进程同时提交 receipt | 仅一条 `approval_claims.consumed_at`,仅一条 `write.confirmed`,仅一条 local effect intent |
-| 崩溃恢复 | 确认事务后 kill,重启 worker | claim 消费/outbox/pending 转移三种顺序崩溃注入 | 不丢 claim、不重复登记 effect intent、不二次消费;终态可 fold |
-| 派发权唯一(#231/#232) | 双 dispatcher 竞争同一 queued intent | 两个 worker 同时 claim 同一 intent | 仅一个 claim 成功(`dispatch_status=dispatching`、`attempt_id` 唯一);落败者无 supplier 调用 |
-| 派发 tenant 边界(#231/#232) | tenant A/B 各有相同 `idem_key` 的 queued intent | A worker 仅凭 `idem_key` claim/fold/query 到 B intent | claim/fold/query 均限定 `tenant_id + idem_key`(或已验证归属的全局 `effect_id`);跨 tenant 影响行数=0、supplier write=0 |
-| attempt fencing 时序(#231/#232) | claim 事务未提交时 intent 仍 queued,可被别的 worker claim;dispatching+attempt 持久化后 crash(外呼前/后)、lease 过期 | claim 未持久化即外呼;把已持久化 dispatching 的 intent 回到 queued 再 book | 只有 claim 事务未提交才回 queued;dispatching+attempt 持久化后任何 crash 都不得 book/续派,统一 unknown,按 attempt id fold;lease 过期不回 queued |
-| persisted-dispatching crash 无网络日志(#231/#232 反证) | — | 无网络日志即推断未外呼并 book/续派 | 仍不得 book,进入 unknown/query/manual reconcile |
-| lease/fencing/授权过期回 queued(#231/#232 反证) | — | lease expiry/fencing 失效/授权过期把 unknown 或 persisted dispatching 回 queued 再 book | 不能回 queued;unknown 继续 query,preflight 失效零写并另建新 intent |
-| 外呼前重验(#231/#232) | quote/receipt 有效、digest 不变、路由/Buyer 一致、未撤回 | quote 过期/digest 变更/路由或 Buyer 变更/已撤回仍外呼;把旧 effect 回 queued | 过期/变更/撤回且未外呼:旧 effect 置 `rejected`(outbox 层)零写,另建新 quote/intent/receipt,不回 queued;已 unknown 继续 query,授权过期也不回 queued 或重订 |
-| queue/preflight 本地拒绝层级(#231/#232 反证) | preflight 发现过期/变更/撤回且未外呼,旧 effect 不可派发 | 给 `pending_writes` 加 `stale`/`cancelled` 状态;未派发过期投影成 supplier failed/cancel/refund | 拒绝只记在 outbox/dispatch/challenge 层,ADR-17 `pending_writes` `pending\|confirmed\|compensated` 三态不变,零 supplier failure/refund 投影 |
-| fingerprint 绑定 supplier payload(#231/#232) | holder/guests 履约字段纳入 supplier payload digest | 展示/确认后替换旅客或联系人仍 book | 替换后零写,需新 quote/intent/receipt |
-| lease 过期+迟到 success(#231/#232) | dispatching lease 过期后供应商迟到建单 | lease 过期即推断无副作用并重订;迟到 success 二次 book | 仅一次 book,按 attempt id fold 为 `reconciled_success` |
-| HotelByte unknown | CLI timeout/non-json/exit0 pending fixture | 自动重试同 write effect 或并发重订 | unknown + query/manual reconcile;禁止盲重试 |
-| query-orders | customerReferenceNo 查到成功/多条;窗口内 miss 保持 unknown | 窗口内 miss 变 reconciled_failed 再重订;supplierReferenceNo 解码猜测;越权 supplier 穿透 | 只按授权查询面投影;miss 在恢复窗口内不否定外部副作用 |
-| 取消 vs 补偿 | pending cancel;confirmed cancel/refund pending/refunded | pending cancel 写成 refund;compensated 显示钱已退 | 文案与账本分词一致;confirmed 补偿有 receipt/outcome |
-| L4 revoke | policy scope 内自动写一次,撤回后再触发 | revoke 后仍出 outbox;超 scope 自动写 | 撤回阻断未来;超 scope 降 L3 |
-| 佣金披露 | 确认卡含佣金/无佣金/赞助来源 | 披露未知仍允许;披露变化沿用旧 receipt | 披露 digest 入 fingerprint |
-| 审计脱敏 | 生成 redacted audit report | 错误含 email/token/order raw id | 可分享报告无 PII/secret |
+| receipt binding | confirm after presentation of the same pending intent; the receipt digest matches the request fingerprint | amount +1, currency changed, terms digest changed, presentation_key changed, nonce reused | positive: confirmed + one local effect intent; negative: fail-closed with no supplier effect |
+| authorization source | a trusted host UI confirmation callback carries actor/tenant/seam/challenge; the server issues the receipt | a model initiates confirmation under the same legitimate actor + legitimate snapshot; the client supplies its own receipt_id/nonce/fingerprint | the model confirmation is rejected with no outbox; only human callbacks authorize; field matching ≠ permission |
+| nonce ordering | the nonce/fingerprint is prepared server-side before presentation and bound to the immutable request | the nonce is generated after presentation; the fingerprint is changed after confirmation; an old challenge is used to confirm after re-presentation | the fingerprint the user saw contains the nonce; immutable after confirmation; stale/re-presented challenges rejected |
+| receipt issuance authority | a trusted confirmation callback references challenge_id; the server issues the receipt and binds it to pending | replaying the same receipt/challenge across intents; consuming a prepared challenge directly | only ledger issuance records are valid; prepared does not authorize; cross-intent replay returns approval-claimed with no effect |
+| actor/tenant/principal | a tenant A actor confirms A's intent | tenant B confirms using the same idem_key/receipt; a BFF principal posed as the traveler principal | all cross-tenant/cross-principal attempts rejected; the audit sees only HMACs |
+| one-time confirmation | two concurrent confirmations of the same idem_key | two processes submit the receipt simultaneously | only one `approval_claims.consumed_at`, only one `write.confirmed`, only one local effect intent |
+| crash recovery | kill after the confirmation transaction, restart the worker | crash injection in three orderings: claim consumption/outbox/pending transition | no lost claim, no duplicate effect intent, no second consumption; the terminal state can fold |
+| unique dispatch right (#231/#232) | two dispatchers compete for the same queued intent | two workers claim the same intent simultaneously | only one claim succeeds (`dispatch_status=dispatching`, unique `attempt_id`); the loser makes no supplier call |
+| dispatch tenant boundary (#231/#232) | tenants A/B each hold a queued intent with the same `idem_key` | an A worker claims/folds/queries the B intent by `idem_key` alone | claim/fold/query are all scoped to `tenant_id + idem_key` (or a global `effect_id` with verified ownership); cross-tenant affected rows=0, supplier write=0 |
+| attempt fencing ordering (#231/#232) | while the claim transaction is uncommitted the intent stays queued and can be claimed by another worker; crash (before/after the outbound call) after dispatching+attempt persistence, lease expiry | the outbound call happens before the claim is persisted; a persisted-dispatching intent is returned to queued and booked again | only an uncommitted claim transaction may return to queued; after dispatching+attempt persistence, any crash must not book/re-dispatch — uniformly unknown, folded by attempt id; lease expiry never returns to queued |
+| persisted-dispatching crash with no network log (#231/#232 falsification) | — | inferring no outbound call from the absence of network logs, then booking/re-dispatching | still must not book; enter unknown/query/manual reconcile |
+| lease/fencing/authorization expiry returning to queued (#231/#232 falsification) | — | lease expiry/fencing invalidation/authorization expiry returning unknown or persisted dispatching to queued and booking again | cannot return to queued; unknown keeps querying; a preflight failure means zero writes and a new intent |
+| pre-dispatch re-validation (#231/#232) | quote/receipt valid, digest unchanged, routing/Buyer consistent, not revoked | calling out anyway with an expired quote/changed digest/changed routing or Buyer/revoked status; returning the old effect to queued | expired/changed/revoked and not yet called out: set the old effect to `rejected` (outbox layer) with zero writes, create a new quote/intent/receipt, and never return to queued; already-unknown keeps querying — authorization expiry never returns to queued or rebooks |
+| queue/preflight local rejection layering (#231/#232 falsification) | preflight finds expiry/change/revocation before the outbound call; the old effect is undispatchable | adding `stale`/`cancelled` states to `pending_writes`; projecting undispatched expiry as supplier failed/cancel/refund | the rejection is recorded only at the outbox/dispatch/challenge layer; ADR-17 `pending_writes` keeps its `pending\|confirmed\|compensated` three states; zero supplier failure/refund projection |
+| fingerprint bound to supplier payload (#231/#232) | holder/guests fulfillment fields included in the supplier payload digest | swapping the traveler or contact after presentation/confirmation and booking anyway | zero writes after a swap; a new quote/intent/receipt is required |
+| lease expiry + late success (#231/#232) | the supplier creates the order late after the dispatching lease expired | inferring no side effect from lease expiry and rebooking; a late success booking a second time | exactly one booking, folded by attempt id to `reconciled_success` |
+| HotelByte unknown | CLI timeout/non-json/exit0-pending fixtures | automatically retrying the same write effect or concurrently rebooking | unknown + query/manual reconcile; blind retries forbidden |
+| query-orders | customerReferenceNo finds success/multiple orders; a miss within the window stays unknown | turning an in-window miss into reconciled_failed and rebooking; decoding/guessing supplierReferenceNo; unauthorized supplier penetration | project only through the authorized query surface; a miss within the recovery window does not negate the external side effect |
+| cancel vs compensation | pending cancel; confirmed cancel/refund pending/refunded | writing a pending cancel as a refund; showing money refunded while compensated | copy and ledger terms stay separated consistently; confirmed compensation has a receipt/outcome |
+| L4 revoke | one automatic write within policy scope, triggered again after revocation | an outbox still emitted after revoke; automatic writes beyond scope | revocation blocks the future; beyond scope downgrades to L3 |
+| commission disclosure | the confirmation card includes commission/no-commission/sponsorship source | allowing forward while disclosure is unknown; a disclosure change reusing the old receipt | the disclosure digest enters the fingerprint |
+| audit redaction | generate a redacted audit report | errors containing email/token/raw order id | the shareable report has no PII/secrets |
 
-> **派发否证执行口径**:上表标 `(#231/#232)` 的派发权唯一、tenant 边界、attempt fencing 时序、persisted-dispatching crash 无网络日志、lease/fencing/授权过期回 queued、外呼前重验、queue/preflight 本地拒绝层级、fingerprint 绑定 supplier payload、lease 过期+迟到 success 各行,是 #231/#232 未来实现时**必须执行**的最小否证验收;当前为 proposal,这些测试**均未执行**,不得伪称已通过。最小否证清单:① 双 dispatcher 竞争同一 intent 只发一次,且 A/B 相同 `idem_key` 只能各自 claim/fold/query 本 tenant intent,跨 tenant 影响行数=0、supplier write=0;② 只有 claim 事务未提交才回 queued——attempt 持久化后/网络前与网络后/投影前任何 crash(无网络日志亦然)都不盲重放、不 book,统一 unknown;③ queue/preflight 本地拒绝零写,旧 effect 置 `rejected` 不回 queued,且不改变 ADR-17 `pending_writes` `pending|confirmed|compensated` 三态、不投影 supplier failure/refund;④ 确认后更改 holder/guests 或 Buyer 零写;⑤ lease/fencing/授权过期不能把 unknown 或 persisted dispatching 回 queued;lease 过期且迟到供应商成功仍仅一次 book。
+> **Dispatch falsification execution criteria**: the rows marked `(#231/#232)` above — unique dispatch right, tenant boundary, attempt fencing ordering, persisted-dispatching crash with no network log, lease/fencing/authorization expiry returning to queued, pre-dispatch re-validation, queue/preflight local rejection layering, fingerprint bound to supplier payload, and lease expiry + late success — are the minimum falsification acceptance tests that **must be run** when #231/#232 is implemented; this is currently a proposal, these tests **have not been executed**, and they must not be claimed as passed. Minimum falsification list: (1) two dispatchers competing for the same intent dispatch exactly once, and with the same `idem_key` across A/B each side can only claim/fold/query its own tenant's intent, with cross-tenant affected rows=0 and supplier write=0; (2) only an uncommitted claim transaction may return to queued — any crash after attempt persistence/before the network, or after the network/before projection (absence of network logs included) must neither blindly replay nor book, uniformly entering unknown; (3) queue/preflight local rejection means zero writes, the old effect is set to `rejected` and never returns to queued, ADR-17 `pending_writes` keeps its `pending|confirmed|compensated` three states unchanged, and no supplier failure/refund is projected; (4) changing holder/guests or the Buyer after confirmation means zero writes; (5) lease/fencing/authorization expiry cannot return unknown or persisted dispatching to queued; with an expired lease and a late supplier success there is still exactly one booking.
 
-## 13. 与既有设计的让渡关系
+## 13. Handover relationships with existing designs
 
-- `booking-saga-fsm.md` 继续是 saga 字母表与边表权威;本文只定义 M5 生产化时每条边携带哪些 receipt/outbox/outcome 字段。
-- `effect-interpreter.md` 继续是 effect seam 权威;写 effect 注册时必须新增 per-effect resilience 策略,默认全关,不得继承读 effect 的重试。
-- `transactional-state-rfc.md` 继续是 ADR-15 账本基座;本文不改 TS-5 触发器。
-- `milestone-delivery-plan.md` 是 program 任务图;HotelByte adapter、协议核验、UAT 与基线稳定性债务在那里跟踪。
-- `m6-b2b-reuse-walkthrough.md` 承接 sponsor/principal 披露与 B2B 复用口径;M6 不得复用 BFF 安全 principal 词义承载 traveler 动机。
+- `booking-saga-fsm.md` remains the authority on the saga alphabet and the edge table; this document only defines which receipt/outbox/outcome fields each edge carries when M5 is productionized.
+- `effect-interpreter.md` remains the authority on effect seams; when registering write effects, a per-effect resilience policy must be added, all off by default, and read-effect retries must not be inherited.
+- `transactional-state-rfc.md` remains the ADR-15 ledger foundation; this document does not change the TS-5 triggers.
+- `milestone-delivery-plan.md` is the program task graph; the HotelByte adapter, agreement verification, UAT, and baseline stability debt are tracked there.
+- `m6-b2b-reuse-walkthrough.md` carries the sponsor/principal disclosure and the B2B reuse accounting; M6 must not reuse the BFF security principal semantics to carry traveler motivations.
 
-## 14. M5 Entry/Exit 勾稽
+## 14. M5 Entry/Exit cross-check
 
-**Entry 必须同时满足**:
+**Entry requires all of the following simultaneously**:
 
-1. M4 Exit:真实 `observed_private` repeat cohort N≥5 且 paired median planning duration reduction ≥50%,experience reflux baseline 有真实分母。
-2. 供应链协议:HotelByte M5-0 矩阵字段可得,尤其是 Buyer/环境/路由、稳定查单键、报价有效期、取消/退款/佣金/售后字段、人工对账 SLA 与 UAT 边界。
+1. M4 Exit: a real `observed_private` repeat cohort with N≥5 and a paired median planning duration reduction ≥50%; the experience reflux baseline has a real denominator.
+2. Supply chain agreement: the HotelByte M5-0 matrix fields are available, especially Buyer/environment/routes, a stable order query key, offer validity, cancellation/refund/commission/after-sales fields, the manual reconciliation SLA, and the UAT boundary.
 
-**交易测试所需具体范围**:
+**Concrete scope required for trade testing**:
 
-- pre-entry:只允许无凭据 help/参数/fixture 检查,不发业务网络,不读 OTP。
-- entry 后 sandbox/UAT:固定 `hbcli` 版本、隔离 credential home、受控 env、固定 Buyer/route、`--json --env=uat` 前缀、全退政策约束;任何 OTP 操作由供应商/人工流程处理,GoTry 不接触。
-- production:真实下单/取消/退款只在 receipt + disclosure + unknown reconcile + manual support 路径均过闸后进入。
+- pre-entry: only credential-free help/flag/fixture checks are allowed; no business network traffic, no OTP reading.
+- post-entry sandbox/UAT: a pinned `hbcli` version, an isolated credential home, a controlled env, a fixed Buyer/route, the `--json --env=uat` prefix, fully-refundable policy constraints; any OTP operation is handled by the supplier/manual process, and GoTry never touches it.
+- production: real ordering/cancellation/refund enters only after the receipt + disclosure + unknown reconcile + manual support paths have all passed their gates.
 
-**Exit 仍沿用 roadmap**:预订零误操作事故;单位经济实测。本文不改 Exit,也不允许用 sandbox 通过替代真实事故/单位经济证据。
+**Exit still follows the roadmap**: zero booking misoperation incidents; measured unit economics. This document does not change Exit, and sandbox passes must not substitute for real incident/unit-economics evidence.

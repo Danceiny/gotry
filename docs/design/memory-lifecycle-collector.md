@@ -1,21 +1,23 @@
-# M4 规划生命周期采集器
+[English](memory-lifecycle-collector.md) | [简体中文](memory-lifecycle-collector.zh-CN.md)
 
-> 定位:Issue #228 的显式 opt-in 采集器使用合同,把首访/回访 planning flow 与外部等待边界脱敏成 #223 scorer 可消费的候选输入。
-> 状态:active
-> 上游:`memory-design.md` §7、GitHub #20/#223/#228。
-> 纪律:只写显式传入的隔离 `stateRoot`;不读取 `ts/dsh-runtime/gotry-state/`、浏览器会话、历史用户资料或真实凭证;本文只记录工具合同,不记录真实 cohort 状态。
+# M4 Planning Lifecycle Collector
 
-## 1. 边界
+> Position: the usage contract for Issue #228's explicit opt-in collector, pseudonymizing first/revisit planning flows and external wait boundaries into candidate input that the #223 scorer can consume.
+> Status: active
+> Upstream: `memory-design.md` §7, GitHub #20/#223/#228.
+> Discipline: writes only to an explicitly passed isolated `stateRoot`; does not read `ts/dsh-runtime/gotry-state/`, browser sessions, historical user profiles, or real credentials; this document records only the tool contract, not real cohort state.
 
-`ts/scripts/memory-lifecycle.ts` 是独立 CLI,背后纯逻辑在 `ts/src/memory-lifecycle.ts`。它不是常驻服务,不自动遥测,不接入产品会话。所有写操作必须同时提供:
+## 1. Boundary
 
-- `--state-root <dir>`:隔离状态根;真实路径或任一受管父/叶子符号链接若指向 `.git` 或 `ts/dsh-runtime` 形态会 fail-closed。
-- `--consent <statement>`:操作者显式同意声明;落盘仅保存 HMAC consent ref。
-- `GOTRY_MEMORY_LIFECYCLE_HMAC_KEY`:至少 32 字符的本地密钥;示例用本机生成的 64 位 hex(32 bytes 熵),只进入 shell 变量,不落盘、不输出。数据集创建后会保存域分离 verifier,换 key 读写/导出均拒绝。
+`ts/scripts/memory-lifecycle.ts` is a standalone CLI; the pure logic behind it lives in `ts/src/memory-lifecycle.ts`. It is not a resident service, does not auto-telemeter, and does not attach to product sessions. Every write operation must also provide:
 
-CLI 使用真实系统时间,没有 `--at`;测试态需要时间注入时调用纯函数接口。
+- `--state-root <dir>`: an isolated state root; if the real path or any managed parent/leaf symlink points at a `.git` or `ts/dsh-runtime` shape, it fails closed.
+- `--consent <statement>`: the operator's explicit consent statement; only an HMAC consent ref is persisted.
+- `GOTRY_MEMORY_LIFECYCLE_HMAC_KEY`: a local key of at least 32 characters; the example generates a 64-digit hex locally (32 bytes of entropy), which only enters a shell variable — never persisted, never printed. After dataset creation, a domain-separated verifier is saved; changing the key makes read/write/export all refuse.
 
-## 2. 命令
+The CLI uses real system time and has no `--at`; test code needing time injection calls the pure-function interface.
+
+## 2. Commands
 
 ```bash
 STATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gotry-m4-collector.XXXXXX")"
@@ -71,29 +73,29 @@ npx tsx ts/scripts/memory-lifecycle.ts export \
 npx tsx ts/scripts/memory-value-report.ts "$EXPORT_PATH"
 ```
 
-上例是一次性 `synthetic_fixture` 演示:`STATE_ROOT` 和 HMAC key 都可随临时根丢弃。私有 `observed_private` 数据集必须在仓库外生成并持久保存首次使用的 64 位 hex key(如密钥管理器或本机安全存储),后续对同一 `stateRoot` 先恢复同一个 `GOTRY_MEMORY_LIFECYCLE_HMAC_KEY`;不要把每次执行都生成新 key 的写法套到已有私有 dataset,否则 manifest verifier 会拒绝读写/导出。
+The example above is a one-off `synthetic_fixture` demo: both `STATE_ROOT` and the HMAC key can be discarded with the temp root. A private `observed_private` dataset must be generated outside the repository, and the first-use 64-digit hex key must be persisted durably (e.g., a secrets manager or local secure storage); afterwards, for the same `stateRoot`, restore the same `GOTRY_MEMORY_LIFECYCLE_HMAC_KEY` first. Do not apply the generate-a-new-key-per-run pattern to an existing private dataset, or the manifest verifier will refuse read/write/export.
 
-`observed_private` 只表示输入来自私有观测;collector 导出仍是 `source_review.state=candidate`,不会生成 `manual_attested`、`reviewer_ref` 或 `attestation_ref`。M4 Exit 仍需要真实 `observed_private` N≥5 repeat cohort 及人工 source-review attestation 合同。
+`observed_private` only means the input comes from private observation; the collector export still carries `source_review.state=candidate` and never generates `manual_attested`, `reviewer_ref`, or `attestation_ref`. M4 Exit still requires a real `observed_private` N≥5 repeat cohort plus a manual source review attestation contract.
 
-## 3. 生命周期不变量
+## 3. Lifecycle Invariants
 
-- 数据集初始化后冻结 `source_kind`、等待代码集合、consent ref 与 HMAC key verifier。
-- 每个 subject 最多记录首访和下一次 eligible completed flow;第三条 eligible flow 拒绝。
-- 同一 subject 不能有重叠 flow;returning start 必须晚于 first complete。
-- 同一 flow 的 wait 不能重叠或倒序;wait code 必须来自 init 前声明的集合;flow complete 必须晚于所有已结束 wait。
-- start/complete/wait/reflux/preference 均按 HMAC event ref 幂等;重复提交返回 `unchanged` 且不改变事件计数。
+- After dataset init, `source_kind`, the wait code set, the consent ref, and the HMAC key verifier are frozen.
+- Each subject records at most the first and the next eligible completed flow; a third eligible flow is refused.
+- The same subject cannot have overlapping flows; a returning start must come after the first complete.
+- Waits within the same flow cannot overlap or run out of order; wait codes must come from the set declared at init; flow complete must come after all ended waits.
+- start/complete/wait/reflux/preference are all idempotent by HMAC event ref; duplicate submissions return `unchanged` and do not change event counts.
 
-## 4. 持久化与恢复
+## 4. Persistence and Recovery
 
-状态位于 `<stateRoot>/gotry-state/memory-lifecycle/`:
+State lives in `<stateRoot>/gotry-state/memory-lifecycle/`:
 
-- `manifest.json`:私有 0600 JSON,通过临时文件 + no-overwrite hard-link 发布;写入失败不留下阻断重试的半 manifest。
-- `events.jsonl`:append-only JSONL,持 writer lock 时先做完整候选投影校验;fd 写入使用 write-all 循环,短写/0 字节返回不能误报成功;失败会回滚到此前已提交前缀。
-- `.writer.lock`:只清理本进程创建的 lock;既有竞争者 lock 返回 `lock_busy`。
-- export 输出同样使用完整临时文件 + no-overwrite 发布;既有目标文件不被覆盖,失败只清理本次临时文件。
+- `manifest.json`: private 0600 JSON, published via a temp file + no-overwrite hard link; a failed write never leaves a half manifest that blocks retries.
+- `events.jsonl`: append-only JSONL; while holding the writer lock, it first validates the full candidate projection; fd writes use a write-all loop — a short write or a 0-byte return must not be misreported as success; on failure it rolls back to the previously committed prefix.
+- `.writer.lock`: only the lock created by this process is cleaned up; an existing competitor's lock returns `lock_busy`.
+- The export output likewise publishes via a full temp file + no-overwrite; an existing target file is not overwritten, and on failure only this run's temp file is cleaned up.
 
-恢复只处理可证明的末尾未提交片段:已提交前缀必须保持 byte-identical;损坏的已换行事件行不会被静默吞掉。
+Recovery handles only the provably uncommitted tail fragment: the committed prefix must stay byte-identical; a corrupted, newline-terminated event line is never silently swallowed.
 
-## 5. 验证入口
+## 5. Verification Entry Point
 
-`GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh` 的 §55 会运行 `ts/scripts/memory-lifecycle-tests.ts`,覆盖显式 opt-in、非法输入零写、key/consent 绑定、倒序拒绝、路径隔离、短写/ENOSPC 故障注入、子进程 collect→export→#223 scorer 链。
+`GOTRY_SESSION_LIVE=0 ./scripts/run-all-tests.sh` §55 runs `ts/scripts/memory-lifecycle-tests.ts`, covering explicit opt-in, zero writes on illegal input, key/consent binding, out-of-order refusal, path isolation, short-write/ENOSPC fault injection, and the subprocess collect→export→#223 scorer chain.

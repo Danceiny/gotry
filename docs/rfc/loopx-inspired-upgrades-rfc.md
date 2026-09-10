@@ -1,137 +1,139 @@
-# RFC:LoopX RFC 群对 GoTry 的映射升级——四道接缝的最小切片
+[English](loopx-inspired-upgrades-rfc.md) | [简体中文](loopx-inspired-upgrades-rfc.zh-CN.md)
 
-> 状态:**accepted**(2026-08-27 founder 指令:「这些不用我拍板吧,loopx inspired 这些可以直接按建议执行」——四切片按 §7 顺序执行,每片落地时按 §11 同步状态面)
-> 修正(同日 founder 指令):GoTry 未来要实现**多用户的 Agent as a Service**——shared-goal-authority-state-provider(claim/CAS/在线权威)不是范围外,是**多用户期的未来正题**,从未采纳清单移入 §6.5 远期采纳面
-> 作者:gotry-builder-01(loopx 治理平面)
-> 日期:2026-08-27
-> 上游权威:`../architecture.md`(技术权威面)、`../roadmap.md`(M0-M6 时间线)、`../gotry-product-design.md`(产品面)
-> 下游影响:每项切片在落地时按 §11 同步状态面,并按需登记为 ADR
+# RFC: Mapping Upgrades from the LoopX RFC Set onto GoTry — Minimal Slices Across Four Seams
 
-## 0. 这是什么、不是什么
+> Status: **accepted** (2026-08-27 founder directive: "These don't need my sign-off, right? The loopx-inspired items can be executed directly as recommended" — the four slices execute in the §7 order, and each slice syncs the state surfaces per §11 when it lands)
+> Amendment (same-day founder directive): GoTry will in the future deliver **multi-user Agent as a Service** — shared-goal-authority-state-provider (claim/CAS/online authority) is not out of scope but the **future core topic of the multi-user phase**, moved from the not-adopted list into the §6.5 long-term adoption surface
+> Author: gotry-builder-01 (loopx governance plane)
+> Date: 2026-08-27
+> Upstream authority: `../architecture.md` (technical authority), `../roadmap.md` (M0-M6 timeline), `../gotry-product-design.md` (product surface)
+> Downstream impact: each slice syncs the state surfaces per §11 when it lands, and is registered as an ADR as needed
 
-本文是一次**技术提议(RFC)**:读完 loopx `docs/architecture/rfcs/` 全部 13 篇(1 篇 Accepted、4 篇 Active Research/Product Direction、8 篇 Draft/Integration),提炼其中与 GoTry 现有架构**有真实接缝**的模块设计与技术理念,给出最小可验证切片与执行顺序。
+## 0. What This Is and Is Not
 
-**不是什么**:不是把 loopx 的控制面搬进 GoTry(loopx 在 gotry 里只承担 L5 治理,本文只借鉴**设计模式**,不引入 loopx 运行时依赖);不是提前做 M5/M6 的事(所有切片都落在当前 M3/M4 边界内);不是一次性大重构(每道切片独立、可单独被拍死)。
+This document is a **technical proposal (RFC)**: having read all 13 papers in loopx `docs/architecture/rfcs/` (1 Accepted, 4 Active Research/Product Direction, 8 Draft/Integration), it distills the module designs and technical ideas that have a **real seam** with GoTry's existing architecture, and gives minimal verifiable slices and an execution order.
 
-**读法**:§1 是契合点总表(哪些 RFC 理念与 gotry 哪条线对齐);§2-§5 是四道具体切片(每道:来源 RFC → gotry 现状 → 设计 → 最小切片 → 验收);§6 是明确不采纳的;§7 是执行计划建议。
+**What it is not**: not porting loopx's control plane into GoTry (inside gotry, loopx only carries L5 governance; this document borrows **design patterns** only and introduces no loopx runtime dependency); not doing M5/M6 work early (all slices stay within the current M3/M4 boundary); not a one-shot big rewrite (each slice is independent and can be killed alone).
 
-## 1. 契合点总表:loopx RFC 理念 ↔ GoTry 接缝
+**How to read it**: §1 is the fit-point summary table (which RFC ideas align with which gotry line); §2-§5 are the four concrete slices (each: source RFC → gotry current state → design → minimal slice → acceptance); §6 is what is explicitly not adopted; §7 is the recommended execution plan.
 
-loopx RFC 群的六条共性哲学(详见调研底稿,本节省略):观察不升级为权威;typed packet + receipt,prose 不是证据;协议仪式不是进展;先只读投影后执行;bounded context 优先;公开面结构性去敏。
+## 1. Fit-Point Summary Table: loopx RFC Ideas ↔ GoTry Seams
 
-把这六条对到 GoTry 的线,产生四道真实契合点:
+Six shared philosophies run across the loopx RFC set (details in the research notes, omitted here): observations never escalate into authority; typed packet + receipt, prose is not evidence; protocol ritual is not progress; read-only projection before execution; bounded context first; structural de-sensitization of the public surface.
 
-| # | loopx RFC 来源 | 核心机制 | GoTry 现状(缺口) | 价值 |
+Mapping these six onto GoTry's lines yields four real fit points:
+
+| # | loopx RFC source | Core mechanism | GoTry current state (gap) | Value |
 |---|---|---|---|---|
-| **S1** | agent-loop-effect-interpreter(Accepted) | canonical packet 四槽(effect_request/interpretation/observation/next_effect)+ handler 是数据 + 五性质 settlement | 12 工具参数契约自由生长,unwrapQuery 是临时防御;execute 返回值无统一 envelope;**已在重演 loopx 已解决的问题** | 高(治理债;拖住每个新工具) |
-| **S2** | post-outcome-memory-utility-attribution(Draft) | recall→application→verified_outcome→attribution sidecar;六件语义分离;证据分级;`rank_score=semantic*bounded_modifier` | wish-pool.json 只进不出,无成行验证、无「建议质量」概念;北极星「下一次出发率」无度量底座 | 高(直喂 M4 北极星) |
-| **S3** | human-attention-wishlist(Draft) | 注意力三类型 gate/request/wish;wish 非阻塞、不单独唤醒;`piggyback_or_digest`;0..1/turn 防协议仪式 | 「主动回访(可关闭)」仅 roadmap 一行,无机制设计;wish pool 只有入口没有合法的触达形态 | 中(M4 前置;定义了回访的合法边界) |
-| **S4** | long-running-agent-reliability(L0–L4 等级) | observer-first 产品入口;L1 non-interference 机器合同;authority 只经显式可回滚 seam | WriteGate 是 M5 二元的「上生产」;booking 写权没有渐进授权路径 | 低(只取哲学,不取机制——M5 拍板时的决策框架) |
+| **S1** | agent-loop-effect-interpreter (Accepted) | canonical packet with four slots (effect_request/interpretation/observation/next_effect) + handlers as data + five-property settlement | the 12 tools' parameter contracts grow freely, unwrapQuery is a stopgap defense; execute return values have no unified envelope; **already re-enacting a problem loopx has solved** | High (governance debt; drags on every new tool) |
+| **S2** | post-outcome-memory-utility-attribution (Draft) | recall→application→verified_outcome→attribution sidecar; six-way semantic separation; evidence tiering; `rank_score=semantic*bounded_modifier` | wish-pool.json only takes in and never lets out; no trip-materialization verification, no concept of "suggestion quality"; the north star "next departure rate" has no measurement foundation | High (feeds the M4 north star directly) |
+| **S3** | human-attention-wishlist (Draft) | three attention types gate/request/wish; wishes are non-blocking and never wake on their own; `piggyback_or_digest`; 0..1/turn to prevent protocol ritual | "proactive follow-up (closable)" is a single roadmap line with no mechanism design; the wish pool has an entry point but no legitimate outreach form | Medium (an M4 prerequisite; defines the legal boundary of follow-up) |
+| **S4** | long-running-agent-reliability (L0–L4 levels) | observer-first product entry; L1 non-interference as a machine contract; authority only via explicit rollback-capable seams | WriteGate is M5's binary "go to production"; booking write authority has no progressive authorization path | Low (philosophy only, not mechanism — a decision framework for the M5 sign-off) |
 
-**不契合的**:research-exploration(治理平面自用,非产品接缝)、shared-goal-authority(多机协调,GoTry 单用户单机)、typescript-migration(loopx 自身的 Python→TS,GoTry 已去 Python)、benchmark C0-C4(gotry 已有 ADR-11 评测三层,重叠)、agent-im-openviking(IM 协作,无对应场景)。
+**Not a fit**: research-exploration (governance-plane self-use, not a product seam), shared-goal-authority (multi-machine coordination; GoTry is single-user single-machine), typescript-migration (loopx's own Python→TS; GoTry already removed Python), benchmark C0-C4 (gotry already has ADR-11's three evaluation layers; overlapping), agent-im-openviking (IM collaboration; no corresponding scenario).
 
-## 2. S1:工具调用的 canonical packet 纪律(Effect Interpreter 映射)
+## 2. S1: Canonical Packet Discipline for Tool Calls (Effect Interpreter Mapping)
 
-**来源**:loopx `agent-loop-effect-interpreter-v0`(Accepted)。核心:把每次工具交互建模为 `model → effect_request → harness interprets → observation → model`,handler 是数据不是 callable(跨进程边界必须可序列化),组合需证五性质(identity/associativity/ordered short-circuit/replay/non-commutativity)。
+**Source**: loopx `agent-loop-effect-interpreter-v0` (Accepted). Core: model every tool interaction as `model → effect_request → harness interprets → observation → model`; handlers are data, not callables (they must be serializable across process boundaries); composition must prove five properties (identity/associativity/ordered short-circuit/replay/non-commutativity).
 
-**gotry 现状**:12 个工具的 execute 签名靠约定,参数解析已有三种形态(裸值/包装对象/字符串主键)——`unwrapQuery` 是事后补丁;execute 返回值是自由 JSON,`as never` 已在两处出现(motivation/hotel);guardToolExecute 拦截异常,但**成功路径的返回形状没有任何 envelope**。每个新工具都在重复解决「参数到底长什么样、返回值 LLM 看到什么」。
+**gotry current state**: the 12 tools' execute signatures rely on convention; argument parsing already has three shapes (bare value / wrapped object / string primary key) — `unwrapQuery` is an after-the-fact patch; execute returns free-form JSON, and `as never` already appears in two places (motivation/hotel); guardToolExecute intercepts exceptions, but **success-path return shapes have no envelope at all**. Every new tool re-solves "what exactly do the arguments look like and what does the LLM see as the return value".
 
-**设计**(只取纪律,不取 loopx 的 schema 名——避免制造第二个抽象层):
+**Design** (take the discipline only, not loopx's schema names — avoiding a second abstraction layer):
 
 ```typescript
-// ts/src/tool-packet.ts(新文件,纯类型,零运行时)
-interface GotryEffectRequest<TArgs>  { tool: string; args: TArgs }        // 模型→harness
-interface GotryObservation<TValue>   { ok: boolean; value?: TValue;       // harness→模型
+// ts/src/tool-packet.ts (new file, pure types, zero runtime)
+interface GotryEffectRequest<TArgs>  { tool: string; args: TArgs }        // model→harness
+interface GotryObservation<TValue>   { ok: boolean; value?: TValue;       // harness→model
                                        error?: { kind: string; message: string } }
-// unwrapQuery 升格为「interpretation」层:args 三形态归一在这里发生,唯一一处
+// unwrapQuery is promoted to the "interpretation" layer: the three args shapes normalize here, in exactly one place
 ```
 
-- **最小切片**:① 12 个工具的 execute 统一改返回 `GotryObservation`(guardToolExecute 的异常降级天然就是 `ok:false` 分支,只是把形状显式化);② unwrapQuery 从 index.ts 移到 tool-packet.ts 并改名 `interpretArgs`(语义归位);③ `as never` 两处消除(observation envelope 后类型自洽)。
-- **验收**:12 工具的 mock 调用全绿(现有 smoke/replay 不动);tsc 0 错;新增一个 packet 单测(五性质里的 replay+non-commutativity 用既有夹具断言)。
-- **成本**:约 60 行 diff,零行为变化(纯形状归一)。
-- **拍板点**:是否接受「工具返回值从此有 envelope」这一约束(对新工具是轻微负担,对调用方是确定性)。
+- **Minimal slice**: (1) all 12 tools' execute uniformly return `GotryObservation` (guardToolExecute's exception degradation is naturally the `ok:false` branch; this just makes the shape explicit); (2) unwrapQuery moves from index.ts to tool-packet.ts and is renamed `interpretArgs` (semantic relocation); (3) the two `as never` occurrences are eliminated (types become self-consistent once the observation envelope exists).
+- **Acceptance**: mock calls of all 12 tools green (existing smoke/replay untouched); tsc at 0 errors; one new packet unit test (the replay+non-commutativity of the five properties asserted with existing fixtures).
+- **Cost**: about 60 lines of diff, zero behavior change (pure shape normalization).
+- **Decision point**: whether to accept the constraint that "tool return values have an envelope from now on" (a slight burden on new tools, determinism for callers).
 
-## 3. S2:记忆效用归因 sidecar——wish pool 的北极星底座(Post-Outcome Memory 映射)
+## 3. S2: Memory Utility Attribution Sidecar — the Wish Pool's North-Star Foundation (Post-Outcome Memory Mapping)
 
-**来源**:loopx `post-outcome-memory-utility-attribution-v0`。核心:召回 ≠ 使用 ≠ 有用;六件语义(召回/使用/结果/归因/效用状态/生命周期)必须独立记录;证据分级 `owner_correction > controlled_replay > deterministic_effect > evaluator_inference`;归因粒度 `item/set/none`;排序形态 `rank = semantic × bounded_modifier`(效用不能复活语义不相关的)。
+**Source**: loopx `post-outcome-memory-utility-attribution-v0`. Core: recall ≠ use ≠ useful; the six semantics (recall/use/outcome/attribution/utility status/lifecycle) must be recorded independently; evidence tiers `owner_correction > controlled_replay > deterministic_effect > evaluator_inference`; attribution granularity `item/set/none`; ranking form `rank = semantic × bounded_modifier` (utility must not resurrect semantically irrelevant items).
 
-**gotry 现状**:`wish-pool.json` 只进不出(契约 6「憧憬入池」+ 工具 `gotry_wish_pool_add`);**没有任何机制知道某条 wish 后来是否成行、建议是否靠谱**;M4 北极星「下一次出发率」目前没有度量底座——只能从聊天记录里人工捞。这正是 loopx RFC 说的「自称用了 ≠ 让结果变好」。
+**gotry current state**: `wish-pool.json` only takes in and never lets out (contract 6 "wishes enter the pool" + the `gotry_wish_pool_add` tool); **no mechanism whatsoever knows whether a wish later materialized or whether the suggestions were any good**; the M4 north star "next departure rate" currently has no measurement foundation — it can only be fished out of chat logs by hand. This is exactly what the loopx RFC calls "claiming use ≠ making the outcome better".
 
-**设计**(纯 sidecar,默认关闭,fail-open,不进主路径):
+**Design** (a pure sidecar, off by default, fail-open, not in the main path):
 
 ```jsonl
-// gotry-state/memory-utility.jsonl(append-only,与 motivation-profile.json 同级)
+// gotry-state/memory-utility.jsonl (append-only, same level as motivation-profile.json)
 {"schema":"memory_utility_observation.v0","wish_id":"w20260827-dali","event":"recalled","ctx":"turn-uuid"}
 {"schema":"memory_utility_observation.v0","wish_id":"w20260827-dali","event":"applied","detail":"user accepted 5-day window"}
 {"schema":"memory_utility_observation.v0","wish_id":"w20260827-dali","event":"verified_outcome","detail":"booked 2026-10-01"}
-// 归因(可选,默认 unknown):evidence_tier 分级,owner_correction 最强
+// attribution (optional, unknown by default): evidence_tier tiers, owner_correction strongest
 ```
 
-- **最小切片**:① `wish-pool.json` 每条加稳定 `wish_id`(现在缺主键);② 新增 `ts/src/memory-utility.ts` 纯函数层:append 三类事件 + 只读投影(每条 wish 的 `utility_status: unknown|helpful|harmful|neutral`);③ 动机访谈工具在召回 wish 时 append `recalled` 事件(只此一处写入,其他全靠 founder/用户后续对话中显式确认才 append `verified_outcome`——**绝不让模型自称「有用」**)。
-- **验收**:sidecar 三断言(append 幂等/投影只读/无 verified_outcome 时 utility 永远 unknown);wish-pool 现有测试不破。
-- **成本**:约 120 行新文件 + 两处一行接入。
-- **拍板点**:是否接受「wish 从此有主键 + 效用事件流」(红线 6 用户数据可见可删——sidecar 与 profile 同级,删除即整文件清,合规)。
+- **Minimal slice**: (1) add a stable `wish_id` to every entry in `wish-pool.json` (the primary key is missing today); (2) add `ts/src/memory-utility.ts`, a pure-function layer: append the three event kinds + a read-only projection (per wish `utility_status: unknown|helpful|harmful|neutral`); (3) the motivation interview tool appends a `recalled` event when it recalls a wish (this is the only write point; everything else waits for explicit founder/user confirmation in later conversation before appending `verified_outcome` — **the model never gets to call itself "useful"**).
+- **Acceptance**: three sidecar assertions (append is idempotent / the projection is read-only / utility stays unknown without a verified_outcome); existing wish-pool tests unbroken.
+- **Cost**: about 120 lines in a new file + two one-line hooks.
+- **Decision point**: whether to accept "wishes get a primary key + a utility event stream from now on" (red line 6, user data visible and deletable — the sidecar sits at the same level as the profile; deleting clears the whole file, which is compliant).
 
-## 4. S3:「下一次出发」回访的合法形态(Human Attention Wishlist 映射)
+## 4. S3: The Legitimate Form of "Next Departure" Follow-Up (Human Attention Wishlist Mapping)
 
-**来源**:loopx `human-attention-wishlist-v0`。核心:人类注意力分三类——`gate`(唯一可阻塞)、`request`(默认非阻塞通知)、`wish`(只顺带呈现,**永远不能单独把 DONT_NOTIFY 改成 NOTIFY**);wish 有稳定 `wish_key` 去重、每 material turn 最多 1 个、active cap;呈现策略 `piggyback_or_digest`;wish 提升的是优先级不是 authority。
+**Source**: loopx `human-attention-wishlist-v0`. Core: human attention splits into three types — `gate` (the only one that can block), `request` (non-blocking notification by default), `wish` (presented only in passing, **must never on its own flip DONT_NOTIFY into NOTIFY**); wishes have a stable `wish_key` for dedup, at most 1 per material turn, and an active cap; presentation strategy `piggyback_or_digest`; a wish raises priority, not authority.
 
-**gotry 现状**:roadmap M4 写「主动回访(可关闭)」但无机制设计;产品面第 96 条红线「永不向未询问的用户推销,主动触达只有一种合法形态:『下一次出发』建议(且可关闭)」。**缺的是:回访以什么形态出现、何时合法、如何不沦为打扰**。loopx 的三类型恰好是这道题的答案。
+**gotry current state**: roadmap M4 says "proactive follow-up (closable)" but has no mechanism design; product-surface red line 96 says "never market to users who did not ask; proactive outreach has exactly one legitimate form: the 'next departure' suggestion (and it is closable)". **What is missing: what form the follow-up takes, when it is legitimate, and how it avoids becoming a nuisance**. loopx's three types happen to be the answer to this question.
 
-**设计**(只取「注意力类型学」,不取 loopx 的 todo 集成):
+**Design** (take the "attention typology" only, not loopx's todo integration):
 
 ```
-wish pool 的触达纪律:
-- 一次对话最多 surface 1 条「下一次出发」建议(0..1 规则,防协议仪式)
-- 只在「条件匹配」时顺带呈现(窗口/预算/季节命中成行条件),绝不单独发起会话
-- 用户关闭(契约 6 可关闭)= 该 wish 打 `muted:true`,永不删除(憧憬不被拒绝,但可以休眠)
-- 任何「建议你出行」的 push 若存在,必须是 digest 形态且可全局关闭——当前无 push 通道,此条为 M4+ 预留纪律
+Wish pool outreach discipline:
+- At most 1 "next departure" suggestion surfaced per conversation (the 0..1 rule, preventing protocol ritual)
+- Presented only in passing when "conditions match" (window/budget/season hitting trip conditions); never starts a conversation on its own
+- User opts out (contract 6 is closable) = that wish is marked `muted:true`, never deleted (a wish is not rejected, but it can sleep)
+- Any "suggest you travel" push, if one ever exists, must be digest-form and globally disableable — there is no push channel today; this is discipline reserved for M4+
 ```
 
-- **最小切片**:① wish-pool.json schema 加 `wish_id` + `muted`(与 S2 共用主键);② `gotry_wish_pool_add` 工具描述与 persona 契约 6 补一句「每轮最多提一条,只在条件命中时」;③ 渲染层若已有 wish 展示,加 0..1 截断。
-- **验收**:契约层断言(一轮对话渲染的 wish 建议 ≤1);muted wish 不出现在渲染。
-- **成本**:约 30 行 + 契约一句话。
-- **拍板点**:0..1/轮 与「绝不单独发起」这两条是否立为硬纪律(产品面红线 96 的技术兑现)。
+- **Minimal slice**: (1) add `wish_id` + `muted` to the wish-pool.json schema (sharing the primary key with S2); (2) add one sentence to the `gotry_wish_pool_add` tool description and persona contract 6: "at most one suggestion per turn, only when conditions hit"; (3) if the render layer already shows wishes, add 0..1 truncation.
+- **Acceptance**: a contract-level assertion (at most 1 wish suggestion rendered per conversation); muted wishes never appear in rendering.
+- **Cost**: about 30 lines + one contract sentence.
+- **Decision point**: whether to make the two rules "0..1 per turn" and "never initiate alone" hard discipline (the technical fulfillment of product-surface red line 96).
 
-## 5. S4:WriteGate 的 L0–L4 渐进授权哲学(Reliability 映射,仅哲学)
+## 5. S4: WriteGate's L0–L4 Progressive Authorization Philosophy (Reliability Mapping, Philosophy Only)
 
-**来源**:loopx `long-running-agent-reliability-diagnostics-governed-delivery-v0`。核心:L0 native → L1 Shadow Observer(non-interference 是机器合同)→ L2 Advisory(typed recommendation,无执行权)→ L3 Governed Seams(具名 checkpoint 上显式授权)→ L4 Semantic Control Plane;authority 只能经显式、可回滚、预登记的 seam 获得。
+**Source**: loopx `long-running-agent-reliability-diagnostics-governed-delivery-v0`. Core: L0 native → L1 Shadow Observer (non-interference is a machine contract) → L2 Advisory (typed recommendation, no execution authority) → L3 Governed Seams (explicit authorization on named checkpoints) → L4 Semantic Control Plane; authority can only be obtained through explicit, rollback-capable, pre-registered seams.
 
-**gotry 现状**:WriteGate 是 M5 的「上生产」二元开关。「读操作自由执行,写操作(预订/支付)必须显式确认」——但「显式确认」长什么样、确认后 scope 多大、如何回滚,目前空白。
+**gotry current state**: WriteGate is M5's binary "go to production" switch. "Reads execute freely; writes (booking/payment) require explicit confirmation" — but what "explicit confirmation" looks like, how wide the post-confirmation scope is, and how to roll back are all blank today.
 
-**设计**(本 RFC 不落代码,只立决策框架):M5 拍板 WriteGate 时,按 L0-L4 分级定义「预订写权」——L2=只给建议+价格,L3=具名 seam(如「单次预订确认」是一等 typed seam,带 receipt),L4=自动续订类。每一级的上线必须可回滚到上一级。
+**Design** (this RFC lands no code; it only sets a decision framework): when M5 signs off WriteGate, define "booking write authority" by L0-L4 level — L2 = suggestions + prices only, L3 = named seams (e.g. "single booking confirmation" as a first-class typed seam carrying a receipt), L4 = auto-renewal types. Each level's rollout must be rollback-capable to the previous level.
 
-- **最小切片**:无代码。仅在 architecture.md 的 M5 展望段(若 §9 有)或 roadmap M5 交付物描述里,把「WriteGate 生产化」细化为「L0-L4 渐进授权,每级可回滚」一句话。
-- **验收**:文档一句话落地,无代码。
-- **成本**:零。
-- **拍板点**:是否接受把 L0-L4 作为 M5 WriteGate 的默认分级词汇。
+- **Minimal slice**: no code. Only in architecture.md's M5 outlook section (if §9 has one) or in the roadmap M5 deliverables description, refine "WriteGate productionization" into one sentence: "L0-L4 progressive authorization, every level rollback-capable".
+- **Acceptance**: one sentence landed in the docs, no code.
+- **Cost**: zero.
+- **Decision point**: whether to adopt L0-L4 as the default leveling vocabulary for the M5 WriteGate.
 
-## 6. 明确不采纳(及理由)
+## 6. Explicitly Not Adopted (and Why)
 
-| loopx RFC | 不采纳理由 |
+| loopx RFC | Reason not to adopt |
 |---|---|
-| research-exploration-control-plane | 治理平面自用(管理 loopx todo/replan),非 GoTry 产品接缝;GoTry 的「研究」就是旅行规划本身,无组合 gap 问题 |
-| typescript-control-plane-migration | loopx 自身的 Python→TS 渐进迁移;GoTry 已去 Python(D-7 清偿),无此债 |
-| long-horizon-benchmark C0-C4 | GoTry 已有 ADR-11 评测三层(金标准/差分/真模型),主张阶梯重叠 |
-| agent-im-openviking / goal-channel | IM 协作场景,GoTry 无外部任务板/群聊通道(多用户 AaaS 期 revisit) |
+| research-exploration-control-plane | governance-plane self-use (manages loopx todo/replan), not a GoTry product seam; GoTry's "research" is travel planning itself, with no composition gap problem |
+| typescript-control-plane-migration | loopx's own gradual Python→TS migration; GoTry already removed Python (D-7 cleared), so there is no such debt |
+| long-horizon-benchmark C0-C4 | GoTry already has ADR-11's three evaluation layers (gold standard / differential / real model); the claim ladders overlap |
+| agent-im-openviking / goal-channel | an IM collaboration scenario; GoTry has no external task board / group chat channel (revisit in the multi-user AaaS phase) |
 
-### 6.5 远期采纳面(多用户 Agent-as-a-Service,2026-08-27 founder 指令立项)
+### 6.5 Long-Term Adoption Surface (multi-user Agent-as-a-Service, chartered by the 2026-08-27 founder directive)
 
-GoTry 未来是多用户的 Agent as a Service——届时 **shared-goal-authority-state-provider** 的三层分离(存储面 provider / 语义权威 authority / 持续协调 supervisor)与 claim/CAS/receipt 协议从「不采纳」转为**未来正题**:
+GoTry's future is a multi-user Agent as a Service — at that point, the three-layer separation of **shared-goal-authority-state-provider** (storage-surface provider / semantic authority / continuously coordinating supervisor) and the claim/CAS/receipt protocol flip from "not adopted" to the **future core topic**:
 
-- 多用户 = 多 goal 并发 = 同一行程/同一用户资源的并发写;单机单用户时代的「文件即权威」(wish-pool.json / motivation-profile.json 直接读写)必须升级为 claim-fence-receipt;
-- 现有地基与之兼容:S2 的 memory-utility sidecar 是 append-only 事件流,CAS 账本化是存储面替换而非语义改造;
-- 触发时机:多用户种子化(共享部署、第二个真实用户)之前完成设计评审;S2/S3 的 wish_id/事件流在单用户期就按「未来可账本化」的形状落(稳定主键 + append-only),避免多用户期返工。
+- Multi-user = many goals in flight = concurrent writes to the same itinerary / the same user's resources; the single-machine single-user era's "file as authority" (direct reads and writes of wish-pool.json / motivation-profile.json) must upgrade to claim-fence-receipt;
+- The existing foundation is compatible with it: S2's memory-utility sidecar is an append-only event stream, and CAS ledgerization is a storage-surface replacement, not a semantic rework;
+- Trigger timing: complete the design review before multi-user seeding (shared deployment, a second real user); S2/S3's wish_id/event streams land in the single-user phase already shaped for "future ledgerization" (stable primary keys + append-only), avoiding multi-user-phase rework.
 
-## 7. 执行计划
+## 7. Execution Plan
 
-**顺序**(按「可逆性 × 价值 × 依赖」排序;每道独立,可被单独拍死):
+**Order** (sorted by "reversibility × value × dependency"; each slice is independent and can be killed alone):
 
-1. **S1 tool-packet**(60 行,零行为变化)——2026-08-27 accepted 当 tick 落地。
-2. **S2 memory-utility sidecar**——依赖 S1 的 observation 纪律;直喂 M4 北极星。
-3. **S3 wish 触达纪律**——与 S2 共用 wish_id 主键;产品红线 96 的技术兑现,与 S2 同批。
-4. **S4 WriteGate L0-L4 词汇**——M5 拍板前任何时刻可落(文档一句话)。
+1. **S1 tool-packet** (60 lines, zero behavior change) — landed the same tick it was accepted, 2026-08-27.
+2. **S2 memory-utility sidecar** — depends on S1's observation discipline; feeds the M4 north star directly.
+3. **S3 wish outreach discipline** — shares the wish_id primary key with S2; the technical fulfillment of product red line 96, in the same batch as S2.
+4. **S4 WriteGate L0-L4 vocabulary** — can land at any time before the M5 sign-off (one doc sentence).
 
-**执行纪律**(原 gate 已由 founder「按建议执行」指令解除):每片落地时按 §11 同步状态面(architecture §9/§10 + roadmap 当前位置),S1/S2 落地各登记一条 ADR;多用户 AaaS 方向只在 §6.5 记录,不提前实现。
+**Execution discipline** (the original gate was lifted by the founder's "execute as recommended" directive): each slice syncs the state surfaces per §11 when it lands (architecture §9/§10 + the roadmap's current position); S1/S2 each register an ADR on landing; the multi-user AaaS direction is recorded only in §6.5, not implemented early.
 
-**红线**:本 RFC 不引入任何新依赖、不动 hotel-be、不改求解器语义(不在 §10 债务清单内的事不做);所有 sidecar 文件落 `gotry-state/`(红线 6:用户数据可见、可编辑、可删除)。
+**Red lines**: this RFC introduces no new dependencies, does not touch hotel-be, and does not change solver semantics (nothing outside the §10 debt list gets done); all sidecar files land in `gotry-state/` (red line 6: user data visible, editable, deletable).

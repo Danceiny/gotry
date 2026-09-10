@@ -1,117 +1,119 @@
-# Agent 产品人格横评:同一段真实行程,各家 AI 怎么答
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-> 方法:把发起人一段真实行程 prompt(§1 冻结原文)投喂各家 AI,逐字存档回答,对照地面真值(§2)与横评矩阵(§3)读出各自的「产品人格」,再反向校准 GoTry 的行为契约(§7)。
-> 结论先行:**每家都在用不同的方式把「旅行工程师」的角色退还给用户**——Kimi 靠道歉式重排把你变成日历和审查员,飞猪靠完美版式把你变成下单员。GoTry 的差异化不在「答得更满」,在「答得更真」:日历锚定、访谈先行、每案带时间账、无出处不出数。
-> 本轮单条最有价值的发现(§4):**Kimi 与飞猪,两个互不相关的产品,要自己算的星期全都落在了 2025 年历上**——日历 grounding 是必须产品化的机制,不是模型的运气。
+# Agent product-persona comparison bench: one real trip, how each AI answers
 
-## 0. 已入册与素材口径
+> Method: feed the founder's real trip prompt (§1, frozen verbatim text) to each AI, archive the answers verbatim, read off each product's "product persona" against the ground truth (§2) and the comparison matrix (§3), then feed the findings back into GoTry's behavior contract (§7).
+> Conclusion first: **each of them hands the "travel engineer" role back to the user in its own way** — Kimi turns you into the calendar and the reviewer through apology-driven rescheduling; Fliggy (飞猪) turns you into the order-placer through flawless formatting. GoTry's differentiation is not "answering fuller", it is "answering truer": calendar anchoring, interview first, a time account on every case, and no number without a source.
+> The single most valuable finding of this round (§4): **Kimi and Fliggy, two unrelated products, both landed every weekday they had to compute themselves on the 2025 calendar** — calendar grounding is a mechanism that must be productized, not model luck.
 
-| Agent | 素材形态 | transcript | 点评 |
+## 0. Archived entries and material scope
+
+| Agent | Material form | Transcript | Review |
 |---|---|---|---|
-| Kimi(月之暗面) | 真实 13 轮多轮对话(2026-08,`data/行程细化计划.docx`) | 未按本格式归档,素材即复盘 | [`docs/research/kimi-postmortem.md`](../../research/kimi-postmortem.md) |
-| 飞猪 AI 开放平台 | 单轮实测(2026-09-04,prompt 逐字投喂) | [`fliggy.md`](./fliggy.md) | 同文件 §点评 |
+| Kimi (Moonshot AI) | Real 13-turn multi-turn conversation (2026-08, `data/行程细化计划.docx`) | Not archived in this format; the material itself is the postmortem | [`docs/research/kimi-postmortem.md`](../../research/kimi-postmortem.md) |
+| Fliggy AI Open Platform (飞猪) | Single-turn live test (2026-09-04, prompt fed verbatim) | [`fliggy.md`](./fliggy.md) | Review in the same file |
 
-素材不对称,如实声明:Kimi 侧可考察「状态与增量修订」维度,飞猪侧为单轮、该维度记 n/a。后续入册一律先跑本 prompt 单轮实测,另有真实多轮素材的单独标注。
+The material is asymmetric, stated as-is: on the Kimi side the "state and incremental revision" dimension can be examined; the Fliggy side is single-turn and that dimension is recorded as n/a. Every future entry runs this prompt as a single-turn live test first; entries with real multi-turn material are labeled separately.
 
-## 1. 标准 prompt(冻结,逐字)
+## 1. Standard prompt (frozen, verbatim)
 
-> 投喂纪律:不删改、不补上下文(含错别字「感到曼谷」——那也是测试项)。年份故意不给:能不能锚对 2026,本身就是第一道题。
+> Feeding discipline: no cutting, no editing, no added context (including the typo 「感到曼谷」 — that too is a test item). The year is deliberately withheld: whether the model can anchor to 2026 is itself the first test.
 
 ```
 7.17周五22:40落地深圳， 7.18早上去香港办银行开户&保险签约；然后争取7.18当天飞泰国普吉岛，跟女朋友在普吉岛见面；然后在普吉岛和附近（对岸有个万xx的海边小城听说也不错）待两周，我这两周居家办公，女朋友就在附近潜水出海游玩；然后争取周五晚上或者周六早上感到曼谷，周末在曼谷度过；然后周日或者周一飞昆明，在云南玩一周（我请假一周）。 8.9要赶到深圳，当晚，也就是8.10周一凌晨（周日晚）从深圳起飞可以在周一上班前到迪拜（机场回来直接去上班[Lol]）。  请给我做机票和酒店的行程规划和推荐。
 ```
 
-设计者视角的考点注解:
+Test-point annotations from the designer's perspective:
 
-- **无年份** → 日历 grounding。2026 真历:7.17=周五(用户给)、7.18=周六、7.31=周五、8.1=周六、8.9=周日、8.10=周一(用户给)。
-- **「周五晚上或者周六早上赶到曼谷」** → 派生锚点,正确换算 = **7.31 晚 / 8.1 早**;不是 8.1/8.2。
-- **「居家办公两周」** → workation 的隐性骨架是工作窗口(真实约束:雇主时区 UTC+4,10:00–19:00 = 普吉 13:00–22:00,见 Kimi 复盘 M-1)——prompt 里没给,所以要问。
-- **「跟女朋友在普吉岛见面」** → 同行人是一条独立客流,她的出发地/航段/预算 prompt 里都没有。
-- **「对岸有个万xx的海边小城」** → 模糊指代,地面真值 = 甲米(Krabi,安达曼海对岸;Kimi 复盘 §三)。
-- **「8.10 周一凌晨(周日晚)」** → 用户已自行消解的歧义;重复追问 = 读题失败。
-- **「机场回来直接去上班 [Lol]」** → 红眼航段的到达状态账(落地精力/时差),玩笑底下是真约束。
+- **No year** → calendar grounding. True 2026 calendar: 7.17=Friday (user-given), 7.18=Saturday, 7.31=Friday, 8.1=Saturday, 8.9=Sunday, 8.10=Monday (user-given).
+- **「周五晚上或者周六早上赶到曼谷」** ("get to Bangkok Friday night or Saturday morning") → derived anchor; correct conversion = **7.31 night / 8.1 morning**; not 8.1/8.2.
+- **「居家办公两周」** ("working from home for two weeks") → the hidden skeleton of a workation is the work window (real constraint: employer time zone UTC+4, 10:00–19:00 = 13:00–22:00 in Phuket; see the Kimi postmortem M-1) — not given in the prompt, so it must be asked.
+- **「跟女朋友在普吉岛见面」** ("meet my girlfriend in Phuket") → the companion is an independent passenger flow; her departure point / legs / budget are all absent from the prompt.
+- **「对岸有个万xx的海边小城」** ("a seaside town called wan-xx across the water") → vague reference; ground truth = Krabi (across the Andaman Sea; Kimi postmortem §3).
+- **「8.10 周一凌晨(周日晚)」** ("8.10 Monday pre-dawn (Sunday night)") → an ambiguity the user already resolved; asking it again = failing to read the brief.
+- **「机场回来直接去上班 [Lol]」** ("straight to work from the airport [Lol]") → the arrival-state account of a red-eye leg (landing energy / jet lag); a real constraint under the joke.
 
-## 2. 地面真值:满分回答必答的 8 项
+## 2. Ground truth: the 8 items a full-score answer must address
 
-| # | 必答题 | 真值/要求 | 来源 |
+| # | Required item | Truth / requirement | Source |
 |---|---|---|---|
-| G1 | 日历断言 | 全程按 2026 断星期;「周五晚/周六早赶曼谷」= 7.31 晚 / 8.1 早 | 2026 年历 |
-| G2 | 工作窗口 | 两周 workation 必问会议时段/雇主时区(真实:UTC+4 10–19,决定每日节奏) | 发起人真实约束 |
-| G3 | 已订锚点 | 必问已有预订(真实:普吉段已订 The Title Rawai;曼谷段已自购 KBV→BKK) | Kimi 复盘 F2/F5 |
-| G4 | 同行人客流 | 「见面」= 两条到达链;她的出发地/票价未知,预算按「单人」即错 | prompt 文本 |
-| G5 | 万xx 指代 | = 甲米;给证据或追问,三选一并列不算命中 | 真实行程 |
-| G6 | 7.18 当天风险 | 早上赴港开户+签约、当天飞普吉是高风险日:应给「不可行/高危」判断与缓冲设计,而非顺手排出「下午直飞」 | 常识+银行实务 |
-| G7 | 迪拜红眼账 | 8.10 凌晨起飞、周一上班前落地、落地直接上班:到达精力/时差账必须算 | prompt 文本 |
-| G8 | 入境政策 | 泰国(对华免签,注明时效)+ 护照效期 + 阿联酋入境政策,政策类表述须带「截至」日期 | 事实,需带时效 |
+| G1 | Calendar assertions | Weekdays asserted on the 2026 calendar throughout; 「周五晚/周六早赶曼谷」 (Bangkok by Friday night / Saturday morning) = 7.31 night / 8.1 morning | 2026 calendar |
+| G2 | Work window | A two-week workation must ask about meeting hours / employer time zone (real: UTC+4 10–19, determines the daily rhythm) | Founder's real constraint |
+| G3 | Booked anchors | Must ask about existing bookings (real: Phuket leg already booked at The Title Rawai; Bangkok leg KBV→BKK self-purchased) | Kimi postmortem F2/F5 |
+| G4 | Companion passenger flow | 「见面」 ("meet up") = two arrival chains; her departure point / fare unknown; budgeting as "single person" is wrong | Prompt text |
+| G5 | The wan-xx reference | = Krabi; give evidence or ask; listing three candidates in parallel does not count as a hit | Real trip |
+| G6 | 7.18 same-day risk | Morning bank account + signing in Hong Kong, then flying to Phuket the same day is a high-risk day: it calls for an "infeasible / high-risk" verdict with buffer design, not a casual "direct flight in the afternoon" | Common sense + banking practice |
+| G7 | The Dubai red-eye account | 8.10 pre-dawn departure, landing before work on Monday, straight to work on landing: the arrival energy / jet-lag account must be computed | Prompt text |
+| G8 | Entry policies | Thailand (visa-free for Chinese passports, with validity noted) + passport validity + UAE entry policy; policy statements must carry an "as of" date | Facts, must carry as-of validity |
 
-G2/G3 不在 prompt 文本里——**正因不在,访谈才是必答题**。这 8 项同时是后续每家的评分卡。
+G2/G3 are not in the prompt text — **precisely because they are not, the interview is a required item**. These 8 items double as the scorecard for every entrant below.
 
-## 3. 横评矩阵(8 维)
+## 3. Comparison matrix (8 dimensions)
 
-| 维度 | Kimi(13 轮真实对话) | 飞猪 AI 开放平台(单轮) | GoTry 行为契约 |
+| Dimension | Kimi (13-turn real conversation) | Fliggy AI Open Platform (single-turn) | GoTry behavior contract |
 |---|---|---|---|
-| 日历 grounding | ✗ 按 2025 历理解日期,用户三次纠正、三次道歉式重排(F1) | ✗ 派生星期全落 2025 历(8.1「周五」/8.9「周六」),与自答的「7.18 周六」页内矛盾(§4) | (2)(8)(9)+时间锚点卡 |
-| 约束访谈 | ✗ 全程零提问;两个改变一切的约束到第 6 轮才由用户说出(F2) | △ 有追问本能,但问的是销售资质(预算/星级/靠海),G1–G8 必答题零命中;还把用户已消解的 8.10 歧义问回去 | (1)(10) |
-| 可行性/时间账 | ✗ 云南每天换城、半天在路上,被用户自己点破(F3) | ✗ 香港开户+签约+当天飞普吉无任何时间账;EK327「约8小时」与「02:00→次日06:00」自相矛盾 | (4)+门到门全成本 |
-| 事实可证性 | △ 目的地研究真实可用(Rawai 推荐/DR5042 班期) | ✗ 「国泰/港龙」在售(港龙 2020 年已停业);EK327 未经锚点核验;全部价格无出处无时效 | (3)(7)(13)(20) |
-| 结构完整性 | △ 第 13 轮才长出像样的对比表(F6) | ✓✓ 单轮交付六段交通+四地住宿+预算+提醒,骨架最完整 | (5)+交付闸:完整须来自验证 |
-| 状态与增量 | ✗ 「你说得对,完全明白!」后整套推倒重排,下一轮又错 | n/a(单轮,未考察) | D1 §5.3 版本化修订 |
-| 商业对齐 | ○ 无商业形状 | → 答案的形状=可售商品列表;收尾问题是转化资质问题 | 用户受托:只读推荐+WriteGate |
-| 风险披露 | △ 被推着才给 | △ 提醒块(签证/WiFi/缓冲)直觉正确,但同一页兜售不可行方案而不标记 | 判决式输出:不可行明说 |
+| Calendar grounding | ✗ Read dates on the 2025 calendar; three user corrections, three apology-driven reschedules (F1) | ✗ Every derived weekday fell on the 2025 calendar (8.1「周五」/8.9「周六」), contradicting its own self-answered 「7.18 周六」 within the page (§4) | (2)(8)(9) + time-anchor card |
+| Constraint interview | ✗ Zero questions throughout; the two constraints that change everything were spoken by the user only at turn 6 (F2) | △ Has a follow-up instinct, but asks sales-qualification questions (budget / star rating / seaside); zero hits on the G1–G8 required items; even asks back the 8.10 ambiguity the user had already resolved | (1)(10) |
+| Feasibility / time account | ✗ A different Yunnan city every day, half of each day on the road — the user pointed it out personally (F3) | ✗ Hong Kong account + signing + same-day flight to Phuket with no time account at all; EK327 「约8小时」 contradicts 「02:00→次日06:00」 | (4) + door-to-door full cost |
+| Fact verifiability | △ Destination research genuinely usable (Rawai recommendation / DR5042 schedule) | ✗ 「国泰/港龙」 (Cathay/Dragonair) listed as selling (Dragonair ceased operations in 2020); EK327 never verified against an anchor; all prices without source or as-of validity | (3)(7)(13)(20) |
+| Structural completeness | △ A decent comparison table only emerged at turn 13 (F6) | ✓✓ Single-turn delivery of six transport legs + four-location lodging + budget + reminders; the most complete skeleton | (5) + delivery gate: completeness must come from verification |
+| State and increment | ✗ After 「你说得对,完全明白!」 it scrapped the whole plan and rescheduled, then erred again the next turn | n/a (single-turn, not examined) | D1 §5.3 versioned revision |
+| Commercial alignment | ○ No commercial shape | → The answer's shape = a list of sellable products; the closing questions are conversion-qualification questions | Fiduciary to the user: read-only recommendation + WriteGate |
+| Risk disclosure | △ Given only when pushed | △ The reminder block (visa / WiFi / buffer) is intuitively right, but the same page sells an infeasible plan without flagging it | Verdict-style output: say "infeasible" outright |
 
-一句话人格判决:
+One-line persona verdicts:
 
-- **Kimi = 博学但无状态的聊天者**:知识面是真的,但 13 轮里用户被迫当了日历、约束采集器、可行性引擎、密度审查员四个角色。
-- **飞猪 = 版式完美的 OTA 导购**:它回答的其实是「一个准备下单的人」,不是「一个在规划的人」——骨架免费给,核算一分不出。
-- **GoTry = 行程的信任工程师**:第 1 轮锚定日历并问出工作窗口;此后每段方案带时间账与证据链;不可行就明说不可行。
+- **Kimi = a knowledgeable but stateless chatterbox**: the knowledge is real, but over 13 turns the user was forced into four roles — calendar, constraint collector, feasibility engine, density reviewer.
+- **Fliggy = a perfectly formatted OTA sales guide**: what it answers is really "a person about to place an order", not "a person planning a trip" — the skeleton comes free, the accounting never arrives.
+- **GoTry = the trip's trust engineer**: anchor the calendar and surface the work window at turn 1; every leg afterwards carries a time account and an evidence chain; when infeasible, say infeasible.
 
-## 4. 本轮最佳发现:两家要自己算的星期,全是 2025 年历的
+## 4. Best finding of this round: every weekday the two had to compute landed on the 2025 calendar
 
-2026 真历 8.1=周六、8.9=周日。飞猪回答里的派生星期逐一吻合 **2025** 年历(2025-08-01=周五、2025-08-09=周六):
+The true 2026 calendar has 8.1=Saturday and 8.9=Sunday. The derived weekdays in Fliggy's answer match the **2025** calendar one for one (2025-08-01=Friday, 2025-08-09=Saturday):
 
-| 日期 | 2026 真历 | 飞猪回答 | 性质 |
+| Date | True 2026 calendar | Fliggy's answer | Nature |
 |---|---|---|---|
-| 7.17 | 周五 | 周五 ✓ | 照抄用户原话 |
-| 7.18 | 周六 | 周六 ✓(总览自答) | 照抄/自答 |
-| 「周五晚赶曼谷」 | **7.31 晚** | 「8.1 周五晚」✗ | 派生(旧年历) |
-| 「周六早赶曼谷」 | **8.1 早** | 「8.2 周六早」✗ | 派生(旧年历) |
-| 8.3 | 周一 | 「周日」✗ | 派生(旧年历) |
-| 8.9 | 周日 | 「周六」✗ | 派生(旧年历) |
-| 8.10 | 周一 | 周一 ✓ | 照抄用户原话 |
+| 7.17 | Friday | Friday ✓ | Copied from the user's words |
+| 7.18 | Saturday | Saturday ✓ (self-answered in the overview) | Copied / self-answered |
+| 「周五晚赶曼谷」 (Bangkok by Friday night) | **7.31 night** | 「8.1 周五晚」 (8.1, Friday night) ✗ | Derived (old calendar) |
+| 「周六早赶曼谷」 (Bangkok by Saturday morning) | **8.1 morning** | 「8.2 周六早」 (8.2, Saturday morning) ✗ | Derived (old calendar) |
+| 8.3 | Monday | 「周日」 (Sunday) ✗ | Derived (old calendar) |
+| 8.9 | Sunday | 「周六」 (Saturday) ✗ | Derived (old calendar) |
+| 8.10 | Monday | Monday ✓ | Copied from the user's words |
 
-**给的锚照抄全对,要算的锚全错**——日期是每次重新生成的文本,不是数据。更硬的一条:飞猪总览自答「7.18 周六 → 普吉」,同一页又答「8.1 周五晚」;7.18 与 8.1 恰好相隔 14 天,任何年份都不可能一个周六一个周五——**这份日历在页内自相矛盾,且它没有任何机制能发现**。Kimi 在多轮里犯了同型错误(F1,按 2025 历理解日期、被纠正三次)。
+**Anchors given by the user were all copied correctly; anchors it had to compute were all wrong** — a date is regenerated text each time, not data. The harder one: Fliggy's overview self-answers 「7.18 周六 → 普吉」 (7.18 Saturday → Phuket), and on the same page answers 「8.1 周五晚」 (8.1, Friday night); 7.18 and 8.1 are exactly 14 days apart, so in no year can one be a Saturday and the other a Friday — **this calendar contradicts itself within the page, and it has no mechanism that could ever notice**. Kimi made the same-shaped error across turns (F1: read dates on the 2025 calendar, corrected three times).
 
-推论:
+Implications:
 
-1. 两个不同团队、不同模型、不同产品形态上的**同型失败**,说明「训练先验里的旧年历压过未锚定的日期推理」是系统性风险——靠模型升级或 prompt 提醒不可靠;
-2. GoTry 的对策不是「提醒模型注意年份」,而是把日期变成数据:时间锚点卡为唯一依据、一律查卡不自算(契约(2)),年界断言(契约(9)),锚点建模时一次性断言、重排走版本化增量(D1 §5.3);
-3. 对用户的伤害是具体的:照「8.1 周五晚出发」订票的人会订在错误的那天,而且整段曼谷「周末」实际错位一天。
+1. The **same-shaped failure** on two different teams, models, and product forms shows that "the old calendar in the training prior overrides unanchored date reasoning" is a systemic risk — model upgrades or prompt reminders are not a reliable fix;
+2. GoTry's countermeasure is not "remind the model about the year" but turning dates into data: the time-anchor card as the sole basis — always consult the card, never self-compute (contract (2)); year-boundary assertion (contract (9)); assert once when modeling anchors, reschedule through versioned increments (D1 §5.3);
+3. The harm to the user is concrete: whoever books by 「8.1 周五晚出发」 (departing Friday night 8.1) books the wrong day, and the whole Bangkok "weekend" is in fact shifted by one day.
 
-## 5. 飞猪单轮点评(摘)
+## 5. Fliggy single-turn review (excerpts)
 
-全文 transcript 与逐条证据见 [`fliggy.md`](./fliggy.md)。摘要:
+The full transcript and item-by-item evidence are in [`fliggy.md`](./fliggy.md). Summary:
 
-- **给分**:六段骨架与行程总览一次给全(G 结构完整度三家最高);预算汇总;提醒块直觉(签证/时差/WiFi/航班缓冲);深圳↔香港给跨境巴士/高铁/出租多模态对比;「凌晨航班→前一晚住宝安机场附近」是全文最接近门到门思维的一句;泰国对华免签答对且带「2024 年起」时效。
-- **失分**:§3 矩阵全部 ✗ 项——日历(§4)、G2–G4 零命中、7.18 高风险日无判决、EK327 算术自相矛盾、港龙停业仍在售、价格无出处、重问已答问题。
-- **最「OTA 导购」的一处**:每个分析段都止于一张价格表,收尾三问全是转化资质(预算范围/星级/靠不靠海)——问的全是「你准备花多少钱」,没有一句「你几点开会」。
+- **Credit**: the six-leg skeleton and the trip overview delivered in one shot (highest structural completeness of the three); budget summary; reminder-block instincts (visa / jet lag / WiFi / flight buffer); Shenzhen↔Hong Kong with a multimodal comparison of cross-border bus / high-speed rail / taxi; 「凌晨航班→前一晚住宝安机场附近」 is the one sentence in the whole text closest to door-to-door thinking; Thailand visa-free for Chinese passports answered correctly with the 「2024 年起」 (since 2024) as-of qualifier.
+- **Debit**: every ✗ item in the §3 matrix — calendar (§4), zero hits on G2–G4, no verdict on the high-risk 7.18 day, EK327 arithmetic self-contradiction, defunct Dragonair still on sale, prices without sources, re-asking answered questions.
+- **The most "OTA sales guide" moment**: every analysis section ends at a price table, and the three closing questions are all conversion qualification (budget range / star rating / seaside or not) — everything asked is 「你准备花多少钱」 ("how much are you ready to spend"), never a single 「你几点开会」 ("what time are your meetings").
 
-## 6. Kimi 多轮复盘
+## 6. Kimi multi-turn postmortem
 
-见 [`docs/research/kimi-postmortem.md`](../../research/kimi-postmortem.md)。其结论在本横评框架下重述:Kimi 的失败不在知识、在架构(无状态、无访谈、无验证、无增量);它第 13 轮才长出的那张四方案对比表(到达时刻/当天还能玩吗/换乘次数),正是 GoTry 的出厂输出。
+See [`docs/research/kimi-postmortem.md`](../../research/kimi-postmortem.md). Its conclusions, restated in this comparison-bench framework: Kimi's failure is not knowledge but architecture (stateless, no interview, no verification, no increments); the four-option comparison table it only grew at turn 13 (arrival times / can I still explore that day / transfer count) is exactly GoTry's factory output.
 
-## 7. 对 GoTry 行为契约的反哺
+## 7. Feedback into the GoTry behavior contract
 
-对照 [`cordis.gotry-patch.yml`](../../../cordis.gotry-patch.yml) 21 条行为契约:
+Checked against the 21 behavior contracts in [`cordis.gotry-patch.yml`](../../../cordis.gotry-patch.yml):
 
-- **已被横评实证的条目**(竞品失败=这些条目的存在性证明):(1) 动机先行、(2)(8)(9) 时间锚点三件套、(3)(13) 翻译不造数/外部事实先查工具、(4) 判定归引擎、(5) 待决=选择题、(7) 证据链、(10) 不重复问、(20) 事实闸。
-- **已落地(2026-09-04 founder 拍板认可;issue [#121](https://github.com/Danceiny/gotry/issues/121)/[#122](https://github.com/Danceiny/gotry/issues/122))**:
-  - **同行人客流访谈 → 契约(1) 扩展**:行程涉及同行人(见面/汇合/结伴)时,同行人是第二条到达链,同样必问——从哪出发/是否已订/有无自己的时间窗;问明即落 `gotry_companion_save`,到达账与预算按各自的链分开算;
-  - **到达状态账显式呈现 → 契约新增 (22) 到达账必达**:红眼/凌晨起飞、或落地当天有硬安排的航段,必须显式给出当地到达时刻(含日期偏移)、时差、到达精力与前一晚落脚建议——时刻表正确不等于行程可行。
-- **e2e 反哺**:本 prompt(§1)兼作 e2e 验收输入,判分标准即 §2 的 G1–G8——与 kimi 复盘 §四同一立场:**Kimi 用 13 轮换来的最终表,应是 GoTry 的出厂输出。**
+- **Items empirically proven by the bench** (competitor failures = existence proofs for these items): (1) motivation first; (2)(8)(9) the time-anchor trio; (3)(13) translation fabricates no numbers / external facts go to tools first; (4) judgment belongs to the engine; (5) open decisions become multiple-choice; (7) evidence chain; (10) never re-ask; (20) fact gate.
+- **Landed (endorsed by the founder on 2026-09-04; issues [#121](https://github.com/Danceiny/gotry/issues/121)/[#122](https://github.com/Danceiny/gotry/issues/122))**:
+  - **Companion passenger-flow interview → extension of contract (1)**: when a trip involves companions (meet up / converge / travel together), the companion is a second arrival chain and must be asked about in the same way — departing from where / booked already or not / own time window; once clarified, persist via `gotry_companion_save`, with arrival accounts and budget computed separately per chain;
+  - **Explicit arrival-state presentation → new contract (22), the arrival account is mandatory**: for red-eye / pre-dawn departures, or legs with hard commitments on landing day, the local arrival time (including date offset), time difference, arrival energy, and a previous-night lodging suggestion must be stated explicitly — a correct timetable is not a feasible trip.
+- **e2e feedback**: this prompt (§1) doubles as an e2e acceptance input, graded by §2's G1–G8 — the same stance as §4 of the Kimi postmortem: **the final table Kimi traded 13 turns for should be GoTry's factory output.**
 
-## 8. 维护纪律:如何入册下一家
+## 8. Maintenance discipline: how to archive the next entrant
 
-1. prompt 用 §1 冻结原文逐字投喂,单轮,不追问不纠错(真实多轮素材另测另标);
-2. transcript 存 `docs/persona-bench/<agent>.md`:头部记通道/轮次/采集日期,输出逐字(格式保真),后接点评(先给分、后失分、逐条带原文证据,末尾人格判决);
-3. §3 矩阵加一列;事实性发现汇总进 §4;契约反哺进 §7(能落地的挂 issue 追溯);
-4. 点评纪律与 kimi 复盘一致:给分如实(「讽刺的部分」也要写),失分必有证据;不为修辞把对方写弱——**横评的产出是机制,不是胜负**。
+1. Feed the §1 frozen prompt verbatim, single turn, no follow-ups, no corrections (real multi-turn material is tested and labeled separately);
+2. Archive the transcript at `docs/persona-bench/<agent>.md`: the header records channel / turns / collection date, the output verbatim (format-faithful), followed by the review (credit first, then debits, each item with verbatim evidence, persona verdict at the end);
+3. Add a column to the §3 matrix; fold factual findings into §4; contract feedback into §7 (attach an issue trace for anything that lands);
+4. Review discipline matches the Kimi postmortem: credit stated honestly (write 「讽刺的部分」 — "the ironic parts" — too), every debit backed by evidence; never write the other side weak for rhetorical effect — **the bench's output is mechanisms, not wins and losses**.

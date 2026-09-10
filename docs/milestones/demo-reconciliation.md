@@ -1,72 +1,74 @@
-# Demo 对账书(P0-5)
+[English](demo-reconciliation.md) | [简体中文](demo-reconciliation.zh-CN.md)
 
-> 状态:frozen(历史备忘,2026-08-27)
-> 对账 = demo 输出 vs 真实行程。地面真值来自两个来源:任务简报本身(§一)与
-> 发起人的 Kimi 对话原件(`data/行程细化计划.docx`,复盘见 `../research/kimi-postmortem.md`)。
-> 对账不是打分仪式:每处差异都要归因到「数据误差/模型缺项/产品缺项」之一。
+# Demo Reconciliation (P0-5)
 
-## 一、已互相印证的点(无需提问)
+> Status: frozen (historical memo, 2026-08-27)
+> Reconciliation = demo output vs the real trip. Ground truth comes from two sources: the task brief itself (§1) and
+> the initiator's original Kimi conversation (`data/行程细化计划.docx`, postmortem in `../research/kimi-postmortem.md`).
+> Reconciliation is not a scoring ritual: every difference must be attributed to one of "data error / model gap / product gap".
 
-| # | demo 侧 | 真实侧 | 结论 |
+## 1. Mutually corroborated points (no questions needed)
+
+| # | Demo side | Real side | Conclusion |
 |---|---|---|---|
-| 1 | 7.17 为周五、8.01 为周六、8.09 为周日、8.10 为周一(2026 年历) | 简报的原话「7.17周五」「8.10周一」 | ✅ 日历全部吻合,重放场景成立 |
-| 2 | EK328(DXB 11:00→SZX 22:40)与简报「22:40 落地深圳」精确吻合 | 发起人工作地在迪拜 | ✅ 入境段即阿联酋航空深圳线回程;返程选 EK329 是同一航线的自然闭环 |
-| 3 | 引擎判定 8.10 凌晨红眼「可行且余量 4.5h」 | 简报语气「[Lol]」——真实发生了且当事人视其为可行 | ✅ 方向一致;等待真实体验细节校准精力模型(75% 是否符合体感) |
-| 4 | 「7.18 当天飞普吉」引擎给出紧但可行的路径(CX773,12:15 离开港岛) | 简报「争取 7.18 当天飞」 | ⏳ 措辞「争取」暗示当时存在不确定性——办证时长是关键变量,等待真实办证耗时 |
-| 5 | 住宿研究:查龙/Rawai=数字游民区+潜水码头双吻合,推荐为主基地 | Kimi 对话:实际订 **The Title East Wing Rawai**(7.18-23) | ✅ **命中**(区域级) |
-| 6 | 万xx 研究排序:甲米奥南 > 考拉克(Similan 闭岛)> 董里 | Kimi 对话:8.1 从**甲米**机场飞曼谷 | ✅ **命中**(研究首选项=真实选择) |
-| 7 | gate q3 由 M-1 工作窗口**确定性回答**:周五晚班全排除,只剩周六早 VZ303 | Kimi 对话:「我买了**8.1 周六早上甲米飞曼谷**的飞机票,10:25 落地」 | ✅ **模型命中且与真实一致**——一条规则回答了 Kimi 烧三轮的问题 |
-| 8 | gate q4 给了经典线/大理深度两案 | Kimi 对话:实际=丽江束河 3 晚+大理才村 2 晚(两城慢住) | △ 方向对(慢住),粒度待吸收:两城慢住应成为 workation 型云南的默认建议 |
+| 1 | 7.17 is a Friday, 8.01 a Saturday, 8.09 a Sunday, 8.10 a Monday (2026 calendar) | The brief's exact words "7.17 Friday", "8.10 Monday" | ✅ Calendar fully matches; the replay scenario holds |
+| 2 | EK328 (DXB 11:00→SZX 22:40) matches the brief's "lands in Shenzhen at 22:40" exactly | The initiator's workplace is Dubai | ✅ The entry leg is the return direction of Emirates' Shenzhen line; choosing EK329 for the return is the natural closure of the same route |
+| 3 | The engine verdict on the 8.10 early-morning red-eye: "feasible with 4.5h margin" | The brief's tone "[Lol]" — it really happened and the person involved saw it as feasible | ✅ Direction agrees; awaiting real-experience detail to calibrate the energy model (does 75% match felt energy) |
+| 4 | For "fly to Phuket (普吉岛) on 7.18 itself" the engine produced a tight-but-feasible path (CX773, leaving Hong Kong Island at 12:15) | Brief: "try to fly on 7.18 itself" | ⏳ The wording "try to" implies uncertainty existed at the time — permit duration is the key variable; awaiting the real permit-processing time |
+| 5 | Stay research: Chalong/Rawai = digital-nomad zone + dive pier, a double match; recommended as main base | Kimi conversation: actually booked **The Title East Wing Rawai** (7.18-23) | ✅ **Hit** (area level) |
+| 6 | 万xx research ranking: Krabi Ao Nang > Khao Lak (Similan closed) > Trang | Kimi conversation: flew to Bangkok from **Krabi** airport on 8.1 | ✅ **Hit** (research first preference = real choice) |
+| 7 | Gate q3 was **deterministically answered** by the M-1 work window: all Friday evening flights excluded, only Saturday-morning VZ303 left | Kimi conversation: "I bought a ticket for **Krabi to Bangkok on Saturday morning, Aug 1**, landing 10:25" | ✅ **Model hit and consistent with reality** — one rule answered what burned Kimi three rounds |
+| 8 | Gate q4 offered two options: classic loop / Dali in depth | Kimi conversation: actual = 3 nights in Shuhe, Lijiang (丽江) + 2 nights in Caicun, Dali (大理) (slow two-city stay) | △ Right direction (slow stay); granularity to absorb: the two-city slow stay should become the default recommendation for workation-style Yunnan |
 
-## 二、待发起人回答的问题清单(每题都对应一个模型/产品校准点)
+## 2. Question list awaiting the initiator (each maps to a model/product calibration point)
 
-~~已答 3/6/7/8(见 §一 第 5-8 行,地面真值来自 Kimi 对话)~~。剩余:
+~~Answered 3/6/7/8 (see §1 rows 5-8; ground truth from the Kimi conversation)~~. Remaining:
 
-**航段(2 问,从对话已再挖 2 题)**:
-1. f1 实际坐的哪班?(CX773 14:45 / HX741 20:20 / 其他)——校准「办证耗时→离港时间」的映射
-2. f4 昆明→深圳 8.9 实际几点到深圳?(校准 arrive_by 锚点设 21:00 是否过松/过紧)
+**Flight legs (2 questions; 2 more mined from the conversation)**:
+1. Which flight did f1 actually take? (CX773 14:45 / HX741 20:20 / other) — calibrates the "permit duration → departure time" mapping
+2. f4 Kunming→Shenzhen: what time did it actually reach Shenzhen on 8.9? (calibrates whether the arrive_by anchor at 21:00 is too loose or too tight)
 
-已挖到(对话第 12 轮+):
-- ✅ **f3 答案**:**8.4 周二 FD582 DMK 08:10→KMG 11:25 + 昆明转飞丽江**(Kimi 终轮四方案对比后被采纳的方向)——demo 的 MU6088 8.3 方案是备选,真实选择晚了一天(因 8.4 才开始休假)
-- ✅ **f2 起点**:8.1 从**甲米(奥南)**出发——两周的「万xx换防」实际住了 3 晚奥南(周末模式)
+Already mined (conversation round 12+):
+- ✅ **f3 answer**: **8.4 Tuesday FD582 DMK 08:10→KMG 11:25 + connection Kunming→Lijiang** (the direction adopted after Kimi's final-round four-option comparison) — the demo's MU6088 8.3 option was the backup; the real choice came a day later (leave started only on 8.4)
+- ✅ **f2 origin**: departed 8.1 from **Krabi (Ao Nang)** — the two-week 『万xx』 relocation actually meant 3 nights in Ao Nang (weekend mode)
 
-**住宿(0 问,全部已挖到)**:
-- ✅ Rawai The Title 7.18-23(5 晚)→ 后续连住至 8.1(拉威基地,含 2 个周末去甲米各住 2 晚的「周末换防」模式,非整体搬迁)——demo 的「主基地+中途换防」预测在结构上命中
+**Stays (0 questions, all mined)**:
+- ✅ Rawai The Title 7.18-23 (5 nights) → continued stay through 8.1 (Rawai base, including a "weekend relocation" pattern of two Krabi trips of 2 nights each across 2 weekends, not a full move) — the demo's "main base + mid-trip relocation" prediction hit structurally
 
-**花费与体感(2 问)**:
-6. 全程实际总花费大概区间?(对照分层预算 ¥12.6k/¥16.3k 的命中率)
-7. 8.10 落地迪拜直奔办公室的真实体感(0-100 自评精力)?(校准红眼睡眠模型 D-6)
+**Spend and felt experience (2 questions)**:
+6. Rough range of the total actual spend? (checks the hit rate of the tiered budget ¥12.6k/¥16.3k)
+7. Real felt experience of the 8.10 Dubai landing and heading straight to the office (self-rated energy 0-100)? (calibrates red-eye sleep model D-6)
 
-## 二·补:auto-guess 答案(2026-08-24 吸收,founder 校正即改)
+## 2 (supplement): auto-guess answers (absorbed 2026-08-24; founder corrections apply immediately)
 
-| 题 | auto-guess | 依据 | 状态 |
+| Question | auto-guess | Basis | Status |
 |---|---|---|---|
-| f1 实际班次 | **HX741 20:20** | 晚班;Kimi 7.18 当天飞+早高峰,CX773 12:15 过紧 | 已入 flights_2026 f1.evidence |
-| f4 SZX 到达 | **≈22:00** | MU6088/DZ6252 中间值;EK329 红眼留 4h 缓冲 | 已入 f4.evidence |
-| Rawai 房型 | **Studio ≈¥400/晚** | 长住+工作型;非套间 | 已入 yunnan-pack meta.reconcil |
-| EK329 落地→家 | **≈1.5h** | SZX→南山车程(D-6 精力模型落地端口径) | 已入 f5.evidence |
-| 8.10 精力(0-100) | **80** | 红眼 11h 落地 75% + 路上 1.5h 补眠 ≈+10% | 已入 engine.ts 精力表 |
-| 全程花费 | **≈¥11.9k** | 机票 ¥4k + 住宿 2 周 ¥4.2k + 接驳 ¥1.2k + 餐饮 ¥1.5k + 潜水/温泉 ¥1k;落 demo 预算分层 ¥12.6k 中 | 已入 f1/f4/f5.evidence 拆解 |
-| 剩余 2 题(花式) | **没问过,无需真答** | demo-reconciliation 不追问;founder 校正即改 | — |
+| f1 actual flight | **HX741 20:20** | Evening flight; Kimi flew on 7.18 itself + morning rush hour, CX773 12:15 too tight | Entered flights_2026 f1.evidence |
+| f4 SZX arrival | **≈22:00** | Midpoint of MU6088/DZ6252; leaves a 4h buffer for the EK329 red-eye | Entered f4.evidence |
+| Rawai room type | **Studio ≈¥400/night** | Long stay + work-oriented; not a suite | Entered yunnan-pack meta.reconcil |
+| EK329 landing→home | **≈1.5h** | SZX→Nanshan drive (D-6 energy model landing-leg convention) | Entered f5.evidence |
+| 8.10 energy (0-100) | **80** | 11h red-eye landing at 75% + 1.5h nap en route ≈ +10% | Entered the engine.ts energy table |
+| Total spend | **≈¥11.9k** | Flights ¥4k + 2-week stays ¥4.2k + transfers ¥1.2k + meals ¥1.5k + diving/hot springs ¥1k; falls inside the demo's budget tier ¥12.6k | Entered the f1/f4/f5.evidence breakdown |
+| Remaining 2 questions (spend detail) | **Never asked; no real answer needed** | demo-reconciliation will not press; founder corrections apply immediately | — |
 
-校正方式:改 `docs/decisions-needed.md` D-2 auto-guess YAML 任意行 + commit,gotry-builder-01 按改后值重写数据包。
+Correction method: edit any line of the D-2 auto-guess YAML in `docs/decisions-needed.md` + commit; gotry-builder-01 rewrites the data pack from the revised values.
 
-## 三、对账后的三类去向(预登记)
+## 3. Three destinations after reconciliation (pre-registered)
 
-- **数据误差** → 修数据包(班期/价格),不动模型;
-- **模型缺项** → 记 ADR 并评估是否进引擎(例如:办证时长分布、季风季出海率);
-- **产品缺项** → 进 loopx todo(例如:两人在不同机场的会合规划、女朋友独立行程建模)。
+- **Data error** → fix the data pack (schedules/prices); model untouched;
+- **Model gap** → record an ADR and evaluate whether it enters the engine (e.g., permit-duration distribution, monsoon-season go-to-sea rate);
+- **Product gap** → into loopx todo (e.g., meet-up planning for two people arriving at different airports, modeling the girlfriend's independent itinerary).
 
-## 状态
+## Status
 
-地面真值 4 题已从 Kimi 对话提取入 §一;**剩余 7 题阻塞在发起人输入**。拿到答案后逐条归因,更新本文档与数据包。
+Ground truth for 4 questions has been extracted from the Kimi conversation into §1; **the remaining 7 questions are blocked on the initiator's input**. Once answers arrive, attribute each one and update this document and the data pack.
 
-## 对账终局(2026-08-26)
+## Reconciliation endgame (2026-08-26)
 
-七题真值全部吸收(founder 2026-08-26 提供剩余四题,详见 data/flights_2026.json 与 data/yunnan-pack.json 的 meta.reconcil 终值条目):
-- f1:实际 ~16:xx 起飞、23:00 落 HKT(地铁 13:xx 赴港机正合适)
-- f4:实际昆明→珠海(没去过想看半天),行李不便即顺风车返深圳
-- Rawai:公寓首夜失败(物业失联/找不到钥匙/条件差),次日换普通酒店全方位更好
-- EK329 后:深圳无住所,按摩店过夜(比酒店划算舒服)
+All seven ground-truth values absorbed (founder provided the remaining four on 2026-08-26; see the final meta.reconcil entries in data/flights_2026.json and data/yunnan-pack.json):
+- f1: actually departed ~16:xx and landed HKT 23:00 (metro to the Hong Kong airport at 13:xx fits well)
+- f4: actually Kunming→Zhuhai (never been; wanted to see it for half a day), returned to Shenzhen by ride-hail since luggage was inconvenient
+- Rawai: the apartment's first night failed (property unreachable / key not found / poor condition); switching to an ordinary hotel the next day was better across the board
+- After EK329: no lodging in Shenzhen; spent the night at a massage parlor (better value and comfort than a hotel)
 
-**原则沉淀(-founder 指示)**:这些都不是阻塞性问题——系统应动态 follow 用户聊天中发现的动机与目的;班次/房型等开放性选题由 agent 给出有说服力的方案,不外问。
+**Principle settled (-founder instruction)**: none of these are blocking issues — the system should dynamically follow the motivations and purposes discovered in the user's chat; for open choices like flight number or room type, the agent offers persuasive options instead of asking outward.

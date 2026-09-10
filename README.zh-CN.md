@@ -176,7 +176,7 @@ AI agent:[`AGENTS.md`](AGENTS.zh-CN.md) 是绑定契约——入场先清扫异�
 
 ## 文档
 
-每篇文档以双语对(英文 `x.md` + 中文 `x.zh-CN.md`)为准绳,成对不一致视为 bug(双语化推进中)。
+每篇文档以双语对(英文 `x.md` + 中文 `x.zh-CN.md`)为准绳,成对不一致视为 bug(机器生成的 `CHANGELOG.md` 与工具自管的 `superpowers/` 豁免)。
 
 | 文档 | 内容 |
 |---|---|

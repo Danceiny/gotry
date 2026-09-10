@@ -1,91 +1,93 @@
-# M4 校准发问清单(2026-08-23)
+[English](m4-calibration-questions.md) | [简体中文](m4-calibration-questions.zh-CN.md)
 
-> 状态:frozen(历史备忘,2026-08-23)
-> 给你(founder)的快速答卷页:5 道题,直接回答即可。每题答完,gotry-builder-01 立即吸收进引擎 + 数据源。
-> 来源:`demo-reconciliation.md` 已挖出 f2/f3/f4 三个答案,**只剩 4 道题待 founder**。
-> 提交方式:粘贴 1-5 题答案到本文件 `/docs/milestones/m4-calibration-questions.md` 末尾的 "你的答案" 块(或在对话中直接发我)。
+# M4 calibration questions (2026-08-23)
 
----
-
-## 1. f1 香港→普吉实际班次?
-
-**目的**: 校准「办证耗时 → 香港离港时间窗」映射——这是 M-1 工作窗口约束的实参。
-
-- (a) **CX773** 7.18 12:15 HKG→HKT 14:30(实测过)
-- (b) **HX741** 7.18 20:20 HKG→HKT 23:35(实测过)
-- (c) **其他**(请填班次号+时刻)
-
-你**实际坐的**: ＿＿＿＿
+> Status: frozen (historical memo, 2026-08-23)
+> A quick answer sheet for you (founder): 5 questions, just answer them directly. After each answer, gotry-builder-01 absorbs it into the engine + data sources immediately.
+> Source: `demo-reconciliation.md` has already mined three answers (f2/f3/f4); **only 4 questions remain for the founder**.
+> How to submit: paste the answers to questions 1-5 into the "Your answers" block at the end of this file `/docs/milestones/m4-calibration-questions.md` (or just send them to me in the conversation).
 
 ---
 
-## 2. f4 昆明→深圳 8.9 实际到达深圳时间?
+## 1. f1 Hong Kong→Phuket (普吉岛): actual flight?
 
-**目的**: 校准 `arrive_by` 锚点(模型用 21:00)— 这个锚点过紧/过松直接影响「当晚能否回家 vs 再住深圳机场」。
+**Purpose**: calibrate the "permit duration → Hong Kong departure time window" mapping — it is the actual argument of the M-1 work-window constraint.
 
-你**实际 8.9 到深圳宝安机场时间**: ＿＿＿＿(格式: HH:MM)
+- (a) **CX773** 7.18 12:15 HKG→HKT 14:30 (tested)
+- (b) **HX741** 7.18 20:20 HKG→HKT 23:35 (tested)
+- (c) **Other** (please fill in flight number + times)
 
----
-
-## 3. Rawai 房型具体是?
-
-**目的**: 校准 `data/hotels_2026.json` 的「The Title」房型维度——经济/标准/套间,价格档次差 3 倍。模型未来给家庭出行推荐时,会按你**实际接受的价格档**做匹配。
-
-`The Title East Wing Rawai` 你订的**房型**:
-- (a) Deluxe Studio(~¥300/晚)
-- (b) One-Bedroom Suite(~¥600/晚)
-- (c) Two-Bedroom Pool Villa(~¥1200+/晚)
-- (d) 其他(请填)
-
-**实际价格档**: ＿＿＿＿(元/晚)
+What you **actually took**: ＿＿＿＿
 
 ---
 
-## 4. 8.10 凌晨 EK329 落地深圳后,你几点到得了家(在南山/福田/罗湖等)?
+## 2. f4 Kunming→Shenzhen: actual arrival time in Shenzhen on 8.9?
 
-**目的**: 校准 D-6 精力模型——深夜红眼落地后 4.5h 余量够不够? 4.5h 是 base cost,从**落地到躺床上**实际还要加 (通关+取行李+打车/家人接+回家路上) **N 小时**。我现把 N 估为 1.5h——但你没回。
+**Purpose**: calibrate the `arrive_by` anchor (the model uses 21:00) — whether this anchor is too tight/too loose directly decides "home that night vs another night at Shenzhen airport".
 
-你**实际 EK329 7.18 落地 → 到家** 用了: ＿＿＿＿(小时)
+Your **actual arrival time at Shenzhen Bao'an Airport on 8.9**: ＿＿＿＿ (format: HH:MM)
 
 ---
 
-## 5. 总花费拆分(2 周普吉 + 云南 + 迪拜端)?
+## 3. Which Rawai room type exactly?
 
-**目的**: 校准 LLM 的"该开多少预算" 推荐 + 候选 budgetTier 经济/舒适/便利 哪个对得上你。
+**Purpose**: calibrate the "The Title" room-type dimension in `data/hotels_2026.json` — economy/standard/suite, price tiers differing 3x. When the model recommends for family trips in the future, it will match against the **price tier you actually accepted**.
 
-| 项 | 实际花费(人民币或当地币) |
+`The Title East Wing Rawai` — the **room type** you booked:
+- (a) Deluxe Studio (~¥300/night)
+- (b) One-Bedroom Suite (~¥600/night)
+- (c) Two-Bedroom Pool Villa (~¥1200+/night)
+- (d) Other (please fill in)
+
+**Actual price tier**: ＿＿＿＿ (yuan/night)
+
+---
+
+## 4. After EK329 landed in Shenzhen in the early morning of 8.10, when could you get home (Nanshan/Futian/Luohu etc.)?
+
+**Purpose**: calibrate the D-6 energy model — is the 4.5h margin enough after a late-night red-eye landing? 4.5h is base cost; from **wheels-down to lying in bed** you actually add **N hours** (immigration + baggage claim + taxi/family pickup + ride home). I currently estimate N as 1.5h — but you never replied.
+
+Your **actual EK329 7.18 landing → home** took: ＿＿＿＿ (hours)
+
+---
+
+## 5. Total spend breakdown (2 weeks Phuket + Yunnan + the Dubai end)?
+
+**Purpose**: calibrate the LLM's "how much budget to set" recommendation + which candidate budgetTier (economy/comfort/convenience) matches you.
+
+| Item | Actual spend (RMB or local currency) |
 |---|---|
-| 机票(2 段国际 + 2 段国内) | ＿＿＿＿ |
-| 住宿(2 周,1 个 Rawai 主基地 + 1 个云南) | ＿＿＿＿ |
-| 当地交通(包车/接驳) | ＿＿＿＿ |
-| 餐饮(粗估) | ＿＿＿＿ |
-| 娱乐/潜水/温泉等 | ＿＿＿＿ |
-| **合计** | ＿＿＿＿ |
+| Flights (2 international + 2 domestic legs) | ＿＿＿＿ |
+| Stays (2 weeks: 1 Rawai main base + 1 Yunnan) | ＿＿＿＿ |
+| Local transport (charter/transfers) | ＿＿＿＿ |
+| Meals (rough estimate) | ＿＿＿＿ |
+| Entertainment/diving/hot springs etc. | ＿＿＿＿ |
+| **Total** | ＿＿＿＿ |
 
 ---
 
-## 你的答案
+## Your answers
 
-> 复制这段到下面 → 填好 commit 即可。**格式宽松**,能不写就不写,gotry-builder-01 会按你给的回答推。
+> Copy this block below → fill it in → commit, done. **Format is loose**: write as little as you can get away with; gotry-builder-01 will infer from whatever answers you give.
 
 ```yaml
-f1_actual: ""               # (a) CX773 12:15  / (b) HX741 20:20  / (c) 班次号+时刻
-f4_szx_arrival: ""           # 8.9 HH:MM 到深圳宝安机场
-rawai_room_type: ""          # (a) Studio / (b) Suite / (c) Pool Villa / (d) 其他
-rawai_nightly_price: 0       # 整数元/晚
-szt_arrival_hours: 0         # 8.10 落地 → 躺床上 用了 几小时
+f1_actual: ""               # (a) CX773 12:15  / (b) HX741 20:20  / (c) flight number + times
+f4_szx_arrival: ""           # 8.9 HH:MM arrival at Shenzhen Bao'an Airport
+rawai_room_type: ""          # (a) Studio / (b) Suite / (c) Pool Villa / (d) other
+rawai_nightly_price: 0       # integer, yuan/night
+szt_arrival_hours: 0         # hours used from 8.10 landing → lying in bed
 total_spend_breakdown:
   flights: 0
   accommodation: 0
   ground_transport: 0
   meals: 0
   activities: 0
-  total: 0                   # 上面 5 项加总,如能填这一项就够
+  total: 0                   # sum of the 5 items above; filling just this one is enough
 ```
 
-## 你的答案(实际填)
+## Your answers (as actually filled)
 
-<!-- 在这里填答 -->
+<!-- fill in answers here -->
 
 ```
 

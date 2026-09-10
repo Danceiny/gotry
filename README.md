@@ -176,7 +176,7 @@ AI agents: [`AGENTS.md`](AGENTS.md) is the binding contract — sweep async work
 
 ## Documentation
 
-Documents ship as bilingual pairs (`x.md` English + `x.zh-CN.md` 中文); divergence within a pair is treated as a bug (rollout in progress).
+Documents ship as bilingual pairs (`x.md` English + `x.zh-CN.md` 中文); divergence within a pair is treated as a bug (machine-generated `CHANGELOG.md` and the tool-managed `superpowers/` namespace exempt).
 
 | Document | Purpose |
 |---|---|

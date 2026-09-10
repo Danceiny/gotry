@@ -1,313 +1,359 @@
-# 工具编排与通道健康面设计(issue #106/#107/#108 收口 + 两个核心命题)
+[English](tool-orchestration-design.md) | [简体中文](tool-orchestration-design.zh-CN.md)
 
-> 状态:**accepted,已全部落地**(D-7/D-8/D-9 于 2026-09-03 采纳;L0/L1 同日落地,L2 七项于 2026-09-04 收口——见 §6)。
-> 关联:ADR-13(工具 envelope)/ADR-18(效应解译器)/ADR-19(事实分型)/ADR-24(turn 预算)/ADR-25(通道健康面);
-> `effect-interpreter.md`;`../data-sources.md`(数据源权威面);evaluation 轨 issue #96/#100/#102。
+# Tool Orchestration and Channel Health Face Design (closeout of issues #106/#107/#108 + two core propositions)
 
-## 0. 这份文档回答什么
+> Status: **accepted, fully landed** (D-7/D-8/D-9 adopted on 2026-09-03; L0/L1 landed the same day, the seven L2 items closed out on 2026-09-04 — see §6).
+> Related: ADR-13 (tool envelope) / ADR-18 (effect interpreter) / ADR-19 (fact typing) / ADR-24 (turn budget) / ADR-25 (channel health face);
+> `effect-interpreter.md`; `../data-sources.md` (authoritative data-source doc); evaluation-track issues #96/#100/#102.
 
-1. open issues 中全部工具调用相关问题的统一设计:#108(session bridge 优先级/工具编排)、
-   #107(TOOL_BUDGET_EXHAUSTED/额度归属)、#106(初始化引导/glob 超时);并交代
-   #96/#100/#102(evaluation 轨,工具契约同源)与 #82(world2agent 事件面)的关系。
-2. 核心命题一:如何**长久**保持工具调用的「性能」,包括在普通 LLM 下的表现。
-3. 核心命题二:如何维持工具生态开放,提供最高程度的可扩展性。
+## 0. What this document answers
 
-## 1. 三个 issue 的共同根因
+1. A unified design for all tool-call issues among the open issues: #108 (session bridge priority / tool orchestration),
+   #107 (TOOL_BUDGET_EXHAUSTED / quota ownership), #106 (bootstrap onboarding / glob timeout); it also states the
+   relationship to #96/#100/#102 (evaluation track, tool contracts from the same source) and #82 (world2agent event face).
+2. Core proposition 1: how to **durably** preserve tool-call "performance", including under ordinary LLMs.
+3. Core proposition 2: how to keep the tool ecosystem open with the highest degree of extensibility.
 
-三个 issue 的失败形态不同,根因是同一个:**失败发生的瞬间,模型手里没有结构化的
-通道状态与下一步指引**——
+## 1. The shared root cause of the three issues
 
-| issue | 失败形态 | 缺失的东西 |
+The three issues fail in different shapes but share one root cause: **at the moment of failure, the model holds no
+structured channel state and no next-step guidance** —
+
+| issue | failure shape | missing piece |
 |---|---|---|
-| #108 | flyai 429 额度尽,模型跨轮盲重试,不知道 session bridge 是更强补缺 | 通道状态(额度已尽)+ 改道指引(下一路最优通道) |
-| #107 | web_fetch/flyai 撞 TOOL_BUDGET_EXHAUSTED,用户拿不到答复 | 配额的归属定义与可见性(耗尽前不可见);症状层已被 ADR-24 v2 根治 |
-| #106 | dsh-calendar 会话中报「未配置 username」;glob/grep 超时 | patch 分发面宿主插件的初始化引导;glob/grep 归上游 dsh(本仓无锚点) |
+| #108 | flyai 429 quota exhausted; the model blind-retries across turns, unaware that session bridge is the stronger fallback | channel state (quota exhausted) + rerouting guidance (the next-best channel) |
+| #107 | web_fetch/flyai hits TOOL_BUDGET_EXHAUSTED; the user gets no answer | ownership definition and visibility of quota (invisible before exhaustion); the symptom layer already cured at the root by ADR-24 v2 |
+| #106 | dsh-calendar reports "username not configured" mid-session; glob/grep timeouts | bootstrap onboarding for patch-distribution-face host plugins; glob/grep belongs to upstream dsh (no anchor in this repo) |
 
-现有底座(不重建,只在其上收口):
+The existing foundation (not rebuilt; we only close out on top of it):
 
-- **ADR-13 平铺 envelope**(`tool-packet.ts`):成功/失败同形,guard 兜底同形——所有工具
-  返回已经是结构化载体,改道指引有地方放。
-- **ADR-18 效应解译器 + 韧性策略表**(`effect.ts`/`resilience.ts`):效应即数据、per-效应
-  退避/熔断显式拍板、mock 解译器;429 不重试归 needs-setup 已落地(flyai.ts)。
-- **ADR-19 事实分型**(`bookable-facts.ts`):miss≠error,传输失败永不落负事实
-  (issue #96 要求的不变量已实装,见 §3.4)。
-- **ADR-24 v2 turn 预算**(`turn-policy.ts`):确定性路由(quick/sync/deep,零 LLM)+
-  wall-clock 双出口(converge/handoff)——「预算耗尽裸死」形态已根治(#107 症状层)。
-- **needs-setup verdict + 工具描述双层明示**(defeb5b):达限即给「勿重试、改走 X」指引。
-- **doctor 体检面**(`capabilities/doctor.ts`):可选依赖状态与补装指引的统一出口。
+- **ADR-13 flat envelope** (`tool-packet.ts`): success/failure share one shape, guard fallbacks share it too — every
+  tool return is already a structured carrier, so rerouting guidance has a place to live.
+- **ADR-18 effect interpreter + resilience policy table** (`effect.ts`/`resilience.ts`): effects as data, per-effect
+  backoff/circuit-breaker decisions made explicit, mock interpreter; "429 no-retry goes to needs-setup" is landed (flyai.ts).
+- **ADR-19 fact typing** (`bookable-facts.ts`): miss≠error, transport failures never write negative facts
+  (the invariant required by issue #96 is implemented, see §3.4).
+- **ADR-24 v2 turn budget** (`turn-policy.ts`): deterministic routing (quick/sync/deep, zero LLM) +
+  wall-clock dual exits (converge/handoff) — the "budget exhausted, bare death" shape is cured at the root (#107 symptom layer).
+- **needs-setup verdict + two-layer explicit tool descriptions** (defeb5b): on reaching the limit, guidance arrives: "do not retry, switch to X".
+- **doctor health-check face** (`capabilities/doctor.ts`): the unified exit for optional-dependency status and install guidance.
 
-根因归纳成四条缺口:
+The root cause reduces to four gaps:
 
-1. **通道状态是隐式的**——散落在报错文案、persona 散文、工具描述里,没有一等数据面;
-2. **路由知识只在 prose 里**——persona (19) 近千字散文,强模型能读,普通模型读不动;
-3. **配额不可见**——耗尽那一刻才知道,无法预知、无法解释;
-4. **初始化引导只覆盖 gotry 自有依赖**——patch 分发的宿主插件(dsh-calendar 等)在覆盖外。
+1. **Channel state is implicit** — scattered across error strings, persona prose, and tool descriptions; no first-class data face;
+2. **Routing knowledge lives only in prose** — persona (19) is nearly a thousand characters of prose; strong models can read it, ordinary models cannot;
+3. **Quota is invisible** — you learn of exhaustion only at the moment it happens; no prediction, no explanation;
+4. **Bootstrap onboarding covers only gotry's own dependencies** — patch-distributed host plugins (dsh-calendar etc.) are outside its coverage.
 
-## 2. 设计总览:通道注册表(数据)+ 通道健康面
+## 2. Design overview: channel registry (data) + channel health face
 
-两个新的一等数据面,其余全部由它们**生成**(不是新增并行真相):
+Two new first-class data faces; everything else is **generated** from them (not a new parallel source of truth):
 
-### 2.1 通道注册表 `channel-registry`(纯数据,单一来源)
+### 2.1 Channel registry `channel-registry` (pure data, single source)
 
-每行描述一条通道:
+Each row describes one channel:
 
 ```
 { id: 'flyai' | 'session:ctrip-flight' | 'session:12306-train' | 'hbcli' | 'open-meteo' | …,
-  intents: ['search-flight', …],            // 覆盖的意图(见 §3.3 意图词表)
+  intents: ['search-flight', …],            // intents covered (see §3.3 intent vocabulary)
   quotaClass: 'user-session' | 'user-key' | 'anonymous-trial' | 'free-public' | 'static',
-  evidenceTier: '[实时API:*]' | '[会话:*]' | '[静态包:估算]',   // 可靠性排序依据
+  evidenceTier: '[实时API:*]' | '[会话:*]' | '[静态包:估算]',   // basis for the reliability ordering
   setup: { surface: 'doctor#flyai' | 'extension-store' | 'cordis.patch.yml', … },
-  fallbacks: ['session:ctrip-flight', 'web'],  // 同意图内的候选顺位(静态初值)
-  probe?: 'doctor item id'                   // 健康探测锚点
+  fallbacks: ['session:ctrip-flight', 'web'],  // candidate order within an intent (static initial value)
+  probe?: 'doctor item id'                   // health-probe anchor
 }
 ```
 
-消费方(全部生成,零手改):① persona (19) 的替换片段;② 各检索工具描述的首行
-(适用意图/降级顺位);③ 工具结果里的 `routing` 建议字段(§3.3);④ doctor 报告行。
-加一个通道 = 注册表加一行 + handler 一个 + 测试断言——persona/描述/doctor 随之自动一致。
-这是命题二(§5)的物理基础,也是命题一「prose 会腐坏、生成物不腐坏」的落点。
+Consumers (all generated, zero hand edits): ① the replacement fragment for persona (19); ② the first line of each
+retrieval tool's description (applicable intents / degradation order); ③ the `routing` suggestion field in tool
+results (§3.3); ④ doctor report lines. Adding a channel = one registry row + one handler + one test assertion —
+persona/descriptions/doctor become consistent automatically. This is the physical basis of Proposition 2 (§5) and the
+landing point of Proposition 1's "prose rots, generated artifacts do not".
 
-### 2.2 通道健康面(channel health)
+### 2.2 Channel health face (channel health)
 
-两个粒度,均从既有 verdict 流派生,不新增运行时:
+Two granularities, both derived from existing verdict flows; no new runtime:
 
-- **持久面 = doctor v2**:体检项从「装没装」扩到「配额类通道现在好不好」——
-  从 incident/fact 侧车读最近一次 needs-setup/429 时间,显示「今日已达限/半可用」级状态;
-  并新增 patch 分发面宿主插件一节(§3.1)。
-- **会话面 = session channel-state**(进程内瞬态,与断路器同先例,不落盘):
-  某通道返回 needs-setup / challenged / cooldown / needs-extension 时记
-  `{channel, state: down|degraded, reason, since}`;后续**同会话内**相关意图的工具结果
-  尾部注入一行 `routing` 建议(见 §3.3)。turn 开始时不主动广播(不烧 token),
-  只在失败现场或相关检索结果处教学——契约在失败现场教,不在系统提示里预习。
+- **Persistent face = doctor v2**: health-check items extend from "is it installed" to "is the quota-class channel
+  healthy right now" — read the most recent needs-setup/429 timestamp from the incident/fact sidecar and show a status
+  at the "limit reached today / half available" level; plus a new section for patch-distributed host plugins (§3.1).
+- **Session face = session channel-state** (in-process transient, same precedent as the circuit breaker, never persisted):
+  when a channel returns needs-setup / challenged / cooldown / needs-extension, record
+  `{channel, state: down|degraded, reason, since}`; afterwards, tool results for related intents **within the same
+  session** get one `routing` suggestion line injected at the tail (see §3.3). No proactive broadcast at turn start
+  (no token burn); teaching happens only at the failure site or on related retrieval results — the contract is taught
+  at the failure site, not previewed in the system prompt.
 
-### 2.3 与 ADR-18「不做自动多渠道路由」、persona (19)「平铺无预设优先级」的兼容论证
+### 2.3 Compatibility argument with ADR-18 "no automatic multi-channel routing" and persona (19) "flat, no preset priorities"
 
-本设计**不动**这两条 founder 判定:工具面保持平铺,解译器不做隐藏派发,模型仍然
-自己选工具、自己发起调用。变化在于:排序不再是**静态预设**(那正是 persona (19) 删掉的
-「三级路由」),而是**由运行时健康状态驱动的动态建议**——#108 的病灶不是「没有静态
-优先级」,而是「flyai 额度耗尽这一状态变化没有任何机制传导到模型的下一次选择」。
-静态平铺 + 动态建议同时满足两条历史判定(透明、可审计、agent 层比价)与本 issue
-的诉求(可用性优先的编排)。备选「解译器层自动改道」仍判定不做:它破坏调用可审计性
-(模型以为调了 A 实际走了 B),与 WriteGate 同构的透明原则相违。
+This design **does not touch** those two founder rulings: the tool face stays flat, the interpreter does no hidden
+dispatch, and the model still picks tools and issues calls by itself. What changes: ordering is no longer a **static
+preset** (exactly the "three-level routing" persona (19) deleted) but a **dynamic suggestion driven by runtime health
+state** — the pathology of #108 is not "no static priority" but "no mechanism carried the state change of flyai's
+exhausted quota into the model's next choice". Static flatness + dynamic suggestions satisfies both historical rulings
+(transparency, auditability, agent-layer price comparison) and this issue's demand (availability-first orchestration).
+The alternative "interpreter-level automatic rerouting" is still ruled out: it breaks call auditability (the model
+believes it called A while B actually ran) and violates the transparency principle isomorphic to WriteGate.
 
-## 3. 逐 issue 设计
+## 3. Per-issue design
 
-### 3.1 #106 — 初始化引导扩到 patch 分发面;glob/grep 归上游
+### 3.1 #106 — bootstrap onboarding extends to the patch distribution face; glob/grep belongs upstream
 
-**事实纠正**:triage 称「gotry 代码面零引用 dsh-calendar」在**分发层不成立**——
-`cordis.gotry-patch.yml` 第 15-16 行分发该插件,`bin/gotry-inner.js` 运行时解析并注入,
-且注释明知「未配置时工具报错降级,不挡启动」。即:gotry 自愿把一个**已知未配置**的
-工具发到了模型的工具箱里,报错发生在会话中段——这正是 issue ①「初始化时一并完成
-安装配置」的合理诉求。triage 的 grep 范围只覆盖了 persona/工具描述/文档,未覆盖分发面。
+**Fact correction**: triage claimed "the gotry code face has zero references to dsh-calendar"; at the **distribution
+layer** this does not hold — `cordis.gotry-patch.yml` lines 15-16 distribute that plugin, `bin/gotry-inner.js` resolves
+and injects it at runtime, and the comment knowingly states "when unconfigured, the tool errors and degrades, without
+blocking startup". That is: gotry voluntarily shipped a **known-unconfigured** tool into the model's toolbox, and the
+error surfaced mid-session — exactly what issue ① reasonably demands: "complete installation and configuration together
+at initialization". Triage's grep scope covered only persona/tool descriptions/docs, not the distribution face.
 
-**设计**:
+**Design**:
 
-1. **doctor v2 新增「宿主插件」一节**:对 patch 分发的每个宿主插件
-   (dsh-calendar / dsh-map-tools / dsh-tool-ask-user)检查两态——可解析(bin 解析逻辑
-   同款候选清单)+ 已配置(calendar:profile `cordis.patch.yml` 的 calendar 行 config
-   是否填了 username;map-tools 零 key 可跑只查存在性);未配置给精确 fix(可复制命令
-   或 patch 行示例)。doctor 只读、永不抛错的契约不变。
-2. **calendar 默认不挂载**(推荐,需拍板 D-9):gotry 对 calendar 的唯一诉求是工作窗口
-   读取,而 persona (1) 的访谈本就首轮必问工作窗口——未配置的 calendar 是纯负资产
-   (多一个会报错的工具)。挂载与否由 **setup 状态面**管理:`~/.gotry/calendar.json`
-   (与扩展 manifest 同居 `~/.gotry`),`npx @danceiny/gotry setup calendar` 开启 / `--off` 恢复
-   默认 / `--status` 查看;**禁止环境变量控制产品行为**(founder 2026-09-03 纠偏:
-   可选依赖必须进 setup 状态管理,env 不是产品开关的归宿);doctor 引导配置;
-   拍板备选:保留默认挂载 + doctor 引导(治标,模型仍会撞一次报错才知道)。
-3. **bootstrap 一次性摘要**:`npx @danceiny/gotry web`/headless 启动时跑一遍只读 doctor,
-   有 degraded/missing 项就打一行摘要(不阻塞启动,不重复刷)——「初始化时可见」
-   取代「会话中段撞错」。
-3a. **#258/#267 web 启动交互式 onboarding(M4 UX proof;#267 = #266 合并后的 post-merge 加固)**:在 `npx @danceiny/gotry web` 且仅交互式
-   TTY + 存在「可自动安装」缺项(hbcli 二进制 / agent-reach `.venv` / dsh-better-sidebar)
-   时,在上述后台摘要**之前**问一次「现在配置可选能力吗」。`y` 复用 `doctor --fix` 的
-   幂等安装器(setupHbcli/setupReach/setupSidebar,**不建第二套**),`n` 立即继续启动 web;
-   结果三态展示——`installed`(本机自动安装)/`needs-user-action`(Chrome 商店、hbcli 登录、
-   FlyAI key、calendar profile 等用户/上游授权,永不冒充自动完成)/`unavailable`(带具体原因,
-   如随包 vendor 缺失需重装 gotry)。部分失败不挡 web 且给可重试命令(`npx @danceiny/gotry doctor --fix`);
-   再跑不重装已健康项(安装器存在性短路 + doctor 复检,幂等)。**无 auto 缺项但有需用户操作/
-   不可用缺项时**(如 win32 上 hbcli/agent-reach/sidebar 无自动安装面,或仅凭证/key/重装缺口):
-   不 prompt 不安装,但渲染分类计划(`needs-user-action` / `unavailable` 逐项带具体原因,win32
-   给平台原因而非无效的 `doctor --fix` 指引),标记 `reported`;inner 据此抑制重复的 detached
-   后台摘要(分类计划已展示缺口)。CI / benchmark / 非 TTY / 全健康 / `GOTRY_SETUP_SKIP=1` /
-   `GOTRY_ONBOARDING_SKIP=1` / `--no-onboarding` 均**零 prompt 零安装仍启 web**;
-   永不在 postinstall 或 detached 后台任务里安装。后台摘要行仅在 onboarding 未 prompt 且未 reported
-   时保留(不重复)。`installerEnabled` 接受注入 env,classifyDoctorGap/buildOnboardingPlan/runOnboarding
-   全链不依赖 ambient `GOTRY_SETUP_*`(生产 CLI 路径仍取 process.env 默认)。**#267 加固**:web-onboarding
-   子调用由 `spawnSync` 改 awaited POSIX process-group `spawn`,使 JS 能服务 SIGINT/SIGTERM——信号路径终止当前活跃子进程/进程组并清
-   私有 result 目录 + patch 目录(幂等),正常/错误路径亦清;bootstrap installer `run()` 使用自己的 bounded process-group lifecycle,inner outer grace 显式大于 installer TERM+SIGKILL budget,避免 stubborn installer 孤儿化;结果通道改 0700 `mkdtemp` 私有目录 + `result.json`
-   `mode 0600 + flag wx`(排他写入,防 symlink 互换)。纯函数(classify/plan/
-   skipReason)与 runOnboardingFix(注入安装器)/promptOnboarding/renderClassifiedPlan(注入流)导出供
-   `bootstrap-tests.ts` 隔离单测——合成 items + 注入 fakes,永不跑真安装器/开浏览器/写
-   `ts/dsh-runtime/gotry-state`;§21 用临时安装包 fixture + 假 dsh + fixture-local TTY preload 跨过**真实**
-   inner→bootstrap onboarding→dsh-web 进程边界(观察到 prompt 恰好一次),§21c/§21f/§21g POSIX 信号/timeout 测试覆盖 prompt-wait、accepted-install parent SIGTERM 与 accepted-install onboarding timeout,证明 stubborn installer 子树、result+patch 目录均有界清理。**边界声明**:本项是带确定性测试的 M4 UX proof,证明安装/修复契约
-   与 prompt/skip/reported 行为,**不**满足 #20 真实 repeat-cohort Exit 证据;fixture/本地安装证明不作 M4 Exit 证据。
-4. **glob/grep 超时**:dsh 宿主内置工具,gotry 侧无动作锚点——维持 triage 结论,
-   上游另立 issue(若仍复现)。本仓不为此设代理层(复用矩阵:harness 层是 dsh 本体)。
+1. **doctor v2 adds a "host plugins" section**: for each patch-distributed host plugin
+   (dsh-calendar / dsh-map-tools / dsh-tool-ask-user), check two states — resolvable (the same candidate list as the
+   bin resolution logic) + configured (whether the calendar row's config in `cordis.patch.yml` has the calendar:profile
+   username filled in; map-tools runs keyless, so only existence is checked); when unconfigured, give a precise fix
+   (a copyable command or a patch-line example). The doctor contract — read-only, never throws — is unchanged.
+2. **calendar not mounted by default** (recommended, needs decision D-9): gotry's only demand on calendar is work-window
+   reading, and persona (1)'s interview already asks about the work window in the first round — an unconfigured calendar
+   is pure negative asset (one more tool that errors). Mounting is managed by the **setup state face**:
+   `~/.gotry/calendar.json` (cohabiting with the extension manifest under `~/.gotry`);
+   `npx @danceiny/gotry setup calendar` enables, `--off` restores the default, `--status` shows state;
+   **environment variables must not control product behavior** (founder correction 2026-09-03: optional dependencies
+   must enter setup state management; env is not where product switches live); doctor guides configuration;
+   fallback option: keep default mounting + doctor guidance (symptomatic fix; the model still hits one error before it knows).
+3. **One-shot bootstrap summary**: at `npx @danceiny/gotry web`/headless startup, run one read-only doctor pass; if
+   degraded/missing items exist, print a one-line summary (non-blocking, no repeated spam) — "visible at initialization"
+   replaces "error hit mid-session".
+3a. **#258/#267 interactive web-startup onboarding (M4 UX proof; #267 = post-merge hardening once #266 merged)**: at `npx @danceiny/gotry web`, and only with an interactive
+   TTY + "auto-installable" gaps present (hbcli binary / agent-reach `.venv` / dsh-better-sidebar), ask once "configure
+   optional capabilities now?" **before** the background summary above. `y` reuses the `doctor --fix` idempotent
+   installers (setupHbcli/setupReach/setupSidebar, **no second set built**); `n` continues web startup immediately;
+   results render in three states — `installed` (auto-installed on this machine) / `needs-user-action` (Chrome Web
+   Store, hbcli login, FlyAI key, calendar profile, and other user/upstream authorizations; never faked as
+   auto-completed) / `unavailable` (with a concrete reason, e.g. a vendored payload missing from the package requires
+   reinstalling gotry). Partial failure does not block web and yields a retryable command
+   (`npx @danceiny/gotry doctor --fix`); reruns do not reinstall already-healthy items (installer existence
+   short-circuit + doctor recheck; idempotent). **When no auto-installable gaps exist but user-action/unavailable gaps
+   do** (e.g. on win32 hbcli/agent-reach/sidebar have no auto-install face, or only credential/key/reinstall gaps
+   remain): no prompt, no install, but render the classified plan (`needs-user-action` / `unavailable` item by item
+   with concrete reasons; win32 gets a platform reason rather than an invalid `doctor --fix` pointer), flagged
+   `reported`; inner uses this to suppress the duplicate detached background summary (the classified plan already shows
+   the gaps). CI / benchmark / non-TTY / all-healthy / `GOTRY_SETUP_SKIP=1` / `GOTRY_ONBOARDING_SKIP=1` /
+   `--no-onboarding` all start web with **zero prompts and zero installs**; never install inside postinstall or
+   detached background tasks. The background summary line is kept only when onboarding neither prompted nor reported
+   (no duplication). `installerEnabled` accepts injected env; the classifyDoctorGap/buildOnboardingPlan/runOnboarding
+   chain depends nowhere on ambient `GOTRY_SETUP_*` (the production CLI path still takes process.env defaults).
+   **#267 hardening**: the web-onboarding subprocess call changed from `spawnSync` to an awaited POSIX process-group
+   `spawn` so JS can serve SIGINT/SIGTERM — the signal path terminates the currently active child process/process
+   group and cleans the private result directory + patch directory (idempotent); the normal/error paths clean too; the
+   bootstrap installer `run()` uses its own bounded process-group lifecycle, with inner's outer grace explicitly
+   larger than the installer TERM+SIGKILL budget so a stubborn installer is not orphaned; the result channel changed to
+   a 0700 `mkdtemp` private directory + `result.json` `mode 0600 + flag wx` (exclusive write, defends against symlink
+   swap). Pure functions (classify/plan/skipReason) and runOnboardingFix (installers injected)/promptOnboarding/
+   renderClassifiedPlan (stream injected) are exported for isolated unit tests in `bootstrap-tests.ts` — synthetic
+   items + injected fakes; never run real installers / open a browser / write `ts/dsh-runtime/gotry-state`; §21 crosses
+   the **real** inner→bootstrap onboarding→dsh-web process boundary with a temporary installer-package fixture +
+   fake dsh + fixture-local TTY preload (the prompt is observed exactly once); §21c/§21f/§21g POSIX signal/timeout
+   tests cover prompt-wait, accepted-install parent SIGTERM, and accepted-install onboarding timeout, proving the
+   stubborn installer subtree and the result+patch directories all get bounded cleanup. **Boundary statement**: this
+   item is an M4 UX proof with deterministic tests; it proves the install/repair contract and the prompt/skip/reported
+   behavior; it does **not** satisfy #20's real repeat-cohort Exit evidence; fixture/local-install proofs do not count
+   as M4 Exit evidence.
+4. **glob/grep timeouts**: built into the dsh host; gotry has no action anchor on its side — keep the triage
+   conclusion, file a separate upstream issue (if it still reproduces). This repo adds no proxy layer for it
+   (reuse matrix: the harness layer is dsh proper).
+### 3.2 #107 — quota ownership mechanism (taxonomy and degradation contract for quota-class tools)
 
-### 3.2 #107 — 配额归属机制(额度类工具的分类学与降级契约)
+The issue's real question (triage located it): **ownership and escalation path of upstream quota**, not gotry's
+per-turn budget (already closed out by ADR-24 v2).
 
-issue 的真问题(triage 已定位):**上游配额的归属与升级路径**,不是 gotry per-turn 预算
-(后者已由 ADR-24 v2 收口)。
+**Five-way quota classification** (goes into the channel registry's `quotaClass`; each class's ownership and
+exhaustion semantics are frozen together):
 
-**配额五分类**(进通道注册表 `quotaClass`,每类的归属与耗尽语义一并冻结):
-
-| 类 | 归属 | 实例 | 耗尽语义 |
+| class | ownership | instances | exhaustion semantics |
 |---|---|---|---|
-| user-session | 用户本人账号 | session bridge(携程/12306) | 用户自己的额度;节律闸(≥30s)+ 挑战即停保护;不转嫁 |
-| user-key | 用户自备 | FLYAI_API_KEY、hbcli 凭证 | 配额是用户与上游的合同;doctor 显示有效性 |
-| anonymous-trial | 产品垫付的导流层 | flyai 匿名试用共享池 | **定位=首次体验,不是生产依赖**;达限即 needs-setup + 升级指引 |
-| free-public | 社区公平使用 | open-meteo / OpenSky / OSRM | 熔断防空转(策略表已有);配额按天复位 |
-| static | 无配额 | 内置数据包 | 估算必标注,永不冒充实时 |
+| user-session | the user's own account | session bridges (Ctrip/12306) | the user's own quota; cadence gate (≥30s) + stop-on-challenge protection; never shifted onto the user |
+| user-key | user-provided | FLYAI_API_KEY, hbcli credentials | the quota is a contract between the user and upstream; doctor shows validity |
+| anonymous-trial | the product-sponsored funnel layer | flyai anonymous-trial shared pool | **positioning = first experience, not a production dependency**; at the limit → needs-setup + upgrade guidance |
+| free-public | community fair use | open-meteo / OpenSky / OSRM | circuit breaker prevents idle spinning (already in the policy table); quota resets daily |
+| static | no quota | built-in data packages | estimates must be labeled, never passed off as real-time |
 
-**归属建议(D-7 拍板)**:正式使用一律向 user-key 或 user-session 升级;**产品统一申请
-正式 key 池当前不做**——成本、滥用面、上游 ToS 三个未定量,M3 真实 cohort 规模出现时
-再复审。匿名试用池保持「零摩擦首体验」定位,但其状态必须可见(doctor 配额探测,§2.2),
-不再「易达限却不可见」。
+**Ownership recommendation (D-7 decision)**: formal use always upgrades to user-key or user-session; **a unified
+product-applied formal key pool is not being done now** — cost, abuse surface, and upstream ToS are three
+unquantifieds; revisit when M3 real cohort scale appears. The anonymous trial pool keeps its "zero-friction first
+experience" positioning, but its state must be visible (doctor quota probe, §2.2) — no longer "easy to exhaust yet
+invisible".
 
-**会话级降级策略**(健康面的会话面,§2.2):429/needs-setup → 本会话标记
-`flyai: down(trial-exhausted)` → 同会话后续机/火/酒检索意图的工具结果注入
-`routing: session → web`(§3.3)。跨会话不记忆(每次会话重探测,避免陈旧状态锁死
-已补装 key 的恢复路径——恢复信号 = 下一次成功调用自动清除 down 态)。
+**Session-level degradation policy** (the session face of the health face, §2.2): 429/needs-setup → mark this session
+`flyai: down(trial-exhausted)` → later flight/train/hotel retrieval intents in the same session get
+`routing: session → web` injected into tool results (§3.3). Nothing is remembered across sessions (re-probe each
+session, so stale state cannot lock out the recovery path of a key installed afterwards — recovery signal = the next
+successful call automatically clears the down state).
 
-### 3.3 #108 — 「动态规划」工具编排 = 意图×通道矩阵 × 健康态 → 建议路由
+### 3.3 #108 — "dynamic programming" tool orchestration = intent×channel matrix × health state → suggested routing
 
-把 founder 的 DP 诉求落成可工程化的形式:
+Landing the founder's DP demand in an engineering-tractable form:
 
 ```
-状态   s = 通道健康向量(§2.2 会话面)+ 配额类(§3.2)+ 各通道证据级(注册表静态)
-动作   a = 为意图 i 选择通道 c ∈ channels(i)
-价值   V(i,s) = lexicographic-max over c available in s of (可用性, 可靠性=证据级, 效率=成本/时延)
-递推   通道间在给定健康态下相互独立 ⇒ 无跨意图耦合,最优子结构成立;
-       每意图的最优 = 可用通道中按字典序取第一——DP 退化为「健康态驱动的有序建议表」
-记忆化 = 会话通道状态缓存(健康态不变,建议表不重算)
+state   s = channel health vector (§2.2 session face) + quota class (§3.2) + per-channel evidence tier (registry static)
+action  a = for intent i, choose channel c ∈ channels(i)
+value   V(i,s) = lexicographic-max over c available in s of (availability, reliability=evidence tier, efficiency=cost/latency)
+recursion  channels are mutually independent given a health state ⇒ no cross-intent coupling, optimal substructure holds;
+       each intent's optimum = the first available channel in lexicographic order — DP degenerates into a health-state-driven ordered suggestion list
+memoization = session channel-state cache (health state unchanged ⇒ the suggestion list is not recomputed)
 ```
 
-工程形态(**建议,不是派发**):
+Engineering shape (**suggestions, not dispatch**):
 
-1. **意图词表**(闭集,注册表 `intents` 的键):`search-flight | search-train | search-hotel |
-   read-web | search-geo | weather | verify-flight | …`——每工具声明自己服务哪些意图。
-2. **工具结果 `routing` 字段**:verdict ≠ hit 时(且仅此时),在 ADR-13 平铺 envelope 上
-   追加 `routing: { intent, alternatives: [{tool, why, setup?}] }`——按当前健康态算出的
-   顺位表,逐条带一句话理由(「flyai 试用额度已尽」「会话面需一次性装扩展」)。
-   成功结果不带(零 token 成本);失败结果带(正是需要指引的瞬间)。
-3. **persona (19) 瘦身**:近千字散文收缩为由注册表生成的紧凑片段——每意图一行
-   「意图 → 通道顺位(含证据级)」,加上「verdict≠hit 时按结果内 routing 改道,
-   每意图每会话至多向用户解释一次」一条规则。prose 教义变为查表教义。
-4. **工具描述首行生成**:各检索工具描述开头统一为生成的「服务意图/当前顺位/不适用面」
-   ——模型在选工具时(读描述)与失败后(读 routing)两个决策点都拿到同一张表。
+1. **Intent vocabulary** (closed set, the keys of the registry's `intents`): `search-flight | search-train | search-hotel |
+   read-web | search-geo | weather | verify-flight | …` — each tool declares which intents it serves.
+2. **Tool-result `routing` field**: when verdict ≠ hit (and only then), append to the ADR-13 flat envelope
+   `routing: { intent, alternatives: [{tool, why, setup?}] }` — an order table computed from the current health state,
+   each entry with a one-sentence reason ("flyai trial quota exhausted", "session face needs a one-time extension
+   install"). Success results carry none (zero token cost); failure results carry it (exactly the moment guidance is
+   needed).
+3. **persona (19) slimming**: the near-thousand-character prose shrinks to a compact fragment generated from the
+   registry — one line per intent "intent → channel order (with evidence tier)", plus one rule "when verdict≠hit,
+   reroute per the in-result routing; explain to the user at most once per intent per session". The prose doctrine
+   becomes a table-lookup doctrine.
+4. **Generated first line of tool descriptions**: every retrieval tool's description uniformly opens with the generated
+   "served intents / current order / non-applicable face" — the model sees the same table at both decision points:
+   when choosing a tool (reading the description) and after failure (reading routing).
 
-**「session bridge 优先级太低」的精确回答**:不设静态优先级(维持 persona (19) 判定);
-设**状态驱动的动态顺位**——flyai 有 key 且健康时它是首荐(零 setup 摩擦),flyai 匿名
-达限的当刻 session 即升为首荐并附安装/登录指引。优先级不再是常量,是健康面的投影。
+**Precise answer to "session bridge priority is too low"**: no static priority (persona (19) ruling kept); set a
+**state-driven dynamic order** — when flyai has a key and is healthy, it is the first recommendation (zero setup
+friction); the moment flyai's anonymous trial hits the limit, session rises to first recommendation with install/login
+guidance attached. Priority is no longer a constant; it is a projection of the health face.
 
-**备选与拒绝**:解译器层自动改道(隐藏派发)——拒绝,理由见 §2.3;把「额度耗尽概率」
-放进 turn-policy 路由——拒绝,turn-policy 是纯函数零 IO(控制面铁律),健康态经
-工具结果注入,不进分类器。
+**Alternatives and rejections**: interpreter-level automatic rerouting (hidden dispatch) — rejected, reasons in §2.3;
+putting "quota-exhaustion probability" into turn-policy routing — rejected, turn-policy is a pure function with zero IO
+(control-plane iron law); health state enters via tool results, not through the classifier.
 
-### 3.4 evaluation 轨(#96/#100/#102)与 #82 的关系
+### 3.4 The evaluation track (#96/#100/#102) and its relation to #82
 
-- **#96(传输失败≠业务 miss)**:要求的不变量已实装(`bookable-facts.ts` error/needs-setup
-  不落事实;session 侧八值 verdict 分型;`classifyTransportFailure` 分型)。建议 owner 核对
-  triage 留下的两条流程项(独立 PR 归属、五类反例覆盖)后关闭。本设计不重复立项。
-- **#102(typed benchmark tool contracts)**:benchmark 桥正在建的「单一 typed 描述符 →
-  模型可见 schema + spawn 前校验」与 §4 机制③ 是同一模式的两端——#102 验证模式,
-  产品侧随后采纳(不是等它,两条独立 PR 线)。
-- **#100(minimal kernel)**:普通 LLM 性能的度量面(见 §4 末尾)。
-- **#82(world2agent 事件驱动)**:未来接缝——外部 sensor event 作为**健康面的新生产者**
-  (站点断 → 通道态置 down)与愿望池 conditions 的新触发源,消费既有接缝,不需要新
-  运行时。记为兼容方向,不在本期承诺。
+- **#96 (transport failure ≠ business miss)**: the required invariant is implemented (`bookable-facts.ts` —
+  error/needs-setup never write facts; session-side eight-value verdict typing; `classifyTransportFailure`
+  classification). Suggest the owner verify the two process items triage left (independent PR attribution,
+  five-class counterexample coverage) and then close it. This design does not file a duplicate.
+- **#102 (typed benchmark tool contracts)**: the "single typed descriptor → model-visible schema + pre-spawn
+  validation" that the benchmark bridge is building and mechanism ③ in §4 are two ends of the same pattern — #102
+  validates the pattern, and the product side adopts it afterwards (not waiting on it; two independent PR lines).
+- **#100 (minimal kernel)**: the measurement face for ordinary-LLM performance (see the end of §4).
+- **#82 (world2agent event-driven)**: a future seam — external sensor events become **new producers for the health
+  face** (a site goes down → the channel state is set to down) and new trigger sources for wish pool conditions,
+  consuming existing seams; no new runtime needed. Recorded as a compatible direction, not promised this cycle.
+## 4. Proposition 1: how to durably preserve tool-call performance (including ordinary LLMs)
 
-## 4. 命题一:如何长久保持工具调用性能(含普通 LLM)
+**Thesis: performance bets not on model cleverness but on a "deterministic control plane + self-healing contracts".**
+This repo's existing positions (§3.5 "whatever backend engineering can solve is never handed to the LLM"; turn-policy
+"control-plane judgments must be deterministic components") unfold fully on the tool-call face into six mechanisms:
 
-**总论:性能不押注模型聪明,押注「确定性控制面 + 自愈契约」。** 本仓既有立场
-(§3.5「能用后端工程解决的绝不交给 LLM」、turn-policy「控制面判定必须是确定性组件」)
-在工具调用面上的完整展开为六条机制:
+1. **Judgment belongs to code; the model does only semantics**. Routing (turn-policy), budgets, the date gate, verdict
+   typing, channel state, reroute order — all zero LLM. An ordinary model does not need to "understand the ecosystem";
+   it only needs to read the next-step line instruction in the current result.
+2. **Contracts are taught at the failure site**. Every failure carries its own recovery instruction: needs-setup comes
+   with setup, challenged comes with "stop", miss≠error is stated separately, routing comes with an order table. A weak
+   model's recovery does not depend on remembering the system prompt, because the instruction arrives in the same frame
+   as the failure — the most important item for ordinary LLMs, and verified effective (after defeb5b, blind 429
+   retries disappeared).
+3. **Typed tool contracts productized** (the largest single lever for ordinary LLMs). Today the parameter face of the
+   23 registered tools is an untyped blob `query: { type: 'json' }` — the model sees no per-field schema, so the gap
+   between strong and weak models is fully exposed as "can it guess the parameter shape". dsh `defineTool` natively
+   supports a typed ParameterSchemaSpec (object/properties/enum/const/required/oneOf; `validateArgs` validates before
+   execute; `parameterSchemaSpecToJsonSchema` projects to a model-visible JSON Schema) — **the blob is this repo's
+   choice, not an upstream limitation**. Migrate the high-traffic tools (flyai/session/hotel/weather first) to
+   `type:'object'` + per-field constraints + `additionalProperties:false`: model-visible structure → ordinary models
+   also get it right in one shot; host-side validation → malformed parameters are structurally rejected before execute
+   (the rejection shape stays ADR-13 ToolFailure, locked by migration tests); `interpretArgs` remains as a
+   legacy-shape tolerance layer.
+4. **The health face makes state visible** (§2.2): the persistent face (doctor) answers "does this channel work on
+   this machine"; the session face answers "what just happened to the channel in this session" — foresight replaces
+   blind retry; explainability replaces dumb failure.
+5. **Evidence-chain grading is the reliability declaration**. [实时API]/[会话]/[静态包:估算] labeled per source; the
+   artifact fact gate (ADR-19) forces traceability — reliability is a declared contract, not model virtue, and does
+   not drift with model generations.
+6. **Incident → fixture loop**. Every real incident is sunk into a regression anchor the same day: Dubai 429 →
+   needs-setup verdict; the wedding itinerary → turn-policy vocabulary and handoff; the Nanning telegraph code →
+   first-party calibration of 129 cities + anti-drift assertions. Of the three evaluation layers (ADR-11), **the
+   benchmark's frozen treatment (#100/#102, explicitly pinning ordinary models like deepseek-v4-flash) is the
+   measurement gate for "ordinary LLM performance"** — every tool-contract migration carries one canary round as
+   evidence; below bar, no merge.
 
-1. **判定归代码,模型只做语义**。路由(turn-policy)、预算、日期闸、verdict 分型、
-   通道状态、改道顺位——全部零 LLM。普通模型不需要「理解生态」,只需要读懂当前
-   这一次结果里的下一步行指令。
-2. **契约在失败现场教学**。每种失败自带恢复指令:needs-setup 带 setup、challenged 带
-   「停手」、miss≠error 分开陈述、routing 带顺位表。弱模型的恢复不依赖记忆系统提示,
-   因为指令随失败同帧到达——这是对普通 LLM 最重要的一条,且已被验证有效
-   (defeb5b 后 429 盲重试消失)。
-3. **typed 工具契约产品化**(普通 LLM 的最大单项杠杆)。当前 23 个注册工具的参数面是
-   `query: { type: 'json' }` 无类型 blob——模型看不到逐字段 schema,强弱模型差距全部
-   暴露在「能不能猜对参数形状」上。dsh `defineTool` 原生支持 typed ParameterSchemaSpec
-   (object/properties/enum/const/required/oneOf,`validateArgs` 在 execute 前校验,
-   `parameterSchemaSpecToJsonSchema` 投影为模型可见 JSON Schema)——**blob 是本仓的
-   选择,不是上游的限制**。把高流量工具(flyai/session/hotel/weather 先行)迁到
-   `type:'object'` + 逐字段约束 + `additionalProperties:false`:模型可见结构 → 普通模型
-   也能一次成型;宿主权校验 → 畸形参数在 execute 前被结构化拒绝(拒绝形状保持
-   ADR-13 ToolFailure,迁移测试锁死);`interpretArgs` 留作旧形态容忍层。
-4. **健康面让状态可见**(§2.2):持久面(doctor)管「这台机器上通道行不行」,会话面
-   管「这次会话里通道刚才怎么了」——预知取代盲重试,可解释取代哑失败。
-5. **证据链分级即可靠性声明**。[实时API]/[会话]/[静态包:估算] 逐源标注,产物事实闸
-   (ADR-19)强制回溯——可靠性是声明出来的契约,不靠模型自觉,不因模型换代而漂移。
-6. **事故→夹具闭环**。每个真实事故当天下沉为回归锚点:迪拜 429 → needs-setup verdict;
-   婚礼行程 → turn-policy 词表与 handoff;南宁电报码 → 129 城第一方校准 + 防漂移断言。
-   评测三层(ADR-11)中,**benchmark 冻结 treatment(#100/#102,显式钉 deepseek-v4-flash
-   这类普通模型)就是「普通 LLM 表现」的度量闸**——工具契约的每次迁移以一轮
-   canary 为证据,不达标不合入。
+"Durable" defined: all of the above is **structure** (code + data + tests), not prompt prose. Prose rots with each
+model generation; a contract with tests does not rot — when rot happens, a test goes red, and red gets fixed.
 
-「长久」的定义:以上全部是**结构**(代码 + 数据 + 测试),不是 prompt 散文。散文随模型
-换代腐坏;带测试的契约不腐坏——腐坏发生时会红,红了就有人修。
+## 5. Proposition 2: how to keep the tool ecosystem open at maximum extensibility
 
-## 5. 命题二:如何维持工具生态开放、最高可扩展性
+**Five open seams already in place** (not rebuilt): the effect registry (one handler row + one policy-table row + one
+assertion; "no policy-table row, no effect"), session adapters (the Ctrip/12306 templates), the CLI-spawn capability
+pattern (flyai/hbcli/anything are isomorphic: spawn→parse→verdict, never throws), the agent-reach reflection bridge
+(upstream adds a channel, gotry changes nothing — "wrapper is not router"), patch host plugins
+(map/calendar/ask-user).
 
-**现状已有的五条开放接缝**(不重建):效应注册表(加一行 handler + 一行策略表 + 一条
-断言,「没有策略表行就没有效应」)、session 适配器(携程/12306 样板)、CLI-spawn 能力
-模式(flyai/hbcli/anything 同构:spawn→parse→verdict,永不抛错)、agent-reach 反射桥
-(上游加渠道 gotry 零改动——「wrapper 不是 router」)、patch 宿主插件(map/calendar/ask-user)。
+**The design pushes openness up one more notch**:
 
-**设计把开放度再推一档**:
+1. **Channel registry + tool descriptor single source** (§2.1 and §4③ are two faces of the same thing): each tool =
+   one descriptor (name/intents/typed params/verdict vocabulary/evidence template/quotaClass/healthClass)
+   + one handler binding; `index.ts` shrinks from a 1500-line registry to an assembler. A third party (or a future
+   agent itself) contributes a tool = descriptor + handler + tests; the review surface converges to the descriptor
+   itself.
+2. **persona/descriptions/doctor generated from the registry** (§2.1): adding a channel drops the number of prose
+   sites to touch from N (persona + every tool description + doctor + docs) to 0 — **the measure of extensibility =
+   the number of files needing hand edits to add one channel; target: 1 registry row + 1 handler + tests**.
+3. **Session adapter contract documented**: 12306's first-party calibration method (official site tables / seat-bucket
+   mapping checked item by item + verify snapshots + anti-drift assertions) is a proven template — write an adapter
+   author's guide (probe → gold-standard fixture → dual-source shape gate → drift lock); community members and later
+   comers add sites without touching the core. Adapters are the ecosystem's unit of extension.
+4. **The reflection bridge as the default pattern**: new CLI-family capabilities default to discovery/reflection
+   passthrough, no per-channel switch (the D-4a' founder correction rises to pattern discipline).
+5. **Event face reserved** (#82): external events enter the health face and wish pool conditions, consuming existing
+   seams.
+6. **Faces that stay closed (the boundary is the trust)**: reuse-matrix hard constraints (code-level reuse only via
+   open-source import; internal assets only bridge/reference); write tools always pass WriteGate (M5); extensibility
+   stops at the write boundary; red lines travel with every contribution — any contributed tool writing the motivation
+   profile must carry evidence; entering the wish pool requires conditions.
 
-1. **通道注册表 + 工具描述符单一来源**(§2.1 与 §4③ 是同一件事的两个面):每个工具
-   = 一份描述符(name/intents/typed params/verdict 词表/证据模板/quotaClass/healthClass)
-   + 一个 handler 绑定;`index.ts` 从 1500 行注册表收缩为装配器。第三方(或未来的
-   agent 自己)贡献工具 = 描述符 + handler + 测试,评审面收敛为描述符本身。
-2. **persona/描述/doctor 由注册表生成**(§2.1):加一个通道要动的 prose 站点数从
-   N(persona + 每工具描述 + doctor + 文档)降为 0——**可扩展性的度量 = 加一个通道
-   需要手改的文件数,目标:1 注册表行 + 1 handler + 测试**。
-3. **session 适配器契约文档化**:12306 的第一方校准法(官方站表/座位桶映射逐条核对 +
-   verify 快照 + 防漂移断言)是已验证模板——写适配器作者指南(探测 → 金标准 fixture →
-   双源 shape gate → 漂移锁),社区/后来者加站点不触核心。适配器是生态的扩展单元。
-4. **反射桥为默认模式**:新 CLI 族能力默认走发现/反射透传,不写 per-channel switch
-   (D-4a' 的 founder 纠偏上升为模式纪律)。
-5. **事件面预留**(#82):外部事件进健康面与愿望池 conditions,消费既有接缝。
-6. **不开放的面(边界即信任)**:复用矩阵硬约束(代码级复用仅限 open-source import,
-   内部资产只 bridge/reference);写工具永远过 WriteGate(M5),可扩展性止于写边界;
-   红线随行——任何贡献的工具写动机画像必须带 evidence,入愿望池必须带 conditions。
+Open and trustworthy are not a trade-off: the registry/descriptors make "adding things" easier; the verdict vocabulary
+/ evidence chain / WriteGate make "what gets added" automatically follow the same discipline — **the ceiling of
+ecosystem openness is set by contract stiffness, not by tool count**.
 
-开放与可信不是 trade-off:注册表/描述符让「加东西」更容易,verdict 词表/证据链/
-WriteGate 让「加进来的东西」自动遵守同一套纪律——**生态开放的上限由契约刚度决定,
-不由工具数量决定**。
+## 6. Landing sequence (layered; one independent PR per layer)
 
-## 6. 落地序列(分层,每层独立 PR)
+- **L0 (pure docs/data face, zero behavior change)**: ✅ landed in 01e002c/9b7ad07 (channel registry +
+  doctor v2 + calendar setup state face); #96 verify-and-close pending the owner.
+- **L1 (contract migration, full-stack regression + six state faces synced)**: ✅ routing suggestion field + session
+  channel state + persona (19) generated card (01e002c); the remainder moved into issues:
+  #112 (typed parameter contract migration, D-30) / #113 (generated tool-description first lines + doctor host-plugin
+  coverage).
+- **L2 (peripheral closeout)**: ✅ all closed out (2026-09-04) — #114 (bootstrap startup health-check summary) /
+  #115 (interpreter migration finish, D-23 discharged) /
+  #116 (adapter author's guide + Ctrip real-session calibration, D-13) / #117 (store-version extension detection,
+  D-24 discharged) /
+  #118 (fact gate hotel claim + one-way generation of render primitives, D-26 closeout) / #119 (external event seam
+  design, #82) /
+  #120 (legacy vendored disposition, D-27 discharged).
+- **#258/#267 (interactive web-startup onboarding, M4 UX proof; #267 = post-merge hardening once #266 merged)**: on
+  top of #114's background summary, add one explicit optional-capability configuration prompt (see §3.1③a), reusing
+  the `doctor --fix` idempotent installers, three-state results, and the strict skip contract;
+  when no auto-installable gaps exist, render the classified plan + `reported` suppresses duplicate summaries (win32
+  and other no-auto-install scenarios stay visible to the user);
+  `installerEnabled` accepts injected env; pure functions + injected installers for isolated unit tests. #267
+  hardening: the web-onboarding subprocess call became an awaited
+  POSIX process-group `spawn` (SIGINT/SIGTERM servable; the signal path cleans result+patch directories), the
+  bootstrap installer `run()` moved in step to a bounded process-group lifecycle, outer grace covering the installer
+  TERM+SIGKILL budget; result channel 0700 `mkdtemp` + `0600/wx`,
+  bootstrap-tests §21 crosses the real inner→bootstrap onboarding process boundary, §21c/§21f/§21g cover prompt-wait,
+  accepted-install parent signal, and accepted-install timeout. **Does not satisfy #20's real repeat-cohort Exit
+  evidence**
+  (M4 UX proof, not a business Exit); D-34 discharged.
 
-- **L0(纯文档/数据面,零行为变化)**:✅ 已落地 01e002c/9b7ad07(通道注册表 +
-  doctor v2 + calendar setup 状态面);#96 核对关闭待 owner。
-- **L1(契约迁移,过全栈回归 + 六状态面同步)**:✅ routing 建议字段 + 会话通道状态 +
-  persona (19) 生成卡片(01e002c);余量入 issue:
-  #112(typed 参数契约迁移,D-30)/ #113(工具描述首行生成 + doctor 宿主插件覆盖面)。
-- **L2(周边收口)**:✅ 全部收口(2026-09-04)——#114(bootstrap 启动体检摘要)/ #115(解译器迁移收尾,D-23 清偿)/
-  #116(适配器作者指南 + 携程真会话校准,D-13)/ #117(商店版扩展检测,D-24 清偿)/
-  #118(事实闸酒店 claim + 渲染原语单向生成,D-26 收口)/ #119(外部事件接缝设计,#82)/
-  #120(legacy vendored 处置,D-27 清偿)。
-- **#258/#267(web 启动交互式 onboarding,M4 UX proof;#267 = #266 合并后的 post-merge 加固)**:在 #114 后台摘要之上加一次显式可选
-  能力配置 prompt(见 §3.1③a),复用 `doctor --fix` 幂等安装器、三态结果、严格跳过契约;
-  无 auto 缺项时渲染分类计划 + `reported` 抑制重复摘要(win32 等无自动安装面场景用户仍可见分类);
-  `installerEnabled` 注入 env,纯函数 + 注入安装器隔离单测。#267 加固:web-onboarding 子调用改 awaited
-  POSIX process-group `spawn`(SIGINT/SIGTERM 可服务,信号路径清 result+patch 目录),bootstrap installer `run()` 同步进 bounded process-group lifecycle,outer grace 覆盖 installer TERM+SIGKILL budget;结果通道 0700 `mkdtemp` + `0600/wx`,
-  bootstrap-tests §21 跨过真实 inner→bootstrap onboarding 进程边界,§21c/§21f/§21g 覆盖 prompt-wait、accepted-install parent signal 与 accepted-install timeout。**不满足 #20 真实 repeat-cohort Exit 证据**
-  (M4 UX proof,非业务 Exit);D-34 清偿。
+> Decision record: D-7/D-8/D-9 were adopted and landed on 2026-09-03 under "proceed to implementation" (issues #106/#107/#108 closed the same day);
+> trigger-deferred items (D-15/D-18/D-19/D-22/D-29, M5 WriteGate, the unified product key pool) are not in this sequence — redemption timing: see architecture §10.
 
-> 拍板记录:D-7/D-8/D-9 已于 2026-09-03 按「推进实现落地」采纳落地(issues #106/#107/#108 同日关闭);
-> 触发式后置项(D-15/D-18/D-19/D-22/D-29、M5 WriteGate、产品统一 key 池)不在本序列——赎回时机见 architecture §10。
+## 7. Decision-point summary (all settled; archived in `../decisions-needed.md`)
 
-## 7. 决策点汇总(已全部结算,存档于 `../decisions-needed.md`)
-
-| # | 议题 | 建议 | 关联 |
+| # | topic | recommendation | related |
 |---|---|---|---|
-| D-7 | 有额度工具的归属机制 | trial=导流层;正式用 user-key/user-session;产品统一 key 池暂缓至 M3 cohort | #107 |
-| D-8 | 编排策略 | 静态平铺 + 健康态驱动的动态建议(本设计);不解译器层自动改道 | #108 |
-| D-9 | dsh-calendar 分发 | 默认不挂载(setup 状态面 `~/.gotry/calendar.json`,`npx @danceiny/gotry setup calendar` on/off;**env 不作产品开关**)+ doctor 引导;备选保留挂载 + 引导 | #106 |
+| D-7 | ownership mechanism for quota-bearing tools | trial = funnel layer; formal use = user-key/user-session; the unified product key pool deferred to the M3 cohort | #107 |
+| D-8 | orchestration strategy | static flatness + health-state-driven dynamic suggestions (this design); no interpreter-level automatic rerouting | #108 |
+| D-9 | dsh-calendar distribution | not mounted by default (setup state face `~/.gotry/calendar.json`, `npx @danceiny/gotry setup calendar` on/off; **env is not a product switch**) + doctor guidance; alternative: keep mounting + guidance | #106 |
