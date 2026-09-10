@@ -844,11 +844,22 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   const compatBadBodyReport = gateArtifact(['## 政策', compatBadBody].join('\n'), [basePolicy], map, { trip_year: tripYear })
   assert(compatBadBodyReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
     `context-free 不接受 body 篡改 → fact_anchor_unknown(实际 ${compatBadBodyReport.violations.length} 违例)`)
-  // context-free 不接受的形态:reminder 日期改成 renderer 不会用的日期(仍假装合法 reminder)
+  // context-free 不接受的形态:把 reminder 短语追加到锚点之后(行尾非空文本)→ 结构
+  //   守门 fail-closed。真正的「ISO 日期合法性」校验见下一条(2026-02-30)。
   const compatBadDate = noReminderLine + ';远期政策须复核——到 1999-01-01 再核验一次'
   const compatBadDateReport = gateArtifact(['## 政策', compatBadDate].join('\n'), [basePolicy], map, { trip_year: tripYear })
   assert(compatBadDateReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
-    `context-free 不接受 renderer 不会用的 reminder 日期 → fact_anchor_unknown(实际 ${compatBadDateReport.violations.length} 违例)`)
+    `context-free 不接受 reminder 追加到锚点之后 → fact_anchor_unknown(实际 ${compatBadDateReport.violations.length} 违例)`)
+  // context-free 不接受的形态:reminder 日期是 renderer 永远不会产出的非法阳历日
+  //   (2026-02-30 → Date.UTC 滚到 3 月 2 日,renderer 自己都不会写)。闸侧的 realIso
+  //   检查先否决,重建行 ≠ 原行 → 落到严格比对 → fail-closed。
+  // 这里手搓一行等价于 `renderPolicyFact({ ...basePolicy, review_by: '2026-02-30' })`
+  // 的形态,但用真实拼接的等价字符串绕过 renderer 自身的 Date 解析(防止被 renderer
+  // 自身提前抛错):在 basePolicy 的裸 body 后插入非法日期的 reminder 段。
+  const compatBadIso = `- ${basePolicy.subject}:截至 ${basePolicy.as_of} 的现行政策——${basePolicy.statement};远期政策须复核——到 2026-02-30 再核验一次 [${basePolicy.source}@${basePolicy.fetched_at} #${basePolicy.query_id}] <!-- fact:${basePolicy.fact_id} -->`
+  const compatBadIsoReport = gateArtifact(['## 政策', compatBadIso].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(compatBadIsoReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `context-free 不接受非法阳历日(2026-02-30)→ fact_anchor_unknown(实际 ${compatBadIsoReport.violations.length} 违例)`)
   // context-free 不接受的形态:review_by 改动(renderer 接受 review_by 但闸侧事实
   //   未带 review_by 时,兼容性回退允许任意合法 ISO 日期 —— 见根 contract 第 4 条。
   //   若闸侧事实**自身**带 review_by,则 reminder 日期必须 == f.review_by,改了就 fail。)

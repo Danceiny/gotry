@@ -177,13 +177,16 @@ async function main(): Promise<void> {
   assert.equal(r10.traceable, 1)
   console.log(`  ok - 注册 gotry_fact_gate context-free canonical reminder(review_by 已知)→ pass`)
 
-  // Case 11:context-free 伪 reminder 日期(1999-01-01,renderer 不会用)→ blocked
+  // Case 11:context-free reminder 错位(把 reminder 段追加到 provenance 之后,而不是
+  //   renderer 固定位置 `[provenance]` 之前)→ 重建 `renderPolicyFact({...f, review_by: '1999-01-01'})`
+  //   与原行不匹配 → fail-closed。日期 '1999-01-01' 本身合法 ISO 阳历日;此例证伪在于
+  //   reminder 位置错配,不在日期本身。
   const compatBadDateLine = `${canonicalLine};远期政策须复核——到 1999-01-01 再核验一次 <!-- fact:${policy.fact_id} -->`
   const r11 = await factGate.execute({ markdown: ['## 政策', compatBadDateLine].join('\n') }, compatExec) as { verdict?: string; violations?: Array<{ kind?: string }>; summary?: string }
-  assert.equal(r11.verdict, 'blocked', `伪 reminder 日期经注册闸应 blocked,实际: ${JSON.stringify({ verdict: r11.verdict, summary: r11.summary })}`)
+  assert.equal(r11.verdict, 'blocked', `reminder 错位经注册闸应 blocked,实际: ${JSON.stringify({ verdict: r11.verdict, summary: r11.summary })}`)
   assert.ok(r11.violations?.some(v => v.kind === 'fact_anchor_unknown'),
-    `伪 reminder 日期应有 fact_anchor_unknown 违例,实际: ${JSON.stringify(r11.violations?.map(v => v.kind))}`)
-  console.log(`  ok - 注册 gotry_fact_gate context-free 伪 reminder 日期 → blocked/fact_anchor_unknown`)
+    `reminder 错位应有 fact_anchor_unknown 违例,实际: ${JSON.stringify(r11.violations?.map(v => v.kind))}`)
+  console.log(`  ok - 注册 gotry_fact_gate context-free reminder 错位 → blocked/fact_anchor_unknown`)
 
   // Case 12:context-free body 篡改(免签停留 → 不免签停留,保留 fact_id 锚点)→ blocked
   const compatBadBodyLine = canonicalLine.replace('免签停留', '不免签停留')
