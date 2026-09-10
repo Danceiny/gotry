@@ -159,9 +159,9 @@ flowchart LR
 
 ## Demo
 
-<a href="docs/assets/demo.en.webm"><img src="docs/assets/demo.en.svg" alt="Illustrative animation-harness capture of a representative transcript — the traveler asks for recovery days at Erhai Lake; the deterministic TypeScript choice kernel rules it infeasible for a 2-day window, banks it in the wish pool, and returns two feasible lakes with evidence tags" width="880" /></a>
+https://github.com/user-attachments/assets/6628c254-eba1-4017-a883-c70d22616939
 
-*Illustrative animation-harness capture of a representative, condensed transcript — not a real `gotry web` product UI E2E; [open as video](docs/assets/demo.en.webm) (static copy below is authoritative):*
+*Illustrative animation-harness capture of a representative, condensed transcript — not a real `gotry web` product UI E2E (sources: [demo.en.svg](docs/assets/demo.en.svg) · [demo.en.webm](docs/assets/demo.en.webm); the animated SVG plays inline where video is unsupported). Static copy below is authoritative:*
 
 ```
 > Two or three days staring at Erhai Lake, leaving from Shanghai, budget 3000, annual leave — no work.

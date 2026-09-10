@@ -159,9 +159,9 @@ flowchart LR
 
 ## 一段对话
 
-<a href="docs/assets/demo.zh-CN.webm"><img src="docs/assets/demo.zh-CN.svg" alt="说明性 animation-harness 动画——代表性对话截取:旅行者说想去洱海休整两天;确定性的 TypeScript 选择内核判定 2 天窗口不可行、放进愿望池,并给出两个可行湖泊与证据标签" width="880" /></a>
+https://github.com/user-attachments/assets/6d537bb7-7992-4cc7-8e89-6f111ef6793b
 
-*说明性 animation-harness 对代表性精简对话的录制——不是 `gotry web` 产品 UI 的真实 E2E;动画内联播放,[点此看视频版](docs/assets/demo.zh-CN.webm);下方静态文本为准:*
+*说明性 animation-harness 对代表性精简对话的录制——不是 `gotry web` 产品 UI 的真实 E2E(源文件:[demo.zh-CN.svg](docs/assets/demo.zh-CN.svg) · [demo.zh-CN.webm](docs/assets/demo.zh-CN.webm);不支持视频的环境下动画 SVG 亦可内联播放)。下方静态文本为准:*
 
 ```
 > 我想去洱海边发呆两三天,上海出发,预算 3000,年假别让我办公。
