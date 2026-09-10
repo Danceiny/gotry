@@ -14,7 +14,7 @@ GoTry is an AI travel agent for **"departure to next departure."** You say where
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.15-blue)](https://www.npmjs.com/package/@danceiny/gotry)
 [![Docs](https://img.shields.io/badge/docs-architecture.md-blue)](docs/architecture.md)
 
-**[What it does](#what-gotry-does)** · **[How it works](#how-it-works)** · **[Demo](#demo)** · **[Benchmark](#how-mainstream-ai-answers-the-same-trip)** · **[Quick start](#quick-start)** · **[Privacy](#consent-and-privacy)** · **[Status](#project-status)** · **[Roadmap](#roadmap)** · **[Docs](#documentation)**
+**[What it does](#what-gotry-does)** · **[How it works](#how-it-works)** · **[Demo](#demo)** · **[Benchmark](#benchmark)** · **[Quick start](#quick-start)** · **[Privacy & trust](#privacy-and-trust)** · **[Status & roadmap](#project-status-and-roadmap)** · **[Contributing](#contributing)** · **[Docs](#documentation)**
 
 ## What GoTry Does
 
@@ -71,8 +71,6 @@ Architecture — the sync path from chat through the kernel to the fact gate, pl
 
 > Interactive version: [`docs/assets/gotry-system-architecture.en.html`](docs/assets/gotry-system-architecture.en.html) (archify, showcase-validated). Layers: L2 dsh plugin · L3 `ts/src/unified.ts` kernel · L4 effect interpreter + realtime bridges · L5 loopx governance. ADRs: [`docs/architecture.md`](docs/architecture.md) (Chinese).
 
-## Tools
-
 23 registered tools in groups: realtime retrieval (Fliggy official channel + your own Chrome session, read-only) · catalog · decision engine · memory · artifacts · fact gate · external search · `gotry_doctor` self-check. No hidden dispatch — a channel registry returns an ordered suggestion list; the model or user chooses. Per-tool contracts: [`docs/tools.md`](docs/tools.md) (Chinese-first).
 
 ## Demo
@@ -101,7 +99,7 @@ Engine verdict:
 
 > Tags: `[skeleton:openflights]` route verified against the public route DB · `[realtime:...]` pulled live seconds ago · `[static-pack:estimate]` estimate — **verify before booking**. Attached by the render layer, never the model.
 
-## How Mainstream AI Answers the Same Trip
+## Benchmark
 
 The same real multi-country workation prompt — with planted traps (no year given, a vague "Wan-xx", an already-resolved ambiguity) — goes verbatim to mainstream assistants; answers are archived word-for-word and scored against a ground-truth rubric ([`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/)).
 
@@ -126,9 +124,9 @@ npx @danceiny/gotry doctor     # optional-channel health check (--fix to repair)
 npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"   # headless one-shot
 ```
 
-Node ≥ 22.15. LLM keys live in the dsh host UI (OpenAI-compatible endpoints included) — gotry never asks for or echoes them. Any npm-compatible registry works; pin an exact version if a mirror's `latest` lags. Inside this repo use the source entry `./gotry web` (bare-name npx fails there). Eligible launches may offer a one-time capability check; CI / non-TTY never prompts, never installs. Onboarding details + operator scripts: [`docs/tools.md`](docs/tools.md). Source install: `npm ci && npm --prefix ts ci && node scripts/build-dist.mjs` — the same pinned DSH `0.1.5-alpha.1` closure as the npm package.
+Node ≥ 22.15. LLM keys live in the dsh host UI (OpenAI-compatible endpoints included) — gotry never asks for or echoes them. Any npm-compatible registry works; pin an exact version if a mirror's `latest` lags. Inside this repo use the source entry `./gotry web` (bare-name npx fails there). Eligible launches may offer a one-time capability check; CI / non-TTY never prompts, never installs. Onboarding details + operator scripts: [`docs/tools.md`](docs/tools.md). Source install: `npm ci && npm --prefix ts ci && node scripts/build-dist.mjs` — the same pinned DSH `0.1.5-alpha.1` closure as the npm package. Full-stack verify: `./scripts/run-all-tests.sh`.
 
-## Consent and Privacy
+## Privacy and Trust
 
 The account-session channel reads realtime data from **your own logged-in Chrome**, under four hard rules:
 
@@ -139,7 +137,7 @@ The account-session channel reads realtime data from **your own logged-in Chrome
 
 One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) extension (one-click, auto-updates) — until installed, tools return `needs-extension` with the store link and spend nothing.
 
-## Trustworthy by Construction
+Trust is structural, not promised:
 
 1. **The model translates; code decides** — no LLM feasibility verdicts or arithmetic.
 2. **Every number carries a source tag** — attached by the render layer, switched honestly on degradation.
@@ -148,22 +146,13 @@ One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.
 5. **Prices fail closed** — unknown model, no guessed price; the price table changes only by PR.
 6. **Your data is yours** — state under `gotry-state/`; tests run on isolated roots.
 
-## Project Status
+## Project Status and Roadmap
 
-**v0.0.1-rc.22** (npm `latest`; registry pull-verified 2026-09-09). Evaluation is at Phase 0 — deterministic contracts and validators; no external scores, no uplift claims.
+**v0.0.1-rc.22** on npm (`latest`). Pre-1.0: the core loop works end to end; evaluation is still at deterministic contracts and validators, with no external scores or uplift claims.
 
-**Working today**: deterministic choice kernel + explicit Z3 flight-chain path · realtime + account-session retrieval (typed, invocation-bound facts) · dependency doctor with scoped, approved repair · memory (motivation / wish pool / companions / timeline) on the tenant-scoped ledger · routed turn budgets with deep-planning handoff tickets · M4 opt-in evidence collector. Recent fail-closed slices: #279/#352 malformed responses, #359/#363 anchor fingerprints, #341 ground transfer, #343 IANA timezones, #338 home-city default, #254/#265/#282/#327/#329/#194 — full trail in [CHANGELOG.md](CHANGELOG.md).
+**Working today** — interview → deterministic feasibility verdict → itinerary with door-to-door true cost · realtime retrieval (Fliggy + your own Chrome session, read-only) with typed, invocation-bound facts · memory (motivation, wish pool, companions, timeline) on a tenant-scoped ledger · self-check doctor with scoped, approved repair.
 
-**Open limitations**: M3 Exit open (no real 50–200 cohort yet) · M4→M6 evidence-bound (#136/#137 gates; fixture proof never opens them) · Ctrip-hotel/Meituan session adapters pending · #272 live evidence open · English covers the solve-output layer only · external runs diagnostic-only · nothing bookable today (M5 via WriteGate only).
-
-<details>
-<summary>Deeper engineering state (ledger contracts / evidence contracts / milestone stance)</summary>
-
-The authoritative state lives in the docs, not this README: transactional state ledger (ADR-15) + dual-form freeze (ADR-16: one ledger semantics for local+web; append/read/fold/rebuild are tenant-scoped, and legacy local rows are not re-attributed without external evidence); the M3 real-cohort evidence contract stands (fixtures don't count toward Exit; 50–200 real samples open the gate); the M4 paired-cohort value evidence contract is hardened (synthetic data is never Exit evidence; observed-private data also needs a manual source-review attestation contract bound to the current summary digest and cannot rely on `evidence_kind` self-reporting); the #228 collector is only an explicit-consent, isolated-stateRoot path to produce those scorer inputs; the async work-order terminal contract (`gotry_async_terminal.v1`: 4/4 → succeeded / ledger settled / exit 0). Details: [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 and issues #19–#22, #223, #224, and #228.
-
-</details>
-
-## Roadmap
+**Not yet** — nothing is bookable today; booking ships only behind the WriteGate user-confirmation design · live-availability evidence is still partial · the real-user cohort study has not reached its exit bar · English covers the solver output layer only.
 
 ```mermaid
 timeline
@@ -177,25 +166,17 @@ timeline
   M6 : B2B embedding — zero-kernel-diff sponsor plugin
 ```
 
-Authoritative timeline with entry/exit gates: [`docs/roadmap.md`](docs/roadmap.md).
-
-## Verify
-
-```bash
-./scripts/run-all-tests.sh    # full-stack suite (pure TS)
-```
-
-Packaged web retry/cancel proof (#289): `GOTRY_SESSION_LIVE=0 npx --no-install tsx scripts/issue-289-web-retry-e2e.ts` from `ts/`. The live session benchmark is opt-in and never runs in CI. PRs require local final-SHA evidence; CI is additional signal.
+Milestone gates: [`docs/roadmap.md`](docs/roadmap.md) · engineering state: [`docs/architecture.md`](docs/architecture.md) · per-version decisions: [`docs/release-notes.md`](docs/release-notes.md) + [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 
 Branch off latest `main` (`feat/ · fix/ · docs/ · chore/`), keep typecheck + full regression green, open a PR. **Red tests never merge.** Guide: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## For AI Agents
-
-[`AGENTS.md`](AGENTS.md) is the binding contract: sweep async work orders on entry · arithmetic only in the evaluate layer, solving only in `unified.*` · never write shared state (`ts/dsh-runtime/gotry-state/`) · sync the six state faces of `architecture.md` §11 in the same commit · stage named files only, no `git add -A`.
+AI agents: [`AGENTS.md`](AGENTS.md) is the binding contract — sweep async work orders on entry · arithmetic only in the evaluate layer, solving only in `unified.*` · never write shared state (`ts/dsh-runtime/gotry-state/`) · sync the six state faces of `architecture.md` §11 in the same commit · stage named files only, no `git add -A`.
 
 ## Documentation
+
+Documents ship as bilingual pairs (`x.md` English + `x.zh-CN.md` 中文); divergence within a pair is treated as a bug (rollout in progress).
 
 | Document | Purpose |
 |---|---|
@@ -211,8 +192,6 @@ Branch off latest `main` (`feat/ · fix/ · docs/ · chore/`), keep typecheck + 
 ## License
 
 **MIT** — same as upstream dsh. See [LICENSE](LICENSE).
-
-## Star History
 
 <a href="https://www.star-history.com/?repos=danceiny%2Fgotry&type=date&legend=top-left">
  <picture>

@@ -14,7 +14,7 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.15-blue)](https://www.npmjs.com/package/@danceiny/gotry)
 [![Docs](https://img.shields.io/badge/docs-architecture.md-blue)](docs/architecture.md)
 
-**[它做什么](#它做什么)** · **[工作原理](#工作原理)** · **[一段对话](#一段对话)** · **[同题横评](#与主流-ai-同题横评产品人格从哪来)** · **[快速开始](#快速开始)** · **[隐私](#账号会话授权与隐私)** · **[状态](#状态与限制)** · **[路线图](#路线图)** · **[文档](#文档)**
+**[它做什么](#它做什么)** · **[工作原理](#工作原理)** · **[一段对话](#一段对话)** · **[同题横评](#同题横评)** · **[快速开始](#快速开始)** · **[隐私与可信](#隐私与可信)** · **[状态与路线图](#状态与路线图)** · **[参与开发](#参与开发)** · **[文档](#文档)**
 
 ## 它做什么
 
@@ -71,8 +71,6 @@ flowchart LR
 
 > 交互版:[`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html)(archify 生成,showcase 校验通过)。分层:L2 dsh 插件 · L3 `ts/src/unified.ts` 内核 · L4 效应解译 + 实时桥 · L5 loopx 治理。ADR:[`docs/architecture.md`](docs/architecture.md)。
 
-## 工具
-
 23 个注册工具分组:实时检索(飞猪官方通道 + 你本人登录态 Chrome,只读)· 目录 · 判定引擎 · 记忆 · 产物 · 事实闸 · 外部检索 · `gotry_doctor` 自检。无隐藏派发——通道注册表只返回有序建议列表,由模型或用户选择。逐工具契约:[`docs/tools.md`](docs/tools.md)。
 
 ## 一段对话
@@ -101,7 +99,7 @@ GoTry: 收到。先把约束记下来——
 
 > 标签:`[骨架:openflights]` 航线经公开航线库校验 · `[实时API:*]` 刚从实时接口拉回 · `[静态包:估算]` 估算,**订前核实**。标签由渲染层附加,模型无权染指。
 
-## 与主流 AI 同题横评(产品人格从哪来)
+## 同题横评
 
 同一段真实的跨国 workation prompt(埋了考点:不给年份、模糊指代「万xx」、用户已自行消解的歧义)逐字投喂各家主流 AI,回答逐字存档、对照地面真值打分([`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/README.md))。
 
@@ -126,9 +124,9 @@ npx @danceiny/gotry doctor     # 可选渠道体检(--fix 补装)
 npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一问一答
 ```
 
-前置 Node ≥ 22.15。LLM key 由 dsh 宿主 UI 配(OpenAI 兼容端点同),gotry 不问也不回显。任何 npm 兼容 registry 皆可;镜像 `latest` 滞后时钉精确版本。仓内请走源码入口 `./gotry web`(裸名 npx 在仓内会失败)。符合条件的启动可能提供一次可选能力检查;CI / 非 TTY 不询问、不安装。onboarding 细节与运维脚本:[`docs/tools.md`](docs/tools.md)。源码安装:`npm ci && npm --prefix ts ci && node scripts/build-dist.mjs`——与 npm 包同一组钉死的 DSH `0.1.5-alpha.1` closure。
+前置 Node ≥ 22.15。LLM key 由 dsh 宿主 UI 配(OpenAI 兼容端点同),gotry 不问也不回显。任何 npm 兼容 registry 皆可;镜像 `latest` 滞后时钉精确版本。仓内请走源码入口 `./gotry web`(裸名 npx 在仓内会失败)。符合条件的启动可能提供一次可选能力检查;CI / 非 TTY 不询问、不安装。onboarding 细节与运维脚本:[`docs/tools.md`](docs/tools.md)。源码安装:`npm ci && npm --prefix ts ci && node scripts/build-dist.mjs`——与 npm 包同一组钉死的 DSH `0.1.5-alpha.1` closure。全栈验证:`./scripts/run-all-tests.sh`。
 
-## 账号会话:授权与隐私
+## 隐私与可信
 
 账号会话通道用**你本人已登录的 Chrome** 读实时数据,四条 hard 规则:
 
@@ -139,7 +137,7 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 
 前置(一次性):[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) 扩展(一键装、自动更新);未安装时工具返回 `needs-extension` 并附链接,不消耗配额。
 
-## 构造上可信
+可信不靠承诺,靠构造:
 
 1. **模型只翻译,代码才判决** —— LLM 不产出可行性判决与算术。
 2. **每个数字带来源标签** —— 渲染层附加,降级如实更换。
@@ -148,22 +146,13 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 5. **价格 fail-closed** —— 未知模型不猜价;价表只经 PR 变更。
 6. **你的数据是你的** —— 状态在 `gotry-state/`;测试用隔离 state root。
 
-## 状态与限制
+## 状态与路线图
 
-当前版本:**v0.0.1-rc.22**(npm `latest`;2026-09-09 镜像 registry 回拉实测通过)。评测处于 Phase 0——确定性合同与校验器;无外部分数、无 uplift 声明。
+npm `latest`:**v0.0.1-rc.22**。未到 1.0:核心链路已端到端可用;评测仍停留在确定性合同与校验器阶段,无外部分数、无 uplift 声明。
 
-**今天可用**:确定性选择内核 + 显式 Z3 航班链路径 · 实时 + 账号会话检索(typed、调用绑定事实)· 依赖体检(批准后范围修复)· 记忆(动机 / 愿望池 / 同行人 / 时间线)落租户作用域账本 · 按任务路由的回合预算(deep-planning 转后台工单)· M4 opt-in 证据采集器。近期 fail-closed 切片:#279/#352 malformed 响应、#359/#363 锚点指纹、#341 地面接驳、#343 IANA 时区、#338 常住地、#254/#265/#282/#327/#329/#194——完整轨迹见 [CHANGELOG.md](CHANGELOG.md)。
+**今天可用** —— 访谈 → 确定性可行性判决 → 带门到门真成本的行程 · 实时检索(飞猪 + 你本人登录态 Chrome,只读),事实 typed 且调用绑定 · 记忆(动机 / 愿望池 / 同行人 / 时间线)落租户作用域账本 · 自检 doctor,批准后范围修复。
 
-**已知限制**:M3 Exit 未关闭(真实 50–200 人 cohort 未积累)· M4→M6 证据门(#136/#137;fixture 证明永不开启)· 携程酒店/美团会话面待回填 · #272 实时证据未收口 · 英文仅覆盖求解输出层 · 外部运行均仅 diagnostic · 今天没有可下单路径(M5 只经 WriteGate 启封)。
-
-<details>
-<summary>更深的工程状态(账本合同 / 证据合同 / 里程碑口径)</summary>
-
-状态权威面在文档,不在 README:事务化状态账本(ADR-15)+ 双形态冻结(ADR-16:本地+Web 一套账本语义);M3 真实 cohort 证据合同已立(fixture 不充当 Exit,真实 50–200 人样本即开 Exit);M4 paired-cohort 价值证据合同已按 #223 加严,#228 collector 只是显式 consent + 隔离 stateRoot 的 scorer 输入生产路径(合成/candidate 不充当 Exit 证据);异步工单终态合同(`gotry_async_terminal.v1`:4/4 → succeeded / ledger settled / exit 0)。细则见 [`docs/roadmap.md`](docs/roadmap.md) / [`docs/architecture.md`](docs/architecture.md) §1 与 #19–#22/#223/#228。
-
-</details>
-
-## 路线图
+**还没有** —— 今天没有可下单路径;预订只随 WriteGate 用户确认设计启封 · 实时可订证据仍部分覆盖 · 真实用户 cohort 未到退出口径 · 英文仅覆盖求解输出层。
 
 ```mermaid
 timeline
@@ -177,25 +166,17 @@ timeline
   M6 : B2B 包裹——内核零改动的 sponsor 插件
 ```
 
-唯一权威时间线(逐里程碑进入/退出条件与 gate):[`docs/roadmap.md`](docs/roadmap.md)。
-
-## 跑测试
-
-```bash
-./scripts/run-all-tests.sh    # 全栈套件(纯 TS)
-```
-
-打包 Web 重试/取消证明(#289):`cd ts && GOTRY_SESSION_LIVE=0 npx --no-install tsx scripts/issue-289-web-retry-e2e.ts`。真实会话 benchmark 为 opt-in,永不进 CI。PR 要求本地 final-SHA 证据;CI 是附加信号。
+里程碑进出闸:[`docs/roadmap.md`](docs/roadmap.md) · 工程状态:[`docs/architecture.md`](docs/architecture.md) · 逐版本决策:[`docs/release-notes.md`](docs/release-notes.md) + [CHANGELOG.md](CHANGELOG.md)。
 
 ## 参与开发
 
 从最新 `main` 切 `feat/ · fix/ · docs/ · chore/` 分支,typecheck + 全栈回归全绿后开 PR。**测试红着不许合。** 指南:[CONTRIBUTING.md](CONTRIBUTING.md)。
 
-## 给 AI Agent
-
-[`AGENTS.md`](AGENTS.md) 是绑定契约:入场先清扫异步工单 · 算术只在 evaluate 层、求解只在 `unified.*` · 绝不写共享状态(`ts/dsh-runtime/gotry-state/`)· 同提交同步 `architecture.md` §11 六状态面 · 只暂存具名文件,禁止 `git add -A`。
+AI agent:[`AGENTS.md`](AGENTS.md) 是绑定契约——入场先清扫异步工单 · 算术只在 evaluate 层、求解只在 `unified.*` · 绝不写共享状态(`ts/dsh-runtime/gotry-state/`)· 同提交同步 `architecture.md` §11 六状态面 · 只暂存具名文件,禁止 `git add -A`。
 
 ## 文档
+
+每篇文档以双语对(英文 `x.md` + 中文 `x.zh-CN.md`)为准绳,成对不一致视为 bug(双语化推进中)。
 
 | 文档 | 内容 |
 |---|---|
@@ -212,8 +193,6 @@ timeline
 
 **MIT**——与上游 dsh 一致。文本见 [LICENSE](LICENSE)。
 
-## Star History
-
 <a href="https://www.star-history.com/?repos=danceiny%2Fgotry&type=date&legend=top-left">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=danceiny/gotry&type=date&theme=dark&legend=top-left" />
@@ -227,10 +206,3 @@ timeline
 **Built with**: DeepSeek Harness 0.1.5-alpha.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
 **版本基线:`v0.0.1-rc.22`(npm `latest`)。** 验证闸:`scripts/run-all-tests.sh`;发布流程:`scripts/publish-npm.sh`。
-
----
-
-## 中英版说明
-
-- 本文件与 [README.md](README.md) 各自完整自含、结构互为镜像(常见开源双语布局)。
-- `docs/` 深度工程文档当前中文先行,英文版计划 v0.1.0 同步。
