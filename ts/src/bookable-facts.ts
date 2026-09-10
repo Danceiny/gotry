@@ -740,9 +740,21 @@ export function renderConnection(legA: FlightFact, legB: FlightFact): string {
  * 与 renderFlightFact / renderHotelFact 同源:启发式 POLICY_WORD 仅覆盖手写/历史产物。
  */
 export function renderPolicyFact(p: PolicyFact, tripStart?: string): string {
+  return `${policyCanonicalBody(p, tripStart)} <!-- fact:${p.fact_id} -->`
+}
+
+/**
+ * 政策行 canonical body(不含锚点;issue #359,D-26 残余收口):
+ * 闸侧锚点回溯用同一原文,subject/statement/source/fetched_at/query_id 任意一项
+ * 改动 → 行文本不再等于 canonical body → fact_anchor_unknown fail-closed。
+ * 不走宽松 substring/subset 匹配,避免锚点行被改写 subject/statement 后仍 pass。
+ * 复核提醒(review_by 或 tripStart 派生的 defaultReviewBy)是合法的可选段——
+ * `tripStart` 与 renderPolicyFact 同一传入,产物与闸两侧语义一致。
+ */
+export function policyCanonicalBody(p: PolicyFact, tripStart?: string): string {
   const review = p.review_by ?? (tripStart ? defaultReviewBy(tripStart) : undefined)
   const reviewNote = review ? `;远期政策须复核——到 ${review} 再核验一次` : ''
-  return `- ${p.subject}:截至 ${p.as_of} 的现行政策——${p.statement}${reviewNote} [${p.source}@${p.fetched_at} #${p.query_id}] <!-- fact:${p.fact_id} -->`
+  return `- ${p.subject}:截至 ${p.as_of} 的现行政策——${p.statement}${reviewNote} [${p.source}@${p.fetched_at} #${p.query_id}]`
 }
 
 /** 从结构化行程渲染夜数口径行(机器反算,唯一口径) */

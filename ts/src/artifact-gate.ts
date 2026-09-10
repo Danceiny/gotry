@@ -18,6 +18,7 @@ import {
   hotelClaimVerdict,
   itineraryInvariants,
   latestFactsForRouteDate,
+  policyCanonicalBody,
   railClaimVerdict,
   renderFlightFact,
   type BookableFact,
@@ -567,7 +568,7 @@ export function gateArtifact(
   markdown: string,
   facts: BookableFact[],
   map: AirlineAirportMap,
-  opts?: { trip_year?: number; itinerary?: ItineraryFacts },
+  opts?: { trip_year?: number; itinerary?: ItineraryFacts; tripStart?: string },
 ): GateReport {
   const claims = extractClaims(markdown, map, opts)
   const violations: GateViolation[] = []
@@ -576,7 +577,6 @@ export function gateArtifact(
   // 渲染锚点优先(issue #118 单向生成):带 fact:<id> 的行确定性回溯注册表——
   // 锚点在=按事实 bookability 判;锚点不存在=手改/伪造,直接违例。启发式对锚点行让位。
   const lines = markdown.split('\n')
-  const AS_OF_PATTERN = /截至\s*(\d{4}-\d{2}-\d{2})/
   for (const [lineNo, factId] of claims.anchors) {
     const f = facts.find(x => x.fact_id === factId)
     if (!f) {
@@ -609,19 +609,21 @@ export function gateArtifact(
       violations.push({ kind: 'not_in_source', line: lineNo, detail: `锚点事实为 exact-date 负事实(${(f as { fetched_at?: string }).fetched_at ?? ''})——负事实对应的可住/可订断言不得出现` })
       continue
     }
-    // 内容指纹(issue #273):锚点行渲染的 as_of 必须与事实 as_of 一致——
-    // 改锚点行日期而保留 fact_id = 手改锚点;与未知锚点同源 fail-closed。
+    // 内容指纹(issue #273 + #359):锚点行的 canonical body 必须与事实全字段匹配——
+    // subject/statement/source/fetched_at/query_id/as_of 任意一项改动 → 渲染行不再
+    // 等于 canonical body → fail-closed(与未知锚点同源);不复用宽松 substring 匹配。
+    // 复核提醒(review_by 或 tripStart 派生的 defaultReviewBy)是合法的可选段,
+    // tripStart 与 renderPolicyFact 同一传入 → 产物与闸两侧语义一致。
     if (f.kind === 'policy') {
       const rendered = lines[lineNo - 1] ?? ''
-      const m = rendered.match(AS_OF_PATTERN)
-      const renderedAsOf = m?.[1]
-      if (!renderedAsOf || renderedAsOf !== f.as_of) {
+      const anchorIdx = rendered.indexOf('<!-- fact:')
+      const renderedBody = (anchorIdx >= 0 ? rendered.slice(0, anchorIdx) : rendered).trimEnd()
+      const canonical = policyCanonicalBody(f, opts?.tripStart)
+      if (renderedBody !== canonical) {
         violations.push({
           kind: 'fact_anchor_unknown',
           line: lineNo,
-          detail: renderedAsOf
-            ? `锚点行 as_of ${renderedAsOf} ≠ 事实 ${f.as_of}——内容指纹不符,锚点被手改`
-            : `锚点行缺少截至日期——事实 ${f.as_of} 的内容指纹不符,锚点被手改`,
+          detail: `锚点行内容指纹不符——期望 ${canonical},实际 ${renderedBody};锚点被手改/伪造,subject/statement/source/fetched_at/query_id/as_of 任一不一致均 fail-closed`,
         })
         continue
       }
