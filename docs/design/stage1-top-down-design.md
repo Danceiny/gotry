@@ -151,6 +151,7 @@ loop:
 
 - **ADR-8(mock-LLM 先行)**:对话循环的架构验证用确定性剧本 LLM,不依赖真实模型;智能质量与架构正确性解耦。淘汰条件:S4 完成后 mock 保留为回归夹具。
 - **ADR-9(访谈确定性)**:`interview_next` 由缺失字段驱动(配置化问题库),LLM 只润色问句——Kimi 的「从不访谈」病根是即兴,确定性驱动是解药。
+- **ADR-19+ Issue #343(IANA tz canonical,2026-09-10)**:候选航班包时区权威 = IANA zone + 当地日期 → 真实 UTC instant(缓存 `Intl.DateTimeFormat`,无新依赖),DST gap/overlap 与未知 zone 在 parse 边界拒收;门到门算术唯一权威 = `ts/src/model.ts` 的 `doorToDoorFromMove`,v2 用真实 UTC instant,v1 用 `(arrMin-depMin)-tzOffsetMin` 字节不变;home zone 工作窗口用 `readWallParts(homeZone, depUtcMs)` 直接投影已知 instant(权威,不重走 ±14h 扫描)。`{version:2}` 显式 opt-in,`data/flights_2026.json` v1 维持不动;当前证据限于离线 focused/sanity/unified/smoke,全仓前台回归仍待执行。public path 不替代实时班期/票价/可售库存。
 
 ## 5. 与债务/阶段的关系
 
