@@ -20,7 +20,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { hasRecognizedAvailableSeat, type SessionTrainOption } from '../capabilities/session/adapters/rail-12306.ts'
+import { hasRecognizedAvailableSeat, validateTrainQueryResponseUrl, type SessionTrainOption } from '../capabilities/session/adapters/rail-12306.ts'
 
 export const BOOKABLE_FACT_SCHEMA = 'gotry_bookable_fact.v1' as const
 
@@ -194,6 +194,8 @@ export interface SessionTrainFactResult {
   }
   collection?: {
     requested: { from: string; to: string; date: string }
+    request: { fromStationTelecode: string; toStationTelecode: string; date: string }
+    response: { url: string; fromStationTelecode: string; toStationTelecode: string; date: string }
     batchId: string
     queryId: string
     fetchedAt: string
@@ -315,6 +317,12 @@ function trainCollectionIsFresh(
   const c = r.collection
   if (!c || !c.batchId.trim() || !c.queryId.trim() || c.queryId !== `session:12306-train:${c.batchId}`) return false
   if (c.requested.from !== q.from || c.requested.to !== q.to || c.requested.date !== q.date) return false
+  if (!c.request || !c.response
+    || c.request.date !== c.requested.date
+    || c.response.fromStationTelecode !== c.request.fromStationTelecode
+    || c.response.toStationTelecode !== c.request.toStationTelecode
+    || c.response.date !== c.request.date
+    || !validateTrainQueryResponseUrl(c.response.url, c.request).ok) return false
   const fetchedMs = Date.parse(c.fetchedAt)
   const nowMs = now.getTime()
   if (!Number.isFinite(fetchedMs) || !Number.isFinite(nowMs)) return false

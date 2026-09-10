@@ -105,7 +105,8 @@ async function main() {
           trace: { effect: fx.effect, channel: 'fixture', attempts: 1, backoffMs: 0, breaker: 'off', evidence: ['[fixture:session-train-unresolved]'] },
         }
       }
-      const common = { requested: { from, to, date }, batchId: `fixture-${date}`, queryId: `session:12306-train:fixture-${date}`, fetchedAt: '2026-09-10T11:59:00.000Z' }
+      const response = { url: `https://kyfw.12306.cn/otn/leftTicket/queryG?leftTicketDTO.train_date=${date}&leftTicketDTO.from_station=SHH&leftTicketDTO.to_station=KMM`, fromStationTelecode: 'SHH', toStationTelecode: 'KMM', date }
+      const common = { requested: { from, to, date }, request: { fromStationTelecode: 'SHH', toStationTelecode: 'KMM', date }, response, batchId: `fixture-${date}`, queryId: `session:12306-train:fixture-${date}`, fetchedAt: '2026-09-10T11:59:00.000Z' }
       const collection = date === '2027-11-15'
         ? { ...common, requested: { from, to, date: '2027-11-14' } }
         : common

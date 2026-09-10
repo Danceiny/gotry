@@ -101,14 +101,14 @@ function waitSniff(tabId, timeoutMs) {
         settled = true
         clearTimeout(timer)
         chrome.runtime.onMessage.removeListener(handler)
-        resolve({ ok: true, kind: 'search', body: String(msg.body ?? ''), title })
+        resolve({ ok: true, kind: 'search', body: String(msg.body ?? ''), url: String(msg.url ?? ''), title })
       }
     }
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
       chrome.runtime.onMessage.removeListener(handler)
-      resolve({ ok: false, kind: 'search', timeout: true, title })
+      resolve({ ok: false, kind: 'search', timeout: true, url: '', title })
     }, Math.max(Number(timeoutMs) || 30_000, 5_000))
     chrome.runtime.onMessage.addListener(handler)
   })

@@ -98,6 +98,8 @@ export interface ExtensionJobResult {
   names?: string[]
   /** search:NETWORK_HINTS 命中的响应原文 */
   body?: string
+  /** search:the exact NETWORK_HINTS response URL selected for body */
+  url?: string
   title?: string
   opened?: boolean
   timeout?: boolean

@@ -169,15 +169,63 @@ export interface AdapterEntry {
   unresolved?: string[]
 }
 
-export function buildTrainEntryUrl(q: TrainEntryQuery): AdapterEntry {
+export interface TrainQueryTelecodes {
+  fromStationTelecode: string
+  toStationTelecode: string
+  date: string
+}
+
+export interface TrainResponseBinding extends TrainQueryTelecodes {
+  /** Exact URL observed on the response whose body was parsed. */
+  url: string
+}
+
+export type TrainResponseUrlValidation =
+  | { ok: true; binding: TrainResponseBinding }
+  | { ok: false; reason: string }
+
+export function resolveTrainQueryTelecodes(q: TrainEntryQuery): { ok: true; telecodes: TrainQueryTelecodes } | { ok: false; unresolved: string[] } {
   const unresolved: string[] = []
   const fromTc = (q.fromStationTelecode ?? '').trim().toUpperCase() || STATION_TELECODES[q.from.trim()]
   const toTc = (q.toStationTelecode ?? '').trim().toUpperCase() || STATION_TELECODES[q.to.trim()]
   if (!fromTc) unresolved.push(q.from)
   if (!toTc) unresolved.push(q.to)
-  if (unresolved.length > 0 || !/^\d{4}-\d{2}-\d{2}$/.test(q.date)) {
-    return { ok: false, unresolved: unresolved.length > 0 ? unresolved : [q.date] }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(q.date)) unresolved.push(q.date)
+  if (unresolved.length > 0 || !fromTc || !toTc) return { ok: false, unresolved }
+  return { ok: true, telecodes: { fromStationTelecode: fromTc, toStationTelecode: toTc, date: q.date } }
+}
+
+/** Bind a parsed body to the exact 12306 query request that this invocation built. */
+export function validateTrainQueryResponseUrl(observedUrl: string, expected: TrainQueryTelecodes): TrainResponseUrlValidation {
+  let parsed: URL
+  try {
+    parsed = new URL(observedUrl)
+  } catch {
+    return { ok: false, reason: 'response URL malformed' }
   }
+  if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== TRAIN_SITE_HOST || parsed.port) {
+    return { ok: false, reason: 'response URL host/protocol is not the 12306 HTTPS host' }
+  }
+  if (!/^\/otn\/leftTicket\/query[A-Za-z0-9_-]*$/i.test(parsed.pathname)
+    || !TRAIN_NETWORK_HINTS.some((hint) => hint.test(parsed.pathname))) {
+    return { ok: false, reason: 'response URL is not an allowed leftTicket query endpoint' }
+  }
+  const exactParam = (name: string): string | undefined => {
+    const values = parsed.searchParams.getAll(name)
+    return values.length === 1 ? values[0] : undefined
+  }
+  if (exactParam('leftTicketDTO.train_date') !== expected.date
+    || exactParam('leftTicketDTO.from_station') !== expected.fromStationTelecode
+    || exactParam('leftTicketDTO.to_station') !== expected.toStationTelecode) {
+    return { ok: false, reason: 'response URL query route/date does not match the invocation' }
+  }
+  return { ok: true, binding: { url: observedUrl, ...expected } }
+}
+
+export function buildTrainEntryUrl(q: TrainEntryQuery): AdapterEntry {
+  const resolved = resolveTrainQueryTelecodes(q)
+  if (!resolved.ok) return { ok: false, unresolved: resolved.unresolved }
+  const { fromStationTelecode: fromTc, toStationTelecode: toTc } = resolved.telecodes
   const fs = encodeURIComponent(`${q.from.trim()},${fromTc}`)
   const ts = encodeURIComponent(`${q.to.trim()},${toTc}`)
   return { ok: true, url: `https://kyfw.12306.cn/otn/leftTicket/init?linktypeid=dc&fs=${fs}&ts=${ts}&date=${q.date}&flag=N,N,Y` }
