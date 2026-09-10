@@ -30,6 +30,7 @@ import {
   supportsNodeVersion,
 } from './gotry-runtime-resolution.js'
 import { onboardingSkipReason, orchestrateWebLaunch } from './gotry-bootstrap.js'
+import { spawnOwnedChild, terminateOwnedChild } from './gotry-process-liveness.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..')
@@ -499,6 +500,7 @@ process.once('exit', cleanupPatch)
 // 等待 bounded close/reap,清 patch + 私有 result 目录(均幂等),移除本监听器,再向自己重发信号恢复原生终止语义。
 // signalHandling 护栏防递归/重复处理(重发信号不再二次进入本回调)。setup/doctor 的 spawnSync 不在此窗口,保持不变。
 let child = null                  // dsh web 子进程(launchWeb 后)
+let childGroupPid = null          // POSIX dsh child process-group leader
 let onboardingChild = null        // onboarding 子进程(运行中时);POSIX 下独立进程组
 let onboardingChildGroupPid = null
 let onboardingResultDir = null    // 私有结果目录;信号/正常/错误路径都清
@@ -523,23 +525,6 @@ const onboardingChildTimeoutMs = (() => {
 let signalHandling = false
 const signalListeners = new Map()
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
-const waitForChildClose = (proc, ms) => new Promise(resolve => {
-  if (!proc) { resolve(false); return }
-  let done = false
-  const finish = value => {
-    if (done) return
-    done = true
-    clearTimeout(timer)
-    proc.off('close', onClose)
-    proc.off('error', onError)
-    resolve(value)
-  }
-  const onClose = () => finish(true)
-  const onError = () => finish(true)
-  const timer = setTimeout(() => finish(false), ms)
-  proc.once('close', onClose)
-  proc.once('error', onError)
-})
 const signalChild = (proc, sig, groupPid = null) => {
   if (!proc) return
   if (process.platform !== 'win32' && groupPid) {
@@ -548,12 +533,7 @@ const signalChild = (proc, sig, groupPid = null) => {
   try { proc.kill(sig) } catch { /* ignore */ }
 }
 const terminateChildBounded = async (proc, sig, groupPid = null, graceMs = ONBOARDING_TERM_GRACE_MS, killMs = ONBOARDING_KILL_WAIT_MS) => {
-  if (!proc) return
-  signalChild(proc, sig, groupPid)
-  const closed = await waitForChildClose(proc, graceMs)
-  if (closed) return
-  signalChild(proc, 'SIGKILL', groupPid)
-  await waitForChildClose(proc, killMs)
+  await terminateOwnedChild({ child: proc, groupPid, signal: sig, termGraceMs: graceMs, killWaitMs: killMs })
 }
 const registerSignalForwarding = () => {
   if (signalListeners.size) return
@@ -563,7 +543,7 @@ const registerSignalForwarding = () => {
       signalHandling = true
       void (async () => {
         const active = onboardingChild || child
-        const groupPid = onboardingChild ? onboardingChildGroupPid : null
+        const groupPid = onboardingChild ? onboardingChildGroupPid : childGroupPid
         cleanupPatch()
         cleanupOnboardingResult()
         await terminateChildBounded(active, sig, groupPid)
@@ -712,11 +692,13 @@ await orchestrateWebLaunch({
   },
   // dsh web 启动边界:launchWeb 即 inner 跨过 onboarding 后到达的 web 启动标记。
   launchWeb: async () => {
-    child = spawn(process.execPath, [dshBin, ...binJs], {
+    const owned = spawnOwnedChild(process.execPath, [dshBin, ...binJs], {
       stdio: childStdio,
       env: childEnv,
       cwd: dshCwd,
     })
+    child = owned.child
+    childGroupPid = owned.groupPid
   },
 })
 if (benchmarkStdout) {
@@ -755,10 +737,37 @@ const reportBenchmarkFailure = reason => {
   process.stderr.write(`[gotry] benchmark terminal output unavailable (${reason})\n`)
 }
 
-child.on('close', (code, signal) => {
+let childLifecycleHandled = false
+let childCleanupPromise = null
+// `close` may be delayed by a descendant which inherited dsh's stdio pipe.
+// Always start bounded TERM→KILL cleanup from `exit` so the owned group is
+// reaped before any close/parser wait. The benchmark zero-success close path
+// still parses the already-captured stdout buffer unchanged; cleanup runs
+// fire-and-forget in the background and stays bounded by ONBOARDING bounds.
+const startChildCleanup = () => {
+  if (childCleanupPromise || !child) return childCleanupPromise
+  childCleanupPromise = terminateOwnedChild({
+    child,
+    groupPid: childGroupPid,
+    signal: 'SIGTERM',
+    termGraceMs: ONBOARDING_TERM_GRACE_MS,
+    killWaitMs: ONBOARDING_KILL_WAIT_MS,
+  })
+  return childCleanupPromise
+}
+child.on('exit', (code, signal) => {
+  void startChildCleanup()
+})
+child.on('close', async (code, signal) => {
+  if (childLifecycleHandled) return
+  childLifecycleHandled = true
   cleanupPatch()
   if (signalHandling) return
   unregisterSignalForwarding()
+  // Non-benchmark web/headless children are owned through both normal and
+  // anomalous exits. The promise was normally started by `exit`; retaining
+  // this close fallback covers runtimes that report close without exit.
+  if (!benchmarkStdout || code !== 0 || signal) await startChildCleanup()
   if (benchmarkStdout) {
     const captured = Buffer.concat(benchmarkStdout).toString('utf8')
     if (code !== 0 || signal || benchmarkOutputTruncated) {
@@ -801,23 +810,43 @@ child.on('close', (code, signal) => {
     // D-NEW 护栏:dsh 异常退出也写一条 incident,留现场而非沉默
     // dist 模式 import JS(node_modules 下的 .ts 会被 Node 拒 strip)
     const incidentModule = distModuleMode && existsSync(join(repoRoot, 'dist/capabilities/incident-log.js'))
-      ? '../dist/capabilities/incident-log.js'
-      : '../ts/capabilities/incident-log.ts'
-    import(incidentModule).then(({ recordIncident }) => {
+      ? join(repoRoot, 'dist/capabilities/incident-log.js')
+      : join(repoRoot, 'ts/capabilities/incident-log.ts')
+    try {
+      const { recordIncident } = await import(pathToFileURL(incidentModule).href)
       recordIncident({
         ts: new Date().toISOString(),
         kind: 'plugin_error',
         message: `gotry spawn exit: ${mode} code=${code} signal=${signal}`,
         source: 'gotry-cli',
-      }, repoRoot).catch(() => {})
-    }).catch(() => {}) // module 找不到时静默
+      }, repoRoot)
+    } catch { /* diagnostics remain best-effort; fatal exit is preserved */ }
+  }
+  if (signal) {
+    try { process.kill(process.pid, signal) } catch { process.exit(1) }
+    return
   }
   process.exit(code ?? 1)
 })
-child.on('error', (e) => {
+child.on('error', async (e) => {
+  if (childLifecycleHandled) return
+  childLifecycleHandled = true
   cleanupPatch()
   if (signalHandling) return
   unregisterSignalForwarding()
+  await startChildCleanup()
+  try {
+    const incidentModule = distModuleMode && existsSync(join(repoRoot, 'dist/capabilities/incident-log.js'))
+      ? join(repoRoot, 'dist/capabilities/incident-log.js')
+      : join(repoRoot, 'ts/capabilities/incident-log.ts')
+    const { recordIncident } = await import(pathToFileURL(incidentModule).href)
+    recordIncident({
+      ts: new Date().toISOString(),
+      kind: 'plugin_error',
+      message: `gotry spawn error: ${e instanceof Error ? e.message : String(e)}`,
+      source: 'gotry-cli',
+    }, repoRoot)
+  } catch { /* diagnostics remain best-effort; fatal exit is preserved */ }
   if (benchmarkEnvironmentConfig) {
     reportBenchmarkFailure('child_spawn_failure')
     return
