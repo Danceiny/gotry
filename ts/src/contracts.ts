@@ -16,14 +16,24 @@ export interface CalendarState {
   assertedWeekdays: Record<string, 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'>
 }
 
-export interface WorkWindowProfile {
-  homeTzOffsetMin: number
+export interface ScheduledWorkWindowProfile {
+  /** Legacy v1 only; v2 pack metadata owns the IANA home zone. */
+  homeTzOffsetMin?: number
+  vacation?: false
   startMin: number
   endMin: number
   workdays: number[]
   /** 证据:用户原话(P0 反幻觉,与动机画像同规) */
   evidence: string
 }
+
+/** Explicit leave means this trip has no work-time restriction. */
+export interface VacationWorkWindowProfile {
+  vacation: true
+  evidence?: string
+}
+
+export type WorkWindowProfile = ScheduledWorkWindowProfile | VacationWorkWindowProfile
 
 export interface TravelerProfile {
   workWindow?: WorkWindowProfile

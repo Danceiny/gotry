@@ -38,6 +38,8 @@
 
 M3 最小可用产品,分发链路无已知堵点。
 
+**时区面(Issue #343)**:`ts/src/tz-resolver.ts` 将 v2 的显式 IANA zone 与 local date 解析为 UTC instant,在 parse 边界拒收未知 zone 与 DST gap/overlap;`ts/src/model.ts` 的 `doorToDoorFromMove` 统一使用 UTC instant 计算耗时。dsh/mock adapter 保留 v2 pack 的 `homeZone`,profile 只提供 schedule,explicit vacation 移除该行程的 work-window restriction,numeric v1 保持兼容。该确定性契约不代表 live schedules/prices/availability/inventory,数据源边界见 [`docs/data-sources.md`](data-sources.md)。
+
 ### 1.1 交付形态与入口
 
 | | |
@@ -439,6 +441,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 
 - **安全 dispatch 日志(#329,2026-09-10)**:同步 HTTP 409 turn-dispatch catch 使用闭合 reason vocabulary,只对完整固定 token 做区分,未知值与带 suffix 的 token 统一为 `UNCLASSIFIED`;stderr 结构化行只含现有 typed `code` 与 `reason`,HTTP typed response/status 不变。公共 HTTP 请求与子进程 stderr 字节 proof 为确定性离线证据,不替代真实 provider、HotelByte UAT 或 M3/M4/M5/M6 准入。
 
+- **Issue #343 时区演进**:flight-pack v2 以显式 IANA zone 与 local date 生成 UTC instant,由确定性模型使用 UTC instant 计算耗时并以已知 instant 投影 home-zone work window;未知 zone 与 DST gap/overlap 在边界拒收。dsh/mock adapter 保留 pack `homeZone`,profile 只提供 schedule,explicit vacation 移除 work-window restriction,numeric v1 保持兼容；该离线确定性契约不代表 live schedules/prices/availability/inventory。
+
 ### 外部 benchmark 泛化(Round 1–12,Discussion #78,official score 仍为空)
 
 > 工程合同全文见 `evaluation/benchmark-environment-bridge.md`;此处只留逐轮事实摘记。共同结论:official scores 全为 null,不声称 uplift 或 external benchmark closure。
@@ -466,6 +470,8 @@ Issue #2 的日期下界与命名年份窗口现由时间锚点与 planner/regis
 PR #327 修订的严格重复 tool-call 参数恢复属于 planner 解析边界收敛，不新增开放债务；其公共路径 proof 仍只覆盖离线 fixture，不替代真实 provider、HotelByte UAT 或里程碑准入证据。
 
 issue #329 的 dispatch 日志收敛属于安全边界加固，不新增开放债务；公共 HTTP/子进程 stderr proof 只证明 deterministic offline contract,不替代真实 provider、HotelByte UAT 或里程碑准入证据。
+
+Issue #343 的时区处理属于模型层 deterministic 边界,不新增开放债务:`ts/src/tz-resolver.ts` 解析 v2 IANA zone 与 local date,`ts/src/model.ts` 以 UTC instant 计算耗时,adapter 保留 v2 pack `homeZone` 并只合并 profile schedule;explicit vacation 移除 work-window restriction,numeric v1 保持兼容。该契约不代表 live schedules/prices/availability/inventory。
 
 ### 10.1 未清偿(工作面)
 

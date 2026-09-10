@@ -7,10 +7,12 @@
 
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
 import type { Candidate, Choice, MotivationProfile, Service, TransferMode, TravelRequest, TrueCost } from './model.ts'
-import { evaluateChoice, minToHhmm, hhmmToMin, requiredUsableHours, trueCostToDict, LATEST_ARRIVE_STAY_MIN } from './model.ts'
+import { evaluateChoice, minToHhmm, hhmmToMin, requiredUsableHours, trueCostToDict, LATEST_ARRIVE_STAY_MIN, doorToDoorFromMove, NonpositiveDurationError } from './model.ts'
 import type { LegReport } from './journey.ts'
 import { withZ3 } from './z3-shared.ts'
 import { t as i18nT } from './i18n.ts'
+import { resolveOffsetForLocalDate, describeResolveFailure, isKnownZoneLoose, readWallParts, wallPartsToIso } from './tz-resolver.ts'
+import { FLIGHT_PACK_VERSION } from './flight-pack-contract.ts'
 
 export interface AnchorsSpec {
   arriveByMin?: number
@@ -36,6 +38,9 @@ export interface MoveSpecTS {
   tzOffsetMin?: number
   /** M-1:出发地 UTC 偏移(工作窗口换算用) */
   originTzOffsetMin?: number
+  /** Issue #343 v2:dep/arr 的 IANA zone(从 option.date + 服务 HH:MM 解析;只读镜像,不算术)。 */
+  ianaDepZone?: string
+  ianaArrZone?: string
 }
 
 /** M-1:旅行者工作窗口(家时区) */
@@ -44,6 +49,14 @@ export interface WorkWindowSpec {
   startMin: number
   endMin: number
   workdays?: number[]
+  /** Issue #343 v2:home IANA zone;overrides numeric `homeTzOffsetMin` when set.
+   *  Used by `workWindowBlocks` to derive a date-sensitive home offset instead of a
+   *  single numeric per-trip shift(原 M-1 数值写法).Mutually exclusive with
+   *  `homeTzOffsetMin` at v2 parse time;不在同一 pack 里同时给两值。 */
+  homeZone?: string
+  /** Issue #343 v2:可选,home 工作窗口的本地表达(hh:mm);缺省回退 start/end 的 min-of-day。 */
+  startHHmm?: string
+  endHHmm?: string
 }
 
 export interface StaySpecTS {
@@ -87,6 +100,8 @@ export interface JourneySpecTS {
   workWindow?: WorkWindowSpec
   /** 骨架层开关(§7-1):true 时对带 route 提示的段做通航性三值标注 */
   skeletonHub?: boolean
+  /** Internal only; symbol-keyed so JSON/public tool schemas never expose pack version. */
+  readonly [FLIGHT_PACK_VERSION]?: 1 | 2
 }
 
 // Z3 运行时收敛到 z3-shared(单一 WASM 实例 + 单一 Context + 会话级互斥)——
@@ -147,6 +162,17 @@ export function segmentsFromCandidate(req: TravelRequest, candidates: Candidate[
 }
 
 export function parseFlightPackToSpec(pack: Record<string, unknown>): JourneySpecTS {
+  // Issue #343 v2:IANA path;v1(无 version 字段或 version===1)走原数值口径。
+  const version = pack['version'] === undefined ? 1 : Number(pack['version'])
+  if (version === 2) return parseFlightPackToSpecV2(pack)
+  if (version !== 1) {
+    throw Object.assign(new Error(`parseFlightPackToSpec: unsupported pack version ${version}`), { code: 'unsupported_pack_version' })
+  }
+  return parseFlightPackToSpecV1(pack)
+}
+
+/** v1 数值口径(path 保留为 export,便于 §7-1/§6 直接复用与差分) */
+export function parseFlightPackToSpecV1(pack: Record<string, unknown>): JourneySpecTS {
   const legs = (pack['legs'] as Array<Record<string, unknown>>).map(l => ({
     id: String(l['id']),
     role: ((l['services'] as unknown[]).length === 1 ? 'fixed' : 'choice') as 'fixed' | 'choice',
@@ -180,6 +206,7 @@ export function parseFlightPackToSpec(pack: Record<string, unknown>): JourneySpe
       endMin: Number(ww['end_min']),
       workdays: (ww['workdays'] as number[] | undefined) ?? [0, 1, 2, 3, 4],
     } : undefined,
+    [FLIGHT_PACK_VERSION]: 1,
   }
   // M-1:班次的星期标注挂到 Option(缺省=不受工作窗口约束)
   for (const l of pack['legs'] as Array<Record<string, unknown>>) {
@@ -194,33 +221,235 @@ export function parseFlightPackToSpec(pack: Record<string, unknown>): JourneySpe
   return spec
 }
 
+/** Issue #343 v2:IANA zone + 当地日期解析;数值 tz_* 字段不可用(混合形态解析时拒收)。 */
+export function parseFlightPackToSpecV2(pack: Record<string, unknown>): JourneySpecTS {
+  const legsRaw = pack['legs'] as Array<Record<string, unknown>>
+  if (!Array.isArray(legsRaw) || legsRaw.length === 0) {
+    throw Object.assign(new Error('parseFlightPackToSpecV2: legs missing/empty'), { code: 'v2_legs_missing' })
+  }
+  const meta = (pack['meta'] ?? {}) as Record<string, unknown>
+  const ww = meta['work_window'] as Record<string, unknown> | undefined
+
+  const legs: SegmentTS[] = []
+  for (const l of legsRaw) {
+    // v2 不允许混合数值 tz_offset_min/origin_tz_offset_min(早 fail)
+    if ('tz_offset_min' in l || 'origin_tz_offset_min' in l) {
+      throw Object.assign(new Error(`parseFlightPackToSpecV2: leg ${l['id']} has legacy tz_offset_min/origin_tz_offset_min;v2 pack must use iana_*_zone + *_local_date`), { code: 'v2_legacy_offset_mixed' })
+    }
+    const legDate = l['date'] ? String(l['date']) : ''
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(legDate)) {
+      throw Object.assign(new Error(`parseFlightPackToSpecV2: leg ${l['id']} requires ISO date`), { code: 'v2_leg_date_missing' })
+    }
+    const ianaDepZone = String(l['iana_dep_zone'] ?? '')
+    const ianaArrZone = String(l['iana_arr_zone'] ?? '')
+    if (!ianaDepZone || !ianaArrZone) {
+      throw Object.assign(new Error(`parseFlightPackToSpecV2: leg ${l['id']} needs iana_dep_zone and iana_arr_zone`), { code: 'v2_zone_missing' })
+    }
+    const options: SegmentOptionTS[] = (l['services'] as Array<Record<string, unknown>>).map(sv => {
+      const svcDepDate = sv['dep_local_date'] ? String(sv['dep_local_date']) : legDate
+      const svcArrDate = sv['arr_local_date'] ? String(sv['arr_local_date']) : legDate
+      const depZone = sv['iana_dep_zone'] ? String(sv['iana_dep_zone']) : ianaDepZone
+      const arrZone = sv['iana_arr_zone'] ? String(sv['iana_arr_zone']) : ianaArrZone
+      const depR = resolveOffsetForLocalDate(depZone, svcDepDate, String(sv['dep']))
+      if (!depR.ok) {
+        throw Object.assign(new Error(`parseFlightPackToSpecV2: dep zone/date failure: ${describeResolveFailure(depR)}`), { code: 'v2_dep_resolve_failed' })
+      }
+      const arrR = resolveOffsetForLocalDate(arrZone, svcArrDate, String(sv['arr']))
+      if (!arrR.ok) {
+        throw Object.assign(new Error(`parseFlightPackToSpecV2: arr zone/date failure: ${describeResolveFailure(arrR)}`), { code: 'v2_arr_resolve_failed' })
+      }
+      // Issue #343 root 复核:d2d canonical 输入必须在 parse 边界校验严格 chronologically after,
+      // 否则把病态数据喂给 model.doorToDoorFromMove → throw NonpositiveDurationError → 被
+      // solveUnified WASM guard 误报为 wasm_runtime_error。
+      if (arrR.utcMs <= depR.utcMs) {
+        throw Object.assign(new Error(
+          `parseFlightPackToSpecV2: service ${String(sv['id'])} arrival instant (${new Date(arrR.utcMs).toISOString()}) must be strictly after departure instant (${new Date(depR.utcMs).toISOString()})`,
+        ), { code: 'v2_arr_not_after_dep' })
+      }
+      // tzOffsetMin = arr - dep(positive = 抵达地更靠东)
+      const tzOffsetMin = arrR.offsetMin - depR.offsetMin
+      return {
+        id: String(sv['id']),
+        label: `${String(sv['id'])} ${String(l['note'] ?? '').slice(0, 18)}`,
+        date: svcDepDate,
+        move: {
+          hub: String(l['hub'] ?? ''),
+          services: [{
+            id: String(sv['id']),
+            depMin: hhmmToMin(String(sv['dep'])),
+            arrMin: hhmmToMin(String(sv['arr'])),
+            priceCny: Number(sv['price_cny']),
+            // Issue #343 v2:把"墙上时刻"投影成真实 UTC instant 留给 evaluate / workWindow 用;
+            // d2d 公式走 (arrUtcMs - depUtcMs)/60000,跨日 / DST / 反向日界线都正确。
+            depUtcMs: depR.utcMs,
+            arrUtcMs: arrR.utcMs,
+          }],
+          bufferMin: Number(l['buffer_min']),
+          originTransferMin: Number(l['origin_transfer_min']),
+          destTransferMin: Number(l['dest_transfer_min']),
+          redEye: Boolean(l['red_eye']),
+          redEyeDurationMin: Number(sv['red_eye_duration_min'] ?? l['red_eye_duration_min'] ?? 0),
+          groundRecoveryMin: l['ground_recovery_min'] ? Number(l['ground_recovery_min']) : undefined,
+          tzOffsetMin,
+          originTzOffsetMin: depR.offsetMin,
+          ianaDepZone: depZone,
+          ianaArrZone: arrZone,
+        },
+        depWeekday: weekdayFromYmd(svcDepDate),
+      }
+    })
+
+    const role = ((l['services'] as unknown[]).length === 1 ? 'fixed' : 'choice') as 'fixed' | 'choice'
+    legs.push({
+      id: String(l['id']),
+      role,
+      note: l['note'] ? String(l['note']) : undefined,
+      date: legDate,
+      anchors: { arriveByMin: l['arrive_by'] ? hhmmToMin(String(l['arrive_by'])) : undefined },
+      route: routeHint(l['id'] as string),
+      options,
+    })
+  }
+
+  // work_window:home_zone 必需(v2 的 home 偏移走 IANA,数值字段不再权威);同时给两值报 reject。
+  let workWindow: WorkWindowSpec | undefined
+  if (ww) {
+    const hasHomeZone = Boolean(ww['home_zone'])
+    const hasHomeNum = ww['home_tz_offset_min'] !== undefined
+    if (hasHomeZone && hasHomeNum) {
+      throw Object.assign(new Error('parseFlightPackToSpecV2: work_window cannot combine home_zone and home_tz_offset_min'), { code: 'v2_ww_conflict' })
+    }
+    if (!hasHomeZone) {
+      throw Object.assign(new Error('parseFlightPackToSpecV2: work_window.home_zone is required for v2'), { code: 'v2_ww_home_zone_required' })
+    }
+    // 在 v2 parse 边界即时验证 home_zone 是已知 IANA zone(root counterexample #3:不许 fail-open)。
+    // 用 tz-resolver 的 isKnownZoneLoose:接受 Intl.DateTimeFormat 能识别的合法 alias(US/Pacific / ROK / Etc/GMT+8)。
+    const homeZone = String(ww['home_zone'])
+    if (!isKnownZoneLoose(homeZone)) {
+      throw Object.assign(new Error(`parseFlightPackToSpecV2: work_window.home_zone '${homeZone}' is not a known IANA zone`), { code: 'v2_home_zone_unknown' })
+    }
+    const startHHmm = ww['start'] ? String(ww['start']) : undefined
+    const endHHmm = ww['end'] ? String(ww['end']) : undefined
+    const startMin = ww['start_min'] !== undefined ? Number(ww['start_min']) : (startHHmm ? hhmmToMin(startHHmm) : hhmmToMin('10:00'))
+    const endMin = ww['end_min'] !== undefined ? Number(ww['end_min']) : (endHHmm ? hhmmToMin(endHHmm) : hhmmToMin('19:00'))
+    // numeric homeTzOffsetMin 仅占位:在 v2 工作窗口过滤时按 home_zone + dep_date 重算;预填 leg-date 占位 0
+    workWindow = {
+      homeTzOffsetMin: 0,
+      startMin,
+      endMin,
+      workdays: (ww['workdays'] as number[] | undefined) ?? [0, 1, 2, 3, 4],
+      homeZone,
+      startHHmm,
+      endHHmm,
+    }
+  }
+
+  return { segments: legs, workWindow, [FLIGHT_PACK_VERSION]: 2 }
+}
+
 const WEEKDAY_IDX: Record<string, number> = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 }
 const WEEKDAY_CN: Record<string, string> = { mon: '一', tue: '二', wed: '三', thu: '四', fri: '五', sat: '六', sun: '日' }
 
-/** M-1:工作日的工作窗口内起飞 → 排除理由;否则 null(与 py _work_window_blocks 对齐)。 */
+/** YYYY-MM-DD → mon/tue/wed/thu/fri/sat/sun;v2 路径给 option 标 depWeekday 用。 */
+export function weekdayFromYmd(ymd: string): string {
+  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) throw new Error(`weekdayFromYmd: bad ymd ${ymd}`)
+  const dow = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay()
+  return ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][dow]!
+}
+
+/** M-1:工作日的工作窗口内起飞 → 排除理由;否则 null(与 py _work_window_blocks 对齐)。
+ *
+ * Issue #343 v2:home zone 存在时,必须把"出发真实 UTC instant"投影到 home zone
+ * 取该 zone 的 date/weekday/HH:MM(root counterexample #2:Tokyo 06:30 ≈ LA 14:30 prev day);
+ * 不再用 dep-local date 直接当 home date。
+ *
+ * root 评审复核:`depUtcMs` 是已知确定的 instant,直接 `readWallParts(homeZone, depUtcMs)`
+ * 取墙时分量 — 不要把 projected wall time 再喂给 `resolveOffsetForLocalDate` 重做 ±14h 扫描,
+ * 否则秋回退日 01:30 会被错误判为 overlap_ambiguous 而 fail-open(已知 instant 永远唯一)。
+ *
+ * dep/arr 的"墙上本地输入"(leg-level `dep`/`arr` 字段)由 parseFlightPackToSpecV2 在
+ * 解析时已用 `resolveOffsetForLocalDate` 拒过 gap/overlap,所以 leg 进 solver 时
+ * 两个 instant 一定 strict-after 且偏移已知。
+ *
+ * home zone 未知时由 v2 parse 边界直接抛 v2_home_zone_unknown 拒绝;
+ * 这里兜底只在 v1 legacy 路径出现。
+ */
 function workWindowBlocks(spec: JourneySpecTS, option: SegmentOptionTS): string | null {
   const ww = spec.workWindow
   if (!ww || !option.move || !option.depWeekday) return null
-  if (!((ww.workdays ?? [0, 1, 2, 3, 4]).includes(WEEKDAY_IDX[option.depWeekday]))) return null
-  const dep = option.move.services[0].depMin
-  const shift = (option.move.originTzOffsetMin ?? 480) - ww.homeTzOffsetMin
-  const start = ww.startMin + shift, end = ww.endMin + shift
-  if (start <= dep && dep <= end) {
+
+  const svc = option.move.services[0]
+  const dep = svc.depMin
+  const homeZone = ww.homeZone
+
+  let homeOffsetMin = ww.homeTzOffsetMin
+  let homeDepMin: number | undefined
+  let homeDepWeekday: string | undefined
+
+  if (homeZone) {
+    if (typeof svc.depUtcMs !== 'number') {
+      // v2 路径必然填了 depUtcMs;没填 = 数据病,按 red flag 排除该 option。
+      return i18nT('un.workwindow_unresolvable_reason', {
+        reason: `home zone ${homeZone} requires UTC dep instant (v2 path bug)`,
+      })
+    }
+    // 已知 instant 直接投影到 home zone 的墙时 — 无歧义,不必也不应重走 ±14h 扫描。
+    const homeParts = readWallParts(homeZone, svc.depUtcMs)
+    const homeIso = wallPartsToIso(homeParts)
+    homeDepMin = hhmmToMin(homeIso.hhmm)
+    homeDepWeekday = weekdayFromYmd(homeIso.ymd)
+  }
+
+  const effectiveDep = homeDepMin ?? dep
+  const effectiveWeekday = homeDepWeekday ?? option.depWeekday
+  if (!((ww.workdays ?? [0, 1, 2, 3, 4]).includes(WEEKDAY_IDX[effectiveWeekday]))) return null
+
+  // v2:startMin/endMin 与 homeDepMin 都是 home-zone 墙时分量(已 IANA 归一),
+  // 直接比较;不再做 originTzOffsetMin 偏移(root 复核该 shift 是 v1 数值残留,会让窗口错位)。
+  // v1 路径(无 homeZone, 走数值 homeTzOffsetMin)保留 shift 兼容旧 spec。
+  let start: number, end: number
+  if (homeZone) {
+    start = ww.startMin
+    end = ww.endMin
+  } else {
+    const shift = (option.move.originTzOffsetMin ?? 480) - homeOffsetMin
+    start = ww.startMin + shift
+    end = ww.endMin + shift
+  }
+  if (start <= effectiveDep && effectiveDep <= end) {
     const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
     return i18nT('un.workwindow_reason', {
-      wd: WEEKDAY_CN[option.depWeekday] ?? '', dep: hhmm(dep), start: hhmm(start), end: hhmm(end),
+      wd: WEEKDAY_CN[effectiveWeekday] ?? '', dep: hhmm(effectiveDep), start: hhmm(start), end: hhmm(end),
     })
   }
   return null
 }
 
-/** D-5:时区感知的段核算(与 py unified._evaluate_option_move 对齐)。 */
+/** D-5:时区感知的段核算(与 py unified._evaluate_option_move 对齐)。
+ *
+ * Issue #343 d2d 算术唯一权威入口 = model.ts 的 `doorToDoorFromMove`。
+ * v2 路径会传 Service.depUtcMs/arrUtcMs(由 parseFlightPackToSpecV2 用 tz-resolver 投出),
+ * 此时 d2d 用真实 UTC instant 差 — 跨日 / 反向日界线 / DST 切换都正确;v2 arr<=dep 抛
+ * NonpositiveDurationError → 该 option 当作不可行(由 solveUnifiedInner 转 unsat_core)。
+ * v1 数值口径无 UTC 字段,走老 (arrMin - depMin) - tzOffsetMin;字节不变。
+ */
 function evaluateOptionMove(segId: string, mv: MoveSpecTS): LegReport & { d2d_min?: number } {
   const svc = mv.services[0]
+  let d2dMin: number
+  try {
+    d2dMin = doorToDoorFromMove(svc, mv).doorToDoorMin
+  } catch (e) {
+    if (e instanceof NonpositiveDurationError) {
+      // d2d 病态输入 → 把这条 option 抛红 flag;这里走结构化 reject 而非吞错。
+      throw Object.assign(new Error(`evaluateOptionMove ${segId}/${svc.id}: ${e.message}`), {
+        code: e.code,
+        kind: e.kind,
+      })
+    }
+    throw e
+  }
   const wake = svc.depMin - mv.bufferMin - mv.originTransferMin
-  // 真实时长 = (到达−出发) − 时差;EK329: 215−(−240)=455min=7h35m
-  const trueFlight = (svc.arrMin - svc.depMin) - (mv.tzOffsetMin ?? 0)
-  const d2d = mv.bufferMin + mv.originTransferMin + trueFlight + mv.destTransferMin
   const wakeDisplay = wake < 0 ? `${minToHhmm(wake + 1440)}(前一日)` : minToHhmm(wake)
   const arriveStay = svc.arrMin + mv.destTransferMin
 
@@ -236,7 +465,7 @@ function evaluateOptionMove(segId: string, mv: MoveSpecTS): LegReport & { d2d_mi
     if (wake < 5 * 60) energy -= 30
     else if (wake < 6 * 60) energy -= 25
     if (arriveStay > 21 * 60) energy -= 10
-    if (d2d > 6 * 60) energy -= 10
+    if (d2dMin > 6 * 60) energy -= 10
     energy = Math.max(0, energy)
   }
   return {
@@ -245,8 +474,8 @@ function evaluateOptionMove(segId: string, mv: MoveSpecTS): LegReport & { d2d_mi
     wake: wakeDisplay,
     wakeMin: wake,
     arrive_stay: minToHhmm(arriveStay),
-    door_to_door: `${Math.floor(d2d / 60)}h${String(d2d % 60).padStart(2, '0')}m`,
-    d2d_min: d2d,
+    door_to_door: `${Math.floor(d2dMin / 60)}h${String(d2dMin % 60).padStart(2, '0')}m`,
+    d2d_min: d2dMin,
     energy_pct: Math.round(energy),
     price_cny: svc.priceCny,
   }
@@ -260,7 +489,7 @@ function releaseZ3(resource: { release?: () => void } | null | undefined): void 
 export async function solveUnified(spec: JourneySpecTS): Promise<{
   feasible: boolean
   money_cny?: number
-  legs?: Array<LegReport & { leg: string }>
+  legs?: Array<LegReport & { leg: string; d2d_min?: number }>
   red_flags?: string[]
   unsat_core?: string[]
   suggestions?: Array<{ relax: string; money_cny: number }>
@@ -280,7 +509,7 @@ export async function solveUnified(spec: JourneySpecTS): Promise<{
 async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
   feasible: boolean
   money_cny?: number
-  legs?: Array<LegReport & { leg: string }>
+  legs?: Array<LegReport & { leg: string; d2d_min?: number }>
   red_flags?: string[]
   unsat_core?: string[]
   suggestions?: Array<{ relax: string; money_cny: number }>

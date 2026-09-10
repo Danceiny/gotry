@@ -30,9 +30,12 @@ for (const turn of userTurns) {
 console.log('\n===== 终态校验 =====')
 console.log('日历断言数:', Object.keys(state.calendar.assertedWeekdays).length,
   '| 2026-07-17 =', state.calendar.assertedWeekdays['2026-07-17'])
-console.log('workWindow:', state.profile.workWindow
-  ? `${state.profile.workWindow.startMin / 60}:00-${state.profile.workWindow.endMin / 60}:00 UTC+${state.profile.workWindow.homeTzOffsetMin / 60}(证据:${state.profile.workWindow.evidence.slice(0, 24)}…)`
-  : '缺失')
+const replayWorkWindow = state.profile.workWindow
+console.log('workWindow:', replayWorkWindow?.vacation === true
+  ? '休假(无工作窗口)'
+  : replayWorkWindow
+    ? `${replayWorkWindow.startMin / 60}:00-${replayWorkWindow.endMin / 60}:00 ${replayWorkWindow.homeTzOffsetMin === undefined ? 'IANA home zone' : `UTC+${replayWorkWindow.homeTzOffsetMin / 60}`}(证据:${replayWorkWindow.evidence.slice(0, 24)}…)`
+    : '缺失')
 console.log('bookedResources:', state.profile.bookedResources?.map(b => b.ref).join('; ') ?? '缺失')
 const { missing } = interviewNext(state)
 console.log('剩余待问:', missing.length === 0 ? '无(除预算档未答,见下)' : missing.join(','))

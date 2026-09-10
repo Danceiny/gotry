@@ -19,7 +19,7 @@ export type MsgKey =
   | 'md.q_choice' | 'md.q_single' | 'md.q_none' | 'md.q_wish' | 'md.q_depart'
   | 'sg.duration' | 'sg.budget' | 'sg.wake_floor' | 'sg.energy_floor' | 'sg.usable_hours' | 'sg.arrival'
   | 'sg.plan' | 'sg.wish_reason_engine' | 'sg.wish_reason_window'
-  | 'un.workwindow_reason' | 'un.redflag_redeye'
+  | 'un.workwindow_reason' | 'un.workwindow_unresolvable_reason' | 'un.redflag_redeye'
 
 type Catalog = Record<MsgKey, string>
 
@@ -51,6 +51,7 @@ const ZH: Catalog = {
   'sg.wish_reason_engine': '动机谱系 {weights} 下,{days} 天窗口装不下这个目的地',
   'sg.wish_reason_window': '{days} 天窗口装不下(目的需 {minDays} 天)',
   'un.workwindow_reason': '周{wd} {dep} 起飞落在工作窗口(当地 {start}-{end})内',
+  'un.workwindow_unresolvable_reason': 'home zone 投影失败:{reason}',
   'un.redflag_redeye': '{leg} 落地精力仅 {pct}%(红眼后直奔事务,当日不宜安排重要会议)',
 }
 
@@ -82,6 +83,7 @@ const EN: Catalog = {
   'sg.wish_reason_engine': 'under motivation weights {weights}, a {days}-day window cannot fit this destination',
   'sg.wish_reason_window': '{days}-day window cannot fit (the purpose needs {minDays} days)',
   'un.workwindow_reason': 'Departs {dep} on weekday {wd}, inside your work window (local {start}-{end})',
+  'un.workwindow_unresolvable_reason': 'home zone projection failed: {reason}',
   'un.redflag_redeye': '{leg} lands with only {pct}% energy (red-eye then straight to business — no big meetings that day)',
 }
 

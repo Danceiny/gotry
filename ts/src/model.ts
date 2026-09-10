@@ -26,6 +26,14 @@ export interface Service {
   depMin: number
   arrMin: number
   priceCny: number
+  /**
+   * Issue #343 v2 路径填充(可选):service 出发/到达对应的真实 UTC instant(epoch ms)。
+   * 同一 service 在 arrMin - depMin ≤ 真实飞行时长 跨日 / DST 切换场景下需要这两个字段
+   * 才能算出正确的 (arrUtcMs - depUtcMs) / 60000。v1 数值路径不填,由 evaluateChoice/Segment 走
+   * 旧 `(arrMin - depMin) - tzOffsetMin` 公式,字节不变。
+   */
+  depUtcMs?: number
+  arrUtcMs?: number
 }
 
 export interface HubAccess {
@@ -162,6 +170,65 @@ export function parseCandidate(d: Record<string, unknown>): Candidate {
     imageryMatch: Number(d['imagery_match']),
     bestMonths: ((d['best_months'] as number[]) ?? []).map(Number),
   }
+}
+
+/** Issue #343 d2d canonical arithmetic。 */
+export class NonpositiveDurationError extends Error {
+  /** 'arr_not_after_dep' | 'legacy_negative_offset' */
+  readonly kind: 'arr_not_after_dep' | 'legacy_negative_offset'
+  readonly code = 'nonpositive_duration'
+  constructor(kind: 'arr_not_after_dep' | 'legacy_negative_offset', message: string) {
+    super(message)
+    this.kind = kind
+    this.name = 'NonpositiveDurationError'
+  }
+}
+
+/**
+ * doorToDoorFromMove 所需的最小 move 字段。本模型层不耦合 unified.ts 的 MoveSpecTS(避免循环)。
+ * unified.ts evaluateOptionMove 必须用这个 helper,而不是再写一份 (arrUtcMs - depUtcMs)/60000。
+ */
+export interface D2DMoveView {
+  bufferMin: number
+  originTransferMin: number
+  destTransferMin: number
+  /** 仅 v1 路径用;v2 路径无需。 */
+  tzOffsetMin?: number
+}
+
+export interface DoorToDoorParts {
+  /** 真实飞行时长(分);v2 = (arrUtcMs - depUtcMs)/60000,v1 = (arrMin - depMin) - tzOffsetMin */
+  trueFlightMin: number
+  /** 门到门(分) = buffer + originTransfer + trueFlight + destTransfer */
+  doorToDoorMin: number
+}
+
+/**
+ * 单段门到门时长(分)。v2 路径用真实 UTC instant(跨日 / 反向日界线 / DST 切换正确),
+ * 且强制 `arrUtcMs > depUtcMs` — parse 边界也会再做一次防御性 throw。
+ * v1 路径用墙上分钟差 - tzOffsetMin(原数值口径,字节不变,即使结果为负也照旧返回)。
+ *
+ * v2:arrUtcMs 必须严格大于 depUtcMs;否则抛 NonpositiveDurationError(arr_not_after_dep)。
+ * v1:沿用 legacy 公式,字节不变;不抛错。
+ *
+ * 调用方(unified.ts evaluateOptionMove)只负责拿到 doorToDoorMin 并包装 LegReport。
+ */
+export function doorToDoorFromMove(svc: Service, mv: D2DMoveView): DoorToDoorParts {
+  if (typeof svc.depUtcMs === 'number' && typeof svc.arrUtcMs === 'number') {
+    if (svc.arrUtcMs <= svc.depUtcMs) {
+      throw new NonpositiveDurationError(
+        'arr_not_after_dep',
+        `service ${svc.id}: arrUtcMs (${svc.arrUtcMs}) must be strictly greater than depUtcMs (${svc.depUtcMs})`,
+      )
+    }
+    const trueFlightMin = (svc.arrUtcMs - svc.depUtcMs) / 60_000
+    const doorToDoorMin = mv.bufferMin + mv.originTransferMin + trueFlightMin + mv.destTransferMin
+    return { trueFlightMin, doorToDoorMin }
+  }
+  // v1 legacy 字节不变:不校验正负,沿用原公式。
+  const trueFlightMin = (svc.arrMin - svc.depMin) - (mv.tzOffsetMin ?? 0)
+  const doorToDoorMin = mv.bufferMin + mv.originTransferMin + trueFlightMin + mv.destTransferMin
+  return { trueFlightMin, doorToDoorMin }
 }
 
 export function evaluateChoice(cand: Candidate, req: TravelRequest, ch: Choice): TrueCost {

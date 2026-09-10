@@ -299,14 +299,14 @@ export function renderSolve(state: TripState): string {
       lines.push(`- ${l['leg']} ${l['service']}:${l['dep']} 起飞,${l['wake']} 出发,${l['arrive_stay']} 到,`
         + `门到门 ${l['door_to_door']},落地精力 ${l['energy_pct']}%,¥${l['price_cny']}`)
     }
-    for (const e of s.work_window_exclusions ?? []) {
-      lines.push(`- 已排除 ${e.option}(工作窗口):${e.reason}`)
-    }
     for (const n of s.skeleton_notes ?? []) lines.push(`- ${n}`)
     for (const f of s.red_flags ?? []) lines.push(`- ⚠️ ${f}`)
   } else {
     lines.push(`**当前约束下不可行——冲突:${(s.unsat_core ?? []).join('、')}`)
     for (const sg of s.suggestions ?? []) lines.push(`- 放宽「${sg.relax}」可解(约 ¥${sg.money_cny})`)
+  }
+  for (const e of s.work_window_exclusions ?? []) {
+    lines.push(`- 已排除 ${e.option}(工作窗口):${e.reason}`)
   }
   if (state.gates.length) {
     lines.push('', '**待你决定(选择题)**')

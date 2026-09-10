@@ -9,6 +9,7 @@ import type { InterviewQuestion, TravelerProfile, TripState, Turn, CalendarState
 import type { JourneySpecTS } from './unified.ts'
 import type { TravelSlotExtraction } from './travel-slots.ts'
 import { parseFlightPackToSpec } from './unified.ts'
+import { mergeProfileWorkWindow } from './flight-pack-adapter.ts'
 
 interface ScriptStep {
   /** 命中条件:用户消息包含此关键词(第一条匹配生效) */
@@ -79,14 +80,9 @@ export function createMockLlm(flightPackPath?: string, slotScript: SlotScriptSte
       const { readFile } = await import('node:fs/promises')
       const pack = JSON.parse(await readFile(flightPackPath, 'utf-8'))
       const spec = parseFlightPackToSpec(pack)
-      spec.workWindow = {
-        homeTzOffsetMin: state.profile.workWindow.homeTzOffsetMin,
-        startMin: state.profile.workWindow.startMin,
-        endMin: state.profile.workWindow.endMin,
-        workdays: state.profile.workWindow.workdays,
-      }
-      spec.budgetCny = 9000
-      return spec
+      const merged = mergeProfileWorkWindow(spec, state.profile.workWindow)
+      merged.budgetCny = 9000
+      return merged
     },
     async extractSlots(history: Turn[]): Promise<TravelSlotExtraction | null> {
       const last = history[history.length - 1]?.text ?? ''
