@@ -18,9 +18,9 @@ import {
   hotelClaimVerdict,
   itineraryInvariants,
   latestFactsForRouteDate,
-  policyCanonicalBody,
   railClaimVerdict,
   renderFlightFact,
+  renderPolicyFact,
   type BookableFact,
   type FlightClaim,
   type FlightClaimVerdict,
@@ -609,21 +609,42 @@ export function gateArtifact(
       violations.push({ kind: 'not_in_source', line: lineNo, detail: `锚点事实为 exact-date 负事实(${(f as { fetched_at?: string }).fetched_at ?? ''})——负事实对应的可住/可订断言不得出现` })
       continue
     }
-    // 内容指纹(issue #273 + #359):锚点行的 canonical body 必须与事实全字段匹配——
-    // subject/statement/source/fetched_at/query_id/as_of 任意一项改动 → 渲染行不再
-    // 等于 canonical body → fail-closed(与未知锚点同源);不复用宽松 substring 匹配。
-    // 复核提醒(review_by 或 tripStart 派生的 defaultReviewBy)是合法的可选段,
-    // tripStart 与 renderPolicyFact 同一传入 → 产物与闸两侧语义一致。
+    // 政策行内容指纹(issue #273 + #359,D-26 残余收口):
+    // 整行 = canonical body + ` <!-- fact:<id> -->`,单一权威面与 renderPolicyFact
+    // 共享 `policyCanonicalBody` 构造器;subject/statement/source/fetched_at/
+    // query_id/as_of 任一改动 → 行文本不再等于 canonical → fact_anchor_unknown
+    // fail-closed。锚点行不得含前导非空文本(允许锚点前的尾随空白)、第二个
+    // `<!-- fact:` 锚点、或任何「借合法锚点却写相反政策」的借用形态;行尾只允许
+    // `<!-- fact:<id> -->` 收尾。复核提醒(review_by 或 tripStart 派生的
+    // defaultReviewBy)由 `opts.tripStart` 同传入闸,与 renderer 产物两侧语义一致;
+    // `opts.itinerary.trip_start` 在调用面等同 `opts.tripStart`,见 gotry_fact_gate
+    // 接线。
     if (f.kind === 'policy') {
       const rendered = lines[lineNo - 1] ?? ''
-      const anchorIdx = rendered.indexOf('<!-- fact:')
-      const renderedBody = (anchorIdx >= 0 ? rendered.slice(0, anchorIdx) : rendered).trimEnd()
-      const canonical = policyCanonicalBody(f, opts?.tripStart)
-      if (renderedBody !== canonical) {
+      const canonical = renderPolicyFact(f, opts?.tripStart)
+      const anchorRe = /<!-- fact:([0-9a-f]{16}) -->/
+      const m = rendered.match(anchorRe)
+      const noSecondAnchor = !m || m.index === undefined
+        ? true
+        : !rendered.slice(0, m.index).includes('<!-- fact:')
+      const exactlyOneAnchor = m && m.index !== undefined && noSecondAnchor
+      const trailingNonEmpty = m && m.index !== undefined
+        ? /\S/.test(rendered.slice(m.index + m[0]!.length))
+        : true
+      const exactAnchorId = m && m.index !== undefined && m[1] === f.fact_id
+      if (!exactlyOneAnchor || !exactAnchorId || trailingNonEmpty) {
         violations.push({
           kind: 'fact_anchor_unknown',
           line: lineNo,
-          detail: `锚点行内容指纹不符——期望 ${canonical},实际 ${renderedBody};锚点被手改/伪造,subject/statement/source/fetched_at/query_id/as_of 任一不一致均 fail-closed`,
+          detail: `政策锚点行结构不合法——必须为 canonical body + 单一「 <!-- fact:<id> -->」且行尾无后置非空文本(检测:行=${JSON.stringify(rendered)},期望=${JSON.stringify(canonical)});手改/伪造锚点或借用合法锚点写相反政策均 fail-closed`,
+        })
+        continue
+      }
+      if (rendered !== canonical) {
+        violations.push({
+          kind: 'fact_anchor_unknown',
+          line: lineNo,
+          detail: `政策锚点行内容指纹不符——期望 ${canonical},实际 ${rendered};subject/statement/source/fetched_at/query_id/as_of 任一不一致均 fail-closed`,
         })
         continue
       }

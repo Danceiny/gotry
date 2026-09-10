@@ -2097,7 +2097,12 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       if (!markdown) return JSON.parse(JSON.stringify({ ok: false, summary: '需要 markdown(产物全文)或 path(产物路径)' })) as Record<string, never>
       const itinerary = q.itinerary as import('./bookable-facts.ts').ItineraryFacts | undefined
       const registry = await loadFactRegistry(config.stateRoot ?? '.')
-      const report = gateArtifact(markdown, registry, avMap, { trip_year: q.tripYear, itinerary })
+      // 政策复核提醒桥接(issue #359):闸侧 opts.tripStart 与 renderer 同一传入
+      // 才能让合法 `renderPolicyFact(f, tripStart)` 行通过公开闸。已加载的
+      // itinerary.trip_start 是权威源(同次闸同时驱动 itineraryInvariants),不再
+      // 额外要求调用方传 opts.tripStart;空 itinerary/无 trip_start 即无提醒。
+      const tripStart = typeof itinerary?.trip_start === 'string' ? itinerary.trip_start : undefined
+      const report = gateArtifact(markdown, registry, avMap, { trip_year: q.tripYear, itinerary, tripStart })
       const lines = report.violations.slice(0, 20).map(v => `  L${v.line} [${v.kind}] ${v.detail}`)
       const summary = report.verdict === 'pass'
         ? `事实闸 PASS:${report.traceable}/${report.claims_checked} 可下单 claim 全部回溯到 exact-date 工具结果(query_id 可重放)——可宣称「已验证方案」。`

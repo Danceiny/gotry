@@ -836,7 +836,32 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   assert(multiReport.verdict === 'blocked' && multiReport.violations.filter(v => v.kind === 'fact_anchor_unknown').length === 1,
     `多行同 fact:仅篡改行 fail-closed(实际违例 ${multiReport.violations.length},fact_anchor_unknown=${multiReport.violations.filter(v => v.kind === 'fact_anchor_unknown').length})`)
 
-  console.log(`  ok - §14 政策锚点全字段内容指纹(#359 / D-26)完成(canonical + 5 failing-before + 2 legitimate + 多行归属)`)
+  // 14j. trailing-after-anchor 攻击:借用合法 fact_id + 锚点,在锚点后追加相反政策正文 →
+  //     闸侧应识别「锚点后仍有非空文本」并 fail-closed,而不是只比对锚点前 canonical body。
+  const trailing = `${canonicalLine} 反而是落地签,需提前办签证`
+  const trailingReport = gateArtifact(['## 政策', trailing].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(trailingReport.verdict === 'blocked' && trailingReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `trailing-after-anchor 攻击 → fact_anchor_unknown(实际 ${trailingReport.verdict}/${trailingReport.violations.length} 违例)`)
+
+  // 14k. duplicate anchor:同一行内两个 `<!-- fact:` → fail-closed
+  const dupAnchor = canonicalLine.replace(`<!-- fact:${basePolicy.fact_id} -->`, `<!-- fact:${basePolicy.fact_id} --> <!-- fact:${basePolicy.fact_id} -->`)
+  const dupReport = gateArtifact(['## 政策', dupAnchor].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(dupReport.verdict === 'blocked' && dupReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `duplicate anchor → fact_anchor_unknown(实际 ${dupReport.verdict}/${dupReport.violations.length} 违例)`)
+
+  // 14l. malformed anchor(没有空格的格式):canonical 是 ` <!-- fact:<id> -->`,缺空格不算同形
+  const malformedAnchor = canonicalLine.replace(`<!-- fact:${basePolicy.fact_id} -->`, `<!--fact:${basePolicy.fact_id}-->`)
+  const malformedReport = gateArtifact(['## 政策', malformedAnchor].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(malformedReport.verdict === 'blocked' && malformedReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `malformed anchor(无空格) → fact_anchor_unknown(实际 ${malformedReport.verdict}/${malformedReport.violations.length} 违例)`)
+
+  // 14m. 前置非空文本:同一行在锚点前塞了原文之外的字符 → fail-closed
+  const prefixAdded = `前缀: ${canonicalLine}`
+  const prefixReport = gateArtifact(['## 政策', prefixAdded].join('\n'), [basePolicy], map, { trip_year: tripYear })
+  assert(prefixReport.verdict === 'blocked' && prefixReport.violations.some(v => v.kind === 'fact_anchor_unknown'),
+    `prefix non-empty → fact_anchor_unknown(实际 ${prefixReport.verdict}/${prefixReport.violations.length} 违例)`)
+
+  console.log(`  ok - §14 政策锚点全字段内容指纹(#359 / D-26)完成(canonical + 5 failing-before + 2 legitimate + 多行归属 + trailing/dup/malformed/prefix 锚点结构攻击)`)
 }
 
 console.log(`\nFACT GATE TESTS: ${pass} pass, ${fail} fail`)
