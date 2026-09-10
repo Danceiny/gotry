@@ -59,6 +59,12 @@ echo "=== 6. 插件 smoke(注册/execute/红线断言) ==="
 (cd ts && npx tsx scripts/smoke.ts | tail -2) || FAIL=1
 
 echo
+echo "=== 6b. 产物视图能力与 Host 合同(客户端导出/运行时 block 卡片/路径护栏/版本更新,全离线) ==="
+(cd ts && npx tsx scripts/artifact-client-contract-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/artifacts-capability-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/dsh-artifact-e2e.ts) || FAIL=1
+
+echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
 

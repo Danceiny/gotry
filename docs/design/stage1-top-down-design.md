@@ -1,6 +1,7 @@
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:
+- 2026-09-10 起,产物视图进入 M4 队列(issue #285):Host 持久化 `presentationMeta`;公开 `./client` adapter 通过 `window.__ModuleLoader__.load` 注册 `gotry_artifacts_list/read` 的 `tool.call.toolview` keyed cards,按 runtime `block` 显示可点击路径、行号、source identity 与 content version,workspace/sidebar 作为额外预览面。读范围白名单 = stateRoot 根 + 会话工作目录(排除 node_modules/.git),扩展名白名单 = 文本类;跨 root / symlink 越界 / 缺失文件 / 超大文件(>2MB)统一返回 ok:false + error + hint。本层只读,WriteGate 红线不涉及。验收证据 = `scripts/artifacts-capability-tests.ts` 12 项隔离 fixture proof + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof + smoke §15/§15b。
 - 2026-09-10 起,PR #327 修订收紧 embedded planner 的重复 tool-call 参数恢复:普通单对象继续走 `JSON.parse`,仅恢复至少两个完整、仅空白分隔且深结构相等的顶层对象；前缀/尾部垃圾/截断/冲突/非对象序列/单个非法对象 fail-closed,字符串花括号与转义由边界扫描正确处理。公共 runPort fixture 仅是确定性本地证据,不构成真实 provider reliability、HotelByte UAT、M3/M4 cohort 或 M5/M6 admission。
 - 2026-09-10 起,#329 收紧同步 Booking HTTP 409 dispatch rejection 日志:stderr 只含 typed `code` 与 exact closed `reason`,unknown/带 suffix 统一为 `UNCLASSIFIED`,公共 HTTP + 子进程 stderr proof 仅为确定性离线证据,不构成真实 provider reliability、HotelByte UAT、M3/M4 cohort 或 M5/M6 admission。
 - 2026-09-10 起,#270 按 `../ops/external-pr-workflow.md` §0 统一公开 issue 启动→Draft PR→exact-head review→merge/destination 回执,并让 `../architecture.md` §10.1 活跃债务指向公开 tracker/触发器;founder 授权的仓内 Claude lane 不受外部机器人 T0/T1 否决,但仍过正常评审。本地/fixture 证明不改变 #20/#22/#136/#137 的真实 gate。
