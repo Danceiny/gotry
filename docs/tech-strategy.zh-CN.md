@@ -1,3 +1,5 @@
+[English](tech-strategy.md) | [简体中文](tech-strategy.zh-CN.md)
+
 # GoTry 技术选型与半年迭代路线(M2–M4)
 
 > 定位:**选型理由、评测体系、分工与持续优化回路的唯一来源**。时间线权威仍归 `roadmap.md`(M0-M6 的 Entry/Exit),本文只管「用什么、谁来做、怎么持续变好」。

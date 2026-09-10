@@ -1,3 +1,5 @@
+[English](roadmap.md) | [简体中文](roadmap.zh-CN.md)
+
 # GoTry Roadmap(唯一时间线)
 
 > 定位:**从今天到愿景的唯一里程碑序列**。已有的三套阶段模型(architecture 的 Stage 0-4、总纲的 Phase 0-3、产品设计的 M1-M3)全部归并映射到本文的 M0-M6,旧模型降级为引用。
@@ -30,7 +32,7 @@
  - **#194 A-轨道 GoTry 缓解(2026-09-10)**:在 dsh jobs tool 进入 registry 前增加 typed `tools/pre-execute` direct-child guard;continuable durable id 返回 completion notice/`list_agents`/`send_message` 恢复指引,非 owner/one-shot/未命中保留原生 jobs 错误。上游 dsh unknown-id 通用 recoverable contract 仍开放,不改 vendor、不关闭 issue;验证入口为 `ts/scripts/issue-194-job-id-guard-tests.ts`。
 
 - **#279 携程机票 malformed 响应闸(2026-09-10)**:合法空列表= `miss`,有效命中= `hit`,未知/畸形形状= `error`;兼容 `parseBatchSearch` 永不抛错,扩展/CDP 均不把 parser error 伪装成 miss。隔离扩展 fixture 仅证明本地解析/编排,不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
- - **Issue #343 IANA timezone behavior**:flight-pack v2 resolves explicit IANA zones and local dates to UTC instants, rejects unknown zones and DST gaps/overlaps, and uses UTC instants for elapsed duration. The dsh/mock adapter path retains the v2 pack `homeZone`; profiles supply schedule only, explicit vacation removes the trip work-window restriction, and numeric v1 behavior remains compatible. This deterministic contract does not prove live schedules, prices, availability, or inventory; see [`docs/data-sources.md`](data-sources.md).
+ - **Issue #343 IANA timezone behavior**:flight-pack v2 resolves explicit IANA zones and local dates to UTC instants, rejects unknown zones and DST gaps/overlaps, and uses UTC instants for elapsed duration. The dsh/mock adapter path retains the v2 pack `homeZone`; profiles supply schedule only, explicit vacation removes the trip work-window restriction, and numeric v1 behavior remains compatible. This deterministic contract does not prove live schedules, prices, availability, or inventory; see [`docs/data-sources.md`](data-sources.zh-CN.md).
   - **#352 FlyAI malformed 响应闸(2026-09-10)**:精确空 `data.itemList: []` 保持 `miss`;机/火/酒店非空列表任一 item typed 校验失败即整体返回结构化 `error`,丢弃有效 sibling 且不生成负库存事实;仅完整合法列表返回 `hit`。`flyai-tests.ts` 为隔离假 CLI/production effect/fact sidecar 的离线工程 proof,不构成真实 provider/UAT 或 issue closure。
 
 - **#327 严格重复 tool-call 参数修订(2026-09-10)**:Booking planner 保留普通单对象解析；恢复只接受完整消费的、至少两个、仅空白分隔且深结构相等的顶层 JSON 对象。公共 `runPort → tool/call` fixture 覆盖一致重复、冲突/截断/前缀/尾部垃圾拒绝及字符串花括号/转义；不宣称真实 provider reliability、HotelByte UAT、M3/M4 cohort 或 M5/M6 admission。

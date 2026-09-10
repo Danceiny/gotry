@@ -1,3 +1,5 @@
+[English](architecture.md) | [简体中文](architecture.zh-CN.md)
+
 # GoTry 技术文档(唯一技术权威面)
 
 > 定位:本仓的**完整技术文档**——系统是什么、怎么构成的、每个模块在哪、怎么跑、往哪演进。
@@ -39,7 +41,7 @@
 
 M3 最小可用产品,分发链路无已知堵点。
 
-**时区面(Issue #343)**:`ts/src/tz-resolver.ts` 将 v2 的显式 IANA zone 与 local date 解析为 UTC instant,在 parse 边界拒收未知 zone 与 DST gap/overlap;`ts/src/model.ts` 的 `doorToDoorFromMove` 统一使用 UTC instant 计算耗时。dsh/mock adapter 保留 v2 pack 的 `homeZone`,profile 只提供 schedule,explicit vacation 移除该行程的 work-window restriction,numeric v1 保持兼容。该确定性契约不代表 live schedules/prices/availability/inventory,数据源边界见 [`docs/data-sources.md`](data-sources.md)。
+**时区面(Issue #343)**:`ts/src/tz-resolver.ts` 将 v2 的显式 IANA zone 与 local date 解析为 UTC instant,在 parse 边界拒收未知 zone 与 DST gap/overlap;`ts/src/model.ts` 的 `doorToDoorFromMove` 统一使用 UTC instant 计算耗时。dsh/mock adapter 保留 v2 pack 的 `homeZone`,profile 只提供 schedule,explicit vacation 移除该行程的 work-window restriction,numeric v1 保持兼容。该确定性契约不代表 live schedules/prices/availability/inventory,数据源边界见 [`docs/data-sources.md`](data-sources.zh-CN.md)。
 
 ### 1.1 交付形态与入口
 
@@ -417,8 +419,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 - **效应解译器(2026-08-29,issue #16 采纳,ADR-18)**:「效应描述+解译器」落地 L4 渠道边界——`ts/capabilities/effect.ts`(效应值注册表+生产/mock 双解译器)与 `resilience.ts`(指数退避+断路器三态)。关键保守边界:①韧性策略 per-效应显式拍板,没有策略行就没有效应(默认全关=对既有行为零改变);②FlyAI Sentinel 上游「说不」永不重试但计熔断(3 连错开 60s 保配额),SESSION 通道永不重试不熔断(风控红线),免费源 2 次退避;③浏览器解译=SESSION_* 效应(既有 CDP 通道),零 Python 红线不做视觉 CUA;④不做渠道自动路由/比价(OTA 平铺 founder 判定,agent 层比价)。垂直切片接 5 工具+realtime-pricing 默认查询口,余下渠道增量迁移(D-23);run-all §37。
 - **可下单事实闸(2026-08-30,issue #46,ADR-19)**:真实会话产物(2027 远期行程)把 exact-date 全 miss 的航班用「当前班期网页+历史」回填并标 ✓/推荐——根因=可下单事实无单一数据源、产物无闸。落地:`bookable-facts.ts`(纯函数层)+ `artifact-gate.ts`(产物闸)+ `fact-log.ts`(侧车落账)+ 第 21 工具 `gotry_fact_gate` + persona (20) 红线 + `data/airline-airports.json` 映射快照;locked golden 2027 E2E(issue 审计值夹具)复现全部违例并抓出(run-all §39;smoke §16)。覆盖面缺口记 D-26。
 - **npm 形态自定义端点修复(2026-08-30,issue #48,未随版本发布)**:rc.15 回拉实测暴露——bin/gotry-inner.js env 映射只做 `LLM_API_KEY → DEEPSEEK_API_KEY`,base 不映射,vendored dsh(llm-deepseek 读 `DEEPSEEK_BASE_URL`)把 OpenAI 兼容端点的 key 发往 DeepSeek 官方端点必然 401,README「OpenAI 兼容均可」承诺行为未跟上;同点补 `LLM_BASE_URL → DEEPSEEK_BASE_URL`(显式 DEEPSEEK_BASE_URL 优先,默认官方路径零改变);两侧拼接语义核验一致(均为 `${base}/chat/completions`);README 双语 + .env.example + bin help 同步配法。已知缺口由 issue #77 闭环(见下条)。
-- **LLM_MODEL 接通 dsh 会话面(2026-08-30,issue #77,未随版本发布)**:`LLM_MODEL` 此前在 dsh 会话面零消费者(#48 修复 E2E 实测暴露:dsh 模型选择只来自 llm-deepseek `DEFAULT_MODELS` 或用户 ~/.dsh 设置)。修复双轨:① bin/gotry-inner.js 把 `LLM_MODEL` 映射为 `GOTRY_LLM_MODEL`,gotry-tools 插件(`capabilities/model-override.ts`)在 `agent/request` 瀑布 post-next 覆盖 provider/model(内存态零持久化,不改写用户 ~/.dsh;dsh settings 分层为 schema 默认 < composition 配置 < 用户层,web UI 选过模型后单靠 composition patch 压不过;瀑布先注册=最外层、post-next 最后生效,显式 .env 意图因此压过一切持久层选择;覆盖同时清掉继承的 reasoningEffort);② 运行时 cordis patch 追加两条 by-id 覆盖(`agent-default-model` 默认模型 + `llm-deepseek` 目录单条目替换,不硬编码上游 DEFAULT_MODELS 防漂移)。默认路径保护:`LLM_MODEL` 不设时两轨均不动作。E2E:`ts/scripts/model-override-e2e.ts` mock 中转四场景全绿;smoke §17 单元回归。附查发现 vendored 仓内形态 Node 兼容窗口断裂,记 D-27(已清偿,存档 [`debt-archive.md`](debt-archive.md))。
-- **通道注册表与健康面(2026-09-03,issue #106/#107/#108,ADR-25)**:三个工具调用 issue 统一根因=「失败瞬间模型手里没有结构化的通道状态与改道指引」(flyai 429 跨轮盲重试/配额不可见/未配置的 calendar 会话中段才撞错)。落地:①`channel-registry.ts` 通道×意图×配额类×证据级单一数据来源,persona 路由卡与 `routing` 建议字段生成化;②`channel-health.ts` 会话瞬态态 + JSONL 持久事件面;③doctor v2=flyai 最近达限时间 + dsh-calendar 三态(D-9 默认不挂载;挂载与否由 setup 状态面 `~/.gotry/calendar.json` 决定,`npx @danceiny/gotry setup calendar` on/off——禁止 env 控制产品行为,founder 2026-09-03 纠偏);④smoke 真跑命中真实 429 验证 needs-setup→routing 全链。设计全文 `design/tool-orchestration-design.md`;run-all §50。typed 参数契约迁移余量记 D-30(已清偿,存档 [`debt-archive.md`](debt-archive.md))。
+- **LLM_MODEL 接通 dsh 会话面(2026-08-30,issue #77,未随版本发布)**:`LLM_MODEL` 此前在 dsh 会话面零消费者(#48 修复 E2E 实测暴露:dsh 模型选择只来自 llm-deepseek `DEFAULT_MODELS` 或用户 ~/.dsh 设置)。修复双轨:① bin/gotry-inner.js 把 `LLM_MODEL` 映射为 `GOTRY_LLM_MODEL`,gotry-tools 插件(`capabilities/model-override.ts`)在 `agent/request` 瀑布 post-next 覆盖 provider/model(内存态零持久化,不改写用户 ~/.dsh;dsh settings 分层为 schema 默认 < composition 配置 < 用户层,web UI 选过模型后单靠 composition patch 压不过;瀑布先注册=最外层、post-next 最后生效,显式 .env 意图因此压过一切持久层选择;覆盖同时清掉继承的 reasoningEffort);② 运行时 cordis patch 追加两条 by-id 覆盖(`agent-default-model` 默认模型 + `llm-deepseek` 目录单条目替换,不硬编码上游 DEFAULT_MODELS 防漂移)。默认路径保护:`LLM_MODEL` 不设时两轨均不动作。E2E:`ts/scripts/model-override-e2e.ts` mock 中转四场景全绿;smoke §17 单元回归。附查发现 vendored 仓内形态 Node 兼容窗口断裂,记 D-27(已清偿,存档 [`debt-archive.md`](debt-archive.zh-CN.md))。
+- **通道注册表与健康面(2026-09-03,issue #106/#107/#108,ADR-25)**:三个工具调用 issue 统一根因=「失败瞬间模型手里没有结构化的通道状态与改道指引」(flyai 429 跨轮盲重试/配额不可见/未配置的 calendar 会话中段才撞错)。落地:①`channel-registry.ts` 通道×意图×配额类×证据级单一数据来源,persona 路由卡与 `routing` 建议字段生成化;②`channel-health.ts` 会话瞬态态 + JSONL 持久事件面;③doctor v2=flyai 最近达限时间 + dsh-calendar 三态(D-9 默认不挂载;挂载与否由 setup 状态面 `~/.gotry/calendar.json` 决定,`npx @danceiny/gotry setup calendar` on/off——禁止 env 控制产品行为,founder 2026-09-03 纠偏);④smoke 真跑命中真实 429 验证 needs-setup→routing 全链。设计全文 `design/tool-orchestration-design.md`;run-all §50。typed 参数契约迁移余量记 D-30(已清偿,存档 [`debt-archive.md`](debt-archive.zh-CN.md))。
 - **行为契约横评反哺(2026-09-04,issue #121/#122)**:`evaluation/persona-bench/` 同题横评(Kimi 13 轮/飞猪单轮,founder 拍板)暴露的两条访谈/呈现缺口进契约——①(1) 动机先行扩展「同行人到达链」:行程涉及同行人时必问从哪出发/是否已订/有无自己的时间窗,问明落 `gotry_companion_save`,到达账与预算分链核算(横评 G4:两家都把「跟女朋友见面」做成了单人行程);②新增 (22) 到达账必达:红眼/凌晨起飞、或落地当天有硬安排的航段,必须显式给出当地到达时刻(含日期偏移)、时差、到达精力与前一晚落脚建议(横评 G7:飞猪「约8小时」与自家「02:00-06:00+1」同页矛盾)。不改工具面、不新增工具。
 - **typed 参数契约迁移(2026-09-04,issue #112,D-30,五刀收官)**:①`gotry_flyai_search` 迁 dsh typed ParameterSchemaSpec(平铺七字段,`parameterSchemaSpecToJsonSchema` 投影模型可见,`validateArgs` 宿主权校验;畸形参数入口即结构化拒绝,ToolArgsError 经 guardToolExecute 保持 ADR-13 形状);②`gotry_session_search`/`gotry_hotel_search`/`gotry_weather_check`(session 三意图无公共 required 字段,按设计 §4③ 保留 `interpretArgs` 容忍层);③七个模型高频工具(session_login/doctor/artifacts_list/fact_gate/agent_reach/turn_handoff_list/artifacts_read);④`query:` blob 清零(wish_pool/trip_log/flight_verify/anything/web/video/github;trip_log 的 evidence P0 红线进 schema);⑤最后三个 payload 形态(feasibility_check/motivation_save/companion_save,evidence 类 P0 红线进嵌套 schema 由宿主权闸)。**23/23 注册工具全部 typed 契约化**;刀法总纲:有 required 字段的工具宿主权拒 blob,全可选工具保留容忍层。普通模型 canary 已跑(`ts/scripts/typed-contract-canary.ts`,MiniMax-M2.7 × 投影后 JSON Schema × 强制 tool_choice,10/10 一次成型;二级观察:无锚点卡时模型裸猜年份,由既有时间锚点卡+过去日期闸在真实会话纠正,非 D-30 缺陷),**D-30 全面清偿**。
 - **工具描述首行生成 + doctor 宿主插件覆盖面(2026-09-04,issue #113,L1 残量收口)**:①`toolRoutingHeadline`(channel-registry)——检索工具描述统一前置注册表生成的「服务意图 × 当前通道顺位」卡,七个检索工具经 `routed()` 接线,模型选工具时与失败后拿到同一张表;注册表加行描述自动一致。②doctor 补齐 patch 分发面宿主插件两态(`dsh-map-tools`/`dsh-tool-ask-user`,此前只覆盖 calendar):这类插件运行时解析失败即整块静默剔除,doctor 候选清单与 bin/gotry-inner.js 解析逻辑同口径。source/package 现由 `ts/dsh-runtime/vendor/dsh-map-tools/` 随包交付 MIT payload；因其 peer 要求 `rc.1` 与 alpha.3 closure 冲突,不再作为外部 npm 依赖。
@@ -476,9 +478,9 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面:
 ## 10. 债务清单(引擎细节工作只能来自这里)
 
 > 债务只能在本表诞生,不许只活在代码注释里(§11 M-exit 清单第 3 条)。
-> **§10.1 = 仍然开着的债**(要接的活从这里来);已清偿债务移入 [`debt-archive.md`](debt-archive.md) 存档,不在本文保留。
+> **§10.1 = 仍然开着的债**(要接的活从这里来);已清偿债务移入 [`debt-archive.md`](debt-archive.zh-CN.md) 存档,不在本文保留。
 
-本轮已清偿的 #279 携程机票 malformed 响应闸留在 [`debt-archive.md`](debt-archive.md),完整行为与证据边界见 §9；不改变现有 D-36 酒店日期闸与 D-37 Dida/CfT cookie debt 编号。
+本轮已清偿的 #279 携程机票 malformed 响应闸留在 [`debt-archive.md`](debt-archive.zh-CN.md),完整行为与证据边界见 §9；不改变现有 D-36 酒店日期闸与 D-37 Dida/CfT cookie debt 编号。
 Issue #2 的日期下界与命名年份窗口现由时间锚点与 planner/registered tool 入口确定性执行:带日期候选默认 future floor,显式 future 年份叠加上界,校验拒绝为结构化结果;完全 dateless 与显式 historical 语义保持不变。不新增并行时间引擎或 Python 运行时,因此不作为未清偿债务重复登记。
 
 PR #327 修订的严格重复 tool-call 参数恢复属于 planner 解析边界收敛，不新增开放债务；其公共路径 proof 仍只覆盖离线 fixture，不替代真实 provider、HotelByte UAT 或里程碑准入证据。
@@ -545,7 +547,7 @@ Issue #338 当前形态:写入 patch 接受 `homeCity` 与 optional `homeCityEvi
 **M-exit 保鲜清单**(里程碑退出提交的勾稽项,结果附于提交信息):
 1. 6 处状态面全部同步(或显式让渡并注明让渡对象);
 2. ADR 全表逐条过「淘汰/复审条件」,触发的当即立项或改状态;
-3. 债务清单勾销与新增——债务只能在本表诞生,不许只活在代码注释里;勾销项移入 [`debt-archive.md`](debt-archive.md) 存档;
+3. 债务清单勾销与新增——债务只能在本表诞生,不许只活在代码注释里;勾销项移入 [`debt-archive.md`](debt-archive.zh-CN.md) 存档;
 4. 计数类表述(ADR 数、测试数)改为引用而非数字——数字会腐烂;
 5. 验收证据可复跑:夹具/脚本命令写进提交信息。
 
@@ -553,7 +555,7 @@ Issue #338 当前形态:写入 patch 接受 `homeCity` 与 optional `homeCityEvi
 
 ## 12. 文档地图
 
-组织规范(目录税则/命名/头部块/生命周期)与总索引见 [`README.md`](README.md)。下表按目录分组:
+组织规范(目录税则/命名/头部块/生命周期)与总索引见 [`README.md`](README.zh-CN.md)。下表按目录分组:
 
 | 文档 | 关注点 |
 |---|---|
@@ -568,7 +570,7 @@ Issue #338 当前形态:写入 patch 接受 `homeCity` 与 optional `homeCityEvi
 | `tools.md` | **工具参考面**:23 个注册工具分组与逐工具契约/降级行为 + 通道路由(注册表只建议不派发)+ web onboarding(#258/#267)与运维脚本面 |
 | `release-notes.md` | 发版记录(按版本归档,最新在上) |
 | `decisions-needed.md` | 待创始人拍板的决策清单 |
-| [`debt-archive.md`](debt-archive.md) | 已清偿债务存档(追加式留证;开着的债与工作面只在本文 §10.1) |
+| [`debt-archive.md`](debt-archive.zh-CN.md) | 已清偿债务存档(追加式留证;开着的债与工作面只在本文 §10.1) |
 | `design/memory-design.md` | **记忆域设计**:C 端六层重设计(M1-M6 现状映射/P1-P4 分期增量/铁律与验收),M4 交付「六层框架重设计」的正式文档 |
 | `design/memory-lifecycle-collector.md` | **M4 planning lifecycle collector 使用合同**(#228/#248):显式 opt-in CLI、隔离 stateRoot、HMAC/consent/source/wait 冻结、JSONL+manifest 原子持久化与 #223/#238 scorer 导出链;仅产出 candidate/synthetic,不替代真实 cohort |
 | `design/milestone-delivery-plan.md` | **M4→M6 living 任务图(issue #225)**:按真实依赖拆分 M4 #223/#238/#228/#248/#20、已入 main 的 ledger/state-cli/Z3/map 基础(#229/#237/#243/#244/#245)、M5 #136 HotelByte 首供应链+WriteGate(#231/#232/#233)、M6 #234/#235/P6/试点与开源质量闸,逐项责任面/责任文件/E2E/否证/退出标准;另跟踪 quality/follow-up 线 #254/#255(#257 已经 PR #264 关闭)(非 M5/M6 Entry 阻断) |

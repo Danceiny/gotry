@@ -1,9 +1,11 @@
+[English](tools.md) | [简体中文](tools.zh-CN.md)
+
 # GoTry 工具参考面
 
 > 定位:gotry-tools 插件 23 个注册工具的分组、逐工具契约与降级行为的唯一参考面;根 README 双语只留组级摘要与指针。
 > 状态:living
-> 上游:[`architecture.md`](architecture.md)(系统权威面)、[`design/tool-orchestration-design.md`](design/tool-orchestration-design.md)(通道注册表设计)、AGENTS.md(仓库契约)
-> 下游:根 `README.md` / `README.zh-CN.md`(摘要 + 指针)、[`user-guide.md`](user-guide.md)(终端用户叙事)
+> 上游:[`architecture.md`](architecture.zh-CN.md)(系统权威面)、[`design/tool-orchestration-design.md`](design/tool-orchestration-design.md)(通道注册表设计)、AGENTS.md(仓库契约)
+> 下游:根 `README.md` / `README.zh-CN.md`(摘要 + 指针)、[`user-guide.md`](user-guide.zh-CN.md)(终端用户叙事)
 
 ## 速览
 

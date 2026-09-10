@@ -1,8 +1,10 @@
+[English](debt-archive.md) | [简体中文](debt-archive.zh-CN.md)
+
 # 已清偿债务存档
 
-> 定位:已清偿债务的追加式存档——每笔债的清偿时间、方式与证据锚点;开着的债与工作面只在 [`architecture.md` §10.1](architecture.md#101-未清偿工作面)。
+> 定位:已清偿债务的追加式存档——每笔债的清偿时间、方式与证据锚点;开着的债与工作面只在 [`architecture.md` §10.1](architecture.zh-CN.md#101-未清偿工作面)。
 > 状态:living(只增不改:条目从 §10.1 勾销时迁入,迁入后正文保持原样,历史保真)
-> 上游:[`architecture.md` §10](architecture.md#10-债务清单引擎细节工作只能来自这里)——债务只能在该表诞生;清偿即迁入本文件,不在权威面保留
+> 上游:[`architecture.md` §10](architecture.zh-CN.md#10-债务清单引擎细节工作只能来自这里)——债务只能在该表诞生;清偿即迁入本文件,不在权威面保留
 > 下游:reviewer 与考古——查「某笔债何时、以何证据清偿」;本文件不承载当前状态,不属 §11 六状态面
 
 ## 速览
@@ -22,7 +24,7 @@
 | D-2 TS unsatCore 竖线 | **已清偿**(coreOf 剥竖线+回归断言) |
 | D-3 LLM 未进环 | **已清偿**(S4 由 MiniMax-M2 完成,`bb880f3`;mock 留作回归夹具,ADR-8 兑现) |
 | D-5 时区语义 | **已清偿**(EK329 官网逐分一致) |
-| #290 DSH alpha.1 公开契约兼容 | **已清偿**:persona 经 `personaPrefix` / `personaSuffix` 投射(legacy `persona:` 不投影);桥 call handler 结构性归类(`timed_out` / `spawn_failed` / `runner_failed`)。详见 [`architecture.md`](architecture.md) §9 #290 条目、§1 状态速览、`ts/scripts/benchmark-environment-bridge-e2e.ts` 中 source+packaged 普通产品人格(personaPrefix + 展开 `今天是 YYYY-MM-DD`)抓取证据 |
+| #290 DSH alpha.1 公开契约兼容 | **已清偿**:persona 经 `personaPrefix` / `personaSuffix` 投射(legacy `persona:` 不投影);桥 call handler 结构性归类(`timed_out` / `spawn_failed` / `runner_failed`)。详见 [`architecture.md`](architecture.zh-CN.md) §9 #290 条目、§1 状态速览、`ts/scripts/benchmark-environment-bridge-e2e.ts` 中 source+packaged 普通产品人格(personaPrefix + 展开 `今天是 YYYY-MM-DD`)抓取证据 |
 | D-4 gate/卡片无承载界面 | 已清偿,详见下方 |
 | D-4a'(agent-reach 100% follow) | 已清偿,详见下方 |
 | D-4\'(Anything 数据接入) | **已完成 2026-08-23**: gotry capabilities/anything.ts 11 套实测 5/5 + hbcli `search anything` 子命令 + hotel-be `/api/search/anything` `@path` 注解;三仓 commit 闭环(244a0ae/c38ff65d1/43236a0) |
@@ -44,11 +46,11 @@
 | D-20 六状态面里程碑口径漂移 | **已清偿 2026-08-29(Issue #19)**:六状态面统一为「M3 真实 evidence 未收口;M4 为 founder 授权并行,不是 M3 Exit 证明;M5/M6 仅受各自 Entry gate 开闸」。后续不得把工程交付、发布或并行切片等同于里程碑退出证据。 |
 | D-21 async 非 4/4 被误结算为成功 | 已清偿,详见下方 |
 | D-32 ledger tenant scope 只落 schema 未贯穿事件/fold | **已清偿 2026-09-08(issue #224)**:`insertEvent` 写当前 tenant,`readEvents`/fold/rebuild 全带 tenant 条件,`wish.updated` 同 id 查当前租户 item;legacy JSON/JSONL 与 v1 DB 只归 `local`。新增 run-all §28/§36 断言覆盖非 local owner、同 id/idem_key、交错 update、跨进程 reopen、A rebuild 不影响 B/local、重复 rebuild、booking saga 审计 owner。已被旧 bug 写成 `local` 的非 local 历史事件缺少可审计 owner,不得自动猜修;有外部证据时另走人工 data-repair issue/PR。 |
-| D-34 可选能力 onboarding 缺口(#258/#267) | **已清偿 2026-09-09(#258;#267 = #266 合并后的 post-merge 加固)**:交互式 `gotry web` 启动前无可选能力配置面;现由 per-launch onboarding 复用 `doctor --fix` 幂等安装器。#267 补齐 awaited POSIX onboarding process group、bootstrap installer bounded process group、outer grace > installer TERM+SIGKILL budget、0700/0600-wx result 通道与 §21c/§21f/§21g stubborn installer 信号/timeout fixture。M4 UX 质量线,不计入 #20 Exit。详见 [`architecture.md` §9](architecture.md#9-演进时间线唯一来源-roadmapmd-的-m0-m6此处只保留原则与现状) |
+| D-34 可选能力 onboarding 缺口(#258/#267) | **已清偿 2026-09-09(#258;#267 = #266 合并后的 post-merge 加固)**:交互式 `gotry web` 启动前无可选能力配置面;现由 per-launch onboarding 复用 `doctor --fix` 幂等安装器。#267 补齐 awaited POSIX onboarding process group、bootstrap installer bounded process group、outer grace > installer TERM+SIGKILL budget、0700/0600-wx result 通道与 §21c/§21f/§21g stubborn installer 信号/timeout fixture。M4 UX 质量线,不计入 #20 Exit。详见 [`architecture.md` §9](architecture.zh-CN.md#9-演进时间线唯一来源-roadmapmd-的-m0-m6此处只保留原则与现状) |
 | D-35 Node 26 dist 构建 API 移除 | **已清偿 2026-09-09(issue #265)**:移除 Node 已删除的 `stripTypeScriptTypes(...,{mode:'transform'})` 路径,改由根 manifest + npm/pnpm 双锁精确固定 TypeScript 5.9.3 并显式产出 ESM。Node 22/24 保留 typecheck + 全栈 CI,另以 Node 22/24/26 focused matrix 验证 exact source→dist、资产字节、无相对 `.ts`/CommonJS wrapper、入口与关键动态 import；Node 24 独立 pnpm frozen-lock job 防直接依赖的 `.pnpm` 解析布局回归。clean-archive release builder 先在隔离 source 内严格 `npm ci --include=dev`,再从提交锁派生剥除 build-only TypeScript entry 的最终 runtime manifest/lock 并严格 `npm ci --omit=dev`;builder proof 拒绝 TypeScript 出现在 runtime package/deps/manifest。该 M4 工程质量证据不关闭 #20/#136/#137 的真实 gate。 |
-| D-36 酒店日期闸缺位(hotel-date-gate) | **已清偿 2026-09-09(issue #283)**:实现与边界详见 [`architecture.md`](architecture.md) §1.2;共享 `parseAbsoluteDate` 拒非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`,有效日期与静态降级兼容。隔离 fixture 证据不构成真实供应商准入。 |
-| D-38 `gotry_doctor` 只能给指引、不能在对话内修复 | **已清偿 2026-09-10(issue #284)**:显式 `action=repair` 形成诊断→范围计划→会话审批→既有 bootstrap 幂等安装器→实际复检链;拒绝/取消/无审批通道零执行,user-action/unavailable 不越权,安装退出不替代健康复检。隔离 fixture 工具 E2E 只证明工程边界,不构成 #20 真实 repeat cohort 或任何 M5/M6 准入。详见 [`architecture.md` §9](architecture.md#9-演进时间线唯一来源-roadmapmd-的-m0-m6此处只保留原则与现状)。 |
-| #279 携程机票 malformed 响应 | **已清偿 2026-09-10**:三态 parser/search 边界与隔离扩展 fixture 见 [`architecture.md`](architecture.md) §9;本地证据不替代 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission |
+| D-36 酒店日期闸缺位(hotel-date-gate) | **已清偿 2026-09-09(issue #283)**:实现与边界详见 [`architecture.md`](architecture.zh-CN.md) §1.2;共享 `parseAbsoluteDate` 拒非法日历日,酒店消费边界拒缺失日期、溢出和错误顺序,失败不 dispatch 并返回 `input_required`,有效日期与静态降级兼容。隔离 fixture 证据不构成真实供应商准入。 |
+| D-38 `gotry_doctor` 只能给指引、不能在对话内修复 | **已清偿 2026-09-10(issue #284)**:显式 `action=repair` 形成诊断→范围计划→会话审批→既有 bootstrap 幂等安装器→实际复检链;拒绝/取消/无审批通道零执行,user-action/unavailable 不越权,安装退出不替代健康复检。隔离 fixture 工具 E2E 只证明工程边界,不构成 #20 真实 repeat cohort 或任何 M5/M6 准入。详见 [`architecture.md` §9](architecture.zh-CN.md#9-演进时间线唯一来源-roadmapmd-的-m0-m6此处只保留原则与现状)。 |
+| #279 携程机票 malformed 响应 | **已清偿 2026-09-10**:三态 parser/search 边界与隔离扩展 fixture 见 [`architecture.md`](architecture.zh-CN.md) §9;本地证据不替代 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission |
 
 **D-24 会话扩展 onboarding UX 缺口(issue #21 隐性状态)**
 

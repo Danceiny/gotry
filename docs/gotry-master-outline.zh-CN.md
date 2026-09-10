@@ -1,3 +1,5 @@
+[English](gotry-master-outline.md) | [简体中文](gotry-master-outline.zh-CN.md)
+
 # GoTry 总纲:工作分解与复用基线
 
 > 单一现行版(历史见 git log;不设文件级版本号)

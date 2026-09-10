@@ -1,3 +1,5 @@
+[English](enterprise-travel-reference-study.md) | [简体中文](enterprise-travel-reference-study.zh-CN.md)
+
 # 企业级差旅 Agent 系统参考研究 → gotry 借鉴决策(2026-09-03)
 
 > 对象:某企业级差旅 Agent 生产系统(下称「T 系统」;ReAct 编排 + 确定性 DAG 双轨,

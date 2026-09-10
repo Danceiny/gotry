@@ -1,3 +1,5 @@
+[English](tokens.md) | [简体中文](tokens.zh-CN.md)
+
 # GoTry Token 手册(唯一 token 权威面)
 
 > 定位:**所有外部凭证的精准获取步骤 + 统一存放位置**。founder 给过的 token 永远在这里查得到——不重问、不丢失。

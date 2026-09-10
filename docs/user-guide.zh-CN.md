@@ -1,3 +1,5 @@
+[English](user-guide.md) | [简体中文](user-guide.zh-CN.md)
+
 # GoTry 使用指南
 
 > 一行启动,浏览器对话。LLM 负责听懂你,数学求解器负责判定与算术——每个数字带证据来源。

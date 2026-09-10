@@ -1,8 +1,11 @@
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 # GoTry 文档规范与总索引
 
 > 定位:本目录的**组织规范与唯一索引**——新文档放哪、怎么命名、头部怎么写、生命周期怎么走,以及全部文档的一行式索引。
 > 上游:`AGENTS.md`(仓库契约);状态面纪律见 `architecture.md` §11。
 > 纪律:单一文件承载单一关注点,版本历史归 git,不设 vN 文件后缀。
+> 双语:每篇文档 = 英文基座 `x.md` + 中文镜像 `x.zh-CN.md`,成对维护、同提交同步,**不一致视为 bug**。
 
 ---
 
@@ -25,6 +28,7 @@
 ## 2. 命名规范
 
 - 一律 kebab-case 小写;禁止 `vN` 版本后缀(版本历史归 git)。
+- **双语成对(loopx 约定)**:英文基座 `x.md` + 中文镜像 `x.zh-CN.md`;机器生成文档(如 `CHANGELOG.md`)豁免。新文档落地即双语;改任何一侧必须同提交同步另一侧。机械校验:`node scripts/check-docs-i18n.mjs`(存在性 + 标题/代码块/链接数对等)。
 - 权威面:裸主题名(`architecture.md`、`roadmap.md`),不带任何前后缀。
 - RFC:`<主题>-rfc.md`;设计:`<主题>-design.md` 或 `<角色>-guide.md`;调研:`<主题>-research.md`、复盘:`<主题>-postmortem.md`。
 - 里程碑备忘:`<里程碑号>-<主题>.md`(如 `m3-web-gap.md`);一次性计划/规格:`YYYY-MM-DD-<主题>.md`。
@@ -64,9 +68,9 @@
 
 ## 6. 引用纪律
 
-- 移动/重命名任何文档,**同一提交内**更新:根 README 双语索引表、`architecture.md` §12 文档地图、引用它的代码注释与脚本串。
-- 文档间互链一律用相对路径 markdown 链接,不用裸文件名(裸文件名移动后无法机械校验)。
-- `AGENTS.md` 契约钉住的四条路径(`architecture.md`、`gotry-master-outline.md`、`tokens.md`、`release-notes.md`)与发布闸读的 `docs/release-notes.md` **不可移动**;确需移动须先改契约与 `scripts/publish-npm.sh`。
+- 移动/重命名任何文档,**同一提交内**更新:根 README 双语索引表、`architecture.md` §12 文档地图、引用它的代码注释与脚本串;双语对的两侧同进退。
+- 文档间互链一律用相对路径 markdown 链接,不用裸文件名(裸文件名移动后无法机械校验)。中文镜像内互链指向对方的 `.zh-CN.md`,英文基座内互链指向基座名。
+- `AGENTS.md` 契约钉住的四条基座路径(`architecture.md`、`gotry-master-outline.md`、`tokens.md`、`release-notes.md`)与发布闸读的 `docs/release-notes.md` **不可移动**;其 `.zh-CN.md` 镜像随基座同进退。确需移动须先改契约与 `scripts/publish-npm.sh`。
 
 ## 7. 可读性纪律(2026-09-05 全仓去冗后立)
 
@@ -82,24 +86,28 @@
 
 ## 8. 总索引
 
-### 根目录(现行权威面)
+### 根目录(现行权威面,双语成对)
+
+> 下表链接中文镜像;英文基座同名去掉 `.zh-CN` 后缀。
 
 | 文档 | 关注点 |
 |---|---|
-| [architecture.md](architecture.md) | 唯一技术权威面:系统/模块/ADR/演进/债务/保鲜机制 |
-| [gotry-master-outline.md](gotry-master-outline.md) | 总纲:工作分解/复用矩阵/决策门 |
-| [gotry-product-design.md](gotry-product-design.md) | 产品设计:主循环/透明机制/全成本模型 |
-| [roadmap.md](roadmap.md) | 唯一时间线:M0–M6 里程碑与当前位置 |
-| [tech-strategy.md](tech-strategy.md) | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测/决策登记 |
-| [data-sources.md](data-sources.md) | 唯一数据源权威面:领域矩阵/新鲜度/证据链契约 |
-| [user-guide.md](user-guide.md) | 终端用户使用指南 |
-| [tools.md](tools.md) | 工具参考面:23 个注册工具的分组与逐工具契约/通道路由/web onboarding/运维脚本面 |
-| [release-notes.md](release-notes.md) | 逐版本发布决策(「为什么」,人写决策面) |
-| [tokens.md](tokens.md) | token 唯一权威面:npm 2FA/发布机制/渠道获取表 |
-| [decisions-needed.md](decisions-needed.md) | 待创始人拍板的决策队列 |
-| [debt-archive.md](debt-archive.md) | 已清偿债务存档(追加式留证;开着的债见 architecture.md §10.1) |
+| [architecture.zh-CN.md](architecture.zh-CN.md) | 唯一技术权威面:系统/模块/ADR/演进/债务/保鲜机制 |
+| [gotry-master-outline.zh-CN.md](gotry-master-outline.zh-CN.md) | 总纲:工作分解/复用矩阵/决策门 |
+| [gotry-product-design.zh-CN.md](gotry-product-design.zh-CN.md) | 产品设计:主循环/透明机制/全成本模型 |
+| [roadmap.zh-CN.md](roadmap.zh-CN.md) | 唯一时间线:M0–M6 里程碑与当前位置 |
+| [tech-strategy.zh-CN.md](tech-strategy.zh-CN.md) | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测/决策登记 |
+| [data-sources.zh-CN.md](data-sources.zh-CN.md) | 唯一数据源权威面:领域矩阵/新鲜度/证据链契约 |
+| [user-guide.zh-CN.md](user-guide.zh-CN.md) | 终端用户使用指南 |
+| [tools.zh-CN.md](tools.zh-CN.md) | 工具参考面:23 个注册工具的分组与逐工具契约/通道路由/web onboarding/运维脚本面 |
+| [release-notes.zh-CN.md](release-notes.zh-CN.md) | 逐版本发布决策(「为什么」,人写决策面) |
+| [tokens.zh-CN.md](tokens.zh-CN.md) | token 唯一权威面:npm 2FA/发布机制/渠道获取表 |
+| [decisions-needed.zh-CN.md](decisions-needed.zh-CN.md) | 待创始人拍板的决策队列 |
+| [debt-archive.zh-CN.md](debt-archive.zh-CN.md) | 已清偿债务存档(追加式留证;开着的债见 architecture.zh-CN.md §10.1) |
 
 ### design/(模块设计)
+
+> 子目录文档当前为中文原文(基座名),双语化分批推进;镜像落地后本表改指 `.zh-CN.md`。
 
 | 文档 | 关注点 |
 |---|---|

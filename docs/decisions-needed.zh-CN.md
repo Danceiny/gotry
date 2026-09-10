@@ -1,3 +1,5 @@
+[English](decisions-needed.md) | [简体中文](decisions-needed.zh-CN.md)
+
 # Decisions Needed — 创始人拍板项汇总
 
 > 定位:当前所有需 founder 拍板才能解锁的事项入口;每条含路径、上下文、影响范围、建议,各项独立、按优先级逐条回。

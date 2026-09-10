@@ -1,3 +1,5 @@
+[English](release-notes.md) | [简体中文](release-notes.zh-CN.md)
+
 # GoTry 发版记录
 
 > 给用户和开发者看的更新日志。Latest 在最上面。

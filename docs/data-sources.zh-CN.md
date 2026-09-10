@@ -1,3 +1,5 @@
+[English](data-sources.md) | [简体中文](data-sources.zh-CN.md)
+
 # GoTry 数据源架构(唯一数据源权威面)
 
 > 定位:本仓**外部数据从哪来**的唯一权威——领域 × 源 × 新鲜度 × 证据链 × 降级路径。

@@ -1,8 +1,10 @@
+[English](CONTRIBUTING.md) | [简体中文](CONTRIBUTING.zh-CN.md)
+
 # 参与开发 — Contributing
 
 > *How to set up, branch, test, and submit changes. Project rule: `main` is updated through reviewed Pull Requests with local final-SHA evidence plus CI signal.*
 
-欢迎参与 GoTry！GoTry 是「从出发到下一次出发」的 AI 旅行 Agent——先用**数学求解器**回答「能不能、怎么去、真实成本多少」，而不是让模型猜。本文是唯一权威的贡献指南；快速上手见 [README](README.md)，技术权威面见 [`docs/architecture.md`](docs/architecture.md)。
+欢迎参与 GoTry！GoTry 是「从出发到下一次出发」的 AI 旅行 Agent——先用**数学求解器**回答「能不能、怎么去、真实成本多少」，而不是让模型猜。本文是唯一权威的贡献指南；快速上手见 [README](README.zh-CN.md)，技术权威面见 [`docs/architecture.md`](docs/architecture.zh-CN.md)。
 
 ---
 
@@ -117,7 +119,7 @@ git checkout main && git pull && git checkout -b fix/your-topic
 
 ## 🏛️ 代码纪律 — Engineering rules
 
-这些是硬约束（详见 [`AGENTS.md`](AGENTS.md) 与 [`docs/architecture.md`](docs/architecture.md)）：
+这些是硬约束（详见 [`AGENTS.md`](AGENTS.zh-CN.md) 与 [`docs/architecture.md`](docs/architecture.zh-CN.md)）：
 
 - **分层纪律**:算术只在 `model.ts`/`unified.py` 的 evaluate 层；求解只在 `unified.ts`/`unified.py`；`engine.*`/`journey.*` 是 deprecated 兼容层，**新代码不得调用**。
 - **TS↔Python 无桥**:`py/gotry_feasibility` 仅作历史对照 oracle，产品运行时与工具链零引用；**不得新增任何 Python 依赖面**。
@@ -131,7 +133,7 @@ git checkout main && git pull && git checkout -b fix/your-topic
 
 ## 🚢 发布 — Release
 
-发布是 founder 确认制（发不发、发哪个版本由 founder 确认；确认后打 tag / 推 remote / npm 发布由执行者完成）。贡献者无需关心；发布闸五条与 registry 回拉验证见 [`AGENTS.md`](AGENTS.md) 与 [`docs/release-notes.md`](docs/release-notes.md)。
+发布是 founder 确认制（发不发、发哪个版本由 founder 确认；确认后打 tag / 推 remote / npm 发布由执行者完成）。贡献者无需关心；发布闸五条与 registry 回拉验证见 [`AGENTS.md`](AGENTS.zh-CN.md) 与 [`docs/release-notes.md`](docs/release-notes.zh-CN.md)。
 
 ---
 
