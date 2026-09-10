@@ -150,6 +150,108 @@ const codeshare: FlightFact = { ...szxDxb[0]!, fact_id: 'cs-demo000000000', flig
 const csLine = renderFlightFact(codeshare)
 assert(csLine.includes('营销 阿联酋航空') && csLine.includes('实际承运 中国南方航空'), 'codeshare 渲染同时输出营销与实际承运(不混用)')
 
+// ---- §4b 价格事实闸(issue #300;flight/train 共用原语,不处理酒店打码价) ---------
+
+console.log('§4b 行内硬价格与 exact-date 事实对账')
+const uo724Rendered = renderFlightFact(uo724)
+const priceOk = gateArtifact(uo724Rendered, [uo724], map, { trip_year: tripYear })
+assert(priceOk.verdict === 'pass' && priceOk.traceable === 1
+  && !priceOk.violations.some(v => v.kind === 'price_contradicted'),
+  'renderFlightFact(UO724 793 CNY) → gateArtifact 无冲突 pass')
+
+const farePlusBudget = gateArtifact(`${uo724Rendered}；总预算¥1000`, [uo724], map, { trip_year: tripYear })
+assert(farePlusBudget.verdict === 'pass' && farePlusBudget.traceable === 1 && farePlusBudget.violations.length === 0,
+  'UO724 自身票价后追加总预算¥1000不串价,仍 pass')
+
+const anchor = uo724Rendered.indexOf('<!-- fact:')
+const budgetBeforeAnchor = gateArtifact(`${uo724Rendered.slice(0, anchor)}；总预算¥1000${uo724Rendered.slice(anchor)}`, [uo724], map, { trip_year: tripYear })
+assert(budgetBeforeAnchor.verdict === 'pass' && budgetBeforeAnchor.violations.length === 0,
+  '证据链后的总预算即使位于锚点前也不串为UO724票价')
+const baggageBeforeSourceAndAnchor = gateArtifact(uo724Rendered.replace(' [flyai@', '；行李费¥50 [flyai@'), [uo724], map, { trip_year: tripYear })
+assert(baggageBeforeSourceAndAnchor.verdict === 'pass' && baggageBeforeSourceAndAnchor.traceable === 1
+  && baggageBeforeSourceAndAnchor.violations.length === 0,
+  'canonical票价后的行李费即使位于source与锚点之前也不串为UO724票价')
+const labelledMoneyField = gateArtifact(uo724Rendered.replace(' [flyai@', '；总计¥1000 [flyai@'), [uo724], map, { trip_year: tripYear })
+assert(labelledMoneyField.verdict === 'pass' && labelledMoneyField.traceable === 1
+  && labelledMoneyField.violations.length === 0,
+  'canonical票价后的通用标签金额不被当作第二票价')
+const explicitFareLabel = gateArtifact(uo724Rendered.replace('¥793', '票价¥793'), [uo724], map, { trip_year: tripYear })
+assert(explicitFareLabel.verdict === 'pass' && explicitFareLabel.traceable === 1 && explicitFareLabel.violations.length === 0,
+  '显式票价标签仍属于可靠 fare role')
+const explicitFareField = gateArtifact(uo724Rendered.replace('¥793', '；总预算¥1000；票价¥793'), [uo724], map, { trip_year: tripYear })
+assert(explicitFareField.verdict === 'pass' && explicitFareField.traceable === 1 && explicitFareField.violations.length === 0,
+  '分隔后的预算字段不遮蔽后续显式票价字段')
+for (const [label, renderedAmount] of [
+  ['分隔后裸金额', '；¥999'],
+  ['分隔后畸形金额', '；¥1,79'],
+] as const) {
+  const ambiguous = gateArtifact(uo724Rendered.replace('¥793', renderedAmount), [uo724], map, { trip_year: tripYear })
+  assert(ambiguous.verdict === 'blocked' && ambiguous.traceable === 0
+    && ambiguous.violations.some(v => v.kind === 'unverified_price_claim'),
+    `${label}无可靠 fare role 必须blocked/unverified`)
+}
+const additionalUnlabelledAmount = gateArtifact(uo724Rendered.replace(' [flyai@', '；¥999 [flyai@'), [uo724], map, { trip_year: tripYear })
+assert(additionalUnlabelledAmount.verdict === 'blocked' && additionalUnlabelledAmount.traceable === 0
+  && additionalUnlabelledAmount.violations.some(v => v.kind === 'unverified_price_claim'),
+  'canonical票价之外追加裸金额不得因候选列表为空而放行')
+
+for (const [label, renderedPrice] of [['¥999', '¥999'], ['CNY 999', 'CNY 999']] as const) {
+  const contradicted = gateArtifact(uo724Rendered.replace('¥793', renderedPrice), [uo724], map, { trip_year: tripYear })
+  const priceViolation = contradicted.violations.find(v => v.kind === 'price_contradicted')
+  assert(contradicted.verdict === 'blocked' && priceViolation !== undefined
+    && /UO724/.test(priceViolation.detail) && /CNY 999/.test(priceViolation.detail) && /CNY 793/.test(priceViolation.detail),
+    `UO724 行内 ${label} ≠ 事实 CNY 793 → blocked/price_contradicted(含可读对账详情)`)
+}
+
+const trainPriceFact: FlightFact = { ...uo724, kind: 'train', fact_id: makeFactId(['train-price', 'G1234']), flight_no: 'G1234' }
+const trainContradicted = gateArtifact(renderFlightFact(trainPriceFact).replace('¥793', '¥794'), [trainPriceFact], map, { trip_year: tripYear })
+assert(trainContradicted.verdict === 'blocked'
+  && trainContradicted.violations.some(v => v.kind === 'price_contradicted' && /G1234/.test(v.detail)),
+  'train fact 同样经共享价格原语对账,不复制 flight 专用实现')
+
+const commaFareFact: FlightFact = { ...uo724, fact_id: makeFactId(['flight-price-comma', 'UO724']), price: 1793 }
+const commaFare = gateArtifact(renderFlightFact(commaFareFact).replace('¥1793', '¥1,793'), [commaFareFact], map, { trip_year: tripYear })
+assert(commaFare.verdict === 'pass' && commaFare.traceable === 1 && commaFare.violations.length === 0,
+  '完整解析千分位¥1,793,与事实1793一致 pass')
+const malformedComma = gateArtifact(uo724Rendered.replace('¥793', '¥1,79'), [uo724], map, { trip_year: tripYear })
+assert(malformedComma.verdict === 'blocked' && malformedComma.traceable === 0
+  && malformedComma.violations.some(v => v.kind === 'unverified_price_claim' && /畸形|未核验|完整/.test(v.detail)),
+  'canonical fare 畸形千分位¥1,79必须blocked/unverified,不得消失或截断为CNY1')
+
+const missingSourcePrice = gateArtifact(uo724Rendered.replace('¥793', '¥999'), [{ ...uo724, price: undefined }], map, { trip_year: tripYear })
+assert(missingSourcePrice.verdict === 'blocked'
+  && missingSourcePrice.violations.some(v => v.kind === 'unverified_price_claim' && /权威 exact-date 事实价格/.test(v.detail)),
+  '源事实缺价时渲染¥999不得冒充已核验价格 → blocked/unverified_price_claim')
+
+const lateUnanchoredPrice = gateArtifact(
+  `### 香港→普吉(7.17)\n${uo724Rendered.replace(/<!--.*?-->/g, '').replace('¥793', `${'说明'.repeat(90)} CNY 999`)}`,
+  [uo724], map, { trip_year: tripYear },
+)
+assert(lateUnanchoredPrice.verdict === 'blocked'
+  && lateUnanchoredPrice.violations.some(v => v.kind === 'unverified_price_claim' && /未锚定|抽取窗口/.test(v.detail)),
+  '无锚点且价格落在120字抽取窗口外不得作为已核验 exact-date 价格 → blocked')
+
+for (const [label, nonComparablePrice] of [
+  ['缺失', '价待询'],
+  ['非数字', '¥7xx'],
+  ['模糊起价', '约¥999 起'],
+] as const) {
+  const nonComparable = gateArtifact(uo724Rendered.replace('¥793', nonComparablePrice), [uo724], map, { trip_year: tripYear })
+  assert(nonComparable.verdict === 'pass' && !nonComparable.violations.some(v => v.kind === 'price_contradicted'),
+    `${label}价格不作可靠硬价比较,保留既有 claim/anchor 语义不误判 price_contradicted`)
+}
+
+const unsupportedCurrency = gateArtifact(uo724Rendered.replace('¥793', 'USD999'), [uo724], map, { trip_year: tripYear })
+assert(unsupportedCurrency.verdict === 'blocked'
+  && unsupportedCurrency.violations.some(v => v.kind === 'unverified_price_claim' && /不支持直接比较|USD/.test(v.detail))
+  && !unsupportedCurrency.violations.some(v => v.kind === 'price_contradicted'),
+  'USD999 不做汇率换算,标为未核验而不得 pass')
+
+const hotelPriceRaw = factsFromHotel({ source: 'flyai-hotel', destination: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03', verdict: 'hit', options: 9, evidence: 'priceRaw=¥799', fetchedAt: '2026-09-04T00:00:00.000Z' })
+const hotelMaskedPrice = gateArtifact('## 住宿\n- 大理 2026-10-01→2026-10-03 酒店有房可订 priceRaw=¥799', hotelPriceRaw, map, { trip_year: 2026 })
+assert(hotelMaskedPrice.verdict === 'pass' && !hotelMaskedPrice.violations.some(v => v.kind === 'price_contradicted'),
+  '酒店 priceRaw 打码/原值行不进入航班/火车硬价格对账')
+
 // ---- §5 验收⑤:联程措辞闸 --------------------------------------------------------
 
 console.log('§5 protected_connection 与联程措辞')

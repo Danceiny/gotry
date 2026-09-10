@@ -59,6 +59,12 @@ echo "=== 6. 插件 smoke(注册/execute/红线断言) ==="
 (cd ts && npx tsx scripts/smoke.ts | tail -2) || FAIL=1
 
 echo
+echo "=== 6b. 产物视图能力与 Host 合同(客户端导出/运行时 block 卡片/路径护栏/版本更新,全离线) ==="
+(cd ts && npx tsx scripts/artifact-client-contract-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/artifacts-capability-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/dsh-artifact-e2e.ts) || FAIL=1
+
+echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
 
@@ -177,6 +183,10 @@ echo "=== 23f. issue #271 dsh child liveness(真实安装 dsh 五个既有 seam 
 echo
 echo "=== 23e. dsh-http-proxy 本地 SSE + 中毒代理反例(#268:真实 fetch 回环 SSE=200+中毒命中=0+proxyRouteFor 回环直接/非回环代理+proxyEnvironmentForChild NODE_USE_ENV_PROXY/NO_PROXY+finally await disposer+await 两服务器关闭+全局路由恢复直接) ==="
 (cd ts && npx tsx scripts/dsh-http-proxy-sse-proof.ts) || FAIL=1
+
+echo
+echo "=== 23f. Issue #194 continuable subagent durable id 与 jobs id 边界(真实 dsh ToolRuntime 调用链+可恢复 pre-execute guard+direct-child ownership) ==="
+(cd ts && npx tsx scripts/issue-194-job-id-guard-tests.ts) || FAIL=1
 
 echo
 echo "=== 24. 「下一次出发」回访骨架(nudge-digest:匹配/file 通道/可关闭/无命中不硬推/lark 缺 key 降级) ==="
@@ -374,6 +384,10 @@ echo "=== 44. sf-live static golden(issue #67:CLI vendor 闭集/OpenFlights 固�
 (cd ts && npx tsx scripts/static-golden-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/sf-soft-score-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/sf-live-cli-tests.ts) || FAIL=1
+
+echo
+echo "=== 44b. sf-summary offline evidence selection(issue #335/#272:canonical filename batch/chronology/source provenance/missing-corrupt fail-closed/legacy unknown;temporary evidence roots only) ==="
+(cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/sf-summary-tests.ts) || FAIL=1
 
 package_e2e_bin="${GOTRY_BRIDGE_E2E_BIN:-${GOTRY_BUDGET_E2E_BIN:-}}"
 package_e2e_dir=""

@@ -17,7 +17,7 @@ import { join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolResult } from '@deepseek-ai/dsh-tools'
 import { ensureStateDir, recordLatency } from './bridge.ts'
 import { segmentsFromCandidate, solveChoiceSegment } from './unified.ts'
 import { checkConnectivity } from '../scripts/skeleton-check.ts'
@@ -28,7 +28,8 @@ import { projectUtility } from './memory-utility.ts'
 import { pickNudgeWish, type WishPoolEntry } from './wish-pool.ts'
 import { resolveTimelineDate } from './travel-timeline.ts'
 import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, readTripsWithFallback, readWishPoolWithFallback } from './state-ledger.ts'
-import { buildTimeAnchor } from './time-anchor.ts'
+import { applyPlanningWindow } from './loop.ts'
+import { buildTimeAnchor, type PlanningWindow } from './time-anchor.ts'
 import { evaluateHotelStayDates } from './hotel-date-gate.ts'
 import { wmoLabel } from '../capabilities/weather.ts'
 // D-23 收编(issue #115):anything/web/github/video/agent_reach/session_login 六渠道改经
@@ -49,6 +50,7 @@ import { routingAdvice, renderRoutingCard, toolRoutingHeadline, type ChannelInte
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
+import { installSubagentJobIdGuard } from './subagent-job-id-guard.ts'
 
 /** 航司→机场映射表(issue #46 冲突检测面;data/airline-airports.json,as_of 快照) */
 let airlineAirportMapCache: AirlineAirportMap | null = null
@@ -70,6 +72,13 @@ export const name = 'gotry-tools'
 // time. Declaring it as a required injection would make the whole plugin
 // depend on a service that is only needed for explicit benchmark opt-in.
 export const inject = ['tools', 'systemPrompt']
+
+function sessionCwd(exec: unknown): string | undefined {
+  const candidate = exec as { agent?: { session?: { header?: { cwd?: unknown } } } } | null
+  return typeof candidate?.agent?.session?.header?.cwd === 'string'
+    ? candidate.agent.session.header.cwd
+    : undefined
+}
 
 export interface Config {
   /** 状态根目录(动机画像、wish pool、延迟日志) */
@@ -96,6 +105,13 @@ interface FeasibilityResult {
   answer_md?: string
   recommended?: string | null
   verdicts?: Array<Record<string, unknown>>
+}
+
+interface FeasibilityValidationFailure extends Record<string, Json> {
+  ok: false
+  code: 'invalid_planning_context' | 'planning_window_rejected'
+  summary: string
+  rejected: Array<{ segmentId: string; optionId: string; date: string }>
 }
 
 interface MotivationProfileInput {
@@ -203,9 +219,36 @@ export interface ApplyTestSeams {
   }
   /** Isolated test-only effect interpreter; production keeps interpretEffect. */
   effect?: typeof interpretEffect
+  /** Test-only clock injection; production derives the reference date from Date. */
+  clock?: () => Date
+}
+
+function parseFeasibilityPlanning(raw: unknown, anchor: ReturnType<typeof buildTimeAnchor>): PlanningWindow | null {
+  if (raw === undefined) return null
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('planning must be an object')
+  const planning = raw as Record<string, unknown>
+  const intent = planning['intent']
+  const requestedYear = planning['requested_year']
+  if (intent !== 'future' && intent !== 'historical') {
+    throw new Error('planning.intent must be future or historical')
+  }
+  if (!Number.isInteger(requestedYear) || Number(requestedYear) < 1_000 || Number(requestedYear) > 9_999) {
+    throw new Error('planning.requested_year must be a four-digit integer')
+  }
+  // referenceDate is always the host clock; the payload cannot supply a stale now.
+  return { intent, requestedYear: Number(requestedYear), referenceDate: anchor.today }
+}
+
+function feasibilityValidationFailure(
+  code: FeasibilityValidationFailure['code'],
+  summary: string,
+  rejected?: FeasibilityValidationFailure['rejected'],
+): FeasibilityValidationFailure {
+  return { ok: false, code, summary, rejected: rejected ?? [] }
 }
 
 export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}): void {
+  const clock = seams.clock ?? (() => new Date())
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
   // 预算,复杂度决定出口结构(converge/handoff)。benchmark opt-in 钉死
@@ -287,6 +330,9 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   // (headless 无用户在场)一律 fail-closed 拒绝。sessionAccess: ask(默认)|allow|off。
   // v1 教训(2026-08-29 founder 实测「每次都要弹,经常无法点击」):逐调用弹卡 = 骚扰,
   // 会话态收归 capabilities/session-consent.ts。防御:极简宿主/mock ctx 无事件总线时跳过。
+  // issue #194 A-轨道 guard 先注册；生产 Cordis 的 prepend 保证它在授权闸
+  // 前运行，smoke 的轻量事件采集器也继续把授权闸作为最后一个观察项。
+  installSubagentJobIdGuard(ctx)
   const ctxOn = (ctx as unknown as { on?: unknown }).on
   if (typeof ctxOn === 'function') {
     const gate = createConsentGate({
@@ -348,7 +394,15 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         required: true,
         properties: {
           request: { type: 'object', additionalProperties: true, required: true, description: '引擎请求:{ motivation weights, hard constraints, window, budget, home hubs }' },
-          candidates: { type: 'array', items: { type: 'object', additionalProperties: true }, required: true, description: '候选列表:[{ id, label, services, transfers, stay, minDays }]' },
+          candidates: { type: 'array', items: { type: 'object', additionalProperties: true }, required: true, description: '候选列表:[{ id, label, date?, services, transfers, stay, minDays }]' },
+          planning: {
+            type: 'object', additionalProperties: false,
+            description: '可选显式规划上下文;dated 候选省略时默认按宿主时钟作 future 下界过滤,指定 future 年份再加年末上界,historical 仅用于明确历史/回测查询;完全 dateless 输入保持旧可行性计算',
+            properties: {
+              intent: { type: 'string', enum: ['future', 'historical'], required: true },
+              requested_year: { type: 'integer', required: true, description: '用户明确请求的四位年份,不传宿主当前年份' },
+            },
+          },
         },
       },
     },
@@ -364,10 +418,22 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       // 路径——候选形态枚举求解,~6ms/次)。unified 内部有 try-catch 护栏覆盖 wasm 异常。
       const started = Date.now()
       const payload = args.payload as Record<string, unknown>
+      const anchor = buildTimeAnchor(clock())
+      let planning: PlanningWindow | null
+      try {
+        planning = parseFeasibilityPlanning(payload['planning'], anchor)
+      } catch (error) {
+        const summary = error instanceof Error ? error.message : 'planning context is invalid'
+        return feasibilityValidationFailure('invalid_planning_context', summary)
+      }
       const req = parseRequest(payload['request'] as Record<string, unknown>)
       const cands = (payload['candidates'] as Record<string, unknown>[]).map(parseCandidate)
       const spec = segmentsFromCandidate(req, cands)
-      const result = solveChoiceSegment(spec, req) as Record<string, unknown>
+      const planningCheck = applyPlanningWindow(spec, planning, anchor, { defaultDatedFuture: true })
+      if (planningCheck.error) {
+        return feasibilityValidationFailure('planning_window_rejected', planningCheck.error, planningCheck.rejected)
+      }
+      const result = solveChoiceSegment(planningCheck.spec, req) as Record<string, unknown>
       const dir = await ensureStateDir(config.stateRoot)
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, 'feasibility_check:in-process-unified').catch(() => {})
       return { ok: true, ...result, latency_ms: Date.now() - started, via: 'in-process-unified' }
@@ -1721,10 +1787,22 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
+      presentationMeta: (_args, value) => {
+        const r = value as { artifacts?: Array<{ path?: string }>; total?: number; truncated?: boolean }
+        const paths = Array.isArray(r.artifacts)
+          ? r.artifacts.map(a => String(a.path ?? '')).filter(Boolean)
+          : []
+        return {
+          shape: 'paths',
+          paths,
+          truncated: Boolean(r.truncated),
+          total: r.total ?? paths.length,
+        }
+      },
     },
-    async execute(args, _exec: unknown) {
+    async execute(args, exec: unknown) {
       const q = unwrapQuery<{ limit?: number }>(args, 'limit')
-      const r = await listArtifacts({ stateRoot: config.stateRoot ?? '.', limit: q.limit })
+      const r = await listArtifacts({ stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec), limit: q.limit })
       const lines = r.artifacts.map(a =>
         `- [${a.source}] ${a.title}${a.status ? `(${a.status})` : ''} — ${a.path}${a.updated ? ` @ ${a.updated.slice(0, 16).replace('T', ' ')}` : ''}`)
       const summary = r.artifacts.length
@@ -1732,13 +1810,23 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         : '无在册产物(异步深度规划交付与工作目录 md 文件都会出现在这里)'
       return JSON.parse(JSON.stringify({ ok: true, artifacts: r.artifacts, total: r.total, truncated: r.truncated, summary })) as Record<string, never>
     },
-    presentCall: () => ({ card: 'generic', title: '列出产物', kind: 'search' }),
-    presentResult: (_args, value) => {
-      const r = value as { summary?: string; total?: number }
+    // Host presentationMeta remains persisted with the ToolResult for Host-side
+    // consumers; the packaged public Client separately renders the runtime block
+    // for these custom wire names in DSH Web.
+    presentResult: (_args, result: ToolResult) => {
+      if (result.isError || typeof result.meta !== 'object' || result.meta === null || Array.isArray(result.meta)) return undefined
+      const meta = result.meta as { shape?: unknown; paths?: unknown; truncated?: unknown; total?: unknown }
+      if (meta.shape !== 'paths' || !Array.isArray(meta.paths) || !meta.paths.every(p => typeof p === 'string') ||
+          typeof meta.truncated !== 'boolean' || typeof meta.total !== 'number' || !Number.isInteger(meta.total) || meta.total < 0) {
+        return undefined
+      }
       return {
-        card: 'generic',
-        title: `产物:${r.total ?? 0} 项在册`,
-        content: [{ type: 'text', text: String(r.summary ?? '') }],
+        card: 'search' as const,
+        shape: 'paths' as const,
+        title: `产物:${meta.total} 项在册${meta.truncated ? '(已截断)' : ''}`,
+        paths: meta.paths,
+        truncated: meta.truncated,
+        total: meta.total,
       }
     },
   }))
@@ -1759,34 +1847,71 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { content?: string }).content ?? JSON.stringify(value).slice(0, 600)) }],
+      presentationMeta: (_args, value) => {
+        const r = value as { path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; source?: string; version?: string }
+        return {
+          path: String(r.path ?? ''),
+          offset: r.offset ?? 1,
+          lines: Array.isArray(r.lines) ? r.lines.map(line => ({ number: line.number, text: line.text })) : [],
+          totalLines: r.totalLines ?? 0,
+          ...(r.lang ? { lang: r.lang } : {}),
+          ...(r.source ? { source: r.source } : {}),
+          ...(r.version ? { version: r.version } : {}),
+        }
+      },
     },
-    async execute(args, _exec) {
+    async execute(args, exec) {
       const q = args
       if (!q.path) throw new Error('gotry_artifacts_read requires path')
       if (!q.path) return JSON.parse(JSON.stringify({ ok: false, error: 'path 必填(来自 gotry_artifacts_list)' })) as Record<string, never>
-      const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', path: q.path, offset: q.offset, limit: q.limit })
+      const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec), path: q.path, offset: q.offset, limit: q.limit })
       if (!r.ok) return JSON.parse(JSON.stringify(r)) as Record<string, never>
+      // 身份/来源展示(issue #285 第 1 条「显示身份/来源」):行号视图保留 read 卡的
+      // path/offset/lines/totalLines/lang;fallback content 用 source label 前缀,
+      // 让无法渲染 read 卡的 UI 也能区分「本会话选了哪个产物」,避免把旧摘要当新内容。
       return JSON.parse(JSON.stringify({
         ...r,
+        source: r.source,
         summary: `${r.path}(${r.totalLines} 行)第 ${r.offset}-${r.offset + r.lines.length - 1} 行${r.windowed ? `(共 ${r.totalLines} 行,可翻页)` : ''}`,
       })) as Record<string, never>
     },
-    presentCall: args => ({ card: 'generic', title: `读产物:${args.path ?? ''}`, kind: 'read', rawInput: args }),
-    presentResult: (_args, value) => {
-      const r = value as unknown as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string; content?: string; error?: string }
-      if (!r.ok) {
-        return { card: 'generic', title: '读产物失败', content: [{ type: 'text', text: String(r.error ?? '') }] }
+    // Keep the standard location payload for Host consumers. The Web client only
+    // renders its built-in keyed tools, so this is not claimed as native custom-card E2E.
+    presentCall: args => ({
+      card: 'generic',
+      title: `读产物:${args.path ?? ''}`,
+      kind: 'read',
+      rawInput: args,
+      ...(args.path ? { locations: [{ path: String(args.path), line: 1 }] } : {}),
+    }),
+    presentResult: (_args, result: ToolResult) => {
+      if (result.isError || typeof result.meta !== 'object' || result.meta === null || Array.isArray(result.meta)) return undefined
+      const meta = result.meta as { path?: unknown; source?: unknown; offset?: unknown; lines?: unknown; totalLines?: unknown; lang?: unknown }
+      if (typeof meta.path !== 'string' || meta.path === '' || typeof meta.offset !== 'number' || !Number.isInteger(meta.offset) || meta.offset < 1 ||
+          !Array.isArray(meta.lines) || !meta.lines.every(line => typeof line === 'object' && line !== null && !Array.isArray(line) &&
+            typeof (line as { number?: unknown }).number === 'number' && Number.isInteger((line as { number: number }).number) &&
+            typeof (line as { text?: unknown }).text === 'string') ||
+          typeof meta.totalLines !== 'number' || !Number.isInteger(meta.totalLines) || meta.totalLines < 0) {
+        return undefined
       }
-      // dsh read 卡:UI 渲染为行号文件视图(issue #25 的「插件能力查看 artifacts」落点)
+      const source = typeof meta.source === 'string' ? meta.source : 'unknown'
+      const identityLine = `source: ${source} · path: ${meta.path} · ${meta.totalLines} lines`
+      const rawContent = result.content
+        .filter(block => block.type === 'text')
+        .map(block => block.text)
+        .join('\n')
       return {
         card: 'read' as const,
-        title: r.path?.split('/').pop() ?? r.path ?? '',
-        path: r.path ?? '',
-        offset: r.offset ?? 1,
-        lines: r.lines ?? [],
-        totalLines: r.totalLines ?? 0,
-        lang: r.lang,
-        content: [{ type: 'text', text: r.content ?? '' }],
+        title: meta.path.split('/').pop() ?? meta.path,
+        path: meta.path,
+        offset: meta.offset,
+        lines: meta.lines as Array<{ number: number; text: string }>,
+        totalLines: meta.totalLines,
+        ...(typeof meta.lang === 'string' ? { lang: meta.lang } : {}),
+        content: [
+          { type: 'text', text: identityLine },
+          { type: 'text', text: rawContent },
+        ],
       }
     },
   }))
@@ -1819,7 +1944,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
     },
-    async execute(args, _exec: unknown) {
+    async execute(args, exec: unknown) {
       const q = unwrapQuery<{ markdown?: string; path?: string; tripYear?: number; itinerary?: Record<string, unknown> }>(args, 'markdown')
       const avMap = await loadAirlineAirportMap()
       if (!avMap) {
@@ -1827,7 +1952,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       }
       let markdown = q.markdown
       if (!markdown && q.path) {
-        const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', path: q.path })
+        const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec), path: q.path })
         if (!r.ok) return JSON.parse(JSON.stringify({ ok: false, summary: `产物读取失败:${String((r as { error?: string }).error ?? '')}` })) as Record<string, never>
         markdown = r.content
       }

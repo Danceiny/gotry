@@ -565,8 +565,14 @@ const unregisterSignalForwarding = () => {
 }
 // LLM key 由 dsh 宿主管理(凭证是用户资产,UI 在 dsh 里;gotry 不拦截启动期,
 // 不在用户面前展示任何 key 配置引导),此处直接放手 spawn dsh。
+const webPortArgs = (() => {
+  if (mode !== 'web') return []
+  const portIndex = rest.indexOf('--port')
+  const port = portIndex >= 0 ? rest[portIndex + 1] : undefined
+  return port !== undefined && /^(?:0|[1-9]\d*)$/.test(port) ? ['--port', port] : []
+})()
 const binJs = mode === 'web'
-  ? ['web', '--patch', patchPath, ...(process.argv.includes('--no-open') ? ['--no-open'] : [])]
+  ? ['web', '--patch', patchPath, ...(process.argv.includes('--no-open') ? ['--no-open'] : []), ...webPortArgs]
   : ['--profile', 'headless', '--patch', patchPath, ...rest]
 
 const childEnv = { ...process.env }

@@ -21,6 +21,10 @@ import { detectLanguage, flagExpiredSlots, scoreExtraction, type TravelSlotExtra
 import { resolveSlotDate, resolveSlots, specDateMismatches, type ResolvedSlots } from '../src/slot-spec.ts'
 import { createMockLlm, type SlotScriptStep } from '../src/mock-llm.ts'
 import { createOpenAICompatLlm } from '../src/dsh-llm.ts'
+import { newState, runTurn } from '../src/loop.ts'
+import { parseRequest } from '../src/model.ts'
+import { solveChoiceSegment, type JourneySpecTS } from '../src/unified.ts'
+import { parsePlanningWindow } from '../src/time-anchor.ts'
 
 interface EvalCase {
   id: string
@@ -187,7 +191,79 @@ const ANCHOR_NOW = new Date(ay, am - 1, ad, 12) // 锚点日中午,避免午夜�
   console.log('5. 槽位→日期解析 OK(绝对/词表/+N/unresolved 边界/整张解析/spec 一致性闸)')
 }
 
-console.log('\nTIME-EVAL TESTS: 5/5 OK(确定性部分,CI 口径)')
+// ---- 6. Issue #2 未来年度窗口(真实 runTurn→validateSpec→solve 路径) -----------
+{
+  const request = parseRequest({
+    note: 'issue-2-fixture',
+    home: { hubs: { H: { to_hub_min: 0 } } },
+    motivation: { weights: {}, hard: { wake_not_before: '06:00', min_arrival_energy_pct: 0 } },
+    window_days: 2,
+    budget_cny: 1000,
+  })
+  const option = (id: string, date: string, score: number) => ({
+    id, label: id, date, score, minDays: 1,
+    move: {
+      hub: 'H',
+      services: [{ id: `out-${id}`, depMin: 600, arrMin: 700, priceCny: 10 }],
+      retServices: [{ id: `ret-${id}`, depMin: 1000, arrMin: 1100, priceCny: 10 }],
+      transfers: [{ mode: 'walk', minutes: 10, priceCny: 0 }],
+      bufferMin: 30, bufferRetMin: 30, originTransferMin: 0, destTransferMin: 0,
+    },
+    stay: { nights: 1, stayCnyPerNight: 10, localDailyCny: 10 },
+  })
+  const spec = (): JourneySpecTS => ({
+    segments: [{ id: 'dest', role: 'choice', options: [
+      option('past', '2026-09-01', 1), option('valid', '2026-10-01', 0.5), option('next-year', '2027-01-01', 0.9),
+    ] }],
+  })
+  const llmFor = (planned: JourneySpecTS) => ({
+    extractFacts: async () => ({
+      assumptions: [],
+      profile: { workWindow: { homeTzOffsetMin: 0, startMin: 600, endMin: 1080, workdays: [0, 1, 2, 3, 4], evidence: 'fixture' }, bookedResources: [] },
+    }),
+    extractSpec: async () => structuredClone(planned),
+    extractSlots: async () => null,
+    polishQuestion: async (q: { text: string }) => q.text,
+  })
+  const run = (message: string, now: Date) => runTurn(
+    newState(2026), message, llmFor(spec()), [],
+    async candidate => solveChoiceSegment(candidate, request) as never, now,
+  )
+
+  const anchor = buildTimeAnchor(new Date(2026, 8, 10, 12))
+  const parsed = parsePlanningWindow('计划在2026年内完成一次旅行', anchor)
+  assert.deepEqual(parsed, { referenceDate: '2026-09-10', requestedYear: 2026, intent: 'future' }, 'named-year future context')
+  assert.equal(parsePlanningWindow('不要再推荐过去的时段，计划2026年内完成旅行', anchor)?.intent, 'future', 'negated past recommendation is not historical intent')
+  assert.equal(parsePlanningWindow('2025年没去成，计划2026年内完成旅行', anchor)?.requestedYear, 2026, 'historical context does not override requested future year')
+  assert.equal(parsePlanningWindow('计划在2025年或2026年内完成旅行', anchor), null, 'conflicting future years remain ambiguous')
+  assert.equal(parsePlanningWindow('历史回测2025年，计划2026年内完成旅行', anchor), null, 'historical and future years remain ambiguous')
+
+  const future = await run('计划在2026年内完成一次旅行', new Date(2026, 8, 10, 12))
+  assert.deepEqual(future.state.spec?.segments[0]?.options.map(o => o.date), ['2026-10-01'], 'past option removed before solve')
+  assert.equal(future.state.solve?.recommended, 'valid', 'solver accepts only same-year future option')
+  assert.match(future.reply, /已排除规划窗口外的候选/, 'reply records deterministic rejection')
+
+  const expired = await run('计划在2025年内完成一次旅行', new Date(2026, 8, 10, 12))
+  assert.equal(expired.state.solve, undefined, 'expired requested year does not solve')
+  assert.match(expired.reply, /2025 年已结束/, 'expired requested year is explicit')
+  assert.doesNotMatch(expired.reply, /2027/, 'expired year is not silently rolled over')
+
+  const historical = await run('历史回测2026年内的方案', new Date(2026, 8, 10, 12))
+  assert.deepEqual(historical.state.spec?.segments[0]?.options.map(o => o.date), ['2026-09-01', '2026-10-01', '2027-01-01'], 'historical lookup bypass preserved')
+  assert.equal(historical.state.solve?.recommended, 'past', 'historical solver may select historical option')
+
+  const refreshedState = newState(2026)
+  await runTurn(refreshedState, '计划在2026年内完成一次旅行', llmFor(spec()), [],
+    async candidate => solveChoiceSegment(candidate, request) as never, new Date(2026, 8, 10, 12))
+  const refreshed = await runTurn(refreshedState, '计划在2026年内完成一次旅行', llmFor(spec()), [],
+    async candidate => solveChoiceSegment(candidate, request) as never, new Date(2026, 9, 2, 12))
+  assert.equal(refreshed.state.solve, undefined, 'later eligible turn refreshes reference date')
+  assert.match(refreshed.reply, /2026-10-02 至 2026-12-31/, 'later reference date is used')
+  assert.equal('planningWindow' in refreshed.state, false, 'planning reference is not persisted in TripState')
+  console.log('6. Issue #2 未来年度窗口 OK(runTurn→validateSpec→solve:排除过去候选/拒绝过期年/保留历史回测/刷新参考日)')
+}
+
+console.log('\nTIME-EVAL TESTS: 6/6 OK(确定性部分,CI 口径)')
 
 // ---- 真模型巡检(--real,只读报告,不进 CI 红线) ----------------------------------
 if (process.argv.includes('--real')) {

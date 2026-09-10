@@ -1,5 +1,5 @@
 /**
- * 冒烟:不启动完整 dsh 运行时,验证插件注册 + execute + 桥接 + Python 引擎全链路。
+ * 冒烟:不启动完整 dsh 运行时,验证插件注册 + execute + 纯 TS 求解器及隔离能力夹具。
  * 运行(在 ts/ 下):npx tsx scripts/smoke.ts
  */
 
@@ -29,6 +29,7 @@ async function main() {
   const approvalReasons: string[] = []
   const selectedEffects: string[] = []
   const effectSummaries: string[] = []
+  let issueNow = new Date(2026, 8, 10, 12)
   // pre-execute 监听器捕获:账号会话授权闸(RFC 支柱④进代码)在 apply() 里经 ctx.on 挂注册表
   type PreDecision = { kind: 'allow' | 'deny' | 'ask'; reason?: string }
   type PreExecute = { name?: string; agent?: object; callId?: string; arguments?: unknown }
@@ -65,7 +66,10 @@ async function main() {
     }
     return interpretEffect(fx as never)
   }
-  apply(ctx, cfg, { effect: fixtureEffect as never })
+  apply(ctx, cfg, {
+    effect: fixtureEffect as never,
+    clock: () => issueNow,
+  })
 
   console.log(`registered tools: ${registered.map(t => t.name).join(', ')}`)
 
@@ -95,7 +99,7 @@ async function main() {
   }, null)
   console.log(`motivation saved -> ${JSON.stringify(saved).slice(0, 80)}...`)
 
-  // 2) 可行性引擎:洱海金标准用例,经桥接跑 Python Z3
+  // 2) 可行性引擎:洱海金标准用例,经注册工具跑纯 TS 求解路径
   const payload = JSON.parse(await readFile(join('..', 'data', 'golden_erhai.json'), 'utf-8'))
   const feasibility = byName('gotry_feasibility_check')
   const result = await feasibility.execute({ payload }, null) as {
@@ -107,6 +111,84 @@ async function main() {
   }
   console.log(`\nfeasibility: recommended=${result.recommended}, via=${result.via}, latency=${result.latency_ms}ms\n`)
   console.log(result.answer_md)
+
+  // Issue #2:实际注册工具 execute → parseCandidate → segmentsFromCandidate
+  // → applyPlanningWindow → solve。日期下界来自 apply 注入的宿主时钟,不来自 payload。
+  const datedCandidates = (payload.candidates as Record<string, unknown>[]).slice(0, 3).map((candidate, i) => ({
+    ...candidate,
+    date: i === 0 ? '2026-09-01' : i === 1 ? '2026-10-01' : '2027-01-01',
+  }))
+  const futurePayload = {
+    ...payload,
+    candidates: datedCandidates,
+    planning: { intent: 'future', requested_year: 2026 },
+  }
+  const noPlanningResult = await feasibility.execute({
+    payload: { ...payload, candidates: datedCandidates.slice(0, 2) },
+  }, null) as {
+    ok?: boolean
+    code?: string
+    recommended?: string | null
+    verdicts?: Array<Record<string, unknown>>
+    summary?: string
+    evidence?: string
+  }
+  const futureResult = await feasibility.execute({ payload: futurePayload }, null) as {
+    ok?: boolean
+    code?: string
+    recommended?: string | null
+    verdicts?: Array<Record<string, unknown>>
+    summary?: string
+    evidence?: string
+  }
+  const pastId = String((datedCandidates[0] as Record<string, unknown>)?.['id'])
+  const validId = String((datedCandidates[1] as Record<string, unknown>)?.['id'])
+  const nextYearId = String((datedCandidates[2] as Record<string, unknown>)?.['id'])
+  if (noPlanningResult.ok !== true || noPlanningResult.recommended !== validId
+    || noPlanningResult.verdicts?.some(v => v['candidate_id'] === pastId || v['candidate_id'] === nextYearId)) {
+    throw new Error(`FAIL: registered no-planning path accepted a past/cross-year candidate: ${JSON.stringify(noPlanningResult).slice(0, 240)}`)
+  }
+  const allPastResult = await feasibility.execute({
+    payload: { ...payload, candidates: datedCandidates.map(candidate => ({ ...candidate, date: '2026-09-01' })) },
+  }, null) as { ok?: boolean; code?: string; summary?: string; evidence?: string }
+  if (allPastResult.ok !== false || allPastResult.code !== 'planning_window_rejected'
+    || allPastResult.evidence !== undefined || !/2026-09-10/.test(allPastResult.summary ?? '')) {
+    throw new Error(`FAIL: no-planning all-past dates should be structured validation rejection: ${JSON.stringify(allPastResult).slice(0, 240)}`)
+  }
+  const incidentsPath = join(smokeRoot, 'gotry-state', 'incidents.jsonl')
+  const incidentBytesBeforeDateValidation = await readFile(incidentsPath, 'utf-8').catch(() => '')
+  if (futureResult.ok !== true || futureResult.recommended !== validId
+    || futureResult.verdicts?.some(v => v['candidate_id'] === pastId || v['candidate_id'] === nextYearId)) {
+    throw new Error(`FAIL: registered Issue #2 path accepted a past candidate: ${JSON.stringify(futureResult).slice(0, 240)}`)
+  }
+  const expiredResult = await feasibility.execute({
+    payload: { ...futurePayload, planning: { intent: 'future', requested_year: 2025 } },
+  }, null) as { ok?: boolean; code?: string; summary?: string; evidence?: string }
+  if (expiredResult.ok !== false || expiredResult.code !== 'planning_window_rejected'
+    || expiredResult.evidence !== undefined || !/2025 年已结束/.test(JSON.stringify(expiredResult))) {
+    throw new Error(`FAIL: registered Issue #2 path did not reject expired year: ${JSON.stringify(expiredResult).slice(0, 240)}`)
+  }
+  const historicalResult = await feasibility.execute({
+    payload: { ...payload, candidates: datedCandidates, planning: { intent: 'historical', requested_year: 2026 } },
+  }, null) as { ok?: boolean; recommended?: string | null; verdicts?: Array<Record<string, unknown>> }
+  const historicalIds = new Set((historicalResult.verdicts ?? []).map(v => String(v['candidate_id'])))
+  if (historicalResult.ok !== true || !historicalIds.has(pastId) || !historicalIds.has(validId) || !historicalIds.has(nextYearId)) {
+    throw new Error(`FAIL: explicit historical mode should preserve dated candidates: ${JSON.stringify(historicalResult).slice(0, 240)}`)
+  }
+  issueNow = new Date(2026, 9, 2, 12)
+  const advancedClockResult = await feasibility.execute({
+    payload: { ...payload, candidates: [datedCandidates[1]] },
+  }, null) as { ok?: boolean; code?: string; summary?: string; evidence?: string }
+  if (advancedClockResult.ok !== false || advancedClockResult.code !== 'planning_window_rejected'
+    || advancedClockResult.evidence !== undefined || !/2026-10-02/.test(advancedClockResult.summary ?? '')) {
+    throw new Error(`FAIL: advanced host clock should reject now-expired dated candidate: ${JSON.stringify(advancedClockResult).slice(0, 240)}`)
+  }
+  const incidentBytesAfterDateValidation = await readFile(incidentsPath, 'utf-8').catch(() => '')
+  if (incidentBytesAfterDateValidation !== incidentBytesBeforeDateValidation) {
+    throw new Error('FAIL: expected date rejections entered incident path')
+  }
+  issueNow = new Date(2026, 8, 10, 12)
+  console.log(`Issue #2 registered execute path: dateless compatible, no-planning past/mixed guarded, valid=${validId} recommended, historical explicit, expired-year and advanced-clock rejection structured`)
 
   // 3) wish pool:把不可行的憧憬连同成行条件放入「下一次出发」
   const wish = byName('gotry_wish_pool_add')
@@ -420,7 +502,8 @@ async function main() {
     ledger.settleWorkflowRun('art-probe-1', '# 交付·账本权威\nD1 大理\nD2 洱海')
 
     const listTool = byName('gotry_artifacts_list')
-    const ledList = await listTool.execute({}, null) as { ok?: boolean; artifacts?: Array<{ source?: string; id?: string; status?: string }>; total?: number }
+    const artifactExec = { agent: { session: { header: { cwd: cwdDir } } } }
+    const ledList = await listTool.execute({}, artifactExec) as { ok?: boolean; artifacts?: Array<{ source?: string; id?: string; status?: string }>; total?: number }
     const run = ledList.artifacts?.find(a => a.id === 'art-probe-1')
     if (!ledList.ok || !run || run.source !== 'async-run' || run.status !== 'settled') {
       throw new Error(`FAIL: artifacts list 应发现账本已交付工单,实际:${JSON.stringify(ledList).slice(0, 200)}`)
@@ -431,11 +514,16 @@ async function main() {
     }
 
     const readTool = byName('gotry_artifacts_read')
-    const r1 = await readTool.execute({ path: 'art-probe-1' }, null) as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string }
+    const r1 = await readTool.execute({ path: 'art-probe-1' }, artifactExec) as { ok?: boolean; path?: string; offset?: number; lines?: Array<{ number: number; text: string }>; totalLines?: number; lang?: string }
     if (!r1.ok || r1.lines?.[0]?.number !== 1 || !r1.lines?.[0]?.text.includes('交付·账本权威') || r1.lang !== 'markdown') {
       throw new Error(`FAIL: 裸工单 id 应从账本读出行号视图,实际:${JSON.stringify(r1).slice(0, 200)}`)
     }
-    const view = readTool.presentResult?.({ path: 'art-probe-1' }, r1) as { card?: string; path?: string; offset?: number; lines?: unknown[]; totalLines?: number; lang?: string }
+    const readOutput = (readTool as unknown as { output?: { render?: (a: Record<string, unknown>, v: unknown) => Array<{ type?: string; text?: string }>; presentationMeta?: (a: Record<string, unknown>, v: unknown) => unknown } }).output
+    const view = readTool.presentResult?.({ path: 'art-probe-1' }, {
+      isError: false,
+      content: readOutput?.render?.({ path: 'art-probe-1' }, r1) ?? [],
+      meta: readOutput?.presentationMeta?.({ path: 'art-probe-1' }, r1),
+    }) as { card?: string; path?: string; offset?: number; lines?: unknown[]; totalLines?: number; lang?: string }
     if (view?.card !== 'read' || view.path !== r1.path || view.offset !== 1 || view.lines?.length !== r1.lines?.length || view.totalLines !== r1.totalLines || view.lang !== 'markdown') {
       throw new Error(`FAIL: read 卡字段不齐,实际:${JSON.stringify(view).slice(0, 200)}`)
     }
@@ -448,8 +536,48 @@ async function main() {
     if (badPath.ok) throw new Error('FAIL: 越界路径必须被拒')
     const badExt = await readArtifact({ stateRoot: smokeRoot, cwd: cwdDir, path: 'gotry-state/gotry-state.db' })
     if (badExt.ok) throw new Error('FAIL: 白名单外扩展名(.db)必须被拒')
+
+    // 15b) dsh Host presenter 契约(issue #285):
+    //   - list 的 presentResult 是 SearchPathsResultView(card:'search' shape:'paths');
+    //     DSH Web 的 public Client adapter separately consumes the runtime block;
+    //   - read 的 presentCall 加 locations:[{path,line:1}],editor 视图在 call 阶段就 follow-along;
+    //   - read 的 presentResult 是 ReadResultView(path/offset/lines/totalLines/lang 齐全),
+    //     Host content[0] 是 source 身份行(显示「从哪个产物读」,避免把旧摘要当新内容)。
+    const listPayload = await listTool.execute({ limit: 5 }, artifactExec) as { ok?: boolean; artifacts?: Array<{ path?: string }>; total?: number; truncated?: boolean }
+    const listOutput = (listTool as unknown as { output?: { render?: (a: Record<string, unknown>, v: unknown) => Array<{ type?: string; text?: string }>; presentationMeta?: (a: Record<string, unknown>, v: unknown) => unknown } }).output
+    const listView = listTool.presentResult?.({}, {
+      isError: false,
+      content: listOutput?.render?.({}, listPayload) ?? [],
+      meta: listOutput?.presentationMeta?.({}, listPayload),
+    }) as { card?: string; shape?: string; paths?: string[]; truncated?: boolean; total?: number; title?: string; content?: Array<{ text?: string }> }
+    if (listView?.card !== 'search' || listView?.shape !== 'paths') {
+      throw new Error(`FAIL: list 卡片应为 card='search' shape='paths',实际:${JSON.stringify({ card: listView?.card, shape: listView?.shape }).slice(0, 200)}`)
+    }
+    if (!Array.isArray(listView.paths) || listView.paths.length !== (listPayload.artifacts?.length ?? 0)) {
+      throw new Error(`FAIL: list paths 长度应等于 artifacts 长度,实际 ${listView.paths?.length} vs ${listPayload.artifacts?.length}`)
+    }
+    if (listView.truncated !== Boolean(listPayload.truncated) || listView.total !== (listPayload.total ?? 0)) {
+      throw new Error(`FAIL: list truncated/total 应与 execute 返回一致,实际 truncated=${listView.truncated} total=${listView.total} vs ${listPayload.truncated}/${listPayload.total}`)
+    }
+    const readCall = (readTool as unknown as { presentCall?: (a: Record<string, unknown>) => { card?: string; kind?: string; locations?: Array<{ path?: string; line?: number }> } }).presentCall?.({ path: 'trip-2027-probe.md' }) as { card?: string; kind?: string; locations?: Array<{ path?: string; line?: number }> }
+    if (readCall?.kind !== 'read' || !Array.isArray(readCall.locations) || readCall.locations[0]?.path !== 'trip-2027-probe.md') {
+      throw new Error(`FAIL: read presentCall 应 kind='read' + locations[0].path='trip-2027-probe.md',实际:${JSON.stringify(readCall).slice(0, 200)}`)
+    }
+    // 复用 r1(账本已交付工单,绝对 path),断言 read 卡片字段 + identity 源行
+    const readView = readTool.presentResult?.({ path: 'art-probe-1' }, {
+      isError: false,
+      content: readOutput?.render?.({ path: 'art-probe-1' }, r1) ?? [],
+      meta: readOutput?.presentationMeta?.({ path: 'art-probe-1' }, r1),
+    }) as { card?: string; path?: string; offset?: number; lines?: unknown[]; totalLines?: number; lang?: string; content?: Array<{ type?: string; text?: string }> }
+    if (readView?.card !== 'read' || readView.path !== r1.path || readView.totalLines !== r1.totalLines || readView.lang !== 'markdown') {
+      throw new Error(`FAIL: read 卡片字段不齐,实际:${JSON.stringify(readView).slice(0, 200)}`)
+    }
+    const identityText = readView.content?.[0]?.text ?? ''
+    if (!identityText.includes('source:') || !identityText.includes(r1.path ?? '')) {
+      throw new Error(`FAIL: read fallback content[0] 应含 source 身份行 + 完整 path,实际:${identityText.slice(0, 200)}`)
+    }
     rmSync(cwdDir, { recursive: true, force: true })
-    console.log(`artifacts: ledger run + cwd md discovered; read window(${r2.ok ? r2.lines.length : '?'} lines @10) + read card; path/ext guardrails hold`)
+    console.log(`artifacts: ledger run + cwd md discovered; read window(${r2.ok ? r2.lines.length : '?'} lines @10) + read card; list→SearchPathsResultView + read locations + source identity; path/ext guardrails hold`)
   }
 
   // 16) 产物事实闸(issue #46,第 21 工具):事实落账(hit 正事实 + miss 负事实,隔离 stateRoot)

@@ -46,6 +46,8 @@ export interface MotivationProfile {
 export interface Candidate {
   id: string
   name: string
+  /** 可选的明确出行日;未提供时保持旧版无日期可行性计算语义 */
+  date?: string
   hub: string
   bufferOutMin: number
   bufferRetMin: number
@@ -147,6 +149,7 @@ export function parseCandidate(d: Record<string, unknown>): Candidate {
   return {
     id: String(d['id']),
     name: String(d['name']),
+    date: typeof d['date'] === 'string' ? d['date'] : undefined,
     hub: String(d['hub']),
     bufferOutMin: Number(d['buffer_out_min'] ?? 60),
     bufferRetMin: Number(d['buffer_ret_min'] ?? 60),

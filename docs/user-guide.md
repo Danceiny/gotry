@@ -79,7 +79,7 @@ npx tsx scripts/state-cli.ts forget --state-root <root> wish <wish_id>
 
 **想看生成的文件(行程 md、工单交付)不用去翻目录**,两条路:
 
-1. 对话里直接说「看看我生成的行程 / 打开上次的规划」——GoTry 会用 `gotry_artifacts_list` 列出在册产物,再用 `gotry_artifacts_read` 以行号视图打开(只读,支持翻页);
+1. 对话里直接说「看看我生成的行程 / 打开上次的规划」——GoTry 会用 `gotry_artifacts_list` 列出在册产物，再用 `gotry_artifacts_read` 以**带行号的文件视图**读取(只读,支持翻页;**首行会显示「source + 完整 path」**,并显示内容版本避免把旧摘要当新内容)。公开 `./client` adapter 在 DSH Web 中按 runtime `block` 渲染自定义 list/read 卡，路径可点击；实际 fresh-profile list→select/open→read→edit→updated-read 证据由 `ts/scripts/dsh-artifact-web-e2e.ts` 生成。workspace/sidebar 文件树仍可作为额外预览面。可读范围 = 你的 gotry stateRoot + **会话工作目录**(排除 `node_modules`/`.git`);**只读文本类**(`md/txt/json/jsonl/csv/log/yaml/yml`),超过 2 MB、跨出允许目录、扩展名不在白名单、或路径是符号链接越界——都会返回带 `hint` 的 `ok: false`;
 2. **dsh web 侧栏工作台**(dsh-better-sidebar,dsh-market 第一 UI 组件):`gotry web` 页面右侧展开工作台,文件树里点开工作区里的行程 md/工单交付,即见产品级渲染(表格/图表/PDF 都支持)。装法:`npx @danceiny/gotry doctor --fix`(体检报告 `gotry-state/doctor-report.md` 也在这个工作台里预览);未装也不影响路 1。
 
 ## 进阶:headless 一问一答

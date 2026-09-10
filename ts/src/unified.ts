@@ -57,6 +57,8 @@ export interface StaySpecTS {
 export interface SegmentOptionTS {
   id: string
   label: string
+  /** 候选级日期;缺省时使用所属 segment.date */
+  date?: string
   move?: MoveSpecTS
   stay?: StaySpecTS
   score?: number
@@ -109,6 +111,7 @@ export function segmentsFromCandidate(req: TravelRequest, candidates: Candidate[
   const options: SegmentOptionTS[] = candidates.map(c => ({
     id: c.id,
     label: c.name,
+    date: c.date,
     score: c.imageryMatch,
     bestMonths: c.bestMonths,
     minDays: c.minDaysForPurpose,
