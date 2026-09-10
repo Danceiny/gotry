@@ -26,6 +26,7 @@ import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDid
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
+import { factsFromHotel } from '../src/bookable-facts.ts'
 
 let pass = 0
 let fail = 0
@@ -285,16 +286,24 @@ console.log('H. flyaiSearch hotel(飞猪官方 search-hotel)')
     }
     assert(/\[实时API:flyai/.test(hr.evidence), '证据链 [实时API:flyai@*]')
   }
-  // H2 离线解析(实测 2026-08-29 大理形状):打码价保 priceRaw、数字价 0、缺名条目跳过
+  // H2 离线 malformed-batch 合同:有效酒店 + malformed sibling → 整体 error,zero facts
   const fakeDir = mkdtempSync(join(tmpdir(), 'flyai-hotel-fake-'))
   const fakeCliH = join(fakeDir, 'flyai-hotel-fake')
   writeFileSync(fakeCliH, '#!/bin/sh\necho \'{"data":{"itemList":[{"name":"大理A 酒店","shId":"1","star":"高档型","rate":null,"price":"\\u00a57xx","address":"addr","interestsPoi":"近洱海","detailUrl":"https://router.feizhu.com/x"},{"star":"舒适型"}]}}\'\nexit 0\n', { mode: 0o755 })
   const h2 = await flyaiSearch({ kind: 'hotel', destName: '大理', cliBin: fakeCliH })
-  assert(h2.verdict === 'hit' && h2.hotels?.length === 1, '酒店解析:缺名条目跳过,1 条有效', h2)
-  const h0 = h2.hotels?.[0]
+  assert(h2.verdict === 'error' && h2.hotels === undefined, '酒店有效+malformed sibling → 整体 structured error', h2)
+  assert(/hotel itemList malformed.*1\/2/i.test(h2.evidence), '酒店 mixed error 暴露 malformed/总条目比例', h2)
+  const h2Facts = factsFromHotel({ source: 'flyai-hotel', destination: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03', verdict: h2.verdict, options: 0, evidence: h2.evidence, fetchedAt: new Date().toISOString() })
+  assert(h2Facts.length === 0, '酒店 mixed error 不落酒店事实', h2Facts)
+
+  // H3 单一完整合法酒店 → hit/1,字段保真(priceRaw/star/jumpUrl)
+  writeFileSync(fakeCliH, '#!/bin/sh\necho \'{"data":{"itemList":[{"name":"大理A 酒店","shId":"1","star":"高档型","rate":null,"price":"\\u00a57xx","address":"addr","interestsPoi":"近洱海","detailUrl":"https://router.feizhu.com/x"}]}}\'\nexit 0\n', { mode: 0o755 })
+  const h3 = await flyaiSearch({ kind: 'hotel', destName: '大理', cliBin: fakeCliH })
+  assert(h3.verdict === 'hit' && h3.hotels?.length === 1, '单一完整酒店 → hit/1', h3)
+  const h0 = h3.hotels?.[0]
   assert(h0?.name === '大理A 酒店' && h0?.priceRaw === '¥7xx' && h0?.price === 0, '打码价保 priceRaw 原值(数字价 0)', h0)
   assert(h0?.star === '高档型' && h0?.hotelId === '1' && h0?.jumpUrl === 'https://router.feizhu.com/x', 'star/jumpUrl(shId/detailUrl)透传', h0)
-  // H3 参数闸:无目的地 / 日期不成对 / 非规整日期 都走结构化 error,不发上游
+  // H4 参数闸:无目的地 / 日期不成对 / 非规整日期 都走结构化 error,不发上游
   const hb1 = await flyaiSearch({ kind: 'hotel' })
   assert(hb1.verdict === 'error' && /destName|目的地/.test(hb1.error ?? ''), '缺目的地 → bad args error', hb1)
   const hb2 = await flyaiSearch({ kind: 'hotel', destName: '大理', checkInDate: '2026-10-01' })

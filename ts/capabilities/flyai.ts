@@ -113,6 +113,7 @@ interface RawItem {
       seatClassName?: string
     }>
   }>
+  adultPrice?: string
   ticketPrice?: string
   /** 机/火与酒店条目的顶层 price(未鉴权态为打码串,机/火如 "1xxx",酒店如 "¥7xx") */
   price?: string
@@ -125,6 +126,51 @@ interface RawItem {
   address?: string
   interestsPoi?: string
   detailUrl?: string
+}
+
+interface ParsedItems<T> {
+  options: T[]
+  malformedCount: number
+}
+
+function nonEmptyText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  return text || undefined
+}
+
+function optionalText(value: unknown, allowNull = false): string | undefined | null {
+  if (value === undefined) return undefined
+  if (allowNull && value === null) return null
+  return nonEmptyText(value)
+}
+
+function positiveFiniteNumber(value: unknown): number | undefined {
+  const number = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim() ? Number(value.trim()) : Number.NaN
+  return Number.isFinite(number) && number > 0 ? number : undefined
+}
+
+function positiveFiniteDuration(value: unknown): number | undefined {
+  if (typeof value === 'number') return positiveFiniteNumber(value)
+  const text = nonEmptyText(value)
+  if (!text) return undefined
+  const minutes = /^(\d+(?:\.\d+)?)\s*分钟$/.exec(text)?.[1]
+  return positiveFiniteNumber(minutes ?? text)
+}
+
+function parseTransportPrice(value: unknown): { price: number; priceRaw?: string } | undefined {
+  const raw = nonEmptyText(value)
+  if (!raw) return undefined
+  const bare = raw.replace(/^¥\s*/, '')
+  if (/^\d+(?:\.\d+)?$/.test(bare)) {
+    const price = Number(bare)
+    return Number.isFinite(price) && price > 0 ? { price } : undefined
+  }
+  // 未鉴权态可能返回 1xxx/¥7xx；保留原值，但绝不把模糊串猜成数字。
+  if (/^\d+x+$/.test(bare)) return { price: 0, priceRaw: raw }
+  return undefined
 }
 
 /**
@@ -265,7 +311,7 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
     }
     return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] ${r.error ?? `exit ${r.code}`}`, error: r.error ?? r.stderr.replace(/\s+/g, ' ').slice(0, 200) }
   }
-  let items: RawItem[]
+  let items: unknown[]
   try {
     // main-lane 加固的扫描器:容忍 npx 前缀日志/不完整对象——data:null 语义失败
     // (issue #24)的「出发日期非法」原话经 raw stdout 片段进 error 终态,语义不丢
@@ -278,60 +324,133 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   }
 
   if (q.kind === 'hotel') {
-    const hotels = parseHotelItems(items)
+    const parsed = parseHotelItems(items)
+    if (parsed.malformedCount > 0) return malformedItemListResult(q.kind, latencyMs, ts, parsed.malformedCount, items.length)
+    const hotels = parsed.options
     const verdict: FlyaiResult['verdict'] = hotels.length > 0 ? 'hit' : 'miss'
     return { kind: q.kind, latencyMs, ok: true, via: 'flyai', verdict, evidence: `[实时API:flyai@${ts}] ${hotels.length}/${items.length} hotel options`, hotels }
   }
-  const options = parseTransportItems(items)
+  const parsed = parseTransportItems(items)
+  if (parsed.malformedCount > 0) return malformedItemListResult(q.kind, latencyMs, ts, parsed.malformedCount, items.length)
+  const options = parsed.options
   const verdict: FlyaiResult['verdict'] = options.length > 0 ? 'hit' : 'miss'
   return { kind: q.kind, latencyMs, ok: true, via: 'flyai', verdict, evidence: `[实时API:flyai@${ts}] ${options.length}/${items.length} ${q.kind} options`, options }
 }
 
-/** 机/火条目 → FlyaiOption(journeys[0].segments[0];缺航班号/时刻的条目跳过) */
-function parseTransportItems(items: RawItem[]): FlyaiOption[] {
-  const options: FlyaiOption[] = []
-  for (const it of items) {
-    const seg = it.journeys?.[0]?.segments?.[0]
-    if (!seg?.marketingTransportNo || !seg.depDateTime) continue
-    const rawPrice = it.ticketPrice ?? it.price ?? ''
-    const numericPrice = Number(rawPrice)
-    options.push({
-      no: seg.marketingTransportNo,
-      name: seg.marketingTransportName ?? '',
-      depDateTime: seg.depDateTime ?? '',
-      arrDateTime: seg.arrDateTime ?? '',
-      depStation: seg.depStationName ?? '',
-      arrStation: seg.arrStationName ?? '',
-      durationMin: Number(seg.duration ?? 0) || 0,
-      price: Number.isFinite(numericPrice) && numericPrice > 0 ? numericPrice : 0,
-      priceRaw: /^\d+$/.test(rawPrice) ? undefined : rawPrice || undefined,
-      seatClass: seg.seatClassName,
-      jumpUrl: it.jumpUrl,
-    })
+function malformedItemListResult(kind: FlyaiKind, latencyMs: number, ts: string, malformedCount: number, total: number): FlyaiResult {
+  const label = kind === 'hotel' ? 'hotel' : 'transport'
+  const error = `FlyAI ${label} itemList malformed: ${malformedCount}/${total} item(s) failed typed validation`
+  return {
+    kind,
+    latencyMs,
+    ok: false,
+    via: 'flyai-error',
+    verdict: 'error',
+    evidence: `[实时API:flyai@error@${ts}] ${label} itemList malformed (${malformedCount}/${total} items failed typed validation; valid siblings discarded)`,
+    error,
   }
-  return options
 }
 
-/** 酒店条目 → FlyaiHotelOption(实测 2026-08-29:price 未鉴权为打码串"¥7xx",rate 常 null) */
-function parseHotelItems(items: RawItem[]): FlyaiHotelOption[] {
-  const hotels: FlyaiHotelOption[] = []
-  for (const it of items) {
-    if (!it.name) continue
-    const rawPrice = String(it.price ?? '')
-    // 打码价如 "¥7xx" 绝不能截成数字 7(会伪装成真价)——仅全数字串才落 price
-    const bare = rawPrice.replace(/^[¥]/, '')
-    const numericPrice = Number(bare)
-    hotels.push({
-      name: it.name,
-      star: it.star,
-      price: /^\d+(\.\d+)?$/.test(bare) && numericPrice > 0 ? numericPrice : 0,
-      priceRaw: rawPrice || undefined,
-      rate: it.rate != null ? String(it.rate) : undefined,
-      address: it.address,
-      poi: it.interestsPoi,
-      hotelId: it.shId,
-      jumpUrl: it.detailUrl,
+/** 机/火条目 → FlyaiOption;非空列表含任一不完整条目即整体 malformed */
+function parseTransportItems(items: unknown[]): ParsedItems<FlyaiOption> {
+  const options: FlyaiOption[] = []
+  let malformedCount = 0
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      malformedCount += 1
+      continue
+    }
+    const it = raw as RawItem
+    const journey = Array.isArray(it.journeys) ? it.journeys[0] : undefined
+    const seg = journey && typeof journey === 'object' && !Array.isArray(journey) && Array.isArray(journey.segments)
+      ? journey.segments[0]
+      : undefined
+    if (!seg || typeof seg !== 'object' || Array.isArray(seg)) {
+      malformedCount += 1
+      continue
+    }
+    const no = nonEmptyText(seg.marketingTransportNo)
+    const name = optionalText(seg.marketingTransportName)
+    const depDateTime = nonEmptyText(seg.depDateTime)
+    const arrDateTime = nonEmptyText(seg.arrDateTime)
+    const depStation = nonEmptyText(seg.depStationName)
+    const arrStation = nonEmptyText(seg.arrStationName)
+    const durationMin = positiveFiniteDuration(seg.duration)
+    const rawPriceValue = it.adultPrice !== undefined
+      ? it.adultPrice
+      : it.ticketPrice !== undefined
+        ? it.ticketPrice
+        : it.price
+    const parsedPrice = parseTransportPrice(rawPriceValue)
+    const seatClass = optionalText(seg.seatClassName)
+    const jumpUrl = optionalText(it.jumpUrl)
+    if (!no || !depDateTime || !arrDateTime || !depStation || !arrStation || durationMin === undefined || !parsedPrice
+      || (seg.marketingTransportName !== undefined && name === undefined)
+      || (seg.seatClassName !== undefined && seatClass === undefined)
+      || (it.jumpUrl !== undefined && jumpUrl === undefined)) {
+      malformedCount += 1
+      continue
+    }
+    options.push({
+      no,
+      name: name ?? '',
+      depDateTime,
+      arrDateTime,
+      depStation,
+      arrStation,
+      durationMin,
+      price: parsedPrice.price,
+      priceRaw: parsedPrice.priceRaw,
+      seatClass: seatClass ?? undefined,
+      jumpUrl: jumpUrl ?? undefined,
     })
   }
-  return hotels
+  return { options, malformedCount }
+}
+
+/** 酒店条目 → FlyaiHotelOption;非空列表含任一不完整条目即整体 malformed */
+function parseHotelItems(items: unknown[]): ParsedItems<FlyaiHotelOption> {
+  const hotels: FlyaiHotelOption[] = []
+  let malformedCount = 0
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      malformedCount += 1
+      continue
+    }
+    const it = raw as RawItem
+    const name = nonEmptyText(it.name)
+    const star = optionalText(it.star)
+    const rawPrice = optionalText(it.price)
+    const rate = optionalText(it.rate, true)
+    const address = optionalText(it.address)
+    const poi = optionalText(it.interestsPoi)
+    const hotelId = optionalText(it.shId)
+    const jumpUrl = optionalText(it.detailUrl)
+    if (!name
+      || (it.star !== undefined && star === undefined)
+      || (it.price !== undefined && rawPrice === undefined)
+      || (it.rate !== undefined && rate === undefined)
+      || (it.address !== undefined && address === undefined)
+      || (it.interestsPoi !== undefined && poi === undefined)
+      || (it.shId !== undefined && hotelId === undefined)
+      || (it.detailUrl !== undefined && jumpUrl === undefined)) {
+      malformedCount += 1
+      continue
+    }
+    // 打码价如 "¥7xx" 绝不能截成数字 7(会伪装成真价)——仅全数字串才落 price
+    const bare = (rawPrice ?? '').replace(/^[¥]/, '')
+    const numericPrice = Number(bare)
+    hotels.push({
+      name,
+      star: star ?? undefined,
+      price: /^\d+(\.\d+)?$/.test(bare) && numericPrice > 0 ? numericPrice : 0,
+      priceRaw: rawPrice || undefined,
+      rate: rate ?? undefined,
+      address: address ?? undefined,
+      poi: poi ?? undefined,
+      hotelId: hotelId ?? undefined,
+      jumpUrl: jumpUrl ?? undefined,
+    })
+  }
+  return { options: hotels, malformedCount }
 }
