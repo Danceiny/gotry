@@ -1,3 +1,5 @@
+[English](deerflow-research.md) | [简体中文](deerflow-research.zh-CN.md)
+
 # DeerFlow 研究 → gotry 优化目标与方法(issue #10)
 
 > 状态:frozen(调研底稿,2026-08-25;issue #10)

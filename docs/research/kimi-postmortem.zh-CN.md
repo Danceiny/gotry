@@ -1,3 +1,5 @@
+[English](kimi-postmortem.md) | [简体中文](kimi-postmortem.zh-CN.md)
+
 # Kimi 行程对话复盘:一次真实的不满,GoTry 的反例教材
 
 > 状态:frozen(复盘教材,2026-08-22)

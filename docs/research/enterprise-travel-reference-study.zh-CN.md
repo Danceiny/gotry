@@ -1,3 +1,5 @@
+[English](enterprise-travel-reference-study.md) | [简体中文](enterprise-travel-reference-study.zh-CN.md)
+
 # 企业级差旅 Agent 系统参考研究 → gotry 借鉴决策(2026-09-03)
 
 > 状态:frozen(参考研究,2026-09-03;来源脱敏)

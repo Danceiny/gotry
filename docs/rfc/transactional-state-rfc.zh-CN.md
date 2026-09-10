@@ -1,3 +1,5 @@
+[English](transactional-state-rfc.md) | [简体中文](transactional-state-rfc.zh-CN.md)
+
 # RFC:GoTry 事务化状态基座(Transaction State Backbone)——业界调研与落地执行计划
 
 > 状态:**accepted**(2026-08-28 founder 指令「按你的建议来」——D1-D5 全部按建议执行;TS-0..TS-4 已落地,TS-5 触发式后置=D-15)

@@ -28,7 +28,7 @@
 ## 2. Naming Rules
 
 - kebab-case lowercase throughout; no `vN` version suffixes (version history belongs to git).
-- **Bilingual pairs (loopx convention)**: English base `x.md` + Chinese mirror `x.zh-CN.md`; machine-generated documents (e.g. `CHANGELOG.md`) are exempt. New docs land bilingual from day one; editing one side requires syncing the other in the same commit. Mechanical check: `node scripts/check-docs-i18n.mjs` (existence + heading/code-block/link count parity).
+- **Bilingual pairs (loopx convention)**: English base `x.md` + Chinese mirror `x.zh-CN.md`; machine-generated documents (e.g. `CHANGELOG.md`) and the tool-managed `superpowers/` namespace are exempt. New docs land bilingual from day one; editing one side requires syncing the other in the same commit. Mechanical check: `node scripts/check-docs-i18n.mjs` (existence + heading/code-block/link count parity).
 - Authorities: bare topic name (`architecture.md`, `roadmap.md`), no prefixes or suffixes.
 - RFC: `<topic>-rfc.md`; design: `<topic>-design.md` or `<role>-guide.md`; research: `<topic>-research.md`; postmortem: `<topic>-postmortem.md`.
 - Milestone memo: `<milestone>-<topic>.md` (e.g. `m3-web-gap.md`); one-off plans/specs: `YYYY-MM-DD-<topic>.md`.
@@ -107,7 +107,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 
 ### design/ (module design)
 
-> Subdirectory documents are currently Chinese originals at the base name; bilingual rollout proceeds in phases, and this table switches to `.zh-CN.md` links as mirrors land.
+> The table links the English bases; the Chinese mirror is the same name with a `.zh-CN` suffix.
 
 | Document | Concern |
 |---|---|

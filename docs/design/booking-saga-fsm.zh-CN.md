@@ -1,3 +1,5 @@
+[English](booking-saga-fsm.md) | [简体中文](booking-saga-fsm.zh-CN.md)
+
 # 预订 saga 状态机(booking_saga_fsm.v1)——issue #17 采纳面的设计正式化
 
 > 状态:**accepted**(2026-08-29 founder 指令「现在就推进」,对 issue #17 评估中「真正值取的三点」的执行)

@@ -1,3 +1,5 @@
+[English](m3-web-gap.md) | [简体中文](m3-web-gap.zh-CN.md)
+
 # M3 段 1:最小 Web 面实测与差距清单
 
 > 状态:frozen(历史备忘,2026-08-29)

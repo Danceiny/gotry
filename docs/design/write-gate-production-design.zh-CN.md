@@ -1,9 +1,11 @@
+[English](write-gate-production-design.md) | [简体中文](write-gate-production-design.zh-CN.md)
+
 # WriteGate 生产化设计提案(issue #225 / M5)
 
 > 定位:M5 交易闭环前的 WriteGate 生产化 proposal,定义授权 receipt、一次确认、供应商未知态、对账/补偿、佣金披露与 HotelByte 首供应链接入边界。
 > 状态:proposal(2026-09-08;只设计,不启封任何预订/支付实现)
-> 上游:[`../roadmap.md`](../roadmap.md) M5、[`../architecture.md`](../architecture.md) ADR-15/17/18/23、[`../rfc/transactional-state-rfc.md`](../rfc/transactional-state-rfc.md) §4.3、[`booking-saga-fsm.md`](booking-saga-fsm.md)、[`effect-interpreter.md`](effect-interpreter.md)、[`milestone-delivery-plan.md`](milestone-delivery-plan.md)、issue #136/#225。
-> 下游:M5 Entry 后的 WriteGate core/outbox/supplier adapter 实现 PR;B2B sponsor 披露面见 [`../milestones/m6-b2b-reuse-walkthrough.md`](../milestones/m6-b2b-reuse-walkthrough.md)。
+> 上游:[`../roadmap.md`](../roadmap.zh-CN.md) M5、[`../architecture.md`](../architecture.zh-CN.md) ADR-15/17/18/23、[`../rfc/transactional-state-rfc.md`](../rfc/transactional-state-rfc.zh-CN.md) §4.3、[`booking-saga-fsm.md`](booking-saga-fsm.zh-CN.md)、[`effect-interpreter.md`](effect-interpreter.zh-CN.md)、[`milestone-delivery-plan.md`](milestone-delivery-plan.zh-CN.md)、issue #136/#225。
+> 下游:M5 Entry 后的 WriteGate core/outbox/supplier adapter 实现 PR;B2B sponsor 披露面见 [`../milestones/m6-b2b-reuse-walkthrough.md`](../milestones/m6-b2b-reuse-walkthrough.zh-CN.md)。
 
 ## 0. 摘要
 

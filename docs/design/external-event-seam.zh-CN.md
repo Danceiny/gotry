@@ -1,3 +1,5 @@
+[English](external-event-seam.md) | [简体中文](external-event-seam.zh-CN.md)
+
 # 外部事件驱动接缝设计(#82 world2agent 兼容方向,issue #119 / D-31)
 
 > 状态:**设计文档(2026-09-04,issue #119)**。本期只设计不承诺实现——落地序列见 §6,

@@ -1,3 +1,5 @@
+[English](extension-privacy.md) | [简体中文](extension-privacy.zh-CN.md)
+
 # GoTry Session Bridge Privacy Policy / 隐私政策
 
 **Last updated / 最后更新:2026-08-30**

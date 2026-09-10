@@ -1,3 +1,5 @@
+[English](maka-research.md) | [简体中文](maka-research.zh-CN.md)
+
 # Apache Maka(Incubating)研究 → GoTry ADR-15 事务化状态基座对照
 
 > 状态:**研究底稿,结论供 founder 拍板**(2026-08-28)

@@ -1,3 +1,5 @@
+[English](dsh-plugins-shortlist.md) | [简体中文](dsh-plugins-shortlist.zh-CN.md)
+
 # dsh 社区插件选型(awesome-dsh-plugin.com 调研,issue #9)
 
 > 状态:frozen(选型调研,2026-08-29;issue #9;已集成项见正文标注)

@@ -1,3 +1,5 @@
+[English](hotelbyte-skills-design.md) | [简体中文](hotelbyte-skills-design.zh-CN.md)
+
 # hotelbyte-skills 架构设计(issue #5)
 
 > 状态:frozen(设计备忘,2026-08-25;issue #5)

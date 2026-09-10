@@ -1,3 +1,5 @@
+[English](s1-walkthrough.md) | [简体中文](s1-walkthrough.zh-CN.md)
+
 # S1 契约走查结论(自查版,呈创始人一分钟确认)
 
 > 状态:frozen(历史备忘,2026-08-22)

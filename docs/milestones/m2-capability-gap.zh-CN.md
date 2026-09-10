@@ -1,3 +1,5 @@
+[English](m2-capability-gap.md) | [简体中文](m2-capability-gap.zh-CN.md)
+
 # M2 数据源桥:hotelbyte-cli 命令缺口盘点(段 1 产出)
 
 > 状态:frozen(历史备忘,2026-08-22)

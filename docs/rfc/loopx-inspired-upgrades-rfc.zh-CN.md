@@ -1,3 +1,5 @@
+[English](loopx-inspired-upgrades-rfc.md) | [简体中文](loopx-inspired-upgrades-rfc.zh-CN.md)
+
 # RFC:LoopX RFC 群对 GoTry 的映射升级——四道接缝的最小切片
 
 > 状态:**accepted**(2026-08-27 founder 指令:「这些不用我拍板吧,loopx inspired 这些可以直接按建议执行」——四切片按 §7 顺序执行,每片落地时按 §11 同步状态面)

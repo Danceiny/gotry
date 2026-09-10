@@ -1,3 +1,5 @@
+[English](user-session-data-rfc.md) | [简体中文](user-session-data-rfc.zh-CN.md)
+
 # 用户会话数据面 RFC:用用户自己的账号会话补齐 OTA 检索(已立项)
 
 > 状态:**accepted**(G7/G8/G9 已于 2026-08-28 结算:G7 已立项、G8 暂缓、G9 已批;P0 同日完成,详见 §5)

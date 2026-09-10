@@ -1,3 +1,5 @@
+[English](adapter-authoring-guide.md) | [简体中文](adapter-authoring-guide.zh-CN.md)
+
 # Session 适配器作者指南(D-13)
 
 > 状态:living(工程手册)

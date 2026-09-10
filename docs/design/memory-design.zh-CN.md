@@ -1,3 +1,5 @@
+[English](memory-design.md) | [简体中文](memory-design.zh-CN.md)
+
 # GoTry 记忆域设计(C 端六层重设计)
 
 > 状态:**active design**(M4 交付「六层框架重设计」的正式设计文档;已落地部分以 ✅ 标注,分期增量见 §4)

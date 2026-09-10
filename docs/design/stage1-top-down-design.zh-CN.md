@@ -1,3 +1,5 @@
+[English](stage1-top-down-design.md) | [简体中文](stage1-top-down-design.zh-CN.md)
+
 # Stage 1 顶层设计:自顶向下(契约 → 循环 → 智能接真)
 
 > **状态速览**:

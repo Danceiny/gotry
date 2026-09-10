@@ -1,3 +1,5 @@
+[English](m4-calibration-questions.md) | [简体中文](m4-calibration-questions.zh-CN.md)
+
 # M4 校准发问清单(2026-08-23)
 
 > 状态:frozen(历史备忘,2026-08-23)

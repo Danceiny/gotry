@@ -1,3 +1,5 @@
+[English](effect-interpreter.md) | [简体中文](effect-interpreter.zh-CN.md)
+
 # 效应解译器 effect_interpreter.v1(设计文档,issue #16 采纳,ADR-18)
 
 > 状态:accepted(2026-08-29)。词汇层+生产/mock 双解译器+垂直切片已落地;smoke/run-all §37 是锚点。

@@ -1,103 +1,40 @@
-# External benchmark environment bridge
+[English](benchmark-environment-bridge.md) | [简体中文](benchmark-environment-bridge.zh-CN.md)
 
-> Status: living engineering ledger (Phase 1 treatment seam; default-off, not a product runtime dependency).
+# 外部 benchmark 环境桥
 
-This document covers the optional Phase 1 treatment seam for an external
-benchmark harness. It is not a product runtime dependency and does not itself
-schedule, launch, spend, score, or claim benchmark improvement.
+> 状态:活的工程台账(Phase 1 治疗接缝;default-off,非产品运行时依赖)。
 
-## Default-off and owner-local configuration
+本文档覆盖外部 benchmark harness 的可选 Phase 1 治疗接缝。它不是产品运行时依赖,自身不调度、不启动、不支出、不评分,也不主张 benchmark 提升。
 
-The bridge is disabled unless `GOTRY_BENCHMARK_ENV_CONFIG` points to an
-absolute, regular, non-symlink JSON file owned by the current POSIX uid. The
-file is limited to 64 KiB and must not be group- or world-writable. It is
-opt-in and must stay outside tracked/public evidence. A declaration is not
-enforcement: the host OS or an equivalent sandbox must enforce forbidden
-writes and denied network.
+## default-off 与 owner-local 配置
 
-Once the variable is set, an invalid schema or unavailable active subprocess
-provider fails hard before any model request; explicit opt-in never falls back
-to an ordinary GoTry run without the bridge.
+除非 `GOTRY_BENCHMARK_ENV_CONFIG` 指向一个绝对路径、常规文件、非符号链接、属主为当前 POSIX uid 的 JSON 文件,桥保持禁用。文件上限 64 KiB,且不得 group/world 可写。这是 opt-in 机制,必须留在受跟踪/公开的证据之外。声明不等于强制:禁写与断网必须由宿主 OS 或等效沙箱强制执行。
 
-## Cold-start tool-surface isolation
+变量一旦设置,schema 非法或活跃子进程 provider 不可用,就在任何模型请求之前硬失败;显式 opt-in 绝不回退到无桥的普通 GoTry 运行。
 
-Opt-in is a process-start boundary. Installation fails if an agent is already
-live; it is never hot-attached to an existing session. Every later benchmark
-agent is forced to native tool presentation and restricted to the exact global
-`gotry_benchmark_environment` definition captured after bridge registration.
-Matching the name alone is insufficient: an agent-scoped same-name shadow is
-denied at dispatch.
+## 冷启动工具面隔离
 
-The final authoritative `system-prompt/assemble` result must contain exactly
-the captured bridge schema. After all downstream `agent/pre-step` listeners
-return, the registry schema and definition identity are checked again. An
-extra scoped tool, schema mutation, same-name shadow, or retained PTC
-`run_code` transport therefore fails before the model request. Per-agent
-guard/presentation/restriction effects are installed atomically and partial
-installation rolls back. Agent disposal releases them. If the plugin unloads
-first, a live agent keeps an agent-owned assembly blocker plus its scoped
-guard/restriction as a fail-closed quarantine: no later model request enters
-the remaining assembly chain, and bridge/non-bridge dispatch is denied until
-that agent or process is disposed. HMR cannot hot-attach to the old agent.
+opt-in 是进程启动边界。agent 已存活时安装即失败;绝不热挂到既有会话。其后每个 benchmark agent 都被强制为 native 工具呈现,并被限制在桥注册后捕获的那个精确全局 `gotry_benchmark_environment` 定义上。仅匹配名称不够:agent 作用域的同名影子在分发时被拒绝。
 
-## Benchmark startup composition isolation
+最终权威的 `system-prompt/assemble` 结果必须恰好包含捕获的桥 schema。所有下游 `agent/pre-step` 监听器返回之后,注册表 schema 与定义身份再查一次。多出的 scoped 工具、schema 篡改、同名影子、或残留的 PTC `run_code` 传输,因此在模型请求之前失败。每 agent 的 guard/呈现/限制效果原子安装,部分安装即回滚。agent 释放时随之释放。若插件先卸载,存活 agent 保留一个 agent 自有的组装阻塞器及其 scoped guard/限制,作为 fail-closed 隔离:后续模型请求不再进入剩余组装链,桥/非桥分发都被拒绝,直至该 agent 或进程被释放。HMR 无法热挂到旧 agent。
 
-After the owner-local config validates, but before any optional host plugin is
-resolved or imported, the CLI projects the top-level patch insert sequence to
-exactly one `gotry-tools` item. Calendar, map, ask-user, inline/reordered
-unknown items, and future non-GoTry inserts are discarded only for benchmark
-opt-in; default-off startup retains the ordinary GoTry composition. Missing or
-duplicate `gotry-tools` entries fail closed.
+## benchmark 启动组合隔离
 
-The config path is then injected into that projected item through exactly one
-`hbcliBin` anchor. A missing or duplicate anchor, or a pre-existing config-path
-field, fails before optional-plugin resolution, dsh spawn, or relay activity.
-The error is stable and does not reflect package paths, config paths, plugin
-names, or benchmark content.
+owner-local 配置验证通过之后、任何可选宿主插件被解析或导入之前,CLI 把顶层 patch insert 序列投影为恰好一个 `gotry-tools` 项。calendar、map、ask-user、内联/重排的未知项、以及未来的非 GoTry insert,只在 benchmark opt-in 时被丢弃;default-off 启动保留普通 GoTry 组合。`gotry-tools` 缺失或重复即 fail-closed。
 
-## Agent conformance and terminal gate
+配置路径随后经恰好一个 `hbcliBin` 锚点注入该投影项。锚点缺失/重复,或已存在 config-path 字段,都在可选插件解析、dsh spawn、中继活动之前失败。错误信息稳定,不反映包路径、配置路径、插件名或 benchmark 内容。
 
-Benchmark opt-in is headless one-shot only. GoTry adds an agent-scoped native
-execution contract that translates prompt references to a CLI, shell, Python,
-or `agent_env.cli` into structured calls to the sole visible
-`gotry_benchmark_environment` tool. `action:"tools"` is discovery only. A
-countable turn must issue an allowed `action:"call"` and receive its paired
-concrete result or declared domain outcome before it can stop. The call shape
-is flat; the retired nested `query` form is not accepted. A domain outcome may
-support a terminal response or a later model-authored argument revision, but
-the bridge does not retry. A later infrastructure failure invalidates a prior
-domain-only path; a later concrete result may recover it. In every case the
-accepted terminal response must occur after the latest bridge response, so a
-stale terminal cannot mask newer evidence.
+## agent 一致性与终结闸
 
-Round 11 makes the model-facing request schema one flat object: `action` is the
-`tools|call|errors` enum, `tool` is an enum derived from the frozen descriptor
-set, and `arguments` is a generic object. This is a wire/schema visibility
-change only. At execution time the bridge still validates `arguments` exactly
-against the selected frozen descriptor `input_schema`; generic model-facing
-arguments do not weaken the execution contract.
+benchmark opt-in 仅限无头 one-shot 形态。GoTry 追加 agent 作用域的 native 执行合同,把 prompt 里对 CLI、shell、Python 或 `agent_env.cli` 的引用翻译为对唯一可见工具 `gotry_benchmark_environment` 的结构化调用。`action:"tools"` 仅用于发现。一个可计数 turn 必须发出一次被允许的 `action:"call"`,并收到其配对的具体结果或已声明领域结局,然后才能停止。调用形状是扁平的;已退役的嵌套 `query` 形态不被接受。领域结局可以支撑一个终结响应,或支撑此后模型自拟的参数修订,但桥不重试。更晚的基础设施失败会使此前仅领域的路径失效;更晚的具体结果可以挽回它。任何情况下,被接受的终结响应必须晚于最新的桥响应,过期终结无法掩盖更新的证据。
 
-The owner-local config also declares a generic tagged-JSON terminal envelope.
-The tag is a bounded identifier and `max_bytes` is capped at 1 MiB. A valid
-terminal response is exactly one matching tag pair whose body is one JSON
-object; prose, code fences, duplicate tags, arrays, primitives, trailing text,
-and oversized bodies fail closed. Paired reasoning blocks (`<think>…</think>`,
-case-insensitive, any position) are stripped before this validation:
-contemporary reasoning models emit them even when instructed to answer with the
-envelope only; every other leading/trailing text still fails closed. This is syntax conformance only: the
-external adapter and official evaluator still own the business schema.
+Round 11 把模型侧请求 schema 变为一个扁平对象:`action` 是 `tools|call|errors` 枚举,`tool` 是从冻结描述符集合派生的枚举,`arguments` 是通用对象。这只是 wire/schema 可见性变化。执行时桥仍按所选冻结描述符的 `input_schema` 精确校验 `arguments`;通用的模型侧 arguments 不削弱执行合同。
 
-If the model tries to stop without a real bridge call, or returns a malformed
-terminal response after a successful call, GoTry injects at most one fixed
-conformance correction. A terminal-format correction must reuse the existing
-tool result and cannot dispatch the bridge again. A second violation ends the
-turn with a stable error that does not reflect the prompt, arguments, tool
-result, paths, or invalid response. The parent CLI separately buffers bounded
-stdout and releases it only when the child exits successfully and the same
-terminal parser accepts it; rejected assistant text is never forwarded as a
-successful benchmark result.
+owner-local 配置还声明一个通用的 tagged-JSON 终结信封。tag 是有界标识符,`max_bytes` 上限 1 MiB。合法终结响应是恰好一对匹配 tag,其 body 为一个 JSON 对象;散文、代码围栏、重复 tag、数组、标量、尾随文本、超限 body 一律 fail-closed。配对的推理块(`<think>…</think>`,大小写不敏感,任意位置)在本校验之前被剥离:当代推理模型即使被要求只用信封作答也会输出它;其余任何前导/尾随文本仍 fail-closed。这只是语法一致性:业务 schema 仍归外部适配器与官方评估器所有。
 
-Example (placeholder paths only):
+模型试图在没有真实桥调用时停止,或在成功调用后返回畸形终结响应时,GoTry 至多注入一次固定的一致性纠偏。终结格式纠偏必须复用既有工具结果,不得再次派发桥。第二次违规则以一个稳定错误终结 turn,该错误不反映 prompt、arguments、工具结果、路径或非法响应本身。父 CLI 另行缓冲有界 stdout,只有子进程成功退出且同一终结解析器接受时才释放;被拒绝的 assistant 文本绝不作为成功的 benchmark 结果转发。
+
+示例(仅占位路径):
 
 ```json
 {
@@ -138,71 +75,19 @@ Example (placeholder paths only):
 }
 ```
 
-The executable and cwd are absolute and fixed. Calls use an argv list with the
-configured prefix; arbitrary shell strings, shell interpolation, and arbitrary
-commands are not exposed. `tools` is a bounded, nonempty descriptor set and is
-the single source for discovery, the model-visible tool-name enum, and exact
-pre-spawn validation.
-Each descriptor has a nonempty description, a closed and bounded object
-`input_schema`, a nonempty unique `output_keys` allowlist, and a finite list of
-exact `domain_outcomes`. Open nested objects, unknown schema keywords, duplicate
-names/keys/outcomes, unbounded arrays, and free-text recovery values fail at
-config load. A v1/v2 file must be migrated explicitly; it is never accepted
-with ambiguous behavior.
+executable 与 cwd 绝对且固定。调用使用带配置前缀的 argv 列表;任意 shell 字符串、shell 插值、任意命令都不暴露。`tools` 是有界非空描述符集合,是发现、模型可见工具名枚举、精确 spawn 前校验的唯一来源。每个描述符必须有非空 description、闭合有界的对象 `input_schema`、非空且唯一的 `output_keys` 白名单、以及有限的精确 `domain_outcomes` 列表。开放嵌套对象、未知 schema 关键字、重复的名称/键/结局、无界数组、自由文本 recovery 值,在配置加载时失败。v1/v2 文件必须显式迁移;绝不以含糊行为被接受。
 
-The model sees one flat object root: `action` is the
-`tools|call|errors` enum, `tool` is the descriptor-derived name enum, and
-`arguments` is a generic object. Only `action` is universally required on this
-provider-facing wire. Before any subprocess starts, execution enforces the
-exact action shape and validates call arguments against the selected frozen
-descriptor `input_schema`; empty, nested legacy `query`, mixed-action,
-missing-call-field, and extra-field objects fail closed.
-`tools` returns the frozen descriptors. `errors` returns the complete closed
-bridge protocol/infrastructure failure inventory. Those failures use
-`{"ok":false,"error":"..."}` and are distinct from an adapter domain outcome,
-which uses `{"ok":true,"outcome":{...}}` after an exact declared exit-zero
-envelope. The bridge never retries either class automatically.
+模型看到一个扁平对象根:`action` 是 `tools|call|errors` 枚举,`tool` 是描述符派生的名称枚举,`arguments` 是通用对象。在这条 provider 侧 wire 上,只有 `action` 无条件必填。任何子进程启动之前,执行层强制精确的 action 形状,并按所选冻结描述符的 `input_schema` 校验调用参数;空对象、嵌套 legacy `query`、混合 action、缺 call 字段、多出字段的对象一律 fail-closed。`tools` 返回冻结描述符。`errors` 返回完整的闭合桥协议/基础设施失败清单。这些失败使用 `{"ok":false,"error":"..."}`,区别于适配器领域结局——后者在精确的已声明 exit-zero 信封之后使用 `{"ok":true,"outcome":{...}}`。两类失败桥都不自动重试。
 
-For a concrete result, every visible object key, including keys below arrays
-and nested objects, must be listed by that descriptor's nonempty `output_keys`;
-every primitive leaf must therefore have a declared-key ancestor. Top-level
-record arrays may pass, while unkeyed primitive or mixed arrays fail closed as
-`{"ok":false,"error":"forbidden_output"}` without reflecting their values.
-`terminal_output` remains required: its identifier-like `tag` defines the only
-accepted envelope and its positive `max_bytes` is capped at 1 MiB.
-Timeout and output caps are enforced by the subprocess seam, with
-non-zero exit, timeout, truncation, invalid JSON, and disallowed tool returning
-a structured failure envelope. The subprocess receives only selected
-`PATH`/locale/time-zone values plus Python no-user-site/no-bytecode guards;
-all other ambient environment names are explicitly removed. Model arguments
-are serialized once and rejected before spawn when their UTF-8 size, depth, or
-structure count exceeds the bridge limits.
+具体结果要求:每个可见对象键——含数组与嵌套对象之下的键——都必须列在该描述符非空的 `output_keys` 中;因此每个标量叶都必须有已声明键的祖先。顶层记录数组可以通过;无键标量数组或混合数组 fail-closed 为 `{"ok":false,"error":"forbidden_output"}`,不回显其值。`terminal_output` 仍然必填:其标识符形态的 `tag` 定义唯一被接受的信封,其正数 `max_bytes` 上限 1 MiB。超时与输出上限由子进程接缝强制;非零退出、超时、截断、非法 JSON、未允许工具都返回结构化失败信封。子进程只接收选定的 `PATH`/locale/时区值,外加 Python no-user-site/no-bytecode 守卫;其余环境变量名一律显式移除。模型参数只序列化一次;UTF-8 大小、深度、结构计数超出桥上限,即在 spawn 前拒绝。
 
-Runner output must be one bounded, exact
-`gotry_benchmark_tool_result_v1` object: either
-`{schema_version,status:"ok",result}` or an exit-zero, descriptor-declared
-`{schema_version,status:"miss"|"error",code,recovery}`. Ambiguous or extra
-fields fail closed; a nonzero process exit always remains an infrastructure
-failure even if stdout resembles a domain envelope. The bridge recursively
-rejects ASCII keys associated with gold, oracle, expected answer, reference,
-label, score, reward, ground truth, hidden query, or loader metadata, without
-reflecting the key or value to the model. Non-ASCII keys and primitive
-top-level results are rejected, and output structure is bounded separately. A benchmark
-adapter may provide only the declared visible tool surface and must keep its
-query loader and Python/harness runtime outside GoTry's product dependency
-graph. No Python dependency is added to the product runtime.
+运行器输出必须是一个有界、精确的 `gotry_benchmark_tool_result_v1` 对象:要么 `{schema_version,status:"ok",result}`,要么 exit-zero 且描述符已声明的 `{schema_version,status:"miss"|"error",code,recovery}`。含糊字段或多出字段 fail-closed;非零进程退出永远是基础设施失败,即使 stdout 看似领域信封。桥递归拒绝与 gold、oracle、期望答案、参考答案、label、score、reward、ground truth、hidden query、loader 元数据相关联的 ASCII 键,且不向模型回显键或值。非 ASCII 键与标量顶层结果被拒绝,输出结构另设上界。benchmark 适配器只可提供已声明的可见工具面,其 query loader 与 Python/harness 运行时必须留在 GoTry 产品依赖图之外。产品运行时不新增任何 Python 依赖。
 
-The owner of the validated config is the authority selecting the executable,
-cwd, and fixed argv prefix. The bridge does not claim that every referenced
-path is owner-owned: root-owned sandbox executables and virtualenv symlinks are
-valid deployment choices. Treatment admission must therefore fence the exact
-adapter/harness revision and review its positive visible-output contract. The
-recursive key guard is defense in depth, not semantic proof against secrets
-encoded inside otherwise allowed string values.
+已验证配置的属主,是选择 executable、cwd 与固定 argv 前缀的权威。桥不主张每个被引用路径都归属主所有:root 属主的沙箱 executable 与 virtualenv 符号链接是合法部署选择。因此治疗准入必须栅定精确的适配器/harness 修订版,并审查其正向可见输出合同。递归键守卫是纵深防御,不是语义证明——防不住藏在其他合法字符串值里的秘密。
 
-## Verification boundary
+## 验证边界
 
-The validator and registration contract can be checked offline with:
+校验器与注册合同可用以下命令离线检查:
 
 ```bash
 cd ts
@@ -210,199 +95,75 @@ npx tsx scripts/benchmark-environment-bridge-tests.ts
 npx tsx scripts/benchmark-environment-bridge-e2e.ts
 ```
 
-The E2E uses a loopback synthetic model relay, a temporary owner-local runner,
-an isolated `DSH_HOME` and cwd, and a synthetic key only. It always exercises
-the source checkout. When `GOTRY_BRIDGE_E2E_BIN` is set, it additionally
-exercises that clean installed-package CLI. The standard regression creates a
-temporary clean consumer when the variable is absent, while CI prepares the
-same route explicitly because the historical root npm lock is not the publish
-consumer dependency closure.
+E2E 只用环回合成模型中继、临时 owner-local 运行器、隔离的 `DSH_HOME` 与 cwd、以及合成 key。它始终演练 source checkout。设置 `GOTRY_BRIDGE_E2E_BIN` 时,额外演练该干净安装包 CLI。变量缺省时,标准回归自建临时干净 consumer;CI 则显式准备同一路由,因为历史上的 root npm lock 不是发布 consumer 的依赖闭包。
 
-Covered behavior:
+覆盖的行为:
 
-- Default-off behavior, environment isolation, private config rejection, real
-  output truncation, a real deadline, global `both` mode being overridden to
-  one native bridge schema, and source/installed requests exposing no other
-  model tool.
-- Clean-package projection fixture with executable inline/reordered future
-  plugins: default-off must actually load the poison, while benchmark opt-in
-  must record zero loads and still reach the bridge.
-- Missing/duplicate `gotry-tools`, missing/duplicate injection anchors, and a
-  pre-existing config-path field must all stop before relay activity.
-- Conformance cases: prose/no-call correction, one real native call followed
-  by tagged JSON, one format-only retry, retry exhaustion, and parent stdout
-  suppression; paired reasoning-block normalization; domain-only,
-  domain-to-result, domain-to-failure, and stale-terminal ordering.
-- Descriptor/result cases: flat `tools|errors|call` branches, the complete
-  bridge failure inventory, schema max/max+1 boundaries, exact adapter
-  envelopes, nonempty positive output keys, primitive/mixed arrays, and a
-  declared miss followed by a model-authored revised call.
-- Unit contracts: live-agent rejection, same-name identity shadows,
-  final-assembly/pre-step schema drift, agent cleanup without double disposal,
-  and plugin-unload quarantine.
+- default-off 行为、环境隔离、私有配置拒绝、真实输出截断、真实 deadline、全局 `both` 模式被覆盖为单一 native 桥 schema,以及 source/安装包请求均不暴露其他模型工具。
+- 干净包投影夹具,带可执行的内联/重排 future 插件:default-off 必须真的把 poison 插件加载进来,而 benchmark opt-in 必须记录零加载且仍到达桥。
+- `gotry-tools` 缺失/重复、注入锚点缺失/重复、已存在的 config-path 字段,都必须在中继活动之前停止。
+- 一致性用例:散文/无调用纠偏、一次真实 native 调用后接 tagged JSON、仅格式的一次重试、重试耗尽、父进程 stdout 抑制;配对推理块归一化;仅领域、领域转结果、领域转失败、过期终结时序。
+- 描述符/结果用例:扁平 `tools|errors|call` 分支、完整桥失败清单、schema 的 max/max+1 边界、精确适配器信封、非空正向 output keys、标量/混合数组、以及声明 miss 后模型自拟的修订调用。
+- 单元合同:存活 agent 拒绝、同名身份影子、最终组装/pre-step schema 漂移、agent 清理且不双重释放、插件卸载隔离。
 
-None of this is ChinaTravel treatment evidence.
+以上均非 ChinaTravel 治疗证据。
 
-## Round ledger
+## Round 台账
 
-All frozen treatments to date are diagnostic-only: official scores are null and
-no uplift or external benchmark closure is claimed.
+迄今所有冻结治疗均仅诊断:官方分数为 null,不主张任何提升或外部 benchmark 闭环。
 
-### Round 2 — first frozen treatment
+### Round 2 — 首次冻结治疗
 
-Provider preflight and planner succeeded, but the runner returned 3 before
-evaluation because the agent described an intended CLI/tool action without a
-structured bridge call or parseable tagged JSON. Official scores null
-([evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18215707)).
+provider 预检与规划器成功,但运行器在评估前返回 3:agent 只描述了想执行的 CLI/工具动作,没有结构化桥调用,也没有可解析的 tagged JSON。官方分数 null([证据](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18215707))。
 
-### Round 3 — agent conformance
+### Round 3 — agent 一致性
 
-Added the provider-neutral conformance layer (prompt CLI/shell/Python
-references mapped to the sole native bridge `query.action=call`; one fixed
-correction; tagged-JSON terminal gate). The new frozen treatment stopped after
-one runner spawn with planner/runner exit 1, zero released terminal bytes, no
-evaluator entry, and null official scores
-([evidence](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18232139)).
+新增 provider 无关的一致性层(prompt 中 CLI/shell/Python 引用映射到唯一 native 桥的 `query.action=call`;一次固定纠偏;tagged-JSON 终结闸)。新冻结治疗在运行器 spawn 一次后停止:planner/runner exit 1、释放的终结字节为零、未进入评估器、官方分数 null([证据](https://github.com/Danceiny/gotry/discussions/78#discussioncomment-18232139))。
 
-### Round 4 — startup composition isolation
+### Round 4 — 启动组合隔离
 
-The CLI projects the config-verified top-level insert to exactly one
-`gotry-tools` item before any optional host plugin resolves; anchor/name
-uniqueness fails closed before relay. The treatment at SHA `5ebddb2` had
-primary preflight pass, but planner and runner both exited 1 after 30.968
-seconds, released zero terminal bytes, never entered the evaluator, and
-produced null official scores. The product Node gate was v24.20.0 while that
-treatment used v26.3.0, so it is diagnostic-only. GitHub Node 22/24 §48
-separately exposed a source default-off 30-second lifecycle hang.
+CLI 在任何可选宿主插件解析之前,把 config 验证过的顶层 insert 投影为恰好一个 `gotry-tools` 项;锚点/名称唯一性在中继之前 fail-closed。SHA `5ebddb2` 的治疗 primary 预检通过,但 planner 与 runner 都在 30.968s 后 exit 1,释放的终结字节为零,从未进入评估器,官方分数 null。产品 Node 闸为 v24.20.0,而该治疗用 v26.3.0,故仅诊断。GitHub Node 22/24 §48 另行暴露 source default-off 下 30 秒生命周期挂起。
 
-### Round 5 — headless lifecycle containment + runtime resolution
+### Round 5 — 无头生命周期围堵 + 运行时解析
 
-Scope: remove the timer/keepalive preload; declare all 216 packages in the
-root/package DSH `0.1.2-alpha.3` closure as exact direct dependencies; require
-manifest, package lock, and root pnpm importer to expose the same 216-name
-set; fail publish preverify on omissions, mixed versions, or ranges; resolve
-the locked runtime before the legacy vendored fallback in a source checkout;
-preserve source normal-mode state continuity under `ts/dsh-runtime/gotry-state/`
-while benchmark opt-in and npm-package runs use the invocation directory;
-reject a non-alpha.3 benchmark runtime before spawn; enforce Node 22.15+; add
-a benchmark-only structured diagnostic pipe with allowlisted redacted reason
-codes while stdout remains fail-closed.
+范围:移除 timer/keepalive 预载;把 root/package DSH `0.1.2-alpha.3` 闭包中全部 216 个包声明为精确直接依赖;要求 manifest、package lock 与 root pnpm importer 暴露同一个 216 名称集合;publish preverify 对遗漏、混版、range 声明失败;source checkout 中锁定运行时先于 legacy vendored 回退解析;source 普通模式在 `ts/dsh-runtime/gotry-state/` 下保持状态连续,benchmark opt-in 与 npm 包运行则使用调用目录;spawn 前拒绝非 alpha.3 的 benchmark 运行时;强制 Node 22.15+;新增 benchmark 专用结构化诊断管道,原因码白名单化且脱敏,stdout 仍 fail-closed。
 
-The frozen treatment at code SHA `752e54c` stopped after 140.715 seconds with
-`child_nonzero_exit`, zero terminal bytes, and null evaluator/official scores.
-The lock-consistency successor does not rewrite that UID attribution.
+代码 SHA `752e54c` 的冻结治疗在 140.715s 后以 `child_nonzero_exit` 停止,终结字节为零,评估器/官方分数 null。lock 一致性后继不重写该 UID 归因。
 
-### Round 6 — structured terminal diagnostics
+### Round 6 — 结构化终结诊断
 
-Narrows the remaining `child_nonzero_exit` ambiguity without reading raw
-stderr. Benchmark conformance observes only the final structured
-`turn/end.reason` and maps allowlisted model codes or limited HTTP status
-values to closed auth, capacity, server, transport, stream, request, and
-generic runtime families; blocked, max-token, aborted, and interrupted are
-also closed enums. A per-session arbiter writes at most once and retains a
-more specific bridge/conformance failure over a later generic terminal error.
-Transient model errors that recover before the final turn end emit no failure.
-Free-form messages, paths, prompts, request IDs, and credentials are neither
-inspected nor reflected. Diagnostics only: stdout, retry policy, prompts,
-tools, evaluator behavior, and scoring are unchanged.
+在不读取原始 stderr 的前提下,收窄 `child_nonzero_exit` 的剩余歧义。benchmark 一致性只观察最终结构化 `turn/end.reason`,把白名单内的模型码或有限 HTTP status 值映射为闭合的 auth、capacity、server、transport、stream、request、generic runtime 族;blocked、max-token、aborted、interrupted 也是闭合枚举。每会话仲裁器至多写一次;面对更晚的通用终结错误,保留更具体的桥/一致性失败。在最终 turn 结束前自行恢复的瞬时模型错误不发任何失败。自由格式的 message、路径、prompt、request ID、凭证,既不检视也不回显。仅诊断:stdout、重试策略、prompt、工具、评估器行为、评分均不变。
 
-The frozen ChinaTravel treatment at code SHA `c61600b` used the
-clean-installed tarball SHA-256
-`8df65b69873034df282dfa126ab93171fa9f1d4177cf17c5f9c694e737ff1161`, UID
-`phase2_familiar_20250321040138918100_00001`, and `deepseek-v4-flash`. It
-stopped after 49.546 seconds with parent reason `child_runtime_error`, zero
-terminal bytes, and null evaluator/official scores. Leakage and local
-credential/endpoint scans were zero. A later documentation-only successor does
-not rewrite the treatment attribution.
+代码 SHA `c61600b` 的冻结 ChinaTravel 治疗,使用干净安装 tarball 的 SHA-256 `8df65b69873034df282dfa126ab93171fa9f1d4177cf17c5f9c694e737ff1161`、UID `phase2_familiar_20250321040138918100_00001`、`deepseek-v4-flash`。它在 49.546s 后停止,父侧原因 `child_runtime_error`,终结字节为零,评估器/官方分数 null。泄漏扫描与本地凭证/端点扫描均为零。其后的仅文档后继不重写治疗归因。
 
-### Round 7 — minimal kernel
+### Round 7 — 最小内核
 
-Benchmark opt-in is a minimal kernel at code SHA
-`edb9392896625adbb48abae4a2ecf968dbfc0349`: tool budget, model override, one
-native bridge, and isolation/conformance remain; product prompt variables,
-process guards, consent hooks, and ordinary GoTry tools are not installed. The
-default path is unchanged. The CLI projects a stable, task-agnostic persona
-and accepts exactly one canonical root `insert` item and one canonical
-`system-prompt` item; missing, duplicate, quoted, reordered, flow, or other
-noncanonical root items fail closed.
+benchmark opt-in 是代码 SHA `edb9392896625adbb48abae4a2ecf968dbfc0349` 上的最小内核:保留工具预算、模型覆盖、单一 native 桥、隔离/一致性;产品 prompt 变量、进程守卫、consent 钩子、普通 GoTry 工具都不安装。默认路径不变。CLI 投影一个稳定、任务无关的 persona,只接受恰好一个规范根 `insert` 项与一个规范 `system-prompt` 项;缺失、重复、加引号、重排、flow、其他非规范根项一律 fail-closed。
 
-The treatment used tarball SHA-256
-`506f20f01966663cb30231df72e7163661402a61cf6d96691972c72cebb24e79`, UID
-`e20241028160248698752` (`easy`), and `deepseek-v4-flash`. Preflight passed
-without fallback; after 80.463 seconds the runner exited 1 and terminal output
-was zero/invalid. The evaluator was not entered, official score was null, and
-the case is not countable. The allowlisted reason was
-`child_bridge_runner_failed`. The next optimization question is a generic
-bridge-tool schema and a recoverable domain-error contract, without changing
-provider routing or scoring.
+该治疗使用 tarball SHA-256 `506f20f01966663cb30231df72e7163661402a61cf6d96691972c72cebb24e79`、UID `e20241028160248698752`(`easy`)、`deepseek-v4-flash`。预检通过,无回退;80.463s 后运行器 exit 1,终结输出为零/非法。评估器未进入,官方分数 null,case 不可计数。白名单原因为 `child_bridge_runner_failed`。下一个优化问题是通用桥工具 schema 与可恢复领域错误合同,不改 provider 路由,不改评分。
 
-### Round 8 — generic bridge actions and recovery inventory
+### Round 8 — 通用桥动作与恢复清单
 
-The bridge query blob became one flat, typed control surface:
-`action=tools|call|errors`, with `tool` and structured `arguments` on calls.
-`action=errors` exposes the complete closed bridge protocol/infrastructure
-failure inventory with stable
-recovery guidance. This makes discovery, invocation, and recovery
-provider-neutral without changing the owner-local executable boundary.
+桥 query blob 变成一个扁平、带类型的控制面:`action=tools|call|errors`,调用时带 `tool` 与结构化 `arguments`。`action=errors` 暴露完整闭合的桥协议/基础设施失败清单,附稳定恢复指引。这让发现、调用、恢复都与 provider 无关,且不改变 owner-local executable 边界。
 
-### Round 9 — benchmark governance budgets and terminal normalization
+### Round 9 — benchmark 治理预算与终结归一化
 
-Round 9 pins an explicit model output ceiling through `LLM_MAX_TOKENS` and
-allows each frozen benchmark run to set validated soft/hard budgets while
-preserving the 60/120-second defaults. It also removes a paired reasoning block
-before applying the otherwise unchanged strict terminal validator. The first
-diagnostic treatment survived the full chain and exercised the ChinaTravel
-tool surface, but did not yield an official, attributable benchmark score or
-external closure.
+Round 9 经 `LLM_MAX_TOKENS` 钉定显式模型输出上限,并允许每次冻结 benchmark 运行设置经校验的软/硬预算,同时保留 60/120 秒默认值。它还在应用其余不变的严格终结校验器之前移除配对推理块。首个诊断治疗贯穿全链并实际演练 ChinaTravel 工具面,但未产出官方、可归因的 benchmark 分数,也未达成外部闭环。
 
-### Round 10 — per-tool typed result contract hardening
+### Round 10 — 每工具类型化结果合同加固
 
-Round 10 keeps the single flat Round 8 protocol and derives one exact `call`
-schema per descriptor. The same closed/bounded `input_schema` is shown to the
-model and applied before spawn; empty or mixed protocol objects fail closed.
-Descriptors also require nonempty `output_keys` and finite exact
-`domain_outcomes`.
+Round 10 保留 Round 8 的单一扁平协议,并为每个描述符派生一个精确 `call` schema。同一份闭合/有界的 `input_schema` 既展示给模型,也在 spawn 前应用;空协议对象或混合协议对象 fail-closed。描述符还要求非空 `output_keys` 与有限的精确 `domain_outcomes`。
 
-Adapter stdout must be one exact `gotry_benchmark_tool_result_v1` envelope. A
-concrete result is accepted only when every primitive leaf sits below a
-declared output key. A declared domain outcome is an exit-zero transport
-success that the model may use to revise arguments; the bridge never retries.
-Nonzero exit, timeout, truncation, malformed JSON, and result/domain ambiguity
-remain infrastructure or conformance failures. Tagged terminal output must be
-newer than the latest bridge response, so an old terminal cannot hide a later
-domain or infrastructure fact.
+适配器 stdout 必须是一个精确的 `gotry_benchmark_tool_result_v1` 信封。只有每个标量叶都位于已声明 output key 之下,具体结果才被接受。已声明领域结局是 exit-zero 的传输成功,模型可据此修订参数;桥绝不重试。非零退出、超时、截断、畸形 JSON、结果/领域歧义,仍属基础设施或一致性失败。tagged 终结输出必须晚于最新桥响应,旧终结无法掩盖更晚的领域或基础设施事实。
 
-This round does not change provider routing, the scorer, the evaluator, or the
-default product path. A frozen treatment and any score/uplift claim require
-separate provenance-bound evidence.
+本轮不改 provider 路由、评分器、评估器、默认产品路径。冻结治疗与任何分数/提升主张,都需要单独的溯源绑定证据。
 
-### Round 10 treatment diagnosis and Round 11 — flat model-facing wire
+### Round 10 治疗诊断与 Round 11 — 扁平模型侧 wire
 
-The real `glm-5.3-flash` treatment on main `c843fae` diagnosed a provider/model
-visibility failure for the top-level `oneOf` bridge schema: the treatment made
-57 empty `{}` calls and produced no countable score. Round 11 therefore changes
-only the model-facing bridge wire to one flat object with `action` enum
-`tools|call|errors`, a descriptor-derived `tool` enum, and generic object
-`arguments`. Execution-time validation remains exact against the selected
-frozen descriptor `input_schema`. Provider routing, the scorer, evaluator,
-default product path, external data/oracle/query/trajectory inputs, private
-paths, and credentials are unchanged; no score or uplift is claimed.
+main `c843fae` 上的真实 `glm-5.3-flash` 治疗诊断出 provider/模型对顶层 `oneOf` 桥 schema 的可见性失败:该治疗发出 57 次空 `{}` 调用,未产出可计数分数。Round 11 因此只把模型侧桥 wire 改为一个扁平对象:`action` 枚举 `tools|call|errors`、描述符派生的 `tool` 枚举、通用对象 `arguments`。执行时校验仍按所选冻结描述符的 `input_schema` 精确执行。provider 路由、评分器、评估器、默认产品路径、外部 data/oracle/query/trajectory 输入、私有路径、凭证都不变;不主张任何分数或提升。
 
-### Round 12 — exact terminal schema projection (#215)
+### Round 12 — 精确终结 schema 投影(#215)
 
-With the wire usable (Round 11), the frozen Round 11 treatment surfaced the
-next bottleneck: GoTry only told the model "one JSON object", so the model
-added root keys and wrote day rows as direct activities, and the official
-scorer rejected the body 22 times by convention without running.
+wire 可用之后(Round 11),Round 11 冻结治疗暴露出下一个瓶颈:GoTry 只告诉模型「one JSON object」,模型于是添加根键、把 day 行写成直接 activities,官方评分器按约定 22 次拒绝 body 而未运行。
 
-Round 12 closes the structural half (issue #215): the bridge config carries a
-data-value-free closed `body_schema`; the same structure contract is projected
-as one deterministic outline into the system prompt and the single terminal
-correction; every accepted terminal body is fail-closed validated against it —
-extra root keys, missing `day`/`activities`, wrong types, and nested extra
-fields are rejected with no autofix. Config face bumped to v4; v3 and older
-configs fail closed. Source tests + source/packaged E2E cover the legal
-ChinaTravel-like hierarchy, the five Round 11 rejection classes, and the
-single-source projection. The frozen rerun (same case, model, and budget;
-only legal terminals reach the pinned official scorer) is the remaining
-segment and has not run at this SHA; no treatment or uplift is claimed.
+Round 12 收口结构半场(issue #215):桥配置携带不含数据值的闭合 `body_schema`;同一结构合同以一份确定性大纲投影进 system prompt 与唯一一次终结纠偏;每个被接受的终结 body 都按它 fail-closed 校验——多余根键、缺失 `day`/`activities`、错误类型、嵌套多余字段一律拒绝,无 autofix。配置面升至 v4;v3 及更旧配置 fail-closed。source 测试 + source/打包 E2E 覆盖合法的类 ChinaTravel 层级、Round 11 的五个拒绝类、单一来源投影。冻结重跑(同 case、同模型、同预算;仅合法终结到达钉定的官方评分器)是剩余段,在本 SHA 尚未运行;不主张任何治疗或提升。

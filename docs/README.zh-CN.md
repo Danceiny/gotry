@@ -28,7 +28,7 @@
 ## 2. 命名规范
 
 - 一律 kebab-case 小写;禁止 `vN` 版本后缀(版本历史归 git)。
-- **双语成对(loopx 约定)**:英文基座 `x.md` + 中文镜像 `x.zh-CN.md`;机器生成文档(如 `CHANGELOG.md`)豁免。新文档落地即双语;改任何一侧必须同提交同步另一侧。机械校验:`node scripts/check-docs-i18n.mjs`(存在性 + 标题/代码块/链接数对等)。
+- **双语成对(loopx 约定)**:英文基座 `x.md` + 中文镜像 `x.zh-CN.md`;机器生成文档(如 `CHANGELOG.md`)与工具自管的 `superpowers/` 命名空间豁免。新文档落地即双语;改任何一侧必须同提交同步另一侧。机械校验:`node scripts/check-docs-i18n.mjs`(存在性 + 标题/代码块/链接数对等)。
 - 权威面:裸主题名(`architecture.md`、`roadmap.md`),不带任何前后缀。
 - RFC:`<主题>-rfc.md`;设计:`<主题>-design.md` 或 `<角色>-guide.md`;调研:`<主题>-research.md`、复盘:`<主题>-postmortem.md`。
 - 里程碑备忘:`<里程碑号>-<主题>.md`(如 `m3-web-gap.md`);一次性计划/规格:`YYYY-MM-DD-<主题>.md`。
@@ -107,71 +107,71 @@
 
 ### design/(模块设计)
 
-> 子目录文档当前为中文原文(基座名),双语化分批推进;镜像落地后本表改指 `.zh-CN.md`。
+> 下表链接中文镜像;英文基座同名去掉 `.zh-CN.md` 后缀。
 
 | 文档 | 关注点 |
 |---|---|
-| [design/memory-design.md](design/memory-design.md) | 记忆域设计:C 端六层重设计(M4 交付) |
-| [design/memory-lifecycle-collector.md](design/memory-lifecycle-collector.md) | M4 lifecycle collector 使用合同:显式 opt-in、隔离 stateRoot、HMAC/consent、原子持久化与 #223/#238 scorer 导出；仅产出 candidate/synthetic,不替代真实 cohort |
-| [design/milestone-delivery-plan.md](design/milestone-delivery-plan.md) | M4→M6 living 任务图(issue #225):#20/#22/#136/#137 真实 gate、#231–#235 后继与 #270 公开交付台账;预准入只含获授权的设计/只读/fixture/failing-before 工作 |
-| [design/write-gate-production-design.md](design/write-gate-production-design.md) | M5 WriteGate 生产化 proposal(issue #225/#136):HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、query miss 保持 unknown、对账/补偿/披露 |
-| [design/fact-writegate-seam.md](design/fact-writegate-seam.md) | fact-anchor × M5 WriteGate 接缝(issue #303,#273 子切片):读路径闸与写路径闸的契约、five-step 最小链、non-success 写 receipt fail-closed、依赖 #136/#231,M5 Entry 前不启封 |
-| [design/effect-interpreter.md](design/effect-interpreter.md) | 效应解译器设计(accepted,ADR-18):词汇/韧性策略表/判定记录 |
-| [design/booking-saga-fsm.md](design/booking-saga-fsm.md) | 预订 saga 状态机(accepted,ADR-17):字母表/边表/M5 缝词汇 |
-| [design/tool-orchestration-design.md](design/tool-orchestration-design.md) | 工具编排与通道健康面设计(proposal,issue #106/#107/#108) |
-| [design/adapter-authoring-guide.md](design/adapter-authoring-guide.md) | Session 适配器作者手册(D-13,#272):四步法/漂移锁/红线 |
-| [design/external-event-seam.md](design/external-event-seam.md) | 外部事件驱动接缝设计(#82 方向/D-31,只设计不承诺实现) |
-| [design/hotelbyte-skills-design.md](design/hotelbyte-skills-design.md) | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
-| [design/stage1-top-down-design.md](design/stage1-top-down-design.md) | Stage 1 顶层设计(历史原文);**状态头是 §11 状态面⑥** |
+| [design/memory-design.md](design/memory-design.zh-CN.md) | 记忆域设计:C 端六层重设计(M4 交付) |
+| [design/memory-lifecycle-collector.md](design/memory-lifecycle-collector.zh-CN.md) | M4 lifecycle collector 使用合同:显式 opt-in、隔离 stateRoot、HMAC/consent、原子持久化与 #223/#238 scorer 导出；仅产出 candidate/synthetic,不替代真实 cohort |
+| [design/milestone-delivery-plan.md](design/milestone-delivery-plan.zh-CN.md) | M4→M6 living 任务图(issue #225):#20/#22/#136/#137 真实 gate、#231–#235 后继与 #270 公开交付台账;预准入只含获授权的设计/只读/fixture/failing-before 工作 |
+| [design/write-gate-production-design.md](design/write-gate-production-design.zh-CN.md) | M5 WriteGate 生产化 proposal(issue #225/#136):HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、query miss 保持 unknown、对账/补偿/披露 |
+| [design/fact-writegate-seam.md](design/fact-writegate-seam.zh-CN.md) | fact-anchor × M5 WriteGate 接缝(issue #303,#273 子切片):读路径闸与写路径闸的契约、five-step 最小链、non-success 写 receipt fail-closed、依赖 #136/#231,M5 Entry 前不启封 |
+| [design/effect-interpreter.md](design/effect-interpreter.zh-CN.md) | 效应解译器设计(accepted,ADR-18):词汇/韧性策略表/判定记录 |
+| [design/booking-saga-fsm.md](design/booking-saga-fsm.zh-CN.md) | 预订 saga 状态机(accepted,ADR-17):字母表/边表/M5 缝词汇 |
+| [design/tool-orchestration-design.md](design/tool-orchestration-design.zh-CN.md) | 工具编排与通道健康面设计(proposal,issue #106/#107/#108) |
+| [design/adapter-authoring-guide.md](design/adapter-authoring-guide.zh-CN.md) | Session 适配器作者手册(D-13,#272):四步法/漂移锁/红线 |
+| [design/external-event-seam.md](design/external-event-seam.zh-CN.md) | 外部事件驱动接缝设计(#82 方向/D-31,只设计不承诺实现) |
+| [design/hotelbyte-skills-design.md](design/hotelbyte-skills-design.zh-CN.md) | hotelbyte-skills 架构(知识进仓/执行留 gotry,issue #5) |
+| [design/stage1-top-down-design.md](design/stage1-top-down-design.zh-CN.md) | Stage 1 顶层设计(历史原文);**状态头是 §11 状态面⑥** |
 
 ### rfc/(提案原文)
 
 | 文档 | 关注点 |
 |---|---|
-| [rfc/transactional-state-rfc.md](rfc/transactional-state-rfc.md) | 事务化状态基座 RFC(accepted 2026-08-28,ADR-15) |
-| [rfc/user-session-data-rfc.md](rfc/user-session-data-rfc.md) | 用户会话数据面 RFC(已立项 2026-08-28):官方通道优先+会话补缺 |
-| [rfc/loopx-inspired-upgrades-rfc.md](rfc/loopx-inspired-upgrades-rfc.md) | LoopX 映射升级 RFC(accepted 2026-08-27):四道接缝最小切片 |
+| [rfc/transactional-state-rfc.md](rfc/transactional-state-rfc.zh-CN.md) | 事务化状态基座 RFC(accepted 2026-08-28,ADR-15) |
+| [rfc/user-session-data-rfc.md](rfc/user-session-data-rfc.zh-CN.md) | 用户会话数据面 RFC(已立项 2026-08-28):官方通道优先+会话补缺 |
+| [rfc/loopx-inspired-upgrades-rfc.md](rfc/loopx-inspired-upgrades-rfc.zh-CN.md) | LoopX 映射升级 RFC(accepted 2026-08-27):四道接缝最小切片 |
 
 ### research/(调研与复盘,冻结)
 
 | 文档 | 关注点 |
 |---|---|
-| [research/maka-research.md](research/maka-research.md) | Apache Maka 研究 → ADR-15 五件套逐项对照(底稿供拍板) |
-| [research/deerflow-research.md](research/deerflow-research.md) | DeerFlow 研究 → 优化目标 T1–T4(issue #10) |
-| [research/enterprise-travel-reference-study.md](research/enterprise-travel-reference-study.md) | 企业级差旅 Agent 八维参考研究(2026-09-03,来源脱敏) |
-| [research/dsh-plugins-shortlist.md](research/dsh-plugins-shortlist.md) | dsh 社区插件选型调研(issue #9) |
-| [research/kimi-postmortem.md](research/kimi-postmortem.md) | Kimi 行程对话复盘:反例教材与地面真值提取 |
+| [research/maka-research.md](research/maka-research.zh-CN.md) | Apache Maka 研究 → ADR-15 五件套逐项对照(底稿供拍板) |
+| [research/deerflow-research.md](research/deerflow-research.zh-CN.md) | DeerFlow 研究 → 优化目标 T1–T4(issue #10) |
+| [research/enterprise-travel-reference-study.md](research/enterprise-travel-reference-study.zh-CN.md) | 企业级差旅 Agent 八维参考研究(2026-09-03,来源脱敏) |
+| [research/dsh-plugins-shortlist.md](research/dsh-plugins-shortlist.zh-CN.md) | dsh 社区插件选型调研(issue #9) |
+| [research/kimi-postmortem.md](research/kimi-postmortem.zh-CN.md) | Kimi 行程对话复盘:反例教材与地面真值提取 |
 
 ### milestones/(里程碑备忘,冻结)
 
 | 文档 | 关注点 |
 |---|---|
-| [milestones/demo-plan-2026-07-17.md](milestones/demo-plan-2026-07-17.md) | 首个可用 demo 交付(普吉岛 workation) |
-| [milestones/demo-reconciliation.md](milestones/demo-reconciliation.md) | Demo 对账书(P0-5) |
-| [milestones/g1-market-memo.md](milestones/g1-market-memo.md) | G1 首发市场锁定决策备忘 |
-| [milestones/m2-capability-gap.md](milestones/m2-capability-gap.md) | M2 段 1:hotelbyte-cli 命令缺口盘点 |
-| [milestones/m2-flight-data-options.md](milestones/m2-flight-data-options.md) | M2 段 2:机票免费数据源选型(§7-1 决策门材料) |
-| [milestones/m3-web-gap.md](milestones/m3-web-gap.md) | M3 段 1:最小 Web 面实测与差距清单 |
-| [milestones/m4-calibration-questions.md](milestones/m4-calibration-questions.md) | M4 校准发问清单 |
-| [milestones/m6-b2b-reuse-walkthrough.md](milestones/m6-b2b-reuse-walkthrough.md) | M6 P6 B2B 复用推演纪要(draft,待 founder 评审) |
-| [milestones/s1-walkthrough.md](milestones/s1-walkthrough.md) | S1 契约走查结论 |
+| [milestones/demo-plan-2026-07-17.md](milestones/demo-plan-2026-07-17.zh-CN.md) | 首个可用 demo 交付(普吉岛 workation) |
+| [milestones/demo-reconciliation.md](milestones/demo-reconciliation.zh-CN.md) | Demo 对账书(P0-5) |
+| [milestones/g1-market-memo.md](milestones/g1-market-memo.zh-CN.md) | G1 首发市场锁定决策备忘 |
+| [milestones/m2-capability-gap.md](milestones/m2-capability-gap.zh-CN.md) | M2 段 1:hotelbyte-cli 命令缺口盘点 |
+| [milestones/m2-flight-data-options.md](milestones/m2-flight-data-options.zh-CN.md) | M2 段 2:机票免费数据源选型(§7-1 决策门材料) |
+| [milestones/m3-web-gap.md](milestones/m3-web-gap.zh-CN.md) | M3 段 1:最小 Web 面实测与差距清单 |
+| [milestones/m4-calibration-questions.md](milestones/m4-calibration-questions.zh-CN.md) | M4 校准发问清单 |
+| [milestones/m6-b2b-reuse-walkthrough.md](milestones/m6-b2b-reuse-walkthrough.zh-CN.md) | M6 P6 B2B 复用推演纪要(draft,待 founder 评审) |
+| [milestones/s1-walkthrough.md](milestones/s1-walkthrough.zh-CN.md) | S1 契约走查结论 |
 
 ### evaluation/(评测体系)
 
 | 文档 | 关注点 |
 |---|---|
-| [evaluation/evaluation-foundation.md](evaluation/evaluation-foundation.md) | Evaluation Phase 0:契约/注册表/准入与边界声明 |
-| [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.md) | 外部 benchmark 桥:Phase 1 接缝与逐轮工程台账 |
-| [evaluation/e2e-prompts.md](evaluation/e2e-prompts.md) | dsh e2e 端到端真 LLM 验证记录(持续更新) |
+| [evaluation/evaluation-foundation.md](evaluation/evaluation-foundation.zh-CN.md) | Evaluation Phase 0:契约/注册表/准入与边界声明 |
+| [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.zh-CN.md) | 外部 benchmark 桥:Phase 1 接缝与逐轮工程台账 |
+| [evaluation/e2e-prompts.md](evaluation/e2e-prompts.zh-CN.md) | dsh e2e 端到端真 LLM 验证记录(持续更新) |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | 产品人格横评:同一真实 prompt 各家回答存档/评分卡/人格提炼 |
 
 ### ops/(发布与合规)
 
 | 文档 | 关注点 |
 |---|---|
-| [ops/extension-privacy.md](ops/extension-privacy.md) | Session Bridge 扩展隐私政策 |
-| [ops/extension-webstore-submission.md](ops/extension-webstore-submission.md) | Chrome Web Store 上架材料与现行 dsh UI 安装交接(ADR-21 通道 B) |
-| [ops/external-pr-workflow.md](ops/external-pr-workflow.md) | 公开 issue→PR→review→merge 台账;另载外部 PR(含自动化机器人)分诊/核验/裁决规则 |
+| [ops/extension-privacy.md](ops/extension-privacy.zh-CN.md) | Session Bridge 扩展隐私政策 |
+| [ops/extension-webstore-submission.md](ops/extension-webstore-submission.zh-CN.md) | Chrome Web Store 上架材料与现行 dsh UI 安装交接(ADR-21 通道 B) |
+| [ops/external-pr-workflow.md](ops/external-pr-workflow.zh-CN.md) | 公开 issue→PR→review→merge 台账;另载外部 PR(含自动化机器人)分诊/核验/裁决规则 |
 
 ### assets/ 与 superpowers/
 

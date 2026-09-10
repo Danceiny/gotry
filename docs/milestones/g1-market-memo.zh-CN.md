@@ -1,3 +1,5 @@
+[English](g1-market-memo.md) | [简体中文](g1-market-memo.zh-CN.md)
+
 # G1 市场锁定决策备忘录(呈创始人一道是非题)
 
 > 状态:frozen(历史备忘,2026-08-22)

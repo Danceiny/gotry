@@ -1,9 +1,11 @@
+[English](milestone-delivery-plan.md) | [简体中文](milestone-delivery-plan.zh-CN.md)
+
 # M4→M6 交付计划与任务图(issue #225)
 
 > 定位:把 M4→M5→M6 拆成可分 worktree 交付的 living program 任务图,逐项写明责任面、责任文件、依赖、交付物、最小 E2E、否证与退出标准。
 > 状态:living(2026-09-08 建立;2026-09-09 follow-up 收紧 #231/#232 派发设计并同步已入 main 事实;issue #225。本文是计划与责任图,不替代 M3/M4/M5/M6 的 Exit 证据)。本次 follow-up 在 M5-1/M5-2/M5-3 写入原子 claim + 调用前持久化 `dispatching`/immutable attempt id/fencing、tenant-scoped claim/fold/query、外呼前重验、`RequestFingerprint` 绑定 holder/guests supplier payload digest 及未来最小否证(均未执行);并同步 #238/#243/#244/#245/#248/#240 已入 main、#227/#241/#242 已关闭。
-> 上游:[`../roadmap.md`](../roadmap.md)、[`../architecture.md`](../architecture.md) §1/§9/§10/§11、[`../gotry-master-outline.md`](../gotry-master-outline.md) §3.5/§3.7、issue #20/#22/#136/#137/#225/#223/#227/#228/#230/#231/#232/#233/#234/#235/#241/#242/#254/#255/#257。
-> 下游:独立 Claude Code worktree 任务、架构复验、PR 描述与贡献闸;公开交付记录按 [`../ops/external-pr-workflow.md`](../ops/external-pr-workflow.md) §0。
+> 上游:[`../roadmap.md`](../roadmap.zh-CN.md)、[`../architecture.md`](../architecture.zh-CN.md) §1/§9/§10/§11、[`../gotry-master-outline.md`](../gotry-master-outline.zh-CN.md) §3.5/§3.7、issue #20/#22/#136/#137/#225/#223/#227/#228/#230/#231/#232/#233/#234/#235/#241/#242/#254/#255/#257。
+> 下游:独立 Claude Code worktree 任务、架构复验、PR 描述与贡献闸;公开交付记录按 [`../ops/external-pr-workflow.md`](../ops/external-pr-workflow.zh-CN.md) §0。
 
 ## 0. 速览
 
@@ -13,7 +15,7 @@
 4. **仍 open 的真实门与实现任务**:#20/#22 真实 cohort、#136 供应协议/内部授权、#137 P6 批准与真实试点均为 TODO。准入前只允许 #136/#137 已授权的设计、只读调查、fixture 与 failing-before 测试;交易运行时、供应商写入和真实 B2B 路径仍须各自 Entry。
 5. **M5 首供应链**:`hotelbyte-cli`(公开 MIT CLI;hotel-be 内部资产只 bridge/reference,不复制代码)。当前未取得供应协议签署/内部授权证据;仅进行只读接口调查与契约准备。
 6. **M5 Entry 为两项**:M4 Exit + 供应链协议。WriteGate 设计可推进;交易实现、真实 book/cancel/refund/UAT 在 Entry 未满足前保持 TODO。
-7. **M6 只到 draft + proof 口径**:[`../milestones/m6-b2b-reuse-walkthrough.md`](../milestones/m6-b2b-reuse-walkthrough.md) 仍待 founder 评审;零内核 diff 是工程指标,不是 traveler 效果代理。
+7. **M6 只到 draft + proof 口径**:[`../milestones/m6-b2b-reuse-walkthrough.md`](../milestones/m6-b2b-reuse-walkthrough.zh-CN.md) 仍待 founder 评审;零内核 diff 是工程指标,不是 traveler 效果代理。
 8. **基线稳定性已收口**:#227 在集成候选上通过 Node24 typecheck、3×240、full 与 CI 后合入并关闭;#242 修复也已入 main并关闭。
 9. **公开可追溯性(#270)**:工程与文档 lane 按 issue 启动 → Draft PR → exact-head review → merge/destination 回执留档;本地/fixture 证据不代替 #20/#136/#137 的真实准入。
 
@@ -93,7 +95,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M5-0 — #136 HotelByte 供应链协议核验
 
-- **版本与发布物(区分三者,详见 [`write-gate-production-design.md`](write-gate-production-design.md) §2)**:
+- **版本与发布物(区分三者,详见 [`write-gate-production-design.md`](write-gate-production-design.zh-CN.md) §2)**:
   - hotel-be 内部参考快照 `16467805bb454df89fc894a7823da674348566e3`(只 bridge/reference,不复制代码)。
   - CLI gitlink 旧源码 `d62030bb9c132e5797e07371c5af0d2b97fdb819`/`staicli@0.0.2` 为历史快照,不作当前发布物依据。
   - CLI 0.0.3 发版 commit `41b5c1a8cc85f736aed753705c8c4b83b7666b4a`;当前 master `e3bae224d8cee0bb34795198eafcf689a1620df6` 含 PR #13 但 npm tarball 不含。
@@ -119,7 +121,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M5-1 — WriteGate proposal 入仓
 
-- **责任文件**:[`write-gate-production-design.md`](write-gate-production-design.md)。
+- **责任文件**:[`write-gate-production-design.md`](write-gate-production-design.zh-CN.md)。
 - **输出**:可信 receipt 发行/消费权威、request fingerprint(绑定实际 supplier request canonical payload digest 或既有 `payload_digest`,敏感字段不公开落账)、approval_claims 持久化、本地 outbox intent(不宣称外部 exactly-once)、dispatcher 原子 claim + 调用前持久化 `dispatching`/immutable attempt id/fencing、外呼前重验(授权/quote-receipt 有效期/immutable digest/路由 Buyer/撤回)、lease 过期不推导无副作用且不重置未执行、HotelByte unknown/query miss/对账/补偿/披露矩阵与准入矩阵。
 - **最小 E2E**:文档链接/路径检查;六状态面引用一致。
 - **否证**:文档暗示 M5 已开闸;把 outbox 写成外部 exactly-once;query miss 在恢复窗口内变 reconciled_failed;receipt 接受客户端/模型拼装;遗漏 HotelByte 30s/unknown/query-orders/Buyer/selector/OTP/portal 优先缺口;遗漏原子 claim/调用前 attempt 持久化/外呼前重验/lease 过期不重置;把派发否证写成已执行。
@@ -129,7 +131,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 - **前置**:M5 Entry 两项(M4 Exit + 供应链协议)均满足;M5-1 proposal accepted。
 - **责任文件**:`ts/src/state-ledger.ts`;`ts/src/booking-saga.ts`;`ts/capabilities/effect.ts`;`approval_claims` 表;`write_effect_intents` 派发态/attempt/fencing 字段;必要 docs/tests。
-- **输出**:nonce/fingerprint 在呈现前由服务端准备为 `PreparedChallenge` 并绑定不可变请求;receipt 发行与消费通道只接受可信宿主 UI 确认回调(带 actor/tenant/seam/challenge),模型只能请求展示,模型发起确认被拒且无 outbox;`approval_claims(receipt_id PRIMARY KEY, challenge_id, nonce_digest UNIQUE, consumed_at)` 与 `pending_writes` 状态转移、outbox intent 同一 SQLite 事务;顺序为准备/呈现 → 可信确认 → 原子消费 + outbox;跨 intent 重放同一 receipt/nonce/challenge 返回 `approval-claimed`。`WriteEffectIntent` 携带 `tenant_id`;receipt 消费事务只产生一个本地 outbox intent(`dispatch_status=queued`);dispatcher 通过 `tenant_id + idem_key` 条件更新(或已验证 tenant 归属的全局 `effect_id`)原子 claim,影响行数=1 才获得派发权,后续 fold/query 同样 tenant-scoped。任何 supplier/network 调用前同事务持久化 `dispatching`、immutable `attempt_id`/`fencing_token`/`claimed_by`/`lease_until`;并发 worker 只有赢得 claim 的一个有权派发。详见 [`write-gate-production-design.md`](write-gate-production-design.md) §5.3/§5.4。
+- **输出**:nonce/fingerprint 在呈现前由服务端准备为 `PreparedChallenge` 并绑定不可变请求;receipt 发行与消费通道只接受可信宿主 UI 确认回调(带 actor/tenant/seam/challenge),模型只能请求展示,模型发起确认被拒且无 outbox;`approval_claims(receipt_id PRIMARY KEY, challenge_id, nonce_digest UNIQUE, consumed_at)` 与 `pending_writes` 状态转移、outbox intent 同一 SQLite 事务;顺序为准备/呈现 → 可信确认 → 原子消费 + outbox;跨 intent 重放同一 receipt/nonce/challenge 返回 `approval-claimed`。`WriteEffectIntent` 携带 `tenant_id`;receipt 消费事务只产生一个本地 outbox intent(`dispatch_status=queued`);dispatcher 通过 `tenant_id + idem_key` 条件更新(或已验证 tenant 归属的全局 `effect_id`)原子 claim,影响行数=1 才获得派发权,后续 fold/query 同样 tenant-scoped。任何 supplier/network 调用前同事务持久化 `dispatching`、immutable `attempt_id`/`fencing_token`/`claimed_by`/`lease_until`;并发 worker 只有赢得 claim 的一个有权派发。详见 [`write-gate-production-design.md`](write-gate-production-design.zh-CN.md) §5.3/§5.4。
 - **外呼前重验**:赢得 claim 后、任何 supplier/network 调用前重验授权、quote/receipt 有效期、当前 immutable request digest、路由/Buyer 与撤回状态;过期/变更/撤回且未外呼时 supplier write=0,旧 effect 在 outbox/dispatch 层置 `rejected` 不回 queued,另建新 quote/intent/receipt;已 unknown 继续 query,授权过期也不回 queued 或重订。拒绝不扩展 ADR-17 `pending_writes` `pending|confirmed|compensated` 三态、不投影 supplier failure/refund。详见同文 §5.5。
 - **保证口径**:本地保证是"同一 ledger intent 只消费一次并只登记一个 write effect intent、同一 `attempt_id` 只 book 一次";外部副作用是否重复依赖供应商幂等/可查重;unknown 禁止盲重试。只有原子 claim/`dispatching` 事务尚未提交时 intent 才仍 queued;一旦 `dispatching`+immutable attempt id 持久化,无论 crash 在外呼前/后、是否有网络日志、lease 是否过期,都不能自动重领、续派或重放 book,统一 unknown/query/manual reconcile(按同一 attempt/`customerReferenceNo`);fencing/lease 只保护本地状态转移,不能撤回已发请求;lease 过期不能推导无副作用,也不能把 persisted dispatching 回到 queued 再 book。
 - **最小 E2E**:并发双确认只有一个 claim/outbox;同一合法 actor + 合法 snapshot 下模型发起确认被拒且无 outbox,真人回调才授权;prepared challenge 直接消费被拒;receipt 过期/金额/币种/条款/presentation_key/nonce 变化 fail-closed;确认后改 fingerprint 被拒;崩溃注入覆盖 claim 消费/outbox/pending 转移三种顺序;跨 intent 重放同一 receipt 被拒。
@@ -140,7 +142,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 - **前置**:M5-0 协议字段可得;M5-2 core 就绪。
 - **责任文件**:新增 hotelbyte-cli trade adapter(文件由实施 PR 定);adapter tests;reconciliation docs。
-- **输出**:钉 npm `staicli@0.0.3` 发布物(integrity 见 M5-0)而非 master;隔离 credential home;受控 env;固定全局 flags 前缀;强制 `customerReferenceNo`;book result.status `verified|pending|failed` 投影;unknown → `query-orders` 或 manual reconcile;query miss 在恢复窗口内保持 unknown。adapter 在发起 `trade book` 前执行 M5-2 的外呼前重验(授权/quote-receipt 有效期/immutable request digest/路由 Buyer/撤回),过期/变更/撤回且未外呼时零 supplier write,旧 effect 在 outbox/dispatch 层置 `rejected` 不回 queued,另建新 quote/intent/receipt(不扩展 ADR-17 `pending_writes` 三态、不投影 supplier failure/refund);`RequestFingerprint` 绑定实际 supplier request 的 canonical payload digest(覆盖 holder/guests 中影响履约的字段)或既有 immutable `payload_digest`,敏感字段不公开落账;展示/确认后替换旅客或联系人必须零写。详见 [`write-gate-production-design.md`](write-gate-production-design.md) §4/§5.4/§5.5。
+- **输出**:钉 npm `staicli@0.0.3` 发布物(integrity 见 M5-0)而非 master;隔离 credential home;受控 env;固定全局 flags 前缀;强制 `customerReferenceNo`;book result.status `verified|pending|failed` 投影;unknown → `query-orders` 或 manual reconcile;query miss 在恢复窗口内保持 unknown。adapter 在发起 `trade book` 前执行 M5-2 的外呼前重验(授权/quote-receipt 有效期/immutable request digest/路由 Buyer/撤回),过期/变更/撤回且未外呼时零 supplier write,旧 effect 在 outbox/dispatch 层置 `rejected` 不回 queued,另建新 quote/intent/receipt(不扩展 ADR-17 `pending_writes` 三态、不投影 supplier failure/refund);`RequestFingerprint` 绑定实际 supplier request 的 canonical payload digest(覆盖 holder/guests 中影响履约的字段)或既有 immutable `payload_digest`,敏感字段不公开落账;展示/确认后替换旅客或联系人必须零写。详见 [`write-gate-production-design.md`](write-gate-production-design.zh-CN.md) §4/§5.4/§5.5。
 - **最小 E2E**:fixture CLI:book verified/pending/failed/timeout/non-json/exit0-but-pending/query success/窗口内 miss/迟到 success/迟到 auto-cancel;断言 exit0 不等于 success,unknown 不重订,窗口内 miss 不变 reconciled_failed。
 - **否证**:并发重订同一授权 intent;把 CLI 30s abort 当 failed;窗口内 miss 变 reconciled_failed 再重订;不查单直接补偿;credentials 或 Buyer 路由来自用户全局环境;读鉴权重试策略无条件复用于交易;外呼前未重验或过期/变更/撤回仍外呼,或把旧 effect 回 queued;展示/确认后替换 holder/guests 或联系人仍 book;lease 过期推断无副作用并重订;preflight 拒绝给 `pending_writes` 加 `stale`/`cancelled` 或投影 supplier failure/refund。**未来实现最小否证(当前 proposal,均未执行)**:① 双 dispatcher 竞争同一 intent 只发一次;② 只有 claim 事务未提交才回 queued——attempt 持久化后/网络前与网络后/投影前任何 crash(无网络日志亦然)都不盲重放、不 book,统一 unknown;③ queue/preflight 本地拒绝零写,旧 effect 置 `rejected` 不回 queued,且不改变 ADR-17 `pending_writes` 三态、不投影 supplier failure/refund;④ 确认后更改 holder/guests 或 Buyer 零写;⑤ lease/fencing/授权过期不能把 unknown 或 persisted dispatching 回 queued;lease 过期且迟到供应商成功仍仅一次 book。不得声称这些测试当前已执行。
 - **退出标准**:adapter 通过 fixture/sandbox 与真实 UAT gate;未取得协议签署/内部授权证据或无 UAT 时保持 TODO。
@@ -172,7 +174,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M6-1 — P6 draft proof 口径改进
 
-- **责任文件**:[`../milestones/m6-b2b-reuse-walkthrough.md`](../milestones/m6-b2b-reuse-walkthrough.md)。
+- **责任文件**:[`../milestones/m6-b2b-reuse-walkthrough.md`](../milestones/m6-b2b-reuse-walkthrough.zh-CN.md)。
 - **输出**:traveler principal/sponsor/BFF principal 分词;把“单点已证明/构造性隔离”校准为 PoC 假设;复用 proof 需要基准 SHA、core 文件集合、core diff、runtime trace、功能路径覆盖;tenant 对抗;披露插件 proposal;P6 founder review 与试点签约保留在 M6 Exit。
 - **最小 E2E**:文档链接/路径检查。
 - **否证**:宣称 frozen/通过评审;靠 LOC 复用率;用 sponsor 收益覆盖 traveler 动机;把商业试点移出 M6 Exit。

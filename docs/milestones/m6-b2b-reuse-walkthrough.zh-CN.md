@@ -1,8 +1,10 @@
+[English](m6-b2b-reuse-walkthrough.md) | [简体中文](m6-b2b-reuse-walkthrough.zh-CN.md)
+
 # M6 B2B 复用推演纪要(P6,待创始人评审)
 
 > 状态:draft(2026-09-08,issue #137/#225;**P6 Exit 仅在 founder 明确 `YES 批准整体方案` 或明确批准修改稿时成立**;NO/提出修改仍为 TODO,不得擅自 frozen。P6 批准不等于 M6 Entry,M5 Exit 仍是硬前置)
 > 验收口径(总纲 §4 P6 行):选 1-2 个 B2B 形态,推演两层为什么的包裹与复用边界;红线随行口径;实测数字必须来自 M6 Entry 后的真实加载证明。
-> 输入:[`../gotry-master-outline.md`](../gotry-master-outline.md) §3.7、[`../research/enterprise-travel-reference-study.md`](../research/enterprise-travel-reference-study.md)、[`../architecture.md`](../architecture.md) ADR-16/23、issue #137/#225/#229/#236/#237/#241/#242/#227。
+> 输入:[`../gotry-master-outline.md`](../gotry-master-outline.zh-CN.md) §3.7、[`../research/enterprise-travel-reference-study.md`](../research/enterprise-travel-reference-study.zh-CN.md)、[`../architecture.md`](../architecture.zh-CN.md) ADR-16/23、issue #137/#225/#229/#236/#237/#241/#242/#227。
 
 ## 0. 结论先行
 
@@ -88,7 +90,7 @@
 
 M6 Exit 工程半面应写为“固定 `kernel-set` diff=0;runtime 实际加载 coverage 与预声明功能路径 coverage 完整;旅行社嵌入 E2E 通过”;商业半面必须是真实试点签约。未签原因只解释 TODO,不能替代签约。
 
-复用 proof 的 schema 与生成脚本由后续 `m6-reuse-proof-schema` 任务负责(见 [`../design/milestone-delivery-plan.md`](../design/milestone-delivery-plan.md) M6-3):提前冻结 `kernel-set.txt`、`loaded-modules.json` 与 runtime trace schema,避免实现者临时发明分母。
+复用 proof 的 schema 与生成脚本由后续 `m6-reuse-proof-schema` 任务负责(见 [`../design/milestone-delivery-plan.md`](../design/milestone-delivery-plan.zh-CN.md) M6-3):提前冻结 `kernel-set.txt`、`loaded-modules.json` 与 runtime trace schema,避免实现者临时发明分母。
 
 
 ## 5. 安全与对抗测试

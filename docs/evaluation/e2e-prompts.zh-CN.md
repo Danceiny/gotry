@@ -1,3 +1,5 @@
+[English](e2e-prompts.md) | [简体中文](e2e-prompts.zh-CN.md)
+
 # dsh e2e 端到端验证(持续更新;正文 §1-§11,2026-08-26)
 
 > 状态:living(验证台账,持续更新)

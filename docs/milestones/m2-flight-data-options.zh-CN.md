@@ -1,3 +1,5 @@
+[English](m2-flight-data-options.md) | [简体中文](m2-flight-data-options.zh-CN.md)
+
 # M2 段 2:机票免费数据源选型建议(§7-1 决策门材料)
 
 > 状态:frozen(历史备忘,2026-08-22)

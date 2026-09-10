@@ -1,3 +1,5 @@
+[English](tool-orchestration-design.md) | [简体中文](tool-orchestration-design.zh-CN.md)
+
 # 工具编排与通道健康面设计(issue #106/#107/#108 收口 + 两个核心命题)
 
 > 状态:**accepted,已全部落地**(D-7/D-8/D-9 于 2026-09-03 采纳;L0/L1 同日落地,L2 七项于 2026-09-04 收口——见 §6)。

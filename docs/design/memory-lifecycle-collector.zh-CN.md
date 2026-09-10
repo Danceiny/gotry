@@ -1,3 +1,5 @@
+[English](memory-lifecycle-collector.md) | [简体中文](memory-lifecycle-collector.zh-CN.md)
+
 # M4 规划生命周期采集器
 
 > 定位:Issue #228 的显式 opt-in 采集器使用合同,把首访/回访 planning flow 与外部等待边界脱敏成 #223 scorer 可消费的候选输入。

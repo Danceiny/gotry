@@ -1,8 +1,10 @@
+[English](external-pr-workflow.md) | [简体中文](external-pr-workflow.zh-CN.md)
+
 # 外部 PR 工作流(维护者侧)
 
-> 定位:外部贡献者(含自动化机器人)PR 的接收、核验、评审、裁决与归档操作流程——贡献者侧规范见 [CONTRIBUTING.md](../../CONTRIBUTING.md),本文不重复。
+> 定位:外部贡献者(含自动化机器人)PR 的接收、核验、评审、裁决与归档操作流程——贡献者侧规范见 [CONTRIBUTING.md](../../CONTRIBUTING.zh-CN.md),本文不重复。
 > 状态:living
-> 上游:[AGENTS.md](../../AGENTS.md)(仓库契约)、CONTRIBUTING.md(Pull Request 流程)
+> 上游:[AGENTS.md](../../AGENTS.zh-CN.md)(仓库契约)、CONTRIBUTING.md(Pull Request 流程)
 > 下游:维护者与执行 agent 处理外部 PR 时的操作面;GitHub CI(`.github/workflows/ci.yml`)
 > 最近更新:2026-09-10
 > 边界:founder 已授权的仓内 Claude Code/worktree 是内部执行 lane,不进入外部机器人 T0/T1 一票否决;它仍须按 §0 公开交付记录并过正常评审闸。
