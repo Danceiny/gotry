@@ -209,8 +209,8 @@ for (const [label, renderedPrice] of [['¥999', '¥999'], ['CNY 999', 'CNY 999']
 const trainPriceFact: FlightFact = { ...uo724, kind: 'train', fact_id: makeFactId(['train-price', 'G1234']), flight_no: 'G1234' }
 const trainContradicted = gateArtifact(renderFlightFact(trainPriceFact).replace(' [flyai@', ' ¥794 [flyai@'), [trainPriceFact], map, { trip_year: tripYear })
 assert(trainContradicted.verdict === 'blocked'
-  && trainContradicted.violations.some(v => v.kind === 'price_contradicted' && /G1234/.test(v.detail)),
-  'train canonical row 不自带价格,但手工追加硬价仍经共享价格原语拦截,不复制 flight 专用实现')
+  && trainContradicted.violations.some(v => v.kind === 'fact_anchor_unknown' && /canonical renderer/.test(v.detail)),
+  'train canonical row 不自带价格,手工追加硬价破坏规范锚点后 fail-closed')
 
 const commaFareFact: FlightFact = { ...uo724, fact_id: makeFactId(['flight-price-comma', 'UO724']), price: 1793 }
 const commaFare = gateArtifact(renderFlightFact(commaFareFact).replace('¥1793', '¥1,793'), [commaFareFact], map, { trip_year: tripYear })
@@ -511,6 +511,16 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
     && !trainRendered.includes('价待询')
     && trainRenderedGate.verdict === 'pass' && trainRenderedGate.traceable === 1,
   'train canonical renderer 保留 typed anchor,只写车次语义且不伪造直飞/价格,可经 gate 回溯')
+  const trainAnchorTamperCases = [
+    ['车次', trainRendered.replace('G1234', 'G9999')],
+    ['出发时间', trainRendered.replace('09:00', '06:00')],
+    ['日期', trainRendered.replace('2027-07-17', '2027-11-12')],
+    ['route', trainRendered.replace(`${gTrain.route.origin}→${gTrain.route.destination}`, `${gTrain.route.origin}→DIFF`)],
+  ] as const
+  assert(trainAnchorTamperCases.every(([, tampered]) => {
+    const report = gateArtifact(tampered, [gTrain], map, { trip_year: tripYear })
+    return report.verdict === 'blocked' && report.violations.some(v => v.kind === 'fact_anchor_unknown')
+  }), 'train canonical anchor 篡改车次/出发时间/日期/route 均被 fact_anchor_unknown 拒绝')
 
   assert(factsFromFlyai(
     { kind: 'train', origin: '上海', destination: '昆明', date: '2027-12-01' },

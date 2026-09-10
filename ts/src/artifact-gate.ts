@@ -19,6 +19,7 @@ import {
   itineraryInvariants,
   latestFactsForRouteDate,
   railClaimVerdict,
+  renderFlightFact,
   type BookableFact,
   type FlightClaim,
   type FlightClaimVerdict,
@@ -582,6 +583,16 @@ export function gateArtifact(
       continue
     }
     if (f.kind === 'train') {
+      const rendered = lines[lineNo - 1] ?? ''
+      const canonical = renderFlightFact(f)
+      if (rendered.trim() !== canonical.trim()) {
+        violations.push({
+          kind: 'fact_anchor_unknown',
+          line: lineNo,
+          detail: `train 锚点行与 canonical renderer 不一致——车次/时刻/日期/route 可能被手改;期望 ${canonical}`,
+        })
+        continue
+      }
       const rail = railClaimVerdict(facts, {
         flight_no: f.flight_no,
         origin: f.route.origin,

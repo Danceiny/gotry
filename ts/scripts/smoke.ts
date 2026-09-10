@@ -56,7 +56,7 @@ async function main() {
     hbcliBin: 'hbcli-not-on-path',  // 强制走降级路径的确定性验证
     sessionAccess: 'ask',
   }
-  const fixtureEffect = async (fx: { effect: string }) => {
+  const fixtureEffect = async (fx: { effect: string; params?: { kind?: string } }) => {
     if (fx.effect === 'SESSION_DIDA_SEARCH') {
       selectedEffects.push(fx.effect)
       return {
@@ -66,6 +66,20 @@ async function main() {
     }
     if (fx.effect === 'FLYAI_SEARCH') {
       selectedEffects.push(fx.effect)
+      if (fx.params?.kind !== 'train') {
+        return {
+          result: {
+            ok: false,
+            via: 'flyai-error',
+            evidence: '[实时API:flyai@error@fixture-offline]',
+            latencyMs: 0,
+            verdict: 'error',
+            kind: fx.params?.kind === 'hotel' ? 'hotel' : 'flight',
+            error: 'offline smoke fixture; real FlyAI provider not invoked',
+          },
+          trace: { effect: fx.effect, channel: 'fixture', attempts: 1, backoffMs: 0, breaker: 'off', evidence: ['[fixture:flyai-offline]'] },
+        }
+      }
       return {
         result: {
           ok: true,
@@ -471,7 +485,8 @@ async function main() {
       effectSummaries.push(result && typeof result === 'object' && 'summary' in result ? String((result as { summary?: string }).summary ?? '') : '')
       return { kind: 'allow' as const }
     })
-    if (pipeline.kind !== 'allow' || approvalReasons.length !== 1 || selectedEffects.length !== 1 || selectedEffects[0] !== 'SESSION_DIDA_SEARCH' || !effectSummaries[0]?.startsWith('Dida 门户实时价')) {
+    const didaEffects = selectedEffects.filter(effect => effect === 'SESSION_DIDA_SEARCH')
+    if (pipeline.kind !== 'allow' || approvalReasons.length !== 1 || didaEffects.length !== 1 || didaEffects[0] !== 'SESSION_DIDA_SEARCH' || !effectSummaries[0]?.startsWith('Dida 门户实时价')) {
       throw new Error(`FAIL: pre-execute→approval→selected effect fixture 未锁定 Dida,实际:${JSON.stringify({ pipeline, approvalReasons, selectedEffects, effectSummaries })}`)
     }
     console.log(`consent pipeline fixture: query-first conflict → approval=${approvalReasons.length}, effect=${selectedEffects[0]}, summary=${effectSummaries[0]}`)

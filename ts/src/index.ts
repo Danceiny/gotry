@@ -249,6 +249,7 @@ function feasibilityValidationFailure(
 
 export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}): void {
   const clock = seams.clock ?? (() => new Date())
+  const runFlyaiEffect = seams.effect ?? interpretEffect
   const rawBenchmarkEnvironmentConfigPath = config.benchmarkEnvironmentConfigPath ?? ''
   // ADR-24 v2:产品路径装「路由 + wall-clock 双出口」——用户主观时间是唯一
   // 预算,复杂度决定出口结构(converge/handoff)。benchmark opt-in 钉死
@@ -1048,7 +1049,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
             return { ok: false, summary: 'checkOut 需 YYYY-MM-DD(与 checkIn 成对)' } as const
           }
         }
-        const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords } })
+        const itp = await runFlyaiEffect({ effect: 'FLYAI_SEARCH', params: { kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords } })
         if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
         const r = itp.result
         await noteChannel('flyai', r.verdict)
@@ -1081,7 +1082,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
             + `多为用户时间表达未带年份所致——向用户确认年份(或按未来最近的同月日修正)后再查。`,
         })) as Record<string, never>
       }
-      const itp = await interpretEffect({ effect: 'FLYAI_SEARCH', params: { kind, origin: q.from, destination: q.to, depDate: q.date } })
+      const itp = await runFlyaiEffect({ effect: 'FLYAI_SEARCH', params: { kind, origin: q.from, destination: q.to, depDate: q.date } })
       if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
       const r = itp.result
       await noteChannel('flyai', r.verdict)
