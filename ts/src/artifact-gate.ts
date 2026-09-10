@@ -18,6 +18,7 @@ import {
   hotelClaimVerdict,
   itineraryInvariants,
   latestFactsForRouteDate,
+  policyCanonicalBody,
   railClaimVerdict,
   renderFlightFact,
   renderPolicyFact,
@@ -25,6 +26,7 @@ import {
   type FlightClaim,
   type FlightClaimVerdict,
   type ItineraryFacts,
+  type PolicyFact,
   type RailClaim,
 } from './bookable-facts.ts'
 
@@ -354,6 +356,9 @@ function lineTimesContradict(text: string, dep?: string, arr?: string): boolean 
   return !times.some(t => t === dep || t === arr)
 }
 
+/** Renderer 固定的 reminder 短语(只此一句,日期为合法 ISO 阳历日)。
+ * 与 `policyCanonicalBody` 同源;闸侧只识别这一固定短语+固定位置(尾随在
+ * `[<source>@<fetched_at> #<query_id>]` 锚点块之前)。 */
 interface HardPrice {
   amount: number
   currency: string
@@ -615,13 +620,17 @@ export function gateArtifact(
     // query_id/as_of 任一改动 → 行文本不再等于 canonical → fact_anchor_unknown
     // fail-closed。锚点行不得含前导非空文本(允许锚点前的尾随空白)、第二个
     // `<!-- fact:` 锚点、或任何「借合法锚点却写相反政策」的借用形态;行尾只允许
-    // `<!-- fact:<id> -->` 收尾。复核提醒(review_by 或 tripStart 派生的
-    // defaultReviewBy)由 `opts.tripStart` 同传入闸,与 renderer 产物两侧语义一致;
-    // `opts.itinerary.trip_start` 在调用面等同 `opts.tripStart`,见 gotry_fact_gate
-    // 接线。
+    // `<!-- fact:<id> -->` 收尾。
+    //
+    // 兼容性回退(legacy public callers):当调用面未传 `opts.tripStart` 且未在
+    // itinerary 给出 `trip_start` 时,闸侧额外接受 renderer 产出的两个 canonical
+    // 形态之一(no-reminder 与 renderer-fixed 提醒 `;远期政策须复核——
+    // 到 YYYY-MM-DD 再核验一次`,日期为合法 ISO 阳历日)。这是 renderer 固定
+    // 短语+位置,不是任意 body 改写或后缀。该回退只匹配 renderer 自身输出,
+    // 不重新拼装、不猜 tripStart、不动 fact_id;有 `opts.tripStart` 或
+    // `itinerary.trip_start` 时优先严格比对对应 reminder,不退到回退集合。
     if (f.kind === 'policy') {
       const rendered = lines[lineNo - 1] ?? ''
-      const canonical = renderPolicyFact(f, opts?.tripStart)
       const anchorRe = /<!-- fact:([0-9a-f]{16}) -->/
       const m = rendered.match(anchorRe)
       const noSecondAnchor = !m || m.index === undefined
@@ -632,7 +641,9 @@ export function gateArtifact(
         ? /\S/.test(rendered.slice(m.index + m[0]!.length))
         : true
       const exactAnchorId = m && m.index !== undefined && m[1] === f.fact_id
-      if (!exactlyOneAnchor || !exactAnchorId || trailingNonEmpty) {
+      const structureOk = exactlyOneAnchor && exactAnchorId && !trailingNonEmpty
+      if (!structureOk) {
+        const canonical = renderPolicyFact(f, opts?.tripStart)
         violations.push({
           kind: 'fact_anchor_unknown',
           line: lineNo,
@@ -640,6 +651,71 @@ export function gateArtifact(
         })
         continue
       }
+      const hasExplicitTripContext = opts?.tripStart !== undefined
+        || (typeof opts?.itinerary?.trip_start === 'string' && opts.itinerary.trip_start.length > 0)
+      if (!hasExplicitTripContext) {
+        // 兼容性:无 trip 上下文时接受 renderer 产出的两个固定 canonical 形态。
+        //   (a) no-reminder 行 —— 与 `renderPolicyFact(f, undefined)` 严格相等
+        //   (b) 携带 renderer 固定 reminder 短语 `;远期政策须复核——到 YYYY-MM-DD 再核验一次`
+        //       的行 —— 日期为合法 ISO 阳历日,renderer 经 tripStart 派生时会任选;
+        //       闸侧不重新拼装,不猜 tripStart,只确认这是 renderer 自身的固定短语
+        //       + 合法 ISO 日期,且 body 仍受 subject/statement/source/fetched_at/
+        //       query_id/as_of 全字段指纹绑定(reminder 只允许固定短语+ISO 日期)。
+        // 失败侧保留:body 改写、reminder 短语变形、reminder 日期写成非法阳历日、
+        // 锚点结构破损、reminder 错位(不接在 provenance 前)等仍走 fact_anchor_unknown。
+        const noReminderLine = renderPolicyFact(f, undefined)
+        if (rendered === noReminderLine) {
+          traceable++
+          continue
+        }
+        // (b) 拆 anchor 后检查 body 结构:`<bareBody>[;远期...到 <ISO> 再核验一次] [<provenance>]`
+        const withoutAnchor = rendered.replace(/ <!-- fact:[0-9a-f]{16} -->$/, '')
+        // 整行格式: <bareBody>;远期政策须复核——到 <ISO> 再核验一次 [<provenance>]
+        const reminderRegex = /^(.+?);远期政策须复核——到 (\d{4}-\d{2}-\d{2}) 再核验一次 \[(.+)\]$/
+        const m2 = withoutAnchor.match(reminderRegex)
+        if (m2) {
+          const isoDate = m2[2]!
+          const dateValid = (() => {
+            const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate)
+            if (!dm) return false
+            const y = Number(dm[1]); const mo = Number(dm[2]); const da = Number(dm[3])
+            if (mo < 1 || mo > 12 || da < 1 || da > 31) return false
+            const test = new Date(Date.UTC(y, mo - 1, da))
+            return test.getUTCFullYear() === y && test.getUTCMonth() === mo - 1 && test.getUTCDate() === da
+          })()
+          if (dateValid) {
+            const bareBody = policyCanonicalBody(f, undefined).replace(/ \[.+\]$/, '').replace(/;远期政策须复核——到 \d{4}-\d{2}-\d{2} 再核验一次$/, '')
+            const expectedProvenanceInner = `${f.source}@${f.fetched_at} #${f.query_id}`
+            // reminder 日期必须收敛到 renderer 在「事实自身字段」下**实际会产出的**合法值:
+            //   - 若事实自带 review_by(renderer 优先级:review_by 优先于 tripStart),则
+            //     日期必须 == f.review_by;改了就 fail-closed(根 contract 第 2 条)。
+            //   - 否则事实无 review_by,renderer 在无 tripStart 时根本不产生 reminder,
+            //     但回退接受 reminder 形态时,日期必须是合法 ISO 阳历日 —— renderer 接到
+            //     tripStart 后经 `defaultReviewBy(tripStart)` 会派生任意 ISO 日期(根
+            //     contract 第 4 条)。
+            // 任何「看似合法但 renderer 不会用」的日期(例如事实带 review_by 但日期 ≠ f.review_by)
+            // 均 fail-closed。
+            let reminderDateAllowed = true
+            if (typeof f.review_by === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(f.review_by)) {
+              reminderDateAllowed = isoDate === f.review_by
+            }
+            if (reminderDateAllowed && m2[1] === bareBody && m2[3] === expectedProvenanceInner) {
+              traceable++
+              continue
+            }
+          }
+        }
+      }
+      // 即使 trip 上下文已知,renderer 不接 tripStart 时也会产出 no-reminder canonical;
+      // 该形态与 `renderPolicyFact(f, undefined)` 严格相等,在此处也必须合法(根 contract:
+      // 「renderer 的 tripStart argument 是 optional」)。否则闸会把「renderer 选择不带
+      // reminder」误判成内容指纹不符,误伤合法事实行。
+      const noReminderCanon = renderPolicyFact(f, undefined)
+      if (rendered === noReminderCanon) {
+        traceable++
+        continue
+      }
+      const canonical = renderPolicyFact(f, opts?.tripStart)
       if (rendered !== canonical) {
         violations.push({
           kind: 'fact_anchor_unknown',
