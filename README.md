@@ -106,45 +106,9 @@ Architecture, five layers:
 
 ## Tools
 
-The GoTry plugin exposes its tools in groups:
+The plugin's 23 registered tools come in groups: **realtime retrieval** (Fliggy official channel + your own Chrome session, physically read-only) · **inventory & catalog** · the **deterministic decision engine** (`gotry_feasibility_check`; explicit flight chains via Z3) · **memory & reachability** · **artifacts** · async work-order status · the **fact gate** · **general external** search · **`gotry_doctor` self-check**.
 
-| Group | Tool | What it does |
-|---|---|---|
-| **Realtime retrieval (OTA/official, read-only)** | `gotry_flyai_search` | Live flight/train/hotel quotes via the Fliggy official channel (masked hotel prices upstream; exhausted anonymous trial quota degrades as `needs-setup` with key guidance, never silent retries) |
-| | `gotry_session_search` | Ctrip flights **and hotels** + 12306 trains + Dida supplier-portal hotel rates on the **user's own Chrome session** (consent-gated, physically read-only; `kind` = flight/hotel/train; unknown kinds fail closed) |
-| | `gotry_session_login` | Login bootstrap: auto-detects existing login first; otherwise opens the login entry in the user's Chrome (**zero terminal**) |
-| | `gotry_weather_check` | Open-Meteo forecast ≤16 d + historical climate baseline |
-| | `gotry_flight_verify` | OpenSky ADS-B live flight observation (three-valued) |
-| | `gotry_skeleton_check` | OpenFlights 168-hub-pair connectivity (three-valued) |
-| **Inventory & catalog** | `gotry_hotel_search` | hotel-byte realtime bridge (asks for missing check-in/check-out dates), with clearly labeled static results when the supplier is unavailable |
-| | `gotry_anything_search` | mixed city/hotel/POI catalog (hotel-be Anything) |
-| **Decision engine** | `gotry_feasibility_check` | Registered path: deterministic TypeScript candidate enumeration/evaluation and per-candidate verdicts |
-| **Memory & reachability** | `gotry_motivation_save` | Persist motivation profile (evidence mandatory, anti-fabrication) |
-| | `gotry_wish_pool_add` / `gotry_wish_pool_list` | "next departure" wish pool + 0..1 conditional recall |
-| | `gotry_companion_save` · `gotry_trip_log` | companion profile / travel timeline |
-| **Artifacts** | `gotry_artifacts_list` / `gotry_artifacts_read` | Discover & read generated artifacts (async deliverables + working-dir markdown) as a read-only, line-numbered view scoped to `stateRoot` + the session working dir; >2 MB / out-of-root / unsupported extension → `ok: false` + `hint`. See [user guide](docs/user-guide.md) |
-| **Factuality gate** | `gotry_fact_gate` | Pre-delivery gate for itinerary artifacts — see [fact gate](#how-it-works) above |
-| **General external** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | web / subtitles / GitHub / all-channel external info (via Agent-Reach) |
-| **Self-check** | `gotry_doctor` | Read-only health check by default; explicit `action: "repair"` shows a scoped plan, requests approval, runs the same idempotent installers as `doctor --fix` / web onboarding, then rechecks before reporting. Browser-store installs, credentials, and Node upgrades stay user actions. Report lands in `gotry-state/doctor-report.md` |
-
-> **Channel routing**: retrieval tools stay flat (no hidden dispatch); the persona routing card and the `routing` suggestions attached to failed search results come from one channel registry (official API > user session > web fallback, filtered by per-session channel health) that returns an **ordered suggestion list** — the model or user chooses the next tool; the registry itself never dispatches, executes, or falls back.
-
-```mermaid
-flowchart LR
-  I["Intent + failed channel"] --> R["channel registry<br/>routingAdvice()"]
-  R -->|"ordered alternatives[]<br/>tier / efficiency / health filtered"| A["routing suggestions<br/>tool · channel · why"]
-  A --> M{"Model or user<br/>chooses next tool"}
-  M --> F["gotry_flyai_search"]
-  M --> C["gotry_session_search"]
-  M --> W["gotry_web_search · Agent-Reach"]
-  R -.-> N["Registry does not dispatch,<br/>execute, or fall back"]
-  classDef api fill:#2ea04322,stroke:#2ea043,color:#2ea043;
-  classDef sess fill:#1f6feb22,stroke:#1f6feb,color:#1f6feb;
-  classDef web fill:#6e768122,stroke:#6e7681,color:#6e7681;
-  class F api;
-  class C sess;
-  class W web;
-```
+Retrieval tools stay flat — no hidden dispatch: a channel registry returns an **ordered suggestion list** (official API > user session > web fallback, filtered by per-session channel health), and the model or user chooses the next tool. Per-tool contracts, the routing diagram, web onboarding behavior, and the operator script surface: [`docs/tools.md`](docs/tools.md) (Chinese-first).
 
 ## Demo
 
@@ -205,13 +169,9 @@ npx @danceiny/gotry web
 | Headless one-shot | `npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"` | scripts / CI / targeted debugging → stdout |
 | Dependency doctor | `npx @danceiny/gotry doctor` (`--fix` to repair) | optional channels misbehaving: checks extension / Agent-Reach / hbcli / FlyAI key / sidebar / calendar / map tools, prints exact repair guidance, writes `gotry-state/doctor-report.md` |
 
-Requires Node ≥ 22.15. LLM credentials are managed by your dsh host UI — gotry itself never asks for or echoes them; OpenAI-compatible endpoints (MiniMax / relays / self-hosted gateways) are handled by the dsh model configuration. First cold start takes 6–15 s; if port `:3080` is taken, free it first; unexpected exits leave evidence in `gotry-state/incidents.jsonl` (nothing silent).
+Requires Node ≥ 22.15. LLM credentials are managed by your dsh host UI — gotry itself never asks for or echoes them; OpenAI-compatible endpoints (MiniMax / relays / self-hosted gateways) are handled by the dsh model configuration. First cold start takes 6–15 s; if port `:3080` is taken, free it first; unexpected exits leave evidence in `gotry-state/incidents.jsonl`.
 
-> **Registries & where you run it** — any npm-compatible registry (npmjs, npmmirror, an internal mirror) works as long as the package is synced there; if a mirror's `latest` lags behind, pin an exact version, e.g. `npx @danceiny/gotry@0.0.1-rc.22 web`. One exception: **inside the gotry repo** (or any project whose package.json is named `@danceiny/gotry`), bare-name `npx @danceiny/gotry …` fails with `sh: gotry: command not found` — use the source entry `./gotry web` instead.
-
-> **Per-launch onboarding (`gotry web`, issues #258/#267)** — an eligible interactive launch offers an optional-capability check at most once: `y` runs the same idempotent installers as `doctor --fix` and reports each gap as `installed` / `needs-user-action` / `unavailable` with a concrete reason; `n` skips straight to web. CI, benchmark, non-TTY, `GOTRY_SETUP_SKIP=1`, and `GOTRY_ONBOARDING_SKIP=1` never prompt and never install; nothing installs during `postinstall` or in a detached background task. This is a deterministic M4 UX proof — it does not satisfy #20 real repeat-cohort evidence.
-
-> **Operator scripts (repo-side, read-only)** — nightly cost accounting has a single source of truth in `ts/data/llm-price-table.json` (PR-only changes; unknown models fail closed; `price-drift-watch.ts` reports drift, never auto-applies); `build-metrics-report.ts` aggregates fact-gate/channel/incident sidecars into one markdown report; `channel-probe.ts` runs cron-driven read-only channel probes whose `down`/recovery events feed routing advice, doctor, and wish recall.
+> **Where you run it** — any npm-compatible registry works as long as the package is synced (pin an exact version if a mirror's `latest` lags). Inside the gotry repo itself, bare-name `npx @danceiny/gotry …` fails with `sh: gotry: command not found` — use the source entry `./gotry web`. An eligible interactive launch may offer a one-time optional-capability check (`y` runs the same installers as `doctor --fix`, `n` skips; CI / non-TTY never prompt, never install). Onboarding details and the repo-side operator scripts (cost table / metrics report / channel probe): [`docs/tools.md`](docs/tools.md).
 
 ### Developer source install
 
@@ -228,12 +188,12 @@ The source entry and the npm package resolve the same 230-package DeepSeek Harne
 
 The account-session channel reads realtime hotel/flight data from **your own logged-in Chrome**, under four hard rules:
 
-1. **Login happens on the external website.** GoTry never offers, fills, or collects any password / SMS code / cookie value. It only answers one boolean question — "does a login-ticket cookie exist" (reads cookie **names** only, zero values touched). Existing logins are auto-detected with zero popups.
-2. **Consent card, once per session.** The first account-session use pops a runtime approval card; approval holds for the session, a refusal revokes it (no repeat prompting). Master switch `sessionAccess: ask|allow|off` at any time.
-3. **Physically read-only.** A ReadGuard aborts all write requests at the network layer — ordering/payment is unreachable in transport. The agent never touches credentials or captchas; on a captcha it stops and hands control back to you.
-4. **Never hijacks your browser.** Retrieval/login always open their own dedicated tab; the login page is brought to front and stays with you; routine test runs never open browser windows.
+1. **Login happens on the external website** — GoTry never offers, fills, or collects any password / SMS code / cookie value; it answers one boolean question — "does a login-ticket cookie exist" (cookie **names** only).
+2. **Consent card, once per session** — approval holds for the session, refusal revokes it; master switch `sessionAccess: ask|allow|off` at any time.
+3. **Physically read-only** — a ReadGuard aborts all write requests at the network layer; a captcha stops the agent and hands control back to you.
+4. **Never hijacks your browser** — retrieval/login open their own dedicated tab; routine test runs never open browser windows.
 
-One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) Chrome extension — one-click on the Chrome Web Store, auto-updates, no setup wizard, no unpacked loading. When an account-session tool first needs it, the dsh host UI surfaces the store URL as a clickable link; until installed, tools return `needs-extension` with that URL and spend nothing. The extension passively forwards the site's own search responses — read-only by construction; cookie values never leave the browser.
+One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) Chrome extension (one-click, auto-updates, no setup wizard) — until installed, tools return `needs-extension` with the store link and spend nothing.
 
 ## Trustworthy by Construction
 
@@ -252,28 +212,22 @@ Current release: **v0.0.1-rc.22** (npm `latest`; the `rc` dist-tag points at rc.
 
 **Working today**:
 
-- **Deterministic choice kernel** — ordinary candidate enumeration, `evaluateChoice`, true-cost checks, per-candidate verdicts, and recommendation
-- **Explicit flight-chain Z3 path** — `solveUnified` handles the separate multi-leg constraint path; solver calls are gated by a single shared Context, serialized sessions, and the #227 local native-cleanup barrier
-- **Bounded ground-transfer slice (#341)** — explicit origin/destination coordinates with `mode=driving` delegate through the registered `map_driving_route` tool; only an exact static `taxi` transfer may receive route-estimated minutes (its static price stays `[static-pack:estimate]`); live traffic, transit/rail, and fares remain outside this slice
-- **Realtime retrieval** — flights/trains/hotels (Fliggy official channel), destination/hotel catalogs, weather, live flight observation, route connectivity; realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`); exhausted FlyAI anonymous trial quota is classified `needs-setup` with key guidance (no blind retries)
-- **Account-session search** — Ctrip flights **and hotels** + 12306 trains + Dida supplier-portal hotel rates on your own Chrome (hotels: real logged-in prices via passive sniffing; trains: public left-ticket query); facts are typed and invocation-bound — recognized empty is the sole negative fact, malformed rows record none, and the list API contributes no price; no live-availability claim beyond that
-- **Dependency doctor** — `npx @danceiny/gotry doctor` (CLI) / `gotry_doctor` (in-chat): read-only by default; explicit repair shows a scoped plan, asks once, runs the existing idempotent installers, and reports from a post-install recheck. Manual items stay manual; LLM keys stay with the dsh host
-- **Extension install on demand** — [GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) is offered as a clickable link when an account-session tool first needs it (one-click install + auto-update); no setup wizard
-- **Memory & reachability** — motivation profile / wish pool / companions / travel timeline, persisted by the tenant-scoped SQLite ledger; English solve output via `GOTRY_LOCALE=en`
-- **M4 lifecycle evidence collector** — explicit opt-in CLI for planning-flow observations: isolated `stateRoot`, mandatory consent + HMAC key; exports feed the #223 scorer as candidate/synthetic only, never manual attestation
-- **Routed turn budgets** — a deterministic, zero-LLM router classifies every turn (quick / sync / deep-planning); time is the only budget: quick/sync turns converge to an answer, deep-planning hands off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) collected by `scripts/turn-handoff-collect.ts` and queryable via the read-only `gotry_turn_handoff_list`; exercised end-to-end through a packaged consumer install in CI
-- **Ledger admin & tenant repair plan** — `ts/scripts/state-cli.ts` parses fail-closed (unknown/duplicate/invalid options never touch the state root); `repair-plan` inventories and dry-runs only on a temporary DB copy — apply/migration/rollback remain numbered follow-ups on #254
-- **Flight/hotel anchor field fingerprint ([#363](https://github.com/Danceiny/gotry/issues/363), parent [#273](https://github.com/Danceiny/gotry/issues/273))** — anchored flight rows are re-tokenized for `flight_no` and must equal `fact.flight_no`; anchored hotel rows must literally contain `fact.destination` + `fact.check_in` + `fact.check_out`; any drift fails closed as `fact_anchor_unknown`. The field fingerprint complements — never replaces — whole-line strict comparison and the existing price classifications; the registered `gotry_fact_gate` execute gains no new path. Deterministic isolated evidence only; does not close #273 or open M5/M6
-- **Recent fail-closed hardening** — malformed supplier responses (#279 Ctrip session, #352 FlyAI), policy-anchor full-content fingerprint (#359), booking-planner repair (#282), strict duplicate tool-call repair (#327), safe-dispatch diagnostics (#329), IANA timezone contract (#343), persistent home-city default (#338), subagent/jobs id guard (#194), Node ≥22.15 build compatibility (#265). Deterministic, isolated evidence each — none of these open M4/M5/M6 gates. Full trail: [CHANGELOG.md](CHANGELOG.md)
+- **Deterministic choice kernel + explicit flight-chain Z3 path** — ordinary candidate enumeration, `evaluateChoice`, true-cost checks, per-candidate verdicts and recommendation; multi-leg flight chains go through the separate `solveUnified` Z3 path
+- **Realtime + account-session retrieval** — flights/trains/hotels (Fliggy official channel), catalogs, weather, live flight observation, route connectivity, plus Ctrip flights & hotels / 12306 trains / Dida supplier-portal rates on your own Chrome (consent-gated, physically read-only, typed invocation-bound facts; no live-availability claim beyond observed runs); realtime prices can overwrite solver prices (`GOTRY_REALTIME_PRICING=1`)
+- **Dependency doctor & extension on demand** — `npx @danceiny/gotry doctor` / `gotry_doctor`: read-only by default, scoped repair on approval via the same idempotent installers; the Session Bridge extension is offered as a clickable link when first needed (no setup wizard)
+- **Memory & reachability** — motivation profile / wish pool / companions / travel timeline on the tenant-scoped SQLite ledger; English solve output via `GOTRY_LOCALE=en`
+- **Routed turn budgets** — a deterministic, zero-LLM router classifies every turn (quick / sync / deep-planning); deep-planning hands off to a persisted background ticket (`gotry_turn_handoff.v1`, ETA ≈1h) instead of dying mid-stream
+- **M4 lifecycle evidence collector** — explicit opt-in CLI, isolated `stateRoot`, mandatory consent + HMAC key; exports feed the #223 scorer as candidate/synthetic only
+- **Recent slices & fail-closed hardening** — bounded ground-transfer slice (#341), flight/hotel anchor field fingerprint (#363), malformed supplier responses (#279/#352), policy-anchor fingerprint (#359), booking-planner & duplicate-call repairs (#282/#327), safe-dispatch diagnostics (#329), IANA timezone contract (#343), home-city default (#338), subagent/jobs id guard (#194), ledger CLI & read-only repair plan (#254), Node ≥22.15 builds (#265). Deterministic, isolated evidence each — none open M4/M5/M6 gates. Full trail: [CHANGELOG.md](CHANGELOG.md)
 
 **Open limitations** (honest list):
 
-- **M3 Exit not closed** — engineering & distribution are ready, but real seed-user evidence (50–200 person cohort) has not been accumulated; automated tests prove contracts and formulas, not business pass
-- **M4→M6 gates remain evidence-bound** — the scorer hardening (#238), opt-in lifecycle collector (#248), tenant CLI, and Z3/map stability foundations are on main, but no real `observed_private` N≥5 repeat cohort has landed; M5 Entry additionally requires supplier agreement/internal authorization (#136), M6 requires #137's P6 approval and a signed real pilot. Local or fixture proof — including the #258/#267 web-onboarding UX proof and the Node 26 dist gate — never opens these real gates
+- **M3 Exit not closed** — the real 50–200 seed-user cohort evidence is not yet accumulated; automated tests prove contracts and formulas, not business pass
+- **M4→M6 gates remain evidence-bound** — no real `observed_private` N≥5 repeat cohort has landed; M5 awaits #136 supplier authorization, M6 awaits #137 P6 approval + a signed pilot; local/fixture proof never opens these gates
 - **Hotel session adapters** — Ctrip-hotel / Meituan logged-in surfaces await real login-state backfill; flights are done
-- **#272 live evidence remains open** — #335 only hardens deterministic offline summary selection; authorized live browser/session calibration and packaged connected/degraded evidence remain outstanding
-- **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host / calibration samples
-- **External benchmark generalization** — every frozen external run to date remains diagnostic-only (no score, no uplift claim); the round-by-round engineering ledger lives in [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
+- **#272 live evidence remains open** — only deterministic offline summary hardening (#335) has landed
+- **Interface language** — English covers the deterministic solve-output layer; the dsh host UI and dialogue surface belong to the host
+- **External benchmark generalization** — every frozen external run to date is diagnostic-only (no score, no uplift); round-by-round ledger: [`docs/evaluation/benchmark-environment-bridge.md`](docs/evaluation/benchmark-environment-bridge.md)
 - **Booking** — nothing bookable ships today; M5 opens only through WriteGate and the booking-saga FSM
 
 <details>
@@ -345,6 +299,7 @@ Program-level context: [`docs/gotry-master-outline.md`](docs/gotry-master-outlin
 | [`docs/gotry-product-design.md`](docs/gotry-product-design.md) | Product design: main loop, transparency, whole-cost model |
 | [`docs/roadmap.md`](docs/roadmap.md) | M0–M6 timeline & current position |
 | [`docs/user-guide.md`](docs/user-guide.md) | End-user guide |
+| [`docs/tools.md`](docs/tools.md) | Tool reference: per-tool contracts, channel routing, onboarding, operator scripts (Chinese-first) |
 | [`docs/data-sources.md`](docs/data-sources.md) | Data sources & evidence-chain policy |
 | [`docs/ops/extension-privacy.md`](docs/ops/extension-privacy.md) | Session Bridge extension privacy |
 | [`docs/research/kimi-postmortem.md`](docs/research/kimi-postmortem.md) | A real AI-travel-planning failure postmortem (cautionary tale) |

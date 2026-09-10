@@ -565,6 +565,7 @@ Issue #338 当前形态:写入 patch 接受 `homeCity` 与 optional `homeCityEvi
 | `tech-strategy.md` | 技术选型与半年迭代路线(M2–M4):选型矩阵/评测体系/分工/持续优化回路/决策登记 |
 | `tokens.md` | **token 唯一权威面**:npm 三路径(web会话/granular bypass/OIDC)+ agent-reach 8 渠道获取表 + 统一 .env 存放 |
 | `user-guide.md` | 面向使用者的上手指南(dsh 形态用法) |
+| `tools.md` | **工具参考面**:23 个注册工具分组与逐工具契约/降级行为 + 通道路由(注册表只建议不派发)+ web onboarding(#258/#267)与运维脚本面 |
 | `release-notes.md` | 发版记录(按版本归档,最新在上) |
 | `decisions-needed.md` | 待创始人拍板的决策清单 |
 | [`debt-archive.md`](debt-archive.md) | 已清偿债务存档(追加式留证;开着的债与工作面只在本文 §10.1) |
