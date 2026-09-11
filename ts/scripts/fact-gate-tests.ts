@@ -1118,5 +1118,78 @@ assert(goodFlights.every(f => f.bookability === 'bookable_exact_date' && f.query
   console.log(`  ok - §15 航班/酒店锚点字段指纹(#363 / D-26)完成(canonical + 5 root 反例 + §4b 价格兼容 + 价格矛盾分类保留 + 借用/dup/phantom + 列车/政策兼容)`)
 }
 
+// ---------------------------------------------------------------------------
+// §16 词表外下单措辞 fail-closed(issue #381,D-26 R1,接管 #273 公开跟踪)
+// 根反例(main 6e85d36 实证):「入境章/落地章」不在 POLICY_WORD、「800元」不匹配
+// ¥/ISO 币种前缀 → 全零抽取 → 无锚点要求 → 静默过闸。修复沿用既有错误分类,
+// 不发明新违例通道:
+//  (a) POLICY_WORD 有限扩充(入境章/落地章/出境章/入境卡/出境卡/出入境卡,与
+//      落地签同族的移民章/卡六词)→ 缺「截至」按既有 policy_without_as_of 拒绝;
+//  (b) 零 claim 行的「交易承诺短语 × 词表外金额写法」有限机械词网 → 既有
+//      unverified_price_claim(硬价缺可比较权威来源,#300 同源)。
+// 双向定界(不得误伤):合法叙述(无交易短语)、预算口径(预算/约 + 词表外金额)、
+// ¥ 前缀金额的零 claim 行(R2 founder 决策边界)、既有 §12j 裸可订短语边界、
+// 已有 claim 的行(由既有机制负责,词网不重复计违例)。
+// ---------------------------------------------------------------------------
+{
+  // 16a. 根反例:普吉岛样本两行原全零抽取 → 逐行显式拒绝
+  const phuket = gateArtifact('普吉岛入境章费用 800元，现场支付\n落地章办理点在机场到达层', [], map, { trip_year: 2026 })
+  assert(phuket.verdict === 'blocked'
+    && phuket.violations.filter(v => v.kind === 'policy_without_as_of').length === 2
+    && [...new Set(phuket.violations.map(v => v.line))].sort((a, b) => a - b).join(',') === '1,2',
+    '普吉岛根反例:入境章/落地章原全零抽取静默过闸 → blocked,两行各一条 policy_without_as_of(红→绿)')
+
+  // 16b. 变体一(换措辞,无政策词 → 交易承诺词网):费用 + 泰铢后缀
+  const baht = gateArtifact('机场快速通道费用 300泰铢，现场支付', [], map, { trip_year: 2026 })
+  assert(baht.verdict === 'blocked' && baht.violations.length === 1
+    && baht.violations[0]!.kind === 'unverified_price_claim' && baht.violations[0]!.line === 1,
+    '换措辞变体:快速通道费用 300泰铢(词表外币种后缀,零 claim)→ blocked/unverified_price_claim(红→绿)')
+
+  // 16c. 变体二(换币种写法):$ 前缀 + 付现
+  const dollar = gateArtifact('机场快速通道费用 $15，现场付现', [], map, { trip_year: 2026 })
+  assert(dollar.verdict === 'blocked' && dollar.violations.length === 1
+    && dollar.violations[0]!.kind === 'unverified_price_claim',
+    '换币种写法变体:$15 前缀写法(零 claim)→ blocked/unverified_price_claim(红→绿)')
+
+  // 16d. 政策路径与币种写法正交:落地章 + $30 → policy_without_as_of
+  const stampDollar = gateArtifact('落地章代办费用 $30', [], map, { trip_year: 2026 })
+  assert(stampDollar.verdict === 'blocked'
+    && stampDollar.violations.filter(v => v.kind === 'policy_without_as_of').length === 1,
+    '落地章 + $30 代办费用 → policy_without_as_of(词表扩充路径,与币种写法正交)')
+
+  // 16e. 入境卡/出入境卡同族词
+  const cardVariant = gateArtifact('出入境卡需要现场填写并缴费 100元', [], map, { trip_year: 2026 })
+  assert(cardVariant.verdict === 'blocked'
+    && cardVariant.violations.filter(v => v.kind === 'policy_without_as_of').length === 1,
+    '出入境卡 + 缴费 100元 → policy_without_as_of(同族词覆盖)')
+
+  // 16f. 误界定界一:带「截至」时间边界的政策行过闸(#302 §13b 同口径);
+  //     行内词表外金额的对账属 R2(价格容忍度/汇率/多币种,founder 决策),不在本 issue。
+  const stampAsOf = gateArtifact('截至 2026-08-29 的现行入境章费用口径 800元', [], map, { trip_year: 2026 })
+  assert(stampAsOf.verdict === 'pass' && stampAsOf.violations.length === 0,
+    '带截至日期的入境章政策行过闸(#302 §13b 同口径);词表外金额对账属 R2 边界')
+
+  // 16g. 误界定界二:合法叙述(无交易承诺短语/无金额)零 claim 不误伤
+  const narrative = gateArtifact('普吉岛老城区适合步行游览，傍晚到海边看日落\n机场到达层有便利店和药房', [], map, { trip_year: 2026 })
+  assert(narrative.verdict === 'pass' && narrative.violations.length === 0,
+    '合法叙述两行(无交易短语)零 claim 仍 pass(双向定界)')
+
+  // 16h. 误界定界三:预算口径的词表外金额(预算/约,无费用/支付短语)不误伤
+  const budgetCjk = gateArtifact('全程餐饮预算约 2000元，丰俭由人', [], map, { trip_year: 2026 })
+  const budgetYen = gateArtifact('全程预算 ¥30,000', [], map, { trip_year: 2026 })
+  assert(budgetCjk.verdict === 'pass' && budgetCjk.violations.length === 0
+    && budgetYen.verdict === 'pass' && budgetYen.violations.length === 0,
+    '预算口径(预算/约 + 元 后缀,¥ 前缀)零 claim 不入承诺词网,仍 pass(R2 边界)')
+
+  // 16i. 已有 claim 的行由既有机制负责:酒店 claim 行内的押金 100元 不被词网重复计违例
+  const claimedLine = gateArtifact('## 住宿\n- 大理 2026-10-01→2026-10-03 洱海民宿有房可订 押金 100元', [], map, { trip_year: 2026 })
+  assert(claimedLine.verdict === 'blocked'
+    && claimedLine.violations.some(v => v.kind === 'unverifiable_hotel_claim')
+    && !claimedLine.violations.some(v => v.kind === 'unverified_price_claim'),
+    '已有 hotel claim 的行(押金 100元)由既有酒店闸负责,词网不重复计 unverified_price_claim')
+
+  console.log('  ok - §16 词表外下单措辞 fail-closed(#381 / D-26 R1)完成(根反例 + 换措辞/换币种两变体 + 同族词 + 截至/预算/叙述三重不误伤定界)')
+}
+
 console.log(`\nFACT GATE TESTS: ${pass} pass, ${fail} fail`)
 if (fail > 0) process.exit(1)

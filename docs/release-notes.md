@@ -16,6 +16,42 @@
 
 ---
 
+## v0.0.1-rc.24 · 2026-09-11
+
+**Source-only bump. The owner (founder) authorized the npm publish of `0.0.1-rc.24` after the docs/audit-sync-2026-09-11 batch closed; the bump advances `package.json` and `extension/manifest.json` together. Source commits covering this version:**
+
+- `6e85d36` feat(session): execute in admin browser extension, kill server-side chrome (#380) — founder 2026-09-11: execution environment = the browser client (GoTry Session Bridge), server-side zero Chrome. `ts/capabilities/session/extension-bridge.ts` extracts transport-agnostic `createBridgeJobQueue`; `handleMountedRequest` mounts gotry-backend `/v1/session/bridge/{health,status,jobs,results}` auth surface. `ts/capabilities/session-search.ts` introduces `multiCollect` for the dida recommended-flow lane (`hotels` + `recommendPrices` both arriving = settlement). `ts/src/backend/modules/session-search.ts` drops the CDP/transport dependency and exposes only the bridge endpoints; `login/open` lets the extension bring the dida login page to the front. Founder directive "hide all config from employees; portal dispatches join ticket" moves the hotelbyte product's `join ticket` dispatch out of the CLI surface. §38 extension-contract tests 36/36.
+- `25502e9` feat(state-ledger): authorized tenant repair apply/rollback with receipt protocol (#254) (#378) — extends `ts/src/ledger-repair-apply.ts` with owner-gated `apply` / `rollback` paths, paired with the receipt protocol from `docs/ops/ledger-tenant-repair.md`. Dry-run still default; production apply requires the explicit owner-only `GOTRY_REPAIR_AUTHORIZE` env token and writes a private receipt on completion.
+- `3168c0f` chore(deps): DSH runtime closure upgraded to 0.1.5-rc.1 (232 packages) (#379) — `ts/package.json` overrides expanded from 14 to 232, pinning the full peer closure at `0.1.5-rc.1`. New additions include `dsh-client-ui-sidebar-files`/`dsh-client-ui-sidebar-right`/`dsh-client-ui-sidebar-textpreview`; removals: `dsh-tool-subagent-report`. CI explicitly strict with `npm ci --strict-peer-deps`.
+- `c28d6be` fix(ci): backfill version field for native binary placeholders in lockfile — three `node-addon-system-*` placeholder entries under `node_modules/@deepseek-ai/node-addon-system/` had no `version` field, causing `npm ci --strict-peer-deps` on npm 11.19.0 to fail with `Invalid Version:`. Backfilled with `0.1.2` matching the parent package's `optionalDependencies`. Unblocks the docs-only PRs (#383 + the audit-sync follow-ups) that were CI-failing despite being pure docs changes.
+
+### What's New (architecture-side increments shipped alongside)
+
+These were merged into `main` between rc.20 and rc.24 but are not in their own release segment because the author intentionally held them in the Unreleased queue pending the rc.24 batch closure:
+
+- **Web startup interactive onboarding (#258/#267)** — `npx @danceiny/gotry web` on an interactive TTY may ask **exactly once** "configure now? (y/N)" before the detached doctor summary fires. `y` reuses `doctor --fix`'s idempotent installers (`setupHbcli` / `setupReach` / `setupSidebar`); `n` proceeds to web. Three-class results (`installed` / `needs-user-action` / `unavailable`). CI / benchmark / non-TTY / `GOTRY_SETUP_SKIP=1` / `GOTRY_ONBOARDING_SKIP=1` / `--no-onboarding` all skip the prompt. **M4 UX proof**; does not count toward #20's real `observed_private` cohort Exit.
+- **Booking Copilot planner shared-source derivation (#263, 8 commits)** — `time-anchor.ts` exports `formatUtcOffsetLabel` with fixed `UTC±HH:MM` zero-pad; `validation.ts` exports the canonical schema bytes; the planner persona's `SearchCriteriaPatch` property-name list is derived from `bookingSurfaceSchema.$defs.SearchCriteriaPatch.properties` — no hand-maintained second copy. Numeric-keyed arrays (`{"0": {...}}`) are detected at the must-be-array repair step. Planner LLM follows `DEEPSEEK_MODEL` / `LLM_MODEL`; MiniMax-M2 nested decision envelopes auto-unwrapped; planner token budget raised for reasoning models.
+- **Booking planner correction batch (#212 / #278)** — `#212` factRef alias-collision prevention via reserved `modelref:` namespace + SHA-256 of raw UTF-8; `#278` schema-rejection feedback loop replays the concrete rejection into the same session instead of blind-retrying the identical prompt (MiniMax-M3 reproducer); occupancy entries invented without `adults` dropped. Predecessor slice to `#282`.
+- **Dida supplier-portal adapter v2 (#372)** — recognizes the load-state recommended flow (`HotelRecommendAPI/SearchHomepageRecommendHotels` + `SearchHomepageRecommendPrices`) in addition to `PopularDestinationAPI/SearchHotels` + `SearchHotelPrices`. UAT probes found this is what the page spontaneously emits. CDP lane uses windowed multi-response collection.
+- **Booking-executor observation surface (#377, M1 slice 1)** — `POST /v1/booking/observe` only; opens the supplier page via CDP, reads the booking-entry button text, captures a screenshot. Deliberately no fill/submit primitives (those belong to a future controlled-executor behind M5 WriteGate).
+- **gotry-backend release build script (#367)** — `scripts/build-booking-copilot-release.mjs` + `scripts/build-gotry-backend-release.mjs` wrap the kernel + booking-copilot + session-search modules into the published artifact for `bin/gotry-backend.js`.
+
+### For Developers
+
+- All new behavior lives behind the same idempotent installer surface as `doctor --fix`; no new global state, no new configuration paths.
+- Booking-copilot planner prompts now share the canonical schema with the booking.surface typed contracts — drift between the planner example and the wire shape is a compile error rather than a runtime mismatch.
+- The lockfile backfill in `c28d6be` is a 6-line fix; if you regenerate `package-lock.json` via `npm install`, the same three placeholders will re-emerge without `version`. The author of `c28d6be` plans to add a `prepublish` lint that rejects empty-version entries; track in the next audit batch.
+
+### Installation
+
+- No change — run `npx @danceiny/gotry@0.0.1-rc.24 web`. The first interactive start runs the #258/#267 onboarding prompt once; pass `--no-onboarding` or set `GOTRY_ONBOARDING_SKIP=1` to skip it.
+
+### dist-tag plan
+
+`npm dist-tag add 0.0.1-rc.24 latest` and `npm dist-tag add 0.0.1-rc.24 rc` in the same authorized publish window (per owner directive, dist-tag c: dual-point both `latest` and `rc`). Granular token DELETE returns 403/405 as documented in [`docs/tokens.md`](../tokens.md); the redundant `rc` alias remains attached at rc.20 — owner decision pending whether to keep the historical `rc` point or let it die.
+
+---
+
 ## v0.0.1-rc.20 · 2026-09-08
 
 ### What's New

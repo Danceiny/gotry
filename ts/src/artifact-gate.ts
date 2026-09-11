@@ -125,11 +125,26 @@ const HEADING_ATX = /^(#{1,6})\s+(.+)$/
 /** 「政策」关键词(issue #273 父 + 子 #302):覆盖签证/免签/落地签/海关/过境五大类 + 子 #302 显式列举的政策词有限并集;
  * 海关申报 与 入境申报 同性质但被原 regex 漏掉,补一个 demonstrative miss。
  * 子 #302 扩词边界:仅 EVUS/ETA/eVisa/疫苗/疫苗接种/健康申报/隔离/工作签/居留/返程签/护照有效期/黄皮书/保险;拉丁 token
- * 大小写不敏感但不嵌入更长 Latin 词(REVUS ≠ EVUS);不做 NLP/同义词/任意政策词表扩展。 */
-const POLICY_WORD = /免签|落地签|签证|入境申报|海关申报|过境免|疫苗|疫苗接种|健康申报|隔离|工作签|居留|返程签|护照有效期|黄皮书|保险|(?<![A-Za-z])(?:EVUS|ETA|eVisa)(?![A-Za-z])/i
+ * 大小写不敏感但不嵌入更长 Latin 词(REVUS ≠ EVUS);不做 NLP/同义词/任意政策词表扩展。
+ * 子 #381(D-26 R1)扩词:入境章/落地章/出境章/入境卡/出境卡/出入境卡——与落地签同族的
+ * 移民章/卡六词,根反例「普吉岛入境章费用 800元」原全零抽取静默过闸,缺「截至」按既有
+ * policy_without_as_of 显式拒绝。仍为有限机械词表,可列举扩充、不做语义模型。 */
+const POLICY_WORD = /免签|落地签|入境章|落地章|出境章|入境卡|出境卡|出入境卡|签证|入境申报|海关申报|过境免|疫苗|疫苗接种|健康申报|隔离|工作签|居留|返程签|护照有效期|黄皮书|保险|(?<![A-Za-z])(?:EVUS|ETA|eVisa)(?![A-Za-z])/i
 /** as_of 必须是「截至 + 具体日期」——「现行 60 天」不算时间边界(issue #46 政策行) */
 const AS_OF_WORD = /截至\s*\d{4}[-/年]\d{1,2}|as[_ ]?of\s*\d{4}/i
 const CHECK_MARK = /[✓✅]/
+
+/** 交易承诺短语有限并集(D-26 R1,issue #381):费用/收费/押金/支付/缴费类下单措辞。
+ * 与「词表外金额写法」同一行同现、且该行经全部既有抽取原语后零 claim 时,按既有
+ * unverified_price_claim fail-closed。可列举扩充,不做 NLP/同义词/语义模型(#302 同款边界);
+ * 可订性短语(有房/可订)不在其中——由 §10/§12 酒店闸负责,其「裸短语不入闸」边界
+ * (#301/#347)保持不变。 */
+const COMMITMENT_TRANSACTION_RE = /费用|收费|手续费|服务费|签证费|通行费|通关费|小费|押金|定金|订金|机场税|港口税|支付|付款|缴款|缴费|现付|到付|付现|代订|代购/
+/** 受支持币种词表外的金额写法(D-26 R1,issue #381):`hardPricesInLine` 只识别
+ * ¥/[A-Z]{3} 前缀硬价;CJK 币种后缀({N}元/泰铢/美元…)与 $/＄ 前缀是其覆盖不了的
+ * 下单金额写法(根反例「800元」)。¥/ISO 前缀金额不在其中——零 claim 行的
+ * ¥/ISO 金额(预算/约价口径)属 R2 价格容忍度 founder 决策边界,不由本网拒绝。 */
+const OFF_VOCAB_AMOUNT_RE = /(?:\d[\d,]*(?:\.\d+)?\s*(?:元|美元|美金|泰铢|铢|日元|日圆|港币|港元|欧元|卢比|比索|林吉特|印尼盾|迪拉姆|里亚尔))|(?:[$＄]\s*\d[\d,]*(?:\.\d+)?)/
 
 /** 「直飞」断言(排除否定前置:无/不/没有/未见直飞;函数实现避开变宽 lookbehind 引擎差异) */
 function hasDirectAssertion(line: string): boolean {
@@ -915,6 +930,26 @@ export function gateArtifact(
       violations.push({ kind: 'unconditional_check', line: p.line, detail: `政策行使用无条件 ✓/✅` })
     }
   }
+
+  // 词表外下单措辞 fail-closed(D-26 R1,issue #381,接管 #273 公开跟踪):
+  // 根反例(main 6e85d36)「普吉岛入境章费用 800元，现场支付」全零抽取静默过闸。
+  // 兜底词网:仅当(1)该行经全部既有抽取原语(锚点/航班/车次/政策/酒店/机场映射/
+  // 直飞)后零 claim,且(2)行内同时命中交易承诺短语与词表外金额写法,才按既有
+  // unverified_price_claim 显式拒绝——不发明新违例通道。已有 claim 的行由各自
+  // 既有机制负责,词网不重复计违例;heading 行与抽取面一致不入网。
+  const claimedLines = new Set<number>(claims.anchors.keys())
+  for (const c of [...claims.flights, ...claims.trains, ...claims.policies, ...claims.hotels, ...claims.airports, ...claims.direct_lines]) claimedLines.add(c.line)
+  lines.forEach((line, idx) => {
+    const lineNo = idx + 1
+    if (claimedLines.has(lineNo) || HEADING_ATX.test(line)) return
+    if (COMMITMENT_TRANSACTION_RE.test(line) && OFF_VOCAB_AMOUNT_RE.test(line)) {
+      violations.push({
+        kind: 'unverified_price_claim',
+        line: lineNo,
+        detail: '词表外下单措辞 fail-closed:该行含交易承诺措辞且金额为受支持币种词表(¥/ISO 前缀)外的写法,无 exact-date 事实可回溯——按未核验价格处理,不得静默过闸;改用渲染原语锚点或附「截至 YYYY-MM-DD」可溯来源(D-26 R1,issue #381)',
+      })
+    }
+  })
 
   // 联程措辞:含「联程」的行,逐航班号查 protected_connection——
   // 只有全部航腿同票保护才允许称联程;分票/自助转机必须显式标红

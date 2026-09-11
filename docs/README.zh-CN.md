@@ -103,6 +103,7 @@
 | [release-notes.zh-CN.md](release-notes.zh-CN.md) | 逐版本发布决策（「为什么」，人写决策面） |
 | [tokens.zh-CN.md](tokens.zh-CN.md) | token 唯一权威面：npm 2FA/发布机制/渠道获取表 |
 | [decisions-needed.zh-CN.md](decisions-needed.zh-CN.md) | 待创始人拍板的决策队列 |
+| [g5-authorization-ledger.zh-CN.md](g5-authorization-ledger.zh-CN.md) | G5 内部差旅桥授权台账（GRANT 条目仅创始人侧维护；由 `ts/scripts/g5-guard.ts` 机械读取，issue #348） |
 | [debt-archive.zh-CN.md](debt-archive.zh-CN.md) | 已清偿债务存档（追加式留证；开着的债见 architecture.zh-CN.md §10.1） |
 
 ### design/（模块设计）
@@ -170,8 +171,9 @@
 | 文档 | 关注点 |
 |---|---|
 | [ops/extension-privacy.md](ops/extension-privacy.zh-CN.md) | Session Bridge 扩展隐私政策 |
-| [ops/extension-webstore-submission.md](ops/extension-webstore-submission.zh-CN.md) | Chrome Web Store 上架材料与现行 dsh UI 安装交接（ADR-21 通道 B） |
+| [ops/extension-webstore-submission.md](ops/extension-webstore-submission.md) | Chrome Web Store 上架材料与现行 dsh UI 安装交接（ADR-21 通道 B） |
 | [ops/external-pr-workflow.md](ops/external-pr-workflow.zh-CN.md) | 公开 issue→PR→review→merge 台账；另载外部 PR（含自动化机器人）分诊/核验/裁决规则 |
+| [ops/security.md](ops/security.zh-CN.md) | 安全策略与漏洞披露：上报通道、triage 纪律、append-only 安全事件台账 |
 | [ops/ledger-tenant-repair.md](ops/ledger-tenant-repair.zh-CN.md) | #254 账本 tenant 修复 owner-gate 清单（dry-run → 授权 → apply → 私有回执） |
 
 ### assets/ 与 superpowers/

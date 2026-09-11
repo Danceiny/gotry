@@ -84,6 +84,12 @@ npx tsx scripts/state-cli.ts forget --state-root <root> wish <wish_id>
 1. 对话里直接说「看看我生成的行程 / 打开上次的规划」——GoTry 会用 `gotry_artifacts_list` 列出在册产物，再用 `gotry_artifacts_read` 以**带行号的文件视图**读取（只读，支持翻页；**首行会显示「source + 完整 path」**，并显示内容版本避免把旧摘要当新内容）。公开 `./client` adapter 在 DSH Web 中按 runtime `block` 渲染自定义 list/read 卡，路径可点击；实际 fresh-profile list→select/open→read→edit→updated-read 证据由 `ts/scripts/dsh-artifact-web-e2e.ts` 生成。workspace/sidebar 文件树仍可作为额外预览面。可读范围 = 你的 gotry stateRoot + **会话工作目录**（排除 `node_modules`/`.git`）；**只读文本类**（`md/txt/json/jsonl/csv/log/yaml/yml`），超过 2 MB、跨出允许目录、扩展名不在白名单、或路径是符号链接越界——都会返回带 `hint` 的 `ok: false`；
 2. **dsh web 侧栏工作台**（dsh-better-sidebar，dsh-market 第一 UI 组件）：`gotry web` 页面右侧展开工作台，文件树里点开工作区里的行程 md/工单交付，即见产品级渲染（表格/图表/PDF 都支持）。装法：`npx @danceiny/gotry doctor --fix`（体检报告 `gotry-state/doctor-report.md` 也在这个工作台里预览）；未装也不影响路 1。
 
+## 首次启动 onboarding（`gotry web`，issue #258/#267）
+
+首次 `npx @danceiny/gotry web` 在交互式 TTY 启动时，如果 startup doctor 发现 gotry 能自动安装的可选能力（`hbcli` 二进制 / Agent-Reach `.venv` / dsh-better-sidebar），会**只问一次**："现在配置可选能力吗？(y/N)"。`y` 复用现有幂等的 `doctor --fix` 安装器（不建第二套）；`n` 立即继续启动 web。每项缺漏以三态之一回报，附具体原因——`installed`（本机已自动安装）/ `needs-user-action`（Chrome Web Store 扩展、`hbcli` 登录、FlyAI key、`dsh-calendar` profile 配置——永不冒充自动完成）/ `unavailable`（如随包 vendor 缺失需重装 gotry）。部分失败不挡 web；再跑不重装已健康项。重试命令：`npx @danceiny/gotry doctor --fix`。
+
+**零 prompt、零安装、web 仍照常启动** 的场景：CI、benchmark、非 TTY、全健康环境、`GOTRY_SETUP_SKIP=1`、onboarding 专用 opt-out `GOTRY_ONBOARDING_SKIP=1`（或 `--no-onboarding`）。gotry 永不在 `postinstall` 或 detached 后台任务里安装。这是带确定性隔离测试的 M4 UX 证明；不满足 #20 真实 repeat-cohort Exit 证据。条件与三态结果完整说明：[`docs/tools.md`](tools.zh-CN.md#web-启动-onboarding-258267)。
+
 ## 进阶：headless 一问一答
 
 ```bash
