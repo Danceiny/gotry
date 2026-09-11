@@ -36,7 +36,7 @@
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页 / 字幕 / GitHub / 全渠道外部信息（经 Agent-Reach） |
 | **自检** | `gotry_doctor` | 默认只读体检（扩展 / Agent-Reach / hbcli / FlyAI key / sidebar / dsh-calendar / dsh-map-tools / dsh-tool-ask-user）。显式 `action: "repair"`：先展示可自动修复项与范围，请求批准，复用 `doctor --fix` / web onboarding 同一套幂等安装器，以安装后复检判定结果；浏览器商店安装、凭证/API key、profile、包重装与 Node 升级仍由用户处理；拒绝、取消或无审批通道时零执行。报告落 `gotry-state/doctor-report.md`（侧栏工作台可预览） |
 
-另有随包交付的 MIT 地图工具 payload（`map_geocode` / `map_poi_search` / `map_*_route` 等，dsh-map-tools 系），不引入与锁定家族冲突的外部 npm peer；地面接驳切片（#341）经注册的公共 `map_driving_route` 委托，仅精确静态 `taxi` 接驳可拿路径估算分钟数，静态价仍标 `[静态包:估算]`。
+另有随包交付的 MIT 地图工具 payload（`map_geocode` / `map_poi_search` / `map_*_route` 等，dsh-map-tools 系），不引入与锁定家族冲突的外部 npm peer；地面接驳切片（#341）经注册的公共 `map_driving_route` 委托，抵达方向（A→B）与返程方向（B→A）分别请求与绑定，缓存/回退按方向隔离（#364），仅精确静态 `taxi` 接驳可拿路径估算分钟数（`minutesOut` / `minutesRet` 覆盖），静态价仍标 `[静态包:估算]`。
 
 ## 通道路由
 

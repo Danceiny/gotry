@@ -5,6 +5,14 @@
  * `map_driving_route` result and the deterministic candidate input. It never
  * calls a map client directly, never writes shared state, and never supplies
  * a price: the selected candidate transfer keeps its static `priceCny`.
+ *
+ * Each `ground_transfer` request resolves two deterministic directions —
+ * outbound (origin → destination) and return (destination → origin) — and
+ * binds the resulting route minutes to the candidate transfer as
+ * `minutesOut` / `minutesRet` overrides consumed by the solver / arithmetic
+ * layer. Cache, freshness, and fallback are isolated per direction so a
+ * miss / error / stale / mismatch in one direction never borrows the
+ * dynamic value of the other.
  */
 
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
@@ -31,6 +39,7 @@ export type GroundTransferProvenance =
 
 export type GroundTransferFreshness = 'fresh' | 'cache_hit' | 'fallback' | 'not_attempted'
 export type GroundTransferCacheStatus = 'miss' | 'hit' | 'requery' | 'stale' | 'bypass'
+export type GroundTransferDirection = 'outbound' | 'return'
 
 export interface GroundTransferCoordinate {
   longitude: number
@@ -74,6 +83,7 @@ export interface GroundTransferCacheInfo {
  * boundary. `trafficStatus` makes clear that duration is not live traffic.
  */
 export interface GroundTransferRouteFact {
+  direction: GroundTransferDirection
   origin: GroundTransferCoordinate
   destination: GroundTransferCoordinate
   mode: typeof GROUND_TRANSFER_MODE
@@ -98,17 +108,11 @@ export interface GroundTransferStaticSelection {
   staticPriceCny: number
 }
 
-export interface GroundTransferResolution {
+export interface GroundTransferDirectionResolution {
   applied: boolean
-  candidateId?: string
-  transferIndex?: number
-  requestedMode?: string | null
-  requestedPosition?: string | null
-  staticMode?: string
+  direction: GroundTransferDirection
   minutes?: number
-  staticMinutes?: number
-  priceCny?: number
-  priceEvidence?: typeof GROUND_TRANSFER_STATIC_PRICE_EVIDENCE
+  staticMinutes: number
   provenance: GroundTransferProvenance
   asOf: string | null
   freshness: GroundTransferFreshness
@@ -118,13 +122,52 @@ export interface GroundTransferResolution {
   fallbackReason?: string
 }
 
+export interface GroundTransferResolution {
+  applied: boolean
+  candidateId?: string
+  transferIndex?: number
+  requestedMode?: string | null
+  requestedPosition?: string | null
+  staticMode?: string
+  staticMinutes?: number
+  priceCny?: number
+  priceEvidence?: typeof GROUND_TRANSFER_STATIC_PRICE_EVIDENCE
+  provenance: GroundTransferProvenance
+  asOf: string | null
+  freshness: GroundTransferFreshness
+  cache: GroundTransferCacheInfo
+  evidenceClass: GroundTransferEvidenceClass
+  outbound: GroundTransferDirectionResolution
+  return: GroundTransferDirectionResolution
+  outboundMinutes?: number
+  returnMinutes?: number
+  fallbackReason?: string
+}
+
+/**
+ * `destTransfers` always carry the legacy `mode` / `minutes` / `priceCny`
+ * fields. The two optional fields below are direction-specific overrides set
+ * by the ground-transfer capability when a route fact successfully resolves
+ * for that direction. The solver / arithmetic layer reads `minutesOut` for
+ * the outbound arrival (ch.outTransfer) and `minutesRet` for the return
+ * departure (ch.retTransfer); if either is missing it falls back to the
+ * symmetric `minutes` field, preserving byte-for-byte behavior for static
+ * inputs and symmetric route inputs.
+ */
 export interface GroundTransferCandidateLike {
   id: string
   destTransfers: Array<{
     mode: string
     minutes: number
     priceCny: number
+    minutesOut?: number
+    minutesRet?: number
   }>
+}
+
+interface GroundTransferDirectionParts {
+  origin: GroundTransferCoordinate
+  destination: GroundTransferCoordinate
 }
 
 interface GroundTransferRequestParts {
@@ -132,9 +175,15 @@ interface GroundTransferRequestParts {
   transferIndex: number | null
   requestedMode: string | null
   requestedPosition: string | null
-  origin: GroundTransferCoordinate | null
-  destination: GroundTransferCoordinate | null
+  outbound: GroundTransferDirectionParts | null
+  ret: GroundTransferDirectionParts | null
   invalidReason?: string
+}
+
+interface CompleteGroundTransferDirection {
+  direction: GroundTransferDirection
+  origin: GroundTransferCoordinate
+  destination: GroundTransferCoordinate
 }
 
 interface CompleteGroundTransferRequest {
@@ -142,8 +191,8 @@ interface CompleteGroundTransferRequest {
   transferIndex: number
   mode: typeof GROUND_TRANSFER_MODE
   position: typeof GROUND_TRANSFER_POSITION
-  origin: GroundTransferCoordinate
-  destination: GroundTransferCoordinate
+  outbound: CompleteGroundTransferDirection
+  ret: CompleteGroundTransferDirection
 }
 
 interface GroundTransferCacheEntry {
@@ -181,15 +230,25 @@ function coordinate(value: unknown): GroundTransferCoordinate | null {
   return { longitude, latitude }
 }
 
+function coordinatePair(value: unknown): GroundTransferDirectionParts | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const origin = coordinate(record['origin'])
+  const destination = coordinate(record['destination'])
+  if (origin === null || destination === null) return null
+  return { origin, destination }
+}
+
 function coordinateText(value: GroundTransferCoordinate): string {
   return `${String(value.longitude)},${String(value.latitude)}`
 }
 
-function cacheKey(request: Pick<CompleteGroundTransferRequest, 'origin' | 'destination'>): string {
+function cacheKey(direction: CompleteGroundTransferDirection): string {
   return JSON.stringify({
     mode: GROUND_TRANSFER_MODE,
-    origin: request.origin,
-    destination: request.destination,
+    direction: direction.direction,
+    origin: direction.origin,
+    destination: direction.destination,
   })
 }
 
@@ -212,34 +271,16 @@ function staticCache(status: GroundTransferCacheStatus = 'bypass'): GroundTransf
   return { status, ageS: null, asOf: null }
 }
 
-function appliedBase(selection: GroundTransferStaticSelection, parts: GroundTransferRequestParts): GroundTransferResolution {
+function notAppliedBase(parts: GroundTransferRequestParts): {
+  requestedMode: string | null
+  requestedPosition: string | null
+  provenance: 'none'
+  asOf: null
+  freshness: 'not_attempted'
+  cache: GroundTransferCacheInfo
+  evidenceClass: 'none'
+} {
   return {
-    applied: true,
-    candidateId: selection.candidateId,
-    transferIndex: selection.transferIndex,
-    requestedMode: parts.requestedMode,
-    requestedPosition: parts.requestedPosition,
-    staticMode: selection.staticMode,
-    staticMinutes: selection.staticMinutes,
-    priceCny: selection.staticPriceCny,
-    priceEvidence: GROUND_TRANSFER_STATIC_PRICE_EVIDENCE,
-    provenance: 'static-transfer-pack',
-    asOf: null,
-    freshness: 'fallback',
-    cache: staticCache(),
-    evidenceClass: 'static_transfer_estimate',
-  }
-}
-
-function notApplied(
-  parts: GroundTransferRequestParts,
-  reason: string,
-  selection?: GroundTransferStaticSelection,
-): GroundTransferResolution {
-  const resolution: GroundTransferResolution = {
-    applied: false,
-    ...(parts.candidateId !== null ? { candidateId: parts.candidateId } : {}),
-    ...(parts.transferIndex !== null ? { transferIndex: parts.transferIndex } : {}),
     requestedMode: parts.requestedMode,
     requestedPosition: parts.requestedPosition,
     provenance: 'none',
@@ -247,19 +288,25 @@ function notApplied(
     freshness: 'not_attempted',
     cache: staticCache('bypass'),
     evidenceClass: 'none',
+  }
+}
+
+function staticDirectionResolution(
+  direction: GroundTransferDirection,
+  staticMinutes: number,
+  reason: string,
+): GroundTransferDirectionResolution {
+  return {
+    applied: false,
+    direction,
+    staticMinutes,
+    provenance: 'static-transfer-pack',
+    asOf: null,
+    freshness: 'fallback',
+    cache: staticCache('bypass'),
+    evidenceClass: 'static_transfer_estimate',
     fallbackReason: reason,
   }
-  if (selection) {
-    resolution.candidateId = selection.candidateId
-    resolution.transferIndex = selection.transferIndex
-    resolution.staticMode = selection.staticMode
-    resolution.staticMinutes = selection.staticMinutes
-    resolution.priceCny = selection.staticPriceCny
-    resolution.priceEvidence = GROUND_TRANSFER_STATIC_PRICE_EVIDENCE
-    resolution.provenance = 'static-transfer-pack'
-    resolution.evidenceClass = 'static_transfer_estimate'
-  }
-  return resolution
 }
 
 function parseRequest(value: unknown): GroundTransferRequestParts {
@@ -270,8 +317,8 @@ function parseRequest(value: unknown): GroundTransferRequestParts {
       transferIndex: null,
       requestedMode: null,
       requestedPosition: null,
-      origin: null,
-      destination: null,
+      outbound: null,
+      ret: null,
       invalidReason: 'ground_transfer_request_invalid:expected an object',
     }
   }
@@ -288,23 +335,37 @@ function parseRequest(value: unknown): GroundTransferRequestParts {
   const requestedPosition = typeof record['position'] === 'string' && record['position'].trim()
     ? record['position']
     : null
-  const origin = coordinate(record['origin'])
-  const destination = coordinate(record['destination'])
+
+  let outbound: GroundTransferDirectionParts | null = null
+  let ret: GroundTransferDirectionParts | null = null
+  if (record['outbound'] !== undefined || record['return'] !== undefined) {
+    outbound = coordinatePair(record['outbound'])
+    ret = coordinatePair(record['return'])
+  } else {
+    // Legacy single-pair shape: outbound = origin/destination; return = the
+    // swapped pair. Keeps pre-#364 payloads behavior-compatible.
+    const legacyOrigin = coordinate(record['origin'])
+    const legacyDestination = coordinate(record['destination'])
+    if (legacyOrigin && legacyDestination) {
+      outbound = { origin: legacyOrigin, destination: legacyDestination }
+      ret = { origin: legacyDestination, destination: legacyOrigin }
+    }
+  }
 
   let invalidReason: string | undefined
   if (candidateId === null) invalidReason = 'ground_transfer_binding_invalid:candidate_id is required'
   else if (transferIndex === null) invalidReason = 'ground_transfer_binding_invalid:transfer_index must be a non-negative integer'
   else if (requestedPosition !== GROUND_TRANSFER_POSITION) invalidReason = `unsupported_ground_transfer_position:${requestedPosition ?? 'unknown'}`
   else if (requestedMode !== GROUND_TRANSFER_MODE) invalidReason = `unsupported_ground_transfer_mode:${requestedMode ?? 'unknown'}`
-  else if (origin === null || destination === null) invalidReason = 'invalid_ground_transfer_coordinates:longitude/latitude must be finite and in range'
+  else if (outbound === null || ret === null) invalidReason = 'invalid_ground_transfer_coordinates:longitude/latitude must be finite and in range'
 
   return {
     candidateId,
     transferIndex,
     requestedMode,
     requestedPosition,
-    origin,
-    destination,
+    outbound,
+    ret,
     invalidReason,
   }
 }
@@ -313,15 +374,15 @@ function completeRequest(parts: GroundTransferRequestParts): CompleteGroundTrans
   if (
     parts.invalidReason || parts.candidateId === null || parts.transferIndex === null
     || parts.requestedMode !== GROUND_TRANSFER_MODE || parts.requestedPosition !== GROUND_TRANSFER_POSITION
-    || parts.origin === null || parts.destination === null
+    || parts.outbound === null || parts.ret === null
   ) return null
   return {
     candidateId: parts.candidateId,
     transferIndex: parts.transferIndex,
     mode: GROUND_TRANSFER_MODE,
     position: GROUND_TRANSFER_POSITION,
-    origin: parts.origin,
-    destination: parts.destination,
+    outbound: { direction: 'outbound', origin: parts.outbound.origin, destination: parts.outbound.destination },
+    ret: { direction: 'return', origin: parts.ret.origin, destination: parts.ret.destination },
   }
 }
 
@@ -346,14 +407,15 @@ function parseRouteResult(value: unknown): PublicMapDrivingRouteResult {
 }
 
 function buildRouteFact(
-  request: CompleteGroundTransferRequest,
+  direction: CompleteGroundTransferDirection,
   route: PublicMapDrivingRouteResult,
   clock: () => Date,
   cache: GroundTransferCacheInfo,
 ): GroundTransferRouteFact {
   return {
-    origin: request.origin,
-    destination: request.destination,
+    direction: direction.direction,
+    origin: direction.origin,
+    destination: direction.destination,
     mode: GROUND_TRANSFER_MODE,
     provider: route.provider,
     distanceM: route.distanceM,
@@ -365,37 +427,6 @@ function buildRouteFact(
     cache,
     evidenceClass: 'public_map_route_estimate',
     trafficStatus: 'not-live-route-estimate',
-  }
-}
-
-function routeResolution(
-  selection: GroundTransferStaticSelection,
-  parts: GroundTransferRequestParts,
-  fact: GroundTransferRouteFact,
-): GroundTransferResolution {
-  return {
-    ...appliedBase(selection, parts),
-    minutes: fact.durationMin,
-    provenance: fact.provenance,
-    asOf: fact.asOf,
-    freshness: fact.freshness,
-    cache: fact.cache,
-    evidenceClass: fact.evidenceClass,
-    routeFact: fact,
-  }
-}
-
-function staticFallback(
-  selection: GroundTransferStaticSelection,
-  parts: GroundTransferRequestParts,
-  reason: string,
-  cacheStatus: GroundTransferCacheStatus = 'bypass',
-): GroundTransferResolution {
-  return {
-    ...appliedBase(selection, parts),
-    minutes: selection.staticMinutes,
-    cache: staticCache(cacheStatus),
-    fallbackReason: `${reason}; static transfer minutes and price preserved`,
   }
 }
 
@@ -423,6 +454,92 @@ function selectionFor<T extends GroundTransferCandidateLike>(
   }
 }
 
+async function resolveDirection(
+  direction: CompleteGroundTransferDirection,
+  staticMinutes: number,
+  provider: GroundTransferProvider,
+  clock: () => Date,
+  cache: Map<string, GroundTransferCacheEntry>,
+  maxEntries: number,
+  context: ResolverContext,
+): Promise<GroundTransferDirectionResolution> {
+  const key = cacheKey(direction)
+  const currentMs = nowMs(clock)
+  const cached = cache.get(key)
+  if (cached) {
+    const ageS = Math.max(0, currentMs - cached.storedAtMs) / 1000
+    if (ageS <= GROUND_TRANSFER_DEFAULT_MAX_AGE_S) {
+      const hitCache: GroundTransferCacheInfo = { status: 'hit', ageS, asOf: cached.fact.asOf }
+      const hitFact: GroundTransferRouteFact = { ...cached.fact, freshness: 'cache_hit', cache: hitCache }
+      return {
+        applied: true,
+        direction: direction.direction,
+        minutes: hitFact.durationMin,
+        staticMinutes,
+        provenance: 'map_driving_route',
+        asOf: hitFact.asOf,
+        freshness: 'cache_hit',
+        cache: hitCache,
+        evidenceClass: 'public_map_route_estimate',
+        routeFact: hitFact,
+      }
+    }
+  }
+
+  const requestForProvider: PublicMapDrivingRouteRequest = {
+    origin: coordinateText(direction.origin),
+    destination: coordinateText(direction.destination),
+    mode: GROUND_TRANSFER_MODE,
+  }
+  try {
+    const raw = await provider(requestForProvider, {
+      signal: context.signal ?? new AbortController().signal,
+      execution: context.execution,
+    })
+    const route = parseRouteResult(raw)
+    const cacheInfo: GroundTransferCacheInfo = {
+      status: cached ? 'requery' : 'miss',
+      ageS: 0,
+      asOf: null,
+    }
+    const fact = buildRouteFact(direction, route, clock, cacheInfo)
+    cacheInfo.asOf = fact.asOf
+    const entry: GroundTransferCacheEntry = { fact, storedAtMs: currentMs }
+    if (cache.size >= maxEntries && !cache.has(key)) {
+      const oldest = cache.keys().next().value
+      if (typeof oldest === 'string') cache.delete(oldest)
+    }
+    cache.set(key, entry)
+    return {
+      applied: true,
+      direction: direction.direction,
+      minutes: fact.durationMin,
+      staticMinutes,
+      provenance: 'map_driving_route',
+      asOf: fact.asOf,
+      freshness: 'fresh',
+      cache: cacheInfo,
+      evidenceClass: 'public_map_route_estimate',
+      routeFact: fact,
+    }
+  } catch (error) {
+    const detail = safeErrorMessage(error)
+    return {
+      applied: false,
+      direction: direction.direction,
+      staticMinutes,
+      provenance: 'static-transfer-pack',
+      asOf: null,
+      freshness: 'fallback',
+      cache: staticCache(cached ? 'stale' : 'bypass'),
+      evidenceClass: 'static_transfer_estimate',
+      fallbackReason: cached
+        ? `stale_route_requery_error:${direction.direction}:${detail}`
+        : `map_driving_route_provider_error:${direction.direction}:${detail}`,
+    }
+  }
+}
+
 export function createGroundTransferResolver(options: {
   provider: GroundTransferProvider
   clock?: () => Date
@@ -436,60 +553,56 @@ export function createGroundTransferResolver(options: {
 
   return {
     async resolve(request, selection, context = {}) {
-      const parts: GroundTransferRequestParts = {
-        candidateId: request.candidateId,
-        transferIndex: request.transferIndex,
+      const [outbound, ret] = await Promise.all([
+        resolveDirection(request.outbound, selection.staticMinutes, options.provider, clock, cache, maxEntries, context),
+        resolveDirection(request.ret, selection.staticMinutes, options.provider, clock, cache, maxEntries, context),
+      ])
+
+      const applied = outbound.applied || ret.applied
+      // Aggregate fields are a summary only: per-direction objects above are
+      // the authoritative per-direction record. A full cache hit keeps the
+      // legacy aggregate semantics ('cache_hit'), a re-query keeps 'requery'.
+      const aggregateProvenance: GroundTransferProvenance = applied ? 'map_driving_route' : 'static-transfer-pack'
+      const aggregateEvidenceClass: GroundTransferEvidenceClass = applied ? 'public_map_route_estimate' : 'static_transfer_estimate'
+      const aggregateFreshness: GroundTransferFreshness = !applied
+        ? 'fallback'
+        : outbound.freshness === 'fresh' || ret.freshness === 'fresh'
+          ? 'fresh'
+          : 'cache_hit'
+      const statuses = [outbound.cache.status, ret.cache.status]
+      const aggregateCache: GroundTransferCacheInfo = !applied
+        ? staticCache('bypass')
+        : {
+            status: statuses.includes('hit') ? 'hit' : statuses.includes('requery') ? 'requery' : 'miss',
+            ageS: 0,
+            asOf: null,
+          }
+      const aggregateAsOf = applied ? (outbound.asOf ?? ret.asOf) : null
+
+      const resolution: GroundTransferResolution = {
+        applied,
+        candidateId: selection.candidateId,
+        transferIndex: selection.transferIndex,
         requestedMode: request.mode,
         requestedPosition: request.position,
-        origin: request.origin,
-        destination: request.destination,
+        staticMode: selection.staticMode,
+        staticMinutes: selection.staticMinutes,
+        priceCny: selection.staticPriceCny,
+        priceEvidence: GROUND_TRANSFER_STATIC_PRICE_EVIDENCE,
+        provenance: aggregateProvenance,
+        asOf: aggregateAsOf,
+        freshness: aggregateFreshness,
+        cache: aggregateCache,
+        evidenceClass: aggregateEvidenceClass,
+        outbound,
+        return: ret,
       }
-      const key = cacheKey(request)
-      const currentMs = nowMs(clock)
-      const cached = cache.get(key)
-      if (cached) {
-        const ageS = Math.max(0, currentMs - cached.storedAtMs) / 1000
-        if (ageS <= GROUND_TRANSFER_DEFAULT_MAX_AGE_S) {
-          const hitCache: GroundTransferCacheInfo = { status: 'hit', ageS, asOf: cached.fact.asOf }
-          const hitFact = { ...cached.fact, freshness: 'cache_hit' as const, cache: hitCache }
-          return routeResolution(selection, parts, hitFact)
-        }
+      if (outbound.applied) resolution.outboundMinutes = outbound.minutes
+      if (ret.applied) resolution.returnMinutes = ret.minutes
+      if (!applied) {
+        resolution.fallbackReason = `both_directions_failed:${outbound.fallbackReason ?? 'unknown'};${ret.fallbackReason ?? 'unknown'}`
       }
-
-      const requestForProvider: PublicMapDrivingRouteRequest = {
-        origin: coordinateText(request.origin),
-        destination: coordinateText(request.destination),
-        mode: GROUND_TRANSFER_MODE,
-      }
-      try {
-        const raw = await options.provider(requestForProvider, {
-          signal: context.signal ?? new AbortController().signal,
-          execution: context.execution,
-        })
-        const route = parseRouteResult(raw)
-        const cacheInfo: GroundTransferCacheInfo = {
-          status: cached ? 'requery' : 'miss',
-          ageS: 0,
-          asOf: null,
-        }
-        const fact = buildRouteFact(request, route, clock, cacheInfo)
-        cacheInfo.asOf = fact.asOf
-        const entry: GroundTransferCacheEntry = { fact, storedAtMs: currentMs }
-        if (cache.size >= maxEntries && !cache.has(key)) {
-          const oldest = cache.keys().next().value
-          if (typeof oldest === 'string') cache.delete(oldest)
-        }
-        cache.set(key, entry)
-        return routeResolution(selection, parts, { ...fact, cache: cacheInfo })
-      } catch (error) {
-        const detail = safeErrorMessage(error)
-        return staticFallback(
-          selection,
-          parts,
-          cached ? `stale_route_requery_error:${detail}` : `map_driving_route_provider_error:${detail}`,
-          cached ? 'stale' : 'bypass',
-        )
-      }
+      return resolution
     },
   }
 }
@@ -540,37 +653,86 @@ export async function resolveGroundTransferPayload<T extends GroundTransferCandi
   const parts = parseRequest(rawRequest)
   const bound = selectionFor(candidates, parts)
   if (!bound) {
-    return { candidates: [...candidates], resolution: notApplied(parts, 'ground_transfer_binding_mismatch: candidate_id and transfer_index must identify exactly one valid static transfer') }
+    const base = notAppliedBase(parts)
+    return {
+      candidates: [...candidates],
+      resolution: {
+        ...base,
+        applied: false,
+        ...(parts.candidateId !== null ? { candidateId: parts.candidateId } : {}),
+        ...(parts.transferIndex !== null ? { transferIndex: parts.transferIndex } : {}),
+        outbound: staticDirectionResolution('outbound', Number.NaN, 'ground_transfer_binding_mismatch'),
+        return: staticDirectionResolution('return', Number.NaN, 'ground_transfer_binding_mismatch'),
+        fallbackReason: 'ground_transfer_binding_mismatch: candidate_id and transfer_index must identify exactly one valid static transfer',
+      },
+    }
   }
 
   const complete = completeRequest(parts)
   if (!complete) {
     return {
       candidates: [...candidates],
-      resolution: staticFallback(bound.selection, parts, parts.invalidReason ?? 'ground_transfer_request_invalid'),
+      resolution: {
+        applied: false,
+        candidateId: bound.selection.candidateId,
+        transferIndex: bound.selection.transferIndex,
+        requestedMode: parts.requestedMode,
+        requestedPosition: parts.requestedPosition,
+        staticMode: bound.selection.staticMode,
+        staticMinutes: bound.selection.staticMinutes,
+        priceCny: bound.selection.staticPriceCny,
+        priceEvidence: GROUND_TRANSFER_STATIC_PRICE_EVIDENCE,
+        provenance: 'static-transfer-pack',
+        asOf: null,
+        freshness: 'fallback',
+        cache: staticCache('bypass'),
+        evidenceClass: 'static_transfer_estimate',
+        outbound: staticDirectionResolution('outbound', bound.selection.staticMinutes, parts.invalidReason ?? 'ground_transfer_request_invalid'),
+        return: staticDirectionResolution('return', bound.selection.staticMinutes, parts.invalidReason ?? 'ground_transfer_request_invalid'),
+        fallbackReason: `${parts.invalidReason ?? 'ground_transfer_request_invalid'}; static transfer minutes and price preserved`,
+      },
     }
   }
 
   if (bound.selection.staticMode !== GROUND_TRANSFER_STATIC_MODE) {
+    const reason = `${GROUND_TRANSFER_STATIC_MODE_MISMATCH}: mode=${bound.selection.staticMode}; only taxi accepts a driving route; static transfer preserved`
     return {
       candidates: [...candidates],
-      resolution: notApplied(
-        parts,
-        `${GROUND_TRANSFER_STATIC_MODE_MISMATCH}: mode=${bound.selection.staticMode}; only taxi accepts a driving route; static transfer preserved`,
-        bound.selection,
-      ),
+      resolution: {
+        applied: false,
+        candidateId: bound.selection.candidateId,
+        transferIndex: bound.selection.transferIndex,
+        requestedMode: parts.requestedMode,
+        requestedPosition: parts.requestedPosition,
+        staticMode: bound.selection.staticMode,
+        staticMinutes: bound.selection.staticMinutes,
+        priceCny: bound.selection.staticPriceCny,
+        priceEvidence: GROUND_TRANSFER_STATIC_PRICE_EVIDENCE,
+        provenance: 'static-transfer-pack',
+        asOf: null,
+        freshness: 'not_attempted',
+        cache: staticCache('bypass'),
+        evidenceClass: 'static_transfer_estimate',
+        outbound: staticDirectionResolution('outbound', bound.selection.staticMinutes, reason),
+        return: staticDirectionResolution('return', bound.selection.staticMinutes, reason),
+        fallbackReason: reason,
+      },
     }
   }
 
   const resolution = await resolver.resolve(complete, bound.selection, context)
-  if (!resolution.applied || resolution.minutes === undefined) {
+  if (!resolution.applied) {
     return { candidates: [...candidates], resolution }
   }
   const patched = candidates.map((candidate, candidateIndex) => {
     if (candidateIndex !== bound.candidateIndex) return candidate
-    const destTransfers = candidate.destTransfers.map((transfer, transferIndex) =>
-      transferIndex === bound.selection.transferIndex ? { ...transfer, minutes: resolution.minutes } : transfer,
-    )
+    const destTransfers = candidate.destTransfers.map((transfer, transferIndex) => {
+      if (transferIndex !== bound.selection.transferIndex) return transfer
+      const next: Record<string, unknown> = { ...transfer }
+      if (resolution.outboundMinutes !== undefined) next['minutesOut'] = resolution.outboundMinutes
+      if (resolution.returnMinutes !== undefined) next['minutesRet'] = resolution.returnMinutes
+      return next as typeof transfer
+    })
     return { ...candidate, destTransfers } as T
   })
   return { candidates: patched, resolution }
