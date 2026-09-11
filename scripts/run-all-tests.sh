@@ -543,6 +543,11 @@ echo
 echo "=== 62. #233 取消/退款独立结果与佣金披露契约层(M5-4 pre-entry:双对象独立终态无合并成功态/serviceFee≠退款金额/refunded 绑权威证据/披露 digest 入指纹且口径变化即拒/unknown 不默认 none/账本分词与文案分词一致 480 组合;纯契约零真实调用) ==="
 (cd ts && npx tsx scripts/issue-233-cancel-refund-commission-tests.ts) || FAIL=1
 
+echo
+echo "=== 63. 内核清单冻结+运行模块证据闸(issue #234:gotry_kernel_manifest_v1 哈希零 diff(改核心/删文件/废弃层冒充即红)/真实运行 import trace 全加载(未加载/替换内核即红)/同引擎·账本·闸路径功能覆盖(缺路径即红)/证据快照 manifestHash+evidenceHash 哈希绑定(错 SHA 即红);含反证自测,import-only 零状态写入,全离线) ==="
+(cd ts && npx tsx scripts/kernel-manifest-gate.ts) || FAIL=1
+(cd ts && npx tsx scripts/kernel-manifest-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

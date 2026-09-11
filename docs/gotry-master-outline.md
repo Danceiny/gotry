@@ -63,7 +63,7 @@ The three lines advance in parallel, synchronized by the decision gates (Chapter
 | **layla.ai** | Commercial closed-source | reference | Competitor and pricing anchor; no code reuse | — | — |
 | Xiaohongshu (小红书) / Yuanzhou (圆周轨迹) | Platform/closed-source | reference | The shape reference and differentiation target for the shared-experience layer (D1 §6.6): high folk-wisdom density but unstructured | Data cannot be imported; cold start does only human distillation of factual assertions, never content搬运 — never carries content over (copyright red line) | The shape can be learned; the data is built in-house |
 
-Matrix conclusion: **no license hard-blockers remain in the reuse matrix** — open-source (MIT/Apache) is imported directly; internal assets are bridged at runtime; AGPL projects (TREK) and internal code (the T system) are always rewritten from the design.
+Matrix conclusion: **no license hard-blockers remain in the reuse matrix** — open-source (MIT/Apache) is imported directly; internal assets are bridged at runtime; AGPL projects (TREK) and internal code (the T system) are always rewritten from the design. Kernel manifest frozen (2026-09-11, issue #234, PR link pending): the GoTry kernel module surface (engine/ledger/gate, 5 files, narrow-not-wide, each with an architecture §/ADR basis) is mechanized into a SHA256 frozen manifest + runtime-module evidence gate (run-all §63) — kernel drift (modification/deletion/bypass/not-loaded) is red; engineering-reuse evidence only, the M6 implementation gate stays behind #137.
 
 ---
 

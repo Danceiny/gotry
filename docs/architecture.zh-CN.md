@@ -242,7 +242,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 > **数据源唯一权威面 = `data-sources.md`**（2026-08-22 立）：领域矩阵 × 四层架构（静态包/免费实时/hbcli 桥/OSM 生态） × Google Place 链路（hbcli→search OpenAPI→geography） × 证据链契约 × TREK 参考采纳。本节只留运行时概要。
 
 - 运行时：两条已实证路径——①TS 进程内（自研循环，~6ms/解）；②真实 dsh headless+cordis 组合（pi-ai→MiniMax，`cordis.gotry-patch.yml`，68ea364）。v0.0.1-rc.2 起 Python CLI 桥下线，纯 TS。环境三件套 `LLM_API_KEY/LLM_BASE_URL/LLM_MODEL`（兼容旧 DEEPSEEK_*）。
-- 复用落地：dsh（import，rc 已对齐）/loopx（import，0.5.1 运行中）/Z3（import，双绑定）/hotelbyte-cli（import+extend，place 链路见 data-sources.md §4）/T 系统·ai-agent-book·TREK（reference，零代码——TREK 数据面模式采纳表见 data-sources.md §5）。
+- 复用落地：dsh（import，rc 已对齐）/loopx（import，0.5.1 运行中）/Z3（import，双绑定）/hotelbyte-cli（import+extend，place 链路见 data-sources.md §4）/T 系统·ai-agent-book·TREK（reference，零代码——TREK 数据面模式采纳表见 data-sources.md §5）。内核清单已冻结（issue #234，PR 待链）：`ts/data/kernel-manifest.json` 钉住内核模块面（引擎 `unified.ts`/`model.ts`，账本 `state-ledger.ts`，闸 `bookable-facts.ts`/`artifact-gate.ts`；逐项 SHA256 + 依据，绑定冻结 baseSHA），机械闸（run-all §63）证明哈希零漂移 + 真实运行 import trace 全加载 + 同引擎/账本/闸路径功能覆盖 + 证据快照哈希绑定。
 
 ## 7. 测试与验证策略
 
