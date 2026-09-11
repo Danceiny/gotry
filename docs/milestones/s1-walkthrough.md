@@ -1,29 +1,31 @@
-# S1 契约走查结论(自查版,呈创始人一分钟确认)
+[English](s1-walkthrough.md) | [简体中文](s1-walkthrough.zh-CN.md)
 
-> 状态:frozen(历史备忘,2026-08-22)
-> 走查方式:不是纸面审阅——契约已被两次真实实战使用(M1 exit 的 MiniMax-M2 三轮重放 `bb880f3`、真实 dsh 运行时端到端 `68ea364`),以下每个走查点都用实战证据回答。
+# S1 contract walkthrough conclusions (self-check version, for the founder's one-minute confirmation)
 
-## 走查点 ①:Gate 只允许选择题
+> Status: frozen (historical memo, 2026-08-22)
+> Walkthrough method: not a paper review — the contract was used twice in real combat (the M1 exit MiniMax-M2 three-round replay `bb880f3`, and a real dsh runtime end-to-end `68ea364`); each walkthrough point below is answered with combat evidence.
 
-- **契约**:`Gate = { id, question, options[≥2], answer? }`——`options` 是数组,结构上没有自由文本的位置。
-- **实战证据**:M1 exit 重放第 3 轮的预算 gate 渲染为「经济(省钱…) / 舒适(办公质量…) / 便利优先(时间最省)」——三选项各带 trade-off;异步交付的不失望四条第 3 条(`待决问题全部是简单选择题`)在 `collectDeepPlanning` 里以 `g.options.length >= 2` 为断言,两次交付均 4/4 通过。
-- **结论**:✅ 成立。类型约束 + 运行时断言双层保证。
+## Walkthrough point ①: Gate allows only multiple-choice
 
-## 走查点 ②:workWindow 必带 evidence
+- **Contract**: `Gate = { id, question, options[≥2], answer? }` — `options` is an array; structurally there is no place for free text.
+- **Combat evidence**: in replay round 3, the budget gate rendered as "Economy (save money…) / Comfort (office quality…) / Convenience-first (least time)" — each of the three options carries its trade-off; the third of the async deliverable's four no-disappointment items (`all pending questions are simple multiple-choice gates`) is asserted in `collectDeepPlanning` as `g.options.length >= 2`, and both deliveries passed 4/4.
+- **Conclusion**: ✅ holds. Type constraint + runtime assertion, two-layer guarantee.
 
-- **契约**:`WorkWindowProfile.evidence: string`(非空字段,无 `?`)。
-- **实战证据**:重放第 2 轮用户说「工作时间 UTC+4 10:00-19:00」→ mock/真 LLM 均落 `evidence: '用户原话:我的工作时间是UTC+4的早上10点到下午7点'`;work-window 排除理由在渲染中引用了这个来源(「工作窗口(当地 13:00-22:00)」可追查到换算链:10:00 UTC+4 + (420−240)min = 13:00)。**注意**:插件工具 `gotry_motivation_save` 在 evidence 缺失时 throw(P0 反幻觉红线)——同一纪律在 contracts 与插件两侧成对存在。
-- **结论**:✅ 成立。字段必填 + 消费端 throw 双保险。
-- **已知边界**:契约的类型层无法强制「evidence 必须是用户原话」(只能靠 LLM 抽取纪律与插件 throw)——ADR-10 校验闸同族问题,接受此边界,靠重放夹具回归。
+## Walkthrough point ②: workWindow must carry evidence
 
-## 走查点 ③:spec_extract 的 assumptions 三分类
+- **Contract**: `WorkWindowProfile.evidence: string` (a non-optional field, no `?`).
+- **Combat evidence**: in replay round 2 the user said "work hours UTC+4 10:00-19:00" → both mock and real LLM persisted `evidence: 'user verbatim: my work hours are 10am to 7pm UTC+4'`; the work-window exclusion reason cites this source in rendering ("work window (local 13:00-22:00)" traces back through the conversion chain: 10:00 UTC+4 + (420−240)min = 13:00). **Note**: the plugin tool `gotry_motivation_save` throws when evidence is missing (the P0 anti-hallucination red line) — the same discipline exists in pairs on the contracts and plugin sides.
+- **Conclusion**: ✅ holds. Required field + consumer-side throw, double insurance.
+- **Known boundary**: the contract's type layer cannot enforce "evidence must be user verbatim" (it can rely only on LLM extraction discipline and the plugin's throw) — same family of problems as the ADR-10 validation gate; accept this boundary and rely on replay fixtures for regression.
 
-- **契约**:`SpecAssumption.source: 'user-verbatim' | 'inferred' | 'default'`。
-- **实战证据**:ADR-10 落地后,`extractSpec` 的骨架 JSON 系统提示要求「锚点只放用户明说或必然的」;dsh E2E 中 M2 抽取的骨架锚点(arriveBy 等)全部来自行程原文;假设分类在 `extractFacts` 返回值里逐字段标注(`assumptions: [{field, source: 'user-verbatim'}]`)。**inferred/default 两值至今无运行时实例**——这是诚实缺口:三分类的类型面完备,但运行时只有第一类被走过。
-- **结论**:✅ 类型成立;⚠️ 运行时覆盖不全(inferred/default 未实战)。建议:M3 种子用户前补一个「用户没说满、需要推断」的重放用例(如预算档从「住得舒服点」推断为 comfort)。
+## Walkthrough point ③: spec_extract's three-way assumption classification
 
-## 总结论
+- **Contract**: `SpecAssumption.source: 'user-verbatim' | 'inferred' | 'default'`.
+- **Combat evidence**: after ADR-10 landed, `extractSpec`'s skeleton JSON system prompt requires "anchors only for what the user explicitly said or what is necessary"; in the dsh E2E, the M2-extracted skeleton anchors (arriveBy etc.) all came from the itinerary's original text; assumption classification is annotated field by field in `extractFacts`' return value (`assumptions: [{field, source: 'user-verbatim'}]`). **inferred/default have no runtime instances to date** — an honest gap: the three-way type surface is complete, but only the first class has ever been exercised at runtime.
+- **Conclusion**: ✅ types hold; ⚠️ runtime coverage incomplete (inferred/default not combat-tested). Recommendation: before M3 seed users, add a replay case of "the user didn't say enough and inference is needed" (e.g., budget tier inferred as comfort from "somewhere comfortable to stay").
 
-**建议:S1 冻结通过。** 三走查点全部有类型+实战双层证据;唯一的运行时覆盖缺口(③的 inferred/default)不阻塞冻结——它是测试覆盖问题不是契约设计问题,挂为 M3 前置事项即可。
+## Overall conclusion
 
-**创始人只需回一句**:「S1 冻结通过」或指出任一走查点不成立。
+**Recommendation: S1 freeze approved.** All three walkthrough points have type + combat two-layer evidence; the only runtime coverage gap (③'s inferred/default) does not block the freeze — it is a test-coverage issue, not a contract-design issue; file it as an M3 prerequisite.
+
+**The founder only needs one line back**: "S1 freeze approved", or point out any walkthrough point that fails.

@@ -1,94 +1,96 @@
-# GoTry 记忆域设计(C 端六层重设计)
+[English](memory-design.md) | [简体中文](memory-design.zh-CN.md)
 
-> 状态:**active design**(M4 交付「六层框架重设计」的正式设计文档;已落地部分以 ✅ 标注,分期增量见 §4)
-> 上游:`gotry-master-outline.md` §3.5(六层参考框架,T 系统设计参考,代码与 schema 均不搬用;T 系统=某企业级差旅 Agent 生产系统,来源脱敏)、`gotry-product-design.md` §7.6(长程状态与记忆)
-> 纪律:单一文件承载记忆域;版本历史归 git
-> 日期:2026-08-28
+# GoTry Memory Domain Design (Consumer-Side Six-Layer Redesign)
 
-## 1. 设计立场(不可让渡)
+> Status: **active design** (the formal design document for M4's "six-layer framework redesign" delivery; landed portions are marked ✅, phased increments in §4)
+> Upstream: `gotry-master-outline.md` §3.5 (six-layer reference framework, T-system design reference; neither code nor schema is copied; T system = a production enterprise travel Agent system, source desensitized), `gotry-product-design.md` §7.6 (long-horizon state and memory)
+> Discipline: the memory domain lives in a single file; version history belongs to git
+> Date: 2026-08-28
 
-1. **后端工程为体,LLM 为用**:确定性事实(日期/城市/订单/约束)绝不交给 LLM 记忆;LLM 只负责必须语义理解的部分(动机、复盘)——提取已走契约 (18) 动态吸收路径(evidence=用户原话),守门在代码(mergeProfile/appendEvent)。
-2. **可溯源 P0**:任何偏好断言必须可回溯到用户原话或工具结果——画像每条权重伴 evidence,效用事件流 append-only。与 D1 §6.3 证据链同构。
-3. **画像只进排序,永不进硬过滤**:rank 通道用记忆调权(未来形态 `semantic × bounded_modifier`,RFC S2 已定界),硬过滤只吃用户当轮显式约束——否则记忆会把搜索筛空。
-4. **记忆属于用户(红线 6)**:全部落 `gotry-state/` 单目录,可见、可编辑、可删除、可导出;敏感字段(证件/联系方式)永不入库——需要时由后端从登录态填充,fail-closed 澄清。
-5. **负面清单**:永不存 ID/token/URL/对话原文;个性化只用画像与聚合行为(产品设计 §7.6 隐私立场)。
-6. **多用户 AaaS 前向兼容**(RFC §6.5):单用户期所有记忆即 append-only 事件流 + 稳定主键,未来账本化(CAS/receipt)是存储面替换,语义层零改造。(2026-08-28 存储面已兑现:ADR-15 账本落地,events 唯一权威+投影 fold,守门纯函数原样复用——「语义层零改造」如约成立;多用户 claim/CAS 实装仍按触发器后置 D-15)
+## 1. Design Stance (Non-Negotiable)
 
-## 2. 六层 × 现状映射
+1. **Backend engineering is the substance, the LLM is the application**: deterministic facts (dates/cities/orders/constraints) are never handed to LLM memory; the LLM only owns what genuinely requires semantic understanding (motivation, retrospective) — extraction already goes through contract (18) dynamic absorption (evidence = the user's own words), with gating in code (mergeProfile/appendEvent).
+2. **Traceability is P0**: every preference assertion must trace back to the user's own words or a tool result — every profile weight carries evidence, and the utility event stream is append-only. Isomorphic to the D1 §6.3 evidence chain.
+3. **The profile only feeds ranking, never hard filters**: the rank channel uses memory for weight tuning (future shape `semantic × bounded_modifier`, bounded by RFC S2); hard filters consume only the user's explicit constraints in the current turn — otherwise memory would filter the search down to nothing.
+4. **Memory belongs to the user (red line 6)**: everything lands in the single `gotry-state/` directory — visible, editable, deletable, exportable; sensitive fields (ID documents/contact details) are never stored — when needed, the backend fills them from the logged-in session, with fail-closed clarification.
+5. **Negative list**: never store IDs/tokens/URLs/raw conversation text; personalization uses only the profile and aggregated behavior (product design §7.6 privacy stance).
+6. **Multi-user AaaS forward compatibility** (RFC §6.5): in the single-user phase all memory is an append-only event stream + stable primary keys; a future ledger form (CAS/receipt) is a storage-layer swap with zero changes to the semantic layer. (2026-08-28: the storage layer has been delivered — the ADR-15 ledger landed, events as the single authority + projection fold, gate pure functions reused as-is — the "zero changes to the semantic layer" promise held; multi-user claim/CAS implementation remains deferred behind its trigger as D-15)
 
-| 层 | C 端语义 | 载体 | 状态 |
+## 2. Six Layers × Current-State Mapping
+
+| Layer | Consumer semantics | Carrier | Status |
 |---|---|---|---|
-| **M1 用户基础** | 常驻城市/时区/工作窗口 | tenant-scoped `homeCityPreference { value, evidence, updated_at }` + `{{motivation_brief}}` | ✅ 工作窗口/时区已入画像;常驻城市显式写入并作为软默认读回:当轮显式 origin 优先,显式 null 清除,missing/malformed/unbound typed preference 要求明确出发地,不 hard-filter 确定性候选。#20 真实 cohort gate 保持开放 |
-| **M2 动机与偏好画像** | 动机权重谱系(跨年)、体力档、节奏档、预算档 | motivation-profile.weights/hard + `{{motivation_brief}}` 读回 | ✅ 核心落地(T1:提取归 LLM/守门归代码/读回注入)+ **P3 时间窗衰减已落地(§4)**;**城市场景分级的证据化残余 →** [#339](https://github.com/Danceiny/gotry/issues/339) |
-| **M3 预算标准** | 预算档(动机访谈校准 + 历史行为) | budgetTier gate → profile | ✅ gate 校准;**实际成交与规划估算偏差回流残余 →** [#340](https://github.com/Danceiny/gotry/issues/340)(**写入闸由 [#136](https://github.com/Danceiny/gotry/issues/136)/[#231](https://github.com/Danceiny/gotry/issues/231)/[#232](https://github.com/Danceiny/gotry/issues/232)/[#233](https://github.com/Danceiny/gotry/issues/233) 治理,真实交易落地前不实现**) |
-| **M4 旅行时间线** | 去过哪/何时/和谁(出发地三级解析的地基) | `gotry-state/trips.jsonl`(§4 P1) | ✅ 已落地 2026-08-28(§4 P1) |
-| **M5 同行人档案** | 同行人+约束(高血压/晕车/体力),敏感填充形态 | `gotry-state/companions.json`(§4 P2) | ✅ 已落地 2026-08-28(§4 P2) |
-| **M6 会话双区记忆** | Trip Notebook(durable)+ Hot Context(分层过期) | dsh 会话自有 transcript | ❌ **P4(非 P3)**,依赖真实使用模式数据;闸由 [#255](https://github.com/Danceiny/gotry/issues/255) 跟踪,真实使用模式或多用户触发前保持关闭 |
+| **M1 User basics** | Home city/time zone/work window | tenant-scoped `homeCityPreference { value, evidence, updated_at }` + `{{motivation_brief}}` | ✅ Work window/time zone are in the profile; home city supports explicit write and read-back as a soft default: the current turn's explicit origin wins, an explicit null clears it, a missing/malformed/unbound typed preference asks for an explicit origin, and deterministic candidates are never hard-filtered. The #20 real-cohort gate stays open |
+| **M2 Motivation and preference profile** | Motivation weight spectrum (multi-year), stamina tier, pace tier, budget tier | motivation-profile.weights/hard + `{{motivation_brief}}` read-back | ✅ Core landed (T1: extraction to the LLM / gating to code / read-back injection) + **P3 time-window decay landed (§4)**; **residual on evidencing city-scene tiering →** [#339](https://github.com/Danceiny/gotry/issues/339) |
+| **M3 Budget standard** | Budget tier (motivation-interview calibration + historical behavior) | budgetTier gate → profile | ✅ Gate calibrated; **residual on refluxing the gap between actual deals and planning estimates →** [#340](https://github.com/Danceiny/gotry/issues/340) (**the write gate is governed by [#136](https://github.com/Danceiny/gotry/issues/136)/[#231](https://github.com/Danceiny/gotry/issues/231)/[#232](https://github.com/Danceiny/gotry/issues/232)/[#233](https://github.com/Danceiny/gotry/issues/233); not implemented before real transactions land**) |
+| **M4 Travel timeline** | Where/when/with whom (foundation for three-level origin resolution) | `gotry-state/trips.jsonl` (§4 P1) | ✅ Landed 2026-08-28 (§4 P1) |
+| **M5 Companion profiles** | Companions + constraints (hypertension/motion sickness/stamina), sensitive-fill form | `gotry-state/companions.json` (§4 P2) | ✅ Landed 2026-08-28 (§4 P2) |
+| **M6 Session dual-zone memory** | Trip Notebook (durable) + Hot Context (tiered expiry) | the dsh session's own transcript | ❌ **P4 (not P3)**, depends on real usage-pattern data; the gate is tracked by [#255](https://github.com/Danceiny/gotry/issues/255) and stays closed until real usage patterns or multi-user trigger it |
 
-**参考框架之外的 GoTry 增量**(T 系统/ai-agent-book 都没有的,本域原创):
+**GoTry increments beyond the reference framework** (absent from both the T system and ai-agent-book; original to this domain):
 
-- **效用归因 sidecar**(`memory-utility.ts`,ADR-14):recalled/applied/verified_outcome 三类事件;归因只认 owner 确认——「被召回 ≠ 有用」。这是六层之上的一把**标尺**,量每层记忆值不值得存。
-- **触达纪律**(`wish-pool.ts` 0..1):记忆的输出面受「永不主动推销」红线约束(产品红线 96)。
+- **Utility attribution sidecar** (`memory-utility.ts`, ADR-14): three event kinds — recalled/applied/verified_outcome; attribution accepts only owner confirmation — "recalled ≠ useful". This is a **yardstick** above the six layers, measuring whether each layer's memory is worth storing.
+- **Outreach discipline** (`wish-pool.ts` 0..1): the memory output surface is bound by the "never proactively sell" red line (product red line 96).
 
-## 3. 已闭合的行为链(2026-08-27/28)
+## 3. Closed Behavior Chains (2026-08-27/28)
 
 ```
-写:契约(18) 动态吸收 → motivation_save(mergeProfile 守门:追加不删史/幂等/权重变更伴证据)
-读:{{motivation_brief}} persona 注入(空=首访)——回访不重复问已答字段
-效用:wish_id + memory-utility.jsonl(归因只认 owner 确认,模型不许自评「有用」)
-触达:gotry_wish_pool_list 0..1(新意图先查池);nudge-digest 三通道(可关闭)
-度量:memory-metrics 只读投影(回流率基线 verified/recalled)
+Write: contract (18) dynamic absorption → motivation_save (mergeProfile gate: append without deleting history / idempotent / weight changes carry evidence)
+Read: {{motivation_brief}} persona injection (empty = first visit) — a revisit is never asked an already-answered field again
+Utility: wish_id + memory-utility.jsonl (attribution accepts only owner confirmation; the model may not rate itself "useful")
+Outreach: gotry_wish_pool_list 0..1 (new intents check the pool first); nudge-digest three channels (dismissible)
+Metrics: memory-metrics read-only projection (reflux-rate baseline verified/recalled)
 ```
 
-真模型实证:e2e §13(四跳读回逐字一致)/§14(0..1 语义执行)。
+Verified on the real model: e2e §13 (four-hop read-back verbatim identical) / §14 (0..1 semantics enforced).
 
-## 4. 分期增量(每期独立可验收,无需新依赖)
+## 4. Phased Increments (each independently acceptable, no new dependencies)
 
-### P1 旅行时间线(M4 层)——**✅ 已落地 2026-08-28**
+### P1 Travel Timeline (M4 layer) — **✅ landed 2026-08-28**
 
-`gotry-state/trips.jsonl` append-only:`{ trip_id, destination, start, end, companions?, source, evidence }`。
-- **写入源**:①用户口述(「上次去大理是国庆」→ 契约 (18) 同款动态吸收,evidence=原话);②成行确认(wish verified_outcome 落地时自动附 timeline 事件)。两源都过守门纯函数(日期解析复用 slot-spec,冲突即停不猜)。
-- **消费**:出发地三级解析(未来行程→时间线→问用户);「去过不再推」进排序通道;回流率分子变准(verified_outcome ⟺ timeline 有对应行程)。
-- **验收(已达成)**:断言 100% 可溯源;交叉一致守门(verified 无 timeline = 巡检缺口暴露,不自动补写)。落地 = `travel-timeline.ts` 纯函数 + `gotry_trip_log` 工具 + confirm-outcome 可选自动挂时间线(tripStart 传入才落,否则留缺口)+ `{{motivation_brief}}` 注入「去过」行(最近 3 次)。run-all §20,7/7 断言。
+`gotry-state/trips.jsonl` append-only: `{ trip_id, destination, start, end, companions?, source, evidence }`.
+- **Write sources**: (1) user speech ("my last Dali trip was over National Day" → contract (18)-style dynamic absorption, evidence = the quoted words); (2) trip confirmation (when a wish's verified_outcome lands, a timeline event is attached automatically). Both sources pass the gate pure function (date parsing reuses slot-spec; on conflict, stop — never guess).
+- **Consumption**: three-level origin resolution (future trip → timeline → ask the user); "visited, stop recommending" feeds the ranking channel; the reflux-rate numerator becomes accurate (verified_outcome ⟺ the timeline holds the matching trip).
+- **Acceptance (met)**: assertions 100% traceable; cross-consistency gating (verified with no timeline = inspection gap exposed, no automatic backfill). Landed = `travel-timeline.ts` pure function + the `gotry_trip_log` tool + optional automatic timeline attachment on confirm-outcome (lands only when tripStart is passed, otherwise the gap remains) + `{{motivation_brief}}` injection of "visited" lines (last 3). run-all §20, 7/7 assertions.
 
-### P2 同行人档案(M5-6 层)——**✅ 已落地 2026-08-28**
+### P2 Companion Profiles (M5-6 layers) — **✅ landed 2026-08-28**
 
-`gotry-state/companions.json`:`{ companion_id, label, constraints: { mobility, health, prefs }, evidence }`。
-- 写入走动机访谈同款(契约 (18));**健康/无障碍约束只进排序与行程结构建议,不进硬过滤**;渲染时「你上次说晕车」式引用需带 evidence 指针(产品设计故事三的行为面)。
-- 验收(已达成):负面清单守卫用例(证件/手机号拒收,4/4 断言 run-all §21);引用可溯源(evidence 数组)。落地 = `companions.ts` 纯函数 + `gotry_companion_save`(第 15 工具)+ `{{motivation_brief}}` 同行人行。
+`gotry-state/companions.json`: `{ companion_id, label, constraints: { mobility, health, prefs }, evidence }`.
+- Writes follow the motivation-interview pattern (contract (18)); **health/accessibility constraints only feed ranking and itinerary-structure suggestions, never hard filters**; when rendering, "you said last time you get motion sickness"-style references must carry an evidence pointer (the behavior face of product design story three).
+- Acceptance (met): negative-list guard cases (ID numbers/phone numbers rejected, 4/4 assertions, run-all §21); references traceable (evidence array). Landed = `companions.ts` pure function + `gotry_companion_save` (tool 15) + the `{{motivation_brief}}` companion line.
 
-### P3 时间窗衰减(M2 层)——**✅ 已落地 2026-08-28**
+### P3 Time-Window Decay (M2 layer) — **✅ landed 2026-08-28**
 
-行为偏好按 30/90/180/365d 分级窗口衰减(确定性 reducer,置信度只降不删——loopx memory-utility 同款边界);**动机权重永不衰减**(产品设计:目的地会变,动机跨年稳定)。
-- 验收(已达成):地板 0.1 旧而不灭/单调/上界 1;动机零衰减为构造性保证(模块无画像 API,5/5 断言 run-all §23)。落地 = `memory-decay.ts` 原语 + memory-metrics 每条 wish「新鲜置信度」列;未来行为偏好层直接复用。
+Behavioral preferences decay over tiered windows of 30/90/180/365d (a deterministic reducer; confidence only decreases, never deleted — the same boundary as loopx memory-utility); **motivation weights never decay** (product design: destinations change, motivations stay stable across years).
+- Acceptance (met): floor 0.1 — old but never extinguished / monotone / ceiling 1; zero motivation decay is a constructive guarantee (the module exposes no profile API, 5/5 assertions, run-all §23). Landed = the `memory-decay.ts` primitive + a "fresh confidence" column per wish in memory-metrics; the future behavioral-preference layer reuses it directly.
 
-### P4 会话双区记忆(M6 层,后置)
+### P4 Session Dual-Zone Memory (M6 layer, deferred)
 
-Trip Notebook(durable,后台 LLM 提取,负面清单执行)+ Hot Context(30min 资源/24h 意图分层过期,CAS 防并发)。**依赖真实使用模式数据**,多用户化前不启动。
+Trip Notebook (durable, background LLM extraction, negative list enforced) + Hot Context (tiered expiry: 30min resources / 24h intents, CAS against concurrency). **Depends on real usage-pattern data**; does not start before multi-user.
 
-## 5. 与里程碑/验收的挂钩
+## 5. Hooks into Milestones/Acceptance
 
-- **M4 exit**:「回访规划时长较首访降 ≥50%」← 读回链(e2e §13 已证机制)+ Issue #20/#223 paired-cohort scorer + #228 lifecycle collector(合同、采集路径与 synthetic/candidate 导出已接入,真实 repeat cohort 未到);「经验回流率有基线」← memory-metrics(过程面)+ Issue #20/#228 experience reflux 观测面。P1 落地后回流率分子从「owner 口头确认」升级为「timeline 行程」——基线质变。
-- **M5 技术线 T7**:偏好断言 100% 可溯源;「画像不进硬过滤」守卫用例——本设计 §1.2/1.3 即其验收定义。
-- **多用户 AaaS**:全部层以 append-only + 稳定主键落地,账本化(RFC §6.5)只换存储面。
+- **M4 exit**: "revisit planning duration down ≥50% vs the first visit" ← the read-back chain (mechanism proven in e2e §13) + the Issue #20/#223 paired-cohort scorer + the #228 lifecycle collector (contract, collection path, and synthetic/candidate export are wired; the real repeat cohort has not arrived); "experience reflux rate has a baseline" ← memory-metrics (process face) + the Issue #20/#228 experience reflux observation face. After P1 landed, the reflux-rate numerator upgraded from "owner verbal confirmation" to "timeline trips" — a qualitative change in the baseline.
+- **M5 technical line T7**: preference assertions 100% traceable; the "profile never enters hard filters" guard case — this design's §1.2/1.3 is its acceptance definition.
+- **Multi-user AaaS**: every layer lands as append-only + stable primary keys; ledgerization (RFC §6.5) only swaps the storage face.
 
-## 6. 明确不做
+## 6. Explicitly Not Doing
 
-- 对话原文存储(隐私立场);敏感证件/支付字段入库(后端填充);LLM 自由记忆(提取必有守门);为「记忆完整」而提前实现 M5/P4(无真实调用方不花钱)。
+- Storing raw conversation text (privacy stance); storing sensitive ID/payment fields (the backend fills them); free-form LLM memory (extraction is always gated); implementing M5/P4 early for the sake of "memory completeness" (no spend without real callers).
 
-## 7. Issue #20 价值证据合同
+## 7. Issue #20 Value Evidence Contract
 
-`ts/scripts/memory-value-report.ts` 只读评分 `memory_value_fixture.v1`:
+`ts/scripts/memory-value-report.ts` scores `memory_value_fixture.v1` read-only:
 
-- **paired cohort**:每个 pair 只接受唯一匿名 subject 的首次与下一次 `eligible + completed` planning flow;returning flow 必须晚于 first flow 完成。active planning duration = wall clock − 预声明且互不重叠的 external waits。分位数固定 nearest-rank,报告 N、首访/回访 p50/p75 与逐 pair reduction p50/p75;阈值比较使用未舍入 raw ratio,只在报告展示时 round。
-- **Exit 阈值冻结**:M4 Exit 最小样本数固定为 `minimum_pair_count_for_exit=5`,中位降幅固定为 `target_median_reduction_ratio=0.5`;输入不能降低阈值,非冻结参数由 scorer fail-closed 拒绝。
-- **experience reflux**:按 experience_id 统计 recalled 与 verified_outcome 的交集,基线 = verified/recalled;每条事件必须有 evidence_ref。
-- **偏好红线**:报告 traceable ratio 与 hard-filter violation count;100% 可溯源且 0 hard filter 才满足验收。
-- **P4 闸**:没有 real usage 或 multi-user trigger 时必须保持 `closed`。
-- **证据等级**:`synthetic_fixture` 只能证明合同与算法,`exit_evidence_eligible=false`;私有 `observed_private` cohort 也不能靠 `evidence_kind` 自报、HMAC 字符串形状或 evidence_ref 形状直接关闭 Exit。Observed 输入必须逐层 exact schema、全部 subject/flow/pair/experience/assertion/evidence ref 使用 `hmac-sha256:<64lowerhex>` 假名,且携带 `memory_value_source_review.v1` 人工 source-review attestation 合同;该合同必须含 `reviewed_summary_digest_sha256`,并与 scorer 对 `source_review` 之外评分 payload 的 canonical JSON SHA-256 一致,旧 attestation 不能覆盖改过的 summary。缺少或不匹配 attestation 时报告只可作为 candidate,指标可计算但 `exit_ready=false`。#228 collector 导出的 observed_private 仍只给 candidate source_review,绝不生成 reviewer/attestation 字段。真实证据留在 `ts/gotry-state/evidence/m4/` 的 manifest/paired-cohort/summary,不得提交原始用户材料;scorer 只验证 attestation 合同形状与 summary digest 绑定,原始材料核验责任仍归人工 review。
-- **兼容迁移**:2026-09-08 起,旧 observed manifest 若缺 `source_review.reviewed_summary_digest_sha256`、使用明文/非 HMAC id、带未声明字段或试图降低阈值,CLI 以 contract-invalid/exit 2 拒绝;私有证据生产者必须重新脱敏、计算本次 summary digest 并补齐 source-review attestation 后再复跑。公开 synthetic fixture 从 N=3 调整为 N=5 指标正例,但 business eligibility 仍恒 false。
+- **paired cohort**: each pair accepts only the first and the next `eligible + completed` planning flow of a single anonymized subject; the returning flow must complete later than the first flow. Active planning duration = wall clock − pre-declared, mutually non-overlapping external waits. Quantiles are fixed to nearest-rank; the report gives N, first-visit/revisit p50/p75, and per-pair reduction p50/p75; threshold comparisons use the unrounded raw ratio, rounding only for report display.
+- **Exit threshold freeze**: the M4 Exit minimum sample count is fixed at `minimum_pair_count_for_exit=5`, and the median reduction at `target_median_reduction_ratio=0.5`; inputs cannot lower the thresholds; non-frozen parameters are rejected fail-closed by the scorer.
+- **experience reflux**: counted by experience_id as the intersection of recalled and verified_outcome; baseline = verified/recalled; every event must carry evidence_ref.
+- **Preference red line**: the report gives the traceable ratio and the hard-filter violation count; acceptance requires 100% traceable and 0 hard filters.
+- **P4 gate**: must stay `closed` without real usage or a multi-user trigger.
+- **Evidence grades**: `synthetic_fixture` proves only the contract and the algorithms, `exit_evidence_eligible=false`; a private `observed_private` cohort likewise cannot close Exit by `evidence_kind` self-report, HMAC string shape, or evidence_ref shape alone. Observed input must be exact schema layer by layer, use `hmac-sha256:<64lowerhex>` pseudonymized keys for all subject/flow/pair/experience/assertion/evidence refs, and carry a `memory_value_source_review.v1` manual source review attestation contract; that contract must contain `reviewed_summary_digest_sha256`, matching the scorer's canonical JSON SHA-256 of the scoring payload outside `source_review`; a stale attestation cannot cover a modified summary. With a missing or mismatched attestation, the report counts only as candidate — metrics compute but `exit_ready=false`. The observed_private exported by the #228 collector still yields only candidate source_review and never generates reviewer/attestation fields. Real evidence stays in the manifest/paired-cohort/summary under `ts/gotry-state/evidence/m4/`; raw user material must not be committed; the scorer only validates the attestation contract shape and the summary digest binding — verifying raw material remains a manual review responsibility.
+- **Compatibility migration**: from 2026-09-08, an old observed manifest that is missing `source_review.reviewed_summary_digest_sha256`, uses plaintext/non-HMAC ids, carries undeclared fields, or attempts to lower thresholds is rejected by the CLI as contract-invalid/exit 2; private evidence producers must re-pseudonymize, compute the current summary digest, and complete the source-review attestation before rerunning. The public synthetic fixture moves from N=3 to N=5 metric positives, but business eligibility remains false throughout.
 
-复跑夹具:
+Fixture rerun:
 
 ```bash
 cd ts
@@ -96,4 +98,4 @@ npx tsx scripts/memory-value-report.ts data/memory-value-fixture.json
 npx tsx scripts/memory-lifecycle-tests.ts
 ```
 
-Collector 用法与持久化不变量见 `memory-lifecycle-collector.md`。
+For collector usage and persistence invariants, see `memory-lifecycle-collector.md`.

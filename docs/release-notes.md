@@ -1,16 +1,18 @@
-# GoTry 发版记录
+[English](release-notes.md) | [简体中文](release-notes.zh-CN.md)
 
-> 给用户和开发者看的更新日志。Latest 在最上面。
+# GoTry Release Notes
+
+> Changelog for users and developers. Latest at the top.
 
 ---
 
 ## Unreleased
 
-- **持久默认出发地(#338,2026-09-10)** — `gotry_motivation_save` 接受 typed `homeCity` 与 optional/explicit exact `homeCityEvidence` 绑定(单条非空 evidence 可省略,多条须显式);账本持久化 `homeCityPreference { value, evidence, updated_at }`，并通过 `{{motivation_brief}}` 作为软默认读回。显式当轮出发地优先，显式 null 清除活跃默认。
-- **产物视图进入 M4 队列(issue #285,2026-09-10)** — `gotry_artifacts_list/read` 在 Host 层持久化标准 `presentationMeta` 并输出 `SearchPathsResultView`/`ReadResultView` 所需字段与 `FileLocation`;**公开 `./client` adapter 通过 `window.__ModuleLoader__.load` 在 DSH Web 中按 runtime `block` 渲染自定义 list/read keyed cards**(wire name `tool.call.toolview`,key = `gotry_artifacts_list` / `gotry_artifacts_read`,见 `client/client.js`),路径可点击、首行显示 source + 完整 path + 行号预览 + source identity + content version;workspace/sidebar 文件树保留为**额外**预览面。读范围白名单 = stateRoot 根 + 会话 dsh 工作目录(排除 node_modules/.git),扩展名白名单 = 文本类;跨 root / symlink 越界 / 缺失文件 / 超大文件(>2MB)统一返回 ok:false + error + hint。本层只读,WriteGate 红线不涉及。验收证据 = `scripts/artifacts-capability-tests.ts` 12 项隔离 fixture proof + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof(覆盖改写后正确 preview 的 changed-file notice 与 reload 后更新可见)+ smoke §15/§15b。此项尚未发布 tag 或 npm 版本;当前最终交付目标 = PR #305 / destination `48c794c58b02d543be01f3bec98a056447dfeb85`。
-- **M4→M6 公开交付与债务台账(#270)** — 架构债务行统一指向公开 tracker 或具体触发条件,D-12/D-16/D-24 归档;issue→Draft PR→exact-head review→merge/destination 回执成为通用公开交付契约。本地/fixture 证据仍不构成 #20/#136/#137 的真实准入。
-- **DSH runtime closure 迁移到 0.1.5-alpha.1(#268)** — 把 root-pinned DSH 运行时依赖从 `0.1.2-alpha.3`(216 包闭包)精确迁到 `0.1.5-alpha.1`(230 包闭包)。精确钉死目标版本,绝不跟随可变 `alpha` dist-tag(当前指向 `0.1.5-alpha.2`)。230 = 15 新增(`dsh-api-workspace-files`/`dsh-client-file-upload`/`dsh-client-resources`/`dsh-client-ui-open-in-app`/`dsh-client-ui-sidebar-files`/`dsh-client-ui-sidebar-right`/`dsh-client-ui-sidebar-textpreview`/`dsh-host-open-in-app`/`dsh-http-proxy`/`dsh-package-manifest`/`dsh-session-format`/`dsh-session-format-catalog`/`dsh-session-format-v0-to-v1`/`dsh-session-format-v1-to-v2`/`dsh-session-format-v2-to-v3`)+ 移除 `dsh-tool-subagent-report`;增减集由重新生成的 npm 与 pnpm 锁文件确认。`ts/package.json` overrides 由 14 扩到 230,把完整 peer 闭包钉在 `0.1.5-alpha.1`,阻止 `^0.1.5-alpha.1` 插入符号把传递 peer 漂到 `0.1.5-alpha.2`。新增失败前置条件契约测试 `dsh-target-closure-proof.ts`(读仓库实态,起始 216/alpha.3 闭包上必败,迁移后必过),接入 run-all §23b。API 审计(`tsc --noEmit` + smoke + map-tools clean-tarball proof)未重现任何目标不兼容:`SettingsProvider.prototype.installSection` 接缝、7 个 `map_*` 工具、settings watch/reload/dispose、Session V3 单向迁移、agent/session/inbox/steer 接缝在 `0.1.5-alpha.1` 均存活,无行为改动。历史 `0.1.2-alpha.3` 证据在 §9/roadmap/stage1/release-notes 旧条目中保留,不批量替换;设置行为不变。此项尚未发布 tag 或 npm 版本；这些确定性证明不构成 M5/M6 准入。
-- **TS 严格安装闭环(#202)** — 在 rc.20 已随包交付 MIT `dsh-map-tools` 的基础上，补齐 alpha.3 peer closure 的精确 overrides，使 `ts/` 裸 `npm ci` 不再依赖 `--legacy-peer-deps`；新增 clean tarball fail-closed 证明。此项尚未发布 tag 或 npm 版本。
+- **Persistent default departure city (#338, 2026-09-10)** — `gotry_motivation_save` accepts a typed `homeCity` with optional/explicit exact `homeCityEvidence` binding (a single non-empty evidence may be omitted; multiple require explicit); the ledger persists `homeCityPreference { value, evidence, updated_at }` and reads it back as a soft default via `{{motivation_brief}}`. An explicit current-turn departure city takes precedence; explicit null clears the active default.
+- **Artifact views enter the M4 queue (issue #285, 2026-09-10)** — `gotry_artifacts_list/read` persist standard `presentationMeta` at the Host layer and output the fields required by `SearchPathsResultView`/`ReadResultView` plus `FileLocation`; **the published `./client` adapter renders custom list/read keyed cards in DSH Web via `window.__ModuleLoader__.load` keyed on the runtime `block`** (wire name `tool.call.toolview`, key = `gotry_artifacts_list` / `gotry_artifacts_read`, see `client/client.js`), with clickable paths, first line showing source + full path + line-number preview + source identity + content version; the workspace/sidebar file tree remains an **additional** preview surface. Read-scope whitelist = stateRoot root + session dsh working directory (excluding node_modules/.git); extension whitelist = text types; cross-root / symlink escape / missing file / oversize file (>2MB) uniformly return ok:false + error + hint. This layer is read-only; the WriteGate red line is not involved. Acceptance evidence = `scripts/artifacts-capability-tests.ts` 12 isolated-fixture proofs + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof (covering the changed-file notice with correct preview after rewrite, and update visibility after reload) + smoke §15/§15b. This item has no tag or npm release yet; current final delivery target = PR #305 / destination `48c794c58b02d543be01f3bec98a056447dfeb85`.
+- **M4→M6 public delivery and debt ledger (#270)** — architecture debt rows uniformly point to a public tracker or concrete trigger conditions; D-12/D-16/D-24 archived; the issue→Draft PR→exact-head review→merge/destination receipt becomes the general public delivery contract. Local/fixture evidence still does not constitute real admission for #20/#136/#137.
+- **DSH runtime closure migrated to 0.1.5-alpha.1 (#268)** — precisely migrated the root-pinned DSH runtime dependency from `0.1.2-alpha.3` (216-package closure) to `0.1.5-alpha.1` (230-package closure). The target version is pinned exactly, never following the mutable `alpha` dist-tag (currently pointing at `0.1.5-alpha.2`). 230 = 15 additions (`dsh-api-workspace-files`/`dsh-client-file-upload`/`dsh-client-resources`/`dsh-client-ui-open-in-app`/`dsh-client-ui-sidebar-files`/`dsh-client-ui-sidebar-right`/`dsh-client-ui-sidebar-textpreview`/`dsh-host-open-in-app`/`dsh-http-proxy`/`dsh-package-manifest`/`dsh-session-format`/`dsh-session-format-catalog`/`dsh-session-format-v0-to-v1`/`dsh-session-format-v1-to-v2`/`dsh-session-format-v2-to-v3`) + removal of `dsh-tool-subagent-report`; the add/remove set is confirmed by regenerated npm and pnpm lockfiles. `ts/package.json` overrides expanded from 14 to 230, pinning the full peer closure at `0.1.5-alpha.1` and preventing the `^0.1.5-alpha.1` caret from drifting transitive peers to `0.1.5-alpha.2`. Added failing-precondition contract test `dsh-target-closure-proof.ts` (reads the repo's actual state; must fail on the starting 216/alpha.3 closure, must pass after migration), wired into run-all §23b. API audit (`tsc --noEmit` + smoke + map-tools clean-tarball proof) reproduced no target incompatibility: the `SettingsProvider.prototype.installSection` seam, the 7 `map_*` tools, settings watch/reload/dispose, Session V3 one-way migration, and the agent/session/inbox/steer seams all survive on `0.1.5-alpha.1`, with no behavior change. Historical `0.1.2-alpha.3` evidence is retained in old §9/roadmap/stage1/release-notes entries, not batch-replaced; settings behavior unchanged. This item has no tag or npm release yet; these deterministic proofs do not constitute M5/M6 admission.
+- **TS strict install closure (#202)** — on top of rc.20, which already shipped the MIT `dsh-map-tools` in the package, completed the exact overrides for the alpha.3 peer closure so that a bare `npm ci` in `ts/` no longer depends on `--legacy-peer-deps`; added clean-tarball fail-closed proof. This item has no tag or npm release yet.
 
 ---
 
@@ -18,21 +20,21 @@
 
 ### What's New
 
-- **修好 `npx @danceiny/gotry doctor --fix` 的整个安装链** — rc.19 实测三红一误报,根因各不相同:
-  - **sidebar「1 项补装失败」是误报**:pnpm 11 的严格构建脚本策略让 dsh 安装器 exit 1,但 167 个包其实已完整落盘(复检本来就是绿的)。现在安装器按落盘状态判成功,并明示 node-pty(侧栏内嵌终端)的构建脚本被 pnpm 跳过、需要时用 `pnpm approve-builds` 补。
-  - **地图/路线/POI 工具这次真的可用了(npm 安装形态)**:rc.19 说「正式进依赖」实际只对源码布局生效——npm 布局从未装上。依赖这条路被上游堵死:dsh-map-tools 的 peer 要求 `>=0.1.2-rc.1` 的 dsh 家族,而 gotry 锁定 `0.1.2-alpha.3`(semver 上 alpha < rc),npm 严格 peer 解析直接拒装,硬上会弄坏 `npx @danceiny/gotry` 主安装路径。rc.20 改为**随包内置分发**——装 gotry 即得地图工具,零 API key(OSM/OSRM)。
-  - **ask-user 的 ❌ 是体检误报**:依赖一直在(npm 的提升布局里,运行时正常),体检的检查路径没覆盖该布局。现在体检与运行时解析同口径,说真话了。
-- **`gotry help` 不再打印合并冲突标记**(rc.19 带入的脏文本,顺带清偿)。
+- **Fixed the entire install chain behind `npx @danceiny/gotry doctor --fix`** — rc.19 field testing showed three reds and one false positive, each with a different root cause:
+  - **The sidebar's "1 item failed to install" was a false positive**: pnpm 11's strict build-script policy made the dsh installer exit 1, but all 167 packages had actually landed on disk in full (the recheck was green all along). The installer now judges success by on-disk state, and explicitly notes that the build script of node-pty (the sidebar's embedded terminal) was skipped by pnpm and can be approved with `pnpm approve-builds` when needed.
+  - **Map/route/POI tools are truly usable this time (npm install form)**: rc.19 said "officially in dependencies", but that only took effect for the source layout — the npm layout never got them installed. The dependency path was blocked upstream: dsh-map-tools' peer requires the dsh family at `>=0.1.2-rc.1`, while gotry pins `0.1.2-alpha.3` (semver: alpha < rc), so npm's strict peer resolution refused the install outright, and forcing it would break the main `npx @danceiny/gotry` install path. rc.20 switches to **in-package bundled distribution** — installing gotry gives you the map tools, zero API key (OSM/OSRM).
+  - **ask-user's ❌ was a health-check false positive**: the dependency was there all along (in npm's hoisted layout, runtime fine), but the health check's probe paths didn't cover that layout. The health check now resolves with the same semantics as the runtime and tells the truth.
+- **`gotry help` no longer prints merge-conflict markers** (dirty text introduced in rc.19, cleared in passing).
 
 ### For Developers
 
-- **CI 双层修复(main 自 #197 起全红)**:①runner npm 升级后裸 `npm ci` 强制校验 peer,而 ts 的 lockfile 一直是 `--legacy-peer-deps` 模式生成——CI 与 CONTRIBUTING 显式带该旗标,并移除 dsh-map-tools 冗余依赖;②turn-deadline 的 5 个 tsc 错误 = 类型面隐性依赖 peer 意外物化(`session/event` 声明在 dsh-session 的 cordis Events augmentation 里,pnpm 隔离布局下 root 侧的 augmentation 合并进另一个 cordis 实例)——显式 `import type` + dsh-session@0.1.2-alpha.3 进 ts 依赖面,overrides 把 peer 闭包钉在 alpha.3 防 rc.1 混版本,ts lock 全量 resolved 指回 registry.npmjs.org。
-- doctor 两面(CLI + 会话工具)改 createRequire 解析链,覆盖 npm/npx 提升布局;map-tools 解析 vendor 优先。
-- 新增回归锚:doctor-tests §5b/5c(提升布局解析/vendor 布局)+ bootstrap-tests §11(安装器 exit 非 0 但落盘 = 按状态判成功)。
+- **CI two-layer fix (main fully red since #197)**: ① after the runner's npm upgrade, a bare `npm ci` enforces peer validation, while ts's lockfile has always been generated in `--legacy-peer-deps` mode — CI and CONTRIBUTING now pass that flag explicitly, and the redundant dsh-map-tools dependency was removed; ② turn-deadline's 5 tsc errors = the type surface implicitly depended on accidental peer materialization (the `session/event` declaration lives in dsh-session's cordis Events augmentation; under pnpm's isolated layout the root-side augmentation merged into a different cordis instance) — explicit `import type` + dsh-session@0.1.2-alpha.3 into the ts dependency surface, overrides pin the peer closure at alpha.3 against rc.1 version mixing, and the ts lock fully resolves back to registry.npmjs.org.
+- Both doctor faces (CLI + session tool) switched to a createRequire resolution chain covering the npm/npx hoisted layout; map-tools resolution prefers vendor first.
+- New regression anchors: doctor-tests §5b/5c (hoisted-layout resolution / vendor layout) + bootstrap-tests §11 (installer exits non-0 but landed on disk = judge success by state).
 
-### 安装
+### Installation
 
-- 没变化,跑 `npx @danceiny/gotry web`。rc.19 用户跑一次 `npx @danceiny/gotry doctor` 复检——地图/ask-user 两项应转绿。
+- No change — run `npx @danceiny/gotry web`. rc.19 users: run `npx @danceiny/gotry doctor` once to recheck — the map/ask-user pair should turn green.
 
 ---
 
@@ -40,21 +42,21 @@
 
 ### What's New
 
-- **修了 rc18 的 `invalid skill name "gotry_motivation_save"` 硬错误** — 在「查余额 + 规划旅行」的交界场景里,模型会把 gotry 的工具名当成宿主 skill 传给 skill 加载器,当场报错。现在人格契约写死了表层规则:gotry 的全部能力一律是工具调用(gotry_ 前缀),绝不进 skill 加载器;skill 调用报 invalid/unknown 就改回工具调用。
-- **地图/路线/POI 工具上线** — `dsh-map-tools` 正式进依赖(零 API key,走 OSM/OSRM 开放源)。此前这个插件一直被启动流程静默丢弃;现在 doctor 体检(对话内 `gotry_doctor` 与终端 `npx @danceiny/gotry doctor`)都会如实告诉你它是否就位。
-- **外部事件接缝(前两段)** — 新增只读通道探针 tick:站点断/上游不可达这类「带外事实」现在会写进通道健康面,检索改道建议与 doctor 即时受益,不用等用户撞上失败;愿望池召回也会否证「依赖通道当前不可用」的憧憬——不再硬推当下走不通的行程。
-- **booking planner 连续加固** — factRef 指针清洗泛化、截断 finalResponse 恢复、UI 预载 offers 容忍、surface-policy 违规重试等一组修复(#172-#188)。
-- **doctor 两面同口径** — 终端 CLI 与会话工具面现在报同一份体检清单(此前 CLI 缺 map-tools/ask-user 两项)。
+- **Fixed rc18's hard error `invalid skill name "gotry_motivation_save"`** — in the boundary scenario of "check balance + plan a trip", the model would pass gotry's tool names to the host skill loader as if they were host skills, erroring on the spot. The persona contract now hard-writes the surface rule: all gotry capabilities are tool calls (`gotry_` prefix), never entering the skill loader; if a skill call reports invalid/unknown, switch back to a tool call.
+- **Map/route/POI tools shipped** — `dsh-map-tools` officially enters dependencies (zero API key, via OSM/OSRM open source). Previously this plugin was silently dropped by the startup flow; now the doctor health checks (in-conversation `gotry_doctor` and terminal `npx @danceiny/gotry doctor`) both truthfully tell you whether it is in place.
+- **External-event seam (first two segments)** — added a read-only channel-probe tick: out-of-band facts like "site down / upstream unreachable" are now written into the channel health surface; retrieval rerouting suggestions and doctor benefit immediately, without waiting for users to hit the failure; wish pool recall also falsifies aspirations whose "depended-on channel is currently unavailable" — no longer hard-pushing itineraries that cannot work right now.
+- **booking planner continuous hardening** — a batch of fixes: factRef pointer cleanup generalization, truncated finalResponse recovery, UI preloaded-offers tolerance, surface-policy violation retry, etc. (#172-#188).
+- **doctor both faces same semantics** — terminal CLI and session tool face now report the same health-check list (previously the CLI lacked the map-tools/ask-user pair).
 
 ### For Developers
 
-- 通道健康面新增 `'ok'` 恢复事件语义(latest-wins 超越 down);外部事件接缝设计 `docs/design/external-event-seam.md` 三段中前两段落地,第三段(world2agent 远程桥)待 D-31 拍板。
-- run-all 新增 §52(通道探针)/§53(愿望池否证)/§54(persona 表层护栏);行为契约仍 22 条((16) 内部澄清)。
-- Node 下界仍为 22.15(低于此版本启动即拒)。
+- Channel health surface adds `'ok'` recovery event semantics (latest-wins overrides down); external-event seam design `docs/design/external-event-seam.md`: the first two of three segments landed, the third (world2agent remote bridge) awaits the D-31 decision.
+- run-all adds §52 (channel probe) / §53 (wish pool falsification) / §54 (persona surface guardrail); the behavior contract remains 22 items ((16) internal clarification).
+- Node floor remains 22.15 (startup refuses anything below it).
 
-### 安装
+### Installation
 
-- 没变化,跑 `npx @danceiny/gotry web`。
+- No change — run `npx @danceiny/gotry web`.
 
 ---
 
@@ -64,17 +66,17 @@
 
 ### What's New
 
-- **修了一个让你卡死在终端的 bug** — 之前 `gotry web` 启动时如果没设 LLM key，CLI 会直接打一段「缺少 LLM API key」然后退出，根本进不了 dsh。但 key 是 dsh 那边管的事，不该 gotry 来挡。现在启动期只剩静默委托 dsh。
-- **`gotry setup` 不再替你管别的依赖** — 之前它会顺手装 hbcli / agent-reach / dsh-better-sidebar 一堆与 gotry 无关的工具，现在它只检查一件事：浏览器扩展装好了吗。其他事归各自的宿主生态。
-- **文档同步卸 key 引导** — README 中英、`user-guide.md` 不再让你「在 .env 里写 LLM_API_KEY」。
+- **Fixed a bug that left you stuck in the terminal** — previously, if no LLM key was set when `gotry web` started, the CLI printed a "missing LLM API key" message and exited outright, never entering dsh at all. But the key is dsh's business and gotry should not gate it. Startup now just silently delegates to dsh.
+- **`gotry setup` no longer manages other dependencies for you** — it used to conveniently install a pile of gotry-unrelated tools like hbcli / agent-reach / dsh-better-sidebar; now it checks exactly one thing: is the browser extension installed. Everything else belongs to its own host ecosystem.
+- **Docs sync the de-keying guidance** — README in both Chinese and English, plus `user-guide.md`, no longer tell you to "write LLM_API_KEY in .env".
 
 ### For Developers
 
-- 这一版主要是「让 gotry 在 CLI 层更像个插件」—— 它不再假装自己是入口，也不再要求用户配它本不该管的事。
+- This release is mainly about "making gotry more plugin-like at the CLI layer" — it no longer pretends to be the entry point, and no longer asks users to configure things it was never supposed to manage.
 
-### 安装
+### Installation
 
-- 没变化，跑 `npx @danceiny/gotry web`，dsh 那边该弹什么弹什么。
+- No change — run `npx @danceiny/gotry web`; dsh pops up whatever it needs to pop up.
 
 ---
 
@@ -82,20 +84,20 @@
 
 ### What's New
 
-- **GoTry Session Bridge 上架 [Chrome Web Store](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)** — 浏览器扩展已通过 Google 审核发布，一键装、自动更新、零系统弹窗。
-- **插件安装回到浏览器的事** — 之前 gotry 在终端里既开浏览器又动剪贴板又弹原生面板，让安装体验变得很糟糕。现在直接打开浏览器商店点「添加至 Chrome」就完成了。`gotry session` 工具在会话检索里碰到扩展未装的状态，会把商店链接直接呈现给你，点一下就到。
-- **携程会话面安装少踩坑** — 之前如果没装扩展就调用携程会话检索会卡住；现在扩展一装好，对话会立刻自动继续。
-- **GitHub Releases 通道保留** — 想自己控制更新节奏、或不想通过商店审核，照样可以在终端用 `npx @danceiny/gotry setup --extension-from=github` 拉取最新版本。
+- **GoTry Session Bridge is live on the [Chrome Web Store](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)** — the browser extension passed Google review and is published: one-click install, auto-update, zero system popups.
+- **Plugin installation goes back to being the browser's job** — previously gotry opened the browser, touched the clipboard, and popped native panels all from the terminal, making the install experience terrible. Now you just open the browser store and click "Add to Chrome" and it's done. When the `gotry session` tool hits an extension-not-installed state during session retrieval, it presents the store link directly to you — one click and you're there.
+- **Ctrip (携程) session-face install with fewer pitfalls** — previously, calling Ctrip session retrieval without the extension installed would hang; now, once the extension is installed, the conversation resumes automatically right away.
+- **GitHub Releases channel retained** — if you want to control your own update cadence, or don't want to go through store review, you can still pull the latest version in the terminal with `npx @danceiny/gotry setup --extension-from=github`.
 
 ### For Developers
 
-- **扩展安装提示做了无缝衔接** — 之前需要装扩展时让用户在终端跑一长串命令，现在 gotry 的工具返回结果里直接带上 Chrome 商店链接，你做的客户端界面可以直接渲染成可点的链接。
-- **Chrome 商店版与本地加载版完全互通** — 双通道用的是同一个扩展、同一个数据桥，所以即使中途从开发者模式加载版换到商店版，或者反过来，会话都不会断。
+- **Extension install prompt is now seamless** — previously, when an extension install was needed, users had to run a long command in the terminal; now gotry's tool results carry the Chrome store link directly, and the client UI you build can render it as a clickable link.
+- **Chrome store version and locally-loaded version fully interoperate** — both channels use the same extension and the same data bridge, so even if you switch from the developer-mode loaded version to the store version mid-way, or the reverse, sessions never break.
 
-### 安装
+### Installation
 
-- 推荐：浏览器打开 [chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) → 「添加至 Chrome」。
-- 安装完毕后启动 gotry，工具首次调用如果还需要扩展，会自动检测到，不用重启。
+- Recommended: open [chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) in your browser → "Add to Chrome".
+- After installation, start gotry; if a tool's first call still needs the extension, it auto-detects — no restart needed.
 
 ---
 
@@ -103,14 +105,14 @@
 
 ### What's New
 
-- **新接入 MiniMax 模型家族的费率** — 之前费率表只覆盖一家供应商；现在 MiniMax 的几款模型也都接入了，会更准确地把每次对话的真实成本算给你看。模型升级时也会自动按新费率结算。
-- **自动监控几大供应商的定价变更** — DeepSeek、MiniMax、OpenAI、Anthropic 四家主流供应商的定价被周期性扫描。如果你在用之前可能会自动重新核价，但**永远不会自动改你的配置** —— 这件事仍然需要人来确认。
-- **更新日志从此机器化** — 这次的更新日志还有不少人工痕迹，从下一版开始会从代码提交记录自动生成。你看到的「What's New」会是开发过程中的真实变更，而不是事后整理。
-- **修复了一个让你重新跑出错的扩展问题** — 之前某些情况下连续跑 gotry 会让端口占用冲突、得手动重启几次才能复现；现在不会了。
+- **Newly onboarded MiniMax model family rates** — the rate table previously covered only one vendor; now several MiniMax models are onboarded too, computing the true cost of each conversation for you more accurately. Model upgrades are automatically billed at the new rates.
+- **Automatically monitor pricing changes across major vendors** — the pricing of four major vendors (DeepSeek, MiniMax, OpenAI, Anthropic) is scanned periodically. If you were using one before, it may be re-priced automatically, but **it will never automatically change your config** — that still requires human confirmation.
+- **Changelog goes machine-generated from here** — this changelog still carries plenty of human traces; starting with the next version it will be auto-generated from code commit records. The "What's New" you see will be the real changes from the development process, not after-the-fact tidying.
+- **Fixed an extension problem that made re-running error out** — previously, in some cases, running gotry repeatedly caused port-occupation conflicts that needed several manual restarts to reproduce; not anymore.
 
 ### For Developers
 
-- **发布流程变的稳** — 现在每次发版前会自动跑全量测试、检查更新日志、跑干净安装确认无误；这些以前都是手工，容易漏。
+- **Release process became stable** — before every release, the full test suite now runs automatically, the changelog is checked, and a clean install is verified; these used to be manual and easy to miss.
 
 ---
 
@@ -118,11 +120,11 @@
 
 ### What's New
 
-- **预订流程的状态机开始有了正式的词表** — 当 gotry 在做预订相关的多步操作时（比如改签、取消、确认），它现在只会用一套预先定义好的动作。这是为了之后让多步操作可以被完整回放、被安全审计，不会出现「它到底跑到哪一步了」的模糊地带。
+- **The booking flow state machine now has a formal vocabulary** — when gotry performs booking-related multi-step operations (e.g., rebooking, cancellation, confirmation), it now uses only a pre-defined set of actions. This is so that multi-step operations can later be fully replayed and safely audited, with no fuzzy zone of "which step did it actually get to".
 
 ### For Developers
 
-- 这一版主要是给下一代「可下单」能力打地基，对终端用户来说没有可见变化。
+- This release mainly lays the foundation for the next-generation "order-placement-capable" ability; no visible change for end users.
 
 ---
 
@@ -130,7 +132,7 @@
 
 ### What's New
 
-- **文档有了中英文分开版本** — 仓库根的 README 现在一份英文、一份中文，看你自己熟悉的语言。npm 主页展示英文。
+- **Docs now have separate Chinese and English versions** — the repo-root README now comes in one English copy and one Chinese copy; read whichever language you're comfortable with. The npm homepage shows English.
 
 ---
 
@@ -138,10 +140,10 @@
 
 ### What's New
 
-- **登录自动检测** — `gotry session` 工具每次需要复用你已经登录好的携程账号前，现在会先默默读一下「是否已登录」这个事实。如果已经登了，直接就能搜，不用每次都弹登录。如果没登，才会打开登录页让你登。
-- **登录页态度更明确** — 之前登录页有时会开在你看不见的位置；现在它一定会把你的浏览器焦点切到你登录页上，登录完你知道在哪。
-- **绝不主动开浏览器** — gotry 的自检流程再也不会因为跑测试就把你的浏览器闪退或反复打开了一堆窗口；除非你显式开 live 模式。
-- **README 重排成普通人能看懂的版本** — 顶部推荐 30 秒上手，分组成「搜什么、用什么、怎么用」三段，关于账号授权与隐私的四条硬规则被单独拎出来强调。
+- **Automatic login detection** — every time the `gotry session` tool needs to reuse your already-logged-in Ctrip account, it now first quietly reads the fact "am I logged in". If yes, it searches directly, without popping a login every time. Only if you're not logged in does it open the login page for you to log in.
+- **The login page is more decisive** — previously the login page sometimes opened where you couldn't see it; now it always switches your browser focus to the login page, so you know where it is after logging in.
+- **Never proactively opens the browser** — gotry's self-check flow will no longer flash-quit your browser or repeatedly open a pile of windows just because tests ran; unless you explicitly enable live mode.
+- **README rearranged into a version ordinary people can understand** — the top recommends a 30-second quickstart, grouped into three sections: "what to search, what to use, how to use"; the four hard rules on account authorization and privacy are pulled out and emphasized separately.
 
 ---
 
@@ -149,10 +151,10 @@
 
 ### What's New
 
-- **酒店搜索接到了 OTA（飞猪官方）** — 之前查酒店只能用 gotry 自己的内部数据；现在它可以直接搜到携程、飞猪上的实时报价。这是只读搜索，零凭证，不会替你下单。
-- **OTA 工具面扁平** — 不再有「这是主路径、这是降级」这种内部概念区分；从前端看上去就是一堆并排的工具，每个都能用。
-- **动用你账号的工具会先弹确认卡** — 任何用到「你在携程的账号」的工具，第一次在每个会话里调用时都会先和你打个招呼——批准后才能用、本会话内记住；如果你拒绝了，这个会话就不再弹、也就不再执行。
-- **登录现在是一个工具** — 之前要登录会跳到命令行，现在 gotry 里直接调 `gotry_session_login`，它会在你自己的浏览器里开登录入口页面，登录你正常做完就行。**登录永远发生在携程官网，gotry 不会接触你的密码、验证码、cookie 值** —— 它只会看一眼「登没登录」这个布尔事实。
+- **Hotel search connected to OTA (Fliggy (飞猪) official)** — previously hotel lookup could only use gotry's own internal data; now it can directly search real-time prices on Ctrip and Fliggy. This is read-only search, zero credentials, and will not place orders for you.
+- **OTA tool surface is flat** — no more internal-concept distinctions like "this is the primary path, this is the fallback"; from the frontend it's just a row of side-by-side tools, each usable.
+- **Tools that touch your account pop a confirmation card first** — any tool that uses "your Ctrip account" greets you first on its first call in each session — usable only after approval, remembered within this session; if you decline, this session won't pop again and won't execute either.
+- **Login is now a tool** — previously login jumped to the command line; now you call `gotry_session_login` directly inside gotry, and it opens the login entry page in your own browser — just finish logging in as usual. **Login always happens on Ctrip's official site; gotry never touches your password, verification code, or cookie values** — it only glances at the boolean fact "logged in or not".
 
 ---
 
@@ -160,10 +162,10 @@
 
 ### What's New
 
-- **Z3 计算引擎的并发竞态根治** — 之前在某些压力场景下，会出现反复求解失败、需要重试一次的隐藏问题；现在彻底修好了，可以并发跑。
-- **实时票价可选开启** — 默认是关的。如果你的型号或场景需要用到实时报价，可以在环境里打开 `GOTRY_REALTIME_PRICING=1`，gotry 会去飞猪官方核实航班实际价格覆写进答案；找不到精确票价时会退回静态包，不会假装实时。
-- **英文输出** — 现在 gotry 的中文/英文界面切换已经全部落地，`GOTRY_LOCALE=en` 切换。
-- **README 之前四条「已知限制」清完了两条** — 实时票价的桥和英文界面都在这一版完成。
+- **Root-cured the Z3 compute engine's concurrency race** — previously, under certain stress scenarios, there was a hidden problem of repeated solve failures requiring one retry; now it's thoroughly fixed and safe to run concurrently.
+- **Real-time fares optionally enabled** — off by default. If your model or scenario needs real-time quotes, set `GOTRY_REALTIME_PRICING=1` in the environment, and gotry verifies actual flight prices against Fliggy official and overwrites them into the answer; when no exact fare is found it falls back to the static package, never pretending to be real-time.
+- **English output** — gotry's Chinese/English UI switch is now fully landed; switch with `GOTRY_LOCALE=en`.
+- **README's previous four "known limitations" — two cleared** — the real-time fare bridge and the English UI both completed in this release.
 
 ---
 
@@ -171,13 +173,13 @@
 
 ### What's New
 
-- **Web 与本地一套账本语义** — 如果你之后想把 gotry 部署成供多人用的 Web 服务，它和你自己本地用同一套数据底座；用户是谁会在账本里有一等列，但单用户阶段你看不到区别。
-- **一句话播报** — 上一版安装后首次启动的「装上了跑不起」问题，现在会引向 npm 完整安装流程而不是把崩溃栈糊你脸上。
+- **Web and local share one ledger semantics** — if you later want to deploy gotry as a multi-user Web service, it shares the same data foundation as your own local use; who the user is becomes a first-class column in the ledger, but you won't see any difference in the single-user phase.
+- **One-line broadcast** — last version's "installed but won't run" problem on first post-install launch now leads to the full npm install flow instead of smearing a crash stack across your face.
 
 ### For Developers
 
-- **rc.9 装的扩展跑不动的根治** — rc.9 装上的扩展有一个隐蔽 bug 让 npm 形态装完不能加载扩展；rc.10 同时根治并把这个检查固化进了发布前必跑的预验证脚本里。
-- **依赖面补齐** — 包内多带了 SQLite（账本）、puppeteer-core（浏览器调试）、DeepSeek dsh 系列几个被 peer 钉住的版本依赖。
+- **Root cure for rc.9's installed-but-not-running extension** — the extension installed by rc.9 had a hidden bug that made the npm form unable to load the extension after install; rc.10 both root-cures it and bakes this check into the pre-release mandatory preverification script.
+- **Dependency surface completed** — the package now bundles SQLite (ledger), puppeteer-core (browser debugging), and several DeepSeek dsh family dependencies pinned by peers.
 
 ---
 
@@ -185,25 +187,25 @@
 
 ### What's New
 
-- **17 个工具** — 记忆域（动机画像、旅行时间线、同行人、时间窗衰减）、事务化状态基座、会话面（携程官方 + 你自己的账号交叉验证）合流；这是开发主线 30 个 commit 一次性合入。
-- **你现在去哪里过，过去去过的地方不再被推** — 动机画像和旅行历史开始进入推荐扣分。
-- **节假日锚点扩到 2031** — 春节、中秋、国庆这些长假的「时间锚点」现在不会被预设漏掉了。
+- **17 tools** — the memory domain (motivation profile, travel timeline, companions, time-window decay), the transactional state foundation, and the session face (Ctrip official + cross-verification with your own account) converge; this is 30 commits from the development mainline merged at once.
+- **Places you've already been are no longer pushed at you** — the motivation profile and travel history now start feeding into recommendation demotion.
+- **Holiday anchors extended to 2031** — the "time anchors" for long holidays like Spring Festival, Mid-Autumn, and National Day are no longer missed by the presets.
 
 ---
 
-## 之前版本（rc.8 及更早）
+## Earlier versions (rc.8 and earlier)
 
-rc.8 是首次带「记忆域 + 时间感硬化」骨架的发布；rc.7 是在真实用户对话数据上完成 7 题对账的终局版本；更早（rc.1 到 rc.6）属于内部迭代。如果你正在从更早跳上来，关键变化是：
+rc.8 was the first release with the "memory domain + time-awareness hardening" skeleton; rc.7 was the final version that completed the 7-question reconciliation on real user conversation data; earlier (rc.1 to rc.6) were internal iterations. If you're jumping up from an earlier version, the key changes are:
 
-- 当前推荐装法：`npx -y @danceiny/gotry@latest`（或 `@rc`）
-- 携程会话检索需装浏览器扩展 —— 见上面 rc.17 那段
-- 一切外部依赖安装统一收口到 `npx @danceiny/gotry setup`
+- Currently recommended install: `npx -y @danceiny/gotry@latest` (or `@rc`)
+- Ctrip session retrieval requires the browser extension — see the rc.17 section above
+- All external dependency installs converge into `npx @danceiny/gotry setup`
 
 ---
 
-## 还没解决的(仍可能影响你)
+## Still unresolved (may still affect you)
 
-- **真实用户样本证据还没收完** — M3(内部里程碑代号,「产品基本可用」)要算真正完成,需要跨多个真实种子用户跑出来的定稿率、NPS、地理问答幻觉率;当前为 0。
-- **会话面只覆盖携程(机/酒/火)** — 美团本地仍是盲区(匿名 403,登录态是硬前置)。
-- **英文界面还存在小尾巴** — 切换到英文后,还有极少数角落的中文没有翻译完。
-- **实时价格默认是关的** —— 打开后端到端比静态包慢一点;不在意的就开着。
+- **Real-user sample evidence not fully collected** — for M3 (internal milestone codename, "product basically usable") to count as truly complete, we need finalization rate, NPS, and geographic Q&A hallucination rate measured across multiple real seed users; currently 0.
+- **Session face only covers Ctrip (flight/hotel/train)** — Meituan (美团) local is still a blind spot (anonymous 403; logged-in state is a hard prerequisite).
+- **The English UI still has small tails** — after switching to English, a very small number of corners still have untranslated Chinese.
+- **Real-time pricing is off by default** — turning it on is slightly slower end-to-end than the static package; if you don't mind, leave it on.

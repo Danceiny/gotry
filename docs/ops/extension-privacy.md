@@ -1,12 +1,14 @@
-# GoTry Session Bridge Privacy Policy / 隐私政策
+[English](extension-privacy.md) | [简体中文](extension-privacy.zh-CN.md)
 
-**Last updated / 最后更新:2026-08-30**
+# GoTry Session Bridge Privacy Policy
+
+**Last updated: 2026-08-30**
 
 GoTry Session Bridge ("the extension") is an optional local data bridge for the
 GoTry travel assistant. This policy explains what the extension does and does
 not do with data.
 
-## Summary(English)
+## Summary (English)
 
 - The extension passively observes flight-search responses **that the page
   itself loads** on `flights.ctrip.com`, and reads only the **names** of login
@@ -23,17 +25,22 @@ not do with data.
   (GoTry's own consent gate), and the extension can be turned off at any time
   from its browser card, independently of this policy.
 
-## 要点(中文)
+## Key Points (Chinese)
 
-- 扩展只**被动嗅探** `flights.ctrip.com` 页面自己发出的航班检索回包;仅读取登录
-  cookie 的**名称**判断登录态。
-- cookie **值从不被读取、存储或传输**;登录永远由你在携程官网亲自完成。
-- 唯一数据去向是**你本机**的 GoTry 进程(回环 `127.0.0.1`,端口 8791-8795);
-  不上云、无统计、无广告、无第三方 SDK。
-- 扩展对任何网站**零写行为**:不代发请求、不修改页面内容。
-- 每次会话检索仍需你在 GoTry 会话内明示授权(gotry 授权闸);扩展卡片可随时
-  一键关闭,与本政策相互独立。
+- The extension only **passively sniffs** flight-search responses that the
+  `flights.ctrip.com` page itself emits; it reads only the **names** of login
+  cookies to determine sign-in state.
+- Cookie **values are never read, stored, or transmitted**; login is always
+  completed by you in person on the Ctrip (携程) website.
+- The only data destination is the GoTry process on **your own machine**
+  (loopback `127.0.0.1`, ports 8791-8795); nothing goes to the cloud, and
+  there is no analytics, no ads, and no third-party SDK.
+- The extension performs **zero writes** on any website: it never sends
+  requests on your behalf and never modifies page content.
+- Every session search still requires your explicit in-session approval
+  within GoTry (the gotry consent gate); the extension card can be switched
+  off with one click at any time, independently of this policy.
 
-## Contact / 联系
+## Contact
 
 Issues: https://github.com/Danceiny/gotry/issues

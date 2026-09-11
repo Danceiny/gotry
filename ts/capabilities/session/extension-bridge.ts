@@ -81,6 +81,13 @@ export const MAX_RESULT_BODY_BYTES = 8 * 1024 * 1024
 
 export type ExtensionJobKind = 'search' | 'open-login' | 'cookie-names'
 
+/** search + multiCollect(dida 推荐流):按接口类别分桶的嗅探回包体 */
+export interface SniffBodies {
+  hotels?: string
+  recommendPrices?: string
+  realtime?: string
+}
+
 export interface ExtensionJob {
   jobId: string
   kind: ExtensionJobKind
@@ -89,6 +96,12 @@ export interface ExtensionJob {
   url?: string
   /** search:等嗅探回包上限 */
   timeoutMs?: number
+  /**
+   * search:dida 推荐流多回包收集(2026-09-11,执行环境迁浏览器客户端)——
+   * find 页加载自发 hotels + recommendPrices 两个接口,单首包语义会丢一半数据;
+   * true 时扩展按类别收齐(或超时结算)后经 bodies 回传
+   */
+  multiCollect?: boolean
 }
 
 export interface ExtensionJobResult {
@@ -98,8 +111,10 @@ export interface ExtensionJobResult {
   names?: string[]
   /** search:NETWORK_HINTS 命中的响应原文 */
   body?: string
-  /** search:the exact NETWORK_HINTS response URL selected for body */
+  /** search:the exact NETWORK_HINTS response URL selected for body;未命中/超时为空 */
   url?: string
+  /** search + multiCollect:分桶回包体(见 SniffBodies) */
+  bodies?: SniffBodies
   title?: string
   opened?: boolean
   timeout?: boolean
@@ -180,9 +195,38 @@ function readBody(req: IncomingMessage, cap: number): Promise<string | { err: st
   })
 }
 
-/** 创 Bridge 服务(测试可直接调;生产走 getOrCreateSessionBridge 懒单例) */
-export async function createSessionBridge(opts: SessionBridgeOptions = {}): Promise<{ ok: true; bridge: SessionJobHandle } | { ok: false; summary: string }> {
-  const ports = opts.ports ?? [...BRIDGE_PORTS]
+export interface BridgeQueueStats {
+  queued: number
+  inFlight: number
+  parked: number
+  lastSeenMsAgo: number | null
+}
+
+/**
+ * 传输无关的桥作业队列(2026-09-11 抽出,founder 定案:执行环境=浏览器客户端,
+ * 服务端零 Chrome)——queue/inFlight/parked 三态 + 长轮询协议处理器,
+ * 可挂两种形态:
+ *   - loopback 独立桥(createSessionBridge;gotry 桌面形态,扩展与本机进程同机)
+ *   - gotry-backend 鉴权面挂载(handleMountedRequest;远程扩展经 bearer 鉴权连入,
+ *     浏览器客户端即执行环境,服务器只做编排/队列)
+ */
+export interface BridgeJobQueue extends SessionJobHandle {
+  stats(): BridgeQueueStats
+  /** 完整桥协议(loopback 独立桥形态;/results/:jobId 路径式) */
+  handleRequest(req: IncomingMessage, res: ServerResponse): void
+  /** 挂载形态(/v1/session/bridge 前缀;/results?jobId= 查询式;bearer 鉴权由宿主模块前置) */
+  handleMountedRequest(req: IncomingMessage, res: ServerResponse): void
+}
+
+export interface BridgeJobQueueOptions {
+  /** 信任的扩展 Origin 白名单;缺省 EXTENSION_ORIGINS(unpacked + 商店版双通道) */
+  extensionOrigins?: readonly string[]
+  now?: () => number
+  /** 长轮询 parked 定时器是否 unref(独立桥惰性形态用;gotry-backend 常驻服务无需) */
+  keepBridge?: boolean
+}
+
+export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJobQueue {
   const extensionOrigins = new Set(opts.extensionOrigins ?? EXTENSION_ORIGINS)
   const now = opts.now ?? Date.now
   const queue: QueuedJob[] = []
@@ -190,7 +234,6 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
   const parked: ParkedPoller[] = []
   let lastSeenAt = 0
   let closed = false
-  let port = 0
   const extensionConnected = (): boolean => lastSeenAt > 0 && now() - lastSeenAt < EXTENSION_CONNECTED_WINDOW_MS
 
   /** 领走首个 capability 匹配的 job(移入 inFlight——回包按 jobId 路由,两处都可找到) */
@@ -201,102 +244,6 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
     inFlight.set(next.job.jobId, next)
     return next
   }
-
-  const server = createServer(async (req, res) => {
-    if (closed) { res.statusCode = 503; res.end(); return }
-    const urlPath = (req.url ?? '').split('?')[0]
-    const origin = req.headers.origin
-    const isPost = req.method === 'POST'
-    const originTrusted = typeof origin === 'string' && extensionOrigins.has(origin)
-    // 网页侧请求必带 Origin;桥端点只信任白名单内的 chrome-extension:// 源(诊断 GET 面放行)
-    if (isPost && !originTrusted) {
-      res.statusCode = 403
-      res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify({ ok: false, error: 'origin 不在桥白名单' }))
-      return
-    }
-    // 心跳:扩展平时只走 /jobs 长轮询(健康只在启动探测时 ping 一次)——
-    // 一切携带白名单扩展 Origin 的请求都刷新 lastSeen,否则 45s 后误判扩展掉线;
-    // 无 Origin 的诊断 GET(/health /status)不记心跳,curl 探活不能伪造「扩展在线」
-    if (originTrusted) {
-      lastSeenAt = now()
-    }
-    const finish = (code: number, body: unknown): void => {
-      res.statusCode = code
-      res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify(body))
-    }
-    if (req.method === 'GET' && urlPath === '/health') {
-      finish(200, { ok: true, service: 'gotry-session-bridge', protocol: BRIDGE_PROTOCOL })
-      return
-    }
-    if (req.method === 'GET' && urlPath === '/status') {
-      finish(200, {
-        ok: true, port, protocol: BRIDGE_PROTOCOL,
-        extensionConnected: extensionConnected(),
-        lastSeenMsAgo: lastSeenAt > 0 ? now() - lastSeenAt : null,
-        queued: queue.length,
-        inFlight: inFlight.size,
-        parked: parked.length,
-      })
-      return
-    }
-    if (isPost && urlPath === '/jobs') {
-      // 轮询体携带 {extensionVersion, capabilities: SITES 键清单}——按站点 capability
-      // 路由(见 ParkedPoller 注);体缺失/非 JSON 视为 match-all,向前兼容旧扩展。
-      const pollerCaps = await readBody(req, 64 * 1024).then((body): Set<string> | null => {
-        if (typeof body !== 'string') return null
-        try {
-          const parsed = JSON.parse(body) as { capabilities?: unknown }
-          return Array.isArray(parsed.capabilities) ? new Set(parsed.capabilities.filter((c): c is string => typeof c === 'string')) : null
-        } catch {
-          return null
-        }
-      })
-      const next = takeMatching(pollerCaps)
-      if (next) { finish(200, { job: next.job }); return }
-      // 长轮询:hold ≤ JOBS_LONG_POLL_MS(必须 < MV3 SW 30s 存活窗口,每次响应都续命);
-      // 新 job 提交时即时唤醒 parked 取活者(见 submit→dispatchToParked)
-      const poller: ParkedPoller = { res, timer: null as unknown as ReturnType<typeof setTimeout>, capabilities: pollerCaps }
-      const parkTimer = setTimeout(() => {
-        const i = parked.findIndex((p) => p.res === res)
-        if (i >= 0) parked.splice(i, 1)
-        finish(200, { job: null })
-      }, JOBS_LONG_POLL_MS)
-      poller.timer = parkTimer
-      // 默认桥是惰性能力:外部扩展的 parked 轮询不得在主流程结束后钉住 CLI。
-      // keepBridge wizard 反过来要靠它守住进程,因此只对默认形态 unref。
-      if (!opts.keepBridge) parkTimer.unref()
-      parked.push(poller)
-      res.on('close', () => {
-        const i = parked.findIndex((p) => p.res === res)
-        if (i >= 0) parked.splice(i, 1)
-        clearTimeout(parkTimer)
-      })
-      return
-    }
-    if (isPost && urlPath.startsWith('/results/')) {
-      const jobId = decodeURIComponent(urlPath.slice('/results/'.length))
-      void readBody(req, MAX_RESULT_BODY_BYTES).then((body) => {
-        if (typeof body !== 'string') { finish(400, { ok: false, error: body.err }); return }
-        let parsed: ExtensionJobResult
-        try {
-          parsed = JSON.parse(body) as ExtensionJobResult
-        } catch {
-          finish(400, { ok: false, error: '回包不是 JSON' })
-          return
-        }
-        finish(200, { ok: true })
-        resolveJob(jobId, parsed)
-      })
-      return
-    }
-    finish(404, { ok: false, error: 'unknown endpoint' })
-  })
-  server.on('connection', (socket) => {
-    // server.unref() 只解开监听器;已接受的扩展长轮询 socket 仍会引用事件循环。
-    if (!opts.keepBridge) socket.unref()
-  })
 
   /** 扩展回包:queued 与 inFlight 两处都可寻址(job 执行失败 = result.ok:false,桥自身不吞) */
   function resolveJob(jobId: string, parsed: ExtensionJobResult): void {
@@ -327,9 +274,122 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
     return true
   }
 
-  const bridge: SessionJobHandle = {
+  const stats = (): BridgeQueueStats => ({
+    queued: queue.length,
+    inFlight: inFlight.size,
+    parked: parked.length,
+    lastSeenMsAgo: lastSeenAt > 0 ? now() - lastSeenAt : null,
+  })
+
+  /**
+   * 协议处理器工厂:prefix='' 为独立桥形态(路径式 results);prefix='/v1/session/bridge'
+   * 为挂载形态(查询式 results——gotry-backend 内核只支持精确路由,jobId 走 query)。
+   * Origin 白名单校验内置于两种形态(远程形态同样强制:网页跨域请求必带邪恶 Origin)。
+   */
+  function makeHandler(prefix: string, resultsViaQuery: boolean, statusExtra?: () => Record<string, unknown>) {
+    return (req: IncomingMessage, res: ServerResponse): void => {
+      if (closed) { res.statusCode = 503; res.end(); return }
+      const urlPath = (req.url ?? '').split('?')[0]
+      const path = prefix && urlPath.startsWith(prefix) ? urlPath.slice(prefix.length) : urlPath
+      const origin = req.headers.origin
+      const isPost = req.method === 'POST'
+      const originTrusted = typeof origin === 'string' && extensionOrigins.has(origin)
+      // 网页侧请求必带 Origin;桥端点只信任白名单内的 chrome-extension:// 源(诊断 GET 面放行)
+      if (isPost && !originTrusted) {
+        res.statusCode = 403
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify({ ok: false, error: 'origin 不在桥白名单' }))
+        return
+      }
+      // 心跳:扩展平时只走 /jobs 长轮询(健康只在启动探测时 ping 一次)——
+      // 一切携带白名单扩展 Origin 的请求都刷新 lastSeen,否则 45s 后误判扩展掉线;
+      // 无 Origin 的诊断 GET(/health /status)不记心跳,curl 探活不能伪造「扩展在线」
+      if (originTrusted) {
+        lastSeenAt = now()
+      }
+      const finish = (code: number, body: unknown): void => {
+        res.statusCode = code
+        res.setHeader('content-type', 'application/json')
+        res.end(JSON.stringify(body))
+      }
+      if (req.method === 'GET' && path === '/health') {
+        finish(200, { ok: true, service: 'gotry-session-bridge', protocol: BRIDGE_PROTOCOL })
+        return
+      }
+      if (req.method === 'GET' && path === '/status') {
+        finish(200, {
+          ok: true, protocol: BRIDGE_PROTOCOL, ...stats(),
+          extensionConnected: extensionConnected(),
+          ...(statusExtra ? statusExtra() : {}),
+        })
+        return
+      }
+      if (isPost && path === '/jobs') {
+        // 轮询体携带 {extensionVersion, capabilities: SITES 键清单}——按站点 capability
+        // 路由(见 ParkedPoller 注);体缺失/非 JSON 视为 match-all,向前兼容旧扩展。
+        void readBody(req, 64 * 1024).then((body) => {
+          const pollerCaps = ((): Set<string> | null => {
+            if (typeof body !== 'string') return null
+            try {
+              const parsed = JSON.parse(body) as { capabilities?: unknown }
+              return Array.isArray(parsed.capabilities) ? new Set(parsed.capabilities.filter((c): c is string => typeof c === 'string')) : null
+            } catch {
+              return null
+            }
+          })()
+          const next = takeMatching(pollerCaps)
+          if (next) { finish(200, { job: next.job }); return }
+          // 长轮询:hold ≤ JOBS_LONG_POLL_MS(必须 < MV3 SW 30s 存活窗口,每次响应都续命);
+          // 新 job 提交时即时唤醒 parked 取活者(见 dispatchToParked)
+          const poller: ParkedPoller = { res, timer: null as unknown as ReturnType<typeof setTimeout>, capabilities: pollerCaps }
+          const parkTimer = setTimeout(() => {
+            const i = parked.findIndex((p) => p.res === res)
+            if (i >= 0) parked.splice(i, 1)
+            finish(200, { job: null })
+          }, JOBS_LONG_POLL_MS)
+          poller.timer = parkTimer
+          // 默认桥是惰性能力:外部扩展的 parked 轮询不得在主流程结束后钉住 CLI。
+          // keepBridge wizard 反过来要靠它守住进程,因此只对默认形态 unref。
+          if (!opts.keepBridge) parkTimer.unref()
+          parked.push(poller)
+          res.on('close', () => {
+            const i = parked.findIndex((p) => p.res === res)
+            if (i >= 0) parked.splice(i, 1)
+            clearTimeout(parkTimer)
+          })
+        })
+        return
+      }
+      const isResults = isPost && (resultsViaQuery ? path === '/results' : path.startsWith('/results/'))
+      if (isResults) {
+        const jobId = resultsViaQuery
+          ? new URL(req.url ?? '', 'http://bridge.local').searchParams.get('jobId') ?? ''
+          : decodeURIComponent(path.slice('/results/'.length))
+        if (!jobId) { finish(400, { ok: false, error: '缺 jobId' }); return }
+        void readBody(req, MAX_RESULT_BODY_BYTES).then((body) => {
+          if (typeof body !== 'string') { finish(400, { ok: false, error: body.err }); return }
+          let parsed: ExtensionJobResult
+          try {
+            parsed = JSON.parse(body) as ExtensionJobResult
+          } catch {
+            finish(400, { ok: false, error: '回包不是 JSON' })
+            return
+          }
+          finish(200, { ok: true })
+          resolveJob(jobId, parsed)
+        })
+        return
+      }
+      finish(404, { ok: false, error: 'unknown endpoint' })
+    }
+  }
+
+  const queueHandle: BridgeJobQueue = {
     port: 0,
     extensionConnected,
+    stats,
+    handleRequest: makeHandler('', false),
+    handleMountedRequest: makeHandler('/v1/session/bridge', true),
     submit(job, submitOpts = {}) {
       const extensionWaitMs = submitOpts.extensionWaitMs ?? DEFAULT_EXTENSION_WAIT_MS
       const timeoutMs = submitOpts.timeoutMs ?? job.timeoutMs ?? 30_000
@@ -353,7 +413,7 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
         let waited = 0
         const waitTimer = setInterval(() => {
           waited += 250
-          if (bridge.extensionConnected()) { clearInterval(waitTimer); return }
+          if (queueHandle.extensionConnected()) { clearInterval(waitTimer); return }
           if (waited >= extensionWaitMs) {
             clearInterval(waitTimer)
             settle({
@@ -383,8 +443,34 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
           clearTimeout(p.timer)
           p.res.destroy()
         }
-        server.close(() => resolve())
-        server.closeAllConnections?.()
+        resolve()
+      }),
+  }
+  return queueHandle
+}
+
+/** 创 Bridge 服务(测试可直接调;生产走 getOrCreateSessionBridge 懒单例) */
+export async function createSessionBridge(opts: SessionBridgeOptions = {}): Promise<{ ok: true; bridge: SessionJobHandle } | { ok: false; summary: string }> {
+  const ports = opts.ports ?? [...BRIDGE_PORTS]
+  const queueHandle = createBridgeJobQueue(opts)
+  let port = 0
+
+  const server = createServer((req, res) => queueHandle.handleRequest(req, res))
+  server.on('connection', (socket) => {
+    // server.unref() 只解开监听器;已接受的扩展长轮询 socket 仍会引用事件循环。
+    if (!opts.keepBridge) socket.unref()
+  })
+
+  const bridge: SessionJobHandle = {
+    port: 0,
+    extensionConnected: queueHandle.extensionConnected,
+    submit: (job, submitOpts) => queueHandle.submit(job, submitOpts),
+    close: () =>
+      new Promise<void>((resolve) => {
+        void queueHandle.close().then(() => {
+          server.close(() => resolve())
+          server.closeAllConnections?.()
+        })
       }),
   }
 
@@ -413,6 +499,7 @@ export async function createSessionBridge(opts: SessionBridgeOptions = {}): Prom
       // 端口被占(如另一个 gotry 实例)——试端口池下一个
     }
   }
+  await queueHandle.close().catch(() => { /* ignore */ })
   return {
     ok: false,
     summary: `扩展桥端口池 ${ports.join('/')} 全部被占(多为并行 gotry 实例);不影响官方通道 gotry_flyai_search。关闭多余实例后重试。`,

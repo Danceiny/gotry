@@ -1,30 +1,32 @@
-# M2 段 2:机票免费数据源选型建议(§7-1 决策门材料)
+[English](m2-flight-data-options.md) | [简体中文](m2-flight-data-options.zh-CN.md)
 
-> 状态:frozen(历史备忘,2026-08-22)
-> 关键事实(2026-08 调研):**Amadeus Self-Service 已于 2026-07-17 关停**(新注册更早暂停,现仅剩 Enterprise 门户)——tech-strategy §2.1 列出的第一候选已失效,本备忘录据此重排。
+# M2 segment 2: flight free-data-source recommendation (§7-1 decision-gate material)
 
-## 一、候选对比(免费层)
+> Status: frozen (historical memo, 2026-08-22)
+> Key fact (2026-08 research): **Amadeus Self-Service shut down on 2026-07-17** (new registrations suspended earlier; only the Enterprise portal remains) — the first candidate listed in tech-strategy §2.1 is dead, and this memo re-ranks accordingly.
 
-| 数据源 | 免费额度 | 覆盖 | 限制 | 对 GoTry 的适配点 |
+## 1. Candidate comparison (free tiers)
+
+| Data source | Free quota | Coverage | Limits | Fit for GoTry |
 |---|---|---|---|---|
-| **OpenSky Network** | 4,000 credits/天,开源 | 实时 ADS-B 航迹 | 无票价/班期表,是「飞机在哪」不是「有哪些航班」 | 校验源:验证某航班真实执飞(引擎证据链的 [实时API] 标注) |
-| **aviationstack** | 100 请求/月 | 实时班期+历史+航线 | 免费层 HTTP 明文;量极小 | 补充抽样:真实班期样本(月 100 次慎用) |
-| **OpenFlights** | 静态数据库整包下载 | 机场/航司/航线/机型 | 无时刻无价格 | **骨架层**:城市对通航性(引擎候选集的合法性校验) |
-| 用户 bookedResources | 无限额 | 用户已出票行程 | 需用户给 | **锚点源**:真实班期+价格(零成本,高保真) |
-| 人工提炼静态包(现状) | — | 金标准用例 | 需人工 | 基线维持 |
+| **OpenSky Network** | 4,000 credits/day, open source | Real-time ADS-B tracks | No fares/schedule tables; answers "where the aircraft is", not "which flights exist" | Verification source: confirm a flight actually operated (the [实时API] tag in the engine's evidence chain) |
+| **aviationstack** | 100 requests/month | Real-time schedules + history + routes | Free tier is plain-text HTTP; tiny volume | Supplementary sampling: real schedule samples (use the 100/month sparingly) |
+| **OpenFlights** | Full static database download | Airports/airlines/routes/aircraft | No times, no prices | **Skeleton layer**: city-pair reachability (legitimacy check for the engine's candidate set) |
+| User bookedResources | Unlimited | User's already-ticketed itineraries | Must be provided by the user | **Anchor source**: real schedules + prices (zero cost, high fidelity) |
+| Hand-curated static pack (current state) | — | Gold-standard use cases | Requires manual effort | Baseline maintained |
 
-## 二、建议(呈 §7-1)
+## 2. Recommendation (presented to §7-1)
 
-**三层组合,全部免费,零新代码依赖**(数据经 CLI/JSON 桥进能力层,符合 ADR-3 桥接收敛):
+**Three-layer combo, all free, zero new code dependencies** (data enters the capability layer via the CLI/JSON bridge, consistent with ADR-3's bridge convergence):
 
-1. **骨架层 = OpenFlights 静态包**(一次性导入 data/ 层,城市对通航性校验);
-2. **锚点层 = 用户 bookedResources**(契约已有该字段;M3 种子用户开始自然积累);
-3. **校验层 = OpenSky(主力,量足)+ aviationstack(月度小样本)**——证据链标注 [实时API:opensky/aviationstack]。
+1. **Skeleton layer = OpenFlights static pack** (one-time import into the data/ layer; city-pair reachability checks);
+2. **Anchor layer = user bookedResources** (the field already exists in the contract; accumulates naturally once M3 seed users start);
+3. **Verification layer = OpenSky (primary, ample volume) + aviationstack (small monthly samples)** — evidence chain tagged [实时API:opensky/aviationstack].
 
-**明确不做**:票价聚合(Skyscanner/Kiwi 等均商业授权)——M2 期价格继续用静态包估算+显式标注,M5 交易闭环时随供应链协议解决。
+**Explicitly not doing**: fare aggregation (Skyscanner/Kiwi etc. are all commercially licensed) — during M2, prices continue as static-pack estimates + explicit tags; resolved with supply-chain agreements at the M5 transaction loop.
 
-## 三、若创始人批准后的段 3 落地序
+## 3. Segment 3 landing order if the founder approves
 
-T3-1 capability-hotelbe(hbcli 桥,酒店六能力已全)→ T3-2 opensky 校验桥(单文件脚本,不进插件)→ T3-3 OpenFlights 静态包导入与通航性校验接入引擎候选集。
+T3-1 capability-hotelbe (hbcli bridge; all six hotel capabilities in place) → T3-2 opensky verification bridge (single-file script, not inside the plugin) → T3-3 OpenFlights static pack import, with reachability checks wired into the engine's candidate set.
 
-来源:[PhocusWire: Amadeus self-service 关停](https://www.phocuswire.com/amadeus-shut-down-self-service-apis-portal-developers)、[Amadeus for Developers](https://developers.amadeus.com/)、[aviationstack pricing](https://aviationstack.com/pricing)、[OpenSky API](https://opensky-network.org/data/api)、[Thunderbit 对比](https://thunderbit.com/blog/best-flight-api-with-free-tiers)、[Geekflare](https://geekflare.com/dev/flight-data-api/)
+Sources: [PhocusWire: Amadeus self-service shutdown](https://www.phocuswire.com/amadeus-shut-down-self-service-apis-portal-developers), [Amadeus for Developers](https://developers.amadeus.com/), [aviationstack pricing](https://aviationstack.com/pricing), [OpenSky API](https://opensky-network.org/data/api), [Thunderbit comparison](https://thunderbit.com/blog/best-flight-api-with-free-tiers), [Geekflare](https://geekflare.com/dev/flight-data-api/)

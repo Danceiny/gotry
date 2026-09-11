@@ -1,60 +1,62 @@
-# Kimi 行程对话复盘:一次真实的不满,GoTry 的反例教材
+[English](kimi-postmortem.md) | [简体中文](kimi-postmortem.zh-CN.md)
 
-> 状态:frozen(复盘教材,2026-08-22)
-> 素材:`data/行程细化计划.docx`(发起人与 Kimi 的 13 轮真实对话,2026-08)。
-> 读法:每条失败 → 根因 → GoTry 的对应机制。结尾附「地面真值提取」(喂给 P0-5 对账)。
-> 结论先行:**用户在 13 轮里被迫充当了「日历、约束采集器、可行性引擎、密度审查员」四个角色——每一个都是产品本该内建的。**
+# Kimi Trip-Conversation Postmortem: One Real Dissatisfaction, GoTry's Counterexample Textbook
 
-## 一、失败清单
+> Status: frozen (postmortem teaching material, 2026-08-22)
+> Source material: `data/行程细化计划.docx` (13 rounds of real dialogue between the initiator and Kimi, 2026-08).
+> How to read: each failure → root cause → GoTry's corresponding mechanism. The ending carries the "ground truth extraction" (fed to P0-5 reconciliation).
+> Conclusion first: **across 13 rounds the user was forced to play four roles — "calendar, constraint collector, feasibility engine, density auditor" — and every one of them is something the product should have built in.**
 
-### F1. 日历年错乱,且「道歉式重排」反复三轮
-- 现象:Kimi 按 2025 年历理解日期,把用户正确的 2026 星期「纠正」成错的;用户至少三次纠正(「周四周五是工作日啊」「8月1日是周六。。」「8.1是周六。。」),每次 Kimi 都「你说得对,完全明白!」然后整套重排,下一轮又错。
-- 根因:日期不是数据,是每次重新生成的文本;没有日历 grounding,没有持久状态。
-- **GoTry 机制**:日期是一等数据(TripState/锚点),星期映射在建模时一次性断言(金标准用例即如此);重排是增量修订,不是推倒重来(D1 §5.3 版本化)。
+## 1. Failure list
 
-### F2. 关键约束后知后觉,从不访谈
-- 现象:两个改变一切的约束——**工作时间 UTC+4 10:00-19:00(=普吉 13:00-22:00,晚上根本不空)** 和 **已订酒店(The Title Rawai 7.18-23)**——到第 6 轮才被用户主动说出。此前 5 轮规划全部建立在错误假设上。
-- 根因:无动机/约束访谈,生成优先、提问为零。
-- **GoTry 机制**:「为什么出发」访谈是第一界面(D1 §5.1);工作时间窗口是硬约束类型,直接影响每日节奏(全成本 §6.5 的时间账)。
+### F1. Calendar year scrambled, and the "apology-refit" looped for three rounds
+- Symptom: Kimi read dates on the 2025 calendar and "corrected" the user's correct 2026 weekdays into wrong ones; the user corrected it at least three times ("周四周五是工作日啊" — "Thursday and Friday are workdays!"; "8月1日是周六。。" — "August 1 is a Saturday.."; "8.1是周六。。" — "8.1 is a Saturday.."), and each time Kimi went "你说得对,完全明白!" ("You're right, completely understood!") and refit the entire plan, only to err again the next round.
+- Root cause: dates were not data but text regenerated on every pass; no calendar grounding, no persistent state.
+- **GoTry mechanism**: dates are first-class data (TripState/anchors); the weekday mapping is asserted once at modeling time (the golden test case does exactly this); a refit is an incremental revision, not a tear-down (D1 §5.3 versioning).
 
-### F3. 密度幻觉,被用户自己识破
-- 现象:「曼谷3天,云南5天,这合适吗?云南各个地方的交通距离和时间你别当做不存在」——Kimi 的云南方案每天换城,实际每天半天在路上;用户一句话点破后,Kimi 才补出「移动次数/纯玩天数」的账。
-- 根因:没有门到门核算,「名义安排」与「实际时间账」脱节。
-- **GoTry 机制**:这正是可行性引擎的原生输出——usable_hours(有效休整/游玩时长)按天核算,「移动日」显式标出,而不是被城市名列表掩盖。
+### F2. Key constraints surfaced late; no interview ever happened
+- Symptom: two constraints that changed everything — **work hours UTC+4 10:00-19:00 (= Phuket 13:00-22:00, evenings not free at all)** and **the already-booked hotel (The Title Rawai 7.18-23)** — were volunteered by the user only in round 6. The previous 5 rounds of planning all rested on wrong assumptions.
+- Root cause: no motivation/constraint interview; generation first, zero questions.
+- **GoTry mechanism**: the "why this trip" interview is the first interface (D1 §5.1); a work-hours window is a hard-constraint type that directly shapes the daily rhythm (the time ledger in full cost §6.5).
 
-### F4. 比例感缺失
-- 现象:「云南有很多地方啊。。。曼谷才一个城市。。。。」——用户质疑时间分配的城市/区域配比,Kimi 无此视角。
-- 根因:优化目标里没有「体验密度」概念。
-- **GoTry 机制**:动机谱系决定配比(关系/探索/工作的权重),引擎按动机计价时间分配(D1 §4.2)。
+### F3. Density illusion, seen through by the user alone
+- Symptom: "曼谷3天,云南5天,这合适吗?云南各个地方的交通距离和时间你别当做不存在" ("Bangkok 3 days, Yunnan 5 days — is that reasonable? Don't treat the travel distances and times between the various places in Yunnan as nonexistent") — Kimi's Yunnan plan changed cities every day, in reality half of each day spent on the road; only after the user called it out in one sentence did Kimi patch in the "transit count / pure-play days" ledger.
+- Root cause: no door-to-door accounting; the "nominal plan" and the "actual time ledger" were disconnected.
+- **GoTry mechanism**: this is exactly the feasibility engine's native output — usable_hours (effective rest/play time) accounted per day, "transit days" explicitly marked, instead of being masked by a list of city names.
 
-### F5. 用户自己当了可行性引擎
-- 现象:「我买了8.1周六早上甲米飞曼谷的飞机票,10:25落地」——锚点航段用户自己查、自己订、自己告诉 AI。规划器本该在用户承诺前完成校验。
-- 根因:AI 只做推荐不做验证;没有「先求解再建议」的架构。
-- **GoTry 机制**:WriteGate 的反面应用——**FlightGate**:推荐先过引擎(锚点/接驳/精力),用户看到已验证的选项再掏钱。
+### F4. Missing sense of proportion
+- Symptom: "云南有很多地方啊。。。曼谷才一个城市。。。。" ("Yunnan has so many places... Bangkok is just one city....") — the user questioned the city/region ratio of the time allocation; Kimi had no such perspective.
+- Root cause: no "experience density" concept in the optimization objective.
+- **GoTry mechanism**: the motivation spectrum determines the ratio (the weights of relationship/exploration/work); the engine prices time allocation by motivation (D1 §4.2).
 
-### F6. 最后一轮才出现的「对的东西」,来得太迟
-- 现象:最终轮的 BKK→昆明→丽江 四方案对比(到达时刻/当天还能玩吗/换乘次数)质量很高——门到门到达状态、方案对比,这正是引擎每天在做的事。但它出现在第 13 轮,而不是第 1 轮。
-- 根因:能力在,架构不在——没有把验证与对比作为默认路径。
-- **GoTry 机制**:这不是功能,是架构:LLM 翻译、求解器判定、LLM 解释,第一轮就出这张表。
+### F5. The user ended up being the feasibility engine
+- Symptom: "我买了8.1周六早上甲米飞曼谷的飞机票,10:25落地" ("I bought a ticket for the 8.1 Saturday-morning flight from Krabi to Bangkok, landing at 10:25") — the anchor flight segment was searched, booked, and reported to the AI by the user. The planner should have completed validation before the user committed.
+- Root cause: the AI only recommended and never verified; no "solve first, then suggest" architecture.
+- **GoTry mechanism**: the inverse application of WriteGate — **FlightGate**: recommendations pass the engine first (anchors/connectors/energy); the user pays only after seeing verified options.
 
-## 二、讽刺的部分(公平起见)
+### F6. The "right thing" appeared only in the final round, far too late
+- Symptom: the final round's BKK→Kunming→Lijiang four-option comparison (arrival times / can you still explore that day / number of transfers) was high quality — door-to-door arrival state, option comparison; this is exactly what the engine does every day. But it appeared in round 13, not round 1.
+- Root cause: the capability existed, the architecture did not — verification and comparison were never made the default path.
+- **GoTry mechanism**: this is not a feature, it is architecture: LLM translates, solver renders the verdict, LLM explains; this table appears in round 1.
 
-Kimi 的目的地研究本身不差:Rawai 推荐(离查龙码头近+安静+数字游民)与 GoTry 数据包独立研究结论一致;最终路由(经昆明飞丽江、DR5042 每周四的班期约束)是真实信息。**失败不在知识,在架构:无状态、无访谈、无验证、无增量。**——这正是「Harness 工程才是竞争力」(总纲附录 A-5)的活例证。
+## 2. The ironic part (for fairness)
 
-## 三、地面真值提取(→ P0-5 对账输入)
+Kimi's destination research itself was not bad: the Rawai recommendation (close to Chalong pier + quiet + digital-nomad friendly) matches the independent conclusion of GoTry's data pack research; the final routing (via Kunming to Lijiang, the DR5042 every-Thursday schedule constraint) was real information. **The failure was not knowledge but architecture: no state, no interview, no verification, no incremental revision.** — a living proof of "harness engineering is the competitive edge" (master outline appendix A-5).
 
-| 对账问题 | 真实答案(来自对话) | demo 侧 |
+## 3. Ground truth extraction (→ P0-5 reconciliation input)
+
+| Reconciliation question | Real answer (from the conversation) | demo side |
 |---|---|---|
-| Q6 普吉住哪 | **Rawai,The Title East Wing**(7.18-23 共 5 晚,之后转甲米) | 数据包推荐查龙/Rawai ✅ 命中 |
-| Q7 万xx 是哪 | **甲米(Krabi)**(8.1 从甲米机场飞曼谷) | 研究排序 甲米奥南第一 ✅ 命中 |
-| Q3 曼谷时机 | **8.1 周六早**(KBV→BKK 10:25 落地) | gate 给了此选项 ✅ |
-| Q4 云南走线 | **丽江束河 3 晚 + 大理才村 2 晚**,昆明中转飞丽江 | demo 给了经典线/大理深度两案,真实=两城慢住,更接近「大理深度」变体 △ |
-| 新发现 | **工作时间 UTC+4 10-19(普吉 13:00-22:00)**:晚上需在线,每日节奏由它决定 | ⚠️ 引擎未建模工作窗口——记为模型缺口 M-1 |
-| 新发现 | BKK→云南实际走 **FD582 08:10 DMK→KMG + 昆明飞丽江**(DR5042 周四班约束) | demo 只到 KMG 为终点 △ |
+| Q6 where to stay in Phuket | **Rawai, The Title East Wing** (7.18-23, 5 nights total, then on to Krabi) | The data pack recommended Chalong/Rawai ✅ hit |
+| Q7 what 万xx refers to | **Krabi (甲米)** (flew BKK from Krabi airport on 8.1) | Research ranking placed Krabi/Ao Nang first ✅ hit |
+| Q3 timing for Bangkok | **Saturday morning 8.1** (KBV→BKK landing 10:25) | The gate offered this option ✅ |
+| Q4 the Yunnan routing | **Lijiang Shuhe 3 nights + Dali Caicun 2 nights**, flying to Lijiang with a Kunming transfer | The demo offered two options, classic route / Dali deep-dive; reality = slow stays in two cities, closer to the "Dali deep-dive" variant △ |
+| New finding | **Work hours UTC+4 10-19 (Phuket 13:00-22:00)**: online in the evenings; it dictates the daily rhythm | ⚠️ The engine does not model work windows — recorded as model gap M-1 |
+| New finding | BKK→Yunnan actually went **FD582 08:10 DMK→KMG + Kunming flight to Lijiang** (DR5042 Thursday-only constraint) | The demo stopped at KMG as the endpoint △ |
 
-**新增模型缺口 M-1(工作窗口约束)**:work window(时区换算)应成为 Segment/统一模型的一等约束——workation 场景的核心变量,Kimi 对话里它推翻了全部每日节奏。挂 loopx。
+**New model gap M-1 (work-window constraint)**: the work window (with timezone conversion) should become a first-class constraint of the Segment/unified model — the core variable of the workation scenario; in the Kimi conversation it overturned the entire daily rhythm. Filed on loopx.
 
-## 四、这段对话作为 Stage 1 的验收标准
+## 4. This conversation as the Stage 1 acceptance criterion
 
-> **同一份开场白,GoTry 应在第 1 轮就问出工作时间和已订资源、断言 2026 日历;第 2 轮给出经引擎验证的五段航程+到达状态表;全程零次日历错误、零「完全重排」。**
-> Kimi 用 13 轮和三次道歉换来的最终表,是 GoTry 的出厂输出。
+> **Given the same opening line, GoTry should ask about work hours and booked resources and assert the 2026 calendar in round 1; deliver the engine-verified five-segment flight plan + arrival-state table in round 2; with zero calendar errors and zero "full refits" throughout.**
+> The final table Kimi produced after 13 rounds and three apologies is GoTry's factory output.

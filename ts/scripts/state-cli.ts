@@ -24,13 +24,23 @@
  *                                       只读 inventory + dry-run tenant 修复计划(#254):
  *                                       正本零写(只在临时副本上读),无显式证据映射的
  *                                       事件一律原地保留;真实 apply 在单独 owner gate 后
+ *   repair-apply [root] --mapping <file> --plan-digest <hex>
+ *                   --i-authorize-apply [--format text|json] [--receipt-out <file>]
+ *                                       授权 apply(#254):写前 backup + CAS 搬移 + 投影重建
+ *   repair-rollback [root] --backup <dir> --i-authorize-rollback
+ *                                       用校验过的 backup 还原正本(#254)
  *
  * 选项(可放在命令前或命令后,也可夹在位置参数之间):
  *   --state-root <root>   显式 state root;省略时按命令沿用位置参数 root 或默认 '.'。
  *   --tenant <tenant>     账本租户 scope(默认 local);这是范围参数,不是认证/授权。
  *   --limit <N>           仅 log 支持;N 必须是正整数。
- *   --mapping <file>      仅 repair-plan 支持;人工确认的证据映射 JSON 数组。
- *   --format text|json    仅 repair-plan 支持;默认 text。
+ *   --mapping <file>      repair-plan / repair-apply;人工确认的证据映射 JSON 数组。
+ *   --format text|json    repair-plan / repair-apply;默认 text。
+ *   --plan-digest <hex>   仅 repair-apply;必须与重算计划 digest 一致。
+ *   --i-authorize-apply   仅 repair-apply;显式授权写路径(布尔旗标)。
+ *   --backup <dir>        仅 repair-rollback;校验过的 backup 目录。
+ *   --i-authorize-rollback 仅 repair-rollback;显式授权还原(布尔旗标)。
+ *   --receipt-out <file>  仅 repair-apply;写出脱敏回执 JSON。
  *
  * root 默认 '.';运行:cd ts && npx tsx scripts/state-cli.ts <cmd> ...
  */
@@ -39,6 +49,11 @@ import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { ensureLedger, ledgerDbPath, ledgerExists, openLedgerIfExists } from '../src/state-ledger.ts'
 import { formatRepairPlan, loadEvidenceMappingFile, planLedgerRepair } from '../src/ledger-repair-plan.ts'
+import {
+  applyLedgerRepair,
+  formatRepairApplyResult,
+  restoreRepairBackup,
+} from '../src/ledger-repair-apply.ts'
 import { collectDeepPlanning, makeJournaledSolvePort, settleAsyncTicket, type AsyncTicket } from '../src/loop.ts'
 import { solveUnified } from '../src/unified.ts'
 import type { TripState } from '../src/contracts.ts'
@@ -59,15 +74,23 @@ const HELP = `用法: npx tsx scripts/state-cli.ts [--state-root <root>] [--tena
   pw-confirm [root] <idemKey> <receipt>
   pw-compensate [root] <idemKey> <note>
   repair-plan [root] [--mapping <file>] [--format text|json]   # 只读 dry-run,零写
+  repair-apply [root] --mapping <file> --plan-digest <hex> --i-authorize-apply [--receipt-out <file>]
+  repair-rollback [root] --backup <dir> --i-authorize-rollback
 选项:
   --state-root <root>   显式 state root;保留位置参数 root 用法
   --tenant <tenant>     默认 local;仅是账本 scope,不是认证/授权
   --limit <N>           仅 log 支持,N 为正整数
-  --mapping <file>      仅 repair-plan 支持,人工确认的证据映射 JSON 数组
-  --format text|json    仅 repair-plan 支持,默认 text
+  --mapping <file>      repair-plan/repair-apply,人工确认的证据映射 JSON 数组
+  --format text|json    repair-plan/repair-apply,默认 text
+  --plan-digest <hex>   仅 repair-apply
+  --i-authorize-apply   仅 repair-apply(布尔旗标)
+  --backup <dir>        仅 repair-rollback
+  --i-authorize-rollback 仅 repair-rollback(布尔旗标)
+  --receipt-out <file>  仅 repair-apply
 边界:tick/export/whatif 只支持 --tenant local;非 local 会在创建目录、打开账本、求解或写文件前拒绝。
   repair-plan 全程只读:不建库、不迁移 schema、不改任何 ledger/projection。
       db/-wal/-shm 在复制或读取期间若有变化会 fail-closed;请对静默或不可变副本重试。
+  repair-apply/repair-rollback 是显式授权写路径;无旗标或 digest 不匹配则零写失败。
 提示:root 路径若像数字/负数或以 '-' 开头,请用 --state-root <root> 明示。`
 
 const COMMANDS = new Set([
@@ -85,12 +108,33 @@ const COMMANDS = new Set([
   'pw-confirm',
   'pw-compensate',
   'repair-plan',
+  'repair-apply',
+  'repair-rollback',
 ])
-const OPTION_NAMES = new Set(['--state-root', '--tenant', '--limit', '--mapping', '--format'])
+const OPTION_NAMES = new Set([
+  '--state-root',
+  '--tenant',
+  '--limit',
+  '--mapping',
+  '--format',
+  '--plan-digest',
+  '--backup',
+  '--receipt-out',
+])
+const FLAG_NAMES = new Set(['--i-authorize-apply', '--i-authorize-rollback'])
 const LOCAL_ONLY_COMMANDS = new Set(['export', 'tick', 'whatif'])
 const SUBJECTS = new Set(['wish', 'companion', 'motivation'])
 
-type OptionName = '--state-root' | '--tenant' | '--limit' | '--mapping' | '--format'
+type OptionName =
+  | '--state-root'
+  | '--tenant'
+  | '--limit'
+  | '--mapping'
+  | '--format'
+  | '--plan-digest'
+  | '--backup'
+  | '--receipt-out'
+type FlagName = '--i-authorize-apply' | '--i-authorize-rollback'
 
 interface ParsedCli {
   cmd?: string
@@ -99,6 +143,11 @@ interface ParsedCli {
   limit: number
   mapping?: string
   format: 'text' | 'json'
+  planDigest?: string
+  backup?: string
+  receiptOut?: string
+  authorizeApply: boolean
+  authorizeRollback: boolean
   positional: string[]
 }
 
@@ -110,6 +159,10 @@ function usageError(message: string): never {
 
 function isOptionName(token: string): token is OptionName {
   return OPTION_NAMES.has(token)
+}
+
+function isFlagName(token: string): token is FlagName {
+  return FLAG_NAMES.has(token)
 }
 
 function parsePositiveInteger(raw: string, label: string): number {
@@ -140,7 +193,9 @@ function rootAndArgs(cmd: string, positional: string[], explicitRoot?: string): 
     case 'stats':
     case 'tick':
     case 'pw-list':
-    case 'repair-plan': {
+    case 'repair-plan':
+    case 'repair-apply':
+    case 'repair-rollback': {
       if (positional.length > 1) usageError(`${cmd} 只接受一个可选 root 位置参数`)
       return { root: positional[0] ?? '.', args: [] }
     }
@@ -164,13 +219,38 @@ function rootAndArgs(cmd: string, positional: string[], explicitRoot?: string): 
   }
 }
 
-function validateArgs(cmd: string, args: string[], limitRaw?: string, mappingRaw?: string, formatRaw?: string): { limit: number; format: 'text' | 'json' } {
-  if (limitRaw !== undefined && cmd !== 'log') usageError(`${cmd} 不支持 --limit`)
-  if (mappingRaw !== undefined && cmd !== 'repair-plan') usageError(`${cmd} 不支持 --mapping`)
-  if (formatRaw !== undefined && cmd !== 'repair-plan') usageError(`${cmd} 不支持 --format`)
-  const limit = limitRaw === undefined ? 20 : parsePositiveInteger(limitRaw, '--limit')
-  if (formatRaw !== undefined && formatRaw !== 'text' && formatRaw !== 'json') usageError(`--format 只支持 text|json:${formatRaw}`)
-  const format: 'text' | 'json' = formatRaw === 'json' ? 'json' : 'text'
+function validateArgs(
+  cmd: string,
+  args: string[],
+  opts: {
+    limitRaw?: string
+    mappingRaw?: string
+    formatRaw?: string
+    planDigest?: string
+    backup?: string
+    receiptOut?: string
+    authorizeApply: boolean
+    authorizeRollback: boolean
+  },
+): { limit: number; format: 'text' | 'json' } {
+  if (opts.limitRaw !== undefined && cmd !== 'log') usageError(`${cmd} 不支持 --limit`)
+  if (opts.mappingRaw !== undefined && cmd !== 'repair-plan' && cmd !== 'repair-apply') {
+    usageError(`${cmd} 不支持 --mapping`)
+  }
+  if (opts.formatRaw !== undefined && cmd !== 'repair-plan' && cmd !== 'repair-apply') {
+    usageError(`${cmd} 不支持 --format`)
+  }
+  if (opts.planDigest !== undefined && cmd !== 'repair-apply') usageError(`${cmd} 不支持 --plan-digest`)
+  if (opts.backup !== undefined && cmd !== 'repair-rollback') usageError(`${cmd} 不支持 --backup`)
+  if (opts.receiptOut !== undefined && cmd !== 'repair-apply') usageError(`${cmd} 不支持 --receipt-out`)
+  if (opts.authorizeApply && cmd !== 'repair-apply') usageError(`${cmd} 不支持 --i-authorize-apply`)
+  if (opts.authorizeRollback && cmd !== 'repair-rollback') usageError(`${cmd} 不支持 --i-authorize-rollback`)
+
+  const limit = opts.limitRaw === undefined ? 20 : parsePositiveInteger(opts.limitRaw, '--limit')
+  if (opts.formatRaw !== undefined && opts.formatRaw !== 'text' && opts.formatRaw !== 'json') {
+    usageError(`--format 只支持 text|json:${opts.formatRaw}`)
+  }
+  const format: 'text' | 'json' = opts.formatRaw === 'json' ? 'json' : 'text'
 
   switch (cmd) {
     case 'migrate':
@@ -180,6 +260,8 @@ function validateArgs(cmd: string, args: string[], limitRaw?: string, mappingRaw
     case 'tick':
     case 'pw-list':
     case 'repair-plan':
+    case 'repair-apply':
+    case 'repair-rollback':
       if (args.length !== 0) usageError(`${cmd} 不接受额外位置参数:${args.join(' ')}`)
       break
     case 'rebuild':
@@ -207,6 +289,17 @@ function validateArgs(cmd: string, args: string[], limitRaw?: string, mappingRaw
       if (args.length !== 2) usageError('pw-compensate 需要 idemKey 与 note;省略 root 时请用 --state-root . 明示')
       break
   }
+
+  if (cmd === 'repair-apply') {
+    if (opts.mappingRaw === undefined) usageError('repair-apply 需要 --mapping <file>')
+    if (opts.planDigest === undefined) usageError('repair-apply 需要 --plan-digest <hex>')
+    if (!opts.authorizeApply) usageError('repair-apply 需要显式 --i-authorize-apply')
+  }
+  if (cmd === 'repair-rollback') {
+    if (opts.backup === undefined) usageError('repair-rollback 需要 --backup <dir>')
+    if (!opts.authorizeRollback) usageError('repair-rollback 需要显式 --i-authorize-rollback')
+  }
+
   return { limit, format }
 }
 
@@ -214,10 +307,16 @@ function parseCli(argv: string[]): ParsedCli {
   let cmd: string | undefined
   const positional: string[] = []
   const options = new Map<OptionName, string>()
+  const flags = new Set<FlagName>()
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!
     if (token.startsWith('--')) {
+      if (isFlagName(token)) {
+        if (flags.has(token)) usageError(`重复选项 ${token}`)
+        flags.add(token)
+        continue
+      }
       if (!isOptionName(token)) usageError(`未知选项 ${token}`)
       if (options.has(token)) usageError(`重复选项 ${token}`)
       const value = argv[i + 1]
@@ -232,18 +331,47 @@ function parseCli(argv: string[]): ParsedCli {
   }
 
   if (cmd === undefined) usageError('缺少命令')
-  if (!COMMANDS.has(cmd)) return { cmd, root: '.', tenant: 'local', limit: 20, format: 'text', positional }
+  if (!COMMANDS.has(cmd)) {
+    return {
+      cmd, root: '.', tenant: 'local', limit: 20, format: 'text',
+      authorizeApply: false, authorizeRollback: false, positional,
+    }
+  }
 
   const tenant = options.get('--tenant') ?? 'local'
   if (tenant.trim() === '') usageError('--tenant 缺少值')
   const explicitRoot = options.get('--state-root')
   if (explicitRoot !== undefined && explicitRoot.trim() === '') usageError('--state-root 缺少值')
   const { root, args } = rootAndArgs(cmd, positional, explicitRoot)
-  const { limit, format } = validateArgs(cmd, args, options.get('--limit'), options.get('--mapping'), options.get('--format'))
+  const authorizeApply = flags.has('--i-authorize-apply')
+  const authorizeRollback = flags.has('--i-authorize-rollback')
+  const { limit, format } = validateArgs(cmd, args, {
+    limitRaw: options.get('--limit'),
+    mappingRaw: options.get('--mapping'),
+    formatRaw: options.get('--format'),
+    planDigest: options.get('--plan-digest'),
+    backup: options.get('--backup'),
+    receiptOut: options.get('--receipt-out'),
+    authorizeApply,
+    authorizeRollback,
+  })
   if (LOCAL_ONLY_COMMANDS.has(cmd) && tenant !== 'local') {
     usageError(`${cmd} 仅支持 --tenant local；该命令未实现租户隔离,已在创建目录、打开账本、求解或写文件前拒绝。`)
   }
-  return { cmd, root, tenant, limit, mapping: options.get('--mapping'), format, positional: args }
+  return {
+    cmd,
+    root,
+    tenant,
+    limit,
+    mapping: options.get('--mapping'),
+    format,
+    planDigest: options.get('--plan-digest'),
+    backup: options.get('--backup'),
+    receiptOut: options.get('--receipt-out'),
+    authorizeApply,
+    authorizeRollback,
+    positional: args,
+  }
 }
 
 function atomicWrite(path: string, text: string): void {
@@ -388,6 +516,46 @@ switch (cmd) {
       console.log(parsed.format === 'json' ? JSON.stringify(plan, null, 2) : formatRepairPlan(plan))
     } catch (e) {
       // source db/WAL/SHM changed during the read: never present a mixed-time plan.
+      console.error(e instanceof Error ? e.message : String(e))
+      process.exit(1)
+    }
+    break
+  }
+  case 'repair-apply': {
+    if (!ledgerExists(root)) { console.error(`无账本(未迁移 root):${ledgerDbPath(root)}`); process.exit(1) }
+    let mappings: unknown
+    try {
+      mappings = loadEvidenceMappingFile(parsed.mapping!)
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : String(e))
+      process.exit(1)
+    }
+    try {
+      const result = applyLedgerRepair({
+        stateRoot: root,
+        sourceTenant: tenant,
+        mappings,
+        planDigest: parsed.planDigest!,
+        authorizeApply: true,
+        receiptOut: parsed.receiptOut,
+      })
+      console.log(parsed.format === 'json' ? JSON.stringify(result, null, 2) : formatRepairApplyResult(result))
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : String(e))
+      process.exit(1)
+    }
+    break
+  }
+  case 'repair-rollback': {
+    try {
+      const r = restoreRepairBackup({
+        stateRoot: root,
+        backupDir: parsed.backup!,
+        authorizeRollback: true,
+      })
+      console.log(`已从校验过的 backup 还原:${r.restoredFrom}`)
+      console.log(`plan-digest=${r.manifest.planDigest} mapping-sha256=${r.manifest.mappingSha256}`)
+    } catch (e) {
       console.error(e instanceof Error ? e.message : String(e))
       process.exit(1)
     }

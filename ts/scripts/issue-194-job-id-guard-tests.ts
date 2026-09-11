@@ -100,7 +100,7 @@ try {
   assert.deepEqual(listedParents, [parentId, parentId, parentId, parentId, unrelatedId])
 
   console.log(JSON.stringify({
-    dsh: '0.1.5-alpha.1',
+    dsh: '0.1.5-rc.1',
     toolRuntime: 'real ToolRuntime + LocalJobRegistry + dsh-tool-jobs',
     guarded: ['job_output', 'job_kill'],
     durableId,

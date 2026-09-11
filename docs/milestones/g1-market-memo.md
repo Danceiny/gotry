@@ -1,26 +1,28 @@
-# G1 市场锁定决策备忘录(呈创始人一道是非题)
+[English](g1-market-memo.md) | [简体中文](g1-market-memo.zh-CN.md)
 
-> 状态:frozen(历史备忘,2026-08-22)
-> 决策方式:不列开放选择题——以你自己的行为证据推导默认答案,你只需确认或推翻。
+# G1 market-lock decision memo (one yes/no question for the founder)
 
-## 行为证据(全部来自你,非推断)
+> Status: frozen (historical memo, 2026-08-22)
+> Decision method: no open multiple-choice list — the default answer is derived from your own behavioral evidence; you only confirm or overturn.
 
-| 证据 | 指向 |
+## Behavioral evidence (all from you, not inferred)
+
+| Evidence | Points to |
 |---|---|
-| 提供的是 **MiniMax** key(中文模型厂商) | 中文市场 |
-| 演练行程是**中文用户**的普吉 workation(深圳/香港/云南/迪拜) | 中国出境为主的场景 |
-| Kimi 对话原件——你在用**中文 AI 产品**做真实规划 | 中文竞品环境 |
-| 已决供应链:hotelbyte-cli(中东/中国酒店库存强)、免费数据源三层组合 | 出境酒店覆盖好 |
-| 对账材料:EK328/329(迪拜往返)——发起人自身即「在海外工作的中国人」 | 高价值画像 firsthand |
+| The provided key is a **MiniMax** key (a Chinese model vendor) | The Chinese market |
+| The rehearsal trip is a Phuket (普吉岛) workation for a **Chinese-speaking user** (Shenzhen/Hong Kong/Yunnan/Dubai) | China-outbound-dominant scenarios |
+| Original Kimi conversation — you use a **Chinese AI product** for real planning | The Chinese competitor environment |
+| Decided supply chain: hotelbyte-cli (strong Middle East/China hotel inventory) + free data sources in a three-layer combo | Good outbound hotel coverage |
+| Reconciliation material: EK328/329 (Dubai round trip) — the initiator is himself "a Chinese person working overseas" | High-value profile, firsthand |
 
-## 推荐答案
+## Recommended answer
 
-**首发市场 = 中文用户的中国出境游(含 workation 场景);国内深度游作为第二场景自然延展,不做独立首发。**
+**Launch market = Chinese users' outbound travel from China (including the workation scenario); domestic in-depth travel extends naturally as the second scenario and is not an independent launch.**
 
-理由压缩:
-1. **痛点密度最高 × 供应链就绪度最高**的交集只有这一个——出境的信息碎片/语言/多段组合正是引擎的主场,而 hotelbyte-cli 的库存恰好强在中东/东南亚;
-2. 「在海外工作的中国人」(发起人画像)是绝佳种子画像:高频出境+高预算+workation 刚需,且**你就是第一个用户**;
-3. 全球英文市场推迟:正面撞 Layla/Mindtrip(Expedia 加持),且 LLM 中文厂商(MiniMax)的优势兑现在英文市场会打折;
-4. 国内深度游不独立首发:供应链(hotelbyte-cli 国内覆盖)与差异化(国内游的信息碎片度低)都不如出境,但作为「同一引擎的第二场景」零边际成本。
+Compressed rationale:
+1. The only intersection of **highest pain density × highest supply-chain readiness** — outbound information fragmentation/language/multi-leg combinations are exactly the engine's home turf, and hotelbyte-cli's inventory is precisely strong in the Middle East/Southeast Asia;
+2. "A Chinese person working overseas" (the initiator profile) is an excellent seed profile: frequent outbound + high budget + a hard workation need, and **you are the first user**;
+3. The global English market is deferred: head-on collision with Layla/Mindtrip (backed by Expedia), and a Chinese LLM vendor's (MiniMax) advantage is discounted when cashed in on the English market;
+4. Domestic in-depth travel does not launch independently: supply chain (hotelbyte-cli domestic coverage) and differentiation (domestic travel has lower information fragmentation) both lose to outbound, but as "the same engine's second scenario" it costs zero marginal effort.
 
-**创始人只需回一句**:「G1 确认中国出境首发」或指出推翻证据。
+**The founder only needs one line back**: "G1 confirmed: China outbound launches first", or cite evidence that overturns it.

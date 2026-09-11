@@ -273,7 +273,7 @@ function projectBenchmarkSystemPrompt(lines) {
   // silently dropped by the target Config and leave the kernel persona-less.
   // The minimal kernel must project through personaPrefix only.
   const legacyPersonaIndexes = item.map((line, index) => /^ {4}persona:\s*>-\s*$/.test(line) ? index : -1).filter(index => index >= 0)
-  if (legacyPersonaIndexes.length !== 0) throw new Error('benchmark system-prompt legacy persona key not allowed under target 0.1.5-alpha.1')
+  if (legacyPersonaIndexes.length !== 0) throw new Error('benchmark system-prompt legacy persona key not allowed under target 0.1.5-rc.1')
   if (configIndexes.length !== 1 || personaIndexes.length !== 1 || personaIndexes[0] <= configIndexes[0]) {
     throw new Error('benchmark system-prompt config violation')
   }
@@ -382,8 +382,8 @@ if (benchmarkEnvironmentConfig) {
 // repo 工作副本走 runtime workspace 链接/依赖解析;都找不到就整块剔除 patch 条目
 // (缺地图不挡旅行规划)。保持 vendored 形态而非 npm 依赖:历史上游 peerDependencies
 // (dsh-settings/dsh-tools >=0.1.2-rc.1)与锁定的 0.1.2-alpha.3 家族在 npm 严格 peer
-// 解析下 ERESOLVE;当前锁定 0.1.5-alpha.1 家族,vendored 副本 peerDependencies 已
-// 对齐 0.1.5-alpha.1,继续以 vendored 形态复用同一份适配补丁与七工具接线。
+// 解析下 ERESOLVE;当前锁定 0.1.5-rc.1 家族,vendored 副本 peerDependencies 已
+// 对齐 0.1.5-rc.1,继续以 vendored 形态复用同一份适配补丁与七工具接线。
 let mapEntry = ''
 if (!benchmarkEnvironmentConfig) {
   const vendoredMap = join(repoRoot, 'ts/dsh-runtime/vendor/dsh-map-tools/lib/index.js')

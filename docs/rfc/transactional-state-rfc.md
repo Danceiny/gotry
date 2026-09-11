@@ -1,216 +1,217 @@
-# RFC:GoTry 事务化状态基座(Transaction State Backbone)——业界调研与落地执行计划
+[English](transactional-state-rfc.md) | [简体中文](transactional-state-rfc.zh-CN.md)
 
-> 状态:**accepted**(2026-08-28 founder 指令「按你的建议来」——D1-D5 全部按建议执行;TS-0..TS-4 已落地,TS-5 触发式后置=D-15)
-> 上游权威:`../architecture.md`(技术权威面)、`../gotry-master-outline.md` §2 复用矩阵、`loopx-inspired-upgrades-rfc.md`(S4/§6.5)、`../design/memory-design.md` §1.6、`../tech-strategy.md` T6
-> 作者:gotry-builder(2026-08-28,业界调研 + 仓内现状摸底驱动)
-> 纪律:单一文件承载单一关注点;版本历史归 git
+# RFC: GoTry Transactional State Backbone — Industry Survey and Implementation Plan
 
-## 0. 一句话主张
+> Status: **accepted** (2026-08-28 founder directive "go with your recommendations" — D1-D5 all executed as recommended; TS-0..TS-4 landed, TS-5 trigger-based and deferred = D-15)
+> Upstream authority: `../architecture.md` (technical authority), `../gotry-master-outline.md` §2 reuse matrix, `loopx-inspired-upgrades-rfc.md` (S4/§6.5), `../design/memory-design.md` §1.6, `../tech-strategy.md` T6
+> Author: gotry-builder (2026-08-28, driven by industry survey + in-repo current-state inventory)
+> Discipline: one file carries one concern; version history belongs to git
 
-把「文件即权威」升级为「**单文件 SQLite 账本即权威**」:append-only 事件流(物理化)+ 当前状态投影(复用现有纯函数守门)+ schema 级红线 + durable 工单步骤日志 + pending_writes saga(WriteGate 基座)。**语义层零改造**——这正是 memory-design §1.6 预留的「账本化是存储面替换,语义层零改造」的兑现路径,不与任何已 accepted 决策冲突。
+## 0. The Claim in One Sentence
 
-## 1. 为什么是现在
+Upgrade "file as authority" to "**a single-file SQLite ledger as the authority**": an append-only event stream (physicalized) + a projection of current state (reusing the existing pure-function gates) + schema-level red lines + durable work-order step logs + a pending_writes saga (the WriteGate substrate). **Zero rework of the semantic layer** — this is exactly the payoff path reserved by memory-design §1.6 ("ledgerization is a storage-surface replacement; the semantic layer changes zero"), and it conflicts with no already-accepted decision.
 
-### 1.1 现状缺口(摸底证据,2026-08-28)
+## 1. Why Now
 
-全部持久化 = 裸 JSON/JSONL 文件,零数据库。逐条:
+### 1.1 Current Gaps (inventory evidence, 2026-08-28)
 
-| 缺口 | 证据 | 业界对应失效模式* |
+All persistence = bare JSON/JSONL files, zero database. Item by item:
+
+| Gap | Evidence | Corresponding industry failure mode* |
 |---|---|---|
-| append-only 只是语义纪律,物理是全量重写 | `memory-utility.jsonl`/`trips.jsonl` 均为 read-modify-write 整文件重写(`ts/src/index.ts:381-383`, `ts/src/index.ts:499-507`) | partial writes |
-| 跨文件写无事务边界 | confirm-outcome 同时写 memory-utility + trips 两文件(`ts/src/index.ts:385-412`),中途崩溃即分叉 | partial writes / cascading bad reads |
-| 异步工单非原子 | `persistAsyncTicket` 裸 `fs.writeFile`(`ts/src/loop.ts:310-329`),无 tmp/rename/journal | recovery gap |
-| 无并发控制 | 全仓无锁/无版本/无 CAS(唯一锁样例是 loopx 自己的 `.loopx/registry.json.lock`) | blast radius |
-| 红线靠约定不靠物理执行 | evidence 红线在 `mergeProfile` 纯函数层(已强),但 2026-08-26 巡检污染事故证明:绕过工具直接写文件没有任何物理拦截 | approval loss / blast radius |
-| 审计断链 | `gotry_session_search` 生产路径未传 auditPath(`ts/src/index.ts:748-769`),ReadGuard 审计内存计数 | audit gap |
-| id 不稳定 | wish_id/工单 id 均时间戳派生(`w${Date.now().toString(36)}`),并发碰撞与时钟回拨无防御 | idempotency 缺失 |
-| stateRoot 碎片化 | `ASYNC_DIR` 硬编码相对路径不接 stateRoot(`ts/src/loop.ts:303`) | — |
+| append-only is only a semantic discipline; physically it is a full rewrite | `memory-utility.jsonl`/`trips.jsonl` are both read-modify-write whole-file rewrites (`ts/src/index.ts:381-383`, `ts/src/index.ts:499-507`) | partial writes |
+| Cross-file writes have no transaction boundary | confirm-outcome writes the memory-utility and trips files at the same time (`ts/src/index.ts:385-412`); a mid-way crash forks them | partial writes / cascading bad reads |
+| Async work orders are not atomic | `persistAsyncTicket` is a bare `fs.writeFile` (`ts/src/loop.ts:310-329`), no tmp/rename/journal | recovery gap |
+| No concurrency control | no locks / no versions / no CAS anywhere in the repo (the only lock sample is loopx's own `.loopx/registry.json.lock`) | blast radius |
+| Red lines rely on convention, not physical enforcement | the evidence red line lives in the `mergeProfile` pure-function layer (already strong), but the 2026-08-26 inspection contamination incident proved that writing files directly, bypassing the tools, meets no physical interception | approval loss / blast radius |
+| Audit chain broken | the production path of `gotry_session_search` never passes auditPath (`ts/src/index.ts:748-769`); the ReadGuard audit is an in-memory counter | audit gap |
+| Unstable ids | wish_id / work-order ids are all timestamp-derived (`w${Date.now().toString(36)}`); no defense against concurrent collisions or clock rollback | idempotency missing |
+| stateRoot fragmentation | `ASYNC_DIR` hardcodes a relative path and never attaches to stateRoot (`ts/src/loop.ts:303`) | — |
 
-*Cockroach Labs《Why Agent Loops Fail in Production》七失效模式:partial writes / cascading bad reads / blast radius / memory drift / recovery gap / approval loss / audit gap。
+*The seven failure modes from Cockroach Labs' "Why Agent Loops Fail in Production": partial writes / cascading bad reads / blast radius / memory drift / recovery gap / approval loss / audit gap.
 
-### 1.2 三个正在逼近的触发器
+### 1.2 Three Approaching Triggers
 
-1. **种子用户在即**(roadmap:M3 剩余 = 真实种子用户):每用户一份状态,崩溃一致性从「创始人自己看得见」变成「产品责任」。
-2. **M5 WriteGate 需要基座**:tech-strategy T6 已列要素——幂等键/pending state/receipt;RFC S4 已定 L0-L4 词汇。这些全部需要一块能落 pending/receipt 的持久 substrate,目前无处可落。
-3. **RFC §6.5 触发条件临近**:「第二个真实用户出现前完成 claim-fence-receipt 设计评审」。claim/CAS/receipt 要在多用户期成立,前提是单机期先有账本(单一权威 + 稳定主键 + 幂等键)。现在做 TS 线就是预付这笔债。
+1. **Seed users are imminent** (roadmap: remaining M3 = real seed users): one state copy per user; crash consistency shifts from "the founder can see it himself" to "product responsibility".
+2. **M5 WriteGate needs a substrate**: tech-strategy T6 already lists the elements — idempotency keys / pending state / receipts; RFC S4 already fixed the L0-L4 vocabulary. All of these need a durable substrate where pending/receipt can land; today there is nowhere to put them.
+3. **RFC §6.5 trigger conditions are near**: "complete the claim-fence-receipt design review before the second real user appears". For claim/CAS/receipt to hold in the multi-user phase, the prerequisite is a ledger in the single-machine phase (single authority + stable primary keys + idempotency keys). Starting the TS line now is prepaying that debt.
 
-### 1.3 不做什么(防过度工程)
+### 1.3 What We Will Not Do (guarding against over-engineering)
 
-- **不引入 Postgres/DBOS/Temporal/Restate 平台**:单用户本地产品不需要服务端与 broker;「SQLite 学派」(§2.7)已给出生产级替代模型。
-- **不动 dsh harness 会话层**:依赖树里 dsh 自带 `dsh-session-persistence-jsonl`/`dsh-session-checkpoint-policy`/`dsh-session-projection`/`dsh-session-query-sqlite`,那四件管 harness 会话持久化;本账本只管**产品状态层**(画像/愿望池/时间线/工单/写权),两层各管各的,不重复 journal。
-- **不提前做多用户**:claim-fence-receipt 仍按 RFC §6.5 触发器后置(TS-5)。
-- **不加任何 Python 面**(总纲刚性约束)。
+- **No Postgres/DBOS/Temporal/Restate platforms**: a single-user local product needs no server side and no broker; the "SQLite school" (§2.7) already provides a production-grade alternative model.
+- **No touching the dsh harness session layer**: the dependency tree ships dsh with `dsh-session-persistence-jsonl`/`dsh-session-checkpoint-policy`/`dsh-session-projection`/`dsh-session-query-sqlite`; those four handle harness session persistence. This ledger governs only the **product state layer** (profile / wish pool / timeline / work orders / write authority); each layer governs its own side, with no duplicate journal.
+- **No premature multi-user**: claim-fence-receipt stays deferred behind the RFC §6.5 trigger (TS-5).
+- **No new Python surface** (hard constraint from the master outline).
 
-## 2. 业界前沿扫描(2025-2026)
+## 2. Industry Frontier Scan (2025-2026)
 
-### 2.1 总表
+### 2.1 Summary Table
 
-| # | 方案 | 核心机制 | 对 GoTry 的取/舍 |
+| # | Approach | Core mechanism | What GoTry takes / leaves |
 |---|---|---|---|
-| 1 | **LoopX**(agent 控制平面;仓内 RFC 已一手调研) | typed packet+receipt、观察不升级为权威、先只读投影后执行、authority 只经显式可回滚 seam、claim/CAS/receipt | 取:receipt/claim 需要账本落点——本计划补的正是持久层;S1-S4 已映射,不重复 |
-| 2 | **DBOS**(「Postgres is all you need for durable execution」) | 每步执行前进 Postgres 事务记 checkpoint,崩溃后从 journal 恢复,step exactly-once | 取:步骤日志机制;舍:Postgres 服务(单机 SQLite 化) |
-| 3 | **Temporal / Restate** | 平台级 durable execution;event history + signal/query;Restate virtual objects 按 key 单写者序列化 + durable state | 取:「每会话一个 keyed 单写者」形态;舍:平台部署 |
-| 4 | **LangGraph** | checkpointer(SQLite/Postgres saver)按 thread 存 checkpoint;time travel = replay + fork | 取:replay/fork 调试形态、投影可重建 |
-| 5 | **Letta(MemGPT)** | agent 全状态(memory blocks/历史/工具配置)进 Postgres/SQLite,agent 用工具改自己的记忆 | 印证「agent 状态即数据库行」;GoTry 语义分层更强,只缺物理层 |
-| 6 | **Claude Code / Codex transcript 学派** | JSONL transcript 是 source of truth;resume/fork 从 transcript 重建(arXiv 2604.14228);Agent SDK 把「每轮写 JSONL」当一等合同 | 印证 append-only 日志驱动 harness 在生产规模成立;GoTry 的 JSONL 流已同形,缺「唯一权威+事务保护」 |
-| 7 | **SQLite durable 学派**(Obelisk 等) | 「control plane 还是单个 SQLite 文件?」——单 SQLite 执行日志 + Litestream→S3 = 完整 durable-execution 模型(append-only log/确定性 replay/可重试 activities),无 broker;诚实声明异步复制 RPO 窗口 | **直接采纳的流派**:单机本地优先 + 用户数据可见可删,完美契合 |
-| 8 | **TigerFS**(timescale) | Postgres 挂载为事务文件系统,写=事务,v0.7 任意回滚,配 agent skills | 取:「文件写入要有版本与回滚」的思想;舍:Postgres(账本+投影导出覆盖此需求) |
-| 9 | **学术线**:SagaLLM / ATOMIX / DeltaState / GA-Rollback | saga 补偿 agent 处理回滚;timely transactional tool use;毫秒级 checkpoint/rollback;可重放环境步进回滚 | 取:WriteGate saga 的补偿语义参考 |
-| 10 | **Cockroach Labs 七失效模式** | 事务/幂等键 `ON CONFLICT DO NOTHING`/检查点表/审批进库/append-only 审计特权保护/时态读 | 取:§1.1 的失效模式对齐即来自此文;「审批进库」直接映射 pending_writes |
-| 11 | **Effectful programming(代数效应)** | 效应即协议,handler 是数据;agent 的 pause/resume/副作用建模为效应解释器;LoopX effect-interpreter 是该路线的工程化 | 取:TS-3 步骤日志=效应执行日志(intent → observation 落账本);S1 tool-packet 已铺好 envelope |
+| 1 | **LoopX** (agent control plane; already surveyed first-hand in the in-repo RFC) | typed packet+receipt, observations never escalate into authority, read-only projection before execution, authority only via explicit rollback-capable seams, claim/CAS/receipt | Take: receipt/claim need a ledger landing spot — this plan supplies exactly that persistence layer; S1-S4 already mapped, no duplication |
+| 2 | **DBOS** ("Postgres is all you need for durable execution") | before each step, record a checkpoint in a Postgres transaction; after a crash, recover from the journal; steps exactly-once | Take: the step-log mechanism; Leave: the Postgres service (replaced by single-machine SQLite) |
+| 3 | **Temporal / Restate** | platform-level durable execution; event history + signal/query; Restate virtual objects serialize per key as single-writer + durable state | Take: the "one keyed single-writer per session" shape; Leave: platform deployment |
+| 4 | **LangGraph** | checkpointer (SQLite/Postgres saver) stores checkpoints per thread; time travel = replay + fork | Take: the replay/fork debugging shape; rebuildable projections |
+| 5 | **Letta (MemGPT)** | full agent state (memory blocks / history / tool config) lives in Postgres/SQLite; the agent edits its own memory via tools | Confirms "agent state as database rows"; GoTry's semantic layering is stronger — only the physical layer is missing |
+| 6 | **Claude Code / Codex transcript school** | the JSONL transcript is the source of truth; resume/fork rebuilds from the transcript (arXiv 2604.14228); the Agent SDK treats "write JSONL every turn" as a first-class contract | Confirms append-only log-driven harnesses hold at production scale; GoTry's JSONL streams already share the shape — what is missing is "a single authority + transaction protection" |
+| 7 | **SQLite durable school** (Obelisk et al.) | "control plane, or a single SQLite file?" — a single-SQLite execution log + Litestream→S3 = a complete durable-execution model (append-only log / deterministic replay / retryable activities), no broker; it honestly declares the async-replication RPO window | **The school adopted directly**: single-machine local-first + user data visible and deletable — a perfect fit |
+| 8 | **TigerFS** (timescale) | Postgres mounted as a transactional file system; writes are transactions; v0.7 rolls back to any point; ships with agent skills | Take: the idea that "file writes need versions and rollback"; Leave: Postgres (ledger + projection export covers this need) |
+| 9 | **Academic line**: SagaLLM / ATOMIX / DeltaState / GA-Rollback | saga compensation for agent rollback; timely transactional tool use; millisecond-level checkpoint/rollback; replayable environment stepping with rollback | Take: compensation semantics as the reference for the WriteGate saga |
+| 10 | **Cockroach Labs' seven failure modes** | transactions / idempotency keys `ON CONFLICT DO NOTHING` / checkpoint tables / approvals stored in the database / append-only audit with privilege protection / temporal reads | Take: the §1.1 failure-mode alignment comes from this article; "approvals into the database" maps directly to pending_writes |
+| 11 | **Effectful programming (algebraic effects)** | effects as protocols, handlers as data; an agent's pause/resume/side effects modeled as an effect interpreter; the LoopX effect-interpreter is the engineering of this line | Take: TS-3 step logs = effect execution logs (intent → observation landed in the ledger); the S1 tool-packet already laid the envelope |
 
-### 2.2 共识骨架(五件套)
+### 2.2 The Shared Skeleton (the five-piece set)
 
-扫过全部流派,2026 年的收敛共识:
+Having scanned every school, the converged consensus of 2026:
 
-1. **append-only log 是唯一权威**(source of truth);当前状态只是日志的视图。
-2. **当前状态 = 日志的确定性投影**(纯函数 fold),可随时 DROP 重建。
-3. **不变量进 schema/事务**,不进约定——红线要么物理执行,要么不算存在。
-4. **长任务 = 步骤日志 + intent-before-execute**:先记意图再执行,崩溃后 done 的步骤不重执行(exactly-once),未动的步骤重试。
-5. **外部副作用 = saga**:pending → confirmed/compensated,幂等键去重,receipt 为证;数据库事务只保内部状态,外部世界用补偿。
+1. **The append-only log is the sole authority** (source of truth); current state is only a view of the log.
+2. **Current state = a deterministic projection of the log** (a pure-function fold); it can be dropped and rebuilt at any time.
+3. **Invariants go into the schema/transactions**, not into conventions — a red line is either physically enforced or it does not exist.
+4. **Long tasks = step logs + intent-before-execute**: record intent before executing; after a crash, done steps do not re-execute (exactly-once), untouched steps retry.
+5. **External side effects = sagas**: pending → confirmed/compensated, idempotency keys deduplicate, receipts are the proof; database transactions protect internal state only, and the external world is handled with compensation.
 
-GoTry 的语义层已经按 2/3/5 的形状在建设(纯函数守门/幂等键/L0-L4 词汇),本计划是把这五件套的**物理层**一次补齐。
+GoTry's semantic layer is already being built in the shape of 2/3/5 (pure-function gates / idempotency keys / L0-L4 vocabulary); this plan fills in the **physical layer** of the five-piece set in one pass.
 
-## 3. 现状资产(全部保留,零重写)
+## 3. Existing Assets (all retained, zero rewrite)
 
-| 资产 | 证据 | 在新架构中的位置 |
+| Asset | Evidence | Place in the new architecture |
 |---|---|---|
-| 纯函数守门全套 | `mergeProfile`(`ts/src/memory-capture.ts:28-59`,追加不删史/幂等/权重变更伴证据)、`appendEvent`(`ts/src/memory-utility.ts:41-54`)、`appendTrip`(`ts/src/travel-timeline.ts:48-62`)、`upsertCompanion`(`ts/src/companions.ts:69-113`)、`pickNudgeWish`(`ts/src/wish-pool.ts:53-66`) | 直接成为 **fold 处理器**与投影更新逻辑,一行不改 |
-| append-only 语义纪律 + 幂等语义键 | 上述纯函数 | 从「纪律」升级为「events 表物理属性」 |
-| 原子写样例 | `writeJson` tmp+rename(`ts/src/bridge.ts:33-39`);incident fsync(`ts/capabilities/incident-log.ts:51-65`) | 退役为导出路径的实现细节 |
-| 测试隔离形态 | smoke mkdtemp stateRoot(`ts/scripts/smoke.ts:20-34`) | stateRoot 即 DB 路径,隔离形态**不变**(tmpdir 一次性 DB) |
-| 红线词汇 | ReadGuard(物理只读镜像,`ts/capabilities/session/read-guard.ts`)、WriteGate L0-L4(RFC S4) | ReadGuard 不动;WriteGate 获得 pending_writes 落点 |
-
-## 4. 目标架构
+| The full pure-function gating set | `mergeProfile` (`ts/src/memory-capture.ts:28-59`, appends never delete history / idempotent / weight changes carry evidence), `appendEvent` (`ts/src/memory-utility.ts:41-54`), `appendTrip` (`ts/src/travel-timeline.ts:48-62`), `upsertCompanion` (`ts/src/companions.ts:69-113`), `pickNudgeWish` (`ts/src/wish-pool.ts:53-66`) | They become the **fold handlers** and the projection-update logic directly, not one line changed |
+| append-only semantic discipline + idempotent semantic keys | the pure functions above | Upgraded from "discipline" to "physical properties of the events table" |
+| Atomic-write samples | `writeJson` tmp+rename (`ts/src/bridge.ts:33-39`); incident fsync (`ts/capabilities/incident-log.ts:51-65`) | Retired into implementation details of the export path |
+| Test isolation shape | smoke mkdtemp stateRoot (`ts/scripts/smoke.ts:20-34`) | stateRoot becomes the DB path; the isolation shape stays **unchanged** (a throwaway DB in tmpdir) |
+| Red-line vocabulary | ReadGuard (physically read-only mirror, `ts/capabilities/session/read-guard.ts`), WriteGate L0-L4 (RFC S4) | ReadGuard untouched; WriteGate gains a pending_writes landing spot |
+## 4. Target Architecture
 
 ```
-stateRoot/gotry-state.db        ← SQLite 单文件,WAL 模式,synchronous=NORMAL
-├── events            账本(唯一权威):seq PK / ts / actor / kind / subject_id /
+stateRoot/gotry-state.db        ← single-file SQLite, WAL mode, synchronous=NORMAL
+├── events            the ledger (sole authority): seq PK / ts / actor / kind / subject_id /
 │                     payload JSON / idem_key / run_id
-├── 投影表             motivation_profile / wish_pool / companions / trips_view
-│                     (派生数据,可随时 DROP 后 fold(events) 重建)
-├── workflow_runs     durable 工单:id / goal / status / created / updated
-├── workflow_steps    步骤日志:run_id / seq / name / intent_ts / done_ts /
+├── projections        motivation_profile / wish_pool / companions / trips_view
+│                     (derived data; DROP and rebuild via fold(events) at any time)
+├── workflow_runs     durable work orders: id / goal / status / created / updated
+├── workflow_steps    step log: run_id / seq / name / intent_ts / done_ts /
 │                     status(pending|done|failed) / result
-├── pending_writes    WriteGate saga:idem_key UNIQUE / seam / payload /
+├── pending_writes    WriteGate saga: idem_key UNIQUE / seam / payload /
 │                     status(pending|confirmed|compensated) / receipt
-└── kv                schema_version 等杂项
+└── kv                schema_version and misc
 ```
 
-### 4.1 读写纪律
+### 4.1 Read/Write Discipline
 
-- **写 = 单事务** `{INSERT INTO events; UPDATE 投影}`——投影与事件同事务提交,永不分叉(修掉 §1.1 的跨文件分叉)。
-- **红线进 schema**:`mergeProfile` 的 evidence 校验在事务内执行,缺失即回滚(INSERT 失败,账本无痕);wish 条件非空 CHECK;`idem_key` 唯一约束 = 幂等物理化。「红线进代码」升级为「红线进 schema」——绕过工具直接写 DB 行不通(工具外无写入路径),绕过 DB 写文件不再影响权威态。
-- **读 = 直读投影**(快路径,零改造);**重建 = fold(events)**(与 LangGraph rebuild 同构)。
-- **导出 = 命令把投影 dump 回 JSON/JSONL 旧文件名**:文件从「权威」降级为「视图」,红线 6(用户数据可见、可编辑、可删除、可导出)继续成立——用户删导出文件 = 删视图;真删数据 = `gotry-state forget <subject>`(事务删除该 subject 全部 events + 重建投影,删除也是事件可审计……若红线 6 要求「删即真删」,则物理 DELETE 并 VACUUM,两者都支持,决策点 D5)。
-- **回放/分叉 = fold 到任意 seq**:「如果这轮画像没写入会怎样」变成一条命令(LangGraph replay/fork;调试与金标准回归共用)。
-- **崩溃安全 = WAL + 事务**:kill -9 任意时刻,重开后要么全有要么全无;工单/画像/时间线不再有半行。
+- **Write = one transaction** `{INSERT INTO events; UPDATE projection}` — projections and events commit in the same transaction and never fork (this fixes the cross-file fork in §1.1).
+- **Red lines go into the schema**: the evidence check from `mergeProfile` runs inside the transaction; missing evidence rolls back (the INSERT fails, the ledger shows no trace); a non-empty CHECK on wish conditions; the `idem_key` UNIQUE constraint physicalizes idempotency. "Red lines into code" upgrades to "red lines into schema" — bypassing the tools to write the DB directly no longer works (there is no write path outside the tools), and writing files while bypassing the DB no longer touches the authoritative state.
+- **Read = query the projections directly** (the fast path, zero rework); **rebuild = fold(events)** (isomorphic to a LangGraph rebuild).
+- **Export = a command dumps the projections back to the old JSON/JSONL filenames**: files are demoted from "authority" to "view", and red line 6 (user data visible, editable, deletable, exportable) keeps holding — a user deleting an exported file deletes the view; truly deleting data = `gotry-state forget <subject>` (one transaction deletes all events for that subject + rebuilds the projections, and the deletion itself is an auditable event... if red line 6 demands "delete means really delete", then a physical DELETE plus VACUUM; both are supported — decision point D5).
+- **Replay/fork = fold to any seq**: "what if this profile write had never happened" becomes one command (LangGraph replay/fork; shared by debugging and gold-standard regression).
+- **Crash safety = WAL + transactions**: kill -9 at any moment, and after restart it is all-or-nothing; work orders / profile / timeline no longer have half-written rows.
 
-### 4.2 durable 工单(「一小时后回来」的真实化)
+### 4.2 Durable Work Orders (making "come back in an hour" real)
 
-`workflow_steps` 实现 DBOS/Obelisk 式步骤日志:
+`workflow_steps` implements DBOS/Obelisk-style step logging:
 
 ```
-requestAsync(goal)    → 事务{INSERT run + step(intent)} → 立即可见
-collectDeepPlanning   → 每步:记 intent → 执行(LLM/求解)→ 记 done+result
-任意进程恢复           → 读 steps:done 的直接取 result 不重执行(exactly-once,
-                        LLM 调用不重复花钱);failed/intent 悬挂的重试
+requestAsync(goal)    → transaction {INSERT run + step(intent)} → visible immediately
+collectDeepPlanning   → each step: record intent → execute (LLM/solver) → record done+result
+any process resumes   → read steps: done ones take the result directly without re-executing
+                        (exactly-once, LLM calls are never paid for twice); failed/hanging
+                        intent ones retry
 ```
 
-async-collect 从「读 JSON 工单」升级为「恢复一个 journaled run」;驱动器(loopx tick / 人工 / 未来通知)任意切换,恢复语义不依赖驱动器——补上 tech-strategy 挂账的「异步调度无仓内实现」中**状态面**这一半(调度器本身仍是独立决策 D3)。
+async-collect upgrades from "reading a JSON work order" to "resuming a journaled run"; the driver (loopx tick / manual / future notifications) can switch freely, and the recovery semantics do not depend on the driver — this fills the **state-surface** half of tech-strategy's open item "async scheduling has no in-repo implementation" (the scheduler itself remains a separate decision, D3).
 
-回收终态同时写入 `gotry_async_terminal.v1` 事件结果并输出同形 JSON:不失望四条 4/4 才进入 `settled`/exit 0,任一未达进入 `failed`/exit 2;复诵沿用账本中的结构化终态,仍然零重算。
+On reclaim, the terminal state is also written as a `gotry_async_terminal.v1` event result and emitted as a same-shaped JSON: only 4/4 on the four no-disappointment checks enters `settled`/exit 0; any miss enters `failed`/exit 2; the recital reuses the structured terminal state from the ledger, still with zero recomputation.
 
-### 4.3 WriteGate 基座(M5 前置)
+### 4.3 WriteGate Substrate (M5 prerequisite)
 
-- L2(建议):只 INSERT `pending_writes`(status=pending),无执行。
-- L3(具名 seam 确认):pending → confirmed,携 receipt(外部世界回执);失败/反悔 → compensated(saga 补偿,参考 SagaLLM)。
-- `idem_key` 唯一 = 「同一预订确认不可能下两次」的物理保证(产品红线:三步确认+幂等键)。
-- what-if 预演 = 复制 DB(`VACUUM INTO`)后在副本上 fold,确认后才在正本走 saga——LoopX「先只读投影后执行」的物理化。
-- ReadGuard 维持现状:检索态物理只读,与 pending_writes 互不相交。
-- **增补(2026-08-29,issue #17 采纳/ADR-17)**:saga 状态推进词汇已显式化为 `booking_saga_fsm.v1`(`ts/src/booking-saga.ts` + `docs/booking-saga-fsm.md`;run-all §36 物理对账)——M5 启封时 booking seam 只许走该边表;已知边界「空 receipt 无物理 CHECK」= D-22。
+- L2 (advisory): only INSERT into `pending_writes` (status=pending), no execution.
+- L3 (named-seam confirmation): pending → confirmed, carrying a receipt (the acknowledgement from the external world); failure / reversal → compensated (saga compensation, cf. SagaLLM).
+- `idem_key` UNIQUE = the physical guarantee that "the same booking confirmation cannot be placed twice" (product red line: three-step confirmation + idempotency key).
+- what-if rehearsal = copy the DB (`VACUUM INTO`), fold on the copy, and only after confirmation run the saga on the original — the physicalization of LoopX's "read-only projection before execution".
+- ReadGuard stays as is: retrieval state is physically read-only and disjoint from pending_writes.
+- **Addendum (2026-08-29, adopted as issue #17 / ADR-17)**: the saga state-advance vocabulary is now explicit as `booking_saga_fsm.v1` (`ts/src/booking-saga.ts` + `docs/booking-saga-fsm.md`; run-all §36 physical reconciliation) — when M5 unseals, the booking seam may only traverse that edge table; the known limitation "an empty receipt has no physical CHECK" = D-22.
 
-### 4.4 选型
+### 4.4 Technology Choices
 
-| 项 | 决定 | 理由 |
+| Item | Decision | Rationale |
 |---|---|---|
-| 引擎 | SQLite,better-sqlite3(主选)/ node:sqlite(备选,决策点 D1) | 复用矩阵 import 通道 ✓;同步 API 与现有 readFileSync 代码风格零摩擦;单文件=备份/分叉/隔离全部免费 |
-| 模式 | WAL + synchronous=NORMAL | 单机崩溃安全与写延迟的平衡点;Litestream 类备份将来也要求 WAL |
-| 平台 | 不上 Postgres/DBOS/Temporal/Restate | §1.3;durable-execution 五件套在单 SQLite 内完备(§2.7 流派实证) |
-| dsh 边界 | harness 会话层归 dsh 四件套,产品状态层归本账本 | 不重复 journal;dsh 跟 main 不动 |
+| Engine | SQLite, better-sqlite3 (primary) / node:sqlite (fallback, decision point D1) | reuse-matrix import channel ✓; the synchronous API has zero friction with the existing readFileSync code style; a single file = backup/fork/isolation all free |
+| Mode | WAL + synchronous=NORMAL | the balance point between single-machine crash safety and write latency; Litestream-style backup will also require WAL |
+| Platform | no Postgres/DBOS/Temporal/Restate | §1.3; the durable-execution five-piece set is complete inside a single SQLite (evidenced by the §2.7 school) |
+| dsh boundary | the harness session layer belongs to dsh's four packages; the product state layer belongs to this ledger | no duplicate journal; dsh follows main, untouched |
+## 5. Reconciliation with Existing Decisions (proof of no conflict)
 
-## 5. 与既有决策的勾稽(不冲突证明)
-
-| 既有决策 | 本计划的关系 |
+| Existing decision | Relation to this plan |
 |---|---|
-| 复用矩阵(总纲 §2) | better-sqlite3 = open-source import,合法通道;不引入任何内部资产代码 |
-| memory-design §1.6「账本化=存储面替换,语义层零改造」 | 本计划就是该替换的执行;六层载体从文件换成账本+导出视图,§1 的六条设计立场逐条保留(可溯源=evidence 进 events;负面清单=负 schema 字段;红线 6=导出+forget) |
-| RFC(loopx)S4 WriteGate L0-L4 | pending_writes 是 L2/L3 的物理落点;「每级可回滚」= saga 状态机 + DB 副本分叉 |
-| RFC(loopx)§6.5 claim-fence-receipt | 账本是 claim/CAS 的单机前置;多用户实装仍按触发器后置(TS-5) |
-| tech-strategy T6(幂等键/pending state/receipt) | TS-4 直接交付三要素的 substrate |
-| ADR-14(效用 sidecar) | memory-utility 事件流物理化为 events 一类,语义键不变 |
-| 红线 6 + 2026-08-26 污染教训 | 权威态单点(DB)+ 工具外无写入路径 + forget 命令;巡检/测试仍走隔离 stateRoot(形态不变) |
+| Reuse matrix (master outline §2) | better-sqlite3 = open-source import, the legal channel; no internal-asset code introduced |
+| memory-design §1.6 "ledgerization = storage-surface replacement, zero semantic-layer rework" | this plan is the execution of that replacement; the six-layer carriers switch from files to ledger + exported views, and the six design stances of §1 are preserved item by item (traceability = evidence into events; the negative list = negative schema fields; red line 6 = export + forget) |
+| RFC (loopx) S4 WriteGate L0-L4 | pending_writes is the physical landing spot for L2/L3; "every level rollback-capable" = the saga state machine + DB-copy forking |
+| RFC (loopx) §6.5 claim-fence-receipt | the ledger is the single-machine prerequisite for claim/CAS; multi-user implementation stays deferred behind the trigger (TS-5) |
+| tech-strategy T6 (idempotency keys / pending state / receipt) | TS-4 directly delivers the substrate for all three elements |
+| ADR-14 (utility sidecar) | the memory-utility event stream physicalizes as one events kind, semantic keys unchanged |
+| Red line 6 + the 2026-08-26 contamination lesson | a single point of authoritative state (the DB) + no write path outside the tools + the forget command; inspection/testing still uses an isolated stateRoot (shape unchanged) |
 
-## 6. 分阶段执行计划(每片独立可拍死)
+## 6. Phased Execution Plan (each slice independently killable)
 
-| 片 | 内容 | 交付与验收 | 测试 | 预估 | 回退 |
+| Slice | Content | Deliverables and acceptance | Tests | Estimate | Rollback |
 |---|---|---|---|---|---|
-| **TS-0 立例** | founder 拍板本 RFC;登记 ADR-15「事务化状态基座」(锚点=TS-1 测试);状态面 6 处同步说明 | 文档 + ADR 行 | — | 0.5d | 无需 |
-| **TS-1 账本基座** | sqlite store 模块(open/migrate/transaction/events 表);evidence/conditions/idem 约束;`--migrate` 导入现有 motivation-profile + wish-pool(回填为 events);投影导出命令(旧文件名) | 崩溃注入(kill -9 mid-tx)后账本一致;无 evidence 的 INSERT 被拒;同 idem_key 重放幂等 | run-all 新增 §28 | 1-2d | 账本留模块内不接主路径,零行为变化 |
-| **TS-2 全量迁移 + 投影回放** | memory-utility/trips/companions 入账本;confirm-outcome 单事务;`gotry-state log/rebuild/rewind` 调试命令 | DROP 投影→fold→与直读逐字节一致;回放到任意 seq 正确;两文件写不再可能分叉 | run-all §29 | 1d | 导出命令反向恢复文件权威 |
-| **TS-3 durable 工单** | async ticket → workflow_runs/steps;async-collect 恢复语义(done 不重执行);修 `ASYNC_DIR` 接 stateRoot(`loop.ts:303`);修 `gotry_session_search` auditPath 落盘(`index.ts:748-769`) | kill -9 mid-collect 后重跑,LLM/求解调用零重复,工单终态一致;审计 JSONL 生产路径可见 | run-all §5 升级 | 1-2d | 工单 JSON 兼容读保留一版 |
-| **TS-4 WriteGate 基座** | pending_writes 表 + 幂等键 + receipt 词汇(L2/L3 物理预备);what-if DB 副本分叉命令 | 同 idem_key 双确认被拒;pending→confirmed→compensated 状态机走查;副本分叉不触正本 | run-all §30 | 1d | 表留而不用,M5 拍板时启封 |
-| **TS-5 触发式后置** | Litestream 备份 / cr-sqlite 多端 / RFC §6.5 claim-fence-receipt 实装 | 触发器:第二真实用户 / 多机部署 / AaaS 立项 | — | — | — |
+| **TS-0 establish the case** | founder signs off this RFC; register ADR-15 "Transactional State Backbone" (anchor = TS-1 tests); note on syncing the 6 state surfaces | docs + an ADR entry | — | 0.5d | not needed |
+| **TS-1 ledger foundation** | sqlite store module (open/migrate/transaction/events table); evidence/conditions/idem constraints; `--migrate` imports the existing motivation-profile + wish-pool (backfilled as events); projection export command (old filenames) | the ledger stays consistent after an injected crash (kill -9 mid-tx); an INSERT without evidence is rejected; replay with the same idem_key is idempotent | run-all adds §28 | 1-2d | the ledger stays module-internal, unattached to the main path, zero behavior change |
+| **TS-2 full migration + projection replay** | memory-utility/trips/companions into the ledger; confirm-outcome in one transaction; `gotry-state log/rebuild/rewind` debug commands | DROP projections → fold → byte-identical to direct reads; replay to any seq is correct; the two-file write can no longer fork | run-all §29 | 1d | the export command restores file-as-authority in reverse |
+| **TS-3 durable work orders** | async ticket → workflow_runs/steps; async-collect recovery semantics (done never re-executes); fix `ASYNC_DIR` to attach to stateRoot (`loop.ts:303`); fix `gotry_session_search` auditPath persistence (`index.ts:748-769`) | rerun after kill -9 mid-collect: zero duplicate LLM/solver calls, consistent work-order terminal state; the audit JSONL is visible on the production path | run-all §5 upgraded | 1-2d | keep one version of JSON work-order compatible reads |
+| **TS-4 WriteGate substrate** | pending_writes table + idempotency keys + receipt vocabulary (physical preparation for L2/L3); the what-if DB-copy fork command | double confirmation with the same idem_key rejected; a pending→confirmed→compensated state-machine walk-through; copy forks never touch the original | run-all §30 | 1d | the table is kept but unused, unsealed when M5 is signed off |
+| **TS-5 trigger-based deferral** | Litestream backup / cr-sqlite multi-device / RFC §6.5 claim-fence-receipt implementation | triggers: a second real user / multi-machine deployment / AaaS kickoff | — | — | — |
 
-**执行纪律**(逐片):全栈回归绿(`scripts/run-all-tests.sh`);同提交同步状态面 6 处;具名文件暂存禁 `git add -A`;创始人真实数据(`ts/dsh-runtime/gotry-state/`)迁移是**独立步骤**——先在隔离 stateRoot 全链验证,真实迁移由 founder 亲自执行,执行前 `VACUUM INTO` 留快照(2026-08-26 教训成纪律)。
+**Execution discipline** (per slice): full-stack regression green (`scripts/run-all-tests.sh`); sync the 6 state surfaces in the same commit; stage named files only, `git add -A` forbidden; migrating the founder's real data (`ts/dsh-runtime/gotry-state/`) is a **separate step** — first verify the full chain on an isolated stateRoot, the real migration is executed by the founder personally, and `VACUUM INTO` leaves a snapshot beforehand (the 2026-08-26 lesson became discipline).
 
-**顺序依赖**:TS-1 → TS-2 → TS-3 串行;TS-4 只依赖 TS-1,可提前;TS-0 随时。总投入约 4-7 个工作日,可切片 interleaving 进 M4/会话数据面节奏。
+**Order dependencies**: TS-1 → TS-2 → TS-3 serial; TS-4 depends only on TS-1 and can move earlier; TS-0 anytime. Total investment is roughly 4-7 working days, and the slices can interleave into the M4 / session-data cadence.
 
-## 7. 明确不做
+## 7. Explicitly Not Doing
 
-- Postgres / DBOS / Temporal / Restate 及任何服务端组件(§1.3);
-- 多写者复制(cr-sqlite)、云备份(Litestream)——TS-5 触发式;
-- 动 dsh harness 会话层四件套;
-- Python 面、重写求解器语义、提前实现 M5 完整 WriteGate(TS-4 只做基座);
-- 对话原文入库(红线:负面清单继续执行,events payload 只存结构化语义)。
+- Postgres / DBOS / Temporal / Restate and any server-side components (§1.3);
+- multi-writer replication (cr-sqlite), cloud backup (Litestream) — trigger-based, TS-5;
+- touching dsh's four harness-session packages;
+- a Python surface, rewriting solver semantics, implementing the full M5 WriteGate early (TS-4 only builds the substrate);
+- storing raw conversation text (red line: the negative list stays in force; events payloads carry structured semantics only).
 
-## 8. 风险
+## 8. Risks
 
-| 风险 | 缓解 |
+| Risk | Mitigation |
 |---|---|
-| 创始人真实数据迁移事故 | 隔离验证 → founder 亲自跑 → 迁移前快照;导出命令保旧文件名,人眼可核对 |
-| 双权威期(文件+DB)混乱 | 不设双写期:one-shot 迁移 + 导出视图单向(DB→文件),文件永不再回流(决策点 D2) |
-| SQLite native 模块安装摩擦(better-sqlite3) | prebuilt binaries 覆盖主流平台;兜底 node:sqlite(零依赖);发布闸④ README 实测会暴露任何摩擦 |
-| 账本膨胀(事件无限增长) | 单用户量级极小(YAML/JSONL 同量级);`gotry-state compact` 预留(seq 高水位快照) |
-| 过度设计 | 六片独立可拍死;TS-1 失败即止损,语义层资产分文未动 |
+| An accident while migrating the founder's real data | isolated verification → the founder runs it personally → a snapshot before migration; the export command keeps the old filenames so a human can eyeball them |
+| Confusion during a dual-authority period (files + DB) | no dual-write period: a one-shot migration + one-way exported views (DB→file); files never flow back (decision point D2) |
+| SQLite native module install friction (better-sqlite3) | prebuilt binaries cover the mainstream platforms; node:sqlite as the fallback (zero dependencies); release gate item 4, the README live test, would expose any friction |
+| Ledger bloat (unbounded event growth) | single-user volume is tiny (the same order as YAML/JSONL); `gotry-state compact` is reserved (a seq high-watermark snapshot) |
+| Over-engineering | six slices, each independently killable; if TS-1 fails we cut losses, and the semantic-layer assets are untouched |
 
-## 9. 决策点(2026-08-28 founder「按你的建议来」全部结算)
+## 9. Decision Points (all settled by the 2026-08-28 founder "go with your recommendations")
 
-| # | 问题 | 决定 |
+| # | Question | Decision |
 |---|---|---|
-| D1 | better-sqlite3 vs node:sqlite | **better-sqlite3**(open-source import 通道;同步 API 契合仓内风格) |
-| D2 | one-shot 迁移 vs 双写过渡期 | **one-shot + 导出视图单向**;落地形态=首写自动迁移(导入前快照 `pre-ledger-backup/`)+ 显式 `state-cli migrate` |
-| D3 | 调度器形态 | **仓内 `state-cli tick`**(恢复语义已与驱动器解耦,随时可换 loopx tick) |
-| D4 | TS-4 是否定为 M5 Entry 前置 | **是**(pending_writes/receipt 基座已就位,M5 拍板时启封) |
-| D5 | `forget` 语义 | **物理硬删 + 审计一行**(红线 6「可删除」按用户视角解释) |
-| D6 | 双形态架构(本地+Web) | **一套账本语义,两种宿主绑定;tenant_id 从第一天就是一等字段;同步=事件复制而非状态翻译**(ADR-16;防「将来大规模重构」的核心冻结) |
+| D1 | better-sqlite3 vs node:sqlite | **better-sqlite3** (the open-source import channel; the synchronous API fits in-repo style) |
+| D2 | one-shot migration vs a dual-write transition period | **one-shot + one-way exported views**; landing shape = automatic migration on first write (a `pre-ledger-backup/` snapshot before import) + explicit `state-cli migrate` |
+| D3 | Scheduler shape | **in-repo `state-cli tick`** (recovery semantics are already decoupled from the driver; can swap to loopx tick anytime) |
+| D4 | Is TS-4 fixed as an M5 Entry prerequisite | **Yes** (the pending_writes/receipt substrate is in place; unsealed when M5 is signed off) |
+| D5 | `forget` semantics | **physical hard delete + one audit line** (red line 6 "deletable" interpreted from the user's perspective) |
+| D6 | Dual-form architecture (local + Web) | **one set of ledger semantics, two host bindings; tenant_id is a first-class field from day one; sync = event replication, not state translation** (ADR-16; the core freeze against "a big refactor later") |
 
-## 9.1 执行说明(与 §6 原计划的两处偏差,均已落测)
+## 9.1 Execution Notes (two deviations from the original §6 plan, both landed with tests)
 
-- 迁移触发:原计划「founder 亲自执行」细化为「**首写自动迁移 + 自动快照** + 显式 `state-cli migrate` 可先行」——安全本质(快照/单事务/one-shot)保留,产品路径无「迁移前工具不可用」窗口。
-- 测试分节:saga 断言并入 §28(ledger-tests 39 断言,含崩溃恢复 exactly-once 与 pending_writes/what-if),CLI 面为 §29(state-cli-tests 14 断言)——比 §6 表中 §28/§29/§30 三节少一节,覆盖面不减。
+- Migration trigger: the original plan's "founder executes personally" is refined to "**automatic migration on first write + automatic snapshot**, with explicit `state-cli migrate` available beforehand" — the safety essence (snapshot / single transaction / one-shot) is preserved, and the product path has no window where "the tool is unavailable before migration".
+- Test sections: the saga assertions are merged into §28 (ledger-tests, 39 assertions, including crash-recovery exactly-once and pending_writes/what-if); the CLI surface is §29 (state-cli-tests, 14 assertions) — one section fewer than the three sections §28/§29/§30 in the §6 table, with no reduction in coverage.
 
-## 10. 参考文献(业界调研来源)
+## 10. References (industry survey sources)
 
-- LoopX:control plane for long-running agents — [dev.to](https://dev.to/arshtechpro/loopx-a-control-plane-for-ai-agents-that-have-to-keep-working-for-days-47n);仓内一手调研见 `loopx-inspired-upgrades-rfc.md`
+- LoopX: control plane for long-running agents — [dev.to](https://dev.to/arshtechpro/loopx-a-control-plane-for-ai-agents-that-have-to-keep-working-for-days-47n); for the in-repo first-hand survey see `loopx-inspired-upgrades-rfc.md`
 - DBOS: [Durable Execution for Crashproof AI Agents](https://www.dbos.dev/blog/durable-execution-crashproof-ai-agents) / [Postgres Is All You Need for Durable Execution](https://www.dbos.dev/blog/postgres-is-all-you-need-for-durable-execution)
-- SQLite durable 学派: [Do your agents need a durable-execution control plane, or a SQLite file?](https://agentnativeengineering.com/field-notes/2026-05-31-sqlite-durable-vs-cloud-queue/) / [SQLite Is All You Need for Durable Workflows](https://dev.to/lymy1205/sqlite-is-all-you-need-for-durable-workflows-3fkn)
+- SQLite durable school: [Do your agents need a durable-execution control plane, or a SQLite file?](https://agentnativeengineering.com/field-notes/2026-05-31-sqlite-durable-vs-cloud-queue/) / [SQLite Is All You Need for Durable Workflows](https://dev.to/lymy1205/sqlite-is-all-you-need-for-durable-workflows-3fkn)
 - Cockroach Labs: [Why Agent Loops Fail in Production](https://www.cockroachlabs.com/blog/agent-loops-production-database-patterns/)
-- Temporal: [Durable Execution Meets AI](https://temporal.io/blog/durable-execution-meets-ai-why-temporal-is-the-perfect-foundation-for-ai);Restate: [Restate vs Temporal](https://restate.dev/vs/temporal)
+- Temporal: [Durable Execution Meets AI](https://temporal.io/blog/durable-execution-meets-ai-why-temporal-is-the-perfect-foundation-for-ai); Restate: [Restate vs Temporal](https://restate.dev/vs/temporal)
 - LangGraph: [Persistence](https://docs.langchain.com/oss/python/langgraph/persistence) / [Use Time Travel](https://docs.langchain.com/oss/python/langgraph/use-time-travel)
 - Letta: [Platform for Stateful LLM Agents](https://blog.stackademic.com/letta-platform-for-stateful-llm-agents-a83b58a1c926)
-- Claude Code transcript 学派: [Manage Sessions](https://code.claude.com/docs/en/sessions) / [Session Browser Cookbook](https://platform.claude.com/cookbook/claude-agent-sdk-05-building-a-session-browser) / [The Design Space of AI Agent Systems (arXiv 2604.14228)](https://arxiv.org/html/2604.14228v1)
+- Claude Code transcript school: [Manage Sessions](https://code.claude.com/docs/en/sessions) / [Session Browser Cookbook](https://platform.claude.com/cookbook/claude-agent-sdk-05-building-a-session-browser) / [The Design Space of AI Agent Systems (arXiv 2604.14228)](https://arxiv.org/html/2604.14228v1)
 - TigerFS: [tigerfs.io](https://tigerfs.io/) / [timescale/tigerfs](https://github.com/timescale/tigerfs)
-- 学术: [SagaLLM (arXiv 2503.11951)](https://arxiv.org/html/2503.11951v3) / [Semantic Isolation for Durable AI Workflows (arXiv 2608.05412)](https://arxiv.org/html/2608.05412v1)
+- Academic: [SagaLLM (arXiv 2503.11951)](https://arxiv.org/html/2503.11951v3) / [Semantic Isolation for Durable AI Workflows (arXiv 2608.05412)](https://arxiv.org/html/2608.05412v1)
 - Effectful programming: [Effects as Protocols and Context as Agents](https://interjectedfuture.com/effects-as-protocols-and-context-as-agents/) / [Algebraic Effects for the Rest of Us](https://overreacted.io/algebraic-effects-for-the-rest-of-us/)
-- 本地优先复制(触发式): [cr-sqlite](https://github.com/vlcn-io/cr-sqlite) / [Litestream](https://litestream.io/)
+- Local-first replication (trigger-based): [cr-sqlite](https://github.com/vlcn-io/cr-sqlite) / [Litestream](https://litestream.io/)

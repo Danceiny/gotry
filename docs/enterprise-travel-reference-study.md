@@ -1,144 +1,146 @@
-# 企业级差旅 Agent 系统参考研究 → gotry 借鉴决策(2026-09-03)
+[English](enterprise-travel-reference-study.md) | [简体中文](enterprise-travel-reference-study.zh-CN.md)
 
-> 对象:某企业级差旅 Agent 生产系统(下称「T 系统」;ReAct 编排 + 确定性 DAG 双轨,
-> 生产级状态面,合规收口层,事件驱动渲染;资料=founder 提供的八维对比分析与深度解读,
-> 来源已脱敏)。本文只回答:**哪些机制值得 gotry 借、借成什么样、借到哪个里程碑、哪些
-> 明确不借**。所有结论映射到现有 ADR/RFC/债务/里程碑接缝,不新增空中楼阁。
+# Enterprise-Grade Travel Agent System Reference Study → gotry Borrowing Decisions (2026-09-03)
+
+> Subject: an enterprise-grade travel Agent production system (hereafter the "T system"; ReAct orchestration + deterministic DAG dual-track,
+> production-grade state plane, compliance consolidation layer, event-driven rendering; material = the eight-dimension comparative analysis and deep read provided by the founder,
+> source de-identified). This document answers only: **which mechanisms are worth borrowing for gotry, into what form, by which milestone, and which are
+> explicitly not borrowed**. All conclusions map onto existing ADR/RFC/debt/milestone seams; no castles in the air.
 >
-> 前置判断:T 系统强在**工程化与生产基础设施**,gotry 强在**形式化方法与产品理念**
-> (Z3 求解/证据链/门到门全成本/愿望池)。两者不是替代关系;本文的借鉴全部以
-> 「不稀释差异化」为约束。
+> Prior judgment: the T system is strong in **engineering and production infrastructure**; gotry is strong in **formal methods and product philosophy**
+> (Z3 solving / evidence chain / door-to-door full cost / wish pool). The two are not substitutes; all borrowing in this document is constrained by
+> "don't dilute differentiation".
 
-## 决策总表
+## Decision Summary Table
 
-| # | T 系统机制 | gotry 决策 | 落点/接缝 |
+| # | T system mechanism | gotry decision | Landing point/seam |
 |---|---|---|---|
-| 1 | 双轨执行:ReAct 编排 + 确定性 DAG 状态机负责真实提交 | **采纳为 M5 设计输入**(现在不写代码) | ADR-17 `booking_saga_fsm.v1` + RFC S4 WriteGate L0-L4;M5 Entry checklist 增三条(见下) |
-| 2 | 生产级状态:变更流推送 + 会话租约分布式锁 + pending CAS + 崩溃可恢复的持久化 turn 协调器 | **缓行**(触发器纪律已立,不提前做) | D-15 触发时按其清单参考实装 |
-| 3 | 写操作闭环:sealed interface 编译期隔离 + op 由 Kind 唯一派生 + pending 持久化 + 二次确认 | **采纳为 M5 设计输入**(与 #1 同批) | ADR-17 边表已有 gate/external-event 边型与 HITL 挂起-恢复形态,同构 |
-| 4 | 合规收口层:Model 装饰器收口 ALLOW/MASKING/DEGRADE/REJECT,业务零改动 | **采纳为 M6 设计输入** | M6 B2B 合规层范式;当前 C 端物理隔离红线保持 |
-| 5 | 事件驱动渲染:执行中 emit 结构化事件,逐块增量推送 | **部分已存在,不新增机制** | Booking Copilot v2 typed SSE 已是同构面(§49);dsh 产品面增量渲染受上游渲染能力约束,见下 |
-| 6 | 双模型分级 + 槽位小模型 + 上下文压缩 | **不采纳(现状)** | ADR-24 Tier 0 确定性路由(零 LLM)+ slot-spec 确定性抽取已覆盖同问题;模型选择归 dsh 宿主 |
-| 7 | 领域 skill 体系(工具集+prompt+边界守卫+渲染器) | **采纳方向,M6 落地** | 对应 M6「一个 B2B 场景零内核改动」交付形态;当前单租户不提前抽象(YAGNI) |
-| 8 | 工程化成熟度(渲染 parity test/路由 eval/灰度发布) | **持续采纳,无新动作** | run-all 既有防漂移测试族 + evaluation lane(#96/#100/#102)即对应面 |
+| 1 | Dual-track execution: ReAct orchestration + deterministic DAG state machine owns real submission | **Adopt as M5 design input** (no code now) | ADR-17 `booking_saga_fsm.v1` + RFC S4 WriteGate L0-L4; M5 Entry checklist gains three items (see below) |
+| 2 | Production-grade state: change-stream push + session-lease distributed lock + pending CAS + crash-recoverable persistent turn coordinator | **Defer** (trigger discipline established, don't build ahead) | When D-15 triggers, implement referencing its checklist |
+| 3 | Write-operation closed loop: sealed interface compile-time isolation + op uniquely derived from Kind + pending persistence + second confirmation | **Adopt as M5 design input** (same batch as #1) | The ADR-17 edge table already has gate/external-event edge types and the HITL suspend-resume form; isomorphic |
+| 4 | Compliance consolidation layer: a Model decorator consolidates ALLOW/MASKING/DEGRADE/REJECT, zero business changes | **Adopt as M6 design input** | M6 B2B compliance layer paradigm; the current C-side physical isolation red line stays |
+| 5 | Event-driven rendering: emit structured events during execution, incremental block-by-block push | **Partially exists already, no new mechanism** | Booking Copilot v2 typed SSE is already the isomorphic face (§49); dsh product surface incremental rendering is constrained by upstream rendering capability, see below |
+| 6 | Dual-model tiering + slot small model + context compaction | **Not adopted (status quo)** | ADR-24 Tier 0 deterministic routing (zero LLM) + slot-spec deterministic extraction already cover the same problem; model selection belongs to the dsh host |
+| 7 | Domain skill system (tool set + prompt + boundary guards + renderers) | **Direction adopted, lands M6** | Corresponds to the M6 "one B2B scenario, zero kernel changes" delivery form; the current single tenant doesn't abstract ahead (YAGNI) |
+| 8 | Engineering maturity (rendering parity test / routing eval / canary release) | **Continuously adopted, no new action** | run-all's existing anti-drift test family + evaluation lane (#96/#100/#102) are the corresponding faces |
 
-## 逐维决策与理由
+## Per-Dimension Decisions and Rationale
 
-### 1+3. 双轨执行与写操作闭环 → M5 设计输入(三条机制进 M5 Entry checklist)
+### 1+3. Dual-Track Execution and Write-Operation Closed Loop → M5 Design Input (Three Mechanisms Enter the M5 Entry Checklist)
 
-T 系统的核心洞察:差旅不是所有环节都适合 LLM ReAct——查询/解释/推荐适合 LLM,
-「选择→确认→提交→支付」是强流程、强确认、强合规的状态机,必须用确定性 DAG。
+The T system's core insight: not every part of travel suits LLM ReAct — query/explain/recommend suit LLMs;
+"select → confirm → submit → pay" is a strong-process, strong-confirmation, strong-compliance state machine that must use a deterministic DAG.
 
-gotry 的对应接缝**已经冻结在词汇层**:ADR-17 `booking_saga_fsm.v1` 的边表就是 DAG
-(四条边全函数表 + 拒绝闭集 + deterministic/gate/external-event 三边型 + HITL 审批
-挂起-恢复),RFC S4 WriteGate L0-L4 渐进授权词汇已进 roadmap M5 交付物。T 系统
-的实践**验证了这一方向**,并补充三条 M5 Entry 时必须逐条对账的实现机制:
+gotry's corresponding seam **is already frozen at the vocabulary layer**: ADR-17 `booking_saga_fsm.v1`'s edge table is the DAG
+(four-edge total-function table + closed rejection set + deterministic/gate/external-event three edge types + HITL approval
+suspend-resume), and the RFC S4 WriteGate L0-L4 progressive authorization vocabulary is already in the roadmap M5 deliverables. The T system's
+practice **validates this direction** and adds three implementation mechanisms that must be reconciled item by item at M5 Entry:
 
-1. **写边界分离**:LLM(ReAct 位)只编排并产出「待确认动作」;确认后的真实提交
-   只能走确定性状态机(DAG 位)。映射:gotry L2 建议可由 LLM 产出,
-   L3/L4 提交必须走 saga 边表,LLM 不得直接构造写调用。
-2. **pending state 持久化**:用户确认前状态落共享存储,下一轮从 pending 恢复,不靠
-   LLM 重新理解上下文。映射:gotry 已有 `pending_writes` saga + ADR-15 账本(D-22
-   记录的空 receipt 物理 CHECK 是 M5 Entry 赎回项),天然兼容;turn-handoff 工单
-   (ADR-24)是「跨 turn 恢复」的另一既有面。
-3. **sealed interface + op 由 Kind 唯一派生**:Executor 不接受裸 ID,编译期隔离写路径;
-   敏感参数处理独立成模块(T 系统此模块近 800 行——安全边界的打磨成本不可避免,
-   预算上要预期)。映射:booking-saga 的拒绝闭集是同一思路的词汇层雏形,
-   M5 实装时升级为类型闭集。
+1. **Write boundary separation**: the LLM (at the ReAct position) only orchestrates and produces "pending-confirmation actions"; real submission
+   after confirmation can only go through the deterministic state machine (the DAG position). Mapping: gotry L2 suggestions may be produced by the LLM;
+   L3/L4 submissions must go through the saga edge table; the LLM must not directly construct write calls.
+2. **Pending state persistence**: before user confirmation, state lands in shared storage; the next turn resumes from pending, not relying on the
+   LLM to re-understand context. Mapping: gotry already has the `pending_writes` saga + the ADR-15 ledger (the empty receipt physical CHECK
+   recorded in D-22 is an M5 Entry redemption item), naturally compatible; turn-handoff work orders
+   (ADR-24) are another existing face of "cross-turn recovery".
+3. **Sealed interface + op uniquely derived from Kind**: the Executor accepts no raw IDs; write paths are isolated at compile time;
+   sensitive-parameter handling is its own module (this module in the T system is nearly 800 lines — the polishing cost of a security boundary is unavoidable,
+   and the budget must anticipate it). Mapping: booking-saga's closed rejection set is the vocabulary-layer embryo of the same idea,
+   upgraded to a closed type set at M5 implementation.
 
-约束不变:M5 Entry = M4 exit + 供应链协议(roadmap),未满足前不动任何写路径
-(AGENTS.md 红线:确认前不得实现任何直接写)。
+Constraint unchanged: M5 Entry = M4 exit + supply chain agreement (roadmap); no write path is touched before that is met
+(AGENTS.md red line: no direct write may be implemented before confirmation).
 
-### 2. 生产级状态持久化 → 缓行,D-15 触发器纪律不变
+### 2. Production-Grade State Persistence → Deferred, D-15 Trigger Discipline Unchanged
 
-T 系统的变更流推送、会话租约分布式锁、pending CAS、崩溃可恢复的持久化 turn 协调器,
-是多实例/FaaS 形态的必需品。gotry 是本地单实例,ADR-15 SQLite 账本 + ADR-16 双形态
-冻结已覆盖当前形态;D-15 已明确触发器(第二真实用户/多机部署/AaaS 立项)才启动
-Litestream/cr-sqlite/claim-fence 实装。
+The T system's change-stream push, session-lease distributed lock, pending CAS, and crash-recoverable persistent turn coordinator
+are necessities of the multi-instance/FaaS form. gotry is a local single instance; the ADR-15 SQLite ledger + ADR-16 dual-form
+freeze already cover the current form; D-15 has explicit triggers (second real user / multi-machine deployment / AaaS project initiation) before
+Litestream/cr-sqlite/claim-fence implementation starts.
 
-**登记**:D-15 触发时,T 系统的租约/CAS/pending-恢复三件套为参考实现清单。
-不提前做(§9 原则:不提前优化下阶段的事)。
+**Registration**: when D-15 triggers, the T system's lease/CAS/pending-recovery trio is the reference implementation checklist.
+Don't build ahead (§9 principle: don't optimize the next stage's work early).
 
-### 4. 合规收口层 → M6 设计输入(装饰器模式零侵入收口)
+### 4. Compliance Consolidation Layer → M6 Design Input (Decorator Pattern Zero-Intrusion Consolidation)
 
-T 系统的合规收口是 Model 接口的装饰器:统一在 service 层对全部 model 实例各包一层,
-ALLOW/MASKING/DEGRADE/REJECT 四动作,流式脱敏还原 + 多轮脱敏保持,业务调用点零改动。
+The T system's compliance consolidation is a decorator over the Model interface: uniformly wrapping every model instance once at the service layer,
+four actions ALLOW/MASKING/DEGRADE/REJECT, streaming masking-restore + multi-turn masking preservation, zero changes at business call sites.
 
-gotry 现状:C 端单用户,隐私红线是物理隔离(不收集密码/验证码/cookie 值,session 通道
-只取 cookie 名)。走向 M6 B2B(旅行社嵌入)时,企业行程/报销/身份数据必须过合规层。
-**装饰器模式是零侵入接入的范式选择**:gotry 的模型调用集中在 dsh 宿主层,M6 时在
-dsh-llm 桥接面加同类 wrapper 即可,不需要逐工具改。登记为 M6 交付物候选;当前不实现
-(C 端无敏感数据出域面)。
+gotry status quo: C-side single user; the privacy red line is physical isolation (no collection of passwords/verification codes/cookie values; the session channel
+takes only cookie names). Moving toward M6 B2B (travel agency embedding), enterprise itinerary/expense/identity data must pass a compliance layer.
+**The decorator pattern is the paradigm choice for zero-intrusion integration**: gotry's model calls concentrate in the dsh host layer; at M6,
+adding a similar wrapper at the dsh-llm bridge face suffices — no per-tool changes needed. Registered as an M6 deliverable candidate; not implemented now
+(the C-side has no sensitive-data egress surface).
 
-### 5. 事件驱动增量渲染 → 已有同构面,不新增机制
+### 5. Event-Driven Incremental Rendering → Isomorphic Face Already Exists, No New Mechanism
 
-T 系统在 DAG 执行中逐块 emit 事件(headline/table/card/notice),逐块增量推送给前端,
-用户不用等全跑完;并有渲染 parity 测试保证事件渲染与模板逐字节一致。
+The T system emits events block by block during DAG execution (headline/table/card/notice), pushing incrementally to the frontend —
+users don't wait for the full run; and it has rendering parity tests guaranteeing that event rendering is byte-identical to templates.
 
-gotry 对照面:**Booking Copilot v2 的 typed SSE 事件流已是同构实现**(action.receipt /
-approval.granted/consumed / decision batch,精确 replay,run-all §49)。dsh 产品面的
-一次性渲染是宿主渲染能力约束,不是 gotry 可单边改的面;长计算的感知等待已由 ADR-24
-handoff(落工单 + 告知 ETA + 回访方式)给出产品答案。结论:**不新增机制**;若 dsh
-上游开放增量渲染能力,再把「求解进度事件」(已捕获约束/候选逐个出)映射进去——
-登记为 dsh 能力依赖,不立 gotry 侧工作项。
+gotry counterpart: **Booking Copilot v2's typed SSE event stream is already an isomorphic implementation** (action.receipt /
+approval.granted/consumed / decision batch, precise replay, run-all §49). The dsh product surface's
+one-shot rendering is a host rendering capability constraint, not a face gotry can change unilaterally; the perceived wait of long computation already has a product answer in ADR-24
+handoff (file a work order + announce ETA + follow-up method). Conclusion: **no new mechanism**; if dsh
+upstream opens incremental rendering capability, then map "solving progress events" (constraints captured / candidates emerging one by one) into it —
+registered as a dsh capability dependency, no gotry-side work item created.
 
-### 6. 双模型分级/槽位小模型/上下文压缩 → 不采纳(现状)
+### 6. Dual-Model Tiering / Slot Small Model / Context Compaction → Not Adopted (Status Quo)
 
-T 系统用快/慢双模型分级 + 专门训练的槽位提取小模型 + 分层上下文压缩。
-gotry 的同问题已由更便宜的机制覆盖:
+The T system uses fast/slow dual-model tiering + a purpose-trained slot-extraction small model + layered context compaction.
+gotry's same problems are covered by cheaper mechanisms:
 
-- turn 分流 = ADR-24 `turn-policy.ts` **确定性分类器(零 LLM)**,比小模型更便宜且可复现;
-- 槽位抽取 = `slot-spec.ts` 确定性代码(逐字保留纪律),不依赖 LLM 结构化提取;
-- 上下文压力 = handoff 工单(落盘 + ETA)规避,而非压缩;
-- 模型选择归 dsh 宿主配置,gotry 不持有模型路由面(双模型分级无从下手也无必要)。
+- turn triage = ADR-24 `turn-policy.ts` **deterministic classifier (zero LLM)**, cheaper than a small model and reproducible;
+- slot extraction = `slot-spec.ts` deterministic code (character-preservation discipline), no dependence on LLM structured extraction;
+- context pressure = avoided via handoff work orders (persisted + ETA), not compression;
+- model selection belongs to dsh host configuration; gotry holds no model routing surface (dual-model tiering has no entry point and no need).
 
-若未来出现真实成本/延迟压力数据,再议;不以 T 系统有而 gotry 无为由引入。
+Revisit if real cost/latency pressure data appears in the future; don't introduce something merely because the T system has it and gotry doesn't.
 
-### 7. 领域 skill 体系 → 方向采纳,M6 落地
+### 7. Domain Skill System → Direction Adopted, Lands M6
 
-T 系统的 flight/hotel/train/requisition/order skill = 工具集 + prompt + 边界守卫
-+ 多渲染器(企业 IM 卡片/多种开放 UI 协议/Web Markdown)。这正是 M6「一个 B2B 场景
-(旅行社嵌入)零内核改动跑通」的天然交付形态:不同客户加载不同 skill 组合。
+The T system's flight/hotel/train/requisition/order skills = tool set + prompt + boundary guards
++ multiple renderers (enterprise IM cards / multiple open UI protocols / Web Markdown). This is exactly the natural delivery form of M6 "one B2B scenario
+(travel agency embedding) runs through with zero kernel changes": different customers load different skill combinations.
 
-gotry 现状:工具按检索/判定/记忆/产物分组已在架构面与 README 成型,但无 skill 级封装。
-**当前单租户 C 端不提前抽象**(YAGNI);M6 Entry 时以 skill 边界重组工具注册面,
-渲染器适配随行(dsh 原生 UI 之外的客户渲染面)。
+gotry status quo: tools grouped by retrieval/judgment/memory/artifacts are already shaped in the architecture face and the README, but there is no skill-level packaging.
+**The current single-tenant C-side doesn't abstract ahead** (YAGNI); at M6 Entry, reorganize the tool registration surface by skill boundaries,
+with renderer adaptation following (customer rendering surfaces beyond the dsh native UI).
 
-### 8. 工程化成熟度 → 持续采纳,无新动作
+### 8. Engineering Maturity → Continuously Adopted, No New Action
 
-T 系统的渲染 parity test(逐字节一致)、路由 eval、灰度发布对应到 gotry 既有面:
+The T system's rendering parity test (byte-identical), routing eval, and canary release map to gotry's existing faces:
 
-- parity test 思路 = gotry 防漂移测试族(§38 扩展桥常量锁、12306 站表快照防漂移
-  (2026-09-03,`data/stations-12306-verify.json`)、双源 fixture scorer §25);
-- 路由 eval = evaluation lane 的 Round 系列(#96 传输失败分型 / #100 minimal kernel /
-  #102 typed tool contracts,进行中);
-- 灰度发布 = npm dist-tag 机制 + 发布确认制(rc → latest 迁移即灰度语义)。
+- parity test idea = gotry's anti-drift test family (§38 extended-bridge constant lock, 12306 station-table snapshot anti-drift
+  (2026-09-03, `data/stations-12306-verify.json`), dual-source fixture scorer §25);
+- routing eval = the evaluation lane's Round series (#96 transport failure taxonomy / #100 minimal kernel /
+  #102 typed tool contracts, in progress);
+- canary release = the npm dist-tag mechanism + release confirmation system (rc → latest migration is canary semantics).
 
-差距自认:gotry 无旅行域外 benchmark 通过记录(D-28,外部 benchmark 多轮仍在
-diagnostic-only),这是工程化成熟度上真实落后的点,由 evaluation lane 按节奏推进,
-不因为本研究改变优先级。
+Self-acknowledged gap: gotry has no benchmark pass record outside the travel domain (D-28; external benchmarks after multiple rounds are still
+diagnostic-only) — a genuinely behind point in engineering maturity, advanced by the evaluation lane at its own pace;
+this study does not change priorities.
 
-## 差异化保留清单(不被带偏)
+## Differentiation Preservation List (Don't Get Led Astray)
 
-| gotry 有、T 系统无 | 保留理由 |
+| gotry has, T system lacks | Preservation rationale |
 |---|---|
-| Z3 形式化求解(模型翻译,solver 决策) | 降幻觉的根本路径;T 系统靠 LLM+规则做可行性判断,无 SMT 求解器 |
-| 证据链标签(`[实时API]`/`[会话]`/`[静态包]`) | 渲染层附加的诚实标注体系,T 系统无对应物 |
-| 门到门全成本(早起惩罚/到达精力) | 推荐排序的理念差异,不止价格/时间 |
-| 愿望池「下一次出发」闭环 | 不可行需求存条件、下次自动召回的产品设计 |
-| 开源透明 ADR 文化 + 诚实标注未完成项 | 协作信任基础 |
+| Z3 formal solving (model translates, solver decides) | the fundamental path to reducing hallucination; the T system does feasibility judgment with LLM+rules, no SMT solver |
+| Evidence chain labels (`[实时API]`/`[会话]`/`[静态包]`) | an honesty labeling system attached at the rendering layer; the T system has no counterpart |
+| Door-to-door full cost (early-rise penalty / arrival energy) | a philosophical difference in recommendation ranking, beyond price/time |
+| Wish pool "next departure" closed loop | a product design that stores conditions for infeasible requests and auto-recalls next time |
+| Open-source transparent ADR culture + honest labeling of unfinished items | the foundation of collaboration trust |
 
-## 反直觉发现(写进决策的理由)
+## Counterintuitive Findings (Reasons Written Into Decisions)
 
-T 系统的核心编排单文件约 3.7k 行、敏感参数处理单文件近 800 行——即使是生产级系统,
-Agent 核心循环与安全边界也需要极大量工程代码打磨。**gotry 不应追求代码量等价,应追求
-用形式化方法达到同等安全性但代码面更小**:Z3 把「LLM 猜 + 规则补」收敛为约束求解,
-booking_saga_fsm 把编排状态机收敛为词汇层边表。但 M5 写路径的安全代码量会真实增长
-(参数闭集/确认面/审计链),规模预算上须有预期——形式化减少的是**判定逻辑**的代码,
-不减少**安全边界**的代码。
+The T system's core orchestration is a single file of ~3.7k lines; sensitive-parameter handling a single file of nearly 800 lines — even for production-grade systems,
+the Agent core loop and security boundary need extremely large amounts of engineering code polish. **gotry should not pursue code-volume equivalence; it should pursue
+equal safety via formal methods with a smaller code surface**: Z3 converges "LLM guesses + rules patch" into constraint solving;
+booking_saga_fsm converges the orchestration state machine into a vocabulary-layer edge table. But M5 write-path safety code volume will genuinely grow
+(closed parameter sets / confirmation surfaces / audit chain) — the scale budget must anticipate this: formalization reduces **decision-logic** code,
+not **security-boundary** code.
 
-## 对 v0.0.1 正式 release 的影响
+## Impact on the v0.0.1 Formal Release
 
-**无阻塞项**。八维借鉴全部落在 M5/M6 设计输入或「已有同构面/不采纳」;v0.0.1 前的
-真实缺口是 2026-09-02 真实会话暴露的 bug 群(#106/#107/#108,修复均已落地,残余为
-founder 决策项)与 evaluation lane 的 #102。本研究不要求 v0.0.1 范围内任何代码变更。
+**No blockers**. All eight dimensions of borrowing land as M5/M6 design inputs or "isomorphic face already exists / not adopted"; the
+real gaps before v0.0.1 are the bug cluster exposed by the 2026-09-02 real session (#106/#107/#108, fixes all landed, the remainder are
+founder decision items) and the evaluation lane's #102. This study requires no code changes within v0.0.1 scope.

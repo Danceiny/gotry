@@ -1,3 +1,5 @@
+[English](evaluation-foundation.md) | [简体中文](evaluation-foundation.zh-CN.md)
+
 # Evaluation Phase 0 foundation
 
 > Status: living contract (Phase 0).

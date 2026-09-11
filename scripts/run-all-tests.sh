@@ -21,6 +21,7 @@ else
   export PATH="$(dirname "$TSX_BIN"):$PATH"
 fi
 (node scripts/run-all-tests-wiring-tests.mjs) || FAIL=1
+(node scripts/check-docs-i18n.mjs) || FAIL=1  # 双语对存在性+结构对等(不一致视为 bug)
 (node scripts/build-dist.mjs) || FAIL=1
 (node scripts/build-dist-compat-tests.mjs) || FAIL=1
 
@@ -245,6 +246,10 @@ echo "=== 29. 账本 CLI e2e(migrate 快照/stats/log/export 视图单向/forget
 echo
 echo "=== 29b. 账本 tenant 修复计划(#254:只读 inventory/dry-run before-after/无证据零搬移/跨租户同 idem_key 同 wish_id 拒绝/重复 dry-run 幂等/正本零写) ==="
 (cd ts && npx tsx scripts/ledger-repair-plan-tests.ts | tail -1) || FAIL=1
+
+echo
+echo "=== 29c. 账本 tenant 修复 apply(#254:授权门零写/CAS搬移/目标tenant可见不串读/幂等/注入失败回滚/backup rollback/隔离stateRoot) ==="
+(cd ts && npx tsx scripts/ledger-repair-apply-tests.ts | tail -1) || FAIL=1
 
 echo
 echo "=== 30. Z3 WASM race 回归(engine/journey/unified 三形态同轮并发压测;修复验证面,run-all §1 止血移除的闸) ==="
@@ -506,7 +511,7 @@ echo "=== 53. 愿望池通道否证(外部事件接缝第 2 段:conditions.chann
 (cd ts && npx tsx scripts/wish-channel-gate-tests.ts) || FAIL=1
 
 echo
-echo "=== 54. persona 表层护栏(#192 回归锚:表层规则句存在/22 条契约编号完整/skill 失败行为指引;全离线) ==="
+echo "=== 54. persona 表层护栏(#192/#2/#194 回归锚:表层规则句存在/13 条契约编号完整(2026-09-11 瘦身改锚)/skill 失败行为指引/动态变量注入面;全离线) ==="
 (cd ts && npx tsx scripts/persona-surface-guard-tests.ts) || FAIL=1
 
 echo

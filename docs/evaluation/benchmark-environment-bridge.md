@@ -1,3 +1,5 @@
+[English](benchmark-environment-bridge.md) | [简体中文](benchmark-environment-bridge.zh-CN.md)
+
 # External benchmark environment bridge
 
 > Status: living engineering ledger (Phase 1 treatment seam; default-off, not a product runtime dependency).

@@ -1,138 +1,139 @@
-# GoTry Token 手册(唯一 token 权威面)
+[English](tokens.md) | [简体中文](tokens.zh-CN.md)
 
-> 定位:**所有外部凭证的精准获取步骤 + 统一存放位置**。founder 给过的 token 永远在这里查得到——不重问、不丢失。
-> 纪律(2026-08-24 founder 锐评后确立):token 进 `.env`(gitignored),不进 `~/.npmrc` 全局、不进 git 跟踪文件、不进 docs 明文。
+# GoTry Token Manual (the single token authority)
+
+> Positioning: **precise acquisition steps + unified storage location for all external credentials**. Every token the founder has given can always be found here — never re-asked, never lost.
+> Discipline (established after the founder's sharp critique on 2026-08-24): tokens go into `.env` (gitignored); not into the global `~/.npmrc`, not into git-tracked files, not into docs in plaintext.
 
 ---
 
-## 统一存放:仓库根 `.env`(gitignored)
+## Unified Storage: Repo Root `.env` (gitignored)
 
 ```
-LLM_API_KEY=...          # DeepSeek(已存,2026-08-22 给)
-NPM_TOKEN=...            # npmjs(已存,2026-08-24 给,见下)
-TWITTER_AUTH_TOKEN=      # agent-reach 渠道(未给,给即填)
+LLM_API_KEY=...          # DeepSeek (stored, given 2026-08-22)
+NPM_TOKEN=...            # npmjs (stored, given 2026-08-24, see below)
+TWITTER_AUTH_TOKEN=      # agent-reach channel (not given, fill on receipt)
 TWITTER_CT0=
-XHS_COOKIES=             # 小红书 Cookie-Editor JSON
+XHS_COOKIES=             # Xiaohongshu Cookie-Editor JSON
 ```
 
-**founder 给 token 的格式**:对话里直接贴(任何格式都行),我自动写 `.env` 并立刻用。
+**The format for the founder giving tokens**: paste directly in conversation (any format works); I auto-write `.env` and use it immediately.
 
 ---
 
-## npm(npmjs.org)— ✅ 已打通(2026-08-22,@danceiny/gotry@0.0.1-rc.5 PUT 200)
+## npm (npmjs.org) — ✅ Connected (2026-08-22, @danceiny/gotry@0.0.1-rc.5 PUT 200)
 
-**隔离命令**(2026-08-22 founder:「不要用全局的 ~/.npmrc,单独弄个命令隔离开」):
-- `./scripts/publish-npm.sh` — `NPM_CONFIG_USERCONFIG` 指向仓内 `.npmrc.publish`(gitignored,.env 现生成),**不读写全局 ~/.npmrc**,不受 bnpm registry/prefix 影响;废弃旧脚本 `npm config set` 往全局写 token 的做法(污染日工作具 npmrc 的源头之一)
-- 实测全过程:whoami=danceiny 通过;`gotry` 裸名与既存 `go-try` 撞名(npm 新规)→ 改 scoped `@danceiny/gotry`;founder 开通 2FA(恢复码存 `~/work/npm_recovery_codes.txt`,已耗 4 枚);**恢复码可当 `--otp` 用**,最终 `npm publish --access public --otp=<恢复码>` → PUT 200 + public access。新包有 npm 安全审查滞留,PUT 200 后 view 可能 404 几分钟—几小时,属正常
-- **⚠️ 2026-08-28 rc.10 发布实况(覆盖旧流程)**:.env 的 legacy NPM_TOKEN 已失效(whoami 401);**恢复码作 --otp 已被 npm 拒收**(「需要 authenticator 的一次性密码」,两枚实测均拒)。可行路径 = ① web 登录:npm CLI 无 TTY 会落交互模式失败,须用 npm-profile 库级驱动(关键头 `npm-auth-type: web`,否则 registry 400 当 couch 登录)取真实 loginUrl → 浏览器 Approve → 会话 token 写 `.npmrc.publish`;② 发布时 EOTP 用 expect 包 PTY 跑 `npm publish`,otplease 自动开浏览器走 `auth/cli` 二次验证,Approve 后自动续发布成功。rc.10 即此路径发出
-- **⚠️ rc.15 发布实录(2026-08-29,#50③ 固化为标准发布动作)**:
-  - web 会话 token(`.npmrc.publish`,路径 A)可登录、可 whoami,但 **publish PUT 被账号级 2FA 拦截(EOTP→网页二次确认)**;npm 日志同时给出 deprecation 警告——bypass-2FA token 的 direct publish 正被收紧(<https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>,target 2027-01)。
-  - 实走通路径 = **PTY 终端下 `npm publish`**(rc.10 起为 expect 包 PTY)→ otplib 弹网页授权 → **founder 浏览器点一次 Approve** → PUT 自动重试成功。**「发布 = 一次浏览器 approve,由 founder 点击」自此为标准动作**(已同步 AGENTS.md 发布闸)
-- **以后每次发布**: `TAG=latest ./scripts/publish-npm.sh`(dist-tag 必须显式传,#50①:旧默认 rc.5 曾把新包发到陈旧通道);凭据走路径 A web 会话——`--otp=<恢复码>` 已被 npm 拒收,granular bypass token(路径 B)在 npm 收紧通道上,均不作主路径
-- **dist-tag 维护(#50②,2026-09-02 已执行)**:founder 指令窗内经 `.env` NPM_TOKEN(granular)执行 `npm dist-tag add @danceiny/gotry@0.0.1-rc.16 rc --registry=https://registry.npmjs.org/` 成功——`rc` 由滞留 rc.7 迁至 rc.16;**但 DELETE dist-tag 端点对该 token 403**(curl 直连复核同 403,granular token 无删除权)→ 杂散 `rc.5` 以 add 通道改指 `0.0.1-rc.5` 自洽,`rc.11–rc.14` 各指同名版本;五别名彻底删除需 npmjs web UI 一次 founder 登录(package → Settings → manage dist-tags)。**runbook 拆两档**:改指(add)token 可直做;删除必须 web UI
-- **删除通道穷尽验证(2026-09-08,rc.20 收尾复测,勿再重试)**:agent 侧四路全 403/405——①`.env` granular token 走 CLI 与 curl 直连 DELETE 同 403(报文明示「Granular access tokens that bypass two-factor authentication may not perform this action」,即 npm 2026-07-31 收紧政策的 dist-tag 面);②`~/.npmrc` 旧 granular token 401(已失效);③主 worktree 遗留 `.npmrc.publish` token(whoami=danceiny 有效,实为 granular 形态 `npm_`×40,非 web 会话)对 DELETE 仍 403——**granular token 有效性≠删除权**;④registry dist-tags 集合整体 PUT 端点 405(不开放)。**web 会话 token 能否过 DELETE 未实测**(无 founder 浏览器授权建不了会话);脚本面已配套 `./scripts/publish-npm.sh login`(终态,豁免 TAG 闸)+ `rmtag` 子命令,login 后 rmtag 若仍 403,则以 npmjs web UI 为准(package → Settings → manage dist-tags)
-- **路径 A(推荐)**: `./scripts/publish-npm.sh login` → 浏览器点一次 Approve → 会话 token 只写 .npmrc.publish → 再跑一次脚本即发
-- 路径 B(**收紧中,不作主路径**): npmjs 网页建 granular token(允许 bypass 2FA + packages read-write)→ 存 .env 的 NPM_TOKEN——npm 政策 target 2027-01 禁 bypass-2FA direct publish,rc.15 发布日志已见 deprecation 警告
+**Isolation command** (2026-08-22 founder: "don't use the global ~/.npmrc, make a separate command to isolate it"):
+- `./scripts/publish-npm.sh` — `NPM_CONFIG_USERCONFIG` points to the in-repo `.npmrc.publish` (gitignored, generated from .env on the fly), **never reads/writes the global ~/.npmrc**, unaffected by bnpm registry/prefix; deprecated the old script's practice of `npm config set` writing tokens to the global config (one of the sources polluting the daily-work npmrc)
+- Full process as actually tested: whoami=danceiny passed; the bare name `gotry` collided with the existing `go-try` (new npm rule) → switched to scoped `@danceiny/gotry`; founder enabled 2FA (recovery codes stored at `~/work/npm_recovery_codes.txt`, 4 used); **recovery codes can be used as `--otp`**; final `npm publish --access public --otp=<recovery code>` → PUT 200 + public access. New packages are subject to an npm security review hold; view may 404 for minutes to hours after PUT 200 — normal
+- **⚠️ 2026-08-28 rc.10 release reality (supersedes the old flow)**: the legacy NPM_TOKEN in .env has expired (whoami 401); **recovery codes as --otp have been rejected by npm** ("one-time password from an authenticator required", both tested codes rejected). Viable paths = ① web login: npm CLI without a TTY falls into interactive mode and fails; you must use npm-profile library-level driving (critical header `npm-auth-type: web`, otherwise the registry 400 treats it as a couch login) to get the real loginUrl → browser Approve → session token written to `.npmrc.publish`; ② at publish time, for EOTP use an expect-wrapped PTY to run `npm publish`; otplease auto-opens the browser for `auth/cli` second verification; after Approve, the publish automatically continues to success. rc.10 was shipped via this path
+- **⚠️ rc.15 release record (2026-08-29, codified by #50③ as the standard release action)**:
+  - The web session token (`.npmrc.publish`, path A) can log in and whoami, but **publish PUT is blocked by account-level 2FA (EOTP → web second confirmation)**; the npm logs also gave a deprecation warning — direct publish with bypass-2FA tokens is being tightened (<https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>, target 2027-01).
+  - The path actually walked = **`npm publish` under a PTY terminal** (expect-wrapped PTY since rc.10) → otplib pops web authorization → **founder clicks Approve once in the browser** → PUT auto-retries to success. **"Release = one browser approve, clicked by the founder" is the standard action from here on** (synced to the AGENTS.md release gate)
+- **Every future release**: `TAG=latest ./scripts/publish-npm.sh` (dist-tag must be passed explicitly, #50①: the old default rc.5 once pushed new packages to a stale channel); credentials use the path A web session — `--otp=<recovery code>` is rejected by npm, and the granular bypass token (path B) is on npm's tightening track; neither is a main path
+- **dist-tag maintenance (#50②, executed 2026-09-02)**: within a founder instruction window, using the `.env` NPM_TOKEN (granular), ran `npm dist-tag add @danceiny/gotry@0.0.1-rc.16 rc --registry=https://registry.npmjs.org/` successfully — `rc` moved from the stranded rc.7 to rc.16; **but the DELETE dist-tag endpoint returns 403 for this token** (direct curl recheck also 403; a granular token has no delete permission) → the stray `rc.5` was repointed via the add channel to `0.0.1-rc.5` for self-consistency, and `rc.11–rc.14` each point to their same-named versions; fully deleting the five aliases requires one founder login on the npmjs web UI (package → Settings → manage dist-tags). **Runbook split into two tiers**: repointing (add) can be done directly with a token; deletion must use the web UI
+- **Deletion channel exhaustion verified (2026-09-08, rc.20 wrap-up retest, do not retry)**: agent side, four routes all 403/405 — ① the `.env` granular token via CLI and direct curl DELETE both 403 (the error message explicitly states "Granular access tokens that bypass two-factor authentication may not perform this action", i.e., the dist-tag face of npm's 2026-07-31 tightening policy); ② the old granular token in `~/.npmrc` 401 (expired); ③ the leftover `.npmrc.publish` token in the main worktree (whoami=danceiny valid, actually granular form `npm_`×40, not a web session) still 403 on DELETE — **granular token validity ≠ delete permission**; ④ the registry dist-tags collection-wide PUT endpoint 405 (not open). **Whether a web session token can pass DELETE is untested** (a session cannot be established without founder browser authorization); the script side already ships `./scripts/publish-npm.sh login` (final state, exempt from the TAG gate) + an `rmtag` subcommand; if rmtag still 403s after login, the npmjs web UI is authoritative (package → Settings → manage dist-tags)
+- **Path A (recommended)**: `./scripts/publish-npm.sh login` → click Approve once in the browser → the session token is written only to .npmrc.publish → run the script again to publish
+- Path B (**being tightened, not a main path**): create a granular token on the npmjs web (allow bypass 2FA + packages read-write) → store as NPM_TOKEN in .env — npm policy target 2027-01 bans bypass-2FA direct publish; the deprecation warning was already seen in the rc.15 release logs
 
-### 历史 token 备注
+### Historical Token Note
 
-2026-08-22/24 曾有一枚 legacy classic token 写进 `.env` 的 `NPM_TOKEN`(后失效,whoami 401);其明文曾误入 git 跟踪文档(私有仓),按 founder 指示不展开;要换随时 npmjs 网页 revoke。**教训已固化:docs 一律不明文存 token。**
+On 2026-08-22/24 there was a legacy classic token written into `.env`'s `NPM_TOKEN` (later expired, whoami 401); its plaintext once mistakenly entered a git-tracked document (private repo); per founder instruction, not elaborated; to rotate, revoke anytime on the npmjs web. **The lesson is codified: docs never store tokens in plaintext.**
 
-### 403 的精确原因(npm 2026-07-31 政策,已实测验证)
+### Precise Causes of 403 (npm 2026-07-31 Policy, Verified by Testing)
 
-| 操作 | 这个 classic token | 原因 |
+| Operation | This classic token | Reason |
 |---|---|---|
-| `npm whoami` | ✅ 通 | 读操作不受限 |
-| `npm profile get` | ❌ 403 | 2026-07-31 起 bypass-2FA token 禁做账户管理 |
-| `npm publish` | ❌ 403 | classic token 无 2FA 能力;需 web 会话或 bypass token |
+| `npm whoami` | ✅ passes | read operations unrestricted |
+| `npm profile get` | ❌ 403 | since 2026-07-31 bypass-2FA tokens are banned from account management |
+| `npm publish` | ❌ 403 | a classic token has no 2FA capability; needs a web session or a bypass token |
 
-政策原文:<https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>
-direct publish 的 token 限制 target 2027-01;主路径 = **路径 A web 会话(发布时 founder 一次浏览器 approve)**;Granular bypass token(路径 B)仍可用但已在退役轨道,中期迁移到路径 C OIDC。
+Policy original text: <https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>
+The token restriction on direct publish targets 2027-01; the main path = **path A web session (one browser approve by the founder at release)**; the granular bypass token (path B) is still usable but on the retirement track; mid-term migration to path C OIDC.
 
-### 路径 A:web 会话(最简,10 秒,无需生成任何 token)
+### Path A: Web Session (Simplest, 10 Seconds, No Token Generation Needed)
 
-我随时能生成一次性链接,你在浏览器点一次 Approve:
+I can generate a one-time link anytime; you click Approve once in the browser:
 
 ```sh
-# 我跑这个,把输出的链接给你,你浏览器打开点确认
+# I run this, give you the output link, you open it in the browser and confirm
 npm login --auth-type=web --registry=https://registry.npmjs.org/
-# 链接形如 https://www.npmjs.com/login?next=/login/cli/<uuid>
-# 你点完 → 我这边会话建立 → 立即 npm publish(会话自带 2FA 授权)
+# the link looks like https://www.npmjs.com/login?next=/login/cli/<uuid>
+# after you click → my session is established → immediately npm publish (the session carries 2FA authorization)
 ```
 
-链接时效约 5 分钟;过期我重新生成就行,零成本。
+The link is valid for about 5 minutes; if it expires I just regenerate — zero cost.
 
-### 路径 B:Granular Access Token(一劳永逸,约 60 秒)
+### Path B: Granular Access Token (One-and-Done, ~60 Seconds)
 
-1. 浏览器开 <https://www.npmjs.com/settings/danceiny/tokens>
+1. Open in the browser <https://www.npmjs.com/settings/danceiny/tokens>
 2. **Generate New Token → Granular Access Token**
-3. 表单关键三处:
-   - Expiration: 选短期(7 天足够)
+3. Three key form fields:
+   - Expiration: choose short term (7 days is enough)
    - Packages and scopes: **Read and write**
-   - **勾选 "Allow token to bypass two-factor authentication"**(页面下方,不勾等于白建)
-4. 生成后复制 `npm_` 开头的串,贴给我 → 我写 `.env` → `./scripts/publish-npm.sh` 发
+   - **Check "Allow token to bypass two-factor authentication"** (lower on the page; not checking it = wasted creation)
+4. After generation, copy the string starting with `npm_`, paste it to me → I write `.env` → `./scripts/publish-npm.sh` publishes
 
-### 路径 C(中期主评估,#50③):GitHub Actions OIDC trusted publishing
+### Path C (Mid-Term Main Evaluation, #50③): GitHub Actions OIDC Trusted Publishing
 
-包首次发上去后,在 npmjs 包设置页关联 GitHub 仓库 + workflow,
-之后 CI 自动发布,**永久无 token 无 2FA**。首次发布前用不了——先走 A 或 B。
+After the package's first publish, associate the GitHub repo + workflow on the npmjs package settings page; afterwards CI auto-publishes, **permanently token-free and 2FA-free**. Unusable before the first publish — walk A or B first.
 
-### 发布脚本(已就位)
+### Publish Script (Ready)
 
 ```sh
-TAG=latest ./scripts/publish-npm.sh                    # dist-tag 必须显式传(#50①);凭据优先用 .npmrc.publish 会话,回退 .env 的 NPM_TOKEN
-NPM_TOKEN=npm_xxx TAG=latest ./scripts/publish-npm.sh  # 或临时注入 token
+TAG=latest ./scripts/publish-npm.sh                    # dist-tag must be explicit (#50①); credentials prefer the .npmrc.publish session, fall back to NPM_TOKEN in .env
+NPM_TOKEN=npm_xxx TAG=latest ./scripts/publish-npm.sh  # or inject a token ad hoc
 ```
 
 ---
 
-## LLM(DeepSeek)
+## LLM (DeepSeek)
 
-已存 `.env` 的 `LLM_API_KEY`(2026-08-22 给,`sk-f2f5...83d8`)。
-获取新 key:<https://platform.deepseek.com/api_keys> → Create new key → 直接贴给我。
+Already stored in `.env`'s `LLM_API_KEY` (given 2026-08-22, `sk-f2f5...83d8`).
+Get a new key: <https://platform.deepseek.com/api_keys> → Create new key → paste directly to me.
 
-## LLM 价表与价格漂移监测(issue #49)
+## LLM Price Table and Price Drift Monitoring (issue #49)
 
-> **换模型 / 换中转时价表随动**:`ts/data/llm-price-table.json` 是 `gotry_m3_nightly_run_v1.cost_usd` 唯一事实源(ADR-11),peak 保守上界只高不低。
-> 增 provider/改价:`gotry_llm_price_table_v2` schema;`loadPriceTable` 双格式兼容 v1;unknown model → fail-closed,不猜价。
-> 长效机制:`npx tsx scripts/price-drift-watch.ts`(默认离线对照 baseline fixture 比对输出 PR-就绪 Markdown diff)/`--fetch`(联网拉官方页 + 首次写 fixture,fetch 失败/解析失败一律 SKIP 零写未知数据);**永不自动 apply 价格**——价格调整必须人工 PR,符合 ADR-11「peak only-high-not-low」。
+> **The price table follows model/relay switches**: `ts/data/llm-price-table.json` is the single source of truth for `gotry_m3_nightly_run_v1.cost_usd` (ADR-11); the peak conservative upper bound only goes up, never down.
+> Adding a provider/changing prices: `gotry_llm_price_table_v2` schema; `loadPriceTable` is dual-format compatible with v1; unknown model → fail-closed, no price guessing.
+> Long-term mechanism: `npx tsx scripts/price-drift-watch.ts` (default offline comparison against the baseline fixture, outputs a PR-ready Markdown diff) / `--fetch` (online pull of official pages + first-time fixture write; fetch failure/parse failure always SKIP, zero writes of unknown data); **never auto-apply prices** — price changes must be manual PRs, per ADR-11 "peak only-high-not-low".
 
 ---
 
-## agent-reach 渠道(全部选配,给即接,不催)
+## agent-reach Channels (All Optional, Connected on Receipt, No Chasing)
 
-> 运行时本体(python `.venv` + agent-reach)状态随时可查:**`npx @danceiny/gotry doctor`**(或在 dsh 对话里让助手调 `gotry_doctor` 工具);缺装时 **`npx @danceiny/gotry doctor --fix`** 一键补装(官方 pip,装入包内 `.venv`)。下表只是**渠道凭证**,仍需逐渠道选配。
+> The runtime body (python `.venv` + agent-reach) status is checkable anytime: **`npx @danceiny/gotry doctor`** (or in a dsh conversation, ask the assistant to call the `gotry_doctor` tool); when something is missing, **`npx @danceiny/gotry doctor --fix`** one-click installs it (official pip, installed into the in-package `.venv`). The table below is only **channel credentials**; each channel still needs individual opt-in.
 
-| 渠道 | 需要什么 | 获取步骤 | 给我格式 |
+| Channel | What's needed | Acquisition steps | Format to give me |
 |---|---|---|---|
-| Twitter/X | 2 个 cookie 值 | 浏览器登录 x.com → F12 → Application → Cookies → 复制 `auth_token` 和 `ct0` | 对话里贴两行 |
-| 小红书 | Cookie JSON | Chrome 装 Cookie-Editor 插件 → 登录小红书 → 插件 Export(JSON) | 贴 JSON |
-| Reddit | rdt-cli cookie | OpenCLI 浏览器登录态(桌面版) | 我检测 OpenCLI 存在即用 |
-| B站字幕 | (可选)OpenCLI | 桌面装 OpenCLI 登录 B站 | 自动检测 |
-| 雪球/股票 | 登录 Cookie | `.venv/bin/agent-reach configure --from-browser chrome --platform xueqiu`(上游指引原样透传) | 配好即用,`gotry_agent_reach` 反射调 get_stock_quote |
-| YouTube 字幕 | yt-dlp | `brew install yt-dlp` | 装完即用,无需给我任何东西 |
-| GitHub 私有仓 | gh 登录 | `brew install gh && gh auth login` | 已装即用 |
-| 全网语义搜索 | mcporter+exa | `npm i -g mcporter && mcporter config add exa https://mcp.exa.ai/mcp --scope home`(免费无 key) | 装完即用 |
+| Twitter/X | 2 cookie values | log in to x.com in the browser → F12 → Application → Cookies → copy `auth_token` and `ct0` | paste two lines in conversation |
+| Xiaohongshu | Cookie JSON | install the Cookie-Editor extension in Chrome → log in to Xiaohongshu → extension Export (JSON) | paste JSON |
+| Reddit | rdt-cli cookie | OpenCLI browser login state (desktop) | I detect OpenCLI presence and use it |
+| Bilibili subtitles | (optional) OpenCLI | install OpenCLI on desktop, log in to Bilibili | auto-detected |
+| Xueqiu/stocks | login Cookie | `.venv/bin/agent-reach configure --from-browser chrome --platform xueqiu` (upstream instructions passed through verbatim) | ready once configured; `gotry_agent_reach` reflectively calls get_stock_quote |
+| YouTube subtitles | yt-dlp | `brew install yt-dlp` | ready once installed, nothing to give me |
+| GitHub private repos | gh login | `brew install gh && gh auth login` | ready once installed |
+| Web-wide semantic search | mcporter+exa | `npm i -g mcporter && mcporter config add exa https://mcp.exa.ai/mcp --scope home` (free, no key) | ready once installed |
 
-**零配置已通的**(无需任何操作):web 读页(r.jina.ai)/ RSS / V2EX / B站搜索。
+**Zero-config already connected** (no action needed): web page reading (r.jina.ai) / RSS / V2EX / Bilibili search.
 
-## 高德 MCP Server(官方 agent 通道,P0 尽调 2026-08-28)
+## Amap MCP Server (Official Agent Channel, P0 Due Diligence 2026-08-28)
 
-| 项 | 内容 |
+| Item | Content |
 |---|---|
-| 能力 | 地理编码/逆地理/POI 搜索/驾公步骑路线(dsh-map-tools 的 OSRM 免费版升级面) |
-| 获取 | <https://console.amap.com/dev/key/app> → 创建应用 → 添加 Key(服务平台选「Web 服务」)→ 贴给我 |
-| 免费 | 个人开发者每日配额(地理编码等各接口数千次/日,以控制台为准) |
-| 用法 | key 进 `.env` 的 `AMAP_KEY`;接法走高德 MCP Server(<https://developer.amap.com/api/mcp-server/getting-started>)或直接 REST |
+| Capabilities | geocoding/reverse geocoding/POI search/driving-transit-walking-cycling routes (the upgrade surface over dsh-map-tools' free OSRM) |
+| Acquisition | <https://console.amap.com/dev/key/app> → create application → add Key (service platform: choose "Web 服务") → paste to me |
+| Free | individual developer daily quota (thousands of calls/day per interface incl. geocoding; the console prevails) |
+| Usage | the key goes into `.env`'s `AMAP_KEY`; integration via the Amap MCP Server (<https://developer.amap.com/api/mcp-server/getting-started>) or direct REST |
 
-## 飞猪 FlyAI(官方 agent 通道;匿名试用额度**共享易达限**,2026-09-02 勘误)
+## Fliggy FlyAI (飞猪) (Official Agent Channel; Anonymous Trial Quota Is a **Shared Pool, Easily Exhausted**, 2026-09-02 Erratum)
 
-`npx -y @fly-ai/flyai-cli search-flight --origin 上海 --destination 丽江 --dep-date 2026-10-01` 即出真实票价。8 工具全只读(机/火/酒/POI/万豪/关键词/AI 语义)。**2026-09-02 迪拜 session 实况:匿名试用额度是共享池,达限后一律 429 "Trial limit reached"**——gotry 侧已归类 `needs-setup`(报错带申请指引,不再当检索失败盲重试)。稳定用法 = 到 <flyai.open.fliggy.com> 控制台申请正式 API Key,配 `FLYAI_API_KEY` 环境变量;`npx @danceiny/gotry doctor` 会显示 key 配置状态。无 key 期间机/火/酒检索以 `gotry_session_search`(账号会话)为主。
+`npx -y @fly-ai/flyai-cli search-flight --origin 上海 --destination 丽江 --dep-date 2026-10-01` returns real fares. All 8 tools are read-only (flights/trains/hotels/POI/Marriott/keywords/AI semantic). **2026-09-02 Dubai session reality: the anonymous trial quota is a shared pool; once exhausted, always 429 "Trial limit reached"** — the gotry side already classifies this as `needs-setup` (the error carries application guidance, no longer blindly retried as a search failure). Stable usage = apply for a formal API Key at the <flyai.open.fliggy.com> console, configure the `FLYAI_API_KEY` environment variable; `npx @danceiny/gotry doctor` shows the key configuration status. During the no-key period, flight/train/hotel search primarily uses `gotry_session_search` (account session).
 
 ---
 
-## 安全基线(不啰嗦,只列事实)
+## Security Baseline (No Nagging, Facts Only)
 
-- `.env` 在 `.gitignore` ✓(git 跟踪文件无 token,已验证)
-- `~/.npmrc` 全局**不放** npmjs token(上 tick 误写已清;公司 bnpm 的留着,那是内网必需)
-- git 历史里有一份 npm token 明文(2026-08-22/24 写进 decisions-needed.md 后推送,私有仓)——按 founder 指示**不再展开此话题**;要换随时 npmjs 网页 revoke
+- `.env` is in `.gitignore` ✓ (no tokens in git-tracked files, verified)
+- The global `~/.npmrc` **does not** hold an npmjs token (last tick's mistaken write cleaned; the company bnpm one stays — an intranet necessity)
+- Git history contains one npm token in plaintext (written into decisions-needed.md on 2026-08-22/24 then pushed, private repo) — per founder instruction **this topic is not elaborated further**; to rotate, revoke anytime on the npmjs web

@@ -675,7 +675,7 @@ function buildPkgFixture(tmpRoot: string) {
   copyFileSync(join(repoRoot, 'bin', 'gotry-process-liveness.js'), join(pkgBin, 'gotry-process-liveness.js'))
   copyFileSync(join(repoRoot, 'cordis.gotry-patch.yml'), join(pkgRoot, 'cordis.gotry-patch.yml'))
   writeFileSync(join(pkgDist, 'index.js'), 'export {}\n')
-  writeFileSync(join(dshDir, 'package.json'), `${JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.5-alpha.1', type: 'module' })}\n`)
+  writeFileSync(join(dshDir, 'package.json'), `${JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.5-rc.1', type: 'module' })}\n`)
   const markerPath = join(tmpRoot, 'dsh-web-launch.log')
   // 假 dsh:写标记后逗留 1.5s 再 exit——若 detached doctor --summary 被误启动,会在此窗口向 stderr(继承)露面。
   writeFileSync(join(dshDir, 'lib', 'bin.js'),

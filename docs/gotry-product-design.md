@@ -1,199 +1,201 @@
-# GoTry 产品设计：从出发到下一次出发
+[English](gotry-product-design.md) | [简体中文](gotry-product-design.zh-CN.md)
 
-> 单一现行版(历史见 git log;不设文件级版本号)
-> **日期**:2026-08-22
-> **读者**:GoTry 未来的产品与工程团队;以及任何想理解这个产品为什么存在的人
-> **状态**:草案。首发市场未锁定,文中市场敏感项以「📍」标注并汇总于第 12 章;标注「待确认」的内容在市场锁定或团队组建后补完。**本文档不替代任何法务/财务/合规正式文件。**
+# GoTry Product Design: From Departure to the Next Departure
 
----
-
-## 0. 阅读说明
-
-- 文档主线一句话:**GoTry 不是又一个行程生成器,而是「从出发到下一次出发」的全周期 AI 旅行伙伴**——它从用户「为什么出发」开始服务,到用户「下一次出发」才算完成一次服务。
-- 两条价值观不是标语,而是产品机制:人文关怀落在「动机先行」的产品主循环(第 5 章);透明落在「推荐卡片 + 佣金披露」的一等公民功能(第 6 章)。每条价值观都能指到具体机制(2.3 节给出映射表)。
-- 市场未锁定:按通用产品设计,第 3 章给出三个候选市场(中国出境/国内深度游/全球英文)的对比,全文市场敏感项就地标注。
-- 技术底座立场:后端原子能力(城市搜索、酒店搜索/静态数据、地理映射等)**尽可能复用 hotel-be 已有能力,避免维护两套**;HotelByte 在 GoTry 里只是酒店供应链之一,不是产品前提(第 7.8 节、附录 B)。
-- 关键主张均带调研出处,来源汇总在附录 A。
+> Single current version (history in git log; no file-level version numbers)
+> **Date**: 2026-08-22
+> **Audience**: GoTry's future product and engineering team; and anyone who wants to understand why this product exists
+> **Status**: Draft. The launch market is not locked; market-sensitive items in the text are marked with "📍" and summarized in Chapter 12; content marked "to be confirmed" will be completed after market lock or team formation. **This document does not replace any formal legal/financial/compliance documents.**
 
 ---
 
-## 1. 执行摘要
+## 0. Reading Notes
 
-**GoTry 是一个 AI 原生的旅行 Agent 产品:从「为什么出发」开始,陪伴用户走过灵感、选择、规划、预订、在路上、回忆,直到「下一次出发」。**
-
-它与现有旅行产品的根本区别有三点:
-
-1. **从动机开始,而不是从目的地开始。** 今天所有旅行产品(OTA、行程生成器、通用 AI 助手)问用户的第一个问题都是「去哪、什么时候、几个人」。GoTry 的第一个问题是「为什么想出发」。这是使命「身体和灵魂,更多旅行,更少旅游」的产品化:旅游是「到过」,旅行是「经历过」。「为什么出发」同时是 B2B 的复用接缝——B2B 客户的「为什么」是包裹式的(「我的客户要因为 xxx 出发」),动机层做成可包裹插件后,B2B 直接复用 99% 能力(见 2.2 与总纲 3.7)。
-2. **透明是机制,不是口号。** 每一条推荐都携带 why(为什么推荐给你、证据来源是什么)与 cost(完整价格拆解,包括 GoTry 自己从中赚多少)。产品红线:不做付费排名,不隐藏任何成本。行业靠信息不对称赚钱的地方,GoTry 靠把它摊开赚钱。而且 **cost 不只是钱**:门到门的时间、精力与生物钟同样计价(6.5 全成本模型)。
-3. **确定性保障。** 行程可行性(时间、地理、预算、体力)由确定性求解引擎验证,LLM 只负责理解用户与解释结果——纯 LLM 生成的行程在 TravelPlanner 基准下可行率仅 4.4%,LLM + 约束求解的混合架构可达 93%+(附录 A-6)。
-
-**北极星指标:下一次出发率**——12 个月内完成第二次出行的用户占比。它同时度量了产品价值(用户真的出发了)、人文关怀(服务持续到了下一次)与商业模式(订阅与佣金的复购基础)。
-
-**商业模式三层**:免费规划与陪伴(信任的入口)/ GoTry Plus 订阅(锚点参照 Layla $49/年)/ 预订佣金(全额披露前提下的交易分成;用户始终可选更便宜的非 GoTry 渠道)。
-
-**路线图三步**:M1 把规划做对(无预订)→ M2 记住你 + 在路上 → M3 预订闭环 + 下一次出发 + 订阅。每一步都是可独立验证的最小闭环,评测先行。
-
-> 本章回答「做什么、怎么做、与谁不同」。为什么做,见第 2 章。
+- The document's main thread in one sentence: **GoTry is not yet another itinerary generator, but a full-cycle AI travel companion "from departure to the next departure"**—it starts serving the user at "why depart" and completes one service cycle only at the user's "next departure".
+- The two values are not slogans but product mechanisms: human care lands in the "motivation-first" product main loop (Chapter 5); transparency lands in the first-class features of "recommendation cards + commission disclosure" (Chapter 6). Every value points to a concrete mechanism (Section 2.3 gives the mapping table).
+- Market not locked: designed as a market-agnostic product; Chapter 3 compares three candidate markets (China outbound / domestic in-depth travel / global English); market-sensitive items are marked in place throughout.
+- Technical foundation stance: backend atomic capabilities (city search, hotel search/static data, geo-mapping, etc.) **reuse hotel-be's existing capabilities as much as possible, avoiding the maintenance of two stacks**; HotelByte is only one of GoTry's hotel supply chains, not a product prerequisite (Section 7.8, Appendix B).
+- Key claims carry research citations; sources are collected in Appendix A.
 
 ---
 
-## 2. 使命、愿景与价值观
+## 1. Executive Summary
 
-> 这章回答「为什么做」。产品设计的其余章节回答「做什么、怎么做」。
+**GoTry is an AI-native travel Agent product: starting from "why depart", it accompanies the user through inspiration, choice, planning, booking, on-the-road, and memories, until the "next departure".**
 
-### 2.1 使命(Mission)
+It differs fundamentally from existing travel products in three ways:
 
-**身体和灵魂,更多旅行,更少旅游。**
+1. **Start from motivation, not from destination.** The first question every travel product today (OTA, itinerary generator, general AI assistant) asks the user is "where, when, how many people". GoTry's first question is "why do you want to depart". This is the productization of the mission "body and soul, more travel, less tourism": tourism is "having been there"; travel is "having experienced it". "Why depart" is also the reuse seam for B2B—the B2B customer's "why" is wrapped ("my customers depart because of xxx"); once the motivation layer is built as a wrappable plugin, B2B directly reuses 99% of the capability (see 2.2 and Master Outline 3.7).
+2. **Transparency is a mechanism, not a slogan.** Every recommendation carries a why (why it is recommended to you, what the evidence sources are) and a cost (a complete price breakdown, including how much GoTry itself earns from it). Product red lines: no paid ranking, no hidden costs. Where the industry makes money from information asymmetry, GoTry makes money by laying it all out. And **cost is not just money**: door-to-door time, energy, and circadian rhythm are priced as well (6.5 full-cost model).
+3. **Deterministic guarantee.** Itinerary feasibility (time, geography, budget, physical stamina) is verified by a deterministic solving engine; the LLM is only responsible for understanding the user and explaining results—pure LLM-generated itineraries achieve only 4.4% feasibility on the TravelPlanner benchmark, while a hybrid LLM + constraint-solving architecture reaches 93%+ (Appendix A-6).
 
-「旅行」与「旅游」在这里不是修辞差异,而是两种产品:
+**North Star metric: next-departure rate**—the share of users who complete a second trip within 12 months. It measures product value (the user actually departed), human care (service continued to the next trip), and the business model (the repurchase basis for subscriptions and commissions) at the same time.
 
-| | 旅游 | 旅行 |
+**Three-layer business model**: free planning and companionship (the entry point of trust) / GoTry Plus subscription (anchored against Layla at $49/year) / booking commissions (transaction share under full disclosure; users can always choose a cheaper non-GoTry channel).
+
+**Three-step roadmap**: M1 gets planning right (no booking) → M2 remembers you + on-the-road → M3 booking loop + next departure + subscription. Each step is an independently verifiable minimal closed loop, evaluation first.
+
+> This chapter answers "what to build, how, and how it differs". For why build it, see Chapter 2.
+
+---
+
+## 2. Mission, Vision, and Values
+
+> This chapter answers "why build it". The remaining chapters of the product design answer "what to build and how".
+
+### 2.1 Mission
+
+**Body and soul, more travel, less tourism.**
+
+"Travel" (旅行) and "tourism" (旅游) are not a rhetorical difference here, but two kinds of products:
+
+| | Tourism | Travel |
 |---|---|---|
-| 目标 | 到过、打卡、集邮 | 经历、感受、变化 |
-| 计量 | 景点数量 | 体验密度与余裕 |
-| 决策方式 | 攻略复刻 | 围绕个人动机的组合 |
-| 结束标志 | 回家 | 带着东西回家(修复的关系、恢复的精力、找到的答案) |
+| Goal | Having been there, checking in, stamp collecting | Experiencing, feeling, changing |
+| Metric | Number of attractions | Experience density and slack |
+| Decision mode | Copying guides | Composition around personal motivation |
+| End marker | Getting home | Bringing something home (repaired relationships, restored energy, answers found) |
 
-今天市面上的旅行产品几乎都在优化「旅游」:更多景点、更满行程、更低价。「更多旅行,更少旅游」意味着 GoTry 要优化的是另一个目标函数——不是让用户「去更多地方」,而是让用户「发生更多真正的旅行」:动机被理解、行程有余裕、体验有深度、结束后有沉淀。
+Nearly all travel products on the market today optimize for "tourism": more attractions, fuller itineraries, lower prices. "More travel, less tourism" means GoTry optimizes a different objective function—not getting users to "visit more places", but getting users to "have more real travel": motivations understood, itineraries with slack, experiences with depth, and something settled after the trip ends.
 
-「身体和灵魂」取自「身体和灵魂总有一个在路上」:**身体在路上(出行中)与灵魂在路上(向往中、回忆中、下一次的萌芽中)都是产品的服务时刻**。这直接决定了 GoTry 的服务边界不是「订单完成」,而是覆盖向往→出行→回忆→再向往的完整循环(第 5 章)。
+"Body and soul" comes from the saying "either the body or the soul is always on the road": **the body on the road (traveling) and the soul on the road (yearning, remembering, the germ of the next trip) are both service moments of the product**. This directly determines that GoTry's service boundary is not "order completed" but the full cycle of yearning → traveling → remembering → yearning again (Chapter 5).
 
-### 2.2 愿景(Vision)
+### 2.2 Vision
 
-**让所有对旅行有美好憧憬的人都用上「GoTry」。**
+**Let everyone who holds a beautiful aspiration for travel use "GoTry".**
 
-「憧憬」是关键词。用户进入产品时可以什么都还没想好——没有目的地、没有日期、只有一种情绪或一个念头。今天的旅行产品无法服务「只有憧憬」的状态(搜索框要求你先输入目的地);通用 AI 助手可以聊,但不能陪到底(没有行程状态、没有实时数据、没有交易闭环)。**憧憬本身就是需求,GoTry 从这里开始服务。**
+"Aspiration" is the key word. Users can enter the product with nothing decided yet—no destination, no dates, only a mood or a thought. Today's travel products cannot serve the "aspiration-only" state (the search box demands you enter a destination first); general AI assistants can chat but cannot accompany to the end (no trip state, no real-time data, no transaction loop). **Aspiration itself is demand; GoTry starts serving from here.**
 
-**B2B 是这个愿景的放大器,不是另一个产品。** 旅行社、酒店、航司、目的地文旅同样面对「客户为什么出发」,而且是包裹式的:「我要用 GoTry,因为我的客户要因为『逃离一个周末』而出发」。GoTry 的动机层按可包裹设计(principal = 出行人,sponsor = 运营方):B2B 版本替换入口与库存池、包裹 sponsor 配置,保留动机访谈、可行性引擎、透明卡片、行程器、记忆、异步规划的全部内核——**99% 能力直接复用**,红线(透明、佣金披露)对 B2B 终端旅客同样生效。
+**B2B is an amplifier of this vision, not another product.** Travel agencies, hotels, airlines, and destination tourism operators face the same question—"why does the customer depart"—and in wrapped form: "I want to use GoTry because my customers depart to 'escape for a weekend'". GoTry's motivation layer is designed to be wrappable (principal = the traveler, sponsor = the operator): the B2B version swaps the entry point and inventory pool and wraps sponsor configuration, while keeping the full kernel—motivation interview, feasibility engine, transparent cards, itinerary planner, memory, async planning—**99% of the capability is directly reused**, and the red lines (transparency, commission disclosure) apply to B2B end travelers as well.
 
-### 2.3 价值观 → 产品机制映射
+### 2.3 Values → Product Mechanism Mapping
 
-每条价值观必须能指到具体机制,否则就是标语。
+Every value must point to a concrete mechanism; otherwise it is a slogan.
 
-**人文关怀:关注用户为什么「出发」,帮助用户解决问题,直到「下一次出发」。**
+**Human care: pay attention to why the user "departs", help the user solve problems, until the "next departure".**
 
-| 价值观原句 | 落地机制 | 所在章节 |
+| Value statement | Landing mechanism | Section |
 |---|---|---|
-| 关注用户为什么出发 | 动机访谈是产品的第一界面,先于一切搜索与推荐;产出动机画像并驱动规划 | 5.1、4.2 |
-| 帮助用户解决问题 | 可行性引擎的失败归因:不说「无法规划」,而是「预算差 ¥300/时间差半天,这三个办法任选其一可解」 | 7.5 |
-| 帮助用户解决问题 | 在路上陪伴:延误、闭馆、天气突变的实时重排,而不是甩一句「请联系服务商」 | 5.5 |
-| 直到下一次出发 | 产品主循环的终点不是订单完成,而是下一次出发;北极星指标由此定义 | 5.7、第 9 章 |
+| Pay attention to why the user departs | The motivation interview is the product's first interface, ahead of all search and recommendation; it produces a motivation profile and drives planning | 5.1, 4.2 |
+| Help the user solve problems | Failure attribution of the feasibility engine: never says "cannot plan", but "budget short by ¥300 / time short by half a day; any one of these three fixes solves it" | 7.5 |
+| Help the user solve problems | On-the-road companionship: real-time rescheduling for delays, closures, and sudden weather changes, instead of a dismissive "please contact the provider" | 5.5 |
+| Until the next departure | The end of the product main loop is not order completion but the next departure; the North Star metric is defined accordingly | 5.7, Chapter 9 |
 
-**透明:行程规划、第三方推荐,不隐瞒 why 和 cost。**
+**Transparency: itinerary planning and third-party recommendations never hide the why and the cost.**
 
-| 价值观原句 | 落地机制 | 所在章节 |
+| Value statement | Landing mechanism | Section |
 |---|---|---|
-| 不隐瞒 why | 每条推荐携带动机匹配理由 + 证据来源 + 数据新鲜度 | 6.1、6.3 |
-| 不隐瞒 why | 排序因素与权重公开,无付费因子 | 6.4 |
-| 不隐瞒 cost | 每条推荐携带完整价格拆解 | 6.1 |
-| 不隐瞒 cost | 每笔涉及 GoTry 收益的交易披露金额;无收益标注「¥0」 | 6.2 |
-| 不隐瞒 cost | 用户始终可选更便宜的非 GoTry 渠道,GoTry 照样推荐 | 5.4 |
+| Never hide the why | Every recommendation carries motivation-match rationale + evidence source + data freshness | 6.1, 6.3 |
+| Never hide the why | Ranking factors and weights are public; no paid factors | 6.4 |
+| Never hide the cost | Every recommendation carries a complete price breakdown | 6.1 |
+| Never hide the cost | Every transaction involving GoTry earnings discloses the amount; zero-earnings transactions are labeled "¥0" | 6.2 |
+| Never hide the cost | Users can always choose a cheaper non-GoTry channel, and GoTry recommends it all the same | 5.4 |
 
-### 2.4 产品红线(硬边界)
+### 2.4 Product Red Lines (Hard Boundaries)
 
-红线是不可交易的约束,任何版本、任何商业压力下都成立:
+Red lines are non-negotiable constraints; they hold in every version and under any commercial pressure:
 
-1. **永不向未询问的用户推销。** 主动触达只有一种合法形态:「下一次出发」建议(且可关闭,5.7)。
-2. **推荐流永不售卖排名。** 竞价不影响排序。若未来存在广告位,必须显式标注且永不混入推荐流。
-3. **每一笔钱可解释。** 用户在任何交易前能看到完整价格拆解与 GoTry 自身收益。
-4. **不编造。** 任何进入行程的 POI/价格/时刻必须有数据源与校验记录(6.3);模型知识不得未经校验直接进入行程。
-5. **写操作永远需要用户显式确认**(7.4 WriteGate):预订、支付、退改、向第三方发送消息。
-6. **用户记忆属于用户。** 可见、可编辑、可删除、可导出(7.6)。
+1. **Never push sales to users who have not asked.** Proactive outreach has exactly one legitimate form: the "next departure" suggestion (and it can be turned off, 5.7).
+2. **The recommendation feed never sells ranking.** Bidding does not affect ordering. If ad slots ever exist in the future, they must be explicitly labeled and never mixed into the recommendation feed.
+3. **Every sum of money is explainable.** Before any transaction, the user sees the complete price breakdown and GoTry's own earnings.
+4. **No fabrication.** Any POI/price/schedule entering an itinerary must have a data source and a verification record (6.3); model knowledge must not enter an itinerary without verification.
+5. **Writes always require explicit user confirmation** (7.4 WriteGate): booking, payment, changes/refunds, sending messages to third parties.
+6. **User memory belongs to the user.** Visible, editable, deletable, exportable (7.6).
 
 ---
 
-## 3. 问题与市场
+## 3. Problem and Market
 
-### 3.1 用户今天怎么旅行(问题定义)
+### 3.1 How Users Travel Today (Problem Definition)
 
-一次出行决策的现状(调研汇总,来源见附录 A):
+The current state of a single trip decision (research summary; sources in Appendix A):
 
-- **规划成本极高**:用户为一个行程花数小时到数月的碎片时间,在 OTA、航司、地图、点评、社交媒体之间反复横跳。
-- **信息碎片且不对称**:价格、库存、二次消费(景区二次付费、酒店押金、小费)对新用户极不友好。
-- **AI 工具不可信**:编造不存在的景点、给出过时价格是实测高发问题;多数方案只到城市粒度,用户需要 POI 与线路粒度。
-- **实时性缺失**:机票/酒店价格库存瞬变,通用大模型接不到 OTA 实时库存,规划慢一步就失效。
-- **信任赤字**:隐藏佣金、大数据杀熟、竞价排名——用户默认「推荐=谁给了钱」。
+- **Extremely high planning cost**: users spend fragmented time ranging from hours to months on one trip, bouncing back and forth among OTAs, airlines, maps, review sites, and social media.
+- **Fragmented and asymmetric information**: prices, inventory, and secondary spending (in-park extra fees, hotel deposits, tips) are extremely unfriendly to new users.
+- **AI tools are untrustworthy**: fabricating nonexistent attractions and quoting outdated prices are frequently observed problems in testing; most solutions stop at city granularity, while users need POI and route granularity.
+- **Missing real-time data**: flight/hotel prices and inventory change in an instant; general-purpose LLMs cannot reach OTA real-time inventory, so a plan one step slower is already invalid.
+- **Trust deficit**: hidden commissions, big-data price discrimination against loyal users, bid-based ranking—users default to assuming "recommendation = whoever paid".
 
-一句话:**用户要的是「靠谱 + 省心」,行业给的是「更多选择 + 更多坑」。**
+In one sentence: **users want "reliable + worry-free"; the industry offers "more choices + more traps".**
 
-### 3.2 竞品格局
+### 3.2 Competitive Landscape
 
-| 阵营 | 代表 | 强 | 弱(结构性) |
+| Category | Representatives | Strengths | Weaknesses (structural) |
 |---|---|---|---|
-| OTA + AI | 携程/Trip.com、Booking | 交易闭环、供应链、存量用户 | 广告与佣金模式**结构性不透明**;AI 是导流工具不是伙伴 |
-| AI 行程生成器 | Layla(2026-07 被 Expedia 收购)、Mindtrip | 对话体验、灵感激发、AI+真人混合 | **chat-only**:被用户实测诟病缺地图、缺行程总览、缺引导流程;可行性无验证 |
-| 工具型规划器 | TREK(开源自托管)、Wanderlog | 地图、协作、结构化行程 | 无 Agent、无动机理解;是「更好的表格」不是伙伴 |
-| 通用 AI 助手 | ChatGPT 等 | 理解力、自由对话 | 无实时数据、无行程状态、无闭环、幻觉无校验 |
-| 内容/经验社区 | 小红书、马蜂窝、圆周轨迹 | **真实民间智慧的密度**(打车难易、宰客、管理水平差异) | 非结构化、要人自己读、真假与时效难辨、进不了规划流程 |
+| OTA + AI | Ctrip/Trip.com (携程/Trip.com), Booking | Transaction loop, supply chain, installed user base | Ad and commission model **structurally opaque**; AI is a traffic funnel, not a companion |
+| AI itinerary generators | Layla (acquired by Expedia in 2026-07), Mindtrip | Conversational experience, inspiration, AI+human hybrid | **chat-only**: user tests criticize the lack of maps, itinerary overview, and guided flow; feasibility unverified |
+| Tool-type planners | TREK (open-source self-hosted), Wanderlog | Maps, collaboration, structured itineraries | No Agent, no motivation understanding; a "better spreadsheet", not a companion |
+| General AI assistants | ChatGPT etc. | Comprehension, free-form dialogue | No real-time data, no trip state, no loop closure, unverified hallucinations |
+| Content/experience communities | Xiaohongshu (小红书), Mafengwo (马蜂窝), Yuanzhou Guiji (圆周轨迹) | **Density of real folk wisdom** (ride-hailing availability, tourist rip-offs, differences in local management quality) | Unstructured, must be read by people themselves, truth and timeliness hard to judge, cannot enter the planning flow |
 
-**GoTry 的位置:Agent 的理解与陪伴 × 规划器的结构化与地图 × 反 OTA 的透明。** 三者的组合今天没有任何一个产品同时具备——Layla 验证了赛道价值(被 Expedia 收购),也暴露了 chat-only 的产品缺陷,这正好是 GoTry 的切入点。
+**GoTry's position: an Agent's understanding and companionship × a planner's structure and maps × anti-OTA transparency.** No product today combines all three—Layla validated the value of the category (acquired by Expedia) and also exposed the chat-only product flaws; that is exactly GoTry's entry point.
 
-### 3.3 候选市场(未锁定 📍)
+### 3.3 Candidate Markets (Not Locked 📍)
 
-| | 中国出境游 | 国内深度游 | 全球英文市场 |
+| | China outbound travel | Domestic in-depth travel | Global English market |
 |---|---|---|---|
-| 市场规模 | 大 | 中 | 大 |
-| 痛点密度 | 最高(签证、多段行程、信息碎片、语言) | 中 | 高(hidden fees、信息碎片) |
-| 供应链门槛 | 高(海外机票/酒店/活动) | 低 | 高 |
-| 竞争强度 | OTA 强势但 AI 化慢 | 高(内容平台+OTA 夹击) | 高(Layla/Mindtrip 正面,且有 Expedia 背书) |
-| 透明价值观共鸣 | 强(杀熟语境) | 中 | 强(hidden fees 语境) |
-| 与 hotel-be 协同 | 中 | 高 | 中(HotelByte 覆盖中东/中国) |
+| Market size | Large | Medium | Large |
+| Pain-point density | Highest (visas, multi-leg itineraries, fragmented information, language) | Medium | High (hidden fees, fragmented information) |
+| Supply-chain barrier | High (overseas flights/hotels/activities) | Low | High |
+| Competitive intensity | OTAs strong but slow to AI-ify | High (squeezed by content platforms + OTAs) | High (Layla/Mindtrip head-on, with Expedia backing) |
+| Transparency-value resonance | Strong (price-discrimination-against-loyal-users context) | Medium | Strong (hidden fees context) |
+| Synergy with hotel-be | Medium | High | Medium (HotelByte covers the Middle East/China) |
 
-**建议**:M1 以「中文用户 + 出境或国内深度场景」做种子验证(团队语言与供应链协同最优),正式锁定在 M1 启动前决策(第 12 章)。本文其余部分按市场无关的通用产品设计,敏感项就地标注。
+**Recommendation**: M1 runs seed validation with "Chinese-speaking users + outbound or domestic in-depth scenarios" (the best team-language and supply-chain synergy); the formal lock is decided before M1 launch (Chapter 12). The rest of this document follows a market-agnostic product design, with sensitive items marked in place.
 
-### 3.4 为什么是现在
+### 3.4 Why Now
 
-1. **混合架构可行性已被证明**:LLM 翻译约束 + 确定性求解的行程规划可行率 93%+ vs 纯 LLM 4.4%(附录 A-6),「不幻觉的行程」从研究走向可工程化。
-2. **赛道被验证**:Expedia 收购 Layla(2026-07),巨头在为 AI 行程规划与预订能力付费。
-3. **成本可行**:模型分级路由、上下文压缩、缓存、批处理五杠杆叠加可降 84-91%(附录 A-7),C 端长会话的经济性第一次成立。
-4. **供应链冷启动成本低**:hotel-be 已有可复用的酒店/城市原子能力与一条现成酒店供应链(HotelByte),比从零开始省一大截(第 7.8 节)。
+1. **The hybrid architecture's feasibility is proven**: itinerary-planning feasibility of LLM-translated constraints + deterministic solving reaches 93%+ vs 4.4% for pure LLM (Appendix A-6); "hallucination-free itineraries" move from research into engineerability.
+2. **The category is validated**: Expedia acquired Layla (2026-07); the giants are paying for AI itinerary planning and booking capability.
+3. **Cost is feasible**: the levers of model tier routing, context compression, caching, and batch processing stack to cut 84-91% (Appendix A-7); the economics of long consumer-facing sessions hold for the first time.
+4. **Low supply-chain cold-start cost**: hotel-be already offers reusable hotel/city atomic capabilities and a ready hotel supply chain (HotelByte), saving a large chunk versus starting from zero (Section 7.8).
 
 ---
 
-## 4. 用户与场景
+## 4. Users and Scenarios
 
-### 4.1 三类核心画像
+### 4.1 Three Core Personas
 
-| 画像 | 进入状态 | 典型一句话 | 核心诉求 |
+| Persona | Entry state | Typical quote | Core need |
 |---|---|---|---|
-| **灵感型** | 什么都没想好,有情绪 | 「最近好累,想出去走走」 | 有人帮我把情绪变成一次值得的旅行 |
-| **计划型** | 有目的地,怕踩坑 | 「十一带爸妈去西安,5 天,别太累」 | 一个靠谱、可调、讲道理的行程 |
-| **随性型** | 边走边定 | 「明天到了再看」 | 在路上随时有人接得住 |
+| **Inspiration-driven** | Nothing decided, has a mood | "I'm so tired lately, I want to get out for a while" | Someone turns my mood into a worthwhile trip |
+| **Plan-driven** | Has a destination, fears traps | "Taking my parents to Xi'an for the October holiday, 5 days, not too tiring" | A reliable, adjustable, reasonable itinerary |
+| **Spontaneous** | Decides on the go | "I'll see when I get there tomorrow" | Someone who can catch me on the road anytime |
 
-三类画像的共同点:都想要「旅行」而非「旅游」——对打卡清单反感或无感,在意体验质量与余裕。差别只在进入循环的阶段不同(灵感型从 5.1 进入,计划型从 5.3 进入,随性型从 5.5 进入),**循环本身是同一套**。
+The three personas share one thing: all want "travel" rather than "tourism"—averse or indifferent to check-in lists, caring about experience quality and slack. They differ only in the stage where they enter the loop (inspiration-driven enters at 5.1, plan-driven at 5.3, spontaneous at 5.5); **the loop itself is the same**.
 
-### 4.2 动机分类学:「为什么出发」的初版六类
+### 4.2 Motivation Taxonomy: The First Six Classes of "Why Depart"
 
-动机访谈(5.1)产出的不是标签,而是进入规划与求解的**约束**:
+What the motivation interview (5.1) produces is not labels but **constraints** entering planning and solving:
 
-| 动机 | 典型表述 | 规划含义(进可行性引擎) |
+| Motivation | Typical expression | Planning implication (into the feasibility engine) |
 |---|---|---|
-| 逃离与休整 | 「想放空」「喘口气」 | 低密度;少换酒店;屏蔽排队型景点;每日移动上限收紧 |
-| 关系与陪伴 | 「带爸妈」「和孩子」「纪念日」 | 按同行人生理档调整节奏;回避高风险项目;留共同体验位 |
-| 挑战与成就 | 「想徒个贡嘎」「考潜水证」 | 训练/装备前置;体能约束显式建模;窗口期(天气/季风)校验 |
-| 好奇与理解 | 「想吃懂潮州菜」「看懂晋祠」 | 深度优于广度;预约/闭馆日校验;讲解资源匹配 |
-| 疗愈与告别 | 「离职间隙」「送自己一段路」 | 私密性;容错冗余;回避人流高峰 |
-| 灵感与创造 | 「去找拍摄素材」「写点东西」 | 光照/季节/机位数据接入;留白时间块 |
+| Escape and recovery | "I want to empty my mind", "I need a breather" | Low density; fewer hotel changes; filter out queue-type attractions; tighten the daily movement cap |
+| Relationship and companionship | "Taking my parents", "with the kids", "anniversary" | Adjust pace to companions' physical tier; avoid high-risk activities; reserve slots for shared experiences |
+| Challenge and achievement | "I want to trek Gongga", "get a diving certificate" | Training/equipment prerequisites; explicit modeling of physical constraints; window (weather/monsoon) checks |
+| Curiosity and understanding | "I want to eat my way into understanding Chaozhou cuisine", "understand Jinci Temple" | Depth over breadth; reservation/closing-day checks; docent-resource matching |
+| Healing and farewell | "Between jobs", "a journey to see myself off" | Privacy; fault-tolerance slack; avoid crowd peaks |
+| Inspiration and creation | "Looking for shooting material", "want to write something" | Access light/season/photo-spot data; leave blank time blocks |
 
-动机可以复合(带父母+逃离),以权重谱系表达。**动机是 GoTry 记忆系统中生命周期最长的一层**(7.6):目的地会变,动机跨年稳定——这是「下一次出发」个性化的锚点。动机还决定**钱-时间-精力的兑换率**(6.5):同样省 ¥400,对挑战与成就型可能是划算的交易,对逃离休整型可能是自毁——引擎按动机计价,而非统一口径。
+Motivations can be compound (parents + escape), expressed as a weighted spectrum. **Motivation is the longest-lived layer in GoTry's memory system** (7.6): destinations change, motivations stay stable across years—this is the anchor for personalizing the "next departure". Motivation also determines the **money-time-energy exchange rate** (6.5): saving the same ¥400 may be a good deal for the challenge-and-achievement type but self-destruction for the escape-and-recovery type—the engine prices by motivation, not by a uniform standard.
 
-### 4.3 场景故事
+### 4.3 Scenario Stories
 
-**故事一(灵感型,完整循环)**:连续加班三个月的工程师,深夜打开 GoTry:「想消失几天」。动机访谈三轮识别出「逃离与休整(0.7)+ 好奇与理解(0.3)」、体力档低、预算 ¥5k。GoTry 给出三个候选:千岛湖骑行慢住、泉州古城闲逛、大理环湖。每个候选是一张透明卡片:为什么匹配动机、预算区间、时间成本、当季风险。他选了泉州,得到一份三天两夜、每天只排一个主线 + 大量余裕的行程——不是 40 个打卡点。回来后 GoTry 自动沉淀行程回忆与花费对账;三个月后,一条可关闭的「下一次出发」建议抵达:「你的逃离指数又高了,十一的泉州避开人流,或者试试新的:潮州,吃的理由你懂。」
+**Story 1 (inspiration-driven, full loop)**: An engineer who has worked overtime for three straight months opens GoTry late at night: "I want to disappear for a few days." Three rounds of motivation interview identify "escape and recovery (0.7) + curiosity and understanding (0.3)", low physical tier, budget ¥5k. GoTry offers three candidates: slow cycling and lakeside stays at Qiandao Lake, wandering the old town of Quanzhou, circling the lake in Dali. Each candidate is a transparent card: why it matches the motivation, budget range, time cost, seasonal risks. He picks Quanzhou and gets a three-day-two-night itinerary with only one main line per day plus abundant slack—not 40 check-in points. After returning, GoTry automatically settles trip memories and expense reconciliation; three months later, a dismissible "next departure" suggestion arrives: "Your escape index is high again. Quanzhou during the October holiday, avoiding the crowds—or try somewhere new: Chaozhou. You know the reason: the food."
 
-**故事二(计划型,可行性引擎)**:用户带父母(70+/68+)去西安,5 天。引擎建模:两位老人每日有效游览时长 ≤5h、避开无电梯住宿、午休块、遗址类景点每日 ≤1。Day3 原案(兵马俑 + 华清池 + 长恨歌)求解无解(往返交通 3.5h 超时)。引擎输出最小修改建议三选一:「删长恨歌改次日午间场」「兵马俑改半日精讲」「Day3 与 Day4 互换避开周一闭馆」。用户选了第三项。出行当天高温橙色预警,在路上 agent 主动把户外段与室内段对调。
+**Story 2 (plan-driven, feasibility engine)**: A user takes parents (70+/68+) to Xi'an for 5 days. Engine modeling: both seniors' effective daily sightseeing time ≤5h, avoid elevator-less lodging, midday-rest blocks, heritage-site attractions ≤1 per day. The original Day 3 plan (Terracotta Army + Huaqing Pool + The Song of Everlasting Sorrow) solves to infeasible (round-trip transport 3.5h exceeds the limit). The engine outputs minimal-change suggestions, pick one of three: "drop The Song of Everlasting Sorrow and switch to next day's midday session" / "change the Terracotta Army to a half-day guided tour" / "swap Day 3 and Day 4 to avoid Monday closures". The user picks the third. On the day of the trip a high-temperature orange alert is issued, and the on-the-road agent proactively swaps the outdoor and indoor segments.
 
-**故事三(随性型,在路上)**:清迈,用户白天临时决定明天去拜县。「明天 7:00 出发的班车还有 4 个座(Aya,¥45,3.5h 弯道多——你上次说晕车,备晕车药; alternatively 包车 ¥900 可停沿路三个观景点)」。一段消息同时完成查询、历史记忆调用、风险提示与两个透明选项。
+**Story 3 (spontaneous, on the road)**: In Chiang Mai, the user decides during the day to go to Pai tomorrow. "The bus departing at 7:00 tomorrow still has 4 seats (Aya, ¥45, 3.5h with many curves—you mentioned motion sickness last time, so pack motion-sickness pills; alternatively a private car at ¥900 can stop at three scenic viewpoints along the way)." One message completes the query, historical-memory recall, risk warning, and two transparent options at once.
 
-**故事四(憧憬素材型,「不懂事儿」的反面)**:上海用户深夜发来一张大理洱海的照片:「想去这儿」。GoTry 没有开始推荐洱海——它先看见约束:周末 2 天、出发地上海,而且它算的是**门到门全成本**(6.5):班次不由你定、提前两小时到机场、家到枢纽还有一段、落地后是陌生接驳——单程对普通人就是完整的一天。它的回应:「这张照片打动你的,更像那种『湖边什么都不干』的感觉。周末从上海去洱海,凌晨起床赶飞机,到住处已是下午,人累了一半——对一个『想放空』的周末,这趟路本身就把目的毁了。这个感觉,周末也有:千岛湖(门到门约 4h)、太湖……另外我把洱海放进了你的『下一次出发』清单:它值得 5 天以上,最好春秋季。要不要看看千岛湖的方案?」
+**Story 4 (aspiration-material type, the opposite of "tone-deaf")**: A Shanghai user sends a photo of Dali's Erhai Lake late at night: "I want to go here." GoTry does not start recommending Erhai—it first sees the constraints: a 2-day weekend, departing from Shanghai, and what it computes is the **door-to-door true cost** (6.5): you don't choose the schedule, arrive at the airport two hours early, home-to-hub is another leg, and after landing comes an unfamiliar transfer—for an ordinary person, one way is a full day. Its reply: "What moves you in this photo is more like the feeling of 'doing nothing at all by the lake'. A weekend from Shanghai to Erhai means getting up before dawn to catch a flight, arriving at the lodging in the afternoon, half exhausted—for a weekend of 'wanting to unwind', the journey itself ruins the purpose. This feeling exists on a weekend too: Qiandao Lake (about 4h door-to-door), Taihu Lake... I've also put Erhai on your 'next departure' list: it deserves 5+ days, best in spring or autumn. Want to see the Qiandao Lake plan?"
 
-素材被尊重,憧憬被接住,全成本被诚实执行。今天所有 AI 产品在这道题上都不及格:只推荐最相关的部分(忠实推荐洱海),完全不关心用户只有一个周末、人在上海。**不解决「为什么出发」,AI 连成本都无法计价——它不知道该用钱、时间还是精力来算这次出发。**
+The material is respected, the aspiration is caught, and the full cost is honestly executed. Every AI product today fails this question: they only recommend the most relevant part (faithfully recommending Erhai), caring nothing about the user having only one weekend and being in Shanghai. **Without solving "why depart", AI cannot even price the cost—it does not know whether to count this departure in money, time, or energy.**
 
 ---
 
-## 5. 产品设计:出发到下一次出发(核心章)
+## 5. Product Design: Departure to Next Departure (Core Chapter)
 
-产品主循环(departure-to-departure loop):
+The product main loop (departure-to-departure loop):
 
 ```
 (1)为什么出发 → (2)去哪里 → (3)规划 → (4)预订 → (5)在路上 → (6)回来之后
@@ -201,87 +203,87 @@
       └──────────────────── (7)下一次出发 ←────────────────────────────────┘
 ```
 
-一个 TripState(长程状态,7.6)贯穿七阶段:动机画像、约束、行程、证据、消费记录都在同一个对象里演化。用户可以从任意阶段进入(计划型直接进 (3),随性型直接进 (5)),循环对所有人闭合。
+One TripState (long-horizon state, 7.6) runs through the seven stages: motivation profile, constraints, itinerary, evidence, and spending records all evolve in the same object. Users can enter at any stage (plan-driven users go straight to (3), spontaneous users straight to (5)); the loop closes for everyone.
 
-### 5.1 为什么出发(Why)
+### 5.1 Why Depart (Why)
 
-**动机访谈是产品的第一界面。**
+**The motivation interview is the product's first interface.**
 
-- 形态:3-6 轮自然语言对话,产出 MotivationProfile(动机谱系+权重、节奏偏好、预算档、体力档、同行人、饮食/文化禁忌)。不是表单——是 agent 提问、用户自然回答,agent 从回答里抽取结构(借鉴 T 系统的 tool-owned 参数抽取实践,7.3;T 系统=某企业级差旅 Agent 生产系统,来源脱敏)。
-- 人文关怀的落点:**先听,再荐**。这个阶段没有任何推荐、任何搜索框。
-- 退出条件:用户说「就想去 X」——直接跳到 (3),动机仍然记录(「已知目的地」不等于「已知动机」)。
-- 尊重边界:用户可以拒绝回答任何问题;画像永远可编辑(红线 6)。
-- **素材是憧憬的表达式,不是目的地指令(产品铁律)**。用户发来一张大理洱海的照片说「想去这儿」——照片是憧憬的表达式,不是目的地指令;相关性不等于意图。任何素材(照片/地名/链接/攻略)的解析次序:
-  1. **素材 → 憧憬**:抽出意象与情绪(「湖边什么都不干」),而不是锁定地名;
-  2. **约束先于素材**:出发地、时间预算、预算档、体力档是硬约束,素材里的目的地只是软偏好;
-  3. **按意象检索候选**:在硬约束内检索同一意象的目的地(周末+上海+湖边发呆 → 千岛湖/太湖/淀山湖…),候选集可以完全不包含素材中的地名;
-  4. **憧憬不被拒绝**:素材目的地若不可行,进入「下一次出发」清单,连同成行条件(洱海:5 天+、春秋季、直飞约 3.5h)——不说「不」,说「现在不行,这是它值得的时机」。
+- Form: 3-6 rounds of natural-language dialogue, producing a MotivationProfile (motivation spectrum + weights, pace preference, budget tier, physical tier, companions, dietary/cultural taboos). Not a form—the agent asks, the user answers naturally, and the agent extracts structure from the answers (borrowing the T system's tool-owned parameter-extraction practice, 7.3; the T system = an enterprise-grade business-travel Agent production system, source anonymized).
+- Where human care lands: **listen first, recommend later**. There are no recommendations and no search box at this stage.
+- Exit condition: the user says "I just want to go to X"—jump straight to (3); the motivation is still recorded ("known destination" does not equal "known motivation").
+- Respect boundaries: the user can decline to answer any question; the profile is always editable (red line 6).
+- **Material is an expression of aspiration, not a destination command (product iron rule)**. A user sends a photo of Dali's Erhai Lake saying "I want to go here"—the photo is an expression of aspiration, not a destination command; relevance is not intent. The parsing order for any material (photo/place name/link/guide):
+  1. **Material → aspiration**: extract the imagery and the emotion ("doing nothing at all by the lake"), rather than locking onto the place name;
+  2. **Constraints before material**: origin, time budget, budget tier, and physical tier are hard constraints; the destination in the material is only a soft preference;
+  3. **Retrieve candidates by imagery**: within the hard constraints, retrieve destinations of the same imagery (weekend + Shanghai + idling by a lake → Qiandao Lake/Taihu Lake/Dianshan Lake...); the candidate set may completely exclude the place name in the material;
+  4. **Aspiration is never rejected**: if the material's destination is infeasible, it enters the "next departure" list together with its feasibility conditions (Erhai: 5+ days, spring/autumn, about 3.5h direct flight)—never say "no"; say "not now, and here is when it is worth it".
 
-### 5.2 去哪里(Where)
+### 5.2 Where to Go (Where)
 
-目的地候选 3-5 个,**每个候选是一张透明卡片**(6.1 的目的地版):
+3-5 destination candidates, **each candidate a transparent card** (the destination version of 6.1):
 
-- why:为什么匹配你的动机(引用访谈原话)、和你同类动机用户的去向分布(匿名、聚合)
-- cost:预算区间(全价口径,含大交通)、时间成本(含签证与飞行 📍)、当季风险(台风/旺季/闭馆季)
-- trade-off:每个候选明确写出「选它你放弃了什么」
+- why: why it matches your motivation (quoting your interview words), and the destination distribution of users with motivations similar to yours (anonymous, aggregated)
+- cost: budget range (full-price basis, including main transport), time cost (including visa and flight 📍), seasonal risks (typhoon/peak season/closure season)
+- trade-off: each candidate explicitly states "what you give up by choosing it"
 
-- **候选生成次序:约束先于素材**(5.1 铁律的执行面):先固定出发地/时间预算/预算档/体力档,再按**意象**(而非地名)检索候选;素材中的目的地只是候选之一,必须与其他候选一样通过同一张透明卡片的 why/cost 审视。
-- **不给「最佳目的地」的单一答案**——选择权和选择的理由都在用户手里。这与 OTA 的「猜你去哪」信息流是刻意对立的产品形态。
+- **Candidate generation order: constraints before material** (the execution side of the 5.1 iron rule): fix origin/time budget/budget tier/physical tier first, then retrieve candidates by **imagery** (not place names); the destination in the material is only one candidate and must pass the same transparent card's why/cost scrutiny as all other candidates.
+- **Never give a single "best destination" answer**—the choice and the reasons for the choice stay in the user's hands. This is a deliberately opposed product form to the OTA's "guess where you'll go" feed.
 
-### 5.3 规划(Plan)
+### 5.3 Planning (Plan)
 
-规划产出的是**结构化行程,不是一段对话文本**(修复 chat-only 竞品的最大缺陷,3.2):
+What planning produces is a **structured itinerary, not a passage of chat text** (fixing the biggest flaw of chat-only competitors, 3.2):
 
-- **Day planner**:拖拽式日程,跨天移动自动重校验可行性
-- **地图视图**:所有点位、路线、时长可视化
-- **预算视图**:分项预算 vs 预估花费
-- **可行性实时校验**:开放时间、交通时长、日照窗口、预算、体力——引擎在编辑时持续求解(7.5),冲突即时标红并给最小修改建议
-- **每个安排可展开 why + cost**(6.1)
-- **版本化**:方案 A/B 并存、可对比、可回滚——「对比」本身就是透明
+- **Day planner**: drag-and-drop schedule; moving items across days automatically re-verifies feasibility
+- **Map view**: all points, routes, and durations visualized
+- **Budget view**: itemized budget vs estimated spending
+- **Real-time feasibility verification**: opening hours, transit durations, daylight windows, budget, stamina—the engine solves continuously while editing (7.5); conflicts are flagged red immediately with minimal-change suggestions
+- **Every arrangement expands to why + cost** (6.1)
+- **Versioning**: plan A/B coexist, comparable, rollback-able—"comparison" is itself transparency
 
-### 5.4 预订(Book)📍(合规口径随市场锁定)
+### 5.4 Booking (Book) 📍 (Compliance Scope Follows Market Lock)
 
-M3 上线。三条硬规则:
+Ships in M3. Three hard rules:
 
-1. **WriteGate 三步确认**(7.4):明细 → 总价(含 GoTry 收益披露)→ 显式确认。幂等键防重复提交。
-2. **比价透明**:同一库存多渠道价格并列;**若非 GoTry 渠道更便宜,照样推荐并支持跳转**。短期损失佣金,长期赢得「推荐可信任」——这是透明价值观最贵也最值的一次下注。
-3. **佣金披露**(6.2):每笔交易展示 GoTry 收益金额或比例。
+1. **WriteGate three-step confirmation** (7.4): details → total price (including GoTry earnings disclosure) → explicit confirmation. Idempotency keys prevent duplicate submission.
+2. **Price-comparison transparency**: prices for the same inventory from multiple channels are listed side by side; **if a non-GoTry channel is cheaper, recommend it all the same and support jumping over**. Losing commission in the short term, winning "recommendations you can trust" in the long term—this is the most expensive and most worthwhile bet of the transparency value.
+3. **Commission disclosure** (6.2): every transaction shows GoTry's earnings amount or ratio.
 
-### 5.5 在路上(Go)
+### 5.5 On the Road (Go)
 
-出行中陪伴——**同一个 TripState 的延续,不是冷启动客服**:
+Companionship during the trip—**a continuation of the same TripState, not a cold-started customer service**:
 
-- 实况:天气预警、人流预估、营业状态突变
-- 突发应对:航班延误/景点闭馆/临时管制 → 实时重排(引擎在既有约束下重求解,改动给出理由)
-- 当日微调:「今天太累了」→ 引擎按体力档收缩当日安排
-- 当地问询:交通、当地礼俗、应急(就近医院/使馆 📍)
+- Live conditions: weather alerts, crowd forecasts, sudden business-status changes
+- Incident response: flight delays / attraction closures / temporary controls → real-time rescheduling (the engine re-solves under the existing constraints, with reasons given for changes)
+- Same-day tuning: "I'm too tired today" → the engine shrinks the day's arrangements per the physical tier
+- Local inquiries: transport, local customs, emergencies (nearest hospital/embassy 📍)
 
-在路上的 agent 知道用户的动机、体力档、已走过的路、还剩什么没走——这是「伙伴」与「客服」的分界线。
+The on-the-road agent knows the user's motivation, physical tier, the road already traveled, and what remains unvisited—this is the dividing line between a "companion" and "customer service".
 
-### 5.6 回来之后(Return)
+### 5.6 After Returning (Return)
 
-- **行程回忆自动沉淀**:路线地图、时间线、照片位(用户自愿上传)、花费对账
-- **花费透明对账**:预算 vs 实际,每一笔可点开看当初的预估与理由——透明的闭环:出发前的承诺,回来后兑现
-- **轻量复盘**:哪里值得再来、哪里不值、下次同类动机的修正建议(进记忆)
-- **经验回流**:复盘里「值得告诉下一个人」的经验被抽取为结构化条目,用户确认后进入共享经验池(6.6)——「你被上一个旅行者帮过,你帮下一个」
+- **Automatic settling of trip memories**: route map, timeline, photo slots (voluntarily uploaded by the user), expense reconciliation
+- **Transparent expense reconciliation**: budget vs actual; every line opens to show the original estimate and its rationale—the transparency loop closed: promises made before departure are honored after return
+- **Lightweight retrospective**: what was worth revisiting, what was not, correction suggestions for similar motivations next time (into memory)
+- **Experience reflux**: experiences from the retrospective that are "worth telling the next person" are extracted into structured entries and, after user confirmation, enter the shared experience pool (6.6)—"you were helped by the last traveler; you help the next one"
 
-人文关怀的落点:**回来不是结束**。这是行业普遍缺失的一段——交易完成即服务终止。
+Where human care lands: **returning is not the end**. This is a segment the industry broadly misses—service terminates when the transaction completes.
 
-### 5.7 下一次出发(Next)
+### 5.7 Next Departure (Next)
 
-- **主动回访**:基于动机演化 + 季节窗口 + 价格窗口的「下一次出发」建议。可关闭、可调频;这是红线 1 下唯一合法的主动触达形态。
-- **动机画像更新**:每次旅行的复盘反哺画像——「逃离型用户开始出现好奇动机」本身就是下一次推荐的依据。
-- 北极星在这里被定义与度量:**下一次出发率**(第 9 章)。
+- **Proactive follow-up**: "next departure" suggestions based on motivation evolution + seasonal windows + price windows. Dismissible, frequency-adjustable; this is the only legitimate proactive outreach form under red line 1.
+- **Motivation profile update**: each trip's retrospective feeds back into the profile—"an escape-type user beginning to show curiosity motivation" is itself the basis for the next recommendation.
+- The North Star is defined and measured here: **next-departure rate** (Chapter 9).
 
 ---
 
-## 6. 透明机制设计
+## 6. Transparency Mechanism Design
 
-> 透明不是「关于我们」页面的承诺,而是产品里每一个原子单位(推荐)的数据结构。
+> Transparency is not a promise on an "About Us" page; it is the data structure of every atomic unit (recommendation) in the product.
 
-### 6.1 推荐卡片(产品的原子单位)
+### 6.1 Recommendation Cards (The Product's Atomic Unit)
 
-任何推荐(目的地、酒店、路线、餐厅、活动)统一为四段结构:
+Every recommendation (destination, hotel, route, restaurant, activity) unifies into a four-part structure:
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -297,73 +299,73 @@ M3 上线。三条硬规则:
 └─────────────────────────────────────────────────────┘
 ```
 
-- **why 的每一条都带证据来源与数据新鲜度**(6.3)。
-- **cost 是全价口径**:显式列出容易被隐藏的二次消费(押金、小费、装备租赁 📍按市场惯例),以及门到门时间与到达状态(见 6.5)。
-- **备选段公开次优项与放弃原因**——透明不止关于被推荐的,也关于没被推荐的。
+- **Every line of the why carries an evidence source and data freshness** (6.3).
+- **The cost is full-price basis**: it explicitly lists easily hidden secondary spending (deposits, tips, equipment rental 📍per market convention), plus door-to-door time and arrival state (see 6.5).
+- **The alternatives section discloses runner-ups and the reasons they were dropped**—transparency is not only about what is recommended, but also about what is not.
 
-### 6.2 佣金披露
+### 6.2 Commission Disclosure
 
-- 每笔涉及 GoTry 收益的交易,在确认前展示收益金额或比例。
-- 无收益交易标注「¥0(无合作分成)」——**零佣金也要说**,否则用户无从区分「真推荐」与「带货」。
-- 对标:行业默认隐藏佣金与竞价排名;GoTry 反向操作,使推荐流整体可审计。
-- 合规口径(披露格式、税则)随市场锁定后确认(第 12 章)📍。
+- Every transaction involving GoTry earnings shows the earnings amount or ratio before confirmation.
+- Zero-earnings transactions are labeled "¥0 (no partnership share)"—**zero commission must also be stated**; otherwise users cannot distinguish a "real recommendation" from "shilling".
+- Benchmark: the industry hides commissions and bid-based ranking by default; GoTry does the reverse, making the entire recommendation feed auditable.
+- Compliance scope (disclosure format, tax rules) is confirmed after market lock (Chapter 12) 📍.
 
-### 6.3 证据链与数据新鲜度
+### 6.3 Evidence Chain and Data Freshness
 
-所有进入推荐与行程的数据,来源分三类,卡片上显式标注:
+All data entering recommendations and itineraries has sources in three categories, explicitly labeled on the card:
 
-| 标注 | 含义 | 进入行程的门槛 |
+| Label | Meaning | Bar for entering an itinerary |
 |---|---|---|
-| [实时 API] | 供应商/地图/天气接口,带抓取时间 | 超时未刷新则标注「价格可能已变动」并阻止进入预订确认 |
-| [用户记忆] | 用户告诉过我们的事实(偏好、禁忌、体力) | 引用需可回溯到原始对话/编辑记录 |
-| [共享经验] | 旅行者回流的民间智慧(如「丽江网约车比大理难打,加价数倍才有人接」) | 带印证计数与时间窗衰减;单一未印证条目只作提示不作依据(6.6) |
-| [模型知识] | LLM 参数知识 | **必须经存在性校验(数据源 cross-check)才能进入行程**——反幻觉的硬闸 |
+| [Real-time API] | Supplier/map/weather interfaces, with fetch time | If not refreshed within the timeout, label "price may have changed" and block from entering booking confirmation |
+| [User memory] | Facts the user has told us (preferences, taboos, stamina) | References must be traceable to the original conversation/edit record |
+| [Shared experience] | Folk wisdom flowed back by travelers (e.g., "ride-hailing in Lijiang is harder to get than in Dali; only a several-fold markup gets a driver to accept") | Carries corroboration counts and time-window decay; a single uncorroborated entry serves only as a hint, never as a basis (6.6) |
+| [Model knowledge] | LLM parametric knowledge | **Must pass existence verification (data-source cross-check) before entering an itinerary**—the hard anti-hallucination gate |
 
-任何 POI(名称、位置、营业状态)未经校验不得进入行程(红线 4)。
+No POI (name, location, business status) may enter an itinerary without verification (red line 4).
 
-### 6.4 排序可解释
+### 6.4 Explainable Ranking
 
-推荐排序的因素与权重公开(文档化);无付费因子(红线 2)。用户可问「为什么 A 排在 B 前面」并得到逐因素回答。
+The factors and weights of recommendation ranking are public (documented); no paid factors (red line 2). Users can ask "why is A ranked ahead of B" and get a factor-by-factor answer.
 
-### 6.5 全成本:钱、时间、精力的兑换率
+### 6.5 Full Cost: The Exchange Rate of Money, Time, and Energy
 
-**成本的真实单位不是钱,是生命体验。** 有钱人旅行舒服,是因为能用钱买省时省事;穷游是在**用时间(和精力)换钱**——两种选择都正当,但今天的旅行产品只展示钱,AI 连算都不算。故事四(4.3)的「上海-大理飞行 3.5h」对普通人是完整的一天,正是因此。
+**The true unit of cost is not money but lived experience.** The rich travel comfortably because they can buy time and convenience with money; budget travel is **trading time (and energy) for money**—both choices are legitimate, but today's travel products only display money, and AI does not even compute the rest. That is exactly why the "Shanghai-Dali 3.5h flight" in Story 4 (4.3) amounts to a full day for an ordinary person.
 
-**门到门全成本(door-to-door true cost)**,每段跨城移动按此计算:
+**Door-to-door true cost**, computed for every intercity leg:
 
-| 构成 | 内容 |
+| Component | Content |
 |---|---|
-| 班次约束 | 可选班次不由你定(早班/红眼),「3.5h 航程」实际是「只有 7:50 的航班」 |
-| 前置缓冲 | 提前到枢纽的时间 + 家到枢纽的时间 → 决定起床时刻 |
-| 生物钟代价 | 凌晨起床/深夜到达对作息的破坏(休整型动机的致命项) |
-| 接驳与导航 | 枢纽→住处的换乘、陌生地看手机找路的认知负荷 |
-| 到达状态 | 到达时刻 + 精力余量 → 决定当天剩余有效时长 |
-| 金钱 | 票价 + 接驳 + 隐性费用(今天唯一被展示的项) |
+| Schedule constraint | You don't choose the schedule (early/red-eye); a "3.5h flight" is actually "only the 7:50 flight exists" |
+| Upfront buffer | Time to arrive at the hub early + home-to-hub time → determines wake-up time |
+| Circadian cost | The damage of pre-dawn wake-ups / late-night arrivals to one's routine (fatal for recovery-type motivations) |
+| Transfer and navigation | Hub→lodging transfers; the cognitive load of finding the way on a phone in an unfamiliar place |
+| Arrival state | Arrival time + remaining energy → determines the day's remaining effective hours |
+| Money | Ticket + transfers + hidden fees (the only item displayed today) |
 
-**到达状态模型**:可行性引擎(7.5)对每段跨城移动计算「到达时刻 + 精力余量」。休整型动机下,凌晨起床 + 双段接驳的到达意味着当日有效时长趋近于零,引擎直接标注**「此安排与你的出发动机冲突」**——工具不能毁掉目的。
+**Arrival-state model**: the feasibility engine (7.5) computes "arrival time + remaining energy" for every intercity leg. Under a recovery-type motivation, arriving after a pre-dawn wake-up plus two transfer legs means the day's effective time approaches zero, and the engine directly flags **"this arrangement conflicts with your departure motivation"**—the tool must not destroy the purpose.
 
-**兑换透明,不评判选择**:GoTry 不把穷游当次等选项(用时间换钱是正当策略),而是把兑换摆到明面上:「省 ¥400 的代价:5:30 起床、2 次换乘、预计 14:00 到住处、当日精力剩余约三成」。透明卡片(6.1)的 Cost 段由此从「价格拆解」升级为**全成本**:钱 + 门到门时长 + 起床时刻 + 到达状态预估 + 与替代选项的兑换对比。这是透明价值观在成本维度的完整形态:**不隐瞒 cost,而 cost 不只是钱。**
+**Transparent exchange, no judgment of choices**: GoTry does not treat budget travel as a second-class option (trading time for money is a legitimate strategy); it lays the exchange out in the open: "The price of saving ¥400: wake at 5:30, 2 transfers, expected arrival at lodging 14:00, about 30% energy left for the day". The Cost section of the transparent card (6.1) is thus upgraded from a "price breakdown" to **full cost**: money + door-to-door duration + wake-up time + arrival-state estimate + exchange comparison with alternatives. This is the complete form of the transparency value in the cost dimension: **never hide the cost—and cost is not just money.**
 
-### 6.6 共享经验:官方渠道不存在的数据
+### 6.6 Shared Experience: Data No Official Channel Has
 
-有一类决定真实体验的信息,**任何官方渠道都不可能提供**:丽江的网约车比大理少得多,大理加一点价就能打到车,丽江要加好几倍;两地旅游部门的管理水平更是天差地别。这类经验今天活在小红书的笔记里(好用,但要人自己去读、分辨真假与时效)、活在圆周轨迹这类社区里(有人喜欢有人不喜欢),但**不存在于任何结构化数据源**——官方不会说,API 里没有。
+There is a class of information that determines the real experience and **no official channel can possibly provide**: ride-hailing cars in Lijiang are far scarcer than in Dali—in Dali a small markup gets you a car, in Lijiang it takes several times more; the two cities' tourism administrations are worlds apart in competence. Today this kind of experience lives in Xiaohongshu notes (useful, but people must read them themselves and judge truth and timeliness) and in communities like Yuanzhou Guiji (some like it, some don't), but **it exists in no structured data source**—officials won't say it, and no API has it.
 
-**AI 时代的新形态:以结构化、可置信、可被 agent 直接消费的共享经验存在。**
+**The new form in the AI era: shared experience that exists as structured, confidence-scored, agent-directly-consumable data.**
 
-- **经验条目(Experience Entry)是最小单元**:断言(「丽江打车高峰需加价 2-3 倍才有人接」)+ 地点与时间窗 + 提出者 + **印证**(其他旅行者的确认/反驳/更新,带时间)+ 新鲜度衰减。经验是活的:管理会变,过期即降权。
-- **回流机制与 5.6 闭环**:回忆沉淀时,「值得告诉下一个人」的经验被抽取为条目,用户确认后共享——「你这次在丽江加价 2 倍才打到车,要告诉下一个去丽江的人吗?」这是人文关怀的互惠形态:**我被上一个旅行者帮过,我帮下一个**。
-- **消费面三处**:①透明卡片的 why 新增证据类型 [共享经验](近 90 天,11 人印证);②可行性引擎用共享经验校准门到门全成本(6.5)——丽江的打车难度直接影响接驳时间与精力扣减的估计;③动机匹配——「管理混乱、易被宰」对逃离休整型是强负信号,对挑战成就型未必。
-- **置信与反滥用**:印证计数 + 时间衰减;单一未印证条目只作提示、不作依据;商家自我推销与水军是对抗面(与「不卖排名」红线同源的攻防)。
-- **冷启动**:种子用户的目的地集中打透;创始团队自己的经验是第一批条目;公开内容(小红书/攻略)只做**事实断言的人工提炼**,不搬运内容(版权与平台规则红线)。
-- **这是护城河**:OTA 不愿做(交易导向)、官方不能做(利益冲突)、通用 AI 做不到(没有回流闭环)。共享经验随用户量复利,且同时强化透明(证据更真)与可行性(参数更实)。
+- **The Experience Entry is the minimal unit**: an assertion ("at peak hours in Lijiang you must add a 2-3x markup before anyone accepts the ride") + place and time window + proposer + **corroboration** (confirmations/rebuttals/updates from other travelers, with timestamps) + freshness decay. Experience is alive: management changes, and expired entries lose weight.
+- **The reflux mechanism closes the loop with 5.6**: when memories settle, experiences "worth telling the next person" are extracted into entries and shared after user confirmation—"this time in Lijiang you had to add a 2x markup to get a car; want to tell the next person going to Lijiang?" This is the reciprocal form of human care: **I was helped by the last traveler; I help the next one**.
+- **Three consumption surfaces**: ① the transparent card's why gains a new evidence type [Shared experience](past 90 days, corroborated by 11 people); ② the feasibility engine uses shared experience to calibrate door-to-door true cost (6.5)—Lijiang's ride-hailing difficulty directly affects estimates of transfer time and energy deduction; ③ motivation matching—"chaotic management, easy to get ripped off" is a strong negative signal for escape-and-recovery types, not necessarily for challenge-and-achievement types.
+- **Confidence and anti-abuse**: corroboration counts + time decay; a single uncorroborated entry serves only as a hint, never as a basis; merchant self-promotion and astroturfing are the adversarial surface (an offense-defense game sharing its root with the "never sell ranking" red line).
+- **Cold start**: seed users' destinations are covered deeply and in a concentrated way; the founding team's own experience is the first batch of entries; public content (Xiaohongshu/guides) only undergoes **manual distillation of factual assertions**, never content copying (copyright and platform-rule red lines).
+- **This is the moat**: OTAs won't do it (transaction-oriented), officials can't (conflict of interest), general AI can't (no reflux loop). Shared experience compounds with user volume and simultaneously strengthens transparency (truer evidence) and feasibility (more realistic parameters).
 
 ---
 
-## 7. Agent 架构
+## 7. Agent Architecture
 
-> 本章是工程设计立场,不是实现细节。核心原则:**LLM 负责理解与解释,确定性系统负责状态与求解,写操作永远有闸。**
+> This chapter states engineering design positions, not implementation details. Core principle: **the LLM handles understanding and explanation; deterministic systems handle state and solving; writes are always gated.**
 
-### 7.1 分层总览
+### 7.1 Layered Overview
 
 ```
 入口层    App / Web /（未来）IM bot
@@ -377,29 +379,29 @@ Agent 层   ReAct 编排(对话) + 确定性流程 DAG 调度 + WriteGate(双执
             机票/活动/POI/天气/签证 📍                     ← 外部供应商与公开数据
 ```
 
-### 7.2 双执行模式(借鉴 T 系统生产实践)
+### 7.2 Dual Execution Modes (Borrowed from T-System Production Practice)
 
-生产级差旅 agent(T 系统)验证过的分工,直接迁移到休闲旅行域:
+The division of labor proven by a production-grade business-travel agent (the T system) migrates directly to the leisure-travel domain:
 
-- **ReAct 编排侧(工具循环)**:自然语言编排、开放式解释、动机访谈、随性问询——一切探索性、解释性、低风险的对话。
-- **确定性 DAG 调度侧**:高置信、强流程、强确认的场景——预订确认、支付、退改、行程定稿。支持 pending state:发起确认后挂起,等用户下一轮明确答复再推进。
-- **路由原则**:对话与探索走 Pure;交易与状态机走 Graph;边界场景(用户在确认流程中岔开提问)由 Graph 挂起、Pure 接管、答完回归。
+- **ReAct orchestration side (tool loop)**: natural-language orchestration, open-ended explanation, motivation interviews, spontaneous inquiries—all exploratory, explanatory, low-risk conversation.
+- **Deterministic DAG scheduling side**: high-confidence, strong-process, strong-confirmation scenarios—booking confirmation, payment, changes/refunds, itinerary finalization. Supports pending state: after a confirmation is initiated, suspend and wait for the user's explicit reply in the next turn before advancing.
+- **Routing principle**: conversation and exploration go to Pure; transactions and state machines go to Graph; boundary scenarios (the user digresses with a question mid-confirmation) are handled by Graph suspending, Pure taking over, and returning after the answer.
 
-### 7.3 工具层
+### 7.3 Tool Layer
 
-- 领域操作(trip/day/place/budget/booking/…)结构化为**带 schema、带细粒度 scope 的工具**——借鉴 TREK 的「应用为体、AI 为用」:先把领域操作建模干净,agent 才有可靠的手脚。
-- 工具返回**结构化证据**(来源、抓取时间、置信度),供透明层(第 6 章)直接消费——透明是从工具层开始设计的,不是展示层补的。
-- **tool-owned dates**(T 系统实践):日期/时间一律由工具解析,模型逐字传递用户原话,杜绝 LLM 算错日期这类低级事故。
-- 长会话可恢复:流式输出 + 断线续传 + 服务端会话状态(T 系统已验证的 SSE + 持久化模式)。
+- Domain operations (trip/day/place/budget/booking/…) are structured as **tools with schemas and fine-grained scopes**—borrowing TREK's "the application as the body, AI as the use": model domain operations cleanly first, and only then does the agent have reliable hands and feet.
+- Tools return **structured evidence** (source, fetch time, confidence) for direct consumption by the transparency layer (Chapter 6)—transparency is designed from the tool layer up, not patched on at the presentation layer.
+- **tool-owned dates** (T-system practice): dates/times are always parsed by tools; the model passes the user's original words verbatim, eliminating low-level accidents like the LLM miscalculating dates.
+- Resumable long sessions: streaming output + reconnection resume + server-side session state (the SSE + persistence pattern proven in the T system).
 
 ### 7.4 WriteGate
 
-- 读工具(搜索、查询、校验):直接执行。
-- 写工具(预订、支付、退改、向第三方发消息):**必须显式确认**;未证明只读的工具默认按写处理。
-- 幂等键:同一确认上下文的重复提交只生效一次。
-- 这是红线 5 的工程化:任何模型幻觉/误判都撞在闸上,而不是撞在用户钱包上。
+- Read tools (search, query, verification): execute directly.
+- Write tools (booking, payment, changes/refunds, messaging third parties): **explicit confirmation required**; tools not proven read-only are treated as writes by default.
+- Idempotency keys: duplicate submissions within the same confirmation context take effect only once.
+- This is the engineering of red line 5: any model hallucination/misjudgment hits the gate, not the user's wallet.
 
-### 7.5 可行性引擎(反幻觉核心)
+### 7.5 Feasibility Engine (The Anti-Hallucination Core)
 
 ```
 自然语言约束/偏好
@@ -415,175 +417,176 @@ Agent 层   ReAct 编排(对话) + 确定性流程 DAG 调度 + WriteGate(双执
 自然语言行程 / 最小修改建议("加 ¥300 / 换日期 / 删一项,任选其一可解")
 ```
 
-- 依据:TravelPlanner 基准下纯 LLM(sole-planning)可行率 4.4%(GPT-4)/10%(o1-preview),LLM+形式化求解混合架构 93%+(附录 A-6)。
-- **失败也是产品**:引擎不返回「无法规划」,而是返回带原因的最小修改集——这是「帮助用户解决问题」的价值观在算法层的落点。
-- 动机(4.2)作为约束进入引擎:同样是三天两夜,「逃离休整」与「挑战成就」求解出的行程密度完全不同。动机还设定**钱-时间-精力兑换率**(6.5):休整型动机下,凌晨起床+多段接驳的门到门安排会被标注「与出发动机冲突」——不解决「为什么出发」,引擎连该用什么计价都不知道。
+- Basis: on the TravelPlanner benchmark, pure LLM (sole-planning) feasibility is 4.4% (GPT-4)/10% (o1-preview); the LLM + formal-solving hybrid architecture reaches 93%+ (Appendix A-6).
+- **Failure is also a product**: the engine never returns "cannot plan" but a minimal change set with reasons—this is where the value "help the user solve problems" lands at the algorithm layer.
+- Motivation (4.2) enters the engine as constraints: for the same three days and two nights, "escape and recovery" and "challenge and achievement" solve to completely different itinerary densities. Motivation also sets the **money-time-energy exchange rate** (6.5): under a recovery-type motivation, a door-to-door arrangement with a pre-dawn wake-up plus multiple transfer legs gets flagged "conflicts with the departure motivation"—without solving "why depart", the engine does not even know what to price in.
 
-### 7.6 长程状态与记忆(借鉴 loopx + ai-agent-book)
+### 7.6 Long-Horizon State and Memory (Borrowed from loopx + ai-agent-book)
 
-**TripState = 一次旅行的长程任务状态**(一个行程从憧憬到回忆,周期以周/月计,远超一次会话):
+**TripState = the long-horizon task state of one trip** (a trip runs from aspiration to memory, on a cycle measured in weeks/months, far beyond one session):
 
-- objective:动机画像 + 约束集
-- phase:七阶段(第 5 章)中的当前位置
-- gates:需要用户判断的显式门——行程定稿、预订确认、支付(借鉴 loopx 的 user gate 模式:问一个具体问题并等待,而不是模糊的「等用户」)
-- evidence:价格快照、可行性校验记录、每笔交易的完整上下文——支持事后复盘与投诉仲裁
-- quota:单次规划会话的迭代预算——**验证后才花费,无有效进展的迭代静默停止**(loopx 的 quota-gated tick 模式,C 端成本治理的关键)
+- objective: motivation profile + constraint set
+- phase: current position within the seven stages (Chapter 5)
+- gates: explicit gates needing user judgment—itinerary finalization, booking confirmation, payment (borrowing loopx's user gate pattern: ask one concrete question and wait, rather than a vague "waiting for the user")
+- evidence: price snapshots, feasibility-verification records, the full context of every transaction—supports after-the-fact review and dispute arbitration
+- quota: the iteration budget of a single planning session—**spend only after verification; iterations without effective progress stop silently** (loopx's quota-gated tick pattern, key to consumer-side cost governance)
 
-**记忆分层**(ai-agent-book 第 3 章框架):
+**Memory layering** (the framework from ai-agent-book Chapter 3):
 
-| 层 | 生命周期 | 内容 | 透明机制 |
+| Layer | Lifetime | Content | Transparency mechanism |
 |---|---|---|---|
-| 动机画像 | 跨年 | 动机谱系、体力档、预算档 | 可见/可编辑(红线 6) |
-| 偏好与禁忌 | 长期 | 饮食、住宿习惯、同行人档案 | 可见/可编辑 |
-| 旅行状态 | 周至月 | 当前 TripState | 完全可见 |
-| 对话上下文 | 会话内 | 当前对话 | 压缩存储,不跨层污染 |
+| Motivation profile | Cross-year | Motivation spectrum, physical tier, budget tier | Visible/editable (red line 6) |
+| Preferences and taboos | Long-term | Diet, lodging habits, companion profiles | Visible/editable |
+| Trip state | Weeks to months | Current TripState | Fully visible |
+| Conversation context | Within session | Current conversation | Stored compressed; no cross-layer pollution |
 
-隐私立场:记忆属于用户;「下一次出发」的个性化只用动机画像与聚合行为,不用对话原文。
+Privacy stance: memory belongs to the user; "next departure" personalization uses only the motivation profile and aggregated behavior, never raw conversation text.
 
-### 7.7 成本工程(C 端经济性的前提)
+### 7.7 Cost Engineering (The Premise of Consumer-Side Economics)
 
-调研基准:不做工程的 agent 会话成本是工程后的 6-10 倍(附录 A-7)。GoTry 从 Day 1 内建五杠杆:
+Research baseline: an un-engineered agent session costs 6-10x an engineered one (Appendix A-7). GoTry builds in five levers from Day 1:
 
-| 杠杆 | GoTry 的做法 | 行业实测幅度 |
+| Lever | GoTry's practice | Industry-measured magnitude |
 |---|---|---|
-| 模型分级路由 | 意图理解/行程编排/翻译解释用强模型;参数抽取/格式化/校验/分类用轻模型 | 省 40-70% |
-| 上下文压缩 | 行程状态结构化存储,对话历史按需加载;verbatim 删除优先于摘要 | token 量降 50-70% |
-| 缓存 | POI/城市静态数据、固定格式抽取、(未来)prompt cache | 命中省至 90% |
-| 批处理 | 夜间价格预取、候选行程批量生成、评测 | 一律 50% |
-| quota 门 | 单会话迭代上限、无进展静默停止 | 防失控(不是省钱,是止损) |
+| Model tier routing | Strong models for intent understanding/itinerary orchestration/translation and explanation; light models for parameter extraction/formatting/verification/classification | Save 40-70% |
+| Context compression | Itinerary state stored structured, conversation history loaded on demand; verbatim deletion preferred over summarization | Token volume down 50-70% |
+| Caching | POI/city static data, fixed-format extraction, (future) prompt cache | Up to 90% saved on hits |
+| Batch processing | Nightly price prefetch, batch candidate-itinerary generation, evaluation | A flat 50% |
+| quota gate | Per-session iteration cap, silent stop on no progress | Prevents runaway (not saving money—stopping losses) |
 
-成本目标:M1 结束时,单次完整规划会话(含动机访谈)模型直接成本可测量、可报告;具体阈值随首发市场与定价校准(第 12 章)。**成本是产品约束,不是事后优化。**
+Cost target: by end of M1, the direct model cost of one full planning session (including the motivation interview) is measurable and reportable; concrete thresholds are calibrated with the launch market and pricing (Chapter 12). **Cost is a product constraint, not an after-the-fact optimization.**
 
-### 7.8 hotel-be 能力复用边界
+### 7.8 hotel-be Capability-Reuse Boundary
 
-**复用(GoTry 不重建)**:城市搜索、酒店搜索/详情/静态数据、地理映射——以内部 API/服务形态暴露给 GoTry 能力层。这是「降低维护两套成本」的直接落点。
+**Reuse (GoTry does not rebuild)**: city search, hotel search/details/static data, geo-mapping—exposed to GoTry's capability layer as internal APIs/services. This is the direct landing of "reduce the cost of maintaining two stacks".
 
-**不复用(领域不同)**:企业差旅域(出差申请、审批流、成本中心、差旅标准)——GoTry 是 C 端休闲旅行,域模型不同,强行复用会把企业语义泄漏进 C 端产品。
+**No reuse (different domain)**: the enterprise travel domain (trip requests, approval flows, cost centers, travel policies)—GoTry is consumer leisure travel; the domain models differ, and forced reuse would leak enterprise semantics into a consumer product.
 
-**供应链立场**:HotelByte 是 GoTry 的酒店供应链**之一**,与外部供应商同场比价。透明的直接应用:**如果 HotelByte 不是最优价,GoTry 照样推荐更优渠道**(5.4 规则 2)。架构上以多供应商抽象隔离,避免被任何单一供应链绑定。
+**Supply-chain stance**: HotelByte is **one** of GoTry's hotel supply chains, compared head-to-head with external suppliers. The direct application of transparency: **if HotelByte is not the best price, GoTry recommends the better channel all the same** (5.4 rule 2). Architecturally, a multi-supplier abstraction provides isolation, avoiding binding to any single supply chain.
 
-### 7.9 评测(eval-driven)
+### 7.9 Evaluation (eval-driven)
 
-评测先于功能放量。三类评测集(参照 T 系统独立评测集仓库的实践,名称脱敏):
+Evaluation precedes feature rollout. Three evaluation sets (following the T system's practice of an independent eval-set repository, name anonymized):
 
-| 评测集 | 度量 | 基线目标(M1) |
+| Eval set | Measures | Baseline target (M1) |
 |---|---|---|
-| 可行性 | 约束满足通过率(时间/地理/预算/体力) | ≥ 80%(向 93%+ 演进) |
-| 事实性 | POI 存在性幻觉率、价格区间偏差 | 幻觉 < 1% |
-| 透明度 | 推荐卡片字段完整率、佣金披露覆盖率、排序因素可解释率 | 100% / 100% / 100% |
+| Feasibility | Constraint-satisfaction pass rate (time/geography/budget/stamina) | ≥ 80% (evolving toward 93%+) |
+| Factuality | POI existence hallucination rate, price-range deviation | Hallucination < 1% |
+| Transparency | Recommendation-card field completeness, commission-disclosure coverage, ranking-factor explainability | 100% / 100% / 100% |
 
-每次 prompt、模型、工具变更跑回归;成本(每用例 token 花费)作为第四维度纳入报告。
-
----
-
-## 8. 商业模式
-
-三层收入,全部与透明共存:
-
-1. **免费:规划与陪伴**。动机访谈、规划、在路上陪伴、回忆沉淀——免费且不降级体验。这是信任的入口;「规划免费」同时是获客成本优势。
-2. **GoTry Plus 订阅**(锚点 $49/年,随市场与法币定价 📍)。解锁:多方案并行对比与长线多段规划、价格监控与窗口提醒、更深度的跨年记忆与年度旅行回顾。订阅收入不依赖交易,与「推荐可信任」无利益冲突。
-3. **预订佣金**。M3 起;全额披露(6.2)前提下的交易分成;用户始终可选非 GoTry 渠道(5.4)。
-
-**永不做的收入**:付费排名、推荐流广告、用户数据转售(红线 2、6)。
-
-**单位经济**:收入(订阅 + 披露佣金)对成本(7.7 工程后的模型成本 + 供应链通道费 + 履约支持)。M3 前不追求交易收入——先把「推荐可信任」的资产攒起来;信任是这个模式里唯一的复利。
+Every prompt, model, or tool change runs regression; cost (token spend per case) is included in the report as a fourth dimension.
 
 ---
 
-## 9. 指标体系
+## 8. Business Model
 
-**北极星:下一次出发率** = 12 个月内完成第二次出行的用户占比。
+Three revenue layers, all coexisting with transparency:
 
-为什么是它:同时度量产品价值(用户真的出发了)、价值观履行(服务持续到了下一次,5.7)、商业模式健康(订阅续费与佣金复购的基础)。它无法被刷量——只有真的服务好了一整轮循环才能移动这个数。
+1. **Free: planning and companionship**. Motivation interview, planning, on-the-road companionship, memory settling—free, with no degraded experience. This is the entry point of trust; "planning is free" is also a customer-acquisition-cost advantage.
+2. **GoTry Plus subscription** (anchored at $49/year, priced per market and fiat currency 📍). Unlocks: parallel multi-plan comparison and long-haul multi-leg planning, price monitoring and window alerts, deeper cross-year memory and annual travel review. Subscription revenue does not depend on transactions and has no conflict of interest with "recommendations you can trust".
+3. **Booking commissions**. From M3; transaction share under full disclosure (6.2); users can always choose non-GoTry channels (5.4).
 
-**过程指标树**(每阶段 1-2 个):
+**Revenue we will never make**: paid ranking, recommendation-feed ads, user-data resale (red lines 2, 6).
 
-| 阶段 | 指标 | 度量什么 |
+**Unit economics**: revenue (subscriptions + disclosed commissions) against costs (post-engineering model costs per 7.7 + supply-chain channel fees + fulfillment support). No transaction revenue is pursued before M3—first accumulate the asset of "recommendations you can trust"; trust is the only compounding interest in this model.
+
+---
+
+## 9. Metrics System
+
+**North Star: next-departure rate** = the share of users who complete a second trip within 12 months.
+
+Why this one: it measures product value (the user actually departed), value fulfillment (service continued to the next trip, 5.7), and business-model health (the basis of subscription renewal and commission repurchase) at the same time. It cannot be gamed—only genuinely serving a full loop well moves this number.
+
+**Process metric tree** (1-2 per stage):
+
+| Stage | Metric | What it measures |
 |---|---|---|
-| 为什么出发 | 动机访谈完成率 | 用户愿意被听 |
-| 去哪里 | 候选采纳率 | 卡片的说服与诚实 |
-| 规划 | 行程定稿率 / why 展开率 | 规划价值 / 透明被真实使用 |
-| 预订(M3) | 预订转化率 / 外部跳转率 | 交易价值 / 透明的代价与回报 |
-| 在路上 | 出行中周活占比 | 陪伴真实发生 |
-| 回来之后 | 回忆完成率 / 对账打开率 / **经验回流率**(沉淀→共享的转化) | 闭环兑现与互惠飞轮 |
-| 下一次出发 | 主动回访接受率 | 触达的克制被认可 |
+| Why depart | Motivation-interview completion rate | Users are willing to be heard |
+| Where to go | Candidate adoption rate | The card's persuasion and honesty |
+| Planning | Itinerary finalization rate / why expansion rate | Planning value / transparency actually used |
+| Booking (M3) | Booking conversion rate / external jump rate | Transaction value / the cost and return of transparency |
+| On the road | Share of weekly active users mid-trip | Companionship really happening |
+| After returning | Memory completion rate / reconciliation open rate / **experience reflux rate** (settling→sharing conversion) | Loop honored and the reciprocity flywheel |
+| Next departure | Proactive follow-up acceptance rate | Restraint in outreach recognized |
 
-**反指标(健康度护栏)**:推销投诉率、POI 幻觉事故数、编辑推荐占比(必须恒为 0)、未披露收益交易数(必须恒为 0)。
-
----
-
-## 10. 路线图
-
-每阶段是一个**可独立验证的最小闭环**,评测先行(7.9)。
-
-### M1(0-3 月):把规划做对
-
-范围:动机访谈;规划对话;结构化行程页(Day planner + 地图 + 预算);透明推荐卡片(6.1 完整四段);可行性引擎 v1(时间 + 地理 + 预算);评测基线三件套。**无预订,轻账号**。
-
-验收:可行性通过率 ≥ 80%;POI 幻觉 < 1%;种子用户(邀请制,50-200 人)行程定稿率 ≥ 40%;NPS ≥ 40;单会话模型成本可测量可报告。
-
-### M2(3-6 月):记住你 + 在路上
-
-范围:记忆系统(动机画像/偏好);出行中陪伴(实况、延误重排、当日微调);价格监控;回忆沉淀 v1(回忆页 + 花费对账)。
-
-验收:回访用户规划时长较首访下降 ≥ 50%(记忆生效的证据);出行中周活占比 ≥ 60%;对账打开率 ≥ 30%。
-
-### M3(6-12 月):闭环
-
-范围:预订(WriteGate + 供应链接入:酒店经 HotelByte 与外部比价,机票/活动外部 📍);佣金披露上线;「下一次出发」主动回访;GoTry Plus 订阅发布。
-
-验收:预订确认流程零误操作事故(WriteGate 有效性);下一次出发率有可报告基线;单位经济模型用实测数据校准。
+**Counter-metrics (health guardrails)**: sales-push complaint rate, POI hallucination incident count, share of editorial placements in recommendations (must stay 0), undisclosed-earnings transaction count (must stay 0).
 
 ---
 
-## 11. 风险与应对
+## 10. Roadmap
 
-1. **实时性与幻觉**(最高技术风险):7.5 可行性引擎 + 6.3 证据链 + 红线 4 的存在性校验;幻觉事故进反指标,一旦发生进根因复盘。
-2. **供应链议价**(初创量小拿不到好价):M1/M2 不依赖交易;比价跳转模式先跑通「推荐可信任」;HotelByte 先行接入降低酒店侧冷启动 📍。
-3. **巨头竞争**(Expedia 收购 Layla 后加码;携程系 AI 化):结构性差异——巨头的佣金+广告模式无法全透明(全透明等于自我革命),GoTry 无此包袱;聚焦巨头没有动机覆盖的「动机理解 → 长期陪伴」段;巨头强在交易效率,弱在关系。
-4. **模型成本失控**:7.7 五杠杆 + quota 门;成本进评测第四维度;「无进展不烧钱」写入架构而非运营手册。
-5. **信任冷启动**(「凭什么信你透明」):机制可审计(每张卡片可验证、每笔收益可核对)+ 邀请制种子用户 + 独立第三方可复核的披露口径。
-6. **「旅行哲学」的规模化风险**(人文关怀能否标准化):动机分类学是有限集 + 连续权重;个性化靠约束求解与记忆,不靠无限长对话——深度的下限由引擎保证,上限由对话提供。
-7. **合规 📍**:佣金披露口径、支付/外汇、数据跨境、自动触达的隐私法规——随市场锁定逐项确认(第 12 章)。
-8. **共享经验的冷启动与污染**:回流闭环转起来之前数据稀薄;转起来之后有水军与商家污染 → 置信模型(印证+时间衰减)+ 单一来源只提示不依据的降级 + 人工种子(6.6);污染对抗与「不卖排名」红线同源。
+Each stage is an **independently verifiable minimal closed loop**, evaluation first (7.9).
+
+### M1 (Months 0-3): Get Planning Right
+
+Scope: motivation interview; planning dialogue; structured itinerary page (Day planner + map + budget); transparent recommendation cards (the full four parts of 6.1); feasibility engine v1 (time + geography + budget); the three-piece evaluation baseline. **No booking, lightweight accounts.**
+
+Acceptance: feasibility pass rate ≥ 80%; POI hallucination < 1%; seed users (invite-only, 50-200 people) itinerary finalization rate ≥ 40%; NPS ≥ 40; per-session model cost measurable and reportable.
+
+### M2 (Months 3-6): Remember You + On the Road
+
+Scope: memory system (motivation profile/preferences); mid-trip companionship (live conditions, delay rescheduling, same-day tuning); price monitoring; memory settling v1 (memory page + expense reconciliation).
+
+Acceptance: returning users' planning time down ≥ 50% vs first visit (evidence that memory works); mid-trip share of weekly active users ≥ 60%; reconciliation open rate ≥ 30%.
+
+### M3 (Months 6-12): Closing the Loop
+
+Scope: booking (WriteGate + supply-chain integration: hotels via HotelByte compared with external channels, flights/activities external 📍); commission disclosure live; "next departure" proactive follow-up; GoTry Plus subscription launch.
+
+Acceptance: zero misoperation incidents in the booking-confirmation flow (WriteGate effectiveness); a reportable baseline for next-departure rate; the unit-economics model calibrated with measured data.
 
 ---
 
-## 12. 待确认事项
+## 11. Risks and Responses
 
-| # | 事项 | 影响范围 | 建议决策时点 |
+1. **Real-time data and hallucination** (highest technical risk): 7.5 feasibility engine + 6.3 evidence chain + red line 4 existence verification; hallucination incidents go into counter-metrics and, once occurred, into root-cause review.
+2. **Supply-chain bargaining power** (a startup with small volume can't get good prices): M1/M2 do not depend on transactions; the price-comparison-and-jump model first proves "recommendations you can trust"; HotelByte is integrated first to lower hotel-side cold start 📍.
+3. **Giant competition** (Expedia doubling down after acquiring Layla; the Ctrip family AI-ifying): structural difference—the giants' commission+advertising model cannot go fully transparent (full transparency equals self-revolution), and GoTry carries no such baggage; focus on the "motivation understanding → long-term companionship" segment the giants have no motivation to cover; giants are strong in transaction efficiency, weak in relationships.
+4. **Model cost runaway**: 7.7's five levers + quota gate; cost enters evaluation as the fourth dimension; "no progress, no burn" is written into the architecture, not an operations manual.
+5. **Trust cold start** ("why should I believe you're transparent"): auditable mechanisms (every card verifiable, every earning checkable) + invite-only seed users + disclosure standards reviewable by independent third parties.
+6. **Scaling risk of the "travel philosophy"** (can human care be standardized): the motivation taxonomy is a finite set + continuous weights; personalization relies on constraint solving and memory, not infinitely long dialogue—the floor of depth is guaranteed by the engine, the ceiling is provided by conversation.
+7. **Compliance 📍**: commission-disclosure standards, payments/foreign exchange, cross-border data, privacy regulations for automated outreach—confirmed item by item with market lock (Chapter 12).
+8. **Cold start and pollution of shared experience**: before the reflux loop spins up, data is thin; after it spins up, astroturfers and merchants pollute → confidence model (corroboration + time decay) + degradation where a single source hints but never grounds + manual seeding (6.6); pollution defense shares its root with the "never sell ranking" red line.
+
+---
+
+## 12. Open Items
+
+| # | Item | Scope of impact | Suggested decision time |
 |---|---|---|---|
-| 1 | 首发市场锁定(中国出境/国内深度/全球英文) | 全文所有 📍 项 | M1 启动前 |
-| 2 | 产品形态:App 还是 Web 先行 | M1 范围与团队构成 | M1 设计期 |
-| 3 | hotel-be 原子能力的暴露形态(API 直连/抽独立服务/SDK) | 架构与联调成本 | M1 设计期 |
-| 4 | 机票/活动供应链选型 | M3 | M2 中期 |
-| 5 | 佣金披露的合规口径与格式 | 商业模式合法性 | 市场锁定后 |
-| 6 | 订阅定价与免费/付费边界 | 收入模型 | M3 前 |
-| 7 | 主动触达(「下一次出发」)的频控与默认值 | 体验与隐私合规 | M2 前 |
-| 8 | 团队与预算 | 全部 | 立即 |
+| 1 | Launch market lock (China outbound / domestic in-depth / global English) | All 📍 items in this document | Before M1 launch |
+| 2 | Product form: App first or Web first | M1 scope and team composition | M1 design phase |
+| 3 | Exposure form of hotel-be atomic capabilities (direct API / standalone service / SDK) | Architecture and integration cost | M1 design phase |
+| 4 | Flight/activity supply-chain selection | M3 | Mid-M2 |
+| 5 | Compliance scope and format of commission disclosure | Business-model legality | After market lock |
+| 6 | Subscription pricing and the free/paid boundary | Revenue model | Before M3 |
+| 7 | Frequency control and defaults for proactive outreach ("next departure") | Experience and privacy compliance | Before M2 |
+| 8 | Team and budget | Everything | Immediately |
 
 ---
 
-## 附录 A:参考项目与来源映射
+## Appendix A: Reference Projects and Source Mapping
 
-| # | 参考 | 是什么 | GoTry 借鉴点 |
+| # | Reference | What it is | What GoTry borrows |
 |---|---|---|---|
-| 1 | [layla.ai](https://layla.ai/) | 商业 AI 旅行规划(柏林,~25 人;2026-07 被 Expedia 收购);freemium + $49/年;AI+真人混合 | 赛道与定价锚点;**反面教材**:chat-only、缺地图/总览/引导(Trustpilot/Reddit 实测)→ GoTry 结构化行程的依据。来源:layla.ai、Skift 2026-07-31 报道、Expedia IR、Trustpilot |
-| 2 | [liketrek/TREK](https://github.com/liketrek/TREK) | 开源自托管旅行规划器(NestJS+React;AGPL v3);150+ MCP 工具、细粒度 scope、限流 | 「应用为体、AI 为用」:领域操作工具化 + 权限模型;功能 checklist(地图/拖拽/导入/协作);**代码不可直接商用(AGPL)** |
-| 3 | [huangruiteng/loopx](https://github.com/huangruiteng/loopx)(zread 页超时,读 GitHub README) | 长程任务状态内核与本地控制平面:objective/gates/todos/evidence/quota;「验证后才花费」 | TripState 长程状态模型(7.6):显式 user gate、evidence、quota-gated loop(C 端成本治理) |
-| 4 | 某企业级差旅 Agent 系统(T 系统,生产运行,来源脱敏) | ReAct 编排 + 确定性 DAG 双执行、WriteGate、tool-owned dates、SSE 断线续传、内部 eval 体系、独立评测集 | 7.2 双执行模式、7.3 工具层实践、7.4 WriteGate、7.9 评测形态——生产验证过的直接迁移 |
-| 5 | [bojieli/ai-agent-book](https://github.com/bojieli/ai-agent-book) | 《深入理解 AI Agent》开源书:上下文工程、记忆、工具/MCP、评测、多 agent;「Harness 工程才是竞争力」 | 7.6 记忆分层框架、7.7 上下文压缩、7.9 eval-driven 方法论 |
-| 6 | [旅行规划 AI Agent 论文解读(知乎)](https://zhuanlan.zhihu.com/p/11161530566)(微信原文被拦截,以此为主源) | TravelPlanner benchmark + LLM+Z3 混合求解论文解读 | 7.5 可行性引擎的直接依据:纯 LLM 4.4% vs 混合 93%+;unsat core → 最小修改建议 |
-| 7 | [Morph: LLM Cost Optimization](https://www.morphllm.com/llm-cost-optimization)(微信原文被拦截,以此为主源) | Agent 成本五杠杆与实测幅度 | 7.7 成本工程:路由 40-70%/压缩 50-70%/缓存 90%/批处理 50%/叠加 84-91% |
-| 8 | 行业难点多源调研 | 环球旅讯/21 财经/消费日报/中国旅游报等 | 3.1 问题定义:碎片化、实时性、粒度、信任 |
-| 9 | 小红书 / 圆周轨迹(创始人使用经验) | 经验社区:真实民间智慧密度高,但非结构化、要人自己读 | 6.6 共享经验层的形态参照与差异化对象;冷启动只做事实断言的人工提炼 |
+| 1 | [layla.ai](https://layla.ai/) | Commercial AI travel planning (Berlin, ~25 people; acquired by Expedia in 2026-07); freemium + $49/year; AI+human hybrid | Category and pricing anchor; **counterexample**: chat-only, missing maps/overview/guided flow (Trustpilot/Reddit user tests) → the basis for GoTry's structured itineraries. Sources: layla.ai, Skift 2026-07-31 report, Expedia IR, Trustpilot |
+| 2 | [liketrek/TREK](https://github.com/liketrek/TREK) | Open-source self-hosted travel planner (NestJS+React; AGPL v3); 150+ MCP tools, fine-grained scopes, rate limiting | "The application as the body, AI as the use": domain operations toolified + permission model; feature checklist (maps/drag-and-drop/import/collaboration); **code not directly commercially usable (AGPL)** |
+| 3 | [huangruiteng/loopx](https://github.com/huangruiteng/loopx) (zread page timed out; read the GitHub README) | Long-horizon task-state kernel and local control plane: objective/gates/todos/evidence/quota; "spend only after verification" | TripState long-horizon state model (7.6): explicit user gates, evidence, quota-gated loop (consumer-side cost governance) |
+| 4 | An enterprise-grade business-travel Agent system (the T system, in production, source anonymized) | ReAct orchestration + deterministic DAG dual execution, WriteGate, tool-owned dates, SSE reconnection resume, internal eval system, independent eval sets | 7.2 dual execution modes, 7.3 tool-layer practices, 7.4 WriteGate, 7.9 evaluation forms—direct migration of production-proven practice |
+| 5 | [bojieli/ai-agent-book](https://github.com/bojieli/ai-agent-book) | The open-source book "Understanding AI Agents in Depth" (深入理解 AI Agent): context engineering, memory, tools/MCP, evaluation, multi-agent; "Harness engineering is the real competitiveness" | 7.6 memory-layering framework, 7.7 context compression, 7.9 eval-driven methodology |
+| 6 | [Reading the travel-planning AI Agent papers (Zhihu)](https://zhuanlan.zhihu.com/p/11161530566) (the WeChat original was blocked; this is the primary source) | Interpretation of the TravelPlanner benchmark + LLM+Z3 hybrid-solving papers | The direct basis for the 7.5 feasibility engine: pure LLM 4.4% vs hybrid 93%+; unsat core → minimal-change suggestions |
+| 7 | [Morph: LLM Cost Optimization](https://www.morphllm.com/llm-cost-optimization) (the WeChat original was blocked; this is the primary source) | The five agent-cost levers and measured magnitudes | 7.7 cost engineering: routing 40-70% / compression 50-70% / caching 90% / batching 50% / stacked 84-91% |
+| 8 | Multi-source research on industry pain points | TravelDaily (环球旅讯), 21st Century Business Herald (21 财经), Consumer Daily (消费日报), China Tourism News (中国旅游报), etc. | 3.1 problem definition: fragmentation, real-time data, granularity, trust |
+| 9 | Xiaohongshu / Yuanzhou Guiji (圆周轨迹) (founder's usage experience) | Experience communities: high density of real folk wisdom, but unstructured and must be read by people themselves | Form reference and differentiation target for the 6.6 shared-experience layer; cold start only does manual distillation of factual assertions |
 
 ---
 
-## 附录 B:与 HotelByte / Stai 体系的关系
-**立场:GoTry 是独立的 C 端产品,不是 HotelByte/Stai 的产品线。** hotel-be 对 GoTry 的价值是两件事:原子能力底座 + 一条现成的酒店供应链。
+## Appendix B: Relationship with the HotelByte / Stai System
 
-- **复用清单**:城市搜索、酒店搜索/详情/静态数据、地理映射(7.8)。原则:能复用的不重建,降低维护两套的成本。
-- **不复用清单**:企业差旅域(申请/审批/成本中心)——域不同,不强行耦合。
-- **与 Stai BP 的边界**:Stai 的硬边界是「不做终端住客」(纯 B2B 分销 marketplace);GoTry 恰好是 C 端——两者不冲突、不重叠。若未来 Stai marketplace 成型,GoTry 可以成为其一个消费方入口,但这**不是 GoTry 的设计前提**。
-- **架构对冲**:GoTry 以多供应商抽象接入酒店库存,HotelByte 是之一而非唯一——单一供应链的议价或可用性变化不影响产品存续。
+**Position: GoTry is an independent consumer product, not a product line of HotelByte/Stai.** hotel-be's value to GoTry is two things: an atomic-capability foundation + a ready-made hotel supply chain.
+
+- **Reuse list**: city search, hotel search/details/static data, geo-mapping (7.8). Principle: don't rebuild what can be reused; reduce the cost of maintaining two stacks.
+- **No-reuse list**: the enterprise travel domain (requests/approvals/cost centers)—different domain, no forced coupling.
+- **Boundary with Stai BP**: Stai's hard boundary is "no end guests" (a pure B2B distribution marketplace); GoTry is precisely consumer-facing—the two neither conflict nor overlap. If the Stai marketplace matures in the future, GoTry can become one of its consumer-side entries, but this is **not a design premise of GoTry**.
+- **Architectural hedge**: GoTry accesses hotel inventory through a multi-supplier abstraction; HotelByte is one of them, not the only one—changes in a single supply chain's pricing power or availability do not affect product survival.

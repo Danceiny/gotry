@@ -1,79 +1,89 @@
-# GoTry Session Bridge — Chrome Web Store 上架材料(ADR-21 分发 B 轨)
+[English](extension-webstore-submission.md) | [简体中文](extension-webstore-submission.zh-CN.md)
 
-> 状态:**已上架(2026-09-02,v0.1.0 过审发布)**。商店页:
+# GoTry Session Bridge — Chrome Web Store Submission Materials (ADR-21 Distribution Track B)
+
+> Status: **Live on the store (2026-09-02, v0.1.0 approved and published)**. Store page:
 > https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd
-> 产物:`node scripts/package-extension.mjs` → `dist-extension/gotry-session-bridge-store.zip`
-> (manifest 在 zip 根,商店后台直传)。图标商店单独上传,不在 zip 内。
+> Artifact: `node scripts/package-extension.mjs` → `dist-extension/gotry-session-bridge-store.zip`
+> (manifest at the zip root; uploaded directly in the store console). The icon is uploaded
+> separately in the store console; it is not in the zip.
 >
-> **上架实测(预案坐实)**:商店用自己生成的签名 key 重签,**不认 manifest 里的固定 key**——
-> 商店版扩展 ID = `oeajpiccmonococjcegddlooeeohlbgd`(item ID,即商店页 URL 末段),
-> 与 unpacked 固定 ID `olpgkofjhhiiiahdkkbcninhjmegghfe` 不同。影响面收口与本文档预言一致:
-> 本机桥 Origin 白名单改双通道同信(`extension-bridge.ts` 的 `EXTENSION_ORIGINS`,
-> run-all §38 回归);扩展代码与 manifest 无需改动(端口池/host 白名单不随通道漂移)。
+> **Store field test (the plan held)**: the store re-signs with its own generated signing key and
+> **ignores the fixed key in the manifest** — the store extension ID is
+> `oeajpiccmonococjcegddlooeeohlbgd` (the item ID, i.e. the last segment of the store page URL),
+> different from the unpacked fixed ID `olpgkofjhhiiiahdkkbcninhjmegghfe`. The impact landed
+> exactly as this document predicted:
+> the local bridge Origin whitelist now trusts both channels (`EXTENSION_ORIGINS` in
+> `extension-bridge.ts`, covered by the run-all §38 regression); the extension code and manifest
+> needed no changes (the port pool / host whitelist do not drift with the channel).
 
-## 为什么走商店(平台约束)
+## Why the store (platform constraints)
 
-Chrome 禁止普通用户从任意 URL 安装打包 CRX:GitHub Releases 只能改善「下载」,
-消不掉「开发者模式 → 加载已解压」的 3 次点击。**一键安装 + 自动更新只有 Chrome Web Store
-一条路**。商店版与 unpacked 版扩展 ID 不同(商店重签,见上),两个 ID 同为
-founder 控制的同一扩展,桥侧白名单双收;端口池(8791-8795)与 host 白名单不变。
+Chrome forbids ordinary users from installing a packaged CRX from an arbitrary URL: GitHub
+Releases can only improve "download"; it cannot remove the 3 clicks of "developer mode → load
+unpacked". **One-click install + auto-update has exactly one path: the Chrome Web Store**. The
+store build and the unpacked build have different extension IDs (the store re-signs; see above);
+both IDs belong to the same founder-controlled extension, and the bridge whitelist trusts both;
+the port pool (8791-8795) and the host whitelist are unchanged.
 
-## 单一用途声明(Single Purpose,审核必填)
+## Single Purpose statement (required by review)
 
-> 在用户自己的携程航班检索页面上,只读嗅探页面自身发出的检索回包与登录票据
-> cookie 的**名称**,经本机回环端口(127.0.0.1)交给用户本机的 GoTry 程序,
-> 用于在用户明示授权下复用其登录态做行程数据交叉验证。扩展零写行为、零数据外传。
+> On the user's own Ctrip (携程) flight-search pages, read-only sniffing of the search responses
+> issued by the page itself and of the **names** of login-ticket cookies, handed over the local
+> loopback port (127.0.0.1) to the user's local GoTry program, to reuse the user's sign-in state
+> for cross-validation of itinerary data under the user's explicit authorization. The extension
+> performs zero writes and sends zero data off the machine.
 
-## 权限逐条理由(Permission Justifications,审核必填)
+## Permission justifications (required by review)
 
-| 权限 | 理由(可直接粘贴) |
+| Permission | Justification (paste-ready) |
 |---|---|
-| `cookies` | 仅读取 cookie **名称**判断登录态(「已登录才检索」的用户门)。绝不读取、存储或传输 cookie 值;登录永远在携程官网由用户完成。 |
-| `alarms` | MV3 Service Worker 保活(长轮询取活间隔的调度),不涉及任何数据面。 |
-| `http://127.0.0.1:8791-8795/*` | 与用户本机 GoTry 进程的回环通信(检索任务下发/回包上交)。仅本机,不涉外网。 |
-| `https://*.ctrip.com/*` | 被动嗅探 flights.ctrip.com 页面**自己发出**的 batchSearch 检索回包(MAIN-world 被动监听,扩展不发起、不修改任何请求);cookie 名读取也在该域。 |
-| content_scripts(flights.ctrip.com,双 world) | MAIN world 被动嗅探 + isolated world 桥接本机回环;两者都不改写页面、不注入 UI。 |
+| `cookies` | Reads only cookie **names** to determine sign-in state (the "search only when signed in" user gate). Never reads, stores, or transmits cookie values; login is always completed by the user on the Ctrip website. |
+| `alarms` | Keeps the MV3 service worker alive (scheduling of the long-poll keep-alive interval); touches no data plane. |
+| `http://127.0.0.1:8791-8795/*` | Loopback communication with the user's local GoTry process (search task dispatch / response hand-back). Local only; never the open internet. |
+| `https://*.ctrip.com/*` | Passive sniffing of the batchSearch responses **issued by the flights.ctrip.com page itself** (passive MAIN-world listening; the extension initiates and modifies no requests); cookie-name reading also happens on this domain. |
+| content_scripts (flights.ctrip.com, dual world) | MAIN-world passive sniffing + isolated-world bridging to the local loopback; neither rewrites the page nor injects UI. |
 
-## 隐私披露(Privacy tab)
+## Privacy disclosures (Privacy tab)
 
-- 不收集个人身份信息;不出售、不共享、不用于第三方目的;无分析/广告 SDK。
-- 唯一数据流向:页面检索回包片段与 cookie **名** → 127.0.0.1 本机 GoTry 进程,不落云。
-- 隐私政策 URL(后台必填):`https://github.com/Danceiny/gotry/blob/main/docs/extension-privacy.md`
+- No personally identifiable information is collected; nothing is sold, shared, or used for third-party purposes; no analytics/ad SDKs.
+- The only data flow: fragments of page search responses and cookie **names** → the local GoTry process at 127.0.0.1; nothing lands in the cloud.
+- Privacy policy URL (required in the console): `https://github.com/Danceiny/gotry/blob/main/docs/extension-privacy.md`
 
-## 商店文案(可直接粘贴)
+## Store listing copy (paste-ready)
 
-- **名称**:GoTry Session Bridge
-- **简述**(≤132 字符):在你自己的登录态里只读嗅探航班检索结果,交给本机 GoTry 做行程交叉验证。零凭证经手,零写行为,零数据外传。
-- **描述**:GoTry 是本地优先的 AI 旅行助手。本扩展是它的可选数据桥:安装一次后,GoTry 可以在你**自己的**携程登录态里做只读航班检索(交叉验证官方通道结果),不再需要开启浏览器调试端口,也没有系统级权限弹窗。只读:嗅探页面自身的检索回包,只取 cookie 名称判断登录态,绝不读值、绝不写、绝不上传。随时可在扩展卡片一键关闭。详见仓库 README。
-- **类目**:Travel;**语言**:中文(简体)+ English
+- **Name**: GoTry Session Bridge
+- **Short description** (≤132 characters): Read-only sniffing of flight search results inside your own sign-in state, handed to local GoTry for itinerary cross-validation. Zero credentials handled, zero writes, zero data leaves the machine.
+- **Description**: GoTry is a local-first AI travel assistant. This extension is its optional data bridge: after a one-time install, GoTry can run read-only flight searches inside **your own** Ctrip sign-in state (cross-validating official-channel results), with no browser debugging port and no system-level permission dialogs. Read-only: it sniffs the page's own search responses, reads only cookie names to determine sign-in state, and never reads values, never writes, never uploads. Switch it off at any time from the extension card. See the repository README for details.
+- **Category**: Travel; **Languages**: Chinese (Simplified) + English
 
-## founder 提交清单(顺序)——已走完(2026-09-02 上架)
+## founder submission checklist (in order) — completed (live on the store 2026-09-02)
 
-1. ~~Chrome Web Store 开发者注册(一次性 $5,Google 账号)。~~
-2. ~~`node scripts/package-extension.mjs` 产 store zip;准备 128×128 图标与 1280×800 截图(商店后台单独上传)。~~
-3. ~~新建 item → 上传 zip → 粘贴上文文案/权限理由/隐私披露 → 隐私政策 URL 指向仓库隐私文档。~~ 当前读者入口为 [extension-privacy.md](extension-privacy.md);此路径修正不表示商店后台 URL 已更新。
-4. ~~提交审核~~ → 过审发布(v0.1.0)。
-5. 过审后落地:桥 Origin 白名单双通道同信(已落,`EXTENSION_ORIGINS` + §38);Node 侧保留 extension 文件/`manifest.key` 预检,`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时以 `installUrl`/`installAction` 交 dsh UI,旧 wizard 不再承担安装职责。GitHub Releases 通道(A 轨)保留为免审核/版本化/回滚/镜像通道。
+1. ~~Chrome Web Store developer registration (one-time $5, Google account).~~
+2. ~~`node scripts/package-extension.mjs` produces the store zip; prepare the 128×128 icon and 1280×800 screenshots (uploaded separately in the store console).~~
+3. ~~Create item → upload zip → paste the copy / permission justifications / privacy disclosures above → point the privacy policy URL at the repository privacy document.~~ The current reader entry point is [extension-privacy.md](extension-privacy.md); this path correction does not mean the store console URL has been updated.
+4. ~~Submit for review~~ → approved and published (v0.1.0).
+5. Post-approval landing: bridge Origin whitelist trusting both channels (landed, `EXTENSION_ORIGINS` + §38); the Node side keeps the extension file / `manifest.key` precheck, and `sessionFlightSearch` / `sessionLogin` hand `installUrl` / `installAction` to the dsh UI on `needs-extension`; the old wizard no longer carries installation duty. The GitHub Releases channel (Track A) is kept as the review-free / versioned / rollback / mirror channel.
 
-## 后续发版(商店通道)
+## Later releases (store channel)
 
-- 商店版更新:升 `extension/manifest.json` 的 `version` → `node scripts/package-extension.mjs` → devconsole 上传新 zip 提审。
-- GitHub 通道更新:`ext-*` 标签 release 资产三件套(tar.gz/store-zip/dist-manifest),用户侧 `npx @danceiny/gotry setup --extension-from=github` 拉取。
+- Store-build update: bump `version` in `extension/manifest.json` → `node scripts/package-extension.mjs` → upload the new zip in the devconsole and submit for review.
+- GitHub channel update: the three-piece `ext-*` tag release assets (tar.gz / store-zip / dist-manifest), pulled by users via `npx @danceiny/gotry setup --extension-from=github`.
 
-## 三通道关系
+## How the three channels relate
 
-| | Chrome Web Store(推荐) | GitHub Releases(免审核) | npm 包内副本(离线兜底) |
+| | Chrome Web Store (recommended) | GitHub Releases (no review) | In-npm copy (offline fallback) |
 |---|---|---|---|
-| 一键安装 | ✓ | ✗(开发者模式 3 次点击) | ✗(同左) |
-| 自动更新 | ✓(随商店发版) | ✗(`--extension-from=github` 手动拉新版) | ✗(随 npm 发版) |
-| 审核成本 | 注册 + 审核 | 无 | 无 |
-| 版本化/回滚/镜像 | ✗(商店节奏) | ✓(Release 资产 + SHA256) | ✗ |
-| 扩展 ID | `oeajpiccmonococjcegddlooeeohlbgd` | `olpgkofjhhiiiahdkkbcninhjmegghfe` | `olpgkofjhhiiiahdkkbcninhjmegghfe` |
+| One-click install | ✓ | ✗ (3 clicks in developer mode) | ✗ (same as left) |
+| Auto-update | ✓ (with store releases) | ✗ (`--extension-from=github` pulls new versions manually) | ✗ (with npm releases) |
+| Review cost | Registration + review | None | None |
+| Versioning / rollback / mirror | ✗ (store cadence) | ✓ (Release assets + SHA256) | ✗ |
+| Extension ID | `oeajpiccmonococjcegddlooeeohlbgd` | `olpgkofjhhiiiahdkkbcninhjmegghfe` | `olpgkofjhhiiiahdkkbcninhjmegghfe` |
 
-## 2026-09-09 待提审变更(dida 供应商门户)
+## 2026-09-09 changes pending submission (dida supplier portal)
 
-- `manifest.json` 变更:host_permissions 新增 `https://*.dida.com/*` 与 `https://dida.com/*`;两组 content_scripts 新增 `https://portal.dida.com/*`。
-- 触发:`gotry_session_search kind=dida`(hotel-be portal integration 迁移线)需要 dida 域注入与票据 cookie 名只读权限。
-- **商店提交流程由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪**;**founder 决策 whether / when / 升哪个 version**(founder-confirm 制,见 `tech-strategy.md` §11 与 `AGENTS.md` 发布纪律);**版本打包 / devconsole 上传 / 状态跟踪 / 验证**由 release executor 在仓库发布纪律下执行;founder 仅完成账户侧必要的本人审批/2FA。提审前商店版用户调 dida 会得到 needs-extension(与全新站点一致),不影响既有 ctrip/12306 车道。
-- unpacked/GitHub Releases 通道不受商店审核影响,`feat/session-dida-portal` 分支合并即生效(PR #297 已 merge,代码与 manifest 已就位)。
-- **当前证据边界**:仓库尚无此次提审或商店回拉验证回执;外部状态由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪。
+- `manifest.json` changes: host_permissions adds `https://*.dida.com/*` and `https://dida.com/*`; both content_scripts groups add `https://portal.dida.com/*`.
+- Trigger: `gotry_session_search kind=dida` (the hotel-be portal integration line) needs dida-domain injection and read-only login-ticket cookie-name permission.
+- **The store submission is tracked by [#346](https://github.com/Danceiny/gotry/issues/346)**; **founder decides whether / when / which version to bump** (founder-confirm regime, see `tech-strategy.md` §11 and the release discipline in `AGENTS.md`); **packaging / devconsole upload / status tracking / verification** are executed by the release executor under the repository release discipline; founder only completes the account-side personal approval / 2FA as required. Before the store build lands, store users calling dida get needs-extension (same as any brand-new site); the existing ctrip/12306 lanes are unaffected.
+- The unpacked / GitHub Releases channels are unaffected by store review; merging the `feat/session-dida-portal` branch takes effect immediately (PR #297 is merged; code and manifest are already in place).
+- **Current evidence boundary**: the repository holds no receipt of this submission or of a store pull-back verification; external state is tracked by [#346](https://github.com/Danceiny/gotry/issues/346).

@@ -1,10 +1,12 @@
-# 飞猪 AI 开放平台 — 横评 transcript 与点评
+[English](fliggy.md) | [简体中文](fliggy.zh-CN.md)
 
-> 通道:飞猪 AI 开放平台;轮次:单轮;采集日期:2026-09-04(发起人自测采集,本仓存档)。
-> 输入:[`README.md`](./README.md) §1 冻结 prompt 逐字投喂,无额外系统提示、无追问。
-> 下文「输出」为逐字稿,格式保真;点评对照该文 §2 地面真值(G1–G8)与 §3 矩阵,纪律见 §8:先给分,后失分,逐条带原文证据。
+# Fliggy AI Open Platform (飞猪) — comparison bench transcript and review
 
-## 输出逐字稿
+> Channel: Fliggy AI Open Platform (飞猪); turns: single-turn; collection date: 2026-09-04 (collected by the founder's own testing, archived in this repo).
+> Input: the §1 frozen prompt from [`README.md`](./README.md), fed verbatim, no extra system prompt, no follow-ups.
+> The "Output" below is a verbatim transcript, format-faithful; the review is checked against that document's §2 ground truth (G1–G8) and §3 matrix, with the discipline of §8: credit first, then debits, each with verbatim evidence.
+
+## Output verbatim transcript
 
 下面是飞猪ai开放平台的。
 
@@ -126,30 +128,30 @@
 如果是凌晨航班，8.9 晚直接住机场附近
 需要我帮你进一步细化某一段行程，或者查询具体的航班和酒店信息吗？你也可以告诉我你的预算范围和偏好（如酒店星级、是否靠海等），我可以给出更精准的推荐！🌴✈️
 
-## 点评
+## Review
 
-### 先给分:做对的(公平起见)
+### Credit first: what it did right (in fairness)
 
-1. **结构完整度是三家最高**:行程总览一表开场,六段交通、四地住宿、预算、提醒四块全齐,单轮交付——同时恰好证明「骨架完整」是模板给的免费基本盘,不构成差异化(GoTry 的完整必须来自验证)。
-2. **多模态本能**:深圳↔香港给跨境巴士/高铁/出租三案,普吉→曼谷给飞机/夜巴/火车——不把一切窄化成机票,与 GoTry 统一模型的多模态立场同向。
-3. **到达状态意识**:「如果 8.10 是凌晨航班,8.9 晚直接住宝安机场附近酒店」——全文最接近门到门思维的一句。
-4. **政策事实答对且带时效**(G8 半分):泰国对华免签「2024 年起」✓;护照效期>6 个月、香港开户需预约,方向正确的通用提醒。扣半分:阿联酋侧入境政策没查。
-5. **收尾有追问本能**:问错了问题(见下),但「先澄清再精化」的姿势是对的。
+1. **The highest structural completeness of the three**: it opens with a trip-overview table, and the six transport legs, four-location lodging, budget, and reminders are all present, delivered in a single turn — which at the same time proves that a "complete skeleton" is a free baseline from the template and not differentiation (GoTry's completeness must come from verification).
+2. **Multimodal instinct**: Shenzhen↔Hong Kong gets three options (cross-border bus / high-speed rail / taxi), Phuket→Bangkok gets plane / night bus / train — it does not narrow everything down to flights, aligned with the multimodal stance of GoTry's unified model.
+3. **Arrival-state awareness**: 「如果 8.10 是凌晨航班,8.9 晚直接住宝安机场附近酒店」 — the sentence closest to door-to-door thinking in the whole text.
+4. **Policy facts answered correctly with an as-of qualifier** (half credit on G8): Thailand visa-free for Chinese passports 「2024 年起」 (since 2024) ✓; passport validity >6 months and bank-account-by-appointment for Hong Kong are generic reminders pointing the right way. Half debit: the UAE-side entry policy was never checked.
+5. **A closing follow-up instinct**: it asked the wrong questions (see below), but the "clarify first, then refine" posture is right.
 
-### 失分项(对照 G1–G8,逐条带原文证据)
+### Debits (against G1–G8, each with verbatim evidence)
 
-1. **G1 日历(最大失分,论证见横评 README §4)**:「第3段:普吉岛 → 曼谷(8.1 周五晚 或 8.2 周六早)」「第5段:昆明 → 深圳(8.9 周六)」——派生星期落 2025 年历;且与其总览自答「7.18 周六」页内矛盾(相隔 14 天不可能一个周六一个周五)。用户按星期标签订票会订错日子,整段曼谷「周末」错位一天。
-2. **G2/G3 零必答题**:「居家办公两周」没换来一句「你几点开会/什么时区」(真实约束 UTC+4 10–19 决定全部每日节奏);已订资源零提问。提示块里的「确认 WiFi 质量/预留安静工作空间」是 workation 的装饰性提醒,不是工作窗口访谈。
-3. **G4 同行人缺位**:「跟女朋友在普吉岛见面」,通篇没有她的出发地与航段;预算表明写「(单人,不含购物)」。见面型行程少算一条客流。
-4. **G5 模糊指代三选一了事**:「万xx」猜攀牙湾/甲米/皮皮岛并列,不给判据、不追问。地面真值是甲米;GoTry 数据包独立研究同样把甲米奥南排第一——证据可得,缺的是求证动作。
-5. **G6 高风险日无判决**:「上午在香港办事顺利,可考虑下午从香港机场直飞普吉」——银行开户+保险签约一上午完成是幻想,无有效时长概念;仅有的「不要订太早,给香港办事留缓冲」是弱提醒,没有「这天大概率不可行,建议拆日」的判决。
-6. **算术自相矛盾(无核算层)**:「EK327 约02:00-06:00+1 约8小时」——02:00 起飞 8 小时后是当日 10:00(迪拜当地 06:00),「+1」与「约8小时」不能同时成立。数字不被核算,与 Kimi F3(密度幻觉)同根。
-7. **停业航司在售**:「香港直飞普吉 国泰/港龙」——港龙(Cathay Dragon)2020 年 10 月已停业。训练先验里的旧世界被当作可售选项给出,无锚点核验、无时效标注(契约(20) 的活靶)。
-8. **重问已答的问题**:「确认是8.10 凌晨(即8.9 深夜)还是8.10 白天」——用户原话「也就是8.10周一凌晨(周日晚)」已经回答了。该问的不问(G2),已答的反问:读题失败的双面实证(契约(10))。
-9. **全部价格无出处**:六段交通价格区间、四地房价区间全部裸奔——无来源、无采集日期、无时效;EK327/「南航/深航」等航司班期同样未经任何核验。对照「估算绝不冒充实时」的证据链纪律。
+1. **G1 calendar (the largest debit; the argument is in comparison bench README §4)**: 「第3段:普吉岛 → 曼谷(8.1 周五晚 或 8.2 周六早)」「第5段:昆明 → 深圳(8.9 周六)」 — the derived weekdays fell on the 2025 calendar; and they contradict the overview's self-answered 「7.18 周六」 within the same page (14 days apart cannot be one Saturday and one Friday). A user booking by the weekday labels books the wrong days, and the whole Bangkok "weekend" is shifted by one day.
+2. **G2/G3: zero required items answered**: 「居家办公两周」 never earned a single "what time are your meetings / what time zone" (the real constraint UTC+4 10–19 determines the entire daily rhythm); zero questions about already-booked resources. The reminder block's 「确认 WiFi 质量/预留安静工作空间」 is decorative workation advice, not a work-window interview.
+3. **G4 companion missing**: 「跟女朋友在普吉岛见面」, yet her departure point and legs are absent from the whole text; the budget table explicitly says 「(单人,不含购物)」 (single person, shopping excluded). A meetup-style trip undercounts one passenger flow.
+4. **G5 vague reference settled with a three-way list**: 「万xx」 guessed as Phang Nga / Krabi / Phi Phi in parallel, with no criteria and no follow-up. The ground truth is Krabi; GoTry's data-pack independent research likewise ranks Krabi's Ao Nang first — the evidence was obtainable; what was missing was the act of verification.
+5. **G6 no verdict on the high-risk day**: 「上午在香港办事顺利,可考虑下午从香港机场直飞普吉」 — finishing a bank account opening + insurance signing in one morning is fantasy, with no concept of effective duration; the only 「不要订太早,给香港办事留缓冲」 is a weak reminder, with no verdict of "this day is most likely infeasible, split it across two days".
+6. **Arithmetic self-contradiction (no accounting layer)**: 「EK327 约02:00-06:00+1 约8小时」 — a 02:00 departure plus 8 hours is 10:00 the same day (06:00 Dubai local time); 「+1」 and 「约8小时」 cannot both hold. Numbers that are never accounted for — the same root as Kimi F3 (density hallucination).
+7. **A defunct airline still on sale**: 「香港直飞普吉 国泰/港龙」 — Dragonair (Cathay Dragon) ceased operations in October 2020. The old world inside the training prior is offered as a sellable option, with no anchor verification and no as-of labeling (a live target for contract (20)).
+8. **Re-asking an answered question**: 「确认是8.10 凌晨(即8.9 深夜)还是8.10 白天」 — the user's original words 「也就是8.10周一凌晨(周日晚)」 had already answered it. Not asking what should be asked (G2) while re-asking what was answered: two-sided proof of a reading failure (contract (10)).
+9. **All prices without sources**: the price ranges for all six transport legs and four lodging markets are entirely unattributed — no source, no collection date, no as-of validity; EK327 and airline schedules such as 「南航/深航」 are equally unverified. Compare this with the evidence-chain discipline of "estimates never impersonate real-time data".
 
-### 人格判决
+### Persona verdict
 
-**版式完美的 OTA 导购员。** 一切输出形状都朝「可售」收敛:段段止于价格表、收尾问转化资质、错误也集中错在「急于给出可下单的样子」(无核算的时刻表、无出处的价格、停业的航司)。它把「看起来能订」做到极致,把「是否真的可行」留给用户。
+**A perfectly formatted OTA sales guide.** Every output shape converges on "sellable": each section ends at a price table, the closing questions are conversion-qualification questions, and even the errors cluster in "rushing to look orderable" (timetables with no accounting, prices with no sources, a defunct airline). It perfects "looks bookable" and leaves "whether it is actually feasible" to the user.
 
-对 GoTry 的镜鉴一半反向、一半正向。反向:导购形状不能有——商业中立,答案不被可售商品塑形,预订永远是人点头(WriteGate)。正向:骨架完整、多模态、到达状态意识、提醒块,这些免费基本盘 GoTry 同样要做到——**且要在验证之上一**:完整来自求解,不来自模板。
+The mirror held up to GoTry is half negative, half positive. Negative: the sales-guide shape must not exist — commercially neutral, answers not shaped by sellable products, booking always requires a human nod (WriteGate). Positive: a complete skeleton, multimodality, arrival-state awareness, reminder blocks — these free baselines GoTry must deliver too — **and on top of verification**: completeness comes from solving, not from templates.
