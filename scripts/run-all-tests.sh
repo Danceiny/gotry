@@ -549,13 +549,11 @@ echo "=== 63. 内核清单冻结+运行模块证据闸(issue #234:gotry_kernel_m
 (cd ts && npx tsx scripts/kernel-manifest-tests.ts) || FAIL=1
 
 echo
-<<<<<<< HEAD
-echo "=== 65. Booking Copilot unavailable/changed 恢复链契约(issue #142 非门控切片:检测分类复用 receipt status 闭集/受控恢复三轮计入 planner 三次调用预算/静默换房换航结构性拒绝/降级必携显式披露/审计链 saga 形态可对账;纯函数契约层,非运行时激活,零真实供应商调用) ==="
-(cd ts && GOTRY_SESSION_LIVE=0 npx tsx scripts/booking-recovery-chain-tests.ts) || FAIL=1
-=======
 echo "=== 64. sponsor 插件与同内核端到端复用证明(issue #235:三主体分离 fail-closed/激活默认关/越权路由+缺 session 绑定拒绝/同内核零拷贝零重声明/佣金不伪造用户效用/B2B fixture E2E 披露入指纹/B2C 同 runner 零渗入+saga 边逐格同/A-B 同业务 id 不串;全离线 fixture,非运行时激活,零真实调用) ==="
 (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/sponsor-reuse-tests.ts) || FAIL=1
->>>>>>> origin/main
+echo
+echo "=== 65. Booking Copilot unavailable/changed 恢复链契约(issue #142 非门控切片:检测分类复用 receipt status 闭集/受控恢复三轮计入 planner 三次调用预算/静默换房换航结构性拒绝/降级必携显式披露/审计链 saga 形态可对账;纯函数契约层,非运行时激活,零真实供应商调用) ==="
+(cd ts && GOTRY_SESSION_LIVE=0 npx tsx scripts/booking-recovery-chain-tests.ts) || FAIL=1
 
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
