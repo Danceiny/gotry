@@ -6,6 +6,8 @@
  *  2. 过期校验 flagExpiredSlots:绝对月日早于锚点今天判过期;相对表达永不判;幂等
  *  3. 评分器 scoreExtraction 自测(通过/语言/域/槽位值/missing_slots/多键 warning)
  *  4. mock 回放管道:25 题 golden 经 mock 回吐,评分管道应 25/25(管道自测,与模型质量解耦)
+ *  7. 春节锚点生成面(issue #274):到期即红守卫(最晚锚点年份 ≥ 当前年+3)+ 双 oracle
+ *     交叉验证(旧表 2026-2031 六条 + 港天文台 2032-2040 九条)+ 耗尽显式告警
  *
  * 真模型巡检(只读报告,不进 CI 红线;ADR-11 质量层定位):
  *  cd ts && npx tsx scripts/time-eval-tests.ts --real
@@ -16,7 +18,14 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildTimeAnchor, parseAbsoluteDate } from '../src/time-anchor.ts'
+import {
+  SPRING_FESTIVAL,
+  SPRING_FESTIVAL_HORIZON_MIN_YEARS,
+  buildTimeAnchor,
+  parseAbsoluteDate,
+  springFestivalHorizonOk,
+  springFestivalHorizonYears,
+} from '../src/time-anchor.ts'
 import { detectLanguage, flagExpiredSlots, scoreExtraction, type TravelSlotExtraction } from '../src/travel-slots.ts'
 import { resolveSlotDate, resolveSlots, specDateMismatches, type ResolvedSlots } from '../src/slot-spec.ts'
 import { createMockLlm, type SlotScriptStep } from '../src/mock-llm.ts'
@@ -263,7 +272,47 @@ const ANCHOR_NOW = new Date(ay, am - 1, ad, 12) // 锚点日中午,避免午夜�
   console.log('6. Issue #2 未来年度窗口 OK(runTurn→validateSpec→solve:排除过去候选/拒绝过期年/保留历史回测/刷新参考日)')
 }
 
-console.log('\nTIME-EVAL TESTS: 6/6 OK(确定性部分,CI 口径)')
+// ---- 7. Issue #274 春节锚点生成面:到期即红守卫 + 双 oracle 交叉验证 + 耗尽显式告警 ----
+{
+  // 守卫(真实时钟):最晚锚点年份 ≥ 当前年+3——现在过,临近耗尽自动红(2099 表则 2097 年起红)
+  assert.ok(springFestivalHorizonOk(), `春节锚点地平线不足 ${SPRING_FESTIVAL_HORIZON_MIN_YEARS} 年(到期即红守卫)`)
+  // 牙齿证明:被否决的旧 2031 手抄表,进入预警窗(2029-01-01 时钟)守卫必红——而非 2031 静默耗尽
+  const LEGACY_HAND_2031: Record<number, string> = {
+    2026: '2026-02-17', 2027: '2027-02-06', 2028: '2028-01-26',
+    2029: '2029-02-13', 2030: '2030-02-03', 2031: '2031-01-23',
+  }
+  assert.ok(
+    springFestivalHorizonYears(LEGACY_HAND_2031, new Date(2029, 0, 1)) < SPRING_FESTIVAL_HORIZON_MIN_YEARS,
+    '旧 2031 手抄表在 2029 时钟下守卫必须红(牙齿证明)',
+  )
+  // 守卫行程自证(对当前表,表扩展后无需改测试):耗尽前 3 年绿、前 2 年红
+  const latestYear = Math.max(...Object.keys(SPRING_FESTIVAL).map(Number))
+  assert.equal(springFestivalHorizonOk(new Date(latestYear - 3, 0, 1)), true, '耗尽前 3 年守卫绿')
+  assert.equal(springFestivalHorizonOk(new Date(latestYear - 2, 0, 1)), false, '耗尽前 2 年守卫红')
+  // oracle A:仓库旧表 2026-2031 逐条比对——库生成不许漂移现状行为
+  for (const [year, date] of Object.entries(LEGACY_HAND_2031)) {
+    assert.equal(SPRING_FESTIVAL[Number(year)], date, `oracle A 旧表 ${year}`)
+  }
+  // oracle B:#384 港天文台核实 2032-2040(gts/time/calendar T2032e–T2040e 正月初一行,2026-09-11 取)
+  const HKO_2032_2040: Record<number, string> = {
+    2032: '2032-02-11', 2033: '2033-01-31', 2034: '2034-02-19',
+    2035: '2035-02-08', 2036: '2036-01-28', 2037: '2037-02-15',
+    2038: '2038-02-04', 2039: '2039-01-24', 2040: '2040-02-12',
+  }
+  for (const [year, date] of Object.entries(HKO_2032_2040)) {
+    assert.equal(SPRING_FESTIVAL[Number(year)], date, `oracle B 港天文台 ${year}`)
+  }
+  // 生成面贯通:旧表外年份(2038)经 buildTimeAnchor 真实出现在锚点卡
+  const a2038 = buildTimeAnchor(new Date(2038, 0, 10, 12))
+  assert.ok(a2038.card.includes('春节 2038-02-04'), '2038 视角春节取 2038-02-04(生成表贯通锚点卡)')
+  // 耗尽显式告警:表耗尽后锚点卡显式标注,不再静默省略;未耗尽则不告警
+  const exhausted = buildTimeAnchor(new Date(latestYear + 1, 5, 1, 12))
+  assert.ok(exhausted.card.includes('春节(锚点表已到期'), '耗尽后锚点卡显式告警(非静默省略)')
+  assert.ok(!buildTimeAnchor(ANCHOR_NOW).card.includes('锚点表已到期'), '未耗尽不告警')
+  console.log('7. 春节锚点生成面 OK(到期守卫/旧 2031 表牙齿/行程自证/双 oracle 15 条/生成贯通/耗尽告警)')
+}
+
+console.log('\nTIME-EVAL TESTS: 7/7 OK(确定性部分,CI 口径)')
 
 // ---- 真模型巡检(--real,只读报告,不进 CI 红线) ----------------------------------
 if (process.argv.includes('--real')) {

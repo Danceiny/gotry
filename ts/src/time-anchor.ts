@@ -7,8 +7,10 @@
  *  - legacy 抽取路径:dsh-llm.ts 注入 FACTS/SKELETON/槽位抽取 prompt;
  *  - 评测:time-eval-tests.ts 用固定 now(2026-08-27)保证确定性。
  *
- * 债务(architecture §10 登记):节日锚点表 SPRING_FESTIVAL 硬编码(2026-08-28 扩至 2031);
- * 跨 2031 前必须再扩表,否则春节锚点静默缺失。
+ * 节日锚点表 SPRING_FESTIVAL:由构建期生成器机械生成(issue #274 清偿 D-9 手抄债务,覆盖 2026-2099);
+ * 扩表/换库 = 重跑 ts/scripts/gen-lunar-anchors.ts(--check 为漂移闸,run-all §58)。
+ * 到期即红守卫 springFestivalHorizonOk:最晚锚点年份 < 当前年+3 时测试红;表耗尽后锚点卡
+ * 显式告警(不再静默省略)——「换个日子的同款债务」的静默耗尽模式已消灭。
  */
 
 export interface TimeAnchor {
@@ -55,14 +57,104 @@ function weekMonday(d: Date): Date {
   return addDays(d, -((d.getDay() + 6) % 7))
 }
 
-/** 春节锚点表(仅此节日漂移大,硬编码;元旦/国庆固定月日,按「下一次发生」算)。D-9:2026-08-28 扩至 2031 */
-const SPRING_FESTIVAL: Record<number, string> = {
+/**
+ * 春节锚点表(正月初一;仅此节日漂移大,故表驱动;元旦/国庆固定月日按「下一次发生」算)。
+ * 本块由构建期生成器机械生成,禁止手改(issue #274:手抄常量表=换个日子的同款债务,已否决)。
+ * provenance:lunar-typescript@1.8.6(MIT,零传递依赖,devDependency 不进 runtime)· 生成时间 2026-09-11T17:19:45.752Z
+ * 命令:cd ts && npx tsx scripts/gen-lunar-anchors.ts(扩表/换库=重跑;--check=漂移闸,run-all §58)
+ * 交叉验证:2026-2031 旧表 6 条 + 港天文台 2032-2040 核实 9 条逐条一致(time-eval §7 双 oracle)。
+ * 到期守卫:springFestivalHorizonOk——最晚锚点年份 < 当前年+3 测试即红(临近耗尽先红于静默缺失)。
+ */
+// [gen:lunar-anchors:begin] 生成块起点——手改会被下次生成覆盖
+export const SPRING_FESTIVAL: Record<number, string> = {
   2026: '2026-02-17',
   2027: '2027-02-06',
   2028: '2028-01-26',
   2029: '2029-02-13',
   2030: '2030-02-03',
   2031: '2031-01-23',
+  2032: '2032-02-11',
+  2033: '2033-01-31',
+  2034: '2034-02-19',
+  2035: '2035-02-08',
+  2036: '2036-01-28',
+  2037: '2037-02-15',
+  2038: '2038-02-04',
+  2039: '2039-01-24',
+  2040: '2040-02-12',
+  2041: '2041-02-01',
+  2042: '2042-01-22',
+  2043: '2043-02-10',
+  2044: '2044-01-30',
+  2045: '2045-02-17',
+  2046: '2046-02-06',
+  2047: '2047-01-26',
+  2048: '2048-02-14',
+  2049: '2049-02-02',
+  2050: '2050-01-23',
+  2051: '2051-02-11',
+  2052: '2052-02-01',
+  2053: '2053-02-19',
+  2054: '2054-02-08',
+  2055: '2055-01-28',
+  2056: '2056-02-15',
+  2057: '2057-02-04',
+  2058: '2058-01-24',
+  2059: '2059-02-12',
+  2060: '2060-02-02',
+  2061: '2061-01-21',
+  2062: '2062-02-09',
+  2063: '2063-01-29',
+  2064: '2064-02-17',
+  2065: '2065-02-05',
+  2066: '2066-01-26',
+  2067: '2067-02-14',
+  2068: '2068-02-03',
+  2069: '2069-01-23',
+  2070: '2070-02-11',
+  2071: '2071-01-31',
+  2072: '2072-02-19',
+  2073: '2073-02-07',
+  2074: '2074-01-27',
+  2075: '2075-02-15',
+  2076: '2076-02-05',
+  2077: '2077-01-24',
+  2078: '2078-02-12',
+  2079: '2079-02-02',
+  2080: '2080-01-22',
+  2081: '2081-02-09',
+  2082: '2082-01-29',
+  2083: '2083-02-17',
+  2084: '2084-02-06',
+  2085: '2085-01-26',
+  2086: '2086-02-14',
+  2087: '2087-02-03',
+  2088: '2088-01-24',
+  2089: '2089-02-10',
+  2090: '2090-01-30',
+  2091: '2091-02-18',
+  2092: '2092-02-07',
+  2093: '2093-01-27',
+  2094: '2094-02-15',
+  2095: '2095-02-05',
+  2096: '2096-01-25',
+  2097: '2097-02-12',
+  2098: '2098-02-01',
+  2099: '2099-01-21',
+}
+// [gen:lunar-anchors:end]
+
+/** 到期即红守卫阈值(issue #274):最晚春节锚点年份必须 ≥ 当前年+3——临近耗尽先红于静默缺失。 */
+export const SPRING_FESTIVAL_HORIZON_MIN_YEARS = 3
+
+/** 表内最晚锚点年份距 now 的年数(守卫与 time-eval §7 共用;旧表「牙齿证明」传表参)。 */
+export function springFestivalHorizonYears(table: Record<number, string>, now: Date = new Date()): number {
+  return Math.max(...Object.keys(table).map(Number)) - now.getFullYear()
+}
+
+/** D-9 到期即红守卫:最晚锚点年份 < 当前年+3 → 测试红(而非春节锚点静默缺失)。 */
+export function springFestivalHorizonOk(now: Date = new Date()): boolean {
+  return springFestivalHorizonYears(SPRING_FESTIVAL, now) >= SPRING_FESTIVAL_HORIZON_MIN_YEARS
 }
 
 export function formatUtcOffsetLabel(utcOffsetMinutes: number): string {
@@ -122,6 +214,7 @@ export function buildTimeAnchor(now: Date = new Date()): TimeAnchor {
   ]
   const spring = Object.values(SPRING_FESTIVAL).filter(d => d >= today).sort()[0]
   if (spring) festivals.push(`春节 ${spring}`)
+  else festivals.push('春节(锚点表已到期:重跑 ts/scripts/gen-lunar-anchors.ts 扩表,勿静默省略)')
 
   const card = [
     `今天 ${today} ${weekdayOf(now)}(时区 ${tzLabelOf(now)})`,

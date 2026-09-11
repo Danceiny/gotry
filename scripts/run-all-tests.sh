@@ -525,6 +525,9 @@ echo "=== 56. tz-resolver + IANA planning offsets(issue #343:China 出境/回程
 echo "=== 57. issue #343 real-entry adapter precedence(parse→merge→solve→render;dsh fetch fixture + mock shared helper;纯离线) ==="
 (cd ts && npx tsx scripts/issue343-real-entry-e2e.ts) || FAIL=1
 
+echo "=== 58. 春节锚点表生成漂移闸(issue #274:lunar-typescript 构建期生成 2026-2099,表/生成块漂移即红;全离线) ==="
+(cd ts && npx tsx scripts/gen-lunar-anchors.ts --check) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
