@@ -177,8 +177,6 @@ interface GroundTransferRequestParts {
   requestedPosition: string | null
   outbound: GroundTransferDirectionParts | null
   ret: GroundTransferDirectionParts | null
-  /** Legacy single-pair shape was used; outbound is set and return is the swapped pair. */
-  legacySwappedReturn: boolean
   invalidReason?: string
 }
 
@@ -321,7 +319,6 @@ function parseRequest(value: unknown): GroundTransferRequestParts {
       requestedPosition: null,
       outbound: null,
       ret: null,
-      legacySwappedReturn: false,
       invalidReason: 'ground_transfer_request_invalid:expected an object',
     }
   }
@@ -341,18 +338,17 @@ function parseRequest(value: unknown): GroundTransferRequestParts {
 
   let outbound: GroundTransferDirectionParts | null = null
   let ret: GroundTransferDirectionParts | null = null
-  let legacySwappedReturn = false
   if (record['outbound'] !== undefined || record['return'] !== undefined) {
     outbound = coordinatePair(record['outbound'])
     ret = coordinatePair(record['return'])
   } else {
-    // Legacy single-pair shape: outbound = origin/destination; return = swapped.
+    // Legacy single-pair shape: outbound = origin/destination; return = the
+    // swapped pair. Keeps pre-#364 payloads behavior-compatible.
     const legacyOrigin = coordinate(record['origin'])
     const legacyDestination = coordinate(record['destination'])
     if (legacyOrigin && legacyDestination) {
       outbound = { origin: legacyOrigin, destination: legacyDestination }
       ret = { origin: legacyDestination, destination: legacyOrigin }
-      legacySwappedReturn = true
     }
   }
 
@@ -370,7 +366,6 @@ function parseRequest(value: unknown): GroundTransferRequestParts {
     requestedPosition,
     outbound,
     ret,
-    legacySwappedReturn,
     invalidReason,
   }
 }
@@ -564,18 +559,24 @@ export function createGroundTransferResolver(options: {
       ])
 
       const applied = outbound.applied || ret.applied
-      const anyRoute = outbound.applied || ret.applied
-      const anyStatic = !anyRoute
-      const aggregateProvenance: GroundTransferProvenance = anyRoute
-        ? (anyStatic ? 'static-transfer-pack' : 'map_driving_route')
-        : 'static-transfer-pack'
-      const aggregateEvidenceClass: GroundTransferEvidenceClass = anyRoute
-        ? 'public_map_route_estimate'
-        : 'static_transfer_estimate'
-      const aggregateFreshness: GroundTransferFreshness = applied ? 'fresh' : 'fallback'
-      const aggregateCache: GroundTransferCacheInfo = applied
-        ? (outbound.cache.status === 'hit' || ret.cache.status === 'hit' ? { status: 'hit', ageS: 0, asOf: null } : { status: 'miss', ageS: 0, asOf: null })
-        : staticCache('bypass')
+      // Aggregate fields are a summary only: per-direction objects above are
+      // the authoritative per-direction record. A full cache hit keeps the
+      // legacy aggregate semantics ('cache_hit'), a re-query keeps 'requery'.
+      const aggregateProvenance: GroundTransferProvenance = applied ? 'map_driving_route' : 'static-transfer-pack'
+      const aggregateEvidenceClass: GroundTransferEvidenceClass = applied ? 'public_map_route_estimate' : 'static_transfer_estimate'
+      const aggregateFreshness: GroundTransferFreshness = !applied
+        ? 'fallback'
+        : outbound.freshness === 'fresh' || ret.freshness === 'fresh'
+          ? 'fresh'
+          : 'cache_hit'
+      const statuses = [outbound.cache.status, ret.cache.status]
+      const aggregateCache: GroundTransferCacheInfo = !applied
+        ? staticCache('bypass')
+        : {
+            status: statuses.includes('hit') ? 'hit' : statuses.includes('requery') ? 'requery' : 'miss',
+            ageS: 0,
+            asOf: null,
+          }
       const aggregateAsOf = applied ? (outbound.asOf ?? ret.asOf) : null
 
       const resolution: GroundTransferResolution = {

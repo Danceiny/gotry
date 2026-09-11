@@ -326,7 +326,10 @@ async function main(): Promise<void> {
     const hitEvidence = asRecord(cacheHit.ground_transfer, 'cache-hit ground_transfer')
     assert.equal(hitEvidence['outboundMinutes'], 15)
     assert.equal(hitEvidence['returnMinutes'], 15)
-    assert.equal(hitEvidence['freshness'], 'fresh')
+    // Full cache hit keeps the legacy aggregate freshness semantics;
+    // per-direction freshness is the authoritative per-direction record.
+    assert.equal(hitEvidence['freshness'], 'cache_hit')
+    assert.equal(asRecord(hitEvidence['cache'], 'cache-hit aggregate cache')['status'], 'hit')
     assert.equal(asRecord(directionOf(hitEvidence['outbound'], 'hit.outbound')['cache'], 'cache-hit outbound cache')['status'], 'hit')
     assert.equal(asRecord(directionOf(hitEvidence['return'], 'hit.return')['cache'], 'cache-hit return cache')['status'], 'hit')
     assert.equal(asRecord(directionOf(hitEvidence['outbound'], 'hit.outbound')['cache'], 'cache-hit outbound cache')['ageS'], 0)
@@ -345,6 +348,7 @@ async function main(): Promise<void> {
     assert.equal(staleEvidence['outboundMinutes'], 20)
     assert.equal(staleEvidence['returnMinutes'], 20)
     assert.equal(staleEvidence['freshness'], 'fresh')
+    assert.equal(asRecord(staleEvidence['cache'], 'stale aggregate cache')['status'], 'requery', 'stale aggregate cache keeps the legacy requery semantics')
     assert.equal(directionOf(staleEvidence['outbound'], 'stale.outbound')['freshness'], 'fresh')
     assert.equal(directionOf(staleEvidence['return'], 'stale.return')['freshness'], 'fresh')
     assert.equal(asRecord(directionOf(staleEvidence['outbound'], 'stale.outbound')['cache'], 'stale.outbound.cache')['status'], 'requery')
