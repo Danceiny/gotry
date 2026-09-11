@@ -103,6 +103,7 @@
 | [release-notes.zh-CN.md](release-notes.zh-CN.md) | 逐版本发布决策（「为什么」，人写决策面） |
 | [tokens.zh-CN.md](tokens.zh-CN.md) | token 唯一权威面：npm 2FA/发布机制/渠道获取表 |
 | [decisions-needed.zh-CN.md](decisions-needed.zh-CN.md) | 待创始人拍板的决策队列 |
+| [g5-authorization-ledger.zh-CN.md](g5-authorization-ledger.zh-CN.md) | G5 内部差旅桥授权台账（GRANT 条目仅创始人侧维护；由 `ts/scripts/g5-guard.ts` 机械读取，issue #348） |
 | [debt-archive.zh-CN.md](debt-archive.zh-CN.md) | 已清偿债务存档（追加式留证；开着的债见 architecture.zh-CN.md §10.1） |
 
 ### design/（模块设计）

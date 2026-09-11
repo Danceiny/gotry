@@ -103,6 +103,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [release-notes.md](release-notes.md) | Per-version release decisions (the "why", human-written decision face) |
 | [tokens.md](tokens.md) | Sole token authority: npm 2FA/publish mechanics/channel acquisition table |
 | [decisions-needed.md](decisions-needed.md) | Decision queue awaiting the founder |
+| [g5-authorization-ledger.md](g5-authorization-ledger.md) | G5 internal-travel-bridge authorization ledger (GRANT entries maintained founder-side only; read mechanically by `ts/scripts/g5-guard.ts`, issue #348) |
 | [debt-archive.md](debt-archive.md) | Paid-off debt archive (append-only evidence; open debts live in architecture.md §10.1) |
 
 ### design/ (module design)
