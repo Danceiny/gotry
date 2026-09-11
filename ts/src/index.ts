@@ -452,7 +452,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
           ground_transfer: {
             type: 'object',
             additionalProperties: false,
-            description: '可选显式地面接驳覆盖:仅 destination 位置、显式经纬度和 mode=driving;路线只改绑定 transfer 的分钟,价格仍来自静态包;缓存 TTL 由能力层固定',
+            description: '可选显式地面接驳覆盖:仅 destination 位置、显式经纬度和 mode=driving;路线同时绑定抵达方向(A→B)与返程方向(B→A),两方向分别请求/缓存/降级,价格仍来自静态包;缓存 TTL 由能力层固定',
             properties: {
               candidate_id: { type: 'string', description: '要绑定的候选 id;不会按相似度推断' },
               transfer_index: { type: 'integer', description: 'dest_transfers 的零基位置;不会按 mode 推断' },
@@ -461,6 +461,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
               origin: {
                 type: 'object',
                 additionalProperties: false,
+                description: '旧版单对坐标:等同于 outbound.origin(能力层自动把返程方向设为其互换)',
                 properties: {
                   longitude: { type: 'number' },
                   latitude: { type: 'number' },
@@ -469,9 +470,56 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
               destination: {
                 type: 'object',
                 additionalProperties: false,
+                description: '旧版单对坐标:等同于 outbound.destination',
                 properties: {
                   longitude: { type: 'number' },
                   latitude: { type: 'number' },
+                },
+              },
+              outbound: {
+                type: 'object',
+                additionalProperties: false,
+                description: '显式抵达方向坐标对(A→B):不指定时回退 origin/destination',
+                properties: {
+                  origin: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      longitude: { type: 'number' },
+                      latitude: { type: 'number' },
+                    },
+                  },
+                  destination: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      longitude: { type: 'number' },
+                      latitude: { type: 'number' },
+                    },
+                  },
+                },
+              },
+              return: {
+                type: 'object',
+                additionalProperties: false,
+                description: '显式返程方向坐标对(B→A):不指定时回退 outbound 互换',
+                properties: {
+                  origin: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      longitude: { type: 'number' },
+                      latitude: { type: 'number' },
+                    },
+                  },
+                  destination: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      longitude: { type: 'number' },
+                      latitude: { type: 'number' },
+                    },
+                  },
                 },
               },
             },

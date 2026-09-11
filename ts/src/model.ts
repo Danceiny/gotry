@@ -19,6 +19,16 @@ export interface TransferMode {
   mode: string
   minutes: number
   priceCny: number
+  /**
+   * Per-direction overrides supplied by the ground-transfer capability when a
+   * driving route fact successfully resolves for outbound (A→B) and/or return
+   * (B→A). `minutesOut` feeds the outbound arrival stay minute;
+   * `minutesRet` feeds the return departure-from-stay minute. When absent
+   * the solver falls back to the symmetric `minutes` field, preserving
+   * byte-for-byte behavior for static and symmetric inputs.
+   */
+  minutesOut?: number
+  minutesRet?: number
 }
 
 export interface Service {
@@ -234,8 +244,14 @@ export function doorToDoorFromMove(svc: Service, mv: D2DMoveView): DoorToDoorPar
 export function evaluateChoice(cand: Candidate, req: TravelRequest, ch: Choice): TrueCost {
   /** 门到门全成本核算(与 Python evaluate_choice 完全一致)。 */
   const access = req.homeHubAccess[cand.hub]
+  const outTransferMin = typeof ch.outTransfer.minutesOut === 'number'
+    ? ch.outTransfer.minutesOut
+    : ch.outTransfer.minutes
+  const retTransferMin = typeof ch.retTransfer.minutesRet === 'number'
+    ? ch.retTransfer.minutesRet
+    : ch.retTransfer.minutes
   const wake = ch.outService.depMin - cand.bufferOutMin - access.toHubMin
-  const arriveStay = ch.outService.arrMin + ch.outTransfer.minutes
+  const arriveStay = ch.outService.arrMin + outTransferMin
   const d2dOut = arriveStay - wake
 
   let energy = 100
@@ -249,7 +265,7 @@ export function evaluateChoice(cand: Candidate, req: TravelRequest, ch: Choice):
 
   const day1Raw = Math.max(0, DAY_END_MIN - arriveStay) / 60
   const day1 = day1Raw * (0.5 + energy / 200)
-  const leaveStayRet = ch.retService.depMin - cand.bufferRetMin - ch.retTransfer.minutes
+  const leaveStayRet = ch.retService.depMin - cand.bufferRetMin - retTransferMin
   const day2 = Math.max(0, leaveStayRet - DAY2_START_MIN) / 60 * DAY2_QUALITY
   const midDays = Math.max(0, ch.days - 2)
   const usable = day1 + day2 + midDays * 8.0 * DAY2_QUALITY
