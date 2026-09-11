@@ -131,6 +131,96 @@ const baselineReceipt = treatmentReuse.run_receipts[0]!.qualification.evidence_r
 treatmentReuse.run_receipts[1]!.qualification.evidence_receipts.official_evaluator_output_sha256 = baselineReceipt
 assert.throws(() => deriveMatchedPairs(treatmentReuse, artifactResolver), /fingerprint mismatch|binding mismatch/)
 
+// D-28 admission gate solidification (issue #203): the registry file's countability
+// face is a frozen fact — chinatravel/travelbench/locomo are diagnostic_only. The
+// `pair-diagnostic-default` vector proves the mechanism on registry[0]; this block
+// pins the published face itself and proves an otherwise fully-qualified ChinaTravel
+// paired construction (reciprocal observed_external roles, identical model identity,
+// all eight controls, evaluator/source-fence/integrity artifacts resolved and closed)
+// is rejected as diagnostic-only, and becomes derivable only when that frozen face is
+// flipped in memory. Per docs/evaluation/evaluation-foundation.md these in-memory
+// observed_external objects are countable_test_only falsification inputs: never
+// written to git, never a baseline, production result, official score, or
+// Agent-quality evidence.
+const countability = Object.fromEntries(registry.map(item => [item.benchmark_id, item.countability_default]))
+assert.deepEqual(countability, {
+  trek: 'countable_if_qualified',
+  travelplanner: 'countable_if_qualified',
+  chinatravel: 'diagnostic_only',
+  travelbench: 'diagnostic_only',
+  tau2: 'countable_if_qualified',
+  locomo: 'diagnostic_only',
+  bfcl: 'countable_if_qualified',
+})
+
+const chinatravel = registry.find(item => item.benchmark_id === 'chinatravel')!
+const ctCase = {
+  ...structuredClone(observedCase),
+  benchmark_id: 'chinatravel',
+  case_id: 'gotry:foundation:chinatravel-admission-probe',
+} as typeof observedCase
+const ctMetrics = Object.fromEntries(chinatravel.native_metrics.values.map(metric => [metric.receipt_key, 0.5]))
+const ctControls = {
+  ...seed.controls,
+  case_set_sha256: evaluationFingerprint([ctCase]),
+  scorer_sha256: evaluationFingerprint(ctCase.scorer_revision),
+  source_fence_sha256: evaluationFingerprint(chinatravel.source_fence),
+  official_evaluator_sha256: evaluationFingerprint(chinatravel.provenance.evaluator),
+}
+const ctRun = (role: 'baseline' | 'treatment'): EvalRunReceiptV0 => {
+  const sha = role === 'baseline' ? '3333333333333333333333333333333333333333' : '4444444444444444444444444444444444444444'
+  const run = {
+    ...seed,
+    run_id: `run:chinatravel:${role}-probe`, benchmark_id: 'chinatravel', case_id: ctCase.case_id,
+    evidence_kind: 'observed_external',
+    gotry_sha: sha,
+    pairing: { pair_id: 'pair:chinatravel:admission-gate-probe', role, counterpart_run_id: `run:chinatravel:${role === 'baseline' ? 'treatment' : 'baseline'}-probe` },
+    model: { provider: 'test-provider', model: 'test-model' }, controls: ctControls,
+    qualification: {
+      official_result: true, source_fence_passed: true, integrity_passed: true,
+      evidence_receipts: { official_evaluator_output_sha256: null, source_fence_audit_sha256: null, integrity_audit_sha256: null },
+    },
+    experiment: {
+      changed_variables: role === 'baseline' ? [] : ['gotry_sha'],
+      candidate_sha256: evaluationFingerprint({ treatment_variable: 'gotry_sha', gotry_sha: sha }),
+    },
+    native_metrics: ctMetrics,
+    evidence_summary: { ...seed.evidence_summary, fixture_only: false, statement: 'test-only diagnostic-gate falsification pair' },
+  } as EvalRunReceiptV0
+  const { evidence_receipts: _receipts, ...qualification } = run.qualification; const bound = { ...run, qualification }
+  const base = { schema_version: 'gotry_eval_evidence_artifact_v0', run_id: run.run_id, benchmark_id: run.benchmark_id, case_id: run.case_id, run_binding_sha256: evaluationFingerprint(bound) }
+  const artifacts = {
+    official_evaluator: { ...base, artifact_kind: 'official_evaluator', evaluator_sha256: run.controls.official_evaluator_sha256, native_metrics_sha256: evaluationFingerprint(run.native_metrics), native_metrics: run.native_metrics, official_result: true },
+    source_fence_audit: { ...base, artifact_kind: 'source_fence_audit', source_fence_sha256: run.controls.source_fence_sha256, input_digest_sha256: ctCase.input_ref.digest_sha256, source_fence_passed: true, forbidden_field_hits: 0 },
+    integrity_audit: { ...base, artifact_kind: 'integrity_audit', integrity_sha256: run.controls.integrity_sha256, candidate_sha256: run.experiment.candidate_sha256, integrity_passed: true },
+  }
+  run.qualification.evidence_receipts = { official_evaluator_output_sha256: evaluationFingerprint(artifacts.official_evaluator), source_fence_audit_sha256: evaluationFingerprint(artifacts.source_fence_audit), integrity_audit_sha256: evaluationFingerprint(artifacts.integrity_audit) }
+  return run
+}
+const ctFoundation = parseEvaluationFoundation({
+  registry, cases: [ctCase], run_receipts: [ctRun('baseline'), ctRun('treatment')], failure_clusters: [],
+})
+const ctResolver = { resolve(sha256: string): unknown {
+  for (const run of ctFoundation.run_receipts) {
+    const { evidence_receipts: _receipts, ...qualification } = run.qualification; const bound = { ...run, qualification }
+    const base = { schema_version: 'gotry_eval_evidence_artifact_v0', run_id: run.run_id, benchmark_id: run.benchmark_id, case_id: run.case_id, run_binding_sha256: evaluationFingerprint(bound) }
+    const artifacts = [{ ...base, artifact_kind: 'official_evaluator', evaluator_sha256: run.controls.official_evaluator_sha256, native_metrics_sha256: evaluationFingerprint(run.native_metrics), native_metrics: run.native_metrics, official_result: true }, { ...base, artifact_kind: 'source_fence_audit', source_fence_sha256: run.controls.source_fence_sha256, input_digest_sha256: ctCase.input_ref.digest_sha256, source_fence_passed: true, forbidden_field_hits: 0 }, { ...base, artifact_kind: 'integrity_audit', integrity_sha256: run.controls.integrity_sha256, candidate_sha256: run.experiment.candidate_sha256, integrity_passed: true }]
+    const found = artifacts.find(item => evaluationFingerprint(item) === sha256); if (found) return found
+  }
+  return undefined
+} }
+assert.throws(() => deriveMatchedPairs(ctFoundation, ctResolver), /diagnostic only/)
+const flippedRegistry = structuredClone(registry)
+flippedRegistry[2]!.countability_default = 'countable_if_qualified'
+const flippedFoundation = parseEvaluationFoundation({
+  registry: flippedRegistry, cases: [ctCase], run_receipts: [ctRun('baseline'), ctRun('treatment')], failure_clusters: [],
+})
+assert.deepEqual(deriveMatchedPairs(flippedFoundation, ctResolver), [{
+  schema_version: 'gotry_eval_matched_pair_derived_v0', pair_id: 'pair:chinatravel:admission-gate-probe', benchmark_id: 'chinatravel',
+  case_id: 'gotry:foundation:chinatravel-admission-probe', baseline_run_id: 'run:chinatravel:baseline-probe',
+  treatment_run_id: 'run:chinatravel:treatment-probe', treatment_variable: 'gotry_sha', matched_pair_countable: true,
+}])
+
 const canonical1 = stableEvaluationJson(diagnostic)
 const canonical2 = stableEvaluationJson(parseEvaluationFoundation(JSON.parse(canonical1)))
 const digest1 = createHash('sha256').update(canonical1).digest('hex')
@@ -166,4 +256,4 @@ for (const key of ['source_fence_passed', 'integrity_passed']) {
   assert.throws(() => parseEvalRunReceipt(run), /synthetic fixture/)
 }
 console.log(`canonical sha256: ${digest1}`)
-console.log(`evaluation-contract tests: ${registry.length} registry, ${pairs.length} test-only matched pair, ${vectors.length} negative vectors green`)
+console.log(`evaluation-contract tests: ${registry.length} registry, 1 test-only matched pair, 39 negative vectors, chinatravel diagnostic-only gate green`)
