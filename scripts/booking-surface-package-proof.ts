@@ -55,7 +55,7 @@ const tarballResult = spawnSync('npm', ['pack', '--silent', '--ignore-scripts'],
 assert.equal(tarballResult.status, 0, tarballResult.stderr || tarballResult.stdout)
 const tarball = resolve(root, tarballResult.stdout.trim())
 writeFileSync(join(packedConsumer, 'package.json'), JSON.stringify({ name: 'clean-consumer', private: true, type: 'module' }))
-const install = spawnSync('npm', ['install', '--prefer-offline', '--ignore-scripts', '--no-audit', '--no-fund', tarball], {
+const install = spawnSync('npm', ['install', '--prefer-online', '--ignore-scripts', '--no-audit', '--no-fund', tarball], {
   cwd: packedConsumer,
   encoding: 'utf8',
   timeout: CLEAN_CONSUMER_INSTALL_TIMEOUT_MS,
