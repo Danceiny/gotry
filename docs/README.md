@@ -172,6 +172,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [ops/extension-privacy.md](ops/extension-privacy.md) | Session Bridge extension privacy policy |
 | [ops/extension-webstore-submission.md](ops/extension-webstore-submission.md) | Chrome Web Store submission materials and the current dsh UI install handoff (ADR-21 channel B) |
 | [ops/external-pr-workflow.md](ops/external-pr-workflow.md) | Public issue→PR→review→merge ledger; plus triage/verification/adjudication rules for external PRs (including automation bots) |
+| [ops/security.md](ops/security.md) | Security policy and vulnerability disclosure: reporting channel, triage discipline, append-only security event log |
 | [ops/ledger-tenant-repair.md](ops/ledger-tenant-repair.md) | #254 ledger tenant repair owner-gate checklist (dry-run → authorize → apply → private receipt) |
 
 ### assets/ and superpowers/
