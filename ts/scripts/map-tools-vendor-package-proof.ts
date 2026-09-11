@@ -121,9 +121,9 @@ function assertTargetLockClosure(): { packages: number; version: string } {
   )
   assert.ok(dshEntries.length >= 10, 'expected dsh-tools peer closure in the ts lock')
   for (const [path, entry] of dshEntries) {
-    assert.equal(entry.version, '0.1.5-alpha.1', `${path} drifted outside the 0.1.5-alpha.1 closure`)
+    assert.equal(entry.version, '0.1.5-rc.1', `${path} drifted outside the 0.1.5-rc.1 closure`)
   }
-  return { packages: dshEntries.length, version: '0.1.5-alpha.1' }
+  return { packages: dshEntries.length, version: '0.1.5-rc.1' }
 }
 
 function findPackageRoot(entry: string): string {
@@ -244,8 +244,8 @@ try {
   const dshSettingsPackageJson = packageRequire.resolve('@deepseek-ai/dsh-settings/package.json')
   const dshTools = JSON.parse(readFileSync(dshToolsPackageJson, 'utf8')) as { version: string }
   const dshSettings = JSON.parse(readFileSync(dshSettingsPackageJson, 'utf8')) as { version: string }
-  assert.equal(dshTools.version, '0.1.5-alpha.1')
-  assert.equal(dshSettings.version, '0.1.5-alpha.1')
+  assert.equal(dshTools.version, '0.1.5-rc.1')
+  assert.equal(dshSettings.version, '0.1.5-rc.1')
   const settingsApi = await import(pathToFileURL(join(dirname(dshSettingsPackageJson), 'lib/index.js')).href) as {
     SettingsProvider?: { prototype?: { installSection?: (...args: unknown[]) => void } }
   }
@@ -253,7 +253,7 @@ try {
   assert.equal(
     typeof installSection,
     'function',
-    'real 0.1.5-alpha.1 SettingsProvider.prototype.installSection must be present',
+    'real 0.1.5-rc.1 SettingsProvider.prototype.installSection must be present',
   )
 
   const plugin = await import(pathToFileURL(join(vendorRoot, 'lib/index.js')).href)
@@ -327,12 +327,12 @@ try {
   assert.deepEqual(activeToolNames(), expectedTools, 'exactly seven active map tools must register')
   assert.equal(registerEvents.length, expectedTools.length * 2, 'installSection initial onChange must rebuild the map tools once')
   assert.equal(toolDisposeEvents.length, expectedTools.length, 'installSection initial reload must dispose the first tool generation')
-  assert.equal(settingsRegistrations.length, 1, '0.1.5-alpha.1 settings section must register once')
+  assert.equal(settingsRegistrations.length, 1, '0.1.5-rc.1 settings section must register once')
   assert.equal(settingsRegistrations[0][0], settingsNamespaceValue, 'settings namespace must be the stable plain string')
-  assert.equal(settingsRegistrations[0][2] && typeof settingsRegistrations[0][2] === 'object', true, '0.1.5-alpha.1 settings register options must be supplied')
-  assert.deepEqual(Object.keys(settingsRegistrations[0][2] as object).sort(), ['base'], '0.1.5-alpha.1 registration must carry the composition base')
-  assert.equal(settingsWatchers.length, 1, '0.1.5-alpha.1 installSection must attach one settings watcher')
-  assert.equal(settingsProviderDisposers.length, 1, '0.1.5-alpha.1 installSection must attach one provider-detach fallback effect')
+  assert.equal(settingsRegistrations[0][2] && typeof settingsRegistrations[0][2] === 'object', true, '0.1.5-rc.1 settings register options must be supplied')
+  assert.deepEqual(Object.keys(settingsRegistrations[0][2] as object).sort(), ['base'], '0.1.5-rc.1 registration must carry the composition base')
+  assert.equal(settingsWatchers.length, 1, '0.1.5-rc.1 installSection must attach one settings watcher')
+  assert.equal(settingsProviderDisposers.length, 1, '0.1.5-rc.1 installSection must attach one provider-detach fallback effect')
 
   settingsWatchers[0]()
   assert.deepEqual(activeToolNames(), expectedTools, 'settings watch reload must keep exactly seven active map tools')

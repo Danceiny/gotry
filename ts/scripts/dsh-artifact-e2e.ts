@@ -3,7 +3,7 @@
  *
  * 真实执行:在临时 stateRoot/cwd 下装载 gotry-tools 插件,触发 gotry_artifacts_list
  * + gotry_artifacts_read 的 execute + output.presentationMeta + presentResult,断言
- * DSH 0.1.5-alpha.1 的 Host ToolResult contract(SearchPathsResultView /
+ * DSH 0.1.5-rc.1 的 Host ToolResult contract(SearchPathsResultView /
  * ReadResultView / GenericCallView.locations),并跑一次隔离 select → preview →
  * modify → view-updated 文件读取循环。
  *

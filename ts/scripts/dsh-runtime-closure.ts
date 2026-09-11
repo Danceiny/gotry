@@ -2,7 +2,7 @@ export type DshLockPackage = {
   version?: string
 }
 
-export const REQUIRED_DSH_RUNTIME_PACKAGE_COUNT = 230
+export const REQUIRED_DSH_RUNTIME_PACKAGE_COUNT = 232
 
 export type DshRuntimeClosureInput = {
   dependencies: Record<string, string>

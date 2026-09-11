@@ -124,7 +124,7 @@ npx @danceiny/gotry doctor     # 可选渠道体检(--fix 补装)
 npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一问一答
 ```
 
-前置 Node ≥ 22.15。LLM key 由 dsh 宿主 UI 配（OpenAI 兼容端点同），gotry 不问也不回显。任何 npm 兼容 registry 皆可；镜像 `latest` 滞后时钉精确版本。仓内请走源码入口 `./gotry web`（裸名 npx 在仓内会失败）。符合条件的启动可能提供一次可选能力检查；CI / 非 TTY 不询问、不安装。onboarding 细节与运维脚本：[`docs/tools.md`](docs/tools.zh-CN.md)。源码安装：`npm ci && npm --prefix ts ci && node scripts/build-dist.mjs`——与 npm 包同一组钉死的 DSH `0.1.5-alpha.1` closure。全栈验证：`./scripts/run-all-tests.sh`。
+前置 Node ≥ 22.15。LLM key 由 dsh 宿主 UI 配（OpenAI 兼容端点同），gotry 不问也不回显。任何 npm 兼容 registry 皆可；镜像 `latest` 滞后时钉精确版本。仓内请走源码入口 `./gotry web`（裸名 npx 在仓内会失败）。符合条件的启动可能提供一次可选能力检查；CI / 非 TTY 不询问、不安装。onboarding 细节与运维脚本：[`docs/tools.md`](docs/tools.zh-CN.md)。源码安装：`npm ci && npm --prefix ts ci && node scripts/build-dist.mjs`——与 npm 包同一组钉死的 DSH `0.1.5-rc.1` closure。全栈验证：`./scripts/run-all-tests.sh`。
 
 ## 隐私与可信
 
@@ -193,7 +193,7 @@ AI agent：[`AGENTS.md`](AGENTS.zh-CN.md) 是绑定契约——入场先清扫�
 
 **MIT**——与上游 dsh 一致。文本见 [LICENSE](LICENSE)。
 
-**Built with**: DeepSeek Harness 0.1.5-alpha.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
+**Built with**: DeepSeek Harness 0.1.5-rc.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
 **版本基线：`v0.0.1-rc.22`（npm `latest`）。** 验证闸：`scripts/run-all-tests.sh`；发布流程：`scripts/publish-npm.sh`。
 

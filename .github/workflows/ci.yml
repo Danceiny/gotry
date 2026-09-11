@@ -74,7 +74,7 @@ jobs:
         run: npm ci --no-audit --no-fund --strict-peer-deps
 
       - name: Install ts dependencies
-        # ts/package.json 精确钉住完整 0.1.5-alpha.1 peer closure；显式
+        # ts/package.json 精确钉住完整 0.1.5-rc.1 peer closure；显式
         # npm ci --strict-peer-deps 是合并闸，防止 lockfile 再次依赖宽松 peer 解析绕行。
         run: npm ci --no-audit --no-fund --strict-peer-deps
         working-directory: ts

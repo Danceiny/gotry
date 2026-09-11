@@ -1,6 +1,6 @@
 /**
  * Issue #289 证据契约:GoTry web/DSH 通用模型请求重试行为(直接驱动已安装的
- * `@deepseek-ai/dsh-llm-retry` 0.1.5-alpha.1;无网络,无密钥,无浏览器)。
+ * `@deepseek-ai/dsh-llm-retry` 0.1.5-rc.1;无网络,无密钥,无浏览器)。
  *
  * 五个契约面:
  *   A. provider-owned normal-mode 语义:mode=normal 时,call 与 retry 一一对应,
@@ -86,7 +86,7 @@ function freshContext(): { ctx: MockCtx; listeners: Map<string, MockListener[]>;
     },
     logger: { warn: () => undefined, error: () => undefined },
   }
-  // 一次性 install dsh-llm-retry(0.1.5-alpha.1)。random=0.5 让 jitter=1(确定)
+  // 一次性 install dsh-llm-retry(0.1.5-rc.1)。random=0.5 让 jitter=1(确定)
   ;(applyLlmRetry as unknown as (c: MockCtx, cfg?: Record<string, never>, int?: { random?: () => number }) => void).call(null, ctx, {}, { random: () => 0.5 })
   return {
     ctx,
@@ -503,7 +503,7 @@ test('G. sessionProjections retry 计数按 session+provider+policyKey 隔离', 
 })
 
 // ---------------- 总结断言 ----------------
-test('summary:已安装 dsh-llm-retry 是上游包,版本=0.1.5-alpha.1,apply 导出', () => {
+test('summary:已安装 dsh-llm-retry 是上游包,版本=0.1.5-rc.1,apply 导出', () => {
   assert.ok(applyLlmRetry, 'dsh-llm-retry 必须 export apply')
   assert.equal(typeof applyLlmRetry, 'function', 'apply 应是函数')
 })
