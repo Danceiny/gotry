@@ -536,6 +536,9 @@ echo "=== 59. 春节锚点表生成漂移闸(issue #274:lunar-typescript 构建�
 echo
 echo "=== 60. HotelByte 交易 bridge unknown 查单对账契约(issue #232:book 执行分类 exit0≠成功/种子 fail-closed/窗口内 miss 保 unknown/窗口届满非无订单证明/冲突显式人工/权威负证据才允许新 intent;纯函数契约层,非运行时激活,零真实供应商调用) ==="
 (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hotelbyte-reconcile-tests.ts) || FAIL=1
+echo
+echo "=== 62. #233 取消/退款独立结果与佣金披露契约层(M5-4 pre-entry:双对象独立终态无合并成功态/serviceFee≠退款金额/refunded 绑权威证据/披露 digest 入指纹且口径变化即拒/unknown 不默认 none/账本分词与文案分词一致 480 组合;纯契约零真实调用) ==="
+(cd ts && npx tsx scripts/issue-233-cancel-refund-commission-tests.ts) || FAIL=1
 
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
