@@ -396,6 +396,11 @@ function parseRouteResult(value: unknown): PublicMapDrivingRouteResult {
     typeof provider !== 'string' || provider.trim() === ''
     || typeof distanceM !== 'number' || !Number.isFinite(distanceM) || distanceM < 0
     || typeof durationS !== 'number' || !Number.isFinite(durationS) || durationS < 0
+    // A positive distance cannot be covered in zero time: such a response is
+    // a self-contradictory route fact, not a credible provider hit. It falls
+    // into the explicit provider-miss fallback instead of silently binding
+    // zero minutes into the solver.
+    || (distanceM > 0 && durationS === 0)
   ) throw new Error('map_driving_route returned an invalid public result')
   return {
     provider,
