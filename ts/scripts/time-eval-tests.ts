@@ -246,6 +246,17 @@ const ANCHOR_NOW = new Date(ay, am - 1, ad, 12) // 锚点日中午,避免午夜�
   assert.equal(parsePlanningWindow('2025年没去成，计划2026年内完成旅行', anchor)?.requestedYear, 2026, 'historical context does not override requested future year')
   assert.equal(parsePlanningWindow('计划在2025年或2026年内完成旅行', anchor), null, 'conflicting future years remain ambiguous')
   assert.equal(parsePlanningWindow('历史回测2025年，计划2026年内完成旅行', anchor), null, 'historical and future years remain ambiguous')
+  // 相对年份(今年/明年/后年/年内)按本轮锚点换算为命名年窗口——未来时态不落过去(issue #2)
+  assert.deepEqual(
+    parsePlanningWindow('今年年内完成一次旅行', anchor),
+    { referenceDate: '2026-09-10', requestedYear: 2026, intent: 'future' },
+    'relative this-year future context resolves against the anchor',
+  )
+  assert.equal(parsePlanningWindow('计划明年出行一次', anchor)?.requestedYear, 2027, 'relative next-year future context')
+  assert.equal(parsePlanningWindow('计划在明年或后年完成旅行', anchor), null, 'conflicting relative years remain ambiguous')
+  assert.equal(parsePlanningWindow('今年的计划很多', anchor), null, 'non-planning mention of this year is not a window')
+  assert.equal(parsePlanningWindow('历史回测今年内的方案', anchor)?.intent, 'historical', 'relative-year historical lookup stays historical')
+  assert.equal(parsePlanningWindow('2025年没去成，今年年内完成旅行', anchor)?.requestedYear, 2026, 'past failure does not override relative future year')
 
   const future = await run('计划在2026年内完成一次旅行', new Date(2026, 8, 10, 12))
   assert.deepEqual(future.state.spec?.segments[0]?.options.map(o => o.date), ['2026-10-01'], 'past option removed before solve')
@@ -260,6 +271,20 @@ const ANCHOR_NOW = new Date(ay, am - 1, ad, 12) // 锚点日中午,避免午夜�
   const historical = await run('历史回测2026年内的方案', new Date(2026, 8, 10, 12))
   assert.deepEqual(historical.state.spec?.segments[0]?.options.map(o => o.date), ['2026-09-01', '2026-10-01', '2027-01-01'], 'historical lookup bypass preserved')
   assert.equal(historical.state.solve?.recommended, 'past', 'historical solver may select historical option')
+
+  // 相对年份未来意图同样不得把过去候选送进求解(issue #2 剩余面,固定时钟反例)
+  const relativeFuture = await run('今年年内完成一次旅行', new Date(2026, 8, 10, 12))
+  assert.deepEqual(relativeFuture.state.spec?.segments[0]?.options.map(o => o.date), ['2026-10-01'], 'relative this-year intent removes past option before solve')
+  assert.equal(relativeFuture.state.solve?.recommended, 'valid', 'relative this-year intent does not recommend a past slot')
+  assert.match(relativeFuture.reply, /已排除规划窗口外的候选/, 'relative this-year intent records deterministic rejection')
+
+  const relativeNextYear = await run('计划明年出行一次', new Date(2026, 8, 10, 12))
+  assert.deepEqual(relativeNextYear.state.spec?.segments[0]?.options.map(o => o.date), ['2027-01-01'], 'relative next-year intent keeps only in-window options')
+  assert.equal(relativeNextYear.state.solve?.recommended, 'next-year', 'relative next-year intent solves within the requested year')
+
+  const relativeHistorical = await run('历史回测今年内的方案', new Date(2026, 8, 10, 12))
+  assert.deepEqual(relativeHistorical.state.spec?.segments[0]?.options.map(o => o.date), ['2026-09-01', '2026-10-01', '2027-01-01'], 'explicit relative-year historical lookup keeps past options')
+  assert.equal(relativeHistorical.state.solve?.recommended, 'past', 'relative-year historical lookup may select past option')
 
   const refreshedState = newState(2026)
   await runTurn(refreshedState, '计划在2026年内完成一次旅行', llmFor(spec()), [],
