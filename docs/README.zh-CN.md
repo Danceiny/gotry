@@ -172,6 +172,7 @@
 | [ops/extension-privacy.md](ops/extension-privacy.zh-CN.md) | Session Bridge 扩展隐私政策 |
 | [ops/extension-webstore-submission.md](ops/extension-webstore-submission.zh-CN.md) | Chrome Web Store 上架材料与现行 dsh UI 安装交接（ADR-21 通道 B） |
 | [ops/external-pr-workflow.md](ops/external-pr-workflow.zh-CN.md) | 公开 issue→PR→review→merge 台账；另载外部 PR（含自动化机器人）分诊/核验/裁决规则 |
+| [ops/ledger-tenant-repair.md](ops/ledger-tenant-repair.zh-CN.md) | #254 账本 tenant 修复 owner-gate 清单（dry-run → 授权 → apply → 私有回执） |
 
 ### assets/ 与 superpowers/
 

@@ -248,6 +248,10 @@ echo "=== 29b. 账本 tenant 修复计划(#254:只读 inventory/dry-run before-a
 (cd ts && npx tsx scripts/ledger-repair-plan-tests.ts | tail -1) || FAIL=1
 
 echo
+echo "=== 29c. 账本 tenant 修复 apply(#254:授权门零写/CAS搬移/目标tenant可见不串读/幂等/注入失败回滚/backup rollback/隔离stateRoot) ==="
+(cd ts && npx tsx scripts/ledger-repair-apply-tests.ts | tail -1) || FAIL=1
+
+echo
 echo "=== 30. Z3 WASM race 回归(engine/journey/unified 三形态同轮并发压测;修复验证面,run-all §1 止血移除的闸) ==="
 (cd ts && npx tsx scripts/z3-race-tests.ts) || FAIL=1
 
