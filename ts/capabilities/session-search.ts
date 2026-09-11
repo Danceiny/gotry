@@ -21,7 +21,7 @@ import { buildEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAME
 import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, validateTrainQueryResponseUrl, TRAIN_SITE_HOST, type SessionTrainOption, type TrainQueryParseOutcome, type TrainResponseBinding } from './session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, parseDidaRecommendHotels, parseDidaPrices, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
-import { EXTENSION_STORE_URL } from './session/extension-bridge.ts'
+import { EXTENSION_STORE_URL, type SessionJobHandle, type SniffBodies } from './session/extension-bridge.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
 
@@ -319,6 +319,11 @@ export interface SessionDidaQuery {
   timeoutMs?: number
   /** 允许匿名实例(默认 false——员工本人 dida 会话是本面的存在前提) */
   allowAnonymous?: boolean
+  /**
+   * 扩展桥注入(2026-09-11,gotry-backend 服务形态):传进程内作业队列,
+   * 远程扩展经鉴权面连入;缺省走 loopback 懒单例(桌面形态)
+   */
+  bridge?: SessionJobHandle
 }
 
 export interface SessionDidaResult {
@@ -338,6 +343,26 @@ export interface SessionDidaResult {
  * 凭据在 hotel-be portal「自动登录」跳板完成,dida 侧人只补验证码 */
 export function didaLoginHint(): string {
   return '未检出你的 dida 登录态——在 hotel-be portal「供应商门户」页对该凭据点「自动登录」完成跳板登录(账密自动填充,你只补验证码);或调用 gotry_session_login(site=dida-portal)打开 dida 登录入口。登录在 dida 官网完成;gotry 永不经手密码/验证码/cookie 值'
+}
+
+/** dida 三类回包合并解析(推荐酒店 + 推荐价格 + 实时价;CDP 窗口收集与扩展 multiCollect 双车道同一合并语义) */
+function mergeDidaRatesBodies(bodies: { hotels: string; recommendPrices: string; realtime: string }): SessionDidaRateOption[] {
+  const hotels = parseDidaRecommendHotels(bodies.hotels)
+  const recommendPrices = parseDidaPrices(bodies.recommendPrices)
+  const realtimeRates = parseDidaRates(bodies.realtime)
+  const pricesByHotel = new Map(recommendPrices.map((p) => [p.hotelId, p]))
+  const rates: SessionDidaRateOption[] = [...realtimeRates]
+  for (const h of hotels) {
+    const p = pricesByHotel.get(h.hotelId)
+    rates.push({
+      hotelId: h.hotelId,
+      hotelName: h.name,
+      price: p?.price ?? 0,
+      ...(p?.currency ? { currency: p.currency } : {}),
+      ...(p?.priceDate ? { priceDate: p.priceDate } : {}),
+    })
+  }
+  return rates
 }
 
 export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDidaResult> {
@@ -366,7 +391,7 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
     // ① 登录态快查:票据 cookie 名存在性(名字级;协议面不存在值字段)。
     // 20s 窗口:桥常在本调用前才拉起,扩展 SW 可能已按 MV3 30s 节律休眠——
     // job 在桥上按 capability 排队等轮询者,窗口覆盖一次 alarm 唤醒周期。
-    const login = await extensionCookieNames({ site, domain: DIDA_SITE_DOMAIN, ticketNames: DIDA_LOGIN_COOKIE_NAMES, timeoutMs: 20_000 })
+    const login = await extensionCookieNames({ site, domain: DIDA_SITE_DOMAIN, ticketNames: DIDA_LOGIN_COOKIE_NAMES, timeoutMs: 20_000 }, q.bridge)
     if (!login.ok) {
       const verdict = classifyBridgeFailure(login.kind)
       if (verdict === 'needs-extension') {
@@ -377,11 +402,12 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
     if (login.tickets.length === 0 && !q.allowAnonymous) {
       return err('needs-login', didaLoginHint())
     }
-    // ② 检索 job:后台标签 + 被动嗅探(URL hint + 形状兜底;扩展零写行为)
-    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs })
+    // ② 检索 job:后台标签 + 被动嗅探(URL hint + 形状兜底;扩展零写行为)。
+    // multiCollect:find 页自发 hotels+recommendPrices 双流,单首包语义丢一半(2026-09-11)
+    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, multiCollect: true }, q.bridge)
     appendExtensionAudit(q.auditPath, {
       kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
-      result: r.ok ? (r.timedOut ? 'timeout' : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
+      result: r.ok ? (r.timedOut ? 'timeout' : r.bodies ? `bodies hotels=${r.bodies.hotels?.length ?? 0}B prices=${r.bodies.recommendPrices?.length ?? 0}B` : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
     })
     if (!r.ok) {
       const verdict = classifyBridgeFailure(r.kind)
@@ -391,11 +417,14 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
       return err(verdict, r.summary)
     }
     const title = r.title
-    const head = r.body.slice(0, 5000)
+    const head = (r.bodies?.hotels ?? r.body).slice(0, 5000)
     if (CHALLENGE_RE.test(title + head)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
-    const rates = parseDidaRates(r.body)
+    // multiCollect 分桶回包 → 与 CDP 车道同语义合并;旧扩展单首包 → 退化 parseDidaRates 兜底
+    const rates = r.bodies
+      ? mergeDidaRatesBodies({ hotels: r.bodies.hotels ?? '', recommendPrices: r.bodies.recommendPrices ?? '', realtime: r.bodies.realtime ?? '' })
+      : parseDidaRates(r.body)
     const verdict: SessionVerdict = rates.length > 0 ? 'hit' : 'miss'
     return {
       ok: true,
@@ -446,21 +475,7 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
     if (CHALLENGE_RE.test(title + headHtml)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
-    const hotels = parseDidaRecommendHotels(bodies.hotels)
-    const recommendPrices = parseDidaPrices(bodies.recommendPrices)
-    const realtimeRates = parseDidaRates(bodies.realtime)
-    const pricesByHotel = new Map(recommendPrices.map((p) => [p.hotelId, p]))
-    const rates: SessionDidaRateOption[] = [...realtimeRates]
-    for (const h of hotels) {
-      const p = pricesByHotel.get(h.hotelId)
-      rates.push({
-        hotelId: h.hotelId,
-        hotelName: h.name,
-        price: p?.price ?? 0,
-        ...(p?.currency ? { currency: p.currency } : {}),
-        ...(p?.priceDate ? { priceDate: p.priceDate } : {}),
-      })
-    }
+    const rates: SessionDidaRateOption[] = mergeDidaRatesBodies(bodies)
     // 有推荐酒店或有实时价即视为通道产出;纯无价酒店如实标注价格待询
     const priced = rates.filter((r) => r.price > 0).length
     const verdict: SessionVerdict = rates.length > 0 ? 'hit' : 'miss'

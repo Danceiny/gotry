@@ -217,10 +217,12 @@ async function main(): Promise<void> {
     manifest_version: number
     permissions: string[]
     host_permissions: string[]
+    optional_host_permissions?: string[]
     content_scripts: Array<{ matches: string[]; js: string[]; world?: string; run_at?: string }>
     key: string
     version: string
     version_name?: string
+    options_page?: string
   }
 
   const derivedId = createHash('sha256')
@@ -242,9 +244,12 @@ async function main(): Promise<void> {
     assert.ok(EXTENSION_STORE_URL.includes(EXTENSION_ID_STORE))
   })
 
-  await check('manifest 合同:MV3 + 最小权限(cookies/alarms;无 debugger/tabs)', () => {
+  await check('manifest 合同:MV3 + 最小权限(cookies/alarms;无 storage/options_page/tabs;founder 2026-09-11 不向员工暴露任何配置面)', () => {
     assert.equal(manifest.manifest_version, 3)
     assert.deepEqual([...manifest.permissions].sort(), ['alarms', 'cookies'])
+    assert.ok(!manifest.permissions.includes('storage'), '不得用 storage 持久化配置(配置由 portal 静默派发)')
+    assert.equal(manifest.options_page, undefined, '不得挂 options 页(employee-facing UI 全禁)')
+    assert.ok(Array.isArray(manifest.optional_host_permissions), '应声明 optional_host_permissions(远程 gotry-backend 域按需授权)')
   })
 
   const manifestPorts = manifest.host_permissions
@@ -252,9 +257,11 @@ async function main(): Promise<void> {
     .filter((v): v is string => v != null)
     .map(Number)
     .sort((a, b) => a - b)
-  await check('防漂移:桥端口池(Node BRIDGE_PORTS)= manifest host_permissions 回环面(+ ctrip 星域)', () => {
+  await check('防漂移:桥端口池(Node BRIDGE_PORTS)= manifest host_permissions 回环面(+ ctrip/dida 星域;2026-09-11 保留站点域:founder 不接受单凭 chrome.cookies API 推断,显式授权链可审计)', () => {
     assert.deepEqual(manifestPorts, [...BRIDGE_PORTS].sort((a, b) => a - b))
     assert.ok(manifest.host_permissions.includes('https://*.ctrip.com/*'))
+    assert.ok(manifest.host_permissions.includes('https://*.dida.com/*'))
+    assert.ok(manifest.host_permissions.includes('https://dida.com/*'))
   })
 
   await check('防漂移:content_scripts 双 world 挂 ctrip 双站+12306+dida(MAIN 嗅探 + ISOLATED 桥;2026-09-03 酒/火实装,2026-09-09 dida 实装)', () => {
@@ -271,6 +278,26 @@ async function main(): Promise<void> {
   const backgroundJs = read('background.js')
   const contentMainJs = read('content-main.js')
   const contentBridgeJs = read('content-bridge.js')
+  await check('配置交付(2026-09-11 hotelbyte 口径:员工零配置):portal 派发 join ticket → SW 静默接收;无 storage/options UI', () => {
+    assert.ok(!backgroundJs.includes('chrome.storage'), '背景 SW 不得读 chrome.storage(配置由 portal 派发,非持久化)')
+    assert.ok(!backgroundJs.includes('chrome.storage.local.get'), '背景 SW 不得列读 storage.local.gotryRemoteBridge')
+    assert.ok(!backgroundJs.includes('chrome.storage.onChanged'), '背景 SW 不得订阅 storage 变更')
+    assert.ok(backgroundJs.includes('chrome.runtime.onMessage'), '背景 SW 应订阅 runtime.onMessage 接收 portal 派发')
+    assert.ok(backgroundJs.includes('\'gotry-join\''), '背景 SW 应识别 gotry-join 消息(portal content-bridge 派发)')
+    assert.ok(backgroundJs.includes('joinTicket'), '背景 SW 应有 joinTicket 模块变量缓存 ticket')
+    assert.ok(backgroundJs.includes('isJoinFresh'), '背景 SW 应有 join ticket 有效性校验(过期/token 缺失即弃)')
+    assert.ok(contentBridgeJs.includes('__gotryJoinTicket'), 'content-bridge 应在页面里读 window.__gotryJoinTicket')
+    assert.ok(contentBridgeJs.includes('type: \'gotry-join\''), 'content-bridge 应把 ticket 转 gotry-join 消息派给 SW')
+    assert.ok(contentBridgeJs.includes('chrome.runtime.sendMessage'), 'content-bridge 应用 chrome.runtime.sendMessage 派发')
+    assert.ok(!backgroundJs.includes('options.html'), '扩展不得引用 options.html/options.js(employee 零配置)')
+  })
+  await check('dida multiCollect(2026-09-11,推荐流双接口):背景分类函数 + waitSniffMulti 分桶结算', () => {
+    assert.ok(backgroundJs.includes('classifyDidaSniff'), '背景 SW 应抽 dida sniff 分类函数')
+    assert.ok(backgroundJs.includes('SearchHomepageRecommendHotels'), '多回包分类应含 hotels 接口')
+    assert.ok(backgroundJs.includes('SearchHomepageRecommendPrices'), '多回包分类应含 recommendPrices 接口')
+    assert.ok(backgroundJs.includes('waitSniffMulti'), '应有多回包分桶结算版本(双齐即返)')
+    assert.ok(backgroundJs.includes('job.multiCollect'), '背景 SW 应按 job.multiCollect 分派单首包/多回包')
+  })
   await check('版本跟随主版本:manifest version_name = package.json version;version = 四段投影(0.0.1-rc.N → 0.0.1.N,founder 2026-09-03 拍板)', () => {
     const pkgVersion = (JSON.parse(readFileSync(join(EXT_DIR, '..', 'package.json'), 'utf8')) as { version: string }).version
     assert.equal(manifest.version_name, pkgVersion, 'version_name 应与 gotry 主版本逐字一致')
@@ -339,11 +366,11 @@ async function main(): Promise<void> {
     assert.ok(manifestAny.content_scripts.every((b) => b.matches.includes(`https://${DIDA_SITE_HOST}/*`)), 'manifest 两组 content_scripts 均应注入 portal.dida.com')
     assert.ok(stripRe(contentMainJs).includes('"HotelPriceList"|"RatePlanList"'), 'dida 形状签名两侧必须逐字一致')
   })
-  await check('物理只读形态:扩展全部 fetch 只指向桥回环端口;不用 chrome.debugger', () => {
+  await check('物理只读形态:扩展全部 fetch 只指向桥(loopback / 远程桥 URL / bridgeBase() / joinTicket.bridgeUrl / 变量别名 url);不用 chrome.debugger;站点域一律 zero fetch', () => {
     for (const [name, src] of [['background', backgroundJs], ['content-main', contentMainJs], ['content-bridge', contentBridgeJs]] as const) {
-      const loopbackFetches = src.match(/fetch\(`?http:\/\/127\.0\.0\.1/g) ?? []
+      const bridgeFetches = src.match(/fetch\(`?(?:http:\/\/127\.0\.0\.1|\$\{bridgeBase\(\)\}|\$\{remoteBridge\.baseUrl\}|\$\{joinTicket\.bridgeUrl[^)]*\})|\bfetch\(\s*url\b/g) ?? []
       const allFetches = src.match(/fetch\(/g) ?? []
-      assert.equal(loopbackFetches.length, allFetches.length, `${name}: fetch 必须只指向桥回环端口(扩展零写行为的代码面证据)`)
+      assert.equal(bridgeFetches.length, allFetches.length, `${name}: fetch 必须只指向桥——扩展零写行为的代码面证据`)
     }
     assert.ok(!backgroundJs.includes('chrome.debugger'), '扩展不得使用 chrome.debugger(警告条/调试面)')
   })
