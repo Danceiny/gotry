@@ -498,7 +498,7 @@ Issue #338 current shape: the write patch accepts `homeCity` and optional `homeC
 
 ### 10.1 Open (working face)
 
-> **#254 current boundary (2026-09-10)**: the read-only inventory/dry-run plan slice has completed source-mutation fail-closed, un-checkpointed WAL visibility, and the v1 zero-directory-write proof; real apply, backup, rollback, failure recovery, target-tenant visibility, and repair receipts are still tracked under the existing #254 numbered sub-items — this slice must not be inferred complete and is not M5/M6 gate evidence.
+> **#254 current boundary (2026-09-11)**: the read-only `repair-plan` slice plus the authorized `repair-apply` / `repair-rollback` execution face are in-tree (`ledger-repair-plan.ts` / `ledger-repair-apply.ts`, run-all §29b/§29c). Apply requires the triple gate (`--mapping` + matching `planDigest` + `--i-authorize-apply`), forces a checksummed backup before writes, CAS-updates `tenant_id` while preserving `seq`, rebuilds affected tenants, and is idempotent via applied stamps. Owner checklist and receipt schema: [`ops/ledger-tenant-repair.md`](ops/ledger-tenant-repair.md). Closing #254 still requires a separate founder-authorized real (or confirmed-unnecessary) repair receipt — fixture green ≠ real repair; not M5/M6 gate evidence.
 
 | Debt | Status / redemption timing |
 |---|---|
@@ -605,6 +605,6 @@ Organizational rules (directory taxonomy/naming/header blocks/lifecycle) and the
 | `milestones/m4-calibration-questions.md` | M4 calibration question set |
 | `milestones/m6-b2b-reuse-walkthrough.md` | M6 P6 B2B reuse walkthrough minutes (draft): traveler principal/sponsor/BFF principal tokenization, measured reuse-rate basis, tenant adversarial cases, disclosure-plugin proposal; pending founder review |
 | `milestones/s1-walkthrough.md` `milestones/g1-market-memo.md` | Stage 1 walkthrough and the G1 launch-market memo (historical memos) |
-| `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` · `ops/external-pr-workflow.md` | Chrome Web Store submission materials and privacy policy (ADR-21 channel B); maintainer-side workflow for external PRs (including automation bots) |
+| `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` · `ops/external-pr-workflow.md` · `ops/ledger-tenant-repair.md` | Chrome Web Store submission materials and privacy policy (ADR-21 channel B); maintainer-side workflow for external PRs (including automation bots); #254 ledger tenant repair owner-gate checklist |
 | `assets/` | archify-generated system architecture diagrams (tool artifacts, no in-repo consumers) |
 | `superpowers/` | superpowers workflow plans/specs (evaluation plan, tool-managed) |

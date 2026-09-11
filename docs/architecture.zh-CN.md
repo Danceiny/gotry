@@ -495,7 +495,7 @@ Issue #338 当前形态：写入 patch 接受 `homeCity` 与 optional `homeCityE
 
 ### 10.1 未清偿（工作面）
 
-> **#254 当前边界（2026-09-10）**：只读 inventory/dry-run 计划切片已补足 source mutation fail-closed、未 checkpoint WAL 可见性与 v1 零目录写证明；真实 apply、backup、rollback、失败恢复、目标 tenant 可见性与 repair receipt 仍按既有 #254 编号子项跟踪，不得由本切片推断完成，也不构成 M5/M6 gate 证据。
+> **#254 当前边界（2026-09-11）**：只读 `repair-plan` 与授权 `repair-apply` / `repair-rollback` 执行面已入库（`ledger-repair-plan.ts` / `ledger-repair-apply.ts`，run-all §29b/§29c）。Apply 需三重门（`--mapping` + 匹配的 `planDigest` + `--i-authorize-apply`），写前强制带校验和的 backup，CAS 更新 `tenant_id` 并保留 `seq`，重建受影响 tenant，并通过 applied stamp 幂等。Owner checklist 与回执 schema：[`ops/ledger-tenant-repair.md`](ops/ledger-tenant-repair.zh-CN.md)。关闭 #254 仍需单独的 founder 授权真实（或确认无需）repair 回执——fixture 绿 ≠ 真实 repair；不构成 M5/M6 gate 证据。
 
 | 债务 | 状态 / 赎回时机 |
 |---|---|
@@ -602,6 +602,6 @@ Issue #338 当前形态：写入 patch 接受 `homeCity` 与 optional `homeCityE
 | `milestones/m4-calibration-questions.md` | M4 校准问题集 |
 | `milestones/m6-b2b-reuse-walkthrough.md` | M6 P6 B2B 复用推演纪要（draft）：traveler principal/sponsor/BFF principal 分词、复用率实测口径、tenant 对抗、披露插件 proposal；待 founder 评审 |
 | `milestones/s1-walkthrough.md` `milestones/g1-market-memo.md` | Stage 1 走查与 G1 首发市场备忘（历史备忘） |
-| `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` · `ops/external-pr-workflow.md` | Chrome Web Store 上架材料与隐私政策（ADR-21 通道 B）；外部 PR（含自动化机器人）维护者侧工作流 |
+| `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` · `ops/external-pr-workflow.md` · `ops/ledger-tenant-repair.md` | Chrome Web Store 上架材料与隐私政策（ADR-21 通道 B）；外部 PR（含自动化机器人）维护者侧工作流；#254 账本 tenant 修复 owner-gate 清单 |
 | `assets/` | archify 生成的系统架构图（工具产物，仓内无消费者） |
 | `superpowers/` | superpowers 工作流 plans/specs（评测计划，工具自管） |

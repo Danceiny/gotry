@@ -58,7 +58,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 | M6-4 | TODO | #235 | m6-plugin worktree | M5 Exit + P6 founder 批准后的 sponsor plugin E2E |
 | M6-5 | TODO | #137 | sales/legal | B2B 试点签约/商业条件；仍属 M6 Exit，不能移出 |
 | Q-1 | DONE（入 main） | #225/#240 | docs/program-225 | 贡献闸文档已随 #240 入 main |
-| Q-2 | TODO | #254 | data-repair 责任面 | 人工修复被旧 bug 误记为 `local` 的历史 tenant 事件；quality/follow-up 线，非 M5/M6 Entry 阻断 |
+| Q-2 | PARTIAL | #254 | data-repair 责任面 | 工程 apply/rollback + 回执 schema 已落地；关闭仍需 founder 授权的真实 repair 回执（或确认无需搬移）；quality/follow-up 线，非 M5/M6 Entry 阻断 |
 | Q-3 | TODO | #255 | design/memory 责任面 | 跟踪 P4 会话双区记忆真实使用与多用户触发条件；quality/follow-up 线，非 M5/M6 Entry 阻断 |
 | Q-4 | DONE（入 main） | #257 | packaging 责任面 | 已随 PR #264（merge bd45d42）入 main 关闭：排除 vendor 目录下生成的 node_modules 进 npm tarball；quality/follow-up 线，非 M5/M6 Entry 阻断 |
 
@@ -224,9 +224,9 @@ M5 Exit + P6 founder review (#137) ───────────────
 ### Q-2 — #254 历史 tenant 事件人工修复（data-repair，quality/follow-up）
 
 - **责任面**：data-repair 责任面，非 M5/M6 Entry 阻断。
-- **责任文件**：按修复 PR 定；边界见 `../architecture.md` §8.16 与 D-32——已被旧 bug 写成 `local` 的非 local 历史事件缺可审计 owner，不可由 schema 迁移猜修，只能在有外部证据时另走人工 data-repair issue/PR。
-- **输出**：对存在外部证据的误记事件，经人工 data-repair PR 还原正确 tenant；无证据的不猜修。
-- **退出标准**：修复 PR 合入并留证据化记录；不改 M5/M6 Entry。
+- **责任文件**：`ts/src/ledger-repair-plan.ts`、`ts/src/ledger-repair-apply.ts`、`ts/scripts/state-cli.ts`（`repair-plan` / `repair-apply` / `repair-rollback`）、run-all §29b/§29c；owner checklist [`../ops/ledger-tenant-repair.md`](../ops/ledger-tenant-repair.zh-CN.md)。边界见 `../architecture.md` §8.16 与 D-32——已被旧 bug 写成 `local` 的非 local 历史事件缺可审计 owner，不可由 schema 迁移猜修，只能在有外部证据时另走人工 data-repair issue/PR。
+- **输出**：对有证据映射的误记事件，经 dry-run 计划 + 授权 apply/rollback（带校验和 backup 与回执 schema）还原正确 tenant；无证据的不猜修。fixture 绿 ≠ 真实 founder repair。
+- **退出标准**：工程 apply 面已合入（PARTIAL）；issue 关闭仍需 founder 授权的真实 repair 回执，**或** founder 确认无需真实搬移；不改 M5/M6 Entry。
 
 ### Q-3 — #255 P4 会话双区记忆使用跟踪（design/memory，quality/follow-up）
 
@@ -262,7 +262,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 15. TODO：#234 M6 复用 proof schema/生成脚本。
 16. TODO：#235 M6 sponsor plugin 零内核 diff + runtime trace proof。
 17. TODO：#137 B2B 试点商业条件/签约。
-18. TODO（quality/follow-up，非 M5/M6 Entry 阻断）：#254 人工修复被误记为 `local` 的历史 tenant 事件。
+18. PARTIAL（quality/follow-up，非 M5/M6 Entry 阻断）：#254 工程 apply/rollback + 回执 schema 已落地；关闭仍需 founder 授权的真实 repair 回执或确认无需搬移。
 19. TODO（quality/follow-up，非 M5/M6 Entry 阻断）：#255 跟踪 P4 会话双区记忆真实使用与多用户触发条件。
 20. DONE（入 main，quality/follow-up，非 M5/M6 Entry 阻断）：#257 已随 PR #264（merge bd45d42）入 main 关闭——排除 vendor 目录下生成的 node_modules 进 npm tarball。
 

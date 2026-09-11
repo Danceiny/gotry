@@ -58,7 +58,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 | M6-4 | TODO | #235 | m6-plugin worktree | sponsor plugin E2E after M5 Exit + P6 founder approval |
 | M6-5 | TODO | #137 | sales/legal | B2B pilot signing/commercial terms; still part of M6 Exit, cannot be moved out |
 | Q-1 | DONE (in main) | #225/#240 | docs/program-225 | contribution gate docs entered main with #240 |
-| Q-2 | TODO | #254 | data-repair responsibility face | manually repair historical tenant events misrecorded as `local` by an old bug; quality/follow-up line, not an M5/M6 Entry blocker |
+| Q-2 | PARTIAL | #254 | data-repair responsibility face | engineering apply/rollback + receipt schema landed; closing still needs a founder-authorized real repair receipt (or confirmation that no move is needed); quality/follow-up line, not an M5/M6 Entry blocker |
 | Q-3 | TODO | #255 | design/memory responsibility face | track real usage of P4 session dual-zone memory and multi-user trigger conditions; quality/follow-up line, not an M5/M6 Entry blocker |
 | Q-4 | DONE (in main) | #257 | packaging responsibility face | entered main and closed with PR #264 (merge bd45d42): exclude generated node_modules under the vendor directory from the npm tarball; quality/follow-up line, not an M5/M6 Entry blocker |
 
@@ -224,9 +224,9 @@ M5 Exit + P6 founder review (#137) ───────────────
 ### Q-2 — #254 manual repair of historical tenant events (data-repair, quality/follow-up)
 
 - **Responsibility face**: data-repair responsibility face; not an M5/M6 Entry blocker.
-- **Responsible files**: defined by the repair PR; boundary per `../architecture.md` §8.16 and D-32 — non-local historical events miswritten as `local` by the old bug lack an auditable owner, cannot be repaired by schema-migration guessing, and can only go through a separate manual data-repair issue/PR when external evidence exists.
-- **Outputs**: for misrecorded events with external evidence, restore the correct tenant via a manual data-repair PR; without evidence, no repair by guessing.
-- **Exit criteria**: repair PRs merged with evidence-backed records; no change to M5/M6 Entry.
+- **Responsible files**: `ts/src/ledger-repair-plan.ts`, `ts/src/ledger-repair-apply.ts`, `ts/scripts/state-cli.ts` (`repair-plan` / `repair-apply` / `repair-rollback`), run-all §29b/§29c; owner checklist [`../ops/ledger-tenant-repair.md`](../ops/ledger-tenant-repair.md). Boundary per `../architecture.md` §8.16 and D-32 — non-local historical events miswritten as `local` by the old bug lack an auditable owner, cannot be repaired by schema-migration guessing, and can only go through a separate manual data-repair issue/PR when external evidence exists.
+- **Outputs**: dry-run plan + authorized apply/rollback with checksummed backup and receipt schema for evidence-backed mappings; without evidence, no repair by guessing. Fixture green ≠ real founder repair.
+- **Exit criteria**: engineering apply face merged (PARTIAL); issue close still requires a founder-authorized real repair receipt **or** founder confirmation that no real move is needed; no change to M5/M6 Entry.
 
 ### Q-3 — #255 P4 session dual-zone memory usage tracking (design/memory, quality/follow-up)
 
@@ -261,7 +261,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 15. TODO: #234 M6 reuse proof schema/generation scripts.
 16. TODO: #235 M6 sponsor plugin zero kernel diff + runtime trace proof.
 17. TODO: #137 B2B pilot commercial terms/signing.
-18. TODO (quality/follow-up, not an M5/M6 Entry blocker): #254 manual repair of historical tenant events misrecorded as `local`.
+18. PARTIAL (quality/follow-up, not an M5/M6 Entry blocker): #254 engineering apply/rollback + receipt schema landed; closing still needs a founder-authorized real repair receipt or confirmation that no move is needed.
 19. TODO (quality/follow-up, not an M5/M6 Entry blocker): #255 tracking real usage of P4 session dual-zone memory and multi-user trigger conditions.
 20. DONE (in main, quality/follow-up, not an M5/M6 Entry blocker): #257 entered main and closed with PR #264 (merge bd45d42) — excluding the generated node_modules under the vendor directory from the npm tarball.
 
