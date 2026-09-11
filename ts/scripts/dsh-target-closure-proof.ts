@@ -1,24 +1,24 @@
 /**
  * DSH 目标闭包契约(issue #268):读取仓库当前状态,断言已精确迁移到
- * @deepseek-ai/dsh 0.1.5-alpha.1 的 230 包闭包。这是 issue #268 的 failing-before
+ * @deepseek-ai/dsh 0.1.5-rc.1 的 232 包闭包。这是 issue #268 的 failing-before
  * 契约——在起始 0.1.2-alpha.3/216 闭包上必须失败,迁移完成后必须通过。
  *
  * 断言面(任一不符即 FAIL):
  *  - 运行时 spawn guard 版本 = 目标;
  *  - 闭包常量 = 目标包数;
  *  - 根 manifest 全部 dsh* 依赖精确锁定目标版本,包数 = 目标;
- *  - 15 个新增 sentinel 在根 manifest 精确存在,移除项 dsh-tool-subagent-report 不存在;
+ *  - 目标闭包 sentinel 在根 manifest 精确存在(含 alpha.1→rc.1 新增三项与 documentpreview 更名),移除项不存在;
  *  - 根 npm lock 闭包与 manifest 集合/版本/包数一致;
  *  - 根 pnpm lock 闭包 + root importer 与 manifest 集合/版本/包数一致;
  *  - ts/package.json 显式声明 @deepseek-ai/dsh-sdk-client@目标(GoTry 直接 import,
  *    不再由上游 main 图传递到达),且其所有显式 dsh* 依赖精确锁定目标版本;
- *  - ts/package.json overrides 的名称集合与根 230 包集合完全一致，值全部精确目标版本;
+ *  - ts/package.json overrides 的名称集合与根 232 包集合完全一致，值全部精确目标版本;
  *  - ts/package-lock.json 每个真实 DSH 条目(按最后包名段过滤,排除嵌套非 dsh 依赖)
- *    精确锁定目标版本,包数 = 目标,名称集合与根 230 完全一致,拒绝嵌套/混合版本;
+ *    精确锁定目标版本,包数 = 目标,名称集合与根 232 完全一致,拒绝嵌套/混合版本;
  *  - ts/ 实际安装树:用 ts 包的 createRequire 上下文解析每个 dsh 包 package.json,
  *    全精确目标版本,解析路径直接位于 ts/node_modules/@deepseek-ai/ 下(非嵌套)。
  *
- * 仅根目录 230 证据不足——ts/ 是 GoTry 直接 import 的消费方,必须独立验证其三层闭包。
+ * 仅根目录 232 证据不足——ts/ 是 GoTry 直接 import 的消费方,必须独立验证其三层闭包。
  *
  * 运行:cd ts && npx tsx scripts/dsh-target-closure-proof.ts
  */
@@ -35,17 +35,18 @@ import {
   validatePnpmRootDshImporter,
 } from './dsh-runtime-closure.ts'
 
-const TARGET_VERSION = '0.1.5-alpha.1'
-const TARGET_PACKAGE_COUNT = 230
+const TARGET_VERSION = '0.1.5-rc.1'
+const TARGET_PACKAGE_COUNT = 232
 
 const ADDED_SENTINELS = [
   '@deepseek-ai/dsh-api-workspace-files',
+  '@deepseek-ai/dsh-chunked-list',
   '@deepseek-ai/dsh-client-file-upload',
   '@deepseek-ai/dsh-client-resources',
   '@deepseek-ai/dsh-client-ui-open-in-app',
+  '@deepseek-ai/dsh-client-ui-sidebar-documentpreview',
   '@deepseek-ai/dsh-client-ui-sidebar-files',
   '@deepseek-ai/dsh-client-ui-sidebar-right',
-  '@deepseek-ai/dsh-client-ui-sidebar-textpreview',
   '@deepseek-ai/dsh-host-open-in-app',
   '@deepseek-ai/dsh-http-proxy',
   '@deepseek-ai/dsh-package-manifest',
@@ -54,9 +55,13 @@ const ADDED_SENTINELS = [
   '@deepseek-ai/dsh-session-format-v0-to-v1',
   '@deepseek-ai/dsh-session-format-v1-to-v2',
   '@deepseek-ai/dsh-session-format-v2-to-v3',
+  '@deepseek-ai/dsh-tool-present',
 ] as const
 
-const REMOVED_SENTINELS = ['@deepseek-ai/dsh-tool-subagent-report'] as const
+const REMOVED_SENTINELS = [
+  '@deepseek-ai/dsh-client-ui-sidebar-textpreview',
+  '@deepseek-ai/dsh-tool-subagent-report',
+] as const
 
 const repoRoot = join(import.meta.dirname, '..', '..')
 
@@ -134,7 +139,7 @@ assert.equal(
   'ts/package.json 必须显式声明 @deepseek-ai/dsh-sdk-client@' + TARGET_VERSION,
 )
 
-// 6. ts/package.json:所有显式 dsh* 依赖必须精确锁定目标版本(不要求 230,ts/ 闭包是
+// 6. ts/package.json:所有显式 dsh* 依赖必须精确锁定目标版本(不要求 232,ts/ 闭包是
 //    传递性的;但显式声明的每个 dsh 依赖都必须精确,不允许 ^/~ 可变范围)。
 const tsDeps = tsPkg.dependencies ?? {}
 const tsExplicitDsh = dshDependencyNames(tsDeps)
@@ -146,7 +151,7 @@ for (const name of tsExplicitDsh) {
   )
 }
 
-// 7. ts/package.json overrides 必须精确覆盖根 manifest 的完整 230 包集合。
+// 7. ts/package.json overrides 必须精确覆盖根 manifest 的完整 232 包集合。
 //    这组 override 是修复 sdk-client peer range 漂移到 alpha.2 的关键约束；只验证
 //    三个显式依赖或最终 lock 会遗漏 manifest 层的防漂移策略。
 const tsOverrides = tsPkg.overrides ?? {}
@@ -154,7 +159,7 @@ const tsOverrideDshNames = dshDependencyNames(tsOverrides)
 assert.deepEqual(
   tsOverrideDshNames,
   rootDshNames,
-  'ts/package.json overrides 的 DSH 名称集合必须与根 230 包集合完全一致',
+  'ts/package.json overrides 的 DSH 名称集合必须与根 232 包集合完全一致',
 )
 for (const name of tsOverrideDshNames) {
   assert.equal(
@@ -165,7 +170,7 @@ for (const name of tsOverrideDshNames) {
 }
 
 // 8. ts/package-lock.json:每个真实 DSH 条目(按包名过滤,排除嵌套非 dsh 依赖)必须
-//    精确锁定目标版本,包数 = 目标,名称集合与根 230 完全一致。
+//    精确锁定目标版本,包数 = 目标,名称集合与根 232 完全一致。
 //    关键:lock 路径前缀 `node_modules/@deepseek-ai/dsh-skill-filesystem/node_modules/chokidar`
 //    的最后包名段是 `chokidar`(非 dsh),不能按路径前缀过滤,必须按最后包名段过滤。
 const tsNpmLock = JSON.parse(readFileSync(join(tsDir, 'package-lock.json'), 'utf8')) as {
@@ -209,10 +214,10 @@ assert.equal(
 )
 const rootDshNameSet = new Set(rootDshNames)
 for (const name of tsLockDshNames) {
-  assert.ok(rootDshNameSet.has(name), `ts lock dsh 包不在根 230 集合中:${name}`)
+  assert.ok(rootDshNameSet.has(name), `ts lock dsh 包不在根 232 集合中:${name}`)
 }
 for (const name of rootDshNameSet) {
-  assert.ok(tsLockDshNames.has(name), `根 230 dsh 包不在 ts lock 中:${name}`)
+  assert.ok(tsLockDshNames.has(name), `根 232 dsh 包不在 ts lock 中:${name}`)
 }
 
 // 9. ts/ 实际安装树:用 ts 包的 createRequire 上下文解析每个 dsh 包的 package.json,

@@ -2,7 +2,7 @@
  *
  * Covers default-off, explicit opt-in, and fail-closed configuration paths.
  * A local developer run exercises the source checkout. The packaged consumer
- * path is built from the current root @deepseek-ai/dsh 0.1.5-alpha.1 closure;
+ * path is built from the current root @deepseek-ai/dsh 0.1.5-rc.1 closure;
  * version/source counterexamples use isolated synthetic fixtures.
  */
 import assert from 'node:assert/strict'
@@ -58,8 +58,8 @@ function runRuntimeProbe(options: RuntimeProbe): { source: string; version: stri
 }
 
 function assertRuntimeSelectionAndVersionGuards(): void {
-  const sourcePriority = runRuntimeProbe({ rootVersion: '0.1.5-alpha.1', vendorVersion: '0.1.2-alpha.1' })
-  assert.deepEqual(sourcePriority, { source: 'root', version: '0.1.5-alpha.1' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
+  const sourcePriority = runRuntimeProbe({ rootVersion: '0.1.5-rc.1', vendorVersion: '0.1.2-alpha.1' })
+  assert.deepEqual(sourcePriority, { source: 'root', version: '0.1.5-rc.1' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
 
   const legacyFallback = runRuntimeProbe({ vendorVersion: '0.1.2-alpha.1' })
   assert.deepEqual(legacyFallback, null, 'non-benchmark source checkout fail-closes instead of using the removed legacy vendored dsh fallback')
@@ -359,7 +359,7 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
   // planner request) must carry each stable sentence exactly once. The
   // separate session-title request does NOT expose the benchmark tool and is
   // intentionally not required to carry the persona — dsh-system-prompt
-  // 0.1.5-alpha.1 emits a distinct system prompt for it (auto-title). This
+  // 0.1.5-rc.1 emits a distinct system prompt for it (auto-title). This
   // is the precise observed public protocol invariant under target closure,
   // not a relaxed `some` over the full request stream.
   const SENTENCE_A = 'You are GoTry, a task-agnostic travel planning assistant.'

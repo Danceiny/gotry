@@ -124,7 +124,7 @@ npx @danceiny/gotry doctor     # optional-channel health check (--fix to repair)
 npx @danceiny/gotry "Two recovery days from Shenzhen, budget 3000"   # headless one-shot
 ```
 
-Node ≥ 22.15. LLM keys live in the dsh host UI (OpenAI-compatible endpoints included) — gotry never asks for or echoes them. Any npm-compatible registry works; pin an exact version if a mirror's `latest` lags. Inside this repo use the source entry `./gotry web` (bare-name npx fails there). Eligible launches may offer a one-time capability check; CI / non-TTY never prompts, never installs. Onboarding details + operator scripts: [`docs/tools.md`](docs/tools.md). Source install: `npm ci && npm --prefix ts ci && node scripts/build-dist.mjs` — the same pinned DSH `0.1.5-alpha.1` closure as the npm package. Full-stack verify: `./scripts/run-all-tests.sh`.
+Node ≥ 22.15. LLM keys live in the dsh host UI (OpenAI-compatible endpoints included) — gotry never asks for or echoes them. Any npm-compatible registry works; pin an exact version if a mirror's `latest` lags. Inside this repo use the source entry `./gotry web` (bare-name npx fails there). Eligible launches may offer a one-time capability check; CI / non-TTY never prompts, never installs. Onboarding details + operator scripts: [`docs/tools.md`](docs/tools.md). Source install: `npm ci && npm --prefix ts ci && node scripts/build-dist.mjs` — the same pinned DSH `0.1.5-rc.1` closure as the npm package. Full-stack verify: `./scripts/run-all-tests.sh`.
 
 ## Privacy and Trust
 
@@ -193,7 +193,7 @@ Documents ship as bilingual pairs (`x.md` English + `x.zh-CN.md` 中文); diverg
 
 **MIT** — same as upstream dsh. See [LICENSE](LICENSE).
 
-**Built with**: DeepSeek Harness 0.1.5-alpha.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
+**Built with**: DeepSeek Harness 0.1.5-rc.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
 **Version baseline: `v0.0.1-rc.22` (npm `latest`).** Verification gates: `scripts/run-all-tests.sh`; release flow: `scripts/publish-npm.sh`.
 

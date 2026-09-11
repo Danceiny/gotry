@@ -9,7 +9,7 @@ import {
   validatePnpmRootDshImporter,
 } from './dsh-runtime-closure.ts'
 
-const VERSION = '0.1.5-alpha.1'
+const VERSION = '0.1.5-rc.1'
 
 function validInput(): DshRuntimeClosureInput {
   return {
@@ -40,7 +40,7 @@ test('rejects a lock package missing from the published direct dependencies', ()
 
 test('rejects an extra ranged DSH dependency absent from the tested lock closure', () => {
   const input = validInput()
-  input.dependencies['@deepseek-ai/dsh-web'] = '^0.1.5-alpha.1'
+  input.dependencies['@deepseek-ai/dsh-web'] = '^0.1.5-rc.1'
   assert.throws(() => validateDshRuntimeClosure(input), /DSH manifest 与 lock 集合不一致/)
 })
 
@@ -61,10 +61,10 @@ test('rejects drift from the runtime spawn guard version', () => {
 test('parses each pnpm DSH resolution once across packages and snapshots', () => {
   const lock = `
 packages:
-  '@deepseek-ai/dsh@0.1.5-alpha.1': {}
-  '@deepseek-ai/dsh-session@0.1.5-alpha.1': {}
+  '@deepseek-ai/dsh@0.1.5-rc.1': {}
+  '@deepseek-ai/dsh-session@0.1.5-rc.1': {}
 snapshots:
-  '@deepseek-ai/dsh@0.1.5-alpha.1': {}
+  '@deepseek-ai/dsh@0.1.5-rc.1': {}
 `
   assert.deepEqual(parsePnpmDshLock(lock), {
     'node_modules/@deepseek-ai/dsh': { version: VERSION },
@@ -75,8 +75,8 @@ snapshots:
 test('preserves two pnpm resolutions of the same DSH package for mixed-version rejection', () => {
   const lock = `
 packages:
-  '@deepseek-ai/dsh@0.1.5-alpha.1': {}
-  '@deepseek-ai/dsh-session@0.1.5-alpha.1': {}
+  '@deepseek-ai/dsh@0.1.5-rc.1': {}
+  '@deepseek-ai/dsh-session@0.1.5-rc.1': {}
   '@deepseek-ai/dsh-session@0.1.5-alpha.2': {}
 `
   const parsed = parsePnpmDshLock(lock)
@@ -98,11 +98,11 @@ importers:
   .:
     dependencies:
       '@deepseek-ai/dsh':
-        specifier: 0.1.5-alpha.1
-        version: 0.1.5-alpha.1(peer@1.0.0)
+        specifier: 0.1.5-rc.1
+        version: 0.1.5-rc.1(peer@1.0.0)
       '@deepseek-ai/dsh-session':
-        specifier: 0.1.5-alpha.1
-        version: 0.1.5-alpha.1
+        specifier: 0.1.5-rc.1
+        version: 0.1.5-rc.1
   ts:
     dependencies:
       '@deepseek-ai/dsh-web':
@@ -131,7 +131,7 @@ test('rejects a ranged DSH specifier in the pnpm root importer', () => {
     dependencies: validInput().dependencies,
     importerEntries: {
       '@deepseek-ai/dsh': { specifier: VERSION, resolvedVersion: VERSION },
-      '@deepseek-ai/dsh-session-title': { specifier: '^0.1.5-alpha.1', resolvedVersion: VERSION },
+      '@deepseek-ai/dsh-session-title': { specifier: '^0.1.5-rc.1', resolvedVersion: VERSION },
     },
     runtimeVersion: VERSION,
   }), /pnpm root importer 未精确锁定/)
@@ -154,7 +154,7 @@ importers:
   .:
     dependencies:
       '@deepseek-ai/dsh':
-        specifier: 0.1.5-alpha.1
+        specifier: 0.1.5-rc.1
 `
   assert.throws(() => parsePnpmRootDshImporter(lock), /pnpm root importer version 不可用/)
 })
@@ -165,8 +165,8 @@ importers:
   .:
     dependencies:
       '@deepseek-ai/dsh':
-        specifier: 0.1.5-alpha.1
-        version: 0.1.5-alpha.1
+        specifier: 0.1.5-rc.1
+        version: 0.1.5-rc.1
         version: 0.1.5-alpha.2
 `
   assert.throws(() => parsePnpmRootDshImporter(lock), /pnpm root importer version 不可用/)
@@ -197,11 +197,11 @@ importers:
   .:
     dependencies:
       '@deepseek-ai/dsh':
-        specifier: 0.1.5-alpha.1
-        version: 0.1.5-alpha.1
+        specifier: 0.1.5-rc.1
+        version: 0.1.5-rc.1
       '@deepseek-ai/dsh':
-        specifier: 0.1.5-alpha.1
-        version: 0.1.5-alpha.1
+        specifier: 0.1.5-rc.1
+        version: 0.1.5-rc.1
 `
   assert.throws(() => parsePnpmRootDshImporter(lock), /pnpm root importer DSH 依赖重复/)
 })

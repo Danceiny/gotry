@@ -34,7 +34,7 @@ node scripts/build-dist.mjs
 cp .env.example .env      # 填 LLM_API_KEY(DeepSeek sk-... 或 OpenAI 兼容协议)
 ```
 
-> **为什么是两份依赖**：root `package.json` 是 npm 包形态（`@danceiny/gotry`）的发布清单，也把源码与发布形态共用的 230 个 DSH `0.1.5-alpha.1` runtime 包全部锁成精确直接依赖；manifest、package-lock 与 root pnpm importer 必须暴露同一 230 项名称集合，publish preverify 会拒绝漏钉、混版和 range。`ts/package.json` 是插件源码与全部测试套件的开发清单。源码普通运行的 dsh cwd 保持在 `ts/dsh-runtime/`，真实运行状态继续落 `ts/dsh-runtime/gotry-state/`；benchmark opt-in 与 npm 包运行使用调用目录隔离。`ts/dsh-runtime/vendor/` 的 legacy 目录仅作锁一致性证据保留，运行时只走 root 依赖闭包解析；`node_modules/` 与运行时 `gotry-state/` 仍被忽略。
+> **为什么是两份依赖**：root `package.json` 是 npm 包形态（`@danceiny/gotry`）的发布清单，也把源码与发布形态共用的 232 个 DSH `0.1.5-rc.1` runtime 包全部锁成精确直接依赖；manifest、package-lock 与 root pnpm importer 必须暴露同一 232 项名称集合，publish preverify 会拒绝漏钉、混版和 range。`ts/package.json` 是插件源码与全部测试套件的开发清单。源码普通运行的 dsh cwd 保持在 `ts/dsh-runtime/`，真实运行状态继续落 `ts/dsh-runtime/gotry-state/`；benchmark opt-in 与 npm 包运行使用调用目录隔离。`ts/dsh-runtime/vendor/` 的 legacy 目录仅作锁一致性证据保留，运行时只走 root 依赖闭包解析；`node_modules/` 与运行时 `gotry-state/` 仍被忽略。
 
 ---
 

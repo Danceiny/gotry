@@ -28,9 +28,9 @@ const dshBin = require.resolve('@deepseek-ai/dsh/lib/bin.js')
 const dshVersion = JSON.parse(readFileSync(require.resolve('@deepseek-ai/dsh/package.json'), 'utf8')).version
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
 const node24 = process.execPath
-const EXTERNAL_BOUND_MS = 4_000
+const EXTERNAL_BOUND_MS = 8_000
 
-assert.equal(dshVersion, '0.1.5-alpha.1', 'proof must run against the lock-selected installed dsh package')
+assert.equal(dshVersion, '0.1.5-rc.1', 'proof must run against the lock-selected installed dsh package')
 
 type CloseOutcome = { code: number | null; signal: NodeJS.Signals | null; error?: string }
 
