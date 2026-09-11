@@ -48,6 +48,12 @@
       }).catch(function () { /* SW 侧无等待者,常态丢弃 */ })
     } catch { /* 环境异常不抛 */ }
   }
+  // 页面派发新票据时重取(2026-09-11,hotel-be 侧 C16 落地配套):
+  // portal 的票据是**异步**取回的(fetch bridgeTicket),通常晚于 DOMContentLoaded,
+  // 上面那次一次性读取会错过;hotel-be 每次写入/刷新 window.__gotryJoinTicket 都会
+  // 在 window 上派发该事件 → 这里重取一次即可(不需要轮询,也不引入任何配置面)。
+  window.addEventListener('gotry-join-ticket-available', dispatchJoinTicket)
+
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', function () { sendPage(); dispatchJoinTicket() }, { once: true })
   } else {
