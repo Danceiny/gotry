@@ -3,6 +3,7 @@
 # Stage 1 顶层设计：自顶向下（契约 → 循环 → 智能接真）
 
 > **状态速览**：
+- 2026-09-11 起，行为契约 23→13 条（瘦身，M4 人格校准线；founder 指令「profile 提示词太长、窄域说辞不具启发性」）：窄域细则去重归位工具描述/通道路由卡（渠道 setup→agent_reach 描述、会话授权/登录→session 工具描述、可下单事实细则→fact_gate 描述，均原文已在）；persona 只留跨场景行为契约，四个动态变量注入面进回归锚；persona-surface-guard-tests 改锚 6/6，历史事故锚全保留。
  - Issue #343 当前状态：flight-pack v2 以显式 IANA zone 与 local date 解析 UTC instant，拒收未知 zone 与 DST gap/overlap，以 UTC instant 计算耗时；dsh/mock adapter 保留 pack `homeZone`，profile 只提供 schedule，explicit vacation 移除 work-window restriction，numeric v1 保持兼容。该确定性契约不代表 live schedules/prices/availability/inventory，边界见 `../data-sources.md`。
  - 2026-09-10 起，#341 地面接驳第一切片在 `gotry_feasibility_check` 前置 adapter 接入显式坐标 `mode=driving`：通过注册的公开 `map_driving_route` 产生带 `asOf`/freshness/cache/provenance 的路线事实，仅覆盖具名静态 `taxi` destination transfer 的分钟，`bus`/`bus_plus_taxi` 保持静态值，静态价格保留为 `[静态包:估算]`；provider/坐标/模式/绑定失败均显式静态回退。`asOf` 是宿主观察/查询时间；live traffic、transit/rail/fare 不在本切片内，既有 #20/M5/M6 gate 不变。
  - 2026-09-10 起，Issue #2 命名年份的未来规划在 `time-anchor.ts` 派生本轮参考日；注册工具 `gotry_feasibility_check` 对带日期候选即使省略 planning 也默认施加宿主时钟 future 下界，显式 future 年份再施加年末上界，预期拒绝返回结构化 validation result 而不进入 incident。完全 dateless 仍保持旧可行性计算，过期年份不滚年，历史/回测需明确 `historical` 模式；loop 仅对显式命名年份规划应用窗口，否定过去推荐和多年份歧义不误判为历史。`time-eval-tests.ts` §6 与 `smoke.ts` registered execute fixture 以注入时钟验证，仅为隔离工程证据，不替代供应商或真实业务准入。
