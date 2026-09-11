@@ -533,6 +533,10 @@ echo
 echo "=== 59. 春节锚点表生成漂移闸(issue #274:lunar-typescript 构建期生成 2026-2099,表/生成块漂移即红;全离线) ==="
 (cd ts && npx tsx scripts/gen-lunar-anchors.ts --check) || FAIL=1
 
+echo
+echo "=== 60. HotelByte 交易 bridge unknown 查单对账契约(issue #232:book 执行分类 exit0≠成功/种子 fail-closed/窗口内 miss 保 unknown/窗口届满非无订单证明/冲突显式人工/权威负证据才允许新 intent;纯函数契约层,非运行时激活,零真实供应商调用) ==="
+(cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hotelbyte-reconcile-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
