@@ -525,6 +525,11 @@ echo "=== 56. tz-resolver + IANA planning offsets(issue #343:China 出境/回程
 echo "=== 57. issue #343 real-entry adapter precedence(parse→merge→solve→render;dsh fetch fixture + mock shared helper;纯离线) ==="
 (cd ts && npx tsx scripts/issue343-real-entry-e2e.ts) || FAIL=1
 
+echo
+echo "=== 58. G5 内部差旅桥机械闸(issue #348:tracked 文件零未授权内部桥引用,授权台账 docs/g5-authorization-ledger.md 仅创始人侧维护;含红→绿+exit2 自测,临时 git fixture 走 --root,全离线) ==="
+(cd ts && npx tsx scripts/g5-guard.ts) || FAIL=1
+(cd ts && npx tsx scripts/g5-guard-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
