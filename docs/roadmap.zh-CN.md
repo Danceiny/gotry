@@ -225,7 +225,7 @@ rc 序列总览（细节见 release-notes.md，版本历史归 git）：
 - **Exit**：预订零误操作事故；单位经济实测（对齐 D1 §8）。
 
 ### M6：B2B 包裹
-- **Entry**：M5 exit + P6 founder 明确批准。P6 draft 见 `milestones/m6-b2b-reuse-walkthrough.md`，当前尚未获批准；P6 批准不等于 M6 Entry，M5 Exit 仍是硬前置。tenant ledger/CLI 与 Z3/map 稳定性基座已入 main，#227/#241/#242 已关闭。**交付**：traveler principal/sponsor/BFF 三主体隔离与插件披露，一个旅行社主场景（目的地文旅为辅）在固定冻结 `kernel-set` 零 diff 下跑通；runtime 实际加载 coverage 与预声明功能路径 coverage 分开证明，loaded LOC ratio 仅作附属指标；实现 issue #234/#235。备产结构性进展（2026-09-11）：#235 sponsor 插件契约面已以纯函数入 main（`ts/capabilities/sponsor-plugin.ts`，run-all §61），以零内核 diff + C 端隔离证明同内核端到端复用——默认关、零真实调用、非运行时激活；运行激活与真实 B2B 路径仍在本 Entry 门后，内核清单归 #234。
+- **Entry**：M5 exit + P6 founder 明确批准。P6 draft 见 `milestones/m6-b2b-reuse-walkthrough.md`，当前尚未获批准；P6 批准不等于 M6 Entry，M5 Exit 仍是硬前置。tenant ledger/CLI 与 Z3/map 稳定性基座已入 main，#227/#241/#242 已关闭。**交付**：traveler principal/sponsor/BFF 三主体隔离与插件披露，一个旅行社主场景（目的地文旅为辅）在固定冻结 `kernel-set` 零 diff 下跑通；runtime 实际加载 coverage 与预声明功能路径 coverage 分开证明，loaded LOC ratio 仅作附属指标；实现 issue #234/#235。备产结构性进展（2026-09-11）：#235 sponsor 插件契约面已以纯函数入 main（`ts/capabilities/sponsor-plugin.ts`，run-all §64），以零内核 diff + C 端隔离证明同内核端到端复用——默认关、零真实调用、非运行时激活；运行激活与真实 B2B 路径仍在本 Entry 门后，内核清单归 #234。
 - **Exit**：工程半面为固定 `kernel-set` diff=0、runtime 实际加载 coverage、预声明功能路径 coverage 与旅行社嵌入 E2E；商业半面必须有真实 B2B 试点签约。未签原因只能解释整体仍为 TODO，不能替代签约。
 
 ## 最短路径：现在 → M3 exit
