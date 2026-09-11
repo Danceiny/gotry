@@ -148,7 +148,7 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 
 ## 状态与路线图
 
-npm `latest`：**v0.0.1-rc.22**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。
+npm `latest`：**v0.0.1-rc.24**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。
 
 **今天可用** —— 访谈 → 确定性可行性判决 → 带门到门真成本的行程 · 实时检索（飞猪 + 你本人登录态 Chrome，只读），事实 typed 且调用绑定 · 记忆（动机 / 愿望池 / 同行人 / 时间线）落租户作用域账本 · 自检 doctor，批准后范围修复。
 
@@ -195,7 +195,7 @@ AI agent：[`AGENTS.md`](AGENTS.zh-CN.md) 是绑定契约——入场先清扫�
 
 **Built with**: DeepSeek Harness 0.1.5-rc.1 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-**版本基线：`v0.0.1-rc.22`（npm `latest`）。** 验证闸：`scripts/run-all-tests.sh`；发布流程：`scripts/publish-npm.sh`。
+**版本基线：`v0.0.1-rc.24`（npm `latest`）。** 验证闸：`scripts/run-all-tests.sh`；发布流程：`scripts/publish-npm.sh`。
 
 <a href="https://www.star-history.com/?repos=danceiny%2Fgotry&type=date&legend=top-left">
  <picture>

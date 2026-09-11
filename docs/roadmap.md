@@ -12,7 +12,7 @@
 
 ### Release Status
 
-**Current npm dist-tags (2026-09-10 read-only observation): `latest=0.0.1-rc.22`, `rc=0.0.1-rc.20`. This line does not treat the `npm view` observation as a clean pull-back verification; the historical rc.18 pull-back evidence is kept on the corresponding version row of the table below.**
+**Current npm dist-tags (2026-09-11 post-publish): `latest=0.0.1-rc.24`, `rc=0.0.1-rc.24`. Both tags dual-point to rc.24 per the rc.24 release-notes dist-tag plan. This line records the publish-time state; the table below carries the historical pull-back evidence.**
 
 - 2026-08-30 morning: #50 verified that the registry had no rc.16 (a correction to the "already published" claim); **the re-release landed the same day at 13:00Z** (npm time measured `0.0.1-rc.16` = 2026-08-30T13:00:38Z), and the GitHub Release was created at 13:03Z (the #76 fix took effect).
 - 2026-09-02 #50② closed out: pull-back verification of latest=rc.16 (clean install of 489 packages / bin `--help` / dist entry all pass); `rc` was moved from the stranded rc.7 to rc.16, the stray `rc.5` was repointed to its same-named version, and `rc.11`–`rc.14` each self-consistently point to their same-named versions — fully deleting the five aliases requires the npmjs web UI (the granular token gets 403 on the DELETE dist-tag endpoint; confirmed identical via curl).

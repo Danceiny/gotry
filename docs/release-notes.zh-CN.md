@@ -16,6 +16,42 @@
 
 ---
 
+## v0.0.1-rc.24 · 2026-09-11
+
+**Source-only bump。founder 在 docs/audit-sync-2026-09-11 批次收口后授权 `npm publish 0.0.1-rc.24`；bump 同时推进 `package.json` 与 `extension/manifest.json`。覆盖此版本的 source commits：**
+
+- `6e85d36` feat(session): execute in admin browser extension, kill server-side chrome (#380) — founder 2026-09-11：执行环境 = 浏览器客户端（GoTry Session Bridge），服务端零 Chrome。`ts/capabilities/session/extension-bridge.ts` 抽出传输无关的 `createBridgeJobQueue`；`handleMountedRequest` 挂载 gotry-backend `/v1/session/bridge/{health,status,jobs,results}` 鉴权面。`ts/capabilities/session-search.ts` 引入 `multiCollect` 给 dida 推荐流车道（`hotels` + `recommendPrices` 双齐即结算）。`ts/src/backend/modules/session-search.ts` 移除 CDP/transport 依赖、仅暴露桥端点；`login/open` 让扩展把 dida 登录页置前台。founder 拍板「hide all config from employees; portal dispatches join ticket」将 hotelbyte 产品的 `join ticket` 派单迁出 CLI 面。§38 扩展合同测试 36/36。
+- `25502e9` feat(state-ledger): authorized tenant repair apply/rollback with receipt protocol (#254) (#378) — `ts/src/ledger-repair-apply.ts` 扩展 owner-gated `apply` / `rollback` 路径，与 `docs/ops/ledger-tenant-repair.md` 的回执协议配对。dry-run 仍默认；生产 apply 需显式 owner-only `GOTRY_REPAIR_AUTHORIZE` env token，完成时落私有回执。
+- `3168c0f` chore(deps): DSH runtime 闭包升级到 0.1.5-rc.1（232 包）(#379) — `ts/package.json` overrides 由 14 扩到 232，把完整 peer 闭包钉在 `0.1.5-rc.1`。新增含 `dsh-client-ui-sidebar-files`/`dsh-client-ui-sidebar-right`/`dsh-client-ui-sidebar-textpreview`；移除 `dsh-tool-subagent-report`。CI 显式严格 `npm ci --strict-peer-deps`。
+- `c28d6be` fix(ci): backfill version field for native binary placeholders in lockfile — `node_modules/@deepseek-ai/node-addon-system/` 下 3 个 `node-addon-system-*` 占位条目没有 `version` 字段，导致 npm 11.19.0 上 `npm ci --strict-peer-deps` 抛 `Invalid Version:`。回填 `0.1.2` 与父包 `optionalDependencies` 对齐，解锁了纯文档 PR（#383 + audit-sync 后续）的 CI 红。
+
+### What's New（同期入库的架构面增量）
+
+这些 commit 在 rc.20 与 rc.24 之间已合 `main`，但本批次 owner 选择把它们挂在 rc.24 段而不是单开 rc 段：
+
+- **Web 启动交互式 onboarding（#258/#267）** — `npx @danceiny/gotry web` 在交互式 TTY 上可能**只问一次**"现在配置可选能力吗？(y/N)"，先于 detached doctor 摘要。`y` 复用 `doctor --fix` 幂等安装器（`setupHbcli` / `setupReach` / `setupSidebar`）；`n` 直接进 web。三态结果（`installed` / `needs-user-action` / `unavailable`）。CI / benchmark / 非 TTY / `GOTRY_SETUP_SKIP=1` / `GOTRY_ONBOARDING_SKIP=1` / `--no-onboarding` 均跳过 prompt。**M4 UX 证明**；不计入 #20 真实 `observed_private` cohort Exit。
+- **Booking Copilot planner 共享源派生（#263, 8 commit）** — `time-anchor.ts` 导出 `formatUtcOffsetLabel`，固定 `UTC±HH:MM` 零填充；`validation.ts` 导出 canonical schema 字节；planner persona 的 `SearchCriteriaPatch` 字段名列表自 `bookingSurfaceSchema.$defs.SearchCriteriaPatch.properties` 派生——不再维护手写第二份。数字键数组（`{"0": {...}}`）在 must-be-array 修复步被识别。planner LLM 跟随 `DEEPSEEK_MODEL` / `LLM_MODEL`；MiniMax-M2 nested decision envelopes 自动解包；planner token budget 上调适配推理模型。
+- **Booking planner 纠偏批量（#212 / #278）** — `#212` factRef alias 碰撞防护（保留 `modelref:` 命名空间 + 原 UTF-8 SHA-256）；`#278` schema 拒绝反馈环把具体拒绝回放进同 session（而非盲重试 IDENTICAL prompt——MiniMax-M3 复现器）；occupancy 项无 `adults` 即丢弃。`#282` 的前置切片。
+- **Dida 供应商门户适配器 v2（#372）** — 识别加载态推荐流（`HotelRecommendAPI/SearchHomepageRecommendHotels` + `SearchHomepageRecommendPrices`），外加 `PopularDestinationAPI/SearchHotels` + `SearchHotelPrices`。UAT 实测页面自发的是该流。CDP 车道窗口式多响应收集。
+- **Booking-executor 观察面（#377, M1 第 1 切片）** — 仅 `POST /v1/booking/observe`：CDP 打开供应商页面，读取预订入口按钮文本，截图存证。刻意不含 fill/submit 原语（那些属于后续 M5 WriteGate 红线之后的受控执行器）。
+- **gotry-backend 发布构建脚本（#367）** — `scripts/build-booking-copilot-release.mjs` + `scripts/build-gotry-backend-release.mjs` 把 kernel + booking-copilot + session-search 模块打包成 `bin/gotry-backend.js` 的发布制品。
+
+### For Developers
+
+- 所有新行为复用 `doctor --fix` 幂等安装器面；无新全局态、无新配置路径。
+- Booking-copilot planner prompts 现与 booking.surface typed 合同共享 canonical schema；planner 示例与线形状的漂移是编译错误而非运行时 mismatch。
+- `c28d6be` 是 6 行修复；若你用 `npm install` 重新生成 `package-lock.json`，同样三个占位条目仍会无 `version` 复现。`c28d6be` 作者计划加 `prepublish` lint 拒空 version 条目；纳入下批次 audit。
+
+### 安装
+
+- 无改动 — `npx @danceiny/gotry@0.0.1-rc.24 web`。首次交互式启动跑一次 #258/#267 onboarding prompt；`--no-onboarding` 或 `GOTRY_ONBOARDING_SKIP=1` 跳过。
+
+### dist-tag 计划
+
+`npm dist-tag add 0.0.1-rc.24 latest` 与 `npm dist-tag add 0.0.1-rc.24 rc` 在同一授权窗口内（owner 拍板：dist-tag c，`latest` 与 `rc` 双指）。granular token DELETE 按 [`docs/tokens.md`](../tokens.md) 文档化行为返回 403/405；冗余 `rc` 别名仍挂在 rc.20——owner 决定保留历史 `rc` 挂点还是让其自然消亡。
+
+---
+
 ## v0.0.1-rc.20 · 2026-09-08
 
 ### What's New
