@@ -534,7 +534,7 @@ echo "=== 59. 春节锚点表生成漂移闸(issue #274:lunar-typescript 构建�
 (cd ts && npx tsx scripts/gen-lunar-anchors.ts --check) || FAIL=1
 
 echo
-echo "=== 60. HotelByte 交易 bridge unknown 查单对账契约(issue #232:book 执行分类 exit0≠成功/种子 fail-closed/窗口内 miss 保 unknown/窗口届满非无订单证明/冲突显式人工/权威负证据才允许新 intent;纯函数契约层,非运行时激活,零真实供应商调用) ==="
+echo "=== 60. HotelByte 交易 bridge unknown 查单对账契约(issue #232:book 执行分类 exit0≠成功/种子 fail-closed/窗口内 miss 保 unknown/窗口届满非无订单证明/冲突显式人工/权威负证据才允许新 intent;纯函数契约层,非运行时激活,零真实供应商调用;spawn 级完整链路 E2E 已落地见 §66) ==="
 (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hotelbyte-reconcile-tests.ts) || FAIL=1
 echo
 echo "=== 61. WriteGate 机制层否证(issue #231:持久化可信审批+原子 outbox;PreparedChallenge/一次性消费/双进程领取竞争/崩溃注入三崩溃点/物理 CHECK+外键+触发器红线/L4 撤回;全离线,零真实供应商调用,非运行时激活,M5 Entry 前产品运行时不实例化) ==="
@@ -554,6 +554,10 @@ echo "=== 64. sponsor 插件与同内核端到端复用证明(issue #235:三主�
 echo
 echo "=== 65. Booking Copilot unavailable/changed 恢复链契约(issue #142 非门控切片:检测分类复用 receipt status 闭集/受控恢复三轮计入 planner 三次调用预算/静默换房换航结构性拒绝/降级必携显式披露/审计链 saga 形态可对账;纯函数契约层,非运行时激活,零真实供应商调用) ==="
 (cd ts && GOTRY_SESSION_LIVE=0 npx tsx scripts/booking-recovery-chain-tests.ts) || FAIL=1
+
+echo
+echo "=== 66. HotelByte 假 CLI spawn 级完整链路 E2E(issue #232 §5:本地 fixture 二进制经真实 child_process spawn 跑通 quote→approval→book→unknown→query-orders 全链/裸调用红基线 6 证伪/timeout→miss→迟到成功与迟到自动取消/exit0 垃圾·无绑定·部分确认不假成功/进程被杀/同 ref 多单冲突显式/窗口届满转人工不重订/探针失败不证明订单不存在;全离线 fixture,零真实 hbcli·网络·凭据,所有 spawn 有界超时) ==="
+(cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hotelbyte-spawn-e2e-tests.ts) || FAIL=1
 
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
