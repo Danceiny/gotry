@@ -13,7 +13,10 @@
     "http://127.0.0.1:8792/*",
     "http://127.0.0.1:8793/*",
     "http://127.0.0.1:8794/*",
-    "http://127.0.0.1:8795/*"
+    "http://127.0.0.1:8795/*",
+    "https://*.ctrip.com/*",
+    "https://*.dida.com/*",
+    "https://dida.com/*"
   ],
   "background": {
     "service_worker": "background.js"
