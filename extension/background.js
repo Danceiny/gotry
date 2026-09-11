@@ -10,42 +10,21 @@
  *       cookie-names → chrome.cookies 只读票据 cookie **名字**(值即取即弃,永不离开扩展——红线)。
  *   - 物理只读(ReadGuard 扩展车道形态):本 SW 绝不向站点发任何请求——检索请求由站点自己的
  *     页面代码发出,我们只「导航 + 被动转发 NETWORK_HINTS 命中响应」;写不是被禁止的行为,是不存在的原语。
+ *
+ * 桥地址(2026-09-11,founder 定案:执行环境=浏览器客户端,服务端零 Chrome):
+ *   扩展**完全不暴露任何配置**给员工。hotel-be portal 在员工已登录的页面里通过
+ *   content-bridge.js 派发 `gotry-join` 消息({bridgeUrl, token}),SW 缓存到
+ *   `joinTicket` 模块变量;员工从未看见 URL / token / API host 等技术字眼。
+ *   SW 进程重启(约每 30s 节律)→ ticket 丢失 → 下次员工打开 portal 页面自动重发 → 静默恢复。
+ *
+ *   桌面形态(loopback 端口池)保留向后兼容:无 join ticket 时回退到 127.0.0.1 探测,
+ *   这是 gotry 桌面开发场景(gotry CLI 同机形态),与员工日常产品路径无关。
  */
 
 'use strict'
 
 const BRIDGE_PORTS = [8791, 8792, 8793, 8794, 8795]
 const RETRY_MS = 5_000
-
-/**
- * 远程桥配置(2026-09-11,founder 定案:执行环境=浏览器客户端,服务端零 Chrome):
- * chrome.storage.local.gotryRemoteBridge = { baseUrl, token } 时,桥面切到远程
- * gotry-backend(经 options 页配置,如 https://<api-host>/v1/session/bridge 或
- * 诊断隧道 http://127.0.0.1:8791/v1/session/bridge),一切请求带 Bearer 鉴权。
- * 缺省保持 loopback 端口池扫描(gotry 桌面同机形态,向后兼容已发布行为)。
- */
-let remoteBridge = null
-function applyRemoteConfig(v) {
-  remoteBridge = v && typeof v.baseUrl === 'string' && v.baseUrl
-    ? { baseUrl: v.baseUrl.replace(/\/+$/, ''), token: String(v.token ?? '') }
-    : null
-  activePort = null
-}
-chrome.storage.local.get('gotryRemoteBridge', (data) => { applyRemoteConfig(data && data.gotryRemoteBridge) })
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.gotryRemoteBridge) applyRemoteConfig(changes.gotryRemoteBridge.newValue)
-})
-
-function bridgeBase() {
-  if (remoteBridge) return remoteBridge.baseUrl
-  return activePort != null ? `http://127.0.0.1:${activePort}` : null
-}
-function bridgeHeaders(withJson) {
-  const h = { 'x-gotry-bridge': 'v1' }
-  if (withJson) h['content-type'] = 'application/json'
-  if (remoteBridge && remoteBridge.token) h['authorization'] = `Bearer ${remoteBridge.token}`
-  return h
-}
 
 /** 站点注册表(与 Node 侧 LOGIN_TARGETS/LOGIN_COOKIE_NAMES 对账,防漂移测试守住) */
 const SITES = {
@@ -81,34 +60,62 @@ const SITE_SEARCH_PREFIXES = {
   'dida-portal': 'https://portal.dida.com/',
 }
 
+/**
+ * join ticket:由 hotel-be portal 通过 content-bridge 派发,SW 缓存;
+ * 模块级变量,SW 重启即清空(下次 portal 页派发即恢复,无需持久化)。
+ * 形态:{ bridgeUrl, token, issuedAt, expiresAt }
+ */
+let joinTicket = null
 let activePort = null
 let polling = false
+
+function isJoinFresh(t) {
+  if (!t || typeof t.bridgeUrl !== 'string' || !t.bridgeUrl) return false
+  if (t.expiresAt && Number.isFinite(Date.parse(t.expiresAt)) && Date.parse(t.expiresAt) < Date.now()) return false
+  return true
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function detectBridge() {
-  if (remoteBridge) {
+  // 远程 join ticket 优先:portal 派发则连远程
+  if (isJoinFresh(joinTicket)) {
     try {
-      const r = await fetch(`${remoteBridge.baseUrl}/health`, { headers: bridgeHeaders(false) })
-      return r.ok
-    } catch { return false }
+      const r = await fetch(`${joinTicket.bridgeUrl.replace(/\/+$/, '')}/health`, {
+        headers: { authorization: `Bearer ${joinTicket.token ?? ''}`, 'x-gotry-bridge': 'v1' },
+      })
+      if (r.ok) return true
+    } catch { /* 远程暂不可达;若也无可用 loopback 则继续重试 */ }
   }
+  // 桌面形态兜底:loopback 端口池扫描
   for (const p of BRIDGE_PORTS) {
     try {
-      const r = await fetch(`http://127.0.0.1:${p}/health`, { headers: bridgeHeaders(false) })
+      const r = await fetch(`http://127.0.0.1:${p}/health`, { headers: { 'x-gotry-bridge': 'v1' } })
       if (r.ok) { activePort = p; return true }
     } catch { /* 无人监听,试下一个端口 */ }
   }
   return false
 }
 
+function bridgeBase() {
+  if (isJoinFresh(joinTicket)) return joinTicket.bridgeUrl.replace(/\/+$/, '')
+  return activePort != null ? `http://127.0.0.1:${activePort}` : null
+}
+
+function bridgeHeaders(withJson) {
+  const h = { 'x-gotry-bridge': 'v1' }
+  if (withJson) h['content-type'] = 'application/json'
+  if (isJoinFresh(joinTicket) && joinTicket.token) h['authorization'] = `Bearer ${joinTicket.token}`
+  return h
+}
+
 async function postResult(jobId, result) {
   const base = bridgeBase()
   if (base == null || !jobId) return
   // 远程桥挂载在 gotry-backend 精确路由内核上,jobId 走 query;loopback 独立桥保持路径式
-  const url = remoteBridge
+  const url = isJoinFresh(joinTicket)
     ? `${base}/results?jobId=${encodeURIComponent(jobId)}`
     : `${base}/results/${encodeURIComponent(jobId)}`
   try {
@@ -128,31 +135,6 @@ async function ticketNames(site) {
   return (Array.isArray(cookies) ? cookies : [])
     .map((c) => c.name)
     .filter((n) => conf.ticketNames.includes(n))
-}
-
-/** 后台标签等嗅探回包;超时带回页标题(供 Node 侧 CHALLENGE_RE 判定),收尾关自己的标签 */
-function waitSniff(tabId, timeoutMs) {
-  return new Promise((resolve) => {
-    let settled = false
-    let title = ''
-    const handler = (msg, sender) => {
-      if (!sender || !sender.tab || sender.tab.id !== tabId) return
-      if (msg && msg.type === 'gotry-page') { title = String(msg.title ?? title); return }
-      if (msg && msg.type === 'gotry-sniff' && !settled) {
-        settled = true
-        clearTimeout(timer)
-        chrome.runtime.onMessage.removeListener(handler)
-        resolve({ ok: true, kind: 'search', body: String(msg.body ?? ''), url: String(msg.url ?? ''), title })
-      }
-    }
-    const timer = setTimeout(() => {
-      if (settled) return
-      settled = true
-      chrome.runtime.onMessage.removeListener(handler)
-      resolve({ ok: false, kind: 'search', timeout: true, url: '', title })
-    }, Math.max(Number(timeoutMs) || 30_000, 5_000))
-    chrome.runtime.onMessage.addListener(handler)
-  })
 }
 
 /** dida 推荐流多回包分类(与 Node 侧 mergeDidaRatesBodies 对账,run-all §38 防漂移断言守住) */
@@ -186,6 +168,31 @@ function waitSniffMulti(tabId, timeoutMs) {
       }
     }
     const timer = setTimeout(finish, Math.max(Number(timeoutMs) || 30_000, 5_000))
+    chrome.runtime.onMessage.addListener(handler)
+  })
+}
+
+/** 后台标签等嗅探回包;超时带回页标题(供 Node 侧 CHALLENGE_RE 判定),收尾关自己的标签 */
+function waitSniff(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false
+    let title = ''
+    const handler = (msg, sender) => {
+      if (!sender || !sender.tab || sender.tab.id !== tabId) return
+      if (msg && msg.type === 'gotry-page') { title = String(msg.title ?? title); return }
+      if (msg && msg.type === 'gotry-sniff' && !settled) {
+        settled = true
+        clearTimeout(timer)
+        chrome.runtime.onMessage.removeListener(handler)
+        resolve({ ok: true, kind: 'search', body: String(msg.body ?? ''), url: String(msg.url ?? ''), title })
+      }
+    }
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      chrome.runtime.onMessage.removeListener(handler)
+      resolve({ ok: false, kind: 'search', timeout: true, url: '', title })
+    }, Math.max(Number(timeoutMs) || 30_000, 5_000))
     chrome.runtime.onMessage.addListener(handler)
   })
 }
@@ -259,6 +266,22 @@ async function loop() {
     polling = false
   }
 }
+
+/**
+ * portal content-bridge 派发入口(2026-09-11):hotel-be portal 在员工已登录的
+ * 页面里通过 content-bridge.js 发 `gotry-join` 消息,SW 静默接收并缓存 ticket。
+ * 员工从未看见这些消息;任何外部源都可发,但 ticket 必须由 hotel-be 后端签发,
+ * Node 侧通过 Bearer 鉴权校验 ticket 内 token 才认账。
+ */
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === 'gotry-join' && msg.ticket && typeof msg.ticket.bridgeUrl === 'string') {
+    joinTicket = msg.ticket
+    activePort = null
+    sendResponse && sendResponse({ ok: true })
+    return false
+  }
+  return false
+})
 
 // SW 冷启动 + 闹钟兜底双保险;loop() 幂等
 if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { void loop() })
