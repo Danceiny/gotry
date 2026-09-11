@@ -61,6 +61,27 @@ const ANCHOR_NOW = new Date(ay, am - 1, ad, 12) // 锚点日中午,避免午夜�
   const a2030 = buildTimeAnchor(new Date(2030, 5, 1, 12))
   assert.ok(a2030.card.includes('春节 2031-01-23'), 'D-9 扩表:2030 年视视角春节取 2031-01-23')
   console.log('1b. D-9 扩表断言 OK(2030 锚点 → 春节 2031-01-23,表覆盖至 2031)')
+  // #274 扩表边界:最后旧年 2031 / 首个新年 2032 / 闰年与年际过渡
+  // (日期均为农历正月初一,来源=香港天文台公历↔农历转换表 T2031e-T2040e,2026-09-11 核对)
+  const a2031Cny = buildTimeAnchor(new Date(2031, 0, 23, 12))
+  assert.ok(a2031Cny.card.includes('春节 2031-01-23'), '最后旧年:2031 春节当日含当日边界')
+  const a2031After = buildTimeAnchor(new Date(2031, 0, 24, 12))
+  assert.ok(a2031After.card.includes('春节 2032-02-11'), '2031 春节次日 → 首个新年锚点 2032-02-11(#274 扩表前此处静默缺失)')
+  const aMid2031 = buildTimeAnchor(new Date(2031, 5, 1, 12))
+  assert.ok(aMid2031.card.includes('春节 2032-02-11'), '2031 年中 → 取 2032-02-11')
+  const aEve2032 = buildTimeAnchor(new Date(2031, 11, 31, 12))
+  assert.ok(aEve2032.card.includes('春节 2032-02-11'), '2031-12-31 年际过渡 → 2032-02-11')
+  assert.ok(aEve2032.card.includes('下周:周一 2032-01-05'), '年际过渡周行跨入 2032')
+  const a2032Leap = buildTimeAnchor(new Date(2032, 1, 8, 12))
+  assert.ok(a2032Leap.card.includes('下周:周一 2032-02-09'), '闰年 2032 周行起于 02-09')
+  assert.ok(a2032Leap.card.includes('周三 2032-02-11'), '闰年 2032 周行含春节 2032-02-11(周三)')
+  const a2032After = buildTimeAnchor(new Date(2032, 1, 12, 12))
+  assert.ok(a2032After.card.includes('春节 2033-01-31'), '2032 春节次日 → 2033-01-31')
+  const aHorizon = buildTimeAnchor(new Date(2040, 1, 12, 12))
+  assert.ok(aHorizon.card.includes('春节 2040-02-12'), '新地平线末日 2040-02-12 仍在表内')
+  const aBeyond = buildTimeAnchor(new Date(2040, 1, 13, 12))
+  assert.ok(!aBeyond.card.includes('春节'), '地平线(2040-02-12)外静默缺失=已知边界,#274 下一扩表触发点')
+  console.log('1c. #274 扩表边界 OK(2031 末日/次日→2032-02-11/闰年年际/2040 地平线与越界已知缺失)')
 }
 
 // ---- 2. 过期校验(确定性,对齐 golden 约定) ------------------------------------
