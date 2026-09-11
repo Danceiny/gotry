@@ -27,7 +27,7 @@
  *
  * 红线(结构性保证):唯一被执行的可执行文件是 mkdtemp 下的本地 fixture 脚本;
  * 套件零 PATH 上的 hbcli 解析、零网络、零凭据;GOTRY_HBCLI_LIVE 不参与、置 1 也不改变本套件行为;
- * 所有 spawn 带有界超时(hang 场景 500ms 内 SIGKILL 收敛)。
+ * 所有 spawn 带有界超时(hang 场景 500ms 内 SIGKILL 收敛;常规场景 15s 只防真死锁,全栈冷态首跑亦稳定)。
  *
  * 运行: cd ts && npx tsx scripts/hotelbyte-spawn-e2e-tests.ts
  */
@@ -250,7 +250,7 @@ try {
 
   // book 复用参数:绑定 ref 与 rate-pkg 经真实 argv 进子进程(回传断言即 spawn 边界证明)
   const bookArgs = ['trade', 'book', '--json', '--rate-pkg-id', RATE_PKG, '--customer-reference-no', REF]
-  async function bookSpawn(mode: string, args: string[] = bookArgs, timeoutMs = 2000): Promise<SpawnOutcome> {
+  async function bookSpawn(mode: string, args: string[] = bookArgs, timeoutMs = 15_000): Promise<SpawnOutcome> {
     return runFake(fakeBin, args, { FAKE_BOOK_MODE: mode, FAKE_RATE_PKG_ID: RATE_PKG }, timeoutMs)
   }
   async function querySpawn(mode: string): Promise<SpawnOutcome> {
@@ -258,7 +258,7 @@ try {
       fakeBin,
       ['trade', 'query-orders', '--json', '--customer-reference-no', REF],
       { FAKE_QUERY_MODE: mode },
-      2000,
+      15_000,
     )
   }
 
@@ -267,7 +267,7 @@ try {
     fakeBin,
     ['search', 'check-avail', '--json', '--rate-pkg-id', RATE_PKG],
     { FAKE_RATE_PKG_ID: RATE_PKG },
-    2000,
+    15_000,
   )
   assert.equal(quoteOutcome.exitCode, 0, 'quote spawn exit0')
   assert.equal(quoteOutcome.timedOut, false, 'quote spawn 不超时')
