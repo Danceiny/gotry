@@ -541,7 +541,7 @@ echo "=== 61. WriteGate 机制层否证(issue #231:持久化可信审批+原子 
 (cd ts && npx tsx scripts/write-gate-tests.ts) || FAIL=1
 
 echo
-echo "=== 61. 内核清单冻结+运行模块证据闸(issue #234:gotry_kernel_manifest_v1 哈希零 diff(改核心/删文件/废弃层冒充即红)/真实运行 import trace 全加载(未加载/替换内核即红)/同引擎·账本·闸路径功能覆盖(缺路径即红)/证据快照 manifestHash+evidenceHash 哈希绑定(错 SHA 即红);含反证自测,import-only 零状态写入,全离线) ==="
+echo "=== 63. 内核清单冻结+运行模块证据闸(issue #234:gotry_kernel_manifest_v1 哈希零 diff(改核心/删文件/废弃层冒充即红)/真实运行 import trace 全加载(未加载/替换内核即红)/同引擎·账本·闸路径功能覆盖(缺路径即红)/证据快照 manifestHash+evidenceHash 哈希绑定(错 SHA 即红);含反证自测,import-only 零状态写入,全离线) ==="
 (cd ts && npx tsx scripts/kernel-manifest-gate.ts) || FAIL=1
 (cd ts && npx tsx scripts/kernel-manifest-tests.ts) || FAIL=1
 
