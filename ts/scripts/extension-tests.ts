@@ -366,9 +366,11 @@ async function main(): Promise<void> {
     assert.ok(manifestAny.content_scripts.every((b) => b.matches.includes(`https://${DIDA_SITE_HOST}/*`)), 'manifest 两组 content_scripts 均应注入 portal.dida.com')
     assert.ok(stripRe(contentMainJs).includes('"HotelPriceList"|"RatePlanList"'), 'dida 形状签名两侧必须逐字一致')
   })
-  await check('物理只读形态:扩展全部 fetch 只指向桥(loopback / 远程桥 URL / bridgeBase() / joinTicket.bridgeUrl / 变量别名 url);不用 chrome.debugger;站点域一律 zero fetch', () => {
+  await check('物理只读形态:扩展全部 fetch 只指向桥(loopback / 远程桥 URL / bridgeBase() / joinTicket.bridgeUrl 含 .replace 派生 / 变量别名 url);不用 chrome.debugger;站点域一律 zero fetch', () => {
     for (const [name, src] of [['background', backgroundJs], ['content-main', contentMainJs], ['content-bridge', contentBridgeJs]] as const) {
-      const bridgeFetches = src.match(/fetch\(`?(?:http:\/\/127\.0\.0\.1|\$\{bridgeBase\(\)\}|\$\{remoteBridge\.baseUrl\}|\$\{joinTicket\.bridgeUrl[^)]*\})|\bfetch\(\s*url\b/g) ?? []
+      // joinTicket.bridgeUrl 分支用 [^}]* 而非 [^)]*:允许同一变量的 .replace(...) 等纯派生表达式(如去尾斜杠),
+      // 派生链一旦写出嵌套 `${}` 或新目标即不再命中——只放宽对同一变量的匹配,不放宽目标集合(fail-closed)。
+      const bridgeFetches = src.match(/fetch\(`?(?:http:\/\/127\.0\.0\.1|\$\{bridgeBase\(\)\}|\$\{remoteBridge\.baseUrl\}|\$\{joinTicket\.bridgeUrl[^}]*\})|\bfetch\(\s*url\b/g) ?? []
       const allFetches = src.match(/fetch\(/g) ?? []
       assert.equal(bridgeFetches.length, allFetches.length, `${name}: fetch 必须只指向桥——扩展零写行为的代码面证据`)
     }
