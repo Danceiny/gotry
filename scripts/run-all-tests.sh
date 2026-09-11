@@ -536,6 +536,9 @@ echo "=== 59. 春节锚点表生成漂移闸(issue #274:lunar-typescript 构建�
 echo
 echo "=== 60. HotelByte 交易 bridge unknown 查单对账契约(issue #232:book 执行分类 exit0≠成功/种子 fail-closed/窗口内 miss 保 unknown/窗口届满非无订单证明/冲突显式人工/权威负证据才允许新 intent;纯函数契约层,非运行时激活,零真实供应商调用) ==="
 (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hotelbyte-reconcile-tests.ts) || FAIL=1
+echo
+echo "=== 61. WriteGate 机制层否证(issue #231:持久化可信审批+原子 outbox;PreparedChallenge/一次性消费/双进程领取竞争/崩溃注入三崩溃点/物理 CHECK+外键+触发器红线/L4 撤回;全离线,零真实供应商调用,非运行时激活,M5 Entry 前产品运行时不实例化) ==="
+(cd ts && npx tsx scripts/write-gate-tests.ts) || FAIL=1
 
 echo
 echo "=== 61. sponsor 插件与同内核端到端复用证明(issue #235:三主体分离 fail-closed/激活默认关/越权路由+缺 session 绑定拒绝/同内核零拷贝零重声明/佣金不伪造用户效用/B2B fixture E2E 披露入指纹/B2C 同 runner 零渗入+saga 边逐格同/A-B 同业务 id 不串;全离线 fixture,非运行时激活,零真实调用) ==="
