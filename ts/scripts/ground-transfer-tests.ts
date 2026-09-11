@@ -1,5 +1,6 @@
 /**
- * Issue #341 focused proof, Issue #364 direction-binding additions.
+ * Issue #341 focused proof, Issue #364 direction-binding additions, and the
+ * 2026-09-11 wider D-39 boundary freeze.
  *
  * The product path is exercised through the registered gotry_feasibility_check
  * tool. Map results come from an isolated public-tool-shaped fixture; the
@@ -10,6 +11,13 @@
  * → destination, return = destination → origin) with isolated cache,
  * freshness, and fallback. A legacy single-pair shape is normalized to
  * outbound + the swapped pair as return.
+ *
+ * The boundary-freeze section pins the offline remainder of the wider D-39
+ * transfer boundary: mode/position vocabulary closure, fallback-completeness
+ * counterexamples, the static↔dynamic switch contract, evidence-annotation
+ * completeness, and cache boundedness. Everything beyond (live traffic,
+ * transit/rail, fares, address resolution, broader transfer combinations) is
+ * gated real-data work and deliberately absent here.
  */
 
 import assert from 'node:assert/strict'
@@ -35,6 +43,8 @@ import {
   GROUND_TRANSFER_STATIC_PRICE_EVIDENCE,
   type GroundTransferDirectionResolution,
   type GroundTransferProvider,
+  type GroundTransferResolver,
+  type PublicMapDrivingRouteRequest,
   type PublicMapDrivingRouteResult,
 } from '../capabilities/ground-transfer.ts'
 
@@ -197,6 +207,19 @@ function directionOf(value: unknown, label: string): GroundTransferDirectionReso
   const record = asRecord(value, label)
   assert.ok(record['direction'] === 'outbound' || record['direction'] === 'return', `${label}.direction must be outbound or return`)
   return record as unknown as GroundTransferDirectionResolution
+}
+
+/** Isolated host lifecycle for one boundary-freeze case. */
+async function withFeasibilityHost(
+  provider: GroundTransferProvider,
+  run: (tool: RegisteredTool) => Promise<void>,
+): Promise<void> {
+  const host = fakeHost(provider)
+  try {
+    await run(host.feasibility)
+  } finally {
+    rmSync(host.root, { recursive: true, force: true })
+  }
 }
 
 async function main(): Promise<void> {
@@ -789,6 +812,237 @@ async function main(): Promise<void> {
     //    for-byte behavior; same baseline is reused unchanged.
     const baselineAgain = await call(host.feasibility, payload)
     assert.deepEqual(withoutLatency(baselineAgain), withoutLatency(baseline))
+
+    // ─── Wider D-39 boundary freeze (2026-09-11, offline remainder) ──────────
+
+    const TAXI_ONLY = taxiOnlyPayload
+
+    // B1. Vocabulary closure. The GoTry boundary accepts exactly
+    //     `mode=driving` at `position=destination`. The vendored public seam
+    //     also exposes transit / walking / bicycling routes; none of them may
+    //     leak through this seam as a route fact, and no malformed request
+    //     shape may reach the provider.
+    let closureCalls = 0
+    await withFeasibilityHost(async () => {
+      closureCalls += 1
+      return route(600)
+    }, async feasibility => {
+      // provenance: cases where no valid transfer is identified report 'none'
+      // (nothing to attribute); cases that identify the transfer but carry an
+      // invalid mode/position/coordinate report the static pack.
+      const closedCases: Array<{ override: JsonRecord; reason: RegExp; label: string; provenance: string }> = [
+        { override: { mode: 'transit' }, reason: /^unsupported_ground_transfer_mode:transit/, label: 'transit', provenance: 'static-transfer-pack' },
+        { override: { mode: 'bicycling' }, reason: /^unsupported_ground_transfer_mode:bicycling/, label: 'bicycling', provenance: 'static-transfer-pack' },
+        { override: { mode: 'walking' }, reason: /^unsupported_ground_transfer_mode:walking/, label: 'walking', provenance: 'static-transfer-pack' },
+        { override: { position: 'origin' }, reason: /^unsupported_ground_transfer_position:origin/, label: 'position=origin', provenance: 'static-transfer-pack' },
+        { override: { position: undefined }, reason: /^unsupported_ground_transfer_position:unknown/, label: 'position missing', provenance: 'static-transfer-pack' },
+        { override: { candidate_id: undefined }, reason: /^ground_transfer_binding_mismatch:/, label: 'candidate_id missing', provenance: 'none' },
+        { override: { transfer_index: -1 }, reason: /^ground_transfer_binding_mismatch:/, label: 'transfer_index negative', provenance: 'none' },
+        {
+          override: { outbound: { origin: GROUND_TRANSFER.origin, destination: GROUND_TRANSFER.destination } },
+          reason: /^invalid_ground_transfer_coordinates:/,
+          label: 'explicit outbound without return',
+          provenance: 'static-transfer-pack',
+        },
+      ]
+      for (const closed of closedCases) {
+        const rejected = await call(feasibility, { ...payload, ground_transfer: { ...GROUND_TRANSFER, ...closed.override } })
+        const rejectedEvidence = asRecord(rejected.ground_transfer, `closure ${closed.label} ground_transfer`)
+        assert.equal(rejectedEvidence['applied'], false, `closure ${closed.label} must not apply`)
+        assert.equal(rejectedEvidence['provenance'], closed.provenance, `closure ${closed.label} provenance`)
+        assert.match(String(rejectedEvidence['fallbackReason']), closed.reason, `closure ${closed.label} reason`)
+      }
+      // Schema-ring closure: shapes the closed tool schema refuses outright
+      // (non-object ground_transfer, fractional transfer_index) never reach
+      // the capability layer — the structured failure names the violation.
+      for (const schemaCase of [
+        { ground_transfer: 'driving-please' as unknown as JsonRecord, pattern: /"payload\.ground_transfer" must be an object/, label: 'non-object' },
+        {
+          ground_transfer: { ...GROUND_TRANSFER, transfer_index: 1.5 },
+          pattern: /"payload\.ground_transfer\.transfer_index" must be an integer/,
+          label: 'fractional transfer_index',
+        },
+      ]) {
+        const schemaRejected = await call(feasibility, { ...payload, ...schemaCase })
+        assert.equal(schemaRejected.ok, false, `schema ring must refuse ${schemaCase.label}`)
+        assert.match(String(schemaRejected['summary']), schemaCase.pattern, `schema ring reason for ${schemaCase.label}`)
+        assert.equal('ground_transfer' in schemaRejected, false, `schema ring rejection carries no transfer evidence (${schemaCase.label})`)
+      }
+      assert.equal(closureCalls, 0, 'no closed-vocabulary or malformed shape may call the provider')
+    })
+
+    // B2. Fallback completeness, mixed directions: a direction whose cache
+    //     entry went stale and whose re-query fails falls back that direction
+    //     only, with the stale entry visible (cache status 'stale' and a
+    //     `stale_route_requery_error` reason), while the other direction keeps
+    //     its re-queried dynamic value.
+    let mixedCalls = 0
+    let mixedClockMs = FIXED_NOW.getTime()
+    let mixedReturnOutage = false
+    const mixedHost = fakeHost(async request => {
+      mixedCalls += 1
+      if (mixedReturnOutage && request.origin === '119.4567,29.6789') throw new Error('return requery outage')
+      return route(900)
+    }, () => new Date(mixedClockMs))
+    try {
+      const mixedFirst = await call(mixedHost.feasibility, { ...TAXI_ONLY, ground_transfer: GROUND_TRANSFER })
+      assert.equal(mixedCalls, 2)
+      assert.equal(mixedFirst.ok, true)
+      mixedClockMs += (GROUND_TRANSFER_DEFAULT_MAX_AGE_S + 1) * 1_000
+      mixedReturnOutage = true
+      const mixed = await call(mixedHost.feasibility, { ...TAXI_ONLY, ground_transfer: GROUND_TRANSFER })
+      assert.equal(mixedCalls, 4, 'both stale entries must re-query; only the return fails')
+      assert.equal(mixed.ok, true)
+      const mixedEvidence = asRecord(mixed.ground_transfer, 'mixed stale/fallback ground_transfer')
+      assert.equal(mixedEvidence['applied'], true)
+      assert.equal(mixedEvidence['outboundMinutes'], 15)
+      assert.equal(mixedEvidence['returnMinutes'], undefined, 'failed stale re-query must not borrow any dynamic value')
+      assert.equal(mixedEvidence['freshness'], 'fresh', 'aggregate freshness follows the re-queried direction')
+      assert.equal(asRecord(mixedEvidence['cache'], 'mixed aggregate cache')['status'], 'requery')
+      assert.equal(mixedEvidence['priceCny'], 30, 'mixed path keeps the static price value')
+      assert.equal(mixedEvidence['priceEvidence'], GROUND_TRANSFER_STATIC_PRICE_EVIDENCE)
+      const mixedOutbound = directionOf(mixedEvidence['outbound'], 'mixed.outbound')
+      const mixedReturn = directionOf(mixedEvidence['return'], 'mixed.return')
+      assert.equal(mixedOutbound.applied, true)
+      assert.equal(mixedOutbound.freshness, 'fresh')
+      assert.equal(asRecord(mixedOutbound['cache'], 'mixed.outbound.cache')['status'], 'requery')
+      assert.equal(mixedReturn.applied, false)
+      assert.equal(mixedReturn.staticMinutes, 25)
+      assert.equal(mixedReturn.freshness, 'fallback')
+      assert.equal(asRecord(mixedReturn['cache'], 'mixed.return.cache')['status'], 'stale', 'the stale entry itself must be visible on fallback')
+      assert.match(String(mixedReturn.fallbackReason), /^stale_route_requery_error:return:return requery outage$/)
+      const mixedVerdict = (mixed.verdicts ?? []).find(v => v['candidate_id'] === 'qiandao')!
+      const mixedTc = asRecord(mixedVerdict['true_cost'], 'mixed true_cost')
+      assert.equal(mixedTc['arrive_stay'], '10:02', 're-queried outbound 15 min ⇒ 9:47 + 15 = 10:02')
+      assert.equal(mixedTc['leave_stay_return'], '17:55', 'stale-failed return keeps static 25 min ⇒ 18:40 − 20 − 25 = 17:55')
+      const mixedVerdictEvidence = asRecord(mixedVerdict['transfer_evidence'], 'mixed verdict transfer_evidence')
+      assert.equal(mixedVerdictEvidence['outboundMinutes'], 15)
+      assert.equal(mixedVerdictEvidence['returnMinutes'], undefined)
+      assert.equal(mixedVerdictEvidence['priceEvidence'], GROUND_TRANSFER_STATIC_PRICE_EVIDENCE)
+    } finally {
+      rmSync(mixedHost.root, { recursive: true, force: true })
+    }
+
+    // B2b. A route fact that contradicts itself — positive distance covered in
+    //      zero time — is not a credible route fact. It must fall into the
+    //      explicit provider-miss fallback instead of silently binding
+    //      minutes = 0 into the solver (issue #341: “不静默改数”).
+    let degenerateCalls = 0
+    await withFeasibilityHost(async () => {
+      degenerateCalls += 1
+      return { provider: 'degenerate-osrm', distanceM: 42_500, durationS: 0 }
+    }, async feasibility => {
+      const degenerate = await call(feasibility, { ...TAXI_ONLY, ground_transfer: GROUND_TRANSFER })
+      const degenerateEvidence = asRecord(degenerate.ground_transfer, 'degenerate ground_transfer')
+      assert.equal(degenerateEvidence['applied'], false, 'a contradictory route fact must not apply')
+      assert.equal(degenerateEvidence['provenance'], 'static-transfer-pack')
+      assert.equal(degenerateEvidence['evidenceClass'], 'static_transfer_estimate')
+      assert.equal(degenerateEvidence['outboundMinutes'], undefined)
+      assert.equal(degenerateEvidence['returnMinutes'], undefined)
+      assert.match(String(degenerateEvidence['fallbackReason']), /invalid public result/)
+      assert.equal(degenerateEvidence['priceCny'], 30)
+      assert.equal(degenerateEvidence['priceEvidence'], GROUND_TRANSFER_STATIC_PRICE_EVIDENCE)
+      const degenerateOutbound = directionOf(degenerateEvidence['outbound'], 'degenerate.outbound')
+      assert.equal(degenerateOutbound.applied, false)
+      assert.equal(degenerateOutbound.staticMinutes, 25)
+      assert.equal(degenerateOutbound['routeFact'], undefined, 'a rejected fact is never cached into evidence')
+      const degenerateSerialized = JSON.stringify(degenerate)
+      assert.equal(degenerateSerialized.includes('"minutesOut":0'), false, 'zero minutes must never be bound')
+      assert.equal(degenerateSerialized.includes('"minutesRet":0'), false)
+      const degenerateVerdict = (degenerate.verdicts ?? []).find(v => v['candidate_id'] === 'qiandao')!
+      const degenerateTc = asRecord(degenerateVerdict['true_cost'], 'degenerate true_cost')
+      assert.equal(degenerateTc['leave_stay_return'], '17:55', 'static 25 min preserved, not the degenerate 0')
+      assert.equal(degenerateCalls, 2, 'the contradictory response is still a provider query for both directions')
+    })
+
+    // B3a. Static↔dynamic switch contract, TTL boundary: a cache entry aged
+    //      exactly the fixed 900 seconds is still a hit; one second later it
+    //      is stale and re-queried.
+    let ttlCalls = 0
+    let ttlClockMs = FIXED_NOW.getTime()
+    const ttlHost = fakeHost(async () => {
+      ttlCalls += 1
+      return route(780)
+    }, () => new Date(ttlClockMs))
+    try {
+      await call(ttlHost.feasibility, { ...payload, ground_transfer: GROUND_TRANSFER })
+      assert.equal(ttlCalls, 2)
+      ttlClockMs += GROUND_TRANSFER_DEFAULT_MAX_AGE_S * 1_000
+      const atBoundary = await call(ttlHost.feasibility, { ...payload, ground_transfer: GROUND_TRANSFER })
+      assert.equal(ttlCalls, 2, 'age == TTL (900s) is still a cache hit')
+      const atBoundaryEvidence = asRecord(atBoundary.ground_transfer, 'ttl-boundary ground_transfer')
+      assert.equal(directionOf(atBoundaryEvidence['outbound'], 'ttl-boundary.outbound')['freshness'], 'cache_hit')
+      assert.equal(directionOf(atBoundaryEvidence['return'], 'ttl-boundary.return')['freshness'], 'cache_hit')
+      ttlClockMs += 1_000
+      const pastBoundary = await call(ttlHost.feasibility, { ...payload, ground_transfer: GROUND_TRANSFER })
+      assert.equal(ttlCalls, 4, 'age > TTL (901s) must re-query both directions')
+      const pastBoundaryEvidence = asRecord(pastBoundary.ground_transfer, 'ttl-past ground_transfer')
+      assert.equal(directionOf(pastBoundaryEvidence['outbound'], 'ttl-past.outbound')['freshness'], 'fresh')
+      assert.equal(asRecord(directionOf(pastBoundaryEvidence['outbound'], 'ttl-past.outbound')['cache'], 'ttl-past.outbound.cache')['status'], 'requery')
+    } finally {
+      rmSync(ttlHost.root, { recursive: true, force: true })
+    }
+
+    // B3b. Identity switch: a route whose duration equals the static minutes
+    //      is still a dynamic fact — the switch is provenance-driven, not
+    //      value-diff-driven; the symmetric `minutes` field stays untouched
+    //      and evidence stays fully annotated in both directions.
+    await withFeasibilityHost(async () => route(1_500), async feasibility => {
+      const identity = await call(feasibility, { ...payload, ground_transfer: GROUND_TRANSFER })
+      const identityEvidence = asRecord(identity.ground_transfer, 'identity ground_transfer')
+      assert.equal(identityEvidence['applied'], true)
+      assert.equal(identityEvidence['provenance'], 'map_driving_route', 'identity minutes must keep the dynamic provenance')
+      assert.equal(identityEvidence['outboundMinutes'], 25)
+      assert.equal(identityEvidence['returnMinutes'], 25)
+      assert.equal(identityEvidence['staticMinutes'], 25)
+      const identityOutboundFact = asRecord(directionOf(identityEvidence['outbound'], 'identity.outbound')['routeFact'], 'identity.outbound.routeFact')
+      const identityReturnFact = asRecord(directionOf(identityEvidence['return'], 'identity.return')['routeFact'], 'identity.return.routeFact')
+      for (const [label, fact] of [['outbound', identityOutboundFact], ['return', identityReturnFact]] as const) {
+        assert.equal('priceCny' in fact, false, `identity ${label} route fact must not invent a price`)
+        assert.equal(fact['trafficStatus'], 'not-live-route-estimate', `identity ${label} route fact must disclaim live traffic`)
+        assert.equal(fact['evidenceClass'], 'public_map_route_estimate')
+      }
+    })
+
+    // B4. Cache boundedness: with maxEntries = 2 the per-direction cache
+    //     evicts its oldest entries, so re-asking the first pair re-queries;
+    //     the default resolver keeps entries and the repeat resolve is a hit.
+    type CompleteRequest = Parameters<GroundTransferResolver['resolve']>[0]
+    const boundedRequests: PublicMapDrivingRouteRequest[] = []
+    const pairFor = (longitude: number): CompleteRequest => ({
+      candidateId: 'qiandao',
+      transferIndex: 0,
+      mode: 'driving',
+      position: 'destination',
+      outbound: { direction: 'outbound', origin: { longitude, latitude: 20 }, destination: { longitude: longitude + 1, latitude: 21 } },
+      ret: { direction: 'return', origin: { longitude: longitude + 1, latitude: 21 }, destination: { longitude, latitude: 20 } },
+    })
+    const boundedSelection = { candidateId: 'qiandao', transferIndex: 0, staticMode: 'taxi', staticMinutes: 25, staticPriceCny: 30 }
+    const boundedResolver = createGroundTransferResolver({
+      provider: async request => {
+        boundedRequests.push({ ...request })
+        return route(600)
+      },
+      clock: () => FIXED_NOW,
+      maxEntries: 2,
+    })
+    await boundedResolver.resolve(pairFor(100), boundedSelection)
+    assert.equal(boundedRequests.length, 2)
+    await boundedResolver.resolve(pairFor(110), boundedSelection)
+    assert.equal(boundedRequests.length, 4)
+    await boundedResolver.resolve(pairFor(100), boundedSelection)
+    assert.equal(boundedRequests.length, 6, 'at maxEntries=2 the first pair was evicted and must re-query')
+    const relaxedRequests: PublicMapDrivingRouteRequest[] = []
+    const relaxedResolver = createGroundTransferResolver({
+      provider: async request => {
+        relaxedRequests.push({ ...request })
+        return route(600)
+      },
+      clock: () => FIXED_NOW,
+    })
+    await relaxedResolver.resolve(pairFor(120), boundedSelection)
+    await relaxedResolver.resolve(pairFor(120), boundedSelection)
+    assert.equal(relaxedRequests.length, 2, 'the default cache keeps entries: the second resolve is a hit')
 
     console.log('issue #341 ground-transfer focused suite: OK')
   } finally {

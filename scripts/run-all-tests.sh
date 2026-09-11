@@ -40,7 +40,7 @@ echo "=== 3. TS unified(统一模型+时区+工作窗口,4 断言) ==="
 (cd ts && npx tsx scripts/unified-tests.ts) || FAIL=1
 
 echo
-echo "=== 3b. Issue #341 ground-transfer bounded public-map seam ==="
+echo "=== 3b. Issue #341 ground-transfer bounded public-map seam + 2026-09-11 wider D-39 边界冻结(模式/位置词汇封闭/回退完备性含矛盾路线事实/静态↔动态切换契约/证据标注完整/缓存有界;全离线) ==="
 (cd ts && GOTRY_SESSION_LIVE=0 npx tsx scripts/ground-transfer-tests.ts) || FAIL=1
 
 echo
