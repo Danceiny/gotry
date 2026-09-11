@@ -10,8 +10,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { aggregateFacts, aggregateChannels, aggregateIncidents, aggregateLatency, collectMetrics, renderMetricsReport, main } from './build-metrics-report.ts'
 
-const NOW = new Date('2026-09-05T12:00:00Z')
+// fixture 时间戳必须相对真实时钟:聚合器(main)按真实 now 取 --days 窗口,
+// 硬编码绝对日期会随日历自然老化出窗(2026-09-11 起 iso(1) 跌出 7 天窗,§6 假红)。
 const DAY = 86_400_000
+const NOW = new Date(Date.now() - 1 * DAY)
 const iso = (daysAgo: number) => new Date(NOW.getTime() - daysAgo * DAY).toISOString()
 
 let checkCount = 0
