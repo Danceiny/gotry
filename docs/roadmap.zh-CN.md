@@ -12,7 +12,7 @@
 
 ### 发行状态
 
-**当前 npm dist-tags（2026-09-10 只读观察）：`latest=0.0.1-rc.22`，`rc=0.0.1-rc.20`。本行不把 `npm view` 观察当作干净回拉验证；历史 rc.18 回拉证据保留在下表对应版本行。**
+**当前 npm dist-tags（2026-09-11 发布后）：`latest=0.0.1-rc.24`，`rc=0.0.1-rc.24`。两 tag 按 rc.24 release-notes dist-tag 计划双指 rc.24。本行记录发布时态；历史回拉证据保留在下表对应版本行。**
 
 - 2026-08-30 上午 #50 核实 registry 无 rc.16（「已发布」口径勘误）；**同日 13:00Z 补发落地**（npm time 实测 `0.0.1-rc.16` = 2026-08-30T13:00:38Z），GitHub Release 13:03Z 随建（#76 修复生效）。
 - 2026-09-02 #50② 收口：回拉实测 latest=rc.16（干净安装 489 包 / bin `--help` / dist 入口全通）；`rc` 由滞留 rc.7 迁至 rc.16，杂散 `rc.5` 改指同名版本、`rc.11–rc.14` 各自同名自洽——五别名彻底删除需 npmjs web UI（granular token 对 DELETE dist-tag 端点 403，curl 复核同）。

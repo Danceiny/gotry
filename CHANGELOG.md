@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.1-rc.24] - 2026-09-11
+
+### Added
+
+- execute in admin browser extension, kill server-side chrome (#380)… (6e85d36)
+- authorized tenant repair apply/rollback with receipt protocol (#254) (#378)… (25502e9)
+- DSH runtime closure upgraded to 0.1.5-rc.1 (232 packages) (#379)… (3168c0f)
+
+### Fixed
+
+- backfill version field for native binary placeholders in lockfile… (c28d6be)
+
+### Documentation
+
+- web startup interactive onboarding (#258/#267) to architecture.md §9 + tools.md + release-notes.md
+- booking Copilot planner shared-source derivation (#263, 8 commits) to architecture.md §9
+- booking planner correction batch (#212 / #278) to architecture.md §9
+- dida supplier-portal adapter v2 (#372) to architecture.md §9
+- booking-executor observation surface (#377, M1 slice 1) to architecture.md §9
+- gotry-backend release build script (#367) to architecture.md §9
+- docs/ops/security.md + .zh-CN.md + README master index entry (PR #387)
+
 ## [0.0.1-rc.22] - 2026-09-08
 
 ### Fixed
