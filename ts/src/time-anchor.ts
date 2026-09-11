@@ -232,11 +232,18 @@ export function buildTimeAnchor(now: Date = new Date()): TimeAnchor {
 
 /**
  * Extract the smallest named-year intent needed by the planning guard.
- * Historical bypass is intentionally narrow: a negated warning about past
- * dates is not historical lookup, and multiple eligible years are ambiguous.
+ * Relative future years (今年/明年/后年/年内) resolve against the current
+ * TimeAnchor, so a future-tense phrase without a four-digit year still yields
+ * a named-year window. Historical bypass is intentionally narrow: a negated
+ * warning about past dates is not historical lookup, and multiple eligible
+ * years are ambiguous. Same-year restatements (「今年年内」「2026 年内」) are
+ * one window, not a conflict.
  */
 export function parsePlanningWindow(text: string, anchor: TimeAnchor): PlanningWindow | null {
   const historical = /(?:回测|复盘|backtest|historical)|(?:历史|过去).{0,8}(?:查询|查|检索|回看|回测|复盘)|(?:查询|查|检索|回看).{0,8}(?:历史|过去)/i.test(text)
+  const anchorYear = Number(anchor.today.slice(0, 4))
+  const relativeYear = (token: string): number =>
+    token === '今年' ? anchorYear : token === '明年' ? anchorYear + 1 : anchorYear + 2
   const matches: Array<{ year: number; start: number; end: number }> = []
   for (const m of text.matchAll(/(?<!\d)(\d{4})\s*年/g)) {
     const start = m.index ?? 0
@@ -246,18 +253,34 @@ export function parsePlanningWindow(text: string, anchor: TimeAnchor): PlanningW
     const start = m.index ?? 0
     matches.push({ year: Number(m[1]), start, end: start + m[0].length })
   }
+  for (const m of text.matchAll(/今年|明年|后年/g)) {
+    const start = m.index ?? 0
+    matches.push({ year: relativeYear(m[0]), start, end: start + m[0].length })
+  }
+  for (const m of text.matchAll(/年内/g)) {
+    const start = m.index ?? 0
+    // 「明年年内」「2025 年内」继承紧邻前缀的年份(「年」可已被年份 token 消费);裸「年内」= 锚点当前年
+    const adjacent = text.slice(0, start).match(/(今年|明年|后年|\d{4})\s*年?\s*$/)
+    matches.push({ year: adjacent ? (/^\d{4}$/.test(adjacent[1]!) ? Number(adjacent[1]) : relativeYear(adjacent[1]!)) : anchorYear, start, end: start + m[0].length })
+  }
   if (matches.some(m => !Number.isInteger(m.year) || m.year < 1_000 || m.year > 9_999)) return null
-  if (historical && matches.length !== 1) return null
+  const distinct = [...new Map(matches.map(m => [m.year, m])).values()]
+  if (historical && distinct.length !== 1) return null
 
   const planningCue = /计划|规划|安排|打算|希望|想在|要在|完成|出行|旅行|预订|预定/i
-  const eligible = matches.filter(m => {
-    const before = text.slice(Math.max(0, m.start - 24), m.start)
-    const after = text.slice(m.end, m.end + 24)
-    return planningCue.test(before) || /^\s*(?:内|以内|完成|出行|旅行|预订|预定)/i.test(after)
-  })
-  const selected = eligible.length === 1 ? eligible[0] : (historical && matches.length === 1 ? matches[0] : null)
-  if (!selected) return null
-  return { referenceDate: anchor.today, requestedYear: selected.year, intent: historical ? 'historical' : 'future' }
+  const eligibleYears = new Set(
+    matches
+      .filter(m => {
+        const before = text.slice(Math.max(0, m.start - 24), m.start)
+        const after = text.slice(m.end, m.end + 24)
+        return planningCue.test(before) || /^\s*(?:内|以内|完成|出行|旅行|预订|预定)/i.test(after)
+      })
+      .map(m => m.year),
+  )
+  const selectedYear = eligibleYears.size === 1 ? [...eligibleYears][0]!
+    : (historical && distinct.length === 1 ? distinct[0]!.year : null)
+  if (selectedYear === null) return null
+  return { referenceDate: anchor.today, requestedYear: selectedYear, intent: historical ? 'historical' : 'future' }
 }
 
 export function planningWindowBounds(window: PlanningWindow, anchor: TimeAnchor): PlanningWindowBounds | null {
