@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "gotry_kernel_manifest_v1",
+  "issue": "#234",
+  "frozenAt": "2026-09-11",
+  "baseSHA": "1c8a17e7ad2fb27b0e91c4476f0c503830f3d957",
+  "entries": [
+    {
+      "path": "ts/src/unified.ts",
+      "group": "engine",
+      "sha256": "c131eac40a92eecdb6f06769c37ecba9ec70672d8b2d8e17f677a018035944c4",
+      "rationale": "统一行程模型与求解唯一入口(Z3 选择 + 枚举候选);B2B 复用场景里「同引擎」的求解面",
+      "basis": "architecture.md §2 L3 行 + §3 表 unified.ts 行(only solve entry);AGENTS.md 分层纪律「solving lives only in unified.ts/unified.py」"
+    },
+    {
+      "path": "ts/src/model.ts",
+      "group": "engine",
+      "sha256": "3ef136f16311c6298313c0b7b8c149debff5da8a0a3e8ecd5cb4670fb47fd9b9",
+      "rationale": "门到门全成本算术纯函数(evaluate 层);「同引擎」的记账面,算术只允许住在这里",
+      "basis": "architecture.md §2 L3 不变量「arithmetic is pure functions, independently testable」+ §3 表 model.ts 行;AGENTS.md 分层纪律「arithmetic lives only in model.ts/unified.py evaluate」"
+    },
+    {
+      "path": "ts/src/state-ledger.ts",
+      "group": "ledger",
+      "sha256": "47dec5df835e97761d9299bc8fd20b42769d4c3e51d95254ec9eead1e40666f5",
+      "rationale": "事务化状态账本(ADR-15):SQLite 单文件单一权威(append-only 事件 + 幂等键 + 投影折叠重建 + 工单 saga);「同账本」的权威面",
+      "basis": "architecture.md §3 表 state-ledger.ts 行(✅ run-all §28)+ ADR-15;issue #234 验收「同引擎/账本/闸路径」"
+    },
+    {
+      "path": "ts/src/bookable-facts.ts",
+      "group": "gate",
+      "sha256": "6ce8771c0b0531c8fa75dfc7ea111c8bfea1317f9212fce25336167f992b80d8",
+      "rationale": "可下单事实模型(gotry_bookable_fact.v1):hit/miss 落账 + 判定原语 + fail-closed 表述;「同闸」的事实底座",
+      "basis": "architecture.md §3 表 bookable-facts.ts 行(✅ run-all §39)+ ADR-19(issue #46 采纳)"
+    },
+    {
+      "path": "ts/src/artifact-gate.ts",
+      "group": "gate",
+      "sha256": "2ce73cc055851f93a875ceb1cd32d6dfaac2534b729b5532369f26985c58ec5b",
+      "rationale": "产物事实闸(gotry_fact_gate):断言逐项回溯注册表,blocked 时不得出 verified;「同闸」的裁决面",
+      "basis": "architecture.md §3 表 artifact-gate.ts 行(✅ run-all §39 + smoke §16)+ ADR-19;仓库红线「无证据不落 verified」"
+    }
+  ],
+  "excluded": [
+    {
+      "path": "ts/src/booking-saga.ts",
+      "reason": "ADR-17 FSM 词表层为纯函数、零运行时接线(architecture §3:zero write-path wiring);真实运行 import trace 不加载它。宁窄勿宽:待 M5 #231 封印写路径后随其接线证据一并冻结"
+    },
+    {
+      "path": "ts/src/contracts.ts",
+      "reason": "契约类型面:类型擦除后不构成运行模块(真实运行 import trace 不实例化);契约漂移由 tsc + smoke 面守住,不入内核哈希清单"
+    },
+    {
+      "path": "ts/src/engine.ts",
+      "reason": "已废弃兼容层(AGENTS.md:engine.*/journey.* deprecated);明确非内核,未来任何条目也不得引用"
+    },
+    {
+      "path": "ts/src/journey.ts",
+      "reason": "已废弃兼容层(AGENTS.md:engine.*/journey.* deprecated);明确非内核,未来任何条目也不得引用"
+    }
+  ],
+  "functionalPaths": [
+    {
+      "name": "engine-solve",
+      "group": "engine",
+      "suite": "ts/scripts/unified-tests.ts",
+      "runAllSection": 3,
+      "kernelModules": ["ts/src/unified.ts", "ts/src/model.ts"]
+    },
+    {
+      "name": "ledger-authority",
+      "group": "ledger",
+      "suite": "ts/scripts/ledger-tests.ts",
+      "runAllSection": 28,
+      "kernelModules": ["ts/src/state-ledger.ts"]
+    },
+    {
+      "name": "gate-fact",
+      "group": "gate",
+      "suite": "ts/scripts/fact-gate-tests.ts",
+      "runAllSection": 39,
+      "kernelModules": ["ts/src/bookable-facts.ts", "ts/src/artifact-gate.ts"]
+    }
+  ]
+}

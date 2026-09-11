@@ -539,6 +539,14 @@ echo "=== 60. HotelByte 交易 bridge unknown 查单对账契约(issue #232:book
 echo
 echo "=== 61. WriteGate 机制层否证(issue #231:持久化可信审批+原子 outbox;PreparedChallenge/一次性消费/双进程领取竞争/崩溃注入三崩溃点/物理 CHECK+外键+触发器红线/L4 撤回;全离线,零真实供应商调用,非运行时激活,M5 Entry 前产品运行时不实例化) ==="
 (cd ts && npx tsx scripts/write-gate-tests.ts) || FAIL=1
+echo
+echo "=== 62. #233 取消/退款独立结果与佣金披露契约层(M5-4 pre-entry:双对象独立终态无合并成功态/serviceFee≠退款金额/refunded 绑权威证据/披露 digest 入指纹且口径变化即拒/unknown 不默认 none/账本分词与文案分词一致 480 组合;纯契约零真实调用) ==="
+(cd ts && npx tsx scripts/issue-233-cancel-refund-commission-tests.ts) || FAIL=1
+
+echo
+echo "=== 63. 内核清单冻结+运行模块证据闸(issue #234:gotry_kernel_manifest_v1 哈希零 diff(改核心/删文件/废弃层冒充即红)/真实运行 import trace 全加载(未加载/替换内核即红)/同引擎·账本·闸路径功能覆盖(缺路径即红)/证据快照 manifestHash+evidenceHash 哈希绑定(错 SHA 即红);含反证自测,import-only 零状态写入,全离线) ==="
+(cd ts && npx tsx scripts/kernel-manifest-gate.ts) || FAIL=1
+(cd ts && npx tsx scripts/kernel-manifest-tests.ts) || FAIL=1
 
 echo
 echo "=== 64. sponsor 插件与同内核端到端复用证明(issue #235:三主体分离 fail-closed/激活默认关/越权路由+缺 session 绑定拒绝/同内核零拷贝零重声明/佣金不伪造用户效用/B2B fixture E2E 披露入指纹/B2C 同 runner 零渗入+saga 边逐格同/A-B 同业务 id 不串;全离线 fixture,非运行时激活,零真实调用) ==="
