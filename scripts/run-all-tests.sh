@@ -548,6 +548,10 @@ echo "=== 63. 内核清单冻结+运行模块证据闸(issue #234:gotry_kernel_m
 (cd ts && npx tsx scripts/kernel-manifest-gate.ts) || FAIL=1
 (cd ts && npx tsx scripts/kernel-manifest-tests.ts) || FAIL=1
 
+echo
+echo "=== 64. Booking Copilot unavailable/changed 恢复链契约(issue #142 非门控切片:检测分类复用 receipt status 闭集/受控恢复三轮计入 planner 三次调用预算/静默换房换航结构性拒绝/降级必携显式披露/审计链 saga 形态可对账;纯函数契约层,非运行时激活,零真实供应商调用) ==="
+(cd ts && GOTRY_SESSION_LIVE=0 npx tsx scripts/booking-recovery-chain-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
