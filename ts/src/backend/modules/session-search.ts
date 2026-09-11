@@ -3,14 +3,25 @@
  * 聚合工作台 M0)。travel agent 能力全部落 gotry——本模块是「一个 gotry 服务」里的
  * 会话检索面,hotel-be 只做网关包装与上下文拼接。
  *
+ * 执行环境(2026-09-11 founder 定案):**浏览器客户端**,服务端零 Chrome
+ * (headless 易风控 + 资源开销大,双双出局)。本模块内嵌桥作业队列
+ * (createBridgeJobQueue)并挂载桥协议端点;管理员浏览器里的 GoTry Session
+ * Bridge 扩展经 bearer 鉴权远程连入,长轮询取活,在自己浏览器的登录态里
+ * 被动嗅探 dida 回包。登录也在管理员自己浏览器完成(login/open 让扩展把
+ * dida 登录页置前台打开,人过验证码)——零 Xvfb、零 noVNC、零 SSH 隧道。
+ *
  * 路由(鉴权:Bearer GOTRY_BACKEND_SESSION_API_KEY;缺 key = fail-closed 503):
- *   GET  /v1/session/status      → 各供应商登录态(票据 cookie 名级;值零过手)
- *   POST /v1/session/search     → 会话面检索(dida:被动嗅探 SearchRealTime 信封)
- *   POST /v1/session/login/open → 打开供应商登录入口页(登录在官网由人完成;
- *                                 noVNC 镜像形态下管理员亲手操作)
+ *   GET  /v1/session/status         → 扩展在线态 + 各供应商登录态(票据 cookie 名级;值零过手)
+ *   POST /v1/session/search         → 会话面检索(dida:multiCollect 嗅探推荐流双接口)
+ *   POST /v1/session/login/open     → 让扩展在管理员浏览器置前台打开 dida 登录入口页
+ *   GET  /v1/session/bridge/health  → 桥健康(扩展启动探测)
+ *   GET  /v1/session/bridge/status  → 桥诊断(队列/在线态快照)
+ *   POST /v1/session/bridge/jobs    → 扩展长轮询取活(hold ≤20s)
+ *   POST /v1/session/bridge/results → 扩展回包(?jobId=;内核只支持精确路由)
  *
  * 红线继承:登录在供应商官网由人完成;challenged 即停;节律闸在 sessionDidaSearch
- * 内;本模块再加单飞锁(同供应商串行,防并发打站点)。
+ * 内;本模块再加单飞锁(同供应商串行,防并发打站点)。桥端点在 bearer 之上再强制
+ * Origin ∈ 扩展白名单(网页跨域请求必带邪恶 Origin,双保险)。
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -18,13 +29,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { BackendModule } from '../kernel.ts'
 import { sessionDidaSearch } from '../../../capabilities/session-search.ts'
 import { DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_DOMAIN } from '../../../capabilities/session/adapters/dida-portal.ts'
-import { openSession } from '../../../capabilities/session/transport.ts'
+import { createBridgeJobQueue, type BridgeJobQueue } from '../../../capabilities/session/extension-bridge.ts'
+import { extensionCookieNames, extensionOpenLogin, classifyBridgeFailure } from '../../../capabilities/session/extension-channel.ts'
 
 export interface SessionSearchModuleOptions {
   apiKey: () => string
   /** 测试注入;缺省直连 sessionDidaSearch */
   search?: typeof sessionDidaSearch
   auditPath?: string
+  /** 测试注入;缺省模块内建进程内桥作业队列 */
+  jobQueue?: BridgeJobQueue
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -61,6 +75,7 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 export function startSessionSearchModule(options: SessionSearchModuleOptions): BackendModule {
   const search = options.search ?? sessionDidaSearch
+  const queue = options.jobQueue ?? createBridgeJobQueue()
   const authorized = (req: IncomingMessage, res: ServerResponse): boolean => {
     const key = options.apiKey()
     const auth = String(req.headers.authorization ?? '')
@@ -70,20 +85,28 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
   }
 
   async function handleStatus(res: ServerResponse): Promise<void> {
-    const t = await openSession({ mode: 'cdp', guard: false, newPage: false })
-    if (!t.ok) {
-      sendJson(res, 200, { ok: true, suppliers: [{ supplier: 'dida-portal', loggedIn: false, reason: 'transport-unavailable', detail: t.summary }], checkedAt: new Date().toISOString() })
+    const checkedAt = new Date().toISOString()
+    if (!queue.extensionConnected()) {
+      sendJson(res, 200, {
+        ok: true,
+        suppliers: [{ supplier: 'dida-portal', loggedIn: false, reason: 'extension-not-connected', detail: '会话执行环境=管理员浏览器扩展(GoTry Session Bridge);扩展未连接桥——在管理员浏览器安装扩展并配置本服务桥地址' }],
+        bridge: queue.stats(),
+        checkedAt,
+      })
       return
     }
-    try {
-      const cookies = await t.browser.cookies().catch(() => [])
-      const tickets = cookies
-        .filter((c) => c.domain.includes(DIDA_SITE_DOMAIN.replace(/^\./, '')) && DIDA_LOGIN_COOKIE_NAMES.includes(c.name))
-        .map((c) => c.name)
-      sendJson(res, 200, { ok: true, suppliers: [{ supplier: 'dida-portal', loggedIn: tickets.length > 0, tickets, checkedAt: new Date().toISOString() }] })
-    } finally {
-      await t.close()
+    const login = await extensionCookieNames({ site: 'dida-portal', domain: DIDA_SITE_DOMAIN, ticketNames: DIDA_LOGIN_COOKIE_NAMES, timeoutMs: 20_000 }, queue)
+    if (!login.ok) {
+      const verdict = classifyBridgeFailure(login.kind)
+      sendJson(res, 200, { ok: true, suppliers: [{ supplier: 'dida-portal', loggedIn: false, reason: verdict, detail: login.summary }], bridge: queue.stats(), checkedAt })
+      return
     }
+    sendJson(res, 200, {
+      ok: true,
+      suppliers: [{ supplier: 'dida-portal', loggedIn: login.tickets.length > 0, tickets: login.tickets, ...(login.tickets.length === 0 ? { reason: 'needs-login' } : {}) }],
+      bridge: queue.stats(),
+      checkedAt,
+    })
   }
 
   async function handleSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -102,6 +125,7 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
         entryUrl: parsed.query?.entryUrl,
         timeoutMs: parsed.query?.timeoutMs,
         auditPath: options.auditPath,
+        bridge: queue,
       }))
       if (result.verdict === 'cooldown') {
         res.setHeader('retry-after', '30')
@@ -136,15 +160,13 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     if (!/^https:\/\/portal\.dida\.com\//.test(url)) {
       sendJson(res, 400, { ok: false, error: '登录入口必须落在 https://portal.dida.com/ 域内(fail-closed)' }); return
     }
-    const t = await openSession({ mode: 'cdp', guard: false, newPage: true, closeOwnPage: false })
-    if (!t.ok) { sendJson(res, 503, { ok: false, error: `会话主机 Chrome 不可达: ${t.summary}` }); return }
-    try {
-      await t.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-      await t.page.bringToFront().catch(() => { /* 镜像形态下无前台语义 */ })
-      sendJson(res, 200, { ok: true, opened: true, url, note: '登录页已留给你完成(验证码人过);会话落在主机 profile,代理不碰表单' })
-    } catch (e) {
-      sendJson(res, 502, { ok: false, error: `打开登录页失败: ${e instanceof Error ? e.message.slice(0, 160) : String(e)}` })
+    const outcome = await extensionOpenLogin({ site: supplier, url, timeoutMs: 20_000 }, queue)
+    if (!outcome.ok) {
+      const verdict = classifyBridgeFailure(outcome.kind)
+      sendJson(res, verdict === 'needs-extension' ? 503 : 502, { ok: false, verdict, error: outcome.summary })
+      return
     }
+    sendJson(res, 200, { ok: true, opened: true, url, note: '登录页已在会话所属浏览器置前台打开(验证码人过);gotry 永不经手密码/cookie 值' })
   }
 
   return {
@@ -153,6 +175,12 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
       { method: 'GET', path: '/v1/session/status', handle: (req, res) => { if (authorized(req, res)) void handleStatus(res) } },
       { method: 'POST', path: '/v1/session/search', handle: (req, res) => { if (authorized(req, res)) void handleSearch(req, res) } },
       { method: 'POST', path: '/v1/session/login/open', handle: (req, res) => { if (authorized(req, res)) void handleLoginOpen(req, res) } },
+      // 桥协议端点:远程扩展经 bearer 鉴权连入;Origin 白名单在队列处理器内再校验一道
+      { method: 'GET', path: '/v1/session/bridge/health', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
+      { method: 'GET', path: '/v1/session/bridge/status', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
+      { method: 'POST', path: '/v1/session/bridge/jobs', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
+      { method: 'POST', path: '/v1/session/bridge/results', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
     ],
+    close: () => queue.close(),
   }
 }

@@ -242,9 +242,11 @@ async function main(): Promise<void> {
     assert.ok(EXTENSION_STORE_URL.includes(EXTENSION_ID_STORE))
   })
 
-  await check('manifest 合同:MV3 + 最小权限(cookies/alarms;无 debugger/tabs)', () => {
+  await check('manifest 合同:MV3 + 最小权限(cookies/alarms/storage;无 debugger/tabs;2026-09-11 加 storage 用于远程桥配置)', () => {
     assert.equal(manifest.manifest_version, 3)
-    assert.deepEqual([...manifest.permissions].sort(), ['alarms', 'cookies'])
+    assert.deepEqual([...manifest.permissions].sort(), ['alarms', 'cookies', 'storage'])
+    assert.ok(Array.isArray(manifest.optional_host_permissions), '应声明 optional_host_permissions(远程桥按需授权)')
+    assert.ok(manifest.options_page === 'options.html', '应挂 options 页(远程桥配置)')
   })
 
   const manifestPorts = manifest.host_permissions
@@ -271,6 +273,24 @@ async function main(): Promise<void> {
   const backgroundJs = read('background.js')
   const contentMainJs = read('content-main.js')
   const contentBridgeJs = read('content-bridge.js')
+  const optionsJs = read('options.js')
+  await check('远程桥配置(2026-09-11,执行环境=浏览器客户端):背景分支探测 + options 页 chrome.storage 写入', () => {
+    assert.ok(backgroundJs.includes('chrome.storage.local.get(\'gotryRemoteBridge\''), '背景 SW 应读 chrome.storage.local.gotryRemoteBridge')
+    assert.ok(backgroundJs.includes('chrome.storage.onChanged'), '背景 SW 应订阅 storage 变更以便热切桥面')
+    assert.ok(backgroundJs.includes('bridgeHeaders'), '背景 SW 应抽 bridgeHeaders(remote 时挂 Bearer)')
+    assert.ok(backgroundJs.includes('bridgeBase()'), '背景 SW 应抽 bridgeBase(远程 URL 或 loopback 端口)')
+    assert.ok(backgroundJs.includes('/results?jobId='), '远程形态 results 应用 query(jobId)而非路径')
+    assert.ok(backgroundJs.includes('applyRemoteConfig'), '背景 SW 应在 storage 变更时调 applyRemoteConfig 重连')
+    assert.ok(optionsJs.includes('chrome.storage.local.set'), 'options 页应能写入远程桥配置')
+    assert.ok(optionsJs.includes('chrome.permissions.request'), 'options 页应按需授权远程源')
+  })
+  await check('dida multiCollect(2026-09-11,推荐流双接口):背景分类函数 + waitSniffMulti 分桶结算', () => {
+    assert.ok(backgroundJs.includes('classifyDidaSniff'), '背景 SW 应抽 dida sniff 分类函数')
+    assert.ok(backgroundJs.includes('SearchHomepageRecommendHotels'), '多回包分类应含 hotels 接口')
+    assert.ok(backgroundJs.includes('SearchHomepageRecommendPrices'), '多回包分类应含 recommendPrices 接口')
+    assert.ok(backgroundJs.includes('waitSniffMulti'), '应有多回包分桶结算版本(双齐即返)')
+    assert.ok(backgroundJs.includes('job.multiCollect'), '背景 SW 应按 job.multiCollect 分派单首包/多回包')
+  })
   await check('版本跟随主版本:manifest version_name = package.json version;version = 四段投影(0.0.1-rc.N → 0.0.1.N,founder 2026-09-03 拍板)', () => {
     const pkgVersion = (JSON.parse(readFileSync(join(EXT_DIR, '..', 'package.json'), 'utf8')) as { version: string }).version
     assert.equal(manifest.version_name, pkgVersion, 'version_name 应与 gotry 主版本逐字一致')
@@ -339,11 +359,11 @@ async function main(): Promise<void> {
     assert.ok(manifestAny.content_scripts.every((b) => b.matches.includes(`https://${DIDA_SITE_HOST}/*`)), 'manifest 两组 content_scripts 均应注入 portal.dida.com')
     assert.ok(stripRe(contentMainJs).includes('"HotelPriceList"|"RatePlanList"'), 'dida 形状签名两侧必须逐字一致')
   })
-  await check('物理只读形态:扩展全部 fetch 只指向桥回环端口;不用 chrome.debugger', () => {
+  await check('物理只读形态:扩展全部 fetch 只指向桥(loopback / 远程桥 URL / bridgeBase()/变量别名 url);不用 chrome.debugger;站点域一律 zero fetch(2026-09-11 加远程桥分支)', () => {
     for (const [name, src] of [['background', backgroundJs], ['content-main', contentMainJs], ['content-bridge', contentBridgeJs]] as const) {
-      const loopbackFetches = src.match(/fetch\(`?http:\/\/127\.0\.0\.1/g) ?? []
+      const bridgeFetches = src.match(/fetch\(`?(?:http:\/\/127\.0\.0\.1|\$\{bridgeBase\(\)\}|\$\{remoteBridge\.baseUrl\})|\bfetch\(\s*url\b/g) ?? []
       const allFetches = src.match(/fetch\(/g) ?? []
-      assert.equal(loopbackFetches.length, allFetches.length, `${name}: fetch 必须只指向桥回环端口(扩展零写行为的代码面证据)`)
+      assert.equal(bridgeFetches.length, allFetches.length, `${name}: fetch 必须只指向桥(loopback / bridgeBase() / 远程桥 URL / 变量别名)——扩展零写行为的代码面证据`)
     }
     assert.ok(!backgroundJs.includes('chrome.debugger'), '扩展不得使用 chrome.debugger(警告条/调试面)')
   })

@@ -17,6 +17,36 @@
 const BRIDGE_PORTS = [8791, 8792, 8793, 8794, 8795]
 const RETRY_MS = 5_000
 
+/**
+ * 远程桥配置(2026-09-11,founder 定案:执行环境=浏览器客户端,服务端零 Chrome):
+ * chrome.storage.local.gotryRemoteBridge = { baseUrl, token } 时,桥面切到远程
+ * gotry-backend(经 options 页配置,如 https://<api-host>/v1/session/bridge 或
+ * 诊断隧道 http://127.0.0.1:8791/v1/session/bridge),一切请求带 Bearer 鉴权。
+ * 缺省保持 loopback 端口池扫描(gotry 桌面同机形态,向后兼容已发布行为)。
+ */
+let remoteBridge = null
+function applyRemoteConfig(v) {
+  remoteBridge = v && typeof v.baseUrl === 'string' && v.baseUrl
+    ? { baseUrl: v.baseUrl.replace(/\/+$/, ''), token: String(v.token ?? '') }
+    : null
+  activePort = null
+}
+chrome.storage.local.get('gotryRemoteBridge', (data) => { applyRemoteConfig(data && data.gotryRemoteBridge) })
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.gotryRemoteBridge) applyRemoteConfig(changes.gotryRemoteBridge.newValue)
+})
+
+function bridgeBase() {
+  if (remoteBridge) return remoteBridge.baseUrl
+  return activePort != null ? `http://127.0.0.1:${activePort}` : null
+}
+function bridgeHeaders(withJson) {
+  const h = { 'x-gotry-bridge': 'v1' }
+  if (withJson) h['content-type'] = 'application/json'
+  if (remoteBridge && remoteBridge.token) h['authorization'] = `Bearer ${remoteBridge.token}`
+  return h
+}
+
 /** 站点注册表(与 Node 侧 LOGIN_TARGETS/LOGIN_COOKIE_NAMES 对账,防漂移测试守住) */
 const SITES = {
   'ctrip-flight': {
@@ -58,22 +88,33 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function detectPort() {
+async function detectBridge() {
+  if (remoteBridge) {
+    try {
+      const r = await fetch(`${remoteBridge.baseUrl}/health`, { headers: bridgeHeaders(false) })
+      return r.ok
+    } catch { return false }
+  }
   for (const p of BRIDGE_PORTS) {
     try {
-      const r = await fetch(`http://127.0.0.1:${p}/health`, { headers: { 'x-gotry-bridge': 'v1' } })
-      if (r.ok) return p
+      const r = await fetch(`http://127.0.0.1:${p}/health`, { headers: bridgeHeaders(false) })
+      if (r.ok) { activePort = p; return true }
     } catch { /* 无人监听,试下一个端口 */ }
   }
-  return null
+  return false
 }
 
 async function postResult(jobId, result) {
-  if (activePort == null || !jobId) return
+  const base = bridgeBase()
+  if (base == null || !jobId) return
+  // 远程桥挂载在 gotry-backend 精确路由内核上,jobId 走 query;loopback 独立桥保持路径式
+  const url = remoteBridge
+    ? `${base}/results?jobId=${encodeURIComponent(jobId)}`
+    : `${base}/results/${encodeURIComponent(jobId)}`
   try {
-    await fetch(`http://127.0.0.1:${activePort}/results/${encodeURIComponent(jobId)}`, {
+    await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-gotry-bridge': 'v1' },
+      headers: bridgeHeaders(true),
       body: JSON.stringify(result),
     })
   } catch { /* 桥可能已退场;Node 侧超时兜底 */ }
@@ -114,6 +155,41 @@ function waitSniff(tabId, timeoutMs) {
   })
 }
 
+/** dida 推荐流多回包分类(与 Node 侧 mergeDidaRatesBodies 对账,run-all §38 防漂移断言守住) */
+function classifyDidaSniff(url) {
+  if (/SearchHomepageRecommendHotels/i.test(url)) return 'hotels'
+  if (/SearchHomepageRecommendPrices/i.test(url)) return 'recommendPrices'
+  if (/HotelPriceAPI\/SearchRealTime/i.test(url)) return 'realtime'
+  return null
+}
+
+/** multiCollect(dida 推荐流):hotels+recommendPrices 齐即结算;超时带回已见分桶(诚实缺桶) */
+function waitSniffMulti(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    const bodies = {}
+    let settled = false
+    let title = ''
+    const finish = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      chrome.runtime.onMessage.removeListener(handler)
+      resolve({ ok: true, kind: 'search', bodies, title, timeout: !(bodies.hotels && bodies.recommendPrices) })
+    }
+    const handler = (msg, sender) => {
+      if (!sender || !sender.tab || sender.tab.id !== tabId) return
+      if (msg && msg.type === 'gotry-page') { title = String(msg.title ?? title); return }
+      if (msg && msg.type === 'gotry-sniff') {
+        const cls = classifyDidaSniff(String(msg.url ?? ''))
+        if (cls && !bodies[cls]) bodies[cls] = String(msg.body ?? '')
+        if (bodies.hotels && bodies.recommendPrices) finish()
+      }
+    }
+    const timer = setTimeout(finish, Math.max(Number(timeoutMs) || 30_000, 5_000))
+    chrome.runtime.onMessage.addListener(handler)
+  })
+}
+
 async function handleJob(job) {
   const jobId = job && job.jobId
   if (typeof jobId !== 'string' || !jobId) return
@@ -144,7 +220,9 @@ async function handleJob(job) {
         return
       }
       const tab = await chrome.tabs.create({ url: job.url, active: false })
-      const result = await waitSniff(tab.id, job.timeoutMs)
+      const result = job.multiCollect
+        ? await waitSniffMulti(tab.id, job.timeoutMs)
+        : await waitSniff(tab.id, job.timeoutMs)
       await chrome.tabs.remove(tab.id).catch(() => { /* 用户先关了,无妨 */ })
       await postResult(jobId, result)
       return
@@ -160,12 +238,14 @@ async function loop() {
   polling = true
   try {
     for (;;) {
-      if (activePort == null) activePort = await detectPort()
-      if (activePort == null) { await sleep(RETRY_MS); continue }
+      if (bridgeBase() == null) {
+        const up = await detectBridge()
+        if (!up) { await sleep(RETRY_MS); continue }
+      }
       try {
-        const r = await fetch(`http://127.0.0.1:${activePort}/jobs`, {
+        const r = await fetch(`${bridgeBase()}/jobs`, {
           method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-gotry-bridge': 'v1' },
+          headers: bridgeHeaders(true),
           body: JSON.stringify({
             extensionVersion: chrome.runtime.getManifest().version,
             capabilities: Object.keys(SITES),

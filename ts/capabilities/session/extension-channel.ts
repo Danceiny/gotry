@@ -10,7 +10,7 @@
  * 检索页无回包不是车道失败:与 CDP 车道同语义(到点无 hints 命中 ⇒ miss,页标题命挑战 ⇒ challenged)。
  */
 
-import { getOrCreateSessionBridge, needsExtensionSummary, type SessionJobHandle } from './extension-bridge.ts'
+import { getOrCreateSessionBridge, needsExtensionSummary, type SessionJobHandle, type SniffBodies } from './extension-bridge.ts'
 
 /**
  * needs-extension 用户门文案(D-24 自适应,issue #117):按本地通道是否落位自动跳过
@@ -43,9 +43,15 @@ function bridgeReady(b: { ok: true; bridge: SessionJobHandle } | { ok: false; su
   return b.ok === true
 }
 
+/** 桥解析(2026-09-11):gotry-backend 服务形态注入进程内队列;桌面形态缺省走 loopback 懒单例 */
+async function resolveBridge(injected?: SessionJobHandle): Promise<SessionJobHandleRef | { ok: false; summary: string }> {
+  if (injected) return { ok: true, bridge: injected }
+  return getOrCreateSessionBridge()
+}
+
 /** cookie-names job:票据 cookie 名存在性(名字级;协议不含值) */
-export async function extensionCookieNames(q: { site: string; domain: string; ticketNames: string[]; timeoutMs?: number }): Promise<{ ok: true; tickets: string[] } | BridgeFailure> {
-  const bridge = await getOrCreateSessionBridge()
+export async function extensionCookieNames(q: { site: string; domain: string; ticketNames: string[]; timeoutMs?: number }, bridgeHandle?: SessionJobHandle): Promise<{ ok: true; tickets: string[] } | BridgeFailure> {
+  const bridge = await resolveBridge(bridgeHandle)
   if (!bridgeReady(bridge)) return { ok: false, kind: 'bridge-unavailable', summary: bridge.summary }
   const outcome = await bridge.bridge.submit(
     { kind: 'cookie-names', site: q.site, timeoutMs: q.timeoutMs ?? 8_000 },
@@ -58,8 +64,8 @@ export async function extensionCookieNames(q: { site: string; domain: string; ti
 }
 
 /** 登录入口置前台打开(#34 纪律:标签留给用户,扩展侧不 close) */
-export async function extensionOpenLogin(q: { site: string; url: string; timeoutMs?: number }): Promise<{ ok: true; opened: boolean } | BridgeFailure> {
-  const bridge = await getOrCreateSessionBridge()
+export async function extensionOpenLogin(q: { site: string; url: string; timeoutMs?: number }, bridgeHandle?: SessionJobHandle): Promise<{ ok: true; opened: boolean } | BridgeFailure> {
+  const bridge = await resolveBridge(bridgeHandle)
   if (!bridgeReady(bridge)) return { ok: false, kind: 'bridge-unavailable', summary: bridge.summary }
   const outcome = await bridge.bridge.submit({ kind: 'open-login', site: q.site, url: q.url }, { timeoutMs: q.timeoutMs ?? 15_000 })
   if (!outcome.ok) return { ok: false, kind: outcome.reason, summary: outcome.summary }
@@ -77,23 +83,27 @@ export interface ExtensionSearchOutcome {
   title: string
   /** 到点未见 hints 命中(站点无回包/风控拦截页) */
   timedOut: boolean
+  /** multiCollect(dida 推荐流):分桶回包体;旧扩展/非 multiCollect 缺省 */
+  bodies?: SniffBodies
 }
 
 /** 检索 job:后台标签打开 entry,等 content hook 的嗅探回包;页无响应=timedOut(非车道失败) */
-export async function extensionSearchJob(q: { site: string; url: string; timeoutMs?: number }): Promise<ExtensionSearchOutcome | BridgeFailure> {
-  const bridge = await getOrCreateSessionBridge()
+export async function extensionSearchJob(q: { site: string; url: string; timeoutMs?: number; multiCollect?: boolean }, bridgeHandle?: SessionJobHandle): Promise<ExtensionSearchOutcome | BridgeFailure> {
+  const bridge = await resolveBridge(bridgeHandle)
   if (!bridgeReady(bridge)) return { ok: false, kind: 'bridge-unavailable', summary: bridge.summary }
   const timeoutMs = q.timeoutMs ?? 30_000
   const outcome = await bridge.bridge.submit(
-    { kind: 'search', site: q.site, url: q.url, timeoutMs },
+    { kind: 'search', site: q.site, url: q.url, timeoutMs, ...(q.multiCollect ? { multiCollect: true } : {}) },
     { timeoutMs: timeoutMs + 10_000 },
   )
   if (!outcome.ok) return { ok: false, kind: outcome.reason, summary: outcome.summary }
+  const bodies = outcome.result.bodies
   return {
     ok: true,
     body: typeof outcome.result.body === 'string' ? outcome.result.body : '',
     url: typeof outcome.result.url === 'string' ? outcome.result.url : '',
     title: typeof outcome.result.title === 'string' ? outcome.result.title : '',
     timedOut: outcome.result.timeout === true,
+    ...(bodies && typeof bodies === 'object' ? { bodies } : {}),
   }
 }
