@@ -154,6 +154,8 @@ Trust is structural, not promised:
 
 **Not yet** — nothing is bookable today; booking ships only behind the WriteGate user-confirmation design · live-availability evidence is still partial · the real-user cohort study has not reached its exit bar · English covers the solver output layer only.
 
+**Issue #411 engineering increment (2026-09-12)** — `sf-live-benchmark` preserves structured challenge verdicts and stops the current batch immediately on `challenge_stop` or `guard_violation`; partial batches are fail-closed by the existing summary path. Offline native-Node24 CLI evidence covers first-challenge, mid-batch challenge, and the complete eight-query batch. This does not advance #272 real login, authorization, or inventory evidence.
+
 ```mermaid
 timeline
   title From departure to next departure

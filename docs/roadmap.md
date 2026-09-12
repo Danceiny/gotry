@@ -20,6 +20,8 @@
 
 **Evaluation boundary (Phase 0/Phase 1)**: contracts/registry/validators and the deterministic cadence strategy are in place; no scheduling, no spending, no scoring, no uplift claims. Full text in `evaluation/evaluation-foundation.md`; the per-round frozen treatment ledger is in `evaluation/benchmark-environment-bridge.md`.
 
+**#411 engineering increment (2026-09-12)**: the live benchmark halts a batch on the first `challenge_stop` or `guard_violation`, preserves attempted/unattempted query IDs, and leaves incomplete batches fail-closed. Native Node24 offline CLI evidence covers first, mid-batch, and complete-batch paths; #272 real login, authorization, and inventory gates remain open.
+
 ### Architecture-Side Increments (not released with any version; the main repo is ahead of the published package form)
 
 > All of the following are **engineering-side deliveries and do not constitute Exit evidence for any milestone** (D-20 convention).

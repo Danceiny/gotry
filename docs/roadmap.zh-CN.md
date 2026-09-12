@@ -20,6 +20,8 @@
 
 **评测边界（Phase 0/Phase 1）**：契约/注册表/校验器与确定性节奏策略已就位；不调度、不花费、不出分、不声称 uplift。全文见 `evaluation/evaluation-foundation.md`；逐轮 frozen treatment 台账见 `evaluation/benchmark-environment-bridge.md`。
 
+**#411 工程增量（2026-09-12）**：live benchmark 在首个 `challenge_stop` 或 `guard_violation` 时停止批次，保留已尝试与未尝试 query ID，不完整批次继续由既有路径 fail-closed。native Node24 离线 CLI 证据覆盖首条、中途与完整批次；#272 真实登录、授权与库存 gate 仍开放。
+
 ### 架构面增量（未随版本发布，主仓领先已发包形态）
 
 > 以下均为**工程面交付，不构成任何里程碑 Exit 证据**（D-20 口径）。

@@ -26,7 +26,7 @@ import {
   type SessionComparableRecord,
   SESSION_FIELD_ACCURACY_THRESHOLD,
 } from '../capabilities/session/benchmark.ts'
-import { sessionFlightSearch, type SessionSearchResult } from '../capabilities/session-search.ts'
+import { sessionFlightSearch, type SessionSearchResult, type SessionVerdict } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import {
   loadStaticFlightSnapshot,
@@ -189,7 +189,10 @@ interface RunSummary {
   started_at: string
   duration_ms: number
   threshold: number
+  /** 实际成功落盘的 record 数(部分批次下 < 8) */
   total: number
+  /** 期望的 sf-* query 总数(默认 8);显式落盘以便 sf-summary 区分 partial vs full */
+  requested_total: number
   accuracy_pass: number
   comparable: number
   hit: number
@@ -200,6 +203,14 @@ interface RunSummary {
   effective_sources: string[]
   fallback_count: number
   golden_source: string
+  /** 批次是否走完全部 requested_total;challenge_stop / guard_violation 后停止即 false */
+  batch_complete: boolean
+  /** 终止原因(批次完整 = null):challenge_stop / guard_violation */
+  halt_reason: 'challenge_stop' | 'guard_violation' | null
+  /** 已尝试的 query id 列表 */
+  attempted_query_ids: string[]
+  /** 未尝试的 query id 列表(部分批次下非空) */
+  unattempted_query_ids: string[]
   records: QueryRunRecord[]
 }
 
@@ -277,6 +288,10 @@ async function runOne(
       read_guard_blocked: 0,
     }
   } else {
+    // 保留 sessionFlightSearch 的结构化 verdict(challenged/cooldown/needs-login 等),
+    // 让 evaluateDoubleSource 落到 challenge_stop / waiting_* / guard_violation;
+    // 勿改写成 'error'——那样双源会落到 source_unavailable,丢掉 RFC §3.5 stop 语义。
+    const preservedVerdict: SessionVerdict = sessRes.verdict
     session = {
       query_id: q.id,
       route_segments: [],
@@ -285,7 +300,7 @@ async function runOne(
       price: 0,
       source: 'ctrip-flight',
       fetched_at: new Date().toISOString(),
-      verdict: sessRes.verdict === 'hit' || sessRes.verdict === 'miss' ? sessRes.verdict : 'error',
+      verdict: preservedVerdict,
       latency_ms: sessionLatencyMs,
       read_guard_blocked: 0,
     }
@@ -349,6 +364,7 @@ async function main(): Promise<void> {
   const runStartedAt = new Date().toISOString()
   const runStartedMs = Date.now()
   const records: QueryRunRecord[] = []
+  let haltReason: RunSummary['halt_reason'] = null
   for (const q of queries) {
     if (records.length > 0) await new Promise((r) => setTimeout(r, 35_000))
     console.log(`\n[sf-live-benchmark] ${q.id} ${q.from}→${q.to} ${q.date}`)
@@ -362,6 +378,18 @@ async function main(): Promise<void> {
     console.log(`  doubleSource: state=${rec.doubleSource.state} quota=${rec.doubleSource.quota_disposition} price_delta=${rec.doubleSource.price_delta ?? '-'} mismatches=${rec.doubleSource.mismatches.length}`)
     if (rec.softScore) {
       console.log(`  soft score: ${(rec.softScore.accuracy * 100).toFixed(1)}% (${rec.softScore.correct}/${rec.softScore.total}) ${rec.softScore.pass ? '✅' : '❌'} missing=${JSON.stringify(rec.softScore.missing)} incorrect=${JSON.stringify(rec.softScore.incorrect)}`)
+    }
+    // RFC §3.5 风控命中即停止本批后续查询;guard_violation 同族(repr 只到 evaluateDoubleSource 一层)
+    // 此后任何 session/comparator 调用一律不得发出,避免触雷
+    if (rec.doubleSource.state === 'challenge_stop') {
+      haltReason = 'challenge_stop'
+      console.error(`[sf-live-benchmark] RFC §3.5 stop: ${q.id} 触发 challenge,后续 ${queries.length - records.length} 条不再发起 session/comparator`)
+      break
+    }
+    if (rec.doubleSource.state === 'guard_violation') {
+      haltReason = 'guard_violation'
+      console.error(`[sf-live-benchmark] read guard 命中: ${q.id} 触发 guard_violation,后续 ${queries.length - records.length} 条不再发起 session/comparator`)
+      break
     }
   }
 
@@ -381,6 +409,7 @@ async function main(): Promise<void> {
     duration_ms: Date.now() - runStartedMs,
     threshold: SESSION_FIELD_ACCURACY_THRESHOLD,
     total: records.length,
+    requested_total: queries.length,
     accuracy_pass,
     comparable,
     hit,
@@ -391,6 +420,10 @@ async function main(): Promise<void> {
     effective_sources: effectiveSources,
     fallback_count: fallbackCount,
     golden_source: requestedSource === 'manual' ? 'manual-golden' : requestedSource,
+    batch_complete: haltReason === null && records.length === queries.length,
+    halt_reason: haltReason,
+    attempted_query_ids: records.map((r) => r.query_id),
+    unattempted_query_ids: queries.slice(records.length).map((q) => q.id),
     records,
   }
 
@@ -401,7 +434,10 @@ async function main(): Promise<void> {
   console.log(`\n──── sf-live-benchmark 汇总 ────`)
   console.log(`golden requested = ${summary.requested_source}`)
   console.log(`golden effective = ${summary.effective_sources.join(',')};fallback=${summary.fallback_count}`)
-  console.log(`跑批 query 数: ${records.length}`)
+  console.log(`跑批 query 数: ${records.length}/${summary.requested_total}${summary.batch_complete ? '' : ` (halted: ${summary.halt_reason ?? 'incomplete'})`}`)
+  console.log(`attempted query_ids: ${summary.attempted_query_ids.join(', ') || '(none)'}`)
+  console.log(`unattempted query_ids: ${summary.unattempted_query_ids.join(', ') || '(none)'}`)
+  console.log(`batch_complete: ${summary.batch_complete}`)
   console.log(`verdict=hit: ${hit}/${records.length}`)
   console.log(`双源合同=comparable: ${comparable}/${records.length}`)
   console.log(`字段准确率 ≥${SESSION_FIELD_ACCURACY_THRESHOLD * 100}% (软命中): ${accuracy_pass}/${records.filter((r) => r.softScore !== null).length}`)

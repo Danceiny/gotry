@@ -154,6 +154,8 @@ npm `latest`：**v0.0.1-rc.24**。未到 1.0：核心链路已端到端可用；
 
 **还没有** —— 今天没有可下单路径；预订只随 WriteGate 用户确认设计启封 · 实时可订证据仍部分覆盖 · 真实用户 cohort 未到退出口径 · 英文仅覆盖求解输出层。
 
+**Issue #411 工程增量（2026-09-12）** —— `sf-live-benchmark` 保留结构化 challenge verdict，在 `challenge_stop` 或 `guard_violation` 时立即停止当前批次；部分批次由既有 summary 路径 fail-closed。native Node24 离线 CLI 证据覆盖首条 challenge、中途 challenge 与完整八条批次。本增量不推进 #272 的真实登录态、授权或库存证据。
+
 ```mermaid
 timeline
   title 从出发到下一次出发

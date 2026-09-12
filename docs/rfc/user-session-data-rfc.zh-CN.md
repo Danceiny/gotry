@@ -194,6 +194,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 ### 3.5 节律、熔断与授权闸（把「像人」做成代码）
 
 - **节律**：站内查询间隔 ≥30s、单会话 ≤10 次、日上限可配（`GOTRY_SESSION_*` 环境变量）；检测到滑块/验证码/风控跳转：**立即熔断 + 冷却 + 通知用户人工处理**——绝不重试、绝不绕过（合规支柱②）。
+- **批停止（issue #411，2026-09-12）**：`sf-live-benchmark` 保留结构化 `challenged` verdict，在首个 `challenge_stop` 或 `guard_violation` 时停止当前批次；记录 attempted/unattempted query ID，并将不完整批次 fail-closed。本条是离线工程合同，不授权也不模拟登录、站点访问或库存校准。
 - **授权闸 v2（支柱④进代码，2026-08-29 落地）**：动用用户本人登录态的工具（`gotry_session_search`）经 dsh `tools/pre-execute`（`session-consent.ts`）在**每会话每站点首次调用**时请求 `ApprovalService` 审批卡授权；allowed-once 记入会话 granted 集（会话内免再弹），rejected/cancelled 记入 denied = **本会话吊销**（不弹卡不执行——拒绝是裁决，不反复骚扰）；无审批通道一律 fail-closed（headless 无用户在场 = 无授权）。首版逐调用弹卡经 founder 实测判为骚扰（「每次都要弹，经常无法点击」），当日改会话内一次。
   - **面向用户的中文文案规范**：授权闸（以及任何同类用户提示）的正文必须使用自然的中文用户句式、全角中文标点（`，。；：、？！（）「」『』——……`）与中文句末标点；工具名、配置键（`sessionAccess=off`）、平台/环境标识（`ReadGuard`、`headless`、`web`、`agent`、`allow`、`ask`、`off` 等）与技术术语保持原值不译；reason IDs、状态集合、缓存、策略、schema、函数签名与判定逻辑一律不变。
 - **开关**：插件 config `sessionAccess: ask|allow|off`（随时可关/预授权/总闸）；站点白名单=适配器注册表现状（仅 ctrip-flight）。**飞猪匿名通道不过闸**（调用不携带用户身份，无账号风控/PIPL 处理面；其对用户的义务由「只读 + jumpUrl 人完成交易 + 配额限流结构化 error」覆盖）；session-tests §I 断言。
