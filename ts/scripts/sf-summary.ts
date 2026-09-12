@@ -4,7 +4,7 @@
  * The default root is retained for humans, while tests and proofs must pass
  * --evidence-root explicitly so no shared founder state is read or written.
  */
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -592,5 +592,20 @@ export function main(args = process.argv.slice(2)): number {
   }
 }
 
+// Issue #420: realpathSync canonicalizes the invocation path and the module
+// URL so the entrypoint guard still recognizes file- and directory-symlink
+// invocations. Without canonicalization, `resolve(process.argv[1])` keeps the
+// symlink path while `fileURLToPath(import.meta.url)` is the real path, and
+// the mismatch silently skips main(). When imported from another module,
+// `process.argv[1]` points at the importer, not at this file, so the guard
+// still fails and main() stays inert.
+function canonicalEntry(p: string): string {
+  try {
+    return realpathSync(p)
+  } catch {
+    return resolve(p)
+  }
+}
+
 const invokedPath = process.argv[1] === undefined ? null : resolve(process.argv[1])
-if (invokedPath !== null && invokedPath === fileURLToPath(import.meta.url)) process.exitCode = main()
+if (invokedPath !== null && canonicalEntry(invokedPath) === canonicalEntry(fileURLToPath(import.meta.url))) process.exitCode = main()

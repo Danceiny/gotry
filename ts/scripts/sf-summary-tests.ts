@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { EXPECTED_QUERY_IDS } from './sf-summary.ts'
 
@@ -52,9 +52,9 @@ function writeBatch(root: string, filename: string, batch: string, source: 'manu
   })
 }
 
-function runCli(root: string): { exit: number; output: string; summary: Record<string, any> } {
+function runCli(root: string, scriptPath: string = cliPath): { exit: number; output: string; summary: Record<string, any> } {
   mkdirSync(join(root, 'home'), { recursive: true })
-  const result = spawnSync(process.execPath, [cliPath, '--evidence-root', root], {
+  const result = spawnSync(process.execPath, [scriptPath, '--evidence-root', root], {
     cwd: tsRoot,
     encoding: 'utf8',
     env: {
@@ -70,6 +70,31 @@ function runCli(root: string): { exit: number; output: string; summary: Record<s
   assert.ok(pathMatch, `CLI must print its output path\n${output}`)
   const summary = JSON.parse(readFileSync(pathMatch[1]!.trim(), 'utf8')) as Record<string, any>
   return { exit: result.status ?? -1, output, summary }
+}
+
+function runCliArgs(scriptPath: string, root: string, extraArgs: string[]): { exit: number; output: string } {
+  mkdirSync(join(root, 'home'), { recursive: true })
+  const result = spawnSync(process.execPath, [scriptPath, ...extraArgs], {
+    cwd: tsRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: join(root, 'home'),
+      GOTRY_SESSION_LIVE: '0',
+      GOTRY_HBCLI_LIVE: '0',
+      GOTRY_HOTELBYTE_SKILLS_LIVE: '0',
+    },
+  })
+  return { exit: result.status ?? -1, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
+}
+
+function makeSymlinkFixtures(): { fileLink: string; dirLink: string } {
+  const base = mkdtempSync(join(tmpdir(), 'gotry-sf420-symlink-'))
+  const fileLink = join(base, 'sf-summary-file-link.ts')
+  const dirLink = join(base, 'sf-summary-dir-link')
+  symlinkSync(cliPath, fileLink)
+  symlinkSync(join(tsRoot, 'scripts'), dirLink, 'dir')
+  return { fileLink, dirLink }
 }
 
 function freshRoot(): string {
@@ -188,6 +213,109 @@ try {
   assert.equal(challenge.summary.total, 8)
   assert.deepEqual(challenge.summary.missing_query_ids, [])
   assert.ok(challenge.summary.errors.some((error: string) => error.includes('challenge/guard stop evidence')))
+
+  // Issue #420 — symlink-path entrypoint guard: the same Node invocation
+  // through a temporary file symlink and a temporary parent-directory
+  // symlink must reach main() and produce identical results to the canonical
+  // path. The symlinks are real symlinks (not pre-canonicalized); the caller
+  // passes the symlink path itself and Node receives it as argv[1].
+
+  const symlinkFixture = freshRoot()
+  roots.push(symlinkFixture)
+  const { fileLink, dirLink } = makeSymlinkFixtures()
+  roots.push(resolve(fileLink, '..'))
+  roots.push(resolve(dirLink, '..'))
+
+  writeBatch(symlinkFixture, '2026-09-15T10-00-00-000Z.json', 'symlink-batch')
+  const coherentCanonical = runCli(symlinkFixture)
+  assert.equal(coherentCanonical.exit, 0, coherentCanonical.output)
+  const coherentFileLink = runCli(symlinkFixture, fileLink)
+  const coherentDirLink = runCli(symlinkFixture, join(dirLink, 'sf-summary.ts'))
+
+  for (const variant of [coherentFileLink, coherentDirLink]) {
+    assert.equal(variant.exit, 0, variant.output)
+    assert.equal(variant.summary.status, coherentCanonical.summary.status)
+    assert.equal(variant.summary.total, coherentCanonical.summary.total)
+    assert.equal(variant.summary.selected_batch.batch_id, coherentCanonical.summary.selected_batch.batch_id)
+    assert.equal(variant.summary.selected_batch.identity_source, coherentCanonical.summary.selected_batch.identity_source)
+    assert.deepEqual(
+      variant.summary.records.map((record: any) => record.query_id),
+      coherentCanonical.summary.records.map((record: any) => record.query_id),
+    )
+    assert.deepEqual(
+      variant.summary.records.map((record: any) => record.soft_score?.pass ?? null),
+      coherentCanonical.summary.records.map((record: any) => record.soft_score?.pass ?? null),
+    )
+  }
+
+  // Issue #420 — invalid argument must exit nonzero through symlinks too,
+  // with the same closed-vocabulary message as the canonical path.
+  const invalidFileLink = runCliArgs(fileLink, symlinkFixture, ['--definitely-invalid-argument'])
+  assert.equal(invalidFileLink.exit, 1, invalidFileLink.output)
+  assert.match(invalidFileLink.output, /unknown argument: --definitely-invalid-argument/)
+  const invalidDirLink = runCliArgs(join(dirLink, 'sf-summary.ts'), symlinkFixture, ['--definitely-invalid-argument'])
+  assert.equal(invalidDirLink.exit, 1, invalidDirLink.output)
+  assert.match(invalidDirLink.output, /unknown argument: --definitely-invalid-argument/)
+
+  // Issue #420 — corrupt newest batch must fail closed through symlinks too,
+  // with the same status / missing / selected_malformed_records as the
+  // canonical path. This pins the scoring/aggregation red lines from being
+  // silently bypassed by the symlink guard.
+  const corruptSymlinkRoot = freshRoot()
+  roots.push(corruptSymlinkRoot)
+  writeBatch(corruptSymlinkRoot, '2026-01-01T10-00-00-000Z.json', 'old-complete', 'manual', 'hit')
+  const newestCorrupt = '2026-09-16T10-00-00-000Z.json'
+  EXPECTED_QUERY_IDS.slice(0, 7).forEach((queryId, index) => writeJson(corruptSymlinkRoot, queryId, newestCorrupt, record(queryId, 'new-incomplete', `2026-09-16T10:00:0${index + 1}.000Z`, 'static', 'error')))
+  writeRaw(corruptSymlinkRoot, 'sf-08', newestCorrupt, '{ corrupt json')
+  const corruptCanonical = runCli(corruptSymlinkRoot)
+  assert.equal(corruptCanonical.exit, 1, corruptCanonical.output)
+  const corruptFileLink = runCli(corruptSymlinkRoot, fileLink)
+  assert.equal(corruptFileLink.exit, 1, corruptFileLink.output)
+  assert.equal(corruptFileLink.summary.status, corruptCanonical.summary.status)
+  assert.equal(corruptFileLink.summary.selected_batch.batch_id, corruptCanonical.summary.selected_batch.batch_id)
+  assert.deepEqual(corruptFileLink.summary.missing_query_ids, corruptCanonical.summary.missing_query_ids)
+  assert.deepEqual(corruptFileLink.summary.selected_malformed_records, corruptCanonical.summary.selected_malformed_records)
+  const corruptDirLink = runCli(corruptSymlinkRoot, join(dirLink, 'sf-summary.ts'))
+  assert.equal(corruptDirLink.exit, 1, corruptDirLink.output)
+  assert.equal(corruptDirLink.summary.status, corruptCanonical.summary.status)
+  assert.deepEqual(corruptDirLink.summary.missing_query_ids, corruptCanonical.summary.missing_query_ids)
+
+  // Issue #420 — module-import inertness: importing the module from a
+  // separate test process must not run main() and must not touch the default
+  // user evidenceRoot under HOME. The library API stays callable.
+  const importRoot = mkdtempSync(join(tmpdir(), 'gotry-sf420-import-'))
+  roots.push(importRoot)
+  const importHome = join(importRoot, 'home')
+  mkdirSync(importHome, { recursive: true })
+  const defaultRoot = join(importHome, '.gotry', 'evidence', 'session')
+  const importerPath = join(importRoot, 'importer.mjs')
+  writeFileSync(importerPath, `
+    import { homedir } from 'node:os'
+    import { existsSync } from 'node:fs'
+    import { join } from 'node:path'
+    const defaultEvidenceRoot = join(homedir(), '.gotry', 'evidence', 'session')
+    if (existsSync(defaultEvidenceRoot)) process.exit(11)
+    const mod = await import(${JSON.stringify(pathToFileURL(cliPath).href)})
+    if (typeof mod.main !== 'function') process.exit(12)
+    if (typeof mod.parseCliArgs !== 'function') process.exit(13)
+    if (typeof mod.buildSummary !== 'function') process.exit(14)
+    if (existsSync(defaultEvidenceRoot)) process.exit(15)
+    process.stdout.write('import-inert OK\\n')
+  `)
+  const importerResult = spawnSync(process.execPath, [importerPath], {
+    cwd: tsRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: importHome,
+      GOTRY_SESSION_LIVE: '0',
+      GOTRY_HBCLI_LIVE: '0',
+      GOTRY_HOTELBYTE_SKILLS_LIVE: '0',
+    },
+  })
+  assert.equal(importerResult.status ?? -1, 0, `${importerResult.stdout ?? ''}${importerResult.stderr ?? ''}`)
+  assert.match(`${importerResult.stdout ?? ''}${importerResult.stderr ?? ''}`, /import-inert OK/)
+  assert.equal(existsSync(defaultRoot), false, `default HOME evidenceRoot must not be created by import`)
 
   console.log('SF SUMMARY CLI E2E: coherent filename batch, chronology, source provenance, missing/corrupt fail-closed, legacy unknown, old/new isolation, and challenge-partial fail-closed OK')
 } finally {
