@@ -66,6 +66,10 @@ window.__ModuleLoader__.load({
       return type === 'list' ? '可打开的 GoTry 产物' : '产物预览'
     }
 
+    function isHtmlPath(path) {
+      return typeof path === 'string' && /\.(html|htm)$/i.test(path)
+    }
+
     function ArtifactListCard(props) {
       var block = props.block
       var state = stateOf(block)
@@ -89,10 +93,10 @@ window.__ModuleLoader__.load({
       } else {
         var list = meta.paths.map(function (path) {
           var isSelected = selected === path
-          return element('li', { key: path, style: { margin: '4px 0' } }, element('button', {
+          var htmlPreview = isHtmlPath(path)
+          var buttonProps = {
             type: 'button',
             'data-gotry-artifact-path': path,
-            'aria-label': 'Open artifact ' + path,
             'aria-pressed': isSelected,
             onClick: function () {
               setSelected(path)
@@ -107,7 +111,28 @@ window.__ModuleLoader__.load({
               textAlign: 'left',
               textDecoration: isSelected ? 'underline' : 'none',
             },
-          }, path))
+          }
+          var label = path
+          if (htmlPreview) {
+            buttonProps['data-gotry-artifact-open'] = 'html-preview'
+            buttonProps['aria-label'] = 'Open HTML preview ' + path
+            buttonProps.title = '打开 HTML 预览：这是可直接查看的网页文件，其中的脚本可能会运行；只想看源码请用读取结果里的文本视图。'
+            label = [
+              element('span', { key: 'path' }, path),
+              element('span', {
+                key: 'badge',
+                'data-gotry-artifact-badge': 'html-preview',
+                style: {
+                  marginLeft: '6px', padding: '0 6px', borderRadius: '999px',
+                  border: '1px solid currentColor', fontSize: '11px', opacity: .75,
+                },
+              }, 'HTML 预览'),
+            ]
+          } else {
+            buttonProps['data-gotry-artifact-open'] = 'artifact'
+            buttonProps['aria-label'] = 'Open artifact ' + path
+          }
+          return element('li', { key: path, style: { margin: '4px 0' } }, element('button', buttonProps, label))
         })
         children.push(element('div', { style: { padding: '0 14px 10px', color: 'var(--dsw-alias-label-secondary, #888)' } },
           '共 ' + String(meta.total) + ' 项' + (meta.truncated ? '（已截断）' : '')))
@@ -128,7 +153,9 @@ window.__ModuleLoader__.load({
         Number.isInteger(meta?.offset) && meta.offset >= 1 && Number.isInteger(meta?.totalLines) &&
         meta.totalLines >= 0 && validLines
       var text = resultText(block)
-      var children = [element('div', { style: { padding: '10px 14px 4px', fontWeight: 600 } }, statusLine(state, 'read'))]
+      var htmlSource = valid && meta.lang === 'html'
+      var header = htmlSource ? 'HTML 源码预览（只读文本）' : statusLine(state, 'read')
+      var children = [element('div', { style: { padding: '10px 14px 4px', fontWeight: 600 } }, header)]
       if (state === 'running') {
         children.push(element('p', { 'data-gotry-artifact-status': 'running', style: { padding: '0 14px 12px', margin: 0 } }, '等待运行时返回文件内容…'))
       } else if (state === 'error') {
@@ -148,7 +175,9 @@ window.__ModuleLoader__.load({
             ])
           })))
       }
-      return element('section', shellProps('read', state), children)
+      var shell = shellProps('read', state)
+      if (htmlSource) shell['data-gotry-artifact-source'] = 'html'
+      return element('section', shell, children)
     }
 
     function ArtifactToolView(props) {

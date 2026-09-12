@@ -1982,6 +1982,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     description:
       'List GoTry artifacts — deep-planning deliverables (async runs from the state ledger) plus agent-written markdown/HTML itinerary files ' +
       'in the working directory (trip plans as .md, .html or .htm). READ-ONLY discovery. ' +
+      'Opening a listed .html/.htm goes through the host native HTML preview, which the client labels as an HTML preview because its scripts may run; gotry_artifacts_read is the source-text path. ' +
       'Use when the user asks to see/open/revisit a previously generated artifact ' +
       '(「看看刚才生成的行程」「上次的规划在哪」「打开那个 md／html」) — list first, then read with gotry_artifacts_read.',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
@@ -2042,7 +2043,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       'Input: the path from gotry_artifacts_list, or a bare async ticket id (e.g. dp-xxxx). ' +
       'Optional offset (1-based) / limit window for paging large files. ' +
       'READ-ONLY; text artifacts only (md/txt/json/jsonl/csv/log/yaml/html/htm). ' +
-      'HTML/HTM is returned as source text for preview only — scripts, inline event handlers and remote loads are never executed or fetched.',
+      'HTML/HTM is returned as source text by this tool only — it does not parse markup, run scripts or inline event handlers, or fetch anything; opening a listed HTML file is a separate action the client labels as an interactive HTML preview.',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;path required → 宿主权入口拒畸形参数(同 flyai/hotel 刀法)
     parameters: {
       path: { type: 'string', required: true, description: 'list 返回的路径或工单 id' },

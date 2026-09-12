@@ -187,7 +187,7 @@ rc 序列总览（细节见 release-notes.md，版本历史归 git）：
 
 **2026-09-10 产物视图进入 M4 队列切片（issue #285）**：Host 持久化 `presentationMeta`；公开 `./client` adapter 注册 `gotry_artifacts_list/read` 的 DSH Web keyed cards，按 runtime `block` 显示可点击路径、行号、source identity 与 content version。workspace/sidebar 文件树保留为额外预览面。读范围白名单 = stateRoot 根 + 会话 dsh 工作目录（排除 node_modules/.git），扩展名白名单 = 文本类（md/txt/json/jsonl/csv/log/yaml/yml）；跨 root / symlink 越界 / 缺失文件 / 超大文件（>2MB）统一返回 ok:false + error + hint。本层只读，WriteGate 红线不涉及。验收证据 = `scripts/artifacts-capability-tests.ts` 12 项隔离 fixture proof + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof + smoke §15/§15b。
 
-**2026-09-12 产物 HTML 源码预览（issue #441，父 #438）**：工作目录顶层发现覆盖 `.md`／`.html`／`.htm` 且大小写不敏感（mtime 排序、各源 limit 与截断语义不变），`.html`／`.htm` 读回为源码文本——`lang: html`、原始行号、全文指纹、分页——走同一组 canonical 路径／realpath／拒绝目录／2 MB 护栏。脚本、内联事件处理器与远程加载一律不执行、不抓取，客户端预览仍是 React 文本节点（无 `dangerouslySetInnerHTML`／`iframe`）。本切片只做源码预览；交互式行程渲染仍归 #438。证据 = `scripts/artifacts-capability-tests.ts` 18 项隔离 fixture proof + `artifact-client-contract-tests.ts` 文本节点钉。
+**2026-09-12 产物 HTML 源码预览（issue #441，父 #438）**：工作目录顶层发现覆盖 `.md`／`.html`／`.htm` 且大小写不敏感（mtime 排序、各源 limit 与截断语义不变），`.html`／`.htm` 读回为源码文本——`lang: html`、原始行号、全文指纹、分页——走同一组 canonical 路径／realpath／拒绝目录／2 MB 护栏。读取／源码卡不解析标记、不运行脚本或内联事件处理器、不发起任何抓取（客户端只渲染文本节点，无 `dangerouslySetInnerHTML`／`iframe`）；列表的主动打开是另一个动作，标注 `Open HTML preview` 并带可见徽标与「页面脚本可能运行」提示，因为它把文件交给宿主原生 HTML 预览（宿主 renderer 行为，单独记录）。交互式 Lavish 本地编辑反馈仍归 #438／#443。证据 = `scripts/artifacts-capability-tests.ts` 18 项隔离 fixture proof + `artifact-client-contract-tests.ts` 文本节点与标注预览钉。
 
 **2026-08-27 时间感优化落地**（外部时间评测驱动，ADR-12）：时间锚点层 + 槽位抽取 v1 + 25 题评测集进仓，真模型 25/25；细节见 architecture.md §1/§9 与 ADR-12。
 

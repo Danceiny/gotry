@@ -12,8 +12,9 @@
  * 纪律:本层只读(不写任何文件;WriteGate 红线不涉及);读取范围白名单 =
  * stateRoot 根 + dsh 工作目录(排除 node_modules/.git),扩展名白名单 =
  * 文本类(md/txt/json/jsonl/csv/log/yaml/yml/html/htm)——本工具是「产物查看」,
- * 不是通用文件浏览器。HTML 只作源码文本预览:不解析、不执行脚本/内联事件、
- * 不发网络请求,交互式渲染属于 #438 的后续切片。
+ * 不是通用文件浏览器。HTML 在本层只作源码文本读取:不解析标记、不运行脚本/内联事件、
+ * 不发起抓取;列表项的主动打开走宿主原生 HTML 预览(客户端以 Open HTML preview 标注
+ * 并提示页面脚本可能运行,属宿主 renderer 行为),交互式 Lavish 本地编辑反馈归 #438/#443。
  */
 
 import { createHash } from 'node:crypto'

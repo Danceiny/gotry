@@ -30,7 +30,7 @@
 | **记忆与触达** | `gotry_motivation_save` | 动机画像落盘（evidence 强制，反幻觉）；支持 typed `homeCity` 常住地软默认（#338），显式当前行程出发地优先，原点永不从 IP/语言/时区/历史/模型猜测推断 |
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | 「下一次出发」愿望池 + 0..1 条件召回；召回可被指名通道宕机否证 |
 | | `gotry_companion_save` · `gotry_trip_log` | 同行人档案 / 旅行时间线 |
-| **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成产物（异步交付 + 工作目录 markdown/HTML）：只读、带行号的文件视图；公开 `./client` adapter 按 runtime `block` 渲染自定义 list/read 卡，路径可点，读卡显示 source 身份与内容版本。范围 = `stateRoot` + 会话工作目录（排除 `node_modules`/`.git`），仅文本扩展名（`md/txt/json/jsonl/csv/log/yaml/yml/html/htm`）；`.html`／`.htm` 大小写不敏感地发现，且只作**源码文本预览**——脚本、内联事件处理器与远程加载一律不执行、不抓取，交互式渲染仍归 #438；>2 MB / 越界 / 符号链接逃逸 / 不支持扩展名 → `ok: false` + `hint` |
+| **产物** | `gotry_artifacts_list` / `gotry_artifacts_read` | 发现与查看已生成产物（异步交付 + 工作目录 markdown/HTML）：只读、带行号的文件视图；公开 `./client` adapter 按 runtime `block` 渲染自定义 list/read 卡，路径可点，读卡显示 source 身份与内容版本。范围 = `stateRoot` + 会话工作目录（排除 `node_modules`/`.git`），仅文本扩展名（`md/txt/json/jsonl/csv/log/yaml/yml/html/htm`）；`.html`／`.htm` 大小写不敏感地发现，`gotry_artifacts_read` 只作**源码文本**返回——该读取路径不解析标记、不运行脚本或内联事件处理器、不发起任何抓取；读卡把 HTML 标注为源码。主动打开列表中的 HTML 条目是另一个显式标注的动作（`Open HTML preview`，并说明页面脚本可能运行），把文件交给宿主原生 HTML 预览——该渲染属宿主行为、不属本工具，交互式 Lavish 本地编辑反馈仍归 #438／#443；>2 MB / 越界 / 符号链接逃逸 / 不支持扩展名 → `ok: false` + `hint` |
 | **异步工单** | `gotry_turn_handoff_list` | 只读查询 deep-planning 后台工单（`gotry_turn_handoff.v1`，ETA 约 1 小时）的状态与交付物 |
 | **事实闸** | `gotry_fact_gate` | 行程产物交付前闸：每条可下单 claim（航班号/车次/时刻/机场/价格/政策）必须回溯到 exact-date 工具结果，否则 blocked。航班/铁路 claim 分开归类；事实锚点带指纹，政策行全文比对（#359），航班/酒店锚点行字段级指纹（#363），篡改或未知锚点一律 fail closed |
 | **通用外部** | `gotry_web_search` · `gotry_video_subtitle` · `gotry_github_search` · `gotry_agent_reach` | 网页 / 字幕 / GitHub / 全渠道外部信息（经 Agent-Reach） |
