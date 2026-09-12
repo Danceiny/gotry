@@ -63,6 +63,15 @@ DOM 快照——都在标记为 `trust: 'untrusted'` 的 `LavishUntrustedFeedbac
 适配器刻意丢弃 CLI 的 `next_step` 指令文本而不转发：那是直接写给 agent 的第三方措辞，不能以系统权威的身份抵达。
 附件引用只投影 `id`/`name`：适配器对反馈**不做任何文件系统访问**，也从不跟随浏览器给出的路径。
 
+**Prompt vs text：两个独立字段。** 每个投影出的 prompt 都同时携带 `text`（选中元素的上下文——自由输入时上游把它置为占位
+字符串 `"Freeform message"`，批注时是元素的 `tagName` 小写加上 `el.innerText.trim()` 的选中片段）与 `prompt`（用户在聊天框里
+实际提交的指令）。上游从 prompt 提炼聊天消息的过滤器是
+`acceptedPrompts.filter((p) => p.tag === "message" && p.prompt)`（见 lavish-axi `dist/cli.mjs` 用户消息投影处，约 7720），
+因此没有 `prompt` 字段就把请求丢在了地上。适配器**绝不**用 `text` 替代 `prompt`：缺字段或非字符串的 `prompt` 在投影中以
+`prompt: ''` 呈现，并计入 `LavishUntrustedFeedback.promptsMalformed`，让丢弃可被审查。空串 `prompt`（合法的「不带文字、
+只要附件」请求）按数据原样保留，**不**计为畸形。批注 tag 是真实的 HTML 元素名（`h1`、`div`…）——见上游 `context()` 约 5359——
+并非字面量 `"text"`。
+
 **什么都不打日志。** 适配器不含日志，不向 stdout 或 stderr 写任何字节。会话 url 内嵌不透明访问键，因此导出了
 `redactLavishSessionUrl` 供需要展示的界面使用；失败详情在返回前即已打码；并有测试断言一次完整生命周期对两个流零写入。
 

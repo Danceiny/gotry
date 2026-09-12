@@ -85,6 +85,19 @@ must not arrive as system authority. Attachment references are projected to `id`
 adapter performs **no filesystem access** for feedback and never follows a path supplied by a
 browser.
 
+**Prompt vs text: two distinct fields.** Each projected prompt carries both `text` (the
+selected-element context — for freeform chat input upstream sets this to the placeholder
+`"Freeform message"`, for an annotation it is the lower-cased element `tagName` plus
+`el.innerText.trim()` of the selected element) and `prompt` (the user's actual instruction from the
+chat input). The upstream chat filter is
+`acceptedPrompts.filter((p) => p.tag === "message" && p.prompt)` (see lavish-axi `dist/cli.mjs`
+near the user-message projection, ~7720), so without `prompt` the request is dropped on the floor.
+The adapter never substitutes `text` for `prompt`: a missing or non-string `prompt` is exposed as
+`prompt: ''` and counted in `LavishUntrustedFeedback.promptsMalformed` so the drop is auditable.
+An empty-string `prompt` (a legitimate "no text, attachments only" request) is preserved as data
+and is **not** counted as malformed. Annotation tags are real HTML element names (`h1`, `div`, …)
+— see upstream `context()` at ~5359 — not a literal `"text"`.
+
 **Nothing is logged.** The adapter contains no logging and writes nothing to stdout or stderr. The
 session url embeds an opaque access key, so `redactLavishSessionUrl` is exported for any surface that
 must display one, failure details are redacted before they are returned, and a test asserts that a

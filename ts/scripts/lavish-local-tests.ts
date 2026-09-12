@@ -33,6 +33,9 @@ import {
   type LavishLocalFailure,
 } from '../capabilities/lavish-local.ts'
 
+const MAX_PROMPT_FIELD_CHARS_TEST = 16 * 1024
+const MAX_PROMPT_FIELD_BYTES_TEST = 16 * 1024
+
 const TOON_ENTRY = createRequire(import.meta.url).resolve('@toon-format/toon')
 const workRoot = await mkdtemp(join(tmpdir(), 'gotry-lavish-local-tests-'))
 
@@ -676,6 +679,213 @@ try {
 
     ok((await session.end(ARTIFACT)).ok === true, 'the session can still be ended after feedback')
     await session.stop()
+  }
+
+  // -------------------------------------------------------------------------
+  // 7b. prompt vs text separation: freeform + annotation shapes from real
+  //     upstream lavish-axi@0.1.67 (see normalizePrompt at dist/cli.mjs ~8112
+  //     and acceptedPrompts filter at ~7720: `tag === "message" && prompt.prompt`).
+  //     Tag is the lower-cased element tagName (context() at ~5359: real
+  //     annotations are h1 / div / p, not the literal "text").
+  // -------------------------------------------------------------------------
+
+  {
+    const REAL_USER_REQUEST = 'Synthetic acceptance feedback: add a visible section titled Agent update 1 with the text Browser feedback accepted. Keep all dates and facts unchanged.'
+    const realBrowserFreeform = await controlSession('real-browser-freeform', {
+      poll: {
+        status: 'feedback',
+        prompts: [
+          { uid: '', tag: 'message', selector: '', text: 'Freeform message', prompt: REAL_USER_REQUEST, attachments: [] },
+        ],
+      },
+    })
+    const freeformResult = await realBrowserFreeform.poll(ARTIFACT)
+    ok(freeformResult.ok === true, 'the real-browser freeform fixture delivers feedback')
+    if (freeformResult.ok) {
+      const prompts = freeformResult.feedback.prompts
+      ok(prompts.length === 1, 'one freeform prompt is projected')
+      const only = prompts[0]
+      ok(only !== undefined, 'the freeform prompt is present')
+      if (only !== undefined) {
+        ok(only.tag === 'message', 'the freeform tag is preserved')
+        ok(only.text === 'Freeform message', `text is the upstream placeholder, not the request: ${only.text}`)
+        ok(only.textTruncated === false, 'the upstream placeholder text is not flagged as truncated')
+        ok(only.prompt === REAL_USER_REQUEST, `prompt is the actual user instruction, not silently substituted with text: ${only.prompt.slice(0, 80)}...`)
+        ok(only.promptTruncated === false, 'a request that fits within the byte bound is not flagged as truncated')
+        ok(only.selector === '' && only.target === undefined, 'freeform has no selector or target')
+      }
+      ok(freeformResult.feedback.promptsMalformed === 0, 'a well-formed freeform prompt is not counted as malformed')
+    }
+    await realBrowserFreeform.stop()
+
+    const realAnnotation = await controlSession('real-annotation', {
+      poll: {
+        status: 'feedback',
+        prompts: [
+          {
+            uid: 'a-1',
+            tag: 'h1',
+            selector: 'h1.day-3',
+            text: 'Day 3 — Kyoto half-day walking tour (08:00 – 14:30)',
+            prompt: 'Re-time this to start no earlier than 10:00.',
+            attachments: [],
+          },
+        ],
+      },
+    })
+    const annotationResult = await realAnnotation.poll(ARTIFACT)
+    ok(annotationResult.ok === true, 'the annotation fixture delivers feedback')
+    if (annotationResult.ok) {
+      const prompts = annotationResult.feedback.prompts
+      ok(prompts.length === 1, 'one annotation prompt is projected')
+      const only = prompts[0]
+      ok(only !== undefined, 'the annotation prompt is present')
+      if (only !== undefined) {
+        ok(only.tag === 'h1', 'the annotation tag is the lower-cased element tagName')
+        ok(only.selector === 'h1.day-3', 'the originating selector is preserved')
+        ok(only.text === 'Day 3 — Kyoto half-day walking tour (08:00 – 14:30)', 'the selected snippet stays in text')
+        ok(only.prompt === 'Re-time this to start no earlier than 10:00.', 'the user comment stays in prompt')
+        ok(only.target === undefined, 'a plain HTML annotation has no target (table/mermaid only)')
+        ok(only.text !== only.prompt, 'text and prompt are not the same string for an annotation')
+      }
+      ok(annotationResult.feedback.promptsMalformed === 0, 'a well-formed annotation prompt is not counted as malformed')
+    }
+    await realAnnotation.stop()
+
+    const counterexampleRepro = await controlSession('root-counterexample', {
+      poll: {
+        status: 'feedback',
+        prompts: [
+          { uid: '', tag: 'message', selector: '', text: 'Freeform message', attachments: [] },
+        ],
+      },
+    })
+    const reproResult = await counterexampleRepro.poll(ARTIFACT)
+    ok(reproResult.ok === true, 'the root counterexample fixture still delivers feedback (no global failure)')
+    if (reproResult.ok) {
+      const prompts = reproResult.feedback.prompts
+      ok(prompts.length === 1, 'the missing-prompt freeform prompt is not silently dropped')
+      const only = prompts[0]
+      ok(only !== undefined && only.prompt === '', `a missing prompt is exposed as the empty string, not as text: ${only?.prompt}`)
+      ok(only !== undefined && only.promptTruncated === false, 'a missing prompt is not falsely flagged as truncated')
+      ok(only !== undefined && only.text === 'Freeform message', 'the placeholder text is preserved')
+      ok(reproResult.feedback.promptsMalformed === 1, `the missing-prompt freeform is counted as malformed: ${reproResult.feedback.promptsMalformed}`)
+    }
+    await counterexampleRepro.stop()
+
+    const nonStringPrompt = await controlSession('non-string-prompt', {
+      poll: {
+        status: 'feedback',
+        prompts: [
+          { uid: 'u', tag: 'message', selector: '', text: 'Freeform message', prompt: 7 as unknown as string },
+          { uid: 'v', tag: 'h1', selector: 'h1.day-3', text: 'snippet', prompt: { bogus: true } as unknown as string },
+          { uid: 'w', tag: 'message', selector: '', text: 'Freeform message', prompt: null as unknown as string },
+        ],
+      },
+    })
+    const nonStringResult = await nonStringPrompt.poll(ARTIFACT)
+    ok(nonStringResult.ok === true, 'non-string prompt fields do not poison the whole poll')
+    if (nonStringResult.ok) {
+      ok(nonStringResult.feedback.promptsMalformed === 3, `every non-string prompt is counted as malformed regardless of tag: ${nonStringResult.feedback.promptsMalformed}`)
+      for (const projected of nonStringResult.feedback.prompts) {
+        ok(projected.prompt === '' && projected.promptTruncated === false, `non-string prompt projected as empty and not falsely truncated: ${JSON.stringify(projected)}`)
+      }
+    }
+    await nonStringPrompt.stop()
+
+    const emptyWithAttachment = await controlSession('empty-with-attachment', {
+      poll: {
+        status: 'feedback',
+        prompts: [
+          { uid: 'ea', tag: 'message', selector: '', text: 'Freeform message', prompt: '', attachments: [{ id: 'att-x', name: 'screenshot.png' }] },
+        ],
+      },
+    })
+    const emptyAttachResult = await emptyWithAttachment.poll(ARTIFACT)
+    ok(emptyAttachResult.ok === true, 'an empty-prompt request with attachments still delivers feedback')
+    if (emptyAttachResult.ok) {
+      ok(emptyAttachResult.feedback.promptsMalformed === 0, 'an empty-string prompt is NOT counted as malformed')
+      const only = emptyAttachResult.feedback.prompts[0]
+      ok(only !== undefined && only.prompt === '', 'the empty prompt is preserved as data')
+      ok(only !== undefined && only.promptTruncated === false, 'an empty prompt is not falsely flagged as truncated')
+      ok(only !== undefined && only.attachments.length === 1 && only.attachments[0]?.id === 'att-x', 'the attachment survives alongside an empty prompt')
+    }
+    await emptyWithAttachment.stop()
+
+    const emptyNoAttachment = await controlSession('empty-no-attachment', {
+      poll: {
+        status: 'feedback',
+        prompts: [
+          { uid: 'en', tag: 'h1', selector: 'h1.day-3', text: 'Day 3', prompt: '', attachments: [] },
+        ],
+      },
+    })
+    const emptyNoAttachResult = await emptyNoAttachment.poll(ARTIFACT)
+    ok(emptyNoAttachResult.ok === true, 'an empty-prompt annotation still delivers feedback')
+    if (emptyNoAttachResult.ok) {
+      ok(emptyNoAttachResult.feedback.promptsMalformed === 0, 'an empty-string prompt with no attachments is still NOT counted as malformed')
+      const only = emptyNoAttachResult.feedback.prompts[0]
+      ok(only !== undefined && only.prompt === '' && only.text === 'Day 3', 'the empty prompt does NOT fall back to the context text')
+      ok(only !== undefined && only.promptTruncated === false, 'an empty prompt is not falsely flagged as truncated')
+    }
+    await emptyNoAttachment.stop()
+
+    const malformedAnyTag = await controlSession('malformed-any-tag', {
+      poll: {
+        status: 'feedback',
+        prompts: [
+          { uid: 'l', tag: 'layout-warnings', selector: '', text: 'warning batch' },
+          { uid: 'n', tag: 'note', selector: '#x', text: 'note body' },
+          { uid: 'p', tag: 'div', selector: 'p', text: 'paragraph' },
+        ],
+      },
+    })
+    const malformedAnyResult = await malformedAnyTag.poll(ARTIFACT)
+    ok(malformedAnyResult.ok === true, 'missing-prompt fixtures on any tag deliver feedback')
+    if (malformedAnyResult.ok) {
+      ok(malformedAnyResult.feedback.promptsMalformed === 3, `missing prompt is counted as malformed on every tag, not just freeform/annotation: ${malformedAnyResult.feedback.promptsMalformed}`)
+      for (const projected of malformedAnyResult.feedback.prompts) {
+        ok(projected.prompt === '' && projected.promptTruncated === false, `missing-prompt is projected as empty without false truncation flags: ${JSON.stringify(projected)}`)
+        ok(projected.text.length > 0, `context text survives so consumers can audit the drop: ${projected.text}`)
+      }
+    }
+    await malformedAnyTag.stop()
+
+    const oversizedChar = 'A'.repeat(MAX_PROMPT_FIELD_CHARS_TEST + 200)
+    const charOverflow = await controlSession('prompt-char-overflow', {
+      poll: { status: 'feedback', prompts: [{ uid: 'c', tag: 'message', selector: '', text: 'Freeform message', prompt: oversizedChar }] },
+    })
+    const charResult = await charOverflow.poll(ARTIFACT)
+    ok(charResult.ok === true, 'an over-char-bound prompt still delivers feedback')
+    if (charResult.ok) {
+      const only = charResult.feedback.prompts[0]
+      ok(only !== undefined, 'the prompt is projected')
+      if (only !== undefined) {
+        ok(only.prompt.length === MAX_PROMPT_FIELD_CHARS_TEST, `the prompt is char-clipped: ${only.prompt.length}`)
+        ok(only.promptTruncated === true, 'the truncation flag is set explicitly')
+      }
+      ok(charResult.feedback.promptsMalformed === 0, 'over-char-bound prompts are truncated, not counted as malformed')
+    }
+    await charOverflow.stop()
+
+    const oversizedByte = '\u{1F600}'.repeat(MAX_PROMPT_FIELD_BYTES_TEST + 100)
+    const byteOverflow = await controlSession('prompt-byte-overflow', {
+      poll: { status: 'feedback', prompts: [{ uid: 'b', tag: 'message', selector: '', text: 'Freeform message', prompt: oversizedByte }] },
+    })
+    const byteResult = await byteOverflow.poll(ARTIFACT)
+    ok(byteResult.ok === true, 'an over-byte-bound prompt still delivers feedback')
+    if (byteResult.ok) {
+      const only = byteResult.feedback.prompts[0]
+      ok(only !== undefined, 'the prompt is projected')
+      if (only !== undefined) {
+        const projectedBytes = Buffer.byteLength(only.prompt, 'utf8')
+        ok(projectedBytes <= MAX_PROMPT_FIELD_BYTES_TEST, `the prompt is byte-clipped to the bound: ${projectedBytes}`)
+        ok(only.promptTruncated === true, 'the byte truncation flag is set explicitly')
+        ok(!only.prompt.endsWith('�'), 'no split multi-byte sequence survives in the truncated prompt')
+      }
+      ok(byteResult.feedback.promptsMalformed === 0, 'over-byte-bound prompts are truncated, not counted as malformed')
+    }
+    await byteOverflow.stop()
   }
 
   // -------------------------------------------------------------------------

@@ -46,6 +46,7 @@ const KILL_GRACE_MS = 2_000
 
 const MAX_PROMPTS = 64
 const MAX_PROMPT_FIELD_CHARS = 16 * 1024
+const MAX_PROMPT_FIELD_BYTES = 16 * 1024
 const MAX_ATTACHMENT_REFS_PER_PROMPT = 16
 const MAX_ARTIFACT_FAILURES = 16
 const MAX_DOM_SNAPSHOT_BYTES = 256 * 1024
@@ -87,11 +88,45 @@ export interface LavishPromptTarget {
   type: string
 }
 
+/**
+ * One untrusted prompt projected from the CLI's normalized prompt list.
+ *
+ * Two distinct fields model the upstream shape (see lavish-axi
+ * `normalizePrompt` at `dist/cli.mjs` near `function normalizePrompt`):
+ *
+ * - `text` is the **selected-element context** — for freeform chat input upstream
+ *   sets this to the placeholder `"Freeform message"`, for an annotation it is
+ *   `el.innerText.trim()` of the element that was selected (capped at 240 chars
+ *   upstream). It is not the user's request.
+ * - `prompt` is the **user instruction** that the chat input submitted. The
+ *   real upstream filter that turns prompts into chat messages is
+ *   `acceptedPrompts.filter((prompt) => prompt.tag === "message" && prompt.prompt)`,
+ *   so without this field the request is dropped on the floor.
+ *
+ * Both fields are bounded by chars and bytes; each carries its own `*Truncated`
+ * flag so a consumer can never mistake a clipped value for a complete one.
+ *
+ * Shape semantics:
+ * - `prompt` is a non-empty string: the user instruction is preserved as data.
+ * - `prompt` is the empty string `""`: a legitimate request with no text but
+ *   possibly attachments (e.g. "comment on this image"). The adapter does
+ *   **not** fall back to the context `text`; the empty `prompt` is the truth.
+ * - `prompt` is missing or non-string at the upstream boundary: malformed.
+ *   The prompt is still projected (its `uid`, `tag`, `selector`, `text`, and
+ *   attachments survive) with `prompt: ''` and `promptTruncated: false`, and
+ *   counted in `LavishUntrustedFeedback.promptsMalformed` so the drop is
+ *   auditable rather than a silent text substitution.
+ */
 export interface LavishPrompt {
   uid: string
   tag: string
   selector: string
+  /** Selected-element context (freeform placeholder or annotation snippet). */
   text: string
+  textTruncated: boolean
+  /** User instruction. Empty when the upstream prompt carried no user content. */
+  prompt: string
+  promptTruncated: boolean
   target?: LavishPromptTarget
   attachments: LavishAttachmentRef[]
 }
@@ -106,6 +141,15 @@ export interface LavishUntrustedFeedback {
   trust: 'untrusted'
   prompts: LavishPrompt[]
   promptsTruncated: boolean
+  /**
+   * Number of prompts whose `prompt` field was missing or non-string at the
+   * upstream boundary. These prompts are still projected (their `uid`, `tag`,
+   * `selector`, `text`, and attachments survive) with `prompt: ''` and
+   * `promptTruncated: false`, and the count is exposed so the drop is
+   * auditable rather than a silent text substitution. An empty-string `prompt`
+   * (a legitimate "no text, attachments only" request) is **not** counted.
+   */
+  promptsMalformed: number
   artifactFailures: LavishArtifactFailure[]
   artifactFailuresTruncated: boolean
   domSnapshot: string
@@ -882,9 +926,11 @@ function cliFailure(body: Record<string, unknown>): LavishLocalFailure {
 function projectFeedback(body: Record<string, unknown>): LavishUntrustedFeedback {
   const rawPrompts = Array.isArray(body.prompts) ? body.prompts : []
   const prompts: LavishPrompt[] = []
+  let promptsMalformed = 0
   for (const raw of rawPrompts.slice(0, MAX_PROMPTS)) {
     const record = readRecord(raw)
     if (!record) continue
+    const tag = bound(readString(record.tag) ?? '', 64)
     const target = readRecord(record.target)
     const attachments: LavishAttachmentRef[] = []
     if (Array.isArray(record.attachments)) {
@@ -895,11 +941,18 @@ function projectFeedback(body: Record<string, unknown>): LavishUntrustedFeedback
         attachments.push({ id: bound(id, 128), name: bound(ref ? readString(ref.name) ?? '' : '', 256) })
       }
     }
+    const textRaw = readString(record.text)
+    const text = boundField(textRaw ?? '', MAX_PROMPT_FIELD_CHARS, MAX_PROMPT_FIELD_BYTES)
+    const promptProjection = projectUserPrompt(record.prompt)
+    if (promptProjection.malformed) promptsMalformed += 1
     prompts.push({
       uid: bound(readString(record.uid) ?? '', 128),
-      tag: bound(readString(record.tag) ?? '', 64),
+      tag,
       selector: bound(readString(record.selector) ?? '', 512),
-      text: bound(readString(record.text) ?? '', MAX_PROMPT_FIELD_CHARS),
+      text: text.value,
+      textTruncated: text.truncated,
+      prompt: promptProjection.value,
+      promptTruncated: promptProjection.truncated,
       ...(target && readString(target.type) ? { target: { type: bound(readString(target.type) as string, 64) } } : {}),
       attachments,
     })
@@ -926,11 +979,59 @@ function projectFeedback(body: Record<string, unknown>): LavishUntrustedFeedback
     trust: 'untrusted',
     prompts,
     promptsTruncated: rawPrompts.length > prompts.length,
+    promptsMalformed,
     artifactFailures,
     artifactFailuresTruncated: rawFailures.length > artifactFailures.length,
     domSnapshot,
     domSnapshotTruncated: snapshotBytes > MAX_DOM_SNAPSHOT_BYTES,
   }
+}
+
+/**
+ * Projects the upstream `prompt` field (the user instruction) without ever
+ * falling back to the `text` (selected-element context) field. A missing,
+ * empty, or non-string `prompt` is reported as malformed so the consumer can
+ * audit the drop instead of acting on a value that was substituted for it.
+ */
+function projectUserPrompt(raw: unknown): { value: string; truncated: boolean; malformed: boolean } {
+  if (typeof raw !== 'string') return { value: '', truncated: false, malformed: true }
+  return { ...boundField(raw, MAX_PROMPT_FIELD_CHARS, MAX_PROMPT_FIELD_BYTES), malformed: false }
+}
+
+/**
+ * Char- and byte-bounded string projection with an explicit truncation flag.
+ * Multi-byte UTF-8 sequences are never split: if the byte cap lands inside a
+ * sequence, the cut backs up to the start of that sequence.
+ */
+function boundField(raw: string, maxChars: number, maxBytes: number): { value: string; truncated: boolean } {
+  const charClipped = raw.length > maxChars
+  const charBounded = charClipped ? raw.slice(0, maxChars) : raw
+  if (!charClipped && Buffer.byteLength(charBounded, 'utf8') <= maxBytes) {
+    return { value: charBounded, truncated: false }
+  }
+  if (Buffer.byteLength(charBounded, 'utf8') <= maxBytes) {
+    return { value: charBounded, truncated: true }
+  }
+  return { value: truncateUtf8Bytes(charBounded, maxBytes), truncated: true }
+}
+
+function truncateUtf8Bytes(text: string, maxBytes: number): string {
+  const bytes = Buffer.from(text, 'utf8')
+  if (bytes.length <= maxBytes) return text
+  let pos = 0
+  while (pos < bytes.length) {
+    const byte = bytes[pos]
+    if (byte === undefined) break
+    const seqLen =
+      (byte & 0x80) === 0 ? 1 :
+      (byte & 0xE0) === 0xC0 ? 2 :
+      (byte & 0xF0) === 0xE0 ? 3 :
+      (byte & 0xF8) === 0xF0 ? 4 : -1
+    if (seqLen < 0) break
+    if (pos + seqLen > maxBytes) break
+    pos += seqLen
+  }
+  return bytes.subarray(0, pos).toString('utf8')
 }
 
 function normalizePollStatus(raw: string | null): LavishPollStatus | null {
