@@ -54,6 +54,7 @@ import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } f
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
 import { installSubagentJobIdGuard } from './subagent-job-id-guard.ts'
+import { registerLavishTools } from './lavish-tools.ts'
 import {
   createGroundTransferResolver,
   createPublicMapDrivingRouteProvider,
@@ -102,6 +103,8 @@ export interface Config {
   sessionAccess: string
   /** Owner-local benchmark environment bridge config; empty disables the bridge. */
   benchmarkEnvironmentConfigPath?: string
+  /** Trusted absolute path of the installed `lavish-axi@0.1.67` package; empty disables the local Lavish Editor product tools. */
+  lavishAxiPackageRoot?: string
 }
 
 export const Config: z<Config> = z.object({
@@ -110,6 +113,7 @@ export const Config: z<Config> = z.object({
   hbcliBin: z.string().default('hbcli'),
   sessionAccess: z.string().default('ask'),
   benchmarkEnvironmentConfigPath: z.string().default(''),
+  lavishAxiPackageRoot: z.string().default(''),
 })
 
 interface FeasibilityResult {
@@ -431,6 +435,14 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     }
     ctx.tools.register(t as unknown as ReturnType<typeof defineTool>)
   }
+
+  // Issue #443: register the five local editor tools only from trusted host
+  // configuration. Tool arguments cannot select process or filesystem authority.
+  registerLavishTools({
+    ctx,
+    register: registerGuarded,
+    getConfig: () => ({ lavishAxiPackageRoot: config.lavishAxiPackageRoot ?? '' }),
+  })
 
   // 工具描述首行生成(issue #113,L1):检索工具描述统一前置注册表生成的
   // 「服务意图 × 通道顺位」卡——模型选工具时(读描述)与失败后(读 routing)

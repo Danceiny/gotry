@@ -261,6 +261,10 @@ export class LavishLocalSession {
   private userEnded = false
   private pollOutcomeUnknown = false
   private closed = false
+  private commandTail: Promise<void> = Promise.resolve()
+  private stopInFlight: Promise<LavishStopResult | LavishLocalFailure> | null = null
+  /** Preserved so failed or incomplete cleanup can never be masked by a later success. */
+  private unconfirmedStop: LavishStopResult | LavishLocalFailure | null = null
 
   private constructor(options: ResolvedOptions) {
     this.options = options
@@ -283,6 +287,10 @@ export class LavishLocalSession {
 
   /** Opens (or re-attaches to) the review session for an accepted HTML artifact path. */
   async open(artifactPath: string): Promise<LavishOpenResult | LavishLocalFailure> {
+    return this.serializeCommand(() => this.openSerial(artifactPath))
+  }
+
+  private async openSerial(artifactPath: string): Promise<LavishOpenResult | LavishLocalFailure> {
     const guard = this.guardNewCommand()
     if (guard) return guard
     if (this.userEnded) {
@@ -335,7 +343,7 @@ export class LavishLocalSession {
    * A `waiting` result consumed nothing and is safe to poll again.
    */
   async poll(artifactPath: string, options: { timeoutMs?: number } = {}): Promise<LavishPollResult | LavishLocalFailure> {
-    return this.pollLike('poll', artifactPath, undefined, options)
+    return this.serializeCommand(() => this.pollLike('poll', artifactPath, undefined, options))
   }
 
   /**
@@ -356,11 +364,15 @@ export class LavishLocalSession {
     if (Buffer.byteLength(text, 'utf8') > MAX_REPLY_BYTES) {
       return fail('invalid-reply', `reply text must not exceed ${MAX_REPLY_BYTES} bytes`)
     }
-    return this.pollLike('reply', artifactPath, text, options)
+    return this.serializeCommand(() => this.pollLike('reply', artifactPath, text, options))
   }
 
   /** Ends the session. The owned server may exit on its own right after this. */
   async end(artifactPath: string): Promise<LavishEndResult | LavishLocalFailure> {
+    return this.serializeCommand(() => this.endSerial(artifactPath))
+  }
+
+  private async endSerial(artifactPath: string): Promise<LavishEndResult | LavishLocalFailure> {
     const guard = this.guardNewCommand()
     if (guard) return guard
 
@@ -389,17 +401,33 @@ export class LavishLocalSession {
 
   /**
    * Reaps only the server this instance started (process group SIGTERM, then
-   * SIGKILL, then a bounded wait). Idempotent: a server that already exited on its
-   * own yields `not-running`. A port held by anything else is reported, never touched.
+   * SIGKILL, then a bounded wait). Idempotent for the success case: a server
+   * that already exited on its own yields `not-running`. A port held by anything
+   * else is reported and the failure is preserved across subsequent calls so
+   * later stops can never turn an unproven failure into success. A port held by
+   * anything else is never touched.
    */
   async stop(): Promise<LavishStopResult | LavishLocalFailure> {
+    if (this.unconfirmedStop !== null) return this.unconfirmedStop
+    if (this.stopInFlight !== null) return this.stopInFlight
     if (this.closed) return { ok: true, kind: 'stop', status: 'not-running', ownedServerExited: true }
 
-    const child = this.server
-    this.sessionOpen = false
-    this.pollOutcomeUnknown = false
-    this.server = null
+    // Refuse queued commands immediately, then reap after the current owned command settles.
     this.closed = true
+    this.sessionOpen = false
+    const pending = this.commandTail.then(() => this.stopOwnedServer())
+    this.stopInFlight = pending
+    this.commandTail = pending.then(() => undefined, () => undefined)
+    try {
+      return await pending
+    } finally {
+      if (this.stopInFlight === pending) this.stopInFlight = null
+    }
+  }
+
+  private async stopOwnedServer(): Promise<LavishStopResult | LavishLocalFailure> {
+    const child = this.server
+    this.server = null
 
     if (!child) return { ok: true, kind: 'stop', status: 'not-running', ownedServerExited: true }
 
@@ -410,8 +438,20 @@ export class LavishLocalSession {
     if (await this.portIsFree()) {
       return { ok: true, kind: 'stop', status: alreadyExited ? 'not-running' : 'stopped', ownedServerExited: true }
     }
-    if (!exited) return { ok: true, kind: 'stop', status: 'stopping', ownedServerExited: false }
-    return fail('port-occupied', `loopback port ${this.options.port} is still held by a process this adapter does not own`)
+    if (!exited) {
+      const incomplete: LavishStopResult = { ok: true, kind: 'stop', status: 'stopping', ownedServerExited: false }
+      this.unconfirmedStop = incomplete
+      return incomplete
+    }
+    const failure = fail('port-occupied', `loopback port ${this.options.port} is still held by a process this adapter does not own`)
+    this.unconfirmedStop = failure
+    return failure
+  }
+
+  private serializeCommand<T>(command: () => Promise<T>): Promise<T> {
+    const result = this.commandTail.then(command)
+    this.commandTail = result.then(() => undefined, () => undefined)
+    return result
   }
 
   private async pollLike(

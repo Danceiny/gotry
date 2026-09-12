@@ -2,10 +2,10 @@
 
 # Lavish 本地会话适配器（#443，父需求 #438）
 
-> 状态：**有界适配器切片（2026-09-12，issue #443）**。本文对应已落地的本地 `lavish-axi` 会话生命周期适配器
-> `ts/capabilities/lavish-local.ts` 与测试 `ts/scripts/lavish-local-tests.ts`。产品注册（插件接线、六处状态面、
-> `run-all-tests.sh`）属于 issue #442/#438，**刻意不属本切片**；真实浏览器反馈路径仍未验证，见 §7。
-> §2 的每一条协议事实都读自已安装的 `lavish-axi@0.1.67` 包本体，而非文档描述。
+> 状态：**有界适配器切片 + 插件注册（2026-09-12，issue #443）**。本文对应已落地的本地 `lavish-axi` 会话生命周期适配器
+> `ts/capabilities/lavish-local.ts` 与测试 `ts/scripts/lavish-local-tests.ts`，以及通过 `ts/src/index.ts`
+> 把适配器以五个 dsh 工具形态对外暴露的 host 侧注册层（适配器与注册切片刻意分为两层；§9 描述它们的边界，
+> §7 保留仍开放的项目）。§2 的每一条协议事实都读自已安装的 `lavish-axi@0.1.67` 包本体，而非文档描述。
 
 ## 1. 本切片回答什么
 
@@ -104,13 +104,10 @@ DOM 快照——都在标记为 `trust: 'untrusted'` 的 `LavishUntrustedFeedbac
 
 ## 7. 不在本切片内（显式 TODO）
 
-- **真实浏览器反馈未验证。** `feedback` 载荷形状、`--agent-reply` 回显、`browser_disconnected` 宽限行为，目前只在合成
-  fixture 载荷上演练过，从未经过真实浏览器会话。「真实浏览器反馈 E2E」在任何产品口径之前都是必需的，属 root 负责的 #438 后续。
-- **无产品接线。** 本切片不触碰 `ts/src/index.ts`、client 界面、六处状态面与 `run-all-tests.sh`；接线是 #442/#438 的工作。
-- **Lavish 不是产品依赖。** 只有解码器（`@toon-format/toon@2.3.1`）进入 manifest 与锁文件。适配器在运行时被交付一个已安装 CLI 路径；
-  CLI 本身不被 vendor 进产品依赖树，DSH 客户端卡片注册（`tool.call.toolview`）也未被触碰。
-- **不支持的反馈形状保持不透明。** whiteboard/excalidraw target 与附件只做有界化并标记为不可信，不做深度建模，
-  因此产品界面不得依赖 `id`/`name`/`type` 之外的字段。
+- **浏览器验收范围。** 直接适配器的浏览器检查覆盖用户反馈、回复、源文件刷新与用户结束，不证明 `browser_disconnected` 宽限行为。注册五工具的浏览器与最终候选证据由 #443（父 #438）跟踪；原生预览验收另归 #448。
+- **Lavish 不是产品依赖。** 只有解码器（`@toon-format/toon@2.3.1`）进入 manifest 与锁文件；适配器在运行时被交付一个已安装 CLI 路径，CLI 本身不被 vendor 进产品依赖树。
+- **不支持的反馈形状保持不透明。** whiteboard/excalidraw target 与附件只做有界化并标记为不可信，不做深度建模，因此产品界面不得依赖 `id` / `name` 之外的字段。
+- **native HTML preview 验收是独立项（#448）。** 打开列表里的 HTML 产物是一条带客户端标签的动作，把文件交给 host 自带的 HTML preview；该渲染及任何脚本执行都是 host 渲染器的行为，不是 Lavish 适配器的行为。Lavish 注册工具既不扩展也不覆盖 host preview，#448 携带 native-preview 验收的真实状态，并刻意不属于本切片。
 
 ## 8. 证据与运行方式
 
@@ -126,3 +123,44 @@ CLI 可信性拒绝（错包名、非 pin 版本、非 pin 入口、入口缺失
 cd ts && npx tsx scripts/lavish-local-tests.ts
 cd ts && GOTRY_LAVISH_LIVE=1 npx tsx scripts/lavish-local-tests.ts
 ```
+
+## 9. 注册到产品工具面
+
+宿主可通过以下 GoTry 插件配置片段启用五个工具：
+
+```json
+{
+  "lavishAxiPackageRoot": "/path/to/node_modules/lavish-axi"
+}
+```
+
+配置须指向已安装、受信任的 `lavish-axi@0.1.67` 包目录的绝对路径。空值或相对路径不会注册 Lavish 工具。
+执行前检查包身份；GoTry 不会自动安装或发现 CLI。工具参数不能覆盖包路径、端口或状态根。
+
+每次调用绑定精确的 `exec.agent.session.id` 与宿主提供的绝对路径 `exec.agent.session.header.cwd`，
+不以 `agent.id` 兜底。原始 cwd 与规范化 cwd 均须保持不变。路径须解析到该工作区内已存在的
+`.html` / `.htm` 文件；拒绝 `.git`、`node_modules` 和符号链接越界。
+
+| 工具 | 用途 |
+| --- | --- |
+| `gotry_lavish_open(path)` | 打开现有产物并返回可用的回环会话 URL。 |
+| `gotry_lavish_poll(path, timeoutMs?)` | 以有界 CLI 等待值轮询一次；排队、启动和命令开销可能增加总耗时。`waiting` 不消费反馈。 |
+| `gotry_lavish_reply(path, reply, timeoutMs?)` | 发送有界的可见回复，并等待一次后续反馈状态。 |
+| `gotry_lavish_end(path)` | 结束评审，保留自有 server 句柄供清理。 |
+| `gotry_lavish_stop()` | 回收该 host session 拥有的 server；重复调用保留清理结果，包括失败。 |
+
+**反馈。** `open` 返回 URL。poll／reply 的反馈有界且标记为 `trust: "untrusted"`：`prompt` 承载用户指令，
+`text` 承载选中元素的上下文。缺失或非字符串的指令计入 `promptsMalformed`；合法空串按数据保留。
+附件仅投影 `id` / `name`，不读取其报告的路径；丢弃 CLI 的 `next_step` 指令。模型与展示层收到相同的有界反馈字段。
+
+**生命周期。** 同一 host session 的命令串行执行。终态记录（`disposed`、`ended`、`poll-outcome-unknown`、
+`stopped`、`user-ended`）以 `lavish-session-terminal` 拒绝后续 open／poll／reply／end；stop 仍可调用并返回
+缓存的清理结果。不可读或不确定的 poll 结果属于终态，因为反馈可能已经被消费。宿主停止或销毁会话的决定不会
+被迟到的反馈覆盖。插件卸载在等待清理前把现有记录标为 disposed 并关闭注册层：活动调用返回
+`lavish-plugin-closed`，包括使用新 host session id 的调用。清理仅向自有进程组发信号；失败保持可见，
+插件卸载会报告未回收的记录。
+
+**评审循环。** `gotry_itinerary_render` 新建一份 HTML；`gotry_artifacts_list` 与 `gotry_artifacts_read`
+发现产物并读取源码。随后：在 Lavish 中打开 → 用户提交反馈 → poll → 智能体修改同一份 HTML 源文件 →
+Lavish 在保存后刷新 → reply → 用户结束或 stop。reply 工具本身不写 HTML。宿主原生 HTML 预览是 #448
+跟踪的独立路径；这些工具不扩大文件系统权限，也不绕过事实闸。

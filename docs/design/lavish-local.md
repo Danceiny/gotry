@@ -2,12 +2,12 @@
 
 # Lavish Local Session Adapter (#443, parent #438)
 
-> Status: **bounded adapter slice (2026-09-12, issue #443)**. This document covers the local
+> Status: **bounded adapter slice + plugin registration (2026-09-12, issue #443)**. This document covers the local
 > `lavish-axi` session lifecycle adapter that landed as `ts/capabilities/lavish-local.ts` with
-> `ts/scripts/lavish-local-tests.ts`. Product registration (plugin wiring, the six state surfaces,
-> `run-all-tests.sh`) belongs to issue #442/#438 and is deliberately **not** part of this slice, and
-> the real browser feedback path is still unverified — see §7.
-> Every protocol claim in §2 was read from the installed `lavish-axi@0.1.67` tarball, not from prose.
+> `ts/scripts/lavish-local-tests.ts`, and the host-side registration layer that exposes it as five
+> dsh tools through `ts/src/index.ts` (the adapter and the registration slice are deliberately
+> distinct layers; §9 names the boundary and §7 keeps the still-open items). Every protocol claim in §2
+> was read from the installed `lavish-axi@0.1.67` tarball, not from prose.
 
 ## 1. What this answers
 
@@ -145,19 +145,10 @@ user-initiated end is likewise sticky: once `open` returns `user-ended`, or a po
 
 ## 7. Not in this slice (explicit TODO)
 
-- **Real browser feedback is unverified.** The `feedback` payload shape, the `--agent-reply` echo,
-  and the `browser_disconnected` grace behaviour have only been exercised against synthetic fixture
-  payloads, never through a real browser session. A "true browser feedback E2E" is required before
-  any product claim, and is root-owned follow-up on issue #438.
-- **No product wiring.** Nothing in `ts/src/index.ts`, the client surfaces, the six state surfaces,
-  or `run-all-tests.sh` is touched by this slice; registration is issue #442/#438 work.
-- **Lavish is not a product dependency.** Only the decoder (`@toon-format/toon@2.3.1`) is added to
-  the manifests and locks. The adapter is handed an installed CLI path at runtime; the CLI itself is
-  not vendored into the product dependency tree, and DSH client-side card registration
-  (`tool.call.toolview`) is untouched.
-- **Unsupported feedback shapes stay opaque.** Whiteboard/excalidraw targets and attachments are
-  bounded and marked untrusted rather than deeply modelled, so the product surface must not rely on
-  fields beyond `id`/`name`/`type`.
+- **Browser acceptance scope.** The direct-adapter browser check exercised user feedback, replies, source-file refresh and user end. It did not establish `browser_disconnected` grace. Registered five-tool browser and final-candidate evidence are tracked in #443 (parent #438); native-preview acceptance is separate in #448.
+- **Lavish is not a product dependency.** Only the decoder (`@toon-format/toon@2.3.1`) enters the manifests and locks; the adapter is handed an installed CLI path at runtime and the CLI itself is not vendored into the product tree.
+- **Unsupported feedback shapes stay opaque.** Whiteboard/excalidraw targets and attachments are bounded and marked untrusted rather than deeply modelled, so the product surface must not rely on fields beyond `id` / `name`.
+- **Native HTML preview acceptance is a separate item (#448).** Opening a listed HTML entry is a client-labelled action that hands the file to the host's native HTML preview; that rendering and any script execution is the host renderer's behaviour, not the Lavish adapter's. The Lavish registered tools do not extend or override the host preview, and #448 carries the actual native-preview status.
 
 ## 8. Evidence and how to run
 
@@ -178,3 +169,52 @@ codes as a transcript.
 cd ts && npx tsx scripts/lavish-local-tests.ts
 cd ts && GOTRY_LAVISH_LIVE=1 npx tsx scripts/lavish-local-tests.ts
 ```
+
+## 9. Registration into the product tool surface
+
+The host can enable the five tools by adding this GoTry plugin configuration fragment:
+
+```json
+{
+  "lavishAxiPackageRoot": "/path/to/node_modules/lavish-axi"
+}
+```
+
+Use the absolute directory of an installed, trusted `lavish-axi@0.1.67` package. Empty or relative
+values register no Lavish tools. Package identity is checked before execution; GoTry does not
+install or discover a CLI automatically. Tool arguments cannot override the package, port or state root.
+
+Each call binds to the exact `exec.agent.session.id` and the host's absolute
+`exec.agent.session.header.cwd`; `agent.id` is not a fallback. Both raw and canonical cwd must
+remain unchanged. Paths must resolve to existing `.html` / `.htm` files inside that workspace;
+`.git`, `node_modules` and symlink escapes are refused.
+
+| Tool | Purpose |
+| --- | --- |
+| `gotry_lavish_open(path)` | Open an existing artifact and return a usable loopback session URL. |
+| `gotry_lavish_poll(path, timeoutMs?)` | Poll once with a bounded CLI wait; queueing, startup and command overhead may add time. `waiting` consumes nothing. |
+| `gotry_lavish_reply(path, reply, timeoutMs?)` | Send a bounded visible reply and wait once for the next feedback state. |
+| `gotry_lavish_end(path)` | End the review, retaining the owned server handle for cleanup. |
+| `gotry_lavish_stop()` | Reap this host session's owned server; repeated calls preserve the cleanup result, including failures. |
+
+**Feedback.** `open` returns the URL. Poll/reply feedback is bounded and marked
+`trust: "untrusted"`: `prompt` carries the user's instruction and `text` carries selected-element
+context. Missing or non-string prompts increment `promptsMalformed`; legitimate empty strings
+remain data. Attachments project only to `id` / `name`, without reading their reported paths.
+The CLI's `next_step` instructions are discarded. The model and presentation receive the same
+bounded feedback fields.
+
+**Lifecycle.** Commands are serialized per host session. Terminal records (`disposed`, `ended`,
+`poll-outcome-unknown`, `stopped`, `user-ended`) reject further open/poll/reply/end calls with
+`lavish-session-terminal`; stop remains available and returns its cached cleanup result.
+Unreadable or uncertain poll outcomes are terminal because the delivery may already be consumed.
+Host stop/disposal cannot be overwritten by a late feedback result. Plugin unload marks existing
+records disposed and closes the registrar before awaiting cleanup: active calls return
+`lavish-plugin-closed`, including calls with a new host session id. Cleanup signals only owned
+process groups; failures remain visible and plugin unload reports unreaped records.
+
+**Review loop.** `gotry_itinerary_render` creates one new HTML file; `gotry_artifacts_list` and
+`gotry_artifacts_read` discover it and read its source. Then: open in Lavish → user submits feedback
+→ poll → agent edits the same HTML source → Lavish refreshes on save → reply → user end or stop.
+The reply tool does not write HTML. Host-native HTML preview is a separate path tracked in #448;
+these tools do not extend filesystem authority or bypass the fact gate.
