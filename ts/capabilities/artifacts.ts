@@ -93,13 +93,19 @@ const DIR_DENY = ['node_modules', '.git']
 
 /**
  * Validate a nonnegative-integer pagination knob (`offset`). undefined defaults
- * to 0; finite, integer, ≥0 numbers pass through; null / strings / nonfinite
- * / noninteger values fail closed rather than being silently coerced.
+ * to 0; safe, integer, ≥0 numbers pass through; null / strings / nonfinite /
+ * noninteger / unsafe-integer (e.g. `Number.MAX_SAFE_INTEGER + 1`) values fail
+ * closed rather than being silently coerced. Safe-integer is the boundary that
+ * matters here: `Number.isInteger` would accept unsafe values whose arithmetic
+ * is no longer exact, and slicing into a sorted array with one is a real bug.
  */
 function normalizeOffset(value: unknown, label: string): number {
   if (value === undefined) return 0
   if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
     throw new Error(`${label} must be a nonnegative integer`)
+  }
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`${label} must be a safe integer (≤ Number.MAX_SAFE_INTEGER)`)
   }
   return value
 }

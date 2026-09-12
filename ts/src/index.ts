@@ -2039,7 +2039,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        return JSON.parse(JSON.stringify({ ok: false, error: msg, summary: msg, hint: 'limit 必须是正整数(上限 50);offset 必须是零-based 非负整数;search 必须是字符串(trim 后空 = 不过滤)' })) as Record<string, never>
+        return JSON.parse(JSON.stringify({ ok: false, error: msg, summary: msg, hint: 'limit 必须是有限整数(零/负夹到 1,大值封顶 50);offset 必须是非负安全整数(≤ Number.MAX_SAFE_INTEGER);search 必须是字符串(trim 后空 = 不过滤,非字符串 predictably 拒绝)' })) as Record<string, never>
       }
       const lines = r.artifacts.map(a =>
         `- [${a.source}] ${a.title}${a.status ? `(${a.status})` : ''} — ${a.path}${a.updated ? ` @ ${a.updated.slice(0, 16).replace('T', ' ')}` : ''}`)

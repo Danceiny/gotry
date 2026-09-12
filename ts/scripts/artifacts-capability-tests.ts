@@ -644,6 +644,16 @@ const HTML_TEXT = [
     'null offset 必须被拒',
   )
   await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, offset: Number.MAX_SAFE_INTEGER + 1 }),
+    /offset must be a safe integer/,
+    'unsafe 整数 offset(>MAX_SAFE_INTEGER)必须被拒,避免数组切片失真',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, offset: -Number.MAX_SAFE_INTEGER - 1 }),
+    /offset must be/,
+    'unsafe 负整数 offset(<-MAX_SAFE_INTEGER)必须被拒(由负数分支先拒)',
+  )
+  await assert.rejects(
     () => listArtifacts({ stateRoot, cwd, limit: '20' as unknown as number }),
     /limit must be a positive integer/,
     '字符串 limit 必须被拒',

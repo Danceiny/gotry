@@ -280,7 +280,7 @@ async function main(): Promise<void> {
     assert.equal(page1View?.paths?.length, 20, 'presenter paths 长度应等于 page1.artifacts.length')
     assert.equal(page1View?.total, 66, 'presenter total 应等于 execute total')
     assert.equal(page1View?.truncated, true, 'presenter truncated 应等于 execute truncated')
-    console.log(`[5/7] #458 page1 → 20 项 / total=65 / truncated=true / SearchPathsResultView contract OK`)
+    console.log(`[5/7] #458 page1 → 20 项 / total=66 / truncated=true / SearchPathsResultView contract OK`)
 
     // b) 翻页 — page2/3/4 拼起来必须唯一覆盖全部 65 条
     const page2 = await hostList.execute({ limit: 20, offset: 20 }, hostExec) as typeof page1
@@ -326,7 +326,11 @@ async function main(): Promise<void> {
     const badSearch = await hostList.execute({ search: 5 as unknown as string }, hostExec) as { ok?: boolean; error?: string; summary?: string }
     assert.equal(badSearch.ok, false, '非字符串 search 必须被拒 ok=false')
     assert.ok(/search/i.test(String(badSearch.error ?? badSearch.summary ?? '')), `错误应含 search 描述,实际 ${badSearch.error ?? badSearch.summary}`)
-    console.log(`[5/7] #458 safe args:offset=-1 / limit='20' / search=5 全部 ok=false,error/summary 含字段名 OK`)
+    // unsafe 整数 offset:能力层 Number.isSafeInteger 边界,registered tool 必须同步拒
+    const unsafeOffset = await hostList.execute({ offset: Number.MAX_SAFE_INTEGER + 1 }, hostExec) as { ok?: boolean; error?: string; summary?: string }
+    assert.equal(unsafeOffset.ok, false, 'unsafe 整数 offset 必须被拒 ok=false')
+    assert.ok(/offset/i.test(String(unsafeOffset.error ?? unsafeOffset.summary ?? '')), `错误应含 offset 描述,实际 ${unsafeOffset.error ?? unsafeOffset.summary}`)
+    console.log(`[5/7] #458 safe args:offset=-1 / limit='20' / search=5 / unsafe-integer offset 全部 ok=false,error/summary 含字段名 OK`)
 
     // e) list→read 实际串联 — 用 search 结果的 path 走 readArtifact,断言 presentResult 仍 ok
     const listViewPath = direct.artifacts![0]!.path!
