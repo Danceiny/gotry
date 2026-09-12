@@ -88,7 +88,7 @@ function lastUserText(body: WireBody): string {
 async function startRelay(): Promise<Relay> {
   const bodies: WireBody[] = []
   const servedTools: string[] = []
-  let phase: 'first-list' | 'first-read' | 'first-final' | 'second-read' | 'second-edit' | 'second-artifact-read' | 'second-final' = 'first-list'
+  let phase: 'first-list' | 'first-read' | 'first-final' | 'second-read' | 'second-edit' | 'second-artifact-read' | 'second-final' | 'third-list' | 'third-read' | 'third-final' = 'first-list'
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     if (req.method !== 'POST' || !req.url?.endsWith('/chat/completions')) {
       res.writeHead(404).end('not found')
@@ -130,7 +130,18 @@ async function startRelay(): Promise<Relay> {
         servedTools.push('gotry_artifacts_read')
         payload = toolResponse('artifact-second-artifact-read', 'gotry_artifacts_read', { path: 'trip-2027.md' })
       } else if (phase === 'second-final' && hasToolMessage(body)) {
+        phase = 'third-list'
         payload = textResponse('artifact-second-final', '已更新并重新读取行程产物。')
+      } else if (phase === 'third-list' && lastUserText(body).includes('HTML')) {
+        phase = 'third-read'
+        servedTools.push('gotry_artifacts_list')
+        payload = toolResponse('artifact-third-list', 'gotry_artifacts_list', { limit: 20 })
+      } else if (phase === 'third-read' && hasToolMessage(body)) {
+        phase = 'third-final'
+        servedTools.push('gotry_artifacts_read')
+        payload = toolResponse('artifact-third-read', 'gotry_artifacts_read', { path: 'trip-2027.html' })
+      } else if (phase === 'third-final' && hasToolMessage(body)) {
+        payload = textResponse('artifact-third-final', '已读取 HTML 产物，请使用列表中的「Open HTML preview」按钮验证原生预览。')
       } else {
         payload = textResponse(`unexpected-${bodies.length}`, '')
       }
@@ -181,6 +192,24 @@ async function main(): Promise<void> {
   const userDataDir = mkdtempSync(join(tmpdir(), 'gotry-artifact-web-chrome-'))
   const fixture = '# Trip 2027\n\nDay 1: arrival\nDay 2: city walk\nDay 3: museum\nDay 4: rest\nDay 5: return\n'
   writeFileSync(join(workspaceDir, 'trip-2027.md'), fixture, { mode: 0o600 })
+  const htmlSentinel = 'gotry-artifact-web-html-sentinel-must-not-run-in-host'
+  const htmlFixture = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GoTry artifact-web HTML</title>
+</head>
+<body>
+<h1 id="artifact-web-h1">GoTry artifact-web visible heading</h1>
+<p id="artifact-web-p">GoTry artifact-web visible body line — synthetic only.</p>
+<script>
+window.__artifact_web_host_executed__ = true;
+document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
+</script>
+</body>
+</html>
+`
+  writeFileSync(join(workspaceDir, 'trip-2027.html'), htmlFixture, { mode: 0o600 })
   writeFileSync(join(consumerDir, 'package.json'), JSON.stringify({ private: true, dependencies: {} }, null, 2))
   const relay = await startRelay()
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null
@@ -370,23 +399,53 @@ async function main(): Promise<void> {
       const body = node as HTMLElement
       body.scrollTop = body.scrollHeight
     })
+    // The right preview pane may sit below the chat fold on a 600-tall
+    // viewport; ensure the pane itself is in view, then re-scroll its body so
+    // the Day 6 line settles inside the pane's visible area before measuring.
+    await page.$eval('[data-textpreview-state="text"]', (node: Element) => { (node as HTMLElement).scrollIntoView({ block: 'end' }) })
+    await page.$eval('[data-textpreview-body]', (node: Element) => {
+      const body = node as HTMLElement
+      body.scrollTop = body.scrollHeight
+    })
     const rightPreviewAfterReload = await page.$eval('[data-textpreview-state="text"]', (node: Element) => {
       const rect = node.getBoundingClientRect()
       const body = node.querySelector('[data-textpreview-body]') as HTMLElement | null
-      const day6 = [...(node.querySelectorAll('[data-textpreview-line]'))].find(line => line.textContent?.includes('Day 6: revision requested'))
-      const day6Rect = day6?.getBoundingClientRect()
+      // The preview body may render Day 6 as a Markdown paragraph rather than
+      // discrete line elements (data-textpreview-line is not always present in
+      // the current rendered DOM); find the smallest descendant whose
+      // textContent includes the Day 6 marker so visibility is checked against
+      // the actual rendered node, preserving the "Day 6 visible after reload"
+      // semantic.
+      const all = Array.from(node.querySelectorAll('*')) as Element[]
+      let day6: Element | null = null
+      let bestLen = Number.POSITIVE_INFINITY
+      for (let i = 0; i < all.length; i++) {
+        const candidate = all[i]!
+        const text = candidate.textContent || ''
+        if (!text.includes('Day 6: revision requested')) continue
+        if (text.length > bestLen) continue
+        bestLen = text.length
+        day6 = candidate
+      }
+      const day6Rect = day6 ? day6.getBoundingClientRect() : null
+      const day6Visible = Boolean(day6Rect && day6Rect.width > 0 && day6Rect.height > 0
+        && day6Rect.bottom > 0 && day6Rect.top < window.innerHeight
+        && day6Rect.bottom <= rect.bottom + 1 && day6Rect.top >= rect.top - 1)
       return {
         visible: rect.width > 0 && rect.height > 0,
         changedBanner: Boolean(node.querySelector('[data-textpreview-changed]')),
         bodyIncludesDay6: body?.textContent?.includes('Day 6: revision requested') || false,
-        day6Visible: Boolean(day6Rect && day6Rect.width > 0 && day6Rect.height > 0 && day6Rect.top < window.innerHeight && day6Rect.bottom > 0),
+        day6Visible,
+        day6Rect: day6Rect ? { top: day6Rect.top, bottom: day6Rect.bottom, height: day6Rect.height, width: day6Rect.width } : null,
+        day6Tag: day6 ? day6.tagName : null,
+        paneRect: { top: rect.top, bottom: rect.bottom, height: rect.height },
         bodyText: body?.textContent || '',
       }
     })
     assert.equal(rightPreviewAfterReload.visible, true, 'right file preview is not visibly rendered after reload')
     assert.equal(rightPreviewAfterReload.changedBanner, false, 'right file preview still shows the changed-file banner after reload')
     assert.equal(rightPreviewAfterReload.bodyIncludesDay6, true, 'right file preview body does not contain Day 6 after reload')
-    assert.equal(rightPreviewAfterReload.day6Visible, true, 'right file preview Day 6 is not visible after reload')
+    assert.equal(rightPreviewAfterReload.day6Visible, true, `right file preview Day 6 is not visible after reload (day6Rect=${JSON.stringify(rightPreviewAfterReload.day6Rect)}; paneRect=${JSON.stringify(rightPreviewAfterReload.paneRect)}; day6Tag=${rightPreviewAfterReload.day6Tag})`)
     // DSH may collapse a completed turn after the last tool result arrives;
     // reopen the real process disclosure and place the revised card in view so
     // the receipt proves visible, not merely hidden-DOM, refreshed evidence.
@@ -411,7 +470,127 @@ async function main(): Promise<void> {
     assert.ok(finalSnapshot.versions.filter(Boolean).length >= 2)
     assert.ok(finalSnapshot.updatedLine?.includes('Day 6'))
     assertions.secondTurn = { ...finalSnapshot, rightPreview: rightPreviewAfterReload, reloadControl }
-    assert.deepEqual(relay.servedTools, ['gotry_artifacts_list', 'gotry_artifacts_read', 'read', 'edit', 'gotry_artifacts_read'])
+
+    // ─── Third turn — native HTML preview via real registered gotry_artifacts_list/read
+    // and the public Client's [data-gotry-artifact-open="html-preview"] button,
+    // which dispatches the installed host's native openFile path. The slide-in
+    // animation finishes after the iframe mounts; wait for the iframe to be
+    // fully inside the actual 1440x1000 viewport (1px rounding tolerance)
+    // before reading bounding boxes, so visible-ness is asserted in viewport
+    // terms, not against hidden/animating geometry.
+    await submit('请用 gotry_artifacts_list 列出当前工作区里 HTML 产物，然后用 gotry_artifacts_read 读取 trip-2027.html 的源码展示给用户。')
+    await page.waitForFunction(() => document.querySelector('[data-turn-process="3"]') !== null, { timeout: 60_000 })
+    await revealArtifactCalls()
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-gotry-artifact-card="read"]')].some(node => node.getAttribute('data-gotry-artifact-source') === 'html'), { timeout: 60_000 })
+
+    const htmlSourceSnapshot = await page.evaluate((sentinel: string) => {
+      const card = document.querySelector('[data-gotry-artifact-card="read"][data-gotry-artifact-source="html"]')
+      const lines = [...(card?.querySelectorAll('[data-gotry-artifact-line]') ?? [])].map(node => node.textContent || '')
+      const concatenated = lines.join('\n')
+      const hostScriptMarker = (window as unknown as Record<string, unknown>)['__artifact_web_host_executed__']
+      const hostDataMarker = document.documentElement.getAttribute(`data-${sentinel}`)
+      const inertTextOnly = Boolean(card) && card!.querySelector('script') === null && card!.querySelector('iframe') === null
+      return {
+        lineCount: lines.length,
+        concatenatedIncludesDoctype: concatenated.includes('<!doctype html>'),
+        concatenatedIncludesScriptTag: concatenated.includes('<script>'),
+        concatenatedIncludesH1: concatenated.includes('GoTry artifact-web visible heading'),
+        hostScriptMarker: hostScriptMarker ?? null,
+        hostDataMarker: hostDataMarker ?? null,
+        inertTextOnly,
+      }
+    }, htmlSentinel)
+    assert.equal(htmlSourceSnapshot.inertTextOnly, true, 'HTML read card is not inert text')
+    assert.equal(htmlSourceSnapshot.concatenatedIncludesDoctype, true, 'HTML read card missing <!doctype html> in text')
+    assert.equal(htmlSourceSnapshot.concatenatedIncludesScriptTag, true, 'HTML read card missing <script> as text')
+    assert.equal(htmlSourceSnapshot.hostScriptMarker, null, 'host executed the source-text script sentinel')
+    assert.equal(htmlSourceSnapshot.hostDataMarker, null, 'host set sentinel data attribute from source text')
+
+    const htmlPathButton = await page.$('[data-gotry-artifact-open="html-preview"]')
+    assert.ok(htmlPathButton, 'real html-preview button missing from list card')
+    const htmlButtonSnapshot = await htmlPathButton.evaluate((node: Element) => ({
+      ariaLabel: node.getAttribute('aria-label') || '',
+      visible: node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0,
+    }))
+    assert.ok(htmlButtonSnapshot.ariaLabel.includes('trip-2027.html'), `unexpected html-preview aria-label: ${htmlButtonSnapshot.ariaLabel}`)
+    assert.equal(htmlButtonSnapshot.visible, true, 'html-preview button not visibly rendered')
+
+    // Switch to the bounded 1440x1000 viewport only for the HTML native preview
+    // so the slide-in animation can settle to a deterministic in-viewport frame.
+    await page.setViewport({ width: 1440, height: 1000 })
+
+    const iframesBefore = await page.evaluate(() => [...document.querySelectorAll('iframe')].map(f => ({ src: f.getAttribute('src') || '', sandbox: f.getAttribute('sandbox') || '' })))
+    await htmlPathButton.click()
+    const blobFrame = await page.waitForFrame((f: import('puppeteer-core').Frame) => f.url().startsWith('blob:'), { timeout: 30_000 })
+    assert.ok(blobFrame, 'no blob: iframe appeared after clicking real Open HTML preview')
+    await blobFrame.waitForSelector('#artifact-web-h1', { visible: true, timeout: 30_000 })
+    await page.waitForFunction(() => {
+      const node = document.querySelector('iframe[src^="blob:"]') as HTMLIFrameElement | null
+      if (!node) return false
+      const r = node.getBoundingClientRect()
+      return r.width > 0 && r.height > 0 && r.x >= 0 && r.y >= 0 && r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1
+    }, { timeout: 30_000 })
+    const iframeSnapshot = await page.evaluate(() => {
+      const node = document.querySelector('iframe[src^="blob:"]') as HTMLIFrameElement | null
+      if (!node) return null
+      const r = node.getBoundingClientRect()
+      return {
+        src: node.getAttribute('src') || '',
+        sandbox: node.getAttribute('sandbox') || '',
+        width: r.width, height: r.height, x: r.x, y: r.y,
+        title: node.getAttribute('title') || '',
+      }
+    })
+    assert.ok(iframeSnapshot, 'blob iframe DOM element missing')
+    assert.ok(iframeSnapshot!.src.startsWith('blob:'), `iframe src is not blob: ${iframeSnapshot!.src}`)
+    assert.equal(iframeSnapshot!.sandbox, 'allow-scripts', `iframe sandbox must be exactly allow-scripts: ${iframeSnapshot!.sandbox}`)
+    const vp = page.viewport()
+    assert.ok(iframeSnapshot!.width > 0 && iframeSnapshot!.height > 0, 'iframe has zero size')
+    assert.ok(iframeSnapshot!.x + iframeSnapshot!.width <= vp!.width + 1 && iframeSnapshot!.y + iframeSnapshot!.height <= vp!.height + 1, 'iframe must fit the actual 1440x1000 viewport')
+
+    const visibleContent = await blobFrame.evaluate(() => {
+      const h1 = document.querySelector('h1') as HTMLElement | null
+      const p = document.querySelector('p') as HTMLElement | null
+      const h1Rect = h1?.getBoundingClientRect()
+      return {
+        h1Text: h1?.textContent || '',
+        h1Id: h1?.id || '',
+        h1Rect: h1Rect ? { width: h1Rect.width, height: h1Rect.height, top: h1Rect.top, bottom: h1Rect.bottom, left: h1Rect.left, right: h1Rect.right } : null,
+        pText: p?.textContent || '',
+        readyState: document.readyState,
+      }
+    })
+    assert.equal(visibleContent.h1Text, 'GoTry artifact-web visible heading')
+    assert.equal(visibleContent.h1Id, 'artifact-web-h1')
+    assert.equal(visibleContent.pText, 'GoTry artifact-web visible body line — synthetic only.')
+    assert.ok(visibleContent.h1Rect && visibleContent.h1Rect.width > 0 && visibleContent.h1Rect.height > 0, 'iframe h1 has zero size')
+    assert.ok(visibleContent.h1Rect!.top >= 0 && visibleContent.h1Rect!.bottom <= iframeSnapshot!.height, 'h1 must be inside the visible iframe viewport')
+    assert.equal(await page.evaluate(() => (window as unknown as Record<string, unknown>)['__artifact_web_host_executed__'] ?? null), null, 'host sentinel mutated during native preview')
+
+    const htmlScreenshotPath = join(outputDir, 'artifact-web-e2e.native-html.png')
+    await page.screenshot({ path: htmlScreenshotPath, fullPage: false })
+    const iframeElement = await page.$('iframe[src^="blob:"]')
+    const htmlIframeScreenshotPath = join(outputDir, 'artifact-web-e2e.native-html.iframe.png')
+    if (iframeElement) await iframeElement.screenshot({ path: htmlIframeScreenshotPath })
+    assertions.nativeHtml = {
+      viewport: vp,
+      htmlSourceCard: htmlSourceSnapshot,
+      htmlPathButton: htmlButtonSnapshot,
+      iframesBeforeClick: iframesBefore,
+      iframe: iframeSnapshot,
+      iframeContent: visibleContent,
+      screenshots: { page: htmlScreenshotPath, iframe: htmlIframeScreenshotPath },
+      htmlFixture: { path: join(workspaceDir, 'trip-2027.html'), sentinel: htmlSentinel },
+    }
+    assert.deepEqual(relay.servedTools, [
+      'gotry_artifacts_list',
+      'gotry_artifacts_read',
+      'read',
+      'edit',
+      'gotry_artifacts_read',
+      'gotry_artifacts_list',
+      'gotry_artifacts_read',
+    ])
     assertions.relay = { toolCalls: relay.servedTools, bodyCount: relay.bodies.length }
     const screenshotPath = join(outputDir, 'artifact-web-e2e.png')
     await page.screenshot({ path: screenshotPath, fullPage: true })
