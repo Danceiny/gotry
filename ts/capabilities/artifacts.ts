@@ -4,13 +4,17 @@
  * 只读能力层,两个纯函数入口(dsh 工具 gotry_artifacts_list / gotry_artifacts_read 的实现):
  *   - listArtifacts: 产物发现。权威源 = 账本 workflow_runs(ADR-15;无账本的旧 root 回退
  *     扫描 gotry-state/async/*.deliverable.md 文件视图),外加 dsh 工作目录顶层 *.md
- *     (agent 写出的行程/规划文件正落在这里——issue 截图里的 trip-2027-*.md 即此类)。
+ *     (agent 写出的行程/规划文件正落在这里——issue 截图里的 trip-2027-*.md 即此类)
+ *     与顶层 *.html/*.htm(issue #441:行程 HTML 产物需先能被发现)。
  *   - readArtifact: 产物阅读。行窗口(offset/limit)+ 原始行号,输出 dsh read 卡所需的
  *     全部字段({number,text}[] / totalLines / lang),UI 侧渲染为行号文件视图。
  *
  * 纪律:本层只读(不写任何文件;WriteGate 红线不涉及);读取范围白名单 =
  * stateRoot 根 + dsh 工作目录(排除 node_modules/.git),扩展名白名单 =
- * 文本类(md/txt/json/jsonl/csv/log/yaml/yml)——本工具是「产物查看」,不是通用文件浏览器。
+ * 文本类(md/txt/json/jsonl/csv/log/yaml/yml/html/htm)——本工具是「产物查看」,
+ * 不是通用文件浏览器。HTML 在本层只作源码文本读取:不解析标记、不运行脚本/内联事件、
+ * 不发起抓取;列表项的主动打开走宿主原生 HTML 预览(客户端以 Open HTML preview 标注
+ * 并提示页面脚本可能运行,属宿主 renderer 行为),交互式 Lavish 本地编辑反馈归 #438/#443。
  */
 
 import { createHash } from 'node:crypto'
@@ -49,7 +53,10 @@ const MAX_WINDOW = 400
 const MAX_BYTES = 2 * 1024 * 1024
 const TEXT_EXT_LANG: Record<string, string> = {
   md: 'markdown', txt: 'text', json: 'json', jsonl: 'json', csv: 'csv', log: 'text', yaml: 'yaml', yml: 'yaml',
+  html: 'html', htm: 'html',
 }
+/** 工作目录顶层可发现的产物扩展名(大小写不敏感);html/htm 只作源码预览。 */
+const CWD_DISCOVER_EXT = /\.(md|html|htm)$/i
 const DIR_DENY = ['node_modules', '.git']
 
 function rootOf(stateRoot: string): string {
@@ -119,8 +126,12 @@ async function listDeliverableFiles(root: string, limit: number): Promise<Artifa
   return entries.sort((a, b) => String(b.updated).localeCompare(String(a.updated)))
 }
 
-/** dsh 工作目录顶层 *.md(agent 写出的行程规划等);非递归,排除 dotfiles。 */
-async function listCwdMarkdown(cwd: string, limit: number): Promise<ArtifactEntry[]> {
+/**
+ * dsh 工作目录顶层可发现产物:md(agent 写出的行程规划等)+ html/htm 行程产物,
+ * 扩展名大小写不敏感;非递归,排除 dotfiles。排序/截断语义与既有 md 版本一致
+ * (mtime 倒序后 slice(0, limit),由调用方 listArtifacts 统一 merge 再截断)。
+ */
+async function listCwdArtifacts(cwd: string, limit: number): Promise<ArtifactEntry[]> {
   let dirents
   try {
     dirents = await readdir(cwd, { withFileTypes: true })
@@ -129,7 +140,7 @@ async function listCwdMarkdown(cwd: string, limit: number): Promise<ArtifactEntr
   }
   const entries: ArtifactEntry[] = []
   for (const d of dirents) {
-    if (!d.isFile() || !/\.md$/i.test(d.name) || d.name.startsWith('.')) continue
+    if (!d.isFile() || !CWD_DISCOVER_EXT.test(d.name) || d.name.startsWith('.')) continue
     const p = join(cwd, d.name)
     const st = await stat(p).catch(() => null)
     if (!st) continue
@@ -138,7 +149,7 @@ async function listCwdMarkdown(cwd: string, limit: number): Promise<ArtifactEntr
     entries.push({
       source: 'cwd-file',
       id: d.name,
-      title: d.name.replace(/\.md$/i, ''),
+      title: d.name.replace(CWD_DISCOVER_EXT, ''),
       path: p,
       updated: new Date(st.mtimeMs).toISOString(),
       bytes: st.size,
@@ -160,7 +171,7 @@ export async function listArtifacts(opts: {
 
   const seenPath = new Set<string>()
   const merged: ArtifactEntry[] = []
-  for (const e of [...listRunsFromLedger(canonicalRoot, 'local', limit), ...(await listDeliverableFiles(canonicalRoot, limit)), ...(await listCwdMarkdown(canonicalCwd, limit))]) {
+  for (const e of [...listRunsFromLedger(canonicalRoot, 'local', limit), ...(await listDeliverableFiles(canonicalRoot, limit)), ...(await listCwdArtifacts(canonicalCwd, limit))]) {
     if (seenPath.has(e.path)) continue
     seenPath.add(e.path)
     merged.push(e)
@@ -228,7 +239,11 @@ export async function readArtifact(opts: {
   // 2) 路径形态:目录白名单 + 扩展名白名单
   if (text === null) {
     const candidates = isAbsolute(raw) ? [resolve(raw)] : [resolve(cwd, raw), resolve(root, raw), resolve(root, 'gotry-state', 'async', raw)]
-    const inScope = (p: string) => (underRoot(p, cwd) || underRoot(p, root)) && !hasDeniedSegment(p)
+    // 预检按 cwd/root 的非 canonical 与 canonical 两种形态放行:list 返回的是 canonical
+    // 路径(realpath 后的 cwd),而 macOS 上 /var 与 /private/var 这类符号链接会让
+    // canonical 路径不匹配字面 cwd,导致 list→read 串联断裂。边界权威仍是下方
+    // realpath 后的 canonical 复检,这里放宽不改变可读集合。
+    const inScope = (p: string) => (underRoot(p, cwd) || underRoot(p, root) || underRoot(p, canonicalCwd) || underRoot(p, canonicalRoot)) && !hasDeniedSegment(p)
     // Prefer an existing candidate so a cwd miss does not mask a valid state-root file.
     const allowed = candidates.find(p => inScope(p) && existsSync(p)) ?? candidates.find(inScope)
     if (!allowed) {
