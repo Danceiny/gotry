@@ -506,21 +506,32 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
     assert.equal(htmlSourceSnapshot.hostScriptMarker, null, 'host executed the source-text script sentinel')
     assert.equal(htmlSourceSnapshot.hostDataMarker, null, 'host set sentinel data attribute from source text')
 
-    const htmlPathButton = await page.$('[data-gotry-artifact-open="html-preview"]')
-    assert.ok(htmlPathButton, 'real html-preview button missing from list card')
-    const htmlButtonSnapshot = await htmlPathButton.evaluate((node: Element) => ({
+    const htmlPathButton = await page.evaluateHandle((canonical: string) => {
+      // Bind to the LATEST list card so the click lands on the third turn's
+      // HTML list, not the first turn's collapsed list card that already
+      // mentions the same canonical filename. Document-order last list wins.
+      const lists = Array.from(document.querySelectorAll('[data-gotry-artifact-card="list"]')) as HTMLElement[]
+      const latest = lists[lists.length - 1]
+      if (!latest) return null
+      const candidate = latest.querySelector(`[data-gotry-artifact-open="html-preview"][aria-label*="${canonical}"]`) as HTMLElement | null
+      return candidate
+    }, 'trip-2027.html')
+    assert.ok(htmlPathButton, 'real html-preview button for canonical trip-2027.html missing from latest list card')
+    const htmlButtonSnapshot = await (htmlPathButton as any).evaluate((node: Element) => ({
       ariaLabel: node.getAttribute('aria-label') || '',
       visible: node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0,
+      listIndex: [...document.querySelectorAll('[data-gotry-artifact-card="list"]')].indexOf(node.closest('[data-gotry-artifact-card="list"]')!),
     }))
     assert.ok(htmlButtonSnapshot.ariaLabel.includes('trip-2027.html'), `unexpected html-preview aria-label: ${htmlButtonSnapshot.ariaLabel}`)
     assert.equal(htmlButtonSnapshot.visible, true, 'html-preview button not visibly rendered')
+    assert.ok(htmlButtonSnapshot.listIndex >= 1, `html-preview button must bind to a non-first list card (got index ${htmlButtonSnapshot.listIndex})`)
 
     // Switch to the bounded 1440x1000 viewport only for the HTML native preview
     // so the slide-in animation can settle to a deterministic in-viewport frame.
     await page.setViewport({ width: 1440, height: 1000 })
 
     const iframesBefore = await page.evaluate(() => [...document.querySelectorAll('iframe')].map(f => ({ src: f.getAttribute('src') || '', sandbox: f.getAttribute('sandbox') || '' })))
-    await htmlPathButton.click()
+    await (htmlPathButton as any).click()
     const blobFrame = await page.waitForFrame((f: import('puppeteer-core').Frame) => f.url().startsWith('blob:'), { timeout: 30_000 })
     assert.ok(blobFrame, 'no blob: iframe appeared after clicking real Open HTML preview')
     await blobFrame.waitForSelector('#artifact-web-h1', { visible: true, timeout: 30_000 })
@@ -551,21 +562,58 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
     const visibleContent = await blobFrame.evaluate(() => {
       const h1 = document.querySelector('h1') as HTMLElement | null
       const p = document.querySelector('p') as HTMLElement | null
-      const h1Rect = h1?.getBoundingClientRect()
-      return {
-        h1Text: h1?.textContent || '',
-        h1Id: h1?.id || '',
-        h1Rect: h1Rect ? { width: h1Rect.width, height: h1Rect.height, top: h1Rect.top, bottom: h1Rect.bottom, left: h1Rect.left, right: h1Rect.right } : null,
-        pText: p?.textContent || '',
-        readyState: document.readyState,
+      const win = document.defaultView || window
+      const out: Record<string, unknown> = { readyState: document.readyState }
+      const elems: Array<[string, HTMLElement | null]> = [['h1', h1], ['p', p]]
+      for (let i = 0; i < elems.length; i++) {
+        const [key, el] = elems[i]!
+        if (!el) { out[key] = null; continue }
+        const cs = win.getComputedStyle(el)
+        const rect = el.getBoundingClientRect()
+        out[key] = {
+          text: el.textContent || '',
+          id: el.id || '',
+          tag: el.tagName,
+          rect: { width: rect.width, height: rect.height, top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
+          display: cs.display,
+          visibility: cs.visibility,
+          opacity: Number(cs.opacity),
+        }
       }
+      return out as { h1: { text: string; id: string; tag: string; rect: { width: number; height: number; top: number; bottom: number; left: number; right: number }; display: string; visibility: string; opacity: number } | null; p: typeof visibleContent extends { p: infer P } ? P : never; readyState: string }
     })
-    assert.equal(visibleContent.h1Text, 'GoTry artifact-web visible heading')
-    assert.equal(visibleContent.h1Id, 'artifact-web-h1')
-    assert.equal(visibleContent.pText, 'GoTry artifact-web visible body line — synthetic only.')
-    assert.ok(visibleContent.h1Rect && visibleContent.h1Rect.width > 0 && visibleContent.h1Rect.height > 0, 'iframe h1 has zero size')
-    assert.ok(visibleContent.h1Rect!.top >= 0 && visibleContent.h1Rect!.bottom <= iframeSnapshot!.height, 'h1 must be inside the visible iframe viewport')
+    const iframeHeight = iframeSnapshot!.height
+    const iframeWidth = iframeSnapshot!.width
+    const isVisuallyShown = (m: typeof visibleContent.h1) => Boolean(m
+      && m.rect.width > 0 && m.rect.height > 0
+      && m.display !== 'none' && m.visibility !== 'hidden' && m.visibility !== 'collapse'
+      && m.opacity > 0
+      && m.rect.top >= 0 && m.rect.bottom <= iframeHeight + 1
+      && m.rect.left >= 0 && m.rect.right <= iframeWidth + 1)
+    assert.ok(visibleContent.h1, 'iframe h1 missing')
+    assert.ok(visibleContent.p, 'iframe p missing')
+    assert.equal(visibleContent.h1.text, 'GoTry artifact-web visible heading')
+    assert.equal(visibleContent.h1.id, 'artifact-web-h1')
+    assert.equal(visibleContent.p.text, 'GoTry artifact-web visible body line — synthetic only.')
+    assert.equal(isVisuallyShown(visibleContent.h1), true, `iframe h1 not visually shown: ${JSON.stringify(visibleContent.h1)}`)
+    assert.equal(isVisuallyShown(visibleContent.p), true, `iframe p not visually shown: ${JSON.stringify(visibleContent.p)}`)
     assert.equal(await page.evaluate(() => (window as unknown as Record<string, unknown>)['__artifact_web_host_executed__'] ?? null), null, 'host sentinel mutated during native preview')
+
+    // Scroll the latest (third-turn) source-text read card into the viewport so
+    // the page screenshot proves the latest HTML read card is the one visible
+    // alongside the right-side native preview — not a stale first-turn MD card.
+    await page.evaluate(() => {
+      const reads = Array.from(document.querySelectorAll('[data-gotry-artifact-card="read"]')) as HTMLElement[]
+      const latest = reads[reads.length - 1]
+      latest?.scrollIntoView({ block: 'center' })
+    })
+    await page.waitForFunction(() => {
+      const reads = Array.from(document.querySelectorAll('[data-gotry-artifact-card="read"]')) as HTMLElement[]
+      const latest = reads[reads.length - 1]
+      if (!latest) return false
+      const r = latest.getBoundingClientRect()
+      return r.width > 0 && r.height > 0 && r.top < window.innerHeight && r.bottom > 0
+    }, { timeout: 30_000 })
 
     const htmlScreenshotPath = join(outputDir, 'artifact-web-e2e.native-html.png')
     await page.screenshot({ path: htmlScreenshotPath, fullPage: false })
