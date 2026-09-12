@@ -71,7 +71,7 @@ flowchart LR
 
 > 交互版：[`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html)（archify 生成，showcase 校验通过）。分层：L2 dsh 插件 · L3 `ts/src/unified.ts` 内核 · L4 效应解译 + 实时桥 · L5 loopx 治理。ADR：[`docs/architecture.md`](docs/architecture.zh-CN.md)。
 
-23 个注册工具分组：实时检索（飞猪官方通道 + 你本人登录态 Chrome，只读）· 目录 · 判定引擎 · 记忆 · 产物 · 事实闸 · 外部检索 · `gotry_doctor` 自检。无隐藏派发——通道注册表只返回有序建议列表，由模型或用户选择。逐工具契约：[`docs/tools.md`](docs/tools.zh-CN.md)。
+24 个注册工具分组：实时检索（飞猪官方通道 + 你本人登录态 Chrome，只读）· 目录 · 判定引擎 · 记忆 · 产物（列表/阅读 + 行程 HTML 生成）· 事实闸 · 外部检索 · `gotry_doctor` 自检。无隐藏派发——通道注册表只返回有序建议列表，由模型或用户选择。逐工具契约：[`docs/tools.md`](docs/tools.zh-CN.md)。
 
 离线 session benchmark 将挑战／守卫截断标为 fail-closed；只有正常跑完八条查询的批次才是 `batch_complete`，生产节律保持 35 秒。sf-summary CLI 接受符号链接或别名形式的入口路径，并产出与规范路径相同的已校验汇总。
 
@@ -158,7 +158,7 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 
 npm `latest`：**v0.0.1-rc.24**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。外部 W2A 事件仍是合同层、默认 inert；尚无真实 sensor 桥或 consumer 激活。
 
-**今天可用** —— 访谈 → 确定性可行性判决 → 带门到门真成本的行程 · 实时检索（飞猪 + 你本人登录态 Chrome，只读），事实 typed 且调用绑定 · 记忆（动机 / 愿望池 / 同行人 / 时间线）落租户作用域账本 · 自检 doctor，批准后范围修复。
+**今天可用** —— 访谈 → 确定性可行性判决 → 带门到门真成本的行程 · 实时检索（飞猪 + 你本人登录态 Chrome，只读），事实 typed 且调用绑定 · 记忆（动机 / 愿望池 / 同行人 / 时间线）落租户作用域账本 · 本地行程 HTML 文档生成（`gotry_itinerary_render`：事实只从会话事实注册表取，在会话工作目录新建一个文件、永不覆盖——浏览器/原生预览验收仍待完成） · 自检 doctor，批准后范围修复。
 
 **还没有** —— 今天没有可下单路径；预订只随 WriteGate 用户确认设计启封 · 实时可订证据仍部分覆盖 · 真实用户 cohort 未到退出口径 · 英文仅覆盖求解输出层。
 

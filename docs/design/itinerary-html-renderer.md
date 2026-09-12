@@ -2,10 +2,10 @@
 
 # Itinerary HTML Renderer (issue #442, parent #438)
 
-> Role: the runtime contract, evidence discipline and rejection set of the pure itinerary HTML renderer `ts/src/itinerary-html.ts`.
-> Status: proposal — internal slice (2026-09-12). The renderer is not yet called from the product chain; wiring is owned by the later integration slice of #438.
+> Role: the runtime contract, evidence discipline and rejection set of the pure itinerary HTML renderer `ts/src/itinerary-html.ts`, plus the product generation entry `ts/capabilities/itinerary-artifact.ts` that feeds it.
+> Status: internal slice (2026-09-12). The renderer is now reachable from a real product path (registered tool `gotry_itinerary_render` → one new HTML file in the session working directory). Browser/native-preview acceptance and the real Lavish editing-feedback loop remain open under parent #438 / #443.
 > Upstream: issue [#442](https://github.com/Danceiny/gotry/issues/442) (parent #438), `docs/design/external-event-seam.md` for the "contract first, activation later" pattern, and the fact model `ts/src/bookable-facts.ts`.
-> Downstream: `ts/scripts/itinerary-html-tests.ts`, and the future caller that loads the fact registry and writes the HTML artifact.
+> Downstream: `ts/scripts/itinerary-html-tests.ts`, `ts/scripts/itinerary-artifact-tests.ts`, and the artifact list/read journey that revisits the generated file.
 
 ## 1. Contract
 
@@ -42,6 +42,16 @@ Consequences that the code enforces structurally, not by prose alone:
 
 Rejected with an explicit error: unknown/missing fields, wrong types, unsupported `mode` / `bookability` / `tier` / `verdict` / fact `schema`, impossible calendar dates (month length and leap years are checked, not just the shape), malformed ISO timestamps, non-finite or out-of-range numbers, oversized arrays and oversized strings, inverted trip windows, zero-night stays, and a rendered document above the byte cap. Error text never echoes the offending input back.
 
-## 5. Slice status
+## 5. Product generation entry
 
-Landed here: the module, its focused test suite and this document. Still open for #438: product wiring, the artifact path, browser E2E of navigation/disclosure/narrow-screen/escaping, the six state surfaces and the bilingual status sync, and a root review of the integrated chain. This renderer's static fixtures are not supplier evidence and do not stand in for a real inventory check.
+The registered tool `gotry_itinerary_render` (`ts/capabilities/itinerary-artifact.ts`) is the only product path that writes an itinerary document. Call shape: `title`, the explicit `itinerary` object (same shape as the renderer's, no nights/budget fields) and `fact_ids` (required string array, empty allowed), plus an optional `basename`.
+
+- **Facts come only from the registry.** The tool never accepts caller-supplied fact objects, does not read Markdown, and does not guess facts. Selected ids are resolved against the current `config.stateRoot` fact log (`loadFactRegistry`); unknown, duplicate and over-limit ids are rejected, and a malformed registered row is rejected by the renderer's runtime validation instead of being quietly dropped.
+- **Empty `fact_ids` is a legitimate input** and renders an explicitly unverified plan: the document states the missing evidence and carries no overall verified badge; only per-fact bookability/tier/source labels exist.
+- **One new file, never an overwrite.** The target is the canonicalized session working directory top level; a basename must match `gotry-itinerary-<ASCII token>.html` (no separators, no `..`), otherwise a crypto-random name is generated. The session working directory must be **explicitly provided and absolute**: a missing, empty, whitespace-only or relative cwd fails closed in the tool boundary and again in the capability — there is deliberately no fallback to the process cwd, because a guessed landing spot is how a document ends up in an unrelated directory. The host-provided path is used **verbatim**: whitespace is inspected only to decide whether the value is empty, and never normalized — a trailing space can be part of a real directory name, and trimming it would redirect the write to a same-named sibling. The file is created with `O_CREAT|O_EXCL` (`wx`), so an existing file and a symlink pointing elsewhere both fail instead of being followed or replaced; `.git`/`node_modules` directories are refused. Writes land only in the session working directory — never in `stateRoot`.
+- **Failure means zero bytes written.** Invalid input, unregistered ids, a rejected render, a taken basename and a refused directory all return structured errors before any file is opened. The result returns the final real path of the written file; the work is local document generation only — no booking, payment or supplier write.
+- **Revisit journey.** The generated `.html` is discovered and read through `gotry_artifacts_list` / `gotry_artifacts_read` (source-card text view). The host's own native HTML preview is a separate UI surface with its own sandbox behavior and is not claimed here.
+
+## 6. Slice status
+
+Landed here: the renderer, the generation entry (registered tool + run-all §6c suites) and this document. Still open for #438/#443: browser acceptance of the generated document (navigation, disclosure, narrow screen, escaping), the native preview's actual sandbox behavior, and the real Lavish editing-feedback loop. The generated document is a projection of caller-supplied structure plus registered facts — its fixtures are not supplier evidence and do not stand in for a real inventory check.

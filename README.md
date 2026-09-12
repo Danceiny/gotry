@@ -71,7 +71,7 @@ Architecture — the sync path from chat through the kernel to the fact gate, pl
 
 > Interactive version: [`docs/assets/gotry-system-architecture.en.html`](docs/assets/gotry-system-architecture.en.html) (archify, showcase-validated). Layers: L2 dsh plugin · L3 `ts/src/unified.ts` kernel · L4 effect interpreter + realtime bridges · L5 loopx governance. ADRs: [`docs/architecture.md`](docs/architecture.md).
 
-23 registered tools in groups: realtime retrieval (Fliggy official channel + your own Chrome session, read-only) · catalog · decision engine · memory · artifacts · fact gate · external search · `gotry_doctor` self-check. No hidden dispatch — a channel registry returns an ordered suggestion list; the model or user chooses. Per-tool contracts: [`docs/tools.md`](docs/tools.md).
+24 registered tools in groups: realtime retrieval (Fliggy official channel + your own Chrome session, read-only) · catalog · decision engine · memory · artifacts (list/read + itinerary HTML generation) · fact gate · external search · `gotry_doctor` self-check. No hidden dispatch — a channel registry returns an ordered suggestion list; the model or user chooses. Per-tool contracts: [`docs/tools.md`](docs/tools.md).
 
 The offline session benchmark marks challenge/guard truncation fail-closed; only a normally completed eight-query batch is `batch_complete`, and production cadence remains 35 seconds. The sf-summary CLI accepts symlinked or aliased entrypoint paths and produces the same validated summary as the canonical path.
 
@@ -158,7 +158,7 @@ Trust is structural, not promised:
 
 **v0.0.1-rc.24** on npm (`latest`). Pre-1.0: the core loop works end to end; evaluation is still at deterministic contracts and validators, with no external scores or uplift claims. External W2A events are contract-only and inert; no real sensor bridge or consumer is active yet.
 
-**Working today** — interview → deterministic feasibility verdict → itinerary with door-to-door true cost · realtime retrieval (Fliggy + your own Chrome session, read-only) with typed, invocation-bound facts · memory (motivation, wish pool, companions, timeline) on a tenant-scoped ledger · self-check doctor with scoped, approved repair.
+**Working today** — interview → deterministic feasibility verdict → itinerary with door-to-door true cost · realtime retrieval (Fliggy + your own Chrome session, read-only) with typed, invocation-bound facts · memory (motivation, wish pool, companions, timeline) on a tenant-scoped ledger · local itinerary HTML document generation (`gotry_itinerary_render`: facts only from the session fact registry, one new file in the session working directory, never overwritten — browser/native-preview acceptance still open) · self-check doctor with scoped, approved repair.
 
 **Not yet** — nothing is bookable today; booking ships only behind the WriteGate user-confirmation design · live-availability evidence is still partial · the real-user cohort study has not reached its exit bar · English covers the solver output layer only.
 

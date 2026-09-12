@@ -2,10 +2,10 @@
 
 # 行程 HTML 渲染器(issue #442,父 #438)
 
-> 定位/Role:纯行程 HTML 渲染器 `ts/src/itinerary-html.ts` 的运行时契约、证据纪律与拒绝集。
-> 状态/Status:proposal——内部切片(2026-09-12)。渲染器尚未进入产品调用链;接线归 #438 的后续集成切片所有。
+> 定位/Role:纯行程 HTML 渲染器 `ts/src/itinerary-html.ts` 的运行时契约、证据纪律与拒绝集,外加喂给它的产品生成入口 `ts/capabilities/itinerary-artifact.ts`。
+> 状态/Status:内部切片(2026-09-12)。渲染器已可从真实产品路径到达(注册工具 `gotry_itinerary_render` → 会话工作目录内的一个新 HTML 文件)。浏览器/原生预览验收与真实 Lavish 编辑反馈闭环仍留在父 #438 / #443 未完成面。
 > 上游/Upstream:issue [#442](https://github.com/Danceiny/gotry/issues/442)(父 #438)、`docs/design/external-event-seam.md` 的「先合同后启用」范式,以及事实模型 `ts/src/bookable-facts.ts`。
-> 下游/Downstream:`ts/scripts/itinerary-html-tests.ts`,以及将来加载事实注册表并写出 HTML 产物的调用方。
+> 下游/Downstream:`ts/scripts/itinerary-html-tests.ts`、`ts/scripts/itinerary-artifact-tests.ts`,以及再次查看生成产物的产物列表/阅读旅程。
 
 ## 1. 契约
 
@@ -42,6 +42,16 @@ renderItineraryHtml(input: unknown):
 
 以下情况一律显式报错:未知/缺失字段、类型错误、不受支持的 `mode` / `bookability` / `tier` / `verdict` / 事实 `schema`、不存在的日历日期(校验月长与闰年,不只校验形状)、畸形 ISO 时间戳、非有限或越界数值、超量数组与超长字符串、行程窗倒置、零夜住宿,以及渲染结果超过字节上限。错误文本绝不回显原始输入。
 
-## 5. 切片状态
+## 5. 产品生成入口
 
-本切片已落地:模块、对应聚焦测试与本文件。仍属 #438 未完成面:产品接线、产物路径、导航/展开/窄屏/转义的浏览器 E2E、六处状态面与双语状态同步,以及根代理对集成链的审阅。本渲染器的静态 fixture 不是供应商证据,不能替代真实库存核验。
+注册工具 `gotry_itinerary_render`(`ts/capabilities/itinerary-artifact.ts`)是唯一写出行程文档的产品路径。调用形状:`title`、显式 `itinerary` 对象(与渲染器同形,不接受夜数/预算字段)与 `fact_ids`(必填字符串数组,允许空),外加可选 `basename`。
+
+- **事实只来自注册表。** 工具从不接收调用方自带的事实对象、不读 Markdown、不猜事实。选中的 id 对当前 `config.stateRoot` 事实日志(`loadFactRegistry`)解析;未知、重复与超量 id 一律拒绝,登记行畸形则由渲染器的运行时校验拒绝,不静默丢弃。
+- **空 `fact_ids` 是合法输入**,渲染为明确未核验的计划:文档写明缺失的证据,且不带任何整体「已验证」徽章——只有逐条事实自带的可下单性/证据层/来源标注。
+- **只新建文件,绝不覆盖。** 目标 = realpath 化后的会话工作目录顶层;basename 必须匹配 `gotry-itinerary-<ASCII token>.html`(无分隔符、无 `..`),否则自动生成 crypto 随机名。会话工作目录必须**显式给出且为绝对路径**:缺失、空白、纯空白或相对的 cwd 在工具边界 fail closed,能力层再次拒绝——刻意不回落进程 cwd,因为「猜落点」正是文档被写进无关目录的方式。宿主给出的路径**按原值**使用:空白只用于判定「是否为空」,绝不归一化——尾随空格可能是真实目录名的一部分,trim 会把写入重定向到同名兄弟目录。文件以 `O_CREAT|O_EXCL`(`wx`)创建:既有文件与指向别处的符号链接都会失败,不会被跟随或替换;`.git`/`node_modules` 目录拒绝。写入只落在会话工作目录,绝不写进 `stateRoot`。
+- **失败即零字节。** 非法输入、未注册 id、渲染被拒、文件名被占用与被拒目录都在打开任何文件之前返回结构化错误。结果返回落盘文件的最终真实路径;本工具只做本地文档生成——不预订、不支付、不写供应商。
+- **再次查看的旅程。** 生成的 `.html` 经 `gotry_artifacts_list` / `gotry_artifacts_read` 发现与阅读(源码卡文本视图)。宿主自带的原生 HTML 预览是另一个 UI 面、有自己的 sandbox 行为,本文不作声明。
+
+## 6. 切片状态
+
+本切片已落地:渲染器、生成入口(注册工具 + run-all §6c 两套件)与本文件。仍属 #438/#443 未完成面:生成产物的浏览器验收(导航、展开、窄屏、转义)、原生预览的实际 sandbox 行为,以及真实 Lavish 编辑反馈闭环。生成产物是「调用方给的显式结构 + 已注册事实」的投影——其 fixture 不是供应商证据,不能替代真实库存核验。

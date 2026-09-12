@@ -70,6 +70,11 @@ echo "=== 6b. 产物视图能力与 Host 合同(客户端导出/运行时 block 
 (cd ts && npx tsx scripts/dsh-artifact-e2e.ts) || FAIL=1
 
 echo
+echo "=== 6c. 行程 HTML 渲染器与产物生成入口(#442/父 #438:纯渲染器有界契约/日期与枚举反例/计划面与证据面分离;注册工具 gotry_itinerary_render 从隔离事实注册表选 id→独占新建 HTML→落盘字节断言,未知/重复/超量 id 与畸形登记行拒绝、撞车不覆盖、符号链接与路径逃逸拒绝、非法输入零写入;全离线合成夹具) ==="
+(cd ts && npx tsx scripts/itinerary-html-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/itinerary-artifact-tests.ts) || FAIL=1
+
+echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
 
