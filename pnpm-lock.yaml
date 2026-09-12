@@ -713,6 +713,9 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: ^3.18.1
         version: 3.18.2
+      '@toon-format/toon':
+        specifier: 2.3.1
+        version: 2.3.1
       ajv:
         specifier: ^8.17.1
         version: 8.20.0
@@ -3298,6 +3301,9 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@toon-format/toon@2.3.1':
+    resolution: {integrity: sha512-sWqEMeAJGMda9qRrfPKrX3C4c33CO9SJuvJzzrcBEn5sbDB+k6pSLkDsfN0rVnLQwR97MV3sDgVbcxQNsq8xVw==}
 
   '@types/node@26.4.0':
     resolution: {integrity: sha512-faiGnoIrLH/V8cibOMEAZ8pMw6oXqSukl29ra4mN8GdaB2ZewzeaLj+INpV5N+Z1eKWzY+IzaIZH2EIR6YZRNQ==}
@@ -7408,6 +7414,8 @@ snapshots:
   '@stablelib/base64@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@toon-format/toon@2.3.1': {}
 
   '@types/node@26.4.0':
     dependencies:

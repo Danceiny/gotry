@@ -125,6 +125,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [design/itinerary-html-renderer.md](design/itinerary-html-renderer.md) | Itinerary HTML renderer contract + product generation entry (internal slice, issue #442/parent #438): pure bounded renderer, plan plane vs evidence plane, rejection set; `gotry_itinerary_render` writes one new non-overwriting HTML file from registry-selected facts; browser/native-preview acceptance open |
 | [design/hotelbyte-skills-design.md](design/hotelbyte-skills-design.md) | hotelbyte-skills architecture (knowledge enters the repo / execution stays in gotry, issue #5) |
 | [design/stage1-top-down-design.md](design/stage1-top-down-design.md) | Stage 1 top-level design (historical original); **its status header is state face ⑥ of §11** |
+| [design/lavish-local.md](design/lavish-local.md) | Lavish local session adapter (#443, parent #438): owned-process/port/state boundary, TOON protocol facts, untrusted feedback, bounded polling |
 
 ### rfc/ (proposal originals)
 
