@@ -21,7 +21,10 @@
  *  12. 缺失/空对象/空串/纯空白/非字符串/相对的会话 cwd → 工具层与能力层都 fail closed,
  *      进程 cwd 零新增文件(绝不回落 process.cwd());
  *  13. 真实产出链路(注册工具):生成 → gotry_artifacts_list 在册同一路径 → gotry_artifacts_read
- *      以 html 源码文本读回,内容与落盘字节逐字一致、version 与磁盘 sha256 一致。
+ *      以 html 源码文本读回,内容与落盘字节逐字一致、version 与磁盘 sha256 一致;
+ *  14. 路径保真:宿主 cwd 的尾随空格属于路径本身——同时存在 `session` 与 `session ` 时,
+ *      工具层与能力层都只写进宿主给出的那一个,绝不 trim 归一化到同名兄弟目录;
+ *      只有兄弟存在时带空格路径按不存在拒绝。
  * 全部合成事实,无用户真实行程;不启动 dsh 宿主、无网络、无供应商调用。
  *
  * 运行(在 ts/ 下):
@@ -396,6 +399,35 @@ async function main(): Promise<void> {
   ok(read.content === chainDisk, '§17i read 内容与落盘字节逐字一致')
   ok(read.version === createHash('sha256').update(chainDisk).digest('hex').slice(0, 12), '§17j content version 与磁盘 sha256 指纹一致')
   ok(read.content === renderHtml([FLIGHT, HOTEL]), '§17k 读回内容 == 注册表选中事实的渲染输出')
+
+  // ---- §18 路径保真:宿主 cwd 的尾随空格是路径的一部分,绝不 trim 归一化到同名兄弟目录 ----
+  const plainDir = join(home, 'session')
+  const spacedDir = join(home, 'session ')
+  mkdirSync(plainDir, { recursive: true })
+  mkdirSync(spacedDir, { recursive: true })
+  const spacedExec = { agent: { session: { header: { cwd: spacedDir } } } }
+
+  const viaTool = await run({ title: TITLE, itinerary: ITINERARY, fact_ids: [], basename: 'gotry-itinerary-spaced.html' }, spacedExec)
+  ok(viaTool.ok === true, `§18a 带尾随空格的会话 cwd 生成成功(实际:${JSON.stringify(viaTool.error ?? '')})`)
+  ok(String(viaTool.path) === join(realpathSync(spacedDir), 'gotry-itinerary-spaced.html'), '§18b 落点 = 宿主给出的带空格目录')
+  ok(readdirSync(spacedDir).includes('gotry-itinerary-spaced.html'), '§18c 文件确实写在带空格目录内')
+  ok(htmlFiles(plainDir).length === 0, '§18d 同名兄弟目录零写入(工具层未归一化)')
+
+  const viaCap = await generateItineraryArtifact(
+    { title: TITLE, itinerary: ITINERARY, fact_ids: [], basename: 'gotry-itinerary-spaced2.html' },
+    { stateRoot, cwd: spacedDir },
+  )
+  ok(viaCap.ok === true && readdirSync(spacedDir).includes('gotry-itinerary-spaced2.html'), '§18e 能力层写进带空格目录')
+  ok(htmlFiles(plainDir).length === 0, '§18f 能力层不落到同名兄弟目录')
+
+  const plainOnly = join(home, 'plainonly')
+  mkdirSync(plainOnly, { recursive: true })
+  const ghost = await generateItineraryArtifact(
+    { title: TITLE, itinerary: ITINERARY, fact_ids: [] },
+    { stateRoot, cwd: `${plainOnly} ` },
+  )
+  ok(ghost.ok === false, '§18g 带空格路径不存在时拒绝(绝不回落 trim 后的兄弟)')
+  ok(readdirSync(plainOnly).length === 0, '§18h trim 后的兄弟目录零写入')
 
   rmSync(home, { recursive: true, force: true })
 

@@ -118,17 +118,18 @@ function takeBasename(value: unknown): { basename: string } | { error: string; h
 }
 
 /** 会话工作目录:必须显式且为绝对路径(缺失/空白/相对一律拒绝,绝不回落 '.' 或 process.cwd()),
- *  已存在、可 realpath、是目录,且不含 .git/node_modules 段 */
+ *  按宿主原值解析(trim 只判全空白、绝不归一化路径),已存在、可 realpath、是目录,且不含 .git/node_modules 段 */
 async function resolveWritableDir(cwd: unknown): Promise<{ dir: string } | { error: string; hint?: string }> {
-  const requested = typeof cwd === 'string' ? cwd.trim() : ''
-  if (requested === '') {
+  if (typeof cwd !== 'string' || cwd.trim() === '') {
     return { error: '会话工作目录缺失:拒绝在未知目录写产物', hint: '写产物必须有宿主显式给出的绝对会话工作目录,不做任何猜测性回落' }
   }
-  if (!isAbsolute(requested)) {
-    return { error: `会话工作目录必须是绝对路径:${requested}`, hint: '相对路径会随进程工作目录漂移,拒绝写入' }
+  // trim 只用于「是否全空白」判定:真实路径一律按宿主原值使用,绝不归一化——
+  // 尾随空格可能是真实目录名的一部分,归一化会写到同名兄弟目录
+  if (!isAbsolute(cwd)) {
+    return { error: `会话工作目录必须是绝对路径:${cwd}`, hint: '相对路径会随进程工作目录漂移,拒绝写入' }
   }
-  const canonical = await realpath(requested).catch(() => null)
-  if (!canonical) return { error: `会话工作目录不存在或无法解析:${requested}`, hint: '本工具只在真实存在的会话工作目录顶层新建文件' }
+  const canonical = await realpath(cwd).catch(() => null)
+  if (!canonical) return { error: `会话工作目录不存在或无法解析:${cwd}`, hint: '本工具只在真实存在的会话工作目录顶层新建文件' }
   if (hasDeniedSegment(canonical)) {
     return { error: '会话工作目录位于受限段(.git/node_modules)内,拒绝写入', hint: `解析后:${canonical}` }
   }
