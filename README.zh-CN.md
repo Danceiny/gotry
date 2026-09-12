@@ -73,7 +73,7 @@ flowchart LR
 
 23 个注册工具分组：实时检索（飞猪官方通道 + 你本人登录态 Chrome，只读）· 目录 · 判定引擎 · 记忆 · 产物 · 事实闸 · 外部检索 · `gotry_doctor` 自检。无隐藏派发——通道注册表只返回有序建议列表，由模型或用户选择。逐工具契约：[`docs/tools.md`](docs/tools.zh-CN.md)。
 
-离线 session benchmark 将挑战／守卫截断标为 fail-closed；只有正常跑完八条查询的批次才是 `batch_complete`，生产节律保持 35 秒。
+离线 session benchmark 将挑战／守卫截断标为 fail-closed；只有正常跑完八条查询的批次才是 `batch_complete`，生产节律保持 35 秒。sf-summary CLI 接受符号链接或别名形式的入口路径，并产出与规范路径相同的已校验汇总。
 
 ## 一段对话
 
