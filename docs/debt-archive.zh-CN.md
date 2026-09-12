@@ -51,6 +51,8 @@
 | D-36 酒店日期闸缺位（hotel-date-gate） | **已清偿 2026-09-09（issue #283）**：实现与边界详见 [`architecture.md`](architecture.zh-CN.md) §1.2；共享 `parseAbsoluteDate` 拒非法日历日，酒店消费边界拒缺失日期、溢出和错误顺序，失败不 dispatch 并返回 `input_required`，有效日期与静态降级兼容。隔离 fixture 证据不构成真实供应商准入。 |
 | D-38 `gotry_doctor` 只能给指引、不能在对话内修复 | **已清偿 2026-09-10（issue #284）**：显式 `action=repair` 形成诊断→范围计划→会话审批→既有 bootstrap 幂等安装器→实际复检链；拒绝/取消/无审批通道零执行，user-action/unavailable 不越权，安装退出不替代健康复检。隔离 fixture 工具 E2E 只证明工程边界，不构成 #20 真实 repeat cohort 或任何 M5/M6 准入。详见 [`architecture.md` §9](architecture.zh-CN.md#9-演进时间线唯一来源-roadmapmd-的-m0-m6此处只保留原则与现状)。 |
 | #279 携程机票 malformed 响应 | **已清偿 2026-09-10**：三态 parser/search 边界与隔离扩展 fixture 见 [`architecture.md`](architecture.zh-CN.md) §9；本地证据不替代 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission |
+| D-9 节日锚点表硬编码 | **改为库生成机制清偿（2026-09-11，issue [#274](https://github.com/Danceiny/gotry/issues/274) 重做；#384 的 2031→2040 手抄扩表已被否决关闭——换个日子的同款债务）**：SPRING_FESTIVAL 由 `ts/scripts/gen-lunar-anchors.ts` 构建期机械生成（devDependency `lunar-typescript@1.8.6`，MIT，零传递依赖，仅开发态——绝不进 runtime bundle），覆盖 2026–2099，生成块内带 provenance（库版本/生成时间/命令）；双独立 oracle 固化于 time-eval §7（旧表 2026–2031 六条 + 港天文台 2032–2040 九条，逐条一致）；到期即红守卫 `springFestivalHorizonOk`（最晚锚点年份 < 当前年+3 → 测试红）+ 表耗尽后锚点卡显式告警——静默缺失 failure mode 已消灭；漂移闸 = run-all §59（`--check`）。新巡检口径：扩表/换库 = 重跑生成器；守卫自然变红（约 2097）前无需人工排期。 |
+| [D-NEW] dsh 进程保活缺失（issue [#271](https://github.com/Danceiny/gotry/issues/271)） | 见下方「[D-NEW] dsh 进程保活缺失」（公开追踪 = #271；2026-09-11 关闭） |
 
 **D-24 会话扩展 onboarding UX 缺口（issue #21 隐性状态）**
 
@@ -94,3 +96,11 @@
 **D-21 async 非 4/4 被误结算为成功**
 
 **已清偿 2026-08-29（Issue #19）**：`collectDeepPlanning` 产出 `gotry_async_terminal.v1`；collector 仅在 4/4 时写 `succeeded`/ledger `settled`/exit 0，任一未达写 `failed`/ledger `failed`/exit 2；账本保存结构化结果，终态复诵零重算且保持同一退出码。隔离 `stateRoot` 回归见 run-all §28。
+
+**[D-NEW] dsh 进程保活缺失（issue #271）**
+
+**Phase A 部分赎回（gotry 侧，2026-09-09，#271）**：
+- `installProcessGuards` 只挂 `uncaughtExceptionMonitor`，按 Node origin 记录 `uncaughtException` / `unhandledRejection`；不安装吞 fatal 的 handler、不调用 `process.exit`、不隐式重启，宿主已有 handler 与 Node/dsh 退出策略继续裁决。
+- `recordIncident` 用单一 fd 完成 append、`fsync`、`close`，仅在全链成功时返回 `true`，失败返回 `false` 且正确回收 fd。native Node24 ESM dist 反例已覆盖 monitor/no-monitor、host handler exit code、writer fsync/close；`guardToolExecute` 继续把工具异常降为结构化失败并落盘。
+- **外层边界已部分赎回（2026-09-10，#271）**：GoTry launcher 对 dsh child 建立独立 POSIX process group；child exit/error/close 先完成 bounded descendant cleanup（继承 stdio 使 close 延迟时由 exit 触发）与既有 incident writer，再按原始非零/零语义退出；父进程单独收到 SIGINT/SIGTERM 时，先清理该 group、移除 handler，再向自身重发原信号。focused proof 的实际 `bin/gotry-inner.js` package-shaped fixture、stderr/产品 incident、marker、before/after direct child/group 空性见 `ts/scripts/issue-271-liveness-tests.ts` 和 run-all §23f。
+- **边界收口（2026-09-11，#271）**：原先开放的三个面已由有界隔离实验补齐证据（记录于 #271 评论 5638940456，脚本 SHA256 绑定）。(1) SDK 直接 transport（`dsh-sdk-client`）：握手与活线往返通过；leader 遭 SIGKILL 时在途请求收到 typed `TransportClosedError`、订阅 born-failed、`close()` 有界——与 CLI 形态存在两点如实非等价：SDK 不建进程组（runtime 后代可能比被杀 leader 活得久）、spawn 系统调用 ENOENT 经 SDK 入口不可达（缺失二进制表现为 exit 1 + `MODULE_NOT_FOUND`）。(2) 内部 supervisor（dsh-app-boot）：激活期 throw 与 boot 后 late rejection 均为「放弃而非重启」——带标签 abandon 诊断或恰一条 `dsh: fatal load failure`，有界 release 后 exit 1，零 respawn、无 unsafe 续行。(3) 部署：打包产物在干净安装下与源码形态逐字节复现 inherited-pipe leader-crash 契约（exit 7 保留、恰一条 incident、后代收割、组清空）。vendor/lock 不变；均不提升 M3/M4-M6 真实 gate。**仅剩候选事项**（不属于本次清偿范围）：若 SDK 直连形态未来进入产品，需向上游提出 SDK 后代的进程组清理增强（创始人决策）；以 [`architecture.md` §10.1](architecture.zh-CN.md#101-未清偿工作面) 中的触发门控观察行追踪，公开追踪 = [#422](https://github.com/Danceiny/gotry/issues/422)。
