@@ -891,6 +891,7 @@ export class BookingCopilotTaskRuntime {
           return existing
         }
         if (existing.phase === 'waiting_receipt') throw new Error('receipt_required')
+        if (!existing.replayUpgradeRequired && existing.revision === revision && existing.workspaceSemanticDigest !== workspaceSemanticDigest) throw new Error('workspace_mismatch')
         const approval = userTurn && 'approval' in userTurn.request ? userTurn.request.approval : undefined
         let approvalState: BookingApprovalState | undefined
         if (approval) {
