@@ -169,6 +169,7 @@ try {
   const toolNames = requests[0]!.body.tools.map((tool: any) => tool.function.name).sort()
   assert.deepEqual(toolNames, [...DSH_EMBEDDED_BOOKING_TOOL_NAMES].sort(), 'real model request exposes exactly the six embedded tools')
   assert.ok(!toolNames.some((name: string) => /gotry_book|payment|holder|guest/i.test(name)), 'real model request exposes no booking write or PII tool')
+  assert.equal(requests[0]!.body.model, 'deepseek-v4-flash', 'the default planner model matches the sdk-minimal catalog')
   const executableKeys = requests[0]!.body.tools.flatMap((tool: any) => objectKeys(tool.function.parameters))
   assert.ok(!executableKeys.some((key: string) => /^(book|payment|holder|guest|portalToken|supplierCost)$/i.test(key)), 'tool inputs expose no write or PII field')
   assert.equal(requests[0]!.headers.authorization, 'Bearer fixture-model-key')

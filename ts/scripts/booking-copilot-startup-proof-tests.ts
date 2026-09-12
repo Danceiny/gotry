@@ -37,6 +37,9 @@ const env = {
   GOTRY_BOOKING_COPILOT_PORT: '0',
   GOTRY_BOOKING_COPILOT_ARTIFACT_ID: '1111111111111111111111111111111111111111',
   LLM_API_KEY: 'model-only-key',
+  LLM_BASE_URL: 'http://model-route.invalid/v1',
+  LLM_MODEL: 'model-v1',
+  LLM_MAX_TOKENS: '8192',
   PORTAL_TOKEN: 'must-not-enter-planner',
   HOTELBYTE_TOKEN: 'must-not-enter-planner',
 }
@@ -110,6 +113,9 @@ assert.equal(started.port, 43123)
 assert.equal(serverApiKey, 'bff-only-key', 'BFF deployment key terminates at the HTTP server')
 assert.equal(serverArtifactId, env.GOTRY_BOOKING_COPILOT_ARTIFACT_ID)
 assert.equal(plannerEnv?.DEEPSEEK_API_KEY, 'model-only-key')
+assert.equal(plannerEnv?.DEEPSEEK_BASE_URL, 'http://model-route.invalid/v1')
+assert.equal(plannerEnv?.DEEPSEEK_MODEL, 'model-v1')
+assert.equal(plannerEnv?.DEEPSEEK_MAX_TOKENS, '8192')
 assert.equal(plannerEnv?.GOTRY_BOOKING_COPILOT_API_KEY, undefined)
 assert.equal(plannerEnv?.PORTAL_TOKEN, undefined)
 assert.equal(plannerEnv?.HOTELBYTE_TOKEN, undefined)

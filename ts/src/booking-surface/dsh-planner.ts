@@ -188,13 +188,19 @@ export function buildDshPlannerEnvironment(
     'http_proxy', 'https_proxy', 'no_proxy',
   ] as const
   for (const key of passthrough) if (source[key]) target[key] = source[key]!
-  const apiKey = source.DEEPSEEK_API_KEY ?? source.LLM_API_KEY
-  const baseUrl = source.DEEPSEEK_BASE_URL ?? source.LLM_BASE_URL
-  const model = source.DEEPSEEK_MODEL ?? source.LLM_MODEL
+  // Credential selection is the namespace authority. Explicit route fields
+  // must come from that same namespace; borrowing a base/model from another
+  // credential tuple silently sends keys to the wrong provider.
+  const useDeepSeekNamespace = Boolean(source.DEEPSEEK_API_KEY)
+  const apiKey = useDeepSeekNamespace ? source.DEEPSEEK_API_KEY : source.LLM_API_KEY
+  if (!apiKey) return target
+  const baseUrl = useDeepSeekNamespace ? source.DEEPSEEK_BASE_URL : source.LLM_BASE_URL
+  const model = useDeepSeekNamespace ? source.DEEPSEEK_MODEL : source.LLM_MODEL
+  const maxTokens = useDeepSeekNamespace ? source.DEEPSEEK_MAX_TOKENS : source.LLM_MAX_TOKENS
   if (apiKey) target.DEEPSEEK_API_KEY = apiKey
   if (baseUrl) target.DEEPSEEK_BASE_URL = baseUrl
   if (model) target.DEEPSEEK_MODEL = model
-  if (source.DEEPSEEK_MAX_TOKENS) target.DEEPSEEK_MAX_TOKENS = source.DEEPSEEK_MAX_TOKENS
+  if (maxTokens) target.DEEPSEEK_MAX_TOKENS = maxTokens
   return target
 }
 
@@ -273,6 +279,17 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
   const sourceEnv = options.env ?? process.env
   const childEnv = buildDshPlannerEnvironment(sourceEnv)
   if (!childEnv.DEEPSEEK_API_KEY) throw new Error('booking_planner_model_key_required')
+  const provider = options.provider?.trim() || 'deepseek-official'
+  const configuredModel = options.model ?? childEnv.DEEPSEEK_MODEL
+  if (provider !== 'deepseek-official' && !configuredModel) {
+    throw new Error('booking_planner_model_required_for_nondefault_provider')
+  }
+  const model = configuredModel ?? 'deepseek-v4-flash'
+  const maxTokens = options.maxTokens
+    ?? (childEnv.DEEPSEEK_MAX_TOKENS ? Number(childEnv.DEEPSEEK_MAX_TOKENS) : 16_384)
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1) {
+    throw new Error('booking_planner_max_tokens_invalid')
+  }
 
   const scratch = mkdtempSync(join(tmpdir(), 'gotry-booking-dsh-'))
   const dshHome = join(scratch, 'home')
@@ -290,17 +307,14 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
       dshHome,
       processCwd: options.stateRoot ?? process.cwd(),
       cwd: options.stateRoot ?? process.cwd(),
-      provider: options.provider ?? 'deepseek-official',
-      // Model must follow the operator-configured env (DEEPSEEK_MODEL / LLM_MODEL)
-      // instead of a hardcoded default: providers without a glm-4.6 mapping
-      // (e.g. MiniMax official) reject the hardcoded name and the DSH loop then
-      // yields no decisions at all (PLANNER_TYPED_DECISION_REQUIRED).
-      model: options.model ?? childEnv.DEEPSEEK_MODEL ?? 'glm-4.6',
+      provider,
+      // Model follows the selected route tuple. With no explicit override it
+      // uses the first model in the sdk-minimal DeepSeek catalog.
+      model,
       // Reasoning models spend the budget on <think> before the tool call; a
       // 4k cap truncates the arguments JSON mid-stream and poisons the whole
       // turn. 16k (env-tunable) leaves room for reasoning + typed decision.
-      maxTokens: options.maxTokens
-        ?? (childEnv.DEEPSEEK_MAX_TOKENS ? Number(childEnv.DEEPSEEK_MAX_TOKENS) : 16_384),
+      maxTokens,
       env: childEnv,
       ...(options.dshBin ? { dshBin: options.dshBin } : {}),
     })
@@ -732,6 +746,123 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   return { kind: 'operation', action }
 }
 
+type ProviderFailure = {
+  code:
+    | 'PLANNER_PROVIDER_AUTH_FAILED'
+    | 'PLANNER_PROVIDER_QUOTA_EXHAUSTED'
+    | 'PLANNER_PROVIDER_RATE_LIMITED'
+    | 'PLANNER_PROVIDER_UNAVAILABLE'
+    | 'PLANNER_PROVIDER_REQUEST_REJECTED'
+    | 'PLANNER_PROVIDER_RESPONSE_INVALID'
+    | 'PLANNER_CONFIGURATION_INVALID'
+    | 'PLANNER_FAILED'
+  retryable: boolean
+}
+
+const PROVIDER_CONFIGURATION_FAILURES = new Set([
+  'MISSING_CREDENTIAL',
+  'INVALID_CREDENTIAL',
+  'UNKNOWN_MODEL',
+  'NO_ADAPTER',
+  'INVALID_CONFIG',
+  'UNSUPPORTED_OPTION',
+])
+
+const PROVIDER_TRANSIENT_FAILURES = new Set([
+  'TRANSPORT',
+  'TIMEOUT',
+  'SERVER',
+  'STREAM_CLOSED',
+  'EMPTY_RESPONSE',
+])
+
+const PROVIDER_REQUEST_FAILURES = new Set([
+  'INVALID_REQUEST',
+  'CONTEXT_WINDOW_EXCEEDED',
+])
+
+const PROVIDER_RESPONSE_FAILURES = new Set([
+  'MALFORMED_RESPONSE',
+  'INVALID_RESPONSE',
+])
+
+function classifyProviderFailure(value: unknown): ProviderFailure | null {
+  if (!isRecord(value)) return null
+  const code = String(value.code ?? '').toUpperCase()
+  const rawStatus = value.status
+  const numericStatus = (typeof rawStatus === 'number' || (typeof rawStatus === 'string' && rawStatus.trim() !== ''))
+    ? Number(rawStatus)
+    : Number.NaN
+  const codeStatus = /^HTTP_(\d{3})$/.exec(code)
+  const status = Number.isFinite(numericStatus) ? numericStatus : Number(codeStatus?.[1] ?? Number.NaN)
+  if (!code && !Number.isFinite(status)) return null
+  if (code === 'AUTH' || status === 401 || status === 403) return { code: 'PLANNER_PROVIDER_AUTH_FAILED', retryable: false }
+  if (code === 'QUOTA') return { code: 'PLANNER_PROVIDER_QUOTA_EXHAUSTED', retryable: false }
+  if (code === 'RATE_LIMIT' || status === 429) return { code: 'PLANNER_PROVIDER_RATE_LIMITED', retryable: true }
+  if (PROVIDER_CONFIGURATION_FAILURES.has(code)) return { code: 'PLANNER_CONFIGURATION_INVALID', retryable: false }
+  if (PROVIDER_REQUEST_FAILURES.has(code) || status === 400 || status === 413 || status === 422) return { code: 'PLANNER_PROVIDER_REQUEST_REJECTED', retryable: false }
+  if (PROVIDER_RESPONSE_FAILURES.has(code)) return { code: 'PLANNER_PROVIDER_RESPONSE_INVALID', retryable: false }
+  if (PROVIDER_TRANSIENT_FAILURES.has(code) || status === 408 || status >= 500) return { code: 'PLANNER_PROVIDER_UNAVAILABLE', retryable: true }
+  if (code || status >= 400) return { code: 'PLANNER_FAILED', retryable: false }
+  return null
+}
+
+type TerminalProviderState = {
+  present: boolean
+  failure: ProviderFailure | null
+}
+
+function terminalProviderStateFromEvents(events: readonly unknown[]): TerminalProviderState {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    if (!isRecord(event) || event.type !== 'turn/end') continue
+    if (!isRecord(event.data) || !isRecord(event.data.reason)) {
+      return { present: true, failure: { code: 'PLANNER_FAILED', retryable: false } }
+    }
+    const reason = event.data.reason
+    if (reason.kind !== 'error') return { present: true, failure: null }
+    if (!isRecord(reason.error)) return { present: true, failure: { code: 'PLANNER_FAILED', retryable: false } }
+    return {
+      present: true,
+      failure: classifyProviderFailure(reason.error) ?? { code: 'PLANNER_FAILED', retryable: false },
+    }
+  }
+  return { present: false, failure: null }
+}
+
+function providerAttemptFailureFromEvents(events: readonly unknown[]): ProviderFailure | null {
+  // Compatibility for truncated/older SDK captures which omitted turn/end:
+  // only then may the latest packed assistant failure stand in for terminal
+  // authority. A present completed turn always suppresses historical attempts.
+  for (let eventIndex = events.length - 1; eventIndex >= 0; eventIndex -= 1) {
+    const event = events[eventIndex]
+    if (!isRecord(event) || event.type !== 'assistant/attempt' || !isRecord(event.data)) continue
+    if (!Array.isArray(event.data.stream)) continue
+    for (let recordIndex = event.data.stream.length - 1; recordIndex >= 0; recordIndex -= 1) {
+      const record = event.data.stream[recordIndex]
+      if (!isRecord(record) || record.type !== 'chunk' || !isRecord(record.chunk) || record.chunk.type !== 'finish' || !isRecord(record.chunk.reason)) continue
+      const reason = record.chunk.reason
+      if ((reason.kind !== 'error' && reason.kind !== 'aborted') || !isRecord(reason.failure)) continue
+      const failure = classifyProviderFailure(reason.failure)
+      if (failure) return failure
+    }
+  }
+  return null
+}
+
+function providerFailureMessage(code: ProviderFailure['code']): string {
+  switch (code) {
+    case 'PLANNER_PROVIDER_AUTH_FAILED': return 'The planner provider rejected authentication.'
+    case 'PLANNER_PROVIDER_QUOTA_EXHAUSTED': return 'The planner provider quota is exhausted.'
+    case 'PLANNER_PROVIDER_RATE_LIMITED': return 'The planner provider rate-limited the request.'
+    case 'PLANNER_PROVIDER_UNAVAILABLE': return 'The planner provider is temporarily unavailable.'
+    case 'PLANNER_PROVIDER_REQUEST_REJECTED': return 'The planner provider rejected the model request.'
+    case 'PLANNER_PROVIDER_RESPONSE_INVALID': return 'The planner provider returned an invalid response.'
+    case 'PLANNER_CONFIGURATION_INVALID': return 'The planner provider configuration is invalid.'
+    case 'PLANNER_FAILED': return 'The planner request failed at the typed runtime boundary.'
+  }
+}
+
 export async function createDshEmbeddedBookingPlanner(
   options: DshEmbeddedBookingPlannerOptions,
 ): Promise<DshEmbeddedBookingPlannerHandle> {
@@ -763,17 +894,33 @@ export async function createDshEmbeddedBookingPlanner(
             try {
               const result = await runPort.run(nextPrompt, { sessionId })
               decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
+              // A valid capability decision is already receipt-gated and is
+              // the authority for this interval. Some providers fail a later
+              // post-tool model step; that must not erase the accepted action.
+              if (decisions.length === 0) {
+                const terminalProviderState = terminalProviderStateFromEvents(result.events)
+                if (terminalProviderState.failure) {
+                  const providerFailure = terminalProviderState.failure
+                  return [{ kind: 'error', error: { code: providerFailure.code, message: providerFailureMessage(providerFailure.code), retryable: providerFailure.retryable } }]
+                }
+                // Compatibility only: text is never trusted directly. A
+                // complete envelope must pass the identical action validator,
+                // allowlist, context, revision and fact-ref authority path.
+                const recovered = recoverFinalResponseDecision(result.finalResponse, task)
+                if (recovered) return [recovered]
+                if (!terminalProviderState.present) {
+                  const providerAttemptFailure = providerAttemptFailureFromEvents(result.events)
+                  if (providerAttemptFailure) {
+                    return [{ kind: 'error', error: { code: providerAttemptFailure.code, message: providerFailureMessage(providerAttemptFailure.code), retryable: providerAttemptFailure.retryable } }]
+                  }
+                }
+              }
               if (decisions.length === 0) {
                 console.error(`[booking-copilot] empty planner decision (attempt ${attempt}):`, JSON.stringify({
                   finalResponse: result.finalResponse,
                   notifications: result.notifications ?? [],
                   events: result.events,
                 }).slice(0, 2000))
-                // Models answer in the text channel with a fully typed
-                // decision envelope; dropping it fails turns the model
-                // actually solved. Same validation path as tool calls.
-                const recovered = recoverFinalResponseDecision(result.finalResponse, task)
-                if (recovered) return [recovered]
               }
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error)
@@ -800,7 +947,7 @@ export async function createDshEmbeddedBookingPlanner(
               nextPrompt = 'Your previous response contained no booking capability tool call. Emit exactly one booking capability tool call for the request, matching its declared parameter schema.'
               continue
             }
-            return [{ kind: 'error', error: { code: 'PLANNER_TYPED_DECISION_REQUIRED', message: 'GoTry produced no typed capability decision; assistant prose was ignored.', retryable: true } }]
+            return [{ kind: 'error', error: { code: 'PLANNER_TYPED_DECISION_REQUIRED', message: 'GoTry produced no typed capability decision; assistant prose was ignored.', retryable: false } }]
           }
           return [{ kind: 'error', error: { code: 'PLANNER_ATTEMPT_BUDGET_EXHAUSTED', message: 'GoTry exhausted the planner attempt budget without a decision.', retryable: true } }]
         } finally { busy = false }

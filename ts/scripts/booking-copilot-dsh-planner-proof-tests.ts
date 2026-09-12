@@ -20,6 +20,7 @@ import {
   formatUtcOffsetLabel,
   type DshPlannerRunPort,
 } from '../src/booking-surface/dsh-planner.ts'
+import { normalizeBookingErrorCode, safeBookingErrorMessage } from '../src/booking-surface/error-codes.ts'
 
 const availability: import("../src/booking-surface/runtime.ts").BookingCopilotTaskState["availability"] = { initialized: true, recoveryStarted: false, availabilityPhase: 'need_offers' as const, activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [] }
 const task: BookingCopilotTaskState = {
@@ -293,15 +294,82 @@ const childEnv = buildDshPlannerEnvironment({
   LANG: 'en_US.UTF-8',
   LLM_API_KEY: 'model-key',
   LLM_BASE_URL: 'http://model.invalid/v1',
+  LLM_MODEL: 'model-v1',
   PORTAL_TOKEN: 'forbidden',
   HOTELBYTE_TOKEN: 'forbidden',
   GOTRY_BOOKING_COPILOT_API_KEY: 'bff-only',
 })
 assert.equal(childEnv.DEEPSEEK_API_KEY, 'model-key')
 assert.equal(childEnv.DEEPSEEK_BASE_URL, 'http://model.invalid/v1')
+assert.equal(childEnv.DEEPSEEK_MODEL, 'model-v1')
 assert.equal(childEnv.PORTAL_TOKEN, undefined)
 assert.equal(childEnv.HOTELBYTE_TOKEN, undefined)
 assert.equal(childEnv.GOTRY_BOOKING_COPILOT_API_KEY, undefined)
+
+const deepseekNamespaceWinsAtomically = buildDshPlannerEnvironment({
+  DEEPSEEK_API_KEY: 'deepseek-key',
+  LLM_API_KEY: 'llm-key',
+  LLM_BASE_URL: 'http://must-not-cross-mix.invalid/v1',
+  LLM_MODEL: 'must-not-cross-mix',
+  LLM_MAX_TOKENS: '4096',
+})
+assert.deepEqual(deepseekNamespaceWinsAtomically, {
+  DEEPSEEK_API_KEY: 'deepseek-key',
+}, 'the selected DEEPSEEK credential never borrows route fields from the LLM namespace')
+
+const completeDeepseekNamespaceWinsAtomically = buildDshPlannerEnvironment({
+  DEEPSEEK_API_KEY: 'deepseek-key',
+  DEEPSEEK_BASE_URL: 'http://deepseek-route.invalid/v1',
+  DEEPSEEK_MODEL: 'deepseek-model',
+  DEEPSEEK_MAX_TOKENS: '16384',
+  LLM_API_KEY: 'llm-key',
+  LLM_BASE_URL: 'http://llm-route.invalid/v1',
+  LLM_MODEL: 'llm-model',
+  LLM_MAX_TOKENS: '8192',
+})
+assert.deepEqual(completeDeepseekNamespaceWinsAtomically, {
+  DEEPSEEK_API_KEY: 'deepseek-key',
+  DEEPSEEK_BASE_URL: 'http://deepseek-route.invalid/v1',
+  DEEPSEEK_MODEL: 'deepseek-model',
+  DEEPSEEK_MAX_TOKENS: '16384',
+}, 'a complete DEEPSEEK tuple wins without mixing any LLM route field')
+
+const llmNamespaceMapsAtomically = buildDshPlannerEnvironment({
+  LLM_API_KEY: 'llm-key',
+  LLM_BASE_URL: 'http://llm-route.invalid/v1',
+  LLM_MODEL: 'llm-model',
+  LLM_MAX_TOKENS: '8192',
+})
+assert.deepEqual(llmNamespaceMapsAtomically, {
+  DEEPSEEK_API_KEY: 'llm-key',
+  DEEPSEEK_BASE_URL: 'http://llm-route.invalid/v1',
+  DEEPSEEK_MODEL: 'llm-model',
+  DEEPSEEK_MAX_TOKENS: '8192',
+}, 'the provider-neutral LLM route is mapped as one credential/base/model/budget tuple')
+
+assert.deepEqual(buildDshPlannerEnvironment({
+  PATH: '/usr/bin',
+  DEEPSEEK_BASE_URL: 'http://orphan-deepseek.invalid/v1',
+  DEEPSEEK_MODEL: 'orphan-deepseek-model',
+  LLM_BASE_URL: 'http://orphan-llm.invalid/v1',
+  LLM_MODEL: 'orphan-llm-model',
+}), { PATH: '/usr/bin' }, 'route fields without a credential never enter the planner subprocess')
+
+await assert.rejects(
+  createDshEmbeddedBookingPlanner({
+    env: { DEEPSEEK_API_KEY: 'model-key', DEEPSEEK_MAX_TOKENS: 'not-a-number' },
+  }),
+  /booking_planner_max_tokens_invalid/,
+  'invalid provider budgets fail at startup instead of reaching the model transport',
+)
+await assert.rejects(
+  createDshEmbeddedBookingPlanner({
+    provider: 'minimax-official',
+    env: { DEEPSEEK_API_KEY: 'model-key' },
+  }),
+  /booking_planner_model_required_for_nondefault_provider/,
+  'a non-default provider cannot inherit the DeepSeek catalog default model',
+)
 
 const textChannelPort: DshPlannerRunPort = {
   async run() {
@@ -562,8 +630,10 @@ const uiOffersDecisions = await uiOffers.plannerFactory(task).next({
 assert.equal(uiOffersDecisions[0]?.kind, "error", "foreign loadedOffers reach the payload without crashing the projection")
 await uiOffers.close()
 
+let plainProseRuns = 0
 const plainProsePort: DshPlannerRunPort = {
   async run() {
+    plainProseRuns += 1
     return { finalResponse: 'I would search hotels in Dubai for you.', events: [] }
   },
   async close() {},
@@ -580,7 +650,324 @@ const plainProseDecisions = await plainProse.plannerFactory(task).next({
     request: { text: 'Find hotels' },
   },
 })
-assert.equal(plainProseDecisions[0]?.kind, 'error', 'prose without a typed decision envelope is never executable')
+assert.equal(plainProseRuns, 3, 'genuine prose receives the bounded typed-decision correction budget')
+assert.deepEqual(plainProseDecisions[0], {
+  kind: 'error',
+  error: {
+    code: 'PLANNER_TYPED_DECISION_REQUIRED',
+    message: 'GoTry produced no typed capability decision; assistant prose was ignored.',
+    retryable: false,
+  },
+}, 'prose without a typed decision envelope is never executable or client-retryable')
+
+let authFailureRuns = 0
+const authFailure = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      authFailureRuns += 1
+      return {
+        finalResponse: '',
+        events: [{ type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'AUTH', status: 401, message: 'provider authentication failed' } } } }],
+        notifications: [{ method: 'session.event', params: {} }, { method: 'session.status', params: {} }],
+      }
+    },
+    async close() {},
+  },
+})
+const authFailureDecision = await authFailure.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-provider-auth', workspace, request: { text: 'Find hotels' } },
+})
+assert.equal(authFailureRuns, 1, 'provider AUTH failure fails closed without three empty-decision retries')
+assert.deepEqual(authFailureDecision[0], { kind: 'error', error: { code: 'PLANNER_PROVIDER_AUTH_FAILED', message: 'The planner provider rejected authentication.', retryable: false } })
+await authFailure.close()
+
+let quotaFailureRuns = 0
+const quotaFailure = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      quotaFailureRuns += 1
+      return {
+        finalResponse: '',
+        events: [{
+          type: 'assistant/attempt',
+          data: {
+            stream: [{
+              type: 'chunk',
+              time: 1,
+              chunk: { type: 'finish', reason: { kind: 'error', failure: { code: 'QUOTA', status: 429, message: 'provider quota exhausted' } } },
+            }],
+          },
+        }],
+        notifications: [{ method: 'session.event', params: {} }, { method: 'session.status', params: {} }],
+      }
+    },
+    async close() {},
+  },
+})
+const quotaFailureDecision = await quotaFailure.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-provider-quota', workspace, request: { text: 'Find hotels' } },
+})
+assert.equal(quotaFailureRuns, 1, 'provider QUOTA failure fails closed without three empty-decision retries')
+assert.deepEqual(quotaFailureDecision[0], { kind: 'error', error: { code: 'PLANNER_PROVIDER_QUOTA_EXHAUSTED', message: 'The planner provider quota is exhausted.', retryable: false } })
+await quotaFailure.close()
+
+let abortedFailureRuns = 0
+const abortedFailure = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      abortedFailureRuns += 1
+      return {
+        finalResponse: '',
+        events: [{
+          type: 'assistant/attempt',
+          data: {
+            stream: [{
+              type: 'chunk',
+              chunk: { type: 'finish', reason: { kind: 'aborted', failure: { code: 'TRANSPORT', message: 'provider stream aborted' } } },
+            }],
+          },
+        }],
+      }
+    },
+    async close() {},
+  },
+})
+const abortedFailureDecision = await abortedFailure.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-provider-aborted', workspace, request: { text: 'Find hotels' } },
+})
+assert.equal(abortedFailureRuns, 1, 'packed aborted provider failure fails closed without empty-decision retries')
+assert.deepEqual(abortedFailureDecision[0], { kind: 'error', error: { code: 'PLANNER_PROVIDER_UNAVAILABLE', message: 'The planner provider is temporarily unavailable.', retryable: true } })
+await abortedFailure.close()
+
+for (const fixture of [
+  {
+    name: 'rate-limit',
+    failure: { code: 'RATE_LIMIT', status: 429, message: 'provider rate limited' },
+    expected: { code: 'PLANNER_PROVIDER_RATE_LIMITED', message: 'The planner provider rate-limited the request.', retryable: true },
+  },
+  {
+    name: 'transport',
+    failure: { code: 'TRANSPORT', message: 'provider transport failed' },
+    expected: { code: 'PLANNER_PROVIDER_UNAVAILABLE', message: 'The planner provider is temporarily unavailable.', retryable: true },
+  },
+  {
+    name: 'empty-response',
+    failure: { code: 'EMPTY_RESPONSE', message: 'provider returned no content' },
+    expected: { code: 'PLANNER_PROVIDER_UNAVAILABLE', message: 'The planner provider is temporarily unavailable.', retryable: true },
+  },
+  {
+    name: 'malformed-response',
+    failure: { code: 'MALFORMED_RESPONSE', message: 'provider returned malformed data' },
+    expected: { code: 'PLANNER_PROVIDER_RESPONSE_INVALID', message: 'The planner provider returned an invalid response.', retryable: false },
+  },
+  {
+    name: 'invalid-response',
+    failure: { code: 'INVALID_RESPONSE', message: 'provider response failed validation' },
+    expected: { code: 'PLANNER_PROVIDER_RESPONSE_INVALID', message: 'The planner provider returned an invalid response.', retryable: false },
+  },
+  {
+    name: 'invalid-request',
+    failure: { code: 'INVALID_REQUEST', status: 400, message: 'provider rejected the request' },
+    expected: { code: 'PLANNER_PROVIDER_REQUEST_REJECTED', message: 'The planner provider rejected the model request.', retryable: false },
+  },
+  {
+    name: 'context-window',
+    failure: { code: 'CONTEXT_WINDOW_EXCEEDED', status: 400, message: 'provider context window exceeded' },
+    expected: { code: 'PLANNER_PROVIDER_REQUEST_REJECTED', message: 'The planner provider rejected the model request.', retryable: false },
+  },
+  {
+    name: 'unsupported-option',
+    failure: { code: 'UNSUPPORTED_OPTION', message: 'provider option unsupported' },
+    expected: { code: 'PLANNER_CONFIGURATION_INVALID', message: 'The planner provider configuration is invalid.', retryable: false },
+  },
+] as const) {
+  let runs = 0
+  const planner = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run() {
+        runs += 1
+        return {
+          finalResponse: '',
+          events: [{ type: 'turn/end', data: { reason: { kind: 'error', error: fixture.failure } } }],
+        }
+      },
+      async close() {},
+    },
+  })
+  const decision = await planner.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: `dsh-provider-${fixture.name}`, workspace, request: { text: 'Find hotels' } },
+  })
+  assert.equal(runs, 1, `provider ${fixture.name} failure is not mistaken for an empty decision`)
+  assert.deepEqual(decision[0], { kind: 'error', error: fixture.expected })
+  await planner.close()
+}
+
+const operationBeforeFailure = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          { type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: searchRun } }) } },
+          { type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'AUTH', status: 401, message: 'post-tool provider failure' } } } },
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+const operationBeforeFailureDecision = await operationBeforeFailure.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-operation-before-provider-failure', workspace, request: { text: 'Find hotels' } },
+})
+assert.deepEqual(operationBeforeFailureDecision, [{ kind: 'operation', action: searchRun }], 'a valid receipt-gated operation outranks a later provider failure')
+await operationBeforeFailure.close()
+
+const finalResponseBeforeTerminalFailure = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: JSON.stringify({ kind: 'operation', action: searchRun }),
+        events: [
+          { type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'AUTH', status: 401, message: 'terminal provider failure' } } } },
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+const finalResponseBeforeTerminalFailureDecision = await finalResponseBeforeTerminalFailure.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-final-response-before-terminal-failure', workspace, request: { text: 'Find hotels' } },
+})
+assert.deepEqual(
+  finalResponseBeforeTerminalFailureDecision,
+  [{ kind: 'error', error: { code: 'PLANNER_PROVIDER_AUTH_FAILED', message: 'The planner provider rejected authentication.', retryable: false } }],
+  'authoritative turn/end error outranks a compatibility finalResponse envelope',
+)
+await finalResponseBeforeTerminalFailure.close()
+
+for (const [name, malformedTerminal] of [
+  ['missing-reason', { type: 'turn/end', data: {} }],
+  ['missing-error', { type: 'turn/end', data: { reason: { kind: 'error' } } }],
+] as const) {
+  const malformedTerminalPlanner = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run() {
+        return {
+          finalResponse: JSON.stringify({ kind: 'operation', action: searchRun }),
+          events: [malformedTerminal],
+        }
+      },
+      async close() {},
+    },
+  })
+  const malformedTerminalDecision = await malformedTerminalPlanner.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: `dsh-malformed-terminal-${name}`, workspace, request: { text: 'Find hotels' } },
+  })
+  assert.deepEqual(
+    malformedTerminalDecision,
+    [{ kind: 'error', error: { code: 'PLANNER_FAILED', message: 'The planner request failed at the typed runtime boundary.', retryable: false } }],
+    `malformed terminal ${name} fails closed before compatibility finalResponse recovery`,
+  )
+  await malformedTerminalPlanner.close()
+}
+
+const recoveredAfterTransientAttempt = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: JSON.stringify({ kind: 'operation', action: searchRun }),
+        events: [
+          {
+            type: 'assistant/attempt',
+            data: { stream: [{ type: 'chunk', chunk: { type: 'finish', reason: { kind: 'aborted', failure: { code: 'RATE_LIMIT', status: 429, message: 'recovered attempt' } } } }] },
+          },
+          { type: 'turn/end', data: { reason: { kind: 'completed' } } },
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+const recoveredAfterTransientAttemptDecision = await recoveredAfterTransientAttempt.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-recovered-provider-attempt', workspace, request: { text: 'Find hotels' } },
+})
+assert.deepEqual(recoveredAfterTransientAttemptDecision, [{ kind: 'operation', action: searchRun }], 'a completed turn ignores an earlier recovered provider attempt failure')
+await recoveredAfterTransientAttempt.close()
+
+const recoveredWithoutTerminalEvent = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: JSON.stringify({ kind: 'operation', action: searchRun }),
+        events: [
+          {
+            type: 'assistant/attempt',
+            data: { stream: [{ type: 'chunk', chunk: { type: 'finish', reason: { kind: 'error', failure: { code: 'RATE_LIMIT', status: 429, message: 'truncated capture' } } } }] },
+          },
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+const recoveredWithoutTerminalEventDecision = await recoveredWithoutTerminalEvent.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-recovered-without-terminal-event', workspace, request: { text: 'Find hotels' } },
+})
+assert.deepEqual(
+  recoveredWithoutTerminalEventDecision,
+  [{ kind: 'operation', action: searchRun }],
+  'a fully validated compatibility envelope outranks an attempt failure when the SDK capture has no terminal event',
+)
+await recoveredWithoutTerminalEvent.close()
+
+let proseAfterTransientAttemptRuns = 0
+const proseAfterTransientAttempt = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      proseAfterTransientAttemptRuns += 1
+      return {
+        finalResponse: 'I recovered but still emitted no tool call.',
+        events: [
+          {
+            type: 'assistant/attempt',
+            data: { stream: [{ type: 'chunk', chunk: { type: 'finish', reason: { kind: 'error', failure: { code: 'EMPTY_RESPONSE', message: 'recovered attempt' } } } }] },
+          },
+          { type: 'turn/end', data: { reason: { kind: 'completed' } } },
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+const proseAfterTransientAttemptDecision = await proseAfterTransientAttempt.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-prose-after-provider-attempt', workspace, request: { text: 'Find hotels' } },
+})
+assert.equal(proseAfterTransientAttemptRuns, 3)
+assert.equal(proseAfterTransientAttemptDecision[0]?.kind === 'error' ? proseAfterTransientAttemptDecision[0].error.code : '', 'PLANNER_TYPED_DECISION_REQUIRED', 'a completed prose-only turn is not relabelled with a stale attempt failure')
+await proseAfterTransientAttempt.close()
+
+for (const [code, message] of [
+  ['PLANNER_PROVIDER_AUTH_FAILED', 'The planner provider rejected authentication.'],
+  ['PLANNER_PROVIDER_QUOTA_EXHAUSTED', 'The planner provider quota is exhausted.'],
+  ['PLANNER_PROVIDER_RATE_LIMITED', 'The planner provider rate-limited the request.'],
+  ['PLANNER_PROVIDER_UNAVAILABLE', 'The planner provider is temporarily unavailable.'],
+  ['PLANNER_PROVIDER_REQUEST_REJECTED', 'The planner provider rejected the model request.'],
+  ['PLANNER_PROVIDER_RESPONSE_INVALID', 'The planner provider returned an invalid response.'],
+  ['PLANNER_CONFIGURATION_INVALID', 'The planner provider configuration is invalid.'],
+] as const) {
+  assert.equal(normalizeBookingErrorCode(code.toLowerCase()), code, `${code} survives the closed error-code registry`)
+  assert.equal(safeBookingErrorMessage(code), message, `${code} has a non-provider-authored safe message`)
+}
 
 const forbiddenPort: DshPlannerRunPort = {
   async run() {
