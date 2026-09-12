@@ -1,10 +1,11 @@
 /**
  * sf live benchmark 挑战截断离线 E2E(issue #411,RFC §3.5 挑战红线)。
  *
- * 真实 CLI 路径:spawn 真 runner(scripts/sf-live-benchmark.ts,经 tsx),只在 /tmp
+ * 真实 CLI 路径:spawn 真 runner(scripts/sf-live-benchmark.ts,Node24 原生 type stripping),只在 /tmp
  * overlay 副本里把 capabilities/session-search.ts 替换为脚本化确定性响应——
  *   challenge@all  首条即 challenged → 期望整批在 1 次调用后截断;
  *   challenge@2    首条 hit、第二条 challenged → 期望 2 次调用后截断;
+ *   challenge@8    前七条 hit、第八条 challenged → 8 条证据齐全但仍非完整批次;
  *   hit@all        普通 8 条批次 → 期望跑满且 sf-summary 仍标完整/有效校准。
  * comparator(flyai CLI)经 PATH shim(npx 即败 + 计数)证明「停止后不再调用」;
  * globalThis.fetch 陷阱兜底断言零网络。HOME/evidence root 全部临时,零真实
@@ -12,7 +13,7 @@
  *
  * 同时断言:challenged 的结构化语义(session.verdict / doubleSource=challenge_stop /
  * no_spend_stop)不被改写;部分批次落盘 stop_reason + attempted/not_attempted 清单;
- * sf-summary 对缺七条的批次 status=fail_closed(不标完整/有效校准)。
+ * sf-summary 对挑战批次 status=fail_closed(即使 8 条证据齐全也不标完整/有效校准)。
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -131,7 +132,12 @@ globalThis.fetch = async (...args) => {
 }
 `)
   const timerPreload = join(base, 'timer-preload.mjs')
-  writeFileSync(timerPreload, `globalThis.setTimeout = (callback, _delay, ...args) => { callback(...args); return 0 }\n`)
+  writeFileSync(timerPreload, `const nativeSetTimeout = globalThis.setTimeout
+globalThis.setTimeout = (callback, delay, ...args) => {
+  if (delay === 35000) return nativeSetTimeout(callback, 0, ...args)
+  return nativeSetTimeout(callback, delay, ...args)
+}
+`)
 
   return {
     base,
@@ -154,7 +160,6 @@ interface RunOutcome {
 
 function runRunner(overlay: Overlay, golden: string, script: string): RunOutcome {
   const result = spawnSync(process.execPath, [
-    join(overlay.ts, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
     join(overlay.ts, 'scripts', 'sf-live-benchmark.ts'),
     `--golden=${golden}`,
   ], {
@@ -194,7 +199,6 @@ function readRecord(overlay: Overlay, queryId: string): Record<string, unknown> 
 /** 跑 overlay 里的真 sf-summary,返回(stdout, 解析后的 summary JSON) */
 function runSfSummary(overlay: Overlay): { status: number | null; stdout: string; summary: Record<string, unknown> } {
   const result = spawnSync(process.execPath, [
-    join(overlay.ts, 'node_modules', 'tsx', 'dist', 'cli.mjs'),
     join(overlay.ts, 'scripts', 'sf-summary.ts'),
     '--evidence-root', overlay.evidenceRoot,
   ], {
@@ -310,7 +314,56 @@ function scenario(name: string): Overlay {
   }
 }
 
-// ── C. 普通八条批次:全 hit → 跑满,sf-summary 仍标完整/有效校准(既有契约) ──
+// ── C. 末条 challenge:八条证据齐全,仍必须 batch_complete=false 且 summary fail_closed ──
+{
+  const overlay = scenario('last-challenge')
+  try {
+    const run = runRunner(overlay, 'flyai', 'challenge@8')
+    assert.equal(run.status, 0, `末条挑战应正常收尾(exit 0),stderr=${run.stderr}`)
+    assert.match(run.stdout, /stop reason: challenge_stop/)
+    assert.match(run.stdout, /attempted=\[sf-01,sf-02,sf-03,sf-04,sf-05,sf-06,sf-07,sf-08\]/)
+    assert.match(run.stdout, /not_attempted=\[\]/)
+    assert.equal(readLines(overlay.sessionCallCounter).length, 8, '末条 challenged 后 session 应恰调用 8 次')
+    assert.equal(readLines(overlay.npxCounter).length, 8, '末条 challenged 后 comparator 应恰调用 8 次')
+    assertZeroNetwork(overlay)
+
+    const challengedRecord = readRecord(overlay, 'sf-08') as {
+      session: { verdict: string }
+      sessionVerdict: string
+      doubleSource: { state: string; quota_disposition: string }
+    }
+    assert.equal(challengedRecord.session.verdict, 'challenged')
+    assert.equal(challengedRecord.sessionVerdict, 'challenged')
+    assert.equal(challengedRecord.doubleSource.state, 'challenge_stop')
+    assert.equal(challengedRecord.doubleSource.quota_disposition, 'no_spend_stop')
+
+    const summary = readRunSummary(overlay) as {
+      total: number
+      batch_complete: boolean
+      stop_reason: string
+      attempted_query_ids: string[]
+      not_attempted_query_ids: string[]
+    }
+    assert.equal(summary.total, 8)
+    assert.equal(summary.batch_complete, false)
+    assert.equal(summary.stop_reason, 'challenge_stop')
+    assert.deepEqual(summary.attempted_query_ids, EXPECTED_QUERY_IDS)
+    assert.deepEqual(summary.not_attempted_query_ids, [])
+
+    const sfSummary = runSfSummary(overlay)
+    assert.equal(sfSummary.status, 1, `完整证据但挑战批次必须 fail_closed,stdout=${sfSummary.stdout}`)
+    assert.equal(sfSummary.summary.status, 'fail_closed')
+    assert.equal(sfSummary.summary.total, 8)
+    assert.deepEqual(sfSummary.summary.missing_query_ids, [])
+    assert.equal(sfSummary.summary.challenge_stop_detected, true)
+    assert.ok((sfSummary.summary.errors as string[]).some((error) => error.includes('challenge/guard stop evidence')))
+    console.log('C. 末条 challenge 截断 OK(8 条证据/0 未尝试/8+8 请求/fail_closed)')
+  } finally {
+    rmSync(overlay.base, { recursive: true, force: true })
+  }
+}
+
+// ── D. 普通八条批次:全 hit → 跑满,sf-summary 仍标完整/有效校准(既有契约) ──
 {
   const overlay = scenario('normal-batch')
   try {
@@ -340,10 +393,10 @@ function scenario(name: string): Overlay {
     assert.equal(sfSummary.summary.status, 'ok')
     assert.equal(sfSummary.summary.total, 8)
     assert.equal(sfSummary.summary.challenge_stop_detected, false)
-    console.log('C. 普通八条批次保留 OK(sf-summary 仍 ok/完整)')
+    console.log('D. 普通八条批次保留 OK(sf-summary 仍 ok/完整)')
   } finally {
     rmSync(overlay.base, { recursive: true, force: true })
   }
 }
 
-console.log('\nSF LIVE CHALLENGE STOP TESTS: 3 scenarios OK (first-challenge / mid-challenge / normal-batch; offline, temp roots, request counts asserted)')
+console.log('\nSF LIVE CHALLENGE STOP TESTS: 4 scenarios OK (first-challenge / mid-challenge / last-challenge / normal-batch; offline, temp roots, request counts asserted)')

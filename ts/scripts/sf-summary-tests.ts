@@ -9,7 +9,6 @@ import { EXPECTED_QUERY_IDS } from './sf-summary.ts'
 
 const tsRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = join(tsRoot, 'scripts', 'sf-summary.ts')
-const tsxPath = join(tsRoot, 'node_modules', '.bin', 'tsx')
 
 function record(queryId: string, batch: string, startedAt: string, source: 'manual' | 'static' | 'unknown', verdict: 'hit' | 'error' = 'hit'): Record<string, unknown> {
   const isStatic = source === 'static'
@@ -55,7 +54,7 @@ function writeBatch(root: string, filename: string, batch: string, source: 'manu
 
 function runCli(root: string): { exit: number; output: string; summary: Record<string, any> } {
   mkdirSync(join(root, 'home'), { recursive: true })
-  const result = spawnSync(process.execPath, [tsxPath, cliPath, '--evidence-root', root], {
+  const result = spawnSync(process.execPath, [cliPath, '--evidence-root', root], {
     cwd: tsRoot,
     encoding: 'utf8',
     env: {
@@ -155,9 +154,9 @@ try {
   assert.ok(legacy.summary.unknown_batch_records.some((item: any) => item.file === 'sf-01/legacy.json'))
   assert.equal(legacy.summary.records.find((item: any) => item.query_id === 'sf-01').batch_id, '2026-09-13T10-00-00-000Z')
 
-  // Challenge-truncated partial batch (issue #411/RFC §3.5): missing five entries means never marked
-  // complete/valid calibration (status=fail_closed), with a challenge_stop_detected annotation;
-  // old evidence where session.verdict was rewritten to error is still recognized via top-level sessionVerdict.
+  // A complete eight-record batch with structured challenge, legacy top-level challenged, and guard
+  // evidence must still fail closed; zero missing IDs prevents missing-record errors from masking the
+  // new challenge/guard error condition.
   const challengeRoot = freshRoot()
   roots.push(challengeRoot)
   const challengeBatch = '2026-09-14T10-00-00-000Z.json'
@@ -178,12 +177,17 @@ try {
     session: { verdict: 'error', price: 0, route_segments: [], fetched_at: '2026-09-14T10:00:04.000Z' },
     doubleSource: { state: 'guard_violation', quota_disposition: 'no_spend_stop', mismatches: [] },
   })
+  EXPECTED_QUERY_IDS.slice(4).forEach((queryId, index) => {
+    const second = (index + 5).toString().padStart(2, '0')
+    writeJson(challengeRoot, queryId, challengeBatch, record(queryId, 'challenge-batch', `2026-09-14T10:00:${second}.000Z`, 'manual', 'hit'))
+  })
   const challenge = runCli(challengeRoot)
   assert.equal(challenge.exit, 1, challenge.output)
   assert.equal(challenge.summary.status, 'fail_closed')
   assert.equal(challenge.summary.challenge_stop_detected, true)
-  assert.equal(challenge.summary.total, 4)
-  assert.equal(challenge.summary.missing_query_ids.length, 4)
+  assert.equal(challenge.summary.total, 8)
+  assert.deepEqual(challenge.summary.missing_query_ids, [])
+  assert.ok(challenge.summary.errors.some((error: string) => error.includes('challenge/guard stop evidence')))
 
   console.log('SF SUMMARY CLI E2E: coherent filename batch, chronology, source provenance, missing/corrupt fail-closed, legacy unknown, old/new isolation, and challenge-partial fail-closed OK')
 } finally {
