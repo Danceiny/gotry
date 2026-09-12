@@ -1980,10 +1980,10 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   registerGuarded(defineTool({
     name: 'gotry_artifacts_list',
     description:
-      'List GoTry artifacts — deep-planning deliverables (async runs from the state ledger) plus agent-written markdown files ' +
-      'in the working directory (trip plans etc.). READ-ONLY discovery. ' +
+      'List GoTry artifacts — deep-planning deliverables (async runs from the state ledger) plus agent-written markdown/HTML itinerary files ' +
+      'in the working directory (trip plans as .md, .html or .htm). READ-ONLY discovery. ' +
       'Use when the user asks to see/open/revisit a previously generated artifact ' +
-      '(「看看刚才生成的行程」「上次的规划在哪」「打开那个 md」) — list first, then read with gotry_artifacts_read.',
+      '(「看看刚才生成的行程」「上次的规划在哪」「打开那个 md／html」) — list first, then read with gotry_artifacts_read.',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
       limit: { type: 'integer', description: '最多返回条数,默认 20' },
@@ -2011,7 +2011,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         `- [${a.source}] ${a.title}${a.status ? `(${a.status})` : ''} — ${a.path}${a.updated ? ` @ ${a.updated.slice(0, 16).replace('T', ' ')}` : ''}`)
       const summary = r.artifacts.length
         ? `在册产物 ${r.artifacts.length}/${r.total} 项${r.truncated ? '(截断,可加 limit)' : ''}:\n${lines.join('\n')}`
-        : '无在册产物(异步深度规划交付与工作目录 md 文件都会出现在这里)'
+        : '无在册产物(异步深度规划交付与工作目录 md/html 文件都会出现在这里)'
       return JSON.parse(JSON.stringify({ ok: true, artifacts: r.artifacts, total: r.total, truncated: r.truncated, summary })) as Record<string, never>
     },
     // Host presentationMeta remains persisted with the ToolResult for Host-side
@@ -2041,7 +2041,8 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       'Read one GoTry artifact as a line-numbered file view rendered directly in the chat UI. ' +
       'Input: the path from gotry_artifacts_list, or a bare async ticket id (e.g. dp-xxxx). ' +
       'Optional offset (1-based) / limit window for paging large files. ' +
-      'READ-ONLY; text artifacts only (md/txt/json/jsonl/csv/log/yaml).',
+      'READ-ONLY; text artifacts only (md/txt/json/jsonl/csv/log/yaml/html/htm). ' +
+      'HTML/HTM is returned as source text for preview only — scripts, inline event handlers and remote loads are never executed or fetched.',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;path required → 宿主权入口拒畸形参数(同 flyai/hotel 刀法)
     parameters: {
       path: { type: 'string', required: true, description: 'list 返回的路径或工单 id' },

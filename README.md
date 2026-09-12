@@ -79,6 +79,8 @@ External-event integration is still inert by default: the #432 W2A `w2a/0.1` ada
 
 Persisted channel-health events also drive routing advice: the six non-hit tool results read the latest persisted health state at the tool-result boundary and exclude a channel named by either the in-session verdict state or the persisted down set. Rows with missing, unparseable, future, or retention-expired timestamps are dropped before latest-wins, so a bad row cannot hide an earlier valid down; only `down` adds a persisted exclusion (`cooldown` stays a pacing state, and recovery or expiry only ceases the exclusion), and none of it clears an in-session failure. The static persona routing card is unchanged.
 
+Artifact discovery now covers HTML itinerary files: `gotry_artifacts_list` finds top-level `.md` / `.html` / `.htm` in the working directory case-insensitively (same mtime ordering, per-source limit and truncation semantics as before), and `gotry_artifacts_read` returns `.html` / `.htm` as source text — `lang: html`, original line numbers, full-content fingerprint and paging, under the same path/size guards. Nothing is parsed or executed: scripts, inline event handlers and remote loads are never run or fetched, and the web client keeps rendering these lines as plain React text. This is source preview only — interactive itinerary rendering remains #438.
+
 ## Demo
 
 https://github.com/user-attachments/assets/6628c254-eba1-4017-a883-c70d22616939

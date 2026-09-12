@@ -72,4 +72,53 @@ assert.equal(malformedTree.props['data-gotry-artifact-state'], 'ok')
 
 const requireRoot = createRequire(join(ROOT, 'package.json'))
 assert.ok(requireRoot.resolve('./client/client.js'))
-console.log('ARTIFACT CLIENT CONTRACT: package export + web manifest + lazy loader + 2 keyed views + malformed fallback OK')
+
+// issue #441: an HTML artifact is previewed as source text only. The client half
+// must not gain a raw-HTML injection API or an embedded browsing context.
+for (const banned of ['dangerouslySetInnerHTML', 'innerHTML', 'outerHTML', 'insertAdjacentHTML', 'srcdoc', 'iframe', 'document.write', 'eval(']) {
+  assert.ok(!source.includes(banned), `client bundle must not use ${banned}`)
+}
+
+const textNodes: string[] = []
+const elementTypes: unknown[] = []
+const forbiddenProps: string[] = []
+function walkTree(node: unknown): void {
+  if (typeof node === 'string') { textNodes.push(node); return }
+  if (Array.isArray(node)) { for (const child of node) walkTree(child); return }
+  const item = node as { type?: unknown; props?: Record<string, unknown>; children?: unknown[] } | null
+  if (!item || typeof item !== 'object') return
+  elementTypes.push(item.type)
+  for (const key of ['dangerouslySetInnerHTML', 'innerHTML', 'outerHTML', 'srcdoc']) {
+    if (key in (item.props ?? {})) forbiddenProps.push(key)
+  }
+  for (const child of item.children ?? []) walkTree(child)
+}
+
+const hostileLines = [
+  '<script>globalThis.__gotry441Pwned = true</script>',
+  '<img src=x onerror="globalThis.__gotry441Pwned = true">',
+  '<iframe src="https://example.invalid/track"></iframe>',
+  '<a href="javascript:globalThis.__gotry441Pwned=true">点击</a>',
+]
+const hostileTree = view({
+  toolName: 'gotry_artifacts_read',
+  block: {
+    kind: 'tool-result',
+    isError: false,
+    meta: {
+      path: '/tmp/trip-2027.html', offset: 1, totalLines: hostileLines.length, lang: 'html',
+      source: 'cwd', version: 'a1b2c3d4e5f6',
+      lines: hostileLines.map((text, index) => ({ number: index + 1, text })),
+    },
+    content: [],
+  },
+})
+assert.equal(hostileTree.props['data-gotry-artifact-card'], 'read')
+assert.equal(hostileTree.props['data-gotry-artifact-state'], 'ok')
+walkTree(hostileTree)
+assert.deepEqual(forbiddenProps, [], `预览树不得出现 raw HTML 注入 props,实际 ${forbiddenProps.join(',')}`)
+assert.ok(!elementTypes.includes('iframe'), '预览树不得创建 iframe')
+for (const line of hostileLines) {
+  assert.ok(textNodes.includes(line), `HTML 源码行必须以文本节点原样呈现:${line}`)
+}
+console.log('ARTIFACT CLIENT CONTRACT: package export + web manifest + lazy loader + 2 keyed views + malformed fallback + HTML source-as-text OK')

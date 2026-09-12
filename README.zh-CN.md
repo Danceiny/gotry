@@ -79,6 +79,8 @@ flowchart LR
 
 持久 channel-health 事件现已接入 routing 建议：六个非 hit 工具结果在工具结果边界读取最新持久健康状态，会话 verdict 状态与持久 down 集合取并集排除通道。缺失、不可解析、未来或已过保留期的时间戳行在 latest-wins 覆盖前丢弃，坏行不得顶掉更早的有效 down；只有 `down` 会新增持久排除（`cooldown` 仍是节律态，恢复或过期只是解除该排除），且都不解除本会话刚发生的失败。静态 persona 路由卡不变。
 
+产物发现现覆盖 HTML 行程文件：`gotry_artifacts_list` 以大小写不敏感方式发现工作目录顶层的 `.md`／`.html`／`.htm`（mtime 排序、各源 limit 与截断语义与既有 md 完全一致），`gotry_artifacts_read` 把 `.html`／`.htm` 作为源码文本返回——`lang: html`、原始行号、全文指纹与分页，走同一组路径／大小护栏。全程不解析、不执行：脚本、内联事件处理器与远程加载一律不运行、不抓取，Web 客户端仍以纯 React 文本节点渲染这些行。本切片只做源码预览——交互式行程渲染仍归 #438。
+
 ## 一段对话
 
 https://github.com/user-attachments/assets/6d537bb7-7992-4cc7-8e89-6f111ef6793b
