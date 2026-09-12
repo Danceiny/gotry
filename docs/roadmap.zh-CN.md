@@ -233,14 +233,16 @@ rc 序列总览（细节见 release-notes.md，版本历史归 git）：
 - **Entry**：M5 exit + P6 founder 明确批准。P6 draft 见 `milestones/m6-b2b-reuse-walkthrough.md`，当前尚未获批准；P6 批准不等于 M6 Entry，M5 Exit 仍是硬前置。tenant ledger/CLI 与 Z3/map 稳定性基座已入 main，#227/#241/#242 已关闭。**交付**：traveler principal/sponsor/BFF 三主体隔离与插件披露，一个旅行社主场景（目的地文旅为辅）在固定冻结 `kernel-set` 零 diff 下跑通；runtime 实际加载 coverage 与预声明功能路径 coverage 分开证明，loaded LOC ratio 仅作附属指标；实现 issue #234/#235。备产结构性进展（2026-09-11）：#235 sponsor 插件契约面已以纯函数入 main（`ts/capabilities/sponsor-plugin.ts`，run-all §64），以零内核 diff + C 端隔离证明同内核端到端复用——默认关、零真实调用、非运行时激活；运行激活与真实 B2B 路径仍在本 Entry 门后，内核清单归 #234。
 - **Exit**：工程半面为固定 `kernel-set` diff=0、runtime 实际加载 coverage、预声明功能路径 coverage 与旅行社嵌入 E2E；商业半面必须有真实 B2B 试点签约。未签原因只能解释整体仍为 TODO，不能替代签约。
 
-## 最短路径：现在 → M3 exit
+## 当前行动：M3 → M6 真实证据
 
 ```
-你:remote 目标 + License 两个决策      ← 发布闸④⑤,种子用户的前置(发布 owner 等这两个答案)
-你:种子用户邀请(发起人即首个用户)      ← ./gotry 即入口(v0.0.1-rc2)
-工程:D-7 迁移(候选形态进 TS unified,清除洱海路由 hack)→ 指标面板(ADR-11 质量层)(第一切片 2026-09-05 已落地:只读聚合呈现面 v1,#138;持续观测/可视化待后续切片)
-Round 9(2026-09-06):治理面预算可配 + LLM_MODEL 输出上限钉死;治疗首次全链路存活(#100/#102)
+你:M3 种子 cohort 证据        ← tracker #22(真实种子 cohort 邀请数据,不是发布决策)
+你:M4 repeat-cohort 证据      ← tracker #20(真实 observed_private N≥5 repeat cohort + 人工 source-review attestation)
+工程:M5 供应协议/内部授权 + #231/#232/#233 WriteGate 生产化   ← tracker #136 控制准入
+工程:M6 P6 founder 批准 + 真实 B2B 试点 + #234/#235 kernel/sponsor 证明   ← tracker #137 控制准入
 ```
+
+剩余结局:一份 #137 下的真实签约试点,不是一个发布版本。已授权的并行工程(记忆/WriteGate/sponsor)不构成准入;各准入门仍归各自的公开 tracker。
 
 ## 旧模型映射（归并即退役）
 
