@@ -3,18 +3,18 @@
     "repository": {
       "pullRequest": {
         "closingIssuesReferences": {
-          "totalCount": 2,
-          "pageInfo": { "hasNextPage": false, "endCursor": null },
+          "totalCount": 5,
+          "pageInfo": { "hasNextPage": true, "endCursor": "Y3Vyc29yOnYyOpHOAABmEQ==" },
           "nodes": [
             {
-              "number": 20,
+              "number": 411,
               "repository": {
                 "name": "gotry",
                 "owner": { "login": "Danceiny" }
               }
             },
             {
-              "number": 411,
+              "number": 413,
               "repository": {
                 "name": "gotry",
                 "owner": { "login": "Danceiny" }
