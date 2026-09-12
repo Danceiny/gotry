@@ -2,6 +2,8 @@
 
 # GoTry Roadmap（唯一时间线）
 
+当前说明：Issue 411 forward 修复将 session benchmark 生产节律保持为 35 秒；挑战／守卫截断批次统一 fail-closed，只有正常完成八条查询的批次才是 `batch_complete`。
+
 > 定位：**从今天到愿景的唯一里程碑序列**。已有的三套阶段模型（architecture 的 Stage 0-4、总纲的 Phase 0-3、产品设计的 M1-M3）全部归并映射到本文的 M0-M6，旧模型降级为引用。
 > 每个里程碑：进入/退出条件、交付物、gate（谁拍板）、依赖。**当前位置用 ← 标注。**
 > 状态细节仍以 `architecture.md` §9-10 为准；本文只管时间与顺序。
@@ -36,7 +38,7 @@
  - **#194 A-轨道 GoTry 缓解（2026-09-10）**：在 dsh jobs tool 进入 registry 前增加 typed `tools/pre-execute` direct-child guard；continuable durable id 返回 completion notice/`list_agents`/`send_message` 恢复指引，非 owner/one-shot/未命中保留原生 jobs 错误。上游 dsh unknown-id 通用 recoverable contract 仍开放，不改 vendor、不关闭 issue；验证入口为 `ts/scripts/issue-194-job-id-guard-tests.ts`。
 
 - **#279 携程机票 malformed 响应闸（2026-09-10）**：合法空列表= `miss`，有效命中= `hit`，未知/畸形形状= `error`；兼容 `parseBatchSearch` 永不抛错，扩展/CDP 均不把 parser error 伪装成 miss。隔离扩展 fixture 仅证明本地解析/编排，不满足 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission。
-- **#411 sf live benchmark 挑战即停（2026-09-12）**：sf-01..08 live 批次在首个 `challenged`／`guard_violation` 即停（RFC §3.5——不重试、不绕过，后续 session 与 comparator 在结构上不可再被调用），保留曾被 verdict 改写丢掉的 `challenge_stop`／`no_spend_stop` 语义，并落盘可审阅的部分批次（`stop_reason`、已尝试／未尝试清单）；`sf-summary` 经 `challenge_stop_detected` 把此类批次标为 fail-closed。回归 run-all §44c：真实 CLI runner + 确定性 session 模块 overlay，三场景（首条挑战／中途挑战／完整八条批次）输出结构与请求计数同时断言，临时根零网络；#272 live 校准不变。
+- **#411 sf live benchmark 挑战即停（2026-09-12）**：sf-01..08 live 批次在首个 `challenged`／`challenge_stop`／`guard_violation` 即停（RFC §3.5——不重试、不绕过，后续 session 与 comparator 在结构上不可再被调用），保留结构化语义，并落盘 `stop_reason`、`batch_complete` 与已尝试／未尝试清单。挑战／守卫终止即使八条记录齐全也将 `batch_complete` 置为 false；`sf-summary` 对选中挑战／守卫证据（包括 legacy 顶层 `sessionVerdict`）fail-closed。回归 run-all §44c 覆盖首条／中途／末条挑战与完整八条批次，并同时断言输出、落盘 JSON、请求计数、临时根和零网络；生产节律保持 35 秒，#272 live 校准不变。
  - **Issue #343 IANA timezone behavior**:flight-pack v2 resolves explicit IANA zones and local dates to UTC instants, rejects unknown zones and DST gaps/overlaps, and uses UTC instants for elapsed duration. The dsh/mock adapter path retains the v2 pack `homeZone`; profiles supply schedule only, explicit vacation removes the trip work-window restriction, and numeric v1 behavior remains compatible. This deterministic contract does not prove live schedules, prices, availability, or inventory; see [`docs/data-sources.md`](data-sources.zh-CN.md).
   - **#352 FlyAI malformed 响应闸（2026-09-10）**：精确空 `data.itemList: []` 保持 `miss`；机/火/酒店非空列表任一 item typed 校验失败即整体返回结构化 `error`，丢弃有效 sibling 且不生成负库存事实；仅完整合法列表返回 `hit`。`flyai-tests.ts` 为隔离假 CLI/production effect/fact sidecar 的离线工程 proof，不构成真实 provider/UAT 或 issue closure。
 
