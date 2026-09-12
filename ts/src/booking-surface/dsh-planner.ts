@@ -408,11 +408,11 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   const action = decision.action as unknown as BookingReadAction
   const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
   if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) {
-    console.error(`[booking-copilot] raw invalid decision (capability mismatch):`, JSON.stringify({ tool: name, actionKind: action.kind }).slice(0, 200))
-    throw new Error(`planner_capability_action_mismatch:${name}:${action.kind}`)
+    invalidDecisionLog('capability_action_mismatch')
+    throw new Error('planner_capability_action_mismatch')
   }
   if (!task.allowedActions.includes(action.kind)) {
-    console.error(`[booking-copilot] raw invalid decision (surface policy):`, JSON.stringify({ actionKind: action.kind, allowed: task.allowedActions }).slice(0, 300))
+    invalidDecisionLog('surface_action_unsupported', { allowedActionCount: task.allowedActions.length })
     throw new Error('planner_surface_action_unsupported')
   }
   if (action.contextRef !== task.contextRef) throw new Error('planner_context_mismatch')

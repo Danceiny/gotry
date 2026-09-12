@@ -1387,9 +1387,11 @@ for (const [surface, taskId, allowedActions, hint] of [
 
 // Runtime/planner exceptions are always a non-empty typed error SSE event;
 // neither an unsupported operation nor raw planner text becomes durable.
+const serverLogSecretMarker = 'ISSUE_3580_PROVIDER_SDK_SECRET_MUST_NOT_BE_LOGGED'
 for (const [label, plannerFactory, expectedCode] of [
   ['runtime-unsupported-action', () => ({ next: async () => [{ kind: 'operation' as const, action: { ...action('disallowed-http-action'), kind: 'offers.query' as const, input: { hotelRefs: ['hotel-a'], criteria: {} } } }] }), 'UNSUPPORTED_ACTION'],
   ['planner-surface-unsupported', () => ({ next: async () => { throw new Error('planner_surface_action_unsupported: raw internal detail') } }), 'PLANNER_SURFACE_ACTION_UNSUPPORTED'],
+  ['planner-provider-secret', () => ({ next: async () => { throw new Error(`provider SDK response ${serverLogSecretMarker}`) } }), 'PLANNER_FAILED'],
 ] as const) {
   const errorRoot = mkdtempSync(join(tmpdir(), `gotry-booking-v2-${label}-`))
   const errorLedger = ensureLedger(errorRoot)
@@ -1408,12 +1410,23 @@ for (const [label, plannerFactory, expectedCode] of [
     },
   })
   const errorTurn = { ...turn(errorTaskId), workspace: { ...workspace(), capabilities: { surface: 'tenant', allowedActions: ['search.run'] } } }
-  const errorResponse = await fetch(`http://127.0.0.1:${errorServer.port}/a2a/booking-copilot/turn`, { method: 'POST', headers: { ...headers, authorization: `Bearer ${label}-key` }, body: JSON.stringify(errorTurn) })
+  const serverErrorLogs: string[] = []
+  const originalServerConsoleError = console.error
+  const errorResponse = await (async () => {
+    try {
+      console.error = (...args: unknown[]) => { serverErrorLogs.push(args.map((value) => String(value)).join(' ')) }
+      return await fetch(`http://127.0.0.1:${errorServer.port}/a2a/booking-copilot/turn`, { method: 'POST', headers: { ...headers, authorization: `Bearer ${label}-key` }, body: JSON.stringify(errorTurn) })
+    } finally {
+      console.error = originalServerConsoleError
+    }
+  })()
   assert.equal(errorResponse.status, 200, `${label} keeps the committed SSE status while returning a typed error`)
   const errorBody = await errorResponse.text()
   assert.match(errorBody, /event: error/, `${label} never returns an empty SSE body`)
   assert.match(errorBody, new RegExp(`"code":"${expectedCode}"`), `${label} normalizes to the closed uppercase code`)
   assert.doesNotMatch(errorBody, /raw internal detail/, `${label} does not expose internal error text`)
+  assert.equal(serverErrorLogs.some((line) => line.includes(expectedCode)), true, `${label} stderr retains the closed diagnostic code`)
+  assert.equal(serverErrorLogs.some((line) => line.includes(serverLogSecretMarker)), false, `${label} stderr omits provider-authored secret text`)
   assert.doesNotMatch(errorBody, /event: operation/, `${label} emits no disallowed operation`)
   const actionRows = errorLedger.db.prepare("SELECT count(*) AS count FROM events WHERE kind = 'booking.copilot.action.issued'").get() as { count: number }
   assert.equal(actionRows.count, 0, `${label} has zero disallowed operation side effect`)
