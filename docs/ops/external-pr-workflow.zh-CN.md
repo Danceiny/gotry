@@ -28,6 +28,34 @@
 - **Merge**：记录被审 head、实际合入方法、merge SHA、destination SHA 验证与下一个开放 tracker。
 - **安全边界**：公开依赖/版本/测试/PR 事实；私有告警原文、exploit 细节、凭证与主机信息只留在 GitHub Security。
 
+## 0.5 自动元数据守卫（T0.5，CI 强制）
+
+只读 GitHub Actions workflow（`.github/workflows/protect-parent-triggers.yml`）+ 纯 Node 检查器（`scripts/protect-parent-triggers.mjs`）阻止子 PR 自动关闭 GoTry M4/M5/M6 父级准入 tracker **#20 / #136 / #137**。权威来源是 GitHub 的 `closingIssuesReferences` GraphQL 字段；workflow 永不解析 PR 标题/正文，也不运行 PR head 代码。
+
+| 情形 | 检查器结果 |
+|---|---|
+| PR 会自动关闭 `Danceiny/gotry#20` / `#136` / `#137` | 拒绝 — exit 1，正文仍含 `Closes #N` / `Fixes #N` 时 PR 不可合入 |
+| 中性引用（`Tracks #N` / `Refs #N`）或非受保护的关闭引用 | 放行 — exit 0 |
+| 同号不同仓 / 不同 owner | 放行 — 不跨仓误伤 |
+| GraphQL `errors[]`、payload 畸形、字段缺失、不可读输入 | 闭口失败 — exit 2（绝不静默放行） |
+
+**维护者修正**：把 `Closes #20` / `Fixes #20`（及 `#136` / `#137` 等价物）替换为 `Tracks #N` / `Refs #N`。维护者按既有证据规则显式关闭真实 gate issue；本守卫**不**引入新审批层，也不改写 M4/M5/M6 Entry/Exit。
+
+**安全边界**（无例外）：
+
+- workflow 触发：`pull_request_target` 仅元数据变更类型（`opened` / `edited` / `reopened` / `synchronize`）
+- job 权限：`contents: read` + `pull-requests: read`；除 `GITHUB_TOKEN` 外零密钥、零 token
+- `actions/checkout@v4` 只 clone 受信基座分支（`repository.default_branch`）；PR head ref **永不**被 checkout 或执行
+- GraphQL query 为 YAML 内常量字符串；PR 数字经 `[1-9][0-9]*` 校验后只传给常量 query
+- PR 标题/正文**永不**插值进 shell、代码或 query 字符串；检查器读 JSON 文件即退出，无 `node -e` / eval
+- 不新增第三方 SDK 依赖；仅用 `actions/checkout@v4` 与预装 `gh` CLI
+
+本地复跑：
+
+```bash
+node scripts/protect-parent-triggers-tests.mjs   # 14 个夹具用例
+```
+
 ---
 
 ## 1. 接收与分诊（T0）

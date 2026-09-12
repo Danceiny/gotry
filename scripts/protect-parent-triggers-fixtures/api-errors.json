@@ -1,0 +1,6 @@
+{
+  "errors": [
+    { "message": "Could not resolve to a PullRequest", "type": "NOT_FOUND" }
+  ],
+  "closingIssuesReferences": null
+}

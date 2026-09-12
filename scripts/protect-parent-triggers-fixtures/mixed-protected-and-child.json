@@ -1,0 +1,18 @@
+{
+  "closingIssuesReferences": [
+    {
+      "number": 20,
+      "repository": {
+        "name": "gotry",
+        "owner": { "login": "Danceiny" }
+      }
+    },
+    {
+      "number": 411,
+      "repository": {
+        "name": "gotry",
+        "owner": { "login": "Danceiny" }
+      }
+    }
+  ]
+}

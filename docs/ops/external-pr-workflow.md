@@ -28,6 +28,34 @@
 - **Merge**: record the reviewed head, the actual merge method, the merge SHA, destination-SHA verification, and the next open tracker.
 - **Security boundary**: publish dependency/version/test/PR facts; raw private alert text, exploit details, credentials, and host information stay only in GitHub Security.
 
+## 0.5 Automated metadata guard (T0.5, CI-enforced)
+
+A read-only GitHub Actions workflow (`.github/workflows/protect-parent-triggers.yml`) plus a pure-Node checker (`scripts/protect-parent-triggers.mjs`) prevents child PRs from auto-closing the GoTry M4/M5/M6 parent admission trackers **#20 / #136 / #137**. The source of truth is GitHub's authoritative `closingIssuesReferences` GraphQL field; the workflow never parses PR title/body text or runs PR head code.
+
+| Condition | Checker outcome |
+|---|---|
+| PR would auto-close `Danceiny/gotry#20`, `#136`, or `#137` | REJECT — exit 1, PR cannot merge while the body still uses `Closes #N` / `Fixes #N` for those numbers |
+| Neutral references (`Tracks #N`, `Refs #N`) or non-protected closing references | ALLOW — exit 0 |
+| Same number in a different repo / different owner | ALLOW — no cross-repo misfire |
+| `errors[]` from GraphQL, malformed payload, missing required fields, unreadable input | FAIL CLOSED — exit 2 (never silently coerced into a pass) |
+
+**Maintainer remediation**: replace `Closes #20` / `Fixes #20` (and the equivalent for `#136`/`#137`) with `Tracks #N` or `Refs #N`. The maintainer closes the real gate issues explicitly after existing evidence acceptance; this guard does **not** introduce a new approval layer or rewire the M4/M5/M6 Entry/Exit rules.
+
+**Security boundaries** (no exceptions):
+
+- Workflow triggers: `pull_request_target` with metadata-change types only (`opened`, `edited`, `reopened`, `synchronize`).
+- Job permissions: `contents: read` + `pull-requests: read`; no secrets, no tokens beyond `GITHUB_TOKEN`.
+- `actions/checkout@v4` clones the trusted base branch only (`repository.default_branch`); PR head ref is **never** checked out or executed.
+- The GraphQL query is a constant string in YAML; PR number is validated as `[1-9][0-9]*` and passed only to the constant query.
+- PR title/body are **never** interpolated into shell, code, or the query string. The checker reads a JSON file and exits; there is no `node -e` / eval.
+- No third-party SDK dependency is added; only `actions/checkout@v4` and the preinstalled `gh` CLI are used.
+
+Local reproduction:
+
+```bash
+node scripts/protect-parent-triggers-tests.mjs   # 14 fixture cases
+```
+
 ---
 
 ## 1. Intake and triage (T0)
