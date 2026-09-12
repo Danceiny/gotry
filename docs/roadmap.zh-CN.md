@@ -2,6 +2,8 @@
 
 # GoTry Roadmap（唯一时间线）
 
+当前说明：Issue 411 forward 修复将 session benchmark 生产节律保持为 35 秒；挑战／守卫截断批次统一 fail-closed，只有正常完成八条查询的批次才是 `batch_complete`。
+
 > 定位：**从今天到愿景的唯一里程碑序列**。已有的三套阶段模型（architecture 的 Stage 0-4、总纲的 Phase 0-3、产品设计的 M1-M3）全部归并映射到本文的 M0-M6，旧模型降级为引用。
 > 每个里程碑：进入/退出条件、交付物、gate（谁拍板）、依赖。**当前位置用 ← 标注。**
 > 状态细节仍以 `architecture.md` §9-10 为准；本文只管时间与顺序。

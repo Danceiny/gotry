@@ -2,6 +2,8 @@
 
 # GoTry Roadmap (Single Timeline)
 
+Current note: Issue 411 forward fix keeps production session-benchmark cadence at 35 seconds; challenge/guard-truncated batches are fail-closed and only normally completed eight-query batches are `batch_complete`.
+
 > Positioning: **the single milestone sequence from today to the vision**. The three existing phase models (architecture's Stage 0-4, the master outline's Phase 0-3, the product design's M1-M3) are all merged and mapped onto this document's M0-M6; the old models are demoted to references.
 > Each milestone: entry/exit criteria, deliverables, gate (who signs off), dependencies. **The current position is marked with ←.**
 > Status details remain governed by `architecture.md` §9-10; this document only governs time and order.
