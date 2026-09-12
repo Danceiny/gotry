@@ -3,7 +3,7 @@
 # M4→M6 Delivery Plan and Task Graph (issue #225)
 
 > Positioning: split M4→M5→M6 into a living program task graph deliverable across separate worktrees, spelling out per item the responsibility face, responsible files, dependencies, deliverables, minimal E2E, falsification, and exit criteria.
-> Status: living (established 2026-09-08; the 2026-09-09 follow-up tightened the #231/#232 dispatch design and synced facts already in main; issue #225. This document is a plan and responsibility graph, not a replacement for the M3/M4/M5/M6 Exit evidence). This follow-up wrote into M5-1/M5-2/M5-3: atomic claim + pre-call persistence of `dispatching`/immutable attempt id/fencing, tenant-scoped claim/fold/query, pre-call revalidation, `RequestFingerprint` binding the holder/guests supplier payload digest, and future minimal falsifications (none executed); it also synced that #238/#243/#244/#245/#248/#240 are in main and #227/#241/#242 are closed.
+> Status: living (issue #225). Pre-entry mechanisms for #231 (trusted approval receipts + atomic outbox core), #232/#233 (hotelbyte-cli pure adapter and cancel/refund/commission contracts), #234 (kernel manifest + import trace proof scripts), and #235 (sponsor plugin contract + default-off fixtures) have entered main and remain sealed at the runtime boundary; the program as a whole stays TODO because M3 real seed cohort and M4 real `observed_private` N≥5 repeat cohort are not closed, M5/M6 Entry gates are unmet, and no real supplier UAT, founder P6 approval, or pilot signing has occurred. This document is a plan and responsibility graph, not a replacement for M3/M4/M5/M6 Exit evidence. The EN/ZH pair must agree in the same commit per the AGENTS contract.
 > Upstream: [`../roadmap.md`](../roadmap.md), [`../architecture.md`](../architecture.md) §1/§9/§10/§11, [`../gotry-master-outline.md`](../gotry-master-outline.md) §3.5/§3.7, issues #20/#22/#136/#137/#225/#223/#227/#228/#230/#231/#232/#233/#234/#235/#241/#242/#254/#255/#257.
 > Downstream: standalone Claude Code worktree tasks, architecture re-verification, PR descriptions, and the contribution gate; public delivery records follow [`../ops/external-pr-workflow.md`](../ops/external-pr-workflow.md) §0.
 
@@ -30,10 +30,10 @@ M4 scorer hardening (#223,工程加固 #238 已入 main) ─┐
 M4 opt-in lifecycle export (#228,collector #248 已入 main) ─┼─> real observed_private repeat cohort N≥5 (#20) ─> M4 Exit
 M4 reflux baseline ────────────────┘
 
-M4 Exit + hotelbyte-cli 供应链协议 (#136) ─> M5 WriteGate(#231) + HotelByte adapter(#232) + cancel/refund(#233) ─> M5 Exit
+M4 Exit + hotelbyte-cli 供应链协议 (#136) ─> M5 Entry ─> 启用 #231/#232/#233 pre-entry 机制（已在 main，运行时不启封）+ 真实 supplier UAT → M5 Exit
 tenant ledger 代码在 main(#229/#237,验收#230 已关闭) + state-cli 代码在 main(#236) ─┐
 CLI 小数边界补丁 #241/PR243(已入 main 7a7f271,issue #241 已关闭) ───────────────┤
-M5 Exit + P6 founder review (#137) ───────────────────────────────────────┴─> M6 proof(#234) + sponsor plugin(#235) ─> M6 Exit(含试点签约)
+M5 Exit + P6 founder review (#137) ───────────────────────────────────────┴─> 启用 #234/#235 pre-entry 机制（已在 main，默认 off）+ 真实 sponsor B2B + 试点 → M6 Exit
 ```
 
 ## 2. Task index (≤5 columns)
@@ -47,15 +47,15 @@ M5 Exit + P6 founder review (#137) ───────────────
 | M4-3 | TODO | #20 | evidence responsibility face | real `observed_private` N≥5 repeat cohort + reflux baseline |
 | M5-0 | TODO | #136 | supply/legal + adapter responsibility face | hotelbyte-cli agreement verification; no signing/internal authorization evidence obtained |
 | M5-1 | DONE (in main) | #225/#136 | docs/program-225 | WriteGate proposal in main (PR #249 merge 293bbb6), design input only; implementation/UAT/M5 Entry still TODO (#136/#231/#232/#233), transaction runtime stays sealed |
-| M5-2 | TODO | #231 | m5-core worktree | persisted trusted approvals and atomic outbox; implement after M5 Entry |
-| M5-3 | TODO | #232 | m5-adapter worktree | hotelbyte-cli trade adapter, unknown/query/reconcile |
-| M5-4 | TODO | #233 | m5-refund worktree | cancel/refund/wallet outcome + commission/disclosure |
+| M5-2 | TODO (pre-entry in main) | #231 | m5-core worktree | persisted trusted approval receipts + atomic outbox mechanism shipped to main (`ts/src/write-gate.ts` `preparePresentation:305` → `trustedHostConfirm:375` → `claimForDispatch:491` → `preDispatchRevalidate:524`; `scripts/run-all-tests.sh:554`); real supplier effect and M5 Entry still TODO (#136) |
+| M5-3 | TODO (pre-entry in main) | #232 | m5-adapter worktree | hotelbyte-cli pure-contract adapter + fake-CLI shipped to main (`ts/capabilities/hotelbyte-transaction.ts` `classifyBookExecution:189` → `advanceReconciliation:226` → `newIntentAllowed:339`; `ts/scripts/hotelbyte-spawn-e2e-tests.ts` `runFake:139`); real supplier UAT and M5 Entry still TODO (#136) |
+| M5-4 | TODO (pre-entry in main) | #233 | m5-refund worktree | cancel/refund/wallet outcome + commission/disclosure pure contract shipped to main (`ts/src/booking-surface/cancel-refund-commission.ts:120/:137` cancel/refund, `:299` disclosure → `:309` fingerprint binding); real compensation matrix and M5 Exit still TODO |
 | M6-0 | DONE (in main) | #229/#237/#230 | ledger integration line | tenant ledger/fold code and acceptance in main |
 | M6-0b | DONE (in main) | #236/#241/#243 | state-cli integration line | tenant CLI and decimal boundary in main and closed |
 | M6-1 | DONE (in main) | #225/#137 | docs/program-225 | P6 approval draft in main (PR #249 merge 293bbb6); #137 founder YES still TODO, M6 Entry still waits on M5 Exit |
 | M6-2 | TODO | #137 | founder review | only an explicit founder YES approving the overall plan or approving a revised draft satisfies P6 Exit |
-| M6-3 | TODO | #234 | m6-proof worktree | kernel-set / loaded-modules / runtime trace schema and generation scripts |
-| M6-4 | TODO | #235 | m6-plugin worktree | sponsor plugin E2E after M5 Exit + P6 founder approval |
+| M6-3 | TODO (pre-entry in main) | #234 | m6-proof worktree | kernel manifest + import trace proof scripts shipped to main (`ts/data/kernel-manifest.json` exists; `ts/scripts/kernel-manifest-gate.ts:63` loads the frozen manifest, `:100–103` validate schema/integrity/functional coverage, `:116` runs the runtime import trace; `ts/scripts/kernel-manifest-evidence.ts:43` builds evidence; `scripts/run-all-tests.sh:561` invokes the gate); M5 Exit + P6 founder YES + real sponsor UAT still TODO (#137) |
+| M6-4 | TODO (pre-entry in main) | #235 | m6-plugin worktree | sponsor plugin contract + default-off fixtures shipped to main (`ts/capabilities/sponsor-plugin.ts` `createSponsorPlugin:96`, route authorization `:155`, ranking `:234`, confirmation fingerprint `:298`, `runBookingScenario:390`; `:138` `requireRuntimeActivation` enforces the default-off flag boundary); activation + real agency E2E + pilot signing still TODO (#137) |
 | M6-5 | TODO | #137 | sales/legal | B2B pilot signing/commercial terms; still part of M6 Exit, cannot be moved out |
 | Q-1 | DONE (in main) | #225/#240 | docs/program-225 | contribution gate docs entered main with #240 |
 | Q-2 | PARTIAL | #254 | data-repair responsibility face | engineering apply/rollback + receipt schema landed; closing still needs a founder-authorized real repair receipt (or confirmation that no move is needed); quality/follow-up line, not an M5/M6 Entry blocker |
@@ -129,6 +129,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M5-2 — #231 persisted trusted approvals and atomic outbox
 
+- **Status**: pre-entry mechanism shipped to main (`ts/src/write-gate.ts` `preparePresentation:305` → `trustedHostConfirm:375` → `claimForDispatch:491` → `preDispatchRevalidate:524`; `scripts/run-all-tests.sh:554` includes write-gate tests); runtime boundary sealed; real supplier effect, M5 Entry, and M5 Exit remain TODO (#136).
 - **Prerequisites**: both M5 Entry items met (M4 Exit + supply agreement); M5-1 proposal accepted.
 - **Responsible files**: `ts/src/state-ledger.ts`; `ts/src/booking-saga.ts`; `ts/capabilities/effect.ts`; the `approval_claims` table; `write_effect_intents` dispatch-state/attempt/fencing fields; required docs/tests.
 - **Outputs**: nonce/fingerprint is prepared server-side as a `PreparedChallenge` before presentation and bound to the immutable request; the receipt issuance and consumption channels accept only trusted host UI confirmation callbacks (carrying actor/tenant/seam/challenge); the model can only request presentation, a model-initiated confirmation is rejected and produces no outbox; `approval_claims(receipt_id PRIMARY KEY, challenge_id, nonce_digest UNIQUE, consumed_at)` plus the `pending_writes` state transition and the outbox intent go in the same SQLite transaction; the order is prepare/present → trusted confirmation → atomic consumption + outbox; replaying the same receipt/nonce/challenge across intents returns `approval-claimed`. `WriteEffectIntent` carries `tenant_id`; the receipt consumption transaction produces exactly one local outbox intent (`dispatch_status=queued`); the dispatcher claims atomically via a conditional update on `tenant_id + idem_key` (or a global `effect_id` with verified tenant ownership), gaining dispatch rights only when affected rows=1, and subsequent fold/query are equally tenant-scoped. Before any supplier/network call, `dispatching` and immutable `attempt_id`/`fencing_token`/`claimed_by`/`lease_until` are persisted in the same transaction; among concurrent workers only the one that won the claim may dispatch. See [`write-gate-production-design.md`](write-gate-production-design.md) §5.3/§5.4 for details.
@@ -140,6 +141,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M5-3 — #232 hotelbyte-cli trade adapter + unknown/query/reconcile
 
+- **Status**: pre-entry contract + fake-CLI shipped to main (`ts/capabilities/hotelbyte-transaction.ts` `classifyBookExecution:189` → `advanceReconciliation:226` → `newIntentAllowed:339`; `ts/scripts/hotelbyte-spawn-e2e-tests.ts` `runFake:139` exercises a local fixture subprocess); real adapter wiring, supplier UAT, and M5 Entry remain TODO (#136).
 - **Prerequisites**: M5-0 agreement fields available; M5-2 core ready.
 - **Responsible files**: new hotelbyte-cli trade adapter (files defined by the implementation PR); adapter tests; reconciliation docs.
 - **Outputs**: pin the npm `staicli@0.0.3` release artifact (integrity per M5-0), not master; isolated credential home; controlled env; fixed global flags prefix; mandatory `customerReferenceNo`; book result.status `verified|pending|failed` projection; unknown → `query-orders` or manual reconcile; a query miss within the recovery window stays unknown. Before initiating `trade book`, the adapter runs the M5-2 pre-call revalidation (authorization/quote-receipt validity/immutable request digest/routed Buyer/revocation); when expired/changed/revoked and no call has gone out, zero supplier writes, the old effect is set to `rejected` at the outbox/dispatch layer and never returns to queued, and a new quote/intent/receipt is created (no extension of the ADR-17 `pending_writes` three states, no projection of supplier failure/refund); `RequestFingerprint` binds the canonical payload digest of the actual supplier request (covering the holder/guests fields that affect fulfillment) or the existing immutable `payload_digest`, with sensitive fields never written publicly to the ledger; replacing travelers or contacts after presentation/confirmation must be zero-write. See [`write-gate-production-design.md`](write-gate-production-design.md) §4/§5.4/§5.5 for details.
@@ -149,6 +151,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M5-4 — #233 cancel/refund/wallet outcome + commission/disclosure
 
+- **Status**: pre-entry contract shipped to main (`ts/src/booking-surface/cancel-refund-commission.ts:120/:137` cancel/refund validation, `:299` disclosure → `:309` fingerprint binding); real compensation matrix, customer refund path, and M5 Exit remain TODO.
 - **Prerequisites**: M5-3; verification of the supplier cancel/refund/wallet restoration fields.
 - **Responsible files**: cancel/refund outcome projection; transparency cards/audit reports; tests.
 - **Outputs**: pending cancel and confirmed compensation kept as distinct terms; `trade cancel` receipt, refund order, wallet refund, service fee, and customer refund amount projected separately; commission/sponsorship/after-sales responsibility disclosed before confirmation and included in the fingerprint.
@@ -189,6 +192,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M6-3 — #234 reuse proof schema and generation scripts
 
+- **Status**: pre-entry offline proof tooling shipped to main (`ts/data/kernel-manifest.json` exists; `ts/scripts/kernel-manifest-gate.ts:63` loads the frozen manifest, `:100–103` validate schema/integrity/functional coverage, `:116` runs the runtime import trace; `ts/scripts/kernel-manifest-evidence.ts:43` builds evidence; `scripts/run-all-tests.sh:561` invokes the gate); M5 Exit, P6 founder YES, and real sponsor UAT remain TODO (#137).
 - **Responsibility face**: m6-proof worktree; freeze the denominator up front so implementers cannot invent one on the spot.
 - **Responsible files**: new proof schema/scripts/fixtures (defined by the implementation PR); updates to P6/roadmap.
 - **Outputs**: a fixed frozen `kernel-set.txt`; `loaded-modules.json`; runtime actually-loaded coverage; pre-declared functional path coverage; LOC only as an auxiliary number.
@@ -198,6 +202,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M6-4 — #235 sponsor plugin proof
 
+- **Status**: pre-entry contract/fixture shipped to main (`ts/capabilities/sponsor-plugin.ts` `createSponsorPlugin:96`, route authorization `:155`, ranking `:234`, confirmation fingerprint `:298`, `runBookingScenario:390`; `:138` `requireRuntimeActivation` enforces the default-off flag boundary); activation, real traveler outcomes, real agency E2E, and pilot signing remain TODO (#137).
 - **Prerequisites**: M5 Exit + explicit M6-2 P6 founder approval + M6-0 tenant isolation evidence + the M6-3 proof schema.
 - **Outputs**: the full travel-agency embedding chain: traveler motivation interview → same MotivationProfile/constraints → sponsor inventory → transparency cards with disclosures → provable zero kernel diff.
 - **Minimal E2E**: run the sponsor plugin in an isolated tenant/stateRoot; `git diff` over the full fixed `kernel-set` is empty; runtime actually-loaded coverage and pre-declared functional path coverage each pass; tenant/sponsor adversarial checks pass.
@@ -251,15 +256,15 @@ M5 Exit + P6 founder review (#137) ───────────────
 5. TODO: #20 real `observed_private` N≥5 repeat cohort and reflux baseline.
 6. TODO: #136 HotelByte supply agreement, Buyer/environment/routing, fields, manual reconciliation, and UAT verification (no signing/internal authorization evidence obtained).
 7. DONE (in main, design input only): #225/#136 M5-1 WriteGate proposal entered main with PR #249 (merge 293bbb6); implementation/UAT/M5 Entry remain in #136/#231/#232/#233.
-8. TODO: #231 trusted approval receipts + atomic outbox core after M5 Entry.
-9. TODO: #232 M5 HotelByte trade adapter unknown/query/reconcile.
-10. TODO: #233 M5 cancel/refund/wallet outcome and commission/disclosure.
+8. TODO (pre-entry mechanism in main): #231 trusted approval receipts + atomic outbox core code shipped to main (`ts/src/write-gate.ts` `preparePresentation` → `trustedHostConfirm` → `claimForDispatch` → `preDispatchRevalidate`); runtime boundary sealed; real supplier effects, M5 Entry, and M5 Exit remain TODO (#136).
+9. TODO (pre-entry contract in main): #232 M5 HotelByte trade adapter pure contract + fake-CLI shipped to main (`ts/capabilities/hotelbyte-transaction.ts` + `ts/scripts/hotelbyte-spawn-e2e-tests.ts`); real supplier UAT and M5 Entry remain TODO (#136).
+10. TODO (pre-entry contract in main): #233 M5 cancel/refund/wallet outcome + commission/disclosure contract shipped to main (`ts/src/booking-surface/cancel-refund-commission.ts`); real compensation matrix and M5 Exit remain TODO.
 11. DONE (in main): #229/#237 tenant ledger isolation + fold regression with #230 acceptance.
 12. DONE (in main): #236 state-cli tenant boundaries and the #241/#243 `.5`/`+.5` decimal boundaries merged and closed.
 13. DONE (in main, approval draft only): #225/#137 M6-1 P6 draft/proof scope entered main with PR #249 (merge 293bbb6); the #137 founder YES and M6 Entry remain TODO.
 14. TODO: #137 explicit P6 founder approval of the overall plan or approval of a revised draft.
-15. TODO: #234 M6 reuse proof schema/generation scripts.
-16. TODO: #235 M6 sponsor plugin zero kernel diff + runtime trace proof.
+15. TODO (pre-entry tooling in main): #234 M6 kernel manifest + import trace proof scripts shipped to main (`ts/data/kernel-manifest.json`; `ts/scripts/kernel-manifest-gate.ts`; `ts/scripts/kernel-manifest-evidence.ts`); M5 Exit, P6 founder YES, and real sponsor UAT remain TODO (#137).
+16. TODO (pre-entry contract/fixture in main): #235 M6 sponsor plugin contract + default-off fixture shipped to main (`ts/capabilities/sponsor-plugin.ts` with `requireRuntimeActivation` enforcing default-off); activation, real traveler outcomes, real agency E2E, and pilot signing remain TODO (#137).
 17. TODO: #137 B2B pilot commercial terms/signing.
 18. PARTIAL (quality/follow-up, not an M5/M6 Entry blocker): #254 engineering apply/rollback + receipt schema landed; closing still needs a founder-authorized real repair receipt or confirmation that no move is needed.
 19. TODO (quality/follow-up, not an M5/M6 Entry blocker): #255 tracking real usage of P4 session dual-zone memory and multi-user trigger conditions.
