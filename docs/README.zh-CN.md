@@ -125,6 +125,7 @@
 | [design/itinerary-html-renderer.md](design/itinerary-html-renderer.zh-CN.md) | 行程 HTML 渲染器合同 + 产品生成入口（内部切片，issue #442/父 #438）：纯有界渲染器、计划面与证据面分离、拒绝集；`gotry_itinerary_render` 从注册表选出的事实在会话工作目录仅新建一个不覆盖的 HTML 文件；浏览器/原生预览验收待完成 |
 | [design/hotelbyte-skills-design.md](design/hotelbyte-skills-design.zh-CN.md) | hotelbyte-skills 架构（知识进仓/执行留 gotry，issue #5） |
 | [design/stage1-top-down-design.md](design/stage1-top-down-design.zh-CN.md) | Stage 1 顶层设计（历史原文）；**状态头是 §11 状态面⑥** |
+| [design/lavish-local.md](design/lavish-local.zh-CN.md) | Lavish 本地会话适配器（#443，父需求 #438）：自有进程/端口/状态边界、TOON 协议事实、不可信反馈、有界轮询 |
 
 ### rfc/（提案原文）
 
