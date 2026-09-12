@@ -71,7 +71,7 @@ flowchart LR
 
 > 交互版：[`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html)（archify 生成，showcase 校验通过）。分层：L2 dsh 插件 · L3 `ts/src/unified.ts` 内核 · L4 效应解译 + 实时桥 · L5 loopx 治理。ADR：[`docs/architecture.md`](docs/architecture.zh-CN.md)。
 
-24 个注册工具分组：实时检索（飞猪官方通道 + 你本人登录态 Chrome，只读）· 目录 · 判定引擎 · 记忆 · 产物（列表/阅读 + 行程 HTML 生成）· 事实闸 · 外部检索 · `gotry_doctor` 自检。无隐藏派发——通道注册表只返回有序建议列表，由模型或用户选择。逐工具契约：[`docs/tools.md`](docs/tools.zh-CN.md)。
+工具分组：实时检索（飞猪官方通道 + 你本人登录态 Chrome，只读）· 目录 · 判定引擎 · 记忆 · 产物（列表/阅读 + 行程 HTML 生成）· 事实闸 · 外部检索 · `gotry_doctor` 自检 · **Lavish 本地评审（默认关闭；#443）**——五个 `gotry_lavish_open` / `_poll` / `_reply` / `_end` / `_stop` 工具绑定到 host 提供的 host session id + 绝对 cwd，仅在可信的 `lavishAxiPackageRoot` 指向已安装 `lavish-axi@0.1.67` 包绝对路径时出现（见 [Lavish 配置与生命周期](docs/design/lavish-local.zh-CN.md#9-注册到产品工具面)）。无隐藏派发——通道注册表只返回有序建议列表，由模型或用户选择。逐工具契约：[`docs/tools.md`](docs/tools.zh-CN.md)。
 
 离线 session benchmark 将挑战／守卫截断标为 fail-closed；只有正常跑完八条查询的批次才是 `batch_complete`，生产节律保持 35 秒。sf-summary CLI 接受符号链接或别名形式的入口路径，并产出与规范路径相同的已校验汇总。
 

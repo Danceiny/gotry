@@ -3,6 +3,7 @@
 # Stage 1 顶层设计：自顶向下（契约 → 循环 → 智能接真）
 
 > **状态速览**：
+- #443 新增五个默认关闭的 Lavish 评审工具，采用可信宿主配置、精确会话与工作目录绑定、有界未受信任反馈及自有进程清理。既有行程生成与产物发现入口衔接评审，见 [工具契约](lavish-local.zh-CN.md#9-注册到产品工具面)。验收证据归 #443（父 #438）；宿主原生预览另归 #448。
 - 2026-09-12 起，#442（父 #438，内部切片）让纯行程 HTML 渲染器可从真实产品入口到达：注册工具 `gotry_itinerary_render`（`ts/capabilities/itinerary-artifact.ts`）接收 `title`、显式行程对象与 `fact_ids`，事实**只**从当前 `stateRoot` 事实注册表取（绝不接收调用方自带事实对象；未知/重复/超量 id 与畸形登记行一律拒绝），以 `O_CREAT\|O_EXCL` 在会话工作目录顶层仅新建一个文件（不覆盖、不跟随符号链接逃逸、拒绝 `.git`/`node_modules`，默认 crypto 随机文件名），非法输入零字节写入，并返回最终真实路径；空 `fact_ids` 是合法的明确未核验计划，不存在整体「已验证」徽章。浏览器/原生预览验收与真实 Lavish 编辑反馈闭环仍留在 #438/#443；run-all §6c 承载聚焦套件。
 - 2026-09-12 起，#432 只为 #82 增加已批准的 inert W2A `w2a/0.1` 合同切片：`ts/capabilities/external-event.ts` 默认关闭、纯函数、64 KiB 有界、经显式 exact source tuple 准入，只投射 untrusted typed metadata，并剥离 `summary`、`user_identity`、`source_event`、`attachments` 与 `_meta`；`external-event-tests.ts` 接入 run-all §53b，覆盖 root 反例以及在 dynamic import 前安装 fetch spy 并证明模块未调用 fetch，且拒绝文件写入与子进程副作用的 Node permission 子进程。当前没有 listener、auth、consumer、健康面／愿望池／账本写入、预订／支付路径或运行时注册；真实 sensor 激活仍归 #82。
 - 同样自 2026-09-12 起，#436 已清偿持久健康面 routing 缺口：local probe 事件写入 `channel-health.jsonl`，六个非 hit 工具结果在工具结果边界读取该面（严格可用时间戳读取 → 纯 down 投影 → `routingAdvice`），持久 `down` 无需任何 verdict 调用即可排除通道。坏时间戳与过保留期的行在 latest-wins 覆盖前丢弃；只有 `down` 会新增持久排除（`cooldown` 仍是节律态，恢复或过期只是解除该排除），且都不解除本会话失败。doctor／愿望池读取口径、30 天保留期与静态 persona 路由卡均不变。

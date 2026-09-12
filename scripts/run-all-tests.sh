@@ -580,6 +580,10 @@ echo
 echo "=== 67b. Issue #443 本地 Lavish Editor 会话适配器(offline:trust/path 白名单/argv 形状/字节与超时上界/状态机/进程组 reap/生命周期规则;GOTRY_LAVISH_LIVE=0 强锁,合成 lavish-axi 包树,零网络零真浏览器,ambient opt-in 也不得安装/调用外部 CLI) ==="
 (cd ts && GOTRY_LAVISH_LIVE=0 npx tsx scripts/lavish-local-tests.ts) || FAIL=1
 
+echo
+echo "=== 67c. Registered Lavish review tools (issue #443: host authority, serialized lifecycle, terminal races, owned process cleanup; isolated offline fixtures) ==="
+(cd ts && GOTRY_LAVISH_LIVE=0 npx tsx scripts/lavish-product-tools-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
