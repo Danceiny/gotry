@@ -249,7 +249,7 @@ rc series overview (details in release-notes.md; version history lives in git):
 
 1. **M3** — produce the real seed-cohort value metrics and reproducible evidence; no invitation-only claim is accepted. Tracker: [#22](https://github.com/Danceiny/gotry/issues/22).
 2. **M4** — build a real `observed_private` repeat cohort (N≥5) with paired planning-time reduction ≥50%, plus the experience-reflux baseline and manual source-review attestation. Tracker: [#20](https://github.com/Danceiny/gotry/issues/20).
-3. **M5** — *after* M4 Exit and a supply agreement / internal authorization: ship the actual WriteGate + booking-payment-refund chain and the existing zero-misoperation / unit-economics exit evidence; parallel contract implementations do not equal admission. Tracker: [#136](https://github.com/Danceiny/gotry/issues/136).
+3. **M5** — *after* M4 Exit and with a supply agreement / internal authorization on record, ship the actual WriteGate + booking-payment-refund chain and the existing zero-misoperation / unit-economics exit evidence; parallel contract implementations do not equal admission. Tracker: [#136](https://github.com/Danceiny/gotry/issues/136).
 4. **M6** — *after* M5 Exit and the P6 decision: demonstrate frozen kernel reuse, runtime / functional coverage, a real agency-embedding E2E, and a signed pilot. Tracker: [#137](https://github.com/Danceiny/gotry/issues/137).
 
 Authorized parallel engineering may continue; formal Entry / Exit stays with each public tracker.

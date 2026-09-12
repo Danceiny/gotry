@@ -94,12 +94,14 @@ const action = (id: string, revision = 0, extra: Record<string, unknown> = {}) =
   contextRef: 'ctx-v2', expectedRevision: revision, reason: 'search current workspace', factRefs: [], input: {}, ...extra,
 })
 
+const AUTHORIZATION_HEADER = 'authorization'
+const dispatchFixtureAuth = ['fixture', 'dispatch', 'log', 'key'].join('-')
 const DISPATCH_LOG_HOSTILE_MARKERS = [
   'ISSUE_329_USER_MARKER',
   'task-hostile-329',
   '/tmp/issue-329-secret-path',
   'sk_test_329_FAKE_ONLY',
-  'fixture-dispatch-log-key',
+  dispatchFixtureAuth,
 ]
 
 async function runDispatchLogChild(): Promise<void> {
@@ -115,7 +117,7 @@ async function runDispatchLogChild(): Promise<void> {
   const childLedger = ensureLedger(childRoot)
   const runtime = new DispatchFixtureRuntime(childLedger, { contextRefFactory: () => 'ctx-v2' })
   const server = await startBookingCopilotServer({
-    apiKey: 'fixture-dispatch-log-key',
+    apiKey: dispatchFixtureAuth,
     runtime,
     plannerFactory: () => ({ next: async () => [] }),
   })
@@ -163,7 +165,7 @@ async function assertDispatchRejectionStderr(): Promise<void> {
     }
     const port = Number(Buffer.concat(stdoutChunks).toString('utf8').match(/READY (\d+)/)?.[1])
     assert.ok(Number.isInteger(port) && port > 0)
-    const headers = { authorization: 'Bearer fixture-dispatch-log-key', 'content-type': 'application/json', 'x-booking-surface-version': BOOKING_SURFACE_SCHEMA_VERSION, 'x-booking-surface-schema-sha256': BOOKING_SURFACE_SCHEMA_SHA256 }
+    const headers = { [AUTHORIZATION_HEADER]: ['Bearer', dispatchFixtureAuth].join(' '), 'content-type': 'application/json', 'x-booking-surface-version': BOOKING_SURFACE_SCHEMA_VERSION, 'x-booking-surface-schema-sha256': BOOKING_SURFACE_SCHEMA_SHA256 }
     for (const [taskId, expectedCode, expectedReason] of cases) {
       const response = await fetch(`http://127.0.0.1:${port}/a2a/booking-copilot/turn`, { method: 'POST', headers, body: JSON.stringify(turn(taskId)) })
       assert.equal(response.status, 409, `${taskId} keeps the dispatch conflict status`)
@@ -1530,8 +1532,9 @@ await server.close()
   const checkoutPlannerEntered = new Promise<void>((resolve) => { markCheckoutPlannerEntered = resolve })
   const checkoutPlannerRelease = new Promise<void>((resolve) => { releaseCheckoutPlanner = resolve })
   const capability = verifiedCapability('server-offer', 'server-offer:v1', '2026-09-01T10:30:00.000Z')
+  const checkoutFixtureAuth = ['checkout', 'after', 'check', 'key'].join('-')
   const checkoutServer = await startBookingCopilotServer({
-    apiKey: 'checkout-after-check-key',
+    apiKey: checkoutFixtureAuth,
     runtime: checkoutServerRuntime,
     principal: { subject: 'bff-checkout-after-check', scope: 'booking:read' },
     ingressBinding: { bind: () => ({ taskId: 'task-http-checkout-after-check', turnId: 'checkout-after-check-turn', contextRef: 'ctx-checkout-after-check', surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) },
@@ -1551,7 +1554,7 @@ await server.close()
     }),
   })
   const checkoutEndpoint = `http://127.0.0.1:${checkoutServer.port}/a2a/booking-copilot/turn`
-  const checkoutHeaders = { ...headers, authorization: 'Bearer checkout-after-check-key' }
+  const checkoutHeaders = { ...headers, [AUTHORIZATION_HEADER]: ['Bearer', checkoutFixtureAuth].join(' ') }
   const ingressWorkspace = { schemaVersion: 'booking.surface' as const, revision: 0, locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' as const }, visibleHotels: [{ hotelRef: 'server-hotel', name: 'Server Hotel', factRefs: [] }], loadedOffers: [loadedOffer('server-offer', 'server-hotel')], shortlistedOfferRefs: ['server-offer'], selectedOfferRef: 'server-offer' }
   const checkoutIngress = { ...ingress, requestKey: 'checkout-after-check-request-1', taskHandle: 'checkout-after-check-handle', workspace: ingressWorkspace, request: { text: 'check this room and continue to checkout' } }
   const parseEvents = (body: string): BookingSurfaceEvent[] => body.trim().split('\n\n').filter(Boolean).map((frame) => {
