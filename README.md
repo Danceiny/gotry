@@ -4,6 +4,8 @@
 
 > **Body and soul — more travel, less tourism.**
 > *身体和灵魂,更多旅行,更少旅游。*
+>
+> Current note: Issue #411 forward fix keeps production session-benchmark cadence at 35 seconds; challenge/guard-truncated batches are fail-closed and only normally completed eight-query batches are `batch_complete`. Issue #420 (2026-09-12) closes the sf-summary CLI entrypoint silent-skip defect under symlink/alias invocations without changing scoring/selection/fail-closed semantics.
 
 GoTry is an AI travel agent for **"departure to next departure."** You say where you want to go and why; it asks what needs asking, then lets code — not the model — make the call: can you go, how, and at what true cost. Every number comes with a source; nothing is hallucinated.
 

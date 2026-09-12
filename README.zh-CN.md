@@ -4,6 +4,8 @@
 
 > **身体和灵魂，更多旅行，更少旅游。**
 > *Body and soul — more travel, less tourism.*
+>
+> 当前备注：Issue #411 forward fix 保持生产 session-benchmark 节律 35 秒；挑战／守卫截断批次 fail-closed，仅正常完成的八条查询批次才为 `batch_complete`。Issue #420（2026-09-12）补闭 sf-summary CLI 入口在符号链接／别名调用下的静默跳过缺陷，scoring / selection / fail-closed 语义不变。
 
 **GoTry 是「从出发到下一次出发」的 AI 旅行 Agent**：你只管说想去哪、为什么出发；它把该问的问清楚，然后让代码替你拍板——能不能去、怎么去、真实代价多少，每个数字都带出处，不靠模型脑补。
 
