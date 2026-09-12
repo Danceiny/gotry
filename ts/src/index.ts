@@ -41,6 +41,7 @@ import { EXTENSION_STORE_URL } from '../capabilities/session/extension-bridge.ts
 import { createConsentGate, approvalFromContext, resolveSessionSearchKind } from '../capabilities/session-consent.ts'
 import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
+import { generateItineraryArtifact } from '../capabilities/itinerary-artifact.ts'
 import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromHotel, factsFromSession, factsFromSessionTrain } from './bookable-facts.ts'
@@ -1983,6 +1984,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       'List GoTry artifacts — deep-planning deliverables (async runs from the state ledger) plus agent-written markdown/HTML itinerary files ' +
       'in the working directory (trip plans as .md, .html or .htm). READ-ONLY discovery. ' +
       'Opening a listed .html/.htm goes through the host native HTML preview, which the client labels as an HTML preview because its scripts may run; gotry_artifacts_read is the source-text path. ' +
+      'Generated itinerary HTML documents (gotry_itinerary_render) land in the same working-directory view. ' +
       'Use when the user asks to see/open/revisit a previously generated artifact ' +
       '(「看看刚才生成的行程」「上次的规划在哪」「打开那个 md／html」) — list first, then read with gotry_artifacts_read.',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
@@ -2118,6 +2120,60 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
           { type: 'text', text: identityLine },
           { type: 'text', text: rawContent },
         ],
+      }
+    },
+  }))
+
+  // ---- 行程 HTML 产物生成(issue #442,父 #438):显式行程 + 注册表事实 → 会话工作目录内的新文件 ----
+  // 只新建(独占 O_EXCL,绝不覆盖);事实只从 config.stateRoot 注册表按 id 取,
+  // 不收调用方自带事实对象;空 fact_ids = 明确未核验计划(无整体「已验证」结论)。
+
+  registerGuarded(defineTool({
+    name: 'gotry_itinerary_render',
+    description:
+      'Generate a local, self-contained HTML itinerary document as a NEW file in the session working directory (never overwrites; '
+      + 'the file can then be listed/read with gotry_artifacts_list / gotry_artifacts_read). '
+      + 'Input: title, the explicit itinerary object { trip_start, trip_end, stays:[{place,check_in,check_out}], '
+      + 'od_segments:[{from,to,date,mode,legs}] } (same shape as gotry_fact_gate itinerary; nights/budget fields are not accepted), '
+      + 'and fact_ids — the ids of already-recorded bookable facts to project as evidence. Facts are loaded ONLY from the session fact '
+      + 'registry (stateRoot bookable-facts log): caller-supplied fact objects are never accepted, and unknown/duplicate/over-limit ids are rejected. '
+      + 'An empty fact_ids array is legitimate and renders an explicitly unverified plan — this document never carries an overall "verified" badge, '
+      + 'only per-fact bookability/tier/source labels. No Markdown-to-facts guessing, no date/night/budget arithmetic, no upstream queries. '
+      + 'Optional basename must match gotry-itinerary-<ASCII token>.html; when omitted a random name is generated. '
+      + 'The result returns the final absolute path.',
+    parameters: {
+      title: { type: 'string', required: true, description: '文档标题(作为页面标题与 h1,原样转义)' },
+      itinerary: { type: 'object', additionalProperties: true, required: true, description: '结构化行程 { trip_start, trip_end, stays:[{place,check_in,check_out}], od_segments:[{from,to,date,mode,legs}] }; 不做夜数/预算/时间运算' },
+      fact_ids: { type: 'array', items: { type: 'string' }, required: true, description: '要投影的事实 id 数组(来自本会话 exact-date 工具结果登记的注册表);必填,空数组 = 明确未核验计划' },
+      basename: { type: 'string', description: '可选文件名,必须形如 gotry-itinerary-<ASCII token>.html;不传则用 crypto 随机名' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
+    },
+    async execute(args, exec) {
+      const q = args as { title?: unknown; itinerary?: unknown; fact_ids?: unknown; basename?: unknown }
+      const r = await generateItineraryArtifact(
+        { title: q.title, itinerary: q.itinerary, fact_ids: q.fact_ids, basename: q.basename },
+        { stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec) ?? process.cwd() },
+      )
+      const summary = r.ok
+        ? `已生成行程 HTML 产物(未写入任何整体「已验证」结论):${r.path}\n`
+          + `投影事实 ${r.fact_ids.length} 条(全部来自当前注册表),文件 ${r.bytes} 字节。`
+          + `${r.fact_ids.length === 0 ? '本次为空事实列表:文档明确为未核验计划。' : ''}`
+          + '可用 gotry_artifacts_list / gotry_artifacts_read 再次查看。'
+        : `未生成产物(未写入任何文件):${r.error}`
+          + `${r.errors?.length ? `\n${r.errors.slice(0, 8).map(e => `- ${e}`).join('\n')}` : ''}`
+          + `${r.hint ? `\n修正提示:${r.hint}` : ''}`
+      return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `生成行程 HTML:${String(args.title ?? '')}`.slice(0, 80), kind: 'execute', rawInput: args }),
+    presentResult: (_args, value) => {
+      const r = value as { ok?: boolean; path?: string; bytes?: number; error?: string }
+      return {
+        card: 'generic',
+        title: r.ok ? `行程 HTML 已生成:${String(r.path ?? '').split('/').pop() ?? ''}` : '行程 HTML 未生成',
+        content: [{ type: 'text', text: r.ok ? `最终路径:${String(r.path ?? '')}(${r.bytes ?? 0} 字节)` : String(r.error ?? '') }],
       }
     },
   }))
