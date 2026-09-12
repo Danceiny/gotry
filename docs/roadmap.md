@@ -237,14 +237,14 @@ rc series overview (details in release-notes.md; version history lives in git):
 - **Entry**: M5 exit + explicit P6 founder approval. The P6 draft is at `milestones/m6-b2b-reuse-walkthrough.md`, not yet approved; P6 approval does not equal M6 Entry — M5 Exit remains the hard precondition. The tenant ledger/CLI and the Z3/map stability foundations are in main, with #227/#241/#242 closed. **Deliverables**: traveler principal/sponsor/BFF three-principal isolation and plugin disclosure, with one agency main scenario (destination cultural tourism secondary) running under a fixed frozen `kernel-set` at zero diff; the runtime's actually-loaded coverage and the pre-declared functional-path coverage are proven separately, with the loaded LOC ratio only an附属 indicator; implementation issues #234/#235. Pre-entry structural progress (2026-09-11): the #235 sponsor plugin contract face is in main as pure functions (`ts/capabilities/sponsor-plugin.ts`, run-all §64) proving same-kernel end-to-end reuse with zero kernel diff and C-side isolation — default-off, zero real calls, non-runtime-activation; runtime activation and the real B2B path stay behind this Entry, and #234 owns the kernel inventory.
 - **Exit**: the engineering half is a fixed `kernel-set` diff=0, runtime actually-loaded coverage, pre-declared functional-path coverage, and an agency-embedding E2E; the business half requires a real B2B pilot contract. An unsigned reason may only explain why the whole remains TODO — it cannot substitute for a signature.
 
-## Shortest Path: now → M3 exit
+## Current Action: M3 → M6 real evidence
 
-```
-You: remote target + License, two decisions        ← release gate ④⑤, preconditions for seed users (the release owner waits on these two answers)
-You: seed-user invitations (the founder is the first user)   ← ./gotry is the entry (v0.0.1-rc2)
-Eng: D-7 migration (candidate form into TS unified, removing the Erhai routing hack) → metrics panel (ADR-11 quality layer) (first slice landed 2026-09-05: read-only aggregate presentation v1, #138; continuous observation/visualization deferred to later slices)
-Round 9 (2026-09-06): governance-face budgets configurable + the LLM_MODEL output cap pinned; the treatment survived the full chain for the first time (#100/#102)
-```
+1. **M3** — produce the real seed-cohort value metrics and reproducible evidence; no invitation-only claim is accepted. Tracker: [#22](https://github.com/Danceiny/gotry/issues/22).
+2. **M4** — build a real `observed_private` repeat cohort (N≥5) with paired planning-time reduction ≥50%, plus the experience-reflux baseline and manual source-review attestation. Tracker: [#20](https://github.com/Danceiny/gotry/issues/20).
+3. **M5** — *after* M4 Exit and a supply agreement / internal authorization: ship the actual WriteGate + booking-payment-refund chain and the existing zero-misoperation / unit-economics exit evidence; parallel contract implementations do not equal admission. Tracker: [#136](https://github.com/Danceiny/gotry/issues/136).
+4. **M6** — *after* M5 Exit and the P6 decision: demonstrate frozen kernel reuse, runtime / functional coverage, a real agency-embedding E2E, and a signed pilot. Tracker: [#137](https://github.com/Danceiny/gotry/issues/137).
+
+Authorized parallel engineering may continue; formal Entry / Exit stays with each public tracker.
 
 ## Legacy Model Mapping (merged, then retired)
 
