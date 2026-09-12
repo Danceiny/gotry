@@ -8,7 +8,7 @@
 > Downstream: implementation/Exit evidence advanced per receipt, and issue gate updates; a founder YES only satisfies the corresponding decision gate — it does not auto-rewrite milestone Entry.
 > Items are independent — you can reply one by one in priority order; work advances per receipt.
 
-**At a glance: 1 item currently pending — #137 P6 founder review (overall plan approval).** An explicit P6 YES still does not satisfy M6 Entry: M5 Exit remains a precondition gate, and P6 approval does not bypass M5. The entry conditions for M5 Entry are tracked in #136. D-1~D-9 and D-4a are all settled; D-31 is trigger-based (decide only when the first real world2agent callback party appears; see below) and is not currently an open runtime surface.
+**At a glance: 1 item currently pending — #137 P6 founder review (overall plan approval).** An explicit P6 YES still does not satisfy M6 Entry: M5 Exit remains a precondition gate, and P6 approval does not bypass M5. The entry conditions for M5 Entry are tracked in #136. D-1~D-9 and D-4a are all settled. D-31's contract-only slice is approved (2026-09-12, issue #432): an inert, default-off, exact-allowlist-tuple metadata adapter that activates nothing; only real bridge/sensor/auth/consumer activation remains trigger-gated under #82 (decide when the first real world2agent callback party appears; see below).
 
 ## Pending
 
@@ -17,9 +17,10 @@
 **Currently pending**: the founder has not yet explicitly approved the overall M6 plan or a revised draft. Only an explicit YES, or explicit approval of a revised draft, satisfies P6 Exit. **A P6 YES still does not satisfy M6 Entry** — M5 Exit remains a precondition gate, and P6 approval does not bypass M5; the two are parallel preconditions, and if either is unmet M6 does not open.
 **Location**: [`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md) (draft, awaiting founder review); issue #137; task graph in [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) M6-1/M6-2.
 
-### D-31 External-Event Write Trust Model
+### D-31 External-Event Write Trust Model (contract settled; live activation trigger-based)
 
-**Trigger-based**: decide only when the first real world2agent callback party appears. Local probes need no auth; remote callbacks require signature/channel binding; the remote surface stays closed until decided. Open-trigger tracking: issue #82; issue #119 is the closed design record.
+**Contract only, settled (2026-09-12, issue #432)**: the founder authorized a pure, deterministic, inert w2a/0.1 envelope adapter — default off, explicit caller opt-in, exact reviewed source/package/version/type allowlist tuple. Sender/source fields are untrusted claims and a tuple match is not authentication; no listener/token, no environment-based product switch, no ledger/fact/wish-pool/channel-health writes, no booking, no consumer registration. It activates no live path; the landed local channel-probe and wish-pool consumers are preserved.
+**Still trigger-based — live activation only**: real bridge/sensor selection, auth/token ownership and consumer integration wait for the first real world2agent callback party (signature/channel binding); the live remote surface stays closed until then. Open-trigger tracking: issue #82; issue #119 is the closed design record.
 **Location**: [`design/external-event-seam.md`](design/external-event-seam.md); open-trigger tracking issue #82; design record issue #119 (closed).
 
 ---
