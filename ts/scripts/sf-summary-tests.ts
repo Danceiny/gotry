@@ -155,7 +155,32 @@ try {
   assert.ok(legacy.summary.unknown_batch_records.some((item: any) => item.file === 'sf-01/legacy.json'))
   assert.equal(legacy.summary.records.find((item: any) => item.query_id === 'sf-01').batch_id, '2026-09-13T10-00-00-000Z')
 
-  console.log('SF SUMMARY CLI E2E: coherent filename batch, chronology, source provenance, missing/corrupt fail-closed, legacy unknown, and old/new isolation OK')
+  // Challenge-truncated partial batch (issue #411/RFC §3.5): missing five entries means never marked
+  // complete/valid calibration (status=fail_closed), with a challenge_stop_detected annotation;
+  // old evidence where session.verdict was rewritten to error is still recognized via top-level sessionVerdict.
+  const challengeRoot = freshRoot()
+  roots.push(challengeRoot)
+  const challengeBatch = '2026-09-14T10-00-00-000Z.json'
+  writeJson(challengeRoot, 'sf-01', challengeBatch, record('sf-01', 'challenge-batch', '2026-09-14T10:00:01.000Z', 'manual', 'hit'))
+  writeJson(challengeRoot, 'sf-02', challengeBatch, {
+    ...record('sf-02', 'challenge-batch', '2026-09-14T10:00:02.000Z', 'manual', 'hit'),
+    session: { verdict: 'challenged', price: 0, route_segments: [], fetched_at: '2026-09-14T10:00:02.000Z' },
+    doubleSource: { state: 'challenge_stop', quota_disposition: 'no_spend_stop', mismatches: [] },
+  })
+  writeJson(challengeRoot, 'sf-03', challengeBatch, {
+    ...record('sf-03', 'challenge-batch', '2026-09-14T10:00:03.000Z', 'manual', 'hit'),
+    session: { verdict: 'error', price: 0, route_segments: [], fetched_at: '2026-09-14T10:00:03.000Z' },
+    sessionVerdict: 'challenged',
+    doubleSource: { state: 'source_unavailable', quota_disposition: 'no_spend_stop', mismatches: [] },
+  })
+  const challenge = runCli(challengeRoot)
+  assert.equal(challenge.exit, 1, challenge.output)
+  assert.equal(challenge.summary.status, 'fail_closed')
+  assert.equal(challenge.summary.challenge_stop_detected, true)
+  assert.equal(challenge.summary.total, 3)
+  assert.equal(challenge.summary.missing_query_ids.length, 5)
+
+  console.log('SF SUMMARY CLI E2E: coherent filename batch, chronology, source provenance, missing/corrupt fail-closed, legacy unknown, old/new isolation, and challenge-partial fail-closed OK')
 } finally {
   for (const root of roots) rmSync(root, { recursive: true, force: true })
 }

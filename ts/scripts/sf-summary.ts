@@ -96,6 +96,9 @@ export interface RunSummary {
   comparable: number
   hit: number
   challenge: number
+  /** 选中批次里出现 challenged/challenge_stop/guard_violation 证据(issue #411):
+   *  这类批次按 RFC §3.5 提前停止,缺条是预期行为,但绝不标为完整/有效校准 */
+  challenge_stop_detected: boolean
   live_under_15s: number
   missing_query_ids: string[]
   malformed_records: Array<{ query_id: string; file: string; reason: string }>
@@ -454,6 +457,15 @@ function toSummaryRecord(item: LoadedRecord, batchId: string, batchIdentitySourc
   }
 }
 
+function challengeStopHit(item: LoadedRecord): boolean {
+  // 新证据:session.verdict / doubleSource.state 承载语义;旧证据(改写 bug 时代):
+  // session.verdict 被改写为 error,但顶层 sessionVerdict 仍是 challenged——一并识别
+  if (nestedString(item.record.session, 'verdict') === 'challenged') return true
+  if (stringValue(item.record.sessionVerdict) === 'challenged') return true
+  const state = nestedString(item.record.doubleSource, 'state')
+  return state === 'challenge_stop' || state === 'guard_violation'
+}
+
 function buildErrors(summary: Pick<RunSummary, 'selected_batch' | 'missing_query_ids' | 'selected_malformed_records' | 'selected_invalid_records'>, conflictReason: string | null): string[] {
   const errors: string[] = []
   if (summary.selected_batch.batch_id === null) errors.push('no defensible batch identity found')
@@ -523,6 +535,7 @@ export function buildSummary(evidenceRoot: string, generatedAt = new Date().toIS
     }).length,
     hit: selectedRecords.filter((record) => record.session_verdict === 'hit').length,
     challenge: selectedRecords.filter((record) => record.session_verdict === 'challenged').length,
+    challenge_stop_detected: selectedRecords.some((record) => challengeStopHit(selected.get(record.query_id)!)),
     live_under_15s: selectedRecords.filter((record) => record.session_verdict === 'hit' && record.session_latency_ms !== null && record.session_latency_ms < 15_000).length,
     missing_query_ids: missingQueryIds,
     malformed_records: loaded.malformedRecords,
@@ -560,6 +573,7 @@ export function main(args = process.argv.slice(2)): number {
     console.log(`generated at: ${summary.generated_at}`)
     console.log(`total: ${summary.total}/${EXPECTED_QUERY_IDS.length}`)
     console.log(`verdict=hit: ${summary.hit}/${summary.total}`)
+    if (summary.challenge_stop_detected) console.log('challenge stop detected: 部分批次为挑战截断产物(RFC §3.5),不计为完整/有效校准')
     console.log(`soft score ≥${summary.threshold * 100}%: ${summary.accuracy_pass}/${summary.accuracy_eligible}`)
     console.log(`manual golden query_ids: ${summary.sources.manual_golden_query_ids.join(', ') || '(none)'}`)
     console.log(`static query_ids: ${summary.sources.static_query_ids.join(', ') || '(none)'}`)
