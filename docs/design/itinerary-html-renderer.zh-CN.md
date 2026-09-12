@@ -48,7 +48,7 @@ renderItineraryHtml(input: unknown):
 
 - **事实只来自注册表。** 工具从不接收调用方自带的事实对象、不读 Markdown、不猜事实。选中的 id 对当前 `config.stateRoot` 事实日志(`loadFactRegistry`)解析;未知、重复与超量 id 一律拒绝,登记行畸形则由渲染器的运行时校验拒绝,不静默丢弃。
 - **空 `fact_ids` 是合法输入**,渲染为明确未核验的计划:文档写明缺失的证据,且不带任何整体「已验证」徽章——只有逐条事实自带的可下单性/证据层/来源标注。
-- **只新建文件,绝不覆盖。** 目标 = realpath 化后的会话工作目录顶层;basename 必须匹配 `gotry-itinerary-<ASCII token>.html`(无分隔符、无 `..`),否则自动生成 crypto 随机名。文件以 `O_CREAT|O_EXCL`(`wx`)创建:既有文件与指向别处的符号链接都会失败,不会被跟随或替换;`.git`/`node_modules` 目录拒绝。写入只落在会话工作目录,绝不写进 `stateRoot`。
+- **只新建文件,绝不覆盖。** 目标 = realpath 化后的会话工作目录顶层;basename 必须匹配 `gotry-itinerary-<ASCII token>.html`(无分隔符、无 `..`),否则自动生成 crypto 随机名。会话工作目录必须**显式给出且为绝对路径**:缺失、空白、纯空白或相对的 cwd 在工具边界 fail closed,能力层再次拒绝——刻意不回落进程 cwd,因为「猜落点」正是文档被写进无关目录的方式。文件以 `O_CREAT|O_EXCL`(`wx`)创建:既有文件与指向别处的符号链接都会失败,不会被跟随或替换;`.git`/`node_modules` 目录拒绝。写入只落在会话工作目录,绝不写进 `stateRoot`。
 - **失败即零字节。** 非法输入、未注册 id、渲染被拒、文件名被占用与被拒目录都在打开任何文件之前返回结构化错误。结果返回落盘文件的最终真实路径;本工具只做本地文档生成——不预订、不支付、不写供应商。
 - **再次查看的旅程。** 生成的 `.html` 经 `gotry_artifacts_list` / `gotry_artifacts_read` 发现与阅读(源码卡文本视图)。宿主自带的原生 HTML 预览是另一个 UI 面、有自己的 sandbox 行为,本文不作声明。
 

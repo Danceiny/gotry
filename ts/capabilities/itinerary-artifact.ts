@@ -9,8 +9,9 @@
  *   1. 事实只从 <stateRoot>/gotry-state/bookable-facts.jsonl 注册表取:入参只收
  *      fact_ids,调用方自带的事实对象一律不接收;未知/重复/超量 id 显式拒绝,
  *      登记行畸形则由渲染器的运行时校验拒绝(不静默丢弃后仍宣称成功);
- *   2. 只新建文件:basename 限定 gotry-itinerary-<ASCII 安全 token>.html,父目录先
- *      realpath 化并排除 .git/node_modules,再以 O_CREAT|O_EXCL('wx')独占创建,
+ *   2. 只新建文件:basename 限定 gotry-itinerary-<ASCII 安全 token>.html,父目录必须是宿主
+ *      显式给出的**绝对**会话工作目录(缺失/空白/相对一律拒绝,绝不回落 `.` 或进程 cwd),
+ *      realpath 化并排除 .git/node_modules 后,再以 O_CREAT|O_EXCL('wx')独占创建,
  *      绝不覆盖既有文件、绝不跟随符号链接改写其目标;
  *   3. 失败即拒绝、零写入:输入非法/事实未注册/渲染被拒/文件名被占用都返回结构化
  *      错误,不落任何字节(校验全部发生在打开文件之前)。
@@ -18,7 +19,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { open, realpath, stat, unlink } from 'node:fs/promises'
-import { join, resolve, sep } from 'node:path'
+import { isAbsolute, join, sep } from 'node:path'
 
 import { loadFactRegistry } from './fact-log.ts'
 import { ITINERARY_HTML_LIMITS, renderItineraryHtml } from '../src/itinerary-html.ts'
@@ -34,7 +35,7 @@ const ID_SAMPLE = 3
 export interface ItineraryArtifactDeps {
   /** 事实注册表根(config.stateRoot);工具面固定传当前配置,不接受调用方覆盖 */
   stateRoot: string
-  /** 会话工作目录(exec 上下文的真实 cwd) */
+  /** 会话工作目录:必须是宿主显式给出的绝对路径;缺失/空白/相对一律拒绝(绝不回落进程 cwd) */
   cwd: string
 }
 
@@ -116,9 +117,16 @@ function takeBasename(value: unknown): { basename: string } | { error: string; h
   return { basename: value }
 }
 
-/** 会话工作目录:必须已存在、可 realpath、是目录,且不含 .git/node_modules 段 */
-async function resolveWritableDir(cwd: string): Promise<{ dir: string } | { error: string; hint?: string }> {
-  const requested = resolve(cwd && cwd.length > 0 ? cwd : '.')
+/** 会话工作目录:必须显式且为绝对路径(缺失/空白/相对一律拒绝,绝不回落 '.' 或 process.cwd()),
+ *  已存在、可 realpath、是目录,且不含 .git/node_modules 段 */
+async function resolveWritableDir(cwd: unknown): Promise<{ dir: string } | { error: string; hint?: string }> {
+  const requested = typeof cwd === 'string' ? cwd.trim() : ''
+  if (requested === '') {
+    return { error: '会话工作目录缺失:拒绝在未知目录写产物', hint: '写产物必须有宿主显式给出的绝对会话工作目录,不做任何猜测性回落' }
+  }
+  if (!isAbsolute(requested)) {
+    return { error: `会话工作目录必须是绝对路径:${requested}`, hint: '相对路径会随进程工作目录漂移,拒绝写入' }
+  }
   const canonical = await realpath(requested).catch(() => null)
   if (!canonical) return { error: `会话工作目录不存在或无法解析:${requested}`, hint: '本工具只在真实存在的会话工作目录顶层新建文件' }
   if (hasDeniedSegment(canonical)) {

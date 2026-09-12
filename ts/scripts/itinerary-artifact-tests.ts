@@ -17,7 +17,11 @@
  *   8. basename 路径分隔符 / 越级 / 错误前缀 / 超长 / 绝对路径全部拒绝,仓外零文件;
  *   9. 会话 cwd 位于 .git/node_modules 段或不存在 → 拒绝;
  *  10. 随机默认名符合契约且两次不同;同一输入两次生成字节一致(确定性);
- *  11. 畸形 title/itinerary/fact_ids 类型 → 拒绝且零写入。
+ *  11. 畸形 title/itinerary/fact_ids 类型 → 拒绝且零写入;
+ *  12. 缺失/空对象/空串/纯空白/非字符串/相对的会话 cwd → 工具层与能力层都 fail closed,
+ *      进程 cwd 零新增文件(绝不回落 process.cwd());
+ *  13. 真实产出链路(注册工具):生成 → gotry_artifacts_list 在册同一路径 → gotry_artifacts_read
+ *      以 html 源码文本读回,内容与落盘字节逐字一致、version 与磁盘 sha256 一致。
  * 全部合成事实,无用户真实行程;不启动 dsh 宿主、无网络、无供应商调用。
  *
  * 运行(在 ts/ 下):
@@ -25,6 +29,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, lstatSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,6 +44,7 @@ import {
   type PolicyFact,
 } from '../src/bookable-facts.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
+import { generateItineraryArtifact } from '../capabilities/itinerary-artifact.ts'
 import { renderItineraryHtml } from '../src/itinerary-html.ts'
 import { ITINERARY_ARTIFACT_BASENAME_RE } from '../capabilities/itinerary-artifact.ts'
 
@@ -340,6 +346,56 @@ async function main(): Promise<void> {
     ok(r.ok === false, `§15a 畸形输入 ${i} 拒绝`)
   }
   ok(htmlFiles(cwd).length === before15, `§15b 畸形输入零写入(实测 ${htmlFiles(cwd).length})`)
+
+  // ---- §16 会话 cwd 非法一律 fail closed(零写入,绝不回落进程 cwd) ----
+  const procCwdBefore = readdirSync(process.cwd()).sort().join(',')
+  const badExecs: Array<[string, unknown]> = [
+    ['缺 exec', undefined],
+    ['空对象 exec', {}],
+    ['无 session', { agent: {} }],
+    ['无 header', { agent: { session: {} } }],
+    ['header 无 cwd', { agent: { session: { header: {} } } }],
+    ['cwd 空串', { agent: { session: { header: { cwd: '' } } } }],
+    ['cwd 纯空白', { agent: { session: { header: { cwd: '   ' } } } }],
+    ['cwd 非字符串', { agent: { session: { header: { cwd: 42 } } } }],
+    ['cwd 相对路径', { agent: { session: { header: { cwd: 'relative/workspace' } } } }],
+  ]
+  for (const [label, badExec] of badExecs) {
+    const r = await tool!.execute({ title: TITLE, itinerary: ITINERARY, fact_ids: [] }, badExec) as ArtifactResult
+    ok(r.ok === false, `§16a 非法会话 cwd 拒绝:${label}`)
+    ok(/会话工作目录/.test(String(r.error)), `§16b 拒绝原因是会话工作目录缺失/非法:${label}`)
+  }
+  ok(readdirSync(process.cwd()).sort().join(',') === procCwdBefore, '§16c 进程 cwd 零新增文件')
+
+  // ---- §16d 直接调用能力层同样 fail closed(不依赖工具层守卫) ----
+  for (const bad of ['', '   ', undefined as unknown as string]) {
+    const r = await generateItineraryArtifact({ title: TITLE, itinerary: ITINERARY, fact_ids: [] }, { stateRoot, cwd: bad })
+    ok(r.ok === false && /会话工作目录/.test(String(r.error)), `§16e 能力层拒绝 cwd=${JSON.stringify(bad)}`)
+  }
+  ok(readdirSync(process.cwd()).sort().join(',') === procCwdBefore, '§16f 能力层非法 cwd 零写入进程 cwd')
+
+  // ---- §17 真实产出链路:注册工具生成 → gotry_artifacts_list → gotry_artifacts_read(#441 已在 main) ----
+  const listTool = tools.get('gotry_artifacts_list')
+  const readTool = tools.get('gotry_artifacts_read')
+  ok(Boolean(listTool && readTool), '§17a 产物 list/read 注册工具可用')
+  const chainName = 'gotry-itinerary-e2e-chain.html'
+  const chain = await run({ title: TITLE, itinerary: ITINERARY, fact_ids: [FLIGHT_ID, HOTEL_ID], basename: chainName })
+  ok(chain.ok === true, `§17b 生成成功(实际:${JSON.stringify(chain.error ?? '')})`)
+  const chainDisk = readFileSync(String(chain.path), 'utf-8')
+
+  const listed = await listTool!.execute({ limit: 50 }, exec) as { artifacts?: Array<{ id?: string; path?: string; source?: string; bytes?: number }> }
+  const entry = (listed.artifacts ?? []).find(a => a.id === chainName)
+  ok(Boolean(entry), '§17c list 在册发现生成的 HTML(同一文件)')
+  ok(entry?.source === 'cwd-file', '§17d 来源为会话工作目录文件')
+  ok(realpathSync(String(entry?.path)) === String(chain.path), '§17e list 路径解析到生成返回的同一真实路径')
+  ok(entry?.bytes === Buffer.byteLength(chainDisk, 'utf8'), '§17f list 字节数与磁盘一致')
+
+  const read = await readTool!.execute({ path: String(entry?.path) }, exec) as { ok?: boolean; lang?: string; content?: string; version?: string; totalLines?: number }
+  ok(read.ok === true, `§17g read 成功(实际:${JSON.stringify((read as { error?: string }).error ?? '')})`)
+  ok(read.lang === 'html', '§17h read 以 html 源码文本读出')
+  ok(read.content === chainDisk, '§17i read 内容与落盘字节逐字一致')
+  ok(read.version === createHash('sha256').update(chainDisk).digest('hex').slice(0, 12), '§17j content version 与磁盘 sha256 指纹一致')
+  ok(read.content === renderHtml([FLIGHT, HOTEL]), '§17k 读回内容 == 注册表选中事实的渲染输出')
 
   rmSync(home, { recursive: true, force: true })
 

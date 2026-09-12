@@ -13,7 +13,7 @@
  * @module @gotry/plugin
  */
 
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -2153,9 +2153,22 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     },
     async execute(args, exec) {
       const q = args as { title?: unknown; itinerary?: unknown; fact_ids?: unknown; basename?: unknown }
+      // 写产物不允许猜测落点:宿主必须给出显式绝对会话工作目录,否则 fail closed
+      //(绝不回落 process.cwd()——那会把产物写进 Node 进程的偶然目录)
+      const cwd = sessionCwd(exec)
+      if (typeof cwd !== 'string' || cwd.trim() === '' || !isAbsolute(cwd)) {
+        const error = typeof cwd !== 'string' || cwd.trim() === ''
+          ? '会话工作目录缺失:拒绝在未知目录写产物'
+          : `会话工作目录必须是绝对路径:${cwd}`
+        return JSON.parse(JSON.stringify({
+          ok: false,
+          error,
+          hint: '产物只写到宿主会话的显式绝对工作目录(dsh 会话 header.cwd);本工具不猜测落点',
+        })) as Record<string, never>
+      }
       const r = await generateItineraryArtifact(
         { title: q.title, itinerary: q.itinerary, fact_ids: q.fact_ids, basename: q.basename },
-        { stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec) ?? process.cwd() },
+        { stateRoot: config.stateRoot ?? '.', cwd },
       )
       const summary = r.ok
         ? `已生成行程 HTML 产物(未写入任何整体「已验证」结论):${r.path}\n`
