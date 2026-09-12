@@ -1,7 +1,7 @@
 name: protect-parent-triggers
 
 # PR metadata guard for GoTry M4/M5/M6 parent admission trackers (#20/#136/#137).
-# See issue #417.
+# See issue #417 (post root-review 2026-09-12).
 #
 # Security stance:
 #  - `pull_request_target` is used so we can read PR metadata via the GitHub API
@@ -11,11 +11,12 @@ name: protect-parent-triggers
 #  - job permissions are read-only (contents: read, pull-requests: read).
 #  - the GraphQL query is a constant string in YAML — PR title/body is never
 #    interpolated into shell, code, or the query itself. Only the integer PR
-#    number (validated) flows into gh.
-#  - the checker is a pure Node script reading a JSON file; its exit code is
-#    the contract. There is no `node -e` or eval.
+#    number (validated as ^[1-9][0-9]*$) flows into gh.
+#  - the checker is a pure Node script reading the RAW GraphQL envelope as JSON;
+#    there is no `node -e` or eval.
 #  - existing repository actions pinning is preserved (actions/checkout@v4 only
-#    for trusted-base clone of this repo's main; no third-party SDK added).
+#    for trusted-base clone of this repo's default_branch; no third-party SDK
+#    added).
 
 on:
   pull_request_target:
@@ -55,6 +56,11 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      # Query asks for totalCount + pageInfo so the bounded `first: 100`
+      # cannot silently underreport: hasNextPage=true fails closed in the
+      # checker instead of being treated as a complete result.
+      # Query is a constant string; only PR_NUMBER and COUNT (both integer
+      # variables, never PR title/body) are interpolated via `gh -F`.
       - name: Query authoritative closingIssuesReferences via GitHub GraphQL
         id: query
         shell: bash
@@ -63,12 +69,13 @@ jobs:
           PR_NUM: ${{ steps.prnum.outputs.pr_number }}
         run: |
           set -euo pipefail
-          # Hardcoded query — PR title/body are never interpolated.
           query='
-            query($pr: Int!) {
+            query($pr: Int!, $count: Int!) {
               repository(owner:"Danceiny", name:"gotry") {
                 pullRequest(number:$pr) {
-                  closingIssuesReferences(first:25) {
+                  closingIssuesReferences(first:$count) {
+                    totalCount
+                    pageInfo { hasNextPage endCursor }
                     nodes {
                       number
                       repository { name owner { login } }
@@ -81,10 +88,11 @@ jobs:
             --header "GraphQL-Features: closing_issues_references" \
             -F query="$query" \
             -F pr="$PR_NUM" \
-            > "$RUNNER_TEMP/closing-refs.json"
+            -F count=100 \
+            > "$RUNNER_TEMP/closing-refs-raw-envelope.json"
 
-      - name: Run the pure-Node checker (exit code is the contract)
+      - name: Run the pure-Node checker on the RAW envelope (exit code is the contract)
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/protect-parent-triggers.mjs "$RUNNER_TEMP/closing-refs.json"
+          node scripts/protect-parent-triggers.mjs "$RUNNER_TEMP/closing-refs-raw-envelope.json"

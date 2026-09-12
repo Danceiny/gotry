@@ -1,11 +1,21 @@
 {
-  "closingIssuesReferences": [
-    {
-      "number": 20,
-      "repository": {
-        "name": "gotry",
-        "owner": { "login": "Danceiny" }
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "closingIssuesReferences": {
+          "totalCount": 1,
+          "pageInfo": { "hasNextPage": false, "endCursor": null },
+          "nodes": [
+            {
+              "number": 20,
+              "repository": {
+                "name": "gotry",
+                "owner": { "login": "Danceiny" }
+              }
+            }
+          ]
+        }
       }
     }
-  ]
+  }
 }

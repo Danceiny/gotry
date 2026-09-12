@@ -37,24 +37,28 @@ A read-only GitHub Actions workflow (`.github/workflows/protect-parent-triggers.
 | PR would auto-close `Danceiny/gotry#20`, `#136`, or `#137` | REJECT — exit 1, PR cannot merge while the body still uses `Closes #N` / `Fixes #N` for those numbers |
 | Neutral references (`Tracks #N`, `Refs #N`) or non-protected closing references | ALLOW — exit 0 |
 | Same number in a different repo / different owner | ALLOW — no cross-repo misfire |
-| `errors[]` from GraphQL, malformed payload, missing required fields, unreadable input | FAIL CLOSED — exit 2 (never silently coerced into a pass) |
+| `errors[]` non-empty OR `errors` not an array; `data` / `data.repository` / `data.repository.pullRequest` missing or null; `pageInfo.hasNextPage === true` (incomplete page); missing or non-boolean hasNextPage; missing or non-integer `totalCount`; `totalCount !== nodes.length`; malformed node entries | FAIL CLOSED — exit 2 (never silently coerced into a pass) |
+
+The checker consumes the **raw GraphQL envelope** as written by `gh api graphql` (top-level `data` and `errors` keys). The production GraphQL query is a constant string in YAML, asks for `totalCount` and `pageInfo { hasNextPage endCursor }`, and bounds the result by `first: 100`. The protected set is fixed to `#20 / #136 / #137`; future protected parents are added by explicit list extension only (no implicit ban on every issue).
 
 **Maintainer remediation**: replace `Closes #20` / `Fixes #20` (and the equivalent for `#136`/`#137`) with `Tracks #N` or `Refs #N`. The maintainer closes the real gate issues explicitly after existing evidence acceptance; this guard does **not** introduce a new approval layer or rewire the M4/M5/M6 Entry/Exit rules.
 
 **Security boundaries** (no exceptions):
 
-- Workflow triggers: `pull_request_target` with metadata-change types only (`opened`, `edited`, `reopened`, `synchronize`).
+- Workflow triggers: `pull_request_target` types only (`opened`, `edited`, `reopened`, `synchronize`).
 - Job permissions: `contents: read` + `pull-requests: read`; no secrets, no tokens beyond `GITHUB_TOKEN`.
 - `actions/checkout@v4` clones the trusted base branch only (`repository.default_branch`); PR head ref is **never** checked out or executed.
-- The GraphQL query is a constant string in YAML; PR number is validated as `[1-9][0-9]*` and passed only to the constant query.
+- The GraphQL query is a constant string in YAML; PR number is validated as `[1-9][0-9]*` and `count` is a constant `100`; both flow only into the constant query.
 - PR title/body are **never** interpolated into shell, code, or the query string. The checker reads a JSON file and exits; there is no `node -e` / eval.
 - No third-party SDK dependency is added; only `actions/checkout@v4` and the preinstalled `gh` CLI are used.
 
 Local reproduction:
 
 ```bash
-node scripts/protect-parent-triggers-tests.mjs   # 14 fixture cases
+node scripts/protect-parent-triggers-tests.mjs   # 21 fixture cases (incl. malformed-envelope and pagination fail-closed)
 ```
+
+**Status**: this section describes the implemented guard. The actual production workflow run on every PR happens after root merges the PR introducing this workflow; until then the local reproduction plus the live `gh api graphql` proof on the same SHA are the source of truth.
 
 ---
 

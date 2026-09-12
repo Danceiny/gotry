@@ -5,7 +5,15 @@
         "closingIssuesReferences": {
           "totalCount": 0,
           "pageInfo": { "hasNextPage": false, "endCursor": null },
-          "nodes": []
+          "nodes": [
+            {
+              "number": 20,
+              "repository": {
+                "name": "gotry",
+                "owner": {}
+              }
+            }
+          ]
         }
       }
     }
