@@ -1,0 +1,90 @@
+name: protect-parent-triggers
+
+# PR metadata guard for GoTry M4/M5/M6 parent admission trackers (#20/#136/#137).
+# See issue #417.
+#
+# Security stance:
+#  - `pull_request_target` is used so we can read PR metadata via the GitHub API
+#    without ever checking out or running PR head code. This workflow does NOT
+#    checkout any PR ref, does NOT install dependencies, does NOT write secrets,
+#    does NOT touch protected branches.
+#  - job permissions are read-only (contents: read, pull-requests: read).
+#  - the GraphQL query is a constant string in YAML — PR title/body is never
+#    interpolated into shell, code, or the query itself. Only the integer PR
+#    number (validated) flows into gh.
+#  - the checker is a pure Node script reading a JSON file; its exit code is
+#    the contract. There is no `node -e` or eval.
+#  - existing repository actions pinning is preserved (actions/checkout@v4 only
+#    for trusted-base clone of this repo's main; no third-party SDK added).
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+    # No path filter: every PR is metadata-checked, including docs-only ones.
+
+permissions: {}
+
+concurrency:
+  group: protect-parent-triggers-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: protect M4/M5/M6 parent admission trackers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Validate PR number is a positive integer
+        id: prnum
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_num="${{ github.event.pull_request.number }}"
+          if ! [[ "$pr_num" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::PR number is not a positive integer: $pr_num" >&2
+            exit 2
+          fi
+          echo "pr_number=$pr_num" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout trusted base (this repo only, no PR head)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Query authoritative closingIssuesReferences via GitHub GraphQL
+        id: query
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUM: ${{ steps.prnum.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          # Hardcoded query — PR title/body are never interpolated.
+          query='
+            query($pr: Int!) {
+              repository(owner:"Danceiny", name:"gotry") {
+                pullRequest(number:$pr) {
+                  closingIssuesReferences(first:25) {
+                    nodes {
+                      number
+                      repository { name owner { login } }
+                    }
+                  }
+                }
+              }
+            }'
+          gh api graphql \
+            --header "GraphQL-Features: closing_issues_references" \
+            -F query="$query" \
+            -F pr="$PR_NUM" \
+            > "$RUNNER_TEMP/closing-refs.json"
+
+      - name: Run the pure-Node checker (exit code is the contract)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/protect-parent-triggers.mjs "$RUNNER_TEMP/closing-refs.json"
