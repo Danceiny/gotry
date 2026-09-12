@@ -342,9 +342,10 @@ export function parseArgs(argv: string[]): { stateRoot: string; out?: string; da
   return { stateRoot: isAbsolute(stateRoot) ? stateRoot : resolve(stateRoot), out, days }
 }
 
-export async function main(argv: string[]): Promise<void> {
+export async function main(argv: string[], injectedNow?: Date): Promise<void> {
   const { stateRoot, out, days } = parseArgs(argv)
-  const snapshot = await collectMetrics(stateRoot, { days })
+  const now = injectedNow ?? new Date()
+  const snapshot = await collectMetrics(stateRoot, { days, now })
   const markdown = renderMetricsReport(snapshot)
   if (out) {
     writeFileSync(out, markdown + '\n', 'utf-8')

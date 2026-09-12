@@ -146,7 +146,7 @@ await withRoot(async (root, stateDir) => {
   writeFileSync(join(stateDir, 'doctor-report.md'), '# doctor\n', 'utf-8')
   const before = readdirSync(stateDir).sort()
   const outPath = join(root, 'report.md')
-  await main(['--state-root', root, '--out', outPath, '--days', '7'])
+  await main(['--state-root', root, '--out', outPath, '--days', '7'], NOW)
   const md = readFileSync(outPath, 'utf-8')
   assert.match(md, /hotel \| 2 \| hit:1 \/ error:1 \| 1\/2\(50%\)/)
   assert.match(md, /\| flyai \| down \| trial-exhausted \|/)
