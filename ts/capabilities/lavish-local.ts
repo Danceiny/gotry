@@ -989,9 +989,11 @@ function projectFeedback(body: Record<string, unknown>): LavishUntrustedFeedback
 
 /**
  * Projects the upstream `prompt` field (the user instruction) without ever
- * falling back to the `text` (selected-element context) field. A missing,
- * empty, or non-string `prompt` is reported as malformed so the consumer can
- * audit the drop instead of acting on a value that was substituted for it.
+ * falling back to the `text` (selected-element context) field. Only a
+ * **missing or non-string** `prompt` is reported as malformed; an empty-string
+ * `prompt` is a legitimate "no text, attachments only" request and is
+ * preserved as data (not substituted, not flagged). Consumers audit the
+ * `malformed` flag instead of acting on a value that was substituted for it.
  */
 function projectUserPrompt(raw: unknown): { value: string; truncated: boolean; malformed: boolean } {
   if (typeof raw !== 'string') return { value: '', truncated: false, malformed: true }
