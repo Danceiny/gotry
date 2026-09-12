@@ -173,12 +173,17 @@ try {
     sessionVerdict: 'challenged',
     doubleSource: { state: 'source_unavailable', quota_disposition: 'no_spend_stop', mismatches: [] },
   })
+  writeJson(challengeRoot, 'sf-04', challengeBatch, {
+    ...record('sf-04', 'challenge-batch', '2026-09-14T10:00:04.000Z', 'manual', 'hit'),
+    session: { verdict: 'error', price: 0, route_segments: [], fetched_at: '2026-09-14T10:00:04.000Z' },
+    doubleSource: { state: 'guard_violation', quota_disposition: 'no_spend_stop', mismatches: [] },
+  })
   const challenge = runCli(challengeRoot)
   assert.equal(challenge.exit, 1, challenge.output)
   assert.equal(challenge.summary.status, 'fail_closed')
   assert.equal(challenge.summary.challenge_stop_detected, true)
-  assert.equal(challenge.summary.total, 3)
-  assert.equal(challenge.summary.missing_query_ids.length, 5)
+  assert.equal(challenge.summary.total, 4)
+  assert.equal(challenge.summary.missing_query_ids.length, 4)
 
   console.log('SF SUMMARY CLI E2E: coherent filename batch, chronology, source provenance, missing/corrupt fail-closed, legacy unknown, old/new isolation, and challenge-partial fail-closed OK')
 } finally {

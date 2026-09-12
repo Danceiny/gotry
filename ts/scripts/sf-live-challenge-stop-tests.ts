@@ -35,6 +35,7 @@ interface Overlay {
   sessionCallCounter: string
   npxCounter: string
   netCounter: string
+  timerPreload: string
 }
 
 function readLines(path: string): string[] {
@@ -129,6 +130,8 @@ globalThis.fetch = async (...args) => {
   throw new Error('blocked network in sf411 offline proof')
 }
 `)
+  const timerPreload = join(base, 'timer-preload.mjs')
+  writeFileSync(timerPreload, `globalThis.setTimeout = (callback, _delay, ...args) => { callback(...args); return 0 }\n`)
 
   return {
     base,
@@ -138,6 +141,7 @@ globalThis.fetch = async (...args) => {
     sessionCallCounter: join(base, 'session-calls.jsonl'),
     npxCounter: join(base, 'npx-calls.txt'),
     netCounter: join(base, 'net-attempts.jsonl'),
+    timerPreload,
   }
 }
 
@@ -161,10 +165,9 @@ function runRunner(overlay: Overlay, golden: string, script: string): RunOutcome
       ...process.env,
       HOME: overlay.home,
       PATH: `${join(overlay.base, 'shim')}:${process.env.PATH ?? ''}`,
-      NODE_OPTIONS: `--import=${join(overlay.base, 'net-trap.mjs')}`,
+      NODE_OPTIONS: `--import=${join(overlay.base, 'net-trap.mjs')} --import=${overlay.timerPreload}`,
       GOTRY_SESSION_LIVE: '0',
       GOTRY_HBCLI_LIVE: '0',
-      GOTRY_SF_INTER_QUERY_DELAY_MS: '50',
       SF411_SCRIPT: script,
       SF411_CALL_COUNTER: overlay.sessionCallCounter,
       SF411_NPX_COUNTER: overlay.npxCounter,

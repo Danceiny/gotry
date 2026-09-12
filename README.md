@@ -69,6 +69,8 @@ Architecture — the sync path from chat through the kernel to the fact gate, pl
   </picture>
 </a>
 
+The offline session benchmark marks challenge/guard truncation fail-closed; only a normally completed eight-query batch is `batch_complete`, and production cadence remains 35 seconds.
+
 > Interactive version: [`docs/assets/gotry-system-architecture.en.html`](docs/assets/gotry-system-architecture.en.html) (archify, showcase-validated). Layers: L2 dsh plugin · L3 `ts/src/unified.ts` kernel · L4 effect interpreter + realtime bridges · L5 loopx governance. ADRs: [`docs/architecture.md`](docs/architecture.md).
 
 23 registered tools in groups: realtime retrieval (Fliggy official channel + your own Chrome session, read-only) · catalog · decision engine · memory · artifacts · fact gate · external search · `gotry_doctor` self-check. No hidden dispatch — a channel registry returns an ordered suggestion list; the model or user chooses. Per-tool contracts: [`docs/tools.md`](docs/tools.md).

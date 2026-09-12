@@ -628,3 +628,7 @@ Organizational rules (directory taxonomy/naming/header blocks/lifecycle) and the
 | `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` · `ops/external-pr-workflow.md` · `ops/ledger-tenant-repair.md` | Chrome Web Store submission materials and privacy policy (ADR-21 channel B); maintainer-side workflow for external PRs (including automation bots); #254 ledger tenant repair owner-gate checklist |
 | `assets/` | archify-generated system architecture diagrams (tool artifacts, no in-repo consumers) |
 | `superpowers/` | superpowers workflow plans/specs (evaluation plan, tool-managed) |
+
+### Issue 411 forward-fix state
+
+The live benchmark marks `batch_complete` only for a normal `completed` terminal reason. Selected challenge/guard evidence, including legacy top-level `sessionVerdict`, makes `sf-summary` fail closed. Production cadence is fixed at 35 seconds; only the isolated offline harness mocks child timers.

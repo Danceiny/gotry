@@ -466,13 +466,14 @@ function challengeStopHit(item: LoadedRecord): boolean {
   return state === 'challenge_stop' || state === 'guard_violation'
 }
 
-function buildErrors(summary: Pick<RunSummary, 'selected_batch' | 'missing_query_ids' | 'selected_malformed_records' | 'selected_invalid_records'>, conflictReason: string | null): string[] {
+function buildErrors(summary: Pick<RunSummary, 'selected_batch' | 'missing_query_ids' | 'selected_malformed_records' | 'selected_invalid_records' | 'challenge_stop_detected'>, conflictReason: string | null): string[] {
   const errors: string[] = []
   if (summary.selected_batch.batch_id === null) errors.push('no defensible batch identity found')
   if (conflictReason !== null) errors.push(conflictReason)
   if (summary.missing_query_ids.length > 0) errors.push(`missing query IDs: ${summary.missing_query_ids.join(', ')}`)
   if (summary.selected_malformed_records.length > 0) errors.push(`malformed JSON: ${summary.selected_malformed_records.map((item) => item.file).join(', ')}`)
   if (summary.selected_invalid_records.length > 0) errors.push(`invalid records: ${summary.selected_invalid_records.map((item) => item.file).join(', ')}`)
+  if (summary.challenge_stop_detected) errors.push('challenge/guard stop evidence: batch is not a complete calibration')
   return errors
 }
 

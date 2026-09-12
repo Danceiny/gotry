@@ -168,3 +168,5 @@ loop:
 - D-3 (LLM not in the loop) decomposes into: S1-S3 (architecture, actionable) + S4 (intelligence, waiting for the key) — the "architecture half" of the debt no longer blocks.
 - D-4 (UI) stays after Stage 1; this design's L1 is "conversation as the interface", with gates presented as in-message multiple choice.
 - The existing unified solver/data packs/plugins = the leaves of this design, zero rework.
+
+Issue 411 forward fix: only a normally completed eight-query batch is `batch_complete`; challenge/guard truncation is fail-closed and production cadence remains 35 seconds.

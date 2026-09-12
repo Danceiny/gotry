@@ -625,3 +625,7 @@ Issue #338 当前形态：写入 patch 接受 `homeCity` 与 optional `homeCityE
 | `ops/extension-webstore-submission.md` · `ops/extension-privacy.md` · `ops/external-pr-workflow.md` · `ops/ledger-tenant-repair.md` | Chrome Web Store 上架材料与隐私政策（ADR-21 通道 B）；外部 PR（含自动化机器人）维护者侧工作流；#254 账本 tenant 修复 owner-gate 清单 |
 | `assets/` | archify 生成的系统架构图（工具产物，仓内无消费者） |
 | `superpowers/` | superpowers 工作流 plans/specs（评测计划，工具自管） |
+
+### Issue 411 forward 修复状态
+
+live benchmark 只有正常 `completed` 终止时才将 `batch_complete` 标为 true。选中批次的挑战／守卫证据（包括 legacy 顶层 `sessionVerdict`）会使 `sf-summary` fail-closed。生产节律固定为 35 秒；仅隔离离线 harness mock 子进程 timer。

@@ -23,8 +23,8 @@
  * 退出码:0 = 正常结束(跑满 8 条,或按红线提前停止;stop_reason 区分;
  * 即便部分 query miss 也是 0);1 = 参数/加载异常。人类评审 evidence 决定 issue 是否可关
  *
- * 测试节律:同 query 间隔默认 35_000ms(§3.4 ≥30s);离线测试可设
- * GOTRY_SF_INTER_QUERY_DELAY_MS=<非负整数毫秒> 缩短,非法值回退默认,不影响停止逻辑
+ * 测试节律:同 query 间隔固定 35_000ms(§3.4 ≥30s)。离线 harness 通过子进程
+ * timer preload 加速，不向生产暴露节律逃生开关。
  */
 
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
@@ -226,18 +226,8 @@ interface StaticContext {
 
 type BatchStopReason = RunSummary['stop_reason']
 
-/** 节律间隔(§3.4 同站点 ≥30s);仅离线测试经 env 缩短,非法值 fail-closed 回默认 */
+/** 生产节律(§3.4 同站点 ≥30s)。测试只可在隔离子进程 mock timer。 */
 const DEFAULT_INTER_QUERY_DELAY_MS = 35_000
-function interQueryDelayMs(): number {
-  const raw = (process.env.GOTRY_SF_INTER_QUERY_DELAY_MS ?? '').trim()
-  if (raw === '') return DEFAULT_INTER_QUERY_DELAY_MS
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isInteger(parsed) || parsed < 0 || String(parsed) !== raw) {
-    console.error(`[sf-live-benchmark] GOTRY_SF_INTER_QUERY_DELAY_MS="${raw}" 非法,回退默认 ${DEFAULT_INTER_QUERY_DELAY_MS}ms`)
-    return DEFAULT_INTER_QUERY_DELAY_MS
-  }
-  return parsed
-}
 
 async function runOne(
   q: GoldenQuery,
@@ -381,12 +371,11 @@ async function main(): Promise<void> {
 
   const runStartedAt = new Date().toISOString()
   const runStartedMs = Date.now()
-  const interQueryDelay = interQueryDelayMs()
   const records: QueryRunRecord[] = []
   const attemptedQueryIds: string[] = []
   let stopReason: BatchStopReason = 'completed'
   for (const q of queries) {
-    if (records.length > 0) await new Promise((r) => setTimeout(r, interQueryDelay))
+    if (records.length > 0) await new Promise((r) => setTimeout(r, DEFAULT_INTER_QUERY_DELAY_MS))
     console.log(`\n[sf-live-benchmark] ${q.id} ${q.from}→${q.to} ${q.date}`)
     const rec = await runOne(q, requestedSource, manifest, staticContext)
     records.push(rec)
@@ -442,7 +431,7 @@ async function main(): Promise<void> {
     effective_sources: effectiveSources,
     fallback_count: fallbackCount,
     golden_source: requestedSource === 'manual' ? 'manual-golden' : requestedSource,
-    batch_complete: records.length === queries.length,
+    batch_complete: stopReason === 'completed' && records.length === queries.length,
     stop_reason: stopReason,
     attempted_query_ids: attemptedQueryIds,
     not_attempted_query_ids: notAttemptedQueryIds,
