@@ -35,7 +35,7 @@
 | **地面交通（接驳/铁路）** | ⚠️ **#341 第一切片**：仅接受显式起点/终点经纬度与 `mode=driving`；`ts/capabilities/ground-transfer.ts` 通过已注册公开 `map_driving_route` 委托路线结果，抵达方向（A→B）与返程方向（B→A）分别请求与绑定，任一方向 miss/error/stale/不匹配仅回退该方向到静态估算；候选 transfer 持有 `minutesOut` / `minutesRet` 覆盖供 `evaluateChoice` 按方向消费；仅把分钟绑定到具名静态 `taxi` transfer；`bus`/`bus_plus_taxi` 不调用路线 provider，静态价格不改写 | 路线估算 + 按方向隔离且有界 cache（方向=origin/destination pair）；**不是实时交通** | 路线事实=`map_driving_route` + `asOf`（宿主观察/查询时间，非 provider 发布时间）/freshness/cache；回退=`[静态包:估算]`；自相矛盾路线事实（正距离零耗时）按 provider miss 拒绝（2026-09-11 边界冻结） | live traffic、transit/rail、fare、地址解析与更广泛 transfer 仍未接入——gated 真实数据工作，按 [#429](https://github.com/Danceiny/gotry/issues/429) 追踪，离线边界已于 2026-09-11 钉闭；12306 不由本切片假设 |
 | **地理/行政区划** | ⚠️ 在线地图由 `dsh-map-tools` Nominatim/Photon 兜底（已 vendored，运行时免费）；**bundled GeoJSON atlas 尚未构建**（offline-first 需求触发后再实现），残余 → [#342](https://github.com/Danceiny/gotry/issues/342) | 实时（在线） | `[实时API:nominatim@ts]` | TREK 模式：bundled GeoJSON atlas（脚本构建，离线） |
 | **时区** | v2 flight pack 使用显式 IANA zone 与 local date 解析 UTC instant；`Intl.DateTimeFormat` 是运行时权威，未知 zone 与 DST gap/overlap 在边界拒收，UTC instant 用于 elapsed duration 与 home-zone work-window 投影。静态 v1 的 numeric offset 继续兼容；该确定性契约不代表 live schedules，prices，availability 或 inventory | 动态（运行时常量）+静态 v1 | `[运行时权威:Intl.DateTimeFormat]`（v2） / `[静态包:估算]`（v1 数值） | v2 显式 IANA；v1 保持兼容 |
-| **汇率** | ❌ 无（全 CNY 硬编码）；**multi-currency FX 仍属触发后置**——中国出境首发当前以 CNY 出境结算路径为主，首条真实非 CNY booking 触发后再实现，残余 → [#344](https://github.com/Danceiny/gotry/issues/344) | — | — | 多币种 FX（Exchangerate.host 等免费层或 hotel-be） |
+| **汇率** | ❌ 无（全 CNY 硬编码）；**multi-currency FX 仍属触发后置**——中国出境首发当前以 CNY 出价结算路径为主；当**首条真实非 CNY 供应商报价、用户预算或目的地需求**出现时启动实现（见 [#344](https://github.com/Danceiny/gotry/issues/344)）；触发前不调用任何浮动汇率源 | — | — | 多币种 FX（Exchangerate.host 等免费层或 hotel-be） |
 | **签证/入境** | ✅ 政策事实生产端 v1（2026-09-05，issue #141）：C 档中国领事服务网（cs.mfa.gov.cn）国家指南树，礼貌抓取（永不重试+断路器护站）→ 签证入境章节抽取 → `PolicyFact(as_of + D+30 review_by + 来源证据链)`落账 | 静态快照抓取 | `[实时API:cs-mfa@ts]` | Timatic/Sherpa° 后议（founder 拍板 C 档免费权威源先行） |
 
 ---
@@ -202,7 +202,7 @@ TREK 是自托管协作旅行规划器，数据面成熟度最高，可借鉴的
 - **触发后置残余**：
   - **#345 三仓门**：GoTry 专用 paid Place/reviews 链——hotel-be `search` 模块新增 place OpenAPI endpoint（转调 geography，带配额封顶），hotel-be `geography` 把 `SearchPlace`/`GetPlaceReviews` 加入 `InternalExposedMethods` 白名单；hotelbyte-cli 新增 `search place` / `search place-reviews` 命令 + `--json`；GoTry 侧新增 `capabilities/place.ts`（hbcliPlaceSearch，失败降级 OSM Nominatim 兜底）。**触发 = first review/photo pull need**（founder + 用量）——触发前不开闸，触发后才动三仓。#276 = hotel-be 内部 `SearchSrv` 在 M4 规模下的扩容路径，**独立**于 #345 三仓门，不得合并。
   - **#342 bundled GeoJSON atlas**（脚本构建、离线）；触发 = offline-first 需求。
-  - **#344 多币种 FX**；触发 = first real non-CNY booking（中国出境首发当前以 CNY 出境结算路径为主）。
+  - **#344 多币种 FX**；触发 = 首条真实非 CNY 供应商报价、用户预算或目的地需求（中国出境首发当前以 CNY 出价结算路径为主；触发前不调用浮动汇率源）。
 - **M5**：票价路径 = FlyAI + 会话（扩展桥）交叉验证，aviationstack 已不在路径（免费层 + 官方接口已覆盖原目标）；KDE Itinerary 式预订导入（bookedResources 数据源）。
 
 ---
