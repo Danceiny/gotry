@@ -1625,6 +1625,76 @@ assert.deepEqual(
   'corrected occupancy preserves both non-empty rooms and child criteria',
 )
 
+// Event-order regression (PR461 review F2): an INVALID_ARGS rejection that
+// arrives after the accepted correction succeeded has not been observed by
+// the model at decision time; the planning authority must fail closed.
+let lateInvalidResultRuns = 0
+const lateInvalidResultPort: DshPlannerRunPort = {
+  async run() {
+    lateInvalidResultRuns += 1
+    return {
+      finalResponse: '',
+      events: [
+        toolCall('booking_search_hotels', JSON.stringify({
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-late-invalid', reason: 'Late invalid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } } } },
+        }), 'call-order-late-invalid'),
+        toolCall('booking_search_hotels', JSON.stringify({
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-late-valid', reason: 'Late valid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } } } },
+        }), 'call-order-late-valid'),
+        toolResult('call-order-late-valid'),
+        toolResult('call-order-late-invalid', true, 'INVALID_ARGS'),
+      ],
+    }
+  },
+  async close() {},
+}
+const lateInvalidResult = await createDshEmbeddedBookingPlanner({ runPort: lateInvalidResultPort })
+await assert.rejects(
+  lateInvalidResult.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-order-late', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_typed_decision_after_candidate/,
+  'rejection feedback that lands after the accepted correction must fail closed',
+)
+assert.equal(lateInvalidResultRuns, 1, 'late rejection result fails closed within a single provider run')
+await lateInvalidResult.close()
+
+// Event-order regression (PR461 review F2): the correction call itself is
+// emitted before the model receives the INVALID_ARGS rejection for the
+// earlier invalid call; the planning authority must refuse to honour it.
+let preFeedbackCorrectionRuns = 0
+const preFeedbackCorrectionPort: DshPlannerRunPort = {
+  async run() {
+    preFeedbackCorrectionRuns += 1
+    return {
+      finalResponse: '',
+      events: [
+        toolCall('booking_search_hotels', JSON.stringify({
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-pre-invalid', reason: 'Pre-feedback invalid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } } } },
+        }), 'call-order-pre-invalid'),
+        toolCall('booking_search_hotels', JSON.stringify({
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-pre-valid', reason: 'Pre-feedback valid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } } } },
+        }), 'call-order-pre-valid'),
+        toolResult('call-order-pre-invalid', true, 'INVALID_ARGS'),
+        toolResult('call-order-pre-valid'),
+      ],
+    }
+  },
+  async close() {},
+}
+const preFeedbackCorrection = await createDshEmbeddedBookingPlanner({ runPort: preFeedbackCorrectionPort })
+await assert.rejects(
+  preFeedbackCorrection.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-order-pre', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_typed_decision_after_candidate/,
+  'correction emitted before its INVALID_ARGS feedback must fail closed',
+)
+assert.equal(preFeedbackCorrectionRuns, 1, 'pre-feedback correction fails closed within a single provider run')
+await preFeedbackCorrection.close()
+
 // A prose-only first response receives the same bounded correction treatment
 // as a malformed typed call; a valid second typed call is returned immediately.
 let proseRecoveryRuns = 0
@@ -1686,5 +1756,5 @@ await assert.rejects(
 )
 assert.equal(providerRuns, 1, 'provider failures are not silently swallowed or retried')
 
-await Promise.all([adapter.close(), textChannel.close(), fencedTextChannel.close(), stringifiedAction.close(), invalidThenValid.close(), invalidWithoutSchemaRejection.close(), unauthorised.close(), unauthorisedTyped.close(), multipleTypedSuccesses.close(), missingToolResult.close(), mismatchedToolResult.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close(), indexKeyedRooms.close(), occupancyRepair.close(), proseRecovery.close(), malformed.close(), providerError.close(), reservedText.close(), finalTextAfterTransientAttempt.close(), attemptFailureWithoutTerminalEvent.close()])
+await Promise.all([adapter.close(), textChannel.close(), fencedTextChannel.close(), stringifiedAction.close(), invalidThenValid.close(), invalidWithoutSchemaRejection.close(), unauthorised.close(), unauthorisedTyped.close(), multipleTypedSuccesses.close(), missingToolResult.close(), mismatchedToolResult.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close(), indexKeyedRooms.close(), occupancyRepair.close(), lateInvalidResult.close(), preFeedbackCorrection.close(), proseRecovery.close(), malformed.close(), providerError.close(), reservedText.close(), finalTextAfterTransientAttempt.close(), attemptFailureWithoutTerminalEvent.close()])
 console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/prose non-executable/no portal token OK')

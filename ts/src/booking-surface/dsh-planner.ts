@@ -557,6 +557,7 @@ function scanDshToolDecisionEvents(events: readonly unknown[], task: BookingCopi
   if (calls.some((call) => call.index > accepted.index)) throw new Error('planner_typed_decision_after_candidate')
   if (rejected.some((call) => call.index > accepted.index)) throw new Error('planner_typed_decision_after_candidate')
   if (calls.some((call) => call.index < accepted.index && call.result?.kind !== 'schema-rejection')) throw new Error('planner_unresolved_tool_call_before_candidate')
+  if (rejected.some((call) => call.result!.index >= accepted.index)) throw new Error('planner_typed_decision_after_candidate')
   return [accepted.decision!]
 }
 
