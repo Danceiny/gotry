@@ -81,13 +81,38 @@ const modelServer = createServer((req, res) => {
               type: 'function',
               function: {
                 name: 'booking_search_hotels',
-                arguments: JSON.stringify({ decision: { kind: 'operation', action } }),
+                arguments: JSON.stringify({ decision: { kind: 'operation' } }),
               },
             }],
           },
           finish_reason: 'tool_calls',
         }],
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }])
+      return
+    }
+    if (modelCall === 2) {
+      sse(res, [{
+        id: 'chatcmpl-booking-repair',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'deepseek-v4-flash',
+        choices: [{
+          index: 0,
+          delta: {
+            role: 'assistant',
+            tool_calls: [{
+              index: 0,
+              id: 'call-booking-repair',
+              type: 'function',
+              function: {
+                name: 'booking_search_hotels',
+                arguments: JSON.stringify({ decision: { kind: 'operation', action } }),
+              },
+            }],
+          },
+          finish_reason: 'tool_calls',
+        }],
       }])
       return
     }
@@ -165,7 +190,11 @@ try {
   const session = planner.plannerFactory(task)
   const decisions = await session.next({ turn, task })
   assert.deepEqual(decisions, [{ kind: 'operation', action }])
-  assert.equal(requests.length, 2, 'real dsh loop executes the typed tool then reaches idle')
+  assert.equal(requests.length, 3, 'invalid tool call is repaired inside one real dsh run before the final model response')
+  assert.equal(requests[0]!.body.model, requests[1]!.body.model, 'rejected and repaired calls use one model session')
+  const repairMessages = JSON.stringify(requests[1]!.body.messages)
+  assert.match(repairMessages, /invalid arguments: decision_schema_violation/, 'repair request contains the ToolArgsError tool error')
+  assert.ok(JSON.stringify(requests[1]!.body.messages).includes('call-booking-1'), 'repair request references the rejected call id')
   const toolNames = requests[0]!.body.tools.map((tool: any) => tool.function.name).sort()
   assert.deepEqual(toolNames, [...DSH_EMBEDDED_BOOKING_TOOL_NAMES].sort(), 'real model request exposes exactly the six embedded tools')
   assert.ok(!toolNames.some((name: string) => /gotry_book|payment|holder|guest/i.test(name)), 'real model request exposes no booking write or PII tool')

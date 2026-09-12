@@ -2,10 +2,10 @@
  * Embedded Booking planner adapter proof.
  *
  * The fake below stops at the DeepSeek Harness SDK event boundary: planner
- * decisions come from typed dsh tool/call events, or from assistant
- * finalResponse text only after it passes the same authority path
- * (validation, allowedActions, contextRef, runtime-owned revision). A
- * separate core proof boots the real dsh SDK runtime.
+ * decisions come only from one typed dsh tool/call paired with one successful
+ * tool/result event. Assistant finalResponse/prose is diagnostic text only and
+ * never an authority source. A separate core proof boots the real dsh SDK
+ * runtime.
  */
 
 import assert from 'node:assert/strict'
@@ -65,15 +65,33 @@ const searchRun = {
 } as const
 const hotelSelect = { ...searchRun, kind: 'hotel.select', actionId: 'action-dsh-select-1', reason: 'Select the requested hotel.', input: { hotelRef: 'hotel-1' } } as const
 
+function toolCall(name: string, argumentsText: string, callId: string): Record<string, unknown> {
+  return { type: 'tool/call', data: { name, callId, arguments: argumentsText } }
+}
+
+function toolResult(callId: string, isError = false, errorCode?: string, toolCallId = callId, sourceKind = 'tool'): Record<string, unknown> {
+  return {
+    type: 'tool/result',
+    data: {
+      message: {
+        source: { kind: sourceKind, callId },
+        content: [{ type: 'tool-result', toolCallId, content: [], isError }],
+      },
+      ...(errorCode ? { error: { name: 'ToolArgsError', code: errorCode } } : {}),
+    },
+  }
+}
+
+function successfulToolEvents(name: string, argumentsText: string, callId: string): Record<string, unknown>[] {
+  return [toolCall(name, argumentsText, callId), toolResult(callId)]
+}
+
 function toolArgumentsPort(argumentsText: string): DshPlannerRunPort {
   return {
     async run() {
       return {
         finalResponse: '',
-        events: [{
-          type: 'tool/call',
-          data: { name: 'booking_search_hotels', arguments: argumentsText },
-        }],
+        events: successfulToolEvents('booking_search_hotels', argumentsText, 'call-arguments'),
       }
     },
     async close() {},
@@ -108,16 +126,17 @@ const repeatedToolArguments = JSON.stringify({
     },
   },
 })
-const repeatedDecision = await runToolArgumentsCase(`${repeatedToolArguments}${repeatedToolArguments}`, 'dsh-duplicate-identical')
-assert.equal(repeatedDecision[0]?.kind, 'operation', 'identical complete JSON object repetitions are accepted through runPort -> tool/call')
-assert.equal(
-  repeatedDecision[0]?.kind === 'operation' ? repeatedDecision[0].action.reason : undefined,
-  'Preserve braces } {, escaped quotes " and a backslash \\ inside a JSON string.',
-  'balanced recovery respects braces and escapes inside JSON strings',
+await assert.rejects(
+  runToolArgumentsCase(`${repeatedToolArguments}${repeatedToolArguments}`, 'dsh-duplicate-identical'),
+  /planner_invalid_tool_arguments/,
+  'repeated JSON objects are not canonical raw arguments',
 )
 
-const spacedRepeatedDecision = await runToolArgumentsCase(`${repeatedToolArguments}\n \t ${repeatedToolArguments}`, 'dsh-duplicate-whitespace')
-assert.equal(spacedRepeatedDecision[0]?.kind, 'operation', 'identical repetitions separated by whitespace are accepted')
+await assert.rejects(
+  runToolArgumentsCase(`${repeatedToolArguments}\n \t ${repeatedToolArguments}`, 'dsh-duplicate-whitespace'),
+  /planner_invalid_tool_arguments/,
+  'whitespace-separated repeated JSON objects are not canonical raw arguments',
+)
 
 await assert.rejects(
   runToolArgumentsCase(`${repeatedToolArguments}${JSON.stringify({
@@ -168,32 +187,35 @@ const runPort: DshPlannerRunPort = {
     if (runIndex === 1) {
       return {
         finalResponse: '{"kind":"book","input":{}}',
-        events: [{
-          type: 'tool/call',
-          data: {
-            name: 'booking_search_hotels',
-            arguments: JSON.stringify({ decision: { kind: 'operation', action: searchRun } }),
-          },
-        }],
+        events: successfulToolEvents(
+          'booking_search_hotels',
+          JSON.stringify({ decision: { kind: 'operation', action: searchRun } }),
+          'call-adapter-search',
+        ),
       }
     }
     if (runIndex === 3) {
-      return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_refine_results', arguments: JSON.stringify({ decision: { kind: 'operation', action: hotelSelect } }) } }] }
+      return {
+        finalResponse: '',
+        events: successfulToolEvents(
+          'booking_refine_results',
+          JSON.stringify({ decision: { kind: 'operation', action: hotelSelect } }),
+          'call-adapter-select',
+        ),
+      }
     }
     return {
       finalResponse: '{"kind":"search.run","input":{}}',
-      events: [{
-        type: 'tool/call',
-        data: {
-          name: 'booking_search_hotels',
-          arguments: JSON.stringify({
-            decision: {
-              kind: 'terminal',
-              terminal: { status: 'completed', summary: 'Stopped at search results.', factRefs: [] },
-            },
-          }),
-        },
-      }],
+      events: successfulToolEvents(
+        'booking_search_hotels',
+        JSON.stringify({
+          decision: {
+            kind: 'terminal',
+            terminal: { status: 'completed', summary: 'Stopped at search results.', factRefs: [] },
+          },
+        }),
+        'call-adapter-terminal',
+      ),
     }
   },
   async close() {},
@@ -392,23 +414,246 @@ const textDecisions = await textChannel.plannerFactory(task).next({
     request: { text: 'JSON prose must stay prose' },
   },
 })
-assert.equal(textDecisions[0]?.kind, 'operation', 'text-channel typed decisions execute through the same authority path')
-assert.deepEqual((textDecisions[0] as { action?: { actionId?: string; expectedRevision?: number } }).action, { ...searchRun, expectedRevision: 0 })
+assert.equal(textDecisions[0]?.kind, 'error', 'finalResponse text never becomes an executable decision')
+assert.equal(textDecisions[0]?.kind === 'error' ? textDecisions[0].error.code : '', 'PLANNER_TYPED_DECISION_REQUIRED')
+
+const fencedTextChannel = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return { finalResponse: `Here is the plan:\n\`\`\`json\n${JSON.stringify({ kind: 'operation', action: searchRun })}\n\`\`\``, events: [] }
+    },
+    async close() {},
+  },
+})
+const fencedTextDecision = await fencedTextChannel.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-fenced-text', workspace, request: { text: 'Find hotels' } },
+})
+assert.equal(fencedTextDecision[0]?.kind, 'error', 'fenced JSON in finalResponse never becomes an executable decision')
+await fencedTextChannel.close()
+
+const stringifiedAction = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      const argumentsText = JSON.stringify({ decision: { kind: 'operation', action: JSON.stringify(searchRun) } })
+      return { finalResponse: '', events: [toolCall('booking_search_hotels', argumentsText, 'call-stringified-action'), toolResult('call-stringified-action', true, 'INVALID_ARGS')] }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  stringifiedAction.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-stringified-action', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_invalid_typed_decision/,
+  'a stringified decision/action remains rejected even when the tool schema rejects that call',
+)
+await stringifiedAction.close()
+
+const invalidCallArguments = JSON.stringify({ decision: { kind: 'operation', action: JSON.stringify(searchRun) } })
+const invalidThenValid = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: 'ignored prose',
+        events: [
+          toolCall('booking_search_hotels', invalidCallArguments, 'call-invalid-schema'),
+          toolResult('call-invalid-schema', true, 'INVALID_ARGS'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-valid-after-schema-rejection'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+const invalidThenValidDecision = await invalidThenValid.plannerFactory(task).next({
+  task,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-invalid-then-valid', workspace, request: { text: 'Find hotels' } },
+})
+assert.deepEqual(invalidThenValidDecision, [{ kind: 'operation', action: searchRun }], 'a schema-rejected call may be superseded by the later unique typed success in the same run')
+await invalidThenValid.close()
+
+const invalidWithoutSchemaRejection = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          toolCall('booking_search_hotels', invalidCallArguments, 'call-invalid-without-schema-rejection'),
+          toolResult('call-invalid-without-schema-rejection'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-valid-after-unproven-rejection'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  invalidWithoutSchemaRejection.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-invalid-without-rejection', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_invalid_typed_decision/,
+  'an invalid call cannot be silently skipped when its same-run schema rejection is unproven',
+)
+await invalidWithoutSchemaRejection.close()
+
+const unauthorisedTyped = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: hotelSelect } }), 'call-unauthorised-action'),
+          toolResult('call-unauthorised-action', true, 'INVALID_ARGS'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-valid-after-unauthorised-action'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  unauthorisedTyped.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-unauthorised-action', workspace, request: { text: 'Select a hotel' } },
+  }),
+  /planner_capability_action_mismatch|planner_surface_action_unsupported/,
+  'a capability/allowed-action violation cannot be hidden by a later typed success',
+)
+await unauthorisedTyped.close()
+
+const multipleTypedSuccesses = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-multiple-1'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-multiple-2' } } }), 'call-multiple-2'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  multipleTypedSuccesses.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-multiple-successes', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_multiple_typed_decisions/,
+  'multiple typed tool successes fail closed instead of selecting the first action',
+)
+await multipleTypedSuccesses.close()
+
+const missingToolResult = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return { finalResponse: '', events: [toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-missing-result')] }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  missingToolResult.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-missing-result', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_tool_result_missing/,
+  'a typed call without its paired result is not executable',
+)
+await missingToolResult.close()
+
+const mismatchedToolResult = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-mismatched-result'),
+          toolResult('call-mismatched-result', false, undefined, 'call-other'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  mismatchedToolResult.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-mismatched-result', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_tool_result_malformed/,
+  'a result whose toolCallId does not match its source call fails closed',
+)
+await mismatchedToolResult.close()
+
+const wrongToolResultSourceKind = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-wrong-source-kind'),
+          toolResult('call-wrong-source-kind', false, undefined, 'call-wrong-source-kind', 'model'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  wrongToolResultSourceKind.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-wrong-source-kind', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_tool_result_malformed/,
+  'a result from a non-tool message source is not an executable tool result',
+)
+await wrongToolResultSourceKind.close()
+
+const typedCallRejectedThenValid = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-typed-schema-rejected'),
+          toolResult('call-typed-schema-rejected', true, 'INVALID_ARGS'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-typed-rejection' } } }), 'call-after-typed-rejection'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  typedCallRejectedThenValid.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-typed-rejected-then-valid', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_tool_call_rejected/,
+  'a parsed typed call with an error result cannot be skipped in favor of a later action',
+)
+await typedCallRejectedThenValid.close()
 
 const sanitizedRefPort: DshPlannerRunPort = {
   async run() {
     return {
       finalResponse: '',
-      events: [{
-        type: 'tool/call',
-        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai', 'draft:destination.Dubai'] } } }) },
-      }],
+      events: successfulToolEvents(
+        'booking_search_hotels',
+        JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai', 'draft:destination.Dubai'] } } }),
+        'call-sanitized-ref',
+      ),
     }
   },
   async close() {},
 }
 const sanitizedRef = await createDshEmbeddedBookingPlanner({ runPort: sanitizedRefPort })
-const sanitizedDecisions = await sanitizedRef.plannerFactory(task).next({
+await assert.rejects(sanitizedRef.plannerFactory(task).next({
   task,
   turn: {
     schemaVersion: 'booking.surface',
@@ -418,43 +663,42 @@ const sanitizedDecisions = await sanitizedRef.plannerFactory(task).next({
     workspace,
     request: { text: 'Find hotels' },
   },
-})
-assert.equal(sanitizedDecisions[0]?.kind, 'operation', 'sanitizer maps off-charset characters deterministically')
-assert.deepEqual(
-  (sanitizedDecisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs,
-  ['modelref:43b07dd7fc80f4a9889b6c672c450a911086293cab2ef4058b95b53559a2d100', 'draft:destination.Dubai'],
-)
+}), /planner_invalid_action/, 'unsafe fact refs are rejected as non-canonical raw arguments')
 await sanitizedRef.close()
 
 const collisionRawRefs = ['fact://a/b', 'fact:..a?b'] as const
-const collisionResults: string[] = []
 for (const [index, rawRef] of collisionRawRefs.entries()) {
   const collisionPlanner = await createDshEmbeddedBookingPlanner({
     runPort: {
       async run() {
-        return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: `action-dsh-collision-${index}`, factRefs: [rawRef] } } }) } }] }
+        return {
+          finalResponse: '',
+          events: successfulToolEvents(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: `action-dsh-collision-${index}`, factRefs: [rawRef] } } }),
+            `call-collision-${index}`,
+          ),
+        }
       },
       async close() {},
     },
   })
-  const decisions = await collisionPlanner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: `dsh-collision-${index}`, workspace, request: { text: 'Find hotels' } } })
-  const ref = (decisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs?.[0]
-  assert.match(ref ?? '', /^[A-Za-z0-9][A-Za-z0-9:._-]*$/, 'unsafe refs map to the runtime-safe pattern')
-  collisionResults.push(ref ?? '')
+  await assert.rejects(collisionPlanner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: `dsh-collision-${index}`, workspace, request: { text: 'Find hotels' } } }), /planner_invalid_action/, 'unsafe refs are rejected without hashing')
   await collisionPlanner.close()
 }
-assert.notEqual(collisionResults[0], collisionResults[1], 'distinct unsafe raw refs retain collision-resistant aliases')
-assert.equal(
-  collisionRawRefs[0].replace(/#/g, ':').replace(/[^A-Za-z0-9:._-]/g, '.'),
-  collisionRawRefs[1].replace(/#/g, ':').replace(/[^A-Za-z0-9:._-]/g, '.'),
-  'the collision pair shares the legacy readable projection',
-)
 
 async function assertFactRefsRejected(factRefs: unknown[], message: string): Promise<void> {
   const planner = await createDshEmbeddedBookingPlanner({
     runPort: {
       async run() {
-        return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs } } }) } }] }
+        return {
+          finalResponse: '',
+          events: successfulToolEvents(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs } } }),
+            'call-fact-ref-rejection',
+          ),
+        }
       },
       async close() {},
     },
@@ -471,7 +715,7 @@ await assertFactRefsRejected([collisionRawRefs[0], firstAlias], 'unsafe raw ref 
 await assertFactRefsRejected([collisionRawRefs[0], collisionRawRefs[0]], 'repair-time duplicate factRefs are rejected by canonical validation')
 await assertFactRefsRejected(['modelref:'.concat('a'.repeat(64))], 'direct modelref namespace input is reserved and rejected')
 
-const reservedRecovery = await createDshEmbeddedBookingPlanner({
+const reservedText = await createDshEmbeddedBookingPlanner({
   runPort: {
     async run() {
       return { finalResponse: JSON.stringify({ kind: 'operation', action: { ...searchRun, factRefs: ['modelref:'.concat('b'.repeat(64))] } }), events: [] }
@@ -479,24 +723,29 @@ const reservedRecovery = await createDshEmbeddedBookingPlanner({
     async close() {},
   },
 })
-const reservedRecoveryDecision = await reservedRecovery.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-reserved-recovery', workspace, request: { text: 'Find hotels' } } })
-assert.equal(reservedRecoveryDecision[0]?.kind, 'error', 'finalResponse recovery rejects direct reserved modelref aliases')
-await reservedRecovery.close()
+const reservedTextDecision = await reservedText.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-reserved-text', workspace, request: { text: 'Find hotels' } } })
+assert.equal(reservedTextDecision[0]?.kind, 'error', 'finalResponse text stays non-executable even when it contains a reserved ref')
+await reservedText.close()
 
 let stableRefCall = 0
 const stableRawRef = 'fact://same/raw'
 const stablePlanner = await createDshEmbeddedBookingPlanner({
-  runPort: {
-    async run() {
-      stableRefCall += 1
-      return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: `action-dsh-stable-${stableRefCall}`, factRefs: [stableRawRef] } } }) } }] }
-    },
+    runPort: {
+      async run() {
+        stableRefCall += 1
+        return {
+          finalResponse: '',
+          events: successfulToolEvents(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: `action-dsh-stable-${stableRefCall}`, factRefs: [stableRawRef] } } }),
+            `call-stable-${stableRefCall}`,
+          ),
+        }
+      },
     async close() {},
   },
 })
-const stableFirst = await stablePlanner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-stable-1', workspace, request: { text: 'Find hotels' } } })
-const stableSecond = await stablePlanner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-stable-2', workspace, request: { text: 'Find hotels again' } } })
-assert.equal((stableFirst[0] as { action?: { factRefs?: string[] } }).action?.factRefs?.[0], (stableSecond[0] as { action?: { factRefs?: string[] } }).action?.factRefs?.[0], 'same raw ref is stable across actions and turns')
+await assert.rejects(stablePlanner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-stable-1', workspace, request: { text: 'Find hotels' } } }), /planner_invalid_action/)
 await stablePlanner.close()
 
 const unauthorisedPort: DshPlannerRunPort = {
@@ -526,16 +775,17 @@ const fragmentRefPort: DshPlannerRunPort = {
   async run() {
     return {
       finalResponse: '',
-      events: [{
-        type: 'tool/call',
-        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [`fact://turn_${task.lastTurnId}/request`] } } }) },
-      }],
+      events: successfulToolEvents(
+        'booking_search_hotels',
+        JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [`fact://turn_${task.lastTurnId}/request`] } } }),
+        'call-fragment-ref',
+      ),
     }
   },
   async close() {},
 }
 const fragmentRef = await createDshEmbeddedBookingPlanner({ runPort: fragmentRefPort })
-const fragmentDecisions = await fragmentRef.plannerFactory(task).next({
+await assert.rejects(fragmentRef.plannerFactory(task).next({
   task,
   turn: {
     schemaVersion: 'booking.surface',
@@ -545,18 +795,13 @@ const fragmentDecisions = await fragmentRef.plannerFactory(task).next({
     workspace,
     request: { text: 'Find hotels' },
   },
-})
-assert.equal(fragmentDecisions[0]?.kind, 'operation', 'JSON-pointer fragment factRefs repair into the safe charset')
-assert.deepEqual(
-  (fragmentDecisions[0] as { action?: { factRefs?: string[] } }).action?.factRefs,
-  [`modelref:c7819d3c0c375fe1bd389006338b99be890fa8e3ddd9390f243cba8b5c139d9a`],
-)
+}), /planner_invalid_action/, 'JSON-pointer fragment factRefs are rejected without hashing')
 await fragmentRef.close()
 
 const truncatedPort: DshPlannerRunPort = {
   async run() {
-    // Real UAT capture: a reasoning-token budget cut the visible JSON before
-    // its closing braces; the authority path must still judge the payload.
+    // A reasoning-token budget cut in finalResponse is text-only evidence and
+    // must never be repaired into an executable decision.
     const truncated = JSON.stringify({ decision: { action: { ...searchRun, factRefs: ['turn_cap-request'] }, kind: 'operation' } }).replace(/}+$/, '')
     return { finalResponse: truncated, events: [] }
   },
@@ -574,17 +819,18 @@ const truncatedDecisions = await truncatedRecovery.plannerFactory(task).next({
     request: { text: 'Find hotels' },
   },
 })
-assert.equal(truncatedDecisions[0]?.kind, 'operation', 'truncated-but-reconstructable finalResponse recovers through the authority path')
+assert.equal(truncatedDecisions[0]?.kind, 'error', 'truncated finalResponse never recovers into an executable decision')
 await truncatedRecovery.close()
 
 const unsafeRefPort: DshPlannerRunPort = {
   async run() {
     return {
       finalResponse: '',
-      events: [{
-        type: 'tool/call',
-        data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [42] } } }) },
-      }],
+      events: successfulToolEvents(
+        'booking_search_hotels',
+        JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: [42] } } }),
+        'call-unsafe-ref',
+      ),
     }
   },
   async close() {},
@@ -812,7 +1058,11 @@ const operationBeforeFailure = await createDshEmbeddedBookingPlanner({
       return {
         finalResponse: '',
         events: [
-          { type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: searchRun } }) } },
+          ...successfulToolEvents(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'operation', action: searchRun } }),
+            'call-operation-before-failure',
+          ),
           { type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'AUTH', status: 401, message: 'post-tool provider failure' } } } },
         ],
       }
@@ -847,7 +1097,7 @@ const finalResponseBeforeTerminalFailureDecision = await finalResponseBeforeTerm
 assert.deepEqual(
   finalResponseBeforeTerminalFailureDecision,
   [{ kind: 'error', error: { code: 'PLANNER_PROVIDER_AUTH_FAILED', message: 'The planner provider rejected authentication.', retryable: false } }],
-  'authoritative turn/end error outranks a compatibility finalResponse envelope',
+  'authoritative turn/end error does not erase a successful typed tool result',
 )
 await finalResponseBeforeTerminalFailure.close()
 
@@ -878,7 +1128,7 @@ for (const [name, malformedTerminal] of [
   await malformedTerminalPlanner.close()
 }
 
-const recoveredAfterTransientAttempt = await createDshEmbeddedBookingPlanner({
+const finalTextAfterTransientAttempt = await createDshEmbeddedBookingPlanner({
   runPort: {
     async run() {
       return {
@@ -895,14 +1145,14 @@ const recoveredAfterTransientAttempt = await createDshEmbeddedBookingPlanner({
     async close() {},
   },
 })
-const recoveredAfterTransientAttemptDecision = await recoveredAfterTransientAttempt.plannerFactory(task).next({
+const finalTextAfterTransientAttemptDecision = await finalTextAfterTransientAttempt.plannerFactory(task).next({
   task,
-  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-recovered-provider-attempt', workspace, request: { text: 'Find hotels' } },
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-final-text-provider-attempt', workspace, request: { text: 'Find hotels' } },
 })
-assert.deepEqual(recoveredAfterTransientAttemptDecision, [{ kind: 'operation', action: searchRun }], 'a completed turn ignores an earlier recovered provider attempt failure')
-await recoveredAfterTransientAttempt.close()
+assert.deepEqual(finalTextAfterTransientAttemptDecision, [{ kind: 'error', error: { code: 'PLANNER_TYPED_DECISION_REQUIRED', message: 'GoTry produced no typed capability decision; assistant prose was ignored.', retryable: false } }], 'a completed turn ignores an earlier attempt failure but never promotes finalResponse text')
+await finalTextAfterTransientAttempt.close()
 
-const recoveredWithoutTerminalEvent = await createDshEmbeddedBookingPlanner({
+const attemptFailureWithoutTerminalEvent = await createDshEmbeddedBookingPlanner({
   runPort: {
     async run() {
       return {
@@ -918,16 +1168,16 @@ const recoveredWithoutTerminalEvent = await createDshEmbeddedBookingPlanner({
     async close() {},
   },
 })
-const recoveredWithoutTerminalEventDecision = await recoveredWithoutTerminalEvent.plannerFactory(task).next({
+const attemptFailureWithoutTerminalEventDecision = await attemptFailureWithoutTerminalEvent.plannerFactory(task).next({
   task,
-  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-recovered-without-terminal-event', workspace, request: { text: 'Find hotels' } },
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-attempt-failure-without-terminal-event', workspace, request: { text: 'Find hotels' } },
 })
 assert.deepEqual(
-  recoveredWithoutTerminalEventDecision,
-  [{ kind: 'operation', action: searchRun }],
-  'a fully validated compatibility envelope outranks an attempt failure when the SDK capture has no terminal event',
+  attemptFailureWithoutTerminalEventDecision,
+  [{ kind: 'error', error: { code: 'PLANNER_PROVIDER_RATE_LIMITED', message: 'The planner provider rate-limited the request.', retryable: true } }],
+  'without a terminal event, the packed provider attempt failure remains authoritative over finalResponse text',
 )
-await recoveredWithoutTerminalEvent.close()
+await attemptFailureWithoutTerminalEvent.close()
 
 let proseAfterTransientAttemptRuns = 0
 const proseAfterTransientAttempt = await createDshEmbeddedBookingPlanner({
@@ -969,14 +1219,65 @@ for (const [code, message] of [
   assert.equal(safeBookingErrorMessage(code), message, `${code} has a non-provider-authored safe message`)
 }
 
+const diagnosticSecretMarker = 'ISSUE_3580_PROVIDER_SECRET_MUST_NOT_BE_LOGGED'
+const diagnosticLogs: string[] = []
+const originalConsoleError = console.error
+try {
+  console.error = (...args: unknown[]) => { diagnosticLogs.push(args.map((value) => String(value)).join(' ')) }
+  const proseWithSecret = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run() {
+        return {
+          finalResponse: `provider prose ${diagnosticSecretMarker}`,
+          notifications: [{ message: diagnosticSecretMarker }],
+          events: [{ type: 'provider/debug', data: { message: diagnosticSecretMarker } }],
+        }
+      },
+      async close() {},
+    },
+  })
+  const proseWithSecretDecision = await proseWithSecret.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-secret-prose', workspace, request: { text: 'Find hotels' } },
+  })
+  assert.equal(proseWithSecretDecision[0]?.kind === 'error' ? proseWithSecretDecision[0].error.code : '', 'PLANNER_TYPED_DECISION_REQUIRED')
+  await proseWithSecret.close()
+
+  const forbiddenSecret = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run() {
+        const callId = 'call-forbidden-secret'
+        return {
+          finalResponse: '',
+          events: [
+            toolCall(`gotry_book_${diagnosticSecretMarker}`, '{}', callId),
+            toolResult(callId, true, 'INVALID_ARGS'),
+          ],
+        }
+      },
+      async close() {},
+    },
+  })
+  await assert.rejects(
+    forbiddenSecret.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-secret-tool', workspace, request: { text: 'Find hotels' } } }),
+    (error: Error) => !String(error).includes(diagnosticSecretMarker) && /planner_forbidden_tool/.test(String(error)),
+    'provider-authored tool names do not enter thrown errors',
+  )
+  await forbiddenSecret.close()
+} finally {
+  console.error = originalConsoleError
+}
+assert.equal(diagnosticLogs.some((line) => line.includes(diagnosticSecretMarker)), false, 'provider-authored text, notifications, events, and tool names are absent from planner logs')
+
 const forbiddenPort: DshPlannerRunPort = {
   async run() {
     return {
       finalResponse: '',
-      events: [{
-        type: 'tool/call',
-        data: { name: 'gotry_book', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, kind: 'book' } } }) },
-      }],
+      events: [
+        toolCall('gotry_book', JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, kind: 'book' } } }), 'call-forbidden'),
+        toolResult('call-forbidden', true, 'INVALID_ARGS'),
+        ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-after-forbidden'),
+      ],
     }
   },
   async close() {},
@@ -994,6 +1295,70 @@ await assert.rejects(
   /planner_forbidden_tool/,
 )
 
+let forbiddenCrossRunRuns = 0
+const forbiddenCrossRun = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      forbiddenCrossRunRuns += 1
+      return forbiddenCrossRunRuns === 1
+        ? {
+            finalResponse: '',
+            events: [
+              toolCall('gotry_book', JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, kind: 'book' } } }), 'call-cross-run-forbidden'),
+              toolResult('call-cross-run-forbidden', true, 'INVALID_ARGS'),
+            ],
+          }
+        : {
+            finalResponse: '',
+            events: successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-cross-run-search'),
+          }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  forbiddenCrossRun.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-cross-run-forbidden', workspace, request: { text: '帮我下单' } },
+  }),
+  /planner_forbidden_tool/,
+  'a forbidden tool cannot be washed into a valid action by a later provider run',
+)
+assert.equal(forbiddenCrossRunRuns, 1, 'safety errors fail closed without a correction run')
+await forbiddenCrossRun.close()
+
+let invalidCrossRunRuns = 0
+const invalidCrossRun = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      invalidCrossRunRuns += 1
+      return invalidCrossRunRuns === 1
+        ? {
+            finalResponse: '',
+            events: [
+              toolCall('booking_search_hotels', 'not-json', 'call-cross-run-invalid'),
+              toolResult('call-cross-run-invalid', true, 'INVALID_ARGS'),
+            ],
+          }
+        : {
+            finalResponse: '',
+            events: successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-cross-run-invalid-recovery'),
+          }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  invalidCrossRun.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-cross-run-invalid', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_invalid_tool_arguments/,
+  'a schema-invalid call cannot be washed into a valid action by a later provider run',
+)
+assert.equal(invalidCrossRunRuns, 1, 'event-authority schema errors fail closed without a correction run')
+await invalidCrossRun.close()
+
 const terminalTask: BookingCopilotTaskState = {
   schemaVersion: 'booking.surface', taskId: 'task-dsh-terminal', contextRef: 'ctx-dsh-terminal', surface: 'tenant', revision: 0,
   allowedActions: ['search.run'], userTurnCount: 1, operationCount: 0, phase: 'planning', lastSequence: 0,
@@ -1006,7 +1371,26 @@ const terminalWorkspace: BookingWorkspaceSnapshot = {
 }
 let terminalRuns = 0
 const terminalPort: DshPlannerRunPort = {
-  async run() { terminalRuns++; return terminalRuns === 1 ? { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, schemaVersion: 'booking.surface', contextRef: terminalTask.contextRef, actionId: 'action-dsh-terminal' } } }) } }] } : { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } } }) } }] } },
+  async run() {
+    terminalRuns += 1
+    return terminalRuns === 1
+      ? {
+          finalResponse: '',
+          events: successfulToolEvents(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, schemaVersion: 'booking.surface', contextRef: terminalTask.contextRef, actionId: 'action-dsh-terminal' } } }),
+            'call-terminal-operation',
+          ),
+        }
+      : {
+          finalResponse: '',
+          events: successfulToolEvents(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } } }),
+            'call-terminal-continuation',
+          ),
+        }
+  },
   async close() {},
 }
 const terminalAdapter = await createDshEmbeddedBookingPlanner({ runPort: terminalPort })
@@ -1024,21 +1408,17 @@ await assert.rejects(
   /planner_identity_required/,
 )
 
-// Regression: MiniMax-M3 serializes arrays as index-keyed objects and emits
-// information-free empty room objects. The repair pass must convert
-// {"0":{"adults":2,"childAges":{}},"1":{}} into rooms [{adults:2,childAges:[]}]
-// in index order, dropping the empty room, and must not leak the empty
-// childAges object as a stringified singleton. Drives the same runPort ->
-// tool/call -> parseToolDecision boundary the real adapter uses.
+// Regression: an index-keyed occupancy object is not a canonical array. It
+// must fail at the same runPort -> tool/call -> parseToolDecision boundary the
+// real adapter uses; the adapter never rewrites it into executable data.
 const indexKeyedRoomsPort: DshPlannerRunPort = {
   async run() {
     return {
       finalResponse: '',
-      events: [{
-        type: 'tool/call',
-        data: {
-          name: 'booking_search_hotels',
-          arguments: JSON.stringify({
+      events: [
+        ...successfulToolEvents(
+          'booking_search_hotels',
+          JSON.stringify({
             decision: {
               kind: 'operation',
               action: {
@@ -1053,14 +1433,15 @@ const indexKeyedRoomsPort: DshPlannerRunPort = {
               },
             },
           }),
-        },
-      }],
+          'call-index-keyed-rooms',
+        ),
+      ],
     }
   },
   async close() {},
 }
 const indexKeyedRooms = await createDshEmbeddedBookingPlanner({ runPort: indexKeyedRoomsPort })
-const indexKeyedDecisions = await indexKeyedRooms.plannerFactory(task).next({
+await assert.rejects(indexKeyedRooms.plannerFactory(task).next({
   task,
   turn: {
     schemaVersion: 'booking.surface',
@@ -1070,65 +1451,73 @@ const indexKeyedDecisions = await indexKeyedRooms.plannerFactory(task).next({
     workspace: { ...workspace, capabilities: { ...workspace.capabilities, allowedActions: [...workspace.capabilities.allowedActions] } },
     request: { text: 'Two adults, one room' },
   },
-})
-assert.equal(indexKeyedDecisions[0]?.kind, 'operation', 'index-keyed occupancy rooms repair yields an executable search.patch')
-assert.deepEqual(
-  (indexKeyedDecisions[0] as { action?: { input?: { patch?: { occupancy?: { rooms?: unknown[] } } } } }).action?.input?.patch?.occupancy?.rooms,
-  [{ adults: 2, childAges: [] }],
-  'index-keyed rooms object becomes an ordered array with the empty room dropped and empty childAges normalized to []',
+}), /planner_invalid_action/, 'index-keyed occupancy rooms are not canonical raw arguments')
+
+const wrongRevision = await createDshEmbeddedBookingPlanner({ runPort: {
+  async run() { return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, expectedRevision: task.revision + 1 } } }), 'call-wrong-revision') } },
+  async close() {},
+} })
+await assert.rejects(
+  wrongRevision.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-wrong-revision', workspace, request: { text: 'Find hotels' } } }),
+  /planner_revision_mismatch/,
+  'a success receipt cannot authorize a model revision different from task.revision',
 )
+await wrongRevision.close()
+
+let unsafeActionIdRuns = 0
+const unsafeActionId = await createDshEmbeddedBookingPlanner({ runPort: {
+  async run() {
+    unsafeActionIdRuns += 1
+    return {
+      finalResponse: '',
+      events: successfulToolEvents(
+        'booking_search_hotels',
+        JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'bad/id' } } }),
+        'call-unsafe-action-id',
+      ),
+    }
+  },
+  async close() {},
+} })
+await assert.rejects(
+  unsafeActionId.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-unsafe-action-id', workspace, request: { text: 'Find hotels' } } }),
+  /planner_invalid_action|unsafe_action_id/,
+  'a success receipt cannot authorize an unsafe model-authored action id',
+)
+assert.equal(unsafeActionIdRuns, 1, 'unsafe action ids fail closed without a cross-run retry')
+await unsafeActionId.close()
+
+async function assertTraceRejected(events: Record<string, unknown>[], error: RegExp, message: string): Promise<void> {
+  const planner = await createDshEmbeddedBookingPlanner({ runPort: { async run() { return { finalResponse: '', events } }, async close() {} } })
+  await assert.rejects(planner.plannerFactory(task).next({ task, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: `dsh-trace-${message}`, workspace, request: { text: 'Find hotels' } } }), error, message)
+  await planner.close()
+}
+const traceCall = toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-trace')
+const traceResult = toolResult('call-trace')
+await assertTraceRejected([traceCall, toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-trace'), traceResult], /planner_tool_call_duplicate_call_id/, 'duplicate callId fails closed')
+await assertTraceRejected([traceCall, traceResult, traceResult], /planner_tool_result_duplicate/, 'duplicate result fails closed')
+await assertTraceRejected([toolResult('call-unmatched')], /planner_tool_result_unmatched/, 'unmatched result fails closed')
+await assertTraceRejected([traceResult, traceCall], /planner_tool_result_out_of_order/, 'out-of-order result fails closed')
 
 // Regression for #282: a non-empty room that carries child ages but omits
 // adults is a semantic validation failure, not disposable representation.
-// The provider must repair that room in the next counted session call.
+// DSH exposes INVALID_ARGS to the model, which must emit a later canonical
+// call inside the same run; the adapter does not start a fresh provider run.
 let occupancyRepairRuns = 0
 const occupancyRepairPort: DshPlannerRunPort = {
-  async run(prompt) {
+  async run() {
     occupancyRepairRuns += 1
-    if (occupancyRepairRuns === 1) {
-      return {
-        finalResponse: '',
-        events: [{
-          type: 'tool/call',
-          data: {
-            name: 'booking_search_hotels',
-            arguments: JSON.stringify({
-              decision: {
-                kind: 'operation',
-                action: {
-                  ...searchRun,
-                  kind: 'search.patch',
-                  actionId: 'action-dsh-282-occupancy-invalid',
-                  reason: 'Preserve both requested rooms and their child ages.',
-                  input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } },
-                },
-              },
-            }),
-          },
-        }],
-      }
-    }
-    assert.match(prompt, /schema validation/, 'occupancy correction is sent as the next counted prompt')
     return {
       finalResponse: '',
-      events: [{
-        type: 'tool/call',
-        data: {
-          name: 'booking_search_hotels',
-          arguments: JSON.stringify({
-            decision: {
-              kind: 'operation',
-              action: {
-                ...searchRun,
-                kind: 'search.patch',
-                actionId: 'action-dsh-282-occupancy-valid',
-                reason: 'Preserve both requested rooms and their child ages.',
-                input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } },
-              },
-            },
-          }),
-        },
-      }],
+      events: [
+        toolCall('booking_search_hotels', JSON.stringify({
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-282-occupancy-invalid', reason: 'Preserve both requested rooms and their child ages.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } } } },
+        }), 'call-occupancy-invalid'),
+        toolResult('call-occupancy-invalid', true, 'INVALID_ARGS'),
+        ...successfulToolEvents('booking_search_hotels', JSON.stringify({
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-282-occupancy-valid', reason: 'Preserve both requested rooms and their child ages.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } } } },
+        }), 'call-occupancy-valid'),
+      ],
     }
   },
   async close() {},
@@ -1138,7 +1527,7 @@ const occupancyRepairDecision = await occupancyRepair.plannerFactory(task).next(
   task,
   turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-282-occupancy', workspace, request: { text: '请保留两个房间和各自的儿童年龄：第一间2成人1儿童6岁，第二间1成人1儿童4岁' } },
 })
-assert.equal(occupancyRepairRuns, 2, 'missing adults triggers one counted correction call')
+assert.equal(occupancyRepairRuns, 1, 'missing adults is corrected within the same provider run')
 assert.deepEqual(
   occupancyRepairDecision[0]?.kind === 'operation' ? occupancyRepairDecision[0].action.input : undefined,
   { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } },
@@ -1146,14 +1535,14 @@ assert.deepEqual(
 )
 
 // A prose-only first response receives the same bounded correction treatment
-// as a malformed typed call; a valid second response is returned immediately.
+// as a malformed typed call; a valid second typed call is returned immediately.
 let proseRecoveryRuns = 0
 const proseRecoveryPort: DshPlannerRunPort = {
   async run(prompt) {
     proseRecoveryRuns += 1
     if (proseRecoveryRuns === 1) return { finalResponse: '我会为你搜索酒店。', events: [] }
     assert.match(prompt, /no booking capability tool call/, 'prose correction is sent as the next counted prompt')
-    return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: searchRun } }) } }] }
+    return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-prose-correction') }
   },
   async close() {},
 }
@@ -1165,13 +1554,20 @@ const proseRecoveryDecision = await proseRecovery.plannerFactory(task).next({
 assert.equal(proseRecoveryRuns, 2, 'prose correction uses the second counted call')
 assert.deepEqual(proseRecoveryDecision, [{ kind: 'operation', action: searchRun }], 'valid correction is returned instead of discarded')
 
-// Repeated malformed responses stop at the three-call budget. A provider
-// failure propagates on the first call instead of being silently swallowed.
+// A malformed typed event is an authority error and fails on the first call.
+// A provider failure likewise propagates instead of being silently swallowed.
 let malformedRuns = 0
 const malformedPort: DshPlannerRunPort = {
   async run() {
     malformedRuns += 1
-    return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, input: { patch: { occupancy: { rooms: [{ childAges: [4] }] } } } } } }) } }] }
+    return {
+      finalResponse: '',
+      events: successfulToolEvents(
+        'booking_search_hotels',
+        JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, input: { patch: { occupancy: { rooms: [{ childAges: [4] }] } } } } } }),
+        `call-malformed-${malformedRuns}`,
+      ),
+    }
   },
   async close() {},
 }
@@ -1181,15 +1577,12 @@ await assert.rejects(
   /planner_invalid_action/,
   'repeated malformed output fails closed',
 )
-assert.equal(malformedRuns, 3, 'repeated malformed output consumes exactly three calls')
+assert.equal(malformedRuns, 1, 'malformed typed output is not retried across provider runs')
 
 let providerRuns = 0
 const providerErrorPort: DshPlannerRunPort = {
   async run() {
     providerRuns += 1
-    if (providerRuns === 1) {
-      return { finalResponse: '', events: [{ type: 'tool/call', data: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, input: { patch: { occupancy: { rooms: [{ childAges: [4] }] } } } } } }) } }] }
-    }
     throw new Error('provider_transport_failure')
   },
   async close() {},
@@ -1200,7 +1593,7 @@ await assert.rejects(
   /provider_transport_failure/,
   'provider failures remain visible to the caller',
 )
-assert.equal(providerRuns, 2, 'provider failures on a counted correction are not silently swallowed or retried')
+assert.equal(providerRuns, 1, 'provider failures are not silently swallowed or retried')
 
-await Promise.all([adapter.close(), textChannel.close(), unauthorised.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close(), indexKeyedRooms.close(), occupancyRepair.close(), proseRecovery.close(), malformed.close(), providerError.close()])
-console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/no prose parser/no portal token OK')
+await Promise.all([adapter.close(), textChannel.close(), fencedTextChannel.close(), stringifiedAction.close(), invalidThenValid.close(), invalidWithoutSchemaRejection.close(), unauthorised.close(), unauthorisedTyped.close(), multipleTypedSuccesses.close(), missingToolResult.close(), mismatchedToolResult.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close(), indexKeyedRooms.close(), occupancyRepair.close(), proseRecovery.close(), malformed.close(), providerError.close(), reservedText.close(), finalTextAfterTransientAttempt.close(), attemptFailureWithoutTerminalEvent.close()])
+console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/prose non-executable/no portal token OK')

@@ -14,7 +14,7 @@ import {
   type BookingPlannerDecision,
 } from '../src/booking-surface/runtime.ts'
 import { startBookingCopilotServer } from '../src/booking-surface/server.ts'
-import { BOOKING_READ_ACTION_KINDS, BOOKING_SURFACE_SCHEMA_SHA256, BOOKING_SURFACE_SCHEMA_VERSION, type ActionReceipt, type BookingReadActionKind, type BookingSurface, type BookingWorkspaceSnapshot, type RelaxationApproval, type VerifiedOfferCapability } from '../src/booking-surface/contracts.ts'
+import { BOOKING_FULL_JOURNEY_ACTION_KINDS, BOOKING_READ_ACTION_KINDS, BOOKING_SURFACE_SCHEMA_SHA256, BOOKING_SURFACE_SCHEMA_VERSION, type ActionReceipt, type BookingReadActionKind, type BookingSurface, type BookingWorkspaceSnapshot, type RelaxationApproval, type VerifiedOfferCapability } from '../src/booking-surface/contracts.ts'
 import { validateBookingSurface } from '../src/booking-surface/validation.ts'
 
 const stateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-runtime-'))
@@ -22,7 +22,7 @@ const workspace = (revision = 0): BookingWorkspaceSnapshot => ({
   schemaVersion: 'booking.surface', contextRef: 'ctx-v2', surface: 'tenant', revision,
   locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' },
   visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
-  capabilities: { surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] },
+  capabilities: { surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] },
 })
 const loadedOffer = (offerRef: string, hotelRef: string, offerVersionRef = `${offerRef}:v1`) => ({ offerRef, offerVersionRef, hotelRef, evidenceLevel: 'rate_loaded' as const, factRefs: [] })
 const verifiedCapability = (offerRef: string, offerVersionRef = `${offerRef}:v1`, expiresAt = '2026-09-01T10:30:00.000Z'): VerifiedOfferCapability => ({ offerRef, offerVersionRef, verifiedOfferRef: `verified-${offerRef}`, expiresAt })
@@ -624,7 +624,7 @@ const server = await startBookingCopilotServer({
   apiKey: 'v2-server-key',
   runtime: serverRuntime,
   principal: { subject: 'bff-principal-a', scope: 'booking:read' },
-  ingressBinding: { bind: (input) => ({ taskId: 'task-server', turnId: `turn-${input.requestKey}`, contextRef: 'ctx-server', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] }) },
+  ingressBinding: { bind: (input) => ({ taskId: 'task-server', turnId: `turn-${input.requestKey}`, contextRef: 'ctx-server', surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) },
   ingressMode: 'bff-ingress-binding',
   plannerFactory: (initial: BookingCopilotTaskState) => { factoryCalls++; return { next: async ({ turn, task: current }) => { plannerCalls++; if (turn.kind === 'user.turn' && turn.request.approval && !approvalPlannerDeferred) { approvalPlannerDeferred = true; resolveApprovalPlannerEntered(); await approvalPlannerRelease } const decision: BookingPlannerDecision = { kind: 'operation', action: { ...action(`server-action-${plannerCalls}`, current.revision), contextRef: current.contextRef } }; return [decision] } } },
 })
@@ -1267,7 +1267,7 @@ await assert.rejects(startBookingCopilotServer({
 }), /booking_copilot_ingress_binding_pair_required/)
 await assert.rejects(startBookingCopilotServer({
   apiKey: 'partial-principal-key',
-  runtime: defaultBindingRuntime, plannerFactory: () => ({ next: async () => [] }), ingressBinding: { bind: () => ({ taskId: 'partial', turnId: 'partial', contextRef: 'partial', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] }) },
+  runtime: defaultBindingRuntime, plannerFactory: () => ({ next: async () => [] }), ingressBinding: { bind: () => ({ taskId: 'partial', turnId: 'partial', contextRef: 'partial', surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) },
 }), /booking_copilot_ingress_binding_pair_required/)
 const defaultBindingServer = await startBookingCopilotServer({
   apiKey: 'default-binding-key',
@@ -1340,7 +1340,7 @@ const terminalServer = await startBookingCopilotServer({
   apiKey: 'terminal-server-key',
   runtime: terminalServerRuntime,
   principal: { subject: 'bff-terminal', scope: 'booking:read' },
-  ingressBinding: { bind: () => ({ taskId: 'task-http-terminal', turnId: 'http-terminal-turn', contextRef: 'ctx-server', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] }) },
+  ingressBinding: { bind: () => ({ taskId: 'task-http-terminal', turnId: 'http-terminal-turn', contextRef: 'ctx-server', surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) },
   ingressMode: 'bff-ingress-binding',
   plannerFactory: () => ({ next: async () => [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'terminal replay', factRefs: [] } }] }),
 })
@@ -1447,7 +1447,7 @@ const ingressBindingServer = await startBookingCopilotServer({
   apiKey: 'ingress-binding-key',
   runtime: ingressBindingRuntime,
   principal: { subject: 'bff-ingress-binding', scope: 'booking:read' },
-  ingressBinding: { bind: () => ({ taskId: 'task-ingress-binding', turnId: 'turn-ingress-binding', contextRef: 'ctx-ingress-binding', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] }) },
+  ingressBinding: { bind: () => ({ taskId: 'task-ingress-binding', turnId: 'turn-ingress-binding', contextRef: 'ctx-ingress-binding', surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) },
   ingressMode: 'bff-ingress-binding',
   plannerFactory: () => ({ next: async () => [] }),
 })

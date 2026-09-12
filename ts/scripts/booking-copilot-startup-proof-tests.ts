@@ -8,7 +8,7 @@ import {
   resolveBookingCopilotStartupConfig,
   startBookingCopilotFromEnvironment,
 } from '../src/booking-surface/startup.ts'
-import { BOOKING_READ_ACTION_KINDS } from '../src/booking-surface/contracts.ts'
+import { BOOKING_FULL_JOURNEY_ACTION_KINDS } from '../src/booking-surface/contracts.ts'
 
 assert.throws(
   () => resolveBookingCopilotStartupConfig({}),
@@ -51,7 +51,7 @@ await assert.rejects(
 )
 await assert.rejects(
   startBookingCopilotFromEnvironment(env, {
-    ingressBinding: { bind: () => ({ taskId: 'partial-task', turnId: 'partial-turn', contextRef: 'partial-context', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] }) },
+    ingressBinding: { bind: () => ({ taskId: 'partial-task', turnId: 'partial-turn', contextRef: 'partial-context', surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) },
   } as never),
   /booking_copilot_ingress_binding_pair_required/,
   'partial trusted BFF seam is rejected before startup',
@@ -84,7 +84,7 @@ let serverApiKey = ''
 let serverArtifactId = ''
 const trustedEnv = { ...env, GOTRY_BOOKING_COPILOT_INGRESS_MODE: 'bff-ingress-binding' }
 const fakeLedger = { close() { closeOrder.push('ledger') } }
-const trustedBinding = { bind: () => ({ taskId: 'startup-task', turnId: 'startup-turn', contextRef: 'startup-context', surface: 'tenant' as const, allowedActions: [...BOOKING_READ_ACTION_KINDS] }) }
+const trustedBinding = { bind: () => ({ taskId: 'startup-task', turnId: 'startup-turn', contextRef: 'startup-context', surface: 'tenant' as const, allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) }
 const started = await startBookingCopilotFromEnvironment(trustedEnv, {
   ensureLedger() { return fakeLedger as never },
   runtimeFactory() { return {} as never },

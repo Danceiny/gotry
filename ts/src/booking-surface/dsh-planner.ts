@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BOOKING_READ_ACTION_KINDS, BOOKING_SURFACE_SCHEMA_VERSION, type BookingCopilotTurn, type BookingReadAction, type BookingSurfaceEvent, type SearchCriteriaPatch } from './contracts.ts'
+import { BOOKING_READ_ACTION_KINDS, type BookingCopilotTurn, type BookingReadAction, type BookingSurfaceEvent, type SearchCriteriaPatch } from './contracts.ts'
 import { buildTimeAnchor } from '../time-anchor.ts'
 export { formatUtcOffsetLabel } from '../time-anchor.ts'
 import {
@@ -100,74 +100,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function structurallyEqualJson(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
-    return left.every((value, index) => structurallyEqualJson(value, right[index]))
-  }
-  if (isRecord(left) || isRecord(right)) {
-    if (!isRecord(left) || !isRecord(right)) return false
-    const leftKeys = Object.keys(left)
-    const rightKeys = Object.keys(right)
-    if (leftKeys.length !== rightKeys.length) return false
-    return leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && structurallyEqualJson(left[key], right[key]))
-  }
-  return false
-}
-
-/**
- * Recover only a complete sequence of two or more identical top-level JSON
- * objects. The scanner finds object boundaries without treating braces or
- * escaped quotes inside JSON strings as structure; JSON.parse remains the
- * authority for each complete segment.
- */
-function parseRepeatedJsonObjects(input: string): Record<string, unknown> | null {
-  const trimmed = input.trim()
-  if (!trimmed.startsWith('{')) return null
-  const objects: Record<string, unknown>[] = []
-  let offset = 0
-  while (offset < trimmed.length) {
-    if (trimmed[offset] !== '{') return null
-    let depth = 0
-    let inString = false
-    let escaped = false
-    let end = -1
-    for (let index = offset; index < trimmed.length; index += 1) {
-      const ch = trimmed[index]
-      if (inString) {
-        if (escaped) escaped = false
-        else if (ch === '\\') escaped = true
-        else if (ch === '"') inString = false
-        continue
-      }
-      if (ch === '"') inString = true
-      else if (ch === '{') depth += 1
-      else if (ch === '}') {
-        depth -= 1
-        if (depth === 0) {
-          end = index + 1
-          break
-        }
-        if (depth < 0) return null
-      }
-    }
-    if (end === -1) return null
-    let parsed: unknown
-    try { parsed = JSON.parse(trimmed.slice(offset, end)) } catch { return null }
-    if (!isRecord(parsed)) return null
-    objects.push(parsed)
-    offset = end
-    while (offset < trimmed.length && /\s/.test(trimmed[offset]!)) offset += 1
-    if (offset < trimmed.length && trimmed[offset] !== '{') return null
-  }
-  if (objects.length < 2) return null
-  const first = objects[0]!
-  return objects.every((object) => structurallyEqualJson(object, first)) ? first : null
-}
-
 function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
   return Object.keys(value).length === allowed.length && Object.keys(value).every((key) => allowed.includes(key))
+}
+
+function diagnosticText(value: string): { bytes: number } {
+  return { bytes: Buffer.byteLength(value, 'utf8') }
+}
+
+function invalidDecisionLog(reason: string, detail: Record<string, unknown> = {}): void {
+  console.error('[booking-copilot] invalid typed decision:', JSON.stringify({ reason, ...detail }))
 }
 
 function dshSessionId(taskId: string): string {
@@ -388,261 +330,25 @@ function asEventDraft(value: Record<string, unknown>): BookingSurfaceEventDraft 
   if (!branchKey || !exactKeys(value, ['kind', branchKey])) throw new Error('planner_invalid_typed_decision')
   const event = { schemaVersion: 'booking.surface', eventId: 'planner-validation-event', taskId: 'planner-validation-task', contextRef: 'planner-validation-context', sequence: 1, emittedAt: '1970-01-01T00:00:00.000Z', ...value } as unknown as BookingSurfaceEvent
   const validation = validateBookingSurfaceEvent(event)
-  if (!validation.ok) throw new Error(`planner_invalid_typed_decision:${validation.errors.join('; ')}`)
+  if (!validation.ok) throw new Error('planner_invalid_typed_decision')
   return value as unknown as BookingSurfaceEventDraft
-}
-
-const ACTION_REPAIR_ROUNDS = 3
-
-function actionValueAt(action: Record<string, unknown>, path: string): unknown {
-  let node: unknown = action
-  for (const raw of path.split('/').filter(Boolean)) {
-    const key = raw.replace(/~1/g, '/').replace(/~0/g, '~')
-    if (isRecord(node)) node = node[key]
-    else if (Array.isArray(node) && /^\d+$/.test(key)) node = node[Number(key)]
-    else return undefined
-  }
-  return node
-}
-
-function actionAssignAt(action: Record<string, unknown>, path: string, value: unknown): void {
-  const parts = path.split('/').filter(Boolean)
-  if (parts.length === 0) return
-  let node: unknown = action
-  for (const raw of parts.slice(0, -1)) {
-    const key = raw.replace(/~1/g, '/').replace(/~0/g, '~')
-    if (isRecord(node)) {
-      const child = node[key]
-      if (isRecord(child) || Array.isArray(child)) {
-        node = child
-      } else {
-        node[key] = {}
-        node = node[key] as Record<string, unknown>
-      }
-    } else if (Array.isArray(node) && /^\d+$/.test(key)) {
-      const child = node[Number(key)]
-      if (isRecord(child) || Array.isArray(child)) {
-        node = child
-      } else {
-        node[Number(key)] = {}
-        node = node[Number(key)] as Record<string, unknown>
-      }
-    } else {
-      return
-    }
-  }
-  const lastKey = parts[parts.length - 1]!.replace(/~1/g, '/').replace(/~0/g, '~')
-  if (isRecord(node)) node[lastKey] = value
-  else if (Array.isArray(node) && /^\d+$/.test(lastKey)) node[Number(lastKey)] = value
-}
-
-/**
- * Some models (observed on MiniMax-M2) wrap the typed decision one level
- * deeper than the canonical envelope: {kind:"action", input:{kind:"search.patch",
- * reason, ...payload}}. Hoist the inner decision deterministically — every
- * field comes from the model itself, so this stays representation-only.
- */
-function unwrapNestedDecisionEnvelope(action: Record<string, unknown>): void {
-  for (let hop = 0; hop < 2; hop += 1) {
-    if (action.kind !== 'action' || !isRecord(action.input)) return
-    const inner = action.input
-    if (typeof inner.kind !== 'string' || inner.kind === 'action') return
-    const payload: Record<string, unknown> = { ...inner }
-    const kind = String(payload.kind)
-    delete payload.kind
-    const reason = typeof payload.reason === 'string' ? payload.reason : undefined
-    delete payload.reason
-    const unwrapped: Record<string, unknown> = { ...action, kind, input: payload }
-    if (reason !== undefined && unwrapped.reason === undefined) unwrapped.reason = reason
-    for (const key of Object.keys(action)) delete action[key]
-    Object.assign(action, unwrapped)
-  }
-}
-
-/**
- * Representation-only repair for model-authored actions, driven by the
- * canonical schema's own validation errors: scalar where an array belongs,
- * stringified numbers, stringified JSON objects, and the dropped
- * schemaVersion echo. Each round applies deterministic fixes from the
- * current error list, then revalidates; semantic mismatches survive the
- * repair and still fail closed.
- */
-function repairActionRepresentation(action: unknown): void {
-  if (!isRecord(action)) return
-  if (typeof action.schemaVersion !== 'string') action.schemaVersion = BOOKING_SURFACE_SCHEMA_VERSION
-  unwrapNestedDecisionEnvelope(action)
-  for (let round = 0; round < ACTION_REPAIR_ROUNDS; round += 1) {
-    const validation = validateBookingReadAction(action as unknown as BookingReadAction)
-    if (validation.ok) return
-    let mutated = false
-    for (const rawError of validation.errors) {
-      const [pathPart, messagePart] = String(rawError).split(': ')
-      if (!pathPart || !messagePart) continue
-      if (messagePart === 'must be array') {
-        const current = actionValueAt(action, pathPart)
-        if (!Array.isArray(current)) {
-          if (isRecord(current) && Object.keys(current).length > 0 && Object.keys(current).every((key) => /^\d+$/.test(key))) {
-            // Model serialized an array as an index-keyed object ({"0":{...}}).
-            // Numeric-key ordering is preserved and information-free empty-object
-            // items are discarded.
-            const values = Object.keys(current).sort((a, b) => Number(a) - Number(b)).map((key) => (current as Record<string, unknown>)[key]).filter((item) => !(isRecord(item) && Object.keys(item).length === 0))
-            actionAssignAt(action, pathPart, values)
-          } else {
-            actionAssignAt(action, pathPart, current === undefined || current === null || current === '' || (isRecord(current) && Object.keys(current).length === 0) ? [] : [String(current)])
-          }
-          mutated = true
-        }
-      } else if ((messagePart === 'must be integer' || messagePart === 'must be number') && typeof actionValueAt(action, pathPart) === 'string') {
-        const raw = String(actionValueAt(action, pathPart)).trim()
-        if (/^-?\d+$/.test(raw)) {
-          actionAssignAt(action, pathPart, Number(raw))
-          mutated = true
-        }
-      } else if (messagePart === 'must be object') {
-        const current = actionValueAt(action, pathPart)
-        if (typeof current === 'string' && current.trim().startsWith('{')) {
-          try { actionAssignAt(action, pathPart, JSON.parse(current)); mutated = true } catch { /* leave for validation */ }
-        } else if (current === undefined || current === null || current === '') {
-          // Empty input is a meaningful shape for zero-argument actions
-          // (e.g. search.run's SearchRunInput: maxProperties 0).
-          actionAssignAt(action, pathPart, {})
-          mutated = true
-        }
-      } else if (messagePart === 'must be equal to constant' && (pathPart === '/schemaVersion' || pathPart.endsWith('/schemaVersion'))) {
-        actionAssignAt(action, pathPart, BOOKING_SURFACE_SCHEMA_VERSION)
-        mutated = true
-      }
-    }
-    if (!mutated) break
-  }
-  const final = validateBookingReadAction(action as unknown as BookingReadAction)
-  if (final.ok) return
-  const kindBlind = final.errors.every((e) => e.includes('/kind') || e.includes("property 'kind'"))
-  if (!kindBlind) return
-  let candidate: BookingReadAction | undefined
-  for (const kind of BOOKING_READ_ACTION_KINDS) {
-    const trial = { ...action, kind } as unknown as BookingReadAction
-    const trialValidation = validateBookingReadAction(trial)
-    if (trialValidation.ok) {
-      if (candidate) return
-      candidate = trial
-    }
-  }
-  if (candidate) Object.assign(action, candidate)
-}
-
-function recoverFinalResponseDecision(response: string, task: BookingCopilotTaskState): BookingPlannerDecision | null {
-  const text = response.trim()
-  if (!text.includes('{')) return null
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
-    const candidates: string[] = []
-    if (fenced) {
-      candidates.push(fenced[1]!)
-    } else {
-      candidates.push(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1))
-      candidates.push(text.slice(text.indexOf('{')))
-    }
-    for (const base of candidates) {
-      const attempts = [base]
-      // Reasoning-token budgets can cut the visible JSON before its closing
-      // braces; append the structurally missing closers and let the authority
-      // path judge the reconstructed payload.
-      let depth = 0
-      let inString = false
-      let escaped = false
-      for (const ch of base) {
-        if (inString) {
-          if (escaped) escaped = false
-          else if (ch === '\\') escaped = true
-          else if (ch === '"') inString = false
-          continue
-        }
-        if (ch === '"') inString = true
-        else if (ch === '{' || ch === '[') depth += 1
-        else if (ch === '}' || ch === ']') depth -= 1
-      }
-      if (depth > 0 && depth <= 4 && !inString) {
-        attempts.push(base.trimEnd().replace(/,+$/, '') + '}'.repeat(depth))
-      }
-      for (const candidate of attempts) {
-        try {
-          const attempted = JSON.parse(candidate)
-          // A repaired cut can yield valid JSON that lost the operation
-          // envelope; that is still a failed recovery for this candidate.
-          if (isRecord(attempted) && isRecord(attempted.decision) && attempted.decision.kind === 'operation') {
-            parsed = attempted
-            break
-          }
-        } catch { /* try the next reconstruction */ }
-      }
-      if (parsed !== undefined) break
-    }
-    if (parsed === undefined) return null
-  }
-  let envelope = parsed
-  if (isRecord(envelope) && isRecord(envelope.decision)) envelope = envelope.decision
-  if (!isRecord(envelope) || envelope.kind !== 'operation' || !isRecord(envelope.action)) return null
-  const action: Record<string, unknown> = { ...envelope.action }
-  if (typeof action.kind !== 'string' || !(BOOKING_READ_ACTION_KINDS as readonly string[]).includes(action.kind)) return null
-  if (typeof action === 'object' && typeof (action as Record<string, unknown>).schemaVersion !== 'string') {
-    ;(action as Record<string, unknown>).schemaVersion = 'booking.surface'
-  }
-  repairActionRepresentation(action)
-  const validation = validateBookingReadAction(action as unknown as BookingReadAction)
-  if (!validation.ok) {
-    console.error('[booking-copilot] finalResponse recovery rejected (invalid action):', JSON.stringify({ kind: action.kind, errors: validation.errors.slice(0, 6) }).slice(0, 600))
-    return null
-  }
-  const repairedRefs = repairPlannerFactRefs(action)
-  const repairedValidation = validateBookingReadAction(action as unknown as BookingReadAction)
-  if (!repairedValidation.ok) return null
-  try {
-    assertPlannerSafeRefs(action, repairedRefs)
-  } catch (error) {
-    console.error('[booking-copilot] finalResponse recovery rejected (unsafe ref):', JSON.stringify({ actionId: action.actionId, factRefs: action.factRefs }).slice(0, 600))
-    return null
-  }
-  const typed = action as unknown as BookingReadAction
-  if (!task.allowedActions.includes(typed.kind)) return null
-  if (typed.contextRef !== task.contextRef) return null
-  if (typed.relaxationApprovalRef) return null
-  typed.expectedRevision = task.revision
-  console.error('[booking-copilot] recovered typed decision from finalResponse:', JSON.stringify({ kind: typed.kind, actionId: typed.actionId }).slice(0, 240))
-  return { kind: 'operation', action: typed }
 }
 
 const PLANNER_SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
 
-// Models cite prompt facts in URI-ish syntax (`fact://turn_X/request`,
-// `turn_X#request`). Preserve already-safe refs exactly; unsafe refs enter the
-// reserved modelref namespace with the full SHA-256 of the raw UTF-8 value.
-function repairPlannerFactRefs(action: Record<string, unknown>): Set<string> {
-  const factRefs = action.factRefs
-  const repairedRefs = new Set<string>()
-  if (!Array.isArray(factRefs)) return repairedRefs
-  action.factRefs = factRefs.map((ref) => {
-    if (typeof ref !== 'string' || PLANNER_SAFE_REF_PATTERN.test(ref)) return ref
-    const alias = `modelref:${createHash('sha256').update(ref, 'utf8').digest('hex')}`
-    repairedRefs.add(alias)
-    return alias
-  })
-  return repairedRefs
-}
-
-function assertPlannerSafeRefs(action: Record<string, unknown>, repairedRefs: Set<string>): void {
+// Action identifiers and fact references are ledger keys, not prose. They
+// must arrive canonical; the reserved modelref namespace is never accepted
+// from a model-authored action.
+function assertPlannerSafeRefs(action: Record<string, unknown>): void {
   const actionId = action.actionId
   if (typeof actionId !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(actionId)) {
-    throw new Error(`planner_invalid_action:unsafe_action_id:${String(actionId).slice(0, 60)}`)
+    throw new Error('planner_invalid_action:unsafe_action_id')
   }
   const factRefs = action.factRefs
   if (Array.isArray(factRefs)) {
     for (const ref of factRefs) {
-      if (typeof ref !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(ref) || (ref.startsWith('modelref:') && !repairedRefs.has(ref)) || ref.length > 512) {
-        throw new Error(`planner_invalid_action:unsafe_fact_ref:${String(ref).slice(0, 60)}`)
+      if (typeof ref !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(ref) || ref.startsWith('modelref:') || ref.length > 512) {
+        throw new Error('planner_invalid_action:unsafe_fact_ref')
       }
     }
   }
@@ -652,80 +358,53 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   if (!isRecord(event) || event.type !== 'tool/call' || !isRecord(event.data)) return null
   const name = event.data.name
   if (typeof name !== 'string' || !TOOL_NAMES.has(name)) {
-    console.error(`[booking-copilot] raw invalid decision (forbidden_tool ${String(name)}):`, JSON.stringify(event).slice(0, 600))
-    throw new Error(`planner_forbidden_tool:${String(name)}`)
+    invalidDecisionLog('forbidden_tool', typeof name === 'string' ? { toolName: diagnosticText(name) } : { toolNameType: typeof name })
+    throw new Error('planner_forbidden_tool')
   }
   if (typeof event.data.arguments !== 'string') {
-    console.error('[booking-copilot] raw invalid decision (arguments not string):', JSON.stringify(event).slice(0, 600))
+    invalidDecisionLog('arguments_not_string', { argumentsType: typeof event.data.arguments })
     throw new Error('planner_invalid_tool_arguments')
   }
   let rawArgs: unknown = event.data.arguments
   let args: unknown
   if (typeof rawArgs === 'string') {
     try { args = JSON.parse(rawArgs) } catch {
-      const repeated = parseRepeatedJsonObjects(rawArgs)
-      if (repeated === null) {
-        console.error('[booking-copilot] raw invalid decision (arguments not JSON):', String(rawArgs).slice(0, 600))
-        throw new Error('planner_invalid_tool_arguments')
-      }
-      args = repeated
-      console.error('[booking-copilot] repaired duplicated tool arguments (validated identical complete objects)')
-    }
-  } else if (isRecord(rawArgs)) {
-    // Some providers hand back an already-parsed arguments object.
-    args = rawArgs
-  } else {
-    console.error('[booking-copilot] raw invalid decision (arguments type):', JSON.stringify(event).slice(0, 600))
-    throw new Error('planner_invalid_tool_arguments')
-  }
-  // The decision envelope is model-authored: bind to the fields the runtime
-  // owns and strip model-added meta keys instead of failing the whole turn.
-  if (!isRecord(args)) {
-    console.error('[booking-copilot] raw invalid decision (arguments not object):', JSON.stringify(args).slice(0, 600))
-    throw new Error('planner_invalid_tool_arguments')
-  }
-  let envelope: Record<string, unknown> = args
-  if (!isRecord(envelope.decision)) {
-    if (typeof envelope.kind !== 'string') {
-      console.error('[booking-copilot] raw invalid decision (no decision/kind):', JSON.stringify(args).slice(0, 800))
+      invalidDecisionLog('arguments_not_json', diagnosticText(rawArgs))
       throw new Error('planner_invalid_tool_arguments')
     }
-    envelope = { decision: envelope }
+  } else {
+    invalidDecisionLog('arguments_not_string', { argumentsType: typeof rawArgs })
+    throw new Error('planner_invalid_tool_arguments')
   }
-  const decision = envelope.decision as Record<string, unknown>
-  // Models sometimes stringify the action or hoist its kind to the decision
-  // level; both carry the same typed payload, so unwrap before validating.
-  if (typeof decision.action === 'string' && decision.action.trim().startsWith('{')) {
-    try { decision.action = JSON.parse(decision.action) } catch { /* validation reports it */ }
+  if (!isRecord(args) || !exactKeys(args, ['decision']) || !isRecord(args.decision)) {
+    invalidDecisionLog('arguments_not_canonical_envelope', { parsedType: Array.isArray(args) ? 'array' : typeof args })
+    throw new Error('planner_invalid_tool_arguments')
   }
-  if (typeof decision.kind === 'string' && (BOOKING_READ_ACTION_KINDS as readonly string[]).includes(decision.kind) && !isRecord(decision.action)) {
-    const { kind: actionKind, ...actionFields } = decision
-    decision.kind = 'operation'
-    decision.action = { ...actionFields, kind: actionKind }
-  }
+  const decision = args.decision as Record<string, unknown>
   if (decision.kind === 'question') throw new Error('planner_question_runtime_owned')
   if (decision.kind !== 'operation') return asEventDraft(decision)
   if (!isRecord(decision.action)) {
-    console.error('[booking-copilot] raw invalid decision (action not object):', JSON.stringify(decision).slice(0, 800))
+    invalidDecisionLog('action_not_object', { actionType: Array.isArray(decision.action) ? 'array' : typeof decision.action })
     throw new Error('planner_invalid_typed_decision')
   }
-  repairActionRepresentation(decision.action)
+  if (!exactKeys(decision, ['kind', 'action'])) throw new Error('planner_invalid_typed_decision')
+  if (decision.action.relaxationApprovalRef) throw new Error('planner_approval_ref_forbidden')
+  if (typeof decision.action.contextRef === 'string' && decision.action.contextRef !== task.contextRef) throw new Error('planner_context_mismatch')
+  if (typeof decision.action.kind === 'string' && !(BOOKING_READ_ACTION_KINDS as readonly string[]).includes(decision.action.kind)) {
+    invalidDecisionLog('forbidden_action', { actionKind: diagnosticText(decision.action.kind) })
+    throw new Error('planner_forbidden_action')
+  }
   const validation = validateBookingReadAction(decision.action)
   if (!validation.ok) {
-    console.error(`[booking-copilot] raw invalid action (${decision.action && typeof decision.action === 'object' ? (decision.action as Record<string, unknown>).kind : '?'}):`, JSON.stringify({ errors: validation.errors.slice(0, 8), action: decision.action }).slice(0, 1200))
-    throw new Error(`planner_invalid_action:${validation.errors.join('; ')}`)
+    invalidDecisionLog('action_schema_invalid', {
+      actionKind: typeof decision.action.kind === 'string' && (BOOKING_READ_ACTION_KINDS as readonly string[]).includes(decision.action.kind)
+        ? decision.action.kind
+        : 'unknown',
+      errorCount: validation.errors.length,
+    })
+    throw new Error('planner_invalid_action')
   }
-  // The runtime rejects opaque refs outside its safe charset at the ledger
-  // boundary, past the retry budget. Repair the common fragment syntax first,
-  // then enforce the same charset here so remaining violations retry as
-  // parse-class failures instead of failing the turn as PLANNER_FAILED.
-  const repairedRefs = repairPlannerFactRefs(decision.action)
-  const repairedValidation = validateBookingReadAction(decision.action)
-  if (!repairedValidation.ok) {
-    console.error(`[booking-copilot] repaired action rejected:`, JSON.stringify({ errors: repairedValidation.errors.slice(0, 8) }).slice(0, 800))
-    throw new Error(`planner_invalid_action:${repairedValidation.errors.join('; ')}`)
-  }
-  assertPlannerSafeRefs(decision.action, repairedRefs)
+  assertPlannerSafeRefs(decision.action)
   const action = decision.action as unknown as BookingReadAction
   const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
   if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) {
@@ -738,12 +417,136 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   }
   if (action.contextRef !== task.contextRef) throw new Error('planner_context_mismatch')
   // The runtime owns the revision: the planner can only echo what the prompt
-  // showed it, and the serialized session means no concurrent mutation exists
-  // inside a turn. Pin the action to the authoritative task revision; the
-  // client-side concurrency guard lives at the context/journal binding.
-  action.expectedRevision = task.revision
+  // showed it. Reject a mismatch instead of rewriting model-authored authority;
+  // the client-side concurrency guard also lives at the context/journal binding.
+  if (action.expectedRevision !== task.revision) throw new Error('planner_revision_mismatch')
   if (action.relaxationApprovalRef) throw new Error('planner_approval_ref_forbidden')
   return { kind: 'operation', action }
+}
+
+type DshToolResultObservation = {
+  index: number
+  sourceCallId?: string
+  toolCallId?: string
+  kind: 'success' | 'schema-rejection' | 'error' | 'malformed'
+}
+
+type DshToolCallObservation = {
+  index: number
+  callId?: string
+  decision?: BookingPlannerDecision
+  error?: unknown
+  result?: DshToolResultObservation
+}
+
+function toolCallIdFromEvent(event: unknown): string | undefined {
+  if (!isRecord(event) || event.type !== 'tool/call' || !isRecord(event.data)) return undefined
+  return typeof event.data.callId === 'string' && event.data.callId.length > 0 ? event.data.callId : undefined
+}
+
+function toolResultObservation(event: unknown, index: number): DshToolResultObservation | null {
+  if (!isRecord(event) || event.type !== 'tool/result' || !isRecord(event.data)) return null
+  const data = event.data
+  const message = isRecord(data.message) ? data.message : undefined
+  const source = message && isRecord(message.source) ? message.source : undefined
+  const sourceKind = source && typeof source.kind === 'string' ? source.kind : undefined
+  const sourceCallId = source && typeof source.callId === 'string' && source.callId.length > 0 ? source.callId : undefined
+  const content = message && Array.isArray(message.content) ? message.content : undefined
+  const block = content?.length === 1 && isRecord(content[0]) ? content[0] : undefined
+  const toolCallId = block && typeof block.toolCallId === 'string' && block.toolCallId.length > 0 ? block.toolCallId : undefined
+  if (sourceKind !== 'tool' || !sourceCallId || !toolCallId || block?.type !== 'tool-result' || typeof block.isError !== 'boolean' || sourceCallId !== toolCallId) {
+    return { index, sourceCallId, toolCallId, kind: 'malformed' }
+  }
+  if (block.isError === false && data.error === undefined) return { index, sourceCallId, toolCallId, kind: 'success' }
+  const error = isRecord(data.error) ? data.error : undefined
+  if (block.isError === true && error?.code === 'INVALID_ARGS') return { index, sourceCallId, toolCallId, kind: 'schema-rejection' }
+  return { index, sourceCallId, toolCallId, kind: 'error' }
+}
+
+function isPlannerSafetyError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /^(planner_forbidden_tool|planner_forbidden_action|planner_capability_action_mismatch|planner_surface_action_unsupported|planner_context_mismatch|planner_approval_ref_forbidden|planner_question_runtime_owned)/.test(message)
+    || message.includes('unsafe_')
+}
+
+function isSchemaShapeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /^(planner_invalid_tool_arguments|planner_invalid_typed_decision|planner_invalid_action)/.test(message)
+}
+
+/**
+ * Scan one DSH run as an ordered typed event trace. A tool call is executable
+ * only when its call id has exactly one later, structurally valid successful
+ * tool/result pair. The sole tolerated correction is an earlier call whose
+ * parse failed and whose paired result is the SDK's structured INVALID_ARGS
+ * rejection, followed by one later successful call. Final-response text is
+ * intentionally absent from this scan.
+ */
+function scanDshToolDecisionEvents(events: readonly unknown[], task: BookingCopilotTaskState): BookingPlannerDecision[] {
+  const results = events.map((event, index) => toolResultObservation(event, index)).filter((result): result is DshToolResultObservation => result !== null)
+  const calls: DshToolCallObservation[] = []
+  for (const [index, event] of events.entries()) {
+    if (!isRecord(event) || event.type !== 'tool/call') continue
+    const observation: DshToolCallObservation = { index, callId: toolCallIdFromEvent(event) }
+    try {
+      observation.decision = parseToolDecision(event, task) ?? undefined
+    } catch (error) {
+      observation.error = error
+    }
+    calls.push(observation)
+  }
+  if (calls.length === 0) {
+    if (results.length > 0) throw new Error('planner_tool_result_unmatched')
+    return []
+  }
+
+  const seenCallIds = new Set<string>()
+  for (const call of calls) {
+    if (!call.callId) throw new Error('planner_tool_call_missing_call_id')
+    if (seenCallIds.has(call.callId)) throw new Error('planner_tool_call_duplicate_call_id')
+    seenCallIds.add(call.callId)
+    const matching = results.filter((result) => result.sourceCallId === call.callId)
+    if (matching.length !== 1) {
+      throw new Error(matching.length === 0 ? 'planner_tool_result_missing' : 'planner_tool_result_duplicate')
+    }
+    const result = matching[0]!
+    if (result.index <= call.index) throw new Error('planner_tool_result_out_of_order')
+    call.result = result
+  }
+  for (const result of results) {
+    if (!result.sourceCallId || !seenCallIds.has(result.sourceCallId)) throw new Error('planner_tool_result_unmatched')
+  }
+
+  const rejected: DshToolCallObservation[] = []
+  const successes: DshToolCallObservation[] = []
+  for (const call of calls) {
+    const result = call.result!
+    if (result.kind === 'malformed') throw new Error('planner_tool_result_malformed')
+    if (result.kind === 'error') throw new Error('planner_tool_call_rejected')
+    if (result.kind === 'schema-rejection') {
+      // A schema rejection can justify skipping only a call that this seam
+      // independently found invalid. A parsed typed decision that received an
+      // error result is still an unresolved action and must fail closed.
+      if (!call.error) throw new Error('planner_tool_call_rejected')
+      if (isPlannerSafetyError(call.error) || !isSchemaShapeError(call.error)) throw call.error
+      rejected.push(call)
+      continue
+    }
+    if (call.error) throw call.error
+    if (!call.decision) throw new Error('planner_typed_decision_missing')
+    successes.push(call)
+  }
+
+  if (successes.length > 1) throw new Error('planner_multiple_typed_decisions')
+  if (successes.length === 0) {
+    if (rejected.length > 0 && rejected.every((call) => call.error !== undefined)) throw rejected[0]!.error
+    throw new Error('planner_typed_decision_required')
+  }
+  const accepted = successes[0]!
+  if (calls.some((call) => call.index > accepted.index)) throw new Error('planner_typed_decision_after_candidate')
+  if (rejected.some((call) => call.index > accepted.index)) throw new Error('planner_typed_decision_after_candidate')
+  if (calls.some((call) => call.index < accepted.index && call.result?.kind !== 'schema-rejection')) throw new Error('planner_unresolved_tool_call_before_candidate')
+  return [accepted.decision!]
 }
 
 type ProviderFailure = {
@@ -883,9 +686,9 @@ export async function createDshEmbeddedBookingPlanner(
         if (task.phase === 'waiting_receipt') throw new Error('receipt_required')
         busy = true
         try {
-          // Every provider call, including a self-correction prompt, consumes
-          // one bounded planner attempt. A correction is parsed through the
-          // same authority path and returned when it is valid.
+          // Every provider call, including a no-tool nudge, consumes one
+          // bounded planner attempt. Any returned decision crosses the same
+          // typed authority path.
           let attempt = 0
           let nextPrompt = plannerPrompt(turn, task, options.now)
           while (attempt < 3) {
@@ -893,7 +696,7 @@ export async function createDshEmbeddedBookingPlanner(
             let decisions: BookingPlannerDecision[] = []
             try {
               const result = await runPort.run(nextPrompt, { sessionId })
-              decisions = result.events.map((event) => parseToolDecision(event, task)).filter((decision): decision is BookingPlannerDecision => decision !== null)
+              decisions = scanDshToolDecisionEvents(result.events, task)
               // A valid capability decision is already receipt-gated and is
               // the authority for this interval. Some providers fail a later
               // post-tool model step; that must not erase the accepted action.
@@ -903,11 +706,6 @@ export async function createDshEmbeddedBookingPlanner(
                   const providerFailure = terminalProviderState.failure
                   return [{ kind: 'error', error: { code: providerFailure.code, message: providerFailureMessage(providerFailure.code), retryable: providerFailure.retryable } }]
                 }
-                // Compatibility only: text is never trusted directly. A
-                // complete envelope must pass the identical action validator,
-                // allowlist, context, revision and fact-ref authority path.
-                const recovered = recoverFinalResponseDecision(result.finalResponse, task)
-                if (recovered) return [recovered]
                 if (!terminalProviderState.present) {
                   const providerAttemptFailure = providerAttemptFailureFromEvents(result.events)
                   if (providerAttemptFailure) {
@@ -916,28 +714,19 @@ export async function createDshEmbeddedBookingPlanner(
                 }
               }
               if (decisions.length === 0) {
-                console.error(`[booking-copilot] empty planner decision (attempt ${attempt}):`, JSON.stringify({
-                  finalResponse: result.finalResponse,
-                  notifications: result.notifications ?? [],
-                  events: result.events,
-                }).slice(0, 2000))
+                console.error('[booking-copilot] no typed decision:', JSON.stringify({
+                  attempt,
+                  finalResponse: diagnosticText(result.finalResponse),
+                  notificationCount: result.notifications?.length ?? 0,
+                  eventCount: result.events.length,
+                }))
               }
             } catch (error) {
-              const message = error instanceof Error ? error.message : String(error)
-              const retryable = attempt < 3 && error instanceof Error && /^planner_(invalid|forbidden|question_runtime_owned|capability_action_mismatch|surface_action_unsupported)/.test(message)
-              if (!retryable) throw error
-              // Self-correction: replay the concrete schema rejection into the
-              // SAME session. The next counted call receives the concrete
-              // rejection and can repair the invalid payload without losing
-              // any user-stated criteria.
-              nextPrompt = `Your previous tool call was rejected by schema validation:\n${message.slice(0, 500)}\nEmit ONE corrected tool call that satisfies the declared parameter schema exactly. Preserve every user-stated criterion; fix only the shape.`
-              continue
-            }
-            if (decisions.length > 1) {
-              // One typed operation per receipt-gated turn; models often emit
-              // a patch+run pair in one response. The first decision drives
-              // this turn and the receipt loop naturally requests the rest.
-              decisions = decisions.slice(0, 1)
+              // scanDshToolDecisionEvents is the event-authority boundary.
+              // Its errors (including schema failures without an in-run
+              // INVALID_ARGS + later-success pair) are terminal for this
+              // provider run and must not be laundered by another run.
+              throw error
             }
             if (decisions.length === 1) return decisions
             // Prose-only responses surface as an empty decision list; nudge

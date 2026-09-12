@@ -8,6 +8,7 @@
  */
 
 import Ajv2020 from 'ajv/dist/2020.js'
+import { ToolArgsError } from '@deepseek-ai/dsh-tools'
 import { canonicalBookingSurfaceSchema, dshBookingActionSchemaForKind } from './canonical-schema.js'
 
 export const name = 'gotry-embedded-booking'
@@ -83,7 +84,7 @@ function toolDefinition(toolName, capabilityId, actionKinds) {
       // knowledge duplicated outside this plugin.
       if (!validateArgs(args)) {
         const errors = (validateArgs.errors ?? []).map((e) => `${e.instancePath || '/'}: ${e.message}`).join('; ')
-        throw new Error(`decision_schema_violation: ${errors}`)
+        throw new ToolArgsError([`decision_schema_violation: ${errors}`])
       }
       const decision = args.decision
       return {

@@ -21,6 +21,10 @@ const gapReceipt=(actionId:string,revision:number,status:ActionReceipt['status']
 // sets, and are intentionally separate from the full tenant action vocabulary.
 assert.deepEqual(bookingSurfaceAllowedActions('storefront'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus'])
 assert.deepEqual(bookingSurfaceAllowedActions('payment_link'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'hotel.select'])
+assert.deepEqual(bookingSurfaceAllowedActions('tenant'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'offers.query', 'offers.view.patch', 'offers.compare', 'offer.select', 'offer.check', 'checkout.prepare', 'order.observe'])
+assert.deepEqual(bookingSurfaceAllowedActions('customer_portal'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'offers.query', 'offers.view.patch', 'offers.compare', 'offer.select', 'offer.check', 'checkout.prepare', 'order.observe'])
+assert.equal(bookingSurfaceAllowedActions('tenant').includes('hotel.select'), false)
+assert.equal(bookingSurfaceAllowedActions('customer_portal').includes('hotel.select'), false)
 
 // Lifetime budget mutation guard: these assertions exercise the transitions,
 // not just the exported constants, so changing a comparison or reset policy
