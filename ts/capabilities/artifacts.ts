@@ -6,6 +6,12 @@
  *     扫描 gotry-state/async/*.deliverable.md 文件视图),外加 dsh 工作目录顶层 *.md
  *     (agent 写出的行程/规划文件正落在这里——issue 截图里的 trip-2027-*.md 即此类)
  *     与顶层 *.html/*.htm(issue #441:行程 HTML 产物需先能被发现)。
+ *     分页/搜索语义(issue #458):offset(零-based 非负整数)与 search(字面 case-insensitive
+ *     子串,匹配 id/title/filename,trim 后空串=不过滤)是先收集全部合格元数据 → 路径 dedupe →
+ *     搜索过滤 → updated DESC + (source,id,canonical path) 词典序 tie-break → 按
+ *     pageSize 切片的全局模型;pageSize 默认 20、上限 50;nextOffset 仅当
+ *     offset + returned < total;offset 越界返回空数组 + 准确 total + truncated:false +
+ *     无 nextOffset;total 反映已过滤集合的真实长度,不假装文件系统快照稳定。
  *   - readArtifact: 产物阅读。行窗口(offset/limit)+ 原始行号,输出 dsh read 卡所需的
  *     全部字段({number,text}[] / totalLines / lang),UI 侧渲染为行号文件视图。
  *
@@ -48,7 +54,33 @@ export interface ArtifactReadView {
   windowed: boolean
 }
 
+export interface ListArtifactsOptions {
+  stateRoot: string
+  cwd?: string
+  limit?: number
+  /** Zero-based nonnegative integer; values outside the eligible set return an empty page with the known total. */
+  offset?: number
+  /** Literal, case-insensitive substring over `id` / `title` / filename. Empty / whitespace-only = no filter. */
+  search?: string
+}
+
+export interface ListArtifactsResult {
+  artifacts: ArtifactEntry[]
+  total: number
+  truncated: boolean
+  /** Present only when a subsequent page exists (`offset + artifacts.length < total`). */
+  nextOffset?: number
+  /** Echo of the effective limit so callers can verify clamping. */
+  limit: number
+  /** Echo of the effective offset (always present for the model-visible output, even when zero). */
+  offset: number
+  /** Echo of the trimmed search filter; absent when no filter was applied. */
+  search?: string
+  roots: string[]
+}
+
 const MAX_LIST = 50
+const DEFAULT_LIST = 20
 const MAX_WINDOW = 400
 const MAX_BYTES = 2 * 1024 * 1024
 const TEXT_EXT_LANG: Record<string, string> = {
@@ -58,6 +90,45 @@ const TEXT_EXT_LANG: Record<string, string> = {
 /** 工作目录顶层可发现的产物扩展名(大小写不敏感);html/htm 只作源码预览。 */
 const CWD_DISCOVER_EXT = /\.(md|html|htm)$/i
 const DIR_DENY = ['node_modules', '.git']
+
+/**
+ * Validate a nonnegative-integer pagination knob (`offset`). undefined defaults
+ * to 0; finite, integer, ≥0 numbers pass through; null / strings / nonfinite
+ * / noninteger values fail closed rather than being silently coerced.
+ */
+function normalizeOffset(value: unknown, label: string): number {
+  if (value === undefined) return 0
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a nonnegative integer`)
+  }
+  return value
+}
+
+/**
+ * Validate and clamp a page-size knob (`limit`). Integer-shaped numbers
+ * (including zero / negative, to keep the pre-#458 clamp-on-1 contract) clamp
+ * to [1, MAX_LIST]; strings, nonfinite, and noninteger values fail closed
+ * without silent coercion. undefined defaults to DEFAULT_LIST.
+ */
+function clampLimit(value: unknown): number {
+  if (value === undefined) return DEFAULT_LIST
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new Error(`limit must be a positive integer`)
+  }
+  return Math.max(1, Math.min(value, MAX_LIST))
+}
+
+/**
+ * Validate the optional `search` filter. Strings trim; empty / whitespace-only
+ * means no filter (already documented). Anything other than a string fails
+ * closed rather than passing through as a silent "no filter".
+ */
+function normalizeSearch(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') throw new Error(`search must be a string`)
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
 
 function rootOf(stateRoot: string): string {
   return stateRoot === '.' ? process.cwd() : resolve(stateRoot)
@@ -76,13 +147,43 @@ function asyncDeliverablePath(root: string, id: string): string {
   return join(root, 'gotry-state', 'async', `${id}.deliverable.md`)
 }
 
+/**
+ * Stable sort key for a list row. Order: `updated` DESC (ISO strings sort
+ * lexicographically), then `source` ASC, then `id` ASC, then canonical `path`
+ * ASC. The deterministic tie-break matters when many entries share an
+ * `updated` value (e.g. equal mtime): pagination would otherwise emit the
+ * same id on two adjacent pages. All comparisons are pure codepoint order
+ * (no `localeCompare`) so the order is stable across hosts/locales.
+ */
+function compareArtifacts(a: ArtifactEntry, b: ArtifactEntry): number {
+  const updA = String(a.updated ?? '')
+  const updB = String(b.updated ?? '')
+  if (updA !== updB) return updA < updB ? 1 : -1
+  if (a.source !== b.source) return a.source < b.source ? -1 : 1
+  if (a.id !== b.id) return a.id < b.id ? -1 : 1
+  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0
+}
+
+function filenameOf(entry: ArtifactEntry): string {
+  const lastSep = entry.path.lastIndexOf(sep)
+  return lastSep >= 0 ? entry.path.slice(lastSep + 1) : entry.path
+}
+
+/** Literal substring predicate (case-insensitive) over id/title/filename. */
+function matchesSearch(entry: ArtifactEntry, needle: string): boolean {
+  const lower = needle.toLowerCase()
+  return entry.id.toLowerCase().includes(lower)
+    || entry.title.toLowerCase().includes(lower)
+    || filenameOf(entry).toLowerCase().includes(lower)
+}
+
 /** 账本 workflow_runs 是权威(listWorkflowRuns 只读 SELECT 直查,不为一个视图改 ledger 类)。 */
-function listRunsFromLedger(root: string, tenant: string, limit: number): ArtifactEntry[] {
+function listRunsFromLedger(root: string, tenant: string): ArtifactEntry[] {
   const ledger = openLedgerIfExists(root, tenant)
   if (!ledger) return []
   const rows = ledger.db
-    .prepare('SELECT id, goal, status, deliverable, updated FROM workflow_runs WHERE tenant_id = ? ORDER BY updated DESC LIMIT ?')
-    .all(ledger.tenant, limit) as Array<{ id: string; goal: string; status: string; deliverable: string | null; updated: string }>
+    .prepare('SELECT id, goal, status, deliverable, updated FROM workflow_runs WHERE tenant_id = ? ORDER BY updated DESC')
+    .all(ledger.tenant) as Array<{ id: string; goal: string; status: string; deliverable: string | null; updated: string }>
   return rows.map(r => {
     const file = asyncDeliverablePath(root, r.id)
     return {
@@ -98,7 +199,7 @@ function listRunsFromLedger(root: string, tenant: string, limit: number): Artifa
 }
 
 /** 无账本旧 root 的兼容视图:直接扫 async 目录的 deliverable 文件(只读,与清扫合同同一目录)。 */
-async function listDeliverableFiles(root: string, limit: number): Promise<ArtifactEntry[]> {
+async function listDeliverableFiles(root: string): Promise<ArtifactEntry[]> {
   const dir = join(root, 'gotry-state', 'async')
   let names: string[] = []
   try {
@@ -107,7 +208,7 @@ async function listDeliverableFiles(root: string, limit: number): Promise<Artifa
     return []
   }
   const entries: ArtifactEntry[] = []
-  for (const n of names.slice(0, limit * 2)) {
+  for (const n of names) {
     const p = join(dir, n)
     const st = await stat(p).catch(() => null)
     if (!st?.isFile()) continue
@@ -123,15 +224,16 @@ async function listDeliverableFiles(root: string, limit: number): Promise<Artifa
       bytes: st.size,
     })
   }
-  return entries.sort((a, b) => String(b.updated).localeCompare(String(a.updated)))
+  return entries
 }
 
 /**
  * dsh 工作目录顶层可发现产物:md(agent 写出的行程规划等)+ html/htm 行程产物,
- * 扩展名大小写不敏感;非递归,排除 dotfiles。排序/截断语义与既有 md 版本一致
- * (mtime 倒序后 slice(0, limit),由调用方 listArtifacts 统一 merge 再截断)。
+ * 扩展名大小写不敏感;非递归,排除 dotfiles。每源在 dedupe/全局排序之前不限
+ * 数量——pageSize 由 listArtifacts 在排序后切片,避免 cwd 顶层 mtime 较老的
+ * 产物被提前丢失。
  */
-async function listCwdArtifacts(cwd: string, limit: number): Promise<ArtifactEntry[]> {
+async function listCwdArtifacts(cwd: string): Promise<ArtifactEntry[]> {
   let dirents
   try {
     dirents = await readdir(cwd, { withFileTypes: true })
@@ -155,31 +257,64 @@ async function listCwdArtifacts(cwd: string, limit: number): Promise<ArtifactEnt
       bytes: st.size,
     })
   }
-  return entries.sort((a, b) => String(b.updated).localeCompare(String(a.updated))).slice(0, limit)
+  return entries
 }
 
-export async function listArtifacts(opts: {
-  stateRoot: string
-  cwd?: string
-  limit?: number
-}): Promise<{ artifacts: ArtifactEntry[]; total: number; truncated: boolean; roots: string[] }> {
-  const limit = Math.max(1, Math.min(opts.limit ?? 20, MAX_LIST))
+export async function listArtifacts(opts: ListArtifactsOptions): Promise<ListArtifactsResult> {
+  const limit = clampLimit(opts.limit)
+  const offset = normalizeOffset(opts.offset, 'offset')
+  const needle = normalizeSearch(opts.search) ?? ''
   const root = rootOf(opts.stateRoot)
   const cwd = opts.cwd ? resolve(opts.cwd) : process.cwd()
   const canonicalRoot = await realpath(root).catch(() => root)
   const canonicalCwd = await realpath(cwd).catch(() => cwd)
 
+  // 1) collect all eligible entries per source, without per-source limits —
+  //    pageSize is applied to the merged/deduped/sorted set so older cwd files
+  //    stay reachable across pages.
+  const collected: ArtifactEntry[] = [
+    ...listRunsFromLedger(canonicalRoot, 'local'),
+    ...(await listDeliverableFiles(canonicalRoot)),
+    ...(await listCwdArtifacts(canonicalCwd)),
+  ]
+
+  // 2) canonical-path dedupe (keep ledger authority when both sources point
+  //    at the same file).
   const seenPath = new Set<string>()
-  const merged: ArtifactEntry[] = []
-  for (const e of [...listRunsFromLedger(canonicalRoot, 'local', limit), ...(await listDeliverableFiles(canonicalRoot, limit)), ...(await listCwdArtifacts(canonicalCwd, limit))]) {
+  const deduped: ArtifactEntry[] = []
+  for (const e of collected) {
     if (seenPath.has(e.path)) continue
     seenPath.add(e.path)
-    merged.push(e)
+    deduped.push(e)
   }
-  merged.sort((a, b) => String(b.updated ?? '').localeCompare(String(a.updated ?? '')))
 
-  const total = merged.length
-  return { artifacts: merged.slice(0, limit), total, truncated: total > limit, roots: [canonicalRoot, canonicalCwd] }
+  // 3) literal, case-insensitive substring filter over id/title/filename.
+  const filtered = needle === '' ? deduped : deduped.filter(e => matchesSearch(e, needle))
+
+  // 4) deterministic global sort (updated DESC + lexical tie-break) so equal
+  //    mtimes have a stable page boundary.
+  filtered.sort(compareArtifacts)
+
+  // 5) page slice. offset may exceed total — return an empty page with the
+  //    known total and `truncated:false`.
+  const total = filtered.length
+  const start = Math.min(offset, total)
+  const end = Math.min(start + limit, total)
+  const page = filtered.slice(start, end)
+  const hasMore = start + page.length < total
+
+  const result: ListArtifactsResult = {
+    artifacts: page,
+    total,
+    truncated: hasMore,
+    limit,
+    /** Echo the requested offset (post-validation) — not the clamped page start — so the caller can detect a beyond-end request. */
+    offset,
+    roots: [canonicalRoot, canonicalCwd],
+  }
+  if (hasMore) result.nextOffset = start + page.length
+  if (needle !== '') result.search = needle
+  return result
 }
 
 /**

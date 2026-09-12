@@ -1998,16 +1998,23 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       'Opening a listed .html/.htm goes through the host native HTML preview, which the client labels as an HTML preview because its scripts may run; gotry_artifacts_read is the source-text path. ' +
       'Generated itinerary HTML documents (gotry_itinerary_render) land in the same working-directory view. ' +
       'Use when the user asks to see/open/revisit a previously generated artifact ' +
-      '(「看看刚才生成的行程」「上次的规划在哪」「打开那个 md／html」) — list first, then read with gotry_artifacts_read.',
+      '(「看看刚才生成的行程」「上次的规划在哪」「打开那个 md／html」) — list first, then read with gotry_artifacts_read. ' +
+      'Optional `offset` (zero-based nonnegative integer) and `search` (literal, case-insensitive substring over id/title/filename; ' +
+      'trim then empty = no filter; no regex/glob semantics, body content is never searched) let you page past the default 20 / cap 50 ' +
+      'to enumerate every eligible artifact and find an older one by name. `total` is the post-filter total; `nextOffset` is present ' +
+      'only when another page exists; an offset past the end returns an empty page with the known `total` and no `nextOffset`. ' +
+      'The list is not a stable snapshot across filesystem mutations.',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
     parameters: {
-      limit: { type: 'integer', description: '最多返回条数,默认 20' },
+      limit: { type: 'integer', description: '最多返回条数,默认 20,上限 50' },
+      offset: { type: 'integer', description: '零-based 非负整数,跳过前 N 条;越界返回空页 + 准确 total + 无 nextOffset' },
+      search: { type: 'string', description: '字面大小写无关子串(匹配 id/title/filename);trim 后空 = 不过滤;非正则/非 glob,不搜内容' },
     },
     output: {
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 600)) }],
       presentationMeta: (_args, value) => {
-        const r = value as { artifacts?: Array<{ path?: string }>; total?: number; truncated?: boolean }
+        const r = value as { artifacts?: Array<{ path?: string }>; total?: number; truncated?: boolean; offset?: number; limit?: number }
         const paths = Array.isArray(r.artifacts)
           ? r.artifacts.map(a => String(a.path ?? '')).filter(Boolean)
           : []
@@ -2020,14 +2027,47 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       },
     },
     async execute(args, exec: unknown) {
-      const q = unwrapQuery<{ limit?: number }>(args, 'limit')
-      const r = await listArtifacts({ stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec), limit: q.limit })
+      const q = unwrapQuery<{ limit?: number; offset?: number; search?: string }>(args, 'limit')
+      let r: Awaited<ReturnType<typeof listArtifacts>>
+      try {
+        r = await listArtifacts({
+          stateRoot: config.stateRoot ?? '.',
+          cwd: sessionCwd(exec),
+          limit: q.limit,
+          offset: q.offset,
+          search: q.search,
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return JSON.parse(JSON.stringify({ ok: false, error: msg, summary: msg, hint: 'limit 必须是正整数(上限 50);offset 必须是零-based 非负整数;search 必须是字符串(trim 后空 = 不过滤)' })) as Record<string, never>
+      }
       const lines = r.artifacts.map(a =>
         `- [${a.source}] ${a.title}${a.status ? `(${a.status})` : ''} — ${a.path}${a.updated ? ` @ ${a.updated.slice(0, 16).replace('T', ' ')}` : ''}`)
+      // Echo the requested offset (post-validation), not the clamped page start,
+      // so a caller that asked for an offset past the end can tell.
+      const requestedOffset = q.offset ?? 0
+      const position = r.artifacts.length > 0
+        ? `${requestedOffset + 1}-${requestedOffset + r.artifacts.length}`
+        : '无'
+      const sizeInfo = `第 ${position}/${r.total} 项(limit=${r.limit})`
+      const searchInfo = r.search ? `,搜索「${r.search}」` : ''
       const summary = r.artifacts.length
-        ? `在册产物 ${r.artifacts.length}/${r.total} 项${r.truncated ? '(截断,可加 limit)' : ''}:\n${lines.join('\n')}`
-        : '无在册产物(异步深度规划交付与工作目录 md/html 文件都会出现在这里)'
-      return JSON.parse(JSON.stringify({ ok: true, artifacts: r.artifacts, total: r.total, truncated: r.truncated, summary })) as Record<string, never>
+        ? `在册产物 ${r.artifacts.length}/${r.total} 项${r.truncated ? `(后续页 offset=${r.nextOffset})` : ''}${searchInfo},${sizeInfo}:\n${lines.join('\n')}`
+        : r.total > 0
+          // Beyond the end with a known total — never claim "no artifacts".
+          ? `空页(${requestedOffset + 1} 起越界;总在册 ${r.total} 项,本次 limit=${r.limit})${searchInfo},${sizeInfo}`
+          : `无在册产物(异步深度规划交付与工作目录 md/html 文件都会出现在这里)${searchInfo ? `(搜索「${r.search}」无匹配)` : ''}`
+      return JSON.parse(JSON.stringify({
+        ok: true,
+        artifacts: r.artifacts,
+        total: r.total,
+        truncated: r.truncated,
+        offset: requestedOffset,
+        limit: r.limit,
+        ...(r.nextOffset !== undefined ? { nextOffset: r.nextOffset } : {}),
+        ...(r.search !== undefined ? { search: r.search } : {}),
+        summary,
+      })) as Record<string, never>
     },
     // Host presentationMeta remains persisted with the ToolResult for Host-side
     // consumers; the packaged public Client separately renders the runtime block
