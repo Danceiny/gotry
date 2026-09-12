@@ -1262,6 +1262,18 @@ const rewriteLegacyOfferRows = (ledger: ReturnType<typeof ensureLedger>, taskId:
 // the replayed workspace into checkout authority. The deliberate
 // replayUpgradeRequired reanchor and confirmed-state strong rejection stay
 // intact; an unchanged same-revision TURN pair still replays normally.
+//
+// Lifecycle: every root/ledger is registered BEFORE any assertion so the
+// finally block can close + remove it even if the assertion throws (a
+// throw is exactly what regression tests must handle). f1MakeRoot
+// registers the path immediately after mkdtemp; f1Open registers the
+// ledger immediately after ensureLedger; f1Close closes once and
+// unregisters.
+const f1Roots: Set<string> = new Set()
+const f1Ledgers: Set<ReturnType<typeof ensureLedger>> = new Set()
+const f1MakeRoot = (prefix: string): string => { const r = mkdtempSync(join(tmpdir(), prefix)); f1Roots.add(r); return r }
+const f1Open = (root: string): ReturnType<typeof ensureLedger> => { const l = ensureLedger(root); f1Ledgers.add(l); return l }
+const f1Close = (ledger: ReturnType<typeof ensureLedger>): void => { if (!f1Ledgers.has(ledger)) return; f1Ledgers.delete(ledger); try { ledger.close() } catch { /* already closed */ } }
 const f1DriftVariants = [
   {
     name: 'verifiedOffer-injected',
@@ -1280,11 +1292,10 @@ const f1DriftVariants = [
     drift: (baseline: BookingWorkspaceSnapshot): BookingWorkspaceSnapshot => ({ ...baseline, visibleHotels: [{ ...baseline.visibleHotels[0]!, name: 'F1 Hotel Renamed' }] }),
   },
 ] as const
-const f1Cleanup: Array<{ close: () => void; root: string }> = []
 try {
 for (const variant of f1DriftVariants) {
-  const root = mkdtempSync(join(tmpdir(), `gotry-booking-v2-f1-replay-${variant.name}-`))
-  const ledger = ensureLedger(root)
+  const root = f1MakeRoot(`gotry-booking-v2-f1-replay-${variant.name}-`)
+  const ledger = f1Open(root)
   const taskId = `task-f1-replay-${variant.name}`
   const baseline: BookingWorkspaceSnapshot = {
     ...workspace(0),
@@ -1304,9 +1315,10 @@ for (const variant of f1DriftVariants) {
   const driftedRequestDigest = bookingDigest({ schemaVersion: 'booking.surface', kind: 'user.turn', taskId, turnId: `${variant.name}-turn`, workspace: drifted, request: { text: 'continue with the injected variant' } })
   ;(writer as unknown as { appendTurn: (taskId: string, contextRef: string, requestDigest: string, workspaceDigest: string, workspaceSemanticDigest: string, ordinal: number, turnId: string, workspace: BookingWorkspaceSnapshot) => void }).appendTurn(taskId, 'ctx-v2', driftedRequestDigest, driftedWorkspaceDigest, driftedSemanticDigest, 2, `${variant.name}-turn`, drifted)
   // Close the writer before opening the restart reader so SQLite handles
-  // never overlap; restart is a fresh process against the same durable root.
-  writer['ledger'].close(); ledger.close()
-  const restartedLedger = ensureLedger(root)
+  // never overlap; the restart is a fresh runtime against the same
+  // durable root in the same process.
+  f1Close(ledger)
+  const restartedLedger = f1Open(root)
   const reader = new BookingCopilotTaskRuntime(restartedLedger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
   const eventsBeforeResume = restartedLedger.countEvents()
   assert.throws(() => reader.resumeTask(taskId), new RegExp(`ledger_corrupt:${taskId}:same_revision_turn_workspace_drift`), `${variant.name} same-rev drift is fail-closed on replay`)
@@ -1318,14 +1330,15 @@ for (const variant of f1DriftVariants) {
   assert.throws(() => reader.issueOperation(taskId, { ...action(`f1-${variant.name}-checkout`), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-f1', offerVersionRef: 'offer-f1:v1', verifiedOfferRef: 'verified-offer-f1' } }), new RegExp(`ledger_corrupt:${taskId}:same_revision_turn_workspace_drift`), `${variant.name} public checkout.prepare is refused with same-rev drift diagnostic`)
   const eventsAfterCheckout = restartedLedger.countEvents()
   assert.equal(eventsAfterCheckout, eventsBeforeResume, `${variant.name} refused checkout.prepare writes no event`)
-  f1Cleanup.push({ close: () => restartedLedger.close(), root })
+  f1Close(restartedLedger)
+  f1Roots.delete(root)
 }
 // Positive: an unchanged snapshot at the same revision (just a different
 // turn identity and request text) is still accepted on replay. This is the
 // normal turn-by-turn conversation pattern under the same workspace.
 {
-  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-f1-replay-snapshot-stable-'))
-  const ledger = ensureLedger(root)
+  const root = f1MakeRoot('gotry-booking-v2-f1-replay-snapshot-stable-')
+  const ledger = f1Open(root)
   const taskId = 'task-f1-replay-snapshot-stable'
   const baseline: BookingWorkspaceSnapshot = {
     ...workspace(0),
@@ -1336,14 +1349,15 @@ for (const variant of f1DriftVariants) {
   const writer = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
   writer.startTask({ ...turn(taskId), workspace: baseline })
   writer.startTask({ ...turn(taskId), turnId: 'snapshot-stable-second-turn', workspace: baseline, request: { text: 'find hotels in Dubai again' } })
-  writer['ledger'].close(); ledger.close()
-  const restartedLedger = ensureLedger(root)
+  f1Close(ledger)
+  const restartedLedger = f1Open(root)
   const reader = new BookingCopilotTaskRuntime(restartedLedger, { contextRefFactory: () => 'ctx-v2' })
   const replayed = reader.resumeTask(taskId)
   assert.equal(replayed?.userTurnCount, 2, 'same-snapshot same-rev TURN pair survives replay')
   assert.equal(replayed?.lastTurnId, 'snapshot-stable-second-turn', 'last turn id reflects the snapshot-stable second turn')
   assert.equal(replayed?.workspaceSnapshot?.selectedOfferRef, 'offer-f1', 'unchanged snapshot retains its selected offer ref')
-  f1Cleanup.push({ close: () => restartedLedger.close(), root })
+  f1Close(restartedLedger)
+  f1Roots.delete(root)
 }
 // Positive: the explicit replayUpgradeRequired reanchor keeps accepting a
 // same-rev drifted TURN row. The legacy-tail replan path is set by an
@@ -1353,8 +1367,8 @@ for (const variant of f1DriftVariants) {
 // hotel snapshot (the legitimate reanchor), then close/reopen and assert
 // the reconstructed state.
 {
-  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-f1-replay-upgrade-'))
-  const ledger = ensureLedger(root)
+  const root = f1MakeRoot('gotry-booking-v2-f1-replay-upgrade-')
+  let ledger = f1Open(root)
   const taskId = 'task-f1-replay-upgrade-anchor'
   const baseline: BookingWorkspaceSnapshot = {
     ...workspace(0),
@@ -1380,35 +1394,46 @@ for (const variant of f1DriftVariants) {
   })
   writer.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId, workspace: { ...baseline, revision: 1 }, receipt: blockerReceipt })
   rewriteLegacyOfferRows(ledger, taskId, 'find hotels in Dubai')
-  writer['ledger'].close(); ledger.close()
-  const reopenedLedger = ensureLedger(root)
+  f1Close(ledger)
+  // First resume: replan sets replayUpgradeRequired (the established
+  // pattern for setting up replayUpgradeRequired; root public old-public
+  // probe independently proved origin).
+  const reopenedLedger = f1Open(root)
   const reader = new BookingCopilotTaskRuntime(reopenedLedger, { contextRefFactory: () => 'ctx-v2' })
-  // First resume: replan sets replayUpgradeRequired (private append on
-  // legacy rows is the established pattern for replayUpgradeRequired setup;
-  // root public old3f probe independently proved origin).
   const recovered = reader.resumeTask(taskId)
   assert.equal(recovered?.replayUpgradeRequired, true, 'legacy blocker lineage replan sets replayUpgradeRequired')
-  reader['ledger'].close(); reopenedLedger.close()
-  // Second open: apply the legitimate reanchor via PUBLIC startTask while
+  f1Close(reopenedLedger)
+  // Apply the legitimate reanchor via PUBLIC startTask while
   // replayUpgradeRequired is set; the reanchor TURN row rewrites the
   // durable semantic digest and clears the flag.
-  const reanchorRoot = ensureLedger(root)
-  const reanchorWriter = new BookingCopilotTaskRuntime(reanchorRoot, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+  ledger = f1Open(root)
+  const reanchorWriter = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
   const reanchorWorkspace: BookingWorkspaceSnapshot = { ...baseline, revision: 1, visibleHotels: [{ hotelRef: 'hotel-f1', name: 'F1 Reanchored Hotel', factRefs: [] }] }
   reanchorWriter.startTask({ ...turn(taskId, 1), turnId: 'f1-replay-reanchor-turn', workspace: reanchorWorkspace, request: { text: 're-anchor after blocker' } })
-  reanchorWriter['ledger'].close(); reanchorRoot.close()
-  const finalLedger = ensureLedger(root)
+  f1Close(ledger)
+  const finalLedger = f1Open(root)
   const finalReader = new BookingCopilotTaskRuntime(finalLedger, { contextRefFactory: () => 'ctx-v2' })
   const upgraded = finalReader.resumeTask(taskId)
   assert.equal(upgraded?.workspaceSnapshot?.visibleHotels?.[0]?.name, 'F1 Reanchored Hotel', 'replayUpgradeRequired allows the same-rev reanchor drift via public startTask')
   assert.equal(upgraded?.replayUpgradeRequired, undefined, 'validated reanchor TURN clears replayUpgradeRequired')
-  f1Cleanup.push({ close: () => finalLedger.close(), root })
+  f1Close(finalLedger)
+  f1Roots.delete(root)
 }
+} catch (f1Failure) {
+  // Surface failure to finally before any cleanup throws, so the assertion
+  // diagnostic is the one the runner reports (not a cleanup error).
+  throw f1Failure
 } finally {
-  for (const handle of f1Cleanup) {
-    try { handle.close() } catch {}
-    try { rmSync(handle.root, { recursive: true, force: true }) } catch {}
+  const closeErrors: unknown[] = []
+  for (const open of [...f1Ledgers]) {
+    try { open.close() } catch (e) { closeErrors.push(e) }
+    f1Ledgers.delete(open)
   }
+  for (const root of [...f1Roots]) {
+    try { rmSync(root, { recursive: true, force: true }) } catch (e) { closeErrors.push(e) }
+    f1Roots.delete(root)
+  }
+  if (closeErrors.length) throw new AggregateError(closeErrors, 'f1 fixture cleanup failed')
 }
 
 const legacyOfferRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-legacy-offer-version-'))
