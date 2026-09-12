@@ -73,6 +73,8 @@ Architecture — the sync path from chat through the kernel to the fact gate, pl
 
 23 registered tools in groups: realtime retrieval (Fliggy official channel + your own Chrome session, read-only) · catalog · decision engine · memory · artifacts · fact gate · external search · `gotry_doctor` self-check. No hidden dispatch — a channel registry returns an ordered suggestion list; the model or user chooses. Per-tool contracts: [`docs/tools.md`](docs/tools.md).
 
+The offline session benchmark marks challenge/guard truncation fail-closed; only a normally completed eight-query batch is `batch_complete`, and production cadence remains 35 seconds.
+
 ## Demo
 
 https://github.com/user-attachments/assets/6628c254-eba1-4017-a883-c70d22616939
