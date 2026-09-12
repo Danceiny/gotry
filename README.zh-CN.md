@@ -77,7 +77,7 @@ flowchart LR
 
 外部事件集成仍默认 inert：#432 W2A `w2a/0.1` adapter 只在显式 exact tuple 准入后校验有界序列化核心 envelope，剥离 opaque／自由文本字段，并返回 untrusted metadata。它不注册 listener 或 consumer，不执行网络、进程、健康面、愿望池、账本或预订副作用；真实 sensor 激活仍归 #82。
 
-持久 channel-health 事件已支撑愿望池召回与既有 doctor 读取；routing advice 在 #436 接上持久最新健康面前，仍沿用进程内 verdict state。
+持久 channel-health 事件现已接入 routing 建议：六个非 hit 工具结果在工具结果边界读取最新持久健康状态，会话 verdict 状态与持久 down 集合取并集排除通道。缺失、不可解析、未来或已过保留期的时间戳行在 latest-wins 覆盖前丢弃，坏行不得顶掉更早的有效 down；只有 `down` 会新增持久排除（`cooldown` 仍是节律态，恢复或过期只是解除该排除），且都不解除本会话刚发生的失败。静态 persona 路由卡不变。
 
 ## 一段对话
 

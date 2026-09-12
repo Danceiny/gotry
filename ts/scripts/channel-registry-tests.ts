@@ -12,6 +12,9 @@
  *     patch 宿主插件两态照亮(map-tools/ask-user,issue #113 L1 残量)
  *  8. apply 接线:channel_routing_card 变量已注册;参数级拒绝不带 routing 字段;
  *     工具描述首行生成(检索工具前置意图顺位卡,非检索工具原样,#113)
+ *  9. 持久健康面投影(#436):persistedDownChannels 纯投影(有效 down 才排除;
+ *     ok/cooldown/缺时间戳/坏时间戳/未来时间戳一律不排除)+ routingAdvice
+ *     与会话态的并集语义(会话失败永不被持久面解除)
  *
  * 运行: cd ts && npx tsx scripts/channel-registry-tests.ts
  */
@@ -22,7 +25,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   CHANNELS, channelsForIntent, routingAdvice, renderRoutingCard, toolRoutingHeadline,
-  INTENT_LABELS, type ChannelIntent, type ChannelQuotaClass, type EvidenceTier,
+  INTENT_LABELS, persistedDownChannels, type ChannelIntent, type ChannelQuotaClass, type EvidenceTier,
 } from '../capabilities/channel-registry.ts'
 import {
   noteChannelVerdict, channelState, clearChannel, resetChannelHealth,
@@ -189,6 +192,42 @@ assert.equal(toolRoutingHeadline('gotry_doctor'), '', '非检索工具无首行�
 assert.ok(flyaiTool.description?.startsWith('本工具服务的检索意图与通道顺位'), 'flyai 描述已前置首行卡(接线生效)')
 assert.ok(!doctorToolDesc.description?.startsWith('本工具服务的检索意图'), 'doctor 描述无首行卡(接线不误伤)')
 console.log('8. apply 接线 + 描述首行生成 OK')
+
+// 9. 持久健康面投影 + 并集语义(issue #436)
+resetChannelHealth()
+const latestEvents = new Map<string, { state: string; at?: string }>([
+  ['down-valid', { state: 'down', at: new Date(NOW - 60_000).toISOString() }],
+  ['down-now', { state: 'down', at: new Date(NOW).toISOString() }],
+  ['ok-latest', { state: 'ok', at: new Date(NOW).toISOString() }],
+  ['cooldown-latest', { state: 'cooldown', at: new Date(NOW).toISOString() }],
+  ['down-no-at', { state: 'down' }],
+  ['down-bad-at', { state: 'down', at: 'not-a-date' }],
+  ['down-future', { state: 'down', at: new Date(NOW + 86_400_000).toISOString() }],
+])
+assert.deepEqual([...persistedDownChannels(latestEvents, NOW)].sort(), ['down-now', 'down-valid'],
+  '投影:只有带有效时间戳且不在未来的 down 才排除(cooldown 是节律、ok 是恢复)')
+assert.ok(persistedDownChannels(new Map(), NOW).size === 0, '空事件表=零排除')
+
+// 并集语义:持久集合只加排除,不能解除会话态;顺位表本身不变
+const noPersisted = routingAdvice('search-flight', { now: NOW })
+assert.ok(noPersisted.alternatives.some(a => a.channel === 'session:ctrip-flight'), '无持久集合=原会话态口径')
+const persistedExcl = routingAdvice('search-flight', { now: NOW, persistedDownChannels: new Set(['session:ctrip-flight']) })
+assert.ok(!persistedExcl.alternatives.some(a => a.channel === 'session:ctrip-flight'), '持久 down 通道被排除')
+assert.equal(persistedExcl.alternatives[0]!.channel, 'flyai', '顺位不变,只过滤')
+const persistedLimit = routingAdvice('search-hotel', { now: NOW, persistedDownChannels: new Set(['flyai', 'hbcli-hotel']), limit: 1 })
+assert.deepEqual(persistedLimit.alternatives.map(a => a.channel), ['session:ctrip-hotel'], '持久排除叠加后 limit 仍截断')
+noteChannelVerdict('session:ctrip-flight', 'challenged', { now: NOW })
+assert.ok(
+  !routingAdvice('search-flight', { now: NOW, persistedDownChannels: new Set() }).alternatives.some(a => a.channel === 'session:ctrip-flight'),
+  '会话 down 在空持久集合(含持久 ok 恢复)下仍排除——持久面不解锁会话失败',
+)
+assert.equal(channelState('session:ctrip-flight', NOW)?.state, 'down', '会话态未被持久面改写')
+clearChannel('session:ctrip-flight')
+assert.ok(
+  routingAdvice('search-flight', { now: NOW, persistedDownChannels: new Set() }).alternatives.some(a => a.channel === 'session:ctrip-flight'),
+  '会话清除 + 持久面无 down → 通道恢复(恢复只对没有会话 down 的通道生效)',
+)
+console.log('9. 持久健康面投影 + 并集语义(#436)OK')
 
 await rm(stateRoot, { recursive: true, force: true })
 console.log('channel-registry-tests: 全部通过')

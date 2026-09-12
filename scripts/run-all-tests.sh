@@ -499,7 +499,7 @@ cleanup_packaged_e2e_runtime
 trap - EXIT
 
 echo
-echo "=== 50. 通道注册表与健康面(docs/design/tool-orchestration-design.md,#106/#107/#108 编排设计:注册表封闭性/意图顺位=证据级×效率/routingAdvice 健康态驱动/flyai 达限即改道·hit 即恢复/verdict 映射闭集/persona 路由卡确定性/JSONL 持久面+坏行容忍/doctor 配额可见+calendar 三态;全离线) ==="
+echo "=== 50. 通道注册表与健康面(docs/design/tool-orchestration-design.md,#106/#107/#108 编排设计:注册表封闭性/意图顺位=证据级×效率/routingAdvice 健康态驱动/flyai 达限即改道·hit 即恢复/verdict 映射闭集/persona 路由卡确定性/JSONL 持久面+坏行容忍/doctor 配额可见+calendar 三态/持久面 down 投影与会话态并集(#436);全离线) ==="
 (cd ts && npx tsx scripts/channel-registry-tests.ts) || FAIL=1
 
 echo
@@ -507,7 +507,7 @@ echo "=== 51. 指标面板只读聚合面(#138 第一切片:事实闸 verdict �
 (cd ts && npx tsx scripts/metrics-report-tests.ts) || FAIL=1
 
 echo
-echo "=== 52. 通道探针 tick(外部事件接缝第 1 段:evaluate 纯函数/latest-wins 'ok' 恢复语义/doctor 口径兼容/metrics ok 超越/CLI 探测面;全离线) ==="
+echo "=== 52. 通道探针 tick(外部事件接缝第 1 段:evaluate 纯函数/latest-wins 'ok' 恢复语义/doctor 口径兼容/metrics ok 超越/CLI 探测面/严格时间戳 opt-in(#436:坏行不得顶掉更早有效 down,默认口径不变);全离线) ==="
 (cd ts && npx tsx scripts/channel-probe-tests.ts) || FAIL=1
 
 echo
@@ -566,6 +566,10 @@ echo "=== 65. Booking Copilot unavailable/changed 恢复链契约(issue #142 非
 echo
 echo "=== 66. HotelByte 假 CLI spawn 级完整链路 E2E(issue #232 §5:本地 fixture 二进制经真实 child_process spawn 跑通 quote→approval→book→unknown→query-orders 全链/裸调用红基线 6 证伪/timeout→miss→迟到成功与迟到自动取消/exit0 垃圾·无绑定·部分确认不假成功/进程被杀/同 ref 多单冲突显式/窗口届满转人工不重订/探针失败不证明订单不存在;全离线 fixture,零真实 hbcli·网络·凭据,所有 spawn 有界超时) ==="
 (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hotelbyte-spawn-e2e-tests.ts) || FAIL=1
+
+echo
+echo "=== 67. issue #436 持久健康面→注册工具 routing 建议 E2E(跨进程 fixture 探针子进程走真实 evaluateProbeResults+recordChannelEvent 写 channel-health.jsonl→真实注册工具 gotry_flyai_search/gotry_session_search 结果 `routing` 字段断言:持久 down 排除(本进程该通道会话态为空)/非会话通道同样生效/会话 down 优先于持久 'ok' 恢复/会话 hit 清除后有效持久 ok 恢复/独立根不串根/过期·未来·缺·坏时间戳均不压制且坏行不得在 latest-wins 前顶掉更早有效 down/同根追加可重复;夹具按产品真实操作标签登记并记录实际请求标签防错位;隔离临时 stateRoot+有界子进程,全离线无网络无真实供应商) ==="
+(cd ts && npx tsx scripts/issue436-persisted-routing-e2e.ts) || FAIL=1
 
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"

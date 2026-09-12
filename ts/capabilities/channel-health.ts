@@ -134,8 +134,12 @@ export async function recordChannelEvent(stateRoot: string, event: ChannelEvent)
  * latest-wins:'ok' 恢复事件可超越同通道更早的 down/cooldown(外部事件接缝
  * 第 1 段);消费方以 `state !== 'down'` 判当前健康,旧判定(`=== 'down'`)
  * 不受影响。
+ * requireValidTimestamp(opt-in,#436 路由消费方):缺失/不可解析/未来时间戳的行
+ * **在 latest-wins 覆盖之前**丢弃——否则一条坏时间戳的新行会顶掉同通道更早的
+ * 有效 down,把通道错误地判回可用。默认 false,doctor/metrics/探针既有口径不变
+ * (它们只消费状态与历史频率,不要求时间戳可信);保留期仍是同一个 limitDays。
  */
-export async function readLatestChannelEvents(stateRoot: string, opts: { limitDays?: number; now?: number } = {}): Promise<Map<string, ChannelEvent>> {
+export async function readLatestChannelEvents(stateRoot: string, opts: { limitDays?: number; now?: number; requireValidTimestamp?: boolean } = {}): Promise<Map<string, ChannelEvent>> {
   const latest = new Map<string, ChannelEvent>()
   try {
     const { readFile } = await import('node:fs/promises')
@@ -150,7 +154,9 @@ export async function readLatestChannelEvents(stateRoot: string, opts: { limitDa
         if (!ev || typeof ev.channel !== 'string' || typeof ev.state !== 'string') continue
         if (!['down', 'cooldown', 'ok'].includes(ev.state)) continue
         const atMs = Date.parse(ev.at ?? '')
-        if (Number.isFinite(atMs) && atMs < cutoff) continue
+        if (opts.requireValidTimestamp) {
+          if (!Number.isFinite(atMs) || atMs > nowMs || atMs < cutoff) continue
+        } else if (Number.isFinite(atMs) && atMs < cutoff) continue
         latest.set(ev.channel, ev)
       } catch { /* 坏行跳过 */ }
     }

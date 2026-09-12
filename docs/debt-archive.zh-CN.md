@@ -53,6 +53,7 @@
 | #279 携程机票 malformed 响应 | **已清偿 2026-09-10**：三态 parser/search 边界与隔离扩展 fixture 见 [`architecture.md`](architecture.zh-CN.md) §9；本地证据不替代 #272 live interface calibration、真实 supplier evidence 或 M4/M5/M6 admission |
 | D-9 节日锚点表硬编码 | **改为库生成机制清偿（2026-09-11，issue [#274](https://github.com/Danceiny/gotry/issues/274) 重做；#384 的 2031→2040 手抄扩表已被否决关闭——换个日子的同款债务）**：SPRING_FESTIVAL 由 `ts/scripts/gen-lunar-anchors.ts` 构建期机械生成（devDependency `lunar-typescript@1.8.6`，MIT，零传递依赖，仅开发态——绝不进 runtime bundle），覆盖 2026–2099，生成块内带 provenance（库版本/生成时间/命令）；双独立 oracle 固化于 time-eval §7（旧表 2026–2031 六条 + 港天文台 2032–2040 九条，逐条一致）；到期即红守卫 `springFestivalHorizonOk`（最晚锚点年份 < 当前年+3 → 测试红）+ 表耗尽后锚点卡显式告警——静默缺失 failure mode 已消灭；漂移闸 = run-all §59（`--check`）。新巡检口径：扩表/换库 = 重跑生成器；守卫自然变红（约 2097）前无需人工排期。 |
 | [D-NEW] dsh 进程保活缺失（issue [#271](https://github.com/Danceiny/gotry/issues/271)） | 见下方「[D-NEW] dsh 进程保活缺失」（公开追踪 = #271；2026-09-11 关闭） |
+| #436 持久健康面 → routingAdvice 传播 | **已清偿 2026-09-12**：六个非 hit 工具结果的 `routing` 字段在工具结果边界读取最新持久健康面，并按会话态与纯 `persistedDownChannels` 投影的并集排除通道；严格时间戳口径在 latest-wins 覆盖前丢弃缺失／不可解析／未来／过保留期的行，坏行不能顶掉更早的有效 down。只有 `down` 会新增持久排除——`cooldown` 仍是节律态（不排除），`'ok'` 恢复或过期只是按既有路由规则解除持久排除；二者都不清除会话 `down`。反例：run-all §67（跨进程生产者的注册工具 E2E）以及 §52／§50 的严格读取与投影用例。不激活 W2A、远程回调、鉴权、listener、consumer 或写路径。行为与边界见 [`architecture.md`](architecture.zh-CN.md) §1.2／§10。（公开追踪 = [#436](https://github.com/Danceiny/gotry/issues/436)） |
 
 **D-24 会话扩展 onboarding UX 缺口（issue #21 隐性状态）**
 
