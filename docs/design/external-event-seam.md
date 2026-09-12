@@ -33,17 +33,15 @@ Two surfaces are easy to conflate, so state them separately:
   (needs-setup→down, hit→clear, miss/error→no change, cooldown expiry), and `routingAdvice` reads **only that map**;
 - **Local probe → persisted health events**: the landed read-only probe (`ts/scripts/channel-probe.ts`, §6.1) is already an
   **out-of-band local producer**. On anomaly it calls `recordChannelEvent` (down), on recovery it writes `'ok'` (latest-wins override),
-  landing persisted health. The readers of persisted health today are wish-pool recall (`ts/src/index.ts:780`) and the doctor's
-  existing persisted-health reader — **not** `routingAdvice`.
+  landing persisted health. Persisted health is already read by wish-pool recall and existing doctor readers — **not** by `routingAdvice`.
 
 What is still open:
 
 - In-session facts like flyai quota exhaustion or Ctrip (携程) challenged propagate fine through the verdict path (#106-#108 already closed);
 - Out-of-band facts — a 12306 redesign, a Ctrip risk-control policy upgrade, an API going offline — are only recorded where the local
   probe covers them; the **remote w2a sensor producer is not connected** (issue #82);
-- **Persisted-health routing propagation is not implemented**: a persisted `down` event does not change `routingAdvice` today. Root's
-  Node 24 temp-state counterexample on `main` `8fed347` (2026-09-12T12:29:45Z, exit 0) shows a persisted `down` still included in
-  routing advice, while `markChannelDown` removes it. Tracked as **#436**; this document claims nothing beyond that.
+- **Persisted-health routing propagation is not implemented**: a persisted `down` event does not change `routingAdvice` today, while
+  the in-process verdict path can remove the channel from routing advice. Tracked as **#436**; this document claims nothing beyond that.
 
 ## 3. Seam design: events as new producers for the health surface and the wish pool
 
@@ -57,7 +55,7 @@ recordChannelEvent(stateRoot, { channel: 'session:ctrip-flight', state: 'down',
 ```
 
 - Events are not a new mechanism; they are a second producer of an existing recording form. Their consumers are not uniform today:
-  wish-pool recall (`ts/src/index.ts:780`) and the doctor's existing persisted-health reader already read persisted health, while
+  wish-pool recall and the doctor's existing persisted-health reader already read persisted health, while
   **`routingAdvice` reads only the in-process `channelState` map** — so persisted events do not reach routing or persona routing-card
   calibers yet. That routing propagation is a desired TODO, tracked as **#436**.
 - Recovery likewise goes through events (`state: 'ok'`) or natural expiry (same semantics as cooldown expiry).

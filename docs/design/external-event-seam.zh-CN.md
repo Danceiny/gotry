@@ -31,15 +31,14 @@ gotry 侧的接缝形态：**外部事件作为两个既有面的新生产者**�
   （needs-setup→down、hit→清除、miss/error→不动、cooldown 过期），而 `routingAdvice` **只读这张 map**；
 - **本地探针 → 持久化健康事件**：已落地的只读探针（`ts/scripts/channel-probe.ts`，§6.1）本身就是**带外本地生产者**：
   异常时调 `recordChannelEvent`（down），恢复写 `'ok'`（latest-wins 超越），落持久化健康面。今天读持久化健康面的是
-  愿望池召回（`ts/src/index.ts:780`）与 doctor 既有持久化健康读取路径——**不含** `routingAdvice`。
+  愿望池召回与 doctor 既有持久化健康读取路径——**不含** `routingAdvice`。
 
 仍开放的部分：
 
 - flyai 达限、携程 challenged 这类**会话内**事实经 verdict 路径传导正常（#106-#108 已收口）；
 - 12306 改版、携程风控策略升级、某接口下线，只在本地探针覆盖到的范围内被落账；**远程 w2a sensor 生产者尚未接入**（issue #82）；
-- **持久化健康的 routing 传导未实现**：持久化的 `down` 事件当前不改变 `routingAdvice`。root 在 `main` `8fed347` 上的
-  Node 24 临时状态反例（2026-09-12T12:29:45Z，exit 0）显示：持久化 `down` 仍被 routing 建议采纳，而 `markChannelDown` 会摘除。
-  由 **#436** 跟踪，本文不声称更多。
+- **持久化健康的 routing 传导未实现**：持久化的 `down` 事件当前不改变 `routingAdvice`，而进程内 verdict 路径可以把通道从
+  routing 建议中摘除。由 **#436** 跟踪，本文不声称更多。
 
 ## 3. 接缝设计：事件 = 健康面与愿望池的新生产者
 
@@ -52,7 +51,7 @@ recordChannelEvent(stateRoot, { channel: 'session:ctrip-flight', state: 'down',
                                reason: 'site-redesign', at: <iso> })
 ```
 
-- 事件不是新机制，是既有落账形态的第二个生产者；但今天各消费方并不齐整：愿望池召回（`ts/src/index.ts:780`）与
+- 事件不是新机制，是既有落账形态的第二个生产者；但今天各消费方并不齐整：愿望池召回与
   doctor 既有持久化健康读取路径已读持久化健康面，而 **`routingAdvice` 只读 in-process `channelState` map**——
   故持久化事件当前到不了 routing 与 persona 路由卡口径。该 routing 传导是期望项，标记为 **TODO #436**。
 - 恢复同样走事件（`state: 'ok'`）或自然过期（与 cooldown 过期同语义）。

@@ -75,6 +75,10 @@ flowchart LR
 
 离线 session benchmark 将挑战／守卫截断标为 fail-closed；只有正常跑完八条查询的批次才是 `batch_complete`，生产节律保持 35 秒。sf-summary CLI 接受符号链接或别名形式的入口路径，并产出与规范路径相同的已校验汇总。
 
+外部事件集成仍默认 inert：#432 W2A `w2a/0.1` adapter 只在显式 exact tuple 准入后校验有界序列化核心 envelope，剥离 opaque／自由文本字段，并返回 untrusted metadata。它不注册 listener 或 consumer，不执行网络、进程、健康面、愿望池、账本或预订副作用；真实 sensor 激活仍归 #82。
+
+持久 channel-health 事件已支撑愿望池召回与既有 doctor 读取；routing advice 在 #436 接上持久最新健康面前，仍沿用进程内 verdict state。
+
 ## 一段对话
 
 https://github.com/user-attachments/assets/6d537bb7-7992-4cc7-8e89-6f111ef6793b
@@ -150,7 +154,7 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 
 ## 状态与路线图
 
-npm `latest`：**v0.0.1-rc.24**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。
+npm `latest`：**v0.0.1-rc.24**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。外部 W2A 事件仍是合同层、默认 inert；尚无真实 sensor 桥或 consumer 激活。
 
 **今天可用** —— 访谈 → 确定性可行性判决 → 带门到门真成本的行程 · 实时检索（飞猪 + 你本人登录态 Chrome，只读），事实 typed 且调用绑定 · 记忆（动机 / 愿望池 / 同行人 / 时间线）落租户作用域账本 · 自检 doctor，批准后范围修复。
 

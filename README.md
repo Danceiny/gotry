@@ -75,6 +75,10 @@ Architecture — the sync path from chat through the kernel to the fact gate, pl
 
 The offline session benchmark marks challenge/guard truncation fail-closed; only a normally completed eight-query batch is `batch_complete`, and production cadence remains 35 seconds. The sf-summary CLI accepts symlinked or aliased entrypoint paths and produces the same validated summary as the canonical path.
 
+External-event integration is still inert by default: the #432 W2A `w2a/0.1` adapter only validates bounded serialized core envelopes behind explicit exact tuple admission, strips opaque/free-text fields, and returns untrusted metadata. It registers no listener or consumer and performs no network, process, health, wish-pool, ledger, or booking side effect; actual sensor activation remains #82.
+
+Persisted channel-health events already support wish-pool recall and existing doctor readers; routing advice still follows the in-process verdict state until #436 connects it to the persisted latest health surface.
+
 ## Demo
 
 https://github.com/user-attachments/assets/6628c254-eba1-4017-a883-c70d22616939
@@ -150,7 +154,7 @@ Trust is structural, not promised:
 
 ## Project Status and Roadmap
 
-**v0.0.1-rc.24** on npm (`latest`). Pre-1.0: the core loop works end to end; evaluation is still at deterministic contracts and validators, with no external scores or uplift claims.
+**v0.0.1-rc.24** on npm (`latest`). Pre-1.0: the core loop works end to end; evaluation is still at deterministic contracts and validators, with no external scores or uplift claims. External W2A events are contract-only and inert; no real sensor bridge or consumer is active yet.
 
 **Working today** — interview → deterministic feasibility verdict → itinerary with door-to-door true cost · realtime retrieval (Fliggy + your own Chrome session, read-only) with typed, invocation-bound facts · memory (motivation, wish pool, companions, timeline) on a tenant-scoped ledger · self-check doctor with scoped, approved repair.
 

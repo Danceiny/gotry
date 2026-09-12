@@ -515,6 +515,10 @@ echo "=== 53. 愿望池通道否证(外部事件接缝第 2 段:conditions.chann
 (cd ts && npx tsx scripts/wish-channel-gate-tests.ts) || FAIL=1
 
 echo
+echo "=== 53b. 外部事件 inert W2A 合同(#432/#82:默认关闭/exact tuple admission/核心 envelope 投影/opaque 字段剥离/fetch spy未调用+permission子进程拒绝文件写入/子进程;纯函数无IO,无消费者注册) ==="
+(cd ts && npx tsx scripts/external-event-tests.ts) || FAIL=1
+
+echo
 echo "=== 54. persona 表层护栏(#192/#2/#194 回归锚:表层规则句存在/13 条契约编号完整(2026-09-11 瘦身改锚)/skill 失败行为指引/动态变量注入面;全离线) ==="
 (cd ts && npx tsx scripts/persona-surface-guard-tests.ts) || FAIL=1
 
