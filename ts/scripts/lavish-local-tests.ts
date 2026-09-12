@@ -127,6 +127,7 @@ if (command === 'server') {
     next_step: 'synthetic next_step must never be surfaced as authority',
     ...(open.self_paint_warning ? { self_paint_warning: open.self_paint_warning } : {}),
   })
+  if (open.exitCode) process.exitCode = open.exitCode
 } else if (command === 'poll') {
   writeFileSync(join(stateDir, 'poll.pid'), String(process.pid))
   const poll = cfg.poll || {}
@@ -147,6 +148,7 @@ if (command === 'server') {
         dom_snapshot: poll.dom_snapshot || '',
       })
     }
+    if (poll.exitCode) process.exitCode = poll.exitCode
   }
   const sleepMs = Number(poll.sleepMs || 0)
   if (sleepMs > 0) setTimeout(finish, sleepMs)
@@ -155,6 +157,7 @@ if (command === 'server') {
   const end = cfg.end || {}
   if (end.error) emit({ error: end.error, code: end.code || 'SERVER_ERROR' })
   else emit({ session: { file: end.file || argv[1], status: end.status || 'ended' } })
+  if (end.exitCode) process.exitCode = end.exitCode
 } else {
   emit({ error: 'Unknown command: ' + command, code: 'VALIDATION_ERROR' })
   process.exitCode = 2
@@ -501,6 +504,92 @@ try {
     const cliError = expectFailure(await errorSession.open(ARTIFACT), 'command-failed')
     ok(cliError.detail.includes('SERVER_ERROR'), `the CLI error code is preserved: ${cliError.detail}`)
     await errorSession.stop()
+  }
+
+  // -------------------------------------------------------------------------
+  // 5b. an unreadable poll response locks consumption, because it may already
+  //     have consumed a once-only feedback delivery
+  // -------------------------------------------------------------------------
+
+  {
+    const unreadable = await controlSession('poll-missing-session', { poll: { stdoutRaw: 'status: whatever\n' } })
+    expectFailure(await unreadable.poll(ARTIFACT), 'malformed-output')
+    ok(unreadable.state().pollOutcomeUnknown === true, 'a poll response with no session object latches the unknown outcome')
+    const argvAfterFirst = (await readJsonl(join(unreadable.state().stateDir, 'argv.jsonl'))).length
+    expectFailure(await unreadable.poll(ARTIFACT), 'poll-outcome-unknown')
+    expectFailure(await unreadable.reply(ARTIFACT, 'a reply that must not be sent'), 'poll-outcome-unknown')
+    const argvAfterRefusals = (await readJsonl(join(unreadable.state().stateDir, 'argv.jsonl'))).length
+    ok(argvAfterRefusals === argvAfterFirst, `no further CLI invocation was made: ${argvAfterFirst} -> ${argvAfterRefusals}`)
+    await unreadable.stop()
+
+    const mystery = await controlSession('poll-mystery-latch', { poll: { status: 'mystery' } })
+    expectFailure(await mystery.poll(ARTIFACT), 'unexpected-status')
+    ok(mystery.state().pollOutcomeUnknown === true, 'an unreadable poll status latches the unknown outcome')
+    const argvAfterMystery = (await readJsonl(join(mystery.state().stateDir, 'argv.jsonl'))).length
+    expectFailure(await mystery.poll(ARTIFACT), 'poll-outcome-unknown')
+    expectFailure(await mystery.reply(ARTIFACT, 'another reply that must not be sent'), 'poll-outcome-unknown')
+    ok(
+      (await readJsonl(join(mystery.state().stateDir, 'argv.jsonl'))).length === argvAfterMystery,
+      'a latched instance spawns nothing further',
+    )
+    await mystery.stop()
+  }
+
+  // -------------------------------------------------------------------------
+  // 5c. a non-zero exit code is never accepted as success, even with
+  //     well-formed TOON on stdout
+  // -------------------------------------------------------------------------
+
+  {
+    const openExit = await controlSession('open-exit2', { open: { status: 'opened', exitCode: 2 } })
+    expectFailure(await openExit.open(ARTIFACT), 'command-failed')
+    ok(openExit.state().sessionOpen === false, 'a failed open never marks the session open')
+    await openExit.stop()
+
+    const endExit = await controlSession('end-exit2', { end: { status: 'ended', exitCode: 2 } })
+    expectFailure(await endExit.end(ARTIFACT), 'command-failed')
+    await endExit.stop()
+
+    const pollExit = await controlSession('poll-exit2', { poll: { status: 'waiting', exitCode: 2 } })
+    expectFailure(await pollExit.poll(ARTIFACT), 'command-failed')
+    ok(pollExit.state().pollOutcomeUnknown === true, 'a non-zero poll exit latches the unknown outcome')
+    const argvAfterPoll = (await readJsonl(join(pollExit.state().stateDir, 'argv.jsonl'))).length
+    expectFailure(await pollExit.poll(ARTIFACT), 'poll-outcome-unknown')
+    ok(
+      (await readJsonl(join(pollExit.state().stateDir, 'argv.jsonl'))).length === argvAfterPoll,
+      'a poll that exited non-zero is not retried',
+    )
+    await pollExit.stop()
+
+    const feedbackExit = await controlSession('feedback-exit2', {
+      poll: { status: 'feedback', prompts: [{ uid: 'u', tag: 'note', text: PROMPT_TEXT_SENTINEL, selector: '#a' }], exitCode: 2 },
+    })
+    const feedbackFailure = expectFailure(await feedbackExit.poll(ARTIFACT), 'command-failed')
+    ok(!feedbackFailure.detail.includes(PROMPT_TEXT_SENTINEL), 'a rejected feedback payload is not echoed into the failure detail')
+    ok(feedbackExit.state().pollOutcomeUnknown === true, 'a rejected feedback delivery also latches')
+    await feedbackExit.stop()
+
+    const structured = await controlSession('exit-with-error', {
+      open: { error: 'Lavish Editor request failed: 500', code: 'SERVER_ERROR', exitCode: 2 },
+    })
+    const structuredFailure = expectFailure(await structured.open(ARTIFACT), 'command-failed')
+    ok(structuredFailure.detail.includes('SERVER_ERROR'), `the structured CLI error wins over the exit code: ${structuredFailure.detail}`)
+    await structured.stop()
+  }
+
+  // -------------------------------------------------------------------------
+  // 5d. reply text is bounded at runtime, before any argv or spawn
+  // -------------------------------------------------------------------------
+
+  {
+    const session = await controlSession('oversized-reply', {})
+    expectFailure(await session.reply(ARTIFACT, 'x'.repeat(2 * 1024 * 1024)), 'invalid-reply')
+    expectFailure(await session.reply(ARTIFACT, 'x'.repeat(20_000)), 'invalid-reply')
+    expectFailure(await session.reply(ARTIFACT, '\u{1D11E}'.repeat(8_000)), 'invalid-reply')
+    const argv = await readJsonl(join(session.state().stateDir, 'argv.jsonl'))
+    ok(argv.length === 0, `an oversized or over-bytes reply spawns nothing: ${JSON.stringify(argv)}`)
+    const stopped = await session.stop()
+    ok(stopped.ok === true, 'an instance that only rejected replies still stops cleanly')
   }
 
   // -------------------------------------------------------------------------

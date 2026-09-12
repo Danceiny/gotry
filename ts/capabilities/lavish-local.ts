@@ -50,6 +50,8 @@ const MAX_ATTACHMENT_REFS_PER_PROMPT = 16
 const MAX_ARTIFACT_FAILURES = 16
 const MAX_DOM_SNAPSHOT_BYTES = 256 * 1024
 const MAX_DETAIL_CHARS = 512
+const MAX_REPLY_CHARS = 16_384
+const MAX_REPLY_BYTES = 24 * 1024
 
 export type LavishLocalErrorCode =
   | 'invalid-options'
@@ -252,12 +254,10 @@ export class LavishLocalSession {
     const run = await this.runCli(['open', resolved.file, '--no-open'])
     if ('code' in run) return run
 
-    const decoded = decodeCliOutput(run.stdout)
+    const decoded = readCliBody(run)
     if ('code' in decoded) return decoded
 
     const body = decoded.value
-    if ('error' in body) return cliFailure(body)
-
     const session = readRecord(body.session)
     if (!session) return fail('malformed-output', 'open response has no session object')
     if (session.file !== resolved.file) {
@@ -305,6 +305,13 @@ export class LavishLocalSession {
     if (text === '--') {
       return fail('invalid-reply', 'reply text must not be the bare flag terminator')
     }
+    // Bounded before any argv or spawn: `shell: false` prevents interpretation, not resource use.
+    if (text.length > MAX_REPLY_CHARS) {
+      return fail('invalid-reply', `reply text must not exceed ${MAX_REPLY_CHARS} characters`)
+    }
+    if (Buffer.byteLength(text, 'utf8') > MAX_REPLY_BYTES) {
+      return fail('invalid-reply', `reply text must not exceed ${MAX_REPLY_BYTES} bytes`)
+    }
     return this.pollLike('reply', artifactPath, text, options)
   }
 
@@ -322,12 +329,10 @@ export class LavishLocalSession {
     const run = await this.runCli(['end', resolved.file])
     if ('code' in run) return run
 
-    const decoded = decodeCliOutput(run.stdout)
+    const decoded = readCliBody(run)
     if ('code' in decoded) return decoded
 
     const body = decoded.value
-    if ('error' in body) return cliFailure(body)
-
     const session = readRecord(body.session)
     const status = session ? readString(session.status) : null
     if (status !== 'ended') {
@@ -397,27 +402,29 @@ export class LavishLocalSession {
     const run = await this.runCli(argv, timeoutMs.value + this.options.commandTimeoutMs)
     if ('code' in run) {
       // A killed long-poll may or may not have consumed feedback; never retry silently.
-      if (run.code === 'command-timeout') this.pollOutcomeUnknown = true
+      // A spawn failure is the one case where the CLI never ran, so nothing was consumed.
+      if (run.code !== 'command-failed') this.pollOutcomeUnknown = true
       return run
     }
 
-    const decoded = decodeCliOutput(run.stdout)
-    if ('code' in decoded) {
+    const body = readCliBody(run)
+    if ('code' in body) {
       this.pollOutcomeUnknown = true
-      return decoded
+      return body
     }
 
-    const body = decoded.value
-    if ('error' in body) {
+    const session = readRecord(body.value.session)
+    if (!session) {
+      // A zero-exit response we cannot read may still have consumed a delivery.
       this.pollOutcomeUnknown = true
-      return cliFailure(body)
+      return fail('malformed-output', 'poll response has no session object')
     }
-
-    const session = readRecord(body.session)
-    if (!session) return fail('malformed-output', 'poll response has no session object')
     const raw = readString(session.status)
     const status = normalizePollStatus(raw)
-    if (!status) return fail('unexpected-status', `unsupported poll status ${quote(raw)}`)
+    if (!status) {
+      this.pollOutcomeUnknown = true
+      return fail('unexpected-status', `unsupported poll status ${quote(raw)}`)
+    }
 
     const endedBy = readString(session.ended_by) ?? undefined
     if (endedBy === 'user' && (status === 'ended' || session.session_ended === true)) {
@@ -432,7 +439,7 @@ export class LavishLocalSession {
       status,
       sessionEnded: session.session_ended === true,
       ...(endedBy ? { endedBy } : {}),
-      feedback: projectFeedback(body),
+      feedback: projectFeedback(body.value),
     }
   }
 
@@ -849,6 +856,21 @@ function decodeCliOutput(stdout: string): { value: Record<string, unknown> } | L
   }
   if (!isPlainObject(decoded)) return fail('malformed-output', 'the Lavish CLI stdout was not a TOON object')
   return { value: decoded }
+}
+
+/**
+ * Reads one CLI result. A structured error object wins over the exit code because
+ * it carries the real reason; otherwise a non-zero exit code always fails closed,
+ * so well-formed stdout from a failed run is never mistaken for success.
+ */
+function readCliBody(run: OwnedRun): { value: Record<string, unknown> } | LavishLocalFailure {
+  const decoded = decodeCliOutput(run.stdout)
+  if (!('code' in decoded) && 'error' in decoded.value) return cliFailure(decoded.value)
+  if (run.exitCode !== 0) {
+    const exit = run.exitCode === null ? 'no exit code (signalled)' : `exit code ${run.exitCode}`
+    return fail('command-failed', `the Lavish CLI reported ${exit}`)
+  }
+  return decoded
 }
 
 function cliFailure(body: Record<string, unknown>): LavishLocalFailure {
