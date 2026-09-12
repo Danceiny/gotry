@@ -145,10 +145,10 @@ user-initiated end is likewise sticky: once `open` returns `user-ended`, or a po
 
 ## 7. Not in this slice (explicit TODO)
 
-- **Browser acceptance scope.** The direct-adapter browser check exercised user feedback, replies, source-file refresh and user end. It did not establish `browser_disconnected` grace. Registered five-tool browser and final-candidate evidence are tracked in #443 (parent #438); native-preview acceptance is separate in #448.
+- **Browser acceptance scope.** The direct-adapter browser check exercised user feedback, replies, source-file refresh and user end. It did not establish `browser_disconnected` grace. The registered Lavish browser feedback chain is covered by #443 CLOSED + PR #456 merged acceptance; native HTML preview proof is accepted on #448 with persistent regression in `ts/scripts/dsh-artifact-web-e2e.ts` (re-runnable: `GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`).
 - **Lavish is not a product dependency.** Only the decoder (`@toon-format/toon@2.3.1`) enters the manifests and locks; the adapter is handed an installed CLI path at runtime and the CLI itself is not vendored into the product tree.
 - **Unsupported feedback shapes stay opaque.** Whiteboard/excalidraw targets and attachments are bounded and marked untrusted rather than deeply modelled, so the product surface must not rely on fields beyond `id` / `name`.
-- **Native HTML preview acceptance is a separate item (#448).** Opening a listed HTML entry is a client-labelled action that hands the file to the host's native HTML preview; that rendering and any script execution is the host renderer's behaviour, not the Lavish adapter's. The Lavish registered tools do not extend or override the host preview, and #448 carries the actual native-preview status.
+- **Native HTML preview acceptance is a separate item (#448).** Opening a listed HTML entry is a client-labelled action that hands the file to the host's native HTML preview; that rendering and any script execution is the host renderer's behaviour, not the Lavish adapter's. The Lavish registered tools do not extend or override the host preview, and #448 carries the actual native-preview status (proof accepted; persistent regression in `ts/scripts/dsh-artifact-web-e2e.ts`, re-runnable: `GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`).
 
 ## 8. Evidence and how to run
 
@@ -216,5 +216,5 @@ process groups; failures remain visible and plugin unload reports unreaped recor
 **Review loop.** `gotry_itinerary_render` creates one new HTML file; `gotry_artifacts_list` and
 `gotry_artifacts_read` discover it and read its source. Then: open in Lavish → user submits feedback
 → poll → agent edits the same HTML source → Lavish refreshes on save → reply → user end or stop.
-The reply tool does not write HTML. Host-native HTML preview is a separate path tracked in #448;
+The reply tool does not write HTML. Host-native HTML preview is a separate path tracked in #448 (proof accepted; persistent regression in `ts/scripts/dsh-artifact-web-e2e.ts`, re-runnable: `GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`);
 these tools do not extend filesystem authority or bypass the fact gate.

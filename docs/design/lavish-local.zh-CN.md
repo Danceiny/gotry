@@ -104,10 +104,10 @@ DOM 快照——都在标记为 `trust: 'untrusted'` 的 `LavishUntrustedFeedbac
 
 ## 7. 不在本切片内（显式 TODO）
 
-- **浏览器验收范围。** 直接适配器的浏览器检查覆盖用户反馈、回复、源文件刷新与用户结束，不证明 `browser_disconnected` 宽限行为。注册五工具的浏览器与最终候选证据由 #443（父 #438）跟踪；原生预览验收另归 #448。
+- **浏览器验收范围。** 直接适配器的浏览器检查覆盖用户反馈、回复、源文件刷新与用户结束，不证明 `browser_disconnected` 宽限行为。已注册的 Lavish 浏览器反馈链由 #443 CLOSED + PR #456 merged acceptance 覆盖；原生 HTML preview 实证在 #448 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`（可复跑：`GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`）。
 - **Lavish 不是产品依赖。** 只有解码器（`@toon-format/toon@2.3.1`）进入 manifest 与锁文件；适配器在运行时被交付一个已安装 CLI 路径，CLI 本身不被 vendor 进产品依赖树。
 - **不支持的反馈形状保持不透明。** whiteboard/excalidraw target 与附件只做有界化并标记为不可信，不做深度建模，因此产品界面不得依赖 `id` / `name` 之外的字段。
-- **native HTML preview 验收是独立项（#448）。** 打开列表里的 HTML 产物是一条带客户端标签的动作，把文件交给 host 自带的 HTML preview；该渲染及任何脚本执行都是 host 渲染器的行为，不是 Lavish 适配器的行为。Lavish 注册工具既不扩展也不覆盖 host preview，#448 携带 native-preview 验收的真实状态，并刻意不属于本切片。
+- **native HTML preview 验收是独立项（#448）。** 打开列表里的 HTML 产物是一条带客户端标签的动作，把文件交给 host 自带的 HTML preview；该渲染及任何脚本执行都是 host 渲染器的行为，不是 Lavish 适配器的行为。Lavish 注册工具既不扩展也不覆盖 host preview，#448 携带 native-preview 验收的真实状态（proof 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`，可复跑：`GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`），并刻意不属于本切片。
 
 ## 8. 证据与运行方式
 
@@ -162,5 +162,5 @@ cd ts && GOTRY_LAVISH_LIVE=1 npx tsx scripts/lavish-local-tests.ts
 
 **评审循环。** `gotry_itinerary_render` 新建一份 HTML；`gotry_artifacts_list` 与 `gotry_artifacts_read`
 发现产物并读取源码。随后：在 Lavish 中打开 → 用户提交反馈 → poll → 智能体修改同一份 HTML 源文件 →
-Lavish 在保存后刷新 → reply → 用户结束或 stop。reply 工具本身不写 HTML。宿主原生 HTML 预览是 #448
-跟踪的独立路径；这些工具不扩大文件系统权限，也不绕过事实闸。
+Lavish 在保存后刷新 → reply → 用户结束或 stop。reply 工具本身不写 HTML。宿主原生 HTML 预览是 #448 跟踪的独立路径（proof 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`，可复跑：`GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`）；
+这些工具不扩大文件系统权限，也不绕过事实闸。
