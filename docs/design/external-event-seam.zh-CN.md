@@ -2,8 +2,11 @@
 
 # 外部事件驱动接缝设计（#82 world2agent 兼容方向，issue #119 / D-31）
 
-> 状态：**设计文档（2026-09-04，issue #119）**。本期只设计不承诺实现——落地序列见 §6，
+> 状态：**设计文档（2026-09-04，issue #119；2026-09-12 更新）**。本文只设计，不承诺任何运行时实现——落地序列见 §6，
 > 触发式推进（第一个真实 sensor 出现时启动第一段）。原则：**消费既有接缝，不建新运行时**。
+> 本地已落地并保留：通道探针（§6.1）与愿望池消费（§6.2）。w2a/0.1 envelope 的**纯契约**切片已获批，
+> 定位为惰性、默认关闭的类型/校验契约（§5.1），不激活任何真实链路；真实 bridge/sensor/auth/消费者接入
+> 仍由 issue #82 触发式推进。本文不声称任何远程 sensor 路径已实现或已验证。
 > 关联：issue #82（world2agent 协议集成）、ADR-18（效应解译器）/ADR-24（turn 预算）、
 > D-8（静态平铺+健康态驱动动态建议）、`capabilities/channel-health.ts`（健康面）、
 > `src/wish-pool.ts`（愿望池召回）、`capabilities/async-workorders*`/`turn-handoff-collect.ts`
@@ -20,14 +23,15 @@ gotry 侧的接缝形态：**外部事件作为两个既有面的新生产者**�
 2. **愿望池 conditions**（`wish-pool.ts`）：事件作为召回评估的新事实源（仍是 pull
    模型，不做 push）。
 
-## 2. 现状：健康面的生产者只有一个，且是 in-band 的
+## 2. 现状：in-band verdict 生产者、已落地的本地探针，未接带外生产者
 
-今天 `channelState`/`routingAdvice` 的唯一事实来源是**工具调用 verdict**
-（`noteChannelVerdict`：needs-setup→down、hit→清除、miss/error→不动、cooldown 过期）。
-这意味着：
+`channelState`/`routingAdvice` 当前有两个生产者：**工具调用 verdict**
+（`noteChannelVerdict`：needs-setup→down、hit→清除、miss/error→不动、cooldown 过期）与**已落地的本地只读探针**
+（`ts/scripts/channel-probe.ts`，§6.1）——探针的异常/恢复 tick 走同一落账形态。愿望池在召回时消费通道条件（§6.2）。
+仍缺的是**带外**入口：
 
 - flyai 达限、携程 challenged 这类**会话内**事实传导是通的（#106-#108 已收口）；
-- **带外**事实没有入口——12306 改版、携程风控策略升级、某接口下线，系统无从知晓，
+- 12306 改版、携程风控策略升级、某接口下线这类**带外**事实没有入口，系统无从知晓，
   只能等下一次真实检索失败，由用户会话承担发现成本。
 
 ## 3. 接缝设计：事件 = 健康面与愿望池的新生产者
@@ -82,13 +86,31 @@ sensor 事件只是新的工单来源。
 incident 同级）；world2agent 远程回调需要签名/通道绑定——**等第一个真实回调方
 出现时拍板**，不预设。拍板前，远程面不开（接缝只存在于本地生产者）。
 
+### 5.1 已获批的纯契约切片（2026-09-12，issue #432）
+
+founder 已授权 w2a/0.1 envelope 的**纯契约**切片，参考基准钉在 `machinepulse-ai/world2agent`
+commit `7e5fc4d4`（`schema/0.1/schema.ts`）。按获批范围，该切片是一个纯函数式、确定性的适配器，
+只投影惰性的不可信事件元数据；不发明 sensor 专用 wire schema，不安装任何运行时依赖。其边界：
+
+- **默认关闭**：仅在调用方显式传入 enabled 选项时可达——无基于环境变量的产品开关、无常驻监听、无 token、无消费者/运行时注册；
+- **精确白名单四元组**：仅当已评审的 source/package/version/type 四元组精确匹配时才做映射，否则给出稳定拒绝结果；
+- **声明即不可信**：envelope 上的 sender/source 字段是不可信数据，四元组匹配**不是**鉴权；
+- **不写不派发**：通道健康面写入、账本/事实/愿望池变更、planner/工具派发、预订与支付均不可达。
+
+批准契约**不激活任何真实链路**：真实 bridge/sensor 选型、auth/token 归属与消费者接入仍由 issue #82
+触发式推进，M4/M5/M6 入场判定不变。已落地的本地探针与愿望池消费（§6.1/§6.2）保留不受影响。
+实现与验证进展由 issue #432 跟踪。
+
 ## 6. 落地序列（触发式，每段独立 PR）
 
 1. **sensor 探针最小行** ✅（2026-09-07 落地：`ts/scripts/channel-probe.ts`，run-all §52）：只读探针 tick（可由 loopx/cron 驱动）对关键通道做
    无副作用探测，异常时调 `recordChannelEvent`（down），恢复写 `'ok'`（latest-wins 超越）——routing/doctor 即时受益；
 2. **愿望池消费** ✅（2026-09-07 落地：`conditions.channels` 可选条件 + 召回时
-   命名通道处于 down 即否证成行条件，run-all §53；「佐证」渲染面留后续切片）：
-3. **world2agent 回调**：auth 模型拍板后接远程生产者（D-31）。
+   命名通道处于 down 即否证成行条件，run-all §53；「佐证」渲染面留后续切片）；
+3. **w2a/0.1 envelope 纯契约适配器**（2026-09-12 获批，issue #432）：即 §5.1 的惰性、默认关闭切片——只落契约，
+   不接生产者、不接消费者；
+4. **world2agent 回调（真实链路）**：auth 模型拍板后接远程生产者（D-31）；真实 sensor/bridge/消费者接入
+   仍开放于 #82。
 
 ## 7. 与既有判定的兼容性
 

@@ -8,7 +8,7 @@
 > 下游：按回执推进的实现/Exit 证据与 issue gate 更新；founder YES 只满足对应决策门，不自动改写里程碑 Entry。
 > 各项独立——你可以按优先级逐条回；按回执推进。
 
-**速览：当前 1 项待拍板——#137 P6 founder review（整体方案批准）。** P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 的进入条件在 #136 跟踪。D-1~D-9、D-4a 均已结算；D-31 为触发式（等第一个真实 world2agent 回调方再拍，见下），当前非开放运行时面。
+**速览：当前 1 项待拍板——#137 P6 founder review（整体方案批准）。** P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 的进入条件在 #136 跟踪。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，由 #82 跟踪（等第一个真实 world2agent 回调方出现再拍，见下）。
 
 ## 未决
 
@@ -17,9 +17,10 @@
 **当前待拍板**：founder 尚未明确批准 M6 整体方案或修改稿。只有明确 YES 或对修改稿明确批准才满足 P6 Exit。**P6 YES 仍不满足 M6 Entry**——M5 Exit 仍是前置门，P6 批准不旁路 M5；两者并列前置，任一未满足则 M6 不开闸。
 **位置**：[`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md)（draft，待 founder 评审）；issue #137；任务图见 [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) M6-1/M6-2。
 
-### D-31 外部事件写入信任模型
+### D-31 外部事件写入信任模型（纯契约已结算；仅真实接入为触发式）
 
-**触发式**：等第一个真实 world2agent 回调方出现再拍。本地探针免鉴权，远程回调需签名/通道绑定；拍板前远程面不开。开放触发跟踪见 issue #82；issue #119 为已关闭的设计记录。
+**纯契约已结算（2026-09-12，issue #432）**：founder 已授权 w2a/0.1 envelope 的纯函数式、确定性、惰性适配器——默认关闭、调用方显式开启、仅精确匹配已评审的 source/package/version/type 白名单四元组。sender/source 字段是不可信声明，四元组匹配不是鉴权；无常驻监听/token、无基于环境变量的产品开关、无账本/事实/愿望池/通道健康面写入、无预订、无消费者注册。它不激活任何真实链路；已落地的本地通道探针与愿望池消费保留。
+**仍为触发式——仅真实接入**：真实 bridge/sensor 选型、auth/token 归属与消费者接入，等第一个真实 world2agent 回调方出现再拍（签名/通道绑定）；拍板前真实远程面不开。开放触发跟踪见 issue #82；issue #119 为已关闭的设计记录。
 **位置**：[`design/external-event-seam.md`](design/external-event-seam.md)；开放触发跟踪 issue #82；设计记录 issue #119（已关闭）。
 
 ---
