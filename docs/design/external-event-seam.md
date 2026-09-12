@@ -30,18 +30,24 @@ the gotry-side seam form: **external events become new producers for two existin
 Two surfaces are easy to conflate, so state them separately:
 
 - **Session verdict → in-process routing state**: `noteChannelVerdict` writes the in-process `channelState` map
-  (needs-setup→down, hit→clear, miss/error→no change, cooldown expiry), and `routingAdvice` reads **only that map**;
+  (needs-setup→down, hit→clear, miss/error→no change, cooldown expiry), and `routingAdvice` reads that map **plus an explicit
+  down set projected by the caller**;
 - **Local probe → persisted health events**: the landed read-only probe (`ts/scripts/channel-probe.ts`, §6.1) is already an
   **out-of-band local producer**. On anomaly it calls `recordChannelEvent` (down), on recovery it writes `'ok'` (latest-wins override),
-  landing persisted health. Persisted health is already read by wish-pool recall and existing doctor readers — **not** by `routingAdvice`.
+  landing persisted health. Persisted health is read by wish-pool recall, existing doctor readers, and — since #436 — the six
+  non-hit tool results, which read it at the tool-result boundary and exclude the union of the session state and the persisted down set.
 
 What is still open:
 
 - In-session facts like flyai quota exhaustion or Ctrip (携程) challenged propagate fine through the verdict path (#106-#108 already closed);
 - Out-of-band facts — a 12306 redesign, a Ctrip risk-control policy upgrade, an API going offline — are only recorded where the local
   probe covers them; the **remote w2a sensor producer is not connected** (issue #82);
-- **Persisted-health routing propagation is not implemented**: a persisted `down` event does not change `routingAdvice` today, while
-  the in-process verdict path can remove the channel from routing advice. Tracked as **#436**; this document claims nothing beyond that.
+- **Persisted-health routing propagation (#436) is implemented for tool results**: a persisted `down` removes the channel from the
+  `routing` advice appended to the six non-hit tool results, with no verdict call involved. The tool-result boundary reads the latest
+  persisted event per channel under a strict timestamp caliber, projects the pure down set, and unions it with the session state;
+  only `down` adds a persisted exclusion (`cooldown` stays a pacing state; `'ok'` recovery or expiry only ceases the exclusion), and
+  none of it clears an in-session failure. The static persona routing card and the
+  default reader caliber (doctor / wish pool / probe) are unchanged.
 
 ## 3. Seam design: events as new producers for the health surface and the wish pool
 
@@ -54,10 +60,12 @@ recordChannelEvent(stateRoot, { channel: 'session:ctrip-flight', state: 'down',
                                reason: 'site-redesign', at: <iso> })
 ```
 
-- Events are not a new mechanism; they are a second producer of an existing recording form. Their consumers are not uniform today:
-  wish-pool recall and the doctor's existing persisted-health reader already read persisted health, while
-  **`routingAdvice` reads only the in-process `channelState` map** — so persisted events do not reach routing or persona routing-card
-  calibers yet. That routing propagation is a desired TODO, tracked as **#436**.
+- Events are not a new mechanism; they are a second producer of an existing recording form. Consumers: wish-pool recall and the
+  doctor's persisted-health reader read the persisted surface directly, and the six non-hit tool-result `routing` fields read it
+  through the strict-timestamp reader plus a pure down projection (#436). A persisted producer therefore reaches routing advice even
+  when this process recorded no verdict. Exclusion follows the existing routing rules: only `down` excludes a channel — `'ok'`,
+  `cooldown` and expiry are not exclusions and clear no session down. The persona routing card stays static — it renders the order
+  table, not health filtering.
 - Recovery likewise goes through events (`state: 'ok'`) or natural expiry (same semantics as cooldown expiry).
 
 ### 3.2 Three producer classes (trust tiers; decision point in §5)
@@ -118,7 +126,9 @@ Implementation and its verification are tracked in issue #432.
 
 1. **Minimal sensor probe row** ✅ (landed 2026-09-07: `ts/scripts/channel-probe.ts`, run-all §52): read-only probe ticks (drivable by loopx/cron) run
    side-effect-free probes against key channels; on anomaly call `recordChannelEvent` (down), on recovery write `'ok'` (latest-wins override),
-   landing persisted health. Persisted-health readers (wish-pool recall, doctor) benefit immediately; **routing propagation is not implemented — TODO #436**;
+   landing persisted health. Persisted-health readers (wish-pool recall, doctor) benefit immediately; since #436 the six non-hit tool
+   results read the same surface through the strict-timestamp reader plus a pure down projection, so a persisted `down` excludes the
+   channel from `routing` advice (session down still wins);
 2. **Wish-pool consumption** ✅ (landed 2026-09-07: a `conditions.channels` optional condition + at recall time,
    a named channel being down refutes the feasibility condition, run-all §53; the "corroboration" render surface is left to a later slice);
 3. **w2a/0.1 envelope contract-only adapter** (approved 2026-09-12, issue #432): the inert, default-off slice in §5.1 — contract only;

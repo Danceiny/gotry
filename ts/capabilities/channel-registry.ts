@@ -242,18 +242,48 @@ export interface RoutingAdviceOptions {
   now?: number
   /** 最多几条(默认 3,控 token) */
   limit?: number
+  /**
+   * 持久健康面里最新事件为 down 的通道(#436;跨进程生产者写的
+   * channel-health.jsonl 经 persistedDownChannels 投影)。与会话态并集排除——
+   * 只会增加排除项,不会清除会话态(会话失败永远优先)。IO 归调用方边界。
+   */
+  persistedDownChannels?: ReadonlySet<string>
+}
+
+/**
+ * 持久健康面投影(#436):readLatestChannelEvents 的最新事件表 → 应排除的通道集合。
+ * 纯函数,IO 归调用方(工具结果边界)。与会话态同口径:只有 down 排除——
+ * cooldown 是节律闸不是不可用,'ok' 是恢复事件(latest-wins)自然放行。
+ * 无时间戳/时间戳不可解析/时间戳在未来的事件一律不排除:坏输入不能凭空压制通道;
+ * 过期事件由读方的既有保留期(limitDays 默认 30 天)负责,此处不另立窗口。
+ */
+export function persistedDownChannels(
+  latest: ReadonlyMap<string, { state: string; at?: string }>,
+  now = Date.now(),
+): Set<string> {
+  const down = new Set<string>()
+  for (const [channel, ev] of latest) {
+    if (ev?.state !== 'down') continue
+    const at = Date.parse(ev.at ?? '')
+    if (!Number.isFinite(at) || at > now) continue
+    down.add(channel)
+  }
+  return down
 }
 
 /**
  * 意图 × 健康态 → 有序改道建议(模型可见的 routing 字段形状)。
- * 排除规则:发起通道本身;会话健康面标记为 down 的通道。
+ * 排除规则:发起通道本身;会话健康面标记为 down 的通道;调用方投影进来的
+ * 持久健康面 down 集合(跨进程生产者,#436)。
  * cooldown 是瞬时节律,不算不可用(保留在表里,why 不变——模型自然
  * 「稍候重试或其他」),down(配额尽/挑战/需登录/需扩展)才排除。
+ * 两个健康面只做并集:持久面缺席/恢复都不能解除会话态的 down。
  */
 export function routingAdvice(intent: ChannelIntent, opts: RoutingAdviceOptions = {}): RoutingAdvice {
   const alternatives = channelsForIntent(intent)
     .filter(c => c.id !== opts.excludeChannel)
     .filter(c => channelState(c.id, opts.now)?.state !== 'down')
+    .filter(c => !opts.persistedDownChannels?.has(c.id))
     .slice(0, opts.limit ?? 3)
     .map(c => ({
       tool: c.tool,

@@ -48,7 +48,7 @@ import { hasRecognizedAvailableSeat } from '../capabilities/session/adapters/rai
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
 import { noteChannelVerdict, recordChannelEvent, readLatestChannelEvents } from '../capabilities/channel-health.ts'
-import { routingAdvice, renderRoutingCard, toolRoutingHeadline, type ChannelIntent } from '../capabilities/channel-registry.ts'
+import { routingAdvice, renderRoutingCard, toolRoutingHeadline, persistedDownChannels, type ChannelIntent } from '../capabilities/channel-registry.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
 import { installBenchmarkToolIsolation } from './benchmark-tool-isolation.ts'
 import { installBenchmarkAgentConformance } from './benchmark-agent-conformance.ts'
@@ -359,9 +359,27 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     const ev = noteChannelVerdict(channel, verdict)
     if (ev) await recordChannelEvent(config.stateRoot ?? '.', ev)
   }
-  /** verdict≠hit 时在平铺 envelope 上追加 routing 建议(§3.3:失败现场教学) */
-  const routingField = (intent: ChannelIntent, excludeChannel: string) =>
-    ({ routing: routingAdvice(intent, { excludeChannel }) })
+  /**
+   * verdict≠hit 时在平铺 envelope 上追加 routing 建议(§3.3:失败现场教学)。
+   * 健康态两源并集(issue #436):进程内会话态 + 本 stateRoot 持久健康面
+   * (channel-probe / 外部本地生产者 append 的 channel-health.jsonl)。持久面在
+   * **工具结果边界**读入并投影为 down 集合(IO 只在此层,注册表保持纯函数);
+   * 读不到/坏行/未来时间戳=不排除——坏输入不能凭空压制通道,与会话态失联同纪律。
+   * 持久面只会加排除项:它写的 'ok' 恢复事件不能解除本会话刚发生的失败。
+   */
+  const routingField = async (intent: ChannelIntent, excludeChannel: string) => {
+    let persistedDown: ReadonlySet<string> | undefined
+    try {
+      // 同一个捕获时钟贯穿读者与投影:坏时间戳行在 latest-wins 覆盖前就被读者丢弃,
+      // 否则一条未来/缺时间戳的新行会顶掉更早的有效 down,把通道错误判回可用。
+      const now = Date.now()
+      persistedDown = persistedDownChannels(
+        await readLatestChannelEvents(config.stateRoot ?? '.', { now, requireValidTimestamp: true }),
+        now,
+      )
+    } catch { /* 健康面缺席=不启用持久排除,建议表退回会话态口径 */ }
+    return { routing: routingAdvice(intent, { excludeChannel, ...(persistedDown ? { persistedDownChannels: persistedDown } : {}) }) }
+  }
 
   // D-NEW 进程护栏(Z3 WASM crash 教训):dsh 0.1.1-rc.1 缺 uncaughtException
   // handler,插件异常穿透即杀进程。我们在 gotry 侧挂护栏:同步 fsync 写事故证据
@@ -1245,7 +1263,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
           : r.verdict === 'needs-setup'
             ? `${dest} 酒店检索未发起(配置问题,非检索失败):${r.error ?? ''}\n${r.setup ?? ''}\n状态体检可调 gotry_doctor。${r.evidence}`
             : `${dest} 酒店无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
-        return JSON.parse(JSON.stringify({ ...r, summary, ...(r.verdict !== 'hit' ? routingField('search-hotel', 'flyai') : {}) })) as Record<string, never>
+        return JSON.parse(JSON.stringify({ ...r, summary, ...(r.verdict !== 'hit' ? await routingField('search-hotel', 'flyai') : {}) })) as Record<string, never>
       }
       const kind = q.kind === 'train' ? 'train' : 'flight'
       if (!q.from || !q.to || !q.date) {
@@ -1284,7 +1302,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
             : `${q.from}→${q.to} ${q.date} ${label}检索失败(可能限流/网络):${r.error ?? ''} ${r.evidence}`
       return JSON.parse(JSON.stringify({
         ...r, kind, summary,
-        ...(r.verdict !== 'hit' ? routingField(kind === 'train' ? 'search-train' : 'search-flight', 'flyai') : {}),
+        ...(r.verdict !== 'hit' ? await routingField(kind === 'train' ? 'search-train' : 'search-flight', 'flyai') : {}),
       })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `官方检索:${args.kind}`, kind: 'fetch', rawInput: args }),
@@ -1403,7 +1421,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
               : `Dida 门户会话检索未取回(${rD.verdict}):${rD.error ?? ''} ${rD.evidence}`
         return JSON.parse(JSON.stringify({
           ...rD, summary: summaryD,
-          ...(rD.verdict !== 'hit' ? routingField('search-hotel', 'session:dida-portal') : {}),
+          ...(rD.verdict !== 'hit' ? await routingField('search-hotel', 'session:dida-portal') : {}),
         })) as Record<string, never>
       }
       // ---- 会话酒店(2026-09-03 实装;2026-09-02 迪拜 session:用户要携程找酒店,会话面却只有机票)----
@@ -1443,7 +1461,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
             : `会话火车检索未取回(${rT.verdict}):${rT.error ?? ''} ${rT.evidence}`
         return JSON.parse(JSON.stringify({
           ...rT, summary: summaryT,
-          ...(rT.verdict !== 'hit' ? routingField('search-train', 'session:12306-train') : {}),
+          ...(rT.verdict !== 'hit' ? await routingField('search-train', 'session:12306-train') : {}),
         })) as Record<string, never>
       }
       if (q.kind === 'hotel') {
@@ -1475,7 +1493,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
             : `会话酒店检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
         return JSON.parse(JSON.stringify({
           ...r, summary,
-          ...(r.verdict !== 'hit' ? routingField('search-hotel', 'session:ctrip-hotel') : {}),
+          ...(r.verdict !== 'hit' ? await routingField('search-hotel', 'session:ctrip-hotel') : {}),
         })) as Record<string, never>
       }
       if (!q.from || !q.to || !q.date) {
@@ -1503,7 +1521,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         : `会话检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
       return JSON.parse(JSON.stringify({
         ...r, summary,
-        ...(r.verdict !== 'hit' ? routingField('search-flight', 'session:ctrip-flight') : {}),
+        ...(r.verdict !== 'hit' ? await routingField('search-flight', 'session:ctrip-flight') : {}),
       })) as Record<string, never>
     },
     presentCall: args => {

@@ -28,17 +28,18 @@ gotry 侧的接缝形态：**外部事件作为两个既有面的新生产者**�
 两个面容易混为一谈，分开说：
 
 - **会话 verdict → in-process 路由态**：`noteChannelVerdict` 写 in-process `channelState` map
-  （needs-setup→down、hit→清除、miss/error→不动、cooldown 过期），而 `routingAdvice` **只读这张 map**；
+  （needs-setup→down、hit→清除、miss/error→不动、cooldown 过期），而 `routingAdvice` 读取该 map **外加调用方投影进来的 down 集合**；
 - **本地探针 → 持久化健康事件**：已落地的只读探针（`ts/scripts/channel-probe.ts`，§6.1）本身就是**带外本地生产者**：
-  异常时调 `recordChannelEvent`（down），恢复写 `'ok'`（latest-wins 超越），落持久化健康面。今天读持久化健康面的是
-  愿望池召回与 doctor 既有持久化健康读取路径——**不含** `routingAdvice`。
+  异常时调 `recordChannelEvent`（down），恢复写 `'ok'`（latest-wins 超越），落持久化健康面。持久化健康面的读取方为
+  愿望池召回、doctor 既有读取路径，以及——自 #436 起——六个非 hit 工具结果：它们在工具结果边界读回，并按会话态与持久 down 集合的并集排除通道。
 
 仍开放的部分：
 
 - flyai 达限、携程 challenged 这类**会话内**事实经 verdict 路径传导正常（#106-#108 已收口）；
 - 12306 改版、携程风控策略升级、某接口下线，只在本地探针覆盖到的范围内被落账；**远程 w2a sensor 生产者尚未接入**（issue #82）；
-- **持久化健康的 routing 传导未实现**：持久化的 `down` 事件当前不改变 `routingAdvice`，而进程内 verdict 路径可以把通道从
-  routing 建议中摘除。由 **#436** 跟踪，本文不声称更多。
+- **持久化健康的 routing 传导（#436）已对工具结果落地**：持久化 `down` 无需任何 verdict 调用即可把通道从六个非 hit 工具结果的
+  `routing` 建议中摘除。工具结果边界以严格时间戳口径读取每通道最新事件、投影纯 down 集合，再与会话态取并集；
+  只有 `down` 会新增持久排除（`cooldown` 仍是节律态；`'ok'` 恢复或过期只是解除该排除），且都不解除本会话失败。静态 persona 路由卡与默认读取口径（doctor／愿望池／探针）均不变。
 
 ## 3. 接缝设计：事件 = 健康面与愿望池的新生产者
 
@@ -51,9 +52,10 @@ recordChannelEvent(stateRoot, { channel: 'session:ctrip-flight', state: 'down',
                                reason: 'site-redesign', at: <iso> })
 ```
 
-- 事件不是新机制，是既有落账形态的第二个生产者；但今天各消费方并不齐整：愿望池召回与
-  doctor 既有持久化健康读取路径已读持久化健康面，而 **`routingAdvice` 只读 in-process `channelState` map**——
-  故持久化事件当前到不了 routing 与 persona 路由卡口径。该 routing 传导是期望项，标记为 **TODO #436**。
+- 事件不是新机制，是既有落账形态的第二个生产者。消费方：愿望池召回与 doctor 持久化健康读取路径直接读持久化健康面；
+  六个非 hit 工具结果的 `routing` 字段经严格时间戳读取 + 纯 down 投影读它（#436）——故持久化生产者即使在本进程没有任何
+  verdict 记录也能进入 routing 建议。排除沿用既有路由规则：只有 `down` 排除通道——`'ok'`、`cooldown` 与过期都不是排除项，
+  且都不清除会话 down。persona 路由卡保持静态：它渲染顺位表，不做健康态过滤。
 - 恢复同样走事件（`state: 'ok'`）或自然过期（与 cooldown 过期同语义）。
 
 ### 3.2 生产者三类（信任分级，决策点见 §5）
@@ -113,7 +115,8 @@ founder 已授权 w2a/0.1 envelope 的**纯契约**切片，参考基准钉在
 
 1. **sensor 探针最小行** ✅（2026-09-07 落地：`ts/scripts/channel-probe.ts`，run-all §52）：只读探针 tick（可由 loopx/cron 驱动）对关键通道做
    无副作用探测，异常时调 `recordChannelEvent`（down），恢复写 `'ok'`（latest-wins 超越），落持久化健康面。
-   持久化健康读取方（愿望池召回、doctor）即时受益；**routing 传导未实现——TODO #436**；
+   持久化健康读取方（愿望池召回、doctor）即时受益；自 #436 起六个非 hit 工具结果也经严格时间戳读取 + 纯 down 投影读同一面，
+   持久化 `down` 即可把通道从 `routing` 建议中排除（会话 down 仍优先）；
 2. **愿望池消费** ✅（2026-09-07 落地：`conditions.channels` 可选条件 + 召回时
    命名通道处于 down 即否证成行条件，run-all §53；「佐证」渲染面留后续切片）；
 3. **w2a/0.1 envelope 纯契约适配器**（2026-09-12 获批，issue #432）：即 §5.1 的惰性、默认关闭切片——只落契约，
