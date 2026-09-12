@@ -79,7 +79,7 @@ flowchart LR
 
 持久 channel-health 事件现已接入 routing 建议：六个非 hit 工具结果在工具结果边界读取最新持久健康状态，会话 verdict 状态与持久 down 集合取并集排除通道。缺失、不可解析、未来或已过保留期的时间戳行在 latest-wins 覆盖前丢弃，坏行不得顶掉更早的有效 down；只有 `down` 会新增持久排除（`cooldown` 仍是节律态，恢复或过期只是解除该排除），且都不解除本会话刚发生的失败。静态 persona 路由卡不变。
 
-产物发现现覆盖 HTML 行程文件：`gotry_artifacts_list` 以大小写不敏感方式发现工作目录顶层的 `.md`／`.html`／`.htm`（mtime 排序、各源 limit 与截断语义与既有 md 完全一致），`gotry_artifacts_read` 把 `.html`／`.htm` 作为源码文本返回——`lang: html`、原始行号、全文指纹与分页，走同一组路径／大小护栏。读卡是源码视图：不解析标记、不运行脚本或内联事件处理器、不发起任何抓取，Web 客户端在 HTML 源码标题下以纯 React 文本渲染这些行。主动打开列表中的 HTML 条目是另一个动作，客户端标注为 `Open HTML preview`（可见徽标 + 「页面脚本可能运行」提示），因为它把文件交给宿主原生 HTML 预览——那是宿主行为，不是本工具行为。交互式 Lavish 本地编辑反馈仍归 #438／#443。
+产物发现现覆盖 HTML 行程文件并支持跨页枚举：`gotry_artifacts_list` 以大小写不敏感方式发现工作目录顶层的 `.md`／`.html`／`.htm`，新增 `offset`（零-based 非负整数）与 `search`（字面大小写不敏感子串，匹配 `id`／`title`／filename；trim 后空串 = 不过滤；非正则／非 glob，不搜文件正文），默认页大小 20、上限 50——用户想找回「上次的规划」时可以逐页枚举全部合格产物并按名字直接定位。模型走收集 → canonical-path 去重 → 搜索过滤 → 确定性全局排序（`updated` DESC + `(source, id, canonical path)` 词典序 tie-break）→ 分页切片的统一路径；移除了此前各源提前 `slice(0, limit)` 的早裁逻辑，避免旧 cwd 产物被单源上限静默丢弃。`total` 反映过滤后集合的真实长度，`nextOffset` 仅当存在下一页时出现，越界 `offset` 返回空页 + 已知 `total` + `truncated:false` + 无 `nextOffset`。`gotry_artifacts_read` 继续把 `.html`／`.htm` 作为源码文本返回——`lang: html`、原始行号、全文指纹与分页，走同一组路径／大小护栏。读卡是源码视图：不解析标记、不运行脚本或内联事件处理器、不发起任何抓取，Web 客户端在 HTML 源码标题下以纯 React 文本渲染这些行。主动打开列表中的 HTML 条目是另一个动作，客户端标注为 `Open HTML preview`（可见徽标 + 「页面脚本可能运行」提示），因为它把文件交给宿主原生 HTML 预览——那是宿主行为，不是本工具行为。交互式 Lavish 本地编辑反馈仍归 #438／#443。
 
 ## 一段对话
 

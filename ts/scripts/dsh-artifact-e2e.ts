@@ -211,6 +211,159 @@ async function main(): Promise<void> {
   assert.ok(/not found|不存在/i.test(notFound.error ?? ''), `不存在错误信息应明示 not found,实际: ${notFound.error}`)
   console.log(`[4/4] GUARDRAIL 不存在文件拒 ok=false,error 含 not-found 类字样`)
 
+  // ── 8) issue #458:registered-plugin list → pagination/search → read → Host 演示 ──
+  // >50 混合源(账本 + legacy + cwd)fixture,stable tie-break / dedupe / filtered total /
+  // safe args,经 registerGuarded → defineTool 真实 execute + presentResult,证明
+  // DSH host 装载的产物工具体表里 #458 的新参数(limit/offset/search)在 host presenter
+  // 层面仍然保持 SearchPathsResultView contract(paths/total/truncated)。
+  //
+  // 注意:不重新 apply() —— 插件装载由外层统一完成,这里直接在外层已注册的工具上
+  // 切换 session cwd/stateRoot;fixture 全部写入外层的 stateRoot / workspace,确保
+  // 真实 execute 走到的就是同一份 list tool 闭包。
+  try {
+    const issue458Root = stateRoot
+    const issue458Cwd = cwd
+    // 账本 2:cap-mix-a / cap-mix-b
+    const { ensureLedger } = await import('../src/state-ledger.ts')
+    const ledger = ensureLedger(issue458Root)
+    ledger.createWorkflowRun({ id: 'cap-mix-a', goal: '账本权威 a', ticket: { objective: 'mix' }, state: {} })
+    ledger.settleWorkflowRun('cap-mix-a', '# mix a\nD1 大理\nD2 洱海\n')
+    ledger.createWorkflowRun({ id: 'cap-mix-b', goal: '账本权威 b', ticket: { objective: 'mix' }, state: {} })
+    ledger.settleWorkflowRun('cap-mix-b', '# mix b\nD1 西双版纳\nD2 普洱\n')
+    // legacy 文件视图 2(无 ledger authority)
+    mkdirSync(join(issue458Root, 'gotry-state', 'async'), { recursive: true })
+    writeFileSync(join(issue458Root, 'gotry-state', 'async', 'legacy-1.deliverable.md'), '# legacy\n')
+    writeFileSync(join(issue458Root, 'gotry-state', 'async', 'legacy-2.deliverable.md'), '# legacy\n')
+    // cwd 60 fixture,带 mtime 严格递增 + 1 个 mtime 很老的"老产物"。
+    // 注:外层 fixture(trip-2027.md)在 cwd 中,mtime 大约 = 此刻,会落在最新区段;
+    // 这里特意让 note-* mtime 起点 = UTC 2026-01-01 00:00:00,小于 trip-2027.md,
+    // 排序仍稳定(cwd-file source 同,按 id 词典序作 tie-break)。
+    const { utimesSync } = await import('node:fs')
+    for (let i = 0; i < 60; i++) {
+      const name = `note-${String(i).padStart(3, '0')}.md`
+      const p = join(issue458Cwd, name)
+      writeFileSync(p, `# ${name}\nbody\n`)
+      utimesSync(p, new Date(Date.UTC(2026, 0, 1, 0, 0, i)), new Date(Date.UTC(2026, 0, 1, 0, 0, i)))
+    }
+    writeFileSync(join(issue458Cwd, 'special-deliverable.md'), '# special\nbody\n')
+    utimesSync(
+      join(issue458Cwd, 'special-deliverable.md'),
+      new Date('2020-01-01T00:00:00Z'),
+      new Date('2020-01-01T00:00:00Z'),
+    )
+
+    const hostList = listTool
+    const hostRead = readTool
+    const hostExec = exec
+
+    // a) 真实分页 — 不带 search,limit=20,offset=0 → page1
+    const page1 = await hostList.execute({ limit: 20 }, hostExec) as {
+      ok?: boolean
+      artifacts?: Array<{ path?: string; source?: string }>
+      total?: number
+      truncated?: boolean
+      nextOffset?: number
+      offset?: number
+      limit?: number
+      summary?: string
+    }
+    assert.equal(page1.ok, true, 'page1 execute 应 ok')
+    assert.equal(page1.artifacts?.length, 20, `page1 长度应 20,实际 ${page1.artifacts?.length}`)
+    assert.equal(page1.total, 66, `page1 total 应 66(2 账本 + 2 legacy + 60 cwd + 1 老 + 1 trip-2027),实际 ${page1.total}`)
+    assert.equal(page1.truncated, true, 'page1 truncated 应 true')
+    assert.equal(page1.nextOffset, 20, `page1 nextOffset 应 20,实际 ${page1.nextOffset}`)
+    assert.equal(page1.limit, 20, `page1 limit echo 应 20`)
+    assert.equal(page1.offset, 0, `page1 offset echo 应 0`)
+    const page1View = hostList.presentResult?.({}, toolResult(hostList, {}, page1))
+    assert.equal(page1View?.card, 'search', '分页仍应保持 SearchPathsResultView card')
+    assert.equal(page1View?.shape, 'paths', '分页仍应保持 SearchPathsResultView shape')
+    assert.equal(page1View?.paths?.length, 20, 'presenter paths 长度应等于 page1.artifacts.length')
+    assert.equal(page1View?.total, 66, 'presenter total 应等于 execute total')
+    assert.equal(page1View?.truncated, true, 'presenter truncated 应等于 execute truncated')
+    console.log(`[5/7] #458 page1 → 20 项 / total=66 / truncated=true / SearchPathsResultView contract OK`)
+
+    // b) 翻页 — page2/3/4 拼起来必须唯一覆盖全部 65 条
+    const page2 = await hostList.execute({ limit: 20, offset: 20 }, hostExec) as typeof page1
+    const page3 = await hostList.execute({ limit: 20, offset: 40 }, hostExec) as typeof page1
+    const page4 = await hostList.execute({ limit: 20, offset: 60 }, hostExec) as typeof page1
+    const all = new Set<string>()
+    for (const p of [page1, page2, page3, page4]) {
+      for (const a of p.artifacts ?? []) all.add(String(a.path))
+    }
+    assert.equal(all.size, 66, `page1..page4 拼接后 66 个唯一 path,实际 ${all.size}`)
+    assert.equal(page4.artifacts?.length, 6, `page4 应 6 条,实际 ${page4.artifacts?.length}`)
+    assert.equal(page4.truncated, false, `page4 已无更多,truncated=false`)
+    assert.equal(page4.nextOffset, undefined, `page4 无 nextOffset`)
+    assert.equal(page4.offset, 60, `page4 offset echo 应回填请求值 60`)
+    console.log(`[5/7] #458 page2/3/4 拼接唯一覆盖 66 条,page4=6 / truncated=false / offset=60 OK`)
+
+    // c) search — 即使 limit=1,也能直接命中老产物
+    const direct = await hostList.execute({ limit: 1, search: 'special-deliverable' }, hostExec) as typeof page1 & { search?: string }
+    assert.equal(direct.total, 1, `search='special-deliverable' 应命中 1 条`)
+    assert.equal(direct.artifacts?.length, 1)
+    assert.equal(direct.truncated, false)
+    assert.equal(direct.search, 'special-deliverable', 'search 应回填 trim 后值')
+    assert.ok(direct.artifacts?.[0]?.path?.endsWith('/special-deliverable.md'), `应命中老产物 path`)
+    const directView = hostList.presentResult?.({ search: 'special-deliverable' }, toolResult(hostList, { search: 'special-deliverable' }, direct))
+    assert.equal(directView?.total, 1, 'search presentResult.total 应 = 1')
+    assert.equal(directView?.paths?.length, 1, 'search presentResult.paths 应 = 1')
+    console.log(`[5/7] #458 search='special-deliverable' → limit=1 直接命中老产物,total=1 / search echo OK`)
+
+    // d) safe args:无效 offset / limit / search 经 execute 透传到能力层应被拒,
+    //    registered tool 仍以 ok:false 包出(无未捕获 throw 越过 host 边界)。
+    //    DSH host 的 schema 类型校验在最外层兜底,某些坏参会先由 schema 拒绝 →
+    //    guardToolExecute 包成 ok:false + summary;另一些(超出 schema 范围但
+    //    类型仍合法)则走 capability 层 normalize* 拒绝 → error 字段。两条路径
+    //    都必须非 ok=true,且含相应字段名。
+    const badOffset = await hostList.execute({ offset: -1 }, hostExec) as { ok?: boolean; error?: string; summary?: string }
+    assert.equal(badOffset.ok, false, '负 offset 必须被拒 ok=false')
+    assert.ok(/offset/i.test(String(badOffset.error ?? badOffset.summary ?? '')), `错误应含 offset 描述,实际 ${badOffset.error ?? badOffset.summary}`)
+    // 字符串 limit:host schema 类型校验兜底(summary 路径)
+    const badLimit = await hostList.execute({ limit: '20' as unknown as number }, hostExec) as { ok?: boolean; error?: string; summary?: string }
+    assert.equal(badLimit.ok, false, '字符串 limit 必须被拒 ok=false')
+    assert.ok(/limit/i.test(String(badLimit.error ?? badLimit.summary ?? '')), `错误应含 limit 描述,实际 ${badLimit.error ?? badLimit.summary}`)
+    // 非字符串 search:host schema 同样兜底
+    const badSearch = await hostList.execute({ search: 5 as unknown as string }, hostExec) as { ok?: boolean; error?: string; summary?: string }
+    assert.equal(badSearch.ok, false, '非字符串 search 必须被拒 ok=false')
+    assert.ok(/search/i.test(String(badSearch.error ?? badSearch.summary ?? '')), `错误应含 search 描述,实际 ${badSearch.error ?? badSearch.summary}`)
+    // unsafe 整数 offset:能力层 Number.isSafeInteger 边界,registered tool 必须同步拒
+    const unsafeOffset = await hostList.execute({ offset: Number.MAX_SAFE_INTEGER + 1 }, hostExec) as { ok?: boolean; error?: string; summary?: string }
+    assert.equal(unsafeOffset.ok, false, 'unsafe 整数 offset 必须被拒 ok=false')
+    assert.ok(/offset/i.test(String(unsafeOffset.error ?? unsafeOffset.summary ?? '')), `错误应含 offset 描述,实际 ${unsafeOffset.error ?? unsafeOffset.summary}`)
+    console.log(`[5/7] #458 safe args:offset=-1 / limit='20' / search=5 / unsafe-integer offset 全部 ok=false,error/summary 含字段名 OK`)
+
+    // e) list→read 实际串联 — 用 search 结果的 path 走 readArtifact,断言 presentResult 仍 ok
+    const listViewPath = direct.artifacts![0]!.path!
+    const readByPath = await hostRead.execute({ path: listViewPath }, hostExec) as {
+      ok?: boolean
+      source?: string
+      lang?: string
+      totalLines?: number
+    }
+    assert.equal(readByPath.ok, true, 'list 串联 read 应 ok')
+    assert.equal(readByPath.source, 'cwd', '老产物 source 应 cwd')
+    assert.equal(readByPath.lang, 'markdown')
+    const readView = hostRead.presentResult?.({ path: listViewPath }, toolResult(hostRead, { path: listViewPath }, readByPath))
+    assert.equal(readView?.card, 'read', 'list→read 串联 read card 应仍 read')
+    assert.equal(readView?.totalLines, readByPath.totalLines)
+    console.log(`[5/7] #458 list→read 串联:search 命中的 path 经 readArtifact 返回 OK,ReadResultView contract 保持 OK`)
+
+    // f) 越界 page(请求 offset=9999)→ 空页 + 已知 total + 无 nextOffset
+    const beyond = await hostList.execute({ offset: 9999 }, hostExec) as typeof page1
+    assert.equal(beyond.ok, true)
+    assert.equal(beyond.artifacts?.length, 0, `越界应空页,实际 ${beyond.artifacts?.length}`)
+    assert.equal(beyond.total, 66, `越界仍应回填 total=66,实际 ${beyond.total}`)
+    assert.equal(beyond.truncated, false, `越界 truncated=false`)
+    assert.equal(beyond.nextOffset, undefined, `越界无 nextOffset`)
+    assert.equal(beyond.offset, 9999, `越界 offset echo 应回填请求值 9999`)
+    const beyondSummary = String(beyond.summary ?? '')
+    assert.ok(!/无在册产物/.test(beyondSummary), `越界 summary 不得误报「无在册产物」,实际: ${beyondSummary}`)
+    assert.ok(beyondSummary.includes('空页') && beyondSummary.includes('66'), `越界 summary 应明示空页 + known total,实际: ${beyondSummary}`)
+    console.log(`[5/7] #458 越界页:empty page + total=66 + 无 nextOffset + summary 明示空页/known total OK`)
+  } catch (err) {
+    throw err
+  }
+
   // ── 清理 ────────────────────────────────────────────────────────────────
   rmSync(home, { recursive: true, force: true })
   console.log('\nDSH ARTIFACT HOST CONTRACT PROOF: list/read metadata, source identity, view-updated loop, guardrails OK; fresh-profile Web custom-card path covered separately by `npx tsx scripts/dsh-artifact-web-e2e.ts` (not part of the cross-platform full suite)')

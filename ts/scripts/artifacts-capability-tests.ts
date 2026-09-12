@@ -236,14 +236,17 @@ const cwd = mkdtempSync(join(tmpdir(), 'gotry-artifacts-cap-cwd-'))
   const r = await listArtifacts({ stateRoot, cwd, limit: 3 })
   assert.equal(r.artifacts.length, 3, `limit=3 应 3 条,实际 ${r.artifacts.length}`)
   assert.equal(r.truncated, true, `应有更多,truncated 应为 true`)
-  // total = sum of each source's retained count = 1 (账本) + 0 (async dir) + 3 (cwd top 3 by mtime) = 4
-  // (listCwdArtifacts 内部就 slice(0, limit);要更多需调用方放大 limit)
-  assert.equal(r.total, 4, `total 应 4(账本 1 + cwd top 3),实际 ${r.total}`)
+  // 自 #458 起 list 不再按源提前 limit,total 反映已过滤集合的全部条目。
+  // 此时 ledger 1(cap-probe-1)+ cwd 顶层 8 个(trip-2027-cap.md +
+  // cap-probe-1.deliverable.md + big.md + extra-0..4)= 9。test 13+ 才加 HTML/htm/
+  // 隐藏文件,不影响本断言。
+  assert.equal(r.total, 9, `total 应 9,实际 ${r.total}`)
   assert.ok(r.total > r.artifacts.length, `total 应 > artifacts.length 才能 truncated,实际 ${r.total} vs ${r.artifacts.length}`)
+  assert.equal(r.nextOffset, 3, `limit=3 truncated 应 nextOffset=3,实际 ${r.nextOffset}`)
   // 放大 limit 后能看到全部
   const r2 = await listArtifacts({ stateRoot, cwd, limit: 20 })
   assert.equal(r2.truncated, false, `limit=20 应能装下,truncated=false`)
-  assert.ok(r2.total >= 7, `放大 limit 后 total 应 ≥ 7(账本 1 + cwd 多个 md),实际 ${r2.total}`)
+  assert.ok(r2.total >= 9, `放大 limit 后 total 应 ≥ 9,实际 ${r2.total}`)
   console.log('12) list limit 截断 OK')
 }
 
@@ -436,6 +439,351 @@ const HTML_TEXT = [
   const roundTrip = await readArtifact({ stateRoot, cwd, path: 'trip-2027-cap.html' })
   if (roundTrip.ok) assert.equal(roundTrip.content, onDisk, '读回内容必须与磁盘原文逐字一致')
   console.log('18) list→read 串联(state-root/cwd)OK')
+}
+
+// ============ issue #458:list paging + literal metadata search ============
+
+// 19) >50 cwd entries: enumerated across pages with no omission/duplicate
+{
+  const bigRoot = mkdtempSync(join(tmpdir(), 'gotry-458-big-root-'))
+  const bigCwd = mkdtempSync(join(tmpdir(), 'gotry-458-big-'))
+  try {
+    const ids: string[] = []
+    // 60 timestamped md files, oldest mtime first so updated ASC == alphabetical.
+    for (let i = 0; i < 60; i++) {
+      const name = `itinerary-${String(i).padStart(3, '0')}.md`
+      const p = join(bigCwd, name)
+      writeFileSync(p, `# itinerary ${i}\n`)
+      // Older = smaller i; mtime strictly increasing ⇒ updated ASC mirrors id ASC.
+      const ts = new Date(Date.UTC(2026, 0, 1, 0, 0, i))
+      const { utimesSync } = await import('node:fs')
+      utimesSync(p, ts, ts)
+      ids.push(name)
+    }
+
+    const r1 = await listArtifacts({ stateRoot: bigRoot, cwd: bigCwd, limit: 20 })
+    assert.equal(r1.artifacts.length, 20, `default page 应 20 条,实际 ${r1.artifacts.length}`)
+    assert.equal(r1.total, 60, `total 应 60(全部 cwd 顶层),实际 ${r1.total}`)
+    assert.equal(r1.truncated, true, `truncated 应 true`)
+    assert.equal(r1.nextOffset, 20, `nextOffset 应 20,实际 ${r1.nextOffset}`)
+    assert.equal(r1.limit, 20, `limit echo 应 20,实际 ${r1.limit}`)
+    assert.equal(r1.offset, 0, `offset echo 应 0`)
+
+    const r2 = await listArtifacts({ stateRoot: bigRoot, cwd: bigCwd, limit: 9999 })
+    assert.equal(r2.artifacts.length, 50, `limit 9999 应被夹到 50,实际 ${r2.artifacts.length}`)
+    assert.equal(r2.total, 60, `cap=50 时 total 仍应 60(不被截断到 50),实际 ${r2.total}`)
+    assert.equal(r2.truncated, true, `50<60 时 truncated 应 true`)
+    assert.equal(r2.limit, 50, `limit echo 应 50`)
+    assert.equal(r2.nextOffset, 50, `nextOffset 应 50`)
+
+    // 全 60 条刚好分两页半:page1+page2 完整覆盖,最后 10 条从 page2 起
+    const page1 = await listArtifacts({ stateRoot: bigRoot, cwd: bigCwd, limit: 30, offset: 0 })
+    const page2 = await listArtifacts({ stateRoot: bigRoot, cwd: bigCwd, limit: 30, offset: 30 })
+    const page3 = await listArtifacts({ stateRoot: bigRoot, cwd: bigCwd, limit: 30, offset: 60 })
+    const collected = new Set<string>()
+    for (const p of [page1, page2, page3]) {
+      assert.equal(p.total, 60, `各页 total 都应 60,实际 ${p.total}`)
+      for (const a of p.artifacts) {
+        assert.equal(collected.has(a.path), false, `path ${a.path} 在分页中出现多次`)
+        collected.add(a.path)
+      }
+    }
+    assert.equal(collected.size, 60, `三页拼起来必须唯一覆盖 60 条,实际 ${collected.size}`)
+    for (const id of ids) {
+      assert.ok([...collected].some(p => p.endsWith(join(bigCwd, id))), `应能找到 ${id}`)
+    }
+    assert.equal(page1.nextOffset, 30, `page1 nextOffset 应 30`)
+    assert.equal(page2.nextOffset, undefined, `page2 已是最后一页,无 nextOffset`)
+    assert.equal(page2.truncated, false, `page2 truncated 应 false`)
+    assert.equal(page3.artifacts.length, 0, `越界页应空,实际 ${page3.artifacts.length}`)
+    assert.equal(page3.nextOffset, undefined, `越界页无 nextOffset,实际 ${page3.nextOffset}`)
+    assert.equal(page3.truncated, false, `越界页 truncated 应 false`)
+    assert.equal(page3.offset, 60, `越界页 offset echo 应回填请求值 60`)
+
+    // 第 1 页首条应是 mtime 最新(序号最大)
+    assert.ok(page1.artifacts[0]?.path.endsWith('itinerary-059.md'), `首条应是 mtime 最新者,实际 ${page1.artifacts[0]?.path}`)
+    // 第 3 页(越界页)首条之后无内容,但 known total 仍准确
+    console.log('19) >50 cwd 跨页枚举 OK')
+  } finally {
+    rmSync(bigCwd, { recursive: true, force: true })
+    rmSync(bigRoot, { recursive: true, force: true })
+  }
+}
+
+// 20) equal timestamps:lexical (source,id,path) tie-break 让 page 边界稳定
+{
+  const tieRoot = mkdtempSync(join(tmpdir(), 'gotry-458-tie-root-'))
+  const sameCwd = mkdtempSync(join(tmpdir(), 'gotry-458-tie-'))
+  try {
+    const ts = new Date('2026-01-01T00:00:00.000Z')
+    const { utimesSync } = await import('node:fs')
+    for (const name of ['zeta.md', 'alpha.md', 'Beta.md', 'Gamma.md']) {
+      const p = join(sameCwd, name)
+      writeFileSync(p, '# tie\n')
+      utimesSync(p, ts, ts)
+    }
+    const r = await listArtifacts({ stateRoot: tieRoot, cwd: sameCwd, limit: 2 })
+    assert.equal(r.total, 4, `total 应 4,实际 ${r.total}`)
+    assert.equal(r.artifacts.length, 2)
+    // 标题去扩展名后 codepoint 词典序(ASCII):'B'(0x42) < 'G'(0x47) < 'a'(0x61) < 'z'(0x7A)
+    const titles = r.artifacts.map(a => a.title)
+    assert.deepEqual(titles, ['Beta', 'Gamma'], `updated 相同时按 title codepoint 词典序,实际 ${titles.join(',')}`)
+    // 同样输入两次必须返回完全相同的顺序
+    const r2 = await listArtifacts({ stateRoot: tieRoot, cwd: sameCwd, limit: 2 })
+    assert.deepEqual(r2.artifacts.map(a => a.path), r.artifacts.map(a => a.path), '等 mtime 下分页顺序必须可复现')
+    console.log('20) equal-timestamp tie-break OK')
+  } finally {
+    rmSync(sameCwd, { recursive: true, force: true })
+    rmSync(tieRoot, { recursive: true, force: true })
+  }
+}
+
+// 21) mixed ledger/legacy/cwd:authority + dedupe 跨分页保留
+{
+  const mixRoot = mkdtempSync(join(tmpdir(), 'gotry-458-mix-root-'))
+  const mixCwd = mkdtempSync(join(tmpdir(), 'gotry-458-mix-cwd-'))
+  try {
+    const ledger = ensureLedger(mixRoot)
+    ledger.createWorkflowRun({ id: 'cap-mix-a', goal: '账本权威 a', ticket: { objective: 'mix' }, state: {} })
+    ledger.settleWorkflowRun('cap-mix-a', '# a\n')
+    ledger.createWorkflowRun({ id: 'cap-mix-b', goal: '账本权威 b', ticket: { objective: 'mix' }, state: {} })
+    ledger.settleWorkflowRun('cap-mix-b', '# b\n')
+    mkdirSync(join(mixRoot, 'gotry-state', 'async'), { recursive: true })
+    writeFileSync(join(mixRoot, 'gotry-state', 'async', 'legacy-1.deliverable.md'), '# legacy\n')
+    writeFileSync(join(mixRoot, 'gotry-state', 'async', 'legacy-2.deliverable.md'), '# legacy\n')
+    writeFileSync(join(mixCwd, 'trip-plan-a.md'), '# cwd a\n')
+    writeFileSync(join(mixCwd, 'trip-plan-b.md'), '# cwd b\n')
+    const r = await listArtifacts({ stateRoot: mixRoot, cwd: mixCwd, limit: 10 })
+    assert.equal(r.total, 6, `total 应 6(2 账本 + 2 legacy + 2 cwd),实际 ${r.total}`)
+    const sources = new Set(r.artifacts.map(a => a.source))
+    assert.ok(sources.has('async-run') && sources.has('cwd-file'), `应同时覆盖账本/legacy 与 cwd 两源,实际 ${[...sources].join(',')}`)
+    // 写入与账本同 path 的文件视图,验证 dedupe 后总数不变
+    writeFileSync(join(mixRoot, 'gotry-state', 'async', 'cap-mix-a.deliverable.md'), '# file view a\n')
+    writeFileSync(join(mixRoot, 'gotry-state', 'async', 'cap-mix-b.deliverable.md'), '# file view b\n')
+    const r2 = await listArtifacts({ stateRoot: mixRoot, cwd: mixCwd, limit: 10 })
+    assert.equal(r2.total, 6, `账本权威 + 文件视图 dedupe 后 total 应仍 6,实际 ${r2.total}`)
+    const seen = new Map<string, number>()
+    for (const a of r2.artifacts) {
+      seen.set(resolve(a.path), (seen.get(resolve(a.path)) ?? 0) + 1)
+    }
+    for (const [k, n] of seen) {
+      assert.ok(n <= 1, `path ${k} 出现 ${n} 次(账本/legacy/cwd 跨源去重失败)`)
+    }
+    // 再次确认源覆盖:每个 cap-mix-{a,b} 应来自账本(async-run),不是 cwd
+    for (const id of ['cap-mix-a', 'cap-mix-b']) {
+      const entry = r2.artifacts.find(a => a.id === id)
+      assert.equal(entry?.source, 'async-run', `${id} 应来自账本权威,实际 ${entry?.source}`)
+    }
+    console.log('21) mixed ledger/legacy/cwd dedupe OK')
+  } finally {
+    rmSync(mixRoot, { recursive: true, force: true })
+    rmSync(mixCwd, { recursive: true, force: true })
+  }
+}
+
+// 22) literal search:finds old entries before paging;total reflects filtered set
+{
+  const searchRoot = mkdtempSync(join(tmpdir(), 'gotry-458-search-root-'))
+  const searchCwd = mkdtempSync(join(tmpdir(), 'gotry-458-search-'))
+  try {
+    for (const name of ['trip-paris-2025.md', 'trip-tokyo-2024.md', 'report-budget.md', 'random.md']) {
+      writeFileSync(join(searchCwd, name), `# ${name}\n`)
+    }
+    const exact = await listArtifacts({ stateRoot: searchRoot, cwd: searchCwd, search: 'paris' })
+    assert.equal(exact.total, 1, `search='paris' 应命中 1 条,实际 ${exact.total}`)
+    assert.equal(exact.artifacts[0]?.id, 'trip-paris-2025.md')
+    const none = await listArtifacts({ stateRoot: searchRoot, cwd: searchCwd, search: '   ' })
+    assert.equal(none.total, 4, `空白 search 应等同未过滤,total=4,实际 ${none.total}`)
+    const ci = await listArtifacts({ stateRoot: searchRoot, cwd: searchCwd, search: 'PARIS' })
+    assert.equal(ci.total, 1, `search 大小写不敏感,实际 ${ci.total}`)
+    const literal = await listArtifacts({ stateRoot: searchRoot, cwd: searchCwd, search: '.*' })
+    assert.equal(literal.total, 0, `.* 应作字面匹配,不命中任何 id/title/filename,实际 ${literal.total}`)
+    const bodyOnly = await listArtifacts({ stateRoot: searchRoot, cwd: searchCwd, search: 'budget-detail' })
+    assert.equal(bodyOnly.total, 0, `search 仅匹配元数据,不搜文件内容,实际 ${bodyOnly.total}`)
+    // search 后分页 + 越界
+    const filtered = await listArtifacts({ stateRoot: searchRoot, cwd: searchCwd, search: 'trip', limit: 2 })
+    assert.equal(filtered.total, 2, `search='trip' 应命中 trip-* 两条,实际 ${filtered.total}`)
+    assert.equal(filtered.nextOffset, undefined, `2 条全在一页时无 nextOffset`)
+    // 元数据命中 via title(去扩展名)
+    const viaTitle = await listArtifacts({ stateRoot: searchRoot, cwd: searchCwd, search: 'report-budget' })
+    assert.equal(viaTitle.total, 1, `命中 id,实际 ${viaTitle.total}`)
+    // 标记 search echo
+    assert.equal(filtered.search, 'trip', `应回填 trim 后的 search,实际 ${filtered.search}`)
+    console.log('22) literal search OK')
+  } finally {
+    rmSync(searchCwd, { recursive: true, force: true })
+    rmSync(searchRoot, { recursive: true, force: true })
+  }
+}
+
+// 23) invalid offset/limit/search types:拒绝可预测,不静默圆整
+{
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, offset: -1 }),
+    /offset must be a nonnegative integer/,
+    '负 offset 必须被拒',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, offset: 1.5 }),
+    /offset must be a nonnegative integer/,
+    '非整数 offset 必须被拒',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, offset: NaN }),
+    /offset must be a nonnegative integer/,
+    'NaN offset 必须被拒',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, offset: '5' as unknown as number }),
+    /offset must be a nonnegative integer/,
+    '字符串 offset 必须被拒(不静默转数字)',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, offset: null as unknown as number }),
+    /offset must be a nonnegative integer/,
+    'null offset 必须被拒',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, offset: Number.MAX_SAFE_INTEGER + 1 }),
+    /offset must be a safe integer/,
+    'unsafe 整数 offset(>MAX_SAFE_INTEGER)必须被拒,避免数组切片失真',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, offset: -Number.MAX_SAFE_INTEGER - 1 }),
+    /offset must be/,
+    'unsafe 负整数 offset(<-MAX_SAFE_INTEGER)必须被拒(由负数分支先拒)',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, limit: '20' as unknown as number }),
+    /limit must be a positive integer/,
+    '字符串 limit 必须被拒',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, limit: Infinity }),
+    /limit must be a positive integer/,
+    'Infinity limit 必须被拒',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, limit: 1.5 }),
+    /limit must be a positive integer/,
+    '非整数 limit 必须被拒',
+  )
+  await assert.rejects(
+    () => listArtifacts({ stateRoot, cwd, search: 5 as unknown as string }),
+    /search must be a string/,
+    '非字符串 search 必须被拒(不静默 "no filter")',
+  )
+  // 兼容路径:零/负 INTEGER limit 静默夹到 1(保留 pre-#458 clamp-on-1 行为)
+  const zero = await listArtifacts({ stateRoot, cwd, limit: 0 })
+  assert.equal(zero.limit, 1, `limit=0 应夹到 1,实际 ${zero.limit}`)
+  assert.equal(zero.artifacts.length <= 1, true, `limit 夹到 1 时最多 1 条`)
+  const neg = await listArtifacts({ stateRoot, cwd, limit: -3 })
+  assert.equal(neg.limit, 1, `limit=-3 应夹到 1,实际 ${neg.limit}`)
+  // 大值夹到 50
+  const big = await listArtifacts({ stateRoot, cwd, limit: 9999 })
+  assert.equal(big.limit, 50, `limit=9999 应夹到 50,实际 ${big.limit}`)
+  // 友好情况:undefined 走默认
+  const ok = await listArtifacts({ stateRoot, cwd })
+  assert.equal(ok.offset, 0, `undefined offset 应回填 0`)
+  assert.equal(ok.limit, 20, `undefined limit 应回填默认 20`)
+  console.log('23) invalid offset/limit/search OK')
+}
+
+// 24) search + paging:在 >50 条里用 search 找到"旧"的精确产物
+{
+  const bigRoot = mkdtempSync(join(tmpdir(), 'gotry-458-bigsearch-root-'))
+  const bigCwd = mkdtempSync(join(tmpdir(), 'gotry-458-bigsearch-'))
+  try {
+    const { utimesSync } = await import('node:fs')
+    for (let i = 0; i < 60; i++) {
+      const name = `note-${String(i).padStart(3, '0')}.md`
+      const p = join(bigCwd, name)
+      writeFileSync(p, `# ${name}\n`)
+      utimesSync(p, new Date(Date.UTC(2026, 0, 1, 0, 0, i)), new Date(Date.UTC(2026, 0, 1, 0, 0, i)))
+    }
+    // 极小 mtime 的目标条目(模拟"老产物")
+    const targetPath = join(bigCwd, 'special-deliverable.md')
+    writeFileSync(targetPath, '# special\n')
+    utimesSync(targetPath, new Date('2020-01-01T00:00:00Z'), new Date('2020-01-01T00:00:00Z'))
+
+    // 不带 search:即便用 limit=50 也找不到极老的产物(默认按 mtime DESC 排序)
+    const noSearch = await listArtifacts({ stateRoot: bigRoot, cwd: bigCwd, limit: 50 })
+    assert.equal(noSearch.total, 61, `61 条总数,实际 ${noSearch.total}`)
+    assert.ok(!noSearch.artifacts.some(a => a.id === 'special-deliverable.md'), '无 search 时老产物应在 50 之外')
+    assert.equal(noSearch.truncated, true, '60 条之外还有老产物时 truncated 应 true')
+
+    // 带 search:即使 limit=1 也能直接定位
+    const direct = await listArtifacts({ stateRoot: bigRoot, cwd: bigCwd, search: 'special-deliverable', limit: 1 })
+    assert.equal(direct.total, 1, `search 命中 1,实际 ${direct.total}`)
+    assert.equal(direct.artifacts[0]?.id, 'special-deliverable.md')
+    assert.equal(direct.truncated, false, `1 条命中无下一页`)
+
+    // search + 翻页:filter 后 total 反映 filtered 集
+    const pageFilter = await listArtifacts({ stateRoot: bigRoot, cwd: bigCwd, search: 'note', limit: 20 })
+    assert.equal(pageFilter.total, 60, `search='note' 应命中 60 条 note-*,实际 ${pageFilter.total}`)
+    assert.equal(pageFilter.artifacts.length, 20)
+    assert.equal(pageFilter.nextOffset, 20, `filter 后 60 条 / limit 20 → nextOffset 20`)
+    const page2 = await listArtifacts({ stateRoot, cwd: bigCwd, search: 'note', limit: 20, offset: 20 })
+    assert.equal(page2.total, 60)
+    assert.equal(page2.artifacts.length, 20)
+    assert.equal(page2.nextOffset, 40, `page2 nextOffset 应 40`)
+    // 两页拼起来应不重复
+    const seen = new Set<string>()
+    for (const a of [...pageFilter.artifacts, ...page2.artifacts]) seen.add(a.path)
+    assert.equal(seen.size, 40, `两页拼起来 40 个唯一 path,实际 ${seen.size}`)
+    console.log('24) search + paging across >50 OK')
+  } finally {
+    rmSync(bigCwd, { recursive: true, force: true })
+    rmSync(bigRoot, { recursive: true, force: true })
+  }
+}
+
+// 25) existing read-by-id/path 边界在新分页表面下不回归
+{
+  // a) 已存在的裸 id 直接读
+  const r = await readArtifact({ stateRoot, cwd, path: 'cap-probe-1' })
+  assert.equal(r.ok, true, '裸工单 id 仍可读')
+  if (r.ok) assert.equal(r.lang, 'markdown')
+
+  // b) 分页结果里某条 path 仍可直接用 readArtifact 读回 — 必须用已知小
+  //    fixture(trip-2027-cap.md),不能选首条 cwd 项:先前测试(10/17a/24)可能
+  //    在 cwd 留下 big.md(>2MB)被 reader 拒,需要隔离 / 显式选择。
+  writeFileSync(join(cwd, 'paging-target.md'), '# paging target\nbody\n')
+  const list = await listArtifacts({ stateRoot, cwd, limit: 50 })
+  const target = list.artifacts.find(a => a.id === 'paging-target.md')
+  assert.ok(target, '列表里应有 paging-target.md 已知小 fixture')
+  const read = await readArtifact({ stateRoot, cwd, path: target!.path })
+  assert.equal(read.ok, true, 'list 返回的 path 应可读回')
+  if (read.ok) assert.equal(read.lang, 'markdown')
+  rmSync(join(cwd, 'paging-target.md'))
+
+  // c) 越界路径仍被拒
+  const out = await readArtifact({ stateRoot, cwd, path: '../../../../../etc/passwd' })
+  assert.equal(out.ok, false, '越界仍必须被拒')
+
+  // d) symlink 越界仍被拒
+  const linkPath = join(cwd, 'symlink-page-out.md')
+  try {
+    symlinkSync('/etc/passwd', linkPath)
+    const r2 = await readArtifact({ stateRoot, cwd, path: 'symlink-page-out.md' })
+    assert.equal(r2.ok, false, 'symlink 逃逸仍被拒')
+  } catch { /* 非 POSIX fs 跳过 */ }
+
+  // e) node_modules 内既不可发现也不可读
+  mkdirSync(join(cwd, 'node_modules'), { recursive: true })
+  writeFileSync(join(cwd, 'node_modules', 'page-evil.md'), '# evil')
+  const denied = await readArtifact({ stateRoot, cwd, path: 'node_modules/page-evil.md' })
+  assert.equal(denied.ok, false, 'node_modules 内文件仍被拒')
+  const list2 = await listArtifacts({ stateRoot, cwd, limit: 50 })
+  assert.ok(!list2.artifacts.some(a => a.id === 'page-evil.md'), 'node_modules 内文件不进入列表')
+  rmSync(join(cwd, 'node_modules'), { recursive: true, force: true })
+
+  // f) 不支持的扩展名仍被拒
+  writeFileSync(join(cwd, 'binary.db'), 'fake')
+  const bad = await readArtifact({ stateRoot, cwd, path: 'binary.db' })
+  assert.equal(bad.ok, false, '.db 仍被拒')
+  rmSync(join(cwd, 'binary.db'))
+  console.log('25) read boundary 与分页表面兼容 OK')
 }
 
 rmSync(stateRoot, { recursive: true, force: true })
