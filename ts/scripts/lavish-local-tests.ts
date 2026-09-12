@@ -19,6 +19,7 @@ import { createRequire } from 'node:module'
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -254,6 +255,179 @@ async function waitForHealth(port: number): Promise<boolean> {
   return false
 }
 
+// ---------------------------------------------------------------------------
+// directly-spawned foreign-server fixture registry (issue #454)
+//
+// Section 9 spawns a same-version lavish-axi server outside the adapter to
+// prove the foreign listener is never adopted or killed. The test harness
+// owns that exact fixture (PID + PGID + loopback port) for the lifetime of
+// the probe. Reaping signals the recorded PGID — not the leader PID — so
+// descendants that survive the leader are still bound to the harness-owned
+// group. Only the recorded fixture group is ever signalled; no broad pkill,
+// no command-name search.
+// ---------------------------------------------------------------------------
+
+interface OwnedFixture {
+  readonly pgid: number
+  readonly port: number
+  readonly label: string
+}
+
+const ownedFixtures = new Set<OwnedFixture>()
+const deferredCleanupErrors: Error[] = []
+
+function trackFixture(pid: number, port: number, label: string): OwnedFixture {
+  const entry: OwnedFixture = { pgid: pid, port, label }
+  ownedFixtures.add(entry)
+  return entry
+}
+
+type Probe = { state: 'present' | 'absent' } | { state: 'error'; detail: string }
+type SignalResult = { state: 'delivered' | 'absent' } | { state: 'error'; detail: string }
+
+interface ReapResult {
+  readonly groupGone: boolean
+  readonly portClosed: boolean
+  readonly escalatedKill: boolean
+  readonly issues: string[]
+}
+
+function probeGroup(pgid: number): Probe {
+  try {
+    process.kill(-pgid, 0)
+    return { state: 'present' }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return code === 'ESRCH'
+      ? { state: 'absent' }
+      : { state: 'error', detail: `group probe failed: ${code ?? String(error)}` }
+  }
+}
+
+function signalGroup(pgid: number, signal: NodeJS.Signals): SignalResult {
+  try {
+    process.kill(-pgid, signal)
+    return { state: 'delivered' }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return code === 'ESRCH'
+      ? { state: 'absent' }
+      : { state: 'error', detail: `${signal} failed: ${code ?? String(error)}` }
+  }
+}
+
+async function waitForGroupGone(pgid: number, timeoutMs: number): Promise<{ gone: boolean; issue?: string }> {
+  const deadline = Date.now() + timeoutMs
+  while (true) {
+    const probe = probeGroup(pgid)
+    if (probe.state === 'absent') return { gone: true }
+    if (probe.state === 'error') return { gone: false, issue: probe.detail }
+    if (Date.now() >= deadline) return { gone: false }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50))
+  }
+}
+
+async function waitForPortClosed(port: number, timeoutMs: number): Promise<{ closed: boolean; issue?: string }> {
+  const deadline = Date.now() + timeoutMs
+  while (true) {
+    const outcome = await new Promise<'open' | 'closed' | string>((resolve) => {
+      const socket = connect(port, '127.0.0.1')
+      let settled = false
+      const finish = (value: 'open' | 'closed' | string): void => {
+        if (settled) return
+        settled = true
+        socket.destroy()
+        resolve(value)
+      }
+      socket.once('connect', () => finish('open'))
+      socket.once('error', (error) => {
+        const code = (error as NodeJS.ErrnoException).code
+        finish(code === 'ECONNREFUSED' ? 'closed' : `port probe failed: ${code ?? String(error)}`)
+      })
+      socket.setTimeout(500, () => finish('port probe timed out'))
+    })
+    if (outcome === 'closed') return { closed: true }
+    if (outcome !== 'open') return { closed: false, issue: outcome }
+    if (Date.now() >= deadline) return { closed: false, issue: 'port remained open' }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50))
+  }
+}
+
+async function reapOwnedFixture(
+  entry: OwnedFixture,
+  options: { graceMs?: number; killGraceMs?: number; portWaitMs?: number } = {},
+): Promise<ReapResult> {
+  const graceMs = options.graceMs ?? 2_000
+  const killGraceMs = options.killGraceMs ?? 2_000
+  const portWaitMs = options.portWaitMs ?? 2_000
+  const issues: string[] = []
+  let groupGone = false
+  let escalatedKill = false
+
+  const term = signalGroup(entry.pgid, 'SIGTERM')
+  if (term.state === 'absent') {
+    groupGone = true
+  } else if (term.state === 'error') {
+    issues.push(term.detail)
+  } else {
+    const waited = await waitForGroupGone(entry.pgid, graceMs)
+    groupGone = waited.gone
+    if (waited.issue) issues.push(waited.issue)
+  }
+
+  if (!groupGone && issues.length === 0) {
+    const kill = signalGroup(entry.pgid, 'SIGKILL')
+    escalatedKill = kill.state === 'delivered'
+    if (kill.state === 'absent') {
+      groupGone = true
+    } else if (kill.state === 'error') {
+      issues.push(kill.detail)
+    } else {
+      const waited = await waitForGroupGone(entry.pgid, killGraceMs)
+      groupGone = waited.gone
+      if (waited.issue) issues.push(waited.issue)
+      else if (!waited.gone) issues.push('process group survived SIGKILL')
+    }
+  }
+
+  const port = await waitForPortClosed(entry.port, portWaitMs)
+  if (port.issue) issues.push(port.issue)
+  return { groupGone, portClosed: port.closed, escalatedKill, issues }
+}
+
+function reapSucceeded(result: ReapResult): boolean {
+  return result.groupGone && result.portClosed && result.issues.length === 0
+}
+
+function describeReap(entry: OwnedFixture, result: ReapResult): string {
+  return `${entry.label} pgid=${entry.pgid} port=${entry.port} groupGone=${result.groupGone} portClosed=${result.portClosed} escalated=${result.escalatedKill} issues=${result.issues.join(',') || 'none'}`
+}
+
+async function reapAllOwnedFixtures(): Promise<Error[]> {
+  const errors: Error[] = []
+  for (const entry of [...ownedFixtures]) {
+    try {
+      const result = await reapOwnedFixture(entry)
+      if (reapSucceeded(result)) ownedFixtures.delete(entry)
+      else errors.push(new Error(`outer fixture cleanup failed: ${describeReap(entry, result)}`))
+    } catch (error) {
+      errors.push(new Error(`outer fixture cleanup threw for ${entry.label} pgid=${entry.pgid}: ${asError(error).message}`))
+    }
+  }
+  return errors
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error))
+}
+
+function throwCollected(errors: Error[]): void {
+  if (errors.length === 0) return
+  if (errors.length === 1) throw errors[0]
+  throw new AggregateError(errors, errors.map((error) => error.message).join(' | '))
+}
+
+let suitePrimary: unknown = undefined
 try {
   // -------------------------------------------------------------------------
   // 1. trusted CLI resolution
@@ -939,7 +1113,11 @@ try {
 
   {
     // A pre-existing lavish-axi server of the very same pinned version is still
-    // not ours: the adapter must neither adopt nor shut it down.
+    // not ours: the adapter must neither adopt nor shut it down. The test
+    // harness owns that exact fixture in a try/finally so every code path —
+    // including a failing assertion — is reaped with bounded exit/PID/port
+    // evidence. Only SIGKILL escalation is permitted, and only against the
+    // harness-owned fixture group — never a broad pkill.
     const port = await allocateUnusedLoopbackPort()
     const preState = await freshStateDir('preexisting')
     await writeControl(preState, {})
@@ -949,25 +1127,36 @@ try {
       detached: true,
       stdio: 'ignore',
     })
-    ok(await waitForHealth(port), 'the pre-existing same-version server is healthy before the probe')
+    const fixturePid = preexisting.pid
+    if (fixturePid === undefined) {
+      throw new Error('failed to spawn pre-existing server: pid is undefined')
+    }
+    const fixture = trackFixture(fixturePid, port, 'preexisting')
+    try {
+      ok(await waitForHealth(port), 'the pre-existing same-version server is healthy before the probe')
 
-    const session = await controlSession('preexisting-session', {}, { port })
-    expectFailure(await session.open(ARTIFACT), 'port-occupied')
-    ok(preexisting.pid !== undefined && isProcessAlive(preexisting.pid), 'the pre-existing server was not adopted or killed')
-    const argv = await readJsonl(join(session.state().stateDir, 'argv.jsonl'))
-    ok(argv.length === 0, `no command was issued to the pre-existing server: ${JSON.stringify(argv)}`)
+      const session = await controlSession('preexisting-session', {}, { port })
+      expectFailure(await session.open(ARTIFACT), 'port-occupied')
+      ok(isProcessAlive(fixturePid), 'the pre-existing server was not adopted or killed')
+      const argv = await readJsonl(join(session.state().stateDir, 'argv.jsonl'))
+      ok(argv.length === 0, `no command was issued to the pre-existing server: ${JSON.stringify(argv)}`)
 
-    const stopped = await session.stop()
-    ok(stopped.ok === true && stopped.status === 'not-running', 'stop reports nothing owned rather than shutting a foreign server down')
-    if (preexisting.pid !== undefined) ok(isProcessAlive(preexisting.pid), 'the pre-existing server survived stop')
-
-    if (preexisting.pid !== undefined) {
+      const stopped = await session.stop()
+      ok(stopped.ok === true && stopped.status === 'not-running', 'stop reports nothing owned rather than shutting a foreign server down')
+      ok(isProcessAlive(fixturePid), 'the pre-existing server survived stop')
+    } finally {
       try {
-        process.kill(-preexisting.pid, 'SIGTERM')
-      } catch {
-        preexisting.kill('SIGTERM')
+        const result = await reapOwnedFixture(fixture)
+        if (reapSucceeded(result)) {
+          ownedFixtures.delete(fixture)
+        } else {
+          // Retain the entry for one outer retry and retain this failed attempt
+          // as evidence even if that retry succeeds.
+          deferredCleanupErrors.push(new Error(`fixture cleanup failed: ${describeReap(fixture, result)}`))
+        }
+      } catch (error) {
+        deferredCleanupErrors.push(new Error(`fixture cleanup threw for ${fixture.label} pgid=${fixture.pgid}: ${asError(error).message}`))
       }
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 300))
     }
   }
 
@@ -1040,10 +1229,22 @@ try {
   } else {
     await realCliProbe()
   }
-
-  console.log(`LAVISH LOCAL ADAPTER TESTS OK (${assertions} assertions)`)
+} catch (err) {
+  suitePrimary = err
 } finally {
-  await rm(workRoot, { recursive: true, force: true })
+  const errors = suitePrimary === undefined ? [...deferredCleanupErrors] : [asError(suitePrimary), ...deferredCleanupErrors]
+  try {
+    errors.push(...await reapAllOwnedFixtures())
+  } catch (error) {
+    errors.push(asError(error))
+  }
+  try {
+    await rm(workRoot, { recursive: true, force: true })
+  } catch (error) {
+    errors.push(asError(error))
+  }
+  if (errors.length === 0) console.log(`LAVISH LOCAL ADAPTER TESTS OK (${assertions} assertions)`)
+  throwCollected(errors)
 }
 
 async function realCliProbe(): Promise<void> {
