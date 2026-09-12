@@ -64,6 +64,7 @@ const searchRun = {
   input: {},
 } as const
 const hotelSelect = { ...searchRun, kind: 'hotel.select', actionId: 'action-dsh-select-1', reason: 'Select the requested hotel.', input: { hotelRef: 'hotel-1' } } as const
+const checkoutPrepare = { ...searchRun, kind: 'checkout.prepare', actionId: 'action-dsh-checkout-1', expectedRevision: 1, reason: 'Prepare checkout for the verified offer.', input: { offerRef: 'offer-confirmed', offerVersionRef: 'offer-confirmed:v1', verifiedOfferRef: 'verified-offer-confirmed' } } as const
 
 function toolCall(name: string, argumentsText: string, callId: string): Record<string, unknown> {
   return { type: 'tool/call', data: { name, callId, arguments: argumentsText } }
@@ -84,6 +85,10 @@ function toolResult(callId: string, isError = false, errorCode?: string, toolCal
 
 function successfulToolEvents(name: string, argumentsText: string, callId: string): Record<string, unknown>[] {
   return [toolCall(name, argumentsText, callId), toolResult(callId)]
+}
+
+function promptPayload(prompt: string): Record<string, any> {
+  return JSON.parse(prompt.split('\n').at(-1)!) as Record<string, any>
 }
 
 function toolArgumentsPort(argumentsText: string): DshPlannerRunPort {
@@ -1358,6 +1363,92 @@ await assert.rejects(
 )
 assert.equal(invalidCrossRunRuns, 1, 'event-authority schema errors fail closed without a correction run')
 await invalidCrossRun.close()
+
+const confirmedTask: BookingCopilotTaskState = {
+  ...task,
+  taskId: 'task-dsh-confirmed',
+  contextRef: 'ctx-dsh-confirmed',
+  revision: 1,
+  allowedActions: ['search.patch', 'search.run', 'offers.query', 'offer.check', 'checkout.prepare'],
+  availability: { initialized: true, recoveryStarted: true, availabilityPhase: 'terminal', activeHotelOrdinal: 0, hotelRefs: ['hotel-confirmed'], hotels: { 'hotel-confirmed': { hotelRef: 'hotel-confirmed', status: 'confirmed', generation: 1, generationNo: 1, currentOfferRefs: ['offer-confirmed'], invalidatedOfferRefs: [], tombstonedOfferRefs: [], tombstonedOfferVersionRefs: [], checksIssued: 1, checkCount: 1, offerQueriesIssued: 0, freshOffersRequired: false, lastEvidence: 'confirmed', currentGeneration: { generationId: 'hotel-confirmed:generation:1', source: { kind: 'workspace_snapshot', workspaceDigest: 'a'.repeat(64), workspaceRevision: 0 }, offerSetDigest: 'b'.repeat(64), orderedOfferRefs: ['offer-confirmed'], evidence: 'complete', valid: false } } }, attempts: [], queryReservations: [], terminal: { code: 'availability_confirmed', hotelRefs: ['hotel-confirmed'], reason: 'confirmed', evidence: 'conclusive' } },
+}
+const confirmedWorkspace: BookingWorkspaceSnapshot = {
+  ...workspace,
+  contextRef: confirmedTask.contextRef,
+  revision: 1,
+  visibleHotels: [{ hotelRef: 'hotel-confirmed', name: 'Confirmed Hotel', factRefs: [] }],
+  loadedOffers: [{ offerRef: 'offer-confirmed', offerVersionRef: 'offer-confirmed:v1', hotelRef: 'hotel-confirmed', evidenceLevel: 'rate_loaded', factRefs: [] }],
+  shortlistedOfferRefs: ['offer-confirmed'],
+  selectedOfferRef: 'offer-confirmed',
+  verifiedOffer: { offerRef: 'offer-confirmed', offerVersionRef: 'offer-confirmed:v1', verifiedOfferRef: 'verified-offer-confirmed', expiresAt: '2026-09-09T11:00:00.000Z' },
+  capabilities: { surface: 'tenant', allowedActions: [...confirmedTask.allowedActions] },
+}
+const confirmedPrompts: string[] = []
+const confirmedCheckout = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run(prompt) {
+      confirmedPrompts.push(prompt)
+      return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ decision: { kind: 'operation', action: { ...checkoutPrepare, contextRef: confirmedTask.contextRef } } }), 'call-confirmed-checkout') }
+    },
+    async close() {},
+  },
+})
+const confirmedCheckoutDecision = await confirmedCheckout.plannerFactory(confirmedTask).next({ task: confirmedTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: confirmedTask.taskId, turnId: 'dsh-confirmed-checkout', workspace: confirmedWorkspace, request: { text: '继续预订' } } })
+assert.deepEqual(confirmedCheckoutDecision, [{ kind: 'operation', action: { ...checkoutPrepare, contextRef: confirmedTask.contextRef } }], 'availability_confirmed can still produce an exact checkout.prepare typed action through the canonical booking_prepare_booking tool')
+assert.deepEqual(confirmedTask.allowedActions, ['search.patch', 'search.run', 'offers.query', 'offer.check', 'checkout.prepare'], 'prompt projection does not mutate durable task allowedActions')
+assert.deepEqual(promptPayload(confirmedPrompts[0]!).task.allowedActions, ['checkout.prepare'], 'availability_confirmed prompt narrows planner-visible actions to checkout.prepare')
+assert.deepEqual(promptPayload(confirmedPrompts[0]!).turn.workspace.capabilities.allowedActions, ['checkout.prepare'], 'availability_confirmed prompt exposes one consistent action list in the turn workspace')
+assert.deepEqual(confirmedWorkspace.capabilities.allowedActions, confirmedTask.allowedActions, 'prompt projection does not mutate the authoritative turn workspace')
+assert.equal(promptPayload(confirmedPrompts[0]!).task.availability.terminalCode, 'availability_confirmed', 'confirmed prompt still exposes the availability terminal reason')
+await confirmedCheckout.close()
+
+const noCheckoutPrompt: string[] = []
+const noCheckoutTask = { ...confirmedTask, taskId: 'task-dsh-confirmed-no-checkout', allowedActions: ['search.run' as const] }
+const noCheckoutPlanner = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run(prompt) {
+      noCheckoutPrompt.push(prompt)
+      return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'checkout_not_authorized', factRefs: [] } } }), 'call-confirmed-no-checkout') }
+    },
+    async close() {},
+  },
+})
+await noCheckoutPlanner.plannerFactory(noCheckoutTask).next({ task: noCheckoutTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: noCheckoutTask.taskId, turnId: 'dsh-confirmed-no-checkout', workspace: { ...confirmedWorkspace, capabilities: { surface: 'tenant', allowedActions: [...noCheckoutTask.allowedActions] } }, request: { text: '继续预订' } } })
+assert.deepEqual(promptPayload(noCheckoutPrompt[0]!).task.allowedActions, [], 'confirmed prompt never broadens a durable allowlist that lacks checkout.prepare')
+assert.deepEqual(promptPayload(noCheckoutPrompt[0]!).turn.workspace.capabilities.allowedActions, [], 'confirmed prompt does not leak a broader workspace capability list')
+await noCheckoutPlanner.close()
+
+const confirmedProseOnly = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run(prompt) {
+      confirmedPrompts.push(prompt)
+      return { finalResponse: JSON.stringify({ kind: 'operation', action: { ...checkoutPrepare, contextRef: confirmedTask.contextRef } }), events: [] }
+    },
+    async close() {},
+  },
+})
+const confirmedProseOnlyDecision = await confirmedProseOnly.plannerFactory(confirmedTask).next({ task: confirmedTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: confirmedTask.taskId, turnId: 'dsh-confirmed-prose-only', workspace: confirmedWorkspace, request: { text: '继续预订' } } })
+assert.equal(confirmedProseOnlyDecision[0]?.kind === 'error' ? confirmedProseOnlyDecision[0].error.code : '', 'PLANNER_TYPED_DECISION_REQUIRED', 'availability_confirmed does not make prose-only checkout JSON executable')
+assert.deepEqual(promptPayload(confirmedPrompts.at(-3)!).task.allowedActions, ['checkout.prepare'], 'prose-only correction starts from the narrowed confirmed prompt')
+await confirmedProseOnly.close()
+
+for (const [label, decision, expected] of [
+  ['terminal', { kind: 'terminal', terminal: { status: 'completed', summary: 'availability_confirmed', factRefs: [] } }, { kind: 'terminal', terminal: { status: 'completed', summary: 'availability_confirmed', factRefs: [] } }],
+  ['error', { kind: 'error', error: { code: 'PLANNER_FAILED', message: 'Planner stopped after confirmation.', retryable: false } }, { kind: 'error', error: { code: 'PLANNER_FAILED', message: 'Planner stopped after confirmation.', retryable: false } }],
+] as const) {
+  const finalityPlanner = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run(prompt) {
+        confirmedPrompts.push(prompt)
+        return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ decision }), `call-confirmed-${label}`) }
+      },
+      async close() {},
+    },
+  })
+  assert.deepEqual(await finalityPlanner.plannerFactory(confirmedTask).next({ task: confirmedTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: confirmedTask.taskId, turnId: `dsh-confirmed-${label}`, workspace: confirmedWorkspace, request: { text: '只检查可订状态' } } }), [expected], `availability_confirmed does not degrade typed ${label} finality`)
+  assert.deepEqual(promptPayload(confirmedPrompts.at(-1)!).task.allowedActions, ['checkout.prepare'], `typed ${label} run still receives the narrowed confirmed prompt`)
+  await finalityPlanner.close()
+}
 
 const terminalTask: BookingCopilotTaskState = {
   schemaVersion: 'booking.surface', taskId: 'task-dsh-terminal', contextRef: 'ctx-dsh-terminal', surface: 'tenant', revision: 0,

@@ -459,8 +459,11 @@ function assertSafeRef(value: string): void { if (!/^[A-Za-z0-9][A-Za-z0-9:._-]*
 function safeIdentity(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]*$/.test(value) }
 function sameActions(a: readonly string[], b: readonly string[]): boolean { return a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]) }
 function availabilityPolicyTerminal(state: AvailabilityPolicyState): AvailabilityExhaustion | undefined { return availabilityPolicyResult(state) }
+function availabilityTerminalEndsTask(terminal: AvailabilityExhaustion | undefined): boolean {
+  return Boolean(terminal && terminal.code !== 'availability_confirmed')
+}
 function taskHasTerminalBudget(state: Pick<BookingCopilotTaskState, 'operationCount' | 'availability'>): boolean {
-  return state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS || Boolean(state.availability.terminal)
+  return state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS || availabilityTerminalEndsTask(state.availability.terminal)
 }
 function assertRequestKey(requestKey: string): asserts requestKey is BookingRequestKey {
   if (!isSafeBookingRequestKey(requestKey)) throw new Error('unsafe_request_key')
@@ -482,20 +485,66 @@ function assertPrincipal(principal: BookingIngressPrincipal): void {
   if (!principal || typeof principal.subject !== 'string' || !principal.subject || principal.subject.length > 256 || typeof principal.scope !== 'string' || !principal.scope || principal.scope.length > 256) throw new Error('trusted_principal_required')
 }
 
-function assertAvailabilityLiveness(state: BookingCopilotTaskState, decisions: readonly BookingPlannerDecision[]): void {
-  if (!state.availability.recoveryStarted || state.awaitingApproval) return
-  const operations = decisions.filter((decision): decision is Extract<BookingPlannerDecision, { kind: 'operation' }> => decision.kind === 'operation')
-  if (operations.length !== 1 || !state.workspaceSnapshot) throw new Error('availability_operation_required')
-  const action = operations[0].action
+function actionAllowedAfterAvailabilityConfirmed(state: BookingCopilotTaskState, action: BookingReadAction, now?: string): boolean {
+  const confirmed = state.lastReceipt
+  return state.availability.terminal?.code === 'availability_confirmed'
+    && confirmed?.status === 'applied'
+    && confirmed.observation.kind === 'offer.availability'
+    && confirmed.observation.available === true
+    && confirmed.observation.currentOfferVersionRef === confirmed.observation.checkedOfferVersionRef
+    && action.kind === 'checkout.prepare'
+    && action.input.offerRef === confirmed.observation.offerRef
+    && action.input.offerVersionRef === confirmed.observation.checkedOfferVersionRef
+    && action.input.verifiedOfferRef === confirmed.observation.verifiedOfferRef
+    && Boolean(state.workspaceSnapshot && actionHitsCurrentOfferVersion(state.workspaceSnapshot, action, now))
+}
+
+function assertAvailabilityActionCompatible(state: BookingCopilotTaskState, action: BookingReadAction, now?: string): void {
+  if (!state.availability.recoveryStarted) return
+  if (!state.workspaceSnapshot) throw new Error('availability_operation_required')
+  if (state.availability.terminal?.code === 'availability_confirmed') {
+    if (!actionAllowedAfterAvailabilityConfirmed(state, action, now)) throw new Error('availability_operation_incompatible')
+    return
+  }
+  if (state.availability.terminal) throw new Error('availability_operation_incompatible')
   const activeHotelRef = state.availability.hotelRefs[state.availability.activeHotelOrdinal]
   if (!activeHotelRef) throw new Error('availability_active_hotel_missing')
   if (state.availability.availabilityPhase === 'need_offers') {
     if (action.kind !== 'offers.query' || action.input.hotelRefs.length !== 1 || action.input.hotelRefs[0] !== activeHotelRef) throw new Error('availability_operation_incompatible')
-  } else if (state.availability.availabilityPhase === 'need_check') {
-    if (action.kind !== 'offer.check' || action.input.offerRef === undefined || action.input.offerVersionRef === undefined || !state.availability.hotels[activeHotelRef]?.currentOfferRefs.includes(action.input.offerRef) || !canIssueOfferCheck(state.availability, state.workspaceSnapshot, action.input.offerRef, action.input.offerVersionRef).ok) throw new Error('availability_operation_incompatible')
-  } else {
-    throw new Error('availability_operation_incompatible')
+    return
   }
+  if (state.availability.availabilityPhase === 'need_check') {
+    if (action.kind !== 'offer.check' || !state.availability.hotels[activeHotelRef]?.currentOfferRefs.includes(action.input.offerRef) || !canIssueOfferCheck(state.availability, state.workspaceSnapshot, action.input.offerRef, action.input.offerVersionRef).ok) throw new Error('availability_operation_incompatible')
+    return
+  }
+  throw new Error('availability_operation_incompatible')
+}
+
+function checkoutReceiptPreparedHandoff(receipt: ActionReceipt): boolean {
+  return receipt.status === 'applied'
+    && receipt.observation.kind === 'checkout.handoff'
+    && receipt.resultContract.outcome === 'complete'
+    && receipt.resultContract.hardCriteriaMet
+    && receipt.resultContract.gapCodes.length === 0
+    && receipt.resultContract.blockers.length === 0
+}
+
+function assertAvailabilityLiveness(state: BookingCopilotTaskState, decisions: readonly BookingPlannerDecision[], now?: string): void {
+  if (!state.availability.recoveryStarted) return
+  const operations = decisions.filter((decision): decision is Extract<BookingPlannerDecision, { kind: 'operation' }> => decision.kind === 'operation')
+  if (state.availability.terminal?.code === 'availability_confirmed') {
+    if (!state.workspaceSnapshot) throw new Error('availability_operation_required')
+    if (operations.length === 0) {
+      const last = decisions.at(-1)
+      if (!last || !['terminal', 'error'].includes(last.kind) || decisions.some((decision) => decision.kind !== 'explanation' && decision.kind !== 'terminal' && decision.kind !== 'error')) throw new Error('availability_operation_required')
+      return
+    }
+    if (operations.length !== 1 || decisions.length !== 1) throw new Error('availability_operation_required')
+    assertAvailabilityActionCompatible(state, operations[0].action, now)
+    return
+  }
+  if (operations.length !== 1) throw new Error('availability_operation_required')
+  assertAvailabilityActionCompatible(state, operations[0].action, now)
 }
 
 function checkpointDigest(action: Omit<BookingActionCheckpoint, 'actionDigest'>): string {
@@ -831,6 +880,7 @@ export class BookingCopilotTaskRuntime {
         if (existing.surface !== surface) throw new Error('task_conflict:surface_mismatch')
         if (existing.revision !== revision && existing.phase !== 'waiting_receipt' && !existing.replayUpgradeRequired) throw new Error('task_conflict:revision_mismatch')
         if (!sameActions(existing.allowedActions, allowedActions)) throw new Error('task_conflict:capability_mismatch')
+        if (existing.availability.terminal?.code === 'availability_confirmed' && (existing.revision !== revision || existing.workspaceSemanticDigest !== workspaceSemanticDigest)) throw new Error('workspace_mismatch')
         if (existing.phase === 'terminal' || existing.phase === 'error') throw new Error('task_terminal')
         if (turnId && existing.lastTurnId === turnId) {
           this.assertTurnBinding(taskId, userTurn)
@@ -904,7 +954,7 @@ export class BookingCopilotTaskRuntime {
         rememberReplayWorkspaceDigest(replayWorkspaceDigests, started.workspaceDigest, started.workspace, startedWorkspace)
         const startedAvailability = normalizeAvailabilityPolicyForReplay(started.availability, startedWorkspace, undefined, undefined, replayWorkspaceDigests)
         if (!started.workspaceDigest || !started.workspaceSemanticDigest || !started.workspace || !started.availability || !started.availabilityDigest || !validateAvailabilityPolicy(startedAvailability) || !replayDigestMatches(started.availabilityDigest, started.availability, startedAvailability) || bookingDigest(initialAvailability) !== bookingDigest(startedAvailability) || !replayWorkspaceDigestMatches(started.workspaceDigest, started.workspace, startedWorkspace) || !replayWorkspaceSemanticDigestMatches(started.workspaceSemanticDigest, started.workspace, startedWorkspace)) throw new Error(`ledger_corrupt:${taskId}:start_workspace`)
-        state = { schemaVersion: 'booking.surface', taskId, contextRef: started.contextRef, surface: started.surface, revision: started.revision, allowedActions: [...started.allowedActions], userTurnCount: 0, operationCount: 0, phase: startedAvailability.terminal ? 'terminal' : 'planning', lastSequence: 0, workspaceDigest: bookingWorkspaceDigest(startedWorkspace), workspaceSemanticDigest: bookingWorkspaceSemanticDigest(startedWorkspace), workspaceSnapshot: startedWorkspace, availability: startedAvailability }
+        state = { schemaVersion: 'booking.surface', taskId, contextRef: started.contextRef, surface: started.surface, revision: started.revision, allowedActions: [...started.allowedActions], userTurnCount: 0, operationCount: 0, phase: availabilityTerminalEndsTask(startedAvailability.terminal) ? 'terminal' : 'planning', lastSequence: 0, workspaceDigest: bookingWorkspaceDigest(startedWorkspace), workspaceSemanticDigest: bookingWorkspaceSemanticDigest(startedWorkspace), workspaceSnapshot: startedWorkspace, availability: startedAvailability }
       } else {
         if (!state) throw new Error(`ledger_corrupt:${taskId}:event_before_start`)
         if (payload.contextRef !== state.contextRef) throw new Error(`ledger_corrupt:${taskId}:context_drift`)
@@ -928,6 +978,7 @@ export class BookingCopilotTaskRuntime {
           try { turnWorkspace = normalizeWorkspaceForReplay(t.workspace) } catch { throw new Error(`ledger_corrupt:${taskId}:turn_workspace`) }
           try { assertWorkspaceLoadedOfferRefsUnique(turnWorkspace) } catch { throw new Error(`ledger_corrupt:${taskId}:turn_workspace`) }
           if (!t.workspaceDigest || !t.workspaceSemanticDigest || !t.workspace || !replayWorkspaceDigestMatches(t.workspaceDigest, t.workspace, turnWorkspace) || !replayWorkspaceSemanticDigestMatches(t.workspaceSemanticDigest, t.workspace, turnWorkspace)) throw new Error(`ledger_corrupt:${taskId}:turn_workspace`)
+          if (state.availability.terminal?.code === 'availability_confirmed' && (state.revision !== turnWorkspace.revision || state.workspaceSemanticDigest !== bookingWorkspaceSemanticDigest(turnWorkspace))) throw new Error(`ledger_corrupt:${taskId}:confirmed_workspace_drift`)
           rememberReplayWorkspaceDigest(replayWorkspaceDigests, t.workspaceDigest, t.workspace, turnWorkspace)
           state.userTurnCount++
           state.lastTurnId = t.turnId
@@ -1017,7 +1068,7 @@ export class BookingCopilotTaskRuntime {
           let expectedAvailability: AvailabilityPolicyState
           try { expectedAvailability = reduceAvailabilityReceipt(state.availability, receiptWorkspace, receipt, state.pendingAction) } catch { throw new Error(`ledger_corrupt:${taskId}:receipt_transition`) }
           if (bookingDigest(expectedAvailability) !== bookingDigest(receiptAvailability)) throw new Error(`ledger_corrupt:${taskId}:receipt_transition`)
-          state.lastReceipt = receipt; state.revision = receipt.revision; state.workspaceDigest = bookingWorkspaceDigest(receiptWorkspace); state.workspaceSemanticDigest = bookingWorkspaceSemanticDigest(receiptWorkspace); state.workspaceSnapshot = receiptWorkspace; state.availability = receiptAvailability; delete state.pendingAction; state.phase = receiptAvailability.terminal || state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS ? 'terminal' : 'planning'
+          state.lastReceipt = receipt; state.revision = receipt.revision; state.workspaceDigest = bookingWorkspaceDigest(receiptWorkspace); state.workspaceSemanticDigest = bookingWorkspaceSemanticDigest(receiptWorkspace); state.workspaceSnapshot = receiptWorkspace; state.availability = receiptAvailability; delete state.pendingAction; state.phase = availabilityTerminalEndsTask(receiptAvailability.terminal) || state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS ? 'terminal' : 'planning'
           clearPendingBatch(consumed)
           delete state.awaitingApproval
         } else if (row.kind === APPROVAL_CONSUMED) {
@@ -1157,7 +1208,7 @@ export class BookingCopilotTaskRuntime {
     if (current.phase === 'terminal' || current.phase === 'error') throw new Error('task_terminal')
     assertReplayUpgradeReanchored(current)
     assertDecisionBatchFinality(decisions)
-    assertAvailabilityLiveness(current, decisions)
+    assertAvailabilityLiveness(current, decisions, this.now())
     if (current.availability.recoveryStarted && !current.availability.terminal && decisions.some((decision) => decision.kind === 'terminal' || decision.kind === 'error')) throw new Error('availability_terminal_policy_owned')
     for (const decision of decisions) {
       if (decision.kind === 'operation') {
@@ -1169,7 +1220,7 @@ export class BookingCopilotTaskRuntime {
       const events: BookingSurfaceEvent[] = []
       const before = this.requireTask(taskId)
       assertReplayUpgradeReanchored(before)
-      assertAvailabilityLiveness(before, decisions)
+      assertAvailabilityLiveness(before, decisions, this.now())
       if (before.availability.recoveryStarted && !before.availability.terminal && decisions.some((decision) => decision.kind === 'terminal' || decision.kind === 'error')) throw new Error('availability_terminal_policy_owned')
       for (const decision of decisions) {
         if (decision.kind !== 'question') continue
@@ -1216,6 +1267,7 @@ export class BookingCopilotTaskRuntime {
       if (state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS) throw new Error('operation_limit_reached')
       if (candidate.relaxationApprovalRef) throw new Error('approval_ref_planner_owned_forbidden')
       if (!state.workspaceSnapshot) throw new Error(`ledger_corrupt:${taskId}:workspace_missing`)
+      assertAvailabilityActionCompatible(state, candidate, this.now())
       if (!actionHitsCurrentOfferVersion(state.workspaceSnapshot, candidate, this.now())) throw new Error('offer_version_not_loaded')
       let action = candidate
       const availability = reduceAvailabilityAction(state.availability, state.workspaceSnapshot, candidate)
@@ -1284,12 +1336,19 @@ export class BookingCopilotTaskRuntime {
       const availability = reduceAvailabilityReceipt(state.availability, turn.workspace, turn.receipt, pending)
       const availabilityTerminal = availabilityPolicyTerminal(availability)
       this.append(RECEIPT, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: state.contextRef, receipt: turn.receipt, receiptDigest, operationCount: state.operationCount, workspaceDigest: receiptWorkspace, workspaceSemanticDigest: receiptWorkspaceSemantic, workspace: turn.workspace, availability, availabilityDigest: bookingDigest(availability), ...(availabilityTerminal ? { availabilityTerminal } : {}) }, `booking-copilot:receipt:${turn.taskId}:${turn.receipt.actionId}`)
-      if (availabilityTerminal || state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS) {
+      if (availabilityTerminalEndsTask(availabilityTerminal) || state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS) {
         const terminalState = this.requireTask(turn.taskId)
         const terminalEvent = this.terminalEvent(terminalState)
         this.appendTerminalEvent(turn.taskId, terminalEvent)
         this.append(DECISION_BATCH, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: state.contextRef, requestKey: `receipt:${turn.receipt.actionId}:${receiptDigest}`, events: [terminalEvent] }, `booking-copilot:decision-batch:${turn.taskId}:receipt:${turn.receipt.actionId}:${receiptDigest}`)
         return terminalState
+      }
+      if (pending.kind === 'checkout.prepare') {
+        const terminalState = this.requireTask(turn.taskId)
+        const terminalEvent = this.checkoutHandoffTerminalEvent(terminalState, checkoutReceiptPreparedHandoff(turn.receipt))
+        this.appendTerminalEvent(turn.taskId, terminalEvent)
+        this.append(DECISION_BATCH, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: state.contextRef, requestKey: `receipt:${turn.receipt.actionId}:${receiptDigest}`, events: [terminalEvent] }, `booking-copilot:decision-batch:${turn.taskId}:receipt:${turn.receipt.actionId}:${receiptDigest}`)
+        return this.requireTask(turn.taskId)
       }
       const blocker = turn.receipt.resultContract.blockers[0]
       if (blocker) {
@@ -1335,8 +1394,15 @@ export class BookingCopilotTaskRuntime {
   }
   private terminalEvent(state: BookingCopilotTaskState): Extract<BookingSurfaceEvent, { kind: 'terminal' }> {
     if (!taskHasTerminalBudget(state)) throw new Error('task_not_terminal')
-    const terminalCode = state.availability.terminal?.code ?? 'operation_limit_reached'
-    const event = { schemaVersion: 'booking.surface' as const, eventId: `terminal-${state.taskId}-${state.operationCount}`, taskId: state.taskId, contextRef: state.contextRef, sequence: state.lastSequence + 1, emittedAt: this.now(), kind: 'terminal' as const, terminal: { status: state.availability.terminal?.code === 'availability_confirmed' ? 'completed' as const : 'stopped' as const, summary: terminalCode, factRefs: [] } }
+    const terminalCode = state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS ? 'operation_limit_reached' : state.availability.terminal?.code ?? 'operation_limit_reached'
+    const event = { schemaVersion: 'booking.surface' as const, eventId: `terminal-${state.taskId}-${state.operationCount}`, taskId: state.taskId, contextRef: state.contextRef, sequence: state.lastSequence + 1, emittedAt: this.now(), kind: 'terminal' as const, terminal: { status: 'stopped' as const, summary: terminalCode, factRefs: [] } }
+    const checked = validateBookingSurfaceEvent(event)
+    if (!checked.ok) throw new Error(`invalid_terminal_event:${errorText(checked)}`)
+    return event
+  }
+
+  private checkoutHandoffTerminalEvent(state: BookingCopilotTaskState, prepared: boolean): Extract<BookingSurfaceEvent, { kind: 'terminal' }> {
+    const event = { schemaVersion: 'booking.surface' as const, eventId: `terminal-${state.taskId}-${state.operationCount}`, taskId: state.taskId, contextRef: state.contextRef, sequence: state.lastSequence + 1, emittedAt: this.now(), kind: 'terminal' as const, terminal: { status: prepared ? 'completed' as const : 'stopped' as const, summary: prepared ? 'checkout_handoff_prepared' : 'checkout_handoff_not_prepared', factRefs: [] } }
     const checked = validateBookingSurfaceEvent(event)
     if (!checked.ok) throw new Error(`invalid_terminal_event:${errorText(checked)}`)
     return event

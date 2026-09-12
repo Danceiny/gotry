@@ -292,8 +292,19 @@ function resolvePlannerNow(clock?: DshPlannerClock): Date {
   return new Date(value.getTime())
 }
 
+function plannerVisibleAllowedActions(task: BookingCopilotTaskState): BookingReadAction['kind'][] {
+  return task.availability.terminal?.code === 'availability_confirmed'
+    ? task.allowedActions.filter((kind) => kind === 'checkout.prepare')
+    : [...task.allowedActions]
+}
+
 function plannerPrompt(turn: BookingCopilotTurn, task: BookingCopilotTaskState, clock?: DshPlannerClock): string {
   const availability = task.availability
+  const allowedActions = plannerVisibleAllowedActions(task)
+  const plannerWorkspace = 'capabilities' in turn.workspace
+    ? { ...turn.workspace, capabilities: { ...turn.workspace.capabilities, allowedActions: [...allowedActions] } }
+    : turn.workspace
+  const plannerTurn = { ...turn, workspace: plannerWorkspace }
   const availabilityProjection = {
     phase: availability.availabilityPhase,
     activeHotelRef: availability.hotelRefs[availability.activeHotelOrdinal],
@@ -306,8 +317,8 @@ function plannerPrompt(turn: BookingCopilotTurn, task: BookingCopilotTaskState, 
   }
   const payload = {
     schemaVersion: 'booking.surface', profile: 'embedded-booking',
-    task: { taskId: task.taskId, contextRef: task.contextRef, surface: task.surface, revision: task.revision, phase: task.phase, allowedActions: task.allowedActions, availability: availabilityProjection, ...(task.lastReceipt ? { lastReceipt: task.lastReceipt } : {}) },
-    turn,
+    task: { taskId: task.taskId, contextRef: task.contextRef, surface: task.surface, revision: task.revision, phase: task.phase, allowedActions, availability: availabilityProjection, ...(task.lastReceipt ? { lastReceipt: task.lastReceipt } : {}) },
+    turn: plannerTurn,
   }
   const anchor = buildTimeAnchor(resolvePlannerNow(clock))
   return [
