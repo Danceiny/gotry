@@ -4,7 +4,7 @@
  * The default root is retained for humans, while tests and proofs must pass
  * --evidence-root explicitly so no shared founder state is read or written.
  */
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -592,5 +592,14 @@ export function main(args = process.argv.slice(2)): number {
   }
 }
 
-const invokedPath = process.argv[1] === undefined ? null : resolve(process.argv[1])
-if (invokedPath !== null && invokedPath === fileURLToPath(import.meta.url)) process.exitCode = main()
+// Entry detection (issue #420): CLI 入口路径必须用 realpath 比较——符号链接、
+// 父目录链接、macOS /var→/private/var 等路径别名会让 resolve(argv[1]) 与
+// fileURLToPath(import.meta.url) 产生不同字符串，但 main 必须照跑。
+// 模块被 import 时不触发 main（保留零 CLI 副作用契约）。
+const invokedPath = process.argv[1] === undefined
+  ? null
+  : realpathSync(resolve(process.argv[1]))
+const scriptPath = realpathSync(fileURLToPath(import.meta.url))
+if (process.argv[1] !== undefined && invokedPath === scriptPath) {
+  process.exitCode = main()
+}
