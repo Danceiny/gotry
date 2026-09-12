@@ -570,9 +570,10 @@ function evidenceFields(f: NormalizedFact): string {
   return `<dl class="fields">${rows.join('')}</dl>`
 }
 
-function canonicalLine(f: NormalizedFact): string {
+function canonicalLine(f: NormalizedFact, tripStart: string): string {
   if (f.kind === 'hotel') return renderHotelFact(f.fact)
-  if (f.kind === 'policy') return renderPolicyFact(f.fact)
+  // 政策事实复用既有权威:缺 review_by 时由 renderPolicyFact 按 tripStart 派生远期复核日
+  if (f.kind === 'policy') return renderPolicyFact(f.fact, tripStart)
   return renderFlightFact(f.fact)
 }
 
@@ -584,8 +585,8 @@ function factTitle(f: NormalizedFact): string {
   return `${f.kind === 'train' ? '车次' : '航班'}事实:${route}${no} ${f.fact.date}`
 }
 
-function renderFact(f: NormalizedFact, id: string): string {
-  let canonical = canonicalLine(f)
+function renderFact(f: NormalizedFact, id: string, tripStart: string): string {
+  let canonical = canonicalLine(f, tripStart)
   if (f.kind === 'policy' && f.runtime.is_plan === true) {
     canonical += '\n注:该政策条目被标注为「计划」意图,不是查询结论,不得当作现行政策执行。'
   }
@@ -617,18 +618,26 @@ function renderPlannedStay(stay: NormalizedStay, id: string, related: Normalized
     + `</div></details>`
 }
 
+/** 计划住宿只与「同目的地且入住/退房日期完全一致」的酒店事实关联;其它档期的证据留在独立区 */
+function hotelFactsForStay(hotelFacts: NormalizedHotel[], stay: NormalizedStay): NormalizedHotel[] {
+  return hotelFacts.filter(f =>
+    f.fact.destination === stay.place
+    && f.fact.check_in === stay.check_in
+    && f.fact.check_out === stay.check_out)
+}
+
 /** 独立证据区:目的地级酒店事实与任何计划住宿分卡、分标题陈述 */
-function renderHotelEvidenceSection(hotelFacts: NormalizedHotel[]): string {
+function renderHotelEvidenceSection(hotelFacts: NormalizedHotel[], tripStart: string): string {
   if (hotelFacts.length === 0) return '<p class="muted missing">本次输入没有酒店事实。</p>'
   return `<h3 id="hotel-evidence">独立记录:目的地级酒店事实</h3>`
     + `<p class="muted">以下事实由上游按「目的地 + 档期」检索落账,与上方任何一条计划住宿都不是同一件事;它们不指明具体酒店,也不构成「某家酒店有房/可订/报价」的声明。</p>`
-    + hotelFacts.map(f => renderFact(f, `hotelfact-${factIdSlug(f.fact.fact_id)}`)).join('')
+    + hotelFacts.map(f => renderFact(f, `hotelfact-${factIdSlug(f.fact.fact_id)}`, tripStart)).join('')
 }
 
-function renderSegment(seg: NormalizedSegment, id: string, related: NormalizedFact[]): string {
+function renderSegment(seg: NormalizedSegment, id: string, related: NormalizedFact[], tripStart: string): string {
   const evidence = related.length === 0
     ? `<p class="muted missing">该段没有匹配的已注册事实:未核验,不得视为可下单方案。</p>`
-    : `<h4>该段可回溯的事实(独立于计划段)</h4>${related.map(f => renderFact(f, `${id}-fact-${factIdSlug(f.fact.fact_id)}`)).join('')}`
+    : `<h4>该段可回溯的事实(独立于计划段)</h4>${related.map(f => renderFact(f, `${id}-fact-${factIdSlug(f.fact.fact_id)}`, tripStart)).join('')}`
   return `<details id="${escapeHtml(id)}"><summary>${escapeHtml(MODE_LABEL[seg.mode])} ${escapeHtml(seg.from)} → ${escapeHtml(seg.to)} ${escapeHtml(seg.date)}</summary><div class="body">`
     + `<div class="row"><span class="badge">计划(用户排期意图)</span><span class="badge warn">非可订声明</span></div>`
     + `<dl class="fields">${fieldRow('出发 from', seg.from)}${fieldRow('到达 to', seg.to)}${fieldRow('出发日期 date', seg.date)}`
@@ -661,14 +670,14 @@ function render(input: RenderInput): string {
   const usedFactIds = new Set<string>()
 
   const stayBlocks = stays.map((stay, i) => {
-    const related = hotelFacts.filter(f => f.fact.destination === stay.place)
+    const related = hotelFactsForStay(hotelFacts, stay)
     for (const f of related) usedFactIds.add(f.fact.fact_id)
     return renderPlannedStay(stay, `stay-${i + 1}`, related)
   })
   const segBlocks = segs.map((seg, i) => {
     const related = routeFactsFor(facts, seg)
     for (const f of related) usedFactIds.add(f.fact.fact_id)
-    return renderSegment(seg, `seg-${i + 1}`, related)
+    return renderSegment(seg, `seg-${i + 1}`, related, itinerary.trip_start)
   })
 
   const stayDateItems = stays.filter((s, i) => stays.findIndex(x => x.check_in === s.check_in) === i)
@@ -690,7 +699,7 @@ function render(input: RenderInput): string {
   const leftoverBlock = leftovers.length === 0
     ? `<p class="muted">没有未被计划条目匹配的额外事实。</p>`
     : `<h3>未被计划条目匹配的事实</h3><p class="muted">这些事实来自注册表,但计划里没有对应的显式段/住宿地。列出不代表计划采用,也不升级为可下单。</p>`
-      + leftovers.map(f => renderFact(f, `unmatched-${factIdSlug(f.fact.fact_id)}`)).join('')
+      + leftovers.map(f => renderFact(f, `unmatched-${factIdSlug(f.fact.fact_id)}`, itinerary.trip_start)).join('')
 
   const hotelNote = hotelFacts.length > 0
     ? `<p class="muted">酒店的授权结论只落在下方「独立记录」区;来源只记录在架家数,价格上游打码。计划住宿卡片不承载任何酒店可订结论。</p>`
@@ -737,15 +746,15 @@ ${segBlocks.join('') || '<p class="muted missing">没有显式交通段。</p>'}
 <section id="stays"><h2>住宿</h2>
 ${hotelNote}
 ${stayBlocks.join('') || '<p class="muted missing">没有显式住宿段。</p>'}
-${renderHotelEvidenceSection(hotelFacts)}
+${renderHotelEvidenceSection(hotelFacts, itinerary.trip_start)}
 </section>
 <section id="facts"><h2>事实与证据</h2>
 <p class="muted">共 ${facts.length} 条事实(航班/车次 ${flightFacts.length},酒店 ${hotelFacts.length},政策 ${policyFacts.length})。逐条保留来源、查询 id、取数时点与数据快照日;缺失项标注缺失。</p>
-${policyFacts.map(f => renderFact(f, `policy-${factIdSlug(f.fact.fact_id)}`)).join('')}
+${policyFacts.map(f => renderFact(f, `policy-${factIdSlug(f.fact.fact_id)}`, itinerary.trip_start)).join('')}
 ${policyNote}
 ${leftoverBlock}
 <h3>全部航班/车次事实(含负事实与冲突)</h3>
-${flightFacts.map(f => renderFact(f, `flight-${factIdSlug(f.fact.fact_id)}`)).join('') || '<p class="muted missing">本次输入没有航班/车次事实。</p>'}
+${flightFacts.map(f => renderFact(f, `flight-${factIdSlug(f.fact.fact_id)}`, itinerary.trip_start)).join('') || '<p class="muted missing">本次输入没有航班/车次事实。</p>'}
 </section>
 </main>
 </div>

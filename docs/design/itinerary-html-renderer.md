@@ -26,7 +26,7 @@ Input carries a title, an explicit itinerary (`trip_start` / `trip_end` / `stays
 
 Consequences that the code enforces structurally, not by prose alone:
 
-- A planned stay card shows the plan fields plus a pointer to the independently recorded hotel facts; hotel facts are rendered in a separate "destination-level hotel facts" block. A destination + date-range inventory hit therefore can never be read as "this chosen hotel has a room".
+- A planned stay card shows the plan fields plus a pointer to the independently recorded hotel facts; hotel facts are rendered in a separate "destination-level hotel facts" block. A stay is linked only to facts whose destination and both dates match exactly — evidence for another window stays independent. A destination + date-range inventory hit therefore can never be read as "this chosen hotel has a room".
 - No overall verified badge exists. A weak tier (`route_exists`, `historical_schedule`, `benchmark_price`) or an `unverified` / `conflict` / `unavailable_exact_date` state is labelled as such and never upgraded.
 - Missing price, missing time and missing evidence stay missing; nothing is invented and no cross-currency total is produced.
 

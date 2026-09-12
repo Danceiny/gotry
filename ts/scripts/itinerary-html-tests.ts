@@ -9,6 +9,7 @@
 
 import {
   BOOKABLE_FACT_SCHEMA,
+  defaultReviewBy,
   renderFlightFact,
   renderHotelFact,
   renderPolicyFact,
@@ -454,6 +455,58 @@ function completeInput(overrides: Record<string, unknown> = {}): Record<string, 
   assert(!/dangerouslySetInnerHTML|innerHTML|document\.write|eval\(/.test(source), '§6d 无 DOM 注入/求值原语')
   assert(!/fetch\(|XMLHttpRequest|WebSocket/.test(source), '§6e 无网络调用')
   assert(/from '\.\/bookable-facts\.ts'/.test(source), '§6f 复用既有事实类型与 canonical 渲染原语')
+}
+
+// ---------------------------------------------------------------------------
+// §7 根审阅反例 1:同目的地但档期不同的酒店事实不得挂到计划住宿上
+// ---------------------------------------------------------------------------
+
+{
+  const otherWindow: HotelFact = { ...HOTEL_HIT, fact_id: 'aaaa1111bbbb2222', check_in: '2028-01-01', check_out: '2028-01-02' }
+  const noWindow: HotelFact = { ...HOTEL_HIT, fact_id: 'cccc3333dddd4444', check_in: undefined, check_out: undefined }
+  const html = assertRendered(
+    renderItineraryHtml({ ...completeInput(), facts: [otherWindow, noWindow] }),
+    '§7 同目的地异档期 / 缺档期酒店事实仍渲染成功',
+  )
+  const stayCard = html.slice(html.indexOf('id="stay-1"'), html.indexOf('id="stay-2"'))
+  assert(stayCard.includes('该计划住宿没有对应的酒店档期事实'),
+    '§7a 异档期事实不得宣称是该计划住宿的同档期证据')
+  assert(!stayCard.includes('aaaa1111bbbb2222') && !stayCard.includes('cccc3333dddd4444'),
+    '§7b 异档期/缺档期事实 id 不得出现在计划住宿卡内')
+  const evidence = html.slice(html.indexOf('id="hotel-evidence"'))
+  assert(evidence.includes('aaaa1111bbbb2222') && evidence.includes('cccc3333dddd4444'),
+    '§7c 异档期/缺档期事实仍留在独立证据区(不被丢弃也不被改写)')
+  assert(evidence.includes('2028-01-01') && evidence.includes('未提供'),
+    '§7d 异档期事实保留自己的 2028 档期,缺档期事实标注未提供')
+
+  // 完全一致的同档期事实仍必须挂接(counterexample 的定界)
+  const exact = assertRendered(renderItineraryHtml({ ...completeInput(), facts: [HOTEL_HIT] }), '§7e 同目的地同档期事实渲染成功')
+  const exactStay = exact.slice(exact.indexOf('id="stay-1"'), exact.indexOf('id="stay-2"'))
+  assert(exactStay.includes('计划住宿:普吉岛') && exactStay.includes('d1b2c3d4e5f60721') && !exactStay.includes('没有对应的酒店档期事实'),
+    '§7f 完全匹配(destination + check_in + check_out)的证据仍按指针挂接')
+}
+
+// ---------------------------------------------------------------------------
+// §8 根审阅反例 2:政策事实缺 review_by 时复用既有远期复核派生(trip_start)
+// ---------------------------------------------------------------------------
+
+{
+  const noReview: PolicyFact = { ...POLICY_PLAN, fact_id: 'eeee5555ffff6666', review_by: undefined } as PolicyFact
+  const html = assertRendered(
+    renderItineraryHtml({ ...completeInput(), facts: [noReview] }),
+    '§8 缺 review_by 的政策事实渲染成功',
+  )
+  const expectedReview = defaultReviewBy('2027-07-16')
+  assert(expectedReview === '2027-06-16', `§8a 既有权威 defaultReviewBy 派生出 ${expectedReview}`)
+  assert(html.includes(`到 ${expectedReview} 再核验一次`),
+    '§8b 缺 review_by 时按 itinerary.trip_start 复用 renderPolicyFact 的远期复核提示')
+  assert(html.includes(renderPolicyFact(noReview, '2027-07-16').replace(/</g, '&lt;').replace(/>/g, '&gt;')),
+    '§8c 政策 canonical 行与带 tripStart 的既有原语逐字一致')
+
+  // review_by 存在时不得被 trip_start 覆盖
+  const withReview = assertRendered(renderItineraryHtml({ ...completeInput(), facts: [POLICY_PLAN as BookableFact] }), '§8d 带 review_by 的政策事实渲染成功')
+  assert(withReview.includes(`到 ${POLICY_PLAN.review_by} 再核验一次`) && !withReview.includes('到 2027-06-16 再核验一次'),
+    '§8e 显式 review_by 优先,不被 trip_start 派生覆盖')
 }
 
 console.log(`\nITINERARY HTML TESTS: ${pass} pass, ${fail} fail`)
