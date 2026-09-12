@@ -1,149 +1,246 @@
 /**
- * Issue #82 (D-31): external event seam for w2a-shaped sensor inputs.
+ * Inert external-event adapter contract for issue #432, parent #82.
  *
- * Pure-function adapter that maps a sensor envelope (untrusted instruction source
- * per w2a model) to a normalized `ExternalEvent` record and refuses to write
- * any shared product state. Activation is default-off: the adapter never
- * triggers a network call, never touches `ts/gotry-state/`, and never reaches
- * the M4/M5/M6 admission gates (#20/#22/#136/#137/#142).
+ * Scope: project a serialized W2A `w2a/0.1` core envelope into bounded,
+ * typed metadata. This module is pure and deterministic: no IO, no Date.now,
+ * no network, no process spawning, no runtime registration, and no state writes.
  *
- * Contract (founder-confirmation required for runtime activation, not for
- * this contract layer):
- *   - Sensor envelope is treated as untrusted input; every payload field is
- *     validated structurally before any mapping runs.
- *   - Mapping is pure: deterministic, no I/O, no global state reads.
- *   - The only side effect is the returned `ExternalEvent` (caller's choice).
- *   - Payload sizes are bounded to keep the mapping O(1).
+ * Upstream reference: machinepulse-ai/world2agent
+ * 7e5fc4d441699993b8f1ef7d3b9776065b7a93e0
+ * `schema/0.1/schema.ts`, `schema/0.1/schema.json`, and
+ * `docs/signal-format.md`.
  */
 
-export interface SensorEnvelope {
-  sensor_id: string
-  schema_version: string
-  emitted_at: string
-  topic: string
-  payload: Record<string, unknown>
-  signature: string | null
+export const SUPPORTED_SCHEMA_VERSION = 'w2a/0.1' as const
+export type SupportedSchemaVersion = typeof SUPPORTED_SCHEMA_VERSION
+
+export const ABSOLUTE_MAX_BYTES = 64 * 1024
+
+export interface AllowedSourceTuple {
+  sensorId: string
+  package: string
+  sensorVersion: string
+  sourceType: string
 }
 
-export interface ExternalEvent {
-  kind: 'weather' | 'transit' | 'lodging' | 'currency' | 'trip-context' | 'unknown'
-  severity: 'info' | 'advisory' | 'blocking'
-  sourceTopics: readonly string[]
-  observedAt: string
-  trustLevel: 'untrusted-sensor'
-  raw: SensorEnvelope
+export interface IngestOptions {
+  enabled?: boolean
+  allowedSources?: readonly AllowedSourceTuple[]
+  maxBytes?: number
 }
 
-export interface ExternalEventEnvelopeError {
-  kind: 'malformed' | 'oversize' | 'stale' | 'unknown-schema' | 'missing-field'
+export interface InertMetadata {
+  trust: 'untrusted'
+  schemaVersion: SupportedSchemaVersion
+  signalId: string
+  emittedAt: number
+  occurredAt: number
+  sensorId: string
+  sourceType: string
+  package: string
+  sensorVersion: string
+  eventType: string
+}
+
+export type RejectionReason =
+  | 'disabled-by-default'
+  | 'invalid-options'
+  | 'empty-allowlist'
+  | 'input-not-a-string'
+  | 'input-too-large'
+  | 'malformed-json'
+  | 'unsupported-schema-version'
+  | 'missing-required-field'
+  | 'malformed-uuid'
+  | 'malformed-timestamp'
+  | 'malformed-event-type'
+  | 'malformed-summary'
+  | 'tuple-not-allowed'
+  | 'malformed-options-tuple'
+
+export interface IngestRejected {
+  ok: false
+  kind: 'rejected'
+  reason: RejectionReason
   detail: string
+  inputBytes: number
 }
 
-const MAX_TOPIC_LEN = 128
-const MAX_PAYLOAD_KEYS = 64
-const MAX_PAYLOAD_DEPTH = 4
-const MAX_FIELD_LEN = 4096
-const STALE_MS = 5 * 60 * 1000
-const SUPPORTED_SCHEMAS = new Set(['w2a/1'])
-
-function err(kind: ExternalEventEnvelopeError['kind'], detail: string): ExternalEventEnvelopeError {
-  return { kind, detail }
+export interface IngestAccepted {
+  ok: true
+  kind: 'ingested'
+  metadata: InertMetadata
+  inputBytes: number
 }
 
-function isString(x: unknown): x is string {
-  return typeof x === 'string'
-}
+export type IngestResult = IngestAccepted | IngestRejected
 
-function boundedDepth(x: unknown, depth: number): boolean {
-  if (depth > MAX_PAYLOAD_DEPTH) return false
-  if (x === null || typeof x !== 'object') return true
-  if (Array.isArray(x)) return x.every((v) => boundedDepth(v, depth + 1))
-  const o = x as Record<string, unknown>
-  if (Object.keys(o).length > MAX_PAYLOAD_KEYS) return false
-  return Object.values(o).every((v) => boundedDepth(v, depth + 1))
-}
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const EVENT_TYPE_RE = /^[^.\s]+\.[^.\s]+\.[^.\s]+$/u
+const MAX_DATE_EPOCH_MS = 8.64e15
 
-function inferKind(topic: string): ExternalEvent['kind'] {
-  const t = topic.toLowerCase()
-  if (/\b(weather|rain|temp|typhoon|storm|forecast)\b/.test(t)) return 'weather'
-  if (/\b(train|flight|bus|ferry|metro|subway|transit)\b/.test(t)) return 'transit'
-  if (/\b(hotel|lodging|hostel|airbnb|booking)\b/.test(t)) return 'lodging'
-  if (/\b(currency|fx|exchange|rate)\b/.test(t)) return 'currency'
-  if (/\b(trip|itinerary|context|user)\b/.test(t)) return 'trip-context'
-  return 'unknown'
-}
+export function ingestExternalEvent(raw: unknown, options: IngestOptions = {}): IngestResult {
+  const cfg = validateOptions(options)
+  if ('rejected' in cfg) return reject(cfg.rejected.reason, cfg.rejected.detail)
 
-function inferSeverity(payload: Record<string, unknown>): ExternalEvent['severity'] {
-  for (const k of ['severity', 'level', 'priority']) {
-    const v = payload[k]
-    if (isString(v)) {
-      const x = v.toLowerCase()
-      if (x === 'blocking' || x === 'critical' || x === 'high') return 'blocking'
-      if (x === 'advisory' || x === 'warning' || x === 'medium') return 'advisory'
-    }
+  if (cfg.enabled !== true) {
+    return reject('disabled-by-default', 'options.enabled must be explicitly true')
   }
-  return 'info'
-}
+  if (cfg.allowedSources.length === 0) {
+    return reject('empty-allowlist', 'allowedSources must contain at least one exact tuple')
+  }
 
-export function adaptSensorEnvelope(env: unknown): ExternalEvent | ExternalEventEnvelopeError {
-  if (env === null || typeof env !== 'object' || Array.isArray(env)) {
-    return err('malformed', 'envelope must be a JSON object')
+  if (typeof raw !== 'string') {
+    return reject('input-not-a-string', 'raw must be a serialized JSON string')
   }
-  const e = env as Record<string, unknown>
-  if (!isString(e.sensor_id) || e.sensor_id.length === 0 || e.sensor_id.length > 128) {
-    return err('missing-field', 'sensor_id must be a non-empty string ≤128 chars')
+
+  const inputBytes = Buffer.byteLength(raw, 'utf8')
+  if (inputBytes > cfg.maxBytes) {
+    return reject('input-too-large', 'serialized envelope exceeds maxBytes', inputBytes)
   }
-  if (!isString(e.schema_version) || e.schema_version.length === 0) {
-    return err('missing-field', 'schema_version must be a non-empty string')
+
+  let envelope: unknown
+  try {
+    envelope = JSON.parse(raw)
+  } catch {
+    return reject('malformed-json', 'serialized envelope is not valid JSON', inputBytes)
   }
-  if (!SUPPORTED_SCHEMAS.has(e.schema_version)) {
-    return err('unknown-schema', `unsupported schema_version ${e.schema_version}; supported=${[...SUPPORTED_SCHEMAS].join(',')}`)
+
+  if (!isRecord(envelope)) {
+    return reject('missing-required-field', 'envelope must be a JSON object', inputBytes)
   }
-  if (!isString(e.emitted_at)) {
-    return err('missing-field', 'emitted_at must be an ISO-8601 string')
+
+  if (envelope.schema_version !== SUPPORTED_SCHEMA_VERSION) {
+    return reject('unsupported-schema-version', 'schema_version must be w2a/0.1', inputBytes)
   }
-  const ts = Date.parse(e.emitted_at)
-  if (Number.isNaN(ts)) {
-    return err('malformed', 'emitted_at is not a valid ISO-8601 timestamp')
+
+  if (typeof envelope.signal_id !== 'string' || !UUID_RE.test(envelope.signal_id)) {
+    return reject('malformed-uuid', 'signal_id must be a UUID-shaped string', inputBytes)
   }
-  if (Date.now() - ts > STALE_MS) {
-    return err('stale', `event ${STALE_MS / 1000}s older than now`)
+
+  if (!isValidEpochMs(envelope.emitted_at)) {
+    return reject('malformed-timestamp', 'emitted_at must be a non-negative integer epoch ms in Date range', inputBytes)
   }
-  if (!isString(e.topic) || e.topic.length === 0 || e.topic.length > MAX_TOPIC_LEN) {
-    return err('missing-field', `topic must be 1..${MAX_TOPIC_LEN} chars`)
+
+  if (!isRecord(envelope.source)) {
+    return reject('missing-required-field', 'source must be a JSON object', inputBytes)
   }
-  if (!('payload' in e) || typeof e.payload !== 'object' || e.payload === null || Array.isArray(e.payload)) {
-    return err('malformed', 'payload must be a JSON object')
+
+  const source = envelope.source
+  const sensorId = readNonEmptyString(source.sensor_id)
+  const packageName = readNonEmptyString(source.package)
+  const sensorVersion = readNonEmptyString(source.sensor_version)
+  const sourceType = readNonEmptyString(source.source_type)
+  const userIdentity = readNonEmptyString(source.user_identity)
+  if (sensorId === null || packageName === null || sensorVersion === null || sourceType === null || userIdentity === null) {
+    return reject(
+      'missing-required-field',
+      'source.{sensor_id,package,sensor_version,source_type,user_identity} must be non-empty strings',
+      inputBytes,
+    )
   }
-  if (!boundedDepth(e.payload, 0)) {
-    return err('oversize', `payload exceeds bounds (≤${MAX_PAYLOAD_KEYS} keys, depth ≤${MAX_PAYLOAD_DEPTH})`)
+
+  if (!isRecord(envelope.event)) {
+    return reject('missing-required-field', 'event must be a JSON object', inputBytes)
   }
-  for (const v of Object.values(e.payload as Record<string, unknown>)) {
-    if (isString(v) && v.length > MAX_FIELD_LEN) {
-      return err('oversize', `payload string field exceeds ${MAX_FIELD_LEN} chars`)
-    }
+
+  const event = envelope.event
+  const eventType = readNonEmptyString(event.type)
+  if (eventType === null || !EVENT_TYPE_RE.test(eventType)) {
+    return reject('malformed-event-type', 'event.type must be a domain.entity.action string with three non-empty dot-separated segments', inputBytes)
   }
-  if (e.signature !== null && e.signature !== undefined && !isString(e.signature)) {
-    return err('malformed', 'signature must be string|null|undefined')
+  if (!isValidEpochMs(event.occurred_at)) {
+    return reject('malformed-timestamp', 'event.occurred_at must be a non-negative integer epoch ms in Date range', inputBytes)
   }
-  const envelope: SensorEnvelope = {
-    sensor_id: e.sensor_id,
-    schema_version: e.schema_version,
-    emitted_at: e.emitted_at,
-    topic: e.topic,
-    payload: e.payload as Record<string, unknown>,
-    signature: isString(e.signature) ? e.signature : null,
+  if (typeof event.summary !== 'string' || event.summary.length < 20) {
+    return reject('malformed-summary', 'event.summary must be at least 20 characters and is never returned', inputBytes)
   }
+
+  const tupleAllowed = cfg.allowedSources.some((tuple) =>
+    tuple.sensorId === sensorId &&
+    tuple.package === packageName &&
+    tuple.sensorVersion === sensorVersion &&
+    tuple.sourceType === sourceType,
+  )
+  if (!tupleAllowed) {
+    return reject('tuple-not-allowed', 'source tuple is not in caller allowlist', inputBytes)
+  }
+
   return {
-    kind: inferKind(envelope.topic),
-    severity: inferSeverity(envelope.payload),
-    sourceTopics: Object.freeze([envelope.topic]),
-    observedAt: envelope.emitted_at,
-    trustLevel: 'untrusted-sensor',
-    raw: envelope,
+    ok: true,
+    kind: 'ingested',
+    inputBytes,
+    metadata: {
+      trust: 'untrusted',
+      schemaVersion: SUPPORTED_SCHEMA_VERSION,
+      signalId: envelope.signal_id,
+      emittedAt: envelope.emitted_at,
+      occurredAt: event.occurred_at,
+      sensorId,
+      sourceType,
+      package: packageName,
+      sensorVersion,
+      eventType,
+    },
   }
 }
 
-export function isExternalEvent(v: ExternalEvent | ExternalEventEnvelopeError): v is ExternalEvent {
-  return (v as ExternalEvent).trustLevel === 'untrusted-sensor'
+function reject(reason: RejectionReason, detail: string, inputBytes = 0): IngestRejected {
+  return { ok: false, kind: 'rejected', reason, detail, inputBytes }
+}
+
+interface ValidatedOptions {
+  enabled: boolean
+  allowedSources: readonly AllowedSourceTuple[]
+  maxBytes: number
+}
+
+function validateOptions(options: IngestOptions): { rejected: { reason: RejectionReason; detail: string } } | ValidatedOptions {
+  if (!isRecord(options)) {
+    return { rejected: { reason: 'invalid-options', detail: 'options must be a plain object' } }
+  }
+
+  const enabled = options.enabled === true
+  const maxBytes = options.maxBytes ?? ABSOLUTE_MAX_BYTES
+  if (typeof maxBytes !== 'number' || !Number.isFinite(maxBytes) || !Number.isInteger(maxBytes) || maxBytes <= 0 || maxBytes > ABSOLUTE_MAX_BYTES) {
+    return { rejected: { reason: 'invalid-options', detail: `maxBytes must be an integer in [1, ${ABSOLUTE_MAX_BYTES}]` } }
+  }
+
+  const rawAllowedSources = options.allowedSources ?? []
+  if (!Array.isArray(rawAllowedSources)) {
+    return { rejected: { reason: 'invalid-options', detail: 'allowedSources must be an array' } }
+  }
+
+  const allowedSources: AllowedSourceTuple[] = []
+  for (const tuple of rawAllowedSources) {
+    if (!isRecord(tuple)) {
+      return { rejected: { reason: 'malformed-options-tuple', detail: 'allowedSources entry must be an object' } }
+    }
+    const sensorId = readNonEmptyString(tuple.sensorId)
+    const packageName = readNonEmptyString(tuple.package)
+    const sensorVersion = readNonEmptyString(tuple.sensorVersion)
+    const sourceType = readNonEmptyString(tuple.sourceType)
+    if (sensorId === null || packageName === null || sensorVersion === null || sourceType === null) {
+      return { rejected: { reason: 'malformed-options-tuple', detail: 'tuple fields must be non-empty strings' } }
+    }
+    allowedSources.push({ sensorId, package: packageName, sensorVersion, sourceType })
+  }
+
+  return { enabled, allowedSources, maxBytes }
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isValidEpochMs(value: unknown): value is number {
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= MAX_DATE_EPOCH_MS
 }
