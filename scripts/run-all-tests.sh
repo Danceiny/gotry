@@ -576,6 +576,10 @@ echo
 echo "=== 67. issue #436 持久健康面→注册工具 routing 建议 E2E(跨进程 fixture 探针子进程走真实 evaluateProbeResults+recordChannelEvent 写 channel-health.jsonl→真实注册工具 gotry_flyai_search/gotry_session_search 结果 \`routing\` 字段断言:持久 down 排除(本进程该通道会话态为空)/非会话通道同样生效/会话 down 优先于持久 'ok' 恢复/会话 hit 清除后有效持久 ok 恢复/独立根不串根/过期·未来·缺·坏时间戳均不压制且坏行不得在 latest-wins 前顶掉更早有效 down/同根追加可重复;夹具按产品真实操作标签登记并记录实际请求标签防错位;隔离临时 stateRoot+有界子进程,全离线无网络无真实供应商) ==="
 (cd ts && npx tsx scripts/issue436-persisted-routing-e2e.ts) || FAIL=1
 
+echo
+echo "=== 67b. Issue #443 本地 Lavish Editor 会话适配器(offline:trust/path 白名单/argv 形状/字节与超时上界/状态机/进程组 reap/生命周期规则;GOTRY_LAVISH_LIVE=0 强锁,合成 lavish-axi 包树,零网络零真浏览器,ambient opt-in 也不得安装/调用外部 CLI) ==="
+(cd ts && GOTRY_LAVISH_LIVE=0 npx tsx scripts/lavish-local-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
