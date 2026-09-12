@@ -14,7 +14,17 @@
  *
  * evidence 落盘:~/.gotry/evidence/session/sf-XX/<ISO ts>.json(issue #21/#67 私有证据)
  *
- * 退出码:0 = 跑完(即便部分 query miss);人类评审 evidence 决定 issue 是否可关
+ * 挑战红线(RFC §3.5,issue #411):任一 query 的 session verdict=challenged
+ * (或双源 state=challenge_stop/guard_violation)即停止本批后续查询——不重试、
+ * 不绕过,session 与 comparator 都不再调用;批次以部分结果落盘,stop_reason 标注
+ * challenge_stop/guard_violation,并给出 attempted/not_attempted 清单。sf-summary
+ * 侧缺条批次一律 fail_closed,不得标为完整或有效校准。
+ *
+ * 退出码:0 = 正常结束(跑满 8 条,或按红线提前停止;stop_reason 区分;
+ * 即便部分 query miss 也是 0);1 = 参数/加载异常。人类评审 evidence 决定 issue 是否可关
+ *
+ * 测试节律:同 query 间隔默认 35_000ms(§3.4 ≥30s);离线测试可设
+ * GOTRY_SF_INTER_QUERY_DELAY_MS=<非负整数毫秒> 缩短,非法值回退默认,不影响停止逻辑
  */
 
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
@@ -200,12 +210,33 @@ interface RunSummary {
   effective_sources: string[]
   fallback_count: number
   golden_source: string
+  /** 批次是否跑满 8 条;challenge/guard 停止的批次为 false(可审阅的部分批次) */
+  batch_complete: boolean
+  /** completed=跑满;challenge_stop=风控/验证码触发即停(RFC §3.5);guard_violation=读守卫违例即停 */
+  stop_reason: 'completed' | 'challenge_stop' | 'guard_violation'
+  attempted_query_ids: string[]
+  not_attempted_query_ids: string[]
   records: QueryRunRecord[]
 }
 
 interface StaticContext {
   snapshot?: StaticFlightSnapshot
   error?: string
+}
+
+type BatchStopReason = RunSummary['stop_reason']
+
+/** 节律间隔(§3.4 同站点 ≥30s);仅离线测试经 env 缩短,非法值 fail-closed 回默认 */
+const DEFAULT_INTER_QUERY_DELAY_MS = 35_000
+function interQueryDelayMs(): number {
+  const raw = (process.env.GOTRY_SF_INTER_QUERY_DELAY_MS ?? '').trim()
+  if (raw === '') return DEFAULT_INTER_QUERY_DELAY_MS
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isInteger(parsed) || parsed < 0 || String(parsed) !== raw) {
+    console.error(`[sf-live-benchmark] GOTRY_SF_INTER_QUERY_DELAY_MS="${raw}" 非法,回退默认 ${DEFAULT_INTER_QUERY_DELAY_MS}ms`)
+    return DEFAULT_INTER_QUERY_DELAY_MS
+  }
+  return parsed
 }
 
 async function runOne(
@@ -277,6 +308,8 @@ async function runOne(
       read_guard_blocked: 0,
     }
   } else {
+    // challenged 原样保留(issue #411):SessionVerdict 与 SessionEvidenceVerdict 同构,
+    // 改写为 error 会让 evaluateDoubleSource 丢失 challenge_stop 语义变成 source_unavailable
     session = {
       query_id: q.id,
       route_segments: [],
@@ -285,7 +318,7 @@ async function runOne(
       price: 0,
       source: 'ctrip-flight',
       fetched_at: new Date().toISOString(),
-      verdict: sessRes.verdict === 'hit' || sessRes.verdict === 'miss' ? sessRes.verdict : 'error',
+      verdict: sessRes.verdict,
       latency_ms: sessionLatencyMs,
       read_guard_blocked: 0,
     }
@@ -348,12 +381,16 @@ async function main(): Promise<void> {
 
   const runStartedAt = new Date().toISOString()
   const runStartedMs = Date.now()
+  const interQueryDelay = interQueryDelayMs()
   const records: QueryRunRecord[] = []
+  const attemptedQueryIds: string[] = []
+  let stopReason: BatchStopReason = 'completed'
   for (const q of queries) {
-    if (records.length > 0) await new Promise((r) => setTimeout(r, 35_000))
+    if (records.length > 0) await new Promise((r) => setTimeout(r, interQueryDelay))
     console.log(`\n[sf-live-benchmark] ${q.id} ${q.from}→${q.to} ${q.date}`)
     const rec = await runOne(q, requestedSource, manifest, staticContext)
     records.push(rec)
+    attemptedQueryIds.push(q.id)
     const evPath = join(homedir(), '.gotry', 'evidence', 'session', q.id, `${runStartedAt.replace(/[:.]/g, '-')}.json`)
     mkdirSync(dirname(evPath), { recursive: true })
     writeFileSync(evPath, JSON.stringify(rec, null, 2))
@@ -363,7 +400,21 @@ async function main(): Promise<void> {
     if (rec.softScore) {
       console.log(`  soft score: ${(rec.softScore.accuracy * 100).toFixed(1)}% (${rec.softScore.correct}/${rec.softScore.total}) ${rec.softScore.pass ? '✅' : '❌'} missing=${JSON.stringify(rec.softScore.missing)} incorrect=${JSON.stringify(rec.softScore.incorrect)}`)
     }
+    // RFC §3.5 红线:风控/验证码或读守卫违例即停止本批后续查询——不重试、不绕过;
+    // session 与 comparator 都不再被调用,余下 query 记入 not_attempted(issue #411)
+    if (rec.sessionVerdict === 'challenged' || rec.doubleSource.state === 'challenge_stop') {
+      stopReason = 'challenge_stop'
+      console.log(`  [sf-live-benchmark] 挑战触发(verdict=${rec.sessionVerdict},state=${rec.doubleSource.state}):停止本批后续查询(RFC §3.5;不重试不绕过)`)
+      break
+    }
+    if (rec.doubleSource.state === 'guard_violation') {
+      stopReason = 'guard_violation'
+      console.log(`  [sf-live-benchmark] 读守卫违例(state=guard_violation):停止本批后续查询(RFC §3.5;不重试不绕过)`)
+      break
+    }
   }
+  const attemptedSet = new Set(attemptedQueryIds)
+  const notAttemptedQueryIds = queries.filter((q) => !attemptedSet.has(q.id)).map((q) => q.id)
 
   const accuracy_pass = records.filter((r) => r.softScore?.pass === true).length
   const comparable = records.filter((r) => r.doubleSource.state === 'comparable').length
@@ -391,6 +442,10 @@ async function main(): Promise<void> {
     effective_sources: effectiveSources,
     fallback_count: fallbackCount,
     golden_source: requestedSource === 'manual' ? 'manual-golden' : requestedSource,
+    batch_complete: records.length === queries.length,
+    stop_reason: stopReason,
+    attempted_query_ids: attemptedQueryIds,
+    not_attempted_query_ids: notAttemptedQueryIds,
     records,
   }
 
@@ -402,6 +457,7 @@ async function main(): Promise<void> {
   console.log(`golden requested = ${summary.requested_source}`)
   console.log(`golden effective = ${summary.effective_sources.join(',')};fallback=${summary.fallback_count}`)
   console.log(`跑批 query 数: ${records.length}`)
+  console.log(`stop reason: ${summary.stop_reason}${summary.stop_reason !== 'completed' ? `;attempted=[${summary.attempted_query_ids.join(',')}] not_attempted=[${summary.not_attempted_query_ids.join(',')}]` : ''}`)
   console.log(`verdict=hit: ${hit}/${records.length}`)
   console.log(`双源合同=comparable: ${comparable}/${records.length}`)
   console.log(`字段准确率 ≥${SESSION_FIELD_ACCURACY_THRESHOLD * 100}% (软命中): ${accuracy_pass}/${records.filter((r) => r.softScore !== null).length}`)
