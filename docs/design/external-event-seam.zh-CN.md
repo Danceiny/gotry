@@ -3,7 +3,7 @@
 # 外部事件驱动接缝设计（#82 world2agent 兼容方向，issue #119 / D-31）
 
 > 状态：**设计文档（2026-09-04，issue #119；2026-09-12 更新）**。本文只设计，不承诺任何运行时实现——落地序列见 §6，
-> 触发式推进（第一个真实 sensor 出现时启动第一段）。原则：**消费既有接缝，不建新运行时**。
+> 其中第 1、2 段已落地（本地探针 + 愿望池消费），仅剩 w2a sensor 生产者为触发式。原则：**消费既有接缝，不建新运行时**。
 > 本地已落地并保留：通道探针（§6.1）与愿望池消费（§6.2）。w2a/0.1 envelope 的**纯契约**切片已获批，
 > 定位为惰性、默认关闭的类型/校验契约（§5.1），不激活任何真实链路；真实 bridge/sensor/auth/消费者接入
 > 仍由 issue #82 触发式推进。本文不声称任何远程 sensor 路径已实现或已验证。
@@ -23,16 +23,23 @@ gotry 侧的接缝形态：**外部事件作为两个既有面的新生产者**�
 2. **愿望池 conditions**（`wish-pool.ts`）：事件作为召回评估的新事实源（仍是 pull
    模型，不做 push）。
 
-## 2. 现状：in-band verdict 生产者、已落地的本地探针，未接带外生产者
+## 2. 现状：in-process 路由态与已落地的持久化带外事件，w2a 生产者尚未接入
 
-`channelState`/`routingAdvice` 当前有两个生产者：**工具调用 verdict**
-（`noteChannelVerdict`：needs-setup→down、hit→清除、miss/error→不动、cooldown 过期）与**已落地的本地只读探针**
-（`ts/scripts/channel-probe.ts`，§6.1）——探针的异常/恢复 tick 走同一落账形态。愿望池在召回时消费通道条件（§6.2）。
-仍缺的是**带外**入口：
+两个面容易混为一谈，分开说：
 
-- flyai 达限、携程 challenged 这类**会话内**事实传导是通的（#106-#108 已收口）；
-- 12306 改版、携程风控策略升级、某接口下线这类**带外**事实没有入口，系统无从知晓，
-  只能等下一次真实检索失败，由用户会话承担发现成本。
+- **会话 verdict → in-process 路由态**：`noteChannelVerdict` 写 in-process `channelState` map
+  （needs-setup→down、hit→清除、miss/error→不动、cooldown 过期），而 `routingAdvice` **只读这张 map**；
+- **本地探针 → 持久化健康事件**：已落地的只读探针（`ts/scripts/channel-probe.ts`，§6.1）本身就是**带外本地生产者**：
+  异常时调 `recordChannelEvent`（down），恢复写 `'ok'`（latest-wins 超越），落持久化健康面。今天读持久化健康面的是
+  愿望池召回（`ts/src/index.ts:780`）与 doctor 既有持久化健康读取路径——**不含** `routingAdvice`。
+
+仍开放的部分：
+
+- flyai 达限、携程 challenged 这类**会话内**事实经 verdict 路径传导正常（#106-#108 已收口）；
+- 12306 改版、携程风控策略升级、某接口下线，只在本地探针覆盖到的范围内被落账；**远程 w2a sensor 生产者尚未接入**（issue #82）；
+- **持久化健康的 routing 传导未实现**：持久化的 `down` 事件当前不改变 `routingAdvice`。root 在 `main` `8fed347` 上的
+  Node 24 临时状态反例（2026-09-12T12:29:45Z，exit 0）显示：持久化 `down` 仍被 routing 建议采纳，而 `markChannelDown` 会摘除。
+  由 **#436** 跟踪，本文不声称更多。
 
 ## 3. 接缝设计：事件 = 健康面与愿望池的新生产者
 
@@ -45,8 +52,9 @@ recordChannelEvent(stateRoot, { channel: 'session:ctrip-flight', state: 'down',
                                reason: 'site-redesign', at: <iso> })
 ```
 
-- `routingAdvice` 的 down-排除、doctor 配额可见行、persona 路由卡口径——**全部零改动
-  生效**（它们只读事件面）。事件不是新机制，是既有机制的第二个生产者。
+- 事件不是新机制，是既有落账形态的第二个生产者；但今天各消费方并不齐整：愿望池召回（`ts/src/index.ts:780`）与
+  doctor 既有持久化健康读取路径已读持久化健康面，而 **`routingAdvice` 只读 in-process `channelState` map**——
+  故持久化事件当前到不了 routing 与 persona 路由卡口径。该 routing 传导是期望项，标记为 **TODO #436**。
 - 恢复同样走事件（`state: 'ok'`）或自然过期（与 cooldown 过期同语义）。
 
 ### 3.2 生产者三类（信任分级，决策点见 §5）
@@ -88,8 +96,9 @@ incident 同级）；world2agent 远程回调需要签名/通道绑定——**�
 
 ### 5.1 已获批的纯契约切片（2026-09-12，issue #432）
 
-founder 已授权 w2a/0.1 envelope 的**纯契约**切片，参考基准钉在 `machinepulse-ai/world2agent`
-commit `7e5fc4d4`（`schema/0.1/schema.ts`）。按获批范围，该切片是一个纯函数式、确定性的适配器，
+founder 已授权 w2a/0.1 envelope 的**纯契约**切片，参考基准钉在
+[`schema/0.1/schema.ts`](https://github.com/machinepulse-ai/world2agent/blob/7e5fc4d441699993b8f1ef7d3b9776065b7a93e0/schema/0.1/schema.ts)
+（`machinepulse-ai/world2agent` commit `7e5fc4d441699993b8f1ef7d3b9776065b7a93e0`）。按获批范围，该切片是一个纯函数式、确定性的适配器，
 只投影惰性的不可信事件元数据；不发明 sensor 专用 wire schema，不安装任何运行时依赖。其边界：
 
 - **默认关闭**：仅在调用方显式传入 enabled 选项时可达——无基于环境变量的产品开关、无常驻监听、无 token、无消费者/运行时注册；
@@ -104,7 +113,8 @@ commit `7e5fc4d4`（`schema/0.1/schema.ts`）。按获批范围，该切片是�
 ## 6. 落地序列（触发式，每段独立 PR）
 
 1. **sensor 探针最小行** ✅（2026-09-07 落地：`ts/scripts/channel-probe.ts`，run-all §52）：只读探针 tick（可由 loopx/cron 驱动）对关键通道做
-   无副作用探测，异常时调 `recordChannelEvent`（down），恢复写 `'ok'`（latest-wins 超越）——routing/doctor 即时受益；
+   无副作用探测，异常时调 `recordChannelEvent`（down），恢复写 `'ok'`（latest-wins 超越），落持久化健康面。
+   持久化健康读取方（愿望池召回、doctor）即时受益；**routing 传导未实现——TODO #436**；
 2. **愿望池消费** ✅（2026-09-07 落地：`conditions.channels` 可选条件 + 召回时
    命名通道处于 down 即否证成行条件，run-all §53；「佐证」渲染面留后续切片）；
 3. **w2a/0.1 envelope 纯契约适配器**（2026-09-12 获批，issue #432）：即 §5.1 的惰性、默认关闭切片——只落契约，

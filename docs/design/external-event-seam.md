@@ -2,8 +2,9 @@
 
 # External-Event-Driven Seam Design (#82 world2agent compatibility direction, issue #119 / D-31)
 
-> Status: **design document (2026-09-04, issue #119; updated 2026-09-12)**. This document designs; it commits to no runtime implementation — for the landing sequence see §6,
-> which advances trigger-based (the first real sensor starts the first segment). Principle: **consume existing seams; build no new runtime**.
+> Status: **design document (2026-09-04, issue #119; updated 2026-09-12)**. This document designs; it commits to no runtime implementation — for the landing
+> sequence see §6, where segments 1-2 have already landed (local probe + wish-pool consumption) and only the remaining w2a sensor producer is trigger-gated.
+> Principle: **consume existing seams; build no new runtime**.
 > Already landed locally and preserved: the channel probe (§6.1) and the wish-pool consumer (§6.2). The w2a/0.1 envelope
 > **contract-only** slice is approved as an inert, default-off typing/validation contract (§5.1) that activates no live path;
 > real bridge/sensor/auth/consumer activation stays trigger-gated under issue #82. Nothing here claims any remote sensor path
@@ -24,16 +25,25 @@ the gotry-side seam form: **external events become new producers for two existin
 2. **Wish-pool conditions** (`wish-pool.ts`): events as a new fact source for recall evaluation (still a pull
    model, no push).
 
-## 2. Current state: an in-band verdict producer, a landed local probe, and no out-of-band producer
+## 2. Current state: in-process routing state vs. persisted out-of-band events, and the unconnected w2a producer
 
-`channelState`/`routingAdvice` today have two producers: the **tool-call verdict**
-(`noteChannelVerdict`: needs-setup→down, hit→clear, miss/error→no change, cooldown expiry) and the **landed local read-only probe**
-(`ts/scripts/channel-probe.ts`, §6.1), whose anomaly/recovery ticks use the same recording form. The wish pool consumes the channel
-condition at recall time (§6.2). What is still missing is the **out-of-band** entry point:
+Two surfaces are easy to conflate, so state them separately:
 
-- In-session facts like flyai quota exhaustion or Ctrip (携程) challenged propagate fine (#106-#108 already closed);
-- Out-of-band facts — a 12306 redesign, a Ctrip risk-control policy upgrade, an API going offline — have no entry point: the system has no way to know,
-  and can only wait for the next real search failure, with the user session bearing the discovery cost.
+- **Session verdict → in-process routing state**: `noteChannelVerdict` writes the in-process `channelState` map
+  (needs-setup→down, hit→clear, miss/error→no change, cooldown expiry), and `routingAdvice` reads **only that map**;
+- **Local probe → persisted health events**: the landed read-only probe (`ts/scripts/channel-probe.ts`, §6.1) is already an
+  **out-of-band local producer**. On anomaly it calls `recordChannelEvent` (down), on recovery it writes `'ok'` (latest-wins override),
+  landing persisted health. The readers of persisted health today are wish-pool recall (`ts/src/index.ts:780`) and the doctor's
+  existing persisted-health reader — **not** `routingAdvice`.
+
+What is still open:
+
+- In-session facts like flyai quota exhaustion or Ctrip (携程) challenged propagate fine through the verdict path (#106-#108 already closed);
+- Out-of-band facts — a 12306 redesign, a Ctrip risk-control policy upgrade, an API going offline — are only recorded where the local
+  probe covers them; the **remote w2a sensor producer is not connected** (issue #82);
+- **Persisted-health routing propagation is not implemented**: a persisted `down` event does not change `routingAdvice` today. Root's
+  Node 24 temp-state counterexample on `main` `8fed347` (2026-09-12T12:29:45Z, exit 0) shows a persisted `down` still included in
+  routing advice, while `markChannelDown` removes it. Tracked as **#436**; this document claims nothing beyond that.
 
 ## 3. Seam design: events as new producers for the health surface and the wish pool
 
@@ -46,8 +56,10 @@ recordChannelEvent(stateRoot, { channel: 'session:ctrip-flight', state: 'down',
                                reason: 'site-redesign', at: <iso> })
 ```
 
-- `routingAdvice`'s down-exclusion, the doctor's quota visibility rows, and the persona routing-card caliber — **all take effect
-  with zero changes** (they only read the event surface). Events are not a new mechanism; they are a second producer of an existing mechanism.
+- Events are not a new mechanism; they are a second producer of an existing recording form. Their consumers are not uniform today:
+  wish-pool recall (`ts/src/index.ts:780`) and the doctor's existing persisted-health reader already read persisted health, while
+  **`routingAdvice` reads only the in-process `channelState` map** — so persisted events do not reach routing or persona routing-card
+  calibers yet. That routing propagation is a desired TODO, tracked as **#436**.
 - Recovery likewise goes through events (`state: 'ok'`) or natural expiry (same semantics as cooldown expiry).
 
 ### 3.2 Three producer classes (trust tiers; decision point in §5)
@@ -89,8 +101,9 @@ appears**, do not preset. Until decided, the remote surface stays closed (the se
 
 ### 5.1 Approved contract-only slice (2026-09-12, issue #432)
 
-The founder authorized a **contract-only** slice for the w2a/0.1 envelope, with the reference pinned at `machinepulse-ai/world2agent`
-commit `7e5fc4d4` (`schema/0.1/schema.ts`). As scoped, the slice is a pure, deterministic adapter that projects only inert untrusted
+The founder authorized a **contract-only** slice for the w2a/0.1 envelope, with the reference pinned at
+[`schema/0.1/schema.ts`](https://github.com/machinepulse-ai/world2agent/blob/7e5fc4d441699993b8f1ef7d3b9776065b7a93e0/schema/0.1/schema.ts)
+(`machinepulse-ai/world2agent` commit `7e5fc4d441699993b8f1ef7d3b9776065b7a93e0`). As scoped, the slice is a pure, deterministic adapter that projects only inert untrusted
 event metadata; it invents no sensor-specific wire schema and installs no runtime dependency. Its boundary:
 
 - **Default off**: it is reachable only with an explicit caller-supplied enabled option — no environment-based product switch, no listener,
@@ -106,7 +119,8 @@ Implementation and its verification are tracked in issue #432.
 ## 6. Landing sequence (trigger-based; each segment an independent PR)
 
 1. **Minimal sensor probe row** ✅ (landed 2026-09-07: `ts/scripts/channel-probe.ts`, run-all §52): read-only probe ticks (drivable by loopx/cron) run
-   side-effect-free probes against key channels; on anomaly call `recordChannelEvent` (down), on recovery write `'ok'` (latest-wins override) — routing/doctor benefit immediately;
+   side-effect-free probes against key channels; on anomaly call `recordChannelEvent` (down), on recovery write `'ok'` (latest-wins override),
+   landing persisted health. Persisted-health readers (wish-pool recall, doctor) benefit immediately; **routing propagation is not implemented — TODO #436**;
 2. **Wish-pool consumption** ✅ (landed 2026-09-07: a `conditions.channels` optional condition + at recall time,
    a named channel being down refutes the feasibility condition, run-all §53; the "corroboration" render surface is left to a later slice);
 3. **w2a/0.1 envelope contract-only adapter** (approved 2026-09-12, issue #432): the inert, default-off slice in §5.1 — contract only;
