@@ -3,7 +3,7 @@
 # 行程 HTML 渲染器(issue #442,父 #438)
 
 > 定位/Role:纯行程 HTML 渲染器 `ts/src/itinerary-html.ts` 的运行时契约、证据纪律与拒绝集,外加喂给它的产品生成入口 `ts/capabilities/itinerary-artifact.ts`。
-> 状态/Status:内部切片(2026-09-12)。渲染器已可从真实产品路径到达(注册工具 `gotry_itinerary_render` → 会话工作目录内的一个新 HTML 文件)。浏览器/原生预览验收与真实 Lavish 编辑反馈闭环仍留在父 #438 / #443 未完成面。
+> 状态/Status:内部切片（2026-09-12）。渲染器已可从真实产品路径到达（注册工具 `gotry_itinerary_render` → 会话工作目录内的一个新 HTML 文件）。原生 HTML preview 实证在 #448 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`（可复跑：`GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`）；已注册的 Lavish 浏览器反馈链由 #443 CLOSED + PR #456 merged acceptance 覆盖。
 > 上游/Upstream:issue [#442](https://github.com/Danceiny/gotry/issues/442)(父 #438)、`docs/design/external-event-seam.md` 的「先合同后启用」范式,以及事实模型 `ts/src/bookable-facts.ts`。
 > 下游/Downstream:`ts/scripts/itinerary-html-tests.ts`、`ts/scripts/itinerary-artifact-tests.ts`,以及再次查看生成产物的产物列表/阅读旅程。
 
@@ -54,4 +54,4 @@ renderItineraryHtml(input: unknown):
 
 ## 6. 切片状态
 
-本切片已落地:渲染器、生成入口(注册工具 + run-all §6c 两套件)与本文件。仍属 #438/#443 未完成面:生成产物的浏览器验收(导航、展开、窄屏、转义)、原生预览的实际 sandbox 行为,以及真实 Lavish 编辑反馈闭环。生成产物是「调用方给的显式结构 + 已注册事实」的投影——其 fixture 不是供应商证据,不能替代真实库存核验。
+本切片已落地：渲染器、生成入口（注册工具 + run-all §6c 两套件）、真实浏览器覆盖（导航、原生 details 与 Return 键盘、窄屏可读、转义）与本文件。原生 HTML preview sandbox 验收 = #448 proof 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`（可复跑：`GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`）；已注册的 Lavish 浏览器反馈链 = #443 CLOSED + PR #456 merged acceptance；生成产物的浏览器覆盖由 #442 CLOSED + PR #449 merged acceptance 收口。生成产物是「调用方给的显式结构 + 已注册事实」的投影——其 fixture 不是供应商证据，不能替代真实库存核验。

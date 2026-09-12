@@ -79,7 +79,7 @@ flowchart LR
 
 持久 channel-health 事件现已接入 routing 建议：六个非 hit 工具结果在工具结果边界读取最新持久健康状态，会话 verdict 状态与持久 down 集合取并集排除通道。缺失、不可解析、未来或已过保留期的时间戳行在 latest-wins 覆盖前丢弃，坏行不得顶掉更早的有效 down；只有 `down` 会新增持久排除（`cooldown` 仍是节律态，恢复或过期只是解除该排除），且都不解除本会话刚发生的失败。静态 persona 路由卡不变。
 
-产物发现现覆盖 HTML 行程文件并支持跨页枚举：`gotry_artifacts_list` 以大小写不敏感方式发现工作目录顶层的 `.md`／`.html`／`.htm`，新增 `offset`（零-based 非负整数）与 `search`（字面大小写不敏感子串，匹配 `id`／`title`／filename；trim 后空串 = 不过滤；非正则／非 glob，不搜文件正文），默认页大小 20、上限 50——用户想找回「上次的规划」时可以逐页枚举全部合格产物并按名字直接定位。模型走收集 → canonical-path 去重 → 搜索过滤 → 确定性全局排序（`updated` DESC + `(source, id, canonical path)` 词典序 tie-break）→ 分页切片的统一路径；移除了此前各源提前 `slice(0, limit)` 的早裁逻辑，避免旧 cwd 产物被单源上限静默丢弃。`total` 反映过滤后集合的真实长度，`nextOffset` 仅当存在下一页时出现，越界 `offset` 返回空页 + 已知 `total` + `truncated:false` + 无 `nextOffset`。`gotry_artifacts_read` 继续把 `.html`／`.htm` 作为源码文本返回——`lang: html`、原始行号、全文指纹与分页，走同一组路径／大小护栏。读卡是源码视图：不解析标记、不运行脚本或内联事件处理器、不发起任何抓取，Web 客户端在 HTML 源码标题下以纯 React 文本渲染这些行。主动打开列表中的 HTML 条目是另一个动作，客户端标注为 `Open HTML preview`（可见徽标 + 「页面脚本可能运行」提示），因为它把文件交给宿主原生 HTML 预览——那是宿主行为，不是本工具行为。交互式 Lavish 本地编辑反馈仍归 #438／#443。
+产物发现现覆盖 HTML 行程文件并支持跨页枚举：`gotry_artifacts_list` 以大小写不敏感方式发现工作目录顶层的 `.md`／`.html`／`.htm`，新增 `offset`（零-based 非负整数）与 `search`（字面大小写不敏感子串，匹配 `id`／`title`／filename；trim 后空串 = 不过滤；非正则／非 glob，不搜文件正文），默认页大小 20、上限 50——用户想找回「上次的规划」时可以逐页枚举全部合格产物并按名字直接定位。模型走收集 → canonical-path 去重 → 搜索过滤 → 确定性全局排序（`updated` DESC + `(source, id, canonical path)` 词典序 tie-break）→ 分页切片的统一路径；移除了此前各源提前 `slice(0, limit)` 的早裁逻辑，避免旧 cwd 产物被单源上限静默丢弃。`total` 反映过滤后集合的真实长度，`nextOffset` 仅当存在下一页时出现，越界 `offset` 返回空页 + 已知 `total` + `truncated:false` + 无 `nextOffset`。`gotry_artifacts_read` 继续把 `.html`／`.htm` 作为源码文本返回——`lang: html`、原始行号、全文指纹与分页，走同一组路径／大小护栏。读卡是源码视图：不解析标记、不运行脚本或内联事件处理器、不发起任何抓取，Web 客户端在 HTML 源码标题下以纯 React 文本渲染这些行。主动打开列表中的 HTML 条目是另一个动作，客户端标注为 `Open HTML preview`（可见徽标 + 「页面脚本可能运行」提示），因为它把文件交给宿主原生 HTML 预览——那是宿主行为，不是本工具行为。已注册的 Lavish 浏览器反馈链由 #443 CLOSED + PR #456 merged acceptance 覆盖交互式编辑反馈；原生 HTML preview 实证在 #448 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`（可复跑：`GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`）。
 
 ## 一段对话
 
@@ -158,7 +158,7 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 
 npm `latest`：**v0.0.1-rc.24**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。外部 W2A 事件仍是合同层、默认 inert；尚无真实 sensor 桥或 consumer 激活。
 
-**今天可用** —— 访谈 → 确定性可行性判决 → 带门到门真成本的行程 · 实时检索（飞猪 + 你本人登录态 Chrome，只读），事实 typed 且调用绑定 · 记忆（动机 / 愿望池 / 同行人 / 时间线）落租户作用域账本 · 本地行程 HTML 文档生成（`gotry_itinerary_render`：事实只从会话事实注册表取，在会话工作目录新建一个文件、永不覆盖——浏览器/原生预览验收仍待完成） · 自检 doctor，批准后范围修复。
+**今天可用** —— 访谈 → 确定性可行性判决 → 带门到门真成本的行程 · 实时检索（飞猪 + 你本人登录态 Chrome，只读），事实 typed 且调用绑定 · 记忆（动机 / 愿望池 / 同行人 / 时间线）落租户作用域账本 · 本地行程 HTML 文档生成（`gotry_itinerary_render`：事实只从会话事实注册表取，在会话工作目录新建一个文件、永不覆盖；原生 HTML preview 实证在 #448 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`） · 自检 doctor，批准后范围修复。
 
 **还没有** —— 今天没有可下单路径；预订只随 WriteGate 用户确认设计启封 · 实时可订证据仍部分覆盖 · 真实用户 cohort 未到退出口径 · 英文仅覆盖求解输出层。
 

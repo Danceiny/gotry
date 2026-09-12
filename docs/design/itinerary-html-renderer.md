@@ -3,7 +3,7 @@
 # Itinerary HTML Renderer (issue #442, parent #438)
 
 > Role: the runtime contract, evidence discipline and rejection set of the pure itinerary HTML renderer `ts/src/itinerary-html.ts`, plus the product generation entry `ts/capabilities/itinerary-artifact.ts` that feeds it.
-> Status: internal slice (2026-09-12). The renderer is now reachable from a real product path (registered tool `gotry_itinerary_render` → one new HTML file in the session working directory). Browser/native-preview acceptance and the real Lavish editing-feedback loop remain open under parent #438 / #443.
+> Status: internal slice (2026-09-12). The renderer is now reachable from a real product path (registered tool `gotry_itinerary_render` → one new HTML file in the session working directory). Native HTML preview proof is accepted on #448, persistent regression lives in `ts/scripts/dsh-artifact-web-e2e.ts` (re-runnable: `GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`); the registered Lavish browser feedback chain is covered by #443 CLOSED + PR #456 merged acceptance.
 > Upstream: issue [#442](https://github.com/Danceiny/gotry/issues/442) (parent #438), `docs/design/external-event-seam.md` for the "contract first, activation later" pattern, and the fact model `ts/src/bookable-facts.ts`.
 > Downstream: `ts/scripts/itinerary-html-tests.ts`, `ts/scripts/itinerary-artifact-tests.ts`, and the artifact list/read journey that revisits the generated file.
 
@@ -54,4 +54,4 @@ The registered tool `gotry_itinerary_render` (`ts/capabilities/itinerary-artifac
 
 ## 6. Slice status
 
-Landed here: the renderer, the generation entry (registered tool + run-all §6c suites) and this document. Still open for #438/#443: browser acceptance of the generated document (navigation, disclosure, narrow screen, escaping), the native preview's actual sandbox behavior, and the real Lavish editing-feedback loop. The generated document is a projection of caller-supplied structure plus registered facts — its fixtures are not supplier evidence and do not stand in for a real inventory check.
+Landed here: the renderer, the generation entry (registered tool + run-all §6c suites), the real-browser coverage (navigation, native details and Return-keyboard, narrow-screen readability, escaping) and this document. Native HTML preview sandbox acceptance = #448 proof accepted with persistent regression in `ts/scripts/dsh-artifact-web-e2e.ts` (re-runnable: `GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`); the registered Lavish browser feedback chain = #443 CLOSED + PR #456 merged acceptance; the generated-document browser coverage is closed by #442 CLOSED + PR #449 merged acceptance. The generated document is a projection of caller-supplied structure plus registered facts — its fixtures are not supplier evidence and do not stand in for a real inventory check.
