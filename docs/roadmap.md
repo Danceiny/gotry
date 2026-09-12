@@ -239,14 +239,12 @@ rc series overview (details in release-notes.md; version history lives in git):
 
 ## Current Action: M3 → M6 real evidence
 
-```
-You: M3 seed cohort evidence       ← tracker #22 (real seed-cohort invitation data, not a release decision)
-You: M4 repeat-cohort evidence     ← tracker #20 (real observed_private N≥5 repeat cohort + manual source-review attestation)
-Eng: M5 supply agreement / internal authorization + #231/#232/#233 WriteGate productionization   ← tracker #136 controls admission
-Eng: M6 P6 founder approval + real B2B pilot + #234/#235 kernel/sponsor proofs   ← tracker #137 controls admission
-```
+1. **M3** — produce the real seed-cohort value metrics and reproducible evidence; no invitation-only claim is accepted. Tracker: [#22](https://github.com/Danceiny/gotry/issues/22).
+2. **M4** — build a real `observed_private` repeat cohort (N≥5) with paired planning-time reduction ≥50%, plus the experience-reflux baseline and manual source-review attestation. Tracker: [#20](https://github.com/Danceiny/gotry/issues/20).
+3. **M5** — *after* M4 Exit and a supply agreement / internal authorization: ship the actual WriteGate + booking-payment-refund chain and the existing zero-misoperation / unit-economics exit evidence; parallel contract implementations do not equal admission. Tracker: [#136](https://github.com/Danceiny/gotry/issues/136).
+4. **M6** — *after* M5 Exit and the P6 decision: demonstrate frozen kernel reuse, runtime / functional coverage, a real agency-embedding E2E, and a signed pilot. Tracker: [#137](https://github.com/Danceiny/gotry/issues/137).
 
-Outcome remaining: a real signed pilot under #137, not a release version. Authorized parallel engineering (memory / WriteGate / sponsor) does not satisfy admission; each admission gate stays with its public tracker.
+Authorized parallel engineering may continue; formal Entry / Exit stays with each public tracker.
 
 ## Legacy Model Mapping (merged, then retired)
 

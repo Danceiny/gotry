@@ -235,14 +235,12 @@ rc 序列总览（细节见 release-notes.md，版本历史归 git）：
 
 ## 当前行动：M3 → M6 真实证据
 
-```
-你:M3 种子 cohort 证据        ← tracker #22(真实种子 cohort 邀请数据,不是发布决策)
-你:M4 repeat-cohort 证据      ← tracker #20(真实 observed_private N≥5 repeat cohort + 人工 source-review attestation)
-工程:M5 供应协议/内部授权 + #231/#232/#233 WriteGate 生产化   ← tracker #136 控制准入
-工程:M6 P6 founder 批准 + 真实 B2B 试点 + #234/#235 kernel/sponsor 证明   ← tracker #137 控制准入
-```
+1. **M3** — 产出真实种子 cohort 的价值指标与可复现证据，不接受仅基于邀请的声明。Tracker:[#22](https://github.com/Danceiny/gotry/issues/22)。
+2. **M4** — 建立真实 `observed_private` repeat cohort(N≥5)，配对规划时长下降 ≥50%，以及体验回流基线与人工 source-review attestation。Tracker:[#20](https://github.com/Danceiny/gotry/issues/20)。
+3. **M5** — *在* M4 Exit 与供应协议/内部授权*之后*：落地实际的 WriteGate + 预订-支付-退款链路与既有的零误操作/单位经济 Exit 证据；并行的契约实现不等于准入。Tracker:[#136](https://github.com/Danceiny/gotry/issues/136)。
+4. **M6** — *在* M5 Exit 与 P6 决策*之后*：展示冻结的内核复用、运行时/功能 coverage、真实旅行社嵌入 E2E 与签约试点。Tracker:[#137](https://github.com/Danceiny/gotry/issues/137)。
 
-剩余结局:一份 #137 下的真实签约试点,不是一个发布版本。已授权的并行工程(记忆/WriteGate/sponsor)不构成准入;各准入门仍归各自的公开 tracker。
+已授权的并行工程可以继续推进，正式 Entry / Exit 仍归各自的公开 tracker。
 
 ## 旧模型映射（归并即退役）
 
