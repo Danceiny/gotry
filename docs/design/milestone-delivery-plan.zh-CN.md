@@ -125,7 +125,7 @@ M5 Exit + accepted P6 founder approval (#137) ───────────�
 - **输出**：可信 receipt 发行/消费权威、request fingerprint（绑定实际 supplier request canonical payload digest 或既有 `payload_digest`，敏感字段不公开落账）、approval_claims 持久化、本地 outbox intent（不宣称外部 exactly-once）、dispatcher 原子 claim + 调用前持久化 `dispatching`/immutable attempt id/fencing、外呼前重验（授权/quote-receipt 有效期/immutable digest/路由 Buyer/撤回）、lease 过期不推导无副作用且不重置未执行、HotelByte unknown/query miss/对账/补偿/披露矩阵与准入矩阵。
 - **最小 E2E**：文档链接/路径检查；六状态面引用一致。
 - **否证**：文档暗示 M5 已开闸；把 outbox 写成外部 exactly-once；query miss 在恢复窗口内变 reconciled_failed；receipt 接受客户端/模型拼装；遗漏 HotelByte 30s/unknown/query-orders/Buyer/selector/OTP/portal 优先缺口；遗漏原子 claim/调用前 attempt 持久化/外呼前重验/lease 过期不重置；把派发否证写成已执行。
-- **退出标准**：WriteGate proposal 已随 PR #249（merge 293bbb6）入 main，仅作 M5 实现前设计输入；#231 core 代码已在 main——M5 Entry 还需运行时激活 + 满足 #136 的真实 supplier UAT，以及 M5 Exit；交易运行时不启封。
+- **退出标准**：WriteGate proposal 与 #231 准入前内核已在主线。M5 Entry 仍要求 M4 Exit 与供应链协议（#136）；只有通过 Entry 后才推进运行时激活与合格真实供应商 UAT（#136/#142）。M5 Exit 仍按原有验收条件判断。
 
 ### M5-2 — #231 持久化可信审批与原子 outbox
 
