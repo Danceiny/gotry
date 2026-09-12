@@ -1273,7 +1273,7 @@ const f1Roots: Set<string> = new Set()
 const f1Ledgers: Set<ReturnType<typeof ensureLedger>> = new Set()
 const f1MakeRoot = (prefix: string): string => { const r = mkdtempSync(join(tmpdir(), prefix)); f1Roots.add(r); return r }
 const f1Open = (root: string): ReturnType<typeof ensureLedger> => { const l = ensureLedger(root); f1Ledgers.add(l); return l }
-const f1Close = (ledger: ReturnType<typeof ensureLedger>): void => { if (!f1Ledgers.has(ledger)) return; f1Ledgers.delete(ledger); try { ledger.close() } catch { /* already closed */ } }
+const f1Close = (ledger: ReturnType<typeof ensureLedger>): void => { if (!f1Ledgers.has(ledger)) return; ledger.close(); f1Ledgers.delete(ledger) }
 const f1DriftVariants = [
   {
     name: 'verifiedOffer-injected',
@@ -1331,7 +1331,6 @@ for (const variant of f1DriftVariants) {
   const eventsAfterCheckout = restartedLedger.countEvents()
   assert.equal(eventsAfterCheckout, eventsBeforeResume, `${variant.name} refused checkout.prepare writes no event`)
   f1Close(restartedLedger)
-  f1Roots.delete(root)
 }
 // Positive: an unchanged snapshot at the same revision (just a different
 // turn identity and request text) is still accepted on replay. This is the
@@ -1357,7 +1356,6 @@ for (const variant of f1DriftVariants) {
   assert.equal(replayed?.lastTurnId, 'snapshot-stable-second-turn', 'last turn id reflects the snapshot-stable second turn')
   assert.equal(replayed?.workspaceSnapshot?.selectedOfferRef, 'offer-f1', 'unchanged snapshot retains its selected offer ref')
   f1Close(restartedLedger)
-  f1Roots.delete(root)
 }
 // Positive: the explicit replayUpgradeRequired reanchor keeps accepting a
 // same-rev drifted TURN row. The legacy-tail replan path is set by an
@@ -1417,12 +1415,7 @@ for (const variant of f1DriftVariants) {
   assert.equal(upgraded?.workspaceSnapshot?.visibleHotels?.[0]?.name, 'F1 Reanchored Hotel', 'replayUpgradeRequired allows the same-rev reanchor drift via public startTask')
   assert.equal(upgraded?.replayUpgradeRequired, undefined, 'validated reanchor TURN clears replayUpgradeRequired')
   f1Close(finalLedger)
-  f1Roots.delete(root)
 }
-} catch (f1Failure) {
-  // Surface failure to finally before any cleanup throws, so the assertion
-  // diagnostic is the one the runner reports (not a cleanup error).
-  throw f1Failure
 } finally {
   const closeErrors: unknown[] = []
   for (const open of [...f1Ledgers]) {
