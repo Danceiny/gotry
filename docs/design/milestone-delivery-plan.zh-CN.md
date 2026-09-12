@@ -3,7 +3,7 @@
 # M4→M6 交付计划与任务图（issue #225）
 
 > 定位：把 M4→M5→M6 拆成可分 worktree 交付的 living program 任务图，逐项写明责任面、责任文件、依赖、交付物、最小 E2E、否证与退出标准。
-> 状态：living（2026-09-08 建立；2026-09-09 follow-up 收紧 #231/#232 派发设计并同步已入 main 事实；issue #225。本文是计划与责任图，不替代 M3/M4/M5/M6 的 Exit 证据）。本次 follow-up 在 M5-1/M5-2/M5-3 写入原子 claim + 调用前持久化 `dispatching`/immutable attempt id/fencing、tenant-scoped claim/fold/query、外呼前重验、`RequestFingerprint` 绑定 holder/guests supplier payload digest 及未来最小否证（均未执行）；并同步 #238/#243/#244/#245/#248/#240 已入 main、#227/#241/#242 已关闭。
+> 状态：living（issue #225）。#231（可信审批 receipt + 原子 outbox core）、#232/#233（hotelbyte-cli 纯契约 adapter 与 cancel/refund/commission 契约）、#234（kernel manifest + import trace proof 工具）、#235（sponsor plugin 契约 + 默认 off fixture）等 pre-entry 机制已入 main 并在运行时边界保持封存；整个 program 仍为 TODO——满足 #136/#142 的真实供应商 UAT 验收证据、P6 批准及试点签约证据仍未闭合。本文是计划与责任图，不替代 M3/M4/M5/M6 的 Exit 证据。
 > 上游：[`../roadmap.md`](../roadmap.zh-CN.md)、[`../architecture.md`](../architecture.zh-CN.md) §1/§9/§10/§11、[`../gotry-master-outline.md`](../gotry-master-outline.zh-CN.md) §3.5/§3.7、issue #20/#22/#136/#137/#225/#223/#227/#228/#230/#231/#232/#233/#234/#235/#241/#242/#254/#255/#257。
 > 下游：独立 Claude Code worktree 任务、架构复验、PR 描述与贡献闸；公开交付记录按 [`../ops/external-pr-workflow.md`](../ops/external-pr-workflow.zh-CN.md) §0。
 
@@ -30,10 +30,10 @@ M4 scorer hardening (#223,工程加固 #238 已入 main) ─┐
 M4 opt-in lifecycle export (#228,collector #248 已入 main) ─┼─> real observed_private repeat cohort N≥5 (#20) ─> M4 Exit
 M4 reflux baseline ────────────────┘
 
-M4 Exit + hotelbyte-cli 供应链协议 (#136) ─> M5 WriteGate(#231) + HotelByte adapter(#232) + cancel/refund(#233) ─> M5 Exit
+M4 Exit + hotelbyte-cli 供应链协议 (#136) ─> M5 Entry ─> #231/#232/#233 pre-entry mechanisms in main（runtime sealed）+ 满足 #136/#142 的真实供应商 UAT 验收 → M5 Exit
 tenant ledger 代码在 main(#229/#237,验收#230 已关闭) + state-cli 代码在 main(#236) ─┐
 CLI 小数边界补丁 #241/PR243(已入 main 7a7f271,issue #241 已关闭) ───────────────┤
-M5 Exit + P6 founder review (#137) ───────────────────────────────────────┴─> M6 proof(#234) + sponsor plugin(#235) ─> M6 Exit(含试点签约)
+M5 Exit + accepted P6 founder approval (#137) ───────────────────────┴─> 既有 #234 import-only proof 工具（已在跑）+ Entry-gated #235 真实 sponsor 激活（M5 Exit + P6）+ 真实试点签约 → M6 Exit
 ```
 
 ## 2. 任务索引（≤5列）
@@ -46,16 +46,16 @@ M5 Exit + P6 founder review (#137) ───────────────
 | M4-2 | DONE（入 main） | #228/#248 | `m4m6-collector-20260908` | 显式 opt-in lifecycle 采集/脱敏导出已入 main；仅生成 candidate/synthetic |
 | M4-3 | TODO | #20 | 证据责任面 | 真实 `observed_private` N≥5 repeat cohort + reflux baseline |
 | M5-0 | TODO | #136 | supply/legal + adapter 责任面 | hotelbyte-cli 协议核验；未取得签署/内部授权证据 |
-| M5-1 | DONE（入 main） | #225/#136 | docs/program-225 | WriteGate proposal 已入 main（PR #249 merge 293bbb6），仅设计输入；实现/UAT/M5 Entry 仍 TODO（#136/#231/#232/#233），交易运行时不启封 |
-| M5-2 | TODO | #231 | m5-core worktree | 持久化可信审批与原子 outbox；M5 Entry 后实现 |
-| M5-3 | TODO | #232 | m5-adapter worktree | hotelbyte-cli trade adapter、unknown/query/reconcile |
-| M5-4 | TODO | #233 | m5-refund worktree | cancel/refund/wallet outcome + commission/披露 |
+| M5-1 | DONE（入 main，仅设计输入） | #225/#136 | docs/program-225 | WriteGate proposal 已随 PR #249（merge 293bbb6）入 main；#231 core 代码已在 main；M5 运行时激活、真实 supplier UAT 与 M5 Entry 仍 TODO（#136），交易运行时不启封 |
+| M5-2 | TODO（pre-entry 已入 main） | #231 | m5-core worktree | 可信审批 receipt + 原子 outbox core 机制已入 main；真实 supplier effect 与 M5 Entry 仍 TODO（#136） |
+| M5-3 | TODO（pre-entry 已入 main） | #232 | m5-adapter worktree | hotelbyte-cli 纯契约 adapter + fake-CLI 已入 main；真实 supplier UAT 与 M5 Entry 仍 TODO（#136） |
+| M5-4 | TODO（pre-entry 已入 main） | #233 | m5-refund worktree | cancel/refund/wallet outcome + commission/披露 纯契约已入 main；真实补偿矩阵与 M5 Exit 仍 TODO |
 | M6-0 | DONE（入 main） | #229/#237/#230 | ledger 集成线 | tenant ledger/fold 代码及验收已入 main |
 | M6-0b | DONE（入 main） | #236/#241/#243 | state-cli 集成线 | tenant CLI 与小数边界已入 main并关闭 |
 | M6-1 | DONE（入 main） | #225/#137 | docs/program-225 | P6 审批底稿已入 main（PR #249 merge 293bbb6）；#137 founder YES 仍 TODO，M6 Entry 仍等 M5 Exit |
 | M6-2 | TODO | #137 | founder review | 仅 founder 明确 YES 批准整体方案或批准修改稿才满足 P6 Exit |
-| M6-3 | TODO | #234 | m6-proof worktree | kernel-set / loaded-modules / runtime trace schema 与生成脚本 |
-| M6-4 | TODO | #235 | m6-plugin worktree | M5 Exit + P6 founder 批准后的 sponsor plugin E2E |
+| M6-3 | TODO（既有工具已入 main） | #234 | m6-proof worktree | kernel manifest + import trace proof 工具已入 main（import-only proof gate 已在跑）；M5 Exit + P6 accepted + 真实 sponsor UAT 仍 TODO（#137） |
+| M6-4 | TODO（pre-entry 已入 main） | #235 | m6-plugin worktree | sponsor plugin 契约 + 默认 off fixture 已入 main；Entry-gated 真实 sponsor 激活（M5 Exit + P6）+ 试点签约 仍 TODO（#137） |
 | M6-5 | TODO | #137 | sales/legal | B2B 试点签约/商业条件；仍属 M6 Exit，不能移出 |
 | Q-1 | DONE（入 main） | #225/#240 | docs/program-225 | 贡献闸文档已随 #240 入 main |
 | Q-2 | PARTIAL | #254 | data-repair 责任面 | 工程 apply/rollback + 回执 schema 已落地；关闭仍需 founder 授权的真实 repair 回执（或确认无需搬移）；quality/follow-up 线，非 M5/M6 Entry 阻断 |
@@ -125,10 +125,11 @@ M5 Exit + P6 founder review (#137) ───────────────
 - **输出**：可信 receipt 发行/消费权威、request fingerprint（绑定实际 supplier request canonical payload digest 或既有 `payload_digest`，敏感字段不公开落账）、approval_claims 持久化、本地 outbox intent（不宣称外部 exactly-once）、dispatcher 原子 claim + 调用前持久化 `dispatching`/immutable attempt id/fencing、外呼前重验（授权/quote-receipt 有效期/immutable digest/路由 Buyer/撤回）、lease 过期不推导无副作用且不重置未执行、HotelByte unknown/query miss/对账/补偿/披露矩阵与准入矩阵。
 - **最小 E2E**：文档链接/路径检查；六状态面引用一致。
 - **否证**：文档暗示 M5 已开闸；把 outbox 写成外部 exactly-once；query miss 在恢复窗口内变 reconciled_failed；receipt 接受客户端/模型拼装；遗漏 HotelByte 30s/unknown/query-orders/Buyer/selector/OTP/portal 优先缺口；遗漏原子 claim/调用前 attempt 持久化/外呼前重验/lease 过期不重置；把派发否证写成已执行。
-- **退出标准**：WriteGate proposal 已随 PR #249（merge 293bbb6）入 main，仅作 M5 实现前设计输入；实现/UAT/M5 Entry 仍为 TODO（#136/#231/#232/#233），交易运行时不启封。
+- **退出标准**：WriteGate proposal 与 #231 准入前内核已在主线。M5 Entry 仍要求 M4 Exit 与供应链协议（#136）；只有通过 Entry 后才推进运行时激活与合格真实供应商 UAT（#136/#142）。M5 Exit 仍按原有验收条件判断。
 
 ### M5-2 — #231 持久化可信审批与原子 outbox
 
+- **状态**：pre-entry 机制已入 main（`ts/src/write-gate.ts`：`preparePresentation`、`trustedHostConfirm`、`claimForDispatch`、`preDispatchRevalidate`；由 `scripts/run-all-tests.sh` write-gate 段覆盖）；运行时边界封存；真实 supplier effect、M5 Entry 与 M5 Exit 仍 TODO（#136）。
 - **前置**：M5 Entry 两项（M4 Exit + 供应链协议）均满足；M5-1 proposal accepted。
 - **责任文件**：`ts/src/state-ledger.ts`；`ts/src/booking-saga.ts`；`ts/capabilities/effect.ts`；`approval_claims` 表；`write_effect_intents` 派发态/attempt/fencing 字段；必要 docs/tests。
 - **输出**：nonce/fingerprint 在呈现前由服务端准备为 `PreparedChallenge` 并绑定不可变请求；receipt 发行与消费通道只接受可信宿主 UI 确认回调（带 actor/tenant/seam/challenge），模型只能请求展示，模型发起确认被拒且无 outbox；`approval_claims(receipt_id PRIMARY KEY, challenge_id, nonce_digest UNIQUE, consumed_at)` 与 `pending_writes` 状态转移、outbox intent 同一 SQLite 事务；顺序为准备/呈现 → 可信确认 → 原子消费 + outbox；跨 intent 重放同一 receipt/nonce/challenge 返回 `approval-claimed`。`WriteEffectIntent` 携带 `tenant_id`；receipt 消费事务只产生一个本地 outbox intent（`dispatch_status=queued`）；dispatcher 通过 `tenant_id + idem_key` 条件更新（或已验证 tenant 归属的全局 `effect_id`）原子 claim，影响行数=1 才获得派发权，后续 fold/query 同样 tenant-scoped。任何 supplier/network 调用前同事务持久化 `dispatching`、immutable `attempt_id`/`fencing_token`/`claimed_by`/`lease_until`；并发 worker 只有赢得 claim 的一个有权派发。详见 [`write-gate-production-design.md`](write-gate-production-design.zh-CN.md) §5.3/§5.4。
@@ -140,6 +141,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M5-3 — #232 hotelbyte-cli trade adapter + unknown/query/reconcile
 
+- **状态**：pre-entry 契约 + fake-CLI 已入 main（`ts/capabilities/hotelbyte-transaction.ts`：`classifyBookExecution`、`advanceReconciliation`、`newIntentAllowed`；`ts/scripts/hotelbyte-spawn-e2e-tests.ts` `runFake` 跑本地 fixture 子进程）；真实 adapter 接线、supplier UAT 与 M5 Entry 仍 TODO（#136）。
 - **前置**：M5-0 协议字段可得；M5-2 core 就绪。
 - **责任文件**：新增 hotelbyte-cli trade adapter（文件由实施 PR 定）；adapter tests；reconciliation docs。
 - **输出**：钉 npm `staicli@0.0.3` 发布物（integrity 见 M5-0）而非 master；隔离 credential home；受控 env；固定全局 flags 前缀；强制 `customerReferenceNo`；book result.status `verified|pending|failed` 投影；unknown → `query-orders` 或 manual reconcile；query miss 在恢复窗口内保持 unknown。adapter 在发起 `trade book` 前执行 M5-2 的外呼前重验（授权/quote-receipt 有效期/immutable request digest/路由 Buyer/撤回），过期/变更/撤回且未外呼时零 supplier write，旧 effect 在 outbox/dispatch 层置 `rejected` 不回 queued，另建新 quote/intent/receipt（不扩展 ADR-17 `pending_writes` 三态、不投影 supplier failure/refund）；`RequestFingerprint` 绑定实际 supplier request 的 canonical payload digest（覆盖 holder/guests 中影响履约的字段）或既有 immutable `payload_digest`，敏感字段不公开落账；展示/确认后替换旅客或联系人必须零写。详见 [`write-gate-production-design.md`](write-gate-production-design.zh-CN.md) §4/§5.4/§5.5。
@@ -149,6 +151,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M5-4 — #233 cancel/refund/wallet outcome + commission/disclosure
 
+- **状态**：pre-entry 契约已入 main（`ts/src/booking-surface/cancel-refund-commission.ts`：cancel/refund 校验、披露、fingerprint 绑定）；真实补偿矩阵、客户退款路径与 M5 Exit 仍 TODO。
 - **前置**：M5-3；供应商取消/退款/钱包恢复字段核验。
 - **责任文件**：cancel/refund outcome 投影；透明卡片/审计报告；tests。
 - **输出**：pending cancel 与 confirmed compensation 分词；`trade cancel` receipt、退款单、钱包退款、手续费、客户退款金额分开投影；佣金/赞助/售后责任在确认前披露并纳入 fingerprint。
@@ -189,8 +192,9 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M6-3 — #234 复用 proof schema 与生成脚本
 
+- **状态**：pre-entry 离线 proof 工具已入 main（`ts/data/kernel-manifest.json`；`ts/scripts/kernel-manifest-gate.ts` 加载冻结 manifest，校验 schema/integrity/functional coverage，运行 runtime import trace；`ts/scripts/kernel-manifest-evidence.ts` 构建 evidence；`scripts/run-all-tests.sh` 调用 import-only proof gate——已在无条件跑）；M5 Exit、P6 accepted 与真实 sponsor UAT 仍 TODO（#137）。
 - **责任面**：m6-proof worktree，提前冻结分母，避免实现者临时发明。
-- **责任文件**：新增 proof schema/脚本/fixture（由实施 PR 定）；更新 P6/roadmap。
+- **责任文件**：`ts/data/kernel-manifest.json`、`ts/scripts/kernel-manifest-gate.ts`、`ts/scripts/kernel-manifest-evidence.ts`（已在 main，import-only proof gate 已接入 run-all）；future work 是真实 sponsor 激活 + tenant/sponsor 对抗 evidence（#137）。
 - **输出**：固定冻结 `kernel-set.txt`；`loaded-modules.json`；runtime 实际加载 coverage；预声明功能路径 coverage；LOC 只作附属数字。
 - **最小 E2E**：冻结完整 kernel-set 后运行 sponsor fixture；整组 kernel zero-diff，并分别报告实际加载覆盖与预声明功能路径覆盖。
 - **否证**：按本次 run 已加载模块缩小 kernel-set 或藏改动；用 loaded LOC ratio 代替两份 coverage；未走事实闸/WriteGate/async 却称路径已覆盖。
@@ -198,6 +202,7 @@ M5 Exit + P6 founder review (#137) ───────────────
 
 ### M6-4 — #235 sponsor plugin proof
 
+- **状态**：pre-entry 契约/fixture 已入 main（`ts/capabilities/sponsor-plugin.ts`：`createSponsorPlugin`、route authorization、ranking、confirmation fingerprint、`runBookingScenario`；`requireRuntimeActivation` 强制 default-off flag 边界）；激活、真实 traveler 效果、真实 agency E2E 与试点签约 仍 TODO（#137）。
 - **前置**：M5 Exit + M6-2 P6 founder 明确批准 + M6-0 tenant 隔离证据 + M6-3 proof schema。
 - **输出**：旅行社嵌入全链：traveler 动机访谈→同 MotivationProfile/constraints→sponsor inventory→透明卡片含披露→可证明零内核 diff。
 - **最小 E2E**：隔离 tenant/stateRoot 跑 sponsor plugin；固定 `kernel-set` 全集 `git diff` 为空；runtime 实际加载 coverage 与预声明功能路径 coverage 分别通过；tenant/sponsor 对抗通过。
@@ -251,16 +256,16 @@ M5 Exit + P6 founder review (#137) ───────────────
 4. DONE（入 main）：#228/#248 显式 opt-in M4 planning lifecycle 本地采集与脱敏导出；仅为 candidate/synthetic。
 5. TODO：#20 真实 `observed_private` N≥5 repeat cohort 与 reflux baseline。
 6. TODO：#136 HotelByte 供应链协议、Buyer/环境/路由、字段、人工对账与 UAT 核验（未取得签署/内部授权证据）。
-7. DONE（入 main，仅设计输入）：#225/#136 M5-1 WriteGate proposal 已随 PR #249（merge 293bbb6）入 main；实现/UAT/M5 Entry 仍在 #136/#231/#232/#233。
-8. TODO：#231 M5 Entry 后可信审批 receipt + 原子 outbox core。
-9. TODO:#232 M5 HotelByte trade adapter unknown/query/reconcile。
-10. TODO：#233 M5 cancel/refund/wallet outcome 与 commission/disclosure。
+7. DONE（入 main，仅设计输入）：#225/#136 M5-1 WriteGate proposal 已随 PR #249（merge 293bbb6）入 main；#231 core 代码已在 main——M5 运行时激活 + 真实 supplier UAT + M5 Entry 仍 TODO（#136）。
+8. TODO（pre-entry 机制已入 main）：#231 可信审批 receipt + 原子 outbox core 代码已入 main（`ts/src/write-gate.ts`）；运行时边界封存；真实 supplier effect、M5 Entry 与 M5 Exit 仍 TODO（#136）。
+9. TODO（pre-entry 契约已入 main）：#232 M5 HotelByte trade adapter 纯契约 + fake-CLI 已入 main（`ts/capabilities/hotelbyte-transaction.ts` + `ts/scripts/hotelbyte-spawn-e2e-tests.ts`）；真实 supplier UAT 与 M5 Entry 仍 TODO（#136）。
+10. TODO（pre-entry 契约已入 main）：#233 M5 cancel/refund/wallet outcome + commission/disclosure 契约已入 main（`ts/src/booking-surface/cancel-refund-commission.ts`）；真实补偿矩阵与 M5 Exit 仍 TODO。
 11. DONE（入 main）：#229/#237 tenant ledger 隔离 + fold 回归与 #230 验收。
 12. DONE（入 main）：#236 state-cli 租户边界与 #241/#243 `.5`/`+.5` 小数边界已合入并关闭。
 13. DONE（入 main，仅审批底稿）：#225/#137 M6-1 P6 draft/proof 口径已随 PR #249（merge 293bbb6）入 main；#137 founder YES 与 M6 Entry 仍为 TODO。
 14. TODO：#137 P6 founder 明确批准整体方案或批准修改稿。
-15. TODO：#234 M6 复用 proof schema/生成脚本。
-16. TODO：#235 M6 sponsor plugin 零内核 diff + runtime trace proof。
+15. TODO（既有工具已入 main）：#234 M6 kernel manifest + import trace proof 工具已入 main（`ts/data/kernel-manifest.json`；`ts/scripts/kernel-manifest-gate.ts`；`ts/scripts/kernel-manifest-evidence.ts`）；import-only proof gate 已在 `scripts/run-all-tests.sh` 跑；M5 Exit、P6 accepted 与真实 sponsor UAT 仍 TODO（#137）。
+16. TODO（pre-entry 契约/fixture 已入 main）：#235 M6 sponsor plugin 契约 + 默认 off fixture 已入 main（`ts/capabilities/sponsor-plugin.ts` 通过 `requireRuntimeActivation` 强制 default-off）；Entry-gated 真实 sponsor 激活 + 真实 agency E2E + 试点签约 仍 TODO（#137）。
 17. TODO：#137 B2B 试点商业条件/签约。
 18. PARTIAL（quality/follow-up，非 M5/M6 Entry 阻断）：#254 工程 apply/rollback + 回执 schema 已落地；关闭仍需 founder 授权的真实 repair 回执或确认无需搬移。
 19. TODO（quality/follow-up，非 M5/M6 Entry 阻断）：#255 跟踪 P4 会话双区记忆真实使用与多用户触发条件。
