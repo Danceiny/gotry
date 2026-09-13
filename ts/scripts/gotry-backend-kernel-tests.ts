@@ -140,6 +140,7 @@ async function main(): Promise<void> {
         { label: 'search supplier=null', path: '/v1/session/search', body: '{"supplier":null}', expectError: 'supplier 必须是字符串' },
         { label: 'search query=string', path: '/v1/session/search', body: '{"supplier":"dida-portal","query":"foo"}', expectError: 'body 必须是 JSON 对象' },
         { label: 'search query.timeoutMs=string', path: '/v1/session/search', body: '{"supplier":"dida-portal","query":{"timeoutMs":"30"}}', expectError: 'body 必须是 JSON 对象' },
+        { label: 'search query.timeoutMs=Infinity', path: '/v1/session/search', body: '{"supplier":"dida-portal","query":{"timeoutMs":1e309}}', expectError: 'body 必须是 JSON 对象' },
         { label: 'login body=null', path: '/v1/session/login/open', body: 'null', expectError: 'body 必须是 JSON 对象' },
         { label: 'login url=number', path: '/v1/session/login/open', body: '{"supplier":"dida-portal","url":123}', expectError: 'url 必须是字符串' },
         { label: 'login supplier=bool', path: '/v1/session/login/open', body: '{"supplier":true}', expectError: 'supplier 必须是字符串' },
@@ -183,7 +184,7 @@ async function main(): Promise<void> {
       check(offDomain.status === 400 && ((offDomain.body as { error?: string } | null)?.error ?? '').includes('portal.dida.com'), 'login url 域外 400(fail-closed)')
       check(submitCalls.count === 1, 'login url 域外:bridge.submit 未增')
     } finally {
-      await closeBackend(guardHandle, [okModule, guardSession]).catch(() => { /* 关闭聚合错误不掩测试结论 */ })
+      await closeBackend(guardHandle, [okModule, guardSession])
     }
   } finally {
     await closeBackend(handle, [okModule, boomModule, session]).catch(() => { /* 关闭聚合错误不掩测试结论 */ })

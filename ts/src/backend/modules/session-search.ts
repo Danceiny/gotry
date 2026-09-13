@@ -110,7 +110,7 @@ function readSearchQuery(obj: Record<string, unknown>): { query?: { entryUrl?: s
   const entryUrl = rec.entryUrl
   const timeoutMs = rec.timeoutMs
   if (entryUrl !== undefined && typeof entryUrl !== 'string') return { code: 'shape' }
-  if (timeoutMs !== undefined && typeof timeoutMs !== 'number') return { code: 'shape' }
+  if (timeoutMs !== undefined && (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs))) return { code: 'shape' }
   return { query: { entryUrl, timeoutMs } }
 }
 
