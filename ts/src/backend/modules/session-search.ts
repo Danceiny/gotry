@@ -27,7 +27,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import type { BackendModule } from '../kernel.ts'
-import { sessionDidaSearch } from '../../../capabilities/session-search.ts'
+import { sessionDidaSearch, type SessionDidaResult } from '../../../capabilities/session-search.ts'
 import { DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_DOMAIN } from '../../../capabilities/session/adapters/dida-portal.ts'
 import { createBridgeJobQueue, type BridgeJobQueue } from '../../../capabilities/session/extension-bridge.ts'
 import { extensionCookieNames, extensionOpenLogin, classifyBridgeFailure } from '../../../capabilities/session/extension-channel.ts'
@@ -45,6 +45,21 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status
   res.setHeader('content-type', 'application/json')
   res.end(JSON.stringify(body))
+}
+
+/**
+ * needs-extension 的安装入口必须随 HTTP 响应一起下发。
+ *
+ * 能力层在 verdict=needs-extension 时已经算好了 Chrome 商店链接与安装动作
+ * (dida 路径返回 EXTENSION_STORE_URL + 'add-to-chrome'),而这一层是**逐字段
+ * 组装**响应的——漏掉这两个键,该 verdict 唯一的行动项就消失在传输层,消费方
+ * 只能退化成"放弃实时价、切回目录价"(hotel-fe#3611)。
+ */
+function extensionInstallFields(result: SessionDidaResult): { installUrl?: string; installAction?: 'add-to-chrome' } {
+  return {
+    ...(result.installUrl ? { installUrl: result.installUrl } : {}),
+    ...(result.installAction ? { installAction: result.installAction } : {}),
+  }
 }
 
 async function readBody(req: IncomingMessage, cap = 64 * 1024): Promise<string> {
@@ -129,7 +144,13 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
       }))
       if (result.verdict === 'cooldown') {
         res.setHeader('retry-after', '30')
-        sendJson(res, 429, { ok: false, verdict: result.verdict, error: result.error, evidence: result.evidence })
+        sendJson(res, 429, {
+          ok: false,
+          verdict: result.verdict,
+          error: result.error,
+          evidence: result.evidence,
+          ...extensionInstallFields(result),
+        })
         return
       }
       sendJson(res, 200, {
@@ -141,6 +162,11 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
         latencyMs: result.latencyMs,
         fetchedAt: new Date().toISOString(),
         ...(result.error ? { error: result.error } : {}),
+        // needs-extension 的安装入口必须跟着 verdict 一起下发。能力层已经算好了
+        // (dida 路径返回 EXTENSION_STORE_URL),这里是它在 HTTP 面唯一的出口——
+        // 逐字段组装时漏掉这两个键,消费方就只剩"放弃实时价、切回目录价"一条路
+        // (hotel-fe#3611)。
+        ...extensionInstallFields(result),
       })
     } catch (e) {
       sendJson(res, 500, { ok: false, error: `会话检索异常: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}` })
