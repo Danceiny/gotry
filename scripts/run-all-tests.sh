@@ -22,6 +22,7 @@ else
 fi
 (node scripts/run-all-tests-wiring-tests.mjs) || FAIL=1
 (node scripts/check-docs-i18n.mjs) || FAIL=1  # 双语对存在性+结构对等(不一致视为 bug)
+(node scripts/check-doc-readability.mjs) || FAIL=1  # 读者入口可读性预算+防追加式 issue/date 台账
 (node scripts/build-dist.mjs) || FAIL=1
 (node scripts/build-dist-compat-tests.mjs) || FAIL=1
 

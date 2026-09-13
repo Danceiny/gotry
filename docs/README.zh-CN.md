@@ -29,6 +29,7 @@
 
 - 一律 kebab-case 小写；禁止 `vN` 版本后缀（版本历史归 git）。
 - **双语成对（loopx 约定）**：英文基座 `x.md` + 中文镜像 `x.zh-CN.md`；机器生成文档（如 `CHANGELOG.md`）与工具自管的 `superpowers/` 命名空间豁免。新文档落地即双语；改任何一侧必须同提交同步另一侧。机械校验：`node scripts/check-docs-i18n.mjs`（存在性 + 标题/代码块/链接数对等）。
+- 八个读者入口文件——README、架构、路线图、冻结 Stage 1 设计的中英双语版本——还必须通过 `node scripts/check-doc-readability.mjs`：面向读者章节的校准行数／字节预算、逻辑行字节上限、双语对 parity、禁止修订史节、禁止追加式 issue/date 台账、权威面／冻结设计前言有界。
 - 权威面：裸主题名（`architecture.md`、`roadmap.md`），不带任何前后缀。
 - RFC：`<主题>-rfc.md`；设计：`<主题>-design.md` 或 `<角色>-guide.md`；调研：`<主题>-research.md`、复盘：`<主题>-postmortem.md`。
 - 里程碑备忘：`<里程碑号>-<主题>.md`（如 `m3-web-gap.md`）；一次性计划/规格：`YYYY-MM-DD-<主题>.md`。
@@ -63,7 +64,7 @@
 
 - **RFC**：拍板前 `proposal`；拍板后改 `accepted`（保留原文不动，正文吸收进权威面）；后续演进只改权威面。
 - **调研/里程碑备忘**：定稿即 `frozen(日期)`，之后只允许改头部状态，不改正文（历史保真）。
-- **权威面**：持续演进，`living`；任何改变系统形态/状态/债务的提交，按 `architecture.md` §11 同提交同步六处状态面。
+- **权威面**：持续演进，`living`；提交只更新 `architecture.md` §11 定义且事实确实变化的专职权威面，其他文档保留短指针。
 - **设计文档**：`proposal → accepted → active`；被权威面吸收后状态标注并让渡。
 
 ## 6. 引用纪律
@@ -78,7 +79,7 @@
 
 1. **速览前置**：超过 80 行的文档，头部块之后必须有「速览」或摘要段（3–7 条），读完即可回答「这篇讲什么、结论是什么、跟我有什么关系」。例外：已有执行摘要/Goal 段的文档不重复加。
 2. **一句一义**：单句不超过一个判断；多重括号嵌套摊平为独立短句；单条 bullet 只承载一个事实，装不下就拆子项。
-3. **篇内去重**：同一结论/事实在篇内只写一遍，重复处删除或改指针（「见 §x」）；跨文档去重按权威面让渡——细节归专职文档（如 benchmark 逐轮台账归 `evaluation/benchmark-environment-bridge.md`），其他处只留摘记+链接。例外：六状态面（`architecture.md` §11）之间的重复是刻意的，不动。
+3. **篇内去重**：同一结论／事实在篇内只写一遍，重复处删除或改指针（「见 §x」）；跨文档去重按权威面让渡——细节归专职文档（如 benchmark 逐轮台账归 `evaluation/benchmark-environment-bridge.md`），其他处只留摘记与链接。把同一实现段落复制到多个状态面属于缺陷。
 4. **枚举下沉**：清单/参数表/逐条理由进表格或文末附录，正文留结论。
 5. **版本历史归 git**：文档内**不写修订史/变更日志节**；历史状态叙事让渡给 `release-notes.md` 与各文档的 frozen 头部。
 6. **状态诚实**：文档头部状态与实际结算保持一致（已立项就不写「待拍板」）；陈旧状态发现即改，不顺手留。
@@ -99,7 +100,7 @@
 | [tech-strategy.zh-CN.md](tech-strategy.zh-CN.md) | 技术选型与半年迭代路线（M2–M4）：选型矩阵/评测/决策登记 |
 | [data-sources.zh-CN.md](data-sources.zh-CN.md) | 唯一数据源权威面：领域矩阵/新鲜度/证据链契约 |
 | [user-guide.zh-CN.md](user-guide.zh-CN.md) | 终端用户使用指南 |
-| [tools.zh-CN.md](tools.zh-CN.md) | 工具参考面：23 个注册工具的分组与逐工具契约/通道路由/web onboarding/运维脚本面 |
+| [tools.zh-CN.md](tools.zh-CN.md) | 工具参考面：注册工具分组、逐工具契约、通道路由、web onboarding 与运维脚本；清单数量以代码为准 |
 | [release-notes.zh-CN.md](release-notes.zh-CN.md) | 逐版本发布决策（「为什么」，人写决策面） |
 | [tokens.zh-CN.md](tokens.zh-CN.md) | token 唯一权威面：npm 2FA/发布机制/渠道获取表 |
 | [decisions-needed.zh-CN.md](decisions-needed.zh-CN.md) | 待创始人拍板的决策队列 |
@@ -124,7 +125,7 @@
 | [design/external-event-seam.md](design/external-event-seam.zh-CN.md) | 外部事件驱动接缝设计（#82 方向/D-31，只设计不承诺实现） |
 | [design/itinerary-html-renderer.md](design/itinerary-html-renderer.zh-CN.md) | 行程 HTML 渲染器合同 + 产品生成入口（内部切片，issue #442/父 #438）：纯有界渲染器、计划面与证据面分离、拒绝集；`gotry_itinerary_render` 从注册表选出的事实在会话工作目录仅新建一个不覆盖的 HTML 文件；原生 HTML preview 实证在 #448 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts` |
 | [design/hotelbyte-skills-design.md](design/hotelbyte-skills-design.zh-CN.md) | hotelbyte-skills 架构（知识进仓/执行留 gotry，issue #5） |
-| [design/stage1-top-down-design.md](design/stage1-top-down-design.zh-CN.md) | Stage 1 顶层设计（历史原文）；**状态头是 §11 状态面⑥** |
+| [design/stage1-top-down-design.md](design/stage1-top-down-design.zh-CN.md) | 冻结的 Stage 1 顶层设计；当前状态让渡给架构与路线图 |
 | [design/lavish-local.md](design/lavish-local.zh-CN.md) | Lavish 本地会话适配器（#443，父需求 #438）：自有进程/端口/状态边界、TOON 协议事实、不可信反馈、有界轮询 |
 
 ### rfc/（提案原文）
@@ -173,7 +174,7 @@
 | 文档 | 关注点 |
 |---|---|
 | [ops/extension-privacy.md](ops/extension-privacy.zh-CN.md) | Session Bridge 扩展隐私政策 |
-| [ops/extension-webstore-submission.md](ops/extension-webstore-submission.md) | Chrome Web Store 上架材料与现行 dsh UI 安装交接（ADR-21 通道 B） |
+| [ops/extension-webstore-submission.md](ops/extension-webstore-submission.zh-CN.md) | Chrome Web Store 上架材料与现行 dsh UI 安装交接（ADR-21 通道 B） |
 | [ops/external-pr-workflow.md](ops/external-pr-workflow.zh-CN.md) | 公开 issue→PR→review→merge 台账；另载外部 PR（含自动化机器人）分诊/核验/裁决规则 |
 | [ops/security.md](ops/security.zh-CN.md) | 安全策略与漏洞披露：上报通道、triage 纪律、append-only 安全事件台账 |
 | [ops/ledger-tenant-repair.md](ops/ledger-tenant-repair.zh-CN.md) | #254 账本 tenant 修复 owner-gate 清单（dry-run → 授权 → apply → 私有回执） |

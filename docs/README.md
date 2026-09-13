@@ -29,6 +29,7 @@
 
 - kebab-case lowercase throughout; no `vN` version suffixes (version history belongs to git).
 - **Bilingual pairs (loopx convention)**: English base `x.md` + Chinese mirror `x.zh-CN.md`; machine-generated documents (e.g. `CHANGELOG.md`) and the tool-managed `superpowers/` namespace are exempt. New docs land bilingual from day one; editing one side requires syncing the other in the same commit. Mechanical check: `node scripts/check-docs-i18n.mjs` (existence + heading/code-block/link count parity).
+- The eight reader-facing files — README, architecture, roadmap, and frozen Stage 1 design in both languages — also pass `node scripts/check-doc-readability.mjs`: calibrated line/byte budgets on reader-facing sections, logical-line byte caps, bilingual pair parity, no revision-history sections, no append-only issue/date ledgers, and bounded authority/design preambles.
 - Authorities: bare topic name (`architecture.md`, `roadmap.md`), no prefixes or suffixes.
 - RFC: `<topic>-rfc.md`; design: `<topic>-design.md` or `<role>-guide.md`; research: `<topic>-research.md`; postmortem: `<topic>-postmortem.md`.
 - Milestone memo: `<milestone>-<topic>.md` (e.g. `m3-web-gap.md`); one-off plans/specs: `YYYY-MM-DD-<topic>.md`.
@@ -63,7 +64,7 @@ Fields may be added as needed (e.g. `读者/audience`, `日期/date`, `信源纪
 
 - **RFC**: `proposal` before the decision; `accepted` after (original text kept untouched; content absorbed into authorities); later evolution only edits the authorities.
 - **Research/milestone memos**: `frozen(date)` once finalized; afterwards only the header status may change, never the body (historical fidelity).
-- **Authorities**: evolve continuously, `living`; any commit that changes system shape/state/debt syncs the six state faces of `architecture.md` §11 in the same commit.
+- **Authorities**: evolve continuously, `living`; a commit updates only the concern-specific authorities whose facts change, as defined by `architecture.md` §11. Other documents keep compact pointers.
 - **Design docs**: `proposal → accepted → active`; once absorbed by an authority, mark the status and cede.
 
 ## 6. Reference Discipline
@@ -78,7 +79,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 
 1. **Summary first**: any document over 80 lines needs a "速览/TL;DR" section (3–7 bullets) right after the header block, sufficient to answer "what is this, what does it conclude, what does it have to do with me". Exception: documents with an existing executive summary/Goal section don't duplicate it.
 2. **One sentence, one meaning**: a single sentence carries at most one judgment; nested parentheticals are flattened into independent short sentences; one bullet carries one fact — split into sub-items if it doesn't fit.
-3. **Intra-doc dedup**: a conclusion/fact appears exactly once per document; repetitions are deleted or turned into pointers ("see §x"). Cross-document dedup follows authority cession — details belong to the dedicated doc (e.g. the per-turn benchmark ledger lives in `evaluation/benchmark-environment-bridge.md`), other places keep a summary plus a link. Exception: duplication among the six state faces (`architecture.md` §11) is deliberate — leave it.
+3. **Intra-doc dedup**: a conclusion/fact appears exactly once per document; repetitions are deleted or turned into pointers ("see §x"). Cross-document dedup follows authority cession — details belong to the dedicated doc (e.g. the per-turn benchmark ledger lives in `evaluation/benchmark-environment-bridge.md`), other places keep a summary plus a link. Copying the same implementation paragraph across status surfaces is a defect.
 4. **Enumerations sink**: lists/parameter tables/itemized rationale go into tables or an appendix; the body keeps conclusions.
 5. **Version history belongs to git**: documents **never** carry revision-history/changelog sections; historical narrative cedes to `release-notes.md` and to frozen headers.
 6. **Honest status**: a document's header status matches reality (an approved project doesn't say "pending"); stale status is fixed on sight, never left behind.
@@ -99,7 +100,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [tech-strategy.md](tech-strategy.md) | Tech selection & half-year iteration route (M2–M4): selection matrix/evaluation/decision register |
 | [data-sources.md](data-sources.md) | Sole data-source authority: domain matrix/freshness/evidence-chain contract |
 | [user-guide.md](user-guide.md) | End-user guide |
-| [tools.md](tools.md) | Tool reference: 23 registered tools grouped, per-tool contracts/channel routing/web onboarding/operator scripts |
+| [tools.md](tools.md) | Tool reference: registered-tool groups, per-tool contracts, channel routing, web onboarding, and operator scripts; inventory count defers to code |
 | [release-notes.md](release-notes.md) | Per-version release decisions (the "why", human-written decision face) |
 | [tokens.md](tokens.md) | Sole token authority: npm 2FA/publish mechanics/channel acquisition table |
 | [decisions-needed.md](decisions-needed.md) | Decision queue awaiting the founder |
@@ -124,7 +125,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [design/external-event-seam.md](design/external-event-seam.md) | External event-driven seam design (#82 direction/D-31, design only, no implementation promise) |
 | [design/itinerary-html-renderer.md](design/itinerary-html-renderer.md) | Itinerary HTML renderer contract + product generation entry (internal slice, issue #442/parent #438): pure bounded renderer, plan plane vs evidence plane, rejection set; `gotry_itinerary_render` writes one new non-overwriting HTML file from registry-selected facts; native HTML preview proof accepted on #448, persistent regression in `ts/scripts/dsh-artifact-web-e2e.ts` |
 | [design/hotelbyte-skills-design.md](design/hotelbyte-skills-design.md) | hotelbyte-skills architecture (knowledge enters the repo / execution stays in gotry, issue #5) |
-| [design/stage1-top-down-design.md](design/stage1-top-down-design.md) | Stage 1 top-level design (historical original); **its status header is state face ⑥ of §11** |
+| [design/stage1-top-down-design.md](design/stage1-top-down-design.md) | Frozen Stage 1 top-level design; current state cedes to architecture and roadmap |
 | [design/lavish-local.md](design/lavish-local.md) | Lavish local session adapter (#443, parent #438): owned-process/port/state boundary, TOON protocol facts, untrusted feedback, bounded polling |
 
 ### rfc/ (proposal originals)
