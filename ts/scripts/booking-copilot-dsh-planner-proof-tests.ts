@@ -800,6 +800,33 @@ const mixedAuthorityCases: ReadonlyArray<{
     accept: false,
     errorPattern: /planner_revision_mismatch/,
   },
+  {
+    name: 'revision mismatch plus empty actionId',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, actionId: '', expectedRevision: 99 },
+    accept: false,
+    errorPattern: /planner_revision_mismatch/,
+  },
+  {
+    name: 'revision mismatch plus nonstring factRef',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, factRefs: [0], expectedRevision: 99 },
+    accept: false,
+    errorPattern: /planner_revision_mismatch/,
+  },
+  {
+    name: 'revision mismatch plus invalid input',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, expectedRevision: 99, input: { bogus: 1 } },
+    accept: false,
+    errorPattern: /planner_revision_mismatch/,
+  },
+  {
+    name: 'wrong-typed revision repair control',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, expectedRevision: '99', factRefs: ['draft:destination=Dubai'] },
+    accept: true,
+  },
 ]
 for (const [index, c] of mixedAuthorityCases.entries()) {
   const mixedAuthorityPlanner = await createDshEmbeddedBookingPlanner({

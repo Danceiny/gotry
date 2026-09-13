@@ -440,6 +440,18 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
       throw new Error('planner_surface_action_unsupported')
     }
   }
+  // The runtime owns the revision: the planner can only echo what the prompt
+  // showed it. Reject a mismatch instead of rewriting model-authored authority;
+  // the client-side concurrency guard also lives at the context/journal binding.
+  // Inspect expectedRevision safely — only a typed number can establish the
+  // mismatch; a wrong-typed or missing revision falls through to schema
+  // validation as a repairable shape error so an unrelated schema failure
+  // (empty actionId / nonstring factRef / closed-input violation) cannot hide
+  // a known numeric revision mismatch behind INVALID_ARGS + later-canonical
+  // shape repair.
+  if (typeof decision.action.expectedRevision === 'number' && decision.action.expectedRevision !== task.revision) {
+    throw new Error('planner_revision_mismatch')
+  }
   const validation = validateBookingReadAction(decision.action)
   if (!validation.ok) {
     invalidDecisionLog('action_schema_invalid', {
@@ -449,14 +461,6 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
       errorCount: validation.errors.length,
     })
     throw new Error('planner_invalid_action')
-  }
-  // The runtime owns the revision: the planner can only echo what the prompt
-  // showed it. Reject a mismatch instead of rewriting model-authored authority;
-  // the client-side concurrency guard also lives at the context/journal binding.
-  // Inspect expectedRevision safely — only a typed number can establish the
-  // mismatch; a wrong-typed revision was already rejected by schema validation.
-  if (typeof decision.action.expectedRevision === 'number' && decision.action.expectedRevision !== task.revision) {
-    throw new Error('planner_revision_mismatch')
   }
   const action = decision.action as unknown as BookingReadAction
   assertPlannerSafeRefs(decision.action)
