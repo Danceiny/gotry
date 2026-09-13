@@ -549,7 +549,7 @@ function runSelfTest() {
     'README.zh-CN.md': '# GoTry\n\n## 速览\n\n紧凑读者入口。\n\n~~~markdown\n## 修订记录\n~~~\n',
   });
 
-  // CRLF/CR line endings are normalized to LF before line scanning (CommonMark 0.31.2 §6.3).
+  // CRLF line endings are normalized to LF before line scanning (CommonMark 0.31.2 §2.1).
   expectFailViaCli('CRLF backtick closer; real heading after valid closer is visible',
     { 'docs/roadmap.md': '# GoTry Roadmap\r\n\r\n## TL;DR\r\n\r\n```markdown\r\n## Revision History\r\n```\r\n\r\n## Revision History\r\n\r\n- Old state.\r\n' },
     ['docs/roadmap.md:9'], 'revision/change-history section belongs in git and release notes');
@@ -566,6 +566,13 @@ function runSelfTest() {
   expectFailViaCli('closer with both ASCII space and tab closes fence; real heading after',
     { 'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\n## Revision History\n``` \t\n## Revision History\n\n- Old state.\n' },
     ['docs/roadmap.md:8'], 'revision/change-history section belongs in git and release notes');
+
+  // Positive CRLF cases: whole-document CRLF fence with the forbidden heading ONLY INSIDE.
+  // A parser that incorrectly reports both the inside and an outside heading would still exit 1.
+  for (const [name, marker] of [['backtick', '```'], ['tilde', '~~~']]) {
+    expectPassViaCli(`whole-document CRLF ${name} fence with forbidden heading only inside`,
+      { 'docs/roadmap.md': `# GoTry Roadmap\r\n\r\n## TL;DR\r\n\r\n${marker}markdown\r\n## Revision History\r\n${marker}\r\n` });
+  }
 
   const cases = [
     {
