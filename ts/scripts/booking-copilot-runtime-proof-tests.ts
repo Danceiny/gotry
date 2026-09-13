@@ -358,12 +358,22 @@ const directIngressRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-missing-t
 const directIngressLedger = ensureLedger(directIngressRoot)
 const directIngressRuntime = new BookingCopilotTaskRuntime(directIngressLedger)
 const directIngressBefore = directIngressLedger.countEvents()
-assert.throws(() => directIngressRuntime.startTask({
-  schemaVersion: 'booking.surface', kind: 'user.turn.ingress', requestKey: 'ingress-no-task', surfaceHint: 'tenant',
-  workspace: { schemaVersion: 'booking.surface', revision: 0, locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [] },
-  request: { text: 'find hotels in Dubai' },
-} as never), /ingress_binding_required/)
-assert.equal(directIngressLedger.countEvents(), directIngressBefore, 'browser ingress has no direct runtime ledger side effects')
+try {
+  assert.throws(() => directIngressRuntime.startTask({
+    schemaVersion: 'booking.surface', kind: 'user.turn.ingress', requestKey: 'ingress-no-task', surfaceHint: 'tenant',
+    workspace: { schemaVersion: 'booking.surface', revision: 0, locale: 'en-US', currency: 'AED', searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [] },
+    request: { text: 'find hotels in Dubai' },
+  } as never), /ingress_binding_required/)
+  assert.equal(directIngressLedger.countEvents(), directIngressBefore, 'browser ingress has no direct runtime ledger side effects')
+} finally {
+  try { directIngressLedger.close() } catch (closeError) {
+    try { rmSync(directIngressRoot, { recursive: true, force: true }) } catch (rmError) {
+      throw new AggregateError([closeError, rmError], 'directIngress fixture teardown failed')
+    }
+    throw closeError
+  }
+  rmSync(directIngressRoot, { recursive: true, force: true })
+}
 const selectedIngressRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-selected-ingress-'))
 const selectedIngressLedger = ensureLedger(selectedIngressRoot)
 const selectedIngressRuntime = new BookingCopilotTaskRuntime(selectedIngressLedger, { contextRefFactory: () => 'ctx-selected-ingress' })
