@@ -29,6 +29,12 @@ assert.ok(
   executableLines.includes('("$TSX_BIN" scripts/booking-surface-package-proof.ts) || FAIL=1'),
   'the root package proof must use the installed tsx binary without an implicit npx fetch',
 )
+const readabilityDefault = executableLines.find((line) => line.startsWith('(node scripts/check-doc-readability.mjs) || FAIL=1'))
+assert.ok(readabilityDefault, 'the readability checker default invocation must be wired with || FAIL=1')
+assert.ok(
+  executableLines.some((line) => line.startsWith('(node scripts/check-doc-readability.mjs --self-test) || FAIL=1')),
+  'the readability checker self-test invocation must be wired with || FAIL=1',
+)
 assert.ok(
   executableLines.includes('(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/session-tests.ts) || FAIL=1'),
   'the active full-suite command must default optional live session probes off',
@@ -61,4 +67,4 @@ const forcedSessionFailure = spawnSync(
 assert.notEqual(forcedSessionFailure.status, 0, 'a real session assertion failure must produce a non-zero process exit')
 assert.match(forcedSessionFailure.stdout, /forced session failure propagation proof/)
 
-console.log('RUN-ALL WIRING PROOF: dist-before-dependents/local-tsx-path/pnpm-package-bin/session-failure-propagation OK')
+console.log('RUN-ALL WIRING PROOF: dist-before-dependents/local-tsx-path/pnpm-package-bin/readability-default-and-selftest/session-failure-propagation OK')
