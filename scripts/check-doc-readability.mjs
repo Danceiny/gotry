@@ -105,7 +105,8 @@ function stripFenceState(lines) {
 }
 
 function markdownStats(text) {
-  const lines = text.split('\n');
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
   const visible = stripFenceState(lines);
   const headings = [];
   for (let i = 0; i < visible.length; i++) {
@@ -421,7 +422,9 @@ function runSelfTest() {
     rmSync(baselineDir, { recursive: true, force: true });
   }
 
+  let cliFixtureCount = 0;
   function runCheckViaCli(overrides) {
+    cliFixtureCount++;
     const dir = mkdtempSync(join(tmpdir(), 'gotry-doc-readability-cli-'));
     try {
       writeFixture(dir, overrides);
@@ -546,6 +549,24 @@ function runSelfTest() {
     'README.zh-CN.md': '# GoTry\n\n## 速览\n\n紧凑读者入口。\n\n~~~markdown\n## 修订记录\n~~~\n',
   });
 
+  // CRLF/CR line endings are normalized to LF before line scanning (CommonMark 0.31.2 §6.3).
+  expectFailViaCli('CRLF backtick closer; real heading after valid closer is visible',
+    { 'docs/roadmap.md': '# GoTry Roadmap\r\n\r\n## TL;DR\r\n\r\n```markdown\r\n## Revision History\r\n```\r\n\r\n## Revision History\r\n\r\n- Old state.\r\n' },
+    ['docs/roadmap.md:9'], 'revision/change-history section belongs in git and release notes');
+
+  expectFailViaCli('CRLF tilde closer; real heading after valid closer is visible',
+    { 'docs/roadmap.md': '# GoTry Roadmap\r\n\r\n## TL;DR\r\n\r\n~~~markdown\r\n## Revision History\r\n~~~\r\n\r\n## Revision History\r\n\r\n- Old state.\r\n' },
+    ['docs/roadmap.md:9'], 'revision/change-history section belongs in git and release notes');
+
+  expectFailViaCli('bare CR closer; real heading after valid closer is visible',
+    { 'docs/roadmap.md': '# GoTry Roadmap\r\r## TL;DR\r\r```markdown\r## Revision History\r```\r\r## Revision History\r\r- Old state.\r' },
+    ['docs/roadmap.md:9'], 'revision/change-history section belongs in git and release notes');
+
+  // CommonMark §4.5 allows both ASCII space and tab between closing marker and end of line.
+  expectFailViaCli('closer with both ASCII space and tab closes fence; real heading after',
+    { 'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\n## Revision History\n``` \t\n## Revision History\n\n- Old state.\n' },
+    ['docs/roadmap.md:8'], 'revision/change-history section belongs in git and release notes');
+
   const cases = [
     {
       name: 'line budget',
@@ -603,7 +624,7 @@ function runSelfTest() {
       rmSync(dir, { recursive: true, force: true });
     }
   }
-  console.log(`DOC READABILITY SELF-TEST OK: ${cases.length} surface-budget negatives + ${'21'} fence/i18n CLI fixtures passed`);
+  console.log(`DOC READABILITY SELF-TEST OK: ${cases.length} surface-budget negatives + ${cliFixtureCount} fence/i18n CLI fixtures passed`);
 }
 
 if (process.argv.includes('--self-test')) {
