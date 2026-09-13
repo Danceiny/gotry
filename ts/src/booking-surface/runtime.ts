@@ -128,6 +128,8 @@ export type BookingPlannerDecision =
 
 export interface BookingPlannerSession {
   next(input: { turn: BookingCopilotTurn; task: BookingCopilotTaskState }): Promise<readonly BookingPlannerDecision[]>
+  /** Releases task-scoped planner resources after a durable terminal/error state. */
+  close?(): Promise<void>
 }
 
 export type BookingPlannerSessionFactory = (initialTask: BookingCopilotTaskState) => BookingPlannerSession

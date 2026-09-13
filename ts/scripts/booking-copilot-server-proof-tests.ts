@@ -30,6 +30,7 @@ const runtime = new BookingCopilotTaskRuntime(ledger, {
 
 let factoryCalls = 0
 let sessionTurns = 0
+let sessionCloses = 0
 const plannerFactory: BookingPlannerSessionFactory = (initialTask) => {
   factoryCalls += 1
   assert.equal(initialTask.taskId, 'task-http-1')
@@ -62,6 +63,7 @@ const plannerFactory: BookingPlannerSessionFactory = (initialTask) => {
         },
       ]
     },
+    async close() { sessionCloses += 1 },
   }
 }
 
@@ -229,6 +231,7 @@ const secondEvents = parseSse(await second.text())
 assert.deepEqual(secondEvents.map((event) => event.kind), ['status', 'explanation', 'terminal'])
 assert.equal(factoryCalls, 1, 'one task reuses one planner session across receipt continuations')
 assert.equal(sessionTurns, 2)
+assert.equal(sessionCloses, 1, 'a durable terminal decision releases the task-scoped planner session')
 assert.ok(!secondEvents.some((event) => event.kind === 'operation'), 'JSON-looking explanation text is not parsed into an operation')
 assert.ok(secondEvents[0]!.sequence > firstEvents.at(-1)!.sequence, 'SSE sequence is monotonic across turns')
 

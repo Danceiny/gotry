@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import {
   createDshEmbeddedBookingPlanner,
   DSH_EMBEDDED_BOOKING_TOOL_NAMES,
+  type DshPlannerTurnMetric,
 } from '../src/booking-surface/dsh-planner.ts'
 import type { BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
 import type { BookingCopilotTurn, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
@@ -61,7 +62,7 @@ const modelServer = createServer((req, res) => {
       continuationServed = true
       sse(res, [{
         id: 'chatcmpl-booking-continuation', object: 'chat.completion.chunk', created: 0, model: 'deepseek-v4-flash',
-        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call-booking-continuation', type: 'function', function: { name: 'booking_search_hotels', arguments: JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } } }) } }] }, finish_reason: 'tool_calls' }],
+        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call-booking-continuation', type: 'function', function: { name: 'booking_search_hotels', arguments: JSON.stringify({ kind: 'terminal' }) } }] }, finish_reason: 'tool_calls' }],
       }])
       return
     }
@@ -107,7 +108,7 @@ const modelServer = createServer((req, res) => {
               type: 'function',
               function: {
                 name: 'booking_search_hotels',
-                arguments: JSON.stringify({ decision: { kind: 'operation', action } }),
+                arguments: JSON.stringify({ kind: 'search.run', input: {} }),
               },
             }],
           },
@@ -175,6 +176,7 @@ const task: BookingCopilotTaskState = {
 }
 
 let planner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
+const plannerMetrics: DshPlannerTurnMetric[] = []
 try {
   planner = await createDshEmbeddedBookingPlanner({
     stateRoot,
@@ -186,17 +188,38 @@ try {
       HOTELBYTE_TOKEN: 'must-not-enter-dsh',
     },
     maxTokens: 512,
+    onMetric: (metric) => plannerMetrics.push(metric),
   })
   const session = planner.plannerFactory(task)
   const decisions = await session.next({ turn, task })
-  assert.deepEqual(decisions, [{ kind: 'operation', action }])
-  assert.equal(requests.length, 3, 'invalid tool call is repaired inside one real dsh run before the final model response')
+  assert.equal(decisions.length, 1)
+  assert.equal(decisions[0]?.kind, 'operation')
+  if (decisions[0]?.kind !== 'operation') throw new Error('real dsh did not materialize a booking operation')
+  assert.equal(decisions[0].action.kind, 'search.run')
+  assert.deepEqual(decisions[0].action.input, {})
+  assert.match(decisions[0].action.actionId, /^planner-[a-f0-9]{24}$/)
+  assert.notEqual(decisions[0].action.actionId, action.actionId)
+  assert.equal(requests.length, 2, 'accepted repair concludes the real dsh turn without a redundant post-tool model request')
+  assert.deepEqual(plannerMetrics[0], {
+    outcome: 'operation',
+    elapsedMs: plannerMetrics[0]?.elapsedMs,
+    harnessRunCount: 1,
+    modelStepCount: 2,
+    schemaRejectedCallCount: 1,
+    firstPassValid: false,
+    repairedValid: true,
+    actionKind: 'search.run',
+  }, 'safe planner metric distinguishes same-turn repair from first-pass validity')
+  assert.ok(Number.isSafeInteger(plannerMetrics[0]?.elapsedMs) && plannerMetrics[0]!.elapsedMs >= 0)
   const firstSystemMessage = (requests[0]!.body.messages as Array<{ role?: string; content?: unknown }>).find((message) => message?.role === 'system')
   assert.ok(firstSystemMessage, 'first model request carries a system message produced by dsh system-prompt')
   const firstSystemContent = typeof firstSystemMessage.content === 'string' ? firstSystemMessage.content : JSON.stringify(firstSystemMessage.content)
   assert.ok(firstSystemContent.includes("You are GoTry's embedded booking planner"), 'first SYSTEM message carries the GoTry personaPrefix (not the generic-default fallback)')
   assert.ok(firstSystemContent.includes('Shape-only example'), 'first SYSTEM message marks the envelope example as shape-only')
-  assert.ok(firstSystemContent.includes('{"decision":{"kind":"operation","action":{"schemaVersion":"booking.surface","kind":"search.patch"'), 'first SYSTEM message carries the corrected full decision envelope example')
+  assert.ok(firstSystemContent.includes('{"kind":"search.patch","input":{"patch":'), 'first SYSTEM message carries the shallow semantic proposal example')
+  for (const runtimeField of ['actionId', 'contextRef', 'expectedRevision', 'sourceFactRef', 'factRefs']) {
+    assert.ok(!JSON.stringify(requests[0]!.body.tools).includes(`"${runtimeField}"`), `model-facing tools omit runtime-owned ${runtimeField}`)
+  }
   assert.equal(requests[0]!.body.model, requests[1]!.body.model, 'rejected and repaired calls use one model session')
   const repairMessages = JSON.stringify(requests[1]!.body.messages)
   assert.match(repairMessages, /invalid arguments: decision_schema_violation/, 'repair request contains the ToolArgsError tool error')
@@ -205,6 +228,7 @@ try {
   assert.deepEqual(toolNames, [...DSH_EMBEDDED_BOOKING_TOOL_NAMES].sort(), 'real model request exposes exactly the six embedded tools')
   assert.ok(!toolNames.some((name: string) => /gotry_book|payment|holder|guest/i.test(name)), 'real model request exposes no booking write or PII tool')
   assert.equal(requests[0]!.body.model, 'deepseek-v4-flash', 'the default planner model matches the sdk-minimal catalog')
+  assert.deepEqual(requests[0]!.body.thinking, { type: 'disabled' }, 'known default route disables long reasoning for constrained criteria extraction')
   const executableKeys = requests[0]!.body.tools.flatMap((tool: any) => objectKeys(tool.function.parameters))
   assert.ok(!executableKeys.some((key: string) => /^(book|payment|holder|guest|portalToken|supplierCost)$/i.test(key)), 'tool inputs expose no write or PII field')
   assert.equal(requests[0]!.headers.authorization, 'Bearer fixture-model-key')
@@ -213,15 +237,15 @@ try {
   assert.equal(proseDecisions[0]?.kind, 'error', 'assistant prose without a tool call never becomes a decision')
   const continuation: BookingCopilotTurn = {
     schemaVersion: 'booking.surface' as const, kind: 'action.receipt.continuation' as const, taskId: task.taskId, workspace,
-    receipt: { schemaVersion: 'booking.surface' as const, kind: 'action.receipt' as const, actionId: action.actionId, contextRef: workspace.contextRef, status: 'applied' as const, revision: 1,
+    receipt: { schemaVersion: 'booking.surface' as const, kind: 'action.receipt' as const, actionId: decisions[0].action.actionId, contextRef: workspace.contextRef, status: 'applied' as const, revision: 1,
       observation: { kind: 'search.state' as const, resultCount: 1 }, resultContract: { outcome: 'complete' as const, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } },
   }
   const continuationDecisions = await session.next({ turn: continuation, task: { ...task, lastReceipt: continuation.kind === 'action.receipt.continuation' ? continuation.receipt : undefined } })
-  assert.deepEqual(continuationDecisions, [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } }], 'real dsh accepts action.receipt.continuation through the typed planner seam')
+  assert.deepEqual(continuationDecisions, [{ kind: 'terminal', terminal: { status: 'completed', summary: 'search_results_ready', factRefs: [] } }], 'real dsh materializes terminal status and summary from the authoritative receipt')
 } finally {
   await planner?.close()
   await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()))
   rmSync(stateRoot, { recursive: true, force: true })
 }
 
-console.log('BOOKING COPILOT DSH CORE PROOF: real subprocess/sdk/plugin/tool-call/session event/idle OK')
+console.log('BOOKING COPILOT DSH CORE PROOF: real subprocess/sdk/plugin/tool-call/concluded-turn/session event/idle OK')

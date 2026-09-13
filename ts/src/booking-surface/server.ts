@@ -144,6 +144,19 @@ function sessionsFor(composition: BookingCopilotComposition): Map<string, Return
   if (!sessions) { sessions = new Map(); sessionsByComposition.set(composition, sessions) }
   return sessions
 }
+async function releasePlannerSession(composition: BookingCopilotComposition, taskId: string): Promise<void> {
+  const sessions = sessionsFor(composition)
+  const session = sessions.get(taskId)
+  if (!session) return
+  sessions.delete(taskId)
+  try {
+    await session.close?.()
+  } catch {
+    // Cleanup must not replace an already-durable booking outcome. Keep the
+    // failure machine-readable and free of task/prompt/PII values.
+    console.error(JSON.stringify({ code: 'PLANNER_SESSION_CLOSE_FAILED' }))
+  }
+}
 function decisionFlightsFor(composition: BookingCopilotComposition): Map<string, Promise<BookingSurfaceEvent[]>> {
   let flights = decisionFlightsByComposition.get(composition)
   if (!flights) { flights = new Map(); decisionFlightsByComposition.set(composition, flights) }
@@ -379,6 +392,7 @@ async function handleBookingCopilotRequest(req: IncomingMessage, res: ServerResp
   res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-content-type-options': 'nosniff', [BOOKING_SURFACE_VERSION_HEADER]: BOOKING_SURFACE_SCHEMA_VERSION, [BOOKING_SURFACE_SCHEMA_SHA256_HEADER]: BOOKING_SURFACE_SCHEMA_SHA256 })
   try {
     if (replayEvents) {
+      if (task.phase === 'terminal' || task.phase === 'error') await releasePlannerSession(composition, task.taskId)
       for (const event of replayEvents) write(res, event)
     } else {
       const requestKey = replayKey ?? `turn:${task.taskId}:${task.userTurnCount}`
@@ -394,12 +408,17 @@ async function handleBookingCopilotRequest(req: IncomingMessage, res: ServerResp
         sessions.set(task.taskId, session)
         const decisions = await session.next({ turn, task: composition.runtime.resumeTask(task.taskId) ?? task })
         const plannerDecisions = decisions.length ? decisions : [{ kind: 'error' as const, error: { code: 'PLANNER_NO_DECISION', message: 'Planner returned no typed decision.', retryable: false } }]
-        return composition.runtime.applyDecisionBatch(task.taskId, requestKey, plannerDecisions, fresh)
+        const events = composition.runtime.applyDecisionBatch(task.taskId, requestKey, plannerDecisions, fresh)
+        const updated = composition.runtime.resumeTask(task.taskId)
+        if (updated?.phase === 'terminal' || updated?.phase === 'error') await releasePlannerSession(composition, task.taskId)
+        return events
       })
       for (const event of decisionEvents) write(res, event)
     }
   } catch (error) {
     writeTypedError(res, composition, task, error, activeDecisionKey, fresh)
+    const updated = composition.runtime.resumeTask(task.taskId)
+    if (updated?.phase === 'terminal' || updated?.phase === 'error') await releasePlannerSession(composition, task.taskId)
   } finally { res.end() }
 }
 

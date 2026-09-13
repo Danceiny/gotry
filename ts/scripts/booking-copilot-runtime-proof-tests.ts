@@ -1805,6 +1805,7 @@ await server.close()
   const checkoutServerLedger = ensureLedger(checkoutServerRoot)
   const checkoutServerRuntime = new BookingCopilotTaskRuntime(checkoutServerLedger, { now: () => '2026-09-01T10:00:00.000Z' })
   let checkoutPlannerCalls = 0
+  let checkoutPlannerCloses = 0
   let markCheckoutPlannerEntered!: () => void
   let releaseCheckoutPlanner!: () => void
   const checkoutPlannerEntered = new Promise<void>((resolve) => { markCheckoutPlannerEntered = resolve })
@@ -1829,6 +1830,7 @@ await server.close()
         }
         return [{ kind: 'operation', action: { ...action('http-checkout-after-check', current.revision), contextRef: current.contextRef, kind: 'checkout.prepare' as const, input: { offerRef: 'server-offer', offerVersionRef: 'server-offer:v1', verifiedOfferRef: capability.verifiedOfferRef } } }]
       },
+      close: async () => { checkoutPlannerCloses += 1 },
     }),
   })
   const checkoutEndpoint = `http://127.0.0.1:${checkoutServer.port}/a2a/booking-copilot/turn`
@@ -1886,6 +1888,7 @@ await server.close()
   assert.deepEqual(checkoutHandoffEvents.map((event) => event.kind), ['terminal'], 'checkout handoff receipt receives runtime-owned terminal without planner')
   assert.equal(checkoutHandoffEvents[0]?.kind === 'terminal' ? checkoutHandoffEvents[0].terminal.summary : '', 'checkout_handoff_prepared')
   assert.equal(checkoutPlannerCalls, 2, 'checkout handoff terminal does not call the planner again')
+  assert.equal(checkoutPlannerCloses, 1, 'runtime-owned checkout terminal releases the task-scoped planner session')
   assert.equal(checkoutServerRuntime.resumeTask('task-http-checkout-after-check')?.phase, 'terminal')
   const afterCheckoutHandoffRows = checkoutServerLedger.countEvents()
   const replayCheckoutHandoff = await fetch(checkoutEndpoint, { method: 'POST', headers: checkoutHeaders, body: JSON.stringify(checkoutHandoffTurn) })

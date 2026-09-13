@@ -18,7 +18,9 @@ import {
   buildDshPlannerEnvironment,
   createDshEmbeddedBookingPlanner,
   formatUtcOffsetLabel,
+  type DshPlannerRunResult,
   type DshPlannerRunPort,
+  type DshEmbeddedBookingPlannerOptions,
 } from '../src/booking-surface/dsh-planner.ts'
 import { normalizeBookingErrorCode, safeBookingErrorMessage } from '../src/booking-surface/error-codes.ts'
 
@@ -52,6 +54,7 @@ const workspace: BookingWorkspaceSnapshot = {
   shortlistedOfferRefs: [],
   capabilities: { surface: 'tenant', allowedActions: ['search.patch', 'search.run'] },
 }
+task.workspaceSnapshot = workspace
 
 const searchRun = {
   schemaVersion: 'booking.surface',
@@ -122,6 +125,22 @@ async function runToolArgumentsCase(argumentsText: string, turnId: string) {
   }
 }
 
+function assertRuntimeMaterializedOperation(
+  decisions: readonly any[],
+  kind: string,
+  input: unknown,
+  expectedTask: BookingCopilotTaskState = task,
+  message = 'planner materializes one runtime-owned operation',
+) {
+  assert.equal(decisions.length, 1, message)
+  assert.equal(decisions[0]?.kind, 'operation', message)
+  assert.equal(decisions[0]?.action?.kind, kind, message)
+  assert.deepEqual(decisions[0]?.action?.input, input, message)
+  assert.equal(decisions[0]?.action?.contextRef, expectedTask.contextRef, message)
+  assert.equal(decisions[0]?.action?.expectedRevision, expectedTask.revision, message)
+  assert.match(decisions[0]?.action?.actionId, /^planner-[a-f0-9]{24}$/, message)
+}
+
 const repeatedToolArguments = JSON.stringify({
   decision: {
     kind: 'operation',
@@ -131,6 +150,133 @@ const repeatedToolArguments = JSON.stringify({
     },
   },
 })
+
+const stringifiedDecisionArguments = JSON.stringify({
+  decision: JSON.stringify({
+    kind: 'operation',
+    action: searchRun,
+  }),
+})
+
+const compactSearchPatchInput = {
+  patch: {
+    destination: { query: 'Dubai' },
+    starRating: { strength: 'must', value: { min: 5, max: 5 } },
+  },
+} as const
+const compactSearchPatchDecision = await runToolArgumentsCase(
+  JSON.stringify({ kind: 'search.patch', input: compactSearchPatchInput }),
+  'dsh-compact-search-patch',
+)
+assert.equal(compactSearchPatchDecision.length, 1)
+assert.equal(compactSearchPatchDecision[0]?.kind, 'operation')
+if (compactSearchPatchDecision[0]?.kind !== 'operation') throw new Error('compact proposal did not materialize an operation')
+assert.deepEqual(compactSearchPatchDecision[0].action.input, compactSearchPatchInput)
+assert.equal(compactSearchPatchDecision[0].action.kind, 'search.patch')
+assert.equal(compactSearchPatchDecision[0].action.contextRef, task.contextRef)
+assert.equal(compactSearchPatchDecision[0].action.expectedRevision, task.revision)
+assert.deepEqual(compactSearchPatchDecision[0].action.factRefs, [])
+assert.match(compactSearchPatchDecision[0].action.actionId, /^planner-[a-f0-9]{24}$/)
+assert.match(compactSearchPatchDecision[0].action.reason, /search criteria/i)
+
+for (const decision of [
+  { kind: 'search.patch', input: compactSearchPatchInput },
+  JSON.stringify({ kind: 'search.patch', input: compactSearchPatchInput }),
+] as const) {
+  const wrapped = await runToolArgumentsCase(JSON.stringify({ decision }), 'dsh-compact-provider-wrapper')
+  assertRuntimeMaterializedOperation(wrapped, 'search.patch', compactSearchPatchInput)
+}
+
+await assert.rejects(
+  runToolArgumentsCase(JSON.stringify({ kind: 'terminal' }), 'dsh-unjustified-terminal'),
+  /planner_terminal_intent_unjustified/,
+  'the model cannot terminate before an authoritative receipt exists',
+)
+await assert.rejects(
+  runToolArgumentsCase(JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'completed', summary: 'forged', factRefs: ['modelref:forged'] } } }), 'dsh-legacy-terminal-evidence'),
+  /planner_nonoperation_runtime_owned/,
+  'legacy model-authored terminal authority is rejected',
+)
+
+for (const [argumentsText, turnId] of [
+  [JSON.stringify({ kind: 'operation', action: searchRun }), 'dsh-direct-decision-envelope'],
+  [stringifiedDecisionArguments, 'dsh-stringified-decision'],
+] as const) {
+  const [decision] = await runToolArgumentsCase(argumentsText, turnId)
+  assert.equal(decision?.kind, 'operation')
+  if (decision?.kind !== 'operation') throw new Error('legacy action was not materialized')
+  assert.equal(decision.action.kind, 'search.run')
+  assert.deepEqual(decision.action.input, {})
+  assert.match(decision.action.actionId, /^planner-[a-f0-9]{24}$/)
+  assert.notEqual(decision.action.actionId, searchRun.actionId, 'legacy model authority is stripped before materialization')
+}
+for (const [suffix, action, error] of [
+  ['capability', hotelSelect, /planner_capability_action_mismatch/],
+  ['context', { ...searchRun, contextRef: 'ctx-other' }, /planner_context_mismatch/],
+  ['revision', { ...searchRun, expectedRevision: 1 }, /planner_revision_mismatch/],
+  ['reserved-ref', { ...searchRun, factRefs: ['modelref:reserved'] }, /planner_invalid_action:reserved_fact_ref/],
+] as const) {
+  await assert.rejects(
+    runToolArgumentsCase(
+      JSON.stringify({ decision: JSON.stringify({ kind: 'operation', action }) }),
+      `dsh-stringified-decision-${suffix}`,
+    ),
+    error,
+    `a stringified decision cannot bypass ${suffix} authority`,
+  )
+}
+const rejectedStringifiedDecision = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          toolCall('booking_search_hotels', stringifiedDecisionArguments, 'call-stringified-decision-rejected'),
+          toolResult('call-stringified-decision-rejected', true, 'INVALID_ARGS'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  rejectedStringifiedDecision.plannerFactory(task).next({
+    task,
+    turn: {
+      schemaVersion: 'booking.surface',
+      kind: 'user.turn',
+      taskId: task.taskId,
+      turnId: 'dsh-stringified-decision-rejected',
+      workspace,
+      request: { text: 'Find hotels' },
+    },
+  }),
+  /planner_tool_call_rejected/,
+  'a parsed stringified decision cannot bypass a paired tool rejection',
+)
+await rejectedStringifiedDecision.close()
+await assert.rejects(
+  runToolArgumentsCase(JSON.stringify({ decision: 'not JSON' }), 'dsh-stringified-decision-invalid-json'),
+  /planner_invalid_tool_arguments/,
+  'a non-JSON decision string is rejected',
+)
+await assert.rejects(
+  runToolArgumentsCase(
+    JSON.stringify({ decision: JSON.stringify(JSON.stringify({ kind: 'operation', action: searchRun })) }),
+    'dsh-stringified-decision-recursive',
+  ),
+  /planner_invalid_tool_arguments/,
+  'decision normalization unwraps exactly one provider encoding layer',
+)
+await assert.rejects(
+  runToolArgumentsCase(
+    JSON.stringify({ decision: JSON.stringify([{ kind: 'operation', action: searchRun }]) }),
+    'dsh-stringified-decision-array',
+  ),
+  /planner_invalid_tool_arguments/,
+  'a stringified decision array is rejected',
+)
+
 await assert.rejects(
   runToolArgumentsCase(`${repeatedToolArguments}${repeatedToolArguments}`, 'dsh-duplicate-identical'),
   /planner_invalid_tool_arguments/,
@@ -213,12 +359,7 @@ const runPort: DshPlannerRunPort = {
       finalResponse: '{"kind":"search.run","input":{}}',
       events: successfulToolEvents(
         'booking_search_hotels',
-        JSON.stringify({
-          decision: {
-            kind: 'terminal',
-            terminal: { status: 'completed', summary: 'Stopped at search results.', factRefs: [] },
-          },
-        }),
+        JSON.stringify({ kind: 'terminal' }),
         'call-adapter-terminal',
       ),
     }
@@ -242,7 +383,7 @@ const first = await session.next({
     request: { text: '执行当前搜索' },
   },
 })
-assert.deepEqual(first, [{ kind: 'operation', action: searchRun }], 'typed dsh tool call becomes one operation')
+assertRuntimeMaterializedOperation(first, 'search.run', {}, task, 'typed dsh tool call becomes one runtime-owned operation')
 
 assert.match(prompts[0]!, /Time anchor: today is 2026-09-09 \(周三, UTC[+-]\d{2}:\d{2}\)/, 'planner prompt uses the injected host-local date anchor')
 assert.match(prompts[0]!, /process host-local anchor used only for relative-date parsing/, 'planner prompt identifies host-local time as a parsing anchor')
@@ -255,11 +396,14 @@ assert.ok(!profilePatch.includes('2026-09-10') && !profilePatch.includes('2026-0
 assert.ok(!/under criteria/i.test(profilePatch), 'planner persona does not revive the stale under-criteria routing wording')
 assert.match(profilePatch, /Shape-only example/i, 'planner persona marks the example as shape-only')
 assert.match(profilePatch, /do not copy literal/i, 'planner persona tells the model not to copy placeholder sample values')
-const shapeExampleLine = profilePatch.split('\n').find((line) => line.trimStart().startsWith('{"decision":'))
-assert.ok(shapeExampleLine, 'planner persona example uses the model-facing decision envelope')
-const shapeExample = JSON.parse(shapeExampleLine!.trim().replace('<rev from payload>', '0')) as { decision?: { kind?: string; action?: unknown } }
-assert.deepEqual(Object.keys(shapeExample), ['decision'], 'planner persona example has exactly the declared top-level envelope')
-assert.deepEqual(Object.keys(shapeExample.decision ?? {}), ['kind', 'action'], 'planner persona example nests the typed operation under decision')
+const shapeExampleLine = profilePatch.split('\n').find((line) => line.trimStart().startsWith('{"kind":"search.patch"'))
+assert.ok(shapeExampleLine, 'planner persona example uses the shallow model-facing proposal')
+const shapeExample = JSON.parse(shapeExampleLine!.trim()) as { kind?: string; input?: unknown }
+assert.deepEqual(Object.keys(shapeExample), ['kind', 'input'], 'planner persona example exposes only semantic kind and input')
+assert.equal(shapeExample.kind, 'search.patch')
+for (const runtimeField of ['schemaVersion', 'actionId', 'contextRef', 'expectedRevision', 'factRefs', 'reason']) {
+  assert.ok(!Object.prototype.hasOwnProperty.call(shapeExample, runtimeField), `planner persona omits runtime-owned ${runtimeField}`)
+}
 assert.match(profilePatch, /"stay":\{"checkIn":"<computed YYYY-MM-DD from the host-local time anchor>","checkOut":"<computed YYYY-MM-DD from nights\/check-in>"\}/, 'shape example keeps the stay object shape')
 assert.match(profilePatch, /"starRating":\{"strength":"must","value":\{"min":3,"max":3\}\}/, 'shape example keeps the starRating criterion shape')
 assert.match(profilePatch, /"occupancy":\{"rooms":\[\{"adults":2,"childAges":\[\]\}\]\}/, 'shape example includes a well-formed occupancy block')
@@ -301,15 +445,21 @@ const second = await session.next({
 })
 assert.deepEqual(second, [{
   kind: 'terminal',
-  terminal: { status: 'completed', summary: 'Stopped at search results.', factRefs: [] },
+  terminal: { status: 'completed', summary: 'search_results_ready', factRefs: [] },
 }])
 assert.equal(sessionIds[0], sessionIds[1], 'one task keeps one dsh session across receipt continuation')
 assert.match(prompts[1]!, /action-dsh-1/, 'receipt continuation reaches the same task-scoped planner session')
 
-const paymentTask = { ...task, taskId: 'task-payment-1', surface: 'payment_link' as const, allowedActions: ['hotel.select'] as BookingCopilotTaskState['allowedActions'], revision: 0 }
+const paymentWorkspace: BookingWorkspaceSnapshot = {
+  ...workspace,
+  surface: 'payment_link',
+  visibleHotels: [{ hotelRef: 'hotel-1', name: 'Hotel One', factRefs: ['hotel:1'] }],
+  capabilities: { surface: 'payment_link', allowedActions: ['hotel.select'] },
+}
+const paymentTask = { ...task, taskId: 'task-payment-1', surface: 'payment_link' as const, allowedActions: ['hotel.select'] as BookingCopilotTaskState['allowedActions'], revision: 0, workspaceSnapshot: paymentWorkspace }
 const paymentSession = adapter.plannerFactory(paymentTask)
-const selected = await paymentSession.next({ task: paymentTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: paymentTask.taskId, turnId: 'payment-turn-1', workspace: { ...workspace, surface: 'payment_link', capabilities: { surface: 'payment_link', allowedActions: ['hotel.select'] } }, request: { text: '选择酒店' } } })
-assert.deepEqual(selected, [{ kind: 'operation', action: hotelSelect }], 'refine-results can emit typed hotel.select on payment_link')
+const selected = await paymentSession.next({ task: paymentTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: paymentTask.taskId, turnId: 'payment-turn-1', workspace: paymentWorkspace, request: { text: '选择酒店' } } })
+assertRuntimeMaterializedOperation(selected, 'hotel.select', hotelSelect.input, paymentTask, 'refine-results can emit typed hotel.select on payment_link')
 
 assert.deepEqual(DSH_EMBEDDED_BOOKING_TOOL_NAMES, [
   'booking_search_hotels',
@@ -481,7 +631,7 @@ const invalidThenValidDecision = await invalidThenValid.plannerFactory(task).nex
   task,
   turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-invalid-then-valid', workspace, request: { text: 'Find hotels' } },
 })
-assert.deepEqual(invalidThenValidDecision, [{ kind: 'operation', action: searchRun }], 'a schema-rejected call may be superseded by the later unique typed success in the same run')
+assertRuntimeMaterializedOperation(invalidThenValidDecision, 'search.run', {}, task, 'a schema-rejected call may be superseded by the later unique typed success in the same run')
 await invalidThenValid.close()
 
 const invalidWithoutSchemaRejection = await createDshEmbeddedBookingPlanner({
@@ -672,12 +822,14 @@ const unsafeFactRefRejectedThenValid = await createDshEmbeddedBookingPlanner({
     async close() {},
   },
 })
-assert.deepEqual(
+assertRuntimeMaterializedOperation(
   await unsafeFactRefRejectedThenValid.plannerFactory(task).next({
     task,
     turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-unsafe-ref-repair', workspace, request: { text: 'Find hotels' } },
   }),
-  [{ kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-unsafe-ref', factRefs: [] } }],
+  'search.run',
+  {},
+  task,
   'a dsh INVALID_ARGS result lets the model repair an unsafe factRef inside the same run',
 )
 await unsafeFactRefRejectedThenValid.close()
@@ -850,7 +1002,7 @@ for (const [index, c] of mixedAuthorityCases.entries()) {
         task,
         turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: `dsh-mixed-authority-${index}`, workspace, request: { text: 'Find hotels' } },
       })
-      assert.deepEqual(decisions, [{ kind: 'operation', action: searchRun }], `${c.name} accepts the later canonical call after shape repair`)
+      assertRuntimeMaterializedOperation(decisions, 'search.run', {}, task, `${c.name} accepts the later canonical call after shape repair`)
     } else {
       await assert.rejects(
         mixedAuthorityPlanner.plannerFactory(task).next({
@@ -1301,7 +1453,7 @@ const operationBeforeFailureDecision = await operationBeforeFailure.plannerFacto
   task,
   turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-operation-before-provider-failure', workspace, request: { text: 'Find hotels' } },
 })
-assert.deepEqual(operationBeforeFailureDecision, [{ kind: 'operation', action: searchRun }], 'a valid receipt-gated operation outranks a later provider failure')
+assertRuntimeMaterializedOperation(operationBeforeFailureDecision, 'search.run', {}, task, 'a valid receipt-gated operation outranks a later provider failure')
 await operationBeforeFailure.close()
 
 const finalResponseBeforeTerminalFailure = await createDshEmbeddedBookingPlanner({
@@ -1593,6 +1745,11 @@ const confirmedTask: BookingCopilotTaskState = {
   revision: 1,
   allowedActions: ['search.patch', 'search.run', 'offers.query', 'offer.check', 'checkout.prepare'],
   availability: { initialized: true, recoveryStarted: true, availabilityPhase: 'terminal', activeHotelOrdinal: 0, hotelRefs: ['hotel-confirmed'], hotels: { 'hotel-confirmed': { hotelRef: 'hotel-confirmed', status: 'confirmed', generation: 1, generationNo: 1, currentOfferRefs: ['offer-confirmed'], invalidatedOfferRefs: [], tombstonedOfferRefs: [], tombstonedOfferVersionRefs: [], checksIssued: 1, checkCount: 1, offerQueriesIssued: 0, freshOffersRequired: false, lastEvidence: 'confirmed', currentGeneration: { generationId: 'hotel-confirmed:generation:1', source: { kind: 'workspace_snapshot', workspaceDigest: 'a'.repeat(64), workspaceRevision: 0 }, offerSetDigest: 'b'.repeat(64), orderedOfferRefs: ['offer-confirmed'], evidence: 'complete', valid: false } } }, attempts: [], queryReservations: [], terminal: { code: 'availability_confirmed', hotelRefs: ['hotel-confirmed'], reason: 'confirmed', evidence: 'conclusive' } },
+  lastReceipt: {
+    schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'action-confirmed-check', contextRef: 'ctx-dsh-confirmed', status: 'applied', revision: 1,
+    observation: { kind: 'offer.availability', offerRef: 'offer-confirmed', checkedOfferVersionRef: 'offer-confirmed:v1', currentOfferVersionRef: 'offer-confirmed:v1', verifiedOfferRef: 'verified-offer-confirmed', available: true, changedFactRefs: [] },
+    resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: ['offer:confirmed'], gapCodes: [], blockers: [], relaxationsApplied: [] },
+  },
 }
 const confirmedWorkspace: BookingWorkspaceSnapshot = {
   ...workspace,
@@ -1605,6 +1762,7 @@ const confirmedWorkspace: BookingWorkspaceSnapshot = {
   verifiedOffer: { offerRef: 'offer-confirmed', offerVersionRef: 'offer-confirmed:v1', verifiedOfferRef: 'verified-offer-confirmed', expiresAt: '2026-09-09T11:00:00.000Z' },
   capabilities: { surface: 'tenant', allowedActions: [...confirmedTask.allowedActions] },
 }
+confirmedTask.workspaceSnapshot = confirmedWorkspace
 const confirmedPrompts: string[] = []
 const confirmedCheckout = await createDshEmbeddedBookingPlanner({
   runPort: {
@@ -1616,7 +1774,7 @@ const confirmedCheckout = await createDshEmbeddedBookingPlanner({
   },
 })
 const confirmedCheckoutDecision = await confirmedCheckout.plannerFactory(confirmedTask).next({ task: confirmedTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: confirmedTask.taskId, turnId: 'dsh-confirmed-checkout', workspace: confirmedWorkspace, request: { text: '继续预订' } } })
-assert.deepEqual(confirmedCheckoutDecision, [{ kind: 'operation', action: { ...checkoutPrepare, contextRef: confirmedTask.contextRef } }], 'availability_confirmed can still produce an exact checkout.prepare typed action through the canonical booking_prepare_booking tool')
+assertRuntimeMaterializedOperation(confirmedCheckoutDecision, 'checkout.prepare', checkoutPrepare.input, confirmedTask, 'availability_confirmed can still produce checkout.prepare through the canonical booking_prepare_booking tool')
 assert.deepEqual(confirmedTask.allowedActions, ['search.patch', 'search.run', 'offers.query', 'offer.check', 'checkout.prepare'], 'prompt projection does not mutate durable task allowedActions')
 assert.deepEqual(promptPayload(confirmedPrompts[0]!).task.allowedActions, ['checkout.prepare'], 'availability_confirmed prompt narrows planner-visible actions to checkout.prepare')
 assert.deepEqual(promptPayload(confirmedPrompts[0]!).turn.workspace.capabilities.allowedActions, ['checkout.prepare'], 'availability_confirmed prompt exposes one consistent action list in the turn workspace')
@@ -1630,7 +1788,7 @@ const noCheckoutPlanner = await createDshEmbeddedBookingPlanner({
   runPort: {
     async run(prompt) {
       noCheckoutPrompt.push(prompt)
-      return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'checkout_not_authorized', factRefs: [] } } }), 'call-confirmed-no-checkout') }
+      return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ kind: 'terminal' }), 'call-confirmed-no-checkout') }
     },
     async close() {},
   },
@@ -1654,27 +1812,41 @@ assert.equal(confirmedProseOnlyDecision[0]?.kind === 'error' ? confirmedProseOnl
 assert.deepEqual(promptPayload(confirmedPrompts.at(-3)!).task.allowedActions, ['checkout.prepare'], 'prose-only correction starts from the narrowed confirmed prompt')
 await confirmedProseOnly.close()
 
-for (const [label, decision, expected] of [
-  ['terminal', { kind: 'terminal', terminal: { status: 'completed', summary: 'availability_confirmed', factRefs: [] } }, { kind: 'terminal', terminal: { status: 'completed', summary: 'availability_confirmed', factRefs: [] } }],
-  ['error', { kind: 'error', error: { code: 'PLANNER_FAILED', message: 'Planner stopped after confirmation.', retryable: false } }, { kind: 'error', error: { code: 'PLANNER_FAILED', message: 'Planner stopped after confirmation.', retryable: false } }],
-] as const) {
-  const finalityPlanner = await createDshEmbeddedBookingPlanner({
-    runPort: {
-      async run(prompt) {
-        confirmedPrompts.push(prompt)
-        return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ decision }), `call-confirmed-${label}`) }
-      },
-      async close() {},
+const finalityPlanner = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run(prompt) {
+      confirmedPrompts.push(prompt)
+      return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ kind: 'terminal' }), 'call-confirmed-terminal') }
     },
-  })
-  assert.deepEqual(await finalityPlanner.plannerFactory(confirmedTask).next({ task: confirmedTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: confirmedTask.taskId, turnId: `dsh-confirmed-${label}`, workspace: confirmedWorkspace, request: { text: '只检查可订状态' } } }), [expected], `availability_confirmed does not degrade typed ${label} finality`)
-  assert.deepEqual(promptPayload(confirmedPrompts.at(-1)!).task.allowedActions, ['checkout.prepare'], `typed ${label} run still receives the narrowed confirmed prompt`)
-  await finalityPlanner.close()
-}
+    async close() {},
+  },
+})
+assert.deepEqual(
+  await finalityPlanner.plannerFactory(confirmedTask).next({ task: confirmedTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: confirmedTask.taskId, turnId: 'dsh-confirmed-terminal', workspace: confirmedWorkspace, request: { text: '只检查可订状态' } } }),
+  [{ kind: 'terminal', terminal: { status: 'completed', summary: 'offer_available', factRefs: ['offer:confirmed'] } }],
+  'terminal intent is materialized from the authoritative availability receipt',
+)
+assert.deepEqual(promptPayload(confirmedPrompts.at(-1)!).task.allowedActions, ['checkout.prepare'], 'terminal intent still receives the narrowed confirmed prompt')
+await finalityPlanner.close()
+
+const modelErrorPlanner = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ decision: { kind: 'error', error: { code: 'PLANNER_FAILED', message: 'forged', retryable: false } } }), 'call-confirmed-error') }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  modelErrorPlanner.plannerFactory(confirmedTask).next({ task: confirmedTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: confirmedTask.taskId, turnId: 'dsh-confirmed-error', workspace: confirmedWorkspace, request: { text: '只检查可订状态' } } }),
+  /planner_nonoperation_runtime_owned/,
+  'the model cannot impersonate a provider/runtime error decision',
+)
+await modelErrorPlanner.close()
 
 const terminalTask: BookingCopilotTaskState = {
   schemaVersion: 'booking.surface', taskId: 'task-dsh-terminal', contextRef: 'ctx-dsh-terminal', surface: 'tenant', revision: 0,
-  allowedActions: ['search.run'], userTurnCount: 1, operationCount: 0, phase: 'planning', lastSequence: 0,
+  allowedActions: ['search.run'], userTurnCount: 1, lastTurnId: 'dsh-terminal-turn-1', operationCount: 0, phase: 'planning', lastSequence: 0,
   availability: { initialized: true, recoveryStarted: true, availabilityPhase: 'terminal', activeHotelOrdinal: 0, hotelRefs: [], hotels: {}, attempts: [], queryReservations: [], terminal: { code: 'availability_exhausted_complete', hotelRefs: [], reason: 'no_current_offers', evidence: 'conclusive' } },
 }
 const terminalWorkspace: BookingWorkspaceSnapshot = {
@@ -1682,6 +1854,7 @@ const terminalWorkspace: BookingWorkspaceSnapshot = {
   searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
   capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
 }
+terminalTask.workspaceSnapshot = terminalWorkspace
 let terminalRuns = 0
 const terminalPort: DshPlannerRunPort = {
   async run() {
@@ -1699,7 +1872,7 @@ const terminalPort: DshPlannerRunPort = {
           finalResponse: '',
           events: successfulToolEvents(
             'booking_search_hotels',
-            JSON.stringify({ decision: { kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } } }),
+            JSON.stringify({ kind: 'terminal' }),
             'call-terminal-continuation',
           ),
         }
@@ -1712,7 +1885,7 @@ assert.equal(terminalDecisions[0]?.kind, 'operation', 'real DSH adapter accepts 
 assert.equal(terminalDecisions[0]?.kind === 'operation' ? terminalDecisions[0].action.schemaVersion : '', 'booking.surface')
 const terminalContinuation = { schemaVersion: 'booking.surface' as const, kind: 'action.receipt.continuation' as const, taskId: terminalTask.taskId, workspace: { ...terminalWorkspace, revision: 1 }, receipt: { schemaVersion: 'booking.surface' as const, kind: 'action.receipt' as const, actionId: 'action-dsh-terminal', contextRef: terminalTask.contextRef, status: 'applied' as const, revision: 1, observation: { kind: 'search.state' as const, resultCount: 1 }, resultContract: { outcome: 'complete' as const, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } }
 const terminalContinuationDecision = await terminalAdapter.plannerFactory(terminalTask).next({ task: { ...terminalTask, revision: 1, lastReceipt: terminalContinuation.receipt }, turn: terminalContinuation })
-assert.deepEqual(terminalContinuationDecision, [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'receipt continuation handled', factRefs: [] } }], 'real DSH planner handles receipt continuation through the typed seam')
+assert.deepEqual(terminalContinuationDecision, [{ kind: 'terminal', terminal: { status: 'completed', summary: 'search_results_ready', factRefs: [] } }], 'real DSH planner materializes receipt continuation terminal state')
 await assert.rejects(
   terminalAdapter.plannerFactory(terminalTask).next({
     task: terminalTask,
@@ -1935,7 +2108,7 @@ const proseRecoveryDecision = await proseRecovery.plannerFactory(task).next({
   turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-turn-282-prose', workspace, request: { text: 'Find hotels' } },
 })
 assert.equal(proseRecoveryRuns, 2, 'prose correction uses the second counted call')
-assert.deepEqual(proseRecoveryDecision, [{ kind: 'operation', action: searchRun }], 'valid correction is returned instead of discarded')
+assertRuntimeMaterializedOperation(proseRecoveryDecision, 'search.run', {}, task, 'valid correction is returned instead of discarded')
 
 // A malformed typed event is an authority error and fails on the first call.
 // A provider failure likewise propagates instead of being silently swallowed.
@@ -1979,4 +2152,325 @@ await assert.rejects(
 assert.equal(providerRuns, 1, 'provider failures are not silently swallowed or retried')
 
 await Promise.all([adapter.close(), textChannel.close(), fencedTextChannel.close(), stringifiedAction.close(), invalidThenValid.close(), invalidWithoutSchemaRejection.close(), unauthorised.close(), unauthorisedTyped.close(), multipleTypedSuccesses.close(), missingToolResult.close(), mismatchedToolResult.close(), fragmentRef.close(), truncatedRecovery.close(), sanitizedRef.close(), unsafeRef.close(), uiOffers.close(), forbidden.close(), terminalAdapter.close(), indexKeyedRooms.close(), occupancyRepair.close(), lateInvalidResult.close(), preFeedbackCorrection.close(), proseRecovery.close(), malformed.close(), providerError.close(), reservedText.close(), finalTextAfterTransientAttempt.close(), attemptFailureWithoutTerminalEvent.close()])
-console.log('BOOKING COPILOT DSH PLANNER PROOF: task session/typed tool decisions/no Book/prose non-executable/no portal token OK')
+
+// Turn deadline/port-isolation contract.  These cases intentionally sit at
+// the planner boundary: a provider that never settles must not hold the
+// booking workspace for the provider's (potentially minutes-long) idle wait,
+// and timing out task A must not close task B's runtime.
+const plannerTimeoutTask = {
+  ...task,
+  taskId: 'task-dsh-timeout-a',
+  lastTurnId: 'dsh-turn-timeout-a',
+  contextRef: 'ctx-dsh-timeout-a',
+  workspaceSnapshot: { ...workspace, contextRef: 'ctx-dsh-timeout-a' },
+}
+const plannerTimeoutTurn = {
+  schemaVersion: 'booking.surface' as const,
+  kind: 'user.turn' as const,
+  taskId: plannerTimeoutTask.taskId,
+  turnId: plannerTimeoutTask.lastTurnId,
+  workspace: plannerTimeoutTask.workspaceSnapshot!,
+  request: { text: 'Find hotels' },
+}
+
+function waitMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function resolveWithin<T>(promise: Promise<T>, ms: number): Promise<T | { testDeadline: true }> {
+  return Promise.race([promise, waitMs(ms).then(() => ({ testDeadline: true as const }))])
+}
+
+let timeoutPortClosed = 0
+const timeoutMetrics: import('../src/booking-surface/dsh-planner.ts').DshPlannerTurnMetric[] = []
+const neverResolvingPort: DshPlannerRunPort = {
+  run: () => new Promise<DshPlannerRunResult>((_resolve) => undefined),
+  async close() { timeoutPortClosed += 1 },
+}
+const timeoutPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => neverResolvingPort,
+  turnTimeoutMs: 25,
+  onMetric: (metric) => timeoutMetrics.push(metric),
+} as DshEmbeddedBookingPlannerOptions & { turnTimeoutMs: number })
+const timeoutResult = await resolveWithin(
+  timeoutPlanner.plannerFactory(plannerTimeoutTask).next({ task: plannerTimeoutTask, turn: plannerTimeoutTurn }),
+  250,
+)
+assert.notDeepEqual(timeoutResult, { testDeadline: true }, 'planner turn deadline returns before a never-resolving provider')
+assert.equal((timeoutResult as any)[0]?.kind, 'error', 'provider timeout is a typed planner error')
+assert.equal((timeoutResult as any)[0]?.error?.code, 'PLANNER_PROVIDER_TIMEOUT', 'provider timeout uses the stable error code')
+assert.equal(timeoutMetrics[0]?.outcome, 'timeout', 'timeout contributes a safe latency metric')
+assert.equal(timeoutMetrics[0]?.firstPassValid, false)
+assert.ok((timeoutMetrics[0]?.elapsedMs ?? 999) < 250, 'timeout latency metric reflects the bounded turn')
+assert.equal(timeoutPortClosed, 1, 'timing out a task closes its owned run port')
+await timeoutPlanner.close()
+
+let taskAClosed = 0
+let taskARuns = 0
+let taskBRuns = 0
+const isolatedPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: (taskId: string) => {
+    if (taskId === 'task-dsh-isolated-a') {
+      return {
+        run: () => {
+          taskARuns += 1
+          return new Promise<DshPlannerRunResult>((_resolve) => undefined)
+        },
+        async close() { taskAClosed += 1 },
+      }
+    }
+    return {
+      async run() {
+        taskBRuns += 1
+        return {
+          finalResponse: '',
+          events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {} }), 'call-isolated-b'),
+        }
+      },
+      async close() {},
+    }
+  },
+  turnTimeoutMs: 25,
+} as DshEmbeddedBookingPlannerOptions & { runPortFactory: unknown; turnTimeoutMs: number })
+const isolatedTaskA = { ...plannerTimeoutTask, taskId: 'task-dsh-isolated-a', lastTurnId: 'dsh-turn-isolated-a' }
+const isolatedTaskB = { ...plannerTimeoutTask, taskId: 'task-dsh-isolated-b', lastTurnId: 'dsh-turn-isolated-b' }
+const isolatedTurn = (isolatedTask: typeof isolatedTaskA) => ({ ...plannerTimeoutTurn, taskId: isolatedTask.taskId, turnId: isolatedTask.lastTurnId })
+const isolatedA = resolveWithin(
+  isolatedPlanner.plannerFactory(isolatedTaskA).next({ task: isolatedTaskA, turn: isolatedTurn(isolatedTaskA) }),
+  250,
+)
+const isolatedB = await isolatedPlanner.plannerFactory(isolatedTaskB).next({ task: isolatedTaskB, turn: isolatedTurn(isolatedTaskB) })
+const isolatedATimeout = await isolatedA
+assert.notDeepEqual(isolatedATimeout, { testDeadline: true }, 'task A timeout is bounded')
+assert.equal((isolatedATimeout as any)[0]?.error?.code, 'PLANNER_PROVIDER_TIMEOUT', 'task A receives a typed timeout')
+assert.equal(taskAClosed, 1, 'task A timeout closes only task A port')
+assertRuntimeMaterializedOperation(isolatedB, 'search.run', {}, isolatedTaskB, 'task B remains executable after task A timeout')
+assert.equal(taskARuns, 1, 'task A provider is called once')
+assert.equal(taskBRuns, 1, 'task B provider is called once')
+await isolatedPlanner.close()
+
+let latePortClosed = 0
+const lateResolutionPort: DshPlannerRunPort = {
+  async run() {
+    await waitMs(80)
+    return {
+      finalResponse: '',
+      events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {} }), 'call-late-resolution'),
+    }
+  },
+  async close() { latePortClosed += 1 },
+}
+const latePlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => lateResolutionPort,
+  turnTimeoutMs: 25,
+} as DshEmbeddedBookingPlannerOptions & { turnTimeoutMs: number })
+const lateResult = await resolveWithin(
+  latePlanner.plannerFactory(plannerTimeoutTask).next({ task: plannerTimeoutTask, turn: plannerTimeoutTurn }),
+  250,
+)
+assert.notDeepEqual(lateResult, { testDeadline: true }, 'late provider response does not extend the turn')
+assert.equal((lateResult as any)[0]?.error?.code, 'PLANNER_PROVIDER_TIMEOUT', 'late response returns timeout')
+await waitMs(110)
+assert.equal(latePortClosed, 1, 'late response port is closed after timeout')
+assert.notEqual((lateResult as any)[0]?.kind, 'operation', 'late resolution cannot become an executable decision')
+await latePlanner.close()
+
+// Shutdown waits for a task port whose factory and close are both still in
+// flight. The planner cannot return while a late-created Harness child remains.
+let resolveDeferredFactory!: (port: DshPlannerRunPort) => void
+let resolveDeferredClose!: () => void
+let deferredCloseCalls = 0
+const deferredFactoryPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => new Promise<DshPlannerRunPort>((resolve) => { resolveDeferredFactory = resolve }),
+  turnTimeoutMs: 1_000,
+})
+const deferredSession = deferredFactoryPlanner.plannerFactory(plannerTimeoutTask)
+const deferredNextOutcome = deferredSession.next({ task: plannerTimeoutTask, turn: plannerTimeoutTurn }).then(
+  () => null,
+  (error: unknown) => error,
+)
+await waitMs(0)
+let deferredShutdownSettled = false
+const deferredShutdown = deferredFactoryPlanner.close().then(() => { deferredShutdownSettled = true })
+await waitMs(5)
+assert.equal(deferredShutdownSettled, false, 'shutdown waits for a pending task-port factory')
+resolveDeferredFactory({
+  async run() { throw new Error('closed planner must not call a late-created port') },
+  async close() {
+    deferredCloseCalls += 1
+    await new Promise<void>((resolve) => { resolveDeferredClose = resolve })
+  },
+})
+await waitMs(5)
+assert.equal(deferredCloseCalls, 1, 'shutdown closes the port produced by a late factory resolution')
+assert.equal(deferredShutdownSettled, false, 'shutdown waits for late port cleanup to settle')
+resolveDeferredClose()
+await deferredShutdown
+assert.match(String((await deferredNextOutcome as Error)?.message), /planner_closed/, 'an in-flight turn cannot use a port after planner shutdown')
+
+// A failed close remains retryable; the first failure is surfaced instead of
+// being hidden behind an allSettled shutdown.
+let cleanupAttempts = 0
+const retryCleanupPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => ({
+    async run() {
+      return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {} }), 'call-cleanup-retry') }
+    },
+    async close() {
+      cleanupAttempts += 1
+      if (cleanupAttempts === 1) throw new Error('fixture_cleanup_failed')
+    },
+  }),
+})
+await retryCleanupPlanner.plannerFactory(plannerTimeoutTask).next({ task: plannerTimeoutTask, turn: plannerTimeoutTurn })
+await assert.rejects(retryCleanupPlanner.close(), /booking_planner_cleanup_failed/, 'shutdown surfaces a task-port cleanup failure')
+await retryCleanupPlanner.close()
+assert.equal(cleanupAttempts, 2, 'a failed task-port cleanup can be retried deterministically')
+
+// Compact proposal authority matrix.  The model supplies only kind + input;
+// all identity, revision, reason, and evidence bindings remain runtime-owned.
+async function runCompactAuthorityCase(
+  authorityTask: BookingCopilotTaskState,
+  proposal: Record<string, unknown>,
+  turnId = authorityTask.lastTurnId ?? 'authority-turn',
+): Promise<readonly any[]> {
+  const authorityWorkspace = authorityTask.workspaceSnapshot!
+  const proposalKind = proposal.kind === 'operation' && typeof proposal.action === 'object' && proposal.action !== null
+    ? (proposal.action as { kind?: unknown }).kind
+    : proposal.kind
+  const toolName = proposalKind === 'hotel.focus' || proposalKind === 'hotel.select'
+    ? 'booking_refine_results'
+    : proposalKind === 'offer.select' || proposalKind === 'offers.compare'
+      ? 'booking_compare_offers'
+      : proposalKind === 'checkout.prepare' || proposalKind === 'offer.check'
+        ? 'booking_prepare_booking'
+        : 'booking_search_hotels'
+  const planner = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run() {
+        return {
+          finalResponse: '',
+          events: successfulToolEvents(toolName, JSON.stringify(proposal), `call-authority-${turnId}`),
+        }
+      },
+      async close() {},
+    },
+  })
+  try {
+    return await planner.plannerFactory(authorityTask).next({
+      task: authorityTask,
+      turn: {
+        schemaVersion: 'booking.surface',
+        kind: 'user.turn',
+        taskId: authorityTask.taskId,
+        turnId,
+        workspace: authorityWorkspace,
+        request: { text: 'Apply this booking request' },
+      },
+    })
+  } finally {
+    await planner.close()
+  }
+}
+
+const budgetTask = {
+  ...task,
+  taskId: 'task-dsh-authority-budget',
+  lastTurnId: 'dsh-turn-authority-budget',
+  workspaceSnapshot: { ...workspace, currency: 'AED' },
+}
+const budgetProposal = {
+  kind: 'search.patch',
+  input: { patch: { budget: { strength: 'must', value: { max: { amount: '1000' } } } } },
+}
+const [budgetDecision] = await runCompactAuthorityCase(budgetTask, budgetProposal)
+assert.equal(budgetDecision?.kind, 'operation', 'budget compact proposal materializes an operation')
+if (budgetDecision?.kind !== 'operation') throw new Error('budget proposal did not materialize')
+assert.deepEqual(budgetDecision.action.input.patch.budget.value.max, {
+  amount: '1000',
+  currency: 'AED',
+  sourceFactRef: 'turn:dsh-turn-authority-budget',
+}, 'budget amount is hydrated from workspace currency and durable turn evidence')
+assert.deepEqual(budgetDecision.action.factRefs, ['turn:dsh-turn-authority-budget'], 'hydrated budget contributes the durable turn fact reference')
+
+const visibleAuthorityWorkspace: BookingWorkspaceSnapshot = {
+  ...workspace,
+  visibleHotels: [{ hotelRef: 'hotel-authority-visible', name: 'Visible Hotel', factRefs: ['hotel:authority-visible'] }],
+  capabilities: { surface: 'tenant', allowedActions: ['hotel.focus'] },
+}
+const visibleHotelTask = {
+  ...task,
+  taskId: 'task-dsh-authority-hotel',
+  lastTurnId: 'dsh-turn-authority-hotel',
+  allowedActions: ['hotel.focus'] as BookingCopilotTaskState['allowedActions'],
+  workspaceSnapshot: visibleAuthorityWorkspace,
+}
+await assert.rejects(
+  runCompactAuthorityCase(visibleHotelTask, { kind: 'hotel.focus', input: { hotelRef: 'hotel-not-visible' } }),
+  /planner_hotel_ref_unbound/,
+  'hotel.focus rejects a hotel reference absent from visible workspace facts',
+)
+const visibleHotelDecisions = await runCompactAuthorityCase(visibleHotelTask, { kind: 'hotel.focus', input: { hotelRef: 'hotel-authority-visible' } })
+assertRuntimeMaterializedOperation(visibleHotelDecisions, 'hotel.focus', { hotelRef: 'hotel-authority-visible' }, visibleHotelTask, 'hotel.focus accepts only a visible hotel')
+assert.deepEqual((visibleHotelDecisions[0] as any)?.action?.factRefs, ['hotel:authority-visible'], 'hotel.focus derives visible hotel facts')
+
+const offerAuthorityWorkspace: BookingWorkspaceSnapshot = {
+  ...workspace,
+  loadedOffers: [{ offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2', hotelRef: 'hotel-1', evidenceLevel: 'rate_loaded', factRefs: ['offer:authority:v2'] }],
+  capabilities: { surface: 'tenant', allowedActions: ['offer.select'] },
+}
+const offerTask = {
+  ...task,
+  taskId: 'task-dsh-authority-offer',
+  lastTurnId: 'dsh-turn-authority-offer',
+  allowedActions: ['offer.select'] as BookingCopilotTaskState['allowedActions'],
+  workspaceSnapshot: offerAuthorityWorkspace,
+}
+await assert.rejects(
+  runCompactAuthorityCase(offerTask, { kind: 'offer.select', input: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v1' } }),
+  /planner_offer_ref_unbound/,
+  'offer.select rejects an obsolete offer version',
+)
+const offerDecisions = await runCompactAuthorityCase(offerTask, { kind: 'offer.select', input: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2' } })
+assertRuntimeMaterializedOperation(offerDecisions, 'offer.select', { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2' }, offerTask, 'offer.select accepts the loaded offer version')
+assert.deepEqual((offerDecisions[0] as any)?.action?.factRefs, ['offer:authority:v2'], 'offer.select derives authoritative offer facts')
+
+const checkoutAuthorityWorkspace: BookingWorkspaceSnapshot = {
+  ...offerAuthorityWorkspace,
+  verifiedOffer: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2', verifiedOfferRef: 'verified-authority:v2', expiresAt: '2099-01-01T00:00:00.000Z' },
+  capabilities: { surface: 'tenant', allowedActions: ['checkout.prepare'] },
+}
+const checkoutTask = {
+  ...offerTask,
+  taskId: 'task-dsh-authority-checkout',
+  lastTurnId: 'dsh-turn-authority-checkout',
+  allowedActions: ['checkout.prepare'] as BookingCopilotTaskState['allowedActions'],
+  workspaceSnapshot: checkoutAuthorityWorkspace,
+}
+await assert.rejects(
+  runCompactAuthorityCase(checkoutTask, { kind: 'checkout.prepare', input: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2', verifiedOfferRef: 'verified-authority:wrong' } }),
+  /planner_verified_offer_ref_unbound/,
+  'checkout.prepare rejects a mismatched verified-offer triplet',
+)
+
+const legacyAuthorityTask: BookingCopilotTaskState = {
+  ...checkoutTask,
+  taskId: 'task-dsh-authority-legacy',
+  lastTurnId: 'dsh-turn-authority-legacy',
+  allowedActions: ['search.run'] as BookingCopilotTaskState['allowedActions'],
+  workspaceSnapshot: { ...workspace, capabilities: { surface: 'tenant', allowedActions: ['search.run'] } },
+}
+const legacyAuthorityAction = {
+  ...searchRun,
+  actionId: 'model-authored-action-id',
+  reason: 'model-authored reason must not survive',
+  factRefs: ['model-authored-fact'],
+}
+const [legacyAuthorityDecision] = await runCompactAuthorityCase(legacyAuthorityTask, { decision: { kind: 'operation', action: legacyAuthorityAction } })
+assert.equal(legacyAuthorityDecision?.kind, 'operation', 'legacy full action remains a rolling-compatibility input')
+if (legacyAuthorityDecision?.kind !== 'operation') throw new Error('legacy authority proposal did not materialize')
+assert.notEqual(legacyAuthorityDecision.action.actionId, legacyAuthorityAction.actionId, 'legacy model actionId is replaced by runtime identity')
+assert.notEqual(legacyAuthorityDecision.action.reason, legacyAuthorityAction.reason, 'legacy model reason is replaced by runtime reason')
+assert.notDeepEqual(legacyAuthorityDecision.action.factRefs, legacyAuthorityAction.factRefs, 'legacy model factRefs are not trusted')
+
+console.log('BOOKING COPILOT DSH PLANNER PROOF: typed proposals/runtime authority/task timeout isolation/no Book OK')
