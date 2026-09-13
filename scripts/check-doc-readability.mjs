@@ -78,20 +78,28 @@ const SURFACES = [
 
 const PAIR_MAX_LINE_DELTA = 8;
 
-const REVISION_HISTORY_HEADING = /^#{2,6}\s*(?:revision history|change log|changelog|version history|change history|updates?|更新记录|修订记录|变更记录|版本历史|版本记录|变更日志)\b/i;
+const REVISION_HISTORY_HEADING = /^#{2,6}\s*(?:(?:revision history|change log|changelog|version history|change history|updates?)\b|(?:更新记录|修订记录|变更记录|版本历史|版本记录|变更日志)(?=\s*$|[\s:：（(]))/i;
 const LEDGER_HEADING = /^#{2,6}\s*(?:.*(?:ledger|台账|流水|append-only|追加).*)$/i;
 const DATED_ROW = /^\s*(?:[-*+]\s+|\d+\.\s+|\|)?(?:20\d{2}[-/.年](?:0?[1-9]|1[0-2])[-/.月](?:0?[1-9]|[12]\d|3[01])日?)\b/;
 const ISSUE_ROW = /^\s*(?:[-*+]\s+|\d+\.\s+|\|).*?(?:#\d+|issues\/\d+)\b/i;
 const POINTER_ISSUE_ROW = /^\s*(?:[-*+]\s+|\d+\.\s+|\|)\s*(?:\[?#\d+\]?|\[#\d+\]\([^)]+\)|https:\/\/github\.com\/[^)\s]+\/issues\/\d+)\s*(?:\||[-:：—–])?\s*(?:see|todo|open|closed|done|见|待办|已关)?\s*$/i;
 
 function stripFenceState(lines) {
-  let inFence = false;
+  let fence = null;
   return lines.map((line) => {
-    if (/^```/.test(line)) {
-      inFence = !inFence;
+    if (fence) {
+      const marker = line.match(/^(?: {0,3})(`{3,}|~{3,})\s*$/)?.[1];
+      if (marker && marker[0] === fence.char && marker.length >= fence.length) fence = null;
       return { line, inFence: true };
     }
-    return { line, inFence };
+    const opener = line.match(/^(?: {0,3})(`{3,}|~{3,})(.*)$/);
+    const marker = opener?.[1];
+    const info = opener?.[2] ?? '';
+    if (marker && (marker[0] !== '`' || !info.includes('`'))) {
+      fence = { char: marker[0], length: marker.length };
+      return { line, inFence: true };
+    }
+    return { line, inFence: false };
   });
 }
 
@@ -412,6 +420,54 @@ function runSelfTest() {
     rmSync(baselineDir, { recursive: true, force: true });
   }
 
+  function expectNoFailures(name, overrides) {
+    const dir = mkdtempSync(join(tmpdir(), 'gotry-doc-readability-'));
+    try {
+      writeFixture(dir, overrides);
+      const failures = runCheck(dir);
+      if (failures.length) {
+        console.error(`SELF-TEST FIXTURE INVALID: ${name}`);
+        console.error(failures.map((failure) => `  ${failure}`).join('\n'));
+        process.exit(1);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  expectNoFailures('tilde-fenced revision heading stays inside fence', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n~~~markdown\n## Revision History\n~~~\n\n- Current state.\n',
+  });
+
+  expectNoFailures('tilde fence info string may carry backticks', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n~~~```js\n## Revision History\n~~~\n\n- Current state.\n',
+  });
+
+  expectNoFailures('wrong-marker closer does not close tilde fence', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n~~~markdown\n## Revision History\n```\n',
+  });
+
+  expectNoFailures('short backtick run does not close longer opener', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n````markdown\n## Revision History\n```\n\n- Current state.\n',
+  });
+
+  expectNoFailures('non-whitespace close tail does not close fence', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\n## Revision History\n``` extra\n\n- Current state.\n',
+  });
+
+  expectNoFailures('unterminated fence continues to EOF', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\n## Revision History\n',
+  });
+
+  expectNoFailures('three-space indented fence opens and closes', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n   ```markdown\n## Revision History\n   ```\n\n- Current state.\n',
+  });
+
+  expectNoFailures('appended tilde fence covers an English revision heading', {
+    'README.md': '# GoTry\n\n## Summary\n\nCompact reader intro.\n\n~~~markdown\n## Revision History\n~~~\n',
+    'README.zh-CN.md': '# GoTry\n\n## 速览\n\n紧凑读者入口。\n\n~~~markdown\n## Revision History\n~~~\n',
+  });
+
   const cases = [
     {
       name: 'line budget',
@@ -421,6 +477,26 @@ function runSelfTest() {
     {
       name: 'revision history heading',
       overrides: { 'docs/roadmap.md': '# GoTry Roadmap\n\n## Revision History\n\n- Old state.\n' },
+      want: /revision\/change-history/,
+    },
+    {
+      name: 'chinese revision history heading',
+      overrides: { 'docs/roadmap.zh-CN.md': '# GoTry 路线图\n\n## 更新记录\n\n- 旧状态。\n' },
+      want: /revision\/change-history/,
+    },
+    {
+      name: 'chinese revision heading with full-width colon tail',
+      overrides: { 'docs/roadmap.zh-CN.md': '# GoTry 路线图\n\n## 变更记录：摘要\n\n- 旧状态。\n' },
+      want: /revision\/change-history/,
+    },
+    {
+      name: 'invalid backtick fence opener keeps body guard active',
+      overrides: { 'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```js `\n## Revision History\n```\n' },
+      want: /revision\/change-history/,
+    },
+    {
+      name: 'real revision heading after valid closing fence is visible',
+      overrides: { 'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\n## Revision History\n```\n\n## Revision History\n\n- Old state.\n' },
       want: /revision\/change-history/,
     },
     {
