@@ -20,6 +20,25 @@ const stringArray = { type: 'array', items: string }
 const plannerSafeRefPattern = '^[A-Za-z0-9][A-Za-z0-9:._-]*$'
 const plannerSafeFactRefPattern = '^(?!modelref:)[A-Za-z0-9][A-Za-z0-9:._-]*$'
 
+// Some OpenAI-compatible providers encode the nested decision once more even
+// though the advertised schema is object-only. Normalize that representation
+// at the tool boundary; all semantic and authority checks stay canonical.
+function normalizeProviderDecisionArgs(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args
+  const prototype = Object.getPrototypeOf(args)
+  if ((prototype !== Object.prototype && prototype !== null)
+    || !Object.prototype.hasOwnProperty.call(args, 'decision')
+    || typeof args.decision !== 'string') return args
+  let decision
+  try {
+    decision = JSON.parse(args.decision)
+  } catch {
+    return args
+  }
+  if (!decision || typeof decision !== 'object' || Array.isArray(decision)) return args
+  return { ...args, decision }
+}
+
 function closedObject(properties, required = Object.keys(properties)) {
   return { type: 'object', properties, required, additionalProperties: false }
 }
@@ -70,7 +89,7 @@ function toolDefinition(toolName, capabilityId, actionKinds) {
       oneOf: [operationDecision, questionDecision, explanationDecision, terminalDecision, errorDecision],
     },
   })
-  const validateArgs = new Ajv2020({ allErrors: true, strict: false }).compile(parameters)
+  const validateArgs = new Ajv2020({ allErrors: true, strict: false, ownProperties: true }).compile(parameters)
   return Object.freeze({
     name: toolName,
     description: `Emit exactly one typed ${capabilityId} decision for the existing Booking workspace. This capability never books, pays, edits holder/guest data, or calls a supplier.`,
@@ -95,11 +114,12 @@ function toolDefinition(toolName, capabilityId, actionKinds) {
       // dsh agent loop feeds tool failures back to the model as tool results,
       // so the model repairs its own shape inside the same turn — no schema
       // knowledge duplicated outside this plugin.
-      if (!validateArgs(args)) {
+      const normalizedArgs = normalizeProviderDecisionArgs(args)
+      if (!validateArgs(normalizedArgs)) {
         const errors = (validateArgs.errors ?? []).map((e) => `${e.instancePath || '/'}: ${e.message}`).join('; ')
         throw new ToolArgsError([`decision_schema_violation: ${errors}`])
       }
-      const decision = args.decision
+      const decision = normalizedArgs.decision
       return {
         accepted: true,
         decisionKind: decision.kind,

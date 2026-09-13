@@ -107,7 +107,7 @@ const modelServer = createServer((req, res) => {
               type: 'function',
               function: {
                 name: 'booking_search_hotels',
-                arguments: JSON.stringify({ decision: { kind: 'operation', action } }),
+                arguments: JSON.stringify({ decision: JSON.stringify({ kind: 'operation', action }) }),
               },
             }],
           },
@@ -190,7 +190,7 @@ try {
   const session = planner.plannerFactory(task)
   const decisions = await session.next({ turn, task })
   assert.deepEqual(decisions, [{ kind: 'operation', action }])
-  assert.equal(requests.length, 3, 'invalid tool call is repaired inside one real dsh run before the final model response')
+  assert.equal(requests.length, 3, 'invalid tool call is repaired with a provider-stringified decision inside one real dsh run')
   const firstSystemMessage = (requests[0]!.body.messages as Array<{ role?: string; content?: unknown }>).find((message) => message?.role === 'system')
   assert.ok(firstSystemMessage, 'first model request carries a system message produced by dsh system-prompt')
   const firstSystemContent = typeof firstSystemMessage.content === 'string' ? firstSystemMessage.content : JSON.stringify(firstSystemMessage.content)

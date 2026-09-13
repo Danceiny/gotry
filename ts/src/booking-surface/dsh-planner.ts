@@ -402,11 +402,24 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     invalidDecisionLog('arguments_not_string', { argumentsType: typeof rawArgs })
     throw new Error('planner_invalid_tool_arguments')
   }
-  if (!isRecord(args) || !exactKeys(args, ['decision']) || !isRecord(args.decision)) {
+  if (!isRecord(args) || !exactKeys(args, ['decision'])) {
     invalidDecisionLog('arguments_not_canonical_envelope', { parsedType: Array.isArray(args) ? 'array' : typeof args })
     throw new Error('planner_invalid_tool_arguments')
   }
-  const decision = args.decision as Record<string, unknown>
+  let parsedDecision: unknown = args.decision
+  if (typeof parsedDecision === 'string') {
+    try {
+      parsedDecision = JSON.parse(parsedDecision)
+    } catch {
+      invalidDecisionLog('decision_string_not_json')
+      throw new Error('planner_invalid_tool_arguments')
+    }
+  }
+  if (!isRecord(parsedDecision)) {
+    invalidDecisionLog('decision_not_object', { decisionType: Array.isArray(parsedDecision) ? 'array' : typeof parsedDecision })
+    throw new Error('planner_invalid_tool_arguments')
+  }
+  const decision = parsedDecision
   if (decision.kind === 'question') throw new Error('planner_question_runtime_owned')
   if (decision.kind !== 'operation') return asEventDraft(decision)
   if (!isRecord(decision.action)) {

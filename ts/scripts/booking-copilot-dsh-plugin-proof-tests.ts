@@ -69,6 +69,50 @@ const validSearchDecision = {
   },
 }
 assert.equal(validateSearchTool(validSearchDecision), true, JSON.stringify(validateSearchTool.errors))
+assert.equal(
+  validateSearchTool({ decision: JSON.stringify(validSearchDecision.decision) }),
+  false,
+  'the advertised model-facing schema remains canonical and object-only',
+)
+assert.deepEqual(
+  await executeSearch({ decision: JSON.stringify(validSearchDecision.decision) }),
+  { accepted: true, decisionKind: 'operation', actionId: 'action-model-1' },
+  'the execution seam normalizes one provider-stringified decision before applying the canonical schema',
+)
+await assert.rejects(
+  executeSearch(Object.create({ decision: JSON.stringify(validSearchDecision.decision), injected: 'prototype-value' })),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+  'an inherited stringified decision cannot be materialized into an executable own property',
+)
+await assert.rejects(
+  executeSearch(Object.create({ decision: validSearchDecision.decision })),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+  'an inherited canonical decision cannot satisfy the model-facing schema',
+)
+for (const decision of [
+  'not JSON',
+  `${JSON.stringify(validSearchDecision.decision)} trailing text`,
+  JSON.stringify(null),
+  JSON.stringify([]),
+  JSON.stringify(1),
+  JSON.stringify(JSON.stringify(validSearchDecision.decision)),
+]) {
+  await assert.rejects(
+    executeSearch({ decision }),
+    (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+    'non-canonical decision strings remain rejected at the tool execution seam',
+  )
+}
+await assert.rejects(
+  executeSearch({
+    decision: JSON.stringify({
+      ...validSearchDecision.decision,
+      action: JSON.stringify(validSearchDecision.decision.action),
+    }),
+  }),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+  'the compatibility seam does not normalize a stringified action',
+)
 assert.equal(validateSearchTool({ decision: { kind: 'operation', action: {
   schemaVersion: 'booking.surface', kind: 'search.run', actionId: 'action-model-v2', contextRef: 'ctx-model-1', expectedRevision: 0,
   reason: 'Run the authoritative workspace search.', factRefs: [], input: {},

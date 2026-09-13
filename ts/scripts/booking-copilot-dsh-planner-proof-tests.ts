@@ -131,6 +131,85 @@ const repeatedToolArguments = JSON.stringify({
     },
   },
 })
+
+const stringifiedDecisionArguments = JSON.stringify({
+  decision: JSON.stringify({
+    kind: 'operation',
+    action: searchRun,
+  }),
+})
+assert.deepEqual(
+  await runToolArgumentsCase(stringifiedDecisionArguments, 'dsh-stringified-decision'),
+  [{ kind: 'operation', action: searchRun }],
+  'one provider-stringified decision object is normalized before typed validation',
+)
+for (const [suffix, action, error] of [
+  ['capability', hotelSelect, /planner_capability_action_mismatch/],
+  ['context', { ...searchRun, contextRef: 'ctx-other' }, /planner_context_mismatch/],
+  ['revision', { ...searchRun, expectedRevision: 1 }, /planner_revision_mismatch/],
+  ['reserved-ref', { ...searchRun, factRefs: ['modelref:reserved'] }, /planner_invalid_action:reserved_fact_ref/],
+] as const) {
+  await assert.rejects(
+    runToolArgumentsCase(
+      JSON.stringify({ decision: JSON.stringify({ kind: 'operation', action }) }),
+      `dsh-stringified-decision-${suffix}`,
+    ),
+    error,
+    `a stringified decision cannot bypass ${suffix} authority`,
+  )
+}
+const rejectedStringifiedDecision = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          toolCall('booking_search_hotels', stringifiedDecisionArguments, 'call-stringified-decision-rejected'),
+          toolResult('call-stringified-decision-rejected', true, 'INVALID_ARGS'),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  rejectedStringifiedDecision.plannerFactory(task).next({
+    task,
+    turn: {
+      schemaVersion: 'booking.surface',
+      kind: 'user.turn',
+      taskId: task.taskId,
+      turnId: 'dsh-stringified-decision-rejected',
+      workspace,
+      request: { text: 'Find hotels' },
+    },
+  }),
+  /planner_tool_call_rejected/,
+  'a parsed stringified decision cannot bypass a paired tool rejection',
+)
+await rejectedStringifiedDecision.close()
+await assert.rejects(
+  runToolArgumentsCase(JSON.stringify({ decision: 'not JSON' }), 'dsh-stringified-decision-invalid-json'),
+  /planner_invalid_tool_arguments/,
+  'a non-JSON decision string is rejected',
+)
+await assert.rejects(
+  runToolArgumentsCase(
+    JSON.stringify({ decision: JSON.stringify(JSON.stringify({ kind: 'operation', action: searchRun })) }),
+    'dsh-stringified-decision-recursive',
+  ),
+  /planner_invalid_tool_arguments/,
+  'decision normalization unwraps exactly one provider encoding layer',
+)
+await assert.rejects(
+  runToolArgumentsCase(
+    JSON.stringify({ decision: JSON.stringify([{ kind: 'operation', action: searchRun }]) }),
+    'dsh-stringified-decision-array',
+  ),
+  /planner_invalid_tool_arguments/,
+  'a stringified decision array is rejected',
+)
+
 await assert.rejects(
   runToolArgumentsCase(`${repeatedToolArguments}${repeatedToolArguments}`, 'dsh-duplicate-identical'),
   /planner_invalid_tool_arguments/,
