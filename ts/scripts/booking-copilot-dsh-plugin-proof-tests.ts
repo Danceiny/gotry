@@ -73,6 +73,86 @@ assert.equal(validateSearchTool({ decision: { kind: 'operation', action: {
   schemaVersion: 'booking.surface', kind: 'search.run', actionId: 'action-model-v2', contextRef: 'ctx-model-1', expectedRevision: 0,
   reason: 'Run the authoritative workspace search.', factRefs: [], input: {},
 } } }), true, JSON.stringify(validateSearchTool.errors))
+const unsafeFactRefSearchDecision = {
+  decision: {
+    kind: 'operation',
+    action: {
+      schemaVersion: 'booking.surface', kind: 'search.run', actionId: 'action-model-v3', contextRef: 'ctx-model-1', expectedRevision: 1,
+      reason: 'Run the authoritative workspace search after applying the destination.', factRefs: ['draft:destination=Dubai'], input: {},
+    },
+  },
+}
+assert.equal(
+  validateSearchTool(unsafeFactRefSearchDecision),
+  false,
+  'model-facing tool schema rejects non-canonical factRefs before the planner authority boundary',
+)
+await assert.rejects(
+  executeSearch(unsafeFactRefSearchDecision),
+  (error: unknown) => error instanceof ToolArgsError
+    && error.name === 'ToolArgsError'
+    && error.code === 'INVALID_ARGS'
+    && /decision_schema_violation/.test(error.message),
+  'unsafe factRefs must surface as a repairable dsh INVALID_ARGS result',
+)
+const reservedFactRefSearchDecision = {
+  ...unsafeFactRefSearchDecision,
+  decision: {
+    ...unsafeFactRefSearchDecision.decision,
+    action: {
+      ...unsafeFactRefSearchDecision.decision.action,
+      factRefs: ['modelref:reserved-by-runtime'],
+    },
+  },
+}
+assert.equal(
+  validateSearchTool(reservedFactRefSearchDecision),
+  false,
+  'model-facing tool schema excludes the runtime-owned modelref namespace',
+)
+await assert.rejects(
+  executeSearch(reservedFactRefSearchDecision),
+  (error: unknown) => error instanceof ToolArgsError
+    && error.name === 'ToolArgsError'
+    && error.code === 'INVALID_ARGS'
+    && /decision_schema_violation/.test(error.message),
+  'reserved modelref factRefs must surface as dsh INVALID_ARGS before the planner authority boundary',
+)
+assert.equal(
+  validateSearchTool({
+    ...unsafeFactRefSearchDecision,
+    decision: {
+      ...unsafeFactRefSearchDecision.decision,
+      action: { ...unsafeFactRefSearchDecision.decision.action, factRefs: ['f'.repeat(513)] },
+    },
+  }),
+  false,
+  'model-facing tool schema enforces the runtime factRef length boundary',
+)
+const unsafeActionIdSearchDecision = {
+  ...unsafeFactRefSearchDecision,
+  decision: {
+    ...unsafeFactRefSearchDecision.decision,
+    action: {
+      ...unsafeFactRefSearchDecision.decision.action,
+      actionId: 'action/model-v3',
+      factRefs: [],
+    },
+  },
+}
+assert.equal(
+  validateSearchTool(unsafeActionIdSearchDecision),
+  false,
+  'model-facing tool schema rejects non-canonical actionIds before the planner authority boundary',
+)
+await assert.rejects(
+  executeSearch(unsafeActionIdSearchDecision),
+  (error: unknown) => error instanceof ToolArgsError
+    && error.name === 'ToolArgsError'
+    && error.code === 'INVALID_ARGS'
+    && /decision_schema_violation/.test(error.message),
+  'unsafe actionIds must surface as a repairable dsh INVALID_ARGS result',
+)
 assert.equal(validateSearchTool({
   ...validSearchDecision,
   decision: {
