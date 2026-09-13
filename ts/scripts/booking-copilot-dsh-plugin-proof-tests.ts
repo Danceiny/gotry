@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { Ajv2020 } from 'ajv/dist/2020.js'
+import { ToolArgsError } from '@deepseek-ai/dsh-tools'
 // @ts-expect-error Runtime dsh plugins are JavaScript modules registered by path.
 import { apply, embeddedBookingToolDefinitions } from '../src/booking-surface/dsh-plugin.js'
 
@@ -35,6 +36,15 @@ assert.equal(operationBranches.length, 2, 'prepare-booking exposes offer.check +
 assert.ok(!JSON.stringify(prepare.parameters).includes('book"'), 'schema has no Book discriminator')
 
 const search = registered.find((tool) => tool.name === 'booking_search_hotels')!
+const executeSearch = search.execute as (args: unknown) => Promise<unknown>
+await assert.rejects(
+  executeSearch({ decision: { kind: 'operation' } }),
+  (error: unknown) => error instanceof ToolArgsError
+    && error.name === 'ToolArgsError'
+    && error.code === 'INVALID_ARGS'
+    && /decision_schema_violation/.test(error.message),
+  'schema violations must surface as dsh ToolArgsError with stable INVALID_ARGS code',
+)
 const validateSearchTool = new Ajv2020({ allErrors: true, strict: true }).compile(search.parameters as any)
 const validSearchDecision = {
   decision: {

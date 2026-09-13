@@ -10,6 +10,12 @@ function accept(label: string, value: unknown) { assert.equal(validateBookingSur
 function reject(label: string, value: unknown) { assert.equal(validateBookingSurface(value).ok, false, label); negative++ }
 assert.deepEqual(bookingSurfaceAllowedActions('storefront'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus'], 'storefront UAT availability observation is least privilege')
 assert.deepEqual(bookingSurfaceAllowedActions('payment_link'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'hotel.select'], 'payment_link UAT availability observation is least privilege')
+const hotelFeRealActions = ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'offers.query', 'offers.view.patch', 'offers.compare', 'offer.select', 'offer.check', 'checkout.prepare', 'order.observe']
+assert.deepEqual(bookingSurfaceAllowedActions('tenant'), hotelFeRealActions, 'tenant capability allowlist mirrors hotel-fe real 11 actions')
+assert.deepEqual(bookingSurfaceAllowedActions('customer_portal'), hotelFeRealActions, 'customer_portal capability allowlist mirrors hotel-fe real 11 actions')
+assert.ok(BOOKING_READ_ACTION_KINDS.includes('hotel.select'), 'global action union retains hotel.select')
+assert.equal(bookingSurfaceAllowedActions('tenant').includes('hotel.select'), false, 'tenant capability excludes hotel.select')
+assert.equal(bookingSurfaceAllowedActions('customer_portal').includes('hotel.select'), false, 'customer_portal capability excludes hotel.select')
 assert.ok(!bookingSurfaceAllowedActions('storefront').includes('offers.query'), 'storefront availability cannot expand into offers')
 assert.ok(!bookingSurfaceAllowedActions('payment_link').includes('checkout.prepare'), 'payment_link availability cannot expand into checkout')
 const hash = 'a'.repeat(64)

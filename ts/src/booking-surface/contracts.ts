@@ -33,10 +33,12 @@ export const BOOKING_COPILOT_MAX_OPERATIONS = 20 as const
 
 export const BOOKING_READ_ACTION_KINDS = ['search.patch','search.run','results.view.patch','hotel.focus','hotel.select','offers.query','offers.view.patch','offers.compare','offer.select','offer.check','checkout.prepare','order.observe'] as const
 export type BookingReadActionKind = typeof BOOKING_READ_ACTION_KINDS[number]
+/** Full read journey shared by tenant and customer-portal workspaces. */
+export const BOOKING_FULL_JOURNEY_ACTION_KINDS = ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'offers.query', 'offers.view.patch', 'offers.compare', 'offer.select', 'offer.check', 'checkout.prepare', 'order.observe'] as const satisfies readonly BookingReadActionKind[]
 /** Product-owned least-privilege action matrix. BFF bindings may narrow these lists, never expand them. */
 export const BOOKING_SURFACE_ALLOWED_ACTIONS: Record<BookingSurface, readonly BookingReadActionKind[]> = {
-  tenant: BOOKING_READ_ACTION_KINDS,
-  customer_portal: BOOKING_READ_ACTION_KINDS,
+  tenant: BOOKING_FULL_JOURNEY_ACTION_KINDS,
+  customer_portal: BOOKING_FULL_JOURNEY_ACTION_KINDS,
   storefront: ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus'],
   payment_link: ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'hotel.select'],
 }

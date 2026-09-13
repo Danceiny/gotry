@@ -8,7 +8,7 @@ import {
   resolveBookingCopilotStartupConfig,
   startBookingCopilotFromEnvironment,
 } from '../src/booking-surface/startup.ts'
-import { BOOKING_READ_ACTION_KINDS } from '../src/booking-surface/contracts.ts'
+import { BOOKING_FULL_JOURNEY_ACTION_KINDS } from '../src/booking-surface/contracts.ts'
 
 assert.throws(
   () => resolveBookingCopilotStartupConfig({}),
@@ -37,6 +37,9 @@ const env = {
   GOTRY_BOOKING_COPILOT_PORT: '0',
   GOTRY_BOOKING_COPILOT_ARTIFACT_ID: '1111111111111111111111111111111111111111',
   LLM_API_KEY: 'model-only-key',
+  LLM_BASE_URL: 'http://model-route.invalid/v1',
+  LLM_MODEL: 'model-v1',
+  LLM_MAX_TOKENS: '8192',
   PORTAL_TOKEN: 'must-not-enter-planner',
   HOTELBYTE_TOKEN: 'must-not-enter-planner',
 }
@@ -48,7 +51,7 @@ await assert.rejects(
 )
 await assert.rejects(
   startBookingCopilotFromEnvironment(env, {
-    ingressBinding: { bind: () => ({ taskId: 'partial-task', turnId: 'partial-turn', contextRef: 'partial-context', surface: 'tenant', allowedActions: [...BOOKING_READ_ACTION_KINDS] }) },
+    ingressBinding: { bind: () => ({ taskId: 'partial-task', turnId: 'partial-turn', contextRef: 'partial-context', surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) },
   } as never),
   /booking_copilot_ingress_binding_pair_required/,
   'partial trusted BFF seam is rejected before startup',
@@ -81,7 +84,7 @@ let serverApiKey = ''
 let serverArtifactId = ''
 const trustedEnv = { ...env, GOTRY_BOOKING_COPILOT_INGRESS_MODE: 'bff-ingress-binding' }
 const fakeLedger = { close() { closeOrder.push('ledger') } }
-const trustedBinding = { bind: () => ({ taskId: 'startup-task', turnId: 'startup-turn', contextRef: 'startup-context', surface: 'tenant' as const, allowedActions: [...BOOKING_READ_ACTION_KINDS] }) }
+const trustedBinding = { bind: () => ({ taskId: 'startup-task', turnId: 'startup-turn', contextRef: 'startup-context', surface: 'tenant' as const, allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) }
 const started = await startBookingCopilotFromEnvironment(trustedEnv, {
   ensureLedger() { return fakeLedger as never },
   runtimeFactory() { return {} as never },
@@ -110,6 +113,9 @@ assert.equal(started.port, 43123)
 assert.equal(serverApiKey, 'bff-only-key', 'BFF deployment key terminates at the HTTP server')
 assert.equal(serverArtifactId, env.GOTRY_BOOKING_COPILOT_ARTIFACT_ID)
 assert.equal(plannerEnv?.DEEPSEEK_API_KEY, 'model-only-key')
+assert.equal(plannerEnv?.DEEPSEEK_BASE_URL, 'http://model-route.invalid/v1')
+assert.equal(plannerEnv?.DEEPSEEK_MODEL, 'model-v1')
+assert.equal(plannerEnv?.DEEPSEEK_MAX_TOKENS, '8192')
 assert.equal(plannerEnv?.GOTRY_BOOKING_COPILOT_API_KEY, undefined)
 assert.equal(plannerEnv?.PORTAL_TOKEN, undefined)
 assert.equal(plannerEnv?.HOTELBYTE_TOKEN, undefined)

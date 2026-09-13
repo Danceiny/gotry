@@ -262,9 +262,12 @@ function fallbackErrorEvent(task: BookingCopilotTaskState, code: string): Bookin
 
 function writeTypedError(res: ServerResponse, composition: BookingCopilotComposition, task: BookingCopilotTaskState, error: unknown, requestKey?: string, includeSubmitted = false): void {
   const code = normalizeBookingErrorCode(error)
-  // Operator-side diagnosability only: the raw boundary error stays on the
-  // server stderr/journal; clients keep receiving the safe typed vocabulary.
-  console.error(`[booking-copilot] planner boundary error (${code}):`, error instanceof Error ? error.stack || error.message : error)
+  // Provider/adapter exceptions can contain response bodies, URLs or request
+  // context. Preserve only the closed code and coarse thrown-value class.
+  console.error('[booking-copilot] planner boundary error:', JSON.stringify({
+    code,
+    thrownType: error instanceof Error ? 'error' : typeof error,
+  }))
   try {
     const decision = { kind: 'error' as const, error: { code, message: safeBookingErrorMessage(code), retryable: false } }
     if (requestKey) {
