@@ -255,6 +255,11 @@ assert.ok(!profilePatch.includes('2026-09-10') && !profilePatch.includes('2026-0
 assert.ok(!/under criteria/i.test(profilePatch), 'planner persona does not revive the stale under-criteria routing wording')
 assert.match(profilePatch, /Shape-only example/i, 'planner persona marks the example as shape-only')
 assert.match(profilePatch, /do not copy literal/i, 'planner persona tells the model not to copy placeholder sample values')
+const shapeExampleLine = profilePatch.split('\n').find((line) => line.trimStart().startsWith('{"decision":'))
+assert.ok(shapeExampleLine, 'planner persona example uses the model-facing decision envelope')
+const shapeExample = JSON.parse(shapeExampleLine!.trim().replace('<rev from payload>', '0')) as { decision?: { kind?: string; action?: unknown } }
+assert.deepEqual(Object.keys(shapeExample), ['decision'], 'planner persona example has exactly the declared top-level envelope')
+assert.deepEqual(Object.keys(shapeExample.decision ?? {}), ['kind', 'action'], 'planner persona example nests the typed operation under decision')
 assert.match(profilePatch, /"stay":\{"checkIn":"<computed YYYY-MM-DD from the host-local time anchor>","checkOut":"<computed YYYY-MM-DD from nights\/check-in>"\}/, 'shape example keeps the stay object shape')
 assert.match(profilePatch, /"starRating":\{"strength":"must","value":\{"min":3,"max":3\}\}/, 'shape example keeps the starRating criterion shape')
 assert.match(profilePatch, /"occupancy":\{"rooms":\[\{"adults":2,"childAges":\[\]\}\]\}/, 'shape example includes a well-formed occupancy block')

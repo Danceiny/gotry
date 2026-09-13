@@ -206,7 +206,7 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
       (三星=3星: min 3 max 3); dates under stay as concrete YYYY-MM-DD resolved from the time anchor.\n\
       Shape-only example of a correctly shaped search.patch tool call; do not copy literal\n\
       placeholder values, dates, destination, contextRef, revision, actionId, or reason from it:\n\
-      {"kind":"operation","action":{"schemaVersion":"booking.surface","kind":"search.patch","actionId":"<unique-id>","contextRef":"<ctx from payload>","expectedRevision":<rev from payload>,"factRefs":[],"reason":"<one line>","input":{"patch":${JSON.stringify(PLANNER_EXAMPLE_PATCH)}}}}\n\
+      {"decision":{"kind":"operation","action":{"schemaVersion":"booking.surface","kind":"search.patch","actionId":"<unique-id>","contextRef":"<ctx from payload>","expectedRevision":<rev from payload>,"factRefs":[],"reason":"<one line>","input":{"patch":${JSON.stringify(PLANNER_EXAMPLE_PATCH)}}}}}\n\
     workspaceContext: false\n\
     skills:\n\
       enabled: false\n\
