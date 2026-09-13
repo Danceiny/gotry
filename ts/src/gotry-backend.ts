@@ -31,6 +31,15 @@ export interface GotryBackendHandle {
   close(): Promise<void>
 }
 
+export function resolveGotryBackendPort(env: Record<string, string | undefined>): number {
+  const raw = env.GOTRY_BACKEND_PORT ?? env.GOTRY_BOOKING_COPILOT_PORT
+  if (raw === undefined) return 3082
+  if (!/^(?:0|[1-9][0-9]{0,4})$/.test(raw)) throw new Error('gotry_backend_invalid_port')
+  const port = Number(raw)
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) throw new Error('gotry_backend_invalid_port')
+  return port
+}
+
 export async function startGotryBackendFromEnvironment(
   env: Record<string, string | undefined> = process.env,
 ): Promise<GotryBackendHandle> {
@@ -44,11 +53,10 @@ export async function startGotryBackendFromEnvironment(
     apiKey: () => env.GOTRY_BACKEND_BOOKING_API_KEY ?? '',
     evidenceDir: () => env.GOTRY_BACKEND_EVIDENCE_DIR ?? '/var/lib/gotry-backend/booking-evidence',
   }))
-  const port = Number(env.GOTRY_BACKEND_PORT ?? env.GOTRY_BOOKING_COPILOT_PORT ?? 3082)
   const handle = await createBackendServer({
     modules,
     host: env.GOTRY_BACKEND_HOST ?? '127.0.0.1',
-    port: Number.isSafeInteger(port) && port > 0 ? port : 3082,
+    port: resolveGotryBackendPort(env),
   })
   return {
     port: handle.port,

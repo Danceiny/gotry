@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 
 import { closeBackend, createBackendServer, type BackendModule } from '../src/backend/kernel.ts'
 import { startSessionSearchModule } from '../src/backend/modules/session-search.ts'
+import { resolveGotryBackendPort } from '../src/gotry-backend.ts'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 let pass = 0
@@ -22,6 +23,14 @@ async function jfetch(url: string, init?: RequestInit): Promise<{ status: number
 }
 
 async function main(): Promise<void> {
+  check(resolveGotryBackendPort({}) === 3082, '统一入口未配置端口时默认 3082')
+  check(resolveGotryBackendPort({ GOTRY_BACKEND_PORT: '0' }) === 0, '统一入口显式端口 0 保留为临时监听')
+  check(resolveGotryBackendPort({ GOTRY_BACKEND_PORT: '3083', GOTRY_BOOKING_COPILOT_PORT: '3999' }) === 3083, '统一入口端口优先级稳定')
+  for (const invalid of ['-1', '1.5', '65536', 'not-a-port']) {
+    assert.throws(() => resolveGotryBackendPort({ GOTRY_BACKEND_PORT: invalid }), /gotry_backend_invalid_port/)
+    pass += 1
+  }
+
   // M1 内核:路由精确分发 + 未知 404 + 异常隔离 500(进程不倒)
   const okModule: BackendModule = {
     name: 'fake-ok',
