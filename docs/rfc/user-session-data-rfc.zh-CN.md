@@ -158,6 +158,16 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 - **`gotry setup wizard`** 退化为**离线健康探活等待**（纯 stdout；detect → wait → exit 0/1），供用户在终端等扩展一跳就连。
 - **自动重放（health-watch 保留，Node 端职责）**：首次遇 `needs-extension` 默认启动 ≤120s 有界后台轮询（`intervalMs=5000`），扩展就位后**自动重放同一 query_id 同一参数**；`sessionFlightSearch({immediate:true})` 显式 opt-out。
 
+**HTTP 契约：`POST /v1/session/search`（供应商 `dida-portal`，M0）**
+
+路由权威：`ts/src/backend/modules/session-search.ts`。可选字段（如 `installUrl`、`installAction`）权威：`ts/capabilities/session-search.ts`。最小契约：
+
+- **路由**：`POST /v1/session/search`；JSON 体 `{ supplier, query? }`，其中 `query` 为 `{ entryUrl?, timeoutMs? }`——`query` 及其字段均可省略。M0 仅接受 `supplier='dida-portal'`，其余 `400`。
+- **鉴权**：`Authorization: Bearer <GOTRY_BACKEND_SESSION_API_KEY>`。缺/错 bearer → `403 { ok:false, error:'forbidden' }`。缺 `GOTRY_BACKEND_SESSION_API_KEY` → **fail-closed**：路由返 `503 { ok:false, error:'GOTRY_BACKEND_SESSION_API_KEY 未配置(fail-closed)' }`——在 supplier 检索被调用前即拒。
+- **`200` 体**：始终含 `{ ok, verdict, supplier, rates, evidence, latencyMs, fetchedAt }`；`rates` 不可得时为 `[]`。异常结果带 `error`。
+  - `installUrl` + `installAction` 由能力层结果经 helper 透出，`200` 与 `429` 两条路径都过该 helper。当前 `needs-extension` 结果两字段都带（能力层设置）；普通结果可能省略。契约不保证其他 verdict 永不携带可选字段。消费方 UI 用 `installUrl`（Chrome Web Store 可点链接）+ `installAction='add-to-chrome'` 渲染安装入口——后端不主动发起安装。
+- **`429` + `Retry-After: 30`** = 节律闸触发（`verdict='cooldown'`）。429 仅是限流：不承诺自动安装，也不承诺自动重放。§3.3 提到的 ≤120s `retry-after-watch` 同 `query_id` 重放是 **Node 端**行为；后端不自重放。§3.3 保留的机票 `health-watch` **不是**后端 dida 自动重放。
+
 **分发双通道（ADR-21）**：Chrome 平台禁止非商店 CRX 直装，一键装+自动更新只有商店。
 
 - **通道 A（GitHub Releases，已落 2026-08-30）**：`gotry setup --extension-from=github` 显式 opt-in（env `GOTRY_EXTENSION_SOURCE` 等效；默认 bundled 保离线确定性）。下载链：Releases 稳定资产名三件套（`gotry-session-bridge.tar.gz`/`-store.zip`/`extension-dist-manifest.json`）→ SHA256 → 固定 key 钉扎（与 bundled 不同 key 即拒装）→ 版本比较 → 原子交换 `~/.gotry/extension`；任何失败显式降级 bundled。`GOTRY_EXTENSION_RELEASE_BASE` 可覆盖基址（镜像/测试）。
