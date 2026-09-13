@@ -98,6 +98,85 @@ async function main(): Promise<void> {
     } finally {
       await closeBackend(extHandle, [extModule]).catch(() => { /* 同上 */ })
     }
+
+    // M3 #483:POST search/login 输入守卫。/m1/ping 作为 liveness 探针,
+    // 每次拒绝请求后立即回到 200,验证内核未被 unhandledRejection 拖垮。
+    // submit 计数 = extensionOpenLogin 经注入 queue 实际触发的 bridge.submit 调用;
+    // 被守卫拦截的请求一律 0 次。
+    const submitCalls: { count: number; lastJob?: { kind: string; site: string; url?: string } } = { count: 0 }
+    const fakeQueue = {
+      extensionConnected: () => true,
+      port: 0,
+      close: async () => undefined,
+      handleMountedRequest: () => undefined,
+      submit: async (job: { kind: string; site: string; url?: string }) => {
+        submitCalls.count += 1
+        submitCalls.lastJob = job
+        return { ok: true as const, result: { ok: true, opened: true } }
+      },
+    }
+    let searchCalls = 0
+    const guardSession = startSessionSearchModule({
+      apiKey: () => 'test-key',
+      search: async () => {
+        searchCalls += 1
+        return {
+          ok: true, via: 'session-dida-portal', evidence: '[会话:dida-portal@test]', latencyMs: 1, verdict: 'hit',
+          rates: [{ hotelName: 'T', roomName: 'R', ratePlanId: 'RP', price: 100, currency: 'CNY', referenceNo: 'REF' }],
+        }
+      },
+      jobQueue: fakeQueue as unknown as Parameters<typeof startSessionSearchModule>[0]['jobQueue'],
+    })
+    const guardHandle = await createBackendServer({ modules: [okModule, guardSession], port: 0 })
+    const guardBase = `http://127.0.0.1:${guardHandle.port}`
+    const authHeader = { authorization: 'Bearer test-key', 'content-type': 'application/json' }
+
+    type Case = { label: string; path: string; body: string; expectError: string }
+    const rejectionCases: Case[] = [
+      { label: 'search body=null', path: '/v1/session/search', body: 'null', expectError: 'body 必须是 JSON 对象' },
+      { label: 'search body=[]', path: '/v1/session/search', body: '[]', expectError: 'body 必须是 JSON 对象' },
+      { label: 'search supplier=number', path: '/v1/session/search', body: '{"supplier":123}', expectError: 'supplier 必须是字符串' },
+      { label: 'search supplier=null', path: '/v1/session/search', body: '{"supplier":null}', expectError: 'supplier 必须是字符串' },
+      { label: 'search query=string', path: '/v1/session/search', body: '{"supplier":"dida-portal","query":"foo"}', expectError: 'body 必须是 JSON 对象' },
+      { label: 'search query.timeoutMs=string', path: '/v1/session/search', body: '{"supplier":"dida-portal","query":{"timeoutMs":"30"}}', expectError: 'body 必须是 JSON 对象' },
+      { label: 'login body=null', path: '/v1/session/login/open', body: 'null', expectError: 'body 必须是 JSON 对象' },
+      { label: 'login url=number', path: '/v1/session/login/open', body: '{"supplier":"dida-portal","url":123}', expectError: 'url 必须是字符串' },
+      { label: 'login supplier=bool', path: '/v1/session/login/open', body: '{"supplier":true}', expectError: 'supplier 必须是字符串' },
+      { label: 'search 非法 JSON', path: '/v1/session/search', body: '{not-json', expectError: 'body 不是 JSON' },
+      { label: 'login 非法 JSON', path: '/v1/session/login/open', body: '{not-json', expectError: 'body 不是 JSON' },
+    ]
+    for (const c of rejectionCases) {
+      const r = await jfetch(`${guardBase}${c.path}`, { method: 'POST', headers: authHeader, body: c.body })
+      const err = (r.body as { error?: string } | null)?.error ?? ''
+      check(r.status === 400, `${c.label}:HTTP 400`)
+      check(err === c.expectError, `${c.label}:error 稳定(${c.expectError})`)
+      // 拒后服务面仍存活:同一 isolated server 上 /m1/ping 仍 200
+      const live = await jfetch(`${guardBase}/m1/ping`)
+      check(live.status === 200, `${c.label}:拒后 server 存活`)
+    }
+    check(searchCalls === 0, '所有被拒 search:search 注入 0 次调用')
+    check(submitCalls.count === 0, '所有被拒 login:bridge.submit 0 次调用')
+
+    // M3b 合法的 search / login 必须真正穿过守卫、调用底层
+    const validSearch = await jfetch(`${guardBase}/v1/session/search`, {
+      method: 'POST', headers: authHeader, body: '{"supplier":"dida-portal","query":{"entryUrl":"https://portal.dida.com/find","timeoutMs":5000}}',
+    })
+    check(validSearch.status === 200, '合法 search(query 对象含 entryUrl/timeoutMs):200')
+    check(searchCalls === 1, '合法 search:search 注入 +1 次')
+    const validLogin = await jfetch(`${guardBase}/v1/session/login/open`, {
+      method: 'POST', headers: authHeader, body: '{"supplier":"dida-portal","url":"https://portal.dida.com/login"}',
+    })
+    check(validLogin.status === 200, '合法 login/open:200')
+    check(submitCalls.count === 1 && submitCalls.lastJob?.kind === 'open-login', '合法 login:bridge.submit +1 次且 kind=open-login')
+
+    // M3c login url 域外仍按既有规则 400(fail-closed 守卫不在本任务范围)
+    const offDomain = await jfetch(`${guardBase}/v1/session/login/open`, {
+      method: 'POST', headers: authHeader, body: '{"supplier":"dida-portal","url":"https://evil.example.com/login"}',
+    })
+    check(offDomain.status === 400 && ((offDomain.body as { error?: string } | null)?.error ?? '').includes('portal.dida.com'), 'login url 域外 400(fail-closed)')
+    check(submitCalls.count === 1, 'login url 域外:bridge.submit 未增')
+
+    await closeBackend(guardHandle, [okModule, guardSession]).catch(() => { /* 关闭聚合错误不掩测试结论 */ })
   } finally {
     await closeBackend(handle, [okModule, boomModule, session]).catch(() => { /* 关闭聚合错误不掩测试结论 */ })
   }

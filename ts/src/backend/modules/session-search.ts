@@ -48,6 +48,73 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /**
+ * POST search/login 体的最小输入守卫:
+ *  - 读取 body 失败(连接断 / 超 64KB 上限) → 'body-read'
+ *  - body 不是合法 JSON                            → 'parse'
+ *  - 顶层不是 plain object(null / 数组 / 原始类型)  → 'shape'
+ *  - supplier 存在但非 string                      → 'supplier-type'
+ *  - url 存在但非 string(login 专属)               → 'url-type'
+ *
+ * 守卫结果以 code 形式回给调用方,由调用方统一 sendJson 400;不抛错——
+ * route 句柄用 `void handle*(...)` 启动异步函数,任何逃逸的 reject 都会变
+ * unhandledRejection 直接终止进程。读取/解析/类型错误必须就地转成 HTTP 响应。
+ */
+type ValidationCode = 'body-read' | 'parse' | 'shape' | 'supplier-type' | 'url-type'
+
+async function readAndParseObjectBody(req: IncomingMessage): Promise<{ obj: Record<string, unknown> } | { code: ValidationCode }> {
+  let raw: string
+  try {
+    raw = await readBody(req)
+  } catch {
+    return { code: 'body-read' }
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return { code: 'parse' }
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { code: 'shape' }
+  }
+  return { obj: parsed as Record<string, unknown> }
+}
+
+function validationMessage(code: ValidationCode): string {
+  switch (code) {
+    case 'body-read': return 'body 读取失败'
+    case 'parse': return 'body 不是 JSON'
+    case 'shape': return 'body 必须是 JSON 对象'
+    case 'supplier-type': return 'supplier 必须是字符串'
+    case 'url-type': return 'url 必须是字符串'
+  }
+}
+
+function ensureStringField(obj: Record<string, unknown>, key: 'supplier' | 'url'): ValidationCode | null {
+  const v = obj[key]
+  if (v !== undefined && typeof v !== 'string') return key === 'supplier' ? 'supplier-type' : 'url-type'
+  return null
+}
+
+/**
+ * search 的可选 query 字段(entryUrl / timeoutMs)做最小白名单:
+ * query 必须为对象;若提供则必须是 string / number,否则按 400 拒绝。
+ * 这是为了避免 untrusted body 被当作已校验类型传入底层 search(),
+ * 同时对历史合法请求保持兼容。
+ */
+function readSearchQuery(obj: Record<string, unknown>): { query?: { entryUrl?: string; timeoutMs?: number } } | { code: ValidationCode } {
+  const q = obj.query
+  if (q === undefined) return { query: undefined }
+  if (q === null || typeof q !== 'object' || Array.isArray(q)) return { code: 'shape' }
+  const rec = q as Record<string, unknown>
+  const entryUrl = rec.entryUrl
+  const timeoutMs = rec.timeoutMs
+  if (entryUrl !== undefined && typeof entryUrl !== 'string') return { code: 'shape' }
+  if (timeoutMs !== undefined && typeof timeoutMs !== 'number') return { code: 'shape' }
+  return { query: { entryUrl, timeoutMs } }
+}
+
+/**
  * needs-extension 的安装入口必须随 HTTP 响应一起下发。
  *
  * 能力层在 verdict=needs-extension 时已经算好了 Chrome 商店链接与安装动作
@@ -125,20 +192,20 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
   }
 
   async function handleSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    let parsed: { supplier?: string; query?: { entryUrl?: string; timeoutMs?: number } }
-    try {
-      parsed = JSON.parse(await readBody(req))
-    } catch {
-      sendJson(res, 400, { ok: false, error: 'body 不是 JSON' }); return
-    }
-    const supplier = (parsed.supplier ?? '').trim()
+    const parsed = await readAndParseObjectBody(req)
+    if ('code' in parsed) { sendJson(res, 400, { ok: false, error: validationMessage(parsed.code) }); return }
+    const supplierType = ensureStringField(parsed.obj, 'supplier')
+    if (supplierType) { sendJson(res, 400, { ok: false, error: validationMessage(supplierType) }); return }
+    const queryCheck = readSearchQuery(parsed.obj)
+    if ('code' in queryCheck) { sendJson(res, 400, { ok: false, error: validationMessage(queryCheck.code) }); return }
+    const supplier = ((parsed.obj.supplier as string | undefined) ?? '').trim()
     if (supplier !== 'dida-portal') {
       sendJson(res, 400, { ok: false, error: `未知供应商通道 ${supplier || '(空)'}(M0 仅 dida-portal)` }); return
     }
     try {
       const result = await withLock(supplier, () => search({
-        entryUrl: parsed.query?.entryUrl,
-        timeoutMs: parsed.query?.timeoutMs,
+        entryUrl: queryCheck.query?.entryUrl,
+        timeoutMs: queryCheck.query?.timeoutMs,
         auditPath: options.auditPath,
         bridge: queue,
       }))
@@ -174,15 +241,15 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
   }
 
   async function handleLoginOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    let parsed: { supplier?: string; url?: string }
-    try {
-      parsed = JSON.parse(await readBody(req))
-    } catch {
-      sendJson(res, 400, { ok: false, error: 'body 不是 JSON' }); return
-    }
-    const supplier = (parsed.supplier ?? '').trim()
+    const parsed = await readAndParseObjectBody(req)
+    if ('code' in parsed) { sendJson(res, 400, { ok: false, error: validationMessage(parsed.code) }); return }
+    const supplierType = ensureStringField(parsed.obj, 'supplier')
+    if (supplierType) { sendJson(res, 400, { ok: false, error: validationMessage(supplierType) }); return }
+    const urlType = ensureStringField(parsed.obj, 'url')
+    if (urlType) { sendJson(res, 400, { ok: false, error: validationMessage(urlType) }); return }
+    const supplier = ((parsed.obj.supplier as string | undefined) ?? '').trim()
     if (supplier !== 'dida-portal') { sendJson(res, 400, { ok: false, error: `未知供应商通道 ${supplier || '(空)'}` }); return }
-    const url = (parsed.url ?? '').trim() || 'https://portal.dida.com/login'
+    const url = ((parsed.obj.url as string | undefined) ?? '').trim() || 'https://portal.dida.com/login'
     if (!/^https:\/\/portal\.dida\.com\//.test(url)) {
       sendJson(res, 400, { ok: false, error: '登录入口必须落在 https://portal.dida.com/ 域内(fail-closed)' }); return
     }
