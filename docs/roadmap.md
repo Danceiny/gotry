@@ -15,6 +15,7 @@ Current note: Issue 411 forward fix keeps production session-benchmark cadence a
 ### Release Status
 
 - From 2026-09-13, issue #467 reaches the first outgoing DSH model request with the embedded Booking Copilot personaPrefix (`buildDshEmbeddedBookingPatch` targets the registered `system-prompt` row), and #470 projects safe-ref syntax into the model-facing tool schema with same-run typed correction while retaining fail-closed unsafe refs; local engineering proof only, exact real Booking UAT remains #142.
+- For `search.run` and `search.patch`, the runtime validates the host's post-action workspace: a higher revision requires cleared hotel focus, loaded offers, shortlist, selection, and verification; an unchanged revision permits no content mutation. Missing optional fields compare safely. Maintained regressions cover this boundary; real UAT remains #142.
 **Current npm dist-tags (2026-09-11 post-publish): `latest=0.0.1-rc.24`, `rc=0.0.1-rc.24`. Both tags dual-point to rc.24 per the rc.24 release-notes dist-tag plan. This line records the publish-time state; the table below carries the historical pull-back evidence.**
 
 - 2026-08-30 morning: #50 verified that the registry had no rc.16 (a correction to the "already published" claim); **the re-release landed the same day at 13:00Z** (npm time measured `0.0.1-rc.16` = 2026-08-30T13:00:38Z), and the GitHub Release was created at 13:03Z (the #76 fix took effect).

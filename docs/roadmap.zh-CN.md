@@ -15,6 +15,7 @@
 ### 发行状态
 
 - 自 2026-09-13 起，issue #467 让内嵌 Booking Copilot personaPrefix 到达首次外发的 DSH 模型请求（`buildDshEmbeddedBookingPatch` 以注册的 `system-prompt` 行为补丁目标），#470 又将 safe-ref 语法投射到面向模型的 tool schema，支持同 run typed 纠偏并保留 unsafe ref 的 fail-closed；仅为本地工程证明，精确的真实 Booking UAT 仍属 #142。
+- 对 `search.run` 与 `search.patch`，运行时校验宿主的动作后工作区：revision 增加时须清空酒店焦点、已载入报价、候选清单、当前选择和核验信息；revision 不变时内容不能变更。缺失的可选字段可安全比较。回归测试覆盖该边界，真实 UAT 仍由 #142 跟踪。
 **当前 npm dist-tags（2026-09-11 发布后）：`latest=0.0.1-rc.24`，`rc=0.0.1-rc.24`。两 tag 按 rc.24 release-notes dist-tag 计划双指 rc.24。本行记录发布时态；历史回拉证据保留在下表对应版本行。**
 
 - 2026-08-30 上午 #50 核实 registry 无 rc.16（「已发布」口径勘误）；**同日 13:00Z 补发落地**（npm time 实测 `0.0.1-rc.16` = 2026-08-30T13:00:38Z），GitHub Release 13:03Z 随建（#76 修复生效）。
