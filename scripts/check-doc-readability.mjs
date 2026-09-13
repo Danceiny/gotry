@@ -7,9 +7,10 @@
  * compacted 2026-09-13 files with modest headroom so the guard prevents ledger
  * re-growth without becoming a general prose linter.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -78,20 +79,28 @@ const SURFACES = [
 
 const PAIR_MAX_LINE_DELTA = 8;
 
-const REVISION_HISTORY_HEADING = /^#{2,6}\s*(?:revision history|change log|changelog|version history|change history|updates?|更新记录|修订记录|变更记录|版本历史|版本记录|变更日志)\b/i;
+const REVISION_HISTORY_HEADING = /^#{2,6}\s*(?:(?:revision history|change log|changelog|version history|change history|updates?)\b|(?:更新记录|修订记录|变更记录|版本历史|版本记录|变更日志)(?=\s*$|[\s:：（(]))/i;
 const LEDGER_HEADING = /^#{2,6}\s*(?:.*(?:ledger|台账|流水|append-only|追加).*)$/i;
 const DATED_ROW = /^\s*(?:[-*+]\s+|\d+\.\s+|\|)?(?:20\d{2}[-/.年](?:0?[1-9]|1[0-2])[-/.月](?:0?[1-9]|[12]\d|3[01])日?)\b/;
 const ISSUE_ROW = /^\s*(?:[-*+]\s+|\d+\.\s+|\|).*?(?:#\d+|issues\/\d+)\b/i;
 const POINTER_ISSUE_ROW = /^\s*(?:[-*+]\s+|\d+\.\s+|\|)\s*(?:\[?#\d+\]?|\[#\d+\]\([^)]+\)|https:\/\/github\.com\/[^)\s]+\/issues\/\d+)\s*(?:\||[-:：—–])?\s*(?:see|todo|open|closed|done|见|待办|已关)?\s*$/i;
 
 function stripFenceState(lines) {
-  let inFence = false;
+  let fence = null;
   return lines.map((line) => {
-    if (/^```/.test(line)) {
-      inFence = !inFence;
+    if (fence) {
+      const marker = line.match(/^(?: {0,3})(`{3,}|~{3,})[ \t]*$/)?.[1];
+      if (marker && marker[0] === fence.char && marker.length >= fence.length) fence = null;
       return { line, inFence: true };
     }
-    return { line, inFence };
+    const opener = line.match(/^(?: {0,3})(`{3,}|~{3,})(.*)$/);
+    const marker = opener?.[1];
+    const info = opener?.[2] ?? '';
+    if (marker && (marker[0] !== '`' || !info.includes('`'))) {
+      fence = { char: marker[0], length: marker.length };
+      return { line, inFence: true };
+    }
+    return { line, inFence: false };
   });
 }
 
@@ -412,16 +421,136 @@ function runSelfTest() {
     rmSync(baselineDir, { recursive: true, force: true });
   }
 
+  function runCheckViaCli(overrides) {
+    const dir = mkdtempSync(join(tmpdir(), 'gotry-doc-readability-cli-'));
+    try {
+      writeFixture(dir, overrides);
+      mkdirSync(join(dir, 'scripts'), { recursive: true });
+      copyFileSync(join(ROOT, 'scripts/check-doc-readability.mjs'), join(dir, 'scripts/check-doc-readability.mjs'));
+      const result = spawnSync(process.execPath, ['scripts/check-doc-readability.mjs'], {
+        cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  function expectPassViaCli(name, overrides) {
+    const result = runCheckViaCli(overrides);
+    if (result.status !== 0 || result.stderr.length > 0) {
+      console.error(`SELF-TEST FIXTURE INVALID: ${name}`);
+      console.error(`  status=${result.status} stderr=${result.stderr.trim()}`);
+      console.error(result.stdout.split('\n').map((l) => `  ${l}`).join('\n'));
+      process.exit(1);
+    }
+  }
+
+  function expectFailViaCli(name, overrides, expectedFiles, expectedSubstr) {
+    const result = runCheckViaCli(overrides);
+    const combined = result.stdout + result.stderr;
+    if (result.status !== 1) {
+      console.error(`SELF-TEST FIXTURE INVALID: ${name} expected exit 1, got ${result.status}`);
+      console.error(combined);
+      process.exit(1);
+    }
+    for (const file of expectedFiles) {
+      if (!combined.includes(file)) {
+        console.error(`SELF-TEST FIXTURE INVALID: ${name} missing file reference ${file}`);
+        console.error(combined);
+        process.exit(1);
+      }
+    }
+    if (expectedSubstr && !combined.includes(expectedSubstr)) {
+      console.error(`SELF-TEST FIXTURE INVALID: ${name} missing diagnostic ${expectedSubstr}`);
+      console.error(combined);
+      process.exit(1);
+    }
+  }
+
+  // Reference-patch positive fixtures (tilde fence, valid open+close).
+  expectPassViaCli('tilde-fenced revision heading stays inside fence', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n~~~markdown\n## Revision History\n~~~\n\n- Current state.\n',
+  });
+
+  // Tilde info strings may carry backticks (CommonMark §4.5); backtick info strings may not.
+  expectPassViaCli('tilde info string may carry backticks', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n~~~```js\n## Revision History\n~~~\n\n- Current state.\n',
+  });
+
+  // Bad backtick info string carries backtick → opener rejected → ## Revision History outside any fence.
+  expectFailViaCli('bad backtick info string with backtick keeps guard active',
+    { 'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```js `\n## Revision History\n```\n' },
+    ['docs/roadmap.md:6'], 'revision/change-history section belongs in git and release notes');
+
+  // 4-backtick opener not closed by 3-backtick run → forbidden heading after the short run must stay in fence.
+  expectPassViaCli('short backtick run does not close longer opener; forbidden heading after', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n````markdown\n## Revision History\n```\n## Revision History\n~~~\n\n- Current state.\n',
+  });
+
+  // 3-backtick opener closed by 4-backtick run → forbidden heading after must be visible to the guard.
+  expectFailViaCli('valid 4-backtick close on 3-backtick opener exposes heading after',
+    { 'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\n## Revision History\n````\n\n## Revision History\n\n- Old state.\n' },
+    ['docs/roadmap.md:9'], 'revision/change-history section belongs in git and release notes');
+
+  // Marker mismatch — tilde opener not closed by backticks (both directions).
+  expectPassViaCli('tilde opener not closed by backtick run; forbidden heading after stays in fence', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n~~~markdown\nstuff\n```\n## Revision History\n\n- Body.\n',
+  });
+  expectPassViaCli('backtick opener not closed by tilde run; forbidden heading after stays in fence', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\nstuff\n~~~\n## Revision History\n\n- Body.\n',
+  });
+
+  // Closing fence with non-whitespace suffix is not a closer; forbidden heading after must stay in fence.
+  expectPassViaCli('non-whitespace close tail does not close fence; forbidden heading after stays in fence', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\nstuff\n``` extra\n## Revision History\n\n- Body.\n',
+  });
+
+  // Non-breaking space suffix is not ASCII whitespace; CommonMark §4.5 allows only spaces/tabs after the closing marker.
+  expectPassViaCli('non-breaking-space suffix does not close fence; forbidden heading after stays in fence', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\nstuff\n``` \n## Revision History\n\n- Body.\n',
+  });
+
+  // Unterminated fence reaches EOF; forbidden heading before EOF must stay in fence.
+  expectPassViaCli('unterminated fence covers trailing forbidden heading at EOF', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\nstuff\n## Revision History\n',
+  });
+
+  // Three-space indented fence opens and closes; heading inside is hidden.
+  expectPassViaCli('three-space indented fence opens and closes', {
+    'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n   ```markdown\n## Revision History\n   ```\n\n- Current state.\n',
+  });
+
+  // Real heading after a valid closing fence is visible to the guard.
+  expectFailViaCli('real revision heading after valid closing fence is visible',
+    { 'docs/roadmap.md': '# GoTry Roadmap\n\n## TL;DR\n\n```markdown\n## Revision History\n```\n\n## Revision History\n\n- Old state.\n' },
+    ['docs/roadmap.md:9'], 'revision/change-history section belongs in git and release notes');
+
+  // All six exact Chinese history headings rejected outside any fence.
+  for (const heading of ['更新记录', '修订记录', '变更记录', '版本历史', '版本记录', '变更日志']) {
+    const overrides = { 'docs/roadmap.zh-CN.md': `# GoTry 路线图\n\n## ${heading}\n\n- 旧状态。\n` };
+    expectFailViaCli(`chinese revision heading "${heading}" rejected`,
+      overrides,
+      ['docs/roadmap.zh-CN.md:3'],
+      'revision/change-history section belongs in git and release notes');
+  }
+
+  // Chinese heading with full-width colon terminator also caught.
+  expectFailViaCli('chinese revision heading with full-width colon tail',
+    { 'docs/roadmap.zh-CN.md': '# GoTry 路线图\n\n## 变更记录：摘要\n\n- 旧状态。\n' },
+    ['docs/roadmap.zh-CN.md:3'], 'revision/change-history section belongs in git and release notes');
+
+  // Chinese heading inside a valid tilde fence on the bilingual mirror pair stays hidden.
+  expectPassViaCli('appended tilde fence covers Chinese revision heading on mirror pair', {
+    'README.md': '# GoTry\n\n## Summary\n\nCompact reader intro.\n\n~~~markdown\n## Revision History\n~~~\n',
+    'README.zh-CN.md': '# GoTry\n\n## 速览\n\n紧凑读者入口。\n\n~~~markdown\n## 修订记录\n~~~\n',
+  });
+
   const cases = [
     {
       name: 'line budget',
       overrides: { 'README.md': `# GoTry\n\n## Summary\n\n${Array.from({ length: 270 }, (_, i) => `line ${i}`).join('\n')}\n` },
       want: /exceeds 260 line budget/,
-    },
-    {
-      name: 'revision history heading',
-      overrides: { 'docs/roadmap.md': '# GoTry Roadmap\n\n## Revision History\n\n- Old state.\n' },
-      want: /revision\/change-history/,
     },
     {
       name: 'append-only issue/date ledger',
@@ -474,7 +603,7 @@ function runSelfTest() {
       rmSync(dir, { recursive: true, force: true });
     }
   }
-  console.log(`DOC READABILITY SELF-TEST OK: ${cases.length} negative fixtures failed as expected`);
+  console.log(`DOC READABILITY SELF-TEST OK: ${cases.length} surface-budget negatives + ${'21'} fence/i18n CLI fixtures passed`);
 }
 
 if (process.argv.includes('--self-test')) {
