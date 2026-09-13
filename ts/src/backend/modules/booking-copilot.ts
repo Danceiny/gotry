@@ -49,7 +49,14 @@ export async function startBookingCopilotModule(
   const ledger: StateLedger = dependencies.ensureLedger(config.stateRoot)
   let planner: DshEmbeddedBookingPlannerHandle | undefined
   try {
-    planner = await dependencies.createPlanner({ stateRoot: config.stateRoot, env: buildDshPlannerEnvironment(env) })
+    // The unified gotry-backend mounts this module instead of the standalone
+    // startup, so it has to pass the same planner options: a deadline only the
+    // standalone entry applied is a deadline the serving path never sees.
+    planner = await dependencies.createPlanner({
+      stateRoot: config.stateRoot,
+      env: buildDshPlannerEnvironment(env),
+      ...(config.plannerTurnTimeoutMs === undefined ? {} : { turnTimeoutMs: config.plannerTurnTimeoutMs }),
+    })
   } catch (error) {
     try { ledger.close() } catch { /* 聚合首错优先 */ }
     throw error
