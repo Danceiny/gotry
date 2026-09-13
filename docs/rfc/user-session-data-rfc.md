@@ -160,12 +160,12 @@ Dependencies: the transport layer itself has **zero new dependencies** (extensio
 
 **HTTP contract: `POST /v1/session/search` (supplier `dida-portal`, M0)**
 
-The HTTP backend that carries the §3.3 verdict to the consuming UI is a separate surface (`gotry-backend` `session-search` module, §3.2). The minimum contract:
+Route authority: `ts/src/backend/modules/session-search.ts`. Optional-field authority (e.g. `installUrl`, `installAction`): `ts/capabilities/session-search.ts`. The minimum contract:
 
-- **Route**: `POST /v1/session/search`; JSON body `{ supplier, query: { entryUrl?, timeoutMs? } }`. M0 accepts `supplier='dida-portal'` only; other values return `400`.
-- **Authentication**: `Authorization: Bearer <GOTRY_BACKEND_SESSION_API_KEY>`. A missing/wrong bearer returns `403 { ok:false, error:'forbidden' }`. A missing `GOTRY_BACKEND_SESSION_API_KEY` is **fail-closed**: the server returns `503 { ok:false, error:'GOTRY_BACKEND_SESSION_API_KEY 未配置(fail-closed)' }` and serves no traffic on this route.
-- **`200` body** carries `{ ok, verdict, supplier, evidence, latencyMs, fetchedAt }`; `rates` on hit results; `error` on errored results.
-  - `installUrl` + `installAction` are **present only when the verdict needs an extension install entry** (`needs-extension`); other verdicts may omit these optional fields. The consuming UI renders the install entry from `installUrl` (a clickable link to the Chrome Web Store) with `installAction='add-to-chrome'` — the backend does not initiate installation itself.
+- **Route**: `POST /v1/session/search`; JSON body `{ supplier, query? }` where `query` is `{ entryUrl?, timeoutMs? }` — both `query` and its fields are optional. M0 accepts `supplier='dida-portal'` only; other values return `400`.
+- **Authentication**: `Authorization: Bearer <GOTRY_BACKEND_SESSION_API_KEY>`. A missing/wrong bearer returns `403 { ok:false, error:'forbidden' }`. A missing `GOTRY_BACKEND_SESSION_API_KEY` is **fail-closed**: the route returns `503 { ok:false, error:'GOTRY_BACKEND_SESSION_API_KEY 未配置(fail-closed)' }` — rejected before supplier search is invoked.
+- **`200` body** always carries `{ ok, verdict, supplier, rates, evidence, latencyMs, fetchedAt }`; `rates` is `[]` when unavailable. `error` appears on errored results.
+  - `installUrl` + `installAction` are projected from the capability result through a helper used on both the `200` and `429` paths. Current `needs-extension` results carry both fields (set by the capability layer); ordinary results may omit them. The contract makes no promise that other verdicts can never carry optional fields. The consuming UI renders the install entry from `installUrl` (a clickable link to the Chrome Web Store) with `installAction='add-to-chrome'` — the backend does not initiate installation itself.
 - **`429` with `Retry-After: 30`** is returned when the cadence gate trips (`verdict='cooldown'`). 429 is rate limiting only: it does not promise automatic installation, and it does not promise automatic replay. The ≤120s `retry-after-watch` + same-`query_id` replay described in §3.3 is a **Node-side** behavior; the backend does not replay. In particular, the flight `health-watch` retained in §3.3 is **not** a backend dida automatic replay.
 
 **Dual distribution channels (ADR-21)**: the Chrome platform forbids sideloading non-store CRX; one-click install + auto-update exist only through the store.
