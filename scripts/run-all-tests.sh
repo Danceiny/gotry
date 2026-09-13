@@ -486,6 +486,7 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 ("$TSX_BIN" scripts/booking-surface-package-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-surface-contract-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-gap-code-contract-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-intent-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-runtime-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-availability-policy-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-availability-ledger-binding-tests.ts) || FAIL=1
@@ -495,6 +496,7 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 (cd ts && npx tsx scripts/booking-copilot-server-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-plugin-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-planner-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/managed-dsh-run-port-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-startup-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-core-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-bin-proof-tests.ts) || FAIL=1

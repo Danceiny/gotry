@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureLedger } from '../src/state-ledger.ts'
-import { BookingCopilotTaskRuntime } from '../src/booking-surface/runtime.ts'
+import { BookingCopilotTaskRuntime as StrictBookingCopilotTaskRuntime } from '../src/booking-surface/runtime.ts'
+import type { BookingIntentProjection } from '../src/booking-surface/booking-intent.ts'
 import { validateBookingSurface } from '../src/booking-surface/validation.ts'
 import type { ActionReceipt, BookingReadAction, BookingWorkspaceSnapshot, UserTurn } from '../src/booking-surface/contracts.ts'
 
@@ -25,6 +26,7 @@ const action: BookingReadAction = {
   schemaVersion: 'booking.surface', kind: 'search.run', actionId: 'action-concurrency-opaque', contextRef: workspace.contextRef,
   expectedRevision: 0, reason: 'opaque reason', factRefs: ['fact-opaque'], input: {},
 }
+const searchResultsIntent = { schemaVersion: 'booking.intent.v1', target: 'search.results' } as const satisfies BookingIntentProjection
 function receipt(which: string): ActionReceipt {
   const value: ActionReceipt = {
     schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: action.actionId, contextRef: workspace.contextRef,
@@ -42,14 +44,14 @@ if (process.argv.includes('--replay')) {
   const replayRoot = process.argv[process.argv.indexOf('--replay') + 1]!
   const replayVariant = process.argv[process.argv.indexOf('--replay') + 2]!
   const replayLedger = ensureLedger(replayRoot)
-  try { new BookingCopilotTaskRuntime(replayLedger).continueWithReceipt(continuation(receipt(replayVariant))); console.log(JSON.stringify({ result: 'success' })) }
+  try { new StrictBookingCopilotTaskRuntime(replayLedger).continueWithReceipt(continuation(receipt(replayVariant))); console.log(JSON.stringify({ result: 'success' })) }
   catch (error) { console.log(JSON.stringify({ result: 'error', error: error instanceof Error ? error.message : String(error) })) }
   replayLedger.close(); process.exit(0)
 }
 
 if (child) {
   const ledger = ensureLedger(root!)
-  const r = new BookingCopilotTaskRuntime(ledger)
+  const r = new StrictBookingCopilotTaskRuntime(ledger)
   writeFileSync(join(root!, `started-${variant}`), 'started')
   const startDeadline = Date.now() + 10_000
   while (!existsSync(join(root!, 'start'))) { if (Date.now() > startDeadline) throw new Error('child_start_timeout'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10) }
@@ -99,10 +101,10 @@ const stateRoot = root ?? mkdtempSync(join(tmpdir(), 'gotry-receipt-concurrency-
 if (!child) {
   mkdirSync(stateRoot, { recursive: true })
   const ledger = ensureLedger(stateRoot)
-  const r = new BookingCopilotTaskRuntime(ledger)
+  const r = new StrictBookingCopilotTaskRuntime(ledger)
   const turn: UserTurn = { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: 'task-concurrency-opaque', turnId: 'receipt-anchor-turn', workspace, request: { text: 'unique-pii-marker raw-prompt-marker' } }
   const sensitiveAction = { ...action, reason: 'unique-pii-marker raw-prompt-marker', input: {} }
-  r.startTask(turn); r.issueOperation(turn.taskId!, sensitiveAction)
+  r.startTask(turn); r.issueOperation(turn.taskId!, sensitiveAction, searchResultsIntent)
   assert.throws(() => r.continueWithReceipt(continuation({ ...receipt('a'), undoToken: 'malicious@example.invalid' })), /invalid_receipt_continuation/)
   assert.throws(() => r.continueWithReceipt(continuation({ ...receipt('a'), observation: { kind: 'gap' as const, code: 'raw-prompt-marker user prose' as never, factRefs: ['numeric-123'] } })), /invalid_receipt_continuation/)
   assert.equal(validateBookingSurface({ ...receipt('a'), status: 'no_match', observation: { kind: 'gap' as const, code: 'no_hotels_matched' as const, factRefs: ['123'] } }).ok, true)
@@ -115,13 +117,13 @@ if (!child) {
   assert.ok(!persisted.some((row) => /unique-pii-marker|raw-prompt-marker/i.test(row.payload)))
   const winner = differing.find((x) => x.result === 'success')
   assert.ok(winner?.variant)
-  assert.deepEqual(new BookingCopilotTaskRuntime(after).resumeTask(turn.taskId!)?.lastReceipt, receipt(winner.variant))
+  assert.deepEqual(new StrictBookingCopilotTaskRuntime(after).resumeTask(turn.taskId!)?.lastReceipt, receipt(winner.variant))
   after.close()
   rmSync(stateRoot, { recursive: true, force: true })
   const equalRoot = mkdtempSync(join(tmpdir(), 'gotry-receipt-equal-'))
   const equalLedger = ensureLedger(equalRoot)
-  const equalRuntime = new BookingCopilotTaskRuntime(equalLedger)
-  equalRuntime.startTask(turn); equalRuntime.issueOperation('task-concurrency-opaque', action)
+  const equalRuntime = new StrictBookingCopilotTaskRuntime(equalLedger)
+  equalRuntime.startTask(turn); equalRuntime.issueOperation('task-concurrency-opaque', action, searchResultsIntent)
   const equal = await runPair(equalRoot, 'same-a', 'same-b')
   assert.equal(equal.filter((x) => x.result === 'success').length, 2)
   const equalCheck = equalLedger
@@ -130,14 +132,14 @@ if (!child) {
   assert.ok(!equalPayloads.some((row) => /sensitive|Authorization|Bearer|raw prompt|secret/i.test(row.payload)))
   const tampered = equalCheck.db.prepare("SELECT seq, payload FROM events WHERE kind = 'booking.copilot.receipt.observed' LIMIT 1").get() as { seq: number; payload: string }
   equalCheck.db.prepare('UPDATE events SET payload = ? WHERE seq = ?').run(tampered.payload.replace(/"receiptDigest":"[a-f0-9]+"/, '"receiptDigest":"0000000000000000000000000000000000000000000000000000000000000000"'), tampered.seq)
-  assert.throws(() => new BookingCopilotTaskRuntime(equalCheck).resumeTask('task-concurrency-opaque'), /ledger_corrupt/)
+  assert.throws(() => new StrictBookingCopilotTaskRuntime(equalCheck).resumeTask('task-concurrency-opaque'), /ledger_corrupt/)
   equalCheck.close()
   rmSync(equalRoot, { recursive: true, force: true })
   for (let round = 0; round < 20; round++) {
     const loopRoot = mkdtempSync(join(tmpdir(), 'gotry-receipt-round-'))
     const loopLedger = ensureLedger(loopRoot)
-    const loopRuntime = new BookingCopilotTaskRuntime(loopLedger)
-    loopRuntime.startTask(turn); loopRuntime.issueOperation('task-concurrency-opaque', action)
+    const loopRuntime = new StrictBookingCopilotTaskRuntime(loopLedger)
+    loopRuntime.startTask(turn); loopRuntime.issueOperation('task-concurrency-opaque', action, searchResultsIntent)
     const result = await runPair(loopRoot, 'a', 'b')
     assert.equal(result.filter((x) => x.result === 'success').length, 1)
     assert.equal(result.filter((x) => x.error === 'receipt_conflict').length, 1)
@@ -145,10 +147,10 @@ if (!child) {
   }
   const replayRoot = mkdtempSync(join(tmpdir(), 'gotry-receipt-replay-'))
   const replayLedger = ensureLedger(replayRoot)
-  const replayRuntime = new BookingCopilotTaskRuntime(replayLedger)
-  replayRuntime.startTask(turn); replayRuntime.issueOperation('task-concurrency-opaque', action); replayRuntime.continueWithReceipt(continuation(receipt('same')))
+  const replayRuntime = new StrictBookingCopilotTaskRuntime(replayLedger)
+  replayRuntime.startTask(turn); replayRuntime.issueOperation('task-concurrency-opaque', action, searchResultsIntent); replayRuntime.continueWithReceipt(continuation(receipt('same')))
   const nextAction = { ...action, actionId: 'action-next-opaque', expectedRevision: 1 }
-  replayRuntime.issueOperation('task-concurrency-opaque', nextAction)
+  replayRuntime.issueOperation('task-concurrency-opaque', nextAction, searchResultsIntent)
   const beforeReplay = replayLedger.countEvents()
   const tsxBin = process.env.PATH?.split(':').map((dir) => join(dir, 'tsx')).find(existsSync)
   assert.ok(tsxBin)
@@ -162,15 +164,15 @@ if (!child) {
   }
   const replayCheck = replayLedger
   assert.equal(replayCheck.countEvents(), beforeReplay)
-  assert.equal(new BookingCopilotTaskRuntime(replayCheck).resumeTask('task-concurrency-opaque')?.pendingAction?.actionId, nextAction.actionId)
+  assert.equal(new StrictBookingCopilotTaskRuntime(replayCheck).resumeTask('task-concurrency-opaque')?.pendingAction?.actionId, nextAction.actionId)
   replayCheck.close(); rmSync(replayRoot, { recursive: true, force: true })
   const reuseRoot = mkdtempSync(join(tmpdir(), 'gotry-receipt-reuse-'))
-  const reuseLedger = ensureLedger(reuseRoot); const reuseRuntime = new BookingCopilotTaskRuntime(reuseLedger)
-  reuseRuntime.startTask(turn); reuseRuntime.issueOperation('task-concurrency-opaque', action); reuseRuntime.continueWithReceipt(continuation(receipt('same')))
+  const reuseLedger = ensureLedger(reuseRoot); const reuseRuntime = new StrictBookingCopilotTaskRuntime(reuseLedger)
+  reuseRuntime.startTask(turn); reuseRuntime.issueOperation('task-concurrency-opaque', action, searchResultsIntent); reuseRuntime.continueWithReceipt(continuation(receipt('same')))
   const actionB = { ...action, actionId: 'action-b-opaque', expectedRevision: 1 }
-  reuseRuntime.issueOperation('task-concurrency-opaque', actionB); reuseRuntime.continueWithReceipt(continuation({ ...receipt('same'), actionId: actionB.actionId }))
+  reuseRuntime.issueOperation('task-concurrency-opaque', actionB, searchResultsIntent); reuseRuntime.continueWithReceipt(continuation({ ...receipt('same'), actionId: actionB.actionId }))
   const reuseEvents = reuseLedger.countEvents(); const reuseState = reuseRuntime.resumeTask('task-concurrency-opaque')
-  assert.throws(() => reuseRuntime.issueOperation('task-concurrency-opaque', action), /stale_revision|ledger_write_failed:action|action_already_receipted/)
+  assert.throws(() => reuseRuntime.issueOperation('task-concurrency-opaque', action, searchResultsIntent), /stale_revision|ledger_write_failed:action|action_already_receipted/)
   assert.equal(reuseLedger.countEvents(), reuseEvents); assert.deepEqual(reuseRuntime.resumeTask('task-concurrency-opaque'), reuseState)
   reuseLedger.close(); rmSync(reuseRoot, { recursive: true, force: true })
   console.log('BOOKING COPILOT RECEIPT LEDGER CONCURRENCY PROOF: winner/conflict/atomic persistence OK')

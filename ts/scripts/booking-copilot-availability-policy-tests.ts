@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ensureLedger } from '../src/state-ledger.ts'
-import { BookingCopilotTaskRuntime } from '../src/booking-surface/runtime.ts'
+import { BookingCopilotProofRuntime as BookingCopilotTaskRuntime } from './booking-copilot-proof-runtime.ts'
 import { createAvailabilityPolicy, digest, MAX_HOTELS_PER_TASK, MAX_OFFER_CHECKS_PER_HOTEL, MAX_OFFER_QUERIES_PER_HOTEL, recordObservedOffersQuery, recordOfferCheckIssued, recordOfferCheckReceipt, recordOffersGeneration, recordOffersQueryIssued, canIssueOfferCheck, type AvailabilityPolicyState } from '../src/booking-surface/availability-policy.ts'
-import { bookingSurfaceAllowedActions } from '../src/booking-surface/contracts.ts'
+import { bookingSurfaceAllowedActions, bookingSurfaceFleetFeatures, bookingSurfaceNegotiatedActions } from '../src/booking-surface/contracts.ts'
 import type { ActionReceipt, BookingReadActionKind, BookingSurfaceEvent, BookingWorkspaceSnapshot, VerifiedOfferCapability } from '../src/booking-surface/contracts.ts'
 import type { OfferCriteria } from '../src/booking-surface/contracts.ts'
 const versionFor=(offerRef:string, suffix='v1'):string=>`${offerRef}:${suffix}`
@@ -14,6 +14,7 @@ const ws=(revision:number,hotels:string[],offers:Array<[string,string,string?]>,
 const receipt=(actionId:string,revision:number,offerRef:string,status:ActionReceipt['status']='unavailable',available=false,checkedOfferVersionRef=versionFor(offerRef),currentOfferVersionRef?:string):ActionReceipt=>({schemaVersion:'booking.surface',kind:'action.receipt',actionId,contextRef:'ctx-availability',status,revision,observation:{kind:'offer.availability',offerRef,checkedOfferVersionRef,currentOfferVersionRef:available?(currentOfferVersionRef ?? checkedOfferVersionRef):undefined,available,verifiedOfferRef:available?'verified-'+offerRef:undefined,changedFactRefs:[],gapCodes:[]},resultContract:{outcome:available?'complete':'empty',hardCriteriaMet:available,factRefs:[],gapCodes:[],blockers:[],relaxationsApplied:[]}})
 const foldQuery = (state: AvailabilityPolicyState, hotelRefs: string[], workspace: BookingWorkspaceSnapshot, actionId: string, queryReceipt: ActionReceipt, criteriaDigest = '') => recordOffersGeneration(state, hotelRefs, workspace, actionId, digest(queryReceipt), queryReceipt, criteriaDigest)
 const criteria: OfferCriteria = {}
+const offerVerifiedIntent = { schemaVersion: 'booking.intent.v1', target: 'offer.verified' } as const
 const offersReceipt=(actionId:string,revision:number,hotelRefs:string[],offerRefs:string[],loadedHotelCount:number,status:ActionReceipt['status']='applied',outcome:'complete'|'partial'|'empty'='complete',hardCriteriaMet=true):ActionReceipt=>({schemaVersion:'booking.surface',kind:'action.receipt',actionId,contextRef:'ctx-availability',status,revision,observation:{kind:'offers.state',hotelRefs,offerRefs,loadedHotelCount,gapCodes:[]},resultContract:{outcome,hardCriteriaMet,factRefs:[],gapCodes:[],blockers:[],relaxationsApplied:[]}})
 const gapReceipt=(actionId:string,revision:number,status:ActionReceipt['status']='failed'):ActionReceipt=>({schemaVersion:'booking.surface',kind:'action.receipt',actionId,contextRef:'ctx-availability',status,revision,observation:{kind:'gap',code:'hotel_rates_failed',factRefs:[]},resultContract:{outcome:'partial',hardCriteriaMet:false,factRefs:[],gapCodes:['hotel_rates_failed'],blockers:[],relaxationsApplied:[]}})
 
@@ -25,6 +26,16 @@ assert.deepEqual(bookingSurfaceAllowedActions('tenant'), ['search.patch', 'searc
 assert.deepEqual(bookingSurfaceAllowedActions('customer_portal'), ['search.patch', 'search.run', 'results.view.patch', 'hotel.focus', 'offers.query', 'offers.view.patch', 'offers.compare', 'offer.select', 'offer.check', 'checkout.prepare', 'order.observe'])
 assert.equal(bookingSurfaceAllowedActions('tenant').includes('hotel.select'), false)
 assert.equal(bookingSurfaceAllowedActions('customer_portal').includes('hotel.select'), false)
+
+// Additive compatibility is negotiated from the fleet intersection, never
+// from a schema hash or a single lucky load-balanced probe.
+assert.deepEqual(bookingSurfaceFleetFeatures([{ features: ['trusted-order-observation-v1'] }]), ['trusted-order-observation-v1'])
+assert.deepEqual(bookingSurfaceFleetFeatures([{ features: ['trusted-order-observation-v1'] }, {}]), [], 'an old peer with no feature advertisement disables the additive field')
+assert.deepEqual(bookingSurfaceFleetFeatures([{ features: ['trusted-order-observation-v1'] }, { features: [] }]), [], 'a mixed rolling fleet uses the safe intersection')
+assert.deepEqual(bookingSurfaceFleetFeatures([{ features: ['trusted-order-observation-v1', 'future-feature'] }]), ['trusted-order-observation-v1'], 'unknown future features do not poison known negotiation')
+assert.equal(bookingSurfaceNegotiatedActions('tenant', [{ schemaSha256: 'same-hash-is-not-authority' }]).includes('order.observe'), false, 'schema hash never enables an additive action')
+assert.equal(bookingSurfaceNegotiatedActions('tenant', [{ features: ['trusted-order-observation-v1'] }]).includes('order.observe'), true, 'the advertised fleet feature enables order observation')
+assert.deepEqual(bookingSurfaceNegotiatedActions('storefront', [{ features: ['trusted-order-observation-v1'] }]), bookingSurfaceAllowedActions('storefront'), 'feature negotiation cannot expand the product surface matrix')
 
 // Lifetime budget mutation guard: these assertions exercise the transitions,
 // not just the exported constants, so changing a comparison or reset policy
@@ -214,17 +225,17 @@ const runtime = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () =>
 const runtimeWorkspace = ws(0, ['rh'], [])
 runtime.startTask({ schemaVersion: 'booking.surface', kind: 'user.turn', taskId: 'runtime-availability', turnId: 'turn-1', workspace: runtimeWorkspace, request: { text: 'find rates' } })
 const query = { schemaVersion: 'booking.surface' as const, kind: 'offers.query' as const, actionId: 'rq-1', contextRef: 'ctx-availability', expectedRevision: 0, reason: 'ordinary query', factRefs: [], input: { hotelRefs: ['rh'], criteria: {} } }
-runtime.issueOperation('runtime-availability', query)
+runtime.issueOperation('runtime-availability', query, offerVerifiedIntent)
 runtime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: 'runtime-availability', workspace: ws(1, ['rh'], [['ro1', 'rh']]), receipt: { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'rq-1', contextRef: 'ctx-availability', status: 'applied', revision: 1, observation: { kind: 'offers.state', hotelRefs: ['rh'], offerRefs: ['ro1'], loadedHotelCount: 1 }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
 const check = { schemaVersion: 'booking.surface' as const, kind: 'offer.check' as const, actionId: 'rc-1', contextRef: 'ctx-availability', expectedRevision: 1, reason: 'CheckAvail', factRefs: [], input: { offerRef: 'ro1', offerVersionRef: versionFor('ro1') } }
-runtime.issueOperation('runtime-availability', check)
-runtime.issueOperation('runtime-availability', check)
+runtime.issueOperation('runtime-availability', check, offerVerifiedIntent)
+runtime.issueOperation('runtime-availability', check, offerVerifiedIntent)
 assert.equal(runtime.resumeTask('runtime-availability')?.availability.attempts.length, 1)
 const restarted = new BookingCopilotTaskRuntime(ensureLedger(ledgerRoot), { contextRefFactory: () => 'ctx-availability' })
 assert.equal(restarted.resumeTask('runtime-availability')?.availability.attempts[0]?.actionId, 'rc-1')
 runtime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: 'runtime-availability', workspace: ws(2, ['rh'], [['ro1', 'rh']]), receipt: { ...receipt('rc-1', 2, 'ro1'), status: 'unavailable' } })
 const query2 = { ...query, actionId: 'rq-2', expectedRevision: 2 }
-runtime.issueOperation('runtime-availability', query2)
+runtime.issueOperation('runtime-availability', query2, offerVerifiedIntent)
 runtime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: 'runtime-availability', workspace: ws(3, ['rh'], []), receipt: { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'rq-2', contextRef: 'ctx-availability', status: 'no_match', revision: 3, observation: { kind: 'offers.state', hotelRefs: ['rh'], offerRefs: [], loadedHotelCount: 0 }, resultContract: { outcome: 'empty', hardCriteriaMet: false, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
 assert.equal(runtime.resumeTask('runtime-availability')?.phase, 'terminal')
 const eventCount = ledger.countEvents()
@@ -233,7 +244,7 @@ const terminalBatch = JSON.parse(terminalBatchPayload.payload) as { requestKey: 
 assert.deepEqual(runtime.terminalDecisionBatch('runtime-availability', terminalBatch.requestKey), terminalBatch.events)
 assert.deepEqual(runtime.terminalDecisionBatch('runtime-availability', terminalBatch.requestKey), terminalBatch.events, 'exact terminal batch replay is read-only')
 assert.throws(() => runtime.terminalDecisionBatch('runtime-availability', 'arbitrary-new-terminal-key'), /task_terminal/)
-assert.throws(() => runtime.issueOperation('runtime-availability', { ...query, actionId: 'late', expectedRevision: 3 }), /task_terminal/)
+assert.throws(() => runtime.issueOperation('runtime-availability', { ...query, actionId: 'late', expectedRevision: 3 }, offerVerifiedIntent), /task_terminal/)
 assert.throws(() => runtime.emitEvent('runtime-availability', { kind: 'status', status: 'working' }), /task_terminal/)
 assert.equal(ledger.countEvents(), eventCount)
 ledger.close(); restarted['ledger'].close(); rmSync(ledgerRoot, { recursive: true, force: true })

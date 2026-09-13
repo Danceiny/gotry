@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gotry.dev/schemas/booking.intent.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "target"],
+  "properties": {
+    "schemaVersion": {
+      "const": "booking.intent.v1"
+    },
+    "target": {
+      "enum": [
+        "search.results",
+        "results.refined",
+        "hotel.focused",
+        "hotel.selected",
+        "offers.loaded",
+        "offers.refined",
+        "offers.compared",
+        "offer.selected",
+        "offer.verified",
+        "checkout.prepared",
+        "order.observed"
+      ]
+    },
+    "offerCriteria": {
+      "$ref": "#/$defs/OfferCriteria"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["target"],
+        "properties": {
+          "target": {
+            "enum": ["search.results", "results.refined", "hotel.focused", "hotel.selected", "order.observed"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "offerCriteria": {
+            "not": {}
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "OpaqueRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "Money": {
+      "type": "object",
+      "required": ["amount", "currency", "sourceFactRef"],
+      "properties": {
+        "amount": {
+          "type": "string",
+          "pattern": "^-?[0-9]+(?:\\.[0-9]+)?$",
+          "maxLength": 64
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "sourceFactRef": {
+          "$ref": "#/$defs/OpaqueRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StringArrayCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": {
+          "enum": ["must", "prefer"]
+        },
+        "value": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/NonEmptyString"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "BooleanCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": {
+          "enum": ["must", "prefer"]
+        },
+        "value": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StringCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": {
+          "enum": ["must", "prefer"]
+        },
+        "value": {
+          "$ref": "#/$defs/NonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "MoneyCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": {
+          "enum": ["must", "prefer"]
+        },
+        "value": {
+          "$ref": "#/$defs/Money"
+        }
+      },
+      "additionalProperties": false
+    },
+    "IntegerCriterion": {
+      "type": "object",
+      "required": ["strength", "value"],
+      "properties": {
+        "strength": {
+          "enum": ["must", "prefer"]
+        },
+        "value": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "OfferCriteria": {
+      "type": "object",
+      "properties": {
+        "roomType": {
+          "$ref": "#/$defs/StringArrayCriterion"
+        },
+        "bedType": {
+          "$ref": "#/$defs/StringArrayCriterion"
+        },
+        "meals": {
+          "$ref": "#/$defs/StringArrayCriterion"
+        },
+        "freeCancellation": {
+          "$ref": "#/$defs/BooleanCriterion"
+        },
+        "freeCancellationUntil": {
+          "$ref": "#/$defs/StringCriterion"
+        },
+        "totalPriceMax": {
+          "$ref": "#/$defs/MoneyCriterion"
+        },
+        "roomsAvailableMin": {
+          "$ref": "#/$defs/IntegerCriterion"
+        },
+        "payAtProperty": {
+          "$ref": "#/$defs/BooleanCriterion"
+        },
+        "mobileRate": {
+          "$ref": "#/$defs/BooleanCriterion"
+        },
+        "targetCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "sort": {
+          "enum": ["best_match", "total_price_asc", "cancellation_latest"]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

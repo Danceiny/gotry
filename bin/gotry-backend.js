@@ -32,7 +32,7 @@ async function main() {
   }
   const backend = await import(pathToFileURL(entryPath).href)
   const handle = await backend.startGotryBackendFromEnvironment(process.env)
-  process.stderr.write(`[gotry-backend] modules=${handle.moduleNames.join(',')}\n`)
+  process.stderr.write(`[gotry-backend] listening on http://127.0.0.1:${handle.port}; modules=${handle.moduleNames.join(',')}\n`)
 
   let stopping = false
   const stop = () => {

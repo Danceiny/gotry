@@ -11,6 +11,8 @@ import { readFileSync } from 'node:fs'
 
 const schemaUrl = new URL('../../../schemas/booking.surface.schema.json', import.meta.url)
 export const canonicalBookingSurfaceSchema = JSON.parse(readFileSync(schemaUrl, 'utf8'))
+const intentSchemaUrl = new URL('../../../schemas/booking.intent.schema.json', import.meta.url)
+export const canonicalBookingIntentSchema = JSON.parse(readFileSync(intentSchemaUrl, 'utf8'))
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value))
@@ -96,4 +98,19 @@ function projectDshSchema(value) {
  */
 export function dshBookingActionSchemaForKind(kind) {
   return projectDshSchema(canonicalBookingActionSchemaForKind(kind))
+}
+
+/** Self-contained intent schema with its sole public-contract ref inlined. */
+export function canonicalBookingIntentProjectionSchema() {
+  const intent = clone(canonicalBookingIntentSchema)
+  intent.properties.offerCriteria = clone(inlineLocalRefs(
+    canonicalBookingSurfaceSchema.$defs.OfferCriteria,
+    canonicalBookingSurfaceSchema,
+  ))
+  return intent
+}
+
+/** Provider-advertised subset; execute-time validation uses the full form. */
+export function dshBookingIntentProjectionSchema() {
+  return projectDshSchema(canonicalBookingIntentProjectionSchema())
 }

@@ -9,7 +9,12 @@
 
 import Ajv2020 from 'ajv/dist/2020.js'
 import { ToolArgsError } from '@deepseek-ai/dsh-tools'
-import { dshBookingActionSchemaForKind } from './canonical-schema.js'
+import {
+  canonicalBookingActionSchemaForKind,
+  canonicalBookingIntentProjectionSchema,
+  dshBookingActionSchemaForKind,
+  dshBookingIntentProjectionSchema,
+} from './canonical-schema.js'
 
 export const name = 'gotry-embedded-booking'
 export const inject = ['tools']
@@ -44,7 +49,10 @@ function decisionBranchKeys(decision) {
 
 function exactDecision(decision) {
   const keys = decisionBranchKeys(decision)
-  return keys !== null && exactKeys(decision, keys)
+  if (keys === null) return false
+  return decision.kind === 'operation'
+    ? exactKeys(decision, [...keys, 'intent'])
+    : exactKeys(decision, keys)
 }
 
 // Provider compatibility is deliberately structural and one-layer only. It
@@ -72,8 +80,7 @@ function closedObject(properties, required = Object.keys(properties)) {
   return { type: 'object', properties, required, additionalProperties: false }
 }
 
-function actionSchema(kind) {
-  const schema = dshBookingActionSchemaForKind(kind)
+function actionSchema(kind, schema = dshBookingActionSchemaForKind(kind)) {
   return {
     ...schema,
     properties: {
@@ -107,48 +114,85 @@ function semanticInputSchema(value) {
   return projected
 }
 
-function actionProposalSchema(kind) {
-  const canonical = dshBookingActionSchemaForKind(kind)
+function intentProposalSchema(schema) {
+  const semantic = semanticInputSchema(schema)
+  const { schemaVersion: _schemaVersion, ...properties } = semantic.properties
+  return {
+    ...semantic,
+    properties,
+    required: semantic.required.filter((key) => key !== 'schemaVersion'),
+  }
+}
+
+function actionProposalSchema(kind, canonical = dshBookingActionSchemaForKind(kind), intent = intentProposalSchema(dshBookingIntentProjectionSchema())) {
   return closedObject({
     kind: canonical.properties.kind,
     input: semanticInputSchema(canonical.properties.input),
-  })
+    intent,
+  }, ['kind', 'input', 'intent'])
 }
 
 function toolDefinition(toolName, capabilityId, actionKinds) {
+  const fullIntentProposalSchema = intentProposalSchema(canonicalBookingIntentProjectionSchema())
   const operationDecision = closedObject({
     kind: { type: 'string', const: 'operation' },
-    action: { oneOf: actionKinds.map(actionSchema) },
+    action: { oneOf: actionKinds.map((kind) => actionSchema(kind, canonicalBookingActionSchemaForKind(kind))) },
+    intent: fullIntentProposalSchema,
   })
   const legacyParameters = closedObject({
     decision: operationDecision,
   })
   const terminalProposal = closedObject({ kind: { type: 'string', const: 'terminal' } })
-  const proposalSchemas = actionKinds.map(actionProposalSchema)
+  const proposalSchemas = actionKinds.map((kind) => actionProposalSchema(kind))
+  // The advertised dsh dialect intentionally omits unsupported numeric/string
+  // keywords. Execute-time validation must still use the full canonical
+  // semantic input, otherwise dsh can conclude a turn that the parent rejects
+  // (for example patch:{}, star=9, an invalid date, or an empty facility list).
+  // Throwing ToolArgsError here keeps the correction inside the same bounded
+  // model run and prevents a false-success tool/result pair.
+  const canonicalProposalSchemas = actionKinds.map((kind) => actionProposalSchema(kind, canonicalBookingActionSchemaForKind(kind), fullIntentProposalSchema))
   const parameters = { type: 'object', anyOf: [...proposalSchemas, terminalProposal] }
   const ajv = new Ajv2020({ allErrors: true, strict: false, ownProperties: true })
-  const proposalValidators = new Map(actionKinds.map((kind, index) => [kind, ajv.compile(proposalSchemas[index])]))
+  const proposalValidators = new Map(actionKinds.map((kind, index) => [kind, ajv.compile(canonicalProposalSchemas[index])]))
   const validateTerminalProposal = ajv.compile(terminalProposal)
   const validateLegacyArgs = ajv.compile(legacyParameters)
 
   function isCompactProposal(value) {
     if (!isPlainRecord(value)) return false
-    if (actionKinds.includes(value.kind)) return exactKeys(value, ['kind', 'input'])
+    if (actionKinds.includes(value.kind)) {
+      return exactKeys(value, ['kind', 'input', 'intent'])
+    }
     return value.kind === 'terminal' && exactKeys(value, ['kind'])
   }
 
   function compactProposal(args, legacyEnvelope) {
     if (isCompactProposal(args)) return args
+    if (isPlainRecord(args) && args.kind === 'operation' && isPlainRecord(args.action)) {
+      if (exactKeys(args, ['kind', 'action']) && exactKeys(args.action, ['kind', 'input', 'intent'])) {
+        return args.action
+      }
+      if (exactKeys(args, ['kind', 'action', 'intent']) && exactKeys(args.action, ['kind', 'input'])) {
+        return { ...args.action, intent: args.intent }
+      }
+    }
     if (isPlainRecord(args) && exactKeys(args, ['decision'])) {
       let wrapped = args.decision
       if (typeof wrapped === 'string') {
         try { wrapped = JSON.parse(wrapped) } catch { wrapped = null }
       }
       if (isCompactProposal(wrapped)) return wrapped
+      if (isPlainRecord(wrapped) && wrapped.kind === 'operation' && isPlainRecord(wrapped.action)) {
+        if (exactKeys(wrapped, ['kind', 'action']) && exactKeys(wrapped.action, ['kind', 'input', 'intent'])) {
+          return wrapped.action
+        }
+        if (exactKeys(wrapped, ['kind', 'action', 'intent']) && exactKeys(wrapped.action, ['kind', 'input'])) {
+          return { ...wrapped.action, intent: wrapped.intent }
+        }
+      }
     }
     const decision = legacyEnvelope?.decision
     if (decision?.kind === 'operation' && isPlainRecord(decision.action)
-      && exactKeys(decision.action, ['kind', 'input'])) return decision.action
+      && exactKeys(decision.action, ['kind', 'input', 'intent'])) return decision.action
     return null
   }
 
@@ -168,6 +212,28 @@ function toolDefinition(toolName, capabilityId, actionKinds) {
 
   function conciseErrors(validator) {
     return (validator?.errors ?? []).slice(0, 8).map((error) => `${error.instancePath || '/'}: ${error.message}`)
+  }
+
+  // Keep near-miss arguments available to Ajv even when they are not exact
+  // enough to become an executable proposal. This gives the model a concrete
+  // field-level repair such as "must have required property 'intent'" instead
+  // of a generic envelope error, while acceptance still goes through the
+  // closed compact/legacy paths above.
+  function validationCandidate(args) {
+    let candidate = args
+    if (isPlainRecord(candidate) && exactKeys(candidate, ['decision'])) {
+      candidate = candidate.decision
+      if (typeof candidate === 'string') {
+        try { candidate = JSON.parse(candidate) } catch { return null }
+      }
+    }
+    if (isPlainRecord(candidate) && candidate.kind === 'operation' && isPlainRecord(candidate.action)) {
+      const action = candidate.action
+      return action.intent === undefined && candidate.intent !== undefined
+        ? { ...action, intent: candidate.intent }
+        : action
+    }
+    return candidate
   }
 
   return Object.freeze({
@@ -192,22 +258,26 @@ function toolDefinition(toolName, capabilityId, actionKinds) {
       // kind so one local mistake does not expand into dozens of union errors.
       const legacyEnvelope = normalizeProviderDecisionEnvelope(args)
       const proposal = compactProposal(args, legacyEnvelope)
-      const proposalValidator = proposal?.kind === 'terminal'
+      const candidate = proposal ?? validationCandidate(args)
+      const proposalValidator = candidate?.kind === 'terminal'
         ? validateTerminalProposal
-        : proposal && proposalValidators.get(proposal.kind)
-      if (proposalValidator?.(proposal)) {
+        : candidate && proposalValidators.get(candidate.kind)
+      const proposalValid = Boolean(proposal && proposalValidator?.(proposal))
+      if (proposalValid) {
         exec.concludeTurn()
         return acceptedValue(proposal, legacyEnvelope)
       }
 
-      // Hidden compatibility accepts a fully canonical old decision during a
-      // rolling upgrade. It is never advertised to the model, and the parent
-      // planner repeats every semantic and authority validation before use.
+      // Hidden compatibility accepts a fully canonical action only when the
+      // operation also carries the mandatory semantic intent. It is never
+      // advertised to the model, and the parent planner repeats every semantic
+      // and authority validation before use.
       if (legacyEnvelope && validateLegacyArgs(legacyEnvelope)) {
         exec.concludeTurn()
         return acceptedValue(null, legacyEnvelope)
       }
 
+      if (!proposalValid) proposalValidator?.(candidate)
       const errors = proposalValidator
         ? conciseErrors(proposalValidator)
         : legacyEnvelope?.decision?.kind === 'operation'

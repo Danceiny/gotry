@@ -4,8 +4,8 @@
  *
  * Assistant text is deliberately ignored. The only executable output is one
  * validated decision carried by one of the six registered dsh capability
- * tools. The Harness subprocess and its session live for the task rather than
- * being respawned for every receipt continuation.
+ * tools. The planner session is task-scoped, while each Harness subprocess is
+ * a short-lived per-turn cache retired after its accepted decision.
  */
 
 import { createHash } from 'node:crypto'
@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BOOKING_READ_ACTION_KINDS, type BookingCopilotTurn, type BookingReadAction, type SearchCriteriaPatch } from './contracts.ts'
+import { BOOKING_READ_ACTION_KINDS, type ActionReceipt, type BookingCopilotTurn, type BookingReadAction, type SearchCriteriaPatch } from './contracts.ts'
 import { buildTimeAnchor } from '../time-anchor.ts'
 export { formatUtcOffsetLabel } from '../time-anchor.ts'
 import {
@@ -21,11 +21,18 @@ import {
   actionsForEmbeddedCapability,
   type EmbeddedBookingCapabilityId,
 } from './profile.ts'
-import type { BookingCopilotTaskState, BookingPlannerDecision, BookingPlannerSessionFactory } from './runtime.ts'
+import { bookingDigest, type BookingActionCheckpoint, type BookingCopilotTaskState, type BookingPlannerDecision, type BookingPlannerSessionFactory } from './runtime.ts'
 import {
   validateBookingReadAction,
+  validateBookingIntentProjection,
   bookingSurfaceSchema,
 } from './validation.ts'
+import { createManagedDshRunPort } from './managed-dsh-run-port.ts'
+import {
+  BOOKING_INTENT_SCHEMA_VERSION,
+  BOOKING_INTENT_TARGET_ACTION,
+  type BookingIntentProjection,
+} from './booking-intent.ts'
 
 export const DSH_EMBEDDED_BOOKING_TOOL_NAMES = [
   'booking_search_hotels',
@@ -63,6 +70,7 @@ export type DshPlannerClock = Date | (() => Date)
 
 export interface DshPlannerTurnMetric {
   outcome: 'operation' | 'terminal' | 'provider_error' | 'timeout' | 'typed_decision_required' | 'failed'
+  decisionSource: 'runtime' | 'model'
   elapsedMs: number
   /** Calls across the Harness run/session seam; one run can contain repairs. */
   harnessRunCount: number
@@ -70,6 +78,9 @@ export interface DshPlannerTurnMetric {
   modelStepCount: number
   schemaRejectedCallCount: number
   firstPassValid: boolean
+  schemaRepairedValid: boolean
+  proseNudgeRecovered: boolean
+  /** Backward-compatible aggregate; prefer the two repair dimensions above. */
   repairedValid: boolean
   actionKind?: BookingReadAction['kind']
 }
@@ -98,21 +109,6 @@ export interface DshEmbeddedBookingPlannerOptions {
 export interface DshEmbeddedBookingPlannerHandle {
   plannerFactory: BookingPlannerSessionFactory
   close(): Promise<void>
-}
-
-interface HarnessRunResultLike {
-  finalResponse?: unknown
-  events?: unknown
-  notifications?: unknown
-}
-
-interface HarnessLike {
-  run(prompt: string, options: { sessionId: string }): Promise<HarnessRunResultLike>
-  close(): Promise<void>
-}
-
-interface DshSdkClientModuleLike {
-  DeepSeekHarness: new (options: Record<string, unknown>) => HarnessLike
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -174,7 +170,6 @@ const PLANNER_EXAMPLE_PATCH: SearchCriteriaPatch = {
   },
   occupancy: { rooms: [{ adults: 2, childAges: [] }] },
   starRating: { strength: 'must', value: { min: 3, max: 3 } },
-  facilities: { strength: 'prefer', value: { allOf: ['breakfast'] } },
 }
 
 /** SearchCriteriaPatch property names derived from the canonical schema — never hand-maintained. */
@@ -216,19 +211,31 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
       Tool-call arguments MUST match the declared tool parameter schema exactly — use the exact\n\
       property names and nesting; never invent property names or move fields between levels. The\n\
       runtime owns schemaVersion, actionId, contextRef, expectedRevision, factRefs, and reason; never\n\
-      emit those fields. To stop after an authoritative receipt, emit only {"kind":"terminal"}; the\n\
-      runtime alone decides terminal status, summary, evidence, and provider errors. The payload's\n\
+      emit those fields. On the first operation for a fresh request, include intent.target for the\n\
+      user's final requested waypoint. Put room/meal/cancellation/offer constraints in\n\
+      intent.offerCriteria only for offers.loaded, offers.refined, offers.compared, offer.selected,\n\
+      offer.verified, or checkout.prepared; search/results/hotel/order waypoints MUST NOT carry it.\n\
+      order.observed is an independent existing-order observation after a trusted order context is\n\
+      available, never a checkout.prepare prefix. The runtime owns intent.schemaVersion. On every later operation in the\n\
+      same task, repeat the active intent's semantic fields exactly; never omit, shorten, or replace them. To stop after an\n\
+      authoritative receipt, emit only {"kind":"terminal"}; the\n\
+      runtime alone decides terminal status, summary, evidence, and provider errors. A search.patch\n\
+      receipt is never a search waypoint: the deterministic runtime compiles its accepted receipt\n\
+      into search.run without another model turn. Emit terminal for search only after a completed\n\
+      search.run checkpoint and ready, partial, or failed workspace results. The payload's\n\
       task.allowedActions lists the ONLY action kinds valid this turn. When it\n\
       contains exactly one kind, that kind is mandatory: for search.patch put every requested\n\
       attribute (destination, facilities, dates, occupancy) into input.patch and STOP — the runtime\n\
       issues search.run itself via receipts afterward. Never emit a kind absent from allowedActions.\n\
       The only valid input.patch property names are: ${PLANNER_PATCH_PROPERTY_NAMES}. There is no\n\
-      "criteria" property. Facility tokens (breakfast, free cancellation) go under facilities;\n\
+      "criteria" property. Hotel amenities such as pool and parking go under facilities. Included\n\
+      breakfast/meal-plan and free-cancellation requirements never go under facilities; they belong\n\
+      in intent.offerCriteria. When multiple offers are requested without a count, use targetCount 3;\n\
       star level under starRating with {"strength":"must|prefer","value":{"min":N,"max":N}}\n\
       (三星=3星: min 3 max 3); dates under stay as concrete YYYY-MM-DD resolved from the time anchor.\n\
       Shape-only example of a correctly shaped search.patch tool call; do not copy literal\n\
       placeholder values, dates, or destination from it:\n\
-      {"kind":"search.patch","input":{"patch":${JSON.stringify(PLANNER_EXAMPLE_PATCH)}}}\n\
+      {"kind":"search.patch","input":{"patch":${JSON.stringify(PLANNER_EXAMPLE_PATCH)}},"intent":{"target":"search.results"}}\n\
     workspaceContext: false\n\
     skills:\n\
       enabled: false\n\
@@ -257,16 +264,18 @@ function resolveRealRunPortConfig(options: DshEmbeddedBookingPlannerOptions): Re
     throw new Error('booking_planner_model_required_for_nondefault_provider')
   }
   const model = configuredModel ?? 'deepseek-v4-flash'
-  const maxTokens = options.maxTokens
-    ?? (childEnv.DEEPSEEK_MAX_TOKENS ? Number(childEnv.DEEPSEEK_MAX_TOKENS) : 16_384)
-  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1) {
-    throw new Error('booking_planner_max_tokens_invalid')
-  }
   // Criteria translation is a constrained extraction task. Disable thinking
   // only for the known default route; custom route tuples keep their provider
   // default unless the deploy explicitly selects a supported effort.
   const reasoningEffort = options.reasoningEffort
     ?? (provider === 'deepseek-official' && model === 'deepseek-v4-flash' ? 'off' : undefined)
+  const maxTokens = options.maxTokens
+    ?? (childEnv.DEEPSEEK_MAX_TOKENS
+      ? Number(childEnv.DEEPSEEK_MAX_TOKENS)
+      : reasoningEffort === 'off' ? 4_096 : 16_384)
+  if (!Number.isSafeInteger(maxTokens) || maxTokens < 1) {
+    throw new Error('booking_planner_max_tokens_invalid')
+  }
   return { childEnv, provider, model, reasoningEffort, maxTokens }
 }
 
@@ -280,10 +289,9 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
   const patchPath = join(scratch, 'embedded-booking.cordis.yml')
   writeFileSync(patchPath, buildDshEmbeddedBookingPatch(pluginPath), { encoding: 'utf8', mode: 0o600 })
 
-  let harness: HarnessLike
+  let managedPort: DshPlannerRunPort
   try {
-    const sdk = await import('@deepseek-ai/dsh-sdk-client') as unknown as DshSdkClientModuleLike
-    harness = new sdk.DeepSeekHarness({
+    managedPort = createManagedDshRunPort({
       profile: 'sdk-minimal',
       patches: [patchPath],
       dshHome,
@@ -294,10 +302,15 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
       // uses the first model in the sdk-minimal DeepSeek catalog.
       model,
       ...(reasoningEffort ? { reasoningEffort } : {}),
-      // Reasoning models spend the budget on <think> before the tool call; a
-      // 4k cap truncates the arguments JSON mid-stream and poisons the whole
-      // turn. 16k (env-tunable) leaves room for reasoning + typed decision.
+      // The default extraction route has thinking disabled and stays at 4k;
+      // custom reasoning routes retain 16k unless the deploy tunes the budget.
       maxTokens,
+      // Each model subprocess is a disposable per-turn cache. Keep teardown
+      // bounded so timed-out turns cannot accumulate children for the SDK's
+      // much longer general-purpose interactive-session grace period.
+      shutdownTimeoutMs: 500,
+      disposeEofGraceMs: 500,
+      disposeGraceMs: 500,
       env: childEnv,
       ...(options.dshBin ? { dshBin: options.dshBin } : {}),
     })
@@ -306,24 +319,22 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
     throw error
   }
 
-  let closed = false
+  let closePromise: Promise<void> | undefined
   return {
     async run(prompt, runOptions) {
-      const result = await harness.run(prompt, runOptions)
-      return {
-        finalResponse: typeof result.finalResponse === 'string' ? result.finalResponse : '',
-        events: Array.isArray(result.events) ? result.events : [],
-        notifications: Array.isArray(result.notifications) ? result.notifications : [],
-      }
+      if (closePromise) throw new Error('booking_planner_run_port_closed')
+      return managedPort.run(prompt, runOptions)
     },
-    async close() {
-      if (closed) return
-      closed = true
-      try {
-        await harness.close()
-      } finally {
-        rmSync(scratch, { recursive: true, force: true })
-      }
+    close() {
+      if (closePromise) return closePromise
+      closePromise = (async () => {
+        try {
+          await managedPort.close()
+        } finally {
+          rmSync(scratch, { recursive: true, force: true })
+        }
+      })()
+      return closePromise
     },
   }
 }
@@ -358,7 +369,7 @@ function plannerPrompt(turn: BookingCopilotTurn, task: BookingCopilotTaskState, 
   }
   const payload = {
     schemaVersion: 'booking.surface', profile: 'embedded-booking',
-    task: { taskId: task.taskId, contextRef: task.contextRef, surface: task.surface, revision: task.revision, phase: task.phase, allowedActions, availability: availabilityProjection, ...(task.lastReceipt ? { lastReceipt: task.lastReceipt } : {}) },
+    task: { taskId: task.taskId, contextRef: task.contextRef, surface: task.surface, revision: task.revision, phase: task.phase, allowedActions, availability: availabilityProjection, ...(task.activeIntent ? { activeIntent: projectPlannerIntent(task.activeIntent.projection) } : {}), ...(task.lastReceipt ? { lastReceipt: task.lastReceipt } : {}) },
     turn: plannerTurn,
   }
   const anchor = buildTimeAnchor(resolvePlannerNow(clock))
@@ -367,13 +378,15 @@ function plannerPrompt(turn: BookingCopilotTurn, task: BookingCopilotTaskState, 
     `Time anchor: today is ${anchor.today} (${anchor.todayWeekdayZh}, ${anchor.tzLabel}). This is the process host-local anchor used only for relative-date parsing; do not treat it as the traveler/user timezone unless the user explicitly states one. Resolve every relative date (明天/tomorrow, 下周/next week, "2 nights") against this anchor and write concrete YYYY-MM-DD dates.`,
     'Use one registered booking capability tool for the next shallow typed proposal.',
     'Assistant prose is non-executable and will be ignored.',
-    'Emit only action kind and action input. The runtime owns schemaVersion, actionId, contextRef, expectedRevision, factRefs, and reason; never include them.',
+    'Emit action kind and action input. On the first operation for a fresh request, also include intent with the final requested waypoint and any offerCriteria. The runtime owns both action schemaVersion and intent schemaVersion, plus actionId, contextRef, expectedRevision, factRefs, and reason; never include those fields.',
+    'Every operation must include intent. If task.activeIntent is present, repeat its semantic fields exactly. Never omit, shorten, replace, or silently relax them. For offers.compared without an explicit count, use offerCriteria.targetCount=3.',
     'When the requested waypoint has already been reached by an authoritative receipt, emit exactly {"kind":"terminal"}. The runtime owns terminal status, summary, evidence, and provider errors.',
+    'A search.patch receipt is never a search waypoint. The deterministic runtime compiles an accepted search.patch receipt into search.run when allowed, without another model call. Emit terminal for search only after the completed checkpoint is search.run and the authoritative workspace results status is ready, partial, or failed.',
     'Never emit a question decision: questions are runtime-owned and the runtime turns them into hard failures. The user is on a live booking workbench: act immediately, never ask for confirmation or clarification.',
     'For composite hotel-search requests (destination plus amenities like breakfast, free cancellation, star rating, offer counts): do NOT ask anything. Emit ONE search.patch proposal whose input.patch carries the destination and every explicitly stated criterion, then stop; the runtime receipts will gate the follow-up search.run.',
-    `input.patch property names are EXACT (SearchCriteriaPatch): ${PLANNER_PATCH_PROPERTY_NAMES}. There is NO "criteria" property — facility tokens (breakfast, free cancellation) go under facilities as {"strength":"prefer|must","value":{"allOf":["<token>"]}}, star level (三星=3星) goes under starRating as {"strength":"must|prefer","value":{"min":3,"max":3}}, dates go under stay as {"checkIn":"YYYY-MM-DD","checkOut":"YYYY-MM-DD"}.`,
+    `Separate hotel facilities from meal, cancellation, room, and offer criteria: hotel amenities (for example pool and parking) go under input.patch.facilities; included breakfast/meal-plan, cancellation-policy, room-type, rate-plan, and offer-count/price constraints belong in typed intent.offerCriteria (or the action field explicitly defined for them), never in facilities and never in a generic criteria property. input.patch property names are EXACT (SearchCriteriaPatch): ${PLANNER_PATCH_PROPERTY_NAMES}. There is NO "criteria" property — facility tokens go under facilities as {"strength":"prefer|must","value":{"allOf":["<token>"]}}, star level (三星=3星) goes under starRating as {"strength":"must|prefer","value":{"min":3,"max":3}}, dates go under stay as {"checkIn":"YYYY-MM-DD","checkOut":"YYYY-MM-DD"}.`,
     'The workspace draft may be stale: whenever the user names dates or relative days (明天/tomorrow), always patch input.patch.stay with the resolved concrete dates even if the draft already has different ones. Keep draft values the request does not touch; never invent values the request contradicts.',
-    'Reference only hotels and offers that appear in the workspace payload (visibleHotels/loadedOffers/results). Any other hotelRef or offerRef does not exist and will be rejected; to discover hotels, run search.run first and wait for its receipt.',
+    'Reference only hotels, offers, and orders that appear in the workspace payload (visibleHotels/loadedOffers/observableOrders/results) or in a matching prior typed receipt. Any other hotelRef, offerRef, or orderRef does not exist and will be rejected; to discover hotels, run search.run first and wait for its receipt.',
     JSON.stringify({ now: anchor.today, timeAnchorCard: anchor.card, ...payload }),
   ].join('\n')
 }
@@ -382,12 +395,12 @@ function exactDecisionKeys(value: Record<string, unknown>): boolean {
   const branch = typeof value.kind === 'string'
     ? { operation: 'action', question: 'question', explanation: 'explanation', terminal: 'terminal', error: 'error' }[value.kind]
     : undefined
-  return branch !== undefined && exactKeys(value, ['kind', branch])
+  return branch !== undefined && (exactKeys(value, ['kind', branch]) || exactKeys(value, ['kind', branch, 'intent']))
 }
 
 function safeArgumentShape(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) return { parsedType: Array.isArray(value) ? 'array' : typeof value }
-  const known = ['decision', 'kind', 'action', 'input', 'terminal']
+  const known = ['decision', 'kind', 'action', 'input', 'intent', 'terminal']
   return {
     parsedType: 'object',
     keyCount: Object.keys(value).length,
@@ -398,20 +411,162 @@ function safeArgumentShape(value: unknown): Record<string, unknown> {
 const PLANNER_SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
 const RUNTIME_TERMINAL_INTENT = '__runtime_terminal_intent'
 
+type PlannerCompletedActionCheckpoint = Pick<BookingActionCheckpoint, 'actionId' | 'kind' | 'input'>
+
+function completedActionForReceipt(task: BookingCopilotTaskState): PlannerCompletedActionCheckpoint {
+  const receipt = task.lastReceipt
+  if (!receipt) throw new Error('planner_terminal_intent_unjustified')
+  const checkpoint = task.lastCompletedAction
+  if (!checkpoint) throw new Error('planner_terminal_checkpoint_unavailable')
+  if (receipt.actionId !== checkpoint.actionId) throw new Error('planner_terminal_checkpoint_mismatch')
+  return checkpoint
+}
+
+function offerCriteriaHasSelectionConstraints(criteria: BookingIntentProjection['offerCriteria']): boolean {
+  return Boolean(criteria && Object.keys(criteria).some((key) => key !== 'targetCount'))
+}
+
+/**
+ * The plugin advertises only semantic intent fields. Durable checkpoints add
+ * schemaVersion and money sourceFactRef for runtime authority; neither is a
+ * model-facing field that can be repeated on a continuation.
+ */
+function projectPlannerIntent(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(projectPlannerIntent)
+  if (!isRecord(value)) return value
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => key !== 'schemaVersion' && key !== 'sourceFactRef')
+    .map(([key, item]) => [key, projectPlannerIntent(item)]))
+}
+
+function plannerOfferTargetCount(task: BookingCopilotTaskState): number | undefined {
+  const intent = task.activeIntent?.projection
+  if (!intent) return undefined
+  if (intent.target === 'offers.compared') return intent.offerCriteria?.targetCount ?? 3
+  if (intent.target === 'offers.loaded' || intent.target === 'offers.refined') {
+    return intent.offerCriteria?.targetCount
+  }
+  // A later offer waypoint may carry the original requested offer count. Keep
+  // that target authoritative through selection, verification, checkout, and
+  // order observation rather than allowing the count proof to disappear.
+  if (intent.target === 'offer.selected' || intent.target === 'offer.verified'
+    || intent.target === 'checkout.prepared') {
+    return intent.offerCriteria?.targetCount
+  }
+  return undefined
+}
+
+function authoritativeOfferRefs(receipt: ActionReceipt): string[] {
+  const observation = receipt.observation
+  if (observation.kind === 'offers.state') return [...new Set(observation.offerRefs)]
+  if (observation.kind === 'offer.selection' || observation.kind === 'offer.availability'
+    || observation.kind === 'checkout.handoff') return [observation.offerRef]
+  return []
+}
+
+function offerTargetReached(task: BookingCopilotTaskState, receipt: ActionReceipt): boolean {
+  const targetCount = plannerOfferTargetCount(task)
+  if (targetCount === undefined) return true
+  const target = task.activeIntent?.projection.target
+  if (target && ['offer.selected', 'offer.verified', 'checkout.prepared'].includes(target)) {
+    // Later waypoints observe one selected offer, not the whole comparison
+    // set. Preserve the earlier multi-offer goal through the host-authoritative
+    // Compare Tray and bind the selected offer back to that set instead of
+    // requiring fabricated count fields on a single-offer receipt.
+    const shortlist = [...new Set(task.workspaceSnapshot?.shortlistedOfferRefs ?? [])]
+    const observedOfferRef = receipt.observation.kind === 'offer.selection'
+      || receipt.observation.kind === 'offer.availability'
+      || receipt.observation.kind === 'checkout.handoff'
+      ? receipt.observation.offerRef
+      : task.workspaceSnapshot?.selectedOfferRef
+    return shortlist.length >= targetCount
+      && typeof observedOfferRef === 'string'
+      && shortlist.includes(observedOfferRef)
+  }
+  const actualOfferRefs = authoritativeOfferRefs(receipt)
+  const { requestedCount, actualCount } = receipt.resultContract
+  return requestedCount === targetCount
+    && typeof actualCount === 'number'
+    && actualCount === actualOfferRefs.length
+    && actualOfferRefs.length >= targetCount
+}
+
+function assertTerminalIntentSemantics(
+  task: BookingCopilotTaskState,
+  checkpoint: PlannerCompletedActionCheckpoint,
+): void {
+  const intent = task.activeIntent?.projection
+  if (!intent?.offerCriteria) return
+  const criteriaDigest = bookingDigest(intent.offerCriteria)
+
+  if (intent.target === 'offers.loaded' || intent.target === 'offers.refined') {
+    if (bookingDigest(checkpoint.input.criteria) !== criteriaDigest) {
+      throw new Error('planner_terminal_intent_criteria_unachieved')
+    }
+    return
+  }
+
+  if (intent.target === 'offers.compared') {
+    // Count authority is receipt-owned and is checked below. Do not throw on
+    // a mismatched model input here: an underfilled authoritative receipt must
+    // terminalize as stopped with offer_target_not_reached.
+  }
+
+  if (offerCriteriaHasSelectionConstraints(intent.offerCriteria)
+    && task.availability.criteriaDigest !== criteriaDigest) {
+    throw new Error('planner_terminal_intent_criteria_unachieved')
+  }
+}
+
 function materializePlannerTerminal(task: BookingCopilotTaskState): BookingPlannerDecision {
   const receipt = task.lastReceipt
   if (!receipt) throw new Error('planner_terminal_intent_unjustified')
+  const checkpoint = completedActionForReceipt(task)
+  const completedActionKind = checkpoint.kind
+  if (task.activeIntent && BOOKING_INTENT_TARGET_ACTION[task.activeIntent.projection.target] !== completedActionKind) {
+    throw new Error('planner_terminal_intent_target_unachieved')
+  }
+  assertTerminalIntentSemantics(task, checkpoint)
+  if (completedActionKind === 'search.patch') {
+    // A criteria patch invalidates the result set.  It is never a search
+    // waypoint, even when a stale receipt happens to retain search.state.
+    throw new Error('planner_terminal_search_patch_not_ready')
+  }
   const factRefs = [...new Set(receipt.resultContract.factRefs)].sort()
   if (factRefs.length > 64) throw new Error('planner_fact_refs_overflow')
   if (factRefs.some((ref) => !PLANNER_SAFE_REF_PATTERN.test(ref) || ref.length > 512 || ref.startsWith('modelref:'))) {
     throw new Error('planner_fact_ref_unbound')
   }
-  const successful = receipt.status === 'applied'
+  let successful = receipt.status === 'applied'
     && receipt.resultContract.outcome === 'complete'
     && receipt.resultContract.hardCriteriaMet
+    && receipt.resultContract.gapCodes.length === 0
+    && receipt.resultContract.blockers.length === 0
+    && receipt.observation.kind !== 'gap'
+    && !('gapCodes' in receipt.observation && receipt.observation.gapCodes?.length)
+  // Order observation is informational until the authoritative order state
+  // is verified. Pending, unknown, and failed are terminal observations, but
+  // never successful booking outcomes.
+  if (receipt.observation.kind === 'order.state') successful = successful && receipt.observation.state === 'verified'
+  const targetReached = offerTargetReached(task, receipt)
+  successful = successful && targetReached
   let summary: string
   switch (receipt.observation.kind) {
-    case 'search.state': summary = 'search_results_ready'; break
+    case 'search.state': {
+      if (completedActionKind !== 'search.run') throw new Error('planner_terminal_search_checkpoint_mismatch')
+      const resultStatus = task.workspaceSnapshot?.results.status
+      if (resultStatus !== 'ready' && resultStatus !== 'partial' && resultStatus !== 'failed') {
+        throw new Error('planner_terminal_search_results_not_ready')
+      }
+      successful = successful && resultStatus === 'ready'
+      const receiptSession = receipt.observation.searchSessionRef
+      const workspaceSession = task.workspaceSnapshot?.results.searchSessionRef
+      if (receiptSession !== undefined && workspaceSession !== undefined && receiptSession !== workspaceSession) {
+        throw new Error('planner_terminal_search_workspace_mismatch')
+      }
+      summary = resultStatus === 'failed' ? 'search_failed' : resultStatus === 'partial' ? 'search_results_partial' : 'search_results_ready'
+      break
+    }
     case 'results.state': summary = 'search_results_refined'; break
     case 'hotel.focus': summary = 'hotel_focused'; break
     case 'hotel.selection': summary = 'hotel_selected'; break
@@ -422,6 +577,15 @@ function materializePlannerTerminal(task: BookingCopilotTaskState): BookingPlann
     case 'order.state': summary = `order_${receipt.observation.state}`; break
     case 'gap': summary = 'booking_constraints_unmet'; break
   }
+  if (receipt.resultContract.gapCodes.length > 0
+    || receipt.resultContract.blockers.length > 0
+    || receipt.observation.kind === 'gap'
+    || ('gapCodes' in receipt.observation && receipt.observation.gapCodes?.length)) {
+    summary = receipt.resultContract.gapCodes.includes('offer_target_not_reached')
+      ? 'offer_target_not_reached'
+      : 'booking_constraints_unmet'
+  }
+  if (!targetReached) summary = 'offer_target_not_reached'
   return {
     kind: 'terminal',
     terminal: { status: successful ? 'completed' : 'stopped', summary, factRefs },
@@ -451,11 +615,15 @@ function collectMoneyFactRefs(value: unknown, refs: Set<string>): void {
   for (const item of Object.values(value)) collectMoneyFactRefs(item, refs)
 }
 
-function hydrateProposalMoney(value: unknown, task: BookingCopilotTaskState): { value: unknown; usedTurnFact: boolean } {
+function hydrateProposalMoney(
+  value: unknown,
+  task: BookingCopilotTaskState,
+  preserveExistingFactRefs = false,
+): { value: unknown; usedTurnFact: boolean } {
   if (Array.isArray(value)) {
     let usedTurnFact = false
     const items = value.map((item) => {
-      const hydrated = hydrateProposalMoney(item, task)
+      const hydrated = hydrateProposalMoney(item, task, preserveExistingFactRefs)
       usedTurnFact ||= hydrated.usedTurnFact
       return hydrated.value
     })
@@ -465,18 +633,21 @@ function hydrateProposalMoney(value: unknown, task: BookingCopilotTaskState): { 
   const looksLikeMoney = typeof value.amount === 'string'
     && Object.keys(value).every((key) => ['amount', 'currency', 'sourceFactRef'].includes(key))
   if (looksLikeMoney) {
+    const sourceFactRef = preserveExistingFactRefs && typeof value.sourceFactRef === 'string'
+      ? value.sourceFactRef
+      : plannerTurnFactRef(task)
     return {
       value: {
         amount: value.amount,
         currency: typeof value.currency === 'string' ? value.currency : task.workspaceSnapshot?.currency,
-        sourceFactRef: plannerTurnFactRef(task),
+        sourceFactRef,
       },
-      usedTurnFact: true,
+      usedTurnFact: sourceFactRef === plannerTurnFactRef(task),
     }
   }
   let usedTurnFact = false
   const hydrated = Object.fromEntries(Object.entries(value).map(([key, item]) => {
-    const next = hydrateProposalMoney(item, task)
+    const next = hydrateProposalMoney(item, task, preserveExistingFactRefs)
     usedTurnFact ||= next.usedTurnFact
     return [key, next.value]
   }))
@@ -553,8 +724,13 @@ function assertProposalInputBindings(
       || verified.verifiedOfferRef !== input.verifiedOfferRef) throw new Error('planner_verified_offer_ref_unbound')
   }
   if (kind === 'order.observe') {
+    // A fresh task may receive an authenticated order projection from the
+    // BFF. A resumed task may instead carry a prior typed order.state receipt.
+    // In both cases the model-supplied orderRef is only a lookup key into
+    // trusted state; it is never accepted from prose on its own.
+    const observableOrder = workspace.observableOrders?.find((order) => order.orderRef === input.orderRef)
     const observation = task.lastReceipt?.observation
-    if (observation?.kind !== 'order.state' || observation.orderRef !== input.orderRef) {
+    if (!observableOrder && (observation?.kind !== 'order.state' || observation.orderRef !== input.orderRef)) {
       throw new Error('planner_order_ref_unbound')
     }
   }
@@ -618,6 +794,10 @@ function trustedProposalFactRefs(
     && task.lastReceipt.observation.orderRef === input.orderRef) {
     for (const ref of task.lastReceipt.resultContract.factRefs) refs.add(ref)
   }
+  if (typeof input.orderRef === 'string') {
+    const observableOrder = workspace.observableOrders?.find((order) => order.orderRef === input.orderRef)
+    if (observableOrder) for (const ref of observableOrder.factRefs) refs.add(ref)
+  }
   if (kind === 'search.run') {
     if (task.lastReceipt?.observation.kind === 'search.state') {
       for (const ref of task.lastReceipt.resultContract.factRefs) refs.add(ref)
@@ -637,6 +817,7 @@ function trustedProposalFactRefs(
 function materializePlannerAction(
   proposal: Record<string, unknown>,
   task: BookingCopilotTaskState,
+  intent?: BookingIntentProjection,
 ): BookingReadAction {
   if (!exactKeys(proposal, ['kind', 'input'])) throw new Error('planner_invalid_typed_decision')
   const kind = proposal.kind
@@ -645,7 +826,21 @@ function materializePlannerAction(
   }
   if (!isRecord(proposal.input)) throw new Error('planner_invalid_action')
   const actionKind = kind as BookingReadAction['kind']
-  const hydrated = hydrateProposalMoney(proposal.input, task)
+  let intentBoundInput: Record<string, unknown> = proposal.input
+  if (intent?.offerCriteria && (actionKind === 'offers.query' || actionKind === 'offers.view.patch')) {
+    intentBoundInput = { ...intentBoundInput, criteria: intent.offerCriteria }
+  }
+  if (intent?.target === 'offers.compared' && actionKind === 'offers.compare') {
+    intentBoundInput = {
+      ...intentBoundInput,
+      requestedCount: intent.offerCriteria?.targetCount ?? 3,
+    }
+  }
+  const hydrated = hydrateProposalMoney(
+    intentBoundInput,
+    task,
+    Boolean(intent?.offerCriteria && (actionKind === 'offers.query' || actionKind === 'offers.view.patch')),
+  )
   if (!isRecord(hydrated.value)) throw new Error('planner_invalid_action')
   const actionId = `planner-${createHash('sha256').update(JSON.stringify([
     task.taskId,
@@ -682,6 +877,27 @@ function materializePlannerAction(
   const validation = validateBookingReadAction(action)
   if (!validation.ok) throw new Error('planner_invalid_action')
   return action as BookingReadAction
+}
+
+/** Compile state transitions that have no remaining product-level choice. */
+function deterministicReceiptDecision(task: BookingCopilotTaskState): BookingPlannerDecision | undefined {
+  const receipt = task.lastReceipt
+  const checkpoint = task.lastCompletedAction
+  if (!receipt || !checkpoint || receipt.actionId !== checkpoint.actionId) return undefined
+  if (checkpoint.kind !== 'search.patch' || receipt.status !== 'applied') return undefined
+  if (receipt.observation.kind !== 'search.state'
+    || receipt.observation.gapCodes?.length
+    || receipt.resultContract.outcome !== 'complete'
+    || !receipt.resultContract.hardCriteriaMet
+    || receipt.resultContract.gapCodes.length
+    || receipt.resultContract.blockers.length) return undefined
+  assertPlannerActionAuthority('booking_search_hotels', 'search.run', task)
+  const intent = task.activeIntent?.projection ?? {
+    schemaVersion: BOOKING_INTENT_SCHEMA_VERSION,
+    target: 'search.results',
+  }
+  const action = materializePlannerAction({ kind: 'search.run', input: {} }, task, intent)
+  return { kind: 'operation', action, intent }
 }
 
 // Action identifiers and fact references are ledger keys, not prose. They
@@ -741,13 +957,51 @@ function assertPlannerActionAuthority(
 function compactDecision(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value)) return null
   if (typeof value.kind === 'string' && (BOOKING_READ_ACTION_KINDS as readonly string[]).includes(value.kind)
-    && exactKeys(value, ['kind', 'input'])) {
-    return { kind: 'operation', action: value }
+    && (exactKeys(value, ['kind', 'input']) || exactKeys(value, ['kind', 'input', 'intent']))) {
+    const action = { kind: value.kind, input: value.input }
+    return { kind: 'operation', action, ...(value.intent !== undefined ? { intent: value.intent } : {}) }
   }
   if (value.kind === 'terminal' && exactKeys(value, ['kind'])) {
     return { kind: RUNTIME_TERMINAL_INTENT }
   }
   return null
+}
+
+function materializePlannerIntent(value: unknown, task: BookingCopilotTaskState): BookingIntentProjection {
+  if (value === undefined) {
+    throw new Error('planner_booking_intent_required')
+  }
+  if (!isRecord(value) || !exactKeys(value, Object.keys(value).includes('offerCriteria') ? ['target', 'offerCriteria'] : ['target'])) {
+    throw new Error('planner_invalid_booking_intent')
+  }
+  const proposal = value.target === 'offers.compared'
+    ? {
+        ...value,
+        offerCriteria: {
+          ...(isRecord(value.offerCriteria) ? value.offerCriteria : {}),
+          targetCount: isRecord(value.offerCriteria) && value.offerCriteria.targetCount !== undefined
+            ? value.offerCriteria.targetCount
+            : 3,
+        },
+      }
+    : value
+  // Money provenance is runtime authority. Apply the same workspace currency
+  // and source-turn binding used for action inputs before validating the
+  // durable projection; otherwise a proposal can pass the tool but fail only
+  // after the dsh turn has already concluded.
+  const hydrated = hydrateProposalMoney({ schemaVersion: BOOKING_INTENT_SCHEMA_VERSION, ...proposal }, task)
+  if (!isRecord(hydrated.value)) throw new Error('planner_invalid_booking_intent')
+  const projection = hydrated.value as unknown as BookingIntentProjection
+  const validation = validateBookingIntentProjection(projection)
+  if (!validation.ok) throw new Error('planner_invalid_booking_intent')
+  if (!task.allowedActions.includes(BOOKING_INTENT_TARGET_ACTION[projection.target])) {
+    throw new Error('planner_intent_target_unsupported')
+  }
+  if (task.activeIntent
+    && bookingDigest(projectPlannerIntent(projection)) !== bookingDigest(projectPlannerIntent(task.activeIntent.projection))) {
+    throw new Error('intent_mutation_forbidden')
+  }
+  return task.activeIntent?.projection ?? projection
 }
 
 function parseToolDecision(event: unknown, task: BookingCopilotTaskState): BookingPlannerDecision | null {
@@ -805,16 +1059,24 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     invalidDecisionLog('action_not_object', { actionType: Array.isArray(decision.action) ? 'array' : typeof decision.action })
     throw new Error('planner_invalid_typed_decision')
   }
-  if (!exactKeys(decision, ['kind', 'action'])) throw new Error('planner_invalid_typed_decision')
+  if (!exactKeys(decision, ['kind', 'action']) && !exactKeys(decision, ['kind', 'action', 'intent'])) throw new Error('planner_invalid_typed_decision')
   const toolName = name as DshEmbeddedBookingToolName
-  if (exactKeys(decision.action, ['kind', 'input'])) {
+  const compactAction = exactKeys(decision.action, ['kind', 'input'])
+    || exactKeys(decision.action, ['kind', 'input', 'intent'])
+  if (compactAction) {
+    if (decision.action.intent !== undefined && decision.intent !== undefined) {
+      throw new Error('planner_ambiguous_booking_intent')
+    }
     assertPlannerActionAuthority(toolName, decision.action.kind, task)
-    return { kind: 'operation', action: materializePlannerAction(decision.action, task) }
+    const intent = materializePlannerIntent(decision.action.intent ?? decision.intent, task)
+    const action = materializePlannerAction({ kind: decision.action.kind, input: decision.action.input }, task, intent)
+    return { kind: 'operation', action, intent }
   }
 
-  // Rolling compatibility accepts the previous full action representation,
-  // validates it as supplied, then strips all model-authored authority fields
-  // and materializes a new canonical action from only kind + input.
+  // Rolling compatibility accepts the previous full action representation
+  // only with an explicit semantic intent. It validates the supplied action,
+  // then strips all model-authored authority fields and materializes a new
+  // canonical action from only kind + input.
   if (decision.action.relaxationApprovalRef) throw new Error('planner_approval_ref_forbidden')
   if (typeof decision.action.contextRef === 'string' && decision.action.contextRef !== task.contextRef) throw new Error('planner_context_mismatch')
   assertPlannerActionAuthority(toolName, decision.action.kind, task)
@@ -848,9 +1110,11 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
   if (action.contextRef !== task.contextRef) throw new Error('planner_context_mismatch')
   if (action.relaxationApprovalRef) throw new Error('planner_approval_ref_forbidden')
   invalidDecisionLog('legacy_action_authority_stripped', { actionKind: action.kind })
+  const intent = materializePlannerIntent(decision.intent, task)
   return {
     kind: 'operation',
-    action: materializePlannerAction({ kind: action.kind, input: action.input }, task),
+    action: materializePlannerAction({ kind: action.kind, input: action.input }, task, intent),
+    intent,
   }
 }
 
@@ -903,7 +1167,7 @@ function isPlannerSafetyError(error: unknown): boolean {
 
 function isSchemaShapeError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return /^(planner_invalid_tool_arguments|planner_invalid_typed_decision|planner_invalid_action)/.test(message)
+  return /^(planner_invalid_tool_arguments|planner_invalid_typed_decision|planner_invalid_action|planner_booking_intent_required|planner_invalid_booking_intent|planner_ambiguous_booking_intent)/.test(message)
 }
 
 /**
@@ -1101,7 +1365,7 @@ function providerFailureMessage(code: ProviderFailure['code']): string {
     case 'PLANNER_PROVIDER_RESPONSE_INVALID': return 'The planner provider returned an invalid response.'
     case 'PLANNER_PROVIDER_TIMEOUT': return 'The planner did not respond within the booking turn deadline.'
     case 'PLANNER_CONFIGURATION_INVALID': return 'The planner provider configuration is invalid.'
-    case 'PLANNER_FAILED': return 'The planner request failed at the typed runtime boundary.'
+    case 'PLANNER_FAILED': return 'The planner stopped unexpectedly before producing a usable action.'
   }
 }
 
@@ -1143,7 +1407,7 @@ export async function createDshEmbeddedBookingPlanner(
   options: DshEmbeddedBookingPlannerOptions,
 ): Promise<DshEmbeddedBookingPlannerHandle> {
   if (options.runPort && options.runPortFactory) throw new Error('booking_planner_run_port_ambiguous')
-  const turnTimeoutMs = options.turnTimeoutMs ?? 20_000
+  const turnTimeoutMs = options.turnTimeoutMs ?? 12_000
   if (!Number.isSafeInteger(turnTimeoutMs) || turnTimeoutMs < 1 || turnTimeoutMs > 120_000) {
     throw new Error('booking_planner_turn_timeout_invalid')
   }
@@ -1152,6 +1416,7 @@ export async function createDshEmbeddedBookingPlanner(
   if (!options.runPort && !options.runPortFactory) resolveRealRunPortConfig(options)
 
   let closed = false
+  let plannerClosePromise: Promise<void> | undefined
   const knownPorts = new Set<DshPlannerRunPort>()
   const closedPorts = new WeakSet<DshPlannerRunPort>()
   const closingPorts = new Map<DshPlannerRunPort, Promise<void>>()
@@ -1168,10 +1433,9 @@ export async function createDshEmbeddedBookingPlanner(
         knownPorts.delete(port)
       })
     closingPorts.set(port, closing)
-    void closing.then(
-      () => closingPorts.delete(port),
-      () => closingPorts.delete(port),
-    )
+    // Keep both fulfilled and rejected close promises sticky. A failed SDK
+    // close cannot become a later success merely because another caller tried
+    // the same non-retryable cleanup operation again.
     return closing
   }
 
@@ -1180,7 +1444,7 @@ export async function createDshEmbeddedBookingPlanner(
     const contextRef = initialTask.contextRef
     const sessionId = dshSessionId(taskId)
     let busy = false
-    let sessionClosed = false
+    let sessionClosePromise: Promise<void> | undefined
     let portPromise: Promise<DshPlannerRunPort> | undefined
     let retirement: Promise<void> | undefined
     const ownsTaskPort = !options.runPort
@@ -1223,11 +1487,15 @@ export async function createDshEmbeddedBookingPlanner(
     return {
       async next({ turn, task }) {
         if (closed) throw new Error('planner_closed')
-        if (sessionClosed) throw new Error('planner_session_closed')
+        if (sessionClosePromise) throw new Error('planner_session_closed')
         if (busy) throw new Error('planner_turn_in_flight')
         if (task.taskId !== taskId) throw new Error('planner_task_mismatch')
         if (turn.kind === 'user.turn.ingress') throw new Error('planner_identity_required')
         if (task.contextRef !== contextRef || turn.workspace.contextRef !== contextRef) throw new Error('planner_context_mismatch')
+        if (turn.kind === 'action.receipt.continuation'
+          && (!task.workspaceSnapshot || bookingDigest(turn.workspace) !== bookingDigest(task.workspaceSnapshot))) {
+          throw new Error('planner_workspace_mismatch')
+        }
         if (task.phase === 'waiting_receipt') throw new Error('receipt_required')
         busy = true
         const startedAt = Date.now()
@@ -1238,9 +1506,17 @@ export async function createDshEmbeddedBookingPlanner(
         let schemaRejectedCallCount = 0
         let metricOutcome: DshPlannerTurnMetric['outcome'] = 'failed'
         let metricActionKind: BookingReadAction['kind'] | undefined
+        let metricDecisionSource: DshPlannerTurnMetric['decisionSource'] = 'model'
         try {
+          const deterministicDecision = deterministicReceiptDecision(task)
+          if (deterministicDecision) {
+            metricOutcome = 'operation'
+            metricActionKind = deterministicDecision.kind === 'operation' ? deterministicDecision.action.kind : undefined
+            metricDecisionSource = 'runtime'
+            return [deterministicDecision]
+          }
           runPort = await beforePlannerDeadline(taskPort(), deadlineAt)
-          if (closed || sessionClosed) throw new Error(closed ? 'planner_closed' : 'planner_session_closed')
+          if (closed || sessionClosePromise) throw new Error(closed ? 'planner_closed' : 'planner_session_closed')
           // Every provider call, including a no-tool nudge, consumes one
           // bounded planner attempt. Any returned decision crosses the same
           // typed authority path.
@@ -1302,7 +1578,10 @@ export async function createDshEmbeddedBookingPlanner(
                 ? 'operation'
                 : decisions[0]?.kind === 'terminal' ? 'terminal' : 'failed'
               metricActionKind = decisions[0]?.kind === 'operation' ? decisions[0].action.kind : undefined
-              if (decisions[0]?.kind !== 'operation') retire(runPort)
+              // A task-scoped planner session is durable state only; the DSH
+              // subprocess is a per-turn cache. Retire it after every accepted
+              // decision so a waiting receipt cannot leak one child forever.
+              retire(runPort)
               return decisions
             }
             // Prose-only responses surface as an empty decision list; nudge
@@ -1330,11 +1609,14 @@ export async function createDshEmbeddedBookingPlanner(
           const typed = metricOutcome === 'operation' || metricOutcome === 'terminal'
           const metric: DshPlannerTurnMetric = {
             outcome: metricOutcome,
+            decisionSource: metricDecisionSource,
             elapsedMs: Math.max(0, Date.now() - startedAt),
             harnessRunCount,
             modelStepCount,
             schemaRejectedCallCount,
             firstPassValid: typed && harnessRunCount === 1 && schemaRejectedCallCount === 0,
+            schemaRepairedValid: typed && schemaRejectedCallCount > 0,
+            proseNudgeRecovered: typed && harnessRunCount > 1,
             repairedValid: typed && (harnessRunCount > 1 || schemaRejectedCallCount > 0),
             ...(metricActionKind ? { actionKind: metricActionKind } : {}),
           }
@@ -1345,24 +1627,30 @@ export async function createDshEmbeddedBookingPlanner(
           busy = false
         }
       },
-      async close() {
-        if (sessionClosed) return
-        sessionClosed = true
+      close() {
+        if (sessionClosePromise) return sessionClosePromise
         const pending = portPromise
         portPromise = undefined
-        if (ownsTaskPort && pending) await closePort(await pending)
-        if (retirement) await retirement
+        sessionClosePromise = (async () => {
+          if (ownsTaskPort && pending) await closePort(await pending)
+          if (retirement) await retirement
+        })()
+        return sessionClosePromise
       },
     }
   }
   return {
     plannerFactory,
-    async close() {
+    close() {
+      if (plannerClosePromise) return plannerClosePromise
       closed = true
-      await Promise.allSettled([...creatingPorts])
-      const results = await Promise.allSettled([...knownPorts].map(closePort))
-      const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
-      if (failures.length) throw new AggregateError(failures, 'booking_planner_cleanup_failed')
+      plannerClosePromise = (async () => {
+        await Promise.allSettled([...creatingPorts])
+        const results = await Promise.allSettled([...knownPorts].map(closePort))
+        const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
+        if (failures.length) throw new AggregateError(failures, 'booking_planner_cleanup_failed')
+      })()
+      return plannerClosePromise
     },
   }
 }

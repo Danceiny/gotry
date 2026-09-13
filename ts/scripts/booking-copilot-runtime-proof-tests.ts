@@ -7,15 +7,30 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ensureLedger } from '../src/state-ledger.ts'
 import {
-  BookingCopilotTaskRuntime,
   bookingDigest,
   type BookingApprovalState,
   type BookingCopilotTaskState,
   type BookingPlannerDecision,
 } from '../src/booking-surface/runtime.ts'
+import { BookingCopilotProofRuntime as BookingCopilotTaskRuntime } from './booking-copilot-proof-runtime.ts'
 import { startBookingCopilotServer } from '../src/booking-surface/server.ts'
-import { BOOKING_COPILOT_MAX_OPERATIONS, BOOKING_FULL_JOURNEY_ACTION_KINDS, BOOKING_READ_ACTION_KINDS, BOOKING_SURFACE_SCHEMA_SHA256, BOOKING_SURFACE_SCHEMA_VERSION, type ActionReceipt, type BookingReadAction, type BookingReadActionKind, type BookingSurface, type BookingSurfaceEvent, type BookingWorkspaceSnapshot, type RelaxationApproval, type VerifiedOfferCapability } from '../src/booking-surface/contracts.ts'
+import { BOOKING_COPILOT_MAX_OPERATIONS, BOOKING_FULL_JOURNEY_ACTION_KINDS, BOOKING_READ_ACTION_KINDS, BOOKING_SURFACE_FEATURES, BOOKING_SURFACE_SCHEMA_SHA256, BOOKING_SURFACE_SCHEMA_VERSION, type ActionReceipt, type BookingReadAction, type BookingReadActionKind, type BookingSurface, type BookingSurfaceEvent, type BookingWorkspaceSnapshot, type RelaxationApproval, type VerifiedOfferCapability } from '../src/booking-surface/contracts.ts'
 import { validateBookingSurface } from '../src/booking-surface/validation.ts'
+import type { BookingIntentProjection } from '../src/booking-surface/booking-intent.ts'
+import { normalizeBookingErrorCode, safeBookingErrorMessage } from '../src/booking-surface/error-codes.ts'
+
+for (const [raw, code] of [
+  ['planner_invalid_tool_arguments', 'PLANNER_PROVIDER_RESPONSE_INVALID'],
+  ['planner_terminal_intent_target_unachieved', 'PLANNER_PROVIDER_RESPONSE_INVALID'],
+  ['planner_forbidden_tool', 'UNSUPPORTED_ACTION'],
+  ['action_intent_mismatch', 'INVALID_ACTION'],
+  ['approval_replayed', 'ACTION_CONFLICT'],
+  ['request_conflict', 'ACTION_CONFLICT'],
+  ['turn_conflict', 'ACTION_CONFLICT'],
+] as const) {
+  assert.equal(normalizeBookingErrorCode(new Error(raw)), code, `${raw} has a precise closed boundary classification`)
+  assert.notEqual(safeBookingErrorMessage(code), 'The planner request failed at the typed runtime boundary.', `${raw} is not collapsed into the generic planner failure`)
+}
 
 const stateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-runtime-'))
 const workspace = (revision = 0): BookingWorkspaceSnapshot => ({
@@ -93,6 +108,10 @@ const action = (id: string, revision = 0, extra: Record<string, unknown> = {}) =
   schemaVersion: 'booking.surface' as const, kind: 'search.run' as const, actionId: id,
   contextRef: 'ctx-v2', expectedRevision: revision, reason: 'search current workspace', factRefs: [], input: {}, ...extra,
 })
+const searchResultsIntent = { schemaVersion: 'booking.intent.v1', target: 'search.results' } as const satisfies BookingIntentProjection
+const offerVerifiedIntent = { schemaVersion: 'booking.intent.v1', target: 'offer.verified' } as const satisfies BookingIntentProjection
+const checkoutPreparedIntent = { schemaVersion: 'booking.intent.v1', target: 'checkout.prepared' } as const satisfies BookingIntentProjection
+const offersLoadedIntent = { schemaVersion: 'booking.intent.v1', target: 'offers.loaded' } as const satisfies BookingIntentProjection
 
 const AUTHORIZATION_HEADER = 'authorization'
 const dispatchFixtureAuth = ['fixture', 'dispatch', 'log', 'key'].join('-')
@@ -489,7 +508,7 @@ const checkoutReceipt = (actionId: string, offerRef: string, offerVersionRef: st
   const after: BookingWorkspaceSnapshot = { ...before, revision: 1, verifiedOffer: capability }
   const writer = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
   const t = writer.startTask({ ...turn('task-checkout-after-check'), workspace: before })
-  writer.issueOperation(t.taskId, { ...action('check-before-checkout'), kind: 'offer.check' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } })
+  writer.issueOperation(t.taskId, { ...action('check-before-checkout'), kind: 'offer.check' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } }, checkoutPreparedIntent)
   writer.continueWithReceipt({
     schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: t.taskId, workspace: after,
     receipt: { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'check-before-checkout', contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offer.availability', offerRef: 'offer-a', checkedOfferVersionRef: 'offer-a:v1', currentOfferVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef, available: true, changedFactRefs: [], gapCodes: [] }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } },
@@ -509,19 +528,19 @@ const checkoutReceipt = (actionId: string, offerRef: string, offerVersionRef: st
   assert.throws(() => reader.issueOperation(t.taskId, action('search-after-confirmed-direct', 1)), /availability_operation_incompatible/, 'direct operations cannot bypass the confirmed-state guard')
   assert.throws(() => reader.issueOperation(t.taskId, { ...action('query-after-confirmed-direct', 1), kind: 'offers.query' as const, input: { hotelRefs: ['hotel-a'], criteria: { targetCount: 1 } } }), /availability_operation_incompatible/, 'confirmed availability cannot query more offers')
   assert.throws(() => reader.issueOperation(t.taskId, { ...action('recheck-after-confirmed-direct', 1), kind: 'offer.check' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } }), /availability_operation_incompatible/, 'confirmed availability cannot issue a second check')
-  assert.throws(() => reader.issueOperation(t.taskId, { ...action('observe-after-confirmed-direct', 1), kind: 'order.observe' as const, input: { orderRef: 'order-a' } }), /availability_operation_incompatible/, 'confirmed availability cannot skip checkout and observe an order')
-  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-stale-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-stale', 0), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } } }]), /stale_revision/, 'confirmed availability does not relax the semantic revision binding')
-  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-wrong-offer-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-wrong-offer', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-b', offerVersionRef: 'offer-b:v1', verifiedOfferRef: capability.verifiedOfferRef } } }]), /availability_operation_incompatible/, 'confirmed availability does not relax the checked offer binding')
-  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-wrong-ref-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-wrong-ref', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: 'verified-other' } } }]), /availability_operation_incompatible/, 'confirmed availability does not relax the verified ref binding')
-  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-wrong-version-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-wrong-version', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v2', verifiedOfferRef: capability.verifiedOfferRef } } }]), /availability_operation_incompatible/, 'confirmed availability does not relax the checked version binding')
-  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-search-batch', [{ kind: 'operation', action: action('search-after-confirmed', 1) }]), /availability_operation_incompatible/, 'confirmed availability does not allow unrelated read actions')
+  assert.throws(() => reader.issueOperation(t.taskId, { ...action('observe-after-confirmed-direct', 1), kind: 'order.observe' as const, input: { orderRef: 'order-a' } }), /action_intent_mismatch/, 'the durable checkout waypoint rejects an order-observe overshoot before availability can be bypassed')
+  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-stale-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-stale', 0), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } }, intent: checkoutPreparedIntent }]), /stale_revision/, 'confirmed availability does not relax the semantic revision binding')
+  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-wrong-offer-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-wrong-offer', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-b', offerVersionRef: 'offer-b:v1', verifiedOfferRef: capability.verifiedOfferRef } }, intent: checkoutPreparedIntent }]), /availability_operation_incompatible/, 'confirmed availability does not relax the checked offer binding')
+  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-wrong-ref-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-wrong-ref', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: 'verified-other' } }, intent: checkoutPreparedIntent }]), /availability_operation_incompatible/, 'confirmed availability does not relax the verified ref binding')
+  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-wrong-version-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-wrong-version', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v2', verifiedOfferRef: capability.verifiedOfferRef } }, intent: checkoutPreparedIntent }]), /availability_operation_incompatible/, 'confirmed availability does not relax the checked version binding')
+  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-search-batch', [{ kind: 'operation', action: action('search-after-confirmed', 1), intent: checkoutPreparedIntent }]), /availability_operation_incompatible/, 'confirmed availability does not allow unrelated read actions')
   assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-explanation-only-batch', [{ kind: 'explanation', explanation: { text: 'extra', factRefs: [] } }]), /availability_operation_required/, 'confirmed availability cannot emit a non-final explanation instead of checkout or typed finality')
-  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-mixed-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-mixed', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } } }, { kind: 'explanation', explanation: { text: 'extra', factRefs: [] } }]), /availability_operation_required/, 'confirmed availability admits only a single checkout.prepare operation batch')
+  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-mixed-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-mixed', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } }, intent: checkoutPreparedIntent }, { kind: 'explanation', explanation: { text: 'extra', factRefs: [] } }]), /availability_operation_required/, 'confirmed availability admits only a single checkout.prepare operation batch')
   checkoutNow = '2026-09-01T10:31:00.000Z'
-  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-expired-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-expired', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } } }]), /availability_operation_incompatible/, 'confirmed availability cannot use an expired verified capability')
+  assert.throws(() => reader.applyDecisionBatch(t.taskId, 'checkout-after-check-expired-batch', [{ kind: 'operation', action: { ...action('checkout-after-check-expired', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } }, intent: checkoutPreparedIntent }]), /availability_operation_incompatible/, 'confirmed availability cannot use an expired verified capability')
   checkoutNow = '2026-09-01T10:00:00.000Z'
   assert.equal(reader['ledger'].countEvents(), beforeCheckoutRows, 'rejected confirmed-state turns and decisions do not append ledger rows')
-  reader.applyDecisionBatch(t.taskId, 'checkout-after-check-batch', [{ kind: 'operation', action: { ...action('checkout-after-check', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } } }])
+  reader.applyDecisionBatch(t.taskId, 'checkout-after-check-batch', [{ kind: 'operation', action: { ...action('checkout-after-check', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } }, intent: checkoutPreparedIntent }])
   assert.equal(reader.resumeTask(t.taskId)?.pendingAction?.kind, 'checkout.prepare', 'checkout.prepare binds to the same checked offer/version/verified ref after confirmation')
   const checkoutHandoffReceipt = checkoutReceipt('checkout-after-check', 'offer-a', 'offer-a:v1', capability.verifiedOfferRef)
   const checkoutTerminalState = reader.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: t.taskId, workspace: { ...after, revision: 2 }, receipt: { ...checkoutHandoffReceipt, revision: 2 } })
@@ -550,9 +569,9 @@ const checkoutReceipt = (actionId: string, offerRef: string, offerVersionRef: st
   const checked: BookingWorkspaceSnapshot = { ...before, revision: 1, verifiedOffer: capability }
   const beginCheckout = (taskId: string, checkActionId: string, checkoutActionId: string): void => {
     const task = rt.startTask({ ...turn(taskId), workspace: before })
-    rt.issueOperation(task.taskId, { ...action(checkActionId), kind: 'offer.check' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } })
+    rt.issueOperation(task.taskId, { ...action(checkActionId), kind: 'offer.check' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1' } }, checkoutPreparedIntent)
     rt.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId, workspace: checked, receipt: { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: checkActionId, contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offer.availability', offerRef: 'offer-a', checkedOfferVersionRef: 'offer-a:v1', currentOfferVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef, available: true, changedFactRefs: [], gapCodes: [] }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
-    rt.applyDecisionBatch(taskId, `batch-${checkoutActionId}`, [{ kind: 'operation', action: { ...action(checkoutActionId, 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } } }])
+    rt.applyDecisionBatch(taskId, `batch-${checkoutActionId}`, [{ kind: 'operation', action: { ...action(checkoutActionId, 1), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } }, intent: checkoutPreparedIntent }])
   }
 
   beginCheckout('task-checkout-incomplete', 'check-before-incomplete', 'checkout-incomplete')
@@ -630,12 +649,13 @@ const checkoutReceipt = (actionId: string, offerRef: string, offerVersionRef: st
   const before: BookingWorkspaceSnapshot = { ...workspace(0), visibleHotels: [{ hotelRef: 'hotel-limit', name: 'Limit Hotel', factRefs: [] }], loadedOffers: [loadedOffer('offer-limit', 'hotel-limit')], shortlistedOfferRefs: ['offer-limit'], selectedOfferRef: 'offer-limit' }
   const taskId = 'task-confirmed-at-operation-limit'
   const focusedBefore = { ...before, focusedHotelRef: 'hotel-limit' }
+  const limitIntent = { schemaVersion: 'booking.intent.v1', target: 'offer.verified' } as const satisfies BookingIntentProjection
   rt.startTask({ ...turn(taskId), workspace: focusedBefore })
   for (let ordinal = 1; ordinal < BOOKING_COPILOT_MAX_OPERATIONS; ordinal++) {
-    const operation = rt.issueOperation(taskId, { ...action(`limit-focus-${ordinal}`), kind: 'hotel.focus' as const, input: { hotelRef: 'hotel-limit' } })
+    const operation = rt.issueOperation(taskId, { ...action(`limit-focus-${ordinal}`), kind: 'hotel.focus' as const, input: { hotelRef: 'hotel-limit' } }, limitIntent)
     rt.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId, workspace: focusedBefore, receipt: { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: operation.action.actionId, contextRef: 'ctx-v2', status: 'applied', revision: 0, observation: { kind: 'hotel.focus', hotelRef: 'hotel-limit' }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
   }
-  const check = rt.issueOperation(taskId, { ...action('limit-check'), kind: 'offer.check' as const, input: { offerRef: 'offer-limit', offerVersionRef: 'offer-limit:v1' } })
+  const check = rt.issueOperation(taskId, { ...action('limit-check'), kind: 'offer.check' as const, input: { offerRef: 'offer-limit', offerVersionRef: 'offer-limit:v1' } }, limitIntent)
   assert.equal(rt.resumeTask(taskId)?.operationCount, BOOKING_COPILOT_MAX_OPERATIONS, 'the successful check is the actual twentieth operation')
   const checkReceipt: ActionReceipt = { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: check.action.actionId, contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offer.availability', offerRef: 'offer-limit', checkedOfferVersionRef: 'offer-limit:v1', currentOfferVersionRef: 'offer-limit:v1', verifiedOfferRef: capability.verifiedOfferRef, available: true, changedFactRefs: [], gapCodes: [] }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } }
   const terminal = rt.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId, workspace: { ...focusedBefore, revision: 1, verifiedOffer: capability }, receipt: checkReceipt })
@@ -757,8 +777,17 @@ const checkoutReceipt = (actionId: string, offerRef: string, offerVersionRef: st
         after.results = { status: 'loading' }
         if (c.keepField === 'focusedHotelRef') after.focusedHotelRef = baseline.focusedHotelRef
         else if (c.keepField === 'loadedOffers') after.loadedOffers = structuredClone(baseline.loadedOffers)
-        else if (c.keepField === 'shortlistedOfferRefs') after.shortlistedOfferRefs = [...baseline.shortlistedOfferRefs]
-        else if (c.keepField === 'selectedOfferRef') after.selectedOfferRef = baseline.selectedOfferRef
+        else if (c.keepField === 'shortlistedOfferRefs') {
+          // Keep the shortlist semantically valid so this case reaches the
+          // search invalidation invariant rather than the canonical workspace
+          // membership guard.
+          after.loadedOffers = structuredClone(baseline.loadedOffers)
+          after.shortlistedOfferRefs = [...baseline.shortlistedOfferRefs]
+        }
+        else if (c.keepField === 'selectedOfferRef') {
+          after.loadedOffers = structuredClone(baseline.loadedOffers)
+          after.selectedOfferRef = baseline.selectedOfferRef
+        }
         else if (c.keepField === 'verifiedOffer') after.verifiedOffer = structuredClone(baseline.verifiedOffer)
       }
       const observation: ActionReceipt['observation'] = c.kind === 'results.view.patch'
@@ -825,6 +854,8 @@ const receipt = {
 const receiptWithDigest = runtime.withReceiptDigest(receipt)
 const afterReceipt = runtime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: task.taskId, workspace: workspace(1), receipt: receiptWithDigest })
 assert.equal(afterReceipt.awaitingApproval?.blocker.blockerId, 'blocker-v2')
+assert.equal(afterReceipt.lastCompletedAction?.actionId, 'action-v2', 'accepted receipt retains its exact completed action checkpoint')
+assert.equal(afterReceipt.lastCompletedAction?.kind, 'search.run', 'completed action kind stays ledger-derived instead of being inferred from observation text')
 const offerRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-target-'))
 const offerRuntime = new BookingCopilotTaskRuntime(ensureLedger(offerRoot), { contextRefFactory: () => 'ctx-v2' })
 const offerTurn = turn('task-offer-target')
@@ -833,6 +864,66 @@ offerRuntime.issueOperation(offerTask.taskId, { ...action('offer-action'), kind:
 const offerReceipt = offerRuntime.withReceiptDigest({ ...receipt, actionId: 'offer-action', observation: availabilityObservation('offer-b', 'offer-b:v1', true), resultContract: { ...receipt.resultContract, blockers: [], gapCodes: [] } })
 const offerWorkspace1 = { ...offerTurn.workspace, revision: 1, visibleHotels: [{ hotelRef: 'hotel-a', name: 'Hotel A', factRefs: [] }], loadedOffers: [loadedOffer('offer-a', 'hotel-a')] }
 assert.throws(() => offerRuntime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: offerTask.taskId, workspace: offerWorkspace1, receipt: offerReceipt }), /receipt_target_mismatch/)
+
+// An offers.view.patch receipt is a claim about the post-action HotelRates
+// registry, not an authority of its own. A forged ref or count must be
+// rejected before it can be handed to the planner as an offers.refined
+// terminal observation.
+const viewBindingRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-view-binding-'))
+const viewBindingRuntime = new BookingCopilotTaskRuntime(ensureLedger(viewBindingRoot), { contextRefFactory: () => 'ctx-v2' })
+const viewBindingWorkspace0: BookingWorkspaceSnapshot = {
+  ...workspace(0),
+  visibleHotels: [{ hotelRef: 'hotel-view-binding', name: 'View Binding Hotel', factRefs: [] }],
+  loadedOffers: [loadedOffer('offer-view-binding-a', 'hotel-view-binding')],
+}
+const viewBindingWorkspace1: BookingWorkspaceSnapshot = {
+  ...viewBindingWorkspace0,
+  revision: 1,
+  loadedOffers: [
+    loadedOffer('offer-view-binding-a', 'hotel-view-binding'),
+    loadedOffer('offer-view-binding-b', 'hotel-view-binding'),
+  ],
+}
+const viewBindingTask = viewBindingRuntime.startTask({ ...turn('task-offer-view-binding'), workspace: viewBindingWorkspace0 })
+const viewBindingAction = {
+  ...action('offer-view-binding-action'),
+  kind: 'offers.view.patch' as const,
+  input: { hotelRef: 'hotel-view-binding', criteria: {} },
+}
+viewBindingRuntime.issueOperation(viewBindingTask.taskId, viewBindingAction)
+const viewBindingReceipt = (offerRefs: string[], actualCount = offerRefs.length): ActionReceipt => ({
+  schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'offer-view-binding-action', contextRef: 'ctx-v2',
+  status: 'applied', revision: 1,
+  observation: { kind: 'offers.state', hotelRefs: ['hotel-view-binding'], offerRefs, loadedHotelCount: 1 },
+  resultContract: { outcome: 'complete', requestedCount: 2, actualCount, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+})
+viewBindingRuntime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: viewBindingTask.taskId, workspace: viewBindingWorkspace1, receipt: viewBindingReceipt(['offer-view-binding-a', 'offer-view-binding-b']) })
+assert.equal(viewBindingRuntime.resumeTask(viewBindingTask.taskId)?.lastReceipt?.observation.kind, 'offers.state', 'offers.view.patch stores the receipt only after matching the post-action loaded offers')
+
+const forgedRefRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-view-forged-ref-'))
+const forgedRefRuntime = new BookingCopilotTaskRuntime(ensureLedger(forgedRefRoot), { contextRefFactory: () => 'ctx-v2' })
+const forgedRefTask = forgedRefRuntime.startTask({ ...turn('task-offer-view-forged-ref'), workspace: viewBindingWorkspace0 })
+forgedRefRuntime.issueOperation(forgedRefTask.taskId, { ...viewBindingAction, actionId: 'offer-view-forged-ref-action' })
+const forgedRefReceipt = { ...viewBindingReceipt(['offer-view-binding-a', 'offer-forged']), actionId: 'offer-view-forged-ref-action' }
+assert.throws(
+  () => forgedRefRuntime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: forgedRefTask.taskId, workspace: viewBindingWorkspace1, receipt: forgedRefReceipt }),
+  /availability_offers_unreported/,
+  'a completed view receipt cannot be replayed with a forged offer ref',
+)
+assert.equal(forgedRefRuntime.resumeTask(forgedRefTask.taskId)?.lastReceipt, undefined, 'a forged view receipt never reaches the durable ledger')
+
+// Use a fresh task for the count case because the valid receipt above has
+// already advanced the durable task to its terminal target.
+const forgedCountRuntime = new BookingCopilotTaskRuntime(ensureLedger(mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-view-count-'))), { contextRefFactory: () => 'ctx-v2' })
+const forgedCountTask = forgedCountRuntime.startTask({ ...turn('task-offer-view-count'), workspace: viewBindingWorkspace0 })
+forgedCountRuntime.issueOperation(forgedCountTask.taskId, { ...viewBindingAction, actionId: 'offer-view-count-action' })
+assert.throws(
+  () => forgedCountRuntime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: forgedCountTask.taskId, workspace: viewBindingWorkspace1, receipt: { ...viewBindingReceipt(['offer-view-binding-a', 'offer-view-binding-b'], 1), actionId: 'offer-view-count-action' } }),
+  /availability_offers_count_mismatch/,
+  'a view receipt cannot report an actualCount different from its authoritative offer refs',
+)
+viewBindingRuntime['ledger'].close(); forgedRefRuntime['ledger'].close(); forgedCountRuntime['ledger'].close()
+rmSync(viewBindingRoot, { recursive: true, force: true }); rmSync(forgedRefRoot, { recursive: true, force: true })
 const offerCheckWorkspace = (revision: number, selectedOfferRef?: string, shortlistedOfferRefs: string[] = ['offer-cleanup', 'offer-peer'], verifiedOffer?: VerifiedOfferCapability): BookingWorkspaceSnapshot => ({ ...workspace(revision), visibleHotels: [{ hotelRef: 'hotel-cleanup', name: 'Hotel Cleanup', factRefs: [] }], loadedOffers: [loadedOffer('offer-cleanup', 'hotel-cleanup'), loadedOffer('offer-peer', 'hotel-cleanup')], selectedOfferRef, shortlistedOfferRefs, ...(verifiedOffer ? { verifiedOffer } : {}) })
 const checkReceipt = (actionId: string, status: 'applied' | 'unavailable' | 'changed' | 'no_match' | 'failed' | 'stale' | 'unsupported', available = status === 'changed'): ActionReceipt => ({ schemaVersion: 'booking.surface' as const, kind: 'action.receipt' as const, actionId, contextRef: 'ctx-v2', status, revision: 1, observation: { kind: 'offer.availability' as const, offerRef: 'offer-cleanup', checkedOfferVersionRef: 'offer-cleanup:v1', currentOfferVersionRef: available ? (status === 'changed' ? 'offer-cleanup:v2' : 'offer-cleanup:v1') : undefined, available, verifiedOfferRef: available && status !== 'changed' ? 'verified-offer-cleanup' : undefined, changedFactRefs: status === 'changed' ? ['price'] : [], gapCodes: [] }, resultContract: { outcome: status === 'changed' ? 'partial' as const : available ? 'complete' as const : status === 'unavailable' || status === 'no_match' ? 'empty' as const : 'partial' as const, hardCriteriaMet: available && status !== 'changed', factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } })
 const assertOfferCheckContinuation = (name: string, before: BookingWorkspaceSnapshot, after: BookingWorkspaceSnapshot, receipt: ActionReceipt, pattern?: RegExp): void => {
@@ -859,17 +950,18 @@ cleanupRuntime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'ac
 assert.equal(cleanupRuntime.resumeTask(cleanupTask.taskId)?.lastReceipt?.status, 'unavailable', 'offer.check can clear only the checked selection/shortlist and stale verification while preserving loaded offer evidence')
 const unavailableRows = cleanupRuntime['ledger'].countEvents()
 assert.throws(() => cleanupRuntime.issueOperation(cleanupTask.taskId, action('search-during-offer-refresh', 1)), /availability_operation_incompatible/, 'direct runtime cannot bypass the required offers.query recovery step')
-assert.throws(() => cleanupRuntime.issueOperation(cleanupTask.taskId, { ...action('observe-during-offer-refresh', 1), kind: 'order.observe' as const, input: { orderRef: 'order-not-yet-created' } }), /availability_operation_incompatible/, 'unavailable recovery cannot skip to order observation')
+assert.throws(() => cleanupRuntime.issueOperation(cleanupTask.taskId, { ...action('observe-during-offer-refresh', 1), kind: 'order.observe' as const, input: { orderRef: 'order-not-yet-created' } }), /action_intent_mismatch/, 'the durable verification waypoint rejects an order-observe overshoot during unavailable recovery')
 assert.equal(cleanupRuntime['ledger'].countEvents(), unavailableRows, 'rejected unavailable-recovery actions append no rows')
 assertOfferCheckContinuation('offer-negative-kept-checked-forbidden', cleanupWorkspace0, { ...cleanupWorkspace1, selectedOfferRef: 'offer-cleanup', shortlistedOfferRefs: ['offer-cleanup', 'offer-peer'] }, cleanupReceipt, /workspace_mismatch/)
 const cleanupChangedWorkspace1: BookingWorkspaceSnapshot = { ...cleanupWorkspace0, revision: 1, loadedOffers: [{ ...loadedOffer('offer-cleanup', 'hotel-cleanup', 'offer-cleanup:v2'), factRefs: ['price'] }, loadedOffer('offer-peer', 'hotel-cleanup')], verifiedOffer: undefined }
 const changedRuntimeRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-offer-changed-runtime-'))
 const changedRuntime = new BookingCopilotTaskRuntime(ensureLedger(changedRuntimeRoot), { contextRefFactory: () => 'ctx-v2' })
 const changedTask = changedRuntime.startTask({ ...turn('task-offer-changed-runtime'), workspace: cleanupWorkspace0 })
-changedRuntime.issueOperation(changedTask.taskId, { ...action('offer-changed-seed-query'), kind: 'offers.query' as const, input: { hotelRefs: ['hotel-cleanup'], criteria: {} } })
+const changedIntent = { schemaVersion: 'booking.intent.v1', target: 'offer.verified' } as const satisfies BookingIntentProjection
+changedRuntime.issueOperation(changedTask.taskId, { ...action('offer-changed-seed-query'), kind: 'offers.query' as const, input: { hotelRefs: ['hotel-cleanup'], criteria: {} } }, changedIntent)
 const changedSeedWorkspace: BookingWorkspaceSnapshot = { ...cleanupWorkspace0, revision: 1 }
 changedRuntime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: changedTask.taskId, workspace: changedSeedWorkspace, receipt: { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'offer-changed-seed-query', contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offers.state', hotelRefs: ['hotel-cleanup'], offerRefs: ['offer-cleanup', 'offer-peer'], loadedHotelCount: 1 }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
-changedRuntime.issueOperation(changedTask.taskId, { ...action('offer-changed-runtime-check', 1), kind: 'offer.check' as const, input: { offerRef: 'offer-cleanup', offerVersionRef: 'offer-cleanup:v1' } })
+changedRuntime.issueOperation(changedTask.taskId, { ...action('offer-changed-runtime-check', 1), kind: 'offer.check' as const, input: { offerRef: 'offer-cleanup', offerVersionRef: 'offer-cleanup:v1' } }, changedIntent)
 changedRuntime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: changedTask.taskId, workspace: { ...cleanupChangedWorkspace1, revision: 2 }, receipt: { ...checkReceipt('offer-changed-runtime-check', 'changed'), revision: 2 } })
 assert.equal(changedRuntime.resumeTask(changedTask.taskId)?.lastReceipt?.status, 'changed', 'runtime persists changed availability against a replacement offer version')
 changedRuntime['ledger'].close(); rmSync(changedRuntimeRoot, { recursive: true, force: true })
@@ -990,7 +1082,7 @@ const server = await startBookingCopilotServer({
   principal: { subject: 'bff-principal-a', scope: 'booking:read' },
   ingressBinding: { bind: (input) => ({ taskId: 'task-server', turnId: `turn-${input.requestKey}`, contextRef: 'ctx-server', surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) },
   ingressMode: 'bff-ingress-binding',
-  plannerFactory: (initial: BookingCopilotTaskState) => { factoryCalls++; return { next: async ({ turn, task: current }) => { plannerCalls++; if (turn.kind === 'user.turn' && turn.request.approval && !approvalPlannerDeferred) { approvalPlannerDeferred = true; resolveApprovalPlannerEntered(); await approvalPlannerRelease } const decision: BookingPlannerDecision = { kind: 'operation', action: { ...action(`server-action-${plannerCalls}`, current.revision), contextRef: current.contextRef } }; return [decision] } } },
+  plannerFactory: (initial: BookingCopilotTaskState) => { factoryCalls++; return { next: async ({ turn, task: current }) => { plannerCalls++; if (turn.kind === 'user.turn' && turn.request.approval && !approvalPlannerDeferred) { approvalPlannerDeferred = true; resolveApprovalPlannerEntered(); await approvalPlannerRelease } const decision: BookingPlannerDecision = { kind: 'operation', action: { ...action(`server-action-${plannerCalls}`, current.revision), contextRef: current.contextRef }, intent: searchResultsIntent }; return [decision] } } },
 })
 const endpoint = `http://127.0.0.1:${server.port}/a2a/booking-copilot/turn`
 const headers = { authorization: 'Bearer v2-server-key', 'content-type': 'application/json', 'x-booking-surface-version': BOOKING_SURFACE_SCHEMA_VERSION, 'x-booking-surface-schema-sha256': BOOKING_SURFACE_SCHEMA_SHA256 }
@@ -1093,7 +1185,7 @@ const approvedResponse = await approvedResponsePromise
 if (concurrentApprovalFailure) throw concurrentApprovalFailure
 assert.ok(concurrentApprovalResponses)
 assert.ok(concurrentApprovalResponses.every(({ status }) => status === 409), 'concurrent exact approvals with fresh keys fail closed before planner replay')
-for (const response of concurrentApprovalResponses) assert.match(await response.text(), /PLANNER_FAILED/, 'approval replay is fail-closed at the HTTP boundary')
+for (const response of concurrentApprovalResponses) assert.match(await response.text(), /ACTION_CONFLICT/, 'approval replay is a typed conflict at the HTTP boundary')
 assert.equal(approvedResponse.status, 200)
 const approvedBody = await approvedResponse.text()
 assert.equal(plannerCalls, 3)
@@ -1185,7 +1277,7 @@ const longTurnId = `turn-${'u'.repeat(180)}`
 const longActionId = `action-${'a'.repeat(180)}`
 longRuntime.startTask({ ...turn(longTaskId), turnId: longTurnId })
 const longDecisionKey = `turn:${longTaskId}:${longTurnId}:${longActionId}`
-const longDecisionEvents = longRuntime.applyDecisionBatch(longTaskId, longDecisionKey, [{ kind: 'operation', action: action(longActionId) }])
+const longDecisionEvents = longRuntime.applyDecisionBatch(longTaskId, longDecisionKey, [{ kind: 'operation', action: action(longActionId), intent: searchResultsIntent }])
 assert.equal(longDecisionEvents.some((event) => event.kind === 'operation' && event.action.actionId === longActionId), true, 'long internal decision key is accepted')
 longLedger.close(); rmSync(longRoot, { recursive: true, force: true })
 
@@ -1324,6 +1416,11 @@ const rewriteLegacyOfferRows = (ledger: ReturnType<typeof ensureLedger>, taskId:
       payload.requestDigest = legacyTurnDigest(taskId, payload.turnId, payload.workspace, text)
     }
     if (row.kind === 'booking.copilot.action.issued' && payload.action && typeof payload.action === 'object') {
+      // booking.intent.v1 did not exist in the pre-versioned ledger family
+      // represented by this migration fixture. Keeping a modern checkpoint
+      // while rewriting its source TURN digest would create an impossible
+      // mixed-era row rather than exercising the legacy replay path.
+      delete payload.intent
       const oldAction = payload.action
       const input = oldAction.input
       if (input && typeof input === 'object' && !Array.isArray(input) && ['offer.select', 'offer.check', 'checkout.prepare'].includes(String(oldAction.kind))) {
@@ -1546,8 +1643,10 @@ legacyOfferRuntime.issueOperation(legacyOfferTask.taskId, { ...action('legacy-of
 rewriteLegacyOfferRows(legacyOfferLedger, legacyOfferTask.taskId, 'find hotels in Dubai')
 const legacyOfferRestart = new BookingCopilotTaskRuntime(ensureLedger(legacyOfferRoot), { contextRefFactory: () => 'ctx-v2' })
 const legacyOfferRecovered = legacyOfferRestart.resumeTask(legacyOfferTask.taskId)
-assert.ok(legacyOfferRecovered && legacyOfferRecovered.pendingAction?.input.offerVersionRef, 'pre-versioned row family migrates to a version-bound pending action')
-assert.deepEqual(legacyOfferRecovered?.availability.attempts.map((attempt) => attempt.offerVersionRef), ['legacy-offer-version:' + bookingDigest({ contextRef: 'ctx-v2', offerRef: 'legacy-offer-a', hotelRef: 'legacy-hotel', evidenceLevel: 'rate_loaded', factRefs: [] }).slice(0, 40), 'legacy-offer-version:' + bookingDigest({ contextRef: 'ctx-v2', offerRef: 'legacy-offer-a', hotelRef: 'legacy-hotel', evidenceLevel: 'rate_loaded', factRefs: ['price'] }).slice(0, 40)], 'legacy A attempts retain distinct old v1 and changed v2 identities')
+assert.equal(legacyOfferRecovered?.pendingAction, undefined, 'pre-intent offer actions never resume as executable pending work')
+assert.equal(legacyOfferRecovered?.activeIntent, undefined, 'legacy offer rows do not infer a narrowed user goal')
+assert.equal(legacyOfferRecovered?.lastReceipt, undefined, 'legacy offer receipts cannot become terminal evidence without durable intent')
+assert.equal(legacyOfferRecovered?.replayUpgradeRequired, true, 'pre-intent offer rows require a fresh user-turn reanchor')
 legacyOfferRestart['ledger'].close(); legacyOfferLedger.close(); rmSync(legacyOfferRoot, { recursive: true, force: true })
 
 // An unsafe legacy checkout tail must not resurrect a scalar verifiedOfferRef
@@ -1561,7 +1660,7 @@ const legacyCheckoutCapability = verifiedCapability('legacy-checkout', 'legacy-c
 const legacyCheckoutWorkspace: BookingWorkspaceSnapshot = { ...workspace(1), visibleHotels: [{ hotelRef: 'legacy-checkout-hotel', name: 'Legacy Checkout Hotel', factRefs: [] }], loadedOffers: [loadedOffer('legacy-checkout', 'legacy-checkout-hotel')], selectedOfferRef: 'legacy-checkout', verifiedOffer: legacyCheckoutCapability }
 const legacyCheckoutTask = legacyCheckoutRuntime.startTask({ ...turn('task-legacy-checkout-tail'), workspace: legacyCheckoutWorkspace })
 const legacyCheckoutAction = { ...action('legacy-checkout-action', 1), kind: 'checkout.prepare' as const, input: { offerRef: 'legacy-checkout', offerVersionRef: 'legacy-checkout:v1', verifiedOfferRef: legacyCheckoutCapability.verifiedOfferRef } }
-const legacyCheckoutBatch = legacyCheckoutRuntime.applyDecisionBatch(legacyCheckoutTask.taskId, 'legacy-checkout-batch', [{ kind: 'operation', action: legacyCheckoutAction }, { kind: 'explanation', explanation: { text: 'checkout handoff is awaiting receipt', factRefs: [] } }], true)
+const legacyCheckoutBatch = legacyCheckoutRuntime.applyDecisionBatch(legacyCheckoutTask.taskId, 'legacy-checkout-batch', [{ kind: 'operation', action: legacyCheckoutAction, intent: checkoutPreparedIntent }, { kind: 'explanation', explanation: { text: 'checkout handoff is awaiting receipt', factRefs: [] } }], true)
 assert.equal(legacyCheckoutBatch.some((event) => event.kind === 'operation' && event.action.actionId === legacyCheckoutAction.actionId), true, 'normal decision batch includes the checkout operation envelope')
 const appendLegacyEvent = (eventId: string, sequence: number, eventKind: 'terminal' | 'error'): void => {
   const safeContent = eventKind === 'terminal' ? { status: 'stopped' as const, summary: 'legacy-terminal', factRefs: [] } : { code: 'unhandled', message: 'legacy error', retryable: false }
@@ -1601,7 +1700,7 @@ const legacyBatchVariantFixture = (variant: BatchVariant): { root: string; taskI
   const batchWorkspace: BookingWorkspaceSnapshot = { ...workspace(0), visibleHotels: [{ hotelRef: `batch-${variant}-hotel`, name: 'Batch Hotel', factRefs: [] }], loadedOffers: [loadedOffer(`batch-${variant}-offer`, `batch-${variant}-hotel`)], selectedOfferRef: `batch-${variant}-offer`, verifiedOffer: capability }
   writer.startTask({ ...turn(taskId), workspace: batchWorkspace })
   const batchAction = { ...action(`batch-${variant}-checkout`), kind: 'checkout.prepare' as const, input: { offerRef: `batch-${variant}-offer`, offerVersionRef: `batch-${variant}-offer:v1`, verifiedOfferRef: capability.verifiedOfferRef } }
-  writer.applyDecisionBatch(taskId, `batch-envelope-${variant}`, [{ kind: 'operation', action: batchAction }, { kind: 'explanation', explanation: { text: 'batch envelope', factRefs: [] } }], true)
+  writer.applyDecisionBatch(taskId, `batch-envelope-${variant}`, [{ kind: 'operation', action: batchAction, intent: checkoutPreparedIntent }, { kind: 'explanation', explanation: { text: 'batch envelope', factRefs: [] } }], true)
   rewriteLegacyOfferRows(ledger, taskId, 'find hotels in Dubai', capability.verifiedOfferRef)
   const row = ledger.db.prepare("SELECT seq, payload FROM events WHERE run_id = ? AND kind = 'booking.copilot.decision.batch'").get(taskId) as { seq: number; payload: string }
   const payload = JSON.parse(row.payload) as { events: Array<Record<string, unknown>> }
@@ -1663,7 +1762,7 @@ const legacyTwoBatchFixture = (crossBatchGraft: boolean): { root: string; taskId
   const normalBatch = writer.applyDecisionBatch(taskId, `${taskId}-normal-batch`, [{ kind: 'explanation', explanation: { text: 'normal completed batch', factRefs: [] } }], true)
   assert.ok(normalBatch.some((event) => event.kind === 'explanation'), 'normal batch persists its own explanation')
   const unsafeAction = { ...action(`${taskId}-unsafe-checkout`, 1), kind: 'checkout.prepare' as const, input: { offerRef: `${taskId}-offer`, offerVersionRef: `${taskId}-offer:v1`, verifiedOfferRef: capability.verifiedOfferRef } }
-  writer.applyDecisionBatch(taskId, `${taskId}-unsafe-batch`, [{ kind: 'operation', action: unsafeAction }, { kind: 'explanation', explanation: { text: 'unsafe legacy batch', factRefs: [] } }], true)
+  writer.applyDecisionBatch(taskId, `${taskId}-unsafe-batch`, [{ kind: 'operation', action: unsafeAction, intent: checkoutPreparedIntent }, { kind: 'explanation', explanation: { text: 'unsafe legacy batch', factRefs: [] } }], true)
   rewriteLegacyOfferRows(ledger, taskId, 'find hotels in Dubai', capability.verifiedOfferRef)
   if (crossBatchGraft) {
     const rows = ledger.db.prepare("SELECT seq, payload FROM events WHERE run_id = ? AND kind = 'booking.copilot.decision.batch' ORDER BY seq").all(taskId) as Array<{ seq: number; payload: string }>
@@ -1696,10 +1795,9 @@ assert.throws(() => graftedTwoBatchReplay.resumeTask(graftedTwoBatch.taskId), ne
 graftedTwoBatchReplayLedger.close()
 rmSync(graftedTwoBatch.root, { recursive: true, force: true })
 
-// A safe pre-versioned offer.select/offer.check batch must be readable through
-// both restart and the durable batch-replay API. The normalized operation is
-// schema-valid and uses the same deterministic synthetic version that the
-// workspace migration derives from the loaded offer facts.
+// Even a structurally safe pre-versioned offer.select/offer.check batch lacks
+// the user's final waypoint. It remains readable as history, but the runtime
+// must not resume or replay it as executable work by inventing an intent.
 for (const kind of ['offer.select', 'offer.check'] as const) {
   const root = mkdtempSync(join(tmpdir(), `gotry-booking-v2-legacy-safe-batch-${kind.replace('.', '-')}-`))
   const ledger = ensureLedger(root)
@@ -1711,25 +1809,19 @@ for (const kind of ['offer.select', 'offer.check'] as const) {
   writer.startTask({ ...turn(taskId), workspace: safeWorkspace })
   const safeAction = { ...action(`${taskId}-action`), kind, input: { offerRef, offerVersionRef: `${offerRef}:v1` } } as const
   const requestKey = `${taskId}-request`
-  writer.applyDecisionBatch(taskId, requestKey, [{ kind: 'operation', action: safeAction }], true)
+  const safeIntent = kind === 'offer.select'
+    ? { schemaVersion: 'booking.intent.v1' as const, target: 'offer.selected' as const }
+    : offerVerifiedIntent
+  writer.applyDecisionBatch(taskId, requestKey, [{ kind: 'operation', action: safeAction, intent: safeIntent }], true)
   rewriteLegacyOfferRows(ledger, taskId, 'find hotels in Dubai')
   ledger.close()
   const restartLedger = ensureLedger(root)
   const restart = new BookingCopilotTaskRuntime(restartLedger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
   const recovered = restart.resumeTask(taskId)
-  const recoveredOperation = recovered?.pendingAction
-  const expectedVersion = `legacy-offer-version:${bookingDigest({ contextRef: 'ctx-v2', offerRef, hotelRef, evidenceLevel: 'rate_loaded', factRefs: [] }).slice(0, 40)}`
-  const offerVersionFromAction = (candidate: { input: unknown } | undefined): string | undefined => {
-    const input = candidate?.input
-    return input && typeof input === 'object' && !Array.isArray(input) && 'offerVersionRef' in input && typeof input.offerVersionRef === 'string' ? input.offerVersionRef : undefined
-  }
-  assert.equal(recoveredOperation?.kind, kind, `legacy ${kind} batch restart retains operation kind`)
-  assert.equal(offerVersionFromAction(recoveredOperation), expectedVersion, `legacy ${kind} batch restart binds deterministic synthetic version`)
-  const replayBatch = restart.readDecisionBatch(taskId, requestKey)
-  assert.ok(replayBatch, `legacy ${kind} batch is readable after restart`)
-  const replayOperation = replayBatch?.find((event) => event.kind === 'operation')
-  assert.ok(replayOperation && validateBookingSurface(replayOperation).ok, `legacy ${kind} batch operation is schema-valid after replay normalization`)
-  assert.equal(replayOperation?.kind === 'operation' ? offerVersionFromAction(replayOperation.action) : undefined, expectedVersion, `legacy ${kind} batch replay operation carries synthetic version`)
+  assert.equal(recovered?.pendingAction, undefined, `legacy ${kind} batch is not resumed without durable intent`)
+  assert.equal(recovered?.activeIntent, undefined, `legacy ${kind} batch does not infer its final waypoint`)
+  assert.equal(recovered?.replayUpgradeRequired, true, `legacy ${kind} batch requires a fresh user-turn anchor`)
+  assert.throws(() => restart.readDecisionBatch(taskId, requestKey), /request_key_invalidated/, `legacy ${kind} executable batch replay is invalidated`)
   restartLedger.close()
   rmSync(root, { recursive: true, force: true })
 }
@@ -1752,7 +1844,7 @@ assert.equal(blockerRecovery?.phase, 'planning', 'normalized legacy blocker rece
 assert.equal(blockerRecovery?.replayUpgradeRequired, true, 'legacy blocker lineage records an explicit replay upgrade gap')
 assert.equal(blockerRecovery?.pendingAction, undefined)
 assert.throws(() => legacyBlockerRestart.issueOperation(blockerTask.taskId, action('blocked-replan-action', 1)), /replay_upgrade|reanchor|replan|turn_required/, 'replay upgrade gap blocks direct operation before a new anchor turn')
-assert.throws(() => legacyBlockerRestart.applyDecisionBatch(blockerTask.taskId, 'blocked-replan-batch', [{ kind: 'operation', action: action('blocked-replan-decision', 1) }]), /replay_upgrade|reanchor|replan|turn_required/, 'replay upgrade gap blocks decision batches before a new anchor turn')
+assert.throws(() => legacyBlockerRestart.applyDecisionBatch(blockerTask.taskId, 'blocked-replan-batch', [{ kind: 'operation', action: action('blocked-replan-decision', 1), intent: searchResultsIntent }]), /replay_upgrade|reanchor|replan|turn_required/, 'replay upgrade gap blocks decision batches before a new anchor turn')
 assert.throws(() => legacyBlockerRestart.emitEvent(blockerTask.taskId, { kind: 'explanation', explanation: { text: 'must wait for a new anchor turn', factRefs: [] } }), /replay_upgrade|reanchor|replan|turn_required/, 'replay upgrade gap blocks standalone event mutation')
 const blockedBindingTurn = { ...turn(blockerTask.taskId, 1), turnId: 'blocked-replan-binding-turn' }
 assert.throws(() => legacyBlockerRestart.persistRequestBinding('blocked-replan-request', blockedBindingTurn, { requestKey: 'blocked-replan-request', principal: { subject: 'blocked-replan-principal', scope: 'booking:read' } }), /replay_upgrade|reanchor|replan|turn_required/, 'replay upgrade gap blocks request binding mutation')
@@ -1822,13 +1914,13 @@ await server.close()
       next: async ({ task: current }) => {
         checkoutPlannerCalls++
         if (checkoutPlannerCalls === 1) {
-          return [{ kind: 'operation', action: { ...action('http-check-before-checkout', current.revision), contextRef: current.contextRef, kind: 'offer.check' as const, input: { offerRef: 'server-offer', offerVersionRef: 'server-offer:v1' } } }]
+          return [{ kind: 'operation', action: { ...action('http-check-before-checkout', current.revision), contextRef: current.contextRef, kind: 'offer.check' as const, input: { offerRef: 'server-offer', offerVersionRef: 'server-offer:v1' } }, intent: checkoutPreparedIntent }]
         }
         if (checkoutPlannerCalls === 2) {
           markCheckoutPlannerEntered()
           await checkoutPlannerRelease
         }
-        return [{ kind: 'operation', action: { ...action('http-checkout-after-check', current.revision), contextRef: current.contextRef, kind: 'checkout.prepare' as const, input: { offerRef: 'server-offer', offerVersionRef: 'server-offer:v1', verifiedOfferRef: capability.verifiedOfferRef } } }]
+        return [{ kind: 'operation', action: { ...action('http-checkout-after-check', current.revision), contextRef: current.contextRef, kind: 'checkout.prepare' as const, input: { offerRef: 'server-offer', offerVersionRef: 'server-offer:v1', verifiedOfferRef: capability.verifiedOfferRef } }, intent: checkoutPreparedIntent }]
       },
       close: async () => { checkoutPlannerCloses += 1 },
     }),
@@ -2032,7 +2124,7 @@ for (const [surface, taskId, allowedActions, hint] of [
 // neither an unsupported operation nor raw planner text becomes durable.
 const serverLogSecretMarker = 'ISSUE_3580_PROVIDER_SDK_SECRET_MUST_NOT_BE_LOGGED'
 for (const [label, plannerFactory, expectedCode] of [
-  ['runtime-unsupported-action', () => ({ next: async () => [{ kind: 'operation' as const, action: { ...action('disallowed-http-action'), kind: 'offers.query' as const, input: { hotelRefs: ['hotel-a'], criteria: {} } } }] }), 'UNSUPPORTED_ACTION'],
+  ['runtime-unsupported-action', () => ({ next: async () => [{ kind: 'operation' as const, action: { ...action('disallowed-http-action'), kind: 'offers.query' as const, input: { hotelRefs: ['hotel-a'], criteria: {} } }, intent: offersLoadedIntent }] }), 'UNSUPPORTED_ACTION'],
   ['planner-surface-unsupported', () => ({ next: async () => { throw new Error('planner_surface_action_unsupported: raw internal detail') } }), 'PLANNER_SURFACE_ACTION_UNSUPPORTED'],
   ['planner-provider-secret', () => ({ next: async () => { throw new Error(`provider SDK response ${serverLogSecretMarker}`) } }), 'PLANNER_FAILED'],
 ] as const) {
@@ -2085,6 +2177,38 @@ for (const [label, plannerFactory, expectedCode] of [
   await errorServer.close(); errorLedger.close(); rmSync(errorRoot, { recursive: true, force: true })
 }
 
+// Error is currently an absorbing task state. Until the public protocol has
+// an idempotent same-task retry command, the emitted contract must not claim
+// that retrying the same task can succeed.
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-terminal-error-retry-'))
+  const ledger = ensureLedger(root)
+  const rt = new BookingCopilotTaskRuntime(ledger, {
+    contextRefFactory: () => 'ctx-terminal-error-retry',
+    now: () => '2026-09-01T10:00:00.000Z',
+  })
+  const errorTurn = {
+    ...turn('task-terminal-error-retry'),
+    workspace: { ...workspace(), contextRef: 'ctx-terminal-error-retry' },
+  }
+  const task = rt.startTask(errorTurn)
+  const events = rt.applyDecisionBatch(task.taskId, 'terminal-error-retry-batch', [{
+    kind: 'error',
+    error: { code: 'PLANNER_PROVIDER_TIMEOUT', message: 'provider detail', retryable: true },
+  }])
+  const errorEvent = events.find((event) => event.kind === 'error')
+  assert.ok(errorEvent?.kind === 'error')
+  assert.equal(errorEvent.error.retryable, false, 'terminal error never advertises an impossible same-task retry')
+  assert.equal(rt.resumeTask(task.taskId)?.phase, 'error', 'normalized error retains absorbing task semantics')
+  assert.deepEqual(
+    rt.applyDecisionBatch(task.taskId, 'terminal-error-retry-batch', [{ kind: 'error', error: { code: 'PLANNER_PROVIDER_TIMEOUT', message: 'different replay input', retryable: true } }]),
+    events,
+    'durable replay preserves the normalized retry contract',
+  )
+  ledger.close()
+  rmSync(root, { recursive: true, force: true })
+}
+
 // Default composition is BFF-bound-turn-only. Browser ingress remains
 // unavailable until the trusted BFF principal/binding seam is supplied.
 const boundOnlyRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-bound-only-'))
@@ -2093,7 +2217,7 @@ const boundOnlyRuntime = new BookingCopilotTaskRuntime(boundOnlyLedger)
 const boundOnlyServer = await startBookingCopilotServer({ apiKey: 'bound-only-key', runtime: boundOnlyRuntime, plannerFactory: () => ({ next: async () => [] }) })
 const boundOnlyHealth = await fetch(`http://127.0.0.1:${boundOnlyServer.port}/healthz`, { headers: { authorization: 'Bearer bound-only-key' } })
 assert.equal(boundOnlyHealth.status, 200)
-assert.deepEqual(await boundOnlyHealth.json(), { schemaVersion: 'booking.surface', schemaSha256: BOOKING_SURFACE_SCHEMA_SHA256, status: 'ready', ingressMode: 'bff-bound-turn-only', acceptedTurnKinds: ['user.turn', 'action.receipt.continuation'] }, 'bound-turn-only health reports the closed turn-kind set')
+assert.deepEqual(await boundOnlyHealth.json(), { schemaVersion: 'booking.surface', schemaSha256: BOOKING_SURFACE_SCHEMA_SHA256, status: 'ready', ingressMode: 'bff-bound-turn-only', acceptedTurnKinds: ['user.turn', 'action.receipt.continuation'], features: [...BOOKING_SURFACE_FEATURES] }, 'bound-turn-only health reports the closed turn-kind set and additive features')
 await boundOnlyServer.close()
 boundOnlyLedger.close(); rmSync(boundOnlyRoot, { recursive: true, force: true })
 const ingressBindingRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-ingress-binding-'))
@@ -2103,13 +2227,31 @@ const ingressBindingServer = await startBookingCopilotServer({
   apiKey: 'ingress-binding-key',
   runtime: ingressBindingRuntime,
   principal: { subject: 'bff-ingress-binding', scope: 'booking:read' },
-  ingressBinding: { bind: () => ({ taskId: 'task-ingress-binding', turnId: 'turn-ingress-binding', contextRef: 'ctx-ingress-binding', surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS] }) },
+  ingressBinding: { bind: (input) => ({ taskId: `task-${input.requestKey}`, turnId: `turn-${input.requestKey}`, contextRef: `ctx-${input.requestKey}`, surface: 'tenant', allowedActions: [...BOOKING_FULL_JOURNEY_ACTION_KINDS], observableOrders: [{ orderRef: 'order-bound-1', factRefs: ['order:state:bound-1'] }] }) },
   ingressMode: 'bff-ingress-binding',
-  plannerFactory: () => ({ next: async () => [] }),
+  plannerFactory: () => ({ next: async ({ task: current }) => {
+    const order = current.workspaceSnapshot?.observableOrders?.[0]
+    if (!order) return []
+    return [{ kind: 'operation' as const, intent: { schemaVersion: 'booking.intent.v1' as const, target: 'order.observed' as const }, action: { ...action('server-order-observe', current.revision), kind: 'order.observe' as const, contextRef: current.contextRef, factRefs: [...order.factRefs], input: { orderRef: order.orderRef } } }]
+  } }),
 })
 const ingressBindingHealth = await fetch(`http://127.0.0.1:${ingressBindingServer.port}/healthz`, { headers: { authorization: 'Bearer ingress-binding-key' } })
 assert.equal(ingressBindingHealth.status, 200)
-assert.deepEqual(await ingressBindingHealth.json(), { schemaVersion: 'booking.surface', schemaSha256: BOOKING_SURFACE_SCHEMA_SHA256, status: 'ready', ingressMode: 'bff-ingress-binding', acceptedTurnKinds: ['user.turn', 'action.receipt.continuation', 'user.turn.ingress'] }, 'ingress-binding health reports the complete trusted ingress mode')
+assert.deepEqual(await ingressBindingHealth.json(), { schemaVersion: 'booking.surface', schemaSha256: BOOKING_SURFACE_SCHEMA_SHA256, status: 'ready', ingressMode: 'bff-ingress-binding', acceptedTurnKinds: ['user.turn', 'action.receipt.continuation', 'user.turn.ingress'], features: [...BOOKING_SURFACE_FEATURES] }, 'ingress-binding health reports the complete trusted ingress mode and additive features')
+const boundOrderIngress = { ...ingress, requestKey: 'ingress-bound-order-1', taskHandle: undefined }
+const unnegotiatedOrderResponse = await fetch(`http://127.0.0.1:${ingressBindingServer.port}/a2a/booking-copilot/turn`, { method: 'POST', headers: { ...headers, authorization: 'Bearer ingress-binding-key' }, body: JSON.stringify({ ...boundOrderIngress, requestKey: 'ingress-unnegotiated-order-1' }) })
+assert.equal(unnegotiatedOrderResponse.status, 200, 'an old same-line base matrix remains usable when the optional feature is absent')
+const unnegotiatedOrderBody = await unnegotiatedOrderResponse.text()
+assert.doesNotMatch(unnegotiatedOrderBody, /order\.observe|order-bound-1|order:state:bound-1/, 'missing fleet feature evidence strips both optional action and trusted projection')
+const boundOrderResponse = await fetch(`http://127.0.0.1:${ingressBindingServer.port}/a2a/booking-copilot/turn`, { method: 'POST', headers: { ...headers, authorization: 'Bearer ingress-binding-key', 'x-booking-surface-features': 'trusted-order-observation-v1' }, body: JSON.stringify(boundOrderIngress) })
+const boundOrderBody = await boundOrderResponse.text()
+assert.equal(boundOrderResponse.status, 200, `BFF binding can inject an observable order into a fresh ingress task: ${boundOrderBody}`)
+assert.match(boundOrderBody, /event: operation/)
+assert.match(boundOrderBody, /order-bound-1/)
+assert.match(boundOrderBody, /order:state:bound-1/)
+const forgedIngressOrder = { ...ingress, requestKey: 'ingress-forged-order-1', workspace: { ...ingress.workspace, observableOrders: [{ orderRef: 'order-browser-forged', factRefs: [] }] } }
+const forgedIngressOrderResponse = await fetch(`http://127.0.0.1:${ingressBindingServer.port}/a2a/booking-copilot/turn`, { method: 'POST', headers: { ...headers, authorization: 'Bearer ingress-binding-key' }, body: JSON.stringify(forgedIngressOrder) })
+assert.equal(forgedIngressOrderResponse.status, 400, 'browser ingress cannot smuggle observable order authority')
 await ingressBindingServer.close()
 ingressBindingLedger.close()
 rmSync(ingressBindingRoot, { recursive: true, force: true })

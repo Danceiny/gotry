@@ -8,10 +8,22 @@ import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
-const builder = join(root, 'scripts/build-booking-copilot-release.mjs')
+const releaseFlavor = process.env.GOTRY_RELEASE_FLAVOR || 'booking-copilot'
+assert.ok(['booking-copilot', 'backend'].includes(releaseFlavor), `unsupported GOTRY_RELEASE_FLAVOR: ${releaseFlavor}`)
+const isBackendRelease = releaseFlavor === 'backend'
+const builderRelative = isBackendRelease
+  ? 'scripts/build-gotry-backend-release.mjs'
+  : 'scripts/build-booking-copilot-release.mjs'
+const builder = join(root, builderRelative)
+const releaseBin = isBackendRelease ? 'bin/gotry-backend.js' : 'bin/gotry-booking-copilot.js'
+const provenanceVersion = isBackendRelease
+  ? 'gotry.backend.release-provenance.v1'
+  : 'gotry.booking-copilot.release-provenance.v1'
 const SCHEMA_SHA256 = createHash('sha256').update(readFileSync(join(root, 'schemas/booking.surface.schema.json'))).digest('hex')
-const contract = process.env.BOOKING_COPILOT_RELEASE_CONTRACT
+const INTENT_SCHEMA_SHA256 = createHash('sha256').update(readFileSync(join(root, 'schemas/booking.intent.schema.json'))).digest('hex')
+const contract = !isBackendRelease && (process.env.BOOKING_COPILOT_RELEASE_CONTRACT
   || (process.env.HOTEL_BE_ROOT ? join(process.env.HOTEL_BE_ROOT, 'build/deploy/gotry-booking-copilot/release-contract.sh') : '')
+)
 for (const name of ['EXPECTED_GOTRY_ARTIFACT_ID', 'EXPECTED_GOTRY_RELEASE_TUPLE', 'EXPECTED_NODE_VERSION', 'EXPECTED_NPM_VERSION']) {
   assert.ok(process.env[name], `${name} is required`)
 }
@@ -44,7 +56,7 @@ const npmProbe = spawnSync('npm', ['--version'], { encoding: 'utf8', env: baseEn
 assert.equal(npmProbe.status, 0, npmProbe.stderr)
 const npmVersion = npmProbe.stdout.trim()
 assert.equal(npmVersion, process.env.EXPECTED_NPM_VERSION)
-const committedBuilder = spawnSync('git', [...gitArgs, 'show', `${artifactId}:scripts/build-booking-copilot-release.mjs`], { cwd: root, env: baseEnv })
+const committedBuilder = spawnSync('git', [...gitArgs, 'show', `${artifactId}:${builderRelative}`], { cwd: root, env: baseEnv })
 assert.equal(committedBuilder.status, 0, 'builder must exist in HEAD before release execution')
 assert.deepEqual(readFileSync(builder), committedBuilder.stdout, 'executing builder must equal the committed HEAD builder')
 assert.doesNotMatch(readFileSync(builder, 'utf8'), /--legacy-peer-deps(?:['\"]|=true['\"])/, 'release install must not bypass peer closure')
@@ -90,7 +102,7 @@ try {
   assert.equal(readFileSync(join(output, 'ARTIFACT_ID'), 'utf8').trim(), process.env.EXPECTED_GOTRY_ARTIFACT_ID)
   const provenance = JSON.parse(readFileSync(join(output, 'BUILD_PROVENANCE.json'), 'utf8'))
   assert.deepEqual(provenance, {
-    schemaVersion: 'gotry.booking-copilot.release-provenance.v1',
+    schemaVersion: provenanceVersion,
     bookingSurfaceSchemaVersion: 'booking.surface',
     artifactId: process.env.EXPECTED_GOTRY_ARTIFACT_ID,
     platform: 'linux',
@@ -112,9 +124,14 @@ try {
     createHash('sha256').update(readFileSync(join(output, 'schemas/booking.surface.schema.json'))).digest('hex'),
     SCHEMA_SHA256,
   )
+  assert.equal(
+    createHash('sha256').update(readFileSync(join(output, 'schemas/booking.intent.schema.json'))).digest('hex'),
+    INTENT_SCHEMA_SHA256,
+  )
   const manifestText = readFileSync(join(output, 'MANIFEST.sha256'), 'utf8')
   assert.doesNotMatch(manifestText, /\.worktree\.env|\.env(?:\.|$)|(?:^|\/)secrets?(?:[._/-]|$)/i)
   const runtimePackage = JSON.parse(readFileSync(join(output, 'package.json'), 'utf8'))
+  assert.equal(runtimePackage.bin?.[isBackendRelease ? 'gotry-backend' : 'gotry-booking-copilot'], releaseBin)
   assert.equal(runtimePackage.devDependencies, undefined, 'release package must not carry build-only dependencies')
   assert.equal(runtimePackage.dependencies?.typescript, undefined, 'TypeScript must not become a release runtime dependency')
   assert.equal(existsSync(join(output, 'node_modules', 'typescript')), false, 'release node_modules must omit TypeScript')
@@ -131,7 +148,7 @@ try {
   assert.doesNotMatch(distText, /sourceURL=(?:file:\/\/)?\/(?:Users|private|var|tmp)\//i, 'dist must not contain an absolute sourceURL')
   assert.equal(distText.includes(root), false, 'dist must not contain an absolute build root')
   const stateRoot = temp()
-  const child = spawn(node24, [join(output, 'bin/gotry-booking-copilot.js')], {
+  const child = spawn(node24, [join(output, releaseBin)], {
     cwd: output,
     env: {
       ...baseEnv,
@@ -141,6 +158,13 @@ try {
       GOTRY_BOOKING_COPILOT_STATE_ROOT: stateRoot,
       GOTRY_BOOKING_COPILOT_HOST: '127.0.0.1',
       GOTRY_BOOKING_COPILOT_PORT: '0',
+      ...(isBackendRelease ? {
+        GOTRY_BACKEND_HOST: '127.0.0.1',
+        GOTRY_BACKEND_PORT: '0',
+        GOTRY_BACKEND_SESSION_API_KEY: 'fixture-session-key',
+        GOTRY_BACKEND_BOOKING_API_KEY: 'fixture-booking-key',
+        GOTRY_BACKEND_EVIDENCE_DIR: join(stateRoot, 'booking-evidence'),
+      } : {}),
     },
   })
   const exit = new Promise((resolve) => child.once('exit', (code, signal) => resolve(code ?? signal)))
@@ -149,7 +173,9 @@ try {
   const deadline = Date.now() + 30000
   let port = 0
   while (Date.now() < deadline && !port && child.exitCode === null) {
-    const match = stderr.match(/listening on http:\/\/127\.0\.0\.1:(\d+)\/a2a\/booking-copilot\/turn/)
+    const match = stderr.match(isBackendRelease
+      ? /\[gotry-backend\] listening on http:\/\/127\.0\.0\.1:(\d+); modules=booking-copilot,session-search,booking-executor/
+      : /listening on http:\/\/127\.0\.0\.1:(\d+)\/a2a\/booking-copilot\/turn/)
     if (match) port = Number(match[1]); else await new Promise((resolve) => setTimeout(resolve, 100))
   }
   try {
@@ -161,6 +187,7 @@ try {
     assert.equal(response.status, 200)
     assert.equal(response.headers.get('x-booking-surface-version'), 'booking.surface')
     assert.equal(response.headers.get('x-booking-surface-schema-sha256'), SCHEMA_SHA256)
+    assert.equal(response.headers.get('x-booking-surface-features'), 'trusted-order-observation-v1')
     assert.equal(response.headers.get('x-gotry-artifact-id'), process.env.EXPECTED_GOTRY_ARTIFACT_ID)
     assert.equal(response.headers.get('x-gotry-node-version'), process.env.EXPECTED_NODE_VERSION)
     assert.equal(response.headers.get('x-gotry-node-modules-abi'), process.versions.modules)
@@ -174,6 +201,7 @@ try {
       status: 'ready',
       ingressMode: 'bff-bound-turn-only',
       acceptedTurnKinds: ['user.turn', 'action.receipt.continuation'],
+      features: ['trusted-order-observation-v1'],
     })
     const retiredHeaders = {
       Authorization: 'Bearer fixture-key',
@@ -210,7 +238,6 @@ try {
       error: {
         code: 'booking_surface_schema_mismatch',
         expectedVersion: 'booking.surface',
-        expectedSchemaSha256: SCHEMA_SHA256,
       },
     })
     const releaseLedgerEventCount = () => {
@@ -300,7 +327,7 @@ try {
   assert.equal(finalHeadProbe.status, 0, finalHeadProbe.stderr)
   const finalHead = finalHeadProbe.stdout.trim()
   assert.equal(finalHead, process.env.EXPECTED_GOTRY_ARTIFACT_ID, 'HEAD changed during release proof')
-  console.log(`BOOKING COPILOT RELEASE BUILDER: PASS (${release.artifactId}, ${release.files} files, ${release.bytes} bytes; BE contract ${contract ? 'PASS' : 'SKIP'}; startup/health/SIGTERM PASS)`)
+  console.log(`${isBackendRelease ? 'GOTRY BACKEND' : 'BOOKING COPILOT'} RELEASE BUILDER: PASS (${release.artifactId}, ${release.files} files, ${release.bytes} bytes; BE contract ${contract ? 'PASS' : 'SKIP'}; startup/health/SIGTERM PASS)`)
 } finally {
   for (const path of tempRoots) rmSync(path, { recursive: true, force: true })
 }
