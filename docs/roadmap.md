@@ -14,6 +14,7 @@ Current note: Issue 411 forward fix keeps production session-benchmark cadence a
 
 ### Release Status
 
+- From 2026-09-13, issue #467: the embedded Booking Copilot personaPrefix now reaches the first outgoing DSH model request (`buildDshEmbeddedBookingPatch` targets the registered `system-prompt` row); engineering slice only, real Booking UAT remains #142.
 **Current npm dist-tags (2026-09-11 post-publish): `latest=0.0.1-rc.24`, `rc=0.0.1-rc.24`. Both tags dual-point to rc.24 per the rc.24 release-notes dist-tag plan. This line records the publish-time state; the table below carries the historical pull-back evidence.**
 
 - 2026-08-30 morning: #50 verified that the registry had no rc.16 (a correction to the "already published" claim); **the re-release landed the same day at 13:00Z** (npm time measured `0.0.1-rc.16` = 2026-08-30T13:00:38Z), and the GitHub Release was created at 13:03Z (the #76 fix took effect).
