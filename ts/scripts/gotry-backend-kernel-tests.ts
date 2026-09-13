@@ -67,6 +67,37 @@ async function main(): Promise<void> {
     })
     const hitBody = hit.body as { ok?: boolean; verdict?: string; rates?: Array<{ ratePlanId?: string }> }
     check(hit.status === 200 && hitBody.verdict === 'hit' && hitBody.rates?.[0]?.ratePlanId === 'RP', '注入 fake 检索:结果合同透传')
+
+    // M2b needs-extension:安装入口是该 verdict 唯一的行动项,必须随响应透出——
+    // 逐字段组装时漏掉它,消费方只能退化成"放弃实时价、切回目录价"(hotel-fe#3611)。
+    const STORE_URL = 'https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd'
+    const extModule = startSessionSearchModule({
+      apiKey: () => 'test-key',
+      search: async () => ({
+        ok: false,
+        via: 'session-dida-portal-error',
+        evidence: '[会话:dida-portal-needs-extension@test]',
+        latencyMs: 1,
+        verdict: 'needs-extension',
+        error: 'GoTry Session Bridge 扩展未连接',
+        installUrl: STORE_URL,
+        installAction: 'add-to-chrome' as const,
+      }),
+    })
+    const extHandle = await createBackendServer({ modules: [extModule], port: 0 })
+    try {
+      const ext = await jfetch(`http://127.0.0.1:${extHandle.port}/v1/session/search`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer test-key', 'content-type': 'application/json' },
+        body: '{"supplier":"dida-portal"}',
+      })
+      const extBody = ext.body as { verdict?: string; installUrl?: string; installAction?: string }
+      check(ext.status === 200 && extBody.verdict === 'needs-extension', 'needs-extension verdict 透传')
+      check(extBody.installUrl === STORE_URL, '安装链接随 verdict 透出')
+      check(extBody.installAction === 'add-to-chrome', '安装动作随 verdict 透出')
+    } finally {
+      await closeBackend(extHandle, [extModule]).catch(() => { /* 同上 */ })
+    }
   } finally {
     await closeBackend(handle, [okModule, boomModule, session]).catch(() => { /* 关闭聚合错误不掩测试结论 */ })
   }
