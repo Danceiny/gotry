@@ -629,15 +629,16 @@ const checkoutReceipt = (actionId: string, offerRef: string, offerVersionRef: st
   const capability = verifiedCapability('offer-limit', 'offer-limit:v1', '2026-09-01T10:30:00.000Z')
   const before: BookingWorkspaceSnapshot = { ...workspace(0), visibleHotels: [{ hotelRef: 'hotel-limit', name: 'Limit Hotel', factRefs: [] }], loadedOffers: [loadedOffer('offer-limit', 'hotel-limit')], shortlistedOfferRefs: ['offer-limit'], selectedOfferRef: 'offer-limit' }
   const taskId = 'task-confirmed-at-operation-limit'
-  rt.startTask({ ...turn(taskId), workspace: before })
+  const focusedBefore = { ...before, focusedHotelRef: 'hotel-limit' }
+  rt.startTask({ ...turn(taskId), workspace: focusedBefore })
   for (let ordinal = 1; ordinal < BOOKING_COPILOT_MAX_OPERATIONS; ordinal++) {
-    const operation = rt.issueOperation(taskId, action(`limit-search-${ordinal}`))
-    rt.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId, workspace: before, receipt: { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: operation.action.actionId, contextRef: 'ctx-v2', status: 'applied', revision: 0, observation: { kind: 'search.state', resultCount: 1 }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
+    const operation = rt.issueOperation(taskId, { ...action(`limit-focus-${ordinal}`), kind: 'hotel.focus' as const, input: { hotelRef: 'hotel-limit' } })
+    rt.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId, workspace: focusedBefore, receipt: { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: operation.action.actionId, contextRef: 'ctx-v2', status: 'applied', revision: 0, observation: { kind: 'hotel.focus', hotelRef: 'hotel-limit' }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } })
   }
   const check = rt.issueOperation(taskId, { ...action('limit-check'), kind: 'offer.check' as const, input: { offerRef: 'offer-limit', offerVersionRef: 'offer-limit:v1' } })
   assert.equal(rt.resumeTask(taskId)?.operationCount, BOOKING_COPILOT_MAX_OPERATIONS, 'the successful check is the actual twentieth operation')
   const checkReceipt: ActionReceipt = { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: check.action.actionId, contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offer.availability', offerRef: 'offer-limit', checkedOfferVersionRef: 'offer-limit:v1', currentOfferVersionRef: 'offer-limit:v1', verifiedOfferRef: capability.verifiedOfferRef, available: true, changedFactRefs: [], gapCodes: [] }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } }
-  const terminal = rt.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId, workspace: { ...before, revision: 1, verifiedOffer: capability }, receipt: checkReceipt })
+  const terminal = rt.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId, workspace: { ...focusedBefore, revision: 1, verifiedOffer: capability }, receipt: checkReceipt })
   assert.equal(terminal.availability.terminal?.code, 'availability_confirmed', 'the availability subflow records its conclusive success')
   assert.equal(terminal.phase, 'terminal')
   const limitBatch = rt.readDecisionBatch(taskId, `receipt:${checkReceipt.actionId}:${rt.receiptDigest(checkReceipt)}`)
@@ -706,6 +707,59 @@ const checkoutReceipt = (actionId: string, offerRef: string, offerVersionRef: st
   const partialReceipt: ActionReceipt = { schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'partial-verified-check', contextRef: 'ctx-v2', status: 'applied', revision: 1, observation: { kind: 'offer.availability', offerRef: 'offer-a', checkedOfferVersionRef: 'offer-a:v1', currentOfferVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef, available: true, changedFactRefs: [], gapCodes: ['check_avail_unverified'] }, resultContract: { outcome: 'partial', hardCriteriaMet: false, factRefs: [], gapCodes: ['check_avail_unverified'], blockers: [], relaxationsApplied: [] } }
   assert.throws(() => rt.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: t.taskId, workspace: after, receipt: partialReceipt }), /workspace_mismatch|receipt_verified|availability_receipt|invalid_receipt/, 'partial applied availability cannot publish a checkout-authorizing verified capability')
   assert.throws(() => rt.issueOperation(t.taskId, { ...action('partial-verified-checkout'), kind: 'checkout.prepare' as const, input: { offerRef: 'offer-a', offerVersionRef: 'offer-a:v1', verifiedOfferRef: capability.verifiedOfferRef } }), /receipt_required|verified_offer|offer_version/, 'partial availability cannot authorize a later checkout')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-search-invalidation-'))
+  const ledger = ensureLedger(root)
+  const runtime = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2' })
+  const before = {
+    ...workspace(0),
+    visibleHotels: [{ hotelRef: 'hotel-proof-1', name: 'Proof Hotel', factRefs: ['hotel:proof'] }],
+    loadedOffers: [loadedOffer('offer-proof-1', 'hotel-proof-1')],
+    focusedHotelRef: 'hotel-proof-1',
+    shortlistedOfferRefs: ['offer-proof-1'],
+    selectedOfferRef: 'offer-proof-1',
+  }
+  const task = runtime.startTask({ ...turn('task-search-invalidation'), workspace: before })
+  runtime.issueOperation(task.taskId, action('search-invalidation-run'))
+  const { focusedHotelRef: _focusedHotelRef, selectedOfferRef: _selectedOfferRef, ...withoutSelections } = before
+  const after = { ...withoutSelections, revision: 1, results: { status: 'loading' as const }, loadedOffers: [], shortlistedOfferRefs: [] }
+  runtime.continueWithReceipt({
+    schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: task.taskId, workspace: after,
+    receipt: {
+      schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'search-invalidation-run', contextRef: 'ctx-v2',
+      status: 'applied', revision: 1, observation: { kind: 'search.state' },
+      resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+    },
+  })
+  assert.equal(runtime.resumeTask(task.taskId)?.workspaceSnapshot?.focusedHotelRef, undefined, 'search.run accepts the workspace-owned stale hotel-focus invalidation')
+  ledger.close(); rmSync(root, { recursive: true, force: true })
+}
+{
+  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-illegal-focus-invalidation-'))
+  const ledger = ensureLedger(root)
+  const runtime = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2' })
+  const before = {
+    ...workspace(0),
+    visibleHotels: [{ hotelRef: 'hotel-proof-1', name: 'Proof Hotel', factRefs: ['hotel:proof'] }],
+    focusedHotelRef: 'hotel-proof-1',
+  }
+  const task = runtime.startTask({ ...turn('task-illegal-focus-invalidation'), workspace: before })
+  runtime.issueOperation(task.taskId, {
+    ...action('illegal-focus-invalidation'),
+    kind: 'results.view.patch', input: { patch: { sort: 'price_asc' } },
+  })
+  const { focusedHotelRef: _focusedHotelRef, ...withoutFocus } = before
+  assert.throws(() => runtime.continueWithReceipt({
+    schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: task.taskId,
+    workspace: { ...withoutFocus, revision: 1, results: { status: 'idle', sort: 'price_asc' } },
+    receipt: {
+      schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'illegal-focus-invalidation', contextRef: 'ctx-v2',
+      status: 'applied', revision: 1, observation: { kind: 'results.state', matchedHotelRefs: ['hotel-proof-1'], visibleCount: 1 },
+      resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+    },
+  }), /workspace_mismatch/, 'a non-search action rejects focus invalidation with the typed workspace mismatch')
   ledger.close(); rmSync(root, { recursive: true, force: true })
 }
 const operation = runtime.issueOperation(task.taskId, action('action-v2'))
@@ -1557,19 +1611,19 @@ const legacyTwoBatchFixture = (crossBatchGraft: boolean): { root: string; taskId
   const capability = verifiedCapability(`${taskId}-offer`)
   const initialWorkspace: BookingWorkspaceSnapshot = {
     ...workspace(0), visibleHotels: [{ hotelRef: `${taskId}-hotel`, name: 'Two Batch Hotel', factRefs: [] }],
-    loadedOffers: [loadedOffer(`${taskId}-offer`, `${taskId}-hotel`)], selectedOfferRef: `${taskId}-offer`, verifiedOffer: capability,
+    loadedOffers: [loadedOffer(`${taskId}-offer`, `${taskId}-hotel`)], focusedHotelRef: `${taskId}-hotel`, selectedOfferRef: `${taskId}-offer`, verifiedOffer: capability,
   }
   writer.startTask({ ...turn(taskId), workspace: initialWorkspace })
   const standaloneStatus = writer.emitEvent(taskId, { kind: 'status', status: 'submitted' })
-  const standaloneAction = writer.issueOperation(taskId, action(`${taskId}-standalone-action`))
+  const standaloneAction = writer.issueOperation(taskId, { ...action(`${taskId}-standalone-action`), kind: 'hotel.focus' as const, input: { hotelRef: `${taskId}-hotel` } })
   const standaloneReceipt = writer.withReceiptDigest({
     schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: standaloneAction.action.actionId, contextRef: 'ctx-v2', status: 'applied', revision: 1,
-    observation: { kind: 'search.state', resultCount: 0 }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+    observation: { kind: 'hotel.focus', hotelRef: `${taskId}-hotel` }, resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
   })
   writer.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId, workspace: { ...initialWorkspace, revision: 1 }, receipt: standaloneReceipt })
   const batchWorkspace: BookingWorkspaceSnapshot = {
     ...workspace(1), visibleHotels: [{ hotelRef: `${taskId}-hotel`, name: 'Two Batch Hotel', factRefs: [] }],
-    loadedOffers: [loadedOffer(`${taskId}-offer`, `${taskId}-hotel`)], selectedOfferRef: `${taskId}-offer`, verifiedOffer: capability,
+    loadedOffers: [loadedOffer(`${taskId}-offer`, `${taskId}-hotel`)], focusedHotelRef: `${taskId}-hotel`, selectedOfferRef: `${taskId}-offer`, verifiedOffer: capability,
   }
   writer.startTask({ ...turn(taskId, 1), turnId: `${taskId}-anchor-turn`, workspace: batchWorkspace })
   const normalBatch = writer.applyDecisionBatch(taskId, `${taskId}-normal-batch`, [{ kind: 'explanation', explanation: { text: 'normal completed batch', factRefs: [] } }], true)
