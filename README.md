@@ -156,7 +156,7 @@ Trust is structural, not promised:
 
 ## Project Status and Roadmap
 - From 2026-09-13, the embedded Booking Copilot personaPrefix now reaches the first outgoing DSH model request (#467); engineering slice only, real Booking UAT remains #142.
-- Existing Booking search invalidation (#468): a revision increase clears dependent hotel and offer selections, while an unchanged revision cannot mutate them; missing optional fields remain comparable. The maintained runtime proof covers `search.run` and `search.patch`, including rejection with the pending action preserved. Real Booking UAT remains open under #142.
+- For `search.run` and `search.patch`, the runtime validates the host's post-action workspace: a higher revision requires cleared hotel focus, loaded offers, shortlist, selection, and verification; an unchanged revision permits no content mutation. Missing optional fields compare safely. Maintained regressions cover this boundary; real UAT remains #142.
 
 **v0.0.1-rc.24** on npm (`latest`). Pre-1.0: the core loop works end to end; evaluation is still at deterministic contracts and validators, with no external scores or uplift claims. External W2A events are contract-only and inert; no real sensor bridge or consumer is active yet.
 
