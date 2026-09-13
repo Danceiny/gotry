@@ -184,7 +184,7 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
 - id: persistent-pwsh\n  disabled: true\n\
 - id: str-replace-editor\n  disabled: true\n\
 - id: sessions\n  disabled: true\n\
-- id: agent-spine\n\
+- id: system-prompt\n\
   config:\n\
     includeHarnessIdentity: false\n\
     includeRuntimeContext: false\n\
