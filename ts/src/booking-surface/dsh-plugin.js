@@ -17,13 +17,26 @@ export const inject = ['tools']
 const string = { type: 'string' }
 const boolean = { type: 'boolean' }
 const stringArray = { type: 'array', items: string }
+const plannerSafeRefPattern = '^[A-Za-z0-9][A-Za-z0-9:._-]*$'
+const plannerSafeFactRefPattern = '^(?!modelref:)[A-Za-z0-9][A-Za-z0-9:._-]*$'
 
 function closedObject(properties, required = Object.keys(properties)) {
   return { type: 'object', properties, required, additionalProperties: false }
 }
 
 function actionSchema(kind) {
-  return dshBookingActionSchemaForKind(kind)
+  const schema = dshBookingActionSchemaForKind(kind)
+  return {
+    ...schema,
+    properties: {
+      ...schema.properties,
+      actionId: { ...schema.properties.actionId, pattern: plannerSafeRefPattern },
+      factRefs: {
+        ...schema.properties.factRefs,
+        items: { ...schema.properties.factRefs.items, pattern: plannerSafeFactRefPattern, maxLength: 512 },
+      },
+    },
+  }
 }
 
 const questionDecision = closedObject({

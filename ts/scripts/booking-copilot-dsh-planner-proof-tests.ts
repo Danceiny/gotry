@@ -649,6 +649,72 @@ await assert.rejects(
 )
 await typedCallRejectedThenValid.close()
 
+const unsafeFactRefRejectedThenValid = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          toolCall(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai'] } } }),
+            'call-unsafe-fact-ref',
+          ),
+          toolResult('call-unsafe-fact-ref', true, 'INVALID_ARGS'),
+          ...successfulToolEvents(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-unsafe-ref', factRefs: [] } } }),
+            'call-valid-after-unsafe-ref',
+          ),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+assert.deepEqual(
+  await unsafeFactRefRejectedThenValid.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-unsafe-ref-repair', workspace, request: { text: 'Find hotels' } },
+  }),
+  [{ kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-unsafe-ref', factRefs: [] } }],
+  'a dsh INVALID_ARGS result lets the model repair an unsafe factRef inside the same run',
+)
+await unsafeFactRefRejectedThenValid.close()
+
+const reservedFactRefRejectedThenValid = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: [
+          toolCall(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['modelref:reserved-by-runtime'] } } }),
+            'call-reserved-fact-ref',
+          ),
+          toolResult('call-reserved-fact-ref', true, 'INVALID_ARGS'),
+          ...successfulToolEvents(
+            'booking_search_hotels',
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-reserved-ref', factRefs: [] } } }),
+            'call-valid-after-reserved-ref',
+          ),
+        ],
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  reservedFactRefRejectedThenValid.plannerFactory(task).next({
+    task,
+    turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: 'dsh-reserved-ref-no-repair', workspace, request: { text: 'Find hotels' } },
+  }),
+  /planner_invalid_action:reserved_fact_ref/,
+  'the runtime-owned modelref namespace remains fail-closed even with paired INVALID_ARGS and a later valid call',
+)
+await reservedFactRefRejectedThenValid.close()
+
 const sanitizedRefPort: DshPlannerRunPort = {
   async run() {
     return {

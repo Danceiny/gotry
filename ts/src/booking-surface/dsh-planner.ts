@@ -358,7 +358,10 @@ function assertPlannerSafeRefs(action: Record<string, unknown>): void {
   const factRefs = action.factRefs
   if (Array.isArray(factRefs)) {
     for (const ref of factRefs) {
-      if (typeof ref !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(ref) || ref.startsWith('modelref:') || ref.length > 512) {
+      if (typeof ref === 'string' && ref.startsWith('modelref:')) {
+        throw new Error('planner_invalid_action:reserved_fact_ref')
+      }
+      if (typeof ref !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(ref) || ref.length > 512) {
         throw new Error('planner_invalid_action:unsafe_fact_ref')
       }
     }
@@ -476,8 +479,10 @@ function toolResultObservation(event: unknown, index: number): DshToolResultObse
 
 function isPlannerSafetyError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return /^(planner_forbidden_tool|planner_forbidden_action|planner_capability_action_mismatch|planner_surface_action_unsupported|planner_context_mismatch|planner_approval_ref_forbidden|planner_question_runtime_owned)/.test(message)
-    || message.includes('unsafe_')
+  // Canonical ref syntax is enforced by the model-facing tool schema. It is a
+  // repairable shape error only when the same call has a paired INVALID_ARGS
+  // result; a successful or unpaired unsafe-ref call still fails closed below.
+  return /^(planner_forbidden_tool|planner_forbidden_action|planner_capability_action_mismatch|planner_surface_action_unsupported|planner_context_mismatch|planner_approval_ref_forbidden|planner_question_runtime_owned|planner_invalid_action:reserved_fact_ref)/.test(message)
 }
 
 function isSchemaShapeError(error: unknown): boolean {

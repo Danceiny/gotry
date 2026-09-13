@@ -155,7 +155,7 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 6. **你的数据是你的** —— 状态在 `gotry-state/`；测试用隔离 state root。
 
 ## 状态与路线图
-- 自 2026-09-13 起，内嵌 Booking Copilot personaPrefix 已到达首次外发的 DSH 模型请求（#467）；仅为工程 slice，真实 Booking UAT 仍属 #142。
+- 自 2026-09-13 起，内嵌 Booking Copilot personaPrefix 已到达首次外发的 DSH 模型请求（#467）；#470 将 safe-ref 语法投射到面向模型的 tool schema，支持同 run typed 纠偏并保留 unsafe ref 的 fail-closed；仅为本地工程证明，真实 Booking UAT 仍属 #142。
 - 对 `search.run` 与 `search.patch`，运行时校验宿主的动作后工作区：revision 增加时须清空酒店焦点、已载入报价、候选清单、当前选择和核验信息；revision 不变时内容不能变更。缺失的可选字段可安全比较。回归测试覆盖该边界，真实 UAT 仍由 #142 跟踪。
 
 npm `latest`：**v0.0.1-rc.24**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。外部 W2A 事件仍是合同层、默认 inert；尚无真实 sensor 桥或 consumer 激活。

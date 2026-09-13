@@ -155,7 +155,7 @@ Trust is structural, not promised:
 6. **Your data is yours** — state under `gotry-state/`; tests run on isolated roots.
 
 ## Project Status and Roadmap
-- From 2026-09-13, the embedded Booking Copilot personaPrefix now reaches the first outgoing DSH model request (#467); engineering slice only, real Booking UAT remains #142.
+- From 2026-09-13, the embedded Booking Copilot personaPrefix reaches the first outgoing DSH model request (#467), while #470 projects safe-ref syntax into the model-facing tool schema for same-run typed correction and keeps unsafe refs fail-closed; local engineering proof only, real Booking UAT remains #142.
 - For `search.run` and `search.patch`, the runtime validates the host's post-action workspace: a higher revision requires cleared hotel focus, loaded offers, shortlist, selection, and verification; an unchanged revision permits no content mutation. Missing optional fields compare safely. Maintained regressions cover this boundary; real UAT remains #142.
 
 **v0.0.1-rc.24** on npm (`latest`). Pre-1.0: the core loop works end to end; evaluation is still at deterministic contracts and validators, with no external scores or uplift claims. External W2A events are contract-only and inert; no real sensor bridge or consumer is active yet.
