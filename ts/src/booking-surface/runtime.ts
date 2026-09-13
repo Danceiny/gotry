@@ -729,21 +729,44 @@ function offerSelectPostActionMatches(previous: BookingWorkspaceSnapshot, curren
   return loadedOffersUnchanged(previous, current)
 }
 
+const SEARCH_INVALIDATION_FIELDS = [
+  'results', 'visibleHotels', 'focusedHotelRef', 'loadedOffers',
+  'shortlistedOfferRefs', 'selectedOfferRef', 'verifiedOffer',
+] as const
+
+function searchPostActionMatches(current: BookingWorkspaceSnapshot, action: BookingActionCheckpoint, receipt: ActionReceipt): boolean {
+  if (receipt.revision === action.expectedRevision) return true
+  return current.focusedHotelRef === undefined
+    && current.loadedOffers.length === 0
+    && current.shortlistedOfferRefs.length === 0
+    && current.selectedOfferRef === undefined
+    && current.verifiedOffer === undefined
+}
+
+function workspaceFieldDigest(value: unknown): string {
+  // Hash an envelope so an absent optional field remains comparable instead
+  // of passing undefined to crypto.Hash.update(). Null stays distinguishable.
+  return bookingDigest({ value })
+}
+
 function workspacePostActionMatches(previous: BookingWorkspaceSnapshot, current: BookingWorkspaceSnapshot, action: BookingActionCheckpoint, receipt: ActionReceipt): boolean {
   if (!workspaceBoundaryMatches(previous, current)) return false
+  const searchAction = action.kind === 'search.patch' || action.kind === 'search.run'
+  const searchMutation = searchAction && receipt.revision > action.expectedRevision
+  if (searchAction && !searchPostActionMatches(current, action, receipt)) return false
   const mutable: Partial<Record<BookingReadActionKind, string[]>> = {
-    'search.patch': ['searchDraft'], 'search.run': ['results', 'visibleHotels'], 'results.view.patch': ['results'],
+    'search.patch': ['searchDraft', ...SEARCH_INVALIDATION_FIELDS], 'search.run': [...SEARCH_INVALIDATION_FIELDS], 'results.view.patch': ['results'],
     'hotel.focus': ['focusedHotelRef'], 'hotel.select': ['focusedHotelRef'],
     'offers.query': ['loadedOffers'], 'offers.view.patch': ['loadedOffers'],
     'offer.select': ['selectedOfferRef'], 'offer.check': ['selectedOfferRef', 'shortlistedOfferRefs', 'verifiedOffer', 'loadedOffers'],
   }
   if (action.kind === 'offer.select' && !offerSelectPostActionMatches(previous, current, { kind: 'offer.select', input: { offerRef: action.input.offerRef, offerVersionRef: action.input.offerVersionRef } }, receipt)) return false
   if (action.kind === 'offer.check' && !offerCheckPostActionMatches(previous, current, { kind: 'offer.check', input: { offerRef: action.input.offerRef, offerVersionRef: action.input.offerVersionRef } }, receipt)) return false
-  const allowed = new Set(['revision', ...(mutable[action.kind] ?? [])])
+  const allowed = new Set(['revision', ...(searchAction && !searchMutation ? [] : (mutable[action.kind] ?? []))])
   const keys = new Set([...Object.keys(previous), ...Object.keys(current)])
   for (const key of keys) {
     if (allowed.has(key)) continue
-    if (bookingDigest((previous as unknown as Record<string, unknown>)[key]) !== bookingDigest((current as unknown as Record<string, unknown>)[key])) return false
+    if (workspaceFieldDigest((previous as unknown as Record<string, unknown>)[key]) !== workspaceFieldDigest((current as unknown as Record<string, unknown>)[key])) return false
   }
   return true
 }
