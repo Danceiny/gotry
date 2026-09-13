@@ -250,11 +250,15 @@ interface ResolvedRealRunPortConfig {
   childEnv: Record<string, string>
   provider: string
   model: string
+  /** Where the model came from: an explicit option, the operator env, or the known default route. */
+  modelSource: 'option' | 'env' | 'default'
   reasoningEffort?: DshEmbeddedBookingPlannerOptions['reasoningEffort']
   maxTokens: number
 }
 
-function resolveRealRunPortConfig(options: DshEmbeddedBookingPlannerOptions): ResolvedRealRunPortConfig {
+// Exported for the proof tests: this is the one place where a missing
+// DEEPSEEK_MODEL could otherwise be absorbed silently.
+export function resolveRealRunPortConfig(options: DshEmbeddedBookingPlannerOptions): ResolvedRealRunPortConfig {
   const sourceEnv = options.env ?? process.env
   const childEnv = buildDshPlannerEnvironment(sourceEnv)
   if (!childEnv.DEEPSEEK_API_KEY) throw new Error('booking_planner_model_key_required')
@@ -264,6 +268,7 @@ function resolveRealRunPortConfig(options: DshEmbeddedBookingPlannerOptions): Re
     throw new Error('booking_planner_model_required_for_nondefault_provider')
   }
   const model = configuredModel ?? 'deepseek-v4-flash'
+  const modelSource = options.model ? 'option' : childEnv.DEEPSEEK_MODEL ? 'env' : 'default'
   // Criteria translation is a constrained extraction task. Disable thinking
   // only for the known default route; custom route tuples keep their provider
   // default unless the deploy explicitly selects a supported effort.
@@ -276,11 +281,17 @@ function resolveRealRunPortConfig(options: DshEmbeddedBookingPlannerOptions): Re
   if (!Number.isSafeInteger(maxTokens) || maxTokens < 1) {
     throw new Error('booking_planner_max_tokens_invalid')
   }
-  return { childEnv, provider, model, reasoningEffort, maxTokens }
+  return { childEnv, provider, model, modelSource, reasoningEffort, maxTokens }
 }
 
 async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Promise<DshPlannerRunPort> {
-  const { childEnv, provider, model, reasoningEffort, maxTokens } = resolveRealRunPortConfig(options)
+  const { childEnv, provider, model, modelSource, reasoningEffort, maxTokens } = resolveRealRunPortConfig(options)
+  // Name the resolved route on every real port. A deployment that forgot
+  // DEEPSEEK_MODEL used to be indistinguishable from one that set it, and the
+  // substituted model is exactly what a later diagnosis needs to see.
+  console.info('[booking-copilot] planner route:', JSON.stringify({
+    provider, model, modelSource, reasoningEffort: reasoningEffort ?? null, maxTokens,
+  }))
 
   const scratch = mkdtempSync(join(tmpdir(), 'gotry-booking-dsh-'))
   const dshHome = join(scratch, 'home')

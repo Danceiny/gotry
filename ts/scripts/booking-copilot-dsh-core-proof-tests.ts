@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   createDshEmbeddedBookingPlanner,
+  resolveRealRunPortConfig,
   DSH_EMBEDDED_BOOKING_TOOL_NAMES,
   type DshPlannerTurnMetric,
 } from '../src/booking-surface/dsh-planner.ts'
@@ -248,6 +249,38 @@ function processExists(pid: number): boolean {
 let planner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
 let stalledPlanner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
 const plannerMetrics: DshPlannerTurnMetric[] = []
+
+// Planner route resolution: a deployment that forgot DEEPSEEK_MODEL must not
+// look like one that set it. The known default route is explicit and reported
+// as `default`, an operator-selected model is reported as `env`/`option`, and a
+// non-default provider has to name its model instead of inheriting a vendor one.
+{
+  const baseEnv = { PATH: process.env.PATH, DEEPSEEK_API_KEY: 'fixture-model-key' }
+  const defaultRoute = resolveRealRunPortConfig({ env: baseEnv })
+  assert.equal(defaultRoute.model, 'deepseek-v4-flash', 'missing DEEPSEEK_MODEL resolves to the known default route')
+  assert.equal(defaultRoute.modelSource, 'default', 'the known default route reports modelSource=default')
+  assert.equal(defaultRoute.reasoningEffort, 'off', 'the known default route disables long reasoning')
+  assert.equal(defaultRoute.maxTokens, 4_096, 'the known default route keeps the 4k budget')
+  const envRoute = resolveRealRunPortConfig({ env: { ...baseEnv, DEEPSEEK_MODEL: 'gateway-selected-model', DEEPSEEK_MAX_TOKENS: '16384' } })
+  assert.equal(envRoute.model, 'gateway-selected-model', 'DEEPSEEK_MODEL selects the route')
+  assert.equal(envRoute.modelSource, 'env', 'an operator-selected model reports modelSource=env')
+  assert.equal(envRoute.reasoningEffort, undefined, 'a custom route keeps its provider reasoning default')
+  assert.equal(envRoute.maxTokens, 16_384, 'DEEPSEEK_MAX_TOKENS is honored')
+  const optionRoute = resolveRealRunPortConfig({ env: baseEnv, model: 'option-model' })
+  assert.equal(optionRoute.model, 'option-model', 'an explicit option selects the route')
+  assert.equal(optionRoute.modelSource, 'option', 'an explicit option reports modelSource=option')
+  assert.throws(
+    () => resolveRealRunPortConfig({ env: baseEnv, provider: 'other-provider' }),
+    /booking_planner_model_required_for_nondefault_provider/,
+    'a non-default provider must name its model instead of inheriting one',
+  )
+  assert.throws(
+    () => resolveRealRunPortConfig({ env: { PATH: process.env.PATH } }),
+    /booking_planner_model_key_required/,
+    'a missing planner key still fails closed',
+  )
+}
+
 try {
   planner = await createDshEmbeddedBookingPlanner({
     stateRoot,
