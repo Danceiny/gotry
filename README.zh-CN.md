@@ -71,15 +71,13 @@ flowchart LR
 
 > 交互版：[`docs/assets/gotry-system-architecture.html`](docs/assets/gotry-system-architecture.html)（archify 生成，showcase 校验通过）。分层：L2 dsh 插件 · L3 `ts/src/unified.ts` 内核 · L4 效应解译 + 实时桥 · L5 loopx 治理。ADR：[`docs/architecture.md`](docs/architecture.zh-CN.md)。
 
-工具分组：实时检索（飞猪官方通道 + 你本人登录态 Chrome，只读）· 目录 · 判定引擎 · 记忆 · 产物（列表/阅读 + 行程 HTML 生成）· 事实闸 · 外部检索 · `gotry_doctor` 自检 · **Lavish 本地评审（默认关闭；#443）**——五个 `gotry_lavish_open` / `_poll` / `_reply` / `_end` / `_stop` 工具绑定到 host 提供的 host session id + 绝对 cwd，仅在可信的 `lavishAxiPackageRoot` 指向已安装 `lavish-axi@0.1.67` 包绝对路径时出现（见 [Lavish 配置与生命周期](docs/design/lavish-local.zh-CN.md#9-注册到产品工具面)）。无隐藏派发——通道注册表只返回有序建议列表，由模型或用户选择。逐工具契约：[`docs/tools.md`](docs/tools.zh-CN.md)。
+能力分组：
 
-离线 session benchmark 将挑战／守卫截断标为 fail-closed；只有正常跑完八条查询的批次才是 `batch_complete`，生产节律保持 35 秒。sf-summary CLI 接受符号链接或别名形式的入口路径，并产出与规范路径相同的已校验汇总。
+- **证据优先的检索与路由** —— 实时来源与本人浏览器会话保持只读，并明确来源标签、通道健康建议和 fail-closed 事实边界。见[`docs/tools.md`](docs/tools.zh-CN.md)、[`docs/data-sources.md`](docs/data-sources.zh-CN.md)与[会话数据 RFC](docs/rfc/user-session-data-rfc.zh-CN.md)。
+- **产物与本地复核** —— 行程 Markdown／HTML 产物可列出并作为源码阅读；原生预览与显式选择的 Lavish 反馈保持为独立宿主能力。见[产物与 Lavish 契约](docs/design/lavish-local.zh-CN.md#9-注册到产品工具面)。
+- **外部事件** —— W2A 信封默认有界且 inert；监听器与传感器激活仍属于独立接缝。见[外部事件设计](docs/design/external-event-seam.zh-CN.md)。
 
-外部事件集成仍默认 inert：#432 W2A `w2a/0.1` adapter 只在显式 exact tuple 准入后校验有界序列化核心 envelope，剥离 opaque／自由文本字段，并返回 untrusted metadata。它不注册 listener 或 consumer，不执行网络、进程、健康面、愿望池、账本或预订副作用；真实 sensor 激活仍归 #82。
 
-持久 channel-health 事件现已接入 routing 建议：六个非 hit 工具结果在工具结果边界读取最新持久健康状态，会话 verdict 状态与持久 down 集合取并集排除通道。缺失、不可解析、未来或已过保留期的时间戳行在 latest-wins 覆盖前丢弃，坏行不得顶掉更早的有效 down；只有 `down` 会新增持久排除（`cooldown` 仍是节律态，恢复或过期只是解除该排除），且都不解除本会话刚发生的失败。静态 persona 路由卡不变。
-
-产物发现现覆盖 HTML 行程文件并支持跨页枚举：`gotry_artifacts_list` 以大小写不敏感方式发现工作目录顶层的 `.md`／`.html`／`.htm`，新增 `offset`（零-based 非负整数）与 `search`（字面大小写不敏感子串，匹配 `id`／`title`／filename；trim 后空串 = 不过滤；非正则／非 glob，不搜文件正文），默认页大小 20、上限 50——用户想找回「上次的规划」时可以逐页枚举全部合格产物并按名字直接定位。模型走收集 → canonical-path 去重 → 搜索过滤 → 确定性全局排序（`updated` DESC + `(source, id, canonical path)` 词典序 tie-break）→ 分页切片的统一路径；移除了此前各源提前 `slice(0, limit)` 的早裁逻辑，避免旧 cwd 产物被单源上限静默丢弃。`total` 反映过滤后集合的真实长度，`nextOffset` 仅当存在下一页时出现，越界 `offset` 返回空页 + 已知 `total` + `truncated:false` + 无 `nextOffset`。`gotry_artifacts_read` 继续把 `.html`／`.htm` 作为源码文本返回——`lang: html`、原始行号、全文指纹与分页，走同一组路径／大小护栏。读卡是源码视图：不解析标记、不运行脚本或内联事件处理器、不发起任何抓取，Web 客户端在 HTML 源码标题下以纯 React 文本渲染这些行。主动打开列表中的 HTML 条目是另一个动作，客户端标注为 `Open HTML preview`（可见徽标 + 「页面脚本可能运行」提示），因为它把文件交给宿主原生 HTML 预览——那是宿主行为，不是本工具行为。已注册的 Lavish 浏览器反馈链由 #443 CLOSED + PR #456 merged acceptance 覆盖交互式编辑反馈；原生 HTML preview 实证在 #448 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`（可复跑：`GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`）。
 
 ## 一段对话
 
@@ -88,7 +86,7 @@ https://github.com/user-attachments/assets/6d537bb7-7992-4cc7-8e89-6f111ef6793b
 *说明性 animation-harness 对精简对话的录制——不是 `gotry web` 产品 UI 的真实 E2E（源文件：[SVG](docs/assets/demo.zh-CN.svg) · [webm](docs/assets/demo.zh-CN.webm)）：*
 
 ```
-> 我想去洱海边发呆两三天,上海出发,预算 3000,年假别让我办公。
+> 我想去洱海边发呆两三天，上海出发，预算 3000，年假别让我办公。
 
 GoTry: 收到。先把约束记下来——
   • 窗口: 2 天  • 出发: 上海  • 预算: ¥3000 全含
@@ -109,7 +107,7 @@ GoTry: 收到。先把约束记下来——
 
 ## 同题横评
 
-同一段真实的跨国 workation prompt（埋了考点：不给年份、模糊指代「万xx」、用户已自行消解的歧义）逐字投喂各家主流 AI，回答逐字存档、对照地面真值打分（[`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/README.md)）。
+同一段真实的跨国 workation prompt（埋了考点：不给年份、模糊指代「万xx」、用户已自行消解的歧义）逐字投喂各家主流 AI，回答逐字存档、对照地面真值打分（[`docs/evaluation/persona-bench/`](docs/evaluation/persona-bench/README.zh-CN.md)）。
 
 | 维度 | 通用助手（Kimi，真实 13 轮） | OTA Agent（飞猪开放平台，单轮） | GoTry 契约 |
 |---|---|---|---|
@@ -122,7 +120,7 @@ GoTry: 收到。先把约束记下来——
 
 > **证据边界：**这是定性比较，不是分数表。Kimi/飞猪两列来自存档 transcript（13 轮 vs 单轮）；GoTry 一列是仓库行为契约。不主张排名或提升。
 
-单条最有价值的发现：两家互不相关的产品，星期全落在 2025 年历上——日历锚定必须是产品机制，不是模型运气（[复盘全文](docs/research/kimi-postmortem.md)）。
+单条最有价值的发现：两家互不相关的产品，星期全落在 2025 年历上——日历锚定必须是产品机制，不是模型运气（[复盘全文](docs/research/kimi-postmortem.zh-CN.md)）。
 
 ## 快速开始
 
@@ -149,20 +147,28 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 
 1. **模型只翻译，代码才判决** —— LLM 不产出可行性判决与算术。
 2. **每个数字带来源标签** —— 渲染层附加，降级如实更换。
-3. **不存在写路径** —— 预订/支付类工具必须先过 WriteGate。
+3. **不存在已激活的供应商预订／支付写路径** —— 机制存在但尚未激活；此类工具必须先过 WriteGate。
 4. **回溯不到就是 blocked** —— 无法回溯到 exact-date 工具结果的 claim 绝不交付为「已验证」；锚点带指纹。
 5. **价格 fail-closed** —— 未知模型不猜价；价表只经 PR 变更。
 6. **你的数据是你的** —— 状态在 `gotry-state/`；测试用隔离 state root。
 
 ## 状态与路线图
-- 自 2026-09-13 起，内嵌 Booking Copilot personaPrefix 已到达首次外发的 DSH 模型请求（#467）；#470 将 safe-ref 语法投射到面向模型的 tool schema，支持同 run typed 纠偏并保留 unsafe ref 的 fail-closed；仅为本地工程证明，真实 Booking UAT 仍属 #142。
-- 对 `search.run` 与 `search.patch`，运行时校验宿主的动作后工作区：revision 增加时须清空酒店焦点、已载入报价、候选清单、当前选择和核验信息；revision 不变时内容不能变更。缺失的可选字段可安全比较。回归测试覆盖该边界，真实 UAT 仍由 #142 跟踪。
+当前边界：确定性规划与有证据边界的只读能力已经可用；预订与真实用户验收仍不属于当前交付声明。见[架构权威文档](docs/architecture.zh-CN.md)与[路线图](docs/roadmap.zh-CN.md)。
 
 npm `latest`：**v0.0.1-rc.24**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。外部 W2A 事件仍是合同层、默认 inert；尚无真实 sensor 桥或 consumer 激活。
 
-**今天可用** —— 访谈 → 确定性可行性判决 → 带门到门真成本的行程 · 实时检索（飞猪 + 你本人登录态 Chrome，只读），事实 typed 且调用绑定 · 记忆（动机 / 愿望池 / 同行人 / 时间线）落租户作用域账本 · 本地行程 HTML 文档生成（`gotry_itinerary_render`：事实只从会话事实注册表取，在会话工作目录新建一个文件、永不覆盖；原生 HTML preview 实证在 #448 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`） · 自检 doctor，批准后范围修复。
+**今天可用**
 
-**还没有** —— 今天没有可下单路径；预订只随 WriteGate 用户确认设计启封 · 实时可订证据仍部分覆盖 · 真实用户 cohort 未到退出口径 · 英文仅覆盖求解输出层。
+- 访谈、确定性可行性判决，以及带门到门真成本的行程。
+- 只读实时检索，事实 typed、与调用绑定，并明确标注来源。
+- tenant-scoped 记忆，覆盖动机、愿望、同行人、时间线与 durable 工单。
+- 从注册的会话事实生成不覆盖的行程 HTML，并提供有范围的自检和经批准的修复路径。
+
+**还没有**
+
+- 当前没有供应商预订或支付路径；未来写入仍受 WriteGate 与可信用户确认约束。
+- 实时可订证据仍部分覆盖，真实用户 cohort 尚未达到退出口径。
+- 英文仍只覆盖求解输出层。
 
 ```mermaid
 timeline
@@ -182,7 +188,7 @@ timeline
 
 从最新 `main` 切 `feat/ · fix/ · docs/ · chore/` 分支，typecheck + 全栈回归全绿后开 PR。**测试红着不许合。** 指南：[CONTRIBUTING.md](CONTRIBUTING.zh-CN.md)。
 
-AI agent：[`AGENTS.md`](AGENTS.zh-CN.md) 是绑定契约——入场先清扫异步工单 · 算术只在 evaluate 层、求解只在 `unified.*` · 绝不写共享状态（`ts/dsh-runtime/gotry-state/`）· 同提交同步 `architecture.md` §11 六状态面 · 只暂存具名文件，禁止 `git add -A`。
+AI agent：[`AGENTS.md`](AGENTS.zh-CN.md) 是绑定契约——入场先清扫异步工单 · 算术只在 evaluate 层、求解只在 `unified.*` · 绝不写共享状态（`ts/dsh-runtime/gotry-state/`）· 只更新 `architecture.md` §11 定义的受影响文档权威 · 只暂存具名文件，禁止 `git add -A`。
 
 ## 文档
 

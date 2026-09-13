@@ -3,7 +3,7 @@
 # GoTry
 
 > **Body and soul — more travel, less tourism.**
-> *身体和灵魂,更多旅行,更少旅游。*
+> *身体和灵魂，更多旅行，更少旅游。*
 
 GoTry is an AI travel agent for **"departure to next departure."** You say where you want to go and why; it asks what needs asking, then lets code — not the model — make the call: can you go, how, and at what true cost. Every number comes with a source; nothing is hallucinated.
 
@@ -71,15 +71,11 @@ Architecture — the sync path from chat through the kernel to the fact gate, pl
 
 > Interactive version: [`docs/assets/gotry-system-architecture.en.html`](docs/assets/gotry-system-architecture.en.html) (archify, showcase-validated). Layers: L2 dsh plugin · L3 `ts/src/unified.ts` kernel · L4 effect interpreter + realtime bridges · L5 loopx governance. ADRs: [`docs/architecture.md`](docs/architecture.md).
 
-Tool groups: realtime retrieval (Fliggy official channel + your own Chrome session, read-only) · catalog · decision engine · memory · artifacts (list/read + itinerary HTML generation) · fact gate · external search · `gotry_doctor` self-check · **Lavish local review (default-off; #443)** — five `gotry_lavish_open` / `_poll` / `_reply` / `_end` / `_stop` tools bound to the host session id + absolute cwd that the host supplies, only present when the trusted `lavishAxiPackageRoot` is set to the absolute path of an installed `lavish-axi@0.1.67` package (see [Lavish configuration and lifecycle](docs/design/lavish-local.md#9-registration-into-the-product-tool-surface)). No hidden dispatch — a channel registry returns an ordered suggestion list; the model or user chooses. Per-tool contracts: [`docs/tools.md`](docs/tools.md).
+Capability groups:
 
-The offline session benchmark marks challenge/guard truncation fail-closed; only a normally completed eight-query batch is `batch_complete`, and production cadence remains 35 seconds. The sf-summary CLI accepts symlinked or aliased entrypoint paths and produces the same validated summary as the canonical path.
-
-External-event integration is still inert by default: the #432 W2A `w2a/0.1` adapter only validates bounded serialized core envelopes behind explicit exact tuple admission, strips opaque/free-text fields, and returns untrusted metadata. It registers no listener or consumer and performs no network, process, health, wish-pool, ledger, or booking side effect; actual sensor activation remains #82.
-
-Persisted channel-health events also drive routing advice: the six non-hit tool results read the latest persisted health state at the tool-result boundary and exclude a channel named by either the in-session verdict state or the persisted down set. Rows with missing, unparseable, future, or retention-expired timestamps are dropped before latest-wins, so a bad row cannot hide an earlier valid down; only `down` adds a persisted exclusion (`cooldown` stays a pacing state, and recovery or expiry only ceases the exclusion), and none of it clears an in-session failure. The static persona routing card is unchanged.
-
-Artifact discovery now covers HTML itinerary files and pages across the full list: `gotry_artifacts_list` finds top-level `.md` / `.html` / `.htm` in the working directory case-insensitively, with `offset` (zero-based nonnegative integer) and `search` (literal case-insensitive substring over `id`/`title`/filename; trim then empty = no filter; no regex/glob, body content never searched) on top of the default page size of 20 (cap 50) so a real user looking for last week's plan can enumerate every eligible artifact and find an older one by name — the model is collect → canonical-path dedupe → search filter → deterministic global sort (`updated` DESC + `(source, id, canonical path)` codepoint tie-break) → page slice, with the previous per-source `slice(0, limit)` early-trim removed so older cwd artifacts stay reachable across pages. `total` reflects the post-filter set; `nextOffset` is present only when more pages exist; an `offset` past the end returns an empty page with the known total + `truncated:false` + no `nextOffset`. `gotry_artifacts_read` keeps returning `.html` / `.htm` as source text — `lang: html`, original line numbers, full-content fingerprint and paging, under the same path/size guards. The read card is a source view: it does not parse markup, runs no script or inline event handler and fetches nothing, and the web client renders these lines as plain React text under an HTML-source header. Opening a listed HTML entry is a separate action that the client labels `Open HTML preview` (visible badge plus a note that the page's scripts may run), because it hands the file to the host's native HTML preview — that rendering is the host's behaviour, not this tool's. The registered Lavish browser feedback chain (#443 CLOSED + PR #456 merged acceptance) covers interactive editing feedback; native HTML preview proof is accepted on #448 and its persistent regression lives in `ts/scripts/dsh-artifact-web-e2e.ts` (re-runnable: `GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`).
+- **Evidence-first retrieval and routing** — realtime sources and your own browser session remain read-only, with source tags, channel-health advice, and fail-closed fact boundaries. See [`docs/tools.md`](docs/tools.md), [`docs/data-sources.md`](docs/data-sources.md), and the [session data RFC](docs/rfc/user-session-data-rfc.md).
+- **Artifacts and local review** — itinerary Markdown/HTML artifacts can be listed and read as source text; native preview and opt-in Lavish feedback remain separate host capabilities. See [artifact and Lavish contracts](docs/design/lavish-local.md#9-registration-into-the-product-tool-surface).
+- **External events** — the W2A envelope is bounded and inert by default; listeners and sensor activation remain a separate seam. See [external-event design](docs/design/external-event-seam.md).
 
 ## Demo
 
@@ -149,20 +145,28 @@ Trust is structural, not promised:
 
 1. **The model translates; code decides** — no LLM feasibility verdicts or arithmetic.
 2. **Every number carries a source tag** — attached by the render layer, switched honestly on degradation.
-3. **No write path exists** — booking/payment tools must pass WriteGate before they ship.
+3. **No active supplier booking/payment write path exists** — the mechanism exists but is not activated; such tools must pass WriteGate before they ship.
 4. **Unverifiable means blocked** — the fact gate never lets an untraceable claim ship as "verified"; anchors are fingerprinted.
 5. **Prices fail closed** — unknown model, no guessed price; the price table changes only by PR.
 6. **Your data is yours** — state under `gotry-state/`; tests run on isolated roots.
 
 ## Project Status and Roadmap
-- From 2026-09-13, the embedded Booking Copilot personaPrefix reaches the first outgoing DSH model request (#467), while #470 projects safe-ref syntax into the model-facing tool schema for same-run typed correction and keeps unsafe refs fail-closed; local engineering proof only, real Booking UAT remains #142.
-- For `search.run` and `search.patch`, the runtime validates the host's post-action workspace: a higher revision requires cleared hotel focus, loaded offers, shortlist, selection, and verification; an unchanged revision permits no content mutation. Missing optional fields compare safely. Maintained regressions cover this boundary; real UAT remains #142.
+Current boundary: deterministic planning and evidence-bound read capabilities are available; booking and real-user acceptance remain outside the shipped claim. See the [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).
 
 **v0.0.1-rc.24** on npm (`latest`). Pre-1.0: the core loop works end to end; evaluation is still at deterministic contracts and validators, with no external scores or uplift claims. External W2A events are contract-only and inert; no real sensor bridge or consumer is active yet.
 
-**Working today** — interview → deterministic feasibility verdict → itinerary with door-to-door true cost · realtime retrieval (Fliggy + your own Chrome session, read-only) with typed, invocation-bound facts · memory (motivation, wish pool, companions, timeline) on a tenant-scoped ledger · local itinerary HTML document generation (`gotry_itinerary_render`: facts only from the session fact registry, one new file in the session working directory, never overwritten; native HTML preview proof accepted on #448, persistent regression in `ts/scripts/dsh-artifact-web-e2e.ts`) · self-check doctor with scoped, approved repair.
+**Working today**
 
-**Not yet** — nothing is bookable today; booking ships only behind the WriteGate user-confirmation design · live-availability evidence is still partial · the real-user cohort study has not reached its exit bar · English covers the solver output layer only.
+- Interview, deterministic feasibility verdicts, and itineraries with door-to-door true cost.
+- Read-only realtime retrieval with typed, invocation-bound facts and explicit provenance.
+- Tenant-scoped memory for motivation, wishes, companions, timeline, and durable work.
+- Non-overwriting itinerary HTML generation from registered session facts, plus a scoped self-check and approved repair path.
+
+**Not yet**
+
+- No supplier booking or payment path is active; any future write remains behind WriteGate and trusted user confirmation.
+- Live-availability evidence is partial, and the real-user cohort has not reached its exit bar.
+- English coverage remains limited to the solver output layer.
 
 ```mermaid
 timeline
@@ -182,7 +186,7 @@ Milestone gates: [`docs/roadmap.md`](docs/roadmap.md) · engineering state: [`do
 
 Branch off latest `main` (`feat/ · fix/ · docs/ · chore/`), keep typecheck + full regression green, open a PR. **Red tests never merge.** Guide: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-AI agents: [`AGENTS.md`](AGENTS.md) is the binding contract — sweep async work orders on entry · arithmetic only in the evaluate layer, solving only in `unified.*` · never write shared state (`ts/dsh-runtime/gotry-state/`) · sync the six state faces of `architecture.md` §11 in the same commit · stage named files only, no `git add -A`.
+AI agents: [`AGENTS.md`](AGENTS.md) is the binding contract — sweep async work orders on entry · arithmetic only in the evaluate layer, solving only in `unified.*` · never write shared state (`ts/dsh-runtime/gotry-state/`) · update only the affected documentation authority defined by `architecture.md` §11 · stage named files only, no `git add -A`.
 
 ## Documentation
 
