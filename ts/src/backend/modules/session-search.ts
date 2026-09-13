@@ -133,13 +133,15 @@ async function readBody(req: IncomingMessage, cap = 64 * 1024): Promise<string> 
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
+    let rejected = false
     req.on('data', (c: Buffer) => {
+      if (rejected) return
       size += c.length
-      if (size > cap) { reject(new Error(`body 超 ${cap} 字节上限`)); req.destroy(); return }
+      if (size > cap) { rejected = true; reject(new Error(`body 超 ${cap} 字节上限`)); return }
       chunks.push(c)
     })
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-    req.on('error', reject)
+    req.on('end', () => { if (!rejected) resolve(Buffer.concat(chunks).toString('utf8')) })
+    req.on('error', (e) => { if (!rejected) reject(e) })
   })
 }
 
