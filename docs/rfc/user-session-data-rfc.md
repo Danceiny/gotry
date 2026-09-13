@@ -158,6 +158,16 @@ Dependencies: the transport layer itself has **zero new dependencies** (extensio
 - **`gotry setup wizard`** degrades to **offline health-probe waiting** (pure stdout; detect → wait → exit 0/1), so the user can wait in the terminal for the extension to connect on the first try.
 - **Automatic replay (health-watch retained, a Node-side responsibility)**: on the first `needs-extension`, a bounded background poll (≤120s, `intervalMs=5000`) starts by default; once the extension is in place, **the same query_id is automatically replayed with the same parameters**; `sessionFlightSearch({immediate:true})` is an explicit opt-out.
 
+**HTTP contract: `POST /v1/session/search` (supplier `dida-portal`, M0)**
+
+The HTTP backend that carries the §3.3 verdict to the consuming UI is a separate surface (`gotry-backend` `session-search` module, §3.2). The minimum contract:
+
+- **Route**: `POST /v1/session/search`; JSON body `{ supplier, query: { entryUrl?, timeoutMs? } }`. M0 accepts `supplier='dida-portal'` only; other values return `400`.
+- **Authentication**: `Authorization: Bearer <GOTRY_BACKEND_SESSION_API_KEY>`. A missing/wrong bearer returns `403 { ok:false, error:'forbidden' }`. A missing `GOTRY_BACKEND_SESSION_API_KEY` is **fail-closed**: the server returns `503 { ok:false, error:'GOTRY_BACKEND_SESSION_API_KEY 未配置(fail-closed)' }` and serves no traffic on this route.
+- **`200` body** carries `{ ok, verdict, supplier, evidence, latencyMs, fetchedAt }`; `rates` on hit results; `error` on errored results.
+  - `installUrl` + `installAction` are **present only when the verdict needs an extension install entry** (`needs-extension`); other verdicts may omit these optional fields. The consuming UI renders the install entry from `installUrl` (a clickable link to the Chrome Web Store) with `installAction='add-to-chrome'` — the backend does not initiate installation itself.
+- **`429` with `Retry-After: 30`** is returned when the cadence gate trips (`verdict='cooldown'`). 429 is rate limiting only: it does not promise automatic installation, and it does not promise automatic replay. The ≤120s `retry-after-watch` + same-`query_id` replay described in §3.3 is a **Node-side** behavior; the backend does not replay. In particular, the flight `health-watch` retained in §3.3 is **not** a backend dida automatic replay.
+
 **Dual distribution channels (ADR-21)**: the Chrome platform forbids sideloading non-store CRX; one-click install + auto-update exist only through the store.
 
 - **Channel A (GitHub Releases, landed 2026-08-30)**: `gotry setup --extension-from=github` explicit opt-in (env `GOTRY_EXTENSION_SOURCE` is equivalent; the default bundled preserves offline determinism). Download chain: the trio of stable Release asset names (`gotry-session-bridge.tar.gz`/`-store.zip`/`extension-dist-manifest.json`) → SHA256 → fixed-key pinning (reject the install if the key differs from bundled) → version comparison → atomic swap into `~/.gotry/extension`; any failure explicitly degrades to bundled. `GOTRY_EXTENSION_RELEASE_BASE` can override the base URL (mirrors/testing).
