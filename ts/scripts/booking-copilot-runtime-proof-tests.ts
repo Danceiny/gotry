@@ -14,7 +14,7 @@ import {
   type BookingPlannerDecision,
 } from '../src/booking-surface/runtime.ts'
 import { startBookingCopilotServer } from '../src/booking-surface/server.ts'
-import { BOOKING_COPILOT_MAX_OPERATIONS, BOOKING_FULL_JOURNEY_ACTION_KINDS, BOOKING_READ_ACTION_KINDS, BOOKING_SURFACE_SCHEMA_SHA256, BOOKING_SURFACE_SCHEMA_VERSION, type ActionReceipt, type BookingReadActionKind, type BookingSurface, type BookingSurfaceEvent, type BookingWorkspaceSnapshot, type RelaxationApproval, type VerifiedOfferCapability } from '../src/booking-surface/contracts.ts'
+import { BOOKING_COPILOT_MAX_OPERATIONS, BOOKING_FULL_JOURNEY_ACTION_KINDS, BOOKING_READ_ACTION_KINDS, BOOKING_SURFACE_SCHEMA_SHA256, BOOKING_SURFACE_SCHEMA_VERSION, type ActionReceipt, type BookingReadAction, type BookingReadActionKind, type BookingSurface, type BookingSurfaceEvent, type BookingWorkspaceSnapshot, type RelaxationApproval, type VerifiedOfferCapability } from '../src/booking-surface/contracts.ts'
 import { validateBookingSurface } from '../src/booking-surface/validation.ts'
 
 const stateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-runtime-'))
@@ -710,57 +710,91 @@ const checkoutReceipt = (actionId: string, offerRef: string, offerVersionRef: st
   ledger.close(); rmSync(root, { recursive: true, force: true })
 }
 {
-  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-search-invalidation-'))
-  const ledger = ensureLedger(root)
-  const runtime = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2' })
-  const before = {
+  const baseline: BookingWorkspaceSnapshot = {
     ...workspace(0),
+    searchDraft: { destination: { query: 'Dubai' } },
     visibleHotels: [{ hotelRef: 'hotel-proof-1', name: 'Proof Hotel', factRefs: ['hotel:proof'] }],
     loadedOffers: [loadedOffer('offer-proof-1', 'hotel-proof-1')],
     focusedHotelRef: 'hotel-proof-1',
     shortlistedOfferRefs: ['offer-proof-1'],
     selectedOfferRef: 'offer-proof-1',
+    verifiedOffer: verifiedCapability('offer-proof-1', 'offer-proof-1:v1', '2026-09-01T10:30:00.000Z'),
   }
-  const task = runtime.startTask({ ...turn('task-search-invalidation'), workspace: before })
-  runtime.issueOperation(task.taskId, action('search-invalidation-run'))
-  const { focusedHotelRef: _focusedHotelRef, selectedOfferRef: _selectedOfferRef, ...withoutSelections } = before
-  const after = { ...withoutSelections, revision: 1, results: { status: 'loading' as const }, loadedOffers: [], shortlistedOfferRefs: [] }
-  runtime.continueWithReceipt({
-    schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: task.taskId, workspace: after,
-    receipt: {
-      schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'search-invalidation-run', contextRef: 'ctx-v2',
-      status: 'applied', revision: 1, observation: { kind: 'search.state' },
-      resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
-    },
-  })
-  assert.equal(runtime.resumeTask(task.taskId)?.workspaceSnapshot?.focusedHotelRef, undefined, 'search.run accepts the workspace-owned stale hotel-focus invalidation')
-  ledger.close(); rmSync(root, { recursive: true, force: true })
-}
-{
-  const root = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-illegal-focus-invalidation-'))
-  const ledger = ensureLedger(root)
-  const runtime = new BookingCopilotTaskRuntime(ledger, { contextRefFactory: () => 'ctx-v2' })
-  const before = {
-    ...workspace(0),
-    visibleHotels: [{ hotelRef: 'hotel-proof-1', name: 'Proof Hotel', factRefs: ['hotel:proof'] }],
-    focusedHotelRef: 'hotel-proof-1',
+  const keepFields = ['focusedHotelRef', 'loadedOffers', 'shortlistedOfferRefs', 'selectedOfferRef', 'verifiedOffer'] as const
+  type InvalidationCase = { name: string; kind: 'search.run' | 'search.patch' | 'results.view.patch'; mode: 'clear' | 'keep' | 'unchanged' | 'no-revision-mutation' | 'non-search-clear-focus'; keepField?: typeof keepFields[number]; expect: 'accept' | 'reject' }
+  const cases: InvalidationCase[] = []
+  for (const kind of ['search.run', 'search.patch'] as const) {
+    cases.push({ name: `${kind} clear`, kind, mode: 'clear', expect: 'accept' })
+    for (const keep of keepFields) cases.push({ name: `${kind} retain ${keep}`, kind, mode: 'keep', keepField: keep, expect: 'reject' })
+    cases.push({ name: `${kind} no-revision unchanged`, kind, mode: 'unchanged', expect: 'accept' })
+    cases.push({ name: `${kind} no-revision invalidation`, kind, mode: 'no-revision-mutation', expect: 'reject' })
   }
-  const task = runtime.startTask({ ...turn('task-illegal-focus-invalidation'), workspace: before })
-  runtime.issueOperation(task.taskId, {
-    ...action('illegal-focus-invalidation'),
-    kind: 'results.view.patch', input: { patch: { sort: 'price_asc' } },
-  })
-  const { focusedHotelRef: _focusedHotelRef, ...withoutFocus } = before
-  assert.throws(() => runtime.continueWithReceipt({
-    schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: task.taskId,
-    workspace: { ...withoutFocus, revision: 1, results: { status: 'idle', sort: 'price_asc' } },
-    receipt: {
-      schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'illegal-focus-invalidation', contextRef: 'ctx-v2',
-      status: 'applied', revision: 1, observation: { kind: 'results.state', matchedHotelRefs: ['hotel-proof-1'], visibleCount: 1 },
-      resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
-    },
-  }), /workspace_mismatch/, 'a non-search action rejects focus invalidation with the typed workspace mismatch')
-  ledger.close(); rmSync(root, { recursive: true, force: true })
+  cases.push({ name: 'non-search clear focus', kind: 'results.view.patch', mode: 'non-search-clear-focus', expect: 'reject' })
+  for (const [index, c] of cases.entries()) {
+    const caseRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-v2-search-invalidation-case-'))
+    const caseLedger = ensureLedger(caseRoot)
+    try {
+      const rt = new BookingCopilotTaskRuntime(caseLedger, { contextRefFactory: () => 'ctx-v2', now: () => '2026-09-01T10:00:00.000Z' })
+      const task = rt.startTask({ ...turn(`task-search-invalidation-${index}`), workspace: structuredClone(baseline) })
+      const actionId = `search-invalidation-${index}`
+      let operation: BookingReadAction
+      if (c.kind === 'search.patch') operation = { ...action(actionId), kind: c.kind, input: { patch: { destination: { query: 'Dubai' } } } }
+      else if (c.kind === 'results.view.patch') operation = { ...action(actionId), kind: c.kind, input: { patch: { sort: 'price_asc' } } }
+      else operation = action(actionId)
+      rt.issueOperation(task.taskId, operation)
+      const afterRevision = c.mode === 'unchanged' || c.mode === 'no-revision-mutation' ? 0 : 1
+      const after: BookingWorkspaceSnapshot = structuredClone(baseline)
+      after.revision = afterRevision
+      if (c.mode === 'non-search-clear-focus') {
+        delete after.focusedHotelRef
+        after.results = { status: 'idle', sort: 'price_asc' }
+      } else if (c.mode !== 'unchanged') {
+        delete after.focusedHotelRef
+        delete after.selectedOfferRef
+        delete after.verifiedOffer
+        after.loadedOffers = []
+        after.shortlistedOfferRefs = []
+        after.results = { status: 'loading' }
+        if (c.keepField === 'focusedHotelRef') after.focusedHotelRef = baseline.focusedHotelRef
+        else if (c.keepField === 'loadedOffers') after.loadedOffers = structuredClone(baseline.loadedOffers)
+        else if (c.keepField === 'shortlistedOfferRefs') after.shortlistedOfferRefs = [...baseline.shortlistedOfferRefs]
+        else if (c.keepField === 'selectedOfferRef') after.selectedOfferRef = baseline.selectedOfferRef
+        else if (c.keepField === 'verifiedOffer') after.verifiedOffer = structuredClone(baseline.verifiedOffer)
+      }
+      const observation: ActionReceipt['observation'] = c.kind === 'results.view.patch'
+        ? { kind: 'results.state', matchedHotelRefs: ['hotel-proof-1'], visibleCount: 1 }
+        : { kind: 'search.state' }
+      const receipt: ActionReceipt = {
+        schemaVersion: 'booking.surface', kind: 'action.receipt', actionId, contextRef: 'ctx-v2',
+        status: 'applied', revision: afterRevision, observation,
+        resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+      }
+      let error: unknown
+      try { rt.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: task.taskId, workspace: after, receipt }) } catch (e) { error = e }
+      if (c.expect === 'accept') {
+        assert.equal(error, undefined, `${c.name}: search invalidation accepts the post-action workspace`)
+        const resumed = rt.resumeTask(task.taskId)
+        assert.ok(resumed, `${c.name}: resumeTask returns a real task state`)
+        assert.equal(resumed.pendingAction, undefined, `${c.name}: accepted continuation clears the pending action`)
+        assert.equal(resumed.revision, afterRevision, `${c.name}: accepted continuation records the post-action revision`)
+        assert.ok(resumed.workspaceSnapshot, `${c.name}: accepted continuation retains the post-action workspace`)
+        assert.deepEqual(resumed.workspaceSnapshot, after, `${c.name}: accepted continuation's workspace snapshot matches`)
+      } else {
+        assert.ok(error instanceof Error, `${c.name}: invalidation must throw`)
+        const message = (error as Error).message
+        if (c.keepField === 'verifiedOffer' && c.mode === 'keep') assert.equal(message, 'invalid_receipt_continuation:$.workspace.verifiedOffer: loaded offer version required', `${c.name}: verifiedOffer residue is rejected by the schema loaded-version binding`)
+        else assert.equal(message, 'workspace_mismatch', `${c.name}: invalidation rejects with workspace_mismatch`)
+        const resumed = rt.resumeTask(task.taskId)
+        assert.ok(resumed, `${c.name}: resumeTask returns a real task state even after a rejected receipt`)
+        assert.ok(resumed.pendingAction, `${c.name}: rejected continuation leaves the pending action intact`)
+        assert.equal(resumed.pendingAction.actionId, actionId, `${c.name}: rejected continuation preserves the original pending action id`)
+        assert.equal(resumed.pendingAction.expectedRevision, 0, `${c.name}: rejected continuation preserves the original expected revision`)
+      }
+    } finally {
+      caseLedger.close()
+      rmSync(caseRoot, { recursive: true, force: true })
+    }
+  }
 }
 const operation = runtime.issueOperation(task.taskId, action('action-v2'))
 assert.equal(operation.action.actionId, 'action-v2')
