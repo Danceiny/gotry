@@ -349,7 +349,22 @@ const PLANNER_SAFE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/
 
 // Action identifiers and fact references are ledger keys, not prose. They
 // must arrive canonical; the reserved modelref namespace is never accepted
-// from a model-authored action.
+// from a model-authored action. The reserved-namespace rejection is a hard
+// authority error, so canonical-schema or sibling syntax failures must not
+// hide it behind a repairable shape error.
+function assertReservedModelRefNamespace(action: Record<string, unknown>): void {
+  const factRefs = action.factRefs
+  if (Array.isArray(factRefs)) {
+    for (const ref of factRefs) {
+      if (typeof ref === 'string' && ref.startsWith('modelref:')) {
+        throw new Error('planner_invalid_action:reserved_fact_ref')
+      }
+    }
+  }
+}
+
+// Pure syntax errors below stay shape-only and remain repairable when
+// paired with a same-run INVALID_ARGS tool/result.
 function assertPlannerSafeRefs(action: Record<string, unknown>): void {
   const actionId = action.actionId
   if (typeof actionId !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(actionId)) {
@@ -358,9 +373,6 @@ function assertPlannerSafeRefs(action: Record<string, unknown>): void {
   const factRefs = action.factRefs
   if (Array.isArray(factRefs)) {
     for (const ref of factRefs) {
-      if (typeof ref === 'string' && ref.startsWith('modelref:')) {
-        throw new Error('planner_invalid_action:reserved_fact_ref')
-      }
       if (typeof ref !== 'string' || !PLANNER_SAFE_REF_PATTERN.test(ref) || ref.length > 512) {
         throw new Error('planner_invalid_action:unsafe_fact_ref')
       }
@@ -408,6 +420,26 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     invalidDecisionLog('forbidden_action', { actionKind: diagnosticText(decision.action.kind) })
     throw new Error('planner_forbidden_action')
   }
+  // Reserved modelref namespace must reject before canonical-schema or sibling
+  // syntax failures can launder the violation through repairable shape errors.
+  assertReservedModelRefNamespace(decision.action)
+  // Authority checks (capability / allowedActions) must reject before any
+  // canonical-schema shape failure. They only fire when the typed kind
+  // discriminant is well-formed; a missing or malformed kind falls through
+  // to validateBookingReadAction as a shape error so a blind cast never
+  // turns an unknown kind into a capability violation.
+  if (typeof decision.action.kind === 'string' && (BOOKING_READ_ACTION_KINDS as readonly string[]).includes(decision.action.kind)) {
+    const actionKind = decision.action.kind as BookingReadAction['kind']
+    const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
+    if (!capability || !actionsForEmbeddedCapability(capability).includes(actionKind)) {
+      invalidDecisionLog('capability_action_mismatch')
+      throw new Error('planner_capability_action_mismatch')
+    }
+    if (!task.allowedActions.includes(actionKind)) {
+      invalidDecisionLog('surface_action_unsupported', { allowedActionCount: task.allowedActions.length })
+      throw new Error('planner_surface_action_unsupported')
+    }
+  }
   const validation = validateBookingReadAction(decision.action)
   if (!validation.ok) {
     invalidDecisionLog('action_schema_invalid', {
@@ -418,22 +450,17 @@ function parseToolDecision(event: unknown, task: BookingCopilotTaskState): Booki
     })
     throw new Error('planner_invalid_action')
   }
-  assertPlannerSafeRefs(decision.action)
-  const action = decision.action as unknown as BookingReadAction
-  const capability = TOOL_TO_CAPABILITY.get(name as DshEmbeddedBookingToolName)
-  if (!capability || !actionsForEmbeddedCapability(capability).includes(action.kind)) {
-    invalidDecisionLog('capability_action_mismatch')
-    throw new Error('planner_capability_action_mismatch')
-  }
-  if (!task.allowedActions.includes(action.kind)) {
-    invalidDecisionLog('surface_action_unsupported', { allowedActionCount: task.allowedActions.length })
-    throw new Error('planner_surface_action_unsupported')
-  }
-  if (action.contextRef !== task.contextRef) throw new Error('planner_context_mismatch')
   // The runtime owns the revision: the planner can only echo what the prompt
   // showed it. Reject a mismatch instead of rewriting model-authored authority;
   // the client-side concurrency guard also lives at the context/journal binding.
-  if (action.expectedRevision !== task.revision) throw new Error('planner_revision_mismatch')
+  // Inspect expectedRevision safely — only a typed number can establish the
+  // mismatch; a wrong-typed revision was already rejected by schema validation.
+  if (typeof decision.action.expectedRevision === 'number' && decision.action.expectedRevision !== task.revision) {
+    throw new Error('planner_revision_mismatch')
+  }
+  const action = decision.action as unknown as BookingReadAction
+  assertPlannerSafeRefs(decision.action)
+  if (action.contextRef !== task.contextRef) throw new Error('planner_context_mismatch')
   if (action.relaxationApprovalRef) throw new Error('planner_approval_ref_forbidden')
   return { kind: 'operation', action }
 }

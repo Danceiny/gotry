@@ -715,6 +715,130 @@ await assert.rejects(
 )
 await reservedFactRefRejectedThenValid.close()
 
+// Issue #473 mixed-authority regression: an INVALID_ARGS + later-valid pair
+// must not launder an authority violation that co-travels with a reference
+// syntax error. Pure shape errors stay repairable; authority rejections
+// remain fail-closed regardless of paired INVALID_ARGS + later canonical.
+const mixedAuthorityCases: ReadonlyArray<{
+  name: string
+  tool: 'booking_search_hotels' | 'booking_refine_results'
+  badAction: Record<string, unknown>
+  accept: true
+} | {
+  name: string
+  tool: 'booking_search_hotels' | 'booking_refine_results'
+  badAction: Record<string, unknown>
+  accept: false
+  errorPattern: RegExp
+}> = [
+  {
+    name: 'shape-only repair control',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, factRefs: ['draft:destination=Dubai'] },
+    accept: true,
+  },
+  {
+    name: 'capability mismatch plus unsafe factRef',
+    tool: 'booking_search_hotels',
+    badAction: { ...hotelSelect, factRefs: ['draft:destination=Dubai'] },
+    accept: false,
+    errorPattern: /planner_capability_action_mismatch/,
+  },
+  {
+    name: 'surface unsupported plus unsafe factRef',
+    tool: 'booking_refine_results',
+    badAction: { ...hotelSelect, factRefs: ['draft:destination=Dubai'] },
+    accept: false,
+    errorPattern: /planner_surface_action_unsupported/,
+  },
+  {
+    name: 'revision mismatch plus unsafe factRef',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, expectedRevision: 99, factRefs: ['draft:destination=Dubai'] },
+    accept: false,
+    errorPattern: /planner_revision_mismatch/,
+  },
+  {
+    name: 'reserved factRef plus unsafe actionId',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, actionId: 'bad/action', factRefs: ['modelref:reserved-by-runtime'] },
+    accept: false,
+    errorPattern: /planner_invalid_action:reserved_fact_ref/,
+  },
+  {
+    name: 'context mismatch plus unsafe factRef control',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, contextRef: 'ctx-other', factRefs: ['draft:destination=Dubai'] },
+    accept: false,
+    errorPattern: /planner_context_mismatch/,
+  },
+  {
+    name: 'reserved factRef plus empty actionId',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, actionId: '', factRefs: ['modelref:reserved-by-runtime'] },
+    accept: false,
+    errorPattern: /planner_invalid_action:reserved_fact_ref/,
+  },
+  {
+    name: 'surface unsupported plus nonstring factRef',
+    tool: 'booking_refine_results',
+    badAction: { ...hotelSelect, factRefs: [0] },
+    accept: false,
+    errorPattern: /planner_surface_action_unsupported/,
+  },
+  {
+    name: 'capability mismatch plus unsafe actionId counterpart',
+    tool: 'booking_search_hotels',
+    badAction: { ...hotelSelect, actionId: 'bad/id' },
+    accept: false,
+    errorPattern: /planner_capability_action_mismatch/,
+  },
+  {
+    name: 'revision mismatch plus unsafe actionId counterpart',
+    tool: 'booking_search_hotels',
+    badAction: { ...searchRun, actionId: 'bad/id', expectedRevision: 99 },
+    accept: false,
+    errorPattern: /planner_revision_mismatch/,
+  },
+]
+for (const [index, c] of mixedAuthorityCases.entries()) {
+  const mixedAuthorityPlanner = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run() {
+        return {
+          finalResponse: '',
+          events: [
+            toolCall(c.tool, JSON.stringify({ decision: { kind: 'operation', action: c.badAction } }), `mixed-authority-${index}-bad`),
+            toolResult(`mixed-authority-${index}-bad`, true, 'INVALID_ARGS'),
+            ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), `mixed-authority-${index}-good`),
+          ],
+        }
+      },
+      async close() {},
+    },
+  })
+  try {
+    if (c.accept) {
+      const decisions = await mixedAuthorityPlanner.plannerFactory(task).next({
+        task,
+        turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: `dsh-mixed-authority-${index}`, workspace, request: { text: 'Find hotels' } },
+      })
+      assert.deepEqual(decisions, [{ kind: 'operation', action: searchRun }], `${c.name} accepts the later canonical call after shape repair`)
+    } else {
+      await assert.rejects(
+        mixedAuthorityPlanner.plannerFactory(task).next({
+          task,
+          turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task.taskId, turnId: `dsh-mixed-authority-${index}`, workspace, request: { text: 'Find hotels' } },
+        }),
+        c.errorPattern,
+        c.name,
+      )
+    }
+  } finally {
+    await mixedAuthorityPlanner.close()
+  }
+}
+
 const sanitizedRefPort: DshPlannerRunPort = {
   async run() {
     return {
