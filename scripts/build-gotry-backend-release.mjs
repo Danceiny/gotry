@@ -16,6 +16,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SCHEMA_VERSION = 'booking.surface'
 const SCHEMA_SOURCE = join(ROOT, 'schemas/booking.surface.schema.json')
 const SCHEMA_SHA256 = sha256(SCHEMA_SOURCE)
+const INTENT_SCHEMA_SOURCE = join(ROOT, 'schemas/booking.intent.schema.json')
+const INTENT_SCHEMA_SHA256 = sha256(INTENT_SCHEMA_SOURCE)
 const PROVENANCE_VERSION = 'gotry.backend.release-provenance.v1'
 function fail(message) { throw new Error(`gotry-backend-release: ${message}`) }
 
@@ -106,6 +108,7 @@ try {
     'bin/gotry-backend.js',
     'bin/gotry-booking-copilot.js',
     'schemas/booking.surface.schema.json',
+    'schemas/booking.intent.schema.json',
   ]) {
     const target = join(release, path)
     mkdirSync(dirname(target), { recursive: true })
@@ -157,6 +160,8 @@ try {
 
   const schema = join(release, 'schemas/booking.surface.schema.json')
   if (sha256(schema) !== SCHEMA_SHA256) fail('schema bytes do not match the Hotel-BE release contract')
+  const intentSchema = join(release, 'schemas/booking.intent.schema.json')
+  if (sha256(intentSchema) !== INTENT_SCHEMA_SHA256) fail('booking intent schema bytes do not match committed source')
   writeFileSync(join(release, 'SCHEMA_VERSION'), `${SCHEMA_VERSION}\n`)
   writeFileSync(join(release, 'SCHEMA_SHA256'), `${SCHEMA_SHA256}\n`)
   writeFileSync(join(release, 'ARTIFACT_ID'), `${artifactId}\n`)

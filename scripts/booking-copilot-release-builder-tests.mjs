@@ -20,6 +20,7 @@ const provenanceVersion = isBackendRelease
   ? 'gotry.backend.release-provenance.v1'
   : 'gotry.booking-copilot.release-provenance.v1'
 const SCHEMA_SHA256 = createHash('sha256').update(readFileSync(join(root, 'schemas/booking.surface.schema.json'))).digest('hex')
+const INTENT_SCHEMA_SHA256 = createHash('sha256').update(readFileSync(join(root, 'schemas/booking.intent.schema.json'))).digest('hex')
 const contract = !isBackendRelease && (process.env.BOOKING_COPILOT_RELEASE_CONTRACT
   || (process.env.HOTEL_BE_ROOT ? join(process.env.HOTEL_BE_ROOT, 'build/deploy/gotry-booking-copilot/release-contract.sh') : '')
 )
@@ -122,6 +123,10 @@ try {
   assert.equal(
     createHash('sha256').update(readFileSync(join(output, 'schemas/booking.surface.schema.json'))).digest('hex'),
     SCHEMA_SHA256,
+  )
+  assert.equal(
+    createHash('sha256').update(readFileSync(join(output, 'schemas/booking.intent.schema.json'))).digest('hex'),
+    INTENT_SCHEMA_SHA256,
   )
   const manifestText = readFileSync(join(output, 'MANIFEST.sha256'), 'utf8')
   assert.doesNotMatch(manifestText, /\.worktree\.env|\.env(?:\.|$)|(?:^|\/)secrets?(?:[._/-]|$)/i)
