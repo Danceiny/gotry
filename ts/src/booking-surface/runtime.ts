@@ -979,7 +979,15 @@ export class BookingCopilotTaskRuntime {
           try { turnWorkspace = normalizeWorkspaceForReplay(t.workspace) } catch { throw new Error(`ledger_corrupt:${taskId}:turn_workspace`) }
           try { assertWorkspaceLoadedOfferRefsUnique(turnWorkspace) } catch { throw new Error(`ledger_corrupt:${taskId}:turn_workspace`) }
           if (!t.workspaceDigest || !t.workspaceSemanticDigest || !t.workspace || !replayWorkspaceDigestMatches(t.workspaceDigest, t.workspace, turnWorkspace) || !replayWorkspaceSemanticDigestMatches(t.workspaceSemanticDigest, t.workspace, turnWorkspace)) throw new Error(`ledger_corrupt:${taskId}:turn_workspace`)
+          // Same-revision replay guard: an ordinary TURN row must not silently
+          // rewrite the durable workspace semantic digest. A ledger written by
+          // an old public startTask (no live-time same-revision guard) would
+          // otherwise smuggle a verifiedOffer/loadedOffer/selection drift into
+          // replay and turn the replayed workspace into checkout authority.
+          // The explicit replayUpgradeRequired reanchor stays intact for the
+          // legacy-tail replan path.
           if (state.availability.terminal?.code === 'availability_confirmed' && (state.revision !== turnWorkspace.revision || state.workspaceSemanticDigest !== bookingWorkspaceSemanticDigest(turnWorkspace))) throw new Error(`ledger_corrupt:${taskId}:confirmed_workspace_drift`)
+          if (!state.replayUpgradeRequired && state.revision === turnWorkspace.revision && state.workspaceSemanticDigest !== bookingWorkspaceSemanticDigest(turnWorkspace)) throw new Error(`ledger_corrupt:${taskId}:same_revision_turn_workspace_drift`)
           rememberReplayWorkspaceDigest(replayWorkspaceDigests, t.workspaceDigest, t.workspace, turnWorkspace)
           state.userTurnCount++
           state.lastTurnId = t.turnId
