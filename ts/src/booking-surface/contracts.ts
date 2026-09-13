@@ -5,11 +5,44 @@
  * is limited to a user turn or an explanation and is never parsed as an action.
  */
 
+/** Compatibility line. Additive compatible changes retain this value; breaking changes must bump it. */
 export const BOOKING_SURFACE_SCHEMA_VERSION = 'booking.surface' as const
-/** SHA-256 of schemas/booking.surface.schema.json; package proof pins drift. */
-export const BOOKING_SURFACE_SCHEMA_SHA256 = 'f9a73339c4c51280bfd63ba67c8b9f495fbbb796573b7a24d35de572f17f5127' as const
+/** Diagnostic SHA-256 of the exact local schema artifact; it detects drift but is not a compatibility gate. */
+export const BOOKING_SURFACE_SCHEMA_SHA256 = 'a6b4ded86998a25a3345a0813d46cf7c43c9c91c14c5a6cac053af75f8064847' as const
 export const BOOKING_SURFACE_VERSION_HEADER = 'x-booking-surface-version' as const
 export const BOOKING_SURFACE_SCHEMA_SHA256_HEADER = 'x-booking-surface-schema-sha256' as const
+
+/**
+ * Additive capabilities are sender-gated instead of creating a new contract
+ * line. A sender may use one only after every currently routable peer has
+ * advertised it; an omitted feature list therefore means no optional feature.
+ */
+export const BOOKING_SURFACE_FEATURES = ['trusted-order-observation-v1'] as const
+export type BookingSurfaceFeature = (typeof BOOKING_SURFACE_FEATURES)[number]
+export const BOOKING_SURFACE_FEATURES_HEADER = 'x-booking-surface-features' as const
+
+export interface BookingSurfaceFeatureAdvertisement {
+  /** Untrusted probe data. Unknown values are ignored; a missing/malformed list contributes no features. */
+  features?: unknown
+  [key: string]: unknown
+}
+
+function advertisedBookingSurfaceFeatures(advertisement: BookingSurfaceFeatureAdvertisement): Set<BookingSurfaceFeature> {
+  if (!Array.isArray(advertisement.features)) return new Set()
+  return new Set(advertisement.features.filter((feature): feature is BookingSurfaceFeature =>
+    typeof feature === 'string' && (BOOKING_SURFACE_FEATURES as readonly string[]).includes(feature)))
+}
+
+/**
+ * Computes the safe fleet intersection. Callers must supply one fresh
+ * advertisement for every routable release identity; an empty or mixed set
+ * disables optional fields instead of guessing from the schema hash.
+ */
+export function bookingSurfaceFleetFeatures(advertisements: readonly BookingSurfaceFeatureAdvertisement[]): BookingSurfaceFeature[] {
+  if (advertisements.length === 0) return []
+  const advertised = advertisements.map(advertisedBookingSurfaceFeatures)
+  return BOOKING_SURFACE_FEATURES.filter((feature) => advertised.every((features) => features.has(feature)))
+}
 
 export const BOOKING_SURFACES = [
   'tenant',
@@ -45,6 +78,17 @@ export const BOOKING_SURFACE_ALLOWED_ACTIONS: Record<BookingSurface, readonly Bo
 /** Stable product-matrix observation for UAT and server readiness proofs. */
 export function bookingSurfaceAllowedActions(surface: BookingSurface): BookingReadActionKind[] {
   return [...BOOKING_SURFACE_ALLOWED_ACTIONS[surface]]
+}
+
+/** BFF-facing allowlist after optional, fleet-safe feature negotiation. */
+export function bookingSurfaceNegotiatedActions(surface: BookingSurface, advertisements: readonly BookingSurfaceFeatureAdvertisement[]): BookingReadActionKind[] {
+  return bookingSurfaceActionsForFeatures(surface, bookingSurfaceFleetFeatures(advertisements))
+}
+
+/** Applies an already-computed fleet intersection supplied by the trusted BFF. */
+export function bookingSurfaceActionsForFeatures(surface: BookingSurface, features: readonly BookingSurfaceFeature[]): BookingReadActionKind[] {
+  return bookingSurfaceAllowedActions(surface).filter((action) =>
+    action !== 'order.observe' || features.includes('trusted-order-observation-v1'))
 }
 
 export type BookingRequestKey = string
@@ -184,6 +228,12 @@ export interface VerifiedOfferCapability {
   expiresAt: string
 }
 
+/** BFF-authoritative order reference exposed only to the internal workspace. */
+export interface ObservableOrderFact {
+  orderRef: string
+  factRefs: string[]
+}
+
 export interface CriterionBlocker {
   blockerId: string
   sourceActionId: string
@@ -291,6 +341,8 @@ export interface BookingWorkspaceSnapshot {
   shortlistedOfferRefs: string[]
   selectedOfferRef?: string
   verifiedOffer?: VerifiedOfferCapability
+  /** Never accepted from browser IngressWorkspace; injected by trusted BFF binding. */
+  observableOrders?: ObservableOrderFact[]
   capabilities: { surface: BookingSurface; allowedActions: BookingReadActionKind[] }
 }
 
@@ -374,6 +426,8 @@ export interface BookingIngressIdentityBinding {
   surface: BookingSurface
   /** BFF-authorized closed action subset for this surface. */
   allowedActions: BookingReadActionKind[]
+  /** Optional trusted order projection; never supplied by browser ingress. */
+  observableOrders?: ObservableOrderFact[]
 }
 
 export interface BookingIngressPrincipal {

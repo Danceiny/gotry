@@ -156,6 +156,27 @@
         }
       }
     },
+    "ObservableOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "orderRef",
+        "factRefs"
+      ],
+      "properties": {
+        "orderRef": {
+          "$ref": "#/$defs/Ref"
+        },
+        "factRefs": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Ref"
+          }
+        }
+      }
+    },
     "OfferVersionInput": {
       "type": "object",
       "additionalProperties": false,
@@ -265,6 +286,14 @@
         },
         "verifiedOffer": {
           "$ref": "#/$defs/VerifiedOffer"
+        },
+        "observableOrders": {
+          "type": "array",
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/ObservableOrder"
+          }
         },
         "capabilities": {
           "type": "object",

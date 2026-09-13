@@ -54,8 +54,76 @@ await assert.rejects(
     && /decision_schema_violation/.test(error.message),
   'schema violations must surface as dsh ToolArgsError with stable INVALID_ARGS code',
 )
+await assert.rejects(
+  executeSearch({ kind: 'search.patch', input: { patch: { destination: { query: 'Dubai' } } } }),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+  'every fresh operation requires a semantic intent before the tool can conclude the turn',
+)
 assert.equal(concludedTurns, 0, 'an invalid tool call stays in the same turn for local schema repair')
 const validateSearchTool = new Ajv2020({ allErrors: true, strict: true }).compile(search.parameters as any)
+for (const invalidProposal of [
+  { kind: 'search.patch', input: { patch: {} }, intent: { target: 'search.results' } },
+  { kind: 'search.patch', input: { patch: { stay: { checkIn: 'tomorrow' } } }, intent: { target: 'search.results' } },
+  { kind: 'search.patch', input: { patch: { starRating: { strength: 'must', value: { min: 9 } } } }, intent: { target: 'search.results' } },
+  { kind: 'search.patch', input: { patch: { facilities: { strength: 'must', value: { allOf: [] } } } }, intent: { target: 'search.results' } },
+  { kind: 'search.patch', input: { patch: { facilities: { strength: 'must', value: { allOf: ['breakfast', 'breakfast'] } } } }, intent: { target: 'search.results' } },
+]) {
+  // dsh's advertised dialect cannot express every canonical constraint. The
+  // execute seam must still reject it before concludeTurn so the model gets
+  // an INVALID_ARGS repair opportunity in the same bounded run.
+  assert.equal(validateSearchTool(invalidProposal), true, 'the intentionally reduced advertised dialect exposes this regression case')
+  await assert.rejects(
+    executeSearch(invalidProposal),
+    (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+    'full canonical semantic constraints are enforced before concludeTurn',
+  )
+}
+assert.equal(concludedTurns, 0, 'canonical semantic failures never conclude the dsh turn')
+
+const compare = registered.find((tool) => tool.name === 'booking_compare_offers')!
+const rawExecuteCompare = compare.execute as (args: unknown, exec: { concludeTurn(): void }) => Promise<unknown>
+let compareConcludedTurns = 0
+const executeCompare = (args: unknown) => rawExecuteCompare(args, {
+  concludeTurn() { compareConcludedTurns += 1 },
+})
+const validateCompareTool = new Ajv2020({ allErrors: true, strict: true }).compile(compare.parameters as any)
+const compositeCompareProposal = {
+  kind: 'offers.compare',
+  input: { offerRefs: ['offer-a', 'offer-b', 'offer-c'], requestedCount: 3 },
+  intent: {
+    target: 'offers.compared',
+    offerCriteria: {
+      meals: { strength: 'must', value: ['breakfast'] },
+      freeCancellation: { strength: 'must', value: true },
+      targetCount: 3,
+    },
+  },
+}
+assert.equal(validateCompareTool(compositeCompareProposal), true, JSON.stringify(validateCompareTool.errors))
+assert.deepEqual(
+  await executeCompare(compositeCompareProposal),
+  { accepted: true, decisionKind: 'operation', actionKind: 'offers.compare' },
+  'a shallow action may carry a typed multi-step goal without runtime-owned metadata',
+)
+assert.equal(compareConcludedTurns, 1)
+const reducedIntentCounterexample = {
+  ...compositeCompareProposal,
+  intent: { target: 'offers.compared', offerCriteria: { targetCount: 0 } },
+}
+assert.equal(validateCompareTool(reducedIntentCounterexample), true, 'the reduced model dialect cannot express targetCount minimum')
+await assert.rejects(
+  executeCompare(reducedIntentCounterexample),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS' && /must be >= 1/.test(error.message),
+  'the execute seam returns a precise repairable error for an invalid intent constraint',
+)
+assert.equal(compareConcludedTurns, 1, 'invalid intent does not conclude the model turn')
+await assert.rejects(
+  executeCompare({ ...compositeCompareProposal, intent: { ...compositeCompareProposal.intent, payment: true } }),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+  'the intent envelope is closed against write/payment fields',
+)
+assert.equal(compareConcludedTurns, 1)
+
 const compactSearchProposal = {
   kind: 'search.patch',
   input: {
@@ -66,6 +134,7 @@ const compactSearchProposal = {
       },
     },
   },
+  intent: { target: 'search.results' },
 }
 assert.equal(validateSearchTool(compactSearchProposal), true, JSON.stringify(validateSearchTool.errors))
 assert.ok(!JSON.stringify(search.parameters).includes('sourceFactRef'), 'model-facing proposal does not ask the model to invent Money provenance')
@@ -103,6 +172,16 @@ for (const decision of [compactSearchProposal, JSON.stringify(compactSearchPropo
     'one exact provider wrapper is normalized without widening semantic authority',
   )
 }
+assert.deepEqual(
+  await executeSearch({ decision: { kind: 'operation', action: compactSearchProposal } }),
+  { accepted: true, decisionKind: 'operation', actionKind: 'search.patch' },
+  'the one-layer operation wrapper preserves nested compact intent without widening authority',
+)
+assert.deepEqual(
+  await executeSearch({ kind: 'operation', action: { kind: compactSearchProposal.kind, input: compactSearchProposal.input }, intent: compactSearchProposal.intent }),
+  { accepted: true, decisionKind: 'operation', actionKind: 'search.patch' },
+  'the direct-hoisted compact operation accepted by the parent is accepted by the plugin too',
+)
 await assert.rejects(
   executeSearch({ decision: compactSearchProposal, extra: true }),
   (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
@@ -111,6 +190,7 @@ await assert.rejects(
 const validSearchDecision = {
   decision: {
     kind: 'operation',
+    intent: { target: 'search.results' },
     action: {
       schemaVersion: 'booking.surface',
       kind: 'search.patch',
@@ -139,7 +219,12 @@ assert.equal(
 assert.deepEqual(
   await executeSearch({ decision: JSON.stringify(validSearchDecision.decision) }),
   { accepted: true, decisionKind: 'operation', actionKind: 'search.patch', actionId: 'action-model-1' },
-  'the execution seam normalizes one provider-stringified decision before applying the canonical schema',
+  'the execution seam normalizes one provider-stringified action plus mandatory intent before applying the canonical schema',
+)
+await assert.rejects(
+  executeSearch({ decision: JSON.stringify({ kind: 'operation', action: validSearchDecision.decision.action }) }),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+  'a fresh legacy full action cannot silently degrade a multi-step request by omitting intent',
 )
 await assert.rejects(
   executeSearch(Object.create({ decision: JSON.stringify(validSearchDecision.decision), injected: 'prototype-value' })),

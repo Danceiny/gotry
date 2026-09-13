@@ -21,6 +21,8 @@ import {
 import {
   bookingCopilotTrafficHandler,
   runtimeIdentity,
+  shutdownBookingCopilotTraffic,
+  type BookingCopilotComposition,
 } from '../../booking-surface/server.ts'
 import { resolveBookingCopilotStartupConfig } from '../../booking-surface/startup.ts'
 
@@ -28,32 +30,45 @@ export interface BookingCopilotModule extends BackendModule {
   close(): Promise<void>
 }
 
+export interface BookingCopilotModuleDependencies {
+  ensureLedger(stateRoot: string): StateLedger
+  createPlanner(options: Parameters<typeof createDshEmbeddedBookingPlanner>[0]): Promise<DshEmbeddedBookingPlannerHandle>
+}
+
+const DEFAULT_DEPENDENCIES: BookingCopilotModuleDependencies = {
+  ensureLedger,
+  createPlanner: createDshEmbeddedBookingPlanner,
+}
+
 export async function startBookingCopilotModule(
   env: Record<string, string | undefined> = process.env,
+  dependencies: BookingCopilotModuleDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<BookingCopilotModule> {
   const config = resolveBookingCopilotStartupConfig(env)
   mkdirSync(config.stateRoot, { recursive: true })
-  const ledger: StateLedger = ensureLedger(config.stateRoot)
+  const ledger: StateLedger = dependencies.ensureLedger(config.stateRoot)
   let planner: DshEmbeddedBookingPlannerHandle | undefined
   try {
-    planner = await createDshEmbeddedBookingPlanner({ stateRoot: config.stateRoot, env: buildDshPlannerEnvironment(env) })
+    planner = await dependencies.createPlanner({ stateRoot: config.stateRoot, env: buildDshPlannerEnvironment(env) })
   } catch (error) {
     try { ledger.close() } catch { /* 聚合首错优先 */ }
     throw error
   }
+  const composition: BookingCopilotComposition = {
+    runtime: new BookingCopilotTaskRuntime(ledger),
+    plannerFactory: planner.plannerFactory,
+    ingressMode: 'bff-bound-turn-only',
+  }
   const traffic = bookingCopilotTrafficHandler({
     apiKey: config.apiKey,
-    composition: {
-      runtime: new BookingCopilotTaskRuntime(ledger),
-      plannerFactory: planner.plannerFactory,
-      ingressMode: 'bff-bound-turn-only',
-    },
+    composition,
     maxBodyBytes: 1_000_000,
     ...(config.artifactId !== undefined ? { artifactId: config.artifactId } : {}),
     ingressMode: 'bff-bound-turn-only',
     runningIdentity: runtimeIdentity(),
   })
   const respond = (req: IncomingMessage, res: ServerResponse): Promise<void> => traffic(req, res)
+  let closePromise: Promise<void> | undefined
   return {
     name: 'booking-copilot',
     routes: [
@@ -62,8 +77,16 @@ export async function startBookingCopilotModule(
       { method: 'GET', path: '/status', handle: respond },
     ],
     async close() {
-      await planner.close()
-      ledger.close()
+      if (!closePromise) {
+        closePromise = (async () => {
+          const failures: unknown[] = []
+          try { await shutdownBookingCopilotTraffic(composition) } catch (error) { failures.push(error) }
+          try { await planner.close() } catch (error) { failures.push(error) }
+          try { ledger.close() } catch (error) { failures.push(error) }
+          if (failures.length > 0) throw new AggregateError(failures, 'booking_copilot_module_close_failed')
+        })()
+      }
+      return closePromise
     },
   }
 }

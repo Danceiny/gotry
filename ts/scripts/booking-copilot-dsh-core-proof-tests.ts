@@ -7,6 +7,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -16,8 +17,8 @@ import {
   DSH_EMBEDDED_BOOKING_TOOL_NAMES,
   type DshPlannerTurnMetric,
 } from '../src/booking-surface/dsh-planner.ts'
-import type { BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
-import type { BookingCopilotTurn, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
+import { bookingDigest, type BookingActionCheckpoint, type BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
+import type { BookingCopilotTurn, BookingReadAction, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
 
 const action = {
   schemaVersion: 'booking.surface',
@@ -29,6 +30,24 @@ const action = {
   factRefs: [],
   input: {},
 } as const
+
+function completedCheckpoint(completed: BookingReadAction, sourceTurnId: string): BookingActionCheckpoint {
+  const base: Omit<BookingActionCheckpoint, 'actionDigest'> = {
+    actionId: completed.actionId,
+    kind: completed.kind,
+    contextRef: completed.contextRef,
+    expectedRevision: completed.expectedRevision,
+    factRefs: [...completed.factRefs],
+    input: structuredClone(completed.input),
+    reasonDigest: bookingDigest(completed.reason),
+    inputDigest: bookingDigest(completed.input),
+    eventId: `operation-${completed.actionId}`,
+    sequence: 1,
+    emittedAt: '2026-08-30T12:00:00.000Z',
+    sourceTurnId,
+  }
+  return { ...base, actionDigest: bookingDigest(base) }
+}
 
 function sse(res: ServerResponse, chunks: unknown[]): void {
   res.writeHead(200, {
@@ -48,6 +67,8 @@ function objectKeys(value: unknown): string[] {
 const requests: Array<{ headers: Record<string, string | string[] | undefined>; body: any }> = []
 let modelCall = 0
 let continuationServed = false
+let observeStalledRequest!: () => void
+const stalledRequestObserved = new Promise<void>((resolve) => { observeStalledRequest = resolve })
 const modelServer = createServer((req, res) => {
   const parts: Buffer[] = []
   req.on('data', (part: Buffer) => parts.push(part))
@@ -55,6 +76,11 @@ const modelServer = createServer((req, res) => {
     const body = JSON.parse(Buffer.concat(parts).toString('utf8'))
     requests.push({ headers: req.headers, body })
     modelCall += 1
+    if (JSON.stringify(body).includes('STALL_PROVIDER_PROOF')) {
+      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache' })
+      observeStalledRequest()
+      return
+    }
     // Script by request content, not call order: the prose-only retry budget
     // issues additional runs whose scripted response must stay prose, not the
     // continuation terminal.
@@ -82,7 +108,10 @@ const modelServer = createServer((req, res) => {
               type: 'function',
               function: {
                 name: 'booking_search_hotels',
-                arguments: JSON.stringify({ decision: { kind: 'operation' } }),
+                // The first probabilistic miss omits the mandatory semantic
+                // goal. The model-facing schema must reject this before the
+                // parent process ever sees a superficially valid action.
+                arguments: JSON.stringify({ kind: 'search.patch', input: { patch: { destination: { query: 'Dubai' } } } }),
               },
             }],
           },
@@ -108,7 +137,35 @@ const modelServer = createServer((req, res) => {
               type: 'function',
               function: {
                 name: 'booking_search_hotels',
-                arguments: JSON.stringify({ kind: 'search.run', input: {} }),
+                // This repairs the required intent but still violates the
+                // full canonical SearchCriteriaPatch.minProperties rule that
+                // the provider-compatible advertised dialect cannot express.
+                arguments: JSON.stringify({ kind: 'search.patch', input: { patch: {} }, intent: { target: 'search.results' } }),
+              },
+            }],
+          },
+          finish_reason: 'tool_calls',
+        }],
+      }])
+      return
+    }
+    if (modelCall === 3) {
+      sse(res, [{
+        id: 'chatcmpl-booking-repair-canonical',
+        object: 'chat.completion.chunk',
+        created: 0,
+        model: 'deepseek-v4-flash',
+        choices: [{
+          index: 0,
+          delta: {
+            role: 'assistant',
+            tool_calls: [{
+              index: 0,
+              id: 'call-booking-repair-canonical',
+              type: 'function',
+              function: {
+                name: 'booking_search_hotels',
+                arguments: JSON.stringify({ kind: 'search.run', input: {}, intent: { target: 'search.results' } }),
               },
             }],
           },
@@ -148,7 +205,7 @@ const workspace: BookingWorkspaceSnapshot = {
   visibleHotels: [],
   loadedOffers: [],
   shortlistedOfferRefs: [],
-  capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
+  capabilities: { surface: 'tenant', allowedActions: ['search.patch', 'search.run'] },
 }
 const turn: BookingCopilotTurn = {
   schemaVersion: 'booking.surface',
@@ -165,7 +222,7 @@ const task: BookingCopilotTaskState = {
   contextRef: action.contextRef,
   surface: 'tenant',
   revision: 0,
-  allowedActions: ['search.run'],
+  allowedActions: ['search.patch', 'search.run'],
   userTurnCount: 1,
   lastTurnId: 'real-dsh-turn-1',
   operationCount: 0,
@@ -175,7 +232,21 @@ const task: BookingCopilotTaskState = {
   workspaceSnapshot: workspace,
 }
 
+function directDshChildPids(): Set<number> {
+  const rows = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
+  return new Set(rows.split('\n').flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line)
+    if (!match || Number(match[2]) !== process.pid || /\bps\s+-axo\b/.test(match[3]!)) return []
+    return [Number(match[1])]
+  }))
+}
+
+function processExists(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch { return false }
+}
+
 let planner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
+let stalledPlanner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
 const plannerMetrics: DshPlannerTurnMetric[] = []
 try {
   planner = await createDshEmbeddedBookingPlanner({
@@ -199,14 +270,17 @@ try {
   assert.deepEqual(decisions[0].action.input, {})
   assert.match(decisions[0].action.actionId, /^planner-[a-f0-9]{24}$/)
   assert.notEqual(decisions[0].action.actionId, action.actionId)
-  assert.equal(requests.length, 2, 'accepted repair concludes the real dsh turn without a redundant post-tool model request')
+  assert.equal(requests.length, 3, 'two in-run schema repairs conclude without a redundant post-tool model request')
   assert.deepEqual(plannerMetrics[0], {
     outcome: 'operation',
+    decisionSource: 'model',
     elapsedMs: plannerMetrics[0]?.elapsedMs,
     harnessRunCount: 1,
-    modelStepCount: 2,
-    schemaRejectedCallCount: 1,
+    modelStepCount: 3,
+    schemaRejectedCallCount: 2,
     firstPassValid: false,
+    schemaRepairedValid: true,
+    proseNudgeRecovered: false,
     repairedValid: true,
     actionKind: 'search.run',
   }, 'safe planner metric distinguishes same-turn repair from first-pass validity')
@@ -217,13 +291,19 @@ try {
   assert.ok(firstSystemContent.includes("You are GoTry's embedded booking planner"), 'first SYSTEM message carries the GoTry personaPrefix (not the generic-default fallback)')
   assert.ok(firstSystemContent.includes('Shape-only example'), 'first SYSTEM message marks the envelope example as shape-only')
   assert.ok(firstSystemContent.includes('{"kind":"search.patch","input":{"patch":'), 'first SYSTEM message carries the shallow semantic proposal example')
+  assert.ok(firstSystemContent.includes('"intent":{"target":"search.results"}'), 'first SYSTEM message demonstrates the mandatory semantic goal')
   for (const runtimeField of ['actionId', 'contextRef', 'expectedRevision', 'sourceFactRef', 'factRefs']) {
     assert.ok(!JSON.stringify(requests[0]!.body.tools).includes(`"${runtimeField}"`), `model-facing tools omit runtime-owned ${runtimeField}`)
   }
-  assert.equal(requests[0]!.body.model, requests[1]!.body.model, 'rejected and repaired calls use one model session')
-  const repairMessages = JSON.stringify(requests[1]!.body.messages)
-  assert.match(repairMessages, /invalid arguments: decision_schema_violation/, 'repair request contains the ToolArgsError tool error')
-  assert.ok(JSON.stringify(requests[1]!.body.messages).includes('call-booking-1'), 'repair request references the rejected call id')
+  assert.equal(requests[0]!.body.model, requests[1]!.body.model, 'required-intent repair stays in one model session')
+  assert.equal(requests[1]!.body.model, requests[2]!.body.model, 'canonical semantic repair stays in the same model session')
+  const requiredIntentRepairMessages = JSON.stringify(requests[1]!.body.messages)
+  assert.match(requiredIntentRepairMessages, /required property 'intent'|must have required property.*intent/, 'first repair identifies the missing semantic intent')
+  assert.ok(requiredIntentRepairMessages.includes('call-booking-1'), 'first repair references the rejected call id')
+  const canonicalRepairMessages = JSON.stringify(requests[2]!.body.messages)
+  assert.match(canonicalRepairMessages, /invalid arguments: decision_schema_violation/, 'second repair contains the execute-time canonical ToolArgsError')
+  assert.match(canonicalRepairMessages, /fewer than 1 properties/, 'second repair carries the precise canonical constraint that failed')
+  assert.ok(canonicalRepairMessages.includes('call-booking-repair'), 'second repair references the canonical-schema rejected call id')
   const toolNames = requests[0]!.body.tools.map((tool: any) => tool.function.name).sort()
   assert.deepEqual(toolNames, [...DSH_EMBEDDED_BOOKING_TOOL_NAMES].sort(), 'real model request exposes exactly the six embedded tools')
   assert.ok(!toolNames.some((name: string) => /gotry_book|payment|holder|guest/i.test(name)), 'real model request exposes no booking write or PII tool')
@@ -240,9 +320,60 @@ try {
     receipt: { schemaVersion: 'booking.surface' as const, kind: 'action.receipt' as const, actionId: decisions[0].action.actionId, contextRef: workspace.contextRef, status: 'applied' as const, revision: 1,
       observation: { kind: 'search.state' as const, resultCount: 1 }, resultContract: { outcome: 'complete' as const, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } },
   }
-  const continuationDecisions = await session.next({ turn: continuation, task: { ...task, lastReceipt: continuation.kind === 'action.receipt.continuation' ? continuation.receipt : undefined } })
+  const continuationWorkspace = { ...workspace, revision: 1, results: { status: 'ready' as const, resultCount: 1 } }
+  const boundContinuation = { ...continuation, workspace: continuationWorkspace }
+  const continuationDecisions = await session.next({ turn: boundContinuation, task: { ...task, revision: 1, workspaceSnapshot: continuationWorkspace, lastCompletedAction: completedCheckpoint(decisions[0].action, task.lastTurnId!), lastReceipt: continuation.kind === 'action.receipt.continuation' ? continuation.receipt : undefined } })
   assert.deepEqual(continuationDecisions, [{ kind: 'terminal', terminal: { status: 'completed', summary: 'search_results_ready', factRefs: [] } }], 'real dsh materializes terminal status and summary from the authoritative receipt')
+
+  // Real SDK/subprocess timeout proof: the user-visible decision deadline is
+  // independent from child teardown, and handle shutdown reaps the actual dsh
+  // process instead of merely incrementing a fake close counter.
+  const childrenBefore = directDshChildPids()
+  const stalledTask: BookingCopilotTaskState = {
+    ...task,
+    taskId: 'task-real-dsh-stalled',
+    contextRef: 'ctx-real-dsh-stalled',
+    lastTurnId: 'real-dsh-stalled-turn',
+    workspaceSnapshot: { ...workspace, contextRef: 'ctx-real-dsh-stalled' },
+  }
+  const stalledTurn: BookingCopilotTurn = {
+    schemaVersion: 'booking.surface',
+    kind: 'user.turn',
+    taskId: stalledTask.taskId,
+    turnId: stalledTask.lastTurnId!,
+    workspace: stalledTask.workspaceSnapshot!,
+    request: { text: 'STALL_PROVIDER_PROOF' },
+  }
+  stalledPlanner = await createDshEmbeddedBookingPlanner({
+    stateRoot,
+    env: {
+      PATH: process.env.PATH,
+      DEEPSEEK_API_KEY: 'fixture-model-key',
+      DEEPSEEK_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+    },
+    maxTokens: 512,
+    turnTimeoutMs: 1_500,
+  })
+  const stalledStartedAt = Date.now()
+  const stalledDecisionPromise = stalledPlanner.plannerFactory(stalledTask).next({ turn: stalledTurn, task: stalledTask })
+  await Promise.race([
+    stalledRequestObserved,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('real stalled provider was not reached')), 5_000)),
+  ])
+  const stalledChildren = [...directDshChildPids()].filter((pid) => !childrenBefore.has(pid))
+  assert.ok(stalledChildren.length >= 1, 'real timeout proof observes the task-owned dsh child before the deadline')
+  const stalledDecisions = await stalledDecisionPromise
+  const stalledResponseMs = Date.now() - stalledStartedAt
+  assert.equal(stalledDecisions[0]?.kind, 'error')
+  assert.equal(stalledDecisions[0]?.kind === 'error' ? stalledDecisions[0].error.code : '', 'PLANNER_PROVIDER_TIMEOUT')
+  assert.ok(stalledResponseMs < 3_000, `real stalled provider returns the typed deadline without awaiting teardown (${stalledResponseMs}ms)`)
+  const cleanupStartedAt = Date.now()
+  await stalledPlanner.close()
+  stalledPlanner = undefined
+  assert.ok(Date.now() - cleanupStartedAt < 3_000, 'real stalled dsh cleanup stays inside the per-turn teardown budget')
+  assert.ok(stalledChildren.every((pid) => !processExists(pid)), 'real stalled dsh child is reaped after planner shutdown')
 } finally {
+  await stalledPlanner?.close()
   await planner?.close()
   await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()))
   rmSync(stateRoot, { recursive: true, force: true })

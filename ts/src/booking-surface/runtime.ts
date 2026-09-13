@@ -26,6 +26,7 @@ import {
   validateApprovalAgainstBlocker,
   validateCriterionBlocker,
   validateBookingReadAction,
+  validateBookingIntentProjection,
   validateBookingSurfaceEvent,
   validateBookingSurface,
   isBookingDateTime,
@@ -44,6 +45,13 @@ import {
   type AvailabilityPolicyState,
 } from './availability-policy.ts'
 import { normalizeBookingErrorCode, safeBookingErrorMessage } from './error-codes.ts'
+import {
+  BOOKING_INTENT_ACTION_ORDINAL,
+  BOOKING_INTENT_TARGET_ACTION,
+  BOOKING_INTENT_TARGET_ORDINAL,
+  type BookingIntentCheckpoint,
+  type BookingIntentProjection,
+} from './booking-intent.ts'
 
 const LEDGER_SCHEMA = 'booking.copilot.ledger' as const
 const ACTOR = 'system:booking-copilot'
@@ -99,9 +107,14 @@ export interface BookingCopilotTaskState {
   /** Durable task-level operation ordinal, folded from action ledger rows. */
   operationCount: number
   lastTurnId?: string
+  lastTurnRequestDigest?: string
   phase: BookingCopilotTaskPhase
   lastSequence: number
   pendingAction?: BookingActionCheckpoint
+  /** Last action whose exact receipt was accepted and folded from the ledger. */
+  lastCompletedAction?: BookingActionCheckpoint
+  /** Durable PII-safe goal; model processes may be retired between receipts. */
+  activeIntent?: BookingIntentCheckpoint
   lastReceipt?: ActionReceipt
   awaitingApproval?: BookingApprovalState
   workspaceDigest?: string
@@ -123,7 +136,7 @@ export type BookingSurfaceEventDraft =
   | Pick<Extract<BookingSurfaceEvent, { kind: 'error' }>, 'kind' | 'error'>
 
 export type BookingPlannerDecision =
-  | { kind: 'operation'; action: BookingReadAction }
+  | { kind: 'operation'; action: BookingReadAction; intent: BookingIntentProjection }
   | BookingSurfaceEventDraft
 
 export interface BookingPlannerSession {
@@ -141,11 +154,16 @@ export interface BookingCopilotRuntimeOptions {
   approvalTtlMs?: number
 }
 
+export interface BookingDecisionBatchOptions {
+  /** Server-owned progress is persisted separately before planner execution. */
+  suppressProgressStatuses?: boolean
+}
+
 interface Row { seq: number; kind: string; payload: string }
 interface BasePayload { schema: typeof LEDGER_SCHEMA; taskId: string; contextRef: string; [key: string]: unknown }
 interface StartedPayload extends BasePayload { surface: BookingSurface; revision: number; allowedActions: BookingReadActionKind[]; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshot; availability: AvailabilityPolicyState; availabilityDigest: string }
-interface TurnPayload extends BasePayload { requestDigest: string; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshot; turnId: string }
-interface ActionPayload extends BasePayload { action: BookingActionCheckpoint; operationCount?: number; availability: AvailabilityPolicyState; availabilityDigest: string }
+interface TurnPayload extends BasePayload { requestDigest: string; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshot; turnId: string; preserveIntent?: boolean }
+interface ActionPayload extends BasePayload { action: BookingActionCheckpoint; operationCount?: number; availability: AvailabilityPolicyState; availabilityDigest: string; intent?: BookingIntentCheckpoint }
 interface ReceiptPayload extends BasePayload { receipt: ActionReceipt; receiptDigest: string; operationCount?: number; workspaceDigest: string; workspaceSemanticDigest: string; workspace: BookingWorkspaceSnapshot; availability: AvailabilityPolicyState; availabilityDigest: string; availabilityTerminal?: AvailabilityExhaustion }
 interface EventPayload extends BasePayload { eventId: string; sequence: number; emittedAt: string; eventKind: Exclude<BookingSurfaceEvent['kind'], 'operation'>; status?: 'submitted'|'working'|'waiting_receipt'|'input_required'; contentDigest: string }
 interface ApprovalPayload extends BasePayload { approval: BookingApprovalState; ref?: RelaxationApprovalRef; approvalDigest: string }
@@ -178,6 +196,81 @@ function bookingWorkspaceSemanticDigest(workspace: BookingWorkspaceSnapshot | Bo
 
 export function bookingTurnDigest(turn: Extract<BookingCopilotTurn, { kind: 'user.turn' | 'user.turn.ingress' }>): string {
   return bookingDigest(turn)
+}
+
+function actionAdvancesIntent(
+  action: { kind: BookingReadActionKind; input: Record<string, any> },
+  intent: BookingIntentProjection,
+): boolean {
+  // Existing-order observation is an independent surface waypoint. Checkout
+  // preparation is deliberately not a prefix: the user-authorized Checkout
+  // flow creates a new trusted order context before observation can begin.
+  if (intent.target === 'order.observed') return action.kind === 'order.observe'
+  const actionOrdinal = BOOKING_INTENT_ACTION_ORDINAL[action.kind]
+  const targetOrdinal = BOOKING_INTENT_TARGET_ORDINAL[intent.target]
+  // Earlier path steps may advance toward a later target; an action after
+  // that target is an overshoot and cannot be bound to the same intent.
+  if (actionOrdinal === undefined || targetOrdinal === undefined || actionOrdinal > targetOrdinal) return false
+  if (intent.offerCriteria && (action.kind === 'offers.query' || action.kind === 'offers.view.patch')) {
+    if (bookingDigest(action.input.criteria) !== bookingDigest(intent.offerCriteria)) return false
+  }
+  if (intent.target === 'offers.compared' && action.kind === 'offers.compare') {
+    const targetCount = intent.offerCriteria?.targetCount ?? 3
+    if (action.input.requestedCount !== targetCount) return false
+  }
+  return true
+}
+
+function intentCheckpointDigest(value: Omit<BookingIntentCheckpoint, 'intentDigest'>): string {
+  return bookingDigest(value)
+}
+
+function validateIntentCheckpoint(
+  checkpoint: BookingIntentCheckpoint,
+  state: Pick<BookingCopilotTaskState, 'taskId' | 'contextRef' | 'allowedActions' | 'lastTurnId' | 'lastTurnRequestDigest' | 'activeIntent'>,
+  action: BookingActionCheckpoint,
+): void {
+  const projection = validateBookingIntentProjection(checkpoint?.projection)
+  const { intentDigest: _digest, ...base } = checkpoint ?? {} as BookingIntentCheckpoint
+  if (!projection.ok
+    || checkpoint.intentDigest !== intentCheckpointDigest(base)
+    || checkpoint.taskId !== state.taskId
+    || checkpoint.contextRef !== state.contextRef
+    || !state.allowedActions.includes(BOOKING_INTENT_TARGET_ACTION[checkpoint.projection.target])
+    || (state.activeIntent
+      ? bookingDigest(state.activeIntent) !== bookingDigest(checkpoint)
+      : checkpoint.sourceTurnId !== action.sourceTurnId
+        || checkpoint.sourceTurnId !== state.lastTurnId
+        || checkpoint.sourceRequestDigest !== state.lastTurnRequestDigest)) {
+    throw new Error('intent_checkpoint_invalid')
+  }
+  if (!actionAdvancesIntent(action, checkpoint.projection)) throw new Error('intent_checkpoint_invalid')
+}
+
+function bindIntentCheckpoint(
+  state: BookingCopilotTaskState,
+  action: BookingReadAction,
+  projection: BookingIntentProjection,
+): BookingIntentCheckpoint {
+  if (state.activeIntent) {
+    if (projection && bookingDigest(projection) !== bookingDigest(state.activeIntent.projection)) {
+      throw new Error('intent_mutation_forbidden')
+    }
+    return state.activeIntent
+  }
+  if (!state.lastTurnId || !state.lastTurnRequestDigest) throw new Error('intent_source_turn_missing')
+  const nextProjection = projection
+  const checked = validateBookingIntentProjection(nextProjection)
+  if (!checked.ok) throw new Error('invalid_booking_intent')
+  if (!state.allowedActions.includes(BOOKING_INTENT_TARGET_ACTION[nextProjection.target])) throw new Error('intent_target_unsupported')
+  const base = {
+    taskId: state.taskId,
+    contextRef: state.contextRef,
+    sourceTurnId: state.lastTurnId,
+    sourceRequestDigest: state.lastTurnRequestDigest,
+    projection: JSON.parse(JSON.stringify(nextProjection)) as BookingIntentProjection,
+  }
+  return { ...base, intentDigest: intentCheckpointDigest(base) }
 }
 
 function canonicalReceiptDigest(value: ActionReceipt): string { return bookingDigest(value) }
@@ -301,6 +394,9 @@ function replanAfterReplayUpgradeGap(state: BookingCopilotTaskState, workspace =
     revision: safeRevision,
     phase: 'planning',
     pendingAction: undefined,
+    lastCompletedAction: undefined,
+    lastReceipt: undefined,
+    activeIntent: undefined,
     awaitingApproval: undefined,
     workspaceDigest: bookingWorkspaceDigest(workspace),
     workspaceSemanticDigest: bookingWorkspaceSemanticDigest(workspace),
@@ -378,6 +474,14 @@ function actionFromOperationEventForReplay(event: Extract<BookingSurfaceEvent, {
   const action = event.action
   if ((action.kind === 'offer.select' || action.kind === 'offer.check' || action.kind === 'checkout.prepare') && typeof action.input.offerRef === 'string' && typeof action.input.offerVersionRef !== 'string' && typeof checkpoint.input.offerVersionRef === 'string') {
     return { ...action, input: { ...action.input, offerVersionRef: checkpoint.input.offerVersionRef } } as BookingReadAction
+  }
+  if ((action.kind === 'offer.select' || action.kind === 'offer.check' || action.kind === 'checkout.prepare') && typeof action.input.offerRef === 'string' && typeof action.input.offerVersionRef === 'string' && typeof checkpoint.input.offerVersionRef !== 'string') {
+    // A pre-versioned ACTION row is the authority during a skipped legacy
+    // tail. Its duplicate decision envelope may still contain a newer
+    // offerVersionRef field. Ignore that unbound field for envelope identity;
+    // the action itself is never resumed and a fresh intent/turn is required.
+    const { offerVersionRef: _unboundVersion, ...legacyInput } = action.input
+    return { ...action, input: legacyInput } as BookingReadAction
   }
   return action
 }
@@ -473,6 +577,10 @@ function assertRequestKey(requestKey: string): asserts requestKey is BookingRequ
 /** Decision batches are runtime-owned and may contain long task/turn/action refs. */
 function assertInternalDecisionKey(requestKey: string): asserts requestKey is BookingInternalDecisionKey {
   if (typeof requestKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,2047}$/.test(requestKey)) throw new Error('unsafe_internal_decision_key')
+}
+
+function progressDecisionKey(requestKey: string): BookingInternalDecisionKey {
+  return `progress:${bookingDigest(requestKey)}`
 }
 
 function assertDecisionBatchFinality(decisions: readonly BookingPlannerDecision[]): void {
@@ -624,9 +732,34 @@ function receiptTargetMatchesAction(receipt: ActionReceipt, action: { kind: Book
   if (action.kind === 'checkout.prepare' && observation.kind === 'checkout.handoff') return observation.offerRef === input.offerRef && observation.offerVersionRef === input.offerVersionRef && observation.verifiedOfferRef === input.verifiedOfferRef
   if (action.kind === 'offers.query' && observation.kind === 'offers.state') return sameRefSet(observation.hotelRefs, input.hotelRefs)
   if (action.kind === 'offers.view.patch' && observation.kind === 'offers.state') return observation.hotelRefs.includes(input.hotelRef)
-  if (action.kind === 'offers.compare' && observation.kind === 'offers.state') return input.offerRefs.every((offerRef: string) => observation.offerRefs.includes(offerRef))
+  if (action.kind === 'offers.compare' && observation.kind === 'offers.state') {
+    return observation.offerRefs.every((offerRef) => input.offerRefs.includes(offerRef))
+      && receipt.resultContract.requestedCount === input.requestedCount
+      && receipt.resultContract.actualCount === observation.offerRefs.length
+  }
   if (action.kind === 'order.observe' && observation.kind === 'order.state') return observation.orderRef === input.orderRef
   return observation.kind === 'gap' || action.kind === 'search.patch' || action.kind === 'search.run' || action.kind === 'results.view.patch'
+}
+
+/**
+ * An offers.state receipt is only executable evidence when it is reconciled
+ * against the page's post-action loaded offer registry. The planner may
+ * propose the receipt shape, but it cannot create offer refs or counts that
+ * are absent from that registry.
+ */
+function assertOffersReceiptWorkspaceBinding(
+  receipt: ActionReceipt,
+  workspace: BookingWorkspaceSnapshot,
+  action: { kind: BookingReadActionKind; input: Record<string, any> },
+): void {
+  if (receipt.observation.kind !== 'offers.state') return
+  if (action.kind !== 'offers.query' && action.kind !== 'offers.view.patch') return
+  const hotelRefs = action.kind === 'offers.query' ? action.input.hotelRefs : [action.input.hotelRef]
+  validateOffersReceiptWorkspace(receipt, workspace, hotelRefs)
+  if (receipt.resultContract.actualCount !== undefined
+    && receipt.resultContract.actualCount !== receipt.observation.offerRefs.length) {
+    throw new Error('availability_offers_count_mismatch')
+  }
 }
 
 function workspaceBoundaryMatches(a: BookingWorkspaceSnapshot, b: BookingWorkspaceSnapshot): boolean {
@@ -939,14 +1072,14 @@ export class BookingCopilotTaskRuntime {
         } else if (existing.awaitingApproval) {
           throw new Error('approval_required')
         }
-        this.appendTurn(taskId, existing.contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, existing.userTurnCount + 1, turnId, boundWorkspace)
+        this.appendTurn(taskId, existing.contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, existing.userTurnCount + 1, turnId, boundWorkspace, Boolean(approval))
         if (requestBinding) this.appendRequestBindingInTransaction(requestBinding.requestKey, userTurn, requestBinding)
         return this.requireTask(taskId)
       }
       if (userTurn?.request.approval) throw new Error('approval_not_awaiting')
       const started: StartedPayload = { schema: LEDGER_SCHEMA, taskId, contextRef, surface, revision, allowedActions, workspaceDigest, workspaceSemanticDigest, workspace: boundWorkspace, availability, availabilityDigest: bookingDigest(availability) }
       this.append(STARTED, taskId, started, `booking-copilot:task:${taskId}`)
-      this.appendTurn(taskId, contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, 1, turnId, boundWorkspace)
+      this.appendTurn(taskId, contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, 1, turnId, boundWorkspace, false)
       if (requestBinding) this.appendRequestBindingInTransaction(requestBinding.requestKey, userTurn, requestBinding)
       return this.requireTask(taskId)
     })
@@ -1016,6 +1149,13 @@ export class BookingCopilotTaskRuntime {
           rememberReplayWorkspaceDigest(replayWorkspaceDigests, t.workspaceDigest, t.workspace, turnWorkspace)
           state.userTurnCount++
           state.lastTurnId = t.turnId
+          if (!/^[0-9a-f]{64}$/.test(t.requestDigest)) throw new Error(`ledger_corrupt:${taskId}:turn_request_digest`)
+          state.lastTurnRequestDigest = t.requestDigest
+          if (!t.preserveIntent) {
+            delete state.activeIntent
+            delete state.lastCompletedAction
+            delete state.lastReceipt
+          }
           state.workspaceDigest = bookingWorkspaceDigest(turnWorkspace)
           state.workspaceSemanticDigest = bookingWorkspaceSemanticDigest(turnWorkspace)
           state.workspaceSnapshot = turnWorkspace
@@ -1044,6 +1184,17 @@ export class BookingCopilotTaskRuntime {
           const operationCount = actionPayload.operationCount ?? state.operationCount + 1
           const { actionDigest: _rawActionDigest, ...rawActionBase } = rawAction
           if (rawAction.actionDigest !== checkpointDigest(rawActionBase) || rawAction.contextRef !== state.contextRef || !Number.isSafeInteger(operationCount) || operationCount !== state.operationCount + 1 || operationCount > BOOKING_COPILOT_MAX_OPERATIONS || !Number.isSafeInteger(rawAction.sequence) || rawAction.sequence <= state.lastSequence) throw new Error(`ledger_corrupt:${taskId}:action`)
+          const hasIntent = Object.prototype.hasOwnProperty.call(actionPayload, 'intent')
+          if (!hasIntent) {
+            // Pre-intent rows remain readable without being upgraded into a
+            // guessed user goal. Stop before applying newer action invariants,
+            // preserve the ordinal, and suppress the legacy tail until a fresh
+            // user turn reanchors the workspace and intent.
+            state = replanAfterReplayUpgradeGap(state)
+            try { consumeSkippedActionOrdinal(state, actionPayload, consumed) } catch { throw new Error(`ledger_corrupt:${taskId}:action`) }
+            skipLegacyUpgradeTail = true
+            continue
+          }
           let a: BookingActionCheckpoint
           try { a = normalizeActionCheckpointForReplay(rawAction, state.workspaceSnapshot) } catch (error) {
             if (error instanceof Error && error.message.startsWith('booking_replan_required:')) { state = replanAfterReplayUpgradeGap(state); try { consumeSkippedActionOrdinal(state, actionPayload, consumed) } catch { throw new Error(`ledger_corrupt:${taskId}:action`) } skipLegacyUpgradeTail = true; continue }
@@ -1056,7 +1207,10 @@ export class BookingCopilotTaskRuntime {
             if (error instanceof Error && error.message.startsWith('booking_replan_required:')) { state = replanAfterReplayUpgradeGap(state); try { consumeSkippedActionOrdinal(state, actionPayload, consumed) } catch { throw new Error(`ledger_corrupt:${taskId}:action`) } skipLegacyUpgradeTail = true; continue }
             throw error
           }
-          if (!checkpointDigestMatchesForReplay(rawAction, a) || a.actionDigest !== checkpointDigest(actionBase) || !Number.isSafeInteger(operationCount) || operationCount !== state.operationCount + 1 || operationCount > BOOKING_COPILOT_MAX_OPERATIONS || !validateAvailabilityPolicy(actionAvailability) || !replayDigestMatches(actionPayload.availabilityDigest, actionPayload.availability, actionAvailability) || !state.workspaceSnapshot) throw new Error(`ledger_corrupt:${taskId}:action`)
+          if (!checkpointDigestMatchesForReplay(rawAction, a) || a.actionDigest !== checkpointDigest(actionBase) || a.sourceTurnId !== state.lastTurnId || !Number.isSafeInteger(operationCount) || operationCount !== state.operationCount + 1 || operationCount > BOOKING_COPILOT_MAX_OPERATIONS || !validateAvailabilityPolicy(actionAvailability) || !replayDigestMatches(actionPayload.availabilityDigest, actionPayload.availability, actionAvailability) || !state.workspaceSnapshot) throw new Error(`ledger_corrupt:${taskId}:action`)
+          if (actionPayload.intent) {
+            try { validateIntentCheckpoint(actionPayload.intent, state, a) } catch { throw new Error(`ledger_corrupt:${taskId}:intent`) }
+          } else throw new Error(`ledger_corrupt:${taskId}:intent`)
           if (a.relaxationApprovalRef) assertApprovalRef(a.relaxationApprovalRef, state, a)
           if (state.pendingAction) throw new Error(`ledger_corrupt:${taskId}:parallel_actions`)
           let expectedAvailability: AvailabilityPolicyState
@@ -1064,6 +1218,7 @@ export class BookingCopilotTaskRuntime {
           if (bookingDigest(expectedAvailability) !== bookingDigest(actionAvailability)) throw new Error(`ledger_corrupt:${taskId}:action_transition`)
           state.operationCount = operationCount
           state.availability = actionAvailability
+          if (actionPayload.intent) state.activeIntent = actionPayload.intent
           state.pendingAction = a; state.phase = 'waiting_receipt'; state.lastSequence = Math.max(state.lastSequence, a.sequence)
           {
             rememberConsumedActionIdentity(consumed, a)
@@ -1073,6 +1228,11 @@ export class BookingCopilotTaskRuntime {
           if (skipLegacyUpgradeTail) {
             const r = payload as ReceiptPayload
             if (typeof r.receipt?.actionId === 'string') suppressedReceiptActionIds.add(r.receipt.actionId)
+            // A standalone legacy action has no decision envelope to consume
+            // its pending identity set. Its receipt closes that skipped unit;
+            // otherwise a later, freshly anchored batch is falsely treated as
+            // a graft containing identities from the legacy action.
+            clearPendingBatch(consumed)
             continue
           }
           const r = payload as ReceiptPayload
@@ -1098,10 +1258,12 @@ export class BookingCopilotTaskRuntime {
           if (!replayDigestMatches(r.receiptDigest, r.receipt, receipt) || !validateBookingSurface(receipt).ok || !r.availability || !r.availabilityDigest || !validateAvailabilityPolicy(receiptAvailability) || !replayDigestMatches(r.availabilityDigest, r.availability, receiptAvailability)) throw new Error(`ledger_corrupt:${taskId}:receipt`)
           if (Boolean(r.availabilityTerminal) !== Boolean(receiptAvailability.terminal) || (r.availabilityTerminal && receiptAvailability.terminal && bookingDigest(r.availabilityTerminal) !== bookingDigest(receiptAvailability.terminal))) throw new Error(`ledger_corrupt:${taskId}:availability_terminal`)
           assertCanonicalReceipt(receipt)
+          try { assertOffersReceiptWorkspaceBinding(receipt, receiptWorkspace, state.pendingAction) } catch { throw new Error(`ledger_corrupt:${taskId}:receipt_transition`) }
           if (!state.workspaceSnapshot || !workspacePostActionMatches(state.workspaceSnapshot, receiptWorkspace, state.pendingAction, receipt) || !receiptObservationMatchesAction(receipt.observation.kind, state.pendingAction.kind) || !receiptTargetMatchesAction(receipt, state.pendingAction)) throw new Error(`ledger_corrupt:${taskId}:receipt_transition`)
           let expectedAvailability: AvailabilityPolicyState
           try { expectedAvailability = reduceAvailabilityReceipt(state.availability, receiptWorkspace, receipt, state.pendingAction) } catch { throw new Error(`ledger_corrupt:${taskId}:receipt_transition`) }
           if (bookingDigest(expectedAvailability) !== bookingDigest(receiptAvailability)) throw new Error(`ledger_corrupt:${taskId}:receipt_transition`)
+          state.lastCompletedAction = state.pendingAction
           state.lastReceipt = receipt; state.revision = receipt.revision; state.workspaceDigest = bookingWorkspaceDigest(receiptWorkspace); state.workspaceSemanticDigest = bookingWorkspaceSemanticDigest(receiptWorkspace); state.workspaceSnapshot = receiptWorkspace; state.availability = receiptAvailability; delete state.pendingAction; state.phase = availabilityTerminalEndsTask(receiptAvailability.terminal) || state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS ? 'terminal' : 'planning'
           clearPendingBatch(consumed)
           delete state.awaitingApproval
@@ -1193,6 +1355,36 @@ export class BookingCopilotTaskRuntime {
     return this.applyDecisionBatch(taskId, requestKey, decisions)
   }
 
+  /**
+   * Persists the server's initial SSE progress before planner execution. The
+   * progress batch has a derived idempotency key, so the final decision batch
+   * keeps the public request key and never repeats these status events.
+   */
+  ensureProgressBatch(taskId: string, requestKey: string, includeSubmitted = false): BookingSurfaceEvent[] {
+    assertInternalDecisionKey(requestKey)
+    const progressKey = progressDecisionKey(requestKey)
+    const prior = this.readDecisionBatch(taskId, progressKey)
+    if (prior) return prior
+    if (this.readDecisionBatch(taskId, requestKey)) return []
+    const run = this.ledger.db.transaction(() => {
+      const state = this.requireTask(taskId)
+      if (state.phase === 'terminal' || state.phase === 'error') return []
+      const recorded = this.readDecisionBatch(taskId, progressKey)
+      if (recorded) return recorded
+      const events: BookingSurfaceEvent[] = []
+      if (includeSubmitted) events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'submitted' }))
+      events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'working' }))
+      this.append(DECISION_BATCH, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef: state.contextRef, requestKey: progressKey, events }, `booking-copilot:decision-batch:${taskId}:${progressKey}`)
+      return events
+    })
+    return run.immediate()
+  }
+
+  readProgressBatch(taskId: string, requestKey: string): BookingSurfaceEvent[] | null {
+    assertInternalDecisionKey(requestKey)
+    return this.readDecisionBatch(taskId, progressDecisionKey(requestKey))
+  }
+
   readDecisionBatch(taskId: string, requestKey: string): BookingSurfaceEvent[] | null {
     const state = this.requireTask(taskId)
     if (state.legacySuppressedDecisionRequestKeys?.includes(requestKey)) throw new Error('request_key_invalidated')
@@ -1234,7 +1426,7 @@ export class BookingCopilotTaskRuntime {
   }
 
   /** Atomically applies planner decisions and records the exact SSE batch before it is sent. */
-  applyDecisionBatch(taskId: string, requestKey: string, decisions: readonly BookingPlannerDecision[], includeSubmitted = false): BookingSurfaceEvent[] {
+  applyDecisionBatch(taskId: string, requestKey: string, decisions: readonly BookingPlannerDecision[], includeSubmitted = false, options: BookingDecisionBatchOptions = {}): BookingSurfaceEvent[] {
     assertInternalDecisionKey(requestKey)
     const prior = this.readDecisionBatch(taskId, requestKey)
     if (prior) return prior
@@ -1248,6 +1440,7 @@ export class BookingCopilotTaskRuntime {
       if (decision.kind === 'operation') {
         const checked = validateBookingReadAction(decision.action)
         if (!checked.ok) throw new Error(`invalid_action:${errorText(checked)}`)
+        if (!validateBookingIntentProjection(decision.intent).ok) throw new Error('invalid_booking_intent')
       }
     }
     const run = this.ledger.db.transaction(() => {
@@ -1262,11 +1455,13 @@ export class BookingCopilotTaskRuntime {
         if (!awaiting || requestKey !== awaiting.presentationRequestKey || bookingDigest(decision.question.blocker) !== bookingDigest(awaiting.blocker) || decision.question.approvalOptions.length !== awaiting.options.length || decision.question.approvalOptions.some(({ approval }) => !awaiting.options.some((option) => option.optionDigest === approval.optionDigest && bookingDigest(option) === bookingDigest(approval)))) throw new Error('approval_presentation_key_mismatch')
         this.ensureApprovalOffered(taskId, before.contextRef, awaiting, requestKey)
       }
-      if (includeSubmitted) events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'submitted' }))
-      events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'working' }))
+      if (!options.suppressProgressStatuses) {
+        if (includeSubmitted) events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'submitted' }))
+        events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'working' }))
+      }
       for (const decision of decisions) {
         if (decision.kind === 'operation') {
-          events.push(this.issueOperationInTransaction(taskId, decision.action))
+          events.push(this.issueOperationInTransaction(taskId, decision.action, decision.intent))
           events.push(this.emitEventInTransaction(taskId, { kind: 'status', status: 'waiting_receipt' }))
         }
         else events.push(this.emitEventInTransaction(taskId, decision))
@@ -1278,14 +1473,15 @@ export class BookingCopilotTaskRuntime {
     return run.immediate()
   }
 
-  issueOperation(taskId: string, candidate: BookingReadAction): { schemaVersion: 'booking.surface'; eventId: string; taskId: string; contextRef: string; sequence: number; emittedAt: string; kind: 'operation'; action: BookingReadAction } {
+  issueOperation(taskId: string, candidate: BookingReadAction, intentProjection: BookingIntentProjection): { schemaVersion: 'booking.surface'; eventId: string; taskId: string; contextRef: string; sequence: number; emittedAt: string; kind: 'operation'; action: BookingReadAction } {
     const validation = validateBookingReadAction(candidate)
     if (!validation.ok) throw new Error(`invalid_action:${errorText(validation)}`)
     assertTaskId(taskId); assertSafeRef(candidate.actionId); candidate.factRefs.forEach(assertSafeRef)
-    return this.ledger.db.transaction(() => this.issueOperationInTransaction(taskId, candidate)).immediate()
+    return this.ledger.db.transaction(() => this.issueOperationInTransaction(taskId, candidate, intentProjection)).immediate()
   }
 
-  private issueOperationInTransaction(taskId: string, candidate: BookingReadAction) {
+  private issueOperationInTransaction(taskId: string, candidate: BookingReadAction, intentProjection?: BookingIntentProjection) {
+      if (intentProjection === undefined || intentProjection === null) throw new Error('booking_intent_required')
       assertSafeRef(candidate.actionId); candidate.factRefs.forEach(assertSafeRef)
       const state = this.requireTask(taskId)
       if (state.phase === 'terminal' || state.phase === 'error') throw new Error('task_terminal')
@@ -1301,6 +1497,8 @@ export class BookingCopilotTaskRuntime {
       if (state.operationCount >= BOOKING_COPILOT_MAX_OPERATIONS) throw new Error('operation_limit_reached')
       if (candidate.relaxationApprovalRef) throw new Error('approval_ref_planner_owned_forbidden')
       if (!state.workspaceSnapshot) throw new Error(`ledger_corrupt:${taskId}:workspace_missing`)
+      const intent = bindIntentCheckpoint(state, candidate, intentProjection)
+      if (!actionAdvancesIntent(candidate, intent.projection)) throw new Error('action_intent_mismatch')
       assertAvailabilityActionCompatible(state, candidate, this.now())
       if (!actionHitsCurrentOfferVersion(state.workspaceSnapshot, candidate, this.now())) throw new Error('offer_version_not_loaded')
       let action = candidate
@@ -1326,7 +1524,7 @@ export class BookingCopilotTaskRuntime {
       const eventValidation = validateBookingSurfaceEvent(event)
       if (!eventValidation.ok) throw new Error(`invalid_operation_event:${errorText(eventValidation)}`)
       if (!state.lastTurnId) throw new Error(`ledger_corrupt:${taskId}:turn_id`)
-      this.appendAction(taskId, state.contextRef, checkpointFor(action, eventId, sequence, emittedAt, state.lastTurnId), state.operationCount + 1, availability)
+      this.appendAction(taskId, state.contextRef, checkpointFor(action, eventId, sequence, emittedAt, state.lastTurnId), state.operationCount + 1, availability, intent)
       return event
   }
 
@@ -1360,10 +1558,10 @@ export class BookingCopilotTaskRuntime {
       if (!workspacePostActionMatches(state.workspaceSnapshot, turn.workspace, state.pendingAction, turn.receipt)) throw new Error('workspace_mismatch')
       if (!receiptObservationMatchesAction(turn.receipt.observation.kind, state.pendingAction.kind)) throw new Error('receipt_observation_action_mismatch')
       if (!receiptTargetMatchesAction(turn.receipt, state.pendingAction)) throw new Error('receipt_target_mismatch')
+      assertOffersReceiptWorkspaceBinding(turn.receipt, turn.workspace, state.pendingAction)
       if (state.pendingAction.kind === 'offer.check' && turn.receipt.status === 'applied' && !verifiedOfferUnexpired(turn.workspace, this.now())) throw new Error('receipt_verified_offer_expired')
       // Failed/stale query receipts may carry a typed gap observation; only an
       // offers.state observation can claim passive offer provenance.
-      if (state.pendingAction.kind === 'offers.query' && turn.receipt.observation.kind === 'offers.state') validateOffersReceiptWorkspace(turn.receipt, turn.workspace, state.pendingAction.input.hotelRefs)
       if (turn.receipt.resultContract.relaxationsApplied.some((approval) => !this.approvalWasConsumed(turn.taskId, approval, state.pendingAction!.actionId))) throw new Error('receipt_relaxation_unauthorized')
       const pending = state.pendingAction
       if (turn.receipt.revision !== turn.workspace.revision) throw new Error('revision_mismatch')
@@ -1377,7 +1575,7 @@ export class BookingCopilotTaskRuntime {
         this.append(DECISION_BATCH, turn.taskId, { schema: LEDGER_SCHEMA, taskId: turn.taskId, contextRef: state.contextRef, requestKey: `receipt:${turn.receipt.actionId}:${receiptDigest}`, events: [terminalEvent] }, `booking-copilot:decision-batch:${turn.taskId}:receipt:${turn.receipt.actionId}:${receiptDigest}`)
         return terminalState
       }
-      if (pending.kind === 'checkout.prepare') {
+      if (pending.kind === 'checkout.prepare' && state.activeIntent?.projection.target === 'checkout.prepared') {
         const terminalState = this.requireTask(turn.taskId)
         const terminalEvent = this.checkoutHandoffTerminalEvent(terminalState, checkoutReceiptPreparedHandoff(turn.receipt))
         this.appendTerminalEvent(turn.taskId, terminalEvent)
@@ -1413,7 +1611,19 @@ export class BookingCopilotTaskRuntime {
       const state = this.requireTask(taskId)
       assertReplayUpgradeReanchored(state)
       const safeDraft = draft.kind === 'error'
-        ? { ...draft, error: { ...draft.error, code: normalizeBookingErrorCode(draft.error.code), message: safeBookingErrorMessage(normalizeBookingErrorCode(draft.error.code)) } }
+        ? {
+            ...draft,
+            error: {
+              ...draft.error,
+              code: normalizeBookingErrorCode(draft.error.code),
+              message: safeBookingErrorMessage(normalizeBookingErrorCode(draft.error.code)),
+              // An error event closes this task immediately. Until the public
+              // protocol has an idempotent same-task retry command, claiming
+              // that such an event is retryable would send the client into a
+              // guaranteed task_terminal response on its next request.
+              retryable: false,
+            },
+          }
         : draft
       const event = { schemaVersion: 'booking.surface' as const, eventId: this.idFactory('event'), taskId, contextRef: state.contextRef, sequence: state.lastSequence + 1, emittedAt: this.now(), ...safeDraft } as Exclude<BookingSurfaceEvent, { kind: 'operation' }>
       const checked = validateBookingSurfaceEvent(event)
@@ -1553,9 +1763,9 @@ export class BookingCopilotTaskRuntime {
     const result = this.ledger.db.prepare(`INSERT OR IGNORE INTO events (tenant_id, ts, actor, kind, subject_id, payload, idem_key, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(this.ledger.tenant, this.now(), ACTOR, kind, taskId, JSON.stringify(payload), idemKey, taskId)
     if (result.changes === 0) throw new Error(`ledger_write_failed:${kind}`)
   }
-  private appendTurn(taskId: string, contextRef: string, requestDigest: string, workspaceDigest: string, workspaceSemanticDigest: string, ordinal: number, turnId: string, workspace?: BookingWorkspaceSnapshot): void { if (!workspace) throw new Error('ledger_write_failed:turn_workspace'); this.append(TURN, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, workspace, turnId }, `booking-copilot:turn:${taskId}:${turnId}`) }
+  private appendTurn(taskId: string, contextRef: string, requestDigest: string, workspaceDigest: string, workspaceSemanticDigest: string, ordinal: number, turnId: string, workspace?: BookingWorkspaceSnapshot, preserveIntent = false): void { if (!workspace) throw new Error('ledger_write_failed:turn_workspace'); this.append(TURN, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, requestDigest, workspaceDigest, workspaceSemanticDigest, workspace, turnId, preserveIntent }, `booking-copilot:turn:${taskId}:${turnId}`) }
   private appendApproval(taskId: string, contextRef: string, approval: BookingApprovalState): void { this.append(APPROVAL_GRANTED, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, approval, approvalDigest: bookingDigest(approval) }, `booking-copilot:approval-granted:${taskId}:${approval.approval?.approvalId ?? 'pending'}:${approval.nonce}`) }
-  private appendAction(taskId: string, contextRef: string, action: BookingActionCheckpoint, operationCount: number, availability: AvailabilityPolicyState): void { this.append(ACTION, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, action, operationCount, availability, availabilityDigest: bookingDigest(availability) }, `booking-copilot:action:${taskId}:${action.actionId}`) }
+  private appendAction(taskId: string, contextRef: string, action: BookingActionCheckpoint, operationCount: number, availability: AvailabilityPolicyState, intent: BookingIntentCheckpoint): void { this.append(ACTION, taskId, { schema: LEDGER_SCHEMA, taskId, contextRef, action, operationCount, availability, availabilityDigest: bookingDigest(availability), intent }, `booking-copilot:action:${taskId}:${action.actionId}`) }
   private appendTerminalEvent(taskId: string, event: Extract<BookingSurfaceEvent, { kind: 'terminal' }>): void {
     const payload: EventPayload = { schema: LEDGER_SCHEMA, taskId, contextRef: event.contextRef, eventId: event.eventId, sequence: event.sequence, emittedAt: event.emittedAt, eventKind: 'terminal', contentDigest: bookingDigest(event.terminal) }
     const idemKey = `booking-copilot:terminal-event:${taskId}`

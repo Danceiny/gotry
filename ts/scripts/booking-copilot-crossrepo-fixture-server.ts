@@ -73,7 +73,7 @@ const plannerFactory: BookingPlannerSessionFactory = (initialTask: BookingCopilo
           reason: 'Run the approved relaxed search.',
           factRefs: [],
           input: {},
-        } }]
+        }, intent: { schemaVersion: 'booking.intent.v1', target: 'search.results' } }]
       }
       if (receiptObserved) {
         return [{
@@ -106,7 +106,10 @@ const plannerFactory: BookingPlannerSessionFactory = (initialTask: BookingCopilo
             factRefs: [],
             input: {},
           }
-      return [{ kind: 'operation', action }]
+      const intent = action.kind === 'hotel.select'
+        ? { schemaVersion: 'booking.intent.v1' as const, target: 'hotel.selected' as const }
+        : { schemaVersion: 'booking.intent.v1' as const, target: 'search.results' as const }
+      return [{ kind: 'operation', action, intent }]
     },
   }
 }

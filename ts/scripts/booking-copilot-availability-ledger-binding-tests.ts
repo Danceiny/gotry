@@ -3,8 +3,11 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ensureLedger } from '../src/state-ledger.ts'
-import { BookingCopilotTaskRuntime, bookingDigest } from '../src/booking-surface/runtime.ts'
+import { bookingDigest } from '../src/booking-surface/runtime.ts'
+import { BookingCopilotProofRuntime as BookingCopilotTaskRuntime } from './booking-copilot-proof-runtime.ts'
 import type { ActionReceipt, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
+
+const offerVerifiedIntent = { schemaVersion: 'booking.intent.v1', target: 'offer.verified' } as const
 
 const workspace = (revision: number): BookingWorkspaceSnapshot => ({
   schemaVersion: 'booking.surface', contextRef: 'ctx-ledger-binding', surface: 'tenant', revision,
@@ -35,10 +38,10 @@ function fixture(stage: 'action' | 'receipt'): Fixture {
   const task = 'ledger-binding-task'
   runtime.startTask({ schemaVersion: 'booking.surface', kind: 'user.turn', taskId: task, turnId: 'turn-1', workspace: workspace(0), request: { text: 'find rates' } })
   const query = { schemaVersion: 'booking.surface' as const, kind: 'offers.query' as const, actionId: 'query-1', contextRef: 'ctx-ledger-binding', expectedRevision: 0, reason: 'load offers', factRefs: [], input: { hotelRefs: ['h1'], criteria: {} } }
-  runtime.issueOperation(task, query)
+  runtime.issueOperation(task, query, offerVerifiedIntent)
   runtime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: task, workspace: workspace(1), receipt: offersReceipt('query-1', 1) })
   const check = { schemaVersion: 'booking.surface' as const, kind: 'offer.check' as const, actionId: 'check-1', contextRef: 'ctx-ledger-binding', expectedRevision: 1, reason: 'check', factRefs: [], input: { offerRef: 'o1', offerVersionRef: 'o1:v1' } }
-  runtime.issueOperation(task, check)
+  runtime.issueOperation(task, check, offerVerifiedIntent)
   if (stage === 'receipt') runtime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: task, workspace: { ...workspace(2), shortlistedOfferRefs: ['o2'], selectedOfferRef: undefined, verifiedOffer: undefined }, receipt: checkReceipt('check-1', 2) })
   ledger.close()
   return { root, ledger, task }
@@ -118,7 +121,9 @@ for (const [label, mutate] of [
   const runtime = new BookingCopilotTaskRuntime(runtimeLedger)
   assert.deepEqual(runtime.resumeTask(fixtureState.task)?.availability.criteria, {}, 'recovery retains the canonical offer criteria after restart')
   const wrongDetour = { schemaVersion: 'booking.surface' as const, kind: 'search.run' as const, actionId: 'detour', contextRef: 'ctx-ledger-binding', expectedRevision: 2, reason: 'detour', factRefs: [], input: {} }
-  assert.throws(() => runtime.applyDecisionBatch(fixtureState.task, 'detour-batch', [{ kind: 'operation', action: wrongDetour }]), /availability_operation_incompatible/)
+  const activeIntent = runtime.resumeTask(fixtureState.task)?.activeIntent?.projection
+  assert.ok(activeIntent)
+  assert.throws(() => runtime.applyDecisionBatch(fixtureState.task, 'detour-batch', [{ kind: 'operation', action: wrongDetour, intent: activeIntent }]), /availability_operation_incompatible/)
   runtimeLedger.close()
   rmSync(fixtureState.root, { recursive: true, force: true })
 }

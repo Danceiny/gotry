@@ -10,8 +10,13 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import type { ActionReceipt, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
-import type { BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { ensureLedger } from '../src/state-ledger.ts'
+import type { ActionReceipt, BookingReadAction, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
+import { bookingDigest, BookingCopilotTaskRuntime, type BookingActionCheckpoint, type BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
+import { BOOKING_INTENT_SCHEMA_VERSION, type BookingIntentCheckpoint } from '../src/booking-surface/booking-intent.ts'
 import {
   DSH_EMBEDDED_BOOKING_TOOL_NAMES,
   buildDshEmbeddedBookingPatch,
@@ -125,6 +130,135 @@ async function runToolArgumentsCase(argumentsText: string, turnId: string) {
   }
 }
 
+// A fresh order-observe turn may bind only to a BFF-injected observable order
+// projection. The model still supplies the lookup key, but neither that key
+// nor its evidence can come from prose or an untrusted ingress snapshot.
+const freshOrderWorkspace: BookingWorkspaceSnapshot = {
+  ...workspace,
+  contextRef: 'ctx-dsh-fresh-order',
+  capabilities: { surface: 'tenant', allowedActions: ['order.observe'] },
+  observableOrders: [{ orderRef: 'order-fresh-1', factRefs: ['order:state:fresh-1'] }],
+}
+const freshOrderTask: BookingCopilotTaskState = {
+  ...task,
+  taskId: 'task-dsh-fresh-order',
+  contextRef: freshOrderWorkspace.contextRef,
+  lastTurnId: 'dsh-turn-fresh-order',
+  allowedActions: ['order.observe'],
+  workspaceSnapshot: freshOrderWorkspace,
+}
+const freshOrderPlanner = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: successfulToolEvents(
+          'booking_observe_booking',
+          JSON.stringify({ kind: 'order.observe', input: { orderRef: 'order-fresh-1' }, intent: { target: 'order.observed' } }),
+          'call-fresh-order',
+        ),
+      }
+    },
+    async close() {},
+  },
+})
+const freshOrderDecisions = await freshOrderPlanner.plannerFactory(freshOrderTask).next({
+  task: freshOrderTask,
+  turn: {
+    schemaVersion: 'booking.surface', kind: 'user.turn', taskId: freshOrderTask.taskId, turnId: freshOrderTask.lastTurnId!,
+    workspace: freshOrderWorkspace, request: { text: '查看刚创建订单状态' },
+  },
+})
+assertRuntimeMaterializedOperation(freshOrderDecisions, 'order.observe', { orderRef: 'order-fresh-1' }, freshOrderTask, 'fresh order observe binds to the BFF-authoritative observable order projection')
+assert.deepEqual((freshOrderDecisions[0] as any)?.action?.factRefs, ['order:state:fresh-1'], 'fresh order observe carries only binding-supplied order evidence')
+await freshOrderPlanner.close()
+
+const forgedOrderPlanner = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() {
+      return {
+        finalResponse: '',
+        events: successfulToolEvents(
+          'booking_observe_booking',
+          JSON.stringify({ kind: 'order.observe', input: { orderRef: 'order-forged' }, intent: { target: 'order.observed' } }),
+          'call-forged-order',
+        ),
+      }
+    },
+    async close() {},
+  },
+})
+await assert.rejects(
+  forgedOrderPlanner.plannerFactory(freshOrderTask).next({
+    task: freshOrderTask,
+    turn: {
+      schemaVersion: 'booking.surface', kind: 'user.turn', taskId: freshOrderTask.taskId, turnId: 'dsh-turn-forged-order',
+      workspace: freshOrderWorkspace, request: { text: '查看订单状态' },
+    },
+  }),
+  /planner_order_ref_unbound/,
+  'fresh order observe rejects an order ref absent from the trusted projection',
+)
+await forgedOrderPlanner.close()
+
+// The trusted order projection must flow through an actual operation and its
+// matching receipt before terminalization. Only a verified order outcome is a
+// successful observation; pending, unknown, and failed remain stopped while
+// retaining their state-specific summaries. Even verified receipts with a
+// partial result or a gap cannot claim completion.
+if (freshOrderDecisions[0]?.kind !== 'operation') throw new Error('fresh order matrix did not receive an operation')
+const orderMatrixIntentBase = {
+  taskId: 'task-dsh-order-state-matrix', contextRef: freshOrderWorkspace.contextRef,
+  sourceTurnId: freshOrderTask.lastTurnId!, sourceRequestDigest: bookingDigest('observe existing order'),
+  projection: { schemaVersion: BOOKING_INTENT_SCHEMA_VERSION, target: 'order.observed' as const },
+}
+const orderMatrixIntent: BookingIntentCheckpoint = { ...orderMatrixIntentBase, intentDigest: bookingDigest(orderMatrixIntentBase) }
+const orderMatrixCases: ReadonlyArray<{
+  state: 'pending' | 'verified' | 'failed' | 'unknown'
+  outcome: 'complete' | 'partial'
+  hardCriteriaMet: boolean
+  gapCodes: ActionReceipt['resultContract']['gapCodes']
+  expectedStatus: 'completed' | 'stopped'
+  expectedSummary: string
+}> = [
+  { state: 'pending', outcome: 'complete', hardCriteriaMet: true, gapCodes: [], expectedStatus: 'stopped', expectedSummary: 'order_pending' },
+  { state: 'unknown', outcome: 'complete', hardCriteriaMet: true, gapCodes: [], expectedStatus: 'stopped', expectedSummary: 'order_unknown' },
+  { state: 'failed', outcome: 'complete', hardCriteriaMet: true, gapCodes: [], expectedStatus: 'stopped', expectedSummary: 'order_failed' },
+  { state: 'verified', outcome: 'complete', hardCriteriaMet: true, gapCodes: [], expectedStatus: 'completed', expectedSummary: 'order_verified' },
+  { state: 'verified', outcome: 'partial', hardCriteriaMet: true, gapCodes: [], expectedStatus: 'stopped', expectedSummary: 'order_verified' },
+  { state: 'verified', outcome: 'complete', hardCriteriaMet: true, gapCodes: ['order_outcome_not_observed'], expectedStatus: 'stopped', expectedSummary: 'booking_constraints_unmet' },
+]
+for (const [index, matrixCase] of orderMatrixCases.entries()) {
+  const matrixTaskId = `task-dsh-order-state-${matrixCase.state}-${index}`
+  const matrixRoot = mkdtempSync(join(tmpdir(), `gotry-booking-order-state-${matrixCase.state}-${index}-`))
+  const matrixLedger = ensureLedger(matrixRoot)
+  const matrixRuntime = new BookingCopilotTaskRuntime(matrixLedger, { contextRefFactory: () => freshOrderWorkspace.contextRef })
+  const action = { ...freshOrderDecisions[0].action, actionId: `order-matrix-${matrixCase.state}-${index}`, factRefs: ['order:state:fresh-1'] } as BookingReadAction
+  const receipt: ActionReceipt = {
+    schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: action.actionId,
+    contextRef: freshOrderWorkspace.contextRef, status: 'applied', revision: 1,
+    observation: { kind: 'order.state', orderRef: 'order-fresh-1', state: matrixCase.state, ...(matrixCase.gapCodes.length ? { gapCodes: matrixCase.gapCodes } : {}) },
+    resultContract: { outcome: matrixCase.outcome, hardCriteriaMet: matrixCase.hardCriteriaMet, factRefs: ['order:state:fresh-1'], gapCodes: matrixCase.gapCodes, blockers: [], relaxationsApplied: [] },
+  }
+  matrixRuntime.startTask({
+    schemaVersion: 'booking.surface', kind: 'user.turn', taskId: matrixTaskId, turnId: `${matrixTaskId}-turn`,
+    workspace: freshOrderWorkspace, request: { text: '查看已有订单状态' },
+  })
+  matrixRuntime.issueOperation(matrixTaskId, action, orderMatrixIntent.projection)
+  const matrixState = matrixRuntime.continueWithReceipt({
+    schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: matrixTaskId,
+    workspace: { ...freshOrderWorkspace, revision: 1 }, receipt,
+  })
+  const [terminal] = await runTerminalContinuation(matrixState, receipt)
+  assert.equal(terminal?.kind, 'terminal', `order ${matrixCase.state} emits a typed terminal`)
+  if (terminal?.kind === 'terminal') {
+    assert.equal(terminal.terminal.status, matrixCase.expectedStatus, `order ${matrixCase.state} status is state-authoritative`)
+    assert.equal(terminal.terminal.summary, matrixCase.expectedSummary, `order ${matrixCase.state} summary is preserved`)
+  }
+  matrixLedger.close()
+  rmSync(matrixRoot, { recursive: true, force: true })
+}
+
 function assertRuntimeMaterializedOperation(
   decisions: readonly any[],
   kind: string,
@@ -141,9 +275,116 @@ function assertRuntimeMaterializedOperation(
   assert.match(decisions[0]?.action?.actionId, /^planner-[a-f0-9]{24}$/, message)
 }
 
+function completedCheckpoint(action: BookingReadAction, sourceTurnId: string): BookingActionCheckpoint {
+  const base: Omit<BookingActionCheckpoint, 'actionDigest'> = {
+    actionId: action.actionId,
+    kind: action.kind,
+    contextRef: action.contextRef,
+    expectedRevision: action.expectedRevision,
+    factRefs: [...action.factRefs],
+    input: structuredClone(action.input),
+    reasonDigest: bookingDigest(action.reason),
+    inputDigest: bookingDigest(action.input),
+    eventId: `operation-${action.actionId}`,
+    sequence: 1,
+    emittedAt: '2026-08-30T12:00:00.000Z',
+    sourceTurnId,
+  }
+  return { ...base, actionDigest: bookingDigest(base) }
+}
+
+async function runTerminalContinuation(task: BookingCopilotTaskState, receipt: ActionReceipt): Promise<readonly any[]> {
+  const planner = await createDshEmbeddedBookingPlanner({
+    runPort: {
+      async run() {
+        return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'terminal' }), `call-terminal-${task.taskId}`) }
+      },
+      async close() {},
+    },
+  })
+  try {
+    return await planner.plannerFactory(task).next({
+      task,
+      turn: {
+        schemaVersion: 'booking.surface',
+        kind: 'action.receipt.continuation',
+        taskId: task.taskId,
+        workspace: task.workspaceSnapshot!,
+        receipt,
+      },
+    })
+  } finally {
+    await planner.close()
+  }
+}
+
+// Exercise the real runtime -> planner receipt continuation path. The
+// planner may terminalize only after the runtime has accepted a workspace
+// whose shortlist is a subset of loadedOffers; a forged shortlist is rejected
+// at the continuation boundary before it can become terminal evidence.
+const shortlistProofRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-shortlist-proof-'))
+const shortlistProofRuntime = new BookingCopilotTaskRuntime(ensureLedger(shortlistProofRoot), { contextRefFactory: () => 'ctx-dsh-shortlist' })
+const shortlistWorkspace0: BookingWorkspaceSnapshot = {
+  ...workspace,
+  contextRef: 'ctx-dsh-shortlist',
+  visibleHotels: [{ hotelRef: 'hotel-shortlist', name: 'Shortlist Hotel', factRefs: [] }],
+  loadedOffers: [
+    { offerRef: 'offer-shortlist-a', offerVersionRef: 'offer-shortlist-a:v1', hotelRef: 'hotel-shortlist', evidenceLevel: 'rate_loaded', factRefs: [] },
+    { offerRef: 'offer-shortlist-b', offerVersionRef: 'offer-shortlist-b:v1', hotelRef: 'hotel-shortlist', evidenceLevel: 'rate_loaded', factRefs: [] },
+  ],
+  shortlistedOfferRefs: ['offer-shortlist-a', 'offer-shortlist-b'],
+  capabilities: { surface: 'tenant', allowedActions: ['offer.select'] },
+}
+const shortlistTurn = {
+  schemaVersion: 'booking.surface' as const, kind: 'user.turn' as const, taskId: 'task-dsh-shortlist', turnId: 'dsh-turn-shortlist',
+  workspace: shortlistWorkspace0, request: { text: 'select the first offer' },
+}
+const shortlistTask = shortlistProofRuntime.startTask(shortlistTurn)
+const shortlistAction: BookingReadAction = {
+  ...searchRun, kind: 'offer.select', actionId: 'action-dsh-shortlist', contextRef: 'ctx-dsh-shortlist',
+  expectedRevision: 0, factRefs: [], input: { offerRef: 'offer-shortlist-a', offerVersionRef: 'offer-shortlist-a:v1' },
+}
+const shortlistIntent = { schemaVersion: BOOKING_INTENT_SCHEMA_VERSION, target: 'offer.selected', offerCriteria: { targetCount: 2 } } as const
+shortlistProofRuntime.issueOperation(shortlistTask.taskId, shortlistAction, shortlistIntent)
+const shortlistWorkspace1: BookingWorkspaceSnapshot = { ...shortlistWorkspace0, revision: 1, selectedOfferRef: 'offer-shortlist-a' }
+const shortlistReceipt: ActionReceipt = {
+  schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: shortlistAction.actionId, contextRef: 'ctx-dsh-shortlist', status: 'applied', revision: 1,
+  observation: { kind: 'offer.selection', offerRef: 'offer-shortlist-a', offerVersionRef: 'offer-shortlist-a:v1' },
+  resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+}
+const acceptedShortlistTask = shortlistProofRuntime.continueWithReceipt({ schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: shortlistTask.taskId, workspace: shortlistWorkspace1, receipt: shortlistReceipt })
+const shortlistPlanner = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run() { return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'terminal' }), 'call-shortlist-terminal') } },
+    async close() {},
+  },
+})
+const shortlistTerminal = await shortlistPlanner.plannerFactory(acceptedShortlistTask).next({
+  task: acceptedShortlistTask,
+  turn: { schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: shortlistTask.taskId, workspace: shortlistWorkspace1, receipt: shortlistReceipt },
+})
+assert.deepEqual(shortlistTerminal, [{ kind: 'terminal', terminal: { status: 'completed', summary: 'offer_selected', factRefs: [] } }], 'accepted runtime receipt continuation reaches the planner terminal')
+await shortlistPlanner.close()
+const forgedShortlistRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-forged-shortlist-proof-'))
+const forgedShortlistRuntime = new BookingCopilotTaskRuntime(ensureLedger(forgedShortlistRoot), { contextRefFactory: () => 'ctx-dsh-shortlist' })
+const forgedShortlistTask = forgedShortlistRuntime.startTask({ ...shortlistTurn, taskId: 'task-dsh-forged-shortlist', turnId: 'dsh-turn-forged-shortlist' })
+forgedShortlistRuntime.issueOperation(forgedShortlistTask.taskId, { ...shortlistAction, actionId: 'action-dsh-forged-shortlist' }, shortlistIntent)
+assert.throws(
+  () => forgedShortlistRuntime.continueWithReceipt({
+    schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: forgedShortlistTask.taskId,
+    workspace: { ...shortlistWorkspace1, shortlistedOfferRefs: ['offer-shortlist-a', 'offer-forged'] },
+    receipt: { ...shortlistReceipt, actionId: 'action-dsh-forged-shortlist' },
+  }),
+  /invalid_receipt_continuation:.*shortlistedOfferRefs: every ref must be a loaded offer/,
+  'forged shortlist is rejected before a planner receipt continuation can terminalize',
+)
+shortlistProofRuntime['ledger'].close(); forgedShortlistRuntime['ledger'].close()
+rmSync(shortlistProofRoot, { recursive: true, force: true }); rmSync(forgedShortlistRoot, { recursive: true, force: true })
+
 const repeatedToolArguments = JSON.stringify({
   decision: {
     kind: 'operation',
+    intent: { target: 'search.results' },
     action: {
       ...searchRun,
       reason: 'Preserve braces } {, escaped quotes " and a backslash \\ inside a JSON string.',
@@ -154,6 +395,7 @@ const repeatedToolArguments = JSON.stringify({
 const stringifiedDecisionArguments = JSON.stringify({
   decision: JSON.stringify({
     kind: 'operation',
+    intent: { target: 'search.results' },
     action: searchRun,
   }),
 })
@@ -165,7 +407,7 @@ const compactSearchPatchInput = {
   },
 } as const
 const compactSearchPatchDecision = await runToolArgumentsCase(
-  JSON.stringify({ kind: 'search.patch', input: compactSearchPatchInput }),
+  JSON.stringify({ kind: 'search.patch', input: compactSearchPatchInput, intent: { target: 'search.results' } }),
   'dsh-compact-search-patch',
 )
 assert.equal(compactSearchPatchDecision.length, 1)
@@ -180,12 +422,24 @@ assert.match(compactSearchPatchDecision[0].action.actionId, /^planner-[a-f0-9]{2
 assert.match(compactSearchPatchDecision[0].action.reason, /search criteria/i)
 
 for (const decision of [
-  { kind: 'search.patch', input: compactSearchPatchInput },
-  JSON.stringify({ kind: 'search.patch', input: compactSearchPatchInput }),
+  { kind: 'search.patch', input: compactSearchPatchInput, intent: { target: 'search.results' } },
+  JSON.stringify({ kind: 'search.patch', input: compactSearchPatchInput, intent: { target: 'search.results' } }),
 ] as const) {
   const wrapped = await runToolArgumentsCase(JSON.stringify({ decision }), 'dsh-compact-provider-wrapper')
   assertRuntimeMaterializedOperation(wrapped, 'search.patch', compactSearchPatchInput)
 }
+const nestedCompactEnvelope = await runToolArgumentsCase(JSON.stringify({
+  decision: {
+    kind: 'operation',
+    action: { kind: 'search.patch', input: compactSearchPatchInput, intent: { target: 'search.results' } },
+  },
+}), 'dsh-nested-compact-intent')
+assertRuntimeMaterializedOperation(nestedCompactEnvelope, 'search.patch', compactSearchPatchInput, task, 'plugin-compatible nested compact intent is accepted by the parent boundary')
+await assert.rejects(
+  runToolArgumentsCase(JSON.stringify({ kind: 'search.patch', input: compactSearchPatchInput }), 'dsh-fresh-missing-intent'),
+  /planner_booking_intent_required/,
+  'a fresh successful-looking action cannot silently collapse a multi-step user goal when intent is missing',
+)
 
 await assert.rejects(
   runToolArgumentsCase(JSON.stringify({ kind: 'terminal' }), 'dsh-unjustified-terminal'),
@@ -199,7 +453,7 @@ await assert.rejects(
 )
 
 for (const [argumentsText, turnId] of [
-  [JSON.stringify({ kind: 'operation', action: searchRun }), 'dsh-direct-decision-envelope'],
+  [JSON.stringify({ kind: 'operation', action: searchRun, intent: { target: 'search.results' } }), 'dsh-direct-decision-envelope'],
   [stringifiedDecisionArguments, 'dsh-stringified-decision'],
 ] as const) {
   const [decision] = await runToolArgumentsCase(argumentsText, turnId)
@@ -218,7 +472,7 @@ for (const [suffix, action, error] of [
 ] as const) {
   await assert.rejects(
     runToolArgumentsCase(
-      JSON.stringify({ decision: JSON.stringify({ kind: 'operation', action }) }),
+      JSON.stringify({ decision: JSON.stringify({ kind: 'operation', action, intent: { target: 'search.results' } }) }),
       `dsh-stringified-decision-${suffix}`,
     ),
     error,
@@ -340,7 +594,7 @@ const runPort: DshPlannerRunPort = {
         finalResponse: '{"kind":"book","input":{}}',
         events: successfulToolEvents(
           'booking_search_hotels',
-          JSON.stringify({ decision: { kind: 'operation', action: searchRun } }),
+          JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }),
           'call-adapter-search',
         ),
       }
@@ -350,7 +604,7 @@ const runPort: DshPlannerRunPort = {
         finalResponse: '',
         events: successfulToolEvents(
           'booking_refine_results',
-          JSON.stringify({ decision: { kind: 'operation', action: hotelSelect } }),
+          JSON.stringify({ decision: { kind: 'operation', action: hotelSelect, intent: { target: 'hotel.selected' } } }),
           'call-adapter-select',
         ),
       }
@@ -398,8 +652,8 @@ assert.match(profilePatch, /Shape-only example/i, 'planner persona marks the exa
 assert.match(profilePatch, /do not copy literal/i, 'planner persona tells the model not to copy placeholder sample values')
 const shapeExampleLine = profilePatch.split('\n').find((line) => line.trimStart().startsWith('{"kind":"search.patch"'))
 assert.ok(shapeExampleLine, 'planner persona example uses the shallow model-facing proposal')
-const shapeExample = JSON.parse(shapeExampleLine!.trim()) as { kind?: string; input?: unknown }
-assert.deepEqual(Object.keys(shapeExample), ['kind', 'input'], 'planner persona example exposes only semantic kind and input')
+const shapeExample = JSON.parse(shapeExampleLine!.trim()) as { kind?: string; input?: unknown; intent?: unknown }
+assert.deepEqual(Object.keys(shapeExample), ['kind', 'input', 'intent'], 'planner persona example exposes semantic kind, input, and mandatory intent only')
 assert.equal(shapeExample.kind, 'search.patch')
 for (const runtimeField of ['schemaVersion', 'actionId', 'contextRef', 'expectedRevision', 'factRefs', 'reason']) {
   assert.ok(!Object.prototype.hasOwnProperty.call(shapeExample, runtimeField), `planner persona omits runtime-owned ${runtimeField}`)
@@ -421,25 +675,33 @@ assert.equal(formatUtcOffsetLabel(0), 'UTC+00:00', 'timezone formatter zero-pads
 const receipt: ActionReceipt = {
   schemaVersion: 'booking.surface',
   kind: 'action.receipt',
-  actionId: searchRun.actionId,
+  actionId: first[0]?.kind === 'operation' ? first[0].action.actionId : searchRun.actionId,
   contextRef: task.contextRef,
   status: 'applied',
   revision: 1,
   observation: { kind: 'search.state', searchSessionRef: 'search-dsh-1', resultCount: 4 },
   resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
 }
-const continuedTask: BookingCopilotTaskState = { ...task, revision: 1, lastReceipt: receipt }
+const continuedWorkspace: BookingWorkspaceSnapshot = {
+  ...workspace,
+  revision: 1,
+  results: { status: 'ready', resultCount: 4, searchSessionRef: 'search-dsh-1' },
+}
+if (first[0]?.kind !== 'operation') throw new Error('first planner turn did not produce an operation checkpoint')
+const continuedTask: BookingCopilotTaskState = {
+  ...task,
+  revision: 1,
+  lastCompletedAction: completedCheckpoint(first[0].action, task.lastTurnId!),
+  lastReceipt: receipt,
+  workspaceSnapshot: continuedWorkspace,
+}
 const second = await session.next({
   task: continuedTask,
   turn: {
     schemaVersion: 'booking.surface',
     kind: 'action.receipt.continuation',
     taskId: task.taskId,
-    workspace: {
-      ...workspace,
-      revision: 1,
-      capabilities: { ...workspace.capabilities, allowedActions: [...workspace.capabilities.allowedActions] },
-    },
+    workspace: continuedWorkspace,
     receipt,
   },
 })
@@ -448,7 +710,56 @@ assert.deepEqual(second, [{
   terminal: { status: 'completed', summary: 'search_results_ready', factRefs: [] },
 }])
 assert.equal(sessionIds[0], sessionIds[1], 'one task keeps one dsh session across receipt continuation')
-assert.match(prompts[1]!, /action-dsh-1/, 'receipt continuation reaches the same task-scoped planner session')
+assert.match(prompts[1]!, /planner-[a-f0-9]{24}/, 'receipt continuation reaches the same task-scoped planner session')
+
+// A search.patch receipt is not a search waypoint. The runtime compiles the
+// mandatory search.run transition without asking the model for another
+// probabilistic tool call.
+const patchTerminalTask: BookingCopilotTaskState = {
+  ...task,
+  taskId: 'task-dsh-patch-terminal',
+  contextRef: 'ctx-dsh-patch-terminal',
+  lastTurnId: 'dsh-patch-terminal-turn',
+  workspaceSnapshot: { ...workspace, contextRef: 'ctx-dsh-patch-terminal' },
+}
+const patchTerminalWorkspace = patchTerminalTask.workspaceSnapshot!
+let patchTerminalRuns = 0
+const patchTerminalPort: DshPlannerRunPort = {
+  async run() {
+    patchTerminalRuns += 1
+    return patchTerminalRuns === 1
+      ? { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.patch', input: { patch: { destination: { query: 'Dubai' } } }, intent: { target: 'search.results' } }), 'call-patch-terminal') }
+      : { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'terminal' }), 'call-patch-terminal-continuation') }
+  },
+  async close() {},
+}
+const patchTerminalPlanner = await createDshEmbeddedBookingPlanner({ runPort: patchTerminalPort })
+const patchTerminalSession = patchTerminalPlanner.plannerFactory(patchTerminalTask)
+const patchDecision = await patchTerminalSession.next({
+  task: patchTerminalTask,
+  turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: patchTerminalTask.taskId, turnId: patchTerminalTask.lastTurnId!, workspace: patchTerminalWorkspace, request: { text: 'Search Dubai' } },
+})
+assertRuntimeMaterializedOperation(patchDecision, 'search.patch', { patch: { destination: { query: 'Dubai' } } }, patchTerminalTask, 'search.patch remains the only first operation')
+if (patchDecision[0]?.kind !== 'operation') throw new Error('patch terminal proof did not receive a patch operation')
+const patchReceipt: ActionReceipt = {
+  schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: patchDecision[0].action.actionId, contextRef: patchTerminalTask.contextRef,
+  status: 'applied', revision: 1, observation: { kind: 'search.state', resultCount: 0 },
+  resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+}
+const patchContinuationWorkspace = { ...patchTerminalWorkspace, revision: 1, results: { status: 'idle' as const } }
+const compiledSearchRun = await patchTerminalSession.next({
+  task: {
+    ...patchTerminalTask,
+    revision: 1,
+    lastCompletedAction: completedCheckpoint(patchDecision[0].action, patchTerminalTask.lastTurnId!),
+    lastReceipt: patchReceipt,
+    workspaceSnapshot: patchContinuationWorkspace,
+  },
+  turn: { schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: patchTerminalTask.taskId, workspace: patchContinuationWorkspace, receipt: patchReceipt },
+})
+assertRuntimeMaterializedOperation(compiledSearchRun, 'search.run', {}, { ...patchTerminalTask, revision: 1 }, 'search.patch receipt deterministically compiles search.run')
+assert.equal(patchTerminalRuns, 1, 'compiled search.run does not invoke the model a second time')
+await patchTerminalPlanner.close()
 
 const paymentWorkspace: BookingWorkspaceSnapshot = {
   ...workspace,
@@ -620,7 +931,7 @@ const invalidThenValid = await createDshEmbeddedBookingPlanner({
         events: [
           toolCall('booking_search_hotels', invalidCallArguments, 'call-invalid-schema'),
           toolResult('call-invalid-schema', true, 'INVALID_ARGS'),
-          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-valid-after-schema-rejection'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }), 'call-valid-after-schema-rejection'),
         ],
       }
     },
@@ -642,7 +953,7 @@ const invalidWithoutSchemaRejection = await createDshEmbeddedBookingPlanner({
         events: [
           toolCall('booking_search_hotels', invalidCallArguments, 'call-invalid-without-schema-rejection'),
           toolResult('call-invalid-without-schema-rejection'),
-          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-valid-after-unproven-rejection'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }), 'call-valid-after-unproven-rejection'),
         ],
       }
     },
@@ -667,7 +978,7 @@ const unauthorisedTyped = await createDshEmbeddedBookingPlanner({
         events: [
           toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: hotelSelect } }), 'call-unauthorised-action'),
           toolResult('call-unauthorised-action', true, 'INVALID_ARGS'),
-          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-valid-after-unauthorised-action'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }), 'call-valid-after-unauthorised-action'),
         ],
       }
     },
@@ -690,8 +1001,8 @@ const multipleTypedSuccesses = await createDshEmbeddedBookingPlanner({
       return {
         finalResponse: '',
         events: [
-          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-multiple-1'),
-          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-multiple-2' } } }), 'call-multiple-2'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }), 'call-multiple-1'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-multiple-2' }, intent: { target: 'search.results' } } }), 'call-multiple-2'),
         ],
       }
     },
@@ -780,9 +1091,9 @@ const typedCallRejectedThenValid = await createDshEmbeddedBookingPlanner({
       return {
         finalResponse: '',
         events: [
-          toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-typed-schema-rejected'),
+          toolCall('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }), 'call-typed-schema-rejected'),
           toolResult('call-typed-schema-rejected', true, 'INVALID_ARGS'),
-          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-typed-rejection' } } }), 'call-after-typed-rejection'),
+          ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-typed-rejection' }, intent: { target: 'search.results' } } }), 'call-after-typed-rejection'),
         ],
       }
     },
@@ -807,13 +1118,13 @@ const unsafeFactRefRejectedThenValid = await createDshEmbeddedBookingPlanner({
         events: [
           toolCall(
             'booking_search_hotels',
-            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai'] } } }),
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['draft:destination=Dubai'] }, intent: { target: 'search.results' } } }),
             'call-unsafe-fact-ref',
           ),
           toolResult('call-unsafe-fact-ref', true, 'INVALID_ARGS'),
           ...successfulToolEvents(
             'booking_search_hotels',
-            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-unsafe-ref', factRefs: [] } } }),
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-unsafe-ref', factRefs: [] }, intent: { target: 'search.results' } } }),
             'call-valid-after-unsafe-ref',
           ),
         ],
@@ -842,13 +1153,13 @@ const reservedFactRefRejectedThenValid = await createDshEmbeddedBookingPlanner({
         events: [
           toolCall(
             'booking_search_hotels',
-            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['modelref:reserved-by-runtime'] } } }),
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, factRefs: ['modelref:reserved-by-runtime'] }, intent: { target: 'search.results' } } }),
             'call-reserved-fact-ref',
           ),
           toolResult('call-reserved-fact-ref', true, 'INVALID_ARGS'),
           ...successfulToolEvents(
             'booking_search_hotels',
-            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-reserved-ref', factRefs: [] } } }),
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, actionId: 'action-dsh-after-reserved-ref', factRefs: [] }, intent: { target: 'search.results' } } }),
             'call-valid-after-reserved-ref',
           ),
         ],
@@ -987,9 +1298,9 @@ for (const [index, c] of mixedAuthorityCases.entries()) {
         return {
           finalResponse: '',
           events: [
-            toolCall(c.tool, JSON.stringify({ decision: { kind: 'operation', action: c.badAction } }), `mixed-authority-${index}-bad`),
+            toolCall(c.tool, JSON.stringify({ decision: { kind: 'operation', action: c.badAction, intent: { target: 'search.results' } } }), `mixed-authority-${index}-bad`),
             toolResult(`mixed-authority-${index}-bad`, true, 'INVALID_ARGS'),
-            ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), `mixed-authority-${index}-good`),
+            ...successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }), `mixed-authority-${index}-good`),
           ],
         }
       },
@@ -1439,7 +1750,7 @@ const operationBeforeFailure = await createDshEmbeddedBookingPlanner({
         events: [
           ...successfulToolEvents(
             'booking_search_hotels',
-            JSON.stringify({ decision: { kind: 'operation', action: searchRun } }),
+            JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }),
             'call-operation-before-failure',
           ),
           { type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'AUTH', status: 401, message: 'post-tool provider failure' } } } },
@@ -1501,7 +1812,7 @@ for (const [name, malformedTerminal] of [
   })
   assert.deepEqual(
     malformedTerminalDecision,
-    [{ kind: 'error', error: { code: 'PLANNER_FAILED', message: 'The planner request failed at the typed runtime boundary.', retryable: false } }],
+    [{ kind: 'error', error: { code: 'PLANNER_FAILED', message: 'The planner stopped unexpectedly before producing a usable action.', retryable: false } }],
     `malformed terminal ${name} fails closed before compatibility finalResponse recovery`,
   )
   await malformedTerminalPlanner.close()
@@ -1745,6 +2056,14 @@ const confirmedTask: BookingCopilotTaskState = {
   revision: 1,
   allowedActions: ['search.patch', 'search.run', 'offers.query', 'offer.check', 'checkout.prepare'],
   availability: { initialized: true, recoveryStarted: true, availabilityPhase: 'terminal', activeHotelOrdinal: 0, hotelRefs: ['hotel-confirmed'], hotels: { 'hotel-confirmed': { hotelRef: 'hotel-confirmed', status: 'confirmed', generation: 1, generationNo: 1, currentOfferRefs: ['offer-confirmed'], invalidatedOfferRefs: [], tombstonedOfferRefs: [], tombstonedOfferVersionRefs: [], checksIssued: 1, checkCount: 1, offerQueriesIssued: 0, freshOffersRequired: false, lastEvidence: 'confirmed', currentGeneration: { generationId: 'hotel-confirmed:generation:1', source: { kind: 'workspace_snapshot', workspaceDigest: 'a'.repeat(64), workspaceRevision: 0 }, offerSetDigest: 'b'.repeat(64), orderedOfferRefs: ['offer-confirmed'], evidence: 'complete', valid: false } } }, attempts: [], queryReservations: [], terminal: { code: 'availability_confirmed', hotelRefs: ['hotel-confirmed'], reason: 'confirmed', evidence: 'conclusive' } },
+  lastCompletedAction: completedCheckpoint({
+    ...searchRun,
+    kind: 'offer.check',
+    actionId: 'action-confirmed-check',
+    contextRef: 'ctx-dsh-confirmed',
+    factRefs: [],
+    input: { offerRef: 'offer-confirmed', offerVersionRef: 'offer-confirmed:v1' },
+  }, 'dsh-confirmed-check-turn'),
   lastReceipt: {
     schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: 'action-confirmed-check', contextRef: 'ctx-dsh-confirmed', status: 'applied', revision: 1,
     observation: { kind: 'offer.availability', offerRef: 'offer-confirmed', checkedOfferVersionRef: 'offer-confirmed:v1', currentOfferVersionRef: 'offer-confirmed:v1', verifiedOfferRef: 'verified-offer-confirmed', available: true, changedFactRefs: [] },
@@ -1768,7 +2087,7 @@ const confirmedCheckout = await createDshEmbeddedBookingPlanner({
   runPort: {
     async run(prompt) {
       confirmedPrompts.push(prompt)
-      return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ decision: { kind: 'operation', action: { ...checkoutPrepare, contextRef: confirmedTask.contextRef } } }), 'call-confirmed-checkout') }
+      return { finalResponse: '', events: successfulToolEvents('booking_prepare_booking', JSON.stringify({ decision: { kind: 'operation', action: { ...checkoutPrepare, contextRef: confirmedTask.contextRef }, intent: { target: 'checkout.prepared' } } }), 'call-confirmed-checkout') }
     },
     async close() {},
   },
@@ -1851,7 +2170,7 @@ const terminalTask: BookingCopilotTaskState = {
 }
 const terminalWorkspace: BookingWorkspaceSnapshot = {
   schemaVersion: 'booking.surface', contextRef: terminalTask.contextRef, surface: 'tenant', revision: 0, locale: 'en-US', currency: 'AED',
-  searchDraft: {}, results: { status: 'idle' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
+  searchDraft: {}, results: { status: 'ready', resultCount: 1, searchSessionRef: 'search-terminal-1' }, visibleHotels: [], loadedOffers: [], shortlistedOfferRefs: [],
   capabilities: { surface: 'tenant', allowedActions: ['search.run'] },
 }
 terminalTask.workspaceSnapshot = terminalWorkspace
@@ -1864,7 +2183,7 @@ const terminalPort: DshPlannerRunPort = {
           finalResponse: '',
           events: successfulToolEvents(
             'booking_search_hotels',
-            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, schemaVersion: 'booking.surface', contextRef: terminalTask.contextRef, actionId: 'action-dsh-terminal' } } }),
+            JSON.stringify({ decision: { kind: 'operation', action: { ...searchRun, schemaVersion: 'booking.surface', contextRef: terminalTask.contextRef, actionId: 'action-dsh-terminal' }, intent: { target: 'search.results' } } }),
             'call-terminal-operation',
           ),
         }
@@ -1880,12 +2199,29 @@ const terminalPort: DshPlannerRunPort = {
   async close() {},
 }
 const terminalAdapter = await createDshEmbeddedBookingPlanner({ runPort: terminalPort })
-const terminalDecisions = await terminalAdapter.plannerFactory(terminalTask).next({ task: terminalTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: terminalTask.taskId, turnId: 'dsh-terminal-turn-1', workspace: terminalWorkspace, request: { text: 'find hotels' } } })
+const terminalSession = terminalAdapter.plannerFactory(terminalTask)
+const terminalDecisions = await terminalSession.next({ task: terminalTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: terminalTask.taskId, turnId: 'dsh-terminal-turn-1', workspace: terminalWorkspace, request: { text: 'find hotels' } } })
 assert.equal(terminalDecisions[0]?.kind, 'operation', 'real DSH adapter accepts the canonical typed action')
 assert.equal(terminalDecisions[0]?.kind === 'operation' ? terminalDecisions[0].action.schemaVersion : '', 'booking.surface')
-const terminalContinuation = { schemaVersion: 'booking.surface' as const, kind: 'action.receipt.continuation' as const, taskId: terminalTask.taskId, workspace: { ...terminalWorkspace, revision: 1 }, receipt: { schemaVersion: 'booking.surface' as const, kind: 'action.receipt' as const, actionId: 'action-dsh-terminal', contextRef: terminalTask.contextRef, status: 'applied' as const, revision: 1, observation: { kind: 'search.state' as const, resultCount: 1 }, resultContract: { outcome: 'complete' as const, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } }
-const terminalContinuationDecision = await terminalAdapter.plannerFactory(terminalTask).next({ task: { ...terminalTask, revision: 1, lastReceipt: terminalContinuation.receipt }, turn: terminalContinuation })
+const terminalActionId = terminalDecisions[0]?.kind === 'operation' ? terminalDecisions[0].action.actionId : 'action-dsh-terminal'
+const terminalContinuation = { schemaVersion: 'booking.surface' as const, kind: 'action.receipt.continuation' as const, taskId: terminalTask.taskId, workspace: { ...terminalWorkspace, revision: 1, results: { ...terminalWorkspace.results, searchSessionRef: 'search-terminal-1' } }, receipt: { schemaVersion: 'booking.surface' as const, kind: 'action.receipt' as const, actionId: terminalActionId, contextRef: terminalTask.contextRef, status: 'applied' as const, revision: 1, observation: { kind: 'search.state' as const, searchSessionRef: 'search-terminal-1', resultCount: 1 }, resultContract: { outcome: 'complete' as const, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] } } }
+const terminalContinuationWorkspace = terminalContinuation.workspace
+if (terminalDecisions[0]?.kind !== 'operation') throw new Error('terminal proof did not produce an operation checkpoint')
+const terminalContinuationDecision = await terminalSession.next({ task: { ...terminalTask, revision: 1, workspaceSnapshot: terminalContinuationWorkspace, lastCompletedAction: completedCheckpoint(terminalDecisions[0].action, 'dsh-terminal-turn-1'), lastReceipt: terminalContinuation.receipt }, turn: terminalContinuation })
 assert.deepEqual(terminalContinuationDecision, [{ kind: 'terminal', terminal: { status: 'completed', summary: 'search_results_ready', factRefs: [] } }], 'real DSH planner materializes receipt continuation terminal state')
+const gappedSearchReceipt: ActionReceipt = {
+  ...terminalContinuation.receipt,
+  resultContract: { ...terminalContinuation.receipt.resultContract, gapCodes: ['criterion_must_not_met'] },
+}
+const gappedSearchTerminal = await terminalSession.next({
+  task: { ...terminalTask, revision: 1, workspaceSnapshot: terminalContinuationWorkspace, lastCompletedAction: completedCheckpoint(terminalDecisions[0].action, 'dsh-terminal-turn-1'), lastReceipt: gappedSearchReceipt },
+  turn: { ...terminalContinuation, receipt: gappedSearchReceipt },
+})
+assert.deepEqual(
+  gappedSearchTerminal,
+  [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'booking_constraints_unmet', factRefs: [] } }],
+  'a receipt that declares a hard-criteria gap cannot be promoted to a completed search terminal',
+)
 await assert.rejects(
   terminalAdapter.plannerFactory(terminalTask).next({
     task: terminalTask,
@@ -1997,11 +2333,11 @@ const occupancyRepairPort: DshPlannerRunPort = {
       finalResponse: '',
       events: [
         toolCall('booking_search_hotels', JSON.stringify({
-          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-282-occupancy-invalid', reason: 'Preserve both requested rooms and their child ages.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } } } },
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-282-occupancy-invalid', reason: 'Preserve both requested rooms and their child ages.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } } }, intent: { target: 'search.results' } },
         }), 'call-occupancy-invalid'),
         toolResult('call-occupancy-invalid', true, 'INVALID_ARGS'),
         ...successfulToolEvents('booking_search_hotels', JSON.stringify({
-          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-282-occupancy-valid', reason: 'Preserve both requested rooms and their child ages.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } } } },
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-282-occupancy-valid', reason: 'Preserve both requested rooms and their child ages.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } } }, intent: { target: 'search.results' } },
         }), 'call-occupancy-valid'),
       ],
     }
@@ -2031,10 +2367,10 @@ const lateInvalidResultPort: DshPlannerRunPort = {
       finalResponse: '',
       events: [
         toolCall('booking_search_hotels', JSON.stringify({
-          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-late-invalid', reason: 'Late invalid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } } } },
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-late-invalid', reason: 'Late invalid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } } }, intent: { target: 'search.results' } },
         }), 'call-order-late-invalid'),
         toolCall('booking_search_hotels', JSON.stringify({
-          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-late-valid', reason: 'Late valid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } } } },
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-late-valid', reason: 'Late valid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } } }, intent: { target: 'search.results' } },
         }), 'call-order-late-valid'),
         toolResult('call-order-late-valid'),
         toolResult('call-order-late-invalid', true, 'INVALID_ARGS'),
@@ -2066,10 +2402,10 @@ const preFeedbackCorrectionPort: DshPlannerRunPort = {
       finalResponse: '',
       events: [
         toolCall('booking_search_hotels', JSON.stringify({
-          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-pre-invalid', reason: 'Pre-feedback invalid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } } } },
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-pre-invalid', reason: 'Pre-feedback invalid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { childAges: [4] }] } } } }, intent: { target: 'search.results' } },
         }), 'call-order-pre-invalid'),
         toolCall('booking_search_hotels', JSON.stringify({
-          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-pre-valid', reason: 'Pre-feedback valid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } } } },
+          decision: { kind: 'operation', action: { ...searchRun, kind: 'search.patch', actionId: 'action-dsh-order-pre-valid', reason: 'Pre-feedback valid call.', input: { patch: { occupancy: { rooms: [{ adults: 2, childAges: [6] }, { adults: 1, childAges: [4] }] } } } }, intent: { target: 'search.results' } },
         }), 'call-order-pre-valid'),
         toolResult('call-order-pre-invalid', true, 'INVALID_ARGS'),
         toolResult('call-order-pre-valid'),
@@ -2098,7 +2434,7 @@ const proseRecoveryPort: DshPlannerRunPort = {
     proseRecoveryRuns += 1
     if (proseRecoveryRuns === 1) return { finalResponse: '我会为你搜索酒店。', events: [] }
     assert.match(prompt, /no booking capability tool call/, 'prose correction is sent as the next counted prompt')
-    return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun } }), 'call-prose-correction') }
+    return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ decision: { kind: 'operation', action: searchRun, intent: { target: 'search.results' } } }), 'call-prose-correction') }
   },
   async close() {},
 }
@@ -2208,6 +2544,7 @@ await timeoutPlanner.close()
 let taskAClosed = 0
 let taskARuns = 0
 let taskBRuns = 0
+let taskBClosed = 0
 const isolatedPlanner = await createDshEmbeddedBookingPlanner({
   runPortFactory: (taskId: string) => {
     if (taskId === 'task-dsh-isolated-a') {
@@ -2224,10 +2561,10 @@ const isolatedPlanner = await createDshEmbeddedBookingPlanner({
         taskBRuns += 1
         return {
           finalResponse: '',
-          events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {} }), 'call-isolated-b'),
+          events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {}, intent: { target: 'search.results' } }), 'call-isolated-b'),
         }
       },
-      async close() {},
+      async close() { taskBClosed += 1 },
     }
   },
   turnTimeoutMs: 25,
@@ -2247,7 +2584,50 @@ assert.equal(taskAClosed, 1, 'task A timeout closes only task A port')
 assertRuntimeMaterializedOperation(isolatedB, 'search.run', {}, isolatedTaskB, 'task B remains executable after task A timeout')
 assert.equal(taskARuns, 1, 'task A provider is called once')
 assert.equal(taskBRuns, 1, 'task B provider is called once')
+await waitMs(0)
+assert.equal(taskBClosed, 1, 'an accepted operation retires its task-owned provider port')
 await isolatedPlanner.close()
+
+// Receipt continuation rebuilds the DSH port from durable task state after
+// the previous operation's port has been retired.
+let rebuiltPortCount = 0
+let rebuiltPortCloseCount = 0
+const rebuiltTask = { ...plannerTimeoutTask, taskId: 'task-dsh-rebuild-port', lastTurnId: 'dsh-turn-rebuild-port' }
+const rebuiltWorkspace = { ...rebuiltTask.workspaceSnapshot!, results: { status: 'idle' as const } }
+const rebuiltPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => {
+    const portOrdinal = ++rebuiltPortCount
+    return {
+      async run() {
+        return portOrdinal === 1
+          ? { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {}, intent: { target: 'search.results' } }), 'call-rebuild-first') }
+          : { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'terminal' }), 'call-rebuild-terminal') }
+      },
+      async close() { rebuiltPortCloseCount += 1 },
+    }
+  },
+  turnTimeoutMs: 250,
+})
+const rebuiltSession = rebuiltPlanner.plannerFactory(rebuiltTask)
+const rebuiltFirst = await rebuiltSession.next({ task: rebuiltTask, turn: { ...plannerTimeoutTurn, taskId: rebuiltTask.taskId, turnId: rebuiltTask.lastTurnId, workspace: rebuiltWorkspace } })
+assertRuntimeMaterializedOperation(rebuiltFirst, 'search.run', {}, rebuiltTask, 'first rebuilt-port turn emits search.run')
+await waitMs(0)
+assert.equal(rebuiltPortCount, 1, 'first receipt interval creates one provider port')
+assert.equal(rebuiltPortCloseCount, 1, 'first accepted operation retires its provider port')
+if (rebuiltFirst[0]?.kind !== 'operation') throw new Error('rebuilt-port first turn did not produce an operation')
+const rebuiltReceipt: ActionReceipt = {
+  schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: rebuiltFirst[0].action.actionId, contextRef: rebuiltTask.contextRef,
+  status: 'applied', revision: 1, observation: { kind: 'search.state', searchSessionRef: 'rebuilt-search-1', resultCount: 1 },
+  resultContract: { outcome: 'complete', hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+}
+const rebuiltReadyWorkspace = { ...rebuiltWorkspace, revision: 1, results: { status: 'ready' as const, resultCount: 1, searchSessionRef: 'rebuilt-search-1' } }
+const rebuiltSecond = await rebuiltSession.next({
+  task: { ...rebuiltTask, revision: 1, workspaceSnapshot: rebuiltReadyWorkspace, lastCompletedAction: completedCheckpoint(rebuiltFirst[0].action, rebuiltTask.lastTurnId!), lastReceipt: rebuiltReceipt },
+  turn: { schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: rebuiltTask.taskId, workspace: rebuiltReadyWorkspace, receipt: rebuiltReceipt },
+})
+assert.deepEqual(rebuiltSecond, [{ kind: 'terminal', terminal: { status: 'completed', summary: 'search_results_ready', factRefs: [] } }], 'rebuilt port continuation can terminalize only after ready search workspace')
+assert.equal(rebuiltPortCount, 2, 'receipt continuation creates a fresh provider port')
+await rebuiltPlanner.close()
 
 let latePortClosed = 0
 const lateResolutionPort: DshPlannerRunPort = {
@@ -2255,7 +2635,7 @@ const lateResolutionPort: DshPlannerRunPort = {
     await waitMs(80)
     return {
       finalResponse: '',
-      events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {} }), 'call-late-resolution'),
+      events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {}, intent: { target: 'search.results' } }), 'call-late-resolution'),
     }
   },
   async close() { latePortClosed += 1 },
@@ -2308,13 +2688,13 @@ resolveDeferredClose()
 await deferredShutdown
 assert.match(String((await deferredNextOutcome as Error)?.message), /planner_closed/, 'an in-flight turn cannot use a port after planner shutdown')
 
-// A failed close remains retryable; the first failure is surfaced instead of
-// being hidden behind an allSettled shutdown.
+// A failed close remains sticky; a non-retryable SDK cleanup cannot be
+// re-invoked and then falsely reported as successful.
 let cleanupAttempts = 0
 const retryCleanupPlanner = await createDshEmbeddedBookingPlanner({
   runPortFactory: () => ({
     async run() {
-      return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {} }), 'call-cleanup-retry') }
+      return { finalResponse: '', events: successfulToolEvents('booking_search_hotels', JSON.stringify({ kind: 'search.run', input: {}, intent: { target: 'search.results' } }), 'call-cleanup-retry') }
     },
     async close() {
       cleanupAttempts += 1
@@ -2324,8 +2704,8 @@ const retryCleanupPlanner = await createDshEmbeddedBookingPlanner({
 })
 await retryCleanupPlanner.plannerFactory(plannerTimeoutTask).next({ task: plannerTimeoutTask, turn: plannerTimeoutTurn })
 await assert.rejects(retryCleanupPlanner.close(), /booking_planner_cleanup_failed/, 'shutdown surfaces a task-port cleanup failure')
-await retryCleanupPlanner.close()
-assert.equal(cleanupAttempts, 2, 'a failed task-port cleanup can be retried deterministically')
+await assert.rejects(retryCleanupPlanner.close(), /booking_planner_cleanup_failed/, 'later close callers observe the same cleanup failure')
+assert.equal(cleanupAttempts, 1, 'a terminal cleanup promise is never re-invoked and laundered into success')
 
 // Compact proposal authority matrix.  The model supplies only kind + input;
 // all identity, revision, reason, and evidence bindings remain runtime-owned.
@@ -2340,6 +2720,8 @@ async function runCompactAuthorityCase(
     : proposal.kind
   const toolName = proposalKind === 'hotel.focus' || proposalKind === 'hotel.select'
     ? 'booking_refine_results'
+    : proposalKind === 'offers.query' || proposalKind === 'offers.view.patch'
+      ? 'booking_find_room_offers'
     : proposalKind === 'offer.select' || proposalKind === 'offers.compare'
       ? 'booking_compare_offers'
       : proposalKind === 'checkout.prepare' || proposalKind === 'offer.check'
@@ -2382,6 +2764,7 @@ const budgetTask = {
 const budgetProposal = {
   kind: 'search.patch',
   input: { patch: { budget: { strength: 'must', value: { max: { amount: '1000' } } } } },
+  intent: { target: 'search.results' },
 }
 const [budgetDecision] = await runCompactAuthorityCase(budgetTask, budgetProposal)
 assert.equal(budgetDecision?.kind, 'operation', 'budget compact proposal materializes an operation')
@@ -2392,6 +2775,409 @@ assert.deepEqual(budgetDecision.action.input.patch.budget.value.max, {
   sourceFactRef: 'turn:dsh-turn-authority-budget',
 }, 'budget amount is hydrated from workspace currency and durable turn evidence')
 assert.deepEqual(budgetDecision.action.factRefs, ['turn:dsh-turn-authority-budget'], 'hydrated budget contributes the durable turn fact reference')
+
+const intentHydrationTask: BookingCopilotTaskState = {
+  ...budgetTask,
+  taskId: 'task-dsh-intent-hydration',
+  lastTurnId: 'dsh-turn-intent-hydration',
+  allowedActions: ['search.patch', 'offers.compare'],
+  workspaceSnapshot: {
+    ...budgetTask.workspaceSnapshot!,
+    capabilities: { surface: 'tenant', allowedActions: ['search.patch', 'offers.compare'] },
+  },
+}
+const [intentHydrationDecision] = await runCompactAuthorityCase(intentHydrationTask, {
+  kind: 'search.patch',
+  input: { patch: { destination: { query: 'Dubai' } } },
+  intent: {
+    target: 'offers.compared',
+    offerCriteria: {
+      totalPriceMax: { strength: 'must', value: { amount: '1000' } },
+    },
+  },
+})
+assert.equal(intentHydrationDecision?.kind, 'operation')
+if (intentHydrationDecision?.kind !== 'operation') throw new Error('intent hydration did not materialize an operation')
+assert.deepEqual(intentHydrationDecision.intent, {
+  schemaVersion: BOOKING_INTENT_SCHEMA_VERSION,
+  target: 'offers.compared',
+  offerCriteria: {
+    totalPriceMax: {
+      strength: 'must',
+      value: { amount: '1000', currency: 'AED', sourceFactRef: 'turn:dsh-turn-intent-hydration' },
+    },
+    targetCount: 3,
+  },
+}, 'intent money receives runtime provenance and unspecified comparison count defaults to three')
+
+// A continuation repeats only plugin-facing semantic intent fields. The
+// durable sourceFactRef remains bound to the original turn, so hydrated money
+// must not force a repair/nudge or mutate the intent on the next provider pass.
+const hydratedMoneyCriteria = {
+  totalPriceMax: {
+    strength: 'must' as const,
+    value: { amount: '1000', currency: 'AED', sourceFactRef: 'turn:dsh-turn-money-origin' },
+  },
+  targetCount: 2,
+}
+const hydratedMoneyProjection = {
+  schemaVersion: BOOKING_INTENT_SCHEMA_VERSION,
+  target: 'offers.refined' as const,
+  offerCriteria: hydratedMoneyCriteria,
+}
+const hydratedMoneyIntentBase = {
+  taskId: 'task-dsh-money-continuation', contextRef: 'ctx-dsh-money-continuation',
+  sourceTurnId: 'dsh-turn-money-origin', sourceRequestDigest: bookingDigest('find two affordable offers'),
+  projection: hydratedMoneyProjection,
+}
+const hydratedMoneyIntent: BookingIntentCheckpoint = {
+  ...hydratedMoneyIntentBase,
+  intentDigest: bookingDigest(hydratedMoneyIntentBase),
+}
+const hydratedMoneyWorkspace: BookingWorkspaceSnapshot = {
+  ...workspace,
+  contextRef: hydratedMoneyIntent.contextRef,
+  revision: 1,
+  visibleHotels: [{ hotelRef: 'hotel-1', name: 'Hotel One', factRefs: ['hotel:1'] }],
+  capabilities: { surface: 'tenant', allowedActions: ['offers.query', 'offers.view.patch'] },
+}
+const hydratedMoneyPriorAction: BookingReadAction = {
+  ...searchRun,
+  kind: 'offers.query', actionId: 'action-money-query', contextRef: hydratedMoneyIntent.contextRef,
+  factRefs: [],
+  input: { hotelRefs: ['hotel-1'], criteria: hydratedMoneyCriteria },
+} as BookingReadAction
+const hydratedMoneyReceipt: ActionReceipt = {
+  schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: hydratedMoneyPriorAction.actionId,
+  contextRef: hydratedMoneyIntent.contextRef, status: 'applied', revision: 1,
+  observation: { kind: 'offers.state', hotelRefs: ['hotel-1'], offerRefs: ['offer-money-a', 'offer-money-b'], loadedHotelCount: 1 },
+  resultContract: { outcome: 'complete', requestedCount: 2, actualCount: 2, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+}
+const hydratedMoneyPrompts: string[] = []
+const hydratedMoneyMetrics: import('../src/booking-surface/dsh-planner.ts').DshPlannerTurnMetric[] = []
+const hydratedMoneyPlanner = await createDshEmbeddedBookingPlanner({
+  runPort: {
+    async run(prompt) {
+      hydratedMoneyPrompts.push(prompt)
+      return {
+        finalResponse: '',
+        events: successfulToolEvents('booking_find_room_offers', JSON.stringify({
+          kind: 'offers.view.patch',
+          input: { hotelRef: 'hotel-1', criteria: { totalPriceMax: { strength: 'must', value: { amount: '1000', currency: 'AED' } }, targetCount: 2 } },
+          intent: { target: 'offers.refined', offerCriteria: { totalPriceMax: { strength: 'must', value: { amount: '1000', currency: 'AED' } }, targetCount: 2 } },
+        }), 'call-money-continuation'),
+      }
+    },
+    async close() {},
+  },
+  onMetric: (metric) => hydratedMoneyMetrics.push(metric),
+})
+const hydratedMoneyTask: BookingCopilotTaskState = {
+  ...task,
+  taskId: hydratedMoneyIntent.taskId,
+  contextRef: hydratedMoneyIntent.contextRef,
+  revision: 1,
+  lastTurnId: 'dsh-turn-money-continuation',
+  allowedActions: ['offers.query', 'offers.view.patch'],
+  activeIntent: hydratedMoneyIntent,
+  lastCompletedAction: completedCheckpoint(hydratedMoneyPriorAction, hydratedMoneyIntent.sourceTurnId),
+  lastReceipt: hydratedMoneyReceipt,
+  workspaceSnapshot: hydratedMoneyWorkspace,
+}
+const [hydratedMoneyContinuation] = await hydratedMoneyPlanner.plannerFactory(hydratedMoneyTask).next({
+  task: hydratedMoneyTask,
+  turn: {
+    schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: hydratedMoneyTask.taskId,
+    workspace: hydratedMoneyWorkspace, receipt: hydratedMoneyReceipt,
+  },
+})
+assert.equal(hydratedMoneyContinuation?.kind, 'operation', 'hydrated-money continuation remains a first-pass operation')
+if (hydratedMoneyContinuation?.kind !== 'operation') throw new Error('hydrated-money continuation did not produce an operation')
+assert.deepEqual((hydratedMoneyContinuation.action as Extract<BookingReadAction, { kind: 'offers.view.patch' }>).input.criteria, hydratedMoneyCriteria, 'continuation action keeps the durable money provenance binding')
+assert.equal(hydratedMoneyMetrics[0]?.firstPassValid, true, 'hydrated-money continuation requires no schema repair or prose nudge')
+const hydratedMoneyPayload = promptPayload(hydratedMoneyPrompts[0]!)
+assert.deepEqual(hydratedMoneyPayload.task.activeIntent, {
+  target: 'offers.refined', offerCriteria: {
+    totalPriceMax: { strength: 'must', value: { amount: '1000', currency: 'AED' } }, targetCount: 2,
+  },
+}, 'continuation payload projects exactly the plugin semantic intent fields')
+assert.ok(!JSON.stringify(hydratedMoneyPayload.task.activeIntent).includes('sourceFactRef'), 'continuation payload omits runtime money provenance')
+assert.ok(!Object.prototype.hasOwnProperty.call(hydratedMoneyPayload.task.activeIntent, 'schemaVersion'), 'continuation payload omits runtime intent schemaVersion')
+await hydratedMoneyPlanner.close()
+
+const offerCriteria = {
+  meals: { strength: 'must' as const, value: ['breakfast'] },
+  freeCancellation: { strength: 'must' as const, value: true },
+  targetCount: 3,
+}
+const offerCriteriaBindingTask: BookingCopilotTaskState = {
+  ...task,
+  taskId: 'task-dsh-intent-action-binding',
+  lastTurnId: 'dsh-turn-intent-action-binding',
+  allowedActions: ['offers.query'],
+  workspaceSnapshot: {
+    ...workspace,
+    visibleHotels: [{ hotelRef: 'hotel-1', name: 'Hotel One', factRefs: ['hotel:1'] }],
+    capabilities: { surface: 'tenant', allowedActions: ['offers.query'] },
+  },
+}
+const [offerCriteriaBindingDecision] = await runCompactAuthorityCase(offerCriteriaBindingTask, {
+  kind: 'offers.query',
+  input: { hotelRefs: ['hotel-1'], criteria: { targetCount: 1 } },
+  intent: { target: 'offers.loaded', offerCriteria },
+})
+assert.equal(offerCriteriaBindingDecision?.kind, 'operation')
+if (offerCriteriaBindingDecision?.kind !== 'operation') throw new Error('offer criteria binding did not materialize an operation')
+assert.deepEqual(
+  offerCriteriaBindingDecision.action.input.criteria,
+  offerCriteria,
+  'runtime compilation binds the authoritative intent criteria instead of executing a weaker model-authored query',
+)
+await assert.rejects(
+  runCompactAuthorityCase({
+    ...intentHydrationTask,
+    taskId: 'task-dsh-intent-unsupported',
+    allowedActions: ['search.patch'],
+    workspaceSnapshot: {
+      ...intentHydrationTask.workspaceSnapshot!,
+      capabilities: { surface: 'tenant', allowedActions: ['search.patch'] },
+    },
+  }, {
+    kind: 'search.patch',
+    input: { patch: { destination: { query: 'Dubai' } } },
+    intent: { target: 'offers.compared' },
+  }),
+  /planner_intent_target_unsupported/,
+  'a typed intent cannot expand the current surface capability policy',
+)
+
+// An intent target is durable planner state, not Harness session state. The
+// offers.compared target survives retirement/rebuild of the per-turn port and
+// cannot be terminalized after an earlier offers.query receipt.
+const comparedWorkspace: BookingWorkspaceSnapshot = {
+  ...workspace,
+  loadedOffers: [
+    { offerRef: 'offer-compared-a', offerVersionRef: 'offer-compared-a:v1', hotelRef: 'hotel-1', evidenceLevel: 'rate_loaded', factRefs: ['offer:compared:a'] },
+    { offerRef: 'offer-compared-b', offerVersionRef: 'offer-compared-b:v1', hotelRef: 'hotel-1', evidenceLevel: 'rate_loaded', factRefs: ['offer:compared:b'] },
+  ],
+  capabilities: { surface: 'tenant', allowedActions: ['offers.query', 'offers.compare'] },
+}
+const comparedIntent = { schemaVersion: BOOKING_INTENT_SCHEMA_VERSION, target: 'offers.compared' as const, offerCriteria: { targetCount: 2 } }
+const comparedIntentBase = { taskId: 'task-dsh-intent-compared', contextRef: 'ctx-dsh-intent-compared', sourceTurnId: 'dsh-intent-compared', sourceRequestDigest: bookingDigest('compare these offers'), projection: comparedIntent }
+const comparedActiveIntent: BookingIntentCheckpoint = { ...comparedIntentBase, intentDigest: bookingDigest(comparedIntentBase) }
+const comparedTask: BookingCopilotTaskState = {
+  ...task,
+  taskId: 'task-dsh-intent-compared', contextRef: 'ctx-dsh-intent-compared', lastTurnId: comparedIntentBase.sourceTurnId,
+  allowedActions: ['offers.query', 'offers.compare'], workspaceSnapshot: { ...comparedWorkspace, contextRef: 'ctx-dsh-intent-compared', revision: 1 },
+}
+let comparedPortOrdinal = 0
+const comparedPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => {
+    comparedPortOrdinal += 1
+    return {
+      async run() {
+        return comparedPortOrdinal === 1
+          ? { finalResponse: '', events: successfulToolEvents('booking_compare_offers', JSON.stringify({ kind: 'offers.compare', input: { offerRefs: ['offer-compared-a', 'offer-compared-b'], requestedCount: 2 }, intent: { target: 'offers.compared', offerCriteria: { targetCount: 2 } } }), `call-compared-${comparedPortOrdinal}`) }
+          : { finalResponse: '', events: successfulToolEvents('booking_compare_offers', JSON.stringify({ kind: 'terminal' }), `call-compared-${comparedPortOrdinal}`) }
+      },
+      async close() {},
+    }
+  },
+})
+const comparedSession = comparedPlanner.plannerFactory(comparedTask)
+const comparedFirst = await comparedSession.next({ task: comparedTask, turn: { schemaVersion: 'booking.surface', kind: 'user.turn', taskId: comparedTask.taskId, turnId: comparedTask.lastTurnId!, workspace: comparedTask.workspaceSnapshot!, request: { text: 'Compare these offers' } } })
+assert.equal(comparedFirst[0]?.kind, 'operation')
+if (comparedFirst[0]?.kind !== 'operation') throw new Error('intent comparison did not produce an operation')
+assert.deepEqual(comparedFirst[0].intent, comparedIntent, 'model proposal intent receives runtime schemaVersion')
+const comparedReceipt: ActionReceipt = {
+  schemaVersion: 'booking.surface', kind: 'action.receipt', actionId: comparedFirst[0].action.actionId, contextRef: comparedTask.contextRef,
+  status: 'applied', revision: 1, observation: { kind: 'offers.state', hotelRefs: ['hotel-1'], offerRefs: ['offer-compared-a', 'offer-compared-b'], loadedHotelCount: 1 },
+  resultContract: { outcome: 'complete', requestedCount: 2, actualCount: 2, hardCriteriaMet: true, factRefs: [], gapCodes: [], blockers: [], relaxationsApplied: [] },
+}
+const priorOffersQuery = { ...searchRun, kind: 'offers.query' as const, actionId: 'action-prior-offers-query', contextRef: comparedTask.contextRef, factRefs: [] as string[], input: { hotelRefs: ['hotel-1'], criteria: { targetCount: 2 } } } as BookingReadAction
+const prematureReceipt: ActionReceipt = { ...comparedReceipt, actionId: priorOffersQuery.actionId, observation: { kind: 'offers.state', hotelRefs: ['hotel-1'], offerRefs: ['offer-compared-a'], loadedHotelCount: 1 } }
+const prematureIntentTask = { ...comparedTask, revision: 1, activeIntent: comparedActiveIntent, lastCompletedAction: completedCheckpoint(priorOffersQuery, comparedTask.lastTurnId!), lastReceipt: prematureReceipt }
+await assert.rejects(
+  comparedSession.next({ task: prematureIntentTask, turn: { schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: comparedTask.taskId, workspace: { ...comparedTask.workspaceSnapshot!, revision: 1 }, receipt: prematureIntentTask.lastReceipt! } }),
+  /planner_terminal_intent_target_unachieved/,
+  'offers.compared intent cannot terminalize after a non-target offers receipt',
+)
+const comparedTerminalTask = { ...prematureIntentTask, lastCompletedAction: completedCheckpoint(comparedFirst[0].action, comparedTask.lastTurnId!), lastReceipt: comparedReceipt }
+const comparedTerminal = await comparedSession.next({ task: comparedTerminalTask, turn: { schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: comparedTask.taskId, workspace: { ...comparedTask.workspaceSnapshot!, revision: 1 }, receipt: comparedReceipt } })
+assert.deepEqual(comparedTerminal, [{ kind: 'terminal', terminal: { status: 'completed', summary: 'room_offers_ready', factRefs: [] } }], 'offers.compared intent survives per-turn port retirement and terminalizes only at its target')
+assert.equal(comparedPortOrdinal, 3, 'intent continuation rebuilds the retired provider port after the guarded premature attempt')
+
+if (comparedFirst[0].action.kind !== 'offers.compare') throw new Error('comparison proof received the wrong action kind')
+const underfilledCompareAction: Extract<BookingReadAction, { kind: 'offers.compare' }> = {
+  ...comparedFirst[0].action,
+  actionId: 'action-underfilled-compare',
+  input: { offerRefs: ['offer-compared-a'], requestedCount: 2 },
+}
+const underfilledCompareReceipt: ActionReceipt = {
+  ...comparedReceipt,
+  actionId: underfilledCompareAction.actionId,
+  observation: { kind: 'offers.state', hotelRefs: ['hotel-1'], offerRefs: ['offer-compared-a'], loadedHotelCount: 1 },
+  resultContract: { ...comparedReceipt.resultContract, actualCount: 1 },
+}
+const underfilledCompareTask = {
+  ...comparedTerminalTask,
+  lastCompletedAction: completedCheckpoint(underfilledCompareAction, comparedTask.lastTurnId!),
+  lastReceipt: underfilledCompareReceipt,
+}
+const underfilledTerminal = await comparedSession.next({
+  task: underfilledCompareTask,
+  turn: { schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: comparedTask.taskId, workspace: { ...comparedTask.workspaceSnapshot!, revision: 1 }, receipt: underfilledCompareReceipt },
+})
+assert.deepEqual(
+  underfilledTerminal,
+  [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'offer_target_not_reached', factRefs: [] } }],
+  'a receipt cannot claim a completed comparison when fewer offers than the durable target were compared',
+)
+
+const falseActualCountReceipt: ActionReceipt = {
+  ...comparedReceipt,
+  resultContract: { ...comparedReceipt.resultContract, actualCount: 1 },
+}
+const falseActualCountTerminal = await comparedSession.next({
+  task: { ...comparedTerminalTask, lastReceipt: falseActualCountReceipt },
+  turn: { schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: comparedTask.taskId, workspace: { ...comparedTask.workspaceSnapshot!, revision: 1 }, receipt: falseActualCountReceipt },
+})
+assert.deepEqual(
+  falseActualCountTerminal,
+  [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'offer_target_not_reached', factRefs: [] } }],
+  'the terminal uses receipt actualCount rather than the model-authored comparison input length',
+)
+
+const constrainedOfferCriteria = {
+  meals: { strength: 'must' as const, value: ['breakfast'] },
+  freeCancellation: { strength: 'must' as const, value: true },
+  targetCount: 2,
+}
+const constrainedProjection = {
+  schemaVersion: BOOKING_INTENT_SCHEMA_VERSION,
+  target: 'offers.compared' as const,
+  offerCriteria: constrainedOfferCriteria,
+}
+const constrainedIntentBase = {
+  ...comparedIntentBase,
+  projection: constrainedProjection,
+}
+const constrainedIntent: BookingIntentCheckpoint = {
+  ...constrainedIntentBase,
+  intentDigest: bookingDigest(constrainedIntentBase),
+}
+const mismatchedCriteriaTask = {
+  ...comparedTerminalTask,
+  activeIntent: constrainedIntent,
+  availability: {
+    ...comparedTerminalTask.availability,
+    criteria: { targetCount: 2 },
+    criteriaDigest: bookingDigest({ targetCount: 2 }),
+  },
+}
+await assert.rejects(
+  comparedSession.next({ task: mismatchedCriteriaTask, turn: { schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: comparedTask.taskId, workspace: { ...comparedTask.workspaceSnapshot!, revision: 1 }, receipt: comparedReceipt } }),
+  /planner_terminal_intent_criteria_unachieved/,
+  'matching an action kind cannot erase meal or cancellation constraints from the durable intent',
+)
+const constrainedCriteriaTask = {
+  ...mismatchedCriteriaTask,
+  availability: {
+    ...mismatchedCriteriaTask.availability,
+    criteria: constrainedOfferCriteria,
+    criteriaDigest: bookingDigest(constrainedOfferCriteria),
+  },
+}
+const constrainedTerminal = await comparedSession.next({
+  task: constrainedCriteriaTask,
+  turn: { schemaVersion: 'booking.surface', kind: 'action.receipt.continuation', taskId: comparedTask.taskId, workspace: { ...comparedTask.workspaceSnapshot!, revision: 1 }, receipt: comparedReceipt },
+})
+assert.deepEqual(constrainedTerminal, [{ kind: 'terminal', terminal: { status: 'completed', summary: 'room_offers_ready', factRefs: [] } }], 'matching criteria lineage permits the requested comparison waypoint')
+
+function offerTargetIntentCheckpoint(taskId: string, contextRef: string, sourceTurnId: string, target: 'offers.loaded' | 'offers.refined', offerCriteria: { targetCount: number }): BookingIntentCheckpoint {
+  const base = {
+    taskId, contextRef, sourceTurnId, sourceRequestDigest: bookingDigest(`${target}:${offerCriteria.targetCount}`),
+    projection: { schemaVersion: BOOKING_INTENT_SCHEMA_VERSION, target, offerCriteria },
+  }
+  return { ...base, intentDigest: bookingDigest(base) }
+}
+
+const queryTargetIntent = offerTargetIntentCheckpoint('task-dsh-offer-query-underfill', 'ctx-dsh-offer-query-underfill', 'dsh-offer-query-underfill', 'offers.loaded', { targetCount: 2 })
+const queryTargetAction: BookingReadAction = {
+  ...searchRun, kind: 'offers.query', actionId: 'action-offer-query-underfill', contextRef: queryTargetIntent.contextRef, factRefs: [],
+  input: { hotelRefs: ['hotel-1'], criteria: { targetCount: 2 } },
+} as BookingReadAction
+const queryTargetReceipt: ActionReceipt = {
+  ...comparedReceipt, actionId: queryTargetAction.actionId, contextRef: queryTargetIntent.contextRef,
+  observation: { kind: 'offers.state', hotelRefs: ['hotel-1'], offerRefs: ['offer-compared-a'], loadedHotelCount: 1 },
+  resultContract: { ...comparedReceipt.resultContract, requestedCount: 2, actualCount: 1 },
+}
+const queryTargetTask: BookingCopilotTaskState = {
+  ...comparedTask, taskId: queryTargetIntent.taskId, contextRef: queryTargetIntent.contextRef,
+  allowedActions: ['offers.query'], revision: 1, activeIntent: queryTargetIntent,
+  lastCompletedAction: completedCheckpoint(queryTargetAction, queryTargetIntent.sourceTurnId), lastReceipt: queryTargetReceipt,
+  workspaceSnapshot: { ...comparedWorkspace, contextRef: queryTargetIntent.contextRef, revision: 1, capabilities: { surface: 'tenant', allowedActions: ['offers.query'] } },
+}
+assert.deepEqual(await runTerminalContinuation(queryTargetTask, queryTargetReceipt), [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'offer_target_not_reached', factRefs: [] } }], 'offers.query underfill cannot terminalize as completed')
+const queryInconsistentReceipt: ActionReceipt = {
+  ...queryTargetReceipt,
+  observation: { kind: 'offers.state', hotelRefs: ['hotel-1'], offerRefs: ['offer-compared-a', 'offer-compared-b'], loadedHotelCount: 1 },
+  resultContract: { ...queryTargetReceipt.resultContract, actualCount: 1 },
+}
+assert.deepEqual(await runTerminalContinuation({ ...queryTargetTask, lastReceipt: queryInconsistentReceipt }, queryInconsistentReceipt), [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'offer_target_not_reached', factRefs: [] } }], 'offers.query rejects inconsistent authoritative actualCount and offer refs')
+
+const viewTargetIntent = offerTargetIntentCheckpoint('task-dsh-offer-view-underfill', 'ctx-dsh-offer-view-underfill', 'dsh-offer-view-underfill', 'offers.refined', { targetCount: 2 })
+const viewTargetAction: BookingReadAction = {
+  ...searchRun, kind: 'offers.view.patch', actionId: 'action-offer-view-underfill', contextRef: viewTargetIntent.contextRef, factRefs: [],
+  input: { hotelRef: 'hotel-1', criteria: { targetCount: 2 } },
+} as BookingReadAction
+const viewTargetReceipt: ActionReceipt = {
+  ...comparedReceipt, actionId: viewTargetAction.actionId, contextRef: viewTargetIntent.contextRef,
+  observation: { kind: 'offers.state', hotelRefs: ['hotel-1'], offerRefs: ['offer-compared-a'], loadedHotelCount: 1 },
+  resultContract: { ...comparedReceipt.resultContract, requestedCount: 2, actualCount: 1 },
+}
+const viewTargetTask: BookingCopilotTaskState = {
+  ...comparedTask, taskId: viewTargetIntent.taskId, contextRef: viewTargetIntent.contextRef,
+  allowedActions: ['offers.view.patch'], revision: 1, activeIntent: viewTargetIntent,
+  lastCompletedAction: completedCheckpoint(viewTargetAction, viewTargetIntent.sourceTurnId), lastReceipt: viewTargetReceipt,
+  workspaceSnapshot: { ...comparedWorkspace, contextRef: viewTargetIntent.contextRef, revision: 1, capabilities: { surface: 'tenant', allowedActions: ['offers.view.patch'] } },
+}
+assert.deepEqual(await runTerminalContinuation(viewTargetTask, viewTargetReceipt), [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'offer_target_not_reached', factRefs: [] } }], 'offers.view.patch underfill cannot terminalize as completed')
+const viewInconsistentReceipt: ActionReceipt = {
+  ...viewTargetReceipt,
+  observation: { kind: 'offers.state', hotelRefs: ['hotel-1'], offerRefs: ['offer-compared-a', 'offer-compared-b'], loadedHotelCount: 1 },
+  resultContract: { ...viewTargetReceipt.resultContract, actualCount: 1 },
+}
+assert.deepEqual(await runTerminalContinuation({ ...viewTargetTask, lastReceipt: viewInconsistentReceipt }, viewInconsistentReceipt), [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'offer_target_not_reached', factRefs: [] } }], 'offers.view.patch rejects inconsistent authoritative actualCount and offer refs')
+
+// A later single-offer waypoint carries the earlier multi-offer goal through
+// the authoritative Compare Tray. It must not require fake count fields on an
+// offer.selection receipt, and it must not forget an underfilled shortlist.
+const selectedProjection = { schemaVersion: BOOKING_INTENT_SCHEMA_VERSION, target: 'offer.selected' as const, offerCriteria: { targetCount: 2 } }
+const selectedIntentBase = { taskId: 'task-dsh-offer-selected-count', contextRef: 'ctx-dsh-offer-selected-count', sourceTurnId: 'dsh-offer-selected-count', sourceRequestDigest: bookingDigest('find two offers and select one'), projection: selectedProjection }
+const selectedIntent: BookingIntentCheckpoint = { ...selectedIntentBase, intentDigest: bookingDigest(selectedIntentBase) }
+const selectedAction: BookingReadAction = {
+  ...searchRun, kind: 'offer.select', actionId: 'action-offer-selected-count', contextRef: selectedIntent.contextRef, factRefs: [] as string[],
+  input: { offerRef: 'offer-compared-a', offerVersionRef: 'offer-compared-a:v1' },
+} as BookingReadAction
+const selectedReceipt: ActionReceipt = {
+  ...comparedReceipt, actionId: selectedAction.actionId, contextRef: selectedIntent.contextRef,
+  observation: { kind: 'offer.selection', offerRef: 'offer-compared-a', offerVersionRef: 'offer-compared-a:v1' },
+  resultContract: { ...comparedReceipt.resultContract, requestedCount: undefined, actualCount: undefined },
+}
+const selectedTask: BookingCopilotTaskState = {
+  ...comparedTask, taskId: selectedIntent.taskId, contextRef: selectedIntent.contextRef,
+  allowedActions: ['offer.select'], revision: 1, activeIntent: selectedIntent,
+  lastCompletedAction: completedCheckpoint(selectedAction, selectedIntent.sourceTurnId), lastReceipt: selectedReceipt,
+  workspaceSnapshot: {
+    ...comparedWorkspace, contextRef: selectedIntent.contextRef, revision: 1,
+    shortlistedOfferRefs: ['offer-compared-a', 'offer-compared-b'], selectedOfferRef: 'offer-compared-a',
+    capabilities: { surface: 'tenant', allowedActions: ['offer.select'] },
+  },
+}
+assert.deepEqual(await runTerminalContinuation(selectedTask, selectedReceipt), [{ kind: 'terminal', terminal: { status: 'completed', summary: 'offer_selected', factRefs: [] } }], 'a selected offer in a target-sized authoritative shortlist completes without fabricated receipt counts')
+assert.deepEqual(await runTerminalContinuation({ ...selectedTask, workspaceSnapshot: { ...selectedTask.workspaceSnapshot!, shortlistedOfferRefs: ['offer-compared-a'] } }, selectedReceipt), [{ kind: 'terminal', terminal: { status: 'stopped', summary: 'offer_target_not_reached', factRefs: [] } }], 'a later offer waypoint cannot forget that its authoritative shortlist was underfilled')
+await comparedPlanner.close()
 
 const visibleAuthorityWorkspace: BookingWorkspaceSnapshot = {
   ...workspace,
@@ -2406,11 +3192,11 @@ const visibleHotelTask = {
   workspaceSnapshot: visibleAuthorityWorkspace,
 }
 await assert.rejects(
-  runCompactAuthorityCase(visibleHotelTask, { kind: 'hotel.focus', input: { hotelRef: 'hotel-not-visible' } }),
+  runCompactAuthorityCase(visibleHotelTask, { kind: 'hotel.focus', input: { hotelRef: 'hotel-not-visible' }, intent: { target: 'hotel.focused' } }),
   /planner_hotel_ref_unbound/,
   'hotel.focus rejects a hotel reference absent from visible workspace facts',
 )
-const visibleHotelDecisions = await runCompactAuthorityCase(visibleHotelTask, { kind: 'hotel.focus', input: { hotelRef: 'hotel-authority-visible' } })
+const visibleHotelDecisions = await runCompactAuthorityCase(visibleHotelTask, { kind: 'hotel.focus', input: { hotelRef: 'hotel-authority-visible' }, intent: { target: 'hotel.focused' } })
 assertRuntimeMaterializedOperation(visibleHotelDecisions, 'hotel.focus', { hotelRef: 'hotel-authority-visible' }, visibleHotelTask, 'hotel.focus accepts only a visible hotel')
 assert.deepEqual((visibleHotelDecisions[0] as any)?.action?.factRefs, ['hotel:authority-visible'], 'hotel.focus derives visible hotel facts')
 
@@ -2427,11 +3213,11 @@ const offerTask = {
   workspaceSnapshot: offerAuthorityWorkspace,
 }
 await assert.rejects(
-  runCompactAuthorityCase(offerTask, { kind: 'offer.select', input: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v1' } }),
+  runCompactAuthorityCase(offerTask, { kind: 'offer.select', input: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v1' }, intent: { target: 'offer.selected' } }),
   /planner_offer_ref_unbound/,
   'offer.select rejects an obsolete offer version',
 )
-const offerDecisions = await runCompactAuthorityCase(offerTask, { kind: 'offer.select', input: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2' } })
+const offerDecisions = await runCompactAuthorityCase(offerTask, { kind: 'offer.select', input: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2' }, intent: { target: 'offer.selected' } })
 assertRuntimeMaterializedOperation(offerDecisions, 'offer.select', { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2' }, offerTask, 'offer.select accepts the loaded offer version')
 assert.deepEqual((offerDecisions[0] as any)?.action?.factRefs, ['offer:authority:v2'], 'offer.select derives authoritative offer facts')
 
@@ -2448,7 +3234,7 @@ const checkoutTask = {
   workspaceSnapshot: checkoutAuthorityWorkspace,
 }
 await assert.rejects(
-  runCompactAuthorityCase(checkoutTask, { kind: 'checkout.prepare', input: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2', verifiedOfferRef: 'verified-authority:wrong' } }),
+  runCompactAuthorityCase(checkoutTask, { kind: 'checkout.prepare', input: { offerRef: 'offer-authority', offerVersionRef: 'offer-authority:v2', verifiedOfferRef: 'verified-authority:wrong' }, intent: { target: 'checkout.prepared' } }),
   /planner_verified_offer_ref_unbound/,
   'checkout.prepare rejects a mismatched verified-offer triplet',
 )
@@ -2466,7 +3252,7 @@ const legacyAuthorityAction = {
   reason: 'model-authored reason must not survive',
   factRefs: ['model-authored-fact'],
 }
-const [legacyAuthorityDecision] = await runCompactAuthorityCase(legacyAuthorityTask, { decision: { kind: 'operation', action: legacyAuthorityAction } })
+const [legacyAuthorityDecision] = await runCompactAuthorityCase(legacyAuthorityTask, { decision: { kind: 'operation', action: legacyAuthorityAction, intent: { target: 'search.results' } } })
 assert.equal(legacyAuthorityDecision?.kind, 'operation', 'legacy full action remains a rolling-compatibility input')
 if (legacyAuthorityDecision?.kind !== 'operation') throw new Error('legacy authority proposal did not materialize')
 assert.notEqual(legacyAuthorityDecision.action.actionId, legacyAuthorityAction.actionId, 'legacy model actionId is replaced by runtime identity')

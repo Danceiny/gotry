@@ -13,6 +13,7 @@
       "default": "./dist/src/booking-surface/index.js"
     },
     "./booking-surface/schema": "./schemas/booking.surface.schema.json",
+    "./booking-surface/intent-schema": "./schemas/booking.intent.schema.json",
     "./booking-surface/runtime": {
       "types": "./ts/src/booking-surface/runtime.ts",
       "import": "./dist/src/booking-surface/runtime.js",
@@ -49,6 +50,7 @@
   },
   "files": [
     "dist/",
+    "!dist/**/managed-dsh-worker-fixture.mjs",
     "client/",
     "data/*.json",
     "bin/",
@@ -82,6 +84,7 @@
     "ts/src/slot-spec.ts",
     "ts/src/travel-slots.ts",
     "schemas/booking.surface.schema.json",
+    "schemas/booking.intent.schema.json",
     "ts/src/booking-surface/",
     "ts/scripts/skeleton-check.ts",
     "ts/scripts/skeleton-integration-test.ts",

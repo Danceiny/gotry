@@ -3,6 +3,7 @@ import { Ajv2020, type ValidateFunction } from 'ajv/dist/2020.js'
 import { BOOKING_READ_ACTION_KINDS, BOOKING_BLOCKER_CODES, BOOKING_GAP_CODES } from './contracts.ts'
 
 const schema = JSON.parse(readFileSync(new URL('../../../schemas/booking.surface.schema.json', import.meta.url), 'utf8')) as Record<string, unknown>
+const intentSchema = JSON.parse(readFileSync(new URL('../../../schemas/booking.intent.schema.json', import.meta.url), 'utf8')) as Record<string, unknown>
 /** Canonical schema bytes (single source of truth) for prompt/tool derivations elsewhere. */
 export const bookingSurfaceSchema = schema
 const ajv = new Ajv2020({ allErrors: true, strict: true })
@@ -12,6 +13,7 @@ const validateActionCanonical = ajv.compile({ $ref: `${schema.$id}#/$defs/Action
 const validateBlockerCanonical = ajv.compile({ $ref: `${schema.$id}#/$defs/Blocker` })
 const validateApprovalCanonical = ajv.compile({ $ref: `${schema.$id}#/$defs/Approval` })
 const validateEventCanonical = ajv.compile({ $ref: `${schema.$id}#/$defs/Event` })
+const validateIntentCanonical = ajv.compile(intentSchema)
 const kinds = new Set<string>(BOOKING_READ_ACTION_KINDS)
 const codes = new Set<string>(BOOKING_BLOCKER_CODES)
 const gapCodes = new Set<string>(BOOKING_GAP_CODES)
@@ -113,6 +115,13 @@ function workspaceErrors(workspace: Record<string, any> | undefined, path: strin
   const offerVersionRefs = loadedOffers.map((offer: any) => offer?.offerVersionRef).filter((ref: unknown): ref is string => typeof ref === 'string')
   if (new Set(offerRefs).size !== offerRefs.length) e.push(`${path}.loadedOffers: duplicate offerRef`)
   if (new Set(offerVersionRefs).size !== offerVersionRefs.length) e.push(`${path}.loadedOffers: duplicate offerVersionRef`)
+  const shortlisted = Array.isArray(workspace.shortlistedOfferRefs) ? workspace.shortlistedOfferRefs : []
+  if (shortlisted.some((ref: unknown) => typeof ref !== 'string' || !loadedOffers.some((offer: any) => offer?.offerRef === ref))) {
+    e.push(`${path}.shortlistedOfferRefs: every ref must be a loaded offer`)
+  }
+  if (workspace.selectedOfferRef !== undefined && !loadedOffers.some((offer: any) => offer?.offerRef === workspace.selectedOfferRef)) {
+    e.push(`${path}.selectedOfferRef: loaded offer required`)
+  }
   const verified = workspace.verifiedOffer
   if (verified !== undefined) {
     if (!loadedOffers.some((offer: any) => offer?.offerRef === verified.offerRef && offer?.offerVersionRef === verified.offerVersionRef)) e.push(`${path}.verifiedOffer: loaded offer version required`)
@@ -194,6 +203,7 @@ export function validateBookingReadAction(value: unknown): BookingSurfaceValidat
 export function validateCriterionBlocker(value: unknown): BookingSurfaceValidationResult { return fromCanonical(validateBlockerCanonical, value) }
 export function validateRelaxationApproval(value: unknown): BookingSurfaceValidationResult { return fromCanonical(validateApprovalCanonical, value) }
 export function validateBookingSurfaceEvent(value: unknown): BookingSurfaceValidationResult { return fromCanonical(validateEventCanonical, value) }
+export function validateBookingIntentProjection(value: unknown): BookingSurfaceValidationResult { return fromCanonical(validateIntentCanonical, value) }
 export function validateApprovalAgainstBlocker(approval: unknown, blocker: unknown): BookingSurfaceValidationResult {
   const a = approval as any
   const b = blocker as any

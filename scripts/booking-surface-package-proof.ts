@@ -6,6 +6,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import Ajv2020 from 'ajv/dist/2020.js'
 import {
   BOOKING_READ_ACTION_KINDS,
   BOOKING_SURFACE_SCHEMA_VERSION,
@@ -27,13 +28,27 @@ assert.deepEqual([...BOOKING_READ_ACTION_KINDS].sort(), [
   'results.view.patch', 'search.patch', 'search.run',
 ].sort(), 'canonical closed 12-action registry')
 assert.equal(typeof BookingCopilotTaskRuntime, 'function')
+type PublicIssueOperationIntent = Parameters<BookingCopilotTaskRuntime['issueOperation']>[2]
+const publicIssueOperationRequiresIntent: undefined extends PublicIssueOperationIntent ? false : true = true
+assert.equal(publicIssueOperationRequiresIntent, true, 'public runtime type requires an explicit typed intent')
 assert.equal(typeof startBookingCopilotServer, 'function')
 assert.equal(typeof createDshEmbeddedBookingPlanner, 'function')
 assert.equal(typeof startBookingCopilotFromEnvironment, 'function')
 
 const schemaPath = fileURLToPath(import.meta.resolve('@danceiny/gotry/booking-surface/schema'))
-const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as { $id?: string }
+type JsonSchema = { $id?: string; $defs?: Record<string, unknown> }
+const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as JsonSchema
 assert.equal(schema.$id, 'https://gotry.dev/schemas/booking.surface.schema.json')
+const intentSchemaPath = fileURLToPath(import.meta.resolve('@danceiny/gotry/booking-surface/intent-schema'))
+const intentSchema = JSON.parse(readFileSync(intentSchemaPath, 'utf8')) as JsonSchema
+assert.equal(intentSchema.$id, 'https://gotry.dev/schemas/booking.intent.schema.json')
+assert.doesNotThrow(() => new Ajv2020({ strict: true }).compile(intentSchema), 'intent schema must compile without an external schema registry')
+for (const definition of [
+  'OpaqueRef', 'NonEmptyString', 'Money', 'StringArrayCriterion', 'BooleanCriterion',
+  'StringCriterion', 'MoneyCriterion', 'IntegerCriterion', 'OfferCriteria',
+]) {
+  assert.deepEqual(intentSchema.$defs?.[definition], schema.$defs?.[definition], `intent schema ${definition} drifted from the canonical surface schema`)
+}
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CLEAN_CONSUMER_INSTALL_TIMEOUT_MS = 300_000
@@ -192,16 +207,25 @@ console.log('PACKED CONSUMER DSH CORE BOOT: OK')
     assertCommandSucceeded('npm-pack-dry-run', packReportStartedAt, packReport)
     const report = JSON.parse(packReport.stdout) as Array<{ files: Array<{ path: string; mode?: number }> }>
     const files = new Map(report[0]!.files.map((entry) => [entry.path, entry]))
+    assert.equal(
+      [...files.keys()].some((path) => path.endsWith('managed-dsh-worker-fixture.mjs')),
+      false,
+      'TERM-resistant process fixture must never ship in the runtime package',
+    )
     for (const path of [
       'bin/gotry-booking-copilot.js',
+      'schemas/booking.intent.schema.json',
       'schemas/booking.surface.schema.json',
+      'dist/src/booking-surface/booking-intent.js',
       'ts/src/booking-surface/contracts.ts',
       'dist/src/booking-surface/index.js',
       'dist/src/booking-surface/runtime.js',
       'dist/src/booking-surface/server.js',
       'dist/src/booking-surface/dsh-planner.js',
       'dist/src/booking-surface/dsh-plugin.js',
+      'dist/src/booking-surface/dsh-worker.js',
       'dist/src/booking-surface/canonical-schema.js',
+      'dist/src/booking-surface/managed-dsh-run-port.js',
       'dist/src/booking-surface/startup.js',
     ]) assert.ok(files.has(path), `npm tarball missing ${path}`)
   }
