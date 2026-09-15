@@ -667,7 +667,8 @@ const personaPrefixKeyMatches = profilePatch.match(/^ {4}personaPrefix:\s*>-/gm)
 assert.equal(personaPrefixKeyMatches.length, 1, `planner patch must carry exactly one personaPrefix: >- key (observed=${personaPrefixKeyMatches.length})`)
 assert.ok(!/(^|\n) {4}persona:\s*>-/.test(profilePatch), 'planner patch must not carry the legacy persona: >- key')
 assert.match(profilePatch, /You are GoTry's embedded booking planner/, 'planner patch retains the intended embedded booking persona text')
-assert.match(profilePatch, /Select exactly one of the six booking/, 'planner patch retains the six-tool discipline')
+assert.match(profilePatch, /Always answer by calling exactly one/, 'planner patch retains the tool-call-only discipline')
+assert.ok(!profilePatch.includes('six booking'), 'planner patch no longer hardcodes the grouped tool count')
 assert.equal(formatUtcOffsetLabel(345), 'UTC+05:45', 'timezone formatter preserves positive minute offsets')
 assert.equal(formatUtcOffsetLabel(-210), 'UTC-03:30', 'timezone formatter preserves negative minute offsets')
 assert.equal(formatUtcOffsetLabel(0), 'UTC+00:00', 'timezone formatter zero-pads whole-hour offsets')
@@ -774,11 +775,18 @@ assertRuntimeMaterializedOperation(selected, 'hotel.select', hotelSelect.input, 
 
 assert.deepEqual(DSH_EMBEDDED_BOOKING_TOOL_NAMES, [
   'booking_search_hotels',
+  'booking_run_search',
   'booking_refine_results',
+  'booking_focus_hotel',
+  'booking_select_hotel',
   'booking_find_room_offers',
+  'booking_view_offers',
   'booking_compare_offers',
+  'booking_select_offer',
   'booking_prepare_booking',
+  'booking_prepare_checkout',
   'booking_observe_booking',
+  'booking_finish_turn',
 ])
 assert.ok(!DSH_EMBEDDED_BOOKING_TOOL_NAMES.some((name) => /book$|trade|payment/i.test(name)), 'profile has no Book/payment tool')
 
