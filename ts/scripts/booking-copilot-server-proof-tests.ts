@@ -791,4 +791,31 @@ assert.deepEqual(restartEvents.map((event) => event.sequence), [1, 2, 3], 'the r
 await restarted.close()
 ledger.close()
 rmSync(stateRoot, { recursive: true, force: true })
+// The unified gotry-backend mounts the module, not the standalone startup: the
+// planner deadline must be forwarded here too, or a deployment's declared value
+// never reaches the serving path (measured: env had 45000, the metric still
+// timed out at 12s because only startup.ts applied it).
+{
+  const deadlineStateRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-deadline-'))
+  let seenPlannerTimeout: unknown
+  const deadlineModule = await startBookingCopilotModule({
+    GOTRY_BOOKING_COPILOT_API_KEY: API_KEY,
+    GOTRY_BOOKING_COPILOT_STATE_ROOT: deadlineStateRoot,
+    GOTRY_BOOKING_COPILOT_PORT: '0',
+    GOTRY_BOOKING_COPILOT_PLANNER_TIMEOUT_MS: '45000',
+  }, {
+    ensureLedger,
+    async createPlanner(options) {
+      seenPlannerTimeout = (options as { turnTimeoutMs?: unknown }).turnTimeoutMs
+      return {
+        plannerFactory: () => ({ async next() { return [] }, async close() {} }),
+        async close() {},
+      }
+    },
+  })
+  assert.equal(seenPlannerTimeout, 45000, 'the unified module forwards the planner deadline from the environment')
+  await deadlineModule.close()
+  rmSync(deadlineStateRoot, { recursive: true, force: true })
+}
+
 console.log('BOOKING COPILOT SERVER PROOF: BFF auth/typed SSE/task session/restart/no-token/no-text-action OK')

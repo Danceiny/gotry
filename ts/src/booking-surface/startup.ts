@@ -24,6 +24,8 @@ export interface BookingCopilotStartupConfig {
   host: string
   port: number
   artifactId?: string
+  /** Planner turn deadline in ms; the planner's own default applies when unset. */
+  plannerTurnTimeoutMs?: number
   /** Defaults to bound-turn-only; a complete injected seam enables ingress. */
   ingressMode: BookingCopilotIngressMode
 }
@@ -57,6 +59,16 @@ function parsePort(raw: string | undefined): number {
   return value
 }
 
+/** Operator-tunable planner deadline; the bounds mirror the planner's own validation. */
+function parsePlannerTurnTimeout(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 1 || value > 120_000) {
+    throw new Error('booking_copilot_planner_timeout_invalid')
+  }
+  return value
+}
+
 export function resolveBookingCopilotStartupConfig(
   env: Record<string, string | undefined> = process.env,
 ): BookingCopilotStartupConfig {
@@ -80,6 +92,7 @@ export function resolveBookingCopilotStartupConfig(
     host: env.GOTRY_BOOKING_COPILOT_HOST || '127.0.0.1',
     port: parsePort(env.GOTRY_BOOKING_COPILOT_PORT),
     artifactId,
+    plannerTurnTimeoutMs: parsePlannerTurnTimeout(env.GOTRY_BOOKING_COPILOT_PLANNER_TIMEOUT_MS),
     ingressMode: ingressMode as BookingCopilotIngressMode,
   }
 }
@@ -132,7 +145,11 @@ export async function startBookingCopilotFromEnvironment(
   let server: BookingCopilotServerHandle | undefined
   try {
     ledger = dependencies.ensureLedger(config.stateRoot)
-    const plannerOptions = { stateRoot: config.stateRoot, env: buildDshPlannerEnvironment(env) }
+    const plannerOptions = {
+      stateRoot: config.stateRoot,
+      env: buildDshPlannerEnvironment(env),
+      ...(config.plannerTurnTimeoutMs === undefined ? {} : { turnTimeoutMs: config.plannerTurnTimeoutMs }),
+    }
     const runtime = activeDependencies.runtimeFactory(ledger)
     planner = await activeDependencies.createPlanner(plannerOptions)
     server = await activeDependencies.startServer({
