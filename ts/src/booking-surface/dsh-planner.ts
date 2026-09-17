@@ -3,8 +3,8 @@
  * embedded Booking Copilot planner seam.
  *
  * Assistant text is deliberately ignored. The only executable output is one
- * validated decision carried by one of the six registered dsh capability
- * tools. The planner session is task-scoped, while each Harness subprocess is
+ * validated decision carried by one registered dsh capability tool. The
+ * planner session is task-scoped, while each Harness subprocess is
  * a short-lived per-turn cache retired after its accepted decision.
  */
 
@@ -17,7 +17,6 @@ import { BOOKING_READ_ACTION_KINDS, type ActionReceipt, type BookingCopilotTurn,
 import { buildTimeAnchor } from '../time-anchor.ts'
 export { formatUtcOffsetLabel } from '../time-anchor.ts'
 import {
-  EMBEDDED_BOOKING_CAPABILITY_IDS,
   actionsForEmbeddedCapability,
   type EmbeddedBookingCapabilityId,
 } from './profile.ts'
@@ -36,20 +35,40 @@ import {
 
 export const DSH_EMBEDDED_BOOKING_TOOL_NAMES = [
   'booking_search_hotels',
+  'booking_run_search',
   'booking_refine_results',
+  'booking_focus_hotel',
+  'booking_select_hotel',
   'booking_find_room_offers',
+  'booking_view_offers',
   'booking_compare_offers',
+  'booking_select_offer',
   'booking_prepare_booking',
+  'booking_prepare_checkout',
   'booking_observe_booking',
+  'booking_finish_turn',
 ] as const
 
 export type DshEmbeddedBookingToolName = (typeof DSH_EMBEDDED_BOOKING_TOOL_NAMES)[number]
 
-const CAPABILITY_TOOL_ENTRIES = EMBEDDED_BOOKING_CAPABILITY_IDS.map((capability, index) => [
-  DSH_EMBEDDED_BOOKING_TOOL_NAMES[index]!,
-  capability,
-] as const)
-const TOOL_TO_CAPABILITY = new Map<DshEmbeddedBookingToolName, EmbeddedBookingCapabilityId>(CAPABILITY_TOOL_ENTRIES)
+// One tool per action kind: the tool name itself selects the union branch, so
+// the advertised schemas stay concrete (no top-level anyOf). The terminal tool
+// is accepted by the parser but never reaches the capability/action check.
+const TOOL_CAPABILITY_ENTRIES: ReadonlyArray<readonly [DshEmbeddedBookingToolName, EmbeddedBookingCapabilityId]> = [
+  ['booking_search_hotels', 'search-hotels'],
+  ['booking_run_search', 'search-hotels'],
+  ['booking_refine_results', 'refine-results'],
+  ['booking_focus_hotel', 'refine-results'],
+  ['booking_select_hotel', 'refine-results'],
+  ['booking_find_room_offers', 'find-room-offers'],
+  ['booking_view_offers', 'find-room-offers'],
+  ['booking_compare_offers', 'compare-offers'],
+  ['booking_select_offer', 'compare-offers'],
+  ['booking_prepare_booking', 'prepare-booking'],
+  ['booking_prepare_checkout', 'prepare-booking'],
+  ['booking_observe_booking', 'observe-booking'],
+]
+const TOOL_TO_CAPABILITY = new Map<DshEmbeddedBookingToolName, EmbeddedBookingCapabilityId>(TOOL_CAPABILITY_ENTRIES)
 const TOOL_NAMES = new Set<string>(DSH_EMBEDDED_BOOKING_TOOL_NAMES)
 
 export interface DshPlannerRunResult {
@@ -100,6 +119,13 @@ export interface DshEmbeddedBookingPlannerOptions {
   maxTokens?: number
   /** Total wall-clock budget across all repair attempts for one planner turn. */
   turnTimeoutMs?: number
+  /**
+   * Soft budget for one provider run before it is presumed hung and retried
+   * on a fresh subprocess. Defaults to min(20s, 2/3 of turnTimeoutMs): legit
+   * observed runs complete well inside 20s, while stalled upstream streams
+   * never complete at all.
+   */
+  stallSoftBudgetMs?: number
   /** Safe aggregate telemetry seam; values contain no prompt, refs, or PII. */
   onMetric?: (metric: DshPlannerTurnMetric) => void
   env?: Record<string, string | undefined>
@@ -181,7 +207,7 @@ function quoteYaml(value: string): string {
   return `'${value.replaceAll("'", "''")}'`
 }
 
-/** Runtime patch over dsh's sdk-minimal profile: six typed planner tools only. */
+/** Runtime patch over dsh's sdk-minimal profile: one typed planner tool per action kind. */
 export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
   return `# GoTry embedded Booking Copilot: typed planning only; no browser, shell, files, Book, or persisted chat.\n\
 - id: deepseek-llm-api-extensions\n  disabled: true\n\
@@ -204,8 +230,10 @@ export function buildDshEmbeddedBookingPatch(pluginPath: string): string {
     includeRuntimeContext: false\n\
     personaPrefix: >-
       You are GoTry's embedded booking planner inside an existing HotelByte booking workspace.\n\
-      The page and its typed receipts are authoritative. Select exactly one of the six booking\n\
-      capability tools per turn and put exactly one shallow typed proposal in that tool call. Never emit\n\
+      The page and its typed receipts are authoritative. Always answer by calling exactly one\n\
+      booking capability tool — never write the decision as assistant text or as JSON in a\n\
+      message. Each tool call carries exactly one shallow typed proposal for that tool's single\n\
+      action kind; the tool description states its exact argument shape. Never emit\n\
       Book, payment, holder, guest, portal token, supplier cost, or an action in assistant text.\n\
       Stop at the user's requested waypoint. After a capability tool accepts the decision, end the turn.\n\
       Tool-call arguments MUST match the declared tool parameter schema exactly — use the exact\n\
@@ -1387,6 +1415,43 @@ class PlannerTurnDeadlineExceeded extends Error {
   }
 }
 
+/** One provider run exceeded its soft stall budget and is presumed hung. */
+class PlannerStallSoftExceeded extends Error {
+  constructor() {
+    super('planner_provider_stall_soft_budget_exceeded')
+    this.name = 'PlannerStallSoftExceeded'
+  }
+}
+
+/**
+ * A provider run that produces no completion within its soft budget is, in
+ * practice, hung: the upstream stream stalls mid-flight and never finishes
+ * (observed on gateway channels as `end_reason: client_gone` after the turn
+ * deadline). Waiting for the full turn deadline then wastes the whole budget
+ * on a dead stream. This wrapper rejects early so the caller can terminate
+ * the child and retry on a fresh run port inside the remaining deadline.
+ */
+function runWithStallBudget(
+  port: DshPlannerRunPort,
+  prompt: string,
+  sessionId: string,
+  softStallBudgetMs: number,
+): Promise<DshPlannerRunResult> {
+  return new Promise<DshPlannerRunResult>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new PlannerStallSoftExceeded()), softStallBudgetMs)
+    port.run(prompt, { sessionId }).then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      },
+    )
+  })
+}
+
 function beforePlannerDeadline<T>(promise: Promise<T>, deadlineAt: number): Promise<T> {
   const remainingMs = deadlineAt - Date.now()
   if (remainingMs <= 0) return Promise.reject(new PlannerTurnDeadlineExceeded())
@@ -1533,12 +1598,24 @@ export async function createDshEmbeddedBookingPlanner(
           // typed authority path.
           let attempt = 0
           let nextPrompt = plannerPrompt(turn, task, options.now)
+          // A hung provider run must not be allowed to silently consume the
+          // whole turn deadline. Every run gets at most a soft stall budget
+          // (capped so the remaining deadline can fund one fresh-port retry);
+          // a run that exceeds it is presumed dead (the upstream stream
+          // stalls mid-flight and never completes), the child is retired,
+          // and the remaining deadline funds one fresh-port retry.
+          const softStallBudgetMs = options.stallSoftBudgetMs
+            ?? Math.max(1_000, Math.min(20_000, Math.floor(turnTimeoutMs * 2 / 3)))
+          let stallRetried = false
           while (attempt < 3) {
             attempt += 1
             harnessRunCount = attempt
             let decisions: BookingPlannerDecision[] = []
             try {
-              const result = await beforePlannerDeadline(runPort.run(nextPrompt, { sessionId }), deadlineAt)
+              const result = await beforePlannerDeadline(
+                runWithStallBudget(runPort, nextPrompt, sessionId, softStallBudgetMs),
+                deadlineAt,
+              )
               modelStepCount += observedModelStepCount(result.events)
               schemaRejectedCallCount += result.events
                 .map((event, index) => toolResultObservation(event, index))
@@ -1573,6 +1650,20 @@ export async function createDshEmbeddedBookingPlanner(
                 }))
               }
             } catch (error) {
+              if (error instanceof PlannerStallSoftExceeded) {
+                if (stallRetried) throw new PlannerTurnDeadlineExceeded()
+                stallRetried = true
+                console.error('[booking-copilot] planner run exceeded the soft stall budget; retrying on a fresh run port:', JSON.stringify({
+                  attempt, softStallBudgetMs, remainingMs: deadlineAt - Date.now(),
+                }))
+                retire(runPort)
+                runPort = await beforePlannerDeadline(taskPort(), deadlineAt)
+                if (closed || sessionClosePromise) throw new Error(closed ? 'planner_closed' : 'planner_session_closed')
+                // The stalled run produced no decision; it must not consume a
+                // prose-nudge attempt.
+                attempt -= 1
+                continue
+              }
               if (error instanceof PlannerTurnDeadlineExceeded) {
                 metricOutcome = 'timeout'
                 retire(runPort)

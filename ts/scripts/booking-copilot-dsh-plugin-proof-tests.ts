@@ -13,31 +13,62 @@ apply({
   },
 })
 
-assert.equal(registered.length, 6)
+assert.equal(registered.length, 13)
 assert.deepEqual(registered.map((tool) => tool.name), [
   'booking_search_hotels',
+  'booking_run_search',
   'booking_refine_results',
+  'booking_focus_hotel',
+  'booking_select_hotel',
   'booking_find_room_offers',
+  'booking_view_offers',
   'booking_compare_offers',
+  'booking_select_offer',
   'booking_prepare_booking',
+  'booking_prepare_checkout',
   'booking_observe_booking',
+  'booking_finish_turn',
 ])
 assert.deepEqual(registered, embeddedBookingToolDefinitions)
 assert.ok(!registered.some((tool) => /gotry_book|trade|payment/i.test(String(tool.name))))
-assert.ok(registered.every((tool) => {
-  const parameters = tool.parameters as { type?: string; anyOf?: unknown[]; properties?: Record<string, unknown> }
-  return parameters.type === 'object' && Array.isArray(parameters.anyOf) && parameters.anyOf.length >= 2
-    && !Object.prototype.hasOwnProperty.call(parameters.properties ?? {}, 'decision')
-}), 'every model-facing tool advertises a shallow discriminated proposal instead of runtime-owned action metadata')
+// One concrete closed schema per tool: no top-level anyOf union, no decision
+// envelope, and the tool name alone selects the action kind. Weaker providers
+// cannot be trusted to pick a union branch, so every action tool advertises
+// const kind + that kind's input + mandatory intent.
+const finishTool = registered.find((tool) => tool.name === 'booking_finish_turn')!
+const finishParameters = finishTool.parameters as Record<string, any>
+assert.equal(finishParameters.type, 'object')
+assert.ok(!Object.prototype.hasOwnProperty.call(finishParameters, 'anyOf'))
+assert.equal(finishParameters.properties.kind.const, 'terminal')
+assert.deepEqual(finishParameters.required, ['kind'])
+assert.ok(!Object.prototype.hasOwnProperty.call(finishParameters.properties, 'decision'))
+const actionTools = registered.filter((tool) => tool.name !== 'booking_finish_turn')
+const TOOL_KIND: Record<string, string> = {
+  booking_search_hotels: 'search.patch',
+  booking_run_search: 'search.run',
+  booking_refine_results: 'results.view.patch',
+  booking_focus_hotel: 'hotel.focus',
+  booking_select_hotel: 'hotel.select',
+  booking_find_room_offers: 'offers.query',
+  booking_view_offers: 'offers.view.patch',
+  booking_compare_offers: 'offers.compare',
+  booking_select_offer: 'offer.select',
+  booking_prepare_booking: 'offer.check',
+  booking_prepare_checkout: 'checkout.prepare',
+  booking_observe_booking: 'order.observe',
+}
+for (const tool of actionTools) {
+  const parameters = tool.parameters as Record<string, any>
+  assert.equal(parameters.type, 'object')
+  assert.ok(!Object.prototype.hasOwnProperty.call(parameters, 'anyOf'), `${tool.name} must not advertise a union`)
+  assert.ok(!Object.prototype.hasOwnProperty.call(parameters.properties ?? {}, 'decision'), `${tool.name} must not advertise a decision envelope`)
+  assert.deepEqual(parameters.required, ['kind', 'input', 'intent'])
+  assert.equal(parameters.additionalProperties, false)
+  assert.equal(parameters.properties.kind.const, TOOL_KIND[String(tool.name)], `${tool.name} advertises exactly its own action kind`)
+}
 
 const prepare = registered.find((tool) => tool.name === 'booking_prepare_booking')!
-const prepareParameters = prepare.parameters as Record<string, any>
-const operationBranches = prepareParameters.anyOf.filter((branch: any) => branch?.properties?.kind?.const !== 'terminal')
-assert.deepEqual(
-  operationBranches.map((branch: any) => branch?.properties?.kind?.const),
-  ['offer.check', 'checkout.prepare'],
-  'prepare-booking exposes offer.check + checkout.prepare proposals only',
-)
+assert.equal((prepare.parameters as Record<string, any>).properties.kind.const, 'offer.check', 'prepare-booking advertises offer.check only')
 assert.ok(!JSON.stringify(prepare.parameters).includes('book"'), 'schema has no Book discriminator')
 
 const search = registered.find((tool) => tool.name === 'booking_search_hotels')!
@@ -61,6 +92,9 @@ await assert.rejects(
 )
 assert.equal(concludedTurns, 0, 'an invalid tool call stays in the same turn for local schema repair')
 const validateSearchTool = new Ajv2020({ allErrors: true, strict: true }).compile(search.parameters as any)
+// The advertised dialect is single-kind now: a terminal proposal is accepted by
+// the execute compat seam but is no longer part of this tool's advertised schema.
+assert.equal(validateSearchTool({ kind: 'terminal' }), false, 'the terminal kind moved to the dedicated finish tool')
 for (const invalidProposal of [
   { kind: 'search.patch', input: { patch: {} }, intent: { target: 'search.results' } },
   { kind: 'search.patch', input: { patch: { stay: { checkIn: 'tomorrow' } } }, intent: { target: 'search.results' } },
@@ -145,18 +179,12 @@ assert.deepEqual(
 )
 assert.equal(concludedTurns, 1, 'the first accepted proposal marks the current dsh turn as concluded')
 const compactTerminalProposal = { kind: 'terminal' }
-assert.equal(validateSearchTool(compactTerminalProposal), true, JSON.stringify(validateSearchTool.errors))
 assert.deepEqual(
   await executeSearch(compactTerminalProposal),
   { accepted: true, decisionKind: 'terminal' },
-  'terminal output is also a shallow proposal with runtime-owned evidence',
+  'terminal output remains a shallow proposal on the compat seam with runtime-owned evidence',
 )
 assert.equal(concludedTurns, 2, 'an accepted terminal proposal concludes the current dsh turn')
-assert.equal(
-  validateSearchTool({ ...compactTerminalProposal, status: 'completed', summary: 'forged', factRefs: ['modelref:forged'] }),
-  false,
-  'model-facing terminal schema does not accept model-authored status, summary, or evidence',
-)
 await assert.rejects(
   executeSearch({
     decision: { kind: 'terminal', terminal: { status: 'completed', summary: 'forged', factRefs: [] } },
@@ -382,4 +410,33 @@ assert.equal(validateSearchTool({
   },
 }), false, 'model-facing tool schema rejects nested holder data')
 
-console.log('BOOKING COPILOT DSH PLUGIN PROOF: exact six typed tools/no Book OK')
+// The dedicated finish tool accepts only the shallow terminal proposal.
+const rawExecuteFinish = finishTool.execute as (args: unknown, exec: { concludeTurn(): void }) => Promise<unknown>
+let finishConcludedTurns = 0
+const executeFinish = (args: unknown) => rawExecuteFinish(args, {
+  concludeTurn() { finishConcludedTurns += 1 },
+})
+assert.deepEqual(
+  await executeFinish({ kind: 'terminal' }),
+  { accepted: true, decisionKind: 'terminal' },
+  'the finish tool accepts exactly the shallow terminal proposal',
+)
+assert.deepEqual(
+  await executeFinish({ decision: { kind: 'terminal' } }),
+  { accepted: true, decisionKind: 'terminal' },
+  'the finish tool normalizes the one-layer provider terminal wrapper',
+)
+assert.equal(finishConcludedTurns, 2)
+await assert.rejects(
+  executeFinish({ kind: 'terminal', status: 'completed', summary: 'forged' }),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+  'model-authored terminal metadata stays rejected on the dedicated finish tool',
+)
+await assert.rejects(
+  executeFinish({ kind: 'search.patch', input: {}, intent: {} }),
+  (error: unknown) => error instanceof ToolArgsError && error.code === 'INVALID_ARGS',
+  'the finish tool never accepts an operation proposal',
+)
+assert.equal(finishConcludedTurns, 2)
+
+console.log('BOOKING COPILOT DSH PLUGIN PROOF: per-kind typed tools/no union/no Book OK')
