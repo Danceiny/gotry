@@ -81,7 +81,7 @@ export interface DshPlannerRunResult {
 }
 
 export interface DshPlannerRunPort {
-  run(prompt: string, options: { sessionId: string }): Promise<DshPlannerRunResult>
+  run(prompt: string, options: { sessionId: string; onProgress?: () => void }): Promise<DshPlannerRunResult>
   close(): Promise<void>
   /** Boot in-worker harness eagerly without a provider call; real ports only. */
   warmup?(): Promise<void>
@@ -122,11 +122,11 @@ export interface DshEmbeddedBookingPlannerOptions {
   /** Total wall-clock budget across all repair attempts for one planner turn. */
   turnTimeoutMs?: number
   /**
-   * Soft budget for one provider run before it is presumed hung and retried
-   * on a fresh subprocess. Defaults to min(20s, 2/3 of turnTimeoutMs): legit
-   * observed runs complete well inside 20s, while stalled upstream streams
-   * never complete at all. Stalled runs retry on fresh ports for as long as
-   * one minimally viable run still fits the turn deadline.
+   * Idle (no-notification) budget for one provider run before it is presumed
+   * hung and retried on a fresh subprocess. Defaults to min(20s, 2/3 of
+   * turnTimeoutMs). A healthy run is a multi-step tool loop and keeps making
+   * progress, so only true silence trips this. Stalled runs retry on fresh
+   * ports for as long as one minimally viable run still fits the deadline.
    */
   stallSoftBudgetMs?: number
   /** Safe aggregate telemetry seam; values contain no prompt, refs, or PII. */
@@ -1458,29 +1458,40 @@ class PlannerStallSoftExceeded extends Error {
 }
 
 /**
- * A provider run that produces no completion within its soft budget is, in
- * practice, hung: the upstream stream stalls mid-flight and never finishes
- * (observed on gateway channels as `end_reason: client_gone` after the turn
- * deadline). Waiting for the full turn deadline then wastes the whole budget
- * on a dead stream. This wrapper rejects early so the caller can terminate
- * the child and retry on a fresh run port inside the remaining deadline.
+ * A provider run that makes no observable progress for its idle budget is
+ * hung in practice (a dead upstream stream never emits another notification).
+ * A healthy run is multi-step — thinking models legitimately run tool loops
+ * for tens of seconds — so total duration must NOT be treated as a hang
+ * signal. The wrapper rejects only when no notification arrives for the idle
+ * budget, so the caller can terminate the child and retry on a fresh run
+ * port inside the remaining deadline.
  */
 function runWithStallBudget(
   port: DshPlannerRunPort,
   prompt: string,
   sessionId: string,
-  softStallBudgetMs: number,
+  idleStallBudgetMs: number,
 ): Promise<DshPlannerRunResult> {
   return new Promise<DshPlannerRunResult>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new PlannerStallSoftExceeded()), softStallBudgetMs)
-    port.run(prompt, { sessionId }).then(
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const arm = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => reject(new PlannerStallSoftExceeded()), idleStallBudgetMs)
+    }
+    arm()
+    const settled = (done: () => void) => {
+      clearTimeout(timer)
+      done()
+    }
+    port.run(prompt, {
+      sessionId,
+      onProgress: arm,
+    }).then(
       (value) => {
-        clearTimeout(timer)
-        resolve(value)
+        settled(() => resolve(value))
       },
       (error) => {
-        clearTimeout(timer)
-        reject(error instanceof Error ? error : new Error(String(error)))
+        settled(() => reject(error instanceof Error ? error : new Error(String(error))))
       },
     )
   })
@@ -1632,27 +1643,24 @@ export async function createDshEmbeddedBookingPlanner(
           // typed authority path.
           let attempt = 0
           let nextPrompt = plannerPrompt(turn, task, options.now)
-          // A hung provider run must not be allowed to silently consume the
-          // whole turn deadline. Every run gets at most a soft stall budget;
-          // a run that exceeds it is presumed dead (the upstream stream
-          // stalls mid-flight and never completes), the child is retired,
-          // and the remaining deadline funds fresh-port retries for as long
-          // as one minimally viable run still fits.
+          // A run that goes silent must not be allowed to silently consume the
+          // whole turn deadline: the idle stall budget fires only when the run
+          // stops emitting notifications entirely, the child is retired, and
+          // the remaining deadline funds fresh-port retries for as long as one
+          // minimally viable run still fits.
+          // Idle (no-notification) budget for one provider run: a healthy run
+          // is a multi-step tool loop that keeps emitting notifications, so
+          // only true silence trips this. Requests in flight when the budget
+          // fires are killed with the retired port.
           const softStallBudgetMs = options.stallSoftBudgetMs
             ?? Math.max(1_000, Math.min(20_000, Math.floor(turnTimeoutMs * 2 / 3)))
-          // UAT evidence (d88a84d + bf74b4b): the first provider run of a fresh
-          // harness systematically stalls past any budget while the fresh-port
-          // retry converges in 13-19s. Give that first run a tighter budget so
-          // the productive retry starts sooner; retries keep the full budget.
-          const firstRunStallBudgetMs = Math.max(1_000, Math.min(15_000, Math.floor(turnTimeoutMs / 3)))
           while (attempt < 3) {
             attempt += 1
             harnessRunCount = attempt
-            const stallBudgetMs = attempt === 1 ? firstRunStallBudgetMs : softStallBudgetMs
             let decisions: BookingPlannerDecision[] = []
             try {
               const result = await beforePlannerDeadline(
-                runWithStallBudget(runPort, nextPrompt, sessionId, stallBudgetMs),
+                runWithStallBudget(runPort, nextPrompt, sessionId, softStallBudgetMs),
                 deadlineAt,
               )
               modelStepCount += observedModelStepCount(result.events)
@@ -1699,7 +1707,7 @@ export async function createDshEmbeddedBookingPlanner(
                 const remainingMs = deadlineAt - Date.now()
                 if (remainingMs < PLANNER_MIN_VIABLE_RUN_MS) throw new PlannerTurnDeadlineExceeded()
                 console.error('[booking-copilot] planner run exceeded the soft stall budget; retrying on a fresh run port:', JSON.stringify({
-                  attempt, stallBudgetMs, remainingMs,
+                  attempt, softStallBudgetMs, remainingMs,
                 }))
                 retire(runPort)
                 runPort = await beforePlannerDeadline(taskPort(), deadlineAt)

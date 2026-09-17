@@ -21,7 +21,15 @@ async function handle(request: Request): Promise<void> {
       reply({ id: request.id, ok: true })
       return
     }
-    const result = await harness.run(request.prompt!, { sessionId: request.sessionId! })
+    const result = await harness.run(request.prompt!, {
+      sessionId: request.sessionId!,
+      // Stream liveness to the parent: every notification (model step, tool
+      // call, receipt) resets the parent's idle-stall timer, so a healthy
+      // multi-step run is never mistaken for a hung stream.
+      onNotification: () => {
+        process.stdout.write(`${JSON.stringify({ id: request.id, progress: true })}\n`)
+      },
+    })
     reply({ id: request.id, ok: true, result })
   } catch {
     // Raw SDK/provider exceptions may contain URLs, model output or request
