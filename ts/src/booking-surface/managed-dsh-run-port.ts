@@ -31,7 +31,7 @@ function workerLaunch(path: string): readonly string[] {
 export class ManagedDshRunPort implements DshPlannerRunPort {
   private readonly handle: SubprocessHandle
   private readonly runtime: LocalSubprocessRuntime
-  private readonly pending = new Map<number, { resolve: (value: DshPlannerRunResult) => void; reject: (error: Error) => void }>()
+  private readonly pending = new Map<number, { ok: (value?: DshPlannerRunResult) => void; fail: (error: Error) => void }>()
   private sequence = 0
   private closePromise: Promise<void> | undefined
   private inputBuffer = ''
@@ -75,14 +75,14 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
         const message = JSON.parse(line) as { id: number; ok: boolean; result?: DshPlannerRunResult; error?: string }
         const waiter = this.pending.get(message.id); if (!waiter) continue
         this.pending.delete(message.id)
-        if (message.ok && message.result) waiter.resolve(message.result)
-        else waiter.reject(new Error(message.error === 'HARNESS_START_FAILED' ? message.error : 'HARNESS_RUN_FAILED'))
+        if (message.ok) waiter.ok(message.result)
+        else waiter.fail(new Error(message.error === 'HARNESS_START_FAILED' ? message.error : 'HARNESS_RUN_FAILED'))
       } catch (error) { this.failPending(error instanceof Error ? error : new Error(String(error))) }
     }
   }
 
   private failPending(error: Error): void {
-    for (const waiter of this.pending.values()) waiter.reject(error)
+    for (const waiter of Object.values(this.pending)) waiter.fail(error)
     this.pending.clear()
   }
 
@@ -90,8 +90,18 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
     if (this.closePromise) return Promise.reject(new Error('managed DSH run port is closed'))
     const id = ++this.sequence
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      this.pending.set(id, { ok: (value) => resolve(value as DshPlannerRunResult), fail: reject })
       this.handle.stdin!.write(`${JSON.stringify({ id, prompt, sessionId: options.sessionId, options: this.harnessOptions })}\n`)
+    })
+  }
+
+  /** Boot the in-worker harness without consuming a provider call. */
+  warmup(): Promise<void> {
+    if (this.closePromise) return Promise.reject(new Error('managed DSH run port is closed'))
+    const id = ++this.sequence
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { ok: () => resolve(), fail: reject })
+      this.handle.stdin!.write(`${JSON.stringify({ id, warmup: true, options: this.harnessOptions })}\n`)
     })
   }
 

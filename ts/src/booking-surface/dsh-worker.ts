@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline'
 import { DeepSeekHarness, type DeepSeekHarnessOptions } from '@deepseek-ai/dsh-sdk-client'
 
-type Request = { id: number; prompt: string; sessionId: string; options?: Record<string, unknown> }
+type Request = { id: number; prompt?: string; sessionId?: string; warmup?: boolean; options?: Record<string, unknown> }
 
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity })
 let harness: DeepSeekHarness | undefined
@@ -14,7 +14,14 @@ function reply(value: unknown): void {
 async function handle(request: Request): Promise<void> {
   try {
     harness ??= new DeepSeekHarness((request.options ?? {}) as DeepSeekHarnessOptions)
-    const result = await harness.run(request.prompt, { sessionId: request.sessionId })
+    // The first harness construction loads the profile, patches and plugins —
+    // the dominant share of a cold first turn. A warmup request pays that
+    // boot cost without consuming a provider call.
+    if (request.warmup) {
+      reply({ id: request.id, ok: true })
+      return
+    }
+    const result = await harness.run(request.prompt!, { sessionId: request.sessionId! })
     reply({ id: request.id, ok: true, result })
   } catch {
     // Raw SDK/provider exceptions may contain URLs, model output or request
