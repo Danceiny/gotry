@@ -1640,13 +1640,19 @@ export async function createDshEmbeddedBookingPlanner(
           // as one minimally viable run still fits.
           const softStallBudgetMs = options.stallSoftBudgetMs
             ?? Math.max(1_000, Math.min(20_000, Math.floor(turnTimeoutMs * 2 / 3)))
+          // UAT evidence (d88a84d + bf74b4b): the first provider run of a fresh
+          // harness systematically stalls past any budget while the fresh-port
+          // retry converges in 13-19s. Give that first run a tighter budget so
+          // the productive retry starts sooner; retries keep the full budget.
+          const firstRunStallBudgetMs = Math.max(1_000, Math.min(15_000, Math.floor(turnTimeoutMs / 3)))
           while (attempt < 3) {
             attempt += 1
             harnessRunCount = attempt
+            const stallBudgetMs = attempt === 1 ? firstRunStallBudgetMs : softStallBudgetMs
             let decisions: BookingPlannerDecision[] = []
             try {
               const result = await beforePlannerDeadline(
-                runWithStallBudget(runPort, nextPrompt, sessionId, softStallBudgetMs),
+                runWithStallBudget(runPort, nextPrompt, sessionId, stallBudgetMs),
                 deadlineAt,
               )
               modelStepCount += observedModelStepCount(result.events)
@@ -1693,7 +1699,7 @@ export async function createDshEmbeddedBookingPlanner(
                 const remainingMs = deadlineAt - Date.now()
                 if (remainingMs < PLANNER_MIN_VIABLE_RUN_MS) throw new PlannerTurnDeadlineExceeded()
                 console.error('[booking-copilot] planner run exceeded the soft stall budget; retrying on a fresh run port:', JSON.stringify({
-                  attempt, softStallBudgetMs, remainingMs,
+                  attempt, stallBudgetMs, remainingMs,
                 }))
                 retire(runPort)
                 runPort = await beforePlannerDeadline(taskPort(), deadlineAt)
