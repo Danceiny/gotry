@@ -31,7 +31,7 @@ function workerLaunch(path: string): readonly string[] {
 export class ManagedDshRunPort implements DshPlannerRunPort {
   private readonly handle: SubprocessHandle
   private readonly runtime: LocalSubprocessRuntime
-  private readonly pending = new Map<number, { ok: (value?: DshPlannerRunResult) => void; fail: (error: Error) => void }>()
+  private readonly pending = new Map<number, { ok: (value?: DshPlannerRunResult) => void; fail: (error: Error) => void; progress?: () => void }>()
   private sequence = 0
   private closePromise: Promise<void> | undefined
   private inputBuffer = ''
@@ -72,7 +72,11 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
       if (newline < 0) return
       const line = this.inputBuffer.slice(0, newline); this.inputBuffer = this.inputBuffer.slice(newline + 1)
       try {
-        const message = JSON.parse(line) as { id: number; ok: boolean; result?: DshPlannerRunResult; error?: string }
+        const message = JSON.parse(line) as { id: number; ok?: boolean; progress?: boolean; result?: DshPlannerRunResult; error?: string }
+        if (message.progress) {
+          this.pending.get(message.id)?.progress?.()
+          continue
+        }
         const waiter = this.pending.get(message.id); if (!waiter) continue
         this.pending.delete(message.id)
         if (message.ok) waiter.ok(message.result)
@@ -86,11 +90,11 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
     this.pending.clear()
   }
 
-  run(prompt: string, options: { sessionId: string }): Promise<DshPlannerRunResult> {
+  run(prompt: string, options: { sessionId: string; onProgress?: () => void }): Promise<DshPlannerRunResult> {
     if (this.closePromise) return Promise.reject(new Error('managed DSH run port is closed'))
     const id = ++this.sequence
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { ok: (value) => resolve(value as DshPlannerRunResult), fail: reject })
+      this.pending.set(id, { ok: (value) => resolve(value as DshPlannerRunResult), fail: reject, progress: options.onProgress })
       this.handle.stdin!.write(`${JSON.stringify({ id, prompt, sessionId: options.sessionId, options: this.harnessOptions })}\n`)
     })
   }
