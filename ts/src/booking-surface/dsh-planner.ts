@@ -83,6 +83,8 @@ export interface DshPlannerRunResult {
 export interface DshPlannerRunPort {
   run(prompt: string, options: { sessionId: string }): Promise<DshPlannerRunResult>
   close(): Promise<void>
+  /** Boot in-worker harness eagerly without a provider call; real ports only. */
+  warmup?(): Promise<void>
 }
 
 export type DshPlannerClock = Date | (() => Date)
@@ -123,7 +125,8 @@ export interface DshEmbeddedBookingPlannerOptions {
    * Soft budget for one provider run before it is presumed hung and retried
    * on a fresh subprocess. Defaults to min(20s, 2/3 of turnTimeoutMs): legit
    * observed runs complete well inside 20s, while stalled upstream streams
-   * never complete at all.
+   * never complete at all. Stalled runs retry on fresh ports for as long as
+   * one minimally viable run still fits the turn deadline.
    */
   stallSoftBudgetMs?: number
   /** Safe aggregate telemetry seam; values contain no prompt, refs, or PII. */
@@ -356,6 +359,34 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
   } catch (error) {
     rmSync(scratch, { recursive: true, force: true })
     throw error
+  }
+
+  // Cold-boot warmup: the first harness construction loads the profile,
+  // patches and plugins from a cold page cache, which on a freshly deployed
+  // host consumed the whole soft-stall budget of the service's very first
+  // user turn. One disposable worker pays that cost at module start — no
+  // provider call, own dshHome to avoid profile/state contention, failures
+  // are silently ignored because the first real run re-boots anyway.
+  if (process.env.GOTRY_BOOKING_COPILOT_WARMUP !== '0') {
+    const warmer = createManagedDshRunPort({
+      profile: 'sdk-minimal',
+      patches: [patchPath],
+      dshHome: join(scratch, 'home-warmer'),
+      processCwd: options.stateRoot ?? process.cwd(),
+      cwd: options.stateRoot ?? process.cwd(),
+      provider,
+      model,
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+      maxTokens,
+      shutdownTimeoutMs: 500,
+      disposeEofGraceMs: 500,
+      disposeGraceMs: 500,
+      env: childEnv,
+      ...(options.dshBin ? { dshBin: options.dshBin } : {}),
+    })
+    void warmer.warmup?.()
+      .catch(() => undefined)
+      .finally(() => { void warmer.close().catch(() => undefined) })
   }
 
   let closePromise: Promise<void> | undefined
@@ -1415,6 +1446,9 @@ class PlannerTurnDeadlineExceeded extends Error {
   }
 }
 
+/** Observed floor for one converged planner provider run; below this a retry cannot plausibly finish. */
+const PLANNER_MIN_VIABLE_RUN_MS = 12_000
+
 /** One provider run exceeded its soft stall budget and is presumed hung. */
 class PlannerStallSoftExceeded extends Error {
   constructor() {
@@ -1599,14 +1633,13 @@ export async function createDshEmbeddedBookingPlanner(
           let attempt = 0
           let nextPrompt = plannerPrompt(turn, task, options.now)
           // A hung provider run must not be allowed to silently consume the
-          // whole turn deadline. Every run gets at most a soft stall budget
-          // (capped so the remaining deadline can fund one fresh-port retry);
+          // whole turn deadline. Every run gets at most a soft stall budget;
           // a run that exceeds it is presumed dead (the upstream stream
           // stalls mid-flight and never completes), the child is retired,
-          // and the remaining deadline funds one fresh-port retry.
+          // and the remaining deadline funds fresh-port retries for as long
+          // as one minimally viable run still fits.
           const softStallBudgetMs = options.stallSoftBudgetMs
             ?? Math.max(1_000, Math.min(20_000, Math.floor(turnTimeoutMs * 2 / 3)))
-          let stallRetried = false
           while (attempt < 3) {
             attempt += 1
             harnessRunCount = attempt
@@ -1651,10 +1684,16 @@ export async function createDshEmbeddedBookingPlanner(
               }
             } catch (error) {
               if (error instanceof PlannerStallSoftExceeded) {
-                if (stallRetried) throw new PlannerTurnDeadlineExceeded()
-                stallRetried = true
+                // A stalled stream is presumed dead, but the upstream stall is
+                // often transient (observed: attempt 1 stalls past the budget,
+                // a fresh-port retry converges in 13-19s). Keep retrying on
+                // fresh ports while at least one minimally viable run
+                // (observed floor ~12s) still fits the turn deadline; only
+                // give up when the remaining budget cannot fund one.
+                const remainingMs = deadlineAt - Date.now()
+                if (remainingMs < PLANNER_MIN_VIABLE_RUN_MS) throw new PlannerTurnDeadlineExceeded()
                 console.error('[booking-copilot] planner run exceeded the soft stall budget; retrying on a fresh run port:', JSON.stringify({
-                  attempt, softStallBudgetMs, remainingMs: deadlineAt - Date.now(),
+                  attempt, softStallBudgetMs, remainingMs,
                 }))
                 retire(runPort)
                 runPort = await beforePlannerDeadline(taskPort(), deadlineAt)
