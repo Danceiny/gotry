@@ -169,6 +169,7 @@
 | [evaluation/evaluation-foundation.md](evaluation/evaluation-foundation.zh-CN.md) | Evaluation Phase 0：契约/注册表/准入与边界声明 |
 | [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.zh-CN.md) | 外部 benchmark 桥：Phase 1 接缝与逐轮工程台账 |
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.zh-CN.md) | dsh e2e 端到端真 LLM 验证记录（持续更新） |
+| [evaluation/round12-canary-report.zh-CN.md](evaluation/round12-canary-report.zh-CN.md) | Round 12 冻结 canary 跑测报告：身份/分数/逐约束发现（#203/#215 收官段） |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | 产品人格横评：同一真实 prompt 各家回答存档/评分卡/人格提炼 |
 
 ### ops/（发布与合规）
