@@ -167,3 +167,9 @@ main `c843fae` 上的真实 `glm-5.3-flash` 治疗诊断出 provider/模型对�
 wire 可用之后（Round 11），Round 11 冻结治疗暴露出下一个瓶颈：GoTry 只告诉模型「one JSON object」，模型于是添加根键、把 day 行写成直接 activities，官方评分器按约定 22 次拒绝 body 而未运行。
 
 Round 12 收口结构半场（issue #215）：桥配置携带不含数据值的闭合 `body_schema`；同一结构合同以一份确定性大纲投影进 system prompt 与唯一一次终结纠偏；每个被接受的终结 body 都按它 fail-closed 校验——多余根键、缺失 `day`/`activities`、错误类型、嵌套多余字段一律拒绝，无 autofix。配置面升至 v4；v3 及更旧配置 fail-closed。source 测试 + source/打包 E2E 覆盖合法的类 ChinaTravel 层级、Round 11 的五个拒绝类、单一来源投影。冻结重跑（同 case、同模型、同预算；仅合法终结到达钉定的官方评分器）是剩余段，在本 SHA 尚未运行；不主张任何治疗或提升。
+
+### Round 12 — 精确终态 schema 投影(#215)
+
+Round 12 闭合结构半场(issue #215):桥 config 携带无数据值的闭合 `body_schema`(结构关键字白名单,enum/const/example/default 与组合形一律拒绝,对象必须 `additionalProperties:false`,字节/深度/节点/属性数有界);同一份结构合同以确定性 outline 投影进 system prompt 与唯一一次 terminal 纠正;接受的终态 body 逐节点 fail-closed 校验——多 root 键、缺 `day`/`activities`、错类型、嵌套多余键原样拒绝,零 autofix。config 契约升到 v4;v3 及更旧 fail-closed。source 测试+source/packaged E2E 覆盖合法 ChinaTravel-like 层级、五类拒绝与单一来源投影。
+
+冻结 treatment(2026-09-18,重建 harness):GoTry SHA `f6e76b88fd50504a1f27056a211014f6d8125b81`,case `phase2_extended_20250322201643676309_00001`(当前 HF 数据修订;2026-08 数据修复后旧 familiar UID 已退役,按 #203「重建新冻结 harness」口径换用并全量记录),模型 `MiniMax-M3`(owner relay 凭证,未入任何记录),v4 config(SHA-256 `762f4e5e4989ff0e…`)+ adapter-v1 v1 envelope(`e6485036ac4ef0bf…`)。planner exit 0,terminal 4840 bytes(`c9d039675208b934…`),schema 必需键 0 违例。pinned 官方 evaluator(b071db25 评估树)首次进入并产出十二轮以来首个非 null 官方分数:`{MicEPR: 33.33, MacEPR: 0.0, C-LPR: 0.0, FPR: 0.0, DAV: 0.0, ATT: 0.0, DDR: 0.0, overall: 3.33}`。单 case、无 matched-pair 基线——不声称 uplift;分数形态(常识面部分通过、逻辑面 0)即下一轮优化靶面。
