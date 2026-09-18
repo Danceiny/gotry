@@ -106,6 +106,8 @@
 | [decisions-needed.zh-CN.md](decisions-needed.zh-CN.md) | 待创始人拍板的决策队列 |
 | [g5-authorization-ledger.zh-CN.md](g5-authorization-ledger.zh-CN.md) | G5 内部差旅桥授权台账（GRANT 条目仅创始人侧维护；由 `ts/scripts/g5-guard.ts` 机械读取，issue #348） |
 | [debt-archive.zh-CN.md](debt-archive.zh-CN.md) | 已清偿债务存档（追加式留证；开着的债见 architecture.zh-CN.md §10.1） |
+| [code-map.zh-CN.md](code-map.zh-CN.md) | 代码地图：自 architecture.md §3 拆出的完整模块/套件清单（issue #477） |
+| [adr-expansions.zh-CN.md](adr-expansions.zh-CN.md) | ADR 展开：architecture.md §8 索引背后的逐决策证据正文（issue #477） |
 
 ### design/（模块设计）
 
