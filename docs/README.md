@@ -106,6 +106,8 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [decisions-needed.md](decisions-needed.md) | Decision queue awaiting the founder |
 | [g5-authorization-ledger.md](g5-authorization-ledger.md) | G5 internal-travel-bridge authorization ledger (GRANT entries maintained founder-side only; read mechanically by `ts/scripts/g5-guard.ts`, issue #348) |
 | [debt-archive.md](debt-archive.md) | Paid-off debt archive (append-only evidence; open debts live in architecture.md §10.1) |
+| [code-map.md](code-map.md) | Code map: full module/suite inventory extracted from architecture.md §3 (issue #477) |
+| [adr-expansions.md](adr-expansions.md) | ADR expansions: per-decision evidence bodies behind the architecture.md §8 index (issue #477) |
 
 ### design/ (module design)
 
