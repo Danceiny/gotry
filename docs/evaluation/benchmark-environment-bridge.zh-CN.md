@@ -162,12 +162,6 @@ Round 10 保留 Round 8 的单一扁平协议，并为每个描述符派生一�
 
 main `c843fae` 上的真实 `glm-5.3-flash` 治疗诊断出 provider/模型对顶层 `oneOf` 桥 schema 的可见性失败：该治疗发出 57 次空 `{}` 调用，未产出可计数分数。Round 11 因此只把模型侧桥 wire 改为一个扁平对象：`action` 枚举 `tools|call|errors`、描述符派生的 `tool` 枚举、通用对象 `arguments`。执行时校验仍按所选冻结描述符的 `input_schema` 精确执行。provider 路由、评分器、评估器、默认产品路径、外部 data/oracle/query/trajectory 输入、私有路径、凭证都不变；不主张任何分数或提升。
 
-### Round 12 — 精确终结 schema 投影（#215）
-
-wire 可用之后（Round 11），Round 11 冻结治疗暴露出下一个瓶颈：GoTry 只告诉模型「one JSON object」，模型于是添加根键、把 day 行写成直接 activities，官方评分器按约定 22 次拒绝 body 而未运行。
-
-Round 12 收口结构半场（issue #215）：桥配置携带不含数据值的闭合 `body_schema`；同一结构合同以一份确定性大纲投影进 system prompt 与唯一一次终结纠偏；每个被接受的终结 body 都按它 fail-closed 校验——多余根键、缺失 `day`/`activities`、错误类型、嵌套多余字段一律拒绝，无 autofix。配置面升至 v4；v3 及更旧配置 fail-closed。source 测试 + source/打包 E2E 覆盖合法的类 ChinaTravel 层级、Round 11 的五个拒绝类、单一来源投影。冻结重跑（同 case、同模型、同预算；仅合法终结到达钉定的官方评分器）是剩余段，在本 SHA 尚未运行；不主张任何治疗或提升。
-
 ### Round 12 — 精确终态 schema 投影(#215)
 
 Round 12 闭合结构半场(issue #215):桥 config 携带无数据值的闭合 `body_schema`(结构关键字白名单,enum/const/example/default 与组合形一律拒绝,对象必须 `additionalProperties:false`,字节/深度/节点/属性数有界);同一份结构合同以确定性 outline 投影进 system prompt 与唯一一次 terminal 纠正;接受的终态 body 逐节点 fail-closed 校验——多 root 键、缺 `day`/`activities`、错类型、嵌套多余键原样拒绝,零 autofix。config 契约升到 v4;v3 及更旧 fail-closed。source 测试+source/packaged E2E 覆盖合法 ChinaTravel-like 层级、五类拒绝与单一来源投影。
