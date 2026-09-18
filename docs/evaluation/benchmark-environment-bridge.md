@@ -405,6 +405,19 @@ extra root keys, missing `day`/`activities`, wrong types, and nested extra
 fields are rejected with no autofix. Config face bumped to v4; v3 and older
 configs fail closed. Source tests + source/packaged E2E cover the legal
 ChinaTravel-like hierarchy, the five Round 11 rejection classes, and the
-single-source projection. The frozen rerun (same case, model, and budget;
-only legal terminals reach the pinned official scorer) is the remaining
-segment and has not run at this SHA; no treatment or uplift is claimed.
+single-source projection.
+
+Frozen treatment (2026-09-18, regenerated harness): GoTry SHA
+`f6e76b88fd50504a1f27056a211014f6d8125b81`, case
+`phase2_extended_20250322201643676309_00001` (current HF data revision; the
+2026-08 data repairs retired the old familiar UIDs, so the harness was
+regenerated as #203 prescribed and the full identity is recorded), model
+`MiniMax-M3` (owner relay credential, recorded nowhere), v4 config (SHA-256
+`762f4e5e4989ff0e…`) + adapter-v1 v1 envelope (`e6485036ac4ef0bf…`).
+Planner exit 0, terminal 4840 bytes (`c9d039675208b934…`), zero
+schema-required violations. The pinned official evaluator (b071db25 tree)
+entered and returned the first non-null official scores in twelve rounds:
+`{MicEPR: 33.33, MacEPR: 0.0, C-LPR: 0.0, FPR: 0.0, DAV: 0.0, ATT: 0.0,
+DDR: 0.0, overall: 3.33}`. Single case, no matched-pair baseline — no uplift
+is claimed; the score profile (commonsense partial, logical 0) is the next
+round's optimization target.
