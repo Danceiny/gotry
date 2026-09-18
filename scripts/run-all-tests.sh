@@ -588,6 +588,10 @@ echo
 echo "=== 67c. Registered Lavish review tools (issue #443: host authority, serialized lifecycle, terminal races, owned process cleanup; isolated offline fixtures) ==="
 (cd ts && GOTRY_LAVISH_LIVE=0 npx tsx scripts/lavish-product-tools-tests.ts) || FAIL=1
 
+echo
+echo "=== 68. state-ledger 数据修复控制面(issue #254:只读 inventory 零写入/显式映射 plan 逐项校验+跨 tenant idem_key 冲突暴露/from 守卫受限 execute+backup SHA-256+journal 幂等+retarget/rollback 校验和验证+损毁拒绝/CLI --execute 闸与 founder 数据守卫;隔离 stateRoot fixture,全离线) ==="
+(cd ts && npx tsx scripts/state-repair-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
