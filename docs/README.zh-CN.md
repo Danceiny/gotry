@@ -170,6 +170,7 @@
 | [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.zh-CN.md) | 外部 benchmark 桥：Phase 1 接缝与逐轮工程台账 |
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.zh-CN.md) | dsh e2e 端到端真 LLM 验证记录（持续更新） |
 | [evaluation/round12-canary-report.zh-CN.md](evaluation/round12-canary-report.zh-CN.md) | Round 12 冻结 canary 跑测报告：身份/分数/逐约束发现（#203/#215 收官段） |
+| [evaluation/sf-manifest.zh-CN.md](evaluation/sf-manifest.zh-CN.md) | sf-01..08 冻结清单：用例/通道矩阵/真实会话需求分类（issue #272 离线段） |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | 产品人格横评：同一真实 prompt 各家回答存档/评分卡/人格提炼 |
 
 ### ops/（发布与合规）
