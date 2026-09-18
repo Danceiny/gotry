@@ -1,38 +1,32 @@
 [English](round12-canary-report.md) | [简体中文](round12-canary-report.zh-CN.md)
 
-# Round 12 frozen canary — first countable official-score run report (issue #203/#215 closure)
+# Round 12 frozen canary — first countable official-score run report (issues #203/#215)
 
-> Positioning: full run report of the Round 12 frozen treatment (regenerated harness, issue #203/#215 closure segment). Companion to the per-turn engineering ledger (`benchmark-environment-bridge.md` Round 12) and the Discussion #78 Round 12 comment. Status: frozen evidence, no uplift claims.
+> What this is: the evaluation summary of the Round 12 frozen canary — what we ran, what came back, why the score looks the way it does, and what to fix next. Hashes and the full config manifest stay in the [engineering ledger](benchmark-environment-bridge.md) Round 12; this report is the readable account.
 
-## Identity
+## TL;DR
 
-| Field | Value |
-|---|---|
-| GoTry SHA | `f6e76b88fd50504a1f27056a211014f6d8125b81` |
-| Case | `phase2_extended_20250322201643676309_00001` (current HF data revision; 2 days, Shenzhen→Shanghai, 1 traveler) |
-| Model | `MiniMax-M3` (owner relay credential; recorded nowhere) |
-| Bridge | `gotry_benchmark_environment_bridge_v4` — 21 frozen tool descriptors, closed `body_schema` projected from the official `output_schema.json` (config SHA-256 `762f4e5e4989ff0e…`) |
-| Adapter | `adapter-v1` exact `gotry_benchmark_tool_result_v1` envelope (SHA-256 `e6485036ac4ef0bf…`) |
-| Budgets | soft 360 s / hard 600 s; bridge timeout 30 s; max output 64 KiB |
-| Result | planner exit `0`; **terminal 4840 bytes** (SHA-256 `c9d039675208b934…`); official-schema unconditional-required violations **0** |
+We rebuilt the benchmark harness on the v4 bridge, ran one frozen canary case end-to-end with `MiniMax-M3`, and for the first time in twelve rounds the official evaluator actually scored the plan: **overall 3.33 / 100** (schema ✅, commonsense ⅓, logic 0). The score is low by design of the scorer — and the failure list is exactly the to-do list for the next round: the model must copy prices, transport stages, and times verbatim from tool output instead of improvising them.
 
-## Official scores (pinned evaluator, b071db25 tree)
+## What ran
 
-```
-{MicEPR: 33.33, MacEPR: 0.0, C-LPR: 0.0, FPR: 0.0, DAV: 0.0, ATT: 0.0, DDR: 0.0, overall: 3.33}
-```
+One frozen case (Shenzhen → Shanghai, 2 days, 1 traveler; current HF data revision) through the full GoTry child on main: v4 bridge config (21 frozen tool descriptors + closed terminal `body_schema`), v1-envelope adapter, `MiniMax-M3` via the owner relay, soft/hard budgets 360/600 s. The agent explored the environment through the bridge (tools → calls) and emitted one `<output>` plan. Full identity is recorded in the [ledger Round 12](benchmark-environment-bridge.md); nothing here is recreated from memory.
 
-First non-null official scores in twelve rounds. Single case, no matched-pair baseline — **no uplift is claimed**.
+## What came back
 
-## Constraint-level findings (the actionable summary)
+- Planner exited 0; the terminal plan was **4,840 bytes, structurally perfect** — zero violations against the official schema's unconditional-required keys. The Round 12 gate did its job: 12 rounds of "evaluator never entered" ended here.
+- Official scores: **overall 3.33**, MicEPR 33.33 (1 of 3 commonsense groups passed), C-LPR 0, FPR 0, DAV/ATT/DDR 0.
 
-MicEPR 33.33 = one of three commonsense groups passed. Per-group findings:
+## Why the score looks like this (per-constraint findings)
 
-1. **Exact-copy discipline (prices/rooms)**: the plan wrote an accommodation price (`1092`) and room count (`2`) that contradict the queried tool output, and a restaurant price (`434`) absent from the database — the model queried correctly but transcribed from inference instead of copying verbatim.
-2. **Transport stage semantics**: the `goto` tool returns multi-stage metro itineraries (metro = three stages). The model collapsed segments into single-stage `walk` entries whose duration/distance contradict the tool (e.g. `12:50` vs `12:59`, 1 km vs 2.44 km). Correct behavior: copy the tool's stage list verbatim.
-3. **Time-chain discipline**: hard-logic failures are chained-time violations — an activity starting before arrival transport lands, a transport departing before the previous activity ends, and an inter-position accommodation activity with an empty `transports` list.
-4. **What passed**: schema structure (0 violations through the v4 closed `body_schema` gate), the first commonsense group (attraction/category structure), and intercity flight selection (real `CZ3588`/`CZ3589` from tool output).
+The scorer found three failure families. None of them are bridge defects — they are model transcription/hygiene behaviors, which means they are fixable at the product contract layer:
 
-## Next-round optimization targets
+1. **Improvised prices and rooms.** The plan wrote an accommodation price of 1092 with 2 rooms where the tool data says otherwise, and a restaurant price of 434 that does not exist in the database. The model queried the right things, then typed numbers from its own prior instead of copying the tool output.
+2. **Collapsed transport stages.** The `goto` tool returns metro itineraries as three-stage trips; the plan rewrote them as single-stage walks with a duration of 20 min where the tool says 29 min and a distance of 1 km where the tool says 2.44 km. Every mismatch is the model editing tool data.
+3. **Broken time chain and a teleporting hotel.** Day-2 activity/transport times don't chain (a transport departs before the previous activity ends), the arrival flight lands at 09:30 but the plan starts the day at 07:00 in the wrong city, and one accommodation activity carries an empty `transports` list.
 
-These are model-behavior failure modes, addressable at the product contract layer (persona/tooling guidance), not bridge defects: (a) verbatim-copy rule extended to prices/rooms (currently names only); (b) transport stages copied verbatim from `goto` output; (c) chained-time rule (previous end ≤ next start). Baseline pairing and sample scaling remain separate admissions.
+What passed: the entire v4 structural gate, the first commonsense group (attraction/category structure), and real intercity flight selection (CZ3588/CZ3589 taken from tool output).
+
+## Next round's targets (product contract layer)
+
+(a) extend the verbatim-copy rule from names to **prices and room counts**; (b) **transport stages copied verbatim** from `goto` output (never re-derived); (c) a **chained-time rule** (previous end ≤ next start, arrival before first activity). These are persona/tooling-guidance changes with the same test-and-PR loop as #192/#2. Baseline pairing and sample scaling remain separate admissions.
