@@ -169,6 +169,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [evaluation/evaluation-foundation.md](evaluation/evaluation-foundation.md) | Evaluation Phase 0: contracts/registries/admission & boundary statements |
 | [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.md) | External benchmark bridge: Phase 1 seam and per-turn engineering ledger |
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.md) | dsh e2e end-to-end real-LLM verification records (continuously updated) |
+| [evaluation/sf-manifest.md](evaluation/sf-manifest.md) | sf-01..08 frozen manifest: cases/channel matrix/live-session classification (issue #272 offline segment) |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | Product-persona comparison: archived answers to the same real prompt/scorecards/persona distillation |
 
 ### ops/ (release & compliance)
