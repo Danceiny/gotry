@@ -171,6 +171,7 @@
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.zh-CN.md) | dsh e2e 端到端真 LLM 验证记录（持续更新） |
 | [evaluation/round12-canary-report.zh-CN.md](evaluation/round12-canary-report.zh-CN.md) | Round 12 冻结 canary：跑了什么、分数意味着什么、为什么（#203/#215） |
 | [evaluation/sf-manifest.zh-CN.md](evaluation/sf-manifest.zh-CN.md) | sf-01..08 冻结清单：用例/通道矩阵/真实会话需求分类（issue #272 离线段） |
+| [evaluation/dida-runner-stop-report.zh-CN.md](evaluation/dida-runner-stop-report.zh-CN.md) | Dida 实时 runner 停止、清理与严格 live opt-in 证据（#502/#504） |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | 产品人格横评：同一真实 prompt 各家回答存档/评分卡/人格提炼 |
 
 ### ops/（发布与合规）
