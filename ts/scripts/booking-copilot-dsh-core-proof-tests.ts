@@ -14,9 +14,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   createDshEmbeddedBookingPlanner,
+  createRealRunPort,
   resolveRealRunPortConfig,
   DSH_EMBEDDED_BOOKING_TOOL_NAMES,
   type DshPlannerTurnMetric,
+  type DshPlannerRunPort,
 } from '../src/booking-surface/dsh-planner.ts'
 import { bookingDigest, type BookingActionCheckpoint, type BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
 import type { BookingCopilotTurn, BookingReadAction, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
@@ -262,6 +264,7 @@ function processExists(pid: number): boolean {
 
 let planner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
 let stalledPlanner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
+let stalledPort: DshPlannerRunPort | undefined
 const plannerMetrics: DshPlannerTurnMetric[] = []
 
 // Planner route resolution: a deployment that forgot DEEPSEEK_MODEL must not
@@ -391,14 +394,29 @@ try {
     workspace: stalledTask.workspaceSnapshot!,
     request: { text: 'STALL_PROVIDER_PROOF' },
   }
+  // This case measures a provider stall, after the SAME task-owned port has
+  // completed real SDK initialize. Cold-start timeout is covered separately
+  // by booking-copilot-dsh-readiness-proof.ts without relaxing this deadline.
+  const priorWarmup = process.env.GOTRY_BOOKING_COPILOT_WARMUP
+  process.env.GOTRY_BOOKING_COPILOT_WARMUP = '0'
+  try {
+    stalledPort = await createRealRunPort({
+      stateRoot,
+      env: {
+        PATH: process.env.PATH,
+        DEEPSEEK_API_KEY: 'fixture-model-key',
+        DEEPSEEK_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+      },
+      maxTokens: 512,
+    })
+  } finally {
+    if (priorWarmup === undefined) delete process.env.GOTRY_BOOKING_COPILOT_WARMUP
+    else process.env.GOTRY_BOOKING_COPILOT_WARMUP = priorWarmup
+  }
+  await stalledPort.warmup!()
+  const readyStalledPort = stalledPort
   stalledPlanner = await createDshEmbeddedBookingPlanner({
-    stateRoot,
-    env: {
-      PATH: process.env.PATH,
-      DEEPSEEK_API_KEY: 'fixture-model-key',
-      DEEPSEEK_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
-    },
-    maxTokens: 512,
+    runPortFactory: () => readyStalledPort,
     turnTimeoutMs: 1_500,
   })
   const stalledStartedAt = Date.now()
@@ -425,6 +443,7 @@ try {
   }
 } finally {
   await stalledPlanner?.close()
+  await stalledPort?.close()
   await planner?.close()
   await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()))
   rmSync(stateRoot, { recursive: true, force: true })

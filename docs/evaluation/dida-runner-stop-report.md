@@ -2,72 +2,61 @@
 
 # Dida live runner stop verification
 
-> Role: command-level evidence for Dida live-runner stop, cleanup, and opt-in gates.
-> Status: frozen(2026-09-19)
-> Upstream: GitHub issues #502/#504 and the GoTry repository contract.
-> Downstream: `ts/scripts/session-dida-live-e2e.ts`, its regression command, and maintainers reviewing live-session evidence.
-
-This report covers GitHub issues [#502](https://github.com/Danceiny/gotry/issues/502) and [#504](https://github.com/Danceiny/gotry/issues/504) on branch `fix/dida-live-stop-502`, based on `origin/main` at `20d728e3668d302821bad0f8687ca8ef55d29ed5`.
+> Role: command-level evidence for Dida runner stop, cleanup, and opt-in gates.
+> Status: validated scenario report; final-SHA gate receipts accompany the PR.
+> Upstream: [#502](https://github.com/Danceiny/gotry/issues/502), [#504](https://github.com/Danceiny/gotry/issues/504), [#515](https://github.com/Danceiny/gotry/issues/515), and the repository contract.
+> Downstream: live-runner maintainers and PR reviewers.
 
 ## Scope and implementation
 
-The runner now requires `GOTRY_SESSION_LIVE === "1"` before it creates a browser process. It performs one `sessionDidaSearch` call, removes the rate limiter reset and retry loop, and aborts and joins the concurrent click assistant in a `finally` path before closing the browser. The implementation commit is `af1060c28e9b6c1dc40341a553093e6d21b2c8b6`.
+The runner requires `GOTRY_SESSION_LIVE === '1'` and credentials before creating its temporary profile or browser. It calls the existing `sessionDidaSearch` once, without resetting the limiter or retrying terminal results. At search completion or rejection it aborts new assistant work, immediately attempts browser close, and waits for both close and assistant completion concurrently. Each cleanup promise has a 5000 ms deadline. Incomplete cleanup produces an explicit phase-specific error and exit 1, never a successful search result.
 
-## Reproduction and fixed command E2E
+PR [#505](https://github.com/Danceiny/gotry/pull/505) integrates main `7f4084492ee9d5acf9e41e9cc5269cb2d3e8198b`. Its two index conflicts retain the Dida, SF isolation, and Copilot readiness reports; the automatic merge also retains their regression entries. No session capability, provider protocol, persistent state, or dependency is changed.
 
-The command `cd ts && npx tsx scripts/dida-runner-stop-tests.ts` spawns the real `scripts/session-dida-live-e2e.ts` entry in a temporary overlay. The runner source is copied unchanged. The session module, browser adapter and Chrome executable are synthetic; a test-only timer preload shortens waits and a fetch trap rejects network attempts. Events record all assistant DOM evaluations, clicks, terminal results and browser close. Assertions require the assistant to have started and no new DOM evaluation dispatched after the terminal result. This run observed two clicks and two overlay evaluations before each result; the test requires at least one click, not an exact timing-dependent count.
+## Scenario matrix and real boundary
 
-| Case | Expected process exit | Search calls | Rate resets | Assistant cleanup | Result |
-|---|---:|---:|---:|---|---|
-| `challenged` | 2 | 1 | 0 | 2 clicks before result; browser closed | pass |
-| `cooldown` | 2 | 1 | 0 | 2 clicks before result; browser closed | pass |
-| `needs-login` | 2 | 1 | 0 | 2 clicks before result; browser closed | pass |
-| `needs-extension` | 2 | 1 | 0 | 2 clicks before result; browser closed | pass |
-| ordinary `error` | 2 | 1 | 0 | 2 clicks before result; browser closed | pass |
-| `hit` | 0 | 1 | 0 | 2 clicks before result; browser closed | pass |
-| thrown search error | 1 | 1 | 0 | 2 clicks before error; browser closed | pass |
+The test spawns the actual runner entry from an unchanged source copy in an isolated temporary directory. Browser transport, the Chrome executable, and session responses are synthetic. The original DOM IIFE executes in `node:vm` against a minimal document/button fixture: evaluation attempts, scrolling, and actual mock button clicks have separate events. Thus an evaluation attempt is not counted as a click. Terminal cases with no button keep assistance active until search ends; the hit case proves one button click and early assistant completion.
 
-The same command verifies the #504 gate for unset, `0`, `false`, and random non-`1` values, plus missing credentials. Each exits with code 1 before the fake browser marker is created, with zero search calls and an empty network trap. The fixed run log is `/tmp/gotry-dida-stop-502-root-e2e.log`.
+| Cases | Required observations | Result |
+|---|---|---|
+| challenged, cooldown, needs-login, needs-extension, error | Exit 2; one search, zero limiter resets, zero button clicks; no DOM dispatch after the terminal event; close invoked | 5 passed |
+| hit, button present | Exit 0; one search, zero resets, exactly one button click; close invoked | Passed |
+| thrown search error | Exit 1; one search, zero resets, no late DOM dispatch; close invoked | Passed |
+| unset, empty, 0, false, random live flag | Exit 1 before browser creation; zero search and network attempts | 5 passed |
+| enabled flag with missing credentials | Exit 1 before browser creation; zero search and network attempts | Passed |
+| evaluation pending until close | Close is invoked and releases evaluation; close settles; terminal exit 2 | Passed |
+| evaluation never settles | Close settles; explicit `cleanup timeout: click assistance`; exit 1 | Passed |
+| browser close never settles | Close invoked; explicit `cleanup timeout: browser close`; exit 1 | Passed |
 
-## Baseline evidence
+All enabled cases assert the browser marker and close invocation. A network trap rejects fetch attempts. Production waits are shortened only in the temporary preload; the 5000 ms cleanup deadline becomes 200 ms, while exact error text and process exit remain asserted. Forced harness timeouts are failures, not accepted cleanup. Canonical Playwright file hashes must remain unchanged before and after each harness run.
 
-The old runner from fixed ref `20d728e3668d302821bad0f8687ca8ef55d29ed5` was executed through the same overlay with `DIDA502_RUN_BASELINE=1 DIDA502_BASELINE_REF=20d728e3668d302821bad0f8687ca8ef55d29ed5`. For `challenged`, `cooldown`, `needs-login`, and `needs-extension`, it made three searches, three rate resets, and twenty assistant clicks; the assistant continued after the terminal result. The old runner also launched the fake browser for non-empty invalid live flags and timed out, demonstrating the #504 gate defect. The baseline log is `/tmp/gotry-dida-stop-502-root-baseline.log`; it is intentionally red and is not a passing test artifact.
+## Independent validation and negative controls
 
-An early draft of the harness briefly linked the complete `node_modules` directory before writing a stub. That run was discarded after it overwrote two local Playwright files. Both files were restored from the lockfile-pinned 1.63.0 npm archive after SHA-512 verification, and the real package import was checked. The worktree dependencies were then independently installed with `npm ci`. The final harness creates an independent temporary dependency directory and checks SHA-256 for the canonical `playwright-core/package.json` and `index.js` before and after the run.
+On macOS arm64 with isolated HOME and lockfile dependencies, the coordinator independently passed all 16 scenarios on Node 22.23.2 in 11.62 seconds and Node 24.16.0 in 11.39 seconds; both exit 0. Raw textual logs share SHA-256 `39adccf333dcab13f0ab241d9d016fb508ce4ddf0fdfcecf64052bf18b5a097b`. This is command-level runner E2E, not real supplier acceptance.
 
-The first full-regression attempt had an incomplete worktree environment: only TS dependencies were installed, so the root build could not load TypeScript and later liveness fixtures lacked `dist`. It was stopped with exit 143 and retained as `/tmp/gotry-dida-stop-502-full-incomplete-env.log`. It is not passing evidence. Root and TS dependencies were then both installed with the CI strict-peer command before the final run. The previously failing liveness fixture passed with the complete environment.
+The same final harness executes immutable old runner source through `DIDA502_RUN_BASELINE=1`. Base `20d728e3668d302821bad0f8687ca8ef55d29ed5` makes three searches and three limiter resets for non-hit terminal results and continues DOM evaluations after the result; nonempty invalid flags start the fake browser and time out. The old test's historical “20 clicks” label was incorrect: those were evaluation attempts, not proven clicks. The current absent-button fixture records zero clicks and separately observes the extra evaluations.
 
-## Environment and validation
+The cleanup-specific control uses old PR head `9377cf1c39e95c1d8884ace34a0c69be9541691c` and the pending-until-close fixture. Old cleanup waits for the evaluation before attempting browser close, so the runner hits the harness's 15-second timeout without a close event. The fixed runner invokes close first and returns exit 2. This directly reproduces [#515](https://github.com/Danceiny/gotry/issues/515), including the circular wait hidden by the earlier passing tests.
 
-Execution date: 2026-09-19. Environment: macOS arm64, Node 24.10.0 for focused commands and Node 24.16.0 selected by the full-regression script, TypeScript 5.9.3, tsx 4.23.13, playwright-core 1.63.0, dsh-session 0.1.5-rc.1. Dependencies came from the committed lockfile. Root independently reviewed the final diff, reran the command E2E and typecheck, and owns full-regression validation.
+Precommit typecheck, dist compatibility and full regression all passed, exit 0. Full regression took 859.02 seconds, completed at `2026-09-19T12:53:30.995581+00:00`, and ended with `ALL SUITES GREEN`; log SHA-256: `8db5251862cf86e0851c71d3ec0075fa13034c9420161f216feafef9ca7270b5`. The PR records subsequent final-SHA local and CI receipts; this precommit record does not replace them.
 
-| Check | Observed result |
-|---|---|
-| Final command E2E | 12/12 scenarios pass, exit 0; 7 search outcomes and 5 opt-in cases |
-| Old runner with final harness | Expected failure, exit 1; retry/reset/late-action and invalid-opt-in defects reproduced |
-| TypeScript typecheck | Pass, exit 0 |
-| Repository full regression | Pass, exit 0; `ALL SUITES GREEN` |
-| Documentation checks | 64 bilingual pairs and 8 reader-facing files pass; whitespace check clean |
-
-Reproduce from the implementation checkout:
+## Reproduction
 
 ```sh
-npm ci --no-audit --no-fund --strict-peer-deps
-cd ts
-npm ci --no-audit --no-fund --strict-peer-deps
-./node_modules/.bin/tsc --noEmit
-./node_modules/.bin/tsx scripts/dida-runner-stop-tests.ts
-DIDA502_RUN_BASELINE=1 ./node_modules/.bin/tsx scripts/dida-runner-stop-tests.ts # expected exit 1
-cd ..
+(cd ts && npx tsc --noEmit)
+(cd ts && npx tsx scripts/dida-runner-stop-tests.ts)
+(cd ts && DIDA502_RUN_BASELINE=1 DIDA502_BASELINE_REF=20d728e3668d302821bad0f8687ca8ef55d29ed5 npx tsx scripts/dida-runner-stop-tests.ts) # expected failure
+(cd ts && DIDA502_RUN_BASELINE=1 DIDA502_BASELINE_REF=9377cf1c39e95c1d8884ace34a0c69be9541691c DIDA502_ONLY_CLEANUP_CASES=1 DIDA502_CLEANUP_CASE=pending-evaluate-released-by-close npx tsx scripts/dida-runner-stop-tests.ts) # expected failure
+node scripts/build-dist-compat-tests.mjs
 GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 GOTRY_LAVISH_LIVE=0 bash scripts/run-all-tests.sh
 ```
 
-The baseline defaults to the exact base SHA above. Full-regression log: `/tmp/gotry-dida-stop-502-full.log`. These local logs are supporting artifacts; the committed scenario table and commands preserve the reviewable evidence. Four explicit skips remain: HotelByte live UAT, the external staicli tarball proof, optional Agent Reach doctor (7 assertions), and the opt-in real Lavish probe. Other live supplier and real-LLM paths were disabled; no live-feature acceptance is inferred.
+Install both root and TS dependencies with `npm ci --no-audit --no-fund --strict-peer-deps`, select the Node version in PATH, and use a temporary HOME. Full regression includes this command. Its skips cover live HotelByte UAT, the external staicli tarball, optional Agent Reach doctor, remote skills verification, and real Lavish, supplier-session and LLM paths.
 
-Final full-regression completion: `2026-09-19 08:40:15 UTC`. Local full-log SHA-256: `65dd68eeca04983cb917612cd71b693de187a84bf7167eeb26b2827b92515f6b`.
+## Failed attempts and limitations
 
-## Evidence boundary and remaining limitation
+An early harness draft linked canonical dependencies before writing a stub and overwrote two local Playwright files. That evidence was discarded; both files were restored from the verified lockfile archive and the worktree dependencies reinstalled independently. The current harness has separate dependencies and hash checks. An early full run with incomplete root dependencies was stopped with exit 143. The first post-main integration run was also stopped with exit 143 when the unbounded cleanup defect was found; neither is passing evidence. The previous CI head failed in the Copilot stalled-provider readiness fixture; main already contains #512's fix, so the changed head requires fresh local and CI validation.
 
-This is a synthetic, command-level runner E2E: it exercises the real runner entry, login-flow control, concurrent assistant, terminal exit mapping, cleanup, and strict opt-in without supplier traffic. A live supplier E2E with a real Dida account, browser login, extension bridge, and portal responses was not run because it would require user login and vendor network access. Therefore the live supplier acceptance evidence remains open separately from this deterministic regression.
+No real Dida account, supplier response, extension bridge, or canonical session verdict classification is exercised. Those live acceptance requirements remain in [#272](https://github.com/Danceiny/gotry/issues/272). Tests prove the runner's use of the supplied verdict, not how the provider produces it. Already dispatched DOM operations cannot be undone by AbortSignal; the bound limits waiting and reports uncertainty. Browser startup/login failures before search and real Chrome process-tree reaping remain outside this runner-stop proof. Tests do not write shared product state.
 
-The accepted scope is the runner control-flow fix for #502/#504. An already dispatched browser evaluation cannot be undone by AbortSignal; the runner stops new assistance and joins the current task. Browser startup/login failures before search, real Chrome process reaping and supplier/bridge behavior are not proven by the synthetic browser-close assertion. No test writes shared `ts/dsh-runtime/gotry-state`, `ts/gotry-state`, or `gotry-state` data.
+Architecture §11 reconciliation: only this report and its bilingual index reflect the changed evidence. System shape, provider availability, milestone acceptance and release status are unchanged.

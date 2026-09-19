@@ -42,6 +42,20 @@ async function removeOverlays(page: { evaluate: (fn: string) => Promise<unknown>
   })()`).catch(() => { /* overlay 未出现不碍事 */ })
 }
 
+async function awaitCleanup(task: Promise<unknown>, label: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      task,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Dida cleanup timeout: ${label}`)), 5_000)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function main(): Promise<void> {
   const user = process.env.DIDA_USERNAME ?? ''
   const pass = process.env.DIDA_PASSWORD ?? ''
@@ -152,8 +166,14 @@ async function main(): Promise<void> {
     result = await sessionDidaSearch({ timeoutMs: 50_000, allowAnonymous: skipGate })
   } finally {
     assistController.abort()
-    await clickAssist
-    await browser.close()
+    // Closing the browser releases pending DOM operations. Do not wait for a
+    // stuck operation before attempting close; both cleanup tasks are bounded.
+    const cleanupResults = await Promise.allSettled([
+      awaitCleanup(browser.close(), 'browser close'),
+      awaitCleanup(clickAssist, 'click assistance'),
+    ])
+    const failure = cleanupResults.find((item) => item.status === 'rejected')
+    if (failure?.status === 'rejected') throw failure.reason
   }
 
   console.log('\n════════ 会话检索结果 ════════')

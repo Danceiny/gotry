@@ -410,7 +410,7 @@ echo "=== 44b. sf-summary offline evidence selection(issue #335/#272:canonical f
 (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/sf-summary-tests.ts) || FAIL=1
 
 echo
-echo "=== 44c. sf-live challenge stop(issue #411/RFC §3.5:首个 challenged/guard 即截断批次/challenged 语义不被改写/部分批次+attempted·not_attempted 清单/普通八条批次保留/请求计数断言;真实 CLI runner+确定性 session 模块 overlay,临时根零网络) ==="
+echo "=== 44c. sf-live evidence isolation + challenge stop(issue #503/#411/RFC §3.5:首个 challenged/guard 即截断批次/challenged 语义不被改写/部分批次+attempted·not_attempted 清单/普通八条批次保留/请求计数断言;真实 CLI runner+确定性 session 模块 overlay,临时根零网络) ==="
 (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 npx tsx scripts/sf-live-challenge-stop-tests.ts) || FAIL=1
 
 echo "=== 44d. Dida live runner stop (#502/#504:真实 runner 入口 + 合成浏览器/session overlay；challenge/cooldown/login/extension/error/hit/throw 单次调用、assist cleanup、strict live gate；零供应商网络) ==="
@@ -502,6 +502,8 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 (cd ts && npx tsx scripts/managed-dsh-run-port-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-startup-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-core-proof-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-dsh-readiness-proof.ts) || FAIL=1
+(cd ts && npx tsx scripts/booking-copilot-dsh-warmer-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-bin-proof-tests.ts) || FAIL=1
 
 echo

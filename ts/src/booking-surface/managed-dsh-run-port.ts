@@ -86,7 +86,7 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   }
 
   private failPending(error: Error): void {
-    for (const waiter of Object.values(this.pending)) waiter.fail(error)
+    for (const waiter of this.pending.values()) waiter.fail(error)
     this.pending.clear()
   }
 

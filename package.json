@@ -51,6 +51,7 @@
   "files": [
     "dist/",
     "!dist/**/managed-dsh-worker-fixture.mjs",
+    "!dist/**/managed-dsh-pending-worker-fixture.mjs",
     "client/",
     "data/*.json",
     "bin/",

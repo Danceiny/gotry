@@ -315,7 +315,8 @@ export function resolveRealRunPortConfig(options: DshEmbeddedBookingPlannerOptio
   return { childEnv, provider, model, modelSource, reasoningEffort, maxTokens }
 }
 
-async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Promise<DshPlannerRunPort> {
+/** Shared by the planner and real-subprocess proofs; owns its scratch directory. */
+export async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Promise<DshPlannerRunPort> {
   const { childEnv, provider, model, modelSource, reasoningEffort, maxTokens } = resolveRealRunPortConfig(options)
   // Name the resolved route on every real port. A deployment that forgot
   // DEEPSEEK_MODEL used to be indistinguishable from one that set it, and the
@@ -361,36 +362,62 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
     throw error
   }
 
-  // Cold-boot warmup: the first harness construction loads the profile,
-  // patches and plugins from a cold page cache, which on a freshly deployed
-  // host consumed the whole soft-stall budget of the service's very first
-  // user turn. One disposable worker pays that cost at module start — no
-  // provider call, own dshHome to avoid profile/state contention, failures
-  // are silently ignored because the first real run re-boots anyway.
+  let warmer: DshPlannerRunPort | undefined
+  let warmerClosePromise: Promise<void> | undefined
+  const closeWarmer = (): Promise<void> => {
+    if (!warmer) return Promise.resolve()
+    if (!warmerClosePromise) {
+      warmerClosePromise = Promise.resolve().then(() => warmer!.close())
+    }
+    return warmerClosePromise
+  }
+
+  // Cold-boot warmup: the first real initialize loads the profile, patches
+  // and plugins from a cold page cache, which on a freshly deployed
+  // host consumed the whole soft-stall budget of a newly created port's first
+  // user turn. One disposable worker starts alongside each real port — no
+  // provider call, own dshHome to avoid profile/state contention. This does
+  // not make the task port ready; its lifecycle is still part of this port,
+  // so close must terminate both trees before removing the shared scratch
+  // directory.
   if (process.env.GOTRY_BOOKING_COPILOT_WARMUP !== '0') {
-    const warmer = createManagedDshRunPort({
-      profile: 'sdk-minimal',
-      patches: [patchPath],
-      dshHome: join(scratch, 'home-warmer'),
-      processCwd: options.stateRoot ?? process.cwd(),
-      cwd: options.stateRoot ?? process.cwd(),
-      provider,
-      model,
-      ...(reasoningEffort ? { reasoningEffort } : {}),
-      maxTokens,
-      shutdownTimeoutMs: 500,
-      disposeEofGraceMs: 500,
-      disposeGraceMs: 500,
-      env: childEnv,
-      ...(options.dshBin ? { dshBin: options.dshBin } : {}),
-    })
+    try {
+      warmer = createManagedDshRunPort({
+        profile: 'sdk-minimal',
+        patches: [patchPath],
+        dshHome: join(scratch, 'home-warmer'),
+        processCwd: options.stateRoot ?? process.cwd(),
+        cwd: options.stateRoot ?? process.cwd(),
+        provider,
+        model,
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        maxTokens,
+        shutdownTimeoutMs: 500,
+        disposeEofGraceMs: 500,
+        disposeGraceMs: 500,
+        env: childEnv,
+        ...(options.dshBin ? { dshBin: options.dshBin } : {}),
+      })
+    } catch (error) {
+      try {
+        await managedPort.close()
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'booking_planner_warmer_start_and_cleanup_failed')
+      }
+      rmSync(scratch, { recursive: true, force: true })
+      throw error
+    }
     void warmer.warmup?.()
       .catch(() => undefined)
-      .finally(() => { void warmer.close().catch(() => undefined) })
+      .finally(() => { void closeWarmer().catch(() => undefined) })
   }
 
   let closePromise: Promise<void> | undefined
   return {
+    async warmup() {
+      if (closePromise) throw new Error('booking_planner_run_port_closed')
+      await managedPort.warmup?.()
+    },
     async run(prompt, runOptions) {
       if (closePromise) throw new Error('booking_planner_run_port_closed')
       return managedPort.run(prompt, runOptions)
@@ -398,9 +425,12 @@ async function createRealRunPort(options: DshEmbeddedBookingPlannerOptions): Pro
     close() {
       if (closePromise) return closePromise
       closePromise = (async () => {
-        try {
-          await managedPort.close()
-        } finally {
+        const results = await Promise.allSettled([managedPort.close(), closeWarmer()])
+        const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : [])
+        if (failures.length) {
+          throw new AggregateError(failures, 'booking_planner_run_port_cleanup_failed')
+        }
+        {
           rmSync(scratch, { recursive: true, force: true })
         }
       })()

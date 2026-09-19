@@ -228,6 +228,7 @@ Bookable-fact ledgering contract (2026-08-30, issue #46/ADR-19):
 
 ### P3.7 Static Golden Vendor + Logged-in Real Runs (Issue #67, 2026-08-30)
 
+- `sf-live-benchmark.ts --evidence-root PATH` writes query records and the batch summary to one explicit directory; pass the same root to `sf-summary.ts`. The default remains `~/.gotry/evidence/session`, but automated tests must use a temporary root. See the [evidence isolation report](evaluation/sf-evidence-isolation-report.md) for the CLI contract and proof boundary.
 - `ts/scripts/sf-live-benchmark.ts --golden=static` uses the versioned `ts/data/sf-static-routes.json`: route/carrier are taken from the ODbL pinned revision `4b969f8e91eb800c45f0e0e2355a0fbb93de27e4` of OpenFlights `routes.dat`, covering sf-01..08.
 - OpenFlights contains no schedule/price/availability, so `departure_at`, `arrival_at`, `transport_number`, and `price` are estimated fields whose time/price bands come from `sf-golden-manifest.json`. Each evidence entry records both `requested_source=static` and the actual `effective_source`, and carries the route URL/revision/license, band source, and fallback reason.
 - If snapshot reading/validation or route coverage fails, stderr explicitly reports `fallback=manual-golden` — silent source switching is refused; this vendor is a benchmark comparator and **cannot prove realtime schedules, realtime fares, or sellable inventory**. The provider-independent soft scorer and the CLI vendor closed set entered run-all §44.
