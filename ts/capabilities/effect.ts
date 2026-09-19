@@ -30,7 +30,7 @@ import {
   type RetryPolicy,
   type RetryablePredicate,
 } from './resilience.ts'
-import { flyaiSearch, type FlyaiQuery } from './flyai.ts'
+import { flyaiSearch, type FlyaiQuery, type FlyaiResult } from './flyai.ts'
 import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
 import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery, type SessionDidaQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
@@ -249,6 +249,10 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     retry: { maxAttempts: 2, baseDelayMs: 500, maxDelayMs: 2_000 },
     breaker: { failureThreshold: 3, openMs: 60_000 },
     isRetryable: (_r, e) => {
+      // Process termination is final for this invocation. New diagnostics must
+      // not turn it into another supplier attempt through text matching.
+      const outcome = (_r as FlyaiResult | null)?.process
+      if (outcome?.timedOut || outcome?.signal || outcome?.spawnErrorCode || outcome?.exitCode === null) return false
       const msg = e != null ? String((e as Error).message ?? e) : String(((_r ?? {}) as { error?: string }).error ?? '')
       return flyaiTransient(msg)
     },

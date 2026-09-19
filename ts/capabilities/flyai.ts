@@ -84,6 +84,17 @@ export interface FlyaiHotelOption {
   jumpUrl?: string
 }
 
+export interface FlyaiProcessOutcome {
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+  /** Deadline fired before exit was observed; this does not prove who sent the signal. */
+  timedOut: boolean
+  /** Monotonic elapsed time through stdio close, including startup and output collection. */
+  elapsedMs: number
+  /** OS error code only; never the command path, arguments, or raw spawn message. */
+  spawnErrorCode?: string
+}
+
 export interface FlyaiResult {
   ok: boolean
   via: 'flyai' | 'flyai-error'
@@ -97,6 +108,8 @@ export interface FlyaiResult {
   error?: string
   /** 上游指引原话/补配指引(仅 needs-setup 时) */
   setup?: string
+  /** Present only when the CLI invocation was attempted. */
+  process?: FlyaiProcessOutcome
 }
 
 interface RawItem {
@@ -237,24 +250,36 @@ export function parseFlyaiItemList(stdout: string): unknown[] {
  * exit 不丢数据;且文件无 64KB 管道缓冲上限。close 后读文件,语义不变。
  */
 function sh(cmd: string, args: string[], opts: { timeoutMs: number }) {
+  const started = performance.now()
   const outFile = join(tmpdir(), `gotry-flyai-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.out`)
   const outFd = openSync(outFile, 'w')
   const child = spawn(cmd, args, { env: process.env, cwd: process.cwd(), stdio: ['ignore', outFd, 'pipe'] })
   let stderr = ''
-  let error: string | undefined
+  let spawnErrorCode: string | undefined
+  let timedOut = false
   const timer = setTimeout(() => {
+    // Exit can precede stdio close. A delayed pipe close is not a live-child timeout.
+    if (child.exitCode !== null || child.signalCode !== null || spawnErrorCode) return
+    timedOut = true
     try { child.kill('SIGKILL') } catch { /* ignore */ }
   }, opts.timeoutMs)
-  return new Promise<{ code: number; stdout: string; stderr: string; error?: string; timedOut?: boolean }>((resolve) => {
+  return new Promise<{ stdout: string; stderr: string; process: FlyaiProcessOutcome }>((resolve) => {
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
-    child.on('error', (e) => { error = (e as Error).message.slice(0, 200) })
-    child.on('close', (code) => {
+    child.on('error', (e: NodeJS.ErrnoException) => {
+      spawnErrorCode = typeof e.code === 'string' && /^[A-Z][A-Z0-9_]{0,31}$/.test(e.code) ? e.code : 'UNKNOWN'
+      clearTimeout(timer)
+    })
+    child.on('exit', () => clearTimeout(timer))
+    child.on('close', (exitCode, signal) => {
       clearTimeout(timer)
       closeSync(outFd)
       let stdout = ''
       try { stdout = readFileSync(outFile, 'utf8') } catch { /* 子进程未启动时文件可能为空,按空 stdout 处理 */ }
       try { unlinkSync(outFile) } catch { /* ignore */ }
-      resolve({ code: code ?? -1, stdout, stderr, error })
+      resolve({ stdout, stderr, process: {
+        exitCode, signal, timedOut, elapsedMs: Math.round(performance.now() - started),
+        ...(spawnErrorCode ? { spawnErrorCode } : {}),
+      } })
     })
   }).finally(() => clearTimeout(timer))
 }
@@ -296,20 +321,29 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
     timeoutMs: q.timeoutMs ?? 30_000,
   })
   const latencyMs = Date.now() - started
-  if (r.error || r.code !== 0) {
+  const observed = { ...base, latencyMs, process: r.process }
+  if (r.process.spawnErrorCode || r.process.timedOut || r.process.signal || r.process.exitCode === null) {
+    const reason = r.process.spawnErrorCode
+      ? `spawn failed (${r.process.spawnErrorCode})`
+      : r.process.timedOut ? 'deadline fired before exit observation'
+      : r.process.signal ? `terminated by ${r.process.signal}` : 'unknown process termination'
+    const detail = `${reason}; exit=${r.process.exitCode ?? 'null'}; signal=${r.process.signal ?? 'none'}; timedOut=${r.process.timedOut}; elapsedMs=${r.process.elapsedMs}`
+    return { ...observed, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] ${detail}`, error: reason }
+  }
+  if (r.process.exitCode !== 0) {
     // 试用额度达限(2026-09-02 迪拜 session 实况:exit 1 + MCP HTTP 429 "Trial limit
     // reached")是配置问题不是瞬时故障——归 needs-setup 带补配指引,让工具层阻断
     // LLM 拿同一把 429 跨轮盲重试;正式 key 经 FLYAI_API_KEY 配入后此路径不再触发。
     const upstream = `${r.stderr}\n${r.stdout}`
     if (/Trial limit reached|HTTP\s*429|\b429\b/.test(upstream)) {
       return {
-        ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'needs-setup',
+        ...observed, ok: false, via: 'flyai-error', verdict: 'needs-setup',
         evidence: `[实时API:flyai@error@${ts}] trial quota exhausted`,
         error: `FlyAI 匿名试用额度已用尽(上游 429):${upstream.replace(/\s+/g, ' ').slice(0, 160)}`,
         setup: 'FlyAI 试用额度达限——到 flyai.open.fliggy.com 控制台申请正式 API Key,配入环境变量 FLYAI_API_KEY 即恢复;本会话请勿重试 gotry_flyai_search,机/火/酒改走 gotry_session_search(账号会话)或 web 检索推进。',
       }
     }
-    return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] ${r.error ?? `exit ${r.code}`}`, error: r.error ?? r.stderr.replace(/\s+/g, ' ').slice(0, 200) }
+    return { ...observed, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] exit ${r.process.exitCode}`, error: r.stderr.replace(/\s+/g, ' ').slice(0, 200) || `exit ${r.process.exitCode}` }
   }
   let items: unknown[]
   try {
@@ -320,21 +354,21 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
     // 实测(2026-08-28):Sentinel 限流时 CLI exit=0 但 stdout 是 {"message":"SentinelBlockException..."}
     const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)
     const reason = e instanceof Error ? e.message : String(e)
-    return { ...base, latencyMs, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] parse failed(${reason}): ${raw}`, error: `failed to parse flyai output as JSON (${reason}): ${raw}` }
+    return { ...observed, ok: false, via: 'flyai-error', verdict: 'error', evidence: `[实时API:flyai@error@${ts}] parse failed(${reason}): ${raw}`, error: `failed to parse flyai output as JSON (${reason}): ${raw}` }
   }
 
   if (q.kind === 'hotel') {
     const parsed = parseHotelItems(items)
-    if (parsed.malformedCount > 0) return malformedItemListResult(q.kind, latencyMs, ts, parsed.malformedCount, items.length)
+    if (parsed.malformedCount > 0) return { ...malformedItemListResult(q.kind, latencyMs, ts, parsed.malformedCount, items.length), process: r.process }
     const hotels = parsed.options
     const verdict: FlyaiResult['verdict'] = hotels.length > 0 ? 'hit' : 'miss'
-    return { kind: q.kind, latencyMs, ok: true, via: 'flyai', verdict, evidence: `[实时API:flyai@${ts}] ${hotels.length}/${items.length} hotel options`, hotels }
+    return { ...observed, ok: true, via: 'flyai', verdict, evidence: `[实时API:flyai@${ts}] ${hotels.length}/${items.length} hotel options`, hotels }
   }
   const parsed = parseTransportItems(items)
-  if (parsed.malformedCount > 0) return malformedItemListResult(q.kind, latencyMs, ts, parsed.malformedCount, items.length)
+  if (parsed.malformedCount > 0) return { ...malformedItemListResult(q.kind, latencyMs, ts, parsed.malformedCount, items.length), process: r.process }
   const options = parsed.options
   const verdict: FlyaiResult['verdict'] = options.length > 0 ? 'hit' : 'miss'
-  return { kind: q.kind, latencyMs, ok: true, via: 'flyai', verdict, evidence: `[实时API:flyai@${ts}] ${options.length}/${items.length} ${q.kind} options`, options }
+  return { ...observed, ok: true, via: 'flyai', verdict, evidence: `[实时API:flyai@${ts}] ${options.length}/${items.length} ${q.kind} options`, options }
 }
 
 function malformedItemListResult(kind: FlyaiKind, latencyMs: number, ts: string, malformedCount: number, total: number): FlyaiResult {

@@ -25,6 +25,7 @@ import { makeProductionInterpreter } from '../capabilities/effect.ts'
 import { loadFactRegistry } from '../capabilities/fact-log.ts'
 import { apply, type Config } from '../src/index.ts'
 import { factsFromFlyai, factsFromHotel, type FlightFact } from '../src/bookable-facts.ts'
+import { runFlyaiProcessProof } from './flyai-process-proof.ts'
 
 const tmp = await mkdtemp(join(tmpdir(), 'flyai-test-'))
 async function fakeCli(name: string, code: number, payload: string): Promise<string> {
@@ -407,3 +408,4 @@ assert.match(t.evidence, /\[实时API:flyai@error@/, '证据链标注')
 
 await rm(tmp, { recursive: true, force: true })
 console.log('FLYAI TESTS: transport/hotel completeness contract OK(离线假 CLI:Sentinel→error / 空 itemList→miss / flight+train+hotel mixed→整体 error 且不落事实 / typed 字段校验 / 完整 flight+train+hotel→hit / exit≠0→error / 429→needs-setup)')
+await runFlyaiProcessProof()

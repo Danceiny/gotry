@@ -66,7 +66,7 @@ Rejection surface (flat):   declinedObservation(): { ok:false, verdict:'error', 
 
 | Effect | Channel | Retry | Breaker | Cadence/Authorization | Rationale |
 |---|---|---|---|---|---|
-| `FLYAI_SEARCH` | cli | transient-class 2 times / starting 500ms | 3 consecutive errors / open 60s | – | data-sources §8: Sentinel rate limiting is never hard-retried; the breaker protects an unpublished quota; 429 trial-quota exhaustion maps to needs-setup (the tool surface blocks blind retries, 2026-09-02 Dubai session) |
+| `FLYAI_SEARCH` | cli | upstream transient errors: 2 times / starting 500ms; local process deadline, signal, and spawn failure: no retry | 3 consecutive errors / open 60s | – | data-sources §8: Sentinel rate limiting is never hard-retried; the breaker protects an unpublished quota; 429 trial-quota exhaustion maps to needs-setup (the tool surface blocks blind retries, 2026-09-02 Dubai session) |
 | `HBCLI_HOTEL_SEARCH` | cli | timeout only, 2 times / starting 300ms | 3 consecutive errors / open 60s | – | the hbcli contract "candidate paths are switching, not retrying" covers only ENOENT-class; timeout (upstream cold-start building the backend session can exceed 30s) recovers with 1 retry (2026-09-02 Dubai session live record) |
 | `HBCLI_HOTEL_RATES` | cli | timeout only, 2 times / starting 300ms | 3 consecutive errors / open 60s | – | same HBCLI family (timeout-only); the price surface **has no static degradation — fail-closed** (no fare estimation, same caliber as the bookable-facts evidence grading) |
 | `HBCLI_CHECK_AVAIL` | cli | timeout only, 2 times / starting 300ms | 3 consecutive errors / open 60s | – | same as above; price-verification unavailable means honest failure (a booking-chain order precondition, M0) |
