@@ -21,11 +21,20 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { chromium } from 'playwright-core'
-import { sessionDidaSearch, __resetRateLimiterForTest } from '../capabilities/session-search.ts'
+import { sessionDidaSearch } from '../capabilities/session-search.ts'
 
 const EXT_DIR = fileURLToPath(new URL('../../extension/', import.meta.url))
 const CDP_PORT = 9233
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((resolve) => {
+  if (signal?.aborted) { resolve(); return }
+  const finish = (): void => {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', finish)
+    resolve()
+  }
+  const timer = setTimeout(finish, ms)
+  signal?.addEventListener('abort', finish, { once: true })
+})
 
 async function removeOverlays(page: { evaluate: (fn: string) => Promise<unknown> }): Promise<void> {
   await page.evaluate(`(() => {
@@ -33,10 +42,24 @@ async function removeOverlays(page: { evaluate: (fn: string) => Promise<unknown>
   })()`).catch(() => { /* overlay 未出现不碍事 */ })
 }
 
+async function awaitCleanup(task: Promise<unknown>, label: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      task,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Dida cleanup timeout: ${label}`)), 5_000)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function main(): Promise<void> {
   const user = process.env.DIDA_USERNAME ?? ''
   const pass = process.env.DIDA_PASSWORD ?? ''
-  if (!process.env.GOTRY_SESSION_LIVE || !user || !pass) {
+  if (process.env.GOTRY_SESSION_LIVE !== '1' || !user || !pass) {
     console.error('GOTRY_SESSION_LIVE=1 与 DIDA_USERNAME/DIDA_PASSWORD 必填(env 注入,不入库)')
     process.exit(1)
   }
@@ -101,27 +124,35 @@ async function main(): Promise<void> {
   // SPA 点击协助与检索并发:job 开的后台标签加载后,替它点页面自己的「预订」,
   // 触发 dida 页面代码发出 SearchRealTime(扩展/桥零写行为不变量不变)。
   console.log('📍 sessionDidaSearch(扩展车道,后台标签被动嗅探 + 预订点击协助)')
-  __resetRateLimiterForTest()
   const loginPageUrl = page.url()
+  const assistController = new AbortController()
+  const assistSignal = assistController.signal
   const clickAssist = (async (): Promise<void> => {
-    await sleep(3_000)
-    for (let i = 0; i < 20; i++) {
-      const jobTabs = context.pages().filter((p) =>
-        p.url().startsWith('https://portal.dida.com/') && p !== page && p.url() !== loginPageUrl)
+    await sleep(3_000, assistSignal)
+    for (let i = 0; i < 20 && !assistSignal.aborted; i++) {
+      // A disconnected browser also ends this optional assistance task.
+      let jobTabs: ReturnType<typeof context.pages>
+      try {
+        jobTabs = context.pages().filter((p) =>
+          p.url().startsWith('https://portal.dida.com/') && p !== page && p.url() !== loginPageUrl)
+      } catch { return }
       for (const tab of jobTabs) {
+        if (assistSignal.aborted) return
         await removeOverlays(tab)
+        if (assistSignal.aborted) return
         const clicked = await tab.evaluate(`(() => {
           const btn = document.querySelector('.hotel-index-recommends-card__book-btn')
             || Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('预订'))
           if (btn) { btn.scrollIntoView(); btn.click(); return true }
           return false
         })()`).catch(() => false)
+        if (assistSignal.aborted) return
         if (clicked === true) {
           console.log('📍 已在 job 后台标签点击「预订」——等页面自己发检索')
           return
         }
       }
-      await sleep(2_000)
+      await sleep(2_000, assistSignal)
     }
   })()
 
@@ -129,14 +160,21 @@ async function main(): Promise<void> {
   // 2026-09-09 SW 探针实证)——E2E 以 DIDA_E2E_SKIP_LOGIN_GATE=1 跳过登录快查,
   // 登录真实性由本驱动前序 GUI 登录保证;嗅探链路不读 cookie 值,不受此缺陷影响。
   const skipGate = process.env.DIDA_E2E_SKIP_LOGIN_GATE === '1'
-  let result = await sessionDidaSearch({ timeoutMs: 50_000, allowAnonymous: skipGate })
-  for (let attempt = 2; attempt <= 3 && result.ok !== true; attempt++) {
-    console.log(`⚠️ 第 ${attempt - 1} 次尝试未取回(${result.verdict}),8s 后重试(节律闸已重置;扩展 SW 30s 节律唤醒)`)
-    await sleep(8_000)
-    __resetRateLimiterForTest()
+  let result: Awaited<ReturnType<typeof sessionDidaSearch>>
+  try {
+    // One request only: live verdicts never authorize a test-only rate reset.
     result = await sessionDidaSearch({ timeoutMs: 50_000, allowAnonymous: skipGate })
+  } finally {
+    assistController.abort()
+    // Closing the browser releases pending DOM operations. Do not wait for a
+    // stuck operation before attempting close; both cleanup tasks are bounded.
+    const cleanupResults = await Promise.allSettled([
+      awaitCleanup(browser.close(), 'browser close'),
+      awaitCleanup(clickAssist, 'click assistance'),
+    ])
+    const failure = cleanupResults.find((item) => item.status === 'rejected')
+    if (failure?.status === 'rejected') throw failure.reason
   }
-  await clickAssist
 
   console.log('\n════════ 会话检索结果 ════════')
   console.log(JSON.stringify(result, null, 2).slice(0, 4_000))
@@ -145,7 +183,6 @@ async function main(): Promise<void> {
   if (rates.length > 0) {
     console.log('样例:', JSON.stringify(rates.slice(0, 3), null, 2))
   }
-  await browser.close()
   process.exit(result.verdict === 'hit' ? 0 : 2)
 }
 
