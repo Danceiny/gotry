@@ -26,6 +26,8 @@ export interface RetryPolicy {
   isRetryable?: RetryablePredicate
   /** 等待注入(测试即时放行,确定性);缺省真实 setTimeout */
   sleep?: (ms: number) => Promise<void>
+  /** 宿主取消:dispatch 前与 backoff 等待中都遵守,abort 即结束不重试 */
+  signal?: AbortSignal
 }
 
 export interface RetryOutcome<T> {
@@ -37,6 +39,8 @@ export interface RetryOutcome<T> {
   attempts: number
   /** 累计回退等待(ms) */
   backoffMs: number
+  /** 宿主信号取消:不是成功,也不是可计 failure 的故障 */
+  aborted: boolean
 }
 
 /** 第 failedAttempt 次失败后的等待时长(纯函数,单测锁定 500→1000→2000 封顶链) */
@@ -61,7 +65,47 @@ export async function withRetry<T>(
   const maxAttempts = Math.max(1, policy.maxAttempts)
   let attempts = 0
   let backoffMs = 0
+  const abortableSleep = (ms: number): Promise<'aborted' | 'slept'> => {
+    const signal = policy.signal
+    if (signal?.aborted) return Promise.resolve('aborted')
+
+    // The injected sleep is part of the retry contract. Keep its rejection
+    // visible to callers, while making an abort win the race and consuming a
+    // later rejection so cancellation cannot create an unhandled rejection.
+    if (!signal) return sleep(ms).then(() => 'slept')
+
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const cleanup = () => signal.removeEventListener('abort', onAbort)
+      const finish = (outcome: 'aborted' | 'slept') => {
+        if (settled) return
+        settled = true
+        if (timer !== undefined) clearTimeout(timer)
+        cleanup()
+        resolve(outcome)
+      }
+      const onAbort = () => finish('aborted')
+      const onSleepResolved = () => finish('slept')
+      const onSleepRejected = (error: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      }
+
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (policy.sleep) {
+        void Promise.resolve().then(() => policy.sleep!(ms)).then(onSleepResolved, onSleepRejected)
+      } else {
+        timer = setTimeout(onSleepResolved, ms)
+      }
+    })
+  }
   for (;;) {
+    if (policy.signal?.aborted) {
+      return { result: null, error: null, attempts, backoffMs, aborted: true }
+    }
     attempts += 1
     let result: T | null = null
     let error: unknown | null = null
@@ -70,16 +114,21 @@ export async function withRetry<T>(
     } catch (e) {
       error = e
     }
+    if (policy.signal?.aborted) {
+      return { result: null, error, attempts, backoffMs, aborted: true }
+    }
     const retryable = policy.isRetryable?.(result, error)
       ?? (error != null || (result as { ok?: unknown } | null)?.ok === false)
     if (attempts < maxAttempts && retryable) {
       const delay = backoffDelayMs(policy, attempts)
       onBackoff?.(attempts, delay)
       backoffMs += delay
-      await sleep(delay)
+      if (await abortableSleep(delay) === 'aborted') {
+        return { result: null, error, attempts, backoffMs, aborted: true }
+      }
       continue
     }
-    return { result, error, attempts, backoffMs }
+    return { result, error, attempts, backoffMs, aborted: false }
   }
 }
 
@@ -131,6 +180,11 @@ export class CircuitBreaker {
     if (this.probeInFlight) return { allowed: false, state: s }
     this.probeInFlight = true
     return { allowed: true, state: s }
+  }
+
+  /** half-open 探测被取消:释放所有权,不把 probe 永久卡死,也不放行第二个探测 */
+  releaseProbe(): void {
+    if (this.state() === 'half-open') this.probeInFlight = false
   }
 
   /** 一次解译调用成功(非 isFailure)——清零;half-open 探测成功即回 closed */

@@ -16,6 +16,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { getEventListeners } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -69,6 +70,70 @@ const noRetry = await withRetry(
   { maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 2000, isRetryable: () => false, sleep: sleep0 },
 )
 assert.equal(noRetry.attempts, 1, '瞬时判定说不重试就 1 次')
+
+// 2a. 退避等待生命周期：正常 timer、取消与注入 sleep 都移除 abort listener。
+const normalBackoffController = new AbortController()
+let normalBackoffCalls = 0
+const normalBackoff = await withRetry(
+  async () => ({ ok: ++normalBackoffCalls > 1 }),
+  { maxAttempts: 2, baseDelayMs: 5, maxDelayMs: 5, signal: normalBackoffController.signal },
+)
+assert.equal(normalBackoff.attempts, 2, '真实 timer 等待后继续下一次尝试')
+assert.equal(normalBackoff.aborted, false, '正常等待不是取消')
+assert.equal(getEventListeners(normalBackoffController.signal, 'abort').length, 0, '正常 timer 完成后移除 abort listener')
+
+const cancelledBackoffController = new AbortController()
+let cancelledBackoffCalls = 0
+let cancelTimer: ReturnType<typeof setTimeout> | undefined
+let cancelledBackoff: Awaited<ReturnType<typeof withRetry<{ ok: boolean }>>>
+try {
+  cancelledBackoff = await withRetry(
+    async () => { cancelledBackoffCalls += 1; return { ok: false } },
+    { maxAttempts: 2, baseDelayMs: 100, maxDelayMs: 100, signal: cancelledBackoffController.signal },
+    () => { cancelTimer = setTimeout(() => cancelledBackoffController.abort(), 1) },
+  )
+} finally {
+  if (cancelTimer !== undefined) clearTimeout(cancelTimer)
+}
+assert.equal(cancelledBackoff!.attempts, 1, 'backoff 取消不派发下一次尝试')
+assert.equal(cancelledBackoff!.aborted, true, 'backoff 取消返回 aborted')
+assert.equal(cancelledBackoffCalls, 1, '取消不是第二次失败')
+assert.equal(getEventListeners(cancelledBackoffController.signal, 'abort').length, 0, '取消后移除 abort listener')
+
+const injectedSleepController = new AbortController()
+let injectedSleepCalls = 0
+const injectedSleep = await withRetry(
+  async () => ({ ok: false }),
+  {
+    maxAttempts: 2,
+    baseDelayMs: 1,
+    maxDelayMs: 1,
+    signal: injectedSleepController.signal,
+    sleep: async () => { injectedSleepCalls += 1; injectedSleepController.abort() },
+  },
+)
+assert.equal(injectedSleepCalls, 1, '退避使用注入 sleep')
+assert.equal(injectedSleep.aborted, true, '注入 sleep 中取消仍终止重试')
+assert.equal(injectedSleep.attempts, 1, '注入 sleep 取消不派发下一次尝试')
+assert.equal(getEventListeners(injectedSleepController.signal, 'abort').length, 0, '注入 sleep 取消后移除 abort listener')
+
+const rejectedSleepController = new AbortController()
+const sleepFailure = new Error('synthetic sleep failure')
+await assert.rejects(
+  withRetry(
+    async () => ({ ok: false }),
+    {
+      maxAttempts: 2,
+      baseDelayMs: 1,
+      maxDelayMs: 1,
+      signal: rejectedSleepController.signal,
+      sleep: async () => { throw sleepFailure },
+    },
+  ),
+  (error: unknown) => error === sleepFailure,
+  '注入 sleep rejection 保持原异常约定',
+)
+assert.equal(getEventListeners(rejectedSleepController.signal, 'abort').length, 0, '注入 sleep rejection 后移除 abort listener')
 console.log('2. 指数退避(封顶链/累计记账/非瞬时止步)OK')
 
 // ---------------------------------------------------------------------------
