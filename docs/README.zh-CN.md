@@ -173,6 +173,7 @@
 | [evaluation/sf-manifest.zh-CN.md](evaluation/sf-manifest.zh-CN.md) | sf-01..08 冻结清单：用例/通道矩阵/真实会话需求分类（issue #272 离线段） |
 | [evaluation/sf-evidence-isolation-report.zh-CN.md](evaluation/sf-evidence-isolation-report.zh-CN.md) | 会话航班跑批证据隔离：命令级端到端、汇总回读与证据边界 |
 | [evaluation/copilot-readiness-report.zh-CN.md](evaluation/copilot-readiness-report.zh-CN.md) | Copilot 就绪与进程清理：真实 SDK 链路、受控 worker、Node 22／24 完整回归与已知边界 |
+| [evaluation/copilot-terminal-report.zh-CN.md](evaluation/copilot-terminal-report.zh-CN.md) | 托管 worker 终止：请求立即拒绝、安全错误与进程清理 |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | 产品人格横评：同一真实 prompt 各家回答存档/评分卡/人格提炼 |
 
 ### ops/（发布与合规）

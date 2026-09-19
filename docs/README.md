@@ -173,6 +173,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [evaluation/sf-manifest.md](evaluation/sf-manifest.md) | sf-01..08 frozen manifest: cases/channel matrix/live-session classification (issue #272 offline segment) |
 | [evaluation/sf-evidence-isolation-report.md](evaluation/sf-evidence-isolation-report.md) | Session-flight benchmark evidence isolation: command E2E, summary readback, and proof limits |
 | [evaluation/copilot-readiness-report.md](evaluation/copilot-readiness-report.md) | Copilot readiness and process cleanup: real SDK paths, controlled workers, Node 22/24 regression, and known limits |
+| [evaluation/copilot-terminal-report.md](evaluation/copilot-terminal-report.md) | Managed worker termination: immediate request rejection, safe errors, and process cleanup |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | Product-persona comparison: archived answers to the same real prompt/scorecards/persona distillation |
 
 ### ops/ (release & compliance)
