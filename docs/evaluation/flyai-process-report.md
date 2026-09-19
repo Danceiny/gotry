@@ -3,7 +3,7 @@
 # FlyAI process outcome report
 
 > Role: verify CLI termination diagnostics and their effect on registered search and inventory facts.
-> Status: implementation under validation; final-commit full regression pending.
+> Status: implemented; full-regression delivery blocked by the Copilot cleanup failure in #518.
 > Upstream: [architecture](../architecture.md), [effect policy](../design/effect-interpreter.md), [#514](https://github.com/Danceiny/gotry/issues/514).
 > Downstream: capability maintainers and PR reviewers.
 
@@ -21,7 +21,7 @@ Every attempted CLI invocation carries a bounded `process` record: nullable `exi
 
 `timedOut` means the configured deadline fired before exit was observed. It does not establish who sent an observed signal. The timer stops at exit; delayed stdio close is not labeled as a live-child timeout. Elapsed time includes startup and output collection through close. The existing file-backed stdout path is retained to avoid pipe truncation.
 
-Spawn failure, signal termination, a fired deadline, and an unknown null exit return `error` before scanning partial output for 429 text. A normal nonzero CLI exit still preserves the existing quota-exhaustion classification. The effect interpreter uses the process record to prevent automatic retries for these terminal local outcomes; upstream transient-error behavior is unchanged. Error outcomes cannot produce positive or negative inventory facts.
+Spawn failure, signal termination, a fired deadline, and an unknown null exit return `error` before scanning partial output for 429 text. A normal nonzero CLI exit still preserves the existing quota-exhaustion classification. The effect interpreter uses the process record to prevent automatic retries for these terminal local outcomes; upstream transient-error behavior is unchanged. Error outcomes cannot produce positive or negative inventory facts. Ordinary nonzero exits still use the existing transient-text policy; the exit-23 no-retry control has no transient output. [#517](https://github.com/Danceiny/gotry/issues/517) records this evidence-boundary clarification.
 
 ## Validation matrix
 
@@ -30,7 +30,8 @@ Spawn failure, signal termination, a fired deadline, and an unknown null exit re
 | Rejected arguments | No effect attempt, no CLI process, no process record or inventory fact. |
 | Delayed stderr close | A normal child exit remains non-timeout; controlled descendants release the pipe, and process diagnostics survive. |
 | Ordinary upstream HTTP 500 | Exactly two actual CLI starts, then miss and one negative fact; existing retry behavior is preserved. |
-| Normal exit 23 | Exact exit code, no signal or timeout, one attempt, no inventory facts. |
+| Exit 23 plus persistent HTTP 500 text | Two starts under the existing transient-text policy, then error and zero facts; a numeric exit code alone does not identify a local termination. |
+| Exit 23 without transient-error text | Exact exit code, no signal or timeout, one attempt, no inventory facts. |
 | SIGTERM with 429 text | Signal outcome remains error; no quota-setup classification or automatic retry. |
 | Controlled deadline | Deadline recorded separately from observed SIGKILL; one attempt and no facts. |
 | Missing executable | Safe ENOENT code, no command/path/argument leakage, no retry or facts. |
@@ -45,11 +46,15 @@ Base: `7f4084492ee9d5acf9e41e9cc5269cb2d3e8198b`. Dependencies installed from bo
 
 The coordinator independently ran the same controlled shell subprocess against the baseline and fix. After printing 429, the subprocess terminates with SIGTERM: the old implementation returns needs-setup and fails the invariant with exit 1; the fix returns error, signal=SIGTERM, timedOut=false and exits 0. Fixture SHA-256: `88bca8c70612da31bc80a9c339ef5527565336828ec4e7508f6d4de47e7b2724`. This falsifies the old classification behavior; it does not reproduce the original intermittent failure.
 
-The coordinator independently reran the complete FlyAI suite, including the registered-tool process proof: Node 22.23.2 passed in 34.47 seconds and Node 24.16.0 passed in 19.35 seconds, both exit 0. Both raw textual logs have SHA-256 `65f2cd60692f403c9ec7edbba3c166868014fd07ab08934a8804d3dcfb9deaef`. The final committed SHA full gate remains pending.
+The coordinator independently reran the complete FlyAI suite, including the registered-tool process proof: Node 22.23.2 passed in 34.47 seconds and Node 24.16.0 passed in 19.35 seconds, both exit 0. Both raw textual logs have SHA-256 `65f2cd60692f403c9ec7edbba3c166868014fd07ab08934a8804d3dcfb9deaef`. The associated PR records the final committed-SHA full gate separately.
 
 A development red run only caught the incorrect expectation that an ENOENT exit code must be null; Node can preserve its -2 sentinel. It is not accepted as an old-implementation regression control. A coordinator-added fact assertion initially needed union-type narrowing; this was corrected before the passing typecheck and focused reruns.
 
 The precommit full regression passed at `2026-09-19 12:36:59 UTC`: exit 0, 584.37 seconds; typecheck and dist compatibility also passed. Full-log SHA-256: `3716ff1ad90f49c527a55cadf07a577d2168ce4f22619cada0ced9259418a066`. Final committed-SHA revalidation is recorded with the PR. Skips include live HotelByte UAT, the external staicli tarball, optional Agent Reach doctor, remote skills verification, and real Lavish, supplier-session and LLM paths; none is claimed as accepted.
+
+The integration candidate combined `b520eef` with main `01b110a`. Its Node 22.23.2 full regression exited 1 after 736.98 seconds at `2026-09-19 13:35:13 UTC`, ending `REGRESSION FAILED`; log SHA-256: `17b3de0579b43b5f44ddefb58c579057711dcba240d4fbfab6c64d90fc60ba1b`. The unchanged Copilot core proof failed during process-tree cleanup; the subsequent readiness proof passed. [#518](https://github.com/Danceiny/gotry/issues/518) tracks this separate blocker. The integration merge was aborted, retaining the owned FlyAI test/report edits; no final-commit full pass or PR delivery is claimed.
+
+The #517 boundary addition was independently rerun after that full run had passed the FlyAI section: Node 22.23.2 typecheck and FlyAI suite passed in 4.89/22.41 seconds; Node 24.16.0 passed in 4.86/19.96 seconds. Both suite logs have SHA-256 `69e56ace4f9c508761ba2248525f8fd93381073fdcdd76a1d168265b912e1c3a`. The new case proves two actual starts and zero facts for persistent exit 23 plus HTTP 500; it is focused evidence, not a replacement for the failed full regression.
 
 ## Reproduction and remaining limits
 

@@ -130,12 +130,13 @@ async function runBadArgs(cliRoot: string): Promise<void> {
   }
 }
 
-async function runTransientRetry(cliRoot: string): Promise<void> {
-  const attemptsFile = join(cliRoot, 'transient-retry.starts')
+async function runTransientRetry(cliRoot: string, persistentExit23 = false): Promise<void> {
+  const name = persistentExit23 ? 'transient-exit23' : 'transient-retry'
+  const attemptsFile = join(cliRoot, `${name}.starts`)
   const cliBin = await writeCli(
     cliRoot,
-    'transient-retry',
-    `const fs = require('node:fs'); const p = ${JSON.stringify(attemptsFile)}; const n = fs.existsSync(p) ? Number(fs.readFileSync(p, 'utf8')) : 0; fs.writeFileSync(p, String(n + 1)); if (n === 0) { process.stderr.write('MCP HTTP 500 upstream temporary failure'); process.exit(1) } else { process.stdout.write(JSON.stringify({ data: { itemList: [] } })) }`,
+    name,
+    `const fs = require('node:fs'); const p = ${JSON.stringify(attemptsFile)}; const n = fs.existsSync(p) ? Number(fs.readFileSync(p, 'utf8')) : 0; fs.writeFileSync(p, String(n + 1)); if (n === 0 || ${persistentExit23}) { process.stderr.write('MCP HTTP 500 upstream temporary failure'); process.exit(${persistentExit23 ? 23 : 1}) } else { process.stdout.write(JSON.stringify({ data: { itemList: [] } })) }`,
   )
   const stateRoot = await mkdtemp(join(tmpdir(), 'flyai-process-state-transient-'))
   try {
@@ -145,13 +146,15 @@ async function runTransientRetry(cliRoot: string): Promise<void> {
     assert.equal(await readFile(attemptsFile, 'utf8'), '2', 'HTTP 500 瞬时错误应实际启动 CLI 两次')
     const result = proofResult(called.result)
     assert.equal(called.attempts, 2, 'HTTP 500 瞬时错误应保留 effect attempts=2')
-    assert.equal(result.verdict, 'miss', '瞬时错误重试成功后应得到 miss')
-    assert.equal(result.process?.exitCode, 0, '最终结果应保留第二次实际进程诊断')
+    assert.equal(result.verdict, persistentExit23 ? 'error' : 'miss')
+    assert.equal(result.process?.exitCode, persistentExit23 ? 23 : 0, '最终结果应保留第二次实际进程诊断')
     assert.equal(result.process?.signal, null)
     assert.equal(result.process?.timedOut, false)
-    assert.equal(called.facts.length, 1)
-    assert.equal(called.facts[0]?.kind, 'flight')
-    assert.equal(called.facts[0]?.bookability, 'unavailable_exact_date')
+    assert.equal(called.facts.length, persistentExit23 ? 0 : 1, '瞬时错误耗尽后不得写库存事实')
+    if (!persistentExit23) {
+      assert.equal(called.facts[0]?.kind, 'flight')
+      assert.equal(called.facts[0]?.bookability, 'unavailable_exact_date')
+    }
   } finally {
     await rm(stateRoot, { recursive: true, force: true })
   }
@@ -170,7 +173,7 @@ export async function runFlyaiProcessProof(): Promise<void> {
     assert.equal(natural.result.process?.timedOut, false)
     assert.ok((natural.result.process?.elapsedMs ?? 0) >= 0)
     assert.equal(natural.facts.length, 0)
-    assert.equal(natural.attempts, 1, '自然非零退出不得重试')
+    assert.equal(natural.attempts, 1, '无瞬时错误文本的非零退出不得重试')
     await assertSafeFailure(natural.result, [natural.cliBin, '北京', '上海'])
 
     const terminated = await runCase(
@@ -262,6 +265,7 @@ export async function runFlyaiProcessProof(): Promise<void> {
     assert.equal(trial.facts.length, 0)
 
     await runTransientRetry(cliRoot)
+    await runTransientRetry(cliRoot, true)
 
     const hotelMixed1 = await runCase(
       cliRoot,
@@ -314,7 +318,7 @@ export async function runFlyaiProcessProof(): Promise<void> {
     await assertSafeFailure(argvChecked.result, ['SECRET_ORIGIN', 'SECRET_DEST', argvChecked.cliBin])
     assert.equal(argvChecked.facts.length, 1)
 
-    console.log('FLYAI PROCESS PROOF: bad-args/no-spawn; exit23; SIGTERM-over-429; timeout-SIGKILL; delayed-stderr-after-exit; ENOENT; empty stdout; exit1+429 needs-setup; HTTP500 retry; hotel mixed1/2 zero-fact; miss/hit process+fact; argv/secret-safe; subprocess/temp cleanup OK')
+    console.log('FLYAI PROCESS PROOF: bad-args/no-spawn; exit23 without transient text; SIGTERM-over-429; timeout-SIGKILL; delayed-stderr-after-exit; ENOENT; empty stdout; exit1+429 needs-setup; HTTP500 retry then miss; exit23+HTTP500 retry exhausted zero-fact; hotel mixed1/2 zero-fact; miss/hit process+fact; argv/secret-safe; subprocess/temp cleanup OK')
   } finally {
     await rm(cliRoot, { recursive: true, force: true })
   }
