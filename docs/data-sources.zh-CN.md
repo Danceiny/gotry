@@ -228,6 +228,7 @@ TREK 是自托管协作旅行规划器，数据面成熟度最高，可借鉴的
 
 ### P3.7 static golden vendor + 登录态实跑（Issue #67,2026-08-30）
 
+- `sf-live-benchmark.ts --evidence-root PATH` 将逐条记录和批次汇总写到同一显式目录；`sf-summary.ts` 使用相同目录回读。默认仍为 `~/.gotry/evidence/session`，自动化测试必须使用临时目录。命令约定与证据边界见[证据隔离报告](evaluation/sf-evidence-isolation-report.zh-CN.md)。
 - `ts/scripts/sf-live-benchmark.ts --golden=static` 使用版本化 `ts/data/sf-static-routes.json`：route/carrier 取自 OpenFlights `routes.dat` 的 ODbL 固定 revision `4b969f8e91eb800c45f0e0e2355a0fbb93de27e4`，覆盖 sf-01..08。
 - OpenFlights 不含 schedule/price/availability，故 `departure_at`、`arrival_at`、`transport_number` 与 `price` 作为 estimated fields，其时刻/价格带来自 `sf-golden-manifest.json`。每条 evidence 同时写 `requested_source=static` 与实际 `effective_source`，并携 route URL/revision/license、band source、fallback reason。
 - 快照读取/校验或路由覆盖失败时 stderr 明示 `fallback=manual-golden`，拒绝静默换源；该 vendor 是 benchmark comparator，**不能证明实时班期、实时票价或可售库存**。provider-independent 软评分与 CLI vendor 闭集进入 run-all §44。
