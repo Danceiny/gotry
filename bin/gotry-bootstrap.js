@@ -54,11 +54,427 @@
  */
 
 import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { createHash } from 'node:crypto'
+
+// ── FlyAI 凭据面(纯 JS 内联;与 ts/capabilities/flyai-config.ts 成对维护,
+// 口径以官方 @fly-ai/flyai-cli 1.0.16 解包事实为准。bootstrap 由 inner 以
+// plain node spawn,不能 import .ts——同 doctorChecks 的既有成对模式)──────
+
+function flyaiNonEmpty(value) {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  return text || undefined
+}
+function flyaiConfigFile() { return join(homedir(), '.flyai', 'config.json') }
+function flyaiVerificationFile() { return join(homedir(), '.gotry', 'flyai-verification.json') }
+
+function readFlyaiConfigObject() {
+  const path = flyaiConfigFile()
+  if (!existsSync(path)) return { ok: true, data: {} }
+  let text
+  try { text = readFileSync(path, 'utf8') } catch (e) { return { ok: false, error: e.message } }
+  if (!text.trim()) return { ok: true, data: {} }
+  try {
+    const parsed = JSON.parse(text)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, error: 'config 顶层不是 JSON 对象' }
+    }
+    return { ok: true, data: parsed }
+  } catch (e) {
+    return { ok: false, error: `config JSON 解析失败:${e.message}` }
+  }
+}
+
+/** 官方 1.0.16 同优先级:FLYAI_API_KEY → DEBUG_FLYAI_API_KEY → config 文件 → none */
+function resolveFlyaiKeyInline() {
+  const configPath = flyaiConfigFile()
+  const envKey = flyaiNonEmpty(process.env.FLYAI_API_KEY)
+  if (envKey) return { key: envKey, source: 'env', configPath }
+  const debugKey = flyaiNonEmpty(process.env.DEBUG_FLYAI_API_KEY)
+  if (debugKey) return { key: debugKey, source: 'env-debug', configPath }
+  const read = readFlyaiConfigObject()
+  const fileKey = read.ok ? flyaiNonEmpty(read.data.FLYAI_API_KEY) : undefined
+  if (fileKey) return { key: fileKey, source: 'config', configPath }
+  return { source: 'none', configPath }
+}
+
+function resolveFlyaiEndpointInline() {
+  const debugUrl = flyaiNonEmpty(process.env.DEBUG_FLYAI_MCP_URL)
+  if (debugUrl) return { url: debugUrl, debug: true }
+  return { url: 'https://flyai.open.fliggy.com/mcp', debug: false }
+}
+
+function maskFlyaiKeyInline(key) {
+  const text = typeof key === 'string' ? key.trim() : ''
+  if (!text) return ''
+  if (text.length <= 4) return '****'
+  return `****${text.slice(-4)}`
+}
+
+function isPlaceholderFlyaiKeyInline(key) {
+  const text = key.trim().toLowerCase()
+  if (!text) return true
+  return /^(your?-?(key|api[._-]?key)|xxxx+|<[^>]+>|sk-[a-z]*$|test|placeholder|changeme|foo|bar)$/.test(text)
+}
+
+function sha256Inline(value) {
+  return createHash('sha256').update(value, 'utf8').digest('hex')
+}
+
+function normalizeEndpointInline(url) {
+  try {
+    return new URL(url).href
+  } catch { return undefined }
+}
+
+function endpointFingerprintInline(url) {
+  const normalized = normalizeEndpointInline(url)
+  return normalized ? sha256Inline(normalized) : undefined
+}
+
+function displayEndpointInline(url) {
+  try {
+    const u = new URL(url)
+    return `${u.protocol}//${u.host}${u.pathname || '/'}${u.search || u.hash ? '?(已隐藏敏感参数)' : ''}`
+  } catch { return '<非法 endpoint>' }
+}
+
+/** 权限硬校验(POSIX):dir 0700,file(存在时)0600 */
+function verifySecureModeInline(dir, file) {
+  if (process.platform === 'win32') return { ok: false, unsupported: true }
+  try {
+    const dirMode = statSync(dir).mode & 0o777
+    if (dirMode !== 0o700) return { ok: false, error: `目录权限 ${dirMode.toString(8)} ≠ 700` }
+    if (existsSync(file)) {
+      const fileMode = statSync(file).mode & 0o777
+      if (fileMode !== 0o600) return { ok: false, error: `文件权限 ${fileMode.toString(8)} ≠ 600` }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
+/**
+ * 原子写 JSON:tmp(mode 0600)→ 权限校验 → rename → 目标权限校验。
+ * finally 删除本操作 tmp:rename 失败也不留含明文残留。
+ */
+function atomicWriteJsonInline(path, value) {
+  const dir = dirname(path)
+  let tmp
+  try {
+    const dirExisted = existsSync(dir)
+    mkdirSync(dir, { recursive: true })
+    if (!dirExisted) try { chmodSync(dir, 0o700) } catch { /* 新建目录后 chmod 失败由 mode 校验拦 */ }
+    const dirCheck = verifySecureModeInline(dir, path)
+    if (dirCheck.unsupported) return { ok: false, error: 'Windows 无 0700/0600 权限位,安全写不支持' }
+    if (!dirCheck.ok) return { ok: false, error: dirCheck.error }
+
+    tmp = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+    let check = verifySecureModeInline(dir, tmp)
+    if (!check.ok) return { ok: false, error: check.error }
+
+    renameSync(tmp, path)
+    tmp = undefined
+    check = verifySecureModeInline(dir, path)
+    if (!check.ok) return { ok: false, error: check.error }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  } finally {
+    if (tmp) { try { rmSync(tmp, { force: true }) } catch { /* best effort */ } }
+  }
+}
+
+function readFlyaiVerificationInline() {
+  try {
+    const path = flyaiVerificationFile()
+    if (!existsSync(path)) return undefined
+    const v = JSON.parse(readFileSync(path, 'utf8'))
+    if (v?.schema !== 'gotry.flyai-verification.v1' || typeof v.keySha256 !== 'string') return undefined
+    return v
+  } catch { return undefined }
+}
+
+/**
+ * setup flyai 子命令(#521;唯一凭据写面,模型工具不可达):
+ *   --stdin 非交互输入;缺省 TTY 隐藏输入(raw mode 不回显);
+ *   --status 只读;--clear 删 config 字段(env/debug 来源清不掉如实标注)。
+ * 保存 = 非空/非占位 → 候选 key scrub-env 真实只读验证 → 原子写 → 验证回执。
+ * 验证失败/写盘失败不动旧配置。
+ */
+async function runSetupFlyai() {
+  const STATUS = process.argv.includes('--status')
+  const CLEAR = process.argv.includes('--clear')
+  const STDIN = process.argv.includes('--stdin')
+
+  const printStatus = (extra = '') => {
+    const r = resolveFlyaiKeyInline()
+    const endpoint = resolveFlyaiEndpointInline()
+    const verification = readFlyaiVerificationInline()
+    say('[gotry-setup] FlyAI(飞猪官方只读检索凭据)')
+    say(`  来源: ${r.source}${r.source === 'env-debug' ? '(DEBUG 调试覆盖)' : ''}`)
+    if (r.key) say(`  key: ${maskFlyaiKeyInline(r.key)}(脱敏;明文不显示)`)
+    say(`  配置文件: ${r.configPath}`)
+    say(`  endpoint: ${displayEndpointInline(endpoint.url)}${endpoint.debug ? '(DEBUG_FLYAI_MCP_URL 调试覆盖)' : ''}`)
+    if (r.key) {
+      const keySha = sha256Inline(r.key)
+      if (verification && verification.keySha256 === keySha) {
+        const sourceMatch = verification.source === r.source
+        const endpointMatch = verification.endpointFingerprint === endpointFingerprintInline(endpoint.url)
+        if (verification.verdict === 'verified' && sourceMatch && endpointMatch && verification.endpointDebug === endpoint.debug) {
+          say(`  验证: 已验证 @ ${verification.at}${endpoint.debug ? '(调试 endpoint)' : ''}`)
+        } else if (verification.verdict === 'verified') {
+          say('  验证: 已配置,未按当前来源/endpoint 验证(回执与当前生效上下文不匹配)')
+        } else {
+          say(`  验证: 验证失败(${verification.verdict}@ ${verification.at})——已配置不等于有效`)
+        }
+      } else {
+        say('  验证: 已配置,未验证(非空不等于鉴权通过;运行不带 --status 的 setup 触发验证)')
+      }
+    } else {
+      say('  验证: 未配置——可直接匿名试用(共享额度易达限),或粘贴正式 key 验证后保存')
+    }
+    if (extra) say(extra)
+    say('  凭据修改仅本机命令可达: `gotry setup flyai`(隐藏输入)/ `--stdin` / `--clear`;模型工具不能传 key')
+  }
+
+  if (STATUS) {
+    printStatus()
+    return 0
+  }
+
+  if (CLEAR) {
+    const read = readFlyaiConfigObject()
+    if (!read.ok) {
+      say(`[gotry-setup] 原配置损坏,已拒绝操作保留原字节(${read.error});请先人工修复 ${flyaiConfigFile()}`)
+      return 1
+    }
+    let hadField = false
+    if (Object.prototype.hasOwnProperty.call(read.data, 'FLYAI_API_KEY')) {
+      hadField = true
+      const next = { ...read.data }
+      delete next.FLYAI_API_KEY
+      if (Object.keys(next).length === 0) {
+        rmSync(flyaiConfigFile(), { force: true })
+      } else {
+        const w = atomicWriteJsonInline(flyaiConfigFile(), next)
+        if (!w.ok) { say(`[gotry-setup] 清除写入失败,旧配置保留:${w.error}`); return 1 }
+      }
+      try { rmSync(flyaiVerificationFile(), { force: true }) } catch { /* best effort */ }
+    }
+    const now = resolveFlyaiKeyInline()
+    if (now.key) {
+      say(`[gotry-setup] config 字段${hadField ? '已删' : '本不存在'};但当前仍由来源 ${now.source}(${maskFlyaiKeyInline(now.key)})生效——文件操作清不掉 env/debug`)
+    } else {
+      say(`[gotry-setup] ✓ 已清除${hadField ? `(字段来自 ${flyaiConfigFile()})` : ''};当前匿名试用态`)
+    }
+    return 0
+  }
+
+  // ── save:取得候选 key ──
+  let candidate
+  if (STDIN || !process.stdin.isTTY) {
+    const chunks = []
+    for await (const chunk of process.stdin) chunks.push(chunk)
+    candidate = Buffer.concat(chunks).toString('utf8')
+    if (!STDIN && !process.stdin.isTTY) {
+      // 非 TTY 且未显式 --stdin:仍接受管道输入,但不进入交互隐藏模式。
+    }
+  } else {
+    say('[gotry-setup] FlyAI API key 设置(输入隐藏,不回显;粘贴后回车)')
+    say('  申请入口: flyai.open.fliggy.com 控制台。直接回车取消。')
+    candidate = await hiddenInput('  key: ')
+  }
+  candidate = (candidate ?? '').trim()
+  if (!candidate) {
+    say('[gotry-setup] 未输入 key——已取消,配置未改动(仍可用匿名试用)')
+    return 0
+  }
+  if (isPlaceholderFlyaiKeyInline(candidate)) {
+    say('[gotry-setup] 拒绝:这是文档占位串,不是真实 API key;配置未改动')
+    return 1
+  }
+
+  // 候选 key 真实只读验证:scrub 掉两个覆盖 env 后注入候选,
+  // 保证验证请求用的是候选 key,不被进程已有 env 遮蔽。
+  say('[gotry-setup] 用候选 key 做只读验证(单次,不重试鉴权错误)…')
+  const verify = await verifyCandidateKeyInline(candidate)
+  if (verify.verdict !== 'hit') {
+    say(`[gotry-setup] ✗ 验证未通过(${verify.verdict}):${verify.error ?? ''}`)
+    say('  配置未改动(失败不覆盖原有效设置)。核对 key 后重试,或 `--clear` 回退匿名。')
+    return 1
+  }
+
+  const before = readFlyaiConfigObject()
+  if (!before.ok) {
+    say(`[gotry-setup] 原配置损坏,已拒绝覆盖保留原字节(${before.error});请先人工修复 ${flyaiConfigFile()}`)
+    return 1
+  }
+  const hadConfigFile = existsSync(flyaiConfigFile())
+  const write = atomicWriteJsonInline(flyaiConfigFile(), { ...before.data, FLYAI_API_KEY: candidate })
+  if (!write.ok) {
+    say(`[gotry-setup] ✗ 写入失败,旧配置保留:${write.error}`)
+    return 1
+  }
+
+  const epAfter = resolveFlyaiEndpointInline()
+  const endpointFingerprint = endpointFingerprintInline(epAfter.url)
+  if (!endpointFingerprint) {
+    const rollback = hadConfigFile
+      ? atomicWriteJsonInline(flyaiConfigFile(), before.data)
+      : (() => { try { rmSync(flyaiConfigFile(), { force: true }); return { ok: true } } catch (e) { return { ok: false, error: e.message } } })()
+    say(`[gotry-setup] ✗ endpoint 非法,未生成验证回执;旧配置${rollback.ok ? '已保留' : `回滚失败:${rollback.error}`}`)
+    return 1
+  }
+  const receipt = {
+    schema: 'gotry.flyai-verification.v1',
+    // 验证的是刚注入并准备写入 config 的候选 key；环境覆盖不能冒充候选来源。
+    source: 'config',
+    keySha256: sha256Inline(candidate),
+    maskedKey: maskFlyaiKeyInline(candidate),
+    verdict: 'verified',
+    endpointFingerprint,
+    endpointDebug: epAfter.debug,
+    at: new Date().toISOString(),
+  }
+  const receiptWrite = atomicWriteJsonInline(flyaiVerificationFile(), receipt)
+  if (!receiptWrite.ok) {
+    const rollback = hadConfigFile
+      ? atomicWriteJsonInline(flyaiConfigFile(), before.data)
+      : (() => { try { rmSync(flyaiConfigFile(), { force: true }); return { ok: true } } catch (e) { return { ok: false, error: e.message } } })()
+    say(`[gotry-setup] ✗ 验证回执写入失败:${receiptWrite.error};旧配置${rollback.ok ? '已保留' : `回滚失败:${rollback.error}`}`)
+    return 1
+  }
+  const after = resolveFlyaiKeyInline()
+  say(`[gotry-setup] ✓ 候选 key 验证通过并已保存(明文不落日志)`)
+  printStatus(`  savedTo: ${after.configPath}`)
+  return 0
+}
+
+/** TTY 隐藏输入:raw mode,不回显;Enter 结束;Ctrl+C/Ctrl+D 取消 */
+function hiddenInput(prompt) {
+  return new Promise((resolve) => {
+    process.stdout.write(prompt)
+    let buf = ''
+    const stdin = process.stdin
+    stdin.setRawMode(true)
+    stdin.resume()
+    stdin.setEncoding('utf8')
+    const stop = () => {
+      try { stdin.setRawMode(false) } catch { /* ignore */ }
+      stdin.pause()
+      process.stdout.write('\n')
+    }
+    const onData = (d) => {
+      for (const ch of d) {
+        if (ch === '\n' || ch === '\r') {
+          stdin.removeListener('data', onData)
+          stop()
+          resolve(buf)
+          return
+        }
+        if (ch === '') {
+          stdin.removeListener('data', onData)
+          stop()
+          resolve('')
+          return
+        }
+        if (ch === '') {
+          // Ctrl+D
+          stdin.removeListener('data', onData)
+          stop()
+          resolve(buf)
+          return
+        }
+        if (ch === '' || ch === '\x7f') {
+          buf = buf.slice(0, -1)
+        } else {
+          buf += ch
+        }
+      }
+    }
+    stdin.on('data', onData)
+  })
+}
+
+/**
+ * 候选 key 验证:spawn 官方 CLI(cliBin 可由测试 env 注入 fixture),
+ * 子进程 env scrub FLYAI_API_KEY/DEBUG_FLYAI_API_KEY 后注入候选。
+ * 返回 {verdict,error}。
+ */
+function verifyCandidateKeyInline(candidate) {
+  const GOTRY_FLYAI_CLI = process.env.GOTRY_FLYAI_CLI_BIN ?? ''
+  const cliBin = GOTRY_FLYAI_CLI || 'npx'
+  const prefix = GOTRY_FLYAI_CLI ? [] : ['-y', '@fly-ai/flyai-cli']
+  const env = { ...process.env }
+  delete env.FLYAI_API_KEY
+  delete env.DEBUG_FLYAI_API_KEY
+  env.FLYAI_API_KEY = candidate
+  const args = [...prefix, 'search-flight', '--origin', '上海', '--destination', '丽江', '--dep-date', '2026-10-01']
+  const timeoutMs = Number(process.env.GOTRY_FLYAI_VERIFY_TIMEOUT_MS ?? 20_000)
+  return new Promise((resolve) => {
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    let settled = false
+    const child = spawn(cliBin, args, {
+      env, stdio: ['ignore', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+    })
+    const finish = (v) => {
+      if (settled) return
+      settled = true
+      resolve(v)
+    }
+    const killGroup = (signal) => {
+      if (process.platform !== 'win32' && child.pid) {
+        try { process.kill(-child.pid, signal); return } catch { /* fall through */ }
+      }
+      try { child.kill(signal) } catch { /* ignore */ }
+    }
+    const timer = setTimeout(() => { timedOut = true; killGroup('SIGKILL') }, timeoutMs)
+    child.stdout?.on('data', d => { stdout += d.toString() })
+    child.stderr?.on('data', d => { stderr += d.toString() })
+    child.on('error', (e) => { clearTimeout(timer); finish({ verdict: 'error', error: e.message }) })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      const combined = `${stderr}\n${stdout}`
+      if (timedOut) return finish({ verdict: 'timeout', error: `验证调用超时 ${timeoutMs}ms` })
+      if (/Invalid API key|HTTP\s*401|\b401\b/.test(combined)) {
+        return finish({ verdict: 'auth-error', error: '401 Invalid API key' })
+      }
+      if (/HTTP\s*403|\b403\b/.test(combined)) {
+        return finish({ verdict: 'forbidden', error: combined.trim().slice(0, 160) })
+      }
+      if (/Trial limit reached/.test(combined)) {
+        return finish({ verdict: 'needs-setup', error: 'Trial limit reached(候选 key 未被识别为正式 key?)' })
+      }
+      if (/HTTP\s*429|\b429\b/.test(combined)) {
+        return finish({ verdict: 'rate-limited', error: '普通限流,稍后重试' })
+      }
+      if (code !== 0) {
+        return finish({ verdict: 'error', error: combined.trim().slice(0, 160) || `exit ${code}` })
+      }
+      try {
+        const envelope = JSON.parse(stdout)
+        if (Array.isArray(envelope?.data?.itemList)) {
+          return finish({ verdict: 'hit', count: envelope.data.itemList.length })
+        }
+        return finish({ verdict: 'error', error: '响应缺 data.itemList' })
+      } catch {
+        return finish({ verdict: 'error', error: '响应不是合法 JSON' })
+      }
+    })
+  })
+}
+
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const AUTO = process.argv.includes('--auto')
@@ -338,6 +754,10 @@ const CALENDAR_CMD = process.argv.includes('calendar')
 const CALENDAR_OFF = process.argv.includes('--off')
 const CALENDAR_STATUS = process.argv.includes('--status')
 
+// setup flyai 子命令(issue #521):`gotry setup flyai [--stdin|--status|--clear]`。
+// 与 calendar 区分:argv 同时含 'setup' 与 'flyai'。
+const FLYAI_SETUP_CMD = process.argv.includes('flyai') && !DOCTOR && !process.argv.some((a) => a === 'search-flight' || a === 'search-hotel' || a === 'search-train')
+
 // --- calendar setup 状态面(与扩展 manifest 同居 ~/.gotry;运行时 inner 与
 // doctor 两端同读这一份,禁止 env 控制产品行为——founder 2026-09-03 纠偏)---
 function calendarStatePath() { return join(homedir(), '.gotry', 'calendar.json') }
@@ -423,9 +843,38 @@ async function doctorChecks() {
   } else {
     items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: '未安装——酒店检索降级静态包(公开渠道估算,非实时,仅覆盖内置场景)', fix: 'npx @danceiny/gotry doctor --fix' })
   }
-  // flyai key(匿名试用额度共享易达限;正式 key 即免)
-  const flyaiKey = (process.env.FLYAI_API_KEY ?? '').trim()
-  items.push({ label: 'FlyAI(飞猪官方检索)', ok: Boolean(flyaiKey), level: flyaiKey ? 'ok' : 'degraded', detail: flyaiKey ? 'FLYAI_API_KEY 已配(正式 key,无试用额度限制)' : '未配 FLYAI_API_KEY——走匿名试用额度(共享,易达限;达限报 "Trial limit reached")', fix: flyaiKey ? undefined : '到 flyai.open.fliggy.com 控制台申请正式 key,配进环境变量 FLYAI_API_KEY' })
+  // flyai(#521):区分「已配置」与「已验证」——非空只表示 configured,
+  // 不承诺正式有效/无限额;有效性必须有 key hash+endpoint 匹配的验证回执。
+  const flyaiResolved = resolveFlyaiKeyInline()
+  const flyaiEndpoint = resolveFlyaiEndpointInline()
+  const flyaiReceipt = readFlyaiVerificationInline()
+  let flyaiLevel = 'degraded'
+  let flyaiDetail
+  let flyaiFix
+  if (!flyaiResolved.key) {
+    flyaiDetail = '未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)'
+    flyaiFix = '本机运行 `gotry setup flyai`(隐藏输入,先验证后保存 FLYAI_API_KEY);申请入口 flyai.open.fliggy.com 控制台'
+  } else {
+    const keySha = sha256Inline(flyaiResolved.key)
+    const receiptMatches = flyaiReceipt
+      && flyaiReceipt.keySha256 === keySha
+      && flyaiReceipt.source === flyaiResolved.source
+      && flyaiReceipt.verdict === 'verified'
+      && flyaiReceipt.endpointFingerprint === endpointFingerprintInline(flyaiEndpoint.url)
+      && flyaiReceipt.endpointDebug === flyaiEndpoint.debug
+    const sourceNote = `来源 ${flyaiResolved.source}${flyaiResolved.source === 'env-debug' ? '(DEBUG)' : ''},${maskFlyaiKeyInline(flyaiResolved.key)}`
+    if (receiptMatches) {
+      flyaiLevel = 'ok'
+      flyaiDetail = `已验证 ${flyaiReceipt.at}(${sourceNote};endpoint ${displayEndpointInline(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})`
+    } else if (flyaiReceipt && flyaiReceipt.keySha256 === keySha && flyaiReceipt.verdict !== 'verified') {
+      flyaiDetail = `已配置未通过验证(${flyaiReceipt.verdict}@ ${flyaiReceipt.at};${sourceNote};endpoint ${displayEndpointInline(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})——非空不等于鉴权通过`
+      flyaiFix = '本机运行 `gotry setup flyai` 重新验证;`gotry setup flyai --clear` 回退匿名'
+    } else {
+      flyaiDetail = `已配置,未验证(${sourceNote};endpoint ${displayEndpointInline(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})`
+      flyaiFix = '本机运行 `gotry setup flyai`(候选 key scrub-env 验证后保存)'
+    }
+  }
+  items.push({ label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪 8 类)', ok: flyaiLevel === 'ok', level: flyaiLevel, detail: flyaiDetail, fix: flyaiFix })
   // sidebar(状态面与 setupSidebar 的落盘复核同一口径)
   const sbOk = sidebarInstalled()
   items.push({ label: 'dsh-better-sidebar(侧栏工作台)', ok: sbOk, level: sbOk ? 'ok' : 'missing', detail: sbOk ? '已安装——web UI 右侧工作台可预览产物与 doctor 报告(gotry-state/doctor-report.md)' : '未安装——dsh web 无右侧工作台,产物与 doctor 报告只能在对话里看(gotry_artifacts_list)', fix: sbOk ? undefined : 'npx @danceiny/gotry doctor --fix' })
@@ -1174,6 +1623,10 @@ async function runInlineHealthWatch(timeoutMs) {
 }
 
 async function main() {
+  // setup flyai 子命令(issue #521):凭据唯一写面(隐藏/stdin/status/clear),
+  // 必须先于 CALENDAR_CMD 判定(命令形如 `setup flyai`)。
+  if (FLYAI_SETUP_CMD) process.exit(await runSetupFlyai())
+
   // calendar 子命令(issue #106/D-9):可选日历挂载的 setup 状态管理(on/off/status)
   if (CALENDAR_CMD) process.exit(await runCalendar())
 
