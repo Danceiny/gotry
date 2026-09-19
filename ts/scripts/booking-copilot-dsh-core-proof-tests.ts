@@ -7,11 +7,12 @@
  */
 
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createServer, type ServerResponse } from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   createDshEmbeddedBookingPlanner,
   createRealRunPort,
@@ -22,6 +23,7 @@ import {
 } from '../src/booking-surface/dsh-planner.ts'
 import { bookingDigest, type BookingActionCheckpoint, type BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
 import type { BookingCopilotTurn, BookingReadAction, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
+import { throwWithCleanupFailures } from './booking-copilot-cleanup-proof-helper.ts'
 
 const action = {
   schemaVersion: 'booking.surface',
@@ -262,9 +264,29 @@ function processExists(pid: number): boolean {
   try { process.kill(pid, 0); return true } catch { return false }
 }
 
+function runCleanupNegativeControl(): void {
+  const nodeBinary = process.execPath
+  const tsxCli = fileURLToPath(new URL('../node_modules/tsx/dist/cli.mjs', import.meta.url))
+  const helper = fileURLToPath(new URL('./booking-copilot-cleanup-proof-helper.ts', import.meta.url))
+  const child = spawnSync(nodeBinary, [tsxCli, helper, '--negative-control'], { encoding: 'utf8', timeout: 5_000 })
+  assert.equal(child.error, undefined, `cleanup negative control spawned with ${nodeBinary}`)
+  assert.equal(child.signal, null, 'cleanup negative control exits before its bound')
+  assert.equal(child.status, 0, `cleanup negative control passed: ${child.stderr}`)
+  assert.deepEqual(JSON.parse(child.stdout), {
+    legacy: { caught: 'proof planner cleanup failure', cleanupOrder: ['legacy-planner'] },
+    repaired: {
+      body: 'proof body failure',
+      cleanup: ['proof planner cleanup failure', 'proof port cleanup failure'],
+      cleanupOrder: ['planner', 'port', 'server', 'state-retained'],
+    },
+  }, 'bounded child proof contrasts legacy masking with retained body and cleanup errors while running every cleanup')
+}
+
 let planner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
 let stalledPlanner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
 let stalledPort: DshPlannerRunPort | undefined
+let bodyFailed = false
+let bodyError: unknown
 const plannerMetrics: DshPlannerTurnMetric[] = []
 
 // Planner route resolution: a deployment that forgot DEEPSEEK_MODEL must not
@@ -299,6 +321,7 @@ const plannerMetrics: DshPlannerTurnMetric[] = []
 }
 
 try {
+  runCleanupNegativeControl()
   planner = await createDshEmbeddedBookingPlanner({
     stateRoot,
     env: {
@@ -441,12 +464,22 @@ try {
   if (childrenBefore !== null) {
     assert.ok(stalledChildren.every((pid) => !processExists(pid)), 'real stalled dsh child is reaped after planner shutdown')
   }
-} finally {
-  await stalledPlanner?.close()
-  await stalledPort?.close()
-  await planner?.close()
-  await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()))
-  rmSync(stateRoot, { recursive: true, force: true })
+} catch (error) {
+  bodyFailed = true
+  bodyError = error
 }
+
+await throwWithCleanupFailures(bodyFailed, bodyError, [
+  async () => { await stalledPlanner?.close() },
+  async () => { await stalledPort?.close() },
+  async () => { await planner?.close() },
+  async () => {
+    modelServer.closeAllConnections()
+    await new Promise<void>((resolve, reject) => modelServer.close((error) => error ? reject(error) : resolve()))
+  },
+], {
+  onSuccess: () => { rmSync(stateRoot, { recursive: true, force: true }) },
+  onFailure: () => { console.error(`BOOKING COPILOT CLEANUP: retained isolated state at ${stateRoot}`) },
+})
 
 console.log('BOOKING COPILOT DSH CORE PROOF: real subprocess/sdk/plugin/tool-call/concluded-turn/session event/idle OK')

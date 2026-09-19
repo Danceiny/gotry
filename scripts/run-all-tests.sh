@@ -500,6 +500,7 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 (cd ts && npx tsx scripts/booking-copilot-dsh-plugin-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-planner-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/managed-dsh-run-port-proof.ts) || FAIL=1
+(cd ts && npx tsx scripts/managed-dsh-cleanup-diagnostic-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-startup-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-core-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-readiness-proof.ts) || FAIL=1

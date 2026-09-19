@@ -335,6 +335,7 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
   let managedPort: DshPlannerRunPort
   try {
     managedPort = createManagedDshRunPort({
+      cleanupRole: 'task',
       profile: 'sdk-minimal',
       patches: [patchPath],
       dshHome,
@@ -383,6 +384,7 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
   if (process.env.GOTRY_BOOKING_COPILOT_WARMUP !== '0') {
     try {
       warmer = createManagedDshRunPort({
+        cleanupRole: 'warmer',
         profile: 'sdk-minimal',
         patches: [patchPath],
         dshHome: join(scratch, 'home-warmer'),
