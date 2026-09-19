@@ -146,12 +146,31 @@ try {
   writeFileSync(consumerScript, `
 import { createServer } from 'node:http'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
-const server = createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end('data: ' + JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 0, model: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'booted' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) + '\\n\\ndata: [DONE]\\n\\n') }) })
+let providerRequests = 0
+const server = createServer((req, res) => { req.resume(); req.on('end', () => { providerRequests++; res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end('data: ' + JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 0, model: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'booted' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) + '\\n\\ndata: [DONE]\\n\\n') }) })
 await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
 const address = server.address()
 const harness = new DeepSeekHarness({ profile: 'sdk-minimal', dshHome: '${consumerRoot}/dsh-home', cwd: '${consumerRoot}', processCwd: '${consumerRoot}', env: { PATH: process.env.PATH, DEEPSEEK_API_KEY: 'fixture', DEEPSEEK_BASE_URL: 'http://127.0.0.1:' + address.port + '/v1' } })
-try { await harness.run('boot core', { sessionId: 'package-proof-core' }) } finally { await harness.close(); await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }
-console.log('PACKED CONSUMER DSH CORE BOOT: OK')
+const started = Date.now()
+let phase = 'initialize'
+const failures = []
+function recordFailure(error) {
+  const safeNames = ['RequestTimeoutError', 'TransportClosedError', 'SdkProtocolError', 'AggregateError', 'Error']
+  failures.push({ phase, elapsedMs: Date.now() - started, providerRequests, error: safeNames.includes(error?.name) ? error.name : 'unknown' })
+  process.exitCode = 1
+}
+try {
+  await harness.start()
+  phase = 'model_run'
+  await harness.run('boot core', { sessionId: 'package-proof-core' })
+} catch (error) { recordFailure(error) }
+finally {
+  phase = 'cleanup'
+  try { await harness.close() } catch (error) { recordFailure(error) }
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+}
+if (failures.length) console.error('CORE_BOOT_FAILURE', JSON.stringify(failures))
+else console.log('PACKED CONSUMER DSH CORE BOOT: OK')
 `)
 
   const packStartedAt = Date.now()
@@ -211,6 +230,11 @@ console.log('PACKED CONSUMER DSH CORE BOOT: OK')
       [...files.keys()].some((path) => path.endsWith('managed-dsh-worker-fixture.mjs')),
       false,
       'TERM-resistant process fixture must never ship in the runtime package',
+    )
+    assert.equal(
+      [...files.keys()].some((path) => path.endsWith('managed-dsh-pending-worker-fixture.mjs')),
+      false,
+      'pending-request process fixture must never ship in the runtime package',
     )
     for (const path of [
       'bin/gotry-booking-copilot.js',
