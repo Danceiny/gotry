@@ -11,6 +11,10 @@ function reply(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`)
 }
 
+// The public subprocess handle deliberately hides its PID. This private
+// worker-owned receipt identifies the group when teardown diagnostics fail.
+reply({ lifecycle: 'worker_started', workerPid: process.pid, parentPid: process.ppid })
+
 async function handle(request: Request): Promise<void> {
   try {
     harness ??= new DeepSeekHarness((request.options ?? {}) as DeepSeekHarnessOptions)

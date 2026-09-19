@@ -174,6 +174,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [evaluation/dida-runner-stop-report.md](evaluation/dida-runner-stop-report.md) | Dida live runner stop/cleanup and strict live opt-in evidence (#502/#504) |
 | [evaluation/sf-evidence-isolation-report.md](evaluation/sf-evidence-isolation-report.md) | Session-flight benchmark evidence isolation: command E2E, summary readback, and proof limits |
 | [evaluation/copilot-readiness-report.md](evaluation/copilot-readiness-report.md) | Copilot readiness and process cleanup: real SDK paths, controlled workers, Node 22/24 regression, and known limits |
+| [evaluation/copilot-cleanup-diagnostic-report.md](evaluation/copilot-cleanup-diagnostic-report.md) | Copilot cleanup failure identity, primary-error preservation and controlled diagnostic evidence (#518) |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | Product-persona comparison: archived answers to the same real prompt/scorecards/persona distillation |
 
 ### ops/ (release & compliance)

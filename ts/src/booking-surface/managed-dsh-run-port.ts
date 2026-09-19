@@ -6,11 +6,13 @@ import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
 import type { DshPlannerRunPort, DshPlannerRunResult } from './dsh-planner.ts'
+import { ManagedDshCleanupError, snapshotManagedDshGroup, type ManagedDshWorkerOutcome } from './managed-dsh-cleanup-diagnostic.ts'
 
 export interface ManagedDshRunPortOptions {
   cwd?: string
   workerPath?: string
   graceMs?: number
+  cleanupRole?: 'task' | 'warmer'
   env?: NodeJS.ProcessEnv
   [key: string]: unknown
 }
@@ -35,11 +37,17 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   private sequence = 0
   private closePromise: Promise<void> | undefined
   private inputBuffer = ''
+  private workerPid: number | null = null
+  private workerOutcome: ManagedDshWorkerOutcome = { state: 'pending' }
+  private readonly cleanupRole: 'task' | 'warmer' | 'unspecified'
+  private readonly graceMs: number
 
   constructor(options: ManagedDshRunPortOptions = {}) {
     const defaultWorker = join(dirname(fileURLToPath(import.meta.url)), 'dsh-worker.js')
     const workerPath = options.workerPath ?? (existsSync(defaultWorker) ? defaultWorker : defaultWorker.replace(/\.js$/, '.ts'))
-    const { workerPath: _worker, graceMs = 500, env, ...harnessOptions } = options
+    const { workerPath: _worker, graceMs = 500, cleanupRole, env, ...harnessOptions } = options
+    this.cleanupRole = cleanupRole ?? 'unspecified'
+    this.graceMs = graceMs
     this.runtime = new LocalSubprocessRuntime(new Context())
     this.handle = this.runtime.spawn({
       argv: workerLaunch(workerPath),
@@ -53,8 +61,14 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
     this.handle.stdout!.setEncoding('utf8')
     this.handle.stdout!.on('data', (chunk: string) => this.consume(chunk))
     this.handle.done.then(
-      () => this.failPending(new Error('managed DSH worker exited')),
-      (error: unknown) => this.failPending(error instanceof Error ? error : new Error(String(error))),
+      (outcome) => {
+        this.workerOutcome = { state: 'exited', exitCode: outcome.exitCode, signal: outcome.signal }
+        this.failPending(new Error('managed DSH worker exited'))
+      },
+      (error: unknown) => {
+        this.workerOutcome = { state: 'failed' }
+        this.failPending(error instanceof Error ? error : new Error(String(error)))
+      },
     )
     // Credentials are already in the managed worker environment. Never copy
     // them into the JSON-lines protocol or a thrown worker error.
@@ -72,7 +86,13 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
       if (newline < 0) return
       const line = this.inputBuffer.slice(0, newline); this.inputBuffer = this.inputBuffer.slice(newline + 1)
       try {
-        const message = JSON.parse(line) as { id: number; ok?: boolean; progress?: boolean; result?: DshPlannerRunResult; error?: string }
+        const message = JSON.parse(line) as { id: number; ok?: boolean; progress?: boolean; result?: DshPlannerRunResult; error?: string; lifecycle?: string; workerPid?: number; parentPid?: number }
+        if (message.lifecycle === 'worker_started') {
+          if (this.workerPid === null && Number.isSafeInteger(message.workerPid) && message.workerPid! > 0 && message.parentPid === process.pid) {
+            this.workerPid = message.workerPid!
+          }
+          continue
+        }
         if (message.progress) {
           this.pending.get(message.id)?.progress?.()
           continue
@@ -112,17 +132,34 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise
     this.closePromise = (async () => {
+      const started = performance.now()
       this.failPending(new Error('managed DSH run port closed'))
       this.handle.terminate()
       const outcome = this.handle.done.then(
         () => undefined,
-        () => { throw new Error('managed DSH worker failed') },
+        () => new Error('managed DSH worker failed'),
       )
-      const rangeEmpty = await this.handle.waitForExit(AbortSignal.timeout(this.cleanupDeadlineMs))
-      if (!rangeEmpty) throw new Error('managed DSH process tree cleanup timeout')
-      await outcome
+      let rangeEmpty: boolean
+      try {
+        rangeEmpty = await this.handle.waitForExit(AbortSignal.timeout(this.cleanupDeadlineMs))
+      } catch {
+        throw await this.cleanupError('managed DSH process tree observation failed', started)
+      }
+      if (!rangeEmpty) throw await this.cleanupError('managed DSH process tree cleanup timeout', started)
+      if (await outcome) throw await this.cleanupError('managed DSH worker failed', started)
     })()
     return this.closePromise
+  }
+
+  private async cleanupError(message: string, started: number): Promise<ManagedDshCleanupError> {
+    const elapsedMs = Math.round(performance.now() - started)
+    const workerOutcome = { ...this.workerOutcome }
+    const processGroup = await snapshotManagedDshGroup(this.workerPid)
+    return new ManagedDshCleanupError(message, {
+      schemaVersion: 'managed-dsh-cleanup.v1', role: this.cleanupRole,
+      workerPid: this.workerPid, elapsedMs, deadlineMs: this.cleanupDeadlineMs,
+      graceMs: this.graceMs, workerOutcome, processGroup,
+    })
   }
 }
 

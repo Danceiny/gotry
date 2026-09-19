@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 
 const grandchild = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { stdio: 'ignore' })
+process.stdout.write(`${JSON.stringify({ lifecycle: 'worker_started', workerPid: process.pid, parentPid: process.ppid })}\n`)
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity })
 input.on('line', (line) => {
   const request = JSON.parse(line)
