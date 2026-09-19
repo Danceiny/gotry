@@ -7,7 +7,7 @@
 
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -24,6 +24,16 @@ process.stdout.write(JSON.stringify({ data: { itemList: [] } }))
 `)
 chmodSync(fakeVerifier, 0o700)
 
+// package-shaped outer entry: no .git, no repository .env, only the runtime files
+// that the npm package exposes for `gotry setup ...` dispatch.
+const packageFixture = join(sandbox, 'package-shaped')
+mkdirSync(join(packageFixture, 'bin'), { recursive: true })
+for (const file of ['gotry-inner.js', 'gotry-bootstrap.js', 'gotry-process-liveness.js', 'gotry-runtime-resolution.js']) {
+  copyFileSync(join(repoRoot, 'bin', file), join(packageFixture, 'bin', file))
+}
+writeFileSync(join(packageFixture, 'package.json'), JSON.stringify({ type: 'module', version: 'test' }) + '\n')
+const packageEntry = join(packageFixture, 'bin', 'gotry-inner.js')
+
 const key = 'sk-fake-setup-key-1234'
 const oldKey = 'sk-old-setup-key-0000'
 const baseEnv = (home: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
@@ -37,6 +47,16 @@ const baseEnv = (home: string, extra: Record<string, string> = {}): NodeJS.Proce
 
 function run(home: string, args: string[], input = '', extra: Record<string, string> = {}) {
   return spawnSync('node', [bootstrap, ...args], {
+    cwd: sandbox,
+    env: baseEnv(home, extra),
+    input,
+    encoding: 'utf8',
+    timeout: 15_000,
+  })
+}
+
+function runPackageEntry(home: string, args: string[], input = '', extra: Record<string, string> = {}) {
+  return spawnSync('node', [packageEntry, ...args], {
     cwd: sandbox,
     env: baseEnv(home, extra),
     input,
@@ -70,6 +90,13 @@ assert.equal('endpoint' in firstReceipt, false, 'receipt 不应保存 endpoint �
 assert.ok(!first.stdout.includes(key), 'stdout 不得回显 key')
 console.log('1. fresh setup + 0700/0600 + fingerprint receipt OK')
 
+const packageHome = mkdtempSync(join(sandbox, 'package-entry-'))
+const packageRun = runPackageEntry(packageHome, ['setup', 'flyai', '--stdin'], `${key}\n`)
+assert.equal(packageRun.status, 0, packageRun.stdout + packageRun.stderr)
+assert.equal(JSON.parse(readFileSync(configPath(packageHome), 'utf8')).FLYAI_API_KEY, key)
+assert.ok(!packageRun.stdout.includes(key), 'outer package entry 不得回显 key')
+console.log('1b. package-shaped bin/gotry-inner.js → setup flyai dispatch OK')
+
 // 2. an ambient env key cannot be claimed as the candidate's verified source.
 const envOverrideHome = mkdtempSync(join(sandbox, 'env-override-'))
 const envOverride = run(envOverrideHome, ['setup', 'flyai', '--stdin'], `${key}\n`, { FLYAI_API_KEY: oldKey })
@@ -97,12 +124,24 @@ const sourceStatus = run(debugHome, ['setup', 'flyai', '--status'], '', {
 })
 assert.equal(sourceStatus.status, 0)
 assert.ok(sourceStatus.stdout.includes('未按当前来源/endpoint 验证'))
-const endpointStatus = run(debugHome, ['setup', 'flyai', '--status'], '', {
-  DEBUG_FLYAI_MCP_URL: 'https://user:query-secret@example.test/changed?token=second-secret',
+const correctReceipt = JSON.stringify({ ...debugReceipt, source: 'config' }, null, 2) + '\n'
+writeFileSync(receiptPath(debugHome), correctReceipt, { mode: 0o600 })
+const matchingStatus = run(debugHome, ['setup', 'flyai', '--status'], '', {
+  DEBUG_FLYAI_MCP_URL: 'https://user:query-secret@example.test/mcp?token=first-secret',
 })
-assert.equal(endpointStatus.status, 0)
-assert.ok(endpointStatus.stdout.includes('未按当前来源/endpoint 验证'))
-assert.ok(!endpointStatus.stdout.includes('second-secret') && !endpointStatus.stdout.includes('user:'), endpointStatus.stdout)
+assert.equal(matchingStatus.status, 0)
+assert.ok(matchingStatus.stdout.includes('验证: 已验证'))
+const pathStatus = run(debugHome, ['setup', 'flyai', '--status'], '', {
+  DEBUG_FLYAI_MCP_URL: 'https://user:query-secret@example.test/changed?token=first-secret',
+})
+assert.equal(pathStatus.status, 0)
+assert.ok(pathStatus.stdout.includes('未按当前来源/endpoint 验证'))
+const queryStatus = run(debugHome, ['setup', 'flyai', '--status'], '', {
+  DEBUG_FLYAI_MCP_URL: 'https://user:query-secret@example.test/mcp?token=second-secret',
+})
+assert.equal(queryStatus.status, 0)
+assert.ok(queryStatus.stdout.includes('未按当前来源/endpoint 验证'))
+assert.ok(!pathStatus.stdout.includes('first-secret') && !queryStatus.stdout.includes('second-secret') && !queryStatus.stdout.includes('user:'), queryStatus.stdout)
 console.log('3. source/path/query mismatch + endpoint output redaction OK')
 
 // 4. malformed config and verifier failure preserve the old bytes/key.
