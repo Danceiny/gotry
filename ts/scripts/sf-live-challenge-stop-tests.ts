@@ -16,10 +16,10 @@
  * sf-summary 对挑战批次 status=fail_closed(即使 8 条证据齐全也不标完整/有效校准)。
  */
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 
 const REAL_TS = join(import.meta.dirname, '..')
 // macOS 的 /tmp 是 /private/tmp 符号链接:sf-summary 以 argv[1]===import.meta.url 判定
@@ -33,6 +33,7 @@ interface Overlay {
   home: string
   ts: string
   evidenceRoot: string
+  defaultEvidenceRoot: string
   sessionCallCounter: string
   npxCounter: string
   netCounter: string
@@ -53,7 +54,6 @@ function buildOverlay(tag: string): Overlay {
   const base = mkdtempSync(join(TMP_ROOT, `gotry-sf411-${tag}-`))
   const home = join(base, 'home')
   const overlayTs = join(base, 'ts')
-  const evidenceRoot = join(home, '.gotry', 'evidence', 'session')
   mkdirSync(home, { recursive: true })
   for (const entry of ['scripts', 'capabilities', 'data'] as const) {
     cpSync(join(REAL_TS, entry), join(overlayTs, entry), { recursive: true })
@@ -61,6 +61,21 @@ function buildOverlay(tag: string): Overlay {
   cpSync(join(REAL_TS, 'package.json'), join(overlayTs, 'package.json'))
   cpSync(join(REAL_TS, 'tsconfig.json'), join(overlayTs, 'tsconfig.json'))
   symlinkSync(join(REAL_TS, 'node_modules'), join(overlayTs, 'node_modules'), 'dir')
+
+  // Keep the explicit destination outside HOME so the test proves that the
+  // new flag, rather than the default, owns every benchmark artifact.
+  const explicitEvidenceRoot = join(base, 'explicit evidence root')
+  const defaultEvidenceRoot = join(home, '.gotry', 'evidence', 'session')
+
+  // Optional local baseline mode lets the harness prove that main@20d728e
+  // fails the explicit-root contract without touching the live worktree.
+  if (process.env.SF503_BASELINE === '1') {
+    const baseline = execFileSync('git', [
+      'show',
+      '20d728e3668d302821bad0f8687ca8ef55d29ed5:ts/scripts/sf-live-benchmark.ts',
+    ], { cwd: join(REAL_TS, '..'), encoding: 'utf8' })
+    writeFileSync(join(overlayTs, 'scripts', 'sf-live-benchmark.ts'), baseline)
+  }
 
   // 确定性 session 模块:每次调用计数并按 SF411_SCRIPT 返回 hit/challenged
   writeFileSync(join(overlayTs, 'capabilities', 'session-search.ts'), `// sf411 E2E 确定性 session 模块(仅存在于临时 overlay;真模块不参与本测试)
@@ -143,7 +158,8 @@ globalThis.setTimeout = (callback, delay, ...args) => {
     base,
     home,
     ts: overlayTs,
-    evidenceRoot,
+    evidenceRoot: explicitEvidenceRoot,
+    defaultEvidenceRoot,
     sessionCallCounter: join(base, 'session-calls.jsonl'),
     npxCounter: join(base, 'npx-calls.txt'),
     netCounter: join(base, 'net-attempts.jsonl'),
@@ -158,10 +174,18 @@ interface RunOutcome {
   overlay: Overlay
 }
 
-function runRunner(overlay: Overlay, golden: string, script: string): RunOutcome {
+type RootMode = 'equals-relative' | 'split-absolute' | 'default'
+
+function runRunner(overlay: Overlay, golden: string, script: string, rootMode: RootMode = 'split-absolute'): RunOutcome {
+  const rootArgs = rootMode === 'equals-relative'
+    ? [`--evidence-root=${relative(overlay.ts, overlay.evidenceRoot)}`]
+    : rootMode === 'split-absolute'
+      ? ['--evidence-root', overlay.evidenceRoot]
+      : []
   const result = spawnSync(process.execPath, [
     join(overlay.ts, 'scripts', 'sf-live-benchmark.ts'),
     `--golden=${golden}`,
+    ...rootArgs,
   ], {
     cwd: overlay.ts,
     encoding: 'utf8',
@@ -182,25 +206,18 @@ function runRunner(overlay: Overlay, golden: string, script: string): RunOutcome
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '', overlay }
 }
 
-function readRunSummary(overlay: Overlay): Record<string, unknown> {
-  const dir = join(overlay.evidenceRoot, 'sf-summary')
-  const files = readdirSync(dir).filter((name) => name.endsWith('.json'))
-  assert.equal(files.length, 1, `runner 应落盘唯一 run summary,实际 ${files.join(',')}`)
-  return JSON.parse(readFileSync(join(dir, files[0]!), 'utf8')) as Record<string, unknown>
-}
-
-function readRecord(overlay: Overlay, queryId: string): Record<string, unknown> {
-  const dir = join(overlay.evidenceRoot, queryId)
+function readRecord(overlay: Overlay, queryId: string, evidenceRoot = overlay.evidenceRoot): Record<string, unknown> {
+  const dir = join(evidenceRoot, queryId)
   const files = readdirSync(dir).filter((name) => name.endsWith('.json'))
   assert.equal(files.length, 1, `${queryId} 应恰有一个证据文件`)
   return JSON.parse(readFileSync(join(dir, files[0]!), 'utf8')) as Record<string, unknown>
 }
 
 /** 跑 overlay 里的真 sf-summary,返回(stdout, 解析后的 summary JSON) */
-function runSfSummary(overlay: Overlay): { status: number | null; stdout: string; summary: Record<string, unknown> } {
+function runSfSummary(overlay: Overlay, evidenceRoot = overlay.evidenceRoot): { status: number | null; stdout: string; summary: Record<string, unknown>; summaryPath: string } {
   const result = spawnSync(process.execPath, [
     join(overlay.ts, 'scripts', 'sf-summary.ts'),
-    '--evidence-root', overlay.evidenceRoot,
+    '--evidence-root', evidenceRoot,
   ], {
     cwd: overlay.ts,
     encoding: 'utf8',
@@ -209,12 +226,63 @@ function runSfSummary(overlay: Overlay): { status: number | null; stdout: string
   })
   const match = /summary: (.+\.json)/.exec(result.stdout ?? '')
   assert.notEqual(match, null, `sf-summary 应输出 summary 路径,stdout=${result.stdout}`)
-  const summary = JSON.parse(readFileSync(match![1]!, 'utf8')) as Record<string, unknown>
-  return { status: result.status, stdout: result.stdout ?? '', summary }
+  const summaryPath = match![1]!
+  assert.equal(summaryPath.startsWith(`${join(evidenceRoot, 'sf-summary')}/`), true, 'sf-summary 输出必须落在传入 evidence root')
+  const summary = JSON.parse(readFileSync(summaryPath, 'utf8')) as Record<string, unknown>
+  return { status: result.status, stdout: result.stdout ?? '', summary, summaryPath }
 }
 
 function assertZeroNetwork(overlay: Overlay): void {
   assert.deepEqual(readLines(overlay.netCounter), [], '零网络断言失败:fetch 陷阱被触发')
+}
+
+function assertBatchArtifacts(overlay: Overlay, evidenceRoot = overlay.evidenceRoot): { raw: Record<string, unknown>; stem: string } {
+  const summaryDir = join(evidenceRoot, 'sf-summary')
+  const summaryFiles = readdirSync(summaryDir).filter((name) => name.endsWith('.json'))
+  assert.equal(summaryFiles.length, 1, `benchmark raw summary 应唯一,实际 ${summaryFiles.join(',')}`)
+  const summaryFile = summaryFiles[0]!
+  const stem = summaryFile.slice(0, -'.json'.length)
+  const identity = /^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/.exec(stem)
+  assert.notEqual(identity, null, 'benchmark raw summary 必须使用 canonical run filename')
+  const captureAt = `${identity![1]}:${identity![2]}:${identity![3]}.${identity![4]}Z`
+  const raw = JSON.parse(readFileSync(join(summaryDir, summaryFile), 'utf8')) as Record<string, unknown>
+  assert.equal(raw.started_at, captureAt, 'raw summary.started_at 必须与 canonical run filename 同一 run identity')
+  const rawRecords = raw.records as Array<Record<string, unknown>>
+  assert.equal(rawRecords.length, raw.total, 'raw summary total 必须与 records 一致')
+  assert.deepEqual(rawRecords.map((record) => record.query_id), raw.attempted_query_ids, 'raw summary records 必须按 attempted 顺序落账')
+
+  for (const queryId of raw.attempted_query_ids as string[]) {
+    const queryDir = join(evidenceRoot, queryId)
+    const files = readdirSync(queryDir).filter((name) => name.endsWith('.json'))
+    assert.deepEqual(files, [summaryFile], `${queryId} 必须使用同一 canonical run stem`)
+    const record = JSON.parse(readFileSync(join(queryDir, summaryFile), 'utf8')) as Record<string, unknown>
+    const rawRecord = rawRecords.find((candidate) => candidate.query_id === queryId)
+    assert.deepEqual(record, rawRecord, `${queryId} 文件必须与 raw summary.records 深相等`)
+  }
+  return { raw, stem }
+}
+
+function assertDefaultRootAbsent(overlay: Overlay): void {
+  assert.equal(existsSync(overlay.defaultEvidenceRoot), false, '显式 root 场景不得写入 HOME 默认 evidence root')
+}
+
+function assertExplicitRootAbsent(overlay: Overlay): void {
+  assert.equal(existsSync(overlay.evidenceRoot), false, '默认兼容场景不得创建显式 evidence root')
+}
+
+function assertRebuiltBatch(summary: Record<string, unknown>, raw: Record<string, unknown>, stem: string): void {
+  const selected = summary.selected_batch as { batch_id: string; identity_source: string; record_count: number; query_ids: string[] }
+  assert.equal(selected.batch_id, stem, 'sf-summary 必须回读 benchmark canonical filename batch')
+  assert.equal(selected.identity_source, 'canonical_filename')
+  assert.equal(selected.record_count, (raw.records as unknown[]).length)
+  assert.deepEqual(selected.query_ids, (raw.records as Array<Record<string, unknown>>).map((record) => record.query_id))
+  assert.equal((summary.records as Array<Record<string, unknown>>).length, selected.record_count)
+  for (const record of summary.records as Array<Record<string, unknown>>) assert.equal(record.batch_id, stem)
+}
+
+function cleanupOverlay(overlay: Overlay): void {
+  rmSync(overlay.base, { recursive: true, force: true })
+  assert.equal(existsSync(overlay.base), false, 'overlay 必须在场景结束时清理')
 }
 
 function scenario(name: string): Overlay {
@@ -227,9 +295,11 @@ function scenario(name: string): Overlay {
 {
   const overlay = scenario('first-challenge')
   try {
-    const run = runRunner(overlay, 'flyai', 'challenge@all')
+    const run = runRunner(overlay, 'flyai', 'challenge@all', 'equals-relative')
     assert.equal(run.status, 0, `挑战截断应正常收尾(exit 0),stderr=${run.stderr}`)
     assert.match(run.stdout, /stop reason: challenge_stop/)
+    const artifacts = assertBatchArtifacts(overlay)
+    assertDefaultRootAbsent(overlay)
     const sessionCalls = readLines(overlay.sessionCallCounter)
     assert.equal(sessionCalls.length, 1, `首条 challenged 后必须停止,期望 1 次 session 调用,实际 ${sessionCalls.length}`)
     const npxCalls = readLines(overlay.npxCounter)
@@ -246,7 +316,7 @@ function scenario(name: string): Overlay {
     assert.equal(record.doubleSource.state, 'challenge_stop')
     assert.equal(record.doubleSource.quota_disposition, 'no_spend_stop')
 
-    const summary = readRunSummary(overlay) as {
+    const summary = artifacts.raw as {
       total: number
       batch_complete: boolean
       stop_reason: string
@@ -266,9 +336,11 @@ function scenario(name: string): Overlay {
     assert.equal(sfSummary.summary.challenge_stop_detected, true)
     assert.equal(sfSummary.summary.total, 1)
     assert.equal((sfSummary.summary.missing_query_ids as string[]).length, 7)
+    assertRebuiltBatch(sfSummary.summary, artifacts.raw, artifacts.stem)
+    assertDefaultRootAbsent(overlay)
     console.log('A. 首条 challenge 截断 OK(1 次调用/comparator 1 次/fail_closed/challenge_stop 语义保留)')
   } finally {
-    rmSync(overlay.base, { recursive: true, force: true })
+    cleanupOverlay(overlay)
   }
 }
 
@@ -279,6 +351,8 @@ function scenario(name: string): Overlay {
     const run = runRunner(overlay, 'flyai', 'challenge@2')
     assert.equal(run.status, 0, `挑战截断应正常收尾(exit 0),stderr=${run.stderr}`)
     assert.match(run.stdout, /stop reason: challenge_stop/)
+    const artifacts = assertBatchArtifacts(overlay)
+    assertDefaultRootAbsent(overlay)
     const sessionCalls = readLines(overlay.sessionCallCounter)
     assert.equal(sessionCalls.length, 2, `中途 challenged 后必须停止,期望 2 次 session 调用,实际 ${sessionCalls.length}`)
     const npxCalls = readLines(overlay.npxCounter)
@@ -296,7 +370,7 @@ function scenario(name: string): Overlay {
     assert.equal(challengedRecord.doubleSource.quota_disposition, 'no_spend_stop')
     assert.equal(existsSync(join(overlay.evidenceRoot, 'sf-03')), false, '未尝试 query 不得产生证据')
 
-    const summary = readRunSummary(overlay) as {
+    const summary = artifacts.raw as {
       total: number
       batch_complete: boolean
       stop_reason: string
@@ -308,9 +382,12 @@ function scenario(name: string): Overlay {
     assert.equal(summary.stop_reason, 'challenge_stop')
     assert.deepEqual(summary.attempted_query_ids, ['sf-01', 'sf-02'])
     assert.deepEqual(summary.not_attempted_query_ids, EXPECTED_QUERY_IDS.slice(2))
+    const sfSummary = runSfSummary(overlay)
+    assertRebuiltBatch(sfSummary.summary, artifacts.raw, artifacts.stem)
+    assertDefaultRootAbsent(overlay)
     console.log('B. 中途 challenge 截断 OK(2 次调用;sf-01 hit 证据保留;sf-03 起零证据)')
   } finally {
-    rmSync(overlay.base, { recursive: true, force: true })
+    cleanupOverlay(overlay)
   }
 }
 
@@ -321,6 +398,8 @@ function scenario(name: string): Overlay {
     const run = runRunner(overlay, 'flyai', 'challenge@8')
     assert.equal(run.status, 0, `末条挑战应正常收尾(exit 0),stderr=${run.stderr}`)
     assert.match(run.stdout, /stop reason: challenge_stop/)
+    const artifacts = assertBatchArtifacts(overlay)
+    assertDefaultRootAbsent(overlay)
     assert.match(run.stdout, /attempted=\[sf-01,sf-02,sf-03,sf-04,sf-05,sf-06,sf-07,sf-08\]/)
     assert.match(run.stdout, /not_attempted=\[\]/)
     assert.equal(readLines(overlay.sessionCallCounter).length, 8, '末条 challenged 后 session 应恰调用 8 次')
@@ -337,7 +416,7 @@ function scenario(name: string): Overlay {
     assert.equal(challengedRecord.doubleSource.state, 'challenge_stop')
     assert.equal(challengedRecord.doubleSource.quota_disposition, 'no_spend_stop')
 
-    const summary = readRunSummary(overlay) as {
+    const summary = artifacts.raw as {
       total: number
       batch_complete: boolean
       stop_reason: string
@@ -357,9 +436,11 @@ function scenario(name: string): Overlay {
     assert.deepEqual(sfSummary.summary.missing_query_ids, [])
     assert.equal(sfSummary.summary.challenge_stop_detected, true)
     assert.ok((sfSummary.summary.errors as string[]).some((error) => error.includes('challenge/guard stop evidence')))
+    assertRebuiltBatch(sfSummary.summary, artifacts.raw, artifacts.stem)
+    assertDefaultRootAbsent(overlay)
     console.log('C. 末条 challenge 截断 OK(8 条证据/0 未尝试/8+8 请求/fail_closed)')
   } finally {
-    rmSync(overlay.base, { recursive: true, force: true })
+    cleanupOverlay(overlay)
   }
 }
 
@@ -370,12 +451,14 @@ function scenario(name: string): Overlay {
     const run = runRunner(overlay, 'manual', 'hit@all')
     assert.equal(run.status, 0, `普通批次应跑满,stderr=${run.stderr}`)
     assert.match(run.stdout, /stop reason: completed/)
+    const artifacts = assertBatchArtifacts(overlay)
+    assertDefaultRootAbsent(overlay)
     const sessionCalls = readLines(overlay.sessionCallCounter)
     assert.equal(sessionCalls.length, 8, `普通批次应完整跑 8 条,实际 ${sessionCalls.length}`)
     assert.equal(readLines(overlay.npxCounter).length, 0, 'manual golden 不经 comparator 进程')
     assertZeroNetwork(overlay)
 
-    const summary = readRunSummary(overlay) as {
+    const summary = artifacts.raw as {
       total: number
       batch_complete: boolean
       stop_reason: string
@@ -393,10 +476,37 @@ function scenario(name: string): Overlay {
     assert.equal(sfSummary.summary.status, 'ok')
     assert.equal(sfSummary.summary.total, 8)
     assert.equal(sfSummary.summary.challenge_stop_detected, false)
+    assertRebuiltBatch(sfSummary.summary, artifacts.raw, artifacts.stem)
+    assertDefaultRootAbsent(overlay)
     console.log('D. 普通八条批次保留 OK(sf-summary 仍 ok/完整)')
   } finally {
-    rmSync(overlay.base, { recursive: true, force: true })
+    cleanupOverlay(overlay)
   }
 }
 
-console.log('\nSF LIVE CHALLENGE STOP TESTS: 4 scenarios OK (first-challenge / mid-challenge / last-challenge / normal-batch; offline, temp roots, request counts asserted)')
+// ── E. 默认目录兼容：仅允许写入隔离 HOME，不得触碰显式 root ──
+{
+  const overlay = scenario('default-root-compat')
+  try {
+    const run = runRunner(overlay, 'manual', 'hit@all', 'default')
+    assert.equal(run.status, 0, `默认 root 批次应跑满,stderr=${run.stderr}`)
+    assert.match(run.stdout, /stop reason: completed/)
+    assert.equal(readLines(overlay.sessionCallCounter).length, 8, '默认路径保持完整八条查询')
+    assert.equal(readLines(overlay.npxCounter).length, 0, 'manual golden 不调用外部 comparator')
+    assertZeroNetwork(overlay)
+    const artifacts = assertBatchArtifacts(overlay, overlay.defaultEvidenceRoot)
+    assert.equal(existsSync(overlay.defaultEvidenceRoot), true)
+    assertExplicitRootAbsent(overlay)
+
+    const sfSummary = runSfSummary(overlay, overlay.defaultEvidenceRoot)
+    assert.equal(sfSummary.status, 0, `默认 root summary 应保持 ok,stdout=${sfSummary.stdout}`)
+    assert.equal(sfSummary.summary.status, 'ok')
+    assertRebuiltBatch(sfSummary.summary, artifacts.raw, artifacts.stem)
+    assertExplicitRootAbsent(overlay)
+    console.log('E. 默认 root 兼容 OK(仅临时 HOME/显式 root 未创建)')
+  } finally {
+    cleanupOverlay(overlay)
+  }
+}
+
+console.log('\nSF LIVE CHALLENGE STOP TESTS: 5 scenarios OK (first-challenge / mid-challenge / last-challenge / normal-batch / default-root-compat; offline, explicit roots, request counts and summary readback asserted)')

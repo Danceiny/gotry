@@ -12,7 +12,8 @@
  * 与 ts/scripts/session-benchmark.ts 的关系:session-benchmark.ts 是离线 fixture 自测
  * (13/18 字段黄金 + 双源合同纯函数断言);sf-live-benchmark.ts 是真网络真扩展端到端。
  *
- * evidence 落盘:~/.gotry/evidence/session/sf-XX/<ISO ts>.json(issue #21/#67 私有证据)
+ * evidence 落盘:--evidence-root PATH/sf-XX/<ISO ts>.json;默认 ~/.gotry/evidence/session。
+ * 自动化测试必须显式传入隔离目录;--help 查看用法(issue #503)。
  *
  * 挑战红线(RFC §3.5,issue #411):任一 query 的 session verdict=challenged
  * (或双源 state=challenge_stop/guard_violation)即停止本批后续查询——不重试、
@@ -29,7 +30,7 @@
 
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { homedir } from 'node:os'
+import { parseSfLiveOptions, SF_LIVE_HELP } from './sf-live-options.ts'
 
 import {
   evaluateDoubleSource,
@@ -40,7 +41,6 @@ import { sessionFlightSearch, type SessionSearchResult } from '../capabilities/s
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import {
   loadStaticFlightSnapshot,
-  parseGoldenSource,
   resolveStaticGolden,
   type GoldenSource,
   type StaticFlightSnapshot,
@@ -346,7 +346,13 @@ async function runOne(
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
-  const requestedSource = parseGoldenSource(args)
+  const { evidenceRoot, source: requestedSource, help } = parseSfLiveOptions(args)
+  if (help) {
+    console.log(SF_LIVE_HELP)
+    return
+  }
+  // Fail before supplier calls if the destination cannot be created (e.g. a file).
+  mkdirSync(evidenceRoot, { recursive: true })
   const queries = loadFlightQueries()
   if (queries.length < 8) {
     console.error(`金标准 sf-* 不足 8 条(实际 ${queries.length})`)
@@ -367,6 +373,7 @@ async function main(): Promise<void> {
       ? 'flyai (FlyAI 官方)'
       : 'static (OpenFlights route/carrier + manual time/price band,估算字段显式标注)'
   console.log(`[sf-live-benchmark] requested official source = ${sourceDescription}`)
+  console.log(`[sf-live-benchmark] evidence root = ${evidenceRoot}`)
   console.log(`[sf-live-benchmark] 阈值:字段准确率 ≥${SESSION_FIELD_ACCURACY_THRESHOLD * 100}%(软命中)`)
 
   const runStartedAt = new Date().toISOString()
@@ -380,7 +387,7 @@ async function main(): Promise<void> {
     const rec = await runOne(q, requestedSource, manifest, staticContext)
     records.push(rec)
     attemptedQueryIds.push(q.id)
-    const evPath = join(homedir(), '.gotry', 'evidence', 'session', q.id, `${runStartedAt.replace(/[:.]/g, '-')}.json`)
+    const evPath = join(evidenceRoot, q.id, `${runStartedAt.replace(/[:.]/g, '-')}.json`)
     mkdirSync(dirname(evPath), { recursive: true })
     writeFileSync(evPath, JSON.stringify(rec, null, 2))
     console.log(`  official(requested=${rec.requested_source},effective=${rec.effective_source}): verdict=${rec.official?.verdict ?? '-'} latency=${rec.officialLatencyMs ?? 0}ms${rec.fallback_reason ? ` fallback=${rec.fallback_reason}` : ''}`)
@@ -438,7 +445,7 @@ async function main(): Promise<void> {
     records,
   }
 
-  const summaryPath = join(homedir(), '.gotry', 'evidence', 'session', 'sf-summary', `${runStartedAt.replace(/[:.]/g, '-')}.json`)
+  const summaryPath = join(evidenceRoot, 'sf-summary', `${runStartedAt.replace(/[:.]/g, '-')}.json`)
   mkdirSync(dirname(summaryPath), { recursive: true })
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2))
 
