@@ -14,10 +14,10 @@ function reply(value: unknown): void {
 async function handle(request: Request): Promise<void> {
   try {
     harness ??= new DeepSeekHarness((request.options ?? {}) as DeepSeekHarnessOptions)
-    // The first harness construction loads the profile, patches and plugins —
-    // the dominant share of a cold first turn. A warmup request pays that
-    // boot cost without consuming a provider call.
+    // Construction is lazy. Only start() spawns the runtime and awaits its
+    // initialize handshake, including the profile, patches and plugins.
     if (request.warmup) {
+      await harness.start()
       reply({ id: request.id, ok: true })
       return
     }
@@ -34,7 +34,7 @@ async function handle(request: Request): Promise<void> {
   } catch {
     // Raw SDK/provider exceptions may contain URLs, model output or request
     // fragments. Only a closed classification crosses the worker protocol.
-    reply({ id: request.id, ok: false, error: harness ? 'HARNESS_RUN_FAILED' : 'HARNESS_START_FAILED' })
+    reply({ id: request.id, ok: false, error: request.warmup || !harness ? 'HARNESS_START_FAILED' : 'HARNESS_RUN_FAILED' })
   }
 }
 
