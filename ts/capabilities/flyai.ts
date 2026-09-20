@@ -123,6 +123,8 @@ export interface FlyaiQuery {
   // ── marriott-hotel only ──
   hotelBrands?: string
   hotelName?: string
+  /** 万豪套餐的省份或城市筛选。 */
+  provinceOrCity?: string
 
   // ── 运行面 ──
   /** 默认 30_000 ms(npx 冷启动 + 远端检索) */
@@ -768,13 +770,16 @@ function buildCliArgs(q: FlyaiQuery): { args?: string[]; error?: string } {
       if (!(q.query ?? '').trim()) return { error: 'query(完整自然语言)required' }
       return { args: ['ai-search', '--query', q.query!.trim()] }
     case 'marriott-package': {
-      if (!(q.keyword ?? '').trim()) return { error: 'keyword(省/市/品牌/酒店名/卖点 单维度)required' }
+      if (![q.keyword, q.hotelName, q.provinceOrCity].some(value => value?.trim())) return { error: 'keyword/hotelName/provinceOrCity 至少填写一项' }
       if (q.sortType && !MARRIOTT_PACKAGE_SORTS.includes(q.sortType)) {
         return { error: `sortType 仅接受 ${MARRIOTT_PACKAGE_SORTS.join('/')}` }
       }
       return {
         args: [
-          'search-marriott-package', '--keyword', q.keyword!.trim(),
+          'search-marriott-package',
+          ...(q.keyword?.trim() ? ['--keyword', q.keyword.trim()] : []),
+          ...(q.hotelName?.trim() ? ['--hotel-name', q.hotelName.trim()] : []),
+          ...(q.provinceOrCity?.trim() ? ['--province-or-city', q.provinceOrCity.trim()] : []),
           ...(q.sortType ? ['--sort-type', q.sortType] : []),
         ],
       }

@@ -65,7 +65,7 @@ const allCalls = [
   { id: 'flyai-keyword', args: { kind: 'keyword', query: '杭州西湖' } },
   { id: 'flyai-ai', args: { kind: 'ai', query: '杭州周末旅行建议' } },
   { id: 'flyai-marriott-hotel', args: { kind: 'marriott-hotel', to: '杭州', checkIn: fixtureDates.checkIn, checkOut: fixtureDates.checkOut, keyWords: '万豪,杭州万豪' } },
-  { id: 'flyai-marriott-package', args: { kind: 'marriott-package', keyword: '杭州', sortType: 'price_asc' } },
+  { id: 'flyai-marriott-package', args: { kind: 'marriott-package', keyword: '杭州', hotelName: '万豪', provinceOrCity: '浙江', sortType: 'price_asc' } },
 ];
 
 const successTransport = (command) => ({
@@ -433,6 +433,7 @@ async function runCase(scenario) {
     assert.ok(byKind.get('marriott-hotel').args.includes('--key-words') && byKind.get('marriott-hotel').args.includes('万豪,杭州万豪'));
     assert.ok(byKind.get('marriott-package').args.includes('--keyword') && byKind.get('marriott-package').args.includes('杭州'));
     assert.ok(byKind.get('marriott-package').args.includes('--sort-type') && byKind.get('marriott-package').args.includes('price_asc'));
+    assert.ok(byKind.get('marriott-package').args.includes('--hotel-name') && byKind.get('marriott-package').args.includes('--province-or-city'));
     assert.match(relayText, /¥1xx/);
     assert.match(relayText, /fixture\.invalid\/search-hotel\/jump/);
     assert.match(relayText, /fixture observation/);
@@ -445,6 +446,7 @@ async function runCase(scenario) {
         assert.ok(observation.options?.[0]?.no && observation.options?.[0]?.jumpUrl);
         assert.equal(observation.options[0].price, 500);
         assert.equal(observation.options[0].nonstop, false);
+        assert.match(observation.summary, /中转 E2E521-A→E2E521-B/);
         assert.equal(observation.options[0].segments?.length, 2);
         assert.equal(observation.options[0].segments?.[0]?.arrStation, '中转机场');
         assert.equal(observation.options[0].segments?.[1]?.arrStation, '杭州东站');

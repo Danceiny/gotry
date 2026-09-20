@@ -297,6 +297,7 @@ function flyaiToolQuery(args: FlyaiToolArgs, signal?: AbortSignal): { query?: Fl
   putText(query, 'query', args, 'query')
   putText(query, 'hotelBrands', args, 'hotelBrands')
   putText(query, 'hotelName', args, 'hotelName')
+  putText(query, 'provinceOrCity', args, 'provinceOrCity')
   putNumber(query, 'timeoutMs', args, 'timeoutMs')
   if (signal) query.signal = signal
 
@@ -373,7 +374,7 @@ function flyaiToolQuery(args: FlyaiToolArgs, signal?: AbortSignal): { query?: Fl
   }
   if (kind === 'poi' && !query.cityName?.trim()) return { error: 'kind=poi 需要 cityName（景点所在城市）' }
   if ((kind === 'keyword' || kind === 'ai') && !query.query?.trim()) return { error: `kind=${kind} 需要 query` }
-  if (kind === 'marriott-package' && !query.keyword?.trim()) return { error: 'kind=marriott-package 需要 keyword' }
+  if (kind === 'marriott-package' && ![query.keyword, query.hotelName, query.provinceOrCity].some(value => value?.trim())) return { error: 'kind=marriott-package 需要 keyword/hotelName/provinceOrCity 至少一项' }
   return { query }
 }
 
@@ -385,7 +386,9 @@ function flyaiToolSummary(query: FlyaiQuery, result: FlyaiResult): string {
   const lines: string[] = []
   if (query.kind === 'flight' || query.kind === 'train') {
     for (const option of (result.options ?? []).slice(0, 8)) {
-      lines.push(`${option.no} ${option.name} ${option.depDateTime.slice(0, 16)}→${option.arrDateTime.slice(0, 16)} ${price(option.priceRaw, option.price)}${option.jumpUrl ? ` · ${option.jumpUrl}` : ''}`)
+      const route = option.nonstop === false ? '中转' : option.nonstop === true ? '直达' : '路线待确认'
+      const services = option.segments?.map(segment => segment.no).join('→') || option.no
+      lines.push(`${route} ${services} ${option.name} ${option.depDateTime.slice(0, 16)}→${option.arrDateTime.slice(0, 16)} ${price(option.priceRaw, option.price)}${option.jumpUrl ? ` · ${option.jumpUrl}` : ''}`)
     }
   } else if (query.kind === 'hotel' || query.kind === 'marriott-hotel') {
     for (const option of (result.hotels ?? []).slice(0, 8)) {
@@ -1466,7 +1469,8 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       category: { type: 'string', enum: [...FLYAI_POI_CATEGORIES], description: '景点官方闭集类别' },
       query: { type: 'string', description: 'keyword/ai 的查询词' },
       hotelBrands: { type: 'string', description: 'kind=marriott-hotel 的品牌关键词（与 hotelName 合并为官方 --key-words）' },
-      hotelName: { type: 'string', description: 'kind=marriott-hotel 的酒店名（与 hotelBrands 合并为官方 --key-words）' },
+      hotelName: { type: 'string', description: '万豪酒店名；marriott-hotel 合并为 --key-words，marriott-package 使用 --hotel-name' },
+      provinceOrCity: { type: 'string', description: '万豪套餐的省份或城市；与 keyword/hotelName 至少填写一项' },
       timeoutMs: { type: 'integer', description: '本次查询本地超时毫秒' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },

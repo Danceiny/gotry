@@ -20,7 +20,7 @@ The adapter uses the public MIT-licensed `@fly-ai/flyai-cli@1.0.16`. This is tec
 | keyword | keyword-search | Query |
 | ai | ai-search | Natural-language query; preserve data without inventing inventory facts |
 | marriott-hotel | search-marriott-hotel | Destination, dates, brands, name, beds, price and sorting |
-| marriott-package | search-marriott-package | Keyword and price sorting |
+| marriott-package | search-marriott-package | Keyword, hotel name, province/city and price sorting |
 
 For `marriott-hotel`, `destName` maps to `--dest-name`; `hotelBrands` and `hotelName` are merged with `keyWords` into the CLI's single `--key-words` value, while bed, date, max-price and sort filters use their dedicated flags. The generic `hotelTypes` and `hotelStars` filters are rejected for this kind. For `marriott-package`, `keyword` maps to the single `--keyword` dimension and `sortType` is limited to `price_asc` or `price_desc`.
 
