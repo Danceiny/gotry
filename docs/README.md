@@ -170,6 +170,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [evaluation/parallel-search-perf-report.md](evaluation/parallel-search-perf-report.md) | Installed-product parallel search measurements and outstanding #519 acceptance gaps |
 | [evaluation/flyai-supplier-acceptance-report.md](evaluation/flyai-supplier-acceptance-report.md) | FlyAI installed-product E2E, official response observations and acceptance limits |
 | [evaluation/flyai-process-report.md](evaluation/flyai-process-report.md) | FlyAI local process termination: original exit -1 failure boundary, misclassification repair and regression lock (#514) |
+| [evaluation/flyai-drain-bounded-report.md](evaluation/flyai-drain-bounded-report.md) | FlyAI stderr drain after main exit: shared spawn-bounded ownership, drain-timeout fail-closed classification and regression lock (#516) |
 | [evaluation/evaluation-foundation.md](evaluation/evaluation-foundation.md) | Evaluation Phase 0: contracts/registries/admission & boundary statements |
 | [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.md) | External benchmark bridge: Phase 1 seam and per-turn engineering ledger |
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.md) | dsh e2e end-to-end real-LLM verification records (continuously updated) |

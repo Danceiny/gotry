@@ -16,6 +16,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { readdirSync } from 'node:fs'
 import { mkdir, readFile, writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -250,6 +251,107 @@ assert.equal((staleQuotaOutcome.result as { localTermination?: string } | null)?
 assert.equal((staleQuotaOutcome.result as { retryable?: boolean } | null)?.retryable, false)
 assert.equal((staleQuotaOutcome.result as { setup?: string } | null)?.setup, undefined, '终止不得生成额度补配指引')
 console.log('1c. exit23/no-text、deadline、signal、spawn、empty-exit、stale-429-termination 均 fail-closed 单次 OK')
+
+// #516: 主进程正常退出后,持有 stderr 管道且不退出的后代不得让调用无界挂起。
+// 进程组边界统一复用 spawn-bounded(与 hbcli/anything 同策略):主进程 exit 后
+// 最多等 drainMs,到点杀组、drain-timeout fail-closed——主进程退出原因(code 0)
+// 与 drain 超时区分开,不完整收集绝不写成 hit/miss 库存事实。
+const drainPayload = JSON.stringify({
+  data: {
+    itemList: [{
+      journeys: [{ segments: [{
+        marketingTransportNo: '9C6617', marketingTransportName: '吉祥航空',
+        depDateTime: '2026-10-01 07:55', arrDateTime: '2026-10-01 11:20',
+        depStationName: '浦东T2', arrStationName: '丽江三义', duration: 205,
+      }] }],
+      ticketPrice: '580',
+      jumpUrl: 'https://www.fliggy.com/demo',
+    }],
+  },
+})
+function drainHolderCli(name: string, holderSpec: string, stdout: string, stderrExtra: string): string {
+  return [
+    '#!/bin/sh',
+    `${holderSpec} &`,
+    `echo $! > '${join(tmp, `${name}.holder.pid`)}'`,
+    "printf '%s\\n' 'descendant still holds stderr' >&2",
+    ...(stderrExtra ? ["printf '%s\\n' " + shellQuote(stderrExtra) + " >&2"] : []),
+    `printf '%s\\n' ${shellQuote(stdout)}`,
+    'exit 0',
+    '',
+  ].join('\n')
+}
+async function holderPid(name: string): Promise<number> {
+  const text = await readFile(join(tmp, `${name}.holder.pid`), 'utf8')
+  return Number(text.trim())
+}
+async function waitForPidGone(pid: number, boundMs: number): Promise<boolean> {
+  const deadline = Date.now() + boundMs
+  for (;;) {
+    try { process.kill(pid, 0) } catch { return true }
+    if (Date.now() >= deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+const tmpdirBeforeDrain = readdirSync(tmpdir()).filter(f => f.startsWith('gotry-flyai-')).length
+
+// 1d-1: drain 超时(真实注册工具入口)——有效 hit 载荷 + 后代持管道不退 →
+// 有界返回 drain-timeout error、零库存事实、后代被杀(读回证明)。
+const drainStateRoot = await mkdtemp(join(tmpdir(), 'flyai-516-registered-state-'))
+const drainTools: RegisteredFlyaiTool[] = []
+const drainContext = {
+  tools: { register: (tool: unknown) => drainTools.push(tool as RegisteredFlyaiTool) },
+  systemPrompt: { variable: () => {} }, on: () => () => {}, get: () => undefined,
+} as unknown as Context
+let drainCli = ''
+const drainBreakers = new Map()
+const drainEffect = makeProductionInterpreter({
+  breakers: drainBreakers, sleep: async () => {},
+  handlers: { FLYAI_SEARCH: async (params: unknown) => flyaiSearch({ ...(params as FlyaiQuery), cliBin: drainCli, timeoutMs: 10_000, drainMs: 600 }) },
+})
+apply(drainContext, { ...isolatedConfig, stateRoot: drainStateRoot, timeoutMs: 10_000 }, { effect: drainEffect as never })
+const drainTool = drainTools.find(tool => tool.name === 'gotry_flyai_search')
+assert.ok(drainTool, '#516 应沿 registered tool 执行')
+
+drainCli = join(tmp, 'flyai-516-drain-timeout')
+await writeFile(drainCli, drainHolderCli('flyai-516-drain-timeout', 'sleep 30', drainPayload, ''), { mode: 0o755 })
+const drainStarted = Date.now()
+const drainResult = await drainTool!.execute({ kind: 'flight', from: '上海', to: '丽江', date: '2027-05-01' }, null) as Record<string, unknown>
+const drainElapsed = Date.now() - drainStarted
+assert.equal(drainResult.ok, false, 'drain 超时不得报告成功')
+assert.equal(drainResult.verdict, 'error', `drain 超时应判 error,实际 ${String(drainResult.verdict)}`)
+assert.equal(drainResult.localTermination, 'drain-timeout', 'drain 超时须与主进程退出原因区分')
+assert.equal(drainResult.retryable, false, 'drain 超时不可重试')
+assert.equal(drainResult.options, undefined, '不完整收集不得暴露 options')
+assert.match(String(drainResult.evidence ?? ''), /drain-timeout/, 'evidence 标注 drain-timeout')
+assert.ok(drainElapsed >= 600 && drainElapsed < 3_500, `drain 超时应有界(600ms 窗口),实际 ${drainElapsed}ms`)
+assert.equal((await loadFactRegistry(drainStateRoot)).length, 0, 'drain 超时不得写入库存 facts')
+assert.ok(await waitForPidGone(await holderPid('flyai-516-drain-timeout'), 2_000), '整组 SIGKILL 后持有者后代须已死(读回)')
+drainBreakers.clear()
+
+// 1d-2: 终止分类先于 HTTP 文本——drain 超时携带陈旧 429 文本不得判 needs-setup。
+drainCli = join(tmp, 'flyai-516-drain-stale-429')
+await writeFile(drainCli, drainHolderCli('flyai-516-drain-stale-429', 'sleep 30', drainPayload, 'MCP HTTP 429 Trial limit reached'), { mode: 0o755 })
+const drainStale = await processEffectCase(drainCli, { drainMs: 600, timeoutMs: 10_000 })
+assert.equal(drainStale.trace.attempts, 1, 'drain 超时只能执行一次')
+assert.equal((drainStale.result as { verdict?: string } | null)?.verdict, 'error', 'drain 超时不得沿用 429 额度分类')
+assert.equal((drainStale.result as { localTermination?: string } | null)?.localTermination, 'drain-timeout')
+assert.equal((drainStale.result as { setup?: string } | null)?.setup, undefined, 'drain 超时不得生成额度补配指引')
+
+// 1d-3: drain 窗口内释放(后代短暂持管道后自行退出)→ 正常 exit 0 语义保持 hit。
+drainCli = join(tmp, 'flyai-516-drain-within-window')
+await writeFile(drainCli, drainHolderCli('flyai-516-drain-within-window', 'sleep 0.2', drainPayload, ''), { mode: 0o755 })
+const withinStarted = Date.now()
+const withinResult = await drainTool!.execute({ kind: 'flight', from: '上海', to: '丽江', date: '2027-05-02' }, null) as Record<string, unknown>
+const withinElapsed = Date.now() - withinStarted
+assert.equal(withinResult.ok, true, '窗口内释放应保持正常成功')
+assert.equal(withinResult.verdict, 'hit', `窗口内释放应判 hit,实际 ${String(withinResult.verdict)}`)
+assert.ok(withinElapsed < 5_000, `正常 exit + 短暂 drain 应有界,实际 ${withinElapsed}ms`)
+assert.equal((await loadFactRegistry(drainStateRoot)).length, 1, 'hit 照常落 typed positive fact')
+await rm(drainStateRoot, { recursive: true, force: true })
+const tmpdirAfterDrain = readdirSync(tmpdir()).filter(f => f.startsWith('gotry-flyai-')).length
+assert.equal(tmpdirAfterDrain, tmpdirBeforeDrain, 'drain 路径不得泄漏 stdout 临时文件')
+console.log('1d. 持管道后代:drain 超时有界 fail-closed(零事实+读回杀净)/陈旧 429 不改判/窗口内释放保持 hit OK')
 
 // 1. Sentinel 限流:合法 JSON 的非业务形状 → error(不是静默 miss)
 const sentinelBin = await fakeCli('flyai-sentinel', 0, '{"message":"SentinelBlockException: flow control"}')

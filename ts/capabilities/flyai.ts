@@ -18,8 +18,10 @@
  *   - 永不抛错:网络/超时/解析失败一律降级为结构化 verdict;
  *   - 证据链:成功 [实时API:flyai@ts];失败 [实时API:flyai@error@ts];
  *   - key 解析/endpoint 覆盖口径与官方 CLI 同源(flyai-config.ts);
- *   - 子进程资源有界:独立进程组,主进程退出后 stderr drain 最多等
- *     drainMs(默认 3s),随后杀残留后代并返回——不被持管道的后代挂死。
+ *   - 子进程资源有界:进程组边界统一复用 spawn-bounded.ts(与 hbcli/anything
+ *     同策略),主进程退出后 stderr drain 最多等 drainMs(默认 3s),随后杀残留
+ *     后代并以 drain-timeout fail-closed 返回——不被持管道的后代挂死,也不把
+ *     不完整收集写成成功库存事实。
  *
  * 故障闭集(verdict):
  *   hit / miss / auth-error(401)/ forbidden(403)/
@@ -27,11 +29,11 @@
  *   timeout / error(网络/Sentinel/malformed)。
  */
 
-import { spawn } from 'node:child_process'
 import { closeSync, openSync, readFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveFlyaiEndpoint, resolveFlyaiKey, type FlyaiKeySource } from './flyai-config.ts'
+import { spawnBounded } from './spawn-bounded.ts'
 
 export type FlyaiKind =
   | 'flight'
@@ -55,7 +57,7 @@ export type FlyaiVerdict =
   | 'cancelled'
 
 /** 本机子进程生命周期终止；它不是可重试的上游故障。 */
-export type FlyaiLocalTermination = 'deadline' | 'signal' | 'spawn' | 'empty-exit'
+export type FlyaiLocalTermination = 'deadline' | 'signal' | 'spawn' | 'empty-exit' | 'drain-timeout'
 
 export interface FlyaiQuery {
   kind: FlyaiKind
@@ -129,6 +131,8 @@ export interface FlyaiQuery {
   // ── 运行面 ──
   /** 默认 30_000 ms(npx 冷启动 + 远端检索) */
   timeoutMs?: number
+  /** 主进程 exit 后等待 stderr 管道释放的上限(默认 3_000 ms);超时杀组并 fail-closed */
+  drainMs?: number
   /** 显式 CLI bin/命令(默认 npx;测试注入假脚本) */
   cliBin?: string
   /** cliBin 之后的前缀参数(默认 ['-y','@fly-ai/flyai-cli']) */
@@ -514,10 +518,10 @@ function safeFlyaiResult<T extends FlyaiResult>(result: T, sensitive: FlyaiSensi
  * 子进程 stdout 走临时文件而非管道(issue #84):管道在 CLI 异步写后
  * 立即 exit 时丢尾部(实测截断 ~7.6KB,exit=0 静默);文件无此问题。
  *
- * 资源边界(#516 关切;本文件内的有界实现,#516 是否验收归其 owner):
- *   - POSIX detached 独立进程组,超时/drain 超时杀整组;
- *   - 主进程 exit 后给后代 drainMs(默认 3000ms)释放 stderr;
- *     到点 close 仍未发生则杀组、按文件已有内容返回并标 drainTimedOut。
+ * 资源边界(#516):进程组/清理策略统一复用 capabilities/spawn-bounded.ts
+ * (与 hbcli/anything 同一进程树边界),本函数只叠加 flyai 特有的
+ * 文件 stdout 收集与本地终止分类——主进程 exit 后 stderr drain 最多等
+ * drainMs(默认 3s),超时杀组、drainTimedOut 结算,不写成成功事实。
  */
 function sh(
   cmd: string,
@@ -531,18 +535,6 @@ function sh(
 
   const outFile = join(tmpdir(), `gotry-flyai-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.out`)
   const outFd = openSync(outFile, 'w')
-  const child = spawn(cmd, args, {
-    env: opts.env ?? process.env,
-    cwd: process.cwd(),
-    stdio: ['ignore', outFd, 'pipe'],
-    detached: process.platform !== 'win32',
-  })
-  let stderr = ''
-  let error: string | undefined
-  let timedOut = false
-  let cancelled = false
-  let localTermination: FlyaiLocalTermination | undefined
-  let settled = false
 
   const readOut = (): string => {
     try { return readFileSync(outFile, 'utf8') } catch { return '' }
@@ -551,78 +543,41 @@ function sh(
     try { closeSync(outFd) } catch { /* ignore */ }
     try { unlinkSync(outFile) } catch { /* ignore */ }
   }
-  const killGroup = (signal: NodeJS.Signals): void => {
-    if (process.platform !== 'win32' && child.pid) {
-      try { process.kill(-child.pid, signal); return } catch { /* fall through */ }
+
+  return spawnBounded(cmd, args, {
+    env: opts.env ?? process.env,
+    cwd: process.cwd(),
+    timeoutMs: opts.timeoutMs,
+    signal: opts.signal,
+    stdoutFd: outFd,
+    drainMs: opts.drainMs ?? 3_000,
+  }).then((r): ShResult => {
+    // 必须先读出 stdout 再清理:closeSync 之后文件即删除,
+    // 先 cleanup 会把成功响应(含空 itemList miss)读成空串。
+    const stdout = readOut()
+    cleanupFile()
+    const localTermination: FlyaiLocalTermination | undefined = r.aborted
+      ? 'signal'
+      : r.timedOut
+        ? 'deadline'
+        : r.drainTimedOut
+          ? 'drain-timeout'
+          : r.error
+            ? 'spawn'
+            : r.signal
+              ? 'empty-exit'
+              : undefined
+    return {
+      code: r.code ?? -1,
+      stdout,
+      stderr: r.stderr,
+      ...(r.signal !== null && r.signal !== undefined ? { signal: r.signal } : {}),
+      ...(r.error ? { error: r.error } : {}),
+      ...(r.timedOut ? { timedOut: true } : {}),
+      ...(r.drainTimedOut ? { drainTimedOut: true } : {}),
+      ...(r.aborted ? { cancelled: true } : {}),
+      ...(localTermination ? { localTermination } : {}),
     }
-    try { child.kill(signal) } catch { /* ignore */ }
-  }
-
-  // 在途取消:杀整个进程组(不是只杀父 PID——wrapper 的实际子进程/后代
-  // 都要覆盖);由 close 收敛为 cancelled,绝不改写成 hit/miss。
-  const onAbort = (): void => {
-    cancelled = true
-    localTermination = 'signal'
-    killGroup('SIGKILL')
-  }
-  opts.signal?.addEventListener('abort', onAbort, { once: true })
-
-  return new Promise<ShResult>((resolve) => {
-    let exitCode = -1
-    let exitSignal: NodeJS.Signals | null = null
-    let mainExited = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      localTermination = 'deadline'
-      killGroup('SIGKILL')
-    }, opts.timeoutMs)
-    let drainTimer: NodeJS.Timeout
-    const armDrainTimer = (): void => {
-      clearTimeout(drainTimer)
-      drainTimer = setTimeout(() => {
-        killGroup('SIGKILL')
-        finish({ timedOut, drainTimedOut: true })
-      }, opts.drainMs ?? 3_000)
-    }
-
-    const finish = (extra: Partial<ShResult>): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      clearTimeout(drainTimer)
-      opts.signal?.removeEventListener('abort', onAbort)
-      // 必须先读出 stdout 再清理:closeSync 之后文件即删除,
-      // 先 cleanup 会把成功响应(含空 itemList miss)读成空串。
-      const stdout = readOut()
-      cleanupFile()
-      resolve({
-        code: exitCode, stdout, stderr,
-        ...(exitSignal ? { signal: exitSignal } : {}),
-        ...(error ? { error } : {}),
-        ...(cancelled ? { cancelled: true } : {}),
-        ...(localTermination ? { localTermination } : {}),
-        ...extra,
-      })
-    }
-
-    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
-    child.on('error', (e) => {
-      error = (e as Error).message.slice(0, 200)
-      if (!cancelled && !timedOut) localTermination = 'spawn'
-    })
-    child.on('exit', (code, signal) => {
-      exitCode = code ?? -1
-      exitSignal = signal
-      if (signal && !cancelled && !timedOut && !error) localTermination = 'empty-exit'
-      mainExited = true
-      armDrainTimer()
-    })
-    child.on('close', (code) => {
-      exitCode = code ?? exitCode
-      if (exitCode < 0 && !cancelled && !timedOut && !error) localTermination = 'empty-exit'
-      void mainExited
-      finish({ timedOut })
-    })
   })
 }
 
@@ -640,7 +595,9 @@ function localTerminationResult(
       ? `进程收到本机取消信号${r.signal ? `(${r.signal})` : ''}`
       : termination === 'deadline'
         ? '达到本地 deadline'
-        : '进程退出但未返回可判定结果'
+        : termination === 'drain-timeout'
+          ? `主进程已退出(code ${r.code})但持有 stderr 的后代在 drain 时限内未释放,整组已终止——结果收集不完整`
+          : '进程退出但未返回可判定结果'
   return {
     kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'error',
     retryable: false, localTermination: termination,
@@ -808,6 +765,7 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   const prefix = q.cliPrefixArgs ?? ['-y', '@fly-ai/flyai-cli@1.0.16']
   const r = await sh(q.cliBin ?? 'npx', [...prefix, ...built.args!], {
     timeoutMs: q.timeoutMs ?? 30_000,
+    drainMs: q.drainMs,
     signal: q.signal,
   })
   const latencyMs = Date.now() - started

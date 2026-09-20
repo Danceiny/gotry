@@ -1,5 +1,5 @@
 /**
- * 有界进程树 spawn(shared by hbcli.ts / anything.ts)。
+ * 有界进程树 spawn(shared by hbcli.ts / anything.ts / flyai.ts)。
  *
  * 契约:
  *   - pre-aborted signal → 零 spawn,直接返回 aborted;
@@ -11,6 +11,11 @@
  *     更强证明，必须按自身已知 PID/进程组做读回。
  *   - 所有路径移除 timer/监听器;正常路径等子进程 close,取消/超时路径另有
  *     有界 settlement deadline,避免后代持有 stdio 管道时无限等待。
+ *   - opt-in stdoutFd:stdout 改临时文件收集(#84 抗截断,flyai 用),结果里
+ *     stdout 为空串,由调用方读文件;
+ *   - opt-in drainMs:主进程 exit 后 stdio 管道仍被后代持有时,最多等 drainMs;
+ *     到点 SIGKILL 整组并立即以 drainTimedOut 结算(记录 exit 事件携带的主进程
+ *     退出原因)——正常 exit 不因持管道后代被改判超时(#516)。
  * 只面向 CLI 能力层内部,不是通用任务框架。
  */
 
@@ -26,6 +31,10 @@ export interface BoundedSpawnOptions {
   cwd?: string
   timeoutMs: number
   signal?: AbortSignal
+  /** 已打开的 stdout 文件 fd(替代管道;调用方负责文件读写与清理)。 */
+  stdoutFd?: number
+  /** 主进程 exit 后等待 stdio 管道释放的上限;超时杀组并以 drainTimedOut 结算。 */
+  drainMs?: number
 }
 
 export interface BoundedSpawnResult {
@@ -38,6 +47,10 @@ export interface BoundedSpawnResult {
   timedOut: boolean
   /** 进程组在 close 后的有界观察是否确认为空；不代表未知后代树的全局证明。 */
   groupReaped?: boolean
+  /** 主进程 'exit' 事件携带的终止信号(干净退出为 null)。 */
+  signal?: NodeJS.Signals | null
+  /** 主进程已退出但管道在 drainMs 内未释放;整组已被 SIGKILL,收集不完整。 */
+  drainTimedOut?: boolean
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
@@ -69,7 +82,7 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
     env: opts.env,
     cwd: opts.cwd,
     detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', opts.stdoutFd ?? 'pipe', 'pipe'],
   })
   const groupPid = child.pid
 
@@ -78,8 +91,12 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
     let stderr = ''
     let done = false
     let timedOut = false
+    let exitCode: number | null = null
+    let exitSignal: NodeJS.Signals | null = null
+    let drainTimedOut = false
     let timeoutTimer: NodeJS.Timeout | undefined
     let hardSettleTimer: NodeJS.Timeout | undefined
+    let drainTimer: NodeJS.Timeout | undefined
     const trackedTimers = new Set<NodeJS.Timeout>()
     const track = (timer: NodeJS.Timeout): NodeJS.Timeout => {
       trackedTimers.add(timer)
@@ -108,6 +125,7 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
       done = true
       if (timeoutTimer) clearTimeout(timeoutTimer)
       if (hardSettleTimer) clearTimeout(hardSettleTimer)
+      if (drainTimer) clearTimeout(drainTimer)
       opts.signal?.removeEventListener('abort', onAbort)
       cleanupTimers()
       child.stdout?.destroy()
@@ -119,12 +137,14 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
       if (done) return
       signalGroup('SIGKILL')
       finish({
-        code: null,
+        code: exitCode,
         stdout,
         stderr,
         error: timedOut ? `timeout after ${opts.timeoutMs}ms` : 'process group cleanup incomplete',
         aborted: opts.signal?.aborted === true && !timedOut,
         timedOut,
+        signal: exitSignal,
+        ...(drainTimedOut ? { drainTimedOut: true } : {}),
         // close 未到达，无法证明未知后代已释放管道；显式保留不完整状态。
         groupReaped: false,
       })
@@ -158,7 +178,31 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
     child.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
     child.on('error', (e: Error) => {
-      finish({ code: null, stdout, stderr, error: e.message, aborted: false, timedOut: false })
+      finish({ code: exitCode, stdout, stderr, error: e.message, aborted: false, timedOut: false, signal: exitSignal })
+    })
+    child.on('exit', (code, signal) => {
+      exitCode = code
+      exitSignal = signal
+      // Main exited but pipes may still be held by descendants (#516): bound
+      // the drain wait, then kill the group and settle with the main exit
+      // reason preserved — a normal exit must not be relabeled a timeout.
+      if (opts.drainMs !== undefined && !done) {
+        drainTimer = track(setTimeout(() => {
+          if (done) return
+          drainTimedOut = true
+          signalGroup('SIGKILL')
+          finish({
+            code: exitCode,
+            stdout,
+            stderr,
+            aborted: opts.signal?.aborted === true && !timedOut,
+            timedOut,
+            signal: exitSignal,
+            drainTimedOut: true,
+            groupReaped: false,
+          })
+        }, opts.drainMs))
+      }
     })
     child.on('close', async (code) => {
       if (done) return
@@ -173,7 +217,7 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
           groupReaped = await waitGroupEmpty(groupPid, KILL_GRACE_MS)
         }
       }
-      finish({ code, stdout, stderr, aborted, timedOut, groupReaped, ...(timedOut ? { error: `timeout after ${opts.timeoutMs}ms` } : {}) })
+      finish({ code, stdout, stderr, aborted, timedOut, signal: exitSignal, ...(drainTimedOut ? { drainTimedOut: true } : {}), groupReaped, ...(timedOut ? { error: `timeout after ${opts.timeoutMs}ms` } : {}) })
     })
   })
 }
