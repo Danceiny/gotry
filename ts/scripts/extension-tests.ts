@@ -266,10 +266,16 @@ async function main(): Promise<void> {
 
   await check('防漂移:content_scripts 双 world 挂 ctrip 双站+12306+dida(MAIN 嗅探 + ISOLATED 桥;2026-09-03 酒/火实装,2026-09-09 dida 实装)', () => {
     assert.equal(manifest.content_scripts.length, 2)
-    for (const cs of manifest.content_scripts) {
-      assert.deepEqual(cs.matches, ['https://flights.ctrip.com/*', `https://${HOTEL_SITE_HOST}/*`, `https://${TRAIN_SITE_HOST}/*`, 'https://www.12306.cn/*', `https://${DIDA_SITE_HOST}/*`])
-      assert.equal(cs.run_at, 'document_start')
-    }
+    // 2026-09-21 hotel-fe#3713:join 交付(portal 页注入 window.__gotryJoinTicket)要求
+    // content-bridge 也跑在 hotelbyte portal 页上;content-main(供应商页 MAIN 嗅探)维持站点面不变。
+    const portalOrigins = ['https://portal-test.hotelbyte.com/*', 'https://portal.hotelbyte.com/*']
+    const main = manifest.content_scripts.find((cs) => cs.js[0] === 'content-main.js')
+    const bridge = manifest.content_scripts.find((cs) => cs.js[0] === 'content-bridge.js')
+    assert.ok(main && bridge, '双 world 脚本齐备')
+    const siteMatches = ['https://flights.ctrip.com/*', `https://${HOTEL_SITE_HOST}/*`, `https://${TRAIN_SITE_HOST}/*`, 'https://www.12306.cn/*', `https://${DIDA_SITE_HOST}/*`]
+    assert.deepEqual(main!.matches, siteMatches)
+    assert.deepEqual(bridge!.matches, [...siteMatches, ...portalOrigins])
+    for (const cs of manifest.content_scripts) assert.equal(cs.run_at, 'document_start')
     const worlds = manifest.content_scripts.map((cs) => cs.world ?? 'ISOLATED').sort()
     assert.deepEqual(worlds, ['ISOLATED', 'MAIN'])
     assert.deepEqual(manifest.content_scripts.map((cs) => cs.js[0]).sort(), ['content-bridge.js', 'content-main.js'])
@@ -290,6 +296,17 @@ async function main(): Promise<void> {
     assert.ok(contentBridgeJs.includes('type: \'gotry-join\''), 'content-bridge 应把 ticket 转 gotry-join 消息派给 SW')
     assert.ok(contentBridgeJs.includes('chrome.runtime.sendMessage'), 'content-bridge 应用 chrome.runtime.sendMessage 派发')
     assert.ok(!backgroundJs.includes('options.html'), '扩展不得引用 options.html/options.js(employee 零配置)')
+  })
+  await check('代填登录(2026-09-21 hotel-fe#3713 形态 A 免密进入门户):portal 投递载荷 → SW 开登录页 → content-bridge 按站点配方填表,账密零持久面', () => {
+    assert.ok(backgroundJs.includes("'gotry-portal-login'"), 'SW 应识别 portal 投递的一次性凭据载荷')
+    assert.ok(backgroundJs.includes('openLoginAndFill'), 'SW 应有「开登录页 + 派发填表」实现')
+    assert.ok(backgroundJs.includes('SITE_SEARCH_PREFIXES[site]'), '登录 URL 必须按站点白名单前缀守域(拒绝任意载荷)')
+    assert.ok(backgroundJs.includes("'gotry-fill-login'"), 'SW 应向登录页 content-bridge 派发填表指令')
+    assert.ok(contentBridgeJs.includes("'gotry-fill-login'"), 'content-bridge 应响应填表指令')
+    assert.ok(contentBridgeJs.includes('setNativeValue'), 'React 受控 input 必须走原型 setter + input/change 事件')
+    assert.ok(contentBridgeJs.includes('requestSubmit'), '无提交按钮时应回退 form.requestSubmit')
+    assert.ok(contentBridgeJs.includes('__gotryPortalLogin'), 'content-bridge 应读 portal 注入的凭据载荷')
+    assert.ok(!backgroundJs.includes('chrome.storage'), '账密不得落持久存储(与 2026-09-11 零配置裁定一致)')
   })
   await check('dida multiCollect(2026-09-11,推荐流双接口):背景分类函数 + waitSniffMulti 分桶结算', () => {
     assert.ok(backgroundJs.includes('classifyDidaSniff'), '背景 SW 应抽 dida sniff 分类函数')
