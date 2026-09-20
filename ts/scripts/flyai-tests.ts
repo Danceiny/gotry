@@ -233,7 +233,23 @@ setTimeout(() => signalController.abort(), 30)
 const signalOutcome = await signalPromise
 assert.equal(signalOutcome.trace.attempts, 1, 'signal 终止只能执行一次')
 assert.equal(signalOutcome.trace.declined, 'aborted', 'signal 终止应沿 effect 取消面返回')
-console.log('1c. exit23/no-text、deadline、signal、spawn、empty-exit 均 fail-closed 单次 OK')
+
+// #514: 本机终止携带陈旧 429 文本(终止前打印的额度错误)不得被判为
+// needs-setup/可重试——终止分类必须先于 HTTP 文本扫描。
+const staleQuotaCli = join(tmp, 'flyai-514-stale-429-signal')
+await writeFile(staleQuotaCli, [
+  '#!/bin/sh',
+  "printf '%s\\n' 'MCP HTTP 429 Trial limit reached' >&2",
+  'kill -TERM $$',
+  '',
+].join('\n'), { mode: 0o755 })
+const staleQuotaOutcome = await processEffectCase(staleQuotaCli)
+assert.equal(staleQuotaOutcome.trace.attempts, 1, '带陈旧 429 文本的终止只能执行一次')
+assert.equal((staleQuotaOutcome.result as { verdict?: string } | null)?.verdict, 'error', '终止不得沿用 429 额度分类')
+assert.equal((staleQuotaOutcome.result as { localTermination?: string } | null)?.localTermination, 'empty-exit')
+assert.equal((staleQuotaOutcome.result as { retryable?: boolean } | null)?.retryable, false)
+assert.equal((staleQuotaOutcome.result as { setup?: string } | null)?.setup, undefined, '终止不得生成额度补配指引')
+console.log('1c. exit23/no-text、deadline、signal、spawn、empty-exit、stale-429-termination 均 fail-closed 单次 OK')
 
 // 1. Sentinel 限流:合法 JSON 的非业务形状 → error(不是静默 miss)
 const sentinelBin = await fakeCli('flyai-sentinel', 0, '{"message":"SentinelBlockException: flow control"}')
