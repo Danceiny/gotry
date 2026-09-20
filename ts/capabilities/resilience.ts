@@ -144,6 +144,20 @@ export interface BreakerOptions {
 }
 
 /**
+ * Ownership of one admitted breaker call.
+ *
+ * Closed calls carry their generation so a call that started before the
+ * breaker opened cannot later affect a newer half-open probe. Half-open calls
+ * additionally carry their own object identity, making release/settlement
+ * conditional on the exact probe that owns the slot.
+ */
+export interface BreakerAttemptToken {
+  readonly generation: number
+  readonly probe: boolean
+  readonly id: number
+}
+
+/**
  * 断路器(每效应一个实例):
  *   closed    常态放行;连续失败达 failureThreshold → open;
  *   open      拒绝(new attempts=0,.fail-fast 保护上游/配额);冷却满 openMs → half-open;
@@ -153,7 +167,9 @@ export interface BreakerOptions {
 export class CircuitBreaker {
   private consecutiveFailures = 0
   private openedAt = 0
-  private probeInFlight = false
+  private generation = 0
+  private nextTokenId = 0
+  private probeToken: BreakerAttemptToken | null = null
 
   constructor(private readonly o: BreakerOptions) {}
 
@@ -172,34 +188,59 @@ export class CircuitBreaker {
   }
 
   /** 发起一次调用前问闸:open 回 {allowed:false}(调用方须返回显式降级观察,不重试) */
-  canAttempt(): { allowed: boolean; state: BreakerState } {
+  canAttempt(): { allowed: boolean; state: BreakerState; token?: BreakerAttemptToken } {
     const s = this.state()
-    if (s === 'closed') return { allowed: true, state: s }
+    if (s === 'closed') return { allowed: true, state: s, token: this.makeToken(false) }
     if (s === 'open') return { allowed: false, state: s }
     // half-open:单探测语义——已有探测在途拒其余并发
-    if (this.probeInFlight) return { allowed: false, state: s }
-    this.probeInFlight = true
-    return { allowed: true, state: s }
+    if (this.probeToken) return { allowed: false, state: s }
+    this.generation += 1
+    const token = this.makeToken(true)
+    this.probeToken = token
+    return { allowed: true, state: s, token }
   }
 
-  /** half-open 探测被取消:释放所有权,不把 probe 永久卡死,也不放行第二个探测 */
-  releaseProbe(): void {
-    if (this.state() === 'half-open') this.probeInFlight = false
+  /**
+   * half-open 探测被取消:仅令牌持有者释放所有权,不把 probe 永久卡死,
+   * 也不让旧 closed 调用或旧 generation 释放新探测。
+   */
+  releaseProbe(token?: BreakerAttemptToken): void {
+    if (token?.probe !== true || this.probeToken !== token || this.state() !== 'half-open') return
+    this.probeToken = null
+    this.generation += 1
   }
 
   /** 一次解译调用成功(非 isFailure)——清零;half-open 探测成功即回 closed */
-  onSuccess(): void {
+  onSuccess(token?: BreakerAttemptToken): void {
+    if (!this.owns(token)) return
     this.consecutiveFailures = 0
     this.openedAt = 0
-    this.probeInFlight = false
+    if (token?.probe === true || (!token && this.probeToken !== null)) {
+      this.probeToken = null
+      this.generation += 1
+    }
   }
 
   /** 一次解译调用失败(含重试耗尽)——半开探测失败 = 重新开闸 */
-  onFailure(): void {
-    this.probeInFlight = false
+  onFailure(token?: BreakerAttemptToken): void {
+    if (!this.owns(token)) return
+    if (token?.probe === true || (!token && this.probeToken !== null)) this.probeToken = null
     this.consecutiveFailures += 1
     if (this.openedAt > 0 || this.consecutiveFailures >= this.threshold()) {
       this.openedAt = this.now()
+      this.generation += 1
     }
+  }
+
+  private makeToken(probe: boolean): BreakerAttemptToken {
+    return Object.freeze({ generation: this.generation, probe, id: ++this.nextTokenId })
+  }
+
+  private owns(token?: BreakerAttemptToken): boolean {
+    // Keep the direct CircuitBreaker API backwards-compatible for callers
+    // that settle the currently active call without retaining its token.
+    if (!token) return true
+    if (token.probe) return this.probeToken === token && this.state() === 'half-open'
+    return token.generation === this.generation && this.probeToken === null
   }
 }

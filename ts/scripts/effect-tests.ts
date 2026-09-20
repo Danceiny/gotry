@@ -159,6 +159,87 @@ br.onFailure()
 assert.equal(br.state(), 'open', '探测失败 → 重新 open(冷却重启)')
 console.log('3. 断路器三态(closed→open→half-open 单探测→双向收敛)OK')
 
+// 3a. 半开探测所有权：旧 closed 调用的取消/完成不能释放或修改新一代探测。
+const raceClock = { value: 100 }
+const raceNow = () => raceClock.value
+let resolveOldClosed!: (value: unknown) => void
+let resolveOldClosedCompletion!: (value: unknown) => void
+let resolveHalfOpenProbe!: (value: unknown) => void
+let oldClosedStarted!: () => void
+let oldClosedCompletionStarted!: () => void
+let halfOpenProbeStarted!: () => void
+const oldClosedReady = new Promise<void>((resolve) => { oldClosedStarted = resolve })
+const oldClosedCompletionReady = new Promise<void>((resolve) => { oldClosedCompletionStarted = resolve })
+const halfOpenProbeReady = new Promise<void>((resolve) => { halfOpenProbeStarted = resolve })
+let secondProbeCalled = false
+const raceInterpreter = makeProductionInterpreter({
+  sleep: sleep0,
+  now: raceNow,
+  breakers: new Map(),
+  handlers: {
+    HBCLI_HOTEL_SEARCH: async (params: any) => {
+      if (params.testCase === 'old-closed') {
+        oldClosedStarted()
+        return new Promise((resolve) => { resolveOldClosed = resolve })
+      }
+      if (params.testCase === 'old-closed-completion') {
+        oldClosedCompletionStarted()
+        return new Promise((resolve) => { resolveOldClosedCompletion = resolve })
+      }
+      if (params.testCase === 'half-open-probe') {
+        halfOpenProbeStarted()
+        return new Promise((resolve) => { resolveHalfOpenProbe = resolve })
+      }
+      if (params.testCase === 'second-probe') {
+        secondProbeCalled = true
+        return { via: 'hbcli-realtime' }
+      }
+      return { via: 'hbcli-error', error: 'synthetic permanent failure' }
+    },
+  },
+})
+const oldClosedController = new AbortController()
+const oldClosed = raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'old-closed', signal: oldClosedController.signal } })
+await oldClosedReady
+const oldClosedCompletion = raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'old-closed-completion' } })
+await oldClosedCompletionReady
+for (let i = 0; i < 3; i++) await raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: `failure-${i}` } })
+const raceBlocked = await raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'blocked' } })
+assert.equal(raceBlocked.trace.declined, 'circuit-open', '旧请求在途时仍可进入 open')
+raceClock.value = 100_000
+const halfOpenProbe = raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'half-open-probe' } })
+await halfOpenProbeReady
+oldClosedController.abort()
+resolveOldClosed({ via: 'hbcli-error', error: 'aborted by host signal' })
+const cancelledOldClosed = await oldClosed
+assert.equal(cancelledOldClosed.trace.attempts, 1, '旧 closed 请求取消仍只执行一次')
+resolveOldClosedCompletion({ via: 'hbcli-realtime' })
+const completedOldClosed = await oldClosedCompletion
+assert.equal(completedOldClosed.trace.breaker, 'half-open', '旧 closed 请求完成不能修改新半开探测')
+const secondProbe = await raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'second-probe' } })
+assert.equal(secondProbe.trace.declined, 'circuit-open', '旧 closed 请求取消不能释放新一代半开探测')
+assert.equal(secondProbeCalled, false, '新一代探测仍由原探测独占')
+resolveHalfOpenProbe({ via: 'hbcli-realtime' })
+const settledHalfOpenProbe = await halfOpenProbe
+assert.equal(settledHalfOpenProbe.trace.breaker, 'closed', '自身半开探测成功后恢复 closed')
+
+// 3b. 探测令牌必须跨 generation 隔离：旧令牌不能释放新探测；失败仍保持 open。
+const ownershipClock = { value: 1_000 }
+const ownership = new CircuitBreaker({ failureThreshold: 1, openMs: 10, now: () => ownershipClock.value })
+ownership.onFailure()
+ownershipClock.value += 10
+const firstProbe = ownership.canAttempt()
+assert.equal(firstProbe.allowed, true)
+ownership.releaseProbe(firstProbe.token)
+const secondGenerationProbe = ownership.canAttempt()
+assert.equal(secondGenerationProbe.allowed, true, '自身取消释放后允许下一代探测')
+ownership.releaseProbe(firstProbe.token)
+assert.equal(ownership.canAttempt().allowed, false, '旧 generation 令牌不能释放新探测')
+ownership.onFailure(secondGenerationProbe.token)
+assert.equal(ownership.state(), 'open', '真实半开失败重新熔断')
+assert.equal(ownership.canAttempt().allowed, false, '真实半开失败后仍拒绝并发探测')
+console.log('3a/3b. 半开探测所有权(旧 closed 取消隔离/取消可重试/跨 generation/失败再熔断)OK')
+
 // ---------------------------------------------------------------------------
 // 4. 生产解译器×瞬时失败:重试后成功,trace 记账(WEATHER 免费源策略 2 次上限)
 // ---------------------------------------------------------------------------
