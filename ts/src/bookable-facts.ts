@@ -238,7 +238,7 @@ export function factsFromFlyai(q: { kind: 'flight' | 'train'; origin: string; de
   const queryId = makeQueryId(source, q.kind, q.origin, q.destination, q.date)
   const origin = iataOf(alias, q.origin)
   const destination = iataOf(alias, q.destination)
-  if (r.verdict === 'error' || r.verdict === 'needs-setup') return []
+  if (r.verdict !== 'hit' && r.verdict !== 'miss') return []
   if (r.verdict === 'miss') return [negativeFact(queryId, q.kind, q.origin, q.destination, q.date, source, fetchedAt, alias)]
   const facts: FlightFact[] = []
   for (const o of r.options ?? []) {
