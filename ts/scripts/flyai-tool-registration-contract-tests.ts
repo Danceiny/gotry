@@ -45,7 +45,7 @@ assert.deepEqual(search.parameters.properties.kind.enum, [
 
 const signal = new AbortController().signal
 const queries: Array<Record<string, unknown>> = [
-  { kind: 'flight', from: '上海', to: '丽江', dateStart: '2099-10-01', dateEnd: '2099-10-03' },
+  { kind: 'flight', from: '上海' },
   { kind: 'train', origin: '上海', destination: '大理', depDateStart: '2099-10-01', depDateEnd: '2099-10-03' },
   { kind: 'hotel', to: '大理' },
   { kind: 'poi', cityName: '大理', category: '自然风光' },
@@ -73,7 +73,11 @@ const unknown = await search.execute({ kind: 'spaceship', from: '上海', to: '�
 assert.equal(calls.length, callsBeforeUnknown, 'unknown kind must be rejected before the effect')
 assert.equal((unknown as Record<string, unknown>).ok, false)
 for (const invalid of [
-  { kind: 'flight', from: '上海', to: '丽江' },
+  { kind: 'flight', to: '丽江' },
+  { kind: 'flight', from: '上海', date: '2099-02-29' },
+  { kind: 'train', from: '上海', dateStart: '2099-10-03', dateEnd: '2099-10-01' },
+  { kind: 'flight', from: '上海', sortType: '9' },
+  { kind: 'marriott-hotel', destName: '大理', hotelStars: '5' },
   { kind: 'poi', cityName: '' },
   { kind: 'keyword' },
   { kind: 'marriott-package' },
@@ -83,6 +87,13 @@ for (const invalid of [
   assert.equal(calls.length, before, `${String(invalid.kind)} missing required input must not reach the effect`)
   assert.equal(rejected.ok, false)
 }
+
+const marriott = await search.execute({ kind: 'marriott-hotel', destName: '大理', hotelBrands: '万豪', hotelName: '大理酒店' }, { signal }) as Record<string, unknown>
+assert.equal(marriott.verdict, 'miss')
+const marriottCall = calls.at(-1)
+assert.equal(marriottCall?.params.keyWords, '万豪 大理酒店', 'Marriott name/brand must map to official --key-words')
+assert.equal('hotelBrands' in (marriottCall?.params ?? {}), false)
+assert.equal('hotelName' in (marriottCall?.params ?? {}), false)
 
 await rm(stateRoot, { recursive: true, force: true })
 console.log('flyai registration contract OK')

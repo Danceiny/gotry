@@ -300,20 +300,76 @@ function flyaiToolQuery(args: FlyaiToolArgs, signal?: AbortSignal): { query?: Fl
   putNumber(query, 'timeoutMs', args, 'timeoutMs')
   if (signal) query.signal = signal
 
+  const isCalendarDate = (value: string): boolean => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+    const date = new Date(`${value}T00:00:00.000Z`)
+    const [year, month, day] = value.split('-').map(Number)
+    return Number.isFinite(date.valueOf())
+      && date.getUTCFullYear() === year
+      && date.getUTCMonth() + 1 === month
+      && date.getUTCDate() === day
+  }
+  const dateError = (label: string, value: string): string | undefined =>
+    isCalendarDate(value) ? undefined : `${label} 必须是有效的 YYYY-MM-DD 日历日期`
+
   if (kind === 'flight' || kind === 'train') {
-    if (!query.origin?.trim() || !query.destination?.trim()) return { error: `kind=${kind} 需要 from/to（中文城市名或机场）` }
+    // Official 1.0.16 requires only --origin; omitting destination/date is a
+    // supported exploration query and must reach the upstream command.
+    if (!query.origin?.trim()) return { error: `kind=${kind} 需要 from/origin（中文城市名或机场）` }
     const hasExact = Boolean(query.depDate)
     const hasStart = Boolean(query.depDateStart)
     const hasEnd = Boolean(query.depDateEnd)
     if (hasStart !== hasEnd) return { error: 'dateStart/depDateStart 与 dateEnd/depDateEnd 必须成对' }
     if (hasExact && (hasStart || hasEnd)) return { error: 'date 与日期范围不能同时传入，请选择 exact-date 或 range 查询' }
-    if (!hasExact && !(hasStart && hasEnd)) return { error: `kind=${kind} 需要 date，或成对的 dateStart/dateEnd` }
+    for (const [label, value] of [
+      ['date', query.depDate],
+      ['dateStart', query.depDateStart],
+      ['dateEnd', query.depDateEnd],
+      ['backDate', query.backDate],
+    ] as const) {
+      if (value) {
+        const error = dateError(label, value)
+        if (error) return { error }
+      }
+    }
+    if (query.depDateStart && query.depDateEnd && query.depDateStart > query.depDateEnd) {
+      return { error: 'dateStart 不能晚于 dateEnd' }
+    }
+    if (query.depDate && query.backDate && query.backDate < query.depDate) {
+      return { error: 'backDate 不能早于 date' }
+    }
+    if (query.sortType && !/^[1-8]$/.test(query.sortType.trim())) {
+      return { error: 'flight/train 的 sortType 只接受 1–8' }
+    }
   }
   if (kind === 'hotel' || kind === 'marriott-hotel') {
     if (!query.destName?.trim()) return { error: `kind=${kind} 需要 to/destName（目的地）` }
     const hasIn = Boolean(query.checkInDate)
     const hasOut = Boolean(query.checkOutDate)
     if (hasIn !== hasOut) return { error: 'checkIn/checkOut 必须成对' }
+    for (const [label, value] of [['checkIn', query.checkInDate], ['checkOut', query.checkOutDate]] as const) {
+      if (value) {
+        const error = dateError(label, value)
+        if (error) return { error }
+      }
+    }
+    if (query.checkInDate && query.checkOutDate && query.checkOutDate <= query.checkInDate) {
+      return { error: 'checkOut 必须晚于 checkIn' }
+    }
+    if (kind === 'marriott-hotel') {
+      // The official Marriott command has one keyword field covering hotel
+      // name/brand; it does not accept generic hotel-types/hotel-stars or
+      // the non-existent hotel-brands/hotel-name flags.
+      if (query.hotelTypes?.trim() || query.hotelStars?.trim()) {
+        return { error: 'marriott-hotel 不支持 hotelTypes/hotelStars；请使用 hotelBrands/hotelName' }
+      }
+      const marriottKeywords = [query.keyWords, query.hotelBrands, query.hotelName]
+        .map(value => value?.trim())
+        .filter((value): value is string => Boolean(value))
+      query.keyWords = marriottKeywords.length ? marriottKeywords.join(' ') : undefined
+      delete query.hotelBrands
+      delete query.hotelName
+    }
   }
   if (kind === 'poi' && !query.cityName?.trim()) return { error: 'kind=poi 需要 cityName（景点所在城市）' }
   if ((kind === 'keyword' || kind === 'ai') && !query.query?.trim()) return { error: `kind=${kind} 需要 query` }
@@ -1360,7 +1416,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     name: 'gotry_flyai_search',
     description: routed('gotry_flyai_search',
       'Live travel search through the Fliggy official FlyAI channel (read-only, no key; booking/comparison happens by the HUMAN on the jumpUrl page). '
-      + 'kind="flight"|"train": from/to(or origin/destination) + date(or dateStart/dateEnd) — real schedules & prices, split 直达/中转 in results. '
+      + 'kind="flight"|"train": from/origin is required; to/destination and date/dateStart+dateEnd are optional for official exploration, and exact-date results split 直达/中转. '
       + 'kind="hotel"|"marriott-hotel": to/destName=目的地中文, checkIn/checkOut (YYYY-MM-DD,成对可选——未定档期可不填先摸底). '
       + 'kind="poi": cityName=城市; kind="keyword"|"ai": query; kind="marriott-package": keyword. '
       + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
@@ -1398,19 +1454,19 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       checkOut: { type: 'string', description: '兼容字段：酒店退房日期 YYYY-MM-DD' },
       checkInDate: { type: 'string', description: '酒店入住日期 YYYY-MM-DD' },
       checkOutDate: { type: 'string', description: '酒店退房日期 YYYY-MM-DD' },
-      keyWords: { type: 'string', description: '酒店关键词' },
+      keyWords: { type: 'string', description: '酒店关键词；hotel/marriott-hotel 均支持' },
       poiName: { type: 'string', description: '酒店周边景点名' },
-      hotelTypes: { type: 'string', description: '酒店类型，逗号分隔' },
+      hotelTypes: { type: 'string', description: '酒店类型，逗号分隔；仅 kind=hotel' },
       sort: { type: 'string', enum: ['distance_asc', 'rate_desc', 'price_asc', 'price_desc', 'no_rank'], description: '酒店排序' },
-      hotelStars: { type: 'string', description: '酒店星级，1–5 逗号分隔' },
+      hotelStars: { type: 'string', description: '酒店星级，1–5 逗号分隔；仅 kind=hotel' },
       hotelBedTypes: { type: 'string', description: '床型，逗号分隔' },
       cityName: { type: 'string', description: '景点所在城市；kind=poi 必填' },
       poiLevel: { type: 'integer', description: '景点等级 1–5' },
       keyword: { type: 'string', description: '景点关键词或万豪套餐单维度关键词' },
       category: { type: 'string', enum: [...FLYAI_POI_CATEGORIES], description: '景点官方闭集类别' },
       query: { type: 'string', description: 'keyword/ai 的查询词' },
-      hotelBrands: { type: 'string', description: '万豪酒店品牌，逗号分隔' },
-      hotelName: { type: 'string', description: '万豪酒店名' },
+      hotelBrands: { type: 'string', description: 'kind=marriott-hotel 的品牌关键词（与 hotelName 合并为官方 --key-words）' },
+      hotelName: { type: 'string', description: 'kind=marriott-hotel 的酒店名（与 hotelBrands 合并为官方 --key-words）' },
       timeoutMs: { type: 'integer', description: '本次查询本地超时毫秒' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
