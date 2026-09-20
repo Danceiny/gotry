@@ -57,6 +57,8 @@ for(let sample=0;sample<sampleCount;sample++){
  assert.deepEqual(tools.map(t=>t.content.replace(/@\d{4}-\d\d-\d\dT[^\]]+/g,'@TIME')),expected); assert.match(stdout,/Baseline probe complete/);
  row.providerSpanMs=events.at(-1).at-events[0].at;console.log(JSON.stringify({sample,code,totalMs:row.totalMs,providerSpanMs:row.providerSpanMs,peak,toolMessageCount:tools.length}));
 }
-report.validated=true;report.medianTotalMs=report.samples.map(s=>s.totalMs).sort((a,b)=>a-b)[Math.floor(sampleCount/2)];
+report.validated=true;
+const orderedTimes=report.samples.map(s=>s.totalMs).sort((a,b)=>a-b);
+report.medianTotalMs=(orderedTimes[Math.floor((sampleCount-1)/2)]+orderedTimes[Math.floor(sampleCount/2)])/2;
 report.baselineMedianMs=baselineMedianMs;report.reduction=baselineMedianMs===null?null:1-report.medianTotalMs/baselineMedianMs;report.performanceTargetPassed=report.reduction===null?null:report.reduction>=0.5;
 writeFileSync(join(outputRoot,'receipt.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({medianTotalMs:report.medianTotalMs,reduction:report.reduction,performanceTargetPassed:report.performanceTargetPassed,featureAccepted:false}));
