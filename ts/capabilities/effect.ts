@@ -206,12 +206,6 @@ interface ChannelSpec {
 
 const defaultIsFailure = (r: unknown): boolean => (r as { ok?: unknown } | null)?.ok === false
 
-/** FlyAI 错误原话里瞬时类(超时/网络断)才值得重试;Sentinel 限流与 ENOENT 永不 */
-const flyaiTransient = (msg: string): boolean =>
-  msg.length > 0
-  && !/Sentinel/i.test(msg)
-  && /timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket|HTTP 5/i.test(msg)
-
 const API_RETRY = { maxAttempts: 2, baseDelayMs: 400, maxDelayMs: 1_600 }
 const API_BREAKER = { failureThreshold: 3, openMs: 30_000 }
 
@@ -250,8 +244,7 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     channel: 'cli',
     retry: { maxAttempts: 2, baseDelayMs: 500, maxDelayMs: 2_000 },
     breaker: { failureThreshold: 3, openMs: 60_000 },
-    isRetryable: (r, e) => {
-      if (e != null) return flyaiTransient(String((e as Error).message ?? e))
+    isRetryable: (r) => {
       const result = r as { verdict?: string; retryable?: boolean } | null
       // Only explicit transient classification permits retry; terminal failures stay final.
       return result?.retryable === true

@@ -16,7 +16,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdir, writeFile, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -157,6 +157,83 @@ assert.equal(typedPositive?.bookability, 'bookable_exact_date')
 assert.equal(typedPositive?.flight_no, 'G11')
 await rm(registeredStateRoot, { recursive: true, force: true })
 console.log('1. registered E2E → mixed/all-malformed zero facts / empty miss negative / official train hit positiveOK')
+
+// #517: registered tool + actual CLI. Persistent exit23/HTTP500 is retried
+// once, then remains an error and writes no inventory fact.
+const registeredTransientState = await mkdtemp(join(tmpdir(), 'flyai-517-registered-state-'))
+const registeredTransientTools: RegisteredFlyaiTool[] = []
+const registeredTransientContext = {
+  tools: { register: (tool: unknown) => registeredTransientTools.push(tool as RegisteredFlyaiTool) },
+  systemPrompt: { variable: () => {} }, on: () => () => {}, get: () => undefined,
+} as unknown as Context
+let registeredTransientCli = ''
+const registeredTransientEffect = makeProductionInterpreter({
+  breakers: new Map(), sleep: async () => {},
+  handlers: { FLYAI_SEARCH: async (params: unknown) => flyaiSearch({ ...(params as FlyaiQuery), cliBin: registeredTransientCli, timeoutMs: 5_000 }) },
+})
+apply(registeredTransientContext, { ...isolatedConfig, stateRoot: registeredTransientState }, { effect: registeredTransientEffect as never })
+const registeredTransientTool = registeredTransientTools.find(tool => tool.name === 'gotry_flyai_search')
+assert.ok(registeredTransientTool, '#517 应沿 registered tool 执行')
+const registeredTransientCount = join(tmp, 'flyai-517-http500.count')
+registeredTransientCli = join(tmp, 'flyai-517-http500-exit23')
+await writeFile(registeredTransientCli, [
+  '#!/bin/sh',
+  'n=0',
+  `[ -f '${registeredTransientCount}' ] && n=$(cat '${registeredTransientCount}')`,
+  `printf '%s' "$((n + 1))" > '${registeredTransientCount}'`,
+  "printf '%s\\n' 'MCP HTTP 500 upstream temporary failure' >&2",
+  'exit 23',
+  '',
+].join('\n'), { mode: 0o755 })
+const registeredTransientResult = await registeredTransientTool!.execute(
+  { kind: 'flight', from: '上海', to: '丽江', date: '2027-04-20' }, null,
+) as Record<string, unknown>
+assert.equal(registeredTransientResult.verdict, 'error', 'exit23 + HTTP500 耗尽后应为最终 error')
+assert.equal(await readFile(registeredTransientCount, 'utf8'), '2', 'registered HTTP500 应实际尝试两次')
+assert.equal((await loadFactRegistry(registeredTransientState)).length, 0, '最终 error 不得写入库存 facts')
+await rm(registeredTransientState, { recursive: true, force: true })
+console.log('1b. registered CLI exit23+HTTP500 → attempts=2 / final error / zero facts OK')
+
+// Remaining #517 boundaries use the same production effect and actual child
+// process adapter, while checking exact attempt counts in the effect trace.
+async function processEffectCase(cliBin: string, extra: Partial<FlyaiQuery> = {}): Promise<{ result: unknown; trace: { attempts: number; declined?: string } }> {
+  const interpreter = makeProductionInterpreter({ breakers: new Map(), sleep: async () => {} })
+  return await interpreter({ effect: 'FLYAI_SEARCH', params: { ...base, cliBin, timeoutMs: 5_000, ...extra } }) as { result: unknown; trace: { attempts: number; declined?: string } }
+}
+const noTransientCli = await fakeCliStreams('flyai-517-exit23-no-transient', 23, '', 'provider failed')
+const noTransientOutcome = await processEffectCase(noTransientCli)
+assert.equal(noTransientOutcome.trace.attempts, 1, '无瞬时文本的 exit23 不得重试')
+assert.equal((noTransientOutcome.result as { retryable?: boolean } | null)?.retryable, false)
+
+const deadlineCli = join(tmp, 'flyai-517-local-deadline')
+await writeFile(deadlineCli, '#!/bin/sh\nsleep 1\n', { mode: 0o755 })
+const deadlineOutcome = await processEffectCase(deadlineCli, { timeoutMs: 50 })
+assert.equal(deadlineOutcome.trace.attempts, 1, '本地 deadline 只能执行一次')
+assert.equal((deadlineOutcome.result as { verdict?: string } | null)?.verdict, 'timeout')
+assert.equal((deadlineOutcome.result as { localTermination?: string } | null)?.localTermination, 'deadline')
+assert.equal((deadlineOutcome.result as { retryable?: boolean } | null)?.retryable, false, '本地 deadline 不得当上游 timeout 重试')
+
+const spawnOutcome = await processEffectCase(join(tmp, 'flyai-517-does-not-exist'))
+assert.equal(spawnOutcome.trace.attempts, 1, 'spawn 失败只能执行一次')
+assert.equal((spawnOutcome.result as { localTermination?: string } | null)?.localTermination, 'spawn')
+assert.equal((spawnOutcome.result as { retryable?: boolean } | null)?.retryable, false)
+
+const emptyExitCli = join(tmp, 'flyai-517-empty-exit')
+await writeFile(emptyExitCli, '#!/bin/sh\nkill -TERM $$\n', { mode: 0o755 })
+const emptyExitOutcome = await processEffectCase(emptyExitCli)
+assert.equal(emptyExitOutcome.trace.attempts, 1, '空退出只能执行一次')
+assert.equal((emptyExitOutcome.result as { localTermination?: string } | null)?.localTermination, 'empty-exit')
+assert.equal((emptyExitOutcome.result as { retryable?: boolean } | null)?.retryable, false)
+
+const signalController = new AbortController()
+const signalCli = join(tmp, 'flyai-517-signal')
+await writeFile(signalCli, '#!/bin/sh\nsleep 1\n', { mode: 0o755 })
+const signalPromise = processEffectCase(signalCli, { signal: signalController.signal })
+setTimeout(() => signalController.abort(), 30)
+const signalOutcome = await signalPromise
+assert.equal(signalOutcome.trace.attempts, 1, 'signal 终止只能执行一次')
+assert.equal(signalOutcome.trace.declined, 'aborted', 'signal 终止应沿 effect 取消面返回')
+console.log('1c. exit23/no-text、deadline、signal、spawn、empty-exit 均 fail-closed 单次 OK')
 
 // 1. Sentinel 限流:合法 JSON 的非业务形状 → error(不是静默 miss)
 const sentinelBin = await fakeCli('flyai-sentinel', 0, '{"message":"SentinelBlockException: flow control"}')

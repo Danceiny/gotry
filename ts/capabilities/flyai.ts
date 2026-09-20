@@ -54,6 +54,9 @@ export type FlyaiVerdict =
   | 'timeout'
   | 'cancelled'
 
+/** 本机子进程生命周期终止；它不是可重试的上游故障。 */
+export type FlyaiLocalTermination = 'deadline' | 'signal' | 'spawn' | 'empty-exit'
+
 export interface FlyaiQuery {
   kind: FlyaiKind
 
@@ -208,8 +211,10 @@ export interface FlyaiResult {
   evidence: string
   latencyMs: number
   verdict: FlyaiVerdict
-  /** true = 普通网络/HTTP 5xx/429 或超时，可交给 effect 层退避重试 */
+  /** true = 已识别的上游普通网络/HTTP 5xx/429 瞬时失败，可交给 effect 层退避重试 */
   retryable?: boolean
+  /** 存在时表示请求未得到可判定的上游响应，应 fail-closed 且只执行一次。 */
+  localTermination?: FlyaiLocalTermination
   kind: FlyaiKind
   options?: FlyaiOption[]
   hotels?: FlyaiHotelOption[]
@@ -413,6 +418,8 @@ interface ShResult {
   drainTimedOut?: boolean
   /** 调用被 AbortSignal 取消(预先 abort=未 spawn;在途 abort=进程组被杀) */
   cancelled?: boolean
+  signal?: NodeJS.Signals | null
+  localTermination?: FlyaiLocalTermination
 }
 
 interface FlyaiSensitiveContext {
@@ -490,7 +497,7 @@ function sh(
 ): Promise<ShResult> {
   // 预先取消:不 spawn 任何进程,不产生 stdout 临时文件。
   if (opts.signal?.aborted) {
-    return Promise.resolve({ code: -1, stdout: '', stderr: '', cancelled: true })
+    return Promise.resolve({ code: -1, stdout: '', stderr: '', cancelled: true, localTermination: 'signal' })
   }
 
   const outFile = join(tmpdir(), `gotry-flyai-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.out`)
@@ -505,6 +512,7 @@ function sh(
   let error: string | undefined
   let timedOut = false
   let cancelled = false
+  let localTermination: FlyaiLocalTermination | undefined
   let settled = false
 
   const readOut = (): string => {
@@ -525,15 +533,18 @@ function sh(
   // 都要覆盖);由 close 收敛为 cancelled,绝不改写成 hit/miss。
   const onAbort = (): void => {
     cancelled = true
+    localTermination = 'signal'
     killGroup('SIGKILL')
   }
   opts.signal?.addEventListener('abort', onAbort, { once: true })
 
   return new Promise<ShResult>((resolve) => {
     let exitCode = -1
+    let exitSignal: NodeJS.Signals | null = null
     let mainExited = false
     const timer = setTimeout(() => {
       timedOut = true
+      localTermination = 'deadline'
       killGroup('SIGKILL')
     }, opts.timeoutMs)
     let drainTimer: NodeJS.Timeout
@@ -557,25 +568,56 @@ function sh(
       cleanupFile()
       resolve({
         code: exitCode, stdout, stderr,
+        ...(exitSignal ? { signal: exitSignal } : {}),
         ...(error ? { error } : {}),
         ...(cancelled ? { cancelled: true } : {}),
+        ...(localTermination ? { localTermination } : {}),
         ...extra,
       })
     }
 
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
-    child.on('error', (e) => { error = (e as Error).message.slice(0, 200) })
-    child.on('exit', (code) => {
+    child.on('error', (e) => {
+      error = (e as Error).message.slice(0, 200)
+      if (!cancelled && !timedOut) localTermination = 'spawn'
+    })
+    child.on('exit', (code, signal) => {
       exitCode = code ?? -1
+      exitSignal = signal
+      if (signal && !cancelled && !timedOut && !error) localTermination = 'empty-exit'
       mainExited = true
       armDrainTimer()
     })
     child.on('close', (code) => {
       exitCode = code ?? exitCode
+      if (exitCode < 0 && !cancelled && !timedOut && !error) localTermination = 'empty-exit'
       void mainExited
       finish({ timedOut })
     })
   })
+}
+
+function localTerminationResult(
+  kind: FlyaiKind,
+  termination: FlyaiLocalTermination,
+  r: ShResult,
+  latencyMs: number,
+  ts: string,
+  envNote: { keySource: FlyaiKeySource; endpointDebug?: boolean },
+): FlyaiResult {
+  const detail = termination === 'spawn'
+    ? `启动失败${r.error ? `:${r.error}` : ''}`
+    : termination === 'signal'
+      ? `进程收到本机取消信号${r.signal ? `(${r.signal})` : ''}`
+      : termination === 'deadline'
+        ? '达到本地 deadline'
+        : '进程退出但未返回可判定结果'
+  return {
+    kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'error',
+    retryable: false, localTermination: termination,
+    evidence: `[实时API:flyai@error@${ts}] local termination: ${termination}`,
+    error: `FlyAI 本地终止(${detail})`,
+  }
 }
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/
@@ -731,7 +773,7 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   const built = buildCliArgs(q)
   if (built.error) return { ...badArg(q.kind, built.error, ts), ...envNote }
 
-  const prefix = q.cliPrefixArgs ?? ['-y', '@fly-ai/flyai-cli']
+  const prefix = q.cliPrefixArgs ?? ['-y', '@fly-ai/flyai-cli@1.0.16']
   const r = await sh(q.cliBin ?? 'npx', [...prefix, ...built.args!], {
     timeoutMs: q.timeoutMs ?? 30_000,
     signal: q.signal,
@@ -742,6 +784,7 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   if (r.cancelled) {
     return safe({
       kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'cancelled',
+      retryable: false, localTermination: 'signal',
       evidence: `[实时API:flyai@error@${ts}] cancelled by caller`,
       error: q.signal?.aborted ? '调用前已取消(未发起检索)' : '检索在途被取消(进程组已终止)',
     })
@@ -750,11 +793,18 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   if (r.timedOut) {
     return safe({
       kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'timeout',
-      retryable: true,
-      evidence: `[实时API:flyai@error@${ts}] timeout after ${q.timeoutMs ?? 30_000}ms`,
-      error: `FlyAI 调用超时(本地时限 ${q.timeoutMs ?? 30_000}ms${r.drainTimedOut ? ';stderr 后代 drain 超时' : ''})`,
-      setup: '检查本机网络后稍后重试,或增大 timeoutMs;急用时改走 gotry_session_search(账号会话)。',
+      retryable: false, localTermination: 'deadline',
+      evidence: `[实时API:flyai@error@${ts}] local deadline after ${q.timeoutMs ?? 30_000}ms`,
+      error: `FlyAI 本地终止(达到 deadline ${q.timeoutMs ?? 30_000}ms${r.drainTimedOut ? ';stderr 后代 drain 超时' : ''})`,
+      setup: '本机 deadline 已终止本次检索；请调整 timeoutMs 或稍后由上层重新发起。',
     })
+  }
+
+  // A signal/empty exit/spawn failure carries no trustworthy upstream
+  // response. Handle it before HTTP text classification so stale partial
+  // stdout (for example a 429 printed before SIGTERM) cannot trigger retry.
+  if (r.localTermination) {
+    return safe(localTerminationResult(q.kind, r.localTermination, r, latencyMs, ts, envNote))
   }
 
   if (r.error || r.code !== 0 || /HTTP\s*(4\d\d|5\d\d)/.test(combined)) {
@@ -1202,111 +1252,4 @@ function parsePackageItems(items: unknown[]): ParsedItems<FlyaiMarriottPackageOp
     })
   }
   return { options, malformedCount }
-}
-
-// ── 候选 key 验证(setup 用:scrub env 注入候选,绝不被旧 env 遮蔽) ────────
-
-export interface FlyaiVerifyOutcome {
-  ok: boolean
-  verdict: FlyaiVerdict
-  retryable?: boolean
-  evidence: string
-  latencyMs: number
-  maskedKey?: string
-  error?: string
-  setup?: string
-}
-
-/**
- * 用候选 key 做一次最便宜只读验证。
- * env 先 scrub(删 FLYAI_API_KEY/DEBUG_FLYAI_API_KEY),再注入候选:
- * 保证验证请求确实用候选 key,不被当前进程旧 env 遮蔽。
- * 不传 candidate:验证当前生效来源(匿名态亦可)。
- */
-export async function verifyFlyaiKey(opts: {
-  candidate?: string
-  cliBin?: string
-  cliPrefixArgs?: string[]
-  timeoutMs?: number
-  signal?: AbortSignal
-}): Promise<FlyaiVerifyOutcome> {
-  const started = Date.now()
-  const candidate = opts.candidate?.trim()
-  const env: NodeJS.ProcessEnv = { ...process.env }
-  delete env.FLYAI_API_KEY
-  delete env.DEBUG_FLYAI_API_KEY
-  if (candidate) env.FLYAI_API_KEY = candidate
-
-  const q: FlyaiQuery = {
-    kind: 'flight', origin: '上海', destination: '丽江', depDate: '2026-10-01',
-    timeoutMs: opts.timeoutMs ?? 20_000,
-    ...(opts.cliBin ? { cliBin: opts.cliBin } : {}),
-    ...(opts.cliPrefixArgs ? { cliPrefixArgs: opts.cliPrefixArgs } : {}),
-  }
-  const r = await flyaiSearchWithEnv(q, env)
-  return {
-    ok: r.verdict === 'hit',
-    verdict: r.verdict,
-    ...(r.retryable !== undefined ? { retryable: r.retryable } : {}),
-    evidence: r.evidence,
-    latencyMs: Date.now() - started,
-    ...(candidate ? { maskedKey: candidate.length <= 4 ? '****' : `****${candidate.slice(-4)}` } : {}),
-    ...(r.error ? { error: r.error } : {}),
-    ...(r.setup ? { setup: r.setup } : {}),
-  }
-}
-
-/** flyaiSearch 的 env 注入变体(仅候选验证用;生产路径 env 原样透传) */
-async function flyaiSearchWithEnv(q: FlyaiQuery, env: NodeJS.ProcessEnv): Promise<FlyaiResult> {
-  const started = Date.now()
-  const ts = new Date().toISOString()
-  const built = buildCliArgs(q)
-  if (built.error) return badArg(q.kind, built.error, ts)
-
-  const keySource: FlyaiKeySource = env.FLYAI_API_KEY ? 'env' : env.DEBUG_FLYAI_API_KEY ? 'env-debug' : 'none'
-  const prefix = q.cliPrefixArgs ?? ['-y', '@fly-ai/flyai-cli']
-  const r = await sh(q.cliBin ?? 'npx', [...prefix, ...built.args!], {
-    timeoutMs: q.timeoutMs ?? 20_000,
-    env,
-    signal: q.signal,
-  })
-  const latencyMs = Date.now() - started
-  const combined = `${r.stderr}\n${r.stdout}`
-  const endpoint = resolveFlyaiEndpoint({ env })
-  const envNote = { keySource, ...(endpoint.debug ? { endpointDebug: true } : {}) }
-  const sensitive: FlyaiSensitiveContext = {
-    ...(env.FLYAI_API_KEY ? { key: env.FLYAI_API_KEY } : {}),
-    ...(endpoint.debug ? { debugEndpoint: endpoint.url } : {}),
-  }
-  const safe = <T extends FlyaiResult>(result: T): T => safeFlyaiResult(result, sensitive)
-  if (r.cancelled) {
-    return safe({
-      kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'cancelled',
-      evidence: `[实时API:flyai@error@${ts}] candidate verify cancelled`,
-      error: '候选 key 验证被取消',
-    })
-  }
-  if (r.timedOut) {
-    return safe({
-      kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'timeout',
-      retryable: true,
-      evidence: `[实时API:flyai@error@${ts}] timeout after ${q.timeoutMs ?? 20_000}ms`,
-      error: 'FlyAI 验证调用超时',
-    })
-  }
-  if (r.error || r.code !== 0 || /HTTP\s*(4\d\d|5\d\d)/.test(combined)) {
-    return safe(classifyUpstreamFailure(q.kind, r, latencyMs, ts, envNote))
-  }
-  let items: unknown[]
-  try {
-    items = parseFlyaiItemList(r.stdout)
-  } catch (e) {
-    const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)
-    return safe({
-      kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'error',
-      evidence: `[实时API:flyai@error@${ts}] parse failed: ${raw}`,
-      error: `verify parse failed (${(e as Error).message}): ${raw}`,
-    })
-  }
-  return safe(parseItemListResult(q.kind, items, latencyMs, ts, envNote, r.stdout))
 }
