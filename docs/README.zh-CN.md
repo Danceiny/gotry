@@ -168,6 +168,7 @@
 | 文档 | 关注点 |
 |---|---|
 | [evaluation/parallel-search-perf-report.zh-CN.md](evaluation/parallel-search-perf-report.zh-CN.md) | 真实安装入口的搜索并行实测与 #519 验收缺口 |
+| [evaluation/flyai-supplier-acceptance-report.zh-CN.md](evaluation/flyai-supplier-acceptance-report.zh-CN.md) | FlyAI 安装后产品端到端、官方响应观测与验收边界 |
 | [evaluation/evaluation-foundation.md](evaluation/evaluation-foundation.zh-CN.md) | Evaluation Phase 0：契约/注册表/准入与边界声明 |
 | [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.zh-CN.md) | 外部 benchmark 桥：Phase 1 接缝与逐轮工程台账 |
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.zh-CN.md) | dsh e2e 端到端真 LLM 验证记录（持续更新） |
