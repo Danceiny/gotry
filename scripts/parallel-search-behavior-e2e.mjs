@@ -20,7 +20,7 @@ const hotel = (destination, id) => ({ id, name: 'gotry_hotel_search', args: { de
 const directory = (keyword, id) => ({ id, name: 'gotry_anything_search', args: { keyword, contentType: 'city' } });
 const report = { binary, node: process.version, featureAccepted: false, boundary: 'Local model/provider replay through the actual installed product. No live provider or autonomous planner acceptance.', cases: [] };
 
-for (const scenario of ['partial-failure', 'dependency']) {
+for (const scenario of ['partial-failure', 'dependency', 'cancellation']) {
   const root = mkdtempSync(join(tmpdir(), 'gotry-search-behavior-'));
   const home = join(root, 'home'), cwd = join(root, 'cwd'), bin = join(root, 'bin'), eventsPath = join(root, 'events.jsonl');
   for (const dir of [home, cwd, bin]) mkdirSync(dir, { recursive: true });
@@ -28,7 +28,13 @@ for (const scenario of ['partial-failure', 'dependency']) {
   writeFileSync(join(bin, 'hbcli'), `#!${process.execPath}
 const fs=require('node:fs');const args=process.argv.slice(2);if(!args.includes('search'))process.exit(77);
 const hotel=args.includes('hotel-list');const event=phase=>fs.appendFileSync(process.env.GOTRY_TEST_EVENTS,JSON.stringify({phase,args,pid:process.pid,at:Date.now()})+'\\n');
-event('start');setTimeout(()=>{event('end');
+event('start');
+if(process.env.GOTRY_TEST_SCENARIO==='cancellation'){
+ const child=require('node:child_process').spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:'ignore'});
+ process.on('SIGTERM',()=>{});
+ fs.appendFileSync(process.env.GOTRY_TEST_EVENTS,JSON.stringify({phase:'ready',pid:process.pid,childPid:child.pid,at:Date.now()})+'\\n');
+ setInterval(()=>{},1000);
+}else setTimeout(()=>{event('end');
  if(process.env.GOTRY_TEST_SCENARIO==='partial-failure' && !hotel && args.includes('南京')){fs.writeFileSync(2,'CONTROLLED_SOURCE_FAILURE');process.exit(7);}
  const body=hotel?{list:args.includes('杭州')?[{id:91901,name:{zh:'受控酒店一',en:'Controlled Hotel One'},star:4,minPrice:{amount:123,currency:'CNY'}}]:[]}:{candidates:process.env.GOTRY_TEST_SCENARIO==='dependency'?[{type:'city',region:{id:77,name:{zh:process.env.GOTRY_TEST_CITY}}}]:[]};
  fs.writeFileSync(1,JSON.stringify(body));},300);
@@ -44,7 +50,7 @@ event('start');setTimeout(()=>{event('end');
         if (!tools.includes('gotry_hotel_search') || !tools.includes('gotry_anything_search')) { response.end(finalReply()); return; }
         if (stage === 0) {
           stage++;
-          response.end(toolReply(scenario === 'partial-failure'
+          response.end(toolReply(scenario !== 'dependency'
             ? [hotel('杭州', 'partial-0'), directory('杭州', 'partial-1'), hotel('南京', 'partial-2'), directory('南京', 'partial-3')]
             : [directory('opaque-destination-key', 'dependency-directory')]));
           return;
@@ -66,26 +72,47 @@ event('start');setTimeout(()=>{event('end');
   const start = Date.now(); let stdout = '', stderr = '', timedOut = false, code;
   const child = spawn(binary, [scenario === 'dependency' ? 'Resolve the opaque destination key, then use the returned city to query hotels for January 15-17, 2027.' : 'Compare Hangzhou and Nanjing hotels and destination directories for January 15-17, 2027. Preserve each source, including failures.'], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', data => stdout += data); child.stderr.on('data', data => stderr += data);
-  let timer;
+  let timer, readinessTimer, cancelSentAt = null, exitSignal = null, aliveAfterExit = [];
+  const readEvents = () => existsSync(eventsPath) ? readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
   try {
     code = await new Promise((resolve, reject) => {
       timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 60000);
-      child.once('error', reject); child.once('close', resolve);
+      child.once('error', reject); child.once('close', (status, signal) => { exitSignal = signal; resolve(status); });
+      if (scenario === 'cancellation') readinessTimer = setInterval(() => {
+        if (cancelSentAt !== null) return;
+        if (readEvents().filter(event => event.phase === 'ready').length === 4) {
+          cancelSentAt = Date.now(); child.kill('SIGINT'); // user cancellation targets the product, not fixtures
+        }
+      }, 10);
     });
+    aliveAfterExit = readEvents().filter(event => event.phase === 'ready').flatMap(event => [event.pid, event.childPid]).filter(alive);
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer); clearInterval(readinessTimer);
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
     try { process.kill(-child.pid, 'SIGKILL'); } catch {}
+    // Cleanup happens after the liveness observation; it cannot make a failed product cleanup pass.
+    for (const pid of readEvents().filter(event => event.phase === 'ready').flatMap(event => [event.pid, event.childPid])) {
+      if (alive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
   }
   const events = existsSync(eventsPath) ? readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
   // The last model request contains every completed tool observation exactly once.
   const messages = bodies.filter(body => body.messages?.some(message => message.role === 'tool')).at(-1)?.messages.filter(message => message.role === 'tool') ?? [];
   let active = 0, peak = 0;
-  for (const event of events) { active += event.phase === 'start' ? 1 : -1; peak = Math.max(peak, active); }
-  const row = { scenario, root, code, timedOut, totalMs: Date.now() - start, peak, events, messages, derivedCity, errors };
+  for (const event of events) { active += event.phase === 'start' ? 1 : event.phase === 'end' ? -1 : 0; peak = Math.max(peak, active); }
+  const row = { scenario, root, code, exitSignal, cancelSentAt, cancelMs: cancelSentAt === null ? null : Date.now() - cancelSentAt, aliveAfterExit, timedOut, totalMs: Date.now() - start, peak, events, messages, derivedCity, errors };
   report.cases.push(row);
   for (const [name, value] of [['stdout.log', stdout], ['stderr.log', stderr], ['relay.json', JSON.stringify(bodies, null, 2)]]) writeFileSync(join(output, scenario + '-' + name), value);
   writeFileSync(join(output, 'receipt.json'), JSON.stringify(report, null, 2));
+  if (scenario === 'cancellation') {
+    assert.equal(timedOut, false); assert.ok(cancelSentAt !== null, 'All four providers must be ready before cancellation');
+    assert.ok(exitSignal === 'SIGINT' || code === 130, `Unexpected cancellation exit ${code}/${exitSignal}`);
+    assert.equal(events.filter(event => event.phase === 'ready').length, 4); assert.equal(peak, 4);
+    assert.deepEqual(aliveAfterExit, [], 'Product exit left owned provider processes alive');
+    assert.ok(row.cancelMs < 6000, `Product cancellation exceeded 6s: ${row.cancelMs}`);
+    row.passed = true; console.log(JSON.stringify({scenario, passed: true, cancelMs: row.cancelMs, peak})); continue;
+  }
   assert.equal(code, 0, stderr); assert.equal(timedOut, false); assert.deepEqual(errors, []); assert.equal(active, 0);
   assert.match(stdout, /Controlled behavior probe complete/);
   if (scenario === 'partial-failure') {
