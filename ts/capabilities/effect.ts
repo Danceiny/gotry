@@ -248,9 +248,13 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     channel: 'cli',
     retry: { maxAttempts: 2, baseDelayMs: 500, maxDelayMs: 2_000 },
     breaker: { failureThreshold: 3, openMs: 60_000 },
-    isRetryable: (_r, e) => {
-      const msg = e != null ? String((e as Error).message ?? e) : String(((_r ?? {}) as { error?: string }).error ?? '')
-      return flyaiTransient(msg)
+    isRetryable: (r, e) => {
+      if (e != null) return flyaiTransient(String((e as Error).message ?? e))
+      const result = r as { verdict?: string; retryable?: boolean } | null
+      // Explicit adapter classification prevents malformed/error prose from
+      // accidentally becoming a retry. Network/HTTP5, timeout and ordinary 429 only.
+      return result?.verdict === 'timeout' || result?.verdict === 'rate-limited'
+        || (result?.verdict === 'error' && result.retryable === true)
     },
     isFailure: defaultIsFailure,
   },
@@ -380,6 +384,8 @@ const SPECS: Record<EffectName, ChannelSpec> = {
 export interface GotryEffect {
   effect: string
   params: unknown
+  /** 调用方取消信号;透传给 handler(retry 各次尝试共享),不被重试覆盖 */
+  signal?: AbortSignal
 }
 
 export interface EffectTrace {
@@ -469,12 +475,30 @@ export function makeProductionInterpreter(opts: ProductionInterpreterOptions = {
     const policy: RetryPolicy | null = spec.retry
       ? { maxAttempts: spec.retry.maxAttempts, baseDelayMs: spec.retry.baseDelayMs, maxDelayMs: spec.retry.maxDelayMs, isRetryable: spec.isRetryable, sleep }
       : { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, sleep }
-    const dispatch = handler as (params: unknown) => Promise<unknown>
-    const outcome = await withRetry(() => dispatch(fx.params), policy)
-    const failed = outcome.error != null || spec.isFailure(outcome.result)
-    if (br) failed ? br.onFailure() : br.onSuccess()
+    // 预先 abort:不 dispatch handler(零 spawn),不重试;breaker 状态不变。
+    if (fx.signal?.aborted) {
+      const breakerState: BreakerState | 'off' = br?.state() ?? 'off'
+      const trace: EffectTrace = {
+        effect: fx.effect, channel: spec.channel, attempts: 0, backoffMs: 0,
+        breaker: breakerState, evidence: [`[效应:${fx.effect}@${ts}] pre-aborted(未发起,breaker 状态不变)`],
+      }
+      const result = {
+        ok: false, verdict: 'cancelled',
+        summary: '调用在发起前已取消(未检索;断路器故障计数不变)。',
+        evidence: trace.evidence.join(';'),
+      }
+      return { result, trace }
+    }
+    const dispatch = handler as (params: unknown, signal?: AbortSignal) => Promise<unknown>
+    const outcome = await withRetry(() => dispatch(fx.params, fx.signal), policy)
+    const resultVerdict = String((outcome.result as { verdict?: string } | null)?.verdict ?? '')
+    const cancelled = resultVerdict === 'cancelled'
+    const failed = !cancelled && (outcome.error != null || spec.isFailure(outcome.result))
+    // cancelled 既不计故障也不清旧故障:不调 onFailure/onSuccess,
+    // 保留本次调用之前断路器里已有的连续失败计数。
+    if (br && !cancelled) failed ? br.onFailure() : br.onSuccess()
     const breakerState: BreakerState | 'off' = br?.state() ?? 'off'
-    const evidence = [`[效应:${fx.effect}@${ts}] attempts=${outcome.attempts} backoff=${outcome.backoffMs}ms breaker=${breakerState}`]
+    const evidence = [`[效应:${fx.effect}@${ts}] attempts=${outcome.attempts} backoff=${outcome.backoffMs}ms breaker=${breakerState}${cancelled ? ' cancelled(breaker 计数不变)' : ''}`]
     return {
       result: outcome.error != null ? null : outcome.result,
       trace: { effect: fx.effect, channel: spec.channel, attempts: outcome.attempts, backoffMs: outcome.backoffMs, breaker: breakerState, evidence },

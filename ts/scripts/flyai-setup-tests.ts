@@ -20,6 +20,10 @@ if (process.env.FAKE_FLYAI_RESULT === 'auth-error') {
   process.stderr.write('HTTP 401 Invalid API key')
   process.exit(1)
 }
+if (process.env.FAKE_FLYAI_RESULT === 'leak-403' || process.env.FAKE_FLYAI_RESULT === 'leak-exit') {
+  process.stderr.write((process.env.FAKE_FLYAI_RESULT === 'leak-403' ? 'HTTP 403 ' : 'upstream failed ') + process.env.FLYAI_API_KEY + ' ' + process.env.DEBUG_FLYAI_MCP_URL)
+  process.exit(1)
+}
 process.stdout.write(JSON.stringify({ data: { itemList: [] } }))
 `)
 chmodSync(fakeVerifier, 0o700)
@@ -171,3 +175,16 @@ assert.notEqual(receiptFail.status, 0)
 assert.ok(receiptFail.stdout.includes('验证回执写入失败'))
 assert.equal(JSON.parse(readFileSync(configPath(receiptFailHome), 'utf8')).FLYAI_API_KEY, oldKey)
 console.log('5. receipt write failure reports non-success and preserves old key OK')
+
+// The verifier may echo its input credentials. Public diagnostics must not.
+for (const failure of ['leak-403', 'leak-exit']) {
+  const result = run(verifyFailHome, ['setup', 'flyai', '--stdin'], `${key}\n`, {
+    FAKE_FLYAI_RESULT: failure,
+    DEBUG_FLYAI_MCP_URL: 'https://private-user:private-password@example.test/mcp?token=private-token',
+  })
+  assert.notEqual(result.status, 0)
+  const output = result.stdout + result.stderr
+  for (const secret of [key, 'private-user', 'private-password', 'private-token']) assert.ok(!output.includes(secret), failure)
+  assert.deepEqual(readFileSync(configPath(verifyFailHome)), verifyBefore)
+}
+console.log('6. upstream stderr cannot leak candidate credentials or endpoint secrets OK')

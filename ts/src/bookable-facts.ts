@@ -161,8 +161,8 @@ export interface FlyaiLikeOption {
 }
 
 export interface FlyaiLikeResult {
-  /** needs-setup(试用额度达限)同 error:无结论不是证据,不落事实 */
-  verdict: 'hit' | 'miss' | 'error' | 'needs-setup'
+  /** needs-setup/auth-error/forbidden/rate-limited/timeout 同 error:无结论不是证据,不落事实 */
+  verdict: 'hit' | 'miss' | 'error' | 'needs-setup' | 'auth-error' | 'forbidden' | 'rate-limited' | 'timeout' | 'cancelled'
   options?: FlyaiLikeOption[]
   evidence?: string
 }
@@ -776,7 +776,7 @@ export function factsFromHotel(input: {
   destination: string
   checkIn?: string
   checkOut?: string
-  verdict: 'hit' | 'miss' | 'needs-setup' | 'error'
+  verdict: string
   options: number
   evidence: string
   fetchedAt: string

@@ -412,13 +412,15 @@ function hiddenInput(prompt) {
 function verifyCandidateKeyInline(candidate) {
   const GOTRY_FLYAI_CLI = process.env.GOTRY_FLYAI_CLI_BIN ?? ''
   const cliBin = GOTRY_FLYAI_CLI || 'npx'
-  const prefix = GOTRY_FLYAI_CLI ? [] : ['-y', '@fly-ai/flyai-cli']
+  const prefix = GOTRY_FLYAI_CLI ? [] : ['-y', '@fly-ai/flyai-cli@1.0.16']
   const env = { ...process.env }
   delete env.FLYAI_API_KEY
   delete env.DEBUG_FLYAI_API_KEY
   env.FLYAI_API_KEY = candidate
-  const args = [...prefix, 'search-flight', '--origin', '上海', '--destination', '丽江', '--dep-date', '2026-10-01']
-  const timeoutMs = Number(process.env.GOTRY_FLYAI_VERIFY_TIMEOUT_MS ?? 20_000)
+  const date = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10)
+  const args = [...prefix, 'search-flight', '--origin', '上海', '--destination', '丽江', '--dep-date', date]
+  const configuredTimeout = Number(process.env.GOTRY_FLYAI_VERIFY_TIMEOUT_MS ?? 20_000)
+  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? Math.min(configuredTimeout, 60_000) : 20_000
   return new Promise((resolve) => {
     let stdout = ''
     let stderr = ''
@@ -451,7 +453,7 @@ function verifyCandidateKeyInline(candidate) {
         return finish({ verdict: 'auth-error', error: '401 Invalid API key' })
       }
       if (/HTTP\s*403|\b403\b/.test(combined)) {
-        return finish({ verdict: 'forbidden', error: combined.trim().slice(0, 160) })
+        return finish({ verdict: 'forbidden', error: 'HTTP 403：无访问权限，请核对控制台权限。' })
       }
       if (/Trial limit reached/.test(combined)) {
         return finish({ verdict: 'needs-setup', error: 'Trial limit reached(候选 key 未被识别为正式 key?)' })
@@ -460,7 +462,8 @@ function verifyCandidateKeyInline(candidate) {
         return finish({ verdict: 'rate-limited', error: '普通限流,稍后重试' })
       }
       if (code !== 0) {
-        return finish({ verdict: 'error', error: combined.trim().slice(0, 160) || `exit ${code}` })
+        // Upstream diagnostics can echo credentials or a private debug URL.
+        return finish({ verdict: 'error', error: `验证进程失败（exit ${code}）；请检查网络与服务状态。` })
       }
       try {
         const envelope = JSON.parse(stdout)

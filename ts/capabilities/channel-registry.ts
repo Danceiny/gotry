@@ -74,7 +74,7 @@ export const CHANNELS: readonly ChannelEntry[] = [
     evidenceTag: '[实时API:flyai@ts]',
     tier: 'realtime-api',
     efficiencyRank: 0,
-    setup: '零 setup(匿名试用共享池,易达限;正式 key 配 FLYAI_API_KEY 解除)',
+    setup: '可匿名试用（共享额度）；本机运行 gotry setup flyai 配置并验证 key；模型仅可用 gotry_flyai_setup 查看或检查状态',
   },
   {
     id: 'hbcli-hotel',
