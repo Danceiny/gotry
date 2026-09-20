@@ -70,7 +70,13 @@ async function settleInjectedHandle(
   // The real provider handle may still be finishing its spawn-failure cleanup
   // after the injected outer close has returned. Keep the proof bounded while
   // observing that cleanup, then observe the sticky close promise as well.
-  const rangeEmpty = await bounded(originalWaitForExit(AbortSignal.timeout(2_000)), 2_500, 'real handle cleanup did not settle')
+  // The bound must clear the provider's scope poll ladder, not a fixed
+  // latency: on Linux the managed range is a systemd user scope re-queried
+  // with intervals doubling 50ms→5s, so under CI load a 2s abort expires
+  // inside a poll sleep and misreports a clean teardown as "not empty"
+  // (Linux-only, load-dependent CI red since #535). The assertion stays
+  // "confirmed empty"; only the rope grows.
+  const rangeEmpty = await bounded(originalWaitForExit(AbortSignal.timeout(15_000)), 20_000, 'real handle cleanup did not settle')
   assert.equal(rangeEmpty, true, 'real handle cleanup observes an empty managed range')
   const done = await bounded(doneOutcome, 2_500, 'real handle done did not settle')
   assert.equal(done.status, 'rejected', 'real spawn-failure handle.done rejects')
