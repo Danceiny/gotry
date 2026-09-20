@@ -150,10 +150,11 @@ console.log('3. source/path/query mismatch + endpoint output redaction OK')
 
 // 4. malformed config and verifier failure preserve the old bytes/key.
 const badHome = mkdtempSync(join(sandbox, 'bad-json-'))
-writeConfig(badHome, '{bad json')
+writeConfig(badHome, `${key} broken json`)
 const badBefore = readFileSync(configPath(badHome))
 const bad = run(badHome, ['setup', 'flyai', '--stdin'], `${key}\n`)
 assert.notEqual(bad.status, 0)
+assert.ok(!(bad.stdout + bad.stderr).includes(key), 'JSON parse errors must not quote credential bytes')
 assert.deepEqual(readFileSync(configPath(badHome)), badBefore)
 
 const verifyFailHome = mkdtempSync(join(sandbox, 'verify-fail-'))

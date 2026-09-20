@@ -112,8 +112,8 @@ export function readFlyaiConfig(configPath: string): FlyaiConfigRead {
       return { ok: false, error: 'config 顶层不是 JSON 对象' }
     }
     return { ok: true, data: parsed as Record<string, unknown> }
-  } catch (e) {
-    return { ok: false, error: `config JSON 解析失败:${(e as Error).message}` }
+  } catch {
+    return { ok: false, error: 'config JSON 解析失败（为保护凭据，不显示原文）' }
   }
 }
 

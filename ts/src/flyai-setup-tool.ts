@@ -35,7 +35,7 @@ export function createFlyaiSetupTool(runEffect: EffectInterpreter) {
           timeoutMs: 20_000, signal: exec?.signal,
         } })
         const result = outcome.result as FlyaiResult | null
-        checkVerdict = result?.verdict ?? 'error'
+        checkVerdict = outcome.trace.declined === 'aborted' ? 'cancelled' : result?.verdict ?? 'error'
         // A concurrent local credential change invalidates this check's receipt.
         const after = resolveFlyaiKey()
         const unchanged = current.key === after.key && current.source === after.source
@@ -59,7 +59,7 @@ export function createFlyaiSetupTool(runEffect: EffectInterpreter) {
       const summary = `${status}；来源 ${current.source}；endpoint ${displayEndpoint(endpoint.url)}${endpoint.debug ? '（DEBUG）' : ''}。`
         + (checkVerdict ? `本次只读检查：${checkVerdict}。` : '')
         + (receiptSaved === false ? '验证回执保存失败，doctor 状态尚未更新。' : '') + guidance
-      return JSON.parse(JSON.stringify({ ok: receiptSaved !== false, action: args.action ?? 'status',
+      return JSON.parse(JSON.stringify({ ok: receiptSaved !== false && (!checkVerdict || checkVerdict === 'hit' || checkVerdict === 'miss'), action: args.action ?? 'status',
         source: current.source, configured: Boolean(current.key), verified,
         maskedKey: current.maskedKey, configPath: current.configPath,
         endpoint: displayEndpoint(endpoint.url), endpointDebug: endpoint.debug,
