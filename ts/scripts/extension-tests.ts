@@ -308,6 +308,16 @@ async function main(): Promise<void> {
     assert.ok(contentBridgeJs.includes('__gotryPortalLogin'), 'content-bridge 应读 portal 注入的凭据载荷')
     assert.ok(!backgroundJs.includes('chrome.storage'), '账密不得落持久存储(与 2026-09-11 零配置裁定一致)')
   })
+  await check('dida 目的地搜索驱动(2026-09-21):portal 页配方(目的地组首项 + button[name=search])→ 落地 URL 用我们的日期重写', () => {
+    assert.ok(contentBridgeJs.includes('runDidaSearch'), 'content-bridge 应有 dida 目的地搜索配方')
+    assert.ok(contentBridgeJs.includes('nd-suggestion-result__group'), '配方应取门户联想结果分组(目的地组优先)')
+    assert.ok(contentBridgeJs.includes('nd-suggestion-search__label'), '配方应识别分组标题以区分目的地/酒店')
+    assert.ok(contentBridgeJs.includes('button[name="search"]'), '配方应点门户查询按钮')
+    assert.ok(contentBridgeJs.includes('ant-modal-wrap'), '配方应先关 cookie 授权弹窗(否则点击被遮罩吞掉)')
+    assert.ok(backgroundJs.includes("'gotry-dida-search'"), 'SW 应向 content-bridge 下发配方指令')
+    assert.ok(backgroundJs.includes("searchParams.set('checkInDate'"), 'SW 应用我们的日期重写落地 URL(不驱动门户日期选择器)')
+    assert.ok(backgroundJs.includes('landingUrl'), 'SW 应回传落地 URL(供解析器与诊断)')
+  })
   await check('dida multiCollect(2026-09-11,推荐流双接口):背景分类函数 + waitSniffMulti 分桶结算', () => {
     assert.ok(backgroundJs.includes('classifyDidaSniff'), '背景 SW 应抽 dida sniff 分类函数')
     assert.ok(backgroundJs.includes('SearchHomepageRecommendHotels'), '多回包分类应含 hotels 接口')
