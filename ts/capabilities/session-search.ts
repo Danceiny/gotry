@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto'
 import { buildEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, validateTrainQueryResponseUrl, TRAIN_SITE_HOST, type SessionTrainOption, type TrainQueryParseOutcome, type TrainResponseBinding } from './session/adapters/rail-12306.ts'
-import { buildDidaEntryUrl, parseDidaRates, parseDidaRecommendHotels, parseDidaPrices, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
+import { buildDidaEntryUrl, parseDidaRates, parseDidaSearchCache, parseDidaRecommendHotels, parseDidaPrices, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
 import { EXTENSION_STORE_URL, type SessionJobHandle, type SniffBodies } from './session/extension-bridge.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
@@ -310,6 +310,20 @@ export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionH
 export interface SessionDidaQuery {
   /** 显式覆盖入口 URL(深链参数校准后使用;须落在 portal.dida.com 域内) */
   entryUrl?: string
+  /**
+   * 按城市的查询(2026-09-21):给定时走「驱动门户目的地搜索」——扩展选目的地 + 用
+   * checkIn/checkOut 重写落地 URL(/hotel/list),嗅探 SearchCache 拿该查询下的酒店价。
+   * 不给则退回首页推荐流口径(不接查询)。
+   */
+  query?: {
+    city: string
+    /** YYYY-MM-DD */
+    checkIn?: string
+    /** YYYY-MM-DD */
+    checkOut?: string
+    adults?: number
+    children?: number
+  }
   /** 隔离 profile 目录(测试必传;默认 /tmp 专用目录) */
   profileDir?: string
   headless?: boolean
@@ -346,7 +360,13 @@ export function didaLoginHint(): string {
 }
 
 /** dida 三类回包合并解析(推荐酒店 + 推荐价格 + 实时价;CDP 窗口收集与扩展 multiCollect 双车道同一合并语义) */
-function mergeDidaRatesBodies(bodies: { hotels: string; recommendPrices: string; realtime: string }): SessionDidaRateOption[] {
+function mergeDidaRatesBodies(bodies: { hotels: string; recommendPrices: string; realtime: string; searchCache?: string }): SessionDidaRateOption[] {
+  // 查询态(驱动门户目的地搜索)拿到的 SearchCache = 该城市+日期下的酒店报价面,优先级最高;
+  // 推荐流是首页口径,仅在拿不到查询态结果时兜底。
+  if (bodies.searchCache) {
+    const scoped = parseDidaSearchCache(bodies.searchCache)
+    if (scoped.length > 0) return scoped
+  }
   const hotels = parseDidaRecommendHotels(bodies.hotels)
   const recommendPrices = parseDidaPrices(bodies.recommendPrices)
   const realtimeRates = parseDidaRates(bodies.realtime)
@@ -404,7 +424,7 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
     }
     // ② 检索 job:后台标签 + 被动嗅探(URL hint + 形状兜底;扩展零写行为)。
     // multiCollect:find 页自发 hotels+recommendPrices 双流,单首包语义丢一半(2026-09-11)
-    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, multiCollect: true }, q.bridge)
+    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, multiCollect: true, ...(q.query ? { query: q.query } : {}) }, q.bridge)
     appendExtensionAudit(q.auditPath, {
       kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
       result: r.ok ? (r.timedOut ? 'timeout' : r.bodies ? `bodies hotels=${r.bodies.hotels?.length ?? 0}B prices=${r.bodies.recommendPrices?.length ?? 0}B` : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
@@ -416,9 +436,12 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
       }
       return err(verdict, r.summary)
     }
-    const title = r.title
-    const head = (r.bodies?.hotels ?? r.body).slice(0, 5000)
-    if (CHALLENGE_RE.test(title + head)) {
+    const title = r.title ?? ''
+    // 挑战判定(2026-09-21 修正):扩展车道**只认页面侧信号**——页面标题 + content-bridge
+    // 按 DOM 判定的 challenge 标记。此前拿 `r.bodies?.hotels`(供应商响应体)扫「验证|captcha」,
+    // 会把酒店名(实测:「曼彻斯特市中心丽笙酒店，经过验证的净零酒店」)误判成风控,
+    // 导致 dida 通道恒 challenged(channel rates 永远取不到)。
+    if (r.challenge === true || CHALLENGE_RE.test(title)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
     // multiCollect 分桶回包 → 与 CDP 车道同语义合并;旧扩展单首包 → 退化 parseDidaRates 兜底

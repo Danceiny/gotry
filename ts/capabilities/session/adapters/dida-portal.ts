@@ -51,6 +51,9 @@ export function buildDidaEntryUrl(q: DidaEntryQuery = {}): DidaEntry {
 export const DIDA_NETWORK_HINTS = [
   /portal-webapi\.dida\.com\/HotelPriceAPI\/SearchRealTime/i,
   /portal-webapi\.dida\.com\/HotelPriceAPI\/SearchMonitor/i,
+  // 2026-09-21 实测:/hotel/list(按城市+日期的搜索结果页)的价格面是 SearchCache,
+  // Data.HotelPriceList[] = 每家酒店 + 该查询下的总价(房间级明细不在此面)。
+  /portal-webapi\.dida\.com\/HotelPriceAPI\/SearchCache/i,
   // 2026-09-10 UAT 实测校准:find 页加载态自发的是推荐流(非 SearchRealTime——
   // 那是用户点「预订」后的实时价接口)。推荐酒店 + 推荐价格两个接口成对出现。
   /portal-webapi\.dida\.com\/HotelRecommendAPI\/SearchHomepageRecommendHotels/i,
@@ -64,6 +67,51 @@ export const DIDA_NETWORK_HINTS = [
 export function looksLikeDidaRatesBody(body: string): boolean {
   if (!body || body.length > 2_000_000) return false
   return /"HotelPriceList"|"RatePlanList"/.test(body)
+}
+
+/**
+ * SearchCache(列表页价格面,2026-09-21 实测) → 报价列表。
+ *
+ * 形态:Data.HotelPriceList[].{Hotel:{HotelID,Name,Name_EN,StarRating,Address,CityName},
+ * TotalPrice, Currency, RatePlanPriceList(列表页为空)}——**每家酒店只给该查询下的总价**,
+ * 房间级明细要详情面(SearchRealTime)。用于「按城市+日期」比价,正好是比价需要的最小信息。
+ *
+ * nights > 1 时按晚均摊出 price(nights 由调用方按查询给出;缺省视为 1 晚)。
+ */
+export function parseDidaSearchCache(
+  body: string,
+  opts: { maxItems?: number; nights?: number } = {},
+): SessionDidaRateOption[] {
+  let raw: unknown
+  try {
+    raw = JSON.parse(body)
+  } catch {
+    return []
+  }
+  const list = (raw as { Data?: { HotelPriceList?: unknown } })?.Data?.HotelPriceList
+  if (!Array.isArray(list)) return []
+  const maxItems = opts.maxItems ?? 60
+  const nights = Math.max(1, Math.floor(opts.nights ?? 1))
+  const out: SessionDidaRateOption[] = []
+  for (const item of list) {
+    if (out.length >= maxItems || item == null || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+    const hotel = (row.Hotel != null && typeof row.Hotel === 'object' ? row.Hotel : {}) as Record<string, unknown>
+    const hotelId = hotel.HotelID != null ? String(hotel.HotelID) : ''
+    if (!hotelId) continue
+    const total = typeof row.TotalPrice === 'number' ? row.TotalPrice : 0
+    const nameCn = typeof hotel.Name === 'string' ? hotel.Name.trim() : ''
+    const nameEn = typeof hotel.Name_EN === 'string' ? hotel.Name_EN.trim() : ''
+    const perNight = total > 0 && nights > 1 ? Math.round(total / nights) : total
+    out.push({
+      hotelId,
+      hotelName: nameCn || nameEn || undefined,
+      price: perNight,
+      ...(total > 0 ? { totalPrice: total } : {}),
+      ...(typeof row.Currency === 'string' ? { currency: row.Currency } : {}),
+    })
+  }
+  return out
 }
 
 // ── 现行加载态接口(2026-09-10 校准):推荐酒店 + 推荐价格 ──────────────────

@@ -86,6 +86,8 @@ export interface SniffBodies {
   hotels?: string
   recommendPrices?: string
   realtime?: string
+  /** /hotel/list 查询态价格面(2026-09-21): 按城市+日期的酒店报价列表 */
+  searchCache?: string
 }
 
 export interface ExtensionJob {
@@ -116,6 +118,8 @@ export interface ExtensionJobResult {
   /** search + multiCollect:分桶回包体(见 SniffBodies) */
   bodies?: SniffBodies
   title?: string
+  /** search:页面级挑战标记(content-bridge 按 DOM 判定) */
+  challenge?: boolean
   opened?: boolean
   timeout?: boolean
   error?: string

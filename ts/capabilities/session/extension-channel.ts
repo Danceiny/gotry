@@ -85,21 +85,27 @@ export interface ExtensionSearchOutcome {
   timedOut: boolean
   /** multiCollect(dida 推荐流):分桶回包体;旧扩展/非 multiCollect 缺省 */
   bodies?: SniffBodies
+  /** 页面级挑战标记(content-bridge 按 DOM 判定;网关侧不得用供应商响应体扫「验证」——会把酒店名误判成风控) */
+  challenge?: boolean
 }
 
 /** 检索 job:后台标签打开 entry,等 content hook 的嗅探回包;页无响应=timedOut(非车道失败) */
-export async function extensionSearchJob(q: { site: string; url: string; timeoutMs?: number; multiCollect?: boolean }, bridgeHandle?: SessionJobHandle): Promise<ExtensionSearchOutcome | BridgeFailure> {
+export async function extensionSearchJob(
+  q: { site: string; url: string; timeoutMs?: number; multiCollect?: boolean; query?: Record<string, unknown> },
+  bridgeHandle?: SessionJobHandle,
+): Promise<ExtensionSearchOutcome | BridgeFailure> {
   const bridge = await resolveBridge(bridgeHandle)
   if (!bridgeReady(bridge)) return { ok: false, kind: 'bridge-unavailable', summary: bridge.summary }
   const timeoutMs = q.timeoutMs ?? 30_000
   const outcome = await bridge.bridge.submit(
-    { kind: 'search', site: q.site, url: q.url, timeoutMs, ...(q.multiCollect ? { multiCollect: true } : {}) },
+    { kind: 'search', site: q.site, url: q.url, timeoutMs, ...(q.multiCollect ? { multiCollect: true } : {}), ...(q.query ? { query: q.query } : {}) },
     { timeoutMs: timeoutMs + 10_000 },
   )
   if (!outcome.ok) return { ok: false, kind: outcome.reason, summary: outcome.summary }
   const bodies = outcome.result.bodies
   return {
     ok: true,
+    ...(outcome.result.challenge === true ? { challenge: true } : {}),
     body: typeof outcome.result.body === 'string' ? outcome.result.body : '',
     url: typeof outcome.result.url === 'string' ? outcome.result.url : '',
     title: typeof outcome.result.title === 'string' ? outcome.result.title : '',
