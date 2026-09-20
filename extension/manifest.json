@@ -17,6 +17,8 @@
     "https://*.ctrip.com/*",
     "https://*.dida.com/*",
     "https://dida.com/*",
+    "http://*.dida.com/*",
+    "http://dida.com/*",
     "https://portal-test.hotelbyte.com/*",
     "https://portal.hotelbyte.com/*",
     "http://127.0.0.1:8080/*",
