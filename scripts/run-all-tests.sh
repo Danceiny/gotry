@@ -79,6 +79,7 @@ echo "=== 6c. 行程 HTML 渲染器与产物生成入口(#442/父 #438:纯渲染
 echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/spawn-bounded-abort-tests.ts) || FAIL=1
 
 echo
 echo "=== 7b. flyai 能力层(离线假 CLI,4 断言:Sentinel 非业务形状→error/空 itemList→miss/命中→hit/exit≠0→error;issue #24) ==="

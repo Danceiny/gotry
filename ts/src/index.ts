@@ -967,7 +967,11 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       + 'single-side, unresolvable, or checkOut ≤ checkIn returns an actionable input_required result WITHOUT spawning the vendor CLI; '
       + 'only after a complete valid stay window is fixed do we forward to hbcli. '
       + 'Output: hotel list with evidence chain ([realtime-API:hbcli] + fetch timestamp, '
-      + 'or [static-pack:estimate]) per the L4 invariant.'),
+      + 'or [static-pack:estimate]) per the L4 invariant. Independent read-only: safe to issue in the same step as other independent searches; '
+      + 'the host abort signal is forwarded to the spawned process tree.'),
+    // 并发安全(issue #519):只读检索,execute 不写共享会话态(延迟/事实落盘 append-only 且失败不阻塞),
+    // 私有进程组接收宿主 signal；取消有界返回，未知组外后代不冒充已回收。
+    isConcurrencySafe: () => true,
     // D-30 第二刀(issue #112):query blob → 平铺 typed 契约(同 flyai 刀法)。
     parameters: {
       destination: { type: 'string', required: true, description: '目的地城市,如 大理' },
@@ -985,6 +989,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       const q = args
       if (!q.destination) throw new Error('gotry_hotel_search requires destination')
       const started = Date.now()
+      const execSignal = (_exec as { signal?: AbortSignal } | undefined)?.signal
       const fallbackPath = join(import.meta.dirname, '..', '..', 'data', 'hotels_2026.json')
       // issue #283 闸:完整、有效且退房晚于入住才能派发 hbcli;失败直接返回
       // input_required,不发供应商命令,不把当前窗口查询当所需日期结果。
@@ -1016,7 +1021,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       // 断路拒绝时返回平铺失败面(不发起查询,不伪装成 miss)
       const itp = await interpretEffect({
         effect: 'HBCLI_HOTEL_SEARCH',
-        params: { destination: q.destination, checkIn: gate.checkIn, checkOut: gate.checkOut, adults: q.adults, hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs, fallbackPath },
+        params: { destination: q.destination, checkIn: gate.checkIn, checkOut: gate.checkOut, adults: q.adults, hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs, fallbackPath, signal: execSignal },
       })
       if (!itp.result) return declinedObservation('HBCLI_HOTEL_SEARCH', itp.trace)
       const resp = itp.result
@@ -1574,7 +1579,9 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       'Three-valued semantics: hit = ≥1 candidate; miss = 0 candidates (try synonyms or contentType=city/hotel); ' +
       'unavailable = hbcli failed (degraded, never blocks). ' +
       'Use as the first stop when the user mentions a place/city/hotel name and you need to ground it in real catalog data ' +
-      '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region).'),
+      '(OpenFlights skeleton tells you connectivity; Anything tells you what EXISTS at a city/region). Independent read-only: safe in the same step as other independent searches; host abort is forwarded to the process tree.'),
+    // 并发安全(issue #519):同 hotel_search,只读 + append-only 延迟日志 + 宿主取消信号。
+    isConcurrencySafe: () => true,
     // D-30 第四刀(issue #112):平铺 typed;keyword required → 宿主权即拒
     parameters: {
       keyword: { type: 'string', required: true, description: '搜索关键词' },
@@ -1590,12 +1597,13 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       const q = args
       const rawQuery = String(q.keyword ?? '')
       const started = Date.now()
+      const execSignal = (_exec as { signal?: AbortSignal } | undefined)?.signal
       if (!q.keyword) {
         return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', summary: 'keyword 必填', evidence: '[hbcli-anything@error] empty' })) as Record<string, never>
       }
       // hbcliBin 直通 config(缺省 'hbcli',能力层按已知安装位回退)——issue #195 教训:
       // 此前 params 只透 q,config.hbcliBin 永远到不了能力层
-      const itpA = await interpretEffect({ effect: 'ANYTHING_SEARCH', params: { ...q, hbcliBin: config.hbcliBin } })
+      const itpA = await interpretEffect({ effect: 'ANYTHING_SEARCH', params: { ...q, hbcliBin: config.hbcliBin, signal: execSignal } })
       if (!itpA.result) return declinedObservation('ANYTHING_SEARCH', itpA.trace)
       const r = itpA.result
       const dir = await ensureStateDir(config.stateRoot)
