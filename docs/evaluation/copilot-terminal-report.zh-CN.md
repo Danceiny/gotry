@@ -3,7 +3,7 @@
 # Booking Copilot worker 终止测试报告
 
 > 定位：验证托管 worker 终止后，端口不会继续接收无限等待的请求。
-> 状态：定向验证通过，2026-09-19 完整回归门禁阻塞。
+> 状态：最终提交树于 2026-09-20 通过完整本地门禁，PR 已提交待审查。
 > 上游：[架构](../architecture.zh-CN.md)、[#510](https://github.com/Danceiny/gotry/issues/510)、[就绪测试报告](copilot-readiness-report.zh-CN.md)。
 > 下游：Booking Copilot 维护者与 PR 审查者。
 
@@ -21,6 +21,8 @@
 
 审查中发现的关联问题记录于 [#513](https://github.com/Danceiny/gotry/issues/513)：若清理观察在 worker 结果被消费前失败，旧关闭流程会留下无人处理的派生 Promise 拒绝。辅助故障注入测试使用真实启动失败的 handle，仅注入 SDK 契约允许的清理拒绝或超时。修复会立即把 worker 失败接收为结果值，仅在清理成功后再抛出，保留清理错误的优先级。这是合成异常覆盖，与下表的真实进程场景分开判断。
 
+本分支等待 [#514](https://github.com/Danceiny/gotry/issues/514) 期间，main 合入了 [#518](https://github.com/Danceiny/gotry/issues/518) 的清理诊断，其 `close()` 已把 worker 结果按值接收（吸收了 #513 的修复）。交付分支合并该演进，并在其上保留本修复的终态语义：`run`／`warmup` 守卫仍以纯安全错误拒绝，`close()` 失败则表现为类型化的 `ManagedDshCleanupError`，稳定公开语义（`managed DSH worker failed`、`managed DSH process tree observation failed`、`managed DSH process tree cleanup timeout`）位于追加的安全诊断载荷之前。两个 proof 在合并树上断言该类型化契约。
+
 ## 场景矩阵
 
 | 场景 | 必须观察到的结果 |
@@ -36,7 +38,7 @@
 
 ## 验证记录
 
-环境：macOS 26.6.2、arm64；两个包根目录均按锁文件安装；dsh 子进程运行时为 0.1.5-rc.1。基线为 `7f40844`。完整执行结束于 2026-09-19T11:34:29.019539+00:00。此处记录的验证调用使用隔离 HOME。源码推送用于继续推进，最终提交 SHA 的本地完整门禁通过前不创建 PR。
+环境：macOS 26.6.2、arm64；两个包根目录均按锁文件安装；dsh 子进程运行时为 0.1.5-rc.1。基线为 `3855f9e`（#518／#534 之后的 origin/main）；交付树为 `7d4bdbc`（main 合入本分支）。2026-09-19 的执行结束于 2026-09-19T11:34:29.019539+00:00；交付树上的最终执行为 2026-09-20T19:31:08Z 至 19:42:11Z。此处记录的验证调用使用隔离 HOME。宿主默认 Node v26.9.0 下的一次中间执行因隔离工作目录的测试环境缺陷失效（依赖符号链接破坏了构建脚本的仓库内 TypeScript 解析约束），与产品代码无关，不计为有效执行。
 
 | 检查 | 结果 |
 |---|---|
@@ -44,14 +46,17 @@
 | 原关闭行为，Node 22.23.2 | 预期 exit 1：注入观察拒绝和超时都产生了未处理的 worker 失败拒绝。 |
 | 三个定向测试，Node 22.23.2 与 24.16.0 | 六条命令全部 exit 0；终止、已有请求与进程树、清理失败契约均通过。 |
 | TypeScript 与 dist 兼容，Node 22.23.2 | 均为 exit 0。 |
-| 完整回归，Node 22.23.2 | exit 1，`REGRESSION FAILED`，1078.59 秒。FlyAI 酒店夹具失败，本次 Copilot 新增测试在该轮中通过。 |
+| 完整回归，Node 22.23.2，2026-09-19 | exit 1，`REGRESSION FAILED`，1078.59 秒。FlyAI 酒店夹具失败，本次 Copilot 新增测试在该轮中通过。 |
+| 合并树上的三个 managed proof，Node 22.23.2 与 26.9.0 | 终止、清理失败与清理诊断 proof 均 exit 0，断言类型化的 `ManagedDshCleanupError` 契约。 |
+| 合并树上的 smoke 与 TypeScript | `SMOKE OK`；`tsc --noEmit` exit 0。 |
+| 最终完整回归，Node 22.23.2，2026-09-20 | exit 0，`ALL SUITES GREEN`，663 秒，交付树 `7d4bdbc`。 |
 | 双语结构、可读性与空白检查 | 通过。 |
 
-生产源码 SHA-256：`68f5cde3f4b8f57ce9e14d41f52f7fca94bd4bf425d1e524806efeef74869138`。失败完整日志 SHA-256：`ef84759ec88a6eeedcdc60ea32cc87a2121aaa5bf1127e65185a43035cef604b`。验证期间生产与测试源码指纹均未变化。负向对照日志指纹：终止行为 `c857b16e4daf9282ec40d7f0c643ae20329101796bca55bf4f49a80c4ac3f518`；清理行为 `7536108abb27e47f3acbf579a286e1afbf8bbf713069817b3fef45c4dfbc86ac`。两个对照均在隔离源码目录中，使用最终测试验证旧端口，不替换工作中的实现。
+生产源码 SHA-256：`6bf542c243e7dd57cf1717e03daf9d9c139772995fd2fe3f525664721ae17850`（合并树；合并前为 `68f5cde3f4b8f57ce9e14d41f52f7fca94bd4bf425d1e524806efeef74869138`）。最终完整日志 SHA-256：`a7d5072ac3df119285af1b595e3c599b907550a4e001089362d7b6777f349cc7`（2026-09-19 失败日志 SHA-256：`ef84759ec88a6eeedcdc60ea32cc87a2121aaa5bf1127e65185a43035cef604b`）。验证期间生产与测试源码指纹均未变化。负向对照日志指纹：终止行为 `c857b16e4daf9282ec40d7f0c643ae20329101796bca55bf4f49a80c4ac3f518`；清理行为 `7536108abb27e47f3acbf579a286e1afbf8bbf713069817b3fef45c4dfbc86ac`。两个对照均在隔离源码目录中，使用最终测试验证旧端口，不替换工作中的实现。
 
-门禁失败已记录于 [#514](https://github.com/Danceiny/gotry/issues/514)。`flyai-tests.ts:249` 期望酒店畸形条目比例 `1/2`，实际收到 `exit -1`。本次未改 FlyAI。既有 helper 丢弃了退出信号，也未记录 5000 ms 定时器是否触发，旧日志不足以确定原因。后续宿主快照显示负载 103.81、交换空间使用约 25 GB，说明环境压力较高，但不能证明该次子进程超时。后续重跑通过不能作为根因修复结论。
+2026-09-19 的门禁失败记录于 [#514](https://github.com/Danceiny/gotry/issues/514)：`flyai-tests.ts:249` 期望酒店畸形条目比例 `1/2`，实际收到 `exit -1`。#514 已由 PR #534 收口（终止携带陈旧 429 文本的 fail-closed 分类），FlyAI 各套件在 2026-09-20 的最终回归中通过；当时的环境压力读数始终未转化为根因结论。
 
-更早一轮完整回归在审查发现 #513 后主动停止，不计为通过。中止和失败的执行均不满足最终 SHA 门禁。可选的真实 HotelByte、远端 skills、会话／登录与 Lavish 探针、外部 STAICLI 包及可选 Agent Reach doctor 断言仍在报告范围之外；历史 Python oracle 不在当前回归入口内。
+更早一轮完整回归在审查发现 #513 后主动停止，不计为通过。中止与失败的 2026-09-19 执行不满足最终 SHA 门禁；2026-09-20 在交付树上的执行满足该门禁。可选的真实 HotelByte、远端 skills、会话／登录与 Lavish 探针、外部 STAICLI 包及可选 Agent Reach doctor 断言仍在报告范围之外；历史 Python oracle 不在当前回归入口内。
 
 ## 复现与限制
 
