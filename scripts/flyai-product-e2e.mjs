@@ -65,8 +65,7 @@ const allCalls = [
   { id: 'flyai-keyword', args: { kind: 'keyword', query: '杭州西湖' } },
   { id: 'flyai-ai', args: { kind: 'ai', query: '杭州周末旅行建议' } },
   { id: 'flyai-marriott-hotel', args: { kind: 'marriott-hotel', to: '杭州', checkIn: fixtureDates.checkIn, checkOut: fixtureDates.checkOut, keyWords: '万豪,杭州万豪' } },
-  // The official 1.0.16 invocation uses only --keyword for this command.
-  { id: 'flyai-marriott-package', args: { kind: 'marriott-package', keyword: '杭州' } },
+  { id: 'flyai-marriott-package', args: { kind: 'marriott-package', keyword: '杭州', sortType: 'price_asc' } },
 ];
 
 const successTransport = (command) => ({
@@ -433,7 +432,7 @@ async function runCase(scenario) {
     assert.ok(byKind.get('poi').args.includes('--poi-level') && byKind.get('poi').args.includes('5'));
     assert.ok(byKind.get('marriott-hotel').args.includes('--key-words') && byKind.get('marriott-hotel').args.includes('万豪,杭州万豪'));
     assert.ok(byKind.get('marriott-package').args.includes('--keyword') && byKind.get('marriott-package').args.includes('杭州'));
-    assert.ok(!byKind.get('marriott-package').args.includes('--sort-type'), 'official Marriott package CLI has no sort-type argument');
+    assert.ok(byKind.get('marriott-package').args.includes('--sort-type') && byKind.get('marriott-package').args.includes('price_asc'));
     assert.match(relayText, /¥1xx/);
     assert.match(relayText, /fixture\.invalid\/search-hotel\/jump/);
     assert.match(relayText, /fixture observation/);
