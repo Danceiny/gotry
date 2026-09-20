@@ -9,7 +9,7 @@
 
 ## Decision and environment
 
-The installed-product controlled E2E passed all nine scenarios below. This proves setup persistence, model-visible tools and results, and inventory error boundaries through real GoTry and dsh processes. Live anonymous official CLI observations are separate supporting evidence. Formal-key authorization, live model quality, booking and payment were not accepted by this run.
+The installed-product controlled E2E passed all nine scenarios below. This proves setup persistence, model-visible tools and results, and inventory error boundaries through real GoTry and dsh processes. Live anonymous official CLI observations are separate supporting evidence. Formal-key read-only acceptance was completed by the follow-up live retest below; live model quality, booking and payment remain unaccepted.
 
 Runtime source: `e8925001084b9f1234ef09a504c04c183edaa81d`. Node `24.10.0`, package `0.0.1-rc.24`, dsh `0.1.5-rc.1`, official FlyAI CLI pinned to `1.0.16`. A packed tarball was installed into a separate temporary consumer with a locked dependency graph; all 232 dsh packages passed closure verification. Tarball SHA-256: `a43794bf4d8cc082c6317473c69a51e9a9e96bb1111b4993bc177b8cd3f65970`.
 
@@ -44,9 +44,19 @@ The adapter replayed the eight captured response shapes offline. This exposed pr
 - [#527](https://github.com/Danceiny/gotry/issues/527): connecting routes lost later legs and could be marked nonstop; both model output and persisted facts now agree.
 - [#528](https://github.com/Danceiny/gotry/issues/528): the first installed run showed only a summary to the model; structured results now survive rendering without duplicating raw provider data.
 - [#529](https://github.com/Danceiny/gotry/issues/529): the next run turned 401 into negative inventory; only hit/miss may now cross the fact boundary.
+- [#530](https://github.com/Danceiny/gotry/issues/530): the official CLI's first run creates `~/.flyai` at 0755 with a 0600 device-id, which the save path rejected; the directory is now tightened to 0700 for the current owner while symlinks and foreign owners stay rejected, and the device-id is preserved.
 - [#517](https://github.com/Danceiny/gotry/issues/517): local nonzero exit alone does not authorize retry; explicit HTTP 5xx evidence does. Focused registered-tool checks cover attempts and zero final error facts.
 
 The initial 100 ms timeout fixture stopped Node before its event was recorded. It was replaced with a 15-second hanging fixture and a 2-second product deadline; the one-invocation assertion remains strict. Earlier failures remain in the local evidence set rather than being relabeled.
+
+## Formal-key live retest (#530)
+
+On 2026-09-20 the config-directory fix was retested with an authorized real key on the installed product. A tarball packed from `feat/flyai-skill-integration-521` (head `c3a4f21` plus the uncommitted fix) was installed into a clean temporary consumer; the official `@fly-ai/flyai-cli@1.0.16` ran through a recording shim, and the key reached the run only from an isolated 0600 file into a fresh HOME.
+
+- Setup: `gotry setup flyai --stdin` verified the candidate with the official CLI, whose first run created `~/.flyai` (0755) and a 0600 device-id; the save then tightened the directory to 0700, wrote the config at 0600, preserved the device-id and wrote the 0600 verification receipt. Setup output and history contained no key bytes.
+- Product: the model relay confirmed setup status/check (`verified:true`, check `hit`, receipt saved) and all eight read-only search kinds returned `hit` against the live provider (latencies 2.3–15.8 s, 44 inventory facts, directory 0700, config 0600).
+- The controlled nine-scenario harness and the full local regression (`ALL SUITES GREEN`, including the harness's setup-verify budget raised from 5 s to 15 s to absorb regression-load process startup) passed at the same tree.
+- Sanitized evidence, including the live receipt and a credential-leak scan, is kept in `.loopx/engineering/tick-1730-qoder-530-live-retest/`. Key-bearing temporary roots were deleted after the run; no booking or payment was attempted.
 
 ## Reproduction and merge gate
 

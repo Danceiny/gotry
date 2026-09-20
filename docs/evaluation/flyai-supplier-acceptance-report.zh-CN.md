@@ -9,7 +9,7 @@
 
 ## 结论与环境
 
-安装后产品的受控端到端测试通过了下表全部九个场景。它通过真实 GoTry 和 dsh 进程验证配置持久化、模型可见的工具及结果，以及库存错误边界。官方 CLI 的真实匿名调用是另一层辅助证据。本轮未验收正式 Key 权限、真实模型质量、预订或支付。
+安装后产品的受控端到端测试通过了下表全部九个场景。它通过真实 GoTry 和 dsh 进程验证配置持久化、模型可见的工具及结果，以及库存错误边界。官方 CLI 的真实匿名调用是另一层辅助证据。正式 Key 的只读验收已由下方后续 live 复测完成；真实模型质量、预订或支付仍未验收。
 
 运行时代码：`e8925001084b9f1234ef09a504c04c183edaa81d`。Node `24.10.0`，安装包 `0.0.1-rc.24`，dsh `0.1.5-rc.1`，官方 FlyAI CLI 固定为 `1.0.16`。打包产物安装到独立临时 consumer，使用锁定依赖图；232 个 dsh 包均通过闭包验证。安装包 SHA-256：`a43794bf4d8cc082c6317473c69a51e9a9e96bb1111b4993bc177b8cd3f65970`。
 
@@ -44,9 +44,19 @@ adapter 对八类捕获形状做了离线回放，发现并修复了旧夹具对
 - [#527](https://github.com/Danceiny/gotry/issues/527)：中转路线丢后续航段且可能标成直达；模型输出与持久化事实现已一致。
 - [#528](https://github.com/Danceiny/gotry/issues/528)：首次实装运行发现模型只收到摘要；现保留结构化结果，且不重复输出供应商原始数据。
 - [#529](https://github.com/Danceiny/gotry/issues/529)：后续实装运行把 401 写成负库存；现只有 hit/miss 能写入事实。
+- [#530](https://github.com/Danceiny/gotry/issues/530)：官方 CLI 首次运行会以 0755 创建 `~/.flyai` 并写入 0600 device-id，旧保存路径因此拒绝；现对当前用户拥有的目录收紧为 0700，符号链接与非本人目录仍拒绝，device-id 保留。
 - [#517](https://github.com/Danceiny/gotry/issues/517)：本地非零退出本身不能授权重试，明确 HTTP 5xx 证据才可以；注册工具专项验证调用次数及最终错误零事实。
 
 最初的一百毫秒超时夹具在 Node 写出事件前将进程终止。现改为挂起十五秒的夹具、两秒产品截止时间，仍严格断言只调用一次。此前失败保存在本地证据集中，没有改写为成功。
+
+## 正式 Key live 复测（#530）
+
+2026-09-20 用授权真实 Key 在安装版产品上复测了配置目录修复。从 `feat/flyai-skill-integration-521`（头部 `c3a4f21` 加未提交修复）打包的安装包被装入干净的临时 consumer；官方 `@fly-ai/flyai-cli@1.0.16` 经记录型 shim 运行，Key 仅从隔离的 0600 文件进入全新 HOME。
+
+- 配置：`gotry setup flyai --stdin` 用官方 CLI 验证候选，其首次运行以 0755 创建 `~/.flyai` 并写入 0600 device-id；保存时目录被收紧为 0700，config 以 0600 写入，device-id 保留，0600 验证回执写入；setup 输出与历史无 Key 字节。
+- 产品：模型 relay 确认 setup status/check（`verified:true`、check `hit`、回执保存），八类只读查询全部对真实供应商返回 `hit`（延迟 2.3～15.8 秒，44 条库存事实，目录 0700，config 0600）。
+- 受控九场景 harness 与完整本地回归（`ALL SUITES GREEN`，其中 harness 的 setup 验证预算由 5 秒提高到 15 秒以吸收回归负载下的进程启动耗时）在同一代码树上通过。
+- 脱敏证据（含 live 回执与凭据泄漏扫描）保存在 `.loopx/engineering/tick-1730-qoder-530-live-retest/`。含 Key 的临时根在运行后删除；未尝试任何预订或支付。
 
 ## 复现与合并门禁
 
