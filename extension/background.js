@@ -221,15 +221,19 @@ async function openLoginAndFill(site, payload) {
     passwordField: typeof payload.passwordField === 'string' ? payload.passwordField : undefined,
   }
   const tab = await chrome.tabs.create({ url: payload.loginUrl, active: true })
-  // content-bridge 在 document_start 注入,但登录页多为 SPA:给受控重试窗口
-  for (let i = 0; i < 20; i++) {
+  // content-bridge 在 document_start 注入,但登录页多为 SPA:输入框常晚于脚本就绪。
+  // 因此「未就绪」必须继续重试——只在**填表成功**时收工(2026-09-21 E2E 实证:
+  // 首次即返回 ok:false 会让登录页一直空着)。
+  let lastError = 'login page not ready'
+  for (let i = 0; i < 30; i++) {
     await sleep(500)
     try {
       const r = await chrome.tabs.sendMessage(tab.id, { type: 'gotry-fill-login', payload: fill })
-      return { ok: !!(r && r.ok), kind: 'open-login-fill', tabId: tab.id, filled: !!(r && r.ok), error: r && r.error ? String(r.error).slice(0, 120) : undefined }
+      if (r && r.ok) return { ok: true, kind: 'open-login-fill', tabId: tab.id, filled: true }
+      if (r && r.error) lastError = String(r.error).slice(0, 120)
     } catch { /* 接收端未就绪,继续等 */ }
   }
-  return { ok: false, kind: 'open-login-fill', tabId: tab.id, error: 'login page not ready' }
+  return { ok: false, kind: 'open-login-fill', tabId: tab.id, error: lastError }
 }
 
 async function handleJob(job) {
