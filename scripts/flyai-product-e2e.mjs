@@ -64,45 +64,51 @@ const allCalls = [
   { id: 'flyai-poi', args: { kind: 'poi', cityName: '杭州', poiLevel: 5, category: '博物馆' } },
   { id: 'flyai-keyword', args: { kind: 'keyword', query: '杭州西湖' } },
   { id: 'flyai-ai', args: { kind: 'ai', query: '杭州周末旅行建议' } },
-  { id: 'flyai-marriott-hotel', args: { kind: 'marriott-hotel', to: '杭州', checkIn: fixtureDates.checkIn, checkOut: fixtureDates.checkOut, hotelBrands: '万豪', hotelName: '杭州万豪' } },
+  { id: 'flyai-marriott-hotel', args: { kind: 'marriott-hotel', to: '杭州', checkIn: fixtureDates.checkIn, checkOut: fixtureDates.checkOut, keyWords: '万豪,杭州万豪' } },
   { id: 'flyai-marriott-package', args: { kind: 'marriott-package', keyword: '杭州', sortType: 'price_asc' } },
 ];
 
 const successTransport = (command) => ({
-  adultPrice: 888,
-  jumpUrl: `https://fixture.invalid/${command}`,
-  journeys: [{ segments: [{
-    marketingTransportNo: command === 'search-flight' ? 'E2E521' : 'G123',
-    marketingTransportName: 'Fixture Transport',
-    depDateTime: `${command === 'search-flight' ? fixtureDates.flight : fixtureDates.train} 08:00:00`,
+  journeys: [{ journeyType: '直达', segments: [{
+    arrCityAbroad: false, arrCityCode: '330100', arrCityName: '杭州',
     arrDateTime: `${command === 'search-flight' ? fixtureDates.flight : fixtureDates.train} 11:00:00`,
-    depStationName: '上海虹桥', arrStationName: '杭州东', duration: 180,
-    seatClassName: '经济舱',
-  }] }],
+    arrStationCode: 'HGH', arrStationName: '杭州东站', arrStationShortName: '杭州东', arrTerm: null,
+    arrWeekAbbrName: '周日', depCityAbroad: null, depCityCode: '310100', depCityName: '上海',
+    depDateTime: `${command === 'search-flight' ? fixtureDates.flight : fixtureDates.train} 08:00:00`,
+    depStationCode: 'AOH', depStationName: '上海虹桥站', depStationShortName: '上海虹桥', depTerm: null,
+    depWeekAbbrName: '周日', duration: '180', marketingTransportName: command === 'search-flight' ? 'Fixture Air' : '高铁',
+    marketingTransportNo: command === 'search-flight' ? 'E2E521' : 'G123', miles: null, quantity: null,
+    seatClassName: command === 'search-flight' ? '经济舱' : '二等座', stopInfos: null, transportType: command === 'search-flight' ? '飞机' : '火车',
+  }], totalDuration: '180', transferDuration: '' }],
+  jumpUrl: `https://fixture.invalid/${command}`,
+  price: '5x', totalDuration: '180',
 });
 const successHotel = (command) => ({
+  address: 'Fixture Road', commissionMoneyYuan: null, decorationTime: '2024',
+  detailUrl: `https://fixture.invalid/${command}/jump`, latitude: '30.25', longitude: '120.16',
+  mainPic: `https://fixture.invalid/${command}/main.jpg`,
   name: command === 'search-marriott-hotel' ? 'Fixture Marriott Hotel' : 'Fixture Hotel',
-  star: '5', price: '¥7xx', rate: '4.8', address: 'Fixture Road', interestsPoi: 'West Lake',
-  shId: 'hotel-521', detailUrl: `https://fixture.invalid/${command}/jump`,
-  mainPic: `https://fixture.invalid/${command}/main.jpg`, score: '4.8', scoreDesc: 'Excellent',
-  review: 'Fixture review', brandName: 'Fixture Brand', latitude: '30.25', longitude: '120.16',
+  price: command === 'search-marriott-hotel' ? '¥360起/晚' : '¥1xx', rate: null,
+  star: command === 'search-marriott-hotel' ? '高档型' : '经济型',
+  ...(command === 'search-marriott-hotel' ? { nearbyPoi: 'West Lake', shid: 'hotel-521' } : { interestsPoi: 'West Lake', shId: 'hotel-521' }),
 });
 const successItem = command => {
   if (command === 'search-flight' || command === 'search-train') return successTransport(command);
   if (command === 'search-hotel' || command === 'search-marriott-hotel') return successHotel(command);
   if (command === 'search-poi') return {
-    id: 'poi-521', name: 'Fixture Museum', mainPic: 'https://fixture.invalid/poi/main.jpg',
-    jumpUrl: 'https://fixture.invalid/poi/jump', address: 'Fixture Street', freePoiStatus: '收费',
-    ticketInfo: { price: '¥80', priceDate: fixtureDates.flight, ticketName: '成人票' },
+    address: 'Fixture Street', category: '历史古迹', description: 'Fixture description', freePoiStatus: 'FREE',
+    id: 'poi-521', jumpUrl: 'https://fixture.invalid/poi/jump', latitude: '30.25', listRank: 'Fixture rank', longitude: '120.16',
+    mainPic: 'https://fixture.invalid/poi/main.jpg', name: 'Fixture Museum', poiLevel: null, ticketInfo: null,
   };
   if (command === 'keyword-search') return { info: {
-    title: 'Fixture Keyword', jumpUrl: 'https://fixture.invalid/keyword/jump',
-    picUrl: 'https://fixture.invalid/keyword/pic.jpg', price: '¥7xx', scoreDesc: '4.8', star: '5', tags: ['fixture'],
+    commissionMoneyYuan: null, jumpUrl: 'https://fixture.invalid/keyword/jump',
+    picUrl: 'https://fixture.invalid/keyword/pic.jpg', price: null, rate: null, scoreDesc: null,
+    skuCommissionStruct: null, star: null, tags: null, title: 'Fixture Keyword',
   } };
   if (command === 'search-marriott-package') return {
-    name: 'Fixture Marriott Package', brandName: '万豪', hotelName: '杭州万豪', cityName: '杭州',
-    price: '¥7xx', detailUrl: 'https://fixture.invalid/package/jump',
-    mainPic: 'https://fixture.invalid/package/main.jpg', sellingPoint: 'Fixture package',
+    benefit: null, commissionMoneyYuan: null, detailUrl: 'https://fixture.invalid/package/jump', itemId: 'package-521',
+    picUrl: 'https://fixture.invalid/package/main.jpg', price: '￥1199起/2晚', rate: null,
+    sellPoint: 'Fixture package', title: 'Fixture Marriott Package',
   };
   return null;
 };
@@ -396,9 +402,9 @@ async function runCase(scenario) {
     assert.ok(byKind.get('train').args.includes('--transport-no') && byKind.get('train').args.includes('G123'));
     assert.ok(byKind.get('hotel').args.includes('--sort') && byKind.get('hotel').args.includes('price_asc'));
     assert.ok(byKind.get('poi').args.includes('--poi-level') && byKind.get('poi').args.includes('5'));
-    assert.ok(byKind.get('marriott-hotel').args.includes('--hotel-brands') && byKind.get('marriott-hotel').args.includes('万豪'));
+    assert.ok(byKind.get('marriott-hotel').args.includes('--key-words') && byKind.get('marriott-hotel').args.includes('万豪,杭州万豪'));
     assert.ok(byKind.get('marriott-package').args.includes('--sort-type') && byKind.get('marriott-package').args.includes('price_asc'));
-    assert.match(relayText, /¥7xx/);
+    assert.match(relayText, /¥1xx/);
     assert.match(relayText, /fixture\.invalid\/search-hotel\/jump/);
     assert.match(relayText, /fixture observation/);
     assert.ok(observations.some(message => message.tool_call_id === 'flyai-hotel'));
@@ -409,7 +415,7 @@ async function runCase(scenario) {
       if (call.args.kind === 'flight' || call.args.kind === 'train') {
         assert.ok(observation.options?.[0]?.no && observation.options?.[0]?.jumpUrl);
       } else if (call.args.kind === 'hotel' || call.args.kind === 'marriott-hotel') {
-        assert.equal(observation.hotels?.[0]?.priceRaw, '¥7xx');
+        assert.equal(observation.hotels?.[0]?.priceRaw, call.args.kind === 'hotel' ? '¥1xx' : '¥360起/晚');
         assert.ok(observation.hotels?.[0]?.jumpUrl && observation.hotels?.[0]?.mainPic);
       } else if (call.args.kind === 'poi') {
         assert.ok(observation.pois?.[0]?.poiId && observation.pois?.[0]?.jumpUrl);
@@ -418,7 +424,7 @@ async function runCase(scenario) {
       } else if (call.args.kind === 'ai') {
         assert.ok(observation.aiData);
       } else {
-        assert.ok(observation.packages?.[0]?.name && observation.packages?.[0]?.detailUrl);
+        assert.ok(observation.packages?.[0]?.title && observation.packages?.[0]?.picUrl && observation.packages?.[0]?.sellPoint);
       }
     }
   } else if (scenario === 'ordinary-429') {
