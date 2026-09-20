@@ -16,6 +16,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { getEventListeners } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -46,6 +47,27 @@ assert.match(badObs.summary, /未登记效应/, '拒绝面人话 summary')
 assert.match(badObs.evidence, /\[效应:CTRIP_DIRECT_QUERY@/, '拒绝面带证据链')
 console.log('1. 注册表封闭性:未登记效应 → 结构化拒绝面(不抛错)OK')
 
+// Host cancellation is an explicit outcome, not an unregistered-effect diagnosis.
+const preCancelled = new AbortController()
+preCancelled.abort()
+let cancelledDispatches = 0
+const cancelledInterpreter = makeProductionInterpreter({
+  breakers: new Map(),
+  handlers: { ANYTHING_SEARCH: async () => { cancelledDispatches++; return { ok: true } } },
+})
+const cancelled = await cancelledInterpreter({ effect: 'ANYTHING_SEARCH', params: { signal: preCancelled.signal } })
+assert.equal(cancelled.result, null)
+assert.equal(cancelled.trace.declined, 'aborted')
+assert.equal(cancelled.trace.attempts, 0)
+assert.equal(cancelledDispatches, 0)
+const cancelledObservation = declinedObservation('ANYTHING_SEARCH', cancelled.trace)
+assert.equal(cancelledObservation.ok, false)
+assert.match(cancelledObservation.summary, /已取消/)
+assert.doesNotMatch(cancelledObservation.summary, /未登记|断路器/)
+assert.match(cancelledObservation.evidence, /@abort@/)
+console.log('1b. 宿主取消明确呈现已取消，零派发、不误报未登记效应 OK')
+
+
 // ---------------------------------------------------------------------------
 // 2. 指数退避:500→1000→2000 封顶;累计记账;非瞬时失败不重试
 // ---------------------------------------------------------------------------
@@ -69,6 +91,70 @@ const noRetry = await withRetry(
   { maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 2000, isRetryable: () => false, sleep: sleep0 },
 )
 assert.equal(noRetry.attempts, 1, '瞬时判定说不重试就 1 次')
+
+// 2a. 退避等待生命周期：正常 timer、取消与注入 sleep 都移除 abort listener。
+const normalBackoffController = new AbortController()
+let normalBackoffCalls = 0
+const normalBackoff = await withRetry(
+  async () => ({ ok: ++normalBackoffCalls > 1 }),
+  { maxAttempts: 2, baseDelayMs: 5, maxDelayMs: 5, signal: normalBackoffController.signal },
+)
+assert.equal(normalBackoff.attempts, 2, '真实 timer 等待后继续下一次尝试')
+assert.equal(normalBackoff.aborted, false, '正常等待不是取消')
+assert.equal(getEventListeners(normalBackoffController.signal, 'abort').length, 0, '正常 timer 完成后移除 abort listener')
+
+const cancelledBackoffController = new AbortController()
+let cancelledBackoffCalls = 0
+let cancelTimer: ReturnType<typeof setTimeout> | undefined
+let cancelledBackoff: Awaited<ReturnType<typeof withRetry<{ ok: boolean }>>>
+try {
+  cancelledBackoff = await withRetry(
+    async () => { cancelledBackoffCalls += 1; return { ok: false } },
+    { maxAttempts: 2, baseDelayMs: 100, maxDelayMs: 100, signal: cancelledBackoffController.signal },
+    () => { cancelTimer = setTimeout(() => cancelledBackoffController.abort(), 1) },
+  )
+} finally {
+  if (cancelTimer !== undefined) clearTimeout(cancelTimer)
+}
+assert.equal(cancelledBackoff!.attempts, 1, 'backoff 取消不派发下一次尝试')
+assert.equal(cancelledBackoff!.aborted, true, 'backoff 取消返回 aborted')
+assert.equal(cancelledBackoffCalls, 1, '取消不是第二次失败')
+assert.equal(getEventListeners(cancelledBackoffController.signal, 'abort').length, 0, '取消后移除 abort listener')
+
+const injectedSleepController = new AbortController()
+let injectedSleepCalls = 0
+const injectedSleep = await withRetry(
+  async () => ({ ok: false }),
+  {
+    maxAttempts: 2,
+    baseDelayMs: 1,
+    maxDelayMs: 1,
+    signal: injectedSleepController.signal,
+    sleep: async () => { injectedSleepCalls += 1; injectedSleepController.abort() },
+  },
+)
+assert.equal(injectedSleepCalls, 1, '退避使用注入 sleep')
+assert.equal(injectedSleep.aborted, true, '注入 sleep 中取消仍终止重试')
+assert.equal(injectedSleep.attempts, 1, '注入 sleep 取消不派发下一次尝试')
+assert.equal(getEventListeners(injectedSleepController.signal, 'abort').length, 0, '注入 sleep 取消后移除 abort listener')
+
+const rejectedSleepController = new AbortController()
+const sleepFailure = new Error('synthetic sleep failure')
+await assert.rejects(
+  withRetry(
+    async () => ({ ok: false }),
+    {
+      maxAttempts: 2,
+      baseDelayMs: 1,
+      maxDelayMs: 1,
+      signal: rejectedSleepController.signal,
+      sleep: async () => { throw sleepFailure },
+    },
+  ),
+  (error: unknown) => error === sleepFailure,
+  '注入 sleep rejection 保持原异常约定',
+)
+assert.equal(getEventListeners(rejectedSleepController.signal, 'abort').length, 0, '注入 sleep rejection 后移除 abort listener')
 console.log('2. 指数退避(封顶链/累计记账/非瞬时止步)OK')
 
 // ---------------------------------------------------------------------------
@@ -93,6 +179,89 @@ assert.equal(br.canAttempt().allowed, true)
 br.onFailure()
 assert.equal(br.state(), 'open', '探测失败 → 重新 open(冷却重启)')
 console.log('3. 断路器三态(closed→open→half-open 单探测→双向收敛)OK')
+
+// 3a. 半开探测所有权：旧 closed 调用的取消/完成不能释放或修改新一代探测。
+const raceClock = { value: 100 }
+const raceNow = () => raceClock.value
+let resolveOldClosed!: (value: unknown) => void
+let resolveOldClosedCompletion!: (value: unknown) => void
+let resolveHalfOpenProbe!: (value: unknown) => void
+let oldClosedStarted!: () => void
+let oldClosedCompletionStarted!: () => void
+let halfOpenProbeStarted!: () => void
+const oldClosedReady = new Promise<void>((resolve) => { oldClosedStarted = resolve })
+const oldClosedCompletionReady = new Promise<void>((resolve) => { oldClosedCompletionStarted = resolve })
+const halfOpenProbeReady = new Promise<void>((resolve) => { halfOpenProbeStarted = resolve })
+let secondProbeCalled = false
+const raceInterpreter = makeProductionInterpreter({
+  sleep: sleep0,
+  now: raceNow,
+  breakers: new Map(),
+  handlers: {
+    HBCLI_HOTEL_SEARCH: async (params: any) => {
+      if (params.testCase === 'old-closed') {
+        oldClosedStarted()
+        return new Promise((resolve) => { resolveOldClosed = resolve })
+      }
+      if (params.testCase === 'old-closed-completion') {
+        oldClosedCompletionStarted()
+        return new Promise((resolve) => { resolveOldClosedCompletion = resolve })
+      }
+      if (params.testCase === 'half-open-probe') {
+        halfOpenProbeStarted()
+        return new Promise((resolve) => { resolveHalfOpenProbe = resolve })
+      }
+      if (params.testCase === 'second-probe') {
+        secondProbeCalled = true
+        return { via: 'hbcli-realtime' }
+      }
+      return { via: 'hbcli-error', error: 'synthetic permanent failure' }
+    },
+  },
+})
+const oldClosedController = new AbortController()
+const oldClosed = raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'old-closed', signal: oldClosedController.signal } })
+await oldClosedReady
+const oldClosedCompletion = raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'old-closed-completion' } })
+await oldClosedCompletionReady
+for (let i = 0; i < 3; i++) await raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: `failure-${i}` } })
+const raceBlocked = await raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'blocked' } })
+assert.equal(raceBlocked.trace.declined, 'circuit-open', '旧请求在途时仍可进入 open')
+raceClock.value = 100_000
+const halfOpenProbe = raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'half-open-probe' } })
+await halfOpenProbeReady
+oldClosedController.abort()
+resolveOldClosed({ via: 'hbcli-error', error: 'aborted by host signal' })
+const cancelledOldClosed = await oldClosed
+assert.equal(cancelledOldClosed.trace.attempts, 1, '旧 closed 请求取消仍只执行一次')
+assert.equal(cancelledOldClosed.trace.declined, 'aborted')
+assert.match(declinedObservation('HBCLI_HOTEL_SEARCH', cancelledOldClosed.trace).summary, /已取消/)
+resolveOldClosedCompletion({ via: 'hbcli-realtime' })
+const completedOldClosed = await oldClosedCompletion
+assert.equal(completedOldClosed.trace.breaker, 'half-open', '旧 closed 请求完成不能修改新半开探测')
+const secondProbe = await raceInterpreter({ effect: 'HBCLI_HOTEL_SEARCH', params: { testCase: 'second-probe' } })
+assert.equal(secondProbe.trace.declined, 'circuit-open', '旧 closed 请求取消不能释放新一代半开探测')
+assert.equal(secondProbeCalled, false, '新一代探测仍由原探测独占')
+resolveHalfOpenProbe({ via: 'hbcli-realtime' })
+const settledHalfOpenProbe = await halfOpenProbe
+assert.equal(settledHalfOpenProbe.trace.breaker, 'closed', '自身半开探测成功后恢复 closed')
+
+// 3b. 探测令牌必须跨 generation 隔离：旧令牌不能释放新探测；失败仍保持 open。
+const ownershipClock = { value: 1_000 }
+const ownership = new CircuitBreaker({ failureThreshold: 1, openMs: 10, now: () => ownershipClock.value })
+ownership.onFailure()
+ownershipClock.value += 10
+const firstProbe = ownership.canAttempt()
+assert.equal(firstProbe.allowed, true)
+ownership.releaseProbe(firstProbe.token)
+const secondGenerationProbe = ownership.canAttempt()
+assert.equal(secondGenerationProbe.allowed, true, '自身取消释放后允许下一代探测')
+ownership.releaseProbe(firstProbe.token)
+assert.equal(ownership.canAttempt().allowed, false, '旧 generation 令牌不能释放新探测')
+ownership.onFailure(secondGenerationProbe.token)
+assert.equal(ownership.state(), 'open', '真实半开失败重新熔断')
+assert.equal(ownership.canAttempt().allowed, false, '真实半开失败后仍拒绝并发探测')
+console.log('3a/3b. 半开探测所有权(旧 closed 取消隔离/取消可重试/跨 generation/失败再熔断)OK')
 
 // ---------------------------------------------------------------------------
 // 4. 生产解译器×瞬时失败:重试后成功,trace 记账(WEATHER 免费源策略 2 次上限)

@@ -57,6 +57,11 @@ field, fails before optional-plugin resolution, dsh spawn, or relay activity.
 The error is stable and does not reflect package paths, config paths, plugin
 names, or benchmark content.
 
+The projected loader entry also requires `subprocess` before GoTry applies;
+this removes a race with parallel service initialization. Ordinary mode keeps
+its existing dependency set. A pre-existing entry-level `inject` field is
+rejected so the generated dependency cannot be overridden or duplicated.
+
 ## Agent conformance and terminal gate
 
 Benchmark opt-in is headless one-shot only. GoTry adds an agent-scoped native
