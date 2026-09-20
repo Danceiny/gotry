@@ -120,6 +120,7 @@
 | [design/milestone-delivery-plan.md](design/milestone-delivery-plan.zh-CN.md) | M4→M6 living 任务图（issue #225）：#20/#22/#136/#137 真实 gate、#231–#235 后继与 #270 公开交付台账；预准入只含获授权的设计/只读/fixture/failing-before 工作 |
 | [design/write-gate-production-design.md](design/write-gate-production-design.zh-CN.md) | M5 WriteGate 生产化 proposal（issue #225/#136）：HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、query miss 保持 unknown、对账/补偿/披露 |
 | [design/fact-writegate-seam.md](design/fact-writegate-seam.zh-CN.md) | fact-anchor × M5 WriteGate 接缝（issue #303，#273 子切片）：读路径闸与写路径闸的契约、five-step 最小链、non-success 写 receipt fail-closed、依赖 #136/#231，M5 Entry 前不启封 |
+| [design/flyai-supplier-skill-design.zh-CN.md](design/flyai-supplier-skill-design.zh-CN.md) | FlyAI 八类能力、本机凭据与证据边界 |
 | [design/effect-interpreter.md](design/effect-interpreter.zh-CN.md) | 效应解译器设计（accepted，ADR-18）：词汇/韧性策略表/判定记录 |
 | [design/booking-saga-fsm.md](design/booking-saga-fsm.zh-CN.md) | 预订 saga 状态机（accepted，ADR-17）：字母表/边表/M5 缝词汇 |
 | [design/tool-orchestration-design.md](design/tool-orchestration-design.zh-CN.md) | 工具编排与通道健康面设计（proposal，issue #106/#107/#108） |

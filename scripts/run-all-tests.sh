@@ -84,6 +84,9 @@ echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话
 echo
 echo "=== 7b. flyai 能力层(离线假 CLI,4 断言:Sentinel 非业务形状→error/空 itemList→miss/命中→hit/exit≠0→error;issue #24) ==="
 (cd ts && npx tsx scripts/flyai-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/flyai-setup-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/flyai-setup-tool-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/flyai-tool-registration-contract-tests.ts) || FAIL=1
 
 echo
 echo "=== 7c. 外部依赖自举(check-only 探测/跳过开关/postinstall 非致命;真安装属发布前干净安装实测) ==="
@@ -511,6 +514,15 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 echo
 echo "=== 49b. dsh-map-tools vendored package proof(issue #202:clean tarball install + MIT license/provenance + alpha.3 settings closure + exactly seven map_* tools + network-free inline coordinates) ==="
 (GOTRY_MAP_TOOLS_E2E_BIN="$package_e2e_bin" "$TSX_BIN" ts/scripts/map-tools-vendor-package-proof.ts) || FAIL=1
+echo "=== 49c. FlyAI installed product E2E (isolated setup, all eight search kinds, error recovery; controlled upstream) ==="
+if [ -n "$package_e2e_bin" ] && [ -x "$package_e2e_bin" ]; then
+  flyai_e2e_parent=$(mktemp -d)
+  node scripts/flyai-product-e2e.mjs "$package_e2e_bin" "$flyai_e2e_parent/evidence" || FAIL=1
+  echo "FlyAI product evidence: $flyai_e2e_parent/evidence"
+else
+  echo "FAIL: FlyAI packaged runtime unavailable"
+  FAIL=1
+fi
 cleanup_packaged_e2e_runtime
 trap - EXIT
 

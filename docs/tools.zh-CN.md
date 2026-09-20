@@ -18,7 +18,8 @@
 
 | 组 | 工具 | 契约 |
 |---|---|---|
-| **实时检索（OTA/官方，只读）** | `gotry_flyai_search` | 机票/火车/酒店实时报价，飞猪官方通道；酒店价格为上游打码展示（真实价以 jumpUrl 页面为准，打码价保 `priceRaw` 原值、数字价恒 0，防「¥7xx 截成 7 伪装真价」）；匿名试用额度达限归类 `needs-setup` 并带配 key 指引，不盲重试 |
+| **实时检索（OTA/官方，只读）** | `gotry_flyai_search` | 八类 FlyAI 公开能力：机票、火车、酒店、景点、关键词、AI、万豪酒店、万豪套餐。平铺参数保留旧别名并开放公开筛选；打码价原样展示，仅精确行程查询写库存事实。鉴权和试用达限不重试，上游瞬时故障最多重试一次。见[集成契约](design/flyai-supplier-skill-design.zh-CN.md)。 |
+| | `gotry_flyai_setup` | `status` 查看来源和验证状态，`check` 只读查询并更新验证回执；均不接收密钥。凭据增改清除使用本机 `gotry setup flyai`；已配置不等于已验证。 |
 | | `gotry_session_search` | 在**用户本人登录态 Chrome** 里查携程机票/酒店 + 12306 火车 + Dida 供应商门户酒店实时价。`kind` = flight/hotel/train，省略默认 flight，query 包裹参数走 query-first 选择，未知/畸形 kind fail closed；全部形态授权闸后物理只读。酒店 = `kind:"hotel"` + 可选 `cityId`，被动嗅探登录态真实价；火车 = `kind:"train"`，12306 公开余票查询面（车次/时刻/座位可用性，列表接口无价格）。火车事实 typed 且绑定单次调用：查询日期为宿主捕获的调用权威、须与精确响应 URL 绑定；可识别空是唯一负事实，malformed/transport/未知座位行零记录，`canWebBuy=Y` 不替代可识别可用座位 |
 | | `gotry_session_login` | 登录引导：先自动检测既有登录；未登录才在用户 Chrome 弹登录入口（**零终端**） |
 | | `gotry_weather_check` | Open-Meteo 预报 ≤16 天 + 历史气候基线 |
