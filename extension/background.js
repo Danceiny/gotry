@@ -265,6 +265,36 @@ async function handleJob(job) {
         await postResult(jobId, { ok: false, error: `search 只允许 ${allowedPrefix ?? '已注册站点域'}(收到 ${String(job.url).slice(0, 80)})` })
         return
       }
+      // 带 query 的 dida 检索 = 驱动门户目的地搜索(2026-09-21):门户无结果路由可直出,
+      // 必须先在城市联想里选定目的地。步骤:开 find 页 → 配方(选目的地+点查询) →
+      // 用**我们的日期**重写落地 URL(不驱动门户日期选择器) → 嗅探价格响应。
+      if (job.query && site === 'dida-portal') {
+        const tab = await chrome.tabs.create({ url: job.url, active: false })
+        try {
+          let recipe = null
+          for (let i = 0; i < 30; i++) {
+            await sleep(500)
+            try { recipe = await chrome.tabs.sendMessage(tab.id, { type: 'gotry-dida-search', params: job.query }); break } catch { /* 接收端未就绪 */ }
+          }
+          if (!recipe || !recipe.ok) {
+            await postResult(jobId, { ok: false, kind: 'search', error: `dida 目的地解析失败(${(recipe && (recipe.step || recipe.error)) || 'recipe-unavailable'})` })
+            return
+          }
+          let landing = recipe.url
+          try {
+            const u = new URL(recipe.url)
+            if (job.query.checkIn) u.searchParams.set('checkInDate', job.query.checkIn)
+            if (job.query.checkOut) u.searchParams.set('checkOutDate', job.query.checkOut)
+            landing = u.toString()
+          } catch { /* 解析失败则用门户落地 URL */ }
+          await chrome.tabs.update(tab.id, { url: landing })
+          const result = await waitSniffMulti(tab.id, job.timeoutMs)
+          await postResult(jobId, { ok: true, kind: 'search', bodies: result.bodies, title: result.title, landingUrl: landing, picked: recipe.picked, timeout: result.timeout })
+          return
+        } finally {
+          await chrome.tabs.remove(tab.id).catch(() => { /* 用户先关了,无妨 */ })
+        }
+      }
       const tab = await chrome.tabs.create({ url: job.url, active: false })
       const result = job.multiCollect
         ? await waitSniffMulti(tab.id, job.timeoutMs)
