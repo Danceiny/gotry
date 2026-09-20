@@ -197,6 +197,41 @@ function waitSniff(tabId, timeoutMs) {
   })
 }
 
+/**
+ * 代填登录(2026-09-21,hotel-fe#3713 形态 A「免密进入门户」):
+ * portal 页把一次性凭据载荷交给本 SW → 前台打开站点登录页 → 回派 content-bridge
+ * 按站点配方填表提交 → 员工零输入落在门户里。
+ *
+ * 红线:账密只在本函数栈内存活——不写 storage(扩展无该权限)、不进日志、不回传;
+ * 登录页必须落在该站点的白名单前缀内(拒绝任意 URL 载荷);sw 只管开页与转发,
+ * 不读页面、不碰 cookie 值。
+ */
+async function openLoginAndFill(site, payload) {
+  const allowedPrefix = SITE_SEARCH_PREFIXES[site]
+  if (!allowedPrefix || typeof payload.loginUrl !== 'string' || !payload.loginUrl.startsWith(allowedPrefix)) {
+    return { ok: false, kind: 'open-login-fill', error: `login 只允许 ${allowedPrefix ?? '已注册站点域'}` }
+  }
+  if (typeof payload.username !== 'string' || !payload.username || typeof payload.password !== 'string' || !payload.password) {
+    return { ok: false, kind: 'open-login-fill', error: 'username/password required' }
+  }
+  const fill = {
+    username: payload.username,
+    password: payload.password,
+    usernameField: typeof payload.usernameField === 'string' ? payload.usernameField : undefined,
+    passwordField: typeof payload.passwordField === 'string' ? payload.passwordField : undefined,
+  }
+  const tab = await chrome.tabs.create({ url: payload.loginUrl, active: true })
+  // content-bridge 在 document_start 注入,但登录页多为 SPA:给受控重试窗口
+  for (let i = 0; i < 20; i++) {
+    await sleep(500)
+    try {
+      const r = await chrome.tabs.sendMessage(tab.id, { type: 'gotry-fill-login', payload: fill })
+      return { ok: !!(r && r.ok), kind: 'open-login-fill', tabId: tab.id, filled: !!(r && r.ok), error: r && r.error ? String(r.error).slice(0, 120) : undefined }
+    } catch { /* 接收端未就绪,继续等 */ }
+  }
+  return { ok: false, kind: 'open-login-fill', tabId: tab.id, error: 'login page not ready' }
+}
+
 async function handleJob(job) {
   const jobId = job && job.jobId
   if (typeof jobId !== 'string' || !jobId) return
@@ -279,6 +314,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     activePort = null
     sendResponse && sendResponse({ ok: true })
     return false
+  }
+  if (msg && msg.type === 'gotry-portal-login' && msg.payload && typeof msg.payload === 'object') {
+    // 凭据载荷只在本次调用内存活:不落 storage、不进日志、不回传账密。
+    const payload = msg.payload
+    const site = typeof payload.site === 'string' && payload.site ? payload.site : 'dida-portal'
+    openLoginAndFill(site, payload)
+      .then((result) => { sendResponse && sendResponse(result) })
+      .catch(() => { sendResponse && sendResponse({ ok: false, kind: 'open-login-fill', error: 'fill failed' }) })
+    return true // 异步响应
   }
   return false
 })
