@@ -165,16 +165,17 @@ export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> 
     if (!(r.error && /ENOENT/.test(r.error) && !r.aborted && !r.timedOut && i < candidates.length - 1)) break
   }
   const latencyMs = Date.now() - started
+  const cleanupError = r.groupReaped === false ? 'process group cleanup incomplete' : undefined
 
   if (r.aborted) {
     return {
       ok: false, via: 'hbcli-anything-error',
       evidence: `[实时API:hbcli-anything@abort@${ts}]`,
-      latencyMs, verdict: 'error', error: 'aborted by host signal',
+      latencyMs, verdict: 'error', error: ['aborted by host signal', cleanupError].filter(Boolean).join('; '),
     }
   }
-  if (r.error || r.code !== 0) {
-    const raw = r.error ?? `${r.stderr.slice(0, 200)} (exit ${r.code})`
+  if (r.error || r.groupReaped === false || r.code !== 0) {
+    const raw = [r.error, r.stderr.slice(0, 200), cleanupError].filter(Boolean).join('; ') || `(exit ${r.code})`
     return {
       ok: false,
       via: 'hbcli-anything-error',

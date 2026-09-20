@@ -72,8 +72,17 @@ async function attemptHbcli(
   })
   const latencyMs = Date.now() - started
   const ts = new Date().toISOString()
-  if (r.error || (r.code !== 0 && !r.aborted)) {
-    const error = r.error ?? r.stderr.trim().slice(0, 200)
+  const cleanupError = r.groupReaped === false ? 'process group cleanup incomplete' : undefined
+  if (r.aborted) {
+    return {
+      via: 'hbcli-error', exitCode: r.code ?? -1, result: null,
+      evidence: `[实时API:hbcli@abort@${ts}]`,
+      stderr: r.stderr.slice(0, 2000), latencyMs,
+      error: ['aborted by host signal', cleanupError].filter(Boolean).join('; '),
+    }
+  }
+  if (r.error || r.groupReaped === false || r.code !== 0) {
+    const error = [r.error, r.stderr.trim().slice(0, 200), cleanupError].filter(Boolean).join('; ')
     const failureKind = r.timedOut ? 'timeout' : /ENOENT/.test(r.error ?? '') ? 'spawn_error' : 'error'
     return {
       via: 'hbcli-error', exitCode: r.code ?? -1, result: null,
@@ -81,13 +90,6 @@ async function attemptHbcli(
       stderr: r.stderr.slice(0, 2000),
       latencyMs, error: error || `exit ${r.code}`,
       spawnError: /ENOENT/.test(r.error ?? ''),
-    }
-  }
-  if (r.aborted) {
-    return {
-      via: 'hbcli-error', exitCode: r.code ?? -1, result: null,
-      evidence: `[实时API:hbcli@abort@${ts}]`,
-      latencyMs, error: 'aborted by host signal',
     }
   }
   // 尝试 JSON 解析
@@ -179,10 +181,11 @@ export async function searchHotels(
   // 取消立即结束:不读静态包、不产出命中/无结果/估算,也不计上游故障
   if (opts.signal?.aborted || /abort/i.test(live.error ?? '')) {
     const ts = new Date().toISOString()
+    const cleanupError = /cleanup incomplete/i.test(live.error ?? '') ? `; ${live.error}` : ''
     return {
       via: 'hbcli-error', exitCode: live.exitCode, result: null,
       evidence: `[实时API:hbcli@abort@${ts}]`,
-      latencyMs: live.latencyMs, error: 'aborted by host signal', summary: `酒店「${query.destination}」检索已取消,未产生事实`,
+      latencyMs: live.latencyMs, error: `aborted by host signal${cleanupError}`, summary: `酒店「${query.destination}」检索已取消,未产生事实`,
     }
   }
   if (live.via === 'hbcli-realtime') {

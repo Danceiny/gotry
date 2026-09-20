@@ -9,7 +9,8 @@
  *   - close 后最多再等待两段 KILL_GRACE 观察进程组；到达边界仍存活时只返回
  *     「清理尝试已耗尽」的结果，不把任意后代树伪装成已回收。调用方若需要
  *     更强证明，必须按自身已知 PID/进程组做读回。
- *   - 所有路径移除 timer/监听器;返回只在子进程 close 后落定。
+ *   - 所有路径移除 timer/监听器;正常路径等子进程 close,取消/超时路径另有
+ *     有界 settlement deadline,避免后代持有 stdio 管道时无限等待。
  * 只面向 CLI 能力层内部,不是通用任务框架。
  */
 
@@ -17,6 +18,7 @@ import { spawn } from 'node:child_process'
 
 const TERM_GRACE_MS = 500
 const KILL_GRACE_MS = 1_000
+const HARD_SETTLE_MS = TERM_GRACE_MS + KILL_GRACE_MS * 2
 const POLL_MS = 10
 
 export interface BoundedSpawnOptions {
@@ -76,6 +78,8 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
     let stderr = ''
     let done = false
     let timedOut = false
+    let timeoutTimer: NodeJS.Timeout | undefined
+    let hardSettleTimer: NodeJS.Timeout | undefined
     const trackedTimers = new Set<NodeJS.Timeout>()
     const track = (timer: NodeJS.Timeout): NodeJS.Timeout => {
       trackedTimers.add(timer)
@@ -102,10 +106,33 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
     const finish = (result: BoundedSpawnResult): void => {
       if (done) return
       done = true
-      clearTimeout(timeoutTimer)
+      if (timeoutTimer) clearTimeout(timeoutTimer)
+      if (hardSettleTimer) clearTimeout(hardSettleTimer)
       opts.signal?.removeEventListener('abort', onAbort)
       cleanupTimers()
+      child.stdout?.destroy()
+      child.stderr?.destroy()
       resolve(result)
+    }
+
+    const forceSettle = (): void => {
+      if (done) return
+      signalGroup('SIGKILL')
+      finish({
+        code: null,
+        stdout,
+        stderr,
+        error: timedOut ? `timeout after ${opts.timeoutMs}ms` : 'process group cleanup incomplete',
+        aborted: opts.signal?.aborted === true && !timedOut,
+        timedOut,
+        // close 未到达，无法证明未知后代已释放管道；显式保留不完整状态。
+        groupReaped: false,
+      })
+    }
+
+    const armHardSettle = (delayMs: number): void => {
+      if (hardSettleTimer) clearTimeout(hardSettleTimer)
+      hardSettleTimer = track(setTimeout(forceSettle, delayMs))
     }
 
     const onAbort = (): void => {
@@ -114,13 +141,15 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
       track(setTimeout(() => {
         signalGroup('SIGKILL')
       }, TERM_GRACE_MS))
+      armHardSettle(HARD_SETTLE_MS)
     }
     opts.signal?.addEventListener('abort', onAbort, { once: true })
 
-    const timeoutTimer = setTimeout(() => {
+    timeoutTimer = setTimeout(() => {
       if (done) return
       timedOut = true
       signalGroup('SIGKILL')
+      armHardSettle(KILL_GRACE_MS * 2)
     }, opts.timeoutMs)
 
     child.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
@@ -144,4 +173,4 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
   })
 }
 
-export const SPAWN_BOUNDED_BOUNDS = Object.freeze({ termGraceMs: TERM_GRACE_MS, killGraceMs: KILL_GRACE_MS })
+export const SPAWN_BOUNDED_BOUNDS = Object.freeze({ termGraceMs: TERM_GRACE_MS, killGraceMs: KILL_GRACE_MS, hardSettleMs: HARD_SETTLE_MS })

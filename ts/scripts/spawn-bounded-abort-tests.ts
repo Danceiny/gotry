@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnBounded } from '../capabilities/spawn-bounded.ts'
 import { callHbcliJson, searchHotels } from '../capabilities/hbcli.ts'
+import { anythingSearch } from '../capabilities/anything.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'gotry-519-abort-'))
 const ownedPids = new Set<number>()
@@ -27,6 +28,18 @@ const waitForFile = async (path: string, label: string, boundMs = 5_000): Promis
     await new Promise(r => setTimeout(r, 10))
   }
   assert.ok(existsSync(path), `${label} ready handshake exceeded ${boundMs}ms`)
+}
+
+const pidAlive = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true } catch { return false }
+}
+
+const waitForPidDead = async (pid: number, boundMs = 1_500): Promise<void> => {
+  const deadline = Date.now() + boundMs
+  while (pidAlive(pid) && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 10))
+  }
+  assert.equal(pidAlive(pid), false, `owned pid ${pid} survived cleanup bound`)
 }
 
 const cleanupOwnedProcesses = (): void => {
@@ -91,14 +104,86 @@ activeWork = undefined
 activeAbort = undefined
 const recycleElapsed = Date.now() - abortStarted
 
-const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true } catch { return false } }
 assert.equal(result.aborted, true, JSON.stringify(result))
 assert.equal(result.timedOut, false)
 assert.equal(result.groupReaped, true, JSON.stringify(result))
 // 有界回收:TERM_GRACE(500)+ 观测窗,父忽略 SIGTERM 由 SIGKILL 兜底
 assert.ok(recycleElapsed < 3_000, `abort bounded wait exceeded: ${recycleElapsed}ms`)
-assert.equal(alive(ids.parent), false, 'parent survived abort')
-assert.equal(alive(ids.child), false, 'descendant survived abort — kill of parent pid is not tree cleanup')
+assert.equal(pidAlive(ids.parent), false, 'parent survived abort')
+assert.equal(pidAlive(ids.child), false, 'descendant survived abort — kill of parent pid is not tree cleanup')
+
+// 2a) 脱离进程组的自有子进程继续持有 stdout/stderr:close 不应无限等待。
+//     child 设 8s 自退只用于让旧实现稳定红灯；finally 仍按已知 PID 立即清理并读回。
+const escapedBin = join(root, 'escaped-child.js')
+const escapedParentBin = join(root, 'escaped-parent.js')
+const escapedPidsFile = join(root, 'escaped-pids.json')
+const escapedReadyFile = join(root, 'escaped-ready')
+writeFileSync(escapedBin, `setInterval(()=>{},1000);setTimeout(()=>process.exit(0),8000);\n`)
+writeFileSync(escapedParentBin, `#!${process.execPath}
+const {spawn}=require('node:child_process');const fs=require('node:fs');
+const c=spawn(process.execPath,[${JSON.stringify(escapedBin)}],{detached:true,stdio:['ignore','inherit','inherit']});
+c.unref();
+fs.writeFileSync(${JSON.stringify(escapedPidsFile)},JSON.stringify({child:c.pid}));
+fs.writeFileSync(${JSON.stringify(escapedReadyFile)},'ready');
+process.on('SIGTERM',()=>process.exit(0));
+setInterval(()=>{},1000);`, { mode: 0o700 })
+const escapedAbort = new AbortController()
+activeAbort = escapedAbort
+const escapedWork = spawnBounded(escapedParentBin, [], { env: process.env, timeoutMs: 10_000, signal: escapedAbort.signal })
+activeWork = escapedWork
+await waitForFile(escapedReadyFile, 'escaped process')
+const escapedIds = JSON.parse(readFileSync(escapedPidsFile, 'utf8')) as { child: number }
+ownedPids.add(escapedIds.child)
+const escapedStarted = Date.now()
+escapedAbort.abort()
+const escapedResult = await escapedWork
+activeWork = undefined
+activeAbort = undefined
+const escapedElapsed = Date.now() - escapedStarted
+assert.ok(escapedElapsed < 3_000, `escaped-pipe settlement exceeded bound: ${escapedElapsed}ms`)
+assert.equal(escapedResult.aborted, true, JSON.stringify(escapedResult))
+assert.equal(escapedResult.groupReaped, false, JSON.stringify(escapedResult))
+assert.match(escapedResult.error ?? '', /cleanup incomplete/, JSON.stringify(escapedResult))
+assert.equal(pidAlive(escapedIds.child), true, 'escaped child should remain for explicit finally cleanup')
+try {
+  process.kill(escapedIds.child, 'SIGKILL')
+  await waitForPidDead(escapedIds.child)
+} finally {
+  ownedPids.delete(escapedIds.child)
+}
+
+// 2a-adapter) hbcli/Anything 必须把同一 cleanup 不完整状态透传到 error 面。
+const adapterCleanupProbe = async (
+  label: string,
+  invoke: (signal: AbortSignal) => Promise<{ error?: string }>,
+): Promise<void> => {
+  rmSync(escapedPidsFile, { force: true })
+  rmSync(escapedReadyFile, { force: true })
+  const controller = new AbortController()
+  activeAbort = controller
+  const work = invoke(controller.signal)
+  activeWork = work
+  let pid: number | undefined
+  try {
+    await waitForFile(escapedReadyFile, `${label} escaped process`)
+    pid = (JSON.parse(readFileSync(escapedPidsFile, 'utf8')) as { child: number }).child
+    ownedPids.add(pid)
+    controller.abort()
+    const result = await work
+    activeWork = undefined
+    activeAbort = undefined
+    assert.match(result.error ?? '', /process group cleanup incomplete/, `${label} hid cleanup failure`)
+  } finally {
+    controller.abort()
+    if (pid !== undefined) {
+      try { process.kill(pid, 'SIGKILL') } catch { /* already exited */ }
+      await waitForPidDead(pid)
+      ownedPids.delete(pid)
+    }
+  }
+}
+await adapterCleanupProbe('hbcli', signal => callHbcliJson([], { hbcliBin: escapedParentBin, timeoutMs: 10_000, signal }))
+await adapterCleanupProbe('anything', signal => anythingSearch({ keyword: 'x', hbcliBin: escapedParentBin, timeoutMs: 10_000, signal }))
 
 // 2b) abort 后不走已知安装位候选:首个缺失后启动 ~/.local/bin，第三候选永不执行
 const home = join(root, 'fake-home')
@@ -145,7 +230,7 @@ assert.equal(timed.aborted, false)
 assert.equal(timed.groupReaped, true, JSON.stringify(timed))
 assert.match(timed.error ?? '', /timeout/)
 
-console.log(`SPAWN BOUNDED ABORT TESTS: 6/6 OK(pre-abort 零 spawn/取消不静态降级/abort 有界杀真父子树/abort 不换候选/timeout SIGKILL 树/语义区分)`)
+console.log(`SPAWN BOUNDED ABORT TESTS: 8/8 OK(pre-abort 零 spawn/取消不静态降级/abort 有界杀真父子树/escaped-pipe settlement/adapter cleanup error/abort 不换候选/timeout SIGKILL 树/语义区分)`)
 } finally {
   activeAbort?.abort()
   if (activeWork) await activeWork
