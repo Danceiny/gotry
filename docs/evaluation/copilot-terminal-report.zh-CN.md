@@ -34,7 +34,7 @@
 | 清理观察失败 | 注入拒绝与超时后，外层保留清理错误，重复关闭返回同一 Promise，没有未处理拒绝。 |
 | 清理 | 有界关闭后，worker 与忽略 TERM 的孙进程均不存在；自然退出和信号退出后仍可幂等清理。 |
 
-立即拒绝以事件循环断言验证，不是生产延迟承诺。已有请求的测试上限为 1500 ms，清理的外层上限为 2000 ms。清理失败 proof 在注入后对真实 provider 清理的观察预算取 provider 自身尺度（12 秒探测）：provider 单次观察调用自身可耗至其文档标注的 5 秒 systemd 查询预算，且进程内首次调用需支付 user-manager 激活成本，冷启动的 Linux CI 运行器上曾超过原 2 秒探测。所有可能失败的异步操作都会立即注册拒绝处理。
+立即拒绝以事件循环断言验证，不是生产延迟承诺。已有请求的测试上限为 1500 ms，清理的外层上限为 2000 ms。清理失败 proof 在注入后对真实 provider 清理的观察预算取 provider 自身尺度（12 秒探测）：provider 单次观察调用自身可耗至其文档标注的 5 秒 systemd 查询预算，且进程内首次调用需支付 user-manager 激活成本，冷启动的 Linux CI 运行器上曾超过原 2 秒探测。该观察记录结局而非强制确认空范围，契约自有断言保持刚性（见下文与 [#541](https://github.com/Danceiny/gotry/issues/541)）。所有可能失败的异步操作都会立即注册拒绝处理。
 
 ## 验证记录
 
@@ -56,7 +56,7 @@
 
 2026-09-19 的门禁失败记录于 [#514](https://github.com/Danceiny/gotry/issues/514)：`flyai-tests.ts:249` 期望酒店畸形条目比例 `1/2`，实际收到 `exit -1`。#514 已由 PR #534 收口（终止携带陈旧 429 文本的 fail-closed 分类），FlyAI 各套件在 2026-09-20 的最终回归中通过；当时的环境压力读数始终未转化为根因结论。
 
-更早一轮完整回归在审查发现 #513 后主动停止，不计为通过。中止与失败的 2026-09-19 执行不满足最终 SHA 门禁；2026-09-20 在交付树上的执行满足该门禁。PR #535 的首轮 CI 发现一处红：Node 24 任务在清理失败 proof 注入后的真实清理观察处失败（`real handle cleanup observes an empty managed range`，`false !== true`）。其前所有 #510／#513 验收断言在同一任务内通过，terminal proof 的启动失败关闭（同一真实 `waitForExit` 契约）亦在该运行器通过；诊断结论是 proof 侧 2 秒探测低于 provider 自身 5 秒 systemd 查询预算在冷启动 CI 运行器上的实际耗时（进程内首次 user-manager 激活）。探测预算已对齐 provider 尺度（12 秒），断言本身未变；这是测试预算修正，不是产品改动。可选的真实 HotelByte、远端 skills、会话／登录与 Lavish 探针、外部 STAICLI 包及可选 Agent Reach doctor 断言仍在报告范围之外；历史 Python oracle 不在当前回归入口内。
+更早一轮完整回归在审查发现 #513 后主动停止，不计为通过。中止与失败的 2026-09-19 执行不满足最终 SHA 门禁；2026-09-20 在交付树上的执行满足该门禁。PR #535 的首轮 CI 发现一处红：Node 24 任务在清理失败 proof 注入后的真实清理观察处失败（`real handle cleanup observes an empty managed range`，`false !== true`）。其前所有 #510／#513 验收断言在同一任务内通过，terminal proof 的启动失败关闭（同一真实 `waitForExit` 契约）亦在该运行器通过；诊断结论是 proof 侧 2 秒探测低于 provider 自身 5 秒 systemd 查询预算在冷启动 CI 运行器上的实际耗时。把探测对齐 provider 尺度（12 秒）解决了该案例，但后续 CI 轮次显示剩余失败与具体运行器相关：同型运行器对这一冷启动观察两种结局都出现过——注入同时拦截了 runtime 内部的早观察者（`spawn()` 把 `handle.done` 接到 `waitForExit`），而 `waitForExit` 按契约为三值（`false`＝调用方的 abort 先触发）。基于该证据，proof 现在记录观察结局而非强制确认空范围——强制要求它衡量的是 CI 运行器 manager 退化下的上游清理时延，不是关闭失败契约本身——#513 全部验收断言（有界 settle／typed 拒绝／幂等 close／零未处理拒绝）保持刚性；该裁决以 [#545](https://github.com/Danceiny/gotry/pull/545) 落地于 [#541](https://github.com/Danceiny/gotry/issues/541)，本报告与其对齐。同期 CI 轮次中的 §38 扩展合同红来自 PR #536 临时加入的 `127.0.0.1:8080` manifest 权限（不在本报告范围），已由 PR #539 回退。可选的真实 HotelByte、远端 skills、会话／登录与 Lavish 探针、外部 STAICLI 包及可选 Agent Reach doctor 断言仍在报告范围之外；历史 Python oracle 不在当前回归入口内。
 
 ## 复现与限制
 
