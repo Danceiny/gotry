@@ -70,19 +70,41 @@ const allCalls = [
 ];
 
 const successTransport = (command) => ({
-  journeys: [{ journeyType: '直达', segments: [{
-    arrCityAbroad: false, arrCityCode: '330100', arrCityName: '杭州',
-    arrDateTime: `${command === 'search-flight' ? fixtureDates.flight : fixtureDates.train} 11:00:00`,
-    arrStationCode: 'HGH', arrStationName: '杭州东站', arrStationShortName: '杭州东', arrTerm: null,
-    arrWeekAbbrName: '周日', depCityAbroad: null, depCityCode: '310100', depCityName: '上海',
-    depDateTime: `${command === 'search-flight' ? fixtureDates.flight : fixtureDates.train} 08:00:00`,
-    depStationCode: 'AOH', depStationName: '上海虹桥站', depStationShortName: '上海虹桥', depTerm: null,
-    depWeekAbbrName: '周日', duration: '180', marketingTransportName: command === 'search-flight' ? 'Fixture Air' : '高铁',
-    marketingTransportNo: command === 'search-flight' ? 'E2E521' : 'G123', miles: null, quantity: null,
-    seatClassName: command === 'search-flight' ? '经济舱' : '二等座', stopInfos: null, transportType: command === 'search-flight' ? '飞机' : '火车',
-  }], totalDuration: '180', transferDuration: '' }],
+  journeys: [{
+    journeyType: command === 'search-flight' ? '中转' : '直达',
+    segments: command === 'search-flight' ? [
+      {
+        arrCityAbroad: false, arrCityCode: '999999', arrCityName: '中转机场',
+        arrDateTime: `${fixtureDates.flight} 09:00:00`, arrStationCode: 'MID', arrStationName: '中转机场',
+        arrStationShortName: '中转机场', arrTerm: null, arrWeekAbbrName: '周日', depCityAbroad: null,
+        depCityCode: '310100', depCityName: '上海', depDateTime: `${fixtureDates.flight} 08:00:00`,
+        depStationCode: 'AOH', depStationName: '上海虹桥站', depStationShortName: '上海虹桥', depTerm: null,
+        depWeekAbbrName: '周日', duration: '60', marketingTransportName: 'Fixture Air',
+        marketingTransportNo: 'E2E521-A', miles: null, quantity: null, seatClassName: '经济舱',
+        stopInfos: null, transportType: '飞机',
+      },
+      {
+        arrCityAbroad: false, arrCityCode: '330100', arrCityName: '杭州',
+        arrDateTime: `${fixtureDates.flight} 11:00:00`, arrStationCode: 'HGH', arrStationName: '杭州东站',
+        arrStationShortName: '杭州东', arrTerm: null, arrWeekAbbrName: '周日', depCityAbroad: null,
+        depCityCode: '999999', depCityName: '中转机场', depDateTime: `${fixtureDates.flight} 09:30:00`,
+        depStationCode: 'MID', depStationName: '中转机场', depStationShortName: '中转机场', depTerm: null,
+        depWeekAbbrName: '周日', duration: '120', marketingTransportName: 'Fixture Air',
+        marketingTransportNo: 'E2E521-B', miles: null, quantity: null, seatClassName: '经济舱',
+        stopInfos: null, transportType: '飞机',
+      },
+    ] : [{
+      arrCityAbroad: false, arrCityCode: '330100', arrCityName: '杭州',
+      arrDateTime: `${fixtureDates.train} 11:00:00`, arrStationCode: 'HGH', arrStationName: '杭州东站', arrStationShortName: '杭州东', arrTerm: null,
+      arrWeekAbbrName: '周日', depCityAbroad: null, depCityCode: '310100', depCityName: '上海',
+      depDateTime: `${fixtureDates.train} 08:00:00`, depStationCode: 'AOH', depStationName: '上海虹桥站', depStationShortName: '上海虹桥', depTerm: null,
+      depWeekAbbrName: '周日', duration: '180', marketingTransportName: '高铁', marketingTransportNo: 'G123', miles: null, quantity: null,
+      seatClassName: '二等座', stopInfos: null, transportType: '火车',
+    }],
+    totalDuration: '180', transferDuration: '',
+  }],
   jumpUrl: `https://fixture.invalid/${command}`,
-  price: '5x', totalDuration: '180',
+  price: command === 'search-flight' ? '500' : '5x', totalDuration: '180',
 });
 const successHotel = (command) => ({
   address: 'Fixture Road', commissionMoneyYuan: null, decorationTime: '2024',
@@ -401,6 +423,9 @@ async function runCase(scenario) {
     assert.equal(setupObservations.get('flyai-setup-check')?.source, 'config');
     assert.equal(setupObservations.get('flyai-setup-check')?.verified, true);
     assert.ok(factLogs.length > 0, 'successful flight/train observations should be isolated in a fact log');
+    const factRows = factLogs.flatMap(path => readJsonLines(path));
+    const flightFact = factRows.find(fact => fact.kind === 'flight' && fact.flight_no === 'E2E521-A');
+    assert.equal(flightFact?.nonstop, false, 'flight fact must preserve the controlled transfer result');
     const byKind = new Map(productEvents.map(event => [event.kind, event]));
     assert.ok(byKind.get('flight').args.includes('--origin') && byKind.get('flight').args.includes('上海'));
     assert.ok(byKind.get('train').args.includes('--transport-no') && byKind.get('train').args.includes('G123'));
@@ -417,8 +442,17 @@ async function runCase(scenario) {
     for (const call of allCalls) {
       const observation = byCall.get(call.id);
       assert.equal(observation?.verdict, 'hit', `${call.args.kind} did not return hit`);
-      if (call.args.kind === 'flight' || call.args.kind === 'train') {
+      if (call.args.kind === 'flight') {
         assert.ok(observation.options?.[0]?.no && observation.options?.[0]?.jumpUrl);
+        assert.equal(observation.options[0].price, 500);
+        assert.equal(observation.options[0].nonstop, false);
+        assert.equal(observation.options[0].segments?.length, 2);
+        assert.equal(observation.options[0].segments?.[0]?.arrStation, '中转机场');
+        assert.equal(observation.options[0].segments?.[1]?.arrStation, '杭州东站');
+        assert.equal(observation.options[0].segments?.[1]?.durationMin, 120);
+      } else if (call.args.kind === 'train') {
+        assert.ok(observation.options?.[0]?.no && observation.options?.[0]?.jumpUrl);
+        assert.equal(observation.options[0].priceRaw, '5x');
       } else if (call.args.kind === 'hotel' || call.args.kind === 'marriott-hotel') {
         assert.equal(observation.hotels?.[0]?.priceRaw, call.args.kind === 'hotel' ? '¥1xx' : '¥360起/晚');
         assert.ok(observation.hotels?.[0]?.jumpUrl && observation.hotels?.[0]?.mainPic);
