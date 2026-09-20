@@ -180,6 +180,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [evaluation/copilot-readiness-report.md](evaluation/copilot-readiness-report.md) | Copilot readiness and process cleanup: real SDK paths, controlled workers, Node 22/24 regression, and known limits |
 | [evaluation/copilot-cleanup-diagnostic-report.md](evaluation/copilot-cleanup-diagnostic-report.md) | Copilot cleanup failure identity, primary-error preservation and controlled diagnostic evidence (#518) |
 | [evaluation/copilot-darwin-zombie-quiescence-report.md](evaluation/copilot-darwin-zombie-quiescence-report.md) | Copilot cleanup timeout mechanism (Darwin zombie-only group observation) and verdict-by-quiescence repair (#518) |
+| [evaluation/copilot-terminal-report.md](evaluation/copilot-terminal-report.md) | Managed worker termination: immediate request rejection, safe errors, and process cleanup |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | Product-persona comparison: archived answers to the same real prompt/scorecards/persona distillation |
 
 ### ops/ (release & compliance)

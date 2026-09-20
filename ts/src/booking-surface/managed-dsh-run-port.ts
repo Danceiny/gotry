@@ -45,6 +45,7 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   private readonly pending = new Map<number, { ok: (value?: DshPlannerRunResult) => void; fail: (error: Error) => void; progress?: () => void }>()
   private sequence = 0
   private closePromise: Promise<void> | undefined
+  private terminalError: Error | undefined
   private inputBuffer = ''
   private workerPid: number | null = null
   private workerStartedAt: string | null = null
@@ -74,11 +75,11 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
     this.handle.done.then(
       (outcome) => {
         this.workerOutcome = { state: 'exited', exitCode: outcome.exitCode, signal: outcome.signal }
-        this.failPending(new Error('managed DSH worker exited'))
+        this.markTerminal('managed DSH worker exited')
       },
-      (error: unknown) => {
+      () => {
         this.workerOutcome = { state: 'failed' }
-        this.failPending(error instanceof Error ? error : new Error(String(error)))
+        this.markTerminal('managed DSH worker failed')
       },
     )
     // Credentials are already in the managed worker environment. Never copy
@@ -127,8 +128,16 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
     this.pending.clear()
   }
 
+  private markTerminal(message: string): void {
+    // Retain a safe terminal outcome before rejecting existing waiters: their
+    // continuations may immediately submit another request to this same port.
+    this.terminalError ??= new Error(message)
+    this.failPending(this.terminalError)
+  }
+
   run(prompt: string, options: { sessionId: string; onProgress?: () => void }): Promise<DshPlannerRunResult> {
     if (this.closePromise) return Promise.reject(new Error('managed DSH run port is closed'))
+    if (this.terminalError) return Promise.reject(this.terminalError)
     const id = ++this.sequence
     return new Promise((resolve, reject) => {
       this.pending.set(id, { ok: (value) => resolve(value as DshPlannerRunResult), fail: reject, progress: options.onProgress })
@@ -139,6 +148,7 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   /** Boot the in-worker harness without consuming a provider call. */
   warmup(): Promise<void> {
     if (this.closePromise) return Promise.reject(new Error('managed DSH run port is closed'))
+    if (this.terminalError) return Promise.reject(this.terminalError)
     const id = ++this.sequence
     return new Promise((resolve, reject) => {
       this.pending.set(id, { ok: () => resolve(), fail: reject })
@@ -152,6 +162,8 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
       const started = performance.now()
       this.failPending(new Error('managed DSH run port closed'))
       this.handle.terminate()
+      // Observe worker failure even if range observation rejects or times out
+      // first. This derived promise must never become an unhandled rejection.
       const outcome = this.handle.done.then(
         () => undefined,
         () => new Error('managed DSH worker failed'),

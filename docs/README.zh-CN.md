@@ -180,6 +180,7 @@
 | [evaluation/copilot-readiness-report.zh-CN.md](evaluation/copilot-readiness-report.zh-CN.md) | Copilot 就绪与进程清理：真实 SDK 链路、受控 worker、Node 22／24 完整回归与已知边界 |
 | [evaluation/copilot-cleanup-diagnostic-report.zh-CN.md](evaluation/copilot-cleanup-diagnostic-report.zh-CN.md) | Copilot 清理失败归属、首错保留与受控诊断证据（#518） |
 | [evaluation/copilot-darwin-zombie-quiescence-report.zh-CN.md](evaluation/copilot-darwin-zombie-quiescence-report.zh-CN.md) | Copilot 清理超时机制（Darwin 仅剩僵尸组的观察缺陷）与按静默判定修复（#518） |
+| [evaluation/copilot-terminal-report.zh-CN.md](evaluation/copilot-terminal-report.zh-CN.md) | 托管 worker 终止：请求立即拒绝、安全错误与进程清理 |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | 产品人格横评：同一真实 prompt 各家回答存档/评分卡/人格提炼 |
 
 ### ops/（发布与合规）
