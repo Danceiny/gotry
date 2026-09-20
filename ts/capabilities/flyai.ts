@@ -948,7 +948,7 @@ function classifyUpstreamFailure(
     return tag('needs-setup', `[实时API:flyai@error@${ts}] trial quota exhausted`, {
       retryable: false,
       error: `FlyAI 匿名试用额度已用尽:${upstream.slice(0, 160)}`,
-      setup: '到 flyai.open.fliggy.com 控制台申请正式 API Key,本机运行 `gotry setup flyai` 配置并验证;本会话请勿盲重试 gotry_flyai_search,机/火/酒改走 gotry_session_search。',
+      setup: '打开 https://flyai.open.fliggy.com/console，登录后复制 API Key,本机运行 `gotry setup flyai` 配置并验证;本会话请勿盲重试 gotry_flyai_search,机/火/酒改走 gotry_session_search。',
     })
   }
   if (/HTTP\s*429|\b429\b/.test(upstream)) {

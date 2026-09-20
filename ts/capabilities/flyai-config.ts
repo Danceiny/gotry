@@ -27,6 +27,7 @@ import { createHash } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -182,6 +183,31 @@ export function verifySecureMode(dir: string, file: string): { ok: boolean; erro
 }
 
 /**
+ * 官方 CLI 1.0.16 首次运行可能先创建 ~/.flyai 为 0755，并在其中写入
+ * 0600 device-id。仅对当前用户拥有且本身不是 symlink 的配置目录收紧到
+ * 0700；验证回执所在 ~/.gotry 仍严格拒绝既有 0755 目录。
+ */
+function prepareFlyaiConfigDir(dir: string, file: string): { ok: boolean; error?: string; unsupported?: boolean } {
+  if (process.platform === 'win32') return { ok: false, unsupported: true, error: 'Windows 无 0700/0600 权限位,安全写不支持' }
+  try {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const entry = lstatSync(dir)
+    if (entry.isSymbolicLink()) return { ok: false, error: '.flyai 目录是符号链接,拒绝写入' }
+    if (!entry.isDirectory()) return { ok: false, error: '.flyai 路径不是目录,拒绝写入' }
+    if (typeof process.getuid === 'function' && entry.uid !== process.getuid()) {
+      return { ok: false, error: '.flyai 目录不属于当前用户,拒绝写入' }
+    }
+    if ((entry.mode & 0o777) !== 0o700) chmodSync(dir, 0o700)
+    const after = lstatSync(dir)
+    if (after.isSymbolicLink() || !after.isDirectory()) return { ok: false, error: '.flyai 目录状态发生变化,拒绝写入' }
+    if (typeof process.getuid === 'function' && after.uid !== process.getuid()) return { ok: false, error: '.flyai 目录所有者发生变化,拒绝写入' }
+    return verifySecureMode(dir, file)
+  } catch (e) {
+    return { ok: false, error: (e as Error).message }
+  }
+}
+
+/**
  * 原子写 JSON 文件(本模块 save/clear/verification 共用的唯一写面):
  *   1. dir 不存在则建,chmod 0700;已存在则先按 0700 校验;
  *   2. tmp(同目录,mode 0600)写内容 → 校验 tmp 0600 → rename;
@@ -233,6 +259,8 @@ export function saveFlyaiKey(key: string, opts: FlyaiConfigPaths = {}): SaveFlya
   const read = readFlyaiConfig(configPath)
   if (!read.ok) return { ok: false, error: `原配置损坏,已拒绝覆盖(${read.error});请先人工修复 ${configPath}` }
 
+  const configDir = prepareFlyaiConfigDir(dirname(configPath), configPath)
+  if (!configDir.ok) return { ok: false, error: configDir.error }
   const write = atomicWriteJson(configPath, { ...read.data, FLYAI_API_KEY: text })
   if (!write.ok) return { ok: false, error: write.error }
 
@@ -269,6 +297,8 @@ export function clearFlyaiKey(opts: FlyaiConfigPaths = {}): ClearFlyaiKeyResult 
         return { ok: false, source: 'none', error: `移除文件失败:${(e as Error).message}` }
       }
     } else {
+      const configDir = prepareFlyaiConfigDir(dirname(configPath), configPath)
+      if (!configDir.ok) return { ok: false, source: 'none', error: configDir.error }
       const write = atomicWriteJson(configPath, next)
       if (!write.ok) return { ok: false, source: 'none', error: write.error }
     }

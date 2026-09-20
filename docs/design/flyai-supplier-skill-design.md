@@ -28,6 +28,8 @@ The flat `gotry_flyai_search` schema retains `from/to/date/checkIn/checkOut` ali
 
 ## Credential ownership
 
+Open the [FlyAI console](https://flyai.open.fliggy.com/console), sign in and copy the API Key into the local setup prompt. Do not paste it into chat.
+
 The local `gotry setup flyai` command accepts hidden terminal input or `--stdin`, verifies the candidate before saving, and supports `--status` and `--clear`. Keys never enter command arguments or model parameters. Failed verification or storage preserves the prior configuration. The official configuration path is `~/.flyai/config.json`; directory/file modes are `0700/0600`.
 
 Resolution follows nonempty `FLYAI_API_KEY`, then `DEBUG_FLYAI_API_KEY`, then the config file, then anonymous shared trial. Debug endpoints are explicit, and their userinfo/query values are hidden. A verification receipt binds the key hash, source and complete endpoint fingerprint; changing any invalidates it. A nonempty key proves configuration only, and a debug check proves only that endpoint.

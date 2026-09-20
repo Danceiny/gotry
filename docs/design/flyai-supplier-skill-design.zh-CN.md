@@ -28,6 +28,8 @@
 
 ## 凭据归属
 
+打开 [FlyAI 控制台](https://flyai.open.fliggy.com/console)，登录后复制 API Key，粘贴到本机配置提示中。不要发送到聊天里。
+
 本机 `gotry setup flyai` 支持隐藏输入和 `--stdin`，先验证候选密钥再保存，并提供 `--status`、`--clear`。密钥不进入命令参数或模型参数。验证或存储失败保留旧配置。沿用官方路径 `~/.flyai/config.json`，目录和文件权限为 `0700/0600`。
 
 解析顺序是非空的 `FLYAI_API_KEY`、`DEBUG_FLYAI_API_KEY`、配置文件、匿名共享试用。调试 endpoint 明确标注，隐藏用户信息和查询参数。验证回执绑定密钥哈希、来源与完整 endpoint 指纹；任何一项变化都会使回执失效。非空密钥只能证明已配置，调试验证仅证明该 endpoint。

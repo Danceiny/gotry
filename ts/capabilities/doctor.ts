@@ -212,7 +212,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     items.push({
       id: 'flyai', label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪)', status: 'degraded',
       detail: `未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)${flyaiQuotaNote}`,
-      fix: '本机运行 `gotry setup flyai`(隐藏输入,候选 key 先 scrub-env 验证后保存);申请入口 flyai.open.fliggy.com 控制台',
+      fix: '本机运行 `gotry setup flyai`(隐藏输入,候选 key 先 scrub-env 验证后保存);打开 https://flyai.open.fliggy.com/console，登录后复制 API Key',
     })
   } else {
     const keySha = sha256Hex(flyaiResolved.key!)

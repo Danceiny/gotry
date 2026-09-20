@@ -9,7 +9,7 @@ import {
 import type { FlyaiResult } from '../capabilities/flyai.ts'
 import { readLatestChannelEvents } from '../capabilities/channel-health.ts'
 
-const guidance = '在本机运行 gotry setup flyai（隐藏输入），或 gotry setup flyai --stdin；清除文件配置用 --clear。不要在聊天中发送 API key。申请入口：https://flyai.open.fliggy.com。'
+const guidance = '在本机运行 gotry setup flyai（隐藏输入），或 gotry setup flyai --stdin；清除文件配置用 --clear。不要在聊天中发送 API key。打开 https://flyai.open.fliggy.com/console，登录后复制 API Key。'
 
 export function createFlyaiSetupTool(runEffect: EffectInterpreter, stateRoot?: string) {
   return defineTool({
