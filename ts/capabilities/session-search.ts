@@ -446,7 +446,7 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
     }
     // multiCollect 分桶回包 → 与 CDP 车道同语义合并;旧扩展单首包 → 退化 parseDidaRates 兜底
     const rates = r.bodies
-      ? mergeDidaRatesBodies({ hotels: r.bodies.hotels ?? '', recommendPrices: r.bodies.recommendPrices ?? '', realtime: r.bodies.realtime ?? '' })
+      ? mergeDidaRatesBodies({ hotels: r.bodies.hotels ?? '', recommendPrices: r.bodies.recommendPrices ?? '', realtime: r.bodies.realtime ?? '', searchCache: r.bodies.searchCache ?? '' })
       : parseDidaRates(r.body)
     const verdict: SessionVerdict = rates.length > 0 ? 'hit' : 'miss'
     return {
