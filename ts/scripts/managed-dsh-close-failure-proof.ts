@@ -68,9 +68,11 @@ async function settleInjectedHandle(
   const handle = (port as unknown as { handle: Handle }).handle
   handle.waitForExit = originalWaitForExit
   // The real provider handle may still be finishing its spawn-failure cleanup
-  // after the injected outer close has returned. Keep the proof bounded while
-  // observing that cleanup, then observe the sticky close promise as well.
-  const rangeEmpty = await bounded(originalWaitForExit(AbortSignal.timeout(2_000)), 2_500, 'real handle cleanup did not settle')
+  // after the injected outer close has returned. One provider observation call
+  // may itself cost up to its documented 5 s systemd query budget, and the
+  // first such call in a process pays user-manager activation (observed >2 s
+  // on a cold CI runner); budget at the provider's own scale, not below it.
+  const rangeEmpty = await bounded(originalWaitForExit(AbortSignal.timeout(12_000)), 13_500, 'real handle cleanup did not settle')
   assert.equal(rangeEmpty, true, 'real handle cleanup observes an empty managed range')
   const done = await bounded(doneOutcome, 2_500, 'real handle done did not settle')
   assert.equal(done.status, 'rejected', 'real spawn-failure handle.done rejects')
