@@ -6,7 +6,14 @@ import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
 import type { DshPlannerRunPort, DshPlannerRunResult } from './dsh-planner.ts'
-import { ManagedDshCleanupError, snapshotManagedDshGroup, type ManagedDshWorkerOutcome } from './managed-dsh-cleanup-diagnostic.ts'
+import {
+  ManagedDshCleanupError,
+  managedDshGroupIsQuiescent,
+  readManagedDshWorkerStart,
+  snapshotManagedDshGroup,
+  type ManagedDshProcessGroupSnapshot,
+  type ManagedDshWorkerOutcome,
+} from './managed-dsh-cleanup-diagnostic.ts'
 
 export interface ManagedDshRunPortOptions {
   cwd?: string
@@ -14,6 +21,8 @@ export interface ManagedDshRunPortOptions {
   graceMs?: number
   cleanupRole?: 'task' | 'warmer'
   env?: NodeJS.ProcessEnv
+  /** Test seam overriding the failure-path group snapshot; production uses the safe ps snapshot. */
+  groupObserver?: typeof snapshotManagedDshGroup
   [key: string]: unknown
 }
 
@@ -38,6 +47,7 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   private closePromise: Promise<void> | undefined
   private inputBuffer = ''
   private workerPid: number | null = null
+  private workerStartedAt: string | null = null
   private workerOutcome: ManagedDshWorkerOutcome = { state: 'pending' }
   private readonly cleanupRole: 'task' | 'warmer' | 'unspecified'
   private readonly graceMs: number
@@ -45,9 +55,10 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   constructor(options: ManagedDshRunPortOptions = {}) {
     const defaultWorker = join(dirname(fileURLToPath(import.meta.url)), 'dsh-worker.js')
     const workerPath = options.workerPath ?? (existsSync(defaultWorker) ? defaultWorker : defaultWorker.replace(/\.js$/, '.ts'))
-    const { workerPath: _worker, graceMs = 500, cleanupRole, env, ...harnessOptions } = options
+    const { workerPath: _worker, graceMs = 500, cleanupRole, env, groupObserver, ...harnessOptions } = options
     this.cleanupRole = cleanupRole ?? 'unspecified'
     this.graceMs = graceMs
+    this.groupObserver = groupObserver ?? snapshotManagedDshGroup
     this.runtime = new LocalSubprocessRuntime(new Context())
     this.handle = this.runtime.spawn({
       argv: workerLaunch(workerPath),
@@ -78,6 +89,7 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
 
   private readonly harnessOptions: Record<string, unknown>
   private readonly cleanupDeadlineMs: number
+  private readonly groupObserver: typeof snapshotManagedDshGroup
 
   private consume(chunk: string): void {
     this.inputBuffer += chunk
@@ -90,6 +102,11 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
         if (message.lifecycle === 'worker_started') {
           if (this.workerPid === null && Number.isSafeInteger(message.workerPid) && message.workerPid! > 0 && message.parentPid === process.pid) {
             this.workerPid = message.workerPid!
+            // One bounded read-only start-time anchor, captured while the worker
+            // is alive, so a later failure snapshot can disprove PID reuse.
+            void readManagedDshWorkerStart(this.workerPid).then((startedAt) => {
+              if (this.workerStartedAt === null) this.workerStartedAt = startedAt
+            })
           }
           continue
         }
@@ -145,20 +162,31 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
       } catch {
         throw await this.cleanupError('managed DSH process tree observation failed', started)
       }
-      if (!rangeEmpty) throw await this.cleanupError('managed DSH process tree cleanup timeout', started)
+      if (!rangeEmpty) {
+        // On Darwin the installed detached fallback observes the group through
+        // kill(-pgid, 0): a zombie-only group yields EPERM, which the runtime
+        // maps to "alive", and zombies only disappear when their owner reaps
+        // them — no signal can accelerate that. The deadline has not moved;
+        // verify through the safe process table whether a live member actually
+        // remains before converting the observation deadline into a failure.
+        const processGroup = await this.groupObserver(this.workerPid, this.workerStartedAt)
+        if (!managedDshGroupIsQuiescent(processGroup)) {
+          throw await this.cleanupError('managed DSH process tree cleanup timeout', started, processGroup)
+        }
+      }
       if (await outcome) throw await this.cleanupError('managed DSH worker failed', started)
     })()
     return this.closePromise
   }
 
-  private async cleanupError(message: string, started: number): Promise<ManagedDshCleanupError> {
+  private async cleanupError(message: string, started: number, processGroup?: ManagedDshProcessGroupSnapshot): Promise<ManagedDshCleanupError> {
     const elapsedMs = Math.round(performance.now() - started)
     const workerOutcome = { ...this.workerOutcome }
-    const processGroup = await snapshotManagedDshGroup(this.workerPid)
+    const group = processGroup ?? await this.groupObserver(this.workerPid, this.workerStartedAt)
     return new ManagedDshCleanupError(message, {
-      schemaVersion: 'managed-dsh-cleanup.v1', role: this.cleanupRole,
+      schemaVersion: 'managed-dsh-cleanup.v2', role: this.cleanupRole,
       workerPid: this.workerPid, elapsedMs, deadlineMs: this.cleanupDeadlineMs,
-      graceMs: this.graceMs, workerOutcome, processGroup,
+      graceMs: this.graceMs, workerOutcome, processGroup: group,
     })
   }
 }
