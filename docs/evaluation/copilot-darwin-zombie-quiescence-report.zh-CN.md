@@ -34,4 +34,4 @@
 - 修复分支上 `npx tsc --noEmit` 与 `npx tsx scripts/smoke.ts` 通过（宿主默认 Node 26.9.0）。
 - 扩展后的诊断证明覆盖注入观察失败、合成表（仅剩僵尸、存活、不可中断、空组、身份复用）、真实存活持有者在自有组内保持真实僵尸，以及 close 判定：仅剩僵尸与空组完成清理、存活成员仍带类型化诊断失败、真实运行时仍回收每棵树。
 - `managed-dsh-run-port-proof`、planner/plugin/readiness/warmer 证明与真实 core proof 在修复分支上于 Node 22.23.2 与宿主默认版本下通过。
-- 修复分支最终完整回归：退出 0，`ALL SUITES GREEN`，Node 22.23.2 下 583 秒；日志 SHA-256 `6a1ba839a2160071010612c9f852daf750b0527de2373ce3b208835f9f94f8bb`。
+- 交付分支最终完整回归：退出 0，`ALL SUITES GREEN`，Node 22.23.2 下 676 秒；日志 SHA-256 `9c617a88684be2722d3cfd0fdf6e9f18507ba0bdc87bb6c8999ea3b73c6ed892`（同一修复在契约修正前的运行测得 583 秒，日志 SHA-256 `6a1ba839a2160071010612c9f852daf750b0527de2373ce3b208835f9f94f8bb`）。

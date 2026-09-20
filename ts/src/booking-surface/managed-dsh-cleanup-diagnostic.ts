@@ -134,8 +134,9 @@ export async function snapshotManagedDshGroup(
   } as ManagedDshProcessGroupSnapshot
   if (workerPid === null) return { ...empty, status: 'unknown_worker' }
   // Only Darwin's installed detached fallback establishes PID == PGID here.
-  // Linux native scopes and Windows Jobs require a provider range identity.
-  if (process.platform !== 'darwin') return { ...empty, expectedPgid: workerPid, status: 'unsupported' }
+  // Linux native scopes and Windows Jobs require a provider range identity,
+  // so an unsupported platform claims no expected group at all.
+  if (process.platform !== 'darwin') return { ...empty, status: 'unsupported' }
   return new Promise((resolve) => {
     // A separate, bounded failure-only observation; it does not extend the
     // provider's cleanup deadline or change its success/failure verdict.
