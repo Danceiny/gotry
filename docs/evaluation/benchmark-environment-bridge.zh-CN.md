@@ -24,6 +24,8 @@ owner-local 配置验证通过之后、任何可选宿主插件被解析或导�
 
 配置路径随后经恰好一个 `hbcliBin` 锚点注入该投影项。锚点缺失/重复，或已存在 config-path 字段，都在可选插件解析、dsh spawn、中继活动之前失败。错误信息稳定，不反映包路径、配置路径、插件名或 benchmark 内容。
 
+投影后的 loader 项还要求 `subprocess` 服务就绪后才执行 GoTry 插件，消除并行服务初始化竞态。普通模式保持原有依赖。已有项级 `inject` 字段会被拒绝，防止覆盖或重复生成的依赖声明。
+
 ## agent 一致性与终结闸
 
 benchmark opt-in 仅限无头 one-shot 形态。GoTry 追加 agent 作用域的 native 执行合同，把 prompt 里对 CLI、shell、Python 或 `agent_env.cli` 的引用翻译为对唯一可见工具 `gotry_benchmark_environment` 的结构化调用。`action:"tools"` 仅用于发现。一个可计数 turn 必须发出一次被允许的 `action:"call"`，并收到其配对的具体结果或已声明领域结局，然后才能停止。调用形状是扁平的；已退役的嵌套 `query` 形态不被接受。领域结局可以支撑一个终结响应，或支撑此后模型自拟的参数修订，但桥不重试。更晚的基础设施失败会使此前仅领域的路径失效；更晚的具体结果可以挽回它。任何情况下，被接受的终结响应必须晚于最新的桥响应，过期终结无法掩盖更新的证据。

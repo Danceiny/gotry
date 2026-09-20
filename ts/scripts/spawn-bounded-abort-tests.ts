@@ -23,11 +23,14 @@ let activeWork: Promise<unknown> | undefined
 let activeAbort: AbortController | undefined
 
 const waitForFile = async (path: string, label: string, boundMs = 5_000): Promise<void> => {
+  let settled = false
+  let outcome: unknown
+  activeWork?.then(value => { settled = true; outcome = value }, error => { settled = true; outcome = String(error) })
   const deadline = Date.now() + boundMs
-  while (!existsSync(path) && Date.now() < deadline) {
+  while (!existsSync(path) && !settled && Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 10))
   }
-  assert.ok(existsSync(path), `${label} ready handshake exceeded ${boundMs}ms`)
+  assert.ok(existsSync(path), `${label} ready handshake failed within ${boundMs}ms; settled=${settled}; outcome=${JSON.stringify(outcome)}`)
 }
 
 const pidAlive = (pid: number): boolean => {
@@ -113,12 +116,12 @@ assert.equal(pidAlive(ids.parent), false, 'parent survived abort')
 assert.equal(pidAlive(ids.child), false, 'descendant survived abort — kill of parent pid is not tree cleanup')
 
 // 2a) 脱离进程组的自有子进程继续持有 stdout/stderr:close 不应无限等待。
-//     child 设 8s 自退只用于让旧实现稳定红灯；finally 仍按已知 PID 立即清理并读回。
+//     child 设 20s 自退只用于让旧实现稳定红灯；finally 仍按已知 PID 立即清理并读回。
 const escapedBin = join(root, 'escaped-child.js')
 const escapedParentBin = join(root, 'escaped-parent.js')
 const escapedPidsFile = join(root, 'escaped-pids.json')
 const escapedReadyFile = join(root, 'escaped-ready')
-writeFileSync(escapedBin, `setInterval(()=>{},1000);setTimeout(()=>process.exit(0),8000);\n`)
+writeFileSync(escapedBin, `setInterval(()=>{},1000);setTimeout(()=>process.exit(0),20000);\n`)
 writeFileSync(escapedParentBin, `#!${process.execPath}
 const {spawn}=require('node:child_process');const fs=require('node:fs');
 const c=spawn(process.execPath,[${JSON.stringify(escapedBin)}],{detached:true,stdio:['ignore','inherit','inherit']});
@@ -129,12 +132,17 @@ process.on('SIGTERM',()=>process.exit(0));
 setInterval(()=>{},1000);`, { mode: 0o700 })
 const escapedAbort = new AbortController()
 activeAbort = escapedAbort
-const escapedWork = spawnBounded(escapedParentBin, [], { env: process.env, timeoutMs: 1_000, signal: escapedAbort.signal })
+// Startup has its own 5s readiness bound. Schedule abort 1s before the ordinary
+// 10s timeout so both timers still overlap the 2.5s drain window, even on a cold host.
+const escapedSpawnStarted = Date.now()
+const escapedWork = spawnBounded(escapedParentBin, [], { env: process.env, timeoutMs: 10_000, signal: escapedAbort.signal })
 activeWork = escapedWork
 await waitForFile(escapedReadyFile, 'escaped process')
 const escapedIds = JSON.parse(readFileSync(escapedPidsFile, 'utf8')) as { child: number }
 ownedPids.add(escapedIds.child)
 // Abort precedes the ordinary timeout; that later timer must not change the cause or extend cleanup.
+await new Promise(r => setTimeout(r, Math.max(0, escapedSpawnStarted + 9_000 - Date.now())))
+assert.ok(Date.now() - escapedSpawnStarted < 10_000, 'fixture must abort before the ordinary timeout')
 const escapedStarted = Date.now()
 escapedAbort.abort()
 const escapedResult = await escapedWork

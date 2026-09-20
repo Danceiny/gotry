@@ -80,9 +80,8 @@ async function loadAirlineAirportMap(): Promise<AirlineAirportMap | null> {
 }
 
 export const name = 'gotry-tools'
-// The bridge obtains subprocess through an optional Cordis lookup at apply
-// time. Declaring it as a required injection would make the whole plugin
-// depend on a service that is only needed for explicit benchmark opt-in.
+// The benchmark CLI projection adds a required subprocess loader dependency.
+// Keep the plugin's ordinary mode independent of that opt-in-only service.
 export const inject = ['tools', 'systemPrompt']
 
 function sessionCwd(exec: unknown): string | undefined {
