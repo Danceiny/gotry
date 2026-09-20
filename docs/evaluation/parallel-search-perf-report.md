@@ -37,6 +37,17 @@ The initial candidate median is 8356 ms versus the historical 7980 ms: **the 50%
 
 The power log records a thermal-protection sleep at 03:25:50 UTC+04:00, lasting 809 seconds, during the third paired baseline. Its tool results contain an unavailable source and turn-deadline failures. That run remains in the evidence; no passing paired median is reported. Further load testing was deferred pending a stable host.
 
+## Behavioral end-to-end checks
+
+The same frozen installed candidate also passed [the behavior harness](../../scripts/parallel-search-behavior-e2e.mjs), using a 300 ms provider delay per call. These are correctness scenarios, not additional performance samples.
+
+| Scenario | Assertions | Result |
+|---|---|---|
+| Four independent queries, one provider failure | Peak concurrency 4; the successful hotel retains its ID, name and price; two valid empty results remain misses; the failed directory remains unavailable with its original source error; observation order preserved | Passed; normal exit, 3152 ms |
+| Directory lookup followed by a dependent hotel query | The hotel query uses the city parsed from the actual directory observation; it starts after that provider finishes; both observations retained, concurrency 1 | Passed; normal exit, 2389 ms |
+
+Both cases use isolated state and the real installed host. They do not prove a model can invent the plan autonomously, cancellation cleanup, or final-commit acceptance. Raw model requests, provider events, outputs and assertions remain in the local test receipts. Final committed code still needs the same scenarios rerun.
+
 ## Reproduction and remaining work
 
 Use [the installed-product harness](../../scripts/parallel-search-perf-e2e.mjs) against separately installed baseline and candidate tarballs with identical dependencies. Use a fresh output directory each time. It preserves receipts, provider events, model requests, stdout and stderr; checks all four ordered source observations; and records wall and monotonic times.
