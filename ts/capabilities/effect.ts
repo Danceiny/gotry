@@ -393,7 +393,7 @@ export interface EffectTrace {
   backoffMs: number
   breaker: BreakerState | 'off'
   /** 非 null 时 result 恒 null(结构化拒绝面,不抛错) */
-  declined?: 'circuit-open' | 'unknown-effect'
+  declined?: 'circuit-open' | 'unknown-effect' | 'aborted'
   /** 解译层横切证据行([效应:<NAME>@ts] …) */
   evidence: string[]
 }
@@ -411,7 +411,9 @@ export function declinedObservation(effect: string, trace: EffectTrace): { ok: f
   return {
     ok: false,
     verdict: 'error',
-    summary: trace.declined === 'circuit-open'
+    summary: trace.declined === 'aborted'
+      ? `${effect} 检索已取消，未产生新的查询结果。`
+      : trace.declined === 'circuit-open'
       ? `${effect} 通道被断路器开启保护(连续失败达到阈值,冷却中)——不要立即重试,换其他工具或稍后再试;原因见 trace 证据链`
       : `${effect} 未登记效应(effect_interpreter.v1 注册表外,生产解译器拒绝)`,
     evidence: trace.evidence.join(';'),
@@ -482,7 +484,7 @@ export function makeProductionInterpreter(opts: ProductionInterpreterOptions = {
       br?.releaseProbe(gate.token)
       const abortedTrace: EffectTrace = {
         effect: fx.effect, channel: spec.channel, attempts: outcome.attempts,
-        backoffMs: outcome.backoffMs, breaker: br?.state() ?? 'off',
+        backoffMs: outcome.backoffMs, breaker: br?.state() ?? 'off', declined: 'aborted',
         evidence: [`[效应:${fx.effect}@abort@${ts}] aborted; breaker state untouched`],
       }
       return { result: null, trace: abortedTrace }

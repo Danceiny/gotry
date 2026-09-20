@@ -46,6 +46,8 @@ Interpreted outcome:        { result: channel-native observation | null, // Effe
 Rejection surface (flat):   declinedObservation(): { ok:false, verdict:'error', summary, evidence }
 ```
 
+- **Host cancellation**: a cancelled dispatch returns `result: null` and `trace.declined: 'aborted'`. The flat observation explicitly says the search was cancelled; it does not diagnose an unknown effect or fabricate an empty result. Cancellation stops retries and leaves failure counts unchanged.
+
 - Interpreter interface `EffectInterpreter = (fx: GotryEffect) => Promise<EffectOutcome>`:
   - **Production interpreter** `makeProductionInterpreter({ handlers?, breakers?, now?, sleep? })`:
     look up the registry → breaker gate → `withRetry` (exponential backoff, base×2^(n-1) capped) → channel handler

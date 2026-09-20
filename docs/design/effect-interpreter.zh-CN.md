@@ -45,6 +45,8 @@ issue #16「多渠道比价与外部依赖隔离」提出三件事：
 拒绝面(平铺):     declinedObservation(): { ok:false, verdict:'error', summary, evidence }
 ```
 
+- **宿主取消**：取消返回 `result: null` 与 `trace.declined: 'aborted'`。平铺结果明确显示检索已取消，不误报未登记效应，也不伪造空查询结果。取消停止重试，不增加失败计数。
+
 - 解译器接口 `EffectInterpreter = (fx: GotryEffect) => Promise<EffectOutcome>`：
   - **生产解译器** `makeProductionInterpreter({ handlers?, breakers?, now?, sleep? })`：
     查注册表 → 断路器闸 → `withRetry`（指数退避，base×2^（n-1） 封顶）→ 渠道 handler

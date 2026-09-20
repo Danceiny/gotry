@@ -47,6 +47,27 @@ assert.match(badObs.summary, /未登记效应/, '拒绝面人话 summary')
 assert.match(badObs.evidence, /\[效应:CTRIP_DIRECT_QUERY@/, '拒绝面带证据链')
 console.log('1. 注册表封闭性:未登记效应 → 结构化拒绝面(不抛错)OK')
 
+// Host cancellation is an explicit outcome, not an unregistered-effect diagnosis.
+const preCancelled = new AbortController()
+preCancelled.abort()
+let cancelledDispatches = 0
+const cancelledInterpreter = makeProductionInterpreter({
+  breakers: new Map(),
+  handlers: { ANYTHING_SEARCH: async () => { cancelledDispatches++; return { ok: true } } },
+})
+const cancelled = await cancelledInterpreter({ effect: 'ANYTHING_SEARCH', params: { signal: preCancelled.signal } })
+assert.equal(cancelled.result, null)
+assert.equal(cancelled.trace.declined, 'aborted')
+assert.equal(cancelled.trace.attempts, 0)
+assert.equal(cancelledDispatches, 0)
+const cancelledObservation = declinedObservation('ANYTHING_SEARCH', cancelled.trace)
+assert.equal(cancelledObservation.ok, false)
+assert.match(cancelledObservation.summary, /已取消/)
+assert.doesNotMatch(cancelledObservation.summary, /未登记|断路器/)
+assert.match(cancelledObservation.evidence, /@abort@/)
+console.log('1b. 宿主取消明确呈现已取消，零派发、不误报未登记效应 OK')
+
+
 // ---------------------------------------------------------------------------
 // 2. 指数退避:500→1000→2000 封顶;累计记账;非瞬时失败不重试
 // ---------------------------------------------------------------------------
@@ -213,6 +234,8 @@ oldClosedController.abort()
 resolveOldClosed({ via: 'hbcli-error', error: 'aborted by host signal' })
 const cancelledOldClosed = await oldClosed
 assert.equal(cancelledOldClosed.trace.attempts, 1, '旧 closed 请求取消仍只执行一次')
+assert.equal(cancelledOldClosed.trace.declined, 'aborted')
+assert.match(declinedObservation('HBCLI_HOTEL_SEARCH', cancelledOldClosed.trace).summary, /已取消/)
 resolveOldClosedCompletion({ via: 'hbcli-realtime' })
 const completedOldClosed = await oldClosedCompletion
 assert.equal(completedOldClosed.trace.breaker, 'half-open', '旧 closed 请求完成不能修改新半开探测')
