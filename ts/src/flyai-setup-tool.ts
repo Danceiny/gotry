@@ -16,7 +16,7 @@ export function createFlyaiSetupTool(runEffect: EffectInterpreter, stateRoot?: s
     name: 'gotry_flyai_setup',
     description: 'Inspect FlyAI credential source and verification status, or check the current configuration with a read-only search. Never accepts, changes or returns credentials. Check updates only a verification receipt; setting or clearing credentials requires the local gotry setup flyai command.',
     parameters: { action: { type: 'string', enum: ['status', 'check'], description: 'status (default): local status; check: read-only provider verification' } },
-    output: { schema: { type: 'json' }, render: (_a, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] },
+    output: { schema: { type: 'json' }, render: (_a, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     async execute(args, exec) {
       // Reject unknown arguments before any provider invocation or metadata write.
       if (Object.keys(args).some(key => key !== 'action') || (args.action !== undefined && args.action !== 'status' && args.action !== 'check')) {

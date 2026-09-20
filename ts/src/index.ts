@@ -1473,7 +1473,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       provinceOrCity: { type: 'string', description: '万豪套餐的省份或城市；与 keyword/hotelName 至少填写一项' },
       timeoutMs: { type: 'integer', description: '本次查询本地超时毫秒' },
     },
-    output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
+    output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: JSON.stringify({ ...(v as Record<string, unknown>), raw: undefined }) }] },
     async execute(args, exec) {
       const raw = args as unknown as FlyaiToolArgs
       const signal = (exec as { signal?: AbortSignal } | null | undefined)?.signal
