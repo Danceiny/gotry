@@ -18,9 +18,12 @@
   if (window.__gotrySniffBridge) return
   window.__gotrySniffBridge = true
 
-  function dispatchJoinTicket() {
+  function dispatchJoinTicket(ev) {
     try {
-      var t = window.__gotryJoinTicket
+      // 本脚本跑在隔离世界:页面主世界设置的 window 属性读不到,票据本体必须
+      // 走事件的 detail(2026-09-21 hotel-fe#3713 E2E 实证);window 属性仅作
+      // MAIN-world 观察面兜底,取不到就安静等下一次事件。
+      var t = (ev && ev.detail && ev.detail.ticket) || window.__gotryJoinTicket
       if (!t || typeof t.bridgeUrl !== 'string' || !t.bridgeUrl) return
       chrome.runtime.sendMessage({ type: 'gotry-join', ticket: t }).catch(function () { /* SW 重启中 */ })
     } catch { /* 不抛 */ }
