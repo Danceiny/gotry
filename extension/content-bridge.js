@@ -200,12 +200,25 @@
     } catch { /* 不抛 */ }
   })
 
+  /** 页面级挑战标记(2026-09-21):风控/验证码面在 DOM 上的稳定特征。
+   * 为什么必须由页面侧判定:网关侧原先拿**嗅探到的供应商响应体**扫「验证|captcha」,
+   * 会把酒店名(如「经过验证的净零酒店」)误判成风控 → dida 通道恒 challenged。 */
+  function challengeHint() {
+    try {
+      var sel = 'iframe[src*="captcha" i], .nc_wrapper, #nc_1_wrapper, .geetest_holder, .geetest_panel, [id*="captcha" i], [class*="captcha" i], [class*="slider-verify" i], [class*="verify-wrap" i]'
+      if (document.querySelector(sel)) return true
+      var text = ((document.body && document.body.innerText) || '').slice(0, 2000)
+      return /请完成验证|拖动滑块|安全验证|请输入验证码|人机验证/.test(text)
+    } catch { return false }
+  }
+
   function sendPage() {
     try {
       chrome.runtime.sendMessage({
         type: 'gotry-page',
         title: document.title || '',
         url: location.href,
+        challenge: challengeHint(),
       }).catch(function () { /* SW 侧无等待者,常态丢弃 */ })
     } catch { /* 环境异常不抛 */ }
   }

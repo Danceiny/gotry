@@ -141,33 +141,77 @@ async function ticketNames(site) {
 function classifyDidaSniff(url) {
   if (/SearchHomepageRecommendHotels/i.test(url)) return 'hotels'
   if (/SearchHomepageRecommendPrices/i.test(url)) return 'recommendPrices'
+  if (/HotelPriceAPI\/SearchCache/i.test(url)) return 'searchCache'
   if (/HotelPriceAPI\/SearchRealTime/i.test(url)) return 'realtime'
   return null
 }
 
-/** multiCollect(dida 推荐流):hotels+recommendPrices 齐即结算;超时带回已见分桶(诚实缺桶) */
+/** multiCollect(dida):按城市+日期的检索以 **searchCache**(列表页价格面)结算;
+ * 旧口径(首页推荐流)仍等 hotels+recommendPrices 齐;超时带回已见分桶(诚实缺桶) */
 function waitSniffMulti(tabId, timeoutMs) {
   return new Promise((resolve) => {
     const bodies = {}
     let settled = false
     let title = ''
+    let challenge = false
     const finish = () => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       chrome.runtime.onMessage.removeListener(handler)
-      resolve({ ok: true, kind: 'search', bodies, title, timeout: !(bodies.hotels && bodies.recommendPrices) })
+      resolve({ ok: true, kind: 'search', bodies, title, challenge, timeout: !(bodies.searchCache || (bodies.hotels && bodies.recommendPrices)) })
     }
     const handler = (msg, sender) => {
       if (!sender || !sender.tab || sender.tab.id !== tabId) return
-      if (msg && msg.type === 'gotry-page') { title = String(msg.title ?? title); return }
+      if (msg && msg.type === 'gotry-page') {
+        title = String(msg.title ?? title)
+        if (msg.challenge === true) challenge = true
+        return
+      }
       if (msg && msg.type === 'gotry-sniff') {
         const cls = classifyDidaSniff(String(msg.url ?? ''))
         if (cls && !bodies[cls]) bodies[cls] = String(msg.body ?? '')
-        if (bodies.hotels && bodies.recommendPrices) finish()
+        // searchCache = 查询态价格面,拿到即可结算(推荐流是首页口径,不参与查询态结算)
+        if (bodies.searchCache || (bodies.hotels && bodies.recommendPrices)) finish()
       }
     }
     const timer = setTimeout(finish, Math.max(Number(timeoutMs) || 30_000, 5_000))
+    chrome.runtime.onMessage.addListener(handler)
+  })
+}
+
+/**
+ * 查询态等待器(2026-09-21):驱动门户目的地搜索后,**只认 searchCache**(列表页价格面)。
+ * 为什么不能复用 waitSniffMulti:驱动流程里标签先落在 find 页,推荐流 double 会立刻满足
+ * 「hotels && recommendPrices」把等待提前结算,导致永远等不到 /hotel/list 的 SearchCache。
+ */
+function waitSniffSearchCache(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false
+    let title = ''
+    let challenge = false
+    const finish = (timedOut) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      chrome.runtime.onMessage.removeListener(handler)
+      resolve({ ok: true, kind: 'search', bodies, title, challenge, timeout: timedOut })
+    }
+    const bodies = {}
+    const handler = (msg, sender) => {
+      if (!sender || !sender.tab || sender.tab.id !== tabId) return
+      if (msg && msg.type === 'gotry-page') {
+        title = String(msg.title ?? title)
+        if (msg.challenge === true) challenge = true
+        return
+      }
+      if (msg && msg.type === 'gotry-sniff') {
+        const cls = classifyDidaSniff(String(msg.url ?? ''))
+        if (cls && !bodies[cls]) bodies[cls] = String(msg.body ?? '')
+        if (bodies.searchCache) finish(false)
+      }
+    }
+    const timer = setTimeout(() => finish(true), Math.max(Number(timeoutMs) || 30_000, 5_000))
     chrome.runtime.onMessage.addListener(handler)
   })
 }
@@ -177,14 +221,19 @@ function waitSniff(tabId, timeoutMs) {
   return new Promise((resolve) => {
     let settled = false
     let title = ''
+    let challenge = false
     const handler = (msg, sender) => {
       if (!sender || !sender.tab || sender.tab.id !== tabId) return
-      if (msg && msg.type === 'gotry-page') { title = String(msg.title ?? title); return }
+      if (msg && msg.type === 'gotry-page') {
+        title = String(msg.title ?? title)
+        if (msg.challenge === true) challenge = true
+        return
+      }
       if (msg && msg.type === 'gotry-sniff' && !settled) {
         settled = true
         clearTimeout(timer)
         chrome.runtime.onMessage.removeListener(handler)
-        resolve({ ok: true, kind: 'search', body: String(msg.body ?? ''), url: String(msg.url ?? ''), title })
+        resolve({ ok: true, kind: 'search', body: String(msg.body ?? ''), url: String(msg.url ?? ''), title, challenge })
       }
     }
     const timer = setTimeout(() => {
@@ -288,7 +337,8 @@ async function handleJob(job) {
             landing = u.toString()
           } catch { /* 解析失败则用门户落地 URL */ }
           await chrome.tabs.update(tab.id, { url: landing })
-          const result = await waitSniffMulti(tab.id, job.timeoutMs)
+          // 查询态:等列表页的 searchCache(给足窗口——门列表页价格面到达约 10-20s)
+          const result = await waitSniffSearchCache(tab.id, Math.max(Number(job.timeoutMs) || 0, 45_000))
           await postResult(jobId, { ok: true, kind: 'search', bodies: result.bodies, title: result.title, landingUrl: landing, picked: recipe.picked, timeout: result.timeout })
           return
         } finally {

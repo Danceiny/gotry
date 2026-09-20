@@ -318,6 +318,13 @@ async function main(): Promise<void> {
     assert.ok(backgroundJs.includes("searchParams.set('checkInDate'"), 'SW 应用我们的日期重写落地 URL(不驱动门户日期选择器)')
     assert.ok(backgroundJs.includes('landingUrl'), 'SW 应回传落地 URL(供解析器与诊断)')
   })
+  await check('dida 查询态(2026-09-21):searchCache 桶 + 只认 searchCache 的等待器 + 页面级挑战标记', () => {
+    assert.ok(backgroundJs.includes("if (/HotelPriceAPI\\/SearchCache/i.test(url)) return 'searchCache'"), 'SW 应把 SearchCache 分到 searchCache 桶')
+    assert.ok(backgroundJs.includes('waitSniffSearchCache'), '查询态应有只认 searchCache 的等待器(推荐流不得参与结算)')
+    assert.ok(backgroundJs.includes('challenge'), 'SW 应把页面级 challenge 标记随结果回传')
+    assert.ok(contentBridgeJs.includes('challengeHint'), 'content-bridge 应按 DOM 判定挑战标记')
+    assert.ok(backgroundJs.includes('landingUrl'), '驱动后应回传落地 URL')
+  })
   await check('dida multiCollect(2026-09-11,推荐流双接口):背景分类函数 + waitSniffMulti 分桶结算', () => {
     assert.ok(backgroundJs.includes('classifyDidaSniff'), '背景 SW 应抽 dida sniff 分类函数')
     assert.ok(backgroundJs.includes('SearchHomepageRecommendHotels'), '多回包分类应含 hotels 接口')

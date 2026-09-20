@@ -102,7 +102,18 @@ function ensureStringField(obj: Record<string, unknown>, key: 'supplier' | 'url'
  * 这是为了避免 untrusted body 被当作已校验类型传入底层 search(),
  * 同时对历史合法请求保持兼容。
  */
-function readSearchQuery(obj: Record<string, unknown>): { query?: { entryUrl?: string; timeoutMs?: number } } | { code: ValidationCode } {
+type SearchQueryFields = {
+  entryUrl?: string
+  timeoutMs?: number
+  /** 按城市的查询(2026-09-21):驱动门户目的地搜索取该查询下的价 */
+  city?: string
+  checkIn?: string
+  checkOut?: string
+  adults?: number
+  children?: number
+}
+
+function readSearchQuery(obj: Record<string, unknown>): { query?: SearchQueryFields } | { code: ValidationCode } {
   const q = obj.query
   if (q === undefined) return { query: undefined }
   if (q === null || typeof q !== 'object' || Array.isArray(q)) return { code: 'shape' }
@@ -111,7 +122,40 @@ function readSearchQuery(obj: Record<string, unknown>): { query?: { entryUrl?: s
   const timeoutMs = rec.timeoutMs
   if (entryUrl !== undefined && typeof entryUrl !== 'string') return { code: 'shape' }
   if (timeoutMs !== undefined && (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs))) return { code: 'shape' }
-  return { query: { entryUrl, timeoutMs } }
+  type Field<T> = { ok: true; value?: T } | { ok: false; code: ValidationCode }
+  const strField = (k: string): Field<string> => {
+    const v = rec[k]
+    if (v === undefined) return { ok: true }
+    if (typeof v !== 'string') return { ok: false, code: 'shape' }
+    return { ok: true, value: v.trim() || undefined }
+  }
+  const numField = (k: string): Field<number> => {
+    const v = rec[k]
+    if (v === undefined) return { ok: true }
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return { ok: false, code: 'shape' }
+    return { ok: true, value: Math.floor(v) }
+  }
+  const city = strField('city')
+  if (!city.ok) return { code: city.code }
+  const checkIn = strField('checkIn')
+  if (!checkIn.ok) return { code: checkIn.code }
+  const checkOut = strField('checkOut')
+  if (!checkOut.ok) return { code: checkOut.code }
+  const adults = numField('adults')
+  if (!adults.ok) return { code: adults.code }
+  const children = numField('children')
+  if (!children.ok) return { code: children.code }
+  return {
+    query: {
+      entryUrl,
+      timeoutMs,
+      ...(city.value ? { city: city.value } : {}),
+      ...(checkIn.value ? { checkIn: checkIn.value } : {}),
+      ...(checkOut.value ? { checkOut: checkOut.value } : {}),
+      ...(adults.value !== undefined ? { adults: adults.value } : {}),
+      ...(children.value !== undefined ? { children: children.value } : {}),
+    },
+  }
 }
 
 /**
@@ -205,9 +249,14 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
       sendJson(res, 400, { ok: false, error: `未知供应商通道 ${supplier || '(空)'}(M0 仅 dida-portal)` }); return
     }
     try {
+      const q = queryCheck.query
       const result = await withLock(supplier, () => search({
-        entryUrl: queryCheck.query?.entryUrl,
-        timeoutMs: queryCheck.query?.timeoutMs,
+        entryUrl: q?.entryUrl,
+        timeoutMs: q?.timeoutMs,
+        // 查询态(城市+日期)交给能力层 → 扩展驱动门户目的地搜索
+        ...(q?.city
+          ? { query: { city: q.city, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults, children: q.children } }
+          : {}),
         auditPath: options.auditPath,
         bridge: queue,
       }))
