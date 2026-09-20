@@ -266,10 +266,16 @@ async function main(): Promise<void> {
 
   await check('防漂移:content_scripts 双 world 挂 ctrip 双站+12306+dida(MAIN 嗅探 + ISOLATED 桥;2026-09-03 酒/火实装,2026-09-09 dida 实装)', () => {
     assert.equal(manifest.content_scripts.length, 2)
-    for (const cs of manifest.content_scripts) {
-      assert.deepEqual(cs.matches, ['https://flights.ctrip.com/*', `https://${HOTEL_SITE_HOST}/*`, `https://${TRAIN_SITE_HOST}/*`, 'https://www.12306.cn/*', `https://${DIDA_SITE_HOST}/*`])
-      assert.equal(cs.run_at, 'document_start')
-    }
+    // 2026-09-21 hotel-fe#3713:join 交付(portal 页注入 window.__gotryJoinTicket)要求
+    // content-bridge 也跑在 hotelbyte portal 页上;content-main(供应商页 MAIN 嗅探)维持站点面不变。
+    const portalOrigins = ['https://portal-test.hotelbyte.com/*', 'https://portal.hotelbyte.com/*']
+    const main = manifest.content_scripts.find((cs) => cs.js[0] === 'content-main.js')
+    const bridge = manifest.content_scripts.find((cs) => cs.js[0] === 'content-bridge.js')
+    assert.ok(main && bridge, '双 world 脚本齐备')
+    const siteMatches = ['https://flights.ctrip.com/*', `https://${HOTEL_SITE_HOST}/*`, `https://${TRAIN_SITE_HOST}/*`, 'https://www.12306.cn/*', `https://${DIDA_SITE_HOST}/*`]
+    assert.deepEqual(main!.matches, siteMatches)
+    assert.deepEqual(bridge!.matches, [...siteMatches, ...portalOrigins])
+    for (const cs of manifest.content_scripts) assert.equal(cs.run_at, 'document_start')
     const worlds = manifest.content_scripts.map((cs) => cs.world ?? 'ISOLATED').sort()
     assert.deepEqual(worlds, ['ISOLATED', 'MAIN'])
     assert.deepEqual(manifest.content_scripts.map((cs) => cs.js[0]).sort(), ['content-bridge.js', 'content-main.js'])
