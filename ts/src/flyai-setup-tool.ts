@@ -7,10 +7,11 @@ import {
   resolveFlyaiKey, sha256Hex, writeFlyaiVerification,
 } from '../capabilities/flyai-config.ts'
 import type { FlyaiResult } from '../capabilities/flyai.ts'
+import { readLatestChannelEvents } from '../capabilities/channel-health.ts'
 
 const guidance = '在本机运行 gotry setup flyai（隐藏输入），或 gotry setup flyai --stdin；清除文件配置用 --clear。不要在聊天中发送 API key。申请入口：https://flyai.open.fliggy.com。'
 
-export function createFlyaiSetupTool(runEffect: EffectInterpreter) {
+export function createFlyaiSetupTool(runEffect: EffectInterpreter, stateRoot?: string) {
   return defineTool({
     name: 'gotry_flyai_setup',
     description: 'Inspect FlyAI credential source and verification status, or check the current configuration with a read-only search. Never accepts, changes or returns credentials. Check updates only a verification receipt; setting or clearing credentials requires the local gotry setup flyai command.',
@@ -55,15 +56,18 @@ export function createFlyaiSetupTool(runEffect: EffectInterpreter) {
         && receipt.source === current.source && receipt.endpointFingerprint === fingerprint
         && receipt.endpointDebug === endpoint.debug)
       const verified = matches && receipt?.verdict === 'verified'
+      const event = stateRoot ? (await readLatestChannelEvents(stateRoot, { requireValidTimestamp: true })).get('flyai') : undefined
+      const lastTrialLimit = event?.state === 'down' && event.reason === 'needs-setup' ? event.at : undefined
       const status = !current.key ? '匿名试用（共享额度）' : verified ? '已验证当前配置' : '已配置，未验证通过'
       const summary = `${status}；来源 ${current.source}；endpoint ${displayEndpoint(endpoint.url)}${endpoint.debug ? '（DEBUG）' : ''}。`
         + (checkVerdict ? `本次只读检查：${checkVerdict}。` : '')
+        + (lastTrialLimit ? `最近试用额度受限：${lastTrialLimit}。` : '')
         + (receiptSaved === false ? '验证回执保存失败，doctor 状态尚未更新。' : '') + guidance
       return JSON.parse(JSON.stringify({ ok: receiptSaved !== false && (!checkVerdict || checkVerdict === 'hit' || checkVerdict === 'miss'), action: args.action ?? 'status',
         source: current.source, configured: Boolean(current.key), verified,
         maskedKey: current.maskedKey, configPath: current.configPath,
         endpoint: displayEndpoint(endpoint.url), endpointDebug: endpoint.debug,
-        checkVerdict, receiptSaved, summary })) as Record<string, never>
+        checkVerdict, receiptSaved, lastTrialLimit, summary })) as Record<string, never>
     },
     // Do not retain unexpected arguments even when a host bypasses schema validation.
     presentCall: args => ({ card: 'generic', title: 'FlyAI 配置检查', kind: 'fetch', rawInput: { action: args.action === 'check' ? 'check' : 'status' } }),

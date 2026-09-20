@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFlyaiSetupTool } from '../src/flyai-setup-tool.ts'
+import { recordChannelEvent } from '../capabilities/channel-health.ts'
 
 const root = mkdtempSync(join(tmpdir(), 'flyai-readonly-tool-'))
 const original = { ...process.env }
@@ -22,11 +23,14 @@ try {
     assert.equal(fx.effect, 'FLYAI_SEARCH')
     assert.ok(!JSON.stringify(fx).includes(key), 'Credential must not enter effect args')
     return { result: { verdict: 'miss' }, trace: { effect: fx.effect, channel: 'cli', attempts: 1, backoffMs: 0, breaker: 'off', evidence: [] } }
-  }) as unknown as { execute(args: Record<string, unknown>, context: unknown): Promise<Record<string, unknown>>; presentCall(args: Record<string, unknown>): unknown }
+  }, root) as unknown as { execute(args: Record<string, unknown>, context: unknown): Promise<Record<string, unknown>>; presentCall(args: Record<string, unknown>): unknown }
+  const limitedAt = new Date(Date.now() - 1000).toISOString()
+  await recordChannelEvent(root, { channel: 'flyai', state: 'down', reason: 'needs-setup', at: limitedAt })
   const status = await tool.execute({ action: 'status' }, {})
   assert.equal(status.configured, true)
   assert.equal(status.verified, false)
   assert.equal(calls, 0)
+  assert.equal(status.lastTrialLimit, limitedAt)
   const rejected = await tool.execute({ action: 'check', key }, {})
   assert.equal(rejected.ok, false)
   assert.equal(calls, 0)

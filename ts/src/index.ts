@@ -1516,7 +1516,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     },
   }))
 
-  registerGuarded(createFlyaiSetupTool((seams.effect ?? interpretEffect) as unknown as EffectInterpreter))
+  registerGuarded(createFlyaiSetupTool((seams.effect ?? interpretEffect) as unknown as EffectInterpreter, config.stateRoot))
 
   registerGuarded(defineTool({
     name: 'gotry_session_login',
