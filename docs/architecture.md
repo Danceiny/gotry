@@ -148,6 +148,8 @@ Option      = { id, move(services×transfers×buffer×red-eye×tz), stay?(nights
 
 `runTurn(state, msg, llm, solve)`: extract facts (calendar asserted once, conflicts pointed out explicitly) → incremental interview (driven by missing fields; workWindow/bookedResources are solve prerequisites; budgetTier demoted to a gate, non-blocking) → when constraints are complete, extractSpec→solve→render (plan + exclusion reasons + red flags + gate multiple-choice). Complex trips switch to **async deep planning** ("come back in an hour"; revisits deliver with the no-disappointment four self-check). Detailed design in `design/stage1-top-down-design.md`.
 
+**Search scheduling**: `gotry_hotel_search` and `gotry_anything_search` declare independent read-only calls safe for the existing dsh bounded scheduler. Dependent calls wait for earlier observations; other tools retain their existing exclusive execution. The host cancellation signal reaches the effect and CLI layers. No second scheduler is introduced. Performance acceptance and limits live in the [measurement report](evaluation/parallel-search-perf-report.md).
+
 **Replay acceptance** (`ts/scripts/replay.ts`): Kimi's 13-turn failure = GoTry's 3 turns; zero calendar back-and-forth; the work window and booked hotel are asked out in the first turn; the final turn is already a verified plan.
 
 ## 6. Data and runtime

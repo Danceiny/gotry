@@ -319,6 +319,9 @@ function injectBenchmarkEnvironmentConfig(raw, configPath) {
   const configIndent = ' '.repeat(itemIndent + 4)
   const configAnchors = raw.match(new RegExp(`^${propertyIndent}config:\\s*(?:#.*)?$`, 'gm')) ?? []
   if (configAnchors.length !== 1) throw new Error('benchmark config block unavailable')
+  if (new RegExp(`^${propertyIndent}(?:inject|'inject'|"inject")\\s*:`, 'm').test(raw)) {
+    throw new Error('benchmark service injection already declared')
+  }
   if ((raw.match(new RegExp(`^${configIndent}benchmarkEnvironmentConfigPath\\s*:`, 'gm')) ?? []).length !== 0) {
     throw new Error('duplicate benchmark config path')
   }
@@ -332,7 +335,10 @@ function injectBenchmarkEnvironmentConfig(raw, configPath) {
   if ((injected.match(new RegExp(`^${configIndent}benchmarkEnvironmentConfigPath\\s*:`, 'gm')) ?? []).length !== 1) {
     throw new Error('benchmark config injection unavailable')
   }
-  return injected
+  // Only benchmark opt-in requires this service. The loader merges this entry
+  // dependency with the plugin's tools/systemPrompt dependencies before apply.
+  // A one-time ctx.get() without this edge races the parallel profile loader.
+  return injected.replace(new RegExp(`^${propertyIndent}config:`, 'm'), `${propertyIndent}inject: [subprocess]\n${propertyIndent}config:`)
 }
 
 let benchmarkTerminalConfig = null

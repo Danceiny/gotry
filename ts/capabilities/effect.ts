@@ -56,6 +56,8 @@ export interface HbHotelEffectParams {
   /** hbcli 二进制(插件 config 直通) */
   hbcliBin?: string
   timeoutMs?: number
+  /** 宿主取消信号(exec.signal):由解译器生命周期消费；渠道适配器透传另行闭包 */
+  signal?: AbortSignal
 }
 
 /** hbcli 房型报价参数(M0 预订链;价格面无静态降级 fail-closed,产物 RatePkgId 供 check-avail/book) */
@@ -134,7 +136,7 @@ const DEFAULT_HANDLERS = {
   HBCLI_HOTEL_SEARCH: (p: HbHotelEffectParams) =>
     searchHotels(
       { destination: p.destination, checkIn: p.checkIn, checkOut: p.checkOut, adults: p.adults },
-      { hbcliBin: p.hbcliBin, timeoutMs: p.timeoutMs, fallbackPath: p.fallbackPath },
+      { hbcliBin: p.hbcliBin, timeoutMs: p.timeoutMs, fallbackPath: p.fallbackPath, signal: p.signal },
     ),
   /** hotelbyte 桥·房型报价(M0 预订链;spawn CLI;价格面无静态降级 fail-closed) */
   HBCLI_HOTEL_RATES: (p: HbRatesEffectParams) =>
@@ -391,7 +393,7 @@ export interface EffectTrace {
   backoffMs: number
   breaker: BreakerState | 'off'
   /** 非 null 时 result 恒 null(结构化拒绝面,不抛错) */
-  declined?: 'circuit-open' | 'unknown-effect'
+  declined?: 'circuit-open' | 'unknown-effect' | 'aborted'
   /** 解译层横切证据行([效应:<NAME>@ts] …) */
   evidence: string[]
 }
@@ -409,7 +411,9 @@ export function declinedObservation(effect: string, trace: EffectTrace): { ok: f
   return {
     ok: false,
     verdict: 'error',
-    summary: trace.declined === 'circuit-open'
+    summary: trace.declined === 'aborted'
+      ? `${effect} 检索已取消，未产生新的查询结果。`
+      : trace.declined === 'circuit-open'
       ? `${effect} 通道被断路器开启保护(连续失败达到阈值,冷却中)——不要立即重试,换其他工具或稍后再试;原因见 trace 证据链`
       : `${effect} 未登记效应(effect_interpreter.v1 注册表外,生产解译器拒绝)`,
     evidence: trace.evidence.join(';'),
@@ -461,7 +465,7 @@ export function makeProductionInterpreter(opts: ProductionInterpreterOptions = {
       breakers.set(fx.effect, created)
       return created
     })()
-    const gate = br?.canAttempt() ?? { allowed: true, state: 'closed' as const }
+    const gate = br?.canAttempt() ?? { allowed: true, state: 'closed' as const, token: undefined }
     if (!gate.allowed) {
       const trace: EffectTrace = { effect: fx.effect, channel: spec.channel, attempts: 0, backoffMs: 0, breaker: gate.state, declined: 'circuit-open', evidence: [`[效应:${fx.effect}@${ts}] breaker=${gate.state} 拒绝(冷却中,不重试)`] }
       return { result: null, trace }
@@ -469,10 +473,24 @@ export function makeProductionInterpreter(opts: ProductionInterpreterOptions = {
     const policy: RetryPolicy | null = spec.retry
       ? { maxAttempts: spec.retry.maxAttempts, baseDelayMs: spec.retry.baseDelayMs, maxDelayMs: spec.retry.maxDelayMs, isRetryable: spec.isRetryable, sleep }
       : { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, sleep }
+    // 宿主取消(若该效应 params 带 signal)贯穿 backoff 等待与下一次 dispatch
+    const hostSignal = (fx.params as { signal?: AbortSignal } | null)?.signal
+    if (hostSignal) policy.signal = hostSignal
     const dispatch = handler as (params: unknown) => Promise<unknown>
     const outcome = await withRetry(() => dispatch(fx.params), policy)
+    if (outcome.aborted) {
+      // 取消不计 failure(不增熔断计数),也不 onSuccess 清掉既有故障;
+      // half-open 探测取消只释放本次 probe 所有权。
+      br?.releaseProbe(gate.token)
+      const abortedTrace: EffectTrace = {
+        effect: fx.effect, channel: spec.channel, attempts: outcome.attempts,
+        backoffMs: outcome.backoffMs, breaker: br?.state() ?? 'off', declined: 'aborted',
+        evidence: [`[效应:${fx.effect}@abort@${ts}] aborted; breaker state untouched`],
+      }
+      return { result: null, trace: abortedTrace }
+    }
     const failed = outcome.error != null || spec.isFailure(outcome.result)
-    if (br) failed ? br.onFailure() : br.onSuccess()
+    if (br) failed ? br.onFailure(gate.token) : br.onSuccess(gate.token)
     const breakerState: BreakerState | 'off' = br?.state() ?? 'off'
     const evidence = [`[效应:${fx.effect}@${ts}] attempts=${outcome.attempts} backoff=${outcome.backoffMs}ms breaker=${breakerState}`]
     return {

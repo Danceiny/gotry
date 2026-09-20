@@ -148,6 +148,8 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 `runTurn(state, msg, llm, solve)`：抽取事实（日历一次断言，冲突显式指出）→ 增量访谈（缺失字段驱动，workWindow/bookedResources 为求解前置，budgetTier 降为 gate 不阻塞）→ 约束齐备则 extractSpec→solve→渲染（方案+排除理由+红旗+gates 选择题）。复杂行程切**异步深度规划**（「一小时后回来看看」；回访交付自带不失望四条自检）。详细设计见 `design/stage1-top-down-design.md`。
 
+**搜索调度**：`gotry_hotel_search` 与 `gotry_anything_search` 将独立只读调用交给 dsh 既有有界并发调度器。依赖查询等待前序结果，其他工具保持原有独占执行；宿主取消信号贯穿效应层与 CLI 层，不另建调度器。性能验收与限制见[测试报告](evaluation/parallel-search-perf-report.zh-CN.md)。
+
 **重放验收**（`ts/scripts/replay.ts`）：Kimi 的 13 轮失败 = GoTry 3 轮；日历零反复；工作窗口与已订酒店首轮即被问出；终轮即已验证方案。
 
 ## 6. 数据与运行时
