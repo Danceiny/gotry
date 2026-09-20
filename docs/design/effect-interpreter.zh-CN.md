@@ -67,7 +67,7 @@ issue #16「多渠道比价与外部依赖隔离」提出三件事：
 
 | 效应 | 渠道 | 重试 | 断路器 | 节律/授权 | 依据 |
 |---|---|---|---|---|---|
-| `FLYAI_SEARCH` | cli | 瞬时类 2 次/500ms 起 | 3 连错/开 60s | – | data-sources §8：Sentinel 限流绝不硬重试；熔断保护未公布配额；429 试用达限归 needs-setup（工具面阻断盲重试，2026-09-02 迪拜 session） |
+| `FLYAI_SEARCH` | cli | 明确瞬时类最多 2 次／500ms 起 | 3 连错／开 60s | – | 普通 429、上游网络和 HTTP 5xx 可重试一次；鉴权、禁止访问、试用达限、Sentinel、畸形响应和本地终止不重试。非零退出码本身不决定策略。 |
 | `HBCLI_HOTEL_SEARCH` | cli | 仅 timeout 2 次/300ms 起 | 3 连错/开 60s | – | hbcli 契约「候选路径是切换不是重试」只覆盖 ENOENT 类；timeout（上游冷启动建后端 session 可超 30s）重试 1 次即恢复（2026-09-02 迪拜 session 实况） |
 | `HBCLI_HOTEL_RATES` | cli | 仅 timeout 2 次/300ms 起 | 3 连错/开 60s | – | 同 HBCLI 族（timeout-only）；价格面**无静态降级 fail-closed**（不估算房价，与 bookable-facts 证据分级同口径） |
 | `HBCLI_CHECK_AVAIL` | cli | 仅 timeout 2 次/300ms 起 | 3 连错/开 60s | – | 同上；验价不可用即诚实失败（预订链下单前置，M0） |

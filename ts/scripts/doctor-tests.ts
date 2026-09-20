@@ -2,7 +2,7 @@
  * doctor 能力层测试(离线,注入 repoRoot/homeDir/env,零安装零网络写路径):
  *  1. 空 tmp 环境 → agent-reach=missing / 扩展=missing / flyai=degraded(无 key)/ LLM key 恒 ok 且不进 broken
  *  2. 补齐假 .venv 双文件 → agent-reach=ok;只补 python → degraded(半可用态被显式区分)
- *  3. FLYAI_API_KEY 注入 → flyai=ok
+ *  3. FLYAI_API_KEY 仅注入 → flyai=degraded(未验证);匹配验证回执 → flyai=ok
  *  4. nodeOk 边界(22.14/22.15/23.0)
  *  5. renderDoctorReportMd:命令类 fix 加反引号、prose 类不加;报告含全部条目
  *  6. MCP 工具面:gotry_doctor 注册可执行,isolated stateRoot 落 doctor-report.md
@@ -24,6 +24,7 @@ import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { runDoctorChecks, renderDoctorReportMd, nodeOk, scopeKeyFor, createRepairApprovalGate, runDoctorRepair, type DoctorItem, type DoctorReport, type DoctorRepairOptions, type DoctorRepairApproval } from '../capabilities/doctor.ts'
+import { endpointFingerprint, maskFlyaiKey, resolveFlyaiEndpoint, sha256Hex, writeFlyaiVerification } from '../capabilities/flyai-config.ts'
 import { apply } from '../src/index.ts'
 import type { Context } from '@deepseek-ai/cordis'
 
@@ -60,10 +61,30 @@ const r2b = await runDoctorChecks({ repoRoot: repoFull, homeDir: emptyHome, env:
 assert.equal(r2b.items.find(i => i.id === 'agent-reach')!.status, 'ok', 'python+agent-reach 齐 → ok')
 console.log('2. .venv 三态(missing/degraded/ok)分级 OK')
 
-// 3. FLYAI_API_KEY 注入 → ok
+// 3. key 非空只代表 configured,不等同于官方鉴权通过；只有匹配当前 key/source/endpoint 的 verified receipt 才能为 ok。
 const r3 = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: emptyHome, env: { FLYAI_API_KEY: 'test-key' } })
-assert.equal(r3.items.find(i => i.id === 'flyai')!.status, 'ok', '有正式 key → flyai=ok')
-console.log('3. FLYAI_API_KEY 注入 → flyai ok OK')
+assert.equal(r3.items.find(i => i.id === 'flyai')!.status, 'degraded', '仅有 key 未验证 → flyai=degraded')
+assert.match(r3.items.find(i => i.id === 'flyai')!.detail, /非空不等于鉴权通过/, '未验证 key 应明确不能代表鉴权通过')
+
+const verifiedHome = await mkdtemp(join(tmpdir(), 'gotry-doctor-verified-'))
+const verifiedEnv = { FLYAI_API_KEY: 'test-key' }
+const verifiedEndpoint = resolveFlyaiEndpoint({ homeDir: verifiedHome, env: verifiedEnv })
+const verifiedFingerprint = endpointFingerprint(verifiedEndpoint.url)
+assert.ok(verifiedFingerprint, '官方 endpoint 应可生成验证指纹')
+assert.equal(writeFlyaiVerification({
+  schema: 'gotry.flyai-verification.v1',
+  source: 'env',
+  keySha256: sha256Hex(verifiedEnv.FLYAI_API_KEY),
+  maskedKey: maskFlyaiKey(verifiedEnv.FLYAI_API_KEY),
+  verdict: 'verified',
+  endpointFingerprint: verifiedFingerprint,
+  endpointDebug: verifiedEndpoint.debug,
+  at: new Date().toISOString(),
+}, verifiedHome), true, '应能写入隔离的 verified receipt')
+const r3Verified = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: verifiedHome, env: verifiedEnv })
+assert.equal(r3Verified.items.find(i => i.id === 'flyai')!.status, 'ok', '匹配 verified receipt → flyai=ok')
+assert.match(r3Verified.items.find(i => i.id === 'flyai')!.detail, /已验证/, 'verified receipt 应显示已验证')
+console.log('3. FLYAI_API_KEY 仅注入 → degraded;匹配 verified receipt → ok OK')
 
 // 4. nodeOk 边界
 assert.equal(nodeOk('22.14.0'), false, '22.14 不足')
@@ -75,7 +96,7 @@ console.log('4. nodeOk 边界 OK')
 const md = renderDoctorReportMd(r1)
 assert.match(md, /# GoTry 依赖体检报告/, '报告标题')
 assert.match(md, /`npx @danceiny\/gotry doctor --fix`/, '命令类 fix 加反引号')
-assert.match(md, /flyai\.open\.fliggy\.com 控制台申请正式 key/, 'prose 类 fix 原样呈现')
+assert.match(md, /flyai\.open\.fliggy\.com\/console/, 'prose 类 fix 原样呈现官方控制台入口')
 assert.ok(!md.includes('`到 flyai'), 'prose 类 fix 不应整体包反引号')
 assert.match(md, /LLM key/, '让渡面(LLM key)照常入表')
 console.log('5. 报告渲染 OK')

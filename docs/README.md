@@ -120,6 +120,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [design/milestone-delivery-plan.md](design/milestone-delivery-plan.md) | M4→M6 living task graph (issue #225): #20/#22/#136/#137 real gates, #231–#235 successors and the #270 public delivery ledger; pre-admission contains only authorized design/read-only/fixture/failing-before work |
 | [design/write-gate-production-design.md](design/write-gate-production-design.md) | M5 WriteGate production proposal (issue #225/#136): HotelByte versions/artifacts, trusted receipt issuance/consumption authority, approval_claims persistence, query-miss stays unknown, reconciliation/compensation/disclosure |
 | [design/fact-writegate-seam.md](design/fact-writegate-seam.md) | fact-anchor × M5 WriteGate seam (issue #303, #273 sub-slice): read-path gate vs write-path gate contracts, five-step minimal chain, non-success write receipts fail closed, depends on #136/#231, no unsealing before M5 Entry |
+| [design/flyai-supplier-skill-design.md](design/flyai-supplier-skill-design.md) | Eight FlyAI capabilities, local credentials and evidence boundaries |
 | [design/effect-interpreter.md](design/effect-interpreter.md) | Effect interpreter design (accepted, ADR-18): vocabulary/resilience strategy table/decision log |
 | [design/booking-saga-fsm.md](design/booking-saga-fsm.md) | Booking saga state machine (accepted, ADR-17): alphabet/edge table/M5 seam vocabulary |
 | [design/tool-orchestration-design.md](design/tool-orchestration-design.md) | Tool orchestration & channel health face design (proposal, issue #106/#107/#108) |
@@ -167,6 +168,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | Document | Concern |
 |---|---|
 | [evaluation/parallel-search-perf-report.md](evaluation/parallel-search-perf-report.md) | Installed-product parallel search measurements and outstanding #519 acceptance gaps |
+| [evaluation/flyai-supplier-acceptance-report.md](evaluation/flyai-supplier-acceptance-report.md) | FlyAI installed-product E2E, official response observations and acceptance limits |
 | [evaluation/evaluation-foundation.md](evaluation/evaluation-foundation.md) | Evaluation Phase 0: contracts/registries/admission & boundary statements |
 | [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.md) | External benchmark bridge: Phase 1 seam and per-turn engineering ledger |
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.md) | dsh e2e end-to-end real-LLM verification records (continuously updated) |

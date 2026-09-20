@@ -316,6 +316,40 @@ assert.equal(itp4th.result, null)
 assert.equal(sentinelCalls, 3, '熔断后不再打上游')
 console.log('5. FlyAI×Sentinel:永不重试 + 连环失败触发熔断保护配额 OK')
 
+// #517: adapter-owned local termination is explicit terminal state. The
+// effect policy must honor retryable=false even when a stale timeout verdict is
+// present, while a classified transient result still receives one retry.
+let localDeadlineCalls = 0
+const localDeadline = makeProductionInterpreter({
+  breakers: new Map(), sleep: sleep0,
+  handlers: {
+    FLYAI_SEARCH: async () => {
+      localDeadlineCalls += 1
+      return { ok: false, via: 'flyai-error', verdict: 'timeout', localTermination: 'deadline', retryable: false, kind: 'flight', latencyMs: 1, evidence: 'local deadline' }
+    },
+  },
+})
+const localDeadlineOutcome = await localDeadline({ effect: 'FLYAI_SEARCH', params: q })
+assert.equal(localDeadlineOutcome.trace.attempts, 1, 'local deadline 明确 terminal 只能一次')
+assert.equal(localDeadlineCalls, 1)
+
+let classifiedTransientCalls = 0
+const classifiedTransient = makeProductionInterpreter({
+  breakers: new Map(), sleep: sleep0,
+  handlers: {
+    FLYAI_SEARCH: async () => {
+      classifiedTransientCalls += 1
+      return classifiedTransientCalls === 1
+        ? { ok: false, via: 'flyai-error', verdict: 'error', retryable: true, kind: 'flight', latencyMs: 1, evidence: 'HTTP 500' }
+        : { ok: true, via: 'flyai', verdict: 'miss', kind: 'flight', latencyMs: 1, evidence: 'empty itemList', options: [] }
+    },
+  },
+})
+const classifiedTransientOutcome = await classifiedTransient({ effect: 'FLYAI_SEARCH', params: q })
+assert.equal(classifiedTransientOutcome.trace.attempts, 2, 'HTTP500 retryable=true 应重试一次')
+assert.equal(classifiedTransientCalls, 2)
+console.log('5b. FlyAI retry policy 只接受显式 retryable=true，本地终止/timeout=false 单次 OK')
+
 // ---------------------------------------------------------------------------
 // 6. 断路拒绝面 + 冷却后 half-open 单探测成功恢复 closed
 // ---------------------------------------------------------------------------

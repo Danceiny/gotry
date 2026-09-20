@@ -1,8 +1,8 @@
 {
   "schemaVersion": "gotry_kernel_manifest_v1",
   "issue": "#234",
-  "frozenAt": "2026-09-11",
-  "baseSHA": "1c8a17e7ad2fb27b0e91c4476f0c503830f3d957",
+  "frozenAt": "2026-09-20",
+  "baseSHA": "e8925001084b9f1234ef09a504c04c183edaa81d",
   "entries": [
     {
       "path": "ts/src/unified.ts",
@@ -28,9 +28,9 @@
     {
       "path": "ts/src/bookable-facts.ts",
       "group": "gate",
-      "sha256": "6ce8771c0b0531c8fa75dfc7ea111c8bfea1317f9212fce25336167f992b80d8",
+      "sha256": "e9ab9cc3eda0c61b800a8ea29a033ec185e112ae6fc17188110a9546bc1aae25",
       "rationale": "可下单事实模型(gotry_bookable_fact.v1):hit/miss 落账 + 判定原语 + fail-closed 表述;「同闸」的事实底座",
-      "basis": "architecture.md §3 表 bookable-facts.ts 行(✅ run-all §39)+ ADR-19(issue #46 采纳)"
+      "basis": "architecture.md §3 表 bookable-facts.ts 行(✅ run-all §39)+ ADR-19(issue #46 采纳); #529 仅 hit/miss 准入事实，#527 保留中转 nonstop=false；installed GoTry E2E 覆盖实际持久化结果"
     },
     {
       "path": "ts/src/artifact-gate.ts",

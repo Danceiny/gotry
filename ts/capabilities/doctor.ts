@@ -21,6 +21,14 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { readLatestChannelEvents } from './channel-health.ts'
+import {
+  displayEndpoint,
+  endpointFingerprint,
+  readFlyaiVerification,
+  resolveFlyaiEndpoint,
+  resolveFlyaiKey,
+  sha256Hex,
+} from './flyai-config.ts'
 
 export type DoctorStatus = 'ok' | 'missing' | 'degraded'
 
@@ -187,23 +195,50 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     })
   }
 
-  // 4. flyai(飞猪官方只读通道;匿名试用额度共享,易达限)
-  //    配额状态可见(通道健康持久面):最近一次达限时间进 detail——
-  //    「易达限却不可见」是 issue #107 的病灶之一。
-  const flyaiKey = env.FLYAI_API_KEY?.trim()
-  const flyaiQuotaNote = !flyaiKey && opts.stateRoot
+  // 4. flyai(#521):8 类官方只读检索。doctor 必须区分「已配置」与
+  //    「已验证」:key 非空只是 configured;verified 需要回执的 key hash、
+  //    source、归一化 endpoint 全部匹配。匿名态显示最近试用达限时间。
+  const flyaiResolved = resolveFlyaiKey({ homeDir: home, env })
+  const flyaiEndpoint = resolveFlyaiEndpoint({ homeDir: home, env })
+  const flyaiReceipt = readFlyaiVerification(home)
+  const flyaiQuotaNote = flyaiResolved.source === 'none' && opts.stateRoot
     ? await (async () => {
         const ev = (await readLatestChannelEvents(opts.stateRoot!)).get('flyai')
-        return ev?.state === 'down' ? `;最近一次试用达限: ${ev.at}(匿名共享池,正式 key 可解除)` : ''
+        return ev?.state === 'down' ? `;最近一次试用达限: ${ev.at}(匿名共享池)` : ''
       })()
     : ''
-  items.push(flyaiKey
-    ? { id: 'flyai', label: 'FlyAI(飞猪官方检索)', status: 'ok', detail: 'FLYAI_API_KEY 已配(正式 key,无试用额度限制)' }
-    : {
-        id: 'flyai', label: 'FlyAI(飞猪官方检索)', status: 'degraded',
-        detail: `未配 FLYAI_API_KEY——走匿名试用额度(共享,易达限;达限报 "Trial limit reached")${flyaiQuotaNote}`,
-        fix: '到 flyai.open.fliggy.com 控制台申请正式 key,配进环境变量 FLYAI_API_KEY;无 key 期间机/火/酒检索请以 gotry_session_search(账号会话)为主',
+
+  if (flyaiResolved.source === 'none') {
+    items.push({
+      id: 'flyai', label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪)', status: 'degraded',
+      detail: `未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)${flyaiQuotaNote}`,
+      fix: '本机运行 `gotry setup flyai`(隐藏输入,候选 key 先 scrub-env 验证后保存);打开 https://flyai.open.fliggy.com/console，登录后复制 API Key',
+    })
+  } else {
+    const keySha = sha256Hex(flyaiResolved.key!)
+    const receiptMatch = flyaiReceipt
+      && flyaiReceipt.keySha256 === keySha
+      && flyaiReceipt.verdict === 'verified'
+      && flyaiReceipt.source === flyaiResolved.source
+      && flyaiReceipt.endpointFingerprint === endpointFingerprint(flyaiEndpoint.url)
+      && flyaiReceipt.endpointDebug === flyaiEndpoint.debug
+    const sourceText = `来源 ${flyaiResolved.source}${flyaiResolved.source === 'env-debug' ? '(DEBUG)' : ''},${flyaiResolved.maskedKey}`
+    if (receiptMatch) {
+      items.push({
+        id: 'flyai', label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪)', status: 'ok',
+        detail: `已验证 ${flyaiReceipt!.at}(${sourceText};endpoint ${displayEndpoint(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})`,
       })
+    } else {
+      const reason = flyaiReceipt && flyaiReceipt.keySha256 === keySha && flyaiReceipt.verdict !== 'verified'
+        ? `验证失败(${flyaiReceipt.verdict}@ ${flyaiReceipt.at})`
+        : '已配置,未验证'
+      items.push({
+        id: 'flyai', label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪)', status: 'degraded',
+        detail: `${reason}(${sourceText};endpoint ${displayEndpoint(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})——非空不等于鉴权通过`,
+        fix: '本机运行 `gotry setup flyai` 重新验证后保存;`gotry setup flyai --clear` 回退匿名',
+      })
+    }
+  }
 
   // 5. dsh-better-sidebar(dsh web 侧栏工作台;产物预览面 + doctor 报告的查看面)
   const sidebarPkg = join(home, '.dsh/profiles/web/node_modules/dsh-better-sidebar/package.json')

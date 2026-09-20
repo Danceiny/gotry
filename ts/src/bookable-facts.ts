@@ -161,8 +161,8 @@ export interface FlyaiLikeOption {
 }
 
 export interface FlyaiLikeResult {
-  /** needs-setup(试用额度达限)同 error:无结论不是证据,不落事实 */
-  verdict: 'hit' | 'miss' | 'error' | 'needs-setup'
+  /** needs-setup/auth-error/forbidden/rate-limited/timeout 同 error:无结论不是证据,不落事实 */
+  verdict: 'hit' | 'miss' | 'error' | 'needs-setup' | 'auth-error' | 'forbidden' | 'rate-limited' | 'timeout' | 'cancelled'
   options?: FlyaiLikeOption[]
   evidence?: string
 }
@@ -238,7 +238,7 @@ export function factsFromFlyai(q: { kind: 'flight' | 'train'; origin: string; de
   const queryId = makeQueryId(source, q.kind, q.origin, q.destination, q.date)
   const origin = iataOf(alias, q.origin)
   const destination = iataOf(alias, q.destination)
-  if (r.verdict === 'error' || r.verdict === 'needs-setup') return []
+  if (r.verdict !== 'hit' && r.verdict !== 'miss') return []
   if (r.verdict === 'miss') return [negativeFact(queryId, q.kind, q.origin, q.destination, q.date, source, fetchedAt, alias)]
   const facts: FlightFact[] = []
   for (const o of r.options ?? []) {
@@ -776,7 +776,7 @@ export function factsFromHotel(input: {
   destination: string
   checkIn?: string
   checkOut?: string
-  verdict: 'hit' | 'miss' | 'needs-setup' | 'error'
+  verdict: string
   options: number
   evidence: string
   fetchedAt: string
