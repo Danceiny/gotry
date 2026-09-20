@@ -42,7 +42,9 @@ import { createConsentGate, approvalFromContext, resolveSessionSearchKind } from
 import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { generateItineraryArtifact } from '../capabilities/itinerary-artifact.ts'
-import { interpretEffect, declinedObservation } from '../capabilities/effect.ts'
+import { interpretEffect, declinedObservation, type EffectInterpreter } from '../capabilities/effect.ts'
+import { FLYAI_POI_CATEGORIES, type FlyaiKind, type FlyaiQuery, type FlyaiResult } from '../capabilities/flyai.ts'
+import { createFlyaiSetupTool } from './flyai-setup-tool.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromHotel, factsFromSession, factsFromSessionTrain } from './bookable-facts.ts'
 import { hasRecognizedAvailableSeat } from '../capabilities/session/adapters/rail-12306.ts'
@@ -222,6 +224,137 @@ function readTimelineTrips(stateRoot: string): Array<{ destination: string; star
     .slice(0, 3)
 }
 
+const FLYAI_TOOL_KINDS = ['flight', 'train', 'hotel', 'poi', 'keyword', 'ai', 'marriott-hotel', 'marriott-package'] as const
+
+function isFlyaiKind(value: unknown): value is FlyaiKind {
+  return typeof value === 'string' && (FLYAI_TOOL_KINDS as readonly string[]).includes(value)
+}
+
+type FlyaiToolArgs = Record<string, unknown>
+
+function textArg(args: FlyaiToolArgs, ...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = args[name]
+    if (value !== undefined) return typeof value === 'string' ? value : undefined
+  }
+  return undefined
+}
+
+function numberArg(args: FlyaiToolArgs, ...names: string[]): number | undefined {
+  for (const name of names) {
+    const value = args[name]
+    if (value !== undefined) return typeof value === 'number' ? value : undefined
+  }
+  return undefined
+}
+
+function putText(target: FlyaiQuery, key: keyof FlyaiQuery, args: FlyaiToolArgs, ...names: string[]): void {
+  const value = textArg(args, ...names)
+  if (value !== undefined) (target as unknown as Record<string, unknown>)[key] = value
+}
+
+function putNumber(target: FlyaiQuery, key: keyof FlyaiQuery, args: FlyaiToolArgs, ...names: string[]): void {
+  const value = numberArg(args, ...names)
+  if (value !== undefined) (target as unknown as Record<string, unknown>)[key] = value
+}
+
+function flyaiToolQuery(args: FlyaiToolArgs, signal?: AbortSignal): { query?: FlyaiQuery; error?: string } {
+  if (!isFlyaiKind(args.kind)) {
+    return { error: `kind 必须是 ${FLYAI_TOOL_KINDS.join('/')}，未知值不会按 flight 处理` }
+  }
+  const kind = args.kind
+  const query: FlyaiQuery = { kind }
+  putText(query, 'origin', args, 'from', 'origin')
+  putText(query, 'destination', args, 'to', 'destination')
+  putText(query, 'depDate', args, 'date', 'depDate')
+  putText(query, 'depDateStart', args, 'dateStart', 'depDateStart')
+  putText(query, 'depDateEnd', args, 'dateEnd', 'depDateEnd')
+  putText(query, 'backDate', args, 'backDate')
+  putNumber(query, 'journeyType', args, 'journeyType')
+  putText(query, 'seatClassName', args, 'seatClassName')
+  putText(query, 'transportNo', args, 'transportNo')
+  putText(query, 'transferCity', args, 'transferCity')
+  putNumber(query, 'depHourStart', args, 'depHourStart')
+  putNumber(query, 'depHourEnd', args, 'depHourEnd')
+  putNumber(query, 'arrHourStart', args, 'arrHourStart')
+  putNumber(query, 'arrHourEnd', args, 'arrHourEnd')
+  putNumber(query, 'totalDurationHour', args, 'totalDurationHour')
+  putNumber(query, 'maxPrice', args, 'maxPrice')
+  putText(query, 'sortType', args, 'sortType')
+
+  putText(query, 'destName', args, 'destName', 'to')
+  putText(query, 'checkInDate', args, 'checkIn', 'checkInDate')
+  putText(query, 'checkOutDate', args, 'checkOut', 'checkOutDate')
+  putText(query, 'keyWords', args, 'keyWords')
+  putText(query, 'poiName', args, 'poiName')
+  putText(query, 'hotelTypes', args, 'hotelTypes')
+  putText(query, 'sort', args, 'sort')
+  putText(query, 'hotelStars', args, 'hotelStars')
+  putText(query, 'hotelBedTypes', args, 'hotelBedTypes')
+  putText(query, 'cityName', args, 'cityName', 'to')
+  putNumber(query, 'poiLevel', args, 'poiLevel')
+  putText(query, 'keyword', args, 'keyword')
+  putText(query, 'category', args, 'category')
+  putText(query, 'query', args, 'query')
+  putText(query, 'hotelBrands', args, 'hotelBrands')
+  putText(query, 'hotelName', args, 'hotelName')
+  putNumber(query, 'timeoutMs', args, 'timeoutMs')
+  if (signal) query.signal = signal
+
+  if (kind === 'flight' || kind === 'train') {
+    if (!query.origin?.trim() || !query.destination?.trim()) return { error: `kind=${kind} 需要 from/to（中文城市名或机场）` }
+    const hasExact = Boolean(query.depDate)
+    const hasStart = Boolean(query.depDateStart)
+    const hasEnd = Boolean(query.depDateEnd)
+    if (hasStart !== hasEnd) return { error: 'dateStart/depDateStart 与 dateEnd/depDateEnd 必须成对' }
+    if (hasExact && (hasStart || hasEnd)) return { error: 'date 与日期范围不能同时传入，请选择 exact-date 或 range 查询' }
+    if (!hasExact && !(hasStart && hasEnd)) return { error: `kind=${kind} 需要 date，或成对的 dateStart/dateEnd` }
+  }
+  if (kind === 'hotel' || kind === 'marriott-hotel') {
+    if (!query.destName?.trim()) return { error: `kind=${kind} 需要 to/destName（目的地）` }
+    const hasIn = Boolean(query.checkInDate)
+    const hasOut = Boolean(query.checkOutDate)
+    if (hasIn !== hasOut) return { error: 'checkIn/checkOut 必须成对' }
+  }
+  if (kind === 'poi' && !query.cityName?.trim()) return { error: 'kind=poi 需要 cityName（景点所在城市）' }
+  if ((kind === 'keyword' || kind === 'ai') && !query.query?.trim()) return { error: `kind=${kind} 需要 query` }
+  if (kind === 'marriott-package' && !query.keyword?.trim()) return { error: 'kind=marriott-package 需要 keyword' }
+  return { query }
+}
+
+function flyaiToolSummary(query: FlyaiQuery, result: FlyaiResult): string {
+  const label = query.kind === 'flight' ? '机票' : query.kind === 'train' ? '火车票' : query.kind === 'hotel' || query.kind === 'marriott-hotel' ? '酒店' : query.kind
+  if (result.verdict === 'miss') return `${label}查询完成，官方通道返回 0 条。${result.evidence}`
+  if (result.verdict !== 'hit') return `${label}查询未完成：${result.error ?? result.verdict}。${result.setup ? `\n${result.setup}` : ''}\n${result.evidence}`
+  const price = (raw: string | undefined, numeric: number | undefined): string => raw?.trim() || (numeric !== undefined && numeric > 0 ? `¥${numeric}` : '价格待询')
+  const lines: string[] = []
+  if (query.kind === 'flight' || query.kind === 'train') {
+    for (const option of (result.options ?? []).slice(0, 8)) {
+      lines.push(`${option.no} ${option.name} ${option.depDateTime.slice(0, 16)}→${option.arrDateTime.slice(0, 16)} ${price(option.priceRaw, option.price)}${option.jumpUrl ? ` · ${option.jumpUrl}` : ''}`)
+    }
+  } else if (query.kind === 'hotel' || query.kind === 'marriott-hotel') {
+    for (const option of (result.hotels ?? []).slice(0, 8)) {
+      lines.push(`${option.name} ${price(option.priceRaw, option.price)}${option.score ? ` · ${option.score}` : ''}${option.jumpUrl ? ` · ${option.jumpUrl}` : ''}`)
+    }
+  } else if (query.kind === 'poi') {
+    for (const option of (result.pois ?? []).slice(0, 8)) lines.push(`${option.name}${option.address ? ` · ${option.address}` : ''}${option.jumpUrl ? ` · ${option.jumpUrl}` : ''}`)
+  } else if (query.kind === 'keyword') {
+    for (const option of (result.keywords ?? []).slice(0, 8)) lines.push(`${option.title}${option.price ? ` · ${option.price}` : ''}${option.jumpUrl ? ` · ${option.jumpUrl}` : ''}`)
+  } else if (query.kind === 'marriott-package') {
+    for (const option of (result.packages ?? []).slice(0, 8)) lines.push(`${option.name}${option.price ? ` · ${option.price}` : ''}${option.detailUrl ? ` · ${option.detailUrl}` : ''}`)
+  } else if (query.kind === 'ai') {
+    lines.push(`上游 ai-search data 已原样保留（${JSON.stringify(result.aiData).slice(0, 500)}）`)
+  }
+  return `${label}官方只读查询命中 ${lines.length} 条：\n${lines.join('\n')}\n${result.evidence}`
+}
+
+function flyaiRoutingIntent(kind: FlyaiKind): ChannelIntent | undefined {
+  if (kind === 'flight') return 'search-flight'
+  if (kind === 'train') return 'search-train'
+  if (kind === 'hotel' || kind === 'marriott-hotel') return 'search-hotel'
+  return undefined
+}
+
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json }
 type JsonObject = { [k: string]: Json }
 
@@ -295,7 +428,11 @@ function feasibilityValidationFailure(
 
 export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}): void {
   const clock = seams.clock ?? (() => new Date())
-  const runFlyaiEffect = seams.effect ?? interpretEffect
+  const runFlyaiEffect = (seams.effect ?? interpretEffect) as unknown as (fx: {
+    effect: 'FLYAI_SEARCH'
+    params: FlyaiQuery
+    signal?: AbortSignal
+  }) => Promise<{ result: FlyaiResult | null; trace: Parameters<typeof declinedObservation>[1] }>
   const groundTransferResolver = createGroundTransferResolver({
     provider: seams.groundTransfer?.provider ?? createPublicMapDrivingRouteProvider(ctx),
     clock,
@@ -1219,104 +1356,96 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     name: 'gotry_flyai_search',
     description: routed('gotry_flyai_search',
       'Live travel search through the Fliggy official FlyAI channel (read-only, no key; booking/comparison happens by the HUMAN on the jumpUrl page). '
-      + 'kind="flight"|"train": from/to 中文城市名 + date YYYY-MM-DD — real schedules & prices, split 直达/中转 in results. '
-      + 'kind="hotel": to=目的地中文(如 大理), checkIn/checkOut (YYYY-MM-DD,成对可选——未定档期可不填先摸底), keyWords?. '
+      + 'kind="flight"|"train": from/to(or origin/destination) + date(or dateStart/dateEnd) — real schedules & prices, split 直达/中转 in results. '
+      + 'kind="hotel"|"marriott-hotel": to/destName=目的地中文, checkIn/checkOut (YYYY-MM-DD,成对可选——未定档期可不填先摸底). '
+      + 'kind="poi": cityName=城市; kind="keyword"|"ai": query; kind="marriott-package": keyword. '
       + 'Hotel prices may be masked upstream (priceRaw like "¥7xx"): always present the mask as a range, and let the human open jumpUrl for the real price. '
       + 'Evidence [实时API:flyai@ts]. verdict=needs-setup (anonymous trial quota exhausted, upstream 429) is a CONFIG issue, not a search failure: surface the setup hint once, do NOT retry this tool this session — switch to gotry_session_search or web search. '
       + 'Errors (rate-limit Sentinel / invalid dates) degrade as structured errors with the upstream message — surface them, never guess.'),
-    // D-30 第一刀(issue #112):query json blob → 平铺 typed 契约。逐字段 schema 由 dsh
-    // parameterSchemaSpecToJsonSchema 投影为模型可见 JSON Schema,validateArgs 在 execute 前
-    // 宿主权校验——畸形参数(缺 kind/枚举外值/类型错/legacy blob 包裹)在入口即被结构化拒绝
-    // (ToolArgsError → guardToolExecute 兜成 ADR-13 ToolFailure,形状由迁移测试锁死)。
-    // 条件必填(机/火要 from/to/date,酒店要 to)不在 schema 强制,仍由 execute 结构化报错给方向。
+    // D-30 第一刀(issue #112):query json blob → 平铺 typed 契约。内部 cliBin、
+    // cliPrefixArgs、credentials、endpoint 不进入模型可见 schema；from/to/date 与
+    // checkIn/checkOut 保留为兼容别名，adapter 的完整公共筛选面在同一平铺入口透传。
     parameters: {
-      kind: { type: 'string', enum: ['flight', 'train', 'hotel'], required: true, description: '检索类型:flight 机票 / train 火车 / hotel 酒店' },
-      from: { type: 'string', description: '出发城市中文,如 上海——kind=flight|train 必填' },
-      to: { type: 'string', description: '到达城市中文,如 丽江;kind=hotel 时为目的地,如 大理(必填)' },
-      date: { type: 'string', description: '出发日期 YYYY-MM-DD——kind=flight|train 必填,须为今天或未来' },
-      checkIn: { type: 'string', description: '入住日期 YYYY-MM-DD,仅 kind=hotel;与 checkOut 成对可选(未定档期可不填先摸底)' },
-      checkOut: { type: 'string', description: '退房日期 YYYY-MM-DD,仅 kind=hotel;与 checkIn 成对' },
-      keyWords: { type: 'string', description: '酒店关键词,如 洱海——仅 kind=hotel 可选' },
+      kind: { type: 'string', enum: [...FLYAI_TOOL_KINDS], required: true, description: '检索类型:flight/train/hotel/poi/keyword/ai/marriott-hotel/marriott-package' },
+      from: { type: 'string', description: '兼容字段：机/火出发城市；等价于 origin' },
+      to: { type: 'string', description: '兼容字段：机/火到达城市或酒店目的地；等价于 destination/destName' },
+      date: { type: 'string', description: '兼容字段：机/火 exact-date YYYY-MM-DD；等价于 depDate' },
+      origin: { type: 'string', description: '机/火出发城市或机场' },
+      destination: { type: 'string', description: '机/火到达城市或机场' },
+      depDate: { type: 'string', description: '机/火 exact-date YYYY-MM-DD' },
+      dateStart: { type: 'string', description: '机/火日期范围起点 YYYY-MM-DD，与 dateEnd 成对' },
+      dateEnd: { type: 'string', description: '机/火日期范围终点 YYYY-MM-DD，与 dateStart 成对' },
+      depDateStart: { type: 'string', description: '机/火日期范围起点 YYYY-MM-DD' },
+      depDateEnd: { type: 'string', description: '机/火日期范围终点 YYYY-MM-DD' },
+      backDate: { type: 'string', description: '机票返程日期 YYYY-MM-DD' },
+      journeyType: { type: 'integer', enum: [1, 2], description: '机票 1=直达，2=中转' },
+      seatClassName: { type: 'string', description: '机/火舱位或坐席，逗号分隔' },
+      transportNo: { type: 'string', description: '航班号或车次，逗号分隔' },
+      transferCity: { type: 'string', description: '中转城市，逗号分隔' },
+      depHourStart: { type: 'integer', description: '出发时段起点 0–23' },
+      depHourEnd: { type: 'integer', description: '出发时段终点 0–23' },
+      arrHourStart: { type: 'integer', description: '到达时段起点 0–23' },
+      arrHourEnd: { type: 'integer', description: '到达时段终点 0–23' },
+      totalDurationHour: { type: 'number', description: '机票总时长上限（小时）' },
+      maxPrice: { type: 'number', description: '最高价格（CNY）' },
+      sortType: { type: 'string', description: '机/火排序或万豪套餐 price_asc/price_desc' },
+      destName: { type: 'string', description: '酒店/万豪酒店目的地' },
+      checkIn: { type: 'string', description: '兼容字段：酒店入住日期 YYYY-MM-DD' },
+      checkOut: { type: 'string', description: '兼容字段：酒店退房日期 YYYY-MM-DD' },
+      checkInDate: { type: 'string', description: '酒店入住日期 YYYY-MM-DD' },
+      checkOutDate: { type: 'string', description: '酒店退房日期 YYYY-MM-DD' },
+      keyWords: { type: 'string', description: '酒店关键词' },
+      poiName: { type: 'string', description: '酒店周边景点名' },
+      hotelTypes: { type: 'string', description: '酒店类型，逗号分隔' },
+      sort: { type: 'string', enum: ['distance_asc', 'rate_desc', 'price_asc', 'price_desc', 'no_rank'], description: '酒店排序' },
+      hotelStars: { type: 'string', description: '酒店星级，1–5 逗号分隔' },
+      hotelBedTypes: { type: 'string', description: '床型，逗号分隔' },
+      cityName: { type: 'string', description: '景点所在城市；kind=poi 必填' },
+      poiLevel: { type: 'integer', description: '景点等级 1–5' },
+      keyword: { type: 'string', description: '景点关键词或万豪套餐单维度关键词' },
+      category: { type: 'string', enum: [...FLYAI_POI_CATEGORIES], description: '景点官方闭集类别' },
+      query: { type: 'string', description: 'keyword/ai 的查询词' },
+      hotelBrands: { type: 'string', description: '万豪酒店品牌，逗号分隔' },
+      hotelName: { type: 'string', description: '万豪酒店名' },
+      timeoutMs: { type: 'integer', description: '本次查询本地超时毫秒' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
-    async execute(args, _exec) {
-      const q = args
-      if (q.kind === 'hotel') {
-        const dest = (q.to ?? '').trim()
-        if (!dest) return { ok: false, summary: 'kind=hotel 需要 to(目的地中文,如 大理)' } as const
-        if ((q.checkIn ? 1 : 0) !== (q.checkOut ? 1 : 0) || (q.checkIn && !/^\d{4}-\d{2}-\d{2}$/.test(q.checkIn))) {
-          return { ok: false, summary: '酒店 checkIn/checkOut 须成对且为 YYYY-MM-DD(未定档期可不填,先摸底)' } as const
-        }
-        // 过去入住日同机/火过去日期闸(issue #24 同构;分层纪律:日期算术在代码层)
-        if (q.checkIn) {
-          const now = new Date()
-          const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-          if (q.checkIn < todayYmd || (q.checkOut ?? '') < q.checkIn) {
-            return JSON.parse(JSON.stringify({
-              ok: false, verdict: 'error', kind: 'hotel',
-              summary: `未发起查询:入住 ${q.checkIn}/退房 ${q.checkOut ?? ''} 不是未来合法区间(今天 ${todayYmd})。向用户确认日期后再查。`,
-            })) as Record<string, never>
-          }
-          if ((q.checkOut ?? '').length !== 10) {
-            return { ok: false, summary: 'checkOut 需 YYYY-MM-DD(与 checkIn 成对)' } as const
-          }
-        }
-        const itp = await runFlyaiEffect({ effect: 'FLYAI_SEARCH', params: { kind: 'hotel', destName: dest, checkInDate: q.checkIn, checkOutDate: q.checkOut, keyWords: q.keyWords } })
-        if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
-        const r = itp.result
-        await noteChannel('flyai', r.verdict)
-        // D-26(issue #118):exact-date 酒店检索 hit/miss 落账(摸底无档期不落,传输失败不落负事实)
-        await appendFacts(config.stateRoot ?? '.', factsFromHotel({
-          source: 'flyai-hotel', destination: dest, checkIn: q.checkIn, checkOut: q.checkOut,
-          verdict: r.verdict, options: r.hotels?.length ?? 0, evidence: r.evidence, fetchedAt: new Date().toISOString(),
-        }))
-        const top = (r.hotels ?? []).slice(0, 8).map(o => `${o.name}${o.star ? `(${o.star})` : ''} ${o.priceRaw ?? '价待询'}${o.poi ? ` · ${o.poi}` : ''}`)
-        const summary = r.verdict === 'hit'
-          ? `${dest} 酒店(飞猪官方只读)前 ${top.length} 家(价格多为打码,真实价以 jumpUrl 为准):\n${top.join('\n')}\n${r.evidence}`
-          : r.verdict === 'needs-setup'
-            ? `${dest} 酒店检索未发起(配置问题,非检索失败):${r.error ?? ''}\n${r.setup ?? ''}\n状态体检可调 gotry_doctor。${r.evidence}`
-            : `${dest} 酒店无结果或失败:${r.error ?? 'miss'} ${r.evidence}`
-        return JSON.parse(JSON.stringify({ ...r, summary, ...(r.verdict !== 'hit' ? await routingField('search-hotel', 'flyai') : {}) })) as Record<string, never>
+    async execute(args, exec) {
+      const raw = args as unknown as FlyaiToolArgs
+      const signal = (exec as { signal?: AbortSignal } | null | undefined)?.signal
+      const built = flyaiToolQuery(raw, signal)
+      if (built.error || !built.query) {
+        return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', summary: `未发起 FlyAI 查询：${built.error ?? '参数无效'}`, evidence: '[校验:gotry_flyai_search] rejected' })) as Record<string, never>
       }
-      const kind = q.kind === 'train' ? 'train' : 'flight'
-      if (!q.from || !q.to || !q.date) {
-        return { ok: false, summary: '需要 from/to(中文城市名)与 date(YYYY-MM-DD)' } as const
+      const q = built.query
+      const todayYmd = new Date().toISOString().slice(0, 10)
+      if ((q.kind === 'flight' || q.kind === 'train') && q.depDate && /^\d{4}-\d{2}-\d{2}$/.test(q.depDate) && q.depDate < todayYmd) {
+        return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', kind: q.kind, summary: `未发起查询：日期 ${q.depDate} 已是过去（今天 ${todayYmd}）。`, evidence: '[校验:gotry_flyai_search] past exact date' })) as Record<string, never>
       }
-      // 过去日期预校验(issue #24,代码层算术;分层纪律):用户说「7.18」未带年份时模型会落到当前年,
-      // 而今天可能已在 8 月——过去日期上游必拒(「出发日期非法」)。拦在发查询之前并指明修正方向,
-      // 不让模型从 miss 里猜因。
-      const now = new Date()
-      const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-      if (q.date < todayYmd) {
-        return JSON.parse(JSON.stringify({
-          ok: false, verdict: 'error', kind,
-          summary: `未发起查询:日期 ${q.date} 已是过去(今天 ${todayYmd}),过去不存在在售机/火车票。`
-            + `多为用户时间表达未带年份所致——向用户确认年份(或按未来最近的同月日修正)后再查。`,
-        })) as Record<string, never>
+      if ((q.kind === 'hotel' || q.kind === 'marriott-hotel') && q.checkInDate && q.checkOutDate
+        && /^\d{4}-\d{2}-\d{2}$/.test(q.checkInDate) && /^\d{4}-\d{2}-\d{2}$/.test(q.checkOutDate)
+        && (q.checkInDate < todayYmd || q.checkOutDate <= q.checkInDate)) {
+        return JSON.parse(JSON.stringify({ ok: false, verdict: 'error', kind: q.kind, summary: `未发起查询：入住 ${q.checkInDate} / 退房 ${q.checkOutDate} 不是未来合法区间。`, evidence: '[校验:gotry_flyai_search] invalid stay dates' })) as Record<string, never>
       }
-      const itp = await runFlyaiEffect({ effect: 'FLYAI_SEARCH', params: { kind, origin: q.from, destination: q.to, depDate: q.date } })
+
+      const itp = await runFlyaiEffect({ effect: 'FLYAI_SEARCH', params: q, signal })
       if (!itp.result) return declinedObservation('FLYAI_SEARCH', itp.trace)
-      const r = itp.result
+      const r = itp.result as FlyaiResult
       await noteChannel('flyai', r.verdict)
-      // issue #46 事实落账(ADR-19):exact-date 检索结论(hit 正事实 / miss 负事实)追加进
-      // bookable-facts 侧车——产物事实闸(gotry_fact_gate)的唯一事实源;落盘失败不阻塞检索
-      const avMap = await loadAirlineAirportMap()
-      await appendFacts(config.stateRoot ?? '.', factsFromFlyai({ kind, origin: q.from, destination: q.to, date: q.date }, r, new Date().toISOString(), avMap?.city_alias))
-      const top = (r.options ?? []).slice(0, 8).map(o => `${o.no} ${o.name} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
-      // issue #24:miss(上游正常返回 0 条)与 error(限流/网络)分开陈述,不再混写「无结果或失败」
-      // (过去日期已被上方预校验拦下,此处不会出现过期查询)
-      const label = kind === 'flight' ? '机票' : '火车票'
-      const summary = r.verdict === 'hit'
-        ? `${q.from}→${q.to} ${q.date} ${label}(飞猪官方只读)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
-        : r.verdict === 'miss'
-          ? `${q.from}→${q.to} ${q.date} ${label}官方通道正常返回 0 条(常见原因:航线未开放/当日售罄)。${r.evidence}`
-          : r.verdict === 'needs-setup'
-            ? `${q.from}→${q.to} ${q.date} ${label}检索未发起(配置问题,非检索失败):${r.error ?? ''}\n${r.setup ?? ''}\n状态体检可调 gotry_doctor。${r.evidence}`
-            : `${q.from}→${q.to} ${q.date} ${label}检索失败(可能限流/网络):${r.error ?? ''} ${r.evidence}`
-      return JSON.parse(JSON.stringify({
-        ...r, kind, summary,
-        ...(r.verdict !== 'hit' ? await routingField(kind === 'train' ? 'search-train' : 'search-flight', 'flyai') : {}),
-      })) as Record<string, never>
+      const fetchedAt = new Date().toISOString()
+      if ((q.kind === 'flight' || q.kind === 'train') && q.origin && q.destination && q.depDate && !q.depDateStart && !q.depDateEnd) {
+        const avMap = await loadAirlineAirportMap()
+        await appendFacts(config.stateRoot ?? '.', factsFromFlyai({ kind: q.kind, origin: q.origin, destination: q.destination, date: q.depDate }, r, fetchedAt, avMap?.city_alias))
+      } else if ((q.kind === 'hotel' || q.kind === 'marriott-hotel') && q.destName && q.checkInDate && q.checkOutDate) {
+        await appendFacts(config.stateRoot ?? '.', factsFromHotel({
+          source: q.kind === 'hotel' ? 'flyai-hotel' : 'flyai-marriott-hotel',
+          destination: q.destName, checkIn: q.checkInDate, checkOut: q.checkOutDate,
+          verdict: r.verdict, options: r.hotels?.length ?? 0, evidence: r.evidence, fetchedAt,
+        }))
+      }
+      const intent = flyaiRoutingIntent(q.kind)
+      const routing = r.verdict !== 'hit' && intent ? await routingField(intent, 'flyai') : {}
+      return JSON.parse(JSON.stringify({ ...r, summary: flyaiToolSummary(q, r), ...routing })) as Record<string, never>
     },
     presentCall: args => ({ card: 'generic', title: `官方检索:${args.kind}`, kind: 'fetch', rawInput: args }),
     presentResult: (args, value) => {
@@ -1326,6 +1455,8 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       return { card: 'generic', title: `${isHotel ? '飞猪酒店' : '飞猪检索'}:${r.ok && n > 0 ? `${n} 条` : '降级'}`, content: [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }] }
     },
   }))
+
+  registerGuarded(createFlyaiSetupTool((seams.effect ?? interpretEffect) as unknown as EffectInterpreter))
 
   registerGuarded(defineTool({
     name: 'gotry_session_login',
