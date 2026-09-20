@@ -22,7 +22,7 @@ The adapter uses the public MIT-licensed `@fly-ai/flyai-cli@1.0.16`. This is tec
 | marriott-hotel | search-marriott-hotel | Destination, dates, brands, name, beds, price and sorting |
 | marriott-package | search-marriott-package | Keyword, hotel name, province/city and price sorting |
 
-For `marriott-hotel`, `destName` maps to `--dest-name`; `hotelBrands` and `hotelName` are merged with `keyWords` into the CLI's single `--key-words` value, while bed, date, max-price and sort filters use their dedicated flags. The generic `hotelTypes` and `hotelStars` filters are rejected for this kind. For `marriott-package`, `keyword` maps to the single `--keyword` dimension and `sortType` is limited to `price_asc` or `price_desc`.
+For `marriott-hotel`, `destName` maps to `--dest-name`; `hotelBrands` and `hotelName` are merged with `keyWords` into the CLI's single `--key-words` value, while bed, date, max-price and sort filters use their dedicated flags. The generic `hotelTypes` and `hotelStars` filters are rejected for this kind. For `marriott-package`, `keyword`, `hotelName` and `provinceOrCity` map to `--keyword`, `--hotel-name` and `--province-or-city` respectively; at least one is required. `sortType` is limited to `price_asc` or `price_desc`.
 
 The flat `gotry_flyai_search` schema retains `from/to/date/checkIn/checkOut` aliases. Masked prices are displayed verbatim and never converted to a numeric quote. Only exact-date flight/train queries with origin, destination and one departure date, or hotel queries with destination and paired stay dates, can write valid hit/miss inventory facts. Exploration results and all errors write none.
 
