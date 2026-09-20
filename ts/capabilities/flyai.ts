@@ -147,6 +147,21 @@ export interface FlyaiOption {
   seatClass?: string
   jumpUrl?: string
   priceRaw?: string
+  nonstop?: boolean
+  journeyType?: string
+  /** 保留官方同票联程的完整分段，避免把中转首段冒充全程。 */
+  segments?: FlyaiTransportSegment[]
+}
+
+export interface FlyaiTransportSegment {
+  no: string
+  name: string
+  depDateTime: string
+  arrDateTime: string
+  depStation: string
+  arrStation: string
+  durationMin: number
+  seatClass?: string
 }
 
 export interface FlyaiHotelOption {
@@ -196,13 +211,18 @@ export interface FlyaiKeywordOption {
 
 export interface FlyaiMarriottPackageOption {
   name: string
+  /** Official CLI field; name is retained as the normalized compatibility field. */
+  title?: string
+  itemId?: string
   brandName?: string
   hotelName?: string
   cityName?: string
   price?: string
   detailUrl?: string
   mainPic?: string
+  picUrl?: string
   sellingPoint?: string
+  sellPoint?: string
 }
 
 export interface FlyaiResult {
@@ -235,7 +255,8 @@ export interface FlyaiResult {
 
 interface RawItem {
   journeys?: Array<{
-    journeyType?: string
+    journeyType?: string | number
+    totalDuration?: string | number
     segments?: Array<{
       marketingTransportName?: string
       marketingTransportNo?: string
@@ -254,10 +275,12 @@ interface RawItem {
   // hotel
   name?: string
   shId?: string
+  shid?: string
   star?: string
   rate?: string | null
   address?: string
   interestsPoi?: string
+  nearbyPoi?: string
   detailUrl?: string
   mainPic?: string
   score?: string | null
@@ -273,6 +296,10 @@ interface RawItem {
   // keyword
   info?: unknown
   // marriott package
+  title?: string
+  itemId?: string
+  picUrl?: string
+  sellPoint?: string
   hotelName?: string
   cityName?: string
   sellingPoint?: string
@@ -1025,37 +1052,56 @@ function parseTransportItems(items: unknown[]): ParsedItems<FlyaiOption> {
     }
     const it = raw as RawItem
     const journey = Array.isArray(it.journeys) ? it.journeys[0] : undefined
-    const seg = journey && typeof journey === 'object' && !Array.isArray(journey) && Array.isArray(journey.segments)
-      ? journey.segments[0]
+    const segments = journey && typeof journey === 'object' && !Array.isArray(journey) && Array.isArray(journey.segments)
+      ? journey.segments
       : undefined
-    if (!seg || typeof seg !== 'object' || Array.isArray(seg)) {
+    if (!segments || segments.length === 0) {
       malformedCount += 1
       continue
     }
-    const no = nonEmptyText(seg.marketingTransportNo)
-    const name = optionalText(seg.marketingTransportName)
-    const depDateTime = nonEmptyText(seg.depDateTime)
-    const arrDateTime = nonEmptyText(seg.arrDateTime)
-    const depStation = nonEmptyText(seg.depStationName)
-    const arrStation = nonEmptyText(seg.arrStationName)
-    const durationMin = positiveFiniteDuration(seg.duration)
+    const parsedSegments: FlyaiTransportSegment[] = []
+    for (const rawSegment of segments) {
+      if (!rawSegment || typeof rawSegment !== 'object' || Array.isArray(rawSegment)) continue
+      const segment = rawSegment as NonNullable<NonNullable<RawItem['journeys']>[number]['segments']>[number]
+      const no = nonEmptyText(segment.marketingTransportNo)
+      const name = optionalText(segment.marketingTransportName)
+      const depDateTime = nonEmptyText(segment.depDateTime)
+      const arrDateTime = nonEmptyText(segment.arrDateTime)
+      const depStation = nonEmptyText(segment.depStationName)
+      const arrStation = nonEmptyText(segment.arrStationName)
+      const durationMin = positiveFiniteDuration(segment.duration)
+      const seatClass = optionalText(segment.seatClassName)
+      if (!no || !depDateTime || !arrDateTime || !depStation || !arrStation || durationMin === undefined
+        || (segment.marketingTransportName !== undefined && name === undefined)
+        || (segment.seatClassName !== undefined && seatClass === undefined)) continue
+      parsedSegments.push({ no, name: name ?? '', depDateTime, arrDateTime, depStation, arrStation, durationMin, seatClass: seatClass ?? undefined })
+    }
+    if (parsedSegments.length !== segments.length) {
+      malformedCount += 1
+      continue
+    }
+    const first = parsedSegments[0]!
+    const last = parsedSegments[parsedSegments.length - 1]!
+    const journeyType = optionalText(journey?.journeyType)
+    const nonstop = parsedSegments.length === 1 && !/^(?:2|中转|transfer)/i.test(journeyType ?? '')
+    const totalDuration = positiveFiniteDuration(journey?.totalDuration)
+      ?? parsedSegments.reduce((sum, segment) => sum + segment.durationMin, 0)
     const rawPriceValue = it.adultPrice !== undefined
       ? it.adultPrice
       : it.ticketPrice !== undefined ? it.ticketPrice : it.price
     const parsedPrice = parseTransportPrice(rawPriceValue)
-    const seatClass = optionalText(seg.seatClassName)
     const jumpUrl = optionalText(it.jumpUrl)
-    if (!no || !depDateTime || !arrDateTime || !depStation || !arrStation || durationMin === undefined || !parsedPrice
-      || (seg.marketingTransportName !== undefined && name === undefined)
-      || (seg.seatClassName !== undefined && seatClass === undefined)
+    if (!parsedPrice
       || (it.jumpUrl !== undefined && jumpUrl === undefined)) {
       malformedCount += 1
       continue
     }
     options.push({
-      no, name: name ?? '', depDateTime, arrDateTime, depStation, arrStation,
-      durationMin, price: parsedPrice.price, priceRaw: parsedPrice.priceRaw,
-      seatClass: seatClass ?? undefined, jumpUrl: jumpUrl ?? undefined,
+      no: first.no, name: first.name, depDateTime: first.depDateTime, arrDateTime: last.arrDateTime,
+      depStation: first.depStation, arrStation: last.arrStation, durationMin: totalDuration,
+      price: parsedPrice.price, priceRaw: parsedPrice.priceRaw,
+      seatClass: first.seatClass, jumpUrl: jumpUrl ?? undefined, nonstop, journeyType: journeyType ?? undefined,
+      segments: parsedSegments,
     })
   }
   return { options, malformedCount }
@@ -1083,8 +1129,10 @@ function parseHotelItems(items: unknown[]): ParsedItems<FlyaiHotelOption> {
     const rawPrice = stringField(it, 'price')
     const rate = it.rate === undefined ? undefined : it.rate === null ? null : nonEmptyText(it.rate) ?? 'bad'
     const address = stringField(it, 'address')
-    const poi = stringField(it, 'interestsPoi')
-    const hotelId = it.shId === undefined ? undefined : nonEmptyText(it.shId) ?? (typeof it.shId === 'number' ? String(it.shId) : 'bad')
+    const poiSource = it.interestsPoi !== undefined ? it.interestsPoi : it.nearbyPoi
+    const poi = poiSource === undefined ? undefined : poiSource === null ? null : nonEmptyText(poiSource) ?? 'bad'
+    const hotelIdSource = it.shId !== undefined ? it.shId : it.shid
+    const hotelId = hotelIdSource === undefined ? undefined : nonEmptyText(hotelIdSource) ?? (typeof hotelIdSource === 'number' ? String(hotelIdSource) : 'bad')
     const jumpUrl = stringField(it, 'detailUrl')
     const mainPic = stringField(it, 'mainPic')
     const score = it.score === undefined ? undefined : it.score === null ? null : nonEmptyText(it.score) ?? 'bad'
@@ -1141,13 +1189,13 @@ function parsePoiItems(items: unknown[]): ParsedItems<FlyaiPoiOption> {
     const address = stringField(it, 'address')
     const freePoiStatus = stringField(it, 'freePoiStatus')
     let ticketInfo: FlyaiPoiTicketInfo | undefined | 'bad'
-    if (it.ticketInfo !== undefined) {
-      if (!it.ticketInfo || typeof it.ticketInfo !== 'object' || Array.isArray(it.ticketInfo)) {
+    if (it.ticketInfo !== undefined && it.ticketInfo !== null) {
+      if (typeof it.ticketInfo !== 'object' || Array.isArray(it.ticketInfo)) {
         ticketInfo = 'bad'
       } else {
         const t = it.ticketInfo as Record<string, unknown>
         const price = t.price === undefined ? undefined : t.price === null ? null : nonEmptyText(t.price) ?? 'bad'
-        const priceDate = t.priceDate === undefined ? undefined : nonEmptyText(t.priceDate) ?? 'bad'
+        const priceDate = t.priceDate === undefined || t.priceDate === null ? undefined : nonEmptyText(t.priceDate) ?? 'bad'
         const ticketName = t.ticketName === undefined ? undefined : nonEmptyText(t.ticketName) ?? 'bad'
         if ([price, priceDate, ticketName].includes('bad')) ticketInfo = 'bad'
         else ticketInfo = { price: price ?? undefined, priceDate, ticketName }
@@ -1198,7 +1246,7 @@ function parseKeywordItems(items: unknown[]): ParsedItems<FlyaiKeywordOption> {
     const scoreDesc = str('scoreDesc')
     const star = str('star')
     let tags: string[] | undefined | 'bad'
-    if (it.tags !== undefined) {
+    if (it.tags !== undefined && it.tags !== null) {
       if (!Array.isArray(it.tags) || it.tags.some(t => nonEmptyText(t) === undefined)) tags = 'bad'
       else tags = it.tags.map(t => String(t).trim())
     }
@@ -1229,26 +1277,34 @@ function parsePackageItems(items: unknown[]): ParsedItems<FlyaiMarriottPackageOp
       continue
     }
     const it = raw as RawItem
-    const name = nonEmptyText(it.name)
+    const title = stringField(it, 'title')
+    const name = title !== undefined ? title : stringField(it, 'name')
+    const itemId = stringField(it, 'itemId')
+    const mainPicSource = it.picUrl !== undefined ? 'picUrl' : 'mainPic'
+    const sellingPointSource = it.sellPoint !== undefined ? 'sellPoint' : 'sellingPoint'
     const fields_ = [
       stringField(it, 'brandName'), stringField(it, 'hotelName'), stringField(it, 'cityName'),
-      stringField(it, 'price'), stringField(it, 'detailUrl'), stringField(it, 'mainPic'),
-      stringField(it, 'sellingPoint'),
+      stringField(it, 'price'), stringField(it, 'detailUrl'), stringField(it, mainPicSource),
+      stringField(it, sellingPointSource), itemId,
     ]
     if (!name || fields_.includes('bad')) {
       malformedCount += 1
       continue
     }
-    const [brandName, hotelName, cityName, price, detailUrl, mainPic, sellingPoint] = fields_ as Array<string | null>
+    const [brandName, hotelName, cityName, price, detailUrl, mainPic, sellingPoint] = fields_ as Array<string | null | undefined>
     options.push({
-      name,
+      name: name as string,
+      ...(title && title !== 'bad' ? { title } : {}),
+      ...(itemId && itemId !== 'bad' ? { itemId } : {}),
       brandName: brandName ?? undefined,
       hotelName: hotelName ?? undefined,
       cityName: cityName ?? undefined,
       price: price ?? undefined,
       detailUrl: detailUrl ?? undefined,
       mainPic: mainPic ?? undefined,
+      picUrl: mainPic ?? undefined,
       sellingPoint: sellingPoint ?? undefined,
+      sellPoint: sellingPoint ?? undefined,
     })
   }
   return { options, malformedCount }

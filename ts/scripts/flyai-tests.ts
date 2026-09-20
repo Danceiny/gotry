@@ -592,5 +592,57 @@ try {
 }
 console.log('15. config/env key + DEBUG endpoint userinfo/query 脱敏(error/raw/AI 输出)与 HTTP 5xx retryable 标记OK')
 
+// 16. Official CLI 1.0.16 captured-shape replay (sanitized, offline). These
+// are the smallest representatives of the seven successful captures; the
+// fields stay strict so a changed shape remains a visible malformed result.
+async function replayOfficialShape(name: string, query: FlyaiQuery, item: unknown): Promise<Awaited<ReturnType<typeof flyaiSearch>>> {
+  const cli = await fakeCli(`official-shape-${name}`, 0, JSON.stringify({ data: { itemList: [item] }, status: 0, message: 'success' }))
+  return await flyaiSearch({ ...query, cliBin: cli, timeoutMs: 5000 })
+}
+const replayFlight = await replayOfficialShape('flight', base, {
+  journeys: [{ segments: [{ depDateTime: '2026-10-04 08:15:00', arrDateTime: '2026-10-04 10:25:00', depStationName: '浦东国际机场', arrStationName: '大兴国际机场', duration: '130', marketingTransportName: '中联航', marketingTransportNo: 'KN5978', seatClassName: '经济舱' }] }], ticketPrice: '400.00', jumpUrl: 'https://router.feizhu.com/multi/webview?url=https%3A%2F%2Frouter.feizhu.com%2Fws%2F1hfppp',
+})
+assert.equal(replayFlight.verdict, 'hit')
+const replayTransfer = await replayOfficialShape('flight-transfer', base, {
+  journeys: [{ journeyType: '中转', totalDuration: '400', segments: [
+    { depDateTime: '2026-10-04 08:15:00', arrDateTime: '2026-10-04 10:25:00', depStationName: '浦东国际机场', arrStationName: '首都国际机场', duration: '130', marketingTransportName: '中联航', marketingTransportNo: 'KN5978', seatClassName: '经济舱' },
+    { depDateTime: '2026-10-04 12:00:00', arrDateTime: '2026-10-04 14:45:00', depStationName: '首都国际机场', arrStationName: '大兴国际机场', duration: '165', marketingTransportName: '国航', marketingTransportNo: 'CA1234', seatClassName: '经济舱' },
+  ] }], ticketPrice: '800.00', jumpUrl: 'https://router.feizhu.com/multi/webview?url=ws-transfer',
+})
+assert.equal(replayTransfer.verdict, 'hit')
+assert.equal(replayTransfer.options?.[0]?.nonstop, false, '官方中转 journey 必须显式 nonstop=false')
+assert.equal(replayTransfer.options?.[0]?.depStation, '浦东国际机场')
+assert.equal(replayTransfer.options?.[0]?.arrStation, '大兴国际机场')
+assert.equal(replayTransfer.options?.[0]?.durationMin, 400, '优先采用官方 totalDuration')
+assert.equal(replayTransfer.options?.[0]?.segments?.length, 2, '保留完整分段结构')
+const replayTrain = await replayOfficialShape('train', trainBase, {
+  journeys: [{ segments: [{ depDateTime: '2026-09-27 06:13:00', arrDateTime: '2026-09-27 07:07:00', depStationName: '上海虹桥站', arrStationName: '杭州东站', duration: '54', marketingTransportName: '高铁', marketingTransportNo: 'G7331', seatClassName: '二等座' }] }], price: '5x', jumpUrl: 'https://router.feizhu.com/multi/webview?url=https%3A%2F%2Frouter.feizhu.com%2Fws%2F4KUGGZ',
+})
+assert.equal(replayTrain.verdict, 'hit')
+assert.equal(replayTrain.options?.[0]?.priceRaw, '5x', '官方打码 train price 原样保留')
+const replayHotel = await replayOfficialShape('hotel', hotelBase, {
+  name: '杭州滨江万豪万枫酒店', shid: '81643030', nearbyPoi: '近浙江中医药大学(滨文校区)', price: '¥360起/晚', star: '高档型', address: '浙江省杭州市滨江区浦沿路773号', mainPic: 'https://img.example.test/hotel.jpg', detailUrl: 'https://router.feizhu.com/multi/webview?url=ws',
+})
+assert.equal(replayHotel.verdict, 'hit')
+assert.equal(replayHotel.hotels?.[0]?.hotelId, '81643030')
+assert.equal(replayHotel.hotels?.[0]?.poi, '近浙江中医药大学(滨文校区)')
+assert.equal(replayHotel.hotels?.[0]?.priceRaw, '¥360起/晚', '官方万豪酒店价格单位原样保留')
+const replayPoi = await replayOfficialShape('poi', { kind: 'poi', cityName: '杭州' }, { id: '1887', name: '飞来峰', mainPic: 'https://img.example.test/poi.jpg', jumpUrl: 'https://router.feizhu.com/multi/webview?url=ws', address: '浙江省杭州市西湖区', freePoiStatus: 'FREE', ticketInfo: { price: '¥6x', priceDate: null, ticketName: '大门票（随买随用） 成人票' } })
+assert.equal(replayPoi.verdict, 'hit')
+const replayKeyword = await replayOfficialShape('keyword', { kind: 'keyword', query: '西湖' }, { info: { title: '西湖风景名胜区', jumpUrl: 'https://router.feizhu.com/multi/webview?url=ws', picUrl: 'https://img.example.test/keyword.jpg', price: null, scoreDesc: null, star: null, tags: null } })
+assert.equal(replayKeyword.verdict, 'hit')
+const replayMarriottHotel = await replayOfficialShape('marriott-hotel', { kind: 'marriott-hotel', destName: '杭州' }, { name: '杭州滨江万豪万枫酒店', shid: '81643030', nearbyPoi: '近浙江中医药大学(滨文校区)', price: '¥360起/晚', star: '高档型', address: '浙江省杭州市滨江区浦沿路773号', mainPic: 'https://img.example.test/marriott.jpg', detailUrl: 'https://router.feizhu.com/multi/webview?url=ws' })
+assert.equal(replayMarriottHotel.verdict, 'hit')
+const replayPackage = await replayOfficialShape('marriott-package', { kind: 'marriott-package', keyword: '杭州' }, { itemId: '1079279344842', title: '杭州临安青山湖科技城万丽酒店2晚连住+双早', picUrl: 'https://img.example.test/package.jpg', sellPoint: '酒店位于狮山公园翠色环抱之中', price: '￥1199起/2晚', detailUrl: 'https://router.feizhu.com/multi/webview?url=ws' })
+assert.equal(replayPackage.verdict, 'hit')
+assert.equal(replayPackage.packages?.[0]?.price, '￥1199起/2晚')
+assert.equal((replayPackage.packages?.[0] as { itemId?: string } | undefined)?.itemId, '1079279344842')
+const replayAiCli = await fakeCli('official-shape-ai', 0, JSON.stringify({ data: '杭州西湖景区精选推荐', message: 'success', status: 0, systemMessage: '*当前为体验模式*' }))
+const replayAi = await flyaiSearch({ kind: 'ai', query: '杭州周末两日旅行建议', cliBin: replayAiCli, timeoutMs: 5000 })
+assert.equal(replayAi.verdict, 'hit')
+assert.equal(replayAi.aiData, '杭州西湖景区精选推荐')
+assert.match(replayAi.systemMessage ?? '', /体验模式/)
+console.log('16. Official CLI 1.0.16 captured-shape replay → 8 类（含 AI bounded data string）OK')
+
 await rm(tmp, { recursive: true, force: true })
 console.log('FLYAI TESTS: transport/hotel completeness + error contract OK(离线假 CLI:Sentinel→error / 空 itemList→miss / flight+train+hotel mixed→整体 error 且不落事实 / typed 字段校验 / 完整 flight+train+hotel→hit / exit≠0→error / 429→needs-setup / transient retryable / 敏感信息脱敏)')
