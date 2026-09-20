@@ -22,7 +22,9 @@
 | marriott-hotel | search-marriott-hotel | 目的地、日期、品牌、酒店名、床型、价格、排序 |
 | marriott-package | search-marriott-package | 关键词、价格排序 |
 
-平铺的 `gotry_flyai_search` 保留 `from/to/date/checkIn/checkOut` 别名。打码价原样展示，绝不转换成数值报价。只有精确行程查询的合法命中或空结果写入库存事实；探索结果和全部错误均不写入。
+对于 `marriott-hotel`，`destName` 映射为 `--dest-name`；`hotelBrands` 和 `hotelName` 与 `keyWords` 合并后映射为 CLI 唯一的 `--key-words` 值，床型、日期、最高价和排序筛选使用各自的官方参数。该 kind 拒绝通用的 `hotelTypes` 和 `hotelStars` 筛选。对于 `marriott-package`，`keyword` 映射为唯一的 `--keyword` 维度，`sortType` 仅接受 `price_asc` 或 `price_desc`。
+
+平铺的 `gotry_flyai_search` 保留 `from/to/date/checkIn/checkOut` 别名。打码价原样展示，绝不转换成数值报价。只有包含出发地、目的地和单个出发日期的精确机票／火车查询，或包含目的地及成对入住日期的酒店查询，才可在合法命中或空结果时写入库存事实。探索结果和全部错误均不写入。
 
 ## 凭据归属
 
