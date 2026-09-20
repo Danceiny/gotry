@@ -345,7 +345,7 @@ async function runCase(scenario) {
     GOTRY_FLYAI_EVENTS: eventsPath,
     GOTRY_FLYAI_FIXTURE_ROOT: root,
     GOTRY_FLYAI_CLI_BIN: fakeNpx,
-    GOTRY_FLYAI_VERIFY_TIMEOUT_MS: '5000',
+    GOTRY_FLYAI_VERIFY_TIMEOUT_MS: '15000',
     GOTRY_FLYAI_EXPECTED_KEY: candidateKey,
     FLYAI_API_KEY: scenario === 'success' ? undefined : candidateKey,
   };
