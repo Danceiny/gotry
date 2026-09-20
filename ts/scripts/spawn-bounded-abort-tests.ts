@@ -129,11 +129,12 @@ process.on('SIGTERM',()=>process.exit(0));
 setInterval(()=>{},1000);`, { mode: 0o700 })
 const escapedAbort = new AbortController()
 activeAbort = escapedAbort
-const escapedWork = spawnBounded(escapedParentBin, [], { env: process.env, timeoutMs: 10_000, signal: escapedAbort.signal })
+const escapedWork = spawnBounded(escapedParentBin, [], { env: process.env, timeoutMs: 1_000, signal: escapedAbort.signal })
 activeWork = escapedWork
 await waitForFile(escapedReadyFile, 'escaped process')
 const escapedIds = JSON.parse(readFileSync(escapedPidsFile, 'utf8')) as { child: number }
 ownedPids.add(escapedIds.child)
+// Abort precedes the ordinary timeout; that later timer must not change the cause or extend cleanup.
 const escapedStarted = Date.now()
 escapedAbort.abort()
 const escapedResult = await escapedWork

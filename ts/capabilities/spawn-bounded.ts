@@ -136,7 +136,10 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
     }
 
     const onAbort = (): void => {
-      if (done) return
+      if (done || timedOut) return
+      // The first termination cause owns the deadline; a later timeout must not
+      // relabel an abort or extend the bounded drain window.
+      if (timeoutTimer) clearTimeout(timeoutTimer)
       signalGroup('SIGTERM')
       track(setTimeout(() => {
         signalGroup('SIGKILL')
@@ -158,11 +161,13 @@ export function spawnBounded(cmd: string, args: string[], opts: BoundedSpawnOpti
       finish({ code: null, stdout, stderr, error: e.message, aborted: false, timedOut: false })
     })
     child.on('close', async (code) => {
+      if (done) return
       const aborted = opts.signal?.aborted === true && !timedOut
       // close 只代表直接子进程退出;再观测进程组为空才认定树清理完成(有界)。
       let groupReaped = true
       if (groupPid !== undefined) {
         groupReaped = await waitGroupEmpty(groupPid, KILL_GRACE_MS)
+        if (done) return
         if (!groupReaped) {
           signalGroup('SIGKILL')
           groupReaped = await waitGroupEmpty(groupPid, KILL_GRACE_MS)
