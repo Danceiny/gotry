@@ -167,7 +167,7 @@ if (scenario === 'auth-401') { process.stderr.write('HTTP 401 Invalid API key fi
 if (scenario === 'forbidden-403') { process.stderr.write('HTTP 403 Forbidden fixture'); process.exit(43); }
 if (scenario === 'trial-429') { process.stderr.write('HTTP 429 Trial limit reached fixture'); process.exit(42); }
 if (scenario === 'sentinel') { process.stdout.write(JSON.stringify({ message: 'SentinelBlockException fixture' })); process.exit(0); }
-if (scenario === 'timeout') { setTimeout(() => {}, 2_000); }
+if (scenario === 'timeout') { setTimeout(() => {}, 15_000); }
 if (scenario === 'ordinary-429' && !fs.existsSync(marker)) { fs.writeFileSync(marker, 'seen'); process.stderr.write('HTTP 429 ordinary rate limit fixture'); process.exit(44); }
 let payload;
 if (scenario === 'malformed') payload = { data: { itemList: [{}] }, systemMessage: 'fixture malformed response' };
@@ -280,7 +280,9 @@ async function runModelProduct({ root, env, scenario, prompt, relay, relayMeta }
           stage = 3; response.end(toolReply(allCalls));
         } else if (scenario !== 'success' && stage === 0) {
           stage = 1;
-          const timeoutMs = scenario === 'timeout' ? 100 : undefined;
+          // Leave process startup time separate from the deliberately hanging
+          // provider; 100 ms can kill Node before it records the first event.
+          const timeoutMs = scenario === 'timeout' ? 2_000 : undefined;
           response.end(toolReply([{ id: `flyai-${scenario}`, args: { kind: 'flight', from: '上海', to: '杭州', date: fixtureDates.flight, ...(timeoutMs ? { timeoutMs } : {}) } }]));
         } else response.end(finalReply());
       } catch (error) {
