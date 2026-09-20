@@ -441,7 +441,7 @@ console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_O
   assert.ok(autoLabels.includes('Agent Reach(网页/社媒读取)'), 'reach missing(fixture 无 .venv)→ auto')
   const userActionLabels: string[] = plan.userAction.map((g: { label: string }) => g.label)
   assert.ok(userActionLabels.includes('GoTry Session Bridge 扩展'), '扩展 missing(隔离 HOME)→ user-action(浏览器商店)')
-  assert.ok(userActionLabels.includes('FlyAI(飞猪官方检索)'), 'flyai 无 key → user-action')
+  assert.ok(userActionLabels.some(label => label.startsWith('FlyAI(飞猪官方检索')), 'flyai 无 key → user-action')
   assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-map-tools')), 'map-tools 随包就位 → 非 unavailable')
   assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-tool-ask-user')), 'ask-user 随包就位 → 非 unavailable')
 }

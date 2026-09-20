@@ -3,7 +3,7 @@
  *  1. Sentinel 限流形状 {"message":"SentinelBlockException..."}——合法 JSON 但无 data.itemList,
  *     曾被 `data?.itemList ?? []` 吞成 0/0 静默 miss(issue #24)→ 应判 error 且保留 sentinel 字样
  *  2. 业务空形状 {"data":{"itemList":[]}} → verdict=miss(0/0,evidence 标注)
- *  3. 非空 transport itemList 只要有 malformed sibling → registered effect error,不落负事实
+ *  3. 非空 flight/train itemList 只要有 malformed sibling → registered effect error,不落负事实
  *     (flight/train 各一条有效+畸形 fixture;无 partial-completeness hit)
  *  4. 非空 hotel itemList 有 malformed sibling → registered effect error,不落酒店事实
  *  5. transport/hotel 字段类型与空白校验不接受 truthy 数字/对象,并覆盖 official Alibaba shape
@@ -16,7 +16,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { writeFile, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -27,9 +27,19 @@ import { apply, type Config } from '../src/index.ts'
 import { factsFromFlyai, factsFromHotel, type FlightFact } from '../src/bookable-facts.ts'
 
 const tmp = await mkdtemp(join(tmpdir(), 'flyai-test-'))
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`
+}
+
 async function fakeCli(name: string, code: number, payload: string): Promise<string> {
   const p = join(tmp, name)
-  await writeFile(p, `#!/bin/sh\necho '${payload}'\nexit ${code}\n`, { mode: 0o755 })
+  await writeFile(p, `#!/bin/sh\nprintf '%s\\n' ${shellQuote(payload)}\nexit ${code}\n`, { mode: 0o755 })
+  return p
+}
+
+async function fakeCliStreams(name: string, code: number, stdout: string, stderr: string): Promise<string> {
+  const p = join(tmp, name)
+  await writeFile(p, `#!/bin/sh\nprintf '%s\\n' ${shellQuote(stdout)}\nprintf '%s\\n' ${shellQuote(stderr)} >&2\nexit ${code}\n`, { mode: 0o755 })
   return p
 }
 
@@ -153,6 +163,7 @@ const sentinelBin = await fakeCli('flyai-sentinel', 0, '{"message":"SentinelBloc
 const s = await flyaiSearch({ ...base, cliBin: sentinelBin, timeoutMs: 5000 })
 assert.equal(s.ok, false, 'Sentinel 形状应 ok=false')
 assert.equal(s.verdict, 'error', `Sentinel 形状应判 error,实际 ${s.verdict}`)
+assert.equal(s.retryable, false, 'Sentinel 不得标记 retryable')
 assert.match(s.error ?? '', /sentinel/i, `error 应保留 sentinel 字样(供上层限流识别),实际 ${s.error}`)
 assert.match(s.evidence, /\[实时API:flyai@error@/, 'error 证据链标注')
 console.log('1. Sentinel 非业务形状 → error(非静默 miss)OK')
@@ -170,8 +181,9 @@ const malformedBin = await fakeCli('flyai-malformed', 0, '{"data":{"itemList":[{
 const malformed = await registeredSearch({ ...base, cliBin: malformedBin, timeoutMs: 5000 })
 assert.equal(malformed.ok, false, '全 malformed transport item 不应报告成功')
 assert.equal(malformed.verdict, 'error', '非空全 malformed transport item 应判 error')
+assert.equal(malformed.retryable, false, 'malformed 不得标记 retryable')
 assert.match(malformed.error ?? '', /malformed|valid typed transport/i, 'error 应保留 transport shape 原因')
-assert.match(malformed.evidence, /flyai@error@.*transport itemList/i, 'evidence 应保留结构化 transport 错误')
+assert.match(malformed.evidence, /flyai@error@.*flight itemList/i, 'evidence 应保留结构化 flight itemList 错误')
 assert.deepEqual(
   factsFromFlyai({ kind: base.kind, origin: base.origin, destination: base.destination, date: base.depDate }, malformed, new Date().toISOString()),
   [],
@@ -211,7 +223,7 @@ const flightMixed = await registeredSearch({ ...base, cliBin: mixedBin, timeoutM
 assert.equal(flightMixed.ok, false, 'flight 混合响应不应报告成功')
 assert.equal(flightMixed.verdict, 'error', 'flight 有效+malformed sibling 应整体 error')
 assert.equal(flightMixed.options, undefined, 'flight malformed error 不应暴露 options')
-assert.match(flightMixed.evidence, /transport itemList malformed.*1\/2/i, 'flight error 应暴露 malformed/总条目比例')
+assert.match(flightMixed.evidence, /flight itemList malformed.*1\/2/i, 'flight error 应暴露 malformed/总条目比例')
 assert.deepEqual(factsFromFlyai({ kind: base.kind, origin: base.origin, destination: base.destination, date: base.depDate }, flightMixed, new Date().toISOString()), [], 'flight mixed error 不得生成负库存事实')
 console.log('4. flight 有效+malformed sibling → 整体 error,不落负事实OK')
 
@@ -232,7 +244,7 @@ const trainMixed = await registeredSearch({ ...trainBase, cliBin: trainMixedBin,
 assert.equal(trainMixed.ok, false, 'train 混合响应不应报告成功')
 assert.equal(trainMixed.verdict, 'error', 'train 有效+malformed sibling 应整体 error')
 assert.equal(trainMixed.options, undefined, 'train malformed error 不应暴露 options')
-assert.match(trainMixed.evidence, /transport itemList malformed.*1\/2/i, 'train error 应暴露 malformed/总条目比例')
+assert.match(trainMixed.evidence, /train itemList malformed.*1\/2/i, 'train error 应暴露 malformed/总条目比例')
 assert.deepEqual(factsFromFlyai({ kind: trainBase.kind, origin: trainBase.origin, destination: trainBase.destination, date: trainBase.depDate }, trainMixed, new Date().toISOString()), [], 'train mixed error 不得生成负库存事实')
 console.log('5. train 有效+malformed sibling → 整体 error,不落负事实OK')
 
@@ -399,11 +411,109 @@ await writeFile(trialBin, `#!/bin/sh\necho 'search-hotel: MCP HTTP 429: Body: {"
 const t = await flyaiSearch({ ...base, cliBin: trialBin, timeoutMs: 5000 })
 assert.equal(t.ok, false)
 assert.equal(t.verdict, 'needs-setup', `429 达限应判 needs-setup,实际 ${t.verdict}`)
-assert.match(t.setup ?? '', /FLYAI_API_KEY/, 'setup 指引带 FLYAI_API_KEY 配置路径')
+assert.match(t.setup ?? '', /gotry setup flyai|FLYAI_API_KEY/, 'setup 指引带本机配置路径')
 assert.match(t.setup ?? '', /flyai\.open\.fliggy\.com/, 'setup 指引带控制台入口')
-assert.match(t.setup ?? '', /请勿重试|勿重试|不要重试/, 'setup 明示本会话勿重试')
+assert.match(t.setup ?? '', /请勿.*重试|勿.*重试|不要重试/, 'setup 明示本会话勿重试')
 assert.match(t.error ?? '', /429|Trial limit/i, 'error 保留上游 429 原话')
 assert.match(t.evidence, /\[实时API:flyai@error@/, '证据链标注')
+assert.equal(t.retryable, false, 'trial 429 不得标记 retryable')
+
+const ordinaryRateBin = await fakeCliStreams('flyai-ordinary-rate', 1, '', 'MCP HTTP 429: rate limited; retry later')
+const ordinaryRate = await flyaiSearch({ ...base, cliBin: ordinaryRateBin, timeoutMs: 5000 })
+assert.equal(ordinaryRate.verdict, 'rate-limited', '普通 429 应保持 rate-limited')
+assert.equal(ordinaryRate.retryable, true, '普通 429 应标记 retryable')
+const networkBin = await fakeCliStreams('flyai-network-transient', 1, '', 'fetch failed: ECONNRESET')
+const networkTransient = await flyaiSearch({ ...base, cliBin: networkBin, timeoutMs: 5000 })
+assert.equal(networkTransient.verdict, 'error', '网络错误保持结构化 error')
+assert.equal(networkTransient.retryable, true, '普通网络错误应标记 retryable')
+
+// 15. 真实 CLI 进程边界:config/env key 与 DEBUG endpoint 敏感段不能进入 error/raw/AI 输出。
+//     这里仍用本地 fixture CLI，但走 adapter 的真实 HOME/env 解析路径，不触碰用户配置。
+const previousFlyaiEnv = {
+  HOME: process.env.HOME,
+  FLYAI_API_KEY: process.env.FLYAI_API_KEY,
+  DEBUG_FLYAI_API_KEY: process.env.DEBUG_FLYAI_API_KEY,
+  DEBUG_FLYAI_MCP_URL: process.env.DEBUG_FLYAI_MCP_URL,
+}
+const sensitiveHome = await mkdtemp(join(tmpdir(), 'flyai-sensitive-home-'))
+const configKey = 'config-secret-key-521'
+const envKey = 'env-secret-key-521'
+const debugEndpoint = 'https://alice:password@example.test/mcp?token=debug-query&x=1'
+const restoreFlyaiEnv = (): void => {
+  for (const [name, value] of Object.entries(previousFlyaiEnv)) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+}
+try {
+  await mkdir(join(sensitiveHome, '.flyai'), { recursive: true })
+  await writeFile(join(sensitiveHome, '.flyai', 'config.json'), JSON.stringify({ FLYAI_API_KEY: configKey }))
+  process.env.HOME = sensitiveHome
+  delete process.env.FLYAI_API_KEY
+  delete process.env.DEBUG_FLYAI_API_KEY
+  process.env.DEBUG_FLYAI_MCP_URL = debugEndpoint
+
+  const configLeakBin = await fakeCliStreams(
+    'flyai-config-leak',
+    1,
+    `stdout key=${configKey} endpoint=${debugEndpoint}`,
+    `stderr key=${configKey} endpoint=${debugEndpoint} HTTP 500`,
+  )
+  const configLeak = await flyaiSearch({ ...base, cliBin: configLeakBin, timeoutMs: 5000 })
+  const configLeakText = JSON.stringify(configLeak)
+  assert.equal(configLeak.keySource, 'config', 'config key 应成为实际来源标记')
+  assert.equal(configLeak.verdict, 'error')
+  assert.equal(configLeak.retryable, true, 'HTTP 500 应标记 retryable，供 effect 层消费')
+  assert.ok(!configLeakText.includes(configKey), 'config key 不得进入 error/raw 输出')
+  assert.ok(!configLeakText.includes('alice:password'), 'DEBUG endpoint userinfo 不得进入 error/raw 输出')
+  assert.ok(!configLeakText.includes('token=debug-query'), 'DEBUG endpoint query 不得进入 error/raw 输出')
+  assert.match(configLeak.error ?? '', /已隐藏 endpoint 敏感参数/, '错误应保留 endpoint 已脱敏提示')
+
+  process.env.FLYAI_API_KEY = envKey
+  const envLeakBin = await fakeCliStreams(
+    'flyai-env-leak',
+    1,
+    `stdout key=${envKey} endpoint=${debugEndpoint}`,
+    `stderr key=${envKey} endpoint=${debugEndpoint} HTTP 401 Invalid API key`,
+  )
+  const envLeak = await flyaiSearch({ ...base, cliBin: envLeakBin, timeoutMs: 5000 })
+  const envLeakText = JSON.stringify(envLeak)
+  assert.equal(envLeak.keySource, 'env', 'env key 应覆盖 config 来源')
+  assert.equal(envLeak.verdict, 'auth-error', 'HTTP 401 应保持 auth-error')
+  assert.equal(envLeak.retryable, false, 'HTTP 401 不得标记 retryable')
+  assert.ok(!envLeakText.includes(envKey), 'env key 不得进入 error/raw 输出')
+  assert.ok(!envLeakText.includes('alice:password'), 'env error 不得包含 endpoint userinfo')
+  assert.ok(!envLeakText.includes('token=debug-query'), 'env error 不得包含 endpoint query')
+
+  const forbiddenBin = await fakeCliStreams(
+    'flyai-forbidden',
+    1,
+    '',
+    `endpoint=${debugEndpoint} HTTP 403 Forbidden`,
+  )
+  const forbidden = await flyaiSearch({ ...base, cliBin: forbiddenBin, timeoutMs: 5000 })
+  assert.equal(forbidden.verdict, 'forbidden', 'HTTP 403 应保持 forbidden')
+  assert.equal(forbidden.retryable, false, 'HTTP 403 不得标记 retryable')
+
+  const aiLeakBin = await fakeCli(
+    'flyai-ai-leak',
+    0,
+    JSON.stringify({
+      data: { answer: envKey, endpoint: debugEndpoint },
+      systemMessage: `模型提示 key=${envKey} endpoint=${debugEndpoint}`,
+    }),
+  )
+  const aiLeak = await flyaiSearch({ kind: 'ai', query: '敏感输出回归', cliBin: aiLeakBin, timeoutMs: 5000 })
+  const aiLeakText = JSON.stringify(aiLeak)
+  assert.equal(aiLeak.verdict, 'hit')
+  assert.ok(!aiLeakText.includes(envKey), 'AI data/systemMessage 不得包含 env key')
+  assert.ok(!aiLeakText.includes('alice:password'), 'AI data/systemMessage 不得包含 endpoint userinfo')
+  assert.ok(!aiLeakText.includes('token=debug-query'), 'AI data/systemMessage 不得包含 endpoint query')
+} finally {
+  restoreFlyaiEnv()
+  await rm(sensitiveHome, { recursive: true, force: true })
+}
+console.log('15. config/env key + DEBUG endpoint userinfo/query 脱敏(error/raw/AI 输出)与 HTTP 5xx retryable 标记OK')
 
 await rm(tmp, { recursive: true, force: true })
-console.log('FLYAI TESTS: transport/hotel completeness contract OK(离线假 CLI:Sentinel→error / 空 itemList→miss / flight+train+hotel mixed→整体 error 且不落事实 / typed 字段校验 / 完整 flight+train+hotel→hit / exit≠0→error / 429→needs-setup)')
+console.log('FLYAI TESTS: transport/hotel completeness + error contract OK(离线假 CLI:Sentinel→error / 空 itemList→miss / flight+train+hotel mixed→整体 error 且不落事实 / typed 字段校验 / 完整 flight+train+hotel→hit / exit≠0→error / 429→needs-setup / transient retryable / 敏感信息脱敏)')
