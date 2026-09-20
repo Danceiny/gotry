@@ -34,7 +34,7 @@ While this branch waited on [#514](https://github.com/Danceiny/gotry/issues/514)
 | Cleanup observer failure | Injected rejection and timeout preserve the outer cleanup error, return one close promise, and produce no unhandled rejection. |
 | Cleanup | Worker and TERM-resistant grandchild are absent after bounded close; natural and signal exits retain idempotent cleanup. |
 
-The immediate checks are event-loop assertions, not latency promises. Existing requests have a 1500 ms test bound; cleanup has a 2000 ms outer bound. Every potentially rejected operation receives a handler immediately.
+The immediate checks are event-loop assertions, not latency promises. Existing requests have a 1500 ms test bound; cleanup has a 2000 ms outer bound. The close-failure proof's post-injection observation of the real provider cleanup is budgeted at the provider's own scale (12 s probe): one provider observation call may itself cost up to its documented 5 s systemd query budget, and the first call in a process pays user-manager activation, which exceeded the original 2 s probe on a cold Linux CI runner. Every potentially rejected operation receives a handler immediately.
 
 ## Validation record
 
@@ -56,7 +56,7 @@ Production source SHA-256: `6bf542c243e7dd57cf1717e03daf9d9c139772995fd2fe3f5256
 
 The 2026-09-19 blocking failure was tracked in [#514](https://github.com/Danceiny/gotry/issues/514): `flyai-tests.ts:249` expected hotel malformed count `1/2`, but received `exit -1`. #514 was closed by PR #534 (fail-closed classification for termination carrying stale 429 text), and the FlyAI suites run green inside the 2026-09-20 final regression; the original environmental pressure reading was never converted into a root-cause claim.
 
-An earlier full run was stopped after review found #513; it is not counted as a pass. The interrupted and failed 2026-09-19 runs did not satisfy the final-SHA gate; the 2026-09-20 run on the delivered tree does. Optional live HotelByte, remote skills, session/login and Lavish probes, the external STAICLI tarball, and optional Agent Reach doctor assertions remain outside this report. The historical Python oracle is not part of the regression entry.
+An earlier full run was stopped after review found #513; it is not counted as a pass. The interrupted and failed 2026-09-19 runs did not satisfy the final-SHA gate; the 2026-09-20 run on the delivered tree does. The first CI round on PR #535 found one red: the Node 24 job failed at the close-failure proof's post-injection real-cleanup observation (`real handle cleanup observes an empty managed range`, `false !== true`). Every #510/#513 acceptance assertion before it passed in the same job, and the terminal proof's spawn-failure close (same real `waitForExit` contract) passed there too; the diagnosed cause is the proof-side 2 s probe sitting below the provider's own 5 s systemd query budget on a cold CI runner (first user-manager activation in the process). The probe was widened to the provider's scale (12 s) with the assertion unchanged; this is a test-budget correction, not a product change. Optional live HotelByte, remote skills, session/login and Lavish probes, the external STAICLI tarball, and optional Agent Reach doctor assertions remain outside this report. The historical Python oracle is not part of the regression entry.
 
 ## Reproduction and limits
 
