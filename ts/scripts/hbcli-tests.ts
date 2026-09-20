@@ -37,7 +37,7 @@ const r2 = await callHbcliJson(['search', 'hotel-list', '--json'], { hbcliBin: f
 assert.equal(r2.via, 'hbcli-error', 'error path')
 assert.match(r2.evidence, /\[实时API:hbcli@error@/, `evidence got: ${r2.evidence}`)
 assert.equal(r2.exitCode, 1, '失败时 exitCode 透传')
-assert.ok(r2.error, '有 error 字段')
+assert.equal(r2.error, 'exit 1', '空 stderr 失败仍保留 exit code 文案')
 
 // 3. 二进制不存在
 const r3 = await callHbcliJson(['search', 'hotel-list', '--json'], { hbcliBin: '/nope/hbcli', timeoutMs: 5000 })

@@ -79,10 +79,14 @@ echo "=== 6c. 行程 HTML 渲染器与产物生成入口(#442/父 #438:纯渲染
 echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/spawn-bounded-abort-tests.ts) || FAIL=1
 
 echo
 echo "=== 7b. flyai 能力层(离线假 CLI,4 断言:Sentinel 非业务形状→error/空 itemList→miss/命中→hit/exit≠0→error;issue #24) ==="
 (cd ts && npx tsx scripts/flyai-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/flyai-setup-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/flyai-setup-tool-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/flyai-tool-registration-contract-tests.ts) || FAIL=1
 
 echo
 echo "=== 7c. 外部依赖自举(check-only 探测/跳过开关/postinstall 非致命;真安装属发布前干净安装实测) ==="
@@ -413,6 +417,9 @@ echo
 echo "=== 44c. sf-live evidence isolation + challenge stop(issue #503/#411/RFC §3.5:首个 challenged/guard 即截断批次/challenged 语义不被改写/部分批次+attempted·not_attempted 清单/普通八条批次保留/请求计数断言;真实 CLI runner+确定性 session 模块 overlay,临时根零网络) ==="
 (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 npx tsx scripts/sf-live-challenge-stop-tests.ts) || FAIL=1
 
+echo "=== 44d. Dida live runner stop (#502/#504:真实 runner 入口 + 合成浏览器/session overlay；challenge/cooldown/login/extension/error/hit/throw 单次调用、assist cleanup、strict live gate；零供应商网络) ==="
+(cd ts && npx tsx scripts/dida-runner-stop-tests.ts) || FAIL=1
+
 package_e2e_bin="${GOTRY_BRIDGE_E2E_BIN:-${GOTRY_BUDGET_E2E_BIN:-}}"
 package_e2e_dir=""
 package_e2e_install_dir=""
@@ -497,6 +504,7 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 (cd ts && npx tsx scripts/booking-copilot-dsh-plugin-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-dsh-planner-proof-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/managed-dsh-run-port-proof.ts) || FAIL=1
+(cd ts && npx tsx scripts/managed-dsh-cleanup-diagnostic-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/managed-dsh-terminal-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/managed-dsh-close-failure-proof.ts) || FAIL=1
 (cd ts && npx tsx scripts/booking-copilot-startup-proof-tests.ts) || FAIL=1
@@ -508,6 +516,15 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 echo
 echo "=== 49b. dsh-map-tools vendored package proof(issue #202:clean tarball install + MIT license/provenance + alpha.3 settings closure + exactly seven map_* tools + network-free inline coordinates) ==="
 (GOTRY_MAP_TOOLS_E2E_BIN="$package_e2e_bin" "$TSX_BIN" ts/scripts/map-tools-vendor-package-proof.ts) || FAIL=1
+echo "=== 49c. FlyAI installed product E2E (isolated setup, all eight search kinds, error recovery; controlled upstream) ==="
+if [ -n "$package_e2e_bin" ] && [ -x "$package_e2e_bin" ]; then
+  flyai_e2e_parent=$(mktemp -d)
+  node scripts/flyai-product-e2e.mjs "$package_e2e_bin" "$flyai_e2e_parent/evidence" || FAIL=1
+  echo "FlyAI product evidence: $flyai_e2e_parent/evidence"
+else
+  echo "FAIL: FlyAI packaged runtime unavailable"
+  FAIL=1
+fi
 cleanup_packaged_e2e_runtime
 trap - EXIT
 

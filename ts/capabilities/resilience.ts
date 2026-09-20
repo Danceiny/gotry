@@ -26,6 +26,8 @@ export interface RetryPolicy {
   isRetryable?: RetryablePredicate
   /** 等待注入(测试即时放行,确定性);缺省真实 setTimeout */
   sleep?: (ms: number) => Promise<void>
+  /** 宿主取消:dispatch 前与 backoff 等待中都遵守,abort 即结束不重试 */
+  signal?: AbortSignal
 }
 
 export interface RetryOutcome<T> {
@@ -37,6 +39,8 @@ export interface RetryOutcome<T> {
   attempts: number
   /** 累计回退等待(ms) */
   backoffMs: number
+  /** 宿主信号取消:不是成功,也不是可计 failure 的故障 */
+  aborted: boolean
 }
 
 /** 第 failedAttempt 次失败后的等待时长(纯函数,单测锁定 500→1000→2000 封顶链) */
@@ -61,7 +65,47 @@ export async function withRetry<T>(
   const maxAttempts = Math.max(1, policy.maxAttempts)
   let attempts = 0
   let backoffMs = 0
+  const abortableSleep = (ms: number): Promise<'aborted' | 'slept'> => {
+    const signal = policy.signal
+    if (signal?.aborted) return Promise.resolve('aborted')
+
+    // The injected sleep is part of the retry contract. Keep its rejection
+    // visible to callers, while making an abort win the race and consuming a
+    // later rejection so cancellation cannot create an unhandled rejection.
+    if (!signal) return sleep(ms).then(() => 'slept')
+
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const cleanup = () => signal.removeEventListener('abort', onAbort)
+      const finish = (outcome: 'aborted' | 'slept') => {
+        if (settled) return
+        settled = true
+        if (timer !== undefined) clearTimeout(timer)
+        cleanup()
+        resolve(outcome)
+      }
+      const onAbort = () => finish('aborted')
+      const onSleepResolved = () => finish('slept')
+      const onSleepRejected = (error: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      }
+
+      signal.addEventListener('abort', onAbort, { once: true })
+      if (policy.sleep) {
+        void Promise.resolve().then(() => policy.sleep!(ms)).then(onSleepResolved, onSleepRejected)
+      } else {
+        timer = setTimeout(onSleepResolved, ms)
+      }
+    })
+  }
   for (;;) {
+    if (policy.signal?.aborted) {
+      return { result: null, error: null, attempts, backoffMs, aborted: true }
+    }
     attempts += 1
     let result: T | null = null
     let error: unknown | null = null
@@ -70,16 +114,21 @@ export async function withRetry<T>(
     } catch (e) {
       error = e
     }
+    if (policy.signal?.aborted) {
+      return { result: null, error, attempts, backoffMs, aborted: true }
+    }
     const retryable = policy.isRetryable?.(result, error)
       ?? (error != null || (result as { ok?: unknown } | null)?.ok === false)
     if (attempts < maxAttempts && retryable) {
       const delay = backoffDelayMs(policy, attempts)
       onBackoff?.(attempts, delay)
       backoffMs += delay
-      await sleep(delay)
+      if (await abortableSleep(delay) === 'aborted') {
+        return { result: null, error, attempts, backoffMs, aborted: true }
+      }
       continue
     }
-    return { result, error, attempts, backoffMs }
+    return { result, error, attempts, backoffMs, aborted: false }
   }
 }
 
@@ -95,6 +144,20 @@ export interface BreakerOptions {
 }
 
 /**
+ * Ownership of one admitted breaker call.
+ *
+ * Closed calls carry their generation so a call that started before the
+ * breaker opened cannot later affect a newer half-open probe. Half-open calls
+ * additionally carry their own object identity, making release/settlement
+ * conditional on the exact probe that owns the slot.
+ */
+export interface BreakerAttemptToken {
+  readonly generation: number
+  readonly probe: boolean
+  readonly id: number
+}
+
+/**
  * 断路器(每效应一个实例):
  *   closed    常态放行;连续失败达 failureThreshold → open;
  *   open      拒绝(new attempts=0,.fail-fast 保护上游/配额);冷却满 openMs → half-open;
@@ -104,7 +167,9 @@ export interface BreakerOptions {
 export class CircuitBreaker {
   private consecutiveFailures = 0
   private openedAt = 0
-  private probeInFlight = false
+  private generation = 0
+  private nextTokenId = 0
+  private probeToken: BreakerAttemptToken | null = null
 
   constructor(private readonly o: BreakerOptions) {}
 
@@ -123,29 +188,59 @@ export class CircuitBreaker {
   }
 
   /** 发起一次调用前问闸:open 回 {allowed:false}(调用方须返回显式降级观察,不重试) */
-  canAttempt(): { allowed: boolean; state: BreakerState } {
+  canAttempt(): { allowed: boolean; state: BreakerState; token?: BreakerAttemptToken } {
     const s = this.state()
-    if (s === 'closed') return { allowed: true, state: s }
+    if (s === 'closed') return { allowed: true, state: s, token: this.makeToken(false) }
     if (s === 'open') return { allowed: false, state: s }
     // half-open:单探测语义——已有探测在途拒其余并发
-    if (this.probeInFlight) return { allowed: false, state: s }
-    this.probeInFlight = true
-    return { allowed: true, state: s }
+    if (this.probeToken) return { allowed: false, state: s }
+    this.generation += 1
+    const token = this.makeToken(true)
+    this.probeToken = token
+    return { allowed: true, state: s, token }
+  }
+
+  /**
+   * half-open 探测被取消:仅令牌持有者释放所有权,不把 probe 永久卡死,
+   * 也不让旧 closed 调用或旧 generation 释放新探测。
+   */
+  releaseProbe(token?: BreakerAttemptToken): void {
+    if (token?.probe !== true || this.probeToken !== token || this.state() !== 'half-open') return
+    this.probeToken = null
+    this.generation += 1
   }
 
   /** 一次解译调用成功(非 isFailure)——清零;half-open 探测成功即回 closed */
-  onSuccess(): void {
+  onSuccess(token?: BreakerAttemptToken): void {
+    if (!this.owns(token)) return
     this.consecutiveFailures = 0
     this.openedAt = 0
-    this.probeInFlight = false
+    if (token?.probe === true || (!token && this.probeToken !== null)) {
+      this.probeToken = null
+      this.generation += 1
+    }
   }
 
   /** 一次解译调用失败(含重试耗尽)——半开探测失败 = 重新开闸 */
-  onFailure(): void {
-    this.probeInFlight = false
+  onFailure(token?: BreakerAttemptToken): void {
+    if (!this.owns(token)) return
+    if (token?.probe === true || (!token && this.probeToken !== null)) this.probeToken = null
     this.consecutiveFailures += 1
     if (this.openedAt > 0 || this.consecutiveFailures >= this.threshold()) {
       this.openedAt = this.now()
+      this.generation += 1
     }
+  }
+
+  private makeToken(probe: boolean): BreakerAttemptToken {
+    return Object.freeze({ generation: this.generation, probe, id: ++this.nextTokenId })
+  }
+
+  private owns(token?: BreakerAttemptToken): boolean {
+    // Keep the direct CircuitBreaker API backwards-compatible for callers
+    // that settle the currently active call without retaining its token.
+    if (!token) return true
+    if (token.probe) return this.probeToken === token && this.state() === 'half-open'
+    return token.generation === this.generation && this.probeToken === null
   }
 }

@@ -120,6 +120,7 @@
 | [design/milestone-delivery-plan.md](design/milestone-delivery-plan.zh-CN.md) | M4→M6 living 任务图（issue #225）：#20/#22/#136/#137 真实 gate、#231–#235 后继与 #270 公开交付台账；预准入只含获授权的设计/只读/fixture/failing-before 工作 |
 | [design/write-gate-production-design.md](design/write-gate-production-design.zh-CN.md) | M5 WriteGate 生产化 proposal（issue #225/#136）：HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、query miss 保持 unknown、对账/补偿/披露 |
 | [design/fact-writegate-seam.md](design/fact-writegate-seam.zh-CN.md) | fact-anchor × M5 WriteGate 接缝（issue #303，#273 子切片）：读路径闸与写路径闸的契约、five-step 最小链、non-success 写 receipt fail-closed、依赖 #136/#231，M5 Entry 前不启封 |
+| [design/flyai-supplier-skill-design.zh-CN.md](design/flyai-supplier-skill-design.zh-CN.md) | FlyAI 八类能力、本机凭据与证据边界 |
 | [design/effect-interpreter.md](design/effect-interpreter.zh-CN.md) | 效应解译器设计（accepted，ADR-18）：词汇/韧性策略表/判定记录 |
 | [design/booking-saga-fsm.md](design/booking-saga-fsm.zh-CN.md) | 预订 saga 状态机（accepted，ADR-17）：字母表/边表/M5 缝词汇 |
 | [design/tool-orchestration-design.md](design/tool-orchestration-design.zh-CN.md) | 工具编排与通道健康面设计（proposal，issue #106/#107/#108） |
@@ -166,13 +167,19 @@
 
 | 文档 | 关注点 |
 |---|---|
+| [evaluation/parallel-search-perf-report.zh-CN.md](evaluation/parallel-search-perf-report.zh-CN.md) | 真实安装入口的搜索并行实测与 #519 验收缺口 |
+| [evaluation/flyai-supplier-acceptance-report.zh-CN.md](evaluation/flyai-supplier-acceptance-report.zh-CN.md) | FlyAI 安装后产品端到端、官方响应观测与验收边界 |
+| [evaluation/flyai-process-report.zh-CN.md](evaluation/flyai-process-report.zh-CN.md) | FlyAI 本地进程终止：原始 exit -1 失败边界、误分类修复与回归锁定（#514） |
 | [evaluation/evaluation-foundation.md](evaluation/evaluation-foundation.zh-CN.md) | Evaluation Phase 0：契约/注册表/准入与边界声明 |
 | [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.zh-CN.md) | 外部 benchmark 桥：Phase 1 接缝与逐轮工程台账 |
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.zh-CN.md) | dsh e2e 端到端真 LLM 验证记录（持续更新） |
 | [evaluation/round12-canary-report.zh-CN.md](evaluation/round12-canary-report.zh-CN.md) | Round 12 冻结 canary：跑了什么、分数意味着什么、为什么（#203/#215） |
 | [evaluation/sf-manifest.zh-CN.md](evaluation/sf-manifest.zh-CN.md) | sf-01..08 冻结清单：用例/通道矩阵/真实会话需求分类（issue #272 离线段） |
+| [evaluation/dida-runner-stop-report.zh-CN.md](evaluation/dida-runner-stop-report.zh-CN.md) | Dida 实时 runner 停止、清理与严格 live opt-in 证据（#502/#504） |
 | [evaluation/sf-evidence-isolation-report.zh-CN.md](evaluation/sf-evidence-isolation-report.zh-CN.md) | 会话航班跑批证据隔离：命令级端到端、汇总回读与证据边界 |
 | [evaluation/copilot-readiness-report.zh-CN.md](evaluation/copilot-readiness-report.zh-CN.md) | Copilot 就绪与进程清理：真实 SDK 链路、受控 worker、Node 22／24 完整回归与已知边界 |
+| [evaluation/copilot-cleanup-diagnostic-report.zh-CN.md](evaluation/copilot-cleanup-diagnostic-report.zh-CN.md) | Copilot 清理失败归属、首错保留与受控诊断证据（#518） |
+| [evaluation/copilot-darwin-zombie-quiescence-report.zh-CN.md](evaluation/copilot-darwin-zombie-quiescence-report.zh-CN.md) | Copilot 清理超时机制（Darwin 仅剩僵尸组的观察缺陷）与按静默判定修复（#518） |
 | [evaluation/copilot-terminal-report.zh-CN.md](evaluation/copilot-terminal-report.zh-CN.md) | 托管 worker 终止：请求立即拒绝、安全错误与进程清理 |
 | [evaluation/persona-bench/](evaluation/persona-bench/) | 产品人格横评：同一真实 prompt 各家回答存档/评分卡/人格提炼 |
 

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ManagedDshRunPort } from '../src/booking-surface/managed-dsh-run-port.ts'
+import { ManagedDshCleanupError } from '../src/booking-surface/managed-dsh-cleanup-diagnostic.ts'
 
 /**
  * Supporting proof for #510's close failure path.
@@ -52,7 +53,11 @@ function reasonMessage(reason: unknown): string {
 async function assertRejected<T>(promise: Promise<Outcome<T>>, expected: string, label: string): Promise<void> {
   const outcome = await bounded(promise, 2_000, `${label}: close did not settle`)
   assert.equal(outcome.status, 'rejected', `${label}: close must reject`)
-  assert.equal(reasonMessage(outcome.reason), expected, `${label}: stable close error`)
+  const reason = (outcome as { status: 'rejected'; reason: unknown }).reason
+  // Since #518 close failures carry the typed safe diagnostic; the stable
+  // public meaning lives before its appended diagnostic payload.
+  assert.ok(reason instanceof ManagedDshCleanupError, `${label}: close failure carries the typed cleanup diagnostic`)
+  assert.equal(reason.message.split(';')[0], expected, `${label}: stable close error`)
 }
 
 async function settleInjectedHandle(
@@ -118,7 +123,7 @@ process.on('unhandledRejection', onUnhandled)
 try {
   const failures: unknown[] = []
   for (const [mode, expected] of [
-    ['reject', 'fault-injected observation failure'],
+    ['reject', 'managed DSH process tree observation failed'],
     ['false', 'managed DSH process tree cleanup timeout'],
   ] as const) {
     try {

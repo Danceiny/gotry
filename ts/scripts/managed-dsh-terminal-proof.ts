@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { ManagedDshRunPort } from '../src/booking-surface/managed-dsh-run-port.ts'
+import { ManagedDshCleanupError } from '../src/booking-surface/managed-dsh-cleanup-diagnostic.ts'
 
 type Outcome =
   | { status: 'fulfilled'; value: unknown }
@@ -248,8 +249,13 @@ async function proveSpawnFailureIsSanitized(): Promise<void> {
     const closePromise = port.close()
     const repeatedClosePromise = port.close()
     assert.strictEqual(repeatedClosePromise, closePromise, 'spawn failure repeated close is idempotent')
-    await rejectedWith(observe(closePromise), 'managed DSH worker failed', 'spawn failure close')
-    await rejectedWith(observe(repeatedClosePromise), 'managed DSH worker failed', 'spawn failure repeated close')
+    for (const [label, promise] of [['spawn failure close', closePromise], ['spawn failure repeated close', repeatedClosePromise]] as const) {
+      const outcome = await bounded(observe(promise), 2_000, `${label} did not settle`)
+      assert.equal(outcome.status, 'rejected', `${label} must reject`)
+      const reason = (outcome as { status: 'rejected'; reason: unknown }).reason
+      assert.ok(reason instanceof ManagedDshCleanupError, `${label} carries the typed cleanup diagnostic`)
+      assert.equal(reason.message.split(';')[0], 'managed DSH worker failed', `${label} stable public error`)
+    }
   } finally {
     await cleanup(port)
     rmSync(root, { recursive: true, force: true })
