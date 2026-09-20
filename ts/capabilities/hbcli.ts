@@ -12,9 +12,9 @@
  * 估算必须显式标记。这是 L4 与 L1 透明卡片的接缝。
  */
 
-import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { spawnBounded } from './spawn-bounded.ts'
 
 export interface HbcliCallOptions {
   /** hbcli 二进制路径(默认 'hbcli',依赖 PATH;~/.local/bin 等已知安装位自动回退) */
@@ -25,6 +25,8 @@ export interface HbcliCallOptions {
   token?: string
   /** 环境(uat/prod/dev);默认 uat */
   env?: 'uat' | 'prod' | 'dev'
+  /** 宿主取消信号(exec.signal);abort → SIGTERM,500ms 后 SIGKILL 有界回收 */
+  signal?: AbortSignal
 }
 
 export interface HbcliCallResult {
@@ -57,70 +59,49 @@ export function hbcliBinCandidates(bin: string, homeDir: string = homedir()): st
 }
 
 /** 单个候选的一次 spawn 封装:失败不抛,返回降级结果(spawnError 标记 ENOENT 类失败供上层换候选) */
-function attemptHbcli(
+async function attemptHbcli(
   bin: string,
   args: string[],
-  opts: Required<Pick<HbcliCallOptions, 'timeoutMs' | 'env'>> & { envVars: Record<string, string> },
+  opts: Required<Pick<HbcliCallOptions, 'timeoutMs' | 'env'>> & { envVars: Record<string, string>; signal?: AbortSignal },
 ): Promise<HbcliCallResult & { spawnError?: boolean }> {
   const started = Date.now()
-  return new Promise((resolve) => {
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const child = spawn(bin, args, { env: { ...process.env, ...opts.envVars } })
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true
-        child.kill('SIGKILL')
-        resolve({
-          via: 'hbcli-error', exitCode: -1, result: null,
-          evidence: `[实时API:hbcli@timeout@${new Date().toISOString()}]`,
-          latencyMs: Date.now() - started, error: `timeout after ${opts.timeoutMs}ms`,
-        })
-      }
-    }, opts.timeoutMs)
-    child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-    child.on('close', (code) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      const latencyMs = Date.now() - started
-      if (code !== 0) {
-        // 不抛错,降级返回。证据链显式标注:实时 API 调用失败+原因+时间戳。
-        resolve({
-          via: 'hbcli-error', exitCode: code ?? -1, result: null,
-          evidence: `[实时API:hbcli@error@${new Date().toISOString()}]`,
-          stderr: stderr.slice(0, 2000),
-          latencyMs, error: stderr.trim().slice(0, 200) || `exit ${code}`,
-        })
-        return
-      }
-      // 尝试 JSON 解析
-      const jStart = stdout.search(/[\{\[]/)
-      const jsonStr = jStart >= 0 ? stdout.slice(jStart) : ''
-      let result: unknown = null
-      if (jsonStr) {
-        try { result = JSON.parse(jsonStr) } catch { /* 非 JSON 输出,留给调用方处理 */ }
-      }
-      resolve({
-        via: 'hbcli-realtime', exitCode: 0, result,
-        evidence: `[实时API:hbcli@${new Date().toISOString()}]`,
-        stdout: stdout.slice(0, 2000), latencyMs,
-      })
-    })
-    child.on('error', (e) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      // ENOENT (二进制不存在) 等也走降级路径;spawnError 供上层按候选路径重试
-      resolve({
-        via: 'hbcli-error', exitCode: -1, result: null,
-        evidence: `[实时API:hbcli@spawn_error@${new Date().toISOString()}]`,
-        latencyMs: Date.now() - started, error: (e as Error).message, spawnError: true,
-      })
-    })
+  const r = await spawnBounded(bin, args, {
+    env: { ...process.env, ...opts.envVars },
+    timeoutMs: opts.timeoutMs,
+    signal: opts.signal,
   })
+  const latencyMs = Date.now() - started
+  const ts = new Date().toISOString()
+  if (r.error || (r.code !== 0 && !r.aborted)) {
+    const error = r.error ?? r.stderr.trim().slice(0, 200)
+    const failureKind = r.timedOut ? 'timeout' : /ENOENT/.test(r.error ?? '') ? 'spawn_error' : 'error'
+    return {
+      via: 'hbcli-error', exitCode: r.code ?? -1, result: null,
+      evidence: `[实时API:hbcli@${failureKind}@${ts}]`,
+      stderr: r.stderr.slice(0, 2000),
+      latencyMs, error: error || `exit ${r.code}`,
+      spawnError: /ENOENT/.test(r.error ?? ''),
+    }
+  }
+  if (r.aborted) {
+    return {
+      via: 'hbcli-error', exitCode: r.code ?? -1, result: null,
+      evidence: `[实时API:hbcli@abort@${ts}]`,
+      latencyMs, error: 'aborted by host signal',
+    }
+  }
+  // 尝试 JSON 解析
+  const jStart = r.stdout.search(/[\{\[]/)
+  const jsonStr = jStart >= 0 ? r.stdout.slice(jStart) : ''
+  let result: unknown = null
+  if (jsonStr) {
+    try { result = JSON.parse(jsonStr) } catch { /* 非 JSON 输出,留给调用方处理 */ }
+  }
+  return {
+    via: 'hbcli-realtime', exitCode: 0, result,
+    evidence: `[实时API:hbcli@${ts}]`,
+    stdout: r.stdout.slice(0, 2000), latencyMs,
+  }
 }
 
 /** 通用 hbcli JSON 调用封装:失败不抛,而是返回降级结果 */
@@ -131,12 +112,16 @@ export async function callHbcliJson(
   const env = opts.env ?? 'uat'
   const envVars: Record<string, string> = { HOTELBYTE_ENV: env }
   if (opts.token) envVars['HOTELBYTE_TOKEN'] = opts.token
-  const callOpts = { timeoutMs: opts.timeoutMs ?? 15_000, env, envVars }
+  const callOpts = { timeoutMs: opts.timeoutMs ?? 15_000, env, envVars, signal: opts.signal }
   const candidates = hbcliBinCandidates(opts.hbcliBin ?? 'hbcli')
+  // abort 状态不可触发 fallback 候选;spawn 前的 pre-aborted 调用整体零 spawn
+  if (opts.signal?.aborted) {
+    return attemptHbcli(candidates[0]!, args, callOpts)
+  }
   let last: HbcliCallResult & { spawnError?: boolean } | undefined
   for (const bin of candidates) {
     last = await attemptHbcli(bin, args, callOpts)
-    // spawn 级失败(ENOENT 等)且还有候选 → 换下一个已知安装位;其余失败(退码/超时)无重试意义
+    // spawn 级失败(ENOENT 等)且还有候选 → 换下一个已知安装位;其余失败(退码/超时/abort)无重试意义
     if (!(last.spawnError && candidates.indexOf(bin) < candidates.length - 1)) return last
   }
   return last!
@@ -191,6 +176,15 @@ export async function searchHotels(
   if (query.checkOut) hbArgs.push('--check-out', query.checkOut)
   if (query.adults) hbArgs.push('--room-occupancies', JSON.stringify([{ adultCount: query.adults, childrenAges: [] }]))
   const live = await callHbcliJson(hbArgs, opts)
+  // 取消立即结束:不读静态包、不产出命中/无结果/估算,也不计上游故障
+  if (opts.signal?.aborted || /abort/i.test(live.error ?? '')) {
+    const ts = new Date().toISOString()
+    return {
+      via: 'hbcli-error', exitCode: live.exitCode, result: null,
+      evidence: `[实时API:hbcli@abort@${ts}]`,
+      latencyMs: live.latencyMs, error: 'aborted by host signal', summary: `酒店「${query.destination}」检索已取消,未产生事实`,
+    }
+  }
   if (live.via === 'hbcli-realtime') {
     // summary 即模型面(render 只透 summary):必须自带紧凑数据行 + 证据链,
     // 否则模型只看到「实时返回」占位一句话(issue #195 实锤)。

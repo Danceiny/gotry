@@ -136,7 +136,7 @@ const DEFAULT_HANDLERS = {
   HBCLI_HOTEL_SEARCH: (p: HbHotelEffectParams) =>
     searchHotels(
       { destination: p.destination, checkIn: p.checkIn, checkOut: p.checkOut, adults: p.adults },
-      { hbcliBin: p.hbcliBin, timeoutMs: p.timeoutMs, fallbackPath: p.fallbackPath },
+      { hbcliBin: p.hbcliBin, timeoutMs: p.timeoutMs, fallbackPath: p.fallbackPath, signal: p.signal },
     ),
   /** hotelbyte 桥·房型报价(M0 预订链;spawn CLI;价格面无静态降级 fail-closed) */
   HBCLI_HOTEL_RATES: (p: HbRatesEffectParams) =>

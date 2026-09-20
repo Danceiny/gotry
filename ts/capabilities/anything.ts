@@ -28,8 +28,8 @@
  * Google Place 链路的「酒店-be 中间层」入口。
  */
 
-import { spawn } from 'node:child_process'
 import { hbcliBinCandidates } from './hbcli.ts'
+import { spawnBounded } from './spawn-bounded.ts'
 
 export interface AnythingQuery {
   /** 多词以空格 join,与 hbcli argument-parser 一致;前后 trim。空则报错(unless contentType 强限定) */
@@ -42,6 +42,8 @@ export interface AnythingQuery {
   timeoutMs?: number
   /** 显式 hbcli 路径(默认 'hbcli',从 $PATH 找;默认名自动回退 ~/.local/bin 等已知安装位) */
   hbcliBin?: string
+  /** 宿主取消信号(exec.signal) */
+  signal?: AbortSignal
 }
 
 export interface AnythingHit {
@@ -115,44 +117,8 @@ interface RawSearchItem {
   }
 }
 
-function sh(cmd: string, args: string[], opts: { timeoutMs: number; env: NodeJS.ProcessEnv }) {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => {
-    ctrl.abort()
-    // AbortSignal on spawn 会发 SIGTERM;对于不响应 SIGTERM 的子进程,需要在外部再发一次 SIGKILL。
-    // Node 不能直接通过 AbortController 拿 child pid,所以需要借助外部变量保存 child。
-  }, opts.timeoutMs)
-  let child: ReturnType<typeof spawn> | null = null
-  let killTimer: NodeJS.Timeout | null = null
-  return new Promise<{ code: number; stdout: string; stderr: string; error?: string }>((resolve) => {
-    child = spawn(cmd, args, {
-      env: opts.env,
-      cwd: process.cwd(),
-      signal: ctrl.signal,
-    })
-    let stdout = ''
-    let stderr = ''
-    let error: string | undefined
-    let killed = false
-    child.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
-    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
-    child.on('error', (e) => { error = (e as Error).message.slice(0, 200) })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      if (killTimer) clearTimeout(killTimer)
-      resolve({ code: killed ? -2 : (code ?? -1), stdout, stderr, error })
-    })
-    // Abort 后 500ms 内若子进程仍活,发 SIGKILL 强杀。
-    ctrl.signal.addEventListener('abort', () => {
-      if (!child) return
-      try {
-        child.kill('SIGTERM')
-      } catch { /* ignore */ }
-      killTimer = setTimeout(() => {
-        try { child?.kill('SIGKILL') } catch { /* ignore */ }
-      }, 500)
-    })
-  })
+function sh(cmd: string, args: string[], opts: { timeoutMs: number; env: NodeJS.ProcessEnv; signal?: AbortSignal }) {
+  return spawnBounded(cmd, args, { env: opts.env, cwd: process.cwd(), timeoutMs: opts.timeoutMs, signal: opts.signal })
 }
 
 /** --json 必须在子命令前(cli.ts 全局旗标预扫描只认子命令前位置;JSON 错误也走结构化 stderr) */
@@ -184,21 +150,35 @@ export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> 
     }
   }
   const args = buildArgs(kw, q)
-  // spawn 级失败(ENOENT)按已知安装位回退(hbcli.ts callHbcliJson 同款);其余失败无重试意义
+  // spawn 级失败(ENOENT)按已知安装位回退(hbcli.ts callHbcliJson 同款);abort/超时/退码无重试无候选
   const candidates = hbcliBinCandidates(q.hbcliBin ?? 'hbcli')
-  let r: { code: number; stdout: string; stderr: string; error?: string } = { code: -1, stdout: '', stderr: '' }
+  if (q.signal?.aborted) {
+    return {
+      ok: false, via: 'hbcli-anything-error',
+      evidence: `[实时API:hbcli-anything@abort@${ts}] pre-aborted, zero spawn`,
+      latencyMs: 0, verdict: 'error', error: 'aborted by host signal',
+    }
+  }
+  let r: Awaited<ReturnType<typeof spawnBounded>> = { code: null, stdout: '', stderr: '', aborted: false, timedOut: false }
   for (let i = 0; i < candidates.length; i++) {
-    r = await sh(candidates[i]!, args, { timeoutMs: q.timeoutMs ?? 12_000, env: process.env })
-    if (!(r.error && i < candidates.length - 1)) break
+    r = await sh(candidates[i]!, args, { timeoutMs: q.timeoutMs ?? 12_000, env: process.env, signal: q.signal })
+    if (!(r.error && /ENOENT/.test(r.error) && !r.aborted && !r.timedOut && i < candidates.length - 1)) break
   }
   const latencyMs = Date.now() - started
 
+  if (r.aborted) {
+    return {
+      ok: false, via: 'hbcli-anything-error',
+      evidence: `[实时API:hbcli-anything@abort@${ts}]`,
+      latencyMs, verdict: 'error', error: 'aborted by host signal',
+    }
+  }
   if (r.error || r.code !== 0) {
     const raw = r.error ?? `${r.stderr.slice(0, 200)} (exit ${r.code})`
     return {
       ok: false,
       via: 'hbcli-anything-error',
-      evidence: `[实时API:hbcli-anything@error@${ts}] ${raw}`,
+      evidence: `[实时API:hbcli-anything@${r.timedOut ? 'timeout' : 'error'}@${ts}] ${raw}`,
       latencyMs,
       verdict: 'error',
       error: upgradeHint(r.stderr) ?? raw,
