@@ -1,12 +1,13 @@
 /** Public npm package subpath proof. Run from the repository root with tsx. */
 import assert from 'node:assert/strict'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import Ajv2020 from 'ajv/dist/2020.js'
+import { HarnessClient } from '@deepseek-ai/dsh-sdk-client'
 import {
   BOOKING_READ_ACTION_KINDS,
   BOOKING_SURFACE_SCHEMA_VERSION,
@@ -55,6 +56,46 @@ const CLEAN_CONSUMER_INSTALL_TIMEOUT_MS = 300_000
 const DIAGNOSTIC_TAIL_BYTES = 256
 type Injection = 'nonzero' | 'timeout'
 type CommandResult = SpawnSyncReturns<string>
+
+/**
+ * Stage records shared by every generated core-boot script. Issue #511's
+ * failure exited 1 with zero stdout bytes, so a trailing console call is
+ * erased: records go straight to fd 2 as each stage is reached, and the
+ * failure record is flushed again from an uncaught-exception hook so an escape
+ * out of the script still names the stage that ran out of budget.
+ */
+const CORE_BOOT_DIAGNOSTIC_HELPERS = `const started = Date.now()
+let phase = 'before_initialize'
+let providerRequests = 0
+const failures = []
+let failureFlushed = false
+function record(line) { writeSync(2, line + '\\n') }
+function mark(next) {
+  phase = next
+  record('CORE_BOOT_STAGE ' + JSON.stringify({ phase: next, elapsedMs: Date.now() - started, providerRequests }))
+}
+function recordFailure(error) {
+  const safeNames = ['RequestTimeoutError', 'TransportClosedError', 'SdkProtocolError', 'AggregateError', 'Error']
+  failures.push({ phase, elapsedMs: Date.now() - started, providerRequests, error: safeNames.includes(error?.name) ? error.name : 'unknown' })
+  process.exitCode = 1
+}
+function flushFailure() {
+  if (failureFlushed || failures.length === 0) return
+  failureFlushed = true
+  record('CORE_BOOT_FAILURE ' + JSON.stringify(failures.slice(0, 3)))
+}
+process.on('uncaughtException', (error) => { recordFailure(error); flushFailure(); process.exit(1) })
+process.on('exit', flushFailure)`
+
+/** SDK defaults the clean consumer inherits: the initialize deadline plus the shutdown, stdin-EOF and SIGTERM windows. */
+const CLEAN_CONSUMER_BOOT_BUDGET_MS = { initialize: 10_000, shutdown: 1_000, eofGrace: 6_000, terminateGrace: 3_000 }
+
+/** A runtime that never answers the handshake and ignores stdin EOF and SIGTERM, so only SIGKILL ends it. */
+const UNRESPONSIVE_RUNTIME_SOURCE = `process.on('SIGTERM', () => {})
+process.stdin.resume()
+process.stderr.write('unresponsive-runtime-fixture\\n')
+setInterval(() => {}, 1_000)
+`
 
 class InstallFailure extends Error {}
 
@@ -133,6 +174,79 @@ setTimeout(() => {}, 5_000)
   })
 }
 
+function writeUnresponsiveRuntime(directory: string): string {
+  mkdirSync(directory, { recursive: true })
+  const fixture = join(directory, 'unresponsive-dsh-runtime.mjs')
+  writeFileSync(fixture, UNRESPONSIVE_RUNTIME_SOURCE)
+  return fixture
+}
+
+/**
+ * Measure the boot budget the clean consumer inherits, against an unresponsive
+ * runtime: `initialize` burns its whole deadline, then the SDK's own teardown
+ * ladder burns the shutdown, stdin-EOF and SIGTERM windows. #511's original
+ * failure took 20088ms, which is this composition plus process overhead, so
+ * pinning it keeps a future duration self-describing about the stage that ran
+ * out of budget.
+ */
+async function measureCleanConsumerBootBudgets(
+  workRoot: string,
+): Promise<{ error: string; initializeMs: number; closeMs: number; totalMs: number }> {
+  const fixture = writeUnresponsiveRuntime(workRoot)
+  const client = new HarnessClient({
+    profile: 'sdk-minimal',
+    dshBin: fixture,
+    dshHome: join(workRoot, 'budget-home'),
+    cwd: workRoot,
+    processCwd: workRoot,
+    env: { PATH: process.env.PATH },
+  })
+  const totalStartedAt = Date.now()
+  client.start()
+  const initializeStartedAt = Date.now()
+  let error = 'none'
+  try {
+    await client.initialize({ cwd: workRoot, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  } catch (cause) {
+    error = cause instanceof Error ? cause.name : 'unknown'
+  }
+  const initializeMs = Date.now() - initializeStartedAt
+  const closeStartedAt = Date.now()
+  await client.close()
+  return { error, initializeMs, closeMs: Date.now() - closeStartedAt, totalMs: Date.now() - totalStartedAt }
+}
+
+/**
+ * Negative control for the shape #511 could not diagnose: a core-boot script
+ * with no catch exits 1 with zero stdout bytes, which is how the original
+ * failure erased its own diagnostics. The stage record must survive it.
+ */
+function runUncaughtEscapeControl(workRoot: string): { result: CommandResult; elapsedMs: number } {
+  const directory = join(workRoot, 'escape-consumer')
+  const fixture = writeUnresponsiveRuntime(join(workRoot, 'escape-runtime'))
+  mkdirSync(join(directory, 'node_modules'), { recursive: true })
+  // The generated script lives outside this checkout, so give it the same
+  // scoped dependency tree a packed consumer would have installed.
+  symlinkSync(resolve(root, 'node_modules/@deepseek-ai'), join(directory, 'node_modules/@deepseek-ai'), 'junction')
+  const script = join(directory, 'boot-core-escape.mjs')
+  writeFileSync(script, `
+import { writeSync } from 'node:fs'
+import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
+${CORE_BOOT_DIAGNOSTIC_HELPERS}
+const harness = new DeepSeekHarness({ profile: 'sdk-minimal', dshBin: ${JSON.stringify(fixture)}, dshHome: ${JSON.stringify(join(workRoot, 'escape-home'))}, cwd: ${JSON.stringify(directory)}, processCwd: ${JSON.stringify(directory)}, env: { PATH: process.env.PATH }, initializeTimeoutMs: 300, shutdownTimeoutMs: 100, disposeEofGraceMs: 400, disposeGraceMs: 300 })
+mark('before_initialize')
+await harness.start()
+mark('initialized')
+await harness.run('boot core', { sessionId: 'package-proof-escape' })
+flushFailure()
+`)
+  const startedAt = Date.now()
+  return {
+    result: spawnSync(process.execPath, [script], { cwd: directory, encoding: 'utf8', timeout: 30_000 }),
+    elapsedMs: Date.now() - startedAt,
+  }
+}
+
 const injection = injectionMode()
 let consumerRoot: string | undefined
 let tarball: string | undefined
@@ -145,32 +259,28 @@ try {
   const consumerScript = join(packedConsumer, 'boot-core.mjs')
   writeFileSync(consumerScript, `
 import { createServer } from 'node:http'
+import { writeSync } from 'node:fs'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
-let providerRequests = 0
+${CORE_BOOT_DIAGNOSTIC_HELPERS}
 const server = createServer((req, res) => { req.resume(); req.on('end', () => { providerRequests++; res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end('data: ' + JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 0, model: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'booted' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) + '\\n\\ndata: [DONE]\\n\\n') }) })
 await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
 const address = server.address()
 const harness = new DeepSeekHarness({ profile: 'sdk-minimal', dshHome: '${consumerRoot}/dsh-home', cwd: '${consumerRoot}', processCwd: '${consumerRoot}', env: { PATH: process.env.PATH, DEEPSEEK_API_KEY: 'fixture', DEEPSEEK_BASE_URL: 'http://127.0.0.1:' + address.port + '/v1' } })
-const started = Date.now()
-let phase = 'initialize'
-const failures = []
-function recordFailure(error) {
-  const safeNames = ['RequestTimeoutError', 'TransportClosedError', 'SdkProtocolError', 'AggregateError', 'Error']
-  failures.push({ phase, elapsedMs: Date.now() - started, providerRequests, error: safeNames.includes(error?.name) ? error.name : 'unknown' })
-  process.exitCode = 1
-}
+mark('before_initialize')
 try {
   await harness.start()
-  phase = 'model_run'
+  mark('initialized')
   await harness.run('boot core', { sessionId: 'package-proof-core' })
+  mark('model_run_done')
 } catch (error) { recordFailure(error) }
 finally {
-  phase = 'cleanup'
+  mark('cleanup')
   try { await harness.close() } catch (error) { recordFailure(error) }
-  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+  try { await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())) } catch (error) { recordFailure(error) }
+  mark('cleanup_done')
 }
-if (failures.length) console.error('CORE_BOOT_FAILURE', JSON.stringify(failures))
-else console.log('PACKED CONSUMER DSH CORE BOOT: OK')
+flushFailure()
+if (failures.length === 0) console.log('PACKED CONSUMER DSH CORE BOOT: OK')
 `)
 
   const packStartedAt = Date.now()
@@ -209,6 +319,17 @@ else console.log('PACKED CONSUMER DSH CORE BOOT: OK')
     const consumerRunStartedAt = Date.now()
     const consumerRun = spawnSync(process.execPath, [consumerScript], { cwd: packedConsumer, encoding: 'utf8', timeout: 60_000 })
     assertCommandSucceeded('core-boot', consumerRunStartedAt, consumerRun)
+    const bootStages = (consumerRun.stderr ?? '')
+      .split('\n')
+      .filter((line) => line.startsWith('CORE_BOOT_STAGE '))
+      .map((line) => JSON.parse(line.slice('CORE_BOOT_STAGE '.length)) as { phase: string; elapsedMs: number; providerRequests: number })
+    assert.ok(
+      bootStages.some((stage) => stage.phase === 'initialized'),
+      `clean consumer must report the stage trace that names a cold-boot stall: ${sanitizedTail(consumerRun.stderr).tail}`,
+    )
+    console.log(
+      `BOOKING SURFACE PACKAGE PROOF: clean-consumer boot budget ${CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize}ms ${JSON.stringify(bootStages.map((stage) => [stage.phase, stage.elapsedMs]))} modelRequests=${bootStages.at(-1)?.providerRequests ?? 0}`,
+    )
     const sandboxPath = join(packedConsumer, 'node_modules/@deepseek-ai/dsh-sandbox')
     const sandboxBackup = join(consumerRoot, 'dsh-sandbox.backup')
     let sandboxRenamed = false
@@ -269,4 +390,44 @@ if (injection) {
   console.log(`BOOKING SURFACE PACKAGE PROOF: injected ${injection} diagnostics and owned cleanup verified`)
 } else {
   console.log('BOOKING SURFACE PACKAGE PROOF: compiled imports/types/schema/npm tarball list resolve')
+}
+
+if (!injection) {
+  const budgetRoot = mkdtempSync(join(tmpdir(), 'gotry-booking-boot-budget-'))
+  try {
+    const teardownBudget =
+      CLEAN_CONSUMER_BOOT_BUDGET_MS.shutdown + CLEAN_CONSUMER_BOOT_BUDGET_MS.eofGrace + CLEAN_CONSUMER_BOOT_BUDGET_MS.terminateGrace
+    const budgets = await measureCleanConsumerBootBudgets(budgetRoot)
+    assert.equal(
+      budgets.error,
+      'RequestTimeoutError',
+      `an unresponsive runtime must fail the handshake with a typed timeout: ${JSON.stringify(budgets)}`,
+    )
+    assert.ok(
+      budgets.initializeMs >= CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize && budgets.initializeMs < CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize + 5_000,
+      `initialize must burn its whole ${CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize}ms deadline, got ${budgets.initializeMs}ms`,
+    )
+    assert.ok(
+      budgets.closeMs >= teardownBudget - 2_000 && budgets.closeMs < teardownBudget + 5_000,
+      `teardown must burn the ${CLEAN_CONSUMER_BOOT_BUDGET_MS.shutdown}+${CLEAN_CONSUMER_BOOT_BUDGET_MS.eofGrace}+${CLEAN_CONSUMER_BOOT_BUDGET_MS.terminateGrace}ms windows, got ${budgets.closeMs}ms`,
+    )
+    assert.ok(
+      budgets.totalMs >= 19_000 && budgets.totalMs < budgets.initializeMs + budgets.closeMs + 1_500,
+      `the 20088ms failure shape is this composition with no unexplained segment: ${JSON.stringify(budgets)}`,
+    )
+    console.log(`BOOKING SURFACE PACKAGE PROOF: unresponsive-runtime boot ${JSON.stringify(budgets)}`)
+
+    const escape = runUncaughtEscapeControl(budgetRoot)
+    assert.equal(escape.result.status, 1, commandDiagnostic('uncaught-escape-control', escape.elapsedMs, escape.result))
+    assert.equal(escape.result.stdout, '', 'the undiagnosed failure shape writes zero stdout bytes')
+    const recordLine = (escape.result.stderr ?? '').split('\n').find((line) => line.startsWith('CORE_BOOT_FAILURE '))
+    assert.ok(recordLine, `the stage record must survive an uncaught escape: ${sanitizedTail(escape.result.stderr).tail}`)
+    const [record] = JSON.parse(recordLine.slice('CORE_BOOT_FAILURE '.length)) as Array<{ phase: string; error: string; providerRequests: number }>
+    assert.equal(record?.phase, 'before_initialize', 'the record names the stage that ran out of budget')
+    assert.equal(record?.error, 'RequestTimeoutError', 'the record classifies the SDK timeout')
+    assert.equal(record?.providerRequests, 0, 'a failed handshake reaches no provider request')
+    console.log(`BOOKING SURFACE PACKAGE PROOF: uncaught-escape control ${JSON.stringify({ status: escape.result.status, stdoutBytes: 0, record })}`)
+  } finally {
+    rmSync(budgetRoot, { recursive: true, force: true })
+  }
 }

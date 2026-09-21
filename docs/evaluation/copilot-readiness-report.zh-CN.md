@@ -3,7 +3,7 @@
 # Booking Copilot 就绪与进程清理测试报告
 
 > 定位：验证 #506、#508、#509 的运行时就绪、模型停滞计时和进程归属。
-> 状态：2026-09-19 本地验证通过，后续 #510、#511 仍保持打开。
+> 状态：2026-09-19 本地验证通过；#511 的归因见下文。
 > 上游：[架构](../architecture.zh-CN.md)、[#506](https://github.com/Danceiny/gotry/issues/506)、[#508](https://github.com/Danceiny/gotry/issues/508)、[#509](https://github.com/Danceiny/gotry/issues/509)。
 > 下游：Booking Copilot 维护者与 PR 审查者。
 
@@ -42,6 +42,20 @@ Node 22 完整日志 SHA-256：`d5c199d31b8427eb2fe35d61e9f9adfad6eaf7bcd35f1afb
 一次加入阶段记录的隔离复现通过。原始原因仍由 [#511](https://github.com/Danceiny/gotry/issues/511) 跟进；包验证已补充阶段、请求数和封闭错误分类，没有自动重试或延长期限。新增 worker 夹具也已明确排除在 npm 发布包之外。
 
 最终完整回归明确排除：真实 HotelByte UAT；外部 STAICLI 包验证（未提供产物）；七项可选 Agent Reach doctor 断言（未安装）；远端 hotelbyte-skills、FlyAI 航班／酒店、会话／登录与 Lavish 实时探针。当前回归入口不再运行历史 Python oracle。
+
+## 干净消费端启动超时的归因（#511）
+
+原始失败只留下四项可观测特征：退出码 1、用时 20088 ms、stdout 0 字节、stderr 731 字节；日志正文已丢失，原始环境未再复现。这四项足以定位阶段。
+
+- 退出码 1 且 stdout 0 字节说明脚本没有走到成功分支，错误以未捕获形式逃逸；外层 `spawnSync` 上限是 60000 ms，因此不是被外层超时击杀。
+- 干净消费端不覆盖任何 SDK 计时参数，继承 SDK 默认预算：initialize 期限 10000 ms、shutdown 1000 ms、stdin EOF 宽限 6000 ms、SIGTERM 宽限 3000 ms（`@deepseek-ai/dsh-sdk-client` 0.1.5-rc.1 的 `lib/index.js` 第 185／537／542／543 行）。`DeepSeekHarness.start()` 在 initialize 失败时会先跑完整条关闭阶梯，再重新抛出。
+- 四段之和为 20000 ms。用不响应握手的夹具实测该组合，三次得到 `initializeMs=10001..10003`、`closeMs=10010..10038`、`totalMs=20013..20040`，与观测的 20088 ms 相差 48–75 ms。
+
+因此原始失败发生在 initialize 握手：运行时在 10000 ms 内没有应答，关闭阶梯随后再消耗约 10000 ms。另一种解释需要握手完成后的某一段恰好再耗去约 9000 ms；当时的脚本还没有模型请求计数，事后无法区分，新增诊断现在可以区分（请求数为 0 表示握手从未完成）。生产端口已把三段宽限压到各 500 ms，并配一次性预热进程（`ts/src/booking-surface/dsh-planner.ts`）；包验证没有预热，沿用默认值。
+
+同一台机器上，打包干净消费端的正常冷启动在预算内用 589／958／1093 ms 完成握手，余量约 9–17 倍。因此「期限对正常冷启动偏紧」不成立，原始失败更像运行时被长时间挂起或饥饿：该次回归与其他用例并行，且是首个完整回归。原始 stderr 已丢失，无法进一步区分。
+
+诊断保留：消费端脚本现在每到一个阶段就把记录直接写入 fd 2，并在未捕获异常钩子里补写失败记录，因此「退出码 1、stdout 0 字节」这种形态不再吞掉阶段信息；包验证同时打印正常启动的各阶段耗时，把上述默认预算组合固定为断言，并保留一条未捕获逃逸的负向对照。原始原因仍由 [#511](https://github.com/Danceiny/gotry/issues/511) 跟进。
 
 ## 场景结果
 

@@ -3,7 +3,7 @@
 # Booking Copilot readiness and process cleanup report
 
 > Role: verify runtime readiness, provider-stall timing, and process ownership for issues #506, #508, and #509.
-> Status: passed locally on 2026-09-19; follow-ups #510 and #511 remain open.
+> Status: passed locally on 2026-09-19; the #511 attribution follows below.
 > Upstream: [architecture](../architecture.md), [#506](https://github.com/Danceiny/gotry/issues/506), [#508](https://github.com/Danceiny/gotry/issues/508), [#509](https://github.com/Danceiny/gotry/issues/509).
 > Downstream: Booking Copilot maintainers and PR reviewers.
 
@@ -42,6 +42,20 @@ An earlier full run was deliberately stopped after the independent warmer findin
 One isolated phase-instrumented reproduction passed. The original cause remains unresolved in [#511](https://github.com/Danceiny/gotry/issues/511); the package proof now records phase, request count and a closed error class without retries or a longer timeout. The new worker fixture is explicitly excluded from the npm package.
 
 Explicit final-run exclusions: live HotelByte UAT; external STAICLI tarball proof (artifact not supplied); seven optional Agent Reach doctor assertions (not installed); remote hotelbyte-skills, FlyAI flight/hotel, session/login, and Lavish live probes. The regression entry no longer runs the historical Python oracle.
+
+## Clean-consumer boot timeout attribution (#511)
+
+The original failure left four observable facts: exit 1, 20088 ms, 0 stdout bytes, 731 stderr bytes. The log body is lost and the original environment never reproduced. Those four facts are enough to localize the stage.
+
+- Exit 1 with zero stdout bytes means the script never reached its success branch and the error escaped uncaught; the outer `spawnSync` bound is 60000 ms, so the outer timeout did not kill it.
+- The clean consumer overrides no SDK timing option, so it inherits the SDK defaults: a 10000 ms initialize deadline, a 1000 ms shutdown, a 6000 ms stdin-EOF grace and a 3000 ms SIGTERM grace (`@deepseek-ai/dsh-sdk-client` 0.1.5-rc.1 `lib/index.js` lines 185, 537, 542, 543). `DeepSeekHarness.start()` runs the whole teardown ladder before rethrowing an initialize failure.
+- The four segments sum to 20000 ms. Measured three times against a runtime that never answers the handshake: `initializeMs=10001..10003`, `closeMs=10010..10038`, `totalMs=20013..20040` — within 48-75 ms of the observed 20088 ms.
+
+So the original failure happened at the initialize handshake: the runtime did not answer within 10000 ms, and the teardown ladder then burned roughly another 10000 ms. The alternative reading needs a post-handshake segment to consume about 9000 ms by coincidence; the script had no model-request counter then, so it cannot be told apart after the fact, while the new diagnostics can tell them apart now (a zero request count means the handshake never completed). Production ports clamp the three graces to 500 ms each and run a one-shot warmup process (`ts/src/booking-surface/dsh-planner.ts`); the package proof has no warmup and keeps the defaults.
+
+On this machine a packed clean consumer completes the handshake in 589, 958 and 1093 ms against the same budget, roughly a 9-17x margin. So "the deadline is too tight for a normal cold boot" does not hold; the original failure looks like a runtime stalled or starved for a long time — that regression ran in parallel with other suites and was the first full run. The original stderr is lost, so nothing further separates the two.
+
+What is retained: the consumer script now writes a record straight to fd 2 at every stage and re-flushes the failure record from an uncaught-exception hook, so the "exit 1, zero stdout bytes" shape can no longer swallow the stage; the package proof also prints the stage timings of a normal boot, pins the default budget composition as an assertion, and keeps a negative control for an uncaught escape. [#511](https://github.com/Danceiny/gotry/issues/511) still tracks the original cause.
 
 ## Scenario results
 
