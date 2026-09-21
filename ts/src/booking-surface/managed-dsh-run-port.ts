@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
-import type { DshPlannerRunPort, DshPlannerRunResult } from './dsh-planner.ts'
+import type { DshBootObservation, DshPlannerRunPort, DshPlannerRunResult } from './dsh-planner.ts'
 import {
   ManagedDshCleanupError,
   managedDshGroupIsQuiescent,
@@ -91,6 +91,17 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   private readonly harnessOptions: Record<string, unknown>
   private readonly cleanupDeadlineMs: number
   private readonly groupObserver: typeof snapshotManagedDshGroup
+  private booted: DshBootObservation | undefined
+
+  /**
+   * What the most recent worker request paid for the initialize handshake: the
+   * measured wall time when that request started the runtime, and zero when an
+   * earlier request in the same worker already had. Read by the planner to keep
+   * our own boot cost separate from the provider budget it must not consume.
+   */
+  bootObservation(): DshBootObservation | undefined {
+    return this.booted
+  }
 
   private consume(chunk: string): void {
     this.inputBuffer += chunk
@@ -99,7 +110,7 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
       if (newline < 0) return
       const line = this.inputBuffer.slice(0, newline); this.inputBuffer = this.inputBuffer.slice(newline + 1)
       try {
-        const message = JSON.parse(line) as { id: number; ok?: boolean; progress?: boolean; result?: DshPlannerRunResult; error?: string; lifecycle?: string; workerPid?: number; parentPid?: number }
+        const message = JSON.parse(line) as { id: number; ok?: boolean; progress?: boolean; result?: DshPlannerRunResult; error?: string; lifecycle?: string; workerPid?: number; parentPid?: number; boot?: DshBootObservation }
         if (message.lifecycle === 'worker_started') {
           if (this.workerPid === null && Number.isSafeInteger(message.workerPid) && message.workerPid! > 0 && message.parentPid === process.pid) {
             this.workerPid = message.workerPid!
@@ -114,6 +125,13 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
         if (message.progress) {
           this.pending.get(message.id)?.progress?.()
           continue
+        }
+        // A boot checkpoint carries the initialize handshake the worker already
+        // completed; the terminal reply for the same request still follows, and
+        // a request killed after booting has left this measurement behind.
+        if (message.boot) {
+          this.booted = message.boot
+          if (message.ok === undefined) continue
         }
         const waiter = this.pending.get(message.id); if (!waiter) continue
         this.pending.delete(message.id)

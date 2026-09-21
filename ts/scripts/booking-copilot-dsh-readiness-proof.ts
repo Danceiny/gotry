@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createDshEmbeddedBookingPlanner, createRealRunPort, type DshPlannerRunPort } from '../src/booking-surface/dsh-planner.ts'
+import { createDshEmbeddedBookingPlanner, createRealRunPort, type DshPlannerRunPort, type DshPlannerTurnMetric } from '../src/booking-surface/dsh-planner.ts'
 import type { BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
 import type { BookingCopilotTurn, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
 
@@ -88,8 +88,21 @@ try {
   await bounded(warming, 10_000, 'runtime initialize did not complete')
   assert.equal(requests.length, 0, 'completed warmup still makes zero model calls')
   assert.ok(alive(readyPids.pid) && alive(readyPids.workerPid), 'both owned processes are alive after initialize')
+  // Our own boot bill must stay readable next to the provider budget it shares
+  // a wire window with, so the port reports what the handshake actually cost.
+  const readyBoot = port.bootObservation?.()
+  assert.ok(readyBoot, 'the real port must observe its own initialize handshake')
+  const bootMsAtFirstTurn = readyBoot.initializeMs
+  assert.equal(readyBoot.mode, 'started', 'the first request in a fresh worker performs the handshake')
+  assert.ok(bootMsAtFirstTurn > 0, `real initialize cost must be measured: ${JSON.stringify(readyBoot)}`)
+  evidence = { ...readyPids, providerRequests: requests.length, boot: readyBoot }
   const readyPort = port
-  planner = await createDshEmbeddedBookingPlanner({ runPortFactory: () => readyPort, turnTimeoutMs: 1_500 })
+  const readyMetrics: DshPlannerTurnMetric[] = []
+  planner = await createDshEmbeddedBookingPlanner({
+    runPortFactory: () => readyPort,
+    turnTimeoutMs: 1_500,
+    onMetric: (metric) => readyMetrics.push(metric),
+  })
   phase = 'provider_stall'
   const started = Date.now()
   const resultPromise = planner.plannerFactory(task).next({ turn, task })
@@ -101,12 +114,16 @@ try {
   const elapsedMs = Date.now() - started
   assert.equal(result[0]?.kind === 'error' && result[0].error.code, 'PLANNER_PROVIDER_TIMEOUT')
   assert.ok(elapsedMs < 3_000, `provider deadline remains bounded: ${elapsedMs}ms`)
+  const stalledTurnMetric = readyMetrics[0]
+  assert.ok(stalledTurnMetric, 'the provider-stall turn must report its own metric')
+  assert.equal(stalledTurnMetric.bootMode, 'reused', 'a turn on an initialized port reuses the runtime instead of starting one')
+  assert.equal(stalledTurnMetric.bootMs, 0, 'a reused runtime contributes no boot time to the turn')
   phase = 'ready_cleanup'
   const cleanupAt = Date.now()
   await bounded(planner.close(), 3_000, 'ready tree cleanup exceeded budget')
   planner = undefined; port = undefined
   assert.ok(!alive(readyPids.pid) && !alive(readyPids.workerPid), 'ready runtime and worker both reaped')
-  console.log('DSH READINESS READY:', JSON.stringify({ startupDelayMs: 1800, warmupProviderCalls: 0, providerRequests: requests.length, providerObservedMs, elapsedMs, cleanupMs: Date.now() - cleanupAt, treeReaped: true }))
+  console.log('DSH READINESS READY:', JSON.stringify({ startupDelayMs: 1800, warmupProviderCalls: 0, providerRequests: requests.length, firstTurnBootMs: bootMsAtFirstTurn, reusedTurnBootMs: stalledTurnMetric.bootMs, providerObservedMs, elapsedMs, cleanupMs: Date.now() - cleanupAt, treeReaped: true }))
 
   const cold = gate('cold')
   phase = 'cold_start_timeout'
@@ -141,6 +158,31 @@ try {
   port = undefined
   assert.ok(!alive(failed.pid) && !alive(failed.workerPid), 'failed runtime and worker both reaped')
   console.log('DSH READINESS FAILURE CLASSIFICATION:', JSON.stringify({ exitCode: failed.exitCode, signal: failed.signal, error: 'HARNESS_START_FAILED', rawStderrExposed: false, providerRequests: 0, treeReaped: true }))
+
+  // Opt-in distribution run: boot fresh runtimes back to back so the local
+  // initialize budget can be set from measured percentiles instead of a guess.
+  // Each sample is a new worker plus a new dsh home, so the page cache is the
+  // only warm input; the numbers are observations, not a service guarantee.
+  const bootSampleCount = Number(process.env.GOTRY_BOOT_SAMPLES ?? 0)
+  if (Number.isSafeInteger(bootSampleCount) && bootSampleCount > 0) {
+    phase = 'boot_sampling'
+    const samples: number[] = []
+    for (let index = 1; index <= bootSampleCount; index += 1) {
+      const samplePort = await createRealRunPort({ stateRoot: root, env, maxTokens: 512 })
+      try {
+        await bounded(samplePort.warmup!(), 30_000, `boot sample ${index} initialize did not complete`)
+        const observation = samplePort.bootObservation?.()
+        assert.ok(observation, `boot sample ${index} must observe its initialize handshake`)
+        assert.equal(observation.mode, 'started', `boot sample ${index} boots a fresh worker`)
+        samples.push(observation.initializeMs)
+      } finally {
+        await bounded(samplePort.close(), 10_000, `boot sample ${index} cleanup exceeded budget`)
+      }
+    }
+    const sorted = [...samples].sort((left, right) => left - right)
+    const percentile = (fraction: number): number => sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))]!
+    console.log('DSH BOOT SAMPLES:', JSON.stringify({ count: sorted.length, minMs: sorted[0], p50Ms: percentile(0.5), p95Ms: percentile(0.95), maxMs: sorted.at(-1) }))
+  }
 } catch (error) {
   console.error('DSH READINESS FAILURE:', JSON.stringify({ phase, ...evidence, providerRequests: requests.length, error: error instanceof Error ? error.message : 'unknown' }))
   throw error

@@ -3,12 +3,34 @@ import { DeepSeekHarness, type DeepSeekHarnessOptions } from '@deepseek-ai/dsh-s
 
 type Request = { id: number; prompt?: string; sessionId?: string; warmup?: boolean; options?: Record<string, unknown> }
 
+/**
+ * What one worker request paid for the SDK initialize handshake: the wall time
+ * of the handshake when this request performed it, and zero when the harness
+ * was already initialized. Our own process boot has to stay cheap next to the
+ * provider budget, so it is measured at the seam that owns it.
+ */
+type BootObservation = { initializeMs: number; mode: 'started' | 'reused' }
+
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity })
 let harness: DeepSeekHarness | undefined
+let booted: { initializeMs: number; mode: 'started' } | undefined
 let chain = Promise.resolve()
 
 function reply(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`)
+}
+
+/**
+ * Start the runtime once and report what this request paid for it. `start()` is
+ * memoized by the SDK, so awaiting it before the first run neither spawns twice
+ * nor changes the classification a failed start produces.
+ */
+async function startTimed(): Promise<BootObservation> {
+  if (booted) return { initializeMs: 0, mode: 'reused' }
+  const startedAt = Date.now()
+  await harness!.start()
+  booted = { initializeMs: Date.now() - startedAt, mode: 'started' }
+  return booted
 }
 
 // The public subprocess handle deliberately hides its PID. This private
@@ -20,8 +42,12 @@ async function handle(request: Request): Promise<void> {
     harness ??= new DeepSeekHarness((request.options ?? {}) as DeepSeekHarnessOptions)
     // Construction is lazy. Only start() spawns the runtime and awaits its
     // initialize handshake, including the profile, patches and plugins.
+    const boot = await startTimed()
+    // The handshake is known before the run can stall or be killed, so it is
+    // reported as its own checkpoint instead of only on a terminal reply: a
+    // cold boot that then times out must still show what the boot cost.
+    process.stdout.write(`${JSON.stringify({ id: request.id, boot })}\n`)
     if (request.warmup) {
-      await harness.start()
       reply({ id: request.id, ok: true })
       return
     }
