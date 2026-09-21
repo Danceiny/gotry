@@ -26,6 +26,9 @@ export interface ManagedDshRunPortOptions {
   [key: string]: unknown
 }
 
+/** The only worker failure classifications allowed to cross the process boundary. */
+const WORKER_FAILURE_CODES = new Set(['HARNESS_BOOT_TIMEOUT', 'HARNESS_START_FAILED', 'HARNESS_RUN_FAILED'])
+
 const requireFromModule = createRequire(import.meta.url)
 
 function workerLaunch(path: string): readonly string[] {
@@ -136,7 +139,10 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
         const waiter = this.pending.get(message.id); if (!waiter) continue
         this.pending.delete(message.id)
         if (message.ok) waiter.ok(message.result)
-        else waiter.fail(new Error(message.error === 'HARNESS_START_FAILED' ? message.error : 'HARNESS_RUN_FAILED'))
+        // Worker stdout is a process boundary: an arbitrary payload must never
+        // become the error the planner classifies on.
+        else if (typeof message.error === 'string' && WORKER_FAILURE_CODES.has(message.error)) waiter.fail(new Error(message.error))
+        else waiter.fail(new Error('HARNESS_RUN_FAILED'))
       } catch (error) { this.failPending(error instanceof Error ? error : new Error(String(error))) }
     }
   }

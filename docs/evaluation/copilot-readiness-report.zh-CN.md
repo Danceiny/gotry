@@ -57,12 +57,23 @@ Node 22 完整日志 SHA-256：`d5c199d31b8427eb2fe35d61e9f9adfad6eaf7bcd35f1afb
 
 诊断保留：消费端脚本现在每到一个阶段就把记录直接写入 fd 2，并在未捕获异常钩子里补写失败记录，因此「退出码 1、stdout 0 字节」这种形态不再吞掉阶段信息；包验证同时打印正常启动的各阶段耗时，把上述默认预算组合固定为断言，并保留一条未捕获逃逸的负向对照。原始原因仍由 [#511](https://github.com/Danceiny/gotry/issues/511) 跟进。
 
+## 本地启动预算与模型预算拆分（#554）
+
+创始人 2026-09-21 的裁定是：只有 LLM 调用才可以容忍秒级延迟——我们自己的进程启动与回收必须按自己的口径设限，不能沿用模型侧的宽松兜底。[#554](https://github.com/Danceiny/gotry/issues/554) 先做了埋点取数：首个握手在冷页缓存下为 2213–2386 ms；页缓存已热时，20 个全新 worker 的分布为 min 344／p50 385／p95 505／max 505 ms。
+
+据此落地两项改动，均未触碰模型侧预算（`turnTimeoutMs` 12000 ms、`softStallBudgetMs` 为其三分之二）。
+
+- **显式的启动期限**：生产路径的任务端口与预热端口改为传入 `initializeTimeoutMs = PLANNER_BOOT_BUDGET_MS`（5000 ms，`ts/src/booking-surface/dsh-planner.ts`），不再继承 SDK 的 10000 ms 模型侧兜底。5000 ms 对最差冷启动观测留有 2 倍以上余量，对热态 p95 约 10 倍。
+- **类型化的启动失败**：从未完成握手的请求不再报 `PLANNER_PROVIDER_TIMEOUT`——那个码声称是模型停滞，而实际一个 provider 调用都没发生。worker 按自己负责的阶段分类（`HARNESS_BOOT_TIMEOUT` 与 `HARNESS_START_FAILED`／`HARNESS_RUN_FAILED`），端口只放行这一闭集跨进程边界，planner 返回 `PLANNER_BOOT_TIMEOUT` 并补齐 `boot_timeout` 度量结果。
+
+改动后实测（对着一个从不回应握手的夹具）：轮次预算放宽到 20000 ms，使 13333 ms 的软停滞预算宽于启动预算，该轮在 **6055 ms** 收敛——启动期限先到，关闭阶梯再加约 1000 ms，全程零 provider 请求。若仍走 SDK 兜底，同一用例会落在 11 s 附近，因此该上限是真实生效而非只写在代码里。1500 ms 轮次预算下的冷启动用例现在报 `PLANNER_BOOT_TIMEOUT`，不再报模型侧的错误码。5000 ms 是**上限而非实测耗时**：实测握手为 0.34–2.4 s。
+
 ## 场景结果
 
 | 场景 | 必要证据与实际结果 |
 |---|---|
 | 同一 port 就绪与模型停滞 | 阻塞真实 CLI 启动 1800 ms，预热持续等待且无模型调用。初始化后，请求包含 `booking_run_search`，到达本地 SSE，并在 3000 ms 内返回 `PLANNER_PROVIDER_TIMEOUT`。关闭后 worker 和 CLI 均退出。 |
-| 冷启动 | 保持启动门阻塞。原有 1500 ms 轮次预算在零模型调用时返回明确类型的超时，两进程均回收。 |
+| 冷启动 | 保持启动门阻塞。原有 1500 ms 轮次预算在零模型调用时返回明确类型的**启动**超时（`PLANNER_BOOT_TIMEOUT`，因为握手从未完成），两进程均回收。另有第二组用例把轮次预算放宽到 20000 ms，使得只有 5000 ms 启动期限能结算它，并断言确实如此。 |
 | 初始化失败 | 可控 CLI 退出码 23、信号 null；预热严格返回 `HARNESS_START_FAILED`。返回错误不含私有夹具 stderr，两进程均回收。 |
 | worker 退出与调用方关闭 | 每个场景启动两个 run 和一个 warmup，等 worker 确认收到三条请求，要求所有 Promise 在 1500 ms 内拒绝。重复关闭返回同一 Promise，关闭也回收忽略 TERM 的孙进程。 |
 | 默认后台预热 | 启用默认预热并阻塞两个 CLI 启动门，关闭有界、拒绝任务预热、回收两棵 worker／CLI 进程树，再清理隔离 scratch；重复关闭返回同一 Promise，模型请求数为零。 |

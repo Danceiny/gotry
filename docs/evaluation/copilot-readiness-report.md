@@ -57,12 +57,23 @@ On this machine a packed clean consumer completes the handshake in 589, 958 and 
 
 What is retained: the consumer script now writes a record straight to fd 2 at every stage and re-flushes the failure record from an uncaught-exception hook, so the "exit 1, zero stdout bytes" shape can no longer swallow the stage; the package proof also prints the stage timings of a normal boot, pins the default budget composition as an assertion, and keeps a negative control for an uncaught escape. [#511](https://github.com/Danceiny/gotry/issues/511) still tracks the original cause.
 
+## Local boot budget split from the provider budget (#554)
+
+The founder ruling of 2026-09-21 is that only an LLM call may tolerate seconds of latency: our own process start and teardown must be bounded on our own terms and must not inherit a model-side fallback. [#554](https://github.com/Danceiny/gotry/issues/554) instrumented the handshake first; the measured distribution is 2213-2386 ms for the first handshake on a cold page cache and, across 20 fresh workers with a warm page cache, min 344 / p50 385 / p95 505 / max 505 ms.
+
+Two changes follow from that measurement. Neither touches the model-side budgets (`turnTimeoutMs` 12000 ms, `softStallBudgetMs` two thirds of it).
+
+- **An explicit boot deadline.** Production task and warmer ports now pass `initializeTimeoutMs = PLANNER_BOOT_BUDGET_MS` (5000 ms, `ts/src/booking-surface/dsh-planner.ts`) instead of inheriting the SDK's 10000 ms model-side fallback. 5000 ms keeps more than 2x headroom over the worst cold observation and about 10x over the hot p95.
+- **A typed boot failure.** A handshake that never completes is no longer reported as `PLANNER_PROVIDER_TIMEOUT`, which claimed a provider stall when no provider call had been made. The worker classifies the phase it owns (`HARNESS_BOOT_TIMEOUT` versus `HARNESS_START_FAILED` / `HARNESS_RUN_FAILED`), the port lets only that closed set cross the process boundary, and the planner returns `PLANNER_BOOT_TIMEOUT` with its own `boot_timeout` metric outcome.
+
+Measured after the change against a runtime that never answers the handshake: with a 20000 ms turn budget, so the 13333 ms soft-stall budget is wider than the boot budget, the turn settles in **6055 ms** — the boot deadline fired, the teardown ladder added about 1000 ms, and zero provider requests were made. Under the SDK fallback the same case would land near 11 s, so the bound is live rather than merely declared. The cold-start case on a 1500 ms turn budget now reports `PLANNER_BOOT_TIMEOUT` instead of the provider code. The 5000 ms value is **a cap, not an observed cost**: observed handshakes are 0.34-2.4 s.
+
 ## Scenario results
 
 | Scenario | Required evidence and observed result |
 |---|---|
 | Same-port readiness and provider stall | Hold real CLI startup for 1800 ms; warmup remains pending and consumes zero model calls. After initialize, the request contains `booking_run_search`, reaches local SSE, and returns `PLANNER_PROVIDER_TIMEOUT` within 3000 ms. Worker and CLI exit on close. |
-| Cold startup | Keep startup blocked. The unchanged 1500 ms turn budget returns a typed timeout before any provider call; both processes are reaped. |
+| Cold startup | Keep startup blocked. The unchanged 1500 ms turn budget returns a typed **boot** timeout (`PLANNER_BOOT_TIMEOUT`, because the handshake never completed) before any provider call; both processes are reaped. A second case widens the turn budget to 20000 ms so only the 5000 ms boot deadline can settle it, and asserts that it does. |
 | Initialize failure | Controlled CLI exit 23, signal null; warmup rejects with exactly `HARNESS_START_FAILED`. Private fixture stderr is absent from the returned error; both processes are reaped. |
 | Worker exit and caller close | Each case starts two runs and one warmup, waits until the worker has received all three, and requires all promises to reject within 1500 ms. Repeated close returns the same promise; close also reaps a TERM-resistant grandchild. |
 | Default background warmer | With default warmup enabled and both CLI startup gates blocked, close is bounded, rejects the task warmup, reaps both worker/CLI trees, and removes isolated scratch; repeated close returns the same promise; zero provider requests. |
