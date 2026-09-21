@@ -2549,6 +2549,65 @@ assert.ok((timeoutMetrics[0]?.elapsedMs ?? 999) < 250, 'timeout latency metric r
 assert.equal(timeoutPortClosed, 1, 'timing out a task closes its owned run port')
 await timeoutPlanner.close()
 
+// A port that reports its own boot but never observed a completed handshake is
+// stuck starting OUR runtime: no provider call happened, so the turn must not
+// claim a provider timeout. The never-resolving port asserted just above
+// deliberately exposes no boot observation at all, which is why it keeps the
+// provider-timeout classification.
+const bootTimeoutTask = {
+  ...task,
+  taskId: 'task-dsh-boot-timeout',
+  lastTurnId: 'dsh-turn-boot-timeout',
+  contextRef: 'ctx-dsh-boot-timeout',
+  workspaceSnapshot: { ...workspace, contextRef: 'ctx-dsh-boot-timeout' },
+}
+const bootTimeoutTurn = {
+  ...plannerTimeoutTurn,
+  taskId: bootTimeoutTask.taskId,
+  turnId: bootTimeoutTask.lastTurnId!,
+  workspace: bootTimeoutTask.workspaceSnapshot!,
+}
+let bootTimeoutPortClosed = 0
+const bootMetrics: import('../src/booking-surface/dsh-planner.ts').DshPlannerTurnMetric[] = []
+const bootTimeoutPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => ({
+    run: () => new Promise<DshPlannerRunResult>((_resolve) => undefined),
+    async close() { bootTimeoutPortClosed += 1 },
+    bootObservation: () => undefined,
+  }),
+  turnTimeoutMs: 25,
+  onMetric: (metric) => bootMetrics.push(metric),
+} as DshEmbeddedBookingPlannerOptions & { turnTimeoutMs: number })
+const bootTimeoutResult = await resolveWithin(
+  bootTimeoutPlanner.plannerFactory(bootTimeoutTask).next({ task: bootTimeoutTask, turn: bootTimeoutTurn }),
+  250,
+)
+assert.notDeepEqual(bootTimeoutResult, { testDeadline: true }, 'a never-started runtime stays inside the turn deadline')
+assert.equal((bootTimeoutResult as any)[0]?.error?.code, 'PLANNER_BOOT_TIMEOUT', 'a stall before the handshake completes is a local boot timeout')
+assert.equal(bootMetrics[0]?.outcome, 'boot_timeout', 'a boot timeout reports its own metric outcome')
+assert.equal(bootTimeoutPortClosed, 1, 'a boot timeout closes its owned run port')
+await bootTimeoutPlanner.close()
+
+// The worker-side handshake deadline crosses the port as a closed code; it must
+// reach the same typed error instead of degrading into an unstructured throw.
+let bootRejectPortClosed = 0
+const bootRejectPlanner = await createDshEmbeddedBookingPlanner({
+  runPortFactory: () => ({
+    run: () => Promise.reject(new Error('HARNESS_BOOT_TIMEOUT')),
+    async close() { bootRejectPortClosed += 1 },
+    bootObservation: () => undefined,
+  }),
+  turnTimeoutMs: 1_000,
+} as DshEmbeddedBookingPlannerOptions & { turnTimeoutMs: number })
+const bootRejectResult = await resolveWithin(
+  bootRejectPlanner.plannerFactory(bootTimeoutTask).next({ task: bootTimeoutTask, turn: bootTimeoutTurn }),
+  250,
+)
+assert.notDeepEqual(bootRejectResult, { testDeadline: true }, 'an expired handshake settles inside the turn deadline')
+assert.equal((bootRejectResult as any)[0]?.error?.code, 'PLANNER_BOOT_TIMEOUT', 'an expired local handshake is typed as a boot timeout')
+assert.equal(bootRejectPortClosed, 1, 'an expired handshake closes its owned run port')
+await bootRejectPlanner.close()
+
 let taskAClosed = 0
 let taskARuns = 0
 let taskBRuns = 0

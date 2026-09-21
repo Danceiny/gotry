@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createDshEmbeddedBookingPlanner, createRealRunPort, type DshPlannerRunPort, type DshPlannerTurnMetric } from '../src/booking-surface/dsh-planner.ts'
+import { createDshEmbeddedBookingPlanner, createRealRunPort, PLANNER_BOOT_BUDGET_MS, type DshPlannerRunPort, type DshPlannerTurnMetric } from '../src/booking-surface/dsh-planner.ts'
 import type { BookingCopilotTaskState } from '../src/booking-surface/runtime.ts'
 import type { BookingCopilotTurn, BookingWorkspaceSnapshot } from '../src/booking-surface/contracts.ts'
 
@@ -137,12 +137,37 @@ try {
   evidence = { ...coldPids, providerRequests: requests.length }
   const coldResult = await bounded(coldResultPromise, 3_000, 'cold-start timeout did not settle')
   const coldElapsedMs = Date.now() - coldAt
-  assert.equal(coldResult[0]?.kind === 'error' && coldResult[0].error.code, 'PLANNER_PROVIDER_TIMEOUT')
+  // The handshake never completed, so no provider call happened: the failure is
+  // ours to own and is typed as a local boot timeout, not a provider stall.
+  assert.equal(coldResult[0]?.kind === 'error' && coldResult[0].error.code, 'PLANNER_BOOT_TIMEOUT')
   assert.equal(requests.length, 1, 'cold blocked startup reaches no provider')
   await bounded(planner.close(), 3_000, 'cold tree cleanup exceeded budget')
   planner = undefined; port = undefined
   assert.ok(!alive(coldPids.pid) && !alive(coldPids.workerPid), 'cold runtime and worker both reaped')
-  console.log('DSH READINESS COLD:', JSON.stringify({ providerRequests: 0, elapsedMs: coldElapsedMs, treeReaped: true }))
+  console.log('DSH READINESS COLD:', JSON.stringify({ providerRequests: 0, elapsedMs: coldElapsedMs, code: 'PLANNER_BOOT_TIMEOUT', treeReaped: true }))
+
+  // The local boot budget must govern its own phase. With a model-stall budget
+  // wider than the boot budget, only the explicit initialize deadline can
+  // settle this turn inside the asserted window; the SDK's 10s fallback or the
+  // 13.3s stall budget would both land later and fail the bound below.
+  phase = 'boot_budget_bound'
+  const budgetGate = gate('boot-budget')
+  port = await createRealRunPort({ stateRoot: root, env, dshBin: budgetGate.dshBin, maxTokens: 512 })
+  planner = await createDshEmbeddedBookingPlanner({ runPortFactory: () => port!, turnTimeoutMs: 20_000 })
+  const budgetAt = Date.now()
+  const budgetResultPromise = planner.plannerFactory(task).next({ turn, task })
+  await until(() => existsSync(budgetGate.marker), 3_000, 'boot-budget runtime never entered startup gate')
+  const budgetPids = budgetGate.pids()
+  const budgetResult = await bounded(budgetResultPromise, 15_000, 'boot budget did not settle the turn')
+  const budgetElapsedMs = Date.now() - budgetAt
+  assert.equal(budgetResult[0]?.kind === 'error' && budgetResult[0].error.code, 'PLANNER_BOOT_TIMEOUT')
+  assert.ok(budgetElapsedMs >= PLANNER_BOOT_BUDGET_MS, `the boot budget must be consumed before it fires (${budgetElapsedMs}ms)`)
+  assert.ok(budgetElapsedMs < PLANNER_BOOT_BUDGET_MS + 6_000, `the local boot budget, not the 13.3s stall budget, must settle this turn (${budgetElapsedMs}ms)`)
+  assert.equal(requests.length, 1, 'a blocked handshake makes no provider request')
+  await bounded(planner.close(), 3_000, 'boot-budget tree cleanup exceeded budget')
+  planner = undefined; port = undefined
+  assert.ok(!alive(budgetPids.pid) && !alive(budgetPids.workerPid), 'boot-budget runtime and worker both reaped')
+  console.log('DSH READINESS BOOT BUDGET:', JSON.stringify({ budgetMs: PLANNER_BOOT_BUDGET_MS, elapsedMs: budgetElapsedMs, code: 'PLANNER_BOOT_TIMEOUT', providerRequests: 0, treeReaped: true }))
 
   phase = 'initialize_failure'
   const failedMarker = join(root, 'failed-start.json')

@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline'
-import { DeepSeekHarness, type DeepSeekHarnessOptions } from '@deepseek-ai/dsh-sdk-client'
+import { DeepSeekHarness, RequestTimeoutError, type DeepSeekHarnessOptions } from '@deepseek-ai/dsh-sdk-client'
 
 type Request = { id: number; prompt?: string; sessionId?: string; warmup?: boolean; options?: Record<string, unknown> }
 
@@ -10,6 +10,27 @@ type Request = { id: number; prompt?: string; sessionId?: string; warmup?: boole
  * provider budget, so it is measured at the seam that owns it.
  */
 type BootObservation = { initializeMs: number; mode: 'started' | 'reused' }
+
+/**
+ * The initialize handshake carries its own deadline (the planner sets it), so
+ * an expiry here is a statement about our own runtime, not about the provider.
+ * It is typed apart from a hard start failure so a caller can never read a
+ * local boot timeout as a model stall.
+ */
+function isHandshakeTimeout(error: unknown): boolean {
+  if (error instanceof RequestTimeoutError) return true
+  return error instanceof AggregateError && error.errors.some(isHandshakeTimeout)
+}
+
+/**
+ * Closed classification for a failed request. While no handshake has completed,
+ * the failure belongs to our own runtime boot; once one has, it belongs to the
+ * run that followed it.
+ */
+function failureCode(warmup: boolean, error: unknown): string {
+  if (!booted) return isHandshakeTimeout(error) ? 'HARNESS_BOOT_TIMEOUT' : 'HARNESS_START_FAILED'
+  return warmup ? 'HARNESS_START_FAILED' : 'HARNESS_RUN_FAILED'
+}
 
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity })
 let harness: DeepSeekHarness | undefined
@@ -61,10 +82,10 @@ async function handle(request: Request): Promise<void> {
       },
     })
     reply({ id: request.id, ok: true, result })
-  } catch {
+  } catch (error) {
     // Raw SDK/provider exceptions may contain URLs, model output or request
     // fragments. Only a closed classification crosses the worker protocol.
-    reply({ id: request.id, ok: false, error: request.warmup || !harness ? 'HARNESS_START_FAILED' : 'HARNESS_RUN_FAILED' })
+    reply({ id: request.id, ok: false, error: failureCode(request.warmup === true, error) })
   }
 }
 

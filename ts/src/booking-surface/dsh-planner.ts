@@ -103,7 +103,7 @@ export interface DshPlannerRunPort {
 export type DshPlannerClock = Date | (() => Date)
 
 export interface DshPlannerTurnMetric {
-  outcome: 'operation' | 'terminal' | 'provider_error' | 'timeout' | 'typed_decision_required' | 'failed'
+  outcome: 'operation' | 'terminal' | 'provider_error' | 'timeout' | 'boot_timeout' | 'typed_decision_required' | 'failed'
   decisionSource: 'runtime' | 'model'
   elapsedMs: number
   /** Calls across the Harness run/session seam; one run can contain repairs. */
@@ -370,6 +370,10 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
       // The default extraction route has thinking disabled and stays at 4k;
       // custom reasoning routes retain 16k unless the deploy tunes the budget.
       maxTokens,
+      // Our own handshake gets our own bound instead of the SDK's model-side
+      // 10s fallback, so a stuck start fails as a boot timeout rather than
+      // silently consuming the provider-stall window.
+      initializeTimeoutMs: PLANNER_BOOT_BUDGET_MS,
       // Each model subprocess is a disposable per-turn cache. Keep teardown
       // bounded so timed-out turns cannot accumulate children for the SDK's
       // much longer general-purpose interactive-session grace period.
@@ -415,6 +419,7 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
         model,
         ...(reasoningEffort ? { reasoningEffort } : {}),
         maxTokens,
+        initializeTimeoutMs: PLANNER_BOOT_BUDGET_MS,
         shutdownTimeoutMs: 500,
         disposeEofGraceMs: 500,
         disposeGraceMs: 500,
@@ -1383,6 +1388,7 @@ type ProviderFailure = {
     | 'PLANNER_PROVIDER_REQUEST_REJECTED'
     | 'PLANNER_PROVIDER_RESPONSE_INVALID'
     | 'PLANNER_PROVIDER_TIMEOUT'
+    | 'PLANNER_BOOT_TIMEOUT'
     | 'PLANNER_CONFIGURATION_INVALID'
     | 'PLANNER_FAILED'
   retryable: boolean
@@ -1492,6 +1498,7 @@ function providerFailureMessage(code: ProviderFailure['code']): string {
     case 'PLANNER_PROVIDER_REQUEST_REJECTED': return 'The planner provider rejected the model request.'
     case 'PLANNER_PROVIDER_RESPONSE_INVALID': return 'The planner provider returned an invalid response.'
     case 'PLANNER_PROVIDER_TIMEOUT': return 'The planner did not respond within the booking turn deadline.'
+    case 'PLANNER_BOOT_TIMEOUT': return 'The planner runtime did not finish starting within its local boot budget.'
     case 'PLANNER_CONFIGURATION_INVALID': return 'The planner provider configuration is invalid.'
     case 'PLANNER_FAILED': return 'The planner stopped unexpectedly before producing a usable action.'
   }
@@ -1507,11 +1514,34 @@ class PlannerTurnDeadlineExceeded extends Error {
 /** Observed floor for one converged planner provider run; below this a retry cannot plausibly finish. */
 const PLANNER_MIN_VIABLE_RUN_MS = 12_000
 
+/**
+ * Budget for our own initialize handshake. The SDK default (10s) is a
+ * model-side fallback applied to a local process start; measured against this
+ * host it is ~20x looser than the work it bounds (hot p95 ~0.5s over 20 fresh
+ * workers, ~2.4s for the first handshake on a cold page cache). 5s keeps >2x
+ * headroom over the worst cold observation while failing a hung handshake in
+ * half of the fallback, so a stuck start can never be billed as a provider
+ * stall.
+ */
+export const PLANNER_BOOT_BUDGET_MS = 5_000
+
 /** One provider run exceeded its soft stall budget and is presumed hung. */
 class PlannerStallSoftExceeded extends Error {
   constructor() {
     super('planner_provider_stall_soft_budget_exceeded')
     this.name = 'PlannerStallSoftExceeded'
+  }
+}
+
+/**
+ * Our own runtime never finished its initialize handshake inside the boot
+ * budget. No provider call was attempted, so this must not be reported as a
+ * provider stall.
+ */
+class PlannerBootTimeoutExceeded extends Error {
+  constructor() {
+    super('planner_boot_timeout')
+    this.name = 'PlannerBootTimeoutExceeded'
   }
 }
 
@@ -1553,6 +1583,17 @@ function runWithStallBudget(
       },
     )
   })
+}
+
+/**
+ * True when the port observes its own boot yet has never seen a completed
+ * handshake: the runtime this turn waited on never came up, so the failure is
+ * our own and not a provider stall. Ports that do not observe boot at all
+ * (injected test/alternate transports) keep their existing classification.
+ */
+function bootNeverCompleted(port: DshPlannerRunPort | undefined): boolean {
+  if (!port || typeof port.bootObservation !== 'function') return false
+  return port.bootObservation() === undefined
 }
 
 function beforePlannerDeadline<T>(promise: Promise<T>, deadlineAt: number): Promise<T> {
@@ -1761,9 +1802,15 @@ export async function createDshEmbeddedBookingPlanner(
                 // a fresh-port retry converges in 13-19s). Keep retrying on
                 // fresh ports while at least one minimally viable run
                 // (observed floor ~12s) still fits the turn deadline; only
-                // give up when the remaining budget cannot fund one.
+                // give up when the remaining budget cannot fund one. Giving up
+                // names the phase we actually stalled in: a stall before the
+                // handshake completes is our own runtime failing to start, not
+                // a silent model stream, so it must not be billed as a
+                // provider timeout.
                 const remainingMs = deadlineAt - Date.now()
-                if (remainingMs < PLANNER_MIN_VIABLE_RUN_MS) throw new PlannerTurnDeadlineExceeded()
+                if (remainingMs < PLANNER_MIN_VIABLE_RUN_MS) {
+                  throw bootNeverCompleted(runPort) ? new PlannerBootTimeoutExceeded() : new PlannerTurnDeadlineExceeded()
+                }
                 console.error('[booking-copilot] planner run exceeded the soft stall budget; retrying on a fresh run port:', JSON.stringify({
                   attempt, softStallBudgetMs, remainingMs,
                 }))
@@ -1775,7 +1822,13 @@ export async function createDshEmbeddedBookingPlanner(
                 attempt -= 1
                 continue
               }
+              // The SDK reports an expired local handshake as its own typed
+              // failure; no provider request was ever made.
+              if (error instanceof Error && error.message === 'HARNESS_BOOT_TIMEOUT') throw new PlannerBootTimeoutExceeded()
               if (error instanceof PlannerTurnDeadlineExceeded) {
+                // The turn deadline can expire while our own runtime is still
+                // starting; that phase is ours, not the provider's.
+                if (bootNeverCompleted(runPort)) throw new PlannerBootTimeoutExceeded()
                 metricOutcome = 'timeout'
                 retire(runPort)
                 return [{ kind: 'error', error: { code: 'PLANNER_PROVIDER_TIMEOUT', message: providerFailureMessage('PLANNER_PROVIDER_TIMEOUT'), retryable: true } }]
@@ -1811,6 +1864,11 @@ export async function createDshEmbeddedBookingPlanner(
           retire(runPort)
           return [{ kind: 'error', error: { code: 'PLANNER_ATTEMPT_BUDGET_EXHAUSTED', message: 'GoTry exhausted the planner attempt budget without a decision.', retryable: true } }]
         } catch (error) {
+          if (error instanceof PlannerBootTimeoutExceeded) {
+            metricOutcome = 'boot_timeout'
+            retire(runPort)
+            return [{ kind: 'error', error: { code: 'PLANNER_BOOT_TIMEOUT', message: providerFailureMessage('PLANNER_BOOT_TIMEOUT'), retryable: true } }]
+          }
           if (error instanceof PlannerTurnDeadlineExceeded) {
             metricOutcome = 'timeout'
             retire(runPort)
