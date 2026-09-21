@@ -75,8 +75,10 @@ function mark(next) {
   record('CORE_BOOT_STAGE ' + JSON.stringify({ phase: next, elapsedMs: Date.now() - started, providerRequests }))
 }
 function recordFailure(error) {
-  const safeNames = ['RequestTimeoutError', 'TransportClosedError', 'SdkProtocolError', 'AggregateError', 'Error']
-  failures.push({ phase, elapsedMs: Date.now() - started, providerRequests, error: safeNames.includes(error?.name) ? error.name : 'unknown' })
+  const safeNames = ['RequestTimeoutError', 'TransportClosedError', 'SdkProtocolError', 'JsonRpcResponseError', 'AggregateError', 'Error']
+  const failure = { phase, elapsedMs: Date.now() - started, providerRequests, error: safeNames.includes(error?.name) ? error.name : 'unknown' }
+  if (typeof error?.code === 'number') failure.errorCode = error.code
+  failures.push(failure)
   process.exitCode = 1
 }
 function flushFailure() {
@@ -239,6 +241,31 @@ await harness.start()
 mark('initialized')
 await harness.run('boot core', { sessionId: 'package-proof-escape' })
 flushFailure()
+`)
+  const startedAt = Date.now()
+  return {
+    result: spawnSync(process.execPath, [script], { cwd: directory, encoding: 'utf8', timeout: 30_000 }),
+    elapsedMs: Date.now() - startedAt,
+  }
+}
+
+/**
+ * Control for the closed error class: the SDK surfaces every JSON-RPC error
+ * response as `JsonRpcResponseError`, so an allowlist that omits it drops the
+ * only distinguishing bit and reports `unknown`. The record must name the class
+ * and keep the numeric wire code, which separates same-class protocol errors.
+ */
+function runJsonRpcErrorClassificationControl(workRoot: string): { result: CommandResult; elapsedMs: number } {
+  const directory = join(workRoot, 'jsonrpc-error-consumer')
+  mkdirSync(join(directory, 'node_modules'), { recursive: true })
+  symlinkSync(resolve(root, 'node_modules/@deepseek-ai'), join(directory, 'node_modules/@deepseek-ai'), 'junction')
+  const script = join(directory, 'boot-core-jsonrpc-error.mjs')
+  writeFileSync(script, `
+import { writeSync } from 'node:fs'
+import { JsonRpcResponseError } from '@deepseek-ai/dsh-sdk-client'
+${CORE_BOOT_DIAGNOSTIC_HELPERS}
+mark('before_initialize')
+throw new JsonRpcResponseError(-32603, 'session unavailable')
 `)
   const startedAt = Date.now()
   return {
@@ -427,6 +454,29 @@ if (!injection) {
     assert.equal(record?.error, 'RequestTimeoutError', 'the record classifies the SDK timeout')
     assert.equal(record?.providerRequests, 0, 'a failed handshake reaches no provider request')
     console.log(`BOOKING SURFACE PACKAGE PROOF: uncaught-escape control ${JSON.stringify({ status: escape.result.status, stdoutBytes: 0, record })}`)
+
+    const classification = runJsonRpcErrorClassificationControl(budgetRoot)
+    assert.equal(
+      classification.result.status,
+      1,
+      commandDiagnostic('jsonrpc-error-classification', classification.elapsedMs, classification.result),
+    )
+    const classificationLine = (classification.result.stderr ?? '')
+      .split('\n')
+      .find((line) => line.startsWith('CORE_BOOT_FAILURE '))
+    assert.ok(classificationLine, `the classification record must survive: ${sanitizedTail(classification.result.stderr).tail}`)
+    const [classified] = JSON.parse(classificationLine.slice('CORE_BOOT_FAILURE '.length)) as Array<{
+      phase: string
+      error: string
+      errorCode?: number
+      providerRequests: number
+    }>
+    assert.equal(classified?.error, 'JsonRpcResponseError', 'a JSON-RPC error response must keep its own class rather than degrade to unknown')
+    assert.equal(classified?.errorCode, -32603, 'the numeric wire code separates same-class protocol errors')
+    assert.equal(classified?.providerRequests, 0, 'a protocol error response reaches no provider request')
+    console.log(
+      `BOOKING SURFACE PACKAGE PROOF: jsonrpc-error classification ${JSON.stringify({ status: classification.result.status, record: classified })}`,
+    )
   } finally {
     rmSync(budgetRoot, { recursive: true, force: true })
   }
