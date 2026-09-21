@@ -146,31 +146,43 @@ try {
   writeFileSync(consumerScript, `
 import { createServer } from 'node:http'
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
+const SAFE_ERROR_NAMES = ['RequestTimeoutError', 'TransportClosedError', 'SdkProtocolError', 'JsonRpcResponseError', 'AggregateError', 'Error']
+const started = Date.now()
+let phase = 'boot'
 let providerRequests = 0
+const failures = []
+function classifyError(error) {
+  return SAFE_ERROR_NAMES.includes(error?.name) ? error.name : 'unknown'
+}
+function recordFailure(error, hook) {
+  const record = { phase, elapsedMs: Date.now() - started, providerRequests, error: classifyError(error) }
+  if (typeof error?.code === 'number') record.errorCode = error.code
+  if (hook) record.hook = hook
+  failures.push(record)
+  console.error('CORE_BOOT_FAILURE ' + JSON.stringify(record))
+  process.exitCode = 1
+}
+process.on('uncaughtException', (error) => { recordFailure(error, 'uncaughtException'); process.exit(1) })
+process.on('unhandledRejection', (error) => { recordFailure(error, 'unhandledRejection'); process.exit(1) })
 const server = createServer((req, res) => { req.resume(); req.on('end', () => { providerRequests++; res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end('data: ' + JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 0, model: 'fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'booted' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }) + '\\n\\ndata: [DONE]\\n\\n') }) })
 await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
 const address = server.address()
 const harness = new DeepSeekHarness({ profile: 'sdk-minimal', dshHome: '${consumerRoot}/dsh-home', cwd: '${consumerRoot}', processCwd: '${consumerRoot}', env: { PATH: process.env.PATH, DEEPSEEK_API_KEY: 'fixture', DEEPSEEK_BASE_URL: 'http://127.0.0.1:' + address.port + '/v1' } })
-const started = Date.now()
-let phase = 'initialize'
-const failures = []
-function recordFailure(error) {
-  const safeNames = ['RequestTimeoutError', 'TransportClosedError', 'SdkProtocolError', 'AggregateError', 'Error']
-  failures.push({ phase, elapsedMs: Date.now() - started, providerRequests, error: safeNames.includes(error?.name) ? error.name : 'unknown' })
-  process.exitCode = 1
-}
+phase = 'initialize'
+if (process.env.GOTRY_PACKAGE_PROOF_DIAGNOSTIC === 'uncaught') setTimeout(() => { const error = new Error('injected asynchronous consumer fault'); error.name = 'TransportClosedError'; throw error }, 0)
 try {
   await harness.start()
   phase = 'model_run'
   await harness.run('boot core', { sessionId: 'package-proof-core' })
+  phase = 'complete'
 } catch (error) { recordFailure(error) }
 finally {
   phase = 'cleanup'
   try { await harness.close() } catch (error) { recordFailure(error) }
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
 }
-if (failures.length) console.error('CORE_BOOT_FAILURE', JSON.stringify(failures))
-else console.log('PACKED CONSUMER DSH CORE BOOT: OK')
+if (failures.length > 1) console.error('CORE_BOOT_FAILURE_ROOT ' + JSON.stringify(failures[0]))
+if (failures.length === 0) console.log('PACKED CONSUMER DSH CORE BOOT: OK')
 `)
 
   const packStartedAt = Date.now()
@@ -220,6 +232,32 @@ else console.log('PACKED CONSUMER DSH CORE BOOT: OK')
     } finally {
       if (sandboxRenamed) renameSync(sandboxBackup, sandboxPath)
     }
+
+    const diagnosticFaultStartedAt = Date.now()
+    const diagnosticFault = spawnSync(process.execPath, [consumerScript], {
+      cwd: packedConsumer,
+      encoding: 'utf8',
+      timeout: 60_000,
+      env: { ...process.env, GOTRY_PACKAGE_PROOF_DIAGNOSTIC: 'uncaught' },
+    })
+    assert.notEqual(diagnosticFault.status, 0, 'an asynchronous consumer fault must fail the boot proof')
+    const faultStderr = diagnosticFault.stderr ?? ''
+    const faultRecordLine = faultStderr.split(/\r?\n/).find((line) => line.startsWith('CORE_BOOT_FAILURE '))
+    assert.ok(
+      faultRecordLine,
+      `consumer fault must emit a classified record: ${commandDiagnostic('core-boot-diagnostic', Date.now() - diagnosticFaultStartedAt, diagnosticFault)}`,
+    )
+    const faultRecord = JSON.parse(faultRecordLine.slice('CORE_BOOT_FAILURE '.length)) as Record<string, unknown>
+    assert.equal(faultRecord.phase, 'initialize', 'the record must retain the phase that was running when the fault fired')
+    assert.equal(faultRecord.hook, 'uncaughtException', 'an asynchronous throw must be classified as uncaughtException')
+    assert.equal(faultRecord.error, 'TransportClosedError', 'only the safe error name may be recorded')
+    assert.equal(typeof faultRecord.elapsedMs, 'number', 'the record must retain the elapsed time')
+    assert.equal(typeof faultRecord.providerRequests, 'number', 'the record must retain the request count')
+    const faultTail = sanitizedTail(faultStderr).tail
+    assert.ok(
+      faultTail.includes('CORE_BOOT_FAILURE') && faultTail.includes('"phase":"initialize"'),
+      `the bounded stderr tail must retain the classified record and its phase, got ${JSON.stringify(faultTail)}`,
+    )
 
     const packReportStartedAt = Date.now()
     const packReport = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { cwd: root, encoding: 'utf8' })
