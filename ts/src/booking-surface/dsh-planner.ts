@@ -80,11 +80,24 @@ export interface DshPlannerRunResult {
   notifications?: readonly unknown[]
 }
 
+/**
+ * What one turn paid for our own runtime boot: the measured initialize
+ * handshake wall time and whether that turn actually started the runtime.
+ * Provider calls may legitimately take seconds; spawning and initializing our
+ * own subprocess may not, so the two budgets are observed separately.
+ */
+export interface DshBootObservation {
+  initializeMs: number
+  mode: 'started' | 'reused'
+}
+
 export interface DshPlannerRunPort {
   run(prompt: string, options: { sessionId: string; onProgress?: () => void }): Promise<DshPlannerRunResult>
   close(): Promise<void>
   /** Boot in-worker harness eagerly without a provider call; real ports only. */
   warmup?(): Promise<void>
+  /** Most recent measured initialize handshake cost; real ports only. */
+  bootObservation?(): DshBootObservation | undefined
 }
 
 export type DshPlannerClock = Date | (() => Date)
@@ -103,6 +116,14 @@ export interface DshPlannerTurnMetric {
   proseNudgeRecovered: boolean
   /** Backward-compatible aggregate; prefer the two repair dimensions above. */
   repairedValid: boolean
+  /**
+   * Measured initialize handshake cost inside this turn's own runtime boot, and
+   * whether this turn performed it. Present only on ports that observe it, so
+   * the local boot bill can be read apart from the provider budget it shares a
+   * wire window with.
+   */
+  bootMs?: number
+  bootMode?: DshBootObservation['mode']
   actionKind?: BookingReadAction['kind']
 }
 
@@ -419,6 +440,11 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
     async warmup() {
       if (closePromise) throw new Error('booking_planner_run_port_closed')
       await managedPort.warmup?.()
+    },
+    // The wrapper must not hide the boot measurement: it is the only signal
+    // that separates our own initialize cost from the provider budget.
+    bootObservation() {
+      return managedPort.bootObservation?.()
     },
     async run(prompt, runOptions) {
       if (closePromise) throw new Error('booking_planner_run_port_closed')
@@ -1794,6 +1820,7 @@ export async function createDshEmbeddedBookingPlanner(
           throw error
         } finally {
           const typed = metricOutcome === 'operation' || metricOutcome === 'terminal'
+          const boot = runPort?.bootObservation?.()
           const metric: DshPlannerTurnMetric = {
             outcome: metricOutcome,
             decisionSource: metricDecisionSource,
@@ -1805,6 +1832,7 @@ export async function createDshEmbeddedBookingPlanner(
             schemaRepairedValid: typed && schemaRejectedCallCount > 0,
             proseNudgeRecovered: typed && harnessRunCount > 1,
             repairedValid: typed && (harnessRunCount > 1 || schemaRejectedCallCount > 0),
+            ...(boot ? { bootMs: boot.initializeMs, bootMode: boot.mode } : {}),
             ...(metricActionKind ? { actionKind: metricActionKind } : {}),
           }
           try {

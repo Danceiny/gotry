@@ -355,9 +355,16 @@ try {
     schemaRepairedValid: true,
     proseNudgeRecovered: false,
     repairedValid: true,
+    bootMs: plannerMetrics[0]?.bootMs,
+    bootMode: plannerMetrics[0]?.bootMode,
     actionKind: 'search.run',
   }, 'safe planner metric distinguishes same-turn repair from first-pass validity')
   assert.ok(Number.isSafeInteger(plannerMetrics[0]?.elapsedMs) && plannerMetrics[0]!.elapsedMs >= 0)
+  // This planner creates its own runtime, so the turn pays the handshake: the
+  // measurement must attribute that cost to the turn instead of hiding it in
+  // the provider window it shares.
+  assert.equal(plannerMetrics[0]?.bootMode, 'started', 'a turn that owns a fresh runtime reports its own boot')
+  assert.ok(Number.isSafeInteger(plannerMetrics[0]?.bootMs) && plannerMetrics[0]!.bootMs! > 0, 'the turn records the measured initialize cost')
   const firstSystemMessage = (requests[0]!.body.messages as Array<{ role?: string; content?: unknown }>).find((message) => message?.role === 'system')
   assert.ok(firstSystemMessage, 'first model request carries a system message produced by dsh system-prompt')
   const firstSystemContent = typeof firstSystemMessage.content === 'string' ? firstSystemMessage.content : JSON.stringify(firstSystemMessage.content)
