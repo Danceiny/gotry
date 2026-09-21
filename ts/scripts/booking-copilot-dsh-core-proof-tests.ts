@@ -356,8 +356,16 @@ try {
     proseNudgeRecovered: false,
     repairedValid: true,
     actionKind: 'search.run',
+    bootMs: plannerMetrics[0]?.bootMs,
+    bootMode: 'started',
   }, 'safe planner metric distinguishes same-turn repair from first-pass validity')
   assert.ok(Number.isSafeInteger(plannerMetrics[0]?.elapsedMs) && plannerMetrics[0]!.elapsedMs >= 0)
+  // The task-owned port boots cold, so its handshake cost is reported instead
+  // of being folded into the turn's provider latency.
+  assert.ok(
+    Number.isSafeInteger(plannerMetrics[0]?.bootMs) && plannerMetrics[0]!.bootMs! > 0,
+    `cold task port reports a real initialize handshake cost: ${JSON.stringify(plannerMetrics[0])}`,
+  )
   const firstSystemMessage = (requests[0]!.body.messages as Array<{ role?: string; content?: unknown }>).find((message) => message?.role === 'system')
   assert.ok(firstSystemMessage, 'first model request carries a system message produced by dsh system-prompt')
   const firstSystemContent = typeof firstSystemMessage.content === 'string' ? firstSystemMessage.content : JSON.stringify(firstSystemMessage.content)
@@ -437,6 +445,13 @@ try {
     else process.env.GOTRY_BOOKING_COPILOT_WARMUP = priorWarmup
   }
   await stalledPort.warmup!()
+  // The stall below is measured after a completed handshake, so the boot cost
+  // must already be visible and must not be attributed to the provider.
+  const stalledBoot = stalledPort.bootObservation?.()
+  assert.ok(
+    stalledBoot?.bootMode === 'started' && stalledBoot.bootMs > 0,
+    `owned port reports its handshake before the stall measurement: ${JSON.stringify(stalledBoot)}`,
+  )
   const readyStalledPort = stalledPort
   stalledPlanner = await createDshEmbeddedBookingPlanner({
     runPortFactory: () => readyStalledPort,

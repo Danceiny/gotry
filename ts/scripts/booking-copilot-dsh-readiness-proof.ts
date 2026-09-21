@@ -65,6 +65,38 @@ function gate(name: string) {
   writeFileSync(dshBin, `import { existsSync, writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid,workerPid:process.ppid,startupPhase:'before_initialize'}))\nconst deadline=Date.now()+15000\nwhile(!existsSync(${JSON.stringify(release)})){if(Date.now()>deadline)process.exit(73);await new Promise(r=>setTimeout(r,10))}\nconst {runCli}=await import(${JSON.stringify(actualBin)});await runCli()\n`)
   return { marker, release, dshBin, pids: () => JSON.parse(readFileSync(marker, 'utf8')) as { pid: number; workerPid: number; startupPhase: string } }
 }
+
+/** Nearest-rank percentile over the collected samples; no interpolation. */
+function percentile(values: readonly number[], fraction: number): number {
+  const sorted = [...values].sort((left, right) => left - right)
+  const rank = Math.min(sorted.length, Math.max(1, Math.ceil(sorted.length * fraction)))
+  return sorted[rank - 1]!
+}
+
+/**
+ * Optional cold-boot sampling for the next round's budget decisions. Each round
+ * owns a fresh worker, so every sample is a genuine cold initialize handshake
+ * rather than a reuse of a warm one.
+ */
+async function sampleColdBoots(rounds: number): Promise<number[]> {
+  const samples: number[] = []
+  for (let round = 1; round <= rounds; round += 1) {
+    const samplePort = await createRealRunPort({ stateRoot: root, env, maxTokens: 512 })
+    try {
+      await bounded(samplePort.warmup!(), 30_000, `boot sample ${round} initialize did not complete`)
+      const observation = samplePort.bootObservation?.()
+      assert.ok(
+        observation?.bootMode === 'started' && observation.bootMs > 0,
+        `boot sample ${round} must be a measured cold handshake: ${JSON.stringify(observation)}`,
+      )
+      samples.push(observation.bootMs)
+    } finally {
+      await bounded(samplePort.close(), 5_000, `boot sample ${round} cleanup exceeded budget`)
+    }
+  }
+  return samples
+}
+
 let port: DshPlannerRunPort | undefined
 let planner: Awaited<ReturnType<typeof createDshEmbeddedBookingPlanner>> | undefined
 let phase = 'initial'
@@ -87,6 +119,21 @@ try {
   writeFileSync(ready.release, 'release')
   await bounded(warming, 10_000, 'runtime initialize did not complete')
   assert.equal(requests.length, 0, 'completed warmup still makes zero model calls')
+  // The initialize handshake is local infrastructure cost, so it must be
+  // observable on its own instead of being absorbed into a provider budget.
+  const coldBoot = port.bootObservation?.()
+  assert.ok(coldBoot, 'the real managed worker reports the initialize handshake it performed')
+  assert.equal(coldBoot.bootMode, 'started', 'a freshly spawned worker performs the handshake itself')
+  assert.ok(
+    Number.isSafeInteger(coldBoot.bootMs) && coldBoot.bootMs > 0,
+    `cold initialize handshake is measured, not defaulted: ${JSON.stringify(coldBoot)}`,
+  )
+  // Reuse path: a second request on the same owned worker answers from the
+  // memoized handshake, so it must report no boot cost of its own.
+  await bounded(port.warmup!(), 5_000, 'reused warmup did not settle')
+  const reusedBoot = port.bootObservation?.()
+  assert.deepEqual(reusedBoot, { bootMs: 0, bootMode: 'reused' }, 'a reused harness reports no initialize cost')
+  assert.equal(requests.length, 0, 'a reused handshake still makes zero model calls')
   assert.ok(alive(readyPids.pid) && alive(readyPids.workerPid), 'both owned processes are alive after initialize')
   const readyPort = port
   planner = await createDshEmbeddedBookingPlanner({ runPortFactory: () => readyPort, turnTimeoutMs: 1_500 })
@@ -106,7 +153,7 @@ try {
   await bounded(planner.close(), 3_000, 'ready tree cleanup exceeded budget')
   planner = undefined; port = undefined
   assert.ok(!alive(readyPids.pid) && !alive(readyPids.workerPid), 'ready runtime and worker both reaped')
-  console.log('DSH READINESS READY:', JSON.stringify({ startupDelayMs: 1800, warmupProviderCalls: 0, providerRequests: requests.length, providerObservedMs, elapsedMs, cleanupMs: Date.now() - cleanupAt, treeReaped: true }))
+  console.log('DSH READINESS READY:', JSON.stringify({ startupDelayMs: 1800, warmupProviderCalls: 0, providerRequests: requests.length, providerObservedMs, elapsedMs, cleanupMs: Date.now() - cleanupAt, bootStarted: coldBoot, bootReused: reusedBoot, treeReaped: true }))
 
   const cold = gate('cold')
   phase = 'cold_start_timeout'
@@ -122,10 +169,15 @@ try {
   const coldElapsedMs = Date.now() - coldAt
   assert.equal(coldResult[0]?.kind === 'error' && coldResult[0].error.code, 'PLANNER_PROVIDER_TIMEOUT')
   assert.equal(requests.length, 1, 'cold blocked startup reaches no provider')
+  // A handshake that never completed must report nothing rather than a
+  // fabricated cost. This is the current classification, unchanged by this
+  // proof: the blocked cold boot still surfaces as PLANNER_PROVIDER_TIMEOUT.
+  const blockedBoot = coldPort.bootObservation?.()
+  assert.equal(blockedBoot, undefined, 'an unfinished cold handshake reports no observation')
   await bounded(planner.close(), 3_000, 'cold tree cleanup exceeded budget')
   planner = undefined; port = undefined
   assert.ok(!alive(coldPids.pid) && !alive(coldPids.workerPid), 'cold runtime and worker both reaped')
-  console.log('DSH READINESS COLD:', JSON.stringify({ providerRequests: 0, elapsedMs: coldElapsedMs, treeReaped: true }))
+  console.log('DSH READINESS COLD:', JSON.stringify({ providerRequests: 0, elapsedMs: coldElapsedMs, bootObservation: blockedBoot ?? null, treeReaped: true }))
 
   phase = 'initialize_failure'
   const failedMarker = join(root, 'failed-start.json')
@@ -141,6 +193,16 @@ try {
   port = undefined
   assert.ok(!alive(failed.pid) && !alive(failed.workerPid), 'failed runtime and worker both reaped')
   console.log('DSH READINESS FAILURE CLASSIFICATION:', JSON.stringify({ exitCode: failed.exitCode, signal: failed.signal, error: 'HARNESS_START_FAILED', rawStderrExposed: false, providerRequests: 0, treeReaped: true }))
+
+  // Opt-in only: the default regression must stay at the fixed scenario cost.
+  const sampleRounds = Number(process.env.GOTRY_PLANNER_BOOT_SAMPLES ?? 0)
+  if (Number.isSafeInteger(sampleRounds) && sampleRounds > 0) {
+    phase = 'boot_sampling'
+    const bootMs = await sampleColdBoots(sampleRounds)
+    console.log('DSH READINESS BOOT SAMPLES:', JSON.stringify({
+      rounds: sampleRounds, bootMs, p50Ms: percentile(bootMs, 0.5), p95Ms: percentile(bootMs, 0.95),
+    }))
+  }
 } catch (error) {
   console.error('DSH READINESS FAILURE:', JSON.stringify({ phase, ...evidence, providerRequests: requests.length, error: error instanceof Error ? error.message : 'unknown' }))
   throw error

@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import type { SubprocessHandle } from '@deepseek-ai/dsh-subprocess'
-import type { DshPlannerRunPort, DshPlannerRunResult } from './dsh-planner.ts'
+import type { DshPlannerBootObservation, DshPlannerRunPort, DshPlannerRunResult } from './dsh-planner.ts'
 import {
   ManagedDshCleanupError,
   managedDshGroupIsQuiescent,
@@ -27,6 +27,19 @@ export interface ManagedDshRunPortOptions {
 }
 
 const requireFromModule = createRequire(import.meta.url)
+
+/**
+ * The worker is a child process, so its handshake report crosses a trust
+ * boundary: accept only a well-formed observation and drop anything else
+ * rather than letting a malformed payload become a metric.
+ */
+function readBootObservation(value: unknown): DshPlannerBootObservation | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const { bootMs, bootMode } = value as { bootMs?: unknown; bootMode?: unknown }
+  if (bootMode !== 'started' && bootMode !== 'reused') return undefined
+  if (typeof bootMs !== 'number' || !Number.isFinite(bootMs) || bootMs < 0) return undefined
+  return { bootMs: Math.round(bootMs), bootMode }
+}
 
 function workerLaunch(path: string): readonly string[] {
   // The worker cwd is the isolated booking state root, so a bare `tsx/esm`
@@ -50,6 +63,7 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   private workerPid: number | null = null
   private workerStartedAt: string | null = null
   private workerOutcome: ManagedDshWorkerOutcome = { state: 'pending' }
+  private lastBoot: DshPlannerBootObservation | undefined
   private readonly cleanupRole: 'task' | 'warmer' | 'unspecified'
   private readonly graceMs: number
 
@@ -99,7 +113,9 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
       if (newline < 0) return
       const line = this.inputBuffer.slice(0, newline); this.inputBuffer = this.inputBuffer.slice(newline + 1)
       try {
-        const message = JSON.parse(line) as { id: number; ok?: boolean; progress?: boolean; result?: DshPlannerRunResult; error?: string; lifecycle?: string; workerPid?: number; parentPid?: number }
+        const message = JSON.parse(line) as { id: number; ok?: boolean; progress?: boolean; result?: DshPlannerRunResult; error?: string; lifecycle?: string; workerPid?: number; parentPid?: number; boot?: unknown }
+        const observation = readBootObservation(message.boot)
+        if (observation) this.lastBoot = observation
         if (message.lifecycle === 'worker_started') {
           if (this.workerPid === null && Number.isSafeInteger(message.workerPid) && message.workerPid! > 0 && message.parentPid === process.pid) {
             this.workerPid = message.workerPid!
@@ -154,6 +170,11 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
       this.pending.set(id, { ok: () => resolve(), fail: reject })
       this.handle.stdin!.write(`${JSON.stringify({ id, warmup: true, options: this.harnessOptions })}\n`)
     })
+  }
+
+  /** The latest initialize-handshake cost the owned worker reported. */
+  bootObservation(): DshPlannerBootObservation | undefined {
+    return this.lastBoot
   }
 
   close(): Promise<void> {

@@ -80,11 +80,25 @@ export interface DshPlannerRunResult {
   notifications?: readonly unknown[]
 }
 
+/**
+ * Cost of the worker-side initialize handshake that established a run port.
+ * `started` means this request performed the handshake; `reused` means an
+ * already-initialized harness answered and no local boot was paid. Local
+ * process startup is our own infrastructure, not provider latency, so it is
+ * observed separately from the model-side stall budget.
+ */
+export interface DshPlannerBootObservation {
+  bootMs: number
+  bootMode: 'started' | 'reused'
+}
+
 export interface DshPlannerRunPort {
   run(prompt: string, options: { sessionId: string; onProgress?: () => void }): Promise<DshPlannerRunResult>
   close(): Promise<void>
   /** Boot in-worker harness eagerly without a provider call; real ports only. */
   warmup?(): Promise<void>
+  /** Initialize-handshake cost reported by a real worker; absent on test seams. */
+  bootObservation?(): DshPlannerBootObservation | undefined
 }
 
 export type DshPlannerClock = Date | (() => Date)
@@ -104,6 +118,14 @@ export interface DshPlannerTurnMetric {
   /** Backward-compatible aggregate; prefer the two repair dimensions above. */
   repairedValid: boolean
   actionKind?: BookingReadAction['kind']
+  /**
+   * Initialize-handshake cost that established this turn's harness. Absent on
+   * test seams and when a cold handshake never completed inside the deadline —
+   * an absent value on a timeout is itself the finding: no boot was observed.
+   */
+  bootMs?: number
+  /** How this turn's harness was established; present whenever bootMs is. */
+  bootMode?: 'started' | 'reused'
 }
 
 export interface DshEmbeddedBookingPlannerOptions {
@@ -419,6 +441,9 @@ export async function createRealRunPort(options: DshEmbeddedBookingPlannerOption
     async warmup() {
       if (closePromise) throw new Error('booking_planner_run_port_closed')
       await managedPort.warmup?.()
+    },
+    bootObservation() {
+      return managedPort.bootObservation?.()
     },
     async run(prompt, runOptions) {
       if (closePromise) throw new Error('booking_planner_run_port_closed')
@@ -1660,6 +1685,7 @@ export async function createDshEmbeddedBookingPlanner(
         let metricOutcome: DshPlannerTurnMetric['outcome'] = 'failed'
         let metricActionKind: BookingReadAction['kind'] | undefined
         let metricDecisionSource: DshPlannerTurnMetric['decisionSource'] = 'model'
+        let turnBoot: DshPlannerBootObservation | undefined
         try {
           const deterministicDecision = deterministicReceiptDecision(task)
           if (deterministicDecision) {
@@ -1686,15 +1712,23 @@ export async function createDshEmbeddedBookingPlanner(
           // fires are killed with the retired port.
           const softStallBudgetMs = options.stallSoftBudgetMs
             ?? Math.max(1_000, Math.min(20_000, Math.floor(turnTimeoutMs * 2 / 3)))
+          // The handshake cost is observed after the run settles, because the
+          // worker only reports it once it has booted. The first observation of
+          // the turn wins: a stall retry boots a replacement port, but the boot
+          // the turn actually paid for is the one that starved its budget.
+          const runOnce = async (port: DshPlannerRunPort, prompt: string): Promise<DshPlannerRunResult> => {
+            try {
+              return await beforePlannerDeadline(runWithStallBudget(port, prompt, sessionId, softStallBudgetMs), deadlineAt)
+            } finally {
+              turnBoot ??= port.bootObservation?.()
+            }
+          }
           while (attempt < 3) {
             attempt += 1
             harnessRunCount = attempt
             let decisions: BookingPlannerDecision[] = []
             try {
-              const result = await beforePlannerDeadline(
-                runWithStallBudget(runPort, nextPrompt, sessionId, softStallBudgetMs),
-                deadlineAt,
-              )
+              const result = await runOnce(runPort, nextPrompt)
               modelStepCount += observedModelStepCount(result.events)
               schemaRejectedCallCount += result.events
                 .map((event, index) => toolResultObservation(event, index))
@@ -1806,6 +1840,7 @@ export async function createDshEmbeddedBookingPlanner(
             proseNudgeRecovered: typed && harnessRunCount > 1,
             repairedValid: typed && (harnessRunCount > 1 || schemaRejectedCallCount > 0),
             ...(metricActionKind ? { actionKind: metricActionKind } : {}),
+            ...(turnBoot ? { bootMs: turnBoot.bootMs, bootMode: turnBoot.bootMode } : {}),
           }
           try {
             if (options.onMetric) options.onMetric(metric)
