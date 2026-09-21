@@ -21,7 +21,7 @@ import { classifyRequest, isSubmitText } from '../capabilities/session/read-guar
 import { buildEntryUrl, parseBatchSearch, parseBatchSearchResult } from '../capabilities/session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, hasRecognizedAvailableSeat, parseLeftTicketQuery, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, STATION_TELECODES, validateTrainQueryResponseUrl } from '../capabilities/session/adapters/rail-12306.ts'
-import { buildDidaEntryUrl, parseDidaRates, looksLikeDidaRatesBody } from '../capabilities/session/adapters/dida-portal.ts'
+import { buildDidaEntryUrl, parseDidaRates, parseDidaSearchCache, looksLikeDidaRatesBody } from '../capabilities/session/adapters/dida-portal.ts'
 import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, didaLoginHint, __resetRateLimiterForTest, __setTrainSessionTransportForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
@@ -821,6 +821,45 @@ console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
   assert(rates[2]!.roomName === 'Suite' && rates[2]!.currency === 'USD', 'RoomList 同构展平', rates[2])
   assert(parseDidaRates('not json').length === 0 && parseDidaRates('{"a":1}').length === 0 && parseDidaRates('[]').length === 0, 'malformed/无信封/裸空数组 一律返空(不抛错)')
   assert(parseDidaRates(envelope, { maxItems: 2 }).length === 2, 'maxItems 截断')
+
+  // SearchCache(列表页价格面,hotel-fe#3731 卡片字段):多语言名 + 星级/地址/城市/坐标/首图
+  const searchCache = JSON.stringify({
+    Message: 'success', Success: true,
+    Data: {
+      HotelPriceList: [
+        {
+          Currency: 'CNY',
+          TotalPrice: 1738,
+          Hotel: {
+            HotelID: 1412723,
+            Name: '里乌迪拜海滩度假村 - 全包',
+            Name_EN: 'Hotel Riu Dubai Beach Resort - All Inclusive',
+            StarRating: 4,
+            Address: '迪拜Corniche Deira',
+            AddressFull: '迪拜Corniche Deira, 迪拜 (及邻近地区), 阿联酋',
+            CityName: '迪拜',
+            CountryCode: 'AE',
+            ChainName: 'RIU Resorts',
+            Latitude: 25.300407,
+            Longitude: 55.306625,
+            HotelImageList: [{ ImageCaption: 'Hotel Exterior', ImageUrl: 'https://image-cdn.didatravel.com/a.jpg' }],
+          },
+        },
+        { Currency: 'CNY', TotalPrice: 1200, Hotel: { HotelID: 11930, Name: '布尔迪拜瑞享酒店', Name_EN: 'Mövenpick Bur Dubai', StarRating: 5, HotelImageList: [] } },
+      ],
+    },
+  })
+  const scoped = parseDidaSearchCache(searchCache)
+  assert(scoped.length === 2, 'SearchCache:HotelPriceList 逐店展平', scoped.length)
+  assert(scoped[0]!.hotelName === '里乌迪拜海滩度假村 - 全包' && scoped[0]!.hotelNameEn === 'Hotel Riu Dubai Beach Resort - All Inclusive', '中文名优先 + 英文名并带(多语言展示)', scoped[0])
+  assert(scoped[0]!.starRating === 4 && scoped[0]!.cityName === '迪拜' && scoped[0]!.countryCode === 'AE' && scoped[0]!.chainName === 'RIU Resorts', '星级/城市/国家/连锁', scoped[0])
+  assert(scoped[0]!.address === '迪拜Corniche Deira, 迪拜 (及邻近地区), 阿联酋', '地址优先 AddressFull', scoped[0]!.address)
+  assert(scoped[0]!.latitude === 25.300407 && scoped[0]!.longitude === 55.306625, '坐标', scoped[0])
+  assert(scoped[0]!.imageUrl === 'https://image-cdn.didatravel.com/a.jpg', '首图取 HotelImageList[0].ImageUrl', scoped[0]!.imageUrl)
+  assert(scoped[0]!.price === 1738 && scoped[0]!.totalPrice === 1738 && scoped[0]!.currency === 'CNY', '单价(1晚=总价)/总价/币种', scoped[0])
+  assert(scoped[1]!.imageUrl === undefined && scoped[1]!.address === undefined, '缺失字段如实留空(不编造)', scoped[1])
+  assert(parseDidaSearchCache(searchCache, { nights: 2 })[0]!.price === 869, 'nights>1 按晚均摊', parseDidaSearchCache(searchCache, { nights: 2 })[0]!.price)
+  assert(parseDidaSearchCache('not json').length === 0 && parseDidaSearchCache('{"Data":{}}').length === 0, 'malformed/无列表 返空不抛错')
 
   // M3 形状签名(与 content-main DIDA_BODY_SIG_RE 逐字对账)
   assert(looksLikeDidaRatesBody('"HotelPriceList":[]'), '签名命中 HotelPriceList')

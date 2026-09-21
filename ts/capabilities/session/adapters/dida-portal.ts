@@ -103,12 +103,28 @@ export function parseDidaSearchCache(
     const nameCn = typeof hotel.Name === 'string' ? hotel.Name.trim() : ''
     const nameEn = typeof hotel.Name_EN === 'string' ? hotel.Name_EN.trim() : ''
     const perNight = total > 0 && nights > 1 ? Math.round(total / nights) : total
+    const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+    const str = (v: unknown): string | undefined => {
+      const t = typeof v === 'string' ? v.trim() : ''
+      return t || undefined
+    }
+    const images = Array.isArray(hotel.HotelImageList) ? (hotel.HotelImageList as Array<Record<string, unknown>>) : []
+    const firstImage = images.map((i) => str(i?.ImageUrl)).find((u): u is string => Boolean(u))
     out.push({
       hotelId,
       hotelName: nameCn || nameEn || undefined,
       price: perNight,
       ...(total > 0 ? { totalPrice: total } : {}),
       ...(typeof row.Currency === 'string' ? { currency: row.Currency } : {}),
+      ...(nameEn && nameEn !== nameCn ? { hotelNameEn: nameEn } : {}),
+      ...(num(hotel.StarRating) !== undefined ? { starRating: num(hotel.StarRating) } : {}),
+      ...(str(hotel.AddressFull) || str(hotel.Address) ? { address: str(hotel.AddressFull) ?? str(hotel.Address) } : {}),
+      ...(str(hotel.CityName) ? { cityName: str(hotel.CityName) } : {}),
+      ...(str(hotel.CountryCode) ? { countryCode: str(hotel.CountryCode) } : {}),
+      ...(str(hotel.ChainName) ? { chainName: str(hotel.ChainName) } : {}),
+      ...(num(hotel.Latitude) !== undefined ? { latitude: num(hotel.Latitude) } : {}),
+      ...(num(hotel.Longitude) !== undefined ? { longitude: num(hotel.Longitude) } : {}),
+      ...(firstImage ? { imageUrl: firstImage } : {}),
     })
   }
   return out
@@ -204,6 +220,23 @@ export interface SessionDidaRateOption {
   jumpUrl?: string
   /** 推荐价对应日期(YYYY-MM-DD;推荐流单晚起始价) */
   priceDate?: string
+  // ── 卡片展示字段(2026-09-21 hotel-fe#3731:参考 hotelList 卡片完整展示) ──
+  /** 英文名(门户 Name_EN;多语言展示按 UI 语言二选一) */
+  hotelNameEn?: string
+  /** 星级(门户 StarRating) */
+  starRating?: number
+  /** 地址(优先 AddressFull) */
+  address?: string
+  /** 城市名(门户 CityName) */
+  cityName?: string
+  /** 国家二字码(门户 CountryCode) */
+  countryCode?: string
+  /** 连锁品牌(门户 ChainName) */
+  chainName?: string
+  latitude?: number
+  longitude?: number
+  /** 首图(门户 image-cdn 绝对地址;可直接渲染) */
+  imageUrl?: string
 }
 
 interface RateCandidate {
