@@ -93,6 +93,7 @@ pass('7. 金标准对话噪音回归(2026-08-28 巡检:访谈答案/多段首查
   // 住宿名词后段优先:订了酒店:名称 → 抓名称而非「我订了」
   const booking = probePoi('我订了酒店:The Title East Wing Rawai,7.18入住 7.23 退房')
   if (!booking || !booking.includes('Title')) throw new Error(`订酒店应抓名称段,得 ${JSON.stringify(booking)}`)
+  assert.equal(booking, 'The Title East Wing Rawai', '真实酒店名须原样回显(旧 24 字上界会截成 …Rawa 且无省略标记)')
   console.log('  7a. 访谈答案/多段首查 → null OK')
   console.log('  7b. 订酒店抓名称段(The Title…) OK')
 })

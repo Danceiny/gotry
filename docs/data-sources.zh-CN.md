@@ -118,7 +118,7 @@ gotry(gotry_place_search 工具, 拟新增)
 | 何时选 | 种子用户期 / 任何地方+酒店混合查 | M4 校准数据后升级 |
 
 **当前 Anything 降级链**（L4 不变量，降级不阻塞）：
-- hbcli 不可达 → verdict=`unavailable` + 证据链 `[实时API:hbcli-anything@error@ts]`
+- hbcli 不可达 → verdict=`unavailable` + 证据链 `[实时API:hbcli-anything@error@ts]`；面向用户与模型的原因一律是人话（缺可选实时源时附补装命令），`(exit null)` 这类进程噪音不出现在这两个面，同时证据链保留上游原话以供溯源
 - Anything miss（0 候选） → verdict=`miss` 让 LLM 换搜索词
 - agent-reach 是 Anything 再下一级的最后兜底（.shared/skills/，D-4a 决定用不用）
 

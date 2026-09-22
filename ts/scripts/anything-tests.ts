@@ -9,6 +9,7 @@
  *  5. 旧 CLI「unknown command」:error 带升级指引(issue #195:裸 unknown command 读起来像工具坏了)
  *  6. 超时:fake hbcli hang — AbortError → verdict error + 不抛错
  *  7. 关键词为空:不调 hbcli — verdict error
+ *  8. 缺 hbcli(spawn 失败):用户面是人话(不留 `(exit null)`/ENOENT 进程噪音)
  *
  * 运行: cd ts && npx tsx scripts/anything-tests.ts
  */
@@ -142,7 +143,21 @@ while :; do sleep 5; done
   assert.equal(r7.verdict, 'error')
   console.log('7. empty keyword → error OK')
 
-  console.log('\nANYTHING TESTS: 7/7 OK(hbcli fake + wire 对齐 + 降级诚实)')
+  // 8. 缺 hbcli(spawn 失败):用户面必须是人话。这条消息会直接渲染进用户回复
+  //    (loop.ts 的 D-7a PoI 探针),旧实现回落成 `(exit null)` 这类进程噪音
+  //    (2026-09-22 端到端走查在「我订了酒店:The Title East Wing Rawai」上实测到)。
+  const r8 = await anythingSearch({ keyword: 'The Title East Wing Rawai', hbcliBin: join(tmp, 'definitely-missing-hbcli') })
+  assert.equal(r8.verdict, 'error', '缺 hbcli 应判 error 而非抛错')
+  assert.ok(r8.error && r8.error.length > 0, '必须给出原因')
+  assert.ok(
+    !/(exit null|ENOENT|spawn )/i.test(r8.error),
+    `用户面不得出现进程噪音,实得:${r8.error}`,
+  )
+  assert.ok(/hbcli/.test(r8.error), `原因须指明是 hbcli,实得:${r8.error}`)
+  assert.ok(r8.evidence.includes('[实时API:hbcli-anything@error@'), '证据链 tag 形态不变')
+  console.log(`8. 缺 hbcli → 人话降级 OK(${r8.error})`)
+
+  console.log('\nANYTHING TESTS: 8/8 OK(hbcli fake + wire 对齐 + 降级诚实)')
 } finally {
   await rm(tmp, { recursive: true, force: true })
 }

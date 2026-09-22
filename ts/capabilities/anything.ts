@@ -136,6 +136,27 @@ function upgradeHint(stderr: string): string | null {
     : null
 }
 
+/**
+ * 失败人话化(对齐 hbcli.ts 的 issue #24 口径)。
+ *
+ * 这条消息会直接渲染进用户回复(loop.ts 的 D-7a PoI 探针)并进入模型面,所以
+ * `(exit null)`、`spawn hbcli ENOENT` 这类进程噪音不能出现——hbcli 未装配是
+ * 可选实时源的降级设计行为,不是工具坏了;无法归类时也要说清发生了什么。
+ */
+function failureReason(
+  r: { error?: string; code?: number | null; stderr?: string; timedOut?: boolean },
+  cleanupError: string | undefined,
+): string {
+  const suffix = cleanupError ? `;${cleanupError}` : ''
+  if (/ENOENT/i.test(r.error ?? '')) return `未安装 hbcli(可选实时源;npx @danceiny/gotry setup 可按官方脚本安装)${suffix}`
+  if (r.timedOut) return `hbcli 实时查询超时(本轮按降级处理)${suffix}`
+  const detail = (r.stderr ?? '').trim().slice(0, 200)
+  if (detail) return `hbcli 报错:${detail}${suffix}`
+  return (r.code == null
+    ? 'hbcli 未返回可判定结果(进程异常结束,本轮按降级处理)'
+    : `hbcli 退出码 ${r.code},未返回可判定结果(本轮按降级处理)`) + suffix
+}
+
 /** Anything 通用搜索 — 任何搜索失败走降级;不抛错 */
 export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> {
   const started = Date.now()
@@ -179,10 +200,11 @@ export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> 
     return {
       ok: false,
       via: 'hbcli-anything-error',
+      // evidence 保留上游原话(溯源契约,anything-tests 锁);error 走人话面
       evidence: `[实时API:hbcli-anything@${r.timedOut ? 'timeout' : 'error'}@${ts}] ${raw}`,
       latencyMs,
       verdict: 'error',
-      error: upgradeHint(r.stderr) ?? raw,
+      error: upgradeHint(r.stderr) ?? failureReason(r, cleanupError),
     }
   }
 
