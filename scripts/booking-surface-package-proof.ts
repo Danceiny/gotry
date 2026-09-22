@@ -54,6 +54,9 @@ for (const definition of [
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const CLEAN_CONSUMER_INSTALL_TIMEOUT_MS = 300_000
 const DIAGNOSTIC_TAIL_BYTES = 256
+const BOOT_RECORD_PREFIXES = ['CORE_BOOT_STAGE ', 'CORE_BOOT_FAILURE ']
+const DIAGNOSTIC_RECORD_LIMIT = 24
+const DIAGNOSTIC_RECORD_BYTES = 2_048
 type Injection = 'nonzero' | 'timeout'
 type CommandResult = SpawnSyncReturns<string>
 
@@ -109,10 +112,8 @@ function injectionMode(): Injection | undefined {
   throw new Error(`unknown ${prefix}${value}`)
 }
 
-function sanitizedTail(value: string | null | undefined): { bytes: number; tail: string } {
-  const raw = value ?? ''
-  const bytes = Buffer.byteLength(raw)
-  const sanitized = raw
+function sanitizeText(value: string): string {
+  return value
     .replace(/https?:\/\/[^\s"'<>]+/gi, '[REDACTED-URL]')
     .replace(/(\b(?:token|password|secret|_authToken|api[_-]?key)\s*[=:]\s*)[^\s,;]+/gi, '$1[REDACTED]')
     .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
@@ -120,6 +121,12 @@ function sanitizedTail(value: string | null | undefined): { bytes: number; tail:
     .replace(/[\r\n\t\v\f]+/g, ' ')
     .replace(/ {2,}/g, ' ')
     .trim()
+}
+
+function sanitizedTail(value: string | null | undefined): { bytes: number; tail: string } {
+  const raw = value ?? ''
+  const bytes = Buffer.byteLength(raw)
+  const sanitized = sanitizeText(raw)
   let tail = ''
   let tailBytes = 0
   for (const character of Array.from(sanitized).reverse()) {
@@ -151,8 +158,35 @@ function commandDiagnostic(label: string, elapsedMs: number, result: CommandResu
   ].join(' ')
 }
 
-function assertCommandSucceeded(label: string, startedAt: number, result: CommandResult): void {
-  assert.equal(result.status, 0, commandDiagnostic(label, Date.now() - startedAt, result))
+/**
+ * Issue #511's acceptance requires the ordered boot stage trace to reach the
+ * reported diagnostic rather than degrade into a stderr tail: the original
+ * failure kept 256 of its 731 stderr bytes, which is exactly where the stage
+ * sequence went missing. The records are structured lines on fd 2, so collect
+ * them in order, redacted and bounded, instead of truncating from the end.
+ */
+function bootRecordSummary(stderr: string | null | undefined): string {
+  const records = (stderr ?? '')
+    .split('\n')
+    .filter((line) => BOOT_RECORD_PREFIXES.some((prefix) => line.startsWith(prefix)))
+    .map(sanitizeText)
+  if (records.length === 0) return '<no boot records>'
+  const half = DIAGNOSTIC_RECORD_LIMIT / 2
+  const kept = records.length <= DIAGNOSTIC_RECORD_LIMIT
+    ? records
+    : [...records.slice(0, half), `<${records.length - DIAGNOSTIC_RECORD_LIMIT} boot records omitted>`, ...records.slice(-half)]
+  let summary = ''
+  for (const record of kept) {
+    const next = summary === '' ? record : `${summary}\n${record}`
+    if (Buffer.byteLength(next) > DIAGNOSTIC_RECORD_BYTES) return `${summary}\n<boot records truncated>`
+    summary = next
+  }
+  return summary
+}
+
+function assertCommandSucceeded(label: string, startedAt: number, result: CommandResult, extra?: string): void {
+  const diagnostic = [commandDiagnostic(label, Date.now() - startedAt, result), extra].filter((part) => part !== undefined).join(' ')
+  assert.equal(result.status, 0, diagnostic)
 }
 
 function runInstall(injection: Injection | undefined, tarball: string, cwd: string): CommandResult {
@@ -345,14 +379,14 @@ if (failures.length === 0) console.log('PACKED CONSUMER DSH CORE BOOT: OK')
     assert.equal(npmClosure.names.length, REQUIRED_DSH_RUNTIME_PACKAGE_COUNT, 'clean npm consumer must resolve the complete Round 5 DSH closure')
     const consumerRunStartedAt = Date.now()
     const consumerRun = spawnSync(process.execPath, [consumerScript], { cwd: packedConsumer, encoding: 'utf8', timeout: 60_000 })
-    assertCommandSucceeded('core-boot', consumerRunStartedAt, consumerRun)
+    assertCommandSucceeded('core-boot', consumerRunStartedAt, consumerRun, `bootRecords=${JSON.stringify(bootRecordSummary(consumerRun.stderr))}`)
     const bootStages = (consumerRun.stderr ?? '')
       .split('\n')
       .filter((line) => line.startsWith('CORE_BOOT_STAGE '))
       .map((line) => JSON.parse(line.slice('CORE_BOOT_STAGE '.length)) as { phase: string; elapsedMs: number; providerRequests: number })
     assert.ok(
       bootStages.some((stage) => stage.phase === 'initialized'),
-      `clean consumer must report the stage trace that names a cold-boot stall: ${sanitizedTail(consumerRun.stderr).tail}`,
+      `clean consumer must report the stage trace that names a cold-boot stall: ${JSON.stringify(bootRecordSummary(consumerRun.stderr))}`,
     )
     console.log(
       `BOOKING SURFACE PACKAGE PROOF: clean-consumer boot budget ${CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize}ms ${JSON.stringify(bootStages.map((stage) => [stage.phase, stage.elapsedMs]))} modelRequests=${bootStages.at(-1)?.providerRequests ?? 0}`,
@@ -476,6 +510,47 @@ if (!injection) {
     assert.equal(classified?.providerRequests, 0, 'a protocol error response reaches no provider request')
     console.log(
       `BOOKING SURFACE PACKAGE PROOF: jsonrpc-error classification ${JSON.stringify({ status: classification.result.status, record: classified })}`,
+    )
+
+    // #511 acceptance: the reported diagnostic must carry the ordered stage
+    // trace. The original failure kept the last 256 of its 731 stderr bytes,
+    // which is where its stage sequence was lost, so assert the records survive
+    // the truncation a plain tail applies.
+    const retentionTrace = [
+      'CORE_BOOT_STAGE {"phase":"before_initialize","elapsedMs":4,"providerRequests":0}',
+      'CORE_BOOT_STAGE {"phase":"initialized","elapsedMs":1564,"providerRequests":0}',
+      'CORE_BOOT_STAGE {"phase":"model_run_done","elapsedMs":1594,"providerRequests":1}',
+      'CORE_BOOT_STAGE {"phase":"cleanup","elapsedMs":1594,"providerRequests":1}',
+      'CORE_BOOT_STAGE {"phase":"cleanup_done","elapsedMs":1929,"providerRequests":1}',
+      'CORE_BOOT_FAILURE [{"phase":"cleanup_done","elapsedMs":1929,"providerRequests":1,"error":"RequestTimeoutError","detail":"https://user:pass@private.invalid/pkg?token=retention-secret"}]',
+    ].join('\n')
+    assert.ok(
+      Buffer.byteLength(retentionTrace) > DIAGNOSTIC_TAIL_BYTES,
+      'the control trace must be longer than the retained tail for the comparison to mean anything',
+    )
+    assert.equal(
+      sanitizedTail(retentionTrace).tail.includes('before_initialize'),
+      false,
+      'a 256-byte stderr tail drops the first stage, which is why the records are reported separately',
+    )
+    const retained = bootRecordSummary(retentionTrace)
+    for (const phase of ['before_initialize', 'initialized', 'model_run_done', 'cleanup', 'cleanup_done']) {
+      assert.ok(retained.includes(`"phase":"${phase}"`), `the reported diagnostic must keep the ${phase} stage: ${retained}`)
+    }
+    assert.ok(retained.includes('CORE_BOOT_FAILURE'), 'the reported diagnostic must keep the failure record')
+    assert.ok(!retained.includes('retention-secret'), 'boot records must stay redacted in the reported diagnostic')
+    const escapeRecords = bootRecordSummary(escape.result.stderr)
+    assert.ok(
+      escapeRecords.includes('before_initialize') && escapeRecords.includes('CORE_BOOT_FAILURE'),
+      `the real escape control must be reportable through its records: ${escapeRecords}`,
+    )
+    console.log(
+      `BOOKING SURFACE PACKAGE PROOF: boot record retention ${JSON.stringify({
+        stderrBytes: Buffer.byteLength(retentionTrace),
+        tailKeepsFirstStage: false,
+        reportedRecords: retained.split('\n').length,
+        escapeRecords: escapeRecords.split('\n').length,
+      })}`,
     )
   } finally {
     rmSync(budgetRoot, { recursive: true, force: true })
