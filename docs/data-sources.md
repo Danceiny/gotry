@@ -118,7 +118,7 @@ gotry (gotry_place_search tool, planned)
 | When to choose | Seed-user phase / any mixed place+hotel query | Upgrade after M4 calibrates the data |
 
 **Current Anything fallback chain** (L4 invariant: fallback never blocks):
-- hbcli unreachable → verdict=`unavailable` + evidence chain `[实时API:hbcli-anything@error@ts]`
+- hbcli unreachable → verdict=`unavailable` + evidence chain `[实时API:hbcli-anything@error@ts]`; the reason shown to the user and the model is plain language (an optional realtime source being absent, with the install command), never raw process noise such as `(exit null)`, while the evidence chain keeps the upstream wording for traceability
 - Anything miss (0 candidates) → verdict=`miss`, letting the LLM try different search terms
 - agent-reach is the last-resort backstop one level below Anything (.shared/skills/; D-4a decides whether to use it)
 

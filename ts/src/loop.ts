@@ -374,7 +374,10 @@ export async function runTurn(
     } else if (ar.verdict === 'miss') {
       parts.push(`**${poiProbe} → miss** (酒店-be Anything 一切正常但无候选)\n${ar.evidence}`)
     } else {
-      parts.push(`**${poiProbe} → unavailable** (${ar.error ?? 'hbcli 不可达'})\n${ar.evidence}`)
+      // 用户面只给人话原因 + 来源 tag:evidence 里的上游原话是溯源契约(能力层测试锁),
+      // 其中的进程噪音(如 `(exit null)`)不该渲染进回复。
+      const sourceTag = ar.evidence.match(/^\[[^\]]+\]/)?.[0]
+      parts.push(`**${poiProbe} → 实时查询不可用**(${ar.error ?? 'hbcli 不可达'})——这条不阻塞本轮规划,只影响实时数据源,其余结论照常带来源标注${sourceTag ? `\n${sourceTag}` : ''}`)
     }
   }
 
@@ -562,6 +565,9 @@ export function makeJournaledSolvePort(ledger: StateLedger, runId: string, solve
  *     2026-08-28 巡检收紧:旧版 ≤24 直通把访谈答案整句当关键词,垃圾 hbcli 调用+证据噪音)。
  * 不是意图(改求解器),只是 datasources 编排层的"提早调 anything"提示。
  */
+/** 住宿名称段上界:路径 2 已要求含拉丁/数字且被标点截断,旧 24 字会把
+ *  「The Title East Wing Rawai」这类真实酒店名截残后回显给用户(2026-09-22)。 */
+const POI_NAME_MAX = 48
 export function probePoi(msg: string): string | null {
   const trimmed = msg.trim()
   if (!trimmed) return null
@@ -577,7 +583,7 @@ export function probePoi(msg: string): string | null {
   if (/(酒店|民宿|客栈|饭店)/.test(trimmed)) {
     const parts = trimmed.split(/(酒店|民宿|客栈|饭店)/)
     const after = cutAtPunct((parts[2] ?? '').replace(/^[的:：\s]+/, ''))
-    if (after.length >= 2 && /[A-Za-z0-9]/.test(after)) return after.slice(0, 24)
+    if (after.length >= 2 && /[A-Za-z0-9]/.test(after)) return after.length > POI_NAME_MAX ? `${after.slice(0, POI_NAME_MAX - 1)}…` : after
     const nounAt = trimmed.search(/(酒店|民宿|客栈|饭店)/)
     const pre = trimmed.slice(Math.max(0, nounAt - 6), nounAt).match(/[一-龥]{2,6}$/)
     if (pre && !/(机票|车票|和|做|订|的)$/.test(pre[0])) return pre[0]
