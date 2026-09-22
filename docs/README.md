@@ -148,6 +148,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [research/enterprise-travel-reference-study.md](research/enterprise-travel-reference-study.md) | Enterprise travel agent eight-dimension reference study (2026-09-03, sources anonymized) |
 | [research/dsh-plugins-shortlist.md](research/dsh-plugins-shortlist.md) | dsh community plugin selection survey (issue #9) |
 | [research/kimi-postmortem.md](research/kimi-postmortem.md) | Kimi itinerary conversation postmortem: counter-example textbook and ground-truth extraction |
+| [research/karpo-deck-web-research.md](research/karpo-deck-web-research.md) | Karpo Deck Web reference study → gotry finished-product borrowing decisions (2026-09-22; primary = site fetch, no issue opened) |
 
 ### milestones/ (milestone memos, frozen)
 
