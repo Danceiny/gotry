@@ -137,7 +137,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     ? { id: 'extension', label: 'GoTry Session Bridge 扩展', status: 'ok', detail: `已就位(本地通道:${extManifest})` }
     : {
         id: 'extension', label: 'GoTry Session Bridge 扩展', status: 'missing',
-        detail: '本地通道未落位(~/.gotry/extension/manifest.json 不存在)。若你已从 Chrome 商店安装(自动更新,商店版 ID oeajpicc…),本项可忽略——会话检索可用性以运行时为准(gotry_session_search 的 verdict)。若未安装:应用商店一键装即可',
+        detail: '本地通道未落位(~/.gotry/extension/manifest.json 不存在)。影响面:gotry_session_search / gotry_session_login(账号会话通道)不可用;携程机票/酒店实时检索、12306 余票、Dida 实时报价都依赖此通道。其它工具(机票 FlyAI、酒店 hbcli、地图、天气等)不受影响。若你已从 Chrome 商店安装(自动更新,商店版 ID oeajpicc…),本项可忽略——会话检索可用性以运行时为准(gotry_session_search 的 verdict)。若未安装:应用商店一键装即可',
         fix: '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd',
       })
 
@@ -211,7 +211,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
   if (flyaiResolved.source === 'none') {
     items.push({
       id: 'flyai', label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪)', status: 'degraded',
-      detail: `未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)${flyaiQuotaNote}`,
+      detail: `未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)${flyaiQuotaNote}。影响面:共享池额度小,频繁会话易触顶;达限本会话内 gotry_flyai_search(机票/酒店/票务/AI/万豪 8 类)失败,改走 gotry_session_search 账号会话通道。`,
       fix: '本机运行 `gotry setup flyai`(隐藏输入,候选 key 先 scrub-env 验证后保存);打开 https://flyai.open.fliggy.com/console，登录后复制 API Key',
     })
   } else {
@@ -275,7 +275,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
       ? { id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'ok', detail: `已挂载且已配置(${calStatePath})` }
       : {
           id: 'calendar', label: 'dsh-calendar(日历工作窗口)', status: 'degraded',
-          detail: '已挂载但 calendar 未配置 username——日历工具会话中会报「未配置」',
+          detail: '已挂载但 calendar 未配置 username——日历工具会话中会报「未配置」。影响面:工作窗口只能由访谈覆盖,日历读取工具不会自动跑;机票/酒店/地图等检索不受影响。',
           fix: `npx @danceiny/gotry setup calendar --off(恢复默认不挂载),或在 ${calProfilePatch} 覆盖 calendar 行 config 填 username(指引: npx @danceiny/gotry setup calendar --status)`,
         })
 

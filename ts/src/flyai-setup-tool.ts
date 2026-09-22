@@ -10,6 +10,7 @@ import type { FlyaiResult } from '../capabilities/flyai.ts'
 import { readLatestChannelEvents } from '../capabilities/channel-health.ts'
 
 const guidance = '在本机运行 gotry setup flyai（隐藏输入），或 gotry setup flyai --stdin；清除文件配置用 --clear。不要在聊天中发送 API key。打开 https://flyai.open.fliggy.com/console，登录后复制 API Key。'
+const guidanceImpact = '影响面:未配置 key 时 gotry_flyai_search 走匿名共享额度池(易达 Trial limit reached,达限本会话该工具不可用);配置后额度走本机 key,失败时按 verdict 改道 gotry_session_search 账号会话通道。'
 
 export function createFlyaiSetupTool(runEffect: EffectInterpreter, stateRoot?: string) {
   return defineTool({
@@ -20,7 +21,7 @@ export function createFlyaiSetupTool(runEffect: EffectInterpreter, stateRoot?: s
     async execute(args, exec) {
       // Reject unknown arguments before any provider invocation or metadata write.
       if (Object.keys(args).some(key => key !== 'action') || (args.action !== undefined && args.action !== 'status' && args.action !== 'check')) {
-        return { ok: false, summary: `仅支持 status/check；不接收凭据。${guidance}` }
+        return { ok: false, summary: `仅支持 status/check；不接收凭据。${guidance} ${guidanceImpact}` }
       }
       const home = homedir()
       const current = resolveFlyaiKey()
@@ -63,6 +64,7 @@ export function createFlyaiSetupTool(runEffect: EffectInterpreter, stateRoot?: s
         + (checkVerdict ? `本次只读检查：${checkVerdict}。` : '')
         + (lastTrialLimit ? `最近试用额度受限：${lastTrialLimit}。` : '')
         + (receiptSaved === false ? '验证回执保存失败，doctor 状态尚未更新。' : '') + guidance
+        + ' ' + guidanceImpact
       return JSON.parse(JSON.stringify({ ok: receiptSaved !== false && (!checkVerdict || checkVerdict === 'hit' || checkVerdict === 'miss'), action: args.action ?? 'status',
         source: current.source, configured: Boolean(current.key), verified,
         maskedKey: current.maskedKey, configPath: current.configPath,

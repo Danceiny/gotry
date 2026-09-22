@@ -41,7 +41,15 @@ assert.ok(byId('agent-reach'), 'agent-reach 项存在')
 assert.equal(byId('agent-reach')!.status, 'missing', `空仓 agent-reach=missing,实际 ${byId('agent-reach')!.status}`)
 assert.match(byId('agent-reach')!.fix ?? '', /npx @danceiny\/gotry doctor --fix/, 'missing 项带精确补装指引')
 assert.equal(byId('extension')!.status, 'missing', '空 home 扩展=missing')
+// #559 B 步:扩展 missing 必须显式说明「哪些工具不可用、哪些不受影响」
+assert.match(byId('extension')!.detail, /影响面/, '扩展 missing detail 必带影响面行(issue #559 B 步)')
+assert.match(byId('extension')!.detail, /gotry_session_search/, '扩展 missing detail 必显挂的工具名')
+assert.match(byId('extension')!.detail, /其它工具/, '扩展 missing detail 必显「其它不受影响」')
 assert.equal(byId('flyai')!.status, 'degraded', '无 key flyai=degraded(有共享试用,非缺失)')
+// #559 B 步:无 key flyai 必须显式说明「匿名共享额度」影响面
+assert.match(byId('flyai')!.detail, /影响面/, 'flyai 无 key detail 必带影响面行(issue #559 B 步)')
+assert.match(byId('flyai')!.detail, /Trial limit/, 'flyai 无 key detail 必显 Trial limit reached 后果')
+assert.match(byId('flyai')!.detail, /gotry_session_search/, 'flyai 无 key detail 必显 fallback 路径')
 assert.equal(byId('llm-key')!.status, 'ok', 'LLM key 恒 ok(让渡面)')
 assert.equal(r1.ok, false, '有 missing 项时报告 ok=false')
 assert.match(r1.summary, /待处理/, 'summary 指明待处理项')
@@ -91,6 +99,25 @@ assert.equal(nodeOk('22.14.0'), false, '22.14 不足')
 assert.equal(nodeOk('22.15.0'), true, '22.15 达标')
 assert.equal(nodeOk('23.0.0'), true, '23.x 达标')
 console.log('4. nodeOk 边界 OK')
+
+// 4b. #559 B 步:calendar 「挂载但未配 username」degraded detail 必须显式影响面
+{
+  const calHome = await mkdtemp(join(tmpdir(), 'gotry-doctor-cal-'))
+  await mkdir(join(calHome, '.gotry'), { recursive: true })
+  await writeFile(join(calHome, '.gotry/calendar.json'), JSON.stringify({ enabled: true, updatedAt: new Date().toISOString() }), { mode: 0o755 })
+  // 让 patch 文件存在但不包含 username: → 触发 degraded
+  const dshDir = join(calHome, '.dsh/profiles/web')
+  await mkdir(dshDir, { recursive: true })
+  await writeFile(join(dshDir, 'cordis.patch.yml'), '- id: dsh-calendar\n  config: {}\n')
+  const r4b = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: calHome, env: {} })
+  const calItem = r4b.items.find(i => i.id === 'calendar')
+  assert.ok(calItem, 'calendar 项存在')
+  assert.equal(calItem!.status, 'degraded', '挂载未配 username → degraded')
+  assert.match(calItem!.detail, /影响面/, 'calendar degraded detail 必带影响面行(issue #559 B 步)')
+  assert.match(calItem!.detail, /工作窗口/, 'calendar degraded detail 必显工作窗口受什么影响')
+  assert.match(calItem!.detail, /机票|酒店|地图/, 'calendar degraded detail 必显「检索不受影响」(防止用户误以为整盘挂)')
+}
+console.log('4b. calendar 影响面 OK')
 
 // 5. 报告渲染:命令类反引号、prose 类原样
 const md = renderDoctorReportMd(r1)

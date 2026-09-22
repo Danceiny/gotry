@@ -19,6 +19,10 @@
 4. **Fallback never blocks**: any realtime source failure falls back to the static pack/skeleton with annotation, and planning is never interrupted (capability-layer contract: always return some kind of result).
 5. **At least one free source per domain**: no deadlock on quotas/credentials during the seed-user phase.
 
+### Setup Surfaces That Need the User (Reference)
+
+Three capabilities cannot be auto-installed by the bootstrap — they touch personal data (extension install + login), personal money (FlyAI key), or personal infrastructure (CalDAV username). The capability-layer hint strings (this doc §2 / §3 / §6 / §8) carry a one-line **impact statement** at the moment of failure; the followable expansion + verification commands for all three live in [`capability-onboarding.md`](capability-onboarding.md). When a setup path or impact surface changes, edit the runtime string **and** that doc in the same commit.
+
 ---
 
 ## 2. Domain Matrix (Current State × Target)
