@@ -66,4 +66,8 @@ Every rejection of the single-page renderer is the deck's rejection, byte for by
 
 ## 7. Slice status and explicit non-claims
 
-Landed here: the shared layer, the deck renderer, the deterministic deck suite (163 assertions, run-all §6d), and the widened source-purity checks. Not in this slice: a registered product entry writing deck files, static export/deploy, QR, any runtime activation, and any share/consent surface — all later slices of issue #564. The deck renders only caller-supplied structure plus registry-selected facts; its fixtures are synthetic and stand for no supplier evidence.
+Landed here: the shared layer, the deck renderer, the deterministic deck suite (226 assertions, run-all §6d), and the widened source-purity checks.
+
+Landed at issue #566 (Phase B slice 2): the deck product entry `ts/capabilities/itinerary-deck-artifact.ts` exposing the registered tool `gotry_itinerary_deck_render` — symmetric to the single-page `gotry_itinerary_render` (shared `normalizeDocInput` + the same registry-only / non-overwriting / session-cwd path guards, with the `gotry-deck-` basename contract). Verified by `ts/scripts/itinerary-deck-artifact-tests.ts` (131 assertions, run-all §6e).
+
+Not in any slice: static export/deploy, QR, any runtime activation, and any share/consent surface — all later slices of issue #564. The deck renderer only renders caller-supplied structure plus registry-selected facts; its fixtures are synthetic and stand for no supplier evidence.
