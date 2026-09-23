@@ -66,4 +66,8 @@ Every rejection of the single-page renderer is the deck's rejection, byte for by
 
 ## 7. Slice status and explicit non-claims
 
-Landed here: the shared layer, the deck renderer, the deterministic deck suite (163 assertions, run-all §6d), and the widened source-purity checks. Not in this slice: a registered product entry writing deck files, static export/deploy, QR, any runtime activation, and any share/consent surface — all later slices of issue #564. The deck renders only caller-supplied structure plus registry-selected facts; its fixtures are synthetic and stand for no supplier evidence.
+Landed here: the shared layer, the deck renderer, the deterministic deck suite (226 assertions after the §6 purity-mirror + drift-lock widening in PR #565's follow-up, run-all §6d), and the widened source-purity checks.
+
+Landed at issue #568 (Phase B slice 3a): the deck static-export bundle `ts/capabilities/itinerary-deck-export.ts` exposing the registered tool `gotry_deck_export` — writes three basename-prefixed files to a host-provided absolute `target_dir` (`<basename>.html` + `<basename>.manifest.json` + `<basename>.qr.svg` placeholder), with manifest provenance (sha256, bytes, fact counts by kind, source tags, evidence-chain summary, exported_at, optional target_url), bundle-level `O_CREAT|O_EXCL`, and an explicit refusal to follow symlinked target_dirs (lstat check before realpath). Verified by `ts/scripts/itinerary-deck-export-tests.ts` (142 assertions, run-all §6f). The real QR matrix (slice 3b) is tracked by issue #569.
+
+Not in any slice: static hosting/deploy, the QR encoding (issue #569), any runtime activation, and any share/consent surface — all later slices of issue #564. The deck renderer only renders caller-supplied structure plus registry-selected facts; its fixtures are synthetic and stand for no supplier evidence.

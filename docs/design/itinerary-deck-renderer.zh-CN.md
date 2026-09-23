@@ -66,4 +66,8 @@ deck 导航是组级锚点链接，随派生收缩（不指向不存在的页）
 
 ## 7. 切片状态与显式不主张
 
-本切片落地：共享层、deck 渲染器、确定性 deck 套件（163 断言，run-all §6d）、拓宽的源码纯度检查。不在本切片：写 deck 文件的注册产品入口、静态导出／部署、QR、任何运行时激活、任何分享／同意面——都是 issue #564 的后续切片。deck 只渲染调用方给出的结构＋注册表选出的事实；其夹具为合成数据，不代表任何供应商证据。
+本切片落地：共享层、deck 渲染器、确定性 deck 套件（run-all §6d，PR #565 后续硬化后 226 断言）、拓宽的源码纯度检查。
+
+issue #568（Phase B 切片 3a）落地：deck 静态导出 bundle `ts/capabilities/itinerary-deck-export.ts`，暴露注册工具 `gotry_deck_export`——在宿主显式给出的绝对 `target_dir` 下写三件带 basename 前缀的文件（`<basename>.html` + `<basename>.manifest.json` + `<basename>.qr.svg` 占位），manifest 含信源（sha256、字节、按 kind 的事实计数、来源标签、证据链摘要、导出时刻、可选 target_url），bundle 三件 `O_CREAT|O_EXCL` 独占，并显式拒绝跟随 symlinked target_dir（realpath 之前的 lstat 检查）。由 `ts/scripts/itinerary-deck-export-tests.ts`（142 断言，run-all §6f）验证。QR 真矩阵编码由 issue #569 跟踪。
+
+不在任何切片：静态托管／部署、QR 编码（#569）、任何运行时激活、任何分享／同意面——都是 issue #564 的后续切片。deck 渲染器只渲染调用方给出的结构＋注册表选出的事实；其夹具为合成数据，不代表任何供应商证据。

@@ -42,6 +42,7 @@ import { createConsentGate, approvalFromContext, resolveSessionSearchKind } from
 import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { generateItineraryArtifact } from '../capabilities/itinerary-artifact.ts'
+import { generateItineraryDeckExport } from '../capabilities/itinerary-deck-export.ts'
 import { interpretEffect, declinedObservation, type EffectInterpreter } from '../capabilities/effect.ts'
 import { FLYAI_POI_CATEGORIES, type FlyaiKind, type FlyaiQuery, type FlyaiResult } from '../capabilities/flyai.ts'
 import { createFlyaiSetupTool } from './flyai-setup-tool.ts'
@@ -2437,6 +2438,71 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         card: 'generic',
         title: r.ok ? `行程 HTML 已生成:${String(r.path ?? '').split('/').pop() ?? ''}` : '行程 HTML 未生成',
         content: [{ type: 'text', text: r.ok ? `最终路径:${String(r.path ?? '')}(${r.bytes ?? 0} 字节)` : String(r.error ?? '') }],
+      }
+    },
+  }))
+
+  // ---- 行程 deck 静态导出 bundle(issue #568,Phase B 切片 3a;QR 真矩阵编码独立为 #569 切片 3b)----
+  // 在宿主显式给出的 target_dir 下写三件,全部带 basename 前缀以支持同 dir 多 bundle 不互撞:
+  // `<basename>.html` + `<basename>.manifest.json` + `<basename>.qr.svg`(占位)。
+  // 与切片 2 的 deck 入口互不重叠(那个写单文件到 session cwd;这个写 bundle 到 host target_dir)。
+
+  registerGuarded(defineTool({
+    name: 'gotry_deck_export',
+    description:
+      'Export a local, self-contained HTML itinerary DECK as a shareable static bundle (NEW directory contents; never overwrites) into a host-provided target directory. '
+      + 'Writes three files at the target_dir top level, all basename-prefixed so multiple bundles can coexist in the same dir: '
+      + '`<basename>.html` (the rendered deck), `<basename>.manifest.json` (provenance: sha256, bytes, fact counts by kind, source tags, evidence-chain summary, exported_at, optional target_url), '
+      + 'and `<basename>.qr.svg` (placeholder — slice 3b will replace it with a real QR matrix encoding the target URL). '
+      + 'Input: title, the explicit itinerary object { trip_start, trip_end, stays:[{place,check_in,check_out}], od_segments:[{from,to,date,mode,legs}] } (same shape as gotry_itinerary_render; nights/budget fields are not accepted), '
+      + 'fact_ids (loaded ONLY from the session fact registry), optional basename (default = random hex), optional target_url (recorded in manifest, used by QR when slice 3b lands). '
+      + 'target_dir must be an absolute directory path provided by the host (no fallback to process cwd). All three files use O_CREAT|O_EXCL — any pre-existing file at the target slot rejects the call with zero bytes written.',
+    parameters: {
+      title: { type: 'string', required: true, description: 'deck 标题(原样转义)' },
+      itinerary: { type: 'object', additionalProperties: true, required: true, description: '结构化行程 { trip_start, trip_end, stays:[{place,check_in,check_out}], od_segments:[{from,to,date,mode,legs}] }; 不做夜数/预算/时间运算' },
+      fact_ids: { type: 'array', items: { type: 'string' }, required: true, description: '事实 id 数组(来自本会话 exact-date 工具结果登记的注册表)' },
+      basename: { type: 'string', description: '可选 bundle stem,默认随机 hex;决定三件文件名(<basename>.html / manifest.json / qr.svg)' },
+      target_url: { type: 'string', description: '可选:目标托管 URL,写入 manifest;切片 3b QR 编码将引用此字段' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
+    },
+    async execute(args, exec) {
+      const q = args as { title?: unknown; itinerary?: unknown; fact_ids?: unknown; basename?: unknown; target_url?: unknown }
+      // 写产物不允许猜测落点:宿主必须给出显式绝对 target_dir,否则 fail closed
+      const targetDir = sessionCwd(exec)
+      if (typeof targetDir !== 'string' || targetDir.trim() === '' || !isAbsolute(targetDir)) {
+        const error = typeof targetDir !== 'string' || targetDir.trim() === ''
+          ? 'target_dir 缺失:拒绝在未知目录写产物'
+          : `target_dir 必须是绝对路径:${targetDir}`
+        return JSON.parse(JSON.stringify({
+          ok: false,
+          error,
+          hint: '产物只写到宿主会话的显式绝对工作目录(dsh 会话 header.cwd);本工具不猜测落点',
+        })) as Record<string, never>
+      }
+      const r = await generateItineraryDeckExport(
+        { title: q.title, itinerary: q.itinerary, fact_ids: q.fact_ids, basename: q.basename, target_url: q.target_url },
+        { stateRoot: config.stateRoot ?? '.', targetDir },
+      )
+      const summary = r.ok
+        ? `已生成 deck 静态导出 bundle(target_dir):${r.target_dir}\n`
+          + `三件文件:html=${r.files.html}\nmanifest=${r.files.manifest}\nqr.svg=${r.files.qr}(占位,切片 3b QR 编码跟进)\n`
+          + `总字节 ${r.bytes},投影事实 ${r.fact_ids.length} 条(全部来自当前注册表)。`
+          + '可直接上传到任意静态托管(Vercel/Netlify/GH Pages)。'
+        : `未生成产物(未写入任何文件):${r.error}`
+          + `${r.errors?.length ? `\n${r.errors.slice(0, 8).map(e => `- ${e}`).join('\n')}` : ''}`
+          + `${r.hint ? `\n修正提示:${r.hint}` : ''}`
+      return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `导出 deck bundle:${String(args.title ?? '')}`.slice(0, 80), kind: 'execute', rawInput: args }),
+    presentResult: (_args, value) => {
+      const r = value as { ok?: boolean; target_dir?: string; files?: { html?: string; manifest?: string; qr?: string }; error?: string }
+      return {
+        card: 'generic',
+        title: r.ok ? `deck bundle 已导出:${String(r.target_dir ?? '')}` : 'deck bundle 未导出',
+        content: [{ type: 'text', text: r.ok ? `三件文件:${r.files?.html ?? ''} / ${r.files?.manifest ?? ''} / ${r.files?.qr ?? ''}` : String(r.error ?? '') }],
       }
     },
   }))
