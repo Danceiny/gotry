@@ -19,6 +19,8 @@ renderItineraryHtml(input: unknown):
 
 输入含标题、显式行程(`trip_start` / `trip_end` / `stays` / `od_segments`)以及**调用方**从注册表选出的事实。渲染器从不查询上游。输出是一份自包含 HTML 文档:内联 CSS、语义导航锚点、原生 `details`/`summary` 展开、无脚本、无任何远端资源。
 
+自 issue #564 起，输入校验、事实归一化、事实卡与双面文案上移到共享文档契约层 `ts/src/itinerary-doc-shared.ts`，被本渲染器与 deck 渲染器逐字共用——见 [itinerary-deck-renderer.md](itinerary-deck-renderer.zh-CN.md)。本模块只保留单页版式与组装；其公开导出（`ITINERARY_HTML_LIMITS` / `ItineraryHtmlInput` / `ItineraryHtmlResult`）以重导出保持不变。
+
 ## 2. 两个永不合流的平面
 
 - **计划面**——用户排期意图(`stays`、`od_segments`)。卡片一律标注为计划,不标注为可订。
@@ -55,3 +57,5 @@ renderItineraryHtml(input: unknown):
 ## 6. 切片状态
 
 本切片已落地：渲染器、生成入口（注册工具 + run-all §6c 两套件）、真实浏览器覆盖（导航、原生 details 与 Return 键盘、窄屏可读、转义）与本文件。原生 HTML preview sandbox 验收 = #448 proof 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts`（可复跑：`GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`）；已注册的 Lavish 浏览器反馈链 = #443 CLOSED + PR #456 merged acceptance；生成产物的浏览器覆盖由 #442 CLOSED + PR #449 merged acceptance 收口。生成产物是「调用方给的显式结构 + 已注册事实」的投影——其 fixture 不是供应商证据，不能替代真实库存核验。
+
+2026-09-23（issue #564）：契约层原样抽取为 `ts/src/itinerary-doc-shared.ts`——零行为变化，由 §6c 两套件在断言语义不变的前提下通过证明（仅 §6 源码纯度检查拓宽到双模块）。deck 投影与其 §6d 套件见 [itinerary-deck-renderer.md](itinerary-deck-renderer.zh-CN.md)。
