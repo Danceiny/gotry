@@ -2511,7 +2511,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       'Export a local, self-contained HTML itinerary DECK as a shareable static bundle (NEW directory contents; never overwrites) into a host-provided target directory. '
       + 'Writes three files at the target_dir top level, all basename-prefixed so multiple bundles can coexist in the same dir: '
       + '`<basename>.html` (the rendered deck), `<basename>.manifest.json` (provenance: sha256, bytes, fact counts by kind, source tags, evidence-chain summary, exported_at, optional target_url), '
-      + 'and `<basename>.qr.svg` (placeholder — slice 3b will replace it with a real QR matrix encoding the target URL). '
+      + 'and `<basename>.qr.svg` (real QR matrix — issue #569, encoding the target_url when provided, or a `local bundle; not yet hosted` marker when omitted). '
       + 'Input: title, the explicit itinerary object { trip_start, trip_end, stays:[{place,check_in,check_out}], od_segments:[{from,to,date,mode,legs}] } (same shape as gotry_itinerary_render; nights/budget fields are not accepted), '
       + 'fact_ids (loaded ONLY from the session fact registry), optional basename (default = random hex), optional target_url (recorded in manifest, used by QR when slice 3b lands). '
       + 'target_dir must be an absolute directory path provided by the host (no fallback to process cwd). All three files use O_CREAT|O_EXCL — any pre-existing file at the target slot rejects the call with zero bytes written.',
@@ -2546,7 +2546,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       )
       const summary = r.ok
         ? `已生成 deck 静态导出 bundle(target_dir):${r.target_dir}\n`
-          + `三件文件:html=${r.files.html}\nmanifest=${r.files.manifest}\nqr.svg=${r.files.qr}(占位,切片 3b QR 编码跟进)\n`
+          + `三件文件:html=${r.files.html}\nmanifest=${r.files.manifest}\nqr.svg=${r.files.qr}(真矩阵,#569 切片 3b 落地;target_url 见 manifest.deck.target_url)\n`
           + `总字节 ${r.bytes},投影事实 ${r.fact_ids.length} 条(全部来自当前注册表)。`
           + '可直接上传到任意静态托管(Vercel/Netlify/GH Pages)。'
         : `未生成产物(未写入任何文件):${r.error}`

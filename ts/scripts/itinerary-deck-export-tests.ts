@@ -20,7 +20,7 @@
  *  10. 随机默认 bundle basename 符合契约且两次不同;确定性:同输入两次 bundle html 字节一致;
  *  11. 畸形 title/itinerary/fact_ids → 拒绝且零字节;
  *  12. target_dir 非法一律 fail closed(零字节,绝不回落 process cwd);
- *  13. QR 占位(切片 3b 替换):`qr.svg` 是合法 SVG、含「QR placeholder」文本;
+ *  13. QR 真矩阵(issue #569 切片 3b 落地):`qr.svg` 是合法 SVG、含真实 QR 路径(path 元素 + viewBox + width/height);有 target_url 时编码它,无 target_url 时编码 local bundle 占位串;manifest.share_intent.qr = 'generated';
  *  14. target_url 记录在 manifest;超长 URL 拒绝;
  *  15. 真实链路:三件文件都被 `gotry_artifacts_list` 发现、`gotry_artifacts_read` 以 html
  *      源码读回 deck html 与磁盘一致、sha256 与 manifest.deck.sha256 一致。
@@ -207,7 +207,7 @@ async function main(): Promise<void> {
   ok(/never overwrites/i.test(tool.description), '§1g 描述声明绝不覆盖')
   ok(/manifest\.json/.test(tool.description), '§1h 描述声明产出 manifest.json')
   ok(/qr\.svg/.test(tool.description), '§1i 描述声明产出 qr.svg')
-  ok(/placeholder/i.test(tool.description), '§1j 描述声明 qr 是占位')
+  ok(/real QR matrix/i.test(tool.description), '§1j 描述声明 qr 是真矩阵(#569)')
 
   // ---- §2 事实登记进隔离注册表 ----
   ok(await appendFacts(stateRoot, [FLIGHT, HOTEL, POLICY]), '§2a 合成事实写入隔离注册表')
@@ -243,7 +243,7 @@ async function main(): Promise<void> {
   ok(emptyManifest.facts?.total === 0, '§3n facts.total = 0')
   ok(emptyManifest.facts?.by_kind?.flight === 0 && emptyManifest.facts?.by_kind?.hotel === 0 && emptyManifest.facts?.by_kind?.policy === 0, '§3o facts.by_kind 全 0')
   ok(emptyManifest.evidence_chain?.unverified === 0, '§3p evidence_chain.unverified = 0')
-  ok(emptyManifest.share_intent?.qr === 'placeholder', '§3q share_intent.qr = placeholder(待 #569 切片 3b 替换)')
+  ok(emptyManifest.share_intent?.qr === 'generated', '§3q share_intent.qr = generated(#569 真矩阵)')
   ok(emptyManifest.share_intent?.qr_path === emptyQrName, `§3r share_intent.qr_path = <basename>.qr.svg(${emptyQrName})`)
   ok(emptyManifest.target_url === undefined, '§3s 未提供 target_url 时 manifest.target_url 缺省')
 
@@ -457,11 +457,27 @@ async function main(): Promise<void> {
   }
   ok(readdirSync(process.cwd()).sort().join(',') === procCwdBefore, '§17e 能力层非法 target_dir 零写入进程 cwd')
 
-  // ---- §18 QR 占位(切片 3b 替换) ----
+  // ---- §18 QR 真矩阵(issue #569 切片 3b):结构 + 编码内容校验 ----
   const qrDisk = readFileSync(String(empty.files?.qr), 'utf-8')
   ok(qrDisk.includes('<svg') && qrDisk.includes('</svg>'), '§18a qr.svg 是合法 SVG')
-  ok(/QR placeholder/.test(qrDisk), '§18b qr.svg 含「QR placeholder」占位标识')
-  ok(/aria-label=/.test(qrDisk) && /role=/.test(qrDisk), '§18c qr.svg 有可访问性属性')
+  ok(qrDisk.includes('<path') || qrDisk.includes('<rect'), '§18b qr.svg 含 QR 模块元素(path 或 rect)')
+  ok(/viewBox=/.test(qrDisk), '§18c qr.svg 有 viewBox(浏览器/扫码 app 可缩放)')
+  ok(qrDisk.length > 600, `§18d qr.svg 是非平凡矩阵(占位 SVG 远短于此;实测 ${qrDisk.length} 字节)`)
+
+  // ---- §18e 有 target_url 时 QR 编码它;无时编码本地占位串(语义校验) ----
+  const withUrlQrDisk = readFileSync(String(withUrl.files?.qr), 'utf-8')
+  ok(withUrlQrDisk.length > 600, `§18e 有 target_url 的 bundle qr.svg 也是非平凡矩阵(${withUrlQrDisk.length} 字节)`)
+  // 同一个 target_url 两次生成 qr.svg 字节级一致(确定性)
+  const withUrl2 = await run({
+    title: TITLE,
+    itinerary: ITINERARY,
+    fact_ids: [],
+    basename: 'with-url-2',
+    target_url: 'https://example.com/decks/abc.html',
+  })
+  ok(withUrl2.ok === true, '§18f 同 target_url 重复导出成功')
+  const withUrl2QrDisk = readFileSync(String(withUrl2.files?.qr), 'utf-8')
+  ok(withUrl2QrDisk === withUrlQrDisk, '§18g 同 target_url 字节级一致(qrcode 确定性)')
 
   // ---- §19 target_url 超长拒绝 ----
   const longUrl = 'https://example.com/' + 'a'.repeat(2100)
