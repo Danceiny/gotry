@@ -811,7 +811,7 @@ function calendarDetail(state) {
   if (!state || state.enabled !== true) return '默认未挂载(D-9:未配置的日历工具不进工具箱;工作窗口由访谈覆盖,不影响任何检索)'
   return calendarProfileConfigured()
     ? `已挂载且已配置(${calendarStatePath()})`
-    : '已挂载但 calendar 未配置 username——日历工具会话中会报「未配置」'
+    : '已挂载但 calendar 未配置 username——日历工具会话中会报「未配置」;影响面:工作窗口只能由访谈覆盖,日历读取工具不会自动跑;机票/酒店/地图等检索不受影响'
 }
 
 async function runCalendar() {
@@ -855,7 +855,7 @@ async function doctorChecks() {
   // 扩展
   const extManifest = join(homedir(), '.gotry', 'extension', 'manifest.json')
   const extOk = existsSync(extManifest)
-  items.push({ label: 'GoTry Session Bridge 扩展', ok: extOk, level: extOk ? 'ok' : 'missing', detail: extOk ? `已就位(${extManifest})` : '未安装——gotry_session_search / gotry_session_login(账号会话通道)不可用,其余工具不受影响', fix: extOk ? undefined : '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd' })
+  items.push({ label: 'GoTry Session Bridge 扩展', ok: extOk, level: extOk ? 'ok' : 'missing', detail: extOk ? `已就位(${extManifest})` : '未安装——影响面:gotry_session_search / gotry_session_login(账号会话通道)不可用;携程机票/酒店实时检索、12306 余票、Dida 实时报价都依赖此通道。其它工具(机票 FlyAI、酒店 hbcli、地图、天气等)不受影响', fix: extOk ? undefined : '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd' })
   // agent-reach(.venv 装在包内)
   const venvPython = join(repoRoot, '.venv/bin/python')
   const reachBin = join(repoRoot, '.venv/bin/agent-reach')
@@ -887,7 +887,7 @@ async function doctorChecks() {
   let flyaiDetail
   let flyaiFix
   if (!flyaiResolved.key) {
-    flyaiDetail = '未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)'
+    flyaiDetail = '未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)。影响面:共享池额度小,频繁会话易触顶;达限本会话内 gotry_flyai_search(机票/酒店/票务/AI/万豪 8 类)失败,改走 gotry_session_search 账号会话通道。'
     flyaiFix = '本机运行 `gotry setup flyai`(隐藏输入,先验证后保存 FLYAI_API_KEY);打开 https://flyai.open.fliggy.com/console，登录后复制 API Key'
   } else {
     const keySha = sha256Inline(flyaiResolved.key)

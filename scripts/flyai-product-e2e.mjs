@@ -406,7 +406,7 @@ async function runCase(scenario) {
     assert.match(setup.stdout, /已保存|验证/);
     assert.equal(status.code, 0, status.stderr);
     assert.match(status.stdout, /source=config|已验证|verified/i);
-    const doctorFlyaiLine = doctor.stdout.split('\n').find(line => /FlyAI/.test(line)) ?? '';
+    const doctorFlyaiLine = doctor.stdout.split('\n').find(line => /^\s*(?:✅|❌|⚠️)\s+FlyAI\(/.test(line)) ?? '';
     assert.match(doctorFlyaiLine, /FlyAI.*已验证.*来源 config/);
     const configPath = join(home, '.flyai', 'config.json');
     assert.ok(existsSync(configPath), 'setup did not write isolated FlyAI config');

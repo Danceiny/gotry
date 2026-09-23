@@ -753,6 +753,20 @@ async function main(): Promise<void> {
     assert.match(s, /已从 Chrome 商店安装/, '给「已装商店版?」提示(打开 Chrome 即可,无需再装)')
     assert.match(s, /应用商店一键装/, '未装用户仍得商店一键装指引')
   })
+  // #559 B 步:影响面行必须显式列出挂的工具 + 不影响哪些(避免用户以为整盘不可用)
+  await check('needs-extension 影响面(issue #559 B 步):本地已落位文案末尾必带影响面行', () => {
+    const s = needsExtensionSummary({ localInstalled: true })
+    assert.match(s, /影响面[:：]/, '影响面前缀必现')
+    assert.match(s, /gotry_session_search/, '必显挂的账号会话工具')
+    assert.match(s, /gotry_session_login/, '必显登录引导工具')
+    assert.match(s, /其它工具/, '必显「其它不受影响」(避免用户误以为整盘挂)')
+  })
+  await check('needs-extension 影响面(issue #559 B 步):本地未落位文案末尾必带影响面行', () => {
+    const s = needsExtensionSummary({ localInstalled: false })
+    assert.match(s, /影响面[:：]/, '影响面前缀必现(商店版用户同样需要知道挂哪些)')
+    assert.match(s, /gotry_session_search/, '必显挂的账号会话工具')
+    assert.match(s, /其它工具/, '必显「其它不受影响」')
+  })
   await check('localExtensionInstalled:HOME 注入可测(manifest 存在=本地通道在)', () => {
     const fakeHome = mkdtempSync(join(tmpdir(), 'gotry-ext-home-'))
     assert.equal(localExtensionInstalled(fakeHome), false, '空 HOME → 本地通道未落位')
