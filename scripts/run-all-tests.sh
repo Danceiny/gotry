@@ -85,6 +85,9 @@ echo "=== 6e. 行程 deck 产物生成入口(#566,Phase B 切片 2:与 gotry_iti
 echo "=== 6f. 行程 deck 静态导出 bundle(#568,Phase B 切片 3a:在 host 给出的 target_dir 写三件 <basename>.html+<basename>.manifest.json+<basename>.qr.svg 占位;manifest 携带 sha256+bytes+facts 计数+source_tags+evidence_chain+target_url;QR 真矩阵编码独立为 #569 切片 3b;O_CREAT|O_EXCL bundle 三件任一存在即拒;拒绝符号链接跟随;进程 cwd 零新增) ==="
 (cd ts && npx tsx scripts/itinerary-deck-export-tests.ts) || FAIL=1
 
+echo "=== 6g. gotry try 离线 deck demo(#571,Phase A:免安装/免 LLM key/免 dsh 主机;子进程跑 scripts/gotry-try-demo.ts→stdout 落盘路径/字节/幻灯数;产物含 scroll-snap 与共享双面文案;全离线合成 fixture) ==="
+(cd ts && npx tsx scripts/gotry-try-demo-tests.ts) || FAIL=1
+
 echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
