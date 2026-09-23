@@ -76,6 +76,9 @@ echo "=== 6c. 行程 HTML 渲染器与产物生成入口(#442/父 #438:纯渲染
 (cd ts && npx tsx scripts/itinerary-html-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/itinerary-artifact-tests.ts) || FAIL=1
 
+echo "=== 6d. 行程 deck 渲染器与共享契约层(#564,研究决策 docs/research/karpo-deck-web-research.md #1:幻灯页确定性派生/纯 CSS scroll-snap 零脚本翻页;校验与证据卡单一事实源 itinerary-doc-shared,拒绝集与单页文档逐字一致的反漂移锁;纯度源检查双模块;逐字节确定性+共享字节上限;全离线合成夹具) ==="
+(cd ts && npx tsx scripts/itinerary-deck-tests.ts) || FAIL=1
+
 echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1

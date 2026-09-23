@@ -19,6 +19,8 @@ renderItineraryHtml(input: unknown):
 
 Input carries a title, an explicit itinerary (`trip_start` / `trip_end` / `stays` / `od_segments`) and the facts the **caller** selected from the registry. The renderer never queries upstream. Output is one self-contained HTML document: inline CSS, semantic navigation anchors, native `details`/`summary` disclosure, no script and no remote resource of any kind.
 
+Since issue #564, input validation, fact normalization, fact cards, and the two-plane prose live in the shared document-contract layer `ts/src/itinerary-doc-shared.ts`, used verbatim by both this renderer and the deck renderer — see [itinerary-deck-renderer.md](itinerary-deck-renderer.md). This module keeps only the single-page layout and assembly; its public exports (`ITINERARY_HTML_LIMITS` / `ItineraryHtmlInput` / `ItineraryHtmlResult`) are re-exported unchanged.
+
 ## 2. Two planes, never merged
 
 - **Plan plane** — the user's scheduling intent (`stays`, `od_segments`). Cards are labelled as plan, not as bookable.
@@ -55,3 +57,5 @@ The registered tool `gotry_itinerary_render` (`ts/capabilities/itinerary-artifac
 ## 6. Slice status
 
 Landed here: the renderer, the generation entry (registered tool + run-all §6c suites), the real-browser coverage (navigation, native details and Return-keyboard, narrow-screen readability, escaping) and this document. Native HTML preview sandbox acceptance = #448 proof accepted with persistent regression in `ts/scripts/dsh-artifact-web-e2e.ts` (re-runnable: `GOTRY_ARTIFACT_WEB_E2E_OUT=<dir> npx tsx ts/scripts/dsh-artifact-web-e2e.ts`); the registered Lavish browser feedback chain = #443 CLOSED + PR #456 merged acceptance; the generated-document browser coverage is closed by #442 CLOSED + PR #449 merged acceptance. The generated document is a projection of caller-supplied structure plus registered facts — its fixtures are not supplier evidence and do not stand in for a real inventory check.
+
+2026-09-23 (issue #564): the contract layer was extracted verbatim into `ts/src/itinerary-doc-shared.ts` — behavior-preserving, proven by the §6c suite passing with unchanged assertion semantics (only the §6 source-purity check widened to both modules). The deck projection and its §6d suite live in [itinerary-deck-renderer.md](itinerary-deck-renderer.md).

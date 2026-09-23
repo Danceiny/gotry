@@ -448,13 +448,18 @@ function completeInput(overrides: Record<string, unknown> = {}): Record<string, 
 // ---------------------------------------------------------------------------
 
 {
-  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/itinerary-html.ts', import.meta.url), 'utf8'))
-  assert(!/from\s+'node:(fs|child_process|net|http|https|dns|worker_threads)'/.test(source), '§6a 不 import IO/子进程/网络模块')
-  assert(!/\bDate\.now\b/.test(source) && !/new Date\(\s*\)/.test(source), '§6b 无当前时间依赖(纯函数)')
-  assert(!/from\s+'\.\/(engine|journey)\.ts'/.test(source), '§6c 不 import 已弃用引擎层')
-  assert(!/dangerouslySetInnerHTML|innerHTML|document\.write|eval\(/.test(source), '§6d 无 DOM 注入/求值原语')
-  assert(!/fetch\(|XMLHttpRequest|WebSocket/.test(source), '§6e 无网络调用')
-  assert(/from '\.\/bookable-facts\.ts'/.test(source), '§6f 复用既有事实类型与 canonical 渲染原语')
+  const readSource = (name: string) => import('node:fs/promises').then(fs => fs.readFile(new URL(name, import.meta.url), 'utf8'))
+  const source = await readSource('../src/itinerary-html.ts')
+  const shared = await readSource('../src/itinerary-doc-shared.ts')
+  // issue #564 抽取共享契约层后:纯度检查同时覆盖两个投影的实现面
+  for (const [label, src] of [['itinerary-html', source], ['itinerary-doc-shared', shared]] as Array<[string, string]>) {
+    assert(!/from\s+'node:(fs|child_process|net|http|https|dns|worker_threads)'/.test(src), `§6a ${label} 不 import IO/子进程/网络模块`)
+    assert(!/\bDate\.now\b/.test(src) && !/new Date\(\s*\)/.test(src), `§6b ${label} 无当前时间依赖(纯函数)`)
+    assert(!/from\s+'\.\/(engine|journey)\.ts'/.test(src), `§6c ${label} 不 import 已弃用引擎层`)
+    assert(!/dangerouslySetInnerHTML|innerHTML|document\.write|eval\(/.test(src), `§6d ${label} 无 DOM 注入/求值原语`)
+    assert(!/fetch\(|XMLHttpRequest|WebSocket/.test(src), `§6e ${label} 无网络调用`)
+  }
+  assert(/from '\.\/bookable-facts\.ts'/.test(shared), '§6f 共享契约层复用既有事实类型与 canonical 渲染原语')
 }
 
 // ---------------------------------------------------------------------------
