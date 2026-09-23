@@ -367,19 +367,43 @@ function completeInput(overrides: Record<string, unknown> = {}): Record<string, 
     ['§5e 缺 itinerary', { title: 't', facts: [] }, 'itinerary 必须是对象'],
     ['§5f stays 非数组', completeInput({ itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-20', stays: 'x', od_segments: [] } }), 'itinerary.stays 必须是数组'],
     ['§5g facts 非数组', completeInput({ facts: {} }), 'facts 必须是数组'],
-    ['§5h 非法 mode', completeInput({ itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-20', stays: [], od_segments: [{ from: 'A', to: 'B', date: '2027-07-17', mode: 'teleport', legs: 1 }] } }), 'itinerary.od_segments[0].mode 不是受支持取值'],
-    ['§5i 非法 bookability', completeInput({ facts: [{ ...FLIGHT_HIT, bookability: 'verified' }] }), 'facts[0].bookability 不是受支持取值'],
-    ['§5j 非法 tier', completeInput({ facts: [{ ...FLIGHT_HIT, tier: 'maybe' }] }), 'facts[0].tier 不是受支持取值'],
-    ['§5k 非法事实 schema', completeInput({ facts: [{ ...FLIGHT_HIT, schema: 'gotry_bookable_fact.v2' }] }), 'facts[0].schema 不是受支持的事实 schema'],
-    ['§5l 非法事实 kind', completeInput({ facts: [{ ...FLIGHT_HIT, kind: 'ferry' }] }), 'facts[0].kind 不是受支持的事实类型'],
-    ['§5m 2 月 30 日', completeInput({ itinerary: { trip_start: '2027-02-30', trip_end: '2027-07-24', stays: [], od_segments: [] } }), 'itinerary.trip_start 不是真实日历日期'],
-    ['§5n 时间戳当日期', completeInput({ itinerary: { trip_start: '2027-07-16T00:00:00Z', trip_end: '2027-07-24', stays: [], od_segments: [] } }), 'itinerary.trip_start 不是真实日历日期'],
-    ['§5o fetched_at 非法', completeInput({ facts: [{ ...FLIGHT_HIT, fetched_at: '2027-06-31T00:00:00Z' }] }), 'facts[0].fetched_at 必须是可解析的 ISO 时间戳'],
-    ['§5p 无限价格', completeInput({ facts: [{ ...FLIGHT_HIT, price: Number.POSITIVE_INFINITY }] }), 'facts[0].price 必须是有限数值'],
-    ['§5q 非整数在架家数', completeInput({ facts: [{ ...HOTEL_HIT, options_masked: 1.5 }] }), 'facts[0].options_masked 必须是整数'],
-    ['§5r 行程窗倒置', completeInput({ itinerary: { trip_start: '2027-07-24', trip_end: '2027-07-16', stays: [], od_segments: [] } }), 'itinerary.trip_end 早于 trip_start'],
-    ['§5s 零夜住宿', completeInput({ itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-24', stays: [{ place: 'P', check_in: '2027-07-20', check_out: '2027-07-20' }], od_segments: [] } }), '退房日期不晚于入住日期'],
-    ['§5t 可下单事实缺班次号', completeInput({ facts: [{ ...FLIGHT_HIT, bookability: 'bookable_exact_date', flight_no: '' }] }), 'facts[0].flight_no 缺失'],
+    ['§5h 缺 facts', { title: 't', itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-20', stays: [], od_segments: [] } }, 'facts 必须是数组'],
+    ['§5i 非法 mode', completeInput({ itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-20', stays: [], od_segments: [{ from: 'A', to: 'B', date: '2027-07-17', mode: 'teleport', legs: 1 }] } }), 'itinerary.od_segments[0].mode 不是受支持取值'],
+    ['§5j 非法 bookability', completeInput({ facts: [{ ...FLIGHT_HIT, bookability: 'verified' }] }), 'facts[0].bookability 不是受支持取值'],
+    ['§5k 非法 tier', completeInput({ facts: [{ ...FLIGHT_HIT, tier: 'maybe' }] }), 'facts[0].tier 不是受支持取值'],
+    ['§5l 非法事实 schema', completeInput({ facts: [{ ...FLIGHT_HIT, schema: 'gotry_bookable_fact.v2' }] }), 'facts[0].schema 不是受支持的事实 schema'],
+    ['§5m 非法事实 kind', completeInput({ facts: [{ ...FLIGHT_HIT, kind: 'ferry' }] }), 'facts[0].kind 不是受支持的事实类型'],
+    // 日期边界与格式
+    ['§5n1 2 月 30 日', completeInput({ itinerary: { trip_start: '2027-02-30', trip_end: '2027-07-24', stays: [], od_segments: [] } }), 'itinerary.trip_start 不是真实日历日期'],
+    ['§5n2 非闰年 2 月 29', completeInput({ itinerary: { trip_start: '2027-02-29', trip_end: '2027-07-24', stays: [], od_segments: [] } }), 'itinerary.trip_start 不是真实日历日期'],
+    ['§5n3 13 月', completeInput({ itinerary: { trip_start: '2027-13-01', trip_end: '2027-07-24', stays: [], od_segments: [] } }), 'itinerary.trip_start 不是真实日历日期'],
+    ['§5n4 越界年', completeInput({ itinerary: { trip_start: '1999-12-31', trip_end: '2027-07-24', stays: [], od_segments: [] } }), 'itinerary.trip_start 不是真实日历日期'],
+    ['§5n5 非法日期格式', completeInput({ itinerary: { trip_start: '2027/07/16', trip_end: '2027-07-24', stays: [], od_segments: [] } }), 'itinerary.trip_start 不是真实日历日期'],
+    ['§5n6 时间串当日期', completeInput({ itinerary: { trip_start: '2027-07-16T00:00:00Z', trip_end: '2027-07-24', stays: [], od_segments: [] } }), 'itinerary.trip_start 不是真实日历日期'],
+    // 时间戳与时刻
+    ['§5o1 fetched_at 非法日历', completeInput({ facts: [{ ...FLIGHT_HIT, fetched_at: '2027-06-31T00:00:00Z' }] }), 'facts[0].fetched_at 必须是可解析的 ISO 时间戳'],
+    ['§5o2 fetched_at 缺时分秒', completeInput({ facts: [{ ...FLIGHT_HIT, fetched_at: '2026-09-12' }] }), 'facts[0].fetched_at 必须是可解析的 ISO 时间戳'],
+    ['§5o3 as_of 非法', completeInput({ facts: [{ ...FLIGHT_HIT, as_of: '2026-13-01' }] }), 'facts[0].as_of 必须是真实日历日期'],
+    ['§5o4 dep_local 非法 HH:MM', completeInput({ facts: [{ ...FLIGHT_HIT, dep_local: '25:00' }] }), 'facts[0].dep_local 必须是 HH:MM'],
+    ['§5o5 review_by 非法', completeInput({ facts: [{ ...FLIGHT_HIT, review_by: '2027-02-30' }] }), 'facts[0].review_by 必须是真实日历日期'],
+    // 数值边界
+    ['§5p1 无限价格', completeInput({ facts: [{ ...FLIGHT_HIT, price: Number.POSITIVE_INFINITY }] }), 'facts[0].price 必须是有限数值'],
+    ['§5p2 负价格', completeInput({ facts: [{ ...FLIGHT_HIT, price: -1 }] }), 'facts[0].price 超出允许范围'],
+    ['§5p3 非整数在架家数', completeInput({ facts: [{ ...HOTEL_HIT, options_masked: 1.5 }] }), 'facts[0].options_masked 必须是整数'],
+    ['§5p4 负在架', completeInput({ facts: [{ ...HOTEL_HIT, options_masked: -3 }] }), 'facts[0].options_masked 超出允许范围'],
+    ['§5p5 legs=0', completeInput({ itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-24', stays: [], od_segments: [{ from: 'A', to: 'B', date: '2027-07-17', mode: 'car', legs: 0 }] } }), 'itinerary.od_segments[0].legs 超出允许范围'],
+    ['§5p6 非整数 legs', completeInput({ itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-24', stays: [], od_segments: [{ from: 'A', to: 'B', date: '2027-07-17', mode: 'car', legs: 1.5 }] } }), 'itinerary.od_segments[0].legs 必须是整数'],
+    // 容量与长度上限
+    ['§5q1 超量住宿', completeInput({ itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-24', stays: Array.from({ length: ITINERARY_DOC_LIMITS.stays + 1 }, () => ({ place: 'P', check_in: '2027-07-17', check_out: '2027-07-18' })), od_segments: [] } }), `itinerary.stays 超出容量上限(${ITINERARY_DOC_LIMITS.stays} 条`],
+    ['§5q2 超量事实', completeInput({ facts: Array.from({ length: ITINERARY_DOC_LIMITS.facts + 1 }, (_v, i) => ({ ...FLIGHT_HIT, fact_id: `f${String(i).padStart(15, '0')}` })) }), `facts 超出容量上限(${ITINERARY_DOC_LIMITS.facts} 条`],
+    ['§5q3 超长 title', completeInput({ title: 'x'.repeat(ITINERARY_DOC_LIMITS.titleChars + 1) }), 'title 超出长度上限'],
+    ['§5q4 超长城市名', completeInput({ itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-24', stays: [], od_segments: [{ from: 'x'.repeat(ITINERARY_DOC_LIMITS.fromToChars + 1), to: 'B', date: '2027-07-17', mode: 'car', legs: 1 }] } }), 'itinerary.od_segments[0].from 超出长度上限'],
+    ['§5q5 超长政策陈述', completeInput({ facts: [{ ...POLICY_PLAN, statement: 'x'.repeat(ITINERARY_DOC_LIMITS.statementChars + 1) }] }), 'facts[0].statement 超出长度上限'],
+    // 逻辑矛盾
+    ['§5r1 行程窗倒置', completeInput({ itinerary: { trip_start: '2027-07-24', trip_end: '2027-07-16', stays: [], od_segments: [] } }), 'itinerary.trip_end 早于 trip_start'],
+    ['§5r2 零夜住宿', completeInput({ itinerary: { trip_start: '2027-07-16', trip_end: '2027-07-24', stays: [{ place: 'P', check_in: '2027-07-20', check_out: '2027-07-20' }], od_segments: [] } }), '退房日期不晚于入住日期'],
+    ['§5r3 可下单事实缺班次号', completeInput({ facts: [{ ...FLIGHT_HIT, bookability: 'bookable_exact_date', flight_no: '' }] }), 'facts[0].flight_no 缺失'],
+    ['§5r4 空出发地', completeInput({ facts: [{ ...FLIGHT_HIT, route: { origin: '', destination: 'HKT' } }] }), 'facts[0].route.origin 不能为空'],
   ]
   for (const [label, input, needle] of cases) {
     const deck = renderItineraryDeck(input)
@@ -407,17 +431,23 @@ function completeInput(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 // ---------------------------------------------------------------------------
-// §6 无隐式借道:渲染器不引入 IO/时间/子进程;共享契约层是唯一依赖
+// §6 无隐式借道:渲染器与共享契约层都不引入 IO/时间/子进程;deck 切片自含纯度证据
 // ---------------------------------------------------------------------------
 
 {
-  const source = await import('node:fs/promises').then(fs => fs.readFile(new URL('../src/itinerary-deck.ts', import.meta.url), 'utf8'))
-  assert(!/from\s+'node:(fs|child_process|net|http|https|dns|worker_threads)'/.test(source), '§6a 不 import IO/子进程/网络模块')
-  assert(!/\bDate\.now\b/.test(source) && !/new Date\(\s*\)/.test(source), '§6b 无当前时间依赖(纯函数)')
-  assert(!/from\s+'\.\/(engine|journey)\.ts'/.test(source), '§6c 不 import 已弃用引擎层')
-  assert(!/dangerouslySetInnerHTML|innerHTML|document\.write|eval\(/.test(source), '§6d 无 DOM 注入/求值原语')
-  assert(!/fetch\(|XMLHttpRequest|WebSocket/.test(source), '§6e 无网络调用')
-  assert(/from '\.\/itinerary-doc-shared\.ts'/.test(source), '§6f 输入校验与证据卡来自共享契约层(无第二实现)')
+  const readSource = (name: string) => import('node:fs/promises').then(fs => fs.readFile(new URL(name, import.meta.url), 'utf8'))
+  const source = await readSource('../src/itinerary-deck.ts')
+  const shared = await readSource('../src/itinerary-doc-shared.ts')
+  // issue #564 共享契约层是本切片的事实源:deck 套件独立证明它的纯度(不只依赖 html §6c)
+  for (const [label, src] of [['itinerary-deck', source], ['itinerary-doc-shared', shared]] as Array<[string, string]>) {
+    assert(!/from\s+'node:(fs|child_process|net|http|https|dns|worker_threads)'/.test(src), `§6a ${label} 不 import IO/子进程/网络模块`)
+    assert(!/\bDate\.now\b/.test(src) && !/new Date\(\s*\)/.test(src), `§6b ${label} 无当前时间依赖(纯函数)`)
+    assert(!/from\s+'\.\/(engine|journey)\.ts'/.test(src), `§6c ${label} 不 import 已弃用引擎层`)
+    assert(!/dangerouslySetInnerHTML|innerHTML|document\.write|eval\(/.test(src), `§6d ${label} 无 DOM 注入/求值原语`)
+    assert(!/fetch\(|XMLHttpRequest|WebSocket/.test(src), `§6e ${label} 无网络调用`)
+  }
+  assert(/from '\.\/itinerary-doc-shared\.ts'/.test(source), '§6f deck 仅依赖共享契约层的事实源(无第二实现)')
+  assert(/from '\.\/bookable-facts\.ts'/.test(shared), '§6g 共享契约层复用既有事实类型与 canonical 渲染原语')
 }
 
 // ---------------------------------------------------------------------------
