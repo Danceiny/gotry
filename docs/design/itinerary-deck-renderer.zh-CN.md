@@ -66,4 +66,8 @@ deck 导航是组级锚点链接，随派生收缩（不指向不存在的页）
 
 ## 7. 切片状态与显式不主张
 
-本切片落地：共享层、deck 渲染器、确定性 deck 套件（163 断言，run-all §6d）、拓宽的源码纯度检查。不在本切片：写 deck 文件的注册产品入口、静态导出／部署、QR、任何运行时激活、任何分享／同意面——都是 issue #564 的后续切片。deck 只渲染调用方给出的结构＋注册表选出的事实；其夹具为合成数据，不代表任何供应商证据。
+本切片落地：共享层、deck 渲染器、确定性 deck 套件（226 断言，run-all §6d）、拓宽的源码纯度检查。
+
+issue #566（Phase B 切片 2）落地：deck 产品入口 `ts/capabilities/itinerary-deck-artifact.ts`，暴露注册工具 `gotry_itinerary_deck_render`——与单页 `gotry_itinerary_render` 完全对称（共用 `normalizeDocInput` + 同一套注册表专属 / 独占新建 / 会话 cwd 路径护栏；basename 契约前缀改为 `gotry-deck-`）。由 `ts/scripts/itinerary-deck-artifact-tests.ts`（131 断言，run-all §6e）验证。
+
+不在任何切片：静态导出／部署、QR、任何运行时激活、任何分享／同意面——都是 issue #564 的后续切片。deck 渲染器只渲染调用方给出的结构＋注册表选出的事实；其夹具为合成数据，不代表任何供应商证据。

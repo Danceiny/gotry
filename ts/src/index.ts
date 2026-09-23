@@ -42,6 +42,7 @@ import { createConsentGate, approvalFromContext, resolveSessionSearchKind } from
 import { installModelOverride } from '../capabilities/model-override.ts'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { generateItineraryArtifact } from '../capabilities/itinerary-artifact.ts'
+import { generateItineraryDeckArtifact } from '../capabilities/itinerary-deck-artifact.ts'
 import { interpretEffect, declinedObservation, type EffectInterpreter } from '../capabilities/effect.ts'
 import { FLYAI_POI_CATEGORIES, type FlyaiKind, type FlyaiQuery, type FlyaiResult } from '../capabilities/flyai.ts'
 import { createFlyaiSetupTool } from './flyai-setup-tool.ts'
@@ -2436,6 +2437,73 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       return {
         card: 'generic',
         title: r.ok ? `行程 HTML 已生成:${String(r.path ?? '').split('/').pop() ?? ''}` : '行程 HTML 未生成',
+        content: [{ type: 'text', text: r.ok ? `最终路径:${String(r.path ?? '')}(${r.bytes ?? 0} 字节)` : String(r.error ?? '') }],
+      }
+    },
+  }))
+
+  // ---- 行程 deck 产物生成(issue #566,Phase B 切片 2;共享契约见 #564):与 gotry_itinerary_render 对称的
+  // 幻灯形态入口——同样只新建(O_EXCL,绝不覆盖)、事实只从注册表按 id 取、空列表合法。
+  // 共享 normalizeDocInput / 同一路径护栏;basename 改 gotry-deck- 前缀。
+
+  registerGuarded(defineTool({
+    name: 'gotry_itinerary_deck_render',
+    description:
+      'Generate a local, self-contained HTML itinerary DECK (slide-form, CSS scroll-snap paging, deterministic slide derivation) as a NEW file in the session working directory (never overwrites; '
+      + 'the file can then be listed/read with gotry_artifacts_list / gotry_artifacts_read). '
+      + 'Input: title, the explicit itinerary object { trip_start, trip_end, stays:[{place,check_in,check_out}], '
+      + 'od_segments:[{from,to,date,mode,legs}] } (same shape as gotry_itinerary_render; nights/budget fields are not accepted), '
+      + 'and fact_ids — the ids of already-recorded bookable facts to project as evidence. Facts are loaded ONLY from the session fact '
+      + 'registry (stateRoot bookable-facts log): caller-supplied fact objects are never accepted, and unknown/duplicate/over-limit ids are rejected. '
+      + 'An empty fact_ids array is legitimate and renders an explicitly unverified plan — this deck never carries an overall "verified" badge, '
+      + 'only per-fact bookability/tier/source labels. No Markdown-to-facts guessing, no date/night/budget arithmetic, no upstream queries. '
+      + 'Optional basename must match gotry-deck-<ASCII token>.html; when omitted a random name is generated. '
+      + 'The result returns the final absolute path.',
+    parameters: {
+      title: { type: 'string', required: true, description: 'deck 标题(作为封面 h1,原样转义)' },
+      itinerary: { type: 'object', additionalProperties: true, required: true, description: '结构化行程 { trip_start, trip_end, stays:[{place,check_in,check_out}], od_segments:[{from,to,date,mode,legs}] }; 不做夜数/预算/时间运算' },
+      fact_ids: { type: 'array', items: { type: 'string' }, required: true, description: '要投影的事实 id 数组(来自本会话 exact-date 工具结果登记的注册表);必填,空数组 = 明确未核验计划' },
+      basename: { type: 'string', description: '可选文件名,必须形如 gotry-deck-<ASCII token>.html;不传则用 crypto 随机名' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 800)) }],
+    },
+    async execute(args, exec) {
+      const q = args as { title?: unknown; itinerary?: unknown; fact_ids?: unknown; basename?: unknown }
+      // 写产物不允许猜测落点:宿主必须给出显式绝对会话工作目录,否则 fail closed
+      //(绝不回落 process.cwd()——那会把产物写进 Node 进程的偶然目录)
+      const cwd = sessionCwd(exec)
+      if (typeof cwd !== 'string' || cwd.trim() === '' || !isAbsolute(cwd)) {
+        const error = typeof cwd !== 'string' || cwd.trim() === ''
+          ? '会话工作目录缺失:拒绝在未知目录写产物'
+          : `会话工作目录必须是绝对路径:${cwd}`
+        return JSON.parse(JSON.stringify({
+          ok: false,
+          error,
+          hint: '产物只写到宿主会话的显式绝对工作目录(dsh 会话 header.cwd);本工具不猜测落点',
+        })) as Record<string, never>
+      }
+      const r = await generateItineraryDeckArtifact(
+        { title: q.title, itinerary: q.itinerary, fact_ids: q.fact_ids, basename: q.basename },
+        { stateRoot: config.stateRoot ?? '.', cwd },
+      )
+      const summary = r.ok
+        ? `已生成行程 deck 产物(未写入任何整体「已验证」结论):${r.path}\n`
+          + `投影事实 ${r.fact_ids.length} 条(全部来自当前注册表),文件 ${r.bytes} 字节。`
+          + `${r.fact_ids.length === 0 ? '本次为空事实列表:deck 明确为未核验计划。' : ''}`
+          + '可用 gotry_artifacts_list / gotry_artifacts_read 再次查看。'
+        : `未生成产物(未写入任何文件):${r.error}`
+          + `${r.errors?.length ? `\n${r.errors.slice(0, 8).map(e => `- ${e}`).join('\n')}` : ''}`
+          + `${r.hint ? `\n修正提示:${r.hint}` : ''}`
+      return JSON.parse(JSON.stringify({ ...r, summary })) as Record<string, never>
+    },
+    presentCall: args => ({ card: 'generic', title: `生成行程 deck:${String(args.title ?? '')}`.slice(0, 80), kind: 'execute', rawInput: args }),
+    presentResult: (_args, value) => {
+      const r = value as { ok?: boolean; path?: string; bytes?: number; error?: string }
+      return {
+        card: 'generic',
+        title: r.ok ? `行程 deck 已生成:${String(r.path ?? '').split('/').pop() ?? ''}` : '行程 deck 未生成',
         content: [{ type: 'text', text: r.ok ? `最终路径:${String(r.path ?? '')}(${r.bytes ?? 0} 字节)` : String(r.error ?? '') }],
       }
     },
