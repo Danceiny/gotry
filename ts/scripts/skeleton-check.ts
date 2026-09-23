@@ -34,7 +34,7 @@ export async function checkConnectivity(a: string, b: string): Promise<{ connect
   return {
     connected: false,
     evidence: inHub
-      ? `[骨架:openflights] ❌ ${a}↔${b} 枢纽间无直飞记录——引擎应将此候选降权或要求中转`
+      ? `[骨架:openflights] ❌ ${a}↔${b} 枢纽对未在骨架覆盖(实时源以新航线为准;骨架可能滞后——请用户根据行程复核)`
       : `[骨架:openflights] ○ ${a}或${b}不在枢纽集,骨架不覆盖(不作否定结论)`,
   }
 }

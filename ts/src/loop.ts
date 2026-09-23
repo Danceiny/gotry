@@ -294,10 +294,20 @@ export function renderSolve(state: TripState): string {
   const lines: string[] = []
   if (s.feasible) {
     lines.push(`**方案可行,机票合计 ¥${s.money_cny}**`)
+    // §7-1 issue #559 卡点 4:从 s.skeleton_notes 字符串编码里推断 unscaffolded 的 seg.id,
+    // 不动 unified.ts/journey.ts(内核冻结面 #234),用户面给 ⚠ 前缀与「枢纽对未在骨架覆盖」补充。
+    // skeleton_notes 单条形态:`<seg.id>: [骨架:openflights] ❌ ...` 或 `<seg.id>: [骨架:openflights] ✅ ...`
+    const unscaffoldedSegIds = new Set<string>()
+    for (const n of s.skeleton_notes ?? []) {
+      const m = /^([^:]+):\s*\[骨架:openflights\]\s*❌/.exec(n)
+      if (m) unscaffoldedSegIds.add(m[1])
+    }
     for (const lg of s.legs ?? []) {
-      const l = lg as Record<string, string | number>
-      lines.push(`- ${l['leg']} ${l['service']}:${l['dep']} 起飞,${l['wake']} 出发,${l['arrive_stay']} 到,`
-        + `门到门 ${l['door_to_door']},落地精力 ${l['energy_pct']}%,¥${l['price_cny']}`)
+      const l = lg as Record<string, string | number | boolean>
+      const unscaffoldedFlag = unscaffoldedSegIds.has(String(l['leg'])) ? '⚠ ' : ''
+      const unscaffoldedNote = unscaffoldedSegIds.has(String(l['leg'])) ? '(枢纽对未在骨架覆盖,实时源以新航线为准)' : ''
+      lines.push(`- ${unscaffoldedFlag}${l['leg']} ${l['service']}:${l['dep']} 起飞,${l['wake']} 出发,${l['arrive_stay']} 到,`
+        + `门到门 ${l['door_to_door']},落地精力 ${l['energy_pct']}%,¥${l['price_cny']}${unscaffoldedNote ? ` ${unscaffoldedNote}` : ''}`)
     }
     for (const n of s.skeleton_notes ?? []) lines.push(`- ${n}`)
     for (const f of s.red_flags ?? []) lines.push(`- ⚠️ ${f}`)
