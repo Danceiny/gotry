@@ -65,9 +65,11 @@ deck 导航是组级锚点链接，随派生收缩（不指向不存在的页）
 单页渲染器的每一条拒绝就是 deck 的拒绝，逐字节一致：两个入口调用同一个 `normalizeDocInput` 与同一个 `docBytesError`。deck 套件用反漂移锁钉住——对每个畸形输入用例（坏日期、坏枚举、坏事实 schema、倒置行程窗、零夜住宿、缺班次号、带错误上限的噪音输入），两个 `errors` 数组必须 `JSON.stringify` 逐字一致，且 `ok` 必须同翻转。任何未来只改一个投影的校验改动，都会在构造上就撞上这道闸。
 
 ## 7. 切片状态与显式不主张
-
 本切片落地：共享层、deck 渲染器、确定性 deck 套件（run-all §6d，PR #565 后续硬化后 226 断言）、拓宽的源码纯度检查。
+
+issue #566（Phase B 切片 2）落地：deck 产品入口 `ts/capabilities/itinerary-deck-artifact.ts`，暴露注册工具 `gotry_itinerary_deck_render`——与单页 `gotry_itinerary_render` 完全对称（共用 `normalizeDocInput` + 同一套注册表专属 / 独占新建 / 会话 cwd 路径护栏；basename 契约前缀改为 `gotry-deck-`）。由 `ts/scripts/itinerary-deck-artifact-tests.ts`（131 断言，run-all §6e）验证。
 
 issue #568（Phase B 切片 3a）落地：deck 静态导出 bundle `ts/capabilities/itinerary-deck-export.ts`，暴露注册工具 `gotry_deck_export`——在宿主显式给出的绝对 `target_dir` 下写三件带 basename 前缀的文件（`<basename>.html` + `<basename>.manifest.json` + `<basename>.qr.svg` 占位），manifest 含信源（sha256、字节、按 kind 的事实计数、来源标签、证据链摘要、导出时刻、可选 target_url），bundle 三件 `O_CREAT|O_EXCL` 独占，并显式拒绝跟随 symlinked target_dir（realpath 之前的 lstat 检查）。由 `ts/scripts/itinerary-deck-export-tests.ts`（142 断言，run-all §6f）验证。QR 真矩阵编码由 issue #569 跟踪。
 
 不在任何切片：静态托管／部署、QR 编码（#569）、任何运行时激活、任何分享／同意面——都是 issue #564 的后续切片。deck 渲染器只渲染调用方给出的结构＋注册表选出的事实；其夹具为合成数据，不代表任何供应商证据。
+
