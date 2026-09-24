@@ -22,6 +22,8 @@ import { createHash, randomBytes } from 'node:crypto'
 import { lstat, open, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, sep } from 'node:path'
 
+import QRCode from 'qrcode'
+
 import { loadFactRegistry } from './fact-log.ts'
 import { ITINERARY_DOC_LIMITS } from '../src/itinerary-doc-shared.ts'
 import {
@@ -252,7 +254,7 @@ function buildManifest(
     facts: { total: facts.length, by_kind: byKind, source_tags: sourceTags.slice(0, SOURCE_TAG_SAMPLE) },
     evidence_chain: { unverified, by_tier: byTier, by_bookability: byBookability },
     target_url: targetUrl,
-    share_intent: { qr: 'placeholder', qr_path: `${basename}${ITINERARY_DECK_EXPORT_QR_SUFFIX}` },
+    share_intent: { qr: 'generated', qr_path: `${basename}${ITINERARY_DECK_EXPORT_QR_SUFFIX}` },
   }
 }
 
@@ -264,17 +266,17 @@ function stampManifest(manifest: Record<string, unknown>, html: string): Record<
   return { ...manifest, deck: { ...deck, sha256, bytes } }
 }
 
-/** qr.svg 占位内容:最小合法 SVG + 占位说明文本;切片 3b 落地后由真矩阵替换 */
-function qrPlaceholderSvg(): string {
-  return [
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="QR placeholder (issue #569)">',
-    '<title>QR placeholder — slice 3b will write the real matrix</title>',
-    '<rect width="200" height="200" fill="#fff" stroke="#16181d" stroke-width="2"/>',
-    '<text x="100" y="96" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#16181d">QR placeholder</text>',
-    '<text x="100" y="116" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#5b6470">slice 3b (issue #569)</text>',
-    '</svg>',
-    '',
-  ].join('')
+/** qr.svg 真矩阵编码(issue #569,Phase B 切片 3b):用 npm `qrcode` 库直接渲染 SVG,
+ * 编码目标 URL 或本地 bundle 入口(无 target_url 时退化为 file://)。
+ * error correction level 默认 M(15% 冗余,适合带 logo / 抗打印 / 二维码扫描容错);
+ * margin=2(ISO 标准 4 模块静默区中的 2——可扫描 + 视觉紧凑)。
+ * SVG 是自包含 XML,可在任意现代浏览器/扫码 app 直接渲染。 */
+async function qrSvgFor(payload: string): Promise<string> {
+  return QRCode.toString(payload, {
+    type: 'svg',
+    errorCorrectionLevel: 'M',
+    margin: 2,
+  })
 }
 
 /**
@@ -335,7 +337,13 @@ export async function generateItineraryDeckExport(input: unknown, deps: Itinerar
   if ('error' in writtenHtml) return { ok: false, error: writtenHtml.error, hint: writtenHtml.hint }
   const writtenManifest = await writeExclusive(manifestPath, JSON.stringify(manifest, null, 2))
   if ('error' in writtenManifest) return { ok: false, error: writtenManifest.error, hint: writtenManifest.hint }
-  const writtenQr = await writeExclusive(qrPath, qrPlaceholderSvg())
+  // QR 编码目标:有 target_url 用之;无则退化为 file:// 占位(deck 本地路径 + 警示注释,
+  // 让扫码应用拿到至少是个可解析字符串——manifest.share_intent.qr_intent 标记 'local_only')
+  const qrTarget = url.targetUrl && url.targetUrl.length > 0
+    ? url.targetUrl
+    : `<local bundle; not yet hosted>`
+  const qrSvg = await qrSvgFor(qrTarget)
+  const writtenQr = await writeExclusive(qrPath, qrSvg)
   if ('error' in writtenQr) return { ok: false, error: writtenQr.error, hint: writtenQr.hint }
 
   const totalBytes = writtenHtml.bytes + writtenManifest.bytes + writtenQr.bytes

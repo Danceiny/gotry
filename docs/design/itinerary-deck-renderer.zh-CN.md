@@ -69,7 +69,9 @@ deck 导航是组级锚点链接，随派生收缩（不指向不存在的页）
 
 issue #566（Phase B 切片 2）落地：deck 产品入口 `ts/capabilities/itinerary-deck-artifact.ts`，暴露注册工具 `gotry_itinerary_deck_render`——与单页 `gotry_itinerary_render` 完全对称（共用 `normalizeDocInput` + 同一套注册表专属 / 独占新建 / 会话 cwd 路径护栏；basename 契约前缀改为 `gotry-deck-`）。由 `ts/scripts/itinerary-deck-artifact-tests.ts`（131 断言，run-all §6e）验证。
 
-issue #568（Phase B 切片 3a）落地：deck 静态导出 bundle `ts/capabilities/itinerary-deck-export.ts`，暴露注册工具 `gotry_deck_export`——在宿主显式给出的绝对 `target_dir` 下写三件带 basename 前缀的文件（`<basename>.html` + `<basename>.manifest.json` + `<basename>.qr.svg` 占位），manifest 含信源（sha256、字节、按 kind 的事实计数、来源标签、证据链摘要、导出时刻、可选 target_url），bundle 三件 `O_CREAT|O_EXCL` 独占，并显式拒绝跟随 symlinked target_dir（realpath 之前的 lstat 检查）。由 `ts/scripts/itinerary-deck-export-tests.ts`（142 断言，run-all §6f）验证。QR 真矩阵编码由 issue #569 跟踪。
+issue #568（Phase B 切片 3a）落地：deck 静态导出 bundle `ts/capabilities/itinerary-deck-export.ts`，暴露注册工具 `gotry_deck_export`——在宿主显式给出的绝对 `target_dir` 下写三件带 basename 前缀的文件（`<basename>.html` + `<basename>.manifest.json` + `<basename>.qr.svg` 占位），manifest 含信源（sha256、字节、按 kind 的事实计数、来源标签、证据链摘要、导出时刻、可选 target_url），bundle 三件 `O_CREAT|O_EXCL` 独占，并显式拒绝跟随 symlinked target_dir（realpath 之前的 lstat 检查）。由 `ts/scripts/itinerary-deck-export-tests.ts`（切片 3b 后 146 断言，run-all §6f）验证。
 
-不在任何切片：静态托管／部署、QR 编码（#569）、任何运行时激活、任何分享／同意面——都是 issue #564 的后续切片。deck 渲染器只渲染调用方给出的结构＋注册表选出的事实；其夹具为合成数据，不代表任何供应商证据。
+issue #569（Phase B 切片 3b，QR 真矩阵）落地：`<basename>.qr.svg` 现在由 npm `qrcode` 库（MIT）渲染出真实 QR 矩阵——有 target_url 时编码之，无则编码字面标记 `<local bundle; not yet hosted>`。`manifest.share_intent.qr` 从 `placeholder` 变为 `generated`。同输入确定性已按字节断言（同 target_url → qr.svg 字节一致）。
+
+不在任何切片：静态托管／部署、任何运行时激活、任何分享／同意面（Phase C 切片见 issue #573）——都是 issue #564 的后续切片。deck 渲染器只渲染调用方给出的结构＋注册表选出的事实；其夹具为合成数据，不代表任何供应商证据。
 

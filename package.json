@@ -366,6 +366,7 @@
     "better-sqlite3": "^13.0.3",
     "dsh-calendar": "^0.3.2",
     "puppeteer-core": "^25.9.0",
+    "qrcode": "^1.5.4",
     "z3-solver": "^5.2.0"
   },
   "repository": {
