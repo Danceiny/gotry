@@ -8,10 +8,12 @@ name: Chrome Extension Publish
 #
 # Secrets(一次性配置,步骤见 docs/extension-store-publish.md):
 #   CHROME_EXTENSION_ID   — CWS item ID(= oeajpiccmonococjcegddlooeeohlbgd)
-#   CHROME_PUBLISHER_ID   — deployer 账号 ID(CWS dashboard → Account → Publisher ID)
 #   CHROME_CLIENT_ID      — GCP OAuth2 client_id(Desktop app)
 #   CHROME_CLIENT_SECRET  — GCP OAuth2 client_secret
 #   CHROME_REFRESH_TOKEN  — 授权给 deployer 的 refresh token
+#
+# 发布走 CWS REST API 直连(curl),不用第三方 action——browser-actions/chrome-webstore-upload
+# 已 404,直连也无 publisher-id 依赖。
 #
 # 版本守卫:CWS 要求版本单调递增;商店现存 0.1.0,manifest version 必须 > 0.1.0
 # (2026-09-24 hotel-fe#3802 事故根源之一即 0.0.1.N < 0.1.0 倒挂无法上架)。
@@ -97,16 +99,41 @@ jobs:
         with:
           name: gotry-session-bridge-v${{ needs.pack.outputs.version }}
 
-      - name: Publish via Chrome Web Store API
-        uses: browser-actions/chrome-webstore-upload@v3
-        with:
-          extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
-          publisher-id: ${{ secrets.CHROME_PUBLISHER_ID }}
-          client-id: ${{ secrets.CHROME_CLIENT_ID }}
-          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
-          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
-          zip-path: ${{ needs.pack.outputs.store_zip }}
-          publish-mode: publish
+      - name: Mint access token (refresh_token grant)
+        run: |
+          set -euo pipefail
+          TOKEN_JSON=$(curl -fsSL https://oauth2.googleapis.com/token \
+            -d grant_type=refresh_token \
+            -d refresh_token="${{ secrets.CHROME_REFRESH_TOKEN }}" \
+            -d client_id="${{ secrets.CHROME_CLIENT_ID }}" \
+            -d client_secret="${{ secrets.CHROME_CLIENT_SECRET }}")
+          ACCESS_TOKEN=$(node -p 'JSON.parse(process.argv[1]).access_token' "$TOKEN_JSON")
+          echo "::add-mask::$ACCESS_TOKEN"
+          echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
+        id: token
+
+      - name: Upload package to Chrome Web Store
+        run: |
+          set -euo pipefail
+          UPLOAD_RESP=$(curl -fsSL -X PUT \
+            "https://chromewebstore.googleapis.com/upload/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}?uploadType=media" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@${{ needs.pack.outputs.store_zip }}")
+          echo "$UPLOAD_RESP"
+          UPLOAD_STATE=$(node -p 'JSON.parse(process.argv[1]).uploadState' "$UPLOAD_RESP")
+          [ "$UPLOAD_STATE" = "SUCCESS" ] || { echo "::error::uploadState=$UPLOAD_STATE"; exit 1; }
+
+      - name: Publish (submit for review)
+        run: |
+          set -euo pipefail
+          PUBLISH_RESP=$(curl -fsSL -X POST \
+            "https://chromewebstore.googleapis.com/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}/publish?publishMode=default" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Length: 0")
+          echo "$PUBLISH_RESP"
 
       - name: Post-publish note
         run: |
