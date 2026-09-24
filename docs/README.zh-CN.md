@@ -128,6 +128,7 @@
 | [design/external-event-seam.md](design/external-event-seam.zh-CN.md) | 外部事件驱动接缝设计（#82 方向/D-31，只设计不承诺实现） |
 | [design/itinerary-html-renderer.md](design/itinerary-html-renderer.zh-CN.md) | 行程 HTML 渲染器合同 + 产品生成入口（内部切片，issue #442/父 #438）：纯有界渲染器、计划面与证据面分离、拒绝集；`gotry_itinerary_render` 从注册表选出的事实在会话工作目录仅新建一个不覆盖的 HTML 文件；原生 HTML preview 实证在 #448 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts` |
 | [design/itinerary-deck-renderer.md](design/itinerary-deck-renderer.zh-CN.md) | 行程 deck 渲染器 + 共享文档契约层（内部切片，issue #564）：幻灯页确定性派生、纯 CSS scroll-snap 零脚本翻页、与单页渲染器的反漂移锁（拒绝集逐字一致）；本切片无产品入口 |
+| [design/share-adapters.md](design/share-adapters.zh-CN.md) | Share 适配器 + HMAC share token + consent 状态机 + shareDeck 流程（内部切片，issue #573，Phase C）：4 个 no-op adapter stub、token 签/验、consent-required 与 consent-revoked 显式区分、7 类 ShareFailureReason 闭集；无 SDK、无 dsh 工具注册、无运行时激活 |
 | [design/hotelbyte-skills-design.md](design/hotelbyte-skills-design.zh-CN.md) | hotelbyte-skills 架构（知识进仓/执行留 gotry，issue #5） |
 | [design/stage1-top-down-design.md](design/stage1-top-down-design.zh-CN.md) | 冻结的 Stage 1 顶层设计；当前状态让渡给架构与路线图 |
 | [design/lavish-local.md](design/lavish-local.zh-CN.md) | Lavish 本地会话适配器（#443，父需求 #438）：自有进程/端口/状态边界、TOON 协议事实、不可信反馈、有界轮询 |

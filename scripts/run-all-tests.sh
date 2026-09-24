@@ -88,6 +88,9 @@ echo "=== 6f. 行程 deck 静态导出 bundle(#568,Phase B 切片 3a:在 host �
 echo "=== 6g. gotry try 离线 deck demo(#571,Phase A:免安装/免 LLM key/免 dsh 主机;子进程跑 scripts/gotry-try-demo.ts→stdout 落盘路径/字节/幻灯数;产物含 scroll-snap 与共享双面文案;全离线合成 fixture) ==="
 (cd ts && npx tsx scripts/gotry-try-demo-tests.ts) || FAIL=1
 
+echo "=== 6h. Share 契约层(#573,Phase C:adapters 4 个 stub + HMAC share token sign/verify + consent state machine + shareDeck 主流程;不接真实 SDK、不挂 dsh 工具面;7 类 ShareFailureReason 全部真实触发;全离线合成) ==="
+(cd ts && npx tsx scripts/share-tests.ts) || FAIL=1
+
 echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
