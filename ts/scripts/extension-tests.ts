@@ -297,6 +297,11 @@ async function main(): Promise<void> {
     assert.ok(contentBridgeJs.includes('chrome.runtime.sendMessage'), 'content-bridge 应用 chrome.runtime.sendMessage 派发')
     assert.ok(!backgroundJs.includes('options.html'), '扩展不得引用 options.html/options.js(employee 零配置)')
   })
+  await check('安装检测契约(2026-09-24 hotel-fe#3802):content-bridge 在 portal 页给 <body> 打 data-portal-helper-installed 标记,横幅据此隐藏', () => {
+    assert.ok(contentBridgeJs.includes('data-portal-helper-installed'), 'content-bridge 应设置 portal 安装检测属性(hotel-fe 横幅的唯一检测面)')
+    assert.ok(contentBridgeJs.includes('markInstalled'), '应有 markInstalled 封装(document_start 下 body 常为 null,需兜底)')
+    assert.ok(/DOMContentLoaded[^\n]*markInstalled/.test(contentBridgeJs), 'body 未就绪时需 DOMContentLoaded 兜底打标记')
+  })
   await check('代填登录(2026-09-21 hotel-fe#3713 形态 A 免密进入门户):portal 投递载荷 → SW 开登录页 → content-bridge 按站点配方填表,账密零持久面', () => {
     assert.ok(backgroundJs.includes("'gotry-portal-login'"), 'SW 应识别 portal 投递的一次性凭据载荷')
     assert.ok(backgroundJs.includes('openLoginAndFill'), 'SW 应有「开登录页 + 派发填表」实现')

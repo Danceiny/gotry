@@ -1,0 +1,113 @@
+name: Chrome Extension Publish
+
+# GoTry Session Bridge 上架 Chrome Web Store(ADR-21 分发通道 B;hotel-fe#3802 后补齐的自动化)。
+#
+# pack:扩展源码变更即打包上传 artifact(store.zip + tar.gz + 版本清单),不发布。
+# publish:**仅手动 dispatch 且 dry_run=false 才上架**——对应仓规「是否发版、发哪个版本由
+#   founder 确认」;上架后 CWS 审核仍需数小时到数天。
+#
+# Secrets(一次性配置,步骤见 docs/extension-store-publish.md):
+#   CHROME_EXTENSION_ID   — CWS item ID(= oeajpiccmonococjcegddlooeeohlbgd)
+#   CHROME_PUBLISHER_ID   — deployer 账号 ID(CWS dashboard → Account → Publisher ID)
+#   CHROME_CLIENT_ID      — GCP OAuth2 client_id(Desktop app)
+#   CHROME_CLIENT_SECRET  — GCP OAuth2 client_secret
+#   CHROME_REFRESH_TOKEN  — 授权给 deployer 的 refresh token
+#
+# 版本守卫:CWS 要求版本单调递增;商店现存 0.1.0,manifest version 必须 > 0.1.0
+# (2026-09-24 hotel-fe#3802 事故根源之一即 0.0.1.N < 0.1.0 倒挂无法上架)。
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "extension/**"
+      - "scripts/package-extension.mjs"
+      - ".github/workflows/extension-publish.yml"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (pack only, skip publish)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+
+concurrency:
+  group: extension-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pack:
+    name: Pack extension
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      store_zip: ${{ steps.meta.outputs.store_zip }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Pack extension
+        run: |
+          set -euo pipefail
+          node scripts/package-extension.mjs
+
+      - name: Version guard (> 0.1.0, CWS monotonic requirement)
+        id: meta
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./extension/manifest.json').version")
+          HIGHEST=$(printf '%s\n0.1.0\n' "$VERSION" | sort -V | tail -n1)
+          if [ "$HIGHEST" != "$VERSION" ] || [ "$VERSION" = "0.1.0" ]; then
+            echo "::error::manifest version $VERSION is not > 0.1.0 (current store version); bump before publishing"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "store_zip=dist-extension/gotry-session-bridge-store.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gotry-session-bridge-v${{ steps.meta.outputs.version }}
+          path: |
+            dist-extension/gotry-session-bridge-store.zip
+            dist-extension/gotry-session-bridge.tar.gz
+            dist-extension/extension-dist-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish to Chrome Web Store
+    needs: pack
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.dry_run == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gotry-session-bridge-v${{ needs.pack.outputs.version }}
+
+      - name: Publish via Chrome Web Store API
+        uses: browser-actions/chrome-webstore-upload@v3
+        with:
+          extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
+          publisher-id: ${{ secrets.CHROME_PUBLISHER_ID }}
+          client-id: ${{ secrets.CHROME_CLIENT_ID }}
+          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
+          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          zip-path: ${{ needs.pack.outputs.store_zip }}
+          publish-mode: publish
+
+      - name: Post-publish note
+        run: |
+          echo "Uploaded v${{ needs.pack.outputs.version }} to CWS. Review may take hours-days; verify the listing version at https://chromewebstore.google.com/detail/${{ secrets.CHROME_EXTENSION_ID }} before claiming published."

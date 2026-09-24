@@ -20,7 +20,9 @@
 
 **https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd**
 
-商店版经 Google 审核上架(2026-09-02),版本跟随商店发版节奏。
+商店版经 Google 审核上架(2026-09-02)。注意:**商店审核有滞后**——2026-09-24 曾出现商店卡在
+0.1.0(早于 portal 会话桥全部能力,装了 portal 横幅也不消失,hotel-fe#3802);自 0.2.0.25 起
+上架走 `.github/workflows/extension-publish.yml` 自动流水线,滞后期望收敛。要最新版请用方式二。
 
 ### 方式二:GitHub Releases 本地加载(免审核,版本更新更快)
 
@@ -46,6 +48,8 @@ npx @danceiny/gotry setup   # 把包内扩展落位到 ~/.gotry/extension
 
 ## 自检
 
+- 扩展卡片版本应为 **0.2.0.25+**;更早的商店 0.1.0 不含 portal 会话桥与安装检测标记,
+  装了 portal 横幅也不会消失(hotel-fe#3802)——升级或改用 GitHub Releases 安装;
 - 商店版扩展 ID 固定为 `oeajpiccmonococjcegddlooeeohlbgd`(商店用自己的签名 key,与 unpacked 版 ID 不同,二者都是同一扩展,本机 gotry 桥双通道同信);
 - 本地加载(unpacked)版扩展 ID 应为固定的 `olpgkofjhhiiiahdkkbcninhjmegghfe`(manifest 带 `key`,跨机器稳定)——若不一致,说明 manifest 被改动过,不要加载;
 - gotry 侧运行 `npx @danceiny/gotry` 后发起一次会话检索,扩展图标应出现(无需点击);桥状态可看 `curl http://127.0.0.1:8791/status`(仅本机回环)。
