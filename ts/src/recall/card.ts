@@ -1,22 +1,25 @@
 /**
- * Why-now card builder(issue #577,Phase D;研究决策 §3 Phase D)。
+ * Why-now card builder(issue #577,Phase D;研究决策 §3 Phase D;
+ * 自检 review 修复见 PR #578——边界校验让「无信源的卡构造上不可能」成为字面真)。
  *
  * 纯函数:RecallTrigger → WhyNowCard(中文文案:标题 + 触发原因 + 当前值/阈值 +
  * 行动建议 + source tag)。
  *
  * 纪律:
- *   - **source tag 必现**(研究文档红线:proactive with provenance);
+ *   - **边界强制 provenance**:buildWhyNowCard 校验 signal.source 非空 + reason 在
+ *     闭集,不合法**直接抛错**——「source_tag 必现」不再是注释承诺而是构造保证;
  *   - 文案模板是封闭词汇(标题/建议的措辞改 = 契约变更,先 review);
- *   - 卡片是数据(不是渲染 HTML);渲染面(deck / 对话 / SMS)各自消费。
+ *   - 卡片是数据(不是渲染 HTML);渲染面(deck / 对话 / SMS)各自消费;
+ *   - renderWhyNowCardLine 必须带证据边界标记(渲染契约:每个渲染面都要展示)。
  */
 
-import { RECALL_REASON_LABEL, type RecallTrigger } from './evaluator.ts'
+import { RECALL_REASON_LABEL, RECALL_REASONS, type RecallReason, type RecallTrigger } from './evaluator.ts'
 
 export interface WhyNowCard {
-  /** 卡片标题(如「现在可以去了:大理 · 洱海恢复之旅」) */
+  /** 卡片标题(如「现在可以去了:大理 · 洱海恢复之旅」;半角冒号——代码字面量即契约) */
   title: string
   /** 触发原因(枚举) */
-  reason: RecallTrigger['signal']['reason']
+  reason: RecallReason
   /** 触发原因的人话标签(如「假期临近」) */
   reason_label: string
   /** 当前值(如「2026-10-01(距今 7 天)」) */
@@ -33,7 +36,7 @@ export interface WhyNowCard {
   evidence_boundary: true
 }
 
-const ACTION_HINT: Record<RecallTrigger['signal']['reason'], string> = {
+const ACTION_HINT: Record<RecallReason, string> = {
   holiday_proximity: '建议在假期前完成规划,锁定当前档期',
   price_drop: '价格已降至阈值,建议尽快确认出发日期',
   weather_window: '天气窗口已打开,适合按原计划出行',
@@ -43,10 +46,21 @@ const ACTION_HINT: Record<RecallTrigger['signal']['reason'], string> = {
 
 /**
  * 构造 why-now 卡:trigger → 人话卡片。
- * title 格式:`现在可以去了:${wish_name}`——封闭词汇,改措辞 = 契约变更。
+ * **边界强制 provenance**:signal.source 非空 + reason 在闭集,否则抛错
+ * (「无信源的卡构造上不可能存在」的字面兑现——手工构造的 trigger 同样受检)。
+ * title 格式:`现在可以去了:${wish_name}`(半角冒号)——封闭词汇,改措辞 = 契约变更。
  */
 export function buildWhyNowCard(trigger: RecallTrigger): WhyNowCard {
   const { wish_name, signal, evaluated_at } = trigger
+  if (signal === null || typeof signal !== 'object') {
+    throw new Error(`buildWhyNowCard:signal 必须是对象(实测 ${String(signal)})`)
+  }
+  if (typeof signal.source !== 'string' || signal.source.length === 0) {
+    throw new Error('buildWhyNowCard:signal.source 必须是非空字符串(无信源的卡构造上不可能存在)')
+  }
+  if (!RECALL_REASONS.includes(signal.reason as RecallReason)) {
+    throw new Error(`buildWhyNowCard:signal.reason 不在闭集(实测 ${String(signal.reason)};允许:${RECALL_REASONS.join(' / ')})`)
+  }
   return {
     title: `现在可以去了:${wish_name}`,
     reason: signal.reason,
@@ -60,7 +74,8 @@ export function buildWhyNowCard(trigger: RecallTrigger): WhyNowCard {
   }
 }
 
-/** 渲染为单行中文摘要(对话/日志面用;卡片数据仍是权威) */
+/** 渲染为单行中文摘要(对话/日志面用;卡片数据仍是权威)。
+ *  必须含证据边界标记(渲染契约:每个渲染面都要展示 evidence_boundary)。 */
 export function renderWhyNowCardLine(card: WhyNowCard): string {
-  return `${card.title}——${card.reason_label}(当前:${card.current_value};阈值:${card.threshold})。${card.action_hint} ${card.source_tag}`
+  return `${card.title}——${card.reason_label}(当前:${card.current_value};阈值:${card.threshold})。${card.action_hint} ${card.source_tag} [证据边界:仅证据驱动]`
 }

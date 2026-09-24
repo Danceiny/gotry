@@ -6,7 +6,8 @@
  * + integration(wish-pool 只读编排)
  * + RecallTickScheduler 端到端(tick → 评估 → 卡 → sink)。
  *
- * 全离线合成数据,无网络、无 IO、无 stateRoot 写、不启动 setInterval。
+ * 全离线合成数据,无网络、无 IO、无 stateRoot 写。产品代码零 setInterval 激活;
+ * 测试本身启动有界、用后即 stop 的 interval(验证 PeriodicTickSource 契约)。
  *
  * 运行(在 ts/ 下):npx tsx scripts/recall-tests.ts
  */
@@ -101,6 +102,9 @@ const SIGNAL_RECOVERED: RecallSignal = {
   const periodic = new PeriodicTickSource({ intervalMs: 1000 })
   ok(periodic.enabled === false, '§1c PeriodicTickSource 默认 enabled=false(opt-in 纪律)')
   ok(periodic.start() === 'disabled', "§1d enabled=false 时 start() 返回 'disabled'(不启动)")
+  // review2 #2:未运行(disabled/未 start)的 next() 返回 null(流终结,永不悬挂)
+  const disabledNext = await periodic.next()
+  ok(disabledNext === null, '§1d0 未运行源的 next() 返回 null(drain-loop 安全退出)')
   periodic.stop() // 幂等停止
 
   // review #3:start() 三态——已启动的实例重复 start 返回 already-running(不混同 disabled)
@@ -115,12 +119,22 @@ const SIGNAL_RECOVERED: RecallSignal = {
   ok(gotTick !== null && gotTick.source === 'rt', '§1d4 next() 阻塞到下一个 tick(drain-loop 安全)')
   running.stop()
 
-  // review #5:pending 有界——10ms 间隔 + maxPending=3,不消费,等 200ms,队列 ≤3
+  // review #5:pending 有界——1ms 间隔 + maxPending=3,不消费,等 200ms,队列恰满 3(上限真到达)
   const capped = new PeriodicTickSource({ intervalMs: 1, enabled: true, maxPending: 3, source: 'cap' })
   capped.start()
   await new Promise(resolve => setTimeout(resolve, 200))
-  ok(capped.pendingLength <= 3, `§1d5 pending 队列有界(maxPending=3,实测 ${capped.pendingLength};溢出丢最旧)`)
+  ok(capped.pendingLength === 3, `§1d5 pending 恰满 maxPending=3(实测 ${capped.pendingLength};上限真到达,一侧不等式防 vacuous pass)`)
+  // review2 #3:stop() 清空 pending(重启不吐陈旧 tick)
   capped.stop()
+  ok(capped.pendingLength === 0, `§1d5b stop() 清空 pending(实测 ${capped.pendingLength};重启不吐陈旧 tick)`)
+  // review2 #2:stop() 把等待者以 null 唤醒(消费协程不泄漏)
+  const flusher = new PeriodicTickSource({ intervalMs: 10_000, enabled: true, source: 'fl' })
+  flusher.start()
+  const hangingNext = flusher.next()  // 先挂起一个等待者(不 await)
+  await new Promise(resolve => setTimeout(resolve, 30))  // 确保 waiter 已注册
+  flusher.stop()
+  const flushed = await Promise.race([hangingNext, new Promise<'timeout'>(r => setTimeout(() => r('timeout'), 500))])
+  ok(flushed === null, `§1d5c stop() 把等待者以 null 唤醒(实测 ${String(flushed)};协程不泄漏)`)
 
   // review #5b:maxPending 非法 → 构造抛错
   let badMax = false
@@ -188,6 +202,27 @@ const SIGNAL_RECOVERED: RecallSignal = {
   ok(firedReasons.size === 5 && RECALL_REASONS.every(r => firedReasons.has(r)),
     `§2l 5 类 RecallReason 全部可达(实际触发 ${firedReasons.size} 类)`)
 
+  // review2 #1:wish_ids 为字符串(真值非数组)→ 整条畸形跳过,绝不降级广播
+  const stringIds = evaluateRecallTriggers(POOL, { now: NOW, signals: [{ ...SIGNAL_PRICE, wish_ids: 'w-dali-erhai' } as unknown as RecallSignal] })
+  ok(stringIds.length === 0, `§2m0 wish_ids 非数组 → 整条跳过(实测 ${stringIds.length} 触发;绝不广播扩权)`)
+
+  // review2 #14:muted 为 'false' 字符串(JSON 往返产物)→ 视为未静音(严格 true 才排除)
+  const stringMutedPool = [{ ...POOL[0], muted: 'false' }, { ...POOL[1], muted: 'false' }]
+  const stringMuted = evaluateRecallTriggers(stringMutedPool as unknown as typeof POOL, { now: NOW, signals: [SIGNAL_HOLIDAY] })
+  ok(stringMuted.length === 2, `§2m1 muted='false' 字符串 → 未静音照常召回(实测 ${stringMuted.length};严格 muted===true 才排除)`)
+
+  // review2 #6:容器/时钟守卫——坏时钟/非数组容器 → 空返回不抛
+  let clockThrew = false
+  try {
+    evaluateRecallTriggers(POOL, { now: new Date('garbage'), signals: [SIGNAL_HOLIDAY] })
+  } catch { clockThrew = true }
+  ok(!clockThrew, '§2m2 ctx.now 非法 → 空返回不抛(toISOString 前置守卫)')
+  let containerThrew = false
+  try {
+    evaluateRecallTriggers(POOL, { now: NOW, signals: undefined as unknown as RecallSignal[] })
+  } catch { containerThrew = true }
+  ok(!containerThrew, '§2m3 signals 非数组 → 空返回不抛(容器守卫)')
+
   // 畸形信号(reason 不在闭集 / source 空 / 字段缺失)→ 静默跳过(不崩、不产触发)
   const badSignals = [
     { reason: 'not_a_reason', source: 'x', current_value: 'y', threshold: 'z' },
@@ -221,18 +256,34 @@ const SIGNAL_RECOVERED: RecallSignal = {
   ok(card.evaluated_at === NOW.toISOString(), '§3g evaluated_at 保持')
   ok(card.evidence_boundary === true, '§3h evidence_boundary 恒 true')
 
-  // 5 类行动建议全部非空
-  const allCards = [SIGNAL_HOLIDAY, SIGNAL_PRICE, SIGNAL_WEATHER, SIGNAL_ROUTE, SIGNAL_RECOVERED].map(s =>
-    buildWhyNowCard(evaluateRecallTriggers(POOL, { now: NOW, signals: [s] })[0] ?? {
-      wish_id: 'x', wish_name: 'x', signal: s, evaluated_at: NOW.toISOString(),
-    }))
-  ok(allCards.every(c => c.action_hint.length > 5), '§3i 5 类 reason 的行动建议全部非空')
+  // review2 #4:卡构造边界强制——source 空 / reason 出集 → 抛错(「无信源卡构造不可能」的字面兑现)
+  let badSourceThrew = false
+  try {
+    buildWhyNowCard({ wish_id: 'x', wish_name: 'x', signal: { ...SIGNAL_PRICE, source: '' } as RecallSignal, evaluated_at: NOW.toISOString() })
+  } catch { badSourceThrew = true }
+  ok(badSourceThrew, "§3h2 buildWhyNowCard source='' → 抛错(边界强制 provenance)")
+  let badReasonThrew = false
+  try {
+    buildWhyNowCard({ wish_id: 'x', wish_name: 'x', signal: { ...SIGNAL_PRICE, reason: 'bogus' } as unknown as RecallSignal, evaluated_at: NOW.toISOString() })
+  } catch { badReasonThrew = true }
+  ok(badReasonThrew, '§3h3 buildWhyNowCard reason 出闭集 → 抛错')
+
+  // review2 #11:5 类行动建议——评估器必须真触发(去 fallback,回归即红)
+  const reasonCards: WhyNowCard[] = []
+  for (const s of [SIGNAL_HOLIDAY, SIGNAL_PRICE, SIGNAL_WEATHER, SIGNAL_ROUTE, SIGNAL_RECOVERED]) {
+    const fired = evaluateRecallTriggers(POOL, { now: NOW, signals: [s] })
+    ok(fired.length >= 1, `§3i0 前置:信号 ${s.reason} 真触发(实测 ${fired.length};无 fallback 掩盖)`)
+    reasonCards.push(buildWhyNowCard(fired[0]))
+  }
+  ok(reasonCards.every(c => c.action_hint.length > 5), '§3i 5 类 reason 的行动建议全部非空')
 
   // 单行渲染含 source tag
   const line = renderWhyNowCardLine(card)
   ok(line.includes(card.title) && line.includes(card.reason_label) && line.includes(card.source_tag),
     `§3j 单行渲染含标题/原因/source tag(${line.slice(0, 60)}...)`)
   ok(line.includes('当前:') && line.includes('阈值:'), '§3k 单行渲染含当前值/阈值')
+  // review2 #8:渲染契约——单行渲染必须含证据边界标记
+  ok(line.includes('证据边界'), '§3k2 单行渲染含证据边界标记(渲染面必须展示 evidence_boundary)')
 }
 
 // ===========================================================================
@@ -306,6 +357,29 @@ const SIGNAL_RECOVERED: RecallSignal = {
   const flakyResult = await flakyScheduler.run(TICK)
   ok(flakyResult.delivered === 1 && flakyResult.failed === 1,
     `§5e2 deliver 逐卡容错:1 成功 1 失败不外泄(实测 ${flakyResult.delivered}/${flakyResult.failed})`)
+  ok(Array.isArray(flakyResult.errors) && flakyResult.errors!.length > 0 && flakyResult.errors![0].includes('deliver'),
+    `§5e3 失败原因记入 errors 数组(实测 ${JSON.stringify(flakyResult.errors)})`)
+
+  // review2 #5:toCard 抛错 → 同样逐卡容错(failed 计数,不杀 run)
+  const badCardScheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal }, WhyNowCard>({
+    evaluate: (tick) => evaluateRecallTriggers(POOL, { now: tick.at, signals: [SIGNAL_PRICE] })
+      .map(tr => ({ wish_id: tr.wish_id, signal: tr.signal })),
+    toCard: () => { throw new Error('card exploded') },
+    sink: new ArrayRecallSink(),
+  })
+  const badCardResult = await badCardScheduler.run(TICK)
+  ok(badCardResult.delivered === 0 && badCardResult.failed === 1,
+    `§5e4 toCard 抛错 → failed 计数不杀 run(实测 ${badCardResult.delivered}/${badCardResult.failed})`)
+
+  // review2 #5:evaluate 抛错 → 空结果 + error 记录(不杀 drain loop)
+  const badEvalScheduler = new RecallTickScheduler<never, never>({
+    evaluate: () => { throw new Error('eval exploded') },
+    toCard: (e) => e,
+    sink: new ArrayRecallSink(),
+  })
+  const badEvalResult = await badEvalScheduler.run(TICK)
+  ok(badEvalResult.delivered === 0 && badEvalResult.failed === 0 && badEvalResult.errors?.[0]?.includes('evaluate') === true,
+    `§5e5 evaluate 抛错 → {0,0,errors} 不外泄(实测 ${JSON.stringify(badEvalResult)})`)
 
   // InMemoryTickSource 驱动多 tick 端到端
   const multiSink = new ArrayRecallSink()

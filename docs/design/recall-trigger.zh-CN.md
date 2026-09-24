@@ -46,7 +46,7 @@ export type RecallReason =
 
 ```ts
 export interface WhyNowCard {
-  title: string           // 「现在可以去了：{wish_name}」——封闭词汇
+  title: string           // 「现在可以去了:{wish_name}」(半角冒号——代码字面量即契约)——封闭词汇
   reason: RecallReason
   reason_label: string    // 如「假期临近」
   current_value: string   // 如「2026-10-01（距今 7 天）」
@@ -70,7 +70,7 @@ export interface WhyNowCard {
 - **为什么 `PeriodicTickSource` 默认关闭。** 仓库的运行时激活纪律（w2a/0.1 contract-only 切片先例）：悄悄启动的后台循环是新的运维面与故障面。`enabled=false` + 显式 opt-in 让本切片零激活。
 - **为什么 `run(tick)` 恰处理一个 tick。** 内部自循环的 scheduler 拥有自己的生命周期——调用方无法给它设界。一 tick 一调用让测试确定性，也让 M4 的 producer 完全掌控迭代。
 - **为什么原因闭集是 5 类。** 每类原因必须有 M4 真能接上的信源（假期日历、价格监控、天气、班次更新、通道健康）；先于传感器发明原因会造出永不触发的词汇。新原因随它的传感器一起、在一次 review 过的变更里到达。
-- **为什么标题是封闭词汇。** 「现在可以去了：{name}」是渲染面（deck/对话/SMS）的契约面；自由标题会让双语渲染与审计过滤失去边界。改措辞 = 契约变更。
+- **为什么标题是封闭词汇。** 「现在可以去了:{name}」是渲染面（deck/对话/SMS）的契约面；自由标题会让双语渲染与审计过滤失去边界。改措辞 = 契约变更。
 - **为什么 muted 与无 id 条目在评估层过滤。** 镜像 `pickNudgeWish` 的纪律：静音的愿望永不召回；没有稳定 wish_id 的条目无法被下游 mutation 引用。在这里过滤（而非卡层）让卡片构造即合法。
 
 ## 6. 切片状态与显式不主张

@@ -91,7 +91,7 @@ echo "=== 6g. gotry try 离线 deck demo(#571,Phase A:免安装/免 LLM key/免 
 echo "=== 6h. Share 契约层(#573,Phase C:adapters 4 个 stub + HMAC share token sign/verify + consent state machine + shareDeck 主流程;不接真实 SDK、不挂 dsh 工具面;7 类 ShareFailureReason 全部真实触发;全离线合成) ==="
 (cd ts && npx tsx scripts/share-tests.ts) || FAIL=1
 
-echo "=== 6i. Recall 触发契约层(#577,Phase D:tick source(InMemory + Periodic 默认关)+ evaluator 5 类 RecallReason 闭集 + why-now card(source tag 必现)+ wish-pool 只读编排 + RecallTickScheduler 端到端;不激活 setInterval、不推送、不 mutation wish-pool;全离线合成) ==="
+echo "=== 6i. Recall 触发契约层(#577,Phase D:tick source(InMemory + Periodic 默认关)+ evaluator 5 类 RecallReason 闭集 + why-now card(source tag 必现)+ wish-pool 只读编排 + RecallTickScheduler 端到端;产品代码零 setInterval 激活(测试启停有界 interval 验证契约);不推送、不 mutation wish-pool;全离线合成) ==="
 (cd ts && npx tsx scripts/recall-tests.ts) || FAIL=1
 
 echo

@@ -2,19 +2,19 @@
  * Recall tick scheduler(issue #577,Phase D;研究决策见
  * docs/research/karpo-deck-web-research.md §3 Phase D;
  * seam 约束见 docs/design/external-event-seam.md §3.3/§4——**pull model,M5 前无 push**;
- * 自检 review 修复见 PR #578 评论)。
+ * 自检 review 两轮修复见 PR #578 评论)。
  *
  * 设计契约:
- *   - TickSource 抽象:`next()` **阻塞到下一个 tick 可用**(而非 drain-and-null)——
- *     drain-loop 调用方在首个 null 退出会永远错过后续 tick;阻塞语义让两种 source
- *     的消费者写法一致(InMemory 耗尽后仍返 null = 流终结);
- *   - PeriodicTickSource:**默认 enabled=false**(显式 opt-in);start() 返回
- *     'started' | 'disabled' | 'already-running'(三态,不混同);timer.unref()
- *     (不拽住进程事件循环);pending 队列有界(maxPending 默认 100,溢出丢最旧);
- *   - RecallTickScheduler 编排器:接 tick → 调 evaluator → 产卡 → 送 sink;
- *     **逐卡 try/catch**——单个 deliver 拒绝不弃余下卡,返 {delivered, failed};
- *   - **不推送**:sink 是注入的下游(测试用数组;M4 接 wish_pool_list 或对话面),
- *     不是 notification/push 通道——seam §4 明确「No push notifications」。
+ *   - TickSource:`next()` **运行中阻塞到下一个 tick 可用**;**未运行(未启动或已
+ *     stop)返回 null = 流终结**——drain-loop 调用方安全退出,永不悬挂;
+ *   - PeriodicTickSource:**默认 enabled=false**(显式 opt-in);start() 三态
+ *     ('started'|'disabled'|'already-running');timer.unref()(不拽住事件循环);
+ *     pending 有界(maxPending 默认 100,溢出丢最旧);**stop() 清空 pending 并把
+ *     全部等待者以 null 唤醒**(终结核平——消费协程不泄漏,重启不吐陈旧 tick);
+ *   - RecallTickScheduler:**永不抛错**——evaluate/toCard/deliver 全部容错:
+ *     evaluate 抛错 → {delivered:0, failed:0, error};单卡 toCard/deliver 抛错 →
+ *     只弃该卡(failed++ 并记 errors),余下继续;返回 {delivered, failed, errors?};
+ *   - **不推送**:sink 是注入的下游,不是 notification/push 通道(seam §4)。
  */
 
 export interface RecallTick {
@@ -25,12 +25,12 @@ export interface RecallTick {
 }
 
 export interface TickSource {
-  /** 拉下一个 tick;**阻塞到可用**(周期源等下个间隔;InMemory 耗尽返 null = 流终结) */
+  /** 拉下一个 tick:**运行中**阻塞到可用;**未运行**(未启动/已 stop)返回 null = 流终结 */
   next(): Promise<RecallTick | null>
 }
 
 /** 测试用 InMemory tick source:预排好的一组 tick,按序返回,耗尽返回 null。
- *  构造时深拷贝每个 tick(防御式——调用方改返回的 tick.at 不会污染队列快照)。 */
+ *  构造与 next() 均防御式深拷贝(调用方改返回的 tick.at 不会污染队列快照)。 */
 export class InMemoryTickSource implements TickSource {
   private queue: RecallTick[]
   constructor(ticks: RecallTick[]) {
@@ -58,11 +58,13 @@ export interface PeriodicTickSourceOptions {
 
 /**
  * 周期 tick source(默认关闭):封装 Node setInterval。
- * - enabled=false 是构造默认,必须显式 opt-in(本切片不接任何运行时);
- * - start() 三态返回:'started'(真的启动)/'disabled'(没 opt-in)/'already-running'
- *   (重复 start 幂等)——不把两种「没启动」混成一个 false;
- * - timer.unref():不拽住进程事件循环(忘了 stop() 不会让进程赖着不死);
- * - next() 阻塞到下一个 tick 可用(drain-loop 安全);pending 有界,溢出丢最旧。
+ * - enabled=false 构造默认,显式 opt-in;start() 三态返回(不混同);
+ * - next() 语义:**运行中**阻塞到下个 tick;**未运行**(disabled/未 start/已 stop)
+ *   立即返回 null(流终结——drain-loop 安全退出,永不悬挂);
+ * - stop() 幂等:**清空 pending(重启不吐陈旧 tick)+ 把全部等待者以 null 唤醒**
+ *   (消费协程不泄漏);
+ * - timer.unref():忘了 stop() 也不拽住进程事件循环;
+ * - pending 有界(maxPending,溢出丢最旧)。
  */
 export class PeriodicTickSource implements TickSource {
   readonly enabled: boolean
@@ -71,7 +73,7 @@ export class PeriodicTickSource implements TickSource {
   private maxPending: number
   private timer: ReturnType<typeof setInterval> | null = null
   private pending: RecallTick[] = []
-  private waiters: Array<(t: RecallTick) => void> = []
+  private waiters: Array<(t: RecallTick | null) => void> = []
 
   constructor(opts: PeriodicTickSourceOptions) {
     this.enabled = opts.enabled === true
@@ -106,12 +108,16 @@ export class PeriodicTickSource implements TickSource {
     return 'started'
   }
 
-  /** 停止内部 setInterval(幂等) */
+  /** 停止(幂等):清 timer + **清空 pending(重启不吐陈旧 tick)+ 等待者全部以 null 唤醒**(终结核平) */
   stop(): void {
     if (this.timer !== null) {
       clearInterval(this.timer)
       this.timer = null
     }
+    this.pending = []
+    const waiters = this.waiters
+    this.waiters = []
+    for (const w of waiters) w(null)
   }
 
   /** 当前 pending 队列长度(只读;测试与诊断用) */
@@ -119,11 +125,12 @@ export class PeriodicTickSource implements TickSource {
     return this.pending.length
   }
 
-  /** 阻塞拉下一个 tick:有 pending 立即取;无则挂起等待下个间隔的回调唤醒 */
+  /** **运行中**阻塞到下一个 tick;**未运行**(disabled/未 start/已 stop)返回 null(流终结) */
   async next(): Promise<RecallTick | null> {
+    if (this.timer === null) return null
     const queued = this.pending.shift()
     if (queued !== undefined) return queued
-    return new Promise<RecallTick>(resolve => {
+    return new Promise<RecallTick | null>(resolve => {
       this.waiters.push(resolve)
     })
   }
@@ -143,7 +150,7 @@ export class ArrayRecallSink implements RecallSink {
 }
 
 export interface RecallTickSchedulerDeps<E, C> {
-  /** tick 到来时的评估函数(evaluator;纯函数) */
+  /** tick 到来时的评估函数(evaluator;契约上纯函数) */
   evaluate: (tick: RecallTick) => E[]
   /** 评估结果到卡的转换(纯函数;签名带 tick——卡的 evaluated_at 应取 tick.at) */
   toCard: (evaluation: E, tick: RecallTick) => C
@@ -154,15 +161,17 @@ export interface RecallTickSchedulerDeps<E, C> {
 export interface RecallRunResult {
   /** 成功送出的卡数 */
   delivered: number
-  /** deliver 抛错被跳过的卡数(不弃余下;不外泄异常) */
+  /** toCard 或 deliver 抛错被跳过的卡数(不弃余下;不外泄异常) */
   failed: number
+  /** 容错捕获的错误消息(前几条;诊断用,绝不外泄为异常) */
+  errors?: string[]
 }
 
 /**
  * 编排器:拉 tick → 评估 → 转卡 → 送 sink。
  * 每次 run 处理一个 tick(调用方决定循环;scheduler 自己不循环——不悄悄长驻)。
- * **逐卡容错**:单个 sink.deliver 拒绝只弃该卡,余下继续;返回 {delivered, failed}
- * (调用方据此决定重试/告警;不抛错)。
+ * **永不抛错**:evaluate 抛错 → {delivered:0, failed:0, error 记入 errors};
+ * 单卡 toCard/deliver 抛错 → 只弃该卡(failed++/errors 记一条),余下继续。
  */
 export class RecallTickScheduler<E, C> {
   private deps: RecallTickSchedulerDeps<E, C>
@@ -172,18 +181,33 @@ export class RecallTickScheduler<E, C> {
   }
 
   async run(tick: RecallTick): Promise<RecallRunResult> {
-    const evaluations = this.deps.evaluate(tick)
+    const errors: string[] = []
+    let evaluations: E[]
+    try {
+      evaluations = this.deps.evaluate(tick)
+      if (!Array.isArray(evaluations)) evaluations = []
+    } catch (err) {
+      return { delivered: 0, failed: 0, errors: [`evaluate: ${(err as Error)?.message ?? String(err)}`] }
+    }
     let delivered = 0
     let failed = 0
     for (const evaluation of evaluations) {
-      const card = this.deps.toCard(evaluation, tick)
+      let card: C
+      try {
+        card = this.deps.toCard(evaluation, tick)
+      } catch (err) {
+        failed++
+        if (errors.length < 4) errors.push(`toCard: ${(err as Error)?.message ?? String(err)}`)
+        continue
+      }
       try {
         await this.deps.sink.deliver(card)
         delivered++
-      } catch {
+      } catch (err) {
         failed++
+        if (errors.length < 4) errors.push(`deliver: ${(err as Error)?.message ?? String(err)}`)
       }
     }
-    return { delivered, failed }
+    return errors.length > 0 ? { delivered, failed, errors } : { delivered, failed }
   }
 }
