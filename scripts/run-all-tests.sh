@@ -94,6 +94,9 @@ echo "=== 6h. Share 契约层(#573,Phase C:adapters 4 个 stub + HMAC share toke
 echo "=== 6i. Recall 触发契约层(#577,Phase D:tick source(InMemory + Periodic 默认关)+ evaluator 5 类 RecallReason 闭集 + why-now card(source tag 必现)+ wish-pool 只读编排 + RecallTickScheduler 端到端;产品代码零 setInterval 激活(测试启停有界 interval 验证契约);不推送、不 mutation wish-pool;全离线合成) ==="
 (cd ts && npx tsx scripts/recall-tests.ts) || FAIL=1
 
+echo "=== 6j. Session-link 契约层(#580,Phase E:HMAC 签名 token(schema 闭集未知键拒绝/plan_it⇔wish_id 成对/session_ref 路径护栏/action 词位无写动词)+ format/parse 互逆(query/hash 拒绝)+ plan-it 行动卡(wish_id 与 payload 同源);无 scheme handler 注册(消费端 M4 激活);不碰写路径 WriteGate 保持 sealed;全离线合成) ==="
+(cd ts && npx tsx scripts/session-link-tests.ts) || FAIL=1
+
 echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1

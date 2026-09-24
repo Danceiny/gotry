@@ -18,6 +18,9 @@ import { RECALL_REASON_LABEL, RECALL_REASONS, type RecallReason, type RecallTrig
 export interface WhyNowCard {
   /** 卡片标题(如「现在可以去了:大理 · 洱海恢复之旅」;半角冒号——代码字面量即契约) */
   title: string
+  /** 卡片所指的 wish(结构化自指;Phase E 起必含——plan-it 深链的行动目标,
+   *  从 title 字符串反解不可接受) */
+  wish_id: string
   /** 触发原因(枚举) */
   reason: RecallReason
   /** 触发原因的人话标签(如「假期临近」) */
@@ -51,7 +54,7 @@ const ACTION_HINT: Record<RecallReason, string> = {
  * title 格式:`现在可以去了:${wish_name}`(半角冒号)——封闭词汇,改措辞 = 契约变更。
  */
 export function buildWhyNowCard(trigger: RecallTrigger): WhyNowCard {
-  const { wish_name, signal, evaluated_at } = trigger
+  const { wish_id, wish_name, signal, evaluated_at } = trigger
   if (signal === null || typeof signal !== 'object') {
     throw new Error(`buildWhyNowCard:signal 必须是对象(实测 ${String(signal)})`)
   }
@@ -63,6 +66,7 @@ export function buildWhyNowCard(trigger: RecallTrigger): WhyNowCard {
   }
   return {
     title: `现在可以去了:${wish_name}`,
+    wish_id,
     reason: signal.reason,
     reason_label: RECALL_REASON_LABEL[signal.reason],
     current_value: signal.current_value,
