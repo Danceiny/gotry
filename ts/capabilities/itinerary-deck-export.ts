@@ -7,7 +7,7 @@
  * (`gotry_itinerary_deck_render`)的产品分工:那两个入口把产物写到 dsh 会话
  * 工作目录顶层(用于 chat 内嵌);本入口把 deck 写到**宿主显式给出的
  * target_dir** 下的一个「分享 bundle」——`basename.html` + `manifest.json` +
- * `qr.svg`(占位;切片 3b 落地后覆盖真矩阵),ready for 任意静态托管。
+ * `qr.svg`(qrcode 库真矩阵,#569),ready for 任意静态托管。
  *
  * 三条硬纪律(继承自单页入口 + deck 入口,verbatim):
  *   1. 事实只从 <stateRoot>/gotry-state/bookable-facts.jsonl 注册表取;
@@ -267,7 +267,9 @@ function stampManifest(manifest: Record<string, unknown>, html: string): Record<
 }
 
 /** qr.svg 真矩阵编码(issue #569,Phase B 切片 3b):用 npm `qrcode` 库直接渲染 SVG,
- * 编码目标 URL 或本地 bundle 入口(无 target_url 时退化为 file://)。
+ * 编码 target_url;无 target_url 时编码字面标记 `<local bundle; not yet hosted>`
+ * (扫码得到一段说明文本而非死链;manifest.target_url 字段同时缺省,Phase C 消费方
+ * 据 manifest.target_url 判断是否 hosted,不靠扫码内容)。
  * error correction level 默认 M(15% 冗余,适合带 logo / 抗打印 / 二维码扫描容错);
  * margin=2(ISO 标准 4 模块静默区中的 2——可扫描 + 视觉紧凑)。
  * SVG 是自包含 XML,可在任意现代浏览器/扫码 app 直接渲染。 */
@@ -329,7 +331,24 @@ export async function generateItineraryDeckExport(input: unknown, deps: Itinerar
     rendered.html,
   )
 
-  // 写盘顺序:HTML → manifest(含 sha256 已填)→ qr.svg 占位;任一失败即回滚已落盘文件
+  // QR **先于任何写盘**生成(fail-fast 零写入):qrcode 库对超容量输入会 reject
+  // (QR v40-M 字节模式上限 2331 字节;2048 个 CJK 字符约 2409 字节即超),
+  // 若先生成 HTML/manifest 再遇 QR reject 会留下半成品 bundle 且重试撞 EEXIST。
+  const qrTarget = url.targetUrl && url.targetUrl.length > 0
+    ? url.targetUrl
+    : `<local bundle; not yet hosted>`
+  let qrSvg: string
+  try {
+    qrSvg = await qrSvgFor(qrTarget)
+  } catch (err) {
+    return {
+      ok: false,
+      error: `QR 编码失败(未写入任何文件):${(err as Error)?.message ?? String(err)}`,
+      hint: `target_url 过长(QR v40-M 字节模式上限约 2331 字节;实测 UTF-8 ${Buffer.byteLength(qrTarget, 'utf8')} 字节)——缩短 target_url 后重试`,
+    }
+  }
+
+  // 写盘顺序:HTML → manifest(含 sha256 已填)→ qr.svg(已在上方预生成)
   const htmlPath = join(dir.dir, files.html)
   const manifestPath = join(dir.dir, files.manifest)
   const qrPath = join(dir.dir, files.qr)
@@ -337,12 +356,6 @@ export async function generateItineraryDeckExport(input: unknown, deps: Itinerar
   if ('error' in writtenHtml) return { ok: false, error: writtenHtml.error, hint: writtenHtml.hint }
   const writtenManifest = await writeExclusive(manifestPath, JSON.stringify(manifest, null, 2))
   if ('error' in writtenManifest) return { ok: false, error: writtenManifest.error, hint: writtenManifest.hint }
-  // QR 编码目标:有 target_url 用之;无则退化为 file:// 占位(deck 本地路径 + 警示注释,
-  // 让扫码应用拿到至少是个可解析字符串——manifest.share_intent.qr_intent 标记 'local_only')
-  const qrTarget = url.targetUrl && url.targetUrl.length > 0
-    ? url.targetUrl
-    : `<local bundle; not yet hosted>`
-  const qrSvg = await qrSvgFor(qrTarget)
   const writtenQr = await writeExclusive(qrPath, qrSvg)
   if ('error' in writtenQr) return { ok: false, error: writtenQr.error, hint: writtenQr.hint }
 

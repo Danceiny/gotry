@@ -467,6 +467,9 @@ async function main(): Promise<void> {
   // ---- §18e 有 target_url 时 QR 编码它;无时编码本地占位串(语义校验) ----
   const withUrlQrDisk = readFileSync(String(withUrl.files?.qr), 'utf-8')
   ok(withUrlQrDisk.length > 600, `§18e 有 target_url 的 bundle qr.svg 也是非平凡矩阵(${withUrlQrDisk.length} 字节)`)
+  // 语义校验(自检 review #3):不同 payload 必须产不同 QR——空 fact_ids→本地 marker vs
+  // 有 target_url→真 URL,字节必不同
+  ok(qrDisk !== withUrlQrDisk, `§18e2 不同 payload 的 QR 字节不同(${qrDisk.length} vs ${withUrlQrDisk.length};QR 必随编码内容变化)`)
   // 同一个 target_url 两次生成 qr.svg 字节级一致(确定性)
   const withUrl2 = await run({
     title: TITLE,
@@ -520,8 +523,8 @@ async function main(): Promise<void> {
   ok(htmlRead.content === chainHtmlDisk, '§20j read 内容与落盘字节一致')
   ok(htmlRead.version === chainManifest.deck?.sha256?.slice(0, 12), '§20k read version = manifest.sha256 前 12 位')
 
-  // qr.svg 占位直接读盘验证(不在 artifact list 白名单内)
-  ok(qrDisk.startsWith('<svg'), '§20l qr.svg 占位是合法 SVG')
+  // qr.svg 直接读盘验证(不在 artifact list 白名单内)
+  ok(qrDisk.startsWith('<svg'), '§20l qr.svg 是合法 SVG(真矩阵,#569)')
 
   // ---- §21 bundle 路径保真(尾随空格) ----
   const plainDir = join(home, 'session')
