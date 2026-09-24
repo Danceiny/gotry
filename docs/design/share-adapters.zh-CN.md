@@ -13,7 +13,7 @@
 - HMAC-SHA256 share-token：`signShareToken` / `verifyShareToken`——base64url body + sig,`timingSafeEqual` 验签,ttl 过期检查,结构化失败原因。
 - `ShareConsentState` 状态机：`mode: 'ask' | 'allow' | 'off'` + 每 `share_id` 一张卡 + `revoked` 列表,显式区分 `consent_required` 与 `consent_revoked`。
 - `shareDeck(token, payload, deps)`——纯异步编排：token → consent → channel → adapter。永不抛错。永远返回 `ShareResult`。
-- 7 类 `ShareFailureReason` 闭集：`not_activated` / `unknown_channel` / `consent_required` / `consent_revoked` / `share_consent_off` / `token_invalid` / `token_expired`——每类在测试里都可达。
+- 8 类 `ShareFailureReason` 闭集：`not_activated` / `unknown_channel` / `consent_required` / `consent_revoked` / `share_consent_off` / `token_invalid` / `token_expired`——每类在测试里都可达。
 
 ## 1. 契约
 
@@ -29,7 +29,7 @@ export interface SharePayload {
 export type ShareFailureReason =
   | 'not_activated' | 'unknown_channel'
   | 'consent_required' | 'consent_revoked' | 'share_consent_off'
-  | 'token_invalid' | 'token_expired'
+  | 'token_invalid' | 'token_expired' | 'adapter_error'
 
 export type ShareResult =
   | { delivered: true; adapter_id: ShareChannel; sent_at: string }
@@ -41,7 +41,7 @@ export interface ShareAdapter {
 }
 ```
 
-`ADAPTERS` 是冻结的 record `{ imessage, sms, slack, webhook } → ShareAdapter`。扩通道 = 新增 `ShareChannel` 成员 + 新增 `ADAPTERS` 条目 +（M4 阶段）替换 no-op stub 为真实实现。闭集纪律防止字符串自由枚举漂移。
+`ADAPTERS` 在运行时 `Object.freeze`(编译期 `Readonly` 单独撑不起冻结声明)——`{ imessage, sms, slack, webhook } → ShareAdapter`。`SHARE_CHANNELS` 由 `Object.keys(ADAPTERS)` 派生,闭集单一事实源。扩通道 = 新增 `ShareChannel` 成员 + 新增 `ADAPTERS` 条目 +（M4 阶段）替换 no-op stub 为真实实现。闭集纪律防止字符串自由枚举漂移。
 
 ## 2. 三条硬纪律（继承自 artifact 入口）
 
@@ -53,8 +53,8 @@ export interface ShareAdapter {
 
 Token 形状：`<body>.<sig>`,其中 `body = base64url(JSON.stringify(payload))`,`sig = base64url(HMAC-SHA256(body, secret))`。
 
-- `payload` = `{ share_id, created_at (ISO), ttl_seconds }`
-- `secret` 默认为 `SHARE_HMAC_SECRET` env,缺省走 `DEFAULT_DEV_SHARE_SECRET`（`gotry-share-dev-secret-DO-NOT-USE-IN-PROD`）——dev / test 无需设 env。**生产必须设 `SHARE_HMAC_SECRET`**。
+- `payload` = `{ share_id, created_at (ISO), ttl_seconds, target: { channel, address } }`——目的地进签名;合法 token 换收件人重放会因 `tokenTargetMatches` 不匹配 → `token_invalid`
+- `secret` 默认为 `SHARE_HMAC_SECRET` env,缺省走 `DEFAULT_DEV_SHARE_SECRET`（`gotry-share-dev-secret-DO-NOT-USE-IN-PROD`）——dev / test 无需设 env。**`NODE_ENV=production` 且 env 缺失时 `resolveShareSecret` 直接抛错**(fail-closed)——忘记设 env 的部署绝不用公开在仓库里的常量签生产 token。
 - `verifyShareToken(token, secret, now)`:
   - 格式检查（恰好一个 `.`）→ `token_invalid`
   - HMAC `timingSafeEqual` 比对（body 或 sig 任一不匹配）→ `token_invalid`
@@ -97,7 +97,7 @@ Token 形状：`<body>.<sig>`,其中 `body = base64url(JSON.stringify(payload))`
 
 ## 7. 切片状态与显式不主张
 
-本切片落地：`ts/src/share/{adapters,share-token,share-consent,share-deck}.ts` + `ts/scripts/share-tests.ts`(54 断言,run-all §6h)。4 个 adapter stub 按设计 no-op。token 签发字节级确定。七类 `ShareFailureReason` 全部可达,套件已证明。
+本切片落地：`ts/src/share/{adapters,share-token,share-consent,share-deck}.ts` + `ts/scripts/share-tests.ts`(自检 review 加固后 73 断言,run-all §6h)。4 个 adapter stub 按设计 no-op。token 签发字节级确定。八类 `ShareFailureReason` 全部可达,套件已证明。
 
 不在本切片：四通道的真 SDK 调用(M4);`gotry_share_*` dsh 工具注册(M4);wish-pool / external-event seam 触发的 share 事件(M4 / Phase D);托管 share URL 服务(研究 E.2)。缝合契约完整;M4 在不动本模块 API 的前提下接 adapter + 接 dsh 面。
 

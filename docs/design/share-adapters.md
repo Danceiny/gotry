@@ -13,7 +13,7 @@
 - HMAC-SHA256 share-token: `signShareToken` / `verifyShareToken` — base64url body + sig, `timingSafeEqual` on verify, ttl expiry check, structured failure reasons.
 - `ShareConsentState` machine with `mode: 'ask' | 'allow' | 'off'`, per-`share_id` cards, `revoked` list, `consent_required` vs `consent_revoked` distinguished explicitly.
 - `shareDeck(token, payload, deps)` — pure async orchestration: token → consent → channel → adapter. Never throws. Always returns `ShareResult`.
-- 7-class `ShareFailureReason` closed set; `not_activated`, `unknown_channel`, `consent_required`, `consent_revoked`, `share_consent_off`, `token_invalid`, `token_expired` — every class is reachable in tests.
+- 8-class `ShareFailureReason` closed set; `not_activated`, `unknown_channel`, `consent_required`, `consent_revoked`, `share_consent_off`, `token_invalid`, `token_expired` — every class is reachable in tests.
 
 ## 1. Contract
 
@@ -29,7 +29,7 @@ export interface SharePayload {
 export type ShareFailureReason =
   | 'not_activated' | 'unknown_channel'
   | 'consent_required' | 'consent_revoked' | 'share_consent_off'
-  | 'token_invalid' | 'token_expired'
+  | 'token_invalid' | 'token_expired' | 'adapter_error'
 
 export type ShareResult =
   | { delivered: true; adapter_id: ShareChannel; sent_at: string }
@@ -41,7 +41,7 @@ export interface ShareAdapter {
 }
 ```
 
-`ADAPTERS` is a frozen record `{ imessage, sms, slack, webhook } → ShareAdapter`. Adding a channel = adding a `ShareChannel` member + adding an `ADAPTERS` entry + (in M4) replacing the no-op stub with a real implementation. The closed-set discipline prevents stringly-typed channel drift.
+`ADAPTERS` is `Object.freeze`-frozen at runtime (compile-time `Readonly` alone cannot uphold the frozen-record claim) — `{ imessage, sms, slack, webhook } → ShareAdapter`. `SHARE_CHANNELS` derives from `Object.keys(ADAPTERS)` so the closed set has one source of truth. Adding a channel = adding a `ShareChannel` member + adding an `ADAPTERS` entry + (in M4) replacing the no-op stub with a real implementation. The closed-set discipline prevents stringly-typed channel drift.
 
 ## 2. Three hard rules (inherited from artifact entries)
 
@@ -53,26 +53,27 @@ export interface ShareAdapter {
 
 Token shape: `<body>.<sig>` where `body = base64url(JSON.stringify(payload))` and `sig = base64url(HMAC-SHA256(body, secret))`.
 
-- `payload` = `{ share_id, created_at (ISO), ttl_seconds }`
-- `secret` defaults to `SHARE_HMAC_SECRET` env, falling back to `DEFAULT_DEV_SHARE_SECRET` (`gotry-share-dev-secret-DO-NOT-USE-IN-PROD`) so dev / test never have to set env. Production MUST set `SHARE_HMAC_SECRET`.
+- `payload` = `{ share_id, created_at (ISO), ttl_seconds, target: { channel, address } }` — the destination is inside the signature; a validly-signed token replayed to a different recipient fails `tokenTargetMatches` → `token_invalid`
+- `secret` defaults to `SHARE_HMAC_SECRET` env, falling back to `DEFAULT_DEV_SHARE_SECRET` (`gotry-share-dev-secret-DO-NOT-USE-IN-PROD`) so dev / test never have to set env. **`resolveShareSecret` throws when `NODE_ENV=production` and the env var is missing** (fail-closed) — a forgotten env never signs production tokens with a constant committed to the public repo.
 - `verifyShareToken(token, secret, now)`:
-  - format check (exactly one `.`) → `token_invalid`
+  - format check (**exactly one dot**, `indexOf === lastIndexOf`; the base64url decoder silently skips invalid chars, so multi-dot tokens must be rejected explicitly) → `token_invalid`
   - HMAC `timingSafeEqual` check → `token_invalid` on any mismatch (body or sig)
   - payload shape validation (share_id / created_at / ttl_seconds types) → `token_invalid`
-  - expiry: `now > created_at + ttl_seconds * 1000` → `token_expired` (ttl = 0 expires at next instant)
+  - ttl validation: non-negative integer capped at `2^31-1` seconds (prevents `expiresMs` overflow to `Infinity`) → `token_invalid`
+  - expiry: `now > created_at + ttl_seconds * 1000` → `token_expired` (ttl = 0 expires at the next instant)
   - on success returns `{ ok: true, payload }` for the caller to feed into `checkShareConsent`
 - `signShareToken` is byte-level deterministic for fixed `(payload, secret)` — verifiable by `sha256(token)`.
 
 ## 4. Share consent state machine
 
 - `mode: 'ask' | 'allow' | 'off'` — total switch. `off` rejects everything with `share_consent_off`. `ask` and `allow` both require a granted card per share_id; `allow` is "user pre-authorized at install time" (no per-share dialog needed), `ask` is "prompt every time". Both modes share the `consent_required` reason when no card is present (so UI can render a single prompt path).
-- `granted: ShareConsentCard[]` — append-only history of cards (`card_id: UUID`, `share_id`, `granted_at: ISO`).
+- `granted: ShareConsentCard[]` — append-only history of cards (`card_id: UUID`, `share_id`, `granted_at: ISO`). `grantShareConsent` is idempotent per share (reuses the existing live card instead of appending) so duplicate grants cannot drift the card set or break revocation totality.
 - `revoked: string[]` — list of revoked `card_id`s. `revoke` is idempotent.
 - `checkShareConsent(state, share_id, card_id?)`:
   - `mode === 'off'` → `share_consent_off`
   - no granted cards for `share_id` → `consent_required` ("never granted" — distinct from revoked)
   - has granted cards but all are in `revoked` → `consent_revoked` ("was granted, then taken back" — distinct from required)
-  - caller-provided `card_id` must match the live card → `consent_revoked` (forgery guard)
+  - caller-provided `card_id` must itself be a live card for that share (matched by id across all cards, not just the first live one) → `consent_revoked` (forgery guard)
 - All transitions are pure: `grantShareConsent` / `revokeShareConsent` / `setShareConsentMode` return new state objects, never mutate.
 
 ## 5. shareDeck flow
@@ -84,7 +85,7 @@ Token shape: `<body>.<sig>` where `body = base64url(JSON.stringify(payload))` an
 4. adapter.send(payload) → return result.delivered ? {...result, sent_at: result.sent_at ?? now()} : result
 ```
 
-The function never throws. Every `ShareFailureReason` is a reachable return path and is exercised by the test suite (§5c explicitly enumerates all seven and asserts each is fired by an actual scenario).
+The function never throws. Every `ShareFailureReason` is a reachable return path and is exercised by the test suite (§5c explicitly enumerates all eight and asserts each is fired by an actual scenario).
 
 ## 6. Decision log
 
@@ -97,7 +98,7 @@ The function never throws. Every `ShareFailureReason` is a reachable return path
 
 ## 7. Slice status and explicit non-claims
 
-Landed here: `ts/src/share/{adapters,share-token,share-consent,share-deck}.ts` + `ts/scripts/share-tests.ts` (54 assertions, run-all §6h). All four adapter stubs are no-op by design. Token signing is byte-deterministic. The seven `ShareFailureReason` values are all reachable by real scenarios and the suite proves it.
+Landed here: `ts/src/share/{adapters,share-token,share-consent,share-deck}.ts` + `ts/scripts/share-tests.ts` (73 assertions after the self-review hardening pass, run-all §6h). All four adapter stubs are no-op by design. Token signing is byte-deterministic. The eight `ShareFailureReason` values are all reachable by real scenarios and the suite proves it.
 
 Not in this slice: real SDK calls for any of the four channels (M4); `gotry_share_*` dsh tool registration (M4); trigger-driven share events from the wish-pool or external-event seam (M4 / Phase D); a hosted share URL service (research E.2). The seam is contract-complete; the M4 work plugs adapters and wires the dsh surface without touching this module's API.
 
