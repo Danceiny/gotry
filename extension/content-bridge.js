@@ -25,6 +25,20 @@
   if (window.__gotrySniffBridge) return
   window.__gotrySniffBridge = true
 
+  /**
+   * portal 安装检测契约(2026-09-24 hotel-fe#3802):hotel-fe 安装横幅只认
+   * <body data-portal-helper-installed="true">——旧 portal-helper 的遗留契约,
+   * 横幅侧注明「unchanged until portal-helper retirement」,本扩展必须对齐,
+   * 否则装了横幅也不消失。document_start 时 body 常未就绪 → DOMContentLoaded
+   * 兜底;ISOLATED world 写 DOM 属性对页面主世界可见。
+   */
+  var INSTALLED_ATTR = 'data-portal-helper-installed'
+  function markInstalled() {
+    if (document.body) document.body.setAttribute(INSTALLED_ATTR, 'true')
+  }
+  if (document.body) markInstalled()
+  else document.addEventListener('DOMContentLoaded', markInstalled, { once: true })
+
   function dispatchJoinTicket(ev) {
     try {
       // 本脚本跑在隔离世界:页面主世界设置的 window 属性读不到,票据本体必须
