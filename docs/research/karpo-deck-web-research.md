@@ -136,7 +136,7 @@ silence), and commission-disclosure slots (product design §1 mechanism; rendere
 |---|---|---|---|
 | A | `gotry try` 离线 demo fixture(#571):固定合成行程 + 空 fact_ids → `renderItineraryDeck` → tmpdir 落盘 + stdout 路径/字节/幻灯数;零安装零 LLM key 零 dsh 主机 | No — new surfaces only | 服务 M3 种子用户漏斗 |
 | B | Deck spec + deck renderer (inherits the `itinerary-html.ts` contract) + static export + QR (#569 real matrix via `qrcode` npm) | No — render-layer extension | M3 |
-| C | Share consent card + token + outbound adapters (iMessage/Slack) | No — read-only delivery faces | M3→M4 |
+| C | Share consent card + token + outbound adapters (issue #573, slice-1: 4 no-op adapter stubs + HMAC token + consent state machine + shareDeck orchestration; M4 slices replace stubs + add dsh tool registration) | No — read-only delivery faces | M3→M4 |
 | D | Tick scheduler + recall-condition trigger evaluator + why-now cards | Seam activation only, per the external-event seam's own gating | M4 engineering |
 | E | One-tap deep-link back into the local session; hosted sharing service (a separate decision) | No write path; WriteGate untouched | M4+ |
 
