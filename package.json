@@ -83,6 +83,10 @@
     "ts/src/memory-utility.ts",
     "ts/src/memory-decay.ts",
     "ts/src/wish-pool.ts",
+    "ts/src/recall/tick.ts",
+    "ts/src/recall/evaluator.ts",
+    "ts/src/recall/card.ts",
+    "ts/src/recall/integration.ts",
     "ts/src/travel-timeline.ts",
     "ts/src/companions.ts",
     "ts/src/time-anchor.ts",
@@ -126,7 +130,9 @@
     "ts/src/share/adapters.ts",
     "ts/src/share/share-consent.ts",
     "ts/src/share/share-deck.ts",
-    "ts/src/share/share-token.ts"
+    "ts/src/share/share-token.ts",
+    "ts/src/session-link/session-link.ts",
+    "ts/src/session-link/plan-it-action.ts"
   ],
   "engines": {
     "node": ">=22.15.0"

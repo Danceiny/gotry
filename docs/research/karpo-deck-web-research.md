@@ -138,7 +138,7 @@ silence), and commission-disclosure slots (product design §1 mechanism; rendere
 | B | Deck spec + deck renderer (inherits the `itinerary-html.ts` contract) + static export + QR (#569 real matrix via `qrcode` npm) | No — render-layer extension | M3 |
 | C | Share consent card + token + outbound adapters (issue #573, slice-1: 4 no-op adapter stubs + HMAC token + consent state machine + shareDeck orchestration; M4 slices replace stubs + add dsh tool registration) | No — read-only delivery faces | M3→M4 |
 | D | Recall trigger contract layer (issue #577: tick source + 5-class RecallReason evaluator + why-now card with mandatory source tag; PeriodicTickSource default-off; no push, no mutation — M4 wires the seam's producer) | Seam activation only, per the external-event seam's own gating | M4 engineering |
-| E | One-tap deep-link back into the local session; hosted sharing service (a separate decision) | No write path; WriteGate untouched | M4+ |
+| E | ~~One-tap deep-link back into the local session~~ — contract layer landed: signed schema-closed `session-link` tokens + plan-it action card (issue #580; slice-1 merged, run-all §6j); hosted sharing service (a separate decision) still open | No write path; WriteGate untouched | M4+ (contract), M4 (consumer activation) |
 
 Every phase follows the repo's existing patterns: contract first, activation later; one PR per slice; bilingual pairs in the same commit; red tests never merge.
 
