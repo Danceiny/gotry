@@ -137,7 +137,7 @@ gotry 的结构性信任已是产品级素材:证据徽章（源标签今天已�
 | A | `gotry try` 离线 demo fixture（#571）：固定合成行程 + 空 fact_ids → `renderItineraryDeck` → tmpdir 落盘 + stdout 路径/字节/幻灯数；零安装零 LLM key 零 dsh 主机 | 否——纯新增面 | 服务 M3 种子用户漏斗 |
 | B | deck spec + deck 渲染器（继承 `itinerary-html.ts` 契约）+ 静态导出 + QR（#569 经 npm `qrcode` 落真矩阵） | 否——渲染层扩展 | M3 |
 | C | 分享同意卡 + token + outbound 适配器（issue #573 切片 1：4 个 no-op adapter stub + HMAC token + consent 状态机 + shareDeck 编排；M4 切片替换 stub + 接 dsh 工具注册） | 否——只读投递面 | M3→M4 |
-| D | tick scheduler + recall 条件触发评估器 + 「为什么是现在」卡片 | 仅接缝激活,按 external-event 接缝自身的门控 | M4 工程面 |
+| D | 召回触发契约层（issue #577：tick source + 5 类 RecallReason 评估器 + source tag 必现的 why-now 卡；PeriodicTickSource 默认关；不推送、不 mutation——M4 接接缝 producer） | 仅接缝激活,按 external-event 接缝自身的门控 | M4 工程面 |
 | E | one-tap deep-link 回本地 session;托管分享服务（独立决策） | 无写路径;WriteGate 不动 | M4+ |
 
 每个 Phase 都沿用仓库既有模式:contract first, activation later;一个 slice 一个 PR;双语成对同 commit;红测试不合。
