@@ -13,7 +13,7 @@
 - `evaluateRecallTriggers(pool, ctx)`——纯函数，把 wish-pool 候选与信号配对。**5 类 `RecallReason` 闭集**（`holiday_proximity` / `price_drop` / `weather_window` / `route_new` / `availability_recovered`）；广播信号匹配全部有效候选，定向信号按 wish_id 精确匹配。畸形信号静默跳过不崩。
 - `buildWhyNowCard(trigger)`——纯函数产数据卡（标题 / 原因标签 / 当前值 / 阈值 / 行动建议 / **source tag 必现**）。`renderWhyNowCardLine(card)` 渲染单行供日志/对话用。
 - `evaluatePoolRecall(input)`——wish-pool 只读集成（不 mutation；召回/通知留 M4）。
-- 42 断言（run-all §6i）覆盖：opt-in 纪律、5 类原因可达、广播 vs 定向匹配、muted/无 id 过滤、source tag 必现、scheduler 端到端。
+- 49 断言（run-all §6i，自检 review 加固后）覆盖：opt-in 纪律（三态 start、阻塞 next、有界 pending、防御式拷贝）、5 类原因可达、广播 vs 定向匹配、muted/无 id 过滤、source tag 必现、逐卡投递容错、按 tick 盖 provenance 戳的 scheduler 端到端。
 
 ## 1. Tick source
 
@@ -22,9 +22,9 @@ export interface RecallTick { at: Date; source: string }
 export interface TickSource { next(): Promise<RecallTick | null> }
 ```
 
-- `InMemoryTickSource`——预排队列；耗尽返回 `null`。仅测试。
-- `PeriodicTickSource`——封装 `setInterval`；**`enabled` 构造默认 `false`，必须显式置 `true`**；禁用时 `start()` 是 no-op 返回 `false`。构造时 `intervalMs` 非正数抛错（fail-closed）。本切片在产品代码里从不构造 enabled 实例——M4 接缝的本地 producer（issue #82）。
-- `RecallTickScheduler`——收 `{ evaluate, toCard, sink }` 依赖；`run(tick)` 恰处理一个 tick 并返卡数。无内部循环：调用方（现在的测试、M4 的 producer）驱动迭代。
+- `InMemoryTickSource`——预排队列；耗尽返回 `null`。仅测试。构造与 `next()` 均防御式深拷贝——调用方改返回的 tick 不会污染队列快照。
+- `PeriodicTickSource`——封装 `setInterval`；**`enabled` 构造默认 `false`，必须显式置 `true`**。`start()` 返回三态 `'started' | 'disabled' | 'already-running'`（不混同）。构造时 `intervalMs` 非正数或 `maxPending` 非正整数抛错（fail-closed）。timer `unref()`（不拽住事件循环）。pending 队列有界（`maxPending` 默认 100，溢出丢最旧——慢消费者不会无限积压过期 tick）。**`next()` 阻塞到下一个 tick 可用**（drain-loop 调用方不会因首个 null 退出而错过后续周期 tick）。本切片在产品代码里从不构造 enabled 实例——M4 接缝的本地 producer（issue #82）。
+- `RecallTickScheduler`——收 `{ evaluate, toCard, sink }` 依赖；`run(tick)` 恰处理一个 tick 并返 `{ delivered, failed }`。**逐卡容错**：单个 `sink.deliver` 拒绝只弃该卡（余下继续；异常不外泄）。无内部循环：调用方（现在的测试、M4 的 producer）驱动迭代。`toCard(evaluation, tick)` 收到 tick——卡的 `evaluated_at` 必须取 `tick.at`，不用外层时钟。
 
 ## 2. 评估器：5 类闭集
 
@@ -75,7 +75,7 @@ export interface WhyNowCard {
 
 ## 6. 切片状态与显式不主张
 
-本切片落地：`ts/src/recall/{tick,evaluator,card,integration}.ts` + `ts/scripts/recall-tests.ts`（42 断言，run-all §6i）。
+本切片落地：`ts/src/recall/{tick,evaluator,card,integration}.ts` + `ts/scripts/recall-tests.ts`（自检 review 加固后 49 断言，run-all §6i）。
 
 不在本切片：真 tick 激活（M4，经接缝本地 producer，issue #82）；dsh 工具注册（`gotry_recall_*`）；触发后的 wish-pool mutation（静音/通知）；信号生产者（真正填 `RecallSignal` 的假期日历/价格监控/天气/班次/通道健康适配器）；任何推送通知路径（M5 WriteGate）。缝合契约完整；M4 接 producer 与消费者，不动本模块 API。
 

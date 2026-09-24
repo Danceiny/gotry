@@ -16,6 +16,7 @@ import {
   InMemoryTickSource,
   PeriodicTickSource,
   RecallTickScheduler,
+  type RecallSink,
   type RecallTick,
 } from '../src/recall/tick.ts'
 import {
@@ -99,10 +100,41 @@ const SIGNAL_RECOVERED: RecallSignal = {
   // PeriodicTickSource 默认关闭
   const periodic = new PeriodicTickSource({ intervalMs: 1000 })
   ok(periodic.enabled === false, '§1c PeriodicTickSource 默认 enabled=false(opt-in 纪律)')
-  ok(periodic.start() === false, '§1d enabled=false 时 start() 不启动 setInterval(返回 false)')
-  const noTick = await periodic.next()
-  ok(noTick === null, '§1e 未启动时 next() 返回 null(无 tick 产生)')
+  ok(periodic.start() === 'disabled', "§1d enabled=false 时 start() 返回 'disabled'(不启动)")
   periodic.stop() // 幂等停止
+
+  // review #3:start() 三态——已启动的实例重复 start 返回 already-running(不混同 disabled)
+  const running = new PeriodicTickSource({ intervalMs: 10, enabled: true, source: 'rt' })
+  ok(running.start() === 'started', "§1d2 首次 start → 'started'")
+  ok(running.start() === 'already-running', "§1d3 重复 start → 'already-running'(与 disabled 不混同)")
+  // review #1:next() 阻塞语义——10ms 间隔,1s 超时护栏内必须等到真 tick
+  const gotTick = await Promise.race([
+    running.next(),
+    new Promise<null>(resolve => setTimeout(() => resolve(null), 1000)),
+  ])
+  ok(gotTick !== null && gotTick.source === 'rt', '§1d4 next() 阻塞到下一个 tick(drain-loop 安全)')
+  running.stop()
+
+  // review #5:pending 有界——10ms 间隔 + maxPending=3,不消费,等 200ms,队列 ≤3
+  const capped = new PeriodicTickSource({ intervalMs: 1, enabled: true, maxPending: 3, source: 'cap' })
+  capped.start()
+  await new Promise(resolve => setTimeout(resolve, 200))
+  ok(capped.pendingLength <= 3, `§1d5 pending 队列有界(maxPending=3,实测 ${capped.pendingLength};溢出丢最旧)`)
+  capped.stop()
+
+  // review #5b:maxPending 非法 → 构造抛错
+  let badMax = false
+  try {
+    new PeriodicTickSource({ intervalMs: 100, enabled: true, maxPending: 0 })
+  } catch { badMax = true }
+  ok(badMax, '§1d6 maxPending=0 → 构造抛错(fail-closed)')
+
+  // review #7:InMemoryTickSource 防御式深拷贝——改返回的 tick.at 不污染队列
+  const mem = new InMemoryTickSource([{ at: new Date(1000), source: 'dc' }, { at: new Date(2000), source: 'dc2' }])
+  const first = await mem.next()
+  if (first) first.at.setTime(999999)  // 恶意改副本
+  const second = await mem.next()
+  ok(second !== null && second.at.getTime() === 2000, `§1d7 InMemory 深拷贝:改返回副本不污染队列(第二个 at=${second?.at.getTime()})`)
 
   // intervalMs 非法 → 构造抛错
   let badInterval = false
@@ -233,17 +265,17 @@ const SIGNAL_RECOVERED: RecallSignal = {
       ? evaluatePoolRecall({ pool: POOL, tick, signals: [SIGNAL_PRICE] }).triggers
         .map(t => ({ wish_id: t.wish_id, signal: t.signal }))
       : [], // 非 test-tick 的 tick 无信号(§5e 用)
-    toCard: (evaluation) => buildWhyNowCard({
+    toCard: (evaluation, tick) => buildWhyNowCard({
       wish_id: evaluation.wish_id,
       wish_name: POOL.find(p => p.wish_id === evaluation.wish_id)?.name ?? evaluation.wish_id,
       signal: evaluation.signal,
-      evaluated_at: NOW.toISOString(),
+      evaluated_at: tick.at.toISOString(),  // review #2:取 tick.at,不用外层 NOW
     }),
     sink,
   })
 
   const count = await scheduler.run(TICK)
-  ok(count === 1, `§5a 一个 tick + 一个定向信号 → 1 张卡(实测 ${count})`)
+  ok(count.delivered === 1 && count.failed === 0, `§5a 一个 tick + 一个定向信号 → 1 张卡(实测 delivered=${count.delivered}/failed=${count.failed})`)
   ok(sink.items.length === 1, '§5b sink 收到 1 张卡')
   const delivered = sink.items[0] as WhyNowCard
   ok(delivered.source_tag === '[source:price-monitor]', '§5c 卡片 source tag 正确')
@@ -251,7 +283,29 @@ const SIGNAL_RECOVERED: RecallSignal = {
 
   // 第二个 tick + 无信号 → 0 卡
   const count2 = await scheduler.run({ at: new Date(NOW.getTime() + 3600_000), source: 't2' })
-  ok(count2 === 0 && sink.items.length === 1, '§5e 第二 tick 无信号 → 0 新卡(sink 不变)')
+  ok(count2.delivered === 0 && sink.items.length === 1, '§5e 第二 tick 无信号 → 0 新卡(sink 不变)')
+
+  // review #4:sink.deliver 逐卡容错——一个抛错不弃余下,返部分计数
+  const flakySink: RecallSink = {
+    deliver: (card: unknown) => {
+      const c = card as { title: string }
+      if (c.title.includes('千岛湖')) throw new Error('sink exploded')  // 第二张卡炸
+    },
+  }
+  const flakyScheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal }, WhyNowCard>({
+    evaluate: (tick) => evaluateRecallTriggers(POOL, { now: tick.at, signals: [SIGNAL_HOLIDAY] })
+      .map(t => ({ wish_id: t.wish_id, signal: t.signal })),
+    toCard: (evaluation, tick) => buildWhyNowCard({
+      wish_id: evaluation.wish_id,
+      wish_name: POOL.find(p => p.wish_id === evaluation.wish_id)?.name ?? evaluation.wish_id,
+      signal: evaluation.signal,
+      evaluated_at: tick.at.toISOString(),
+    }),
+    sink: flakySink,
+  })
+  const flakyResult = await flakyScheduler.run(TICK)
+  ok(flakyResult.delivered === 1 && flakyResult.failed === 1,
+    `§5e2 deliver 逐卡容错:1 成功 1 失败不外泄(实测 ${flakyResult.delivered}/${flakyResult.failed})`)
 
   // InMemoryTickSource 驱动多 tick 端到端
   const multiSink = new ArrayRecallSink()
@@ -263,20 +317,25 @@ const SIGNAL_RECOVERED: RecallSignal = {
   const src = new InMemoryTickSource([TICK, { at: new Date(NOW.getTime() + 60_000), source: 't2' }])
   let total = 0
   for (let t = await src.next(); t !== null; t = await src.next()) {
-    total += await multiScheduler.run(t)
+    const r = await multiScheduler.run(t)
+    total += r.delivered
   }
   ok(total === 2 && multiSink.items.length === 2, `§5f InMemory 多 tick 端到端:2 tick × 1 信号 → 2 卡(实测 ${total}/${multiSink.items.length})`)
+  // review #2:第二张卡的 evaluated_at 必须是第二 tick 的时刻(NOW+60s),不是外层 NOW
+  const secondCard = multiSink.items[1] as { evaluated_at: string }
+  ok(secondCard.evaluated_at === new Date(NOW.getTime() + 60_000).toISOString(),
+    `§5f2 第二张卡 evaluated_at = 第二 tick 时刻(实测 ${secondCard.evaluated_at})`)
 
   function evaluatePoolRecallShim(tick: RecallTick): { wish_id: string; signal: RecallSignal }[] {
     return evaluatePoolRecall({ pool: POOL, tick, signals: [SIGNAL_PRICE] }).triggers
       .map(t => ({ wish_id: t.wish_id, signal: t.signal }))
   }
-  function toCardShim(evaluation: { wish_id: string; signal: RecallSignal }): WhyNowCard {
+  function toCardShim(evaluation: { wish_id: string; signal: RecallSignal }, tick: RecallTick): WhyNowCard {
     return buildWhyNowCard({
       wish_id: evaluation.wish_id,
       wish_name: POOL.find(p => p.wish_id === evaluation.wish_id)?.name ?? evaluation.wish_id,
       signal: evaluation.signal,
-      evaluated_at: NOW.toISOString(),
+      evaluated_at: tick.at.toISOString(),
     })
   }
 }

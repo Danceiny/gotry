@@ -13,7 +13,7 @@
 - `evaluateRecallTriggers(pool, ctx)` — pure function pairing wish-pool candidates with signals. **5-class `RecallReason` closed set** (`holiday_proximity` / `price_drop` / `weather_window` / `route_new` / `availability_recovered`); broadcast signals match all valid candidates, targeted signals match by wish_id. Malformed signals are skipped, not crashed.
 - `buildWhyNowCard(trigger)` — pure function producing a data card (title / reason label / current value / threshold / action hint / **source tag mandatory**). `renderWhyNowCardLine(card)` renders one line for logs/conversation.
 - `evaluatePoolRecall(input)` — read-only wish-pool integration (no mutation; recall/notification stays M4).
-- 42 assertions (run-all §6i) covering: opt-in discipline, 5-reason reachability, broadcast vs targeted matching, muted/no-id filtering, source-tag presence, scheduler end-to-end.
+- 49 assertions (run-all §6i, after the self-review hardening pass) covering: opt-in discipline (three-state start, blocking next, bounded pending, defensive copies), 5-reason reachability, broadcast vs targeted matching, muted/no-id filtering, source-tag presence, per-card delivery fault tolerance, scheduler end-to-end with per-tick provenance stamps.
 
 ## 1. Tick sources
 
@@ -22,9 +22,9 @@ export interface RecallTick { at: Date; source: string }
 export interface TickSource { next(): Promise<RecallTick | null> }
 ```
 
-- `InMemoryTickSource` — pre-seeded queue; drains to `null`. Test-only.
+- `InMemoryTickSource` — pre-seeded queue; drains to `null`. Test-only. Defensive deep-copies ticks on both construction and `next()` so callers mutating a returned tick cannot corrupt the queue snapshot.
 - `PeriodicTickSource` — wraps `setInterval`; **`enabled` defaults to `false` and must be explicitly set to `true`** at construction; `start()` is a no-op returning `false` when disabled. Constructor throws on non-positive `intervalMs` (fail-closed). This slice never constructs an enabled instance in product code — M4 wires the seam's local producer (issue #82).
-- `RecallTickScheduler` — takes `{ evaluate, toCard, sink }` deps; `run(tick)` processes exactly one tick and returns the card count. No internal loop: the caller (test now, M4 producer later) drives iteration.
+- `RecallTickScheduler` — takes `{ evaluate, toCard, sink }` deps; `run(tick)` processes exactly one tick and returns `{ delivered, failed }`. **Per-card fault tolerance**: a rejected `sink.deliver` skips only that card (remaining triggers continue; the exception never escapes). No internal loop: the caller (test now, M4 producer later) drives iteration. `toCard(evaluation, tick)` receives the tick — cards must stamp `evaluated_at` from `tick.at`, not an outer-scope clock.
 
 ## 2. Evaluator: the 5-class closed set
 
@@ -75,7 +75,7 @@ The research doc's red line — **proactive with provenance** — is structurall
 
 ## 6. Slice status and explicit non-claims
 
-Landed here: `ts/src/recall/{tick,evaluator,card,integration}.ts` + `ts/scripts/recall-tests.ts` (42 assertions, run-all §6i).
+Landed here: `ts/src/recall/{tick,evaluator,card,integration}.ts` + `ts/scripts/recall-tests.ts` (49 assertions after the self-review hardening pass, run-all §6i).
 
 Not in this slice: real tick activation (M4, via the seam's local producer under issue #82); dsh tool registration (`gotry_recall_*`); wish-pool mutation on trigger (mute/notify); signal producers (holiday calendar / price monitor / weather / schedule / channel-health adapters that actually populate `RecallSignal`); any push notification path (M5 WriteGate). The seam is contract-complete; M4 plugs the producer and wires the consumer without touching this module's API.
 
