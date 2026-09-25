@@ -16,6 +16,10 @@
  *   - 永不抛错;verdict: found / not-installed / needs-setup / error
  *   - needs-setup 的 setup 文案 = 上游 check() 原话透传,不转述
  *   - 证据链 [agent-reach:<channel>.<method>@ts]
+ *   - **error 走人话面**(issue #559 卡点#2 收尾:同层一套说话方式,对齐
+ *     anything.ts failureReason 的 issue #24 口径)——bridge 崩溃/超时/非 JSON
+ *     时 Python traceback、裸 stderr、空错误串不再进模型面与用户回复;上游
+ *     原话完整保留在 evidence(溯源契约,agent-reach-tests 锁)
  */
 
 import { spawn } from 'node:child_process'
@@ -42,18 +46,45 @@ const repoRoot = () => resolve(import.meta.dirname, '..', '..')
 const venvPython = () => resolve(repoRoot(), '.venv/bin/python')
 const bridgeScript = () => resolve(import.meta.dirname, 'agent-reach-bridge.py')
 
-function run(bin: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string; err?: string }> {
+function run(bin: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string; err?: string; timedOut?: boolean }> {
   return new Promise((resolveRun) => {
     const child = spawn(bin, args, { env: process.env })
     let stdout = ''
     let stderr = ''
     let err: string | undefined
-    const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch { /* ignore */ } }, timeoutMs)
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      try { child.kill('SIGKILL') } catch { /* ignore */ }
+    }, timeoutMs)
     child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
     child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
     child.on('error', (e) => { err = (e as Error).message })
-    child.on('close', (code) => { clearTimeout(timer); resolveRun({ code, stdout, stderr, err }) })
+    child.on('close', (code) => { clearTimeout(timer); resolveRun({ code, stdout, stderr, err, timedOut }) })
   })
+}
+
+/**
+ * 失败人话化(issue #559 卡点#2 收尾;对齐 anything.ts failureReason 的
+ * issue #24 口径)。这条消息会直接进模型面与用户回复,所以 Python traceback、
+ * 裸 stderr、空错误串不能出现——agent-reach 是可选依赖,上游崩溃是降级设计
+ * 行为,不是工具坏了;无法归类时也要说清发生了什么。纯函数,离线可测。
+ * 上游原话不进本函数的产物——它完整保留在 evidence(溯源契约)。
+ */
+export function humanizeBridgeFailure(
+  what: string,
+  r: { code: number | null; stderr?: string; stdout?: string; timedOut?: boolean },
+): string {
+  if (r.timedOut) return `${what} 超时(可选依赖,本轮按降级处理)`
+  const text = r.stderr || r.stdout || ''
+  const lines = text.split('\n').map(s => s.trim()).filter(Boolean)
+  // Python traceback 首行是 "Traceback (most recent call last):",末行才是异常本体
+  const isTraceback = /^traceback/i.test(lines[0] ?? '')
+  const detail = (isTraceback ? (lines[lines.length - 1] ?? '') : lines.join(' ')).slice(0, 160)
+  if (detail) return `${what} 报错:${detail}(可选依赖,本轮按降级处理)`
+  return r.code == null
+    ? `${what} 未返回可判定结果(进程异常结束,本轮按降级处理)`
+    : `${what} 退出码 ${r.code},未返回可判定结果(本轮按降级处理)`
 }
 
 interface BridgeOut {
@@ -66,8 +97,16 @@ interface BridgeOut {
   channel?: Record<string, unknown>
 }
 
+/** 注入面(测试用;缺省走真 .venv 反射桥) */
+export type ReachRunFn = typeof run
+export interface ReachDeps {
+  run?: ReachRunFn
+  /** 覆盖 .venv python 路径(测试注入时指向任一存在文件,绕过 not-installed 早退) */
+  venvPython?: () => string
+}
+
 /** 通用入口:反射调上游任意渠道方法;永不抛错 */
-export async function reach(q: { channel: string; method: string; args?: string[] | string; timeoutMs?: number }): Promise<ReachResult> {
+export async function reach(q: { channel: string; method: string; args?: string[] | string; timeoutMs?: number }, deps: ReachDeps = {}): Promise<ReachResult> {
   const started = Date.now()
   const evidence = (state: string) => `[agent-reach:${q.channel}.${q.method}@${state === 'found' ? ts() : `${state}@${ts()}`}]`
   const base = { channel: q.channel, method: q.method }
@@ -75,12 +114,22 @@ export async function reach(q: { channel: string; method: string; args?: string[
   if (!q.channel || !q.method) {
     return { ...base, ok: false, verdict: 'error', evidence: evidence('error'), latencyMs: 0, error: 'channel 与 method 必填(渠道/方法清单:先随便调一次,inventory 会带回上游清单)' }
   }
-  const py = venvPython()
+  const py = (deps.venvPython ?? venvPython)()
   if (!existsSync(py)) {
     return { ...base, ok: false, verdict: 'not-installed', evidence: evidence('not-installed'), latencyMs: 0, setup: 'gotry .venv 缺 python——可选依赖未装配。补装:终端跑 npx @danceiny/gotry doctor --fix,或让用户看体检报告 npx @danceiny/gotry doctor' }
   }
   const args = Array.isArray(q.args) ? q.args : (q.args ? q.args.split(/\s+/).filter(Boolean) : [])
-  const r = await run(py, [bridgeScript(), q.channel, q.method, ...args], q.timeoutMs ?? 30_000)
+  let r: Awaited<ReturnType<ReachRunFn>>
+  try {
+    r = await (deps.run ?? run)(py, [bridgeScript(), q.channel, q.method, ...args], q.timeoutMs ?? 30_000)
+  } catch (e) {
+    // 永不抛错的字面兑现:注入面/运行面任何 reject 都落结构化降级,不外泄异常
+    return {
+      ...base, ok: false, verdict: 'error', evidence: evidence('error'),
+      latencyMs: Date.now() - started,
+      error: `agent-reach ${q.channel}.${q.method} 调用异常(本轮按降级处理):${String((e as Error)?.message ?? e).slice(0, 120)}`,
+    }
+  }
   const latencyMs = Date.now() - started
 
   let parsed: BridgeOut = {}
@@ -111,7 +160,18 @@ export async function reach(q: { channel: string; method: string; args?: string[
   if (checkStatus === 'warn' || checkStatus === 'off') {
     return { ...base, ok: false, verdict: 'needs-setup', evidence: evidence('needs-setup'), latencyMs, error: parsed.error, setup: parsed.check?.message }
   }
-  return { ...base, ok: false, verdict: 'error', evidence: evidence('error'), latencyMs, error: parsed.error ?? r.stderr.slice(0, 200) }
+  // 兜底:bridge 无结构化错误(崩溃/超时 SIGKILL/非 JSON 输出)。#559 卡点#2:
+  // 同层一套说话方式——error 走人话面(裸 stderr / Python traceback / 空错误串
+  // 从此不可能;parsed.error 缺失**或空串**都落人话),上游原话保留在 evidence
+  // (溯源契约,agent-reach-tests 锁)。bridge 自报的结构化错误(人话形态)仍透传。
+  const bridgeError = typeof parsed.error === 'string' && parsed.error.length > 0 ? parsed.error : undefined
+  const rawTail = [r.err, r.stderr, r.stdout].map(s => (s ?? '').trim()).filter(Boolean).join(' | ').slice(0, 400)
+  return {
+    ...base, ok: false, verdict: 'error',
+    evidence: evidence('error') + (rawTail ? ` ${rawTail}` : ''),
+    latencyMs,
+    error: bridgeError ?? humanizeBridgeFailure(`agent-reach ${q.channel}.${q.method}`, r),
+  }
 }
 
 /** 读网页:委托上游 WebChannel.read(Jina Reader 后端);供 gotry web 读取工具使用 */

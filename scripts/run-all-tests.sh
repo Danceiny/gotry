@@ -149,7 +149,7 @@ echo "=== 12. probePoi 单测(datasources 编排层,6 类覆盖) ==="
 (cd ts && npx tsx scripts/probe-poi-tests.ts) || FAIL=1
 
 echo
-echo "=== 13. agent-reach web 读取(readUrl 薄壳,3 断言:非法/超时/live 降级容忍) ==="
+echo "=== 13. agent-reach web 读取(readUrl 薄壳 3 断言:非法/超时/live 降级容忍)+ #559 卡点#2 收尾(failure 人话面 10 断言离线注入:traceback/超时/退出码/空错误串陷阱人话化,evidence 保留上游原话;exit-2 inventory 与 check 透传路径不回归;注入 reject 永不抛错) ==="
 (cd ts && npx tsx scripts/agent-reach-tests.ts) || FAIL=1
 
 echo
