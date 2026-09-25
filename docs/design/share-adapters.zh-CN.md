@@ -54,12 +54,13 @@ export interface ShareAdapter {
 Token 形状：`<body>.<sig>`,其中 `body = base64url(JSON.stringify(payload))`,`sig = base64url(HMAC-SHA256(body, secret))`。
 
 - `payload` = `{ share_id, created_at (ISO), ttl_seconds, target: { channel, address } }`——目的地进签名;合法 token 换收件人重放会因 `tokenTargetMatches` 不匹配 → `token_invalid`
-- `secret` 默认为 `SHARE_HMAC_SECRET` env,缺省走 `DEFAULT_DEV_SHARE_SECRET`（`gotry-share-dev-secret-DO-NOT-USE-IN-PROD`）——dev / test 无需设 env。**`NODE_ENV=production` 且 env 缺失时 `resolveShareSecret` 直接抛错**(fail-closed)——忘记设 env 的部署绝不用公开在仓库里的常量签生产 token。
+- `secret` 默认为 `SHARE_HMAC_SECRET` env，缺省走 `DEFAULT_DEV_SHARE_SECRET`（`gotry-share-dev-secret-DO-NOT-USE-IN-PROD`）——dev / test 无需设 env。**`NODE_ENV=production` 且 env 缺失时 `resolveShareSecret` 直接抛错**（fail-closed）——忘记设 env 的部署绝不用公开在仓库里的常量签生产 token。刻意抛错保留在签发面；verify 期缺省解析在守卫体内进行，同一配置错误与非字符串运行期键（数字/对象/Symbol 等 JS 畸形输入）都收敛为 `token_invalid`，HMAC 计算本身也在守卫内——任何调用方/配置输入都无法越出失败闭集（verify 永不抛错，也绝不静默回落公开 dev 常量）。
 - `verifyShareToken(token, secret, now)`:
+  - secret 解析在守卫体内（缺省键走默认解析，非字符串运行期键拒绝）→ production 缺 secret 配置错或畸形键 → `token_invalid`
   - 格式检查（恰好一个 `.`）→ `token_invalid`
   - HMAC `timingSafeEqual` 比对（body 或 sig 任一不匹配）→ `token_invalid`
   - payload 形态校验（share_id / created_at / ttl_seconds 类型）→ `token_invalid`
-  - 过期检查：`now > created_at + ttl_seconds * 1000` → `token_expired`（ttl=0 在下一瞬即过期）
+  - 过期检查：注入时钟先自校——非有限时间或回调抛错 → `token_invalid`（`NaN` 对任何上界比较恒 false，曾让过期 token 静默通过）；再判 `now > created_at + ttl_seconds * 1000` → `token_expired`（ttl=0 在下一瞬即过期）
   - 成功返回 `{ ok: true, payload }` 给调用方送进 `checkShareConsent`
 - `signShareToken` 对固定 `(payload, secret)` 字节级确定性——可由 `sha256(token)` 验证。
 
@@ -84,7 +85,7 @@ Token 形状：`<body>.<sig>`,其中 `body = base64url(JSON.stringify(payload))`
 4. adapter.send(payload) → 返回 result.delivered ? {...result, sent_at: result.sent_at ?? now()} : result
 ```
 
-永不抛错。每个 `ShareFailureReason` 都是可达返回路径,由测试套件逐类触发（§5c 显式枚举全部七类并断言每类都被真实场景触发）。
+永不抛错。每个 `ShareFailureReason` 都是可达返回路径，由测试套件逐类触发（§5c 显式枚举全部八类并断言每类都被真实场景触发）。
 
 ## 6. 决策日志
 
@@ -97,7 +98,7 @@ Token 形状：`<body>.<sig>`,其中 `body = base64url(JSON.stringify(payload))`
 
 ## 7. 切片状态与显式不主张
 
-本切片落地：`ts/src/share/{adapters,share-token,share-consent,share-deck}.ts` + `ts/scripts/share-tests.ts`(自检 review 加固后 73 断言,run-all §6h)。4 个 adapter stub 按设计 no-op。token 签发字节级确定。八类 `ShareFailureReason` 全部可达,套件已证明。
+本切片落地：`ts/src/share/{adapters,share-token,share-consent,share-deck}.ts` + `ts/scripts/share-tests.ts`（校验边界修复后 85 断言，run-all §6h）。4 个 adapter stub 按设计 no-op。token 签发字节级确定。八类 `ShareFailureReason` 全部可达，套件已证明。verify 期操作面失效（无效时钟、非字符串运行期键、production 缺 secret）在套件内已覆盖；production 配置面用隔离子进程环境验证。
 
 不在本切片：四通道的真 SDK 调用(M4);`gotry_share_*` dsh 工具注册(M4);wish-pool / external-event seam 触发的 share 事件(M4 / Phase D);托管 share URL 服务(研究 E.2)。缝合契约完整;M4 在不动本模块 API 的前提下接 adapter + 接 dsh 面。
 

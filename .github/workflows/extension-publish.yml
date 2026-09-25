@@ -12,8 +12,17 @@ name: Chrome Extension Publish
 #   CHROME_CLIENT_SECRET  — GCP OAuth2 client_secret
 #   CHROME_REFRESH_TOKEN  — 授权给 deployer 的 refresh token
 #
-# 发布走 CWS REST API 直连(curl),不用第三方 action——browser-actions/chrome-webstore-upload
-# 已 404,直连也无 publisher-id 依赖。
+# 发布走 CWS REST API 直连(curl,官方 v1.1 端点),不用第三方 action——
+# browser-actions/chrome-webstore-upload 已 404,直连也无 publisher-id 依赖。
+#
+# 状态纪律(2026-09-25 修复,#346/#537):上传/提审/商店在架是三个不同状态,HTTP 2xx 一律
+# 不足为凭——每步响应经 scripts/cws-publish-validate.mjs 分类:token 缺失/空白/invalid_grant、
+# uploadState≠SUCCESS 或 SUCCESS 带 itemError、publish status[] 非全 OK(NOT_AUTHORIZED/
+# ITEM_NOT_FOUND/ITEM_TAKEN_DOWN/仅 ITEM_PENDING_REVIEW 等)一律 fail-closed。
+# 机密纪律:失败日志不含任何 API 供应文本(响应体/明细/token),只有固定分类 + HTTP 码。
+# 传输纪律:三步 curl 均带 --connect-timeout/--max-time;超时/断连时结果记 UNCONFIRMED——
+# 先读回 item 状态再决定,不做自动重试。
+# artifact 预检(三件套在位 + SHA256 对账 + 版本匹配)先于任何 OAuth/网络调用。
 #
 # 版本守卫:CWS 要求版本单调递增;商店现存 0.1.0,manifest version 必须 > 0.1.0
 # (2026-09-24 hotel-fe#3802 事故根源之一即 0.0.1.N < 0.1.0 倒挂无法上架)。
@@ -75,6 +84,8 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "store_zip=dist-extension/gotry-session-bridge-store.zip" >> "$GITHUB_OUTPUT"
 
+      # 多路径上传:artifact 根 = 三路径的公共祖先目录 dist-extension/(三件文件在 archive 根)。
+      # publish job 的 download path 必须显式对齐此根——见下方 Download artifact 注释。
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -94,47 +105,110 @@ jobs:
       inputs.dry_run == 'false'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # upload-artifact 多路径上传把三件文件 root 在公共祖先目录 dist-extension/ 下;
+      # download 不显式给 path 会解压到 workspace 根,curl 引用 dist-extension/store.zip
+      # 必落空(2026-09-24 路径错位事故)。显式 path 对齐 artifact 根。
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: gotry-session-bridge-v${{ needs.pack.outputs.version }}
+          path: dist-extension
+
+      # 先于任何 OAuth/网络调用:四个 secret 非空(扩展 ID 形如 32 位 [a-p])+ 三件套在位、
+      # dist-manifest 版本与 dispatch 期望一致、zip/tar.gz SHA256 逐字对账。
+      - name: Preflight (secrets + artifact asserted before any network call)
+        env:
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+        run: |
+          set -euo pipefail
+          for s in CHROME_EXTENSION_ID CHROME_CLIENT_ID CHROME_CLIENT_SECRET CHROME_REFRESH_TOKEN; do
+            [ -n "${!s:-}" ] || { echo "::error::missing secret $s — see docs/extension-store-publish.md §3"; exit 1; }
+          done
+          [[ "$CHROME_EXTENSION_ID" =~ ^[a-p]{32}$ ]] || { echo "::error::CHROME_EXTENSION_ID must be a 32-char [a-p] CWS item ID (got ${#CHROME_EXTENSION_ID} chars)"; exit 1; }
+          node scripts/cws-publish-validate.mjs artifact --dir dist-extension --expect-version "${{ needs.pack.outputs.version }}"
 
       - name: Mint access token (refresh_token grant)
+        id: token
+        env:
+          CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
         run: |
           set -euo pipefail
-          TOKEN_JSON=$(curl -fsSL https://oauth2.googleapis.com/token \
+          # -f 会吞掉错误响应体;这里捕获 body+code 交校验器分类。curl 自身失败(超时/断连)
+          # 时结果 UNCONFIRMED:先读回状态再决定,不自动重试。
+          CURL_EXIT=0
+          RESP=$(curl -sS --connect-timeout 10 --max-time 30 -w '\n%{http_code}' https://oauth2.googleapis.com/token \
             -d grant_type=refresh_token \
-            -d refresh_token="${{ secrets.CHROME_REFRESH_TOKEN }}" \
-            -d client_id="${{ secrets.CHROME_CLIENT_ID }}" \
-            -d client_secret="${{ secrets.CHROME_CLIENT_SECRET }}")
-          ACCESS_TOKEN=$(node -p 'JSON.parse(process.argv[1]).access_token' "$TOKEN_JSON")
+            -d "refresh_token=${CHROME_REFRESH_TOKEN}" \
+            -d "client_id=${CHROME_CLIENT_ID}" \
+            -d "client_secret=${CHROME_CLIENT_SECRET}") || CURL_EXIT=$?
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "::error::token endpoint transport failure (curl exit ${CURL_EXIT}; 28=timeout). Outcome UNCONFIRMED — read back state before any retry; no automatic retry."
+            exit 1
+          fi
+          HTTP_CODE="${RESP##*$'\n'}"
+          BODY="${RESP%$'\n'*}"
+          ACCESS_TOKEN=$(printf '%s' "$BODY" | node scripts/cws-publish-validate.mjs token --http-code "$HTTP_CODE" --field access_token)
           echo "::add-mask::$ACCESS_TOKEN"
           echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
-        id: token
 
       - name: Upload package to Chrome Web Store
+        env:
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
         run: |
           set -euo pipefail
-          UPLOAD_RESP=$(curl -fsSL -X PUT \
-            "https://chromewebstore.googleapis.com/upload/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}?uploadType=media" \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+          CURL_EXIT=0
+          RESP=$(curl -sS --connect-timeout 10 --max-time 300 -w '\n%{http_code}' -X PUT \
+            "https://chromewebstore.googleapis.com/upload/chromewebstore/v1.1/items/${CHROME_EXTENSION_ID}?uploadType=media" \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
             -H "x-goog-api-version: 2" \
             -H "Content-Type: application/octet-stream" \
-            --data-binary "@${{ needs.pack.outputs.store_zip }}")
-          echo "$UPLOAD_RESP"
-          UPLOAD_STATE=$(node -p 'JSON.parse(process.argv[1]).uploadState' "$UPLOAD_RESP")
-          [ "$UPLOAD_STATE" = "SUCCESS" ] || { echo "::error::uploadState=$UPLOAD_STATE"; exit 1; }
+            --data-binary "@dist-extension/gotry-session-bridge-store.zip") || CURL_EXIT=$?
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "::error::upload transport failure (curl exit ${CURL_EXIT}; 28=timeout). Upload outcome UNCONFIRMED — read back the item state (in-progress upload / uploadState) before any retry; no automatic retry."
+            exit 1
+          fi
+          HTTP_CODE="${RESP##*$'\n'}"
+          BODY="${RESP%$'\n'*}"
+          node scripts/cws-publish-validate.mjs upload --http-code "$HTTP_CODE" <<<"$BODY"
 
       - name: Publish (submit for review)
+        env:
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
         run: |
           set -euo pipefail
-          PUBLISH_RESP=$(curl -fsSL -X POST \
-            "https://chromewebstore.googleapis.com/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}/publish?publishMode=default" \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+          # v1 文档化 query 参数是 publishTarget(default),不是 publishMode。
+          CURL_EXIT=0
+          RESP=$(curl -sS --connect-timeout 10 --max-time 60 -w '\n%{http_code}' -X POST \
+            "https://chromewebstore.googleapis.com/chromewebstore/v1.1/items/${CHROME_EXTENSION_ID}/publish?publishTarget=default" \
+            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
             -H "x-goog-api-version: 2" \
-            -H "Content-Length: 0")
-          echo "$PUBLISH_RESP"
+            -H "Content-Length: 0") || CURL_EXIT=$?
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "::error::publish transport failure (curl exit ${CURL_EXIT}; 28=timeout). Submission outcome UNCONFIRMED — read back the item state before any retry; no automatic retry; a blind resubmit can duplicate a review."
+            exit 1
+          fi
+          HTTP_CODE="${RESP##*$'\n'}"
+          BODY="${RESP%$'\n'*}"
+          # HTTP 200 ≠ 提审受理:status[] 每个元素都是 OK 才算本次受理;含 ITEM_PENDING_REVIEW =
+          # 既往提审可能在审(非零退出,先读回再决定、勿盲目重提);其余状态 fail-closed
+          node scripts/cws-publish-validate.mjs publish --http-code "$HTTP_CODE" <<<"$BODY"
 
       - name: Post-publish note
         run: |
-          echo "Uploaded v${{ needs.pack.outputs.version }} to CWS. Review may take hours-days; verify the listing version at https://chromewebstore.google.com/detail/${{ secrets.CHROME_EXTENSION_ID }} before claiming published."
+          echo "Submission accepted for v${{ needs.pack.outputs.version }}. This is NOT review approval and NOT store publication — uploaded / submitted / live are distinct states."
+          echo "CWS review may take hours-days. Store pull-back is mandatory before anything may claim published: verify the listing version at https://chromewebstore.google.com/detail/${{ secrets.CHROME_EXTENSION_ID }} (tracked by #346/#537)."

@@ -24,6 +24,14 @@
  *  14. target_url 记录在 manifest;超长 URL 拒绝;
  *  15. 真实链路:三件文件都被 `gotry_artifacts_list` 发现、`gotry_artifacts_read` 以 html
  *      源码读回 deck html 与磁盘一致、sha256 与 manifest.deck.sha256 一致。
+ *  16. QR 独立解码验收(#569 T2):**实际落盘的 qr.svg** 经 sharp(libvips)光栅化 +
+ *      jsqr(独立解码器,Apache-2.0,与编码侧 qrcode 库零共享代码)解码,逐字节还原
+ *      payload——ASCII URL / UTF-8 URL / 字面本地占位串 × 128/240/480px 全矩阵;不同
+ *      payload 经解码器还原后互不相等(负控制)。期望占位串在测试侧独立钉死为审批
+ *      字面量,§22r 把生产常量与之互锁(漂移即红)。
+ *  17. manifest.local_only 显式指示(#569 的 local_only 期望,以 v1 兼容附加字段落地):
+ *      无 target_url → true(绝不暗示线上目的地),有 target_url → false;与
+ *      target_url 缺省、QR 本地占位串三态互锁。
  * 全部合成事实,无用户真实行程;不启动 dsh 宿主、无网络、无供应商调用。
  *
  * 运行(在 ts/ 下):
@@ -37,6 +45,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { Context } from '@deepseek-ai/cordis'
+import jsQRDefault from 'jsqr'
+import sharp from 'sharp'
+
 import { apply } from '../src/index.ts'
 import {
   BOOKABLE_FACT_SCHEMA,
@@ -50,6 +61,7 @@ import { generateItineraryDeckExport } from '../capabilities/itinerary-deck-expo
 import {
   ITINERARY_DECK_EXPORT_BASENAME_RE,
   ITINERARY_DECK_EXPORT_HTML_SUFFIX,
+  ITINERARY_DECK_EXPORT_LOCAL_MARKER,
   ITINERARY_DECK_EXPORT_MANIFEST_SUFFIX,
   ITINERARY_DECK_EXPORT_QR_SUFFIX,
 } from '../capabilities/itinerary-deck-export.ts'
@@ -57,6 +69,14 @@ import {
 let pass = 0
 let fail = 0
 const failures: string[] = []
+
+// jsqr@1.4.0 的 d.ts 在本项目 skipLibCheck 下 default export 解析退化(default 被当成
+// 模块命名空间);运行时(tsx/CJS interop)default 就是函数。这里显式钉住运行时契约。
+const jsQR = jsQRDefault as unknown as (
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+) => { data: string; binaryData: number[] } | null
 
 function ok(cond: boolean, msg: string): void {
   if (cond) { pass++; return }
@@ -173,6 +193,17 @@ function bundleFiles(dir: string): string[] {
 
 function countOf(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1
+}
+
+/** 独立解码链(#569 T2):qr.svg 字节 → sharp(libvips)光栅化到 size×size → jsqr 解码。
+ * 解码器(jsqr)与编码器(qrcode 库)零共享代码;识别不出返回 null。
+ * 返回 data 为解码字符串,bytes 为原始 UTF-8 字节(QR byte 模式原样还原)。 */
+async function decodeQrSvg(svgText: string, size: number): Promise<{ data: string; bytes: Uint8Array } | null> {
+  const raster = await sharp(Buffer.from(svgText, 'utf-8')).resize(size, size).raw().toBuffer({ resolveWithObject: true })
+  const pixels = new Uint8ClampedArray(raster.data)
+  const decoded = jsQR(pixels, raster.info.width, raster.info.height)
+  if (!decoded) return null
+  return { data: decoded.data, bytes: new Uint8Array(decoded.binaryData) }
 }
 
 async function main(): Promise<void> {
@@ -486,6 +517,75 @@ async function main(): Promise<void> {
   const longUrl = 'https://example.com/' + 'a'.repeat(2100)
   const longUrlRun = await run({ title: TITLE, itinerary: ITINERARY, fact_ids: [], basename: 'long-url', target_url: longUrl })
   ok(longUrlRun.ok === false && /target_url/.test(String(longUrlRun.error)), '§19a 超长 target_url 拒绝')
+
+  // 超出 QR 编码容量(但未超 target_url 长度上限)的输入:QR 先于任何写盘生成 → 零写入
+  // (#569 切片 3b 零写入保护回归:qrcode 库 reject 时三件一件都不落盘,重试不撞 EEXIST)
+  const overQrUrl = '普'.repeat(1000) // 1000 字符 ≤ 2048 上限;UTF-8 3000 字节 > QR v40-M 2331 上限
+  const overQr = await run({ title: TITLE, itinerary: ITINERARY, fact_ids: [], basename: 'over-qr', target_url: overQrUrl })
+  ok(overQr.ok === false && /QR 编码失败/.test(String(overQr.error)), '§19b 超出 QR v40-M 容量的 target_url 结构化拒绝')
+  ok(!bundleFiles(cwd).includes(`over-qr${ITINERARY_DECK_EXPORT_HTML_SUFFIX}`)
+    && !bundleFiles(cwd).includes(`over-qr${ITINERARY_DECK_EXPORT_MANIFEST_SUFFIX}`)
+    && !bundleFiles(cwd).includes(`over-qr${ITINERARY_DECK_EXPORT_QR_SUFFIX}`),
+    '§19c QR 编码失败零写入(bundle 三件都未落盘)')
+
+  // ---- §22 QR 独立解码验收(#569 T2):光栅化后经独立解码器逐字节还原 payload ----
+  // 「不同字节 + 有 <path>」不构成解码证明;这里把**实际落盘的 qr.svg**交给独立解码链
+  // (sharp 光栅化 → jsqr 解码,与编码侧 qrcode 库零共享代码),断言还原结果与期望
+  // payload 逐字节一致。依赖说明:jsqr 是本次新增的 dev-only 依赖;sharp 早已在运行时
+  // 闭包内(@deepseek-ai/dsh-attachment-local 的传递依赖)——本次只在 ts/package.json
+  // 把既有版本显式声明为 devDependency 并新增测试 import,不新增任何 runtime 调用。
+  // 审批过的字面占位串在测试侧独立钉死(期望值不引用生产常量):生产常量被意外改动时
+  // §22b 必红;§22r 再把生产常量与这个字面量互锁(漂移即红)。
+  const marker = '<local bundle; not yet hosted>'
+  const emptyDecoded = await decodeQrSvg(qrDisk, 240)
+  ok(emptyDecoded !== null, '§22a 本地占位 QR 经独立解码器解码成功(非 null)')
+  ok(emptyDecoded?.data === marker, `§22b 无 target_url 时解码还原字面占位串(实测:${JSON.stringify(emptyDecoded?.data)})`)
+  ok(Buffer.compare(Buffer.from(marker, 'utf8'), Buffer.from(emptyDecoded?.bytes ?? [])) === 0, '§22c 占位串 UTF-8 字节逐字节一致')
+
+  const urlDecoded = await decodeQrSvg(withUrlQrDisk, 240)
+  const withUrlStr = 'https://example.com/decks/abc.html'
+  ok(urlDecoded !== null, '§22d target_url QR 经独立解码器解码成功(非 null)')
+  ok(urlDecoded?.data === withUrlStr, `§22e 解码还原精确 URL(实测:${JSON.stringify(urlDecoded?.data)})`)
+  ok(Buffer.compare(Buffer.from(withUrlStr, 'utf8'), Buffer.from(urlDecoded?.bytes ?? [])) === 0, '§22f URL UTF-8 字节逐字节一致')
+
+  // 负控制:两条 payload 经**解码器**还原后互不相等——证明比较非空洞(不是同码/常量误判)
+  ok(urlDecoded?.data !== marker && emptyDecoded?.data !== withUrlStr, '§22g 不同 payload 解码还原互不相等(负控制)')
+
+  // UTF-8 payload(非 ASCII 走 QR byte 模式 UTF-8 编码):解码必须逐字节还原
+  const utf8Url = 'https://example.com/decks/普吉-2027.html?from=深圳'
+  const utf8Run = await run({ title: TITLE, itinerary: ITINERARY, fact_ids: [], basename: 'utf8-url', target_url: utf8Url })
+  ok(utf8Run.ok === true, `§22h UTF-8 target_url 导出成功(实际:${JSON.stringify(utf8Run.error ?? '')})`)
+  const utf8QrDisk = readFileSync(String(utf8Run.files?.qr), 'utf-8')
+  const utf8Decoded = await decodeQrSvg(utf8QrDisk, 240)
+  ok(utf8Decoded !== null, '§22i UTF-8 QR 解码成功(非 null)')
+  ok(utf8Decoded?.data === utf8Url, `§22j UTF-8 URL 字符串精确还原(实测:${JSON.stringify(utf8Decoded?.data)})`)
+  ok(Buffer.compare(Buffer.from(utf8Url, 'utf8'), Buffer.from(utf8Decoded?.bytes ?? [])) === 0, '§22k UTF-8 URL 字节逐字节一致')
+
+  // 实用显示尺寸:128px(小图)与 240px(典型)都能被独立解码器还原——margin=2 静默区的证据
+  const smallDecoded = await decodeQrSvg(withUrlQrDisk, 128)
+  ok(smallDecoded !== null && smallDecoded.data === withUrlStr, '§22l 128px 实用显示尺寸解码还原精确 URL(margin=2 静默区可扫描)')
+  const largeDecoded = await decodeQrSvg(withUrlQrDisk, 480)
+  ok(largeDecoded !== null && largeDecoded.data === withUrlStr, '§22m 480px 放大尺寸解码还原精确 URL')
+
+  // 补全 payload × 尺寸矩阵:UTF-8 与本地占位串在 128/480px 同样解码还原精确 payload
+  const utf8Small = await decodeQrSvg(utf8QrDisk, 128)
+  ok(utf8Small !== null && utf8Small.data === utf8Url, '§22n 128px UTF-8 URL 解码还原精确')
+  const utf8Large = await decodeQrSvg(utf8QrDisk, 480)
+  ok(utf8Large !== null && utf8Large.data === utf8Url, '§22o 480px UTF-8 URL 解码还原精确')
+  const markerSmall = await decodeQrSvg(qrDisk, 128)
+  ok(markerSmall !== null && markerSmall.data === marker, '§22p 128px 本地占位串解码还原精确')
+  const markerLarge = await decodeQrSvg(qrDisk, 480)
+  ok(markerLarge !== null && markerLarge.data === marker, '§22q 480px 本地占位串解码还原精确')
+
+  // 漂移锁:生产常量必须仍等于上方测试侧独立钉死的审批字面占位串(期望值没有引用它)
+  ok(marker === ITINERARY_DECK_EXPORT_LOCAL_MARKER, '§22r ITINERARY_DECK_EXPORT_LOCAL_MARKER 与审批字面占位串一致(漂移即红)')
+
+  // ---- §23 manifest.local_only 显式指示(#569 的 local_only 期望 × v1 兼容附加字段) ----
+  ok(emptyManifest.local_only === true, '§23a 无 target_url 时 manifest.local_only = true')
+  ok(urlManifest.local_only === false, '§23b 有 target_url 时 manifest.local_only = false')
+  // 三态互锁:local_only=true ⟺ target_url 缺省 ⟺ QR 编码本地占位串(绝不暗示线上目的地)
+  ok(emptyManifest.target_url === undefined && emptyManifest.local_only === true && emptyDecoded?.data === marker,
+    '§23c local_only=true 与 target_url 缺省与本地占位串三态互锁')
 
   // ---- §20 真实链路:产物 list/read → deck html 与磁盘一致 + sha256 与 manifest 一致 ----
   const listTool = tools.get('gotry_artifacts_list')

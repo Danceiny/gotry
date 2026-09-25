@@ -3,9 +3,9 @@
 # 行程 deck 渲染器（issue #564）
 
 > 定位：纯 deck 渲染器 `ts/src/itinerary-deck.ts` 的运行时契约、幻灯页确定性派生与决策日志，连同两个投影共同立足的共享文档契约层 `ts/src/itinerary-doc-shared.ts`。
-> 状态：内部切片（2026-09-23）。渲染器是纯函数，本切片没有产品入口——没有任何注册工具写 deck 文件；产品路径、静态导出与 QR 属于 issue #564 的后续切片。
+> 状态：产品入口已按 Phase B 落地（2026-09-25 对账）：纯渲染器（2026-09-23）、deck 产物入口 `gotry_itinerary_deck_render`（#566）、静态导出 bundle `gotry_deck_export` 与 QR 真矩阵（#568/#569）；Phase C 分享／同意契约和桩实现已落地，见[分享适配器设计](share-adapters.zh-CN.md)。静态托管／部署与真实对外发送运行时尚未启用。
 > 上游：issue #564；[karpo-deck-web 参考研究](../research/karpo-deck-web-research.zh-CN.md)借鉴决策 #1；契约词汇继承自 [itinerary-html-renderer.md](itinerary-html-renderer.zh-CN.md)。
-> 下游：`ts/scripts/itinerary-deck-tests.ts`（run-all §6d）；后续 deck 产品入口／静态导出切片；后续阶段的设计系统种子。
+> 下游：`ts/scripts/itinerary-deck-tests.ts`（run-all §6d）；[Phase C 分享／同意契约](share-adapters.zh-CN.md)；须分别准入的托管和对外发送运行时；后续阶段的设计系统种子。
 
 ## 速览（TL;DR）
 
@@ -69,9 +69,11 @@ deck 导航是组级锚点链接，随派生收缩（不指向不存在的页）
 
 issue #566（Phase B 切片 2）落地：deck 产品入口 `ts/capabilities/itinerary-deck-artifact.ts`，暴露注册工具 `gotry_itinerary_deck_render`——与单页 `gotry_itinerary_render` 完全对称（共用 `normalizeDocInput` + 同一套注册表专属 / 独占新建 / 会话 cwd 路径护栏；basename 契约前缀改为 `gotry-deck-`）。由 `ts/scripts/itinerary-deck-artifact-tests.ts`（131 断言，run-all §6e）验证。
 
-issue #568（Phase B 切片 3a）落地：deck 静态导出 bundle `ts/capabilities/itinerary-deck-export.ts`，暴露注册工具 `gotry_deck_export`——在宿主显式给出的绝对 `target_dir` 下写三件带 basename 前缀的文件（`<basename>.html` + `<basename>.manifest.json` + `<basename>.qr.svg` 占位），manifest 含信源（sha256、字节、按 kind 的事实计数、来源标签、证据链摘要、导出时刻、可选 target_url），bundle 三件 `O_CREAT|O_EXCL` 独占，并显式拒绝跟随 symlinked target_dir（realpath 之前的 lstat 检查）。由 `ts/scripts/itinerary-deck-export-tests.ts`（切片 3b 后 146 断言，run-all §6f）验证。
+issue #568（Phase B 切片 3a）落地：deck 静态导出 bundle `ts/capabilities/itinerary-deck-export.ts`，暴露注册工具 `gotry_deck_export`——在宿主显式给出的绝对 `target_dir` 下写三件带 basename 前缀的文件（`<basename>.html` + `<basename>.manifest.json` + `<basename>.qr.svg` 占位），manifest 含信源（sha256、字节、按 kind 的事实计数、来源标签、证据链摘要、导出时刻、可选 target_url），bundle 三件 `O_CREAT|O_EXCL` 独占，并显式拒绝跟随 symlinked target_dir（realpath 之前的 lstat 检查）。由 `ts/scripts/itinerary-deck-export-tests.ts`（T2 解码验收拓宽后 170 断言，run-all §6f）验证。
 
 issue #569（Phase B 切片 3b，QR 真矩阵）落地：`<basename>.qr.svg` 现在由 npm `qrcode` 库（MIT）渲染出真实 QR 矩阵——有 target_url 时编码之，无则编码字面标记 `<local bundle; not yet hosted>`。`manifest.share_intent.qr` 从 `placeholder` 变为 `generated`。同输入确定性已按字节断言（同 target_url → qr.svg 字节一致）。
 
-不在任何切片：静态托管／部署、任何运行时激活、任何分享／同意面（Phase C 切片见 issue #573）——都是 issue #564 的后续切片。deck 渲染器只渲染调用方给出的结构＋注册表选出的事实；其夹具为合成数据，不代表任何供应商证据。
+QR 验收证据（T2，2026-09-25）：落盘 SVG 经独立解码链还原——`sharp` 光栅化（sharp 本就经 `@deepseek-ai/dsh-attachment-local` 的传递依赖存在于运行时闭包，本次仅在 devDependencies 显式声明既有版本——本改动只新增测试 import，不新增任何 runtime 调用）＋ `jsqr` 解码（Apache-2.0，本次新增的 dev-only 依赖，与 `qrcode` 编码侧零共享代码）——在 payload × 尺寸全矩阵（ASCII URL、UTF-8 URL、钉死的字面本地占位串 × 128/240/480px）下逐字节还原精确 payload，2 模块静默区维持不变（无证据要求调整）。期望占位串在测试侧独立钉死为审批字面量（不引用生产常量），并与生产常量互锁（意外改动即红）。manifest 新增附加字段 `local_only`（当且仅当 `target_url` 缺省时为 `true`）：issue #569 的 `local_only` 期望以向后兼容的可选字段形式并入已接受的 `gotry_deck_manifest.v1` 契约——「无线上目的地」从此从 `local_only: true` 显式读出，而不是靠 `target_url` 字段缺失来推断。超长输入零写入与 bundle 撞车回归保留；本通道未做实体手机扫码验收（独立光栅解码 + 渲染图目检是已记录的可执行证据）。
+
+渲染器与 Phase B 导出切片不提供静态托管／部署或对外发送运行时。Phase C 分享／同意契约和桩实现已另行落地，其激活门槛见[分享适配器设计](share-adapters.zh-CN.md)。deck 渲染器只渲染调用方给出的结构＋注册表选出的事实；其夹具为合成数据，不代表任何供应商证据。
 

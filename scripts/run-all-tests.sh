@@ -161,7 +161,11 @@ echo "=== 15. agent-reach wrapper(反射桥 + 真 doctor,7 断言) ==="
 (cd ts && npx tsx scripts/agent-reach-wrapper-tests.ts) || FAIL=1
 
 echo
-echo "=== 15b. doctor 可选依赖体检(注入式三态分级/LLM key 让渡/报告渲染/gotry_doctor 工具面落盘,6 段) ==="
+echo "=== 15b. agent-reach 确定性失败面(fake python 注入,14 段:缺可执行/缺包/超时/坏 JSON/stderr 与凭证不漏/形状错型不抛错/readUrl 产品边界 + 透传回归锁) ==="
+(cd ts && npx tsx scripts/agent-reach-error-tests.ts) || FAIL=1
+
+echo
+echo "=== 15c. doctor 可选依赖体检(注入式三态分级/LLM key 让渡/报告渲染/gotry_doctor 工具面落盘,6 段) ==="
 (cd ts && npx tsx scripts/doctor-tests.ts) || FAIL=1
 
 echo

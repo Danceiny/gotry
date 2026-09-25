@@ -2546,7 +2546,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       )
       const summary = r.ok
         ? `已生成 deck 静态导出 bundle(target_dir):${r.target_dir}\n`
-          + `三件文件:html=${r.files.html}\nmanifest=${r.files.manifest}\nqr.svg=${r.files.qr}(真矩阵,#569 切片 3b 落地;target_url 见 manifest.deck.target_url)\n`
+          + `三件文件:html=${r.files.html}\nmanifest=${r.files.manifest}\nqr.svg=${r.files.qr}(真矩阵,#569 切片 3b 落地;target_url 见 manifest.target_url)\n`
           + `总字节 ${r.bytes},投影事实 ${r.fact_ids.length} 条(全部来自当前注册表)。`
           + '可直接上传到任意静态托管(Vercel/Netlify/GH Pages)。'
         : `未生成产物(未写入任何文件):${r.error}`

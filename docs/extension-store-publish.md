@@ -9,9 +9,18 @@ because publishing was fully manual).
 
 The workflow packs `extension/` with `scripts/package-extension.mjs` and, only on
 manual dispatch with `dry_run=false`, uploads the store zip through the Chrome Web
-Store API. Publishing requires five repo secrets; everything else is already in the
+Store API. Publishing requires four repo secrets; everything else is already in the
 workflow. CWS requires strictly increasing versions — the store currently holds 0.1.0,
 so manifest `version` must stay above it.
+
+The publish path is verifiable end to end (2026-09-25, #346/#537): the publish job
+downloads the pack artifact explicitly into `dist-extension/` and asserts the three
+files, the version and the SHA256 checksums against `extension-dist-manifest.json`
+before any OAuth/network call (`scripts/cws-publish-validate.mjs artifact`). Every
+API response is then classified against the documented v1.1 semantics — HTTP 2xx
+alone is never treated as success. Uploading, review submission and store
+availability are three distinct states; acceptance of a submission is not store
+publication (§5).
 
 ## 2. One-time OAuth setup
 
@@ -39,12 +48,13 @@ redirect (`http://localhost:PORT`) or https://developers.google.com/oauthplaygro
 
 ## 3. Repo secrets
 
-Add five secrets under repo Settings → Secrets and variables → Actions:
+Add four secrets under repo Settings → Secrets and variables → Actions (the direct
+REST API needs no publisher ID; the earlier five-secret table belonged to the
+retired third-party action era and is obsolete):
 
 | Secret | Value |
 | --- | --- |
 | `CHROME_EXTENSION_ID` | `oeajpiccmonococjcegddlooeeohlbgd` |
-| `CHROME_PUBLISHER_ID` | publisher ID from CWS dashboard → Account |
 | `CHROME_CLIENT_ID` | OAuth client ID from 2b |
 | `CHROME_CLIENT_SECRET` | OAuth client secret from 2b |
 | `CHROME_REFRESH_TOKEN` | refresh token from 2c |
@@ -52,11 +62,55 @@ Add five secrets under repo Settings → Secrets and variables → Actions:
 ## 4. First publish
 
 Dispatch the workflow once with `dry_run=true` (pack only, verifies the version
-guard and artifacts), then with `dry_run=false` after founder confirmation. CWS
-review takes hours to days; verify the listing version before claiming published.
+guard and artifacts), then with `dry_run=false` after founder confirmation. The
+publish job runs in order: artifact preflight → token → upload → publish; each step
+fails closed per §5. CWS review takes hours to days; a store pull-back verification
+(the listing actually shows the new version) is mandatory before anything may claim
+published.
 
-## 5. Maintenance
+## 5. Publish response semantics (v1.1)
 
-Refresh tokens expire after six months of inactivity — dispatch a publish at least
-twice a year or re-mint the token. Rotate the client secret by repeating 2b/2c/3 if
+`scripts/cws-publish-validate.mjs` classifies each response; the classification is
+fail-closed and its failure output carries only fixed reasons, HTTP codes and
+derived booleans/counts — never response bodies, error descriptions or tokens
+(no API-supplied text enters the workflow log; the access token's only output is
+the masked `--field access_token` extraction).
+
+| Step | Accepted (exit 0) | Rejected (exit 1) |
+| --- | --- | --- |
+| token | JSON body with a non-empty whitespace-free `access_token` | non-2xx; `error` field of any type (e.g. `invalid_grant`); missing/empty/whitespace-containing token; malformed JSON |
+| upload | `uploadState: "SUCCESS"` with empty `itemError` | `FAILURE`/`IN_PROGRESS`/`NOT_FOUND`/unknown values; `SUCCESS` with a non-empty or malformed `itemError` (does not advance); non-2xx; malformed JSON |
+| publish | `status[]` non-empty and **every** element is `OK` (classified `submitted` = this dispatch was accepted) | mixed `OK` + rejection, non-string elements, `NOT_AUTHORIZED`, `ITEM_NOT_FOUND`, `ITEM_TAKEN_DOWN`, unknown values, missing `status[]`; `ITEM_PENDING_REVIEW` alone is a distinct rejection (see below) |
+
+- `ITEM_PENDING_REVIEW` means a previous submission may already be in review. It is
+  not proof that this version was submitted: the step exits non-zero with a
+  read-back instruction and must not be retried blindly. Read the item state from
+  the CWS dashboard/API first; record an existing manual submission and avoid
+  resubmission.
+- Transport failures (curl timeout/connection error) mark the outcome UNCONFIRMED
+  for that step — read back the item state before any retry; the workflow never
+  retries automatically (a blind resubmit can duplicate a review).
+- The publish request uses the documented v1 query parameter
+  `publishTarget=default` (v1 has no `publishMode`).
+
+## 6. Rollback
+
+The [CWS dashboard rollback](https://developer.chrome.com/docs/webstore/rollback)
+restores the previous published package under a new version number without another
+review; pending and staged submissions are discarded. Test compatibility locally,
+then obtain founder confirmation for the rollback action and exact new version
+before triggering it. Verify the resulting version in the dashboard and store
+listing before claiming success. A forward fix with a higher version remains an
+alternative.
+
+Retain the approved prior upload and its checksum as rollback evidence. A package
+rebuilt from an `ext-*` repository tag is only a reconstruction until its equivalence
+to the approved upload is verified.
+
+## 7. Maintenance
+
+Refresh tokens can expire or be revoked. If the token step reports an API error,
+verify the credential state and re-mint the token using §2 when needed. Rotate the client secret by repeating 2b/2c/3 if
 it leaks; the CWS item and extension ID are unaffected.
+
+The workflow uses the documented [v1.1 API](https://developer.chrome.com/docs/webstore/api/v1). Any later API migration must update the workflow endpoints and the response classifier together.

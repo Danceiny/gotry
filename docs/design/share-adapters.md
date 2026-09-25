@@ -54,13 +54,14 @@ export interface ShareAdapter {
 Token shape: `<body>.<sig>` where `body = base64url(JSON.stringify(payload))` and `sig = base64url(HMAC-SHA256(body, secret))`.
 
 - `payload` = `{ share_id, created_at (ISO), ttl_seconds, target: { channel, address } }` — the destination is inside the signature; a validly-signed token replayed to a different recipient fails `tokenTargetMatches` → `token_invalid`
-- `secret` defaults to `SHARE_HMAC_SECRET` env, falling back to `DEFAULT_DEV_SHARE_SECRET` (`gotry-share-dev-secret-DO-NOT-USE-IN-PROD`) so dev / test never have to set env. **`resolveShareSecret` throws when `NODE_ENV=production` and the env var is missing** (fail-closed) — a forgotten env never signs production tokens with a constant committed to the public repo.
+- `secret` defaults to `SHARE_HMAC_SECRET` env, falling back to `DEFAULT_DEV_SHARE_SECRET` (`gotry-share-dev-secret-DO-NOT-USE-IN-PROD`) so dev / test never have to set env. **`resolveShareSecret` throws when `NODE_ENV=production` and the env var is missing** (fail-closed) — a forgotten env never signs production tokens with a constant committed to the public repo. The deliberate throw lives on the issuance side; at verification time the default resolution runs inside a guarded body and the same configuration error folds into `token_invalid`; a non-string runtime key (number/object/Symbol — malformed JS caller input) folds the same way, and the HMAC computation itself is guarded — no caller/config input can escape the result union (verify never throws, and never silently falls back to the public dev constant).
 - `verifyShareToken(token, secret, now)`:
+  - secret resolution guarded (default resolution for an omitted key; non-string runtime keys — number/object/Symbol — rejected) → `token_invalid` on a production-missing-secret configuration error or a malformed key
   - format check (**exactly one dot**, `indexOf === lastIndexOf`; the base64url decoder silently skips invalid chars, so multi-dot tokens must be rejected explicitly) → `token_invalid`
   - HMAC `timingSafeEqual` check → `token_invalid` on any mismatch (body or sig)
   - payload shape validation (share_id / created_at / ttl_seconds types) → `token_invalid`
   - ttl validation: non-negative integer capped at `2^31-1` seconds (prevents `expiresMs` overflow to `Infinity`) → `token_invalid`
-  - expiry: `now > created_at + ttl_seconds * 1000` → `token_expired` (ttl = 0 expires at the next instant)
+  - expiry: the injected clock itself is validated first — non-finite time or a throwing callback → `token_invalid` (a `NaN` clock compares false against every bound, which once let an expired token pass); then `now > created_at + ttl_seconds * 1000` → `token_expired` (ttl = 0 expires at the next instant)
   - on success returns `{ ok: true, payload }` for the caller to feed into `checkShareConsent`
 - `signShareToken` is byte-level deterministic for fixed `(payload, secret)` — verifiable by `sha256(token)`.
 
@@ -98,7 +99,7 @@ The function never throws. Every `ShareFailureReason` is a reachable return path
 
 ## 7. Slice status and explicit non-claims
 
-Landed here: `ts/src/share/{adapters,share-token,share-consent,share-deck}.ts` + `ts/scripts/share-tests.ts` (73 assertions after the self-review hardening pass, run-all §6h). All four adapter stubs are no-op by design. Token signing is byte-deterministic. The eight `ShareFailureReason` values are all reachable by real scenarios and the suite proves it.
+Landed here: `ts/src/share/{adapters,share-token,share-consent,share-deck}.ts` + `ts/scripts/share-tests.ts` (85 assertions after the validation-boundary repair, run-all §6h). All four adapter stubs are no-op by design. Token signing is byte-deterministic. The eight `ShareFailureReason` values are all reachable by real scenarios and the suite proves it. Verification-time operational failures (invalid clock, non-string runtime keys, missing production secret) are exercised in-suite; the production-configuration cases run in isolated subprocess environments.
 
 Not in this slice: real SDK calls for any of the four channels (M4); `gotry_share_*` dsh tool registration (M4); trigger-driven share events from the wish-pool or external-event seam (M4 / Phase D); a hosted share URL service (research E.2). The seam is contract-complete; the M4 work plugs adapters and wires the dsh surface without touching this module's API.
 

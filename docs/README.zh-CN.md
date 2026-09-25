@@ -202,3 +202,4 @@
 
 - `assets/`：archify 生成的系统架构图（`gotry-system-architecture.*`），由外部 archify 工具重生成，仓内无消费者。
 - `superpowers/`：superpowers 工作流的 plans/specs（评测计划 Phase 0 等），工具自管。
+- [开放问题执行计划](superpowers/plans/2026-09-25-open-issues-execution-plan.zh-CN.md)：记录本次问题验收余项、产品优先执行顺序与真实证据门禁的提案。

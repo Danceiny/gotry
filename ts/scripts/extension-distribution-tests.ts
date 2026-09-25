@@ -1,5 +1,5 @@
 /**
- * 扩展分发通道合同测试(§43;ADR-21 分发 A,GitHub Releases 下载链)。
+ * 扩展分发通道合同测试(§43;ADR-21 分发 A,GitHub Releases 下载链 + 通道 B 发布链预检)。
  *
  * 全离线确定性:回环 node:http 服务器(mkdtemp + 临时端口)serve dist-manifest 与
  * 真 tar.gz 夹具(由平台 tar 从仓内 extension/ 打出);零外网、零浏览器、零共享状态。
@@ -10,7 +10,12 @@
  *   ③ 版本比较:0.1.0<0.1.1<0.2.0<1.0.0,相等为 0;
  *   ④ 回环 e2e:installed(下载→SHA256→tar 解压→key 钉扎→原子交换)/ up-to-date(不下载 tarball)/
  *      check-only(只报告不落盘)/ 坏 SHA 拒绝 / 404 降级 fallback-bundled / key 漂移拒绝;
- *   ⑤ CLI 契约:extension-distribution-cli.ts 对回环基址单行 JSON + 退出码 0/2。
+ *   ⑤ CLI 契约:extension-distribution-cli.ts 对回环基址单行 JSON + 退出码 0/2;
+ *   ⑥ CWS 发布链(scripts/cws-publish-validate.mjs,通道 B #346/#537):token/upload/publish
+ *      响应分类经子进程走同一条 CLI 路径(HTTP 2xx 不足为凭;invalid_grant/uploadState≠SUCCESS/
+ *      status[] 无 OK 一律拒绝;仅 ITEM_PENDING_REVIEW = 已在审勿重复提审)+ artifact 预检
+ *      (三件套/版本/SHA256 对账)+ upload→download 路径错位回归(artifact 根 = dist-extension,
+ *      download 缺 path 解到 workspace 根 = 2026-09-24 事故形态)+ workflow/文档防漂移。
  */
 
 import assert from 'node:assert/strict'
@@ -19,7 +24,7 @@ import { createServer } from 'node:http'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
   DEFAULT_RELEASE_BASE,
@@ -250,6 +255,218 @@ function distManifestJson(version: string, sha: string): string {
   ok(r2.code === 2 && r2.json?.ok === false && r2.json?.action === 'fallback-bundled', `CLI 失败 exit 2 + fallback-bundled JSON`)
   lb.close()
   rmSync(dest, { recursive: true, force: true })
+}
+
+// ─── ⑥ CWS 发布链:响应分类 + artifact 预检 + 路径错位回归(scripts/cws-publish-validate.mjs) ───
+{
+  const VALIDATOR = join(repoRoot, 'scripts', 'cws-publish-validate.mjs')
+  const WORKFLOW_SRC = readFileSync(join(repoRoot, '.github/workflows/extension-publish.yml'), 'utf8')
+  const SENTINEL = 'FAKE_SECRET_SENTINEL'
+  let importWithoutArgv = false
+  try {
+    execFileSync(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(pathToFileURL(VALIDATOR).href)})`], { cwd: repoRoot, stdio: 'pipe' })
+    importWithoutArgv = true
+  } catch { /* the pure module must not execute or crash its CLI entrypoint */ }
+  ok(importWithoutArgv, '校验器可作为纯模块导入，无 argv[1] 时不触发 CLI')
+  /** 子进程走与 workflow 逐字相同的 CLI 路径(stdin + --http-code + 退出码;成功 JSON 在 stdout,失败 JSON 在 stderr) */
+  const runValidator = (args: string[], stdin?: string) =>
+    new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      const child = spawn('node', [VALIDATOR, ...args], { cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'] })
+      let out = ''
+      let err = ''
+      child.stdout.on('data', (c) => { out += c.toString('utf8') })
+      child.stderr.on('data', (c) => { err += c.toString('utf8') })
+      if (stdin != null) child.stdin.write(stdin)
+      child.stdin.end()
+      child.on('close', (code) => resolve({ code: code ?? -1, stdout: out, stderr: err }))
+    })
+  /** 机密纪律:任何失败路径的 stdout+stderr 都不得携带响应体/明细/凭据等 API 供应文本 */
+  const assertNoLeak = async (args: string[], stdin: string, label: string) => {
+    const r = await runValidator(args, stdin)
+    ok(r.code === 1, `${label}:非零退出`)
+    ok(!`${r.stdout}${r.stderr}`.includes(SENTINEL), `${label}:stdout+stderr 无 sentinel 泄漏`)
+    const lastLine = r.stderr.trim().split('\n').pop() ?? '{}'
+    ok(JSON.parse(lastLine).ok === false, `${label}:失败 JSON 为固定分类(${JSON.parse(lastLine).reason})`)
+  }
+
+  // (1) token:合法 → exit 0;分类 JSON 不携带凭据;--field access_token 是唯一 token 出口
+  {
+    const r = await runValidator(['token', '--http-code', '200'], '{"access_token":"SECRET-TOKEN","expires_in":3599,"token_type":"Bearer"}')
+    ok(r.code === 0 && JSON.parse(r.stdout).ok === true, `token 合法响应接受(${r.stdout.trim()})`)
+    ok(!r.stdout.includes('SECRET-TOKEN'), 'token 分类 JSON 不回显 access_token(仅 --field 吐本值)')
+    const f = await runValidator(['token', '--http-code', '200', '--field', 'access_token'], '{"access_token":"SECRET-TOKEN"}')
+    ok(f.code === 0 && f.stdout.trim() === 'SECRET-TOKEN', 'token --field access_token 吐本值(workflow 捕获形态)')
+  }
+  // (2) token fail-closed:4xx/5xx、error 字段(任意类型含对象)、缺/空/纯空白/内嵌空白或控制字符的
+  //     access_token、畸形 JSON——全部拒绝;每条都同时是 sentinel 泄漏探针(响应体不落日志)
+  {
+    const cases: Array<[string, string, string, string]> = [
+      ['401', `{"access_token":"${SENTINEL}"}`, 'http-status', 'HTTP 401(体含 sentinel)'],
+      ['200', `{"error":"invalid_grant","error_description":"expired ${SENTINEL}"}`, 'api-error', 'invalid_grant(描述含 sentinel)'],
+      ['200', `{"error":{"code":5,"message":"${SENTINEL}"}}`, 'api-error', '对象值 error 字段'],
+      ['200', `{"expires_in":3599,"note":"${SENTINEL}"}`, 'missing-access-token', '缺 access_token(体含 sentinel)'],
+      ['200', `{"access_token":"${SENTINEL}","error":null}`, 'api-error', 'null error 字段仍拒绝'],
+      ['200', '{"access_token":""}', 'missing-access-token', '空 access_token'],
+      ['200', '{"access_token":"   "}', 'missing-access-token', '纯空白 access_token'],
+      ['200', '{"access_token":"ab\\ncd"}', 'missing-access-token', '合法 JSON 内嵌 \\n(转义形式)'],
+      ['200', '{"access_token":"a\\tb"}', 'missing-access-token', '内嵌制表符'],
+      ['200', 'not-json', 'malformed-json', '畸形 JSON'],
+    ]
+    for (const [code, body, reason, label] of cases) {
+      const r = await runValidator(['token', '--http-code', code], body)
+      ok(r.code === 1 && JSON.parse(r.stderr).reason === reason, `token fail-closed:${label}(${reason})`)
+      ok(!`${r.stdout}${r.stderr}`.includes(SENTINEL), `token 无泄漏:${label}`)
+    }
+  }
+  // (3) upload:SUCCESS 且 itemError 为空唯一放行;HTTP-success/application-rejection(200 + FAILURE、
+  //     SUCCESS 带非空 itemError 的自相矛盾响应)拒绝;明细文本不落日志
+  {
+    const r = await runValidator(['upload', '--http-code', '200'], '{"kind":"chromewebstore#item","uploadState":"SUCCESS"}')
+    ok(r.code === 0 && JSON.parse(r.stdout).uploadState === 'SUCCESS', 'upload SUCCESS(空 itemError)接受')
+    const rejection: Array<[string, string]> = [
+      [`{"uploadState":"FAILURE","itemError":["${SENTINEL}"]}`, '200+FAILURE(明细含 sentinel)'],
+      [`{"uploadState":"SUCCESS","itemError":["${SENTINEL}"]}`, 'SUCCESS 带非空 itemError(自相矛盾,不前进了)'],
+      [`{"uploadState":"SUCCESS","itemError":"${SENTINEL}"}`, 'itemError 字符串拒绝'],
+      [`{"uploadState":"SUCCESS","itemError":{"message":"${SENTINEL}"}}`, 'itemError 对象拒绝'],
+      ['{"uploadState":"SUCCESS","itemError":null}', 'itemError null 拒绝'],
+      ['{"uploadState":"IN_PROGRESS"}', 'IN_PROGRESS 拒绝'],
+      ['{"uploadState":"NOT_FOUND"}', 'NOT_FOUND 拒绝'],
+      ['{"uploadState":"SOMETHING_NEW"}', '未知新值 fail-closed'],
+      ['{"kind":"chromewebstore#item"}', '缺 uploadState'],
+      ['<html>gateway error</html>', 'HTML 网关体按畸形 JSON 拒绝'],
+    ]
+    for (const [body, label] of rejection) await assertNoLeak(['upload', '--http-code', '200'], body, `upload:${label}`)
+    const rMixed = await runValidator(['upload', '--http-code', '200'], rejection[1][0])
+    ok(JSON.parse(rMixed.stderr).reason === 'upload-success-with-errors' && JSON.parse(rMixed.stderr).itemErrorCount === 1, 'SUCCESS+itemError 归类 upload-success-with-errors(计数为派生布尔/数值)')
+    const r500 = await runValidator(['upload', '--http-code', '500'], '{"uploadState":"SUCCESS"}')
+    ok(r500.code === 1 && JSON.parse(r500.stderr).reason === 'http-status' && JSON.parse(r500.stderr).httpCode === 500, '非 2xx 即使体面 SUCCESS 也拒绝(仅固定分类 + HTTP 码)')
+  }
+  // (4) publish:status[] 非空且每个元素都 === 'OK' 才算本次提审受理;混合 OK/拒绝、非字符串元素、
+  //     枚举外新值(IN_REVIEW 不存在于 v1)一律拒绝;仅 ITEM_PENDING_REVIEW = 独立拒绝原因
+  //     (非零退出 + 读回指引,绝不是本版受理凭证);所有失败路径体文本不落日志
+  {
+    const rOk = await runValidator(['publish', '--http-code', '200'], '{"kind":"chromewebstore#item","item_id":"x","status":["OK"],"statusDetail":["OK"]}')
+    ok(rOk.code === 0 && JSON.parse(rOk.stdout).reviewState === 'submitted', 'publish status=[OK] 归类 submitted(HTTP 200 ≠ 提审受理,以响应体为准)')
+    const rOk2 = await runValidator(['publish', '--http-code', '200'], '{"status":["OK","OK"]}')
+    ok(rOk2.code === 0 && JSON.parse(rOk2.stdout).reviewState === 'submitted', '全 OK 多元素仍受理')
+    const rPending = await runValidator(['publish', '--http-code', '200'], '{"status":["ITEM_PENDING_REVIEW"]}')
+    const pendingJson = JSON.parse(rPending.stderr.trim().split('\n').pop() ?? '{}')
+    ok(rPending.code === 1 && pendingJson.reason === 'publish-already-pending-review', '仅 ITEM_PENDING_REVIEW = 独立拒绝原因,非零退出(读回后再决定,绝非本版受理凭证)')
+    ok(/read back the item state/.test(rPending.stderr) && !rPending.stderr.includes(SENTINEL), '读回指引为固定安全文本')
+    const rejections: Array<[string, string]> = [
+      [`{"status":["NOT_AUTHORIZED"],"statusDetail":["${SENTINEL}"]}`, 'NOT_AUTHORIZED(明细含 sentinel)'],
+      ['{"status":["OK","NOT_AUTHORIZED"]}', '混合 OK + 拒绝状态'],
+      ['{"status":["OK",123]}', '非字符串元素混入'],
+      ['{"status":["ITEM_NOT_FOUND"]}', 'ITEM_NOT_FOUND'],
+      ['{"status":["ITEM_TAKEN_DOWN"]}', 'ITEM_TAKEN_DOWN'],
+      ['{"status":["IN_REVIEW"]}', 'IN_REVIEW(v1 无此枚举值)'],
+      ['{"status":["ITEM_PENDING_REVIEW","NOT_AUTHORIZED"]}', '混合 pending + 拒绝'],
+      ['{"kind":"chromewebstore#item","item_id":"x"}', '缺 status[]'],
+      ['{"status":[]}', '空 status[]'],
+      ['{bad', '畸形 JSON'],
+    ]
+    for (const [body, label] of rejections) await assertNoLeak(['publish', '--http-code', '200'], body, `publish:${label}`)
+    const rMix = await runValidator(['publish', '--http-code', '200'], rejections[1][0])
+    ok(JSON.parse(rMix.stderr).reason === 'publish-rejected', '混合 OK/拒绝归 publish-rejected(绝不标 review-submitted)')
+    const rMixPending = await runValidator(['publish', '--http-code', '200'], rejections[6][0])
+    const mixPendingJson = JSON.parse(rMixPending.stderr.trim().split('\n').pop() ?? '{}')
+    ok(mixPendingJson.reason === 'publish-already-pending-review' && mixPendingJson.hasRecognizedRejection === true, '混合 pending/拒绝也 fail(附 recognized-rejection 派生布尔)')
+  }
+  // (5) 用法错误 exit 2(--http-code 必填——workflow 逐字携带)
+  {
+    const r = await runValidator(['upload'], '{}')
+    ok(r.code === 2, '缺 --http-code 归用法错误 exit 2')
+  }
+
+  // (6) artifact 预检:三件套/版本/SHA256 对账 + pack→download→文件查找错位回归
+  //     (upload-artifact 多路径 root 在公共祖先 dist-extension/;download 缺 path 解到
+  //      workspace 根 = 2026-09-24 事故形态——旧 curl 引 dist-extension/ 必 ENOENT)
+  {
+    const work = mkdtempSync(join(tmpdir(), 'extdist-cws-'))
+    const zipBytes = Buffer.from(`store-zip-bytes-${Date.now()}`)
+    const tarBytes = Buffer.from(`tar-bytes-${Date.now()}`)
+    const zipSha = sha256Hex(zipBytes)
+    const tarSha = sha256Hex(tarBytes)
+    const distManifest = JSON.stringify({
+      version: '0.2.0.25',
+      tarball: DIST_ASSET_TARBALL,
+      tarballSha256: tarSha,
+      zip: DIST_ASSET_STORE_ZIP,
+      zipSha256: zipSha,
+      builtFromCommit: 'fb1cbf2',
+    })
+    // 事故形态(红):artifact 内容按 v4 根规则 = 三件文件在 archive 根;download 缺 path 落 workspace 根
+    const oldDownload = join(work, 'workspace-old')
+    mkdirSync(oldDownload)
+    writeFileSync(join(oldDownload, DIST_ASSET_STORE_ZIP), zipBytes)
+    writeFileSync(join(oldDownload, DIST_ASSET_TARBALL), tarBytes)
+    writeFileSync(join(oldDownload, DIST_ASSET_MANIFEST), distManifest)
+    const red = await runValidator(['artifact', '--dir', join(oldDownload, 'dist-extension'), '--expect-version', '0.2.0.25'])
+    ok(red.code === 1 && JSON.parse(red.stderr).reason === 'missing-manifest', '路径错位事故形态拒绝(download 缺 path → dist-extension/ 下无三件套,旧 curl 必 ENOENT)')
+    // 修复形态(绿):download 显式 path: dist-extension
+    const newDownload = join(work, 'workspace-new', 'dist-extension')
+    mkdirSync(newDownload, { recursive: true })
+    writeFileSync(join(newDownload, DIST_ASSET_STORE_ZIP), zipBytes)
+    writeFileSync(join(newDownload, DIST_ASSET_TARBALL), tarBytes)
+    writeFileSync(join(newDownload, DIST_ASSET_MANIFEST), distManifest)
+    const green = await runValidator(['artifact', '--dir', newDownload, '--expect-version', '0.2.0.25'])
+    ok(green.code === 0 && JSON.parse(green.stdout).zipSha256 === zipSha, '修复形态:显式 path 后预检全绿(版本+SHA256 对账)')
+
+    const mkFixture = () => {
+      const dir = join(work, `fixture-${Math.random().toString(36).slice(2)}`)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, DIST_ASSET_STORE_ZIP), zipBytes)
+      writeFileSync(join(dir, DIST_ASSET_TARBALL), tarBytes)
+      writeFileSync(join(dir, DIST_ASSET_MANIFEST), distManifest)
+      return dir
+    }
+    const tamper: Array<(dir: string) => string> = [
+      (dir) => { writeFileSync(join(dir, DIST_ASSET_MANIFEST), JSON.stringify({ ...JSON.parse(distManifest), version: '0.0.1.1' })); return 'version-mismatch' },
+      (dir) => { writeFileSync(join(dir, DIST_ASSET_STORE_ZIP), Buffer.from('tampered')); return 'checksum-mismatch' },
+      (dir) => { rmSync(join(dir, DIST_ASSET_STORE_ZIP)); return 'missing-artifact' },
+      (dir) => { rmSync(join(dir, DIST_ASSET_MANIFEST)); return 'missing-manifest' },
+      (dir) => { writeFileSync(join(dir, DIST_ASSET_MANIFEST), '{bad'); return 'malformed-manifest' },
+      (dir) => { writeFileSync(join(dir, DIST_ASSET_MANIFEST), JSON.stringify({ ...JSON.parse(distManifest), zipSha256: 'zz' })); return 'bad-hash-format' },
+      (dir) => { writeFileSync(join(dir, DIST_ASSET_MANIFEST), JSON.stringify({ ...JSON.parse(distManifest), zip: 'other.zip' })); return 'asset-name-drift' },
+    ]
+    for (const mutate of tamper) {
+      const dir = mkFixture()
+      const reason = mutate(dir)
+      const r = await runValidator(['artifact', '--dir', dir, '--expect-version', '0.2.0.25'])
+      ok(r.code === 1 && JSON.parse(r.stderr).reason === reason, `artifact 预检 fail-closed:${reason}`)
+    }
+    rmSync(work, { recursive: true, force: true })
+  }
+
+  // (7) 防漂移:validator 资产名与 package-extension.mjs 逐字一致;workflow 逐字携带
+  //     path: dist-extension + 预检 + 校验器三步调用 + publishTarget + 有界超时 + UNCONFIRMED 读回
+  //     + 机密纪律(-f 不回用);双语文档不再提 CHROME_PUBLISHER_ID(四 secret 口径)
+  {
+    const pkgSrc = readFileSync(join(repoRoot, 'scripts', 'package-extension.mjs'), 'utf8')
+    const validatorSrc = readFileSync(VALIDATOR, 'utf8')
+    ok(validatorSrc.includes(`export const STORE_ZIP_NAME = '${DIST_ASSET_STORE_ZIP}'`), 'validator store zip 资产名一致')
+    ok(validatorSrc.includes(`export const TARBALL_NAME = '${DIST_ASSET_TARBALL}'`), 'validator tarball 资产名一致')
+    ok(validatorSrc.includes(`export const DIST_MANIFEST_NAME = '${DIST_ASSET_MANIFEST}'`), 'validator dist-manifest 资产名一致')
+    for (const name of [DIST_ASSET_STORE_ZIP, DIST_ASSET_TARBALL, DIST_ASSET_MANIFEST]) {
+      ok(pkgSrc.includes(`'${name}'`), `package-extension.mjs 含 ${name}(validator 对账对象在场)`)
+    }
+    ok(/download-artifact@v4[\s\S]{0,400}path: dist-extension/.test(WORKFLOW_SRC), 'workflow download 显式 path: dist-extension(路径错位修复在位)')
+    ok(WORKFLOW_SRC.includes('cws-publish-validate.mjs artifact --dir dist-extension'), 'workflow 预检先于网络调用')
+    ok((WORKFLOW_SRC.match(/cws-publish-validate\.mjs (token|upload|publish)/g) ?? []).length === 3, 'token/upload/publish 三步都走校验器')
+    ok(!WORKFLOW_SRC.includes('CHROME_PUBLISHER_ID'), 'workflow 无 CHROME_PUBLISHER_ID(直连 API 四 secret)')
+    ok(WORKFLOW_SRC.includes('publishTarget=default'), 'publish query 用 v1 文档化参数 publishTarget=default')
+    ok(!/publish\?publishMode|&publishMode/.test(WORKFLOW_SRC), 'publishMode(v1 无此参数)不再出现在请求 URL')
+    const curlCalls = WORKFLOW_SRC.match(/curl -sS --connect-timeout \d+ --max-time \d+/g) ?? []
+    ok(curlCalls.length === 3, `三步 curl 均带有界 --connect-timeout/--max-time(实得 ${curlCalls.length})`)
+    ok((WORKFLOW_SRC.match(/::error::[^\n]*UNCONFIRMED/g) ?? []).length === 3, '传输失败三步均记 UNCONFIRMED(读回后再决定,不自动重试)')
+    ok(!WORKFLOW_SRC.includes('curl -fsS'), '不再用 -f(吞错误响应体,无法分类)')
+    ok(WORKFLOW_SRC.includes('if-no-files-found: error'), 'workflow pack 侧 if-no-files-found: error 保留(缺件即红)')
+    for (const doc of ['docs/extension-store-publish.md', 'docs/extension-store-publish.zh-CN.md']) {
+      const src = readFileSync(join(repoRoot, doc), 'utf8')
+      ok(!src.includes('CHROME_PUBLISHER_ID'), `${doc} 无 CHROME_PUBLISHER_ID(四 secret 口径同步)`)
+      ok(src.includes('publishTarget'), `${doc} 载明 publishTarget(v1 文档化参数)`)
+    }
+  }
 }
 
 console.log(`EXTENSION DISTRIBUTION: ${passed} pass, 0 fail`)
