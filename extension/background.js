@@ -68,6 +68,9 @@ const SITE_SEARCH_PREFIXES = {
 let joinTicket = null
 let activePort = null
 let polling = false
+// Each Chrome profile has its own service worker. A restart rotates this ID, so an
+// in-flight search pinned to the old worker fails closed instead of switching profiles.
+const clientId = crypto.randomUUID()
 
 function isJoinFresh(t) {
   if (!t || typeof t.bridgeUrl !== 'string' || !t.bridgeUrl) return false
@@ -105,7 +108,7 @@ function bridgeBase() {
 }
 
 function bridgeHeaders(withJson) {
-  const h = { 'x-gotry-bridge': 'v1' }
+  const h = { 'x-gotry-bridge': 'v1', 'x-gotry-client-id': clientId }
   if (withJson) h['content-type'] = 'application/json'
   if (isJoinFresh(joinTicket) && joinTicket.token) h['authorization'] = `Bearer ${joinTicket.token}`
   return h
@@ -375,6 +378,7 @@ async function loop() {
           body: JSON.stringify({
             extensionVersion: chrome.runtime.getManifest().version,
             capabilities: Object.keys(SITES),
+            clientId,
           }),
         })
         const data = await r.json().catch(() => ({ job: null }))

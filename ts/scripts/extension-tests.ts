@@ -124,11 +124,11 @@ interface FakeJob {
 }
 
 /** 假扩展客户端:一次长轮询取活 + 回包(Origin=固定扩展源,过桥白名单) */
-async function claimOnce(port: number, respond: ((job: FakeJob) => Record<string, unknown> | null) | null, signal?: AbortSignal, capabilities?: string[], origin = EXTENSION_ORIGIN): Promise<{ job: FakeJob | null }> {
+async function claimOnce(port: number, respond: ((job: FakeJob) => Record<string, unknown> | null) | null, signal?: AbortSignal, capabilities?: string[], origin = EXTENSION_ORIGIN, clientId?: string): Promise<{ job: FakeJob | null }> {
   const r = await fetch(`http://127.0.0.1:${port}/jobs`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin },
-    body: JSON.stringify({ extensionVersion: 'test', ...(capabilities ? { capabilities } : {}) }),
+    body: JSON.stringify({ extensionVersion: 'test', ...(capabilities ? { capabilities } : {}), ...(clientId ? { clientId } : {}) }),
     signal,
   })
   const data = (await r.json()) as { job: FakeJob | null }
@@ -137,7 +137,7 @@ async function claimOnce(port: number, respond: ((job: FakeJob) => Record<string
     if (result) {
       await fetch(`http://127.0.0.1:${port}/results/${encodeURIComponent(data.job.jobId)}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', origin },
+        headers: { 'content-type': 'application/json', origin, ...(clientId ? { 'x-gotry-client-id': clientId } : {}) },
         body: JSON.stringify(result),
       })
     }
@@ -788,6 +788,61 @@ async function main(): Promise<void> {
       storeAbort.abort()
       unpackedAbort.abort()
       await Promise.allSettled([storePoll, unpackedSearchPoll].filter((p): p is Promise<{ job: FakeJob | null }> => p !== undefined))
+      await __resetSessionBridgeForTest()
+      __setSessionBridgeForTest(null)
+      await lane.close()
+      __resetRateLimiterForTest()
+    }
+  })
+
+  await check('同一 Origin 的两个 Chrome 配置不能交叉领取预检后的检索或提交结果', async () => {
+    const lane = await mustBridge([0])
+    __setSessionBridgeForTest(lane)
+    const clientA = '11111111-1111-4111-8111-111111111111'
+    const clientB = '22222222-2222-4222-8222-222222222222'
+    const otherAbort = new AbortController()
+    const sameAbort = new AbortController()
+    let otherGotSearch = false
+    let sameGotSearch = false
+    let otherPoll: Promise<{ job: FakeJob | null }> | undefined
+    let samePoll: Promise<{ job: FakeJob | null }> | undefined
+    try {
+      __resetRateLimiterForTest()
+      const cookiePoll = claimOnce(lane.port, null, undefined, ['ctrip-flight'], EXTENSION_ORIGIN, clientA)
+      await waitForParkedCount(lane.port, 1)
+      const search = sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000 })
+      const cookieClaim = await cookiePoll
+      assert.equal(cookieClaim.job?.kind, 'cookie-names')
+      otherPoll = claimOnce(lane.port, (job) => {
+        otherGotSearch = true
+        return { ok: false, kind: job.kind, error: 'wrong-chrome-profile' }
+      }, otherAbort.signal, ['ctrip-flight'], EXTENSION_ORIGIN, clientB).catch(() => ({ job: null }))
+      await waitForParkedCount(lane.port, 1)
+      const wrongClientResult = await fetch(`http://127.0.0.1:${lane.port}/results/${encodeURIComponent(cookieClaim.job!.jobId)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN, 'x-gotry-client-id': clientB },
+        body: JSON.stringify({ ok: false, kind: 'cookie-names', error: 'wrong-chrome-profile' }),
+      })
+      assert.equal(wrongClientResult.status, 403)
+      const cookieResult = await fetch(`http://127.0.0.1:${lane.port}/results/${encodeURIComponent(cookieClaim.job!.jobId)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN, 'x-gotry-client-id': clientA },
+        body: JSON.stringify({ ok: true, kind: 'cookie-names', names: ['cticket'] }),
+      })
+      assert.equal(cookieResult.status, 200)
+      samePoll = claimOnce(lane.port, (job) => {
+        assert.equal(job.kind, 'search')
+        sameGotSearch = true
+        return { ok: true, kind: 'search', body: JSON.stringify({ data: { flightItineraryList: [] } }), url: job.url, title: '机票列表' }
+      }, sameAbort.signal, ['ctrip-flight'], EXTENSION_ORIGIN, clientA).catch(() => ({ job: null }))
+      const result = await search
+      assert.equal(result.verdict, 'miss', `同一客户端应完成检索,实际 ${result.verdict}:${result.error ?? ''}`)
+      assert.equal(sameGotSearch, true)
+      assert.equal(otherGotSearch, false)
+    } finally {
+      otherAbort.abort()
+      sameAbort.abort()
+      await Promise.allSettled([otherPoll, samePoll].filter((p): p is Promise<{ job: FakeJob | null }> => p !== undefined))
       await __resetSessionBridgeForTest()
       __setSessionBridgeForTest(null)
       await lane.close()
