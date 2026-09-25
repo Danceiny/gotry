@@ -93,3 +93,16 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 - **商店提交流程由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪**；**founder 决策 whether / when / 升哪个 version**（founder-confirm 制，见 `tech-strategy.md` §11 与 `AGENTS.md` 发布纪律）；**版本打包 / devconsole 上传 / 状态跟踪 / 验证**由 release executor 在仓库发布纪律下执行；founder 仅完成账户侧必要的本人审批/2FA。提审前商店版用户调 dida 会得到 needs-extension（与全新站点一致），不影响既有 ctrip/12306 车道。
 - unpacked/GitHub Releases 通道不受商店审核影响，`feat/session-dida-portal` 分支合并即生效（PR #297 已 merge，代码与 manifest 已就位）。
 - **当前证据边界**：提审已受理，但线上商店仍为 v0.1.0。须待 v0.2.0.26 过审、上线并完成商店回拉验证后，才能关闭 [#346](https://github.com/Danceiny/gotry/issues/346) 或 [#537](https://github.com/Danceiny/gotry/issues/537)。
+
+## 过审后品牌 Chrome 验收矩阵
+
+仅在线上商店提供 v0.2.0.26 后执行。将证据存入私有且带日期的目录，例如 `~/.gotry/evidence/extension/stai-0.2.0.26/<timestamp>/`；公开 issue 仅记录脱敏裁决和产物哈希。不得保存 cookie 值、join ticket、一次性凭据、个人行程或供应商原始回包。使用普通 Chrome 中商店签名的 `oeajpiccmonococjcegddlooeeohlbgd`，不用解压安装版 ID 或 Chrome for Testing 配置。记录 Chrome 版本、扩展版本、商店页版本、桥协议和测试时间，以便复现。
+
+| 闸门 | 可复现操作 | 证据及通过条件 |
+|---|---|---|
+| 公开回拉 | 打开公开商店条目，在普通 Chrome 安装或更新 Stai。核对已安装版本及携程、Dida、HotelByte 权限；只启用一条 Stai 通道。 | 商店公开版与已安装版均为 `0.2.0.26`，条目 ID 仍为商店 ID。分别记录旧 v0.1.0 自动更新与全新安装的结果。后台草稿获批本身不算通过。 |
+| 桌面连接 | 启动 GoTry 本机桥后，只读查询 `http://127.0.0.1:8791/health` 和 `/status`；必要时打开受支持页面唤醒扩展。 | 健康检查返回 `session-bridge.v1`；状态返回 `extensionConnected: true` 且心跳时间足够近。类型化不可用结果记为失败或降级观察，不记为命中。 |
+| 员工门户 join | 在获准的员工账号下打开 `https://portal.hotelbyte.com/` 或对应测试站，按正常流程 join。通过获准界面只读查询门户后端的 `bridge/status`。 | 门户发出一次性 join ticket 后，状态为 `extensionConnected: true`。只记录布尔值、时间和端点类别；不导出 ticket 或 bearer token。没有员工账号时标记为**未执行**。 |
+| Dida 登录及 D-37 | 账号持有人从门户按正常流程在普通 Chrome 完成 Dida 登录。只读查询获准的 `sessionChannel/status`，再执行一次有界的只读 Dida 检索。 | 观察到 `loggedIn: true` 和类型化命中或明确未命中；真实退出登录时返回 `needs-login`。记录 cookie 名称级检测是否与页面会话一致。本商店验收不得使用 Chrome for Testing 的跳过登录闸参数。遇到挑战立即停止。 |
+
+门户 join 与 Dida 闸门需要获准使用该供应商的员工门户账号；若登录需要介入，则由账号持有人完成，或仅在商店后台的私密字段提供专用审核凭据。这些是测试前置条件，不得将凭据写入仓库。[#346](https://github.com/Danceiny/gotry/issues/346) 在公开回拉、权限、更新和桌面连接检查通过后关闭。[#537](https://github.com/Danceiny/gotry/issues/537) 还须完整通过门户 join 与 Dida 登录链路。[#272](https://github.com/Danceiny/gotry/issues/272) 的真实适配器验收范围更广，须另有证据才能关闭。
