@@ -26,6 +26,7 @@ import {
   evaluateRecallTriggers,
   type RecallContext,
   type RecallSignal,
+  type RecallTrigger,
 } from '../src/recall/evaluator.ts'
 import { buildWhyNowCard, renderWhyNowCardLine, type WhyNowCard } from '../src/recall/card.ts'
 import { evaluatePoolRecall } from '../src/recall/integration.ts'
@@ -46,9 +47,14 @@ const TICK: RecallTick = { at: NOW, source: 'test-tick' }
 const POOL = [
   { wish_id: 'w-dali-erhai', name: '大理 · 洱海恢复之旅', conditions: { days: 5, budget_cny: 5000 }, added_at: '2026-07-01T00:00:00Z' },
   { wish_id: 'w-qiandao', name: '千岛湖周末', conditions: { days: 2, budget_cny: 2000 }, added_at: '2026-08-15T00:00:00Z' },
-  { wish_id: 'w-muted', name: '静音的愿望', muted: true, added_at: '2026-06-01T00:00:00Z' },
-  { wish_id: '', name: '无 id 的愿望(不召回)', added_at: '2026-06-01T00:00:00Z' },
+  { wish_id: 'w-nocond', name: '无条件的愿望(条件门不召回)', added_at: '2026-09-20T00:00:00Z' },
+  { wish_id: 'w-muted', name: '静音的愿望', muted: true, conditions: { days: 2 }, added_at: '2026-06-01T00:00:00Z' },
+  { wish_id: '', name: '无 id 的愿望(不召回)', conditions: { days: 2 }, added_at: '2026-06-01T00:00:00Z' },
 ]
+
+/** 召回窗口上下文(§6/§7 条件资格门用)。days=7 使 POOL 全部带条件条目均命中
+ *  (含 muted/无 id 的 days:2)——它们被排除只能归因于过滤,而非条件不命中。 */
+const MATCH_CTX = { days: 7, budgetCny: 6000, month: 10 }
 
 const SIGNAL_HOLIDAY: RecallSignal = {
   reason: 'holiday_proximity',
@@ -173,11 +179,11 @@ const SIGNAL_RECOVERED: RecallSignal = {
   ok(RECALL_REASON_LABEL.holiday_proximity === '假期临近', '§2b reason label 中文标签')
 
   // 无信号 → 空触发
-  const empty = evaluateRecallTriggers(POOL, { now: NOW, signals: [] })
+  const empty = evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: [] })
   ok(empty.length === 0, '§2c 无信号 → 空触发(不硬推)')
 
   // 广播信号(holiday_proximity 无 wish_ids)→ 匹配全部未 muted 且有 id 的候选
-  const broadcast = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_HOLIDAY] })
+  const broadcast = evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: [SIGNAL_HOLIDAY] })
   ok(broadcast.length === 2, `§2d 广播信号命中 2 个有效候选(实测 ${broadcast.length};muted + 无 id 被滤)`)
   ok(broadcast.every(t => t.wish_id === 'w-dali-erhai' || t.wish_id === 'w-qiandao'),
     '§2e 广播信号命中的 id 都是有效候选(muted/无 id 不出现)')
@@ -185,41 +191,41 @@ const SIGNAL_RECOVERED: RecallSignal = {
   ok(broadcast.every(t => t.evaluated_at === NOW.toISOString()), '§2g 触发携带评估时刻(ISO)')
 
   // 定向信号(price_drop 带 wish_ids)→ 只命中指定 id
-  const targeted = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_PRICE] })
+  const targeted = evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: [SIGNAL_PRICE] })
   ok(targeted.length === 1 && targeted[0].wish_id === 'w-dali-erhai',
     '§2h 定向信号只命中指定 wish_id(其它候选不出现)')
 
   // 多信号 → 每个信号独立触发(一个 wish 可命中多个信号)
-  const multi = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_PRICE, SIGNAL_WEATHER] })
+  const multi = evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: [SIGNAL_PRICE, SIGNAL_WEATHER] })
   ok(multi.length === 2, `§2i 两个定向信号(同 wish)→ 2 个触发(实测 ${multi.length})`)
   ok(multi.every(t => t.wish_id === 'w-dali-erhai'), '§2j 同 wish 多信号 → 各自独立触发')
   ok(multi[0].signal.reason !== multi[1].signal.reason, '§2k 触发按信号顺序(reason 不同)')
 
   // 全 5 类信号可达
   const allSignals: RecallSignal[] = [SIGNAL_HOLIDAY, SIGNAL_PRICE, SIGNAL_WEATHER, SIGNAL_ROUTE, SIGNAL_RECOVERED]
-  const allFired = evaluateRecallTriggers(POOL, { now: NOW, signals: allSignals })
+  const allFired = evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: allSignals })
   const firedReasons = new Set(allFired.map(t => t.signal.reason))
   ok(firedReasons.size === 5 && RECALL_REASONS.every(r => firedReasons.has(r)),
     `§2l 5 类 RecallReason 全部可达(实际触发 ${firedReasons.size} 类)`)
 
   // review2 #1:wish_ids 为字符串(真值非数组)→ 整条畸形跳过,绝不降级广播
-  const stringIds = evaluateRecallTriggers(POOL, { now: NOW, signals: [{ ...SIGNAL_PRICE, wish_ids: 'w-dali-erhai' } as unknown as RecallSignal] })
+  const stringIds = evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: [{ ...SIGNAL_PRICE, wish_ids: 'w-dali-erhai' } as unknown as RecallSignal] })
   ok(stringIds.length === 0, `§2m0 wish_ids 非数组 → 整条跳过(实测 ${stringIds.length} 触发;绝不广播扩权)`)
 
   // review2 #14:muted 为 'false' 字符串(JSON 往返产物)→ 视为未静音(严格 true 才排除)
   const stringMutedPool = [{ ...POOL[0], muted: 'false' }, { ...POOL[1], muted: 'false' }]
-  const stringMuted = evaluateRecallTriggers(stringMutedPool as unknown as typeof POOL, { now: NOW, signals: [SIGNAL_HOLIDAY] })
+  const stringMuted = evaluateRecallTriggers(stringMutedPool as unknown as typeof POOL, { now: NOW, match_context: MATCH_CTX, signals: [SIGNAL_HOLIDAY] })
   ok(stringMuted.length === 2, `§2m1 muted='false' 字符串 → 未静音照常召回(实测 ${stringMuted.length};严格 muted===true 才排除)`)
 
   // review2 #6:容器/时钟守卫——坏时钟/非数组容器 → 空返回不抛
   let clockThrew = false
   try {
-    evaluateRecallTriggers(POOL, { now: new Date('garbage'), signals: [SIGNAL_HOLIDAY] })
+    evaluateRecallTriggers(POOL, { now: new Date('garbage'), match_context: MATCH_CTX, signals: [SIGNAL_HOLIDAY] })
   } catch { clockThrew = true }
   ok(!clockThrew, '§2m2 ctx.now 非法 → 空返回不抛(toISOString 前置守卫)')
   let containerThrew = false
   try {
-    evaluateRecallTriggers(POOL, { now: NOW, signals: undefined as unknown as RecallSignal[] })
+    evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: undefined as unknown as RecallSignal[] })
   } catch { containerThrew = true }
   ok(!containerThrew, '§2m3 signals 非数组 → 空返回不抛(容器守卫)')
 
@@ -231,11 +237,11 @@ const SIGNAL_RECOVERED: RecallSignal = {
     null,
     'not-an-object',
   ] as unknown as RecallSignal[]
-  const badResult = evaluateRecallTriggers(POOL, { now: NOW, signals: badSignals })
+  const badResult = evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: badSignals })
   ok(badResult.length === 0, `§2m 畸形信号全部跳过(实测产 ${badResult.length} 触发;不崩不产)`)
 
   // 空 pool → 任何信号都空
-  const emptyPool = evaluateRecallTriggers([], { now: NOW, signals: [SIGNAL_HOLIDAY] })
+  const emptyPool = evaluateRecallTriggers([], { now: NOW, match_context: MATCH_CTX, signals: [SIGNAL_HOLIDAY] })
   ok(emptyPool.length === 0, '§2n 空 pool → 空触发')
 }
 
@@ -244,7 +250,7 @@ const SIGNAL_RECOVERED: RecallSignal = {
 // ===========================================================================
 
 {
-  const [trigger] = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_PRICE] })
+  const [trigger] = evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: [SIGNAL_PRICE] })
   ok(trigger !== undefined, '§3a 前置:定向触发存在')
   const card = buildWhyNowCard(trigger!)
 
@@ -259,19 +265,19 @@ const SIGNAL_RECOVERED: RecallSignal = {
   // review2 #4:卡构造边界强制——source 空 / reason 出集 → 抛错(「无信源卡构造不可能」的字面兑现)
   let badSourceThrew = false
   try {
-    buildWhyNowCard({ wish_id: 'x', wish_name: 'x', signal: { ...SIGNAL_PRICE, source: '' } as RecallSignal, evaluated_at: NOW.toISOString() })
+    buildWhyNowCard({ wish_id: 'x', wish_name: 'x', signal: { ...SIGNAL_PRICE, source: '' } as RecallSignal, match_hits: [], evaluated_at: NOW.toISOString() })
   } catch { badSourceThrew = true }
   ok(badSourceThrew, "§3h2 buildWhyNowCard source='' → 抛错(边界强制 provenance)")
   let badReasonThrew = false
   try {
-    buildWhyNowCard({ wish_id: 'x', wish_name: 'x', signal: { ...SIGNAL_PRICE, reason: 'bogus' } as unknown as RecallSignal, evaluated_at: NOW.toISOString() })
+    buildWhyNowCard({ wish_id: 'x', wish_name: 'x', signal: { ...SIGNAL_PRICE, reason: 'bogus' } as unknown as RecallSignal, match_hits: [], evaluated_at: NOW.toISOString() })
   } catch { badReasonThrew = true }
   ok(badReasonThrew, '§3h3 buildWhyNowCard reason 出闭集 → 抛错')
 
   // review2 #11:5 类行动建议——评估器必须真触发(去 fallback,回归即红)
   const reasonCards: WhyNowCard[] = []
   for (const s of [SIGNAL_HOLIDAY, SIGNAL_PRICE, SIGNAL_WEATHER, SIGNAL_ROUTE, SIGNAL_RECOVERED]) {
-    const fired = evaluateRecallTriggers(POOL, { now: NOW, signals: [s] })
+    const fired = evaluateRecallTriggers(POOL, { now: NOW, match_context: MATCH_CTX, signals: [s] })
     ok(fired.length >= 1, `§3i0 前置:信号 ${s.reason} 真触发(实测 ${fired.length};无 fallback 掩盖)`)
     reasonCards.push(buildWhyNowCard(fired[0]))
   }
@@ -294,6 +300,7 @@ const SIGNAL_RECOVERED: RecallSignal = {
   const result = evaluatePoolRecall({
     pool: POOL,
     tick: TICK,
+    match_context: MATCH_CTX,
     signals: [SIGNAL_HOLIDAY, SIGNAL_PRICE],
   })
   ok(result.triggers.length === 3, `§4a 触发数 = 广播(2)+ 定向(1)= 3(实测 ${result.triggers.length})`)
@@ -301,7 +308,7 @@ const SIGNAL_RECOVERED: RecallSignal = {
   ok(result.cards.every(c => c.source_tag.startsWith('[source:')), '§4c 每张卡都带 source tag')
 
   // 无信号 → 全空
-  const emptyResult = evaluatePoolRecall({ pool: POOL, tick: TICK, signals: [] })
+  const emptyResult = evaluatePoolRecall({ pool: POOL, tick: TICK, match_context: MATCH_CTX, signals: [] })
   ok(emptyResult.triggers.length === 0 && emptyResult.cards.length === 0, '§4d 无信号 → 空(不硬推)')
 }
 
@@ -311,15 +318,16 @@ const SIGNAL_RECOVERED: RecallSignal = {
 
 {
   const sink = new ArrayRecallSink()
-  const scheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal }, WhyNowCard>({
+  const scheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal; match_hits: string[] }, WhyNowCard>({
     evaluate: (tick) => tick.source === 'test-tick'
-      ? evaluatePoolRecall({ pool: POOL, tick, signals: [SIGNAL_PRICE] }).triggers
-        .map(t => ({ wish_id: t.wish_id, signal: t.signal }))
+      ? evaluatePoolRecall({ pool: POOL, tick, match_context: MATCH_CTX, signals: [SIGNAL_PRICE] }).triggers
+        .map(t => ({ wish_id: t.wish_id, signal: t.signal, match_hits: t.match_hits }))
       : [], // 非 test-tick 的 tick 无信号(§5e 用)
     toCard: (evaluation, tick) => buildWhyNowCard({
       wish_id: evaluation.wish_id,
       wish_name: POOL.find(p => p.wish_id === evaluation.wish_id)?.name ?? evaluation.wish_id,
       signal: evaluation.signal,
+      match_hits: evaluation.match_hits,  // #577 收口:真命中证据贯穿到卡
       evaluated_at: tick.at.toISOString(),  // review #2:取 tick.at,不用外层 NOW
     }),
     sink,
@@ -343,13 +351,14 @@ const SIGNAL_RECOVERED: RecallSignal = {
       if (c.title.includes('千岛湖')) throw new Error('sink exploded')  // 第二张卡炸
     },
   }
-  const flakyScheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal }, WhyNowCard>({
-    evaluate: (tick) => evaluateRecallTriggers(POOL, { now: tick.at, signals: [SIGNAL_HOLIDAY] })
-      .map(t => ({ wish_id: t.wish_id, signal: t.signal })),
+  const flakyScheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal; match_hits: string[] }, WhyNowCard>({
+    evaluate: (tick) => evaluateRecallTriggers(POOL, { now: tick.at, match_context: MATCH_CTX, signals: [SIGNAL_HOLIDAY] })
+      .map(t => ({ wish_id: t.wish_id, signal: t.signal, match_hits: t.match_hits })),
     toCard: (evaluation, tick) => buildWhyNowCard({
       wish_id: evaluation.wish_id,
       wish_name: POOL.find(p => p.wish_id === evaluation.wish_id)?.name ?? evaluation.wish_id,
       signal: evaluation.signal,
+      match_hits: evaluation.match_hits,
       evaluated_at: tick.at.toISOString(),
     }),
     sink: flakySink,
@@ -361,9 +370,9 @@ const SIGNAL_RECOVERED: RecallSignal = {
     `§5e3 失败原因记入 errors 数组(实测 ${JSON.stringify(flakyResult.errors)})`)
 
   // review2 #5:toCard 抛错 → 同样逐卡容错(failed 计数,不杀 run)
-  const badCardScheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal }, WhyNowCard>({
-    evaluate: (tick) => evaluateRecallTriggers(POOL, { now: tick.at, signals: [SIGNAL_PRICE] })
-      .map(tr => ({ wish_id: tr.wish_id, signal: tr.signal })),
+  const badCardScheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal; match_hits: string[] }, WhyNowCard>({
+    evaluate: (tick) => evaluateRecallTriggers(POOL, { now: tick.at, match_context: MATCH_CTX, signals: [SIGNAL_PRICE] })
+      .map(tr => ({ wish_id: tr.wish_id, signal: tr.signal, match_hits: tr.match_hits })),
     toCard: () => { throw new Error('card exploded') },
     sink: new ArrayRecallSink(),
   })
@@ -383,7 +392,7 @@ const SIGNAL_RECOVERED: RecallSignal = {
 
   // InMemoryTickSource 驱动多 tick 端到端
   const multiSink = new ArrayRecallSink()
-  const multiScheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal }, WhyNowCard>({
+  const multiScheduler = new RecallTickScheduler<{ wish_id: string; signal: RecallSignal; match_hits: string[] }, WhyNowCard>({
     evaluate: evaluatePoolRecallShim,
     toCard: toCardShim,
     sink: multiSink,
@@ -400,18 +409,168 @@ const SIGNAL_RECOVERED: RecallSignal = {
   ok(secondCard.evaluated_at === new Date(NOW.getTime() + 60_000).toISOString(),
     `§5f2 第二张卡 evaluated_at = 第二 tick 时刻(实测 ${secondCard.evaluated_at})`)
 
-  function evaluatePoolRecallShim(tick: RecallTick): { wish_id: string; signal: RecallSignal }[] {
-    return evaluatePoolRecall({ pool: POOL, tick, signals: [SIGNAL_PRICE] }).triggers
-      .map(t => ({ wish_id: t.wish_id, signal: t.signal }))
+  function evaluatePoolRecallShim(tick: RecallTick): { wish_id: string; signal: RecallSignal; match_hits: string[] }[] {
+    return evaluatePoolRecall({ pool: POOL, tick, match_context: MATCH_CTX, signals: [SIGNAL_PRICE] }).triggers
+      .map(t => ({ wish_id: t.wish_id, signal: t.signal, match_hits: t.match_hits }))
   }
-  function toCardShim(evaluation: { wish_id: string; signal: RecallSignal }, tick: RecallTick): WhyNowCard {
+  function toCardShim(evaluation: { wish_id: string; signal: RecallSignal; match_hits: string[] }, tick: RecallTick): WhyNowCard {
     return buildWhyNowCard({
       wish_id: evaluation.wish_id,
       wish_name: POOL.find(p => p.wish_id === evaluation.wish_id)?.name ?? evaluation.wish_id,
       signal: evaluation.signal,
+      match_hits: evaluation.match_hits,
       evaluated_at: tick.at.toISOString(),
     })
   }
+}
+
+// ===========================================================================
+// §6 条件资格门(#577 收口):信号不能绕过 wish 条件——
+//   资格 = scoreWishMatch(原样复用)非空(任一 days/budget/month 命中;
+//   命名 down 通道否证)。match_context 缺省/畸形 → fail-closed 空返回,
+//   绝不降级为「全部广播」。语义:任一条件命中即有召回资格,
+//   不等于「全部出行条件已满足」。
+// ===========================================================================
+
+{
+  // 混合资格池:远超窗口 / 无条件 / 仅天数命中 / 依赖 down 通道 / 仅月份命中
+  const POOL_R = [
+    { wish_id: 'w-far', name: '天数预算都差得远', conditions: { days: 30, budget_cny: 99000 }, added_at: '2026-09-01T00:00:00Z' },
+    { wish_id: 'w-nocond', name: '无条件的愿望', added_at: '2026-09-02T00:00:00Z' },
+    { wish_id: 'w-onehit', name: '只有天数达标', conditions: { days: 3, budget_cny: 99000, best_months: [1] }, added_at: '2026-09-03T00:00:00Z' },
+    { wish_id: 'w-veto', name: '依赖已 down 通道', conditions: { days: 3, channels: ['hbcli-hotel'] }, added_at: '2026-09-04T00:00:00Z' },
+    { wish_id: 'w-months', name: '只看月份', conditions: { best_months: [10, 11] }, added_at: '2026-09-05T00:00:00Z' },
+  ]
+  const idsOf = (ts: ReturnType<typeof evaluateRecallTriggers>) => ts.map(t => t.wish_id).sort().join(',')
+
+  // §6a 有信号但条件全不命中(且无条件)→ 不触发
+  const unmatched = evaluateRecallTriggers(
+    [{ wish_id: 'w-far', name: '差得远', conditions: { days: 30, budget_cny: 99000 } }, POOL_R[1]],
+    { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: MATCH_CTX },
+  )
+  ok(unmatched.length === 0, `§6a 有信号但条件全不命中/无条件 → 0 触发(实测 ${unmatched.length};不硬推)`)
+
+  // §6b 资格门广播:仅条件命中的候选触发(w-veto days 命中但未提供 down 面 → 不否证,
+  //     与 scoreWishMatch「通道健康或健康面缺席不否证」原语义一致;§6g 单独钉否证)
+  const gate = evaluateRecallTriggers(POOL_R, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: MATCH_CTX })
+  ok(idsOf(gate) === 'w-months,w-onehit,w-veto', `§6b 广播只达条件命中的候选(实测 ${idsOf(gate)};w-far/w-nocond 不触发)`)
+
+  // §6c match_context 缺省 → fail-closed 空返回(绝不降级广播)
+  const noCtx = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_HOLIDAY] } as unknown as RecallContext)
+  ok(noCtx.length === 0, `§6c 缺 match_context → 0 触发(实测 ${noCtx.length};fail-closed 不广播)`)
+
+  // §6d match_context 畸形(JSON 往返产物:数字变字符串 / Set 变数组 / NaN)→ fail-closed
+  const strDays = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: { days: '7', budgetCny: 6000 } as unknown as RecallContext['match_context'] })
+  ok(strDays.length === 0, `§6d1 days='7' 字符串 → 0 触发(实测 ${strDays.length};畸形上下文 fail-closed)`)
+  const arrDown = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: { days: 7, channelDown: ['hbcli-hotel'] } as unknown as RecallContext['match_context'] })
+  ok(arrDown.length === 0, `§6d2 channelDown 是数组非 Set → 0 触发(实测 ${arrDown.length})`)
+  const nanDays = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: { days: Number.NaN } })
+  ok(nanDays.length === 0, `§6d3 days=NaN → 0 触发(实测 ${nanDays.length})`)
+
+  // §6e match_context 形状合法但全空({})→ 零证据零触发(不把空窗口当广播授权)
+  const emptyCtx = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: {} })
+  ok(emptyCtx.length === 0, `§6e 空 match_context({})→ 0 触发(实测 ${emptyCtx.length};零证据不硬推)`)
+
+  // §6f 定向信号不能绕过条件门:指定 id 无条件命中 → 0;混合 id → 只达命中的那个
+  const bypass = evaluateRecallTriggers([POOL_R[0]], { now: NOW, signals: [{ ...SIGNAL_PRICE, wish_ids: ['w-far'] }], match_context: MATCH_CTX })
+  ok(bypass.length === 0, `§6f1 定向信号指向条件不命中的候选 → 0 触发(实测 ${bypass.length};定向不扩权)`)
+  const mixed = evaluateRecallTriggers(POOL_R, { now: NOW, signals: [{ ...SIGNAL_PRICE, wish_ids: ['w-onehit', 'w-far'] }], match_context: MATCH_CTX })
+  ok(idsOf(mixed) === 'w-onehit', `§6f2 定向混合 id → 只达条件命中的(实测 ${idsOf(mixed)})`)
+
+  // §6g 命名 down 通道否证:days 命中但依赖通道 down → 否证(定向/广播都不得触发);
+  //     通道健康或 down 的是别的通道 → 照常触发(scoreWishMatch 原语义)
+  const vetoPool = [POOL_R[3]]
+  const preVeto = evaluateRecallTriggers(vetoPool, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: MATCH_CTX })
+  ok(preVeto.length === 1, `§6g0 无否证信息时 days 命中 → 有资格(实测 ${preVeto.length})`)
+  const vetoCtx = { ...MATCH_CTX, channelDown: new Set(['hbcli-hotel']) }
+  const vetoed = evaluateRecallTriggers(vetoPool, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: vetoCtx })
+  ok(vetoed.length === 0, `§6g1 依赖通道 down → 广播否证(实测 ${vetoed.length})`)
+  const vetoTargeted = evaluateRecallTriggers(vetoPool, { now: NOW, signals: [{ ...SIGNAL_PRICE, wish_ids: ['w-veto'] }], match_context: vetoCtx })
+  ok(vetoTargeted.length === 0, `§6g2 依赖通道 down → 定向同样否证(实测 ${vetoTargeted.length};定向不绕过否证)`)
+  const otherDown = evaluateRecallTriggers(vetoPool, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: { ...MATCH_CTX, channelDown: new Set(['other-channel']) } })
+  ok(otherDown.length === 1, `§6g3 down 的是无关通道 → 不误杀(实测 ${otherDown.length})`)
+
+  // §6h 一项命中即有资格(既有语义):仅 days 命中 / 仅 month 命中,且触发携带逐项命中
+  const one = evaluateRecallTriggers(POOL_R, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: MATCH_CTX })
+  const onehit = one.find(t => t.wish_id === 'w-onehit')
+  const monthhit = one.find(t => t.wish_id === 'w-months')
+  ok(onehit !== undefined && Array.isArray(onehit.match_hits) && onehit.match_hits.join('+') === 'days≥3',
+    `§6h1 仅 days 命中即有资格,match_hits=[days≥3](实测 ${String(onehit?.match_hits)})`)
+  ok(monthhit !== undefined && Array.isArray(monthhit.match_hits) && monthhit.match_hits.join('+') === 'month=10',
+    `§6h2 仅 month 命中即有资格,match_hits=[month=10](实测 ${String(monthhit?.match_hits)})`)
+
+  // §6i 畸形 conditions/条目不崩,资格由 scoreWishMatch 原语义判定:
+  //     conditions 为字符串/数字 → 无命中;best_months 为字符串 → 忽略但 days 照常命中;null 条目被滤
+  const POOL_MAL = [
+    { wish_id: 'w-cond-str', name: 'conditions 是字符串', conditions: '5天', added_at: '2026-09-06T00:00:00Z' },
+    { wish_id: 'w-cond-num', name: 'conditions 是数字', conditions: 42, added_at: '2026-09-07T00:00:00Z' },
+    { wish_id: 'w-months-str', name: 'best_months 是字符串', conditions: { days: 1, best_months: '10,11' }, added_at: '2026-09-08T00:00:00Z' },
+    null,
+  ] as unknown as typeof POOL
+  let malThrew = false
+  let mal: ReturnType<typeof evaluateRecallTriggers> = []
+  try {
+    mal = evaluateRecallTriggers(POOL_MAL, { now: NOW, signals: [SIGNAL_HOLIDAY], match_context: MATCH_CTX })
+  } catch { malThrew = true }
+  ok(!malThrew, '§6i1 畸形 conditions/条目 → 不抛不崩')
+  ok(mal.length === 1 && mal[0]?.wish_id === 'w-months-str',
+    `§6i2 畸形形状按原评分语义判定(实测 ${mal.map(t => t.wish_id).join(',')};字符串/数字 conditions 无命中,字符串 best_months 忽略)`)
+
+  // §6j 全 5 类原因在有效条件下可达,且每个触发都带非空逐项命中
+  const allR = evaluateRecallTriggers(POOL, { now: NOW, signals: [SIGNAL_HOLIDAY, SIGNAL_PRICE, SIGNAL_WEATHER, SIGNAL_ROUTE, SIGNAL_RECOVERED], match_context: MATCH_CTX })
+  const allReasons = new Set(allR.map(t => t.signal.reason))
+  ok(allReasons.size === 5 && RECALL_REASONS.every(r => allReasons.has(r)),
+    `§6j1 有效条件下 5 类原因全部可达(实测 ${allReasons.size} 类)`)
+  ok(allR.every(t => Array.isArray(t.match_hits) && t.match_hits.length > 0),
+    `§6j2 每个触发都携带非空 match_hits(实测 ${allR.filter(t => !Array.isArray(t.match_hits) || t.match_hits.length === 0).length} 个缺命中)`)
+}
+
+// ===========================================================================
+// §7 命中证据贯穿(#577 收口):触发 → 卡 → 渲染边界——
+//   卡只陈述实际命中的愿望条件,渲染面显式声明「非全部出行条件已满足」;
+//   手工构造的卡不发明证据。
+// ===========================================================================
+
+{
+  // §7a 集成:真命中证据进卡与渲染(证据逐项 = scoreWishMatch 的 hits 原文)
+  const result = evaluatePoolRecall({ pool: POOL, tick: TICK, signals: [SIGNAL_PRICE], match_context: MATCH_CTX })
+  const priceCard = result.cards[0]
+  ok(priceCard !== undefined && Array.isArray(priceCard.match_evidence) && priceCard.match_evidence.join('+') === 'days≥5+budget≥5000',
+    `§7a 卡携带真命中证据(实测 ${String(priceCard?.match_evidence)})`)
+  const evidenceLine = renderWhyNowCardLine(priceCard)
+  ok(evidenceLine.includes('命中条件:days≥5+budget≥5000'), `§7b 渲染行陈述命中条件(实测含「${evidenceLine.slice(0, 80)}…」)`)
+  ok(evidenceLine.includes('非全部出行条件已满足'), '§7c 渲染行显式声明不主张全部出行条件已满足')
+  ok(evidenceLine.includes('证据边界'), '§7c2 渲染行保留证据边界标记(渲染契约不变)')
+
+  // §7d 缺 match_context → 集成层同样 fail-closed(0 触发 0 卡)
+  const noCtx = evaluatePoolRecall({ pool: POOL, tick: TICK, signals: [SIGNAL_HOLIDAY] } as unknown as Parameters<typeof evaluatePoolRecall>[0])
+  ok(noCtx.triggers.length === 0 && noCtx.cards.length === 0, `§7d 集成缺 match_context → 空(实测 ${noCtx.triggers.length}/${noCtx.cards.length})`)
+
+  // §7e 手工构造的卡不发明证据:match_hits 缺省/空数组/畸形 → 卡无证据、渲染无命中子句
+  const manual = buildWhyNowCard({ wish_id: 'w-x', wish_name: '手工卡', signal: SIGNAL_PRICE, evaluated_at: NOW.toISOString() } as unknown as RecallTrigger)
+  ok(manual.match_evidence === undefined, `§7e1 手工卡无 match_hits → 卡无证据(实测 ${String(manual.match_evidence)})`)
+  const emptyHits = buildWhyNowCard({ wish_id: 'w-x', wish_name: '手工卡', signal: SIGNAL_PRICE, match_hits: [], evaluated_at: NOW.toISOString() })
+  ok(emptyHits.match_evidence === undefined, `§7e2 match_hits=[] → 卡无证据(空数组不发明;实测 ${String(emptyHits.match_evidence)})`)
+  let garbledThrew = false
+  let garbled: WhyNowCard | null = null
+  try {
+    garbled = buildWhyNowCard({ wish_id: 'w-x', wish_name: '手工卡', signal: SIGNAL_PRICE, match_hits: 'days≥5' as unknown as string[], evaluated_at: NOW.toISOString() } as unknown as RecallTrigger)
+  } catch { garbledThrew = true }
+  ok(!garbledThrew && garbled !== null && garbled.match_evidence === undefined,
+    `§7e3 畸形 match_hits → 不崩且不发明证据(实测 ${String(garbled?.match_evidence)})`)
+  ok(!renderWhyNowCardLine(manual).includes('命中条件'), '§7f 无证据卡的渲染不出现命中条件子句')
+
+  // §7g scheduler 端到端:真命中证据贯穿 evaluate → toCard → sink
+  const evidenceSink = new ArrayRecallSink()
+  const evidenceScheduler = new RecallTickScheduler<{ wish_id: string; wish_name: string; signal: RecallSignal; match_hits: string[] }, WhyNowCard>({
+    evaluate: (tick) => evaluatePoolRecall({ pool: POOL, tick, signals: [SIGNAL_PRICE], match_context: MATCH_CTX }).triggers,
+    toCard: (evaluation, tick) => buildWhyNowCard({ ...evaluation, evaluated_at: tick.at.toISOString() }),
+    sink: evidenceSink,
+  })
+  await evidenceScheduler.run(TICK)
+  const evidenceCard = evidenceSink.items[0] as WhyNowCard
+  ok(Array.isArray(evidenceCard?.match_evidence) && evidenceCard.match_evidence.join('+') === 'days≥5+budget≥5000',
+    `§7g scheduler 端到端:卡证据 = 真命中(实测 ${String(evidenceCard?.match_evidence)})`)
 }
 
 console.log(`\nRECALL TESTS: ${pass} pass, ${fail} fail`)

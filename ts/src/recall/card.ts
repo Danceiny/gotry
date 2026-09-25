@@ -37,6 +37,10 @@ export interface WhyNowCard {
   evaluated_at: string
   /** 证据边界声明(恒 true;渲染面必须展示) */
   evidence_boundary: true
+  /** 实际命中的愿望条件(评估器从 scoreWishMatch 带出的逐项 hits,如「days≥5」;
+   *  **缺省 = 该卡未附条件命中证据**——手工构造的卡不发明证据;渲染面必须把
+   *  「命中部分愿望条件」与「全部出行条件已满足」区分开,后者永不主张)。 */
+  match_evidence?: string[]
 }
 
 const ACTION_HINT: Record<RecallReason, string> = {
@@ -51,6 +55,9 @@ const ACTION_HINT: Record<RecallReason, string> = {
  * 构造 why-now 卡:trigger → 人话卡片。
  * **边界强制 provenance**:signal.source 非空 + reason 在闭集,否则抛错
  * (「无信源的卡构造上不可能存在」的字面兑现——手工构造的 trigger 同样受检)。
+ * **证据诚实**:trigger.match_hits 是非空字符串数组时原样带上(all-or-nothing,
+ * 不部分裁剪、不发明);缺省/空/畸形 → 卡不带 match_evidence——手工构造的卡
+ * 宁可无证据,不虚构命中。
  * title 格式:`现在可以去了:${wish_name}`(半角冒号)——封闭词汇,改措辞 = 契约变更。
  */
 export function buildWhyNowCard(trigger: RecallTrigger): WhyNowCard {
@@ -64,6 +71,10 @@ export function buildWhyNowCard(trigger: RecallTrigger): WhyNowCard {
   if (!RECALL_REASONS.includes(signal.reason as RecallReason)) {
     throw new Error(`buildWhyNowCard:signal.reason 不在闭集(实测 ${String(signal.reason)};允许:${RECALL_REASONS.join(' / ')})`)
   }
+  // 条件命中证据:all-or-nothing 校验(非空的非空字符串数组才带上;不发明、不裁剪)
+  const rawHits: unknown = (trigger as Partial<RecallTrigger>).match_hits
+  const hasEvidence = Array.isArray(rawHits) && rawHits.length > 0
+    && rawHits.every(h => typeof h === 'string' && h.length > 0)
   return {
     title: `现在可以去了:${wish_name}`,
     wish_id,
@@ -75,11 +86,21 @@ export function buildWhyNowCard(trigger: RecallTrigger): WhyNowCard {
     source_tag: `[source:${signal.source}]`,
     evaluated_at,
     evidence_boundary: true,
+    ...(hasEvidence ? { match_evidence: [...(rawHits as string[])] } : {}),
   }
 }
 
 /** 渲染为单行中文摘要(对话/日志面用;卡片数据仍是权威)。
- *  必须含证据边界标记(渲染契约:每个渲染面都要展示 evidence_boundary)。 */
+ *  必须含证据边界标记(渲染契约:每个渲染面都要展示 evidence_boundary);
+ *  卡带 match_evidence 时逐项陈述命中条件,并显式声明**不主张全部出行条件已满足**
+ *  (命中部分愿望条件只是召回资格,不是出行可行性证明)。 */
 export function renderWhyNowCardLine(card: WhyNowCard): string {
-  return `${card.title}——${card.reason_label}(当前:${card.current_value};阈值:${card.threshold})。${card.action_hint} ${card.source_tag} [证据边界:仅证据驱动]`
+  const evidence = Array.isArray(card.match_evidence) && card.match_evidence.length > 0
+    ? card.match_evidence
+    : null
+  const conditionClause = evidence !== null ? `;命中条件:${evidence.join('+')}` : ''
+  const boundary = evidence !== null
+    ? '[证据边界:仅命中上述愿望条件,非全部出行条件已满足]'
+    : '[证据边界:仅证据驱动]'
+  return `${card.title}——${card.reason_label}(当前:${card.current_value};阈值:${card.threshold}${conditionClause})。${card.action_hint} ${card.source_tag} ${boundary}`
 }
