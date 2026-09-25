@@ -1,6 +1,6 @@
 [English](extension-webstore-submission.md) | [简体中文](extension-webstore-submission.zh-CN.md)
 
-# GoTry Session Bridge — Chrome Web Store Submission Materials (ADR-21 Distribution Track B)
+# Stai — Chrome Web Store Submission Materials (ADR-21 Distribution Track B)
 
 > Status: **Live on the store (2026-09-02, v0.1.0 approved and published)**. Store page:
 > https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd
@@ -28,40 +28,48 @@ the port pool (8791-8795) and the host whitelist are unchanged.
 
 ## Single Purpose statement (required by review)
 
-> On the user's own Ctrip (携程) flight-search pages, read-only sniffing of the search responses
-> issued by the page itself and of the **names** of login-ticket cookies, handed over the local
-> loopback port (127.0.0.1) to the user's local GoTry program, to reuse the user's sign-in state
-> for cross-validation of itinerary data under the user's explicit authorization. The extension
-> performs zero writes and sends zero data off the machine.
+> Stai connects authorized Ctrip flight/hotel, 12306 rail, and Dida supplier-portal
+> searches to GoTry. It relays page-produced search results and selected login-cookie
+> **names** through the local bridge or an authenticated backend bridge supplied by the
+> employee portal. That portal can also provide a one-time Dida login payload for
+> form fill and submission. The extension does not book or pay.
 
 ## Permission justifications (required by review)
 
 | Permission | Justification (paste-ready) |
 |---|---|
-| `cookies` | Reads only cookie **names** to determine sign-in state (the "search only when signed in" user gate). Never reads, stores, or transmits cookie values; login is always completed by the user on the Ctrip website. |
+| `cookies` | Selects specified cookie **names** for Ctrip or Dida sign-in checks; cookie values are not put in bridge results or persistent extension storage. |
 | `alarms` | Keeps the MV3 service worker alive (scheduling of the long-poll keep-alive interval); touches no data plane. |
-| `http://127.0.0.1:8791-8795/*` | Loopback communication with the user's local GoTry process (search task dispatch / response hand-back). Local only; never the open internet. |
-| `https://*.ctrip.com/*` | Passive sniffing of the batchSearch responses **issued by the flights.ctrip.com page itself** (passive MAIN-world listening; the extension initiates and modifies no requests); cookie-name reading also happens on this domain. |
-| content_scripts (flights.ctrip.com, dual world) | MAIN-world passive sniffing + isolated-world bridging to the local loopback; neither rewrites the page nor injects UI. |
+| `http://127.0.0.1:8791-8795/*` | Desktop bridge health, job polling and result delivery to local GoTry. |
+| `https://*.ctrip.com/*` | Ctrip flight/hotel page response observation and login-state cookie-name checks. |
+| `https://*.dida.com/*`, `https://dida.com/*`, `http://*.dida.com/*`, `http://dida.com/*` | Dida portal result observation and cookie-name checks, including the non-Secure session-cookie domain variants. |
+| `https://portal.hotelbyte.com/*`, `https://portal-test.hotelbyte.com/*` | Employee-portal join-ticket and one-time supplier-login handoff. The portal issues a bridge path on its own origin; search results and status can leave the device in this mode. |
+| content scripts on Ctrip, 12306, Dida and HotelByte pages | Observe matching page responses, hand off portal data, operate an authorized Dida search and fill/submit a portal-provided Dida login. |
 
 ## Privacy disclosures (Privacy tab)
 
-- No personally identifiable information is collected; nothing is sold, shared, or used for third-party purposes; no analytics/ad SDKs.
-- The only data flow: fragments of page search responses and cookie **names** → the local GoTry process at 127.0.0.1; nothing lands in the cloud.
-- Privacy policy URL (required in the console): `https://github.com/Danceiny/gotry/blob/main/docs/extension-privacy.md`
+- Declare page search content, page URL/title, login-cookie names, optional backend transmission and one-time supplier-login credential handling accurately. Do not claim "zero credentials", "local only" or "zero writes".
+- In the data-use checklist, select **authentication information** and **website content**. Also select **personally identifiable information** when a supplier username can be an email address, and **web history** because the bridge can receive the current page URL and title. Do not select unrelated categories without evidence.
+- The extension has no analytics/ad SDK; booking and payment are outside its scope.
+- The portal restricts bridge URLs to its own origin. The old broad HTTP/HTTPS optional-host patterns were unused and have been removed from this candidate.
+- Privacy policy URL (required in the console): `https://github.com/Danceiny/gotry/blob/main/docs/ops/extension-privacy.md`
 
 ## Store listing copy (paste-ready)
 
-- **Name**: GoTry Session Bridge
-- **Short description** (≤132 characters): Read-only sniffing of flight search results inside your own sign-in state, handed to local GoTry for itinerary cross-validation. Zero credentials handled, zero writes, zero data leaves the machine.
-- **Description**: GoTry is a local-first AI travel assistant. This extension is its optional data bridge: after a one-time install, GoTry can run read-only flight searches inside **your own** Ctrip sign-in state (cross-validating official-channel results), with no browser debugging port and no system-level permission dialogs. Read-only: it sniffs the page's own search responses, reads only cookie names to determine sign-in state, and never reads values, never writes, never uploads. Switch it off at any time from the extension card. See the repository README for details.
+- **Name**: Stai (formerly GoTry Session Bridge)
+- **Short description** (≤132 characters): Authorized travel search bridge for GoTry, with local or employee-portal backend delivery and supplier sign-in assistance.
+- **Description**: Stai connects supported Ctrip flight/hotel, 12306 rail and Dida supplier-portal searches to GoTry. It observes matching search responses from the pages and checks selected login-cookie names, never forwarding cookie values. Desktop results go to local GoTry; an authenticated HotelByte employee portal can connect the extension to its backend, so search data can leave the device. The portal may provide one-time Dida credentials for in-memory login-form fill and submission; the extension does not persist those credentials. It may operate Dida search controls, but does not book or pay. You can disable the extension in Chrome. See the privacy policy for details.
 - **Category**: Travel; **Languages**: Chinese (Simplified) + English
+
+## Reviewer access
+
+The dashboard's **Test instructions** fields are currently empty. The Ctrip desktop path can be checked with the public GoTry setup and a user-owned Ctrip session; the HotelByte employee-portal join and Dida one-time login require a separate review account. If that path is part of review, enter a dedicated test account directly in the dashboard's private credential fields and provide bounded steps in **Other instructions**. Never place credentials in this repository or a public issue.
 
 ## founder submission checklist (in order) — completed (live on the store 2026-09-02)
 
 1. ~~Chrome Web Store developer registration (one-time $5, Google account).~~
 2. ~~`node scripts/package-extension.mjs` produces the store zip; prepare the 128×128 icon and 1280×800 screenshots (uploaded separately in the store console).~~
-3. ~~Create item → upload zip → paste the copy / permission justifications / privacy disclosures above → point the privacy policy URL at the repository privacy document.~~ The current reader entry point is [extension-privacy.md](extension-privacy.md); this path correction does not mean the store console URL has been updated.
+3. ~~Create item → upload zip → paste listing/privacy disclosures.~~ The live listing's privacy URL still points to a moved path. Correct it to [extension-privacy.md](extension-privacy.md) in the dashboard before the next submission.
 4. ~~Submit for review~~ → approved and published (v0.1.0).
 5. Post-approval landing: bridge Origin whitelist trusting both channels (landed, `EXTENSION_ORIGINS` + §38); the Node side keeps the extension file / `manifest.key` precheck, and `sessionFlightSearch` / `sessionLogin` hand `installUrl` / `installAction` to the dsh UI on `needs-extension`; the old wizard no longer carries installation duty. The GitHub Releases channel (Track A) is kept as the review-free / versioned / rollback / mirror channel.
 
@@ -87,10 +95,10 @@ the port pool (8791-8795) and the host whitelist are unchanged.
 | Versioning / rollback / mirror | ✗ (store cadence) | ✓ (Release assets + SHA256) | ✗ |
 | Extension ID | `oeajpiccmonococjcegddlooeeohlbgd` | `olpgkofjhhiiiahdkkbcninhjmegghfe` | `olpgkofjhhiiiahdkkbcninhjmegghfe` |
 
-## 2026-09-09 changes pending submission (dida supplier portal)
+## Pending Stai submission (candidate 0.2.0.26)
 
-- `manifest.json` changes: host_permissions adds `https://*.dida.com/*` and `https://dida.com/*`; both content_scripts groups add `https://portal.dida.com/*`.
-- Trigger: `gotry_session_search kind=dida` (the hotel-be portal integration line) needs dida-domain injection and read-only login-ticket cookie-name permission.
+- The live store still serves 0.1.0 as GoTry Session Bridge. The 0.2.0.25 GitHub Release predates the Stai rename while current main still uses that version; a new version is needed for distinct bytes. Candidate 0.2.0.26 is preparation, not an authorized or submitted release.
+- Include the Dida/HotelByte permissions, portal join and login behavior in the dashboard listing and privacy answers. Record the exact built SHA and zip checksum. The repository Actions workflow currently has no configured CWS secrets; use the dashboard upload only after the founder confirms the exact version and window, or configure the workflow's secrets through the account owner.
 - **The store submission is tracked by [#346](https://github.com/Danceiny/gotry/issues/346)**; **founder decides whether / when / which version to bump** (founder-confirm regime, see `tech-strategy.md` §11 and the release discipline in `AGENTS.md`); **packaging / devconsole upload / status tracking / verification** are executed by the release executor under the repository release discipline; founder only completes the account-side personal approval / 2FA as required. Before the store build lands, store users calling dida get needs-extension (same as any brand-new site); the existing ctrip/12306 lanes are unaffected.
 - unpacked / GitHub Releases channels are unaffected by store review; merging the `feat/session-dida-portal` branch takes effect immediately (PR #297 is merged; code and manifest are already in place).
-- **Current evidence boundary**: the repository holds no receipt of this submission or of a store pull-back verification; external state is tracked by [#346](https://github.com/Danceiny/gotry/issues/346).
+- **Current evidence boundary**: there is no dashboard receipt of this submission or store pull-back verification. Upload, review acceptance and live publication remain separate states, tracked by [#346](https://github.com/Danceiny/gotry/issues/346) and [#537](https://github.com/Danceiny/gotry/issues/537).

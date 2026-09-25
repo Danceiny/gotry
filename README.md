@@ -132,14 +132,14 @@ Node ≥ 22.15. LLM keys live in the dsh host UI (OpenAI-compatible endpoints in
 
 ## Privacy and Trust
 
-The account-session channel reads realtime data from **your own logged-in Chrome**, under four hard rules:
+The personal desktop account-session channel reads realtime data from **your own logged-in Chrome**, under four hard rules:
 
 1. **Login happens on the external website** — no passwords, SMS codes, or cookie values; cookie *names* only.
 2. **Consent card, once per session** — refusal revokes it; master switch `sessionAccess: ask|allow|off`.
 3. **Physically read-only** — a ReadGuard aborts writes at the network layer; a captcha stops the agent.
 4. **Never hijacks your browser** — dedicated tabs only; tests never open windows.
 
-One-time prerequisite: the [GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) extension (one-click, auto-updates) — until installed, tools return `needs-extension` with the store link and spend nothing.
+One-time prerequisite: the [Stai extension (currently listed as GoTry Session Bridge)](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) (one-click, auto-updates) — until installed, tools return `needs-extension` with the store link and spend nothing. The separate HotelByte employee-portal flow can send search data to an authorized backend bridge and can handle one-time supplier-login credentials in memory; see the [extension privacy policy](docs/ops/extension-privacy.md).
 
 Trust is structural, not promised:
 

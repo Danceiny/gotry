@@ -1,6 +1,6 @@
 [English](extension-webstore-submission.md) | [简体中文](extension-webstore-submission.zh-CN.md)
 
-# GoTry Session Bridge — Chrome Web Store 上架材料（ADR-21 分发 B 轨）
+# Stai — Chrome Web Store 上架材料（ADR-21 分发 B 轨）
 
 > 状态：**已上架（2026-09-02，v0.1.0 过审发布）**。商店页：
 > https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd
@@ -22,38 +22,47 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 
 ## 单一用途声明（Single Purpose，审核必填）
 
-> 在用户自己的携程航班检索页面上，只读嗅探页面自身发出的检索回包与登录票据
-> cookie 的**名称**，经本机回环端口（127.0.0.1）交给用户本机的 GoTry 程序，
-> 用于在用户明示授权下复用其登录态做行程数据交叉验证。扩展零写行为、零数据外传。
+> Stai 将获准的携程机票及酒店、12306 火车、Dida 供应商门户检索连接至 GoTry。
+> 扩展把页面产生的检索结果与指定登录 cookie 的**名称**交给本机桥，或员工门户
+> 提供的已认证后端桥。员工门户还可提供一次性 Dida 登录载荷，供扩展填写并提交
+> 登录表单。扩展不执行预订或付款。
 
 ## 权限逐条理由（Permission Justifications，审核必填）
 
 | 权限 | 理由（可直接粘贴） |
 |---|---|
-| `cookies` | 仅读取 cookie **名称**判断登录态（「已登录才检索」的用户门）。绝不读取、存储或传输 cookie 值；登录永远在携程官网由用户完成。 |
+| `cookies` | 选取指定 cookie 的**名称**判断携程或 Dida 登录态；不把 cookie 值放进桥接结果或持久化扩展存储。 |
 | `alarms` | MV3 Service Worker 保活（长轮询取活间隔的调度），不涉及任何数据面。 |
-| `http://127.0.0.1:8791-8795/*` | 与用户本机 GoTry 进程的回环通信（检索任务下发/回包上交）。仅本机，不涉外网。 |
-| `https://*.ctrip.com/*` | 被动嗅探 flights.ctrip.com 页面**自己发出**的 batchSearch 检索回包（MAIN-world 被动监听，扩展不发起、不修改任何请求）；cookie 名读取也在该域。 |
-| `content_scripts`（flights.ctrip.com，双 world） | MAIN world 被动嗅探 + isolated world 桥接本机回环；两者都不改写页面、不注入 UI。 |
+| `http://127.0.0.1:8791-8795/*` | 桌面形态的本机 GoTry 桥健康检查、任务轮询与结果交付。 |
+| `https://*.ctrip.com/*` | 携程机票及酒店页面回包观察和登录态 cookie 名称检查。 |
+| `https://*.dida.com/*`、`https://dida.com/*`、`http://*.dida.com/*`、`http://dida.com/*` | Dida 门户回包观察与 cookie 名称检查，包含非 Secure 会话 cookie 的域变体。 |
+| `https://portal.hotelbyte.com/*`、`https://portal-test.hotelbyte.com/*` | 员工门户 join ticket 与一次性供应商登录载荷交接；门户签发同源桥路径，该形态的检索结果和状态可能离开设备。 |
+| 携程、12306、Dida 与 HotelByte 页面上的内容脚本 | 观察匹配回包、传递门户数据、操作获准的 Dida 检索，以及代填并提交门户提供的 Dida 登录。 |
 
 ## 隐私披露（Privacy tab）
 
-- 不收集个人身份信息；不出售、不共享、不用于第三方目的；无分析/广告 SDK。
-- 唯一数据流向：页面检索回包片段与 cookie **名** → 127.0.0.1 本机 GoTry 进程，不落云。
-- 隐私政策 URL（后台必填）：`https://github.com/Danceiny/gotry/blob/main/docs/extension-privacy.md`
+- 准确申报页面检索内容、页面 URL／标题、登录 cookie 名称、可选后端传输，以及一次性供应商登录凭据处理；不得再声称「零凭证经手」「仅本机」「零写行为」。
+- 数据使用清单勾选**身份验证信息**与**网站内容**。供应商用户名可能是邮箱，另勾选**个人身份信息**；桥可能收到当前页面 URL 与标题，另勾选**网络记录**。没有证据的其他类别不勾选。
+- 扩展没有统计或广告 SDK，也不执行预订、付款。
+- 门户把桥地址限制在自身同源。旧版全网 HTTP／HTTPS 可选主机权限没有被实际使用，本候选版本已移除。
+- 隐私政策 URL（后台必填）：`https://github.com/Danceiny/gotry/blob/main/docs/ops/extension-privacy.md`
 
 ## 商店文案（可直接粘贴）
 
-- **名称**：GoTry Session Bridge
-- **简述**（≤132 字符）：在你自己的登录态里只读嗅探航班检索结果，交给本机 GoTry 做行程交叉验证。零凭证经手，零写行为，零数据外传。
-- **描述**：GoTry 是本地优先的 AI 旅行助手。本扩展是它的可选数据桥：安装一次后，GoTry 可以在你**自己的**携程登录态里做只读航班检索（交叉验证官方通道结果），不再需要开启浏览器调试端口，也没有系统级权限弹窗。只读：嗅探页面自身的检索回包，只取 cookie 名称判断登录态，绝不读值、绝不写、绝不上传。随时可在扩展卡片一键关闭。详见仓库 README。
+- **名称**：Stai（原名 GoTry Session Bridge）。
+- **简述**（≤132 字符）：连接获准的旅行检索与 GoTry，可经本机或员工门户后端传递结果，并辅助供应商登录。
+- **描述**：Stai 将获准的携程机票及酒店、12306 火车、Dida 供应商门户检索连接至 GoTry。扩展观察页面的匹配检索回包，仅选取指定登录 cookie 的名称，不转发 cookie 值。桌面形态把结果交给本机 GoTry；已认证的 HotelByte 员工门户可以连接其后端桥，检索数据因此可能离开设备。门户可以提供一次性 Dida 凭据供扩展在内存中代填并提交登录表单；扩展不持久保存该凭据。扩展可操作 Dida 检索控件，但不执行预订或付款。用户可在 Chrome 中停用扩展。详见隐私政策。
 - **类目**：Travel；**语言**：中文（简体）+ English
+
+## 审核访问
+
+后台的**测试说明**目前为空。审核员可按公开的 GoTry 安装步骤及自有携程会话检查桌面形态；HotelByte 员工门户 join 与 Dida 一次性登录则需要单独的审核测试账号。若审核覆盖该路径，应直接在后台私密的凭据字段填写专用账号，并在**其他说明**中写清有限步骤。不得把凭据写进本仓库或公开 issue。
 
 ## founder 提交清单（顺序）——已走完（2026-09-02 上架）
 
 1. ~~Chrome Web Store 开发者注册（一次性 $5，Google 账号）。~~
 2. ~~`node scripts/package-extension.mjs` 产 store zip；准备 128×128 图标与 1280×800 截图（商店后台单独上传）。~~
-3. ~~新建 item → 上传 zip → 粘贴上文文案/权限理由/隐私披露 → 隐私政策 URL 指向仓库隐私文档。~~ 当前读者入口为 [extension-privacy.md](extension-privacy.zh-CN.md)；此路径修正不表示商店后台 URL 已更新。
+3. ~~新建 item → 上传 zip → 填写商店文案与隐私披露。~~ 当前商店隐私政策 URL 仍指向已迁移的旧路径；下次提审前须在后台改为 [extension-privacy.md](extension-privacy.zh-CN.md)。
 4. ~~提交审核~~ → 过审发布（v0.1.0）。
 5. 过审后落地：桥 Origin 白名单双通道同信（已落，`EXTENSION_ORIGINS` + §38）；Node 侧保留 extension 文件/`manifest.key` 预检，`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时以 `installUrl`/`installAction` 交 dsh UI，旧 wizard 不再承担安装职责。GitHub Releases 通道（A 轨）保留为免审核/版本化/回滚/镜像通道。
 
@@ -76,10 +85,10 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 | 版本化/回滚/镜像 | ✗（商店节奏） | ✓（Release 资产 + SHA256） | ✗ |
 | 扩展 ID | `oeajpiccmonococjcegddlooeeohlbgd` | `olpgkofjhhiiiahdkkbcninhjmegghfe` | `olpgkofjhhiiiahdkkbcninhjmegghfe` |
 
-## 2026-09-09 待提审变更（dida 供应商门户）
+## Stai 待提审变更（候选版本 0.2.0.26）
 
-- `manifest.json` 变更：host_permissions 新增 `https://*.dida.com/*` 与 `https://dida.com/*`；两组 content_scripts 新增 `https://portal.dida.com/*`。
-- 触发：`gotry_session_search kind=dida`（hotel-be portal integration 迁移线）需要 dida 域注入与票据 cookie 名只读权限。
+- 线上商店仍为 GoTry Session Bridge 0.1.0。GitHub Release 的 0.2.0.25 早于 Stai 更名，当前 main 却仍使用该版本；不同内容需要新版本号。0.2.0.26 只是准备候选，尚未获准或提审。
+- 后台文案与隐私问题须如实覆盖 Dida／HotelByte 权限、门户 join 和登录行为，并记录构建源码 SHA 与 zip 校验值。目前仓库 Actions 未配置 CWS secrets；准确版本与窗口获创始人确认后，可走商店后台手动上传，或由账号所有者配置工作流凭据。
 - **商店提交流程由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪**；**founder 决策 whether / when / 升哪个 version**（founder-confirm 制，见 `tech-strategy.md` §11 与 `AGENTS.md` 发布纪律）；**版本打包 / devconsole 上传 / 状态跟踪 / 验证**由 release executor 在仓库发布纪律下执行；founder 仅完成账户侧必要的本人审批/2FA。提审前商店版用户调 dida 会得到 needs-extension（与全新站点一致），不影响既有 ctrip/12306 车道。
 - unpacked/GitHub Releases 通道不受商店审核影响，`feat/session-dida-portal` 分支合并即生效（PR #297 已 merge，代码与 manifest 已就位）。
-- **当前证据边界**：仓库尚无此次提审或商店回拉验证回执；外部状态由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪。
+- **当前证据边界**：尚无此次后台提审或商店回拉回执。上传、提审受理、商店在架是不同状态，由 [#346](https://github.com/Danceiny/gotry/issues/346) 与 [#537](https://github.com/Danceiny/gotry/issues/537) 跟踪。

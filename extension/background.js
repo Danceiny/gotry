@@ -8,8 +8,8 @@
  *       search       → 后台标签打开 job.url(per-site 白名单:flights/hotels.ctrip.com),等 content hook 嗅探回包,收尾关自己的标签;
  *       open-login   → 置前台打开登录入口页(登录页纪律 #34),标签留给用户,绝不代关;
  *       cookie-names → chrome.cookies 只读票据 cookie **名字**(值即取即弃,永不离开扩展——红线)。
- *   - 物理只读(ReadGuard 扩展车道形态):本 SW 绝不向站点发任何请求——检索请求由站点自己的
- *     页面代码发出,我们只「导航 + 被动转发 NETWORK_HINTS 命中响应」;写不是被禁止的行为,是不存在的原语。
+ *   - 检索回包经页面代码发出并被动观察;本 SW 的 fetch 只发往桥,不直接发往供应商站点。
+ *     员工门户另有获准的 Dida 搜索控件操作与一次性登录表单代填/提交,详见隐私政策。
  *
  * 桥地址(2026-09-11,founder 定案:执行环境=浏览器客户端,服务端零 Chrome):
  *   扩展**完全不暴露任何配置**给员工。hotel-be portal 在员工已登录的页面里通过
