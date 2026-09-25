@@ -134,14 +134,14 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 
 ## 隐私与可信
 
-账号会话通道用**你本人已登录的 Chrome** 读实时数据，四条 hard 规则：
+个人桌面账号会话通道用**你本人已登录的 Chrome** 读实时数据，四条规则：
 
 1. **登录在外部网站完成** —— 不碰密码、验证码、cookie 值；只读 cookie **名字**。
 2. **授权卡，每会话一次** —— 拒绝即吊销；总闸 `sessionAccess: ask|allow|off`。
 3. **物理只读** —— ReadGuard 在网络层中止写请求；遇验证码立即停。
 4. **绝不劫持你的浏览器** —— 只开独立标签页；测试永不自动开窗。
 
-前置（一次性）：[GoTry Session Bridge](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) 扩展（一键装、自动更新）；未安装时工具返回 `needs-extension` 并附链接，不消耗配额。
+前置（一次性）：[Stai 扩展（商店当前仍显示 GoTry Session Bridge）](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)（一键装、自动更新）；未安装时工具返回 `needs-extension` 并附链接，不消耗配额。独立的 HotelByte 员工门户形态可将检索数据发往获准的后端桥，也会在内存中处理一次性供应商登录凭据；详见[扩展隐私政策](docs/ops/extension-privacy.zh-CN.md)。
 
 可信不靠承诺，靠构造：
 

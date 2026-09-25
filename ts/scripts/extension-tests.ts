@@ -249,7 +249,7 @@ async function main(): Promise<void> {
     assert.deepEqual([...manifest.permissions].sort(), ['alarms', 'cookies'])
     assert.ok(!manifest.permissions.includes('storage'), '不得用 storage 持久化配置(配置由 portal 静默派发)')
     assert.equal(manifest.options_page, undefined, '不得挂 options 页(employee-facing UI 全禁)')
-    assert.ok(Array.isArray(manifest.optional_host_permissions), '应声明 optional_host_permissions(远程 gotry-backend 域按需授权)')
+    assert.equal(manifest.optional_host_permissions, undefined, '门户只签发同源桥路径，未调用运行时授权 API，不得保留全网可选权限')
   })
 
   const manifestPorts = manifest.host_permissions
@@ -405,13 +405,13 @@ async function main(): Promise<void> {
     assert.ok(manifestAny.content_scripts.every((b) => b.matches.includes(`https://${DIDA_SITE_HOST}/*`)), 'manifest 两组 content_scripts 均应注入 portal.dida.com')
     assert.ok(stripRe(contentMainJs).includes('"HotelPriceList"|"RatePlanList"'), 'dida 形状签名两侧必须逐字一致')
   })
-  await check('物理只读形态:扩展全部 fetch 只指向桥(loopback / 远程桥 URL / bridgeBase() / joinTicket.bridgeUrl 含 .replace 派生 / 变量别名 url);不用 chrome.debugger;站点域一律 zero fetch', () => {
+  await check('扩展 fetch 只指向桥(loopback / 门户同源桥 URL / bridgeBase() / joinTicket.bridgeUrl 含 .replace 派生 / 变量别名 url);不用 chrome.debugger;站点域一律 zero fetch', () => {
     for (const [name, src] of [['background', backgroundJs], ['content-main', contentMainJs], ['content-bridge', contentBridgeJs]] as const) {
       // joinTicket.bridgeUrl 分支用 [^}]* 而非 [^)]*:允许同一变量的 .replace(...) 等纯派生表达式(如去尾斜杠),
       // 派生链一旦写出嵌套 `${}` 或新目标即不再命中——只放宽对同一变量的匹配,不放宽目标集合(fail-closed)。
       const bridgeFetches = src.match(/fetch\(`?(?:http:\/\/127\.0\.0\.1|\$\{bridgeBase\(\)\}|\$\{remoteBridge\.baseUrl\}|\$\{joinTicket\.bridgeUrl[^}]*\})|\bfetch\(\s*url\b/g) ?? []
       const allFetches = src.match(/fetch\(/g) ?? []
-      assert.equal(bridgeFetches.length, allFetches.length, `${name}: fetch 必须只指向桥——扩展零写行为的代码面证据`)
+      assert.equal(bridgeFetches.length, allFetches.length, `${name}: fetch 必须只指向桥；门户另有登录代填和搜索控件操作`)
     }
     assert.ok(!backgroundJs.includes('chrome.debugger'), '扩展不得使用 chrome.debugger(警告条/调试面)')
   })
