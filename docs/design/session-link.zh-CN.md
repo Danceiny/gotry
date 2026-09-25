@@ -22,8 +22,10 @@ book/pay/confirm 在行动词位里不存在,写行动链接连构造都构造�
 - `session_ref` 是不透明引用、永不路径化:`/` `\` `..` NUL 与超 128 字符
   在 sign 与 verify **两层**都拒绝——「不写共享状态」的链接层版:链接
   永远无法命名 state 路径。
-- 失败闭集 2 类(`link_invalid` | `link_expired`);verify 永不抛错;
-  消费端 fail-closed(非法链接什么都不打开)。
+- 失败闭集 2 类（`link_invalid` | `link_expired`）；verify 永不抛错——
+  production 缺 secret、非字符串运行期 secret 键（数字/对象/Symbol 等 JS
+  畸形输入）与注入时钟失效（非有限时间或回调抛错）都是操作面错误，
+  收敛为 `link_invalid`；消费端 fail-closed（非法链接什么都不打开）。
 - URL 形态只在渲染期(`formatSessionLink(token, base?)`,默认
   `gotry://session/<token>`;本地 http 消费端可传
   `http://127.0.0.1:3080/session`);签名字节里不含宿主细节。
@@ -31,8 +33,11 @@ book/pay/confirm 在行动词位里不存在,写行动链接连构造都构造�
 ## 1. 为什么与 share token(Phase C)分立
 
 Session link 与 share token 共享同一套 HMAC 硬化清单——恰一个点、
-timingSafeEqual(先长度)、整数 ttl 上限 2^31-1、时钟注入、production
-fail-closed secret(`SESSION_LINK_HMAC_SECRET`)。但两者**刻意不共享校验器**:
+timingSafeEqual（先长度）、整数 ttl 上限 2^31-1、时钟注入（非有限或抛错的
+时钟在 verify 即 invalid）、production fail-closed secret
+（`SESSION_LINK_HMAC_SECRET`——刻意抛错保留在签发面；verify 把同一配置
+错误、非字符串运行期键与任何 HMAC 计算异常收敛为 `link_invalid`）。
+但两者**刻意不共享校验器**：
 
 | 维度 | share token(Phase C) | session link(Phase E) |
 |---|---|---|
@@ -69,6 +74,8 @@ WriteGate seal 原样未动;本层不新增任何写路径。)
 护栏**两层都跑**:sign 抛错(坏链接不出厂);verify 拒一切绕过 sign 的
 东西(手工 HMAC 也会在形态检查上死掉)。过期判定用注入时钟对
 `created_at + ttl_seconds * 1000`;`ttl_seconds = 0` 是合法的单时刻链接。
+非有限或抛错的时钟本身就是 `link_invalid`——无效时间上绝不产生接受
+（`NaN` 对任何上界比较恒 false，曾让过期链接静默通过）。
 
 ## 4. URL 渲染与反解
 
@@ -126,9 +133,11 @@ Phase D 合同补齐:一键行动必须结构化命名目标,从 title 字符串
 
 本切片落地:
 
-- `ts/src/session-link/session-link.ts`——sign/verify/format/parse + 护栏。
+- `ts/src/session-link/session-link.ts`——sign/verify/format/parse + 护栏
+  （verify 期的 secret 解析与时钟读取在守卫体内；签发面保留刻意的配置抛错）。
 - `ts/src/session-link/plan-it-action.ts`——一键行动卡。
-- `ts/scripts/session-link-tests.ts`——80 断言,全离线。
+- `ts/scripts/session-link-tests.ts`——96 断言，全离线（production 缺 secret
+  在隔离子进程环境里验证）。
 - WhyNowCard `wish_id`;`scripts/run-all-tests.sh` §6j 注册。
 
 明确非声明:

@@ -12,7 +12,13 @@
  *   - ttl 契约:非负整数、上限 2^31-1 秒(防 expiresMs 溢出 Infinity 永不过期);
  *   - 校验使用 timingSafeEqual(先长度比对)防时序侧信道;
  *   - secret 默认从 `SHARE_HMAC_SECRET` env 取;缺省且 NODE_ENV=production 时
- *     **fail-closed 抛错**(绝不静默用仓库里公开的 dev 常量签生产 token);
+ *     **fail-closed**(绝不静默用仓库里公开的 dev 常量签生产 token)——刻意抛错
+ *     保留在签发面(resolve/sign);verify 面把同样的配置错误收敛为 `token_invalid`,
+ *     非字符串运行期键(数字/对象/Symbol 等 JS 畸形输入)同样收敛,HMAC 计算
+ *     本身也在守卫内——任何调用方/配置输入都无法越出「永不抛错」的校验边界;
+ *   - 注入时钟本身失效(getTime 非有限值或回调抛错)→ fail-closed `token_invalid`:
+ *     `NaN > expiresMs` 恒 false,曾把过期 token 静默判成有效——无效时间上
+ *     不产生任何接受;
  *   - 篡改/过期/格式错三类失败都走 ShareFailureReason 同一闭集。
  */
 
@@ -67,12 +73,27 @@ function isTokenTarget(value: unknown): value is ShareTokenTarget {
     && typeof t.address === 'string'
 }
 
-/** 校验:格式(恰一个点)→ HMAC 等值(timingSafeEqual)→ payload 形态 → 过期 */
+/** 校验:secret 解析(守卫体)→ 格式(恰一个点)→ HMAC 等值(timingSafeEqual)
+ *  → payload 形态 → 过期(注入时钟失效 = token_invalid)。**永不抛错**:
+ *  production 缺 env secret 与失效时钟都是操作面错误,收敛进 token_invalid,
+ *  刻意的配置/签发异常只保留在 resolve/sign 侧。 */
 export function verifyShareToken(
   token: string,
-  secret: string = resolveShareSecret(),
+  secret?: string,
   now: () => Date = () => new Date(),
 ): ShareTokenVerifyResult {
+  // 运行期 secret 解析放进守卫体:production 缺 env 的配置错在验证面 fail-closed
+  // 为 token_invalid,不抛错(若静默回落公开 dev 常量,伪造 token 将被放行);
+  // 非字符串运行期键(数字/对象/Symbol 等 JS 畸形调用方输入)同样收敛
+  // token_invalid——createHmac 对它们会抛 TypeError,绝不让异常越出本函数
+  let hmacSecret: string
+  try {
+    const resolved = secret === undefined ? resolveShareSecret() : secret
+    if (typeof resolved !== 'string') return { ok: false, reason: 'token_invalid' }
+    hmacSecret = resolved
+  } catch {
+    return { ok: false, reason: 'token_invalid' }
+  }
   if (typeof token !== 'string' || token.length === 0) return { ok: false, reason: 'token_invalid' }
   const dot = token.indexOf('.')
   // 恰一个点:多点(base64url 解码器会静默吞非法字符)与无点都拒绝
@@ -81,8 +102,14 @@ export function verifyShareToken(
   const body = token.slice(0, dot)
   const sig = token.slice(dot + 1)
 
-  // HMAC 等值比较(先长度,再 timingSafeEqual;Buffer-vs-Buffer)
-  const expected = createHmac('sha256', secret).update(body).digest()
+  // HMAC 等值比较(先长度,再 timingSafeEqual;Buffer-vs-Buffer);加密计算
+  // 本身也在守卫内——任何运行期键异常收敛 token_invalid,绝不外泄异常
+  let expected: Buffer
+  try {
+    expected = createHmac('sha256', hmacSecret).update(body).digest()
+  } catch {
+    return { ok: false, reason: 'token_invalid' }
+  }
   let actual: Buffer
   try {
     actual = Buffer.from(sig, 'base64url')
@@ -115,12 +142,20 @@ export function verifyShareToken(
     return { ok: false, reason: 'token_invalid' }
   }
 
-  // 过期检查
+  // 过期检查:注入时钟失效(抛错/非有限值)fail-closed 为 token_invalid——
+  // NaN 与 expiresMs 比较恒 false,失效时钟不得让任何 token 通过
   const createdMs = Date.parse(payload.created_at)
   if (!Number.isFinite(createdMs)) return { ok: false, reason: 'token_invalid' }
   const expiresMs = createdMs + payload.ttl_seconds * 1000
   if (!Number.isFinite(expiresMs)) return { ok: false, reason: 'token_invalid' }
-  if (now().getTime() > expiresMs) return { ok: false, reason: 'token_expired' }
+  let nowMs: number
+  try {
+    nowMs = now().getTime()
+  } catch {
+    return { ok: false, reason: 'token_invalid' }
+  }
+  if (!Number.isFinite(nowMs)) return { ok: false, reason: 'token_invalid' }
+  if (nowMs > expiresMs) return { ok: false, reason: 'token_expired' }
 
   return { ok: true, payload }
 }

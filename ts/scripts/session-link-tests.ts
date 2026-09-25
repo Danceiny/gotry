@@ -4,6 +4,9 @@
  * schema 闭集未知键拒绝 / plan_it⇔wish_id 成对 / session_ref 路径护栏 /
  * 写动词词位不存在 / production fail-closed)
  * + format/parse 互逆与 query/hash 拒绝
+ * + 校验面运行期边界(失效时钟不得放行;非字符串 secret 键拒绝;
+ *   production 缺 secret 的 verify 收敛,签发面刻意抛错保留——配置面用
+ *   隔离子进程验证)
  * + plan-it 行动卡(wish_id 与 token payload 同源 / label 封闭词汇)
  * + WhyNowCard.wish_id 结构化自指(Phase E 合同增补)。
  *
@@ -13,7 +16,13 @@
  * 运行(在 ts/ 下):npx tsx scripts/session-link-tests.ts
  */
 
+import { spawnSync } from 'node:child_process'
 import { createHmac } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { DEFAULT_DEV_SHARE_SECRET } from '../src/share/share-token.ts'
 import {
@@ -27,6 +36,7 @@ import {
   signSessionLink,
   verifySessionLink,
   type SessionLinkPayload,
+  type SessionLinkVerifyResult,
 } from '../src/session-link/session-link.ts'
 import { PLAN_IT_LABEL, buildPlanItAction } from '../src/session-link/plan-it-action.ts'
 import { buildWhyNowCard, type WhyNowCard } from '../src/recall/card.ts'
@@ -161,8 +171,9 @@ section('§3 构造层护栏(sign 抛错 = 坏链接不出仓库)')
   try { signSessionLink(basePayload({ action: 'open', wish_id: 'w-x' }), SECRET) } catch { threw3 = true }
   ok(threw3, '§3e open 夹带 wish_id → sign 抛错(语义混淆拒绝)')
 
-  // session_ref 路径护栏(链接永远无法命名 state 路径)
-  for (const bad of ['../gotry-state', 'a/b', 'a\\b', 'a..b', 'x/y/z', '/abs']) {
+  // session_ref 路径护栏(链接永远无法命名 state 路径;含 NUL——源码里该
+  // 守卫字面量曾存真实 NUL 字节,用 \0 转义后此断言钉住行为)
+  for (const bad of ['../gotry-state', 'a/b', 'a\\b', 'a..b', 'x/y/z', '/abs', 'a\0b']) {
     let threw = false
     try { signSessionLink(basePayload({ session_ref: bad }), SECRET) } catch { threw = true }
     ok(threw, `§3f session_ref=${JSON.stringify(bad)} → sign 抛错(路径化引用拒绝)`)
@@ -344,6 +355,104 @@ function makeCard(wishId: string): WhyNowCard {
     const r = verifySessionLink(autoToken, SECRET, () => NOW)
     ok(r.ok === true && r.payload.link_id.length > 0 && r.payload.ttl_seconds === 86_400, '§7n 默认 link_id 非空 + ttl 24h')
   }
+}
+
+// ---------------------------------------------------------------- §8 校验面运行期边界
+section('§8 校验面运行期边界(失效时钟不得放行;production 缺 secret 的 verify 收敛)')
+
+const TS_ROOT = join(import.meta.dirname, '..')
+
+/** tsx CLI 文件(直接以 process.execPath 启动,不经 npx/shell 孙进程)。 */
+function resolveTsxCli(): string {
+  const req = createRequire(join(TS_ROOT, 'package.json'))
+  const pkgPath = req.resolve('tsx/package.json')
+  const binField = (JSON.parse(readFileSync(pkgPath, 'utf-8')) as { bin?: string | { tsx?: string } }).bin
+  const bin = typeof binField === 'string' ? binField : binField?.tsx
+  if (!bin) throw new Error('tsx package.json 必须有 bin 入口')
+  return join(dirname(pkgPath), bin)
+}
+
+/** production 缺 secret 的配置面必须放隔离子进程验证:env 是进程级全局,
+ *  进程内改写会污染本套件其余默认 secret 断言(§5a/§5b 依赖真实 process.env)。 */
+function runProdEnvChild(fixtureBody: string, token: string): { status: number | null; stdout: string; stderr: string } {
+  const home = mkdtempSync(join(tmpdir(), 'gotry-session-link-prod-env-'))
+  const fixture = join(home, 'prod-env-probe.mts')
+  writeFileSync(fixture, fixtureBody, 'utf8')
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'production' }
+  delete env.SESSION_LINK_HMAC_SECRET
+  const res = spawnSync(process.execPath, [resolveTsxCli(), fixture, token], {
+    cwd: TS_ROOT, encoding: 'utf8', timeout: 30_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024, env,
+  })
+  rmSync(home, { recursive: true, force: true })
+  return { status: res.status, stdout: res.stdout, stderr: res.stderr }
+}
+
+{
+  const nanClock = (): Date => new Date(Number.NaN)
+
+  // 过期 token + NaN 时钟:`NaN > expiresMs` 恒 false,曾把过期链接静默判成有效(#580 缺口)
+  const expired = signSessionLink(basePayload({ ttl_seconds: 1 }), SECRET)
+  const r1 = verifySessionLink(expired, SECRET, nanClock)
+  ok(!r1.ok && r1.reason === 'link_invalid', '§8a 过期 token + NaN 时钟 → link_invalid(失效时钟不得把过期判成有效)')
+
+  // 未过期 token + NaN 时钟同样拒绝:任何接受都不得建立在无效时间上
+  const live = signSessionLink(basePayload(), SECRET)
+  const r2 = verifySessionLink(live, SECRET, nanClock)
+  ok(!r2.ok && r2.reason === 'link_invalid', '§8b 未过期 token + NaN 时钟 → link_invalid')
+
+  // 时钟回调抛错:异常不外泄,收敛为 link_invalid(「verify 永不抛错」的字面真)
+  const throwingClock = (): Date => { throw new Error('clock unavailable') }
+  let threw = false
+  let r3: SessionLinkVerifyResult | undefined
+  try { r3 = verifySessionLink(live, SECRET, throwingClock) } catch { threw = true }
+  ok(!threw && r3 !== undefined && !r3.ok && r3.reason === 'link_invalid', '§8c 时钟回调抛错 → 不外泄,收敛 link_invalid')
+
+  // production 缺 secret(NODE_ENV=production 且无 SESSION_LINK_HMAC_SECRET),全在子进程:
+  // token 用公开 dev 常量签——若 verify 静默回落 dev 常量,它将 verify 通过(锋利形式)
+  const devSigned = signSessionLink(
+    basePayload({ link_id: 'prod-env-probe', ttl_seconds: 3600 }),
+    DEFAULT_DEV_SESSION_LINK_SECRET,
+  )
+  const sessionLinkUrl = pathToFileURL(join(TS_ROOT, 'src', 'session-link', 'session-link.ts')).href
+  const child = runProdEnvChild([
+    `import { DEFAULT_DEV_SESSION_LINK_SECRET, resolveSessionLinkSecret, signSessionLink, verifySessionLink } from ${JSON.stringify(sessionLinkUrl)}`,
+    `const token = process.argv[2] ?? ''`,
+    `const now = () => new Date('2026-09-25T08:00:00.000Z')`,
+    `const payload = { link_id: 'x', session_ref: 'sess-x', action: 'open', created_at: '2026-09-25T08:00:00.000Z', ttl_seconds: 60 }`,
+    `const out = {}`,
+    `try { out.defaultSecretVerify = verifySessionLink(token, undefined, now) } catch (e) { out.defaultSecretVerifyThrew = String(e) }`,
+    `try { out.explicitSecretVerify = verifySessionLink(token, DEFAULT_DEV_SESSION_LINK_SECRET, now) } catch (e) { out.explicitSecretVerifyThrew = String(e) }`,
+    `try { resolveSessionLinkSecret(); out.resolveThrew = false } catch { out.resolveThrew = true }`,
+    `try { signSessionLink(payload); out.signThrew = false } catch { out.signThrew = true }`,
+    `console.log(JSON.stringify(out))`,
+  ].join('\n'), devSigned)
+
+  ok(child.status === 0, `§8d 子进程探针正常退出(status=${child.status};stderr=${child.stderr.slice(0, 300)})`)
+  let report: Record<string, unknown> = {}
+  try { report = JSON.parse(child.stdout.trim()) as Record<string, unknown> } catch { /* 失败落进下面的断言 */ }
+  const v = report.defaultSecretVerify as { ok?: boolean; reason?: string } | undefined
+  ok(v?.ok === false && v?.reason === 'link_invalid' && report.defaultSecretVerifyThrew === undefined,
+    '§8e production 缺 secret:verify 缺省 secret 解析 → 不抛错,收敛 link_invalid(绝不静默回落公开 dev 常量)')
+  const explicit = report.explicitSecretVerify as { ok?: boolean } | undefined
+  ok(explicit?.ok === true && report.explicitSecretVerifyThrew === undefined,
+    '§8f 显式传入 secret 的 verify 在 production 照常工作(守卫只针对缺省解析,不做全量否决)')
+  ok(report.resolveThrew === true, '§8g production 缺 secret:resolveSessionLinkSecret 仍抛错(签发面刻意的配置异常保留)')
+  ok(report.signThrew === true, '§8h production 缺 secret:signSessionLink 缺省 secret 仍抛错(签发面 fail-closed)')
+
+  // 非字符串运行期 secret 键(畸形 JS 调用方输入:数字/对象/Symbol)——
+  // createHmac 曾在守卫体外对它们抛 TypeError;校验面必须收敛 link_invalid
+  const badKeys: Array<[string, unknown]> = [['123(数字)', 123], ['{}(对象)', {}], ['Symbol(bad)', Symbol('bad')]]
+  for (const [label, badKey] of badKeys) {
+    let keyThrew = false
+    let keyResult: SessionLinkVerifyResult | undefined
+    try { keyResult = verifySessionLink(live, badKey as unknown as string) } catch { keyThrew = true }
+    ok(!keyThrew && keyResult !== undefined && !keyResult.ok && keyResult.reason === 'link_invalid',
+      `§8i 非字符串 secret(${label})→ 不抛错,收敛 link_invalid`)
+  }
+
+  // 合法字符串键保留:空字符串键签/验往返照常(守卫只拒非字符串,不做全量收紧)
+  const emptyKeyToken = signSessionLink(basePayload({ ttl_seconds: 60 }), '')
+  ok(verifySessionLink(emptyKeyToken, '', () => NOW).ok === true, '§8j 空字符串 secret(合法字符串键)签/验往返照常')
 }
 
 console.log(`\nSESSION-LINK TESTS: ${pass} pass, ${fail} fail`)

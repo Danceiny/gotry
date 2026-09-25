@@ -1,14 +1,23 @@
 /**
  * Share contract 验收套件(issue #573,Phase C 切片;含 PR #574 自检 review 修复面):
  * adapter 契约 + HMAC share token(target 绑定)+ consent state machine(幂等 grant)
- * + shareDeck 编排(never-throws / 原型键防护 / adapter_error 收敛)。
+ * + shareDeck 编排(never-throws / 原型键防护 / adapter_error 收敛)
+ * + 校验面运行期边界(失效时钟不得放行;非字符串 secret 键拒绝;
+ *   production 缺 secret 的 verify 收敛,签发面刻意抛错保留——配置面用
+ *   隔离子进程验证)。
  *
  * 全离线、合成数据,无网络、无 SDK 调用、无 stateRoot 写。
  *
  * 运行(在 ts/ 下):npx tsx scripts/share-tests.ts
  */
 
+import { spawnSync } from 'node:child_process'
 import { createHmac } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import {
   ADAPTERS,
@@ -27,6 +36,7 @@ import {
   resolveShareSecret,
   signShareToken,
   verifyShareToken,
+  type ShareTokenVerifyResult,
 } from '../src/share/share-token.ts'
 import {
   checkShareConsent,
@@ -394,6 +404,106 @@ function tk(share_id: string, target: { channel: ShareChannel; address: string }
     resolveShareSecret({ NODE_ENV: 'production' })
   } catch { prodThrew = true }
   ok(prodThrew, '§5i production 缺 SHARE_HMAC_SECRET → fail-closed 抛错(绝不静默用公开 dev 常量)')
+}
+
+// ===========================================================================
+// §6 校验面运行期边界 — 失效时钟(NaN/抛错)不得让任何 token 通过;
+//   production 缺 secret 的配置面在隔离子进程验证(verify 收敛 token_invalid,
+//   resolve/sign 的刻意抛错保留在签发面)
+// ===========================================================================
+
+const TS_ROOT = join(import.meta.dirname, '..')
+
+/** tsx CLI 文件(直接以 process.execPath 启动,不经 npx/shell 孙进程)。 */
+function resolveTsxCli(): string {
+  const req = createRequire(join(TS_ROOT, 'package.json'))
+  const pkgPath = req.resolve('tsx/package.json')
+  const binField = (JSON.parse(readFileSync(pkgPath, 'utf-8')) as { bin?: string | { tsx?: string } }).bin
+  const bin = typeof binField === 'string' ? binField : binField?.tsx
+  if (!bin) throw new Error('tsx package.json 必须有 bin 入口')
+  return join(dirname(pkgPath), bin)
+}
+
+/** production 缺 secret 的配置面必须放隔离子进程验证:env 是进程级全局,
+ *  进程内改写会污染本套件其余默认 secret 断言(§5g/§5h 依赖真实 process.env)。 */
+function runProdEnvChild(fixtureBody: string, token: string): { status: number | null; stdout: string; stderr: string } {
+  const home = mkdtempSync(join(tmpdir(), 'gotry-share-prod-env-'))
+  const fixture = join(home, 'prod-env-probe.mts')
+  writeFileSync(fixture, fixtureBody, 'utf8')
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'production' }
+  delete env.SHARE_HMAC_SECRET
+  const res = spawnSync(process.execPath, [resolveTsxCli(), fixture, token], {
+    cwd: TS_ROOT, encoding: 'utf8', timeout: 30_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024, env,
+  })
+  rmSync(home, { recursive: true, force: true })
+  return { status: res.status, stdout: res.stdout, stderr: res.stderr }
+}
+
+{
+  const nanClock = (): Date => new Date(Number.NaN)
+
+  // 过期 token + NaN 时钟:`NaN > expiresMs` 恒 false,曾把过期 token 静默判成有效(#573 缺口)
+  const expired = tk('nan-clock-expired', TARGET, 1)
+  const r1 = verifyShareToken(expired, SECRET, nanClock)
+  ok(!r1.ok && r1.reason === 'token_invalid', '§6a 过期 token + NaN 时钟 → token_invalid(失效时钟不得把过期判成有效)')
+
+  // 未过期 token + NaN 时钟同样拒绝:任何接受都不得建立在无效时间上
+  const live = tk('nan-clock-live')
+  const r2 = verifyShareToken(live, SECRET, nanClock)
+  ok(!r2.ok && r2.reason === 'token_invalid', '§6b 未过期 token + NaN 时钟 → token_invalid')
+
+  // 时钟回调抛错:异常不外泄,收敛为 token_invalid(verify 面永不抛错的字面真)
+  const throwingClock = (): Date => { throw new Error('clock unavailable') }
+  let threw = false
+  let r3: ShareTokenVerifyResult | undefined
+  try { r3 = verifyShareToken(live, SECRET, throwingClock) } catch { threw = true }
+  ok(!threw && r3 !== undefined && !r3.ok && r3.reason === 'token_invalid', '§6c 时钟回调抛错 → 不外泄,收敛 token_invalid')
+
+  // production 缺 secret(NODE_ENV=production 且无 SHARE_HMAC_SECRET),全在子进程:
+  // token 用公开 dev 常量签——若 verify 静默回落 dev 常量,它将 verify 通过(锋利形式)
+  const devSigned = signShareToken(
+    { share_id: 'prod-env-probe', created_at: NOW().toISOString(), ttl_seconds: 3600, target: TARGET },
+    DEFAULT_DEV_SHARE_SECRET,
+  )
+  const shareTokenUrl = pathToFileURL(join(TS_ROOT, 'src', 'share', 'share-token.ts')).href
+  const child = runProdEnvChild([
+    `import { DEFAULT_DEV_SHARE_SECRET, resolveShareSecret, signShareToken, verifyShareToken } from ${JSON.stringify(shareTokenUrl)}`,
+    `const token = process.argv[2] ?? ''`,
+    `const now = () => new Date('2026-09-23T12:00:00.000Z')`,
+    `const out = {}`,
+    `try { out.defaultSecretVerify = verifyShareToken(token, undefined, now) } catch (e) { out.defaultSecretVerifyThrew = String(e) }`,
+    `try { out.explicitSecretVerify = verifyShareToken(token, DEFAULT_DEV_SHARE_SECRET, now) } catch (e) { out.explicitSecretVerifyThrew = String(e) }`,
+    `try { resolveShareSecret(); out.resolveThrew = false } catch { out.resolveThrew = true }`,
+    `try { signShareToken({ share_id: 'x', created_at: '2026-09-23T12:00:00.000Z', ttl_seconds: 60, target: { channel: 'imessage', address: 'a' } }); out.signThrew = false } catch { out.signThrew = true }`,
+    `console.log(JSON.stringify(out))`,
+  ].join('\n'), devSigned)
+
+  ok(child.status === 0, `§6d 子进程探针正常退出(status=${child.status};stderr=${child.stderr.slice(0, 300)})`)
+  let report: Record<string, unknown> = {}
+  try { report = JSON.parse(child.stdout.trim()) as Record<string, unknown> } catch { /* 失败落进下面的断言 */ }
+  const v = report.defaultSecretVerify as { ok?: boolean; reason?: string } | undefined
+  ok(v?.ok === false && v?.reason === 'token_invalid' && report.defaultSecretVerifyThrew === undefined,
+    '§6e production 缺 secret:verify 缺省 secret 解析 → 不抛错,收敛 token_invalid(绝不静默回落公开 dev 常量)')
+  const explicit = report.explicitSecretVerify as { ok?: boolean } | undefined
+  ok(explicit?.ok === true && report.explicitSecretVerifyThrew === undefined,
+    '§6f 显式传入 secret 的 verify 在 production 照常工作(守卫只针对缺省解析,不做全量否决)')
+  ok(report.resolveThrew === true, '§6g production 缺 secret:resolveShareSecret 仍抛错(签发面刻意的配置异常保留)')
+  ok(report.signThrew === true, '§6h production 缺 secret:signShareToken 缺省 secret 仍抛错(签发面 fail-closed)')
+
+  // 非字符串运行期 secret 键(畸形 JS 调用方输入:数字/对象/Symbol)——
+  // createHmac 曾在守卫体外对它们抛 TypeError;校验面必须收敛 token_invalid
+  const badKeys: Array<[string, unknown]> = [['123(数字)', 123], ['{}(对象)', {}], ['Symbol(bad)', Symbol('bad')]]
+  for (const [label, badKey] of badKeys) {
+    let keyThrew = false
+    let keyResult: ShareTokenVerifyResult | undefined
+    try { keyResult = verifyShareToken(live, badKey as unknown as string) } catch { keyThrew = true }
+    ok(!keyThrew && keyResult !== undefined && !keyResult.ok && keyResult.reason === 'token_invalid',
+      `§6i 非字符串 secret(${label})→ 不抛错,收敛 token_invalid`)
+  }
+
+  // 合法字符串键保留:空字符串键签/验往返照常(守卫只拒非字符串,不做全量收紧)
+  const emptyKeyToken = signShareToken({ share_id: 'empty-key', created_at: NOW().toISOString(), ttl_seconds: 60, target: TARGET }, '')
+  ok(verifyShareToken(emptyKeyToken, '', NOW).ok === true, '§6j 空字符串 secret(合法字符串键)签/验往返照常')
 }
 
 console.log(`\nSHARE TESTS: ${pass} pass, ${fail} fail`)

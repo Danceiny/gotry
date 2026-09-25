@@ -25,7 +25,10 @@ cannot even be constructed (sign throws), let alone verified.
   >128 chars are refused at sign **and** verify — the link-layer form of
   "never write shared state": a link can never name a state path.
 - Failures: a 2-class closed set (`link_invalid` | `link_expired`); verify
-  never throws; consumers fail closed (an invalid link opens nothing).
+  never throws — a missing production secret, a non-string runtime secret key
+  (number/object/Symbol), and an invalid injected clock (non-finite time or a
+  throwing callback) are operational errors that fold into `link_invalid`;
+  consumers fail closed (an invalid link opens nothing).
 - URL form is render-time only (`formatSessionLink(token, base?)`, default
   `gotry://session/<token>`; a local HTTP consumer may pass
   `http://127.0.0.1:3080/session`); the signed bytes never embed a host.
@@ -34,8 +37,12 @@ cannot even be constructed (sign throws), let alone verified.
 
 The share token (issue #573) and the session link share the HMAC hardening
 checklist — exactly one dot, timingSafeEqual (length first), integer ttl capped
-at 2^31-1, injected clock, production fail-closed secret
-(`SESSION_LINK_HMAC_SECRET`). They deliberately do **not** share a verifier:
+at 2^31-1, injected clock (a non-finite or throwing clock is itself invalid at
+verify), production fail-closed secret (`SESSION_LINK_HMAC_SECRET` — the
+deliberate throw lives on the issuance side; verify folds the same
+configuration error, a non-string runtime key, and any HMAC computation
+failure into `link_invalid`). They deliberately do **not** share
+a verifier:
 
 | dimension | share token (Phase C) | session link (Phase E) |
 |---|---|---|
@@ -78,7 +85,9 @@ Guards run at **both** layers: sign throws (bad links never leave the factory),
 verify rejects anything that bypassed sign (hand-forged HMAC still dies on
 shape). Expiry compares the injected clock against
 `created_at + ttl_seconds * 1000`; `ttl_seconds = 0` is a valid
-single-moment link.
+single-moment link. A clock that is non-finite or throws is itself
+`link_invalid` — acceptance is never granted on an invalid time (`NaN`
+compares false against every bound, which once let an expired link through).
 
 ## 4. URL rendering and parsing
 
@@ -144,9 +153,12 @@ deliberately outside this contract.
 
 Landed (this slice):
 
-- `ts/src/session-link/session-link.ts` — sign/verify/format/parse + guards.
+- `ts/src/session-link/session-link.ts` — sign/verify/format/parse + guards
+  (verification-time secret resolution and clock reads are guarded; issuance
+  keeps its deliberate configuration throws).
 - `ts/src/session-link/plan-it-action.ts` — the one-tap action card.
-- `ts/scripts/session-link-tests.ts` — 80 assertions, all offline.
+- `ts/scripts/session-link-tests.ts` — 96 assertions, all offline (production
+  without a secret is exercised in an isolated subprocess environment).
 - WhyNowCard `wish_id`; registration in `scripts/run-all-tests.sh` §6j.
 
 Explicit non-claims:
