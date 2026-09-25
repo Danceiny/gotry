@@ -303,6 +303,7 @@ function makeCard(wishId: string): WhyNowCard {
     wish_id: wishId,
     wish_name: '大理 · 洱海恢复之旅',
     signal: { reason: 'price_drop', source: 'fare-probe', current_value: '¥1,880(降 12%)', threshold: '≤ ¥2,000' },
+    match_hits: [],  // 手工构造的 fixture:不附条件命中证据(buildWhyNowCard 不发明证据)
     evaluated_at: NOW.toISOString(),
   })
 }

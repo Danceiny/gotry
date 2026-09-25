@@ -2,13 +2,22 @@
 
 # Open Issues Execution Plan
 
-> Role: a dated execution proposal for the 30 open issues, including remaining work, ordering, and acceptance; not a new milestone authority.
-> Status: first engineering wave implemented; local full regression passed; awaiting merge and remaining live acceptance. Inspected 2026-09-25.
+> Role: a dated execution plan for the initial 30 open issues, including remaining work, ordering, and acceptance; not a new milestone authority.
+> Status: first engineering wave merged through #582; issue closure is tracked on the linked GitHub issues. The #577 condition correction accompanies this plan; merge/closure receipts belong to its linked issue. Baseline inspected 2026-09-25.
 > Upstream: [repository contract](../../../AGENTS.md), [master outline](../../gotry-master-outline.md), [architecture](../../architecture.md), [roadmap](../../roadmap.md), and each linked issue's scope.
 > Downstream: issue triage, independently reviewable PRs, and evidence collection.
 > For agentic workers: implement admitted tasks using `superpowers:subagent-driven-development` or `superpowers:executing-plans`; preserve the gates below.
 
 **Goal:** turn the open queue into a usable travel-planning delivery sequence, prioritizing core planning and integration usability, then real M3 evidence.
+
+**Definition of Done:** each admitted engineering issue reaches completion only when all four conditions hold:
+
+1. Its agreed scope is implemented and acceptance evidence is recorded; additional validation does not silently become a new closure requirement.
+2. Applicable regression, CI and independent review pass on the delivered code; affected authority documents are synchronized in both languages.
+3. The PR is merged into the intended base branch.
+4. The issue is closed as completed with links to the merged change and acceptance evidence, and its final state is read back.
+
+Continue execution through merge and issue closure under the founder's instruction. A real-evidence or release parent remains open only for its own unsatisfied acceptance, recorded concretely on that issue. Release version/action confirmation remains governed by AGENTS.md.
 
 **Architecture:** retain the existing planner, fact registry, deck/export, session bridge, and evidence collectors. Finish bounded product gaps, collect real outcomes, and activate additional capabilities only when their recorded triggers occur.
 
@@ -46,19 +55,19 @@
 | Synthetic demo, retries, or a repeated person inflates cohort success | T4/T6: frozen eligibility, denominator, provenance, private consent, and separate engineering evidence |
 | A token accepts an invalid clock, or a read/link path crosses its authority | T1b/T5/T7: invalid tokens fail closed; challenge stop, Checkout ownership, and milestone gates remain explicit |
 
-## 3. Disposition of all 30 open issues
+## 3. Disposition of the initial 30 open issues
 
 | Issue | Remaining work / disposition | Execution route |
 |---|---|---|
-| [#564](https://github.com/Danceiny/gotry/issues/564) | Renderer merged via #565 | T0 closure candidate |
-| [#566](https://github.com/Danceiny/gotry/issues/566) | Product render entry merged via #567 | T0 closure candidate |
-| [#568](https://github.com/Danceiny/gotry/issues/568) | Export merged via #570; reconcile accepted basename-prefixed filenames with original checklist | T0 closure candidate |
-| [#569](https://github.com/Danceiny/gotry/issues/569) | QR implementation #575/#576 merged; this wave adds independent decode and `local_only`; physical scan remains | T2, keep open |
-| [#571](https://github.com/Danceiny/gotry/issues/571) | Offline script merged via #572; not a deployed zero-install landing site | T0 closure candidate |
-| [#573](https://github.com/Danceiny/gotry/issues/573) | Consent/token/stubs merged via #574; this wave fixes invalid-clock validation, awaiting merge | T1b, keep open; no outbound activation |
-| [#577](https://github.com/Danceiny/gotry/issues/577) | Recall signal pairing merged via #578; wish `conditions` are not evaluated | T0 follow-up below; keep open |
-| [#580](https://github.com/Danceiny/gotry/issues/580) | Link contract merged via #581; this wave fixes missing-secret and invalid-clock validation, awaiting merge | T1b, keep open; no route/scheme activation |
-| [#559](https://github.com/Danceiny/gotry/issues/559) | Agent-Reach error and recovery guidance fixed in this wave; awaiting merge | T1, then T4 product walkthrough |
+| [#564](https://github.com/Danceiny/gotry/issues/564) | Renderer merged via #565 | Closed; acceptance reconciled |
+| [#566](https://github.com/Danceiny/gotry/issues/566) | Product render entry merged via #567 | Closed; acceptance reconciled |
+| [#568](https://github.com/Danceiny/gotry/issues/568) | Export merged via #570; reconcile accepted basename-prefixed filenames with original checklist | Closed; acceptance reconciled |
+| [#569](https://github.com/Danceiny/gotry/issues/569) | QR implementation #575/#576 merged; independent SVG decode and `local_only` merged via #582 | T2 complete; closed |
+| [#571](https://github.com/Danceiny/gotry/issues/571) | Offline script merged via #572; not a deployed zero-install landing site | Closed; acceptance reconciled |
+| [#573](https://github.com/Danceiny/gotry/issues/573) | Consent/token/stubs merged via #574; invalid-clock validation fixed via #582 | T1b complete; closed; no outbound activation |
+| [#577](https://github.com/Danceiny/gotry/issues/577) | Recall signal pairing merged via #578; this correction reuses wish-condition matching and carries actual hits | T0 condition repair and acceptance below |
+| [#580](https://github.com/Danceiny/gotry/issues/580) | Link contract merged via #581; missing-secret and invalid-clock validation fixed via #582 | T1b complete; closed; no route/scheme activation |
+| [#559](https://github.com/Danceiny/gotry/issues/559) | Agent-Reach error and recovery guidance merged via #582 | T1 complete; closed; T4 remains separate |
 | [#346](https://github.com/Danceiny/gotry/issues/346) | Shared store-release gate and receipt authority | T3; retain until actual acceptance |
 | [#537](https://github.com/Danceiny/gotry/issues/537) | Version in title is stale; current join-chain acceptance belongs to the same release as #346 | T3; one release, separate acceptance checklist |
 | [#272](https://github.com/Danceiny/gotry/issues/272) | Real connected/degraded adapter evidence and packaged entry | T5; manifest #501 already merged |
@@ -85,11 +94,11 @@
 
 | Wave | Deliverables | Parallelism / exit |
 |---|---|---|
-| 1 — next bounded execution batch | T0 reconciliation; T1 error copy; T1b token validation; T2 QR acceptance; T3 release preparation; T6 sampling preparation | One owner per PR; reviewer independent. T1/T1b/T2/T3 can run separately; serialize shared runner/index edits. Done when reviewable changes and evidence exist |
+| 1 — next bounded execution batch | T0 reconciliation; T1 error copy; T1b token validation; T2 QR acceptance; T3 release preparation; T6 sampling preparation | One owner per PR; reviewer independent. T1/T1b/T2/T3 can run separately; serialize shared runner/index edits. Admitted engineering issues finish through merge and closure under the DoD; T3/T6 preparation leaves their parent acceptance explicitly open |
 | 2 — actual product use | T4 three-scenario walkthrough; T5 authorized session evidence; T6 seed use/revisit; T7 if UAT ready | Start admitted lanes without waiting on all others. Close measured defects; preserve missing-input status |
 | 3 — evidence-selected expansion | At most one next core/data gap from T4/T6, with #429 address clarification as a candidate | No preselected broad feature program; each new slice needs a real example and acceptance before implementation |
 
-Current execution: Claude Code used the user-confirmed existing configuration in isolated worktrees. T1/T1b implementation, automated T2 acceptance and offline T3 preparation are delivered for integration review. T0 found four closure candidates and one remaining #577 scope gap; no issue state has changed. T6 has a preparation handoff, with real enrollment and collection still pending.
+Current execution: Claude Code used the user-confirmed existing configuration in isolated worktrees. #582 is merged and its eight remote checks passed. #559/#564/#566/#568/#569/#571/#573/#580 are closed with acceptance evidence. The #577 correction has 96 passing recall assertions and independent review; its issue owns the merge/closure receipt. T3 remains release preparation; T6 has a preparation handoff with real enrollment and collection pending.
 
 Effort is bounded by deliverables, not a promise about store review or cohort arrival. Waiting for login, review, users, or suppliers consumes no repeated diagnostic work. External outreach is not authorized by this plan; prepare materials and use explicitly admitted sessions.
 
@@ -100,14 +109,14 @@ Effort is bounded by deliverables, not a promise about store review or cohort ar
 **Files/surfaces:** linked issues; `docs/design/itinerary-deck-renderer.{md,zh-CN.md}`; concern-specific authority pointers; existing LoopX task readback.
 **Consumes / produces:** current issue acceptance + exact merged SHAs → one remaining-work ledger and evidence-based closure candidates.
 
-- [x] Verify merged SHA, original scope, acceptance evidence and downstream exclusions for the five original closure candidates. #564/#566/#568/#571 satisfy their slices; #577 remains open because wish conditions are not evaluated. For #568 reconcile `<stem>.html`, `<stem>.manifest.json`, `<stem>.qr.svg`; do not rename working code merely to match a stale checklist.
+- [x] Verify merged SHA, original scope, acceptance evidence and downstream exclusions for the five original closure candidates. #564/#566/#568/#571 satisfy their slices; the #577 condition gap is addressed by the correction below. For #568 reconcile `<stem>.html`, `<stem>.manifest.json`, `<stem>.qr.svg`; do not rename working code merely to match a stale checklist.
 - [x] Correct the renderer design header that still says no product entry; keep current progress in design/issue surfaces, not the frozen Karpo study.
 - [x] Reconcile #142's completed #473/#476 prerequisites in architecture D-29; live UAT stays open. Do not repeat #272's already-merged #501 manifest freeze or #231/#234/#235 groundwork.
-- [ ] Reconcile #18's stale #512 issue status when updating the issue surface.
+- [x] Verify #512 is merged; #18's current body does not list it as an open dependency. Preserve the parent evidence gates.
 - [x] Reconcile stale deck/QR status in the code-map pair. Correct #511's overstrong inference in the readiness report pair: zero provider requests do not prove initialize failed; use the ordered stage chain. This documentation correction does not resolve the original intermittent incident.
 - [x] Read the LoopX execution contract: zero registered agents and no current binding. Use direct user-authorized Claude Code execution; do not invent Todo IDs, mutate the unbound lane, create another goal or install a heartbeat.
-- [ ] For #577, clarify whether `RecallSignal` carries raw observations or already-matched authoritative inputs and identify where wish `conditions` are enforced. Implement or demonstrate that enforcement with matching and non-matching offline cases, then reconcile the original scope and design. Keep this follow-up within the pure evaluator and read-only integration; runtime activation stays out of scope.
-- [ ] When issue updates/closures are explicitly authorized, record scope and evidence, then close only fully satisfied feature tickets. Parent evidence gates stay open. This planning pass itself posts no comments and closes no issues.
+- [x] Repair #577 by reusing `scoreWishMatch` before signal routing and carrying actual condition hits into triggers/cards. `RecallSignal` contains producer-supplied event descriptions; display strings are not numeric facts. Matching, non-matching, targeted-bypass, down-channel and partial-hit cases pass; the design pair records this boundary. Runtime activation stays out of scope. Complete its merge and closure through the Definition of Done above.
+- [x] Close #559/#564/#566/#568/#569/#571/#573/#580 with merged-change and acceptance evidence under the founder's explicit instruction. Read back the issue states. Parent evidence gates retain their own acceptance.
 
 ### T1 — Finish #559's remaining integration failure experience
 
@@ -118,7 +127,7 @@ Effort is bounded by deliverables, not a promise about store review or cohort ar
 - [x] Follow `anything.ts` failure classification at the existing boundary. Preserve source tags and upstream `needs-setup` instructions; do not add a second channel registry, automatic retries or a new Python surface.
 - [x] Assert the user sees cause, affected capability and next action; no raw traceback, secret-like diagnostic value, or false booking-failure claim.
 - [x] Run deterministic error cases (14 sections), typecheck and isolated smoke; the existing optional wrapper suite retains its dependency/live skip rules.
-- [ ] Merge the fix and reconcile acceptance before closing #559; full regression has passed.
+- [x] Merge #582 and close #559 after acceptance reconciliation; local full regression and remote CI passed.
 
 ### T1b — Repair the existing share/session-link validation boundaries
 
@@ -129,7 +138,7 @@ Effort is bounded by deliverables, not a promise about store review or cohort ar
 - [x] Move verification-time secret resolution into a guarded body and reject non-finite current time. Keep deliberate configuration/signing exceptions at issuance; session-link verification must return `link_invalid` for operational validation errors, and share verification must preserve its `token_invalid`/`token_expired` vocabulary.
 - [x] Preserve normal round trips, expiry boundaries, signature checks, target binding, unknown-key rejection and the ban on write actions. Do not register a deep-link handler, sender or tick process.
 - [x] Run both token suites (share 85, session-link 96), typecheck and isolated smoke, including expiry boundaries and malformed runtime keys.
-- [ ] Merge and reconcile #573/#580 acceptance before closure; full regression has passed.
+- [x] Merge #582, reconcile acceptance and close #573/#580; local full regression and remote CI passed.
 
 ### T2 — Complete #569's real QR acceptance
 
@@ -138,9 +147,9 @@ Effort is bounded by deliverables, not a promise about store review or cohort ar
 
 - [x] Decode the actual generated SVG through an independent decoder after rasterization; compare exact URL for ordinary and UTF-8 payloads, and the literal local-only marker when URL is absent. Different bytes and a `<path>` element are insufficient proof.
 - [x] Check the issue's `local_only` expectation against the accepted manifest contract. Either deliver an explicit compatible indicator or record an approved scope reconciliation; absence of `target_url` must not imply an online destination. Keep decoder dependencies out of runtime where possible.
-- [ ] Exercise practical display size and quiet-zone behavior with a real scanner, record the payload without using private links, and retain oversized-input zero-write/collision regressions. Adjust margin only if evidence requires it.
+- [x] Independently decode the actual generated SVG at 128/240/480 pixels, preserving quiet-zone and oversized-input zero-write/collision regressions. Physical phone scanning is optional additional validation, not an added acceptance gate; it was not performed.
 - [x] Re-run export (170), renderer (226), artifact (131), typecheck and isolated smoke; clean dependency installation also passes export and typecheck.
-- [ ] Merge and reconcile the outstanding physical-scan acceptance before closing #569; full regression has passed.
+- [x] Merge #582 and close #569 using independent decode evidence and reconciled manifest semantics; local full regression and remote CI passed.
 
 ### T3 — Make the extension release path verifiable, then finish distribution
 
@@ -199,7 +208,7 @@ Effort is bounded by deliverables, not a promise about store review or cohort ar
 
 ## 6. Verification and handoff
 
-The integrated source passed `scripts/run-all-tests.sh` with all live supplier/session switches disabled (exit 0, `ALL SUITES GREEN`, runtime Node 26.9.0). Targeted typecheck/smoke and the changed suites also passed; release classification has 159 assertions. Optional Agent Reach installation, STAICLI tarball proof and live probes retain their explicit skips. Final documentation changes passed the bilingual and readability gates.
+For #582, the integrated source passed `scripts/run-all-tests.sh` with all live supplier/session switches disabled (exit 0, `ALL SUITES GREEN`, runtime Node 26.9.0). Targeted typecheck/smoke and the changed suites also passed; release classification has 159 assertions. Optional Agent Reach installation, STAICLI tarball proof and live probes retain their explicit skips. Final documentation changes passed the bilingual and readability gates.
 
 Existing targeted commands, run from the repository root:
 
@@ -222,4 +231,4 @@ GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 ./scripts/
 
 For each implementation PR, attach exact tested SHA, commands, exit results, explicit skips and remaining live gates. A cancelled CI run does not prove a code failure or a passing gate; report local and remote evidence separately. Follow the existing merge/release authorization, and never merge with known red tests.
 
-The current delivery covers T0–T3 engineering and T6 preparation. Next execute the bounded #577 follow-up, physical QR scan and admitted T4–T7 evidence lanes; store actions still require their recorded release authorization. Use independent implementation/review lanes for disjoint files, with one integration owner. This proposal adds no scheduled task, release, external message, product-state write or issue closure; those actions are governed by their existing scope and authorization.
+The current delivery covers T0–T3 engineering and T6 preparation. Follow the #577 merge/closure receipt and proceed with admitted T4–T7 evidence lanes; store actions still require their recorded release authorization. Use independent implementation/review lanes for disjoint files, with one integration owner. Apply the Definition of Done above through merge and issue closure. Scheduled tasks, releases and product-state writes retain their existing scope and authorization.
