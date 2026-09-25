@@ -61,7 +61,7 @@ async function resolveBridge(injected?: SessionJobHandle): Promise<SessionJobHan
 }
 
 /** cookie-names job:票据 cookie 名存在性(名字级;协议不含值) */
-export async function extensionCookieNames(q: { site: string; domain: string; ticketNames: string[]; timeoutMs?: number }, bridgeHandle?: SessionJobHandle): Promise<{ ok: true; tickets: string[] } | BridgeFailure> {
+export async function extensionCookieNames(q: { site: string; domain: string; ticketNames: string[]; timeoutMs?: number }, bridgeHandle?: SessionJobHandle): Promise<{ ok: true; tickets: string[]; origin?: string } | BridgeFailure> {
   const bridge = await resolveBridge(bridgeHandle)
   if (!bridgeReady(bridge)) return { ok: false, kind: 'bridge-unavailable', summary: bridge.summary }
   const outcome = await bridge.bridge.submit(
@@ -73,7 +73,7 @@ export async function extensionCookieNames(q: { site: string; domain: string; ti
   if (failure) return failure
   const names = Array.isArray(outcome.result.names) ? outcome.result.names.filter((n): n is string => typeof n === 'string') : []
   // 红线自证:隧道面只有名字(extension-tests §红线断言协议面无值字段)
-  return { ok: true, tickets: names }
+  return { ok: true, tickets: names, ...(outcome.origin ? { origin: outcome.origin } : {}) }
 }
 
 /** 登录入口置前台打开(#34 纪律:标签留给用户,扩展侧不 close) */
@@ -106,7 +106,7 @@ export interface ExtensionSearchOutcome {
 
 /** 检索 job:后台标签打开 entry,等 content hook 的嗅探回包;页无响应=timedOut(非车道失败) */
 export async function extensionSearchJob(
-  q: { site: string; url: string; timeoutMs?: number; multiCollect?: boolean; query?: Record<string, unknown> },
+  q: { site: string; url: string; timeoutMs?: number; multiCollect?: boolean; query?: Record<string, unknown>; preferredOrigin?: string },
   bridgeHandle?: SessionJobHandle,
 ): Promise<ExtensionSearchOutcome | BridgeFailure> {
   const bridge = await resolveBridge(bridgeHandle)
@@ -114,7 +114,7 @@ export async function extensionSearchJob(
   const timeoutMs = q.timeoutMs ?? 30_000
   const outcome = await bridge.bridge.submit(
     { kind: 'search', site: q.site, url: q.url, timeoutMs, ...(q.multiCollect ? { multiCollect: true } : {}), ...(q.query ? { query: q.query } : {}) },
-    { timeoutMs: timeoutMs + 10_000 },
+    { timeoutMs: timeoutMs + 10_000, ...(q.preferredOrigin ? { preferredOrigin: q.preferredOrigin } : {}) },
   )
   if (!outcome.ok) return { ok: false, kind: outcome.reason, summary: outcome.summary }
   // An exhausted page sniff still carries the page title and challenge hint.
