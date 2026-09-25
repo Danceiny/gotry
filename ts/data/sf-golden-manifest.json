@@ -1,6 +1,7 @@
 {
   "comment": "sf-live-benchmark golden(issue #21 验收「字段准确率 ≥90%」对照源)。本表=公开班期 + 价格区间,不绑任何 vendor;字段评分子集硬命中(query_id/from/to/currency/source/verdict)+ 时间/价格/班次软命中(±60min/±15%/子串包含)。sf-01 fixture 来自 ts/scripts/session-benchmark.ts:26-42 已知期望;其余 7 条以公开班期知识写时间窗口与价格带(具体班次由 session 真实落,匹配子串算 correct)。",
   "threshold": 0.9,
+  "query_manifest_sha256": "3be197830e5a6aa6e1309684a1fce4a736ad2a845c67b6f2f1b8a4ad3ccf977a",
   "matches": [
     {
       "query_id": "sf-01",
