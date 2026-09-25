@@ -784,6 +784,9 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     if (CHALLENGE_RE.test(title + head)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
+    if (r.timedOut) {
+      return err('error', 'batchSearch 嗅探超时：页面未收到可解析回包；本次检索未完成')
+    }
     const parsed = parseBatchSearchResult(r.body)
     if (parsed.verdict === 'error') {
       return err('error', `batchSearch 响应形状异常(非合法空响应;options=0 不视为 miss):body ${r.body.length}B 头 ${r.body.slice(0, 80)}`)

@@ -718,6 +718,41 @@ async function main(): Promise<void> {
     }
   })
 
+  await check('机票检索嗅探超时应说明未收到回包,不误报 batchSearch 形状异常', async () => {
+    const lane = await mustBridge([0])
+    __setSessionBridgeForTest(lane)
+    let done = false
+    const claimLoop = (async () => {
+      while (!done) {
+        const ac = new AbortController()
+        const bail = setTimeout(() => ac.abort(), 2_000)
+        try {
+          await claimOnce(lane.port, (job) => {
+            if (job.kind === 'cookie-names') return { ok: true, kind: 'cookie-names', names: ['cticket'] }
+            assert.equal(job.kind, 'search')
+            assert.equal(job.site, 'ctrip-flight')
+            return { ok: false, kind: 'search', timeout: true, url: '', title: '机票列表' }
+          }, ac.signal)
+        } catch { /* 等待取活时中止 */ }
+        clearTimeout(bail)
+      }
+    })()
+    try {
+      __resetRateLimiterForTest()
+      const result = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000 })
+      assert.equal(result.verdict, 'error')
+      assert.match(result.error ?? '', /嗅探超时|未收到.*回包/)
+      assert.doesNotMatch(result.error ?? '', /响应形状异常/)
+    } finally {
+      done = true
+      await claimLoop
+      await __resetSessionBridgeForTest()
+      __setSessionBridgeForTest(null)
+      await lane.close()
+      __resetRateLimiterForTest()
+    }
+  })
+
   await check('全链 fail-closed:扩展车道桥端口池全占 → sessionFlightSearch verdict=error(环境故障,非用户门)', async () => {
     // 设计契约:只有 extension-not-connected 才是 user gate (needs-extension);
     // 端口池全占是环境故障(并行 gotry 实例/外部进程占端口)→ verdict=error,
