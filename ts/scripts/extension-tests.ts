@@ -124,10 +124,10 @@ interface FakeJob {
 }
 
 /** 假扩展客户端:一次长轮询取活 + 回包(Origin=固定扩展源,过桥白名单) */
-async function claimOnce(port: number, respond: ((job: FakeJob) => Record<string, unknown> | null) | null, signal?: AbortSignal, capabilities?: string[]): Promise<{ job: FakeJob | null }> {
+async function claimOnce(port: number, respond: ((job: FakeJob) => Record<string, unknown> | null) | null, signal?: AbortSignal, capabilities?: string[], origin = EXTENSION_ORIGIN): Promise<{ job: FakeJob | null }> {
   const r = await fetch(`http://127.0.0.1:${port}/jobs`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
+    headers: { 'content-type': 'application/json', origin },
     body: JSON.stringify({ extensionVersion: 'test', ...(capabilities ? { capabilities } : {}) }),
     signal,
   })
@@ -137,7 +137,7 @@ async function claimOnce(port: number, respond: ((job: FakeJob) => Record<string
     if (result) {
       await fetch(`http://127.0.0.1:${port}/results/${encodeURIComponent(data.job.jobId)}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
+        headers: { 'content-type': 'application/json', origin },
         body: JSON.stringify(result),
       })
     }
@@ -460,6 +460,33 @@ async function main(): Promise<void> {
     }
   })
 
+  await check('已领取作业的回包只接受领取它的扩展 Origin', async () => {
+    const lane = await mustBridge([0])
+    try {
+      const pending = lane.submit({ kind: 'search', site: 'ctrip-flight', url: 'https://flights.ctrip.com/online/list/oneway-sha-ljg?depdate=2026-12-01' })
+      const claimed = await claimOnce(lane.port, null)
+      assert.equal(claimed.job?.kind, 'search')
+      const target = `http://127.0.0.1:${lane.port}/results/${encodeURIComponent(claimed.job!.jobId)}`
+      const forged = await fetch(target, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN_STORE },
+        body: JSON.stringify({ ok: false, kind: 'search', error: 'other-origin-result' }),
+      })
+      assert.equal(forged.status, 403)
+      const valid = await fetch(target, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
+        body: JSON.stringify({ ok: true, kind: 'search', body: '{"data":{"flightItineraryList":[]}}', title: '机票列表' }),
+      })
+      assert.equal(valid.status, 200)
+      const outcome = await pending
+      assert.equal(outcome.ok, true)
+      if (outcome.ok) assert.equal(outcome.origin, EXTENSION_ORIGIN)
+    } finally {
+      await lane.close()
+    }
+  })
+
   await check('心跳判定:初始未连接;合法请求(health/长轮询)后视为在线', async () => {
     assert.equal(b.extensionConnected(), false)
     await heartbeat(port)
@@ -715,6 +742,56 @@ async function main(): Promise<void> {
       await __resetSessionBridgeForTest()
       __setSessionBridgeForTest(null)
       await lane.close()
+    }
+  })
+
+  await check('同次机票会话的检索只能由完成票据预检的扩展 Origin 领取', async () => {
+    const lane = await mustBridge([0])
+    __setSessionBridgeForTest(lane)
+    const storeAbort = new AbortController()
+    const unpackedAbort = new AbortController()
+    let storeGotSearch = false
+    let unpackedGotSearch = false
+    let storePoll: Promise<{ job: FakeJob | null }> | undefined
+    let unpackedSearchPoll: Promise<{ job: FakeJob | null }> | undefined
+    try {
+      __resetRateLimiterForTest()
+      const cookiePoll = claimOnce(lane.port, null)
+      await waitForParkedCount(lane.port, 1)
+      const search = sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000 })
+      const cookieClaim = await cookiePoll
+      assert.equal(cookieClaim.job?.kind, 'cookie-names')
+
+      // 商店版先候在桥上；它不得接走另一 Origin 已验证登录态后的 search。
+      storePoll = claimOnce(lane.port, (job) => {
+        storeGotSearch = true
+        return { ok: false, kind: job.kind, error: 'wrong-extension-origin' }
+      }, storeAbort.signal, ['ctrip-flight'], EXTENSION_ORIGIN_STORE).catch(() => ({ job: null }))
+      await waitForParkedCount(lane.port, 1)
+      const cookieResult = await fetch(`http://127.0.0.1:${lane.port}/results/${encodeURIComponent(cookieClaim.job!.jobId)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN },
+        body: JSON.stringify({ ok: true, kind: 'cookie-names', names: ['cticket'] }),
+      })
+      assert.equal(cookieResult.status, 200)
+
+      unpackedSearchPoll = claimOnce(lane.port, (job) => {
+        assert.equal(job.kind, 'search')
+        unpackedGotSearch = true
+        return { ok: true, kind: 'search', body: JSON.stringify({ data: { flightItineraryList: [] } }), url: job.url, title: '机票列表' }
+      }, unpackedAbort.signal, ['ctrip-flight'], EXTENSION_ORIGIN).catch(() => ({ job: null }))
+      const result = await search
+      assert.equal(result.verdict, 'miss', `同一 Origin 应完成检索,实际 ${result.verdict}:${result.error ?? ''}`)
+      assert.equal(unpackedGotSearch, true)
+      assert.equal(storeGotSearch, false)
+    } finally {
+      storeAbort.abort()
+      unpackedAbort.abort()
+      await Promise.allSettled([storePoll, unpackedSearchPoll].filter((p): p is Promise<{ job: FakeJob | null }> => p !== undefined))
+      await __resetSessionBridgeForTest()
+      __setSessionBridgeForTest(null)
+      await lane.close()
+      __resetRateLimiterForTest()
     }
   })
 
