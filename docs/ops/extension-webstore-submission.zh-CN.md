@@ -2,7 +2,8 @@
 
 # Stai — Chrome Web Store 上架材料（ADR-21 分发 B 轨）
 
-> 状态：**已上架（2026-09-02，v0.1.0 过审发布）**。商店页：
+> 状态：**v0.2.0.26 于 2026-09-25 提交 Chrome Web Store 审核，已选过审后自动发布；
+> 线上仍为 v0.1.0**。商店页：
 > https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd
 > 产物：`node scripts/package-extension.mjs` → `dist-extension/gotry-session-bridge-store.zip`
 > （manifest 在 zip 根，商店后台直传）。图标商店单独上传，不在 zip 内。
@@ -56,13 +57,13 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 
 ## 审核访问
 
-后台的**测试说明**目前为空。审核员可按公开的 GoTry 安装步骤及自有携程会话检查桌面形态；HotelByte 员工门户 join 与 Dida 一次性登录则需要单独的审核测试账号。若审核覆盖该路径，应直接在后台私密的凭据字段填写专用账号，并在**其他说明**中写清有限步骤。不得把凭据写进本仓库或公开 issue。
+后台的**其他说明**已写入公开 GoTry 安装步骤与审核员自有携程／12306 会话的桌面路径，也明确说明受限的 HotelByte 员工门户 join 与 Dida 一次性登录路径尚未提供审核凭据。若审核需要覆盖该路径，应直接在后台私密的凭据字段填写专用测试账号。不得把凭据写进本仓库或公开 issue。
 
 ## founder 提交清单（顺序）——已走完（2026-09-02 上架）
 
 1. ~~Chrome Web Store 开发者注册（一次性 $5，Google 账号）。~~
 2. ~~`node scripts/package-extension.mjs` 产 store zip；准备 128×128 图标与 1280×800 截图（商店后台单独上传）。~~
-3. ~~新建 item → 上传 zip → 填写商店文案与隐私披露。~~ 当前商店隐私政策 URL 仍指向已迁移的旧路径；下次提审前须在后台改为 [extension-privacy.md](extension-privacy.zh-CN.md)。
+3. ~~新建 item → 上传 zip → 填写商店文案与隐私披露。~~ v0.2.0.26 提审时已把隐私政策 URL 改为 [extension-privacy.md](extension-privacy.zh-CN.md)；v0.1.0 线上页可能要等新版发布后才更新。
 4. ~~提交审核~~ → 过审发布（v0.1.0）。
 5. 过审后落地：桥 Origin 白名单双通道同信（已落，`EXTENSION_ORIGINS` + §38）；Node 侧保留 extension 文件/`manifest.key` 预检，`sessionFlightSearch`/`sessionLogin` 在 `needs-extension` 时以 `installUrl`/`installAction` 交 dsh UI，旧 wizard 不再承担安装职责。GitHub Releases 通道（A 轨）保留为免审核/版本化/回滚/镜像通道。
 
@@ -85,10 +86,10 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 | 版本化/回滚/镜像 | ✗（商店节奏） | ✓（Release 资产 + SHA256） | ✗ |
 | 扩展 ID | `oeajpiccmonococjcegddlooeeohlbgd` | `olpgkofjhhiiiahdkkbcninhjmegghfe` | `olpgkofjhhiiiahdkkbcninhjmegghfe` |
 
-## Stai 待提审变更（候选版本 0.2.0.26）
+## Stai v0.2.0.26 审核回执
 
-- 线上商店仍为 GoTry Session Bridge 0.1.0。GitHub Release 的 0.2.0.25 早于 Stai 更名，当前 main 却仍使用该版本；不同内容需要新版本号。0.2.0.26 只是准备候选，尚未获准或提审。
-- 后台文案与隐私问题须如实覆盖 Dida／HotelByte 权限、门户 join 和登录行为，并记录构建源码 SHA 与 zip 校验值。目前仓库 Actions 未配置 CWS secrets；准确版本与窗口获创始人确认后，可走商店后台手动上传，或由账号所有者配置工作流凭据。
+- 创始人已确认 v0.2.0.26 并要求立即提审。[PR #586](https://github.com/Danceiny/gotry/pull/586) 合并后的提交为 `3925d1a5963a32c8708d358d14ed70999580d967`；该提交构建的商店 zip SHA-256 为 `7c88b2e21a7546c99917b96ba16b37b5d6674f93ab9461dd26d12573af57e7a2`。相同版本的 [ext-v0.2.0.26 GitHub Release](https://github.com/Danceiny/gotry/releases/tag/ext-v0.2.0.26) 资产已回拉校验。
+- 商店后台接受 zip，草稿显示 `version_name` 为 `0.2.0-rc.26`（`version` 为 `0.2.0.26`）。文案、权限理由、数据使用清单及隐私政策 URL 已按 Dida／HotelByte 实际行为更新。2026-09-25，后台返回「已将您的扩展程序提交送审」，状态为「待审核」。已选择过审后自动发布；上线前不能做 Chrome Web Store 回拉验证。仓库 Actions 目前未配置 CWS secrets，故本次使用后台上传。
 - **商店提交流程由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪**；**founder 决策 whether / when / 升哪个 version**（founder-confirm 制，见 `tech-strategy.md` §11 与 `AGENTS.md` 发布纪律）；**版本打包 / devconsole 上传 / 状态跟踪 / 验证**由 release executor 在仓库发布纪律下执行；founder 仅完成账户侧必要的本人审批/2FA。提审前商店版用户调 dida 会得到 needs-extension（与全新站点一致），不影响既有 ctrip/12306 车道。
 - unpacked/GitHub Releases 通道不受商店审核影响，`feat/session-dida-portal` 分支合并即生效（PR #297 已 merge，代码与 manifest 已就位）。
-- **当前证据边界**：尚无此次后台提审或商店回拉回执。上传、提审受理、商店在架是不同状态，由 [#346](https://github.com/Danceiny/gotry/issues/346) 与 [#537](https://github.com/Danceiny/gotry/issues/537) 跟踪。
+- **当前证据边界**：提审已受理，但线上商店仍为 v0.1.0。须待 v0.2.0.26 过审、上线并完成商店回拉验证后，才能关闭 [#346](https://github.com/Danceiny/gotry/issues/346) 或 [#537](https://github.com/Danceiny/gotry/issues/537)。
