@@ -2,7 +2,8 @@
 
 # Stai — Chrome Web Store Submission Materials (ADR-21 Distribution Track B)
 
-> Status: **Live on the store (2026-09-02, v0.1.0 approved and published)**. Store page:
+> Status: **v0.2.0.26 submitted for Chrome Web Store review on 2026-09-25,
+> with automatic publication selected after approval; v0.1.0 remains live**. Store page:
 > https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd
 > Artifact: `node scripts/package-extension.mjs` → `dist-extension/gotry-session-bridge-store.zip`
 > (manifest at the zip root; uploaded directly in the store console). The icon is uploaded
@@ -63,13 +64,13 @@ the port pool (8791-8795) and the host whitelist are unchanged.
 
 ## Reviewer access
 
-The dashboard's **Test instructions** fields are currently empty. The Ctrip desktop path can be checked with the public GoTry setup and a user-owned Ctrip session; the HotelByte employee-portal join and Dida one-time login require a separate review account. If that path is part of review, enter a dedicated test account directly in the dashboard's private credential fields and provide bounded steps in **Other instructions**. Never place credentials in this repository or a public issue.
+The dashboard's **Other instructions** now give the public GoTry setup and user-owned Ctrip/12306 desktop path, and disclose that the restricted HotelByte employee-portal join and Dida one-time login path has no reviewer credentials supplied. If review needs that path, enter a dedicated test account directly in the dashboard's private credential fields. Never place credentials in this repository or a public issue.
 
 ## founder submission checklist (in order) — completed (live on the store 2026-09-02)
 
 1. ~~Chrome Web Store developer registration (one-time $5, Google account).~~
 2. ~~`node scripts/package-extension.mjs` produces the store zip; prepare the 128×128 icon and 1280×800 screenshots (uploaded separately in the store console).~~
-3. ~~Create item → upload zip → paste listing/privacy disclosures.~~ The live listing's privacy URL still points to a moved path. Correct it to [extension-privacy.md](extension-privacy.md) in the dashboard before the next submission.
+3. ~~Create item → upload zip → paste listing/privacy disclosures.~~ The moved privacy-policy URL was corrected to [extension-privacy.md](extension-privacy.md) in the v0.2.0.26 submission; the live v0.1.0 listing may still show the old URL until publication.
 4. ~~Submit for review~~ → approved and published (v0.1.0).
 5. Post-approval landing: bridge Origin whitelist trusting both channels (landed, `EXTENSION_ORIGINS` + §38); the Node side keeps the extension file / `manifest.key` precheck, and `sessionFlightSearch` / `sessionLogin` hand `installUrl` / `installAction` to the dsh UI on `needs-extension`; the old wizard no longer carries installation duty. The GitHub Releases channel (Track A) is kept as the review-free / versioned / rollback / mirror channel.
 
@@ -95,10 +96,10 @@ The dashboard's **Test instructions** fields are currently empty. The Ctrip desk
 | Versioning / rollback / mirror | ✗ (store cadence) | ✓ (Release assets + SHA256) | ✗ |
 | Extension ID | `oeajpiccmonococjcegddlooeeohlbgd` | `olpgkofjhhiiiahdkkbcninhjmegghfe` | `olpgkofjhhiiiahdkkbcninhjmegghfe` |
 
-## Pending Stai submission (candidate 0.2.0.26)
+## Stai v0.2.0.26 review receipt
 
-- The live store still serves 0.1.0 as GoTry Session Bridge. The 0.2.0.25 GitHub Release predates the Stai rename while current main still uses that version; a new version is needed for distinct bytes. Candidate 0.2.0.26 is preparation, not an authorized or submitted release.
-- Include the Dida/HotelByte permissions, portal join and login behavior in the dashboard listing and privacy answers. Record the exact built SHA and zip checksum. The repository Actions workflow currently has no configured CWS secrets; use the dashboard upload only after the founder confirms the exact version and window, or configure the workflow's secrets through the account owner.
+- The founder confirmed v0.2.0.26 and immediate submission. [PR #586](https://github.com/Danceiny/gotry/pull/586) merged as `3925d1a5963a32c8708d358d14ed70999580d967`; the exact-commit store zip SHA-256 is `7c88b2e21a7546c99917b96ba16b37b5d6674f93ab9461dd26d12573af57e7a2`. Its matching [ext-v0.2.0.26 GitHub Release](https://github.com/Danceiny/gotry/releases/tag/ext-v0.2.0.26) assets were pulled back and checksummed.
+- The store dashboard accepted the zip, showing draft `version_name` `0.2.0-rc.26` (`version` `0.2.0.26`). The listing, permission justifications, data-use checklist and policy URL were updated for Dida/HotelByte. On 2026-09-25 the dashboard returned **“Your extension has been submitted for review”** and **Pending review**. Automatic publication after approval is selected; no Chrome Web Store pull-back is possible until it is live. The repository Actions workflow currently has no configured CWS secrets, so this submission used the dashboard.
 - **The store submission is tracked by [#346](https://github.com/Danceiny/gotry/issues/346)**; **founder decides whether / when / which version to bump** (founder-confirm regime, see `tech-strategy.md` §11 and the release discipline in `AGENTS.md`); **packaging / devconsole upload / status tracking / verification** are executed by the release executor under the repository release discipline; founder only completes the account-side personal approval / 2FA as required. Before the store build lands, store users calling dida get needs-extension (same as any brand-new site); the existing ctrip/12306 lanes are unaffected.
 - unpacked / GitHub Releases channels are unaffected by store review; merging the `feat/session-dida-portal` branch takes effect immediately (PR #297 is merged; code and manifest are already in place).
-- **Current evidence boundary**: there is no dashboard receipt of this submission or store pull-back verification. Upload, review acceptance and live publication remain separate states, tracked by [#346](https://github.com/Danceiny/gotry/issues/346) and [#537](https://github.com/Danceiny/gotry/issues/537).
+- **Current evidence boundary**: submission is accepted for review, while the public store still serves v0.1.0. Approval, live v0.2.0.26 and store pull-back remain to be verified before [#346](https://github.com/Danceiny/gotry/issues/346) or [#537](https://github.com/Danceiny/gotry/issues/537) can be closed.
