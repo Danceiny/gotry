@@ -44,6 +44,8 @@ export const ITINERARY_DECK_EXPORT_MANIFEST_NAME = 'manifest.json'
 export const ITINERARY_DECK_EXPORT_QR_NAME = 'qr.svg'
 /** 随机默认 bundle basename(仅 crypto 十六进制;显式 basename 优先) */
 export const ITINERARY_DECK_EXPORT_RANDOM_BYTES = 8
+/** 无 target_url 时 QR 编码的字面本地占位串(扫码得到说明文本而非死链;#569) */
+export const ITINERARY_DECK_EXPORT_LOCAL_MARKER = '<local bundle; not yet hosted>'
 const RANDOM_ATTEMPTS = 3
 const DIR_DENY = ['.git', 'node_modules']
 const ID_SAMPLE = 3
@@ -220,7 +222,9 @@ async function writeExclusive(path: string, body: string): Promise<{ bytes: numb
   return { bytes }
 }
 
-/** 构造 manifest:v1 schema,记录 deck 字节/sha256、事实计数 + 来源标签、证据链分布、target_url、share_intent */
+/** 构造 manifest:v1 schema,记录 deck 字节/sha256、事实计数 + 来源标签、证据链分布、target_url、local_only、share_intent。
+ * local_only 是 #569 的显式指示字段(v1 兼容附加字段,不改 schema 名):无 target_url 时为 true——
+ * 消费方据此读出「本地 bundle,无线上目的地」,绝不靠 target_url 字段缺失来暗示。 */
 function buildManifest(
   basename: string,
   facts: BookableFact[],
@@ -254,6 +258,7 @@ function buildManifest(
     facts: { total: facts.length, by_kind: byKind, source_tags: sourceTags.slice(0, SOURCE_TAG_SAMPLE) },
     evidence_chain: { unverified, by_tier: byTier, by_bookability: byBookability },
     target_url: targetUrl,
+    local_only: targetUrl === undefined,
     share_intent: { qr: 'generated', qr_path: `${basename}${ITINERARY_DECK_EXPORT_QR_SUFFIX}` },
   }
 }
@@ -267,11 +272,12 @@ function stampManifest(manifest: Record<string, unknown>, html: string): Record<
 }
 
 /** qr.svg 真矩阵编码(issue #569,Phase B 切片 3b):用 npm `qrcode` 库直接渲染 SVG,
- * 编码 target_url;无 target_url 时编码字面标记 `<local bundle; not yet hosted>`
- * (扫码得到一段说明文本而非死链;manifest.target_url 字段同时缺省,Phase C 消费方
- * 据 manifest.target_url 判断是否 hosted,不靠扫码内容)。
+ * 编码 target_url;无 target_url 时编码字面标记 ITINERARY_DECK_EXPORT_LOCAL_MARKER
+ * (扫码得到一段说明文本而非死链;manifest.target_url 同时缺省、manifest.local_only=true,
+ * 消费方据 manifest 字段判断是否 hosted,不靠扫码内容)。
  * error correction level 默认 M(15% 冗余,适合带 logo / 抗打印 / 二维码扫描容错);
- * margin=2(ISO 标准 4 模块静默区中的 2——可扫描 + 视觉紧凑)。
+ * margin=2(ISO 标准 4 模块静默区中的 2——可扫描 + 视觉紧凑;#569 T2 验收:payload ×
+ * 128/240/480px 全矩阵经独立解码链还原精确 payload,无证据要求调整)。
  * SVG 是自包含 XML,可在任意现代浏览器/扫码 app 直接渲染。 */
 async function qrSvgFor(payload: string): Promise<string> {
   return QRCode.toString(payload, {
@@ -336,7 +342,7 @@ export async function generateItineraryDeckExport(input: unknown, deps: Itinerar
   // 若先生成 HTML/manifest 再遇 QR reject 会留下半成品 bundle 且重试撞 EEXIST。
   const qrTarget = url.targetUrl && url.targetUrl.length > 0
     ? url.targetUrl
-    : `<local bundle; not yet hosted>`
+    : ITINERARY_DECK_EXPORT_LOCAL_MARKER
   let qrSvg: string
   try {
     qrSvg = await qrSvgFor(qrTarget)
