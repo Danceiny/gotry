@@ -7,7 +7,7 @@
  *   - extension-not-connected → 'needs-extension'(waiting no-spend,一次性安装指引;
  *     **不静默回退 CDP**——回退即重新引入逐连接权限框,正是本通道要消灭的摩擦);
  *   - bridge-unavailable(端口池全占等环境故障)→ 'error'(非用户门)。
- * 检索页无回包不是车道失败:与 CDP 车道同语义(到点无 hints 命中 ⇒ miss,页标题命挑战 ⇒ challenged)。
+ * 检索页无回包不是车道失败:调用侧判为 sniff_timeout/error,页标题命挑战则判 challenged。
  */
 
 import { getOrCreateSessionBridge, needsExtensionSummary, type ExtensionJobResult, type SessionJobHandle, type SniffBodies } from './extension-bridge.ts'

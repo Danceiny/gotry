@@ -38,7 +38,7 @@ import {
   type SessionComparableRecord,
   SESSION_FIELD_ACCURACY_THRESHOLD,
 } from '../capabilities/session/benchmark.ts'
-import { sessionFlightSearch, type SessionSearchResult } from '../capabilities/session-search.ts'
+import { sessionFlightSearch, type SessionFlightTransportShape, type SessionSearchResult } from '../capabilities/session-search.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import {
   loadStaticFlightSnapshot,
@@ -193,6 +193,7 @@ interface QueryRunRecord {
   officialLatencyMs: number | null
   sessionLatencyMs: number | null
   sessionVerdict: string
+  sessionTransportShape: SessionFlightTransportShape | 'not_observed'
   sessionError: string | undefined
   started_at: string
 }
@@ -344,6 +345,7 @@ async function runOne(
     officialLatencyMs,
     sessionLatencyMs,
     sessionVerdict: String(sessionVerdict),
+    sessionTransportShape: sessRes.transportShape ?? 'not_observed',
     sessionError,
     started_at: startedAt,
   }
