@@ -225,6 +225,7 @@ TREK 是自托管协作旅行规划器，数据面成熟度最高，可借鉴的
 
 - `capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard（方法×URL 双因子 + 驼峰复合写词，写请求物理 abort + 审计，fail-closed）+ 携程机票适配器（batchSearch 嗅探→结构化）+ 节律闸（同站 ≥30s）；证据链新标注 `[会话:ctrip-flight@ts]` 生效；run-all §24。live 会话检索需 headful（headless 下携程只回壳页，实测）。
 - 登录态为存在前提（founder 纠偏 2026-08-28）：persistent 专用 profile 降为测试/后备（实测：匿名窗口无人会登录，History/Cookies 双 0 行）；**2026-08-30 传输层定案（founder「逐连接权限框根本无法使用」）：扩展桥升 PRIMARY**——`extension/` GoTry Session Bridge（MV3 一次性安装，manifest 固定 key=扩展 ID）在自身标签页被动嗅探站点自身请求（扩展零写行为），`session/extension-bridge.ts` 回环桥（node:http 零新依赖，origin 白名单）长轮询配对；系统弹窗每会话 0 次，cookie 只读名字值即弃，cdp 降为 `GOTRY_SESSION_TRANSPORT=cdp` 显式诊断后备（不静默回退）；run-all §38 全离线合同。
+- 多个可信扩展 Origin 同时轮询同一桥时，票据名字预检与紧接着的检索绑定到领取预检作业的 Origin；另一 Origin 不能提交该作业的回包。这只保证 Origin 亲和，不证明 Chrome 配置身份；跨次检索和共享同一 Origin 的多个配置仍需按 [#272](https://github.com/Danceiny/gotry/issues/272) 做真实核验。
 
 ### #21 双源验收合同（2026-08-29）
 
