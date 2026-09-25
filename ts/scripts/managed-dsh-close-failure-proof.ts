@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
+import { spawn as nodeSpawn, type SpawnOptions } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { ManagedDshRunPort } from '../src/booking-surface/managed-dsh-run-port.ts'
 import { ManagedDshCleanupError } from '../src/booking-surface/managed-dsh-cleanup-diagnostic.ts'
 
@@ -12,6 +14,20 @@ import { ManagedDshCleanupError } from '../src/booking-surface/managed-dsh-clean
  * This is fault injection, not a complete provider E2E: dsh-subprocess-local
  * supplies the real spawn-failure handle, while waitForExit is replaced in
  * memory with each result allowed by its public contract (reject or false).
+ *
+ * Process-lifecycle containment (full-regression hang, GH run 36137453638 /
+ * Node 24 job 108078849783): the native linux-scope owner's shared observation
+ * has no cancellable wait and no wall-clock bound (#541). After this proof's
+ * bounded observation window aborts, the scope owner's pending timers and
+ * systemctl work stay referenced and kept the process alive after the result
+ * had printed. The proof therefore pins the runtime's PUBLIC test hooks
+ * (`SpawnInternals.platform`, documented "host platform override", consumed
+ * synchronously by selectContainmentMode) to select the deterministic POSIX
+ * fallback owner: a spawn that never started a child has no pid, so its
+ * range-emptiness is observable immediately and the process can exit
+ * naturally. The hooks are saved/restored synchronously around the (fully
+ * synchronous) port construction; the global `process.platform` is never
+ * touched and the real missing-cwd failure is preserved.
  */
 
 type Handle = {
@@ -22,6 +38,9 @@ type Handle = {
 type Outcome<T> =
   | { status: 'fulfilled'; value: T }
   | { status: 'rejected'; reason: unknown }
+
+/** Recorded ordinary spawn invocation (public SpawnInternals.spawn hook). */
+type RecordedSpawn = { program: string; args: readonly string[]; options: SpawnOptions }
 
 const workerPath = fileURLToPath(new URL('./fixtures/managed-dsh-pending-worker-fixture.mjs', import.meta.url))
 
@@ -67,26 +86,65 @@ async function settleInjectedHandle(
 ): Promise<void> {
   const handle = (port as unknown as { handle: Handle }).handle
   handle.waitForExit = originalWaitForExit
-  // The real provider handle may still be finishing its spawn-failure cleanup
-  // after the injected outer close has returned. Keep the observation bounded
-  // at the provider's own scale: one linux-scope query may cost up to its
-  // documented 5 s systemd budget.
-  //
-  // The observation OUTCOME is recorded, not required: demanding
-  // confirmed-empty here measures upstream teardown latency under CI runner
-  // manager degradation, not the #510 close-failure contract. Two budgets
-  // were already exceeded by the same assertion (2 s in #535, 12 s in #540 —
-  // run 35539442825 still failed Node 24 while Node 22 passed the identical
-  // commit), so no fixed wall clock has proven it; raising it further is
-  // deadline roulette. The contract-owned assertions below (bounded settle,
-  // typed rejection, idempotent close, no unhandled rejections) stay hard.
+  // The pinned fallback owner makes the real observation deterministic: the
+  // spawn never produced a child (no pid), so the owner's liveness probe is
+  // immediately false and confirmed-empty arrives without any provider-side
+  // wait. The bounded window stays as harness safety, not as a contract.
   const rangeEmpty = await bounded(originalWaitForExit(AbortSignal.timeout(12_000)), 13_500, 'real handle cleanup did not settle')
-  if (!rangeEmpty) {
-    console.log('MANAGED DSH CLOSE FAILURE PROOF: range not confirmed empty within 12s observation (linux-scope teardown latency; recorded, see #541)')
-  }
+  assert.equal(rangeEmpty, true, 'real handle cleanup must confirm the range empty (deterministic fallback owner)')
   const done = await bounded(doneOutcome, 2_500, 'real handle done did not settle')
   assert.equal(done.status, 'rejected', 'real spawn-failure handle.done rejects')
   await bounded(observe(port.close()), 2_500, 'sticky close promise did not settle')
+}
+
+const runtimeProto = LocalSubprocessRuntime.prototype as unknown as {
+  spawn: (this: LocalSubprocessRuntime, spec: Parameters<LocalSubprocessRuntime['spawn']>[0]) => ReturnType<LocalSubprocessRuntime['spawn']>
+}
+
+/**
+ * Construct the port with the runtime's PUBLIC test hooks pinned to the POSIX
+ * fallback owner for the one synchronous spawn the constructor performs.
+ * `platform: 'darwin'` routes selectContainmentMode away from the linux-scope
+ * owner whose uncancellable shared wait can hang the runner; the recorded
+ * `spawn` hook delegates to the real node spawn so the missing-cwd failure is
+ * genuine. Prototype and per-instance internals are restored before any
+ * asynchronous assertion can observe them.
+ */
+function constructPortWithFallbackOwner(options: { cwd: string; workerPath: string; graceMs: number }): {
+  port: ManagedDshRunPort
+  spawnCalls: RecordedSpawn[]
+  pinnedInternals: SpawnOptions | null
+  prototypeRestored: boolean
+} {
+  const spawnCalls: RecordedSpawn[] = []
+  let pinnedInternals: Record<string, unknown> | null = null
+  const originalProtoSpawn = runtimeProto.spawn
+  runtimeProto.spawn = function (this: LocalSubprocessRuntime, spec) {
+    pinnedInternals = this.internals as unknown as Record<string, unknown>
+    const hadPlatform = Object.hasOwn(this.internals, 'platform')
+    const previousPlatform = this.internals.platform
+    const previousSpawn = this.internals.spawn
+    this.internals.platform = 'darwin'
+    this.internals.spawn = (program, args, opts) => {
+      spawnCalls.push({ program, args: [...args], options: opts })
+      return (previousSpawn ?? nodeSpawn)(program, args, opts)
+    }
+    try {
+      return originalProtoSpawn.call(this, spec)
+    } finally {
+      if (previousSpawn !== undefined) this.internals.spawn = previousSpawn
+      else delete this.internals.spawn
+      if (hadPlatform) this.internals.platform = previousPlatform
+      else delete this.internals.platform
+    }
+  }
+  let port: ManagedDshRunPort
+  try {
+    port = new ManagedDshRunPort(options)
+  } finally {
+    runtimeProto.spawn = originalProtoSpawn
+  }
+  return { port, spawnCalls, pinnedInternals, prototypeRestored: runtimeProto.spawn === originalProtoSpawn }
 }
 
 async function proveCloseFailure(
@@ -96,7 +154,26 @@ async function proveCloseFailure(
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), `gotry-510-close-${mode}-`))
   const missingCwd = join(root, 'missing-cwd')
-  const port = new ManagedDshRunPort({ cwd: missingCwd, workerPath, graceMs: 50 })
+  const { port, spawnCalls, pinnedInternals, prototypeRestored } = constructPortWithFallbackOwner({
+    cwd: missingCwd,
+    workerPath,
+    graceMs: 50,
+  })
+  // Containment-selection coverage: the pinned platform hook must have routed
+  // this spawn through the POSIX fallback owner — the ordinary spawn hook
+  // fired exactly once for the real Node executable with the real missing
+  // cwd and detached POSIX options (the native linux-scope branch would have
+  // exec'd systemd-run instead).
+  assert.equal(spawnCalls.length, 1, `${mode}: ordinary spawn fired exactly once (fallback owner selected)`)
+  assert.equal(spawnCalls[0].program, process.execPath, `${mode}: real worker executable spawned`)
+  assert.equal(spawnCalls[0].args.at(-1), workerPath, `${mode}: real worker path spawned`)
+  assert.equal(spawnCalls[0].options.cwd, missingCwd, `${mode}: real missing cwd passed to the real spawn`)
+  assert.equal(spawnCalls[0].options.detached, true, `${mode}: detached POSIX fallback owner selected`)
+  // Hook restoration coverage: nothing observable of the test hooks may
+  // outlive the synchronous construction.
+  assert.ok(prototypeRestored, `${mode}: runtime prototype spawn restored`)
+  assert.ok(pinnedInternals !== null && !Object.hasOwn(pinnedInternals, 'platform') && !Object.hasOwn(pinnedInternals, 'spawn'),
+    `${mode}: internals test hooks restored`)
   const handle = (port as unknown as { handle: Handle }).handle
   const originalWaitForExit = handle.waitForExit.bind(handle)
   const doneOutcome = observe(handle.done)
