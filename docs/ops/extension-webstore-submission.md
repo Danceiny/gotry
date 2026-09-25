@@ -67,7 +67,14 @@ the port pool (8791-8795) and the host whitelist are unchanged.
 
 ## Later releases (store channel)
 
-- Store-build update: bump `version` in `extension/manifest.json` → `node scripts/package-extension.mjs` → upload the new zip in the devconsole and submit for review.
+- Store-build update: bump `version` in `extension/manifest.json` → the
+  `extension-publish.yml` workflow packs automatically on `extension/**` pushes; the
+  publish job (manual dispatch, `dry_run=false`, founder-confirm regime) uploads via
+  the CWS REST API and submits for review — setup, response semantics and
+  fail-closed rules in [extension-store-publish.md](../extension-store-publish.md).
+  The devconsole manual upload remains the fallback; the repository's release
+  discipline (AGENTS.md) and the store pull-back verification requirement are
+  unchanged.
 - GitHub channel update: the three-piece `ext-*` tag release assets (tar.gz / store-zip / dist-manifest), pulled by users via `npx @danceiny/gotry setup --extension-from=github`.
 
 ## How the three channels relate
@@ -85,5 +92,5 @@ the port pool (8791-8795) and the host whitelist are unchanged.
 - `manifest.json` changes: host_permissions adds `https://*.dida.com/*` and `https://dida.com/*`; both content_scripts groups add `https://portal.dida.com/*`.
 - Trigger: `gotry_session_search kind=dida` (the hotel-be portal integration line) needs dida-domain injection and read-only login-ticket cookie-name permission.
 - **The store submission is tracked by [#346](https://github.com/Danceiny/gotry/issues/346)**; **founder decides whether / when / which version to bump** (founder-confirm regime, see `tech-strategy.md` §11 and the release discipline in `AGENTS.md`); **packaging / devconsole upload / status tracking / verification** are executed by the release executor under the repository release discipline; founder only completes the account-side personal approval / 2FA as required. Before the store build lands, store users calling dida get needs-extension (same as any brand-new site); the existing ctrip/12306 lanes are unaffected.
-- The unpacked / GitHub Releases channels are unaffected by store review; merging the `feat/session-dida-portal` branch takes effect immediately (PR #297 is merged; code and manifest are already in place).
+- unpacked / GitHub Releases channels are unaffected by store review; merging the `feat/session-dida-portal` branch takes effect immediately (PR #297 is merged; code and manifest are already in place).
 - **Current evidence boundary**: the repository holds no receipt of this submission or of a store pull-back verification; external state is tracked by [#346](https://github.com/Danceiny/gotry/issues/346).

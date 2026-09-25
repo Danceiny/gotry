@@ -59,7 +59,11 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 
 ## 后续发版（商店通道）
 
-- 商店版更新：升 `extension/manifest.json` 的 `version` → `node scripts/package-extension.mjs` → devconsole 上传新 zip 提审。
+- 商店版更新：升 `extension/manifest.json` 的 `version` → `extension-publish.yml` 流水线在
+  `extension/**` 推送时自动打包；publish job（手动 dispatch、`dry_run=false`、founder
+  确认制）经 CWS REST API 上传并提审——配置、响应语义与 fail-closed 规则见
+  [extension-store-publish.zh-CN.md](../extension-store-publish.zh-CN.md)。devconsole 手工
+  上传保留为兜底；仓库发布纪律（AGENTS.md）与商店回拉验证要求不变。
 - GitHub 通道更新：`ext-*` 标签 release 资产三件套（tar.gz/store-zip/dist-manifest），用户侧 `npx @danceiny/gotry setup --extension-from=github` 拉取。
 
 ## 三通道关系
