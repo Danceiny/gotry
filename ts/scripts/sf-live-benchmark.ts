@@ -182,6 +182,7 @@ interface QueryRunRecord {
   requested_source: GoldenSource
   effective_source: string
   fallback_reason: string | null
+  comparator_evidence_scope: 'deterministic_only' | 'live_provider'
   estimated_fields: string[]
   official_provenance: StaticGoldenResolution['provenance'] | null
   official: SessionComparableRecord | null
@@ -203,6 +204,7 @@ interface RunSummary {
   total: number
   accuracy_pass: number
   comparable: number
+  live_provider_comparable: number
   hit: number
   challenge: number
   no_data: number
@@ -211,6 +213,7 @@ interface RunSummary {
   effective_sources: string[]
   fallback_count: number
   golden_source: string
+  comparator_evidence_scope: 'deterministic_only' | 'live_provider'
   /** 批次是否跑满 8 条;challenge/guard 停止的批次为 false(可审阅的部分批次) */
   batch_complete: boolean
   /** completed=跑满;challenge_stop=风控/验证码触发即停(RFC §3.5);guard_violation=读守卫违例即停 */
@@ -330,6 +333,7 @@ async function runOne(
     requested_source: requestedSource,
     effective_source: effectiveSource,
     fallback_reason: fallbackReason,
+    comparator_evidence_scope: requestedSource === 'flyai' ? 'live_provider' : 'deterministic_only',
     estimated_fields: estimatedFields,
     official_provenance: officialProvenance,
     official,
@@ -411,6 +415,7 @@ async function main(): Promise<void> {
 
   const accuracy_pass = records.filter((r) => r.softScore?.pass === true).length
   const comparable = records.filter((r) => r.doubleSource.state === 'comparable').length
+  const liveProviderComparable = records.filter((r) => r.comparator_evidence_scope === 'live_provider' && r.doubleSource.state === 'comparable').length
   const hit = records.filter((r) => r.sessionVerdict === 'hit').length
   const challenge = records.filter((r) => r.sessionVerdict === 'challenged' || r.doubleSource.state === 'challenge_stop' || r.doubleSource.state === 'guard_violation').length
   const no_data = records.filter((r) => r.official?.verdict !== 'hit' || (r.sessionVerdict !== 'hit' && r.sessionVerdict !== 'challenged')).length
@@ -427,6 +432,7 @@ async function main(): Promise<void> {
     total: records.length,
     accuracy_pass,
     comparable,
+    live_provider_comparable: liveProviderComparable,
     hit,
     challenge,
     no_data,
@@ -435,6 +441,7 @@ async function main(): Promise<void> {
     effective_sources: effectiveSources,
     fallback_count: fallbackCount,
     golden_source: requestedSource === 'manual' ? 'manual-golden' : requestedSource,
+    comparator_evidence_scope: requestedSource === 'flyai' ? 'live_provider' : 'deterministic_only',
     batch_complete: stopReason === 'completed' && records.length === queries.length,
     stop_reason: stopReason,
     attempted_query_ids: attemptedQueryIds,
@@ -448,11 +455,13 @@ async function main(): Promise<void> {
 
   console.log(`\n──── sf-live-benchmark 汇总 ────`)
   console.log(`golden requested = ${summary.requested_source}`)
+  console.log(`comparator evidence scope = ${summary.comparator_evidence_scope}${summary.comparator_evidence_scope === 'deterministic_only' ? ' (not live provider inventory evidence)' : ''}`)
   console.log(`golden effective = ${summary.effective_sources.join(',')};fallback=${summary.fallback_count}`)
   console.log(`跑批 query 数: ${records.length}`)
   console.log(`stop reason: ${summary.stop_reason}${summary.stop_reason !== 'completed' ? `;attempted=[${summary.attempted_query_ids.join(',')}] not_attempted=[${summary.not_attempted_query_ids.join(',')}]` : ''}`)
   console.log(`verdict=hit: ${hit}/${records.length}`)
   console.log(`双源合同=comparable: ${comparable}/${records.length}`)
+  console.log(`live-provider comparable: ${liveProviderComparable}/${records.length}`)
   console.log(`字段准确率 ≥${SESSION_FIELD_ACCURACY_THRESHOLD * 100}% (软命中): ${accuracy_pass}/${records.filter((r) => r.softScore !== null).length}`)
   console.log(`live <15s (hit): ${live_under_15s}/${hit || 0}`)
   console.log(`challenge/guard 触发: ${challenge}`)

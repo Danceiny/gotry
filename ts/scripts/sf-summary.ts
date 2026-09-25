@@ -54,6 +54,7 @@ export interface SummaryRecord {
   requested_source: string | null
   effective_source: string | null
   fallback_reason: string | null
+  comparator_evidence_scope: 'deterministic_only' | 'live_provider' | 'unknown'
   batch_id: string
   batch_identity_source: string
   evidence_captured_at: string | null
@@ -89,11 +90,15 @@ export interface RunSummary {
     query_ids: string[]
   }
   status: 'ok' | 'fail_closed'
+  /** status only validates the selected offline batch, never live availability. */
+  status_scope: 'batch_integrity_only'
   total: number
   threshold: number
   accuracy_pass: number
   accuracy_eligible: number
   comparable: number
+  /** Subset of comparable whose requested and effective comparator is a live provider. */
+  live_provider_comparable: number
   hit: number
   challenge: number
   /** 选中批次里出现 challenged/challenge_stop/guard_violation 证据(issue #411):
@@ -404,6 +409,14 @@ function sourceBucket(record: SummaryRecord): keyof RunSummary['sources'] {
   return 'unknown_query_ids'
 }
 
+function comparatorScope(requested: string | null, effective: string | null): SummaryRecord['comparator_evidence_scope'] {
+  const wanted = requested?.toLowerCase() ?? ''
+  const actual = effective?.toLowerCase() ?? ''
+  if (wanted === 'static' || wanted === 'manual' || actual.startsWith('static') || actual.startsWith('manual')) return 'deterministic_only'
+  if (wanted === 'flyai' && actual === 'flyai') return 'live_provider'
+  return 'unknown'
+}
+
 function toSummaryRecord(item: LoadedRecord, batchId: string, batchIdentitySource: string): SummaryRecord {
   const record = item.record
   const fields = sourceFields(record)
@@ -435,6 +448,7 @@ function toSummaryRecord(item: LoadedRecord, batchId: string, batchIdentitySourc
     requested_source: fields.requested,
     effective_source: fields.effective,
     fallback_reason: fields.fallback,
+    comparator_evidence_scope: comparatorScope(fields.requested, fields.effective),
     batch_id: batchId,
     batch_identity_source: batchIdentitySource,
     evidence_captured_at: item.captureAt,
@@ -526,6 +540,7 @@ export function buildSummary(evidenceRoot: string, generatedAt = new Date().toIS
       query_ids: selectedRecords.map((record) => record.query_id),
     },
     status: 'fail_closed',
+    status_scope: 'batch_integrity_only',
     total: selectedRecords.length,
     threshold: SESSION_FIELD_ACCURACY_THRESHOLD,
     accuracy_pass: selectedRecords.filter((record) => record.soft_score?.pass === true).length,
@@ -533,6 +548,10 @@ export function buildSummary(evidenceRoot: string, generatedAt = new Date().toIS
     comparable: selectedRecords.filter((record) => {
       const item = selected.get(record.query_id)
       return item !== undefined && isObject(item.record.doubleSource) && item.record.doubleSource.state === 'comparable'
+    }).length,
+    live_provider_comparable: selectedRecords.filter((record) => {
+      const item = selected.get(record.query_id)
+      return record.comparator_evidence_scope === 'live_provider' && item !== undefined && isObject(item.record.doubleSource) && item.record.doubleSource.state === 'comparable'
     }).length,
     hit: selectedRecords.filter((record) => record.session_verdict === 'hit').length,
     challenge: selectedRecords.filter((record) => record.session_verdict === 'challenged').length,
@@ -569,11 +588,15 @@ export function main(args = process.argv.slice(2)): number {
     const { summary, summaryPath } = buildSummary(options.evidenceRoot)
     console.log('──── sf-summary (coherent offline batch) ────')
     console.log(`status: ${summary.status}`)
+    console.log('status scope: offline batch integrity only; live availability requires independent session verification')
     console.log(`selected batch: ${summary.selected_batch.batch_id ?? '(none)'}`)
     console.log(`batch capture: ${summary.batch_capture_at ?? '(unknown)'}`)
     console.log(`generated at: ${summary.generated_at}`)
     console.log(`total: ${summary.total}/${EXPECTED_QUERY_IDS.length}`)
-    console.log(`verdict=hit: ${summary.hit}/${summary.total}`)
+    console.log(`session verdict=hit (offline record, unverified): ${summary.hit}/${summary.total}`)
+    console.log(`double-source comparable (all scopes): ${summary.comparable}/${summary.total}`)
+    console.log(`live-provider comparable: ${summary.live_provider_comparable}/${summary.total}`)
+    if (summary.sources.static_query_ids.length > 0 || summary.sources.manual_golden_query_ids.length > 0) console.log('static/manual comparator: deterministic only; no live provider inventory proof')
     if (summary.challenge_stop_detected) console.log('challenge stop detected: 部分批次为挑战截断产物(RFC §3.5),不计为完整/有效校准')
     console.log(`soft score ≥${summary.threshold * 100}%: ${summary.accuracy_pass}/${summary.accuracy_eligible}`)
     console.log(`manual golden query_ids: ${summary.sources.manual_golden_query_ids.join(', ') || '(none)'}`)

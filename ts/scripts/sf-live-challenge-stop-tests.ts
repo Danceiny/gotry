@@ -468,12 +468,15 @@ function scenario(name: string): Overlay {
     assert.equal(summary.total, 8)
     assert.equal(summary.batch_complete, true)
     assert.equal(summary.stop_reason, 'completed')
+    assert.equal((artifacts.raw as Record<string, unknown>).comparator_evidence_scope, 'deterministic_only')
+    assert.equal((artifacts.raw as Record<string, unknown>).live_provider_comparable, 0)
     assert.deepEqual(summary.attempted_query_ids, EXPECTED_QUERY_IDS)
     assert.deepEqual(summary.not_attempted_query_ids, [])
 
     const sfSummary = runSfSummary(overlay)
     assert.equal(sfSummary.status, 0, `完整八条批次须保持 ok 契约,stdout=${sfSummary.stdout}`)
     assert.equal(sfSummary.summary.status, 'ok')
+    assert.equal(sfSummary.summary.status_scope, 'batch_integrity_only')
     assert.equal(sfSummary.summary.total, 8)
     assert.equal(sfSummary.summary.challenge_stop_detected, false)
     assertRebuiltBatch(sfSummary.summary, artifacts.raw, artifacts.stem)
@@ -509,4 +512,27 @@ function scenario(name: string): Overlay {
   }
 }
 
-console.log('\nSF LIVE CHALLENGE STOP TESTS: 5 scenarios OK (first-challenge / mid-challenge / last-challenge / normal-batch / default-root-compat; offline, explicit roots, request counts and summary readback asserted)')
+// ── F. 静态对照可形成可比记录，但不得贡献实时提供方可比数 ──
+{
+  const overlay = scenario('static-scope')
+  try {
+    const run = runRunner(overlay, 'static', 'hit@all')
+    assert.equal(run.status, 0, `静态批次应跑满，stderr=${run.stderr}`)
+    assert.match(run.stdout, /comparator evidence scope = deterministic_only/)
+    const artifacts = assertBatchArtifacts(overlay)
+    assert.equal(artifacts.raw.comparator_evidence_scope, 'deterministic_only')
+    assert.equal(artifacts.raw.live_provider_comparable, 0)
+    assert.ok((artifacts.raw.records as Array<Record<string, unknown>>).every((record) => record.comparator_evidence_scope === 'deterministic_only'))
+    const rebuilt = runSfSummary(overlay)
+    assert.equal(rebuilt.summary.status_scope, 'batch_integrity_only')
+    assert.equal(rebuilt.summary.live_provider_comparable, 0)
+    assert.ok((rebuilt.summary.records as Array<Record<string, unknown>>).every((record) => record.comparator_evidence_scope === 'deterministic_only'))
+    assertZeroNetwork(overlay)
+    assertDefaultRootAbsent(overlay)
+    console.log('F. 静态对照仅计确定性证据 OK')
+  } finally {
+    cleanupOverlay(overlay)
+  }
+}
+
+console.log('\nSF LIVE CHALLENGE STOP TESTS: 6 scenarios OK (first-challenge / mid-challenge / last-challenge / normal-batch / default-root-compat / static-scope; offline, explicit roots, request counts and summary readback asserted)')

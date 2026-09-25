@@ -117,6 +117,37 @@ try {
   assert.equal(coherent.summary.started_at, '2026-09-09T10:00:00.000Z')
   assert.notEqual(coherent.summary.generated_at, coherent.summary.started_at)
   assert.equal(new Set(coherent.summary.records.map((item: any) => item.started_at)).size, 8)
+  assert.equal(coherent.summary.status_scope, 'batch_integrity_only')
+  assert.equal(coherent.summary.comparable, 8)
+  assert.equal(coherent.summary.live_provider_comparable, 0)
+  assert.ok(coherent.summary.records.every((item: any) => item.comparator_evidence_scope === 'deterministic_only'))
+
+  // A complete static batch can be coherent and have eight double-source
+  // comparisons, but its comparator cannot prove live provider inventory.
+  const staticRoot = freshRoot()
+  roots.push(staticRoot)
+  writeBatch(staticRoot, '2026-09-09T11-00-00-000Z.json', 'static-batch', 'static', 'hit')
+  const staticBatch = runCli(staticRoot)
+  assert.equal(staticBatch.summary.status, 'ok')
+  assert.equal(staticBatch.summary.status_scope, 'batch_integrity_only')
+  assert.equal(staticBatch.summary.comparable, 8)
+  assert.equal(staticBatch.summary.live_provider_comparable, 0)
+  assert.ok(staticBatch.summary.records.every((item: any) => item.comparator_evidence_scope === 'deterministic_only'))
+  assert.match(staticBatch.output, /static\/manual comparator: deterministic only/)
+
+  const liveRoot = freshRoot()
+  roots.push(liveRoot)
+  EXPECTED_QUERY_IDS.forEach((queryId, index) => {
+    const fixture = record(queryId, 'flyai-batch', `2026-09-09T12:00:${(index + 1).toString().padStart(2, '0')}.000Z`, 'unknown')
+    const effective = index === 7 ? 'manual-golden' : 'flyai'
+    writeJson(liveRoot, queryId, '2026-09-09T12-00-00-000Z.json', {
+      ...fixture, requested_source: 'flyai', effective_source: effective, official_source: effective,
+    })
+  })
+  const liveBatch = runCli(liveRoot)
+  assert.equal(liveBatch.summary.live_provider_comparable, 7)
+  assert.equal(liveBatch.summary.records.filter((item: any) => item.comparator_evidence_scope === 'live_provider').length, 7)
+  assert.equal(liveBatch.summary.records.find((item: any) => item.query_id === 'sf-08').comparator_evidence_scope, 'deterministic_only')
 
   // A newer static/error batch wins over an older manual hit and remains in
   // the static bucket. An unsupported source is visible as unknown, never
