@@ -178,6 +178,9 @@ const offlineDeps = (out: Partial<RunOut>) => ({
   // stdout 兜底(stderr 空时)
   const s = humanizeBridgeFailure('agent-reach web.read', { code: 1, stderr: '', stdout: 'weird non-json output' })
   assert.ok(s.includes('weird non-json output'), `stdout 兜底,实际 ${s}`)
+  // 截断到只剩 traceback 首行 → 不放行噪音,回落退出码人话
+  const t1 = humanizeBridgeFailure('agent-reach web.read', { code: 1, stderr: 'Traceback (most recent call last):' })
+  assert.ok(!/traceback/i.test(t1) && t1.includes('退出码 1'), `截断首行回落,实际 ${t1}`)
   console.log('12. humanizeBridgeFailure 纯函数单元 OK')
 }
 

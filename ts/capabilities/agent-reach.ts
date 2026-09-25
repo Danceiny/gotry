@@ -78,9 +78,11 @@ export function humanizeBridgeFailure(
   if (r.timedOut) return `${what} 超时(可选依赖,本轮按降级处理)`
   const text = r.stderr || r.stdout || ''
   const lines = text.split('\n').map(s => s.trim()).filter(Boolean)
-  // Python traceback 首行是 "Traceback (most recent call last):",末行才是异常本体
+  // Python traceback 首行是 "Traceback (most recent call last):",末行才是异常本体;
+  // 输出被截断到只剩首行时末行仍是 Traceback 噪音——回落退出码人话,不放行
   const isTraceback = /^traceback/i.test(lines[0] ?? '')
-  const detail = (isTraceback ? (lines[lines.length - 1] ?? '') : lines.join(' ')).slice(0, 160)
+  const raw = (isTraceback ? (lines[lines.length - 1] ?? '') : lines.join(' '))
+  const detail = /^traceback/i.test(raw) ? '' : raw.slice(0, 160)
   if (detail) return `${what} 报错:${detail}(可选依赖,本轮按降级处理)`
   return r.code == null
     ? `${what} 未返回可判定结果(进程异常结束,本轮按降级处理)`
