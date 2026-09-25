@@ -274,6 +274,8 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 **#272 维护基线（2026-09-26）**：`sf-01..08` 的查询 ID、顺序、路线和日期以 `ts/data/session-golden-20.json` 为准，SHA-256 `3be197830e5a6aa6e1309684a1fce4a736ad2a845c67b6f2f1b8a4ad3ccf977a` 固定在 `ts/data/sf-golden-manifest.json`。真实跑批器在创建证据目录或联系供应商之前拒绝查询及对照清单漂移。八条的携程可用性与传输行为都须在明确获准、已登录的浏览器会话中核验；手工对照和 `--golden=static` 仅是离线确定性参照。若修订查询集，须审核新清单修订并另开证据批次，不得继承旧批次的真实结果。当前真实证据缺口和下次检查点见 [#272](https://github.com/Danceiny/gotry/issues/272)。
 
+离线 `sf-summary.ts` 的 `status=ok` 只证明所选批次完整性（`status_scope=batch_integrity_only`），不证明实时可用性。原始及重建证据都将静态和手工对照标为 `comparator_evidence_scope=deterministic_only`；即使原始双源状态为 `comparable`，`live_provider_comparable` 也不会计入这类对照。已登录会话的可用性仍须另附可审阅的真实证据。
+
 - **动因（founder 实问「flyai 只是一个 vendor，可以切别的？」）**：P3.6 后跑批发现 FlyAI `Trial limit reached`，字段评分无对照源 → 改**可插拨 official golden**：① 默认 manual-golden（`ts/data/sf-golden-manifest.json` 公开班期 + 价格带，零网络零 vendor）；② `--golden=flyai` 显式切回 FlyAI（hbcli / 其他官方通道可同理接入）；③ 字段评分改**软命中**（硬字段 query_id/from/to/currency/source/verdict 必中，软字段时间窗口 ±60min / 价格带 ±15% / 班次子串匹配 known_flights）。
 - **官方通道尽调（2026-08-30）**：`hbcli` 只覆盖 hotel-be 域不覆盖机/火；`OpenFlights` 只有通航关系无班次；携程 `flights.ctrip.com/schedule/*.html` 公共时刻表返 432 风控——结论 = 手工 golden + 公开班期知识是当前最稳。
 - **Exit（已达成）**：本机实测 8 query：**7/8 verdict=hit / 6/6 manual-golden 软命中 100%**（sf-01 MU6145 ¥3240 7.9s / sf-02 CA1441 ¥2605 6.3s / sf-03 9C8779 ¥810 5.3s / sf-04 CZ3497 ¥1340 4.2s / sf-05 hit 7s / sf-06 GJ7153 ¥680 6.2s / sf-07 JD5143 ¥630 4.2s flyai / sf-08 miss 25s flyai）；live <15s **7/7 hit 全过**；ReadGuard 8/8 zero writes；challenge 0/8。evidence 落盘：`~/.gotry/evidence/session/sf-XX/<ts>.json` + sf-summary 汇总；`sf-summary.ts` 一键重建 unified summary。
