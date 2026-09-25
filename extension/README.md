@@ -10,7 +10,7 @@ Stai (formerly GoTry Session Bridge) connects supported travel-search pages to G
 - Sends search results and status to the local GoTry bridge in desktop use. An authenticated HotelByte employee portal can instead provide a short-lived ticket for its backend bridge, in which case search data can leave the device.
 - When that portal supplies authorized one-time Dida login credentials, the extension handles them in memory, opens the allowlisted login page, fills and submits the form. It can also operate Dida search controls. It does not persist credentials in extension storage or perform bookings or payments.
 
-See the [privacy policy](../docs/ops/extension-privacy.md) for the current data and destination disclosure.
+See the [privacy policy](https://github.com/Danceiny/gotry/blob/main/docs/ops/extension-privacy.md) for the current data and destination disclosure.
 
 ## Install
 

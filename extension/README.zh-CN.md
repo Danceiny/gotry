@@ -10,7 +10,7 @@ Stai（原名 GoTry Session Bridge）将已支持的旅行检索页面连接至 
 - 桌面形态将检索结果及状态发送到本机 GoTry 桥。已认证的 HotelByte 员工门户也可提供短期票据，接入其后端桥；此时检索数据可能离开设备。
 - 门户提供获准的一次性 Dida 登录凭据时，扩展在内存中处理，打开白名单内的登录页，填写并提交表单。扩展还可操作 Dida 检索控件。扩展不在持久化存储中保存凭据，也不执行预订或付款。
 
-数据和去向的现行说明见[隐私政策](../docs/ops/extension-privacy.zh-CN.md)。
+数据和去向的现行说明见[隐私政策](https://github.com/Danceiny/gotry/blob/main/docs/ops/extension-privacy.zh-CN.md)。
 
 ## 安装
 
