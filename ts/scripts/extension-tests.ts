@@ -42,6 +42,7 @@ import {
 import {
   classifyBridgeFailure,
   extensionCookieNames,
+  extensionOpenLogin,
   extensionSearchJob,
 } from '../capabilities/session/extension-channel.ts'
 import { appendExtensionAudit, resolveTransportMode, sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, __resetRateLimiterForTest } from '../capabilities/session-search.ts'
@@ -476,6 +477,43 @@ async function main(): Promise<void> {
     const outcome = await submitP
     assert.ok(outcome.ok)
     assert.deepEqual(outcome.ok ? outcome.result.names : [], ['cticket', 'uid'])
+  })
+
+  await check('扩展作业失败必须保留 job-error,不能伪装成未登录或空搜索响应', async () => {
+    const cases = [
+      { kind: 'cookie-names', invoke: () => extensionCookieNames({ site: 'ctrip-flight', domain: 'ctrip.com', ticketNames: ['cticket'] }, b) },
+      { kind: 'search', invoke: () => extensionSearchJob({ site: 'ctrip-flight', url: 'https://flights.ctrip.com/online/list/oneway-sha-ljg?depdate=2026-10-01' }, b) },
+      { kind: 'open-login', invoke: () => extensionOpenLogin({ site: 'ctrip-flight', url: 'https://passport.ctrip.com/' }, b) },
+    ] as const
+    for (const item of cases) {
+      const pending = item.invoke()
+      const claimed = await claimOnce(port, (job) => {
+        assert.equal(job.kind, item.kind)
+        return { ok: false, kind: item.kind, error: 'browser tab creation failed' }
+      })
+      assert.ok(claimed.job)
+      const result = await pending
+      assert.equal(result.ok, false, `${item.kind} must expose the extension failure`)
+      if (!result.ok) {
+        assert.equal(result.kind, 'job-error')
+        assert.match(result.summary, /browser tab creation failed/)
+      }
+    }
+  })
+
+  await check('检索嗅探到点仍保留页面标题,供挑战红线判定', async () => {
+    const pending = extensionSearchJob({ site: 'ctrip-flight', url: 'https://flights.ctrip.com/online/list/oneway-sha-ljg?depdate=2026-10-01' }, b)
+    const claimed = await claimOnce(port, (job) => {
+      assert.equal(job.kind, 'search')
+      return { ok: false, kind: 'search', timeout: true, url: '', title: '安全验证' }
+    })
+    assert.ok(claimed.job)
+    const result = await pending
+    assert.equal(result.ok, true)
+    if (result.ok) {
+      assert.equal(result.timedOut, true)
+      assert.equal(result.title, '安全验证')
+    }
   })
 
   await check('cookie 红线:扩展代码只上报名(c.name 映射),值不进任何结果对象', () => {

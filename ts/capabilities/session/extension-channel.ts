@@ -10,7 +10,7 @@
  * 检索页无回包不是车道失败:与 CDP 车道同语义(到点无 hints 命中 ⇒ miss,页标题命挑战 ⇒ challenged)。
  */
 
-import { getOrCreateSessionBridge, needsExtensionSummary, type SessionJobHandle, type SniffBodies } from './extension-bridge.ts'
+import { getOrCreateSessionBridge, needsExtensionSummary, type ExtensionJobResult, type SessionJobHandle, type SniffBodies } from './extension-bridge.ts'
 
 /**
  * needs-extension 用户门文案(D-24 自适应,issue #117):按本地通道是否落位自动跳过
@@ -43,6 +43,17 @@ function bridgeReady(b: { ok: true; bridge: SessionJobHandle } | { ok: false; su
   return b.ok === true
 }
 
+function failedJob(result: ExtensionJobResult): BridgeFailure | null {
+  if (result.ok === true) return null
+  return {
+    ok: false,
+    kind: 'job-error',
+    summary: typeof result.error === 'string' && result.error.length > 0
+      ? result.error.slice(0, 200)
+      : '扩展作业失败且未提供原因',
+  }
+}
+
 /** 桥解析(2026-09-11):gotry-backend 服务形态注入进程内队列;桌面形态缺省走 loopback 懒单例 */
 async function resolveBridge(injected?: SessionJobHandle): Promise<SessionJobHandleRef | { ok: false; summary: string }> {
   if (injected) return { ok: true, bridge: injected }
@@ -58,6 +69,8 @@ export async function extensionCookieNames(q: { site: string; domain: string; ti
     { timeoutMs: q.timeoutMs ?? 8_000 },
   )
   if (!outcome.ok) return { ok: false, kind: outcome.reason, summary: outcome.summary }
+  const failure = failedJob(outcome.result)
+  if (failure) return failure
   const names = Array.isArray(outcome.result.names) ? outcome.result.names.filter((n): n is string => typeof n === 'string') : []
   // 红线自证:隧道面只有名字(extension-tests §红线断言协议面无值字段)
   return { ok: true, tickets: names }
@@ -69,6 +82,8 @@ export async function extensionOpenLogin(q: { site: string; url: string; timeout
   if (!bridgeReady(bridge)) return { ok: false, kind: 'bridge-unavailable', summary: bridge.summary }
   const outcome = await bridge.bridge.submit({ kind: 'open-login', site: q.site, url: q.url }, { timeoutMs: q.timeoutMs ?? 15_000 })
   if (!outcome.ok) return { ok: false, kind: outcome.reason, summary: outcome.summary }
+  const failure = failedJob(outcome.result)
+  if (failure) return failure
   if (!outcome.result.opened) return { ok: false, kind: 'job-error', summary: outcome.result.error ?? '登录入口打开失败' }
   return { ok: true, opened: true }
 }
@@ -102,6 +117,20 @@ export async function extensionSearchJob(
     { timeoutMs: timeoutMs + 10_000 },
   )
   if (!outcome.ok) return { ok: false, kind: outcome.reason, summary: outcome.summary }
+  // An exhausted page sniff still carries the page title and challenge hint.
+  // Let the caller inspect them before classifying the empty body.
+  if (outcome.result.ok === false && outcome.result.timeout === true) {
+    return {
+      ok: true,
+      body: '',
+      url: '',
+      title: typeof outcome.result.title === 'string' ? outcome.result.title : '',
+      timedOut: true,
+      ...(outcome.result.challenge === true ? { challenge: true } : {}),
+    }
+  }
+  const failure = failedJob(outcome.result)
+  if (failure) return failure
   const bodies = outcome.result.bodies
   return {
     ok: true,
