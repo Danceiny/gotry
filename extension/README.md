@@ -1,4 +1,6 @@
-# GoTry Session Bridge(浏览器扩展)
+# Stai(浏览器扩展)
+
+> 原名 **GoTry Session Bridge**,2026-09-25 品牌统一更名为 **Stai**(staitravel.com);内部代号、extension ID、桥接端点均不变,已装用户自动跟随更新。
 
 一次性安装的会话检索数据面(issue #21 传输层方案 C,2026-08-29 founder 定案):在你**自己的** Chrome 登录态里,只读嗅探携程机票检索回包([会话:ctrip-flight]。gotry 不再需要逐连接弹 Chrome 权限框,也不需要开 `chrome://inspect` 远程调试。
 
