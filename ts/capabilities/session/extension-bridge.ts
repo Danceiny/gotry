@@ -132,11 +132,11 @@ export interface ExtensionJobResult {
 }
 
 export type SubmitOutcome =
-  | { ok: true; result: ExtensionJobResult; origin?: string }
+  | { ok: true; result: ExtensionJobResult; origin?: string; clientId?: string }
   | { ok: false; reason: 'bridge-unavailable' | 'extension-not-connected' | 'timeout'; summary: string }
 
 export interface SessionJobHandle {
-  submit(job: Omit<ExtensionJob, 'jobId'>, opts?: { timeoutMs?: number; extensionWaitMs?: number; preferredOrigin?: string }): Promise<SubmitOutcome>
+  submit(job: Omit<ExtensionJob, 'jobId'>, opts?: { timeoutMs?: number; extensionWaitMs?: number; preferredOrigin?: string; preferredClientId?: string }): Promise<SubmitOutcome>
   extensionConnected(): boolean
   port: number
   close(): Promise<void>
@@ -164,6 +164,8 @@ interface QueuedJob {
   timer: ReturnType<typeof setTimeout> | null
   preferredOrigin?: string
   claimedOrigin?: string
+  preferredClientId?: string
+  claimedClientId?: string
 }
 
 /**
@@ -180,10 +182,14 @@ interface ParkedPoller {
   timer: ReturnType<typeof setTimeout>
   capabilities: Set<string> | null
   origin: string
+  clientId?: string
 }
 
-function jobMatches(entry: QueuedJob, capabilities: Set<string> | null, origin: string): boolean {
+const CLIENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function jobMatches(entry: QueuedJob, capabilities: Set<string> | null, origin: string, clientId?: string): boolean {
   if (entry.preferredOrigin && entry.preferredOrigin !== origin) return false
+  if (entry.preferredClientId && entry.preferredClientId !== clientId) return false
   return capabilities == null || capabilities.size === 0 || capabilities.has(entry.job.site)
 }
 
@@ -250,11 +256,12 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
   const extensionConnected = (): boolean => lastSeenAt > 0 && now() - lastSeenAt < EXTENSION_CONNECTED_WINDOW_MS
 
   /** 领走首个 capability 匹配的 job(移入 inFlight——回包按 jobId 路由,两处都可找到) */
-  function takeMatching(capabilities: Set<string> | null, origin: string): QueuedJob | null {
-    const idx = queue.findIndex((q) => jobMatches(q, capabilities, origin))
+  function takeMatching(capabilities: Set<string> | null, origin: string, clientId?: string): QueuedJob | null {
+    const idx = queue.findIndex((q) => jobMatches(q, capabilities, origin, clientId))
     if (idx < 0) return null
     const [next] = queue.splice(idx, 1)
     next.claimedOrigin = origin
+    next.claimedClientId = clientId
     inFlight.set(next.job.jobId, next)
     return next
   }
@@ -265,7 +272,7 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
     if (inFlightHit) {
       inFlight.delete(jobId)
       if (inFlightHit.timer) clearTimeout(inFlightHit.timer)
-      inFlightHit.resolve({ ok: true, result: parsed, origin: inFlightHit.claimedOrigin })
+      inFlightHit.resolve({ ok: true, result: parsed, origin: inFlightHit.claimedOrigin, clientId: inFlightHit.claimedClientId })
       return
     }
     const idx = queue.findIndex((q) => q.job.jobId === jobId)
@@ -277,11 +284,12 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
 
   /** 新 job 入队时即时派发给 capability 匹配的 parked 取活者(否则要白等一个 20s 长轮询周期) */
   function dispatchToParked(entry: QueuedJob): boolean {
-    const i = parked.findIndex((p) => jobMatches(entry, p.capabilities, p.origin))
+    const i = parked.findIndex((p) => jobMatches(entry, p.capabilities, p.origin, p.clientId))
     if (i < 0) return false
     const [p] = parked.splice(i, 1)
     clearTimeout(p.timer)
     entry.claimedOrigin = p.origin
+    entry.claimedClientId = p.clientId
     inFlight.set(entry.job.jobId, entry)
     p.res.statusCode = 200
     p.res.setHeader('content-type', 'application/json')
@@ -343,20 +351,23 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
         // 轮询体携带 {extensionVersion, capabilities: SITES 键清单}——按站点 capability
         // 路由(见 ParkedPoller 注);体缺失/非 JSON 视为 match-all,向前兼容旧扩展。
         void readBody(req, 64 * 1024).then((body) => {
-          const pollerCaps = ((): Set<string> | null => {
-            if (typeof body !== 'string') return null
+          const pollerInfo = ((): { capabilities: Set<string> | null; clientId?: string } => {
+            if (typeof body !== 'string') return { capabilities: null }
             try {
-              const parsed = JSON.parse(body) as { capabilities?: unknown }
-              return Array.isArray(parsed.capabilities) ? new Set(parsed.capabilities.filter((c): c is string => typeof c === 'string')) : null
+              const parsed = JSON.parse(body) as { capabilities?: unknown; clientId?: unknown }
+              return {
+                capabilities: Array.isArray(parsed.capabilities) ? new Set(parsed.capabilities.filter((c): c is string => typeof c === 'string')) : null,
+                ...(typeof parsed.clientId === 'string' && CLIENT_ID_RE.test(parsed.clientId) ? { clientId: parsed.clientId } : {}),
+              }
             } catch {
-              return null
+              return { capabilities: null }
             }
           })()
-          const next = takeMatching(pollerCaps, origin as string)
+          const next = takeMatching(pollerInfo.capabilities, origin as string, pollerInfo.clientId)
           if (next) { finish(200, { job: next.job }); return }
           // 长轮询:hold ≤ JOBS_LONG_POLL_MS(必须 < MV3 SW 30s 存活窗口,每次响应都续命);
           // 新 job 提交时即时唤醒 parked 取活者(见 dispatchToParked)
-          const poller: ParkedPoller = { res, timer: null as unknown as ReturnType<typeof setTimeout>, capabilities: pollerCaps, origin: origin as string }
+          const poller: ParkedPoller = { res, timer: null as unknown as ReturnType<typeof setTimeout>, capabilities: pollerInfo.capabilities, origin: origin as string, clientId: pollerInfo.clientId }
           const parkTimer = setTimeout(() => {
             const i = parked.findIndex((p) => p.res === res)
             if (i >= 0) parked.splice(i, 1)
@@ -395,6 +406,10 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
             finish(403, { ok: false, error: '作业由另一扩展 Origin 领取' })
             return
           }
+          if (assigned?.claimedClientId && assigned.claimedClientId !== req.headers['x-gotry-client-id']) {
+            finish(403, { ok: false, error: '作业由另一扩展客户端领取' })
+            return
+          }
           finish(200, { ok: true })
           resolveJob(jobId, parsed)
         })
@@ -420,7 +435,11 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
           resolve({ ok: false, reason: 'bridge-unavailable', summary: '指定扩展 Origin 不在桥白名单' })
           return
         }
-        const entry: QueuedJob = { job: full, resolve: null as unknown as (o: SubmitOutcome) => void, timer: null, preferredOrigin: submitOpts.preferredOrigin }
+        if (submitOpts.preferredClientId && !CLIENT_ID_RE.test(submitOpts.preferredClientId)) {
+          resolve({ ok: false, reason: 'bridge-unavailable', summary: '指定扩展客户端标识无效' })
+          return
+        }
+        const entry: QueuedJob = { job: full, resolve: null as unknown as (o: SubmitOutcome) => void, timer: null, preferredOrigin: submitOpts.preferredOrigin, preferredClientId: submitOpts.preferredClientId }
         const settle = (outcome: SubmitOutcome): void => {
           if (entry.timer) clearTimeout(entry.timer)
           const i = queue.findIndex((q) => q.job.jobId === full.jobId)

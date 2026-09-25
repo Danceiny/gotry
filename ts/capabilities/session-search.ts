@@ -212,7 +212,7 @@ export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionH
       return err('needs-login', '未检出你本人登录态——调用 gotry_session_login 为用户打开携程登录入口(登录在携程官网完成;gotry 永不经手密码/验证码/cookie 值)')
     }
     // ② 检索 job:后台标签 + 被动嗅探(URL hint + 形状兜底;扩展零写行为)
-    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, preferredOrigin: login.origin })
+    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, preferredOrigin: login.origin, preferredClientId: login.clientId })
     appendExtensionAudit(q.auditPath, {
       kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
       result: r.ok ? (r.timedOut ? 'timeout' : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
@@ -424,7 +424,7 @@ export async function sessionDidaSearch(q: SessionDidaQuery): Promise<SessionDid
     }
     // ② 检索 job:后台标签 + 被动嗅探(URL hint + 形状兜底;扩展零写行为)。
     // multiCollect:find 页自发 hotels+recommendPrices 双流,单首包语义丢一半(2026-09-11)
-    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, multiCollect: true, preferredOrigin: login.origin, ...(q.query ? { query: q.query } : {}) }, q.bridge)
+    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, multiCollect: true, preferredOrigin: login.origin, preferredClientId: login.clientId, ...(q.query ? { query: q.query } : {}) }, q.bridge)
     appendExtensionAudit(q.auditPath, {
       kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
       result: r.ok ? (r.timedOut ? 'timeout' : r.bodies ? `bodies hotels=${r.bodies.hotels?.length ?? 0}B prices=${r.bodies.recommendPrices?.length ?? 0}B` : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
@@ -767,7 +767,7 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
       return err('needs-login', '未检出你本人登录态——调用 gotry_session_login 为用户打开携程登录入口(登录在携程官网完成;gotry 永不经手密码/验证码/cookie 值)')
     }
     // ② 检索 job:后台标签 + MAIN-world 被动嗅探(检索请求由站点自己发出,扩展零写行为)
-    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, preferredOrigin: login.origin })
+    const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, preferredOrigin: login.origin, preferredClientId: login.clientId })
     appendExtensionAudit(q.auditPath, {
       kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
       result: r.ok ? (r.timedOut ? 'timeout' : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
