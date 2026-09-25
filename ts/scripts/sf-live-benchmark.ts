@@ -31,6 +31,7 @@
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { parseSfLiveOptions, SF_LIVE_HELP } from './sf-live-options.ts'
+import { validateSfManifest } from './sf-manifest.ts'
 
 import {
   evaluateDoubleSource,
@@ -67,13 +68,13 @@ type GoldenMatch = GoldenBand
 interface GoldenManifest {
   comment: string
   threshold: number
+  query_manifest_sha256: string
   matches: GoldenMatch[]
 }
 
-/** 从 session-golden-20.json 拿 8 条飞行 query */
-function loadFlightQueries(): GoldenQuery[] {
-  const golden = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'data', 'session-golden-20.json'), 'utf8')) as GoldenFile
-  return golden.queries.filter((q) => q.id.startsWith('sf-')).slice(0, 8)
+/** Read the source manifest before validating the frozen eight-case slice. */
+function loadFlightQueries(): GoldenFile {
+  return JSON.parse(readFileSync(join(import.meta.dirname, '..', 'data', 'session-golden-20.json'), 'utf8')) as GoldenFile
 }
 
 /** 从 sf-golden-manifest.json 拿手工 golden(默认 official 来源) */
@@ -351,14 +352,10 @@ async function main(): Promise<void> {
     console.log(SF_LIVE_HELP)
     return
   }
+  const manifest = loadManualGolden()
+  const queries = validateSfManifest(loadFlightQueries(), manifest)
   // Fail before supplier calls if the destination cannot be created (e.g. a file).
   mkdirSync(evidenceRoot, { recursive: true })
-  const queries = loadFlightQueries()
-  if (queries.length < 8) {
-    console.error(`金标准 sf-* 不足 8 条(实际 ${queries.length})`)
-    process.exit(1)
-  }
-  const manifest = loadManualGolden()
   const staticContext: StaticContext = {}
   if (requestedSource === 'static') {
     try {

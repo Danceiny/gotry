@@ -432,6 +432,7 @@ echo
 echo "=== 44. sf-live static golden(issue #67:CLI vendor 闭集/OpenFlights 固定修订 provenance/8 条路由覆盖/手工时刻价格带/失败明示回退/跨 provider 软评分;全离线) ==="
 (cd ts && npx tsx scripts/static-golden-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/sf-soft-score-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/sf-manifest-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/sf-live-cli-tests.ts) || FAIL=1
 
 echo
