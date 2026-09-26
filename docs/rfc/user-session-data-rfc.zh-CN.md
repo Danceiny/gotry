@@ -276,7 +276,7 @@ ts/src/index.ts       新 dsh 工具 gotry_session_search(site, query, dateSlots
 
 离线 `sf-summary.ts` 的 `status=ok` 只证明所选批次完整性（`status_scope=batch_integrity_only`），不证明实时可用性。原始及重建证据都将静态和手工对照标为 `comparator_evidence_scope=deterministic_only`；即使原始双源状态为 `comparable`，`live_provider_comparable` 也不会计入这类对照。已登录会话的可用性仍须另附可审阅的真实证据。
 
-下一次获准的 `sf-live-benchmark` 批次会在每条原始查询证据中记录 `sessionTransportShape`，只用固定枚举标明携程 `batchSearch` 信封结构或预检、挑战、嗅探超时状态，不记录字段值。隔离的扩展审计只保存站点 Origin 和该形状，不保存路线／日期 URL、页面标题、票据名字或响应正文。合成会话桩标为 `not_observed`。这些标签帮助审阅传输漂移；未取得真实已登录批次前，仍不能据此确认实时库存。
+下一次获准的 `sf-live-benchmark` 批次会在每条原始查询证据中记录 `sessionTransportShape`，只用固定枚举标明携程 `batchSearch` 信封结构或预检、挑战、嗅探超时状态，不记录字段值。隔离的扩展审计只保存站点 Origin 和该形状，不保存路线／日期 URL、页面标题、票据名字或响应正文。机票预检与检索作业失败时使用主机固定文案，不把可能含私有回包细节的扩展错误原文写进证据。合成会话桩标为 `not_observed`。这些标签帮助审阅传输漂移；未取得真实已登录批次前，仍不能据此确认实时库存。
 
 - **动因（founder 实问「flyai 只是一个 vendor，可以切别的？」）**：P3.6 后跑批发现 FlyAI `Trial limit reached`，字段评分无对照源 → 改**可插拨 official golden**：① 默认 manual-golden（`ts/data/sf-golden-manifest.json` 公开班期 + 价格带，零网络零 vendor）；② `--golden=flyai` 显式切回 FlyAI（hbcli / 其他官方通道可同理接入）；③ 字段评分改**软命中**（硬字段 query_id/from/to/currency/source/verdict 必中，软字段时间窗口 ±60min / 价格带 ±15% / 班次子串匹配 known_flights）。
 - **官方通道尽调（2026-08-30）**：`hbcli` 只覆盖 hotel-be 域不覆盖机/火；`OpenFlights` 只有通航关系无班次；携程 `flights.ctrip.com/schedule/*.html` 公共时刻表返 432 风控——结论 = 手工 golden + 公开班期知识是当前最稳。

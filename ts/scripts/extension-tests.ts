@@ -894,6 +894,43 @@ async function main(): Promise<void> {
     }
   })
 
+  await check('携程扩展作业错误不得把客户端原文带入会话证据', async () => {
+    const sentinel = 'PRIVATE_ROUTE_DATE_COOKIE_VALUE'
+    for (const failedKind of ['cookie-names', 'search'] as const) {
+      const lane = await mustBridge([0])
+      __setSessionBridgeForTest(lane)
+      let done = false
+      const claimLoop = (async () => {
+        while (!done) {
+          const ac = new AbortController()
+          const bail = setTimeout(() => ac.abort(), 2_000)
+          try {
+            await claimOnce(lane.port, (job) => {
+              if (job.kind === failedKind) return { ok: false, kind: job.kind, error: sentinel }
+              assert.equal(job.kind, 'cookie-names')
+              return { ok: true, kind: 'cookie-names', names: ['cticket'] }
+            }, ac.signal)
+          } catch { /* 等待取活时中止 */ }
+          clearTimeout(bail)
+        }
+      })()
+      try {
+        __resetRateLimiterForTest()
+        const result = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000 })
+        assert.equal(result.verdict, 'error')
+        assert.equal(result.transportShape, failedKind === 'search' ? 'search_job_unavailable' : 'precheck_unavailable')
+        assert.doesNotMatch(JSON.stringify(result), /PRIVATE_ROUTE_DATE_COOKIE_VALUE/)
+      } finally {
+        done = true
+        await claimLoop
+        await __resetSessionBridgeForTest()
+        __setSessionBridgeForTest(null)
+        await lane.close()
+        __resetRateLimiterForTest()
+      }
+    }
+  })
+
   await check('全链 fail-closed:扩展车道桥端口池全占 → sessionFlightSearch verdict=error(环境故障,非用户门)', async () => {
     // 设计契约:只有 extension-not-connected 才是 user gate (needs-extension);
     // 端口池全占是环境故障(并行 gotry 实例/外部进程占端口)→ verdict=error,
