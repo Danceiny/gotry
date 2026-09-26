@@ -17,13 +17,14 @@ import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure } from 
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { buildEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
+import { buildEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type BatchSearchShape, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
 import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, validateTrainQueryResponseUrl, TRAIN_SITE_HOST, type SessionTrainOption, type TrainQueryParseOutcome, type TrainResponseBinding } from './session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, parseDidaSearchCache, parseDidaRecommendHotels, parseDidaPrices, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
 import { EXTENSION_STORE_URL, type SessionJobHandle, type SniffBodies } from './session/extension-bridge.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
+export type SessionFlightTransportShape = BatchSearchShape | 'sniff_timeout' | 'challenge_page' | 'precheck_unavailable' | 'needs_login' | 'search_job_unavailable'
 
 export interface SessionSearchResult {
   ok: boolean
@@ -33,6 +34,8 @@ export interface SessionSearchResult {
   verdict: SessionVerdict
   options?: SessionFlightOption[]
   error?: string
+  /** Redacted, fixed-vocabulary shape only; no response body, page title, URL query, or cookie data. */
+  transportShape?: SessionFlightTransportShape
   /** needs-extension 时给出 Chrome Web Store URL —— dsh UI 应直接渲成可点链接(浏览器自己当安装器,gotry 不插手) */
   installUrl?: string
   installAction?: 'add-to-chrome'
@@ -734,8 +737,9 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
   const started = Date.now()
   const ts = new Date().toISOString()
   const site = 'ctrip-flight'
-  const err = (verdict: SessionVerdict, error: string): SessionSearchResult => ({
+  const err = (verdict: SessionVerdict, error: string, transportShape?: SessionFlightTransportShape): SessionSearchResult => ({
     ok: false, via: 'session-ctrip-flight-error', evidence: `[会话:${site}@error@${ts}] ${error}`, latencyMs: Date.now() - started, verdict, error,
+    ...(transportShape ? { transportShape } : {}),
   })
 
   // 节律闸:超间隔即拒,不发起导航
@@ -758,38 +762,41 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     if (!login.ok) {
       const verdict = classifyBridgeFailure(login.kind)
       if (verdict === 'needs-extension') {
-        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: login.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: login.summary, transportShape: 'precheck_unavailable', installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
       }
-      return err(verdict, login.summary)
+      return err(verdict, login.summary, 'precheck_unavailable')
     }
     // 登录态闸:用户自己的账号;匿名默认拒(allowAnonymous 仅链路自检且证据标自检态)
     if (login.tickets.length === 0 && !q.allowAnonymous) {
-      return err('needs-login', '未检出你本人登录态——调用 gotry_session_login 为用户打开携程登录入口(登录在携程官网完成;gotry 永不经手密码/验证码/cookie 值)')
+      return err('needs-login', '未检出你本人登录态——调用 gotry_session_login 为用户打开携程登录入口(登录在携程官网完成;gotry 永不经手密码/验证码/cookie 值)', 'needs_login')
     }
     // ② 检索 job:后台标签 + MAIN-world 被动嗅探(检索请求由站点自己发出,扩展零写行为)
     const r = await extensionSearchJob({ site, url: entry.url, timeoutMs: q.timeoutMs, preferredOrigin: login.origin, preferredClientId: login.clientId })
-    appendExtensionAudit(q.auditPath, {
-      kind: 'extension-session-job', site, url: entry.url, jobId: 'search',
-      result: r.ok ? (r.timedOut ? 'timeout' : `body ${r.body.length}B title="${r.title.slice(0, 60)}"`) : `${r.kind}:${r.summary.slice(0, 120)}`,
+    const auditShape = (shape: SessionFlightTransportShape): void => appendExtensionAudit(q.auditPath, {
+      kind: 'extension-session-job', site, url: 'https://flights.ctrip.com', jobId: 'search', result: shape,
     })
     if (!r.ok) {
+      auditShape('search_job_unavailable')
       const verdict = classifyBridgeFailure(r.kind)
       if (verdict === 'needs-extension') {
-        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: r.summary, installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: r.summary, transportShape: 'search_job_unavailable', installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
       }
-      return err(verdict, r.summary)
+      return err(verdict, r.summary, 'search_job_unavailable')
     }
     const title = r.title
     const head = r.body.slice(0, 5000)
     if (CHALLENGE_RE.test(title + head)) {
-      return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
+      auditShape('challenge_page')
+      return err('challenged', '风控/验证码命中；按红线不重试不绕过，交还用户', 'challenge_page')
     }
     if (r.timedOut) {
-      return err('error', 'batchSearch 嗅探超时：页面未收到可解析回包；本次检索未完成')
+      auditShape('sniff_timeout')
+      return err('error', 'batchSearch 嗅探超时：页面未收到可解析回包；本次检索未完成', 'sniff_timeout')
     }
     const parsed = parseBatchSearchResult(r.body)
+    auditShape(parsed.shape)
     if (parsed.verdict === 'error') {
-      return err('error', `batchSearch 响应形状异常(非合法空响应;options=0 不视为 miss):body ${r.body.length}B 头 ${r.body.slice(0, 80)}`)
+      return err('error', `batchSearch 响应形状异常（${parsed.shape}；非合法空响应）`, parsed.shape)
     }
     const options = parsed.options
     const verdict: SessionVerdict = parsed.verdict === 'hit' ? 'hit' : 'miss'
@@ -799,6 +806,7 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
       evidence: `[会话:${site}@${ts}] ${options.length} options;transport=extension(被动嗅探,零系统弹窗;扩展零写行为=物理只读)${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
       latencyMs: Date.now() - started,
       verdict,
+      transportShape: parsed.shape,
       options,
     }
   }
@@ -847,11 +855,12 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     const title = await t.page.title().catch(() => '')
     const headHtml = (await t.page.content().catch(() => '')).slice(0, 5000)
     if (CHALLENGE_RE.test(title + headHtml)) {
-      return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
+      return err('challenged', '风控/验证码命中；按红线不重试不绕过，交还用户', 'challenge_page')
     }
+    if (body.length === 0) return err('error', 'batchSearch 嗅探超时：页面未收到可解析回包；本次检索未完成', 'sniff_timeout')
     const parsed = parseBatchSearchResult(body)
     if (parsed.verdict === 'error') {
-      return err('error', `batchSearch 响应形状异常(非合法空响应;options=0 不视为 miss):body ${body.length}B 头 ${body.slice(0, 80)}`)
+      return err('error', `batchSearch 响应形状异常（${parsed.shape}；非合法空响应）`, parsed.shape)
     }
     const options = parsed.options
     const verdict: SessionVerdict = parsed.verdict === 'hit' ? 'hit' : 'miss'
@@ -861,6 +870,7 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
       evidence: `[会话:${site}@${ts}] ${options.length} options;guard blocked=${t.guard.blockedCount()}/${t.guard.requestCount()}${q.allowAnonymous ? ';anonymous=自检态' : ''}`,
       latencyMs: Date.now() - started,
       verdict,
+      transportShape: parsed.shape,
       options,
     }
   } catch (e) {

@@ -79,8 +79,14 @@ console.log('B2. parseBatchSearchResult(issue #279 形状异常归 error,合法�
   }] } })
   const rHit = parseBatchSearchResult(fixtureHit)
   assert(rHit.verdict === 'hit' && rHit.options.length === 1 && rHit.options[0]?.flightNo === 'HO5577' && rHit.options[0]?.price === 2980, '命中 fixture → hit + 1 option + 最低价', rHit)
+  assert(rHit.shape === 'itinerary_rows_usable', '命中只记录固定形状枚举，不记录回包值')
   const rMiss = parseBatchSearchResult(JSON.stringify({ data: { flightItineraryList: [] } }))
   assert(rMiss.verdict === 'miss' && rMiss.options.length === 0, '已识别合法空(数组存在且空) → miss(不为 hit 也不为 error)', rMiss)
+  assert(rMiss.shape === 'itinerary_list_empty', '合法空的结构形状固定')
+  assert(parseBatchSearchResult('').shape === 'invalid_json', '非 JSON 形状固定')
+  assert(parseBatchSearchResult('null').shape === 'root_not_object', '非对象根形状固定')
+  assert(parseBatchSearchResult('{}').shape === 'data_not_object', '缺 data 形状固定')
+  assert(parseBatchSearchResult('{"data":{}}').shape === 'itinerary_list_not_array', '缺列表形状固定')
   // 不抛错 + 形状未识别 → error(关键:不可静默收敛为 miss,把未知响应误判为「这条线路没航班」)
   const malformed: Array<[string, string]> = [
     ['JSON null body', 'null'],
@@ -124,6 +130,7 @@ console.log('B2. parseBatchSearchResult(issue #279 形状异常归 error,合法�
   ] } })
   const rAb = parseBatchSearchResult(allBadRows)
   assert(rAb.verdict === 'error' && rAb.options.length === 0, '非空列表行全畸形 → error(不伪装成 miss)', rAb)
+  assert(rAb.shape === 'itinerary_rows_unusable', '畸形行形状固定')
   // 混合列表保留有效项,忽略畸形兄弟行
   const mixed = JSON.stringify({ data: { flightItineraryList: [
     { flightSegments: [{}], priceList: [{ adultPrice: 'bad' }] },

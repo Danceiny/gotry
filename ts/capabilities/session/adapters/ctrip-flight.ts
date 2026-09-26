@@ -60,10 +60,20 @@ export interface SessionFlightOption {
  * 形状未识别(malformed/unknown)= error,选项命中 = hit。误把任意 [] 判 miss 会把未知
  * 响应错误收敛为「这条线路没有航班」,这是上游接口改版/协议变动期的常见陷阱 */
 export type BatchSearchVerdict = 'hit' | 'miss' | 'error'
+/** Fixed, value-free envelope classes for redacted transport evidence. */
+export type BatchSearchShape =
+  | 'invalid_json'
+  | 'root_not_object'
+  | 'data_not_object'
+  | 'itinerary_list_not_array'
+  | 'itinerary_list_empty'
+  | 'itinerary_rows_unusable'
+  | 'itinerary_rows_usable'
 
 export interface BatchSearchResult {
   options: SessionFlightOption[]
   verdict: BatchSearchVerdict
+  shape: BatchSearchShape
 }
 
 /** 安全取字符串字段(任意来源字段都可能是 null/undefined/数字/对象) */
@@ -95,18 +105,18 @@ export function parseBatchSearchResult(body: string): BatchSearchResult {
   try {
     raw = JSON.parse(body)
   } catch {
-    return { options: [], verdict: 'error' }
+    return { options: [], verdict: 'error', shape: 'invalid_json' }
   }
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { options: [], verdict: 'error' }
+    return { options: [], verdict: 'error', shape: 'root_not_object' }
   }
   const data = (raw as { data?: unknown }).data
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
-    return { options: [], verdict: 'error' }
+    return { options: [], verdict: 'error', shape: 'data_not_object' }
   }
   const list = (raw as { data: { flightItineraryList?: unknown } }).data.flightItineraryList
   if (!Array.isArray(list)) {
-    return { options: [], verdict: 'error' }
+    return { options: [], verdict: 'error', shape: 'itinerary_list_not_array' }
   }
   const out: SessionFlightOption[] = []
   for (const it of list) {
@@ -166,5 +176,6 @@ export function parseBatchSearchResult(body: string): BatchSearchResult {
   return {
     options: out,
     verdict: out.length > 0 ? 'hit' : list.length === 0 ? 'miss' : 'error',
+    shape: out.length > 0 ? 'itinerary_rows_usable' : list.length === 0 ? 'itinerary_list_empty' : 'itinerary_rows_unusable',
   }
 }

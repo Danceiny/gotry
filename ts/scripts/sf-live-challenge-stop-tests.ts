@@ -249,6 +249,7 @@ function assertBatchArtifacts(overlay: Overlay, evidenceRoot = overlay.evidenceR
   assert.equal(raw.started_at, captureAt, 'raw summary.started_at 必须与 canonical run filename 同一 run identity')
   const rawRecords = raw.records as Array<Record<string, unknown>>
   assert.equal(rawRecords.length, raw.total, 'raw summary total 必须与 records 一致')
+  assert.ok(rawRecords.every((record) => record.sessionTransportShape === 'not_observed'), '脚本化 session stub 不能冒充真实传输形状')
   assert.deepEqual(rawRecords.map((record) => record.query_id), raw.attempted_query_ids, 'raw summary records 必须按 attempted 顺序落账')
 
   for (const queryId of raw.attempted_query_ids as string[]) {

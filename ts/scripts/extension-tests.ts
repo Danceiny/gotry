@@ -798,6 +798,8 @@ async function main(): Promise<void> {
   await check('同一 Origin 的两个 Chrome 配置不能交叉领取预检后的检索或提交结果', async () => {
     const lane = await mustBridge([0])
     __setSessionBridgeForTest(lane)
+    const shapeRoot = mkdtempSync(join(tmpdir(), 'gotry-sf272-shape-'))
+    const shapeAudit = join(shapeRoot, 'transport-shape.jsonl')
     const clientA = '11111111-1111-4111-8111-111111111111'
     const clientB = '22222222-2222-4222-8222-222222222222'
     const otherAbort = new AbortController()
@@ -810,7 +812,7 @@ async function main(): Promise<void> {
       __resetRateLimiterForTest()
       const cookiePoll = claimOnce(lane.port, null, undefined, ['ctrip-flight'], EXTENSION_ORIGIN, clientA)
       await waitForParkedCount(lane.port, 1)
-      const search = sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000 })
+      const search = sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000, auditPath: shapeAudit })
       const cookieClaim = await cookiePoll
       assert.equal(cookieClaim.job?.kind, 'cookie-names')
       otherPoll = claimOnce(lane.port, (job) => {
@@ -837,6 +839,11 @@ async function main(): Promise<void> {
       }, sameAbort.signal, ['ctrip-flight'], EXTENSION_ORIGIN, clientA).catch(() => ({ job: null }))
       const result = await search
       assert.equal(result.verdict, 'miss', `同一客户端应完成检索,实际 ${result.verdict}:${result.error ?? ''}`)
+      assert.equal(result.transportShape, 'itinerary_list_empty')
+      const shapeEvidence = readFileSync(shapeAudit, 'utf8')
+      assert.equal(JSON.parse(shapeEvidence).result, 'itinerary_list_empty')
+      assert.equal(JSON.parse(shapeEvidence).url, 'https://flights.ctrip.com')
+      assert.doesNotMatch(shapeEvidence, /depdate|oneway-sha-ljg|机票列表|cticket/)
       assert.equal(sameGotSearch, true)
       assert.equal(otherGotSearch, false)
     } finally {
@@ -847,6 +854,7 @@ async function main(): Promise<void> {
       __setSessionBridgeForTest(null)
       await lane.close()
       __resetRateLimiterForTest()
+      rmSync(shapeRoot, { recursive: true, force: true })
     }
   })
 
@@ -873,6 +881,7 @@ async function main(): Promise<void> {
       __resetRateLimiterForTest()
       const result = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000 })
       assert.equal(result.verdict, 'error')
+      assert.equal(result.transportShape, 'sniff_timeout')
       assert.match(result.error ?? '', /嗅探超时|未收到.*回包/)
       assert.doesNotMatch(result.error ?? '', /响应形状异常/)
     } finally {
