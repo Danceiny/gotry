@@ -13,7 +13,7 @@
  */
 
 import { openSession, type SessionTransport, type TransportFailure } from './session/transport.ts'
-import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure } from './session/extension-channel.ts'
+import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure, needsExtensionHint, type BridgeFailureKind } from './session/extension-channel.ts'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -25,6 +25,16 @@ import { EXTENSION_STORE_URL, type SessionJobHandle, type SniffBodies } from './
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
 export type SessionFlightTransportShape = BatchSearchShape | 'sniff_timeout' | 'challenge_page' | 'precheck_unavailable' | 'needs_login' | 'search_job_unavailable'
+
+/** Flight evidence can be persisted by the benchmark; extension-supplied error text is untrusted. */
+function flightBridgeFailureSummary(kind: BridgeFailureKind): string {
+  switch (kind) {
+    case 'extension-not-connected': return needsExtensionHint()
+    case 'bridge-unavailable': return '扩展桥或端口池不可用；请检查本机服务后重试'
+    case 'timeout': return '扩展作业超时；请稍后重试'
+    case 'job-error': return '扩展作业失败；请检查扩展连接后重试'
+  }
+}
 
 export interface SessionSearchResult {
   ok: boolean
@@ -761,10 +771,11 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     const login = await extensionCookieNames({ site, domain: SITE_DOMAIN.replace(/^\./, ''), ticketNames: LOGIN_COOKIE_NAMES })
     if (!login.ok) {
       const verdict = classifyBridgeFailure(login.kind)
+      const summary = flightBridgeFailureSummary(login.kind)
       if (verdict === 'needs-extension') {
-        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: login.summary, transportShape: 'precheck_unavailable', installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: summary, transportShape: 'precheck_unavailable', installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
       }
-      return err(verdict, login.summary, 'precheck_unavailable')
+      return err(verdict, summary, 'precheck_unavailable')
     }
     // 登录态闸:用户自己的账号;匿名默认拒(allowAnonymous 仅链路自检且证据标自检态)
     if (login.tickets.length === 0 && !q.allowAnonymous) {
@@ -778,10 +789,11 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     if (!r.ok) {
       auditShape('search_job_unavailable')
       const verdict = classifyBridgeFailure(r.kind)
+      const summary = flightBridgeFailureSummary(r.kind)
       if (verdict === 'needs-extension') {
-        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: r.summary, transportShape: 'search_job_unavailable', installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
+        return { ok: false, via: 'session-ctrip-flight-error', evidence: '[会话:ctrip-flight-needs-extension@ts]', latencyMs: Date.now() - started, verdict, error: summary, transportShape: 'search_job_unavailable', installUrl: EXTENSION_STORE_URL, installAction: 'add-to-chrome' as const }
       }
-      return err(verdict, r.summary, 'search_job_unavailable')
+      return err(verdict, summary, 'search_job_unavailable')
     }
     const title = r.title
     const head = r.body.slice(0, 5000)
