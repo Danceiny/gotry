@@ -826,6 +826,8 @@ console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
   assert(rates[0]!.inventory === 3 && rates[0]!.referenceNo === 'REF-A' && rates[0]!.paymentType === 'Prepay', '库存/引用号/支付类型', rates[0])
   assert(rates[1]!.ratePlanId === 'RP-2' && rates[1]!.inventory === 0, 'inventory=0 如实保留(不伪装可订)', rates[1])
   assert(rates[2]!.roomName === 'Suite' && rates[2]!.currency === 'USD', 'RoomList 同构展平', rates[2])
+  assert(rates[0]!.roomNameEn === 'Sea View King', '英文房型名随 DidaRoomTypeName_EN 透传(≠中文名才给)', rates[0])
+  assert(rates[2]!.roomNameEn === 'Suite', '仅 EN 房型名:roomName 走 EN 兜底,roomNameEn 同值(与 hotelNameEn 同口径)', rates[2])
   assert(parseDidaRates('not json').length === 0 && parseDidaRates('{"a":1}').length === 0 && parseDidaRates('[]').length === 0, 'malformed/无信封/裸空数组 一律返空(不抛错)')
   assert(parseDidaRates(envelope, { maxItems: 2 }).length === 2, 'maxItems 截断')
 
