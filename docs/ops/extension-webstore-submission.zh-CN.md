@@ -101,6 +101,7 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 - **拒审事实**（2026-09-30 后台直读，账号 danceiny@gmail.com）：v0.2.0.26 草稿状态「已拒绝」，违规日期 2026-09-26，类型=内容政策，违规=「提供的元数据与观察到的功能无关」，纠正指引=元数据须准确描述产品实际功能，参考 ID `Red Potassium`；后台保留申诉入口（未使用）。
 - **归因**：listing/manifest 名称是裸品牌词 `Stai`，与审核员观察到的行为（机票/酒店/火车检索回包观察、登录 cookie 名检查、供应商门户一次性登录代填、loopback 桥接）之间无可读关联；描述文案虽已具体，名称层面的「功能词缺失」足以触发元数据不相关判定。
 - **处置**：founder 2026-09-30 拍板改名 **Stai Travel Bridge**（Travel 对齐检索面，Bridge 对齐桥接）并重提，不做申诉。v0.2.0.27 = manifest name 改名 + 版本推进（version `0.2.0.27` / version_name `0.2.0-rc.27`），listing 文案、权限理由、隐私申报沿用 v0.2.0.26 已修正版本（「零凭证经手」类旧表述已在 #586 清除）。
+- **重提回执（2026-09-30）**：PR #597 合并（main `ecfd4c8`），exact-SHA 重建 zip SHA-256 `65bdb8f37ae87386d3d710f18bf59c174d296fd2150a1ecbafb0d70e7bb7e347`，[ext-v0.2.0.27 Release](https://github.com/Danceiny/gotry/releases/tag/ext-v0.2.0.27) 三资产已发布；dashboard 上传后软件包中的标题显示 Stai Travel Bridge、草稿版本 `0.2.0-rc.27`，「提请审核 → 提交审核」完成，状态 **待审核**。CWS secrets 仍空配，本次仍为 dashboard 路径。操作配方：包内 file input 忽略合成 click（无 user activation），经页面 JS DataTransfer 注入 File 后派发 change 事件完成上传；「提请审核」在 /edit 落地页头部，签名密钥提示以「知道了」关闭。
 
 ## 过审后品牌 Chrome 验收矩阵
 
