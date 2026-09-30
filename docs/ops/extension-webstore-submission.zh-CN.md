@@ -1,9 +1,11 @@
 [English](extension-webstore-submission.md) | [简体中文](extension-webstore-submission.zh-CN.md)
 
-# Stai — Chrome Web Store 上架材料（ADR-21 分发 B 轨）
+# Stai Travel Bridge — Chrome Web Store 上架材料（ADR-21 分发 B 轨）
 
-> 状态：**v0.2.0.26 于 2026-09-25 提交 Chrome Web Store 审核，已选过审后自动发布；
-> 线上仍为 v0.1.0**。商店页：
+> 状态：**v0.2.0.26（listing 名称 Stai）于 2026-09-25 提审，2026-09-26 被拒——内容政策
+> 「提供的元数据与观察到的功能无关」（参考 ID Red Potassium）；线上仍为 v0.1.0**。
+> 2026-09-30 founder 拍板改名为 **Stai Travel Bridge**（Travel 对齐机票/酒店/火车检索面，
+> Bridge 对齐桥接功能）并以 v0.2.0.27 重新提审。商店页：
 > https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd
 > 产物：`node scripts/package-extension.mjs` → `dist-extension/gotry-session-bridge-store.zip`
 > （manifest 在 zip 根，商店后台直传）。图标商店单独上传，不在 zip 内。
@@ -50,7 +52,7 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 
 ## 商店文案（可直接粘贴）
 
-- **名称**：Stai（原名 GoTry Session Bridge）。
+- **名称**：Stai Travel Bridge（原名 GoTry Session Bridge；v0.2.0.26 以裸品牌名 Stai 提审被拒，2026-09-30 改名重提）。
 - **简述**（≤132 字符）：连接获准的旅行检索与 GoTry，可经本机或员工门户后端传递结果，并辅助供应商登录。
 - **描述**：Stai 将获准的携程机票及酒店、12306 火车、Dida 供应商门户检索连接至 GoTry。扩展观察页面的匹配检索回包，仅选取指定登录 cookie 的名称，不转发 cookie 值。桌面形态把结果交给本机 GoTry；已认证的 HotelByte 员工门户可以连接其后端桥，检索数据因此可能离开设备。门户可以提供一次性 Dida 凭据供扩展在内存中代填并提交登录表单；扩展不持久保存该凭据。扩展可操作 Dida 检索控件，但不执行预订或付款。用户可在 Chrome 中停用扩展。详见隐私政策。
 - **类目**：Travel；**语言**：中文（简体）+ English
@@ -93,6 +95,12 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 - **商店提交流程由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪**；**founder 决策 whether / when / 升哪个 version**（founder-confirm 制，见 `tech-strategy.md` §11 与 `AGENTS.md` 发布纪律）；**版本打包 / devconsole 上传 / 状态跟踪 / 验证**由 release executor 在仓库发布纪律下执行；founder 仅完成账户侧必要的本人审批/2FA。提审前商店版用户调 dida 会得到 needs-extension（与全新站点一致），不影响既有 ctrip/12306 车道。
 - unpacked/GitHub Releases 通道不受商店审核影响，`feat/session-dida-portal` 分支合并即生效（PR #297 已 merge，代码与 manifest 已就位）。
 - **当前证据边界**：提审已受理，但线上商店仍为 v0.1.0。须待 v0.2.0.26 过审、上线并完成商店回拉验证后，才能关闭 [#346](https://github.com/Danceiny/gotry/issues/346) 或 [#537](https://github.com/Danceiny/gotry/issues/537)。
+
+## Stai v0.2.0.26 拒审回执与 v0.2.0.27 重提（2026-09-30）
+
+- **拒审事实**（2026-09-30 后台直读，账号 danceiny@gmail.com）：v0.2.0.26 草稿状态「已拒绝」，违规日期 2026-09-26，类型=内容政策，违规=「提供的元数据与观察到的功能无关」，纠正指引=元数据须准确描述产品实际功能，参考 ID `Red Potassium`；后台保留申诉入口（未使用）。
+- **归因**：listing/manifest 名称是裸品牌词 `Stai`，与审核员观察到的行为（机票/酒店/火车检索回包观察、登录 cookie 名检查、供应商门户一次性登录代填、loopback 桥接）之间无可读关联；描述文案虽已具体，名称层面的「功能词缺失」足以触发元数据不相关判定。
+- **处置**：founder 2026-09-30 拍板改名 **Stai Travel Bridge**（Travel 对齐检索面，Bridge 对齐桥接）并重提，不做申诉。v0.2.0.27 = manifest name 改名 + 版本推进（version `0.2.0.27` / version_name `0.2.0-rc.27`），listing 文案、权限理由、隐私申报沿用 v0.2.0.26 已修正版本（「零凭证经手」类旧表述已在 #586 清除）。
 
 ## 过审后品牌 Chrome 验收矩阵
 

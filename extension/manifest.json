@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Stai",
-  "version": "0.2.0.26",
+  "name": "Stai Travel Bridge",
+  "version": "0.2.0.27",
   "description": "Stai 连接获准的旅行检索与供应商门户：检索结果经本机或授权后端桥接；门户可触发一次性登录代填，扩展不持久保存凭据。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnuzBX8rT8+RZKEUip5VRA0cY056pExy9PNdN9YCiuY3dgglRbcIBhjuFJoR6EX3/MaUv82vJVyItRVrowXLTwDk4WZof0vwFgKL0zBK304PC46pUaAKTSu1PgXeL1+j5KTAGz/9a9+RnPdbj7jND5rM/MOmBHNPVPpp1NlwxRGIgF9OxHSOfXORcH4Iyte1aJSFUJbFtNS/DaE5D+KjyupPLyIqVN/dCiKnNsTCEHQB9ngeli665PFp76hkccHQQZ4sVuMLS4zBPcazUsp1kcnW+xsQoUATkODTCY+Pzk3zUVF1QOESTjRCVnbNi8tkO43RMRs2q63gX/3inFivcEwIDAQAB",
   "permissions": [
@@ -56,5 +56,5 @@
       "run_at": "document_start"
     }
   ],
-  "version_name": "0.2.0-rc.26"
+  "version_name": "0.2.0-rc.27"
 }
