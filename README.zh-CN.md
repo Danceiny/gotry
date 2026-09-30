@@ -141,7 +141,7 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 3. **物理只读** —— ReadGuard 在网络层中止写请求；遇验证码立即停。
 4. **绝不劫持你的浏览器** —— 只开独立标签页；测试永不自动开窗。
 
-前置（一次性）：[Stai 扩展（商店当前仍显示 GoTry Session Bridge）](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)（一键装、自动更新）；未安装时工具返回 `needs-extension` 并附链接，不消耗配额。独立的 HotelByte 员工门户形态可将检索数据发往获准的后端桥，也会在内存中处理一次性供应商登录凭据；详见[扩展隐私政策](docs/ops/extension-privacy.zh-CN.md)。
+前置（一次性）：[Stai Travel Bridge 扩展（商店名在 v0.2.0.27 过审前仍显示 GoTry Session Bridge）](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd)（一键装、自动更新）；未安装时工具返回 `needs-extension` 并附链接，不消耗配额。独立的 HotelByte 员工门户形态可将检索数据发往获准的后端桥，也会在内存中处理一次性供应商登录凭据；详见[扩展隐私政策](docs/ops/extension-privacy.zh-CN.md)。
 
 可信不靠承诺，靠构造：
 

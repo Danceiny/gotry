@@ -1,9 +1,13 @@
 [English](extension-webstore-submission.md) | [简体中文](extension-webstore-submission.zh-CN.md)
 
-# Stai — Chrome Web Store Submission Materials (ADR-21 Distribution Track B)
+# Stai Travel Bridge — Chrome Web Store Submission Materials (ADR-21 Distribution Track B)
 
-> Status: **v0.2.0.26 submitted for Chrome Web Store review on 2026-09-25,
-> with automatic publication selected after approval; v0.1.0 remains live**. Store page:
+> Status: **v0.2.0.26 (listing name Stai) was submitted on 2026-09-25 and REJECTED on
+> 2026-09-26 — content policy: "the provided metadata is irrelevant to the observed
+> functionality" (reference ID Red Potassium); v0.1.0 remains live**. On 2026-09-30 the
+> founder decided to rename the listing to **Stai Travel Bridge** (Travel matches the
+> flight/hotel/rail search surface, Bridge matches the bridging function) and resubmit
+> as v0.2.0.27. Store page:
 > https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd
 > Artifact: `node scripts/package-extension.mjs` → `dist-extension/gotry-session-bridge-store.zip`
 > (manifest at the zip root; uploaded directly in the store console). The icon is uploaded
@@ -57,7 +61,7 @@ the port pool (8791-8795) and the host whitelist are unchanged.
 
 ## Store listing copy (paste-ready)
 
-- **Name**: Stai (formerly GoTry Session Bridge)
+- **Name**: Stai Travel Bridge (formerly GoTry Session Bridge; the bare brand name Stai was rejected in the v0.2.0.26 review and renamed on 2026-09-30)
 - **Short description** (≤132 characters): Authorized travel search bridge for GoTry, with local or employee-portal backend delivery and supplier sign-in assistance.
 - **Description**: Stai connects supported Ctrip flight/hotel, 12306 rail and Dida supplier-portal searches to GoTry. It observes matching search responses from the pages and checks selected login-cookie names, never forwarding cookie values. Desktop results go to local GoTry; an authenticated HotelByte employee portal can connect the extension to its backend, so search data can leave the device. The portal may provide one-time Dida credentials for in-memory login-form fill and submission; the extension does not persist those credentials. It may operate Dida search controls, but does not book or pay. You can disable the extension in Chrome. See the privacy policy for details.
 - **Category**: Travel; **Languages**: Chinese (Simplified) + English
@@ -103,6 +107,12 @@ The dashboard's **Other instructions** now give the public GoTry setup and user-
 - **The store submission is tracked by [#346](https://github.com/Danceiny/gotry/issues/346)**; **founder decides whether / when / which version to bump** (founder-confirm regime, see `tech-strategy.md` §11 and the release discipline in `AGENTS.md`); **packaging / devconsole upload / status tracking / verification** are executed by the release executor under the repository release discipline; founder only completes the account-side personal approval / 2FA as required. Before the store build lands, store users calling dida get needs-extension (same as any brand-new site); the existing ctrip/12306 lanes are unaffected.
 - unpacked / GitHub Releases channels are unaffected by store review; merging the `feat/session-dida-portal` branch takes effect immediately (PR #297 is merged; code and manifest are already in place).
 - **Current evidence boundary**: submission is accepted for review, while the public store still serves v0.1.0. Approval, live v0.2.0.26 and store pull-back remain to be verified before [#346](https://github.com/Danceiny/gotry/issues/346) or [#537](https://github.com/Danceiny/gotry/issues/537) can be closed.
+
+## Stai v0.2.0.26 rejection receipt and v0.2.0.27 resubmission (2026-09-30)
+
+- **Rejection facts** (read directly from the dashboard on 2026-09-30, account danceiny@gmail.com): the v0.2.0.26 draft reads **Rejected**, violation date 2026-09-26, type = content policy, violation = "the provided metadata is irrelevant to the observed functionality", fix guidance = metadata must accurately describe the product's actual functionality, reference ID `Red Potassium`; the dashboard keeps an appeal entry (not used).
+- **Attribution**: the listing/manifest name was the bare brand word `Stai`, with no readable connection to what a reviewer observes (flight/hotel/rail search-response observation, login-cookie name checks, supplier-portal one-time login form fill, loopback bridging); the description copy was already specific, but the missing function words in the name alone are enough to trigger the metadata-irrelevance verdict.
+- **Disposition**: the founder decided on 2026-09-30 to rename the listing to **Stai Travel Bridge** (Travel matches the search surface, Bridge matches the bridging) and resubmit rather than appeal. v0.2.0.27 = manifest rename + version advance (version `0.2.0.27` / version_name `0.2.0-rc.27`); listing copy, permission justifications and privacy disclosures carry over the corrected v0.2.0.26 versions (the obsolete "zero credentials handled" claims were already removed in #586).
 
 ## Post-approval branded-Chrome acceptance matrix
 
