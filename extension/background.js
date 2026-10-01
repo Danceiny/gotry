@@ -72,6 +72,15 @@ let polling = false
 // in-flight search pinned to the old worker fails closed instead of switching profiles.
 const clientId = crypto.randomUUID()
 
+/**
+ * workspace 事件 buffer(批次 B,2026-10-01):content-bridge 转发的页面事件先进内存,
+ * 伴随每次 /jobs 长轮询批量上行(见 flushWorkspaceEvents)。模块变量,SW 重启即弃——
+ * 事件是活动上下文非权威事实,可接受;零 storage(扩展无该权限,红线)。
+ * 上界护栏:超出即丢最旧(页面风暴不得把 SW 内存或上行 body 顶爆 256KB 服务端限)。
+ */
+const WORKSPACE_EVENT_BUFFER_CAP = 200
+const workspaceEventBuffer = []
+
 function isJoinFresh(t) {
   if (!t || typeof t.bridgeUrl !== 'string' || !t.bridgeUrl) return false
   if (t.expiresAt && Number.isFinite(Date.parse(t.expiresAt)) && Date.parse(t.expiresAt) < Date.now()) return false
@@ -128,6 +137,29 @@ async function postResult(jobId, result) {
       body: JSON.stringify(result),
     })
   } catch { /* 桥可能已退场;Node 侧超时兜底 */ }
+}
+
+/**
+ * workspace 事件批量上行(批次 B):伴随每次 /jobs 长轮询,把 buffer 整批 POST
+ * /v1/session/bridge/events(带 x-gotry-client-id/content-type,bearer 随 bridgeHeaders,
+ * Origin 由扩展 fetch 上下文自带 chrome-extension:// 源)。失败(网络断/403/400/503)
+ * 静默丢弃——事件是活动上下文非权威事实,重试不增值;批已出 buffer,不回灌。
+ * loopback 桌面形态无该端点(404)同样静默丢弃,零影响。
+ */
+async function flushWorkspaceEvents() {
+  if (workspaceEventBuffer.length === 0) return
+  const base = bridgeBase()
+  if (base == null) return
+  const batch = workspaceEventBuffer.splice(0, workspaceEventBuffer.length)
+  // 变量别名 url(与 postResult 同款):§38 fetch 审计只放行 bridgeBase()/joinTicket 派生或 url 别名
+  const url = `${base}/v1/session/bridge/events`
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: bridgeHeaders(true),
+      body: JSON.stringify({ clientId, events: batch }),
+    })
+  } catch { /* 桥不可达:静默丢弃 */ }
 }
 
 /** 只读票据 cookie 名单(只上报名;chrome.cookies 的值就地丢弃,不进任何结果对象) */
@@ -383,6 +415,8 @@ async function loop() {
         })
         const data = await r.json().catch(() => ({ job: null }))
         if (data && data.job) await handleJob(data.job)
+        // 伴随每次 /jobs 长轮询的事件上行(批次 B):桥已确认可达,再发本批
+        await flushWorkspaceEvents()
       } catch { activePort = null; await sleep(RETRY_MS) }
     }
   } finally {
@@ -411,6 +445,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then((result) => { sendResponse && sendResponse(result) })
       .catch(() => { sendResponse && sendResponse({ ok: false, kind: 'open-login-fill', error: 'fill failed' }) })
     return true // 异步响应
+  }
+  if (msg && msg.type === 'gotry-workspace-event' && msg.event && typeof msg.event === 'object') {
+    // 页面 workspace 事件进内存 buffer,随下一次 /jobs 长轮询批量上行(批次 B);
+    // 不回执(事件即发即弃),不落 storage。形状由服务端逐条校验,这里不解析内容。
+    if (workspaceEventBuffer.length >= WORKSPACE_EVENT_BUFFER_CAP) workspaceEventBuffer.shift()
+    workspaceEventBuffer.push(msg.event)
+    return false
   }
   return false
 })

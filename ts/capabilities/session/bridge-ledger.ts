@@ -12,8 +12,12 @@
  *     现在 404 {ok:false,error:'unknown-job'} 且孤儿回包落 bridge_jobs(status='unresolved',
  *     result_json 保留)供对账。
  *
- * 红线继承:本账本只存**控制状态**(job 元数据/回包/节律/客户端能力清单),协议面
- * 不存在 cookie 值字段(extension-tests §38 红线断言),账本亦零凭据落库。
+ * 批次 B(2026-10-01,事件上行端点):bridge_events 表——扩展 workspace 事件
+ * (活动上下文,非权威事实)经 POST /v1/session/bridge/events 上行落账;
+ * idem_key 部分唯一索引(WHERE NOT NULL)让重试幂等:同 key 重发不重复落行。
+ *
+ * 红线继承:本账本只存**控制状态**(job 元数据/回包/节律/客户端能力清单/事件流水),
+ * 协议面不存在 cookie 值字段(extension-tests §38 红线断言),账本亦零凭据落库。
  *
  * 引擎:better-sqlite3(既有依赖,零新增);WAL + busy_timeout,同仓 readFileSync
  * 风格的同步 API。时间戳一律 epoch 毫秒(INTEGER),与 timeout_at 比较同单位。
@@ -73,6 +77,28 @@ export interface BridgePacingRow {
   cooldown_until: number
 }
 
+/** bridge_events 行(批次 B;列名与建表一一对应,测试/对账读口径) */
+export interface BridgeEventRow {
+  seq: number
+  ts: number
+  client_id: string
+  kind: string
+  site: string | null
+  subject: string
+  payload_json: string
+  idem_key: string | null
+}
+
+/** 事件上行写入输入(会话模块按批次逐条投递;idem_key 可空 = 不参与幂等去重) */
+export interface BridgeEventInput {
+  client_id: string
+  kind: string
+  site: string | null
+  subject: string
+  payload_json: string
+  idem_key: string | null
+}
+
 /** stateRoot 可相对可绝对(与 state-ledger.stateDirOf 同款解析) */
 function stateDirOf(stateRoot: string): string {
   const root = isAbsolute(stateRoot) ? stateRoot : join(process.cwd(), stateRoot)
@@ -114,6 +140,19 @@ CREATE TABLE IF NOT EXISTS bridge_pacing (
   last_hit_at INTEGER NOT NULL,
   cooldown_until INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS bridge_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  client_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  site TEXT,
+  subject TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  idem_key TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS bridge_events_idem_key
+  ON bridge_events(idem_key) WHERE idem_key IS NOT NULL;
 `
 
 /**
@@ -238,6 +277,30 @@ export class BridgeLedgerStore implements BridgeJobStore {
   pacingOf(site: string): { lastHitAt: number; cooldownUntil: number } | null {
     const row = this.db.prepare(`SELECT last_hit_at, cooldown_until FROM bridge_pacing WHERE site=?`).get(site) as Pick<BridgePacingRow, 'last_hit_at' | 'cooldown_until'> | undefined
     return row ? { lastHitAt: row.last_hit_at, cooldownUntil: row.cooldown_until } : null
+  }
+
+  /**
+   * 事件上行落账(批次 B):seq 由 AUTOINCREMENT 分配,ts 取服务端落账时刻
+   * (clientTs 是扩展侧时钟,仅参与形状校验不入列——服务端时钟才是账本唯一时间轴)。
+   * 幂等:idem_key 非空且已存在 → 不重复落行,返回 false(由调用方计入 rejected);
+   * idem_key 为 NULL 的行不参与去重,多行共存(部分唯一索引)。
+   * 同进程同步 API,check-then-insert 对本连接原子。
+   */
+  insertEvent(ev: BridgeEventInput): boolean {
+    if (ev.idem_key !== null) {
+      const dup = this.db.prepare(`SELECT 1 FROM bridge_events WHERE idem_key=?`).get(ev.idem_key)
+      if (dup) return false
+    }
+    this.db.prepare(
+      `INSERT INTO bridge_events (ts, client_id, kind, site, subject, payload_json, idem_key)
+       VALUES (@ts, @clientId, @kind, @site, @subject, @payload, @idem)`,
+    ).run({ ts: this.now(), clientId: ev.client_id, kind: ev.kind, site: ev.site, subject: ev.subject, payload: ev.payload_json, idem: ev.idem_key })
+    return true
+  }
+
+  /** 事件流水读面(测试/对账):按 seq 升序 */
+  listEvents(): BridgeEventRow[] {
+    return this.db.prepare(`SELECT seq, ts, client_id, kind, site, subject, payload_json, idem_key FROM bridge_events ORDER BY seq`).all() as BridgeEventRow[]
   }
 
   listPendingJobs(): BridgePendingJob[] {

@@ -185,7 +185,8 @@ interface ParkedPoller {
   clientId?: string
 }
 
-const CLIENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** 扩展客户端标识形状(每 SW 生命周期一个 crypto.randomUUID);导出供事件上行端点(批次 B)同链校验 */
+export const CLIENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function jobMatches(entry: QueuedJob, capabilities: Set<string> | null, origin: string, clientId?: string): boolean {
   if (entry.preferredOrigin && entry.preferredOrigin !== origin) return false

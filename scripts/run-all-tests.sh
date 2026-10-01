@@ -643,6 +643,10 @@ echo
 echo "=== 69. 桥作业账本(批次 A「桥作业账本化」:bridge.db 三表与 state-ledger 分库/write-before-submit 先写后派发·账本写失败即提交失败/领取与善果回包落账/claimed 超时→unresolved+节律冷却·未被领取超时→void/未知回包 404 unknown-job+孤儿 result 落库对账/recoverOnBoot 重排复活结算/bridge_clients upsert+login_sites 名字级/挂载路径模块接线与账本节律读判定;隔离 stateRoot,全离线) ==="
 (cd ts && npx tsx scripts/bridge-ledger-tests.ts) || FAIL=1
 
+echo
+echo "=== 70. 桥事件上行(批次 B:POST /v1/session/bridge/events——bearer+扩展 Origin 白名单双校验与 /jobs 同链/缺 key 503·错 Origin 403/形状守卫 400/混合批次逐条裁决 accepted·rejected/bridge_events seq·ts·idem_key 部分唯一索引幂等·NULL 不去重/payload_json 原样落账/body >256KB 超限 400 零落账/无账本形态 503 fail-closed;真实 createBackendServer HTTP 面+隔离 stateRoot,全离线) ==="
+(cd ts && npx tsx scripts/bridge-events-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

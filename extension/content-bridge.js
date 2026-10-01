@@ -59,6 +59,20 @@
     } catch { /* 不抛 */ }
   }
 
+  /**
+   * workspace 事件(批次 B,2026-10-01):页面派发 gotry-workspace-event-available
+   * 即把 detail(事件本体 {kind,site?,subject,payload_json,clientTs?,idem_key?})经
+   * chrome.runtime.sendMessage 转发 SW——照抄 gotry-join-ticket-available 的转发模式;
+   * 本脚本不读不存任何 cookie、零 storage,事件过手即弃(持久面在 SW 侧内存 buffer)。
+   */
+  function dispatchWorkspaceEvent(ev) {
+    try {
+      var d = (ev && ev.detail) || null
+      if (!d || typeof d !== 'object' || typeof d.kind !== 'string' || !d.kind) return
+      chrome.runtime.sendMessage({ type: 'gotry-workspace-event', event: d }).catch(function () { /* SW 重启中,事件即弃 */ })
+    } catch { /* 不抛 */ }
+  }
+
   /** 原生设值:React 受控 input 需走原型 setter + input/change 事件,直接赋 value 会被吞 */
   function setNativeValue(el, value) {
     var desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')
@@ -242,6 +256,9 @@
   // 在 window 上派发该事件 → 这里重取一次即可(不需要轮询,也不引入任何配置面)。
   window.addEventListener('gotry-join-ticket-available', dispatchJoinTicket)
   window.addEventListener('gotry-portal-login-available', dispatchPortalLogin)
+  // workspace 事件是纯 CustomEvent(无 window 属性面,无一次性读取——document_start
+  // 注入保证本监听先于页面脚本注册,派发即转发,错过即弃)。
+  window.addEventListener('gotry-workspace-event-available', dispatchWorkspaceEvent)
 
   if (document.readyState === 'loading') {
     window.addEventListener('DOMContentLoaded', function () { sendPage(); dispatchJoinTicket(); dispatchPortalLogin() }, { once: true })
