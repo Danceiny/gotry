@@ -639,6 +639,10 @@ echo
 echo "=== 68. state-ledger 数据修复控制面(issue #254:只读 inventory 零写入/显式映射 plan 逐项校验+跨 tenant idem_key 冲突暴露/from 守卫受限 execute+backup SHA-256+journal 幂等+retarget/rollback 校验和验证+损毁拒绝/CLI --execute 闸与 founder 数据守卫;隔离 stateRoot fixture,全离线) ==="
 (cd ts && npx tsx scripts/state-repair-tests.ts) || FAIL=1
 
+echo
+echo "=== 69. 桥作业账本(批次 A「桥作业账本化」:bridge.db 三表与 state-ledger 分库/write-before-submit 先写后派发·账本写失败即提交失败/领取与善果回包落账/claimed 超时→unresolved+节律冷却·未被领取超时→void/未知回包 404 unknown-job+孤儿 result 落库对账/recoverOnBoot 重排复活结算/bridge_clients upsert+login_sites 名字级/挂载路径模块接线与账本节律读判定;隔离 stateRoot,全离线) ==="
+(cd ts && npx tsx scripts/bridge-ledger-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

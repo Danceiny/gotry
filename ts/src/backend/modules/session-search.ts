@@ -30,6 +30,7 @@ import type { BackendModule } from '../kernel.ts'
 import { sessionDidaSearch, type SessionDidaResult } from '../../../capabilities/session-search.ts'
 import { DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_DOMAIN } from '../../../capabilities/session/adapters/dida-portal.ts'
 import { createBridgeJobQueue, type BridgeJobQueue } from '../../../capabilities/session/extension-bridge.ts'
+import { openBridgeLedgerStore, type BridgeLedgerStore } from '../../../capabilities/session/bridge-ledger.ts'
 import { extensionCookieNames, extensionOpenLogin, classifyBridgeFailure } from '../../../capabilities/session/extension-channel.ts'
 
 export interface SessionSearchModuleOptions {
@@ -37,8 +38,15 @@ export interface SessionSearchModuleOptions {
   /** 测试注入;缺省直连 sessionDidaSearch */
   search?: typeof sessionDidaSearch
   auditPath?: string
-  /** 测试注入;缺省模块内建进程内桥作业队列 */
+  /** 测试注入;缺省模块内建桥作业队列(给 stateRoot 时为 ledger-backed) */
   jobQueue?: BridgeJobQueue
+  /**
+   * 桥作业账本根(批次 A「桥作业账本化」,2026-10-01):提供且未注入 jobQueue 时,
+   * 队列/在飞/节律/客户端注册落 `<stateRoot>/gotry-state/bridge.db`(独立于
+   * gotry-state.db),启动即 recoverOnBoot(queued 重排/超时 claimed 结算),检索前
+   * 先读账本节律。缺省纯内存——测试与桌面形态零变化。
+   */
+  stateRoot?: string
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -203,7 +211,29 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 export function startSessionSearchModule(options: SessionSearchModuleOptions): BackendModule {
   const search = options.search ?? sessionDidaSearch
-  const queue = options.jobQueue ?? createBridgeJobQueue()
+  // 桥队列形态(批次 A):注入 jobQueue(测试)→ 原样;给 stateRoot(挂载路径)→
+  // ledger-backed(store 注入 createBridgeJobQueue);两者皆缺 → 纯内存(现状)。
+  let ledger: BridgeLedgerStore | undefined
+  let queue: BridgeJobQueue
+  if (options.jobQueue) {
+    queue = options.jobQueue
+  } else if (options.stateRoot !== undefined) {
+    try {
+      ledger = openBridgeLedgerStore(options.stateRoot)
+    } catch (e) {
+      // 账本开不了不打断服务:退回纯内存(重启丢在飞的旧缺陷面),stderr 留痕
+      process.stderr.write(`[session-search] 桥账本打开失败,退回纯内存队列: ${e instanceof Error ? e.message : String(e)}\n`)
+    }
+    queue = createBridgeJobQueue(ledger ? { store: ledger } : {})
+  } else {
+    queue = createBridgeJobQueue()
+  }
+  // 开机恢复(gotry-backend 会话模块启动路径):queued→重排;claimed 已超时→
+  // unresolved+节律记账;claimed 未超时→复活 inFlight(重启不再丢在飞作业)。
+  const recovery = queue.recoverOnBoot?.()
+  if (recovery && recovery.requeued + recovery.rehydratedInFlight + recovery.settledUnresolved + recovery.voidedStale > 0) {
+    process.stderr.write(`[session-search] 桥账本开机恢复:重排 ${recovery.requeued},复活在飞 ${recovery.rehydratedInFlight},超时结算 ${recovery.settledUnresolved},过期作废 ${recovery.voidedStale}\n`)
+  }
   const authorized = (req: IncomingMessage, res: ServerResponse): boolean => {
     const key = options.apiKey()
     const auth = String(req.headers.authorization ?? '')
@@ -247,6 +277,19 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     const supplier = ((parsed.obj.supplier as string | undefined) ?? '').trim()
     if (supplier !== 'dida-portal') {
       sendJson(res, 400, { ok: false, error: `未知供应商通道 ${supplier || '(空)'}(M0 仅 dida-portal)` }); return
+    }
+    // 挂载路径节律读判定(批次 A):账本口径跨重启(超时结算/上一次提交都在库里),
+    // 与 sessionDidaSearch 的进程内节律闸双闸取严——内存闸挡本进程,账本闸挡重启前打过的站点。
+    const pacing = ledger?.pacingOf(supplier)
+    if (pacing && Date.now() < pacing.cooldownUntil) {
+      const retryAfterSec = Math.max(1, Math.ceil((pacing.cooldownUntil - Date.now()) / 1_000))
+      res.setHeader('retry-after', String(retryAfterSec))
+      sendJson(res, 429, {
+        ok: false,
+        verdict: 'cooldown',
+        error: `bridge ledger cooldown: site ${supplier} cooling down until ${new Date(pacing.cooldownUntil).toISOString()}(last ledger hit ${Date.now() - pacing.lastHitAt}ms ago)`,
+      })
+      return
     }
     try {
       const q = queryCheck.query
@@ -325,6 +368,6 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
       { method: 'POST', path: '/v1/session/bridge/jobs', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
       { method: 'POST', path: '/v1/session/bridge/results', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
     ],
-    close: () => queue.close(),
+    close: () => queue.close().then(() => { ledger?.close() }),
   }
 }

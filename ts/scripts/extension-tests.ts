@@ -453,7 +453,11 @@ async function main(): Promise<void> {
         headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN_STORE },
         body: '{}',
       })
-      assert.equal(r.status, 200, '商店版扩展源不得吃 403(否则商店通道全断)')
+      // 批次 A(2026-10-01)起未知 jobId 回包 = 404 unknown-job(不再 200 静默丢弃);
+      // 本断言守住的原不变量是「商店版源不得吃 403」——403 会整条商店通道全断。
+      assert.notEqual(r.status, 403, '商店版扩展源不得吃 403(否则商店通道全断)')
+      assert.equal(r.status, 404, '未知 jobId 回包按批次 A 合同回 404 unknown-job')
+      assert.equal(((await r.json()) as { error?: string }).error, 'unknown-job')
       assert.equal(storeLane.extensionConnected(), true, '白名单源的任何请求都刷新心跳')
     } finally {
       await storeLane.close()
