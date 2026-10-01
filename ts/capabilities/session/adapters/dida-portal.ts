@@ -202,6 +202,8 @@ export interface SessionDidaRateOption {
   hotelName?: string
   roomTypeId?: string
   roomName?: string
+  /** 英文房型名（门户 DidaRoomTypeName_EN；缺失时不编造） */
+  roomNameEn?: string
   ratePlanId?: string
   /** 单价(数值不可得时为 0) */
   price: number
@@ -244,6 +246,7 @@ interface RateCandidate {
   hotelName?: string
   roomTypeId?: string
   roomName?: string
+  roomNameEn?: string
   plan: Record<string, unknown>
 }
 
@@ -266,6 +269,9 @@ function rateCandidate(hotel: Record<string, unknown>, room: Record<string, unkn
     roomName: typeof room.DidaRoomTypeName_CN === 'string' && room.DidaRoomTypeName_CN.trim()
       ? room.DidaRoomTypeName_CN
       : (typeof room.DidaRoomTypeName_EN === 'string' ? room.DidaRoomTypeName_EN : undefined),
+    roomNameEn: typeof room.DidaRoomTypeName_EN === 'string' && room.DidaRoomTypeName_EN.trim()
+      ? room.DidaRoomTypeName_EN
+      : undefined,
     plan,
   }
 }
@@ -312,6 +318,7 @@ export function parseDidaRates(body: string, opts: { maxItems?: number } = {}): 
           hotelName: cand.hotelName,
           roomTypeId: cand.roomTypeId,
           roomName: cand.roomName,
+          roomNameEn: cand.roomNameEn,
           ratePlanId: typeof p.RatePlanID === 'string' ? p.RatePlanID : undefined,
           price: typeof p.Price === 'number' ? p.Price : 0,
           totalPrice: typeof p.TotalPrice === 'number' ? p.TotalPrice : undefined,
