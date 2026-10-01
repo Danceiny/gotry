@@ -29,7 +29,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { BackendModule } from '../kernel.ts'
 import { sessionDidaSearch, type SessionDidaResult } from '../../../capabilities/session-search.ts'
 import { DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_DOMAIN } from '../../../capabilities/session/adapters/dida-portal.ts'
-import { createBridgeJobQueue, type BridgeJobQueue } from '../../../capabilities/session/extension-bridge.ts'
+import { createBridgeJobQueue, EXTENSION_ORIGINS, type BridgeJobQueue } from '../../../capabilities/session/extension-bridge.ts'
 import { extensionCookieNames, extensionOpenLogin, classifyBridgeFailure } from '../../../capabilities/session/extension-channel.ts'
 
 export interface SessionSearchModuleOptions {
@@ -201,9 +201,23 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * 桥面扩展 Origin 白名单的运维覆盖:unpacked 安装的扩展 ID 随装载绝对路径变化
+ * (SHA256(path) 前 32 位映射 a-p),把员工本机的安装挡在 403(hotel-be#32143 验收
+ * 实测)。默认仍收 unpacked dev + 商店双通道;env 以逗号追加合法 origin。
+ */
+function bridgeExtensionOrigins(): readonly string[] | undefined {
+  const raw = process.env.GOTRY_SESSION_BRIDGE_EXTENSION_ORIGINS
+  if (!raw) return undefined
+  const extra = [...new Set(raw.split(',')
+    .map((s) => s.trim())
+    .filter((s) => /^chrome-extension:\/\/[a-p]{32}$/.test(s)))]
+  return extra.length ? [...EXTENSION_ORIGINS, ...extra] : undefined
+}
+
 export function startSessionSearchModule(options: SessionSearchModuleOptions): BackendModule {
   const search = options.search ?? sessionDidaSearch
-  const queue = options.jobQueue ?? createBridgeJobQueue()
+  const queue = options.jobQueue ?? createBridgeJobQueue({ extensionOrigins: bridgeExtensionOrigins() })
   const authorized = (req: IncomingMessage, res: ServerResponse): boolean => {
     const key = options.apiKey()
     const auth = String(req.headers.authorization ?? '')
