@@ -326,6 +326,21 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * 桥面扩展 Origin 白名单的运维覆盖:unpacked 安装的扩展 ID 随装载绝对路径变化
+ * (SHA256(path) 前 32 位映射 a-p),把员工本机的安装挡在 403(hotel-be#32143 验收
+ * 实测;hotel-be#34173 UAT 复验发现 10-01 cherry-pick 未进 main,10-17 例行发版回退)。
+ * 默认仍收 unpacked dev + 商店双通道;env 以逗号追加合法 origin。
+ */
+function bridgeExtensionOrigins(): readonly string[] | undefined {
+  const raw = process.env.GOTRY_SESSION_BRIDGE_EXTENSION_ORIGINS
+  if (!raw) return undefined
+  const extra = [...new Set(raw.split(',')
+    .map((s) => s.trim())
+    .filter((s) => /^chrome-extension:\/\/[a-p]{32}$/.test(s)))]
+  return extra.length ? [...EXTENSION_ORIGINS, ...extra] : undefined
+}
+
 export function startSessionSearchModule(options: SessionSearchModuleOptions): BackendModule {
   // AaaS A2: the cdp transport drives the host's own Chrome whoever asks, so a second organization could ride it. The
   // organization-scoped form therefore runs on the extension bridge only (the single lane keeps the cdp opt-in).
@@ -351,9 +366,9 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
       // 账本开不了不打断服务:退回纯内存(重启丢在飞的旧缺陷面),stderr 留痕
       process.stderr.write(`[session-search] 桥账本打开失败,退回纯内存队列: ${e instanceof Error ? e.message : String(e)}\n`)
     }
-    queue = createBridgeJobQueue(ledger ? { store: ledger } : {})
+    queue = createBridgeJobQueue(ledger ? { store: ledger, extensionOrigins: bridgeExtensionOrigins() } : { extensionOrigins: bridgeExtensionOrigins() })
   } else {
-    queue = createBridgeJobQueue()
+    queue = createBridgeJobQueue({ extensionOrigins: bridgeExtensionOrigins() })
   }
   // 开机恢复(gotry-backend 会话模块启动路径):queued→重排;claimed 已超时→
   // unresolved+节律记账;claimed 未超时→复活 inFlight(重启不再丢在飞作业)。
