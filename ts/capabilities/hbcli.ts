@@ -286,3 +286,49 @@ export async function checkAvail(
     : `ratePkg ${query.ratePkgId}:hbcli 实时验价不可用(${live.error ?? live.via});价格面无静态降级,fail-closed`
   return { ...live, avail: live.result, summary }
 }
+
+/**
+ * C 端客户邮箱验证码登录(hotelbyte-cli auth customer-* 两步流;后端
+ * loginByCustomerEmailCode:验证通过即登录,新邮箱即注册,无需密码):
+ *   step 1 customerSendCode —— 邮箱收码(外发邮件动作,仅用户明示要登录/注册时调用);
+ *   step 2 customerLogin —— 用户从收件箱报码,验证即建档/登录。
+ *
+ * 与检索族的本质差异:customerLogin 写 hbcli 共享凭据仓(customer 档,
+ * ~/.staicli/credentials.json)——hbcli 侧 customer 档是最低优先级凭据(无
+ * portal/API-key 凭据时才生效),登录不劫持既有凭据。本层不透出 token 值
+ * (CLI 只回 token_saved,凭据留在 CLI 仓内,不进 gotry 会话/日志)。
+ * auth 命令族要求 hbcli 带 register 支持(npm 0.0.4 起;0.0.3 报 unknown
+ * command,经 hbcli-error 面优雅失败)。
+ */
+export async function customerSendCode(
+  email: string,
+  opts: HbcliCallOptions = {},
+): Promise<HbcliCallResult & { summary: string }> {
+  const live = await callHbcliJson(['--json', 'auth', 'customer-send-code', '--email', email], opts)
+  const r = live.result as { expiresIn?: number; nextTime?: string } | null
+  const summary = live.via === 'hbcli-realtime'
+    ? `验证码已发送到 ${email}${r?.expiresIn ? `(有效期 ${r.expiresIn} 秒)` : ''}——请让用户从邮箱查收并报码,再走 gotry_hotel_auth_login`
+    : `验证码发送失败(${live.error ?? live.via});服务端有发码限流,勿立即重试`
+  return { ...live, summary }
+}
+
+export async function customerLogin(
+  query: { email: string; code: string; ttl?: number; attributionToken?: string },
+  opts: HbcliCallOptions = {},
+): Promise<HbcliCallResult & { summary: string }> {
+  const hbArgs = ['--json', 'auth', 'customer-login', '--email', query.email, '--code', query.code]
+  if (query.ttl && query.ttl > 0) hbArgs.push('--ttl', String(query.ttl))
+  if (query.attributionToken) hbArgs.push('--attribution-token', query.attributionToken)
+  const live = await callHbcliJson(hbArgs, opts)
+  const r = live.result as { status?: string; attributionBound?: boolean } | null
+  let summary: string
+  if (live.via === 'hbcli-realtime' && r?.status === 'logged_in') {
+    const attribution = typeof r.attributionBound === 'boolean'
+      ? `;顾问归因绑定${r.attributionBound ? '成功' : '未成(登录不受影响,归因可重试)'}`
+      : ''
+    summary = `hotelbyte 客户登录成功(${query.email};新邮箱即注册${attribution})——凭据已存入 hbcli customer 档,后续酒店检索/报价走实时源`
+  } else {
+    summary = `hotelbyte 客户登录失败(${live.error ?? live.via});验证码是一次性凭据,失败后需重新发码`
+  }
+  return { ...live, summary }
+}

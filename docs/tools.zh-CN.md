@@ -27,6 +27,7 @@
 | | `gotry_skeleton_check` | OpenFlights 168 对枢纽通航性校验（三值） |
 | **库存与目录** | `gotry_hotel_search` | hotel-byte 实时桥；需提供有效入住/退房日期，缺失时先追问；供应商不可用时降级为明确标注的静态结果 |
 | | `gotry_anything_search` | 城市/酒店/地标混合目录（hotel-be Anything） |
+| | `gotry_hotel_auth_send_code` / `gotry_hotel_auth_login` | hotelbyte 客户邮箱验证码两步登录（新邮箱即注册，无需密码）：第一步真实发信到用户邮箱——仅在用户明示同意后调用；第二步用户从收件箱报码完成登录。凭据落 hbcli customer 档（最低优先级，不劫持既有 portal/API-key 凭据），为该身份解锁酒店实时源。验证码一次性，失败需重新发码再试；可选顾问归因令牌把客户绑进顾问客户簿。需 npm staicli ≥ 0.0.4 |
 | **判定引擎** | `gotry_feasibility_check` | 注册工具路径：确定性的 TypeScript 候选枚举/评估与逐候选判决；显式多段航班链走独立的 `solveUnified` Z3 路径 |
 | **记忆与触达** | `gotry_motivation_save` | 动机画像落盘（evidence 强制，反幻觉）；支持 typed `homeCity` 常住地软默认（#338），显式当前行程出发地优先，原点永不从 IP/语言/时区/历史/模型猜测推断 |
 | | `gotry_wish_pool_add` / `gotry_wish_pool_list` | 「下一次出发」愿望池 + 0..1 条件召回；召回可被指名通道宕机否证 |
