@@ -647,6 +647,10 @@ echo
 echo "=== 70. 桥事件上行(批次 B:POST /v1/session/bridge/events——bearer+扩展 Origin 白名单双校验与 /jobs 同链/缺 key 503·错 Origin 403/形状守卫 400/混合批次逐条裁决 accepted·rejected/bridge_events seq·ts·idem_key 部分唯一索引幂等·NULL 不去重/payload_json 原样落账/body >256KB 超限 400 零落账/无账本形态 503 fail-closed;真实 createBackendServer HTTP 面+隔离 stateRoot,全离线) ==="
 (cd ts && npx tsx scripts/bridge-events-tests.ts) || FAIL=1
 
+echo
+echo "=== 71. 会话双区记忆分区契约纯核(P4-1,design/session-dual-zone-memory-design.md §5:闭集 hot_context·trip_notebook 未知拒收/写侧负面清单证件·手机号·URL·凭证零入区/owner 确认引用闸/rev CAS 同 rev 幂等 no-op·stale_rev fail-closed 类型化/注入时钟分层 TTL 30min resource·24h intent 只自写入起算读不续命/确定性 fold 重建==直读;纯函数零 IO·零定时器·零网络,不接账本(P4-2)与会话(P4-3),内核 manifest 零漂移;全离线) ==="
+(cd ts && npx tsx scripts/session-zones-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
