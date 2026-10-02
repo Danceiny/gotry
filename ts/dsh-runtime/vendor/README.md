@@ -31,14 +31,18 @@ peerDependencies 否决**:历史上游要求 `dsh-settings`/`dsh-tools`
 `>=0.1.2-rc.1`,而 gotry 历史锁定的运行时家族是 `0.1.2-alpha.3`
 (semver 上 alpha < rc)——npm/npx 严格 peer 解析直接 ERESOLVE
 (optionalDependencies 也不豁免),硬依赖会弄坏 `npx @danceiny/gotry`
-主安装路径。当前锁定 `0.1.5-alpha.1` 家族后,`>=0.1.2-rc.1` 已被满足,
-但 vendored 副本 peerDependencies 已对齐 `0.1.5-alpha.1`,继续保持
-vendored 形态复用同一份适配补丁与七工具接线,避免在 npm 依赖面引入
-额外硬依赖而弄坏 `npx @danceiny/gotry` 主安装路径。故以 vendor
-副本随 tarball 分发(root `package.json` `files[]` 含本目录),
-`bin/gotry-inner.js` 解析链 vendor 优先;
+主安装路径。当前锁定 `0.2.0-rc.2` 家族(issue #600):上游 `>=0.1.2-rc.1`
+开区间直接满足,npm 解析与 0.2.0 起的运行时 peer 兼容闸均通过;但继续
+保持 vendored 形态(避免在 npm 依赖面引入额外硬依赖而弄坏
+`npx @danceiny/gotry` 主安装路径),vendored 副本为上游 `0.7.3`
+原样内容 + settings-ns.js 适配(SettingsForms 页策略,旧线型兼容)+ 双语 README 来源通知。vendor 副本随 tarball 分发
+(root `package.json` `files[]` 含本目录),`bin/gotry-inner.js`
+解析链 vendor 优先;
 升级 = 从 npm 拉 `dsh-map-tools@<new>` 覆盖本目录(保留来源与
-license:MIT,上游 package.json 里无 devDependencies 需清理)。
+license:MIT,上游 package.json 里无 devDependencies 需清理;
+0.5.1→0.7.3 实操:`npm pack dsh-map-tools@0.7.3` 解包覆盖 +
+双语 README 追加 vendored 通知 + 更新 map-tools-vendor-package-proof
+的 version/fileCount/aggregateSha256)。
 
 ## 升级/复现流程(dsh 家族,下个版本照抄)
 

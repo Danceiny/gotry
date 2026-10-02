@@ -108,8 +108,10 @@ try {
   const resultPromise = planner.plannerFactory(task).next({ turn, task })
   await until(() => requests.length === 1, 3_000, 'initialized real provider was not reached')
   const providerObservedMs = Date.now() - started
-  const modelRequest = JSON.parse(requests[0]!) as { tools: Array<{ function: { name: string } }> }
-  assert.ok(modelRequest.tools.some((tool) => tool.function.name === 'booking_run_search'), 'real initialized runtime includes the GoTry booking plugin')
+  const modelRequest = JSON.parse(requests[0]!) as { tools: Array<{ function?: { name?: string }; name?: string }> }
+  // 0.2.0-rc.2 起工具条目是平铺 {name}(旧形态是 {function:{name}} 包裹);
+  // 断言的是 booking 插件在场,两种线型都接受。
+  assert.ok(modelRequest.tools.some((tool) => tool.function?.name === 'booking_run_search' || tool.name === 'booking_run_search'), 'real initialized runtime includes the GoTry booking plugin')
   const result = await bounded(resultPromise, 3_000, 'planner did not return a bounded timeout')
   const elapsedMs = Date.now() - started
   assert.equal(result[0]?.kind === 'error' && result[0].error.code, 'PLANNER_PROVIDER_TIMEOUT')

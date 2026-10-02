@@ -9,6 +9,9 @@
  * pattern); the two halves of the card read/write a real file.
  */
 import type { Context } from '@deepseek-ai/cordis';
+import type { IncomingMessage } from 'node:http';
+/** Refuse cross-origin and non-loopback requests (the route answers same-origin loopback only). */
+export declare function isTrustedRequest(req: IncomingMessage): boolean;
 /**
  * Register the settings-card route under the web server, when one exists.
  *

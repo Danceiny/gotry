@@ -289,11 +289,10 @@ type BridgeResultStatus = { kind: 'result' } | { kind: 'domain' } | { kind: 'fai
 function bridgeResultStatus(data: Record<string, unknown>, callId: string): BridgeResultStatus | undefined {
   if (!plainObject(data.message) || !plainObject(data.message.source)) return undefined
   if (data.message.source.callId !== callId || !Array.isArray(data.message.content)) return undefined
-  const block = data.message.content.find(candidate => plainObject(candidate)
-    && candidate.type === 'tool-result'
-    && candidate.toolCallId === callId)
-  if (!plainObject(block) || block.isError === true || !Array.isArray(block.content)) return undefined
-  const text = block.content
+  // 0.2.0-rc.2 线型:tool/result 的身份与错误位在 message 顶层
+  // (toolCallId/isError),content 是文本载荷块;旧线型的 {type:'tool-result'} 块已不存在。
+  if (data.message.toolCallId !== callId || data.message.isError === true) return undefined
+  const text = data.message.content
     .filter(candidate => plainObject(candidate) && candidate.type === 'text' && typeof candidate.text === 'string')
     .map(candidate => String((candidate as Record<string, unknown>).text))
     .join('')
@@ -496,7 +495,9 @@ function correctionMessage(mode: Exclude<RetryMode, 'none'>, projection: Benchma
     : `BENCHMARK_CONFORMANCE_TERMINAL: Reuse the existing successful tool result. Do not call any tool. Reply only <${projection.terminal.tag}> with one JSON object matching exactly ${terminalSchemaOutline(projection.terminal.body_schema)} — no extra keys, no missing keys, exact types.`
   return createUserMessage({
     content: [{ type: 'text' as const, text }],
-    source: { kind: 'plugin' as const, plugin: 'gotry-benchmark-agent-conformance' },
+    // 0.2.0-rc.2 的 MessageSourceMap 移除了 'plugin' kind;基准纠偏消息是
+    // 插件注入的指令,归入 system-prompt(运行时自产注入),不冒充真实用户输入。
+    source: { kind: 'system-prompt' as const },
   })
 }
 

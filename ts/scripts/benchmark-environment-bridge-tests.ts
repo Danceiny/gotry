@@ -321,6 +321,7 @@ function toolCall(callId = 'call-1', options: { turn?: number; step?: number; ac
 }
 function toolResult(callId = 'call-1', options: { turn?: number; step?: number; ok?: boolean; isError?: boolean; error?: string; outcome?: Record<string, unknown>; payload?: Record<string, unknown> } = {}) {
   const { turn = 1, step = 1, ok = true, isError = false, error = 'runner_failed', outcome, payload } = options
+  // 0.2.0-rc.2 线型:toolCallId/isError 在 message 顶层,content 是单个文本载荷块。
   return {
     type: 'tool/result',
     data: {
@@ -328,12 +329,9 @@ function toolResult(callId = 'call-1', options: { turn?: number; step?: number; 
       step,
       message: {
         source: { kind: 'tool', callId },
-        content: [{
-          type: 'tool-result',
-          toolCallId: callId,
-          isError,
-          content: [{ type: 'text', text: JSON.stringify(payload ?? (outcome ? { ok: true, outcome } : ok ? { ok: true, result: {} } : { ok: false, error })) }],
-        }],
+        toolCallId: callId,
+        isError,
+        content: [{ type: 'text', text: JSON.stringify(payload ?? (outcome ? { ok: true, outcome } : ok ? { ok: true, result: {} } : { ok: false, error })) }],
       },
     },
   }

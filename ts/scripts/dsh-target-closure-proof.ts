@@ -1,6 +1,6 @@
 /**
  * DSH 目标闭包契约(issue #268):读取仓库当前状态,断言已精确迁移到
- * @deepseek-ai/dsh 0.1.5-rc.1 的 232 包闭包。这是 issue #268 的 failing-before
+ * @deepseek-ai/dsh 0.2.0-rc.2 的 232 包闭包。这是 issue #268 的 failing-before
  * 契约——在起始 0.1.2-alpha.3/216 闭包上必须失败,迁移完成后必须通过。
  *
  * 断言面(任一不符即 FAIL):
@@ -35,8 +35,8 @@ import {
   validatePnpmRootDshImporter,
 } from './dsh-runtime-closure.ts'
 
-const TARGET_VERSION = '0.1.5-rc.1'
-const TARGET_PACKAGE_COUNT = 232
+const TARGET_VERSION = '0.2.0-rc.2'
+const TARGET_PACKAGE_COUNT = 279
 
 const ADDED_SENTINELS = [
   '@deepseek-ai/dsh-api-workspace-files',

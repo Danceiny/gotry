@@ -2,7 +2,7 @@
  *
  * Covers default-off, explicit opt-in, and fail-closed configuration paths.
  * A local developer run exercises the source checkout. The packaged consumer
- * path is built from the current root @deepseek-ai/dsh 0.1.5-rc.1 closure;
+ * path is built from the current root @deepseek-ai/dsh 0.2.0-rc.2 closure;
  * version/source counterexamples use isolated synthetic fixtures.
  */
 import assert from 'node:assert/strict'
@@ -27,7 +27,7 @@ const MARKER = 'BENCHMARK_BRIDGE_LOOKUP_OK'
 const TIMEOUT_MS = 30_000
 const LOOKUP_INPUT_SCHEMA = { type: 'object', properties: { city: { type: 'string', enum: ['Dubai', 'Singapore'] } }, required: ['city'], additionalProperties: false }
 const TSX_LOADER = pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href
-type Body = { messages?: Array<Record<string, unknown>>; tools?: Array<Record<string, unknown>> }
+type Body = { messages?: Array<Record<string, unknown>>; tools?: Array<Record<string, unknown>>; system?: unknown }
 
 type RuntimeProbe = {
   rootVersion?: string
@@ -58,8 +58,8 @@ function runRuntimeProbe(options: RuntimeProbe): { source: string; version: stri
 }
 
 function assertRuntimeSelectionAndVersionGuards(): void {
-  const sourcePriority = runRuntimeProbe({ rootVersion: '0.1.5-rc.1', vendorVersion: '0.1.2-alpha.1' })
-  assert.deepEqual(sourcePriority, { source: 'root', version: '0.1.5-rc.1' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
+  const sourcePriority = runRuntimeProbe({ rootVersion: '0.2.0-rc.2', vendorVersion: '0.1.2-alpha.1' })
+  assert.deepEqual(sourcePriority, { source: 'root', version: '0.2.0-rc.2' }, 'source checkout uses the root dsh package even when legacy vendor is alpha.1')
 
   const legacyFallback = runRuntimeProbe({ vendorVersion: '0.1.2-alpha.1' })
   assert.deepEqual(legacyFallback, null, 'non-benchmark source checkout fail-closes instead of using the removed legacy vendored dsh fallback')
@@ -150,21 +150,30 @@ function sse(payload: Record<string, unknown>): string {
   return `data: ${JSON.stringify(payload)}\n\n`
 }
 function finalText(text: string): string {
-  return sse({ id: 'bridge-final', object: 'chat.completion.chunk', choices: [{ delta: { role: 'assistant', content: text }, finish_reason: null }] })
-    + sse({ id: 'bridge-final-stop', object: 'chat.completion.chunk', choices: [{ delta: {}, finish_reason: 'stop' }] }) + 'data: [DONE]\n\n'
+  // 0.2.0-rc.2 线型:Messages 流事件。
+  return sse({ type: 'message_start', message: { usage: { input_tokens: 10 } } })
+    + sse({ type: 'content_block_start', index: 0, content_block: { type: 'text', text } })
+    + sse({ type: 'content_block_stop', index: 0 })
+    + sse({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } })
+    + sse({ type: 'message_stop' }) + 'data: [DONE]\n\n'
 }
 function toolCall(callId = 'bridge-call-1', city = 'Dubai'): string {
-  return sse({ id: `bridge-${callId}`, object: 'chat.completion.chunk', choices: [{ delta: { role: 'assistant', tool_calls: [{ index: 0, id: callId, type: 'function', function: { name: TOOL, arguments: JSON.stringify({ action: 'call', tool: 'lookup', arguments: { city } }) } }] }, finish_reason: null }] })
-    + sse({ id: 'bridge-call-stop', object: 'chat.completion.chunk', choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + 'data: [DONE]\n\n'
+  return sse({ type: 'message_start', message: { usage: { input_tokens: 10 } } })
+    + sse({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: callId, name: TOOL, input: {} } })
+    + sse({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ action: 'call', tool: 'lookup', arguments: { city } }) } })
+    + sse({ type: 'content_block_stop', index: 0 })
+    + sse({ type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } })
+    + sse({ type: 'message_stop' }) + 'data: [DONE]\n\n'
 }
 function names(body: Body): string[] {
   return (body.tools ?? []).map(t => { const f = t.function as Record<string, unknown> | undefined; return String(f?.name ?? t.name ?? '') }).filter(Boolean)
 }
 function toolResultPresent(body: Body): boolean {
-  return (body.messages ?? []).some(m => m.role === 'tool' && JSON.stringify(m).includes(MARKER))
+  return (body.messages ?? []).some(m => (m.role === 'tool' || (Array.isArray(m.content) && m.content.some((b: Record<string, unknown>) => b?.type === 'tool_result'))) && JSON.stringify(m).includes(MARKER))
 }
 function anyToolResultPresent(body: Body): boolean {
-  return (body.messages ?? []).some(m => m.role === 'tool')
+  // 新线型:工具结果以 user 消息携带 tool_result 块;旧线型是 role='tool'。
+  return (body.messages ?? []).some(m => m.role === 'tool' || (Array.isArray(m.content) && m.content.some((b: Record<string, unknown>) => b?.type === 'tool_result')))
 }
 
 type CaseMode = 'disabled' | 'enabled' | 'domain-recovery' | 'domain-recovery-failed' | 'unexpected-output' | 'invalid-path' | 'invalid-schema' | 'unsafe-config' | 'output-truncated' | 'timeout' | 'runner-failed' | 'spawn-failed' | 'web-mode' | 'debug-redaction'
@@ -336,7 +345,9 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     `${target} enabled runtime must expose exactly the benchmark tool; observed tool names=${JSON.stringify(enabledToolNames)}`,
   )
   const bridgeTool = enabled.requests.find(request => names(request).includes(TOOL))?.tools?.find(tool => names({ tools: [tool] }).includes(TOOL))
-  const flatSchema = (bridgeTool?.function as Record<string, any> | undefined)?.parameters
+  // 0.2.0-rc.2 线型:schema 是平铺 tool.input_schema(旧线型 tool.function.parameters)。
+  const toolAny = bridgeTool as Record<string, any> | undefined
+  const flatSchema = (toolAny?.function as Record<string, any> | undefined)?.parameters ?? toolAny?.input_schema
   assert.equal(flatSchema?.type, 'object', `${target} bridge exposes an object-root wire schema`)
   assert.equal(flatSchema?.oneOf, undefined, `${target} bridge wire has no top-level oneOf`)
   assert.deepEqual(flatSchema?.required, ['action'])
@@ -359,7 +370,7 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
   // planner request) must carry each stable sentence exactly once. The
   // separate session-title request does NOT expose the benchmark tool and is
   // intentionally not required to carry the persona — dsh-system-prompt
-  // 0.1.5-rc.1 emits a distinct system prompt for it (auto-title). This
+  // 0.2.0-rc.2 emits a distinct system prompt for it (auto-title). This
   // is the precise observed public protocol invariant under target closure,
   // not a relaxed `some` over the full request stream.
   const SENTENCE_A = 'You are GoTry, a task-agnostic travel planning assistant.'
@@ -370,19 +381,22 @@ async function assertRuntimeContract(executableOverride?: string): Promise<void>
     `${target} must emit at least one planner request exposing the benchmark tool; requests=${enabled.requests.length}; schemas=${JSON.stringify(enabled.requests.map(names))}`,
   )
   for (const request of plannerRequests) {
-    const prompt = JSON.stringify(request)
-    const aCount = (prompt.match(new RegExp(SENTENCE_A.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
-    const bCount = (prompt.match(new RegExp(SENTENCE_B.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
-    assert.equal(aCount, 1, `${target} planner request must carry stable sentence A exactly once (observed=${aCount}); prompt head=${prompt.slice(0, 400)}`)
-    assert.equal(bCount, 1, `${target} planner request must carry stable sentence B exactly once (observed=${bCount}); prompt head=${prompt.slice(0, 400)}`)
-  }
-  assert.match(enabled.output, /benchmark_terminal/)
+    // 0.2.0-rc.2 线型:persona 在请求体顶层 system 字段;请求还携带协议级会话
+    // replay(内含 system/message 事件),整包计数会把 replay 里的事件误计为重复。
+    const systemText = typeof request.system === 'string' ? request.system : JSON.stringify(request.system ?? '')
+    const aCount = (systemText.match(new RegExp(SENTENCE_A.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
+    const bCount = (systemText.match(new RegExp(SENTENCE_B.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) ?? []).length
+    assert.equal(aCount, 1, `${target} planner request must carry stable sentence A exactly once (observed=${aCount}); system head=${systemText.slice(0, 400)}`)
+    assert.equal(bCount, 1, `${target} planner request must carry stable sentence B exactly once (observed=${bCount}); system head=${systemText.slice(0, 400)}`)
+  }  assert.match(enabled.output, /benchmark_terminal/)
   const recovered = await runCase('domain-recovery', executableOverride)
   assert.equal(recovered.exit, 0, `${target} model-driven domain miss recovery exits successfully; output=${recovered.output.slice(-2_000)}`)
   assert.equal(recovered.servedToolCalls, 2, `${target} model emits exactly two tool calls around one declared miss`)
   assert.deepEqual(recovered.runnerArguments, [{ city: 'Dubai' }, { city: 'Singapore' }], `${target} model revises the declared city before the second adapter invocation`)
   assert.ok(recovered.requests.some(request => (request.messages ?? []).some(message => {
-    if (message.role !== 'tool') return false
+    // 新线型:工具结果是携带 tool_result 块的 user 消息(role='tool' 旧线型兼容保留)。
+    const isToolResult = message.role === 'tool' || (Array.isArray(message.content) && message.content.some((block: Record<string, unknown>) => block?.type === 'tool_result'))
+    if (!isToolResult) return false
     const serialized = JSON.stringify(message)
     return /status\\?":\\?"miss/.test(serialized) && /recovery\\?":\\?"revise_arguments/.test(serialized)
   })), `${target} declared typed miss reaches model history`)
@@ -584,7 +598,7 @@ function taggedTerminal(valid: boolean): string {
 }
 
 function conformanceResponse(mode: ConformanceMode, request: Body, plannerCount: number): string {
-  const hasToolResult = (request.messages ?? []).some(message => message.role === 'tool')
+  const hasToolResult = anyToolResultPresent(request)
   if (mode === 'a' && plannerCount === 1 && !hasToolResult) return finalText('assistant prose without a call')
   const call = mode === 'a' && plannerCount === 2
     || ['b', 'd', 'f', 'large', 'schema'].includes(mode) && plannerCount === 1

@@ -50,6 +50,8 @@ export class OsrmClient {
             durationS: route.duration ?? 0,
             polyline: JSON.stringify(route.geometry),
             points,
+            // OSRM 的 `overview=full` 就是完整路线几何，直接复用。
+            geometry: points,
             steps,
         };
     }

@@ -51,43 +51,29 @@ function sse(data: Record<string, unknown>): string {
 }
 
 function toolResponse(idSuffix: string): string {
-  const call = {
-    index: 0,
-    id: `deadline-call-${idSuffix}`,
-    type: 'function',
-    function: { name: TOOL, arguments: JSON.stringify({ query: { limit: 1 } }) },
-  }
-  return sse({
-    id: `deadline-${idSuffix}`,
-    object: 'chat.completion.chunk',
-    created: 1,
-    model: 'synthetic-deadline-model',
-    choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [call] }, finish_reason: null }],
-  }) + sse({
-    id: `deadline-${idSuffix}-finish`,
-    object: 'chat.completion.chunk',
-    created: 1,
-    model: 'synthetic-deadline-model',
-    choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-  }) + 'data: [DONE]\n\n'
+  // 0.2.0-rc.2 线型:Messages 流事件(message_start/content_block_*/message_stop)。
+  return sse({ type: 'message_start', message: { usage: { input_tokens: 10 } } })
+    + sse({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: `deadline-call-${idSuffix}`, name: TOOL, input: {} } })
+    + sse({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify({ query: { limit: 1 } }) } })
+    + sse({ type: 'content_block_stop', index: 0 })
+    + sse({ type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } })
+    + sse({ type: 'message_stop' }) + 'data: [DONE]\n\n'
 }
 
-function textResponse(text: string, id = 'deadline-final'): string {
-  return sse({
-    id, object: 'chat.completion.chunk', created: 1,
-    model: 'synthetic-deadline-model',
-    choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
-  }) + sse({
-    id: `${id}-finish`, object: 'chat.completion.chunk', created: 1,
-    model: 'synthetic-deadline-model', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-  }) + 'data: [DONE]\n\n'
+function textResponse(text: string, _id = 'deadline-final'): string {
+  return sse({ type: 'message_start', message: { usage: { input_tokens: 10 } } })
+    + sse({ type: 'content_block_start', index: 0, content_block: { type: 'text', text } })
+    + sse({ type: 'content_block_stop', index: 0 })
+    + sse({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } })
+    + sse({ type: 'message_stop' }) + 'data: [DONE]\n\n'
 }
 
 async function startRelay(): Promise<Relay> {
   const bodies: WireBody[] = []
   const plannerBodies: WireBody[] = []
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.method !== 'POST' || !req.url?.endsWith('/chat/completions')) {
+    // 0.2.0-rc.2 起 SDK 调 /v1/messages;保留 /chat/completions 兼容旧线型。
+    if (req.method !== 'POST' || !(req.url?.endsWith('/chat/completions') || req.url?.endsWith('/messages'))) {
       res.writeHead(404).end('not found'); return
     }
     const chunks: Buffer[] = []
@@ -103,8 +89,9 @@ async function startRelay(): Promise<Relay> {
         // issue #205:已交接判定只认真实 role=tool 消息(persona (21) 的
         // TURN_DEADLINE_HANDOFF 字面量也在 system 文本里,整包扫描会首轮误判
         // 已交接 → 永不派发工具 → handoff 语义测试退化为纯文本收尾)。
+        // 新线型里工具结果以 user 消息携带 tool_result 块;旧线型是 role='tool'。
         const realToolMessages = (body.messages ?? []).filter(
-          message => message.role === 'tool'
+          message => message.role === 'tool' || (Array.isArray(message.content) && message.content.some((block: Record<string, unknown>) => block?.type === 'tool_result'))
         )
         const alreadyHandedOff = realToolMessages.some(message => JSON.stringify(message).includes(HANDOFF))
         // 首个 planner 响应拖过硬阈:首个工具派发必然越过 wall-clock 边界。
@@ -134,7 +121,8 @@ async function startRelay(): Promise<Relay> {
 }
 
 function allToolMessages(bodies: WireBody[]): Array<Record<string, unknown>> {
-  return bodies.flatMap(body => (body.messages ?? []).filter(message => message.role === 'tool'))
+  // 新线型:工具结果以 user 消息携带 tool_result 块;旧线型是 role='tool'。
+  return bodies.flatMap(body => (body.messages ?? []).filter(message => message.role === 'tool' || (Array.isArray(message.content) && message.content.some((block: Record<string, unknown>) => block?.type === 'tool_result'))))
 }
 
 function toolNames(body: WireBody): string[] {

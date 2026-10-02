@@ -1278,15 +1278,18 @@ function toolResultObservation(event: unknown, index: number): DshToolResultObse
   const source = message && isRecord(message.source) ? message.source : undefined
   const sourceKind = source && typeof source.kind === 'string' ? source.kind : undefined
   const sourceCallId = source && typeof source.callId === 'string' && source.callId.length > 0 ? source.callId : undefined
+  // 0.2.0-rc.2 起 tool-result 的身份与错误位在 message 顶层(toolCallId/isError),
+  // content 是单个文本载荷块;旧线型的 {type:'tool-result'} 块已不存在。
+  const toolCallId = message && typeof message.toolCallId === 'string' && message.toolCallId.length > 0 ? message.toolCallId : undefined
+  const isError = message && typeof message.isError === 'boolean' ? message.isError : undefined
   const content = message && Array.isArray(message.content) ? message.content : undefined
   const block = content?.length === 1 && isRecord(content[0]) ? content[0] : undefined
-  const toolCallId = block && typeof block.toolCallId === 'string' && block.toolCallId.length > 0 ? block.toolCallId : undefined
-  if (sourceKind !== 'tool' || !sourceCallId || !toolCallId || block?.type !== 'tool-result' || typeof block.isError !== 'boolean' || sourceCallId !== toolCallId) {
+  if (sourceKind !== 'tool' || !sourceCallId || !toolCallId || !block || typeof isError !== 'boolean' || sourceCallId !== toolCallId) {
     return { index, sourceCallId, toolCallId, kind: 'malformed' }
   }
-  if (block.isError === false && data.error === undefined) return { index, sourceCallId, toolCallId, kind: 'success' }
+  if (isError === false && data.error === undefined) return { index, sourceCallId, toolCallId, kind: 'success' }
   const error = isRecord(data.error) ? data.error : undefined
-  if (block.isError === true && error?.code === 'INVALID_ARGS') return { index, sourceCallId, toolCallId, kind: 'schema-rejection' }
+  if (isError === true && error?.code === 'INVALID_ARGS') return { index, sourceCallId, toolCallId, kind: 'schema-rejection' }
   return { index, sourceCallId, toolCallId, kind: 'error' }
 }
 

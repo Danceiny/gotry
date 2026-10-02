@@ -19,8 +19,8 @@ import assert from 'node:assert/strict'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const upstreamLicenseSha256 = 'b6bbb0c73a02cf8d2c304e9f208b41c32f0a810fabe366986e2b14ac3338f618'
-const upstreamVendorFileCount = 32
-const adaptedVendorAggregateSha256 = '65ac7b76a62c07bda771c476fff6b4c5e4220b013ce74ad3c54e6b95e5b34063'
+const upstreamVendorFileCount = 37
+const adaptedVendorAggregateSha256 = 'f01515d8c1ec2973c7b4fb2bec0f6e2175bceef7a5331847cb210a11855a49e2'
 const expectedTools = [
   'map_bicycling_route',
   'map_driving_route',
@@ -121,9 +121,9 @@ function assertTargetLockClosure(): { packages: number; version: string } {
   )
   assert.ok(dshEntries.length >= 10, 'expected dsh-tools peer closure in the ts lock')
   for (const [path, entry] of dshEntries) {
-    assert.equal(entry.version, '0.1.5-rc.1', `${path} drifted outside the 0.1.5-rc.1 closure`)
+    assert.equal(entry.version, '0.2.0-rc.2', `${path} drifted outside the 0.2.0-rc.2 closure`)
   }
-  return { packages: dshEntries.length, version: '0.1.5-rc.1' }
+  return { packages: dshEntries.length, version: '0.2.0-rc.2' }
 }
 
 function findPackageRoot(entry: string): string {
@@ -235,7 +235,7 @@ try {
     license?: string
   }
   assert.equal(vendorPackage.name, 'dsh-map-tools')
-  assert.equal(vendorPackage.version, '0.5.1')
+  assert.equal(vendorPackage.version, '0.7.3')
   assert.equal(vendorPackage.license, 'MIT')
   assert.equal(sha256(join(vendorRoot, 'LICENSE')), upstreamLicenseSha256, 'upstream MIT license changed')
 
@@ -244,16 +244,18 @@ try {
   const dshSettingsPackageJson = packageRequire.resolve('@deepseek-ai/dsh-settings/package.json')
   const dshTools = JSON.parse(readFileSync(dshToolsPackageJson, 'utf8')) as { version: string }
   const dshSettings = JSON.parse(readFileSync(dshSettingsPackageJson, 'utf8')) as { version: string }
-  assert.equal(dshTools.version, '0.1.5-rc.1')
-  assert.equal(dshSettings.version, '0.1.5-rc.1')
+  assert.equal(dshTools.version, '0.2.0-rc.2')
+  assert.equal(dshSettings.version, '0.2.0-rc.2')
   const settingsApi = await import(pathToFileURL(join(dirname(dshSettingsPackageJson), 'lib/index.js')).href) as {
-    SettingsProvider?: { prototype?: { installSection?: (...args: unknown[]) => void } }
+    SettingsForms?: { prototype?: { configure?: (...args: unknown[]) => () => void } }
   }
-  const installSection = settingsApi.SettingsProvider?.prototype?.installSection
+  // 0.2.0-rc.2:SettingsForms 取代了手工 section API——表单由插件导出的
+  // Config schema 自动生成,唯一的手工注册是页策略 settings.configure({auto}, fiber)。
+  const settingsConfigure = settingsApi.SettingsForms?.prototype?.configure
   assert.equal(
-    typeof installSection,
+    typeof settingsConfigure,
     'function',
-    'real 0.1.5-rc.1 SettingsProvider.prototype.installSection must be present',
+    'real 0.2.0-rc.2 SettingsForms.prototype.configure must be present',
   )
 
   const plugin = await import(pathToFileURL(join(vendorRoot, 'lib/index.js')).href)
@@ -265,8 +267,9 @@ try {
   const settingsWatchers: Array<() => void> = []
   const settingsProviderDisposers: Array<() => void> = []
   const contextDisposers: Array<() => void> = []
-  const settingsNamespaceValue = 'dsh-map-tools'
+  const settingsConfigureCalls: Array<{ presentation: unknown; owner: unknown }> = []
   const activeToolNames = () => [...registered.keys()].sort()
+  const settingsConfigureDisposed: string[] = []
   const settingsProvider = {
     ctx: {
       effect(effect: () => (() => void) | void) {
@@ -290,7 +293,15 @@ try {
         replace: async () => undefined,
       }
     },
-    installSection: (...args: unknown[]) => installSection!.apply(settingsProvider, args),
+    installSection: (..._args: unknown[]) => {
+      throw new Error('legacy installSection must not be called on the 0.2.0-rc.2 settings service')
+    },
+    configure: (presentation: unknown, owner: unknown) => {
+      settingsConfigureCalls.push({ presentation, owner })
+      return () => {
+        settingsConfigureDisposed.push('policy')
+      }
+    },
   }
   const context = {
     fiber: { state: 'active' },
@@ -314,7 +325,15 @@ try {
       if (dependencies.includes('settings')) {
         callback({ settings: settingsProvider })
       } else if (dependencies.includes('webServer')) {
-        callback({ webServer: { register: () => undefined } })
+        // 0.7.3 的 config-route 用 scope.effect 托管回环路由的撤销注册。
+        callback({
+          webServer: { register: () => undefined },
+          effect(effect: () => (() => void) | void) {
+            const disposer = effect()
+            if (typeof disposer === 'function') contextDisposers.push(disposer)
+            return disposer
+          },
+        })
       } else {
         throw new Error(`unexpected dependency injection: ${dependencies.join(',')}`)
       }
@@ -325,24 +344,20 @@ try {
     defaultMode: 'driving', language: 'zh',
   })
   assert.deepEqual(activeToolNames(), expectedTools, 'exactly seven active map tools must register')
-  assert.equal(registerEvents.length, expectedTools.length * 2, 'installSection initial onChange must rebuild the map tools once')
-  assert.equal(toolDisposeEvents.length, expectedTools.length, 'installSection initial reload must dispose the first tool generation')
-  assert.equal(settingsRegistrations.length, 1, '0.1.5-rc.1 settings section must register once')
-  assert.equal(settingsRegistrations[0][0], settingsNamespaceValue, 'settings namespace must be the stable plain string')
-  assert.equal(settingsRegistrations[0][2] && typeof settingsRegistrations[0][2] === 'object', true, '0.1.5-rc.1 settings register options must be supplied')
-  assert.deepEqual(Object.keys(settingsRegistrations[0][2] as object).sort(), ['base'], '0.1.5-rc.1 registration must carry the composition base')
-  assert.equal(settingsWatchers.length, 1, '0.1.5-rc.1 installSection must attach one settings watcher')
-  assert.equal(settingsProviderDisposers.length, 1, '0.1.5-rc.1 installSection must attach one provider-detach fallback effect')
+  assert.equal(registerEvents.length, expectedTools.length, 'schema-driven settings add no initial tool rebuild')
+  assert.equal(toolDisposeEvents.length, 0, 'schema-driven settings dispose no tool generation')
+  assert.equal(settingsConfigureCalls.length, 1, '0.2.0-rc.2 settings page policy must configure exactly once')
+  assert.deepEqual(settingsConfigureCalls[0]?.presentation, { auto: true }, 'page policy presentation must opt into the automatic card')
+  assert.equal(settingsConfigureCalls[0]?.owner, context.fiber, 'page policy owner must be the plugin fiber')
+  assert.equal(settingsRegistrations.length, 0, 'legacy per-section registration must stay retired')
+  assert.equal(settingsWatchers.length, 0, 'legacy settings watcher must stay retired')
+  assert.equal(settingsProviderDisposers.length, 0, 'legacy provider-detach fallback must stay retired')
+  // 两个受管撤销:config-route 的回环路由注册 + settings 页策略(按注册序)。
+  assert.equal(contextDisposers.length, 2, 'config-route disposer + settings page-policy disposer must register with the plugin effects')
 
-  settingsWatchers[0]()
-  assert.deepEqual(activeToolNames(), expectedTools, 'settings watch reload must keep exactly seven active map tools')
-  assert.equal(registerEvents.length, expectedTools.length * 3, 'settings watch must rebuild the map tools')
-  assert.equal(toolDisposeEvents.length, expectedTools.length * 2, 'settings watch reload must dispose the previous generation')
-
-  settingsProviderDisposers[0]()
-  assert.deepEqual(activeToolNames(), expectedTools, 'settings provider detach fallback must keep exactly seven active map tools')
-  assert.equal(registerEvents.length, expectedTools.length * 4, 'provider detach fallback must rebuild the map tools')
-  assert.equal(toolDisposeEvents.length, expectedTools.length * 3, 'provider detach fallback must dispose the previous generation')
+  contextDisposers[1]!()
+  assert.equal(settingsConfigureDisposed.length, 1, 'plugin effect disposal must release the settings page policy')
+  assert.deepEqual(activeToolNames(), expectedTools, 'policy disposal must keep exactly seven active map tools')
 
   const finalActiveTools = [...registered.values()]
   const originalFetch = globalThis.fetch
@@ -368,7 +383,7 @@ try {
     status: 'PASS',
     artifactMode: cleanInstalledBin ? 'clean-installed-tarball' : 'packed-unpacked-focused',
     vendored: {
-      sourcePackage: 'dsh-map-tools@0.5.1',
+      sourcePackage: 'dsh-map-tools@0.7.3',
       licenseSha256: upstreamLicenseSha256, vendorFileCount: vendorTree.count,
       adaptedVendorAggregateSha256: vendorTree.sha256,
     },
@@ -377,8 +392,8 @@ try {
     settingsLifecycle: {
       registerEvents: registerEvents.length,
       toolDisposeEvents: toolDisposeEvents.length,
-      watchedReloads: 1,
-      providerDetachFallbacks: 1,
+      pagePolicyConfigured: settingsConfigureCalls.length,
+      legacySectionRegistrations: settingsRegistrations.length,
       pluginUnloadDisposed: true,
     },
     tools: finalActiveTools.map(tool => tool.name).sort(),

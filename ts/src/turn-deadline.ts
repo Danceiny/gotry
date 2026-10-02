@@ -179,7 +179,8 @@ function convergenceContext(code: string, text: string) {
     id: randomUUID(),
     role: 'user' as const,
     content: [{ type: 'text' as const, text: `${code}: ${text}` }],
-    source: { kind: 'plugin' as const, plugin: 'gotry-turn-deadline' },
+    // 0.2.0-rc.2(V4 会话格式)移除 'plugin' source kind;运行时自产注入归 system-prompt。
+    source: { kind: 'system-prompt' as const },
   }
 }
 
@@ -303,7 +304,7 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
     if (event.type === 'user/message') {
       // dsh 事件载荷在 event.data 下(benchmark-agent-conformance 同型读法)。
       const message = (event as {
-        data?: { source?: { kind?: string }; content?: Array<{ type?: string; text?: string }> }
+        data?: { source?: { kind?: string }; content?: ReadonlyArray<{ type?: string; text?: string }> }
       }).data
       if (message?.source?.kind !== 'user') return
       const text = (message.content ?? []).find(block => block.type === 'text')?.text ?? ''
