@@ -572,4 +572,30 @@ console.log('12. user-action 项绝不装(scope 过滤 + 分类器守住 + 未�
 }
 console.log('13. tool-level gotry_doctor 注册 + observable chain(diagnose→repair→recheck)OK')
 
+// 14. hbcli 凭证判定按 whoami 输出解析(hotelbyte-cli 三档 api_key/portal/customer):
+//     旧判法裸 exit code 会把「没登录」报成「凭证有效」(whoami 无凭证也退 0)。
+//     注入假 hbcli 二进制(~/.local/bin 安装位)分别回未配置/customer 档两形态。
+{
+  const fakeHbcliHome = async (name: string, whoamiJson: string): Promise<string> => {
+    const homeX = join(tmp, `home-${name}`)
+    const bd = join(homeX, '.local', 'bin')
+    await mkdir(bd, { recursive: true })
+    await writeFile(join(bd, 'hbcli'), `#!/bin/sh\ncase "$*" in\n  *--version*) echo '0.0.4';;\n  *whoami*) echo '${whoamiJson}';;\nesac\n`, { mode: 0o755 })
+    return homeX
+  }
+  const homeNoCred = await fakeHbcliHome('hbcli-nocred', '{"env":"uat","api_key":{"configured":false},"portal":{"configured":false},"customer":{"configured":false}}')
+  const rNoCred = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: homeNoCred, env: {} })
+  const hbNoCred = rNoCred.items.find(i => i.id === 'hbcli')!
+  assert.equal(hbNoCred.status, 'degraded', `whoami 三档全 false 应 degraded,实际 ${hbNoCred.status}`)
+  assert.match(hbNoCred.fix ?? '', /customer-send-code/, 'degraded fix 应带客户邮箱验证码登录指引')
+  assert.match(hbNoCred.fix ?? '', /auth register/, 'degraded fix 应带 B 端注册指引')
+
+  const homeCustomer = await fakeHbcliHome('hbcli-customer', '{"env":"uat","api_key":{"configured":false},"portal":{"configured":false},"customer":{"configured":true,"email":"g@m.com","has_ticket":true}}')
+  const rCustomer = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: homeCustomer, env: {} })
+  const hbCustomer = rCustomer.items.find(i => i.id === 'hbcli')!
+  assert.equal(hbCustomer.status, 'ok', `customer 档 configured 应 ok,实际 ${hbCustomer.status}`)
+  assert.match(hbCustomer.detail, /customer 档在用/, 'ok detail 应标注 customer 档')
+}
+console.log('14. hbcli whoami 三档解析(未配置=degraded+注册指引 / customer 档=ok)OK')
+
 console.log('doctor-tests: 全部通过')

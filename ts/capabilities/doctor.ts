@@ -178,13 +178,27 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
         fix: 'npm install -g staicli --registry=https://registry.npmjs.org/',
       })
     } else {
-      const whoami = await probe(hbCmd, ['auth', 'whoami'])
-      items.push(whoami
-        ? { id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'ok', detail: `已安装且凭证有效(${hbPresent}, v${v ? v.join('.') : '?'})` }
+      // 凭证判定按 whoami 输出解析(三档 api_key/portal/customer 任一 configured
+      // 即有效),不再用裸 exit code——whoami 无凭证时也退 0,旧判法把「没登录」
+      // 报成「凭证有效」。输出不可解析(超旧版/异常)保守视为有效,沿用旧语义。
+      const whoamiOut = await probeStdout(hbCmd, ['--json', 'auth', 'whoami'])
+      let credOk = true
+      let credDetail = ''
+      if (whoamiOut !== null) {
+        try {
+          const w = JSON.parse(whoamiOut) as { api_key?: { configured?: boolean }; portal?: { configured?: boolean }; customer?: { configured?: boolean } }
+          credOk = !!(w.api_key?.configured || w.portal?.configured || w.customer?.configured)
+          credDetail = w.customer?.configured ? ',customer 档在用(客户邮箱验证码登录)' : ''
+        } catch { /* 非 JSON 输出:保守视为有效,不误报 */ }
+      } else {
+        credOk = false
+      }
+      items.push(credOk
+        ? { id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'ok', detail: `已安装且凭证有效(${hbPresent}, v${v ? v.join('.') : '?'}${credDetail})` }
         : {
             id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'degraded',
             detail: '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)',
-            fix: 'hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)',
+            fix: 'hbcli auth customer-send-code --email you@mail.com 收码后 hbcli auth customer-login --email you@mail.com --code <收件码>(客户邮箱验证码登录,新邮箱即注册,需 npm staicli ≥ 0.0.4);B 端租户注册走 hbcli auth register(先 auth send-code);或 hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)',
           })
     }
   } else {
