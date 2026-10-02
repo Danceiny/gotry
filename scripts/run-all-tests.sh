@@ -647,6 +647,10 @@ echo
 echo "=== 70. 桥事件上行(批次 B:POST /v1/session/bridge/events——bearer+扩展 Origin 白名单双校验与 /jobs 同链/缺 key 503·错 Origin 403/形状守卫 400/混合批次逐条裁决 accepted·rejected/bridge_events seq·ts·idem_key 部分唯一索引幂等·NULL 不去重/payload_json 原样落账/body >256KB 超限 400 零落账/无账本形态 503 fail-closed;真实 createBackendServer HTTP 面+隔离 stateRoot,全离线) ==="
 (cd ts && npx tsx scripts/bridge-events-tests.ts) || FAIL=1
 
+echo
+echo "=== 72. 离线行政区划 atlas 加载器(issue #342 机制就绪·默认关闭:只读加载器 ts/capabilities/geo-atlas.ts 零调用方,数据面零切换;manifest schema/SHA-256 校验/缺 manifest·坏 JSON·错 schema·缺件·篡改·损坏·形状漂移·重复 id 全部 fail-closed/同名地 ambiguous 带候选不代选·layer 过滤/未知地区三值 miss 携快照 provenance/中文名命中·大小写空白归一/两次加载确定性/fetch spy 全程零网络;合成小 fixture 驱动,不依赖构建产物与网络) ==="
+(cd ts && npx tsx scripts/geo-atlas-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
