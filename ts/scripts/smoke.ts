@@ -381,7 +381,9 @@ async function main() {
 
   // 12) 会话数据面工具(P3 切片1):官方通道 live + 会话工具 needs-login 合同(隔离 profile,零导航)
   {
-    const fa = await byName('gotry_flyai_search').execute({ kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string; setup?: string }
+    // live 查询日期恒取「今天+30 天」:固定日期会在到期日被 #24 过去日期预校验拒绝(2026-10-02 定时炸弹教训)
+    const flyaiLiveDate = new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10)
+    const fa = await byName('gotry_flyai_search').execute({ kind: 'flight', from: '上海', to: '丽江', date: flyaiLiveDate }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string; setup?: string }
     const faBlocked = fa.verdict === 'error' && /sentinel|block|trial limit/i.test(fa.error ?? '')
     // 端点不可达/超时(出口 IP 被拒或网络抖动)→ 工具以带证据链的 error 终态优雅降级,同样合法
     const faErrTerminal = fa.ok === false && fa.verdict === 'error' && /^flyai-error$/.test(String(fa.via ?? '')) && /\[实时API:flyai@error@/.test(String(fa.evidence ?? ''))
@@ -416,7 +418,7 @@ async function main() {
       const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR
       process.env.CHROME_USER_DATA_DIR = prof
       try {
-        ss = await byName('gotry_session_search').execute({ from: '上海', to: '丽江', date: '2026-10-01' }, null) as typeof ss
+        ss = await byName('gotry_session_search').execute({ from: '上海', to: '丽江', date: flyaiLiveDate }, null) as typeof ss
       } finally {
         if (previousChromeUserDataDir === undefined) delete process.env.CHROME_USER_DATA_DIR
         else process.env.CHROME_USER_DATA_DIR = previousChromeUserDataDir
@@ -435,7 +437,7 @@ async function main() {
         : `live hit(${fa.options?.length ?? 0} 条)`
     console.log(`session-face tools: flyai ${faOutcome}; session cdp 隔离门禁=needs-attach`)
     // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 三合法终态(试用达限 needs-setup / 限流·端点降级 or hit)
-    const fh = await byName('gotry_flyai_search').execute({ kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string; setup?: string }
+    const fh = await byName('gotry_flyai_search').execute({ kind: 'hotel', to: '大理', checkIn: flyaiLiveDate, checkOut: new Date(Date.now() + 31 * 86400_000).toISOString().slice(0, 10) }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string; setup?: string }
     const fhBlocked = fh.verdict === 'error' && /sentinel|block|trial limit/i.test(fh.error ?? '')
     const fhErrTerminal = fh.ok === false && fh.verdict === 'error' && /^flyai-error$/.test(String(fh.via ?? '')) && /\[实时API:flyai@error@/.test(String(fh.evidence ?? ''))
     const fhNeedsSetup = fh.ok === false && fh.verdict === 'needs-setup'
