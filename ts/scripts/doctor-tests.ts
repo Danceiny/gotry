@@ -20,6 +20,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -583,18 +584,27 @@ console.log('13. tool-level gotry_doctor 注册 + observable chain(diagnose→re
     await writeFile(join(bd, 'hbcli'), `#!/bin/sh\ncase "$*" in\n  *--version*) echo '0.0.4';;\n  *whoami*) echo '${whoamiJson}';;\nesac\n`, { mode: 0o755 })
     return homeX
   }
-  const homeNoCred = await fakeHbcliHome('hbcli-nocred', '{"env":"uat","api_key":{"configured":false},"portal":{"configured":false},"customer":{"configured":false}}')
-  const rNoCred = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: homeNoCred, env: {} })
-  const hbNoCred = rNoCred.items.find(i => i.id === 'hbcli')!
-  assert.equal(hbNoCred.status, 'degraded', `whoami 三档全 false 应 degraded,实际 ${hbNoCred.status}`)
-  assert.match(hbNoCred.fix ?? '', /customer-send-code/, 'degraded fix 应带客户邮箱验证码登录指引')
-  assert.match(hbNoCred.fix ?? '', /auth register/, 'degraded fix 应带 B 端注册指引')
+  // PATH 隔离:本机 PATH 上真实存在的 hbcli(如 ~/.local/bin/hbcli)会以裸名优先解析,
+  // 压过假 home 注入,把三档全 false 误报为 ok——滤掉含 hbcli 的 PATH 目录再跑,finally 恢复。
+  // 只修测试隔离,不动生产探测顺序(doctor.ts hbcliCandidates)。
+  const prevPath = process.env.PATH
+  process.env.PATH = (prevPath ?? '').split(':').filter((d) => !existsSync(join(d, 'hbcli'))).join(':')
+  try {
+    const homeNoCred = await fakeHbcliHome('hbcli-nocred', '{"env":"uat","api_key":{"configured":false},"portal":{"configured":false},"customer":{"configured":false}}')
+    const rNoCred = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: homeNoCred, env: {} })
+    const hbNoCred = rNoCred.items.find(i => i.id === 'hbcli')!
+    assert.equal(hbNoCred.status, 'degraded', `whoami 三档全 false 应 degraded,实际 ${hbNoCred.status}`)
+    assert.match(hbNoCred.fix ?? '', /customer-send-code/, 'degraded fix 应带客户邮箱验证码登录指引')
+    assert.match(hbNoCred.fix ?? '', /auth register/, 'degraded fix 应带 B 端注册指引')
 
-  const homeCustomer = await fakeHbcliHome('hbcli-customer', '{"env":"uat","api_key":{"configured":false},"portal":{"configured":false},"customer":{"configured":true,"email":"g@m.com","has_ticket":true}}')
-  const rCustomer = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: homeCustomer, env: {} })
-  const hbCustomer = rCustomer.items.find(i => i.id === 'hbcli')!
-  assert.equal(hbCustomer.status, 'ok', `customer 档 configured 应 ok,实际 ${hbCustomer.status}`)
-  assert.match(hbCustomer.detail, /customer 档在用/, 'ok detail 应标注 customer 档')
+    const homeCustomer = await fakeHbcliHome('hbcli-customer', '{"env":"uat","api_key":{"configured":false},"portal":{"configured":false},"customer":{"configured":true,"email":"g@m.com","has_ticket":true}}')
+    const rCustomer = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: homeCustomer, env: {} })
+    const hbCustomer = rCustomer.items.find(i => i.id === 'hbcli')!
+    assert.equal(hbCustomer.status, 'ok', `customer 档 configured 应 ok,实际 ${hbCustomer.status}`)
+    assert.match(hbCustomer.detail, /customer 档在用/, 'ok detail 应标注 customer 档')
+  } finally {
+    process.env.PATH = prevPath
+  }
 }
 console.log('14. hbcli whoami 三档解析(未配置=degraded+注册指引 / customer 档=ok)OK')
 
