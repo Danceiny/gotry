@@ -117,6 +117,7 @@
 |---|---|
 | [design/memory-design.md](design/memory-design.zh-CN.md) | 记忆域设计：C 端六层重设计（M4 交付） |
 | [design/memory-lifecycle-collector.md](design/memory-lifecycle-collector.zh-CN.md) | M4 lifecycle collector 使用合同：显式 opt-in、隔离 stateRoot、HMAC/consent、原子持久化与 #223/#238 scorer 导出；仅产出 candidate/synthetic，不替代真实 cohort |
+| [design/session-dual-zone-memory-design.md](design/session-dual-zone-memory-design.zh-CN.md) | P4 会话双区记忆实现级设计（#255，创始人 2026-10-02 批准立项，只做设计+拆分计划）：工作区分层 TTL + owner 确认回流长期区 Notebook，ADR-15 账本上六个日志类事件 kind，零新表、`state-ledger.ts` 零改动；可否证价值指标与全离线 PR 序列 P4-1..P4-4 |
 | [design/milestone-delivery-plan.md](design/milestone-delivery-plan.zh-CN.md) | M4→M6 living 任务图（issue #225）：#20/#22/#136/#137 真实 gate、#231–#235 后继与 #270 公开交付台账；预准入只含获授权的设计/只读/fixture/failing-before 工作 |
 | [design/p6-founder-decision-brief.md](design/p6-founder-decision-brief.zh-CN.md) | P6 创始人决策简报（issue #137，M6-2）：M6 Entry 两个硬前置与现状、方案要点、风险、是/否/修改稿问题清单——只为决策服务，不当回执 |
 | [design/m5-supplier-agreement-matrix.md](design/m5-supplier-agreement-matrix.zh-CN.md) | M5-0 HotelByte 供应链协议可填矩阵（issue #136）：钉死的工程事实加 A/C–J 具名值字段，以及填满后如何流入 M5 Entry |
