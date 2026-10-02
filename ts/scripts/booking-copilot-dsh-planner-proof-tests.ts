@@ -79,12 +79,15 @@ function toolCall(name: string, argumentsText: string, callId: string): Record<s
 }
 
 function toolResult(callId: string, isError = false, errorCode?: string, toolCallId = callId, sourceKind = 'tool'): Record<string, unknown> {
+  // 0.2.0-rc.2 线型:toolCallId/isError 在 message 顶层,content 是单个文本载荷块。
   return {
     type: 'tool/result',
     data: {
       message: {
         source: { kind: sourceKind, callId },
-        content: [{ type: 'tool-result', toolCallId, content: [], isError }],
+        toolCallId,
+        content: [{ type: 'text', text: isError ? 'Error: fixture tool failure' : 'Typed booking decision accepted (operation). End this turn.' }],
+        isError,
       },
       ...(errorCode ? { error: { name: 'ToolArgsError', code: errorCode } } : {}),
     },

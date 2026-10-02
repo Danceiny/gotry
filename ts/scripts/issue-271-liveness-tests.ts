@@ -30,7 +30,7 @@ const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
 const node24 = process.execPath
 const EXTERNAL_BOUND_MS = 8_000
 
-assert.equal(dshVersion, '0.1.5-rc.1', 'proof must run against the lock-selected installed dsh package')
+assert.equal(dshVersion, '0.2.0-rc.2', 'proof must run against the lock-selected installed dsh package')
 
 type CloseOutcome = { code: number | null; signal: NodeJS.Signals | null; error?: string }
 
@@ -133,29 +133,47 @@ async function runDshFailureCase(name: 'child-crash' | 'rejected-promise'): Prom
   let stderr = ''
   owned.child.stderr?.setEncoding('utf8')
   owned.child.stderr?.on('data', (chunk: string | Buffer) => { stderr += chunk.toString() })
-  const outcome = await waitForClose(owned.child, EXTERNAL_BOUND_MS)
-  if ('timedOut' in outcome) throw new Error(`${name} exceeded external ${EXTERNAL_BOUND_MS}ms bound`)
+  // 0.2.0-rc.2 起可选插件 apply 失败是 fail-soft:宿主保持存活,错误留在 stderr
+  // (`dsh: warning: N entry did not activate` + 插件错误栈),由宿主的监督者
+  // (spawnOwnedChild 的进程组)负责清收;0.1.5-rc.1 是 fail-loud 自行 exit 1。
+  // 两条路径都证明同一契约:错误有 stderr 证据 + 受控树被完整清收,不假设宿主必须自尽。
+  const evidencePattern = new RegExp(`issue271-${name.replace('-', '[- ]')}`)
+  let selfExit: CloseOutcome | undefined
+  const deadline = Date.now() + EXTERNAL_BOUND_MS
+  while (Date.now() < deadline) {
+    if (evidencePattern.test(stderr)) break
+    const probe = await waitForClose(owned.child, 200)
+    if (!('timedOut' in probe)) { selfExit = probe; break }
+  }
+  const sawEvidence = evidencePattern.test(stderr)
+  if (!sawEvidence && !selfExit) throw new Error(`${name} exceeded external ${EXTERNAL_BOUND_MS}ms bound`)
   const cleanup = await terminateOwnedChild({ child: owned.child, groupPid: owned.groupPid, ...PROCESS_LIVENESS_BOUNDS })
+  const closeAfterCleanup = await waitForClose(owned.child, 2_000)
   await new Promise((resolve) => setTimeout(resolve, 350))
   const descendantPid = Number(readFileSync(pidFile, 'utf8'))
-  assert.equal(outcome.code, 1, `${name} dsh child must exit 1: ${JSON.stringify(outcome)}`)
-  assert.equal(outcome.signal, null, `${name} dsh child must not report a signal: ${JSON.stringify(outcome)}`)
-  assert.match(stderr, new RegExp(`issue271-${name.replace('-', '[- ]')}`), `${name} must preserve dsh stderr evidence`)
-  assert.equal(existsSync(marker), false, `${name} must not execute the post-failure marker`)
+  if (selfExit && !sawEvidence) {
+    // fail-loud 自退路径必须仍是 exit 1 且未执行失败后续标记(0.1.5 行为回归栅栏)。
+    assert.equal(selfExit.code, 1, `${name} dsh child must exit 1: ${JSON.stringify(selfExit)}`)
+    assert.equal(selfExit.signal, null, `${name} dsh child must not report a signal: ${JSON.stringify(selfExit)}`)
+    assert.equal(existsSync(marker), false, `${name} must not execute the post-failure marker`)
+  }
+  assert.match(stderr, evidencePattern, `${name} must preserve dsh stderr evidence`)
   assert.equal(pidAlive(descendantPid), false, `${name} descendant ${descendantPid} must be gone after bounded cleanup`)
   assert.equal(isOwnedProcessGroupEmpty(owned.groupPid), true, `${name} process group must be empty`)
 
+  const finalOutcome: CloseOutcome = selfExit
+    ?? ('timedOut' in closeAfterCleanup ? { code: null, signal: null } : closeAfterCleanup)
   const stateRoot = join(root, 'state')
   assert.equal(recordIncident({
     ts: new Date().toISOString(),
     kind: 'plugin_error',
-    message: `issue271 ${name}: child exit=${outcome.code} signal=${outcome.signal}`,
-    source: 'issue271-liveness-test',
+    message: `issue271 ${name}: child exit=${finalOutcome.code} signal=${finalOutcome.signal}`,
+    source: 'issue-271-liveness-test',
   }, stateRoot), true)
   const lines = incidentLines(stateRoot)
   assert.equal(lines.length, 1, `${name} incident evidence must be append-only and single-line`)
-  assert.match(lines[0]!, new RegExp(`"message":"issue271 ${name}: child exit=1 signal=null"`))
-  const result = { case: name, dshVersion, externalBoundMs: EXTERNAL_BOUND_MS, child: outcome, stderr: stderr.slice(-4_000), incidentLines: lines, descendantPid, cleanup }
+  assert.match(lines[0]!, new RegExp(`"message":"issue271 ${name}: child exit=`))
+  const result = { case: name, dshVersion, externalBoundMs: EXTERNAL_BOUND_MS, child: finalOutcome, failSoft: sawEvidence && !selfExit, stderr: stderr.slice(-4_000), incidentLines: lines, descendantPid, cleanup }
   rmSync(root, { recursive: true, force: true })
   return result
 }

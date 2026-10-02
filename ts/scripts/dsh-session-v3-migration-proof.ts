@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
+import { createSessionFormatCatalogWithChildren, sessionFormatCatalog } from '@deepseek-ai/dsh-session-format-catalog'
 import type {
   SessionFormatArtifact,
   SessionFormatEvent,
@@ -54,7 +54,10 @@ const sourceJsonl = sourceLines.join('\n') + '\n'
 
 const tmp = mkdtempSync(join(tmpdir(), 'session-v3-migration-proof-'))
 const sourcePath = join(tmp, 'source.v2.jsonl')
-const successorPath = join(tmp, 'successor.v3.jsonl')
+const successorPath = join(tmp, 'successor.current.jsonl')
+// 0.2.0-rc.2 起 catalog current = V4;V3→V4 边要求显式历史子代理证据,
+// 本 fixture 是无父会话,声明空数组(createSessionFormatCatalogWithChildren)。
+const catalog = createSessionFormatCatalogWithChildren([])
 
 try {
   // 2. 写 V2 源字节到磁盘,保存确切源字节快照。
@@ -67,9 +70,9 @@ try {
   const headerValue: unknown = JSON.parse(parsedLines[0])
   const rowValues: unknown[] = parsedLines.slice(1).map((l) => JSON.parse(l))
 
-  // 4. catalog 当前版本 = 3;V2 header 分类为 migration-required。
-  assert.equal(sessionFormatCatalog.currentVersion, 3, 'catalog 当前版本必须为 3')
-  const headerRead = sessionFormatCatalog.readHeader(headerValue)
+  // 4. catalog 当前版本 = 4(0.2.0-rc.2 起);V2 header 分类为 migration-required。
+  assert.equal(catalog.currentVersion, 4, 'catalog 当前版本必须为 4(0.2.0-rc.2 起 V4 为 current)')
+  const headerRead = catalog.readHeader(headerValue)
   assert.equal(
     headerRead.status,
     'migration-required',
@@ -77,7 +80,7 @@ try {
   )
 
   // 5. 创建恢复器,逐行解码,完成恢复为 V3 工件(validation:transformed,迁移后校验)。
-  const restore = sessionFormatCatalog.createRestore(headerValue, {
+  const restore = catalog.createRestore(headerValue, {
     recovery: 'recoverable',
     validation: 'transformed',
   })
@@ -86,22 +89,21 @@ try {
   }
   const artifact: SessionFormatArtifact = restore.finish()
 
-  // 6. V3 工件版本 = 3,事件数 = V2 + 1(在 step/start 后插入 system head)。
-  assert.equal(artifact.header.version, 3, '恢复后工件版本必须为 3')
-  assert.equal(
-    artifact.events.length,
-    v2Events.length + 1,
-    `V3 事件数必须 = V2 + 1(插入 system head),当前 ${artifact.events.length}`,
+  // 6. 迁移链工件版本 = 4(V2→V3 插入 system head 后,V3→V4 不减事件)。
+  assert.equal(artifact.header.version, 4, '恢复后工件版本必须为 4')
+  assert.ok(
+    artifact.events.length >= v2Events.length + 1,
+    `迁移链事件数必须 ≥ V2 + 1(插入 system head),当前 ${artifact.events.length}`,
   )
 
-  // 插入的 system head(原 step/start 后,索引 2)必须是 system/message。
-  const inserted = artifact.events[2]
-  assert.equal(inserted.type, 'system/message', `插入的事件必须是 system/message(当前 ${inserted.type})`)
+  // 插入的 system head(原 step/start 后)必须是 system/message。
+  const inserted = artifact.events.find((event) => event.type === 'system/message')
+  assert.ok(inserted, '迁移链必须包含插入的 system/message head')
 
-  // 7. 编码 V3 继任者为 JSONL 字节,写入独立磁盘文件。
-  const v3HeaderRecord = sessionFormatCatalog.encodeCurrentHeader(artifact.header, artifact.inheritedEventCount)
-  const v3RowRecords: SessionFormatJsonObject[] = artifact.events.map((e) => sessionFormatCatalog.encodeCurrentEvent(e))
-  const successorLines = [toLine(v3HeaderRecord), ...v3RowRecords.map(toLine)]
+  // 7. 编码 current(V4)继任者为 JSONL 字节,写入独立磁盘文件。
+  const currentHeaderRecord = catalog.encodeCurrentHeader(artifact.header, artifact.inheritedEventCount)
+  const currentRowRecords: SessionFormatJsonObject[] = artifact.events.map((e) => catalog.encodeCurrentEvent(e))
+  const successorLines = [toLine(currentHeaderRecord), ...currentRowRecords.map(toLine)]
   const successorJsonl = successorLines.join('\n') + '\n'
   writeFileSync(successorPath, successorJsonl, 'utf8')
 
@@ -111,10 +113,10 @@ try {
   const successorHeaderValue: unknown = JSON.parse(successorParsed[0])
   const successorRowValues: unknown[] = successorParsed.slice(1).map((l) => JSON.parse(l))
 
-  const successorRead = sessionFormatCatalog.readHeader(successorHeaderValue)
+  const successorRead = catalog.readHeader(successorHeaderValue)
   assert.equal(successorRead.status, 'current', `V3 继任者必须重新打开为 current(当前 ${successorRead.status})`)
 
-  const successorRestore = sessionFormatCatalog.createRestore(successorHeaderValue, {
+  const successorRestore = catalog.createRestore(successorHeaderValue, {
     recovery: 'recoverable',
     validation: 'current',
   })
@@ -122,7 +124,7 @@ try {
     successorRestore.decodeRow(row)
   }
   const successorArtifact: SessionFormatArtifact = successorRestore.finish()
-  assert.equal(successorArtifact.header.version, 3, 'V3 继任者完全解码后版本必须为 3')
+  assert.equal(successorArtifact.header.version, 4, 'current 继任者完全解码后版本必须为 4')
   assert.equal(
     successorArtifact.events.length,
     artifact.events.length,
@@ -138,7 +140,7 @@ try {
 
   console.log(
     `SESSION V3 MIGRATION PROOF: V2 source ${sourceBytes.length}B (${v2Events.length} events) on disk → ` +
-      `V3(${artifact.events.length} events, +system/message), successor ${successorJsonl.length}B reopens as current ` +
+      `current V4(${artifact.events.length} events, +system/message), successor ${successorJsonl.length}B reopens as current ` +
       `and fully decodes (${successorArtifact.events.length} events), source bytes unchanged after migration`,
   )
 } finally {

@@ -221,7 +221,9 @@ if (!onlyCleanupCases) for (const verdict of ['challenged', 'cooldown', 'needs-l
     expect(lines(overlay.net).length === 0, `${verdict} attempted network`)
     if (failures.length === failuresBefore) console.log(`ok ${verdict}: exit=${runResult.status} search=1 reset=0 evaluate_attempts=${evaluateAttempts.length} clicks=${clickEvents.length} cleanup=true`)
   } finally {
-    if (process.env.DIDA502_KEEP_OVERLAY !== '1') rmSync(overlay.base, { recursive: true, force: true })
+    // 合成浏览器的 straggler 写与递归删除存在竞速(ENOTEMPTY,实测 macOS 偶发);
+    // maxRetries+retryDelay 让清理有界重试,清理竞速不判测试失败。
+    if (process.env.DIDA502_KEEP_OVERLAY !== '1') rmSync(overlay.base, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 }
 

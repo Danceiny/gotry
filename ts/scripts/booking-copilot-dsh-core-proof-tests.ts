@@ -63,6 +63,30 @@ function sse(res: ServerResponse, chunks: unknown[]): void {
   res.end('data: [DONE]\n\n')
 }
 
+/** 0.2.0-rc.2 起 provider 线型是 Messages 流(message_start、content_block 前缀事件、
+ * message_stop),不再是 OpenAI chat.completion.chunk;合成响应按新线型发。 */
+function messagesToolCallEvents(id: string, name: string, input: unknown): unknown[] {
+  return [
+    { type: 'message_start', message: { usage: { input_tokens: 10 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id, name, input: {} } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } },
+    { type: 'message_stop' },
+  ]
+}
+
+function messagesTextEvents(text: string): unknown[] {
+  return [
+    { type: 'message_start', message: { usage: { input_tokens: 20 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } },
+    { type: 'message_stop' },
+  ]
+}
+
+
 function objectKeys(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(objectKeys)
   if (typeof value !== 'object' || value === null) return []
@@ -91,102 +115,28 @@ const modelServer = createServer((req, res) => {
     // continuation terminal.
     if (!continuationServed && JSON.stringify(body).includes('action.receipt.continuation')) {
       continuationServed = true
-      sse(res, [{
-        id: 'chatcmpl-booking-continuation', object: 'chat.completion.chunk', created: 0, model: 'deepseek-v4-flash',
-        choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call-booking-continuation', type: 'function', function: { name: 'booking_search_hotels', arguments: JSON.stringify({ kind: 'terminal' }) } }] }, finish_reason: 'tool_calls' }],
-      }])
+      sse(res, messagesToolCallEvents('call-booking-continuation', 'booking_search_hotels', { kind: 'terminal' }))
       return
     }
     if (modelCall === 1) {
-      sse(res, [{
-        id: 'chatcmpl-booking-1',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'deepseek-v4-flash',
-        choices: [{
-          index: 0,
-          delta: {
-            role: 'assistant',
-            tool_calls: [{
-              index: 0,
-              id: 'call-booking-1',
-              type: 'function',
-              function: {
-                name: 'booking_search_hotels',
-                // The first probabilistic miss omits the mandatory semantic
-                // goal. The model-facing schema must reject this before the
-                // parent process ever sees a superficially valid action.
-                arguments: JSON.stringify({ kind: 'search.patch', input: { patch: { destination: { query: 'Dubai' } } } }),
-              },
-            }],
-          },
-          finish_reason: 'tool_calls',
-        }],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      }])
+      // The first probabilistic miss omits the mandatory semantic goal. The
+      // model-facing schema must reject this before the parent process ever
+      // sees a superficially valid action.
+      sse(res, messagesToolCallEvents('call-booking-1', 'booking_search_hotels', { kind: 'search.patch', input: { patch: { destination: { query: 'Dubai' } } } }))
       return
     }
     if (modelCall === 2) {
-      sse(res, [{
-        id: 'chatcmpl-booking-repair',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'deepseek-v4-flash',
-        choices: [{
-          index: 0,
-          delta: {
-            role: 'assistant',
-            tool_calls: [{
-              index: 0,
-              id: 'call-booking-repair',
-              type: 'function',
-              function: {
-                name: 'booking_search_hotels',
-                // This repairs the required intent but still violates the
-                // full canonical SearchCriteriaPatch.minProperties rule that
-                // the provider-compatible advertised dialect cannot express.
-                arguments: JSON.stringify({ kind: 'search.patch', input: { patch: {} }, intent: { target: 'search.results' } }),
-              },
-            }],
-          },
-          finish_reason: 'tool_calls',
-        }],
-      }])
+      // This repairs the required intent but still violates the full canonical
+      // SearchCriteriaPatch.minProperties rule that the provider-compatible
+      // advertised dialect cannot express.
+      sse(res, messagesToolCallEvents('call-booking-repair', 'booking_search_hotels', { kind: 'search.patch', input: { patch: {} }, intent: { target: 'search.results' } }))
       return
     }
     if (modelCall === 3) {
-      sse(res, [{
-        id: 'chatcmpl-booking-repair-canonical',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'deepseek-v4-flash',
-        choices: [{
-          index: 0,
-          delta: {
-            role: 'assistant',
-            tool_calls: [{
-              index: 0,
-              id: 'call-booking-repair-canonical',
-              type: 'function',
-              function: {
-                name: 'booking_run_search',
-                arguments: JSON.stringify({ kind: 'search.run', input: {}, intent: { target: 'search.results' } }),
-              },
-            }],
-          },
-          finish_reason: 'tool_calls',
-        }],
-      }])
+      sse(res, messagesToolCallEvents('call-booking-repair-canonical', 'booking_run_search', { kind: 'search.run', input: {}, intent: { target: 'search.results' } }))
       return
     }
-    sse(res, [{
-      id: 'chatcmpl-booking-2',
-      object: 'chat.completion.chunk',
-      created: 0,
-      model: 'deepseek-v4-flash',
-      choices: [{ index: 0, delta: { role: 'assistant', content: 'Typed decision emitted.' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 20, completion_tokens: 4, total_tokens: 24 },
-    }])
+    sse(res, messagesTextEvents('Typed decision emitted.'))
   })
 })
 
@@ -365,9 +315,10 @@ try {
   // the provider window it shares.
   assert.equal(plannerMetrics[0]?.bootMode, 'started', 'a turn that owns a fresh runtime reports its own boot')
   assert.ok(Number.isSafeInteger(plannerMetrics[0]?.bootMs) && plannerMetrics[0]!.bootMs! > 0, 'the turn records the measured initialize cost')
-  const firstSystemMessage = (requests[0]!.body.messages as Array<{ role?: string; content?: unknown }>).find((message) => message?.role === 'system')
-  assert.ok(firstSystemMessage, 'first model request carries a system message produced by dsh system-prompt')
-  const firstSystemContent = typeof firstSystemMessage.content === 'string' ? firstSystemMessage.content : JSON.stringify(firstSystemMessage.content)
+  // 0.2.0-rc.2 Messages 线型:system 不在 messages 里,是请求体顶层 system 字段。
+  const firstSystem = requests[0]!.body.system
+  assert.ok(typeof firstSystem === 'string' && firstSystem.length > 0, 'first model request carries a system message produced by dsh system-prompt')
+  const firstSystemContent = firstSystem
   assert.ok(firstSystemContent.includes("You are GoTry's embedded booking planner"), 'first SYSTEM message carries the GoTry personaPrefix (not the generic-default fallback)')
   assert.ok(firstSystemContent.includes('Shape-only example'), 'first SYSTEM message marks the envelope example as shape-only')
   assert.ok(firstSystemContent.includes('{"kind":"search.patch","input":{"patch":'), 'first SYSTEM message carries the shallow semantic proposal example')
@@ -384,14 +335,15 @@ try {
   assert.match(canonicalRepairMessages, /invalid arguments: decision_schema_violation/, 'second repair contains the execute-time canonical ToolArgsError')
   assert.match(canonicalRepairMessages, /fewer than 1 properties/, 'second repair carries the precise canonical constraint that failed')
   assert.ok(canonicalRepairMessages.includes('call-booking-repair'), 'second repair references the canonical-schema rejected call id')
-  const toolNames = requests[0]!.body.tools.map((tool: any) => tool.function.name).sort()
+  const toolNames = requests[0]!.body.tools.map((tool: any) => tool.function?.name ?? tool.name).sort()
   assert.deepEqual(toolNames, [...DSH_EMBEDDED_BOOKING_TOOL_NAMES].sort(), 'real model request exposes exactly the embedded tool set')
   assert.ok(!toolNames.some((name: string) => /gotry_book|payment|holder|guest/i.test(name)), 'real model request exposes no booking write or PII tool')
   assert.equal(requests[0]!.body.model, 'deepseek-v4-flash', 'the default planner model matches the sdk-minimal catalog')
   assert.deepEqual(requests[0]!.body.thinking, { type: 'disabled' }, 'known default route disables long reasoning for constrained criteria extraction')
-  const executableKeys = requests[0]!.body.tools.flatMap((tool: any) => objectKeys(tool.function.parameters))
+  const executableKeys = requests[0]!.body.tools.flatMap((tool: any) => objectKeys(tool.function?.parameters ?? tool.input_schema))
   assert.ok(!executableKeys.some((key: string) => /^(book|payment|holder|guest|portalToken|supplierCost)$/i.test(key)), 'tool inputs expose no write or PII field')
-  assert.equal(requests[0]!.headers.authorization, 'Bearer fixture-model-key')
+  // 0.2.0-rc.2 认证头随线型变化(authorization Bearer 或 x-api-key);断言凭据到达,不锁单一头部。
+  assert.ok(requests[0]!.headers.authorization === 'Bearer fixture-model-key' || requests[0]!.headers['x-api-key'] === 'fixture-model-key', 'provider credential reaches the provider via the standard auth header')
   assert.ok(!JSON.stringify(requests).includes('must-not-enter-dsh'), 'BFF and portal credentials never enter the dsh model transport')
   const proseDecisions = await session.next({ turn, task })
   assert.equal(proseDecisions[0]?.kind, 'error', 'assistant prose without a tool call never becomes a decision')

@@ -20,8 +20,17 @@ export interface RouteResult {
     durationS: number;
     /** Compact polyline string (Amap format) or GeoJSON line, depending on provider. */
     polyline: string;
-    /** Waypoint coordinates [lng, lat] along the route (sampled). */
+    /**
+     * Waypoint coordinates [lng, lat] along the route (sampled).
+     * @deprecated 历史字段：高德分支只放了起终点，语义不可靠；新代码用 {@link geometry}。
+     */
     points: LngLat[];
+    /**
+     * 真实路线几何，按行进顺序的 `[lng, lat]` 点序列（首尾即起点/终点）。
+     * 未抽稀——可能上千个点，只用于派生 UI 卡片的示意图；
+     * 需要持久化时必须先过 `simplifyGeometry`（见 `src/geo.ts`）。
+     */
+    geometry: LngLat[];
     /** Step-by-step instructions. */
     steps: RouteStep[];
 }
@@ -36,6 +45,10 @@ export interface GeocodeResult {
     /** Optional structured fields. */
     city?: string;
     district?: string;
+    /** 省/直辖市（反查时用于把长地址裁成可读地名）。 */
+    province?: string;
+    /** 街道/镇/乡（反查时用于把长地址裁成可读地名）。 */
+    township?: string;
     adcode?: string;
 }
 /** Normalized POI search result. */

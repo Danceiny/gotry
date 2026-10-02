@@ -41,21 +41,19 @@ const ymd = value => value.toISOString().slice(0, 10);
 const addDays = days => new Date(Date.now() + days * 86_400_000);
 const fixtureDates = { flight: ymd(addDays(14)), train: ymd(addDays(15)), checkIn: ymd(addDays(21)), checkOut: ymd(addDays(23)) };
 
-const chunk = (delta, finish = null) => `data: ${JSON.stringify({
-  id: 'flyai-product-e2e', object: 'chat.completion.chunk', created: 1,
-  model: 'controlled-model', choices: [{ index: 0, delta, finish_reason: finish }],
-})}\n\n`;
-const toolReply = calls => chunk({
-  role: 'assistant',
-  tool_calls: calls.map((call, index) => ({
-    index, id: call.id, type: 'function',
-    function: { name: call.name ?? 'gotry_flyai_search', arguments: JSON.stringify(call.args) },
-  })),
-}) + chunk({}, 'tool_calls') + 'data: [DONE]\n\n';
-const finalReply = () => chunk({
-  role: 'assistant',
-  content: 'Controlled FlyAI product boundary complete; fixture observations are not live availability.',
-}) + chunk({}, 'stop') + 'data: [DONE]\n\n';
+// 0.2.0-rc.2 线型:Messages 流事件(message_start、content_block 前缀事件、message_stop)。
+const messageEvent = event => `data: ${JSON.stringify(event)}\n\n`;
+const toolReply = calls => messageEvent({ type: 'message_start', message: { usage: { input_tokens: 10 } } })
+  + calls.map((call, index) => messageEvent({ type: 'content_block_start', index, content_block: { type: 'tool_use', id: call.id, name: call.name ?? 'gotry_flyai_search', input: {} } })
+    + messageEvent({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(call.args) } })
+    + messageEvent({ type: 'content_block_stop', index })).join('')
+  + messageEvent({ type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 5 } })
+  + messageEvent({ type: 'message_stop' }) + 'data: [DONE]\n\n';
+const finalReply = () => messageEvent({ type: 'message_start', message: { usage: { input_tokens: 10 } } })
+  + messageEvent({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'Controlled FlyAI product boundary complete; fixture observations are not live availability.' } })
+  + messageEvent({ type: 'content_block_stop', index: 0 })
+  + messageEvent({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } })
+  + messageEvent({ type: 'message_stop' }) + 'data: [DONE]\n\n';
 
 const allCalls = [
   { id: 'flyai-flight', args: { kind: 'flight', from: '上海', to: '杭州', date: fixtureDates.flight, seatClassName: '经济舱' } },
@@ -203,10 +201,14 @@ function findFiles(root, wanted) {
 }
 
 function decodeToolContent(message) {
-  if (typeof message?.content !== 'string') return message?.content ?? {};
-  try { return JSON.parse(message.content); } catch {
-    const embedded = message.content.match(/\{[\s\S]*\}/)?.[0];
-    try { return embedded ? JSON.parse(embedded) : { raw: message.content }; } catch { return { raw: message.content }; }
+  const blocks = Array.isArray(message?.content) ? message.content : [message?.content];
+  const text = blocks
+    .map(block => typeof block === 'string' ? block : (block && typeof block.text === 'string' ? block.text : ''))
+    .join('');
+  if (!text) return {};
+  try { return JSON.parse(text); } catch {
+    const embedded = text.match(/\{[\s\S]*\}/)?.[0];
+    try { return embedded ? JSON.parse(embedded) : { raw: text }; } catch { return { raw: text }; }
   }
 }
 
@@ -234,7 +236,7 @@ async function runProcess(args, env, cwd, input = '', timeoutMs = 20_000) {
 async function runModelProduct({ root, env, scenario, prompt, relay, relayMeta }) {
   let stage = 0;
   const server = createServer((request, response) => {
-    if (request.method !== 'POST' || !request.url?.endsWith('/chat/completions')) {
+    if (request.method !== 'POST' || !(request.url?.endsWith('/chat/completions') || request.url?.endsWith('/messages'))) {
       response.writeHead(404).end(); return;
     }
     let raw = '';
@@ -249,22 +251,31 @@ async function runModelProduct({ root, env, scenario, prompt, relay, relayMeta }
           const setupTool = (body.tools ?? []).find(tool => (tool.function?.name ?? tool.name) === 'gotry_flyai_setup');
           const searchTool = (body.tools ?? []).find(tool => (tool.function?.name ?? tool.name) === 'gotry_flyai_search');
           if (scenario === 'success' && (!setupTool || !searchTool)) relayMeta.contractErrors.push('required FlyAI model tools missing');
-          if (setupTool && JSON.stringify(setupTool.parameters ?? setupTool.function?.parameters ?? {}).match(/api[_-]?key|credential|secret|FLYAI_API_KEY/i)) {
+          if (setupTool && JSON.stringify(setupTool.parameters ?? setupTool.function?.parameters ?? setupTool.input_schema ?? {}).match(/api[_-]?key|credential|secret|FLYAI_API_KEY/i)) {
             relayMeta.contractErrors.push('gotry_flyai_setup schema exposes credential input');
           }
-          if (searchTool && JSON.stringify(searchTool.parameters ?? searchTool.function?.parameters ?? {}).match(/api[_-]?key|credential|secret|FLYAI_API_KEY/i)) {
+          if (searchTool && JSON.stringify(searchTool.parameters ?? searchTool.function?.parameters ?? searchTool.input_schema ?? {}).match(/api[_-]?key|credential|secret|FLYAI_API_KEY/i)) {
             relayMeta.contractErrors.push('gotry_flyai_search schema exposes credential input');
           }
+          // 新线型:assistant 工具调用是 content 里的 tool_use 块;旧线型是 tool_calls 数组。
+          const historyCalls = [];
           for (const message of body.messages ?? []) {
-            if (message.role !== 'assistant' || !Array.isArray(message.tool_calls)) continue;
-            for (const call of message.tool_calls) {
-              if ((call.function?.name ?? call.name) !== 'gotry_flyai_setup') continue;
-              let args;
-              try { args = JSON.parse(call.function?.arguments ?? '{}'); } catch { args = {}; }
-              if (!relayMeta.setupCalls.some(previous => previous.id === call.id)) relayMeta.setupCalls.push({ id: call.id, args });
-              if (Object.keys(args).some(key => key !== 'action') || !['status', 'check'].includes(args.action)) {
-                relayMeta.contractErrors.push('gotry_flyai_setup received unexpected or credential argument');
+            if (message.role !== 'assistant') continue;
+            if (Array.isArray(message.tool_calls)) {
+              for (const call of message.tool_calls) historyCalls.push({ id: call.id, name: call.function?.name ?? call.name, argsText: call.function?.arguments });
+            } else if (Array.isArray(message.content)) {
+              for (const block of message.content) {
+                if (block?.type === 'tool_use') historyCalls.push({ id: block.id, name: block.name, argsText: JSON.stringify(block.input ?? {}) });
               }
+            }
+          }
+          for (const call of historyCalls) {
+            if (call.name !== 'gotry_flyai_setup') continue;
+            let args;
+            try { args = JSON.parse(call.argsText ?? '{}'); } catch { args = {}; }
+            if (!relayMeta.setupCalls.some(previous => previous.id === call.id)) relayMeta.setupCalls.push({ id: call.id, args });
+            if (Object.keys(args).some(key => key !== 'action') || !['status', 'check'].includes(args.action)) {
+              relayMeta.contractErrors.push('gotry_flyai_setup received unexpected or credential argument');
             }
           }
         }
@@ -313,7 +324,20 @@ async function runModelProduct({ root, env, scenario, prompt, relay, relayMeta }
 }
 
 function toolMessages(relay) {
-  return relay.flatMap(body => (body.messages ?? []).filter(message => message.role === 'tool'));
+  // 0.2.0-rc.2 线型:工具结果以 user 消息携带 tool_result 块(tool_use_id 承载调用 id);
+  // 旧线型是 role='tool' + tool_call_id。统一投影为 { callId, content } 供观察面消费。
+  const projected = [];
+  for (const body of relay) {
+    for (const message of body.messages ?? []) {
+      if (message.role === 'tool') projected.push({ tool_call_id: message.tool_call_id, content: message.content });
+      else if (Array.isArray(message.content)) {
+        for (const block of message.content) {
+          if (block?.type === 'tool_result') projected.push({ tool_call_id: block.tool_use_id, content: block.content });
+        }
+      }
+    }
+  }
+  return projected;
 }
 
 function assertNoKey(values) {

@@ -922,7 +922,7 @@ async function doctorChecks() {
   // doctor 把两态照亮。候选清单与 bin/gotry-inner.js 解析链、ts/capabilities/doctor.ts 同口径:
   // tarball vendor 副本优先(随 files[] 分发,不进 npm 依赖——历史上游 peerDependencies
   // 要求 dsh-settings/dsh-tools >=0.1.2-rc.1,与锁定的 0.1.2-alpha.3 家族在 npm 严格 peer
-  // 解析下 ERESOLVE;当前锁定 0.1.5-rc.1 家族,vendored 副本已对齐 0.1.5-rc.1,
+  // 解析下 ERESOLVE;当前锁定 0.2.0-rc.2 家族,vendored 0.7.3 保留上游开区间 peers(>=0.1.2-rc.1)直接通过 0.2.0 起的运行时 peer 兼容闸,
   // 保持 vendored 形态复用适配补丁),其余覆盖 source/提升/profile 布局。
   const rootRequire = createRequire(join(repoRoot, 'package.json'))
   const mapCandidates = [

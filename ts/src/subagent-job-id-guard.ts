@@ -11,7 +11,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { PreToolDecision, ToolExecution } from '@deepseek-ai/dsh-tools'
-import type { SubagentListEntry, SubagentRuntime } from '@deepseek-ai/dsh-subagent'
+import type { SubagentCatalogEntry, SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 
 const JOB_TOOLS = new Set(['job_output', 'job_kill'])
 
@@ -30,8 +30,8 @@ function jobIdOf(exec: ToolExecution): string | undefined {
   return typeof jobId === 'string' && jobId.length > 0 ? jobId : undefined
 }
 
-function isContinuableChild(entry: SubagentListEntry, jobId: string): boolean {
-  return entry.kind === 'child' && entry.mode === 'continuable' && entry.id === jobId
+function isContinuableChild(entry: SubagentCatalogEntry, jobId: string): boolean {
+  return entry.mode === 'continuable' && entry.id === jobId
 }
 
 function recoveryReason(toolName: string, jobId: string): string {
@@ -56,7 +56,7 @@ export function installSubagentJobIdGuard(ctx: Context): void {
     const subagents = subagentsOf(ctx)
     if (!jobId || !agent || !subagents) return next()
 
-    let children: SubagentListEntry[]
+    let children: SubagentCatalogEntry[]
     try {
       children = await subagents.listChildren(agent.id as SessionId, exec.signal)
     } catch (error) {

@@ -121,6 +121,7 @@ try {
     cwd: tmp,
     rows: 24,
     cols: 80,
+    terminalType: 'xterm-256color',
     graceMs: 8000,
   })
   assert.equal(typeof term.pid, 'number', `PTY pid 必须是数字(当前 ${typeof term.pid})`)
