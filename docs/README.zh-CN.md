@@ -118,6 +118,8 @@
 | [design/memory-design.md](design/memory-design.zh-CN.md) | 记忆域设计：C 端六层重设计（M4 交付） |
 | [design/memory-lifecycle-collector.md](design/memory-lifecycle-collector.zh-CN.md) | M4 lifecycle collector 使用合同：显式 opt-in、隔离 stateRoot、HMAC/consent、原子持久化与 #223/#238 scorer 导出；仅产出 candidate/synthetic，不替代真实 cohort |
 | [design/milestone-delivery-plan.md](design/milestone-delivery-plan.zh-CN.md) | M4→M6 living 任务图（issue #225）：#20/#22/#136/#137 真实 gate、#231–#235 后继与 #270 公开交付台账；预准入只含获授权的设计/只读/fixture/failing-before 工作 |
+| [design/p6-founder-decision-brief.md](design/p6-founder-decision-brief.zh-CN.md) | P6 创始人决策简报（issue #137，M6-2）：M6 Entry 两个硬前置与现状、方案要点、风险、是/否/修改稿问题清单——只为决策服务，不当回执 |
+| [design/m5-supplier-agreement-matrix.md](design/m5-supplier-agreement-matrix.zh-CN.md) | M5-0 HotelByte 供应链协议可填矩阵（issue #136）：钉死的工程事实加 A/C–J 具名值字段，以及填满后如何流入 M5 Entry |
 | [design/write-gate-production-design.md](design/write-gate-production-design.zh-CN.md) | M5 WriteGate 生产化 proposal（issue #225/#136）：HotelByte 版本/发布物、可信 receipt 发行/消费权威、approval_claims 持久化、query miss 保持 unknown、对账/补偿/披露 |
 | [design/fact-writegate-seam.md](design/fact-writegate-seam.zh-CN.md) | fact-anchor × M5 WriteGate 接缝（issue #303，#273 子切片）：读路径闸与写路径闸的契约、five-step 最小链、non-success 写 receipt fail-closed、依赖 #136/#231，M5 Entry 前不启封 |
 | [design/flyai-supplier-skill-design.zh-CN.md](design/flyai-supplier-skill-design.zh-CN.md) | FlyAI 八类能力、本机凭据与证据边界 |
@@ -126,6 +128,7 @@
 | [design/tool-orchestration-design.md](design/tool-orchestration-design.zh-CN.md) | 工具编排与通道健康面设计（proposal，issue #106/#107/#108） |
 | [design/adapter-authoring-guide.md](design/adapter-authoring-guide.zh-CN.md) | Session 适配器作者手册（D-13，#272）：四步法/漂移锁/红线 |
 | [design/external-event-seam.md](design/external-event-seam.zh-CN.md) | 外部事件驱动接缝设计（#82 方向/D-31，只设计不承诺实现） |
+| [design/callback-party-decision-template.md](design/callback-party-decision-template.zh-CN.md) | 外部 callback 方决策模板（#82/D-31）：通道形态、HMAC/mTLS/OAuth 签名绑定选项、token 归属、按证据的 sensor 来源判据——决策就绪、未决策，等第一个真实 callback 方 |
 | [design/itinerary-html-renderer.md](design/itinerary-html-renderer.zh-CN.md) | 行程 HTML 渲染器合同 + 产品生成入口（内部切片，issue #442/父 #438）：纯有界渲染器、计划面与证据面分离、拒绝集；`gotry_itinerary_render` 从注册表选出的事实在会话工作目录仅新建一个不覆盖的 HTML 文件；原生 HTML preview 实证在 #448 已接受，持久回归落在 `ts/scripts/dsh-artifact-web-e2e.ts` |
 | [design/itinerary-deck-renderer.md](design/itinerary-deck-renderer.zh-CN.md) | 行程 deck 渲染器 + 共享文档契约层（内部切片，issue #564）：幻灯页确定性派生、纯 CSS scroll-snap 零脚本翻页、与单页渲染器的反漂移锁（拒绝集逐字一致）；本切片无产品入口 |
 | [design/recall-trigger.md](design/recall-trigger.zh-CN.md) | 召回触发评估器 + tick 调度器 + why-now 卡（内部切片，issue #577，Phase D）：5 类 RecallReason 闭集、PeriodicTickSource 默认关闭（opt-in）、source tag 结构性必现、wish-pool 只读；产品代码零 setInterval 激活；不推送、不 mutation | 
