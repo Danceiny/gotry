@@ -45,6 +45,7 @@ import { generateItineraryArtifact } from '../capabilities/itinerary-artifact.ts
 import { generateItineraryDeckArtifact } from '../capabilities/itinerary-deck-artifact.ts'
 import { generateItineraryDeckExport } from '../capabilities/itinerary-deck-export.ts'
 import { interpretEffect, declinedObservation, type EffectInterpreter } from '../capabilities/effect.ts'
+import { customerSendCode, customerLogin } from '../capabilities/hbcli.ts'
 import { FLYAI_POI_CATEGORIES, type FlyaiKind, type FlyaiQuery, type FlyaiResult } from '../capabilities/flyai.ts'
 import { createFlyaiSetupTool } from './flyai-setup-tool.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
@@ -1274,6 +1275,90 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         content: [{ type: 'text', text: String(r.summary ?? '') }],
       }
     },
+  }))
+
+  // ---- hotelbyte 客户认证面(hbcli auth customer-*;新邮箱即注册,无需密码)----
+  // 两步流:send_code(外发邮件,须用户明示同意)→ 用户从收件箱报码 → login。
+  // 刻意不走 interpretEffect 效应层:发码/验码非幂等(超时重试会重复发信/浪费
+  // 一次性验证码),直调能力层 fail-fast;凭据写 hbcli customer 档(CLI 侧最低
+  // 优先级,不劫持既有 portal/API-key 凭据),token 值不进 gotry 会话/日志。
+
+  registerGuarded(defineTool({
+    name: 'gotry_hotel_auth_send_code',
+    description:
+      'Send an email verification code to the user for HotelByte customer login (step 1 of 2). '
+      + '**Only call after the user explicitly agreed to login/register with that email** — this sends a real email and the backend rate-limits sends. '
+      + 'Step 2 is gotry_hotel_auth_login with the code the user reads from their inbox (never guess or fabricate the code). '
+      + 'Requires hbcli with auth support (npm staicli ≥ 0.0.4); on older versions it fails with unknown-command via the error surface.',
+    parameters: {
+      email: { type: 'string', required: true, description: '用户邮箱(验证码发送目标,须用户自己提供)' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
+    },
+    async execute(args, _exec) {
+      const q = args as { email?: string }
+      const email = String(q.email ?? '').trim()
+      if (!email || !email.includes('@')) {
+        return { ok: false, summary: `需要有效邮箱才能发送验证码(收到:${email || '空'})——请向用户要邮箱,不猜` } as never
+      }
+      const started = Date.now()
+      const r = await customerSendCode(email, { hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs })
+      return JSON.parse(JSON.stringify({
+        ok: r.via === 'hbcli-realtime',
+        summary: r.summary,
+        evidence: r.evidence,
+        via: r.via,
+        detail: r.result,
+        latency_ms: Date.now() - started,
+      })) as never
+    },
+    presentCall: args => ({ card: 'generic', title: `发送验证码:${(args as { email?: string }).email ?? ''}`, kind: 'execute', rawInput: args }),
+  }))
+
+  registerGuarded(defineTool({
+    name: 'gotry_hotel_auth_login',
+    description:
+      'Complete HotelByte customer login with email + code (step 2 of 2; pairs with gotry_hotel_auth_send_code). '
+      + 'The code comes from the user\'s inbox — never guess. A NEW email is auto-registered (no password needed): verified email = account. '
+      + 'On success the credential is stored in hbcli\'s customer profile (lowest precedence — existing portal/API-key credentials are NOT hijacked), '
+      + 'and subsequent hotel search/rates run realtime under that identity. Optional attributionToken (from an advisor share link) binds the user '
+      + 'to that advisor. Login failure consumes the one-shot code: re-send a new code before retrying.',
+    parameters: {
+      email: { type: 'string', required: true, description: '用户邮箱(与发送验证码时一致)' },
+      code: { type: 'string', required: true, description: '用户从邮箱收到的验证码(一次性凭据;失败即作废,需重新发码)' },
+      attributionToken: { type: 'string', description: '顾问归因令牌(顾问分享链接携带;可选,绑定后该客户计入顾问客户簿)' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? JSON.stringify(value).slice(0, 400)) }],
+    },
+    async execute(args, _exec) {
+      const q = args as { email?: string; code?: string; attributionToken?: string }
+      const email = String(q.email ?? '').trim()
+      const code = String(q.code ?? '').trim()
+      if (!email || !email.includes('@')) {
+        return { ok: false, summary: `需要有效邮箱才能登录(收到:${email || '空'})——请向用户确认邮箱` } as never
+      }
+      if (!code) {
+        return { ok: false, summary: '需要邮箱验证码才能登录——请让用户从收件箱查收并报码(先 gotry_hotel_auth_send_code)' } as never
+      }
+      const started = Date.now()
+      const r = await customerLogin(
+        { email, code, attributionToken: q.attributionToken ? String(q.attributionToken) : undefined },
+        { hbcliBin: config.hbcliBin, timeoutMs: config.timeoutMs },
+      )
+      return JSON.parse(JSON.stringify({
+        ok: r.via === 'hbcli-realtime' && (r.result as { status?: string } | null)?.status === 'logged_in',
+        summary: r.summary,
+        evidence: r.evidence,
+        via: r.via,
+        detail: r.result,
+        latency_ms: Date.now() - started,
+      })) as never
+    },
+    presentCall: args => ({ card: 'generic', title: `客户登录:${(args as { email?: string }).email ?? ''}`, kind: 'execute', rawInput: args }),
   }))
 
   registerGuarded(defineTool({

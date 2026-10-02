@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { callHbcliJson, searchHotels, hbcliBinCandidates } from '../capabilities/hbcli.ts'
+import { callHbcliJson, searchHotels, hbcliBinCandidates, customerSendCode, customerLogin } from '../capabilities/hbcli.ts'
 
 const tmp = await mkdtemp(join(tmpdir(), 'hbcli-test-'))
 async function fakeBin(name: string, code: number, payload: string): Promise<string> {
@@ -119,5 +119,55 @@ console.log(`6. ENOENT 人话化 OK:${r6.summary}`)
   console.log('7. hbcliBinCandidates(~/.local/bin + ~/.staicli/current 回退)OK')
 }
 
+// 8. 客户邮箱验证码登录两步流(hotelbyte-cli auth customer-*;上游旗标契约回归)
+{
+  const { writeFileSync, chmodSync } = await import('node:fs')
+  const authEchoBin = join(tmp, 'hbcli-auth-echo')
+  writeFileSync(authEchoBin, `#!/bin/sh
+echo "ARGS:$@"
+echo '{"status":"sent","expiresIn":300}'
+`)
+  chmodSync(authEchoBin, 0o755)
+  const rs = await customerSendCode('guest@mail.com', { hbcliBin: authEchoBin })
+  const sendLine = JSON.stringify(rs)
+  if (!sendLine.includes('customer-send-code') || !sendLine.includes('guest@mail.com')) {
+    throw new Error(`FAIL: customer-send-code 旗标未对齐,实际 ${sendLine.slice(0, 200)}`)
+  }
+  assert.equal(rs.via, 'hbcli-realtime', 'send-code happy path')
+  assert.ok(rs.summary.includes('验证码已发送到 guest@mail.com'), 'send summary 应带邮箱')
+  assert.ok(rs.summary.includes('300'), 'send summary 应带有效期')
+
+  const authLoginBin = join(tmp, 'hbcli-auth-login')
+  writeFileSync(authLoginBin, `#!/bin/sh
+echo "ARGS:$@"
+echo '{"status":"logged_in","token_saved":true,"attributionBound":true}'
+`)
+  chmodSync(authLoginBin, 0o755)
+  const rl2 = await customerLogin(
+    { email: 'guest@mail.com', code: '123456', attributionToken: 'v2.u.sig' },
+    { hbcliBin: authLoginBin },
+  )
+  const loginLine = JSON.stringify(rl2)
+  if (!loginLine.includes('customer-login') || !loginLine.includes('--code') || !loginLine.includes('123456') || !loginLine.includes('attribution-token')) {
+    throw new Error(`FAIL: customer-login 旗标未对齐,实际 ${loginLine.slice(0, 240)}`)
+  }
+  assert.equal(rl2.via, 'hbcli-realtime', 'login happy path')
+  assert.ok(rl2.summary.includes('登录成功'), 'login summary 应报成功')
+  assert.ok(rl2.summary.includes('顾问归因绑定成功'), 'login summary 应带归因结果')
+
+  // 可选旗标省略契约:不传 attributionToken/ttl 时不得出现在上游 argv
+  const rl3 = await customerLogin({ email: 'guest@mail.com', code: '654321' }, { hbcliBin: authLoginBin })
+  const loginLine3 = JSON.stringify(rl3)
+  if (loginLine3.includes('attribution-token') || loginLine3.includes('--ttl')) {
+    throw new Error(`FAIL: 可选旗标不应透传,实际 ${loginLine3.slice(0, 240)}`)
+  }
+
+  // 失败面:验证码一次性,失败 summary 必须引导重新发码
+  const rf = await customerLogin({ email: 'guest@mail.com', code: '000000' }, { hbcliBin: failBin2 })
+  assert.equal(rf.via, 'hbcli-error', 'login error path')
+  assert.ok(rf.summary.includes('重新发码'), `失败 summary 应引导重新发码,实际 ${rf.summary}`)
+  console.log('8. customer-send-code/customer-login 旗标契约 + 一次性验证码失败面 OK')
+}
+
 await rm(tmp, { recursive: true, force: true })
-console.log('HBCLI TESTS: 8/8 OK (happy / error / no-binary / fallback-filter / fallback-no-match / v0.3.0 旗标回归 / ENOENT 人话化 / 候选路径)')
+console.log('HBCLI TESTS: 9/9 OK (happy / error / no-binary / fallback-filter / fallback-no-match / v0.3.0 旗标回归 / ENOENT 人话化 / 候选路径 / customer 两步流)')

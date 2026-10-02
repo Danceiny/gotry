@@ -37,10 +37,24 @@
 | **POI/地点搜索** | ✅ Anything（混合 城市+酒店+place 候选） + OSM 兜底（`dsh-map-tools` 内嵌 Nominatim/Photon 免费回退，`ts/scripts/map-tools-vendor-package-proof.ts` 已 vendored 证） | Any | `hbcli-anything` / M4 `osm-nominatim` | M3：DONE；TREK 同款，免费兜底 |
 | **天气/季节性** | ✅ Open-Meteo 已接（`capabilities/weather.ts`：预报≤16 天+历史气候基线；免费无 key；工具 `gotry_weather_check`）；地理编码双源：Open-Meteo（主，人口/行政级排序防同名小地压主城）+ OSM Nominatim（中文兜底——open-meteo 中文名覆盖有洞，issue #24 实测「普吉岛」0 结果） | 实时 | `[实时API:open-meteo@ts]` / 兜底 `[实时API:nominatim@ts]` | 保持；WMO 码已映射中文 |
 | **地面交通（接驳/铁路）** | ⚠️ **#341 第一切片**：仅接受显式起点/终点经纬度与 `mode=driving`；`ts/capabilities/ground-transfer.ts` 通过已注册公开 `map_driving_route` 委托路线结果，抵达方向（A→B）与返程方向（B→A）分别请求与绑定，任一方向 miss/error/stale/不匹配仅回退该方向到静态估算；候选 transfer 持有 `minutesOut` / `minutesRet` 覆盖供 `evaluateChoice` 按方向消费；仅把分钟绑定到具名静态 `taxi` transfer；`bus`/`bus_plus_taxi` 不调用路线 provider，静态价格不改写 | 路线估算 + 按方向隔离且有界 cache（方向=origin/destination pair）；**不是实时交通** | 路线事实=`map_driving_route` + `asOf`（宿主观察/查询时间，非 provider 发布时间）/freshness/cache；回退=`[静态包:估算]`；自相矛盾路线事实（正距离零耗时）按 provider miss 拒绝（2026-09-11 边界冻结） | live traffic、transit/rail、fare、地址解析与更广泛 transfer 仍未接入——gated 真实数据工作，按 [#429](https://github.com/Danceiny/gotry/issues/429) 追踪，离线边界已于 2026-09-11 钉闭；12306 不由本切片假设 |
-| **地理/行政区划** | ⚠️ 在线地图由 `dsh-map-tools` Nominatim/Photon 兜底（已 vendored，运行时免费）；**bundled GeoJSON atlas 尚未构建**（offline-first 需求触发后再实现），残余 → [#342](https://github.com/Danceiny/gotry/issues/342) | 实时（在线） | `[实时API:nominatim@ts]` | TREK 模式：bundled GeoJSON atlas（脚本构建，离线） |
+| **地理/行政区划** | ⚠️ 在线地图仍由 `dsh-map-tools` Nominatim/Photon 兜底（已 vendored，运行时免费）；**bundled GeoJSON atlas 机制于 2026-10-02 落地（issue #342，创始人授权提前启动）——默认关闭：构建脚本 + 只读加载器 + 已提交快照，零产品调用方，无任何数据面切换**（见 §2.1）；激活触发条件不变 = offline-first 需求 | 实时（在线）/静态快照（离线，未启用） | `[实时API:nominatim@ts]`（在线路径不变） | TREK 模式：bundled GeoJSON atlas（脚本构建，离线） |
 | **时区** | v2 flight pack 使用显式 IANA zone 与 local date 解析 UTC instant；`Intl.DateTimeFormat` 是运行时权威，未知 zone 与 DST gap/overlap 在边界拒收，UTC instant 用于 elapsed duration 与 home-zone work-window 投影。静态 v1 的 numeric offset 继续兼容；该确定性契约不代表 live schedules，prices，availability 或 inventory | 动态（运行时常量）+静态 v1 | `[运行时权威:Intl.DateTimeFormat]`（v2） / `[静态包:估算]`（v1 数值） | v2 显式 IANA；v1 保持兼容 |
 | **汇率** | ❌ 无（全 CNY 硬编码）；**multi-currency FX 仍属触发后置**——中国出境首发当前以 CNY 出价结算路径为主；当**首条真实非 CNY 供应商报价、用户预算或目的地需求**出现时启动实现（见 [#344](https://github.com/Danceiny/gotry/issues/344)）；触发前不调用任何浮动汇率源 | — | — | 多币种 FX（Exchangerate.host 等免费层或 hotel-be） |
 | **签证/入境** | ✅ 政策事实生产端 v1（2026-09-05，issue #141）：C 档中国领事服务网（cs.mfa.gov.cn）国家指南树，礼貌抓取（永不重试+断路器护站）→ 签证入境章节抽取 → `PolicyFact(as_of + D+30 review_by + 来源证据链)`落账 | 静态快照抓取 | `[实时API:cs-mfa@ts]` | Timatic/Sherpa° 后议（founder 拍板 C 档免费权威源先行） |
+
+### 2.1 离线行政区划 atlas（机制就绪、默认关闭——[#342](https://github.com/Danceiny/gotry/issues/342)）
+
+atlas 机制已端到端存在但零消费方；上方在线 Nominatim/Photon 路径原样未动。选型与边界：
+
+| 决策 | 取值 | 依据 |
+|---|---|---|
+| 数据集 | Natural Earth vector，release v5.1.2 钉在 commit `f1890d9f…` | 公有领域（"free for use in any type of project"，无需署名）→ 随包再分发许可证干净；钉 commit 保证可重复构建 |
+| 图层 | Admin-0 @ 50m（242 条）+ Admin-1 @ 50m（294 条主要次级行政区，覆盖 9 个大国） | 全量 4,649 条 Admin-1 只有 @ 10m ≈ 40 MB 原始体积——超出任何 bundle 预算；50m 保国家层完整覆盖，admin-1 部分覆盖按三值 miss 如实记录 |
+| 体积上限 | 提交产物合计 ≤ 2 MB；实测 1.64 MB（0.89 + 0.75） | 属性投影（只留 name/id/边界）+ Douglas-Peucker 0.02°（最大偏差 ~2.2 km）+ 坐标 3 位小数取整；若重建超上限，构建脚本自动降级为仅 Admin-0 并把原因写进 manifest |
+| 构建 | `node scripts/build-geo-atlas.mjs` → `ts/data/geo-atlas/ne-v5.1.2/`（两个 GeoJSON + `manifest.json`：来源 URL、拉取日期、SHA-256、许可证、记录数、字节数） | 显式步骤；只有构建脚本触网（node 内置 fetch，零新依赖）；测试不依赖网络与构建产物 |
+| 消费 | `ts/capabilities/geo-atlas.ts`——只读按名/按 ID 查询，返回带 provenance 的 typed 记录；**零调用方** | 同名地 → `ambiguous` 附候选（加载器不代选）；边界变化 → 快照是 as-of version/fetchedAt 的 provenance，绝不冒充 live；未知地区 → 三值 miss（miss ≠ 不存在）；多语言 → 源数据有 `nameZh` 才透出，绝不伪造翻译（ADR-10）；快照缺失/篡改/损坏/形状漂移/重复 id → 加载报错，fail-closed |
+| 离线证明 | run-all §71 用 `fetch` spy 断言加载器全程零网络调用 | 离线性是被执行的断言，不是口头声明 |
+| 激活 | 触发条件不变 = offline-first 需求（离线规划 / visited-map / 稳定行政区归一化） | 触发后再接线在线 Nominatim/Photon 与 atlas 的选择/降级关系；此前本行整体保持 inert |
 
 ---
 
@@ -205,7 +219,7 @@ TREK 是自托管协作旅行规划器，数据面成熟度最高，可借鉴的
   - 第一切片之外的 rail/transit、fare、live traffic 与非显式坐标解析仍是按 [#429](https://github.com/Danceiny/gotry/issues/429) 追踪的后续边界。
 - **触发后置残余**：
   - **#345 三仓门**：GoTry 专用 paid Place/reviews 链——hotel-be `search` 模块新增 place OpenAPI endpoint（转调 geography，带配额封顶），hotel-be `geography` 把 `SearchPlace`/`GetPlaceReviews` 加入 `InternalExposedMethods` 白名单；hotelbyte-cli 新增 `search place` / `search place-reviews` 命令 + `--json`；GoTry 侧新增 `capabilities/place.ts`（hbcliPlaceSearch，失败降级 OSM Nominatim 兜底）。**触发 = first review/photo pull need**（founder + 用量）——触发前不开闸，触发后才动三仓。#276 = hotel-be 内部 `SearchSrv` 在 M4 规模下的扩容路径，**独立**于 #345 三仓门，不得合并。
-  - **#342 bundled GeoJSON atlas**（脚本构建、离线）；触发 = offline-first 需求。
+  - **#342 bundled GeoJSON atlas**（脚本构建、离线）；触发 = offline-first 需求。机制已于 2026-10-02 落地（§2.1：构建脚本 + 只读加载器 + 已提交 Natural Earth v5.1.2 快照 + manifest，run-all §71）——默认关闭、零产品调用方；仅剩触发后的激活（在线 ↔ atlas 选择/降级接线）。
   - **#344 多币种 FX**；触发 = 首条真实非 CNY 供应商报价、用户预算或目的地需求（中国出境首发当前以 CNY 出价结算路径为主；触发前不调用浮动汇率源）。
 - **M5**：票价路径 = FlyAI + 会话（扩展桥）交叉验证，aviationstack 已不在路径（免费层 + 官方接口已覆盖原目标）；KDE Itinerary 式预订导入（bookedResources 数据源）。
 
