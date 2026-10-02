@@ -656,7 +656,7 @@ echo "=== 73. 服务运行时观测补齐(#272/#511,2026-10-02 UAT 只读实查�
 (cd ts && npx tsx scripts/observability-tests.ts) || FAIL=1
 
 echo
-echo "=== 73. 会话双区记忆分区契约纯核(P4-1,design/session-dual-zone-memory-design.md §5:闭集 hot_context·trip_notebook 未知拒收/写侧负面清单证件·手机号·URL·凭证零入区/owner 确认引用闸/rev CAS 同 rev 幂等 no-op·stale_rev fail-closed 类型化/注入时钟分层 TTL 30min resource·24h intent 只自写入起算读不续命/确定性 fold 重建==直读;纯函数零 IO·零定时器·零网络,不接账本(P4-2)与会话(P4-3),内核 manifest 零漂移;全离线;编号 71→73:#606 先占了 §71) ==="
+echo "=== 74. 会话双区记忆分区契约纯核(P4-1,design/session-dual-zone-memory-design.md §5:闭集 hot_context·trip_notebook 未知拒收/写侧负面清单证件·手机号·URL·凭证零入区/owner 确认引用闸/rev CAS 同 rev 幂等 no-op·stale_rev fail-closed 类型化/注入时钟分层 TTL 30min resource·24h intent 只自写入起算读不续命/确定性 fold 重建==直读;纯函数零 IO·零定时器·零网络,不接账本(P4-2)与会话(P4-3),内核 manifest 零漂移;全离线;编号 71→74:§71 FX/#606、§72 atlas/#608、§73 观测/#607 先后占号) ==="
 (cd ts && npx tsx scripts/session-zones-tests.ts) || FAIL=1
 
 if [ "$FAIL" -ne 0 ]; then
