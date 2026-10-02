@@ -1546,6 +1546,22 @@ class PlannerBootTimeoutExceeded extends Error {
 }
 
 /**
+ * #511: one service-runtime line per classified boot failure. The
+ * PLANNER_BOOT_TIMEOUT family previously existed only as a typed error code and
+ * in build-time proof output, so a recurrence in the serving process left no
+ * log anchor. initializeMs is the port's handshake measurement when it got one
+ * (a boot timeout usually means it never did — then null); closeMs is owned by
+ * the cleanup diagnostics and is not duplicated here.
+ */
+function logPlannerBootTimeout(port: DshPlannerRunPort | undefined): void {
+  const boot = port?.bootObservation?.()
+  process.stderr.write(`PLANNER_BOOT_TIMEOUT ${JSON.stringify({
+    initializeMs: boot?.initializeMs ?? null,
+    mode: boot?.mode ?? null,
+  })}\n`)
+}
+
+/**
  * A provider run that makes no observable progress for its idle budget is
  * hung in practice (a dead upstream stream never emits another notification).
  * A healthy run is multi-step — thinking models legitimately run tool loops
@@ -1866,6 +1882,7 @@ export async function createDshEmbeddedBookingPlanner(
         } catch (error) {
           if (error instanceof PlannerBootTimeoutExceeded) {
             metricOutcome = 'boot_timeout'
+            logPlannerBootTimeout(runPort)
             retire(runPort)
             return [{ kind: 'error', error: { code: 'PLANNER_BOOT_TIMEOUT', message: providerFailureMessage('PLANNER_BOOT_TIMEOUT'), retryable: true } }]
           }
