@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "gotry_geo_atlas_manifest_v1",
+  "dataset": "natural-earth",
+  "version": "ne-v5.1.2",
+  "upstream": {
+    "repository": "https://github.com/nvkelso/natural-earth-vector",
+    "tag": "v5.1.2",
+    "commit": "f1890d9f152c896d250a77557a5751a93d494776"
+  },
+  "license": {
+    "name": "Natural Earth — public domain (no attribution required)",
+    "statementUrl": "https://github.com/nvkelso/natural-earth-vector#f1890d9f152c896d250a77557a5751a93d494776 README: \"Natural Earth is a public domain map dataset ... free for use in any type of project\"",
+    "termsUrl": "https://www.naturalearthdata.com/about/terms-of-use/"
+  },
+  "build": {
+    "script": "scripts/build-geo-atlas.mjs",
+    "fetchedAt": "2026-10-02T07:19:27.808Z",
+    "simplification": {
+      "algorithm": "ramer-douglas-peucker",
+      "toleranceDeg": 0.02,
+      "toleranceApproxKm": 2.2,
+      "coordPrecisionDecimals": 3,
+      "minHoleExtentDeg": 0.02
+    },
+    "sizeCapMb": 2,
+    "degradedToAdmin0": false,
+    "degradeReason": null
+  },
+  "artifacts": [
+    {
+      "layer": "admin-0",
+      "file": "admin-0.geojson",
+      "upstreamUrl": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/f1890d9f152c896d250a77557a5751a93d494776/geojson/ne_50m_admin_0_countries.geojson",
+      "upstreamSha256": "3e458fc036ad0a66411f2c1e6cac49c5d7bfb81cb1123bc513b22511a2b7fdeb",
+      "upstreamRecordCount": 242,
+      "recordCount": 242,
+      "bytes": 931820,
+      "sha256": "60a39f25896efff221bfa428aac8f24664ba300d9dd1ada77f9952a57ad82477"
+    },
+    {
+      "layer": "admin-1",
+      "file": "admin-1.geojson",
+      "upstreamUrl": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/f1890d9f152c896d250a77557a5751a93d494776/geojson/ne_50m_admin_1_states_provinces.geojson",
+      "upstreamSha256": "69a0e06e640b2d505858ae1cb63034e4677f3000b35a98e16312932b98c426b9",
+      "upstreamRecordCount": 294,
+      "recordCount": 294,
+      "bytes": 786701,
+      "sha256": "b84c35ce4ee31e50e63240d3c407d48980ae168da956f2ac29d4d0429b488c06"
+    }
+  ],
+  "totalBytes": 1718521
+}
