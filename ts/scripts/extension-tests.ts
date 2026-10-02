@@ -52,6 +52,7 @@ import { HOTEL_NETWORK_HINTS, HOTEL_SITE_HOST, buildHotelEntryUrl } from '../cap
 import { TRAIN_NETWORK_HINTS, TRAIN_SITE_HOST } from '../capabilities/session/adapters/rail-12306.ts'
 import { DIDA_NETWORK_HINTS, DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_HOST } from '../capabilities/session/adapters/dida-portal.ts'
 import { evaluateDoubleSource, type SessionComparableRecord } from '../capabilities/session/benchmark.ts'
+import { BRIDGE_EVENTS_PATH } from '../src/backend/modules/session-search.ts'
 import { factsFromSessionTrain } from '../src/bookable-facts.ts'
 
 const EXT_DIR = fileURLToPath(new URL('../../extension/', import.meta.url))
@@ -338,6 +339,16 @@ async function main(): Promise<void> {
     assert.ok(backgroundJs.includes('waitSniffMulti'), '应有多回包分桶结算版本(双齐即返)')
     assert.ok(backgroundJs.includes('job.multiCollect'), '背景 SW 应按 job.multiCollect 分派单首包/多回包')
   })
+  await check('防漂移(workspace 事件上行,批次 B 2026-10-01):content-bridge 监听页面事件名 = SW 消息面 = SW 上行端点 = Node 路由;内存 buffer 零 storage,失败静默丢弃', () => {
+    assert.ok(contentBridgeJs.includes('gotry-workspace-event-available'), 'content-bridge 应监听页面派发的 gotry-workspace-event-available 自定义事件')
+    assert.ok(contentBridgeJs.includes("type: 'gotry-workspace-event'"), 'content-bridge 应把事件 detail 经 gotry-workspace-event 消息转发 SW')
+    assert.ok(backgroundJs.includes("'gotry-workspace-event'"), '背景 SW 应接收 workspace 事件消息并进内存 buffer')
+    assert.ok(backgroundJs.includes(BRIDGE_EVENTS_PATH), `背景 SW 上行端点应与 Node 路由逐字一致(${BRIDGE_EVENTS_PATH})`)
+    assert.ok(backgroundJs.includes('workspaceEventBuffer'), '背景 SW 应有内存 buffer 模块变量(SW 重启即弃,零 storage)')
+    assert.ok(backgroundJs.includes('flushWorkspaceEvents'), '背景 SW 应伴随 /jobs 长轮询批量上行(flushWorkspaceEvents)')
+    assert.ok(/await flushWorkspaceEvents\(\)/.test(backgroundJs), 'flush 应挂在 /jobs 长轮询循环里(伴随每次轮询)')
+    assert.ok(!backgroundJs.includes('chrome.storage'), '事件 buffer 不得落 chrome.storage(红线:扩展零 storage)')
+  })
   await check('版本跟随主版本:manifest version_name = package.json version;version = 四段投影(0.0.1-rc.N → 0.0.1.N,founder 2026-09-03 拍板)', () => {
     const pkgVersion = (JSON.parse(readFileSync(join(EXT_DIR, '..', 'package.json'), 'utf8')) as { version: string }).version
     assert.equal(manifest.version_name, pkgVersion, 'version_name 应与 gotry 主版本逐字一致')
@@ -453,7 +464,11 @@ async function main(): Promise<void> {
         headers: { 'content-type': 'application/json', origin: EXTENSION_ORIGIN_STORE },
         body: '{}',
       })
-      assert.equal(r.status, 200, '商店版扩展源不得吃 403(否则商店通道全断)')
+      // 批次 A(2026-10-01)起未知 jobId 回包 = 404 unknown-job(不再 200 静默丢弃);
+      // 本断言守住的原不变量是「商店版源不得吃 403」——403 会整条商店通道全断。
+      assert.notEqual(r.status, 403, '商店版扩展源不得吃 403(否则商店通道全断)')
+      assert.equal(r.status, 404, '未知 jobId 回包按批次 A 合同回 404 unknown-job')
+      assert.equal(((await r.json()) as { error?: string }).error, 'unknown-job')
       assert.equal(storeLane.extensionConnected(), true, '白名单源的任何请求都刷新心跳')
     } finally {
       await storeLane.close()

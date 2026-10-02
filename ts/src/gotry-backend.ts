@@ -12,7 +12,8 @@
  *   booking-copilot 模块:GOTRY_BOOKING_COPILOT_API_KEY/STATE_ROOT/INGRESS_MODE/
  *     ARTIFACT_ID + DEEPSEEK/LLM keys(dsh planner,同独立部署)
  *   session-search 模块:GOTRY_BACKEND_SESSION_API_KEY(缺 = 该模块 fail-closed 503)、
- *     GOTRY_SESSION_TRANSPORT=cdp、CHROME_USER_DATA_DIR、GOTRY_SESSION_AUDIT_PATH
+ *     GOTRY_SESSION_TRANSPORT=cdp、CHROME_USER_DATA_DIR、GOTRY_SESSION_AUDIT_PATH、
+ *     GOTRY_BACKEND_STATE_ROOT(桥作业账本根,缺省 '.';账本文件 <stateRoot>/gotry-state/bridge.db)
  *
  * 运行:node bin/gotry-backend.js(编译产物)或 tsx ts/src/gotry-backend.ts(源码形态)。
  */
@@ -48,6 +49,9 @@ export async function startGotryBackendFromEnvironment(
   modules.push(startSessionSearchModule({
     apiKey: () => env.GOTRY_BACKEND_SESSION_API_KEY ?? '',
     auditPath: env.GOTRY_SESSION_AUDIT_PATH,
+    // 批次 A「桥作业账本化」:挂载路径桥队列/在飞/节律/客户端注册落 SQLite
+    // (<stateRoot>/gotry-state/bridge.db),重启经 recoverOnBoot 收敛,不丢在飞作业。
+    stateRoot: env.GOTRY_BACKEND_STATE_ROOT ?? '.',
   }))
   modules.push(startBookingExecutorModule({
     apiKey: () => env.GOTRY_BACKEND_BOOKING_API_KEY ?? '',

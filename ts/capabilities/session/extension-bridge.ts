@@ -185,7 +185,8 @@ interface ParkedPoller {
   clientId?: string
 }
 
-const CLIENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** 扩展客户端标识形状(每 SW 生命周期一个 crypto.randomUUID);导出供事件上行端点(批次 B)同链校验 */
+export const CLIENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function jobMatches(entry: QueuedJob, capabilities: Set<string> | null, origin: string, clientId?: string): boolean {
   if (entry.preferredOrigin && entry.preferredOrigin !== origin) return false
@@ -235,6 +236,12 @@ export interface BridgeJobQueue extends SessionJobHandle {
   handleRequest(req: IncomingMessage, res: ServerResponse): void
   /** 挂载形态(/v1/session/bridge 前缀;/results?jobId= 查询式;bearer 鉴权由宿主模块前置) */
   handleMountedRequest(req: IncomingMessage, res: ServerResponse): void
+  /**
+   * 开机恢复(批次 A;仅 store 注入形态存在,纯内存无此方法):
+   * queued→重排 / claimed 已超时→unresolved+节律记账 / claimed 未超时→复活 inFlight。
+   * gotry-backend 会话模块启动路径调用(见 backend/modules/session-search.ts)。
+   */
+  recoverOnBoot?(): BridgeRecoverySummary
 }
 
 export interface BridgeJobQueueOptions {
@@ -243,17 +250,95 @@ export interface BridgeJobQueueOptions {
   now?: () => number
   /** 长轮询 parked 定时器是否 unref(独立桥惰性形态用;gotry-backend 常驻服务无需) */
   keepBridge?: boolean
+  /**
+   * 可选持久账本(DI,批次 A「桥作业账本化」2026-10-01):缺省 undefined = 现状纯内存
+   * (桌面 loopback 形态零变化);gotry-backend 挂载路径传 bridge-ledger 的 SQLite 实现,
+   * 队列/在飞/节律/客户端注册落 <stateRoot>/gotry-state/bridge.db,重启经 recoverOnBoot 收敛。
+   */
+  store?: BridgeJobStore
+}
+
+/**
+ * 桥作业持久账本契约(实现方:capabilities/session/bridge-ledger.ts)。
+ * 只承载**控制状态**——job 元数据、回包、节律、客户端能力清单;协议面不存在
+ * cookie 值字段(§38 红线),账本零凭据。时间戳一律 epoch 毫秒。
+ */
+export interface BridgeJobStore {
+  /** write-before-submit:入队前先落 queued;**抛错 = 提交失败,调用方不得入队派发** */
+  insertQueuedJob(job: ExtensionJob, timeoutAt: number): void
+  /** 领取(/jobs 派发与 dispatchToParked 两处):claimed + 领取者,attempts 递增 */
+  markClaimed(jobId: string, claim: { origin: string; clientId?: string }): void
+  markResolved(jobId: string, result: ExtensionJobResult): void
+  /** 超时/对账结算:曾被领取却未拿到善果终态(带回包则由 recordOrphanResult 落 result) */
+  markUnresolved(jobId: string, note?: { reason: string }): void
+  /** 从未被领取的终态作废(零站点花费) */
+  markVoid(jobId: string): void
+  /** 孤儿回包落库(未知 jobId 的回包内容以 unresolved 保留,供对账) */
+  recordOrphanResult(jobId: string, result: ExtensionJobResult): void
+  /** bridge_clients upsert(/jobs 轮询体 clientId + capabilities 到达即刷新) */
+  upsertClient(clientId: string, origin: string, capabilities: readonly string[]): void
+  /** cookie-names 命中票据名(名字级)→ 记客户端在该站点持有登录态 */
+  recordClientLoginSite(clientId: string, site: string): void
+  /** 站点导航类作业提交/领取:记命中时刻并推冷却 */
+  noteSiteHit(site: string): void
+  /** 超时结算冷却(claimed 超时:站点可能已被打) */
+  applyCooldown(site: string): void
+  pacingOf(site: string): { lastHitAt: number; cooldownUntil: number } | null
+  /** recoverOnBoot 输入:未终态(queued/claimed)作业投影 */
+  listPendingJobs(): Array<{
+    id: string
+    kind: string
+    site: string
+    payload_json: string
+    status: 'queued' | 'claimed'
+    claimed_by_client: string | null
+    claimed_origin: string | null
+    timeout_at: number | null
+    attempts: number
+  }>
+}
+
+/** recoverOnBoot 结算摘要(挂载路径启动日志/测试断言面) */
+export interface BridgeRecoverySummary {
+  /** queued 且未过期 → 重新入队(迟到回包仍可 resolved 落账) */
+  requeued: number
+  /** claimed 且未超时 → 复活进 inFlight(扩展若已领取,回包直达 resolved) */
+  rehydratedInFlight: number
+  /** claimed 且 timeout_at 已过 → unresolved + 节律记账 */
+  settledUnresolved: number
+  /** queued 且 timeout_at 已过(未被领取即过期)→ void,零花费不再派发 */
+  voidedStale: number
+}
+
+/** 站点导航类作业(会真实打开供应商页面的 kind;cookie-names 只读不导航) */
+const NAVIGATION_JOB_KINDS: ReadonlySet<ExtensionJobKind> = new Set(['search', 'open-login'])
+export function isNavigationJobKind(kind: ExtensionJobKind): boolean {
+  return NAVIGATION_JOB_KINDS.has(kind)
 }
 
 export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJobQueue {
   const extensionOrigins = new Set(opts.extensionOrigins ?? EXTENSION_ORIGINS)
   const now = opts.now ?? Date.now
+  const store = opts.store
   const queue: QueuedJob[] = []
   const inFlight = new Map<string, QueuedJob>()
   const parked: ParkedPoller[] = []
   let lastSeenAt = 0
   let closed = false
   const extensionConnected = (): boolean => lastSeenAt > 0 && now() - lastSeenAt < EXTENSION_CONNECTED_WINDOW_MS
+
+  /**
+   * 账本写兜底:持久面故障不得打断桥协议主路径(write-before-submit 的 INSERT 除外,
+   * 它在 submit 里直接决定提交成败)。stderr 留痕,作业照常流转。
+   */
+  const record = (label: string, write: () => void): void => {
+    if (!store) return
+    try {
+      write()
+    } catch (e) {
+      process.stderr.write(`[bridge] 账本写入失败(${label}): ${e instanceof Error ? e.message : String(e)}\n`)
+    }
+  }
 
   /** 领走首个 capability 匹配的 job(移入 inFlight——回包按 jobId 路由,两处都可找到) */
   function takeMatching(capabilities: Set<string> | null, origin: string, clientId?: string): QueuedJob | null {
@@ -263,6 +348,8 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
     next.claimedOrigin = origin
     next.claimedClientId = clientId
     inFlight.set(next.job.jobId, next)
+    record('markClaimed', () => store!.markClaimed(next.job.jobId, { origin, clientId }))
+    if (isNavigationJobKind(next.job.kind)) record('noteSiteHit', () => store!.noteSiteHit(next.job.site))
     return next
   }
 
@@ -272,6 +359,13 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
     if (inFlightHit) {
       inFlight.delete(jobId)
       if (inFlightHit.timer) clearTimeout(inFlightHit.timer)
+      record('markResolved', () => store!.markResolved(jobId, parsed))
+      record('client-login-site', () => {
+        const names = Array.isArray(parsed.names) ? parsed.names : []
+        if (parsed.ok === true && inFlightHit.job.kind === 'cookie-names' && names.length > 0 && inFlightHit.claimedClientId) {
+          store!.recordClientLoginSite(inFlightHit.claimedClientId, inFlightHit.job.site)
+        }
+      })
       inFlightHit.resolve({ ok: true, result: parsed, origin: inFlightHit.claimedOrigin, clientId: inFlightHit.claimedClientId })
       return
     }
@@ -279,6 +373,7 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
     if (idx < 0) return
     const [entry] = queue.splice(idx, 1)
     if (entry.timer) clearTimeout(entry.timer)
+    record('markResolved', () => store!.markResolved(jobId, parsed))
     entry.resolve({ ok: true, result: parsed })
   }
 
@@ -291,6 +386,8 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
     entry.claimedOrigin = p.origin
     entry.claimedClientId = p.clientId
     inFlight.set(entry.job.jobId, entry)
+    record('markClaimed', () => store!.markClaimed(entry.job.jobId, { origin: p.origin, clientId: p.clientId }))
+    if (isNavigationJobKind(entry.job.kind)) record('noteSiteHit', () => store!.noteSiteHit(entry.job.site))
     p.res.statusCode = 200
     p.res.setHeader('content-type', 'application/json')
     p.res.end(JSON.stringify({ job: entry.job }))
@@ -303,6 +400,109 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
     parked: parked.length,
     lastSeenMsAgo: lastSeenAt > 0 ? now() - lastSeenAt : null,
   })
+
+  /**
+   * 结算器(submit 与 recoverOnBoot 复活条目共用):内存三态清理 + 账本终态落笔。
+   * 幂等护栏(settled 标记)防 waitTimer 兜底在 resolved 之后二次结算把账本写花。
+   * 超时结算规则(批次 A):曾被领取→unresolved+导航类记节律冷却(站点可能已被打);
+   * 从未被领取→void(零花费)。extension-not-connected 同为零花费 void;
+   * close 作废时已领取条目**留在 claimed**——持久记录交给下一轮 recoverOnBoot 收敛
+   * (扩展迟到回包仍可经 recordOrphanResult 对账,不虚构终态)。
+   */
+  function armSettle(entry: QueuedJob, deliver?: (outcome: SubmitOutcome) => void): (outcome: SubmitOutcome) => void {
+    let settled = false
+    return (outcome: SubmitOutcome): void => {
+      if (settled) return
+      settled = true
+      if (entry.timer) clearTimeout(entry.timer)
+      const i = queue.findIndex((q) => q.job.jobId === entry.job.jobId)
+      if (i >= 0) queue.splice(i, 1)
+      const wasClaimed = inFlight.delete(entry.job.jobId) || entry.claimedOrigin !== undefined
+      // outcome.ok 的 resolved 已在 resolveJob 落账;这里只结算失败终态
+      if (store && !outcome.ok) {
+        if (outcome.reason === 'timeout') {
+          if (wasClaimed) {
+            record('markUnresolved', () => store!.markUnresolved(entry.job.jobId, { reason: 'timeout' }))
+            if (isNavigationJobKind(entry.job.kind)) record('applyCooldown', () => store!.applyCooldown(entry.job.site))
+          } else {
+            record('markVoid', () => store!.markVoid(entry.job.jobId))
+          }
+        } else if (outcome.reason === 'extension-not-connected') {
+          record('markVoid', () => store!.markVoid(entry.job.jobId))
+        } else if (!wasClaimed) {
+          record('markVoid', () => store!.markVoid(entry.job.jobId))
+        }
+      }
+      deliver?.(outcome)
+    }
+  }
+
+  /**
+   * 开机恢复(仅 store 形态;纯内存 no-op):
+   *   queued 未过期 → 重新入队(可被派发,迟到善果仍 resolved 落账);
+   *   queued 已过期 → void(未被领取即过期,零花费不再派发);
+   *   claimed 未超时 → 复活进 inFlight(重启丢在飞作业的修复面:扩展若已领取,回包直达);
+   *   claimed 已超时 → unresolved + 导航类记节律冷却(该站点可能已被打)。
+   * payload 损坏(id 不匹配/非 JSON)按不可对账处理:queued→void / claimed→unresolved。
+   */
+  function recoverOnBoot(): BridgeRecoverySummary {
+    const summary: BridgeRecoverySummary = { requeued: 0, rehydratedInFlight: 0, settledUnresolved: 0, voidedStale: 0 }
+    if (!store || closed) return summary
+    let pending: ReturnType<BridgeJobStore['listPendingJobs']> = []
+    try {
+      pending = store.listPendingJobs()
+    } catch (e) {
+      process.stderr.write(`[bridge] 账本恢复读取失败:${e instanceof Error ? e.message : String(e)}\n`)
+      return summary
+    }
+    for (const row of pending) {
+      const expired = row.timeout_at !== null && row.timeout_at <= now()
+      let job: ExtensionJob | null = null
+      try {
+        const parsed = JSON.parse(row.payload_json) as ExtensionJob
+        if (parsed && typeof parsed.jobId === 'string' && parsed.jobId === row.id) job = parsed
+      } catch { /* 损坏 payload 按不可对账处理 */ }
+      if (row.status === 'claimed') {
+        if (!expired && job) {
+          const entry: QueuedJob = {
+            job,
+            resolve: null as unknown as (o: SubmitOutcome) => void,
+            timer: null,
+            claimedOrigin: row.claimed_origin ?? undefined,
+            claimedClientId: row.claimed_by_client ?? undefined,
+          }
+          const settle = armSettle(entry)
+          entry.resolve = settle
+          const remaining = row.timeout_at !== null ? Math.max(row.timeout_at - now(), 1) : 30_000
+          entry.timer = setTimeout(() => settle({ ok: false, reason: 'timeout', summary: `恢复作业 ${row.id} 超时未回包` }), remaining)
+          inFlight.set(row.id, entry)
+          summary.rehydratedInFlight++
+        } else {
+          record('markUnresolved', () => store!.markUnresolved(row.id, { reason: 'timeout' }))
+          if (isNavigationJobKind(row.kind as ExtensionJobKind)) record('applyCooldown', () => store!.applyCooldown(row.site))
+          summary.settledUnresolved++
+        }
+      } else {
+        if (!expired && job) {
+          const entry: QueuedJob = {
+            job,
+            resolve: null as unknown as (o: SubmitOutcome) => void,
+            timer: null,
+          }
+          const settle = armSettle(entry)
+          entry.resolve = settle
+          const remaining = row.timeout_at !== null ? Math.max(row.timeout_at - now(), 1) : 30_000
+          entry.timer = setTimeout(() => settle({ ok: false, reason: 'timeout', summary: `恢复作业 ${row.id} 超时未回包` }), remaining)
+          if (!dispatchToParked(entry)) queue.push(entry)
+          summary.requeued++
+        } else {
+          record('markVoid', () => store!.markVoid(row.id))
+          summary.voidedStale++
+        }
+      }
+    }
+    return summary
+  }
 
   /**
    * 协议处理器工厂:prefix='' 为独立桥形态(路径式 results);prefix='/v1/session/bridge'
@@ -363,6 +563,10 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
               return { capabilities: null }
             }
           })()
+          // 客户端注册落账(store 形态):轮询即刷新 origin/capabilities/last_seen(bridge_clients upsert)
+          if (pollerInfo.clientId) {
+            record('upsertClient', () => store!.upsertClient(pollerInfo.clientId!, origin as string, [...(pollerInfo.capabilities ?? [])]))
+          }
           const next = takeMatching(pollerInfo.capabilities, origin as string, pollerInfo.clientId)
           if (next) { finish(200, { job: next.job }); return }
           // 长轮询:hold ≤ JOBS_LONG_POLL_MS(必须 < MV3 SW 30s 存活窗口,每次响应都续命);
@@ -410,6 +614,15 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
             finish(403, { ok: false, error: '作业由另一扩展客户端领取' })
             return
           }
+          // 未知 jobId(批次 A):不再 200 静默丢弃——404 明示,孤儿回包内容落账
+          // (status='unresolved',result_json 保留)供对账。扩展 postResult 本就有
+          // catch 且不检查状态码(extension/background.js),协议兼容零改动。
+          const known = assigned !== undefined || queue.some((q) => q.job.jobId === jobId)
+          if (!known) {
+            record('orphan-result', () => store!.recordOrphanResult(jobId, parsed))
+            finish(404, { ok: false, error: 'unknown-job' })
+            return
+          }
           finish(200, { ok: true })
           resolveJob(jobId, parsed)
         })
@@ -425,6 +638,7 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
     stats,
     handleRequest: makeHandler('', false),
     handleMountedRequest: makeHandler('/v1/session/bridge', true),
+    ...(store ? { recoverOnBoot } : {}),
     submit(job, submitOpts = {}) {
       const extensionWaitMs = submitOpts.extensionWaitMs ?? DEFAULT_EXTENSION_WAIT_MS
       const timeoutMs = submitOpts.timeoutMs ?? job.timeoutMs ?? 30_000
@@ -439,14 +653,19 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
           resolve({ ok: false, reason: 'bridge-unavailable', summary: '指定扩展客户端标识无效' })
           return
         }
-        const entry: QueuedJob = { job: full, resolve: null as unknown as (o: SubmitOutcome) => void, timer: null, preferredOrigin: submitOpts.preferredOrigin, preferredClientId: submitOpts.preferredClientId }
-        const settle = (outcome: SubmitOutcome): void => {
-          if (entry.timer) clearTimeout(entry.timer)
-          const i = queue.findIndex((q) => q.job.jobId === full.jobId)
-          if (i >= 0) queue.splice(i, 1)
-          inFlight.delete(full.jobId)
-          resolve(outcome)
+        // write-before-submit(store 形态):先落 queued 再入队/派发——持久面失败即提交失败,
+        // 绝不派发无账作业。桌面纯内存形态此步整体跳过,行为零变化。
+        if (store) {
+          try {
+            store.insertQueuedJob(full, now() + timeoutMs)
+          } catch (e) {
+            resolve({ ok: false, reason: 'bridge-unavailable', summary: `桥账本写入失败,作业不入队:${e instanceof Error ? e.message : String(e)}` })
+            return
+          }
+          if (isNavigationJobKind(full.kind)) record('noteSiteHit', () => store!.noteSiteHit(full.site))
         }
+        const entry: QueuedJob = { job: full, resolve: null as unknown as (o: SubmitOutcome) => void, timer: null, preferredOrigin: submitOpts.preferredOrigin, preferredClientId: submitOpts.preferredClientId }
+        const settle = armSettle(entry, resolve)
         entry.resolve = settle
         entry.timer = setTimeout(() => {
           settle({ ok: false, reason: 'timeout', summary: `扩展未在 ${timeoutMs}ms 内回包(标签页无嗅探命中或扩展已停用)` })

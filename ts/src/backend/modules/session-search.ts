@@ -18,6 +18,8 @@
  *   GET  /v1/session/bridge/status  → 桥诊断(队列/在线态快照)
  *   POST /v1/session/bridge/jobs    → 扩展长轮询取活(hold ≤20s)
  *   POST /v1/session/bridge/results → 扩展回包(?jobId=;内核只支持精确路由)
+ *   POST /v1/session/bridge/events  → 扩展 workspace 事件批量上行(批次 B,2026-10-01;
+ *                                     body ≤256KB,逐条落 bridge_events,响应 {accepted,rejected})
  *
  * 红线继承:登录在供应商官网由人完成;challenged 即停;节律闸在 sessionDidaSearch
  * 内;本模块再加单飞锁(同供应商串行,防并发打站点)。桥端点在 bearer 之上再强制
@@ -29,16 +31,29 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { BackendModule } from '../kernel.ts'
 import { sessionDidaSearch, type SessionDidaResult } from '../../../capabilities/session-search.ts'
 import { DIDA_LOGIN_COOKIE_NAMES, DIDA_SITE_DOMAIN } from '../../../capabilities/session/adapters/dida-portal.ts'
-import { createBridgeJobQueue, type BridgeJobQueue } from '../../../capabilities/session/extension-bridge.ts'
+import { CLIENT_ID_RE, createBridgeJobQueue, EXTENSION_ORIGINS, type BridgeJobQueue } from '../../../capabilities/session/extension-bridge.ts'
+import { openBridgeLedgerStore, type BridgeEventInput, type BridgeLedgerStore } from '../../../capabilities/session/bridge-ledger.ts'
 import { extensionCookieNames, extensionOpenLogin, classifyBridgeFailure } from '../../../capabilities/session/extension-channel.ts'
+
+/** 事件上行端点路径(批次 B;导出供 extension-tests §38 与扩展侧 background.js 防漂移对账) */
+export const BRIDGE_EVENTS_PATH = '/v1/session/bridge/events'
+/** 事件上行 body 上限(事件是活动上下文非权威事实,256KB 足够一个批次;超限 400 整批拒绝) */
+export const BRIDGE_EVENTS_BODY_LIMIT = 256 * 1024
 
 export interface SessionSearchModuleOptions {
   apiKey: () => string
   /** 测试注入;缺省直连 sessionDidaSearch */
   search?: typeof sessionDidaSearch
   auditPath?: string
-  /** 测试注入;缺省模块内建进程内桥作业队列 */
+  /** 测试注入;缺省模块内建桥作业队列(给 stateRoot 时为 ledger-backed) */
   jobQueue?: BridgeJobQueue
+  /**
+   * 桥作业账本根(批次 A「桥作业账本化」,2026-10-01):提供且未注入 jobQueue 时,
+   * 队列/在飞/节律/客户端注册落 `<stateRoot>/gotry-state/bridge.db`(独立于
+   * gotry-state.db),启动即 recoverOnBoot(queued 重排/超时 claimed 结算),检索前
+   * 先读账本节律。缺省纯内存——测试与桌面形态零变化。
+   */
+  stateRoot?: string
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -94,6 +109,32 @@ function ensureStringField(obj: Record<string, unknown>, key: 'supplier' | 'url'
   const v = obj[key]
   if (v !== undefined && typeof v !== 'string') return key === 'supplier' ? 'supplier-type' : 'url-type'
   return null
+}
+
+/**
+ * 单条上行事件的形状守卫(批次 B):{kind, site?, subject, payload_json, clientTs?, idem_key?}。
+ * 返回 null = 该条拒绝(计入 rejected,不中断批次);返回对象 = 可落账输入。
+ *  - payload_json 只约束 string,内容原样落账不二次解析(事件是活动上下文,消费方自鉴);
+ *  - clientTs 仅约束有限数值(扩展侧时钟,不入列——账本唯一时间轴是服务端 ts);
+ *  - site/idem_key 空字符串按缺省处理(NULL 不参与幂等去重)。
+ */
+function validateBridgeEvent(clientId: string, ev: unknown): BridgeEventInput | null {
+  if (ev === null || typeof ev !== 'object' || Array.isArray(ev)) return null
+  const rec = ev as Record<string, unknown>
+  if (typeof rec.kind !== 'string' || !rec.kind) return null
+  if (rec.site !== undefined && typeof rec.site !== 'string') return null
+  if (typeof rec.subject !== 'string' || !rec.subject) return null
+  if (typeof rec.payload_json !== 'string') return null
+  if (rec.clientTs !== undefined && (typeof rec.clientTs !== 'number' || !Number.isFinite(rec.clientTs))) return null
+  if (rec.idem_key !== undefined && (typeof rec.idem_key !== 'string' || !rec.idem_key)) return null
+  return {
+    client_id: clientId,
+    kind: rec.kind,
+    site: typeof rec.site === 'string' && rec.site ? rec.site : null,
+    subject: rec.subject,
+    payload_json: rec.payload_json,
+    idem_key: typeof rec.idem_key === 'string' && rec.idem_key ? rec.idem_key : null,
+  }
 }
 
 /**
@@ -203,13 +244,99 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 export function startSessionSearchModule(options: SessionSearchModuleOptions): BackendModule {
   const search = options.search ?? sessionDidaSearch
-  const queue = options.jobQueue ?? createBridgeJobQueue()
+  // 桥队列形态(批次 A):注入 jobQueue(测试)→ 原样;给 stateRoot(挂载路径)→
+  // ledger-backed(store 注入 createBridgeJobQueue);两者皆缺 → 纯内存(现状)。
+  let ledger: BridgeLedgerStore | undefined
+  let queue: BridgeJobQueue
+  if (options.jobQueue) {
+    queue = options.jobQueue
+  } else if (options.stateRoot !== undefined) {
+    try {
+      ledger = openBridgeLedgerStore(options.stateRoot)
+    } catch (e) {
+      // 账本开不了不打断服务:退回纯内存(重启丢在飞的旧缺陷面),stderr 留痕
+      process.stderr.write(`[session-search] 桥账本打开失败,退回纯内存队列: ${e instanceof Error ? e.message : String(e)}\n`)
+    }
+    queue = createBridgeJobQueue(ledger ? { store: ledger } : {})
+  } else {
+    queue = createBridgeJobQueue()
+  }
+  // 开机恢复(gotry-backend 会话模块启动路径):queued→重排;claimed 已超时→
+  // unresolved+节律记账;claimed 未超时→复活 inFlight(重启不再丢在飞作业)。
+  const recovery = queue.recoverOnBoot?.()
+  if (recovery && recovery.requeued + recovery.rehydratedInFlight + recovery.settledUnresolved + recovery.voidedStale > 0) {
+    process.stderr.write(`[session-search] 桥账本开机恢复:重排 ${recovery.requeued},复活在飞 ${recovery.rehydratedInFlight},超时结算 ${recovery.settledUnresolved},过期作废 ${recovery.voidedStale}\n`)
+  }
   const authorized = (req: IncomingMessage, res: ServerResponse): boolean => {
     const key = options.apiKey()
     const auth = String(req.headers.authorization ?? '')
     if (!key) { sendJson(res, 503, { ok: false, error: 'GOTRY_BACKEND_SESSION_API_KEY 未配置(fail-closed)' }); return false }
     if (auth !== `Bearer ${key}`) { sendJson(res, 403, { ok: false, error: 'forbidden' }); return false }
     return true
+  }
+
+  /**
+   * 扩展 workspace 事件批量上行(批次 B,2026-10-01):bearer(路由前置 authorized)之上
+   * 再强制 Origin ∈ 扩展白名单——与 /jobs 同链(同一 EXTENSION_ORIGINS 常量,网页跨域
+   * 请求必带邪恶 Origin,双保险)。body ≤256KB 超限 400 整批拒绝;逐条形状校验后落
+   * bridge_events:合法落账 accepted++,形状非法/idem_key 重复 rejected++(重试幂等:
+   * 同 idem_key 重发不重复落行)。事件是活动上下文非权威事实,批次内单条账本写失败
+   * 降级为该条 rejected + stderr 留痕,不打断批次也不抛出(route 句柄 void 启动,
+   * 逃逸 reject 会变 unhandledRejection 终止进程)。无账本形态(未给 stateRoot)
+   * fail-closed 503:事件无处落账,不假成功。
+   */
+  const extensionOrigins = new Set(EXTENSION_ORIGINS)
+  async function handleBridgeEvents(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const origin = req.headers.origin
+    if (typeof origin !== 'string' || !extensionOrigins.has(origin)) {
+      sendJson(res, 403, { ok: false, error: 'origin 不在桥白名单' })
+      return
+    }
+    if (!ledger) {
+      sendJson(res, 503, { ok: false, error: '事件账本未配置(缺 stateRoot 的纯内存形态不收事件,fail-closed)' })
+      return
+    }
+    let raw: string
+    try {
+      raw = await readBody(req, BRIDGE_EVENTS_BODY_LIMIT)
+    } catch (e) {
+      sendJson(res, 400, { ok: false, error: e instanceof Error ? e.message : 'body 读取失败' })
+      return
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      sendJson(res, 400, { ok: false, error: 'body 不是 JSON' })
+      return
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      sendJson(res, 400, { ok: false, error: 'body 必须是 JSON 对象' })
+      return
+    }
+    const rec = parsed as Record<string, unknown>
+    if (typeof rec.clientId !== 'string' || !CLIENT_ID_RE.test(rec.clientId)) {
+      sendJson(res, 400, { ok: false, error: 'clientId 必须是扩展客户端标识(UUID)' })
+      return
+    }
+    if (!Array.isArray(rec.events)) {
+      sendJson(res, 400, { ok: false, error: 'events 必须是数组' })
+      return
+    }
+    let accepted = 0
+    let rejected = 0
+    for (const ev of rec.events) {
+      const input = validateBridgeEvent(rec.clientId, ev)
+      if (!input) { rejected += 1; continue }
+      try {
+        if (ledger.insertEvent(input)) accepted += 1
+        else rejected += 1
+      } catch (e) {
+        rejected += 1
+        process.stderr.write(`[session-search] 桥事件落账失败(计入 rejected): ${e instanceof Error ? e.message : String(e)}\n`)
+      }
+    }
+    sendJson(res, 200, { ok: true, accepted, rejected })
   }
 
   async function handleStatus(res: ServerResponse): Promise<void> {
@@ -247,6 +374,19 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     const supplier = ((parsed.obj.supplier as string | undefined) ?? '').trim()
     if (supplier !== 'dida-portal') {
       sendJson(res, 400, { ok: false, error: `未知供应商通道 ${supplier || '(空)'}(M0 仅 dida-portal)` }); return
+    }
+    // 挂载路径节律读判定(批次 A):账本口径跨重启(超时结算/上一次提交都在库里),
+    // 与 sessionDidaSearch 的进程内节律闸双闸取严——内存闸挡本进程,账本闸挡重启前打过的站点。
+    const pacing = ledger?.pacingOf(supplier)
+    if (pacing && Date.now() < pacing.cooldownUntil) {
+      const retryAfterSec = Math.max(1, Math.ceil((pacing.cooldownUntil - Date.now()) / 1_000))
+      res.setHeader('retry-after', String(retryAfterSec))
+      sendJson(res, 429, {
+        ok: false,
+        verdict: 'cooldown',
+        error: `bridge ledger cooldown: site ${supplier} cooling down until ${new Date(pacing.cooldownUntil).toISOString()}(last ledger hit ${Date.now() - pacing.lastHitAt}ms ago)`,
+      })
+      return
     }
     try {
       const q = queryCheck.query
@@ -324,7 +464,9 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
       { method: 'GET', path: '/v1/session/bridge/status', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
       { method: 'POST', path: '/v1/session/bridge/jobs', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
       { method: 'POST', path: '/v1/session/bridge/results', handle: (req, res) => { if (authorized(req, res)) queue.handleMountedRequest(req, res) } },
+      // 事件上行(批次 B):bearer + Origin 白名单双校验与 /jobs 同链,处理器内落 bridge_events
+      { method: 'POST', path: BRIDGE_EVENTS_PATH, handle: (req, res) => { if (authorized(req, res)) void handleBridgeEvents(req, res) } },
     ],
-    close: () => queue.close(),
+    close: () => queue.close().then(() => { ledger?.close() }),
   }
 }
