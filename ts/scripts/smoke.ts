@@ -18,6 +18,13 @@ interface ToolLike {
   presentResult?: (args: Record<string, unknown>, result: unknown) => { card?: string; title?: string; content?: Array<{ type: string; text?: string }> } | undefined
 }
 
+// 日期槽位动态化:live 检索(flyai/session)的入参日期必须在未来——硬编码日期
+// 会在次日翻成 past date 被 date-gate 拒绝(2026-10-02 实爆:2026-10-01 变过去)。
+const futureDate = (offsetDays: number): string => new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10)
+const SMOKE_FLIGHT_DATE = futureDate(7)
+const SMOKE_HOTEL_CHECKIN = futureDate(10)
+const SMOKE_HOTEL_CHECKOUT = futureDate(12)
+
 async function main() {
   // 巡检状态纪律:smoke 的探针数据(wish/profile/sidecar)写进独立临时 stateRoot,
   // 不与真实用户状态(gotry-state)混居;结束即删
@@ -381,7 +388,7 @@ async function main() {
 
   // 12) 会话数据面工具(P3 切片1):官方通道 live + 会话工具 needs-login 合同(隔离 profile,零导航)
   {
-    const fa = await byName('gotry_flyai_search').execute({ kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string; setup?: string }
+    const fa = await byName('gotry_flyai_search').execute({ kind: 'flight', from: '上海', to: '丽江', date: SMOKE_FLIGHT_DATE }, null) as { ok?: boolean; verdict?: string; via?: string; options?: unknown[]; evidence?: string; error?: string; setup?: string }
     const faBlocked = fa.verdict === 'error' && /sentinel|block|trial limit/i.test(fa.error ?? '')
     // 端点不可达/超时(出口 IP 被拒或网络抖动)→ 工具以带证据链的 error 终态优雅降级,同样合法
     const faErrTerminal = fa.ok === false && fa.verdict === 'error' && /^flyai-error$/.test(String(fa.via ?? '')) && /\[实时API:flyai@error@/.test(String(fa.evidence ?? ''))
@@ -416,7 +423,7 @@ async function main() {
       const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR
       process.env.CHROME_USER_DATA_DIR = prof
       try {
-        ss = await byName('gotry_session_search').execute({ from: '上海', to: '丽江', date: '2026-10-01' }, null) as typeof ss
+        ss = await byName('gotry_session_search').execute({ from: '上海', to: '丽江', date: SMOKE_FLIGHT_DATE }, null) as typeof ss
       } finally {
         if (previousChromeUserDataDir === undefined) delete process.env.CHROME_USER_DATA_DIR
         else process.env.CHROME_USER_DATA_DIR = previousChromeUserDataDir
@@ -435,7 +442,7 @@ async function main() {
         : `live hit(${fa.options?.length ?? 0} 条)`
     console.log(`session-face tools: flyai ${faOutcome}; session cdp 隔离门禁=needs-attach`)
     // 酒店平铺接入(2026-08-29):同一 flyai 工具 kind=hotel——live 三合法终态(试用达限 needs-setup / 限流·端点降级 or hit)
-    const fh = await byName('gotry_flyai_search').execute({ kind: 'hotel', to: '大理', checkIn: '2026-10-01', checkOut: '2026-10-03' }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string; setup?: string }
+    const fh = await byName('gotry_flyai_search').execute({ kind: 'hotel', to: '大理', checkIn: SMOKE_HOTEL_CHECKIN, checkOut: SMOKE_HOTEL_CHECKOUT }, null) as { ok?: boolean; verdict?: string; via?: string; hotels?: unknown[]; evidence?: string; error?: string; setup?: string }
     const fhBlocked = fh.verdict === 'error' && /sentinel|block|trial limit/i.test(fh.error ?? '')
     const fhErrTerminal = fh.ok === false && fh.verdict === 'error' && /^flyai-error$/.test(String(fh.via ?? '')) && /\[实时API:flyai@error@/.test(String(fh.evidence ?? ''))
     const fhNeedsSetup = fh.ok === false && fh.verdict === 'needs-setup'
@@ -453,7 +460,7 @@ async function main() {
     if (fhDest.ok !== false) throw new Error('FAIL: hotel 缺目的地应参数闸拒绝')
     // D-30 迁移锁:legacy blob 形态({query:{...}} 包裹)在宿主权校验即被结构化拒绝——
     // defineTool validateArgs 抛 ToolArgsError,guardToolExecute 兜成 ADR-13 ToolFailure(ok:false+evidence)
-    const faLegacy = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: '2026-10-01' } } as never, null) as { ok?: boolean; summary?: string; evidence?: string }
+    const faLegacy = await byName('gotry_flyai_search').execute({ query: { kind: 'flight', from: '上海', to: '丽江', date: SMOKE_FLIGHT_DATE } } as never, null) as { ok?: boolean; summary?: string; evidence?: string }
     if (!(faLegacy.ok === false && !!faLegacy.evidence && /内部错误|参数|schema|violat/i.test(String(faLegacy.summary ?? '')))) {
       throw new Error(`FAIL: flyai legacy blob 形态应被 typed 契约结构化拒绝(ADR-13 ToolFailure),实际:${JSON.stringify(faLegacy).slice(0, 200)}`)
     }
