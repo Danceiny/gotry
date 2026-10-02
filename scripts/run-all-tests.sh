@@ -655,6 +655,10 @@ echo "=== 72. 离线行政区划 atlas 加载器(issue #342 机制就绪·默认
 echo "=== 73. 服务运行时观测补齐(#272/#511,2026-10-02 UAT 只读实查证实的证据留存缺口:session-search verdict 结构化日志——形状/脱敏哨兵/≤200 摘要/单行化/rates·evidence 不入日志;planner 子进程 boot 观测——HARNESS_BOOT_STAGE 成功行含 initializeMs·reused 不重复打/HARNESS_BOOT_TIMEOUT 分类行/PLANNER_BOOT_TIMEOUT 结算行;gotry-backend 启动阶段行——CORE_BOOT_STAGE module_mounted×3+listening/CORE_BOOT_FAILURE 形状;全离线,fake search/runPort 注入+临时 fixture worker 子进程+隔离 stateRoot) ==="
 (cd ts && npx tsx scripts/observability-tests.ts) || FAIL=1
 
+echo
+echo "=== 74. 会话双区记忆分区契约纯核(P4-1,design/session-dual-zone-memory-design.md §5:闭集 hot_context·trip_notebook 未知拒收/写侧负面清单证件·手机号·URL·凭证零入区/owner 确认引用闸/rev CAS 同 rev 幂等 no-op·stale_rev fail-closed 类型化/注入时钟分层 TTL 30min resource·24h intent 只自写入起算读不续命/确定性 fold 重建==直读;纯函数零 IO·零定时器·零网络,不接账本(P4-2)与会话(P4-3),内核 manifest 零漂移;全离线;编号 71→74:§71 FX/#606、§72 atlas/#608、§73 观测/#607 先后占号) ==="
+(cd ts && npx tsx scripts/session-zones-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
