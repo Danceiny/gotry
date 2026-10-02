@@ -24,6 +24,12 @@
  * 红线继承:登录在供应商官网由人完成;challenged 即停;节律闸在 sessionDidaSearch
  * 内;本模块再加单飞锁(同供应商串行,防并发打站点)。桥端点在 bearer 之上再强制
  * Origin ∈ 扩展白名单(网页跨域请求必带邪恶 Origin,双保险)。
+ *
+ * verdict 结构化日志(#272 观测缺口,2026-10-02 UAT 只读实查证实:verdict 此前
+ * 无任何日志载体——BFF 代理日志与 gotry 应用日志均不落):search/status 每次
+ * 结算在 stderr 落一行 `[session-search] verdict {json}`(ts/supplier/verdict/
+ * latencyMs/error 摘要,脱敏)。与桥账本(bridge_jobs,PR #601)互补——日志管
+ * 「看」,账本管「恢复」,verdict 不写 bridge_jobs。
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -54,6 +60,62 @@ export interface SessionSearchModuleOptions {
    * 先读账本节律。缺省纯内存——测试与桌面形态零变化。
    */
   stateRoot?: string
+  /**
+   * verdict 结构化日志通道(测试注入;缺省 process.stderr 一行一条,#272)。
+   * 只收模块结算的脱敏 verdict 行,不影响 HTTP 响应面。
+   */
+  verdictLog?: (line: string) => void
+}
+
+/** verdict 行 error 摘要上限(#272:结构化行的脱敏摘要,不是传输面文案) */
+const VERDICT_ERROR_SUMMARY_LIMIT = 200
+
+/**
+ * error 摘要里必须脱敏的形状(#272):凭据词出现在键名里(含复合键,如
+ * SESSION_TICKET=…)时其赋值整体替换为 [REDACTED];独立 Bearer 头单列。
+ * 只换值、保留键名——键名本身是脱敏证据,值才是泄漏面。
+ */
+const VERDICT_ERROR_REDACTION_ASSIGNMENT = /\b([\w-]*(?:cookie|ticket|token|sessionid|authorization|credential)[\w-]*)(\s*[:=]\s*)[^\s;,"'&]+/gi
+const VERDICT_ERROR_REDACTION_BEARER = /\b(bearer)(\s+)[^\s;,"'&]+/gi
+
+/**
+ * verdict 行的 error 摘要(#272):单行化(防日志注入)+ 凭据形状脱敏 + 截断到
+ * 200 字符。绝不携带 rates/evidence/回包内容——那些字段根本不进本行;能力层的
+ * error 按合同是主机固定文案,这里再做一道防御性脱敏(离线哨兵在
+ * observability-tests 里锁)。
+ */
+function redactVerdictErrorSummary(error: string | undefined): string | undefined {
+  if (!error) return undefined
+  const flattened = error.replaceAll(/[\r\n\t]+/g, ' ').trim()
+  const redacted = flattened
+    .replace(VERDICT_ERROR_REDACTION_BEARER, (_match, scheme: string, sep: string) => `${scheme}${sep}[REDACTED]`)
+    .replace(VERDICT_ERROR_REDACTION_ASSIGNMENT, (_match, name: string, sep: string) => `${name}${sep}[REDACTED]`)
+  if (!redacted) return undefined
+  return redacted.length > VERDICT_ERROR_SUMMARY_LIMIT
+    ? `${redacted.slice(0, VERDICT_ERROR_SUMMARY_LIMIT - 1)}…`
+    : redacted
+}
+
+/** verdict 行的结算面:search=会话检索,status=登录态探测 */
+type SessionVerdictSurface = 'search' | 'status'
+
+function formatSessionVerdictLine(entry: {
+  surface: SessionVerdictSurface
+  supplier: string
+  verdict: string
+  latencyMs: number
+  error?: string
+}): string {
+  const record: Record<string, unknown> = {
+    ts: new Date().toISOString(),
+    surface: entry.surface,
+    supplier: entry.supplier,
+    verdict: entry.verdict,
+    latencyMs: Math.max(0, Math.round(entry.latencyMs)),
+  }
+  const error = redactVerdictErrorSummary(entry.error)
+  if (error !== undefined) record.error = error
+  return `[session-search] verdict ${JSON.stringify(record)}`
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -244,6 +306,13 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 export function startSessionSearchModule(options: SessionSearchModuleOptions): BackendModule {
   const search = options.search ?? sessionDidaSearch
+  // verdict 结构化日志通道(#272):缺省 stderr(服务运行时既见面),测试注入收集器
+  const verdictEmit = options.verdictLog ?? ((line: string) => { process.stderr.write(`${line}\n`) })
+  const verdictLog = (entry: Parameters<typeof formatSessionVerdictLine>[0]): void => {
+    try {
+      verdictEmit(formatSessionVerdictLine(entry))
+    } catch { /* 结算日志绝不反噬 HTTP 结算路径 */ }
+  }
   // 桥队列形态(批次 A):注入 jobQueue(测试)→ 原样;给 stateRoot(挂载路径)→
   // ledger-backed(store 注入 createBridgeJobQueue);两者皆缺 → 纯内存(现状)。
   let ledger: BridgeLedgerStore | undefined
@@ -340,6 +409,7 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
   }
 
   async function handleStatus(res: ServerResponse): Promise<void> {
+    const startedAt = Date.now()
     const checkedAt = new Date().toISOString()
     if (!queue.extensionConnected()) {
       sendJson(res, 200, {
@@ -348,12 +418,14 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
         bridge: queue.stats(),
         checkedAt,
       })
+      verdictLog({ surface: 'status', supplier: 'dida-portal', verdict: 'needs-extension', latencyMs: Date.now() - startedAt })
       return
     }
     const login = await extensionCookieNames({ site: 'dida-portal', domain: DIDA_SITE_DOMAIN, ticketNames: DIDA_LOGIN_COOKIE_NAMES, timeoutMs: 20_000 }, queue)
     if (!login.ok) {
       const verdict = classifyBridgeFailure(login.kind)
       sendJson(res, 200, { ok: true, suppliers: [{ supplier: 'dida-portal', loggedIn: false, reason: verdict, detail: login.summary }], bridge: queue.stats(), checkedAt })
+      verdictLog({ surface: 'status', supplier: 'dida-portal', verdict, latencyMs: Date.now() - startedAt, error: login.summary })
       return
     }
     sendJson(res, 200, {
@@ -362,9 +434,12 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
       bridge: queue.stats(),
       checkedAt,
     })
+    // tickets 只有 cookie 名级(值零过手),verdict 行也只落登录态结论本身
+    verdictLog({ surface: 'status', supplier: 'dida-portal', verdict: login.tickets.length > 0 ? 'logged-in' : 'needs-login', latencyMs: Date.now() - startedAt })
   }
 
   async function handleSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const startedAt = Date.now()
     const parsed = await readAndParseObjectBody(req)
     if ('code' in parsed) { sendJson(res, 400, { ok: false, error: validationMessage(parsed.code) }); return }
     const supplierType = ensureStringField(parsed.obj, 'supplier')
@@ -386,6 +461,7 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
         verdict: 'cooldown',
         error: `bridge ledger cooldown: site ${supplier} cooling down until ${new Date(pacing.cooldownUntil).toISOString()}(last ledger hit ${Date.now() - pacing.lastHitAt}ms ago)`,
       })
+      verdictLog({ surface: 'search', supplier, verdict: 'cooldown', latencyMs: Date.now() - startedAt, error: `bridge ledger cooldown retry-after ${retryAfterSec}s` })
       return
     }
     try {
@@ -409,6 +485,7 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
           evidence: result.evidence,
           ...extensionInstallFields(result),
         })
+        verdictLog({ surface: 'search', supplier, verdict: result.verdict, latencyMs: result.latencyMs, error: result.error })
         return
       }
       sendJson(res, 200, {
@@ -426,8 +503,11 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
         // (hotel-fe#3611)。
         ...extensionInstallFields(result),
       })
+      // 结算行只落 verdict/延迟/脱敏 error;rates 与 evidence(回包形状)永不进日志
+      verdictLog({ surface: 'search', supplier, verdict: result.verdict, latencyMs: result.latencyMs, error: result.error })
     } catch (e) {
       sendJson(res, 500, { ok: false, error: `会话检索异常: ${e instanceof Error ? e.message.slice(0, 200) : String(e)}` })
+      verdictLog({ surface: 'search', supplier, verdict: 'error', latencyMs: Date.now() - startedAt, error: e instanceof Error ? e.message : String(e) })
     }
   }
 

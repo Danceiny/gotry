@@ -23,6 +23,13 @@ export interface ManagedDshRunPortOptions {
   env?: NodeJS.ProcessEnv
   /** Test seam overriding the failure-path group snapshot; production uses the safe ps snapshot. */
   groupObserver?: typeof snapshotManagedDshGroup
+  /**
+   * Boot-marker channel (#511): receives one `HARNESS_BOOT_STAGE …` line per
+   * completed initialize handshake and one `HARNESS_BOOT_TIMEOUT …` line when
+   * the worker's own handshake deadline expires. Defaults to process stderr —
+   * the serving process log surface these markers were missing from.
+   */
+  bootLog?: (line: string) => void
   [key: string]: unknown
 }
 
@@ -59,10 +66,12 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   constructor(options: ManagedDshRunPortOptions = {}) {
     const defaultWorker = join(dirname(fileURLToPath(import.meta.url)), 'dsh-worker.js')
     const workerPath = options.workerPath ?? (existsSync(defaultWorker) ? defaultWorker : defaultWorker.replace(/\.js$/, '.ts'))
-    const { workerPath: _worker, graceMs = 500, cleanupRole, env, groupObserver, ...harnessOptions } = options
+    const { workerPath: _worker, graceMs = 500, cleanupRole, env, groupObserver, bootLog, ...harnessOptions } = options
     this.cleanupRole = cleanupRole ?? 'unspecified'
     this.graceMs = graceMs
     this.groupObserver = groupObserver ?? snapshotManagedDshGroup
+    this.bootLog = bootLog ?? ((line: string) => { process.stderr.write(`${line}\n`) })
+    this.constructedAtMs = Date.now()
     this.runtime = new LocalSubprocessRuntime(new Context())
     this.handle = this.runtime.spawn({
       argv: workerLaunch(workerPath),
@@ -94,7 +103,22 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
   private readonly harnessOptions: Record<string, unknown>
   private readonly cleanupDeadlineMs: number
   private readonly groupObserver: typeof snapshotManagedDshGroup
+  private readonly bootLog: (line: string) => void
+  private readonly constructedAtMs: number
   private booted: DshBootObservation | undefined
+
+  /**
+   * #511: surface the boot markers in the serving process. The four startup
+   * marker families previously existed only in build-time proof output, so a
+   * recurrence in service runtime left nothing to grep. Payloads are closed
+   * shapes only — role, timings; never prompts, provider fragments, or
+   * credentials.
+   */
+  private emitBootLog(line: string): void {
+    try {
+      this.bootLog(line)
+    } catch { /* boot markers must never break the worker protocol */ }
+  }
 
   /**
    * What the most recent worker request paid for the initialize handshake: the
@@ -134,6 +158,11 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
         // a request killed after booting has left this measurement behind.
         if (message.boot) {
           this.booted = message.boot
+          // One line per real subprocess boot (#511): only a 'started'
+          // handshake measured an initialize; 'reused' rode an earlier one.
+          if (message.boot.mode === 'started') {
+            this.emitBootLog(`HARNESS_BOOT_STAGE ${JSON.stringify({ role: this.cleanupRole, initializeMs: message.boot.initializeMs, mode: 'started' })}`)
+          }
           if (message.ok === undefined) continue
         }
         const waiter = this.pending.get(message.id); if (!waiter) continue
@@ -141,7 +170,19 @@ export class ManagedDshRunPort implements DshPlannerRunPort {
         if (message.ok) waiter.ok(message.result)
         // Worker stdout is a process boundary: an arbitrary payload must never
         // become the error the planner classifies on.
-        else if (typeof message.error === 'string' && WORKER_FAILURE_CODES.has(message.error)) waiter.fail(new Error(message.error))
+        else if (typeof message.error === 'string' && WORKER_FAILURE_CODES.has(message.error)) {
+          if (message.error === 'HARNESS_BOOT_TIMEOUT') {
+            // The worker's own initialize deadline expired before any handshake
+            // completed; record the closed classification plus what this port
+            // observable spent on it (closeMs belongs to cleanup diagnostics).
+            this.emitBootLog(`HARNESS_BOOT_TIMEOUT ${JSON.stringify({
+              role: this.cleanupRole,
+              elapsedMs: Date.now() - this.constructedAtMs,
+              initializeMs: this.booted?.initializeMs ?? null,
+            })}`)
+          }
+          waiter.fail(new Error(message.error))
+        }
         else waiter.fail(new Error('HARNESS_RUN_FAILED'))
       } catch (error) { this.failPending(error instanceof Error ? error : new Error(String(error))) }
     }
