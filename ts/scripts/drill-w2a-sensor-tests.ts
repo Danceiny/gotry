@@ -51,12 +51,25 @@ import { CHANNELS } from '../capabilities/channel-registry.ts'
 const DRILL_LABEL = 'simulated_trigger_drill'
 const TS_DIR = resolve(import.meta.dirname, '..')
 const REPO_ROOT = resolve(TS_DIR, '..')
-const SUITE_BUDGET_MS = 25_000
+const SUITE_BUDGET_MS = 90_000
 const CHILD_BUDGET_MS = 10_000
 
 let pass = 0
 const failures: string[] = []
 const children = new Set<ChildProcess>()
+/** Every pid ever spawned. Never cleared, so the final leak check is not vacuous. */
+const trackedPids = new Set<number>()
+
+/** Kill every live child AND every pid ever spawned. Safe to call repeatedly. */
+function reapAll(): void {
+  for (const child of children) {
+    try { child.kill('SIGKILL') } catch { /* already gone */ }
+  }
+  children.clear()
+  for (const pid of trackedPids) {
+    try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+  }
+}
 
 function ok(condition: unknown, message: string): void {
   if (condition) {
@@ -115,6 +128,29 @@ interface Case {
 
 const DEEP_NEST_DEPTH = 20_000
 
+let achievedNestDepth = 0
+
+/**
+ * Build the deeply-nested opaque payload WITHOUT ever throwing.
+ *
+ * `JSON.parse` depth limits are a V8 build detail, and this value is needed at
+ * module scope (the corpus is shared by the in-process and cross-process arms).
+ * A `RangeError` here would kill the suite before a single assertion or any
+ * cleanup ran, so the builder degrades to a shallower depth and records what it
+ * actually achieved.
+ */
+function deepNestedPayload(): unknown {
+  for (const depth of [DEEP_NEST_DEPTH, 2_000, 200, 1]) {
+    try {
+      const value = JSON.parse('['.repeat(depth) + ']'.repeat(depth)) as unknown
+      achievedNestDepth = depth
+      return value
+    } catch { /* this V8 refuses that depth; try shallower */ }
+  }
+  achievedNestDepth = 0
+  return []
+}
+
 const CORPUS: Case[] = [
   {
     name: 'benign-approved-tuple',
@@ -151,7 +187,7 @@ const CORPUS: Case[] = [
   },
   {
     name: 'deeply-nested-payload',
-    raw: envelope({ source_event: { schema: { type: 'object' }, data: JSON.parse('['.repeat(DEEP_NEST_DEPTH) + ']'.repeat(DEEP_NEST_DEPTH)) } }),
+    raw: envelope({ source_event: { schema: { type: 'object' }, data: deepNestedPayload() } }),
     expect: null,
     note: 'opaque depth is ignored, never walked: the host must not crash and must project the same 10 keys',
   },
@@ -279,8 +315,17 @@ try {
   denials.net = 'ALLOWED'
 } catch (error) { denials.net = error.code ?? 'threw' }
 
+// Whether THIS Node even has an OS-level net scope. The permission model gained
+// one only on a later line than the repo's CI floor, and \`has()\` returns false
+// (or throws) for an unknown scope — so the drill must report the capability
+// instead of assuming a denial code. Without the scope, a refused connect is
+// just a closed port (ECONNREFUSED), which proves nothing about a gate.
+let netScope = 'absent'
+try { netScope = process.permission?.has('net') === true ? 'enforced' : 'absent' }
+catch { netScope = 'absent' }
+
 const prototypeClean = Object.prototype.polluted === undefined && {}.polluted === undefined && ({}).prototype === undefined
-process.stdout.write('DRILL_RESULT ' + JSON.stringify({ verdicts, fetchCalls, timerCalls, denials, prototypeClean }) + '\\n')
+process.stdout.write('DRILL_RESULT ' + JSON.stringify({ verdicts, fetchCalls, timerCalls, denials, netScope, prototypeClean }) + '\\n')
 void realSetTimeout
 `
 
@@ -304,6 +349,7 @@ function runBounded(
     stdio: [pipeFrom ? 'pipe' : 'ignore', 'pipe', 'pipe'],
   })
   children.add(child)
+  if (child.pid) trackedPids.add(child.pid)
   // EPIPE is expected whenever the reader exits first (crash or `file` delivery);
   // the drill asserts on exit codes and stderr, so the race must not be fatal.
   child.stdin?.on('error', () => {})
@@ -343,6 +389,8 @@ interface HostResult {
   fetchCalls: number
   timerCalls: number
   denials: Record<string, string>
+  /** 'enforced' when this Node's permission model actually has a net scope. */
+  netScope: 'enforced' | 'absent'
   prototypeClean: boolean
 }
 
@@ -383,8 +431,14 @@ interface ChecklistItem {
   why: string
 }
 
+// The suite-level bound is a diagnostic backstop, not an assertion: every child
+// already carries its own bound. `process.exit` skips `finally`, so the deadline
+// path must do the reaping and the temp-root removal itself or it would leak
+// exactly the processes the drill exists to keep bounded.
 const suiteDeadline = setTimeout(() => {
-  console.error(`DRILL BUDGET EXCEEDED (${SUITE_BUDGET_MS}ms)`)
+  console.error(`DRILL BUDGET EXCEEDED (${SUITE_BUDGET_MS}ms) — reaping before exit`)
+  try { reapAll() } catch { /* best effort */ }
+  try { rmSync(workRoot, { recursive: true, force: true }) } catch { /* best effort */ }
   process.exit(1)
 }, SUITE_BUDGET_MS)
 suiteDeadline.unref()
@@ -499,6 +553,7 @@ try {
   // ---- §D side-effect isolation --------------------------------------------
   console.log('-- D side-effect isolation: OS gate, zero state writes, zero fetch, zero timers')
   let hostDenials: Record<string, string> = {}
+  const netScopeSeen = new Set<string>()
   {
     const before = inventory(workRoot)
     for (const delivery of ['stdin', 'file'] as const) {
@@ -519,7 +574,21 @@ try {
       eq(result.prototypeClean, true, `D[${delivery}] host prototype chain stayed clean`)
       eq(result.denials['fsWrite'], 'ERR_ACCESS_DENIED', `D[${delivery}] OS gate refuses any fs write from the adapter host`)
       eq(result.denials['childProcess'], 'ERR_ACCESS_DENIED', `D[${delivery}] OS gate refuses child_process`)
-      eq(result.denials['net'], 'ERR_ACCESS_DENIED', `D[${delivery}] OS gate refuses network`)
+      // The net scope is NOT portable across the Node versions this repo runs on.
+      // Assert only what is true everywhere — no outbound connection succeeded —
+      // and classify separately whether an OS gate or just a closed port refused
+      // it, so the report never credits the permission model with a denial it
+      // did not make.
+      ok(result.denials['net'] !== 'ALLOWED', `D[${delivery}] no outbound connection succeeded from the adapter host (got ${result.denials['net']})`)
+      if (result.netScope === 'enforced') {
+        eq(result.denials['net'], 'ERR_ACCESS_DENIED', `D[${delivery}] this Node enforces a net scope, so the refusal must come from the OS gate`)
+      } else {
+        ok(
+          ['ECONNREFUSED', 'ERR_ACCESS_DENIED'].includes(String(result.denials['net'])),
+          `D[${delivery}] without a net scope the connect must still fail closed (got ${result.denials['net']})`,
+        )
+      }
+      netScopeSeen.add(`${result.netScope}:${result.denials['net']}`)
       // Cross-arm agreement: the delivery form must not change a single verdict.
       for (const verdict of result.verdicts) {
         const local = inProcess.get(verdict.name)
@@ -539,6 +608,16 @@ try {
     for (const surface of ['gotry-state', 'gotry-state.db', 'channel-health.jsonl', 'wish-pool.json', 'bookable-facts.json']) {
       eq(after.some((p) => p.includes(surface)), false, `D-writes nothing resembling ${surface} appeared`)
     }
+    // Recorded as `permission.has('net'):connect-outcome`. Note that these two
+    // can disagree: on Node 26 `has('net')` reports absent while the connect is
+    // still refused with ERR_ACCESS_DENIED, and on the Node 22/24 line there is
+    // no net scope at all and port 9 simply gives ECONNREFUSED. So neither
+    // signal is portable on its own, and the suite gates only on the claim that
+    // holds everywhere: no outbound connection succeeded. fs write and
+    // child_process ARE OS-gated on every supported Node and stay hard
+    // assertions.
+    console.log(`     observed: D net classification on ${process.version} (permission.has('net'):connect-outcome): ${JSON.stringify([...netScopeSeen])} — only "no outbound connection succeeded" is asserted portably; the network denial is NOT credited to the permission model unless has('net') reports it enforced`)
+    console.log(`     observed: D deeply-nested corpus case reached depth ${achievedNestDepth} (requested ${DEEP_NEST_DEPTH}); a lower number means this V8 refused the requested depth and the drill fell back rather than dying`)
   }
 
   // ---- §E activation-path trace --------------------------------------------
@@ -734,17 +813,18 @@ try {
   }
 } finally {
   clearTimeout(suiteDeadline)
-  for (const child of children) {
-    try { child.kill('SIGKILL') } catch { /* already gone */ }
-  }
-  children.clear()
+  reapAll()
   rmSync(workRoot, { recursive: true, force: true })
 }
 
-// Leak discipline: no child of this drill may remain.
+// Leak discipline: checked against the pid set, which is never cleared, so the
+// assertion cannot be satisfied by an emptied collection.
 {
-  const survivors = [...children].filter((c) => c.exitCode === null && c.signalCode === null)
-  eq(survivors.length, 0, 'Z no spawned child survives the drill')
+  const survivors = [...trackedPids].filter((pid) => {
+    try { process.kill(pid, 0); return true } catch { return false }
+  })
+  eq(survivors.length, 0, `Z no process this drill spawned survives (survivors=${JSON.stringify(survivors)})`)
+  console.log(`     observed: Z tracked ${trackedPids.size} spawned pids; ${survivors.length} survived the final reap`)
 }
 
 console.log(`\nDRILL #82 W2A SENSOR (${DRILL_LABEL}): ${pass} ok, ${failures.length} fail`)

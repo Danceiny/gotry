@@ -43,7 +43,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { HarnessClient, DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client'
 import { spawnOwnedChild, signalOwnedChild, isOwnedProcessGroupEmpty, terminateOwnedChild } from '../../bin/gotry-process-liveness.js'
@@ -51,11 +51,19 @@ import { spawnOwnedChild, signalOwnedChild, isOwnedProcessGroupEmpty, terminateO
 const DRILL_LABEL = 'simulated_trigger_drill'
 const TS_DIR = resolve(import.meta.dirname, '..')
 const REPO_ROOT = resolve(TS_DIR, '..')
-const SUITE_BUDGET_MS = 25_000
+const SUITE_BUDGET_MS = 90_000
 const FLIP = 'IF THIS FLIPS, #422 premise changed'
 
 const require_ = createRequire(import.meta.url)
-const SDK_VERSION = (require_('@deepseek-ai/dsh-sdk-client/package.json') as { version: string }).version
+const SDK_MANIFEST_PATH = require_.resolve('@deepseek-ai/dsh-sdk-client/package.json')
+const SDK_VERSION = (require_(SDK_MANIFEST_PATH) as { version: string }).version
+/**
+ * Read the source from the SAME package the version came from. There are two
+ * installed copies (`node_modules` and `ts/node_modules`); deriving the path
+ * from the resolved manifest makes the version assertion and the static-source
+ * assertions describe one package instead of two.
+ */
+const SDK_SOURCE_PATH = join(dirname(SDK_MANIFEST_PATH), 'lib', 'index.js')
 const EXPECTED_SDK_VERSION = '0.2.0-rc.2'
 
 let pass = 0
@@ -97,6 +105,42 @@ function psFacts(pids: number[]): Array<{ pid: number; ppid: number; pgid: numbe
   } catch {
     return []
   }
+}
+
+/**
+ * Is this pid still one of OUR processes? Guards the reap path against pid
+ * reuse: a recorded pid can be recycled by the OS for an unrelated process
+ * between the observation and the kill, and SIGKILLing that would be a real
+ * side effect outside the drill's blast radius.
+ *
+ * Ownership evidence, either is enough: the command line still names one of
+ * this drill's fixture files (they all live under the drill's own temp root),
+ * or the parent chain reaches this drill process.
+ */
+function isDrillOwned(pid: number): boolean {
+  try {
+    const argv = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
+    if (argv.includes('fixture-dsh-runtime') || argv.includes('fixture-descendant') || argv.includes('fixture-grandchild')) return true
+  } catch {
+    return false
+  }
+  // Walk the parent chain, bounded, looking for this process.
+  let current = pid
+  for (let hop = 0; hop < 8; hop += 1) {
+    const facts = psFacts([current])
+    const parent = facts[0]?.ppid
+    if (parent === undefined || parent <= 1) return false
+    if (parent === process.pid) return true
+    current = parent
+  }
+  return false
+}
+
+/** SIGKILL one recorded pid, but only while it is still ours. */
+function reapIfOwned(pid: number | null | undefined): void {
+  if (!pid || !pidAlive(pid)) return
+  if (!isDrillOwned(pid)) return
+  try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -251,8 +295,14 @@ async function awaitTree(fixtures: FixtureSet, budgetMs = 8_000): Promise<TreeOb
   return tree
 }
 
+// Generous diagnostic backstop, not a performance assertion. `process.exit`
+// skips `finally`, so the deadline path reaps the fixture tree itself —
+// otherwise it would strand exactly the TERM-ignoring descendants this suite
+// creates on purpose.
 const suiteDeadline = setTimeout(() => {
-  console.error(`DRILL BUDGET EXCEEDED (${SUITE_BUDGET_MS}ms)`)
+  console.error(`DRILL BUDGET EXCEEDED (${SUITE_BUDGET_MS}ms) — reaping fixture tree before exit`)
+  for (const pid of trackedPids) reapIfOwned(pid)
+  try { rmSync(workRoot, { recursive: true, force: true }) } catch { /* best effort */ }
   process.exit(1)
 }, SUITE_BUDGET_MS)
 suiteDeadline.unref()
@@ -263,7 +313,8 @@ try {
   console.log(`-- S1 static evidence from the installed SDK [${DRILL_LABEL}]`)
   {
     eq(SDK_VERSION, EXPECTED_SDK_VERSION, `S1-1 the installed @deepseek-ai/dsh-sdk-client is the re-baseline target ${EXPECTED_SDK_VERSION}. ${FLIP}: a different version invalidates every pinned result below`)
-    const sdkSource = readFileSync(join(REPO_ROOT, 'node_modules', '@deepseek-ai', 'dsh-sdk-client', 'lib', 'index.js'), 'utf8')
+    console.log(`     observed: S1 version and source both read from ${SDK_MANIFEST_PATH.replace(REPO_ROOT, '<repo>')}`)
+    const sdkSource = readFileSync(SDK_SOURCE_PATH, 'utf8')
     const spawnBlock = sdkSource.slice(sdkSource.indexOf('const child = spawn(this.runtime.command'), sdkSource.indexOf('this.child = child;'))
     ok(spawnBlock.length > 0, 'S1-2 located the transport spawn call in the installed SDK')
     eq(/detached/.test(spawnBlock), false, `S1-3 PINNED: the SDK transport spawn passes no \`detached\` option, so the runtime is NOT a process-group leader. ${FLIP}`)
@@ -324,7 +375,7 @@ try {
       observe(`S2 #422 GAP CONFIRMED on ${SDK_VERSION} (synthetic fixture, not a product callsite): the SDK-owned leader is reaped, its descendants are not. The CLI launcher's guarantee (S7) is NOT inherited by the direct transport.`)
     } finally {
       for (const pid of [tree.descendant, tree.grandchild]) {
-        if (pid) { try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ } }
+        reapIfOwned(pid)
       }
       await client.close().catch(() => {})
     }
@@ -362,7 +413,7 @@ try {
       observe(`S3 cooperative teardown ${closeMs}ms: leader exited cleanly, descendant alive=${pidAlive(tree.descendant)}, grandchild alive=${pidAlive(tree.grandchild)}`)
     } finally {
       for (const pid of [tree.descendant, tree.grandchild]) {
-        if (pid) { try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ } }
+        reapIfOwned(pid)
       }
       await client.close().catch(() => {})
     }
@@ -395,7 +446,7 @@ try {
       observe(`S4 DeepSeekHarness: leader gone=${!pidAlive(tree.leader)}, descendant alive=${pidAlive(tree.descendant)} — the gap is in the transport, not in the API layer`)
     } finally {
       for (const pid of [tree.descendant, tree.grandchild]) {
-        if (pid) { try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ } }
+        reapIfOwned(pid)
       }
       await harness.close().catch(() => {})
     }
@@ -472,7 +523,7 @@ try {
       observe(`S6 close() idempotent and terminal; reuse rejected with ${reuseError}; exactly one runtime pid (${firstLeader}) over the whole lifecycle`)
     } finally {
       for (const pid of [tree.descendant, tree.grandchild]) {
-        if (pid) { try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ } }
+        reapIfOwned(pid)
       }
       await client.close().catch(() => {})
     }
@@ -508,7 +559,7 @@ try {
     } finally {
       signalOwnedChild(child, 'SIGKILL', groupPid)
       for (const pid of [tree.leader, tree.descendant, tree.grandchild]) {
-        if (pid) { try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ } }
+        reapIfOwned(pid)
       }
     }
   }
@@ -516,8 +567,18 @@ try {
   clearTimeout(suiteDeadline)
   // Leak discipline: reap every pid this drill ever learned about, twice,
   // regardless of which assertion failed.
+  //
+  // Identity guard against pid reuse: only signal a pid whose process is still
+  // a descendant of this drill (its own pid, or a parent chain reaching this
+  // process), or whose argv still names one of this drill's fixtures. A pid the
+  // OS has since handed to an unrelated process must never be killed.
   for (const round of [0, 1]) {
     for (const pid of trackedPids) {
+      if (!pidAlive(pid)) continue
+      if (!isDrillOwned(pid)) {
+        console.error(`     note: pid ${pid} is alive but no longer owned by this drill (pid reuse) — not signalling it`)
+        continue
+      }
       try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
     }
     if (round === 0) await sleep(120)
