@@ -659,6 +659,18 @@ echo
 echo "=== 74. 会话双区记忆分区契约纯核(P4-1,design/session-dual-zone-memory-design.md §5:闭集 hot_context·trip_notebook 未知拒收/写侧负面清单证件·手机号·URL·凭证零入区/owner 确认引用闸/rev CAS 同 rev 幂等 no-op·stale_rev fail-closed 类型化/注入时钟分层 TTL 30min resource·24h intent 只自写入起算读不续命/确定性 fold 重建==直读;纯函数零 IO·零定时器·零网络,不接账本(P4-2)与会话(P4-3),内核 manifest 零漂移;全离线;编号 71→74:§71 FX/#606、§72 atlas/#608、§73 观测/#607 先后占号) ==="
 (cd ts && npx tsx scripts/session-zones-tests.ts) || FAIL=1
 
+echo
+echo "=== 81. 触发演练:#82 world2agent sensor(simulated_trigger_drill——模拟外部触发只证明激活机制,不满足 #82 触发条件、不裁决 D-31:独立 OS 进程夹具 sensor 经 stdin+文件两种投递把 w2a/0.1 envelope 送进既有惰性适配面;default-off 全拒/精确四元组 source·package·version·type 单字段变更即拒/敌意语料 伪造发信声明·重放·超限·两万层深嵌套·原型污染键·自然语言注入·未知事件类型·时间戳偏移 在进程内与跨进程逐条判定一致/副作用隔离 Node 权限模型 fs 写·child_process·网络全 ERR_ACCESS_DENIED + 隔离根零文件 + 零 fetch 零定时器/激活路径溯源 已批准本地探针真达持久健康面而 w2a 元数据无 channel 词位且产品零调用方=契约边界据实上报不接线/callback 方决策模板 15 项可执行清单逐项 satisfied_by_contract 或 needs_real_party;全离线无真实 sensor·无桥·无回调方) ==="
+(cd ts && npx tsx scripts/drill-w2a-sensor-tests.ts) || FAIL=1
+
+echo
+echo "=== 82. 触发演练:#275 D-15 多写者/多用户(simulated_trigger_drill——mkdtemp 夹具不构成生产证据,不满足第二真实用户·多机部署·AaaS 触发:真实子进程并发 冷开竞争安全面钉死+追加面幂等键去重·无丢更新·租户隔离·integrity_check/崩溃演练 事务内具名崩点与产品写路径定时变化 SIGKILL 后重开 all-or-nothing 与 fold==直读/陈旧领取 N dispatcher 竞争恰一赢家·fencing·租约过期不回 queued·存储层 forward-only 触发器·跨租户影响行数 0/写负载下 SQLite 在线备份→恢复 校验和+事件序前缀+fold 自洽/Litestream 与 cr-sqlite 未装记为 needs real trigger + dependency decision;state-ledger.ts 只读不改) ==="
+(cd ts && npx tsx scripts/drill-multiuser-ledger-tests.ts) || FAIL=1
+
+echo
+echo "=== 83. 触发演练:#422 dsh SDK 后代清理再基线(simulated_trigger_drill——夹具 dshBin 不是真实产品调用面,不构成 #422 触发或上游归属裁决;dsh 家族 2026-10-02 升 0.2.0-rc.2 故按实测钉死:SDK 静态证据 spawn 无 detached·永不按进程组发信/不响应且忽略 TERM 的 runtime 走真实 close() 梯级 shutdown→stdin EOF→SIGTERM→SIGKILL/协作式 runtime 干净退出/DeepSeekHarness 高层同路径/缺二进制语义/close 幂等终态与禁止静默重生/对照组 bin/gotry-process-liveness.js 进程组清理零残留;每个钉死断言带「若翻转则 #422 前提已变」,所有夹具 pid 无论成败 finally 强制收尸) ==="
+(cd ts && npx tsx scripts/drill-sdk-descendant-cleanup-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
