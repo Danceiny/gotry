@@ -8,7 +8,7 @@
 
 ## Unreleased
 
-暂无排队项。
+- **会话双区记忆机制（#255，默认关闭）** — 在既有 `events` 表上新增六个日志类事件（零新表；内核钉死的 `state-ledger.ts` 零改动）、捕获缝、按 scope 绑定的读回变量 `session_zone_brief`、经既有 motivation/timeline/companion 闸路由的 owner 确认晋升、`state-cli export` 新增 `hot-context.jsonl` 与 `notebook.json` 视图，以及 opt-in 观测面和三个阈值在见数据前冻结的指标。`sessionZones` 开关默认 `off`，关闭时惰性；价值声明仍关闭（尚无真实使用），出厂 persona 在 founder 决定前不引用新变量。
 
 ---
 
