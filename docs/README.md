@@ -183,6 +183,8 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.md) | External benchmark bridge: Phase 1 seam and per-turn engineering ledger |
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.md) | dsh e2e end-to-end real-LLM verification records (continuously updated) |
 | [evaluation/round12-canary-report.md](evaluation/round12-canary-report.md) | Round 12 frozen canary: what ran, what the scores mean, why (issue #203/#215) |
+| [evaluation/trigger-drill-report-core.md](evaluation/trigger-drill-report-core.md) | Simulated-trigger drills for #82 / #275 / #422: what was exercised, defects found, what only the real trigger can supply (never a trigger satisfied) |
+| [evaluation/trigger-drill-report-contracts.md](evaluation/trigger-drill-report-contracts.md) | Simulated-trigger drills for #340 / #339 / #429: default-off contract mechanisms, the route-provider conformance gate and its findings (never a trigger satisfied) |
 | [evaluation/sf-manifest.md](evaluation/sf-manifest.md) | sf-01..08 frozen manifest: cases/channel matrix/live-session classification (issue #272 offline segment) |
 | [evaluation/dida-runner-stop-report.md](evaluation/dida-runner-stop-report.md) | Dida live runner stop/cleanup and strict live opt-in evidence (#502/#504) |
 | [evaluation/sf-evidence-isolation-report.md](evaluation/sf-evidence-isolation-report.md) | Session-flight benchmark evidence isolation: command E2E, summary readback, and proof limits |

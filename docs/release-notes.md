@@ -8,7 +8,8 @@
 
 ## Unreleased
 
-Nothing queued.
+- **Simulated-trigger drills for the dormant trigger-gated trackers (#82, #275, #422, #340, #339, #429; fixture level, trackers stay open)** — default-off, zero-caller contract mechanisms for transaction-outcome-versus-estimate projection (#340), city×scenario tiering with an empty registry (#339) and a route-provider conformance gate (#429); drill suites for the inert W2A sensor path (#82), concurrent writers, crash/reopen and online backup on the tenant ledger (#275) and the dsh SDK descendant-cleanup re-baseline on `0.2.0-rc.2` (#422, gap confirmed); and an opt-in, read-only measurement probe for the external Anything path (#276/#345). Every result is labeled `simulated_trigger_drill` or `fixture_contract` and none satisfies a trigger.
+- **Provider fault detail is scrubbed before it reaches tool results (#429)** — a ground-transfer provider's error text (markup, credential-shaped strings) no longer flows verbatim into `transfer_evidence`; the fixed `GROUND_TRANSFER_*` messages pass through byte-identical. Two further contract gaps on the accepted path (response-side mode and direction binding) are recorded and await a ruling.
 
 ---
 

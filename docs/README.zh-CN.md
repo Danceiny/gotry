@@ -183,6 +183,8 @@
 | [evaluation/benchmark-environment-bridge.md](evaluation/benchmark-environment-bridge.zh-CN.md) | 外部 benchmark 桥：Phase 1 接缝与逐轮工程台账 |
 | [evaluation/e2e-prompts.md](evaluation/e2e-prompts.zh-CN.md) | dsh e2e 端到端真 LLM 验证记录（持续更新） |
 | [evaluation/round12-canary-report.zh-CN.md](evaluation/round12-canary-report.zh-CN.md) | Round 12 冻结 canary：跑了什么、分数意味着什么、为什么（#203/#215） |
+| [evaluation/trigger-drill-report-core.zh-CN.md](evaluation/trigger-drill-report-core.zh-CN.md) | #82／#275／#422 的模拟触发演练：演练了什么、发现的缺陷、只有真实触发才能提供的内容（绝不等于触发已满足） |
+| [evaluation/trigger-drill-report-contracts.zh-CN.md](evaluation/trigger-drill-report-contracts.zh-CN.md) | #340／#339／#429 的模拟触发演练：默认关闭的契约机制、路线供应商合规闸及其发现（绝不等于触发已满足） |
 | [evaluation/sf-manifest.zh-CN.md](evaluation/sf-manifest.zh-CN.md) | sf-01..08 冻结清单：用例/通道矩阵/真实会话需求分类（issue #272 离线段） |
 | [evaluation/dida-runner-stop-report.zh-CN.md](evaluation/dida-runner-stop-report.zh-CN.md) | Dida 实时 runner 停止、清理与严格 live opt-in 证据（#502/#504） |
 | [evaluation/sf-evidence-isolation-report.zh-CN.md](evaluation/sf-evidence-isolation-report.zh-CN.md) | 会话航班跑批证据隔离：命令级端到端、汇总回读与证据边界 |
