@@ -1,0 +1,43 @@
+{
+  "schema": "session_zone_metric_fixture.v1",
+  "evidence_kind": "synthetic_fixture",
+  "metric_contract": {
+    "schema": "session_zone_metric_contract.v1",
+    "frozen_at": "2026-10-04",
+    "frozen_before_any_data": true,
+    "minimum_sample_count": 5,
+    "min_confirm_rate": 0.5,
+    "min_reask_avoidance_ratio": 0.5,
+    "max_stale_hit_rate": 0.1
+  },
+  "promotion_decisions": [
+    { "proposal_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000001", "decision": "confirmed" },
+    { "proposal_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000002", "decision": "confirmed" },
+    { "proposal_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000003", "decision": "confirmed" },
+    { "proposal_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000004", "decision": "denied" },
+    { "proposal_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000005", "decision": "confirmed" },
+    { "proposal_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000006", "decision": "denied" }
+  ],
+  "reask_pairs": [
+    { "pair_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000011", "first_visit_asked_fields": 4, "returning_reasked_fields": 1, "within_intent_ttl": true },
+    { "pair_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000012", "first_visit_asked_fields": 5, "returning_reasked_fields": 2, "within_intent_ttl": true },
+    { "pair_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000013", "first_visit_asked_fields": 3, "returning_reasked_fields": 0, "within_intent_ttl": true },
+    { "pair_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000014", "first_visit_asked_fields": 6, "returning_reasked_fields": 3, "within_intent_ttl": true },
+    { "pair_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000015", "first_visit_asked_fields": 4, "returning_reasked_fields": 2, "within_intent_ttl": true },
+    { "pair_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000016", "first_visit_asked_fields": 4, "returning_reasked_fields": 4, "within_intent_ttl": false }
+  ],
+  "zone_served_facts": [
+    { "served_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000021", "corrected": false },
+    { "served_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000022", "corrected": false },
+    { "served_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000023", "corrected": false },
+    { "served_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000024", "corrected": false },
+    { "served_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000025", "corrected": false },
+    { "served_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000026", "corrected": false },
+    { "served_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000027", "corrected": false },
+    { "served_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000028", "corrected": false },
+    { "served_ref": "hmac-sha256:0000000000000000000000000000000000000000000000000000000000000029", "corrected": false },
+    { "served_ref": "hmac-sha256:000000000000000000000000000000000000000000000000000000000000002a", "corrected": false },
+    { "served_ref": "hmac-sha256:000000000000000000000000000000000000000000000000000000000000002b", "corrected": false },
+    { "served_ref": "hmac-sha256:000000000000000000000000000000000000000000000000000000000000002c", "corrected": true }
+  ]
+}

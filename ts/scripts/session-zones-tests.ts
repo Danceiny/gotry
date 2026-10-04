@@ -419,6 +419,27 @@ pass('fold:重复事件(同 rev 重放)天然 no-op;幂等键遵循设计钉死�
   const rev = z.events[1]!
   assert.match(zoneIdemKey(cap), /^hotctx:.+:1$/)
   assert.match(zoneIdemKey(rev), /^hotctx:.+:2$/)
+  // 同一事件重放 → 同一幂等键(落账本后由 UNIQUE 索引物理去重)
+  assert.equal(zoneIdemKey(cap), zoneIdemKey({ ...cap }))
+})
+
+pass('幂等键带生代:drop→重捕获的同 id 同 rev 不与旧生命周期碰撞(P4-2 物理化暴露)', () => {
+  const z = freshZone()
+  apply(z, captureHotNote(z.zone, captureInput()))
+  const noteId = Object.keys(z.zone.hot)[0]!
+  const firstBirth = z.events[0]!
+  apply(z, dropHotNote(z.zone, noteId, at(5 * MIN)))
+  apply(z, captureHotNote(z.zone, captureInput({ ts: at(6 * MIN) })))
+  const reborn = z.events[2]!
+  assert.equal((reborn as { note: { note_id: string; rev: number } }).note.note_id, noteId, '语义派生 id:重捕获同 id')
+  assert.equal((reborn as { note: { rev: number } }).note.rev, 1, '新生命周期 rev 回到 1')
+  assert.notEqual(
+    zoneIdemKey(reborn),
+    zoneIdemKey(firstBirth),
+    '同 id 同 rev 的两个生命周期必须是不同幂等键,否则 UNIQUE 索引会吞掉「更正后仍真」的重捕获',
+  )
+  // 同一生命周期内重放仍同键(去重不被生代破坏)
+  assert.equal(zoneIdemKey(reborn), zoneIdemKey({ ...reborn }))
 })
 
 pass('fold:drop→重捕获生命周期(更正后仍真);fold 不改入参(纯度)', () => {
@@ -449,4 +470,4 @@ pass('契约原语:canonicalJson 键序规范化与 makeHotNoteId 稳定性', ()
   assert.notEqual(a, makeHotNoteId({ session_ref: SESS_A, tier: 'intent', kind: 'destination', payload: { city: '丽江' } }))
 })
 
-console.log(`\nSESSION ZONES TESTS: ${n}/21 OK(P4-1 分区契约纯核:闭集/负面清单写侧/rev CAS/注入时钟分层 TTL/确定性 fold;全离线)`)
+console.log(`\nSESSION ZONES TESTS: ${n}/22 OK(P4-1 分区契约纯核:闭集/负面清单写侧/rev CAS/注入时钟分层 TTL/确定性 fold;全离线)`)

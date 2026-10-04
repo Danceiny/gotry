@@ -15,16 +15,19 @@
  *  11. rejected/cancelled + unavailable 通道:零执行 + 结构化 verdict='approval-denied'
  *  12. user-action 项绝不安装;scope 过滤只考虑 items 范围内 id
  *  13. tool-level gotry_doctor 注册 + observable chain(diagnose → repair)
+ *  14. hbcli whoami 三档解析;14b. probeStdout 在 stdio 关闭(close)后结算,exit 先于 data 不丢输出
  *
  * 运行: cd ts && npx tsx scripts/doctor-tests.ts
  */
 
 import assert from 'node:assert/strict'
+import type { ChildProcess, spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { runDoctorChecks, renderDoctorReportMd, nodeOk, scopeKeyFor, createRepairApprovalGate, runDoctorRepair, type DoctorItem, type DoctorReport, type DoctorRepairOptions, type DoctorRepairApproval } from '../capabilities/doctor.ts'
+import { runDoctorChecks, renderDoctorReportMd, nodeOk, probeStdout, scopeKeyFor, createRepairApprovalGate, runDoctorRepair, type DoctorItem, type DoctorReport, type DoctorRepairOptions, type DoctorRepairApproval } from '../capabilities/doctor.ts'
 import { endpointFingerprint, maskFlyaiKey, resolveFlyaiEndpoint, sha256Hex, writeFlyaiVerification } from '../capabilities/flyai-config.ts'
 import { apply } from '../src/index.ts'
 import type { Context } from '@deepseek-ai/cordis'
@@ -607,5 +610,53 @@ console.log('13. tool-level gotry_doctor 注册 + observable chain(diagnose→re
   }
 }
 console.log('14. hbcli whoami 三档解析(未配置=degraded+注册指引 / customer 档=ok)OK')
+
+// 14b. probeStdout 必须等 stdio 关闭('close')再结算,不能在 'exit' 结算:
+//      Node 文档明言 'exit' 触发时 stdout 可能还没读完。秒退的 whoami 子进程若 exit 先于 data,
+//      输出丢成空串,空串走「不可解析=保守视为有效」分支,把无凭证 hbcli 报成 ok
+//      (Node 22 CI 偶发红 14 的 degraded 断言,与被测 PR 无关)。注入假子进程,确定性复现该次序。
+{
+  const fakeSpawn = (script: (child: EventEmitter, stdout: EventEmitter) => void): typeof spawn => (() => {
+    const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; kill: () => boolean }
+    child.stdout = new EventEmitter()
+    child.kill = () => true
+    setImmediate(() => script(child, child.stdout))
+    return child as unknown as ChildProcess
+  }) as unknown as typeof spawn
+  const whoami = '{"env":"uat","api_key":{"configured":false},"portal":{"configured":false},"customer":{"configured":true}}'
+  const probe = (impl: typeof spawn, timeoutMs = 1_000) => probeStdout('hbcli', ['--json', 'auth', 'whoami'], timeoutMs, impl)
+
+  assert.equal(
+    await probe(fakeSpawn((child, stdout) => {
+      child.emit('exit', 0, null) // exit 先到,管道数据尚未送达
+      stdout.emit('data', Buffer.from(`${whoami}\n`))
+      child.emit('close', 0, null) // stdio 关闭后才 close
+    })),
+    whoami,
+    'exit 先于 stdout data 时,输出必须完整返回(旧实现在 exit 结算,得到空串)',
+  )
+  assert.equal(
+    await probe(fakeSpawn((child, stdout) => {
+      stdout.emit('data', Buffer.from('{"a":'))
+      stdout.emit('data', Buffer.from('1}\n'))
+      child.emit('exit', 0, null)
+      child.emit('close', 0, null)
+    })),
+    '{"a":1}',
+    '多段 data 拼接后 trim',
+  )
+  assert.equal(
+    await probe(fakeSpawn((child, stdout) => {
+      child.emit('exit', 2, null)
+      stdout.emit('data', Buffer.from('boom'))
+      child.emit('close', 2, null)
+    })),
+    null,
+    '非零退出码一律 null(无论输出)',
+  )
+  assert.equal(await probe(fakeSpawn((child) => { child.emit('error', new Error('spawn ENOENT')) })), null, 'spawn error → null')
+  assert.equal(await probe(fakeSpawn(() => { /* 永不 close:靠超时兜底 */ }), 50), null, '子进程不结束 → 超时 null,不悬挂')
+}
+console.log('14b. probeStdout 在 stdio 关闭后结算(exit 先于 data 不丢输出 / 非零退出 null / error null / 超时 null)OK')
 
 console.log('doctor-tests: 全部通过')

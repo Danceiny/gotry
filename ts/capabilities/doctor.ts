@@ -77,10 +77,17 @@ function probe(bin: string, args: string[], timeoutMs = 8_000): Promise<boolean>
   })
 }
 
-/** 探测命令 stdout(--version),失败返回 null */
-function probeStdout(bin: string, args: string[], timeoutMs = 8_000): Promise<string | null> {
+/**
+ * 探测命令 stdout(--version),失败返回 null。
+ *
+ * 在 'close' 而非 'exit' 结算:'exit' 触发时 stdout 管道可能还没读完(Node 文档明言),
+ * 秒退进程的输出会丢成空串,而空串走「不可解析 = 保守视为有效」分支,把无凭证的 hbcli
+ * 报成 ok。'close' 在 stdio 全部关闭后才触发;超时仍由下方定时器兜底。
+ * `spawnImpl` 仅供测试注入假子进程以确定性复现「exit 先于 data」的次序。
+ */
+export function probeStdout(bin: string, args: string[], timeoutMs = 8_000, spawnImpl: typeof spawn = spawn): Promise<string | null> {
   return new Promise((resolveProbe) => {
-    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'ignore'], env: process.env })
+    const child = spawnImpl(bin, args, { stdio: ['ignore', 'pipe', 'ignore'], env: process.env })
     let out = ''
     let done = false
     const timer = setTimeout(() => {
@@ -88,7 +95,7 @@ function probeStdout(bin: string, args: string[], timeoutMs = 8_000): Promise<st
     }, timeoutMs)
     child.on('error', () => { if (!done) { done = true; clearTimeout(timer); resolveProbe(null) } })
     child.stdout?.on('data', (d) => { out += d.toString() })
-    child.on('exit', (code) => { if (!done) { done = true; clearTimeout(timer); resolveProbe(code === 0 ? out.trim() : null) } })
+    child.on('close', (code) => { if (!done) { done = true; clearTimeout(timer); resolveProbe(code === 0 ? out.trim() : null) } })
   })
 }
 
