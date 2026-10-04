@@ -672,6 +672,10 @@ echo "=== 83. 触发演练:#422 dsh SDK 后代清理再基线(simulated_trigger_
 (cd ts && npx tsx scripts/drill-sdk-descendant-cleanup-tests.ts) || FAIL=1
 
 echo
+echo "=== 84. Anything 路径只读测量探针(#276/#345 触发演练的证据探针:GOTRY_UAT_READONLY=1 才会起 hbcli,缺省零进程零测量·exit 0 waiting_external_evidence/百分位最近秩·失败按原因计数且保留耗时/字段存在率空串·空数组·空对象不计/凭据形状脱敏·≤160 字符/突发阶段并发不超 5/只输出聚合不落原始回包;真实 hbcli 路径从不被测试使用,全离线;测量真实路径但不满足任一 tracker 的触发条件) ==="
+(cd ts && npx tsx scripts/anything-path-measure-tests.ts) || FAIL=1
+
+echo
 echo "=== 85. 成交结果↔规划估算投影契约(issue #340 模拟触发演练,证据标签 simulated_trigger_drill/fixture_contract——真实触发未发生,tracker 保持 open 且默认关闭:plan estimate↔immutable quote↔attempt↔账本 intent 四必填关联键+确定性派生/闭集 pending·confirmed·failed·cancelled·refunded·unknown,unknown 与超时永不记成交也永不记零偏差(结构化 not_comparable 不返回数值)/本地账本词 compensated 拒作供应商终态(compensated≠refunded)·serviceFee 拒作退款额·refunded 必绑权威退款记录/append-only 可撤销投影:同幂等键同载荷重放零新条目·异载荷冲突·撤销本身是条目不删不改·确定性 fold 重建==直读/终态不回退(terminal→open regression、终态冲突)且迟到终态被接纳并标记/负面清单:敏感订单字段按名拒+凭证·手机·证件·邮箱·URL 值形扫描拒,证据只走摘要与指针——数字身份模式两侧锚定且逐叶扫描(嵌在字母数字串里的 15+ 位数字不算证件号,合法 SHA 摘要不被误拒;独立成串的任意长度数字仍拒,纯十进制不给豁免)/偏差只校准未来估算与排序(有界 ppm 钉上下界·薄样本回中性·indeterminate 只计数不计值),反证falsification:校准额永不能翻转用户预算硬约束(hard_budget_guard)/真实订单摄取缝触发闸冻结 false+注册表冻结空+fetch spy 零调用;纯函数零网络零子进程零 CLI,夹具只读复用 hotelbyte 假 CLI 词表,真实订单 E2E 待 M5+真实授权记录,明确不在本节范围) ==="
 (cd ts && npx tsx scripts/outcome-projection-tests.ts) || FAIL=1
 
