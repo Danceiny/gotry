@@ -638,6 +638,9 @@ function solverVerdict(state: TripState): { verdict: PersonaRunOutcome['solver_v
 }
 
 async function withDeadline<T>(promise: Promise<T>, ms: number, code: PersonaSimErrorCode, detail: string): Promise<T> {
+  // A loser promise that rejects after the race would otherwise surface as an unhandled
+  // rejection, so it is defused before the race starts.
+  promise.catch(() => {})
   let timer: NodeJS.Timeout | undefined
   try {
     return await Promise.race([
@@ -658,13 +661,14 @@ export interface SessionOptions {
   packPath: string
   clock: Clock
   maxTurns: number
-  sessionDeadlineMs: number
+  /** Caller-owned usage trackers: a session that times out must still have its spend
+   *  counted by the budget gate, so the counters live outside the session. */
+  productUsage: LlmUsageTracker
+  personaUsage: LlmUsageTracker
 }
 
 async function runPersonaSession(options: SessionOptions): Promise<PersonaRunOutcome> {
-  const { card, personaEndpoint, clock } = options
-  const productUsage = emptyUsage()
-  const personaUsage = emptyUsage()
+  const { card, personaEndpoint, clock, productUsage, personaUsage } = options
   const outcome: PersonaRunOutcome = {
     persona_id: card.persona_id,
     expected_outcome: card.expected_outcome,
@@ -688,6 +692,10 @@ async function runPersonaSession(options: SessionOptions): Promise<PersonaRunOut
 
   const now = clock.now()
   const port: LlmPort & { usage?: LlmUsageTracker } = createOpenAICompatLlm(options.packPath, () => now)
+  const syncProductUsage = (): void => {
+    const tracked = (port as { usage?: LlmUsageTracker }).usage
+    if (tracked) Object.assign(productUsage, tracked)
+  }
   const solvePort = realtimeSolvePort(solveUnified)
   const state = newState()
   const history: Turn[] = []
@@ -698,6 +706,7 @@ async function runPersonaSession(options: SessionOptions): Promise<PersonaRunOut
     const userMessage: string = message
     try {
       const { reply } = await runTurn(state, userMessage, port as LlmPort, [...history], solvePort as never, now)
+      syncProductUsage()
       history.push({ role: 'user', text: userMessage }, { role: 'assistant', text: reply })
       outcome.user_turns += 1
 
@@ -725,6 +734,7 @@ async function runPersonaSession(options: SessionOptions): Promise<PersonaRunOut
         message = decision.message
       }
     } catch (error) {
+      syncProductUsage()
       // A broken persona contract or a provider failure ends this session without
       // discarding what already happened: the partial funnel is the measurement.
       outcome.error = {
@@ -735,8 +745,7 @@ async function runPersonaSession(options: SessionOptions): Promise<PersonaRunOut
     }
   }
 
-  const trackedUsage = (port as { usage?: LlmUsageTracker }).usage
-  if (trackedUsage) Object.assign(productUsage, trackedUsage)
+  syncProductUsage()
   return outcome
 }
 
@@ -880,13 +889,22 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
   const hmacKey = options.hmacKey ?? envValue('GOTRY_M3_COHORT_HMAC_KEY') ?? (options.dryRun ? FIXTURE_HMAC_KEY : undefined)
   if (!hmacKey) fail('missing_hmac_key', 'a real batch needs GOTRY_M3_COHORT_HMAC_KEY')
 
+  // A real batch costs money, so its evidence must not land in a temp root this function
+  // then deletes: both destinations have to be chosen by the caller.
+  if (!options.dryRun && (options.stateRoot === undefined || options.evidenceRoot === undefined)) {
+    fail('bad_args', 'a real batch needs both --state-root and --evidence-root so the evidence survives the run')
+  }
   const ownsRoot = options.stateRoot === undefined
   const batchRoot = options.stateRoot ?? mkdtempSync(join(tmpdir(), 'gotry-persona-sim-'))
   const captureRoot = join(batchRoot, 'capture')
   const evidenceRoot = options.evidenceRoot ?? join(batchRoot, 'evidence')
   const clock = options.clock ?? (options.dryRun ? steppingClock(FIXTURE_CLOCK_START) : { now: () => new Date() })
   const maxTurns = Math.min(options.maxTurns ?? DEFAULT_MAX_TURNS, DEFAULT_MAX_TURNS)
-  const concurrency = options.dryRun ? 1 : Math.max(1, Math.min(options.concurrency ?? 1, MAX_CONCURRENCY))
+  // The fixture provider keeps one active persona at a time, so any fixture-backed batch
+  // is serialized regardless of the requested concurrency.
+  const concurrency = options.dryRun || options.fixture
+    ? 1
+    : Math.max(1, Math.min(options.concurrency ?? 1, MAX_CONCURRENCY))
   const sessionDeadlineMs = options.sessionDeadlineMs ?? 180_000
 
   let fixture: FixtureProviderHandle | null = options.fixture ?? null
@@ -921,7 +939,8 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
     const windowStart = new Date(Date.parse(clock.now().toISOString()) - 86_400_000).toISOString()
     initM3Cohort({
       ...captureCommon,
-      cohort: `persona-sim:${selected.map(card => card.persona_id).join(',')}`,
+      // Bounded label: the deck can grow, the cohort handle must not.
+      cohort: `persona-sim:${createHash('sha256').update(selected.map(card => card.persona_id).join(',')).digest('hex').slice(0, 32)}`,
       evidenceKind: 'synthetic_fixture',
       windowStartAt: windowStart,
       windowEndAt: new Date(Date.parse(windowStart) + 30 * 86_400_000).toISOString(),
@@ -946,6 +965,9 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
         const sessionRoot = join(batchRoot, 'sessions', card.persona_id)
         mkdirSync(sessionRoot, { recursive: true })
         if (fixture) fixture.setPersona(card)
+        // The trackers are owned here so a timed-out session still reports its spend.
+        const productUsage = emptyUsage()
+        const personaUsage = emptyUsage()
         let outcome: PersonaRunOutcome
         try {
           outcome = await withDeadline(
@@ -956,7 +978,8 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
               packPath: join(REPO_ROOT, 'data', 'flights_2026.json'),
               clock,
               maxTurns,
-              sessionDeadlineMs,
+              productUsage,
+              personaUsage,
             }),
             sessionDeadlineMs,
             'persona_timeout',
@@ -976,8 +999,8 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
             unsat_core: [],
             poi_audit: null,
             plan_markdown_sha256: null,
-            product_usage: emptyUsage(),
-            persona_usage: emptyUsage(),
+            product_usage: productUsage,
+            persona_usage: personaUsage,
             error: { code, detail: (error as Error).message.slice(0, 300) },
           }
         }
@@ -1082,11 +1105,12 @@ function renderMarkdown(result: PersonaBatchResult): string {
   ]
   if (result.reason) lines.push(`- reason: ${result.reason}`)
   if (result.personas.length > 0) {
-    lines.push('', '| persona | turns | delivered | finalized | nps | solver | claims | invalid | gate |', '|---|---|---|---|---|---|---|---|---|')
+    lines.push('', '| persona | turns | delivered | finalized | nps | solver | claims | invalid | gate | error |', '|---|---|---|---|---|---|---|---|---|---|')
     for (const persona of result.personas) {
       lines.push(`| ${persona.persona_id} | ${persona.user_turns} | ${persona.plan_delivered} | ${persona.finalized} | ${persona.nps ?? '-'} `
         + `| ${persona.solver_verdict}${persona.unsat_core.length ? `(${persona.unsat_core.join(',')})` : ''} `
-        + `| ${persona.poi_audit?.locked_claims ?? '-'} | ${persona.poi_audit?.invalid_claims ?? '-'} | ${persona.poi_audit?.gate_verdict ?? '-'}${persona.error ? ` | ERROR ${persona.error.code}` : ''} |`)
+        + `| ${persona.poi_audit?.locked_claims ?? '-'} | ${persona.poi_audit?.invalid_claims ?? '-'} | ${persona.poi_audit?.gate_verdict ?? '-'} `
+        + `| ${persona.error ? persona.error.code : '-'} |`)
     }
   }
   const summary = result.scorer_summary

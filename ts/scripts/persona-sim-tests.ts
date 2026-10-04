@@ -216,6 +216,20 @@ async function main(): Promise<void> {
     assert.equal(contactedHosts.length, before, 'the waiting state must contact nothing')
   })
 
+  await pass('a real batch must name both roots so its paid evidence survives', async () => {
+    const before = contactedHosts.length
+    await expectCode('bad_args', async () => withEnv({ LLM_API_KEY: 'placeholder-never-used', GOTRY_PERSONA_CONSENT: 'test', GOTRY_M3_COHORT_HMAC_KEY: '0123456789abcdef0123456789abcdef' }, () => runPersonaBatch({
+      dryRun: false,
+      clock: frozenClock(),
+    })))
+    await expectCode('bad_args', async () => withEnv({ LLM_API_KEY: 'placeholder-never-used', GOTRY_PERSONA_CONSENT: 'test', GOTRY_M3_COHORT_HMAC_KEY: '0123456789abcdef0123456789abcdef' }, () => runPersonaBatch({
+      dryRun: false,
+      stateRoot: newRoot(),
+      clock: frozenClock(),
+    })))
+    assert.equal(contactedHosts.length, before, 'the guard must run before any request')
+  })
+
   let dryRunDigest = ''
   await pass('offline dry run drives the whole pipeline through to the scorer', async () => {
     const root = newRoot()
