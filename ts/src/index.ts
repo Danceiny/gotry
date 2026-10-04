@@ -1217,9 +1217,10 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         + 'Payload must be typed slot-spec-family fields — NEVER raw conversation text, IDs, phone numbers, URLs or credentials '
         + '(the write gate rejects those shapes). Evidence is a pointer (session + observation index), never content. '
         + 'action="propose" only PROPOSES moving a note into the durable notebook: it writes NOTHING; the owner must confirm in their own words, '
-        + 'after which you call gotry_session_zone_promote with that quote. The model may never self-promote.',
+        + 'after which you call gotry_session_zone_promote with that quote. The model may never self-promote. '
+        + 'action="deny" records that the owner declined to remember it long-term (writes nothing; stop re-proposing it this session).',
       parameters: {
-        action: { type: 'string', required: true, enum: ['capture', 'revise', 'drop', 'propose'], description: 'capture=新片段入工作区;revise=CAS 修订(需 noteId+expectedRev);drop=更正即弃;propose=提议晋升(零写入)' },
+        action: { type: 'string', required: true, enum: ['capture', 'revise', 'drop', 'propose', 'deny'], description: 'capture=新片段入工作区;revise=CAS 修订(需 noteId+expectedRev);drop=更正即弃;propose=提议晋升(零写入);deny=owner 否决提议(零写入)' },
         tier: { type: 'string', enum: ['resource', 'intent'], description: 'capture 必填:intent(目的地/日期/人数/预算立场,24h)或 resource(检索形态,30min)' },
         kind: { type: 'string', enum: ['availability', 'price_band', 'destination', 'date_window', 'party_size', 'budget_stance'], description: 'capture 必填;revise 可选(改 kind)' },
         payload: { type: 'object', additionalProperties: true, description: '结构化片段,如 { city: "大理" } / { start: "2026-11-01", end: "2026-11-05" };禁放原文/证件/电话/URL/凭证' },

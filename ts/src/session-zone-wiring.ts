@@ -46,6 +46,7 @@ import {
   type ZoneAppendResult,
   type ZoneLedgerErrorCode,
 } from './session-zone-ledger.ts'
+import { noteZoneSignal } from './session-zone-observation.ts'
 import type { StateLedger } from './state-ledger.ts'
 
 // ---- 总闸(默认关;未知值 fail-closed 关) -----------------------------------------
@@ -227,8 +228,8 @@ export function observeToolResult(
 
 // ---- 用户陈述吸收(契约 18 同款:模型带 typed 片段,不带原文) ----------------------
 
-export type ZoneNoteAction = 'capture' | 'revise' | 'drop' | 'propose'
-export const ZONE_NOTE_ACTIONS: readonly ZoneNoteAction[] = ['capture', 'revise', 'drop', 'propose']
+export type ZoneNoteAction = 'capture' | 'revise' | 'drop' | 'propose' | 'deny'
+export const ZONE_NOTE_ACTIONS: readonly ZoneNoteAction[] = ['capture', 'revise', 'drop', 'propose', 'deny']
 
 export function isZoneNoteAction(v: unknown): v is ZoneNoteAction {
   return typeof v === 'string' && (ZONE_NOTE_ACTIONS as readonly string[]).includes(v)
@@ -301,6 +302,7 @@ export function applyZoneNote(
     }
     const { state } = readZoneLog(ledger)
     if (!state.hot[input.noteId]) return err('unknown_subject', `工作区笔记不存在:${input.noteId}`)
+    noteZoneSignal('proposal') // 形状计数(opt-in 关闭时为 no-op)
     return {
       ok: true,
       action: 'propose',
@@ -310,6 +312,24 @@ export function applyZoneNote(
       requiresOwnerConfirm: true,
       ask: '这条要不要我长期记住?请用你自己的话回我一句确认(模型自述不算确认);确认后我再写入笔记本。',
       detail: '提议零落账:持久区唯一入口是 owner 确认晋升',
+    }
+  }
+
+  // owner 否决晋升提议(P4-4 观测面需要真实分母:没有否决面,确认率恒为 1 = 假指标)。
+  // 零落账:笔记仍留在工作区服务本次会话,只是本会话不再提议它进笔记本。
+  if (input.action === 'deny') {
+    if (typeof input.noteId !== 'string' || input.noteId.length === 0) {
+      return err('unknown_subject', 'deny 需要 noteId(owner 否决的是哪条提议)')
+    }
+    const { state } = readZoneLog(ledger)
+    if (!state.hot[input.noteId]) return err('unknown_subject', `工作区笔记不存在:${input.noteId}`)
+    noteZoneSignal('deny')
+    return {
+      ok: true,
+      action: 'deny',
+      appended: false,
+      noteId: input.noteId,
+      detail: 'owner 否决:零落账;笔记仍服务本会话,本会话不再提议它进笔记本',
     }
   }
 
@@ -532,6 +552,7 @@ export function promoteWithRouting(
     }], { actor: 'tool:gotry_session_zone_promote' })
     const r = results[0]!
     if (!r.ok) throw new ZonePromotionRejected(err(r.code, r.detail))
+    noteZoneSignal('confirm') // owner 确认计数(opt-in 关闭时为 no-op)
     const entryId = r.event?.kind === 'notebook.entry.promoted' ? r.event.entry.entry_id : undefined
     return {
       ok: true,
@@ -609,10 +630,11 @@ export function renderSessionZoneBrief(input: {
   if (input.zoneSwitch !== 'on' || !input.ledger) return ''
   try {
     const { state } = readZoneLog(input.ledger)
-    const working = input.sessionRef
-      ? readWorkingZone(state, { now: input.now, session_ref: input.sessionRef })
-      : readWorkingZone(state, { now: input.now, session_ref: '' })
-    return renderZoneBrief({ working, notebook: readNotebook(state), sessionRef: input.sessionRef })
+    const working = readWorkingZone(state, { now: input.now, session_ref: input.sessionRef ?? '' })
+    const brief = renderZoneBrief({ working, notebook: readNotebook(state), sessionRef: input.sessionRef })
+    // 工作区读命中/未命中(形状计数;opt-in 关闭时为 no-op)
+    noteZoneSignal(brief === '' ? 'read_miss' : 'read_hit')
+    return brief
   } catch {
     return ''
   }

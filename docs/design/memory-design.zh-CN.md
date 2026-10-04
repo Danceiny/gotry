@@ -25,7 +25,7 @@
 | **M3 预算标准** | 预算档（动机访谈校准 + 历史行为） | budgetTier gate → profile | ✅ gate 校准；**实际成交与规划估算偏差回流残余 →** [#340](https://github.com/Danceiny/gotry/issues/340)（**写入闸由 [#136](https://github.com/Danceiny/gotry/issues/136)/[#231](https://github.com/Danceiny/gotry/issues/231)/[#232](https://github.com/Danceiny/gotry/issues/232)/[#233](https://github.com/Danceiny/gotry/issues/233) 治理，真实交易落地前不实现**） |
 | **M4 旅行时间线** | 去过哪/何时/和谁（出发地三级解析的地基） | `gotry-state/trips.jsonl`（§4 P1） | ✅ 已落地 2026-08-28（§4 P1） |
 | **M5 同行人档案** | 同行人+约束（高血压/晕车/体力），敏感填充形态 | `gotry-state/companions.json`（§4 P2） | ✅ 已落地 2026-08-28（§4 P2） |
-| **M6 会话双区记忆** | Trip Notebook（durable）+ Hot Context（分层过期） | dsh 会话自有 transcript | ❌ **P4（非 P3）**，依赖真实使用模式数据；闸由 [#255](https://github.com/Danceiny/gotry/issues/255) 跟踪，真实使用模式或多用户触发前保持关闭 |
+| **M6 会话双区记忆** | Trip Notebook（durable）+ Hot Context（分层过期） | ADR-15 账本上的六个日志类事件 kind + 读时 fold（`session-zones.ts` / `session-zone-ledger.ts`）；dsh 会话 transcript 仍是转写原文的权威，两区只存指针 | ✅ **机制 2026-10-04 落地（P4-1..P4-4，§4），`sessionZones` 默认关闭**；价值闸仍开放——三个可否证指标阈值已冻结但真实 cohort 未到，故 [#255](https://github.com/Danceiny/gotry/issues/255) 的价值声明与 #20 scorer 的 `p4` 闸都仍关闭 |
 
 **参考框架之外的 GoTry 增量**（T 系统/ai-agent-book 都没有的，本域原创）：
 
@@ -64,9 +64,12 @@
 行为偏好按 30/90/180/365d 分级窗口衰减（确定性 reducer，置信度只降不删——loopx memory-utility 同款边界）；**动机权重永不衰减**（产品设计：目的地会变，动机跨年稳定）。
 - 验收（已达成）：地板 0.1 旧而不灭/单调/上界 1；动机零衰减为构造性保证（模块无画像 API，5/5 断言 run-all §23）。落地 = `memory-decay.ts` 原语 + memory-metrics 每条 wish「新鲜置信度」列；未来行为偏好层直接复用。
 
-### P4 会话双区记忆（M6 层，后置）
+### P4 会话双区记忆（M6 层）—— **✅ 机制 2026-10-04 落地，默认关闭**
 
-Trip Notebook（durable，后台 LLM 提取，负面清单执行）+ Hot Context（30min 资源/24h 意图分层过期，CAS 防并发）。**依赖真实使用模式数据**，多用户化前不启动。
+Trip Notebook（durable，唯一入口是 owner 确认晋升——模型只可提议，永不自晋升）+ Hot Context（30min 资源/24h 意图分层过期，乐观 rev CAS）。实现级设计见 [session-dual-zone-memory-design.md](session-dual-zone-memory-design.zh-CN.md)。
+
+- **已落地**：P4-1 分区契约纯核（`session-zones.ts`，run-all §74）→ P4-2 账本落点、`forgetSubject` 接入与两个 `state-cli export` 派生视图（`session-zone-ledger.ts`，§77；零新表，`state-ledger.ts` 零改动，内核 manifest 零漂移）→ P4-3 `sessionZones: 'off'|'on'` 开关后的会话接线（`session-zone-wiring.ts`，§78；证据只走指针的捕获缝、`{{session_zone_brief}}` 读回变量、经既有动机/时间线/同行人闸路由的 owner 确认晋升）→ P4-4 opt-in 形状计数、三个可否证指标的只读投影（阈值先于任何数据冻结）与 #228 家族的 HMAC 假名候选导出（`session-zone-observation.ts`，§79）。
+- **仍关闭的是价值**：机制全绿只证明契约，不证明收益——夹具是 `synthetic_fixture`（`exit_evidence_eligible=false`、`value_claimed=false`），真实 cohort 尚未到来，#20 scorer 的 `p4` 闸按它自己的证据规则走。多写者 claim/CAS 物理化仍留在 D-15（[#275](https://github.com/Danceiny/gotry/issues/275)）之后。
 
 ## 5. 与里程碑/验收的挂钩
 
@@ -76,7 +79,7 @@ Trip Notebook（durable，后台 LLM 提取，负面清单执行）+ Hot Context
 
 ## 6. 明确不做
 
-- 对话原文存储（隐私立场）；敏感证件/支付字段入库（后端填充）；LLM 自由记忆（提取必有守门）；为「记忆完整」而提前实现 M5/P4（无真实调用方不花钱）。
+- 对话原文存储（隐私立场）；敏感证件/支付字段入库（后端填充）；LLM 自由记忆（提取必有守门）；为「记忆完整」而越过某一层自己的闸去建（无真实调用方不花钱——P4 只在创始人明示批准后才进入实现流程，出厂默认关闭，且在真实 cohort 过 §4 冻结指标之前不声称任何价值）。
 
 ## 7. Issue #20 价值证据合同
 

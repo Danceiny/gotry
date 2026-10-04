@@ -3,7 +3,7 @@
 # GoTry 会话双区记忆设计（P4 / M6 层）
 
 > 定位：issue #255 P4 会话双区记忆的实现级设计——在 ADR-15 账本之上落「会话工作区 + 长期区 Notebook」；本次立项只交付设计与拆分计划，不含实现代码。
-> 状态：**proposal**（创始人 2026-10-02 批准进入实现流程；实现 PR 在本设计合入后才开始）
+> 状态：**active**（创始人 2026-10-02 批准进入实现流程；P4-1..P4-4 序列已落地——纯核 run-all §74、账本落点 §77、会话接线 §78、观测与指标 §79；`sessionZones` 出厂默认关）
 > 上游：[memory-design.md](memory-design.zh-CN.md) §1/§2 M6/§4 P4、[事务状态 RFC](../rfc/transactional-state-rfc.zh-CN.md)（ADR-15/16）、[issue #255](https://github.com/Danceiny/gotry/issues/255) 启动前验收、`gotry-master-outline.md` §3.5 第 5 层。
 > 下游：PR 序列 P4-1..P4-4（§5）、`memory-design.md` §4 P4 状态同步、#228 家族观测面。
 > 日期：2026-10-02
@@ -76,7 +76,7 @@
   1. **晋升信号质量**——晋升提名中的 owner 确认率与否认率；一个主要收集否认的长期区，说明提名器失准。
   2. **工作区收益**——免重问率：意图 TTL 内回访会话未重复追问的字段数，除以配对首访问过的同名字段数（配对形态借自 #20；按 flow 计算，不看内容）。
   3. **过期误命中率**——分区供出事实被 owner 更正的占比；超声明上界即反向证伪 TTL 分层。
-- 上述指标的阈值在 P4-4 的度量契约里于 PR 时冻结（#20 的阈值冻结纪律——本设计不发明数字）。fixture 只证明度量契约；`synthetic_fixture` 永不声称价值。#20 scorer/manifest 契约内冻结的 `p4` 闸遵循其自身证据规则，不由本立项翻转。
+- 上述指标的阈值在 P4-4 的度量契约里于 PR 时冻结（#20 的阈值冻结纪律——本设计不发明数字）。**2026-10-04 冻结于 `session_zone_metric_contract.v1`（`ts/src/session-zone-observation.ts`），先于任何数据存在**：`minimum_sample_count=5` 与 `min_reask_avoidance_ratio=0.5` 直接沿用 #20 已为 M4 Exit 冻结的两个数（`minimum_pair_count_for_exit` / `target_median_reduction_ratio`）——工作区不给自己一条比 Exit 更松的线；`min_confirm_rate=0.5` 是提名器的最弱可辩护下界（「对的比错的多」——主要被 owner 否认的提名器按定义就是失准）；`max_stale_hit_rate=0.1` 是天花板不是目标——被 owner 更正的分区供述是用户看得见的记忆失败，十分之一即证伪 TTL 分层。输入不得移动这些数字：夹具声明不同值即 `contract_invalid` 拒收，低于样本线的指标一律 `insufficient_sample`，永不 `pass`。fixture 只证明度量契约；`synthetic_fixture` 永不声称价值，`observed_private` 也永不高于 candidate（本面不生成 reviewer/attestation 字段）。#20 scorer/manifest 契约内冻结的 `p4` 闸遵循其自身证据规则，不由本立项翻转。
 - **激活开关**：插件配置 `sessionZones: 'off' | 'on'`，默认关闭——与 `sessionAccess` 同族三态开关。创始人本地开启；真实使用经由 collector 产出 `observed_private` 候选，绝不来自环境采集。
 
 ## 5. 实现拆分（PR 序列，验收全离线）
@@ -89,6 +89,8 @@
 | **P4-2 账本落点 + 删除/导出** | 六个事件 kind；经账本公开面的事务化追加（`state-ledger.ts` 零改动）；`forgetSubject` 接入；两个导出视图 | 同 rev 幂等重放为 no-op；追加中途 kill -9 要么全有要么全无；forget 删除分区事件并留一行审计；导出视图等于 fold 输出；run-all §63 内核 manifest 门禁零漂移地保持绿 |
 | **P4-3 会话接线（默认关）** | 捕获缝（工具观测边界与契约 18 式用户陈述吸收，只落证据指针）；persona 读回 `{{session_zone_brief}}`（有界：在活工作区笔记、回访时的 intent 层笔记、Notebook 行）；经 owner 确认表面的晋升流；更正即弃 | 隔离 stateRoot smoke，零写入 `dsh-runtime`；负面清单守卫端到端在位；首访读回为空；无确认引用的晋升被拒；`sessionZones:'off'` 时接线惰性 |
 | **P4-4 观测 + 度量 + 状态同步** | opt-in 形态计数、HMAC 候选导出（collector 家族）、三个可否证指标的只读投影、`memory-design.md` §2/§4 状态同步 | fixture 只证明度量契约（不是价值）；导出仅含计数与引用——零内容字段（断言）；观测路径零定时器/零网络；双语文档与状态面同 commit 同步 |
+
+**落地状态（2026-10-04）**：P4-1 run-all §74、P4-2 §77、P4-3 §78、P4-4 §79——全部离线，`sessionZones` 默认关。相对本立项有两处偏差，均记入 §7：幂等键补了生代（§2）；P4-3 注册了 `{{session_zone_brief}}` 动态变量，但**没有**把占位符写进出厂 persona（`cordis.gotry-patch.yml`）——引用它就改了出厂提示词，那是创始人决定面，而默认关验收要求 persona 输出逐字节不变。P4-4 另加了 owner 否决面（`gotry_session_zone_note action="deny"`，零账本写入）：没有它，确认率就没有分母，指标 ① 会按构造恒为 1.0。
 
 ## 6. 明确不做
 
@@ -111,3 +113,7 @@
 | Notebook 作为平行事实库 | 每个语义单一写入权威（§3 路由规则）；第二个存储即真相分叉 |
 | 现在就做按条目效用事件 | 那是 ADR-14 的第二个消费方——由 ADR-14 自己的 re-review 触发器裁决，不是 P4 |
 | 模型发起晋升 | 存储继承 ADR-14 owner 确认纪律；只许提名 |
+| 不带生代的幂等键 | id 是语义派生的，drop 后重捕获复用同一 id 与 rev 1——UNIQUE 索引会物理吞掉 §1.3 明定的重捕获（P4-2） |
+| P4-3 就把 `{{session_zone_brief}}` 写进出厂 persona | 改出厂提示词是创始人决定面，而默认关验收要求 persona 输出逐字节不变；变量已注册，开关一开 persona 即可引用 |
+| 为晋升推断路由载荷 | 从工作区笔记猜权重/日期/同行人约束等于伪造 owner 事实；缺路由载荷即 `routing_required` fail-closed |
+| 只有提名、没有否决面的晋升漏斗 | 没有 owner 否决，确认率的分母只剩确认——指标 ① 按构造恒为 1.0（P4-4） |

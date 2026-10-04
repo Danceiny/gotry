@@ -667,6 +667,10 @@ echo
 echo "=== 78. 会话双区记忆会话接线(P4-3,issue #255:sessionZones 总闸默认关——缺省/未知值 fail-closed 关、分区工具不注册、白名单 execute 不被包裹、读回恒空串且不建库、既有注入面与工具清单逐项不变;开闸后捕获缝只投影形状字段(verdict/条数/价格带)——零名称零 URL零自由文本、证据只走指针(摘要 session_ref + 观察序号)、分区内永不出现宿主 session id 原文/负面清单端到端(证件·手机·URL·凭证零入区)/读回首访空串与条数字符双上界/propose 零落账(模型永不自晋升)+ owner 原话引用闸(宿主 schema 闸与代码闭集双道)/§3 路由:preference→动机闸·trip_fact→时间线闸·点名同行人的约束→同行人闸,缺路由载荷 routing_required 拒收,既有闸拒绝即同事务整笔回滚/CAS stale_rev 与更正即弃/过期源不得晋升;真实 apply() 注册面 + mkdtemp 隔离 stateRoot,对 ts/dsh-runtime/gotry-state 零写入(前后快照断言),全离线) ==="
 (cd ts && npx tsx scripts/session-zone-wiring-tests.ts) || FAIL=1
 
+echo
+echo "=== 79. 会话双区记忆观测面与可否证指标(P4-4,issue #255:形状计数(分层捕获·修订·弃用/笔记本三计数/过期年龄分桶/活笔记)零 id·零载荷·零时间戳逐键断言、坏时钟不猜、两次投影一致;计数接收器显式 opt-in(GOTRY_SESSION_ZONE_OBSERVE=1),默认全 0 no-op,接线面 propose·deny·confirm·读命中真的入账(无否决面则确认率恒 1 = 假指标);三可否证指标阈值**见数据前冻结**——样本线 5 与收益线 0.5 同 #20 已冻结值、确认率下界 0.5、失效率上界 0.1,夹具声明改一个数即 contract_invalid、样本不足 insufficient_sample、样本形状非法 bad_sample;夹具只证契约不证价值(synthetic exit_evidence_eligible/value_claimed 恒 false,observed_private 只到 candidate 且永不生成 reviewer/attestation);候选导出只带计数与 HMAC 假名引用(键集闭集断言零内容字段)、摘要绑定、缺同意·缺/弱 HMAC key fail-closed;观测路径零定时器零网络(fetch/setTimeout/setInterval 真实 spy);#20 scorer 冻结 p4 闸未被触碰;只读 CLI 不建库、--out 不覆盖;隔离 stateRoot,全离线) ==="
+(cd ts && npx tsx scripts/session-zone-observation-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
