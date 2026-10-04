@@ -6,10 +6,18 @@
  * Everything this harness produces is SYNTHETIC. It drives a persona LLM against the real
  * GoTry session logic and records the funnel with `src/m3-cohort.ts`, so it validates the
  * capture path, the funnel mechanics, interview friction and system-side measurements
- * (fact-gate claim traceability). It proves NOTHING about real-traveller value and can
- * never contribute to M3 or M4 exit evidence: every record it writes lands in a
- * `synthetic_fixture` evidence root, which `scripts/product-metrics.ts` refuses to turn
- * into `business_pass=true` by construction.
+ * (fact-gate claim adjudication). It proves NOTHING about real-traveller value and can
+ * never contribute to M3 or M4 exit evidence. Two record-level facts enforce that, and
+ * neither depends on the other:
+ *   - every simulated participant is enrolled `test_or_staff=true`, so the scorer's own
+ *     exclusion drops all of them and its eligible sample is 0 — true even if a manifest
+ *     were relabelled, because the exclusion lives in the records;
+ *   - the manifest carries `evidence_kind=synthetic_fixture`, which `product-metrics.ts`
+ *     refuses to turn into `business_pass=true` regardless of the numbers.
+ * The export attestation is a third, weaker thing: it is keyed, so it detects tampering by
+ * anyone without the capture key — it says nothing about whether the participants were real.
+ * Because the scorer excludes every simulated participant, the funnel numbers a reader
+ * wants are computed here by `summarizeFunnel()`, not read off the scorer.
  *
  * What is real in a run and what is simulated:
  *   real      — the deterministic interview (`src/loop.ts interviewNext`), the spec gate,
@@ -55,9 +63,11 @@ import { solveUnified } from '../src/unified.ts'
 import { realtimeSolvePort } from '../src/realtime-pricing.ts'
 import type { TripState, Turn } from '../src/contracts.ts'
 import {
+  assertSafeStateRoot,
   enrollParticipant,
   exportM3Cohort,
   initM3Cohort,
+  M3CohortError,
   M3_SIMULATION_PROVENANCE_SCHEMA,
   recordNps,
   recordPlanDelivered,
@@ -88,6 +98,7 @@ export const FIXTURE_CLOCK_START = '2026-10-05T00:00:00.000Z'
 export type PersonaSimErrorCode =
   | 'bad_args'
   | 'budget_exceeded'
+  | 'capture_failed'
   | 'cost_unprovable'
   | 'fixture_unclassified_prompt'
   | 'internal_error'
@@ -98,6 +109,7 @@ export type PersonaSimErrorCode =
   | 'persona_contract_violation'
   | 'persona_timeout'
   | 'provider_error'
+  | 'unsafe_state_root'
 
 export class PersonaSimError extends Error {
   readonly code: PersonaSimErrorCode
@@ -543,8 +555,10 @@ export const CONTRADICTION_KINDS: ReadonlySet<string> = new Set([
 ])
 
 export interface PoiAudit {
+  /** Audited denominator: only claims the gate could actually adjudicate. */
   locked_claims: number
   invalid_claims: number
+  claims_extracted: number
   traceable_claims: number
   unverified_claims: number
   gate_verdict: 'pass' | 'blocked'
@@ -552,6 +566,16 @@ export interface PoiAudit {
   violation_kinds: Record<string, number>
 }
 
+/**
+ * `locked_claims` is the *audited* denominator, not the extracted claim count.
+ *
+ * Counting every extracted claim as audited was wrong: with an empty registry a plan whose
+ * claims are all `route_unqueried` would record 0/N and the scorer would print a 0% POI
+ * rate with `pass=true` — an unaudited plan scoring as a clean one. A claim is only part of
+ * the denominator when the registry could adjudicate it, i.e. it came back traceable or
+ * contradicted. An empty registry therefore yields `locked_claims=0`, which the scorer
+ * reports as `unavailable` with `pass=false`, which is the truth.
+ */
 export function poiAuditFromGateReport(report: {
   verdict?: unknown
   claims_checked?: unknown
@@ -559,7 +583,7 @@ export function poiAuditFromGateReport(report: {
   presentation?: unknown
   violations?: unknown
 }): PoiAudit {
-  const locked = typeof report.claims_checked === 'number' ? report.claims_checked : 0
+  const extracted = typeof report.claims_checked === 'number' ? report.claims_checked : 0
   const traceable = typeof report.traceable === 'number' ? report.traceable : 0
   const violations = Array.isArray(report.violations) ? report.violations as Array<{ kind?: unknown }> : []
   const kinds: Record<string, number> = {}
@@ -569,11 +593,14 @@ export function poiAuditFromGateReport(report: {
     kinds[kind] = (kinds[kind] ?? 0) + 1
     if (CONTRADICTION_KINDS.has(kind)) contradicted += 1
   }
+  const invalid = Math.min(contradicted, extracted)
+  const locked = Math.min(traceable + invalid, extracted)
   return {
     locked_claims: locked,
-    invalid_claims: Math.min(contradicted, locked),
+    invalid_claims: Math.min(invalid, locked),
+    claims_extracted: extracted,
     traceable_claims: traceable,
-    unverified_claims: Math.max(locked - traceable - Math.min(contradicted, locked), 0),
+    unverified_claims: Math.max(extracted - locked, 0),
     gate_verdict: report.verdict === 'pass' ? 'pass' : 'blocked',
     presentation: String(report.presentation ?? 'verified_label_forbidden'),
     violation_kinds: kinds,
@@ -665,6 +692,12 @@ export interface SessionOptions {
    *  counted by the budget gate, so the counters live outside the session. */
   productUsage: LlmUsageTracker
   personaUsage: LlmUsageTracker
+  /** Called after every turn with this session's spend so far. Throws `budget_exceeded` to
+   *  stop mid-session; the per-turn granularity is the finest the usage API allows, since a
+   *  tracker only moves when a request returns. */
+  checkBudget: (sessionCostUsd: number) => void
+  /** Prices this session's spend so far from the two caller-owned trackers. */
+  sessionCost: () => number
 }
 
 async function runPersonaSession(options: SessionOptions): Promise<PersonaRunOutcome> {
@@ -733,6 +766,9 @@ async function runPersonaSession(options: SessionOptions): Promise<PersonaRunOut
       } else {
         message = decision.message
       }
+      // Budget is enforced between turns, not only between sessions: two concurrent
+      // sessions could otherwise both run to completion past the limit.
+      options.checkBudget(options.sessionCost())
     } catch (error) {
       syncProductUsage()
       // A broken persona contract or a provider failure ends this session without
@@ -772,6 +808,64 @@ export interface PersonaBatchOptions {
   omitFixtureUsage?: boolean
 }
 
+/**
+ * Funnel arithmetic computed by the harness itself.
+ *
+ * It has to be: simulated participants are enrolled `test_or_staff=true`, so the scorer
+ * excludes every one of them and its own funnel fields come back `unavailable`. That
+ * exclusion is the point — it is what keeps simulated records out of the eligible set at
+ * record level — so the numbers a reader wants about the simulation are computed here, over
+ * the harness's own outcomes, using the scorer's formulas.
+ */
+export interface PersonaFunnelSummary {
+  schema: 'gotry_persona_sim_funnel.v1'
+  personas_run: number
+  errored: number
+  delivered: number
+  finalized: number
+  /** finalized / delivered, or null when the denominator is 0 (never 0% on an empty set). */
+  finalization_rate: number | null
+  nps_responses: number
+  promoters: number
+  passives: number
+  detractors: number
+  nps_score: number | null
+  claims_extracted: number
+  locked_claims: number
+  invalid_claims: number
+  /** invalid / locked, or null when nothing was audited. */
+  poi_rate: number | null
+}
+
+export function summarizeFunnel(outcomes: readonly PersonaRunOutcome[]): PersonaFunnelSummary {
+  const round = (value: number): number => Number(value.toFixed(6))
+  const delivered = outcomes.filter(outcome => outcome.plan_delivered)
+  const finalized = delivered.filter(outcome => outcome.finalized)
+  const scores = delivered.map(outcome => outcome.nps).filter((score): score is number => score !== null)
+  const promoters = scores.filter(score => score >= 9).length
+  const detractors = scores.filter(score => score <= 6).length
+  const claimsExtracted = delivered.reduce((sum, outcome) => sum + (outcome.poi_audit?.claims_extracted ?? 0), 0)
+  const locked = delivered.reduce((sum, outcome) => sum + (outcome.poi_audit?.locked_claims ?? 0), 0)
+  const invalid = delivered.reduce((sum, outcome) => sum + (outcome.poi_audit?.invalid_claims ?? 0), 0)
+  return {
+    schema: 'gotry_persona_sim_funnel.v1',
+    personas_run: outcomes.length,
+    errored: outcomes.filter(outcome => outcome.error !== null).length,
+    delivered: delivered.length,
+    finalized: finalized.length,
+    finalization_rate: delivered.length === 0 ? null : round(finalized.length / delivered.length),
+    nps_responses: scores.length,
+    promoters,
+    passives: scores.length - promoters - detractors,
+    detractors,
+    nps_score: scores.length === 0 ? null : round(100 * (promoters - detractors) / scores.length),
+    claims_extracted: claimsExtracted,
+    locked_claims: locked,
+    invalid_claims: invalid,
+    poi_rate: locked === 0 ? null : round(invalid / locked),
+  }
+}
+
 export interface PersonaBatchResult {
   schema: 'gotry_persona_sim_result.v1'
   state: 'waiting_external_evidence' | 'dry_run_complete' | 'evidence_written'
@@ -785,6 +879,7 @@ export interface PersonaBatchResult {
   real_spend_usd: number
   cost_over_budget: boolean
   personas: PersonaRunOutcome[]
+  funnel: PersonaFunnelSummary
   evidence_root: string | null
   scorer_summary: M3ProductMetricsSummary | null
   verification: { evidence_kind: string; record_count: number; simulated_record_count: number } | null
@@ -870,6 +965,7 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
       real_spend_usd: 0,
       cost_over_budget: false,
       personas: [],
+      funnel: summarizeFunnel([]),
       evidence_root: null,
       scorer_summary: null,
       verification: null,
@@ -896,6 +992,15 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
   }
   const ownsRoot = options.stateRoot === undefined
   const batchRoot = options.stateRoot ?? mkdtempSync(join(tmpdir(), 'gotry-persona-sim-'))
+  // The capture core enforces the state-root policy, but only once it is asked to write —
+  // by then the harness would already have mkdir'd its sandbox and capture dir inside a
+  // forbidden root. Apply the same policy here, before any directory is created.
+  try {
+    assertSafeStateRoot(batchRoot)
+  } catch (error) {
+    if (error instanceof M3CohortError && error.code === 'unsafe_state_root') fail('unsafe_state_root', batchRoot)
+    fail('bad_args', `unusable --state-root: ${(error as Error).message}`)
+  }
   const captureRoot = join(batchRoot, 'capture')
   const evidenceRoot = options.evidenceRoot ?? join(batchRoot, 'evidence')
   const clock = options.clock ?? (options.dryRun ? steppingClock(FIXTURE_CLOCK_START) : { now: () => new Date() })
@@ -968,6 +1073,7 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
         // The trackers are owned here so a timed-out session still reports its spend.
         const productUsage = emptyUsage()
         const personaUsage = emptyUsage()
+        const sessionCost = (): number => usageCost(productModel, productUsage, priceTable) + usageCost(personaModel, personaUsage, priceTable)
         let outcome: PersonaRunOutcome
         try {
           outcome = await withDeadline(
@@ -980,6 +1086,13 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
               maxTurns,
               productUsage,
               personaUsage,
+              sessionCost,
+              checkBudget: (thisSession: number) => {
+                if (Number((costUsd + thisSession).toFixed(6)) > budgetUsd) {
+                  overBudget = true
+                  fail('budget_exceeded', `running total exceeds GOTRY_PERSONA_BUDGET_USD ${budgetUsd}`)
+                }
+              },
             }),
             sessionDeadlineMs,
             'persona_timeout',
@@ -1020,19 +1133,31 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
           }
           const participant = `persona:${card.persona_id}`
           const plan = `persona:${card.persona_id}:plan`
-          await capture(() => {
-            enrollParticipant({ ...captureCommon, participant, invited: true, participantConsent: true, testOrStaff: false, simulation: provenance }, clock)
-            recordPlanDelivered({ ...captureCommon, participant, plan, attribution: 'gotry_primary' }, clock)
-            if (outcome.finalized) recordPlanFinalized({ ...captureCommon, participant, plan }, clock)
-            if (outcome.nps !== null) recordNps({ ...captureCommon, participant, plan, score: outcome.nps }, clock)
-            recordPoiLock({
-              ...captureCommon,
-              participant,
-              plan,
-              lockedClaims: outcome.poi_audit!.locked_claims,
-              invalidClaims: outcome.poi_audit!.invalid_claims,
-            }, clock)
-          })
+          // test_or_staff=true is deliberate and is the record-level half of the
+          // never-counts guarantee: the scorer's own `test_or_staff` exclusion drops every
+          // simulated participant, so even a relabelled manifest yields sample=0 and
+          // business_pass=false. The funnel numbers a reader wants are therefore computed
+          // by summarizeFunnel() over the harness's outcomes, not read off the scorer.
+          try {
+            await capture(() => {
+              enrollParticipant({ ...captureCommon, participant, invited: true, participantConsent: true, testOrStaff: true, simulation: provenance }, clock)
+              recordPlanDelivered({ ...captureCommon, participant, plan, attribution: 'gotry_primary' }, clock)
+              if (outcome.finalized) recordPlanFinalized({ ...captureCommon, participant, plan }, clock)
+              if (outcome.nps !== null) recordNps({ ...captureCommon, participant, plan, score: outcome.nps }, clock)
+              recordPoiLock({
+                ...captureCommon,
+                participant,
+                plan,
+                lockedClaims: outcome.poi_audit!.locked_claims,
+                invalidClaims: outcome.poi_audit!.invalid_claims,
+              }, clock)
+            })
+          } catch (error) {
+            // Same granularity as a failed session: one unrecordable persona is reported on
+            // that persona and the paid batch still exports everything else.
+            captureChain = Promise.resolve()
+            outcome.error = { code: 'capture_failed', detail: (error as Error).message.slice(0, 300) }
+          }
         }
 
         costUsd = Number((costUsd
@@ -1045,14 +1170,19 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, runNext))
-    await captureChain
+    await captureChain.catch(() => {})
 
+    // An over-budget batch still exports: the spend already happened and the captured
+    // records are facts about it. The batch reports cost_over_budget and the CLI exits 3.
     const { payload } = exportM3Cohort({ ...captureCommon, evidenceRoot }, clock)
     const manifest = parseManifest(JSON.parse(JSON.stringify(payload.manifest)))
     const cohort = payload.cohort.map((record, index) => parseCohortRecord(JSON.parse(JSON.stringify(record)), index))
     const summary = scoreProductMetrics(manifest, cohort, [])
-    const verification = verifyExportedEvidence(evidenceRoot)
+    const verification = verifyExportedEvidence(evidenceRoot, hmacKey)
     if (summary.business_pass) fail('internal_error', 'a synthetic export must never reach business_pass')
+    if (summary.sample.participants !== 0) {
+      fail('internal_error', 'simulated participants must be excluded from the scorer eligible set')
+    }
 
     return {
       schema: 'gotry_persona_sim_result.v1',
@@ -1067,6 +1197,7 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
       real_spend_usd: options.dryRun ? 0 : costUsd,
       cost_over_budget: overBudget,
       personas: outcomes.sort((a, b) => a.persona_id.localeCompare(b.persona_id)),
+      funnel: summarizeFunnel(outcomes),
       evidence_root: evidenceRoot,
       scorer_summary: summary,
       verification: {
@@ -1105,26 +1236,36 @@ function renderMarkdown(result: PersonaBatchResult): string {
   ]
   if (result.reason) lines.push(`- reason: ${result.reason}`)
   if (result.personas.length > 0) {
-    lines.push('', '| persona | turns | delivered | finalized | nps | solver | claims | invalid | gate | error |', '|---|---|---|---|---|---|---|---|---|---|')
+    lines.push('', '| persona | turns | delivered | finalized | nps | solver | extracted | audited | invalid | gate | error |', '|---|---|---|---|---|---|---|---|---|---|---|')
     for (const persona of result.personas) {
       lines.push(`| ${persona.persona_id} | ${persona.user_turns} | ${persona.plan_delivered} | ${persona.finalized} | ${persona.nps ?? '-'} `
         + `| ${persona.solver_verdict}${persona.unsat_core.length ? `(${persona.unsat_core.join(',')})` : ''} `
-        + `| ${persona.poi_audit?.locked_claims ?? '-'} | ${persona.poi_audit?.invalid_claims ?? '-'} | ${persona.poi_audit?.gate_verdict ?? '-'} `
-        + `| ${persona.error ? persona.error.code : '-'} |`)
+        + `| ${persona.poi_audit?.claims_extracted ?? '-'} | ${persona.poi_audit?.locked_claims ?? '-'} | ${persona.poi_audit?.invalid_claims ?? '-'} `
+        + `| ${persona.poi_audit?.gate_verdict ?? '-'} | ${persona.error ? persona.error.code : '-'} |`)
     }
   }
+  const funnel = result.funnel
+  lines.push('', `- harness funnel (simulation, computed here): delivered=${funnel.delivered}/${funnel.personas_run} `
+    + `finalized=${funnel.finalized} finalization=${funnel.finalization_rate ?? 'unavailable'} `
+    + `nps=${funnel.nps_score ?? 'unavailable'}(n=${funnel.nps_responses}) `
+    + `claims extracted=${funnel.claims_extracted} audited=${funnel.locked_claims} invalid=${funnel.invalid_claims} `
+    + `poi=${funnel.poi_rate ?? 'unavailable'} errored=${funnel.errored}`)
   const summary = result.scorer_summary
   if (summary) {
-    lines.push('', `- scorer: participants=${summary.sample.participants} finalization=${summary.finalization.rate ?? 'unavailable'} `
-      + `nps=${summary.nps.score ?? 'unavailable'} poi=${summary.poi_hallucination.rate ?? 'unavailable'}`)
+    lines.push(`- scorer (excludes every simulated participant via test_or_staff): participants=${summary.sample.participants} `
+      + `finalization=${summary.finalization.rate ?? 'unavailable'} nps=${summary.nps.score ?? 'unavailable'} `
+      + `poi=${summary.poi_hallucination.rate ?? 'unavailable'} test_or_staff_excluded=${summary.exclusions['test_or_staff'] ?? 0}`)
     lines.push(`- business_pass: ${summary.business_pass} — ${summary.business_pass_reason}`)
   }
   return lines.join('\n')
 }
 
 async function main(): Promise<void> {
-  const asJson = (arg('--format') ?? 'markdown') === 'json'
+  // `--format` is read inside the try: a malformed flag must surface as bad_args, not as an
+  // unhandled rejection before the error path exists.
+  let asJson = process.argv.includes('--format')
   try {
+    asJson = (arg('--format') ?? 'markdown') === 'json'
     const result = await runPersonaBatch({
       deckPath: arg('--deck'),
       dryRun: process.argv.includes('--dry-run'),

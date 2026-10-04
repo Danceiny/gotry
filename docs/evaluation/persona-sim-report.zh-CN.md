@@ -11,7 +11,9 @@
 
 本 harness 产出的一切都是合成的，并且在落盘字节里就标明了这一点。它只能作为三件事的证据：M3 采集面端到端可用；`ts/scripts/product-metrics.ts` 的漏斗算术由真实记录而非手写记录驱动；一次会话能自观测到的系统侧测量（访谈摩擦、求解判定、事实闸 claim 可回溯性）确实可推导。
 
-除此之外它什么都不能证明。人格是一个读卡片的语言模型，不是旅行者。模拟的定稿与模拟的 NPS 测的是卡片，不是交付给人的价值。这里产出的任何记录都不能计入 M3 或 M4 退出，有三条相互独立的机制在兜底：manifest 带 `evidence_kind=synthetic_fixture`，评分器拒绝把它变成 `business_pass=true`；采集存储拒绝让模拟与真实参与者混居同一存储或同一证据根；导出 attestation 让单字段改标可被发现。M3 闸仍然要求一份被纳入的 50–200 人真实种子用户证据集。
+除此之外它什么都不能证明。人格是一个读卡片的语言模型，不是旅行者。模拟的定稿与模拟的 NPS 测的是卡片，不是交付给人的价值。这里产出的任何记录都不能计入 M3 或 M4 退出，有两条彼此独立的记录级事实在兜底：每个模拟参与者都以 `test_or_staff=true` 入组，评分器自己的排除项会把它们全部剔出，哪怕 manifest 被改标，合格样本仍然是 0——因为排除依据写在记录里；manifest 带 `evidence_kind=synthetic_fixture`，无论数字多好，评分器都拒绝把它变成 `business_pass=true`。此外采集存储拒绝让模拟与真实参与者混居同一存储或同一证据根。M3 闸仍然要求一份被纳入的 50–200 人真实种子用户证据集。
+
+导出 attestation 是另一件更弱的事，本报告照实说：它带密钥 MAC，所以能发现任何不持采集密钥者的篡改，并证明这四个文件是该存储未经修改的产出。它对「参与者是不是真人」一字未证——那是关于采集过程的事实，任何摘要都无法建立。又因为评分器按设计排除了全部模拟参与者，本报告里的漏斗数字由 harness 对自己的 outcome 按评分器同一组公式计算得出，并明确标注为「模拟的数字」。
 
 ## 真实面与模拟面
 
@@ -54,7 +56,11 @@ cd ts && \
     --concurrency 2 --format json
 ```
 
-退出码：批次跑完或等待态为 0，fail-closed 拒绝为 1，预算闸提前停批为 3。证据根会收到 `manifest.json`、`cohort.jsonl`、`provenance.jsonl` 与 `export-attestation.json`；`npx tsx scripts/m3-cohort.ts verify --evidence-root <dir>` 重算全部 digest，`npx tsx scripts/product-metrics.ts --evidence-root <dir> --format json` 给它评分。两者都会说 `synthetic_fixture`，评分器会说 `business_pass: false`。
+真实批次必须同时给出两个根：付费跑出来的证据不得写进 harness 随后会删掉的临时目录。预算在**轮次之间**而非仅在会话之间判定，所以两个并发会话不可能都越限跑完；触发预算闸的批次仍会导出已经付过钱的部分——钱已经花了，记录就是关于这笔花费的事实——同时报 `cost_over_budget` 并以 3 退出。
+
+退出码：批次跑完或等待态为 0，fail-closed 拒绝为 1，预算闸提前停批为 3。证据根会收到 `manifest.json`、`cohort.jsonl`、`provenance.jsonl` 与 `export-attestation.json`，四个文件要么全写要么全不写。`GOTRY_M3_COHORT_HMAC_KEY=… npx tsx scripts/m3-cohort.ts verify --evidence-root <dir>` 重算全部 digest 并校验密钥 MAC（它需要密钥；没有密钥的校验谁都能重算），`npx tsx scripts/product-metrics.ts --evidence-root <dir> --format json` 给它评分。两者都会说 `synthetic_fixture`，评分器会说 `business_pass: false` 且合格样本为 0。
+
+采集被中断时，`npx tsx scripts/m3-cohort.ts lock-status --state-root <dir>` 会说明 `lock_busy` 是活写者还是被杀进程留下的残锁，`unlock` 只清理记录 pid 已消失的锁。
 
 ## dry run 输出样例
 
@@ -68,33 +74,36 @@ cd ts && \
 - cost: computed $0.028674 / budget $0.25 (real spend $0)
 - evidence root: <temp>/evidence
 
-| persona | turns | delivered | finalized | nps | solver | claims | invalid | gate | error |
-|---|---|---|---|---|---|---|---|---|---|
-| erhai-weekend-unwind | 1 | true | false | 6 | candidate_choice | 2 | 0 | blocked | - |
-| krabi-dive-buddy-terse | 3 | true | true | 7 | feasible | 7 | 0 | blocked | - |
-| phuket-with-parents | 3 | true | true | 8 | feasible | 6 | 0 | blocked | - |
-| phuket-workation-multileg | 3 | true | true | 9 | feasible | 7 | 0 | blocked | - |
-| redeye-dubai-monday | 2 | true | true | 9 | feasible | 7 | 0 | blocked | - |
-| vague-wish-drifter | 3 | false | false | - | none | - | - | - | - |
-| yunnan-budget-student | 1 | true | false | 4 | infeasible(wasm_runtime_error) | 0 | 0 | pass | - |
+| persona | turns | delivered | finalized | nps | solver | extracted | audited | invalid | gate | error |
+|---|---|---|---|---|---|---|---|---|---|---|
+| erhai-weekend-unwind | 1 | true | false | 6 | candidate_choice | 2 | 0 | 0 | blocked | - |
+| krabi-dive-buddy-terse | 3 | true | true | 7 | feasible | 7 | 0 | 0 | blocked | - |
+| phuket-with-parents | 3 | true | true | 8 | feasible | 6 | 0 | 0 | blocked | - |
+| phuket-workation-multileg | 3 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
+| redeye-dubai-monday | 2 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
+| vague-wish-drifter | 3 | false | false | - | none | - | - | - | - | - |
+| yunnan-budget-student | 1 | true | false | 4 | infeasible(wasm_runtime_error) | 0 | 0 | 0 | pass | - |
 
-- scorer: participants=6 finalization=0.666667 nps=0 poi=0
+- harness funnel (simulation, computed here): delivered=6/7 finalized=4 finalization=0.666667 nps=0(n=6) claims extracted=29 audited=0 invalid=0 poi=unavailable errored=0
+- scorer (excludes every simulated participant via test_or_staff): participants=0 finalization=unavailable nps=unavailable poi=unavailable test_or_staff_excluded=6
 - business_pass: false — evidence_kind=synthetic_fixture cannot prove business pass
 ```
 
-这张表要按采集面结果读，不是按产品结果读。七个人格里六个拿到了交付方案，四个定稿，漂流者停在访谈阶段因此完全没有产生 cohort 记录——真实漏斗本来就该这么记。计算出的成本是把封存价表应用到 fixture 上报的 token 用量上；真实花费为零。
+这张表要按采集面结果读，不是按产品结果读。七个人格里六个拿到了交付方案，四个定稿，漂流者停在访谈阶段因此完全没有产生 cohort 记录——真实漏斗本来就该这么记。评分器那一行全是 `unavailable` 是故意的：六条记录全带 `test_or_staff`，它的合格集为空，而这正是把模拟参与者挡在 M3 之外的记录级排除。claim 那几列解释了为什么 POI 率是 `unavailable` 而不是好看的 0%：闸抽出 29 条可下单 claim，一条都无法裁决，因为没有任何 exact-date 检索跑过。计算出的成本是把封存价表应用到 fixture 上报的 token 用量上；真实花费为零。
 
 ## claim 审计是怎么推导的
 
-每条 cohort 记录里的 `locked_claims` 与 `invalid_claims` 来自真实注册工具 `gotry_fact_gate`，对交付方案 markdown、按该会话自己隔离 `stateRoot` 里的事实注册表运行。`locked_claims` 就是闸的 `claims_checked`：闸从产物里抽出的每一条可下单 claim。`invalid_claims` 只计注册表与产物直接矛盾的违例——`not_in_source`、`contradicted`、`airport_mapping_conflict`、`price_contradicted`、`fact_anchor_unknown`、`unconditional_check`、`self_transfer_called_through`，以及行程不变量那几类。逐类明细、traceable 计数与闸判定按人格逐条上报。
+每条 cohort 记录里的 `locked_claims` 与 `invalid_claims` 来自真实注册工具 `gotry_fact_gate`，对交付方案 markdown、按该会话自己隔离 `stateRoot` 里的事实注册表运行。`locked_claims` 是**被审计**的分母，不是抽出的 claim 总数：只有注册表能够裁决的 claim 才进分母，即回溯成功或被反驳的那些。`invalid_claims` 只计注册表与产物直接矛盾的违例——`not_in_source`、`contradicted`、`airport_mapping_conflict`、`price_contradicted`、`fact_anchor_unknown`、`unconditional_check`、`self_transfer_called_through`，以及行程不变量那几类。抽出计数、traceable 计数、逐类明细与闸判定按人格逐条上报。
 
-它不是什么：不是 POI 幻觉率。未核验的 claim 不等于幻觉；模拟运行里没有任何 exact-date 检索工具跑过，所以注册表是空的、每条 claim 都是 `route_unqueried`——闸判定是 `blocked`、`traceable=0`，而 `invalid_claims` 保持 0。上面那个 `poi=0` 的诚实读法是「没有任何 claim 被已记录的事实反驳」，不是「方案准确」。M3 指标的本意——被审计的无效 POI claim 除以锁定的被审计 claim——需要人工审计者拿 claim 比对标准答案。本 harness 产不出那个数字，也不假装能产；它真正建立的是：这个字段由一次真实测量填上，而不是手写上去的。
+把抽出的 claim 全当成已审计是一种好看的谎言：注册表为空时，一份 claim 全是 `route_unqueried` 的方案会记成 0/N，评分器于是打印 0% 的 POI 率并给 `pass=true`——一份完全未经审计的方案得了干净方案的分。改用被审计分母后，空注册表得到 `locked_claims=0`，评分器据此报 `unavailable` 且 `pass=false`。这才是模拟运行的真相：没有任何 exact-date 检索跑过，所以没有任何 claim 可裁决。
+
+因此它不是什么：不是 POI 幻觉率。未核验的 claim 不等于幻觉。M3 指标的本意——被审计的无效 POI claim 除以锁定的被审计 claim——需要人工审计者拿 claim 比对标准答案。本 harness 产不出那个数字，也不假装能产；它真正建立的是：这个字段由一次真实测量填上而不是手写上去的，并且一份未经审计的方案无法冒充准确方案。
 
 ## 限制
 
 人格模型决定定稿与 NPS，所以两者都是卡组的性质。改一张卡就改了漏斗；每条记录随附的 provenance digest 是该人格系统提示词原文的 SHA-256，所以改过的卡会在证据里显形，而不是无声无息。
 
-人格契约被破坏的会话（JSON 不合法、给从未见过的方案打分、交付前就定稿）被记为错误，不产生 cohort 记录。这是 fail-closed，但它会让漏斗产生偏差，所以逐人格错误清单是输出的一部分，必须与数字一起读。
+人格契约被破坏的会话（JSON 不合法、给从未见过的方案打分、交付前就定稿）被记为错误，不产生 cohort 记录。采集写入失败、以及中途触发预算闸的会话，粒度相同：错误挂在那个人格上，批次其余部分照常导出。这是 fail-closed，但它会让漏斗产生偏差，所以逐人格错误清单与漏斗里的 `errored` 计数是输出的一部分，必须与数字一起读。
 
 dry run 不覆盖槽位与 spec 的日期一致性闸：fixture 不返回槽位抽取，于是该闸走它文档化的「无槽位则不参与」分支。真实 LLM 批次会覆盖它。
 
@@ -106,4 +115,4 @@ dry run 不覆盖槽位与 spec 的日期一致性闸：fixture 不返回槽位�
 
 ## 验证
 
-`./scripts/run-all-tests.sh` §75 跑 `ts/scripts/m3-cohort-tests.ts`（采集契约加四条合成标签反证，每条都带红基线），§76 跑 `ts/scripts/persona-sim-tests.ts`（卡组契约、无凭证停机纪律、完整离线流水线、字节确定性、预算与价目闸、轮次有界、PII 哨兵与非本机断言）。两套都是离线确定性的，都不写 `mkdtemp` 根之外的任何位置。
+`./scripts/run-all-tests.sh` §75 跑 `ts/scripts/m3-cohort-tests.ts`（采集契约、四条合成标签反证各带红基线、一次把三个摘要全部重算的伪造只被密钥 MAC 抓住、向半占用证据根导出的全有或全无、以及写锁回收），§76 跑 `ts/scripts/persona-sim-tests.ts`（卡组契约、无凭证停机纪律、完整离线流水线、字节确定性、记录级与 manifest 级两道排除分别证明、预算与价目闸、不安全状态根拒收、轮次有界与 PII 哨兵）。两套都是离线确定性的，都不写 `mkdtemp` 根之外的任何位置；§76 的 fetch spy 对 `127.0.0.1` 以外的主机直接抛错而不只是记录，所以回归不可能把凭证带出本机。

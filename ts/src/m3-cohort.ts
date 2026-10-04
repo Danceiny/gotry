@@ -14,9 +14,12 @@
  *       `real_seed_cohort`  → simulated participants are refused outright;
  *       `synthetic_fixture` → every participant MUST carry a simulation provenance block.
  *     The two can therefore never be mixed in one store or one evidence root.
- *   - export writes exactly the scorer's v1 shapes plus two sidecars the scorer ignores
- *     (`provenance.jsonl`, `export-attestation.json`); the attestation binds the digests
- *     so relabelling a synthetic export as real is detectable.
+ *   - export is all-or-nothing and writes exactly the scorer's v1 shapes plus two sidecars
+ *     the scorer ignores (`provenance.jsonl`, `export-attestation.json`); the attestation
+ *     carries a keyed MAC over its own body, so an export cannot be relabelled or
+ *     re-digested without the capture key. That proves the four files are the unmodified
+ *     output of a capture store holding the key — it does NOT prove the participants were
+ *     real people, which is a claim about collection that no digest can establish.
  *
  * Path/lock/atomic-write discipline deliberately mirrors `memory-lifecycle.ts` rather than
  * importing it: the two collectors keep independent error-code domains and independent
@@ -26,7 +29,7 @@
  * `scripts/product-metrics.ts` do every division.
  */
 
-import { createHash, createHmac, randomBytes } from 'node:crypto'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import {
   chmodSync,
   closeSync,
@@ -209,6 +212,26 @@ export interface M3ExportAttestation {
    *  record does. */
   cohort_records_sha256: string
   provenance_jsonl_sha256: string
+  /**
+   * Keyed MAC over every other field of this attestation.
+   *
+   * The plain digests above only bind the bytes to each other, all of which a forger can
+   * recompute. This field is what the forger cannot produce without the capture key, so
+   * `verifyExportedEvidence` requires that key. It proves "this export came from a capture
+   * store held by whoever holds the key, unmodified since"; it proves nothing about whether
+   * the participants behind it were real people.
+   */
+  attestation_hmac: string
+}
+
+const ATTESTATION_BODY_KEYS = [
+  'schema_version', 'cohort_id', 'evidence_kind', 'exported_at', 'record_count',
+  'simulated_record_count', 'capture_manifest_digest_sha256', 'manifest_sha256',
+  'cohort_records_sha256', 'provenance_jsonl_sha256',
+] as const
+
+function attestationMac(hmacKey: string, body: Omit<M3ExportAttestation, 'attestation_hmac'>): string {
+  return pseudonymousRef(hmacKey, 'export-attestation', [canonicalJson(body)])
 }
 
 /** The cohort-record subset of a `cohort.jsonl`, in file order, as the digest sees it. */
@@ -453,12 +476,12 @@ export function planKeyFor(hmacKey: string, evidenceKind: M3EvidenceKind, partic
   ])
 }
 
-function cohortRefFor(hmacKey: string, cohort: string): string {
-  return pseudonymousRef(hmacKey, 'cohort', [assertRawLabel(cohort)])
+function cohortRefFor(hmacKey: string, evidenceKind: M3EvidenceKind, cohort: string): string {
+  return pseudonymousRef(hmacKey, `cohort:${assertEvidenceKind(evidenceKind)}`, [assertRawLabel(cohort)])
 }
 
-function cohortKeyVerifier(hmacKey: string): string {
-  return pseudonymousRef(hmacKey, 'cohort-key-verifier', [M3_COHORT_STORE_SCHEMA])
+function cohortKeyVerifier(hmacKey: string, evidenceKind: M3EvidenceKind): string {
+  return pseudonymousRef(hmacKey, `cohort-key-verifier:${assertEvidenceKind(evidenceKind)}`, [M3_COHORT_STORE_SCHEMA])
 }
 
 function eventRef(hmacKey: string, kind: string, parts: readonly string[]): string {
@@ -527,7 +550,9 @@ function sameOrChildPath(parent: string, child: string): boolean {
   return distance === '' || (!distance.startsWith('..') && !isAbsolute(distance))
 }
 
-function assertSafeStateRoot(stateRoot: string): string {
+/** Policy gate on a caller-supplied state root. Exported so a harness can refuse an unsafe
+ *  root BEFORE it creates any directory inside it. */
+export function assertSafeStateRoot(stateRoot: string): string {
   if (!nonEmptyString(stateRoot)) fail('missing_state_root')
   const resolved = resolve(stateRoot)
   assertSafePolicyPath(resolved)
@@ -736,6 +761,83 @@ function appendPrivateLine(storeRoot: string, path: string, line: string): void 
   try { chmodSync(path, 0o600) } catch { /* best effort */ }
 }
 
+export const M3_COHORT_LOCK_SCHEMA = 'gotry_m3_cohort_lock.v1' as const
+
+export interface M3CohortLockState {
+  path: string
+  held: boolean
+  pid: number | null
+  pid_alive: boolean | null
+  reason: 'absent' | 'live_writer' | 'stale_writer' | 'unreadable'
+}
+
+/** `true` when the pid is gone, `false` when it exists (EPERM means it exists under another
+ *  uid), `null` when the lock does not name a usable pid. */
+function pidIsDead(pid: number | null): boolean | null {
+  if (pid === null) return null
+  if (pid === process.pid) return false
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    if (isNodeError(error, 'ESRCH')) return true
+    return false
+  }
+}
+
+function readLockPid(lockPath: string): number | null {
+  try {
+    const parsed = JSON.parse(readFileSync(lockPath, 'utf8')) as Record<string, unknown>
+    if (!isObject(parsed) || parsed['schema_version'] !== M3_COHORT_LOCK_SCHEMA) return null
+    const pid = parsed['pid']
+    return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null
+  } catch {
+    return null
+  }
+}
+
+/** Read-only lock inspection: tells an operator whether `lock_busy` is a live writer or a
+ *  leftover from a killed one. Never writes. */
+export function inspectStoreLock(stateRoot: string): M3CohortLockState {
+  const storeRoot = storeRootForStateRoot(stateRoot)
+  const lockPath = join(storeRoot, '.writer.lock')
+  if (!existsSync(storeRoot) || !pathExistsByLstat(lockPath)) {
+    return { path: lockPath, held: false, pid: null, pid_alive: null, reason: 'absent' }
+  }
+  const pid = readLockPid(lockPath)
+  const dead = pidIsDead(pid)
+  if (pid === null) return { path: lockPath, held: true, pid: null, pid_alive: null, reason: 'unreadable' }
+  return {
+    path: lockPath,
+    held: true,
+    pid,
+    pid_alive: dead === null ? null : !dead,
+    reason: dead === true ? 'stale_writer' : 'live_writer',
+  }
+}
+
+/**
+ * Clear a writer lock whose owning process is gone.
+ *
+ * A Ctrl-C during a long real capture used to wedge the store at `lock_busy` forever. The
+ * safety check is the recorded pid: a live owner (or a lock that does not name a readable
+ * pid) is refused, so this can never steal the lock from a running writer.
+ */
+export function unlockStore(stateRoot: string): { schema: 'gotry_m3_cohort_unlock.v1'; ok: true; status: CommandStatus; lock: M3CohortLockState } {
+  const state = inspectStoreLock(stateRoot)
+  if (!state.held) return { schema: 'gotry_m3_cohort_unlock.v1', ok: true, status: 'unchanged', lock: state }
+  if (state.reason !== 'stale_writer') fail('lock_busy')
+  const storeRoot = storeRootForStateRoot(stateRoot)
+  assertManagedFilePath(storeRoot, state.path)
+  try {
+    unlinkSync(state.path)
+  } catch (error) {
+    if (isNodeError(error, 'ENOENT')) return { schema: 'gotry_m3_cohort_unlock.v1', ok: true, status: 'unchanged', lock: state }
+    fail('internal_error')
+  }
+  return { schema: 'gotry_m3_cohort_unlock.v1', ok: true, status: 'recorded', lock: state }
+}
+
 function withStoreLock<T>(storeRoot: string, createStore: boolean, body: () => T): T {
   assertManagedStoreIsolation(storeRoot)
   if (createStore) ensurePrivateDir(storeRoot)
@@ -744,24 +846,36 @@ function withStoreLock<T>(storeRoot: string, createStore: boolean, body: () => T
 
   const lockPath = join(storeRoot, '.writer.lock')
   assertManagedFilePath(storeRoot, lockPath)
-  let fd = -1
-  let createdLock = false
-  try {
-    fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | OPEN_NOFOLLOW, 0o600)
-    createdLock = true
-    writeAllSync(fd, JSON.stringify({ schema_version: 'gotry_m3_cohort_lock.v1', pid: process.pid }))
-  } catch (error) {
-    if (fd >= 0) {
-      try { closeSync(fd) } catch { /* preserve original error */ }
-      fd = -1
+  const acquire = (): 'acquired' | 'busy' => {
+    let fd = -1
+    let createdLock = false
+    try {
+      fd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | OPEN_NOFOLLOW, 0o600)
+      createdLock = true
+      writeAllSync(fd, JSON.stringify({ schema_version: M3_COHORT_LOCK_SCHEMA, pid: process.pid }))
+    } catch (error) {
+      if (fd >= 0) {
+        try { closeSync(fd) } catch { /* preserve original error */ }
+        fd = -1
+      }
+      if (createdLock) {
+        try { unlinkSync(lockPath) } catch { /* best effort for this writer's failed lock */ }
+      }
+      if (isNodeError(error, 'EEXIST')) return 'busy'
+      fail('internal_error')
+    } finally {
+      if (fd >= 0) closeSync(fd)
     }
-    if (createdLock) {
-      try { unlinkSync(lockPath) } catch { /* best effort for this writer's failed lock */ }
-    }
-    if (isNodeError(error, 'EEXIST')) fail('lock_busy')
-    fail('internal_error')
-  } finally {
-    if (fd >= 0) closeSync(fd)
+    return 'acquired'
+  }
+
+  if (acquire() === 'busy') {
+    // A lock whose writer is gone (Ctrl-C, OOM kill) must not wedge the store forever. Only
+    // a provably dead pid is reclaimed; a live one — or a lock we cannot read a pid from —
+    // still returns lock_busy, so a running writer is never robbed.
+    if (pidIsDead(readLockPid(lockPath)) !== true) fail('lock_busy')
+    try { unlinkSync(lockPath) } catch { /* another writer may have cleared it first */ }
+    if (acquire() === 'busy') fail('lock_busy')
   }
 
   try {
@@ -1126,8 +1240,10 @@ function eventExists(events: readonly M3CaptureEvent[], ref: string): boolean {
   return events.some(event => event.event_ref === ref)
 }
 
+/** The verifier is domain-separated by the manifest's own `evidence_kind`, so a store whose
+ *  kind was edited on disk no longer matches its key. */
 function assertCohortKeyMatches(manifest: M3CaptureManifest, hmacKey: string): void {
-  if (manifest.cohort_key_verifier !== cohortKeyVerifier(hmacKey)) fail('cohort_key_mismatch')
+  if (manifest.cohort_key_verifier !== cohortKeyVerifier(hmacKey, manifest.evidence_manifest.evidence_kind)) fail('cohort_key_mismatch')
 }
 
 function loadLockedStore(common: PreparedCommon): { manifest: M3CaptureManifest; events: M3CaptureEvent[]; projection: M3CaptureProjection } {
@@ -1200,12 +1316,13 @@ function sameFrozenCohort(existing: M3CaptureManifest, next: M3CaptureManifest):
 
 export function initM3Cohort(options: InitCohortOptions, clock: Clock = systemClock): M3CohortCliResult {
   const common = prepareCommon(options)
-  const cohortRef = cohortRefFor(common.hmacKey, options.cohort)
+  const evidenceKind = assertEvidenceKind(options.evidenceKind)
+  const cohortRef = cohortRefFor(common.hmacKey, evidenceKind, options.cohort)
   const next: M3CaptureManifest = {
     schema_version: M3_COHORT_MANIFEST_SCHEMA,
     capture_schema: M3_COHORT_STORE_SCHEMA,
     cohort_ref: cohortRef,
-    cohort_key_verifier: cohortKeyVerifier(common.hmacKey),
+    cohort_key_verifier: cohortKeyVerifier(common.hmacKey, evidenceKind),
     created_at: assertIsoDate(clock.now()),
     consent_ref: common.consentRef,
     evidence_manifest: buildEvidenceManifest(options, cohortRef, assertIsoDate(clock.now())),
@@ -1446,6 +1563,7 @@ export function buildExportPayload(
   manifest: M3CaptureManifest,
   events: readonly M3CaptureEvent[],
   exportedAt: string,
+  hmacKey: string,
 ): M3ExportPayload {
   const projection = projectCaptureEvents(events)
   const evidenceKind = manifest.evidence_manifest.evidence_kind
@@ -1482,7 +1600,7 @@ export function buildExportPayload(
   const manifestBytes = `${JSON.stringify(manifest.evidence_manifest, null, 2)}\n`
   const recordLines = cohort.map(record => JSON.stringify(record))
   const provenanceBytes = provenance.map(row => JSON.stringify(row)).join('\n') + (provenance.length > 0 ? '\n' : '')
-  const attestation: M3ExportAttestation = {
+  const body: Omit<M3ExportAttestation, 'attestation_hmac'> = {
     schema_version: M3_EXPORT_ATTESTATION_SCHEMA,
     cohort_id: manifest.evidence_manifest.cohort_id,
     evidence_kind: evidenceKind,
@@ -1494,6 +1612,7 @@ export function buildExportPayload(
     cohort_records_sha256: cohortRecordsDigest(recordLines),
     provenance_jsonl_sha256: sha256Hex(provenanceBytes),
   }
+  const attestation: M3ExportAttestation = { ...body, attestation_hmac: attestationMac(hmacKey, body) }
   return { manifest: manifest.evidence_manifest, cohort, provenance, attestation }
 }
 
@@ -1509,12 +1628,13 @@ export function exportM3Cohort(options: ExportOptions, clock: Clock = systemCloc
   const evidenceRoot = assertOutputPath(assertRawLabel(options.evidenceRoot, 4096))
   return withStoreLock(common.storeRoot, false, () => {
     const { manifest, events } = loadLockedStore(common)
-    const payload = buildExportPayload(manifest, events, assertIsoDate(clock.now()))
+    const payload = buildExportPayload(manifest, events, assertIsoDate(clock.now()), common.hmacKey)
 
+    const attestationPath = join(evidenceRoot, 'export-attestation.json')
+    const targets = [join(evidenceRoot, 'manifest.json'), join(evidenceRoot, 'cohort.jsonl'), join(evidenceRoot, 'provenance.jsonl'), attestationPath]
     // An evidence root that already carries an attestation of a different kind is never
     // appended to: real and simulated evidence never share a directory.
-    const attestationPath = join(evidenceRoot, 'export-attestation.json')
-    if (existsSync(attestationPath)) {
+    if (pathExistsByLstat(attestationPath)) {
       try {
         const existing = JSON.parse(readFileSync(attestationPath, 'utf8')) as Record<string, unknown>
         if (existing['evidence_kind'] !== payload.attestation.evidence_kind) fail('evidence_root_conflict')
@@ -1523,6 +1643,13 @@ export function exportM3Cohort(options: ExportOptions, clock: Clock = systemCloc
         fail('evidence_root_conflict')
       }
       fail('output_exists')
+    }
+    // Every target is checked before the first byte is written. Checking only the
+    // attestation would let a root that already holds somebody else's cohort.jsonl take
+    // this export's manifest.json and then fail — leaving a manifest of one kind sitting
+    // over records of another, which the scorer would read without ever consulting verify.
+    for (const target of targets) {
+      if (pathExistsByLstat(target)) fail('output_exists')
     }
 
     if (options.validate) {
@@ -1538,10 +1665,21 @@ export function exportM3Cohort(options: ExportOptions, clock: Clock = systemCloc
     const recordLines = payload.cohort.map(record => JSON.stringify(record))
     const cohortBytes = recordLines.join('\n') + (recordLines.length > 0 ? '\n' : '')
     const provenanceBytes = payload.provenance.map(row => JSON.stringify(row)).join('\n') + (payload.provenance.length > 0 ? '\n' : '')
-    writeOutputFileNoOverwrite(join(evidenceRoot, 'manifest.json'), manifestBytes)
-    writeOutputFileNoOverwrite(join(evidenceRoot, 'cohort.jsonl'), cohortBytes)
-    writeOutputFileNoOverwrite(join(evidenceRoot, 'provenance.jsonl'), provenanceBytes)
-    writeOutputFileNoOverwrite(attestationPath, `${JSON.stringify(payload.attestation, null, 2)}\n`)
+    const bytesByTarget = [manifestBytes, cohortBytes, provenanceBytes, `${JSON.stringify(payload.attestation, null, 2)}\n`]
+    // All-or-nothing: a partial export is rolled back, so no reader can ever meet a
+    // manifest without the records and attestation that belong to it.
+    const written: string[] = []
+    try {
+      for (const [index, target] of targets.entries()) {
+        writeOutputFileNoOverwrite(target, bytesByTarget[index]!)
+        written.push(target)
+      }
+    } catch (error) {
+      for (const target of written.reverse()) {
+        try { unlinkSync(target) } catch { /* best effort rollback */ }
+      }
+      throw error
+    }
 
     return {
       payload,
@@ -1570,14 +1708,22 @@ export interface VerifyExportResult {
 }
 
 /**
- * Re-derive every digest in `export-attestation.json` from the bytes on disk.
+ * Re-derive every digest in `export-attestation.json` from the bytes on disk AND check the
+ * keyed MAC over the attestation body.
  *
- * This is the check that makes a one-field relabel detectable: flipping
+ * What this proves: the four files are exactly the ones a capture store holding this HMAC
+ * key exported together, and none of them has changed since. Flipping
  * `manifest.json.evidence_kind` from `synthetic_fixture` to `real_seed_cohort` leaves the
- * scorer happy (it trusts the manifest) but breaks `manifest_sha256`, and the attestation's
- * own `evidence_kind` no longer matches the manifest's.
+ * scorer happy — it trusts the manifest it is handed — but breaks `manifest_sha256`; and a
+ * forger who recomputes all three digests and edits `evidence_kind` plus
+ * `simulated_record_count` in the attestation still cannot produce `attestation_hmac`,
+ * which is why this function requires the key rather than being a pure byte check.
+ *
+ * What this does not prove: that the participants behind the records were real people. That
+ * is a claim about collection, not about bytes, and no digest can establish it.
  */
-export function verifyExportedEvidence(evidenceRoot: string): VerifyExportResult {
+export function verifyExportedEvidence(evidenceRoot: string, hmacKey: string | undefined): VerifyExportResult {
+  const key = normalizeHmacKey(hmacKey)
   const root = assertOutputPath(assertRawLabel(evidenceRoot, 4096))
   const read = (name: string): string => {
     const path = join(root, name)
@@ -1599,13 +1745,17 @@ export function verifyExportedEvidence(evidenceRoot: string): VerifyExportResult
     fail('export_validation_failed')
   }
   if (!isObject(attestation)) fail('export_validation_failed')
-  exactKeys(attestation, [
-    'schema_version', 'cohort_id', 'evidence_kind', 'exported_at', 'record_count',
-    'simulated_record_count', 'capture_manifest_digest_sha256', 'manifest_sha256',
-    'cohort_records_sha256', 'provenance_jsonl_sha256',
-  ])
+  exactKeys(attestation, [...ATTESTATION_BODY_KEYS, 'attestation_hmac'])
   if (attestation['schema_version'] !== M3_EXPORT_ATTESTATION_SCHEMA) fail('export_validation_failed')
   const evidenceKind = assertEvidenceKind(attestation['evidence_kind'])
+  // Keyed first: without the MAC every other check below is recomputable by a forger.
+  const presentedMac = attestation['attestation_hmac']
+  if (!nonEmptyString(presentedMac) || !HMAC_REF_PATTERN.test(presentedMac)) fail('export_validation_failed')
+  const body = Object.fromEntries(ATTESTATION_BODY_KEYS.map(bodyKey => [bodyKey, attestation[bodyKey]]))
+  const expectedMac = pseudonymousRef(key, 'export-attestation', [canonicalJson(body)])
+  if (presentedMac.length !== expectedMac.length || !timingSafeEqual(Buffer.from(presentedMac), Buffer.from(expectedMac))) {
+    fail('export_validation_failed')
+  }
   const recordLines = cohortRecordLines(cohortBytes)
   if (sha256Hex(manifestBytes) !== attestation['manifest_sha256']) fail('export_validation_failed')
   if (cohortRecordsDigest(recordLines) !== attestation['cohort_records_sha256']) fail('export_validation_failed')

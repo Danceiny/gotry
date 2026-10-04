@@ -23,6 +23,7 @@ import {
   CONTRADICTION_KINDS,
   DEFAULT_DECK_PATH,
   deliveredPlanMarkdown,
+  FIXTURE_HMAC_KEY,
   loadPersonaDeck,
   parsePersonaDeck,
   PersonaSimError,
@@ -30,10 +31,21 @@ import {
   poiAuditFromGateReport,
   promptDigest,
   runPersonaBatch,
+  summarizeFunnel,
   type PersonaCard,
   type PersonaSimErrorCode,
 } from './persona-sim.ts'
-import { verifyExportedEvidence, type Clock } from '../src/m3-cohort.ts'
+import {
+  enrollParticipant,
+  exportM3Cohort,
+  initM3Cohort,
+  recordNps,
+  recordPlanDelivered,
+  recordPlanFinalized,
+  recordPoiLock,
+  verifyExportedEvidence,
+  type Clock,
+} from '../src/m3-cohort.ts'
 import type { TripState } from '../src/contracts.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -102,15 +114,24 @@ function withEnv<T>(patch: Record<string, string | undefined>, body: () => T): T
   }
 }
 
-/** Only 127.0.0.1 may be contacted anywhere in this suite. */
+/**
+ * Only 127.0.0.1 may be contacted anywhere in this suite, and the spy ENFORCES it rather
+ * than recording it: a regression that reached a live endpoint would carry whatever
+ * LLM_API_KEY the operator has exported, so the request must never leave the process.
+ */
 const contactedHosts: string[] = []
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (input: Parameters<typeof realFetch>[0], init?: Parameters<typeof realFetch>[1]) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
+  let hostname: string
   try {
-    contactedHosts.push(new URL(url).hostname)
+    hostname = new URL(url).hostname
   } catch {
-    contactedHosts.push(`unparsable:${String(url).slice(0, 40)}`)
+    hostname = `unparsable:${String(url).slice(0, 40)}`
+  }
+  contactedHosts.push(hostname)
+  if (hostname !== '127.0.0.1') {
+    throw new Error(`offline test suite attempted a request to ${hostname} — blocked before any credential could leave`)
   }
   return realFetch(input, init)
 }) as typeof realFetch
@@ -266,18 +287,41 @@ async function main(): Promise<void> {
       assert.ok((calls[kind] ?? 0) > 0, `fixture never served a ${kind} call: ${JSON.stringify(calls)}`)
     }
 
-    // Capture -> export -> scorer.
+    // Capture -> export -> scorer. Every simulated participant is enrolled
+    // test_or_staff=true, so the scorer excludes all of them at record level: its eligible
+    // set is empty and its funnel fields are unavailable, which is the point.
     const summary = result.scorer_summary!
     assert.equal(summary.evidence_kind, 'synthetic_fixture')
     assert.equal(summary.business_pass, false)
     assert.equal(summary.business_pass_reason, 'evidence_kind=synthetic_fixture cannot prove business pass')
     const delivered = result.personas.filter(persona => persona.plan_delivered).length
     const finalized = result.personas.filter(persona => persona.finalized).length
-    assert.equal(summary.sample.participants, delivered)
-    assert.equal(summary.finalization.numerator, finalized)
-    assert.equal(summary.finalization.denominator, delivered)
+    assert.equal(summary.sample.participants, 0, 'no simulated participant may enter the eligible set')
+    assert.equal(summary.exclusions['test_or_staff'], delivered, 'every simulated record is excluded as test_or_staff')
+    assert.equal(summary.finalization.rate, null, 'an empty eligible set is unavailable, never 0%')
+    assert.equal(summary.nps.score, null)
+    assert.equal(summary.poi_hallucination.rate, null)
     assert.equal(result.verification!.record_count, delivered)
     assert.equal(result.verification!.simulated_record_count, delivered, 'every synthetic record carries provenance')
+
+    // The funnel a reader wants is computed by the harness over its own outcomes.
+    const funnel = result.funnel
+    assert.equal(funnel.schema, 'gotry_persona_sim_funnel.v1')
+    assert.equal(funnel.personas_run, deck.length)
+    assert.equal(funnel.delivered, delivered)
+    assert.equal(funnel.finalized, finalized)
+    assert.equal(funnel.finalization_rate, Number((finalized / delivered).toFixed(6)))
+    assert.equal(funnel.errored, 0)
+    const scores = result.personas.filter(persona => persona.plan_delivered && persona.nps !== null).map(persona => persona.nps!)
+    assert.equal(funnel.nps_responses, scores.length)
+    assert.equal(funnel.promoters, scores.filter(score => score >= 9).length)
+    assert.equal(funnel.detractors, scores.filter(score => score <= 6).length)
+    // With an empty fact registry nothing is adjudicable, so the audited denominator is 0
+    // and the POI rate is unavailable rather than a flattering 0%.
+    assert.ok(funnel.claims_extracted > 0, 'the gate must have extracted claims from the plans')
+    assert.equal(funnel.locked_claims, 0, 'an empty registry can audit nothing')
+    assert.equal(funnel.invalid_claims, 0)
+    assert.equal(funnel.poi_rate, null, 'nothing audited means unavailable, not 0%')
 
     // The exported provenance must name the persona and digest the prompt that drove it.
     const evidenceRoot = result.evidence_root!
@@ -291,9 +335,62 @@ async function main(): Promise<void> {
       assert.equal(row['product_model'], result.product_model)
       assert.equal(row['persona_model'], result.persona_model)
     }
-    assert.equal(verifyExportedEvidence(evidenceRoot).evidence_kind, 'synthetic_fixture')
+    assert.equal(verifyExportedEvidence(evidenceRoot, FIXTURE_HMAC_KEY).evidence_kind, 'synthetic_fixture')
+    for (const record of readFileSync(join(evidenceRoot, 'cohort.jsonl'), 'utf8')
+      .split('\n').filter(line => line.trim() !== '').map(line => JSON.parse(line) as Record<string, unknown>)) {
+      assert.equal(record['test_or_staff'], true, 'every simulated record must be labelled test_or_staff')
+      assert.equal((record['poi_audit'] as Record<string, unknown>)['locked_claims'], 0)
+    }
     dryRunDigest = readFileSync(join(evidenceRoot, 'cohort.jsonl'), 'utf8')
     assert.ok(dryRunDigest.length > 0)
+  })
+
+  await pass('evidence_kind alone still blocks business_pass when records are not test_or_staff', async () => {
+    // The record-level exclusion is one half of the guarantee; this proves the other half
+    // independently, by scoring a synthetic manifest over records that are NOT excluded.
+    const root = newRoot()
+    const evidenceRoot = join(root, 'not-excluded')
+    const clock = frozenClock()
+    const captureRoot = join(root, 'capture')
+    const captureCommon = { stateRoot: captureRoot, consent: 'test consent', hmacKey: '0123456789abcdef0123456789abcdef' }
+    const simulation = {
+      schema_version: 'gotry_m3_simulation_provenance_v1' as const,
+      kind: 'llm_persona' as const,
+      persona_id: 'erhai-weekend-unwind',
+      product_model: 'MiniMax-M2',
+      persona_model: 'MiniMax-M2',
+      prompt_digest: 'a'.repeat(64),
+    }
+    initM3Cohort({
+      ...captureCommon,
+      cohort: 'not-excluded',
+      evidenceKind: 'synthetic_fixture',
+      windowStartAt: '2026-10-01T00:00:00.000Z',
+      windowEndAt: '2026-12-31T23:59:59.000Z',
+      timezone: 'UTC',
+      allowedAttribution: ['gotry_primary'],
+    }, clock)
+    for (let index = 0; index < 50; index += 1) {
+      const participant = `sim-${String(index).padStart(3, '0')}`
+      const plan = `${participant}-plan`
+      enrollParticipant({ ...captureCommon, participant, invited: true, participantConsent: true, testOrStaff: false, simulation }, clock)
+      recordPlanDelivered({ ...captureCommon, participant, plan, attribution: 'gotry_primary' }, clock)
+      recordPlanFinalized({ ...captureCommon, participant, plan }, clock)
+      recordNps({ ...captureCommon, participant, plan, score: 10 }, clock)
+      recordPoiLock({ ...captureCommon, participant, plan, lockedClaims: 10, invalidClaims: 0 }, clock)
+    }
+    const { payload } = exportM3Cohort({ ...captureCommon, evidenceRoot }, clock)
+    assert.equal(payload.cohort.length, 50)
+    assert.equal(payload.cohort.every(record => record.test_or_staff === false), true)
+    const scorer = spawnSync(TSX, ['scripts/product-metrics.ts', '--evidence-root', evidenceRoot, '--format', 'json'], {
+      cwd: TS_ROOT, encoding: 'utf8', timeout: 120_000,
+    })
+    assert.equal(scorer.status, 0, `${scorer.stderr}\n${scorer.stdout}`)
+    const summary = JSON.parse(scorer.stdout) as { sample: { participants: number; pass: boolean }; business_pass: boolean; business_pass_reason: string }
+    assert.equal(summary.sample.participants, 50, 'these records DO enter the eligible set')
+    assert.equal(summary.sample.pass, true)
+    assert.equal(summary.business_pass, false, 'evidence_kind alone must still block business_pass')
+    assert.equal(summary.business_pass_reason, 'evidence_kind=synthetic_fixture cannot prove business pass')
   })
 
   await pass('the offline dry run is byte-deterministic', async () => {
@@ -303,13 +400,40 @@ async function main(): Promise<void> {
     assert.equal(repeat, dryRunDigest, 'the same frozen clock must produce the same cohort records')
   })
 
-  await pass('budget gate stops the batch early and reports it', async () => {
+  await pass('budget gate trips between turns, stops the batch and still exports the spend', async () => {
     const root = newRoot()
     const result = await runPersonaBatch({ dryRun: true, stateRoot: root, clock: frozenClock(), budgetUsd: 0.000001 })
     assert.equal(result.cost_over_budget, true)
     assert.ok(result.reason?.includes('exceeds GOTRY_PERSONA_BUDGET_USD'))
     assert.equal(result.personas.length, 1, 'the batch must stop after the first over-budget persona')
     assert.ok(result.cost_usd > 0.000001)
+    // The first session is cut mid-flight rather than being allowed to run to completion.
+    assert.equal(result.personas[0]!.error?.code, 'budget_exceeded')
+    // The already-paid spend is still exported: the records are facts about money spent.
+    assert.ok(result.evidence_root && existsSync(result.evidence_root), 'an over-budget batch still writes its evidence')
+    assert.equal(verifyExportedEvidence(result.evidence_root!, FIXTURE_HMAC_KEY).ok, true)
+  })
+
+  await pass('an unsafe --state-root is refused before any directory is created', async () => {
+    const forbidden = join(TS_ROOT, 'dsh-runtime', 'persona-sim-should-never-exist')
+    assert.equal(existsSync(forbidden), false, 'precondition: the forbidden path must not exist yet')
+    await expectCode('unsafe_state_root', async () => runPersonaBatch({
+      dryRun: true,
+      stateRoot: forbidden,
+      evidenceRoot: join(forbidden, 'evidence'),
+      clock: frozenClock(),
+    }))
+    assert.equal(existsSync(forbidden), false, 'the harness must not mkdir inside a forbidden state root')
+    assert.equal(existsSync(join(forbidden, 'empty-bin')), false)
+    assert.equal(existsSync(join(forbidden, 'capture')), false)
+  })
+
+  await pass('the funnel summary is pure and never divides by an empty denominator', () => {
+    const empty = summarizeFunnel([])
+    assert.equal(empty.delivered, 0)
+    assert.equal(empty.finalization_rate, null)
+    assert.equal(empty.nps_score, null)
+    assert.equal(empty.poi_rate, null)
   })
 
   await pass('an unpriced model is refused before any spend', async () => {
@@ -358,8 +482,10 @@ async function main(): Promise<void> {
       assert.equal(persona.user_turns, 2, 'the loop must stop at max_user_turns')
       assert.equal(persona.plan_delivered, false)
     }
-    assert.equal(result.scorer_summary!.sample.participants, 0, 'an interview-only batch produces no cohort record')
-    assert.equal(result.scorer_summary!.finalization.rate, null, 'an empty denominator is unavailable, not 0%')
+    assert.equal(result.verification!.record_count, 0, 'an interview-only batch produces no cohort record')
+    assert.equal(result.funnel.delivered, 0)
+    assert.equal(result.funnel.finalization_rate, null, 'an empty denominator is unavailable, not 0%')
+    assert.equal(result.scorer_summary!.sample.participants, 0)
   })
 
   await pass('a PII sentinel in a persona utterance never reaches the evidence root', async () => {
@@ -378,7 +504,7 @@ async function main(): Promise<void> {
       },
     })))
     const result = await runPersonaBatch({ dryRun: true, deckPath, stateRoot: root, clock: frozenClock() })
-    assert.ok(result.scorer_summary!.sample.participants > 0, 'the sentinel personas must actually reach a plan')
+    assert.ok(result.funnel.delivered > 0, 'the sentinel personas must actually reach a plan')
     const evidenceText = allFileText(result.evidence_root!)
     assert.equal(evidenceText.includes(SENTINEL), false, 'sentinel leaked into the evidence root')
     assert.equal(evidenceText.includes('PRIVACY_SENTINEL'), false)
@@ -395,7 +521,9 @@ async function main(): Promise<void> {
     assert.equal(existsSync(kept.evidence_root!), true)
   })
 
-  await pass('claim audit maps contradictions to invalid and unverified to unverified', () => {
+  await pass('the audited denominator counts only adjudicable claims', () => {
+    // An entirely unverified plan must not look like a clean one: nothing was audited, so
+    // the denominator is 0 and the scorer reports unavailable rather than a 0% POI rate.
     const unverified = poiAuditFromGateReport({
       verdict: 'blocked',
       claims_checked: 7,
@@ -403,20 +531,22 @@ async function main(): Promise<void> {
       presentation: 'verified_label_forbidden',
       violations: Array.from({ length: 7 }, () => ({ kind: 'route_unqueried' })),
     })
-    assert.equal(unverified.locked_claims, 7)
+    assert.equal(unverified.claims_extracted, 7)
+    assert.equal(unverified.locked_claims, 0, 'nothing adjudicable means nothing audited')
     assert.equal(unverified.invalid_claims, 0, 'unverified is not hallucinated')
     assert.equal(unverified.unverified_claims, 7)
     assert.equal(unverified.gate_verdict, 'blocked')
 
-    const contradicted = poiAuditFromGateReport({
+    const mixed = poiAuditFromGateReport({
       verdict: 'blocked',
       claims_checked: 4,
       traceable: 1,
       presentation: 'verified_label_forbidden',
       violations: [{ kind: 'not_in_source' }, { kind: 'contradicted' }, { kind: 'route_unqueried' }],
     })
-    assert.equal(contradicted.invalid_claims, 2)
-    assert.equal(contradicted.unverified_claims, 1)
+    assert.equal(mixed.locked_claims, 3, 'one traceable plus two contradicted were adjudicated')
+    assert.equal(mixed.invalid_claims, 2)
+    assert.equal(mixed.unverified_claims, 1)
     assert.ok(CONTRADICTION_KINDS.has('not_in_source') && !CONTRADICTION_KINDS.has('route_unqueried'))
 
     const clean = poiAuditFromGateReport({ verdict: 'pass', claims_checked: 3, traceable: 3, presentation: 'verified_itinerary_allowed', violations: [] })

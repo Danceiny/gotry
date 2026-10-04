@@ -10,7 +10,14 @@
  * clock. Tests inject clocks through `../src/m3-cohort.ts`.
  *
  * HMAC key custody: `GOTRY_M3_COHORT_HMAC_KEY` (>= 32 chars) lives outside the repository
- * and is never printed by this CLI. Losing it makes the store unreadable by design.
+ * and is never printed by this CLI. Losing it makes the store unreadable by design, and
+ * `verify` needs it too — the export attestation is keyed, not a public digest.
+ *
+ * Argv exposure (accepted, documented): `--participant`, `--plan` and `--consent` carry raw
+ * labels on the command line, so they are visible to `ps` and land in shell history. Only
+ * their HMAC refs are ever persisted, but the invocation itself is not secret. For a real
+ * cohort, drive this CLI from a script whose history is not shared, or export the labels
+ * from a file the shell does not record; never pass anything you would not put in `ps`.
  *
  *   npx tsx scripts/m3-cohort.ts init --state-root "$ROOT" --consent "$C" \
  *     --cohort m3-seed --evidence-kind real_seed_cohort \
@@ -22,7 +29,9 @@
  *   npx tsx scripts/m3-cohort.ts nps      ... --participant <handle> --plan <handle> --score 9
  *   npx tsx scripts/m3-cohort.ts poi-lock ... --participant <handle> --plan <handle> --locked-claims 12 --invalid-claims 0
  *   npx tsx scripts/m3-cohort.ts export   ... --evidence-root <dir>
- *   npx tsx scripts/m3-cohort.ts verify   --evidence-root <dir>
+ *   npx tsx scripts/m3-cohort.ts verify   --evidence-root <dir>        # needs the HMAC key
+ *   npx tsx scripts/m3-cohort.ts lock-status --state-root "$ROOT"      # read-only
+ *   npx tsx scripts/m3-cohort.ts unlock     --state-root "$ROOT"       # dead writer only
  */
 
 import { resolve } from 'node:path'
@@ -31,12 +40,14 @@ import {
   enrollParticipant,
   exportM3Cohort,
   initM3Cohort,
+  inspectStoreLock,
   M3CohortError,
   M3_SIMULATION_PROVENANCE_SCHEMA,
   recordNps,
   recordPlanDelivered,
   recordPlanFinalized,
   recordPoiLock,
+  unlockStore,
   verifyExportedEvidence,
   type M3Attribution,
   type M3CohortErrorCode,
@@ -267,19 +278,30 @@ function run(command: string, flags: ParsedFlags): void {
     case 'export': {
       ensureNoUnknownFlags(flags, ['state-root', 'consent', 'evidence-root'])
       const evidenceRoot = one(flags, 'evidence-root')!
-      const { payload, result } = exportM3Cohort({ ...common(flags), evidenceRoot, validate: scorerValidator })
+      const shared = common(flags)
+      const { payload, result } = exportM3Cohort({ ...shared, evidenceRoot, validate: scorerValidator })
       // Verify the bytes that actually landed: re-read the evidence root through the real
-      // scorer parsers plus the attestation check.
+      // scorer parsers plus the keyed attestation check.
       const manifest = parseManifest(JSON.parse(JSON.stringify(payload.manifest)))
       const cohort = payload.cohort.map((record, index) => parseCohortRecord(JSON.parse(JSON.stringify(record)), index))
       const summary = scoreProductMetrics(manifest, cohort, [])
-      const verification = verifyExportedEvidence(evidenceRoot)
+      const verification = verifyExportedEvidence(evidenceRoot, shared.hmacKey)
       output({ ...result, verification, scorer_summary: summary })
       return
     }
     case 'verify': {
       ensureNoUnknownFlags(flags, ['evidence-root'])
-      output(verifyExportedEvidence(one(flags, 'evidence-root')!))
+      output(verifyExportedEvidence(one(flags, 'evidence-root')!, process.env['GOTRY_M3_COHORT_HMAC_KEY']))
+      return
+    }
+    case 'lock-status': {
+      ensureNoUnknownFlags(flags, ['state-root'])
+      output(inspectStoreLock(one(flags, 'state-root')!))
+      return
+    }
+    case 'unlock': {
+      ensureNoUnknownFlags(flags, ['state-root'])
+      output(unlockStore(one(flags, 'state-root')!))
       return
     }
     default:

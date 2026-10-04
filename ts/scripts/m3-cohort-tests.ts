@@ -15,6 +15,7 @@
 
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -27,6 +28,7 @@ import {
   exportM3Cohort,
   fileMode,
   initM3Cohort,
+  inspectStoreLock,
   M3CohortError,
   M3_ACCEPTANCE,
   M3_EXCLUSION_CODES,
@@ -39,6 +41,7 @@ import {
   recordPlanFinalized,
   recordPoiLock,
   storeRootForStateRoot,
+  unlockStore,
   verifyExportedEvidence,
   type Clock,
   type M3Attribution,
@@ -107,6 +110,21 @@ function initArgs(root: string, evidenceKind: 'real_seed_cohort' | 'synthetic_fi
     timezone: 'Asia/Shanghai',
     allowedAttribution: ['gotry_primary', 'gotry_assisted'] as M3Attribution[],
   }
+}
+
+/** A pid that is provably gone: spawn a trivial child, wait for it, reuse its pid. */
+function findDeadPid(): number {
+  const child = spawnSync(process.execPath, ['-e', 'process.exit(0)'], { encoding: 'utf8', timeout: 30_000 })
+  const pid = child.pid
+  assert.ok(typeof pid === 'number' && pid > 0, 'could not obtain a finished child pid')
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      return pid
+    }
+  }
+  assert.fail(`pid ${pid} did not become reapable`)
 }
 
 function allFileText(root: string): string {
@@ -410,7 +428,7 @@ async function main(): Promise<void> {
     assert.equal(summary.evidence_kind, 'real_seed_cohort')
     assert.equal(summary.sample.participants, 1)
     assert.equal(summary.business_pass, false, 'one participant cannot clear the 50-sample floor')
-    assert.equal(verifyExportedEvidence(evidenceRoot).record_count, 1)
+    assert.equal(verifyExportedEvidence(evidenceRoot, KEY).record_count, 1)
     // No-overwrite: a second export into the same root refuses rather than rewriting.
     expectCode('output_exists', () => exportM3Cohort({ ...common(root), evidenceRoot }, clock))
   })
@@ -483,7 +501,7 @@ async function main(): Promise<void> {
     assert.equal(synth.status, 0, `${synth.stderr}\n${synth.stdout}`)
     assert.equal((JSON.parse(synth.stdout) as { business_pass: boolean }).business_pass, false)
     // A hand-made root carries no attestation at all, which the verifier refuses.
-    expectCode('export_validation_failed', () => verifyExportedEvidence(realRoot))
+    expectCode('export_validation_failed', () => verifyExportedEvidence(realRoot, KEY))
   })
 
   await pass('(d) relabelling a synthetic export as real breaks the attestation', () => {
@@ -493,7 +511,7 @@ async function main(): Promise<void> {
     captureOne(root, 'synthetic_fixture', 'sim-one', clock)
     const evidenceRoot = join(root, 'evidence')
     exportM3Cohort({ ...common(root), evidenceRoot }, clock)
-    const verified = verifyExportedEvidence(evidenceRoot)
+    const verified = verifyExportedEvidence(evidenceRoot, KEY)
     assert.equal(verified.evidence_kind, 'synthetic_fixture')
     assert.equal(verified.simulated_record_count, 1)
 
@@ -506,22 +524,22 @@ async function main(): Promise<void> {
     assert.equal(relabelled.status, 0, `${relabelled.stderr}\n${relabelled.stdout}`)
     assert.equal((JSON.parse(relabelled.stdout) as { evidence_kind: string }).evidence_kind, 'real_seed_cohort')
     // The attestation catches it: the manifest digest no longer matches.
-    expectCode('export_validation_failed', () => verifyExportedEvidence(evidenceRoot))
+    expectCode('export_validation_failed', () => verifyExportedEvidence(evidenceRoot, KEY))
     writeFileSync(manifestPath, original, 'utf8')
-    assert.equal(verifyExportedEvidence(evidenceRoot).evidence_kind, 'synthetic_fixture', 'restoring the byte restores the proof')
+    assert.equal(verifyExportedEvidence(evidenceRoot, KEY).evidence_kind, 'synthetic_fixture', 'restoring the byte restores the proof')
 
     // Hiding the synthetic label by deleting the sidecar is caught too.
     const provenancePath = join(evidenceRoot, 'provenance.jsonl')
     const provenance = readFileSync(provenancePath, 'utf8')
     writeFileSync(provenancePath, '', 'utf8')
-    expectCode('export_validation_failed', () => verifyExportedEvidence(evidenceRoot))
+    expectCode('export_validation_failed', () => verifyExportedEvidence(evidenceRoot, KEY))
     writeFileSync(provenancePath, provenance, 'utf8')
 
     // Editing a cohort record is caught; a legitimate nightly append is not.
     const cohortPath = join(evidenceRoot, 'cohort.jsonl')
     const cohortBytes = readFileSync(cohortPath, 'utf8')
     writeFileSync(cohortPath, cohortBytes.replace('"nps_score":10', '"nps_score":9'), 'utf8')
-    expectCode('export_validation_failed', () => verifyExportedEvidence(evidenceRoot))
+    expectCode('export_validation_failed', () => verifyExportedEvidence(evidenceRoot, KEY))
     writeFileSync(cohortPath, cohortBytes, 'utf8')
     const nightlyLine = JSON.stringify({
       schema_version: 'gotry_m3_nightly_run_v1',
@@ -533,8 +551,134 @@ async function main(): Promise<void> {
       cost_usd: 0.12,
     })
     writeFileSync(cohortPath, `${cohortBytes}${nightlyLine}\n`, 'utf8')
-    assert.equal(verifyExportedEvidence(evidenceRoot).record_count, 1, 'a nightly append must not invalidate the cohort attestation')
+    assert.equal(verifyExportedEvidence(evidenceRoot, KEY).record_count, 1, 'a nightly append must not invalidate the cohort attestation')
     assert.equal(cohortRecordLines(readFileSync(cohortPath, 'utf8')).length, 1)
+  })
+
+  await pass('(d) a fully recomputed forgery is caught by the keyed attestation', () => {
+    const root = newRoot()
+    const clock = stepClock()
+    initM3Cohort(initArgs(root, 'synthetic_fixture'), clock)
+    captureOne(root, 'synthetic_fixture', 'sim-one', clock)
+    const evidenceRoot = join(root, 'evidence')
+    exportM3Cohort({ ...common(root), evidenceRoot }, clock)
+    const manifestPath = join(evidenceRoot, 'manifest.json')
+    const provenancePath = join(evidenceRoot, 'provenance.jsonl')
+    const attestationPath = join(evidenceRoot, 'export-attestation.json')
+    const cohortBytes = readFileSync(join(evidenceRoot, 'cohort.jsonl'), 'utf8')
+
+    // The forger does the whole job: relabel the manifest, delete the synthetic labels,
+    // recompute all three digests, and rewrite the attestation's own kind and counters.
+    const forgedManifest = readFileSync(manifestPath, 'utf8').replace('"synthetic_fixture"', '"real_seed_cohort"')
+    writeFileSync(manifestPath, forgedManifest, 'utf8')
+    writeFileSync(provenancePath, '', 'utf8')
+    const attestation = JSON.parse(readFileSync(attestationPath, 'utf8')) as Record<string, unknown>
+    attestation['evidence_kind'] = 'real_seed_cohort'
+    attestation['simulated_record_count'] = 0
+    attestation['manifest_sha256'] = createHash('sha256').update(forgedManifest).digest('hex')
+    attestation['provenance_jsonl_sha256'] = createHash('sha256').update('').digest('hex')
+    attestation['cohort_records_sha256'] = createHash('sha256').update(cohortRecordLines(cohortBytes).join('\n') + '\n').digest('hex')
+    writeFileSync(attestationPath, `${JSON.stringify(attestation, null, 2)}\n`, 'utf8')
+
+    // Red baseline: every unkeyed digest in the forged attestation now matches its file, so
+    // a byte-only verifier would accept it, and the scorer reads a real cohort.
+    assert.equal(attestation['manifest_sha256'], createHash('sha256').update(readFileSync(manifestPath, 'utf8')).digest('hex'))
+    assert.equal(attestation['provenance_jsonl_sha256'], createHash('sha256').update(readFileSync(provenancePath, 'utf8')).digest('hex'))
+    const forgedScore = runScorerCli(evidenceRoot)
+    assert.equal(forgedScore.status, 0, `${forgedScore.stderr}\n${forgedScore.stdout}`)
+    assert.equal((JSON.parse(forgedScore.stdout) as { evidence_kind: string }).evidence_kind, 'real_seed_cohort')
+
+    // Green: the MAC over the attestation body cannot be recomputed without the key.
+    expectCode('export_validation_failed', () => verifyExportedEvidence(evidenceRoot, KEY))
+    // A wrong key is refused too, and verify without a key at all refuses up front.
+    expectCode('export_validation_failed', () => verifyExportedEvidence(evidenceRoot, OTHER_KEY))
+    expectCode('missing_hmac_key', () => verifyExportedEvidence(evidenceRoot, undefined))
+  })
+
+  await pass('verify requires the capture key even for an untampered export', () => {
+    const root = newRoot()
+    const clock = stepClock()
+    initM3Cohort(initArgs(root, 'real_seed_cohort'), clock)
+    captureOne(root, 'real_seed_cohort', 'real-one', clock)
+    const evidenceRoot = join(root, 'evidence')
+    exportM3Cohort({ ...common(root), evidenceRoot }, clock)
+    assert.equal(verifyExportedEvidence(evidenceRoot, KEY).ok, true)
+    expectCode('export_validation_failed', () => verifyExportedEvidence(evidenceRoot, OTHER_KEY))
+    expectCode('missing_hmac_key', () => verifyExportedEvidence(evidenceRoot, undefined))
+    const attestation = JSON.parse(readFileSync(join(evidenceRoot, 'export-attestation.json'), 'utf8')) as Record<string, unknown>
+    assert.match(String(attestation['attestation_hmac']), /^hmac-sha256:[0-9a-f]{64}$/)
+    assert.equal(allFileText(evidenceRoot).includes(KEY), false, 'the key itself never reaches the evidence root')
+    const cli = runCli(['verify', '--evidence-root', evidenceRoot], null)
+    assert.equal(cli.stderr.trim(), 'm3_cohort_error:missing_hmac_key', 'the CLI verify path needs the key too')
+  })
+
+  await pass('export is all-or-nothing: a partially occupied evidence root is refused untouched', () => {
+    const root = newRoot()
+    const clock = stepClock()
+    initM3Cohort(initArgs(root, 'real_seed_cohort'), clock)
+    captureOne(root, 'real_seed_cohort', 'real-one', clock)
+    // A root already holding somebody else's cohort records but no manifest/attestation.
+    const evidenceRoot = join(root, 'half-occupied')
+    mkdirSync(evidenceRoot, { recursive: true })
+    const squatterCohort = '{"schema_version":"gotry_m3_cohort_record_v1","squatter":true}\n'
+    writeFileSync(join(evidenceRoot, 'cohort.jsonl'), squatterCohort, 'utf8')
+    writeFileSync(join(evidenceRoot, 'provenance.jsonl'), '', 'utf8')
+    expectCode('output_exists', () => exportM3Cohort({ ...common(root), evidenceRoot }, clock))
+    // Nothing of this export may remain: a real manifest sitting over foreign records would
+    // be read by the scorer, which never consults verify.
+    assert.equal(existsSync(join(evidenceRoot, 'manifest.json')), false, 'no manifest may be left behind')
+    assert.equal(existsSync(join(evidenceRoot, 'export-attestation.json')), false)
+    assert.equal(readFileSync(join(evidenceRoot, 'cohort.jsonl'), 'utf8'), squatterCohort, 'the pre-existing file is untouched')
+    // The same applies when only the manifest is squatting.
+    const second = join(root, 'manifest-only')
+    mkdirSync(second, { recursive: true })
+    writeFileSync(join(second, 'manifest.json'), '{}', 'utf8')
+    expectCode('output_exists', () => exportM3Cohort({ ...common(root), evidenceRoot: second }, clock))
+    assert.equal(existsSync(join(second, 'cohort.jsonl')), false)
+    assert.equal(readFileSync(join(second, 'manifest.json'), 'utf8'), '{}')
+    // A clean root still works afterwards.
+    const clean = join(root, 'clean')
+    assert.equal(exportM3Cohort({ ...common(root), evidenceRoot: clean }, clock).payload.cohort.length, 1)
+  })
+
+  await pass('a writer lock left by a dead process is reclaimed; a live one is not', () => {
+    const root = newRoot()
+    const clock = stepClock()
+    initM3Cohort(initArgs(root, 'real_seed_cohort'), clock)
+    const lockPath = join(storeRootForStateRoot(root), '.writer.lock')
+
+    // A lock naming this live process is a live writer: refused, and unlock refuses too.
+    writeFileSync(lockPath, JSON.stringify({ schema_version: 'gotry_m3_cohort_lock.v1', pid: process.pid }), { mode: 0o600 })
+    assert.equal(inspectStoreLock(root).reason, 'live_writer')
+    expectCode('lock_busy', () => enrollParticipant({ ...common(root), participant: 'p1', invited: true, participantConsent: true, testOrStaff: false }, clock))
+    expectCode('lock_busy', () => unlockStore(root))
+    assert.equal(existsSync(lockPath), true, 'a live writer keeps its lock')
+
+    // A lock with no readable pid is also refused: unknown is not dead.
+    writeFileSync(lockPath, 'not json at all', { mode: 0o600 })
+    assert.equal(inspectStoreLock(root).reason, 'unreadable')
+    expectCode('lock_busy', () => enrollParticipant({ ...common(root), participant: 'p1', invited: true, participantConsent: true, testOrStaff: false }, clock))
+    expectCode('lock_busy', () => unlockStore(root))
+
+    // A lock from a process that is gone must not wedge the store for weeks.
+    const deadPid = findDeadPid()
+    writeFileSync(lockPath, JSON.stringify({ schema_version: 'gotry_m3_cohort_lock.v1', pid: deadPid }), { mode: 0o600 })
+    const state = inspectStoreLock(root)
+    assert.equal(state.reason, 'stale_writer')
+    assert.equal(state.pid, deadPid)
+    const result = enrollParticipant({ ...common(root), participant: 'p1', invited: true, participantConsent: true, testOrStaff: false }, clock)
+    assert.equal(result.status, 'recorded', 'a stale lock is reclaimed rather than wedging the store')
+    assert.equal(existsSync(lockPath), false, 'the reclaimed lock is released again')
+    // The explicit CLI path: lock-status reports, unlock clears only a dead writer.
+    writeFileSync(lockPath, JSON.stringify({ schema_version: 'gotry_m3_cohort_lock.v1', pid: deadPid }), { mode: 0o600 })
+    const status = runCli(['lock-status', '--state-root', root])
+    assert.equal(status.status, 0, status.stderr)
+    assert.equal((JSON.parse(status.stdout) as { reason: string }).reason, 'stale_writer')
+    const unlocked = runCli(['unlock', '--state-root', root])
+    assert.equal(unlocked.status, 0, unlocked.stderr)
+    assert.equal((JSON.parse(unlocked.stdout) as { status: string }).status, 'recorded')
+    assert.equal(existsSync(lockPath), false)
+    assert.equal((JSON.parse(runCli(['unlock', '--state-root', root]).stdout) as { status: string }).status, 'unchanged')
   })
 
   await pass('(b) a synthetic export refuses to enter an evidence root attested as real', () => {
@@ -550,8 +694,8 @@ async function main(): Promise<void> {
     initM3Cohort(initArgs(simRoot, 'synthetic_fixture'), simClock)
     captureOne(simRoot, 'synthetic_fixture', 'sim-one', simClock)
     expectCode('evidence_root_conflict', () => exportM3Cohort({ ...common(simRoot), evidenceRoot }, simClock))
-    assert.equal(verifyExportedEvidence(evidenceRoot).evidence_kind, 'real_seed_cohort', 'the real root is untouched')
-    assert.equal(verifyExportedEvidence(evidenceRoot).simulated_record_count, 0)
+    assert.equal(verifyExportedEvidence(evidenceRoot, KEY).evidence_kind, 'real_seed_cohort', 'the real root is untouched')
+    assert.equal(verifyExportedEvidence(evidenceRoot, KEY).simulated_record_count, 0)
   })
 
   await pass('export refuses a store whose manifest kind no longer matches its records', () => {
@@ -561,7 +705,7 @@ async function main(): Promise<void> {
     captureOne(root, 'synthetic_fixture', 'sim-one', clock)
     const { manifest, events } = readStoreForTests(root)
     const tampered = { ...manifest, evidence_manifest: { ...manifest.evidence_manifest, evidence_kind: 'real_seed_cohort' as const } }
-    expectCode('simulation_forbidden_in_real_cohort', () => buildExportPayload(tampered, events, '2026-11-01T00:00:00.000Z'))
+    expectCode('simulation_forbidden_in_real_cohort', () => buildExportPayload(tampered, events, '2026-11-01T00:00:00.000Z', KEY))
   })
 
   await pass('export is deterministic for the same capture log', () => {
@@ -571,8 +715,8 @@ async function main(): Promise<void> {
     captureOne(root, 'synthetic_fixture', 'sim-b', clock)
     captureOne(root, 'synthetic_fixture', 'sim-a', clock)
     const { manifest, events } = readStoreForTests(root)
-    const first = buildExportPayload(manifest, events, '2026-11-01T00:00:00.000Z')
-    const second = buildExportPayload(manifest, events, '2026-11-01T00:00:00.000Z')
+    const first = buildExportPayload(manifest, events, '2026-11-01T00:00:00.000Z', KEY)
+    const second = buildExportPayload(manifest, events, '2026-11-01T00:00:00.000Z', KEY)
     assert.equal(canonicalJson(first), canonicalJson(second))
     const keys = first.cohort.map(record => record.plan_key)
     assert.deepEqual(keys, [...keys].sort(), 'records are emitted in plan-key order')
