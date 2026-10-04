@@ -671,6 +671,10 @@ echo
 echo "=== 83. 触发演练:#422 dsh SDK 后代清理再基线(simulated_trigger_drill——夹具 dshBin 不是真实产品调用面,不构成 #422 触发或上游归属裁决;dsh 家族 2026-10-02 升 0.2.0-rc.2 故按实测钉死:SDK 静态证据 spawn 无 detached·永不按进程组发信/不响应且忽略 TERM 的 runtime 走真实 close() 梯级 shutdown→stdin EOF→SIGTERM→SIGKILL/协作式 runtime 干净退出/DeepSeekHarness 高层同路径/缺二进制语义/close 幂等终态与禁止静默重生/对照组 bin/gotry-process-liveness.js 进程组清理零残留;每个钉死断言带「若翻转则 #422 前提已变」,所有夹具 pid 无论成败 finally 强制收尸) ==="
 (cd ts && npx tsx scripts/drill-sdk-descendant-cleanup-tests.ts) || FAIL=1
 
+echo
+echo "=== 85. 成交结果↔规划估算投影契约(issue #340 模拟触发演练,证据标签 simulated_trigger_drill/fixture_contract——真实触发未发生,tracker 保持 open 且默认关闭:plan estimate↔immutable quote↔attempt↔账本 intent 四必填关联键+确定性派生/闭集 pending·confirmed·failed·cancelled·refunded·unknown,unknown 与超时永不记成交也永不记零偏差(结构化 not_comparable 不返回数值)/本地账本词 compensated 拒作供应商终态(compensated≠refunded)·serviceFee 拒作退款额·refunded 必绑权威退款记录/append-only 可撤销投影:同幂等键同载荷重放零新条目·异载荷冲突·撤销本身是条目不删不改·确定性 fold 重建==直读/终态不回退(terminal→open regression、终态冲突)且迟到终态被接纳并标记/负面清单:敏感订单字段按名拒+凭证·手机·证件·邮箱·URL 值形扫描拒,证据只走摘要与指针/偏差只校准未来估算与排序(有界 ppm 钉上下界·薄样本回中性·indeterminate 只计数不计值),反证falsification:校准额永不能翻转用户预算硬约束(hard_budget_guard)/真实订单摄取缝触发闸冻结 false+注册表冻结空+fetch spy 零调用;纯函数零网络零子进程零 CLI,夹具只读复用 hotelbyte 假 CLI 词表,真实订单 E2E 待 M5+真实授权记录,明确不在本节范围) ==="
+(cd ts && npx tsx scripts/outcome-projection-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
