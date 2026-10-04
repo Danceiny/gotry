@@ -453,7 +453,13 @@ export function resolveTier(
 // Ranking-only application (no filter surface exists)
 // ---------------------------------------------------------------------------
 
-/** One ranking candidate. `semantic` is the authoritative relevance score. */
+/**
+ * One ranking candidate. `semantic` is the authoritative relevance score and must
+ * be non-negative: the contract is MULTIPLICATIVE, so a negative score would
+ * invert the meaning of every modifier (a boost above 1.0 would demote the
+ * candidate and a penalty below 1.0 would promote it). A negative score is
+ * therefore refused rather than silently given inverted semantics.
+ */
 export interface TierRankCandidate {
   readonly id: string
   readonly cityKey: string
@@ -495,6 +501,12 @@ export function applyTierRanking(
     seen.add(c.id)
     if (typeof c.semantic !== 'number' || !Number.isFinite(c.semantic)) {
       return fail('bad_candidate', `candidate ${c.id} semantic score must be finite, got ${String(c.semantic)}`)
+    }
+    if (c.semantic < 0) {
+      return fail(
+        'bad_candidate',
+        `candidate ${c.id} semantic score must be non-negative, got ${String(c.semantic)} — the ranking contract is multiplicative, so a negative score would invert every modifier (a boost would demote)`,
+      )
     }
   }
 

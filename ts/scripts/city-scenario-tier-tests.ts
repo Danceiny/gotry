@@ -291,6 +291,18 @@ check(everPresent, 'FALSIFICATION battery: across 11 semantic scores × 3 regist
 expectRefusal(applyTierRanking([{ id: '', cityKey: 'city-a', semantic: 1 }], { scenarioKey: 'scenario-x' }), 'bad_candidate', 'non-empty id', 'a blank candidate id refused')
 expectRefusal(applyTierRanking([{ id: 'a', cityKey: 'city-a', semantic: Number.NaN }], { scenarioKey: 'scenario-x' }), 'bad_candidate', 'must be finite', 'a non-finite semantic score refused')
 expectRefusal(
+  applyTierRanking([{ id: 'a', cityKey: 'city-a', semantic: -0.5 }], { scenarioKey: 'scenario-x' }),
+  'bad_candidate', 'would invert every modifier',
+  'a NEGATIVE semantic score is refused: the contract is multiplicative, so a boost would demote it',
+)
+expectRefusal(
+  applyTierRanking([{ id: 'ok', cityKey: 'city-b', semantic: 0.5 }, { id: 'neg', cityKey: 'city-a', semantic: -1 }], { scenarioKey: 'scenario-x' }, { registry: probeRegistry, triggerFired: true }),
+  'bad_candidate', 'must be non-negative',
+  'one negative candidate refuses the whole ranking (no partial ordering over inverted semantics)',
+)
+check(applyTierRanking([{ id: 'zero', cityKey: 'city-a', semantic: 0 }], { scenarioKey: 'scenario-x' }, { registry: probeRegistry, triggerFired: true }).ok, 'zero is admissible (it is the boundary, not a negative)')
+check(applyTierRanking([{ id: 'negzero', cityKey: 'city-a', semantic: -0 }], { scenarioKey: 'scenario-x' }).ok, 'negative zero is admissible (it equals zero, not below it)')
+expectRefusal(
   applyTierRanking([{ id: 'a', cityKey: 'city-a', semantic: 1 }, { id: 'a', cityKey: 'city-b', semantic: 2 }], { scenarioKey: 'scenario-x' }),
   'bad_candidate', 'duplicate candidate id',
   'duplicate candidate ids refused (ranking inputs are a set)',

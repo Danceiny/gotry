@@ -310,8 +310,6 @@ export const OUTCOME_EVIDENCE_FORBIDDEN_KEYS = [
 
 /** Value-shape scan (defense in depth behind the key allow-list). */
 const OUTCOME_VALUE_NEGATIVE_PATTERNS: Array<{ re: RegExp; label: string }> = [
-  { re: /\d{15,17}[Xx]?/, label: 'suspected document/card number' },
-  { re: /1[3-9]\d{9}/, label: 'suspected mainland mobile number' },
   { re: /(护照|身份证|证件号|通行证)\s*号?\s*[:：]?\s*\w+/i, label: 'identity document field' },
   { re: /[\w.+-]+@[\w-]+\.[\w.-]+/, label: 'email address' },
   { re: /https?:\/\/\S+/i, label: 'URL' },
@@ -319,6 +317,47 @@ const OUTCOME_VALUE_NEGATIVE_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\bbearer\s+[A-Za-z0-9._-]{8,}/i, label: 'credential shape' },
   { re: /\bsk-[A-Za-z0-9]{12,}/, label: 'credential shape' },
 ]
+
+/**
+ * Numeric-identifier patterns, anchored on both sides and scanned PER LEAF VALUE.
+ *
+ * Both halves of that sentence are load-bearing:
+ *
+ * - **Anchored**: the allow-listed `*_digest` fields legitimately carry SHA-family
+ *   hex, and a run of fifteen or more decimal digits occurs inside a random 64-char
+ *   digest a few percent of the time. An unanchored `\d{15,}` refuses those
+ *   legitimate digests. Requiring a non-alphanumeric boundary means a digit run
+ *   embedded in a longer alphanumeric token is not an identifier, while a STANDALONE
+ *   run still is — at any length, since ID cards are 18 and card numbers up to 19.
+ * - **Per leaf**: scanning the canonical JSON instead would defeat the anchors,
+ *   because the surrounding `"` quotes are themselves non-alphanumeric boundaries.
+ *
+ * A pure-decimal token is deliberately NOT given a digest exemption: it is
+ * indistinguishable from an identifier, so it stays fail-closed.
+ */
+const OUTCOME_NUMERIC_ID_PATTERNS: Array<{ re: RegExp; label: string }> = [
+  { re: /(?<![0-9A-Za-z])\d{15,}[Xx]?(?![0-9A-Za-z])/, label: 'suspected document/card number' },
+  { re: /(?<![0-9A-Za-z])1[3-9]\d{9}(?![0-9A-Za-z])/, label: 'suspected mainland mobile number' },
+]
+
+/** Collect every scalar leaf as the string the scan should see. */
+function collectScalarLeaves(value: unknown, out: string[], depth = 0): void {
+  if (depth > 5) return
+  if (typeof value === 'string') {
+    out.push(value)
+    return
+  }
+  if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') {
+    out.push(String(value))
+    return
+  }
+  if (value === null || typeof value !== 'object') return
+  if (Array.isArray(value)) {
+    for (const item of value) collectScalarLeaves(item, out, depth + 1)
+    return
+  }
+  for (const item of Object.values(value as Record<string, unknown>)) collectScalarLeaves(item, out, depth + 1)
+}
 
 /** Deterministic canonical JSON (sorted keys); cycles / depth / undefined → null. */
 export function canonicalOutcomeJson(v: unknown, depth = 0, seen: Set<object> = new Set()): string | null {
@@ -368,6 +407,13 @@ export function outcomeEvidenceViolation(evidence: unknown): string | null {
   if (canonical === null) return 'evidence must be finite, acyclic, bounded-depth and free of undefined values'
   for (const { re, label } of OUTCOME_VALUE_NEGATIVE_PATTERNS) {
     if (re.test(canonical)) return `negative list: ${label} detected in an evidence value (digests and pointers only)`
+  }
+  const leaves: string[] = []
+  collectScalarLeaves(record, leaves)
+  for (const leaf of leaves) {
+    for (const { re, label } of OUTCOME_NUMERIC_ID_PATTERNS) {
+      if (re.test(leaf)) return `negative list: ${label} detected in an evidence value (digests and pointers only)`
+    }
   }
   return null
 }

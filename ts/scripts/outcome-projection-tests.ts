@@ -329,6 +329,43 @@ for (const [value, label] of [
 }
 check(outcomeEvidenceViolation('not-an-object') !== null && outcomeEvidenceViolation([1, 2]) !== null, 'a non-object evidence payload is refused')
 
+// A hex digest legitimately contains long runs of decimal digits a few percent of
+// the time. The numeric-id patterns are anchored to a non-alphanumeric boundary so
+// such a digest is NOT mistaken for a document number (unanchored, these would all
+// be refused and the negative list would reject legitimate evidence).
+for (const digest of [
+  'a12345678901234567b',                                               // 17-digit run inside hex
+  'sha256:bb123456789012345678901234567890cc',                         // long run after a prefix
+  '0123456789012345abcdef0123456789abcdef0123456789abcdef0123456789',  // 64-char digest, leading run
+  'ab1380013800012345ef',                                              // embeds a mobile-shaped run
+  'sha16:00000000000000000a',                                          // digit run + one hex letter
+  'HB123456789012345678ORD',                                           // non-hex ref: isolates the anchors
+]) {
+  check(
+    outcomeEvidenceViolation({ probe_digest: digest, supplier_order_ref_digest: digest }) === null,
+    `a hex digest with a 15+ digit run is accepted, not flagged as a document number: ${digest.slice(0, 28)}`,
+  )
+  const appended = appendOutcome(freshProjection(), { idemKey: 'o', status: 'unknown', observedAt: T_BOOK, evidence: { probe_digest: digest } }, T_NOW)
+  check(appended.ok, `the same digest is accepted by appendOutcome: ${digest.slice(0, 28)}`)
+}
+// Standalone identifier-shaped runs stay refused at any length, including the
+// pure-decimal case that is deliberately NOT given the hex-digest exemption.
+for (const [value, label] of [
+  ['12345678901234567', '17-digit standalone run (pure decimal: no hex exemption)'],
+  ['123456789012345678', '18-digit ID-card-length run'],
+  ['12345678901234567X', 'ID-card run with an X check digit'],
+  ['1234567890123456789', '19-digit card-length run'],
+  ['sha256:12345678901234567', 'pure-decimal run behind a digest prefix'],
+  ['ref 13800138000 ok', 'standalone mobile number inside prose'],
+] as const) {
+  check(
+    outcomeEvidenceViolation({ probe_digest: value }) !== null,
+    `a standalone identifier-shaped value is still refused: ${label}`,
+  )
+}
+check(outcomeEvidenceViolation({ probe_digest: 12345678901234567 as unknown as string }) !== null, 'a numeric (non-string) leaf carrying an identifier-shaped run is refused too')
+check(outcomeEvidenceViolation({ probe_digest: ['ok', '123456789012345678'] }) !== null, 'the scan reaches identifier-shaped runs nested in an array leaf')
+
 console.log('D3. refund money discipline (serviceFee ≠ refund; refunded needs authority)')
 const confirmedThenCancelled = (() => {
   const a = appendOutcome(freshProjection(), { idemKey: 'c1', status: 'confirmed', observedAt: T_BOOK, amount: { money: parseMoney('CNY', '880.00'), source: 'supplier_final_charge' }, evidence: EVIDENCE_OK }, T_NOW)
