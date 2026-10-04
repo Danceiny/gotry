@@ -8,7 +8,7 @@
 
 ## Unreleased
 
-Nothing queued.
+- **`doctor` no longer intermittently reports an hbcli without credentials as `ok`** — the credential probe settled on the child's `exit` event, which can fire before its stdout has been read; an empty read then fell into the "unparseable output counts as valid" branch. It now settles on `close`, and a deterministic regression test injects a child that exits before its data arrives. This also removes an intermittent red on the Node 22 CI job.
 
 ---
 
