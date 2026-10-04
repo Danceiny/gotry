@@ -27,6 +27,7 @@ import {
   isHotNoteKind,
   isHotTier,
   isNotebookKind,
+  makeHotNoteId,
   readNotebook,
   readWorkingZone,
   validSessionRef,
@@ -92,22 +93,43 @@ export function nextObservationTurn(sessionRef: string): number {
   return next
 }
 
-/** 当前进程最近绑定的会话(persona 读回用:resource 层只在本会话可读) */
-let boundSessionRef: string | null = null
+/**
+ * 会话绑定(persona 读回用:resource 层只在**本会话**可读)。
+ *
+ * 按 scope 键存,不存进程全局:dsh 的 agent-loop 以 agent 对象为 ScopeKey
+ * (`createScope(loopCtx, this)`),工具侧的 `exec.agent` 与 persona 组装侧的
+ * `AssembleContext.scope` 因此是同一个对象身份。进程全局单值会让同一宿主进程里
+ * 的两个会话互相读到对方的 resource 层笔记——那正是设计 §1.1 禁止的事
+ * (P4-3 复查发现)。WeakMap:会话消失即自动回收。
+ * 取不到 scope(轻量宿主/无绑定)→ null → 读回**不出** resource 段(fail-closed)。
+ */
+const sessionRefByScope = new WeakMap<object, string>()
 
-export function bindZoneSession(sessionRef: string | null): void {
-  if (sessionRef !== null && !validSessionRef(sessionRef)) return
-  boundSessionRef = sessionRef
+/** 从 exec 取 scope 键(与 dsh agent-loop 的 ScopeKey 同一对象身份) */
+export function zoneScopeOfExec(exec: unknown): object | undefined {
+  const agent = (exec as { agent?: unknown } | null)?.agent
+  return typeof agent === 'object' && agent !== null ? agent : undefined
 }
 
-export function boundZoneSession(): string | null {
-  return boundSessionRef
+export function bindZoneSession(scope: object | undefined, sessionRef: string | null): void {
+  if (!scope) return
+  if (sessionRef === null) {
+    sessionRefByScope.delete(scope)
+    return
+  }
+  if (!validSessionRef(sessionRef)) return
+  sessionRefByScope.set(scope, sessionRef)
 }
 
-/** 测试用:清空进程内会话绑定与观察游标(产品路径不调用) */
+export function boundZoneSession(scope: object | undefined): string | null {
+  if (!scope) return null
+  return sessionRefByScope.get(scope) ?? null
+}
+
+/** 测试用:清空观察游标与提议去重集(scope 绑定随对象回收,无需清)。产品路径不调用。 */
 export function resetZoneSessionBindingForTests(): void {
-  boundSessionRef = null
   observationCursor.clear()
+  proposalSeen.clear()
 }
 
 // ---- 工具观察缝(闭集白名单 + 形状投影) -------------------------------------------
@@ -203,26 +225,35 @@ export function projectToolObservation(input: {
 /**
  * 观察缝落账(非抛出):任何失败(账本不可用/写闸拒绝)都只是「没记住」,
  * 绝不影响工具返回值——记忆面永远不能把产品主路径带红。
+ *
+ * 写门用 `capture_or_touch`:同一检索重复出现时**续命**(TTL 自本次写入起算),
+ * 而不是撞 stale_rev 被默默丢掉。纯 capture 会让 30min 后的同一检索永远刷不新
+ * 那条 resource 笔记,工作区于是悄悄停止供述该形态(P4-3 复查发现)。
+ * 返回值区分 captured/touched/rejected,让「没记住」在计数上可见而不是无声。
  */
 export function observeToolResult(
   ledger: StateLedger | null,
   input: { tool: string; result: unknown; session_ref: string; ts: string },
-): { captured: number; rejected: number } {
-  if (!ledger) return { captured: 0, rejected: 0 }
+): { captured: number; touched: number; rejected: number } {
+  const zero = { captured: 0, touched: 0, rejected: 0 }
+  if (!ledger) return zero
   try {
     const turn = nextObservationTurn(input.session_ref)
     const captures = projectToolObservation({ ...input, turn })
     let captured = 0
+    let touched = 0
     let rejected = 0
     for (const capture of captures) {
       // 逐条独立事务:一条被负面清单拒收不连带丢掉另一条形状笔记
-      const r = appendZoneWrite(ledger, { op: 'capture', input: capture }, { actor: `tool:${input.tool}` })
-      if (r.ok && r.appended) captured++
-      else if (!r.ok) rejected++
+      const r = appendZoneWrite(ledger, { op: 'capture_or_touch', input: capture }, { actor: `tool:${input.tool}` })
+      if (!r.ok) rejected++
+      else if (!r.appended) touched++ // 同 ts 同内容重放:已是本次写入时刻,无需续命
+      else if (r.event?.kind === 'hotctx.note.revised') touched++
+      else captured++
     }
-    return { captured, rejected }
+    return { captured, touched, rejected }
   } catch {
-    return { captured: 0, rejected: 0 }
+    return zero
   }
 }
 
@@ -233,6 +264,20 @@ export const ZONE_NOTE_ACTIONS: readonly ZoneNoteAction[] = ['capture', 'revise'
 
 export function isZoneNoteAction(v: unknown): v is ZoneNoteAction {
   return typeof v === 'string' && (ZONE_NOTE_ACTIONS as readonly string[]).includes(v)
+}
+
+/**
+ * 提议/否决去重集(进程内;观测计数与指标口径对齐):
+ * 指标 ① 的分母按 `proposal_ref` 去重,所以同一「笔记 × 目标 kind」的重复提议
+ * 只算一个提议;确认侧同理——只在**真的落了**笔记本条目时记一次 confirm。
+ */
+const proposalSeen = new Set<string>()
+
+function markProposal(scope: 'propose' | 'deny' | 'confirm', noteId: string, kind?: string): boolean {
+  const key = `${scope}|${noteId}|${kind ?? ''}`
+  if (proposalSeen.has(key)) return false
+  proposalSeen.add(key)
+  return true
 }
 
 export type ZoneWiringErrorCode =
@@ -302,7 +347,9 @@ export function applyZoneNote(
     }
     const { state } = readZoneLog(ledger)
     if (!state.hot[input.noteId]) return err('unknown_subject', `工作区笔记不存在:${input.noteId}`)
-    noteZoneSignal('proposal') // 形状计数(opt-in 关闭时为 no-op)
+    // 按提议主体去重:指标 ① 的分母是 proposal_ref(每个提议一次),
+    // 同一条笔记被重复提议两次仍是**一个**提议——否则计数口径与指标口径不同(复查发现)。
+    if (markProposal('propose', input.noteId, kind)) noteZoneSignal('proposal')
     return {
       ok: true,
       action: 'propose',
@@ -323,7 +370,7 @@ export function applyZoneNote(
     }
     const { state } = readZoneLog(ledger)
     if (!state.hot[input.noteId]) return err('unknown_subject', `工作区笔记不存在:${input.noteId}`)
-    noteZoneSignal('deny')
+    if (markProposal('deny', input.noteId)) noteZoneSignal('deny')
     return {
       ok: true,
       action: 'deny',
@@ -375,8 +422,9 @@ export function applyZoneNote(
     return err('payload_bound', 'payload 必须是结构化对象(slot-spec 族片段,不接受自由文本)')
   }
   const turn = nextObservationTurn(input.session_ref)
+  // capture_or_touch:用户把同一片段再说一次 = 它仍在场 → 续 TTL,不是 stale_rev
   const r = appendZoneWrite(ledger, {
-    op: 'capture',
+    op: 'capture_or_touch',
     input: {
       session_ref: input.session_ref,
       tier: input.tier as HotTier,
@@ -387,7 +435,9 @@ export function applyZoneNote(
     },
   }, { actor: 'tool:gotry_session_zone_note' })
   if (!r.ok) return err(r.code, r.detail)
-  const noteId = r.event?.kind === 'hotctx.note.captured' ? r.event.note.note_id : undefined
+  const noteId = r.event?.kind === 'hotctx.note.captured' || r.event?.kind === 'hotctx.note.revised'
+    ? r.event.note.note_id
+    : makeHotNoteId({ session_ref: input.session_ref, tier: input.tier as HotTier, kind: input.kind as HotNoteKind, payload: input.payload }) ?? undefined
   return { ok: true, action: 'capture', appended: r.appended, noteId, detail: r.detail }
 }
 
@@ -416,6 +466,69 @@ export function classifyPromotionRouting(kind: NotebookKind, payload: Record<str
   return 'notebook'
 }
 
+/**
+ * 路由逃逸检测(纯函数;分类之后、落账之前):notebook 路由只对**真的没有既有
+ * 权威**的断言成立。两条判据——
+ *  1. 载荷带着权威形状键(偏好权重/行程日期/同行人约束字段);
+ *  2. 源工作区笔记的 kind 本身就属于某个既有权威的语义(destination/date_window →
+ *     时间线,party_size → 同行人,budget_stance → 动机画像)。
+ * 命中任一条即返回拒收理由:请改按对应 kind 声明并带上该权威的路由载荷。
+ * 模型自己选的 kind 不构成豁免——这正是「单一写权威」要防的事。
+ */
+export function routingEscapeViolation(input: {
+  kind: NotebookKind
+  authority: PromotionAuthority
+  payload: Record<string, unknown>
+  sourceKind: string
+}): string | null {
+  if (input.authority !== 'notebook') return null
+  for (const [authority, keys] of Object.entries(AUTHORITY_SHAPED_KEYS)) {
+    const hit = keys.find(k => input.payload[k] !== undefined)
+    if (hit !== undefined) {
+      return `载荷字段 ${hit} 属 ${authority} 语义:kind=${input.kind} 会绕过该权威的闸私存事实;请按对应 kind 声明并带上 ${authority} 路由载荷`
+    }
+  }
+  const sourceAuthority = HOT_KIND_AUTHORITY[input.sourceKind]
+  if (sourceAuthority) {
+    return `源笔记 kind=${input.sourceKind} 属 ${sourceAuthority} 语义:kind=${input.kind} 会绕过该权威的闸;请按对应 kind 声明并带上 ${sourceAuthority} 路由载荷`
+  }
+  return null
+}
+
+/** 路由载荷与分类权威必须一致:为 A 权威备料却声明成 B 类别,同样是绕闸 */
+export function routedPayloadMismatch(input: {
+  authority: PromotionAuthority
+  supplied: ZoneRoutedPayloads
+}): string | null {
+  const supplied: Array<'motivation' | 'timeline' | 'companion'> = []
+  if (input.supplied.motivation !== undefined) supplied.push('motivation')
+  if (input.supplied.trip !== undefined) supplied.push('timeline')
+  if (input.supplied.companion !== undefined) supplied.push('companion')
+  const stray = supplied.filter(a => a !== input.authority)
+  if (stray.length === 0) return null
+  return `路由载荷 ${stray.join('/')} 与本次分类权威 ${input.authority} 不符:请按该事实真正的类别声明 kind(模型选的 kind 不构成豁免)`
+}
+
+/**
+ * 权威形状键(路由逃逸检测):出现在 notebook 路由的载荷里,就说明这条断言其实
+ * 有既有写权威——把它当「教训/一般约束」存进笔记本等于绕闸私存(复查发现:
+ * 同一条持久偏好只要声明成 kind='lesson',或同行人约束的载荷不写 companion_label,
+ * 就永远到不了既有闸)。检测到即 routing_required 拒收,要求改声明到对应 kind。
+ */
+export const AUTHORITY_SHAPED_KEYS: Record<'motivation' | 'timeline' | 'companion', readonly string[]> = {
+  motivation: ['weights', 'hard', 'homeCity', 'home_city', 'budget_tier', 'budgetTier', 'motivation', 'preference', 'redeye', 'wake_not_before'],
+  timeline: ['destination', 'start', 'end', 'trip', 'visited', 'city', 'date_window', 'checkIn', 'checkOut'],
+  companion: ['companion_label', 'companion', 'companions', 'mobility', 'health', 'prefs', 'party_size', 'adults'],
+}
+
+/** 源笔记 kind → 已有写权威的语义(notebook 路由在这些 kind 上须显式举证) */
+export const HOT_KIND_AUTHORITY: Record<string, 'motivation' | 'timeline' | 'companion'> = {
+  destination: 'timeline',
+  date_window: 'timeline',
+  party_size: 'companion',
+  budget_stance: 'motivation',
+}
+
 export interface ZoneRoutedPayloads {
   motivation?: { weights?: Record<string, number>; hard?: Record<string, unknown>; homeCity?: string | null }
   trip?: { destination: string; start: string; end?: string; companions?: string[] }
@@ -439,6 +552,30 @@ export interface ZonePromotionOk {
   /** 既有闸的落地结果(notebook 路由时缺席) */
   routed?: { authority: PromotionAuthority; applied: boolean; idempotent: boolean; ref?: string }
   detail?: string
+}
+
+/**
+ * 动机断言落地核对(纯函数):返回第一个**没有**出现在结果画像里的字段描述,
+ * 全部落地则返回 null。`appendMotivationPatch` 的 saved:false 既可能是「无变化」
+ * (已落地,幂等)也可能是「被拒」(未落地),且不带 reason——核对结果是唯一
+ * 可靠的区分方式,也顺带覆盖未来新增的拒收理由。
+ */
+function motivationPatchUnmet(
+  patch: NonNullable<ZoneRoutedPayloads['motivation']>,
+  profile: { weights?: Record<string, number>; hard?: Record<string, unknown>; homeCityPreference?: { value: string | null } },
+): string | null {
+  for (const [k, v] of Object.entries(patch.weights ?? {})) {
+    if (profile.weights?.[k] !== v) return `weights.${k} 未落地`
+  }
+  for (const [k, v] of Object.entries(patch.hard ?? {})) {
+    if (JSON.stringify(profile.hard?.[k]) !== JSON.stringify(v)) return `hard.${k} 未落地`
+  }
+  if (patch.homeCity !== undefined) {
+    const current = profile.homeCityPreference?.value
+    const expected = typeof patch.homeCity === 'string' ? patch.homeCity.trim() : patch.homeCity
+    if (current !== expected) return 'homeCity 未落地'
+  }
+  return null
 }
 
 /** 回滚载体:路由闸拒绝 → 抛出 → 整个外层事务回滚(笔记本条目与权威写不可能分叉) */
@@ -485,6 +622,19 @@ export function promoteWithRouting(
     }
     const payload = input.payload ?? source.payload
     const authority = classifyPromotionRouting(kind, payload)
+    // 路由逃逸两道闸(分类之后、任何写入之前):载荷/源 kind 暗示既有权威,
+    // 或路由载荷与分类权威不符 → 一律拒收,绝不在笔记本里私存有主的事实。
+    const escape = routingEscapeViolation({ kind, authority, payload, sourceKind: source.kind })
+    if (escape) throw new ZonePromotionRejected(err('routing_required', escape))
+    const mismatch = routedPayloadMismatch({
+      authority,
+      supplied: {
+        ...(input.motivation !== undefined ? { motivation: input.motivation } : {}),
+        ...(input.trip !== undefined ? { trip: input.trip } : {}),
+        ...(input.companion !== undefined ? { companion: input.companion } : {}),
+      },
+    })
+    if (mismatch) throw new ZonePromotionRejected(err('routing_required', mismatch))
     let routed: ZonePromotionOk['routed']
     if (authority === 'motivation') {
       const patch = input.motivation
@@ -500,6 +650,14 @@ export function promoteWithRouting(
         ...(patch.homeCity !== undefined ? { homeCity: patch.homeCity, homeCityEvidence: input.ownerQuote } : {}),
         evidence: [input.ownerQuote],
       }, 'tool:gotry_session_zone_promote')
+      // 动机闸的 saved:false 是二义的(「无变化」与「被拒」同一个返回,且不带 reason),
+      // 不能像时间线/同行人那样读 reason。所以改为**核对结果**:断言的每个字段必须
+      // 真的出现在返回画像里,否则就是被拒 → 整笔回滚(复查发现:被拒的偏好晋升
+      // 原先仍会落一条笔记本条目,等于笔记本替动机画像背书)。
+      const unmet = motivationPatchUnmet(patch, res.profile)
+      if (unmet) {
+        throw new ZonePromotionRejected(err('routed_rejected', `动机画像闸未落地该断言(${unmet});整笔晋升回滚`))
+      }
       routed = { authority, applied: res.saved, idempotent: !res.saved }
     } else if (authority === 'timeline') {
       const trip = input.trip
@@ -552,7 +710,8 @@ export function promoteWithRouting(
     }], { actor: 'tool:gotry_session_zone_promote' })
     const r = results[0]!
     if (!r.ok) throw new ZonePromotionRejected(err(r.code, r.detail))
-    noteZoneSignal('confirm') // owner 确认计数(opt-in 关闭时为 no-op)
+    // 只有真的落了条目才算一次 owner 确认(幂等重放不是第二次确认);同口径去重
+    if (r.appended && markProposal('confirm', input.noteId, kind)) noteZoneSignal('confirm')
     const entryId = r.event?.kind === 'notebook.entry.promoted' ? r.event.entry.entry_id : undefined
     return {
       ok: true,
@@ -624,6 +783,7 @@ export function renderZoneBrief(input: {
 export function renderSessionZoneBrief(input: {
   ledger: StateLedger | null
   now: string
+  /** 本次组装 scope 绑定的会话引用;null = 未绑定 → 读回不出 resource 段(fail-closed) */
   sessionRef: string | null
   zoneSwitch: ZoneSwitch
 }): string {

@@ -63,12 +63,21 @@ function readFixture(): unknown {
   }
 }
 
-/** 只读计数:无账本 = 全 0(不建库) */
+/**
+ * 只读计数:无账本 = 全 0(不建库)。
+ * 日志触读上界即拒:`readEvents` 丢的是最老事件,残缺日志算出的计数会被当成全量
+ * (与 forget/export 同一条截断纪律)。
+ */
 function countersOf(now: string): ZoneShapeCounters {
   const root = flags.get('--state-root') ?? '.'
   const ledger = openLedgerIfExists(root)
   if (!ledger) return projectZoneCounters([], now)
-  return projectZoneCounters(readZoneLog(ledger).events, now)
+  const read = readZoneLog(ledger)
+  if (read.truncated) {
+    console.error('log_truncated: 分区事件日志触到读上界,计数拒绝在残缺日志上输出(会被当成全量)')
+    process.exit(2)
+  }
+  return projectZoneCounters(read.events, now)
 }
 
 const now = new Date().toISOString()

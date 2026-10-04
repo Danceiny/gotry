@@ -29,6 +29,7 @@ import {
   appendZoneWrites,
   forgetZoneSession,
   forgetZoneSubjects,
+  readZoneExportViews,
   readZoneLog,
   renderZoneExportViews,
   type ZoneAppendResult,
@@ -290,6 +291,7 @@ try {
     }))
     const auditBefore = ledger.readEvents('forget.executed', 100).length
     const r = forgetZoneSession(ledger, SESS_A)
+    assert.ok(r.ok, JSON.stringify(r))
     assert.equal(r.subjects, 3, '2 条笔记 + 1 条笔记本条目')
     assert.equal(r.deleted, 3)
     assert.equal(ledger.readEvents('forget.executed', 100).length, auditBefore + 1, '多主体仍只一行审计')
@@ -301,8 +303,31 @@ try {
     const after = readZoneLog(ledger).state
     assert.equal(Object.keys(after.notebook).length, 0)
     assert.deepEqual(Object.values(after.hot).map(h => h.session_ref), [SESS_B], '另一会话不受影响')
-    assert.equal(forgetZoneSession(ledger, 'sess-nobody').deleted, 0, '无主体时零删除零审计')
+    const nobody = forgetZoneSession(ledger, 'sess-nobody')
+    assert.ok(nobody.ok)
+    assert.equal(nobody.deleted, 0, '无主体时零删除零审计')
     assert.equal(ledger.readEvents('forget.executed', 100).length, auditBefore + 1)
+  })
+
+  // 10b. 截断日志上的遗忘/导出一律拒绝(红线 6「可删除」不得 fail-open)
+  pass('截断即拒:遗忘与导出都拒绝在不完整 fold 上执行(readEvents 丢的是最老事件)', () => {
+    const { root, ledger } = freshLedger('truncated-forget')
+    ok(appendZoneWrite(ledger, captureReq()))
+    ok(appendZoneWrite(ledger, captureReq({ payload: { city: '清迈' }, ts: at(MIN) })))
+    ok(appendZoneWrite(ledger, captureReq({ payload: { city: '东京' }, ts: at(2 * MIN) })))
+    const auditBefore = ledger.readEvents('forget.executed', 100).length
+    const forget = forgetZoneSession(ledger, SESS_A, 'system:test', { limit: 2 })
+    assert.equal(forget.ok, false, '截断时遗忘必须拒绝(否则静默漏删主体)')
+    assert.equal((forget as { code?: string }).code, 'log_truncated')
+    assert.equal(ledger.readEvents('forget.executed', 100).length, auditBefore, '拒绝路径零审计行零删除')
+    assert.equal(Object.keys(readZoneLog(ledger).state.hot).length, 3, '主体一个都没被删')
+    const views = readZoneExportViews(ledger, { limit: 2 })
+    assert.equal(views.ok, false, '截断时导出必须拒绝(残缺视图会被当全量)')
+    assert.equal((views as { code?: string }).code, 'log_truncated')
+    const full = readZoneExportViews(ledger)
+    assert.ok(full.ok)
+    assert.equal(full.views.hotContextJsonl.split('\n').filter(Boolean).length, 3)
+    void root
   })
 
   // 10. 导出视图 == fold 输出,且导出零新事件
@@ -331,6 +356,57 @@ try {
     assert.equal(empty.status, 0)
     assert.equal(existsSync(join(emptyRoot, 'gotry-state', ZONE_EXPORT_HOT_FILE)), false)
     assert.equal(existsSync(join(emptyRoot, 'gotry-state', ZONE_EXPORT_NOTEBOOK_FILE)), false)
+  })
+
+  // 10c. capture_or_touch:过期后重捕获 / 同一检索重复出现都必须续命
+  pass('capture_or_touch:过期笔记续命复活、重复同形观察续 TTL;纯 capture 仍 stale_rev', () => {
+    const { ledger } = freshLedger('touch')
+    const birth = ok(appendZoneWrite(ledger, { op: 'capture_or_touch', input: captureReq({ tier: 'resource', kind: 'availability', payload: { tool: 'gotry_flyai_search', verdict: 'hit', option_count: 2 } }).input }))
+    assert.equal(birth.appended, true)
+    const noteId = Object.keys(readZoneLog(ledger).state.hot)[0]!
+    const first = readZoneLog(ledger).state.hot[noteId]!
+    assert.equal(first.rev, 1)
+    assert.equal(first.ttl_expires_at, new Date(Date.parse(T0) + 30 * MIN).toISOString())
+    // 纯 capture:同 id 不同时刻 → stale_rev(未修复时观察缝就卡在这里)
+    const plain = appendZoneWrite(ledger, { op: 'capture', input: { ...captureReq({ tier: 'resource', kind: 'availability', payload: { tool: 'gotry_flyai_search', verdict: 'hit', option_count: 2 }, ts: at(40 * MIN) }).input } })
+    assert.ok(!plain.ok && plain.code === 'stale_rev', `纯 capture 仍应 stale_rev:${JSON.stringify(plain)}`)
+    // 40 分钟后(已过期)同形观察:续命 → rev 2 且到期时刻推到 40min+30min
+    const touched = ok(appendZoneWrite(ledger, { op: 'capture_or_touch', input: captureReq({ tier: 'resource', kind: 'availability', payload: { tool: 'gotry_flyai_search', verdict: 'hit', option_count: 2 }, ts: at(40 * MIN) }).input }))
+    assert.equal(touched.appended, true, '过期笔记必须能被续命(否则工作区永久停供该形态)')
+    assert.equal(touched.event?.kind, 'hotctx.note.revised')
+    const revived = readZoneLog(ledger).state.hot[noteId]!
+    assert.equal(revived.rev, 2)
+    assert.equal(revived.created_at, T0, '续命保留诞生时刻(血缘不漂移)')
+    assert.equal(revived.last_touched_at, at(40 * MIN))
+    assert.equal(revived.ttl_expires_at, new Date(Date.parse(T0) + 70 * MIN).toISOString(), 'TTL 自最后一次写入起算')
+    assert.deepEqual(
+      readWorkingZone(readZoneLog(ledger).state, { now: at(41 * MIN), session_ref: SESS_A }).map(x => x.rev),
+      [2],
+      '续命后重新进入读视图',
+    )
+    // 同 ts 同内容重放仍是幂等 no-op(不白记一条)
+    const replay = ok(appendZoneWrite(ledger, { op: 'capture_or_touch', input: captureReq({ tier: 'resource', kind: 'availability', payload: { tool: 'gotry_flyai_search', verdict: 'hit', option_count: 2 }, ts: at(40 * MIN) }).input }))
+    assert.equal(replay.appended, false)
+    // 其他拒收(负面清单)不得被 capture_or_touch 放宽
+    const neg = appendZoneWrite(ledger, { op: 'capture_or_touch', input: captureReq({ payload: { city: '大理', phone: '13800138000' }, ts: at(41 * MIN) }).input })
+    assert.ok(!neg.ok && neg.code === 'negative_list')
+  })
+
+  // 10d. 生代碰撞:显式报错,不静默吞
+  pass('生代碰撞:同毫秒 capture→drop→重捕获 → idem_collision 显式失败(不报假幂等)', () => {
+    const { ledger } = freshLedger('collision')
+    const first = ok(appendZoneWrite(ledger, captureReq()))
+    const noteId = Object.keys(readZoneLog(ledger).state.hot)[0]!
+    ok(appendZoneWrite(ledger, { op: 'drop', note_id: noteId, ts: at(MIN) }))
+    const before = ledger.countEvents()
+    const same = appendZoneWrite(ledger, captureReq()) // 与诞生同一毫秒 → 同一幂等键
+    assert.equal(same.ok, false, '必须显式失败而不是报 appended:false')
+    assert.equal((same as { code?: string }).code, 'idem_collision')
+    assert.equal(ledger.countEvents(), before, '失败路径零新行')
+    assert.equal(first.idemKey, `hotctx:${noteId}:${T0}:1`)
+    // 换一个写入时刻即可成功(生代不同)
+    const later = ok(appendZoneWrite(ledger, captureReq({ ts: at(2 * MIN) })))
+    assert.equal(later.appended, true)
   })
 
   // 11. 读上界 fail-closed
@@ -402,7 +478,7 @@ try {
     }
   })
 
-  console.log(`\nSESSION ZONE LEDGER TESTS: ${n}/15 OK(P4-2 账本落点:六 kind 落既有表/单事务守门 fail-closed/双道幂等/kill -9 全有或全无/forget 一行审计/导出视图==fold;隔离 stateRoot,全离线)`)
+  console.log(`\nSESSION ZONE LEDGER TESTS: ${n}/18 OK(P4-2 账本落点:六 kind 落既有表/单事务守门 fail-closed/双道幂等/kill -9 全有或全无/forget 一行审计/导出视图==fold;隔离 stateRoot,全离线)`)
 } finally {
   for (const root of roots) rmSync(root, { recursive: true, force: true })
 }

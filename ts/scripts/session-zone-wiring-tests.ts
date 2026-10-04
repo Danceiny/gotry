@@ -26,16 +26,17 @@ import { readZoneLog } from '../src/session-zone-ledger.ts'
 import {
   ZONE_BRIEF_MAX_CHARS,
   ZONE_OBSERVABLE_TOOLS,
-  bindZoneSession,
   classifyPromotionRouting,
+  observeToolResult,
   projectToolObservation,
   promoteWithRouting,
   renderZoneBrief,
   resetZoneSessionBindingForTests,
   resolveZoneSwitch,
+  routingEscapeViolation,
   zoneSessionRef,
 } from '../src/session-zone-wiring.ts'
-import { ZONE_EVENT_KINDS } from '../src/session-zones.ts'
+import { ZONE_EVENT_KINDS, readWorkingZone } from '../src/session-zones.ts'
 
 let n = 0
 function pass(name: string, body: () => void | Promise<void>): Promise<void> {
@@ -53,17 +54,42 @@ function freshRoot(tag: string): string {
   return root
 }
 
+/**
+ * 离线检索夹具:注入 apply() 的 effect 缝,保证**绝不**触达真实 FlyAI
+ * (真实路径会从 homedir/env 读 key 并可能 spawn 真实 CLI,结果随机器而变)。
+ */
+const fixtureEffect = (async (fx: { effect: string; params?: { kind?: string } }) => {
+  if (fx.effect === 'FLYAI_SEARCH') {
+    return {
+      result: {
+        ok: true,
+        via: 'fixture',
+        evidence: '[fixture:zone-wiring] offline',
+        latencyMs: 0,
+        verdict: 'hit',
+        kind: fx.params?.kind ?? 'flight',
+        options: [
+          { no: 'MU5111', name: '东方航空', depDateTime: '2027-11-11T07:35:00+08:00', arrDateTime: '2027-11-11T10:05:00+08:00', price: 880, jumpUrl: 'https://flights.example.com/a' },
+          { no: 'CA1234', name: '国航', depDateTime: '2027-11-11T12:35:00+08:00', arrDateTime: '2027-11-11T15:05:00+08:00', price: 1260, jumpUrl: 'https://flights.example.com/b' },
+        ],
+      },
+      trace: { effect: fx.effect, channel: 'fixture', attempts: 1, backoffMs: 0, breaker: 'off', evidence: ['[fixture:zone-wiring]'] },
+    }
+  }
+  return { result: null, trace: { effect: fx.effect, channel: 'fixture', attempts: 0, backoffMs: 0, breaker: 'off', evidence: ['[fixture:declined]'] } }
+}) as never
+
 /** 真实 apply() 注册面(与 smoke 同款极简 ctx:只收工具与注入变量) */
 function harness(cfg: Partial<Config> & { stateRoot: string }): {
   tools: ToolLike[]
-  variables: Record<string, () => string>
+  variables: Record<string, (context?: { scope?: object }) => string>
   tool: (name: string) => ToolLike
 } {
   const tools: ToolLike[] = []
-  const variables: Record<string, () => string> = {}
+  const variables: Record<string, (context?: { scope?: object }) => string> = {}
   const ctx = {
     tools: { register: (t: unknown) => tools.push(t as ToolLike) },
-    systemPrompt: { variable: (name: string, provider: () => string) => { variables[name] = provider } },
+    systemPrompt: { variable: (name: string, provider: (context?: { scope?: object }) => string) => { variables[name] = provider } },
     get: () => undefined,
     on: () => () => {},
   } as unknown as Context
@@ -72,7 +98,7 @@ function harness(cfg: Partial<Config> & { stateRoot: string }): {
     hbcliBin: 'hbcli-not-on-path',
     sessionAccess: 'off',
     ...cfg,
-  } as Config)
+  } as Config, { effect: fixtureEffect })
   return {
     tools,
     variables,
@@ -85,8 +111,14 @@ function harness(cfg: Partial<Config> & { stateRoot: string }): {
 }
 
 const SESSION_ID = 'dsh-session-abcdef-0123456789'
-const EXEC = { agent: { session: { id: SESSION_ID } } }
+/** scope 键 = dsh agent-loop 的 ScopeKey(agent 对象身份);exec.agent 是同一对象 */
+const AGENT_A = { session: { id: SESSION_ID } }
+const EXEC = { agent: AGENT_A }
 const SESS = zoneSessionRef(SESSION_ID)!
+const SESSION_ID_B = 'dsh-session-999999-9876543210'
+const AGENT_B = { session: { id: SESSION_ID_B } }
+const EXEC_B = { agent: AGENT_B }
+const SESS_B = zoneSessionRef(SESSION_ID_B)!
 const QUOTE = '对,我以后都不坐红眼航班,记着'
 
 function zoneEventCount(root: string): number {
@@ -212,6 +244,40 @@ async function main(): Promise<void> {
       assert.ok(Number.isInteger(note.evidence_ref.turn) && note.evidence_ref.turn >= 0)
       assert.equal(JSON.stringify(note).includes(SESSION_ID), false, '分区不得出现宿主 session id 原文')
     }
+    // 投影出的形状来自离线夹具(两条候选 + 880/1260 价格带),不依赖任何真实供应商
+    const payloads = notes.map(x => JSON.stringify(x.payload)).sort()
+    assert.ok(payloads.some(p => p.includes('"option_count":2')), `应有 availability 形状:${payloads.join(' | ')}`)
+    assert.ok(payloads.some(p => p.includes('"low":880') && p.includes('"high":1260')), `应有价格带形状:${payloads.join(' | ')}`)
+    const serialized = JSON.stringify(notes)
+    for (const forbidden of ['https://', 'example.com', '东方航空', '国航']) {
+      assert.equal(serialized.includes(forbidden), false, `落账的笔记不得携带:${forbidden}`)
+    }
+  })
+
+  await pass('捕获缝续命:同一检索在 TTL 之后再跑一次 → 续 TTL 并回到读视图(不被 stale_rev 吞掉)', async () => {
+    const root = freshRoot('observe-touch')
+    const ledger = ensureLedger(root)
+    const t0 = new Date('2026-10-04T08:00:00.000Z')
+    const result = { ok: true, verdict: 'hit', options: [{ no: 'MU1', price: 880 }, { no: 'CA1', price: 1260 }] }
+    const first = observeToolResult(ledger, { tool: 'gotry_flyai_search', result, session_ref: SESS, ts: t0.toISOString() })
+    assert.deepEqual(first, { captured: 2, touched: 0, rejected: 0 }, '首次观察:两条形状笔记诞生')
+    const ids = Object.keys(readZoneLog(ledger).state.hot).sort()
+    assert.equal(ids.length, 2)
+    // 40 分钟后(resource 30min 已过期)同一检索再跑:必须续命,不得被默默丢掉
+    const later = new Date(t0.getTime() + 40 * 60_000).toISOString()
+    const second = observeToolResult(ledger, { tool: 'gotry_flyai_search', result, session_ref: SESS, ts: later })
+    assert.deepEqual(second, { captured: 0, touched: 2, rejected: 0 }, '同形观察 = 续命,不是 rejected')
+    assert.deepEqual(Object.keys(readZoneLog(ledger).state.hot).sort(), ids, '续命不新建主体')
+    const state = readZoneLog(ledger).state
+    for (const id of ids) {
+      assert.equal(state.hot[id]!.rev, 2)
+      assert.equal(state.hot[id]!.last_touched_at, later)
+    }
+    assert.equal(
+      readWorkingZone(state, { now: new Date(t0.getTime() + 41 * 60_000).toISOString(), session_ref: SESS }).length,
+      2,
+      '续命后两条都回到读视图(未修复时这里是 0:工作区悄悄停供)',
+    )
   })
 
   // ---- 负面清单端到端 ----
@@ -242,19 +308,40 @@ async function main(): Promise<void> {
   await pass('读回:首访空串;有活笔记后有界(条数上界 + 字符上界);关闸即空', async () => {
     const root = freshRoot('brief')
     const on = harness({ stateRoot: root, sessionZones: 'on' })
-    assert.equal(on.variables['session_zone_brief']!(), '', '首访(无账本)读回空串')
+    assert.equal(on.variables['session_zone_brief']!({ scope: AGENT_A }), '', '首访(无账本)读回空串')
     const note = on.tool('gotry_session_zone_note')
-    bindZoneSession(SESS)
     for (const city of ['大理', '丽江', '香格里拉']) {
       await note.execute!({ action: 'capture', tier: 'intent', kind: 'destination', payload: { city } }, EXEC)
     }
-    const brief = on.variables['session_zone_brief']!()
+    const brief = on.variables['session_zone_brief']!({ scope: AGENT_A })
     assert.ok(brief.includes('会话双区记忆'), `读回应含分区标题:${brief}`)
     assert.ok(brief.includes('大理'))
     assert.ok(brief.length <= ZONE_BRIEF_MAX_CHARS, '读回字符有界')
     // 同一账本在关闸配置下读回仍为空(开关是读回的唯一开关)
     const offSame = harness({ stateRoot: root })
-    assert.equal(offSame.variables['session_zone_brief']!(), '', '关闸读回空串,即便账本里有活笔记')
+    assert.equal(offSame.variables['session_zone_brief']!({ scope: AGENT_A }), '', '关闸读回空串,即便账本里有活笔记')
+  })
+
+  await pass('读回按 scope 隔离:两个会话同进程时 B 读不到 A 的 resource 层笔记(设计 §1.1)', async () => {
+    const root = freshRoot('two-sessions')
+    const on = harness({ stateRoot: root, sessionZones: 'on' })
+    const note = on.tool('gotry_session_zone_note')
+    // A 会话:一条 resource(本会话私有)+ 一条 intent(跨会话可读)
+    await note.execute!({ action: 'capture', tier: 'resource', kind: 'availability', payload: { tool: 'gotry_flyai_search', verdict: 'hit', option_count: 7 } }, EXEC)
+    await note.execute!({ action: 'capture', tier: 'intent', kind: 'destination', payload: { city: '大理' } }, EXEC)
+    // B 会话:自己的 resource
+    await note.execute!({ action: 'capture', tier: 'resource', kind: 'availability', payload: { tool: 'gotry_session_search', verdict: 'miss', option_count: 0 } }, EXEC_B)
+    assert.notEqual(SESS, SESS_B)
+    const briefA = on.variables['session_zone_brief']!({ scope: AGENT_A })
+    const briefB = on.variables['session_zone_brief']!({ scope: AGENT_B })
+    assert.ok(briefA.includes('option_count=7'), `A 读到自己的 resource:${briefA}`)
+    assert.equal(briefB.includes('option_count=7'), false, 'B 绝不得读到 A 的 resource 层笔记')
+    assert.ok(briefB.includes('gotry_session_search'), `B 读到自己的 resource:${briefB}`)
+    assert.ok(briefA.includes('大理') && briefB.includes('大理'), 'intent 层按契约跨会话可读')
+    // 无 scope(轻量宿主/未绑定)→ 不出 resource 段,fail-closed
+    const briefNoScope = on.variables['session_zone_brief']!()
+    assert.equal(briefNoScope.includes('本次会话查到的'), false, '取不到 scope 时不出 resource 段')
+    assert.ok(briefNoScope.includes('大理'), 'intent 段仍在(跨会话可读)')
   })
 
   await pass('读回纯函数:条数上界生效;无会话绑定时 resource 层不出现(intent 跨会话可读)', () => {
@@ -356,6 +443,61 @@ async function main(): Promise<void> {
     assert.equal(Object.keys(readZoneLog(ledger).state.notebook).length, 0)
   })
 
+  await pass('路由逃逸:换个 kind 或抹掉 companion_label 都绕不过既有闸(模型选的 kind 不构成豁免)', async () => {
+    const root = freshRoot('routing-escape')
+    const on = harness({ stateRoot: root, sessionZones: 'on' })
+    const note = on.tool('gotry_session_zone_note')
+    const promote = on.tool('gotry_session_zone_promote')
+    const ledger = ensureLedger(root)
+    // ① 持久偏好声明成 lesson:源笔记 kind=budget_stance 属动机语义 → 拒
+    const pref = await note.execute!({ action: 'capture', tier: 'intent', kind: 'budget_stance', payload: { redeye: 'never' } }, EXEC) as { note_id?: string }
+    const asLesson = await promote.execute!({ noteId: pref.note_id, kind: 'lesson', ownerQuote: QUOTE, surface: 'user_reply' }, EXEC) as { ok?: boolean; code?: string; summary?: string }
+    assert.equal(asLesson.ok, false, '偏好换 kind=lesson 必须被拒')
+    assert.equal(asLesson.code, 'routing_required')
+    assert.match(String(asLesson.summary), /budget_stance|motivation/)
+    // ② 同行人约束抹掉 companion_label:载荷仍带 health → 拒
+    const comp = await note.execute!({ action: 'capture', tier: 'intent', kind: 'destination', payload: { city: '大理' } }, EXEC) as { note_id?: string }
+    const strippedLabel = await promote.execute!({ noteId: comp.note_id, kind: 'constraint', ownerQuote: QUOTE, surface: 'user_reply', payload: { health: ['晕车'] } }, EXEC) as { ok?: boolean; code?: string }
+    assert.equal(strippedLabel.ok, false, '抹掉 companion_label 仍不得绕过同行人闸')
+    assert.equal(strippedLabel.code, 'routing_required')
+    // ③ 备了动机载荷却声明成 constraint:路由载荷与分类不符 → 拒
+    const mismatch = await promote.execute!({ noteId: comp.note_id, kind: 'constraint', ownerQuote: QUOTE, surface: 'user_reply', payload: { quiet: true }, motivation: { hard: { wake_not_before: '07:00' } } }, EXEC) as { ok?: boolean; code?: string }
+    assert.equal(mismatch.ok, false)
+    assert.equal(mismatch.code, 'routing_required')
+    assert.equal(Object.keys(readZoneLog(ledger).state.notebook).length, 0, '三条逃逸路径零笔记本条目')
+    assert.equal(ledger.readMotivation(), null, '零动机写入')
+    // 纯函数层同口径(无源权威语义的 lesson 正常通过)
+    assert.equal(routingEscapeViolation({ kind: 'lesson', authority: 'notebook', payload: { lesson: 'too_tight' }, sourceKind: 'availability' }), null)
+    assert.ok(routingEscapeViolation({ kind: 'lesson', authority: 'notebook', payload: { weights: { x: 1 } }, sourceKind: 'availability' }))
+    assert.equal(routingEscapeViolation({ kind: 'preference', authority: 'motivation', payload: { weights: { x: 1 } }, sourceKind: 'budget_stance' }), null, '已走权威路由的不算逃逸')
+  })
+
+  await pass('动机闸拒绝即整笔回滚:被拒的偏好晋升不得留下笔记本条目(saved 二义性不可信)', async () => {
+    const root = freshRoot('motivation-refused')
+    const on = harness({ stateRoot: root, sessionZones: 'on' })
+    const note = on.tool('gotry_session_zone_note')
+    const promote = on.tool('gotry_session_zone_promote')
+    const ledger = ensureLedger(root)
+    // 先用同一条原话把 homeCity 写进画像:之后换城市但复用**同一条**原话 →
+    // mergeProfile 判为「无新证据」拒收,且 saved:false 不带任何 reason。
+    ledger.appendMotivationPatch({ homeCity: '上海', homeCityEvidence: QUOTE, evidence: [QUOTE] })
+    assert.equal(ledger.readMotivation()?.homeCityPreference?.value, '上海')
+    const captured = await note.execute!({ action: 'capture', tier: 'intent', kind: 'budget_stance', payload: { home: 'moved' } }, EXEC) as { note_id?: string }
+    const zoneBefore = zoneEventCount(root)
+    const r = await promote.execute!({ noteId: captured.note_id, kind: 'preference', ownerQuote: QUOTE, surface: 'user_reply', motivation: { homeCity: '北京' } }, EXEC) as { ok?: boolean; code?: string; summary?: string }
+    assert.equal(r.ok, false, `动机闸未落地该断言时必须拒绝整笔:${JSON.stringify(r)}`)
+    assert.equal(r.code, 'routed_rejected')
+    assert.equal(ledger.readMotivation()?.homeCityPreference?.value, '上海', '画像未被改写')
+    assert.equal(zoneEventCount(root), zoneBefore, '笔记本零新事件(同事务回滚)')
+    assert.equal(Object.keys(readZoneLog(ledger).state.notebook).length, 0)
+    // 带新证据的同一断言则正常落地
+    const freshQuote = '我搬到北京了,以后默认从北京出发'
+    const ok2 = await promote.execute!({ noteId: captured.note_id, kind: 'preference', ownerQuote: freshQuote, surface: 'user_reply', motivation: { homeCity: '北京' } }, EXEC) as { ok?: boolean; authority?: string; routed?: { applied?: boolean } }
+    assert.equal(ok2.ok, true, JSON.stringify(ok2))
+    assert.equal(ok2.routed?.applied, true)
+    assert.equal(ledger.readMotivation()?.homeCityPreference?.value, '北京')
+  })
+
   await pass('路由落地:preference 经动机闸 / trip_fact 经时间线闸 / 约束经同行人闸,笔记本同事务记断言+血缘', async () => {
     const root = freshRoot('routing-apply')
     const on = harness({ stateRoot: root, sessionZones: 'on' })
@@ -392,8 +534,8 @@ async function main(): Promise<void> {
       assert.equal(entry.origin.session_ref, SESS, '血缘指向源会话')
       assert.ok(entry.origin.note_id, '血缘指向源笔记')
     }
-    // 纯约束/教训留在笔记本自身(无平行权威)
-    const lessonNote = await note.execute!({ action: 'capture', tier: 'intent', kind: 'budget_stance', payload: { lesson: 'too_tight' } }, EXEC) as { note_id?: string }
+    // 纯教训留在笔记本自身(源笔记 kind 无既有权威语义、载荷无权威形状键)
+    const lessonNote = await note.execute!({ action: 'capture', tier: 'resource', kind: 'availability', payload: { lesson: 'too_tight' } }, EXEC) as { note_id?: string }
     const lessonOut = await promote.execute!({ noteId: lessonNote.note_id, kind: 'lesson', ownerQuote: QUOTE, surface: 'user_reply' }, EXEC) as { ok?: boolean; authority?: string; routed?: unknown }
     assert.equal(lessonOut.ok, true, JSON.stringify(lessonOut))
     assert.equal(lessonOut.authority, 'notebook')
@@ -462,7 +604,7 @@ async function main(): Promise<void> {
   })
 
   assert.equal(runtimeSnapshot(), runtimeBefore, '本套件必须对 ts/dsh-runtime/gotry-state 零写入(产品真实状态)')
-  console.log(`\nSESSION ZONE WIRING TESTS: ${n}/17 OK(P4-3 会话接线:默认关惰性/捕获缝形状投影/负面清单端到端/读回有界/propose 零落账/owner 引用闸/§3 路由 fail-closed 与同事务回滚;隔离 stateRoot,全离线)`)
+  console.log(`\nSESSION ZONE WIRING TESTS: ${n}/21 OK(P4-3 会话接线:默认关惰性/捕获缝形状投影/负面清单端到端/读回有界/propose 零落账/owner 引用闸/§3 路由 fail-closed 与同事务回滚;隔离 stateRoot,全离线)`)
 }
 
 main()

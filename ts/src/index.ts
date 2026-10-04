@@ -37,6 +37,7 @@ import {
   promoteWithRouting,
   renderSessionZoneBrief,
   resolveZoneSwitch,
+  zoneScopeOfExec,
   zoneSessionRefFromExec,
 } from './session-zone-wiring.ts'
 import { isValidHomeCityPreference, resolveDefaultOrigin, type MergedProfile, type ProfilePatch } from './memory-capture.ts'
@@ -547,8 +548,11 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
 
   // 时间感知:注册动态变量,persona 里用 {{current_date}} 引用。
   // 每次 assemble 时取系统时钟——LLM 始终知道「今天是几号」。
+  // provider 收到本次组装的 AssembleContext(dsh-system-prompt 契约:
+  // `variable(name, provider: (context: AssembleContext) => string | undefined)`);
+  // `scope` 是不透明、按身份比较的 ScopeKey —— 分区读回据此分辨会话。
   const sp = (ctx as unknown as Record<string, unknown>)['systemPrompt'] as {
-    variable?: (name: string, provider: () => string) => void
+    variable?: (name: string, provider: (context?: { scope?: object }) => string) => void
   } | undefined
   sp?.variable?.('current_date', () => {
     const d = new Date()
@@ -569,11 +573,14 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   // 变量恒注册(persona 侧可随时引用),但总闸 off(默认)时恒返回空串 —— 接线惰性,
   // 不建库、不读库、零事件;persona 模板本身不在本 PR 改动,因此开关 off 时注入面
   // 输出逐字节不变。空串 = 首访/无活笔记(与 motivation_brief 同纪律)。
+  // 读回按**组装 scope** 取会话身份(dsh agent-loop 以 agent 对象为 ScopeKey,
+  // 与工具侧 exec.agent 同一身份):同一宿主进程里的两个会话因此读不到对方的
+  // resource 层笔记(设计 §1.1);取不到 scope → 不出 resource 段(fail-closed)。
   const zoneSwitch = resolveZoneSwitch(config.sessionZones)
-  sp?.variable?.('session_zone_brief', () => renderSessionZoneBrief({
+  sp?.variable?.('session_zone_brief', assembleContext => renderSessionZoneBrief({
     ledger: zoneSwitch === 'on' ? openLedgerIfExists(config.stateRoot ?? '.') : null,
     now: new Date().toISOString(),
-    sessionRef: boundZoneSession(),
+    sessionRef: boundZoneSession(assembleContext?.scope),
     zoneSwitch,
   }))
 
@@ -668,7 +675,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         try {
           const sessionRef = zoneSessionRefFromExec(exec)
           if (sessionRef) {
-            bindZoneSession(sessionRef)
+            bindZoneSession(zoneScopeOfExec(exec), sessionRef)
             observeToolResult(openLedgerIfExists(config.stateRoot ?? '.') ?? ensureLedger(config.stateRoot ?? '.'), {
               tool: toolName,
               result,
@@ -1237,7 +1244,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         if (!sessionRef) {
           return { ok: false, code: 'bad_session', summary: '无会话身份(exec.agent.session.id 缺失):分区不记忆无主体的片段' } as never
         }
-        bindZoneSession(sessionRef)
+        bindZoneSession(zoneScopeOfExec(exec), sessionRef)
         const r = applyZoneNote(ensureLedger(config.stateRoot), {
           action: args.action as never,
           ...(args.tier !== undefined ? { tier: args.tier } : {}),
@@ -1283,7 +1290,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       },
       async execute(args, exec: unknown) {
         const sessionRef = zoneSessionRefFromExec(exec)
-        if (sessionRef) bindZoneSession(sessionRef)
+        if (sessionRef) bindZoneSession(zoneScopeOfExec(exec), sessionRef)
         const r = promoteWithRouting(ensureLedger(config.stateRoot), {
           noteId: String(args.noteId ?? ''),
           kind: String(args.kind ?? ''),

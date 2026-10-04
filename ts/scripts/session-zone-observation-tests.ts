@@ -47,6 +47,7 @@ import {
   applyZoneNote,
   promoteWithRouting,
   renderSessionZoneBrief,
+  resetZoneSessionBindingForTests,
 } from '../src/session-zone-wiring.ts'
 import { initMemoryLifecycleDataset, readStoreForTests } from '../src/memory-lifecycle.ts'
 import type { ZoneEvent } from '../src/session-zones.ts'
@@ -225,10 +226,23 @@ try {
     assert.equal(payoff.value, 14 / 22)
     assert.equal(payoff.verdict, 'pass')
     const stale = byId.get('stale_hit_rate')!
-    assert.equal(stale.sample_count, 10)
-    assert.equal(stale.value, 0.1)
+    assert.equal(stale.sample_count, 12)
+    assert.equal(stale.value, 1 / 12)
     assert.equal(stale.direction, 'lower_is_better')
-    assert.equal(stale.verdict, 'pass', '上界是 ≤:恰好 0.1 仍过')
+    assert.equal(stale.verdict, 'pass', '夹具刻意不踩在上界上(1/12 ≈ 0.083 < 0.1)')
+    // 上界语义单独验:恰好 0.1 过(≤),刚过 0.1 即不过
+    const onBound = projectZoneMetrics({
+      ...loadFixture(),
+      zone_served_facts: Array.from({ length: 10 }, (_, i) => ({ served_ref: `ref-${i}`, corrected: i === 0 })),
+    })
+    assert.ok(onBound.ok)
+    assert.equal(onBound.report.metrics.find(m => m.id === 'stale_hit_rate')!.verdict, 'pass', '恰好 0.1 仍过(上界是 ≤)')
+    const overBound = projectZoneMetrics({
+      ...loadFixture(),
+      zone_served_facts: Array.from({ length: 9 }, (_, i) => ({ served_ref: `ref-${i}`, corrected: i === 0 })),
+    })
+    assert.ok(overBound.ok)
+    assert.equal(overBound.report.metrics.find(m => m.id === 'stale_hit_rate')!.verdict, 'below_threshold', '1/9 > 0.1 即不过')
   })
 
   pass('样本不足即 insufficient_sample;越界即 below_threshold(永不因少量样本宣布通过)', () => {
@@ -473,31 +487,47 @@ try {
     const root = freshRoot('signals')
     const ledger = ensureLedger(root)
     const ts = new Date().toISOString()
-    assert.ok(appendZoneWrite(ledger, captureReq({ ts })).ok)
-    const noteId = Object.keys(readZoneLog(ledger).state.hot)[0]!
+    // 源笔记用 availability + 无权威形状键的载荷:lesson 晋升本就该留在笔记本
+    const mk = (payload: Record<string, unknown>) => {
+      const before = new Set(Object.keys(readZoneLog(ledger).state.hot))
+      assert.ok(appendZoneWrite(ledger, { op: 'capture', input: { session_ref: SESS, tier: 'resource', kind: 'availability', payload, evidence_ref: { session_ref: SESS, turn: 0 }, ts } }).ok)
+      const born = Object.keys(readZoneLog(ledger).state.hot).find(id => !before.has(id))
+      assert.ok(born, `捕获应产生新主体:${JSON.stringify(payload)}`)
+      return born
+    }
+    const noteA = mk({ lesson: 'too_tight' })
+    const noteB = mk({ lesson: 'too_long' })
 
     // opt-in 关:同一条调用链零计数
     configureZoneObservation(false)
-    applyZoneNote(ledger, { action: 'propose', noteId, promoteKind: 'lesson', session_ref: SESS, ts })
-    applyZoneNote(ledger, { action: 'deny', noteId, session_ref: SESS, ts })
+    applyZoneNote(ledger, { action: 'propose', noteId: noteA, promoteKind: 'lesson', session_ref: SESS, ts })
+    applyZoneNote(ledger, { action: 'deny', noteId: noteA, session_ref: SESS, ts })
     renderSessionZoneBrief({ ledger, now: ts, sessionRef: SESS, zoneSwitch: 'on' })
     assert.deepEqual(zoneSignalSnapshot(), zeroSignalCounts(), 'opt-in 关闭时整条链零计数')
 
-    // opt-in 开:提议/否决/确认/读命中各自入账
+    // opt-in 开:计数口径与指标 ① 的 proposal_ref 去重口径一致
     configureZoneObservation(true)
-    assert.ok(applyZoneNote(ledger, { action: 'propose', noteId, promoteKind: 'lesson', session_ref: SESS, ts }).ok)
-    assert.ok(applyZoneNote(ledger, { action: 'propose', noteId, promoteKind: 'lesson', session_ref: SESS, ts }).ok)
-    assert.ok(applyZoneNote(ledger, { action: 'deny', noteId, session_ref: SESS, ts }).ok)
-    const promoted = promoteWithRouting(ledger, { noteId, kind: 'lesson', ownerQuote: QUOTE, surface: 'user_reply', ts })
+    resetZoneSessionBindingForTests() // 清提议去重集,从干净口径开始
+    assert.ok(applyZoneNote(ledger, { action: 'propose', noteId: noteA, promoteKind: 'lesson', session_ref: SESS, ts }).ok)
+    assert.ok(applyZoneNote(ledger, { action: 'propose', noteId: noteA, promoteKind: 'lesson', session_ref: SESS, ts }).ok)
+    assert.deepEqual(zoneSignalSnapshot().proposal, 1, '同一提议重复两次仍是一个提议(与 proposal_ref 去重同口径)')
+    assert.ok(applyZoneNote(ledger, { action: 'propose', noteId: noteB, promoteKind: 'lesson', session_ref: SESS, ts }).ok)
+    assert.equal(zoneSignalSnapshot().proposal, 2, '不同提议各记一次')
+    assert.ok(applyZoneNote(ledger, { action: 'deny', noteId: noteA, session_ref: SESS, ts }).ok)
+    assert.ok(applyZoneNote(ledger, { action: 'deny', noteId: noteA, session_ref: SESS, ts }).ok)
+    assert.equal(zoneSignalSnapshot().deny, 1, '同一提议被否两次仍是一次否决')
+    const promoted = promoteWithRouting(ledger, { noteId: noteB, kind: 'lesson', ownerQuote: QUOTE, surface: 'user_reply', ts })
     assert.ok(promoted.ok, JSON.stringify(promoted))
+    const replay = promoteWithRouting(ledger, { noteId: noteB, kind: 'lesson', ownerQuote: QUOTE, surface: 'user_reply', ts })
+    assert.ok(replay.ok && replay.appended === false, '幂等重放不是第二次确认')
+    assert.equal(zoneSignalSnapshot().confirm, 1, '确认只在真的落了条目时记一次')
     const hit = renderSessionZoneBrief({ ledger, now: ts, sessionRef: SESS, zoneSwitch: 'on' })
     assert.notEqual(hit, '', '有活笔记 = 读命中')
     const emptyRoot = freshRoot('signals-empty')
     renderSessionZoneBrief({ ledger: ensureLedger(emptyRoot), now: ts, sessionRef: SESS, zoneSwitch: 'on' })
-    const snapshot = zoneSignalSnapshot()
-    assert.deepEqual(snapshot, { proposal: 2, confirm: 1, deny: 1, read_hit: 1, read_miss: 1 })
+    assert.deepEqual(zoneSignalSnapshot(), { proposal: 2, confirm: 1, deny: 1, read_hit: 1, read_miss: 1 })
     // deny 零落账:否决不动账本
-    assert.equal(Object.keys(readZoneLog(ledger).state.hot).length, 1)
+    assert.equal(Object.keys(readZoneLog(ledger).state.hot).length, 2)
     configureZoneObservation(false)
   })
 

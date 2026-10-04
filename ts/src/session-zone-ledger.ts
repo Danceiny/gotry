@@ -28,6 +28,7 @@ import {
   dropHotNote,
   dropNotebookEntry,
   foldZoneEvents,
+  makeHotNoteId,
   promoteHotNote,
   readNotebook,
   reviseHotNote,
@@ -66,8 +67,14 @@ export const ZONE_LOG_READ_LIMIT = 20_000
 /** 默认 actor(P4-3 的工具面会传各自的具名 actor) */
 export const ZONE_DEFAULT_ACTOR = 'tool:gotry_session_zone'
 
-/** 账本层错误码闭集 = P4-1 写门码 + 日志截断(读不全就不许写,不猜 rev) */
-export type ZoneLedgerErrorCode = ZoneWriteErrorCode | 'log_truncated'
+/**
+ * 账本层错误码闭集 = P4-1 写门码 + 两个物理化码:
+ *  - `log_truncated`:读不全就不许写(不在截断日志上猜 rev);
+ *  - `idem_collision`:守门闸说该追加,但幂等键已存在(同毫秒 drop→重捕获等生代碰撞)。
+ *    **显式报错,不静默吞**:静默的 appended:false 会让调用方以为「幂等跳过」,
+ *    实际上这次写入根本没发生。调用方换一个写入时刻重试即可。
+ */
+export type ZoneLedgerErrorCode = ZoneWriteErrorCode | 'log_truncated' | 'idem_collision'
 
 export interface ZoneAppendOk {
   ok: true
@@ -85,9 +92,18 @@ export interface ZoneAppendErr {
 }
 export type ZoneAppendResult = ZoneAppendOk | ZoneAppendErr
 
-/** 写请求闭集(与 P4-1 五个写门 + 两个 drop 一一对应) */
+/** 写请求闭集(与 P4-1 五个写门 + 两个 drop 一一对应,外加一个组合写门) */
 export type ZoneWriteRequest =
   | { op: 'capture'; input: HotCaptureInput }
+  /**
+   * 捕获或续命(组合写门:同 id 已存在 → touch 续 TTL,不存在 → 诞生)。
+   * 为什么需要它:note_id 自「会话+层+kind+规范载荷」语义派生,所以**只有**同一
+   * 语义片段会撞 id;而过期是读时视图——过期笔记仍在 fold 状态里,纯 capture 会
+   * 以 stale_rev 拒收,于是「同一检索 30min 后再跑一次」永远刷不新那条笔记,
+   * 工作区会悄悄停止供述该形态(P4-3 复查发现)。touch 是写入 → TTL 自新写入起算,
+   * 过期笔记也因此复活;rev+1 保留血缘,不另起生代。
+   */
+  | { op: 'capture_or_touch'; input: HotCaptureInput }
   | { op: 'revise'; input: HotReviseInput }
   | { op: 'drop'; note_id: string; ts: string }
   | { op: 'promote'; input: PromoteInput }
@@ -191,6 +207,38 @@ function gateRequest(state: ZoneState, req: ZoneWriteRequest): ZoneWriteResult {
   switch (req.op) {
     case 'capture':
       return captureHotNote(state, req.input)
+    case 'capture_or_touch': {
+      // 先走 capture 的完整闸链(闭集/形状/有界/负面清单/时钟);只有「同 id 已存在」
+      // 这一种拒收(stale_rev)才转成续命写入——其余拒收原样上报,闸语义零放宽。
+      const birth = captureHotNote(state, req.input)
+      if (birth.ok || birth.code !== 'stale_rev') return birth
+      const noteId = makeHotNoteId({
+        session_ref: req.input.session_ref,
+        tier: req.input.tier,
+        kind: req.input.kind,
+        payload: req.input.payload,
+      })
+      const cur = noteId === null ? undefined : state.hot[noteId]
+      if (!cur) return birth
+      // 同一写入时刻的同形重放:TTL 已自该时刻起算,再续一次只是空转 rev → 幂等 no-op。
+      // (id 由会话+层+kind+规范载荷派生,所以撞到这里时载荷与 kind 必然相同,只有 ts 可能不同。)
+      if (cur.last_touched_at === req.input.ts) {
+        return {
+          ok: true,
+          appended: false,
+          idemKey: zoneIdemKey({ kind: 'hotctx.note.revised', ts: req.input.ts, note: cur }),
+          detail: '同写入时刻同形重放:幂等 no-op(TTL 已自该时刻起算)',
+        }
+      }
+      // 同语义片段再次出现 = 续命写入(TTL 自本次写入起算;过期笔记据此复活)
+      return reviseHotNote(state, {
+        note_id: cur.note_id,
+        expected_rev: cur.rev,
+        payload: req.input.payload,
+        kind: req.input.kind,
+        ts: req.input.ts,
+      })
+    }
     case 'revise':
       return reviseHotNote(state, req.input)
     case 'drop':
@@ -261,9 +309,15 @@ export function appendZoneWrites(
       const { subjectId, payload } = eventPayload(ev)
       const seq = ledger.insertEvent({ actor, kind: ev.kind, subjectId, payload, idemKey: gate.idemKey, ts: ev.ts })
       if (seq === null) {
-        // UNIQUE 命中:同一语义事件早已落账 → 物理 no-op(不推进在算状态)
-        results.push({ ok: true, appended: false, idemKey: gate.idemKey, detail: '幂等键已存在:物理 no-op' })
-        continue
+        // 守门闸刚说该追加(fold 里没有这条),却撞上既有幂等键 → 生代碰撞:
+        // 同一毫秒内 capture→drop→重捕获会复用 `<id>:<created_at>:1`。这不是幂等重放,
+        // 而是**这次写入没发生**。静默报 appended:false 会骗调用方,所以显式失败、整批回滚。
+        results.push({
+          ok: false,
+          code: 'idem_collision',
+          detail: `幂等键已存在但 fold 中无此主体(生代碰撞:${gate.idemKey});本次写入未发生,请用不同的写入时刻重试`,
+        })
+        throw new ZoneBatchRejected(results)
       }
       events.push(ev)
       state = foldZoneEvents(events)
@@ -314,13 +368,25 @@ export function forgetZoneSubjects(
 /**
  * 会话级遗忘:该会话的全部工作区笔记 + 血缘指向该会话的全部笔记本条目,
  * 放进**一次** forgetSubject 调用 → 仍只留一行审计(「删除本身留一行」)。
+ *
+ * 截断即拒(fail-closed):主体集合是从 fold 推出来的,而 `readEvents` 触到读上界时
+ * 丢的是**最老**的事件——在截断日志上做遗忘会静默漏删主体,红线 6「可删除」就
+ * fail-open 了。宁可报错让调用方提高上界/先归档,也不假装删干净了。
  */
 export function forgetZoneSession(
   ledger: StateLedger,
   sessionRef: string,
   actor = 'system:state-cli',
-): { deleted: number; subjects: number } {
-  const { state } = readZoneLog(ledger)
+  opts: { limit?: number } = {},
+): { ok: true; deleted: number; subjects: number } | { ok: false; code: 'log_truncated'; detail: string } {
+  const { state, truncated } = readZoneLog(ledger, opts)
+  if (truncated) {
+    return {
+      ok: false,
+      code: 'log_truncated',
+      detail: `分区事件日志触到读上界(${opts.limit ?? ZONE_LOG_READ_LIMIT}):截断日志会漏掉最老的主体,遗忘拒绝在不完整视图上执行`,
+    }
+  }
   const subjects: ZoneForgetSubject[] = []
   for (const note of Object.values(state.hot)) {
     if (note.session_ref === sessionRef) subjects.push({ zone: 'hot_context', id: note.note_id })
@@ -328,7 +394,8 @@ export function forgetZoneSession(
   for (const entry of Object.values(state.notebook)) {
     if (entry.origin?.session_ref === sessionRef) subjects.push({ zone: 'trip_notebook', id: entry.entry_id })
   }
-  return forgetZoneSubjects(ledger, subjects, actor)
+  const r = forgetZoneSubjects(ledger, subjects, actor)
+  return { ok: true, deleted: r.deleted, subjects: r.subjects }
 }
 
 // ---- 导出视图(从 fold 派生;单向 DB→文件,永不是写路径) --------------------------
@@ -354,4 +421,24 @@ export function renderZoneExportViews(state: ZoneState): ZoneExportViews {
     hotContextJsonl: notes.length ? notes.map(n => JSON.stringify(n)).join('\n') + '\n' : '',
     notebookJson: JSON.stringify(readNotebook(state), null, 2),
   }
+}
+
+/**
+ * 账本 → 导出视图(导出面唯一入口;截断即拒 fail-closed)。
+ * 「可见可导出」同样不能 fail-open:截断日志导出的是**残缺**视图,而读者会把
+ * 它当全量。纯渲染器 `renderZoneExportViews` 留给已确认完整的 state 使用。
+ */
+export function readZoneExportViews(
+  ledger: StateLedger,
+  opts: { limit?: number } = {},
+): { ok: true; views: ZoneExportViews } | { ok: false; code: 'log_truncated'; detail: string } {
+  const { state, truncated } = readZoneLog(ledger, opts)
+  if (truncated) {
+    return {
+      ok: false,
+      code: 'log_truncated',
+      detail: `分区事件日志触到读上界(${opts.limit ?? ZONE_LOG_READ_LIMIT}):导出拒绝输出残缺视图(读者会把它当全量)`,
+    }
+  }
+  return { ok: true, views: renderZoneExportViews(state) }
 }

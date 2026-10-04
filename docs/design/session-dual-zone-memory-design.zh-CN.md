@@ -54,7 +54,8 @@
 - **事件 kind**（六个，§1.3）以日志类事件落在既有 `events` 表上——`foldEvent` 的 default 分支本就对日志类 kind 不做投影，与 `trip.logged`、`memory_utility.event` 完全同款。`subject_id` = 笔记/条目 id；幂等键为 `hotctx:<note_id>:<生代>:<rev>` / `notebook:<entry_id>:<生代>:<rev>`，同 rev 重放写入即物理 no-op（与 `mu:` / `trip:` 键同款技巧）。生代 = 文档的 `created_at`（诞生时刻，修订沿用不变）：id 是语义派生的，drop 后重捕获会复用同一 id 与 rev 1——键里没有生代，UNIQUE 索引就会把 §1.3 明定的「更正后仍真」重捕获物理吞掉（P4-2 物理化时发现）。
 - **写路径**：单事务 {fold 读当前 rev；守门校验；INSERT}，由新模块经账本公开面（`db.transaction` + `readEvents` + `insertEvent`）执行。乐观 rev CAS：父 rev 不等于当前 fold rev 的写入在落库前以 `stale_rev` fail-closed 拒绝。按 ADR-16 的单账本 owner 语义，每会话单写者天然成立；跨进程/跨主机 fencing 留在 D-15（[#275](https://github.com/Danceiny/gotry/issues/275)）之后——rev 词位现在就选定，未来 fencing 只加物理不改语义。
 - **读路径**：`readEvents(kind)` + 新纯函数模块内的确定性 fold（`readTrips` + `projectUtilityNow` 同款模式）。P4 v1 不落持久化投影：单用户量级下每会话体量极小，未来的 `projection_items` subject 是零语义改动的优化项。过期与存活在该 fold 内计算。
-- **删除/导出**：新 kind 直接接入既有 `forgetSubject`（红线 6「可删除」= 物理删除加一行审计）；`state-cli export` 增加两个派生视图（`hot-context.jsonl`、`notebook.json`），从 fold 读出——是视图，绝不是写路径。
+- **删除/导出**：新 kind 直接接入既有 `forgetSubject`（红线 6「可删除」= 物理删除加一行审计）；`state-cli export` 增加两个派生视图（`hot-context.jsonl`、`notebook.json`），从 fold 读出——是视图，绝不是写路径。所有 fold 消费方在**日志截断**时一律 fail-closed：`readEvents` 触到上界丢的是**最老**的事件，截断的 fold 会让遗忘漏掉主体、让残缺导出冒充全量——写路径、会话级遗忘、导出视图与观测计数因此全部拒绝执行。
+- **重捕获与过期**：note id 由（会话、层、kind、规范载荷）派生，所以只有**同一个**片段会撞 id；而过期是读时视图，过期笔记仍在 fold 状态里。于是纯 capture 会把「同一检索过了 TTL 再跑一次」判成 `stale_rev`，工作区悄悄停止供述该形态；捕获缝改用「捕获或续命」：续命是写入，TTL 自它起算，过期笔记因此复活（rev+1，诞生血缘不变）。
 - **零新表论证**：双区每条数据都小、按 subject 划界、append-only 且幂等去重、可 fold 成视图——`events` 形态四项全中。专用表只会在多写者量级（TTL 索引、按会话 claim 行）才回本，而那正是 ADR-15 的 re-review 触发器（D-15）。若 D-15 触发：claim/fence 物理化加可选持久化投影；事件词位与本设计语义原样存活（「sync = 事件复制，不是状态翻译」）。
 - **内核冻结**：`state-ledger.ts` 被内核 manifest 钉住（run-all §63 门禁）；本设计要求对它零改动，P4-2 验收包含该门禁零哈希漂移地保持绿。
 

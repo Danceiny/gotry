@@ -53,8 +53,7 @@ import { ensureLedger, ledgerDbPath, ledgerExists, openLedgerIfExists } from '..
 import {
   ZONE_EXPORT_HOT_FILE,
   ZONE_EXPORT_NOTEBOOK_FILE,
-  readZoneLog,
-  renderZoneExportViews,
+  readZoneExportViews,
 } from '../src/session-zone-ledger.ts'
 import { formatRepairPlan, loadEvidenceMappingFile, planLedgerRepair } from '../src/ledger-repair-plan.ts'
 import {
@@ -415,8 +414,13 @@ switch (cmd) {
     if (trips.length) atomicWrite(join(dir, 'trips.jsonl'), trips.map(e => JSON.stringify(e)).join('\n') + '\n')
     // 会话双区派生视图(P4-2,design/session-dual-zone-memory-design.md §2):
     // 从六个事件 kind 的确定性 fold 渲染;空分区不产生空文件(同既有视图纪律)。
-    const zone = readZoneLog(ledger)
-    const zoneViews = renderZoneExportViews(zone.state)
+    // 日志触读上界即拒:导出残缺视图比不导出更坏(读者会当它是全量)。
+    const zone = readZoneExportViews(ledger)
+    if (!zone.ok) {
+      console.error(`${zone.code}: ${zone.detail}`)
+      process.exit(1)
+    }
+    const zoneViews = zone.views
     if (zoneViews.hotContextJsonl) atomicWrite(join(dir, ZONE_EXPORT_HOT_FILE), zoneViews.hotContextJsonl)
     if (zoneViews.notebookJson !== '[]') atomicWrite(join(dir, ZONE_EXPORT_NOTEBOOK_FILE), zoneViews.notebookJson)
     console.log(`视图已导出(单向,DB→文件;红线 6):${dir}/`)
