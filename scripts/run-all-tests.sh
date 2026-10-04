@@ -664,7 +664,7 @@ echo "=== 77. 会话双区记忆账本落点(P4-2,issue #255:六 kind 以日志�
 (cd ts && npx tsx scripts/session-zone-ledger-tests.ts) || FAIL=1
 
 echo
-echo "=== 78. 会话双区记忆会话接线(P4-3,issue #255:sessionZones 总闸默认关——缺省/未知值 fail-closed 关、分区工具不注册、白名单 execute 不被包裹、读回恒空串且不建库、既有注入面与工具清单逐项不变;开闸后捕获缝只投影形状字段(verdict/条数/价格带)——零名称零 URL零自由文本、证据只走指针(摘要 session_ref + 观察序号)、分区内永不出现宿主 session id 原文/负面清单端到端(证件·手机·URL·凭证零入区)/读回首访空串与条数字符双上界/propose 零落账(模型永不自晋升)+ owner 原话引用闸(宿主 schema 闸与代码闭集双道)/§3 路由:preference→动机闸·trip_fact→时间线闸·点名同行人的约束→同行人闸,缺路由载荷 routing_required 拒收,既有闸拒绝即同事务整笔回滚/路由逃逸两道闸:换 kind 声明或抹掉 companion_label 都绕不过既有闸、路由载荷与分类不符即拒/动机闸未落地该断言即整笔回滚(saved 二义性不可信,核对结果而非信 flag)/读回按组装 scope 隔离:同进程两会话互不可见对方 resource 层笔记、取不到 scope 即不出该段/捕获缝续命:同一检索过 TTL 再跑一次续命回读视图/CAS stale_rev 与更正即弃/过期源不得晋升;真实 apply() 注册面 + 注入离线 effect 夹具(零真实供应商/零 homedir 依赖) + mkdtemp 隔离 stateRoot,对 ts/dsh-runtime/gotry-state 零写入(前后快照断言),全离线) ==="
+echo "=== 78. 会话双区记忆会话接线(P4-3,issue #255:sessionZones 总闸默认关——缺省/未知值 fail-closed 关、分区工具不注册、读回变量**连名字都不注册**(注入面清单与 main 逐项一致;§48 对产品模式变量清单逐项断言)、白名单 execute 不被包裹、不建库、既有工具清单逐项不变;开闸后捕获缝只投影形状字段(verdict/条数/价格带)——零名称零 URL零自由文本、证据只走指针(摘要 session_ref + 观察序号)、分区内永不出现宿主 session id 原文/负面清单端到端(证件·手机·URL·凭证零入区)/读回首访空串与条数字符双上界/propose 零落账(模型永不自晋升)+ owner 原话引用闸(宿主 schema 闸与代码闭集双道)/§3 路由:preference→动机闸·trip_fact→时间线闸·点名同行人的约束→同行人闸,缺路由载荷 routing_required 拒收,既有闸拒绝即同事务整笔回滚/路由逃逸两道闸:换 kind 声明或抹掉 companion_label 都绕不过既有闸、路由载荷与分类不符即拒/动机闸未落地该断言即整笔回滚(saved 二义性不可信,核对结果而非信 flag)/读回按组装 scope 隔离:同进程两会话互不可见对方 resource 层笔记、取不到 scope 即不出该段/捕获缝续命:同一检索过 TTL 再跑一次续命回读视图/CAS stale_rev 与更正即弃/过期源不得晋升;真实 apply() 注册面 + 注入离线 effect 夹具(零真实供应商/零 homedir 依赖) + mkdtemp 隔离 stateRoot,对 ts/dsh-runtime/gotry-state 零写入(前后快照断言),全离线) ==="
 (cd ts && npx tsx scripts/session-zone-wiring-tests.ts) || FAIL=1
 
 echo

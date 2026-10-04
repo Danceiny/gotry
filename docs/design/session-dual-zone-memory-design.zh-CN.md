@@ -91,7 +91,11 @@
 | **P4-3 会话接线（默认关）** | 捕获缝（工具观测边界与契约 18 式用户陈述吸收，只落证据指针）；persona 读回 `{{session_zone_brief}}`（有界：在活工作区笔记、回访时的 intent 层笔记、Notebook 行）；经 owner 确认表面的晋升流；更正即弃 | 隔离 stateRoot smoke，零写入 `dsh-runtime`；负面清单守卫端到端在位；首访读回为空；无确认引用的晋升被拒；`sessionZones:'off'` 时接线惰性 |
 | **P4-4 观测 + 度量 + 状态同步** | opt-in 形态计数、HMAC 候选导出（collector 家族）、三个可否证指标的只读投影、`memory-design.md` §2/§4 状态同步 | fixture 只证明度量契约（不是价值）；导出仅含计数与引用——零内容字段（断言）；观测路径零定时器/零网络；双语文档与状态面同 commit 同步 |
 
-**落地状态（2026-10-04）**：P4-1 run-all §74、P4-2 §77、P4-3 §78、P4-4 §79——全部离线，`sessionZones` 默认关。相对本立项有两处偏差，均记入 §7：幂等键补了生代（§2）；P4-3 注册了 `{{session_zone_brief}}` 动态变量，但**没有**把占位符写进出厂 persona（`cordis.gotry-patch.yml`）——引用它就改了出厂提示词，那是创始人决定面，而默认关验收要求 persona 输出逐字节不变。P4-4 另加了 owner 否决面（`gotry_session_zone_note action="deny"`，零账本写入）：没有它，确认率就没有分母，指标 ① 会按构造恒为 1.0。
+**落地状态（2026-10-04）**：P4-1 run-all §74、P4-2 §77、P4-3 §78、P4-4 §79——全部离线，`sessionZones` 默认关。相对本立项有两处偏差，均记入 §7：幂等键补了生代（§2）；`session_zone_brief` 读回**只在开关为 on 时注册**，且没有把占位符写进出厂 persona（`cordis.gotry-patch.yml`）。
+
+**默认关必须与上一版不可区分**，而注入面多出一个变量**名字**本身就是可观测差异（run-all §48 对产品模式变量清单逐项断言），所以关闸时压根不注册。这一步之所以安全，只因为出厂 persona 今天不引用该变量。**创始人一旦把 `{{session_zone_brief}}` 写进 persona，注册就必须改为无条件（关闸时返回空串）**——strict 插值下未注册的引用会让整段 persona 渲染失败——并且同一次改动必须同步更新 run-all §48 的变量清单、`persona-surface-guard-tests` 的注入面清单与 `benchmark-environment-bridge-e2e` 的 `CANONICAL_RAW_VARIABLES`。
+
+P4-4 另加了 owner 否决面（`gotry_session_zone_note action="deny"`，零账本写入）：没有它，确认率就没有分母，指标 ① 会按构造恒为 1.0。
 
 ## 6. 明确不做
 
@@ -115,6 +119,7 @@
 | 现在就做按条目效用事件 | 那是 ADR-14 的第二个消费方——由 ADR-14 自己的 re-review 触发器裁决，不是 P4 |
 | 模型发起晋升 | 存储继承 ADR-14 owner 确认纪律；只许提名 |
 | 不带生代的幂等键 | id 是语义派生的，drop 后重捕获复用同一 id 与 rev 1——UNIQUE 索引会物理吞掉 §1.3 明定的重捕获（P4-2） |
-| P4-3 就把 `{{session_zone_brief}}` 写进出厂 persona | 改出厂提示词是创始人决定面，而默认关验收要求 persona 输出逐字节不变；变量已注册，开关一开 persona 即可引用 |
+| P4-3 就把 `{{session_zone_brief}}` 写进出厂 persona | 改出厂提示词是创始人决定面，而默认关验收要求 persona 输出逐字节不变 |
+| persona 尚未引用就无条件注册读回变量 | 注入面多一个变量名本身就是可观测差异（run-all §48 钉死产品模式变量清单）；默认关必须与上一版不可区分。注册改为无条件，与添加 persona 占位符同一次改动 |
 | 为晋升推断路由载荷 | 从工作区笔记猜权重/日期/同行人约束等于伪造 owner 事实；缺路由载荷即 `routing_required` fail-closed |
 | 只有提名、没有否决面的晋升漏斗 | 没有 owner 否决，确认率的分母只剩确认——指标 ① 按构造恒为 1.0（P4-4） |

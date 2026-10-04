@@ -30,6 +30,7 @@ import {
   observeToolResult,
   projectToolObservation,
   promoteWithRouting,
+  renderSessionZoneBrief,
   renderZoneBrief,
   resetZoneSessionBindingForTests,
   resolveZoneSwitch,
@@ -157,7 +158,7 @@ async function main(): Promise<void> {
   })
 
   // ---- 关闸惰性 ----
-  await pass('关闸惰性:工具清单不含分区工具且与基线逐项一致;注入面多出的变量恒返回空串', async () => {
+  await pass('关闸惰性:工具清单与注入面变量清单都与基线逐项一致(关闸与 main 不可区分)', async () => {
     const offRoot = freshRoot('off')
     const off = harness({ stateRoot: offRoot })
     const onRoot = freshRoot('on')
@@ -171,9 +172,21 @@ async function main(): Promise<void> {
       offNames,
       '开关只增两件分区工具,其他工具清单逐项不变',
     )
-    assert.deepEqual(Object.keys(off.variables).sort(), Object.keys(on.variables).sort(), '注入面变量集合不随开关变化')
-    assert.equal(off.variables['session_zone_brief']!(), '', '关闸读回恒空串(不建库、不读库)')
-    assert.equal(existsSync(join(offRoot, 'gotry-state', 'gotry-state.db')), false, '关闸读回不得建库')
+    // 注入面:关闸时**连变量名都不得多出**——多一个名字就是可观测差异
+    // (§48 benchmark-environment-bridge-tests 对产品模式变量清单逐项断言)。
+    assert.deepEqual(
+      Object.keys(off.variables),
+      ['current_date', 'time_anchor_card', 'motivation_brief', 'channel_routing_card'],
+      '关闸注入面与 main 逐项一致(session_zone_brief 未注册)',
+    )
+    assert.equal('session_zone_brief' in off.variables, false, '关闸不得注册分区读回变量')
+    assert.equal(typeof on.variables['session_zone_brief'], 'function', '开闸才注册分区读回变量')
+    assert.deepEqual(
+      Object.keys(on.variables).filter(k => k !== 'session_zone_brief'),
+      Object.keys(off.variables),
+      '开闸只增 session_zone_brief 一个变量名,其余注入面顺序与内容不变',
+    )
+    assert.equal(existsSync(join(offRoot, 'gotry-state', 'gotry-state.db')), false, '关闸不得建库')
     // 其他既有注入面输出不受影响(逐字节)
     for (const key of ['current_date', 'time_anchor_card', 'motivation_brief', 'channel_routing_card']) {
       assert.equal(off.variables[key]!(), on.variables[key]!(), `既有注入面 ${key} 输出逐字节不变`)
@@ -317,9 +330,14 @@ async function main(): Promise<void> {
     assert.ok(brief.includes('会话双区记忆'), `读回应含分区标题:${brief}`)
     assert.ok(brief.includes('大理'))
     assert.ok(brief.length <= ZONE_BRIEF_MAX_CHARS, '读回字符有界')
-    // 同一账本在关闸配置下读回仍为空(开关是读回的唯一开关)
+    // 同一账本在关闸配置下:变量压根不注册;纯函数层即便被直接调用也返回空串
     const offSame = harness({ stateRoot: root })
-    assert.equal(offSame.variables['session_zone_brief']!({ scope: AGENT_A }), '', '关闸读回空串,即便账本里有活笔记')
+    assert.equal('session_zone_brief' in offSame.variables, false, '关闸即便账本里有活笔记也不注册读回变量')
+    assert.equal(
+      renderSessionZoneBrief({ ledger: openLedgerIfExists(root), now: new Date().toISOString(), sessionRef: SESS, zoneSwitch: 'off' }),
+      '',
+      '纯函数层的总闸守卫仍在(防御纵深:绕过注册点直调也读不出东西)',
+    )
   })
 
   await pass('读回按 scope 隔离:两个会话同进程时 B 读不到 A 的 resource 层笔记(设计 §1.1)', async () => {

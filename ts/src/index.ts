@@ -573,16 +573,28 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   // 变量恒注册(persona 侧可随时引用),但总闸 off(默认)时恒返回空串 —— 接线惰性,
   // 不建库、不读库、零事件;persona 模板本身不在本 PR 改动,因此开关 off 时注入面
   // 输出逐字节不变。空串 = 首访/无活笔记(与 motivation_brief 同纪律)。
-  // 读回按**组装 scope** 取会话身份(dsh agent-loop 以 agent 对象为 ScopeKey,
-  // 与工具侧 exec.agent 同一身份):同一宿主进程里的两个会话因此读不到对方的
-  // resource 层笔记(设计 §1.1);取不到 scope → 不出 resource 段(fail-closed)。
+  // 会话双区读回(issue #255 P4-3):**只在总闸 on 时注册**。
+  //  - 为什么是条件注册:默认关必须与 main **不可区分**——注入面多出一个变量名
+  //    就已经是可观测差异(§48 benchmark-environment-bridge-tests 的
+  //    「normal product mode keeps its prompt variables」逐项断言会红)。
+  //    出厂 persona(cordis.gotry-patch.yml)今天不引用本变量,所以条件注册安全。
+  //  - **后续约束**:创始人一旦把 `{{session_zone_brief}}` 写进出厂 persona,
+  //    本变量必须改为**无条件注册**(关闸时返回空串)——strict 插值下未注册的
+  //    引用会让整段 persona 渲染失败。那一步同时要改 §48 的变量清单断言、
+  //    persona-surface-guard-tests 的注入面清单与 benchmark-environment-bridge-e2e
+  //    的 CANONICAL_RAW_VARIABLES。
+  //  - 读回按**组装 scope** 取会话身份(dsh agent-loop 以 agent 对象为 ScopeKey,
+  //    与工具侧 exec.agent 同一身份):同一宿主进程里的两个会话因此读不到对方的
+  //    resource 层笔记(设计 §1.1);取不到 scope → 不出 resource 段(fail-closed)。
   const zoneSwitch = resolveZoneSwitch(config.sessionZones)
-  sp?.variable?.('session_zone_brief', assembleContext => renderSessionZoneBrief({
-    ledger: zoneSwitch === 'on' ? openLedgerIfExists(config.stateRoot ?? '.') : null,
-    now: new Date().toISOString(),
-    sessionRef: boundZoneSession(assembleContext?.scope),
-    zoneSwitch,
-  }))
+  if (zoneSwitch === 'on') {
+    sp?.variable?.('session_zone_brief', assembleContext => renderSessionZoneBrief({
+      ledger: openLedgerIfExists(config.stateRoot ?? '.'),
+      now: new Date().toISOString(),
+      sessionRef: boundZoneSession(assembleContext?.scope),
+      zoneSwitch,
+    }))
+  }
 
   // 通道路由卡(通道注册表生成,docs/design/tool-orchestration-design.md §2.1/D-8):
   // persona 检索条款只留行为契约,机/火/酒通道顺位与额度口径查卡——prose 教义
