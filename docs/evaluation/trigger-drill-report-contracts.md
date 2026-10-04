@@ -18,17 +18,19 @@ Specifically, nothing here counts as:
 - a named provider, a licence, a coverage/freshness measurement, or provider availability (#429);
 - an M4/M5/M6 Exit, or a milestone exit of any kind.
 
-All three trackers remain **open and default-off**. In code this is structural, not a convention: `OUTCOME_TRIGGER_FIRED`, `CITY_SCENARIO_TIER_TRIGGER_FIRED` and `D39_LIVE_ROUTE_TRIGGER_FIRED` are all frozen `false`; the supplier-outcome source registry, the city-scenario taxonomy registry and the live-route provider registry are all frozen empty; and no product file imports any of the three modules. The accepted narrow D-39 path of issue #341 is unchanged — not one byte of `ts/capabilities/ground-transfer.ts` was edited.
+All three trackers remain **open and default-off**. In code this is structural, not a convention: `OUTCOME_TRIGGER_FIRED`, `CITY_SCENARIO_TIER_TRIGGER_FIRED` and `D39_LIVE_ROUTE_TRIGGER_FIRED` are all frozen `false`; the supplier-outcome source registry, the city-scenario taxonomy registry and the live-route provider registry are all frozen empty; and no product file imports any of the three modules.
+
+One exception to "nothing in the product path changed", stated plainly: the drill found a product-reachable information leak in the accepted narrow D-39 path, and that one defect **was fixed** — `ts/capabilities/ground-transfer.ts` now routes its provider-failure text through the shared sanitizer (§5.4, GAP-429-3). That is a safety fix to an existing surface, not an admission of any new path: no provider is named, no path is admitted, and the resolution semantics, reason prefixes and static fallback are byte-identical.
 
 No network, no LLM, no credentials, no subprocess, no shared state. All work happened in an isolated worktree.
 
 ## 2. TL;DR
 
-- Three pure contract modules plus three focused suites were added, all default-off with zero product callers: **295 assertions green** (135 + 79 + 81), typecheck exit 0, isolated smoke exit 0, kernel manifest gate zero drift.
+- Three pure contract modules plus three focused suites were added, all default-off with zero product callers: **333 assertions green** (155 + 83 + 95), typecheck exit 0, isolated smoke exit 0, kernel manifest gate zero drift.
 - #340: the association key, the status alphabet, append-only/revocable projection, the negative list, and the guard that deviation calibration can never override a hard budget are all encoded and falsified.
 - #339: only the **mechanism** ships — a versioned taxonomy schema with an **empty** registry. No tier content exists in code, and admission is refused before validation while the trigger is false. Candidate scenario vocabulary appears in §4.4 as an explicitly unvalidated hypothesis.
-- #429: a nine-clause conformance gate that any future live-route adapter must pass. Run against the existing ground-transfer logic it found **three real gaps** (§5.4), one of which is reachable in product output today.
-- Nothing was fixed in existing code: the gaps are reported with minimal repros for the owner to rule on.
+- #429: a nine-clause conformance gate that any future live-route adapter must pass. Run against the existing ground-transfer logic it found **three real gaps** (§5.4).
+- **One gap was product-reachable and is fixed here** (GAP-429-3: a provider error body reaching the tool result); the two dormant gaps stay pinned as characterization assertions with an explicit flip instruction.
 
 ## 3. Drill 1 — #340 outcome vs planning estimate
 
@@ -102,7 +104,7 @@ The taxonomy members themselves and their city coverage; the scenario vocabulary
 
 ### 5.2 What was built and exercised
 
-`ts/capabilities/route-provider-conformance.ts` — the admission gate any future live-route adapter must pass. It declares zero imports (so zero network, cache, timer or filesystem surface, and no coupling to the evaluate/solve kernel), and the suite asserts that import surface mechanically.
+`ts/capabilities/route-provider-conformance.ts` — the admission gate any future live-route adapter must pass. Its only import is the pure sibling sanitizer, it reads no clock (the caller must inject `now`), and it has zero network, cache, timer or filesystem surface and no coupling to the evaluate/solve kernel; the suite asserts that import surface mechanically.
 
 Eight fault modes are declared and driven: unavailable, stale, mismatched direction, mode relabel, estimate as live traffic, challenge, rate limited, partial result. Nine conformance clauses must all pass:
 
@@ -120,7 +122,7 @@ The gate is itself falsifiable: an adapter whose fault is silently accepted flip
 
 ### 5.3 Results
 
-`ts/scripts/route-provider-conformance-tests.ts`: **81 assertions pass, exit 0**. Registered as run-all **§87**. Driven against the existing ground-transfer logic, six clauses pass today and three are gaps:
+`ts/scripts/route-provider-conformance-tests.ts`: **95 assertions pass, exit 0**. Registered as run-all **§87**. Driven against the existing ground-transfer logic, seven clauses pass (one of them only after the fix below) and two remain gaps:
 
 | Clause | Existing ground-transfer behaviour |
 |---|---|
@@ -130,15 +132,15 @@ The gate is itself falsifiable: an adapter whose fault is silently accepted flip
 | fault fail-closed | Pass — provider error and self-contradictory route both fall back, no minutes override |
 | direction binding (request side) | Pass — each direction is queried with its own ordered pair; no cache sharing |
 | freshness contract | Pass — a stale cache entry is re-queried and, on failure, reported stale, never served as a hit |
-| mode isolation | **GAP-429-1** |
-| direction binding (response side) | **GAP-429-2** |
-| fault detail sanitized | **GAP-429-3** |
+| fault detail sanitized | Pass **after the GAP-429-3 fix in this lane** (was a leak) |
+| mode isolation | **GAP-429-1**, still pinned |
+| direction binding (response side) | **GAP-429-2**, still pinned |
 
 ### 5.4 Defects found in existing code
 
-These were found by the drill and are **not fixed here**: `ts/capabilities/ground-transfer.ts` was not edited. The suite pins current behaviour as characterization assertions labelled `GAP-429-n`, so run-all stays green and a future fix must flip them.
+Three defects were found in `ts/capabilities/ground-transfer.ts`. GAP-429-3 was product-reachable and **is fixed here**. GAP-429-1 and GAP-429-2 are genuinely dormant (no provider exists that could trigger them today), so they stay pinned as characterization assertions labelled `GAP-429-n` — run-all stays green, and each assertion message carries an explicit flip instruction so a future fix inverts it rather than silently passing.
 
-**GAP-429-1 (mode isolation).** `parseRouteResult` keeps only `provider`, `distanceM`, `durationS`, `polyline`, `steps`. A provider payload asserting a contradicting `mode` is silently dropped, and the route fact is labelled `mode: 'driving'` from the request. Its duration is then bound into the solver.
+**GAP-429-1 (mode isolation) — pinned.** `parseRouteResult` keeps only `provider`, `distanceM`, `durationS`, `polyline`, `steps`. A provider payload asserting a contradicting `mode` is silently dropped, and the route fact is labelled `mode: 'driving'` from the request. Its duration is then bound into the solver.
 
 ```ts
 // provider returns a TRANSIT route under the driving tool
@@ -150,7 +152,7 @@ provider: async () => ({ provider: 'mock-transit', distanceM: 30000, durationS: 
 
 Severity today is low — the only wired provider is the registered `map_driving_route` tool, which is driving by construction — but this is exactly the clause a transit or rail path must satisfy, so the check must exist before any such adapter is admitted.
 
-**GAP-429-2 (direction binding, response side).** Direction binding is enforced on the request side (the cache key includes direction and the ordered pair) but the response is never verified against what was requested. A provider that resolves a different origin/destination has its duration bound as the airport transfer.
+**GAP-429-2 (direction binding, response side) — pinned.** Direction binding is enforced on the request side (the cache key includes direction and the ordered pair) but the response is never verified against what was requested. A provider that resolves a different origin/destination has its duration bound as the airport transfer.
 
 ```ts
 // provider routes an entirely different O/D and says so in its own fields
@@ -161,16 +163,25 @@ provider: async () => ({ provider: 'mock-wrong-od', distanceM: 999, durationS: 6
 //           candidates[0].destTransfers[0].minutesOut === 1            // a 999 m / 60 s route as the transfer
 ```
 
-**GAP-429-3 (fault detail sanitized) — product-reachable.** `safeErrorMessage` only strips newlines and truncates to 400 characters, so a provider-thrown error message reaches `fallbackReason` verbatim, and `exposeGroundTransferEvidence` carries it into the tool result and into each matching verdict's `transfer_evidence`. That function is wired in the live product path at `ts/src/index.ts:801`, reached from the registered feasibility tool.
+**GAP-429-3 (fault detail sanitized) — product-reachable, FIXED.** The pre-fix `safeErrorMessage` only stripped newlines and truncated to 400 characters, so a provider-thrown error message reached `fallbackReason` verbatim, and `exposeGroundTransferEvidence` carried it into the tool result and into each matching verdict's `transfer_evidence`. That function is wired in the live product path at `ts/src/index.ts:801`, reached from the registered feasibility tool, with `createPublicMapDrivingRouteProvider` as the default provider — so this was a live information-leak channel, not a hypothetical one.
+
+The fix extracts the sanitizer into `ts/capabilities/provider-detail-sanitize.ts` (pure, zero imports) so one implementation serves both the #429 conformance gate and the live path, and routes `safeErrorMessage` through it. The historical 400-character bound and the `unknown provider error` empty-case wording are preserved, so every existing reason string is byte-identical.
 
 ```ts
 provider: async () => { throw new Error(
   'HTTP 403 <html><body>Please complete the CAPTCHA. token=abc123 cookie=sid=XYZ ...</body></html>') }
-// observed: resolution.outbound.fallbackReason contains 'token=abc123' and '<html>'
-//           JSON.stringify(exposeGroundTransferEvidence({verdicts:[...]}, resolution)) contains 'token=abc123'
+// before: resolution.outbound.fallbackReason contained 'token=abc123' and '<html>'
+//         JSON.stringify(exposeGroundTransferEvidence({verdicts:[...]}, resolution)) contained 'token=abc123'
+// after:  'map_driving_route_provider_error:outbound:HTTP 403 [markup-redacted][markup-redacted]
+//          Please complete the CAPTCHA. [credential-redacted] [credential-redacted] ...'
+//         — classification prefix intact, redaction explicit and auditable, leak check clean
 ```
 
-Today's wired provider throws either a fixed `GROUND_TRANSFER_*` string or `map_driving_route failed: <nested tool error>`, so the channel currently carries a dsh tool error message rather than raw provider markup. The leak becomes material the moment a live route adapter is wired — that is, on exactly the #429 path. The remedy shape already exists and is tested: `sanitizeFaultDetail` makes the same string safe, and `faultDetailLeak` flags it.
+Regression coverage is in run-all §87 and runs through the **real** resolution path: a throwing provider carrying markup, a token and a cookie, asserted clean on the outbound reason, the return reason, the aggregate reason and the `exposeGroundTransferEvidence` output. A loop over five already-safe provider messages (including both fixed `GROUND_TRANSFER_*` strings and `map_driving_route failed: ...`) asserts byte-identical pass-through, and the existing `ground-transfer-tests.ts` suite passes unchanged both with and without the fix — so no behaviour changed for anything that was already safe. The only normalization difference is that runs of whitespace now collapse to a single space, where previously only newlines did.
+
+### 5.4a Why GAP-429-1 and GAP-429-2 were not fixed in the same pass
+
+Both are latent rather than live. The only wired provider is the registered `map_driving_route` tool, which is driving-only by construction and returns a result shape with no origin/destination echo at all, so neither gap has a path to fire today. Closing them properly means widening `PublicMapDrivingRouteResult` to carry the provider's own mode and resolved endpoints and deciding what to do when a provider omits them — a contract change to the accepted #341 boundary, which is the owner's call, not a drill's. The conformance gate already encodes the target behaviour, so the remedy is specified and tested; only the decision is outstanding.
 
 ### 5.5 What only the real trigger can supply
 
@@ -181,16 +192,19 @@ The provider identity, licence and quota conditions; actual coverage and freshne
 Baseline before the work, at `origin/main` 7077695: typecheck exit 0, isolated smoke exit 0, existing ground-transfer suite exit 0. All commands below were run from the isolated worktree after the three commits.
 
 ```text
-cd ts && npx tsx scripts/outcome-projection-tests.ts        exit 0   135 pass
-cd ts && npx tsx scripts/city-scenario-tier-tests.ts        exit 0    79 pass
-cd ts && npx tsx scripts/route-provider-conformance-tests.ts exit 0   81 pass
-cd ts && npx tsc --noEmit                                   exit 0
-cd ts && npx tsx scripts/smoke.ts                           exit 0   SMOKE OK
-cd ts && npx tsx scripts/kernel-manifest-gate.ts            exit 0   zero drift, kernel 5/5 loaded
-cd ts && npx tsx scripts/kernel-manifest-tests.ts           exit 0   §1-§7 green
-node scripts/check-docs-i18n.mjs                            exit 0   86 bilingual pairs
-node scripts/check-doc-readability.mjs                      exit 0   8 reader-facing files
-bash -n scripts/run-all-tests.sh                            exit 0
+cd ts && npx tsx scripts/outcome-projection-tests.ts         exit 0   155 pass
+cd ts && npx tsx scripts/city-scenario-tier-tests.ts         exit 0    83 pass
+cd ts && npx tsx scripts/route-provider-conformance-tests.ts exit 0    95 pass
+cd ts && GOTRY_SESSION_LIVE=0 npx tsx scripts/ground-transfer-tests.ts  exit 0   issue #341 suite OK
+cd ts && npx tsx scripts/map-tools-vendor-package-proof.ts   exit 0   vendored map proof OK
+cd ts && npx tsc --noEmit                                    exit 0
+cd ts && npx tsx scripts/smoke.ts                            exit 0   SMOKE OK
+cd ts && npx tsx scripts/kernel-manifest-gate.ts             exit 0   zero drift, kernel 5/5 loaded
+cd ts && npx tsx scripts/kernel-manifest-tests.ts            exit 0   §1-§7 green
+node scripts/check-docs-i18n.mjs                             exit 0   87 bilingual pairs
+node scripts/check-doc-readability.mjs                       exit 0   8 reader-facing files
+node scripts/check-doc-readability.mjs --self-test            exit 0   8 negatives + 26 fixtures
+bash -n scripts/run-all-tests.sh                             exit 0
 ```
 
 The full `scripts/run-all-tests.sh` was deliberately **not** run here: it binds fixed ports and is CPU-heavy, and several agents were working in parallel. The integrator runs it serially. Sections §85, §86 and §87 were appended at the end of that script in the existing format.
@@ -204,16 +218,25 @@ Each mutation below was applied to the new module, observed red, and reverted; t
       -> 1 FAIL: "a calibrated amount smuggled into the hard budget verdict is refused"  (exit 1)
 #340  let `unknown` be deviation-comparable
       -> 5 FAIL incl. "unknown is refused, NOT reported as zero deviation"               (exit 1)
+#340  restore the UNANCHORED document-number pattern
+      -> 12 FAIL: legitimate digests with a 15+ digit run refused as an ID               (exit 1)
 #339  add a score filter to applyTierRanking
       -> 15 FAIL incl. the no-hard-filter falsification battery                          (exit 1)
 #339  let conflicting evidence silently elect the first tier
       -> 3 FAIL incl. "conflicting evidence -> neutral, no winner elected"               (exit 1)
-#429  drop response-side direction binding
+#339  drop the non-negative semantic guard
+      -> 2 FAIL incl. "a NEGATIVE semantic score is refused"                             (exit 1)
+#429  drop response-side direction binding (conformance gate)
       -> 3 FAIL incl. "expected refusal direction_mismatch, got ADMISSION"               (exit 1)
-#429  disable fault-detail scrubbing
+#429  disable fault-detail scrubbing (conformance gate)
       -> 8 FAIL incl. "the cookie and token values never survive sanitization"           (exit 1)
+#429  restore the pre-fix safeErrorMessage in ground-transfer.ts
+      -> 8 FAIL incl. "exposeGroundTransferEvidence carries no provider body"            (exit 1)
+      and ground-transfer-tests.ts stays exit 0 BOTH ways -> the fix changes no behaviour
 ```
+
+One mutation was initially NOT falsifiable and that is itself a finding: a hex-digest exemption branch shadowed the anchored pattern, so unanchoring it produced zero failures. The redundant branch was removed rather than kept as untestable defence, leaving one mechanism (per-leaf scan plus anchors) that the red baseline above actually bites.
 
 ## 8. Boundaries not crossed
 
-No kernel-pinned file was touched (`unified.ts`, `model.ts`, `state-ledger.ts`, `bookable-facts.ts`, `artifact-gate.ts`), and the kernel manifest gate reports zero drift. `ts/capabilities/ground-transfer.ts` was not edited despite the three gaps found in it. No shared authority document was edited: facts that the integrator may want to reconcile are listed in the hand-back report rather than written into `architecture.md`, `roadmap.md`, the root README or release notes. No dependency was added and `package.json` was not touched — the three new modules have zero product callers and therefore do not ship, following the same precedent as the FX, geo-atlas and session-zones contract slices. No state directory, user home path or credential store was read or written.
+No kernel-pinned file was touched (`unified.ts`, `model.ts`, `state-ledger.ts`, `bookable-facts.ts`, `artifact-gate.ts`), and the kernel manifest gate reports zero drift. `ts/capabilities/ground-transfer.ts` was edited in exactly one respect — its provider-failure text now passes through the shared sanitizer (GAP-429-3) — with the resolution semantics, reason prefixes, length bound, empty-case wording and static fallback all unchanged and the existing suite green both before and after. No shared authority document was edited: facts that the integrator may want to reconcile are listed in the hand-back report rather than written into `architecture.md`, `roadmap.md`, the root README or release notes. No dependency was added and `package.json` was not touched — the three new contract modules have zero product callers and therefore do not ship, following the same precedent as the FX, geo-atlas and session-zones contract slices. The one module that IS now product-reachable is the pure sanitizer, which has zero imports, zero IO and no clock; the #429 conformance gate itself stays free of product callers. No state directory, user home path or credential store was read or written.

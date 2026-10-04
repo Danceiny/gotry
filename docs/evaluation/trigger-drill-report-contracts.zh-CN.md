@@ -18,17 +18,19 @@
 - 具名供应商、许可、覆盖率与新鲜度实测，或供应商可用性（#429）；
 - M4/M5/M6 Exit，或任何里程碑的出口。
 
-三个 tracker 全部继续 **open 且默认关闭**。这在代码里是结构性的，不是约定：`OUTCOME_TRIGGER_FIRED`、`CITY_SCENARIO_TIER_TRIGGER_FIRED`、`D39_LIVE_ROUTE_TRIGGER_FIRED` 三个闸都冻结为 `false`；供应商终态源注册表、城市场景 taxonomy 注册表、活体路线供应商注册表三者都冻结为空；产品面没有任何文件 import 这三个模块。issue #341 既有的窄范围 D-39 路径不变——`ts/capabilities/ground-transfer.ts` 一个字节都没改。
+三个 tracker 全部继续 **open 且默认关闭**。这在代码里是结构性的，不是约定：`OUTCOME_TRIGGER_FIRED`、`CITY_SCENARIO_TIER_TRIGGER_FIRED`、`D39_LIVE_ROUTE_TRIGGER_FIRED` 三个闸都冻结为 `false`；供应商终态源注册表、城市场景 taxonomy 注册表、活体路线供应商注册表三者都冻结为空；产品面没有任何文件 import 这三个模块。
+
+「产品路径零改动」有一个例外，明说：本次演练在已获准的窄范围 D-39 路径上查出一处产品可达的信息泄漏，该缺陷**已修复**——`ts/capabilities/ground-transfer.ts` 现在把供应商失败文本经共享脱敏器输出（§5.4，GAP-429-3）。这是对既有暴露面的安全修复，不是对任何新路径的准入：没有具名供应商、没有路径获准，解析语义、原因前缀与静态回退逐字不变。
 
 零网络、零 LLM、零凭据、零子进程、零共享状态。全部工作在隔离 worktree 内完成。
 
 ## 2. 速览
 
-- 新增三个纯契约模块与三套定向测试，全部默认关闭、产品面零调用方：**295 条断言全绿**（135 + 79 + 81），typecheck 退出码 0，隔离 smoke 退出码 0，内核清单闸零漂移。
+- 新增三个纯契约模块与三套定向测试，全部默认关闭、产品面零调用方：**333 条断言全绿**（155 + 83 + 95），typecheck 退出码 0，隔离 smoke 退出码 0，内核清单闸零漂移。
 - #340：关联键、终态词表、append-only 可撤销投影、负面清单，以及「偏差校准永不能压过预算硬约束」的守卫，全部结构化编码并逐条证伪。
 - #339：**只交机制**——版本化 taxonomy schema 加一个**空**注册表。代码里零分级内容，且触发闸为 false 时准入在校验之前即被拒。候选场景词表以明确标注为未验证假设的形式写在 §4.4。
-- #429：一套九条条款的合规闸，任何未来活体路线适配器都必须过。拿它实跑既有 ground-transfer 逻辑，查出 **三处真实缺口**（§5.4），其中一处今天即可在产品输出中到达。
-- 既有代码一处未修：缺口附最小复现上报，由 owner 裁决。
+- #429：一套九条条款的合规闸，任何未来活体路线适配器都必须过。拿它实跑既有 ground-transfer 逻辑，查出 **三处真实缺口**（§5.4）。
+- **其中一处产品可达，已在本次修复**（GAP-429-3：供应商错误原文到达工具结果）；另两处休眠缺口继续以特征化断言钉住，并附明确的翻转指引。
 
 ## 3. 演练一 —— #340 成交结果与规划估算对比
 
@@ -102,7 +104,7 @@ taxonomy 成员本身及其城市覆盖；场景词表与成功指标；由数�
 
 ### 5.2 建了什么、跑了什么
 
-`ts/capabilities/route-provider-conformance.ts` —— 任何未来活体路线适配器都必须过的准入闸。它声明零 import（因此零网络、零缓存、零定时器、零文件系统面，也不耦合 evaluate/solve 内核），测试机械断言了这个 import 面。
+`ts/capabilities/route-provider-conformance.ts` —— 任何未来活体路线适配器都必须过的准入闸。它唯一的 import 是纯粹的同级脱敏器，自身不读时钟（`now` 必须由调用方注入），零网络、零缓存、零定时器、零文件系统面，也不耦合 evaluate/solve 内核；测试机械断言了这个 import 面。
 
 声明并驱动了八种故障模式：不可用、过期、方向不匹配、模式改标、估算冒充实时路况、人机挑战、限流、部分结果。九条合规条款必须全过：
 
@@ -120,7 +122,7 @@ taxonomy 成员本身及其城市覆盖；场景词表与成功指标；由数�
 
 ### 5.3 结果
 
-`ts/scripts/route-provider-conformance-tests.ts`：**81 条断言通过，退出码 0**。登记为 run-all **§87**。对既有 ground-transfer 逻辑实跑，今天六条通过、三条是缺口：
+`ts/scripts/route-provider-conformance-tests.ts`：**95 条断言通过，退出码 0**。登记为 run-all **§87**。对既有 ground-transfer 逻辑实跑，七条通过（其中一条是下文修复之后才通过）、两条仍是缺口：
 
 | 条款 | 既有 ground-transfer 行为 |
 |---|---|
@@ -130,15 +132,15 @@ taxonomy 成员本身及其城市覆盖；场景词表与成功指标；由数�
 | 故障 fail-closed | 通过 —— 供应商报错与自相矛盾路线都回退，不施加分钟覆盖 |
 | 方向绑定（请求侧） | 通过 —— 每个方向以自己的有序对查询，缓存不共享 |
 | 新鲜度合同 | 通过 —— 过期缓存条目被重查，失败时报 stale，绝不当命中 |
-| 模式隔离 | **GAP-429-1** |
-| 方向绑定（响应侧） | **GAP-429-2** |
-| 故障详情脱敏 | **GAP-429-3** |
+| 故障详情脱敏 | **本次 GAP-429-3 修复之后**通过（此前是泄漏） |
+| 模式隔离 | **GAP-429-1**，继续钉住 |
+| 方向绑定（响应侧） | **GAP-429-2**，继续钉住 |
 
 ### 5.4 在既有代码中发现的缺陷
 
-这些由演练发现且**本次不修**：`ts/capabilities/ground-transfer.ts` 未被编辑。测试以标注为 `GAP-429-n` 的特征化断言钉住当前行为，因此 run-all 保持绿，而未来的修复必须翻转这些断言。
+在 `ts/capabilities/ground-transfer.ts` 中发现三处缺陷。GAP-429-3 产品可达，**已在本次修复**。GAP-429-1 与 GAP-429-2 确属休眠（今天不存在能触发它们的供应商），因此继续以标注为 `GAP-429-n` 的特征化断言钉住——run-all 保持绿，且每条断言消息都带明确的翻转指引，使未来的修复翻转它而不是静默通过。
 
-**GAP-429-1（模式隔离）。** `parseRouteResult` 只保留 `provider`、`distanceM`、`durationS`、`polyline`、`steps`。供应商载荷里相矛盾的 `mode` 被静默丢弃，路线事实按请求被标为 `mode: 'driving'`，其时长随后被绑进求解器。
+**GAP-429-1（模式隔离）—— 钉住。** `parseRouteResult` 只保留 `provider`、`distanceM`、`durationS`、`polyline`、`steps`。供应商载荷里相矛盾的 `mode` 被静默丢弃，路线事实按请求被标为 `mode: 'driving'`，其时长随后被绑进求解器。
 
 ```ts
 // 供应商在驾车工具下返回一条公交路线
@@ -150,7 +152,7 @@ provider: async () => ({ provider: 'mock-transit', distanceM: 30000, durationS: 
 
 今天的严重度低——唯一接线的供应商是注册的 `map_driving_route` 工具，按构造就是驾车——但这恰恰是公交或轨道路径必须满足的条款，所以在任何这类适配器获准之前这道检查必须先存在。
 
-**GAP-429-2（方向绑定，响应侧）。** 方向绑定在请求侧成立（缓存键含方向与有序对），但响应从未与请求核对。解析到另一组 origin/destination 的供应商，其时长会被当作机场接送绑定。
+**GAP-429-2（方向绑定，响应侧）—— 钉住。** 方向绑定在请求侧成立（缓存键含方向与有序对），但响应从未与请求核对。解析到另一组 origin/destination 的供应商，其时长会被当作机场接送绑定。
 
 ```ts
 // 供应商路由了完全不同的 O/D，并在自己的字段里说明了这一点
@@ -161,16 +163,25 @@ provider: async () => ({ provider: 'mock-wrong-od', distanceM: 999, durationS: 6
 //       candidates[0].destTransfers[0].minutesOut === 1            // 999 米 / 60 秒的路线成了接送
 ```
 
-**GAP-429-3（故障详情脱敏）—— 产品可达。** `safeErrorMessage` 只去换行并截断到 400 字符，因此供应商抛出的错误消息逐字进入 `fallbackReason`，而 `exposeGroundTransferEvidence` 会把它带进工具结果以及每条匹配 verdict 的 `transfer_evidence`。该函数在活体产品路径 `ts/src/index.ts:801` 处接线，由注册的可行性工具到达。
+**GAP-429-3（故障详情脱敏）—— 产品可达，已修复。** 修复前的 `safeErrorMessage` 只去换行并截断到 400 字符，因此供应商抛出的错误消息逐字进入 `fallbackReason`，而 `exposeGroundTransferEvidence` 会把它带进工具结果以及每条匹配 verdict 的 `transfer_evidence`。该函数在活体产品路径 `ts/src/index.ts:801` 处接线，由注册的可行性工具到达，默认供应商是 `createPublicMapDrivingRouteProvider`——所以这是一条活体信息泄漏通道，不是假想情形。
+
+修复把脱敏器抽到 `ts/capabilities/provider-detail-sanitize.ts`（纯函数、零 import），使一份实现同时服务 #429 合规闸与活体路径，并让 `safeErrorMessage` 走它。历史的 400 字符上界与 `unknown provider error` 空值文案均保留，因此既有每一条原因字符串都逐字不变。
 
 ```ts
 provider: async () => { throw new Error(
   'HTTP 403 <html><body>Please complete the CAPTCHA. token=abc123 cookie=sid=XYZ ...</body></html>') }
-// 观测：resolution.outbound.fallbackReason 含 'token=abc123' 与 '<html>'
-//       JSON.stringify(exposeGroundTransferEvidence({verdicts:[...]}, resolution)) 含 'token=abc123'
+// 修复前：resolution.outbound.fallbackReason 含 'token=abc123' 与 '<html>'
+//         JSON.stringify(exposeGroundTransferEvidence({verdicts:[...]}, resolution)) 含 'token=abc123'
+// 修复后：'map_driving_route_provider_error:outbound:HTTP 403 [markup-redacted][markup-redacted]
+//          Please complete the CAPTCHA. [credential-redacted] [credential-redacted] ...'
+//         —— 分类前缀完好，脱敏显式可审计，泄漏检查干净
 ```
 
-今天接线的供应商抛出的要么是固定的 `GROUND_TRANSFER_*` 字符串，要么是 `map_driving_route failed: <嵌套工具错误>`，所以该通道当前承载的是 dsh 工具错误消息，而不是供应商原始标记。一旦接入活体路线适配器——也就是恰好在 #429 的路径上——这个泄漏就变得实质。补救形状已存在且已测：`sanitizeFaultDetail` 能把同一字符串变安全，`faultDetailLeak` 能标记它。
+回归覆盖登记在 run-all §87，且走**真实**解析路径：一个抛出带标记、token 与 cookie 消息的供应商，对出程原因、回程原因、聚合原因以及 `exposeGroundTransferEvidence` 输出逐一断言干净。另有一个遍历五条本来就安全的供应商消息（含两条固定 `GROUND_TRANSFER_*` 字符串与 `map_driving_route failed: ...`）的循环，断言逐字原样通过；既有 `ground-transfer-tests.ts` 套件在修复前后都绿——因此本来安全的内容行为零变化。唯一的归一化差异是：连续空白现在收敛为单个空格，而此前只收敛换行。
+
+### 5.4a 为什么 GAP-429-1 与 GAP-429-2 没有在同一轮修掉
+
+两者都是潜伏而非活体。唯一接线的供应商是注册的 `map_driving_route` 工具，它按构造只做驾车，且返回的结果形状里完全没有 origin/destination 回显，因此今天两处缺口都没有触发路径。要把它们真正关掉，意味着扩宽 `PublicMapDrivingRouteResult` 以承载供应商自己的模式与解析端点，并决定供应商省略这些字段时怎么办——这是对已获准 #341 边界的合同变更，属于 owner 的裁决，不是一次演练该自行拍的板。合规闸已经把目标行为编码并测好，所以补救已有规格、只差决定。
 
 ### 5.5 只有真实触发才能提供的东西
 
@@ -181,16 +192,19 @@ provider: async () => { throw new Error(
 动工前基线，在 `origin/main` 7077695：typecheck 退出码 0，隔离 smoke 退出码 0，既有 ground-transfer 套件退出码 0。下列命令均在三次提交之后、于隔离 worktree 内执行。
 
 ```text
-cd ts && npx tsx scripts/outcome-projection-tests.ts        exit 0   135 pass
-cd ts && npx tsx scripts/city-scenario-tier-tests.ts        exit 0    79 pass
-cd ts && npx tsx scripts/route-provider-conformance-tests.ts exit 0   81 pass
-cd ts && npx tsc --noEmit                                   exit 0
-cd ts && npx tsx scripts/smoke.ts                           exit 0   SMOKE OK
-cd ts && npx tsx scripts/kernel-manifest-gate.ts            exit 0   零漂移，内核 5/5 被加载
-cd ts && npx tsx scripts/kernel-manifest-tests.ts           exit 0   §1-§7 全绿
-node scripts/check-docs-i18n.mjs                            exit 0   86 对双语文档
-node scripts/check-doc-readability.mjs                      exit 0   8 份面向读者文档
-bash -n scripts/run-all-tests.sh                            exit 0
+cd ts && npx tsx scripts/outcome-projection-tests.ts         exit 0   155 pass
+cd ts && npx tsx scripts/city-scenario-tier-tests.ts         exit 0    83 pass
+cd ts && npx tsx scripts/route-provider-conformance-tests.ts exit 0    95 pass
+cd ts && GOTRY_SESSION_LIVE=0 npx tsx scripts/ground-transfer-tests.ts  exit 0   issue #341 套件 OK
+cd ts && npx tsx scripts/map-tools-vendor-package-proof.ts   exit 0   vendored map 证明 OK
+cd ts && npx tsc --noEmit                                    exit 0
+cd ts && npx tsx scripts/smoke.ts                            exit 0   SMOKE OK
+cd ts && npx tsx scripts/kernel-manifest-gate.ts             exit 0   零漂移，内核 5/5 被加载
+cd ts && npx tsx scripts/kernel-manifest-tests.ts            exit 0   §1-§7 全绿
+node scripts/check-docs-i18n.mjs                             exit 0   87 对双语文档
+node scripts/check-doc-readability.mjs                       exit 0   8 份面向读者文档
+node scripts/check-doc-readability.mjs --self-test            exit 0   8 反例 + 26 夹具
+bash -n scripts/run-all-tests.sh                             exit 0
 ```
 
 完整的 `scripts/run-all-tests.sh` 刻意**没有**在此执行：它绑定固定端口且 CPU 开销大，而当时有多个 agent 并行工作。该脚本由集成者串行执行。§85、§86、§87 三节已按既有格式追加在脚本末尾。
@@ -204,16 +218,25 @@ bash -n scripts/run-all-tests.sh                            exit 0
       -> 1 条 FAIL：「被校准金额偷渡进预算硬约束判定会被拒」                        （exit 1）
 #340  让 unknown 可参与偏差比较
       -> 5 条 FAIL，含「unknown 被拒而非记为零偏差」                               （exit 1）
+#340  恢复未锚定的证件号模式
+      -> 12 条 FAIL：带 15+ 位数字串的合法摘要被当成证件号拒收                      （exit 1）
 #339  给 applyTierRanking 加一个按分过滤
       -> 15 条 FAIL，含 no-hard-filter 证伪电池                                    （exit 1）
 #339  让冲突证据静默择取第一档
       -> 3 条 FAIL，含「冲突证据 -> 中性，不代选」                                  （exit 1）
-#429  去掉响应侧方向绑定
+#339  去掉语义分非负守卫
+      -> 2 条 FAIL，含「负语义分被拒」                                              （exit 1）
+#429  去掉响应侧方向绑定（合规闸）
       -> 3 条 FAIL，含「期望拒绝 direction_mismatch，实际获得 ADMISSION」            （exit 1）
-#429  关闭故障详情脱敏
+#429  关闭故障详情脱敏（合规闸）
       -> 8 条 FAIL，含「cookie 与 token 值永不在脱敏后留存」                         （exit 1）
+#429  恢复 ground-transfer.ts 里修复前的 safeErrorMessage
+      -> 8 条 FAIL，含「exposeGroundTransferEvidence 不带出供应商响应体」            （exit 1）
+      且 ground-transfer-tests.ts 两种情况都是 exit 0 -> 该修复零行为变化
 ```
+
+有一处变异起初**不可证伪**，这本身就是一个发现：一个十六进制摘要豁免分支遮蔽了锚定模式，导致去掉锚定后零失败。该冗余分支被删除，而不是留作无法测试的「防御」，于是只剩一套机制（逐叶扫描加锚定），上面的红基线才真正咬得住。
 
 ## 8. 没有越过的边界
 
-没有触碰任何内核钉住文件（`unified.ts`、`model.ts`、`state-ledger.ts`、`bookable-facts.ts`、`artifact-gate.ts`），内核清单闸报零漂移。尽管在 `ts/capabilities/ground-transfer.ts` 中查出三处缺口，该文件未被编辑。没有编辑任何共享权威文档：集成者可能需要对账的事实列在交回报告里，而不是写进 `architecture.md`、`roadmap.md`、根 README 或发布说明。没有新增依赖、也没有改 `package.json` —— 三个新模块产品面零调用方因此不随包发布，与 FX、geo-atlas、会话双区三个契约切片同一先例。没有读写任何状态目录、用户主目录或凭据存储。
+没有触碰任何内核钉住文件（`unified.ts`、`model.ts`、`state-ledger.ts`、`bookable-facts.ts`、`artifact-gate.ts`），内核清单闸报零漂移。`ts/capabilities/ground-transfer.ts` 只在一处被编辑——其供应商失败文本现在经共享脱敏器输出（GAP-429-3）——解析语义、原因前缀、长度上界、空值文案与静态回退全部不变，既有套件在修复前后都绿。没有编辑任何共享权威文档：集成者可能需要对账的事实列在交回报告里，而不是写进 `architecture.md`、`roadmap.md`、根 README 或发布说明。没有新增依赖、也没有改 `package.json` —— 三个新契约模块产品面零调用方因此不随包发布，与 FX、geo-atlas、会话双区三个契约切片同一先例。现在唯一进入产品可达范围的模块是那个纯脱敏器，它零 import、零 IO、不读时钟；#429 合规闸本身仍然产品面零调用方。没有读写任何状态目录、用户主目录或凭据存储。
