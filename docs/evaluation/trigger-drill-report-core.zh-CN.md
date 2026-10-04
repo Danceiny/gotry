@@ -17,7 +17,7 @@
 
 ## 演练 1——issue #82 模拟 world2agent sensor
 
-套件：`ts/scripts/drill-w2a-sensor-tests.ts`，登记为 run-all §81。结果：退出码 0，282 条断言通过。
+套件：`ts/scripts/drill-w2a-sensor-tests.ts`，登记为 run-all §81。记录那次运行的结果：退出码 0，284 条断言通过。本文给出的断言条数是某一次运行的实测值，不是契约；套件以退出码为门，尤其多写者套件只在争用主机走到的分支上才追加断言。
 
 **模拟的触发。** 一个独立 OS 进程扮演 sensor 加本地桥，它按固定的合成剧本重放 `w2a/0.1` envelope（NDJSON），并以两种方式投递：真实的进程间 stdin 管道，以及一个 spool 文件。第二个 OS 进程在 Node 权限模型（只读授权）下承载已落地的惰性适配入口 `ts/capabilities/external-event.ts`。
 
@@ -26,7 +26,7 @@
 - 默认关闭：不显式传开启参数时，所有被投递的 envelope（含良性那条）一律 `disabled-by-default` 拒绝，且不投射任何元数据。
 - 精确四元组：`sensor_id`、`package`、`sensor_version`、`source_type` 任意单字段变更即 `tuple-not-allowed`；开启但 allowlist 为空仍然拒绝。
 - 敌意语料，进程内与跨进程逐条判定一致：伪造发信声明（`authenticated`、`signature`、`verified_by` 与伪造的 `user_identity`）、同一 `signal_id` 重放、超限载荷、两万层深嵌套载荷、三个层级的原型污染键、`event.summary` 内的自然语言注入外加自造的 `event.instruction`、未知事件类型，以及时间戳偏移的两端极值。被接受的 envelope 恰好投射十个惰性字段并带 `trust: 'untrusted'`，且从不回显祈使句文本、身份声明、附件数据或不透明载荷。
-- 副作用隔离：适配宿主以 `--permission` 加只读授权运行，因此 `fs` 写、`child_process` 与网络由 OS 以 `ERR_ACCESS_DENIED` 拒绝，而不是靠测试里的一个 promise。此外还有：零 `fetch` 调用、零定时器创建、原型链干净、隔离根下零文件新建，`gotry-state` 目录从未被创建。
+- 副作用隔离：适配宿主以 `--permission` 加只读授权运行，因此 `fs` 写与 `child_process` 由 OS 以 `ERR_ACCESS_DENIED` 拒绝，而不是靠测试里的一个 promise。网络是更弱的论断，本文据实写明：在本仓运行的各 Node 版本之间，权限模型没有可移植的 `net` scope；即便在连接确实以 `ERR_ACCESS_DENIED` 被拒的 Node 26 主机上，`process.permission.has('net')` 仍报告该 scope 缺席。因此套件只对「没有任何出站连接成功」设门，同时接受 `ECONNREFUSED`，并且只有当 `has('net')` 报告 scope 已生效时才把这次拒绝记在权限模型账上。此外还有：零 `fetch` 调用、零定时器创建、原型链干净、隔离根下零文件新建，`gotry-state` 目录从未被创建。
 
 **组合边界：据实上报而不接线。** 派工要求「仅在契约允许时」用良性模拟 sensor 事件做组合测试。契约不允许，于是套件证明原因，而不是自造一条路：
 
@@ -47,7 +47,11 @@
 
 ## 演练 2——issue #275 D-15 第二用户与多写者
 
-套件：`ts/scripts/drill-multiuser-ledger-tests.ts`，登记为 run-all §82。结果：退出码 0，194 条断言通过。`ts/src/state-ledger.ts` 全程只读。
+套件：`ts/scripts/drill-multiuser-ledger-tests.ts`，登记为 run-all §82。记录那次运行的结果：退出码 0，223 条断言通过（条数随主机产生的争用量变化，因为 liveness 分支只在被走到时才追加断言）。`ts/src/state-ledger.ts` 全程只读。
+
+安全面与活性面是刻意分开的。设门的断言是任何主机、任何速度下都必须成立的那些：`integrity_check`、无重复 `(tenant_id, idem_key)`、账本恰好持有 worker 自认写入的那些行、覆盖每次尝试的记账恒等式、租户隔离，以及带非空行数的 fold 等于直读。慢速共享 runner 能跑完多少次尝试、看到哪些 SQLite 争用码，属于活性面，只经观察行上报、绝不设门——一条休眠且未准入的路径不该有能力把回归搞红。失败码按已知争用码集合校验而不钉死到某个字面量，因此集合之外的码仍会被读作新的失败模式。
+
+两处让证据名副其实的机械细节。fold 校验把 `-wal` 与 `-shm` 边车连同数据库文件一起拷走：账本跑在 WAL 模式，而这些受害者是被 `SIGKILL` 的，没有任何 checkpoint 发生；只拷 `gotry-state.db` 会拿空投影去比空投影而空洞通过。因此每条 fold 断言都配一条与就地读取的事件数相等校验；在 `after-commit` 崩点下拷贝携带那一条已提交事件，这就是边车确实被拷走的证明。套件级时间上界是远高于真实开销的诊断兜底，不是性能断言；它的超时路径自己收尸并删除临时根，因为 `process.exit` 会跳过 `finally`，而其中两个 worker 按设计是无限循环的。
 
 ### 覆盖矩阵
 
@@ -55,7 +59,7 @@
 |---|---|---|
 | 记录触发证据并选定一种部署拓扑 | 无 | GAP，需真实触发。演练选不了拓扑。 |
 | 定义租户归属、fencing token 或 receipt、幂等、冲突解决、备份与恢复、回滚契约 | 租户归属见 `ts/src/state-ledger.ts` 与 `ts/scripts/ledger-tests.ts` §11；fencing 与 claim 见 `docs/design/write-gate-production-design.md` §5.3／§5.4 与 `ts/src/write-gate.ts`；幂等由 `events_idem` 唯一索引承担；冲突解决由 forward-only 派发触发器承担；备份与回滚见 `ts/scripts/state-repair-tests.ts` | PARTIAL。契约存在，但只覆盖单写者本地形态。多写者契约、复制语义与跨机回滚仍未定义。 |
-| 以隔离 stateRoot 与崩溃／重开测试证明并发写者与陈旧 claim 拒绝 | `ts/scripts/write-gate-tests.ts` §4 的双进程领取竞争；`ts/scripts/booking-copilot-*-concurrency-proof-tests.ts` 的 receipt／operation／事件序竞争；`ts/scripts/ledger-tests.ts` §9 加 `ts/scripts/ledger-workflow-crash.ts` 的崩溃与恢复 | 本次演练已离线补齐，新增：N 进程（不止两个）领取竞争；单租户与双租户下的 N 进程并发追加；单事务内的具名崩点；产品写路径上定时变化的 SIGKILL；以及冷开竞争。 |
+| 以隔离 stateRoot 与崩溃／重开测试证明并发写者与陈旧 claim 拒绝 | `ts/scripts/write-gate-tests.ts` §4 的双进程领取竞争；`ts/scripts/booking-copilot-*-concurrency-proof-tests.ts` 的 receipt／operation／事件序竞争；`ts/scripts/ledger-tests.ts` §9 加 `ts/scripts/ledger-workflow-crash.ts` 的崩溃与恢复 | EXERCISED OFFLINE（模拟；不构成该条目的关闭）。本次演练新增：N 进程（不止两个）领取竞争；单租户与双租户下的 N 进程并发追加；单事务内的具名崩点；产品写路径上定时变化的 SIGKILL；以及冷开竞争。 |
 | 端到端验证备份恢复与租户隔离；夹具不构成生产上线证据 | `ts/scripts/state-repair-tests.ts` 的离线文件拷贝备份与校验和回滚；`ts/scripts/ledger-tests.ts` §11 与 `ts/scripts/write-gate-tests.ts` §5 的租户隔离 | PARTIAL。本次新增写负载下的 SQLite 在线备份、带校验和验证的恢复、事件序前缀检查与 fold 自洽。端到端生产上线证据被该条目自身的措辞排除在外。 |
 | 跑账本套件、隔离 smoke 与全栈回归；同步架构、路线图与现状面 | run-all §28、§29、§68 | 归整合者。演练只登记 §82；串行全栈回归与权威对账归整合者。 |
 | Litestream 流式备份 | 无 | `needs real trigger + dependency decision`。未安装；演练断言其缺席，使任何文档都不能声称已有。 |
@@ -77,6 +81,8 @@
 
 相关的次序事实：在 `openDb` 里 `pragma('journal_mode = WAL')` 先于 `pragma('busy_timeout = 5000')` 执行，因此 WAL 切换取得的排他锁被持有时，其余连接还没装上 busy handler。
 
+失败码并不是单一字面量。连续三次运行分别记录 18 个进程中成功打开 7、8、11 个，其中两次除 `SQLITE_BUSY` 外还产生了 `SQLITE_BUSY_SNAPSHOT`。本套件的早期版本把该码钉死为仅 `SQLITE_BUSY`，在那三次里会有两次变红——这正是现在改为接受已知争用码集合、并把与记录基线的偏离上报而不是据此失败的原因。
+
 分类：这是 D-15 的决策输入，不是主干回归。D-15 明确多写者路径未准入，ADR-16 给的是单账本 owner 语义，所以单写者产品形态根本碰不到这条竞争。`ts/src/state-ledger.ts` 属内核冻结，演练不碰它；缓解手段（串行化首次打开，或把 `busy_timeout` 放在 `journal_mode` 之前）归 D-15 决策。演练用带明确翻转提示的方式钉死失败码，而不是把回归搞红——在一条休眠且未准入的路径上亮红灯只会阻塞整合者，保护不了任何已准入契约。
 
 **缺陷 D15-2（真实、已上报、未修复）：读—改—写产品路径需要账本并不提供的调用方重试循环。**
@@ -89,7 +95,7 @@
 
 ## 演练 3——issue #422 dsh SDK 后代清理（再基线）
 
-套件：`ts/scripts/drill-sdk-descendant-cleanup-tests.ts`，登记为 run-all §83。结果：退出码 0，42 条断言通过。零 vendor 与 `node_modules` 改动，除本文记录外不提任何上游提案。
+套件：`ts/scripts/drill-sdk-descendant-cleanup-tests.ts`，登记为 run-all §83。记录那次运行的结果：退出码 0，42 条断言通过。零 vendor 与 `node_modules` 改动，除本文记录外不提任何上游提案。
 
 **模拟的触发，以及为什么这是一次再基线。** dsh 家族于 2026-10-02 从 0.1.5-rc.1 升到 0.2.0-rc.2，因此 #422 的前提需要在已安装版本上重新测量。演练按 `scripts/booking-surface-package-proof.ts` 的既有做法，以 `profile: 'sdk-minimal'` 与夹具 `dshBin` 驱动 SDK 直连传输。夹具 leader 启动后立即派一个忽略 `SIGTERM` 的后代，后代自己再派一个孙进程，因此只杀直接子进程的清理不可能侥幸通过。
 
