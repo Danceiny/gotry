@@ -8,7 +8,7 @@
 
 ## Unreleased
 
-暂无排队项。
+- **M3 种子 cohort 采集 CLI 与 LLM persona 模拟 harness（#22，仅 synthetic）** — 面向受邀且已同意的种子参与者、由操作者驱动的采集路径，写出评分器的 `gotry_m3_cohort_record_v1`（这类记录的首个生产者）；以及在离线或真实 LLM（带预算闸）下预演漏斗的 persona 模拟 harness。模拟运行标记为 `synthetic_fixture`、以 `test_or_staff` 登记，绝不计入 M3/M4 证据；M3 闸不变（仍需经准入的 50–200 名真实种子用户）。
 
 ---
 

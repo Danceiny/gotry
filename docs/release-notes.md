@@ -8,7 +8,7 @@
 
 ## Unreleased
 
-Nothing queued.
+- **M3 cohort capture CLI and LLM persona simulation harness (#22, synthetic only)** — an operator-driven capture path for invited, consented seed participants that writes the scorer's `gotry_m3_cohort_record_v1` (the first producer of those records), and a persona-simulation harness that rehearses the funnel offline or with a real LLM under a budget gate. Simulated runs are labeled `synthetic_fixture`, enrolled as `test_or_staff`, and can never contribute to M3/M4 evidence; the M3 gate is unchanged (an admitted real 50–200 seed-user set is still required).
 
 ---
 
