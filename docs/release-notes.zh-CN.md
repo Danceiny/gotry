@@ -8,12 +8,41 @@
 
 ## Unreleased
 
-- **Stai Travel Bridge 已在 Chrome 应用商店上线（0.2.0.27，#346／#537）** — 源码包与锁文件配对为 `0.2.0-rc.27`，以保持扩展版本不变量；这不代表 npm 已发布。0.2.0.26 于 2026-09-26 因上架元数据与实际功能不符被拒；上架名改为 Stai Travel Bridge 后于 2026-09-30 重提 0.2.0.27。公开商店页与商店更新接口均已分发 0.2.0.27（2026-10-04 回拉）。已安装扩展侧的验收——桌面连接、员工门户 join 与 Dida 登录——仍在 #346 下待做。
+暂无排队项。
+
+---
+
+## v0.2.0-rc.27 · 2026-10-04
+
+**为什么发这一版。** 已发布的 `latest`（`0.0.1-rc.24`）在干净机器上无法启动 `gotry web`：其钉死的 DSH 运行时（`0.1.5-rc.1`）启动即报 `user patch-layer watching requires the Cordis HMR service`（[#600](https://github.com/Danceiny/gotry/issues/600)）。本版把整个 DSH 家族升到 `0.2.0-rc.2`（279 个包，[#610](https://github.com/Danceiny/gotry/pull/610)），该启动路径已不复存在。founder 于 2026-10-04 确认发版。版本号继续与 Stai Travel Bridge 扩展版本 `0.2.0.27` 配对（扩展版本不变量）。
+
+### 新增（自 rc.24 起）
+
+- **首启修复** — 干净机器上的 `npx @danceiny/gotry web` 在 `0.2.0-rc.2` DSH 闭包上重新可以启动；此前的闭包在干净机器上运行 web 配置时启动即崩。
+- **行程产物** — deck 渲染器与带真实二维码矩阵的静态导出包、产品入口 `gotry_itinerary_deck_render` 与 `gotry_itinerary_render`（HTML）、宿主持有的 Lavish 审阅工具、产物列表分页与字面元数据搜索、分享契约层与一键深链契约（契约层，默认关闭）。
+- **实时与会话检索** — FlyAI：覆盖全部公开检索类型、安全的配置检查、有界进程清理、回包畸形或进程被终止时 fail-closed；相互独立的检索现在带有界取消并行执行。Dida：按城市＋日期的查询链路、目的地驱动、门户投递一次性登录代填、英文房型名。会话桥：登录检查与检索绑定同一个扩展客户端、扩展作业失败不再误报 `needs-login`、用于漂移诊断的脱敏传输形状、作业账本与事件上行。
+- **嵌入式 Booking Copilot planner** — 类型化决策与权限加固、搜索失效回执、可部署的回合期限、预热与停滞预算；planner 自建进程的启动有了独立的紧预算与错误类型，启动失败不再被报成模型超时。
+- **记忆与召回** — 召回 tick 调度器与 why-now 卡；租户账本修复控制面（带回执的 apply 与 rollback）；会话双区记忆分区契约（P4-1，惰性、默认关闭）。
+- **可观测性** — 服务运行时补充结构化 verdict 日志与 planner／backend 启动阶段标记；启动诊断保留按序的阶段记录（[#511](https://github.com/Danceiny/gotry/issues/511)）。
+- **能力上手** — 通道（如 `hbcli`）缺失时给出人话化的失败原因、首次接触提示写明影响面、双语上手文档。
+- **hbcli** — 客户邮箱验证码两步登录工具面。
+- **惰性、默认关闭的契约** — 外部事件（W2A）接缝、Money/FX 事实契约、离线行政区划 atlas 加载器；均不激活任何活体路径。
+- **Stai Travel Bridge 已在 Chrome 应用商店上线（0.2.0.27，#346／#537）** — 0.2.0.26 于 2026-09-26 因上架元数据与实际功能不符被拒；上架名改为 Stai Travel Bridge 后于 2026-09-30 重提 0.2.0.27。公开商店页与商店更新接口均已分发 0.2.0.27（2026-10-04 回拉）。已安装扩展侧的验收——桌面连接、员工门户 join 与 Dida 登录——仍在 #346 下待做。
+
+### 此前排队的条目（沿用原 Unreleased 清单）
 - **持久默认出发地（#338,2026-09-10）** — `gotry_motivation_save` 接受 typed `homeCity` 与 optional/explicit exact `homeCityEvidence` 绑定（单条非空 evidence 可省略，多条须显式）；账本持久化 `homeCityPreference { value, evidence, updated_at }`，并通过 `{{motivation_brief}}` 作为软默认读回。显式当轮出发地优先，显式 null 清除活跃默认。
-- **产物视图进入 M4 队列（issue #285,2026-09-10）** — `gotry_artifacts_list/read` 在 Host 层持久化标准 `presentationMeta` 并输出 `SearchPathsResultView`/`ReadResultView` 所需字段与 `FileLocation`；**公开 `./client` adapter 通过 `window.__ModuleLoader__.load` 在 DSH Web 中按 runtime `block` 渲染自定义 list/read keyed cards**（wire name `tool.call.toolview`，key = `gotry_artifacts_list` / `gotry_artifacts_read`，见 `client/client.js`），路径可点击、首行显示 source + 完整 path + 行号预览 + source identity + content version；workspace/sidebar 文件树保留为**额外**预览面。读范围白名单 = stateRoot 根 + 会话 dsh 工作目录（排除 node_modules/.git），扩展名白名单 = 文本类；跨 root / symlink 越界 / 缺失文件 / 超大文件（>2MB）统一返回 ok:false + error + hint。本层只读，WriteGate 红线不涉及。验收证据 = `scripts/artifacts-capability-tests.ts` 12 项隔离 fixture proof + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof（覆盖改写后正确 preview 的 changed-file notice 与 reload 后更新可见）+ smoke §15/§15b。此项尚未发布 tag 或 npm 版本；当前最终交付目标 = PR #305 / destination `48c794c58b02d543be01f3bec98a056447dfeb85`。
+- **产物视图进入 M4 队列（issue #285,2026-09-10）** — `gotry_artifacts_list/read` 在 Host 层持久化标准 `presentationMeta` 并输出 `SearchPathsResultView`/`ReadResultView` 所需字段与 `FileLocation`；**公开 `./client` adapter 通过 `window.__ModuleLoader__.load` 在 DSH Web 中按 runtime `block` 渲染自定义 list/read keyed cards**（wire name `tool.call.toolview`，key = `gotry_artifacts_list` / `gotry_artifacts_read`，见 `client/client.js`），路径可点击、首行显示 source + 完整 path + 行号预览 + source identity + content version；workspace/sidebar 文件树保留为**额外**预览面。读范围白名单 = stateRoot 根 + 会话 dsh 工作目录（排除 node_modules/.git），扩展名白名单 = 文本类；跨 root / symlink 越界 / 缺失文件 / 超大文件（>2MB）统一返回 ok:false + error + hint。本层只读，WriteGate 红线不涉及。验收证据 = `scripts/artifacts-capability-tests.ts` 12 项隔离 fixture proof + `scripts/dsh-artifact-web-e2e.ts` fresh-profile Web list→select/open→read→edit→updated-read proof（覆盖改写后正确 preview 的 changed-file notice 与 reload 后更新可见）+ smoke §15/§15b。已通过 PR #305 交付 / destination `48c794c58b02d543be01f3bec98a056447dfeb85`。
 - **M4→M6 公开交付与债务台账（#270）** — 架构债务行统一指向公开 tracker 或具体触发条件，D-12/D-16/D-24 归档；issue→Draft PR→exact-head review→merge/destination 回执成为通用公开交付契约。本地/fixture 证据仍不构成 #20/#136/#137 的真实准入。
-- **DSH runtime closure 迁移到 0.1.5-alpha.1（#268）** — 把 root-pinned DSH 运行时依赖从 `0.1.2-alpha.3`（216 包闭包）精确迁到 `0.1.5-alpha.1`（230 包闭包）。精确钉死目标版本，绝不跟随可变 `alpha` dist-tag（当前指向 `0.1.5-alpha.2`）。230 = 15 新增（`dsh-api-workspace-files`/`dsh-client-file-upload`/`dsh-client-resources`/`dsh-client-ui-open-in-app`/`dsh-client-ui-sidebar-files`/`dsh-client-ui-sidebar-right`/`dsh-client-ui-sidebar-textpreview`/`dsh-host-open-in-app`/`dsh-http-proxy`/`dsh-package-manifest`/`dsh-session-format`/`dsh-session-format-catalog`/`dsh-session-format-v0-to-v1`/`dsh-session-format-v1-to-v2`/`dsh-session-format-v2-to-v3`）+ 移除 `dsh-tool-subagent-report`；增减集由重新生成的 npm 与 pnpm 锁文件确认。`ts/package.json` overrides 由 14 扩到 230，把完整 peer 闭包钉在 `0.1.5-alpha.1`，阻止 `^0.1.5-alpha.1` 插入符号把传递 peer 漂到 `0.1.5-alpha.2`。新增失败前置条件契约测试 `dsh-target-closure-proof.ts`（读仓库实态，起始 216/alpha.3 闭包上必败，迁移后必过），接入 run-all §23b。API 审计（`tsc --noEmit` + smoke + map-tools clean-tarball proof）未重现任何目标不兼容：`SettingsProvider.prototype.installSection` 接缝、7 个 `map_*` 工具、settings watch/reload/dispose、Session V3 单向迁移、agent/session/inbox/steer 接缝在 `0.1.5-alpha.1` 均存活，无行为改动。历史 `0.1.2-alpha.3` 证据在 §9/roadmap/stage1/release-notes 旧条目中保留，不批量替换；设置行为不变。此项尚未发布 tag 或 npm 版本；这些确定性证明不构成 M5/M6 准入。
-- **TS 严格安装闭环（#202）** — 在 rc.20 已随包交付 MIT `dsh-map-tools` 的基础上，补齐 alpha.3 peer closure 的精确 overrides，使 `ts/` 裸 `npm ci` 不再依赖 `--legacy-peer-deps`；新增 clean tarball fail-closed 证明。此项尚未发布 tag 或 npm 版本。
+- **DSH runtime closure 迁移到 0.1.5-alpha.1（#268）** — 把 root-pinned DSH 运行时依赖从 `0.1.2-alpha.3`（216 包闭包）精确迁到 `0.1.5-alpha.1`（230 包闭包）。精确钉死目标版本，绝不跟随可变 `alpha` dist-tag（当前指向 `0.1.5-alpha.2`）。230 = 15 新增（`dsh-api-workspace-files`/`dsh-client-file-upload`/`dsh-client-resources`/`dsh-client-ui-open-in-app`/`dsh-client-ui-sidebar-files`/`dsh-client-ui-sidebar-right`/`dsh-client-ui-sidebar-textpreview`/`dsh-host-open-in-app`/`dsh-http-proxy`/`dsh-package-manifest`/`dsh-session-format`/`dsh-session-format-catalog`/`dsh-session-format-v0-to-v1`/`dsh-session-format-v1-to-v2`/`dsh-session-format-v2-to-v3`）+ 移除 `dsh-tool-subagent-report`；增减集由重新生成的 npm 与 pnpm 锁文件确认。`ts/package.json` overrides 由 14 扩到 230，把完整 peer 闭包钉在 `0.1.5-alpha.1`，阻止 `^0.1.5-alpha.1` 插入符号把传递 peer 漂到 `0.1.5-alpha.2`。新增失败前置条件契约测试 `dsh-target-closure-proof.ts`（读仓库实态，起始 216/alpha.3 闭包上必败，迁移后必过），接入 run-all §23b。API 审计（`tsc --noEmit` + smoke + map-tools clean-tarball proof）未重现任何目标不兼容：`SettingsProvider.prototype.installSection` 接缝、7 个 `map_*` 工具、settings watch/reload/dispose、Session V3 单向迁移、agent/session/inbox/steer 接缝在 `0.1.5-alpha.1` 均存活，无行为改动。历史 `0.1.2-alpha.3` 证据在 §9/roadmap/stage1/release-notes 旧条目中保留，不批量替换；设置行为不变。这些确定性证明不构成 M5/M6 准入。（后续已被取代：闭包现为 `0.2.0-rc.2`。）
+- **TS 严格安装闭环（#202）** — 在 rc.20 已随包交付 MIT `dsh-map-tools` 的基础上，补齐 alpha.3 peer closure 的精确 overrides，使 `ts/` 裸 `npm ci` 不再依赖 `--legacy-peer-deps`；新增 clean tarball fail-closed 证明。
+
+### 安装
+
+运行 `npx @danceiny/gotry@0.2.0-rc.27 web`（Node ≥ 22.15）。待 `latest` 指向本版后，`npx @danceiny/gotry web` 等价；镜像滞后时请钉精确版本。
+
+### dist-tag 计划
+
+`TAG=latest ./scripts/publish-npm.sh`，dist-tag 显式传入（#50①）。兼容用 `rc` tag 仍停在 `0.0.1-rc.20`；是否退役仍由 owner 决定。
 
 ---
 
