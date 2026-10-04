@@ -16,9 +16,12 @@ mkdirSync(markerDir, { recursive: true })
 const actualBin = pathToFileURL(join(dirname(fileURLToPath(import.meta.resolve('@deepseek-ai/dsh/package.json'))), 'lib/bin.js')).href
 const gateBin = join(root, 'blocked-dsh.mjs')
 writeFileSync(gateBin, `
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, renameSync, writeFileSync } from 'node:fs'
 const marker = ${JSON.stringify(markerDir)} + '/gate-' + process.pid + '.json'
-writeFileSync(marker, JSON.stringify({ pid: process.pid, workerPid: process.ppid }))
+// Atomic publish: the proof parses each marker the moment the directory lists it, so a marker must never be visible half-written (writeFileSync creates the empty file first).
+const staging = ${JSON.stringify(root)} + '/gate-' + process.pid + '.staging'
+writeFileSync(staging, JSON.stringify({ pid: process.pid, workerPid: process.ppid }))
+renameSync(staging, marker)
 while (!existsSync(${JSON.stringify(releaseFile)})) await new Promise((resolve) => setTimeout(resolve, 10))
 const { runCli } = await import(${JSON.stringify(actualBin)})
 await runCli()

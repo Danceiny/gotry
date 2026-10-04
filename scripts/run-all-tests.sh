@@ -660,6 +660,26 @@ echo "=== 74. 会话双区记忆分区契约纯核(P4-1,design/session-dual-zone
 (cd ts && npx tsx scripts/session-zones-tests.ts) || FAIL=1
 
 echo
+echo "=== 75. M3 种子 cohort 采集(issue #22,scripts/product-metrics.ts 评分器此前零生产方:显式 opt-in(无 HMAC key/无 consent/未 init 一律零写入)/HMAC-SHA256 假名 participant·plan·cohort_id·cohort-key-verifier 四类键全部按 evidence_kind 域分离/append-only 幂等重放 unchanged/乱序与越界 fail-closed 类型化(同人第二条 NPS 被写时拒)/ts/dsh-runtime·~/.dsh·~/.gotry·.git 状态根拒收·0600 文件 0700 目录/writer lock:活写者与不可读 pid 一律 lock_busy 零写入、记录 pid 已死的残锁被回收且 lock-status/unlock CLI 只清死锁/导出四文件全有或全无(半占用证据根零残留,预检四个目标后才落第一个字节) + 严格 gotry_m3_cohort_record_v1 形状 + 真实 product-metrics.ts 子进程消费/合成标签反证:(a) 全项达标的合成 cohort 仍 business_pass=false、(b) 模拟记录既不得入 real_seed_cohort 存储也不得入已 attest 为 real 的证据根、(c) PII 哨兵零落盘、(d) 单字段改标 real 以及三个摘要全部重算的完整伪造都被 attestation 的密钥 MAC 抓住(verify 必须持 key,错 key/无 key 均拒);(a)(b)(d) 各带红基线:同样数字手写成 real 时评分器单独会给 business_pass=true、伪造后的无密钥摘要逐一自洽;隔离 mkdtemp 状态根,全离线) ==="
+(cd ts && npx tsx scripts/m3-cohort-tests.ts) || FAIL=1
+
+echo
+echo "=== 76. LLM persona 模拟 harness(issue #22 采集面验证,SYNTHETIC ONLY 永不计入 M3/M4:≥6 张有依据的人格卡闭集校验(卡片字段/枚举/重复 id/继续无话/nps 越界全拒)/无凭证且非 --dry-run = waiting_external_evidence 零写入零花费零请求(与 nightly-evidence.ts 同停机纪律)/--dry-run 本地 fixture OpenAI 兼容端点同时服务产品模型与人格模型,跑通真实会话链:确定性访谈→真 LLM 翻译 seam→规划窗口闸→真 solveUnified/候选求解→真注册 gotry_fact_gate 读隔离 stateRoot 事实注册表→claim 裁决→m3-cohort 记录→真评分器;产品 prompt 未能分类即 500 硬失败(dsh-llm.ts prompt 漂移会炸测试)/同冻结时钟两次导出字节一致/永不计入的两道独立保证分别验证:记录级(模拟参与者全部 test_or_staff=true→评分器合格样本 0、排除计数=交付数)与 manifest 级(同样 50 条未排除记录仍 business_pass=false);漏斗数字由 harness 纯函数 summarizeFunnel 自算(空分母 null 不报 0%)/被审计分母只计可裁决 claim:空注册表→locked=0、poi unavailable 而非好看的 0%/每条合成记录带 persona_id + prompt_digest provenance 且 attestation 经密钥 MAC 校验/预算在轮次之间判定(越限会话中途 budget_exceeded、批次停批但已付费记录照常导出)、未封存价目模型在任何花费前 fail-closed、provider 缺 usage = 成本不可证 fail-closed 零导出/真实批次必须同时给 state-root 与 evidence-root、不安全状态根在建任何目录前即拒/轮次按卡片 patience 有界、PII 哨兵零落盘、自有临时根必清/全程 fetch spy 对非 127.0.0.1 直接抛错阻断,零真实网络零凭证外泄) ==="
+(cd ts && npx tsx scripts/persona-sim-tests.ts) || FAIL=1
+
+echo
+echo "=== 77. 会话双区记忆账本落点(P4-2,issue #255:六 kind 以日志类事件落**既有** events 表(零新表/零 schema 迁移/state-ledger.ts 零改动)/单事务{fold 读 rev;守门闸;INSERT}——stale_rev·负面清单·闭集·缺 owner 引用在插入前拒绝且账本零新行/双道幂等(守门层同 rev 重放 appended:false + UNIQUE 索引物理 no-op)/幂等键带生代使 drop→重捕获不被吞/真实子进程 kill -9 提交前崩溃 = 全无·正常提交 = 全有/forget 物理硬删 + 恰一行审计(会话级多主体仍一行)/state-cli export 两派生视图逐字节 == fold 且导出零新事件/读上界 log_truncated 在写路径·会话级遗忘·导出视图三处全 fail-closed(readEvents 丢最老事件,残缺 fold 会漏删主体/冒充全量)/capture_or_touch 过期笔记续命复活与同形观察续 TTL(纯 capture 仍 stale_rev)/生代碰撞 idem_collision 显式失败不报假幂等/坏行与伪造文档确定性跳过/与既有投影及租户互不干扰/账本零过期事件;隔离 mkdtemp stateRoot,全离线,有界子进程超时) ==="
+(cd ts && npx tsx scripts/session-zone-ledger-tests.ts) || FAIL=1
+
+echo
+echo "=== 78. 会话双区记忆会话接线(P4-3,issue #255:sessionZones 总闸默认关——缺省/未知值 fail-closed 关、分区工具不注册、读回变量**连名字都不注册**(注入面清单与 main 逐项一致;§48 对产品模式变量清单逐项断言)、白名单 execute 不被包裹、不建库、既有工具清单逐项不变;开闸后捕获缝只投影形状字段(verdict/条数/价格带)——零名称零 URL零自由文本、证据只走指针(摘要 session_ref + 观察序号)、分区内永不出现宿主 session id 原文/负面清单端到端(证件·手机·URL·凭证零入区)/读回首访空串与条数字符双上界/propose 零落账(模型永不自晋升)+ owner 原话引用闸(宿主 schema 闸与代码闭集双道)/§3 路由:preference→动机闸·trip_fact→时间线闸·点名同行人的约束→同行人闸,缺路由载荷 routing_required 拒收,既有闸拒绝即同事务整笔回滚/路由逃逸两道闸:换 kind 声明或抹掉 companion_label 都绕不过既有闸、路由载荷与分类不符即拒/动机闸未落地该断言即整笔回滚(saved 二义性不可信,核对结果而非信 flag)/读回按组装 scope 隔离:同进程两会话互不可见对方 resource 层笔记、取不到 scope 即不出该段/捕获缝续命:同一检索过 TTL 再跑一次续命回读视图/CAS stale_rev 与更正即弃/过期源不得晋升;真实 apply() 注册面 + 注入离线 effect 夹具(零真实供应商/零 homedir 依赖) + mkdtemp 隔离 stateRoot,对 ts/dsh-runtime/gotry-state 零写入(前后快照断言),全离线) ==="
+(cd ts && npx tsx scripts/session-zone-wiring-tests.ts) || FAIL=1
+
+echo
+echo "=== 79. 会话双区记忆观测面与可否证指标(P4-4,issue #255:形状计数(分层捕获·修订·弃用/笔记本三计数/过期年龄分桶/活笔记)零 id·零载荷·零时间戳逐键断言、坏时钟不猜、两次投影一致;计数接收器显式 opt-in(GOTRY_SESSION_ZONE_OBSERVE=1),默认全 0 no-op,接线面 propose·deny·confirm·读命中真的入账(无否决面则确认率恒 1 = 假指标),计数去重口径与指标 proposal_ref 一致(同一提议重复只记一次,确认只在真落条目时记);三可否证指标阈值**见数据前冻结**——样本线 5 与收益线 0.5 同 #20 已冻结值、确认率下界 0.5、失效率上界 0.1,夹具声明改一个数即 contract_invalid、样本不足 insufficient_sample、样本形状非法 bad_sample;夹具只证契约不证价值(synthetic exit_evidence_eligible/value_claimed 恒 false,observed_private 只到 candidate 且永不生成 reviewer/attestation);候选导出只带计数与 HMAC 假名引用(键集闭集断言零内容字段)、摘要绑定、缺同意·缺/弱 HMAC key fail-closed;观测路径零定时器零网络(fetch/setTimeout/setInterval 真实 spy);#20 scorer 冻结 p4 闸未被触碰;只读 CLI 不建库、--out 不覆盖;隔离 stateRoot,全离线) ==="
+(cd ts && npx tsx scripts/session-zone-observation-tests.ts) || FAIL=1
+
+echo
 echo "=== 81. 触发演练:#82 world2agent sensor(simulated_trigger_drill——模拟外部触发只证明激活机制,不满足 #82 触发条件、不裁决 D-31:独立 OS 进程夹具 sensor 经 stdin+文件两种投递把 w2a/0.1 envelope 送进既有惰性适配面;default-off 全拒/精确四元组 source·package·version·type 单字段变更即拒/敌意语料 伪造发信声明·重放·超限·两万层深嵌套·原型污染键·自然语言注入·未知事件类型·时间戳偏移 在进程内与跨进程逐条判定一致/副作用隔离 Node 权限模型 fs 写·child_process·网络全 ERR_ACCESS_DENIED + 隔离根零文件 + 零 fetch 零定时器/激活路径溯源 已批准本地探针真达持久健康面而 w2a 元数据无 channel 词位且产品零调用方=契约边界据实上报不接线/callback 方决策模板 15 项可执行清单逐项 satisfied_by_contract 或 needs_real_party;全离线无真实 sensor·无桥·无回调方) ==="
 (cd ts && npx tsx scripts/drill-w2a-sensor-tests.ts) || FAIL=1
 

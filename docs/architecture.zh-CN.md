@@ -164,7 +164,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 **评测三层（ADR-11）**：
 - **回归层（防退化）**：TS-vs-TS 双路径稳定性（同 spec 不同 module instance）+ 金标准断言（洱海 8+5、普吉链 4、统一模型 20/20）+ **重放夹具**（mock 重放即行为级回归，Kimi 对话是失败基线）。**v0.0.1-rc.2 起：** 不再依赖 Python oracle 差分；run-all-tests 9 套一次性绿，无需 Python 运行时。全栈入口：`scripts/run-all-tests.sh`。
 - **质量层（防漂移）**：评测集+指标面板——POI 幻觉率、定稿率、不失望四条、NPS；M3 上线（见 `tech-strategy.md` §4），此前以 replay 终态断言兜底。
-- **巡检层（防「mock 绿而真智能烂」）**：真 LLM 重放（`replay-real.ts`）的 nightly 形态已落地——`nightly-evidence.ts`（封存 prompt 集 + 封存价表，预算闸 `GOTRY_NIGHTLY_BUDGET_USD`，无凭证 waiting/backoff/no-spend 零写入，run-all §35；真跑花钱不进 CI，heartbeat/founder 手动执行）。产出 `gotry_m3_nightly_run_v1` 记录追加进**私有证据账本** `ts/gotry-state/evidence/m3/cohort.jsonl`（git 忽略）；`cost_usd` 只来自 dsh-llm 的 usage 累计器 × 封存价表。ADR-10 正是 mock 绿而真 LLM 烂出来的，教训制度化。
+- **巡检层（防「mock 绿而真智能烂」）**：真 LLM 重放（`replay-real.ts`）的 nightly 形态已落地——`nightly-evidence.ts`（封存 prompt 集 + 封存价表，预算闸 `GOTRY_NIGHTLY_BUDGET_USD`，无凭证 waiting/backoff/no-spend 零写入，run-all §35；真跑花钱不进 CI，heartbeat/founder 手动执行）。产出 `gotry_m3_nightly_run_v1` 记录追加进**私有证据账本** `ts/gotry-state/evidence/m3/cohort.jsonl`（git 忽略）；`cost_usd` 只来自 dsh-llm 的 usage 累计器 × 封存价表。ADR-10 正是 mock 绿而真 LLM 烂出来的，教训制度化。种子 cohort 采集 CLI（`m3-cohort.ts`）是面向真实受邀且已同意参与者的 `gotry_m3_cohort_record_v1` 记录的生产者；`persona-sim.ts` 用 LLM persona 预演该路径，其产出仅为 synthetic（以 `test_or_staff` 登记，绝不计入 M3/M4 证据）。
 
 ## 8. ADR
 

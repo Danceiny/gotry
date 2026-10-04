@@ -25,7 +25,7 @@
 | **M3 Budget standard** | Budget tier (motivation-interview calibration + historical behavior) | budgetTier gate → profile | ✅ Gate calibrated; **residual on refluxing the gap between actual deals and planning estimates →** [#340](https://github.com/Danceiny/gotry/issues/340) (**the write gate is governed by [#136](https://github.com/Danceiny/gotry/issues/136)/[#231](https://github.com/Danceiny/gotry/issues/231)/[#232](https://github.com/Danceiny/gotry/issues/232)/[#233](https://github.com/Danceiny/gotry/issues/233); not implemented before real transactions land**) |
 | **M4 Travel timeline** | Where/when/with whom (foundation for three-level origin resolution) | `gotry-state/trips.jsonl` (§4 P1) | ✅ Landed 2026-08-28 (§4 P1) |
 | **M5 Companion profiles** | Companions + constraints (hypertension/motion sickness/stamina), sensitive-fill form | `gotry-state/companions.json` (§4 P2) | ✅ Landed 2026-08-28 (§4 P2) |
-| **M6 Session dual-zone memory** | Trip Notebook (durable) + Hot Context (tiered expiry) | the dsh session's own transcript | ❌ **P4 (not P3)**, depends on real usage-pattern data; the gate is tracked by [#255](https://github.com/Danceiny/gotry/issues/255) and stays closed until real usage patterns or multi-user trigger it |
+| **M6 Session dual-zone memory** | Trip Notebook (durable) + Hot Context (tiered expiry) | six log-type event kinds on the ADR-15 ledger + a read-time fold (`session-zones.ts` / `session-zone-ledger.ts`); the dsh session transcript stays the raw-conversation authority and both zones hold only pointers | ✅ **Mechanism landed 2026-10-04 (P4-1..P4-4, §4), `sessionZones` default-off**; the value gate stays open — the three falsifiable metrics have frozen thresholds but no real cohort yet, so [#255](https://github.com/Danceiny/gotry/issues/255)'s value claim and the #20 scorer `p4` gate are both still closed |
 
 **GoTry increments beyond the reference framework** (absent from both the T system and ai-agent-book; original to this domain):
 
@@ -64,9 +64,12 @@ Verified on the real model: e2e §13 (four-hop read-back verbatim identical) / �
 Behavioral preferences decay over tiered windows of 30/90/180/365d (a deterministic reducer; confidence only decreases, never deleted — the same boundary as loopx memory-utility); **motivation weights never decay** (product design: destinations change, motivations stay stable across years).
 - Acceptance (met): floor 0.1 — old but never extinguished / monotone / ceiling 1; zero motivation decay is a constructive guarantee (the module exposes no profile API, 5/5 assertions, run-all §23). Landed = the `memory-decay.ts` primitive + a "fresh confidence" column per wish in memory-metrics; the future behavioral-preference layer reuses it directly.
 
-### P4 Session Dual-Zone Memory (M6 layer, deferred)
+### P4 Session Dual-Zone Memory (M6 layer) — **✅ mechanism landed 2026-10-04, default-off**
 
-Trip Notebook (durable, background LLM extraction, negative list enforced) + Hot Context (tiered expiry: 30min resources / 24h intents, CAS against concurrency). **Depends on real usage-pattern data**; does not start before multi-user.
+Trip Notebook (durable, owner-confirmed promotion only — the model may propose, never self-promote) + Hot Context (tiered expiry: 30min resources / 24h intents, optimistic rev CAS). Implementation-level design: [session-dual-zone-memory-design.md](session-dual-zone-memory-design.md).
+
+- **Landed**: P4-1 zone contract pure core (`session-zones.ts`, run-all §74) → P4-2 ledger landing, `forgetSubject` integration and two `state-cli export` views (`session-zone-ledger.ts`, §77; zero new tables, `state-ledger.ts` untouched, kernel-manifest gate zero drift) → P4-3 session wiring behind the `sessionZones: 'off'|'on'` switch (`session-zone-wiring.ts`, §78; capture seams with pointer-only evidence, the `{{session_zone_brief}}` read-back variable, owner-confirmed promotion routed through the existing motivation/timeline/companion gates) → P4-4 opt-in shape-only counters, the three falsifiable metrics as read-only projections with thresholds frozen before any data, and an HMAC-pseudonymous candidate export in the #228 collector family (`session-zone-observation.ts`, §79).
+- **Still closed**: the value claim. The mechanism being green proves the contracts, not the payoff — fixtures are `synthetic_fixture` (`exit_evidence_eligible=false`, `value_claimed=false`), a real cohort has not arrived, and the #20 scorer `p4` gate follows its own evidence rules. Multi-writer claim/CAS physicalization stays behind D-15 ([#275](https://github.com/Danceiny/gotry/issues/275)).
 
 ## 5. Hooks into Milestones/Acceptance
 
@@ -76,7 +79,7 @@ Trip Notebook (durable, background LLM extraction, negative list enforced) + Hot
 
 ## 6. Explicitly Not Doing
 
-- Storing raw conversation text (privacy stance); storing sensitive ID/payment fields (the backend fills them); free-form LLM memory (extraction is always gated); implementing M5/P4 early for the sake of "memory completeness" (no spend without real callers).
+- Storing raw conversation text (privacy stance); storing sensitive ID/payment fields (the backend fills them); free-form LLM memory (extraction is always gated); building past a layer's own gates for the sake of "memory completeness" (no spend without real callers — P4 entered the flow only on explicit founder approval, ships default-off, and claims no value until a real cohort passes §4's frozen metrics).
 
 ## 7. Issue #20 Value Evidence Contract
 

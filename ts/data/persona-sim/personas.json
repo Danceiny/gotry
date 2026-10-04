@@ -1,0 +1,234 @@
+{
+  "schema_version": "gotry_persona_sim_deck_v1",
+  "description": "Persona cards for the SYNTHETIC-only M3 capture-path harness (ts/scripts/persona-sim.ts). Every card is grounded in material already in this repository: docs/user-guide.md 'Try It' prompts, docs/evaluation/persona-bench/README.md §1 frozen prompt, and docs/research/kimi-postmortem.md. A persona is a simulation, never a traveller: nothing produced from this deck can contribute to M3 or M4 exit evidence.",
+  "personas": [
+    {
+      "persona_id": "erhai-weekend-unwind",
+      "title": "Erhai weekend unwind, hard-constraint no-match",
+      "grounding": "docs/user-guide.md 'Try It: An Infeasible Dream Gets Caught'; data/golden_erhai.json",
+      "goals": [
+        "Stare at Erhai lake and do nothing for a weekend",
+        "Leave Shanghai on Friday evening and be back for Monday"
+      ],
+      "hard_constraints": [
+        "This weekend only, two days, not negotiable",
+        "Total budget CNY 3000",
+        "No wake-up before 08:00",
+        "On annual leave: no work window at all",
+        "Nothing booked yet"
+      ],
+      "patience": { "max_user_turns": 4, "abandon_after_questions": 3 },
+      "answering_style": "verbose",
+      "finalize_rule": "Do not finalize if my stated destination is ruled out, even when alternatives look good — I came for Erhai. Finalize only if an Erhai-shaped plan fits the weekend.",
+      "rating_rule": "Rate 6 when the refusal is honest and alternatives come with wake-up time, arrival energy and all-in cost; rate 2 if the engine invents a feasible Erhai weekend.",
+      "opening_message": "我想去洱海边发呆,就这周末,我在上海,预算3000,别让我早起。年假了不用办公,还没订任何东西。",
+      "expected_outcome": "plan_delivered_not_finalized",
+      "dry_run": {
+        "product_facts": [
+          { "profile": { "workWindow": { "vacation": true }, "bookedResources": [] } }
+        ],
+        "product_skeleton": { "scenario": "erhai", "segments": [{ "id": "c1", "role": "choice" }] },
+        "product_slots": null,
+        "persona_turns": [
+          { "decision": "abandon", "message": "洱海这次去不了的话我就先不定了,谢谢。", "nps": 6 }
+        ]
+      }
+    },
+    {
+      "persona_id": "phuket-workation-multileg",
+      "title": "Two-week Phuket workation with a multi-leg chain",
+      "grounding": "docs/evaluation/persona-bench/README.md §1 frozen prompt; docs/research/kimi-postmortem.md M-1/F2; data/flights_2026.json",
+      "goals": [
+        "Work remotely from Phuket for two weeks and meet my girlfriend there",
+        "Reach Bangkok for the weekend, then Yunnan, then be at work in Dubai Monday morning"
+      ],
+      "hard_constraints": [
+        "Employer time zone UTC+4, meeting hours 10:00-19:00 — no flight may cut into them",
+        "The Phuket hotel is already booked 7.18-7.23 and cannot move",
+        "7.18 morning is a Hong Kong bank appointment"
+      ],
+      "patience": { "max_user_turns": 6, "abandon_after_questions": 5 },
+      "answering_style": "verbose",
+      "finalize_rule": "Finalize once the plan respects the work window and keeps the booked hotel as a fixed anchor, and every leg states arrival energy.",
+      "rating_rule": "Rate 9 when work windows actually exclude conflicting flights with reasons; rate 5 if the plan silently replans my booked hotel.",
+      "opening_message": "7.17周五22:40落地深圳,7.18早上去香港办银行开户&保险签约;争取7.18当天飞泰国普吉岛,跟女朋友见面,之后两周在普吉居家办公;8.10周一凌晨从深圳起飞,要在周一上班前到迪拜。请给我做机票和酒店的行程规划和推荐。",
+      "expected_outcome": "plan_delivered_and_finalized",
+      "dry_run": {
+        "product_facts": [
+          { "calendar": { "year": 2026, "assertedWeekdays": { "2026-07-17": "fri", "2026-07-18": "sat" } } },
+          { "profile": { "workWindow": { "homeTzOffsetMin": 240, "startMin": 600, "endMin": 1140, "workdays": [0, 1, 2, 3, 4], "evidence": "用户原话:工作时间是UTC+4的10:00到19:00" } } },
+          { "profile": { "bookedResources": [{ "kind": "hotel", "ref": "The Title East Wing Rawai", "window": "2026-07-18~07-23" }] } }
+        ],
+        "product_skeleton": { "scenario": "workation", "segments": [{ "id": "f1", "role": "choice" }] },
+        "product_slots": null,
+        "persona_turns": [
+          { "decision": "continue", "message": "我的工作时间是UTC+4的早上10点到下午7点,周一到周五。" },
+          { "decision": "continue", "message": "我订了酒店:The Title East Wing Rawai,7.18入住 7.23 退房,这个不能改。" },
+          { "decision": "finalize", "message": "可以,就按这个方案定了。", "nps": 9 }
+        ]
+      }
+    },
+    {
+      "persona_id": "phuket-with-parents",
+      "title": "Phuket with parents, slow pace and no early departures",
+      "grounding": "docs/user-guide.md 'Try It: A Multi-Leg Trip with Work Windows' (companion-flow variant); docs/evaluation/persona-bench/README.md G4 companion passenger flow",
+      "goals": [
+        "Take my parents to Phuket for a week at a slow pace",
+        "Keep every transfer short enough for them to handle"
+      ],
+      "hard_constraints": [
+        "No departure before 09:00 — my parents cannot do pre-dawn airports",
+        "At most one connection per direction",
+        "I still have to work: 09:00-18:00 Beijing time on weekdays",
+        "Nothing booked yet"
+      ],
+      "patience": { "max_user_turns": 5, "abandon_after_questions": 4 },
+      "answering_style": "verbose",
+      "finalize_rule": "Finalize when no leg departs before 09:00 and the plan says what each leg costs door to door.",
+      "rating_rule": "Rate 8 when early departures are excluded with a stated reason; rate 4 if a 06:00 wake-up is presented as fine.",
+      "opening_message": "想带爸妈去普吉岛待一周,我还得远程上班。老人起不来早,别安排早班机,中转也别太折腾。还没订任何东西,帮我看看机票和酒店。",
+      "expected_outcome": "plan_delivered_and_finalized",
+      "dry_run": {
+        "product_facts": [
+          { "profile": { "companions": ["parents"] } },
+          { "profile": { "workWindow": { "homeTzOffsetMin": 480, "startMin": 540, "endMin": 1080, "workdays": [0, 1, 2, 3, 4], "evidence": "用户原话:09:00-18:00 北京时间" } } },
+          { "profile": { "bookedResources": [] } }
+        ],
+        "product_skeleton": { "scenario": "workation", "segments": [{ "id": "f1", "role": "choice" }] },
+        "product_slots": null,
+        "persona_turns": [
+          { "decision": "continue", "message": "我的工作时间是北京时间 9 点到 18 点,周一到周五。" },
+          { "decision": "continue", "message": "都还没订,机票酒店都要你帮我看。" },
+          { "decision": "finalize", "message": "行,这个节奏爸妈可以,就这样定。", "nps": 8 }
+        ]
+      }
+    },
+    {
+      "persona_id": "redeye-dubai-monday",
+      "title": "Multi-leg red-eye that has to land before Monday work",
+      "grounding": "docs/evaluation/persona-bench/README.md G8 red-eye arrival state; docs/research/kimi-postmortem.md 「机场回来直接去上班」",
+      "goals": [
+        "Get from Shenzhen to Dubai overnight and go straight to the office",
+        "Not be a wreck when I land"
+      ],
+      "hard_constraints": [
+        "Must be at the Dubai office Monday 10:00 local",
+        "Red-eye is acceptable, missing work is not",
+        "Employer time zone UTC+4, meeting hours 10:00-19:00",
+        "Return flight already booked"
+      ],
+      "patience": { "max_user_turns": 4, "abandon_after_questions": 3 },
+      "answering_style": "terse",
+      "finalize_rule": "Finalize as soon as the plan reports arrival energy for the red-eye leg and does not collide with meeting hours.",
+      "rating_rule": "Rate 9 when arrival energy is computed rather than only ticket price; rate 3 if the overnight leg is presented with price alone.",
+      "opening_message": "8.10周一凌晨从深圳起飞,要在迪拜周一上班前落地,机场直接去公司。帮我看机票。",
+      "expected_outcome": "plan_delivered_and_finalized",
+      "dry_run": {
+        "product_facts": [
+          { "profile": { "workWindow": { "homeTzOffsetMin": 240, "startMin": 600, "endMin": 1140, "workdays": [0, 1, 2, 3, 4], "evidence": "用户原话:UTC+4 10:00-19:00" } } },
+          { "profile": { "bookedResources": [{ "kind": "flight", "ref": "return leg already booked", "window": "2026-08-10" }] } }
+        ],
+        "product_skeleton": { "scenario": "workation", "segments": [{ "id": "f1", "role": "choice" }] },
+        "product_slots": null,
+        "persona_turns": [
+          { "decision": "continue", "message": "回程已经订了。" },
+          { "decision": "finalize", "message": "定。", "nps": 9 }
+        ]
+      }
+    },
+    {
+      "persona_id": "yunnan-budget-student",
+      "title": "Budget-tight student, one week in Yunnan",
+      "grounding": "docs/roadmap.md M3 budget-tier scenario; data/yunnan-pack.json",
+      "goals": [
+        "One week in Yunnan — Dali and Lijiang — on a student budget",
+        "Spend as little as possible on transport"
+      ],
+      "hard_constraints": [
+        "Hard ceiling CNY 4000 for everything",
+        "On leave for the week, no work window",
+        "Dates are flexible",
+        "Nothing booked yet"
+      ],
+      "patience": { "max_user_turns": 4, "abandon_after_questions": 3 },
+      "answering_style": "terse",
+      "finalize_rule": "Finalize only if a concrete plan comes in under CNY 4000. An infeasibility verdict without a usable relaxation means I walk away.",
+      "rating_rule": "Rate 7 for an honest under-budget plan; rate 4 or lower when the refusal reason is not something I can act on.",
+      "opening_message": "我请假一周去云南,大理丽江都想看看,预算4000以内全包,日期可以调。还没订任何东西。",
+      "expected_outcome": "plan_delivered_not_finalized",
+      "dry_run": {
+        "product_facts": [
+          { "profile": { "workWindow": { "vacation": true }, "bookedResources": [] } }
+        ],
+        "product_skeleton": { "scenario": "yunnan", "segments": [{ "id": "f1", "role": "choice" }] },
+        "product_slots": null,
+        "persona_turns": [
+          { "decision": "abandon", "message": "这个理由我没法处理,我先自己查吧。", "nps": 4 }
+        ]
+      }
+    },
+    {
+      "persona_id": "vague-wish-drifter",
+      "title": "Vague wish, needs the interview to ask the load-bearing questions",
+      "grounding": "docs/user-guide.md 'Try It: A Return Visit' opening 「想出去走走」",
+      "goals": [
+        "Go somewhere. I have not thought about where.",
+        "Be talked into something rather than fill in a form"
+      ],
+      "hard_constraints": [
+        "I will not volunteer dates, budget or destination unless asked directly",
+        "If asked more than three questions before I see anything concrete, I lose interest"
+      ],
+      "patience": { "max_user_turns": 4, "abandon_after_questions": 3 },
+      "answering_style": "evasive",
+      "finalize_rule": "Never finalize in this session — I am browsing. Abandon once my patience runs out.",
+      "rating_rule": "I never see a plan in this session, so I give no score at all: an M3 NPS answer belongs to a delivered plan and I refuse to invent one.",
+      "opening_message": "想出去走走。",
+      "expected_outcome": "interview_only",
+      "dry_run": {
+        "product_facts": [{}],
+        "product_skeleton": null,
+        "product_slots": null,
+        "persona_turns": [
+          { "decision": "continue", "message": "不知道,随便吧。" },
+          { "decision": "continue", "message": "还没想好。" },
+          { "decision": "abandon", "message": "算了,我再想想。" }
+        ]
+      }
+    },
+    {
+      "persona_id": "krabi-dive-buddy-terse",
+      "title": "Companion arriving separately, answers in single words",
+      "grounding": "docs/evaluation/persona-bench/README.md G4/G5 (companion flow; 「对岸万xx的海边小城」 = Krabi)",
+      "goals": [
+        "Join my partner who is already in Phuket and dive around Krabi",
+        "Not plan anything myself"
+      ],
+      "hard_constraints": [
+        "I fly from a different origin than my partner",
+        "I work European hours remotely: 15:00-23:00 local",
+        "My partner already booked the Phuket hotel"
+      ],
+      "patience": { "max_user_turns": 4, "abandon_after_questions": 4 },
+      "answering_style": "terse",
+      "finalize_rule": "Finalize at the first plan that does not collide with my working hours.",
+      "rating_rule": "Rate 7 when my separate arrival chain is treated as its own passenger flow; rate 3 if the plan assumes one traveller.",
+      "opening_message": "对象已经在普吉了,我从别的地方飞过去跟她碰头,想去对岸那个海边小城潜水。帮我看机票。",
+      "expected_outcome": "plan_delivered_and_finalized",
+      "dry_run": {
+        "product_facts": [
+          { "profile": { "companions": ["partner already in Phuket"] } },
+          { "profile": { "workWindow": { "homeTzOffsetMin": 420, "startMin": 900, "endMin": 1380, "workdays": [0, 1, 2, 3, 4], "evidence": "用户原话:15:00-23:00" } } },
+          { "profile": { "bookedResources": [{ "kind": "hotel", "ref": "partner-booked Phuket hotel", "window": "2026-07-18~07-23" }] } }
+        ],
+        "product_skeleton": { "scenario": "workation", "segments": [{ "id": "f1", "role": "choice" }] },
+        "product_slots": null,
+        "persona_turns": [
+          { "decision": "continue", "message": "15点到23点。" },
+          { "decision": "continue", "message": "她订了。" },
+          { "decision": "finalize", "message": "可以。", "nps": 7 }
+        ]
+      }
+    }
+  ]
+}

@@ -189,6 +189,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [evaluation/dida-runner-stop-report.md](evaluation/dida-runner-stop-report.md) | Dida live runner stop/cleanup and strict live opt-in evidence (#502/#504) |
 | [evaluation/sf-evidence-isolation-report.md](evaluation/sf-evidence-isolation-report.md) | Session-flight benchmark evidence isolation: command E2E, summary readback, and proof limits |
 | [evaluation/copilot-readiness-report.md](evaluation/copilot-readiness-report.md) | Copilot readiness and process cleanup: real SDK paths, controlled workers, Node 22/24 regression, and known limits |
+| [evaluation/persona-sim-report.md](evaluation/persona-sim-report.md) | LLM persona simulation harness and M3 capture CLI: what simulated sessions can and cannot show (synthetic only, never M3/M4 evidence) |
 | [evaluation/copilot-cleanup-diagnostic-report.md](evaluation/copilot-cleanup-diagnostic-report.md) | Copilot cleanup failure identity, primary-error preservation and controlled diagnostic evidence (#518) |
 | [evaluation/copilot-darwin-zombie-quiescence-report.md](evaluation/copilot-darwin-zombie-quiescence-report.md) | Copilot cleanup timeout mechanism (Darwin zombie-only group observation) and verdict-by-quiescence repair (#518) |
 | [evaluation/copilot-terminal-report.md](evaluation/copilot-terminal-report.md) | Managed worker termination: immediate request rejection, safe errors, and process cleanup |
