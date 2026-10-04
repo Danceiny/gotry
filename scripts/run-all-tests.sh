@@ -659,6 +659,10 @@ echo
 echo "=== 74. 会话双区记忆分区契约纯核(P4-1,design/session-dual-zone-memory-design.md §5:闭集 hot_context·trip_notebook 未知拒收/写侧负面清单证件·手机号·URL·凭证零入区/owner 确认引用闸/rev CAS 同 rev 幂等 no-op·stale_rev fail-closed 类型化/注入时钟分层 TTL 30min resource·24h intent 只自写入起算读不续命/确定性 fold 重建==直读;纯函数零 IO·零定时器·零网络,不接账本(P4-2)与会话(P4-3),内核 manifest 零漂移;全离线;编号 71→74:§71 FX/#606、§72 atlas/#608、§73 观测/#607 先后占号) ==="
 (cd ts && npx tsx scripts/session-zones-tests.ts) || FAIL=1
 
+echo
+echo "=== 75. M3 种子 cohort 采集(issue #22,scripts/product-metrics.ts 评分器此前零生产方:显式 opt-in(无 HMAC key/无 consent/未 init 一律零写入)/HMAC-SHA256 假名 participant·plan·cohort 键按 evidence_kind 域分离/append-only 幂等重放 unchanged/乱序与越界 fail-closed 类型化(同人第二条 NPS 被写时拒)/ts/dsh-runtime·~/.dsh·~/.gotry·.git 状态根拒收·0600 文件 0700 目录·writer lock busy 零写入/导出严格 gotry_m3_cohort_record_v1 形状 + 真实 product-metrics.ts 子进程消费/合成标签四条反证:(a) 全项达标的合成 cohort 仍 business_pass=false、(b) 模拟记录既不得入 real_seed_cohort 存储也不得入已 attest 为 real 的证据根、(c) PII 哨兵零落盘、(d) 单字段改标 real 被导出 attestation digest 抓住;(a)(b)(d) 各带红基线:同样数字手写成 real 时评分器单独会给 business_pass=true;隔离 mkdtemp 状态根,全离线) ==="
+(cd ts && npx tsx scripts/m3-cohort-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
