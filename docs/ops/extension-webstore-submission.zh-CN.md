@@ -94,7 +94,7 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 - 商店后台接受 zip，草稿显示 `version_name` 为 `0.2.0-rc.26`（`version` 为 `0.2.0.26`）。文案、权限理由、数据使用清单及隐私政策 URL 已按 Dida／HotelByte 实际行为更新。2026-09-25，后台返回「已将您的扩展程序提交送审」，状态为「待审核」。已选择过审后自动发布；上线前不能做 Chrome Web Store 回拉验证。仓库 Actions 目前未配置 CWS secrets，故本次使用后台上传。
 - **商店提交流程由 [#346](https://github.com/Danceiny/gotry/issues/346) 跟踪**；**founder 决策 whether / when / 升哪个 version**（founder-confirm 制，见 `tech-strategy.md` §11 与 `AGENTS.md` 发布纪律）；**版本打包 / devconsole 上传 / 状态跟踪 / 验证**由 release executor 在仓库发布纪律下执行；founder 仅完成账户侧必要的本人审批/2FA。提审前商店版用户调 dida 会得到 needs-extension（与全新站点一致），不影响既有 ctrip/12306 车道。
 - unpacked/GitHub Releases 通道不受商店审核影响，`feat/session-dida-portal` 分支合并即生效（PR #297 已 merge，代码与 manifest 已就位）。
-- **当前证据边界**：提审已受理，但线上商店仍为 v0.1.0。须待 v0.2.0.27 过审、上线并完成商店回拉验证后，才能关闭 [#346](https://github.com/Danceiny/gotry/issues/346)（唯一跟踪单——原 [#537](https://github.com/Danceiny/gotry/issues/537) 的门户 join 与 Dida 登录链路验收已于 2026-10-02 并入本单，#537 凭收据收口）。
+- **本次提审时的证据边界**（已被下方 2026-10-04 回执取代）：提审已受理，但当时线上商店仍为 v0.1.0。[#346](https://github.com/Danceiny/gotry/issues/346) 是唯一跟踪单——原 [#537](https://github.com/Danceiny/gotry/issues/537) 的门户 join 与 Dida 登录链路验收已于 2026-10-02 并入本单，#537 凭收据收口。
 
 ## Stai v0.2.0.26 拒审回执与 v0.2.0.27 重提（2026-09-30）
 
@@ -103,13 +103,18 @@ founder 控制的同一扩展，桥侧白名单双收；端口池（8791-8795）
 - **处置**：founder 2026-09-30 拍板改名 **Stai Travel Bridge**（Travel 对齐检索面，Bridge 对齐桥接）并重提，不做申诉。v0.2.0.27 = manifest name 改名 + 版本推进（version `0.2.0.27` / version_name `0.2.0-rc.27`），listing 文案、权限理由、隐私申报沿用 v0.2.0.26 已修正版本（「零凭证经手」类旧表述已在 #586 清除）。
 - **重提回执（2026-09-30）**：PR #597 合并（main `ecfd4c8`），exact-SHA 重建 zip SHA-256 `65bdb8f37ae87386d3d710f18bf59c174d296fd2150a1ecbafb0d70e7bb7e347`，[ext-v0.2.0.27 Release](https://github.com/Danceiny/gotry/releases/tag/ext-v0.2.0.27) 三资产已发布；dashboard 上传后软件包中的标题显示 Stai Travel Bridge、草稿版本 `0.2.0-rc.27`，「提请审核 → 提交审核」完成，状态 **待审核**。CWS secrets 仍空配，本次仍为 dashboard 路径。操作配方：包内 file input 忽略合成 click（无 user activation），经页面 JS DataTransfer 注入 File 后派发 change 事件完成上传；「提请审核」在 /edit 落地页头部，签名密钥提示以「知道了」关闭。
 
+## Stai v0.2.0.27 过审与公开回拉回执（2026-10-04）
+
+- **过审**：v0.2.0.27 已通过审核并上线。2026-10-04 15:48Z 从两个公开来源回拉，未使用后台权限。商店更新接口（`clients2.google.com/service/update2/crx?response=updatecheck`，条目 `oeajpiccmonococjcegddlooeeohlbgd`）返回 `version="0.2.0.27"`、`size=19512`，CRX `hash_sha256=ffc95dafd9a42355c41b10f1ae8eb474b6004fc0053fec032e9c65450e93acc6`；商店会重新打包并签名 CRX，因此该摘要不能与上文仓库 zip 摘要直接比对。公开商店页显示名称 Stai Travel Bridge、版本 0.2.0-rc.27、最后更新 2026-10-02。2026-10-02 06:30Z 抽查时页面仍为 v0.1.0，故上线发生在其后，具体时刻未取得。
+- **仍待做**：安装时的权限提示（公开页文本中读不到）、桌面连接检查、员工门户 join 与 Dida 登录链路——均在下方矩阵中。在它们通过前 [#346](https://github.com/Danceiny/gotry/issues/346) 保持打开。
+
 ## 过审后品牌 Chrome 验收矩阵
 
-仅在线上商店提供 v0.2.0.26 后执行。将证据存入私有且带日期的目录，例如 `~/.gotry/evidence/extension/stai-0.2.0.26/<timestamp>/`；公开 issue 仅记录脱敏裁决和产物哈希。不得保存 cookie 值、join ticket、一次性凭据、个人行程或供应商原始回包。使用普通 Chrome 中商店签名的 `oeajpiccmonococjcegddlooeeohlbgd`，不用解压安装版 ID 或 Chrome for Testing 配置。记录 Chrome 版本、扩展版本、商店页版本、桥协议和测试时间，以便复现。
+现在线上商店已提供 v0.2.0.27（2026-10-04 回拉，见上方回执），可执行本矩阵。将证据存入私有且带日期的目录，例如 `~/.gotry/evidence/extension/stai-0.2.0.27/<timestamp>/`；公开 issue 仅记录脱敏裁决和产物哈希。不得保存 cookie 值、join ticket、一次性凭据、个人行程或供应商原始回包。使用普通 Chrome 中商店签名的 `oeajpiccmonococjcegddlooeeohlbgd`，不用解压安装版 ID 或 Chrome for Testing 配置。记录 Chrome 版本、扩展版本、商店页版本、桥协议和测试时间，以便复现。
 
 | 闸门 | 可复现操作 | 证据及通过条件 |
 |---|---|---|
-| 公开回拉 | 打开公开商店条目，在普通 Chrome 安装或更新 Stai。核对已安装版本及携程、Dida、HotelByte 权限；只启用一条 Stai 通道。 | 商店公开版与已安装版均为 `0.2.0.26`，条目 ID 仍为商店 ID。分别记录旧 v0.1.0 自动更新与全新安装的结果。后台草稿获批本身不算通过。 |
+| 公开回拉 | 打开公开商店条目，在普通 Chrome 安装或更新 Stai。核对已安装版本及携程、Dida、HotelByte 权限；只启用一条 Stai 通道。 | 商店公开版与已安装版均为 `0.2.0.27`，条目 ID 仍为商店 ID。分别记录旧 v0.1.0 自动更新与全新安装的结果。后台草稿获批本身不算通过。 |
 | 桌面连接 | 启动 GoTry 本机桥后，只读查询 `http://127.0.0.1:8791/health` 和 `/status`；必要时打开受支持页面唤醒扩展。 | 健康检查返回 `session-bridge.v1`；状态返回 `extensionConnected: true` 且心跳时间足够近。类型化不可用结果记为失败或降级观察，不记为命中。 |
 | 员工门户 join | 在获准的员工账号下打开 `https://portal.hotelbyte.com/` 或对应测试站，按正常流程 join。通过获准界面只读查询门户后端的 `bridge/status`。 | 门户发出一次性 join ticket 后，状态为 `extensionConnected: true`。只记录布尔值、时间和端点类别；不导出 ticket 或 bearer token。没有员工账号时标记为**未执行**。 |
 | Dida 登录及 D-37 | 账号持有人从门户按正常流程在普通 Chrome 完成 Dida 登录。只读查询获准的 `sessionChannel/status`，再执行一次有界的只读 Dida 检索。 | 观察到 `loggedIn: true` 和类型化命中或明确未命中；真实退出登录时返回 `needs-login`。记录 cookie 名称级检测是否与页面会话一致。本商店验收不得使用 Chrome for Testing 的跳过登录闸参数。遇到挑战立即停止。 |
