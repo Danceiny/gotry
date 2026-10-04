@@ -131,24 +131,40 @@ const DEEP_NEST_DEPTH = 20_000
 let achievedNestDepth = 0
 
 /**
- * Build the deeply-nested opaque payload WITHOUT ever throwing.
+ * Build the deeply-nested opaque payload as JSON text WITHOUT ever throwing.
  *
  * `JSON.parse` depth limits are a V8 build detail, and this value is needed at
  * module scope (the corpus is shared by the in-process and cross-process arms).
  * A `RangeError` here would kill the suite before a single assertion or any
  * cleanup ran, so the builder degrades to a shallower depth and records what it
  * actually achieved.
+ *
+ * It returns TEXT that `envelopeWithRawOpaque` splices in, never a parsed value
+ * that gets re-stringified: `JSON.parse` is iterative but `JSON.stringify`
+ * recurses, and 20_000 frames fit the arm64 macOS stack yet overflow the x64
+ * Linux CI runner's ("Maximum call stack size exceeded" at module scope).
  */
-function deepNestedPayload(): unknown {
+function deepNestedPayloadText(): string {
   for (const depth of [DEEP_NEST_DEPTH, 2_000, 200, 1]) {
+    const text = '['.repeat(depth) + ']'.repeat(depth)
     try {
-      const value = JSON.parse('['.repeat(depth) + ']'.repeat(depth)) as unknown
+      JSON.parse(text) // acceptance probe only; the parsed value is discarded
       achievedNestDepth = depth
-      return value
+      return text
     } catch { /* this V8 refuses that depth; try shallower */ }
   }
   achievedNestDepth = 0
-  return []
+  return '[]'
+}
+
+const OPAQUE_PLACEHOLDER = '__opaque_data_placeholder__'
+
+/** An envelope whose opaque `source_event.data` is the given raw JSON text. */
+function envelopeWithRawOpaque(opaqueJsonText: string): string {
+  const text = envelope({ source_event: { schema: { type: 'object' }, data: OPAQUE_PLACEHOLDER } })
+  const quoted = JSON.stringify(OPAQUE_PLACEHOLDER)
+  if (!text.includes(quoted)) throw new Error('envelopeWithRawOpaque: placeholder not found in the envelope text')
+  return text.replace(quoted, () => opaqueJsonText)
 }
 
 const CORPUS: Case[] = [
@@ -187,7 +203,7 @@ const CORPUS: Case[] = [
   },
   {
     name: 'deeply-nested-payload',
-    raw: envelope({ source_event: { schema: { type: 'object' }, data: deepNestedPayload() } }),
+    raw: envelopeWithRawOpaque(deepNestedPayloadText()),
     expect: null,
     note: 'opaque depth is ignored, never walked: the host must not crash and must project the same 10 keys',
   },
