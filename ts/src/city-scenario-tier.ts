@@ -27,9 +27,9 @@
  *  - docs/rfc/loopx-inspired-upgrades-rfc.md S2: the ranking form
  *    `rank = semantic × bounded_modifier` and the evidence-grade ordering
  *    `owner_correction > controlled_replay > deterministic_effect > evaluator_inference`;
- *  - ts/capabilities/sponsor-plugin.ts `rankSponsorCandidates` precedent: a
- *    non-semantic weight never silently rewrites the sort key, and a tie-break
- *    bias is disclosed per candidate;
+ *  - the ranking-disclosure precedent in `ts/capabilities/` (the sponsored-inventory
+ *    ranker): a non-semantic weight never silently rewrites the sort key, and a
+ *    tie-break bias is disclosed per candidate;
  *  - ts/src/memory-decay.ts: decay touches behavioural events only and exposes no
  *    motivation-profile API; this module likewise touches no profile and no store.
  *
@@ -473,7 +473,7 @@ export interface TierRankedCandidate {
   readonly modifier_ppm: number
   readonly score: number
   readonly tier_id: string | null
-  /** per-candidate disclosure of the bias applied (sponsor-plugin precedent) */
+  /** per-candidate disclosure of the bias applied (ranking-disclosure precedent) */
   readonly explanation: string
 }
 

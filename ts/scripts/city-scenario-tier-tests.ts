@@ -268,7 +268,10 @@ check(boostedRank.ok && boostedRank.value.map(r => r.id).join(',') === 'cand-boo
 check(boostedRank.ok && boostedRank.value.length === candidates.length, 'reordering preserves the candidate count exactly')
 check(boostedRank.ok && tierRankingFilterViolation(candidates, boostedRank.value) === null, 'the mechanical no-hard-filter check passes for the reordered ranking')
 check(boostedRank.ok && boostedRank.value.every(r => candidates.some(c => c.id === r.id && c.semantic === r.semantic)), 'every row preserves its original semantic score (the unmodified ranking is always recoverable)')
-check(boostedRank.ok && boostedRank.value.find(r => r.id === 'cand-boosted')!.explanation.includes('probe-tier-1'), 'the applied bias is disclosed per candidate (sponsor-plugin precedent)')
+check(
+  boostedRank.ok && (boostedRank.value.find(r => r.id === 'cand-boosted')?.explanation ?? '').includes('probe-tier-1'),
+  'the applied bias is disclosed per candidate (ranking-disclosure precedent)',
+)
 
 /** The most hostile admissible tier: the lower bound applied to a zero semantic score. */
 const minTier: readonly CityScenarioTierEntry[] = [admittedProbe({ tier_id: 'probe-min', modifier_ppm: TIER_MODIFIER_PPM_MIN })]
