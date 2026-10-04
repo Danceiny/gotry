@@ -659,6 +659,10 @@ echo
 echo "=== 74. 会话双区记忆分区契约纯核(P4-1,design/session-dual-zone-memory-design.md §5:闭集 hot_context·trip_notebook 未知拒收/写侧负面清单证件·手机号·URL·凭证零入区/owner 确认引用闸/rev CAS 同 rev 幂等 no-op·stale_rev fail-closed 类型化/注入时钟分层 TTL 30min resource·24h intent 只自写入起算读不续命/确定性 fold 重建==直读;纯函数零 IO·零定时器·零网络,不接账本(P4-2)与会话(P4-3),内核 manifest 零漂移;全离线;编号 71→74:§71 FX/#606、§72 atlas/#608、§73 观测/#607 先后占号) ==="
 (cd ts && npx tsx scripts/session-zones-tests.ts) || FAIL=1
 
+echo
+echo "=== 77. 会话双区记忆账本落点(P4-2,issue #255:六 kind 以日志类事件落**既有** events 表(零新表/零 schema 迁移/state-ledger.ts 零改动)/单事务{fold 读 rev;守门闸;INSERT}——stale_rev·负面清单·闭集·缺 owner 引用在插入前拒绝且账本零新行/双道幂等(守门层同 rev 重放 appended:false + UNIQUE 索引物理 no-op)/幂等键带生代使 drop→重捕获不被吞/真实子进程 kill -9 提交前崩溃 = 全无·正常提交 = 全有/forget 物理硬删 + 恰一行审计(会话级多主体仍一行)/state-cli export 两派生视图逐字节 == fold 且导出零新事件/读上界 log_truncated fail-closed/坏行与伪造文档确定性跳过/与既有投影及租户互不干扰/账本零过期事件;隔离 mkdtemp stateRoot,全离线,有界子进程超时) ==="
+(cd ts && npx tsx scripts/session-zone-ledger-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1

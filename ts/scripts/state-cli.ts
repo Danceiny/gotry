@@ -4,6 +4,8 @@
  *   migrate [root]                      one-shot 迁移:旧 JSON/JSONL → 账本 events
  *                                       (导入前自动快照到 gotry-state/pre-ledger-backup/)
  *   export [root]                       local-only:账本 → 旧文件名视图(红线 6:可见可导出;单向,不回流)
+ *                                       另含会话双区派生视图(P4-2):hot-context.jsonl /
+ *                                       notebook.json,从事件 fold 渲染——视图永不是写路径
  *   log [root] [--limit N]              事件账本尾部(append-only 审计面)
  *   stats [root]                        各面计数
  *   rebuild [root] [toSeq]              DROP 投影 → fold 重放(可截到 toSeq;账本/投影
@@ -48,6 +50,12 @@
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { ensureLedger, ledgerDbPath, ledgerExists, openLedgerIfExists } from '../src/state-ledger.ts'
+import {
+  ZONE_EXPORT_HOT_FILE,
+  ZONE_EXPORT_NOTEBOOK_FILE,
+  readZoneLog,
+  renderZoneExportViews,
+} from '../src/session-zone-ledger.ts'
 import { formatRepairPlan, loadEvidenceMappingFile, planLedgerRepair } from '../src/ledger-repair-plan.ts'
 import {
   applyLedgerRepair,
@@ -405,6 +413,12 @@ switch (cmd) {
     if (utility.length) atomicWrite(join(dir, 'memory-utility.jsonl'), utility.map(e => JSON.stringify(e)).join('\n') + '\n')
     const trips = ledger.readTrips()
     if (trips.length) atomicWrite(join(dir, 'trips.jsonl'), trips.map(e => JSON.stringify(e)).join('\n') + '\n')
+    // 会话双区派生视图(P4-2,design/session-dual-zone-memory-design.md §2):
+    // 从六个事件 kind 的确定性 fold 渲染;空分区不产生空文件(同既有视图纪律)。
+    const zone = readZoneLog(ledger)
+    const zoneViews = renderZoneExportViews(zone.state)
+    if (zoneViews.hotContextJsonl) atomicWrite(join(dir, ZONE_EXPORT_HOT_FILE), zoneViews.hotContextJsonl)
+    if (zoneViews.notebookJson !== '[]') atomicWrite(join(dir, ZONE_EXPORT_NOTEBOOK_FILE), zoneViews.notebookJson)
     console.log(`视图已导出(单向,DB→文件;红线 6):${dir}/`)
     break
   }
