@@ -663,6 +663,10 @@ echo
 echo "=== 75. M3 种子 cohort 采集(issue #22,scripts/product-metrics.ts 评分器此前零生产方:显式 opt-in(无 HMAC key/无 consent/未 init 一律零写入)/HMAC-SHA256 假名 participant·plan·cohort 键按 evidence_kind 域分离/append-only 幂等重放 unchanged/乱序与越界 fail-closed 类型化(同人第二条 NPS 被写时拒)/ts/dsh-runtime·~/.dsh·~/.gotry·.git 状态根拒收·0600 文件 0700 目录·writer lock busy 零写入/导出严格 gotry_m3_cohort_record_v1 形状 + 真实 product-metrics.ts 子进程消费/合成标签四条反证:(a) 全项达标的合成 cohort 仍 business_pass=false、(b) 模拟记录既不得入 real_seed_cohort 存储也不得入已 attest 为 real 的证据根、(c) PII 哨兵零落盘、(d) 单字段改标 real 被导出 attestation digest 抓住;(a)(b)(d) 各带红基线:同样数字手写成 real 时评分器单独会给 business_pass=true;隔离 mkdtemp 状态根,全离线) ==="
 (cd ts && npx tsx scripts/m3-cohort-tests.ts) || FAIL=1
 
+echo
+echo "=== 76. LLM persona 模拟 harness(issue #22 采集面验证,SYNTHETIC ONLY 永不计入 M3/M4:≥6 张有依据的人格卡闭集校验(卡片字段/枚举/重复 id/继续无话/nps 越界全拒)/无凭证且非 --dry-run = waiting_external_evidence 零写入零花费零请求(与 nightly-evidence.ts 同停机纪律)/--dry-run 本地 fixture OpenAI 兼容端点同时服务产品模型与人格模型,跑通真实会话链:确定性访谈→真 LLM 翻译 seam→规划窗口闸→真 solveUnified/候选求解→真注册 gotry_fact_gate 读隔离 stateRoot 事实注册表→claim 锁定→m3-cohort 记录→真评分器;产品 prompt 未能分类即 500 硬失败(dsh-llm.ts prompt 漂移会炸测试)/同冻结时钟两次导出字节一致/每条合成记录带 persona_id + prompt_digest provenance 且 business_pass=false/预算闸提前停批、未封存价目模型在任何花费前 fail-closed、provider 缺 usage = 成本不可证 fail-closed 零导出/轮次按卡片 patience 有界、PII 哨兵零落盘、自有临时根必清/全程 fetch spy 断言只联 127.0.0.1,零真实网络零凭证) ==="
+(cd ts && npx tsx scripts/persona-sim-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
