@@ -217,11 +217,14 @@ const silentlyAccepting: readonly ConformanceProbe[] = FULL_PROBES.map(p =>
 )
 const silentReport = runRouteProviderConformance(USE_CASE, MOCK_DESCRIPTOR, silentlyAccepting, NOW)
 check(!silentReport.admissible, 'an adapter whose transit payload is accepted as driving is NOT admissible')
-const modeClause = silentReport.clauses.find(c => c.clause === 'mode_isolation')!
-check(modeClause.verdict === 'fail' && modeClause.evidence.some(e => e.includes('a fault was silently accepted')), 'the mode_isolation clause reports the silent acceptance explicitly')
+const modeClause = silentReport.clauses.find(c => c.clause === 'mode_isolation')
+check(
+  modeClause?.verdict === 'fail' && (modeClause?.evidence ?? []).some(e => e.includes('a fault was silently accepted')),
+  'the mode_isolation clause reports the silent acceptance explicitly',
+)
 const partialReport = runRouteProviderConformance(USE_CASE, MOCK_DESCRIPTOR, FULL_PROBES.filter(p => p.clause !== 'freshness_contract'), NOW)
 check(!partialReport.admissible && partialReport.unprobed.join(',') === 'freshness_contract', 'an UNPROBED clause blocks admission ("untested" is not conformance)')
-check(partialReport.clauses.find(c => c.clause === 'freshness_contract')!.verdict === 'fail', 'an unprobed clause is reported as fail, never as pass')
+check(partialReport.clauses.find(c => c.clause === 'freshness_contract')?.verdict === 'fail', 'an unprobed clause is reported as fail, never as pass')
 const emptyReport = runRouteProviderConformance(USE_CASE, MOCK_DESCRIPTOR, [], NOW)
 check(!emptyReport.admissible && emptyReport.unprobed.length === ROUTE_CONFORMANCE_CLAUSES.length, 'a provider with zero probes is not admissible on any clause')
 
@@ -291,8 +294,14 @@ console.log('F. layering: the conformance module is pure and has zero product ca
 const CAPABILITY_DIR = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'capabilities')
 const CONFORMANCE_SOURCE = readFileSync(join(CAPABILITY_DIR, 'route-provider-conformance.ts'), 'utf8')
 const importLines = CONFORMANCE_SOURCE.split('\n').filter(l => /^\s*import\s/.test(l))
-check(importLines.length === 0, 'the conformance module declares zero imports (zero network/cache/timer/filesystem surface)')
+check(
+  importLines.length === 1 && importLines[0].includes("'./provider-detail-sanitize.ts'"),
+  'the conformance module imports exactly one thing: the pure sibling sanitizer (zero network/cache/timer/clock/filesystem surface)',
+)
+const SANITIZER_SOURCE = readFileSync(join(CAPABILITY_DIR, 'provider-detail-sanitize.ts'), 'utf8')
+check(SANITIZER_SOURCE.split('\n').filter(l => /^\s*import\s/.test(l)).length === 0, 'the shared sanitizer itself declares zero imports (one pure implementation, two callers)')
 check(!/from '.*(model|unified)\.ts'/.test(CONFORMANCE_SOURCE), 'the conformance module never imports the kernel evaluate/solve layer')
+check(!/new Date\(\)/.test(CONFORMANCE_SOURCE), 'the conformance module reads no clock: `now` is injected by the caller')
 check(CONFORMANCE_SOURCE.includes('export const D39_LIVE_ROUTE_TRIGGER_FIRED = false'), 'the trigger declaration is literally `= false` in source')
 check(CONFORMANCE_SOURCE.includes('export const ADMITTED_LIVE_ROUTE_PROVIDERS: readonly RouteProviderDescriptor[] = []'), 'the provider registry declaration is literally `= []` in source')
 const INDEX_SOURCE = readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '..', 'src', 'index.ts'), 'utf8')
@@ -330,10 +339,10 @@ check(gtLive.resolution.outbound.routeFact?.trafficStatus === 'not-live-route-es
 check(gtLive.resolution.outbound.routeFact?.evidenceClass === 'public_map_route_estimate', 'evidence_class_isolation PASSES: the fact stays a public route estimate')
 const gtUnavailable = await driveGroundTransfer(async () => { throw new Error('connection refused') })
 const gtStaticAfter: StaticTransferFallback = {
-  mode: gtUnavailable.resolution.staticMode!,
-  minutes: gtUnavailable.resolution.staticMinutes!,
-  priceCny: gtUnavailable.resolution.priceCny!,
-  priceEvidence: gtUnavailable.resolution.priceEvidence!,
+  mode: gtUnavailable.resolution.staticMode ?? '(absent)',
+  minutes: gtUnavailable.resolution.staticMinutes ?? -1,
+  priceCny: gtUnavailable.resolution.priceCny ?? -1,
+  priceEvidence: gtUnavailable.resolution.priceEvidence ?? '(absent)',
 }
 check(staticFallbackViolation(staticBefore, gtStaticAfter) === null, 'static_fallback_preserved PASSES: an unavailable provider leaves mode/minutes/price/label byte-identical')
 check(gtUnavailable.resolution.applied === false && gtUnavailable.candidates[0].destTransfers[0].minutesOut === undefined, 'fault_fail_closed PASSES: a provider error applies no minutes override')
@@ -363,11 +372,45 @@ const afterStale = await resolveGroundTransferPayload(GT_REQUEST, GT_CANDIDATES,
 check(afterStale.resolution.applied === false && afterStale.resolution.outbound.cache.status === 'stale', 'freshness_contract PASSES: a stale cache entry is re-queried and, on failure, reported stale — never served as a hit')
 check(afterStale.candidates[0].destTransfers[0].minutesOut === undefined, 'freshness_contract PASSES: a stale-then-failed direction applies no minutes override')
 
-console.log('G2. KNOWN GAPS characterized (current behaviour pinned; a fix must flip these)')
+console.log('G2. fault_detail_sanitized: FIXED — the real resolution path no longer leaks a provider body')
+// Regression for GAP-429-3 through the REAL resolution path: a throwing provider
+// whose message carries markup, a token and a cookie. `safeErrorMessage` now routes
+// through the shared sanitizeFaultDetail, so nothing reaches the exposed surface.
+const gtLeakFixed = await driveGroundTransfer(async () => { throw new Error(CHALLENGE_BODY) })
+const sanitizedReason = gtLeakFixed.resolution.outbound.fallbackReason ?? ''
+check(sanitizedReason !== '', 'a throwing provider still produces a fallbackReason (the fix redacts, it does not swallow)')
+check(!sanitizedReason.includes('token=abc123') && !sanitizedReason.includes('sid=XYZ'), 'the token and cookie values never reach fallbackReason')
+check(!sanitizedReason.includes('<html>') && !sanitizedReason.includes('</body>'), 'provider markup never reaches fallbackReason')
+check(!sanitizedReason.includes('https://provider.example'), 'the challenge URL never reaches fallbackReason')
+check(sanitizedReason.includes('[credential-redacted]') && sanitizedReason.includes('[markup-redacted]'), 'the redaction is explicit and auditable, not a silent drop')
+check(sanitizedReason.startsWith('map_driving_route_provider_error:outbound:'), 'the structured reason prefix is unchanged (classification still readable)')
+check(faultDetailLeak(sanitizedReason) === null, 'the mechanical leak check passes on the real resolution path output')
+const exposedFixed = exposeGroundTransferEvidence({ verdicts: [{ candidate_id: 'cand-1' }] }, gtLeakFixed.resolution)
+const exposedJson = JSON.stringify(exposedFixed)
+check(!exposedJson.includes('token=abc123') && !exposedJson.includes('sid=XYZ') && !exposedJson.includes('<html>'), 'exposeGroundTransferEvidence (wired at ts/src/index.ts:801) carries no provider body into the tool result or the verdict transfer_evidence')
+check(faultDetailLeak(gtLeakFixed.resolution.fallbackReason ?? '') === null, 'the aggregate both_directions_failed reason is clean too')
+check(faultDetailLeak(gtLeakFixed.resolution.return.fallbackReason ?? '') === null, 'the return-direction reason is clean too')
+// No behaviour change for the fixed, already-safe error strings.
+for (const safeMessage of [
+  'provider unavailable',
+  'invalid public result',
+  'GROUND_TRANSFER_NESTED_EXECUTION_UNSUPPORTED: current tool execution context is unavailable',
+  'GROUND_TRANSFER_PUBLIC_MAP_TOOL_UNAVAILABLE: map_driving_route is not registered in the current tool scope',
+  'map_driving_route failed: upstream timeout after 3000 ms',
+]) {
+  const drive = await driveGroundTransfer(async () => { throw new Error(safeMessage) })
+  check(
+    drive.resolution.outbound.fallbackReason === `map_driving_route_provider_error:outbound:${safeMessage}`,
+    `an already-safe provider message passes through byte-identical: "${safeMessage.slice(0, 44)}"`,
+  )
+}
+check(sanitizeFaultDetail('a  b', { maxChars: 400 }) === 'a b', 'whitespace runs collapse (the only normalization difference vs the previous newline-only strip)')
+
+console.log('G3. KNOWN GAPS still characterized (genuinely dormant; FLIP when fixed)')
 const gtModeRelabel = await driveGroundTransfer(async () => ({ provider: 'mock-transit', distanceM: 30000, durationS: 3600, mode: 'transit' } as never))
 check(
   gtModeRelabel.resolution.applied === true && gtModeRelabel.resolution.outbound.routeFact?.mode === 'driving' && gtModeRelabel.candidates[0].destTransfers[0].minutesOut === 60,
-  'GAP-429-1 (mode_isolation): a payload asserting mode="transit" is silently dropped and the fact is labelled mode="driving"; its 60 minutes are bound into the solver. The conformance gate refuses this (mode_mismatch).',
+  'GAP-429-1 (mode_isolation): a payload asserting mode="transit" is silently dropped and the fact is labelled mode="driving"; its 60 minutes are bound into the solver. FLIP: if this assertion fails, the gap is fixed — invert this assertion (expect a fallback, not an applied route fact) and drop the GAP-429-1 note from docs/evaluation/trigger-drill-report-contracts.md.',
 )
 expectRefusal(
   admitRouteFact(USE_CASE, MOCK_DESCRIPTOR, REQUEST_OUT, okOutcome({ mode: 'transit' }), NOW),
@@ -377,25 +420,12 @@ expectRefusal(
 const gtWrongOd = await driveGroundTransfer(async () => ({ provider: 'mock-wrong-od', distanceM: 999, durationS: 60, resolvedOrigin: '0,0', resolvedDestination: '1,1' } as never))
 check(
   gtWrongOd.resolution.applied === true && gtWrongOd.resolution.outbound.routeFact?.origin.longitude === 100.1 && gtWrongOd.candidates[0].destTransfers[0].minutesOut === 1,
-  'GAP-429-2 (direction_binding, RESPONSE side): the provider\'s own resolved O/D is never verified; the fact echoes the REQUESTED pair and a 999 m / 60 s route is bound as the airport transfer.',
+  'GAP-429-2 (direction_binding, RESPONSE side): the provider\'s own resolved O/D is never verified; the fact echoes the REQUESTED pair and a 999 m / 60 s route is bound as the airport transfer. FLIP: if this assertion fails, the gap is fixed — invert this assertion (expect a direction-mismatch fallback) and drop the GAP-429-2 note from docs/evaluation/trigger-drill-report-contracts.md.',
 )
 expectRefusal(
   admitRouteFact(USE_CASE, MOCK_DESCRIPTOR, REQUEST_OUT, okOutcome({ echoed_origin: '0,0', echoed_destination: '1,1' }), NOW),
   'direction_mismatch', 'verified against the RESPONSE, not assumed from the request',
   'GAP-429-2 remedy shape: the conformance gate verifies the echoed pair',
 )
-const gtLeak = await driveGroundTransfer(async () => { throw new Error(CHALLENGE_BODY) })
-const leakedReason = gtLeak.resolution.outbound.fallbackReason ?? ''
-check(
-  leakedReason.includes('token=abc123') && leakedReason.includes('<html>'),
-  'GAP-429-3 (fault_detail_sanitized): a provider-thrown error message reaches fallbackReason verbatim, including markup, a token and a cookie value.',
-)
-const exposed = exposeGroundTransferEvidence({ verdicts: [{ candidate_id: 'cand-1' }] }, gtLeak.resolution)
-check(
-  JSON.stringify(exposed).includes('token=abc123'),
-  'GAP-429-3 reach: exposeGroundTransferEvidence (wired at ts/src/index.ts:801) carries that text into the tool result and the matching verdict\'s transfer_evidence.',
-)
-check(faultDetailLeak(leakedReason) !== null, 'GAP-429-3 remedy shape: the conformance leak check flags that exact string')
-check(faultDetailLeak(sanitizeFaultDetail(leakedReason)) === null, 'GAP-429-3 remedy shape: sanitizeFaultDetail makes the same string safe to expose')
 
 console.log(`\nROUTE PROVIDER CONFORMANCE TESTS (#429, simulated_trigger_drill / fixture_contract; no real provider contacted): ${passed} pass${process.exitCode ? ', FAIL' : ' (all green)'}`)

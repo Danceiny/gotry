@@ -30,10 +30,13 @@
  *  - ts/capabilities/fx-contract.ts (#344): the trigger-gated, frozen-empty
  *    registry seam and the "stale/miss/error never masquerades as current" rule.
  *
- * Layering: this module performs zero network, cache, timer or filesystem work and
- * imports nothing from the kernel evaluate/solve layer (`src/model.ts`,
- * `src/unified.ts`). Any future adapter's network/cache work stays on the capability
- * side of that line; the focused suite asserts the import surface mechanically.
+ * Layering: this module performs zero network, cache, timer, clock or filesystem
+ * work, and its ONLY import is the pure sibling sanitizer
+ * `provider-detail-sanitize.ts` (shared with the live ground-transfer path so one
+ * implementation serves both). It imports nothing from the kernel evaluate/solve
+ * layer (`src/model.ts`, `src/unified.ts`), and no product file imports it. Any
+ * future adapter's network/cache work stays on the capability side of that line;
+ * the focused suite asserts the import surface mechanically.
  *
  * Only the real trigger can supply: the provider identity and licence, actual
  * coverage/freshness measurements, a separately authoritative fare source, and an
@@ -41,6 +44,11 @@
  *
  * @module capabilities/route-provider-conformance
  */
+
+import { FAULT_DETAIL_MAX_CHARS, faultDetailLeak, sanitizeFaultDetail } from './provider-detail-sanitize.ts'
+
+/** Re-exported so the conformance gate stays the single API surface for callers. */
+export { FAULT_DETAIL_MAX_CHARS, faultDetailLeak, sanitizeFaultDetail }
 
 export const ROUTE_PROVIDER_CONFORMANCE_SCHEMA = 'gotry_route_provider_conformance.v1'
 
@@ -237,45 +245,9 @@ export interface RouteFact {
 }
 
 // ---------------------------------------------------------------------------
-// Detail sanitization (no provider body, markup, cookie or token ever escapes)
+// Detail sanitization: see ./provider-detail-sanitize.ts (shared with the live
+// ground-transfer path; re-exported above so this gate stays the single API).
 // ---------------------------------------------------------------------------
-
-export const FAULT_DETAIL_MAX_CHARS = 120
-
-const DETAIL_SCRUB_PATTERNS: Array<{ re: RegExp; label: string }> = [
-  { re: /<[^>]*>/g, label: 'markup' },
-  { re: /(?:cookie|set-cookie|authorization|api[_-]?key|token|secret|password|sid)\s*[:=]\s*\S+/gi, label: 'credential' },
-  { re: /\bbearer\s+[A-Za-z0-9._-]{8,}/gi, label: 'credential' },
-  { re: /https?:\/\/\S+/gi, label: 'url' },
-]
-
-/**
- * Sanitize a provider fault detail: strip markup, credential assignments and URLs,
- * collapse whitespace and truncate. A fault detail is a LABEL for operators, never
- * a channel for a provider response body.
- */
-export function sanitizeFaultDetail(detail: unknown): string {
-  let text = typeof detail === 'string' ? detail : ''
-  for (const { re, label } of DETAIL_SCRUB_PATTERNS) text = text.replace(re, `[${label}-redacted]`)
-  text = text.replace(/\s+/g, ' ').trim()
-  if (text.length > FAULT_DETAIL_MAX_CHARS) text = `${text.slice(0, FAULT_DETAIL_MAX_CHARS - 1)}…`
-  return text === '' ? '(no detail)' : text
-}
-
-/**
- * Mechanical leak check for any string about to reach the evidence surface.
- *
- * Shape-only by design: it looks for provider-response-body tells (markup,
- * credential assignments, URLs) and deliberately does NOT bound length — the
- * length bound belongs to `sanitizeFaultDetail`, which caps the PROVIDER fragment,
- * whereas a gate's own refusal explanation is host-authored prose and may be long.
- */
-export function faultDetailLeak(detail: string): string | null {
-  if (/<[^>]*>/.test(detail)) return 'fault detail carries markup (a provider response body must never reach the evidence surface)'
-  if (/(?:cookie|authorization|api[_-]?key|token|secret|password|sid)\s*[:=]\s*\S+/i.test(detail)) return 'fault detail carries a credential assignment'
-  if (/https?:\/\//i.test(detail)) return 'fault detail carries a URL'
-  return null
-}
 
 // ---------------------------------------------------------------------------
 // The admission gate
@@ -438,7 +410,8 @@ export async function consultRouteProvider(
   adapter: RouteProviderAdapter,
   useCase: RouteUseCase,
   request: RouteRequest,
-  options?: { triggerFired?: boolean; registry?: readonly RouteProviderDescriptor[]; now?: string; signal?: AbortSignal },
+  /** `now` is MANDATORY: this module reads no clock, so the caller injects one. */
+  options: { now: string; triggerFired?: boolean; registry?: readonly RouteProviderDescriptor[]; signal?: AbortSignal },
 ): Promise<RouteResult<RouteFact>> {
   const triggerFired = options?.triggerFired ?? D39_LIVE_ROUTE_TRIGGER_FIRED
   if (!triggerFired) {
@@ -454,9 +427,8 @@ export async function consultRouteProvider(
       `provider '${String(adapter?.descriptor?.id)}' is not in the admitted registry (admitted: [${registry.map(d => d.id).join('/') || 'none'}]); admitting one is a per-path founder decision with a legal_basis and source_sha`,
     )
   }
-  const now = options?.now ?? new Date().toISOString()
   const outcome = await adapter.fetchRoute(request, { signal: options?.signal ?? new AbortController().signal })
-  return admitRouteFact(useCase, adapter.descriptor, request, outcome, now)
+  return admitRouteFact(useCase, adapter.descriptor, request, outcome, options.now)
 }
 
 // ---------------------------------------------------------------------------

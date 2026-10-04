@@ -13,11 +13,22 @@
  * layer. Cache, freshness, and fallback are isolated per direction so a
  * miss / error / stale / mismatch in one direction never borrows the
  * dynamic value of the other.
+ *
+ * A provider failure becomes a `fallbackReason`, and `exposeGroundTransferEvidence`
+ * carries that text into the tool result and each matching verdict's
+ * `transfer_evidence`. It is therefore an EXPOSED surface: every provider-authored
+ * failure string passes through the shared `sanitizeFaultDetail` first, so markup,
+ * credential assignments and URLs from a provider response body can never reach it
+ * (issue #429 GAP-429-3). The historical 400-character bound and the historical
+ * empty-case wording are preserved, so existing `GROUND_TRANSFER_*` /
+ * `map_driving_route` reason strings are unchanged byte for byte.
  */
 
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolExecutionInput, ToolRunContext } from '@deepseek-ai/dsh-tools'
+
+import { sanitizeFaultDetail } from './provider-detail-sanitize.ts'
 
 export const GROUND_TRANSFER_MODE = 'driving' as const
 export const GROUND_TRANSFER_POSITION = 'destination' as const
@@ -262,9 +273,21 @@ function asOf(clock: () => Date): string {
   return new Date(nowMs(clock)).toISOString()
 }
 
+/** Historical bound for an exposed provider failure string (unchanged). */
+const GROUND_TRANSFER_FAULT_DETAIL_MAX_CHARS = 400
+
+/**
+ * Normalize a provider failure into an exposable label. The text reaches the tool
+ * result via `exposeGroundTransferEvidence`, so it is scrubbed of markup,
+ * credential assignments and URLs before anything else (#429 GAP-429-3); the
+ * historical length bound and empty-case wording are preserved.
+ */
 function safeErrorMessage(value: unknown): string {
   const message = value instanceof Error ? value.message : String(value)
-  return message.replace(/[\r\n]+/g, ' ').trim().slice(0, 400) || 'unknown provider error'
+  return sanitizeFaultDetail(message, {
+    maxChars: GROUND_TRANSFER_FAULT_DETAIL_MAX_CHARS,
+    emptyPlaceholder: 'unknown provider error',
+  })
 }
 
 function staticCache(status: GroundTransferCacheStatus = 'bypass'): GroundTransferCacheInfo {
