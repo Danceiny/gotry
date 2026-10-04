@@ -27,7 +27,18 @@ import { interpretArgs, type GotryObservation } from './tool-packet.ts'
 import { projectUtility } from './memory-utility.ts'
 import { pickNudgeWish, type WishPoolEntry } from './wish-pool.ts'
 import { resolveTimelineDate } from './travel-timeline.ts'
-import { ensureLedger, readCompanionsWithFallback, readMotivationWithFallback, readTripsWithFallback, readWishPoolWithFallback } from './state-ledger.ts'
+import { ensureLedger, openLedgerIfExists, readCompanionsWithFallback, readMotivationWithFallback, readTripsWithFallback, readWishPoolWithFallback } from './state-ledger.ts'
+import {
+  applyZoneNote,
+  bindZoneSession,
+  boundZoneSession,
+  isZoneObservableTool,
+  observeToolResult,
+  promoteWithRouting,
+  renderSessionZoneBrief,
+  resolveZoneSwitch,
+  zoneSessionRefFromExec,
+} from './session-zone-wiring.ts'
 import { isValidHomeCityPreference, resolveDefaultOrigin, type MergedProfile, type ProfilePatch } from './memory-capture.ts'
 import { applyPlanningWindow } from './loop.ts'
 import { buildTimeAnchor, type PlanningWindow } from './time-anchor.ts'
@@ -105,6 +116,8 @@ export interface Config {
   hbcliBin: string
   /** 账号会话检索总闸(RFC 支柱④「用户明示授权+随时可关」):ask=gotry_session_search 每会话每站点首次调用弹审批卡、会话内记住(默认);allow=用户已在配置明示预授权(直接放行);off=总闸关闭,直接拒绝 */
   sessionAccess: string
+  /** 会话双区记忆总闸(issue #255 P4-3):off=默认(缺省/未知值同样 fail-closed 关),接线完全惰性(零账本事件/读回空串/工具不注册);on=创始人本地启用 */
+  sessionZones?: string
   /** Owner-local benchmark environment bridge config; empty disables the bridge. */
   benchmarkEnvironmentConfigPath?: string
   /** Trusted absolute path of the installed `lavish-axi@0.1.67` package; empty disables the local Lavish Editor product tools. */
@@ -116,6 +129,7 @@ export const Config: z<Config> = z.object({
   timeoutMs: z.number().default(30_000),
   hbcliBin: z.string().default('hbcli'),
   sessionAccess: z.string().default('ask'),
+  sessionZones: z.string().default('off'),
   benchmarkEnvironmentConfigPath: z.string().default(''),
   lavishAxiPackageRoot: z.string().default(''),
 })
@@ -551,6 +565,18 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   // 渲染成紧凑 brief 注入 persona;为空 = 首访。与当轮说法冲突时以用户为准。
   sp?.variable?.('motivation_brief', () => renderMotivationBrief(config.stateRoot ?? '.'))
 
+  // 会话双区记忆读回(issue #255 P4-3,design/session-dual-zone-memory-design.md §5):
+  // 变量恒注册(persona 侧可随时引用),但总闸 off(默认)时恒返回空串 —— 接线惰性,
+  // 不建库、不读库、零事件;persona 模板本身不在本 PR 改动,因此开关 off 时注入面
+  // 输出逐字节不变。空串 = 首访/无活笔记(与 motivation_brief 同纪律)。
+  const zoneSwitch = resolveZoneSwitch(config.sessionZones)
+  sp?.variable?.('session_zone_brief', () => renderSessionZoneBrief({
+    ledger: zoneSwitch === 'on' ? openLedgerIfExists(config.stateRoot ?? '.') : null,
+    now: new Date().toISOString(),
+    sessionRef: boundZoneSession(),
+    zoneSwitch,
+  }))
+
   // 通道路由卡(通道注册表生成,docs/design/tool-orchestration-design.md §2.1/D-8):
   // persona 检索条款只留行为契约,机/火/酒通道顺位与额度口径查卡——prose 教义
   // 变查表教义,注册表加通道卡片自动一致。
@@ -630,6 +656,29 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     const t = { ...(tool as unknown as Record<string, unknown>) }
     if (typeof t.execute === 'function') {
       t.execute = guardToolExecute(String(t.name), config.stateRoot ?? '.', t.execute as (args: never, exec: unknown) => never)
+    }
+    // 工具观察捕获缝(issue #255 P4-3):总闸 on 且工具在闭集白名单内才包裹——
+    // off(默认)时 execute 一层不多包,行为逐字节不变。捕获只投影形状字段
+    // (verdict/条数/价格带),证据只走指针;捕获失败永不影响工具返回值。
+    if (zoneSwitch === 'on' && typeof t.execute === 'function' && isZoneObservableTool(t.name)) {
+      const inner = t.execute as (args: never, exec: unknown) => Promise<unknown>
+      const toolName = String(t.name)
+      t.execute = async (args: never, exec: unknown): Promise<unknown> => {
+        const result = await inner(args, exec)
+        try {
+          const sessionRef = zoneSessionRefFromExec(exec)
+          if (sessionRef) {
+            bindZoneSession(sessionRef)
+            observeToolResult(openLedgerIfExists(config.stateRoot ?? '.') ?? ensureLedger(config.stateRoot ?? '.'), {
+              tool: toolName,
+              result,
+              session_ref: sessionRef,
+              ts: new Date().toISOString(),
+            })
+          }
+        } catch { /* 记忆面永不把产品主路径带红 */ }
+        return result
+      }
     }
     ctx.tools.register(t as unknown as ReturnType<typeof defineTool>)
   }
@@ -1155,6 +1204,110 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     },
     presentCall: args => ({ card: 'generic', title: '记录旅行', kind: 'edit', rawInput: args }),
   }))
+
+  // 会话双区记忆工具面(issue #255 P4-3):**只在总闸 on 时注册**——off(默认)时
+  // 工具清单逐项不变,模型看不到任何分区入口(接线惰性的第一道)。
+  if (zoneSwitch === 'on') {
+    registerGuarded(defineTool({
+      name: 'gotry_session_zone_note',
+      description:
+        'Session working-zone memory (hot context, issue #255): capture a STRUCTURED fragment of what is still in play this session '
+        + '(destination / date window / party size / budget stance = intent tier, 24h; search shapes = resource tier, 30min), '
+        + 'revise it with optimistic CAS when the user corrects a detail, or drop it when it stops being true. '
+        + 'Payload must be typed slot-spec-family fields — NEVER raw conversation text, IDs, phone numbers, URLs or credentials '
+        + '(the write gate rejects those shapes). Evidence is a pointer (session + observation index), never content. '
+        + 'action="propose" only PROPOSES moving a note into the durable notebook: it writes NOTHING; the owner must confirm in their own words, '
+        + 'after which you call gotry_session_zone_promote with that quote. The model may never self-promote.',
+      parameters: {
+        action: { type: 'string', required: true, enum: ['capture', 'revise', 'drop', 'propose'], description: 'capture=新片段入工作区;revise=CAS 修订(需 noteId+expectedRev);drop=更正即弃;propose=提议晋升(零写入)' },
+        tier: { type: 'string', enum: ['resource', 'intent'], description: 'capture 必填:intent(目的地/日期/人数/预算立场,24h)或 resource(检索形态,30min)' },
+        kind: { type: 'string', enum: ['availability', 'price_band', 'destination', 'date_window', 'party_size', 'budget_stance'], description: 'capture 必填;revise 可选(改 kind)' },
+        payload: { type: 'object', additionalProperties: true, description: '结构化片段,如 { city: "大理" } / { start: "2026-11-01", end: "2026-11-05" };禁放原文/证件/电话/URL/凭证' },
+        noteId: { type: 'string', description: 'revise/drop/propose 的目标笔记 id' },
+        expectedRev: { type: 'integer', description: 'revise 的父 rev(必须等于当前 rev,否则 stale_rev 拒绝)' },
+        promoteKind: { type: 'string', enum: ['trip_fact', 'preference', 'constraint', 'lesson'], description: 'propose 时提议的持久条目类别' },
+      },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
+      },
+      async execute(args, exec: unknown) {
+        const sessionRef = zoneSessionRefFromExec(exec)
+        if (!sessionRef) {
+          return { ok: false, code: 'bad_session', summary: '无会话身份(exec.agent.session.id 缺失):分区不记忆无主体的片段' } as never
+        }
+        bindZoneSession(sessionRef)
+        const r = applyZoneNote(ensureLedger(config.stateRoot), {
+          action: args.action as never,
+          ...(args.tier !== undefined ? { tier: args.tier } : {}),
+          ...(args.kind !== undefined ? { kind: args.kind } : {}),
+          ...(args.payload !== undefined ? { payload: args.payload as Record<string, unknown> } : {}),
+          ...(args.noteId !== undefined ? { noteId: args.noteId } : {}),
+          ...(args.expectedRev !== undefined ? { expectedRev: args.expectedRev } : {}),
+          ...(args.promoteKind !== undefined ? { promoteKind: args.promoteKind } : {}),
+          session_ref: sessionRef,
+          ts: new Date().toISOString(),
+        })
+        if (!r.ok) return { ok: false, code: r.code, summary: r.detail } as never
+        const summary = r.proposed
+          ? `已提议(未写入):${r.ask ?? ''}`
+          : `${r.action}${r.appended ? ' 已落账' : ' 幂等跳过'}${r.noteId ? `:${r.noteId.slice(0, 60)}` : ''}`
+        return { ok: true, action: r.action, appended: r.appended, note_id: r.noteId, requires_owner_confirm: r.requiresOwnerConfirm === true, summary } as never
+      },
+      presentCall: args => ({ card: 'generic', title: `会话记忆:${String(args.action ?? '')}`, kind: 'edit', rawInput: args }),
+    }))
+
+    registerGuarded(defineTool({
+      name: 'gotry_session_zone_promote',
+      description:
+        'Owner-confirmed promotion into the durable trip notebook (issue #255) — the ONLY write path into durable memory. '
+        + 'Requires ownerQuote: the user\'s OWN words confirming they want this remembered long-term; your own summary is not a confirmation. '
+        + 'Routing rule: a preference ALSO goes through the motivation-profile gate (pass motivation.{weights|hard|homeCity}), '
+        + 'a trip fact through the timeline gate (pass trip.{destination,start}), a companion constraint through the companion gate (pass companion.{label,constraints}). '
+        + 'Without the required routed payload the promotion is REJECTED — the notebook never becomes a parallel store for a fact that already has an owner. '
+        + 'Generic constraints and lessons live in the notebook itself. The notebook write and the routed gate write are one transaction: they cannot diverge.',
+      parameters: {
+        noteId: { type: 'string', required: true, description: '源工作区笔记 id(必须未过期)' },
+        kind: { type: 'string', required: true, enum: ['trip_fact', 'preference', 'constraint', 'lesson'], description: '持久条目类别' },
+        ownerQuote: { type: 'string', required: true, description: '用户本人确认要长期记住的原话(≤200 字;模型自述不算确认)' },
+        surface: { type: 'string', required: true, enum: ['user_reply', 'approval_card'], description: '确认表面:用户回复 或 审批卡' },
+        payload: { type: 'object', additionalProperties: true, description: '可选:覆盖源笔记载荷的结构化断言' },
+        motivation: { type: 'object', additionalProperties: true, description: 'preference 必填:{ weights?, hard?, homeCity? } 至少一项(经动机画像闸)' },
+        trip: { type: 'object', additionalProperties: true, description: 'trip_fact 必填:{ destination, start(YYYY-MM-DD), end?, companions? }(经时间线闸)' },
+        companion: { type: 'object', additionalProperties: true, description: '同行人约束必填:{ label, constraints:{ mobility?, health?, prefs? } }(经同行人闸)' },
+      },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
+      },
+      async execute(args, exec: unknown) {
+        const sessionRef = zoneSessionRefFromExec(exec)
+        if (sessionRef) bindZoneSession(sessionRef)
+        const r = promoteWithRouting(ensureLedger(config.stateRoot), {
+          noteId: String(args.noteId ?? ''),
+          kind: String(args.kind ?? ''),
+          ownerQuote: String(args.ownerQuote ?? ''),
+          surface: String(args.surface ?? ''),
+          ...(args.payload !== undefined ? { payload: args.payload as Record<string, unknown> } : {}),
+          ...(args.motivation !== undefined ? { motivation: args.motivation as never } : {}),
+          ...(args.trip !== undefined ? { trip: args.trip as never } : {}),
+          ...(args.companion !== undefined ? { companion: args.companion as never } : {}),
+          ts: new Date().toISOString(),
+        })
+        if (!r.ok) return { ok: false, code: r.code, summary: r.detail } as never
+        const routed = r.routed ? `;并经 ${r.routed.authority} 闸${r.routed.applied ? '落地' : '幂等跳过'}` : ''
+        return {
+          ok: true,
+          appended: r.appended,
+          entry_id: r.entryId,
+          authority: r.authority,
+          routed: r.routed ? JSON.parse(JSON.stringify(r.routed)) as JsonObject : null,
+          summary: `${r.appended ? '已写入笔记本' : '笔记本幂等跳过'}${routed}`,
+        } as never
+      },
+      presentCall: args => ({ card: 'generic', title: '笔记本晋升(owner 确认)', kind: 'edit', rawInput: args }),
+    }))
+  }
 
   registerGuarded(defineTool({
     name: 'gotry_hotel_search',

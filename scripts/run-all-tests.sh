@@ -663,6 +663,10 @@ echo
 echo "=== 77. 会话双区记忆账本落点(P4-2,issue #255:六 kind 以日志类事件落**既有** events 表(零新表/零 schema 迁移/state-ledger.ts 零改动)/单事务{fold 读 rev;守门闸;INSERT}——stale_rev·负面清单·闭集·缺 owner 引用在插入前拒绝且账本零新行/双道幂等(守门层同 rev 重放 appended:false + UNIQUE 索引物理 no-op)/幂等键带生代使 drop→重捕获不被吞/真实子进程 kill -9 提交前崩溃 = 全无·正常提交 = 全有/forget 物理硬删 + 恰一行审计(会话级多主体仍一行)/state-cli export 两派生视图逐字节 == fold 且导出零新事件/读上界 log_truncated fail-closed/坏行与伪造文档确定性跳过/与既有投影及租户互不干扰/账本零过期事件;隔离 mkdtemp stateRoot,全离线,有界子进程超时) ==="
 (cd ts && npx tsx scripts/session-zone-ledger-tests.ts) || FAIL=1
 
+echo
+echo "=== 78. 会话双区记忆会话接线(P4-3,issue #255:sessionZones 总闸默认关——缺省/未知值 fail-closed 关、分区工具不注册、白名单 execute 不被包裹、读回恒空串且不建库、既有注入面与工具清单逐项不变;开闸后捕获缝只投影形状字段(verdict/条数/价格带)——零名称零 URL零自由文本、证据只走指针(摘要 session_ref + 观察序号)、分区内永不出现宿主 session id 原文/负面清单端到端(证件·手机·URL·凭证零入区)/读回首访空串与条数字符双上界/propose 零落账(模型永不自晋升)+ owner 原话引用闸(宿主 schema 闸与代码闭集双道)/§3 路由:preference→动机闸·trip_fact→时间线闸·点名同行人的约束→同行人闸,缺路由载荷 routing_required 拒收,既有闸拒绝即同事务整笔回滚/CAS stale_rev 与更正即弃/过期源不得晋升;真实 apply() 注册面 + mkdtemp 隔离 stateRoot,对 ts/dsh-runtime/gotry-state 零写入(前后快照断言),全离线) ==="
+(cd ts && npx tsx scripts/session-zone-wiring-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
