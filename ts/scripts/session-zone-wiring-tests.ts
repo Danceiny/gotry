@@ -187,9 +187,11 @@ async function main(): Promise<void> {
       '开闸只增 session_zone_brief 一个变量名,其余注入面顺序与内容不变',
     )
     assert.equal(existsSync(join(offRoot, 'gotry-state', 'gotry-state.db')), false, '关闸不得建库')
-    // 其他既有注入面输出不受影响(逐字节)
+    // 其他既有注入面输出不受影响(逐字节)。channel_routing_card 内含「卡生成于 <ISO 时间戳>」,两次渲染相隔数毫秒就不同——
+    // 先把 ISO 时间戳归一化再逐字节比较,否则这条断言取决于两次渲染是否落在同一毫秒(间歇性红,CI 上实测过)。
+    const stripStamp = (text: string): string => text.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, '<ts>')
     for (const key of ['current_date', 'time_anchor_card', 'motivation_brief', 'channel_routing_card']) {
-      assert.equal(off.variables[key]!(), on.variables[key]!(), `既有注入面 ${key} 输出逐字节不变`)
+      assert.equal(stripStamp(off.variables[key]!()), stripStamp(on.variables[key]!()), `既有注入面 ${key} 输出逐字节不变(时间戳归一化后)`)
     }
   })
 
