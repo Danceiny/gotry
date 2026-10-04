@@ -139,7 +139,7 @@ The personal desktop account-session channel reads realtime data from **your own
 3. **Physically read-only** — a ReadGuard aborts writes at the network layer; a captcha stops the agent.
 4. **Never hijacks your browser** — dedicated tabs only; tests never open windows.
 
-One-time prerequisite: the [Stai Travel Bridge extension (store name stays GoTry Session Bridge until v0.2.0.27 is approved)](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) (one-click, auto-updates) — until installed, tools return `needs-extension` with the store link and spend nothing. The separate HotelByte employee-portal flow can send search data to an authorized backend bridge and can handle one-time supplier-login credentials in memory; see the [extension privacy policy](docs/ops/extension-privacy.md).
+One-time prerequisite: the [Stai Travel Bridge extension](https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd) (one-click, auto-updates) — until installed, tools return `needs-extension` with the store link and spend nothing. The separate HotelByte employee-portal flow can send search data to an authorized backend bridge and can handle one-time supplier-login credentials in memory; see the [extension privacy policy](docs/ops/extension-privacy.md).
 
 Trust is structural, not promised:
 
