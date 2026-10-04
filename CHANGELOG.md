@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - independent cancel/refund results with explicit commission disclosure (#233)… (#401)
 - persistent trusted approvals and atomic outbox (#231)… (#399)
 - transaction bridge unknown-result reconciliation contract (#232)… (#398)
-- mechanical guard requiring explicit authorization for G5 bridges (#348)… (#388)
+- mechanical guard requiring explicit authorization before bridging internal travel tools (#348)… (#388)
 - add docs/ops/security.md + .zh-CN.md (audit 2026-09-11)… (#387)
 - execute in admin browser extension… (#380)
 - 授权 tenant 修复 apply/rollback 与回执协议(#254)… (#378)
