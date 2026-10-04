@@ -675,6 +675,10 @@ echo
 echo "=== 85. 成交结果↔规划估算投影契约(issue #340 模拟触发演练,证据标签 simulated_trigger_drill/fixture_contract——真实触发未发生,tracker 保持 open 且默认关闭:plan estimate↔immutable quote↔attempt↔账本 intent 四必填关联键+确定性派生/闭集 pending·confirmed·failed·cancelled·refunded·unknown,unknown 与超时永不记成交也永不记零偏差(结构化 not_comparable 不返回数值)/本地账本词 compensated 拒作供应商终态(compensated≠refunded)·serviceFee 拒作退款额·refunded 必绑权威退款记录/append-only 可撤销投影:同幂等键同载荷重放零新条目·异载荷冲突·撤销本身是条目不删不改·确定性 fold 重建==直读/终态不回退(terminal→open regression、终态冲突)且迟到终态被接纳并标记/负面清单:敏感订单字段按名拒+凭证·手机·证件·邮箱·URL 值形扫描拒,证据只走摘要与指针/偏差只校准未来估算与排序(有界 ppm 钉上下界·薄样本回中性·indeterminate 只计数不计值),反证falsification:校准额永不能翻转用户预算硬约束(hard_budget_guard)/真实订单摄取缝触发闸冻结 false+注册表冻结空+fetch spy 零调用;纯函数零网络零子进程零 CLI,夹具只读复用 hotelbyte 假 CLI 词表,真实订单 E2E 待 M5+真实授权记录,明确不在本节范围) ==="
 (cd ts && npx tsx scripts/outcome-projection-tests.ts) || FAIL=1
 
+echo
+echo "=== 86. 城市×场景分级机制(issue #339 模拟触发演练,证据标签 simulated_trigger_drill/fixture_contract——真实样本未到,tracker 保持 open:只交机制不交内容,CITY_SCENARIO_TIER_REGISTRY 源码级冻结为空 + 触发闸冻结 false,admitTierEntry 在任何校验之前拒收(不凭 fixture 造画像),词表提案只在演练报告里标注为未验证假设/版本化 taxonomy schema:每档强制 provenance(RFC S2 证据等级闭集·real_usage_sample 唯一准入来源·≥3 条可审样本引用·问责评审人·冻结时刻)与 retirement(淘汰条件+复审期限须晚于冻结)/semantic×bounded_modifier 有界整数 ppm 钉上下界,0·负·越界·小数·非数一律拒(下界>0 即结构上无法抹掉候选)/中性退回:触发未开·空注册表·未知城市·未知场景·冲突证据 五因均回 ×1.0 且冲突不代选(只暴露冲突 tier_id)·坏键是调用方错误不静默中性/反证 falsification:modifier 只能重排永不能移除候选(含下界×零语义分·11×3 组合电池·结果形状零 exclude/filter/drop 字段·机械 no-hard-filter 检查自身可证伪)/确定性与稳定并列序,缺陷注册表读时拒绝不静默夹取;纯函数零 IO·零网络·产品面零调用方,不接 unified.ts 排序(内核钉住)) ==="
+(cd ts && npx tsx scripts/city-scenario-tier-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
