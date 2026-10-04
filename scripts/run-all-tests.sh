@@ -679,6 +679,10 @@ echo
 echo "=== 86. 城市×场景分级机制(issue #339 模拟触发演练,证据标签 simulated_trigger_drill/fixture_contract——真实样本未到,tracker 保持 open:只交机制不交内容,CITY_SCENARIO_TIER_REGISTRY 源码级冻结为空 + 触发闸冻结 false,admitTierEntry 在任何校验之前拒收(不凭 fixture 造画像),词表提案只在演练报告里标注为未验证假设/版本化 taxonomy schema:每档强制 provenance(RFC S2 证据等级闭集·real_usage_sample 唯一准入来源·≥3 条可审样本引用·问责评审人·冻结时刻)与 retirement(淘汰条件+复审期限须晚于冻结)/semantic×bounded_modifier 有界整数 ppm 钉上下界,0·负·越界·小数·非数一律拒(下界>0 即结构上无法抹掉候选)/中性退回:触发未开·空注册表·未知城市·未知场景·冲突证据 五因均回 ×1.0 且冲突不代选(只暴露冲突 tier_id)·坏键是调用方错误不静默中性/反证 falsification:modifier 只能重排永不能移除候选(含下界×零语义分·11×3 组合电池·结果形状零 exclude/filter/drop 字段·机械 no-hard-filter 检查自身可证伪)/确定性与稳定并列序,缺陷注册表读时拒绝不静默夹取;纯函数零 IO·零网络·产品面零调用方,不接 unified.ts 排序(内核钉住)) ==="
 (cd ts && npx tsx scripts/city-scenario-tier-tests.ts) || FAIL=1
 
+echo
+echo "=== 87. D-39 活体路线供应商合规闸(issue #429 模拟触发演练,证据标签 simulated_trigger_drill/fixture_contract——以「具名用例+候选供应商」在契约层模拟,不触达任何真实路线供应商,各路径仍保持 open 且默认关闭,#341 既有窄范围不动:触发闸 D39_LIVE_ROUTE_TRIGGER_FIRED 冻结 false+准入注册表冻结空,consultRouteProvider 在触碰 adapter 之前拒绝(fetch spy 零调用)/mock adapter 八故障模式(unavailable·stale·mismatched_direction·mode_relabel·estimate_as_live_traffic·challenge·rate_limited·partial_result)驱动九条合规条款:方向绑定按响应回显校验(非由请求假定)·模式隔离(driving↔transit/rail 任一方向改标即拒)·证据级隔离(估算冒充 live_traffic 即拒,弱级填强承诺同样拒)·新鲜度合同·来源身份+source_sha·故障 fail-closed 无静默降级·静态回退与原价标签逐字保全·路线商永不自任票价权威·故障详情脱敏(响应体/标记/cookie/token/URL 零外泄)/闸自身可证伪:静默接受故障即该条款红、未探测条款不得记 pass、零探测不可准入/对既有 ts/capabilities/ground-transfer.ts 实跑适用条款——六条今日通过,三条按当前行为钉为已知缺口 GAP-429-1/2/3(模式改标被静默丢弃、响应侧 O/D 不校验、供应商错误原文含 token/cookie 流入 fallbackReason 并经 exposeGroundTransferEvidence 到达工具结果),缺口细节与最小复现见 docs/evaluation/trigger-drill-report-contracts.md,修复须翻转对应断言/模块零 import 零网络零缓存,不耦合 evaluate/solve 内核,产品面零调用方) ==="
+(cd ts && npx tsx scripts/route-provider-conformance-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
