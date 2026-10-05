@@ -4,7 +4,9 @@
  *   - 封存价表仅可审计换算(peak 保守上界),未知模型 fail-closed,usage 缺失 fail-closed;
  *   - run_key 确定性 + 记录必须过消费方 parseNightlyRun(生产器写的就是评分器读的);
  *   - 无凭证 = waiting_external_evidence,不写任何文件(issue #22 停机纪律);
- *   - --dry-run mock 全链演练可跑通且绝不落盘。
+ *   - --dry-run mock 全链演练可跑通且绝不落盘;
+ *   - --dry-run 默认离线(issue #617):PATH 上的计数 fake hbcli 零次被调起(第三轮「我订了酒店:…」会触发 PoI 探针),
+ *     operator 显式设置的 GOTRY_HBCLI_LIVE 不被覆盖(同时是 fake 可达的 positive control),演练后环境原样还原。
  * 真跑(花钱)不在 CI:heartbeat/founder 手动 `npx tsx scripts/nightly-evidence.ts`。
  *
  * 价表 schema 演进(issue #49):v1 (legacy DeepSeek only) / v2 (provider-aware;DeepSeek+MiniMax);
@@ -14,7 +16,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -175,5 +177,45 @@ try {
   rmSync(dryParent, { recursive: true, force: true })
 }
 ok('dry-run mock 全链演练 + real_llm=false + 零落盘')
+
+// ---- 7b. issue #617:dry-run 是离线「mock 全链演练」,不得经 runTurn→probePoi→anythingSearch 连真实 hbcli 后端 ----
+// 受控 PATH 上放计数 fake(只用 shell 内建);HOME 指向空目录,已知安装位回退碰不到开发机真实 hbcli。
+const hbcliProbeRoot = mkdtempSync(join(tmpdir(), 'nightly-hbcli-'))
+const hbcliProbeBin = join(hbcliProbeRoot, 'bin')
+const hbcliCallsLog = join(hbcliProbeRoot, 'calls.log')
+mkdirSync(hbcliProbeBin)
+mkdirSync(join(hbcliProbeRoot, 'home'))
+writeFileSync(join(hbcliProbeBin, 'hbcli'), `#!/bin/sh\nprintf 'call\\n' >> '${hbcliCallsLog}'\nprintf '%s' '{"candidates":[]}'\n`, { mode: 0o755 })
+const hbcliCalls = (): number => existsSync(hbcliCallsLog) ? readFileSync(hbcliCallsLog, 'utf8').split('\n').filter(Boolean).length : 0
+const savedEnv = { PATH: process.env['PATH'], HOME: process.env['HOME'], LIVE: process.env['GOTRY_HBCLI_LIVE'] }
+const restoreEnv = (key: 'PATH' | 'HOME' | 'GOTRY_HBCLI_LIVE', value: string | undefined): void => {
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+}
+try {
+  process.env['PATH'] = `${hbcliProbeBin}:${savedEnv.PATH ?? ''}`
+  process.env['HOME'] = join(hbcliProbeRoot, 'home')
+  const dryRoot2 = join(hbcliProbeRoot, 'evidence')
+
+  // 缺省(operator 未设):演练期间 GOTRY_HBCLI_LIVE=0,fake 零次被调起,演练后环境原样还原(无泄漏)
+  delete process.env['GOTRY_HBCLI_LIVE']
+  const offlineDry = await runNightlyEvidence({ evidenceRoot: dryRoot2, dryRun: true, clock: () => new Date(executeAt) })
+  assert.equal(offlineDry.state, 'dry_run')
+  assert.equal(hbcliCalls(), 0, 'dry-run 缺省离线:PATH 上的 fake hbcli 必须被调起 0 次')
+  assert.equal(process.env['GOTRY_HBCLI_LIVE'], undefined, 'dry-run 结束后必须还原 GOTRY_HBCLI_LIVE(不得泄漏进后续进程内套件)')
+
+  // operator 显式设置的值不被覆盖——同时是 positive control:证明上面的「零次」不是因为 fake 不可达
+  process.env['GOTRY_HBCLI_LIVE'] = '1'
+  const explicitDry = await runNightlyEvidence({ evidenceRoot: dryRoot2, dryRun: true, clock: () => new Date(executeAt) })
+  assert.equal(explicitDry.state, 'dry_run')
+  assert.ok(hbcliCalls() >= 1, `显式 GOTRY_HBCLI_LIVE=1 不得被 dry-run 覆盖,PoI 探针应调起 fake(实际 ${hbcliCalls()} 次)`)
+  assert.equal(process.env['GOTRY_HBCLI_LIVE'], '1', '显式值演练后原样保留')
+} finally {
+  restoreEnv('PATH', savedEnv.PATH)
+  restoreEnv('HOME', savedEnv.HOME)
+  restoreEnv('GOTRY_HBCLI_LIVE', savedEnv.LIVE)
+  rmSync(hbcliProbeRoot, { recursive: true, force: true })
+}
+ok('dry-run 缺省 GOTRY_HBCLI_LIVE=0:fake hbcli 零次调起 + 环境还原;显式值不覆盖(positive control)')
 
 console.log(`nightly-evidence tests: ${passed} 组断言全绿(offline,真跑不在 CI)`)

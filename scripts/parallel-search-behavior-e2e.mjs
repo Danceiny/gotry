@@ -68,7 +68,8 @@ if(process.env.GOTRY_TEST_SCENARIO==='cancellation'){
     });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const env = { PATH: bin + ':' + process.env.PATH, HOME: home, DSH_HOME: join(home, 'dsh'), TMPDIR: root, SHELL: '/bin/zsh', LLM_API_KEY: 'synthetic-only', LLM_BASE_URL: `http://127.0.0.1:${server.address().port}/v1`, LLM_MODEL: 'controlled-model', GOTRY_LOCALE: 'en', GOTRY_TURN_HANDOFF_ROOT: cwd, GOTRY_SESSION_LIVE: '0', GOTRY_HBCLI_LIVE: '0', GOTRY_HOTELBYTE_SKILLS_LIVE: '0', GOTRY_TEST_EVENTS: eventsPath, GOTRY_TEST_SCENARIO: scenario, GOTRY_TEST_CITY: city };
+  // GOTRY_HBCLI_LIVE stays unset on purpose (issue #617): the shim hbcli on PATH IS the controlled provider under test, and `0` would switch the anything channel off.
+  const env = { PATH: bin + ':' + process.env.PATH, HOME: home, DSH_HOME: join(home, 'dsh'), TMPDIR: root, SHELL: '/bin/zsh', LLM_API_KEY: 'synthetic-only', LLM_BASE_URL: `http://127.0.0.1:${server.address().port}/v1`, LLM_MODEL: 'controlled-model', GOTRY_LOCALE: 'en', GOTRY_TURN_HANDOFF_ROOT: cwd, GOTRY_SESSION_LIVE: '0', GOTRY_HOTELBYTE_SKILLS_LIVE: '0', GOTRY_TEST_EVENTS: eventsPath, GOTRY_TEST_SCENARIO: scenario, GOTRY_TEST_CITY: city };
   const start = Date.now(); let stdout = '', stderr = '', timedOut = false, code;
   const child = spawn(binary, [scenario === 'dependency' ? 'Resolve the opaque destination key, then use the returned city to query hotels for January 15-17, 2027.' : 'Compare Hangzhou and Nanjing hotels and destination directories for January 15-17, 2027. Preserve each source, including failures.'], { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', data => stdout += data); child.stderr.on('data', data => stderr += data);

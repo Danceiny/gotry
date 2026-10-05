@@ -6,7 +6,7 @@
  *
  * 运行(在 ts/ 下):
  *   npx tsx scripts/nightly-evidence.ts                  # 真跑:需 LLM_API_KEY,追加证据记录
- *   npx tsx scripts/nightly-evidence.ts --dry-run        # mock 全链演练,绝不写证据
+ *   npx tsx scripts/nightly-evidence.ts --dry-run        # mock 全链演练,绝不写证据(缺省 GOTRY_HBCLI_LIVE=0:不连真实 hbcli;显式设置则尊重)
  *   npx tsx scripts/nightly-evidence.ts --format json    # 机器可读状态(heartbeat 消费)
  *   npx tsx scripts/nightly-evidence.ts --no-env-file    # 不读仓根 .env(等待态测试用)
  *
@@ -237,6 +237,17 @@ function arg(name: string): string | undefined {
   return index >= 0 ? process.argv[index + 1] : undefined
 }
 
+/**
+ * issue #617:`--dry-run` 是离线「mock 全链演练」,但 runTurn 的 PoI 探针会 spawn 本机真实 hbcli
+ * (带凭据即连真实后端、耗配额)。演练期间把离线开关缺省置 0——operator 显式设过 GOTRY_HBCLI_LIVE
+ * (含空串)则一律不覆盖;返回还原函数(本函数在进程内被测试与 persona harness 复用,不得泄漏环境)。
+ */
+function defaultHbcliLiveOff(): () => void {
+  if (process.env['GOTRY_HBCLI_LIVE'] !== undefined) return () => {}
+  process.env['GOTRY_HBCLI_LIVE'] = '0'
+  return () => { delete process.env['GOTRY_HBCLI_LIVE'] }
+}
+
 export async function runNightlyEvidence(options: {
   evidenceRoot: string
   dryRun: boolean
@@ -257,9 +268,14 @@ export async function runNightlyEvidence(options: {
   const port: LlmPort = options.dryRun ? createMockLlm(packPath) : createOpenAICompatLlm(packPath)
   const state = newState()
   const history: Array<{ role: 'user' | 'assistant'; text: string }> = []
-  for (const turn of promptSet.turns) {
-    const { reply } = await runTurn(state, turn, port, [...history], solvePort as never)
-    history.push({ role: 'user', text: turn }, { role: 'assistant', text: reply })
+  const restoreHbcliLive = options.dryRun ? defaultHbcliLiveOff() : () => {}
+  try {
+    for (const turn of promptSet.turns) {
+      const { reply } = await runTurn(state, turn, port, [...history], solvePort as never)
+      history.push({ role: 'user', text: turn }, { role: 'assistant', text: reply })
+    }
+  } finally {
+    restoreHbcliLive()
   }
 
   const promptSetSha = sha256Of(promptSet)

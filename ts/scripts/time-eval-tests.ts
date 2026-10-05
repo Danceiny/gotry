@@ -35,6 +35,9 @@ import { parseRequest } from '../src/model.ts'
 import { solveChoiceSegment, type JourneySpecTS } from '../src/unified.ts'
 import { parsePlanningWindow } from '../src/time-anchor.ts'
 
+// issue #617:确定性部分(第 6 节)经 runTurn,其 PoI 探针缺省不得 spawn 本机真实 hbcli(显式设置的值不覆盖)
+process.env['GOTRY_HBCLI_LIVE'] ??= '0'
+
 interface EvalCase {
   id: string
   priority: string
