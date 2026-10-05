@@ -1,8 +1,8 @@
 {
   "schemaVersion": "gotry_kernel_manifest_v1",
   "issue": "#234",
-  "frozenAt": "2026-09-20",
-  "baseSHA": "e8925001084b9f1234ef09a504c04c183edaa81d",
+  "frozenAt": "2026-10-05",
+  "baseSHA": "08259d8567210734a11c410b10a4e516ca2651be",
   "entries": [
     {
       "path": "ts/src/unified.ts",
@@ -21,9 +21,9 @@
     {
       "path": "ts/src/state-ledger.ts",
       "group": "ledger",
-      "sha256": "47dec5df835e97761d9299bc8fd20b42769d4c3e51d95254ec9eead1e40666f5",
+      "sha256": "3f250c14a29a507237116d7d01f384d7d4db9c3161edda56c37bf90e0479ef46",
       "rationale": "事务化状态账本(ADR-15):SQLite 单文件单一权威(append-only 事件 + 幂等键 + 投影折叠重建 + 工单 saga);「同账本」的权威面",
-      "basis": "architecture.md §3 表 state-ledger.ts 行(✅ run-all §28)+ ADR-15;issue #234 验收「同引擎/账本/闸路径」"
+      "basis": "architecture.md §3 表 state-ledger.ts 行(✅ run-all §28)+ ADR-15;issue #234 验收「同引擎/账本/闸路径」; 2026-10-05 按 D-15 演练 D15-1/D15-2 修复后的哈希重钉(创始人决策,#275 已以 deferred 关闭、#619 同一缺陷):busy_timeout 前置于 WAL 切换、建表与全部先读后写事务一律 BEGIN IMMEDIATE、争用有界重试、耗尽抛典型化 LedgerBusyError;存储面(schema/幂等键/事件形状/公开签名)与单写者行为均未动,run-all §82 把两处期望由观测改为硬断言"
     },
     {
       "path": "ts/src/bookable-facts.ts",
