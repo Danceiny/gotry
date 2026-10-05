@@ -5,7 +5,7 @@
 > Position: the end-to-end procedure for publishing `@danceiny/gotry` to npm — who clicks what, what the execution agent runs, and what proves a release is real.
 > Status: living
 > Upstream: [AGENTS.md](../../AGENTS.md) release discipline (founder confirmation, release gate, pull-back rule), [tokens.md](../tokens.md) (credential paths and the npm 2FA facts)
-> Downstream: `scripts/publish-npm.sh`, `scripts/release-preflight.mjs`, `scripts/verify-published.mjs`, `scripts/post-release-docs.mjs`, `scripts/release-notes.mjs`
+> Downstream: `scripts/publish-npm.sh`, `scripts/release-preflight.mjs`, `scripts/verify-published.mjs`, `scripts/post-release-docs.mjs`, `scripts/release-notes.mjs`, `.github/workflows/npm-publish.yml`, `scripts/release-oidc.mjs`
 > Last updated: 2026-10-06
 > Boundary: this document owns the procedure; credential acquisition and the npm policy facts stay in tokens.md, and what counts as the release gate stays in AGENTS.md. No document may say "published" before the pull-back receipt in §4 exists.
 
@@ -18,6 +18,7 @@
 - Nothing is "published" until `scripts/verify-published.mjs` passes: the registry serves the exact bytes built here, and a clean-room install runs.
 - The GitHub Release is created only after that pull-back, and the web session is revoked at the very end.
 - A stopped run loses nothing: re-running is safe, because the changelog gate is idempotent, an already-published version is detected, and the pull-back can run on its own.
+- Once the founder has set up npm Trusted Publishing, the same release can run with no clicks as a GitHub Actions workflow (§7). Until its first real run has passed, the command above stays the path of record.
 
 ## 1. Before the first command
 
@@ -98,4 +99,38 @@ Three emergency switches exist, and each leaves its claim unproven: `--skip-pref
 - Repointing a dist-tag works with the `.env` granular token. Deleting one needs a web session: `./scripts/publish-npm.sh rmtag <tag>…`, one approval per tag, with `latest` refused. The facts and their history live in [tokens.md](../tokens.md).
 - The session is revoked after a successful release. `--keep-session` keeps it for a maintenance batch, and `./scripts/publish-npm.sh logout` ends it.
 - A `.npmrc.publish` token equal to `NPM_TOKEN` in `.env` is never revoked, because that is a long-lived token; the file is just deleted.
-- Trusted Publishing from GitHub Actions is the planned replacement for the clicks (tokens.md, Path C). Until it is set up and proven, this document is the path.
+- Trusted Publishing from GitHub Actions replaces the clicks once it is set up and proven (§7, tokens.md Path C). Until its first real run has passed, §2 is the path of record.
+
+## 7. Zero-click path: the publish workflow
+
+`.github/workflows/npm-publish.yml` runs the stages of §2 on GitHub's runners and publishes with npm Trusted Publishing: the publish job's OIDC identity replaces the founder's two approvals, and no npm credential exists anywhere. It is built and has a structure lint (`scripts/npm-publish-workflow-tests.mjs`), but its first real use is still ahead.
+
+**One-time setting.** The founder makes it, because it is persistent configuration:
+
+1. npmjs.com → `@danceiny/gotry` → Settings → Trusted publishing → GitHub Actions. Organization or user `Danceiny`, Repository `gotry`, Workflow filename `npm-publish.yml`, Environment `npm-publish` (optional), Allowed actions: tick `npm publish`.
+2. Optionally, GitHub → Settings → Environments → `npm-publish`: restrict deployment tags to `v*` and add required reviewers.
+
+**Run it on the release tag.** `workflow_dispatch` runs the workflow file as it is at that tag, so the tag must already contain the file; the first release that can use it is the one cut after the PR that adds it.
+
+```sh
+gh workflow run npm-publish.yml --ref v<version> -f dist_tag=latest                    # rehearsal, the default
+gh workflow run npm-publish.yml --ref v<version> -f dist_tag=latest -f dry_run=false   # the real publish
+```
+
+| Job | What it does | Identity |
+|---|---|---|
+| gate | refuses anything but a tag; runs the §2 preflight; installs the root dependencies without install scripts; builds; packs the tarball and records it in `.release-expected.json`; uploads both with the two OIDC tools | none |
+| publish | checks the tarball against the recorded shasum; prints the run's OIDC claims beside the Trusted Publisher form values; runs `npm publish <tarball> --tag <dist_tag>` | `id-token: write`, environment `npm-publish` |
+| verify | skipped on a rehearsal; runs `verify-published.mjs` against the registry and uploads the receipt | none |
+| github-release | creates the GitHub Release from `release-notes.mjs` with `--verify-tag` | `contents: write` |
+
+A rehearsal does everything except the registry write, including the real token exchange, because npm exchanges the token before it looks at `--dry-run`. A green rehearsal therefore proves the npm-side setting. It does not prove the allowed-actions tick or provenance; only the first real run exercises those. npm reports an OIDC failure only at verbose level and shows a generic "not logged in" otherwise, so `release-oidc.mjs` reads the verdict out of the log and prints it with a hint:
+
+| Hint in the publish job | Meaning | Do |
+|---|---|---|
+| the exchange failed, with the registry's own reason above it | the Trusted Publisher setting does not match this run | compare the form with the claims block of the "OIDC claims" step: owner, repository, workflow filename and environment, case-sensitive |
+| npm never attempted the exchange | the job lacks `id-token: write`, or the runner is not GitHub-hosted | restore the permission; self-hosted runners cannot publish this way |
+| the exchange worked but the registry refused the write | the allowed actions lack `npm publish` | tick it on npmjs.com |
+| the provenance statement was rejected | `repository.url` in package.json does not name this repository, or it is not public | fix it, or publish through §2, which carries no provenance |
+
+What stays the same: the preflight, the pull-back rule, and the docs follow-up. After a real run, fetch the receipt with `gh run download <run-id> -n release-receipt -D <dir>` and continue at §4 with `--receipt <dir>/.release-verified.json`. What differs: the preflight's CI proof skips the workflow's own `Release: …` check runs; the job that holds the identity never runs anything installed after the checkout; and there is no approval link to expire. A failed run before the publish step published nothing. A failed verify step can be re-run on its own with "Re-run failed jobs", which reuses the gate's tarball and does not publish again.

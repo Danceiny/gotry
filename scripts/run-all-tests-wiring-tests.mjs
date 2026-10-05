@@ -39,6 +39,7 @@ assert.ok(
 for (const releaseSuite of [
   'release-preflight-tests.mjs', 'verify-published-tests.mjs', 'post-release-docs-tests.mjs',
   'release-notes-tests.mjs', 'publish-npm-tests.mjs', 'build-dist-guard-tests.mjs',
+  'release-oidc-tests.mjs', 'npm-publish-workflow-tests.mjs',
 ]) {
   assert.ok(
     executableLines.some((line) => line.startsWith(`(node scripts/${releaseSuite}) || FAIL=1`)),

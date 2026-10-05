@@ -6,7 +6,8 @@
  * suite is offline and deterministic. The cases are the ways a release has actually gone wrong or nearly did:
  * publishing from a checkout that is not the tag (HEAD drift), a tag that never reached the remote (gh release
  * create --verify-tag then fails after npm already published), a commit that never went through main, CI proof
- * that was cancelled by concurrency (rc.28) or is red, and a version that is already on the registry.
+ * that was cancelled by concurrency (rc.28) or is red, and a version that is already on the registry. The npm-publish
+ * workflow adds two more: its own "Release: …" check runs must never count as CI, and its gate packs the real tarball.
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -14,12 +15,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { compareSemver, parseSemver, redact } from './release-lib.mjs'
+import { RELEASE_CHECK_PREFIX, compareSemver, looksLikeSecret, parseSemver, redact } from './release-lib.mjs'
 import { findCiProof, judgeCheckRuns, parseArgs, parseRepo, runPreflight, writeExpected } from './release-preflight.mjs'
 
 let checks = 0
 const ok = (cond, msg) => { assert.ok(cond, msg); checks++ }
-const eq = (a, b, msg) => { assert.deepEqual(a, b, msg); checks++ }
+const eq = (a, b, msg = `expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`) => { assert.deepEqual(a, b, msg); checks++ }
 
 // ---- release-lib: semver precedence (a downgrade guard that mis-orders prereleases would block or allow wrongly) ----
 eq(parseSemver('1.2'), null, 'not a semver')
@@ -32,6 +33,11 @@ eq(compareSemver('1.0.0-alpha', '1.0.0-alpha.1'), -1, 'a shorter prerelease set 
 eq(compareSemver('1.0.0-alpha.1', '1.0.0-alpha.beta'), -1, 'numeric identifiers sort below alphanumeric')
 eq(compareSemver('x', '1.0.0'), null, 'not comparable')
 eq(redact('dsh web: http://127.0.0.1:3080/?token=abc-123_DEF ok'), 'dsh web: http://127.0.0.1:3080/?token=<redacted> ok', 'login tokens never reach a log')
+eq(RELEASE_CHECK_PREFIX, 'Release: ', 'the prefix the workflow\'s job names and the CI proof agree on')
+ok(looksLikeSecret(`npm notice token ${'npm_'}${'a1B2'.repeat(9)}`), 'an npm token shape is a secret')
+ok(looksLikeSecret(`Bearer ${'eyJhbGciOiJSUzI1NiJ9'}.${'eyJzdWIiOiJyZXBvIn0'}.${'c2lnbmF0dXJlLWJ5dGVz'}`), 'a JWT shape is a secret')
+ok(!looksLikeSecret('npm verbose oidc Successfully retrieved and set token\nhttp fetch PUT 200 https://registry.npmjs.org/@danceiny%2fgotry 812ms'), 'ordinary verbose npm output is not')
+ok(!looksLikeSecret('npm_config_registry=https://registry.npmjs.org/ and eyJ is a prefix'), 'a short npm_ word or a bare eyJ is not')
 
 // ---- argument parsing ----
 eq(parseArgs(['--tag', 'latest']).tag, 'latest')
@@ -40,6 +46,8 @@ assert.throws(() => parseArgs(['--tag']), /needs a value/); checks++
 assert.throws(() => parseArgs(['--tag', 'latest', '--nope']), /unknown argument/); checks++
 eq(parseArgs(['--tag', 'latest', '--skip-ci-proof', 'gh offline']).skipCiProof, 'gh offline')
 ok(parseArgs(['--tag', 'rc', '--registry', 'http://127.0.0.1:1']).registry.endsWith('/'), 'registry gets a trailing slash')
+eq(parseArgs(['--tag', 'latest', '--write-expected', '--pack-dir', '/tmp/bundle']).packDir, '/tmp/bundle')
+assert.throws(() => parseArgs(['--tag', 'latest', '--pack-dir', '/tmp/bundle']), /only goes with --write-expected/); checks++
 
 // ---- repository detection from a remote URL ----
 eq(parseRepo('git@github.com:Danceiny/gotry.git'), 'Danceiny/gotry')
@@ -108,6 +116,17 @@ proof = findCiProof({ repo: 'o/r', sha: SHA, tree: TREE, tagName: 'v1', gh: fake
 ok(!proof.ok && /still running/.test(proof.detail), 'pending with no other proof says wait, not rerun')
 
 assert.throws(() => findCiProof({ repo: 'o/r', sha: SHA, tree: TREE, tagName: 'v1', gh: fakeGh({}) }), /could not read check runs/); checks++
+
+// The npm-publish workflow's jobs ("Release: …") sit on the tag commit while it runs and stay after a failed rehearsal.
+// They are not CI: counting them would make a workflow's own preflight wait for itself, and one red rehearsal block every later release.
+proof = findCiProof({ repo: 'o/r', sha: SHA, tree: TREE, tagName: 'v1', gh: fakeGh({ [`repos/o/r/commits/${SHA}/check-runs`]: `${green}Release: gate\tin_progress\t\n` }) })
+ok(proof.ok, 'the workflow\'s own running job does not make the proof pending')
+proof = findCiProof({ repo: 'o/r', sha: SHA, tree: TREE, tagName: 'v1', gh: fakeGh({ [`repos/o/r/commits/${SHA}/check-runs`]: `${green}Release: publish\tcompleted\tfailure\n` }) })
+ok(proof.ok, 'a failed rehearsal job is not a red CI')
+proof = findCiProof({ repo: 'o/r', sha: SHA, tree: TREE, tagName: 'v1', gh: fakeGh({ [`repos/o/r/commits/${SHA}/check-runs`]: 'Release: gate\tin_progress\t\n', [`repos/o/r/commits/${SHA}/pulls`]: '' }) })
+ok(!proof.ok && /gh workflow run CI --ref v1/.test(proof.detail), 'release jobs alone are no proof; the remedy is CI on the tag')
+proof = findCiProof({ repo: 'o/r', sha: SHA, tree: TREE, tagName: 'v1', gh: fakeGh({ [`repos/o/r/commits/${SHA}/check-runs`]: `${green}Release-notes lint\tcompleted\tfailure\n` }) })
+ok(!proof.ok && /Release-notes lint/.test(proof.detail), 'only the exact "Release: " prefix is skipped: a real check that merely starts with "Release" still counts')
 
 // ---- full preflight on real temporary git repositories ----
 const base = mkdtempSync(join(tmpdir(), 'gotry-preflight-'))
@@ -285,6 +304,22 @@ const greenGh = (repoSha) => fakeGh({ [`repos/o/r/commits/${repoSha}/check-runs`
   eq([e.commit, e.tree], [r.commit, r.tree], 'bound to the commit and tree it was built from')
   assert.throws(() => writeExpected({ root: r.work, tag: 'latest', run: () => ({ status: 0, stdout: JSON.stringify([{ name: '@scope/pkg', version: '9.9.9' }]), stderr: '' }) }), /package\.json is 0\.2\.0-rc\.9/); checks++
   assert.throws(() => writeExpected({ root: r.work, tag: 'latest', run: () => ({ status: 1, stdout: '', stderr: 'boom' }) }), /npm pack --dry-run failed/); checks++
+}
+
+// writeExpected with a pack directory: the pack is real, the tarball name is recorded, the directory is created
+{
+  const r = makeRepo('packdir')
+  const packDir = join(base, 'bundle', 'nested')
+  const fakeRun = (cmd, args) => {
+    eq([cmd, ...args], ['npm', 'pack', '--json', '--pack-destination', packDir], 'a real pack into the directory')
+    return { status: 0, stdout: JSON.stringify([{ name: '@scope/pkg', version: '0.2.0-rc.9', filename: 'scope-pkg-0.2.0-rc.9.tgz', shasum: 'e'.repeat(40), integrity: 'sha512-xyz', entryCount: 5, unpackedSize: 99 }]), stderr: '' }
+  }
+  const e = writeExpected({ root: r.work, tag: 'latest', packDir, run: fakeRun, now: () => new Date('2026-10-06T00:00:00Z') })
+  eq(e.tarball, 'scope-pkg-0.2.0-rc.9.tgz', 'the record names the tarball the workflow will publish')
+  ok(readFileSync(join(r.work, '.release-expected.json'), 'utf8').includes('"tarball"'), 'and the name reaches the file')
+  eq(spawnSync('test', ['-d', packDir]).status, 0, 'the pack directory is created when missing')
+  assert.throws(() => writeExpected({ root: r.work, tag: 'latest', packDir, run: () => ({ status: 0, stdout: JSON.stringify([{ name: '@scope/pkg', version: '0.2.0-rc.9' }]), stderr: '' }) }), /did not say which tarball/); checks++
+  assert.throws(() => writeExpected({ root: r.work, tag: 'latest', packDir, run: () => ({ status: 1, stdout: '', stderr: 'boom' }) }), /npm pack failed: boom/); checks++
 }
 
 // the CLI runs when reached through a symlinked directory (see release-lib isMain); no --tag is a usage error, exit 2

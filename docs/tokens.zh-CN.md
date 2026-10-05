@@ -74,10 +74,14 @@ npm login --auth-type=web --registry=https://registry.npmjs.org/
    - **勾选 "Allow token to bypass two-factor authentication"**（页面下方，不勾等于白建）
 4. 生成后复制 `npm_` 开头的串，贴给我 → 我写 `.env` → `./scripts/publish-npm.sh` 发
 
-### 路径 C（中期主评估，#50③）：GitHub Actions OIDC trusted publishing
+### 路径 C：GitHub Actions OIDC trusted publishing（已建好；等 founder 的一次性设置，首次真实运行还在前面）
 
-包首次发上去后，在 npmjs 包设置页关联 GitHub 仓库 + workflow，
-之后 CI 自动发布，**永久无 token 无 2FA**。首次发布前用不了——先走 A 或 B。
+`.github/workflows/npm-publish.yml` 通过 npm Trusted Publishing 发布——**没有 token、没有 `.npmrc`、不用点击**。它在发布 tag 上运行，重跑点击路径的预检，发布自己的 gate 作业打出的 tarball，且仅在 registry 回拉通过之后才创建 GitHub Release（流程见 [ops/npm-release-runbook.md](ops/npm-release-runbook.zh-CN.md) §7）。包已经存在，所以现在就可以做设置：
+
+1. npmjs.com → `@danceiny/gotry` → Settings → Trusted publishing → GitHub Actions：Organization or user 填 `Danceiny`，Repository 填 `gotry`，Workflow filename 填 `npm-publish.yml`（含扩展名，区分大小写），Environment 填 `npm-publish`（可选），Allowed actions 勾选 `npm publish`。
+2. 可选加固，GitHub → Settings → Environments → `npm-publish`：把部署 tag 限制为 `v*`，并加上必需审阅人。
+
+要求 npm ≥ 11.5.1（工作流固定为 11.21.0）、GitHub 托管的 runner，以及公开仓库（用于 provenance）。演练（`dry_run`，默认）已经能证明 npm 一侧的设置，因为 npm 是先换 OIDC token、再看 `--dry-run`；allowed actions 的勾选与 provenance 只有首次真实运行才会走到。在那次运行通过之前，仍以路径 A 为准。该工作流只负责发布：dist-tag 维护（重指向、删除）仍然用 `.env` token 或 web 会话。
 
 ### 发布脚本（已就位）
 

@@ -11,31 +11,33 @@
  *   clean tree   no tracked modifications (the tarball is built from the files on disk)
  *   docs         CHANGELOG.md top section, release-notes.md and release-notes.zh-CN.md all carry the version
  *   CI proof     the exact tree is green: the tag commit's own check runs, or — when push CI was cancelled by
- *                concurrency — the merged PR head with an identical tree. A red or missing proof blocks.
+ *                concurrency — the merged PR head with an identical tree. A red or missing proof blocks. The
+ *                npm-publish workflow's own jobs ("Release: …") are not CI and never count, pending or failed.
  *   registry     the version is not already published (npm's 403 for that is obscure); the dist-tag intent is
  *                shown, and publishing an older version to a dist-tag that is ahead is refused
  *
  * Usage:
  *   node scripts/release-preflight.mjs --tag <dist-tag> [--version <v>] [--remote origin] [--branch main]
  *        [--repo owner/name] [--registry <url>] [--skip-ci-proof "<reason>"] [--allow-downgrade] [--json <file>]
- *   node scripts/release-preflight.mjs --write-expected --tag <dist-tag>     # after the dist build
+ *   node scripts/release-preflight.mjs --write-expected --tag <dist-tag> [--pack-dir <dir>]   # after the dist build
  *
  * --write-expected records what `npm pack` produces from the built tree (shasum, integrity, file count) in
- * .release-expected.json; verify-published.mjs later proves the registry serves exactly that.
+ * .release-expected.json; verify-published.mjs later proves the registry serves exactly that. With --pack-dir the
+ * pack is real and the tarball is left in that directory, so the record describes the very file a workflow publishes.
  * Exit: 0 every check passed; 1 a check failed; 2 usage or environment error.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EXPECTED_FILE, OFFICIAL_REGISTRY, UsageError, VERIFIED_FILE, compareSemver, fetchPackument, isMain, parseSemver } from './release-lib.mjs'
+import { EXPECTED_FILE, OFFICIAL_REGISTRY, RELEASE_CHECK_PREFIX, UsageError, VERIFIED_FILE, compareSemver, fetchPackument, isMain, parseSemver } from './release-lib.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 export function parseArgs(argv) {
   const opts = {
     tag: '', version: '', remote: 'origin', branch: 'main', repo: '', registry: OFFICIAL_REGISTRY,
-    skipCiProof: '', allowDowngrade: false, json: '', writeExpected: false,
+    skipCiProof: '', allowDowngrade: false, json: '', writeExpected: false, packDir: '',
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -54,10 +56,12 @@ export function parseArgs(argv) {
     else if (a === '--allow-downgrade') opts.allowDowngrade = true
     else if (a === '--json') opts.json = value()
     else if (a === '--write-expected') opts.writeExpected = true
+    else if (a === '--pack-dir') opts.packDir = value()
     else if (a === '-h' || a === '--help') throw new UsageError('')
     else throw new UsageError(`unknown argument ${a}`)
   }
   if (!opts.tag) throw new UsageError('--tag is required: the dist-tag is an explicit intent, never defaulted (#50①)')
+  if (opts.packDir && !opts.writeExpected) throw new UsageError('--pack-dir only goes with --write-expected')
   if (!opts.registry.endsWith('/')) opts.registry += '/'
   return opts
 }
@@ -94,6 +98,8 @@ function ghLines(gh, args, what) {
 function checkRunRows(gh, repo, sha) {
   return ghLines(gh, ['api', '--paginate', `repos/${repo}/commits/${sha}/check-runs`, '--jq', '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv'], `check runs of ${sha.slice(0, 8)}`)
     .map(([name, status, conclusion]) => ({ name, status, conclusion }))
+    // The release workflow's own jobs are running (or failed in a rehearsal) on this very commit: not CI evidence.
+    .filter((row) => !row.name.startsWith(RELEASE_CHECK_PREFIX))
 }
 
 /**
@@ -243,12 +249,16 @@ export async function runPreflight(opts, deps = {}) {
 }
 
 /** Run after the dist build: what `npm pack` makes from this tree is what the registry must serve. */
-export function writeExpected({ root = ROOT, tag, run = spawnSync, git = realGit(root), now = () => new Date() }) {
+export function writeExpected({ root = ROOT, tag, packDir = '', run = spawnSync, git = realGit(root), now = () => new Date() }) {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-  const r = run('npm', ['pack', '--dry-run', '--json'], { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20 })
-  if (r.status !== 0) throw new Error(`npm pack --dry-run failed: ${(r.stderr ?? '').trim().split('\n').slice(-2).join(' ')}`)
+  // A real pack (the workflow publishes that very file) or a dry run (the click path packs again at publish time).
+  if (packDir) mkdirSync(packDir, { recursive: true })
+  const args = packDir ? ['pack', '--json', '--pack-destination', packDir] : ['pack', '--dry-run', '--json']
+  const r = run('npm', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20 })
+  if (r.status !== 0) throw new Error(`npm ${args.slice(0, packDir ? 1 : 2).join(' ')} failed: ${(r.stderr ?? '').trim().split('\n').slice(-2).join(' ')}`)
   const packed = JSON.parse(r.stdout)[0]
   if (!packed || packed.version !== pkg.version) throw new Error(`npm pack describes ${packed?.name}@${packed?.version}, package.json is ${pkg.version}`)
+  if (packDir && !packed.filename) throw new Error('npm pack did not say which tarball it wrote')
   const expected = {
     schema: 'gotry_release_expected_v1',
     name: pkg.name,
@@ -256,6 +266,7 @@ export function writeExpected({ root = ROOT, tag, run = spawnSync, git = realGit
     tag,
     commit: git(['rev-parse', 'HEAD']).stdout,
     tree: git(['rev-parse', 'HEAD^{tree}']).stdout,
+    ...(packDir ? { tarball: packed.filename } : {}),
     shasum: packed.shasum,
     integrity: packed.integrity,
     fileCount: packed.entryCount,
@@ -270,14 +281,15 @@ async function main() {
   let opts
   try { opts = parseArgs(process.argv.slice(2)) } catch (err) {
     if (err instanceof UsageError) {
-      console.error(`${err.message ? `error: ${err.message}\n` : ''}usage: node scripts/release-preflight.mjs --tag <dist-tag> [--version <v>] [--remote origin] [--branch main] [--repo owner/name] [--registry <url>] [--skip-ci-proof "<reason>"] [--allow-downgrade] [--json <file>]\n       node scripts/release-preflight.mjs --write-expected --tag <dist-tag>`)
+      console.error(`${err.message ? `error: ${err.message}\n` : ''}usage: node scripts/release-preflight.mjs --tag <dist-tag> [--version <v>] [--remote origin] [--branch main] [--repo owner/name] [--registry <url>] [--skip-ci-proof "<reason>"] [--allow-downgrade] [--json <file>]\n       node scripts/release-preflight.mjs --write-expected --tag <dist-tag> [--pack-dir <dir>]`)
       return 2
     }
     throw err
   }
   if (opts.writeExpected) {
-    const e = writeExpected({ tag: opts.tag })
-    console.log(`expected build recorded in ${EXPECTED_FILE}: ${e.name}@${e.version} shasum ${e.shasum}, ${e.fileCount} files, ${e.unpackedSize} unpacked bytes`)
+    const packDir = opts.packDir ? resolve(opts.packDir) : ''
+    const e = writeExpected({ tag: opts.tag, packDir })
+    console.log(`expected build recorded in ${EXPECTED_FILE}: ${e.name}@${e.version} shasum ${e.shasum}, ${e.fileCount} files, ${e.unpackedSize} unpacked bytes${packDir ? `; tarball ${join(packDir, e.tarball)}` : ''}`)
     return 0
   }
   // Records of an earlier release must not outlive the start of this one.

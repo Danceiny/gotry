@@ -74,9 +74,14 @@ The link is valid for about 7 minutes; if it expires nothing is lost and I regen
    - **Check "Allow token to bypass two-factor authentication"** (lower on the page; not checking it = wasted creation)
 4. After generation, copy the string starting with `npm_`, paste it to me → I write `.env` → `./scripts/publish-npm.sh` publishes
 
-### Path C (Mid-Term Main Evaluation, #50③): GitHub Actions OIDC Trusted Publishing
+### Path C: GitHub Actions OIDC Trusted Publishing (built; waits for the founder's one-time setting, first real run still ahead)
 
-After the package's first publish, associate the GitHub repo + workflow on the npmjs package settings page; afterwards CI auto-publishes, **permanently token-free and 2FA-free**. Unusable before the first publish — walk A or B first.
+`.github/workflows/npm-publish.yml` publishes through npm Trusted Publishing — **no token, no `.npmrc`, no click**. It runs on the release tag, repeats the click path's preflight, publishes the tarball its own gate job packed, and creates the GitHub Release only after the registry pull-back passes (procedure: [ops/npm-release-runbook.md](ops/npm-release-runbook.md) §7). The package already exists, so the setting can be made now:
+
+1. npmjs.com → `@danceiny/gotry` → Settings → Trusted publishing → GitHub Actions: Organization or user `Danceiny`, Repository `gotry`, Workflow filename `npm-publish.yml` (extension included, case-sensitive), Environment `npm-publish` (optional), Allowed actions: tick `npm publish`.
+2. Optional hardening, GitHub → Settings → Environments → `npm-publish`: restrict deployment tags to `v*` and add required reviewers.
+
+It needs npm ≥ 11.5.1 (the workflow pins 11.21.0), a GitHub-hosted runner, and a public repository for provenance. A rehearsal (`dry_run`, the default) already proves the npm-side setting, because npm exchanges the OIDC token before it looks at `--dry-run`; the allowed-actions tick and provenance are exercised only by the first real run. Until that run has passed, path A stays the path of record. The workflow only publishes: dist-tag maintenance (repointing, deleting) is still the `.env` token or a web session.
 
 ### Publish Script (Ready)
 
