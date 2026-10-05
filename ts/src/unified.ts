@@ -117,6 +117,13 @@ function routeHint(id: string): string | undefined {
   return SEGMENT_ROUTES[id]
 }
 
+// Issue #620 注:数据包缺 buffer_min/origin_transfer_min/dest_transfer_min 时,
+// 这里的 `Number(undefined)` = NaN 会一路流到求解层。NaN **不在 parse 边界补 0**
+// (补零等于替用户编接驳时间,ADR-10 翻译不造数),也不在这里整包拒收
+// (data/yunnan-pack.json 的 yn0 真值按 meta.reconcil 仍待 founder 校准)。
+// 防线在 solveUnifiedInner 的 assertZ3IntegerInputs:进 Z3 之前逐字段点名,
+// 以显式 solver_error 返回,绝不冒充「不可行」。
+
 // ---- 适配器:旧候选用例(洱海形态:request + candidates)→ 单 choice 段 -------------
 // 与 py unified.py segments_from_candidate 逐行对齐
 
@@ -485,8 +492,20 @@ function releaseZ3(resource: { release?: () => void } | null | undefined): void 
   if (typeof resource?.release === 'function') resource.release()
 }
 
-/** 航班链形态求解:按 Option 选择,锚点命名约束,core 剥竖线(D-2 修复) */
-export async function solveUnified(spec: JourneySpecTS): Promise<{
+/**
+ * Issue #620:求解器自身失败的显式类别。**不是 unsat_core**——判定缺席,不是「不可行」。
+ * 机器 token 只住在 `code` 里,不得渲染进任何用户面「冲突」文案。
+ */
+export type SolverErrorInfo = {
+  /** `solver_input_not_integer` = spec 里有非整数进不了 Z3 整数编码(确定性,可定位到字段);
+   *  `solver_runtime_error` = z3-solver / WASM 运行时异常(含真正的内存/竞态形态)。 */
+  code: 'solver_input_not_integer' | 'solver_runtime_error'
+  message: string
+}
+
+export interface UnifiedSolveResult {
+  /** `solver_error` 存在时,`feasible: false` 只表示「没有产出可行解」,
+   *  **不表示「不可行」**——那一轮根本没有判定。读者必须先看 `solver_error`。 */
   feasible: boolean
   money_cny?: number
   legs?: Array<LegReport & { leg: string; d2d_min?: number }>
@@ -495,27 +514,76 @@ export async function solveUnified(spec: JourneySpecTS): Promise<{
   suggestions?: Array<{ relax: string; money_cny: number }>
   work_window_exclusions?: Array<{ segment: string; option: string; reason: string }>
   skeleton_notes?: string[]
-}> {
-  // WASM 防护:如果 z3-solver 加载或求解触发 memory access 错误,不让异常穿透到进程层把 dsh 杀掉。
-  // 候选形态走 solveChoiceSegment 不经过这里——这里是显式航班链路径,用户量较少。
-  try {
-    return await solveUnifiedInner(spec)
-  } catch (e) {
-    console.error('[gotry] solveUnified failed (likely wasm thread race):', (e as Error).message?.slice(0, 200))
-    return { feasible: false, unsat_core: ['wasm_runtime_error'], red_flags: ['WASM 求解器异常,建议下次用候选形态(枚举)重试'] }
+  solver_error?: SolverErrorInfo
+}
+
+/** Issue #620:进 Z3 前的输入类型闸。`Int.val(NaN|Infinity|小数)` 在 WASM 里是
+ *  `Assertion failed`,不是一个可解释的判定——所以在构造 AST 之前抛可定位的类型化错误。 */
+export class SolverInputError extends Error {
+  readonly code = 'solver_input_not_integer' as const
+  constructor(message: string) {
+    super(message)
+    this.name = 'SolverInputError'
   }
 }
 
-async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
-  feasible: boolean
-  money_cny?: number
-  legs?: Array<LegReport & { leg: string; d2d_min?: number }>
-  red_flags?: string[]
-  unsat_core?: string[]
-  suggestions?: Array<{ relax: string; money_cny: number }>
-  work_window_exclusions?: Array<{ segment: string; option: string; reason: string }>
-  skeleton_notes?: string[]
-}> {
+/** 把所有将要变成 `Int.val(...)` 的数验成有限整数;违例逐项点名(段/候选/字段)。 */
+function assertZ3IntegerInputs(spec: JourneySpecTS, wakeFloorMin: number): void {
+  const bad: string[] = []
+  const check = (where: string, value: unknown): void => {
+    // NaN/Infinity 经 JSON.stringify 会变成 "null",诊断信息就丢了——数值一律按原文印。
+    if (!Number.isInteger(value)) bad.push(`${where}=${typeof value === 'number' ? String(value) : JSON.stringify(value)}`)
+  }
+  check('wakeFloorMin', wakeFloorMin)
+  if (spec.budgetCny !== undefined) check('budgetCny', spec.budgetCny)
+  for (const seg of spec.segments) {
+    if (seg.anchors?.arriveByMin !== undefined) check(`${seg.id}.anchors.arriveByMin`, seg.anchors.arriveByMin)
+    if (seg.anchors?.departAfterMin !== undefined) check(`${seg.id}.anchors.departAfterMin`, seg.anchors.departAfterMin)
+    // 段级 wake/arriveStay 编码只取 options[0].move 的接驳口径(见下方 o0)。
+    const o0 = seg.options[0]?.move
+    if (o0) {
+      check(`${seg.id}.bufferMin`, o0.bufferMin)
+      check(`${seg.id}.originTransferMin`, o0.originTransferMin)
+      check(`${seg.id}.destTransferMin`, o0.destTransferMin)
+    }
+    for (const opt of seg.options) {
+      const svc = opt.move?.services[0]
+      if (!svc) {
+        bad.push(`${seg.id}/${opt.id}.services[0]=missing`)
+        continue
+      }
+      check(`${seg.id}/${opt.id}.depMin`, svc.depMin)
+      check(`${seg.id}/${opt.id}.arrMin`, svc.arrMin)
+      check(`${seg.id}/${opt.id}.priceCny`, svc.priceCny)
+    }
+  }
+  if (bad.length > 0) {
+    throw new SolverInputError(
+      `solveUnified: Z3 整数编码只接受有限整数,下列输入不是(issue #620):${bad.slice(0, 8).join('、')}`
+      + (bad.length > 8 ? `(共 ${bad.length} 处)` : ''),
+    )
+  }
+}
+
+/** 航班链形态求解:按 Option 选择,锚点命名约束,core 剥竖线(D-2 修复) */
+export async function solveUnified(spec: JourneySpecTS): Promise<UnifiedSolveResult> {
+  // 求解器失败防护:z3-solver 加载/求解异常不让它穿透到进程层把 dsh 杀掉。
+  // 但也**不冒充判定**(issue #620):崩溃以 solver_error 显式返回,unsat_core 保持缺席,
+  // 否则「引擎故障」会被下游当成「你的行程不可行」,理由位置上还放着机器 token。
+  // 候选形态走 solveChoiceSegment 不经过这里——这里是显式航班链路径。
+  try {
+    return await solveUnifiedInner(spec)
+  } catch (e) {
+    const err = e instanceof Error ? e : new Error(String(e))
+    const code: SolverErrorInfo['code'] = err instanceof SolverInputError ? err.code : 'solver_runtime_error'
+    const message = (err.message ?? '').slice(0, 200)
+    // 措辞纪律:不再写「likely wasm thread race」——#620 证明它也可能是确定性的输入错误。
+    console.error(`[gotry] solveUnified aborted — ${code}(求解器失败,不是「不可行」判定):`, message)
+    return { feasible: false, solver_error: { code, message } }
+  }
+}
+
+async function solveUnifiedInner(spec: JourneySpecTS): Promise<UnifiedSolveResult> {
   // M-1:求解前的工作窗口确定性预过滤(与 py 对齐),排除理由入记录
   // 骨架层(§7-1):三值语义标注——枢纽间否定只降权不排除(骨架滞后会错杀 EK329)
   const skeletonNotes: string[] = []
@@ -541,11 +609,16 @@ async function solveUnifiedInner(spec: JourneySpecTS): Promise<{
     }
   }
 
+  // Issue #620:类型闸在 Z3 会话之外先跑——非整数输入不许进 WASM(进去就是
+  // `Assertion failed`,还会污染共享实例)。抛 SolverInputError,由 solveUnified 归类。
+  const wakeFloorPre = spec.defaultWakeFloorMin ?? hhmmToMin('06:00')
+  assertZ3IntegerInputs(spec, wakeFloorPre)
+
   // Z3 会话进互斥门(骨架/预过滤等网络段留在门外):solveUnifiedInner 的判定段
   // 从 here 到 return 全部独占共享实例。
   return withZ3('unified.solveUnifiedInner', async z3 => {
   const { Bool, If, Int, Solver, Sum } = z3
-  const wakeFloor = spec.defaultWakeFloorMin ?? hhmmToMin('06:00')
+  const wakeFloor = wakeFloorPre
 
   const allSels: Record<string, any[]> = {}
   const assertions: Record<string, any> = {}

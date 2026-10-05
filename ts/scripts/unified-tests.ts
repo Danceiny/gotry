@@ -58,4 +58,44 @@ off.workWindow = undefined
 const r4 = await solveUnified(off)
 assert.deepEqual(r4.work_window_exclusions, [])  // 关掉窗口,周五班恢复可选
 
-console.log(`TS UNIFIED TESTS: 4/4 OK(工作窗口生效,f2=VZ303,¥${r1.money_cny})`)
+// 5. Issue #620:yunnan-pack 的 yn0 段缺 buffer_min/origin_transfer_min/dest_transfer_min
+//    → 旧实现 Number(undefined)=NaN → Int.val(NaN) 在 z3 WASM 里 `Assertion failed`
+//    → 被兜底翻译成「不可行 + unsat_core:['wasm_runtime_error']」。三条红线:
+//    ① parse 边界必须点名拒收(不默认补 0);② 绕过 parse 的 NaN spec 必须以
+//    solver_error 返回而**绝不**是 infeasible;③ 补齐那三个字段后整包必须真能判定。
+const yunnanRaw = JSON.parse(await readFile(join('..', 'data', 'yunnan-pack.json'), 'utf-8'))
+
+// ① 真实数据包:yn0 的三个缺字段 → NaN → 必须是显式 solver_error,绝不是「不可行」
+const yunnanSpecRaw = parseFlightPackToSpec(structuredClone(yunnanRaw))
+yunnanSpecRaw.budgetCny = 9000
+assert.ok(Number.isNaN(yunnanSpecRaw.segments[0].options[0].move!.bufferMin), 'yn0 缺 buffer_min 的事实前提')
+const rYunnanRaw = await solveUnified(yunnanSpecRaw)
+assert.equal(rYunnanRaw.solver_error?.code, 'solver_input_not_integer', `yunnan 包必须以 solver_error 返回(got ${JSON.stringify(rYunnanRaw)})`)
+assert.ok(rYunnanRaw.solver_error!.message.includes('yn0.bufferMin'), `solver_error 必须点名出问题的段与字段(got ${rYunnanRaw.solver_error!.message})`)
+assert.equal(rYunnanRaw.feasible, false, 'solver_error 轮次没有产出可行解')
+assert.deepEqual(rYunnanRaw.unsat_core, undefined, '求解器失败不得伪造 unsat_core(机器 token 不进冲突位)')
+assert.ok(!JSON.stringify(rYunnanRaw).includes('wasm_runtime_error'), '不得再出现 wasm_runtime_error 这个伪冲突 token')
+
+// ② 最小输入:健康包里塞一个 NaN 接驳分钟 → 同样是 solver_error,点名到字段
+const nanSpec = parseFlightPackToSpec(pack)
+nanSpec.budgetCny = 9000
+nanSpec.segments[0].options[0].move!.bufferMin = Number.NaN
+const rNan = await solveUnified(nanSpec)
+assert.equal(rNan.solver_error?.code, 'solver_input_not_integer', `NaN 接驳必须以 solver_error 返回(got ${JSON.stringify(rNan)})`)
+assert.ok(rNan.solver_error!.message.includes('f1.bufferMin'), `solver_error 必须点名字段(got ${rNan.solver_error!.message})`)
+assert.equal(rNan.feasible, false, 'solver_error 轮次没有产出可行解')
+
+// ③ 补齐 yn0 的三个字段(由测试提供,不改数据包:真值待 founder 校准)→ 整包真能判定,
+//    证明断言失败的最小输入正是这三个字段,其余四段编码本身没问题
+const yunnanFixed = structuredClone(yunnanRaw)
+Object.assign((yunnanFixed['legs'] as Array<Record<string, unknown>>)[0], {
+  buffer_min: 60, origin_transfer_min: 30, dest_transfer_min: 30,
+})
+const yunnanSpec = parseFlightPackToSpec(yunnanFixed)
+yunnanSpec.budgetCny = 9000
+const rYunnan = await solveUnified(yunnanSpec)
+assert.equal(rYunnan.solver_error, undefined, `补齐三字段后不得再有求解器失败(got ${JSON.stringify(rYunnan.solver_error)})`)
+assert.equal(rYunnan.feasible, true, `yunnan 整包应可行(unsat_core=${JSON.stringify(rYunnan.unsat_core)})`)
+assert.equal(rYunnan.legs!.length, 5, '五段全判定')
+
+console.log(`TS UNIFIED TESTS: 5/5 OK(工作窗口生效,f2=VZ303,¥${r1.money_cny};#620 yunnan NaN→solver_error 点名 yn0,补齐三字段后可行 ¥${rYunnan.money_cny})`)

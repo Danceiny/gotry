@@ -76,11 +76,15 @@ export interface TripState {
 // ---- 求解结果(unified 求解器输出的契约化引用) ----------------------------------
 
 export interface SolveResult {
+  /** `solver_error` 存在时,`feasible: false` 只表示「没有产出可行解」,
+   *  **不表示「不可行」**(issue #620):那一轮求解器自己失败了,判定缺席。 */
   feasible: boolean
   money_cny?: number
   legs?: Array<Record<string, unknown> & { leg: string }>
   red_flags?: string[]
   unsat_core?: string[]
+  /** 求解器自身失败(非判定)。机器 token 只住 `code`,不进用户面「冲突」文案。 */
+  solver_error?: { code: string; message: string }
   suggestions?: Array<{ relax: string; money_cny?: number }>
   work_window_exclusions?: Array<{ segment: string; option: string; reason: string }>
   skeleton_notes?: string[]
