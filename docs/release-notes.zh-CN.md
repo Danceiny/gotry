@@ -45,9 +45,11 @@
 
 运行 `npx @danceiny/gotry@0.2.0-rc.27 web`（Node ≥ 22.15）。待 `latest` 指向本版后，`npx @danceiny/gotry web` 等价；镜像滞后时请钉精确版本。
 
-### dist-tag 计划
+### 已发布
 
-`TAG=latest ./scripts/publish-npm.sh`，dist-tag 显式传入（#50①）。兼容用 `rc` tag 仍停在 `0.0.1-rc.20`；是否退役仍由 owner 决定。
+2026-10-05 以 `TAG=latest ./scripts/publish-npm.sh`（dist-tag 显式传入，#50①）发布 `@danceiny/gotry@0.2.0-rc.27`，并从 registry 回拉校验：`npm view` 显示 `latest` → `0.2.0-rc.27`（shasum `f0889a78cd817bb33028630b9087177cc81c3ed2`，517 个文件）。在干净机器上（全新 HOME 与 npm 缓存、仅官方 registry、无 LLM key）`npx @danceiny/gotry@latest web` 可以启动并提供界面——`Cordis HMR service` 启动崩溃已消失——`doctor` 能输出报告，没有凭证的一次性任务以宿主的缺凭证提示失败而不是抛堆栈。GitHub Release：[v0.2.0-rc.27](https://github.com/Danceiny/gotry/releases/tag/v0.2.0-rc.27)。兼容用 `rc` tag 仍停在 `0.0.1-rc.20`；挪动它需要另一次网页授权（#50③）。
+
+本版已知问题：`npx @danceiny/gotry doctor` 会把没有凭证的 hbcli 报成「凭证有效」——CLI 仍按 `hbcli auth whoami` 的退出码判定，而工具层 doctor 已改为解析其 JSON（[#623](https://github.com/Danceiny/gotry/issues/623)）。
 
 ---
 
