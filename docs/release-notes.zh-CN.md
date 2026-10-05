@@ -9,6 +9,7 @@
 ## Unreleased
 
 - **`doctor` 不再偶发地把没有凭证的 hbcli 报成 `ok`** — 凭证探测在子进程 `exit` 事件结算，此时 stdout 可能还没读完；读到空串便落入「输出不可解析视为有效」分支。现改为在 `close` 结算，并用确定性回归测试注入一个先退出、数据后到的子进程。这同时消除了 Node 22 CI 任务的偶发红灯。
+- **会话双区记忆机制（#255，默认关闭）** — 在既有 `events` 表上新增六个日志类事件（零新表；内核钉死的 `state-ledger.ts` 零改动）、捕获缝、按 scope 绑定的读回变量 `session_zone_brief`、经既有 motivation/timeline/companion 闸路由的 owner 确认晋升、`state-cli export` 新增 `hot-context.jsonl` 与 `notebook.json` 视图，以及 opt-in 观测面和三个阈值在见数据前冻结的指标。`sessionZones` 开关默认 `off`，关闭时惰性；价值声明仍关闭（尚无真实使用），出厂 persona 在 founder 决定前不引用新变量。
 
 ---
 

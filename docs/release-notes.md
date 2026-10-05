@@ -9,6 +9,7 @@
 ## Unreleased
 
 - **`doctor` no longer intermittently reports an hbcli without credentials as `ok`** — the credential probe settled on the child's `exit` event, which can fire before its stdout has been read; an empty read then fell into the "unparseable output counts as valid" branch. It now settles on `close`, and a deterministic regression test injects a child that exits before its data arrives. This also removes an intermittent red on the Node 22 CI job.
+- **Session dual-zone memory mechanism (#255, default off)** — six log-type event kinds on the existing `events` table (zero new tables; the kernel-pinned `state-ledger.ts` is untouched), a capture seam, a scope-keyed read-back variable `session_zone_brief`, owner-confirmed promotion routed through the existing motivation/timeline/companion gates, `state-cli export` views `hot-context.jsonl` and `notebook.json`, and an opt-in observation face with three metrics whose thresholds are frozen before any data. The `sessionZones` switch defaults to `off` and is inert when off; the value claim stays closed (no real usage yet), and the shipped persona does not reference the new variable until the founder decides.
 
 ---
 

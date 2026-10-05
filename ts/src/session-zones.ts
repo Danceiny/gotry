@@ -142,17 +142,20 @@ export type ZoneEvent =
 
 /**
  * 幂等键(设计 §2 钉死的 rev 写键:P4-2 落账本直接复用):
- * rev 写 `hotctx:<note_id>:<rev>` / `notebook:<entry_id>:<rev>`——同 rev 重放物理 no-op;
- * drop 键带 ts:同一事件重放仍去重,且不跨生命周期碰撞(drop→再捕获循环不误伤)。
+ * rev 写 `hotctx:<note_id>:<生代>:<rev>` / `notebook:<entry_id>:<生代>:<rev>`——
+ * 同 rev 重放物理 no-op;drop 键带 ts:同一事件重放仍去重。
+ * 生代 = 文档的 created_at(诞生时刻,修订沿用):note_id/entry_id 是语义派生的,
+ * drop 后重捕获会复用同一 id 与 rev 1,若键里没有生代,UNIQUE 索引会把「更正后
+ * 仍真」的重捕获物理吞掉——纯核允许的生命周期在账本上就断了(P4-2 物理化暴露)。
  */
 export function zoneIdemKey(ev: ZoneEvent): string {
   switch (ev.kind) {
     case 'hotctx.note.captured':
     case 'hotctx.note.revised':
-      return `hotctx:${ev.note.note_id}:${ev.note.rev}`
+      return `hotctx:${ev.note.note_id}:${ev.note.created_at}:${ev.note.rev}`
     case 'notebook.entry.promoted':
     case 'notebook.entry.revised':
-      return `notebook:${ev.entry.entry_id}:${ev.entry.rev}`
+      return `notebook:${ev.entry.entry_id}:${ev.entry.created_at}:${ev.entry.rev}`
     case 'hotctx.note.dropped':
       return `hotctx:${ev.note_id}:drop:${ev.ts}`
     case 'notebook.entry.dropped':
