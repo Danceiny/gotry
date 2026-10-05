@@ -660,6 +660,14 @@ echo "=== 74. 会话双区记忆分区契约纯核(P4-1,design/session-dual-zone
 (cd ts && npx tsx scripts/session-zones-tests.ts) || FAIL=1
 
 echo
+echo "=== 75. M3 种子 cohort 采集(issue #22,scripts/product-metrics.ts 评分器此前零生产方:显式 opt-in(无 HMAC key/无 consent/未 init 一律零写入)/HMAC-SHA256 假名 participant·plan·cohort_id·cohort-key-verifier 四类键全部按 evidence_kind 域分离/append-only 幂等重放 unchanged/乱序与越界 fail-closed 类型化(同人第二条 NPS 被写时拒)/ts/dsh-runtime·~/.dsh·~/.gotry·.git 状态根拒收·0600 文件 0700 目录/writer lock:活写者与不可读 pid 一律 lock_busy 零写入、记录 pid 已死的残锁被回收且 lock-status/unlock CLI 只清死锁/导出四文件全有或全无(半占用证据根零残留,预检四个目标后才落第一个字节) + 严格 gotry_m3_cohort_record_v1 形状 + 真实 product-metrics.ts 子进程消费/合成标签反证:(a) 全项达标的合成 cohort 仍 business_pass=false、(b) 模拟记录既不得入 real_seed_cohort 存储也不得入已 attest 为 real 的证据根、(c) PII 哨兵零落盘、(d) 单字段改标 real 以及三个摘要全部重算的完整伪造都被 attestation 的密钥 MAC 抓住(verify 必须持 key,错 key/无 key 均拒);(a)(b)(d) 各带红基线:同样数字手写成 real 时评分器单独会给 business_pass=true、伪造后的无密钥摘要逐一自洽;隔离 mkdtemp 状态根,全离线) ==="
+(cd ts && npx tsx scripts/m3-cohort-tests.ts) || FAIL=1
+
+echo
+echo "=== 76. LLM persona 模拟 harness(issue #22 采集面验证,SYNTHETIC ONLY 永不计入 M3/M4:≥6 张有依据的人格卡闭集校验(卡片字段/枚举/重复 id/继续无话/nps 越界全拒)/无凭证且非 --dry-run = waiting_external_evidence 零写入零花费零请求(与 nightly-evidence.ts 同停机纪律)/--dry-run 本地 fixture OpenAI 兼容端点同时服务产品模型与人格模型,跑通真实会话链:确定性访谈→真 LLM 翻译 seam→规划窗口闸→真 solveUnified/候选求解→真注册 gotry_fact_gate 读隔离 stateRoot 事实注册表→claim 裁决→m3-cohort 记录→真评分器;产品 prompt 未能分类即 500 硬失败(dsh-llm.ts prompt 漂移会炸测试)/同冻结时钟两次导出字节一致/永不计入的两道独立保证分别验证:记录级(模拟参与者全部 test_or_staff=true→评分器合格样本 0、排除计数=交付数)与 manifest 级(同样 50 条未排除记录仍 business_pass=false);漏斗数字由 harness 纯函数 summarizeFunnel 自算(空分母 null 不报 0%)/被审计分母只计可裁决 claim:空注册表→locked=0、poi unavailable 而非好看的 0%/每条合成记录带 persona_id + prompt_digest provenance 且 attestation 经密钥 MAC 校验/预算在轮次之间判定(越限会话中途 budget_exceeded、批次停批但已付费记录照常导出)、未封存价目模型在任何花费前 fail-closed、provider 缺 usage = 成本不可证 fail-closed 零导出/真实批次必须同时给 state-root 与 evidence-root、不安全状态根在建任何目录前即拒/轮次按卡片 patience 有界、PII 哨兵零落盘、自有临时根必清/全程 fetch spy 对非 127.0.0.1 直接抛错阻断,零真实网络零凭证外泄) ==="
+(cd ts && npx tsx scripts/persona-sim-tests.ts) || FAIL=1
+
+echo
 echo "=== 77. 会话双区记忆账本落点(P4-2,issue #255:六 kind 以日志类事件落**既有** events 表(零新表/零 schema 迁移/state-ledger.ts 零改动)/单事务{fold 读 rev;守门闸;INSERT}——stale_rev·负面清单·闭集·缺 owner 引用在插入前拒绝且账本零新行/双道幂等(守门层同 rev 重放 appended:false + UNIQUE 索引物理 no-op)/幂等键带生代使 drop→重捕获不被吞/真实子进程 kill -9 提交前崩溃 = 全无·正常提交 = 全有/forget 物理硬删 + 恰一行审计(会话级多主体仍一行)/state-cli export 两派生视图逐字节 == fold 且导出零新事件/读上界 log_truncated 在写路径·会话级遗忘·导出视图三处全 fail-closed(readEvents 丢最老事件,残缺 fold 会漏删主体/冒充全量)/capture_or_touch 过期笔记续命复活与同形观察续 TTL(纯 capture 仍 stale_rev)/生代碰撞 idem_collision 显式失败不报假幂等/坏行与伪造文档确定性跳过/与既有投影及租户互不干扰/账本零过期事件;隔离 mkdtemp stateRoot,全离线,有界子进程超时) ==="
 (cd ts && npx tsx scripts/session-zone-ledger-tests.ts) || FAIL=1
 

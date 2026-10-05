@@ -187,6 +187,7 @@
 | [evaluation/dida-runner-stop-report.zh-CN.md](evaluation/dida-runner-stop-report.zh-CN.md) | Dida 实时 runner 停止、清理与严格 live opt-in 证据（#502/#504） |
 | [evaluation/sf-evidence-isolation-report.zh-CN.md](evaluation/sf-evidence-isolation-report.zh-CN.md) | 会话航班跑批证据隔离：命令级端到端、汇总回读与证据边界 |
 | [evaluation/copilot-readiness-report.zh-CN.md](evaluation/copilot-readiness-report.zh-CN.md) | Copilot 就绪与进程清理：真实 SDK 链路、受控 worker、Node 22／24 完整回归与已知边界 |
+| [evaluation/persona-sim-report.zh-CN.md](evaluation/persona-sim-report.zh-CN.md) | LLM persona 模拟 harness 与 M3 采集 CLI：模拟会话能说明与不能说明什么（仅 synthetic，绝不计入 M3/M4 证据） |
 | [evaluation/copilot-cleanup-diagnostic-report.zh-CN.md](evaluation/copilot-cleanup-diagnostic-report.zh-CN.md) | Copilot 清理失败归属、首错保留与受控诊断证据（#518） |
 | [evaluation/copilot-darwin-zombie-quiescence-report.zh-CN.md](evaluation/copilot-darwin-zombie-quiescence-report.zh-CN.md) | Copilot 清理超时机制（Darwin 仅剩僵尸组的观察缺陷）与按静默判定修复（#518） |
 | [evaluation/copilot-terminal-report.zh-CN.md](evaluation/copilot-terminal-report.zh-CN.md) | 托管 worker 终止：请求立即拒绝、安全错误与进程清理 |
