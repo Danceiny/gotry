@@ -89,6 +89,7 @@ ok(single.test('docs/a.md') && !single.test('docs/sub/b.md'), '`*` 应限单段'
 // ── 3. 命名面豁免 ──────────────────────────────────────────────────────────
 ok(NAMING_SURFACES.has('docs/gotry-master-outline.md') && NAMING_SURFACES.has('docs/gotry-master-outline.zh-CN.md'), '门定义对必须在命名面')
 ok(NAMING_SURFACES.has('docs/g5-authorization-ledger.md') && NAMING_SURFACES.has('ts/scripts/g5-guard.ts'), '台账与 guard 自身必须在命名面')
+ok(NAMING_SURFACES.has('CHANGELOG.md'), 'CHANGELOG.md 是 commit 标题的机械镜像(#621),必须在命名面')
 
 // ── 4. CLI 端到端(临时 git fixture) ───────────────────────────────────────
 const tsRoot = join(import.meta.dirname, '..')
@@ -146,4 +147,23 @@ const noLedgerRoot = makeFixture({ 'src/adapter.ts': 'export const x = 1\n' })
 ok(runGuard(noLedgerRoot).status === 2, '台账缺失应 exit 2(闸配置错误),不得放行')
 rmSync(noLedgerRoot, { recursive: true, force: true })
 
-console.log(`G5 GUARD TESTS: ${assertions}/${assertions} OK(命中/不命中双向 / 台账 fail-closed+glob / 命名面 / CLI 红绿+exit2)`)
+// #621:CHANGELOG.md 豁免只作用于这一个路径——同一行桥接字样放在 CHANGELOG.md 通过,放在任何其他文件仍然红
+const BRIDGE_LINE = '- mechanical guard requiring explicit authorization before wiring G5 bridge adapters (#348)\n'
+const changelogRoot = makeFixture({
+  'CHANGELOG.md': `# Changelog\n\n## [0.0.0]\n\n${BRIDGE_LINE}`,
+  'src/adapter.ts': 'export const x = 1\n',
+  'docs/g5-authorization-ledger.md': LEDGER_HEADER,
+})
+const changelogOnly = runGuard(changelogRoot)
+ok(changelogOnly.status === 0, `命名 G5 闸的 CHANGELOG 行不应被判未授权引用(status=${changelogOnly.status}, stderr=${changelogOnly.stderr.slice(0, 200)})`)
+rmSync(changelogRoot, { recursive: true, force: true })
+const leakRoot = makeFixture({
+  'CHANGELOG.md': `# Changelog\n\n${BRIDGE_LINE}`,
+  'docs/notes.md': BRIDGE_LINE,
+  'docs/g5-authorization-ledger.md': LEDGER_HEADER,
+})
+const leak = runGuard(leakRoot)
+ok(leak.status === 1 && leak.stderr.includes('docs/notes.md') && !leak.stderr.includes('CHANGELOG.md'), `同一行放在别的文件仍必须红,且只指向那个文件(status=${leak.status}, stderr=${leak.stderr.slice(0, 240)})`)
+rmSync(leakRoot, { recursive: true, force: true })
+
+console.log(`G5 GUARD TESTS: ${assertions}/${assertions} OK(命中/不命中双向 / 台账 fail-closed+glob / 命名面 / CLI 红绿+exit2 / CHANGELOG 命名面只豁免该路径)`)
