@@ -153,7 +153,7 @@ Trust is structural, not promised:
 ## Project Status and Roadmap
 Current boundary: deterministic planning and evidence-bound read capabilities are available; booking and real-user acceptance remain outside the shipped claim. See the [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).
 
-**v0.0.1-rc.24** on npm (`latest`). Pre-1.0: the core loop works end to end; evaluation is still at deterministic contracts and validators, with no external scores or uplift claims. External W2A events are contract-only and inert; no real sensor bridge or consumer is active yet.
+**v0.2.0-rc.27** on npm (`latest`). Pre-1.0: the core loop works end to end; evaluation is still at deterministic contracts and validators, with no external scores or uplift claims. External W2A events are contract-only and inert; no real sensor bridge or consumer is active yet.
 
 **Working today**
 
@@ -209,7 +209,7 @@ Documents ship as bilingual pairs (`x.md` English + `x.zh-CN.md` 中文); diverg
 
 **Built with**: DeepSeek Harness 0.2.0-rc.2 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-**Version baseline: `v0.0.1-rc.24` (npm `latest`).** Verification gates: `scripts/run-all-tests.sh`; release flow: `scripts/publish-npm.sh`.
+**Version baseline: `v0.2.0-rc.27` (npm `latest`).** Verification gates: `scripts/run-all-tests.sh`; release flow: `scripts/publish-npm.sh`.
 
 <a href="https://www.star-history.com/?repos=danceiny%2Fgotry&type=date&legend=top-left">
  <picture>

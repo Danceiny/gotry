@@ -44,9 +44,11 @@
 
 Run `npx @danceiny/gotry@0.2.0-rc.27 web` (Node ≥ 22.15). Once `latest` points to this version, `npx @danceiny/gotry web` is equivalent; pin the exact version if your registry mirror lags.
 
-### dist-tag plan
+### Published
 
-`TAG=latest ./scripts/publish-npm.sh`, with the tag passed explicitly (#50①). The compatibility `rc` tag stays on `0.0.1-rc.20`; whether to retire it remains an owner decision.
+Published to npm on 2026-10-05 as `@danceiny/gotry@0.2.0-rc.27` with `TAG=latest ./scripts/publish-npm.sh` (tag passed explicitly, #50①), then pulled back from the registry: `npm view` shows `latest` → `0.2.0-rc.27` (shasum `f0889a78cd817bb33028630b9087177cc81c3ed2`, 517 files). On a clean machine (fresh HOME and npm cache, official registry only, no LLM key) `npx @danceiny/gotry@latest web` boots and serves the UI — the `Cordis HMR service` startup crash is gone — `doctor` prints its report, and a one-shot without credentials fails with the host's missing-credential message rather than a stack trace. GitHub Release: [v0.2.0-rc.27](https://github.com/Danceiny/gotry/releases/tag/v0.2.0-rc.27). The compatibility `rc` tag is still on `0.0.1-rc.20`; moving it needs a separate web approval (#50③).
+
+Known issue in this version: `npx @danceiny/gotry doctor` reports an hbcli without credentials as "credentials valid" — the CLI still judges by the exit code of `hbcli auth whoami`, while the tool-layer doctor already parses its JSON ([#623](https://github.com/Danceiny/gotry/issues/623)).
 
 ---
 

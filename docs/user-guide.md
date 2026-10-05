@@ -13,7 +13,7 @@ npx @danceiny/gotry web
 # the LLM key is configured in the dsh host UI; the gotry CLI stays silent
 ```
 
-> Any npm-compatible registry (npmjs / npmmirror / a company-internal mirror) can run this command; when a mirror's `latest` lags, pin an exact version (e.g. `npx @danceiny/gotry@0.0.1-rc.22 web`). Note: **inside the gotry repo directory**, use the source entry `./gotry web` instead — a bare-name npx inside the repo gets misjudged by npm exec as "already installed locally" and reports `sh: gotry: command not found`.
+> Any npm-compatible registry (npmjs / npmmirror / a company-internal mirror) can run this command; when a mirror's `latest` lags, pin an exact version (e.g. `npx @danceiny/gotry@0.2.0-rc.27 web`). Note: **inside the gotry repo directory**, use the source entry `./gotry web` instead — a bare-name npx inside the repo gets misjudged by npm exec as "already installed locally" and reports `sh: gotry: command not found`.
 
 **Source (developers)**:
 
