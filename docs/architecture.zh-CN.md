@@ -251,7 +251,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | D-28 | 外部 benchmark 尚未产出 matched、可归因证据集；diagnostic run 与部分 terminal 不能支持 uplift 声明。 | 冻结 cohort 必须得到有效非空 terminal 且 evaluator 已执行，再满足原 manifest 与 registry 控制后才允许 aggregate 或 uplift 陈述。[#203](https://github.com/Danceiny/gotry/issues/203)、[评测契约](evaluation/evaluation-foundation.zh-CN.md) |
 | D-29 | Booking Copilot 缺少真实库存产品验收；工程契约、fixture 与可复现产物不能替代该旅程。 | 冻结 GoTry、hotel-be、hotel-fe 精确 SHA；覆盖 tenant、customer、storefront、payment-link；至少让一条 unavailable／changed 报价经重新搜索、新 CheckAvail 与原 Checkout 恢复；`Book` 只在 Checkout；未知结果经 QueryOrders 对账并留存清理证据。产品跟踪：[#142](https://github.com/Danceiny/gotry/issues/142)。 |
 | D-33 | M4→M6 program 仍缺把回访用户价值、供应链与 B2B 复用连接起来的真实证据和准入决定。 | 满足 D-18／D-19；取得 M5 protocol、buyer、routing、reconciliation、UAT signing 或内部授权证据；再取得独立 M6 Entry 决定与真实 pilot 合同。[#270](https://github.com/Danceiny/gotry/issues/270)、[#136](https://github.com/Danceiny/gotry/issues/136)、[#137](https://github.com/Danceiny/gotry/issues/137) |
-| D-39 | 地面接驳逻辑仅覆盖显式坐标驾车估算与静态价格证据；live traffic、transit／rail、fare、地址解析和更广组合未准入。 | 每条扩展路径都需要具名产品场景、数据源、新鲜度契约、访问边界与真实数据证明；只读路由不授权任何写路径。[#429](https://github.com/Danceiny/gotry/issues/429) 现已建立夹具层面的合规闸，任何未来的活体路线适配器都必须通过（未准入任何供应商）；已准入路径的供应商故障详情在进入工具结果前会被清洗；另有两处契约缺口（响应侧的模式与方向绑定）待裁决——[报告](evaluation/trigger-drill-report-contracts.zh-CN.md)。 |
+| D-39 | 地面接驳逻辑仅覆盖显式坐标驾车估算与静态价格证据；live traffic、transit／rail、fare、地址解析和更广组合未准入。 | 每条扩展路径都需要具名产品场景、数据源、新鲜度契约、访问边界与真实数据证明；只读路由不授权任何写路径。现已建立夹具层面的合规闸，任何未来的活体路线适配器都必须通过（未准入任何供应商）；已准入路径的供应商故障详情在进入工具结果前会被清洗；响应侧的两处契约缺口（供应商自述模式、方向绑定）已修复：与请求矛盾的供应商声明一律失败关闭、回落到静态估算——[报告](evaluation/trigger-drill-report-contracts.zh-CN.md)。跟踪 issue [#429](https://github.com/Danceiny/gotry/issues/429)（2026-10-05 以 deferred 关闭；触发条件出现时另开新 issue）。 |
 
 ## 11. 保鲜机制
 
