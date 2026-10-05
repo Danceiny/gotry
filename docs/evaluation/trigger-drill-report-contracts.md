@@ -3,7 +3,7 @@
 # Trigger drill report: three dormant trackers at contract level
 
 > Role: record what three simulated-trigger drills (#340, #339, #429) actually proved at contract level, and what they explicitly did not prove.
-> Status: living; the three trackers stay open and default-off.
+> Status: living; the three drill trackers (#340, #339, #429) were closed on 2026-10-05 as **deferred, not completed** — every path below stays default-off, and a real trigger needs a new issue.
 > Upstream: [architecture.md](../architecture.md) D-39 and §10, [write-gate production design](../design/write-gate-production-design.md), [memory design](../design/memory-design.md), [loopx-inspired upgrades RFC](../rfc/loopx-inspired-upgrades-rfc.md).
 > Downstream: reviewers of the three trackers, and whoever implements an admitted slice once a real trigger fires.
 
@@ -18,19 +18,19 @@ Specifically, nothing here counts as:
 - a named provider, a licence, a coverage/freshness measurement, or provider availability (#429);
 - an M4/M5/M6 Exit, or a milestone exit of any kind.
 
-All three trackers remain **open and default-off**. In code this is structural, not a convention: `OUTCOME_TRIGGER_FIRED`, `CITY_SCENARIO_TIER_TRIGGER_FIRED` and `D39_LIVE_ROUTE_TRIGGER_FIRED` are all frozen `false`; the supplier-outcome source registry, the city-scenario taxonomy registry and the live-route provider registry are all frozen empty; and no product file imports any of the three modules.
+All three trackers were **closed on 2026-10-05 as deferred — not completed** — and every path remains **default-off**. In code this is structural, not a convention: `OUTCOME_TRIGGER_FIRED`, `CITY_SCENARIO_TIER_TRIGGER_FIRED` and `D39_LIVE_ROUTE_TRIGGER_FIRED` are all frozen `false`; the supplier-outcome source registry, the city-scenario taxonomy registry and the live-route provider registry are all frozen empty; and no product file imports any of the three modules.
 
-One exception to "nothing in the product path changed", stated plainly: the drill found a product-reachable information leak in the accepted narrow D-39 path, and that one defect **was fixed** — `ts/capabilities/ground-transfer.ts` now routes its provider-failure text through the shared sanitizer (§5.4, GAP-429-3). That is a safety fix to an existing surface, not an admission of any new path: no provider is named, no path is admitted, and the resolution semantics, reason prefixes and static fallback are byte-identical.
+One exception to "nothing in the product path changed", stated plainly: the drill found a product-reachable information leak in the accepted narrow D-39 path, and that one defect **was fixed** — `ts/capabilities/ground-transfer.ts` now routes its provider-failure text through the shared sanitizer (§5.4, GAP-429-3). That is a safety fix to an existing surface, not an admission of any new path: no provider is named, no path is admitted, and the resolution semantics, reason prefixes and static fallback are byte-identical. On 2026-10-05 a follow-up pass closed the other two D-39 contract gaps the same way (§5.4, GAP-429-1/2): the provider's own declared mode and resolved endpoints are verified when present, and a contradiction fails closed to the static estimate. Also not an admission — still no provider named, still no path admitted, and every existing reason string and result byte-identical.
 
 No network, no LLM, no credentials, no subprocess, no shared state. All work happened in an isolated worktree.
 
 ## 2. TL;DR
 
-- Three pure contract modules plus three focused suites were added, all default-off with zero product callers: **333 assertions green** (155 + 83 + 95), typecheck exit 0, isolated smoke exit 0, kernel manifest gate zero drift.
+- Three pure contract modules plus three focused suites were added, all default-off with zero product callers: **345 assertions green** (155 + 83 + 107, the last count including the 2026-10-05 GAP-429-1/2 regressions), typecheck exit 0, isolated smoke exit 0, kernel manifest gate zero drift.
 - #340: the association key, the status alphabet, append-only/revocable projection, the negative list, and the guard that deviation calibration can never override a hard budget are all encoded and falsified.
 - #339: only the **mechanism** ships — a versioned taxonomy schema with an **empty** registry. No tier content exists in code, and admission is refused before validation while the trigger is false. Candidate scenario vocabulary appears in §4.4 as an explicitly unvalidated hypothesis.
 - #429: a nine-clause conformance gate that any future live-route adapter must pass. Run against the existing ground-transfer logic it found **three real gaps** (§5.4).
-- **One gap was product-reachable and is fixed here** (GAP-429-3: a provider error body reaching the tool result); the two dormant gaps stay pinned as characterization assertions with an explicit flip instruction.
+- **All three gaps are now fixed**: GAP-429-3 (a provider error body reaching the tool result) in this lane, and the two dormant ones (GAP-429-1/2: response-side mode and direction binding) in the 2026-10-05 follow-up, which flipped their pinned characterization assertions into refusal regressions.
 
 ## 3. Drill 1 — #340 outcome vs planning estimate
 
@@ -122,7 +122,7 @@ The gate is itself falsifiable: an adapter whose fault is silently accepted flip
 
 ### 5.3 Results
 
-`ts/scripts/route-provider-conformance-tests.ts`: **95 assertions pass, exit 0**. Registered as run-all **§87**. Driven against the existing ground-transfer logic, seven clauses pass (one of them only after the fix below) and two remain gaps:
+`ts/scripts/route-provider-conformance-tests.ts`: **107 assertions pass, exit 0**. Registered as run-all **§87**. Driven against the existing ground-transfer logic, all nine clauses now pass — three of them only after the fixes recorded below:
 
 | Clause | Existing ground-transfer behaviour |
 |---|---|
@@ -133,35 +133,38 @@ The gate is itself falsifiable: an adapter whose fault is silently accepted flip
 | direction binding (request side) | Pass — each direction is queried with its own ordered pair; no cache sharing |
 | freshness contract | Pass — a stale cache entry is re-queried and, on failure, reported stale, never served as a hit |
 | fault detail sanitized | Pass **after the GAP-429-3 fix in this lane** (was a leak) |
-| mode isolation | **GAP-429-1**, still pinned |
-| direction binding (response side) | **GAP-429-2**, still pinned |
+| mode isolation | Pass **after the GAP-429-1 fix (2026-10-05)** — a declared mode other than driving is refused |
+| direction binding (response side) | Pass **after the GAP-429-2 fix (2026-10-05)** — a resolved origin/destination outside the tolerance is refused |
 
 ### 5.4 Defects found in existing code
 
-Three defects were found in `ts/capabilities/ground-transfer.ts`. GAP-429-3 was product-reachable and **is fixed here**. GAP-429-1 and GAP-429-2 are genuinely dormant (no provider exists that could trigger them today), so they stay pinned as characterization assertions labelled `GAP-429-n` — run-all stays green, and each assertion message carries an explicit flip instruction so a future fix inverts it rather than silently passing.
+Three defects were found in `ts/capabilities/ground-transfer.ts`. GAP-429-3 was product-reachable and **was fixed in this lane**. GAP-429-1 and GAP-429-2 were genuinely dormant (no provider exists that could trigger them today) and stayed pinned as characterization assertions labelled `GAP-429-n` until the owner ruled on the contract change; the founder ruled on **2026-10-05** to fix them, so **all three are now fixed** and the two pinned assertions are flipped refusal regressions in run-all **§87**.
 
-**GAP-429-1 (mode isolation) — pinned.** `parseRouteResult` keeps only `provider`, `distanceM`, `durationS`, `polyline`, `steps`. A provider payload asserting a contradicting `mode` is silently dropped, and the route fact is labelled `mode: 'driving'` from the request. Its duration is then bound into the solver.
+**GAP-429-1 (mode isolation) — FIXED 2026-10-05.** Before: `parseRouteResult` kept only `provider`, `distanceM`, `durationS`, `polyline`, `steps`, so a provider payload asserting a contradicting `mode` was silently dropped, the route fact was labelled `mode: 'driving'` from the request, and its duration was bound into the solver. Now: `PublicMapDrivingRouteResult` carries the provider's own optional `mode`, and a declared mode other than `driving` is refused with `mode_mismatch:<direction>:<detail>` — the existing `<code>:<direction>:<detail>` reason shape, with the conformance gate's own code name — and the static estimate stands.
 
 ```ts
 // provider returns a TRANSIT route under the driving tool
 provider: async () => ({ provider: 'mock-transit', distanceM: 30000, durationS: 3600, mode: 'transit' })
-// observed: resolution.applied === true
-//           resolution.outbound.routeFact.mode === 'driving'
-//           candidates[0].destTransfers[0].minutesOut === 60   // transit minutes bound as driving
+// now: resolution.applied === false
+//      resolution.outbound.fallbackReason startsWith 'mode_mismatch:outbound:'
+//      resolution.outbound.routeFact === undefined
+//      candidates[0].destTransfers[0].minutesOut === undefined   // transit minutes never bound
 ```
 
-Severity today is low — the only wired provider is the registered `map_driving_route` tool, which is driving by construction — but this is exactly the clause a transit or rail path must satisfy, so the check must exist before any such adapter is admitted.
+Severity today is still low — the only wired provider is the registered `map_driving_route` tool, which is driving by construction — but this is exactly the clause a transit or rail path must satisfy, and the check now exists before any such adapter can be admitted.
 
-**GAP-429-2 (direction binding, response side) — pinned.** Direction binding is enforced on the request side (the cache key includes direction and the ordered pair) but the response is never verified against what was requested. A provider that resolves a different origin/destination has its duration bound as the airport transfer.
+**GAP-429-2 (direction binding, response side) — FIXED 2026-10-05.** Before: direction binding was enforced on the request side (the cache key includes direction and the ordered pair) but the response was never verified against what was requested, so a provider that resolved a different origin/destination had its duration bound as the airport transfer. Now: the optional `resolvedOrigin` / `resolvedDestination` are compared against the pair sent for that direction within `GROUND_TRANSFER_ECHO_TOLERANCE_DEG` (1e-4 degrees, about 11 m — a road-node snap still matches, a different place does not), and a mismatch is refused with `direction_mismatch:<direction>:<detail>`. An echo that cannot be parsed is refused too: present-but-unverifiable fails closed rather than being assumed to be the requested pair. A refusal writes nothing to the cache, so it can never be served later as a cache hit.
 
 ```ts
 // provider routes an entirely different O/D and says so in its own fields
 provider: async () => ({ provider: 'mock-wrong-od', distanceM: 999, durationS: 60,
                          resolvedOrigin: '0,0', resolvedDestination: '1,1' })
-// observed: resolution.applied === true
-//           resolution.outbound.routeFact.origin.longitude === 100.1   // the REQUESTED pair, echoed back
-//           candidates[0].destTransfers[0].minutesOut === 1            // a 999 m / 60 s route as the transfer
+// now: resolution.applied === false
+//      resolution.outbound.fallbackReason startsWith 'direction_mismatch:outbound:'
+//      candidates[0].destTransfers[0].minutesOut === undefined   // the 999 m / 60 s route never binds
 ```
+
+All three fields stay **optional**, and absent means unverifiable — accepted only because the sole wired provider is driving-only and echoes no origin/destination, which is why every existing reason string and result is byte-identical and `ts/scripts/ground-transfer-tests.ts` passes unchanged. Any future non-driving or address-resolving adapter must supply them; the conformance gate's `mode_isolation` and `direction_binding` clauses already refuse an adapter that does not. A provider-authored claim quoted inside a refusal reason goes through the shared sanitizer first, so the GAP-429-3 boundary holds for the new reasons as well.
 
 **GAP-429-3 (fault detail sanitized) — product-reachable, FIXED.** The pre-fix `safeErrorMessage` only stripped newlines and truncated to 400 characters, so a provider-thrown error message reached `fallbackReason` verbatim, and `exposeGroundTransferEvidence` carried it into the tool result and into each matching verdict's `transfer_evidence`. That function is wired in the live product path at `ts/src/index.ts:801`, reached from the registered feasibility tool, with `createPublicMapDrivingRouteProvider` as the default provider — so this was a live information-leak channel, not a hypothetical one.
 
@@ -179,9 +182,11 @@ provider: async () => { throw new Error(
 
 Regression coverage is in run-all §87 and runs through the **real** resolution path: a throwing provider carrying markup, a token and a cookie, asserted clean on the outbound reason, the return reason, the aggregate reason and the `exposeGroundTransferEvidence` output. A loop over five already-safe provider messages (including both fixed `GROUND_TRANSFER_*` strings and `map_driving_route failed: ...`) asserts byte-identical pass-through, and the existing `ground-transfer-tests.ts` suite passes unchanged both with and without the fix — so no behaviour changed for anything that was already safe. The only normalization difference is that runs of whitespace now collapse to a single space, where previously only newlines did.
 
-### 5.4a Why GAP-429-1 and GAP-429-2 were not fixed in the same pass
+### 5.4a The ruling that closed GAP-429-1 and GAP-429-2
 
-Both are latent rather than live. The only wired provider is the registered `map_driving_route` tool, which is driving-only by construction and returns a result shape with no origin/destination echo at all, so neither gap has a path to fire today. Closing them properly means widening `PublicMapDrivingRouteResult` to carry the provider's own mode and resolved endpoints and deciding what to do when a provider omits them — a contract change to the accepted #341 boundary, which is the owner's call, not a drill's. The conformance gate already encodes the target behaviour, so the remedy is specified and tested; only the decision is outstanding.
+Both were latent rather than live, which is why the drill pinned them instead of fixing them: the only wired provider is the registered `map_driving_route` tool, driving-only by construction and with no origin/destination echo at all, so neither gap had a path to fire. Closing them meant widening `PublicMapDrivingRouteResult` to carry the provider's own mode and resolved endpoints and deciding what to do when a provider omits them — a contract change to the accepted #341 boundary, and therefore the owner's call, not a drill's.
+
+The founder ruled on **2026-10-05**: fix both, with the fields optional and the absent case unchanged. The implementation is the one the conformance gate already specified, so the gate and the product path now refuse the same payload with the same code. Red baseline held: with the capability fix reverted the flipped assertions go red (7 failures, exit 1), and with it restored the suite is green again at 107 assertions, `ground-transfer-tests.ts` passing unchanged in both states.
 
 ### 5.5 What only the real trigger can supply
 
@@ -238,5 +243,7 @@ Each mutation below was applied to the new module, observed red, and reverted; t
 One mutation was initially NOT falsifiable and that is itself a finding: a hex-digest exemption branch shadowed the anchored pattern, so unanchoring it produced zero failures. The redundant branch was removed rather than kept as untestable defence, leaving one mechanism (per-leaf scan plus anchors) that the red baseline above actually bites.
 
 ## 8. Boundaries not crossed
+
+Scope note: this section records the drill lane itself. The later 2026-10-05 GAP-429-1/2 pass (§5.4) edited `ts/capabilities/ground-transfer.ts`, its §87 drill suite and the D-39 row of `architecture.md` — still no kernel-pinned file, no dependency and no admitted path.
 
 No kernel-pinned file was touched (`unified.ts`, `model.ts`, `state-ledger.ts`, `bookable-facts.ts`, `artifact-gate.ts`), and the kernel manifest gate reports zero drift. `ts/capabilities/ground-transfer.ts` was edited in exactly one respect — its provider-failure text now passes through the shared sanitizer (GAP-429-3) — with the resolution semantics, reason prefixes, length bound, empty-case wording and static fallback all unchanged and the existing suite green both before and after. No shared authority document was edited: facts that the integrator may want to reconcile are listed in the hand-back report rather than written into `architecture.md`, `roadmap.md`, the root README or release notes. No dependency was added and `package.json` was not touched — the three new contract modules have zero product callers and therefore do not ship, following the same precedent as the FX, geo-atlas and session-zones contract slices. The one module that IS now product-reachable is the pure sanitizer, which has zero imports, zero IO and no clock; the #429 conformance gate itself stays free of product callers. No state directory, user home path or credential store was read or written.

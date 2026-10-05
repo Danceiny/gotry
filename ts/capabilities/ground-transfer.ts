@@ -14,6 +14,15 @@
  * miss / error / stale / mismatch in one direction never borrows the
  * dynamic value of the other.
  *
+ * A provider's OWN claims about its answer — declared `mode`, resolved
+ * origin/destination — are verified against the request whenever the provider
+ * makes them: a contradiction is refused with the conformance vocabulary
+ * (`mode_mismatch` / `direction_mismatch`) and falls back to the static estimate,
+ * so a transit duration is never bound as driving and a route between two other
+ * places is never bound as the airport transfer (issue #429 GAP-429-1/2). All
+ * three fields are OPTIONAL and absent means unverifiable: see
+ * `PublicMapDrivingRouteResult` for why absent is still accepted today.
+ *
  * A provider failure becomes a `fallbackReason`, and `exposeGroundTransferEvidence`
  * carries that text into the tool result and each matching verdict's
  * `transfer_evidence`. It is therefore an EXPOSED surface: every provider-authored
@@ -36,6 +45,25 @@ export const GROUND_TRANSFER_STATIC_MODE = 'taxi' as const
 export const GROUND_TRANSFER_STATIC_MODE_MISMATCH = 'ground_transfer_static_mode_mismatch' as const
 export const GROUND_TRANSFER_STATIC_PRICE_EVIDENCE = '[静态包:估算]' as const
 export const GROUND_TRANSFER_DEFAULT_MAX_AGE_S = 15 * 60
+/**
+ * Refusal classifications for a provider that contradicts its own request. The
+ * two names are the #429 conformance gate's vocabulary verbatim
+ * (`RouteErrorCode`), reused here as the `<code>:<direction>:<detail>` reason
+ * prefix this module already uses for `map_driving_route_provider_error` and
+ * `stale_route_requery_error`. They are duplicated as literals on purpose: the
+ * gate must stay free of product callers, so nothing here imports it.
+ */
+export const GROUND_TRANSFER_ROUTE_MODE_MISMATCH = 'mode_mismatch' as const
+export const GROUND_TRANSFER_ROUTE_DIRECTION_MISMATCH = 'direction_mismatch' as const
+/**
+ * Tolerance for verifying a provider's echoed endpoint against the requested
+ * one: 1e-4 degrees ≈ 11 m of latitude. A provider legitimately snaps a
+ * coordinate to the nearest routable road node, so an exact string match would
+ * refuse honest answers; anything beyond this bound is a different place, not a
+ * snap. Deliberately tight — refusing falls back to the static estimate, which
+ * is the safe direction.
+ */
+export const GROUND_TRANSFER_ECHO_TOLERANCE_DEG = 1e-4
 const GROUND_TRANSFER_CACHE_LIMIT = 32
 
 export type GroundTransferEvidenceClass =
@@ -57,13 +85,32 @@ export interface GroundTransferCoordinate {
   latitude: number
 }
 
-/** The public result fields exposed by dsh-map-tools' route tool. */
+/**
+ * The public result fields exposed by dsh-map-tools' route tool, plus the three
+ * OPTIONAL claims an adapter may make about its own answer (#429 GAP-429-1/2).
+ *
+ * `mode` / `resolvedOrigin` / `resolvedDestination` are the provider's OWN
+ * statements about what it actually routed. When present they are verified
+ * against the request and a contradiction is refused; when ABSENT the answer is
+ * simply unverifiable and today's behaviour is kept byte for byte, because the
+ * sole wired provider — the registered `map_driving_route` tool — is driving by
+ * construction and echoes no origin/destination. Any future non-driving or
+ * address-resolving adapter MUST supply them: the #429 conformance gate
+ * (`mode_isolation` / `direction_binding` clauses in
+ * `./route-provider-conformance.ts`) already refuses an adapter that does not.
+ */
 export interface PublicMapDrivingRouteResult {
   provider: string
   distanceM: number
   durationS: number
   polyline?: string
   steps?: readonly Record<string, unknown>[]
+  /** the transport mode the provider says it routed (omitted by the wired driving tool) */
+  mode?: string
+  /** canonical `"lon,lat"` the provider says it routed FROM (omitted by the wired driving tool) */
+  resolvedOrigin?: string
+  /** canonical `"lon,lat"` the provider says it routed TO (omitted by the wired driving tool) */
+  resolvedDestination?: string
 }
 
 export interface PublicMapDrivingRouteRequest {
@@ -254,6 +301,47 @@ function coordinateText(value: GroundTransferCoordinate): string {
   return `${String(value.longitude)},${String(value.latitude)}`
 }
 
+/** Parse a canonical `"lon,lat"` text back into a validated coordinate. */
+function coordinateFromText(value: string): GroundTransferCoordinate | null {
+  const parts = value.split(',')
+  if (parts.length !== 2) return null
+  const [longitudeText, latitudeText] = parts as [string, string]
+  if (longitudeText.trim() === '' || latitudeText.trim() === '') return null
+  return coordinate({ longitude: Number(longitudeText), latitude: Number(latitudeText) })
+}
+
+/**
+ * Does a provider's echoed endpoint name the place that was requested?
+ *
+ * Compared within `GROUND_TRANSFER_ECHO_TOLERANCE_DEG` so a road-node snap still
+ * matches. An echo that cannot be parsed is NOT a match: present-but-unverifiable
+ * fails closed rather than being accepted as the requested pair.
+ */
+function sameEndpoint(echoed: string, requested: string): boolean {
+  const left = coordinateFromText(echoed)
+  const right = coordinateFromText(requested)
+  if (left === null || right === null) return false
+  return Math.abs(left.longitude - right.longitude) <= GROUND_TRANSFER_ECHO_TOLERANCE_DEG
+    && Math.abs(left.latitude - right.latitude) <= GROUND_TRANSFER_ECHO_TOLERANCE_DEG
+}
+
+/**
+ * Normalize one of the provider's OWN optional claims into a comparable string.
+ *
+ * Absent (`undefined` / `null`) stays absent — that is the wired driving tool and
+ * its behaviour is unchanged. A present-but-unusable value is NOT dropped: it is
+ * carried as a non-empty string so the enforcement below can refuse it, because
+ * silently dropping a contradicting claim is exactly the relabel this seam
+ * forbids. A `{ longitude, latitude }` object is accepted as the canonical text.
+ */
+function declaredClaim(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'string') return value.trim() === '' ? '(blank)' : value.trim()
+  const asCoordinate = coordinate(value)
+  if (asCoordinate !== null) return coordinateText(asCoordinate)
+  return typeof value === 'object' ? JSON.stringify(value) : String(value)
+}
+
 function cacheKey(direction: CompleteGroundTransferDirection): string {
   return JSON.stringify({
     mode: GROUND_TRANSFER_MODE,
@@ -287,6 +375,21 @@ function safeErrorMessage(value: unknown): string {
   return sanitizeFaultDetail(message, {
     maxChars: GROUND_TRANSFER_FAULT_DETAIL_MAX_CHARS,
     emptyPlaceholder: 'unknown provider error',
+  })
+}
+
+/** Bound for a provider-authored claim quoted inside a refusal reason. */
+const GROUND_TRANSFER_CLAIM_DETAIL_MAX_CHARS = 120
+
+/**
+ * A provider's own claim (mode / echoed endpoint / provider id) is provider-authored
+ * text, and a refusal reason reaches the tool result via
+ * `exposeGroundTransferEvidence`. Quote it only through the shared sanitizer.
+ */
+function safeClaim(value: string): string {
+  return sanitizeFaultDetail(value, {
+    maxChars: GROUND_TRANSFER_CLAIM_DETAIL_MAX_CHARS,
+    emptyPlaceholder: '(absent)',
   })
 }
 
@@ -425,13 +528,63 @@ function parseRouteResult(value: unknown): PublicMapDrivingRouteResult {
     // zero minutes into the solver.
     || (distanceM > 0 && durationS === 0)
   ) throw new Error('map_driving_route returned an invalid public result')
+  // The provider's own claims are CARRIED, never dropped: `routeClaimRefusal`
+  // below checks them when they exist. Absent stays absent (the wired driving
+  // tool sends none of the three), and re-parsing an already-parsed result is
+  // idempotent because the carried values are already canonical.
+  const declaredMode = declaredClaim(record['mode'])
+  const resolvedOrigin = declaredClaim(record['resolvedOrigin'])
+  const resolvedDestination = declaredClaim(record['resolvedDestination'])
   return {
     provider,
     distanceM,
     durationS,
     ...(typeof record['polyline'] === 'string' ? { polyline: record['polyline'] } : {}),
     ...(Array.isArray(record['steps']) ? { steps: record['steps'] as readonly Record<string, unknown>[] } : {}),
+    ...(declaredMode !== undefined ? { mode: declaredMode } : {}),
+    ...(resolvedOrigin !== undefined ? { resolvedOrigin } : {}),
+    ...(resolvedDestination !== undefined ? { resolvedDestination } : {}),
   }
+}
+
+/**
+ * Verify the provider's OWN claims against the request for this direction, and
+ * return a typed refusal when one contradicts it (#429 GAP-429-1/2).
+ *
+ * ABSENT = UNVERIFIABLE, and absent is ACCEPTED — not because an unverified
+ * answer is as good as a verified one, but because the only wired provider (the
+ * registered `map_driving_route` tool) is driving by construction and echoes no
+ * origin/destination, so for it nothing changes byte for byte. Any future
+ * non-driving or address-resolving adapter must supply these fields; the #429
+ * conformance gate already refuses an adapter that does not.
+ *
+ * PRESENT and contradicting = REFUSAL. The caller falls back to the static
+ * transfer estimate with its original price label, so a mislabelled or
+ * misrouted answer never reaches the solver.
+ */
+function routeClaimRefusal(
+  direction: CompleteGroundTransferDirection,
+  request: PublicMapDrivingRouteRequest,
+  route: PublicMapDrivingRouteResult,
+): { code: string; detail: string } | null {
+  if (route.mode !== undefined && route.mode !== GROUND_TRANSFER_MODE) {
+    return {
+      code: GROUND_TRANSFER_ROUTE_MODE_MISMATCH,
+      detail: `provider ${safeClaim(route.provider)} returned mode '${safeClaim(route.mode)}' for a '${GROUND_TRANSFER_MODE}' request; a declared mode is never relabelled as ${GROUND_TRANSFER_MODE}; static transfer preserved`,
+    }
+  }
+  const { resolvedOrigin, resolvedDestination } = route
+  if (resolvedOrigin === undefined && resolvedDestination === undefined) return null
+  if (
+    (resolvedOrigin !== undefined && !sameEndpoint(resolvedOrigin, request.origin))
+    || (resolvedDestination !== undefined && !sameEndpoint(resolvedDestination, request.destination))
+  ) {
+    return {
+      code: GROUND_TRANSFER_ROUTE_DIRECTION_MISMATCH,
+      detail: `provider ${safeClaim(route.provider)} resolved ${safeClaim(resolvedOrigin ?? '(absent)')}>${safeClaim(resolvedDestination ?? '(absent)')} but the ${direction.direction} request was ${request.origin}>${request.destination}; direction binding is verified against the response, not assumed from the request; static transfer preserved`,
+    }
+  }
+  return null
 }
 
 function buildRouteFact(
@@ -525,6 +678,23 @@ async function resolveDirection(
       execution: context.execution,
     })
     const route = parseRouteResult(raw)
+    const refusal = routeClaimRefusal(direction, requestForProvider, route)
+    if (refusal !== null) {
+      // Fail closed: no fact is built and nothing is written to the cache, so a
+      // refused answer can never be served later as a cache hit. The static
+      // minutes, price and `[静态包:估算]` label are left untouched.
+      return {
+        applied: false,
+        direction: direction.direction,
+        staticMinutes,
+        provenance: 'static-transfer-pack',
+        asOf: null,
+        freshness: 'fallback',
+        cache: staticCache(cached ? 'stale' : 'bypass'),
+        evidenceClass: 'static_transfer_estimate',
+        fallbackReason: `${refusal.code}:${direction.direction}:${refusal.detail}`,
+      }
+    }
     const cacheInfo: GroundTransferCacheInfo = {
       status: cached ? 'requery' : 'miss',
       ageS: 0,
