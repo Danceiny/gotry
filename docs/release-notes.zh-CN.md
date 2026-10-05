@@ -11,6 +11,8 @@
 - **`doctor` 不再偶发地把没有凭证的 hbcli 报成 `ok`** — 凭证探测在子进程 `exit` 事件结算，此时 stdout 可能还没读完；读到空串便落入「输出不可解析视为有效」分支。现改为在 `close` 结算，并用确定性回归测试注入一个先退出、数据后到的子进程。这同时消除了 Node 22 CI 任务的偶发红灯。
 - **会话双区记忆机制（#255，默认关闭）** — 在既有 `events` 表上新增六个日志类事件（零新表；内核钉死的 `state-ledger.ts` 零改动）、捕获缝、按 scope 绑定的读回变量 `session_zone_brief`、经既有 motivation/timeline/companion 闸路由的 owner 确认晋升、`state-cli export` 新增 `hot-context.jsonl` 与 `notebook.json` 视图，以及 opt-in 观测面和三个阈值在见数据前冻结的指标。`sessionZones` 开关默认 `off`，关闭时惰性；价值声明仍关闭（尚无真实使用），出厂 persona 在 founder 决定前不引用新变量。
 - **M3 种子 cohort 采集 CLI 与 LLM persona 模拟 harness（#22，仅 synthetic）** — 面向受邀且已同意的种子参与者、由操作者驱动的采集路径，写出评分器的 `gotry_m3_cohort_record_v1`（这类记录的首个生产者）；以及在离线或真实 LLM（带预算闸）下预演漏斗的 persona 模拟 harness。模拟运行标记为 `synthetic_fixture`、以 `test_or_staff` 登记，绝不计入 M3/M4 证据；M3 闸不变（仍需经准入的 50–200 名真实种子用户）。
+- **休眠触发式追踪单的模拟触发演练（#82、#275、#422、#340、#339、#429；夹具层面，追踪单保持开放）** — 为成交结果↔规划估算投影（#340）、城市×场景分级（注册表为空，#339）与路线供应商合规闸（#429）新增默认关闭、零调用方的契约机制；为惰性的 W2A sensor 路径（#82）、租户账本上的并发写者／崩溃重开／在线备份（#275）以及 `0.2.0-rc.2` 上的 dsh SDK 后代清理再基线（#422，缺口得到确认）新增演练套件；并为外部 Anything 路径（#276／#345）新增 opt-in 的只读测量探针。所有结果都标注为 `simulated_trigger_drill` 或 `fixture_contract`，没有一项满足任何触发条件。
+- **供应商故障详情进入工具结果前先被清洗（#429）** — 接驳供应商的错误文本（标记、凭据形状字符串）不再原样流入 `transfer_evidence`；固定的 `GROUND_TRANSFER_*` 文案按字节原样通过。已准入路径上另有两处契约缺口（响应侧的模式与方向绑定）已记录、待裁决。
 
 ---
 
