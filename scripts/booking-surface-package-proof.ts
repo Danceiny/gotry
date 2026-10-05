@@ -464,9 +464,14 @@ if (!injection) {
       'RequestTimeoutError',
       `an unresponsive runtime must fail the handshake with a typed timeout: ${JSON.stringify(budgets)}`,
     )
+    // A timer armed for N ms can fire up to ~1 ms early relative to the wall-clock Date.now() the proof measures
+    // with (monotonic timer vs wall-clock rounding): Node 22 CI measured 9999 ms for a 10000 ms deadline and a strict
+    // `>=` failed an otherwise correct run. The proof is that the handshake burns the whole deadline (not, say, half
+    // of it), so allow a small early-fire tolerance; the upper bound stays tight.
+    const timerEarlyToleranceMs = 50
     assert.ok(
-      budgets.initializeMs >= CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize && budgets.initializeMs < CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize + 5_000,
-      `initialize must burn its whole ${CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize}ms deadline, got ${budgets.initializeMs}ms`,
+      budgets.initializeMs >= CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize - timerEarlyToleranceMs && budgets.initializeMs < CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize + 5_000,
+      `initialize must burn its whole ${CLEAN_CONSUMER_BOOT_BUDGET_MS.initialize}ms deadline (early-fire tolerance ${timerEarlyToleranceMs}ms), got ${budgets.initializeMs}ms`,
     )
     assert.ok(
       budgets.closeMs >= teardownBudget - 2_000 && budgets.closeMs < teardownBudget + 5_000,
