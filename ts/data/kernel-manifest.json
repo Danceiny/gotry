@@ -2,7 +2,7 @@
   "schemaVersion": "gotry_kernel_manifest_v1",
   "issue": "#234",
   "frozenAt": "2026-10-05",
-  "baseSHA": "d5b7da45d8884541f2b3cf9bbada21f500e991a1",
+  "baseSHA": "631d58ea159f296b7a2071cf76bd1020b37f0040",
   "entries": [
     {
       "path": "ts/src/unified.ts",
