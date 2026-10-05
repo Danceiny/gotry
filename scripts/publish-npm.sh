@@ -150,11 +150,14 @@ if [ "$SKIP_CHANGELOG" = "0" ] && command -v gh >/dev/null 2>&1; then
     # 写临时 notes 文件
     NOTES_FILE="$(mktemp -t gotry-release-notes-XXXXXX)"
     printf '%s\n' "$RELEASE_NOTES" > "$NOTES_FILE"
+    # --verify-tag(不是 --target):发布闸要求 tag 已推远端;`--target` 只接受分支名或完整 commit SHA,
+    # 传 tag 名会被 GitHub 以 HTTP 422 `target_commitish is invalid` 拒收(rc.27 发布实测,npm 已发而 Release 没建出来),
+    # 且 tag 不存在时它会静默在 main 上新建 tag。--verify-tag 则在 tag 缺失时直接中止。
     gh release create "v${CURRENT_VERSION}" \
       --title "v${CURRENT_VERSION}" \
       --notes-file "$NOTES_FILE" \
-      --target "v${CURRENT_VERSION}" \
-      || echo "  (gh release create 失败;手动补:gh release create v${CURRENT_VERSION} --notes-file <>)"
+      --verify-tag \
+      || echo "  (gh release create 失败;手动补:gh release create v${CURRENT_VERSION} --notes-file <> --verify-tag)"
     rm -f "$NOTES_FILE"
   else
     echo "  (CHANGELOG.md 中找不到 ## [${CURRENT_VERSION}] 段,跳过 gh release create)"
