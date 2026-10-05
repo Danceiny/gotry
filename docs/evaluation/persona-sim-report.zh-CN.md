@@ -109,7 +109,7 @@ dry run 不覆盖槽位与 spec 的日期一致性闸：fixture 不返回槽位�
 
 `data/yunnan-pack.json` 会确定性地让 `solveUnified` 以 z3 WASM 断言失败，用户面回复变成「当前约束下不可行——冲突：wasm_runtime_error」。卡组保留这个用例，因为它是模拟暴露出来的真实缺陷：一个内部引擎错误被当作不可行判决呈现给用户，理由位置上放的是机器 token。Harness 记录判定与 `unsat_core`，而不是把它藏掉。
 
-产品模型的工具选择没有被测量，因为 harness 驱动的是会话接缝而不是 dsh 运行时（见方法一节）。`ts/src/dsh-llm.ts` 的 `chat()` 没有请求超时；harness 改为用自己的截止期限约束每个人格会话，这意味着卡住的 provider 会被归因到会话层而不是那次调用。
+产品模型的工具选择没有被测量，因为 harness 驱动的是会话接缝而不是 dsh 运行时（见方法一节）。`ts/src/dsh-llm.ts` 的 `chat()` 现在会约束每次请求（`GOTRY_LLM_TIMEOUT_MS`，默认 300 秒）并以类型化的 `LlmRequestError` 失败；但 harness 的单会话截止期限（`sessionDeadlineMs`，180 秒）比这个默认值更短，所以卡住的产品侧 provider 仍会被归因到会话层（`persona_timeout`）而不是那次调用；把 `GOTRY_LLM_TIMEOUT_MS` 调得更低才会按调用暴露，并记为 `internal_error`，detail 为 `llm timeout:`。
 
 会话的 POI 探针在本机装了 `hbcli` 时会打到活体后端，而且它自己没有离线开关。Harness 在批次期间清洗 `PATH` 与 `HOME`，让该探针始终走降级路径；测试套件用 fetch spy 断言全程不联 `127.0.0.1` 以外的任何主机。
 

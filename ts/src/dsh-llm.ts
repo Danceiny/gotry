@@ -1,7 +1,8 @@
 /**
  * 真 LlmPort:OpenAI 兼容接口的 provider 中立适配器(DeepSeek/MiniMax-M2 实测)。
  * 零新依赖(node 内建 fetch)。环境变量:LLM_API_KEY/LLM_BASE_URL/LLM_MODEL
- * (兼容旧 DEEPSEEK_* 别名)。MiniMax-M2 是推理模型:输出带 <think> 块,
+ * (兼容旧 DEEPSEEK_* 别名);GOTRY_LLM_TIMEOUT_MS = 单次请求总预算(默认 300000ms,
+ * 非正整数忽略)。MiniMax-M2 是推理模型:输出带 <think> 块,
  * 必须先剥离再解析——JSON 藏在 think 里是常见失败模式。
  * 无 key 时抛出明确错误,replay-real 自动回退 mock(ADR-8)。
  * 责任铁律不变:本适配器只做翻译/润色/解释,判定与算术在确定性组件。
@@ -37,11 +38,100 @@ function emptyUsage(): LlmUsageTracker {
   return { calls: 0, inputTokens: 0, outputTokens: 0, inputCacheHitTokens: 0, inputCacheMissTokens: 0, responsesMissingUsage: 0 }
 }
 
-async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, json: boolean, usage?: LlmUsageTracker): Promise<string> {
+/** 单次请求(连接→响应头→正文读完)的默认总预算:对推理模型足够宽松,只兜「连上了却永不应答」的卡死。 */
+export const DEFAULT_LLM_TIMEOUT_MS = 300_000
+/**
+ * 超时上限 = 2^31-1 ms(≈24.8 天)。Node 对更大的延迟会溢出并**悄悄改成 1ms**
+ * (TimeoutOverflowWarning),即「配得越大越立刻超时」——所以必须夹住,绝不原样透传。
+ */
+const MAX_LLM_TIMEOUT_MS = 2_147_483_647
+
+/**
+ * chat() 的请求级选项。timeoutMs 压过环境变量 GOTRY_LLM_TIMEOUT_MS;signal 由调用方持有并与
+ * 超时合并(AbortSignal.any)——任一先触发就终止本次请求,落成 LlmRequestError。
+ */
+export interface LlmRequestOptions {
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+/** 只认十进制正整数(数值或纯数字串);其余(0/负数/小数/NaN/带单位/空串)一律 undefined——绝不退化成「无超时」。 */
+function parseTimeoutMs(raw: unknown): number | undefined {
+  const n = typeof raw === 'string' ? (/^\d+$/.test(raw.trim()) ? Number(raw.trim()) : Number.NaN) : raw
+  return typeof n === 'number' && Number.isSafeInteger(n) && n > 0 ? Math.min(n, MAX_LLM_TIMEOUT_MS) : undefined
+}
+
+/** 解析顺序:本次调用显式值 > 环境变量 GOTRY_LLM_TIMEOUT_MS(调用时取值,同 base()/model())> 默认值。 */
+export function resolveLlmTimeoutMs(callMs?: number): number {
+  return parseTimeoutMs(callMs) ?? parseTimeoutMs(process.env['GOTRY_LLM_TIMEOUT_MS']) ?? DEFAULT_LLM_TIMEOUT_MS
+}
+
+export type LlmRequestFailureCode = 'timeout' | 'aborted'
+
+/**
+ * chat() 请求被截断(超时 / 调用方取消)的类型化失败——不是挂起,也不会被吞。
+ * 与既有错误形态一致,而非另起一套:
+ *  - message 沿用本模块 `llm <kind>: <detail>` 约定(同 `llm 429: …`),只读 .message 的调用方
+ *    (nightly-evidence / persona-sim / time-eval --real)原样可用;
+ *  - name 取平台既有名 TimeoutError / AbortError(AbortSignal.timeout 与手动 abort 抛的同名),
+ *    persona-sim、channel-probe 等按 name 分类的代码零改动即可识别;
+ *  - cause 保留 fetch 抛出的原始错误(调用方自定义的 abort reason 也在其中)。
+ * HTTP 非 2xx(`llm <status>`)、DNS/连接重置、坏 JSON 仍是原样的普通 Error——只改写「被我们的 signal 终止」的失败。
+ */
+export class LlmRequestError extends Error {
+  readonly code: LlmRequestFailureCode
+  /** 本次生效的超时预算;仅 code === 'timeout' 有值 */
+  readonly timeoutMs: number | undefined
+
+  constructor(code: LlmRequestFailureCode, detail: string, options: { cause?: unknown; timeoutMs?: number } = {}) {
+    super(`llm ${code}: ${detail}`, options.cause === undefined ? undefined : { cause: options.cause })
+    this.name = code === 'timeout' ? 'TimeoutError' : 'AbortError'
+    this.code = code
+    this.timeoutMs = options.timeoutMs
+  }
+}
+
+interface ChatCompletion {
+  choices: Array<{ message: { content: string } }>
+  usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number }
+}
+
+/**
+ * 发一次请求并读完正文。**同一个 signal 贯穿 fetch 与 res.json()/res.text()**,所以超时覆盖整个请求
+ * (含「响应头已到、正文卡住」与「非 2xx 的错误正文卡住」),调用方取消同理。
+ * 只有「被我们的 signal 终止」才改写成 LlmRequestError;其余错误原样上抛。
+ */
+async function requestCompletion(
+  url: string,
+  init: { headers: Record<string, string>; body: string },
+  request: LlmRequestOptions,
+): Promise<{ ok: true; data: ChatCompletion } | { ok: false; status: number; text: string }> {
+  const timeoutMs = resolveLlmTimeoutMs(request.timeoutMs)
+  const timeout = AbortSignal.timeout(timeoutMs)
+  const signal = request.signal ? AbortSignal.any([request.signal, timeout]) : timeout
+  try {
+    const res = await fetch(url, { method: 'POST', headers: init.headers, body: init.body, signal })
+    if (!res.ok) return { ok: false, status: res.status, text: await res.text() }
+    return { ok: true, data: await res.json() as ChatCompletion }
+  } catch (error) {
+    if (!signal.aborted) throw error
+    // AbortSignal.any 的 reason 是最先触发的那个源的 reason:等于超时信号的 reason 即超时先到,否则是调用方取消
+    if (timeout.aborted && signal.reason === timeout.reason) {
+      throw new LlmRequestError('timeout', `no complete response within ${timeoutMs}ms (GOTRY_LLM_TIMEOUT_MS)`, { cause: error, timeoutMs })
+    }
+    throw new LlmRequestError('aborted', "request cancelled by the caller's AbortSignal", { cause: error })
+  }
+}
+
+async function chat(
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  json: boolean,
+  usage?: LlmUsageTracker,
+  request: LlmRequestOptions = {},
+): Promise<string> {
   const key = process.env['LLM_API_KEY'] ?? process.env['DEEPSEEK_API_KEY']
   if (!key) throw new Error('LLM_API_KEY 未设置(兼容 DEEPSEEK_API_KEY 别名)——真 LLM 路径不可用,请回退 mock(ADR-8)')
-  const res = await fetch(`${base()}/chat/completions`, {
-    method: 'POST',
+  const reply = await requestCompletion(`${base()}/chat/completions`, {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model: model(),
@@ -49,9 +139,9 @@ async function chat(messages: Array<{ role: 'system' | 'user' | 'assistant'; con
       ...(json ? { response_format: { type: 'json_object' } } : {}),
       temperature: json ? 0 : 0.7,
     }),
-  })
-  if (!res.ok) throw new Error(`llm ${res.status}: ${(await res.text()).slice(0, 300)}`)
-  const data = await res.json() as { choices: Array<{ message: { content: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number } }
+  }, request)
+  if (!reply.ok) throw new Error(`llm ${reply.status}: ${reply.text.slice(0, 300)}`)
+  const data = reply.data
   if (usage) {
     usage.calls += 1
     const u = data.usage
@@ -94,7 +184,11 @@ const SKELETON_SYSTEM = `你是行程骨架抽取器。从对话中抽取行程�
 规则:每个跨城移动一段;锚点只放用户明说或必然的(如"当天到"→arriveByMin 23:59=1439);时刻用当日分钟。
 scenario 判定:「洱海/大理/千岛湖/太湖+选目的地」→erhai(候选集);「普吉/workation/远程办公+多城链」→workation(五段链);「云南/大理丽江」→yunnan;不确定→generic。只输出 JSON。`
 
-export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date = () => new Date()): LlmPort & { usage: LlmUsageTracker } {
+/**
+ * request:本端口每次 chat() 共用的请求级选项(timeoutMs / signal)。signal 是端口级取消——
+ * 调用方可借它在会话/批次截止时真正掐断在途请求,而不是放着它继续挂在 provider 上。
+ */
+export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date = () => new Date(), request: LlmRequestOptions = {}): LlmPort & { usage: LlmUsageTracker } {
   const pack = flightPackPath
   const usage = emptyUsage()
   const historyText = (h: Turn[]) => h.map(t => `${t.role === 'user' ? '用户' : '助手'}: ${t.text}`).join('\n')
@@ -107,6 +201,7 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
         [{ role: 'system', content: FACTS_SYSTEM }, { role: 'user', content: `${anchorContext()}\n\n${historyText(history)}` }],
         true,
         usage,
+        request,
       )
       const obj = parseJsonBlock(out)
       if (!obj) return { assumptions: [] }
@@ -122,6 +217,7 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
         [{ role: 'system', content: SKELETON_SYSTEM }, { role: 'user', content: `${context}\n\n${historyText(history)}` }],
         true,
         usage,
+        request,
       )
       const skeleton = parseJsonBlock(out)
       if (!skeleton || !Array.isArray(skeleton['segments']) || (skeleton['segments'] as unknown[]).length === 0) return null
@@ -167,6 +263,7 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
         [{ role: 'system', content: buildSlotSystem(anchor) }, { role: 'user', content: historyText(history) }],
         true,
         usage,
+        request,
       )
       const obj = parseJsonBlock(out)
       if (!obj) return null
@@ -180,6 +277,7 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
          { role: 'user', content: `【${q.key}】${q.text}(为什么问:${q.why})` }],
         false,
         usage,
+        request,
       )
       return out.trim() || `【${q.key}】${q.text}`
     },
