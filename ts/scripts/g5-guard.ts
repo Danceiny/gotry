@@ -49,7 +49,10 @@ export const G5_BRIDGE_PATTERNS: ReadonlyArray<{ name: string; regex: RegExp }> 
  * 它们不是授权——真实桥接落在其它任何文件都仍需台账 GRANT。
  *  - master-outline 对:G5 门定义 + 复用矩阵 T 系统行(tracker 本体);
  *  - 授权台账对:授权面自身;
- *  - guard + 自测:检测器必须含有自己的检测串。
+ *  - guard + 自测:检测器必须含有自己的检测串;
+ *  - CHANGELOG.md:由 ts/scripts/build-changelog.ts 从 commit 标题**原样镜像**生成(#621)——描述这条闸的提交
+ *    标题一旦进入某个版本段,生成物就会「提到」它。豁免它不削弱闸:真正的桥接代码/配置落在别的文件里,
+ *    仍被逐文件扫描(g5-guard-tests 钉死豁免只作用于这一个路径)。
  */
 export const NAMING_SURFACES: ReadonlySet<string> = new Set([
   'docs/gotry-master-outline.md',
@@ -58,6 +61,7 @@ export const NAMING_SURFACES: ReadonlySet<string> = new Set([
   'docs/g5-authorization-ledger.zh-CN.md',
   'ts/scripts/g5-guard.ts',
   'ts/scripts/g5-guard-tests.ts',
+  'CHANGELOG.md',
 ])
 
 /** 排除段:第三方闭包/生成物/创始人私有产品数据(只读红线目录也不扫)。 */
