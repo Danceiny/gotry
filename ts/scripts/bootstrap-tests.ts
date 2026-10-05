@@ -10,6 +10,7 @@
  *  4. GOTRY_SETUP_EXTENSION=0 单项跳过
  *  5. wizard --dry-run 与真实路径(probe 失败 exit 1)
  *  8. doctor 子命令:体检清单/LLM key 让渡/报告落盘(状态面回归)
+ * 24. hbcli 凭证判定(#623):CLI doctor 按 whoami 三档 JSON 判而非退出码,并与工具层 doctor 对拍同结论
  *
  * 不测真实安装(浏览器商店一键装已上架,扩展就位检测走 runHealthWatch 的回环端口)。
  * 运行: cd ts && npx tsx scripts/bootstrap-tests.ts
@@ -21,6 +22,7 @@ import { EventEmitter } from 'node:events'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, delimiter } from 'node:path'
+import { runDoctorChecks } from '../capabilities/doctor.ts'
 
 const repoRoot = join(import.meta.dirname, '..', '..')
 const bootstrap = join(repoRoot, 'bin', 'gotry-bootstrap.js')
@@ -1416,4 +1418,66 @@ console.log('22. win32 platform boundary(hbcli/reach/sidebar → unavailable + �
 }
 console.log('23. result 通道排他写入(预存文件不被覆盖 + symlink 不跟随 victim,mode 0600 + flag wx)OK')
 
-console.log('BOOTSTRAP TESTS: 25/25 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+env opt-out+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan / 编排缝 orchestrateWebLaunch × 6 / prompt waiter failure deterministic process-group reap / waiter 原始错误 + cleanup timeout/failure handled / 临时安装包 spawned inner 21a TTY-eligible 真实 prompt→n→web + 摘要抑制 + 无残留 / 21b non-TTY 零 prompt / 21c POSIX 信号清理 SIGTERM→清 result+patch 目录 + 无残留子进程 / 21f yes-path installer 子树信号清理 / 21g yes-path timeout installer 子树清理 / 21d timeout 诊断 + 无残留 / 21e dsh-lifecycle 信号转发 / win32 平台边界 / result 通道排他写入)')
+// 24. hbcli 凭证判定(#623):`gotry doctor` 的 CLI 面按 `hbcli --json auth whoami` 的三档 JSON 判,不看退出码——
+//     whoami 没有凭证时也退 0,旧判法对「没登录」恒报「凭证有效」(rc.27 已发布版实测 14/14)。
+//     CLI(bin/gotry-bootstrap.js)与工具层(ts/capabilities/doctor.ts)是同一检查的两份实现,
+//     故同一份假 hbcli 夹具同时喂两边对拍:结论必须一致(漂移即红)。受控 PATH 只含 node 软链 + 假 hbcli,
+//     隔离 HOME,不碰真机 hbcli(开发机常把真 hbcli 装在 node 同目录)。
+{
+  const { classifyHbcliWhoami } = await import(bootstrap)
+  const allFalse = '{"env":"uat","api_key":{"configured":false},"portal":{"configured":false},"customer":{"configured":false}}'
+  const unit = (out: string | null) => classifyHbcliWhoami(out) as { ok: boolean; customer: boolean }
+  assert.deepEqual(unit(allFalse), { ok: false, customer: false }, '三档全 false → 未配置')
+  assert.deepEqual(unit(allFalse.replace('"customer":{"configured":false}', '"customer":{"configured":true}')), { ok: true, customer: true }, 'customer 档 → 有效且标注 customer')
+  assert.deepEqual(unit(allFalse.replace('"api_key":{"configured":false}', '"api_key":{"configured":true}')), { ok: true, customer: false }, 'api_key 档 → 有效')
+  assert.deepEqual(unit('not json'), { ok: true, customer: false }, '非 JSON(超旧版/异常)保守视为有效,与工具层同语义')
+  assert.deepEqual(unit(''), { ok: true, customer: false }, '空输出同属不可解析,保守视为有效')
+  assert.deepEqual(unit(null), { ok: false, customer: false }, '取不到输出(非零退出/超时/spawn 失败)→ 未确认')
+
+  const fakeHbcli = (whoamiArm: string): string =>
+    `#!/bin/sh\ncase "$*" in\n  *--version*) echo '0.0.4';;\n  *version*) echo '0.0.4';;\n  *whoami*) ${whoamiArm};;\nesac\n`
+  const cases: Array<{ name: string; arm: string; expect: 'ok' | 'degraded'; customer?: boolean }> = [
+    { name: 'allfalse', arm: `echo '${allFalse}'`, expect: 'degraded' },
+    { name: 'customer', arm: `echo '${allFalse.replace('"customer":{"configured":false}', '"customer":{"configured":true}')}'`, expect: 'ok', customer: true },
+    { name: 'apikey', arm: `echo '${allFalse.replace('"api_key":{"configured":false}', '"api_key":{"configured":true}')}'`, expect: 'ok' },
+    { name: 'plaintext', arm: `echo 'not json'`, expect: 'ok' },
+    { name: 'failing', arm: `echo boom >&2; exit 3`, expect: 'degraded' },
+  ]
+  const emptyRepo = mkdtempSync(join(tmpdir(), 'gotry-hbcli-parity-repo-'))
+  const prevPath = process.env.PATH
+  try {
+    for (const c of cases) {
+      const root = mkdtempSync(join(tmpdir(), `gotry-hbcli-${c.name}-`))
+      try {
+        const binDir = join(root, 'bin'); const home = join(root, 'home')
+        mkdirSync(binDir); mkdirSync(home)
+        symlinkSync(process.execPath, join(binDir, 'node'))
+        writeFileSync(join(binDir, 'hbcli'), fakeHbcli(c.arm), { mode: 0o755 })
+
+        // CLI 面
+        const cli = runBootstrap(['doctor'], { HOME: home, PATH: binDir, FLYAI_API_KEY: '' })
+        const line = cli.out.split('\n').find((l) => l.includes('hbcli(酒店实时源)'))
+        assert.ok(line, `${c.name}: CLI doctor 应输出 hbcli 行\n${cli.out}`)
+        const cliLevel = line.includes('已安装且凭证有效') ? 'ok' : line.includes('二进制在,但凭证未配置/失效') ? 'degraded' : 'other'
+        assert.equal(cliLevel, c.expect, `${c.name}: CLI doctor 的 hbcli 结论应为 ${c.expect}\n${line}`)
+        if (c.customer) assert.ok(line.includes('customer 档在用'), `${c.name}: CLI 应标注 customer 档在用\n${line}`)
+
+        // 工具层(同一夹具、同一受控 PATH)
+        process.env.PATH = binDir
+        const tool = (await runDoctorChecks({ repoRoot: emptyRepo, homeDir: home, env: {} })).items.find((i) => i.id === 'hbcli')!
+        process.env.PATH = prevPath
+        assert.equal(tool.status, c.expect, `${c.name}: 工具层 doctor 的 hbcli 结论应为 ${c.expect},实际 ${tool.status}`)
+        assert.equal(cliLevel, tool.status, `${c.name}: CLI 与工具层必须同结论(两份实现不得漂移)`)
+      } finally {
+        process.env.PATH = prevPath
+        try { rmSync(root, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+    }
+  } finally {
+    process.env.PATH = prevPath
+    try { rmSync(emptyRepo, { recursive: true, force: true }) } catch { /* ignore */ }
+  }
+}
+console.log('24. hbcli 凭证判定(CLI doctor 按 whoami 三档 JSON 判,不看退出码;与工具层 doctor 对拍 5 夹具同结论:全 false=degraded / customer·api_key=ok / 非 JSON=保守 ok / 非零退出=degraded)OK')
+
+console.log('BOOTSTRAP TESTS: 26/26 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+env opt-out+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan / 编排缝 orchestrateWebLaunch × 6 / prompt waiter failure deterministic process-group reap / waiter 原始错误 + cleanup timeout/failure handled / 临时安装包 spawned inner 21a TTY-eligible 真实 prompt→n→web + 摘要抑制 + 无残留 / 21b non-TTY 零 prompt / 21c POSIX 信号清理 SIGTERM→清 result+patch 目录 + 无残留子进程 / 21f yes-path installer 子树信号清理 / 21g yes-path timeout installer 子树清理 / 21d timeout 诊断 + 无残留 / 21e dsh-lifecycle 信号转发 / win32 平台边界 / result 通道排他写入 / hbcli 凭证判定 CLI↔工具层对拍)')

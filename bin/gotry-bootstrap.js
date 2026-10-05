@@ -634,6 +634,42 @@ function probe(cmd, args, timeoutMs = 10_000) {
   })
 }
 
+/**
+ * 探测命令 stdout,失败(spawn 错误/非零退出/超时)返回 null。
+ * 在 'close' 而非 'exit' 结算:'exit' 触发时 stdout 管道可能还没读完,输出会丢成空串
+ * (与 ts/capabilities/doctor.ts 的 probeStdout 同一处修复,#622)。
+ */
+function probeStdout(cmd, args, timeoutMs = 10_000) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'] })
+    let out = ''
+    let done = false
+    const timer = setTimeout(() => {
+      if (!done) { done = true; try { child.kill('SIGKILL') } catch { /* ignore */ } resolve(null) }
+    }, timeoutMs)
+    child.on('error', () => { if (!done) { done = true; clearTimeout(timer); resolve(null) } })
+    child.stdout?.on('data', (d) => { out += d.toString() })
+    child.on('close', (code) => { if (!done) { done = true; clearTimeout(timer); resolve(code === 0 ? out.trim() : null) } })
+  })
+}
+
+/**
+ * 按 `hbcli --json auth whoami` 的输出判凭证(hotelbyte-cli 三档 api_key/portal/customer 任一
+ * configured 即有效),不看退出码——whoami 没有凭证时也退 0,按退出码判会把「没登录」报成「凭证有效」(#623)。
+ * 与工具层 ts/capabilities/doctor.ts 同语义:输出不可解析(超旧版/异常)保守视为有效;取不到输出(null)视为未确认。
+ * 两处实现的一致性由 bootstrap-tests 的 CLI↔工具层对拍守住。
+ */
+function classifyHbcliWhoami(out) {
+  if (out === null) return { ok: false, customer: false }
+  try {
+    const w = JSON.parse(out)
+    const customer = !!w?.customer?.configured
+    return { ok: !!(w?.api_key?.configured || w?.portal?.configured || customer), customer }
+  } catch {
+    return { ok: true, customer: false }
+  }
+}
+
 const say = (s) => console.log(s)
 
 /** hbcli 最低版本(可用 GOTRY_MIN_HBCLI_VERSION 覆盖)。
@@ -664,7 +700,7 @@ async function hbcliVersion(bin) {
     const timer = setTimeout(() => { if (!done) { done = true; try { child.kill('SIGKILL') } catch { /* ignore */ } resolve(null) } }, 10_000)
     child.on('error', () => { if (!done) { done = true; clearTimeout(timer); resolve(null) } })
     child.stdout?.on('data', (d) => { out += d.toString() })
-    child.on('exit', (code) => { if (!done) { done = true; clearTimeout(timer); resolve(code === 0 ? parseVersion(out.trim()) : null) } })
+    child.on('close', (code) => { if (!done) { done = true; clearTimeout(timer); resolve(code === 0 ? parseVersion(out.trim()) : null) } })
   })
 }
 
@@ -872,8 +908,15 @@ async function doctorChecks() {
     if (v && !versionAtLeast(v, MIN_HBCLI_VERSION)) {
       items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——trade.* / search/checkAvail 会 401(issue #142)`, fix: 'npm install -g staicli --registry=https://registry.npmjs.org/' })
     } else {
-      const whoami = await probe(hbBin === 'hbcli(PATH)' ? 'hbcli' : hbBin, ['auth', 'whoami'])
-      items.push({ label: 'hbcli(酒店实时源)', ok: whoami, level: whoami ? 'ok' : 'degraded', detail: whoami ? `已安装且凭证有效(${hbBin}, v${v ? v.join('.') : '?'})` : '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)', fix: whoami ? undefined : 'hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)' })
+      // 凭证按 whoami 的 JSON 三档判定,不再看退出码(#623:whoami 无凭证也退 0,旧判法恒报「凭证有效」)
+      const cred = classifyHbcliWhoami(await probeStdout(hbBin === 'hbcli(PATH)' ? 'hbcli' : hbBin, ['--json', 'auth', 'whoami']))
+      items.push({
+        label: 'hbcli(酒店实时源)', ok: cred.ok, level: cred.ok ? 'ok' : 'degraded',
+        detail: cred.ok
+          ? `已安装且凭证有效(${hbBin}, v${v ? v.join('.') : '?'}${cred.customer ? ',customer 档在用(客户邮箱验证码登录)' : ''})`
+          : '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)',
+        fix: cred.ok ? undefined : 'hbcli auth customer-send-code --email you@mail.com 收码后 hbcli auth customer-login --email you@mail.com --code <收件码>(客户邮箱验证码登录,新邮箱即注册,需 npm staicli ≥ 0.0.4);B 端租户注册走 hbcli auth register(先 auth send-code);或 hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)',
+      })
     }
   } else {
     items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: '未安装——酒店检索降级静态包(公开渠道估算,非实时,仅覆盖内置场景)', fix: 'npx @danceiny/gotry doctor --fix' })
@@ -1741,4 +1784,5 @@ export {
   classifyDoctorGap, buildOnboardingPlan, onboardingSkipReason,
   runOnboardingFix, promptOnboarding, renderClassifiedPlan, runOnboarding, orchestrateWebLaunch,
   doctorFixAutoSupported, platformAutoUnavailableReason, installerEnabled,
+  classifyHbcliWhoami,
 }
