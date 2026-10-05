@@ -3,7 +3,7 @@
 # M5-0 HotelByte Supply Agreement Matrix (issue #136, fillable draft)
 
 > Role: the fillable named-value matrix behind M5 Entry component ② — every field states its semantics, who fills it, and an example format; named values stay blank until the founder and HotelByte supply them.
-> Status: fillable draft (2026-10-02; all named values blank; the engineering facts in §2 are pinned read-only; a filled matrix is still not a signed agreement).
+> Status: fillable draft (2026-10-02; all named values blank; the engineering facts in §2 are pinned read-only; a filled matrix is still not a signed agreement; on 2026-10-05 the founder closed #136 as not planned and the matrix stays blank — wherever this document says "in #136", read: in the issue that resumes M5-0, i.e. a new issue linking #136 or #136 reopened).
 > Upstream: [milestone-delivery-plan.md](milestone-delivery-plan.md) §4 M5-0, [write-gate-production-design.md](write-gate-production-design.md) §14, issue #136 owner comments (2026-09-08/09/10 admission matrices).
 > Downstream: #136 M5 Entry acceptance; after Entry the #231 → #232 → #233 implementation order; [decisions-needed.md](../decisions-needed.md) links here.
 

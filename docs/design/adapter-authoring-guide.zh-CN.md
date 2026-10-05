@@ -81,7 +81,7 @@ doctor 行全部由注册表生成，表外通道=对模型不可见且不可审
    陈述，不混写"无结果或失败"。
 8. **效果注册表纪律**：退避/熔断策略行逐条拍板（透传面永不重试；timeout 类才可重试）。
 
-## 4. 携程接口面真会话校准清单（D-13 遗留，执行依赖 founder 登录，公开追踪 = #272）
+## 4. 携程接口面真会话校准清单（D-13 遗留，执行依赖 founder 登录，本节为权威——原 tracker #272 已于 2026-10-05 按「推迟」关闭）
 
 > 前置：`scripts/session-login.ts` 完成携程真登录（顺带同窗口登录美团）——该 founder
 > 动作已挂在 `gotry-session-data-goal` 的 user todo，校准执行与它同窗口做。
@@ -98,6 +98,13 @@ doctor 行全部由注册表生成，表外通道=对模型不可见且不可审
   实测见 `../data-sources.md`（字段级 ≥90%、live <15s 仍为统一复核门，RFC 验收口径）。
 - [ ] **cookie 票据名单校准**：两侧登录后核对 `LOGIN_COOKIE_NAMES` 全覆盖、零误报。
 - [ ] 校准结论回写 `../data-sources.md`（领域矩阵行）。
+
+承接自已关闭 #272 的验收（证据契约是 [`../evaluation/sf-manifest.zh-CN.md`](../evaluation/sf-manifest.zh-CN.md) 里的 `sf-01..08` manifest；已完成：manifest 已冻结，`--golden=static` 继续标注为仅确定性——永不计入真实可订或实时库存证据）：
+
+- [ ] 采集脱敏、可评审的传输形状证据，覆盖 connected 与 unavailable／degraded 两种状态；cookie 值与个人行程数据不得进入 git 或 issue。
+- [ ] 核验携程实时接口漂移处理，以及扩展 connected／unavailable 的回退路径。
+- [ ] 依据观察到的形状新增或更新适配器漂移守卫，然后在确切 SHA 上通过会话测试、隔离 smoke 与全量回归。
+- [ ] 授权或登录态缺失时，把真实会话阻塞点与下一次取证日期记在开启该窗口的 issue 上——即出现已登录 Dida 的浏览器窗口与已授权 UAT 部署后，另开链接 #272 的新 issue。
 
 ## 5. 参考：既有样板
 

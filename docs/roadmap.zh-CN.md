@@ -13,7 +13,7 @@
 - M0–M2 建立了确定性规划闭环、Agent 形态与实时证据链。
 - 当前位于 M3。真实种子用户证据仍未满足退出门；工程活动不能替代该证据。
 - M4 工程可并行推进，但正式 M4 准入仍依赖 M3 退出，且自身需要真实回访用户 cohort。
-- Booking Copilot 是内嵌只读动作工程线。四 surface 真实库存与不可订恢复仍由 [#142](https://github.com/Danceiny/gotry/issues/142) 跟踪。
+- Booking Copilot 是内嵌只读动作工程线。四 surface 真实库存与不可订恢复仍开放，见 [`architecture.zh-CN.md` §10 D-29](architecture.zh-CN.md#101-未清偿工作面)；其 tracker issue 已于 2026-10-05 按「推迟」关闭（见 §1）。
 - M5 交易写入仍封在 WriteGate 与供应链授权之后；M6 还要求 M5 退出、创始人批准与真实试点。
 
 ## 1. 当前位置
@@ -23,9 +23,11 @@
 | 已发布包 | npm `latest` 指向 `0.0.1-rc.24`；兼容用 `rc` tag 仍指向 `0.0.1-rc.20`。源码 `main` 可能领先两者。 | [`release-notes.zh-CN.md`](release-notes.zh-CN.md) 与 [CHANGELOG](../CHANGELOG.md) |
 | 产品里程碑 | M3 证据仍开放。Web 产品与确定性 scorer 已存在；真实 50–200 人种子用户结果集尚未满足退出门。 | [#22](https://github.com/Danceiny/gotry/issues/22) |
 | 评测 | 确定性契约与校验器已存在。未取得准入且完整的 cohort 前，不声明 official score 或 uplift。 | [`evaluation/evaluation-foundation.zh-CN.md`](evaluation/evaluation-foundation.zh-CN.md) |
-| 记忆 | M4 collector 与 scorer 只属于工程支持；仍需带 source review 的真实 `observed_private` 回访 cohort。 | [#20](https://github.com/Danceiny/gotry/issues/20) |
-| Booking Copilot | GoTry 可为既有预订工作台规划 typed 只读动作；`Book` 仍由 Checkout 独占。真实库存、恢复、Checkout 与订单状态证据仍开放。 | [`architecture.zh-CN.md` §10 D-29](architecture.zh-CN.md#101-未清偿工作面)、[#142](https://github.com/Danceiny/gotry/issues/142) |
-| 交易与 B2B | M5 与 M6 尚未准入。离线契约与 fixture 不会启封供应商写入，也不能证明真实试点。 | [#136](https://github.com/Danceiny/gotry/issues/136)、[#137](https://github.com/Danceiny/gotry/issues/137) |
+| 记忆 | M4 collector 与 scorer 只属于工程支持；仍需带 source review 的真实 `observed_private` 回访 cohort。 | [`architecture.zh-CN.md` §10 D-19](architecture.zh-CN.md#101-未清偿工作面)、[#20](https://github.com/Danceiny/gotry/issues/20)（已按「推迟」关闭） |
+| Booking Copilot | GoTry 可为既有预订工作台规划 typed 只读动作；`Book` 仍由 Checkout 独占。真实库存、恢复、Checkout 与订单状态证据仍开放。 | [`architecture.zh-CN.md` §10 D-29](architecture.zh-CN.md#101-未清偿工作面)、[#142](https://github.com/Danceiny/gotry/issues/142)（已按「推迟」关闭） |
+| 交易与 B2B | M5 与 M6 尚未准入。离线契约与 fixture 不会启封供应商写入，也不能证明真实试点。 | [`architecture.zh-CN.md` §10 D-22 与 D-33](architecture.zh-CN.md#101-未清偿工作面)、[#136](https://github.com/Danceiny/gotry/issues/136) 与 [#137](https://github.com/Danceiny/gotry/issues/137)（均已按「推迟」关闭） |
+
+**Tracker 状态（2026-10-05）。** 创始人已将 [#20](https://github.com/Danceiny/gotry/issues/20)、[#136](https://github.com/Danceiny/gotry/issues/136)、[#137](https://github.com/Danceiny/gotry/issues/137) 与 [#142](https://github.com/Danceiny/gotry/issues/142) 按「推迟」关闭（状态：not planned）：M4–M6 暂非产品核心能力，Booking Copilot 的验收则等待 UAT 窗口。关闭不等于验收——§3 的每道闸门及上方链接的每条债务仍未满足，任何要求都没有放宽，已关闭的 issue 是历史而非 tracker。待其触发条件出现时，另开 issue 并链接已关闭的那一条即可恢复：M4 需要真实回访 cohort；M5 需要具名的供应协议取值及签约或内部授权证据；M6 需要 M5 退出与创始人的 P6 决策；Booking Copilot 需要已授权的 UAT 部署与已登录 Dida 的浏览器窗口。
 
 当前架构细节归 [`architecture.zh-CN.md`](architecture.zh-CN.md)，逐工具契约归 [`tools.zh-CN.md`](tools.zh-CN.md)。逐变更历史归 git、[CHANGELOG](../CHANGELOG.md) 与 [`release-notes.zh-CN.md`](release-notes.zh-CN.md)，不进入本路线图。
 
@@ -53,20 +55,20 @@
 
 ### M4——回访用户价值
 
-- Tracker：[#20](https://github.com/Danceiny/gotry/issues/20)。
+- Tracker：[#20](https://github.com/Danceiny/gotry/issues/20)——2026-10-05 已按「推迟」关闭；下列要求不变。
 - 必须具备：真实 `observed_private` 回访 cohort、N≥5、配对规划时长对比、回流基线与人工 source-review attestation。
 - 不接受替代：历史 wish 日志、candidate／synthetic 导出，或缺少真实 cohort 的 scorer 结果。
 
 ### M5——授权交易链
 
-- Tracker：[#136](https://github.com/Danceiny/gotry/issues/136)。
+- Tracker：[#136](https://github.com/Danceiny/gotry/issues/136)——2026-10-05 已按「推迟」关闭；下列要求不变。
 - 激活前必须具备：M4 退出，以及供应协议或内部授权。
 - 退出必须具备：真实 WriteGate 受控的预订、支付、退改链；佣金披露；对账；零误操作与单位经济证据。
 - 红线：设计文档、纯契约、mock CLI 或 Booking Copilot 只读动作都不能激活供应商写入。
 
 ### M6——经验证的 B2B 复用
 
-- Tracker：[#137](https://github.com/Danceiny/gotry/issues/137)。
+- Tracker：[#137](https://github.com/Danceiny/gotry/issues/137)——2026-10-05 已按「推迟」关闭；下列要求不变。
 - 激活前必须具备：M5 退出与创始人明确批准。
 - 退出必须具备：固定 kernel-set 零 diff、运行时与功能路径覆盖、真实旅行社嵌入 E2E 与签约试点。
 - 不接受替代：走查、未签署意向或单独的 loaded-LOC ratio。

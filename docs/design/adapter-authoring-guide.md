@@ -82,7 +82,7 @@ and doctor rows are all generated from the registry; an off-table channel is inv
 8. **Effect-registry discipline**: backoff/breaker policy rows are decided explicitly one by one (pass-through surfaces never retry;
    only timeout-class failures may retry).
 
-## 4. Ctrip (携程) interface-surface real-session calibration checklist (D-13 leftover; execution depends on founder login; public tracking = #272)
+## 4. Ctrip (携程) interface-surface real-session calibration checklist (D-13 leftover; execution depends on founder login; this section is the authority — the former tracker #272 was closed 2026-10-05 as deferred)
 
 > Prerequisite: `scripts/session-login.ts` completes the real Ctrip login (and logs into Meituan (美团) in the same window) — that founder
 > action is attached to the user todo of `gotry-session-data-goal`; run the calibration in the same window as it.
@@ -99,6 +99,13 @@ and doctor rows are all generated from the registry; an off-table channel is inv
   `../data-sources.md` (field-level ≥90% and live <15s remain the unified recheck gate — RFC acceptance criteria).
 - [ ] **Cookie ticket name-list calibration**: after logging in on both sides, verify `LOGIN_COOKIE_NAMES` full coverage and zero false positives.
 - [ ] Write calibration conclusions back to `../data-sources.md` (domain matrix row).
+
+Acceptance carried over from the closed #272 (the evidence contract is the `sf-01..08` manifest in [`../evaluation/sf-manifest.md`](../evaluation/sf-manifest.md); done: the manifest is frozen, and `--golden=static` stays labeled deterministic-only — it never counts as real availability or live-inventory evidence):
+
+- [ ] Capture redacted, reviewable transport-shape evidence for the connected and the unavailable/degraded states; no cookie values or personal itinerary data enter git or issues.
+- [ ] Verify Ctrip live-interface drift handling and the extension's connected/unavailable fallback path.
+- [ ] Add or update adapter drift guards from the observed shapes, then pass the session tests, the isolated smoke, and the full regression on the exact SHA.
+- [ ] When authorization or login state is absent, record the real-session blocker and the next evidence date on the issue that opens the window — a new issue linking #272, opened once a logged-in Dida browser window and an authorized UAT deploy exist.
 
 ## 5. References: existing exemplars
 

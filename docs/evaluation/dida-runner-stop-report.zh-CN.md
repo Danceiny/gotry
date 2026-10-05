@@ -57,6 +57,6 @@ GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 GOTRY_LAVI
 
 早期测试草稿链接 canonical 依赖后写入 stub，覆盖了两个本地 Playwright 文件；该轮证据已废弃，文件已从校验过的锁文件压缩包恢复，工作树依赖也独立重装。当前测试使用独立依赖并检查哈希。一次根目录依赖不全的完整回归以退出码 143 停止；首次合入主干后的完整回归发现清理缺陷，也以 143 主动停止，两轮均不算通过。旧 PR 提交的 CI 失败在 Copilot stalled-provider 就绪夹具；主干已包含 #512 修复，因此更新提交仍须重新执行本地与 CI 验证。
 
-没有执行真实 Dida 账号、供应商回包、扩展桥接或 canonical session 终态分类；相应实时验收继续由 [#272](https://github.com/Danceiny/gotry/issues/272) 跟踪。测试证明 runner 如何处理收到的终态，不证明供应商如何产生终态。AbortSignal 无法撤销已发出的 DOM 操作，上界只限制等待并报告未完成。搜索前的浏览器启动／登录失败，以及真实 Chrome 进程树回收，仍不在本报告证明范围内。测试不写入共享产品状态。
+没有执行真实 Dida 账号、供应商回包、扩展桥接或 canonical session 终态分类；相应实时验收仍按 D-13 开放（[适配器编写指南](../design/adapter-authoring-guide.zh-CN.md) §4）；其 tracker [#272](https://github.com/Danceiny/gotry/issues/272) 已于 2026-10-05 按「推迟」关闭。测试证明 runner 如何处理收到的终态，不证明供应商如何产生终态。AbortSignal 无法撤销已发出的 DOM 操作，上界只限制等待并报告未完成。搜索前的浏览器启动／登录失败，以及真实 Chrome 进程树回收，仍不在本报告证明范围内。测试不写入共享产品状态。
 
 架构第 11 节核对：只有本报告和双语索引反映证据变化；系统结构、供应商可用性、里程碑验收与发布状态均未变化。

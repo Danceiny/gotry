@@ -13,7 +13,7 @@
 - M0–M2 established the deterministic planning loop, agent form, and realtime evidence path.
 - M3 is current. Its real seed-user evidence is still open; engineering activity does not substitute for that exit gate.
 - M4 engineering may proceed in parallel, but formal M4 entry still depends on M3 exit and its own real repeat-user cohort.
-- Booking Copilot is an embedded, read-action engineering line. Real four-surface inventory and unavailable-offer recovery remain open under [#142](https://github.com/Danceiny/gotry/issues/142).
+- Booking Copilot is an embedded, read-action engineering line. Real four-surface inventory and unavailable-offer recovery remain open as [`architecture.md` §10 D-29](architecture.md#101-open-working-face); the tracker issue was closed as deferred on 2026-10-05 (see §1).
 - M5 transaction writes remain sealed behind WriteGate and supply-chain authorization. M6 additionally requires M5 exit, founder approval, and a real pilot.
 
 ## 1. Current Position
@@ -23,9 +23,11 @@
 | Published package | npm `latest` points to `0.0.1-rc.24`; the compatibility `rc` tag remains on `0.0.1-rc.20`. Source `main` may be ahead of both. | [`release-notes.md`](release-notes.md) and [CHANGELOG](../CHANGELOG.md) |
 | Product milestone | M3 evidence is open. The web product and deterministic scorer exist; the real 50–200 seed-user outcome set does not yet satisfy the exit gate. | [#22](https://github.com/Danceiny/gotry/issues/22) |
 | Evaluation | Deterministic contracts and validators exist. No official external score or uplift is claimed without an admitted, complete cohort. | [`evaluation/evaluation-foundation.md`](evaluation/evaluation-foundation.md) |
-| Memory | M4 collectors and scorers are engineering support only. A real `observed_private` repeat cohort with source review remains required. | [#20](https://github.com/Danceiny/gotry/issues/20) |
-| Booking Copilot | GoTry can plan typed read actions for an existing booking workspace; `Book` remains owned by Checkout. Real inventory, recovery, Checkout, and order-state evidence remain open. | [`architecture.md` §10 D-29](architecture.md#101-open-working-face), [#142](https://github.com/Danceiny/gotry/issues/142) |
-| Transactions and B2B | M5 and M6 are not admitted. Offline contracts and fixtures do not unlock supplier writes or prove a pilot. | [#136](https://github.com/Danceiny/gotry/issues/136), [#137](https://github.com/Danceiny/gotry/issues/137) |
+| Memory | M4 collectors and scorers are engineering support only. A real `observed_private` repeat cohort with source review remains required. | [`architecture.md` §10 D-19](architecture.md#101-open-working-face), [#20](https://github.com/Danceiny/gotry/issues/20) (closed as deferred) |
+| Booking Copilot | GoTry can plan typed read actions for an existing booking workspace; `Book` remains owned by Checkout. Real inventory, recovery, Checkout, and order-state evidence remain open. | [`architecture.md` §10 D-29](architecture.md#101-open-working-face), [#142](https://github.com/Danceiny/gotry/issues/142) (closed as deferred) |
+| Transactions and B2B | M5 and M6 are not admitted. Offline contracts and fixtures do not unlock supplier writes or prove a pilot. | [`architecture.md` §10 D-22 and D-33](architecture.md#101-open-working-face), [#136](https://github.com/Danceiny/gotry/issues/136) and [#137](https://github.com/Danceiny/gotry/issues/137) (closed as deferred) |
+
+**Tracker state (2026-10-05).** The founder closed [#20](https://github.com/Danceiny/gotry/issues/20), [#136](https://github.com/Danceiny/gotry/issues/136), [#137](https://github.com/Danceiny/gotry/issues/137), and [#142](https://github.com/Danceiny/gotry/issues/142) as deferred (state: not planned): M4–M6 are not the product's core capability for now, and Booking Copilot acceptance waits for a UAT window. Closing is not acceptance — every gate in §3 and every debt row linked above stays unmet, no requirement is relaxed, and the closed issues are history, not trackers. To resume, open a new issue that links the closed one once its trigger exists: for M4 a real repeat cohort; for M5 named supply-agreement values with signing or internal-authorization evidence; for M6 M5 exit plus a founder P6 decision; for Booking Copilot an authorized UAT deploy and a logged-in Dida browser window.
 
 Detailed current architecture belongs to [`architecture.md`](architecture.md). Per-tool contracts belong to [`tools.md`](tools.md). Per-change history belongs to git, [CHANGELOG](../CHANGELOG.md), and [`release-notes.md`](release-notes.md), not this roadmap.
 
@@ -53,20 +55,20 @@ The sequence is strict even when engineering work is parallel: an offline contra
 
 ### M4 — repeat-user value
 
-- Tracker: [#20](https://github.com/Danceiny/gotry/issues/20).
+- Tracker: [#20](https://github.com/Danceiny/gotry/issues/20) — closed 2026-10-05 as deferred; the requirements below are unchanged.
 - Required: a real `observed_private` repeat cohort, N≥5, paired planning-time comparison, reflux baseline, and manual source-review attestation.
 - Rejected substitute: historical wish logs, candidate/synthetic exports, or scorer output without the real cohort.
 
 ### M5 — authorized transaction chain
 
-- Tracker: [#136](https://github.com/Danceiny/gotry/issues/136).
+- Tracker: [#136](https://github.com/Danceiny/gotry/issues/136) — closed 2026-10-05 as deferred; the requirements below are unchanged.
 - Required before activation: M4 exit and a supply agreement or internal authorization.
 - Required for exit: the actual WriteGate-controlled booking, payment, change/refund chain; commission disclosure; reconciliation; zero-misoperation and unit-economics evidence.
 - Red line: no supplier write is activated by a design document, pure contract, mock CLI, or Booking Copilot read action.
 
 ### M6 — verified B2B reuse
 
-- Tracker: [#137](https://github.com/Danceiny/gotry/issues/137).
+- Tracker: [#137](https://github.com/Danceiny/gotry/issues/137) — closed 2026-10-05 as deferred; the requirements below are unchanged.
 - Required before activation: M5 exit and explicit founder approval.
 - Required for exit: fixed kernel-set zero diff, runtime and functional-path coverage, a real agency-embedding E2E, and a signed pilot.
 - Rejected substitute: a walkthrough, unsigned intent, or loaded-LOC ratio alone.

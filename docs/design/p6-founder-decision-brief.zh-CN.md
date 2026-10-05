@@ -3,9 +3,9 @@
 # P6 创始人决策简报（issue #137，M6-2）
 
 > 定位：P6 founder 评审的一页决策面——P6 是什么、M6 Entry 两个硬前置的现状、方案要点、风险，以及等待 founder 回答的问题清单；只为决策服务，绝不当决策回执。
-> 状态：决策就绪（2026-10-02；本简报只汇集开放问题——文中没有任何一项已被拍板；P6 Exit 仍以 founder 在 issue #137 的明确表态为准）。
+> 状态：决策就绪但已推迟（2026-10-02 汇集；2026-10-05 founder 已将 #137 按 not planned 关闭，当前无人在追；本简报只汇集开放问题——文中没有任何一项已被拍板；P6 Exit 仍以 founder 在 P6 issue 的明确表态为准——即链接 #137 的新 issue，或重新打开的 #137）。
 > 上游：[m6-b2b-reuse-walkthrough.md](../milestones/m6-b2b-reuse-walkthrough.zh-CN.md)（P6 草案）、[milestone-delivery-plan.md](milestone-delivery-plan.zh-CN.md) M6-1..M6-5、[roadmap.md](../roadmap.zh-CN.md) M6 行、issue #137 owner 评论（2026-09-08/09/10）。
-> 下游：founder 在 issue #137 回复；[decisions-needed.md](../decisions-needed.zh-CN.md) 按回执归档 #137 条目；#234 coverage 口径冻结与 #235 激活门读其结果。
+> 下游：founder 在恢复 P6 的 issue 里回复（链接 #137 的新 issue，或重新打开的 #137）；[decisions-needed.md](../decisions-needed.zh-CN.md) 按回执归档 #137 条目；#234 coverage 口径冻结与 #235 激活门读其结果。
 
 ## 速览（TL;DR）
 
@@ -64,13 +64,13 @@
 
 ## 6. 批准后第一步
 
-1. 在 #137 记录回执（YES 本身或已批准的修改稿）；[decisions-needed.md](../decisions-needed.zh-CN.md) 把 #137 移入已结算；此后推演纪要方可转 `frozen(日期)`。
+1. 在恢复 P6 的 issue 记录回执（YES 本身或已批准的修改稿）；[decisions-needed.md](../decisions-needed.zh-CN.md) 把 #137 移入已结算；此后推演纪要方可转 `frozen(日期)`。
 2. 在 #234 下冻结 `kernel-set.txt` 与两份 coverage 口径——#137 owner 评论（2026-09-09）明确允许在 M5 Exit 前做；LOC 保持附属。
 3. #235 保持 Entry 门控：真实 sponsor 激活等 M5 Exit + P6；契约、fixture 与 failing-test 打磨可继续。
 4. M5 线不变且仍是关键路径：#136 M5-0 具名值 + #20 M4 Exit。仅凭 P6 的 YES 不启动任何 M6 实现。
 
 ## 7. 本简报不是什么
 
-- 不是决策回执：本文任何内容都不满足 P6 Exit；只有 founder 在 #137 的明确表态才算。
+- 不是决策回执：本文任何内容都不满足 P6 Exit；只有 founder 在 P6 issue 的明确表态才算。
 - 不是改门：M6 Entry 仍是 M5 Exit + P6 批准；本简报不加条件也不减条件。
 - 不是试点替代：商业条款与签约在 M6-5，归 founder 与销售/法务。

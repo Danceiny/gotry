@@ -2,7 +2,7 @@
 
 # M6 B2B 复用推演纪要（P6，待创始人评审）
 
-> 状态：draft（2026-09-08，issue #137/#225；**P6 Exit 仅在 founder 明确 `YES 批准整体方案` 或明确批准修改稿时成立**；NO/提出修改仍为 TODO，不得擅自 frozen。P6 批准不等于 M6 Entry，M5 Exit 仍是硬前置）
+> 状态：draft（2026-09-08，issue #137/#225；**P6 Exit 仅在 founder 明确 `YES 批准整体方案` 或明确批准修改稿时成立**；NO/提出修改仍为 TODO，不得擅自 frozen。P6 批准不等于 M6 Entry，M5 Exit 仍是硬前置；#137 已于 2026-10-05 按「推迟」关闭——本纪要仍是 draft、不得 frozen，也不隐含任何 P6 决定）
 > 验收口径（总纲 §4 P6 行）：选 1-2 个 B2B 形态，推演两层为什么的包裹与复用边界；红线随行口径；实测数字必须来自 M6 Entry 后的真实加载证明。
 > 输入：[`../gotry-master-outline.md`](../gotry-master-outline.zh-CN.md) §3.7、[`../research/enterprise-travel-reference-study.md`](../research/enterprise-travel-reference-study.zh-CN.md)、[`../architecture.md`](../architecture.zh-CN.md) ADR-16/23、issue #137/#225/#229/#236/#237/#241/#242/#227。
 

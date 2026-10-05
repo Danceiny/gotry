@@ -3,7 +3,7 @@
 # M5-0 HotelByte 供应链协议矩阵（issue #136，可填写草案）
 
 > 定位：M5 Entry 第②组成项背后的可填写具名值矩阵——每个字段写明语义、谁填、示例格式；founder 与 HotelByte 给出之前，具名值一律留空。
-> 状态：可填写草案（2026-10-02；所有具名值留空；§2 的工程事实为只读钉死；填满的矩阵仍不是已签协议）。
+> 状态：可填写草案（2026-10-02；所有具名值留空；§2 的工程事实为只读钉死；填满的矩阵仍不是已签协议；2026-10-05 founder 已将 #136 按 not planned 关闭，矩阵继续留空——文中凡写「在 #136」之处，一律读作在恢复 M5-0 的 issue 里，即链接 #136 的新 issue 或重新打开的 #136）。
 > 上游：[milestone-delivery-plan.md](milestone-delivery-plan.zh-CN.md) §4 M5-0、[write-gate-production-design.md](write-gate-production-design.zh-CN.md) §14、issue #136 owner 评论（2026-09-08/09/10 准入矩阵）。
 > 下游：#136 M5 Entry 验收；Entry 后 #231 → #232 → #233 实施顺序；[decisions-needed.md](../decisions-needed.zh-CN.md) 链接到此。
 
