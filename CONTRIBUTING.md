@@ -66,6 +66,8 @@ cd ts && GOTRY_HBCLI_LIVE=1 npx tsx scripts/hbcli-e2e-tests.ts
 
 `GOTRY_HOTELBYTE_SKILLS_LIVE=1` only enables the remote `hotelbyte-skills` contract read in §17; unset, `0`, or any other value runs only the local tool-description contract and does not read the GitHub keychain. `GOTRY_SESSION_LIVE` does not open the HotelByte UAT.
 
+`GOTRY_HBCLI_LIVE=0` (also `false`/`off`, case-insensitive) additionally closes the realtime `hbcli search anything` channel behind `gotry_anything_search` and the PoI probe in `runTurn`: no `hbcli` is spawned and the call degrades as `verdict=error` with `[实时API:hbcli-anything@offline@…]`; for this channel unset or any other value keeps the product default (live whenever `hbcli` is available). The offline harnesses (`nightly-evidence.ts --dry-run`, `persona-sim.ts`, `replay.ts`, `replay-async.ts`, `time-eval-tests.ts`) default it to `0` unless you set it explicitly.
+
 Run a single suite:
 
 ```bash

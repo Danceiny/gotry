@@ -40,7 +40,8 @@ for(let sample=0;sample<sampleCount;sample++){
   });
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
- const env={PATH:shim+':'+process.env.PATH,HOME:home,DSH_HOME:join(home,'dsh'),SHELL:'/bin/zsh',TMPDIR:root,LLM_API_KEY:'synthetic-local-only',LLM_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,LLM_MODEL:'controlled-baseline',GOTRY_LOCALE:'en',GOTRY_TURN_HANDOFF_ROOT:cwd,GOTRY_SESSION_LIVE:'0',GOTRY_HBCLI_LIVE:'0',GOTRY_HOTELBYTE_SKILLS_LIVE:'0',GOTRY_PROBE_EVENTS:eventsFile};
+ // GOTRY_HBCLI_LIVE stays unset on purpose (issue #617): the shim hbcli on PATH IS the controlled provider under test, and `0` would switch the anything channel off.
+ const env={PATH:shim+':'+process.env.PATH,HOME:home,DSH_HOME:join(home,'dsh'),SHELL:'/bin/zsh',TMPDIR:root,LLM_API_KEY:'synthetic-local-only',LLM_BASE_URL:`http://127.0.0.1:${server.address().port}/v1`,LLM_MODEL:'controlled-baseline',GOTRY_LOCALE:'en',GOTRY_TURN_HANDOFF_ROOT:cwd,GOTRY_SESSION_LIVE:'0',GOTRY_HOTELBYTE_SKILLS_LIVE:'0',GOTRY_PROBE_EVENTS:eventsFile};
  const start=Date.now(), monotonicStart=process.hrtime.bigint();let stdout='',stderr='';const child=spawn(binary,['Compare Hangzhou and Nanjing for January 15-17, 2027. For each named city independently query its destination directory and hotel list; all city names and dates are already provided.'],{cwd,env,detached:true,stdio:['ignore','pipe','pipe']});child.stdout.on('data',x=>stdout+=x);child.stderr.on('data',x=>stderr+=x);
  let code;try{code=await new Promise(resolve=>{const timer=setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL')}catch{}resolve('timeout');},90000);child.once('exit',x=>{clearTimeout(timer);resolve(x)});});}finally{await new Promise(r=>server.close(r));}
  writeFileSync(join(outputRoot,`sample-${sample}-stdout.log`),stdout);writeFileSync(join(outputRoot,`sample-${sample}-stderr.log`),stderr);

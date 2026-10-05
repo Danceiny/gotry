@@ -41,7 +41,9 @@
  *     `responsesMissingUsage > 0` makes cost unprovable, which is also fail-closed;
  *   - `GOTRY_PERSONA_BUDGET_USD` (default 0.25) stops the batch and exits 3;
  *   - PATH/HOME are scrubbed for the duration of the batch so the session's POI probe
- *     (`src/loop.ts` -> `capabilities/anything.ts`) cannot reach the live `hbcli` backend;
+ *     (`src/loop.ts` -> `capabilities/anything.ts`) cannot reach the live `hbcli` backend,
+ *     and `GOTRY_HBCLI_LIVE` defaults to `0` (the probe's explicit offline switch, issue #617;
+ *     a value the operator set explicitly is not overridden);
  *   - one `mkdtemp` stateRoot per persona, bounded turns, bounded deadlines, concurrency
  *     <= 2, deterministic persona ordering, every temp dir and server closed in `finally`.
  *
@@ -913,8 +915,11 @@ function usageCost(model: string, usage: LlmUsageTracker, table: LlmPriceTable):
 }
 
 /** Scrub the environment the sessions run in: no live POI backend, no realtime pricing,
- *  no inherited provider endpoint. Restored by the returned function. */
-function scrubSessionEnv(patch: Record<string, string | undefined>, sandbox: string): () => void {
+ *  no inherited provider endpoint. Restored by the returned function.
+ *  GOTRY_HBCLI_LIVE (issue #617) is the explicit offline switch of the POI probe's `hbcli` channel:
+ *  it defaults to `0` here, but a value the operator set explicitly is never overridden
+ *  (PATH/HOME stay scrubbed either way, so even an explicit `1` finds no real `hbcli` unless one is planted under the sandbox HOME). */
+export function scrubSessionEnv(patch: Record<string, string | undefined>, sandbox: string): () => void {
   const binDir = join(sandbox, 'empty-bin')
   mkdirSync(binDir, { recursive: true })
   const full: Record<string, string | undefined> = {
@@ -922,7 +927,7 @@ function scrubSessionEnv(patch: Record<string, string | undefined>, sandbox: str
     HOME: sandbox,
     GOTRY_REALTIME_PRICING: undefined,
     GOTRY_SESSION_LIVE: '0',
-    GOTRY_HBCLI_LIVE: '0',
+    GOTRY_HBCLI_LIVE: process.env['GOTRY_HBCLI_LIVE'] ?? '0',
     ...patch,
   }
   const saved = new Map<string, string | undefined>()

@@ -17,6 +17,10 @@ import { spawnBounded } from '../capabilities/spawn-bounded.ts'
 import { callHbcliJson, searchHotels } from '../capabilities/hbcli.ts'
 import { anythingSearch } from '../capabilities/anything.ts'
 
+// issue #617:本套件要真起 fake hbcli(进程树回收证明),而 `GOTRY_HBCLI_LIVE=0 ./scripts/run-all-tests.sh`
+// 会把 anythingSearch 的离线开关带进来——此处显式开启,不让外部环境改变进程回收断言的对象。
+delete process.env['GOTRY_HBCLI_LIVE']
+
 const root = mkdtempSync(join(tmpdir(), 'gotry-519-abort-'))
 const ownedPids = new Set<number>()
 let activeWork: Promise<unknown> | undefined
