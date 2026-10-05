@@ -10,17 +10,27 @@
  *  6. 超时:fake hbcli hang — AbortError → verdict error + 不抛错
  *  7. 关键词为空:不调 hbcli — verdict error
  *  8. 缺 hbcli(spawn 失败):用户面是人话(不留 `(exit null)`/ENOENT 进程噪音)
+ *  9. 离线开关 GOTRY_HBCLI_LIVE=0|false|off(issue #617):计数 fake hbcli **零次**被调起,
+ *     返回既有降级面(与缺 hbcli 同形:ok:false / hbcli-anything-error / verdict:error + 人话原因);
+ *     含 PATH 解析的真实调用面(runTurn 的 PoI 探针不传 hbcliBin)
+ * 10. 开关未设或任何其他取值:行为与此前完全一致——fake 被调起,hit/miss/error 三值语义不变
+ * 11. 既有入参的既有结果在开关关闭时逐字节不变:空 keyword / pre-aborted 先于离线判定
+ *
+ * 本套件独占 GOTRY_HBCLI_LIVE:开头清掉外部值(`GOTRY_HBCLI_LIVE=0 ./scripts/run-all-tests.sh` 也不得改变 fake 断言),
+ * 结束还原。
  *
  * 运行: cd ts && npx tsx scripts/anything-tests.ts
  */
 
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { anythingSearch } from '../capabilities/anything.ts'
 
 const tmp = await mkdtemp(join(tmpdir(), 'anything-test-'))
+const savedLive = process.env.GOTRY_HBCLI_LIVE
+delete process.env.GOTRY_HBCLI_LIVE
 try {
   async function fakeBin(name: string, behaviour: 'ok' | 'echo-args' | 'empty' | 'fail' | 'hang' | 'unknown-command'): Promise<string> {
     const p = join(tmp, name)
@@ -157,7 +167,118 @@ while :; do sleep 5; done
   assert.ok(r8.evidence.includes('[实时API:hbcli-anything@error@'), '证据链 tag 形态不变')
   console.log(`8. 缺 hbcli → 人话降级 OK(${r8.error})`)
 
-  console.log('\nANYTHING TESTS: 8/8 OK(hbcli fake + wire 对齐 + 降级诚实)')
+  // ---- 9-11. 离线开关 GOTRY_HBCLI_LIVE(issue #617) -------------------------------------------
+  // 计数 fake:每被调起一次就往 calls.log 追加一行(只用 shell 内建,PATH 为空也能跑),再按 kind 回包。
+  const callsLog = join(tmp, 'calls.log')
+  const invocations = async (): Promise<number> => {
+    try { return (await readFile(callsLog, 'utf8')).split('\n').filter(Boolean).length } catch { return 0 }
+  }
+  async function countedBin(name: string, kind: 'hit' | 'miss' | 'fail', dir = tmp): Promise<string> {
+    const p = join(dir, name)
+    const reply = kind === 'hit'
+      ? `printf '%s' '{"candidates":[{"type":"city","matchScore":9,"region":{"id":"d1","name":{"zh":"大理市"}}}]}'`
+      : kind === 'miss'
+        ? `printf '%s' '{"candidates":[]}'`
+        : `printf 'hotelbe down\\n' >&2\nexit 1`
+    await writeFile(p, `#!/bin/sh\nprintf 'call\\n' >> '${callsLog}'\n${reply}\n`, { mode: 0o755 })
+    return p
+  }
+  async function withLive<T>(value: string | undefined, body: () => Promise<T>): Promise<T> {
+    const prev = process.env.GOTRY_HBCLI_LIVE
+    if (value === undefined) delete process.env.GOTRY_HBCLI_LIVE
+    else process.env.GOTRY_HBCLI_LIVE = value
+    try {
+      return await body()
+    } finally {
+      if (prev === undefined) delete process.env.GOTRY_HBCLI_LIVE
+      else process.env.GOTRY_HBCLI_LIVE = prev
+    }
+  }
+  const countedHit = await countedBin('hbcli-counted-hit', 'hit')
+  const countedMiss = await countedBin('hbcli-counted-miss', 'miss')
+  const countedFail = await countedBin('hbcli-counted-fail', 'fail')
+
+  // 9. 关闭:0/false/off(不分大小写、忽略首尾空白)→ 零 spawn + 既有降级面
+  for (const off of ['0', 'false', 'off', 'OFF', 'False', ' 0 ', ' off\n']) {
+    const before = await invocations()
+    const r9 = await withLive(off, () => anythingSearch({ keyword: '大理', hbcliBin: countedHit }))
+    assert.equal(await invocations(), before, `GOTRY_HBCLI_LIVE=${JSON.stringify(off)}:fake hbcli 必须被调起 0 次`)
+    assert.equal(r9.ok, false)
+    assert.equal(r9.via, 'hbcli-anything-error')
+    assert.equal(r9.verdict, 'error', '「没查」不得说成「查无」:走 error 降级面而非 miss')
+    assert.equal(r9.hits, undefined)
+    assert.deepEqual(Object.keys(r9).sort(), Object.keys(r8).sort(), '与缺 hbcli 降级同形(同一组字段)')
+    assert.match(r9.evidence, /^\[实时API:hbcli-anything@offline@[^\]]+\]/, `证据链应标 offline,实得:${r9.evidence}`)
+    assert.ok(r9.error && /hbcli/.test(r9.error) && /GOTRY_HBCLI_LIVE/.test(r9.error), `原因须说明 hbcli 通道被开关关闭,实得:${r9.error}`)
+    assert.ok(!/(exit null|ENOENT|spawn |timeout)/i.test(r9.error), `用户面不得出现进程噪音(也不得含 timeout:效应层只重试 timeout 类),实得:${r9.error}`)
+  }
+  // 9b. 真实调用面:不传 hbcliBin('hbcli' 由 PATH 解析,runTurn 的 PoI 探针即如此)。
+  //     未设开关的 positive control 证明 fake 确实可达——否则「零次」可能是空断言。
+  const pathBin = join(tmp, 'pathbin')
+  await mkdir(pathBin)
+  await countedBin('hbcli', 'hit', pathBin)
+  const savedPath = process.env.PATH
+  const savedHome = process.env.HOME
+  process.env.PATH = `${pathBin}:${savedPath ?? ''}`
+  process.env.HOME = join(tmp, 'empty-home') // 已知安装位回退落在空目录,碰不到开发机真实 hbcli
+  try {
+    const base = await invocations()
+    const control = await withLive(undefined, () => anythingSearch({ keyword: '大理' }))
+    assert.equal(control.verdict, 'hit', `positive control:未设开关时 PATH 上的 fake 应被调起,实得:${control.evidence}`)
+    assert.equal(await invocations(), base + 1, 'positive control 恰好调起一次')
+    const off = await withLive('0', () => anythingSearch({ keyword: '大理' }))
+    assert.equal(off.verdict, 'error')
+    assert.match(off.evidence, /@offline@/)
+    assert.equal(await invocations(), base + 1, 'GOTRY_HBCLI_LIVE=0:PATH 上的 hbcli 零次调起')
+  } finally {
+    if (savedPath === undefined) delete process.env.PATH
+    else process.env.PATH = savedPath
+    if (savedHome === undefined) delete process.env.HOME
+    else process.env.HOME = savedHome
+  }
+  console.log('9. GOTRY_HBCLI_LIVE=0|false|off → 零 spawn + 既有降级面(显式 hbcliBin 与 PATH 解析两种调用面)OK')
+
+  // 10. 未设或任何其他取值 = 与此前完全一致:fake 被调起,hit/miss/error 三值语义不变
+  for (const on of [undefined, '1']) {
+    const before = await invocations()
+    const h = await withLive(on, () => anythingSearch({ keyword: '大理', hbcliBin: countedHit }))
+    const m = await withLive(on, () => anythingSearch({ keyword: 'nothing', hbcliBin: countedMiss }))
+    const f = await withLive(on, () => anythingSearch({ keyword: 'x', hbcliBin: countedFail }))
+    assert.equal(await invocations(), before + 3, `GOTRY_HBCLI_LIVE=${String(on)}:三只 fake 各被调起一次`)
+    assert.equal(h.verdict, 'hit')
+    assert.equal(h.hits![0]!.name, '大理市')
+    assert.match(h.evidence, /^\[实时API:hbcli-anything@\d{4}-/, 'hit 证据链形态不变')
+    assert.equal(m.verdict, 'miss')
+    assert.equal(m.hits!.length, 0)
+    assert.equal(f.verdict, 'error')
+    assert.match(f.evidence, /^\[实时API:hbcli-anything@error@/, 'error 证据链形态不变(不是 offline)')
+    assert.equal(f.error, 'hbcli 报错:hotelbe down', '既有原因串逐字节不变')
+  }
+  // 非 0/false/off 的取值一律视为开启(与此前一致):空串/1/true/on/yes/no/disabled/00/任意字符串
+  for (const other of ['', 'true', 'on', 'yes', 'no', 'disabled', '00', 'maybe']) {
+    const before = await invocations()
+    const r = await withLive(other, () => anythingSearch({ keyword: '大理', hbcliBin: countedHit }))
+    assert.equal(r.verdict, 'hit', `GOTRY_HBCLI_LIVE=${JSON.stringify(other)} 不是关闭值,应保持 live,实得:${r.evidence}`)
+    assert.equal(await invocations(), before + 1)
+  }
+  console.log('10. 开关未设/其他取值 → 与此前一致(hit/miss/error 三值 + 既有原因串)OK')
+
+  // 11. 关闭时,既有入参的既有结果逐字节不变:空 keyword / pre-aborted 先于离线判定(两者本就零 spawn)
+  const before11 = await invocations()
+  const rEmpty = await withLive('0', () => anythingSearch({ keyword: '   ', hbcliBin: countedHit }))
+  assert.equal(rEmpty.error, 'keyword is required')
+  assert.match(rEmpty.evidence, /^\[实时API:hbcli-anything@error@[^\]]+\] keyword empty$/)
+  const preAborted = new AbortController()
+  preAborted.abort()
+  const rAbort = await withLive('0', () => anythingSearch({ keyword: '大理', hbcliBin: countedHit, signal: preAborted.signal }))
+  assert.equal(rAbort.error, 'aborted by host signal')
+  assert.match(rAbort.evidence, /^\[实时API:hbcli-anything@abort@[^\]]+\] pre-aborted, zero spawn$/)
+  assert.equal(await invocations(), before11, '两条既有降级路径均零 spawn')
+  console.log('11. 关闭态下空 keyword / pre-aborted 的既有结果不变 OK')
+
+  console.log('\nANYTHING TESTS: 11/11 OK(hbcli fake + wire 对齐 + 降级诚实 + #617 离线开关零 spawn)')
 } finally {
+  if (savedLive === undefined) delete process.env.GOTRY_HBCLI_LIVE
+  else process.env.GOTRY_HBCLI_LIVE = savedLive
   await rm(tmp, { recursive: true, force: true })
 }

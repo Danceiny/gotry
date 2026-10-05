@@ -10,6 +10,9 @@ import { interviewNext, newState, runTurn } from '../src/loop.ts'
 import { solveUnified } from '../src/unified.ts'
 import { join } from 'node:path'
 
+// issue #617:mock 重放是离线演练;runTurn 的 PoI 探针缺省不得 spawn 本机真实 hbcli(显式设置的值不覆盖)
+process.env['GOTRY_HBCLI_LIVE'] ??= '0'
+
 const llm = createMockLlm(join('..', 'data', 'flights_2026.json'))
 let state = newState()
 

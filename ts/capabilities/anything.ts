@@ -19,6 +19,12 @@
  *   - miss: hbcli exit 0,但 candidates 为空(查无结果)
  *   - err:  hbcli exit ≠ 0 或超时(降级,降级产物 标 [实时API:hbcli-anything@error@ts])
  *
+ * 离线开关(issue #617;与会话通道 GOTRY_SESSION_LIVE 同形,方向相反以保持产品默认不变):
+ *   GOTRY_HBCLI_LIVE=0|false|off(不分大小写)→ 零 spawn、不碰凭据与后端,走同一条降级面
+ *   (verdict=error,证据标 [实时API:hbcli-anything@offline@ts]);未设或任何其他取值 = 与此前
+ *   完全一致(hbcli 可用即 live)。判定见 hbcliLiveEnabled;mock/dry-run harness(nightly-evidence --dry-run、
+ *   persona-sim、replay*)缺省把它置 0,operator 显式设置的值不覆盖。
+ *
  * 契约(与 hbcli/weather/opensky 同构,L4 不变量):
  *   - 永不抛错:网络/超时/解析失败一律降级返回;
  *   - 证据链标注:成功 [实时API:hbcli-anything@ts];失败 [实时API:hbcli-anything@error@ts];
@@ -157,6 +163,16 @@ function failureReason(
     : `hbcli 退出码 ${r.code},未返回可判定结果(本轮按降级处理)`) + suffix
 }
 
+/**
+ * 实时 hbcli 通道是否开启(issue #617)。只有显式写 0 / false / off(不分大小写,忽略首尾空白)
+ * 才关闭;未设或任何其他取值都视为开启——终端用户依赖的实时源缺省不丢。调用时读取,
+ * 测试与 harness 可在进程内切换。
+ */
+export function hbcliLiveEnabled(env: Partial<Pick<NodeJS.ProcessEnv, 'GOTRY_HBCLI_LIVE'>> = process.env): boolean {
+  const v = (env.GOTRY_HBCLI_LIVE ?? '').trim().toLowerCase()
+  return v !== '0' && v !== 'false' && v !== 'off'
+}
+
 /** Anything 通用搜索 — 任何搜索失败走降级;不抛错 */
 export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> {
   const started = Date.now()
@@ -178,6 +194,17 @@ export async function anythingSearch(q: AnythingQuery): Promise<AnythingResult> 
       ok: false, via: 'hbcli-anything-error',
       evidence: `[实时API:hbcli-anything@abort@${ts}] pre-aborted, zero spawn`,
       latencyMs: 0, verdict: 'error', error: 'aborted by host signal',
+    }
+  }
+  // 离线开关:位置在入参校验与 pre-abort 之后,既有入参的既有结果/原因串逐字节不变;
+  // 关闭时与「未装配 hbcli」同形降级(ok:false / hbcli-anything-error / verdict:error + 人话原因,
+  // 无进程噪音,也不含 timeout 字样——效应层只重试 timeout 类),且不 spawn、不重试。
+  if (!hbcliLiveEnabled()) {
+    return {
+      ok: false, via: 'hbcli-anything-error',
+      evidence: `[实时API:hbcli-anything@offline@${ts}] GOTRY_HBCLI_LIVE switched off; live channel closed, zero spawn`,
+      latencyMs: Date.now() - started, verdict: 'error',
+      error: 'hbcli 实时通道已关闭(GOTRY_HBCLI_LIVE 离线开关;本轮按降级处理,未发起查询)',
     }
   }
   let r: Awaited<ReturnType<typeof spawnBounded>> = { code: null, stdout: '', stderr: '', aborted: false, timedOut: false }

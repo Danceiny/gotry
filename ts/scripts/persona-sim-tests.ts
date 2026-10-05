@@ -15,7 +15,7 @@
 
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,6 +31,7 @@ import {
   poiAuditFromGateReport,
   promptDigest,
   runPersonaBatch,
+  scrubSessionEnv,
   summarizeFunnel,
   type PersonaCard,
   type PersonaSimErrorCode,
@@ -106,6 +107,24 @@ function withEnv<T>(patch: Record<string, string | undefined>, body: () => T): T
   }
   try {
     return body()
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+/** Like withEnv, but the environment stays patched until the async body settles. */
+async function withEnvAsync<T>(patch: Record<string, string | undefined>, body: () => Promise<T>): Promise<T> {
+  const saved = new Map<string, string | undefined>()
+  for (const [key, value] of Object.entries(patch)) {
+    saved.set(key, process.env[key])
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  try {
+    return await body()
   } finally {
     for (const [key, value] of saved) {
       if (value === undefined) delete process.env[key]
@@ -576,6 +595,57 @@ async function main(): Promise<void> {
     assert.equal(result.state, 'dry_run_complete')
     assert.equal(result.evidence_kind, 'synthetic_fixture')
     assert.equal(result.scorer_summary.business_pass, false)
+  })
+
+  await pass('session env: GOTRY_HBCLI_LIVE defaults to 0, an explicit operator value is kept, and the env is restored (issue #617)', async () => {
+    const sandbox = newRoot()
+    for (const [operator, expected] of [[undefined, '0'], ['1', '1'], ['0', '0'], ['off', 'off']] as const) {
+      await withEnvAsync({ GOTRY_HBCLI_LIVE: operator }, async () => {
+        const restore = scrubSessionEnv({}, sandbox)
+        assert.equal(process.env['GOTRY_HBCLI_LIVE'], expected, `operator ${String(operator)} -> sessions see ${expected}`)
+        assert.equal(process.env['PATH'], join(sandbox, 'empty-bin'), 'PATH stays scrubbed whatever the operator set')
+        assert.equal(process.env['HOME'], sandbox)
+        restore()
+        assert.equal(process.env['GOTRY_HBCLI_LIVE'], operator, 'the operator value is restored exactly')
+      })
+    }
+  })
+
+  await pass('a dry-run batch never spawns hbcli by default; an explicit operator value is not overridden (issue #617)', async () => {
+    // The batch sets HOME=<state root> and PATH=<empty dir>, so the HOME-relative known-install location is the
+    // only place the POI probe could ever find a binary. A counting fake lives there (shell builtins only, so it
+    // also runs under the empty PATH); the explicit `1` run is the positive control proving it is reachable.
+    // Each run gets its own root: a batch refuses to export over an existing evidence directory.
+    const batch = async (operator: string | undefined): Promise<{ calls: number; error: unknown; sessions: number }> => {
+      const root = newRoot()
+      const fakeDir = join(root, '.local', 'bin')
+      mkdirSync(fakeDir, { recursive: true })
+      const callsLog = join(root, 'hbcli-calls.log')
+      writeFileSync(join(fakeDir, 'hbcli'), `#!/bin/sh\nprintf 'call\\n' >> '${callsLog}'\nprintf '%s' '{"candidates":[]}'\n`, { mode: 0o755 })
+      // A bare place name is what probePoi turns into an anything search on the first user turn.
+      const deckPath = writeDeck(root, Array.from({ length: 6 }, (_unused, index) => baseCard({
+        persona_id: `poi-probe-${index}`,
+        opening_message: '大理',
+      })))
+      const result = await withEnvAsync({ GOTRY_HBCLI_LIVE: operator }, async () => {
+        const outcome = await runPersonaBatch({ dryRun: true, deckPath, stateRoot: root, clock: frozenClock(), personaFilter: ['poi-probe-0'] })
+        assert.equal(process.env['GOTRY_HBCLI_LIVE'], operator, 'the batch restores the operator value')
+        return outcome
+      })
+      const calls = existsSync(callsLog) ? readFileSync(callsLog, 'utf8').split('\n').filter(Boolean).length : 0
+      return { calls, error: result.personas[0]?.error ?? null, sessions: result.personas.length }
+    }
+
+    const byDefault = await batch(undefined)
+    assert.equal(byDefault.sessions, 1)
+    assert.equal(byDefault.error, null, 'the probe path must not break the session')
+    assert.equal(byDefault.calls, 0, 'default dry-run: the fake hbcli must be invoked ZERO times')
+
+    const explicitOff = await batch('0')
+    assert.equal(explicitOff.calls, 0, 'explicit 0 stays offline')
+
+    const explicitOn = await batch('1')
+    assert.ok(explicitOn.calls >= 1, `explicit GOTRY_HBCLI_LIVE=1 must not be overridden: the POI probe should reach the fake (calls=${explicitOn.calls})`)
   })
 
   await pass('the whole suite contacted nothing outside 127.0.0.1', () => {

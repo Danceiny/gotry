@@ -66,6 +66,8 @@ cd ts && GOTRY_HBCLI_LIVE=1 npx tsx scripts/hbcli-e2e-tests.ts
 
 `GOTRY_HOTELBYTE_SKILLS_LIVE=1` 仅启用 §17 的远端 `hotelbyte-skills` 契约读取；未设置、`0` 或其他值只跑本地工具描述契约，不读取 GitHub keychain。`GOTRY_SESSION_LIVE` 不会打开 HotelByte UAT。
 
+`GOTRY_HBCLI_LIVE=0`（亦可写 `false`/`off`，不区分大小写）还会关闭 `gotry_anything_search` 与 `runTurn` PoI 探针背后的实时 `hbcli search anything` 通道：不启动 `hbcli`，调用以 `verdict=error` 降级并标 `[实时API:hbcli-anything@offline@…]`；对该通道而言，未设置或其他取值保持产品默认（`hbcli` 可用即 live）。离线 harness（`nightly-evidence.ts --dry-run`、`persona-sim.ts`、`replay.ts`、`replay-async.ts`、`time-eval-tests.ts`）默认置 `0`，除非你显式设置。
+
 单独跑某个套件：
 
 ```bash
