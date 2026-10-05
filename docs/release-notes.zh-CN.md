@@ -8,14 +8,42 @@
 
 ## Unreleased
 
+暂无排队项。
+
+---
+
+## v0.2.0-rc.28 · 2026-10-05
+
+**为什么发这一版。** rc.27 的回拉校验与模拟触发演练暴露了真实缺陷。`npx @danceiny/gotry doctor` 会把没有凭证的 hbcli 报成「凭证有效」，装了 hbcli 的机器无一幸免（[#623](https://github.com/Danceiny/gotry/issues/623)）；接驳路径上，供应商的原始错误文本可能不经清洗进入工具结果，而与自己的模式或解析起终点相矛盾的路线供应商仍会被绑定成机场接驳（#429）；求解器崩溃可能以「你的行程不可行」的样子走到旅行者面前（[#620](https://github.com/Danceiny/gotry/issues/620)）；租户账本还会把裸 SQLite 争用错误漏给调用方（[#619](https://github.com/Danceiny/gotry/issues/619)）。这些在本版全部修复。本版同时落地会话双区记忆（默认关闭）与 M3 采集及 persona 模拟 harness（仅 synthetic）。版本号继续与扩展 manifest 配对（`0.2.0.28`，由 `extension-tests` 强制）；扩展本身未改。
+
+### 新增（自 rc.27 起）
+
+**修复**
+
+- **`gotry doctor` 不再把没有凭证的 hbcli 报成「凭证有效」（[#623](https://github.com/Danceiny/gotry/issues/623)）** — CLI 此前按 `hbcli auth whoami` 的退出码判定，而它在什么都没配置时也退 0，所以装了 hbcli 的机器都会看到假的「有效」（已发布的 rc.27 上 14 次实测 14 次）。现改为与工具层 doctor 完全一致地解析三档 `whoami` JSON，探测在 `close` 结算，并加了对拍测试：同一份假 hbcli 同时喂给两份实现，二者不得再漂移。
 - **`doctor` 不再偶发地把没有凭证的 hbcli 报成 `ok`** — 凭证探测在子进程 `exit` 事件结算，此时 stdout 可能还没读完；读到空串便落入「输出不可解析视为有效」分支。现改为在 `close` 结算，并用确定性回归测试注入一个先退出、数据后到的子进程。这同时消除了 Node 22 CI 任务的偶发红灯。
+- **供应商故障详情进入工具结果前先被清洗（#429）** — 接驳供应商的错误文本（标记、凭据形状字符串）不再原样流入 `transfer_evidence`；固定的 `GROUND_TRANSFER_*` 文案按字节原样通过。
+- **与自己的请求相矛盾的路线供应商，现在被拒绝而不再被绑定（#429 GAP-429-1／2）** — 自述模式不是驾车，或解析出的起终点与请求点对相差约 11 米以上（或无法解析），都回落到静态接驳估算并保留原价格标签，且不写缓存；当前接线的驾车工具两者都不声明，行为不变。
+- **求解器崩溃不再被当成「行程不可行」上报（[#620](https://github.com/Danceiny/gotry/issues/620)）** — `solveUnified` 在进 Z3 之前校验每一个整数输入，并以显式的 `solver_error`（`solver_input_not_integer`／`solver_runtime_error`）返回，不再伪造 `unsat_core:['wasm_runtime_error']`；面向旅行者的文案说的是「求解器出错了」，而不是「行程不可能」。云南包上的根因是数据缺口（`yn0` 段没有缓冲与接驳分钟数），不是线程竞态，所以该包在分钟数校准之前会报 `solver_error`（[#635](https://github.com/Danceiny/gotry/issues/635)）。
+- **租户账本不再把裸 SQLite 争用错误漏给调用方（[#619](https://github.com/Danceiny/gotry/issues/619)）** — `openDb` 把 `busy_timeout` 装在 WAL 切换之前，建表与迁移在 `BEGIN IMMEDIATE` 下完成；全部先读后写的账本事务改为开头就取写锁；争用预算耗尽时抛类型化的 `LedgerBusyError`，而不是裸 `SQLITE_BUSY`／`SQLITE_BUSY_SNAPSHOT`（D-15 演练缺陷 D15-1／D15-2）。存储数据、schema、幂等键、事件形状与单写者行为均未改变。内核清单已在 founder 批准下为 `state-ledger.ts` 与 `unified.ts` 重钉。
+- **卡住的 LLM provider 不再让真实 LLM 运行无限挂起（[#618](https://github.com/Danceiny/gotry/issues/618)）** — `chat()` 现在会在 `GOTRY_LLM_TIMEOUT_MS`（默认 300 秒）内未完整应答、或调用方 `AbortSignal` 触发时，以类型化的 `LlmRequestError`（`timeout`／`aborted`）结束请求，而不是无限等待；usage 累计与缺 usage 即 fail-closed 的规则不变。
+- **实时 `hbcli` 通道的离线开关（[#617](https://github.com/Danceiny/gotry/issues/617)）** — `GOTRY_HBCLI_LIVE=0`（亦可写 `false`／`off`）时，`anythingSearch` 不再启动 `hbcli`，并以 `[实时API:hbcli-anything@offline@…]` 降级；未设置或其他取值行为不变（`hbcli` 可用即 live）。`nightly-evidence.ts --dry-run`、`persona-sim.ts`、`replay.ts`、`replay-async.ts`、`time-eval-tests.ts` 现缺省置 `0`（显式取值照常生效），mock 与 dry-run 路径不再带着开发机已存凭据连到真实后端。
+- **发布脚本以 `--verify-tag` 创建 GitHub Release** — `scripts/publish-npm.sh` 把 tag 名传给 `gh release create --target`，GitHub 以 HTTP 422（`target_commitish is invalid`）拒收：rc.27 在 npm 上发布成功，但 Release 步骤失败、只能手动补建。`--verify-tag` 在远端缺 tag 时直接中止，而不是悄悄在 `main` 上新建一个 tag。
+- **测试加固** — warmer-proof 的闸标记改为原子发布（此前 Node 24 上偶发失败）；boot-budget 证明对 10 秒握手期限允许 50 毫秒的提前触发容差（一次 Node 22 运行量到 9999 毫秒）。
+
+**新增（默认关闭或仅 synthetic）**
+
 - **会话双区记忆机制（#255，默认关闭）** — 在既有 `events` 表上新增六个日志类事件（零新表；内核钉死的 `state-ledger.ts` 零改动）、捕获缝、按 scope 绑定的读回变量 `session_zone_brief`、经既有 motivation/timeline/companion 闸路由的 owner 确认晋升、`state-cli export` 新增 `hot-context.jsonl` 与 `notebook.json` 视图，以及 opt-in 观测面和三个阈值在见数据前冻结的指标。`sessionZones` 开关默认 `off`，关闭时惰性；价值声明仍关闭（尚无真实使用），出厂 persona 在 founder 决定前不引用新变量。
 - **M3 种子 cohort 采集 CLI 与 LLM persona 模拟 harness（#22，仅 synthetic）** — 面向受邀且已同意的种子参与者、由操作者驱动的采集路径，写出评分器的 `gotry_m3_cohort_record_v1`（这类记录的首个生产者）；以及在离线或真实 LLM（带预算闸）下预演漏斗的 persona 模拟 harness。模拟运行标记为 `synthetic_fixture`、以 `test_or_staff` 登记，绝不计入 M3/M4 证据；M3 闸不变（仍需经准入的 50–200 名真实种子用户）。
-- **休眠触发式追踪单的模拟触发演练（#82、#275、#422、#340、#339、#429；夹具层面，追踪单保持开放）** — 为成交结果↔规划估算投影（#340）、城市×场景分级（注册表为空，#339）与路线供应商合规闸（#429）新增默认关闭、零调用方的契约机制；为惰性的 W2A sensor 路径（#82）、租户账本上的并发写者／崩溃重开／在线备份（#275）以及 `0.2.0-rc.2` 上的 dsh SDK 后代清理再基线（#422，缺口得到确认）新增演练套件；并为外部 Anything 路径（#276／#345）新增 opt-in 的只读测量探针。所有结果都标注为 `simulated_trigger_drill` 或 `fixture_contract`，没有一项满足任何触发条件。
-- **供应商故障详情进入工具结果前先被清洗（#429）** — 接驳供应商的错误文本（标记、凭据形状字符串）不再原样流入 `transfer_evidence`；固定的 `GROUND_TRANSFER_*` 文案按字节原样通过。已准入路径上另有两处契约缺口（响应侧的模式与方向绑定）已记录、待裁决。
-- **发布脚本以 `--verify-tag` 创建 GitHub Release** — `scripts/publish-npm.sh` 把 tag 名传给 `gh release create --target`，GitHub 以 HTTP 422（`target_commitish is invalid`）拒收：rc.27 在 npm 上发布成功，但 Release 步骤失败、只能手动补建。`--verify-tag` 在远端缺 tag 时直接中止，而不是悄悄在 `main` 上新建一个 tag。
-- **`gotry doctor` 不再把没有凭证的 hbcli 报成「凭证有效」（[#623](https://github.com/Danceiny/gotry/issues/623)）** — CLI 此前按 `hbcli auth whoami` 的退出码判定，而它在什么都没配置时也退 0，所以装了 hbcli 的机器都会看到假的「有效」（已发布的 rc.27 上 14 次实测 14 次）。现改为与工具层 doctor 完全一致地解析三档 `whoami` JSON，探测在 `close` 结算，并加了对拍测试：同一份假 hbcli 同时喂给两份实现，二者不得再漂移。
+- **休眠触发式追踪单的模拟触发演练（#82、#275、#422、#340、#339、#429；夹具层面；这些追踪单后来已按「推迟」关闭）** — 为成交结果↔规划估算投影（#340）、城市×场景分级（注册表为空，#339）与路线供应商合规闸（#429）新增默认关闭、零调用方的契约机制；为惰性的 W2A sensor 路径（#82）、租户账本上的并发写者／崩溃重开／在线备份（#275）以及 `0.2.0-rc.2` 上的 dsh SDK 后代清理再基线（#422，缺口得到确认）新增演练套件；并为外部 Anything 路径（#276／#345）新增 opt-in 的只读测量探针。所有结果都标注为 `simulated_trigger_drill` 或 `fixture_contract`，没有一项满足任何触发条件。
+
+**整理**
+
 - **八个休眠的触发式追踪单按「推迟」关闭（#82、#275、#422、#340、#339、#429、#276、#345）** — 它们的触发条件都没有出现，模拟触发演练也不满足其中任何一个；把它们作为常设积压挂着并不健康。按 *not planned* 而不是「完成」关闭：各触发条件现在写在对应的权威文档里（architecture 的 D-15／§10／D-39、`decisions-needed`、`memory-design` §2、`data-sources`），真实触发出现时另开 issue。
+
+### 安装
+
+运行 `npx @danceiny/gotry@0.2.0-rc.28 web`（Node ≥ 22.15）。待 `latest` 指向本版后，`npx @danceiny/gotry web` 等价；镜像滞后时请钉精确版本。
 
 ---
 
