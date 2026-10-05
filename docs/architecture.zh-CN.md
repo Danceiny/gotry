@@ -79,7 +79,7 @@ Booking Copilot 是既有预订旅程里的助手，不是平行预订产品。
 - 更高 search revision 可以替换或清空 `results` 与 `visibleHotels`，但必须清空 `focusedHotelRef`、`loadedOffers`、`shortlistedOfferRefs`、`selectedOfferRef` 与 `verifiedOffer`；revision 增加时，`search.patch` 也可以改变 `searchDraft`。同 revision 时，两个 search action 均不得修改工作区内容。缺失的 optional 值必须安全比较，且不能把 `undefined` 与 `null` 视为相同。迟到响应不得覆盖更新的用户状态，任何 Checkout handoff 都必须从随后核验的报价重新派生。
 - Checkout 是唯一交易授权面。产品验收要求 changed／unavailable 报价先回到真实搜索和 CheckAvail 再建立新 handoff，并要求未知预订结果以相同 customer reference 通过 QueryOrders 对账；这些交易行为不是当前已激活的 GoTry 写能力。
 
-以上实现契约不等于产品验收。tenant、customer、storefront 与 payment-link 四 surface 的真实库存旅程和 unavailable／changed 恢复仍归 D-29 与 [#142](https://github.com/Danceiny/gotry/issues/142)。
+以上实现契约不等于产品验收。tenant、customer、storefront 与 payment-link 四 surface 的真实库存旅程和 unavailable／changed 恢复仍归 D-29（tracker [#142](https://github.com/Danceiny/gotry/issues/142) 已于 2026-10-05 按「推迟」关闭）。
 
 ### 1.5 当前产品限制
 
@@ -226,7 +226,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 
 长期转变是从独立对话式预订流程，转向既有搜索、报价与 Checkout 工作台中的 BFF-bound typed 只读动作。宿主事实与 Checkout 权威保持不变；当前可执行边界只在 §1.4 与 ADR-23 维护一次。
 
-真实库存、unavailable／changed 恢复、Checkout 与 QueryOrders 证据仍归 D-29 和 [#142](https://github.com/Danceiny/gotry/issues/142)。
+真实库存、unavailable／changed 恢复、Checkout 与 QueryOrders 证据仍归 D-29（tracker [#142](https://github.com/Danceiny/gotry/issues/142) 已于 2026-10-05 按「推迟」关闭）。
 
 ### 9.4 历史细节
 
@@ -242,16 +242,16 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 |---|---|---|
 | 账本修复／#254 | 历史事件可能被错误记在默认 `local` tenant。只读 plan 和需授权的 apply／rollback 已存在，但 fixture 不能证明真实数据是否需要修复。 | 按[操作手册](ops/ledger-tenant-repair.zh-CN.md)使用带校验和备份与 digest 绑定流程，产出 founder 授权的真实修复 receipt，或记录确认无需修复的决定。 |
 | SDK 直连 runtime 触发器 | 未来 `dsh-sdk-client` 产品 runtime 不会自动继承 CLI launcher 的进程组清理保证；在提出这种 runtime 前保持 dormant。 | 激活前为具体直连生命周期指定后代进程归属并证明有界清理；本行不授权 vendor fork 或 runtime 激活。跟踪 issue [#422](https://github.com/Danceiny/gotry/issues/422) 已于 2026-10-05 按「推迟」关闭；提出这种 runtime 时另开 issue。 |
-| D-37 | CfT／Chromium 扩展 API 目前看不到 Dida 的 HttpOnly 票据 cookie，因此 quick login check 可能误报 `needs-login`；页面请求与被动响应嗅探仍可工作。 | 上游修复，或经验证的品牌 Chrome + 商店扩展路径能够观察所需登录态。[#272](https://github.com/Danceiny/gotry/issues/272) |
-| D-13 | 用户会话 adapter 仍会受真实站点与浏览器漂移影响；离线 parser 和 static comparator 不代表 connected 行为。 | 按[会话 RFC](rfc/user-session-data-rfc.zh-CN.md)为每个支持 adapter 采集真实 connected 与显式 degraded 证据，包括 challenge／guard stop 语义和 packaged entry 行为。[#272](https://github.com/Danceiny/gotry/issues/272) |
-| D-15 | 单文件 tenant 账本尚无已准入的多写者、云备份或多机复制路径。 | 只有第二个真实用户、多机部署或 AaaS 立项触发；届时定义并证明 claim fencing、备份与复制语义。跟踪 issue [#275](https://github.com/Danceiny/gotry/issues/275)（2026-10-05 以 deferred 关闭；触发出现时另开新 issue）。离线模拟触发演练已在夹具上演练并发写者、崩溃重开与在线备份；演练发现的两处账本缺陷已于 2026-10-05 修复（`busy_timeout` 在 WAL 切换之前装好、建表与全部先读后写事务一律 `BEGIN IMMEDIATE`、争用有界重试、耗尽后抛典型化的 `LedgerBusyError`），演练已把两者改为硬断言；演练仍不满足触发条件——[报告](evaluation/trigger-drill-report-core.zh-CN.md)。 |
+| D-37 | CfT／Chromium 扩展 API 目前看不到 Dida 的 HttpOnly 票据 cookie，因此 quick login check 可能误报 `needs-login`；页面请求与被动响应嗅探仍可工作。 | 上游修复，或经验证的品牌 Chrome + 商店扩展路径能够观察所需登录态。[#272](https://github.com/Danceiny/gotry/issues/272)（已按「推迟」关闭） |
+| D-13 | 用户会话 adapter 仍会受真实站点与浏览器漂移影响；离线 parser 和 static comparator 不代表 connected 行为。 | 按[会话 RFC](rfc/user-session-data-rfc.zh-CN.md)为每个支持 adapter 采集真实 connected 与显式 degraded 证据，包括 challenge／guard stop 语义和 packaged entry 行为；清单见[适配器指南](design/adapter-authoring-guide.zh-CN.md) §4。[#272](https://github.com/Danceiny/gotry/issues/272)（已按「推迟」关闭） |
+| D-15 | 单文件 tenant 账本尚无已准入的多写者、云备份或多机复制路径。 | 只有第二个真实用户、多机部署或 AaaS 立项触发；届时定义并证明 claim fencing、备份与复制语义。跟踪 issue [#275](https://github.com/Danceiny/gotry/issues/275)（2026-10-05 以 deferred 关闭；触发出现时另开新 issue）。离线模拟触发演练已在夹具上演练并发写者、崩溃重开与在线备份；演练发现的两处账本缺陷已修复（2026-10-05；细节见报告），演练已把两者改为硬断言，但演练不满足触发条件——[报告](evaluation/trigger-drill-report-core.zh-CN.md)。 |
 | D-18 | M3 缺少真实种子用户证据。 | 真实 50–200 人 cohort 同时达到完成率 ≥40%、NPS ≥40、POI 幻觉率 <1%，并具备窗口内可复跑 nightly 证据；synthetic fixture 与无凭证 waiting run 不计入。[#22](https://github.com/Danceiny/gotry/issues/22) |
-| D-19 | M4 缺少可观察的回访用户价值。 | `observed_private` cohort 达到 N≥5、规划时间 median reduction ≥0.5，输入采用 HMAC 假名键，具备人工 source review，且 review digest 绑定报告 summary；candidate 或 synthetic export 不计入。[#20](https://github.com/Danceiny/gotry/issues/20) |
-| D-22 | `pending_writes` 仍缺 booking saga 契约指定的物理非空 receipt CHECK；outbox 自身已有约束，但不能替代这一接缝。 | 在已准入的 M5 Entry 中加入 schema CHECK 并冻结接缝词汇，且不得提前激活供应商写路径。[#136](https://github.com/Danceiny/gotry/issues/136)、[#231](https://github.com/Danceiny/gotry/issues/231) |
+| D-19 | M4 缺少可观察的回访用户价值。 | `observed_private` cohort 达到 N≥5、规划时间 median reduction ≥0.5，输入采用 HMAC 假名键，具备人工 source review，且 review digest 绑定报告 summary；candidate 或 synthetic export 不计入。[#20](https://github.com/Danceiny/gotry/issues/20)（已按「推迟」关闭） |
+| D-22 | `pending_writes` 仍缺 booking saga 契约指定的物理非空 receipt CHECK；outbox 自身已有约束，但不能替代这一接缝。 | 在已准入的 M5 Entry 中加入 schema CHECK 并冻结接缝词汇，且不得提前激活供应商写路径。[#136](https://github.com/Danceiny/gotry/issues/136)（已按「推迟」关闭）、[#231](https://github.com/Danceiny/gotry/issues/231) |
 | D-26 | 事实闸对部分无锚文本仍依赖有界反向抽取，尚无已准入的 FX／多币种结算政策或完整 live-source 覆盖；已知或带锚断言当前仍 fail-closed。 | 将每项残余替换为具名 canonical fact path 和反例；只有真实供应商报价、预算或目的地需求出现时才准入非 CNY 处理。[#381](https://github.com/Danceiny/gotry/issues/381)、[#344](https://github.com/Danceiny/gotry/issues/344) |
 | D-28 | 外部 benchmark 尚未产出 matched、可归因证据集；diagnostic run 与部分 terminal 不能支持 uplift 声明。 | 冻结 cohort 必须得到有效非空 terminal 且 evaluator 已执行，再满足原 manifest 与 registry 控制后才允许 aggregate 或 uplift 陈述。[#203](https://github.com/Danceiny/gotry/issues/203)、[评测契约](evaluation/evaluation-foundation.zh-CN.md) |
-| D-29 | Booking Copilot 缺少真实库存产品验收；工程契约、fixture 与可复现产物不能替代该旅程。 | 冻结 GoTry、hotel-be、hotel-fe 精确 SHA；覆盖 tenant、customer、storefront、payment-link；至少让一条 unavailable／changed 报价经重新搜索、新 CheckAvail 与原 Checkout 恢复；`Book` 只在 Checkout；未知结果经 QueryOrders 对账并留存清理证据。产品跟踪：[#142](https://github.com/Danceiny/gotry/issues/142)。 |
-| D-33 | M4→M6 program 仍缺把回访用户价值、供应链与 B2B 复用连接起来的真实证据和准入决定。 | 满足 D-18／D-19；取得 M5 protocol、buyer、routing、reconciliation、UAT signing 或内部授权证据；再取得独立 M6 Entry 决定与真实 pilot 合同。[#270](https://github.com/Danceiny/gotry/issues/270)、[#136](https://github.com/Danceiny/gotry/issues/136)、[#137](https://github.com/Danceiny/gotry/issues/137) |
+| D-29 | Booking Copilot 缺少真实库存产品验收；工程契约、fixture 与可复现产物不能替代该旅程。 | 冻结 GoTry、hotel-be、hotel-fe 精确 SHA；覆盖 tenant、customer、storefront、payment-link；至少让一条 unavailable／changed 报价经重新搜索、新 CheckAvail 与原 Checkout 恢复；`Book` 只在 Checkout；未知结果经 QueryOrders 对账并留存清理证据；在真实库存上观察 availability reducer 的 typed 子状态。产品跟踪：[#142](https://github.com/Danceiny/gotry/issues/142)（已按「推迟」关闭；其评论保留 UAT 证据轨迹）。 |
+| D-33 | M4→M6 program 仍缺把回访用户价值、供应链与 B2B 复用连接起来的真实证据和准入决定。 | 满足 D-18／D-19；取得 M5 protocol、buyer、routing、reconciliation、UAT signing 或内部授权证据；再取得独立 M6 Entry 决定与真实 pilot 合同。[#270](https://github.com/Danceiny/gotry/issues/270)、[#136](https://github.com/Danceiny/gotry/issues/136)、[#137](https://github.com/Danceiny/gotry/issues/137)（均已关闭；#136、#137 按「推迟」） |
 | D-39 | 地面接驳逻辑仅覆盖显式坐标驾车估算与静态价格证据；live traffic、transit／rail、fare、地址解析和更广组合未准入。 | 每条扩展路径都需要具名产品场景、数据源、新鲜度契约、访问边界与真实数据证明；只读路由不授权任何写路径。现已建立夹具层面的合规闸，任何未来的活体路线适配器都必须通过（未准入任何供应商）；已准入路径的供应商故障详情在进入工具结果前会被清洗；响应侧的两处契约缺口（供应商自述模式、方向绑定）已修复：与请求矛盾的供应商声明一律失败关闭、回落到静态估算——[报告](evaluation/trigger-drill-report-contracts.zh-CN.md)。跟踪 issue [#429](https://github.com/Danceiny/gotry/issues/429)（2026-10-05 以 deferred 关闭；触发条件出现时另开新 issue）。 |
 
 ## 11. 保鲜机制

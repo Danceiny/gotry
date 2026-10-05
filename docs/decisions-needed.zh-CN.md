@@ -8,19 +8,19 @@
 > 下游：按回执推进的实现/Exit 证据与 issue gate 更新；founder YES 只满足对应决策门，不自动改写里程碑 Entry。
 > 各项独立——你可以按优先级逐条回；按回执推进。
 
-**速览：当前 2 项待拍板——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 的进入条件在 #136 跟踪。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
+**速览：当前没有在追的拍板项；2 项已推迟——#137 P6 founder review（整体方案批准；决策简报：[`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)）与 #136 M5-0 协议矩阵具名值填写（可填矩阵：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)）。** 2026-10-05 founder 已将 #20、#136、#137 按「推迟」关闭（状态：not planned），原因是 M4–M6 暂非产品核心能力；此后本文为它们的权威。关闭不是回执：没有 P6 YES 或修改稿批准，没有填写任何具名值，M4 Exit 也未满足。P6 明确 YES 仍不满足 M6 Entry：M5 Exit 仍是前置门，P6 批准不旁路 M5。M5 Entry 仍需 M4 Exit 加供应协议。D-1~D-9、D-4a 均已结算；D-31 的纯契约切片已获批（2026-09-12，issue #432）：惰性、默认关闭、仅精确白名单四元组才映射的元数据适配器，不激活任何链路；仅真实 bridge/sensor/auth/消费者接入仍为触发式，原由 #82 跟踪（已于 2026-10-05 按「推迟」关闭，本节为权威；等第一个真实 world2agent 回调方出现再拍，决策模板：[`design/callback-party-decision-template.md`](design/callback-party-decision-template.md)，见下）。
 
 ## 未决
 
 ### #137 P6 founder review（整体方案批准）
 
-**当前待拍板**：founder 尚未明确批准 M6 整体方案或修改稿。只有明确 YES 或对修改稿明确批准才满足 P6 Exit。**P6 YES 仍不满足 M6 Entry**——M5 Exit 仍是前置门，P6 批准不旁路 M5；两者并列前置，任一未满足则 M6 不开闸。
-**位置**：[`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md)（draft，待 founder 评审）；issue #137；任务图见 [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) M6-1/M6-2；一页决策简报 [`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)。
+**已推迟（founder，2026-10-05；issue #137 按 not planned 关闭）**：founder 尚未批准 M6 整体方案或修改稿，并决定暂不推进。推迟不等于批准——只有明确 YES 或对修改稿明确批准才满足 P6 Exit。**P6 YES 仍不满足 M6 Entry**——M5 Exit 仍是前置门，P6 批准不旁路 M5；两者并列前置，任一未满足则 M6 不开闸。要恢复时，由 founder 在链接 #137 的新 issue 里回复（或重新打开它）。
+**位置**：[`milestones/m6-b2b-reuse-walkthrough.md`](milestones/m6-b2b-reuse-walkthrough.md)（draft，待 founder 评审）；issue #137（已关闭）；任务图见 [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) M6-1/M6-2；一页决策简报 [`design/p6-founder-decision-brief.md`](design/p6-founder-decision-brief.md)。
 
 ### #136 M5-0 供应链协议矩阵（具名值填写）
 
-**当前待拍板**：M5-0 协议矩阵字段（A 块加 C–J 块）等 founder 与 HotelByte 填具名值——Buyer/tenantEntityId selector、路由、凭据目录、环境、商业字段、对账 SLA、UAT 护栏。填好的具名值加签署/内部授权证据构成 M5 Entry 第②组成项；M4 Exit（#20）仍是并列的第①组成项。仅填矩阵不开任何运行时路径。
-**位置**：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)；issue #136；任务图 [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) M5-0。
+**已推迟（founder，2026-10-05；issue #136 按 not planned 关闭）**：M5-0 协议矩阵字段（A 块加 C–J 块）仍等 founder 与 HotelByte 填具名值——Buyer/tenantEntityId selector、路由、凭据目录、环境、商业字段、对账 SLA、UAT 护栏。填好的具名值加签署/内部授权证据构成 M5 Entry 第②组成项；M4 Exit（#20，同样于 2026-10-05 按「推迟」关闭）仍是并列的第①组成项。仅填矩阵不开任何运行时路径。要恢复时，在链接 #136 的新 issue 里填矩阵并附证据（或重新打开它）。
+**位置**：[`design/m5-supplier-agreement-matrix.md`](design/m5-supplier-agreement-matrix.md)；issue #136（已关闭）；任务图 [`design/milestone-delivery-plan.md`](design/milestone-delivery-plan.md) M5-0。
 
 ### D-31 外部事件写入信任模型（纯契约已结算；仅真实接入为触发式）
 

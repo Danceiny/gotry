@@ -2,7 +2,7 @@
 
 # M6 B2B reuse walkthrough memo (P6, awaiting founder review)
 
-> Status: draft (2026-09-08, issues #137/#225; **P6 Exit holds only when the founder explicitly says `YES approve the overall plan` or explicitly approves a revised draft**; NO / proposed changes keep it TODO — do not freeze it on your own. P6 approval is not M6 Entry; M5 Exit remains a hard prerequisite)
+> Status: draft (2026-09-08, issues #137/#225; **P6 Exit holds only when the founder explicitly says `YES approve the overall plan` or explicitly approves a revised draft**; NO / proposed changes keep it TODO — do not freeze it on your own. P6 approval is not M6 Entry; M5 Exit remains a hard prerequisite; #137 was closed as deferred on 2026-10-05 — the memo stays a draft, not frozen, and no P6 decision is implied)
 > Acceptance criteria (master outline §4 P6 row): pick 1-2 B2B forms and walk through the two-layers-of-why wrapping and the reuse boundary; red lines carried through; measured numbers must come from real loading proof after M6 Entry.
 > Inputs: [`../gotry-master-outline.md`](../gotry-master-outline.md) §3.7, [`../research/enterprise-travel-reference-study.md`](../research/enterprise-travel-reference-study.md), [`../architecture.md`](../architecture.md) ADR-16/23, issues #137/#225/#229/#236/#237/#241/#242/#227.
 

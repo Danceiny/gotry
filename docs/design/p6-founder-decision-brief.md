@@ -3,9 +3,9 @@
 # P6 Founder Decision Brief (issue #137, M6-2)
 
 > Role: the one-page decision face for the P6 founder review — what P6 is, the two hard M6 Entry prerequisites and their current state, the plan essentials, the risks, and the exact questions awaiting a founder answer; decision support only, never a decision receipt.
-> Status: decision-ready (2026-10-02; this brief only assembles open questions — nothing inside is decided; P6 Exit still rests on the founder's explicit words in issue #137).
+> Status: decision-ready but deferred (assembled 2026-10-02; on 2026-10-05 the founder closed #137 as not planned, so nothing here is being chased; this brief only assembles open questions — nothing inside is decided; P6 Exit still rests on the founder's explicit words in the P6 issue — a new issue linking #137, or #137 reopened).
 > Upstream: [milestones/m6-b2b-reuse-walkthrough.md](../milestones/m6-b2b-reuse-walkthrough.md) (the P6 draft), [milestone-delivery-plan.md](milestone-delivery-plan.md) M6-1..M6-5, [roadmap.md](../roadmap.md) M6 row, issue #137 owner comments (2026-09-08/09/10).
-> Downstream: the founder replies in issue #137; [decisions-needed.md](../decisions-needed.md) archives the #137 item on receipt; #234 coverage-caliber freezing and #235 activation gating read the outcome.
+> Downstream: the founder replies in the issue that resumes P6 (a new issue linking #137, or #137 reopened); [decisions-needed.md](../decisions-needed.md) archives the #137 item on receipt; #234 coverage-caliber freezing and #235 activation gating read the outcome.
 
 ## TL;DR
 
@@ -64,13 +64,13 @@ Advisory defaults restate the walkthrough memo's lean; none is a decision. Reply
 
 ## 6. First steps after approval
 
-1. Record the receipt in #137 (the YES itself or the approved revised draft); [decisions-needed.md](../decisions-needed.md) moves #137 to settled; only then may the walkthrough memo turn `frozen(date)`.
+1. Record the receipt in the issue that resumes P6 (the YES itself or the approved revised draft); [decisions-needed.md](../decisions-needed.md) moves #137 to settled; only then may the walkthrough memo turn `frozen(date)`.
 2. Under #234, freeze `kernel-set.txt` and the two coverage calibers — explicitly allowed before M5 Exit per the #137 owner comments (2026-09-09); LOC stays auxiliary.
 3. #235 stays Entry-gated: real sponsor activation waits for M5 Exit + P6; contract, fixture, and failing-test refinement may continue.
 4. The M5 lane is unchanged and remains the critical path: #136 M5-0 named values + #20 M4 Exit. No M6 implementation starts on a P6 YES alone.
 
 ## 7. What this brief is not
 
-- Not a decision receipt: nothing here satisfies P6 Exit; only the founder's explicit words in #137 do.
+- Not a decision receipt: nothing here satisfies P6 Exit; only the founder's explicit words in the P6 issue do.
 - Not a gate rewrite: M6 Entry stays M5 Exit + P6 approval; this brief adds no condition and removes none.
 - Not a pilot substitute: commercial terms and signing live in M6-5 with the founder and sales/legal.

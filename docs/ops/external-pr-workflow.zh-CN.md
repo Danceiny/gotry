@@ -41,7 +41,7 @@
 
 检查器直接消费 `gh api graphql` 写出的**原始 GraphQL envelope**（顶层 `data` / `errors`）。生产 GraphQL query 是 YAML 内常量字符串，固定请求 `totalCount` 与 `pageInfo { hasNextPage endCursor }`，并以 `first: 100` 限定结果。保护集合固定为 `#20 / #136 / #137`；未来受保护父单只通过显式列表扩展加入，绝不把所有 issue 一概禁止自动关闭。
 
-**维护者修正**：把 `Closes #20` / `Fixes #20`（及 `#136` / `#137` 等价物）替换为 `Tracks #N` / `Refs #N`。维护者按既有证据规则显式关闭真实 gate issue；本守卫**不**引入新审批层，也不改写 M4/M5/M6 Entry/Exit。
+**维护者修正**：把 `Closes #20` / `Fixes #20`（及 `#136` / `#137` 等价物）替换为 `Tracks #N` / `Refs #N`。维护者显式关闭真实 gate issue——要么按既有证据规则在验收后关闭，要么作为 founder 的有意推迟（2026-10-05：#20 / #136 / #137 未经验收即按 not planned 关闭；推迟不等于验收，守卫继续生效，重新打开的父单会再次受保护）；本守卫**不**引入新审批层，也不改写 M4/M5/M6 Entry/Exit。
 
 **安全边界**（无例外）：
 

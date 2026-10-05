@@ -9,7 +9,7 @@
 
 ## Evidence boundary
 
-This report covers a command-level end-to-end path: the real benchmark command writes query records and its batch summary; the real summary command reads those files and writes a rebuilt summary. Session responses are deterministic substitutes in a temporary source overlay, the FlyAI process is intercepted, and fetch attempts are trapped. No live supplier, login, inventory, fare, or real-session acceptance is established by this test. Those acceptance conditions remain in issue #272.
+This report covers a command-level end-to-end path: the real benchmark command writes query records and its batch summary; the real summary command reads those files and writes a rebuilt summary. Session responses are deterministic substitutes in a temporary source overlay, the FlyAI process is intercepted, and fetch attempts are trapped. No live supplier, login, inventory, fare, or real-session acceptance is established by this test. Those acceptance conditions remain open under D-13 ([adapter authoring guide](../design/adapter-authoring-guide.md) §4); issue #272 was closed 2026-10-05 as deferred.
 
 ## Command contract
 

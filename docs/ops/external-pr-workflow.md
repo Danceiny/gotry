@@ -41,7 +41,7 @@ A read-only GitHub Actions workflow (`.github/workflows/protect-parent-triggers.
 
 The checker consumes the **raw GraphQL envelope** as written by `gh api graphql` (top-level `data` and `errors` keys). The production GraphQL query is a constant string in YAML, asks for `totalCount` and `pageInfo { hasNextPage endCursor }`, and bounds the result by `first: 100`. The protected set is fixed to `#20 / #136 / #137`; future protected parents are added by explicit list extension only (no implicit ban on every issue).
 
-**Maintainer remediation**: replace `Closes #20` / `Fixes #20` (and the equivalent for `#136`/`#137`) with `Tracks #N` or `Refs #N`. The maintainer closes the real gate issues explicitly after existing evidence acceptance; this guard does **not** introduce a new approval layer or rewire the M4/M5/M6 Entry/Exit rules.
+**Maintainer remediation**: replace `Closes #20` / `Fixes #20` (and the equivalent for `#136`/`#137`) with `Tracks #N` or `Refs #N`. The maintainer closes the real gate issues explicitly — after existing evidence acceptance, or as a deliberate founder deferral (on 2026-10-05 #20 / #136 / #137 were closed as not planned without acceptance; deferral is not acceptance, and the guard stays in force so a reopened parent is protected again); this guard does **not** introduce a new approval layer or rewire the M4/M5/M6 Entry/Exit rules.
 
 **Security boundaries** (no exceptions):
 
