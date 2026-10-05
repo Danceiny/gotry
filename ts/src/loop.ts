@@ -238,13 +238,18 @@ function terminalOutcomeFromState(ticketId: string, state: TripState): AsyncTerm
     })
   }
 
+  // issue #620:求解器自身失败时既没有产物也没有判定——2 条不成立;但「做不到诚实说」
+  // 恰恰成立(我们明说了是引擎故障而非不可行),不靠 unsat_core 冒充自检通过。
+  const solverFailed = Boolean(state.solve.solver_error)
   return asyncTerminalOutcome(ticketId, {
     '1_承诺时间后必有明确产物': Boolean(state.solve.legs?.length || state.solve.verdicts?.length),
-    '2_产物通过自检清单': state.solve.feasible
-      ? (state.solve.legs?.every(l => (l as Record<string, unknown>)['energy_pct'] !== undefined) ?? false)
-      : Boolean(state.solve.unsat_core?.length),
+    '2_产物通过自检清单': solverFailed
+      ? false
+      : state.solve.feasible
+        ? (state.solve.legs?.every(l => (l as Record<string, unknown>)['energy_pct'] !== undefined) ?? false)
+        : Boolean(state.solve.unsat_core?.length),
     '3_待决问题全部是简单选择题': state.gates.every(g => g.id === 'budget' || g.options.length >= 2),
-    '4_做不到的诚实说': state.solve.feasible || Boolean(state.solve.suggestions?.length),
+    '4_做不到的诚实说': solverFailed || state.solve.feasible || Boolean(state.solve.suggestions?.length),
   })
 }
 
@@ -292,7 +297,12 @@ export function renderSolve(state: TripState): string {
   const s = state.solve
   if (!s) return '(无求解结果)'
   const lines: string[] = []
-  if (s.feasible) {
+  if (s.solver_error) {
+    // issue #620:求解器自己失败 ≠ 行程不可行。这里**不**说「不可行」、不列「冲突」,
+    // 也不把机器 token(solver_error.code)渲染给用户——它只在日志/证据里。
+    lines.push('**这轮没算出结论——求解器自身出错了,不是你的行程不可行**')
+    lines.push('- 我不把引擎故障说成「不可行」:这条已记录,修好或换候选形态(枚举)后重算')
+  } else if (s.feasible) {
     lines.push(`**方案可行,机票合计 ¥${s.money_cny}**`)
     // §7-1 issue #559 卡点 4:从 s.skeleton_notes 字符串编码里推断 unscaffolded 的 seg.id,
     // 不动 unified.ts/journey.ts(内核冻结面 #234),用户面给 ⚠ 前缀与「枢纽对未在骨架覆盖」补充。

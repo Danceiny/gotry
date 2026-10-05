@@ -647,8 +647,14 @@ export interface PersonaRunOutcome {
   finalized: boolean
   abandoned: boolean
   nps: number | null
-  solver_verdict: 'feasible' | 'infeasible' | 'candidate_choice' | 'none'
+  /** `solver_error` is its own class, never folded into `infeasible` (issue #620): the
+   *  solver failing is not a verdict about the trip, and counting it as an infeasibility
+   *  would make the harness report an engine defect as a product answer. */
+  solver_verdict: 'feasible' | 'infeasible' | 'candidate_choice' | 'solver_error' | 'none'
   unsat_core: string[]
+  /** Machine code of the solver failure (`solver_input_not_integer` / `solver_runtime_error`),
+   *  null whenever the solver produced an actual verdict. Never a user-facing string. */
+  solver_error_code: string | null
   poi_audit: PoiAudit | null
   plan_markdown_sha256: string | null
   product_usage: LlmUsageTracker
@@ -656,12 +662,18 @@ export interface PersonaRunOutcome {
   error: { code: PersonaSimErrorCode; detail: string } | null
 }
 
-function solverVerdict(state: TripState): { verdict: PersonaRunOutcome['solver_verdict']; unsat: string[] } {
+function solverVerdict(state: TripState): { verdict: PersonaRunOutcome['solver_verdict']; unsat: string[]; errorCode: string | null } {
   const solve = state.solve as Record<string, unknown> | undefined
-  if (!solve) return { verdict: 'none', unsat: [] }
-  if (typeof solve['answer_md'] === 'string') return { verdict: 'candidate_choice', unsat: [] }
+  if (!solve) return { verdict: 'none', unsat: [], errorCode: null }
+  if (typeof solve['answer_md'] === 'string') return { verdict: 'candidate_choice', unsat: [], errorCode: null }
+  // issue #620: a solver failure is classified before `feasible` is read at all. The solver
+  // crashing says nothing about the trip, so it must not be counted as an infeasibility.
+  const solverError = solve['solver_error'] as { code?: unknown } | undefined
+  if (solverError && typeof solverError === 'object') {
+    return { verdict: 'solver_error', unsat: [], errorCode: String(solverError.code ?? 'unknown') }
+  }
   const unsat = Array.isArray(solve['unsat_core']) ? (solve['unsat_core'] as unknown[]).map(String) : []
-  return { verdict: solve['feasible'] === true ? 'feasible' : 'infeasible', unsat }
+  return { verdict: solve['feasible'] === true ? 'feasible' : 'infeasible', unsat, errorCode: null }
 }
 
 async function withDeadline<T>(promise: Promise<T>, ms: number, code: PersonaSimErrorCode, detail: string): Promise<T> {
@@ -712,6 +724,7 @@ async function runPersonaSession(options: SessionOptions): Promise<PersonaRunOut
     nps: null,
     solver_verdict: 'none',
     unsat_core: [],
+    solver_error_code: null,
     poi_audit: null,
     plan_markdown_sha256: null,
     product_usage: productUsage,
@@ -750,6 +763,7 @@ async function runPersonaSession(options: SessionOptions): Promise<PersonaRunOut
         const verdict = solverVerdict(state)
         outcome.solver_verdict = verdict.verdict
         outcome.unsat_core = verdict.unsat
+        outcome.solver_error_code = verdict.errorCode
         // The product's own registered fact gate, reading this session's isolated registry.
         const report = await factGate.execute({ markdown: planMarkdown, tripYear: 2026 }, null) as Record<string, unknown>
         outcome.poi_audit = poiAuditFromGateReport(report)
@@ -1110,6 +1124,7 @@ export async function runPersonaBatch(options: PersonaBatchOptions): Promise<Per
             nps: null,
             solver_verdict: 'none',
             unsat_core: [],
+            solver_error_code: null,
             poi_audit: null,
             plan_markdown_sha256: null,
             product_usage: productUsage,
@@ -1239,7 +1254,7 @@ function renderMarkdown(result: PersonaBatchResult): string {
     lines.push('', '| persona | turns | delivered | finalized | nps | solver | extracted | audited | invalid | gate | error |', '|---|---|---|---|---|---|---|---|---|---|---|')
     for (const persona of result.personas) {
       lines.push(`| ${persona.persona_id} | ${persona.user_turns} | ${persona.plan_delivered} | ${persona.finalized} | ${persona.nps ?? '-'} `
-        + `| ${persona.solver_verdict}${persona.unsat_core.length ? `(${persona.unsat_core.join(',')})` : ''} `
+        + `| ${persona.solver_verdict}${persona.solver_error_code ? `(${persona.solver_error_code})` : persona.unsat_core.length ? `(${persona.unsat_core.join(',')})` : ''} `
         + `| ${persona.poi_audit?.claims_extracted ?? '-'} | ${persona.poi_audit?.locked_claims ?? '-'} | ${persona.poi_audit?.invalid_claims ?? '-'} `
         + `| ${persona.poi_audit?.gate_verdict ?? '-'} | ${persona.error ? persona.error.code : '-'} |`)
     }

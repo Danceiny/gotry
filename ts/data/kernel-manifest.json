@@ -1,15 +1,15 @@
 {
   "schemaVersion": "gotry_kernel_manifest_v1",
   "issue": "#234",
-  "frozenAt": "2026-09-20",
-  "baseSHA": "e8925001084b9f1234ef09a504c04c183edaa81d",
+  "frozenAt": "2026-10-05",
+  "baseSHA": "d5b7da45d8884541f2b3cf9bbada21f500e991a1",
   "entries": [
     {
       "path": "ts/src/unified.ts",
       "group": "engine",
-      "sha256": "c131eac40a92eecdb6f06769c37ecba9ec70672d8b2d8e17f677a018035944c4",
+      "sha256": "4b7093226c4f7d5c359e6d4205998af53c8378e12fbfd68d626172e0422777af",
       "rationale": "统一行程模型与求解唯一入口(Z3 选择 + 枚举候选);B2B 复用场景里「同引擎」的求解面",
-      "basis": "architecture.md §2 L3 行 + §3 表 unified.ts 行(only solve entry);AGENTS.md 分层纪律「solving lives only in unified.ts/unified.py」"
+      "basis": "architecture.md §2 L3 行 + §3 表 unified.ts 行(only solve entry);AGENTS.md 分层纪律「solving lives only in unified.ts/unified.py」; #620 founder 授权改动:进 Z3 前的整数输入闸 + 求解器失败以 solver_error 显式返回(不再伪造 unsat_core:['wasm_runtime_error'] 冒充不可行),run-all §3 unified-tests 覆盖"
     },
     {
       "path": "ts/src/model.ts",

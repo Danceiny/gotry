@@ -64,10 +64,10 @@ If a capture is interrupted, `npx tsx scripts/m3-cohort.ts lock-status --state-r
 
 ## Sample dry-run output
 
-Verbatim from `npx tsx scripts/persona-sim.ts --dry-run` on 2026-10-04, with the temporary evidence path elided. The stderr line is part of the real output and is discussed under limitations.
+Verbatim from `npx tsx scripts/persona-sim.ts --dry-run` on 2026-10-05, with the temporary evidence path elided. The stderr line is part of the real output and is discussed under limitations.
 
 ```text
-[gotry] solveUnified failed (likely wasm thread race): Assertion failed
+[gotry] solveUnified aborted — solver_input_not_integer(求解器失败,不是「不可行」判定): solveUnified: Z3 整数编码只接受有限整数,下列输入不是(issue #620):yn0.bufferMin=NaN、yn0.originTransferMin=NaN、yn0.destTransferMin=NaN
 # persona-sim (dry_run_complete) — SYNTHETIC ONLY, never M3/M4 evidence
 
 - models: product=MiniMax-M2 persona=MiniMax-M2 real_llm=false
@@ -82,7 +82,7 @@ Verbatim from `npx tsx scripts/persona-sim.ts --dry-run` on 2026-10-04, with the
 | phuket-workation-multileg | 3 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
 | redeye-dubai-monday | 2 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
 | vague-wish-drifter | 3 | false | false | - | none | - | - | - | - | - |
-| yunnan-budget-student | 1 | true | false | 4 | infeasible(wasm_runtime_error) | 0 | 0 | 0 | pass | - |
+| yunnan-budget-student | 1 | true | false | 4 | solver_error(solver_input_not_integer) | 0 | 0 | 0 | pass | - |
 
 - harness funnel (simulation, computed here): delivered=6/7 finalized=4 finalization=0.666667 nps=0(n=6) claims extracted=29 audited=0 invalid=0 poi=unavailable errored=0
 - scorer (excludes every simulated participant via test_or_staff): participants=0 finalization=unavailable nps=unavailable poi=unavailable test_or_staff_excluded=6
@@ -107,7 +107,7 @@ A session whose persona contract breaks (malformed JSON, a score for a plan it n
 
 The dry run does not exercise the slot-to-spec date-consistency gate: the fixture returns no slot extraction, so that gate takes its documented "no slots, no participation" branch. A real-LLM batch does exercise it.
 
-`data/yunnan-pack.json` fails `solveUnified` deterministically with a z3 WASM assertion, and the user-facing reply becomes "infeasible — conflict: wasm_runtime_error". The persona deck keeps that case because it is a real defect the simulation surfaces: an internal engine error is presented to the user as an infeasibility verdict carrying a machine token as the reason. The harness records the verdict and the `unsat_core` rather than hiding it.
+`data/yunnan-pack.json` still fails `solveUnified` deterministically, and the persona deck keeps that case because the simulation is what surfaced it. The cause is now located and the outcome no longer lies (issue #620): leg `yn0` omits `buffer_min`, `origin_transfer_min` and `dest_transfer_min`, the v1 pack parser turns each missing field into `NaN`, and Z3's `Int.val` rejects a non-integer with a WASM `Assertion failed`. `solveUnified` now refuses to build that encoding at all, reports `solver_error.code = solver_input_not_integer` naming every offending field, and the harness classifies it as its own `solver_error` verdict instead of folding it into `infeasible`. Nothing in the user-facing reply says "infeasible" and no machine token reaches it. What remains open is the data: the three missing minutes are a real-world fact the pack's own `meta.reconcil` defers to founder calibration, so neither the parser nor this fix invents them.
 
 The product model's tool-call selection is not measured, because the harness drives the session seam rather than the dsh runtime (see method). `ts/src/dsh-llm.ts` `chat()` has no request timeout; the harness bounds each persona session with its own deadline instead, which means a stalled provider is attributed to the session rather than to the call.
 

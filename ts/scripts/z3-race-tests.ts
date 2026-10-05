@@ -6,7 +6,9 @@
  * (run-all §1 重试止血与 release-notes rc.2-rc.4 的实录根因)。
  * 修复(z3-shared.ts):单一 WASM 实例 + 单一 Context + 会话级互斥门。
  *
- * 断言:① 并发轮次无 unified WASM 降级(wasm_runtime_error);② 判定与顺序基线一致。
+ * 断言:① 并发轮次无 unified 求解器失败(issue #620 后形态:`solver_error`,
+ *   旧形态是伪造的 `unsat_core:['wasm_runtime_error']`——两条都断言不出现);
+ * ② 判定与顺序基线一致。
  * 运行(在 ts/ 下):npx tsx scripts/z3-race-tests.ts
  */
 
@@ -41,6 +43,9 @@ for (let round = 0; round < ROUNDS; round++) {
   void jny
   assert.equal(eng['recommended'], baseEngine['recommended'], `r${round}: engine recommended 漂移`)
   assert.equal(jny['feasible'], baseJourney['feasible'], `r${round}: journey feasible 漂移`)
+  // issue #620:求解器失败现在是 solver_error(显式类别),不再伪装成 unsat_core 里的
+  // 机器 token。两种形态都断言不出现——旧形态回归也会被这条抓住。
+  assert.equal(uni['solver_error'], undefined, `r${round}: unified 会话求解器失败——race 复发(${JSON.stringify(uni['solver_error'])})`)
   assert.equal((uni['unsat_core'] ?? []).includes('wasm_runtime_error'), false, `r${round}: unified 会话触发 WASM 降级——race 复发`)
   assert.equal(uni['feasible'], true, `r${round}: unified 判定漂移(基线应为可行)`)
 }
