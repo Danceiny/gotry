@@ -1,7 +1,7 @@
 # Chrome Web Store Publish Setup
 
 One-time setup that wires `.github/workflows/extension-publish.yml` to publish the
-GoTry Session Bridge extension to the Chrome Web Store (distribution channel B,
+Stai Travel Bridge extension to the Chrome Web Store (distribution channel B,
 ADR-21; incident follow-up to hotel-fe#3802 where the store was stuck on 0.1.0
 because publishing was fully manual).
 

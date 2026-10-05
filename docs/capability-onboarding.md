@@ -13,7 +13,7 @@ Three external capabilities in GoTry cannot be auto-installed by the bootstrap �
 
 | Capability | Why it is user-side | Where it is wired |
 |---|---|---|
-| Session Bridge extension | Per-browser Chrome install + extension ID identity pinning; the extension runs in the user's browser, not on the server | `extension/README.md`, `ts/capabilities/session/extension-bridge.ts` |
+| Stai Travel Bridge extension | Per-browser Chrome install + extension ID identity pinning; the extension runs in the user's browser, not on the server | `extension/README.md`, `ts/capabilities/session/extension-bridge.ts` |
 | FlyAI key | Provider-side API key — never embedded into the npm package; the LLM cannot enter it on the user's behalf; the host CLI is the only write path | `ts/src/flyai-setup-tool.ts`, `ts/capabilities/flyai.ts` |
 | dsh-calendar | CalDAV username is a user-owned resource, mounted optionally via the setup state surface (D-9: optional dependencies enter the setup state, not env vars) | `ts/capabilities/doctor.ts`, `bin/gotry-bootstrap.js` |
 
@@ -21,7 +21,7 @@ The first-touch prompts (capability layer / bootstrap / doctor) now end with a o
 
 ---
 
-## 1. Session Bridge Extension
+## 1. Stai Travel Bridge Extension
 
 ### What you get when it is connected
 
@@ -90,7 +90,7 @@ Both IDs (`oeajpicc…` for store, `olpgkf…` for unpacked) are trusted by the 
 | State | Behaviour | Status |
 |---|---|---|
 | Anonymous trial (no key) | `gotry_flyai_search` falls back to the shared quota pool | **Easily exhausted** — the pool is small; high-traffic sessions hit `Trial limit reached` and the tool returns `verdict=needs-setup` for the rest of the session |
-| After Trial limit | `gotry_flyai_search` is unavailable until configured | session still usable via `gotry_session_search` (account-session, requires Session Bridge) or hbcli (hotel) |
+| After Trial limit | `gotry_flyai_search` is unavailable until configured | session still usable via `gotry_session_search` (account-session, requires Stai Travel Bridge) or hbcli (hotel) |
 | After `gotry setup flyai` | quota follows your personal key, retry-after / 401 paths behave correctly | normal |
 
 ### Setup steps

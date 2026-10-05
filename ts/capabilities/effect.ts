@@ -9,7 +9,7 @@
  *     断路器,per-效应策略表)→ 渠道 handler(现能力层函数,零改写);
  *   - mock  解译器 makeMockInterpreter:夹具回放(CI/本地无网确定性);
  *   - 浏览器解译 = SESSION_* 效应(用户本人登录态的扩展桥车道,2026-08-29 起默认传输:
- *     MV3 GoTry Session Bridge + 本地桥长轮询,零系统弹窗;ReadGuard+授权闸不变,
+ *     MV3 Stai Travel Bridge + 本地桥长轮询,零系统弹窗;ReadGuard+授权闸不变,
  *     非 CUA 视觉点击——本仓已按零 Python 依赖与 a11y/DOM 优先判死后者,
  *     docs/design/effect-interpreter.md §4)。
  *

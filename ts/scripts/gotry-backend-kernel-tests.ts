@@ -87,7 +87,7 @@ async function main(): Promise<void> {
         evidence: '[会话:dida-portal-needs-extension@test]',
         latencyMs: 1,
         verdict: 'needs-extension',
-        error: 'GoTry Session Bridge 扩展未连接',
+        error: 'Stai Travel Bridge 扩展未连接',
         installUrl: STORE_URL,
         installAction: 'add-to-chrome' as const,
       }),

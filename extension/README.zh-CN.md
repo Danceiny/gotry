@@ -2,7 +2,7 @@
 
 # Stai 浏览器扩展
 
-Stai（原名 GoTry Session Bridge）将已支持的旅行检索页面连接至 GoTry。商店版与本地加载版的扩展 ID 不同，但使用相同的桥接合同。
+Stai（原名 Stai Travel Bridge）将已支持的旅行检索页面连接至 GoTry。商店版与本地加载版的扩展 ID 不同，但使用相同的桥接合同。
 
 ## 功能
 

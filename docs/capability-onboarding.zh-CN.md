@@ -13,7 +13,7 @@ GoTry 里有三项外部能力**不能**由 bootstrap 自动装——它们触�
 
 | 能力 | 为何用户侧 | 装在哪里 |
 |---|---|---|
-| Session Bridge 扩展 | 每浏览器 Chrome 一次性安装 + 扩展 ID 身份固定；扩展跑在用户浏览器里，不在服务端 | `extension/README.md`、`ts/capabilities/session/extension-bridge.ts` |
+| Stai Travel Bridge 扩展 | 每浏览器 Chrome 一次性安装 + 扩展 ID 身份固定；扩展跑在用户浏览器里，不在服务端 | `extension/README.md`、`ts/capabilities/session/extension-bridge.ts` |
 | FlyAI key | 平台侧 API key——永不嵌入 npm 包；模型不能替用户输入；本机 CLI 是唯一写入面 | `ts/src/flyai-setup-tool.ts`、`ts/capabilities/flyai.ts` |
 | dsh-calendar | CalDAV username 是用户自有资源；D-9 拍板：可选依赖进 setup 状态管理，禁环境变量控制产品行为 | `ts/capabilities/doctor.ts`、`bin/gotry-bootstrap.js` |
 
@@ -21,7 +21,7 @@ GoTry 里有三项外部能力**不能**由 bootstrap 自动装——它们触�
 
 ---
 
-## 1. Session Bridge 扩展
+## 1. Stai Travel Bridge 扩展
 
 ### 装好后能拿到什么
 
@@ -90,7 +90,7 @@ curl -s http://127.0.0.1:8791/status
 | 状态 | 行为 | 影响 |
 |---|---|---|
 | 匿名试用（无 key） | `gotry_flyai_search` 走共享额度池 | **额度易耗尽**——池子小；高频会话触发 `Trial limit reached`，本会话内该工具返 `verdict=needs-setup` |
-| 达限后 | `gotry_flyai_search` 不可用直到配 key | 会话仍可用：走 `gotry_session_search`（账号会话，需 Session Bridge）或 hbcli（酒店） |
+| 达限后 | `gotry_flyai_search` 不可用直到配 key | 会话仍可用：走 `gotry_session_search`（账号会话，需 Stai Travel Bridge）或 hbcli（酒店） |
 | 配好 `gotry setup flyai` | 配额走本机 key，401 / 速率限制路径正常 | 正常 |
 
 ### 配置步骤

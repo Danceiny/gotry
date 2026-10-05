@@ -199,7 +199,7 @@ console.log('6. gotry_doctor 工具面 + 报告落盘 OK')
 // 合成 doctor items(与 bootstrap-tests §12 onboardingItems 同形态,稳定 id 锚点)。
 const repairItems: DoctorItem[] = [
   { id: 'node', label: 'Node 运行时', status: 'ok', detail: 'Node 22.x' },
-  { id: 'extension', label: 'GoTry Session Bridge 扩展', status: 'missing', detail: '未安装', fix: 'https://chromewebstore...' },
+  { id: 'extension', label: 'Stai Travel Bridge 扩展', status: 'missing', detail: '未安装', fix: 'https://chromewebstore...' },
   { id: 'agent-reach', label: 'Agent Reach(网页/社媒读取)', status: 'missing', detail: '未装配', fix: 'npx @danceiny/gotry doctor --fix' },
   { id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'missing', detail: '未安装', fix: 'npx @danceiny/gotry doctor --fix' },
   { id: 'flyai', label: 'FlyAI(飞猪官方检索)', status: 'degraded', detail: '未配 FLYAI_API_KEY', fix: '到 flyai 控制台申请 key' },
@@ -224,7 +224,7 @@ function fakeBridge(env: NodeJS.ProcessEnv = {}): NonNullable<DoctorRepairOption
       if (label.startsWith('Agent Reach')) return e.GOTRY_SETUP_REACH === '0' ? 'unavailable' : 'auto'
       if (label.startsWith('hbcli')) return i.level === 'degraded' ? 'user-action' : (e.GOTRY_SETUP_HBCLI === '0' ? 'unavailable' : 'auto')
       if (label.startsWith('dsh-better-sidebar')) return e.GOTRY_SETUP_SIDEBAR === '0' ? 'unavailable' : 'auto'
-      if (label.startsWith('GoTry Session Bridge')) return 'user-action'
+      if (label.startsWith('Stai Travel Bridge')) return 'user-action'
       if (label.startsWith('FlyAI')) return 'user-action'
       if (label.startsWith('dsh-calendar')) return 'user-action'
       if (label.startsWith('dsh-map-tools')) return 'unavailable'

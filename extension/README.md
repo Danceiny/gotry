@@ -2,7 +2,7 @@
 
 # Stai browser extension
 
-Stai (formerly GoTry Session Bridge) connects supported travel-search pages to GoTry. The Chrome Web Store and unpacked builds have different extension IDs but use the same bridge contract.
+Stai (formerly Stai Travel Bridge) connects supported travel-search pages to GoTry. The Chrome Web Store and unpacked builds have different extension IDs but use the same bridge contract.
 
 ## What it does
 

@@ -1,7 +1,7 @@
 /**
  * Dida 供应商门户会话面 LIVE E2E(hotel-be portal integration 迁移线;GOTRY_SESSION_LIVE=1 显式开启)。
  *
- * 全链:真 Chrome(加载 unpacked Session Bridge 扩展)→ 人/驱动在 dida 官网完成登录
+ * 全链:真 Chrome(加载 unpacked Stai Travel Bridge 扩展)→ 人/驱动在 dida 官网完成登录
  * (账密经 env 注入,gotry 永不经手)→ sessionDidaSearch 扩展车道(桥自动拉起,
  * 扩展 cookie-names 名字级登录闸 → search job 后台标签被动嗅探)→ dida SPA 页面
  * 自身发起 SearchRealTime → parseDidaRates 结构化报价。

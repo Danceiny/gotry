@@ -138,7 +138,7 @@ ts/capabilities/session/
   adapters/<site>.ts  站点适配器:{ entry, searchForm locators, networkHints[{urlPattern,parser}], a11yFallback, cooldown }
                       首个适配器=携程机票(PoC 已识别 networkHints:search/batchSearch + FlightIntlAndInlandLowestPriceSearch)
   action-cache.ts     本地动作缓存:key=指令+DOM 指纹 → 确定性 locator;miss 回退 LLM 重定位并回写
-extension/             GoTry Session Bridge(MV3,零构建):manifest(固定 key)/background.js(长轮询 SW:
+extension/             Stai Travel Bridge(MV3,零构建):manifest(固定 key)/background.js(长轮询 SW:
                        search 后台标签+收尾关自己页/open-login 置前台留用户/cookie-names 只取名字值即弃)/
                        content-main.js(MAIN world hook fetch/XHR,NETWORK_HINTS 命中→CustomEvent)/
                        content-bridge.js(ISOLATED world,CustomEvent↔chrome.runtime)

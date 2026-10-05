@@ -1,5 +1,5 @@
 /**
- * GoTry Session Bridge — MAIN-world 网络嗅探(manifest world:"MAIN",document_start)。
+ * Stai Travel Bridge — MAIN-world 网络嗅探(manifest world:"MAIN",document_start)。
  *
  * MAIN world 没有 chrome.runtime,只负责:hook 站点自己的 fetch/XHR,把命中
  * 嗅探面的响应文本以 CustomEvent 派发到页面里;ISOLATED 侧的 content-bridge.js

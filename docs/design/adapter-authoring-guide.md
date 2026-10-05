@@ -12,7 +12,7 @@
 
 ## 0. One iron rule: adapters are **read-only** at the transport layer
 
-The extension bridge (GoTry Session Bridge) never issues requests on a site's behalf — it only passively forwards **the site's own query responses**
+The extension bridge (Stai Travel Bridge) never issues requests on a site's behalf — it only passively forwards **the site's own query responses**
 (the `session-bridge.v1` job protocol); gotry never touches credentials/CAPTCHAs, and a challenge page means stop (`challenged`).
 Any design that "sends the user's requests out for them" is overreach and is rejected at review.
 
