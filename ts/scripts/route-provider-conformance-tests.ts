@@ -20,11 +20,12 @@
  *  F. Layering: the conformance module imports nothing (zero IO / zero kernel
  *     coupling) and has zero product callers.
  *  G. The EXISTING ground-transfer logic (ts/capabilities/ground-transfer.ts, the
- *     accepted #341/#364 narrow path) driven through the applicable clauses: six
- *     clauses PASS today; three are CHARACTERIZED as known gaps (GAP-429-1/2/3)
- *     that the conformance gate above catches. The gap assertions pin CURRENT
- *     behaviour — fixing a gap must flip its assertion. Details and minimal repros
- *     live in docs/evaluation/trigger-drill-report-contracts.md.
+ *     accepted #341/#364 narrow path) driven through the applicable clauses. All
+ *     three gaps the drill found (GAP-429-1/2/3) are now FIXED, so the former
+ *     characterization assertions are FLIPPED: a contradicting provider claim —
+ *     declared mode, or resolved origin/destination — fails closed to the static
+ *     fallback instead of binding its minutes. Details and minimal repros live in
+ *     docs/evaluation/trigger-drill-report-contracts.md.
  *
  * Run (from ts/): npx tsx scripts/route-provider-conformance-tests.ts
  */
@@ -406,26 +407,113 @@ for (const safeMessage of [
 }
 check(sanitizeFaultDetail('a  b', { maxChars: 400 }) === 'a b', 'whitespace runs collapse (the only normalization difference vs the previous newline-only strip)')
 
-console.log('G3. KNOWN GAPS still characterized (genuinely dormant; FLIP when fixed)')
+console.log('G3. GAP-429-1 / GAP-429-2: FIXED — a contradicting provider claim fails closed (FLIPPED assertions)')
+function gtStaticAfterOf(resolution: { staticMode?: string; staticMinutes?: number; priceCny?: number; priceEvidence?: string }): StaticTransferFallback {
+  return {
+    mode: resolution.staticMode ?? '(absent)',
+    minutes: resolution.staticMinutes ?? -1,
+    priceCny: resolution.priceCny ?? -1,
+    priceEvidence: resolution.priceEvidence ?? '(absent)',
+  }
+}
+
+// GAP-429-1 (mode_isolation). Was: the mode claim was dropped, the fact was
+// labelled mode='driving' and the transit duration was bound into the solver.
 const gtModeRelabel = await driveGroundTransfer(async () => ({ provider: 'mock-transit', distanceM: 30000, durationS: 3600, mode: 'transit' } as never))
 check(
-  gtModeRelabel.resolution.applied === true && gtModeRelabel.resolution.outbound.routeFact?.mode === 'driving' && gtModeRelabel.candidates[0].destTransfers[0].minutesOut === 60,
-  'GAP-429-1 (mode_isolation): a payload asserting mode="transit" is silently dropped and the fact is labelled mode="driving"; its 60 minutes are bound into the solver. FLIP: if this assertion fails, the gap is fixed — invert this assertion (expect a fallback, not an applied route fact) and drop the GAP-429-1 note from docs/evaluation/trigger-drill-report-contracts.md.',
+  gtModeRelabel.resolution.applied === false
+  && gtModeRelabel.resolution.outbound.routeFact === undefined
+  && gtModeRelabel.candidates[0].destTransfers[0].minutesOut === undefined
+  && gtModeRelabel.candidates[0].destTransfers[0].minutesRet === undefined,
+  'GAP-429-1 (mode_isolation) FIXED: a payload asserting mode="transit" is refused — no route fact, and its 60 minutes are never bound into the solver (was: silently relabelled driving and bound). FLIPPED from the characterization assertion; reverting the ground-transfer fix makes this fail.',
 )
+check(
+  (gtModeRelabel.resolution.outbound.fallbackReason ?? '').startsWith('mode_mismatch:outbound:')
+  && (gtModeRelabel.resolution.return.fallbackReason ?? '').startsWith('mode_mismatch:return:'),
+  'GAP-429-1 FIXED: both directions carry the conformance refusal vocabulary in the existing `<code>:<direction>:<detail>` reason shape',
+)
+check(
+  gtModeRelabel.resolution.provenance === 'static-transfer-pack' && gtModeRelabel.resolution.evidenceClass === 'static_transfer_estimate',
+  'GAP-429-1 FIXED: the refusal reports the static pack as the provenance, never a map route estimate',
+)
+check(staticFallbackViolation(staticBefore, gtStaticAfterOf(gtModeRelabel.resolution)) === null, 'GAP-429-1 FIXED: static_fallback_preserved still holds — mode, minutes, price and label byte-identical')
+check(faultDetailLeak(gtModeRelabel.resolution.outbound.fallbackReason ?? '') === null, 'GAP-429-1 FIXED: the provider-authored mode claim is quoted through the shared sanitizer (no leak)')
 expectRefusal(
   admitRouteFact(USE_CASE, MOCK_DESCRIPTOR, REQUEST_OUT, okOutcome({ mode: 'transit' }), NOW),
   'mode_mismatch', 'must never be relabelled',
-  'GAP-429-1 remedy shape: the conformance gate refuses the same payload',
+  'GAP-429-1: the conformance gate refuses the same payload with the same code (gate and product path now agree)',
 )
+
+// GAP-429-2 (direction_binding, RESPONSE side). Was: the provider's own resolved
+// O/D was never read, the fact echoed the REQUESTED pair, and a 999 m / 60 s
+// route was bound as the airport transfer.
 const gtWrongOd = await driveGroundTransfer(async () => ({ provider: 'mock-wrong-od', distanceM: 999, durationS: 60, resolvedOrigin: '0,0', resolvedDestination: '1,1' } as never))
 check(
-  gtWrongOd.resolution.applied === true && gtWrongOd.resolution.outbound.routeFact?.origin.longitude === 100.1 && gtWrongOd.candidates[0].destTransfers[0].minutesOut === 1,
-  'GAP-429-2 (direction_binding, RESPONSE side): the provider\'s own resolved O/D is never verified; the fact echoes the REQUESTED pair and a 999 m / 60 s route is bound as the airport transfer. FLIP: if this assertion fails, the gap is fixed — invert this assertion (expect a direction-mismatch fallback) and drop the GAP-429-2 note from docs/evaluation/trigger-drill-report-contracts.md.',
+  gtWrongOd.resolution.applied === false
+  && gtWrongOd.resolution.outbound.routeFact === undefined
+  && gtWrongOd.candidates[0].destTransfers[0].minutesOut === undefined
+  && gtWrongOd.candidates[0].destTransfers[0].minutesRet === undefined,
+  'GAP-429-2 (direction_binding, RESPONSE side) FIXED: a provider that resolved 0,0→1,1 is refused — the 999 m / 60 s route is never bound as the airport transfer. FLIPPED from the characterization assertion; reverting the ground-transfer fix makes this fail.',
 )
+check(
+  (gtWrongOd.resolution.outbound.fallbackReason ?? '').startsWith('direction_mismatch:outbound:')
+  && (gtWrongOd.resolution.return.fallbackReason ?? '').startsWith('direction_mismatch:return:'),
+  'GAP-429-2 FIXED: both directions carry the `direction_mismatch:<direction>:<detail>` reason',
+)
+check(staticFallbackViolation(staticBefore, gtStaticAfterOf(gtWrongOd.resolution)) === null, 'GAP-429-2 FIXED: static_fallback_preserved still holds after a direction refusal')
+check(faultDetailLeak(gtWrongOd.resolution.outbound.fallbackReason ?? '') === null, 'GAP-429-2 FIXED: the echoed pair is quoted through the shared sanitizer (no leak)')
 expectRefusal(
   admitRouteFact(USE_CASE, MOCK_DESCRIPTOR, REQUEST_OUT, okOutcome({ echoed_origin: '0,0', echoed_destination: '1,1' }), NOW),
   'direction_mismatch', 'verified against the RESPONSE, not assumed from the request',
-  'GAP-429-2 remedy shape: the conformance gate verifies the echoed pair',
+  'GAP-429-2: the conformance gate verifies the echoed pair with the same code (gate and product path now agree)',
+)
+
+// The enforcement is a verification, not a blanket refusal: a conforming claim is
+// admitted exactly as before, and a road-node snap inside the documented
+// tolerance still matches. Absent claims (the wired `map_driving_route` tool)
+// keep today's behaviour byte for byte — asserted throughout G1/G2 above and by
+// the unchanged ts/scripts/ground-transfer-tests.ts suite.
+function offsetEndpoint(text: string, deltaDeg: number): string {
+  const [longitude, latitude] = text.split(',').map(Number) as [number, number]
+  return `${String(longitude + deltaDeg)},${String(latitude + deltaDeg)}`
+}
+const gtConforming = await driveGroundTransfer(async req => ({
+  provider: 'mock-conforming', distanceM: 30000, durationS: 2400,
+  mode: 'driving', resolvedOrigin: req.origin, resolvedDestination: req.destination,
+} as never))
+check(
+  gtConforming.resolution.applied === true
+  && gtConforming.resolution.outbound.routeFact?.mode === 'driving'
+  && gtConforming.candidates[0].destTransfers[0].minutesOut === 40,
+  'a provider that declares driving AND echoes the requested pair is admitted unchanged (the fix verifies claims, it does not refuse them)',
+)
+check(
+  gtConforming.resolution.outbound.routeFact?.trafficStatus === 'not-live-route-estimate'
+  && gtConforming.resolution.outbound.routeFact?.evidenceClass === 'public_map_route_estimate',
+  'a verified fact is still only a route estimate: verification never upgrades the evidence class',
+)
+const gtSnapped = await driveGroundTransfer(async req => ({
+  provider: 'mock-snapped', distanceM: 30000, durationS: 2400,
+  resolvedOrigin: offsetEndpoint(req.origin, 0.00005), resolvedDestination: offsetEndpoint(req.destination, 0.00005),
+} as never))
+check(
+  gtSnapped.resolution.applied === true && gtSnapped.candidates[0].destTransfers[0].minutesOut === 40,
+  'an endpoint snapped to the nearest road node (5e-5 deg ≈ 5 m, inside the documented 1e-4 tolerance) is still the requested place',
+)
+const gtDrifted = await driveGroundTransfer(async req => ({
+  provider: 'mock-drifted', distanceM: 30000, durationS: 2400,
+  resolvedOrigin: offsetEndpoint(req.origin, 0.01), resolvedDestination: req.destination,
+} as never))
+check(
+  gtDrifted.resolution.applied === false && (gtDrifted.resolution.outbound.fallbackReason ?? '').startsWith('direction_mismatch:outbound:'),
+  'an endpoint ~1.1 km away is beyond the tolerance and is refused: a snap is not a different place',
+)
+const gtUnparseableEcho = await driveGroundTransfer(async () => ({
+  provider: 'mock-unparseable', distanceM: 30000, durationS: 2400, resolvedDestination: 'Suvarnabhumi Airport',
+} as never))
+check(
+  gtUnparseableEcho.resolution.applied === false && (gtUnparseableEcho.resolution.outbound.fallbackReason ?? '').startsWith('direction_mismatch:outbound:'),
+  'a present-but-unverifiable echo fails closed (an unparseable pair is never assumed to be the requested one)',
 )
 
 console.log(`\nROUTE PROVIDER CONFORMANCE TESTS (#429, simulated_trigger_drill / fixture_contract; no real provider contacted): ${passed} pass${process.exitCode ? ', FAIL' : ' (all green)'}`)
