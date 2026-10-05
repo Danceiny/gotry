@@ -35,6 +35,16 @@ assert.ok(
   executableLines.some((line) => line.startsWith('(node scripts/check-doc-readability.mjs --self-test) || FAIL=1')),
   'the readability checker self-test invocation must be wired with || FAIL=1',
 )
+// the release tooling is what stands between a green tree and the registry: its suites are part of the gate
+for (const releaseSuite of [
+  'release-preflight-tests.mjs', 'verify-published-tests.mjs', 'post-release-docs-tests.mjs',
+  'release-notes-tests.mjs', 'publish-npm-tests.mjs', 'build-dist-guard-tests.mjs',
+]) {
+  assert.ok(
+    executableLines.some((line) => line.startsWith(`(node scripts/${releaseSuite}) || FAIL=1`)),
+    `${releaseSuite} must be registered in the full suite`,
+  )
+}
 assert.ok(
   executableLines.includes('(cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/session-tests.ts) || FAIL=1'),
   'the active full-suite command must default optional live session probes off',

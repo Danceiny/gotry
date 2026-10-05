@@ -32,7 +32,12 @@ if (rootManifest.devDependencies?.typescript !== TYPESCRIPT_VERSION) {
 const typescriptEntry = fileURLToPath(import.meta.resolve('typescript'))
 const compilerRelative = relative(join(root, 'node_modules'), typescriptEntry)
 if (compilerRelative === '..' || compilerRelative.startsWith(`..${sep}`) || isAbsolute(compilerRelative)) {
-  throw new Error(`TypeScript must resolve within root node_modules, got ${typescriptEntry}`)
+  throw new Error(
+    `TypeScript must resolve within root node_modules, got ${typescriptEntry}\n` +
+    `A symlinked or hoisted node_modules is refused on purpose: the dist bytes must come from this tree's own compiler.\n` +
+    `Run \`npm ci\` in ${root}, or clone a ready install: \`cp -cR <other-tree>/node_modules ${join(root, 'node_modules')}\` ` +
+    `(APFS; on Linux \`cp -a --reflink=auto\`).`,
+  )
 }
 if (ts.version !== TYPESCRIPT_VERSION) {
   throw new Error(`TypeScript ${TYPESCRIPT_VERSION} required, loaded ${ts.version}`)

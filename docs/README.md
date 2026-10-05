@@ -19,7 +19,7 @@
 | `research/` | Investigations and postmortems (frozen) | Time-sensitive surveys, competitive research, postmortems | Never leaves; adopted conclusions are absorbed into authorities, the original freezes |
 | `milestones/` | Milestone memos (historical record) | Phase output, walkthrough, reconciliation, or decision memo of a milestone | Never leaves; frozen when the milestone closes |
 | `evaluation/` | Evaluation system (contracts, ledgers, comparisons, verification records) | Material about evaluation/benchmark/e2e/persona comparisons | Contract-type docs may stay living long-term |
-| `ops/` | Release and compliance operations | Store submissions, privacy policies, other external compliance texts | Long-term living |
+| `ops/` | Release and compliance operations | Release runbooks, store submissions, privacy policies, other external compliance texts | Long-term living |
 | `assets/` | Tool-generated artifacts (architecture diagrams, visualizations) | Output of archify and similar tools | Overwritten on regeneration |
 | `superpowers/` | The superpowers workflow's own namespace (plans/specs) | Written automatically by superpowers skills | Tool-managed; no hand-written docs |
 
@@ -199,6 +199,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 
 | Document | Concern |
 |---|---|
+| [ops/npm-release-runbook.md](ops/npm-release-runbook.md) | npm release procedure: who clicks what, the script stages, the registry pull-back that gates "published", and what to do when a run stops |
 | [ops/extension-privacy.md](ops/extension-privacy.md) | Session Bridge extension privacy policy |
 | [ops/extension-webstore-submission.md](ops/extension-webstore-submission.md) | Chrome Web Store submission materials and the current dsh UI install handoff (ADR-21 channel B) |
 | [ops/external-pr-workflow.md](ops/external-pr-workflow.md) | Public issue→PR→review→merge ledger; plus triage/verification/adjudication rules for external PRs (including automation bots) |

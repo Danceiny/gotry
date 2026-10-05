@@ -28,6 +28,15 @@ fi
 (node scripts/build-dist-compat-tests.mjs) || FAIL=1
 
 echo
+echo "=== 0b. 发布工具链(预检/回拉校验/发布后文档/Release notes/发布脚本编排/构建守卫;全离线:无网络、无浏览器、无真 npm) ==="
+(node scripts/release-preflight-tests.mjs) || FAIL=1
+(node scripts/verify-published-tests.mjs) || FAIL=1
+(node scripts/post-release-docs-tests.mjs) || FAIL=1  # 含「真实文档形状仍可被识别」的漂移守卫:改 README/路线图措辞要同步改它
+(node scripts/release-notes-tests.mjs) || FAIL=1
+(node scripts/publish-npm-tests.mjs) || FAIL=1  # 在 sh 与 dash 下各跑一遍(脚本是 POSIX sh)
+(node scripts/build-dist-guard-tests.mjs) || FAIL=1
+
+echo
 echo "=== 1. TS engine(洱海金标准,8 断言) ==="
 # Z3 WASM race 已根治(2026-08-29,z3-shared.ts 单一实例+会话级互斥):不再需要「重试一次」
 # 止血;并发形态的回归闸见 §30 z3-race-tests。
