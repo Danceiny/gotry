@@ -240,7 +240,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | ID | 未偿义务 | 退出证据与跟踪 |
 |---|---|---|
 | 账本修复／#254 | 历史事件可能被错误记在默认 `local` tenant。只读 plan 和需授权的 apply／rollback 已存在，但 fixture 不能证明真实数据是否需要修复。 | 按[操作手册](ops/ledger-tenant-repair.zh-CN.md)使用带校验和备份与 digest 绑定流程，产出 founder 授权的真实修复 receipt，或记录确认无需修复的决定。 |
-| SDK 直连 runtime 触发器 | 未来 `dsh-sdk-client` 产品 runtime 不会自动继承 CLI launcher 的进程组清理保证；在提出这种 runtime 前保持 dormant。 | 激活前为具体直连生命周期指定后代进程归属并证明有界清理；本跟踪项不授权 vendor fork 或 runtime 激活。[#422](https://github.com/Danceiny/gotry/issues/422) |
+| SDK 直连 runtime 触发器 | 未来 `dsh-sdk-client` 产品 runtime 不会自动继承 CLI launcher 的进程组清理保证；在提出这种 runtime 前保持 dormant。 | 激活前为具体直连生命周期指定后代进程归属并证明有界清理；本行不授权 vendor fork 或 runtime 激活。跟踪 issue [#422](https://github.com/Danceiny/gotry/issues/422) 已于 2026-10-05 按「推迟」关闭；提出这种 runtime 时另开 issue。 |
 | D-37 | CfT／Chromium 扩展 API 目前看不到 Dida 的 HttpOnly 票据 cookie，因此 quick login check 可能误报 `needs-login`；页面请求与被动响应嗅探仍可工作。 | 上游修复，或经验证的品牌 Chrome + 商店扩展路径能够观察所需登录态。[#272](https://github.com/Danceiny/gotry/issues/272) |
 | D-13 | 用户会话 adapter 仍会受真实站点与浏览器漂移影响；离线 parser 和 static comparator 不代表 connected 行为。 | 按[会话 RFC](rfc/user-session-data-rfc.zh-CN.md)为每个支持 adapter 采集真实 connected 与显式 degraded 证据，包括 challenge／guard stop 语义和 packaged entry 行为。[#272](https://github.com/Danceiny/gotry/issues/272) |
 | D-15 | 单文件 tenant 账本尚无已准入的多写者、云备份或多机复制路径。 | 只有第二个真实用户、多机部署或 AaaS 立项触发；届时定义并证明 claim fencing、备份与复制语义。[#275](https://github.com/Danceiny/gotry/issues/275) 离线模拟触发演练已在夹具上演练并发写者、崩溃重开与在线备份，并记录两处仍待处理的账本缺陷（冷启动并发打开时 `openDb` 直接抛出 `SQLITE_BUSY`、延迟型读改写路径无内置重试）；演练不满足触发条件——[报告](evaluation/trigger-drill-report-core.zh-CN.md)。 |

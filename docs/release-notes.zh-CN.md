@@ -15,6 +15,7 @@
 - **供应商故障详情进入工具结果前先被清洗（#429）** — 接驳供应商的错误文本（标记、凭据形状字符串）不再原样流入 `transfer_evidence`；固定的 `GROUND_TRANSFER_*` 文案按字节原样通过。已准入路径上另有两处契约缺口（响应侧的模式与方向绑定）已记录、待裁决。
 - **发布脚本以 `--verify-tag` 创建 GitHub Release** — `scripts/publish-npm.sh` 把 tag 名传给 `gh release create --target`，GitHub 以 HTTP 422（`target_commitish is invalid`）拒收：rc.27 在 npm 上发布成功，但 Release 步骤失败、只能手动补建。`--verify-tag` 在远端缺 tag 时直接中止，而不是悄悄在 `main` 上新建一个 tag。
 - **`gotry doctor` 不再把没有凭证的 hbcli 报成「凭证有效」（[#623](https://github.com/Danceiny/gotry/issues/623)）** — CLI 此前按 `hbcli auth whoami` 的退出码判定，而它在什么都没配置时也退 0，所以装了 hbcli 的机器都会看到假的「有效」（已发布的 rc.27 上 14 次实测 14 次）。现改为与工具层 doctor 完全一致地解析三档 `whoami` JSON，探测在 `close` 结算，并加了对拍测试：同一份假 hbcli 同时喂给两份实现，二者不得再漂移。
+- **八个休眠的触发式追踪单按「推迟」关闭（#82、#275、#422、#340、#339、#429、#276、#345）** — 它们的触发条件都没有出现，模拟触发演练也不满足其中任何一个；把它们作为常设积压挂着并不健康。按 *not planned* 而不是「完成」关闭：各触发条件现在写在对应的权威文档里（architecture 的 D-15／§10／D-39、`decisions-needed`、`memory-design` §2、`data-sources`），真实触发出现时另开 issue。
 
 ---
 
