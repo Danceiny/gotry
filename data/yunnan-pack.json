@@ -30,33 +30,6 @@
   },
   "legs": [
     {
-      "id": "yn0",
-      "note": "昆明→丽江(衔接 8.4 FD582 KMG 11:25 落地后,下午转飞丽江;M-1 工作窗口外)",
-      "date": "8.4 下午",
-      "services": [
-        {
-          "id": "MU5819",
-          "dep": "14:30",
-          "arr": "15:35",
-          "price_cny": 520,
-          "price_note": "东航,1h5m 直飞"
-        },
-        {
-          "id": "8L9662",
-          "dep": "16:40",
-          "arr": "17:45",
-          "price_cny": 480,
-          "price_note": "祥鹏,1h5m 直飞"
-        }
-      ],
-      "evidence": [
-        {
-          "tag": "[demo-reconcil:已]",
-          "note": "8.4 FD582 → 11:25 KMG → 当天转飞丽江(已挖)"
-        }
-      ]
-    },
-    {
       "id": "yn1",
       "note": "深圳→丽江(直飞,丽江进大理出的开口程第一段)",
       "date": "flexible",
@@ -151,6 +124,36 @@
       "arrive_by": "23:00",
       "origin_tz_offset_min": 480,
       "weekday": "any"
+    }
+  ],
+  "advisory_legs": [
+    {
+      "id": "yn0",
+      "advisory_reason": "本段缺 buffer_min / origin_transfer_min / dest_transfer_min 三个真值,待 founder 校准(flights_2026.json 的 f3 evidence 早已写明:yn0 衔接仍写,引擎层不挂接)。替它填数等于编造真实世界的事实(ADR-10 翻译不造数),所以只记录、不挂接引擎;三个整数补齐后把整段搬回 legs 即可参与求解(issue #635)。",
+      "note": "昆明→丽江(衔接 8.4 FD582 KMG 11:25 落地后,下午转飞丽江;M-1 工作窗口外)",
+      "date": "8.4 下午",
+      "services": [
+        {
+          "id": "MU5819",
+          "dep": "14:30",
+          "arr": "15:35",
+          "price_cny": 520,
+          "price_note": "东航,1h5m 直飞"
+        },
+        {
+          "id": "8L9662",
+          "dep": "16:40",
+          "arr": "17:45",
+          "price_cny": 480,
+          "price_note": "祥鹏,1h5m 直飞"
+        }
+      ],
+      "evidence": [
+        {
+          "tag": "[demo-reconcil:已]",
+          "note": "8.4 FD582 → 11:25 KMG → 当天转飞丽江(已挖)"
+        }
+      ]
     }
   ],
   "stays": [

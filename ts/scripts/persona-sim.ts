@@ -664,7 +664,7 @@ export interface PersonaRunOutcome {
   error: { code: PersonaSimErrorCode; detail: string } | null
 }
 
-function solverVerdict(state: TripState): { verdict: PersonaRunOutcome['solver_verdict']; unsat: string[]; errorCode: string | null } {
+export function solverVerdict(state: TripState): { verdict: PersonaRunOutcome['solver_verdict']; unsat: string[]; errorCode: string | null } {
   const solve = state.solve as Record<string, unknown> | undefined
   if (!solve) return { verdict: 'none', unsat: [], errorCode: null }
   if (typeof solve['answer_md'] === 'string') return { verdict: 'candidate_choice', unsat: [], errorCode: null }

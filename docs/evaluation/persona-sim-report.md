@@ -64,10 +64,9 @@ If a capture is interrupted, `npx tsx scripts/m3-cohort.ts lock-status --state-r
 
 ## Sample dry-run output
 
-Verbatim from `npx tsx scripts/persona-sim.ts --dry-run` on 2026-10-05, with the temporary evidence path elided. The stderr line is part of the real output and is discussed under limitations.
+Verbatim from `npx tsx scripts/persona-sim.ts --dry-run` on 2026-10-05, with the temporary evidence path elided.
 
 ```text
-[gotry] solveUnified aborted — solver_input_not_integer(求解器失败,不是「不可行」判定): solveUnified: Z3 整数编码只接受有限整数,下列输入不是(issue #620):yn0.bufferMin=NaN、yn0.originTransferMin=NaN、yn0.destTransferMin=NaN
 # persona-sim (dry_run_complete) — SYNTHETIC ONLY, never M3/M4 evidence
 
 - models: product=MiniMax-M2 persona=MiniMax-M2 real_llm=false
@@ -82,14 +81,14 @@ Verbatim from `npx tsx scripts/persona-sim.ts --dry-run` on 2026-10-05, with the
 | phuket-workation-multileg | 3 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
 | redeye-dubai-monday | 2 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
 | vague-wish-drifter | 3 | false | false | - | none | - | - | - | - | - |
-| yunnan-budget-student | 1 | true | false | 4 | solver_error(solver_input_not_integer) | 0 | 0 | 0 | pass | - |
+| yunnan-budget-student | 1 | true | false | 4 | feasible | 4 | 0 | 0 | blocked | - |
 
-- harness funnel (simulation, computed here): delivered=6/7 finalized=4 finalization=0.666667 nps=0(n=6) claims extracted=29 audited=0 invalid=0 poi=unavailable errored=0
+- harness funnel (simulation, computed here): delivered=6/7 finalized=4 finalization=0.666667 nps=0(n=6) claims extracted=33 audited=0 invalid=0 poi=unavailable errored=0
 - scorer (excludes every simulated participant via test_or_staff): participants=0 finalization=unavailable nps=unavailable poi=unavailable test_or_staff_excluded=6
 - business_pass: false — evidence_kind=synthetic_fixture cannot prove business pass
 ```
 
-Read this as a capture-path result, not a product result. Six of seven personas reached a delivered plan, four finalized, and the drifter stayed in the interview and therefore produced no cohort record at all — which is how a real funnel would record it. The scorer line is all `unavailable` on purpose: all six records are `test_or_staff`, so its eligible set is empty, which is exactly the record-level exclusion that keeps simulated participants out of M3. The claim columns show why the POI rate is `unavailable` rather than a flattering 0%: the gate extracted 29 bookable claims and could adjudicate none of them, because no exact-date retrieval ran. The computed cost is the sealed price table applied to the fixture's reported token usage; real spend is zero.
+Read this as a capture-path result, not a product result. Six of seven personas reached a delivered plan, four finalized, and the drifter stayed in the interview and therefore produced no cohort record at all — which is how a real funnel would record it. The scorer line is all `unavailable` on purpose: all six records are `test_or_staff`, so its eligible set is empty, which is exactly the record-level exclusion that keeps simulated participants out of M3. The claim columns show why the POI rate is `unavailable` rather than a flattering 0%: the gate extracted 33 bookable claims and could adjudicate none of them, because no exact-date retrieval ran. The computed cost is the sealed price table applied to the fixture's reported token usage; real spend is zero.
 
 ## How the claim audit is derived
 
@@ -107,7 +106,7 @@ A session whose persona contract breaks (malformed JSON, a score for a plan it n
 
 The dry run does not exercise the slot-to-spec date-consistency gate: the fixture returns no slot extraction, so that gate takes its documented "no slots, no participation" branch. A real-LLM batch does exercise it.
 
-`data/yunnan-pack.json` still fails `solveUnified` deterministically, and the persona deck keeps that case because the simulation is what surfaced it. The cause is now located and the outcome no longer lies (issue #620): leg `yn0` omits `buffer_min`, `origin_transfer_min` and `dest_transfer_min`, the v1 pack parser turns each missing field into `NaN`, and Z3's `Int.val` rejects a non-integer with a WASM `Assertion failed`. `solveUnified` now refuses to build that encoding at all, reports `solver_error.code = solver_input_not_integer` naming every offending field, and the harness classifies it as its own `solver_error` verdict instead of folding it into `infeasible`. Nothing in the user-facing reply says "infeasible" and no machine token reaches it. What remains open is the data: the three missing minutes are a real-world fact the pack's own `meta.reconcil` defers to founder calibration, so neither the parser nor this fix invents them.
+The `yunnan-budget-student` card used to end in a solver failure, and the deck keeps it because the simulation is what surfaced that (issue #620). The cause was a data gap, not the solver: the pack's leg `yn0` (the Kunming→Lijiang connection after the 8.4 landing) omits `buffer_min`, `origin_transfer_min` and `dest_transfer_min`, the v1 pack parser turned each missing field into `NaN`, and Z3's `Int.val` rejects a non-integer with a WASM `Assertion failed`. Two things changed. `solveUnified` now refuses to build that encoding at all and reports `solver_error.code = solver_input_not_integer` naming every offending field; the user-facing reply neither says "infeasible" nor shows a machine token, and the harness classifies it as its own `solver_error` verdict instead of folding it into `infeasible` — the offline suite asserts that classification directly and asserts that no shipped card ends in one. And the pack no longer carries the hole (issue #635): `yn0` moved to the pack's `advisory_legs` — recorded with its reason and not attached to the engine, which is what the pack's own reconciliation notes always said — so the card now solves over the four attached legs (`yn1`–`yn4`). The three minutes are still a real-world fact only the founder can supply, so nothing invents them; once they are supplied, moving `yn0` back into `legs` is the whole change.
 
 The product model's tool-call selection is not measured, because the harness drives the session seam rather than the dsh runtime (see method). `ts/src/dsh-llm.ts` `chat()` bounds each request (`GOTRY_LLM_TIMEOUT_MS`, default 300 s) and fails with a typed `LlmRequestError`, but the harness's per-session deadline (`sessionDeadlineMs`, 180 s) is shorter than that default, so a stalled product provider is still attributed to the session (`persona_timeout`) rather than to the call; a lower `GOTRY_LLM_TIMEOUT_MS` surfaces it per call, recorded as `internal_error` with the `llm timeout:` detail.
 

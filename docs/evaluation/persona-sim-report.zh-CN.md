@@ -64,10 +64,9 @@ cd ts && \
 
 ## dry run 输出样例
 
-以下为 2026-10-05 执行 `npx tsx scripts/persona-sim.ts --dry-run` 的原样输出，仅省略了临时证据路径。那行 stderr 是真实输出的一部分，在限制一节讨论。
+以下为 2026-10-05 执行 `npx tsx scripts/persona-sim.ts --dry-run` 的原样输出，仅省略了临时证据路径。
 
 ```text
-[gotry] solveUnified aborted — solver_input_not_integer(求解器失败,不是「不可行」判定): solveUnified: Z3 整数编码只接受有限整数,下列输入不是(issue #620):yn0.bufferMin=NaN、yn0.originTransferMin=NaN、yn0.destTransferMin=NaN
 # persona-sim (dry_run_complete) — SYNTHETIC ONLY, never M3/M4 evidence
 
 - models: product=MiniMax-M2 persona=MiniMax-M2 real_llm=false
@@ -82,14 +81,14 @@ cd ts && \
 | phuket-workation-multileg | 3 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
 | redeye-dubai-monday | 2 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
 | vague-wish-drifter | 3 | false | false | - | none | - | - | - | - | - |
-| yunnan-budget-student | 1 | true | false | 4 | solver_error(solver_input_not_integer) | 0 | 0 | 0 | pass | - |
+| yunnan-budget-student | 1 | true | false | 4 | feasible | 4 | 0 | 0 | blocked | - |
 
-- harness funnel (simulation, computed here): delivered=6/7 finalized=4 finalization=0.666667 nps=0(n=6) claims extracted=29 audited=0 invalid=0 poi=unavailable errored=0
+- harness funnel (simulation, computed here): delivered=6/7 finalized=4 finalization=0.666667 nps=0(n=6) claims extracted=33 audited=0 invalid=0 poi=unavailable errored=0
 - scorer (excludes every simulated participant via test_or_staff): participants=0 finalization=unavailable nps=unavailable poi=unavailable test_or_staff_excluded=6
 - business_pass: false — evidence_kind=synthetic_fixture cannot prove business pass
 ```
 
-这张表要按采集面结果读，不是按产品结果读。七个人格里六个拿到了交付方案，四个定稿，漂流者停在访谈阶段因此完全没有产生 cohort 记录——真实漏斗本来就该这么记。评分器那一行全是 `unavailable` 是故意的：六条记录全带 `test_or_staff`，它的合格集为空，而这正是把模拟参与者挡在 M3 之外的记录级排除。claim 那几列解释了为什么 POI 率是 `unavailable` 而不是好看的 0%：闸抽出 29 条可下单 claim，一条都无法裁决，因为没有任何 exact-date 检索跑过。计算出的成本是把封存价表应用到 fixture 上报的 token 用量上；真实花费为零。
+这张表要按采集面结果读，不是按产品结果读。七个人格里六个拿到了交付方案，四个定稿，漂流者停在访谈阶段因此完全没有产生 cohort 记录——真实漏斗本来就该这么记。评分器那一行全是 `unavailable` 是故意的：六条记录全带 `test_or_staff`，它的合格集为空，而这正是把模拟参与者挡在 M3 之外的记录级排除。claim 那几列解释了为什么 POI 率是 `unavailable` 而不是好看的 0%：闸抽出 33 条可下单 claim，一条都无法裁决，因为没有任何 exact-date 检索跑过。计算出的成本是把封存价表应用到 fixture 上报的 token 用量上；真实花费为零。
 
 ## claim 审计是怎么推导的
 
@@ -107,7 +106,7 @@ cd ts && \
 
 dry run 不覆盖槽位与 spec 的日期一致性闸：fixture 不返回槽位抽取，于是该闸走它文档化的「无槽位则不参与」分支。真实 LLM 批次会覆盖它。
 
-`data/yunnan-pack.json` 仍然会确定性地让 `solveUnified` 失败，卡组保留这个用例——它正是模拟暴露出来的。现在成因已定位、结论不再说谎（issue #620）：`yn0` 段缺 `buffer_min`、`origin_transfer_min`、`dest_transfer_min`，v1 包解析把每个缺失字段变成 `NaN`，而 Z3 的 `Int.val` 遇到非整数会在 WASM 里 `Assertion failed`。`solveUnified` 现在根本不构造那个编码，直接以 `solver_error.code = solver_input_not_integer` 返回并逐项点名出问题的字段，harness 也把它归为独立的 `solver_error` 判定，而不是计入「不可行」。用户面回复里不出现「不可行」，也不出现任何机器 token。仍然未关的是数据：那三个缺失的分钟数是现实世界的事实，数据包自己的 `meta.reconcil` 把它留给 founder 校准，所以解析器与本次修复都不替它编造。
+`yunnan-budget-student` 卡曾以求解器失败收场，卡组保留它，因为正是模拟暴露了这件事（issue #620）。成因是数据缺口而不是求解器：数据包的 `yn0` 段（8.4 落地后昆明→丽江的衔接）缺 `buffer_min`、`origin_transfer_min`、`dest_transfer_min`，v1 包解析把每个缺失字段变成 `NaN`，而 Z3 的 `Int.val` 遇到非整数会在 WASM 里 `Assertion failed`。随后做了两件事。一是 `solveUnified` 现在根本不构造那个编码，直接以 `solver_error.code = solver_input_not_integer` 返回并逐项点名出问题的字段；用户面回复既不说「不可行」，也不出现机器 token，harness 也把它归为独立的 `solver_error` 判定，而不是计入「不可行」——离线套件直接断言这个分类，并断言出厂卡组里没有任何一张以它收场。二是数据包不再带着这个洞（issue #635）：`yn0` 移到包的 `advisory_legs`——连同理由一起记录、不挂接引擎，数据包自己的校准备注一直就是这么写的——于是该卡现在在已挂接的四段（`yn1`–`yn4`）上求解。那三个分钟数仍然是只有 founder 才能提供的现实世界事实，所以没有任何人替它编造；提供之后，把 `yn0` 搬回 `legs` 就是全部改动。
 
 产品模型的工具选择没有被测量，因为 harness 驱动的是会话接缝而不是 dsh 运行时（见方法一节）。`ts/src/dsh-llm.ts` 的 `chat()` 现在会约束每次请求（`GOTRY_LLM_TIMEOUT_MS`，默认 300 秒）并以类型化的 `LlmRequestError` 失败；但 harness 的单会话截止期限（`sessionDeadlineMs`，180 秒）比这个默认值更短，所以卡住的产品侧 provider 仍会被归因到会话层（`persona_timeout`）而不是那次调用；把 `GOTRY_LLM_TIMEOUT_MS` 调得更低才会按调用暴露，并记为 `internal_error`，detail 为 `llm timeout:`。
 
