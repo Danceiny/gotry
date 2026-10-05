@@ -62,7 +62,7 @@ function runBootstrap(extraArgs: string[], extraEnv: Record<string, string>, boo
 // 1. --check-only:扩展就位探测,exit 0(已不替用户管 hbcli/agent-reach/sidebar)
 const c1 = runBootstrap(['--check-only'], {})
 assert.equal(c1.code, 0, `--check-only 应 exit 0,实际 ${c1.code}\n${c1.out}`)
-assert.ok(c1.out.includes('Session Bridge'), '报告应含扩展就位节(issue #21 传输层方案 C)')
+assert.ok(c1.out.includes('Stai Travel Bridge'), '报告应含扩展就位节(issue #21 传输层方案 C)')
 assert.ok(!c1.out.includes('hbcli'), 'setup 不再替用户管 hbcli(已让出)')
 assert.ok(!c1.out.includes('agent-reach'), 'setup 不再替用户管 agent-reach(已让出)')
 assert.ok(!c1.out.includes('dsh-better-sidebar'), 'setup 不再替用户管 dsh-better-sidebar(已让出)')
@@ -222,7 +222,7 @@ console.log('11. setupSidebar 落盘状态复核(pnpm 忽略构建脚本 exit 1 
 // 只取 missing 一态;degraded 分类在 12 里用独立 item 单测,避免 label-keyed Map 碰撞。
 const onboardingItems = [
   { label: 'Node 运行时', level: 'ok', detail: 'Node 22.x', fix: undefined },
-  { label: 'GoTry Session Bridge 扩展', level: 'missing', detail: '未安装', fix: 'https://chromewebstore...' },
+  { label: 'Stai Travel Bridge 扩展', level: 'missing', detail: '未安装', fix: 'https://chromewebstore...' },
   { label: 'Agent Reach(网页/社媒读取)', level: 'missing', detail: '未装配', fix: 'npx @danceiny/gotry doctor --fix' },
   { label: 'hbcli(酒店实时源)', level: 'missing', detail: '未安装', fix: 'npx @danceiny/gotry doctor --fix' },
   { label: 'FlyAI(飞猪官方检索)', level: 'degraded', detail: '未配 FLYAI_API_KEY', fix: '到 flyai 控制台申请 key' },
@@ -310,7 +310,7 @@ console.log('13. onboardingSkipReason(非 TTY/CI/benchmark/--no-onboarding/SKIP 
   assert.equal(byLabel.get('Agent Reach(网页/社媒读取)')!.status, 'installed')
   assert.equal(byLabel.get('hbcli(酒店实时源)')!.status, 'installed')
   assert.equal(byLabel.get('dsh-better-sidebar(侧栏工作台)')!.status, 'installed')
-  assert.equal(byLabel.get('GoTry Session Bridge 扩展')!.status, 'needs-user-action')
+  assert.equal(byLabel.get('Stai Travel Bridge 扩展')!.status, 'needs-user-action')
   assert.equal(byLabel.get('FlyAI(飞猪官方检索)')!.status, 'needs-user-action')
   assert.equal(byLabel.get('dsh-calendar(日历工作窗口)')!.status, 'needs-user-action')
   assert.equal(byLabel.get('dsh-map-tools(地图/路线/POI)')!.status, 'unavailable')
@@ -446,7 +446,7 @@ console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_O
   assert.ok(autoLabels.includes('hbcli(酒店实时源)'), 'hbcli missing(空 PATH)→ auto')
   assert.ok(autoLabels.includes('Agent Reach(网页/社媒读取)'), 'reach missing(fixture 无 .venv)→ auto')
   const userActionLabels: string[] = plan.userAction.map((g: { label: string }) => g.label)
-  assert.ok(userActionLabels.includes('GoTry Session Bridge 扩展'), '扩展 missing(隔离 HOME)→ user-action(浏览器商店)')
+  assert.ok(userActionLabels.includes('Stai Travel Bridge 扩展'), '扩展 missing(隔离 HOME)→ user-action(浏览器商店)')
   assert.ok(userActionLabels.some(label => label.startsWith('FlyAI(飞猪官方检索')), 'flyai 无 key → user-action')
   assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-map-tools')), 'map-tools 随包就位 → 非 unavailable')
   assert.ok(!plan.unavailable.some((g: { label: string }) => g.label.startsWith('dsh-tool-ask-user')), 'ask-user 随包就位 → 非 unavailable')
@@ -638,7 +638,7 @@ console.log('19. onboarding --scan(临时包 fixture + 隔离 HOME + 受控 PATH
     assert.ok(visible.includes('dsh-better-sidebar(侧栏工作台)'), '渲染 sidebar 不可用行')
     assert.match(visible, /Windows[^\n]*dsh-better-sidebar/, 'sidebar 行带 Windows 原因')
     // user-action 项平台无关,仍渲染(扩展商店/flyai key/calendar)
-    assert.ok(visible.includes('GoTry Session Bridge 扩展'), '渲染扩展 user-action 行')
+    assert.ok(visible.includes('Stai Travel Bridge 扩展'), '渲染扩展 user-action 行')
     assert.ok(visible.includes('FlyAI(飞猪官方检索)'), '渲染 flyai user-action 行')
     assert.ok(visible.includes('dsh-calendar(日历工作窗口)'), '渲染 calendar user-action 行')
   }
@@ -1364,7 +1364,7 @@ console.log('21. spawned installed-package inner(21a TTY-eligible 真实 prompt�
   assert.match(unavail.get('dsh-better-sidebar(侧栏工作台)')!.detail, /Windows/, 'sidebar unavailable 给 win 平台具体原因')
   // user-action 项不受平台影响(扩展商店/flyai key/calendar profile)
   const ua = new Set((plan.userAction as Array<{ label: string }>).map((g) => g.label))
-  assert.ok(ua.has('GoTry Session Bridge 扩展'), 'win32 扩展仍 user-action(平台无关)')
+  assert.ok(ua.has('Stai Travel Bridge 扩展'), 'win32 扩展仍 user-action(平台无关)')
   assert.ok(ua.has('FlyAI(飞猪官方检索)'), 'win32 flyai 仍 user-action(平台无关)')
   assert.ok(ua.has('dsh-calendar(日历工作窗口)'), 'win32 calendar 仍 user-action(平台无关)')
   // darwin 计划对照:auto=3,promptable=true(不回归)

@@ -62,17 +62,17 @@ export function localExtensionInstalled(home = homedir()): boolean {
  * 影响面统一行:账号会话通道断 → 列表底部工具不提供;其余工具不受影响。
  * 纯函数(默认 HOME 可注入)。
  *
- * 双语对照:CN=本函数返回值;EN 权威见 docs/capability-onboarding.md「Session Bridge 安装」段。
+ * 双语对照:CN=本函数返回值;EN 权威见 docs/capability-onboarding.md「Stai Travel Bridge 安装」段。
  */
 const EXTENSION_IMPACT_LINE = '影响面:gotry_session_search / gotry_session_login(账号会话通道)不可用;携程机票/酒店实时检索、12306 余票、Dida 实时报价都依赖此通道。其它工具(机票 FlyAI、酒店 hbcli、地图、天气等)不受影响。'
 export function needsExtensionSummary(opts: { localInstalled?: boolean; home?: string } = {}): string {
   const local = opts.localInstalled ?? localExtensionInstalled(opts.home)
   if (local) {
-    return 'GoTry Session Bridge 扩展未连接(未安装或已停用)。推荐 Chrome 应用商店一键装(自动更新) '
+    return 'Stai Travel Bridge 扩展未连接(未安装或已停用)。推荐 Chrome 应用商店一键装(自动更新) '
       + `${EXTENSION_STORE_URL} ;或 npx @danceiny/gotry setup 落位后 chrome://extensions 开发者模式「加载已解压的扩展程序」指向 ~/.gotry/extension。`
       + EXTENSION_IMPACT_LINE
   }
-  return 'GoTry Session Bridge 扩展未连接。若你已从 Chrome 商店安装(自动更新):打开 Chrome 并确认扩展已启用即可自动连接,无需再装。'
+  return 'Stai Travel Bridge 扩展未连接。若你已从 Chrome 商店安装(自动更新):打开 Chrome 并确认扩展已启用即可自动连接,无需再装。'
     + `若尚未安装:应用商店一键装 ${EXTENSION_STORE_URL} (装完零弹窗,浏览器自己当安装器)。`
     + EXTENSION_IMPACT_LINE
 }

@@ -891,7 +891,7 @@ async function doctorChecks() {
   // 扩展
   const extManifest = join(homedir(), '.gotry', 'extension', 'manifest.json')
   const extOk = existsSync(extManifest)
-  items.push({ label: 'GoTry Session Bridge 扩展', ok: extOk, level: extOk ? 'ok' : 'missing', detail: extOk ? `已就位(${extManifest})` : '未安装——影响面:gotry_session_search / gotry_session_login(账号会话通道)不可用;携程机票/酒店实时检索、12306 余票、Dida 实时报价都依赖此通道。其它工具(机票 FlyAI、酒店 hbcli、地图、天气等)不受影响', fix: extOk ? undefined : '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd' })
+  items.push({ label: 'Stai Travel Bridge 扩展', ok: extOk, level: extOk ? 'ok' : 'missing', detail: extOk ? `已就位(${extManifest})` : '未安装——影响面:gotry_session_search / gotry_session_login(账号会话通道)不可用;携程机票/酒店实时检索、12306 余票、Dida 实时报价都依赖此通道。其它工具(机票 FlyAI、酒店 hbcli、地图、天气等)不受影响', fix: extOk ? undefined : '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd' })
   // agent-reach(.venv 装在包内)
   const venvPython = join(repoRoot, '.venv/bin/python')
   const reachBin = join(repoRoot, '.venv/bin/agent-reach')
@@ -1164,7 +1164,7 @@ function classifyDoctorGap(item, opts = {}) {
     return installerEnabled('hbcli', env) && autoSupported ? 'auto' : 'unavailable'
   }
   if (label.startsWith('dsh-better-sidebar')) return installerEnabled('sidebar', env) && autoSupported ? 'auto' : 'unavailable'
-  if (label.startsWith('GoTry Session Bridge')) return 'user-action' // 浏览器商店一键装
+  if (label.startsWith('Stai Travel Bridge')) return 'user-action' // 浏览器商店一键装
   if (label.startsWith('FlyAI')) return 'user-action' // 上游控制台申请 key
   if (label.startsWith('dsh-calendar')) return 'user-action' // profile cordis.patch.yml 配置
   if (label.startsWith('dsh-map-tools')) return 'unavailable' // 随包 vendor,缺失即重装 gotry
@@ -1443,7 +1443,7 @@ function copyExtensionDir(srcDir, dstDir) {
 
 /** 会话检索扩展(issue #21 方案 C):包内 extension/ → ~/.gotry/extension 幂等落位 + 一次性加载指引 */
 async function setupExtension() {
-  say('[gotry-setup] GoTry Session Bridge 扩展(会话检索数据面 issue #21;一次性安装,替代逐连接弹窗)')
+  say('[gotry-setup] Stai Travel Bridge 扩展(会话检索数据面 issue #21;一次性安装,替代逐连接弹窗)')
   const srcDir = join(repoRoot, 'extension')
   const srcManifest = join(srcDir, 'manifest.json')
   if (!existsSync(srcManifest)) {
@@ -1465,7 +1465,7 @@ async function setupExtension() {
     return { ok: false }
   }
   say(`  ✓ 已落位 ${dstDir}(v${srcVersion};manifest 带固定 key,unpacked 扩展 ID 恒为 olpgkofjhhiiiahdkkbcninhjmegghfe)`)
-  say('  推荐(免下面三步):Chrome 应用商店一键安装 GoTry Session Bridge(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd')
+  say('  推荐(免下面三步):Chrome 应用商店一键安装 Stai Travel Bridge(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd')
   say('  本地加载(每台浏览器一次,约 30 秒):Chrome 打开 chrome://extensions → 右上角开启「开发者模式」→「加载已解压的扩展程序」→ 选择 ~/.gotry/extension')
   say('  获取/更新本地通道扩展可走 GitHub Releases:npx @danceiny/gotry setup --extension-from=github(自动下载校验落位;手动下载: github.com/Danceiny/gotry/releases 标签 ext-*)')
   say('  装好即生效,零系统弹窗;扩展卡片开关=总闸(与 gotry 授权闸 sessionAccess 双重控制)')
@@ -1478,7 +1478,7 @@ async function setupExtension() {
  * 任何失败显式降级 bundled 包内副本——安装外部产物永远不挡 gotry 本体。
  */
 async function setupExtensionFromGithub() {
-  say('[gotry-setup] GoTry Session Bridge 扩展 · GitHub Releases 下载通道(dist-manifest → tar.gz → SHA256 → key 钉扎)')
+  say('[gotry-setup] Stai Travel Bridge 扩展 · GitHub Releases 下载通道(dist-manifest → tar.gz → SHA256 → key 钉扎)')
   const destDir = join(homedir(), '.gotry', 'extension')
   const cliScript = join(repoRoot, 'ts', 'scripts', 'extension-distribution-cli.ts')
   const releaseBase = process.env.GOTRY_EXTENSION_RELEASE_BASE // 镜像/测试基址覆盖;缺省 GitHub 官方
@@ -1509,7 +1509,7 @@ async function setupExtensionFromGithub() {
   if (r && r.ok) {
     if (r.action === 'installed') {
       say(`  ✓ 已从 GitHub Releases 落位 ${destDir}(v${r.version}${r.previousVersion ? `,旧 v${r.previousVersion}` : ''})`)
-      say('  已装过旧版的浏览器:chrome://extensions → GoTry Session Bridge 卡片 → 「重新加载」一次即生效(新装跳过)。')
+      say('  已装过旧版的浏览器:chrome://extensions → Stai Travel Bridge 卡片 → 「重新加载」一次即生效(新装跳过)。')
       return { ok: true }
     }
     // up-to-date(check-only 下远端更新也会走到这里,只报告不落盘)
@@ -1728,7 +1728,7 @@ if (WIZARD) {
     }
     say('')
     say('[gotry-wizard] ────────────────────────────────')
-    say('[gotry-wizard] GoTry Session Bridge 是浏览器的事——在 Chrome 应用商店一键装:')
+    say('[gotry-wizard] Stai Travel Bridge 是浏览器的事——在 Chrome 应用商店一键装:')
     say('[gotry-wizard]   https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd')
     say('[gotry-wizard] 装好即生效;装完后我会自动检测到(下方探活等待,最长 120s)。')
     say('[gotry-wizard] 全过程 gotry 不动你的剪贴板、不开你的 Chrome、不弹任何面板。')
@@ -1749,7 +1749,7 @@ if (WIZARD) {
   }
 
   if (process.platform === 'win32') {
-    say('[gotry-setup] GoTry Session Bridge 扩展:推荐 Chrome 应用商店一键安装 https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd ;本地通道:手动把包内 extension/ 目录拷到 %USERPROFILE%\\.gotry\\extension,再在 chrome://extensions 开发者模式「加载已解压的扩展程序」')
+    say('[gotry-setup] Stai Travel Bridge 扩展:推荐 Chrome 应用商店一键安装 https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd ;本地通道:手动把包内 extension/ 目录拷到 %USERPROFILE%\\.gotry\\extension,再在 chrome://extensions 开发者模式「加载已解压的扩展程序」')
     process.exit(AUTO ? 0 : 1)
   }
   if (AUTO && (process.env.CI || process.env.GOTRY_SETUP_SKIP === '1')) {
@@ -1760,7 +1760,7 @@ if (WIZARD) {
   const results = []
   // gotry 自留面只剩扩展是否就位;hbcli/agent-reach/dsh-better-sidebar 由各自宿主生态自管。
   if (process.env.GOTRY_SETUP_EXTENSION !== '0') results.push(await (EXTENSION_FROM === 'github' ? setupExtensionFromGithub() : setupExtension()))
-  else say('[gotry-setup] GoTry Session Bridge 扩展:GOTRY_SETUP_EXTENSION=0 跳过')
+  else say('[gotry-setup] Stai Travel Bridge 扩展:GOTRY_SETUP_EXTENSION=0 跳过')
   const failed = results.filter((r) => !r.ok).length
   if (failed > 0) {
     say(`[gotry-setup] ${failed} 项未就绪——gotry 本体不受影响;可稍后重跑: npx @danceiny/gotry setup`)

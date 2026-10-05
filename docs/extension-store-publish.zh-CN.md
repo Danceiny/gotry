@@ -1,6 +1,6 @@
 # Chrome Web Store 上架配置
 
-一次性配置，让 `.github/workflows/extension-publish.yml` 能把 GoTry Session Bridge
+一次性配置，让 `.github/workflows/extension-publish.yml` 能把 Stai Travel Bridge
 扩展发布到 Chrome Web Store（分发通道 B，ADR-21；hotel-fe#3802 事故的后续——商店卡在
 0.1.0 的根源正是发布全靠手工）。
 

@@ -2,7 +2,7 @@
  * 会话检索编排层(RFC §3.2):transport → adapter entry → networkHint 嗅探 → 解析 → ReadGuard → 证据链。
  *
  * 传输车道(2026-08-29 定案,RFC §2.2):**扩展桥为默认**——一次性安装的 MV3 扩展
- * (GoTry Session Bridge)在自己标签页被动嗅探 batchSearch,零 Chrome 系统弹窗;
+ * (Stai Travel Bridge)在自己标签页被动嗅探 batchSearch,零 Chrome 系统弹窗;
  *  cdp(attach 日常 Chrome,Chrome 144+ 每连接弹权限框)降为显式后备
  * (`GOTRY_SESSION_TRANSPORT=cdp` opt-in,诊断/测试用);persistent 仅测试。
  *

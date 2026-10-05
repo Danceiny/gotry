@@ -138,7 +138,7 @@ ts/capabilities/session/
   adapters/<site>.ts  site adapter: { entry, searchForm locators, networkHints[{urlPattern,parser}], a11yFallback, cooldown }
                       the first adapter = Ctrip flights (the PoC already identified networkHints: search/batchSearch + FlightIntlAndInlandLowestPriceSearch)
   action-cache.ts     local action cache: key = instruction + DOM fingerprint → deterministic locator; on a miss, fall back to LLM re-location and write back
-extension/             GoTry Session Bridge (MV3, zero build): manifest (fixed key) / background.js (long-polling SW:
+extension/             Stai Travel Bridge (MV3, zero build): manifest (fixed key) / background.js (long-polling SW:
                        search background tab + closing its own page on wrap-up / open-login foregrounds and leaves the tab to the user / cookie-names takes names only and discards values) /
                        content-main.js (MAIN world hook of fetch/XHR; a NETWORK_HINTS hit → CustomEvent) /
                        content-bridge.js (ISOLATED world, CustomEvent↔chrome.runtime)

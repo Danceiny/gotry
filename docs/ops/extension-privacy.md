@@ -1,10 +1,10 @@
 [English](extension-privacy.md) | [简体中文](extension-privacy.zh-CN.md)
 
-# Stai Extension Privacy Policy
+# Stai Travel Bridge Privacy Policy
 
-**Last updated: 2026-09-25**
+**Last updated: 2026-10-05**
 
-Stai (formerly GoTry Session Bridge) supports authorized travel searches and supplier-portal sign-in. This policy describes the extension itself; the websites and GoTry backend have their own data handling.
+Stai Travel Bridge (formerly Stai, originally released as GoTry Session Bridge) supports authorized travel searches and supplier-portal sign-in. This policy describes the extension itself; the websites and GoTry backend have their own data handling.
 
 ## Data and destinations
 
@@ -18,6 +18,6 @@ When the employee portal supplies an authorized one-time Dida login payload, the
 
 ## Limited use and contact
 
-Stai uses information received through Chrome APIs only for the user-facing functions described here. Its use of that information adheres to the [Chrome Web Store User Data Policy, including Limited Use requirements](https://developer.chrome.com/docs/webstore/program-policies/limited-use/). It does not sell data, use it for advertising, or permit human review except where the policy allows.
+Stai Travel Bridge uses information received through Chrome APIs only for the user-facing functions described here. Its use of that information adheres to the [Chrome Web Store User Data Policy, including Limited Use requirements](https://developer.chrome.com/docs/webstore/program-policies/limited-use/). It does not sell data, use it for advertising, or permit human review except where the policy allows.
 
 GoTry desktop session searches use GoTry's consent gate. The extension can be disabled in Chrome at any time. For questions, use https://github.com/Danceiny/gotry/issues.

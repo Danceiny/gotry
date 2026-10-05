@@ -1788,7 +1788,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       'Productized login bootstrap for the account session channel (call this when gotry_session_search returns needs-login — the user never needs a terminal). ' + 'AUTO-DETECTION FIRST: it reads ticket-cookie NAMES before anything else — if the user already logged in (on the external site) it confirms instantly WITHOUT opening any page. '
       + 'OPENS the site login entry in the USER\'S OWN Chrome (foreground tab, left open for the user) and waits for the user to finish logging in on the external site. '
       + 'GoTry NEVER collects, stores, or transmits credentials: no passwords, no SMS codes, no cookie values — it only checks the boolean fact "already logged in" (reads cookie NAMES only, zero values). '
-      + 'Transport: the GoTry Session Bridge browser extension (one-time install, ZERO Chrome system dialogs). '
+      + 'Transport: the Stai Travel Bridge browser extension (one-time install, ZERO Chrome system dialogs). '
       + `verdict logged-in (tickets detected) | pending (login tab opened, user not done yet — offer to re-check later) | needs-extension (one-time extension install: the verdict surfaces the Chrome Web Store installUrl as a clickable link for dsh UI to render — installation is a browser concern, not gotry's). `
       + 'Evidence [会话:<site>-login@ts].',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层
@@ -1807,7 +1807,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         : r.verdict === 'pending'
           ? `登录入口已在你的 Chrome 打开;请在弹出的标签页里正常登录携程(登录由你在官网完成,不属于 gotry)。完成后说一声"继续",我再确认。gotry 只检查"是否已登录",永不收集你的账号信息。${r.evidence}`
           : r.verdict === 'needs-extension'
-            ? `需要一次性安装 GoTry Session Bridge 浏览器扩展:这是浏览器的事,gotry 不弹面板不开剪贴板——请直接在 Chrome 应用商店一键装(add-to-chrome 自动更新)。storeUrl=${EXTENSION_STORE_URL}. 装好即生效,装完后告诉我「重试」即可。${r.evidence}`
+            ? `需要一次性安装 Stai Travel Bridge 浏览器扩展:这是浏览器的事,gotry 不弹面板不开剪贴板——请直接在 Chrome 应用商店一键装(add-to-chrome 自动更新)。storeUrl=${EXTENSION_STORE_URL}. 装好即生效,装完后告诉我「重试」即可。${r.evidence}`
             : r.verdict === 'needs-attach'
               ? `cdp 车道需要一次性开启你 Chrome 的远程调试开关:在你的 Chrome 地址栏打开 chrome://inspect/#remote-debugging 并打开开关,然后说一声"重试"(默认走扩展车道,无需此步)。${r.evidence}`
               : `登录引导未完成:${r.error ?? '未知原因'} ${r.evidence}`
@@ -1822,7 +1822,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         : r.verdict === 'pending'
           ? '等待你在携程页面完成登录'
           : needsExt
-            ? '🧩 需装 GoTry Session Bridge 扩展(浏览器商店一键装,自动更新)'
+            ? '🧩 需装 Stai Travel Bridge 扩展(浏览器商店一键装,自动更新)'
             : r.verdict ?? '降级'
       const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }]
       // needs-extension:把商店 URL 渲成可点链接(浏览器自己当安装器,gotry 不插手)
@@ -1837,7 +1837,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     description: routed('gotry_session_search',
       'Search on the USER\'S OWN browser session (Ctrip kind="flight"(default)/"hotel"; 12306 kind="train" — public query face, no login needed). '
       + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
-      + 'Transport: GoTry Session Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
+      + 'Transport: Stai Travel Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
       + 'kind="flight": from/to 中文城市名 + date YYYY-MM-DD — sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
       + 'kind="hotel": to=目的地中文, cityId? = the numeric city= in a hotels.ctrip.com list URL (web-search it when the destination is outside the built-in city table), checkIn?/checkOut? (YYYY-MM-DD), adults?; hotel prices are the user\'s real logged-in prices. Evidence [会话:ctrip-hotel@ts]. '
       + 'kind="dida": Dida supplier-portal realtime hotel rates on the employee\'s own logged-in session (hotel-be portal integration line) — no from/to needed; the portal find page\'s own requests are sniffed passively. Rates carry ratePlanId/referenceNo for the server-side booking chain. Evidence [会话:dida-portal@ts]. '
@@ -2011,7 +2011,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         : r.verdict === 'needs-login'
           ? '需登录'
           : needsExt
-            ? '🧩 需装 GoTry Session Bridge 扩展(浏览器商店一键装,自动更新)'
+            ? '🧩 需装 Stai Travel Bridge 扩展(浏览器商店一键装,自动更新)'
             : r.verdict ?? '降级'
       const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }]
       if (needsExt && r.installUrl) content.push({ type: 'text', text: `安装链接:${r.installUrl}` })
@@ -2301,7 +2301,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   registerGuarded(defineTool({
     name: 'gotry_doctor',
     description:
-      'Check optional-dependency health for ALL gotry tools (read-only by default). Coverage: GoTry Session Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key + recent trial-quota exhaustion time / dsh-calendar mount state / dsh-better-sidebar / dsh-map-tools / dsh-tool-ask-user. '
+      'Check optional-dependency health for ALL gotry tools (read-only by default). Coverage: Stai Travel Bridge extension / Agent Reach (.venv) / hbcli (hotel realtime) / FlyAI key + recent trial-quota exhaustion time / dsh-calendar mount state / dsh-better-sidebar / dsh-map-tools / dsh-tool-ask-user. '
       + 'Call this when ANY gotry tool returns not-installed / needs-setup, when the user asks 「体检/依赖状态/工具为什么不可用」, or BEFORE leaning on a channel for a plan. '
       + 'Returns per-item status (ok/degraded/missing) with exact fix commands. '
       + 'Action=diagnose (default): pure read-only — never installs anything, only renders the report. '

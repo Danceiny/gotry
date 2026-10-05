@@ -1,10 +1,10 @@
 [English](extension-privacy.md) | [简体中文](extension-privacy.zh-CN.md)
 
-# Stai 浏览器扩展隐私政策
+# Stai Travel Bridge 浏览器扩展隐私政策
 
-**最后更新：2026-09-25**
+**最后更新：2026-10-05**
 
-Stai（原名 GoTry Session Bridge）支持获准的旅行检索与供应商门户登录。本文说明扩展自身的行为；网站和 GoTry 后端各自处理其接收的数据。
+Stai Travel Bridge（前名 Stai，最初以 GoTry Session Bridge 发布）支持获准的旅行检索与供应商门户登录。本文说明扩展自身的行为；网站和 GoTry 后端各自处理其接收的数据。
 
 ## 数据与去向
 
@@ -18,6 +18,6 @@ Stai（原名 GoTry Session Bridge）支持获准的旅行检索与供应商门�
 
 ## 有限使用与联系
 
-Stai 仅将通过 Chrome API 获得的信息用于本文所述的用户可见功能。这些信息的使用遵循 [Chrome Web Store 用户数据政策及 Limited Use 要求](https://developer.chrome.com/docs/webstore/program-policies/limited-use/)。扩展不出售数据、不用于广告；除政策允许的情形外，不允许人工审阅。
+Stai Travel Bridge 仅将通过 Chrome API 获得的信息用于本文所述的用户可见功能。这些信息的使用遵循 [Chrome Web Store 用户数据政策及 Limited Use 要求](https://developer.chrome.com/docs/webstore/program-policies/limited-use/)。扩展不出售数据、不用于广告；除政策允许的情形外，不允许人工审阅。
 
 GoTry 桌面会话检索遵循 GoTry 的授权闸。用户可随时在 Chrome 中停用扩展。如有问题，请访问 https://github.com/Danceiny/gotry/issues。

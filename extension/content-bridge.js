@@ -1,5 +1,5 @@
 /**
- * GoTry Session Bridge — ISOLATED-world 桥(manifest 默认 world,document_start)。
+ * Stai Travel Bridge — ISOLATED-world 桥(manifest 默认 world,document_start)。
  *
  * MAIN world(content-main.js)拿不到 chrome API;本脚本监听页面里的
  * gotry-ctrip-sniff 自定义事件,把响应文本经 chrome.runtime.sendMessage 转发给

@@ -96,7 +96,7 @@ export const CHANNELS: readonly ChannelEntry[] = [
     evidenceTag: '[会话:ctrip-flight@ts]',
     tier: 'session',
     efficiencyRank: 2,
-    setup: '一次性装 Session Bridge 扩展 + 授权卡 + (如需)官网登录',
+    setup: '一次性装 Stai Travel Bridge 扩展 + 授权卡 + (如需)官网登录',
     hint: 'kind=flight',
   },
   {
@@ -108,7 +108,7 @@ export const CHANNELS: readonly ChannelEntry[] = [
     evidenceTag: '[会话:ctrip-hotel@ts]',
     tier: 'session',
     efficiencyRank: 2,
-    setup: '一次性装 Session Bridge 扩展 + 授权卡 + (如需)官网登录',
+    setup: '一次性装 Stai Travel Bridge 扩展 + 授权卡 + (如需)官网登录',
     hint: 'kind=hotel',
   },
   {
@@ -120,7 +120,7 @@ export const CHANNELS: readonly ChannelEntry[] = [
     evidenceTag: '[会话:dida-portal@ts]',
     tier: 'session',
     efficiencyRank: 2,
-    setup: '一次性装 Session Bridge 扩展 + 授权卡 + hotel-be portal 自动登录跳板(dida 官网由人完成登录)',
+    setup: '一次性装 Stai Travel Bridge 扩展 + 授权卡 + hotel-be portal 自动登录跳板(dida 官网由人完成登录)',
     hint: 'kind=dida',
   },
   {
@@ -132,7 +132,7 @@ export const CHANNELS: readonly ChannelEntry[] = [
     evidenceTag: '[会话:train-12306@ts]',
     tier: 'session',
     efficiencyRank: 2,
-    setup: '一次性装 Session Bridge 扩展(公开查询面,无需登录)',
+    setup: '一次性装 Stai Travel Bridge 扩展(公开查询面,无需登录)',
     hint: 'kind=train',
   },
   {

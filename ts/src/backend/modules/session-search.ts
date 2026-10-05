@@ -414,7 +414,7 @@ export function startSessionSearchModule(options: SessionSearchModuleOptions): B
     if (!queue.extensionConnected()) {
       sendJson(res, 200, {
         ok: true,
-        suppliers: [{ supplier: 'dida-portal', loggedIn: false, reason: 'extension-not-connected', detail: '会话执行环境=管理员浏览器扩展(GoTry Session Bridge);扩展未连接桥——在管理员浏览器安装扩展并配置本服务桥地址' }],
+        suppliers: [{ supplier: 'dida-portal', loggedIn: false, reason: 'extension-not-connected', detail: '会话执行环境=管理员浏览器扩展(Stai Travel Bridge);扩展未连接桥——在管理员浏览器安装扩展并配置本服务桥地址' }],
         bridge: queue.stats(),
         checkedAt,
       })
