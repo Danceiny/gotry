@@ -32,6 +32,7 @@ import {
   promptDigest,
   runPersonaBatch,
   scrubSessionEnv,
+  solverVerdict,
   summarizeFunnel,
   type PersonaCard,
   type PersonaSimErrorCode,
@@ -297,6 +298,13 @@ async function main(): Promise<void> {
       }
       assert.equal(persona.finalized, card.expected_outcome === 'plan_delivered_and_finalized')
     }
+
+    // A solver failure is an engine/data defect, not a product answer: no shipped card may end in one.
+    // The yunnan card used to (issue #620) until its pack's uncalibrated leg became advisory (issue #635).
+    for (const persona of result.personas) {
+      assert.notEqual(persona.solver_verdict, 'solver_error', `${persona.persona_id}: solver failed (${persona.solver_error_code})`)
+    }
+    assert.equal(result.personas.find(persona => persona.persona_id === 'yunnan-budget-student')!.solver_verdict, 'feasible')
 
     // The fixture classified every product prompt: an unclassified one means src/dsh-llm.ts
     // changed its system prompts and the harness is no longer driving the real seam.
@@ -581,6 +589,22 @@ async function main(): Promise<void> {
       calendar: { year: 2026, assertedWeekdays: {} }, profile: {}, gates: [], wishes: [],
       solve: { answer_md: '# 候选对比\n...' },
     } as unknown as TripState), '# 候选对比\n...')
+  })
+
+  await pass('a solver failure is its own verdict class and never folds into infeasible (issue #620)', () => {
+    const base = { calendar: { year: 2026, assertedWeekdays: {} }, profile: {}, gates: [], wishes: [] }
+    const verdict = (solve?: Record<string, unknown>) => solverVerdict({ ...base, ...(solve ? { solve } : {}) } as unknown as TripState)
+    assert.deepEqual(verdict(), { verdict: 'none', unsat: [], errorCode: null })
+    assert.deepEqual(verdict({ answer_md: '# 候选对比' }), { verdict: 'candidate_choice', unsat: [], errorCode: null })
+    assert.deepEqual(verdict({ feasible: true }), { verdict: 'feasible', unsat: [], errorCode: null })
+    assert.deepEqual(verdict({ feasible: false, unsat_core: ['total:budget'] }), { verdict: 'infeasible', unsat: ['total:budget'], errorCode: null })
+    // `feasible: false` next to a solver_error means "no verdict was produced", so it is classified
+    // before `feasible` is read at all, and an unsat_core can never leak into it.
+    assert.deepEqual(
+      verdict({ feasible: false, solver_error: { code: 'solver_input_not_integer', message: 'yn1.bufferMin=NaN' } }),
+      { verdict: 'solver_error', unsat: [], errorCode: 'solver_input_not_integer' },
+    )
+    assert.equal(verdict({ feasible: false, solver_error: {} }).errorCode, 'unknown')
   })
 
   await pass('CLI: offline dry run exits 0 with a machine-readable synthetic result', () => {
