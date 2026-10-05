@@ -64,10 +64,10 @@ cd ts && \
 
 ## dry run 输出样例
 
-以下为 2026-10-04 执行 `npx tsx scripts/persona-sim.ts --dry-run` 的原样输出，仅省略了临时证据路径。那行 stderr 是真实输出的一部分，在限制一节讨论。
+以下为 2026-10-05 执行 `npx tsx scripts/persona-sim.ts --dry-run` 的原样输出，仅省略了临时证据路径。那行 stderr 是真实输出的一部分，在限制一节讨论。
 
 ```text
-[gotry] solveUnified failed (likely wasm thread race): Assertion failed
+[gotry] solveUnified aborted — solver_input_not_integer(求解器失败,不是「不可行」判定): solveUnified: Z3 整数编码只接受有限整数,下列输入不是(issue #620):yn0.bufferMin=NaN、yn0.originTransferMin=NaN、yn0.destTransferMin=NaN
 # persona-sim (dry_run_complete) — SYNTHETIC ONLY, never M3/M4 evidence
 
 - models: product=MiniMax-M2 persona=MiniMax-M2 real_llm=false
@@ -82,7 +82,7 @@ cd ts && \
 | phuket-workation-multileg | 3 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
 | redeye-dubai-monday | 2 | true | true | 9 | feasible | 7 | 0 | 0 | blocked | - |
 | vague-wish-drifter | 3 | false | false | - | none | - | - | - | - | - |
-| yunnan-budget-student | 1 | true | false | 4 | infeasible(wasm_runtime_error) | 0 | 0 | 0 | pass | - |
+| yunnan-budget-student | 1 | true | false | 4 | solver_error(solver_input_not_integer) | 0 | 0 | 0 | pass | - |
 
 - harness funnel (simulation, computed here): delivered=6/7 finalized=4 finalization=0.666667 nps=0(n=6) claims extracted=29 audited=0 invalid=0 poi=unavailable errored=0
 - scorer (excludes every simulated participant via test_or_staff): participants=0 finalization=unavailable nps=unavailable poi=unavailable test_or_staff_excluded=6
@@ -107,7 +107,7 @@ cd ts && \
 
 dry run 不覆盖槽位与 spec 的日期一致性闸：fixture 不返回槽位抽取，于是该闸走它文档化的「无槽位则不参与」分支。真实 LLM 批次会覆盖它。
 
-`data/yunnan-pack.json` 会确定性地让 `solveUnified` 以 z3 WASM 断言失败，用户面回复变成「当前约束下不可行——冲突：wasm_runtime_error」。卡组保留这个用例，因为它是模拟暴露出来的真实缺陷：一个内部引擎错误被当作不可行判决呈现给用户，理由位置上放的是机器 token。Harness 记录判定与 `unsat_core`，而不是把它藏掉。
+`data/yunnan-pack.json` 仍然会确定性地让 `solveUnified` 失败，卡组保留这个用例——它正是模拟暴露出来的。现在成因已定位、结论不再说谎（issue #620）：`yn0` 段缺 `buffer_min`、`origin_transfer_min`、`dest_transfer_min`，v1 包解析把每个缺失字段变成 `NaN`，而 Z3 的 `Int.val` 遇到非整数会在 WASM 里 `Assertion failed`。`solveUnified` 现在根本不构造那个编码，直接以 `solver_error.code = solver_input_not_integer` 返回并逐项点名出问题的字段，harness 也把它归为独立的 `solver_error` 判定，而不是计入「不可行」。用户面回复里不出现「不可行」，也不出现任何机器 token。仍然未关的是数据：那三个缺失的分钟数是现实世界的事实，数据包自己的 `meta.reconcil` 把它留给 founder 校准，所以解析器与本次修复都不替它编造。
 
 产品模型的工具选择没有被测量，因为 harness 驱动的是会话接缝而不是 dsh 运行时（见方法一节）。`ts/src/dsh-llm.ts` 的 `chat()` 现在会约束每次请求（`GOTRY_LLM_TIMEOUT_MS`，默认 300 秒）并以类型化的 `LlmRequestError` 失败；但 harness 的单会话截止期限（`sessionDeadlineMs`，180 秒）比这个默认值更短，所以卡住的产品侧 provider 仍会被归因到会话层（`persona_timeout`）而不是那次调用；把 `GOTRY_LLM_TIMEOUT_MS` 调得更低才会按调用暴露，并记为 `internal_error`，detail 为 `llm timeout:`。
 

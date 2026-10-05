@@ -243,7 +243,11 @@ export function createOpenAICompatLlm(flightPackPath?: string, clock: () => Date
           return { segments: [], note: 'erhai-candidates', budgetCny: 3000 } as unknown as JourneySpecTS
         }
         packSpec = parseFlightPackToSpec(JSON.parse(await readFile(packPath, 'utf-8')))
-      } catch {
+      } catch (e) {
+        // issue #620:数据包被 parse 边界拒收时,原因必须留痕——否则用户只看到
+        // 「骨架还不完整」,运维看不到是哪个包的哪个字段把求解面挡住了。
+        const err = e as Error & { code?: string }
+        console.error(`[gotry] extractSpec: 数据包不可用 ${packPath}(${err.code ?? 'parse_failed'}):`, (err.message ?? '').slice(0, 200))
         return null
       }
       const anchorsById = new Map<string, Record<string, unknown>>(
