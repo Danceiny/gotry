@@ -707,6 +707,10 @@ echo
 echo "=== 87. D-39 活体路线供应商合规闸(issue #429 模拟触发演练,证据标签 simulated_trigger_drill/fixture_contract——以「具名用例+候选供应商」在契约层模拟,不触达任何真实路线供应商,各路径仍保持 open 且默认关闭,#341 既有窄范围不动:触发闸 D39_LIVE_ROUTE_TRIGGER_FIRED 冻结 false+准入注册表冻结空,consultRouteProvider 在触碰 adapter 之前拒绝(fetch spy 零调用)/mock adapter 八故障模式(unavailable·stale·mismatched_direction·mode_relabel·estimate_as_live_traffic·challenge·rate_limited·partial_result)驱动九条合规条款:方向绑定按响应回显校验(非由请求假定)·模式隔离(driving↔transit/rail 任一方向改标即拒)·证据级隔离(估算冒充 live_traffic 即拒,弱级填强承诺同样拒)·新鲜度合同·来源身份+source_sha·故障 fail-closed 无静默降级·静态回退与原价标签逐字保全·路线商永不自任票价权威·故障详情脱敏(响应体/标记/cookie/token/URL 零外泄)/闸自身可证伪:静默接受故障即该条款红、未探测条款不得记 pass、零探测不可准入/对既有 ts/capabilities/ground-transfer.ts 实跑适用条款——七条通过(其中故障详情脱敏是本次修复后才通过:GAP-429-3 产品可达泄漏已修,safeErrorMessage 改走共享 provider-detail-sanitize,历史 400 字符上界与空值文案保留;回归走真实解析路径断言出程·回程·聚合原因与 exposeGroundTransferEvidence 输出均不带 token/cookie/标记,另有五条本来安全的消息逐字原样通过),两条休眠缺口继续钉住 GAP-429-1/2(模式改标被静默丢弃、响应侧 O/D 不校验)且断言消息自带 FLIP 指引;细节与最小复现见 docs/evaluation/trigger-drill-report-contracts.md/模块唯一 import 是纯脱敏器、零网络零缓存零时钟(now 由调用方注入),不耦合 evaluate/solve 内核,合规闸自身产品面零调用方) ==="
 (cd ts && npx tsx scripts/route-provider-conformance-tests.ts) || FAIL=1
 
+echo
+echo "=== 88. dsh-llm 请求级超时与调用方取消(issue #618:chat() 此前既无超时也不收 signal,provider 连上后不应答会让 nightly-evidence/replay-real/persona-sim 无限挂起;现为 AbortSignal.timeout(默认 300000ms,GOTRY_LLM_TIMEOUT_MS 或调用方显式值可改,非正整数忽略,超大值夹到 2^31-1 防 Node 溢出成 1ms)+调用方 signal 经 AbortSignal.any 合并,整段请求含正文读取同受约束;截断落成类型化 LlmRequestError(timeout|aborted,name 取平台既有 TimeoutError|AbortError,message 沿用 llm <kind>: 约定,cause 保留)而非挂起/吞错,非 abort 失败(HTTP 非 2xx/连接被拒/缺 key)原样不改;usage 累计与缺 usage 即成本不可证的 fail-closed 语义不变,截断调用不动 tracker;127.0.0.1 假 provider 夹具(收下连接永不应答/响应头后正文卡死/错误正文卡死/正常应答)+bounded 包装,回退修复时卡死用例只会失败不会挂起;runTurn 与 nightly-evidence 对卡死 provider 抛类型化失败且 nightly 零写入;全离线) ==="
+(cd ts && npx tsx scripts/dsh-llm-tests.ts) || FAIL=1
+
 if [ "$FAIL" -ne 0 ]; then
   echo "REGRESSION FAILED"
   exit 1
