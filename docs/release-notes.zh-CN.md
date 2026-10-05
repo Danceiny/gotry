@@ -13,6 +13,7 @@
 - **M3 种子 cohort 采集 CLI 与 LLM persona 模拟 harness（#22，仅 synthetic）** — 面向受邀且已同意的种子参与者、由操作者驱动的采集路径，写出评分器的 `gotry_m3_cohort_record_v1`（这类记录的首个生产者）；以及在离线或真实 LLM（带预算闸）下预演漏斗的 persona 模拟 harness。模拟运行标记为 `synthetic_fixture`、以 `test_or_staff` 登记，绝不计入 M3/M4 证据；M3 闸不变（仍需经准入的 50–200 名真实种子用户）。
 - **休眠触发式追踪单的模拟触发演练（#82、#275、#422、#340、#339、#429；夹具层面，追踪单保持开放）** — 为成交结果↔规划估算投影（#340）、城市×场景分级（注册表为空，#339）与路线供应商合规闸（#429）新增默认关闭、零调用方的契约机制；为惰性的 W2A sensor 路径（#82）、租户账本上的并发写者／崩溃重开／在线备份（#275）以及 `0.2.0-rc.2` 上的 dsh SDK 后代清理再基线（#422，缺口得到确认）新增演练套件；并为外部 Anything 路径（#276／#345）新增 opt-in 的只读测量探针。所有结果都标注为 `simulated_trigger_drill` 或 `fixture_contract`，没有一项满足任何触发条件。
 - **供应商故障详情进入工具结果前先被清洗（#429）** — 接驳供应商的错误文本（标记、凭据形状字符串）不再原样流入 `transfer_evidence`；固定的 `GROUND_TRANSFER_*` 文案按字节原样通过。已准入路径上另有两处契约缺口（响应侧的模式与方向绑定）已记录、待裁决。
+- **发布脚本以 `--verify-tag` 创建 GitHub Release** — `scripts/publish-npm.sh` 把 tag 名传给 `gh release create --target`，GitHub 以 HTTP 422（`target_commitish is invalid`）拒收：rc.27 在 npm 上发布成功，但 Release 步骤失败、只能手动补建。`--verify-tag` 在远端缺 tag 时直接中止，而不是悄悄在 `main` 上新建一个 tag。
 
 ---
 
