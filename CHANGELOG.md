@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-rc.28] - 2026-10-05
+
+### Added
+
+- cohort capture CLI + synthetic-only LLM persona simulation harness (#22)… (#614)
+- session dual-zone memory P4-2..P4-4… (#613)
+
+### Fixed
+
+- cross-process contention must not reach the caller as a raw SQLITE_BUSY… (#634)
+- a solver crash is reported as solver_error, not as an infeasible trip — Z3 integer-input gate… (#633)
+- GOTRY_HBCLI_LIVE=0 switches the realtime hbcli channel off… (#632)
+- dsh-llm chat() gets a request-level timeout and honours a caller AbortSignal… (#631)
+- refuse a provider answer that contradicts its own mode or resolved origin/destination instead of binding it (#429 GAP-42… (#630)
+- the boot-budget proof needs an early-fire tolerance on the 10 s handshake deadline (Node 22 CI measured 9999 ms)… (#629)
+- exempt CHANGELOG.md from the G5 guard's naming surfaces… (#628)
+- the CLI judges hbcli credentials from the whoami JSON, not its exit code… (#626)
+- create the GitHub Release with --verify-tag… (#625)
+- publish the warmer-proof gate marker atomically; the proof JSON.parses each marker as soon as the directory lists it, so… (#616)
+- settle the hbcli stdout probe on 'close', not 'exit'… (#622)
+
+### Documentation
+
+- eight dormant trigger-watch issues are closed as deferred… (#627)
+- rc.27 is published and pulled back… (#624)
+
+### Tests
+
+- simulated-trigger drills for the dormant trackers + GAP-429-3 provider-fault scrub (#82 #275 #422 #340 #339 #429 #276 #3… (#615)
+
 ## [0.2.0-rc.27] - 2026-10-04
 
 ### Added
