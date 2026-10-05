@@ -3,13 +3,13 @@
 # 触发演练报告：核心休眠跟踪单
 
 > 定位：记录模拟外部触发对 #82、#275、#422 三个休眠跟踪单的激活机制证明了什么、又没有证明什么。
-> 状态：living（2026-10-04）。仅模拟触发演练；三个跟踪单全部保持开启。
+> 状态：living（2026-10-05）。仅模拟触发演练。三个核心演练跟踪单 #82、#275、#422 已于 2026-10-05 以 deferred 关闭，不是完成——真实触发出现时另开新 issue。
 > 上游：[#82](https://github.com/Danceiny/gotry/issues/82)、[#275](https://github.com/Danceiny/gotry/issues/275)、[#422](https://github.com/Danceiny/gotry/issues/422)；[架构](../architecture.zh-CN.md) D-15 行与第 10 节；[外部事件接缝](../design/external-event-seam.zh-CN.md)；[回调方决策模板](../design/callback-party-decision-template.zh-CN.md)；[事务化状态 RFC](../rfc/transactional-state-rfc.zh-CN.md)。
 > 下游：D-15 与 D-31 决策面；run-all §81、§82、§83 的审查者。
 
 ## 证据边界
 
-**模拟触发不是真实触发。** 本文每一项结果在测试套件内部都带 `simulated_trigger_drill` ／ `synthetic` 标签。演练的目的是在真实触发到来之前先把激活路径跑通，它们**不**满足任何跟踪单的触发条件，**不**构成真实回调方、真实用户或真实供应商证据，也**不**改变任何准入闸。三个跟踪单全部保持开启。
+**模拟触发不是真实触发。** 本文每一项结果在测试套件内部都带 `simulated_trigger_drill` ／ `synthetic` 标签。演练的目的是在真实触发到来之前先把激活路径跑通，它们**不**满足任何跟踪单的触发条件，**不**构成真实回调方、真实用户或真实供应商证据，也**不**改变任何准入闸。三个跟踪单已于 2026-10-05 以 deferred 关闭，不是完成；真实触发需要另开新 issue。
 
 这里算证据的东西：真实的 OS 子进程、`mkdtemp` 根上的真实 SQLite 文件、真实安装的 dsh SDK dispose 路径、真实的 `bin/gotry-process-liveness.js` 清理面、`ps` 给出的真实进程表事实，以及 OS 级的 Node 权限模型。
 
@@ -47,7 +47,7 @@
 
 ## 演练 2——issue #275 D-15 第二用户与多写者
 
-套件：`ts/scripts/drill-multiuser-ledger-tests.ts`，登记为 run-all §82。记录那次运行的结果：退出码 0，223 条断言通过（条数随主机产生的争用量变化，因为 liveness 分支只在被走到时才追加断言）。`ts/src/state-ledger.ts` 全程只读。
+套件：`ts/scripts/drill-multiuser-ledger-tests.ts`，登记为 run-all §82。D15 修复之后记录那次运行的结果：退出码 0，240 条断言通过（条数随主机产生的争用量变化，因为 liveness 分支只在被走到时才追加断言）。本次演练不再是「`ts/src/state-ledger.ts` 全程只读」：创始人在 2026-10-05 决定修掉演练发现的两处缺陷，因此内核文件有改动，演练的 D15 期望也翻转为硬断言。
 
 安全面与活性面是刻意分开的。设门的断言是任何主机、任何速度下都必须成立的那些：`integrity_check`、无重复 `(tenant_id, idem_key)`、账本恰好持有 worker 自认写入的那些行、覆盖每次尝试的记账恒等式、租户隔离，以及带非空行数的 fold 等于直读。慢速共享 runner 能跑完多少次尝试、看到哪些 SQLite 争用码，属于活性面，只经观察行上报、绝不设门——一条休眠且未准入的路径不该有能力把回归搞红。失败码按已知争用码集合校验而不钉死到某个字面量，因此集合之外的码仍会被读作新的失败模式。
 
@@ -67,7 +67,7 @@
 
 ### 演练实际跑了什么
 
-- **冷开竞争（A0）。** 三轮、每轮六个进程、无发令枪地打开同一个全新账本。安全面每次都成立：`integrity_check` ok、无重复幂等键、fold 重建等于直读、至少一个进程建成账本。
+- **冷开竞争（A0、A0b、A0c）。** 三轮、每轮六个进程、无发令枪地打开同一个全新账本。安全面每次都成立：`integrity_check` ok、无重复幂等键、fold 重建等于直读。D15-1 修复之后 liveness 一侧也改为硬断言：18 个进程全部打开成功，唯一准入的失败形状是典型化的 `LedgerBusyError`。两条确定性分支取代了靠时序运气的部分——起跑枪控制的打开撞上以回滚日志模式持有、400 毫秒后释放的写锁，必须成功（A0b）；同样的打开撞上始终不释放的锁，必须以典型化错误放弃（A0c）。
 - **N 并发写者（A）。** 每租户三个 worker 进程，分单租户与双租户两组，跑在已预建的账本文件上。追加式事件面：每个不同幂等键在每租户恰落一次，`(tenant_id, idem_key)` 从未出现两次，每次尝试都是插入或去重且零错误，每个租户恰好拥有并且只读到自己的行。读—改—写产品面（`appendWish` 共用同一愿望名）：每租户恰一次 `added`、其余转为更新，每租户一行投影且用稳定的名称派生 id，`integrity_check` ok，fold 等于直读。
 - **崩溃演练（B）。** 经账本公开面构造的单事务内四个具名崩点，各两轮，每一次都是真实 `SIGKILL`：`before-transaction`、`after-event-insert`、`after-projection-write`、`after-commit`。三个提交前崩点下零事件、零投影行存活；`after-commit` 下各恰好存活一条。另加三次产品写路径上的定时变化 kill（确定性种子），之后已提交的 `wish.added` 条数始终等于投影行数，fold 始终等于直读。
 - **带 fencing 的陈旧 claim（C）。** 四个 dispatcher 进程竞争同一条 queued outbox 意图：恰一个赢家、三个被封闭集原因拒绝、一行 outbox 处于 `dispatching`、一个不可变 `attempt_id`、一条领取事件、输家零写。赢家之后陈旧 dispatcher 重试被 `not-claimable` 拒绝；租约过期不让意图重新可领；直接 SQL 把状态改回 `queued` 被存储层 forward-only 触发器拒绝（不是应用层判断）；tenant-b 用同一 `idem_key` 领取得到 `missing-intent`。
@@ -75,7 +75,11 @@
 
 ### 发现的缺陷
 
-**缺陷 D15-1（真实、已上报、未修复）：并发首次打开全新账本会从 `openDb` 抛出未分类的 `SQLITE_BUSY`。**
+**缺陷 D15-1（2026-10-05 已修复，创始人决策）：并发首次打开全新账本曾从 `openDb` 抛出未分类的 `SQLITE_BUSY`。**
+
+**修法。** `openDb` 现在把 `busy_timeout` 装在任何可争用语句之前（含 WAL 切换）；`journal_mode = WAL` 切换对争用码有界重试，并在每次尝试前回看是否已被别的进程切好；版本探测与建表／迁移合并进同一个 `BEGIN IMMEDIATE` 事务，不再在事务外探测版本。两处打开路径的重试都按墙钟封顶，唯一剩下的失败出口是典型化的 `LedgerBusyError`（`code: 'GOTRY_LEDGER_BUSY'`，底层 SQLite 码保留在 `sqliteCode` 与 `cause` 里）。schema 已是终态的再次打开完全不取写锁，顺带去掉了「每次 open 都写一次 `kv`」这个让冷启动窗口更密的争用源。演练的期望已翻转并改为硬断言：18 个进程全部打开成功，任何失败都必须是那个典型化错误。另加两条确定性分支——起跑枪控制的子进程在别的进程以回滚日志模式持写锁期间打开，必须等待并成功（A0b）；同一竞态但锁始终不释放，必须以典型化错误失败（A0c）。只把 `ts/src/state-ledger.ts` 回退到修复前的版本，A0-6、A0-7、A0b、A0c 立刻变红（18 次只开成 9 次，裸 `SQLITE_BUSY` 落在 `state-ledger.ts:708` 与 `:745`）。
+
+以下保留当初记录的缺陷原文，作为审计留痕：
 
 最小复现：跑 `ts/scripts/drill-multiuser-ledger-tests.ts` 的 A0 节，或派六个进程各自无协调地调用 `openDb(freshStateRoot, 'local')`。跨多次运行观察到：18 个进程中有 1 到 5 个失败，错误码恒为 `SQLITE_BUSY`，落在 `ts/src/state-ledger.ts` `openDb` 内两个调用点——`pragma('journal_mode = WAL')` 与 schema 迁移事务里的 `db.exec(SCHEMA)`。调用方拿到的是裸 SQLite 错误而非类型化拒绝，且不做任何重试。
 
@@ -83,11 +87,13 @@
 
 失败码并不是单一字面量。连续三次运行分别记录 18 个进程中成功打开 7、8、11 个，其中两次除 `SQLITE_BUSY` 外还产生了 `SQLITE_BUSY_SNAPSHOT`。本套件的早期版本把该码钉死为仅 `SQLITE_BUSY`，在那三次里会有两次变红——这正是现在改为接受已知争用码集合、并把与记录基线的偏离上报而不是据此失败的原因。
 
-分类：这是 D-15 的决策输入，不是主干回归。D-15 明确多写者路径未准入，ADR-16 给的是单账本 owner 语义，所以单写者产品形态根本碰不到这条竞争。`ts/src/state-ledger.ts` 属内核冻结，演练不碰它；缓解手段（串行化首次打开，或把 `busy_timeout` 放在 `journal_mode` 之前）归 D-15 决策。演练用带明确翻转提示的方式钉死失败码，而不是把回归搞红——在一条休眠且未准入的路径上亮红灯只会阻塞整合者，保护不了任何已准入契约。
+当时的分类：D-15 的决策输入，不是主干回归——D-15 明确多写者路径未准入，ADR-16 给的是单账本 owner 语义，所以单写者产品形态根本碰不到这条竞争。创始人在 2026-10-05 决定照样修：同一形状在演练之外也被撞到（issue #619），而且修复只改变争用路径上的行为。`ts/src/state-ledger.ts` 属内核冻结，因此同一笔改动里把冻结清单 `ts/data/kernel-manifest.json` 按新文件哈希重钉。
 
-**缺陷 D15-2（真实、已上报、未修复）：读—改—写产品路径需要账本并不提供的调用方重试循环。**
+**缺陷 D15-2（2026-10-05 已修复，创始人决策）：读—改—写产品路径曾需要账本并不提供的调用方重试循环。**
 
-`appendWish` 跑的是 DEFERRED 读—改—写事务，因此跨进程争用会把裸 `SQLITE_BUSY` 与 `SQLITE_BUSY_SNAPSHOT` 抛给调用方。本次演练中六个进程需要 6 到 9 次调用方重试才完成 12 次尝试；在没有重试循环的早期运行里，6 次中 2 次、12 次中 8 次未能恢复。安全面始终成立——`integrity_check` ok、每租户一行愿望、fold 等于直读——但既没有类型化拒绝也没有内建重试。分类同 D15-1：D-15 设计输入，单写者形态不受影响。
+当初记录的事实：`appendWish` 跑的是 DEFERRED 读—改—写事务，因此跨进程争用会把裸 `SQLITE_BUSY` 与 `SQLITE_BUSY_SNAPSHOT` 抛给调用方。本次演练中六个进程需要 6 到 9 次调用方重试才完成 12 次尝试；在没有重试循环的早期运行里，6 次中 2 次、12 次中 8 次未能恢复。安全面始终成立——`integrity_check` ok、每租户一行愿望、fold 等于直读——但既没有类型化拒绝也没有内建重试。
+
+**修法。** 根因是：第一条语句为读的 DEFERRED 事务只取读快照，等到要写时 SQLite 无法升级过期快照，于是**立即**返回 `SQLITE_BUSY_SNAPSHOT` 且**根本不调用 busy handler**——`busy_timeout` 在这条路径上完全无效。账本的全部事务按同一条判据审计了一遍：第一条语句是不是 `SELECT`。六条先读后写的（`appendMotivationPatch`、`appendWish`、`appendTripEvent`、`appendCompanion`、`confirmOutcome`，以及旧数据导入事务）现在统一经一个带有界争用重试的助手跑 `BEGIN IMMEDIATE`；八条先写的（`appendUtilityEvent`、`rebuildProjections`、`createWorkflowRun`、`finishWorkflowRun`、`requestPendingWrite`、`confirmPendingWrite`、`compensatePendingWrite`、`forgetSubject`）第一条语句就拿到写锁，故意保持 DEFERRED，审计表记在源码里。演练保留调用方重试循环，但只作为**量具**，并把次数硬断言为零；只回退账本文件，该断言立刻变红：单租户 6 次尝试里 3 次重试，双租户 12 次尝试里 10 次重试。
 
 **观察，不是缺陷：fencing token 的单调性是空洞的。** forward-only 的派发状态触发器让第二次领取不可能发生，因此今天观察不到任何大于 1 的 `fencing_token`。设计文档所称的单调递增性质在当前形态下不可测；真正能第一次检验它的是跨机租约交接。
 

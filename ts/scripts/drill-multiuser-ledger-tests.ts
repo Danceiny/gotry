@@ -7,17 +7,28 @@
  *   processes on an mkdtemp root are NOT a second real user, NOT a multi-machine
  *   deployment and NOT an approved AaaS initiative. Issue #275's own acceptance
  *   text says "fixtures do not count as production rollout evidence", so nothing
- *   here satisfies the trigger: #275 stays open and this file enables no
- *   replication and no multi-writer path. What the drill proves is that the
+ *   here satisfies the trigger: tracking issue #275 was closed on 2026-10-05 as
+ *   DEFERRED (not completed — open a new issue when the trigger appears), and
+ *   this file enables no replication and no multi-writer path. What the drill proves is that the
  *   machinery that already exists holds its SAFETY invariants when a
  *   multi-writer trigger is simulated, and it pins exactly where the
  *   unadmitted path degrades.
  *
  * Sections:
  *   A0  cold-open race: N processes opening a FRESH ledger simultaneously.
- *       This is where the drill found a real defect — see the pinned
- *       observation and the report. `src/state-ledger.ts` is kernel-pinned, so
- *       the drill records the defect and does not fix it.
+ *       This is where the drill found defect D15-1. The founder decided to fix
+ *       it on 2026-10-05, so the expectation here is FLIPPED: every opener must
+ *       now succeed, and the only admitted failure is the typed
+ *       `LedgerBusyError` (`code: 'GOTRY_LEDGER_BUSY'`). A raw `SQLITE_BUSY*`
+ *       out of `openDb` is a REGRESSION, not a host-timing fact.
+ *   A0b deterministic D15-1 regression: a start-gunned child opens a fresh
+ *       ledger exactly while another process holds a write lock in
+ *       rollback-journal mode, so the child's `journal_mode = WAL` switch must
+ *       wait. Before the fix `busy_timeout` was installed AFTER that switch and
+ *       the child threw a raw SQLITE_BUSY with no retry; now it waits and wins.
+ *   A0c deterministic exhaustion: the same race with the lock never released
+ *       inside the open budget. The open must fail with the TYPED error — this
+ *       is the one admitted failure shape, and it is asserted, not observed.
  *   A   N processes appending concurrently to ONE tenant and to TWO tenants:
  *       idem-key dedupe, no lost updates, tenant isolation, integrity_check
  *   B   SIGKILL at named crash points inside one transaction, plus
@@ -282,6 +293,43 @@ console.log(JSON.stringify({ workerId: process.env.WORKER_ID, outcome }))
 `
 
 /**
+ * A0b/A0c worker: start-gunned cold open against a ledger whose write lock is
+ * held by the parent. Deterministic by construction — the child reports ready
+ * BEFORE the parent takes the lock, and only opens after the start gun, so the
+ * open is guaranteed to land inside the contended window.
+ *
+ * It reports the error SHAPE, which is the whole point of the D15-1 flip: a
+ * typed `LedgerBusyError` (name + `code: 'GOTRY_LEDGER_BUSY'`) is admitted, a
+ * raw SQLite code out of `openDb` is not.
+ */
+const BLOCKED_OPEN_WORKER = `
+import { writeFileSync, existsSync } from 'node:fs'
+const { openDb } = await import(process.env.STATE_LEDGER_URL)
+
+writeFileSync(process.env.READY_PATH, 'ready')
+while (!existsSync(process.env.GO_PATH)) await new Promise((r) => setTimeout(r, 2))
+
+const started = Date.now()
+let outcome
+try {
+  const ledger = openDb(process.env.STATE_ROOT, 'local')
+  ledger.insertEvent({ actor: 'drill:blocked', kind: 'drill.blocked', payload: {}, idemKey: 'blocked:open' })
+  const journal = String(ledger.db.pragma('journal_mode', { simple: true }) ?? '')
+  ledger.close()
+  outcome = { ok: true, journal }
+} catch (error) {
+  outcome = {
+    ok: false,
+    name: error?.name ?? 'unknown',
+    code: error?.code ?? 'unknown',
+    sqliteCode: error?.sqliteCode ?? null,
+    attempts: error?.attempts ?? null,
+  }
+}
+console.log(JSON.stringify({ outcome, elapsedMs: Date.now() - started }))
+`
+
+/**
  * A worker. `MODE=append` hammers the append-only event face with an
  * overlapping idem-key set; `MODE=wish` hammers the read-modify-write product
  * path with one shared wish name, retrying a bounded number of times on SQLite
@@ -440,12 +488,14 @@ const workRoot = realpathSync(mkdtempSync(join(tmpdir(), 'gotry-drill-d15-')))
 
 try {
   const coldOpenWorker = join(workRoot, 'cold-open-worker.mts')
+  const blockedOpenWorker = join(workRoot, 'blocked-open-worker.mts')
   const appendWorker = join(workRoot, 'append-worker.mts')
   const crashWorker = join(workRoot, 'crash-worker.mts')
   const productWorker = join(workRoot, 'product-write-worker.mts')
   const claimWorker = join(workRoot, 'claim-worker.mts')
   const loadWorker = join(workRoot, 'load-worker.mts')
   writeFileSync(coldOpenWorker, COLD_OPEN_WORKER)
+  writeFileSync(blockedOpenWorker, BLOCKED_OPEN_WORKER)
   writeFileSync(appendWorker, APPEND_WORKER)
   writeFileSync(crashWorker, CRASH_WORKER)
   writeFileSync(productWorker, PRODUCT_WRITE_WORKER)
@@ -500,28 +550,89 @@ try {
       }
     }
 
-    // The DEFECT is reported through observe(), not through a hard assertion:
-    // which processes lose the cold-open race, and with which SQLite code, is
-    // host-timing dependent (0 to 9 of 18 across local runs). Pinning the code
-    // identity would make a dormant, unadmitted path flake red on a slow CI
-    // runner. The assertions that DO gate are the safety ones above
-    // (integrity_check, no duplicate idem key, fold == direct read with a
-    // non-vacuous row count, at least one successful create).
+    // FLIPPED 2026-10-05 (D15-1 fixed, founder decision). Before the fix this
+    // block only observed the defect, because WHICH process lost the cold-open
+    // race was host-timing dependent (0 to 9 of 18 across local runs) and a raw
+    // SQLITE_BUSY was the recorded baseline. `openDb` now installs
+    // `busy_timeout` before anything contendable, retries the WAL switch and the
+    // schema transaction under a wall-clock budget, and takes the schema lock
+    // with BEGIN IMMEDIATE, so a lost race is no longer an outcome: it is either
+    // a successful open or, if the whole budget is exhausted, the TYPED
+    // `LedgerBusyError`. Both halves below are therefore GATED.
+    //
+    // IF THIS FLIPS BACK (a raw SQLITE_BUSY* reappears out of openDb), the fix
+    // has regressed — do not re-soften this to an observation. The ordering
+    // (`busy_timeout` first) and the IMMEDIATE schema transaction in
+    // `src/state-ledger.ts openDb` are what make it hold.
     const distinctCodes = [...new Set(allCodes)].sort()
-    const CONTENTION_CODES = ['SQLITE_BUSY', 'SQLITE_BUSY_SNAPSHOT', 'SQLITE_CANTOPEN', 'SQLITE_PROTOCOL', 'SQLITE_IOERR_SHMOPEN']
     observe(`A0 cold-open race, ${ROUNDS} rounds x ${WORKERS} processes on a fresh root: ${totalSucceeded}/${totalWorkers} opened successfully, ${allCodes.length} raised ${JSON.stringify(distinctCodes)} out of openDb`)
-    if (allCodes.length > 0) {
-      ok(
-        distinctCodes.every((c) => CONTENTION_CODES.includes(String(c))),
-        `A0-6 every cold-open failure is a known SQLite contention code (observed ${JSON.stringify(distinctCodes)}, allowed ${JSON.stringify(CONTENTION_CODES)}). A code outside this set would be a NEW failure mode and must be investigated, not a timing difference.`,
-      )
-      if (!distinctCodes.every((c) => c === 'SQLITE_BUSY')) {
-        observe(`A0 the failure-code mix differs from the recorded baseline ["SQLITE_BUSY"]: ${JSON.stringify(distinctCodes)}. IF THIS FLIPS, the D-15 premise may have changed — re-read the defect note below before trusting it.`)
+    eq(totalSucceeded, totalWorkers, `A0-6 every cold-open process opened the fresh ledger (${totalSucceeded}/${totalWorkers}); failures=${JSON.stringify(distinctCodes)} callsites=${JSON.stringify([...callsites])}`)
+    ok(
+      distinctCodes.every((c) => String(c) === 'GOTRY_LEDGER_BUSY'),
+      `A0-7 the only admitted cold-open failure is the typed LedgerBusyError (observed ${JSON.stringify(distinctCodes)}). A raw SQLITE_BUSY/SQLITE_BUSY_SNAPSHOT here is the D15-1 regression, not a timing difference.`,
+    )
+  }
+
+  // ---- A0b/A0c: deterministic D15-1 regression, no timing luck ------------
+  console.log('-- A0b/A0c deterministic cold open against a held write lock')
+  {
+    /**
+     * Run one start-gunned cold open while the parent holds a write lock.
+     *
+     * The ledger file is created here in ROLLBACK-JOURNAL mode on purpose: that
+     * forces the child's `openDb` to perform the `journal_mode = WAL` switch,
+     * which needs an exclusive lock, which is exactly the statement that threw
+     * a raw SQLITE_BUSY before the fix (it ran before `busy_timeout` existed).
+     * `holdMs = null` means "never release inside the open budget".
+     */
+    const openUnderHeldLock = async (label: string, holdMs: number | null): Promise<{ outcome: { ok: boolean; name?: string; code?: string; sqliteCode?: string | null; journal?: string }; elapsedMs: number } | null> => {
+      const stateRoot = realpathSync(mkdtempSync(join(workRoot, `held-lock-${label}-`)))
+      mkdirSync(join(stateRoot, 'gotry-state'), { recursive: true })
+      const dbPath = join(stateRoot, 'gotry-state', 'gotry-state.db')
+      const holder = new Database(dbPath)
+      holder.pragma('journal_mode = delete')
+      holder.exec('CREATE TABLE IF NOT EXISTS drill_lock_holder (x)')
+      const readyPath = join(stateRoot, 'ready')
+      const goPath = join(stateRoot, 'go')
+      const started = startChild(blockedOpenWorker, { STATE_LEDGER_URL, STATE_ROOT: stateRoot, READY_PATH: readyPath, GO_PATH: goPath })
+      let locked = false
+      try {
+        ok(await waitForReady(readyPath, 9_000, [started.child]), `${label} the opener reached the start gun before the lock was taken`)
+        holder.exec('BEGIN IMMEDIATE')
+        locked = true
+        writeFileSync(goPath, 'go')
+        if (holdMs !== null) {
+          await sleep(holdMs)
+          holder.exec('ROLLBACK')
+          locked = false
+        }
+        const run = await started.done
+        eq(run.timedOut, false, `${label} the opener finished inside its bound (stderr=${run.stderr.slice(-200)})`)
+        return lastJsonLine<{ outcome: { ok: boolean; name?: string; code?: string; sqliteCode?: string | null; journal?: string }; elapsedMs: number }>(run)
+      } finally {
+        started.reap()
+        if (locked) { try { holder.exec('ROLLBACK') } catch { /* already rolled back */ } }
+        holder.close()
       }
-      observe(`A0 DEFECT (real, reported, NOT fixed here): a concurrent FIRST open of the same fresh ledger throws an untyped SQLITE_BUSY straight out of openDb — not a typed rejection and with no retry. Observed callsites: ${JSON.stringify([...callsites])}. Contributing ordering fact in src/state-ledger.ts openDb: 'pragma journal_mode = WAL' runs BEFORE 'pragma busy_timeout = 5000', so the exclusive lock the WAL switch takes is held while the other connections have no busy handler installed yet. state-ledger.ts is kernel-pinned; the mitigation (serialize first open, or set busy_timeout first) belongs to the D-15 decision.`)
-    } else {
-      observe('A0 PINNED: this run observed no cold-open failure. The race is host-timing dependent; a run that does observe SQLITE_BUSY out of openDb is the real signal and the D-15 decision must treat it as real.')
     }
+
+    // A0b: the lock is released well inside the open budget -> the open must win.
+    const released = await openUnderHeldLock('A0b', 400)
+    ok(released !== null, 'A0b the opener reported an outcome')
+    eq(released?.outcome.ok, true, `A0b SAFETY+LIVENESS a cold open that starts while another process holds the write lock now waits and succeeds (outcome=${JSON.stringify(released?.outcome)}). Before the fix this threw a raw SQLITE_BUSY out of pragma('journal_mode = WAL') because busy_timeout was installed after it.`)
+    eq(String(released?.outcome.journal ?? '').toLowerCase(), 'wal', 'A0b the opener really completed the WAL switch it had to wait for')
+
+    // A0c: the lock is never released -> the ONE admitted failure shape.
+    const exhausted = await openUnderHeldLock('A0c', null)
+    ok(exhausted !== null, 'A0c the opener reported an outcome')
+    eq(exhausted?.outcome.ok, false, `A0c with the write lock never released, the open must not claim success (outcome=${JSON.stringify(exhausted?.outcome)})`)
+    eq(exhausted?.outcome.name, 'LedgerBusyError', `A0c exhaustion surfaces the TYPED error, not a raw SQLite error (name=${JSON.stringify(exhausted?.outcome.name)})`)
+    eq(exhausted?.outcome.code, 'GOTRY_LEDGER_BUSY', `A0c the typed error carries the stable code (code=${JSON.stringify(exhausted?.outcome.code)})`)
+    ok(
+      typeof exhausted?.outcome.sqliteCode === 'string' && /^SQLITE_(BUSY|PROTOCOL)/.test(exhausted.outcome.sqliteCode),
+      `A0c the typed error keeps the underlying SQLite code for diagnosis (sqliteCode=${JSON.stringify(exhausted?.outcome.sqliteCode)})`,
+    )
+    observe(`A0b/A0c deterministic held-lock opens: released-at-400ms open succeeded in ${released?.elapsedMs}ms; never-released open gave up with the typed error in ${exhausted?.elapsedMs}ms`)
   }
 
   // ---- A: N concurrent writers, one tenant and two tenants ----------------
@@ -639,9 +750,16 @@ try {
       ok(onlyContention(wishTotals.errors), `${label} SAFETY any unrecovered wish failure is a known SQLite contention code (codes=${JSON.stringify(wishTotals.errors)})`)
       ok(wishTotals.added <= tenants.length, `${label} SAFETY at most one "added" per tenant — the rest must see the existing row (${wishTotals.added} <= ${tenants.length})`)
       eq(inspect(dbPath).integrity, 'ok', `${label} SAFETY integrity_check still ok after the read-modify-write batch`)
-      if (wishErrors > 0) {
-        observe(`${label} LIVENESS the read-modify-write face left ${wishErrors} attempts unrecovered after bounded retry ${JSON.stringify(wishTotals.errors)}; that is the unadmitted path degrading, reported not gated`)
-      }
+      // FLIPPED 2026-10-05 (D15-2 fixed, founder decision). `appendWish` and the
+      // other read-first ledger transactions now run BEGIN IMMEDIATE, so the
+      // read-then-upgrade shape that returned SQLITE_BUSY_SNAPSHOT *without ever
+      // calling the busy handler* no longer exists; contention becomes a
+      // busy-handler wait, with a bounded in-ledger retry behind it. The worker
+      // keeps its caller-side retry loop purely as an INSTRUMENT: it now has to
+      // count zero. Before the fix six processes needed 6 to 9 retries to finish
+      // 12 attempts, and an earlier run left 8 of 12 unrecovered.
+      eq(wishTotals.errors ? Object.keys(wishTotals.errors).length : 0, 0, `${label} D15-2 the read-modify-write face leaves nothing unrecovered (${wishErrors} errors ${JSON.stringify(wishTotals.errors)})`)
+      eq(wishTotals.retries, 0, `${label} D15-2 the read-modify-write face needs ZERO caller-side retries now that the ledger takes the write lock up front (${wishTotals.retries} retries over ${wishTotals.attempts} attempts). IF THIS FLIPS BACK, a read-first ledger transaction lost its .immediate() — see the transaction audit table above runWrite in src/state-ledger.ts.`)
 
       for (const tenant of tenants) {
         const ledger = openDb(stateRoot, tenant)
@@ -666,9 +784,6 @@ try {
       eq(aFold.events, inspect(dbPath).events, `${label} the fold copy saw the same event count as the in-place read (not a vacuous comparison)`)
       observe(`${label} append-only face, ${WORKERS * tenants.length} processes: ${appendTotals.inserted} inserted, ${appendTotals.deduped} deduped, ${appendErrors} errors`)
       observe(`${label} read-modify-write face, ${WORKERS * tenants.length} processes: ${wishTotals.added} added, ${wishTotals.updated} updated, ${wishTotals.retries} caller-side retries needed on SQLITE_BUSY/SQLITE_BUSY_SNAPSHOT, ${wishErrors} unrecovered`)
-      if (wishTotals.retries > 0) {
-        observe(`${label} UNADMITTED-PATH DEGRADATION: appendWish runs a DEFERRED read-modify-write transaction, so cross-process contention surfaces raw SQLite codes to the caller and only a caller-side retry loop completes it. The ledger offers no such retry and no typed rejection. Safety held; this is a D-15 design input, not a main regression (single-writer is the admitted form).`)
-      }
     }
   }
 
@@ -823,7 +938,7 @@ try {
       )
       const threwLosers = loserReasons.filter((r) => r.startsWith('threw:'))
       if (threwLosers.length > 0) {
-        observe(`C LIVENESS ${threwLosers.length} of ${WORKERS - 1} losers surfaced a raw SQLite code instead of a typed verdict ${JSON.stringify(threwLosers)} — the IMMEDIATE claim transaction exhausted its busy timeout. Correctness held (exactly one claim row and one claim event below); this is the same D-15 class as the appendWish finding.`)
+        observe(`C LIVENESS ${threwLosers.length} of ${WORKERS - 1} losers surfaced a raw SQLite code instead of a typed verdict ${JSON.stringify(threwLosers)} — the IMMEDIATE claim transaction exhausted its busy timeout. Correctness held (exactly one claim row and one claim event below). claimForDispatch already takes the write lock up front, so this is pure busy-timeout exhaustion in write-gate.ts, not the D15-2 read-then-upgrade shape that was fixed in the ledger.`)
       }
       eq(winners[0]?.verdict.fencing_token, 1, 'C6 the winner persisted a fencing token before any outbound call')
       ok(typeof winners[0]?.verdict.attempt_id === 'string', 'C7 the winner persisted an immutable attempt_id')
@@ -962,8 +1077,9 @@ console.log(`\nDRILL #275 MULTI-WRITER (${DRILL_LABEL}): ${pass} ok, ${failures.
 console.log('OBSERVATIONS (facts, not acceptance):')
 for (const line of observations) console.log(`  - ${line}`)
 console.log('EVIDENCE BOUNDARY: mkdtemp fixtures and synthetic workers only. No second real user,')
-console.log('no multi-machine deployment, no AaaS initiative. Issue #275 stays open; no replication')
-console.log('or multi-writer path is enabled by this drill.')
+console.log('no multi-machine deployment, no AaaS initiative. Tracking issue #275 was closed on')
+console.log('2026-10-05 as deferred, not completed; no replication or multi-writer path is enabled by')
+console.log('this drill. The D15-1/D15-2 ledger defects it found ARE fixed and are gated above.')
 if (failures.length > 0) {
   console.error(`\n${failures.length} FAILURE(S):`)
   for (const failure of failures) console.error(`  - ${failure}`)
