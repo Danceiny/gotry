@@ -209,13 +209,15 @@ jobs:
 
       # 回拉:registry 里的字节 == gate 打出来的那份,再在干净环境里跑 doctor / 插件加载 / web 启动 / 一次性运行。
       # registry 在发布后约 4 分钟才可见,脚本会轮询。
+      # 回执记下这次运行的地址(publishedBy):发布后文档据此写「由哪次工作流运行发布」,而不是点击路径的命令。
       - name: Pull the version back from the registry
         env:
           DIST_TAG: ${{ inputs.dist_tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           cp bundle/.release-expected.json .release-expected.json
-          node scripts/verify-published.mjs --tag "$DIST_TAG" --wait 900
+          node scripts/verify-published.mjs --tag "$DIST_TAG" --wait 900 --published-by workflow --run-url "$RUN_URL"
 
       - name: Upload the pull-back receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

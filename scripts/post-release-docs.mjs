@@ -15,22 +15,27 @@
  * The baseline files describe the `latest` dist-tag, so only a release published to `latest` touches them;
  * any other dist-tag only gets its release-notes section. Idempotent: a second run changes nothing.
  *
+ * The Published sentence names the route the receipt records (`publishedBy`): the click path's command, or the
+ * npm-publish.yml run that published. A receipt written before that field existed is read as the click path, so for a
+ * workflow release it needs the override: --published-by workflow --run-url <the run's URL>.
+ *
  * Usage:
  *   node scripts/post-release-docs.mjs [--receipt <path>] [--root <dir>] [--date YYYY-MM-DD] [--check]
+ *        [--published-by script|workflow --run-url <https://github.com/<owner>/<repo>/actions/runs/<id>>]
  * --check writes nothing and exits 1 when the docs are not yet up to date with the receipt.
  * Exit: 0 done / up to date; 1 a doc shape was not recognised (nothing written) or --check found work; 2 usage.
  */
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { UsageError, VERIFIED_FILE, compareSemver, isMain } from './release-lib.mjs'
+import { UsageError, VERIFIED_FILE, compareSemver, isMain, publishRoute } from './release-lib.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO_URL = 'https://github.com/Danceiny/gotry'
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 export function parseArgs(argv) {
-  const opts = { receipt: '', root: ROOT, date: '', check: false }
+  const opts = { receipt: '', root: ROOT, date: '', check: false, publishedBy: '', runUrl: '' }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     const value = () => {
@@ -42,10 +47,14 @@ export function parseArgs(argv) {
     else if (a === '--root') opts.root = resolve(value())
     else if (a === '--date') opts.date = value()
     else if (a === '--check') opts.check = true
+    else if (a === '--published-by') opts.publishedBy = value()
+    else if (a === '--run-url') opts.runUrl = value()
     else if (a === '-h' || a === '--help') throw new UsageError('')
     else throw new UsageError(`unknown argument ${a}`)
   }
   if (opts.date && !/^\d{4}-\d{2}-\d{2}$/.test(opts.date)) throw new UsageError('--date must be YYYY-MM-DD')
+  // a run URL alone is refused too: the override is explicit about the route it names
+  if (opts.publishedBy || opts.runUrl) publishRoute(opts.publishedBy, opts.runUrl)
   return opts
 }
 
@@ -55,6 +64,12 @@ export function assertReceipt(receipt) {
   if (receipt.ok !== true) throw new Error('the receipt records a failed pull-back')
   if (receipt.cleanRoom !== true) throw new Error('the receipt is registry-only: the clean-room run did not happen, so this is not the pull-back')
   if (!receipt.version || !receipt.tag || !receipt.registry?.shasum) throw new Error('the receipt lacks version, tag or registry facts')
+  // absent is the click path (receipts from before the field); present must be well-formed, because it becomes a docs link
+  if (receipt.publishedBy !== undefined) {
+    const p = receipt.publishedBy
+    if (!p || typeof p !== 'object' || !['script', 'workflow'].includes(p.route)) throw new Error(`the receipt's publishedBy.route must be "script" or "workflow", got ${JSON.stringify(p?.route)}`)
+    publishRoute(p.route, p.runUrl)
+  }
 }
 
 function publishedText(lang, r, date) {
@@ -62,14 +77,21 @@ function publishedText(lang, r, date) {
   const rc = r.registry.distTags?.rc
   const files = r.registry.fileCount != null ? (lang === 'en' ? `, ${r.registry.fileCount} files` : `，${r.registry.fileCount} 个文件`) : ''
   const link = `[v${r.version}](${REPO_URL}/releases/tag/v${r.version})`
+  const run = r.publishedBy?.route === 'workflow' ? r.publishedBy.runUrl : ''
   if (lang === 'en') {
     const predicted = matched ? ' — the shasum `npm pack --dry-run` predicted from the tagged tree before publishing —' : ''
     const rcSentence = rc && rc !== r.version ? ` The compatibility \`rc\` tag is still on \`${rc}\`.` : ''
-    return `Published to npm on ${date} as \`${r.name}@${r.version}\` with \`TAG=${r.tag} ./scripts/publish-npm.sh\` (tag passed explicitly, #50①), then pulled back from the registry: \`npm view\` shows \`${r.tag}\` → \`${r.version}\` (shasum \`${r.registry.shasum}\`${files})${predicted} and the downloaded tarball hashes to it. On a clean machine (fresh HOME and npm cache, official registry only, no LLM key) \`npx ${r.name}@${r.version}\` passes end to end: \`doctor\` prints its report, the dist entry loads the \`gotry-tools\` plugin, \`web\` boots (token URL 303 → 200, no token 401), and a one-shot without credentials fails with the host's missing-credential message rather than a stack trace. GitHub Release: ${link}.${rcSentence}`
+    const how = run
+      ? `by the \`npm-publish.yml\` workflow ([run](${run})) through npm Trusted Publishing (dist-tag \`${r.tag}\` passed explicitly, #50①)`
+      : `with \`TAG=${r.tag} ./scripts/publish-npm.sh\` (tag passed explicitly, #50①)`
+    return `Published to npm on ${date} as \`${r.name}@${r.version}\` ${how}, then pulled back from the registry: \`npm view\` shows \`${r.tag}\` → \`${r.version}\` (shasum \`${r.registry.shasum}\`${files})${predicted} and the downloaded tarball hashes to it. On a clean machine (fresh HOME and npm cache, official registry only, no LLM key) \`npx ${r.name}@${r.version}\` passes end to end: \`doctor\` prints its report, the dist entry loads the \`gotry-tools\` plugin, \`web\` boots (token URL 303 → 200, no token 401), and a one-shot without credentials fails with the host's missing-credential message rather than a stack trace. GitHub Release: ${link}.${rcSentence}`
   }
   const predicted = matched ? '，与发布前由已打 tag 的源码树经 `npm pack --dry-run` 预测的 shasum 一致' : ''
   const rcSentence = rc && rc !== r.version ? `兼容用 \`rc\` tag 仍指向 \`${rc}\`。` : ''
-  return `${date} 以 \`TAG=${r.tag} ./scripts/publish-npm.sh\`（dist-tag 显式传入，#50①）发布 \`${r.name}@${r.version}\`，并从 registry 回拉校验：\`npm view\` 显示 \`${r.tag}\` → \`${r.version}\`（shasum \`${r.registry.shasum}\`${files}）${predicted}，下载的 tarball 字节哈希同样吻合。在干净机器上（全新 HOME 与 npm 缓存、仅官方 registry、无 LLM key）\`npx ${r.name}@${r.version}\` 端到端通过：\`doctor\` 打印报告，dist 入口能加载 \`gotry-tools\` 插件，\`web\` 可启动（带 token 的 URL 303 → 200，无 token 为 401），无凭证的一次性任务以宿主的缺凭证提示失败，而不是抛出堆栈。GitHub Release：${link}。${rcSentence}`
+  const lead = run
+    ? `${date} 由 \`npm-publish.yml\` 工作流（[运行记录](${run})）经 npm Trusted Publishing 发布 \`${r.name}@${r.version}\`（dist-tag \`${r.tag}\` 显式传入，#50①）`
+    : `${date} 以 \`TAG=${r.tag} ./scripts/publish-npm.sh\`（dist-tag 显式传入，#50①）发布 \`${r.name}@${r.version}\``
+  return `${lead}，并从 registry 回拉校验：\`npm view\` 显示 \`${r.tag}\` → \`${r.version}\`（shasum \`${r.registry.shasum}\`${files}）${predicted}，下载的 tarball 字节哈希同样吻合。在干净机器上（全新 HOME 与 npm 缓存、仅官方 registry、无 LLM key）\`npx ${r.name}@${r.version}\` 端到端通过：\`doctor\` 打印报告，dist 入口能加载 \`gotry-tools\` 插件，\`web\` 可启动（带 token 的 URL 303 → 200，无 token 为 401），无凭证的一次性任务以宿主的缺凭证提示失败，而不是抛出堆栈。GitHub Release：${link}。${rcSentence}`
 }
 
 /** Insert "### Published" before the `---` that closes the version's block, unless the block already has one. */
@@ -167,7 +189,7 @@ async function main() {
   let opts
   try { opts = parseArgs(process.argv.slice(2)) } catch (err) {
     if (err instanceof UsageError) {
-      console.error(`${err.message ? `error: ${err.message}\n` : ''}usage: node scripts/post-release-docs.mjs [--receipt <path>] [--root <dir>] [--date YYYY-MM-DD] [--check]`)
+      console.error(`${err.message ? `error: ${err.message}\n` : ''}usage: node scripts/post-release-docs.mjs [--receipt <path>] [--root <dir>] [--date YYYY-MM-DD] [--check] [--published-by script|workflow --run-url <run URL>]`)
       return 2
     }
     throw err
@@ -182,6 +204,8 @@ async function main() {
     console.error(`error: cannot read the receipt ${receiptPath}: ${err.message}`)
     return 2
   }
+  // the flags win over the receipt: a receipt from before `publishedBy` existed cannot know it was a workflow run
+  if (opts.publishedBy && receipt && typeof receipt === 'object') receipt.publishedBy = publishRoute(opts.publishedBy, opts.runUrl)
   const files = {}
   for (const f of FILES) if (existsSync(join(opts.root, f)) && statSync(join(opts.root, f)).isFile()) files[f] = readFileSync(join(opts.root, f), 'utf8')
   let plan

@@ -20,11 +20,12 @@
  * Usage:
  *   node scripts/verify-published.mjs [<version>] [--tag latest] [--expected .release-expected.json]
  *        [--wait 600] [--poll 10] [--registry <url>] [--registry-only] [--doctor-absent <regex>]...
- *        [--json <file>] [--keep]
+ *        [--json <file>] [--keep] [--published-by script|workflow --run-url <run URL>]
  *
  * With no arguments it reads ./.release-expected.json, which publish-npm.sh writes before the publish click.
  * A full pass writes ./.release-verified.json (the receipt scripts/post-release-docs.mjs reads); --registry-only
- * never writes it, because a registry-only pass is not the pull-back.
+ * never writes it, because a registry-only pass is not the pull-back. The receipt records how the version was
+ * published (`publishedBy`): the click path unless npm-publish.yml's verify job says it was that workflow's run.
  * Exit: 0 every check passed; 1 a check failed; 2 usage or environment error.
  */
 import { spawn, spawnSync } from 'node:child_process'
@@ -34,7 +35,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { EXPECTED_FILE, OFFICIAL_REGISTRY, UsageError, VERIFIED_FILE, fetchPackument, isMain, redact } from './release-lib.mjs'
+import { EXPECTED_FILE, OFFICIAL_REGISTRY, UsageError, VERIFIED_FILE, fetchPackument, isMain, publishRoute, redact } from './release-lib.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 export const PLUGIN_NAME = 'gotry-tools'
@@ -43,7 +44,7 @@ export const DEFAULT_PROMPT = 'Two recovery days from Shenzhen, budget 3000'
 export function parseArgs(argv) {
   const opts = {
     version: '', tag: '', expected: '', wait: 600, poll: 10, registry: OFFICIAL_REGISTRY, registryOnly: false,
-    doctorAbsent: [], json: '', keep: false,
+    doctorAbsent: [], json: '', keep: false, publishedBy: '', runUrl: '',
   }
   const positional = []
   for (let i = 0; i < argv.length; i++) {
@@ -62,6 +63,8 @@ export function parseArgs(argv) {
     else if (a === '--doctor-absent') opts.doctorAbsent.push(value())
     else if (a === '--json') opts.json = value()
     else if (a === '--keep') opts.keep = true
+    else if (a === '--published-by') opts.publishedBy = value()
+    else if (a === '--run-url') opts.runUrl = value()
     else if (a === '-h' || a === '--help') throw new UsageError('')
     else if (a.startsWith('--')) throw new UsageError(`unknown flag ${a}`)
     else positional.push(a)
@@ -70,6 +73,7 @@ export function parseArgs(argv) {
   opts.version = positional[0] ?? ''
   if (!Number.isFinite(opts.wait) || opts.wait < 0) throw new UsageError('--wait must be a non-negative number of seconds')
   if (!Number.isFinite(opts.poll) || opts.poll <= 0) throw new UsageError('--poll must be a positive number of seconds')
+  publishRoute(opts.publishedBy, opts.runUrl)
   if (!opts.registry.endsWith('/')) opts.registry += '/'
   return opts
 }
@@ -287,7 +291,7 @@ async function main() {
   let opts
   try { opts = parseArgs(process.argv.slice(2)) } catch (err) {
     if (err instanceof UsageError) {
-      console.error(`${err.message ? `error: ${err.message}\n` : ''}usage: node scripts/verify-published.mjs [<version>] [--tag latest] [--expected ${EXPECTED_FILE}] [--wait 600] [--poll 10] [--registry <url>] [--registry-only] [--doctor-absent <regex>]... [--json <file>] [--keep]`)
+      console.error(`${err.message ? `error: ${err.message}\n` : ''}usage: node scripts/verify-published.mjs [<version>] [--tag latest] [--expected ${EXPECTED_FILE}] [--wait 600] [--poll 10] [--registry <url>] [--registry-only] [--doctor-absent <regex>]... [--json <file>] [--keep] [--published-by script|workflow --run-url <run URL>]`)
       return 2
     }
     throw err
@@ -331,6 +335,7 @@ async function main() {
   const receipt = {
     schema: 'gotry_release_verified_v1',
     name, version, tag, ok,
+    publishedBy: publishRoute(opts.publishedBy, opts.runUrl),
     registry: dist ? { shasum: dist.shasum, integrity: dist.integrity, fileCount: dist.fileCount ?? null, unpackedSize: dist.unpackedSize ?? null, distTags: dist.distTags } : null,
     cleanRoom: !opts.registryOnly,
     node: process.version,

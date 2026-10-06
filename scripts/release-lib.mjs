@@ -23,6 +23,25 @@ export const RELEASE_CHECK_PREFIX = 'Release: '
 export class UsageError extends Error {}
 
 /**
+ * How a release reached the registry, as the pull-back receipt records it and the docs then say it: `script` is the
+ * click path (scripts/publish-npm.sh), `workflow` is one run of .github/workflows/npm-publish.yml, named by its run
+ * URL. verify-published.mjs writes it and post-release-docs.mjs reads it (or takes it as an override), so both share
+ * this check: the URL ends up in a docs link, and a docs sentence that names the wrong route is a false record.
+ */
+const RUN_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/\d+$/
+
+/** `{ route: 'script' }` or `{ route: 'workflow', runUrl }`; anything else throws a UsageError. */
+export function publishRoute(route, runUrl) {
+  if (route === undefined || route === '' || route === 'script') {
+    if (runUrl) throw new UsageError('a run URL only goes with the workflow route')
+    return { route: 'script' }
+  }
+  if (route !== 'workflow') throw new UsageError(`the publish route must be "script" or "workflow", got ${JSON.stringify(route)}`)
+  if (!RUN_URL.test(String(runUrl ?? ''))) throw new UsageError(`the workflow route needs the run URL, https://github.com/<owner>/<repo>/actions/runs/<id>, got ${JSON.stringify(runUrl ?? '')}`)
+  return { route: 'workflow', runUrl }
+}
+
+/**
  * True when `metaUrl` (a module's import.meta.url) is the script node was started with. Node reports the real path
  * in import.meta.url but keeps argv[1] as typed, so a plain comparison silently never runs main() when the script is
  * reached through a symlinked directory (macOS /tmp and /var are symlinks).

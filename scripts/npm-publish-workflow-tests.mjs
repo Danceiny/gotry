@@ -169,6 +169,11 @@ export function lintWorkflow(text) {
   need(/inputs\.dry_run/.test(children(verify.body, 4).get('if')?.value ?? ''), 'job verify: must be skipped on a rehearsal (if: inputs.dry_run is false)')
   need(needsOf(verify).includes('publish'), 'job verify: must need publish')
   need(/verify-published\.mjs[^\n]*--tag/.test(text_of('verify')), 'job verify: must run verify-published.mjs with the explicit dist-tag')
+  need(
+    /verify-published\.mjs[^\n]*--published-by workflow[^\n]*--run-url "\$RUN_URL"/.test(text_of('verify'))
+      && /RUN_URL:\s*\$\{\{ github\.server_url \}\}\/\$\{\{ github\.repository \}\}\/actions\/runs\/\$\{\{ github\.run_id \}\}/.test(text_of('verify')),
+    'job verify: the receipt must record that this workflow run published it (--published-by workflow --run-url built from the run\'s own server_url, repository and run_id), or the docs follow-up would name the click path',
+  )
   const release = jobs.get('release') ?? { body: [] }
   need(needsOf(release).includes('verify'), 'job release: must need verify — the GitHub Release is created only after a passing pull-back')
   need(/release-notes\.mjs/.test(text_of('release')) && /--verify-tag/.test(text_of('release')), 'job release: must build the notes with release-notes.mjs and create the Release with --verify-tag (never --target)')
@@ -231,6 +236,8 @@ mutate('the tarball is no longer checked', 'echo "$expected  $TARBALL" | sha1sum
 mutate('the rehearsal flag is dropped', 'if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi', 'true', /must honour dry_run/)
 mutate('verify runs on a rehearsal too', 'if: ${{ !inputs.dry_run }}', 'if: ${{ always() }}', /skipped on a rehearsal/)
 mutate('verify no longer needs publish', 'needs: [gate, publish]', 'needs: [gate]', /verify: must need publish/)
+mutate('verify stops saying the workflow published it', '--wait 900 --published-by workflow --run-url "$RUN_URL"', '--wait 900', /receipt must record that this workflow run published it/)
+mutate('the run URL no longer names this run', 'RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}', 'RUN_URL: https://github.com/Danceiny/gotry/actions/runs/1', /receipt must record that this workflow run published it/)
 mutate('the Release is created before the pull-back', 'needs: [gate, verify]', 'needs: [gate, publish]', /created only after a passing pull-back/)
 mutate('the Release uses --target', '--notes-file "$RUNNER_TEMP/notes.md" --verify-tag', '--notes-file "$RUNNER_TEMP/notes.md" --target "v$VERSION"', /--verify-tag/)
 
