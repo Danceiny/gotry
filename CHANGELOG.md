@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-rc.29] - 2026-10-06
+
+### Fixed
+
+- the yunnan pack's uncalibrated yn0 leg becomes advisory… (#638)
+
+### Documentation
+
+- rc.28 is published and pulled back… (#640)
+- defer #20/#136/#137/#142/#272 — the authority docs carry the closed state… (#639)
+
+### Chore
+
+- publish through npm Trusted Publishing from a tag-dispatched workflow, so a release needs no founder click and holds no… (#642)
+- make the npm release one verified command… (#641)
+- 用户可见名随 CWS listing 统一为 Stai Travel Bridge… (#637)
+
 ## [0.2.0-rc.28] - 2026-10-05
 
 ### Added

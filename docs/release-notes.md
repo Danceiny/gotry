@@ -12,6 +12,33 @@ Nothing queued.
 
 ---
 
+## v0.2.0-rc.29 · 2026-10-06
+
+**Why this release.** rc.28 turned a solver crash into an explicit `solver_error` instead of a false "your trip is infeasible" ([#620](https://github.com/Danceiny/gotry/issues/620)). That left the bundled Yunnan pack ending in a `solver_error` instead of a plan: its `yn0` leg (Kunming → Lijiang after the 8.4 landing) has no calibrated buffer or transfer minutes, and only the founder can supply those ([#635](https://github.com/Danceiny/gotry/issues/635)). The pack now solves over its four attached legs and keeps `yn0` as advisory. The release also finishes the Chrome Web Store rename inside the product: `doctor`, the setup and wizard text and the tool descriptions now say Stai Travel Bridge, the name the listing has carried since it went live on 2026-10-04. The version stays paired with the extension manifest (`0.2.0.29`, enforced by `extension-tests`); the extension's behavior is unchanged.
+
+### What's New (since rc.28)
+
+**Fixes**
+
+- **The bundled Yunnan pack solves again ([#635](https://github.com/Danceiny/gotry/issues/635))** — `yn0` moves from `legs` to a new `advisory_legs` section of `data/yunnan-pack.json`, with its reason stated: its buffer, origin-transfer and destination-transfer minutes are real-world facts only the founder can calibrate, and nothing is invented in their place. No reader consumes `advisory_legs`, so the parser, the solver and the kernel-pinned files are untouched. Before, `solveUnified` on this pack returned `solver_error` (`solver_input_not_integer`); the product's own pure-TypeScript `solveChoiceSegment` entry was never affected. Once the three minutes exist, putting `yn0` back into `legs` is the whole change. A test now audits every shipped pack for the three integer fields, and the persona dry run's Yunnan row is `feasible`.
+- **One name for the extension: Stai Travel Bridge (#637)** — after the listing was renamed, the setup and wizard lines, the needs-extension summaries, the `doctor` item label and the channel and tool descriptions still said "GoTry Session Bridge". They now say what the Chrome Web Store shows. The store link and the extension's identity are unchanged. A script that matches the old `doctor` label text must use the new one.
+
+**Release tooling (not in the npm package)**
+
+- **The npm release is one verified command (#641)** — `scripts/publish-npm.sh` runs a preflight that lists every blocker before the first approval click. "Published" is gated on a registry pull-back receipt, and the GitHub Release and the docs follow-up both read that receipt. CI can be dispatched on a tag, so a tag commit whose push run was cancelled can still carry its own proof. The procedure is `docs/ops/npm-release-runbook.md`.
+- **A publish workflow for npm Trusted Publishing (#642)** — `.github/workflows/npm-publish.yml` is dispatch-only and rehearses by default. It lets a release run with no approval click and no npm credential, and the job that holds the identity runs nothing installed after checkout. It needs a one-time Trusted Publisher setting on npmjs.com, and until a real run has passed, the command above stays the path of record.
+
+**Housekeeping**
+
+- **Five more trackers closed as deferred (#20, #136, #137, #142, #272)** — closed as *not planned* on 2026-10-05: M4–M6 are not the product's core capability for now, and the Booking Copilot acceptance waits for a logged-in Dida browser window and an authorized UAT deploy. Closing is not acceptance: every gate stays unmet, and the authority docs carry each resume trigger and the acceptance that carries over (#639).
+- **README, user guide and roadmap baselines follow rc.28 (#640)** — rc.28 is recorded as published and pulled back from the registry.
+
+### Installation
+
+Run `npx @danceiny/gotry@0.2.0-rc.29 web` (Node ≥ 22.15). Once `latest` points to this version, `npx @danceiny/gotry web` is equivalent; pin the exact version if your registry mirror lags.
+
+---
+
 ## v0.2.0-rc.28 · 2026-10-05
 
 **Why this release.** The rc.27 pull-back and the simulated-trigger drills turned up real defects. `npx @danceiny/gotry doctor` reported an hbcli without credentials as "credentials valid" on every machine with hbcli installed ([#623](https://github.com/Danceiny/gotry/issues/623)); on the ground-transfer path a provider's raw error text could reach tool results unredacted, and a route provider that contradicted its own mode or resolved origin/destination was still bound as the airport transfer (#429); a solver crash could reach a traveller as "your trip is infeasible" ([#620](https://github.com/Danceiny/gotry/issues/620)); and the tenant ledger leaked raw SQLite contention errors to callers ([#619](https://github.com/Danceiny/gotry/issues/619)). All of them are fixed here. The release also lands the session dual-zone memory (default off) and the M3 capture and persona-simulation harness (synthetic only). The version stays paired with the extension manifest (`0.2.0.28`, enforced by `extension-tests`); the extension itself is unchanged.
