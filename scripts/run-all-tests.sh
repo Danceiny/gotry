@@ -28,13 +28,15 @@ fi
 (node scripts/build-dist-compat-tests.mjs) || FAIL=1
 
 echo
-echo "=== 0b. 发布工具链(预检/回拉校验/发布后文档/Release notes/发布脚本编排/构建守卫;全离线:无网络、无浏览器、无真 npm) ==="
+echo "=== 0b. 发布工具链(预检/回拉校验/发布后文档/Release notes/发布脚本编排/构建守卫/OIDC 发布工具与工作流结构;全离线:无网络、无浏览器、无真 npm) ==="
 (node scripts/release-preflight-tests.mjs) || FAIL=1
 (node scripts/verify-published-tests.mjs) || FAIL=1
 (node scripts/post-release-docs-tests.mjs) || FAIL=1  # 含「真实文档形状仍可被识别」的漂移守卫:改 README/路线图措辞要同步改它
 (node scripts/release-notes-tests.mjs) || FAIL=1
 (node scripts/publish-npm-tests.mjs) || FAIL=1  # 在 sh 与 dash 下各跑一遍(脚本是 POSIX sh)
 (node scripts/build-dist-guard-tests.mjs) || FAIL=1
+(node scripts/release-oidc-tests.mjs) || FAIL=1
+(node scripts/npm-publish-workflow-tests.mjs) || FAIL=1  # 零点击发布工作流的结构纪律(最小权限/钉死 action/无机密);变异用例证明检查不是空的
 
 echo
 echo "=== 1. TS engine(洱海金标准,8 断言) ==="

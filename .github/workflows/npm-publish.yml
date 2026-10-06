@@ -1,0 +1,277 @@
+name: npm Publish
+
+# 发布 @danceiny/gotry 到 npm 的零点击路径:npm Trusted Publishing(GitHub OIDC),不放任何 npm 机密。
+# 全流程与 scripts/publish-npm.sh 的点击路径等价——预检 → 构建 → 发布 → 回拉校验 → GitHub Release——
+# 区别只在发布那一步用 workflow 的 OIDC 身份代替 founder 的两次浏览器批准。完整手册:docs/ops/npm-release-runbook.md §7。
+#
+# 用法(founder 确认发布后;**在发布 tag 上 dispatch**——workflow 文件取自 tag 当时的版本,所以 tag 必须已含本文件):
+#   gh workflow run npm-publish.yml --ref v<version> -f dist_tag=latest                      # 演练(dry_run 默认 true)
+#   gh workflow run npm-publish.yml --ref v<version> -f dist_tag=latest -f dry_run=false     # 真发
+# 演练做完除「写 registry」之外的一切,包括真实的 OIDC 换票(npm 先换票、再看 --dry-run),所以它能证明 npm 侧的
+# Trusted Publisher 配置对不对;失败时日志会打印本次运行的 OIDC claims 与应当填进 npmjs.com 表单的值。
+#
+# 一次性配置(founder,npmjs.com 与 GitHub 各一处;状态:首次真实使用前未经证明,点击路径始终可退回):
+#   npmjs.com → @danceiny/gotry → Settings → Trusted publishing → GitHub Actions:
+#     Organization or user=Danceiny · Repository=gotry · Workflow filename=npm-publish.yml
+#     Environment=npm-publish(可选) · Allowed actions 勾选「npm publish」
+#   GitHub → Settings → Environments → npm-publish(可选加固):Deployment tags 限 v* ,可加 Required reviewers。
+#
+# 结构纪律(npm-publish-workflow-tests.mjs 逐条机械检查):
+#   - 仅 workflow_dispatch;dist_tag 必须显式给出(#50①);dry_run 默认 true。
+#   - 只有 publish 作业有 id-token: write,且它不安装任何仓库依赖、不 checkout:它只跑 gate 作业放进 bundle 的
+#     发布工具与那份 tarball。gate 作业(装依赖、跑构建)没有 id-token,所以依赖的安装脚本换不到发布身份。
+#   - 无 secrets.* / NODE_AUTH_TOKEN / NPM_TOKEN;所有 uses: 钉 40 位 commit SHA,仅限 actions/ 官方。
+#   - 作业名一律以「Release: 」开头:预检的 CI 证明据此跳过本 workflow 自己的检查运行(release-lib.mjs)。
+# 回拉(verify 作业)通过之前不叫「已发布」(AGENTS.md 发布闸);通过后才建 GitHub Release。
+
+on:
+  workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: "npm dist-tag to publish under (explicit, never defaulted)"
+        required: true
+        type: choice
+        options:
+          - latest
+          - rc
+          - next
+      dry_run:
+        description: "Rehearse: everything except the registry write (the OIDC exchange still runs)"
+        required: true
+        default: true
+        type: boolean
+      allow_downgrade:
+        description: "Allow the dist-tag to move to an older version (preflight refuses by default)"
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: "Release: gate"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.pack.outputs.version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
+    steps:
+      - name: Refuse anything but a version tag
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "::error::dispatch this workflow on a version tag (gh workflow run npm-publish.yml --ref v<version> ...), not on $GITHUB_REF_TYPE $GITHUB_REF_NAME"
+            exit 1
+          fi
+
+      - name: Checkout the tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      # 点击路径的预检在这里原样跑一遍:版本/tag/tag 在 main 上/文档/tag 提交的 CI 证明/registry 状态,一并列出。
+      - name: Preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIST_TAG: ${{ inputs.dist_tag }}
+          ALLOW_DOWNGRADE: ${{ inputs.allow_downgrade }}
+        run: |
+          set -euo pipefail
+          args=(--tag "$DIST_TAG" --repo "$GITHUB_REPOSITORY")
+          if [ "$ALLOW_DOWNGRADE" = "true" ]; then args+=(--allow-downgrade); fi
+          node scripts/release-preflight.mjs "${args[@]}"
+
+      # 发布作业只跑这两个文件(scripts/release-oidc.mjs 只 import release-lib.mjs)。先于依赖安装放进 bundle。
+      - name: Stage the OIDC tools for the publish job
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bundle/tools"
+          cp scripts/release-lib.mjs scripts/release-oidc.mjs "$RUNNER_TEMP/bundle/tools/"
+
+      # 只装根目录依赖,且不跑依赖的生命周期脚本:构建只需要根 node_modules 里的 TypeScript(build-dist.mjs 的守卫)。
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund --strict-peer-deps
+
+      # 真打包:.release-expected.json 描述的就是随后被发布的那一份 tarball,回拉校验拿它对照 registry。
+      - name: Build dist and pack the tarball
+        id: pack
+        env:
+          DIST_TAG: ${{ inputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          node scripts/build-dist.mjs
+          node scripts/release-preflight.mjs --write-expected --tag "$DIST_TAG" --pack-dir "$RUNNER_TEMP/bundle"
+          cp .release-expected.json "$RUNNER_TEMP/bundle/.release-expected.json"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "tarball=$(node -p "require('./.release-expected.json').tarball")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-bundle
+          path: ${{ runner.temp }}/bundle/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: "Release: publish"
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-bundle
+          path: bundle
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      # Trusted Publishing 要 npm >= 11.5.1(经 OIDC 写 dist-tag 要 >= 11.21.0);固定到确切版本,不随 Node 自带版本漂移。
+      - name: Pin npm
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.21.0
+          npm --version
+
+      - name: Verify the tarball is the one the gate packed
+        env:
+          TARBALL: ${{ needs.gate.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          cd bundle
+          expected="$(node -p "require('./.release-expected.json').shasum")"
+          echo "$expected  $TARBALL" | sha1sum -c -
+
+      - name: OIDC claims
+        run: node bundle/tools/release-oidc.mjs claims
+
+      - name: Publish through OIDC
+        env:
+          TARBALL: ${{ needs.gate.outputs.tarball }}
+          DIST_TAG: ${{ inputs.dist_tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          args=(--tarball "bundle/$TARBALL" --tag "$DIST_TAG")
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          node bundle/tools/release-oidc.mjs publish "${args[@]}"
+
+  verify:
+    name: "Release: verify"
+    needs: [gate, publish]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Download the release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-bundle
+          path: bundle
+
+      # 回拉:registry 里的字节 == gate 打出来的那份,再在干净环境里跑 doctor / 插件加载 / web 启动 / 一次性运行。
+      # registry 在发布后约 4 分钟才可见,脚本会轮询。
+      - name: Pull the version back from the registry
+        env:
+          DIST_TAG: ${{ inputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          cp bundle/.release-expected.json .release-expected.json
+          node scripts/verify-published.mjs --tag "$DIST_TAG" --wait 900
+
+      - name: Upload the pull-back receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-receipt
+          path: .release-verified.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: "Release: github-release"
+    needs: [gate, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      # 与点击路径同一份脚本组装 notes;--verify-tag:tag 不在远端就中止,不静默在 main 上新建 tag(rc.27 教训)。
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release $tag already exists; nothing to create"
+            exit 0
+          fi
+          node scripts/release-notes.mjs --version "$VERSION" --out "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+
+      - name: Say what is left
+        env:
+          RUN_ID: ${{ github.run_id }}
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          {
+            echo "### @danceiny/gotry@$VERSION is published and pulled back"
+            echo
+            echo "Docs may say \"published\" only now. In a clean main checkout:"
+            echo
+            echo '```sh'
+            echo "gh run download $RUN_ID -n release-receipt -D /tmp/release-receipt"
+            echo "node scripts/post-release-docs.mjs --receipt /tmp/release-receipt/.release-verified.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

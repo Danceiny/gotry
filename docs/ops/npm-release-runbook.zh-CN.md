@@ -5,7 +5,7 @@
 > 定位：`@danceiny/gotry` 发布到 npm 的端到端流程——谁点什么、执行 agent 跑什么、什么才能证明一次发布是真的。
 > 状态：living
 > 上游：[AGENTS.md](../../AGENTS.zh-CN.md) 发布纪律（founder 确认、发布闸、回拉规则），[tokens.md](../tokens.zh-CN.md)（凭据路径与 npm 2FA 事实）
-> 下游：`scripts/publish-npm.sh`、`scripts/release-preflight.mjs`、`scripts/verify-published.mjs`、`scripts/post-release-docs.mjs`、`scripts/release-notes.mjs`
+> 下游：`scripts/publish-npm.sh`、`scripts/release-preflight.mjs`、`scripts/verify-published.mjs`、`scripts/post-release-docs.mjs`、`scripts/release-notes.mjs`、`.github/workflows/npm-publish.yml`、`scripts/release-oidc.mjs`
 > 最近更新：2026-10-06
 > 边界：本文承载流程；凭据获取与 npm 策略事实留在 tokens.md，发布闸的判据留在 AGENTS.md。§4 的回拉回执出现之前，任何文档都不得写「已发布」。
 
@@ -18,6 +18,7 @@
 - `scripts/verify-published.mjs` 通过之前不叫「已发布」：registry 提供的正是本地构建的那份字节，并且干净环境安装能跑通。
 - GitHub Release 只在回拉通过之后创建，web 会话在最后撤销。
 - 中途停下不丢东西：重跑是安全的，因为 changelog 闸幂等、已发布的版本会被识别、回拉也可以单独跑。
+- founder 为 npm 设置好 Trusted Publishing 之后，同一次发布可以作为 GitHub Actions 工作流零点击完成（§7）。在它的首次真实运行通过之前，仍以上面这条命令为准。
 
 ## 1. 第一条命令之前
 
@@ -98,4 +99,38 @@ node scripts/check-docs-i18n.mjs && node scripts/check-doc-readability.mjs
 - 重指向 dist-tag 用 `.env` 里的 granular token 即可；删除则需要 web 会话：`./scripts/publish-npm.sh rmtag <tag>…`，每个 tag 一次批准，`latest` 会被拒绝。事实与来龙去脉见 [tokens.md](../tokens.zh-CN.md)。
 - 发布成功后会话会被撤销。`--keep-session` 为一批维护操作保留会话，`./scripts/publish-npm.sh logout` 结束会话。
 - 与 `.env` 里 `NPM_TOKEN` 相同的 `.npmrc.publish` token 永不撤销，因为那是长期 token；只删除该文件。
-- 用 GitHub Actions 的 Trusted Publishing 替代点击是已规划的方向（tokens.md 路径 C）。在它建立并验证之前，本文就是路径。
+- 用 GitHub Actions 的 Trusted Publishing 替代点击，要等它建立并验证之后（§7，tokens.md 路径 C）。在它首次真实运行通过之前，以 §2 为准。
+
+## 7. 零点击路径：发布工作流
+
+`.github/workflows/npm-publish.yml` 在 GitHub 的 runner 上跑 §2 的各阶段，并用 npm Trusted Publishing 发布：发布作业的 OIDC 身份替代 founder 的两次批准，任何地方都不存在 npm 凭据。它已经建好并带有结构检查（`scripts/npm-publish-workflow-tests.mjs`），但首次真实使用还在前面。
+
+**一次性设置。** 由 founder 来做，因为这是持久配置：
+
+1. npmjs.com → `@danceiny/gotry` → Settings → Trusted publishing → GitHub Actions。Organization or user 填 `Danceiny`，Repository 填 `gotry`，Workflow filename 填 `npm-publish.yml`，Environment 填 `npm-publish`（可选），Allowed actions 勾选 `npm publish`。
+2. 可选加固：GitHub → Settings → Environments → `npm-publish`，把部署 tag 限制为 `v*` 并加上必需审阅人。
+
+**在发布 tag 上运行。** `workflow_dispatch` 运行的是该 tag 时的工作流文件，所以 tag 必须已含该文件；能用上它的第一个版本，是添加该文件的 PR 之后切出的那一版。
+
+```sh
+gh workflow run npm-publish.yml --ref v<version> -f dist_tag=latest                    # 演练，默认
+gh workflow run npm-publish.yml --ref v<version> -f dist_tag=latest -f dry_run=false   # 真正发布
+```
+
+| 作业 | 做什么 | 身份 |
+|---|---|---|
+| gate | 拒绝非 tag 的运行；跑 §2 的预检；不跑安装脚本地装根目录依赖；构建；打包 tarball 并记入 `.release-expected.json`；把两者连同两个 OIDC 工具一起上传 | 无 |
+| publish | 对照记录的 shasum 检查 tarball；把本次运行的 OIDC claims 与 Trusted Publisher 表单应填的值并排打印；执行 `npm publish <tarball> --tag <dist_tag>` | `id-token: write`，环境 `npm-publish` |
+| verify | 演练时跳过；对 registry 跑 `verify-published.mjs` 并上传回执 | 无 |
+| github-release | 用 `release-notes.mjs` 生成内容并以 `--verify-tag` 创建 GitHub Release | `contents: write` |
+
+演练做完除写 registry 以外的一切，包括真实的换票，因为 npm 是先换票、再看 `--dry-run`。所以演练通过就证明了 npm 一侧的设置；它证明不了 allowed actions 的勾选与 provenance，那两样只有首次真实运行才会走到。npm 只在 verbose 级别报告 OIDC 失败，否则只显示笼统的「未登录」，所以 `release-oidc.mjs` 从日志里读出结论，并附上提示打印出来：
+
+| 发布作业里的提示 | 含义 | 处理 |
+|---|---|---|
+| 换票失败，上方附有 registry 自己给的原因 | Trusted Publisher 设置与本次运行对不上 | 把表单与「OIDC claims」步骤打印的 claims 对照：owner、repository、workflow filename 与 environment，区分大小写 |
+| npm 根本没有尝试换票 | 作业缺 `id-token: write`，或 runner 不是 GitHub 托管的 | 恢复该权限；自托管 runner 不能这样发布 |
+| 换票成功但 registry 拒绝写入 | allowed actions 缺 `npm publish` | 在 npmjs.com 勾选 |
+| provenance 声明被拒绝 | package.json 的 `repository.url` 没指向本仓库，或仓库不是公开的 | 修正它，或改走 §2（那条路径不带 provenance） |
+
+不变的是预检、回拉规则与文档后续。真实运行之后，用 `gh run download <run-id> -n release-receipt -D <dir>` 取回回执，再在 §4 用 `--receipt <dir>/.release-verified.json` 继续。不同的是：预检的 CI 证明会跳过工作流自己的 `Release: …` 检查运行；持有身份的作业从不运行检出之后才安装的任何东西；也不再有会过期的批准链接。发布步骤之前失败的运行什么也没发布。verify 步骤失败时，可以用「Re-run failed jobs」单独重跑它，它复用 gate 的 tarball，不会再次发布。

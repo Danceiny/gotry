@@ -1,6 +1,6 @@
 /**
  * scripts/release-lib.mjs — the few helpers the release scripts share
- * (release-preflight.mjs, verify-published.mjs, post-release-docs.mjs, release-notes.mjs).
+ * (release-preflight.mjs, verify-published.mjs, post-release-docs.mjs, release-notes.mjs, release-oidc.mjs).
  * One copy, because two copies of a release rule drift apart (the #623 lesson).
  */
 
@@ -12,6 +12,13 @@ export const OFFICIAL_REGISTRY = 'https://registry.npmjs.org/'
 export const EXPECTED_FILE = '.release-expected.json'
 /** Written by verify-published.mjs when the pull-back passes; post-release-docs.mjs reads it. */
 export const VERIFIED_FILE = '.release-verified.json'
+
+/**
+ * Every job of .github/workflows/npm-publish.yml is named "Release: …". Their check runs sit on the tag commit while the
+ * workflow runs and stay there, failed or not, after a rehearsal — they are not CI evidence for the tree, so the CI
+ * proof in release-preflight.mjs skips them. npm-publish-workflow-tests.mjs pins the workflow's job names to this.
+ */
+export const RELEASE_CHECK_PREFIX = 'Release: '
 
 export class UsageError extends Error {}
 
@@ -27,6 +34,12 @@ export function isMain(metaUrl) {
 /** Never let a login token reach a log, a terminal or a JSON receipt. */
 export function redact(text) {
   return String(text).replace(/token=[\w-]+/g, 'token=<redacted>')
+}
+
+/** An npm token (npm_ + base62) or a JWT. A log that holds one is withheld, not printed: Actions logs of a public repo are public. */
+const SECRET_SHAPES = [/\bnpm_[A-Za-z0-9]{30,}/, /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/]
+export function looksLikeSecret(text) {
+  return SECRET_SHAPES.some((re) => re.test(String(text)))
 }
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/
