@@ -44,7 +44,10 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-ui-tool"
+        "@deepseek-ai/dsh-client-ui-tool",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
       ]
     }
   },
@@ -57,6 +60,8 @@
     "bin/",
     "ts/src/index.ts",
     "ts/src/flyai-setup-tool.ts",
+    "ts/src/gotry-web-api.ts",
+    "ts/src/artifact-delivery.ts",
     "ts/src/subagent-job-id-guard.ts",
     "ts/src/benchmark-environment-bridge.ts",
     "ts/src/benchmark-tool-isolation.ts",

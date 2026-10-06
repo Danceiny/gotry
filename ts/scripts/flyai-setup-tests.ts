@@ -6,7 +6,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -42,7 +42,7 @@ chmodSync(fakeVerifier, 0o700)
 // that the npm package exposes for `gotry setup ...` dispatch.
 const packageFixture = join(sandbox, 'package-shaped')
 mkdirSync(join(packageFixture, 'bin'), { recursive: true })
-for (const file of ['gotry-inner.js', 'gotry-bootstrap.js', 'gotry-extension-status.js', 'gotry-process-liveness.js', 'gotry-runtime-resolution.js']) {
+for (const file of ['gotry-inner.js', 'gotry-bootstrap.js', 'gotry-flyai-verification.js', 'gotry-extension-status.js', 'gotry-process-liveness.js', 'gotry-runtime-resolution.js']) {
   copyFileSync(join(repoRoot, 'bin', file), join(packageFixture, 'bin', file))
 }
 writeFileSync(join(packageFixture, 'package.json'), JSON.stringify({ type: 'module', version: 'test' }) + '\n')
@@ -243,3 +243,58 @@ for (const failure of ['leak-403', 'leak-exit']) {
   assert.deepEqual(readFileSync(configPath(verifyFailHome)), verifyBefore)
 }
 console.log('6. upstream stderr cannot leak candidate credentials or endpoint secrets OK')
+
+// A parent-only interrupt must reap the private verifier group before setup
+// exits. A grandchild holds both pipes to expose orphaned verification jobs.
+if (process.platform !== 'win32') {
+  const hangingVerifier = join(sandbox, 'hanging-flyai-cli.cjs')
+  writeFileSync(hangingVerifier, `#!/usr/bin/env node
+const { spawn } = require('node:child_process')
+const { writeFileSync } = require('node:fs')
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'inherit' })
+writeFileSync(process.env.FAKE_FLYAI_PID_FILE, JSON.stringify([process.pid, child.pid]))
+setInterval(() => {}, 1000)
+`)
+  chmodSync(hangingVerifier, 0o700)
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    const home = mkdtempSync(join(sandbox, `cancel-${signal}-`))
+    writeConfig(home, { FLYAI_API_KEY: oldKey, keep: 'yes' })
+    const before = readFileSync(configPath(home))
+    const pidFile = join(home, 'verifier-pids.json')
+    const child = spawn('node', [bootstrap, 'setup', 'flyai', '--stdin'], {
+      cwd: sandbox,
+      env: baseEnv(home, { GOTRY_FLYAI_CLI_BIN: hangingVerifier, FAKE_FLYAI_PID_FILE: pidFile, GOTRY_FLYAI_VERIFY_TIMEOUT_MS: '60000' }),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let output = '', pids: number[] = []
+    child.stdout.on('data', chunk => { output += chunk })
+    child.stderr.on('data', chunk => { output += chunk })
+    const closed = new Promise<{ code: number | null, signal: NodeJS.Signals | null }>(resolve => child.once('close', (code, signal) => resolve({ code, signal })))
+    child.stdin.end(`${key}\n`)
+    try {
+      const startDeadline = Date.now() + 5000
+      while (!existsSync(pidFile) && Date.now() < startDeadline) await delay(20)
+      assert.ok(existsSync(pidFile), 'verifier must start before the interrupt')
+      pids = JSON.parse(readFileSync(pidFile, 'utf8'))
+      child.kill(signal)
+      let bound: ReturnType<typeof setTimeout>
+      const result = await Promise.race([closed, new Promise<never>((_, reject) => {
+        bound = setTimeout(() => reject(new Error('interrupted setup did not exit within 5s')), 5000)
+      })]).finally(() => clearTimeout(bound!))
+      assert.ok(result.signal === signal || result.code === 128 + (signal === 'SIGINT' ? 2 : 15), JSON.stringify(result))
+      const cleanupDeadline = Date.now() + 1000
+      while (pids.some(alive) && Date.now() < cleanupDeadline) await delay(20)
+      assert.ok(pids.every(pid => !alive(pid)), `${signal} left a verifier descendant alive`)
+      assert.deepEqual(readFileSync(configPath(home)), before)
+      assert.equal(existsSync(receiptPath(home)), false)
+      assert.ok(!output.includes(key), 'interrupt output must not echo the candidate')
+    } finally {
+      child.kill('SIGKILL')
+      if (pids[0]) { try { process.kill(-pids[0], 'SIGKILL') } catch { /* already gone */ } }
+      for (const pid of pids) { try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ } }
+    }
+  }
+  console.log('7. SIGINT/SIGTERM reap the verifier group and preserve old credentials OK')
+}

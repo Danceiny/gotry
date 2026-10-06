@@ -59,6 +59,8 @@ import { generateItineraryDeckExport } from '../capabilities/itinerary-deck-expo
 import { interpretEffect, declinedObservation, type EffectInterpreter } from '../capabilities/effect.ts'
 import { customerSendCode, customerLogin } from '../capabilities/hbcli.ts'
 import { FLYAI_POI_CATEGORIES, type FlyaiKind, type FlyaiQuery, type FlyaiResult } from '../capabilities/flyai.ts'
+import { registerGotryWebApi } from './gotry-web-api.ts'
+import { registerArtifactDeliveries } from './artifact-delivery.ts'
 import { createFlyaiSetupTool } from './flyai-setup-tool.ts'
 import { appendFacts, loadFactRegistry } from '../capabilities/fact-log.ts'
 import { factsFromFlyai, factsFromHotel, factsFromSession, factsFromSessionTrain } from './bookable-facts.ts'
@@ -520,6 +522,10 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   // 固定 policy 保证评测可复现,不走路由。GOTRY_HANDOFF_CHILD=1 是收集器
   // 派生的后台规划会话:唯一出口 converge + 长 leash——前台转后台,后台
   // 必须产出最终交付物,不得再次 handoff(否则无限递归)。
+  if (!rawBenchmarkEnvironmentConfigPath) {
+    registerGotryWebApi(ctx, config.stateRoot ?? '.')
+    registerArtifactDeliveries(ctx)
+  }
   const handoffChild = process.env.GOTRY_HANDOFF_CHILD === '1'
   installTurnDeadline(ctx, handoffChild
     ? { fixedPolicy: { softMs: 300_000, hardMs: 900_000, exit: 'converge' } }

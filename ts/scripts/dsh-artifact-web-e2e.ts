@@ -1,7 +1,7 @@
 /**
  * Fresh-profile, installed-package Web E2E for GoTry artifact cards.
  *
- * The only model endpoint is a local OpenAI-compatible SSE relay. The test
+ * The only model endpoint is a local Chat/Messages SSE relay. The test
  * starts `gotry web --no-open --port 0`, captures the authenticated `dsh web:`
  * URL, then drives the real composer with a fresh headless Chrome profile.
  * It verifies the public Client cards, path selection, the normal read → edit
@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
@@ -75,22 +75,40 @@ function toolNames(body: WireBody): string[] {
 }
 
 function hasToolMessage(body: WireBody): boolean {
-  return (body.messages ?? []).some(message => message.role === 'tool')
+  return (body.messages ?? []).some(message => message.role === 'tool'
+    || Array.isArray(message.content) && message.content.some(block => block?.type === 'tool_result'))
 }
 
 function lastUserText(body: WireBody): string {
-  const message = [...(body.messages ?? [])].reverse().find(item => item.role === 'user')
+  const message = [...(body.messages ?? [])].reverse().find(item => item.role === 'user'
+    && (!Array.isArray(item.content) || item.content.some(block => block?.type === 'text')))
   const content = message?.content
   if (typeof content === 'string') return content
   return JSON.stringify(content ?? '')
 }
 
+/** Current DSH uses DeepSeek Messages; keep the relay compatible with both wires. */
+function messagesResponse(chatPayload: string): string {
+  const first = JSON.parse(chatPayload.split('\n').find(line => line.startsWith('data: '))!.slice(6))
+  const delta = first.choices[0].delta, call = delta.tool_calls?.[0]
+  const event = (type: string, value: Record<string, unknown>) => `event: ${type}\ndata: ${JSON.stringify({ type, ...value })}\n\n`
+  return event('message_start', { message: { id: first.id, type: 'message', role: 'assistant', model: first.model,
+    content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } })
+    + event('content_block_start', { index: 0, content_block: call
+      ? { type: 'tool_use', id: call.id, name: call.function.name, input: {} } : { type: 'text', text: '' } })
+    + event('content_block_delta', { index: 0, delta: call
+      ? { type: 'input_json_delta', partial_json: call.function.arguments } : { type: 'text_delta', text: delta.content || '' } })
+    + event('content_block_stop', { index: 0 })
+    + event('message_delta', { delta: { stop_reason: call ? 'tool_use' : 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } })
+    + event('message_stop', {})
+}
+
 async function startRelay(): Promise<Relay> {
   const bodies: WireBody[] = []
   const servedTools: string[] = []
-  let phase: 'first-list' | 'first-read' | 'first-final' | 'second-read' | 'second-edit' | 'second-artifact-read' | 'second-final' | 'third-list' | 'third-read' | 'third-final' = 'first-list'
+  let phase: 'first-list' | 'first-read' | 'first-final' | 'second-read' | 'second-edit' | 'second-artifact-read' | 'second-final' | 'third-list' | 'third-read' | 'third-final' | 'fourth-render' | 'fourth-final' | 'done' = 'first-list'
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.method !== 'POST' || !req.url?.endsWith('/chat/completions')) {
+    if (req.method !== 'POST' || !/\/(chat\/completions|messages)$/.test(req.url || '')) {
       res.writeHead(404).end('not found')
       return
     }
@@ -141,11 +159,23 @@ async function startRelay(): Promise<Relay> {
         servedTools.push('gotry_artifacts_read')
         payload = toolResponse('artifact-third-read', 'gotry_artifacts_read', { path: 'trip-2027.html' })
       } else if (phase === 'third-final' && hasToolMessage(body)) {
+        phase = 'fourth-render'
         payload = textResponse('artifact-third-final', '已读取 HTML 产物，请使用列表中的「Open HTML preview」按钮验证原生预览。')
+      } else if (phase === 'fourth-render' && lastUserText(body).includes('生成')) {
+        phase = 'fourth-final'
+        servedTools.push('gotry_itinerary_render')
+        payload = toolResponse('artifact-fourth-render', 'gotry_itinerary_render', {
+          title: 'Native delivery fixture', basename: 'gotry-itinerary-native-delivery.html', fact_ids: [],
+          itinerary: { trip_start: '2027-04-01', trip_end: '2027-04-02',
+            stays: [{ place: 'Shanghai', check_in: '2027-04-01', check_out: '2027-04-02' }], od_segments: [] },
+        })
+      } else if (phase === 'fourth-final' && hasToolMessage(body)) {
+        phase = 'done'
+        payload = textResponse('artifact-fourth-final', '原生文件交付已生成；本计划未核验。')
       } else {
         payload = textResponse(`unexpected-${bodies.length}`, '')
       }
-      res.end(payload)
+      res.end(req.url?.endsWith('/messages') ? messagesResponse(payload) : payload)
     })
   })
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -190,6 +220,14 @@ async function main(): Promise<void> {
   const homeDir = mkdtempSync(join(tmpdir(), 'gotry-artifact-web-home-'))
   const dshHome = mkdtempSync(join(tmpdir(), 'gotry-artifact-web-dsh-'))
   const userDataDir = mkdtempSync(join(tmpdir(), 'gotry-artifact-web-chrome-'))
+  const verifier = join(homeDir, 'flyai-verifier.cjs')
+  writeFileSync(verifier, `#!/usr/bin/env node
+if (process.env.FLYAI_API_KEY === 'sk-web-bad-candidate') {
+  process.stderr.write('HTTP 401 ' + process.env.FLYAI_API_KEY); process.exit(1);
+}
+process.stdout.write(JSON.stringify({data:{itemList:[]}}));
+`)
+  chmodSync(verifier, 0o700)
   const fixture = '# Trip 2027\n\nDay 1: arrival\nDay 2: city walk\nDay 3: museum\nDay 4: rest\nDay 5: return\n'
   writeFileSync(join(workspaceDir, 'trip-2027.md'), fixture, { mode: 0o600 })
   const htmlSentinel = 'gotry-artifact-web-html-sentinel-must-not-run-in-host'
@@ -217,6 +255,7 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
   let server: WebServerProcess | null = null
   let passed = false
   let serverOutput = ''
+  const browserErrors: string[] = []
   const assertions: Record<string, unknown> = {
     isolation: { home: homeDir, dshHome, workspace: workspaceDir, userDataDir, liveFlags: { GOTRY_SESSION_LIVE: '0', GOTRY_HBCLI_LIVE: '0', GOTRY_HOTELBYTE_SKILLS_LIVE: '0' } },
   }
@@ -226,7 +265,8 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
     const tarball = join(packageDir, readdirSync(packageDir).find(name => name.endsWith('.tgz')) || '')
     assert.ok(existsSync(tarball), 'npm pack did not produce a GoTry tarball')
     const packageJson = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version: string }
-    await run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], { cwd: consumerDir, env: { ...process.env, HOME: homeDir } })
+    await run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], { cwd: consumerDir,
+      env: { ...process.env, HOME: homeDir, npm_config_cache: join(outputDir, 'npm-cache') } })
     const installedRoot = join(consumerDir, 'node_modules', '@danceiny', 'gotry')
     const installedBin = join(installedRoot, 'bin', 'gotry-inner.js')
     assert.ok(existsSync(installedBin), 'packed GoTry binary missing')
@@ -246,7 +286,15 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
       LLM_API_KEY: 'synthetic-artifact-web-key',
       LLM_BASE_URL: `http://127.0.0.1:${relay.port}/v1`,
       LLM_MODEL: 'synthetic-artifact-web',
+      DEEPSEEK_API_KEY: 'synthetic-artifact-web-key',
+      DEEPSEEK_BASE_URL: `http://127.0.0.1:${relay.port}/v1`,
+      GOTRY_FLYAI_CLI_BIN: verifier,
+      GOTRY_FLYAI_VERIFY_TIMEOUT_MS: '5000',
+      GOTRY_TURN_HANDOFF_ROOT: workspaceDir,
     }
+    delete env.FLYAI_API_KEY
+    delete env.DEBUG_FLYAI_API_KEY
+    delete env.DEBUG_FLYAI_MCP_URL
     const child = spawn(process.execPath, [installedBin, 'web', '--no-open', '--port', '0'], { cwd: workspaceDir, env, stdio: ['ignore', 'pipe', 'pipe'] })
     server = child
     child.stdout.on('data', chunk => { serverOutput += chunk.toString() })
@@ -258,14 +306,15 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
     browser = await puppeteer.launch({ executablePath: CHROME, headless: true, userDataDir, args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] })
     page = await browser.newPage()
     page.on('console', (message: any) => { serverOutput += `\n[browser console ${message.type()}] ${message.text()}` })
-    page.on('pageerror', (error: Error) => { serverOutput += `\n[browser pageerror] ${error.stack || error.message}` })
+    page.on('pageerror', (error: Error) => { browserErrors.push(error.message); serverOutput += `\n[browser pageerror] ${error.stack || error.message}` })
+    await page.setViewport({ width: 1440, height: 1000 })
     page.setDefaultTimeout(30_000)
     await page.goto(urlResult.url, { waitUntil: 'networkidle2', timeout: 30_000 })
     // A fresh DSH profile may show the product's first-run disclosure before
     // the composer is mounted. Dismiss that visible UI gate through its real
     // button; do not seed cookies or attach an existing browser profile.
     await page.evaluate(() => {
-      const button = [...document.querySelectorAll('button')].find(node => node.textContent?.trim() === '继续') as HTMLButtonElement | undefined
+      const button = [...document.querySelectorAll('button')].find(node => /^(继续|Continue)$/.test(node.textContent?.trim() || '')) as HTMLButtonElement | undefined
       button?.click()
     })
     // Register the isolated fixture through DSH's authenticated public RPC
@@ -294,25 +343,28 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
     // host-authoritative registration through its normal baseline path.
     await page.reload({ waitUntil: 'networkidle2', timeout: 30_000 })
     await page.evaluate(() => {
-      const button = [...document.querySelectorAll('button')].find(node => node.textContent?.trim() === '继续') as HTMLButtonElement | undefined
+      const button = [...document.querySelectorAll('button')].find(node => /^(继续|Continue)$/.test(node.textContent?.trim() || '')) as HTMLButtonElement | undefined
       button?.click()
     })
     await page.waitForFunction((title: string) => document.body.innerText.includes(title), { timeout: 30_000 }, workspaceTitle)
-    await page.click('button[aria-label="选择工作区"], button[aria-label="Select workspace"]')
-    await page.waitForFunction((title: string) => [...document.querySelectorAll('[role="menuitem"], [role="option"], button')].some(node => node.textContent?.trim() === title), { timeout: 30_000 }, workspaceTitle)
+    await page.click('button[aria-label="选择工作区"], button[aria-label="Choose workspace"], button[aria-label="Select workspace"]')
+    await page.waitForFunction((title: string) => [...document.querySelectorAll('[role="menuitem"], [role="option"]')].some(node => node.textContent?.trim() === title), { timeout: 30_000 }, workspaceTitle)
     await page.evaluate((title: string) => {
-      const node = [...document.querySelectorAll('[role="menuitem"], [role="option"], button')].find(candidate => candidate.textContent?.trim() === title) as HTMLElement | undefined
+      const node = [...document.querySelectorAll('[role="menuitem"], [role="option"]')].find(candidate => candidate.textContent?.trim() === title) as HTMLElement | undefined
       node?.click()
     }, workspaceTitle)
+    await page.waitForFunction((title: string) => [...document.querySelectorAll('button[aria-label="选择工作区"], button[aria-label="Choose workspace"], button[aria-label="Select workspace"]')]
+      .some(node => node.textContent?.includes(title)), { timeout: 30_000 }, workspaceTitle)
     await page.waitForSelector('[contenteditable="true"]')
+    console.log('Web E2E: isolated installed package and selected workspace ready')
     const submit = async (text: string) => {
-      const editor = await page.$('[contenteditable="true"]')
-      assert.ok(editor, 'real composer missing')
-      await editor.click()
-      await page.keyboard.type(text)
-      const button = await page.$('button[aria-label="发送消息"], button[aria-label="Send message"]')
-      assert.ok(button, 'real composer submit button missing')
-      await button.click()
+      await page.locator('[contenteditable="true"]').fill(text)
+      await page.waitForFunction(() => {
+        const button = document.querySelector('button[aria-label="发送消息"], button[aria-label="Send message"]') as HTMLButtonElement | null
+        return button && !button.disabled
+      })
+      await page.locator('button[aria-label="发送消息"], button[aria-label="Send message"]').click()
+      await page.waitForFunction((message: string) => document.body.innerText.includes(message), { timeout: 30_000 }, text)
     }
 
     await submit('请列出并打开刚才生成的 trip-2027.md 行程产物。')
@@ -322,19 +374,28 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
           if (process.getAttribute('aria-expanded') !== 'true') (process as HTMLElement).click()
         }
       })
+      await page.waitForFunction(() => [...document.querySelectorAll('[data-turn-process]')]
+        .every(node => (node as HTMLButtonElement).disabled || node.getAttribute('aria-expanded') === 'true'))
+      await page.evaluate(() => {
+        for (const activity of document.querySelectorAll('[data-process-activity]')) {
+          if (activity.getAttribute('aria-expanded') !== 'true') (activity as HTMLElement).click()
+        }
+      })
     }
     await page.waitForFunction(() => document.querySelector('[data-turn-process="1"]') !== null, { timeout: 60_000 })
+    await page.waitForFunction(() => document.body.innerText.includes('已展示行程产物。'), { timeout: 60_000 })
     await revealArtifactCalls()
     await page.waitForSelector('[data-gotry-artifact-card="list"]')
     await page.waitForSelector('[data-gotry-artifact-card="list"][data-gotry-artifact-state="ok"]')
     await page.waitForSelector('[data-gotry-artifact-card="read"] [data-gotry-artifact-line="1"]')
+    console.log('Web E2E: native tool cards visible')
     assert.equal(await page.$eval('[data-gotry-artifact-card="list"]', (node: Element) => {
       const rect = node.getBoundingClientRect()
-      return rect.width > 0 && rect.height > 0
+      return !node.closest('[hidden]') && rect.width > 0 && rect.height > 0
     }), true, 'artifact list card is not visibly rendered')
     assert.equal(await page.$eval('[data-gotry-artifact-card="read"]', (node: Element) => {
       const rect = node.getBoundingClientRect()
-      return rect.width > 0 && rect.height > 0
+      return !node.closest('[hidden]') && rect.width > 0 && rect.height > 0
     }), true, 'artifact read card is not visibly rendered')
     const pathButton = await page.$('[data-gotry-artifact-path$="trip-2027.md"]')
     assert.ok(pathButton, 'list card path button missing')
@@ -357,14 +418,15 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
 
     await submit('请修改刚才的行程产物，在末尾追加 Day 6，然后重新读取并展示更新版本。')
     await page.waitForFunction(() => document.querySelector('[data-turn-process="2"]') !== null, { timeout: 60_000 })
+    await page.waitForFunction(() => document.body.innerText.includes('已更新并重新读取行程产物。'), { timeout: 60_000 })
     await revealArtifactCalls()
     await page.waitForFunction(() => document.querySelectorAll('[data-gotry-artifact-card="read"]').length >= 2, { timeout: 60_000 })
     await page.waitForFunction(() => [...document.querySelectorAll('[data-gotry-artifact-card="read"]')].some(node => node.textContent?.includes('Day 6: revision requested')), { timeout: 60_000 })
-    // The artifact card has the fresh read result, but the public DSH file
-    // preview intentionally keeps its old page until the user acknowledges
-    // the changed-file banner. Exercise that visible reload control instead
-    // of treating the custom card or hidden DOM as sidebar evidence.
-    await page.waitForSelector('[data-textpreview-changed]', { timeout: 60_000 })
+    // Independently verify the native file preview. The current Host may
+    // refresh automatically; a retained older page must expose a reload
+    // control. In either case the rendered sidebar must show the new line.
+    await page.waitForFunction(() => document.querySelector('[data-textpreview-changed]')
+      || document.querySelector('[data-textpreview-body]')?.textContent?.includes('Day 6: revision requested'), { timeout: 60_000 })
     const staleRightPreview = await page.$eval('[data-textpreview-state="text"]', (node: Element) => {
       const rect = node.getBoundingClientRect()
       const body = node.querySelector('[data-textpreview-body]')
@@ -375,21 +437,19 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
       }
     })
     assert.equal(staleRightPreview.visible, true, 'right file preview is not visibly rendered before reload')
-    assert.equal(staleRightPreview.changedBanner, true, 'right file preview did not show the changed-file banner')
-    assert.equal(staleRightPreview.includesDay6, false, 'right file preview unexpectedly contained Day 6 before reload')
-    const reloadButton = await page.$('[data-textpreview-changed] [data-textpreview-reload-now]')
-    assert.ok(reloadButton, 'right file preview reload control missing')
-    const reloadControl = await page.$eval('[data-textpreview-changed] [data-textpreview-reload-now]', (node: Element) => {
-      const rect = node.getBoundingClientRect()
-      return {
-        visible: rect.width > 0 && rect.height > 0,
-        text: node.textContent?.trim() || '',
-        ariaLabel: node.getAttribute('aria-label'),
-      }
-    })
-    assert.equal(reloadControl.visible, true, 'right file preview reload control is not visible')
-    assert.match(reloadControl.text, /重新载入|Reload/)
-    await reloadButton.click()
+    let reloadControl = { visible: false, text: 'Automatic native refresh', ariaLabel: null as string | null }
+    if (!staleRightPreview.includesDay6) {
+      assert.equal(staleRightPreview.changedBanner, true, 'a stale file preview must expose its changed-file banner')
+      const reloadButton = await page.$('[data-textpreview-changed] [data-textpreview-reload-now]')
+      assert.ok(reloadButton, 'right file preview reload control missing')
+      reloadControl = await page.$eval('[data-textpreview-changed] [data-textpreview-reload-now]', (node: Element) => {
+        const rect = node.getBoundingClientRect()
+        return { visible: rect.width > 0 && rect.height > 0, text: node.textContent?.trim() || '', ariaLabel: node.getAttribute('aria-label') }
+      })
+      assert.equal(reloadControl.visible, true, 'right file preview reload control is not visible')
+      assert.match(reloadControl.text, /重新载入|Reload/)
+      await reloadButton.click()
+    }
     await page.waitForFunction(() => {
       const preview = document.querySelector('[data-textpreview-state="text"]')
       const body = preview?.querySelector('[data-textpreview-body]')
@@ -480,6 +540,7 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
     // terms, not against hidden/animating geometry.
     await submit('请用 gotry_artifacts_list 列出当前工作区里 HTML 产物，然后用 gotry_artifacts_read 读取 trip-2027.html 的源码展示给用户。')
     await page.waitForFunction(() => document.querySelector('[data-turn-process="3"]') !== null, { timeout: 60_000 })
+    await page.waitForFunction(() => document.body.innerText.includes('已读取 HTML 产物'), { timeout: 60_000 })
     await revealArtifactCalls()
     await page.waitForFunction(() => [...document.querySelectorAll('[data-gotry-artifact-card="read"]')].some(node => node.getAttribute('data-gotry-artifact-source') === 'html'), { timeout: 60_000 })
 
@@ -630,6 +691,7 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
       screenshots: { page: htmlScreenshotPath, iframe: htmlIframeScreenshotPath },
       htmlFixture: { path: join(workspaceDir, 'trip-2027.html'), sentinel: htmlSentinel },
     }
+    console.log('Web E2E: read/edit/refresh and native HTML sandbox passed')
     assert.deepEqual(relay.servedTools, [
       'gotry_artifacts_list',
       'gotry_artifacts_read',
@@ -639,6 +701,102 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
       'gotry_artifacts_list',
       'gotry_artifacts_read',
     ])
+
+    // The render tool emits the same durable presentation event as native
+    // present. No extra model call or invented Client-only card is involved.
+    await submit('请生成一个未核验的 HTML 行程文件，验证原生文件交付。')
+    await page.waitForFunction(() => document.body.innerText.includes('原生文件交付已生成'), { timeout: 60_000 })
+    await page.waitForSelector('[data-presented-file] button[title$="gotry-itinerary-native-delivery.html"]')
+    assert.ok(existsSync(join(workspaceDir, 'gotry-itinerary-native-delivery.html')))
+    await page.click('[data-presented-file] button[title$="gotry-itinerary-native-delivery.html"]')
+    const generatedFrame = await page.waitForFrame(async (frame: import('puppeteer-core').Frame) => {
+      if (!frame.url().startsWith('blob:')) return false
+      return frame.evaluate(() => document.querySelector('h1')?.textContent === 'Native delivery fixture').catch(() => false)
+    }, { timeout: 30_000 })
+    assert.ok(generatedFrame, 'native delivery card did not open the generated file')
+    await page.screenshot({ path: join(outputDir, 'gotry-native-delivery.png'), fullPage: false })
+    assertions.delivery = { nativeCard: true, nativePreview: true, filename: 'gotry-itinerary-native-delivery.html' }
+
+    // Search and paginate the persistent workbench without asking the model.
+    for (let index = 0; index < 22; index++) writeFileSync(join(workspaceDir, `history-${String(index).padStart(2, '0')}.md`), '# History fixture\n')
+    const modelRequestsBeforeBrowse = relay.bodies.length
+    const clickText = async (pattern: string, root = 'body') => {
+      await page.waitForFunction((source: string, selector: string) => [...document.querySelectorAll(selector + ' button')].some(node => {
+        const rect = node.getBoundingClientRect()
+        return rect.width > 0 && rect.height > 0 && !(node as HTMLButtonElement).disabled
+          && new RegExp(source).test(node.textContent?.trim() || node.getAttribute('aria-label') || '')
+      }), { timeout: 30_000 }, pattern, root)
+      await page.evaluate((source: string, selector: string) => {
+        const node = [...document.querySelectorAll(selector + ' button')].find(node => {
+          const rect = node.getBoundingClientRect()
+          return rect.width > 0 && rect.height > 0 && !(node as HTMLButtonElement).disabled
+            && new RegExp(source).test(node.textContent?.trim() || node.getAttribute('aria-label') || '')
+        }) as HTMLButtonElement
+        node.click()
+      }, pattern, root)
+    }
+    await page.click('button[aria-label="新标签页"], button[aria-label="New tab"]')
+    await clickText('^GoTry (产物|artifacts)', '[data-sidebar-right-guide]')
+    await page.waitForSelector('[data-gotry-artifact-entry]')
+    assert.equal(await page.$$eval('[data-gotry-artifact-entry]', (nodes: Element[]) => nodes.length), 20)
+    await clickText('^(下一页|Next)$', '[data-gotry-artifacts-browser]')
+    await page.waitForFunction(() => document.querySelector('[data-gotry-artifacts-browser] [role="status"]')?.textContent?.startsWith('21–'))
+    const search = '[data-gotry-artifacts-browser] input'
+    await page.type(search, 'trip-2027')
+    await page.waitForFunction(() => document.querySelectorAll('[data-gotry-artifact-entry]').length === 2)
+    await page.screenshot({ path: join(outputDir, 'gotry-artifacts-workbench.png'), fullPage: false })
+    await page.click('[data-gotry-artifact-entry$="trip-2027.html"]')
+    const historyFrame = await page.waitForFrame(async (frame: import('puppeteer-core').Frame) => {
+      if (!frame.url().startsWith('blob:')) return false
+      return frame.evaluate(() => document.querySelector('#artifact-web-h1')?.textContent === 'GoTry artifact-web visible heading').catch(() => false)
+    }, { timeout: 30_000 })
+    assert.ok(historyFrame, 'persistent workbench failed to open HTML in the native preview')
+    assert.equal(relay.bodies.length, modelRequestsBeforeBrowse, 'history browsing must not invoke the model')
+    assertions.workbench = { entryVisible: true, pageSize: 20, pagination: true, searchMatches: 2, nativePreview: true, modelRequests: 0 }
+
+    // Native Plugins navigation and real official-file persistence.
+    await clickText('^(插件|Plugins)$')
+    await page.waitForSelector('[data-plugin-item="gotry"] button')
+    await page.click('[data-plugin-item="gotry"] button')
+    await page.waitForFunction(() => /匿名试用|Anonymous trial/.test(document.querySelector('[data-gotry-flyai-status]')?.textContent || ''))
+    assert.equal(await page.$eval('#gotry-flyai-key', (node: HTMLInputElement) => node.type), 'password')
+    const goodKey = 'sk-web-good-candidate-1234', badKey = 'sk-web-bad-candidate'
+    await page.type('#gotry-flyai-key', goodKey)
+    await clickText('^(验证并保存|Verify and save)$', '[data-gotry-flyai-settings]')
+    await page.waitForFunction(() => /当前配置已验证|Current configuration verified/.test(document.querySelector('[data-gotry-flyai-status]')?.textContent || ''))
+    const configPath = join(homeDir, '.flyai/config.json'), beforeBad = readFileSync(configPath, 'utf8')
+    assert.equal(JSON.parse(beforeBad).FLYAI_API_KEY, goodKey)
+    assert.equal(statSync(configPath).mode & 0o777, 0o600)
+    assert.equal(await page.$eval('#gotry-flyai-key', (node: HTMLInputElement) => node.value), '')
+    await page.screenshot({ path: join(outputDir, 'gotry-flyai-settings.png'), fullPage: false })
+    await page.type('#gotry-flyai-key', badKey)
+    await clickText('^(验证并保存|Verify and save)$', '[data-gotry-flyai-settings]')
+    await page.waitForFunction(() => /401/.test(document.querySelector('[data-gotry-flyai-settings] [role="alert"]')?.textContent || ''))
+    assert.equal(readFileSync(configPath, 'utf8'), beforeBad)
+    assert.equal(await page.$eval('[data-gotry-flyai-status]', (node: Element) => /已验证|verified/.test(node.textContent || '')), true)
+    const leakedKey = await page.evaluate((keys: string[]) => keys.some(key => document.documentElement.outerHTML.includes(key)), [goodKey, badKey])
+    assert.equal(leakedKey, false, 'a saved or rejected credential leaked into the rendered document')
+    assert.equal(serverOutput.includes(goodKey) || serverOutput.includes(badKey), false, 'a credential leaked into the runtime/browser log')
+    assert.equal(JSON.stringify(relay.bodies).includes(goodKey) || JSON.stringify(relay.bodies).includes(badKey), false, 'a credential entered model traffic')
+    await page.screenshot({ path: join(outputDir, 'gotry-flyai-rejected.png'), fullPage: false })
+    await page.setViewport({ width: 390, height: 844 })
+    await page.waitForFunction(() => (document.querySelector('[data-gotry-flyai-settings]')?.getBoundingClientRect().width || 0) >= 240)
+    const layout = await page.$eval('[data-gotry-flyai-settings]', (node: Element) => ({ width: node.getBoundingClientRect().width, scrollWidth: node.scrollWidth }))
+    assert.ok(layout.scrollWidth <= layout.width + 1, `configuration fields overflow the narrow viewport: ${JSON.stringify(layout)}`)
+    await page.screenshot({ path: join(outputDir, 'gotry-flyai-narrow.png'), fullPage: false })
+    await page.setViewport({ width: 1440, height: 1000 })
+    await clickText('^(重新读取状态|Refresh status)$', '[data-gotry-flyai-settings]')
+    await page.waitForFunction(() => /已验证|verified/.test(document.querySelector('[data-gotry-flyai-status]')?.textContent || ''))
+    const origin = new URL(urlResult.url).origin
+    assert.equal((await fetch(origin + '/api/gotry/flyai')).status, 401, 'configuration route bypassed native browser authentication')
+    assert.equal((await fetch(origin + '/api/gotry/flyai', { headers: { origin: 'https://untrusted.example' } })).status, 403, 'configuration route bypassed native Origin checks')
+    await clickText('^(清除本机 Key|Clear local key)$', '[data-gotry-flyai-settings]')
+    await page.waitForFunction(() => /匿名试用|Anonymous trial/.test(document.querySelector('[data-gotry-flyai-status]')?.textContent || ''))
+    assertions.flyai = { nativePluginsPage: true, maskedInput: true, verifiedSave: true, officialConfigMode: '0600',
+      rejectedCandidatePreservesOldKey: true, noDomLogModelSecret: true, refresh: true, clear: true,
+      unauthenticatedStatus: 401, crossOriginStatus: 403, narrowViewport: { width: 390, height: 844, ...layout }, verifier: 'isolated CLI fixture' }
+    assert.deepEqual(browserErrors, [], 'browser reported uncaught application errors')
+    assertions.browserErrors = browserErrors
     assertions.relay = { toolCalls: relay.servedTools, bodyCount: relay.bodies.length }
     const screenshotPath = join(outputDir, 'artifact-web-e2e.png')
     await page.screenshot({ path: screenshotPath, fullPage: true })
@@ -649,7 +807,7 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
     const receipt = { screenshot: { path: screenshotPath, sha256: screenshotSha256 }, domAssertions: { path: domPath, sha256: domSha256 }, serverOutputSha256: createHash('sha256').update(serverOutput).digest('hex') }
     writeFileSync(join(outputDir, 'artifact-web-e2e.receipt.json'), JSON.stringify(receipt, null, 2) + '\n', { mode: 0o600 })
     passed = true
-    console.log(`DSH ARTIFACT WEB E2E: PASS fresh Chrome profile, list→select/open→preview→read→edit→updated read; screenshot=${screenshotPath}; screenshotSha256=${screenshotSha256}; dom=${domPath}; domSha256=${domSha256}`)
+    console.log(`DSH ARTIFACT WEB E2E: PASS fresh installed package; native configuration save/reject/clear, authenticated routes, persistent workbench search/page/preview, native generated-file delivery, list/read/edit/refresh; screenshot=${screenshotPath}; screenshotSha256=${screenshotSha256}; dom=${domPath}; domSha256=${domSha256}`)
   } finally {
     if (page && !passed) {
       try {
@@ -658,6 +816,7 @@ document.documentElement.setAttribute('data-${htmlSentinel}', 'host-ran-it');
         writeFileSync(failureHtml, await page.content(), { mode: 0o600 })
         await page.screenshot({ path: failurePng, fullPage: true })
         writeFileSync(join(outputDir, 'artifact-web-e2e.failure.log'), serverOutput, { mode: 0o600 })
+        writeFileSync(join(outputDir, 'artifact-web-e2e.failure.relay.json'), JSON.stringify({ servedTools: relay.servedTools, bodies: relay.bodies }, null, 2), { mode: 0o600 })
         console.error(`DSH ARTIFACT WEB E2E failure artifacts: html=${failureHtml}; screenshot=${failurePng}; log=${join(outputDir, 'artifact-web-e2e.failure.log')}`)
       } catch { /* browser may have failed before a document existed */ }
     }

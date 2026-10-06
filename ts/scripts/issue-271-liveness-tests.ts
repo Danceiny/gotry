@@ -306,7 +306,7 @@ function writeProductFixture(root: string, options: { writeTerminalOutput: boole
   writeFileSync(join(presentDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-tool-present', main: 'index.js' }))
   writeFileSync(join(presentDir, 'index.js'), 'module.exports = {}\n')
 
-  for (const file of ['gotry-inner.js', 'gotry-bootstrap.js', 'gotry-extension-status.js', 'gotry-runtime-resolution.js', 'gotry-process-liveness.js']) {
+  for (const file of ['gotry-inner.js', 'gotry-bootstrap.js', 'gotry-flyai-verification.js', 'gotry-extension-status.js', 'gotry-runtime-resolution.js', 'gotry-process-liveness.js']) {
     copyFileSync(join(repoRoot, 'bin', file), join(binDir, file))
   }
   copyFileSync(join(repoRoot, 'ts', 'capabilities', 'incident-log.ts'), join(tsCapabilitiesDir, 'incident-log.ts'))

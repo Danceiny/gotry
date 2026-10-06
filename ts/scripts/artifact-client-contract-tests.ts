@@ -39,14 +39,14 @@ const fakeReact = {
   useState<T>(initial: T) { return [initial, () => {}] as const },
 }
 const clientExports = registrations[0].factory(name => {
-  assert.equal(name, 'react')
-  return fakeReact
+  assert.ok(['react', '@deepseek-ai/dsh-client-ui-primitives'].includes(name))
+  return name === 'react' ? fakeReact : {}
 })
 assert.deepEqual(Object.keys(clientExports), ['apply', 'inject'])
 
 const slotRegistrations: Array<{ key?: string; view: unknown }> = []
 const registrationContext = {
-  inject(_deps: string[], callback: (scope: any) => void) { callback(registrationContext) },
+  inject(deps: string[], callback: (scope: any) => void) { if (deps.every(name => name in registrationContext)) callback(registrationContext) },
   slots: {
     inject(_slot: string, callback: () => unknown) { callback() },
     register(definition: { key?: string }, view: unknown) {

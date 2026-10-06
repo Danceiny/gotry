@@ -136,7 +136,7 @@ TAG=latest ./scripts/publish-npm.sh   # dist-tag 必须显式传(#50①);凭据�
 
 FlyAI 提供八类只读检索。匿名试用使用共享池；`Trial limit reached` 归类为 `needs-setup`，鉴权或额度失败不重试。
 
-配置个人密钥，运行 `npx @danceiny/gotry setup flyai`。打开 [FlyAI 控制台](https://flyai.open.fliggy.com/console)，登录后复制 API Key，粘贴到终端的隐藏输入框。GoTry 先做只读查询验证，通过后保存到 `~/.flyai/config.json`；验证失败保留原凭据。请勿把密钥粘贴到聊天里。查看状态运行 `npx @danceiny/gotry setup flyai --status`；清除已存密钥运行 `npx @danceiny/gotry setup flyai --clear`。已有 `FLYAI_API_KEY` 或 `DEBUG_FLYAI_API_KEY` 环境覆盖仍优先于文件，状态会显示实际生效来源。浏览器扩展已连接时，可选账号会话检索。
+配置个人密钥，可用 **Web → 插件 → GoTry → FlyAI**，或在终端运行 `npx @danceiny/gotry setup flyai`。打开 [FlyAI 控制台](https://flyai.open.fliggy.com/console)，登录后复制 API Key，粘贴到密码输入框或终端隐藏输入框。两种入口均先做只读查询验证，通过后写入官方 `~/.flyai/config.json`，并在 `~/.gotry/flyai-verification.json` 保存绑定该 Key 的回执；候选 Key 验证失败或取消时保留原凭据。网页路由复用 DSH 已认证的浏览器 API，只返回是否配置、来源与验证状态，不返回 Key。请勿把密钥粘贴到聊天里。可在网页查看或清除，也可运行 `npx @danceiny/gotry setup flyai --status`／`--clear`。已有 `FLYAI_API_KEY` 或 `DEBUG_FLYAI_API_KEY` 环境覆盖仍优先于文件；网页显示实际生效来源，此时禁止写入。浏览器扩展已连接时，可选账号会话检索。
 
 ---
 
