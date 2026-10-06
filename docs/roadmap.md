@@ -20,7 +20,7 @@
 
 | Surface | Current position | Authority |
 |---|---|---|
-| Published package | npm `latest` points to `0.2.0-rc.28`; the compatibility `rc` tag remains on `0.0.1-rc.20`. Source `main` may be ahead of both. | [`release-notes.md`](release-notes.md) and [CHANGELOG](../CHANGELOG.md) |
+| Published package | npm `latest` points to `0.2.0-rc.29`; the compatibility `rc` tag remains on `0.0.1-rc.20`. Source `main` may be ahead of both. | [`release-notes.md`](release-notes.md) and [CHANGELOG](../CHANGELOG.md) |
 | Product milestone | M3 evidence is open. The web product and deterministic scorer exist; the real 50–200 seed-user outcome set does not yet satisfy the exit gate. | [#22](https://github.com/Danceiny/gotry/issues/22) |
 | Evaluation | Deterministic contracts and validators exist. No official external score or uplift is claimed without an admitted, complete cohort. | [`evaluation/evaluation-foundation.md`](evaluation/evaluation-foundation.md) |
 | Memory | M4 collectors and scorers are engineering support only. A real `observed_private` repeat cohort with source review remains required. | [`architecture.md` §10 D-19](architecture.md#101-open-working-face), [#20](https://github.com/Danceiny/gotry/issues/20) (closed as deferred) |
