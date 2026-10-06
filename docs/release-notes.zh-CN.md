@@ -12,6 +12,33 @@
 
 ---
 
+## v0.2.0-rc.29 · 2026-10-06
+
+**为什么发这一版。** rc.28 让求解器崩溃以显式的 `solver_error` 上报，而不再被说成「你的行程不可行」（[#620](https://github.com/Danceiny/gotry/issues/620)）。这使随包的云南数据包仍以 `solver_error` 收场、给不出方案：它的 `yn0` 段（8.4 落地后昆明→丽江的衔接）没有校准过的缓冲与接驳分钟数，而这些只有 founder 能提供（[#635](https://github.com/Danceiny/gotry/issues/635)）。现在该包在它挂接的四段上求解，`yn0` 作为 advisory 保留。本版同时在产品内为 Chrome 应用商店的更名收尾：`doctor`、setup 与 wizard 文案、工具描述统一写 Stai Travel Bridge——即该 listing 自 2026-10-04 上线起使用的名字。版本号继续与扩展 manifest 配对（`0.2.0.29`，由 `extension-tests` 强制）；扩展行为未改。
+
+### 新增（自 rc.28 起）
+
+**修复**
+
+- **随包的云南数据包重新可解（[#635](https://github.com/Danceiny/gotry/issues/635)）** — `yn0` 从 `legs` 移入 `data/yunnan-pack.json` 新增的 `advisory_legs` 段，并写明原因：它的缓冲、出发地接驳与目的地接驳分钟数是只有 founder 能校准的现实事实，不替它们编造数字。没有任何读取方消费 `advisory_legs`，所以解析器、求解器与内核钉死文件零改动。此前对该包调用 `solveUnified` 返回 `solver_error`（`solver_input_not_integer`）；产品自己的纯 TypeScript 入口 `solveChoiceSegment` 从未受影响。三个分钟数一旦到位，把 `yn0` 放回 `legs` 就是全部改动。现在有测试审计每个随包数据包的三个整数字段，persona 演练里云南一行为 `feasible`。
+- **扩展只剩一个名字：Stai Travel Bridge（#637）** — listing 改名之后，setup 与 wizard 的提示行、需要扩展的摘要、`doctor` 条目标签以及通道与工具描述仍写着「GoTry Session Bridge」。现在统一为 Chrome 应用商店展示的名字。商店链接与扩展身份不变。按旧 `doctor` 标签文字匹配的脚本需改用新标签。
+
+**发布工具链（不在 npm 包内）**
+
+- **npm 发布收成一条经过校验的命令（#641）** — `scripts/publish-npm.sh` 的预检会在第一次批准点击之前列出全部阻塞项。「已发布」以 registry 回拉回执为闸，GitHub Release 与文档后续步骤都读该回执。CI 可以在 tag 上手动触发，所以 push 运行被取消的 tag 提交也能带上自己的证明。流程见 `docs/ops/npm-release-runbook.md`。
+- **面向 npm Trusted Publishing 的发布工作流（#642）** — `.github/workflows/npm-publish.yml` 只能手动触发且默认演练。它能让一次发布不需要批准点击、也不持有任何 npm 凭证，持有身份的作业在 checkout 之后不运行任何已安装的东西。使用前需要在 npmjs.com 做一次性的 Trusted Publisher 设置；在真实运行通过之前，上面那条命令仍是备案路径。
+
+**整理**
+
+- **又有五个追踪单按「推迟」关闭（#20、#136、#137、#142、#272）** — 2026-10-05 按 *not planned* 关闭：M4–M6 暂不是产品的核心能力，Booking Copilot 的验收则要等一个已登录的 Dida 浏览器窗口和一次获授权的 UAT 部署。关闭不等于验收：所有闸门仍未满足，权威文档承载每一条恢复触发条件与顺延的验收（#639）。
+- **README、用户指南与路线图的基线随 rc.28 更新（#640）** — rc.28 记为已发布，并已从 registry 回拉校验。
+
+### 安装
+
+运行 `npx @danceiny/gotry@0.2.0-rc.29 web`（Node ≥ 22.15）。待 `latest` 指向本版后，`npx @danceiny/gotry web` 等价；镜像滞后时请钉精确版本。
+
+---
+
 ## v0.2.0-rc.28 · 2026-10-05
 
 **为什么发这一版。** rc.27 的回拉校验与模拟触发演练暴露了真实缺陷。`npx @danceiny/gotry doctor` 会把没有凭证的 hbcli 报成「凭证有效」，装了 hbcli 的机器无一幸免（[#623](https://github.com/Danceiny/gotry/issues/623)）；接驳路径上，供应商的原始错误文本可能不经清洗进入工具结果，而与自己的模式或解析起终点相矛盾的路线供应商仍会被绑定成机场接驳（#429）；求解器崩溃可能以「你的行程不可行」的样子走到旅行者面前（[#620](https://github.com/Danceiny/gotry/issues/620)）；租户账本还会把裸 SQLite 争用错误漏给调用方（[#619](https://github.com/Danceiny/gotry/issues/619)）。这些在本版全部修复。本版同时落地会话双区记忆（默认关闭）与 M3 采集及 persona 模拟 harness（仅 synthetic）。版本号继续与扩展 manifest 配对（`0.2.0.28`，由 `extension-tests` 强制）；扩展本身未改。
