@@ -65,6 +65,7 @@ import { factsFromFlyai, factsFromHotel, factsFromSession, factsFromSessionTrain
 import { hasRecognizedAvailableSeat } from '../capabilities/session/adapters/rail-12306.ts'
 import { gateArtifact, type AirlineAirportMap } from './artifact-gate.ts'
 import { installTurnDeadline, listTurnHandoffTickets } from './turn-deadline.ts'
+import { startTurnHandoffJob } from './turn-handoff-job.ts'
 import { noteChannelVerdict, recordChannelEvent, readLatestChannelEvents } from '../capabilities/channel-health.ts'
 import { routingAdvice, renderRoutingCard, toolRoutingHeadline, persistedDownChannels, type ChannelIntent } from '../capabilities/channel-registry.ts'
 import { registerBenchmarkEnvironmentBridge, type BenchmarkSubprocessService } from './benchmark-environment-bridge.ts'
@@ -524,7 +525,11 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     ? { fixedPolicy: { softMs: 300_000, hardMs: 900_000, exit: 'converge' } }
     : rawBenchmarkEnvironmentConfigPath.trim()
       ? { fixedPolicy: benchmarkPinnedPolicy() }
-      : { stateRoot: process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.' })
+      : { stateRoot: process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.',
+        // A one-shot headless process exits after its final response and cannot
+        // own ongoing work. Keep that ticket queued for explicit collection.
+        startHandoff: (ticket, agent, root) => typeof ctx.get === 'function' && ctx.get('connection')
+          ? startTurnHandoffJob(ctx, ticket, agent, root) : Promise.resolve(ticket) })
   if (rawBenchmarkEnvironmentConfigPath.trim()) {
     // Benchmark mode is a deliberately minimal kernel: only the model
     // override and the environment bridge are installed besides the pinned
@@ -1104,8 +1109,8 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     name: 'gotry_turn_handoff_list',
     description:
       'List background deep-planning handoff tickets (read-only). Call this whenever the user asks about '
-      + 'a previously handed-off plan («规划好了吗» / «上次那个行程»): open = still being worked in the '
-      + 'background (ETA ' + '约 1 小时' + '), settled = deliverable ready (excerpt included, full text in the '
+      + 'a previously handed-off plan («规划好了吗» / «上次那个行程»): open = queued, worker not started; '
+      + 'running = started with a native job id (use job_list for live status); settled = deliverable ready (excerpt included, full text in the '
       + 'ticket\'s .deliverable.md), failed = honest failure note. Never fabricate a deliverable that is not here.',
     // D-30 第三刀(issue #112):query blob → 平铺 typed;全字段可选 → interpretArgs 容忍层(同 session 刀法)
     parameters: {
@@ -1115,9 +1120,10 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: String((value as { summary?: string }).summary ?? '') }],
     },
-    async execute(args, _exec: unknown) {
+    async execute(args, exec: unknown) {
       const q = interpretArgs<{ ticketId?: string }>(args)
-      const root = process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.'
+      const configuredRoot = process.env.GOTRY_TURN_HANDOFF_ROOT ?? config.stateRoot ?? '.'
+      const root = configuredRoot === '.' ? sessionCwd(exec) ?? '.' : configuredRoot
       const all = await listTurnHandoffTickets(root)
       const tickets = (q.ticketId ? all.filter(t => t.id === q.ticketId) : all).slice(0, 10)
       if (tickets.length === 0) {
@@ -1130,9 +1136,18 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       }
       const lines = tickets.map(t => {
         const head = `[${t.status}] ${t.id} ${t.objective.slice(0, 40)}`
-        if (t.status === 'open') return `${head}——后台规划中,ETA ${t.etaLabel}`
+        if (t.status === 'open') return `${head}——待启动，后台尚未运行`
+        if (t.status === 'running') {
+          const owner = (exec as { agent?: import('@deepseek-ai/dsh-agent').Agent }).agent
+          // Native counters restart with the host. A recycled id alone is not
+          // the durable ticket's identity and must not offer another trip's job.
+          const live = owner && ctx.get('jobs')?.list(owner.id).some(job => job.id === t.jobId
+            && job.owner === owner.id && job.kind === 'gotry-planning' && job.label.startsWith(`${t.id}: `)
+            && (job.status === 'running' || job.status === 'stopping'))
+          return `${head}——${live ? `后台任务 ${t.jobId}，预计 ${t.etaLabel}` : '运行记录已中断，当前没有活跃后台任务'} `
+        }
         if (t.status === 'failed') return `${head}——失败:${t.error ?? '未知原因'}(请重新发起规划)`
-        return `${head}——已交付,摘要:${(t.deliverableExcerpt ?? '').slice(0, 120).replace(/\n/g, ' ')}`
+        return `${head}——${t.deliverablePath ? `已交付：${t.deliverablePath}` : '交付文件缺失'}，摘要:${(t.deliverableExcerpt ?? '').slice(0, 120).replace(/\n/g, ' ')}`
       })
       return {
         ok: true, count: tickets.length, tickets,
@@ -2490,6 +2505,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       try {
         r = await listArtifacts({
           stateRoot: config.stateRoot ?? '.',
+          handoffRoot: process.env.GOTRY_TURN_HANDOFF_ROOT ?? ((config.stateRoot ?? '.') === '.' ? sessionCwd(exec) ?? '.' : config.stateRoot),
           cwd: sessionCwd(exec),
           limit: q.limit,
           offset: q.offset,
@@ -2582,7 +2598,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       const q = args
       if (!q.path) throw new Error('gotry_artifacts_read requires path')
       if (!q.path) return JSON.parse(JSON.stringify({ ok: false, error: 'path 必填(来自 gotry_artifacts_list)' })) as Record<string, never>
-      const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', cwd: sessionCwd(exec), path: q.path, offset: q.offset, limit: q.limit })
+      const r = await readArtifact({ stateRoot: config.stateRoot ?? '.', handoffRoot: process.env.GOTRY_TURN_HANDOFF_ROOT ?? ((config.stateRoot ?? '.') === '.' ? sessionCwd(exec) ?? '.' : config.stateRoot), cwd: sessionCwd(exec), path: q.path, offset: q.offset, limit: q.limit })
       if (!r.ok) return JSON.parse(JSON.stringify(r)) as Record<string, never>
       // 身份/来源展示(issue #285 第 1 条「显示身份/来源」):行号视图保留 read 卡的
       // path/offset/lines/totalLines/lang;fallback content 用 source label 前缀,

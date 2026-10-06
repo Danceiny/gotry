@@ -229,6 +229,8 @@ async function main(): Promise<void> {
       cwd: TS_DIR,
       env: {
         ...process.env,
+        HOME: dshHome,
+        DSH_HOME: dshHome,
         GOTRY_HANDOFF_PLANNER_BIN: configuredBin,
         LLM_API_KEY: 'synthetic-e2e-key',
         LLM_BASE_URL: 'http://127.0.0.1:' + relay.port + '/v1',

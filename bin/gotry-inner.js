@@ -133,7 +133,7 @@ const selectedDsh = selectDshRuntime({
 let dshBin = selectedDsh?.bin ?? ''
 const dshSource = selectedDsh?.source ?? ''
 const dshCwd = selectedDsh
-  ? selectDshCwd({
+  ? process.env.GOTRY_HANDOFF_CHILD === '1' ? process.cwd() : selectDshCwd({
       repoRoot,
       invocationCwd: process.cwd(),
       sourceCheckoutMode,
@@ -430,6 +430,12 @@ if (!benchmarkEnvironmentConfig && (mode === 'web' || stdioAsk)) try {
 
 const unboundPatch = benchmarkPatchProjection ?? readFileSync(staticPatch, 'utf-8')
 let patchRaw = benchmarkPatchProjection ?? unboundPatch.replace(/(name:\s*)'[^']*ts\/src\/index\.ts'/, `$1'${pluginEntry}'`)
+if (!benchmarkPatchProjection && patchRaw.includes("'placeholder/dsh-tool-present'")) {
+  // Native file delivery is separate from fs/write in the pinned DSH runtime.
+  // Resolve through DSH's declared closure (also works with strict pnpm).
+  const presentEntry = createRequire(dshBin).resolve('@deepseek-ai/dsh-tool-present')
+  patchRaw = patchRaw.replace("'placeholder/dsh-tool-present'", `'${presentEntry}'`)
+}
 patchRaw = patchRaw.replace(/^\s*# \{ask-user-insert\}.*\n(\s*# .*\n)?/m, askUserInsert ? askUserInsert + '\n' : '')
 
 // Owner-local benchmark environment opt-in. Keep the path out of tool input

@@ -10,6 +10,8 @@
         stateRoot: '.'
         timeoutMs: 30000
         hbcliBin: 'hbcli'
+    - id: gotry-present
+      name: 'placeholder/dsh-tool-present'
     - id: dsh-map-tools
       name: 'placeholder/dsh-map-tools'
     - id: dsh-calendar

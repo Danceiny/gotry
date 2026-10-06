@@ -13,19 +13,19 @@
  *   `gotry_turn_handoff.v1` 工单并指令模型告知用户 ETA 与回访方式。
  * - handoff 工单是**新的独立格式**,落在 `<stateRoot>/gotry-state/
  *   turn-handoffs/`,不与 `async/` 的 loop 求解工单混用——async-collect
- *   对无 spec 的 state 会立即结算 failed(假失败),收集器是未来的
- *   agent tick(loopx),不是 async-collect。
+ *   对无 spec 的 state 会立即结算 failed(假失败)。产品通过原生 jobs
+ *   启动独立收集器;仅落单不代表后台已开始。
  */
 
 import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 // 类型面显式依赖:session/event、session/disposed 的事件表声明在 dsh-session 的
 // cordis Events augmentation 里——不显式导入时,该声明只在 peer 恰好物化进
 // ts/node_modules 的机器上可见(legacy-peer-deps 安装则缺,5 个 TS2345/TS7006)。
-import type {} from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ToolExecutionResult, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { classifyTurn, TURN_HANDOFF_ETA_LABEL, turnPolicyFor, type TurnPolicy } from './turn-policy.ts'
 
@@ -41,7 +41,11 @@ export interface TurnHandoffTicket {
   userMessage: string
   requestedAt: string
   etaLabel: string
-  status: 'open' | 'settled' | 'failed'
+  status: 'open' | 'running' | 'settled' | 'failed'
+  jobId?: string
+  workspaceCwd?: string
+  ownerSessionId?: string
+  context?: string
   /** 结算时间(ISO);open 时缺省。 */
   settledAt?: string
   /** 结算交付物文件名(与工单同目录的 .deliverable.md)。 */
@@ -57,6 +61,8 @@ export interface TurnHandoffTicketView {
   objective: string
   requestedAt: string
   etaLabel: string
+  jobId?: string
+  deliverablePath?: string
   settledAt?: string
   error?: string
   deliverableExcerpt?: string
@@ -71,9 +77,37 @@ export interface TurnDeadlineOptions {
   stateRoot?: string
   /** Wall-clock source — overridden by tests for determinism. */
   now?: () => number
+  /** Product host owns dispatch and native job tracking. Absent means queued. */
+  startHandoff?: (ticket: TurnHandoffTicket, agent: Agent, stateRoot: string) => Promise<TurnHandoffTicket>
 }
 
-export async function writeTurnHandoffTicket(stateRoot: string, userMessage: string): Promise<TurnHandoffTicket> {
+function handoffContext(events: readonly SessionEvent[]): string | undefined {
+  const questionIds = new Set(events.filter(event => event.type === 'tool/call' && event.data.name === 'ask_user_question')
+    .map(event => event.type === 'tool/call' ? event.data.callId : ''))
+  // Human constraints are lossless. Refuse dispatch if they exceed the input
+  // budget; silently cutting an accessibility/budget answer changes the task.
+  const answers = events.filter(event => (event.type === 'user/message' && event.data.source.kind === 'user')
+    || (event.type === 'tool/call' && questionIds.has(event.data.callId))
+    || (event.type === 'tool/result' && event.data.message.source.kind === 'tool' && questionIds.has(event.data.message.source.callId)))
+    .map(event => JSON.stringify(event.data)).join('\n')
+  if (answers.length > 64_000) throw new Error('Prior user answers exceed the handoff context limit; planning paused without dropping constraints. Start a new session with the complete trip constraints.')
+  let remaining = 18_000
+  const evidence: string[] = []
+  for (const event of [...events].reverse()) {
+    if (event.type !== 'tool/result' || (event.data.message.source.kind === 'tool' && questionIds.has(event.data.message.source.callId))) continue
+    const row = JSON.stringify(event.data)
+    // Evidence may be excerpted, with an explicit marker and valid JSON.
+    const excerpt = row.length > remaining
+      ? JSON.stringify({ truncated: true, excerpt: row.slice(-Math.floor(remaining / 2)) }) : row
+    if (excerpt.length + 1 > remaining) break
+    evidence.unshift(excerpt)
+    remaining -= excerpt.length + 1
+    if (remaining < 100) break
+  }
+  return answers || evidence.length ? `${answers}\n${evidence.join('\n')}` : undefined
+}
+
+export async function writeTurnHandoffTicket(stateRoot: string, userMessage: string, details: Pick<TurnHandoffTicket, 'workspaceCwd' | 'ownerSessionId' | 'context'> = {}): Promise<TurnHandoffTicket> {
   const ticket: TurnHandoffTicket = {
     schema: TURN_HANDOFF_SCHEMA,
     id: `th-${Date.now().toString(36)}-${randomUUID().slice(0, 6)}`,
@@ -82,6 +116,7 @@ export async function writeTurnHandoffTicket(stateRoot: string, userMessage: str
     requestedAt: new Date().toISOString(),
     etaLabel: TURN_HANDOFF_ETA_LABEL,
     status: 'open',
+    ...details,
   }
   await writeTicketJson(stateRoot, ticket)
   return ticket
@@ -92,7 +127,7 @@ function handoffDir(stateRoot: string): string {
   return join(root, 'gotry-state', 'turn-handoffs')
 }
 
-async function writeTicketJson(stateRoot: string, ticket: TurnHandoffTicket): Promise<string> {
+export async function writeTicketJson(stateRoot: string, ticket: TurnHandoffTicket): Promise<string> {
   const dir = handoffDir(stateRoot)
   await mkdir(dir, { recursive: true })
   const path = join(dir, `${ticket.id}.json`)
@@ -151,12 +186,14 @@ export async function listTurnHandoffTickets(stateRoot: string): Promise<TurnHan
         objective: raw.objective,
         requestedAt: raw.requestedAt,
         etaLabel: raw.etaLabel,
+        ...(raw.jobId ? { jobId: raw.jobId } : {}),
         ...(raw.settledAt ? { settledAt: raw.settledAt } : {}),
         ...(raw.error ? { error: raw.error } : {}),
       }
-      if (raw.status !== 'open' && raw.deliverableFile) {
+      if ((raw.status === 'settled' || raw.status === 'failed') && raw.deliverableFile === `${raw.id}.deliverable.md`) {
         try {
           const text = await readFile(join(dir, raw.deliverableFile), 'utf-8')
+          view.deliverablePath = resolve(dir, raw.deliverableFile)
           view.deliverableExcerpt = text.length > 600 ? `${text.slice(0, 600)}…` : text
         } catch { /* 交付物缺失时视图降级,不阻塞列表 */ }
       }
@@ -200,7 +237,12 @@ function exhaustionResult(reason: string): ToolExecutionResult {
 }
 
 function handoffResult(ticket: TurnHandoffTicket): ToolExecutionResult {
-  const instruction = `Turn handed off to background planning. Async ticket ${ticket.id} created (ETA ${ticket.etaLabel}). Stop dispatching tools and tell the user in one short message: the deep planning continues in the background, the expected time, and to check back later (mention ticket ${ticket.id}).`
+  const state = ticket.status === 'running' && ticket.jobId
+    ? `Background planning started as native background job ${ticket.jobId} (estimated ${ticket.etaLabel}; not a guarantee). Track or cancel with job_list/job_output/job_kill.`
+    : ticket.status === 'failed'
+      ? `Background planning could not start: ${ticket.error ?? 'unknown failure'}. Tell the user it failed; do not promise later delivery.`
+      : 'The ticket is queued; the background worker has not started. Tell the user it is pending, not running; do not promise a completion time.'
+  const instruction = `Async ticket ${ticket.id} persisted. ${state} Stop research and answer from existing results. Never claim a file was created when its tool call failed or was refused. For any successfully written output, call present with its exact existing path before the final response. Mention ticket ${ticket.id}.`
   return {
     isError: true,
     error: {
@@ -221,6 +263,7 @@ type AgentTurnState = {
   startedAt: number
   policy: TurnPolicy
   userMessage?: string
+  handoff?: Promise<TurnHandoffTicket>
 }
 
 /**
@@ -250,12 +293,16 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
 
   const stateByAgent = new Map<string, AgentTurnState>()
   const softExecutions = new Map<ToolExecutionToken, { agentId: string; exit: string }>()
+  const handoffExecutions = new Map<ToolExecutionToken, { agentId: string; contexts: NonNullable<ToolExecutionResult['additionalContexts']> }>()
   const finalOnlyDisposers = new Map<string, () => void>()
 
   const clearAgent = (agentId: string) => {
     stateByAgent.delete(agentId)
     for (const [token, owner] of softExecutions) {
       if (owner.agentId === agentId) softExecutions.delete(token)
+    }
+    for (const [token, owner] of handoffExecutions) {
+      if (owner.agentId === agentId) handoffExecutions.delete(token)
     }
     finalOnlyDisposers.get(agentId)?.()
     finalOnlyDisposers.delete(agentId)
@@ -273,7 +320,7 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
     }
     const inheritedNames = globalTools.schemas()
       .map(schema => schema.name)
-      .filter(name => name !== 'run_code')
+      .filter(name => name !== 'run_code' && name !== 'present')
     if (inheritedNames.length === 0) return
     finalOnlyDisposers.set(agentId, scopedTools.restrict({ deny: inheritedNames }))
   }
@@ -324,18 +371,61 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
       ?? { startedAt: now(), policy: { ...defaultPolicy, softMs: softPin ?? defaultPolicy.softMs, hardMs: hardPin ?? defaultPolicy.hardMs } }
     stateByAgent.set(agentId, state)
 
+    // Present validates files on disk and publishes native deliverable events;
+    // it must remain callable after the research window closes.
+    if (exec.name === 'present') return next()
+
     const elapsed = now() - state.startedAt
     if (elapsed > state.policy.hardMs) {
-      // Synchronous schema suppression so same-step follow-up calls cannot
-      // loop on refusal results (the 2026-09-02 trajectory failure).
-      enterFinalOnly(exec.agent)
       if (state.policy.exit === 'handoff' && state.userMessage && options.stateRoot) {
-        return writeTurnHandoffTicket(options.stateRoot, state.userMessage)
-          .then(ticket => handoffResult(ticket))
+        const root = options.stateRoot === '.'
+          ? (exec.agent.session?.header.cwd ?? process.cwd()) : resolve(options.stateRoot)
+        const written = exec.name === 'write' && !state.handoff ? Promise.resolve().then(() => next()) : undefined
+        if (!state.handoff) {
+          const session = exec.agent.session
+          // Reserve the handoff before executing the write body. Parallel or
+          // repeated calls see the same promise and cannot write/dispatch twice.
+          state.handoff = (async () => {
+            try { await written } finally { enterFinalOnly(exec.agent!) }
+            let context: string | undefined
+            let contextError: string | undefined
+            try { context = handoffContext(session?.snapshotEvents() ?? []) }
+            catch (error) { contextError = error instanceof Error ? error.message : 'handoff context unavailable' }
+            const ticket = await writeTurnHandoffTicket(root, state.userMessage!, {
+              workspaceCwd: session?.header.cwd,
+              ownerSessionId: session ? String(session.id) : undefined,
+              context,
+            })
+            if (contextError) {
+              await settleTurnHandoffTicket(root, ticket, 'failed', `# Planning paused\n\n${contextError}`, contextError)
+              return { ...ticket, status: 'failed', error: contextError }
+            }
+            return options.startHandoff ? options.startHandoff(ticket, exec.agent!, root) : ticket
+          })()
+        }
+        // The triggering call may be the output write itself. Execute it once,
+        // preserve its actual outcome, then require native present. Attach a
+        // rejection handler now even if the pending tool itself rejects.
+        const handoff = state.handoff.then(handoffResult, () => exhaustionResult(`${TURN_DEADLINE_EXHAUSTED}: ticket persistence failed; no background worker was started`))
+        return (async () => {
+          const output = await written
+          const guidance = await handoff
+          if (output) {
+            handoffExecutions.set(exec.token, { agentId, contexts: guidance.additionalContexts ?? [] })
+            // Keep the registry's canonical result object. Rebuilding it after
+            // restricting inherited schemas would make DSH re-resolve a tool
+            // that has just been hidden and report UNKNOWN_TOOL after saving.
+            return output
+          }
+          return guidance
+        })()
           .catch(() => exhaustionResult(
             `${TURN_DEADLINE_EXHAUSTED}: hard deadline ${state.policy.hardMs}ms reached (ticket persistence failed; degraded to converge)`,
           ))
       }
+      // Suppress inherited research schemas immediately on refusal; DSH's
+      // scoped schemas remain visible but hit this same per-call guard.
+      enterFinalOnly(exec.agent)
       return Promise.resolve(exhaustionResult(
         `${TURN_DEADLINE_EXHAUSTED}: turn exceeded hard deadline of ${state.policy.hardMs}ms (elapsed ${elapsed}ms); provide a final answer using existing results`,
       ))
@@ -349,16 +439,19 @@ export function installTurnDeadline(ctx: Context, options: TurnDeadlineOptions =
   ctx.on('tools/post-execute', (exec, _result, next) => {
     return next().then(decision => {
       const owner = softExecutions.get(exec.token)
-      if (!owner) return decision
+      const handoff = handoffExecutions.get(exec.token)
+      handoffExecutions.delete(exec.token)
+      if (!owner && !handoff) return decision
       softExecutions.delete(exec.token)
-      const text = owner.exit === 'handoff'
+      const text = owner?.exit === 'handoff'
         ? 'Turn has crossed the soft deadline of a deep-planning turn. Wrap up context gathering now; the turn will hand off to background planning at the hard deadline.'
         : 'Turn has crossed the soft deadline. Stop dispatching new tools and produce the final answer from gathered evidence.'
       return {
         ...decision,
         additionalContexts: [
           ...(decision.additionalContexts ?? []),
-          convergenceContext(TURN_DEADLINE_SOFT, text) as never,
+          ...(handoff?.contexts ?? []),
+          ...(owner ? [convergenceContext(TURN_DEADLINE_SOFT, text) as never] : []),
         ],
       }
     })

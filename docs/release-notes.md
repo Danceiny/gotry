@@ -8,7 +8,7 @@
 
 ## Unreleased
 
-Nothing queued.
+- Deep-planning handoffs now preserve the pending draft write, start a native owned job in a persistent host, and remain queued otherwise. Completion or failure stays queryable; drafts and results use native presentation and artifact retrieval ([#647](https://github.com/Danceiny/gotry/issues/647)). Unreleased source change; installed real-session acceptance remains outstanding.
 
 ---
 

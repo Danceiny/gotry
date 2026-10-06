@@ -63,7 +63,7 @@ GoTry 是覆盖「一次出发到下一次出发」的证据优先旅行 Agent�
 | 用户会话 | 浏览器检索保持只读、按站点授权、受节律限制且可审计；登录在外部站点完成，票据值不进入模型上下文。 |
 | 状态 | tenant-scoped SQLite 账本是权威；投影可重建，幂等、待处理写入和 durable 工单终态显式化。 |
 | 外部效应 | 工具代码描述效应，解译器负责渠道访问、重试、断路与测试替代；建议不等于隐藏派发。 |
-| 长任务 | 每轮以当面回答、durable handoff 或 typed 终态之一结束；后台工单 ID 与子 Agent ID 不可混用。 |
+| 长任务 | 每轮以当面回答、持久 handoff 或 typed 终态之一结束；排队工单不能证明执行，运行声明必须对应原生归属任务；后台任务与子 Agent 标识不同。 |
 | 写动作 | 预订、支付和供应商写入不进入普通工具面；未来写入必须另行准入 WriteGate，并由可信宿主做一次性授权。 |
 | 评测 | fixture 与本地 proof 只证明工程行为；synthetic evidence、诊断 benchmark 与隔离 adapter 不代表真实用户、供应商或业务验收。 |
 
@@ -196,7 +196,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 21 | 扩展分发三通道（issue #21 分发通道，2026-08-30；商店轨 2026-09-02 上架） | [§8.21](adr-expansions.zh-CN.md#821-扩展分发三通道) | ~~商店过审后复审 wizard 步骤~~（已触发：wizard 退化为离线健康探活等待；安装=浏览器的事、渲染=dsh UI 的事，§3.3 职责返交落地）；GitHub 不可达地区常态化时复审镜像默认值；出现第二分发产物时复审通道抽象 | `ts/capabilities/session/extension-distribution.ts`；`scripts/package-extension.mjs`；run-all §43；`docs/ops/extension-webstore-submission.md` |
 | 22 | static golden 是**可审计 benchmark comparator**，不是实时航班源（issue #67） | [§8.22](adr-expansions.zh-CN.md#822-static-golden--可审计-comparator) | 出现可免私有凭证、许可清晰且稳定的官方 flight API，或 hbcli 发布 flight 合同时复审其为新 provider；static 仍只保留为确定性回归夹具 | `ts/capabilities/session/static-flight-golden.ts`；`ts/data/sf-static-routes.json`；run-all §44 |
 | 23 | embedded Booking Copilot 安全边界与 BFF request identity binding（单一 booking.surface 契约） | [§8.23](adr-expansions.zh-CN.md#823-adr-23embedded-booking-copilot-安全边界与-bff-request-identity-binding) | 出现离页自动写/支付必须进入 M5 WriteGate proposal/ADR 后续实现；出现多写者/跨 host 触发 ADR-15/16 复审；~~所有消费方迁移 v2 后再退 v1~~（**已触发 2026-09-05**：#133 收敛为单一契约，v1 退役，文件转正为无后缀 canonical 名） | `schemas/booking.surface.schema.json`；`ts/src/booking-surface/`（contracts/runtime/server/startup 等）；run-all 证明面 |
-| 24 | turn 预算 = 路由 + wall-clock 双出口：确定性分类 → converge/handoff；handoff 落独立工单待 loopx tick 收 | [§8.24](adr-expansions.zh-CN.md#824-adr-24turn-预算--路由--wall-clock-双出口（turn-policy-/-turn-deadline）) | 路由误分成系统性问题时（用户反馈「该当面答的被转后台」可观测），先扩 Tier 0 信号词表再考虑 Tier 2（结构化状态）；handoff 工单积压需要真实收集器时启动 loopx tick 设计；评测端 60s 太紧先调 env pin | `ts/src/turn-policy.ts`；`ts/src/turn-deadline.ts`；`ts/src/index.ts` 装配；`ts/scripts/turn-policy-tests.ts`；`ts/scripts/agent-planning-turn-deadline-{tests,e2e}.ts`；`scripts/run-all-tests.sh` §45 |
+| 24 | turn 预算：确定性路由 → converge 或持久 handoff，由原生归属任务执行 | [§8.24](adr-expansions.zh-CN.md#824-adr-24turn-预算--路由--wall-clock-双出口（turn-policy-/-turn-deadline）) | 路由误分成为系统性问题时复审路由；中断的原生任务需要自动重启时复审持久恢复。 | `ts/src/turn-policy.ts`；`ts/src/turn-deadline.ts`；`ts/src/turn-handoff-job.ts`；`scripts/run-all-tests.sh` §45 |
 | 25 | 通道健康面与动态路由建议（issue #106/#107/#108，D-7/D-8/D-9 采纳 2026-09-03）：工具面保持平铺（ADR-18 判定不动）、解译器不做隐藏改道；通道注册表单一数据来源生成 persona 卡/工具描述/doctor 行；检索 verdict≠hit 时结果内注入 `routing` 有序建议（可用性>证据级>效率字典序，健康态过滤），契约在失败现场教学；配额五分类（user-session/user-key/anonymous-trial/free-public/static）冻结归属语义；calendar 默认不挂载（D-9） | 解译器自动改道（拒绝：模型以为调 A 实际走 B，破坏调用可审计性）/静态反转优先级（拒绝：每个新用户先付扩展安装成本）/只靠 prose 教义（拒绝：prose 腐坏，普通模型读不动） | routing 建议误配成系统性问题时先修注册表数据；出现跨通道比价聚合产品裁决时与 ADR-18 一起复审；正式 key 池（产品统一申请）待 M3 真实 cohort 规模复审 | `ts/capabilities/channel-registry.ts` `channel-health.ts`；`docs/design/tool-orchestration-design.md`；run-all §50；smoke（flyai needs-setup→routing） |
 
 逐决策正文已迁至关注面权威文档 [adr-expansions.zh-CN.md](adr-expansions.zh-CN.md),与其 ADR 行同改。
