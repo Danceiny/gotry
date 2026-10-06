@@ -88,8 +88,9 @@ Usage:
     # 跳过该问: --no-onboarding 或 GOTRY_ONBOARDING_SKIP=1
   gotry setup                        # 扩展就位检查/指引(商店一键装)
   gotry setup calendar               # 可选日历(CalDAV 工作窗口)挂载开关:默认关;--off 关闭;--status 查看
+  gotry setup flyai                  # FlyAI 配置向导:控制台取 key → 隐藏粘贴 → 验证后保存;--status 查看;--clear 清除
   gotry doctor                       # 可选依赖体检:扩展/agent-reach/hbcli/flyai/sidebar 状态 + 补装指引
-  gotry doctor --fix                 # 体检 + 按报告补装(hbcli 官方脚本 / agent-reach pip / sidebar 插件)
+  gotry doctor --fix                 # 补装可选依赖;交互终端可选择接着配置 FlyAI
   gotry "一段完整任务..."            # headless 一问一答
   gotry help                         # this help
   gotry --version                    # 版本号(bug 报告必填项)

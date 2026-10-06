@@ -554,7 +554,8 @@ echo "=== 49. Booking Copilot embedded contract(canonical schema/npm subpath/clo
 echo
 echo "=== 49b. dsh-map-tools vendored package proof(issue #202:clean tarball install + MIT license/provenance + alpha.3 settings closure + exactly seven map_* tools + network-free inline coordinates) ==="
 (GOTRY_MAP_TOOLS_E2E_BIN="$package_e2e_bin" "$TSX_BIN" ts/scripts/map-tools-vendor-package-proof.ts) || FAIL=1
-echo "=== 49c. FlyAI installed product E2E (isolated setup, all eight search kinds, error recovery; controlled upstream) ==="
+echo "=== 49c. Doctor onboarding + FlyAI installed product E2E (isolated setup, all eight search kinds, error recovery; controlled upstream) ==="
+(node scripts/doctor-onboarding-tests.mjs "$package_e2e_bin") || FAIL=1
 if [ -n "$package_e2e_bin" ] && [ -x "$package_e2e_bin" ]; then
   flyai_e2e_parent=$(mktemp -d)
   node scripts/flyai-product-e2e.mjs "$package_e2e_bin" "$flyai_e2e_parent/evidence" || FAIL=1

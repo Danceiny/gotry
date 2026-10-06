@@ -60,6 +60,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
+import { checkExtensionStatus } from './gotry-extension-status.js'
 
 // ── FlyAI 凭据面(纯 JS 内联;与 ts/capabilities/flyai-config.ts 成对维护,
 // 口径以官方 @fly-ai/flyai-cli 1.0.16 解包事实为准。bootstrap 由 inner 以
@@ -267,7 +268,7 @@ async function runSetupFlyai() {
       say('  验证: 未配置——可直接匿名试用(共享额度易达限),或粘贴正式 key 验证后保存')
     }
     if (extra) say(extra)
-    say('  凭据修改仅本机命令可达: `gotry setup flyai`(隐藏输入)/ `--stdin` / `--clear`;模型工具不能传 key')
+    say('  本机配置：`npx @danceiny/gotry setup flyai`（隐藏输入）；`--status` 查看；`--clear` 清除；模型工具不能传 key')
   }
 
   if (STATUS) {
@@ -315,8 +316,10 @@ async function runSetupFlyai() {
       // 非 TTY 且未显式 --stdin:仍接受管道输入,但不进入交互隐藏模式。
     }
   } else {
-    say('[gotry-setup] FlyAI API key 设置(输入隐藏,不回显;粘贴后回车)')
-    say('  打开 https://flyai.open.fliggy.com/console，登录后复制 API Key。直接回车取消。')
+    say('[gotry-setup] FlyAI 配置向导（无需设置环境变量或手工编辑文件）')
+    say('  1. 打开 https://flyai.open.fliggy.com/console，登录后复制 API Key。')
+    say('  2. 在下面粘贴并回车（输入隐藏，不回显）；直接回车取消。请勿把 key 发到聊天里。')
+    say('  3. 自动做只读验证，通过后保存到本机；失败保留原配置。')
     candidate = await hiddenInput('  key: ')
   }
   candidate = (candidate ?? '').trim()
@@ -393,7 +396,6 @@ async function runSetupFlyai() {
 /** TTY 隐藏输入:raw mode,不回显;Enter 结束;Ctrl+C/Ctrl+D 取消 */
 function hiddenInput(prompt) {
   return new Promise((resolve) => {
-    process.stdout.write(prompt)
     let buf = ''
     const stdin = process.stdin
     stdin.setRawMode(true)
@@ -433,6 +435,9 @@ function hiddenInput(prompt) {
       }
     }
     stdin.on('data', onData)
+    // Disable terminal echo before advertising readiness: a fast paste can
+    // reach the PTY as soon as the prompt is written, even within this tick.
+    process.stdout.write(prompt)
   })
 }
 
@@ -889,9 +894,8 @@ async function doctorChecks() {
   const nodeFine = maj > 22 || (maj === 22 && min >= 15)
   items.push({ label: 'Node 运行时', ok: nodeFine, level: nodeFine ? 'ok' : 'missing', detail: `Node ${nv}(需 ≥22.15)`, fix: nodeFine ? undefined : '升级 Node.js 至 22.15+(https://nodejs.org)' })
   // 扩展
-  const extManifest = join(homedir(), '.gotry', 'extension', 'manifest.json')
-  const extOk = existsSync(extManifest)
-  items.push({ label: 'Stai Travel Bridge 扩展', ok: extOk, level: extOk ? 'ok' : 'missing', detail: extOk ? `已就位(${extManifest})` : '未安装——影响面:gotry_session_search / gotry_session_login(账号会话通道)不可用;携程机票/酒店实时检索、12306 余票、Dida 实时报价都依赖此通道。其它工具(机票 FlyAI、酒店 hbcli、地图、天气等)不受影响', fix: extOk ? undefined : '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd' })
+  const extension = await checkExtensionStatus()
+  items.push({ label: 'Stai Travel Bridge 扩展', ok: extension.status === 'ok', level: extension.status, detail: extension.detail, fix: extension.fix })
   // agent-reach(.venv 装在包内)
   const venvPython = join(repoRoot, '.venv/bin/python')
   const reachBin = join(repoRoot, '.venv/bin/agent-reach')
@@ -931,7 +935,7 @@ async function doctorChecks() {
   let flyaiFix
   if (!flyaiResolved.key) {
     flyaiDetail = '未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)。影响面:共享池额度小,频繁会话易触顶;达限本会话内 gotry_flyai_search(机票/酒店/票务/AI/万豪 8 类)失败,改走 gotry_session_search 账号会话通道。'
-    flyaiFix = '本机运行 `gotry setup flyai`(隐藏输入,先验证后保存 FLYAI_API_KEY);打开 https://flyai.open.fliggy.com/console，登录后复制 API Key'
+    flyaiFix = '运行 `npx @danceiny/gotry setup flyai`：① 打开 https://flyai.open.fliggy.com/console 登录并复制 API Key；② 在终端隐藏粘贴并回车；③ 自动验证并保存。也可运行 `npx @danceiny/gotry doctor --fix` 按提示配置'
   } else {
     const keySha = sha256Inline(flyaiResolved.key)
     const receiptMatches = flyaiReceipt
@@ -946,10 +950,10 @@ async function doctorChecks() {
       flyaiDetail = `已验证 ${flyaiReceipt.at}(${sourceNote};endpoint ${displayEndpointInline(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})`
     } else if (flyaiReceipt && flyaiReceipt.keySha256 === keySha && flyaiReceipt.verdict !== 'verified') {
       flyaiDetail = `已配置未通过验证(${flyaiReceipt.verdict}@ ${flyaiReceipt.at};${sourceNote};endpoint ${displayEndpointInline(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})——非空不等于鉴权通过`
-      flyaiFix = '本机运行 `gotry setup flyai` 重新验证;`gotry setup flyai --clear` 回退匿名'
+      flyaiFix = '运行 `npx @danceiny/gotry setup flyai` 重新验证；`npx @danceiny/gotry setup flyai --clear` 回退匿名'
     } else {
       flyaiDetail = `已配置,未验证(${sourceNote};endpoint ${displayEndpointInline(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})`
-      flyaiFix = '本机运行 `gotry setup flyai`(候选 key scrub-env 验证后保存)'
+      flyaiFix = '运行 `npx @danceiny/gotry setup flyai`，按提示隐藏粘贴 API Key，验证后自动保存'
     }
   }
   items.push({ label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪 8 类)', ok: flyaiLevel === 'ok', level: flyaiLevel, detail: flyaiDetail, fix: flyaiFix })
@@ -1018,8 +1022,8 @@ const fixCell = (fix) => (!fix ? '—' : /^(npx|hbcli|curl|pip|python|\$)/.test(
 function startupDoctorLine(items) {
   const broken = (items ?? []).filter((i) => i.level && i.level !== 'ok')
   if (broken.length === 0) return null
-  const human = (lv) => (lv === 'missing' ? '缺' : '半可用')
-  return `[gotry] doctor: ${broken.length} 项待处理(${broken.map((i) => `${i.label}=${human(i.level)}`).join('、')})——对话里让助手调 gotry_doctor 看详情与指引,或终端跑 npx @danceiny/gotry doctor`
+  const human = i => i.level === 'missing' ? '缺' : i.label.startsWith('Stai Travel Bridge') ? '待确认' : '半可用'
+  return `[gotry] doctor: ${broken.length} 项待处理(${broken.map((i) => `${i.label}=${human(i)}`).join('、')})——对话里让助手调 gotry_doctor 看详情与指引,或终端跑 npx @danceiny/gotry doctor`
 }
 
 /** 体检报告 markdown(与 ts/capabilities/doctor.ts renderDoctorReportMd 同形) */
@@ -1073,10 +1077,24 @@ async function runDoctor() {
       if (process.env.GOTRY_SETUP_SIDEBAR !== '0') results.push(await setupSidebar())
       const failedFix = results.filter((r) => !r.ok).length
       say(failedFix === 0 ? '[gotry-doctor] 补装完成;下面是补装后复检。' : `[gotry-doctor] ${failedFix} 项补装失败——见上方安装器输出;可重跑 npx @danceiny/gotry doctor --fix`)
-      items = await doctorChecks()
-      for (const i of items) {
-        say(`  ${doctorIcon[i.level]} ${i.label}:${i.detail}`)
+    }
+    // Explicit --fix may offer local credential setup, but never consumes a
+    // secret from CI, a pipe, startup diagnostics or the model tool surface.
+    if (items.some(i => i.label.startsWith('FlyAI(') && i.level !== 'ok')
+        && process.platform !== 'win32' && process.stdin.isTTY && process.stdout.isTTY && !process.env.CI) {
+      process.stdout.write('[gotry-doctor] 现在配置 FlyAI？控制台取 key → 隐藏粘贴 → 验证后保存（y/N）：')
+      const answer = await readOneLine(process.stdin)
+      if (/^y(?:es)?$/i.test(answer.trim())) {
+        const setupCode = await runSetupFlyai()
+        if (setupCode !== 0) say('[gotry-doctor] FlyAI 配置未完成；可重跑 `npx @danceiny/gotry setup flyai`。')
+      } else {
+        say('[gotry-doctor] 已跳过 FlyAI 配置；稍后运行 `npx @danceiny/gotry setup flyai`。')
       }
+    }
+    items = await doctorChecks()
+    for (const i of items) {
+      say(`  ${doctorIcon[i.level]} ${i.label}:${i.detail}`)
+      if (i.level !== 'ok' && i.fix) say(`      ↳ 修复: ${i.fix}`)
     }
   }
   // 报告落盘(侧栏工作台预览面;写失败不挡体检结论)
