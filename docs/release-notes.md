@@ -10,6 +10,26 @@
 
 ---
 
+## v0.2.0-rc.31 · 2026-10-06
+
+**Why this release.** FlyAI setup required a terminal command, and generated files were hard to find again. This release puts configuration in the native Plugins → GoTry panel and adds a GoTry artifacts tab to the native right workbench ([#651](https://github.com/Danceiny/gotry/issues/651), [#653](https://github.com/Danceiny/gotry/pull/653)). The extension manifest stays paired at `0.2.0.31`; its behavior is unchanged.
+
+### What's New (since rc.30)
+
+- **Visual FlyAI configuration** — open the console, enter a masked key, verify and save, refresh status or clear configuration. Environment-provided keys are read-only. Failed verification and cancellation preserve the previous key; secret values never enter model tools or status responses.
+- **Native artifact workbench** — browse history, handoff tickets and workspace files with search, pagination and native previews. Successful bounded renders produce file delivery cards. No additional Artifacts plugin is required, and browsing does not call a model.
+- **Truthful extension diagnostics and terminal setup** — `doctor` distinguishes an installed extension from a connected browser session. The terminal setup shares the bounded verifier and propagates cancellation cleanly ([#652](https://github.com/Danceiny/gotry/pull/652)).
+
+### Installation
+
+Run `npx @danceiny/gotry@0.2.0-rc.31 web` (Node ≥ 22.15). Once `latest` points to this version, `npx @danceiny/gotry web` is equivalent; pin the exact version if your registry mirror lags.
+
+### Acceptance boundary
+
+Full-stack regression and installed-package browser checks cover saving, rejected-key preservation, clearing, artifact browsing and native delivery with isolated state and controlled upstream responses. These checks do not establish acceptance with a real FlyAI account. Publication is established only by a passing registry pull-back receipt.
+
+---
+
 ## v0.2.0-rc.30 · 2026-10-06
 
 **Why this release.** A deep-planning turn could hit its deadline, reject the draft write, and save only an open handoff ticket, while the final reply still promised a created file and a background planner ([#647](https://github.com/Danceiny/gotry/issues/647)). This release ties those promises to the actual write result and native job lifecycle, and makes the draft and final deliverable openable. The version remains paired with the extension manifest (`0.2.0.30`, enforced by `extension-tests`); the extension's behavior is unchanged.

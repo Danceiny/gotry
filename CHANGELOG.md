@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-rc.31] - 2026-10-06
+
+### Added
+
+- add native FlyAI setup and artifact workbench… (#653)
+
+### Fixed
+
+- 避免商店扩展误报并降低 FlyAI 配置门槛… (#652)
+
+### Documentation
+
+- align version baselines with verified rc.30 publish… (#650)
+
 ## [0.2.0-rc.30] - 2026-10-06
 
 ### Fixed
