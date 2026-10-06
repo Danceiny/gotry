@@ -19,7 +19,7 @@
 | `research/` | 调研与复盘（冻结） | 时间戳敏感的调查、竞品研究、postmortem | 不离开；结论被采纳后正文吸收进权威面，原文冻结 |
 | `milestones/` | 里程碑备忘（历史记录） | 某里程碑的阶段产出、走查、对账、决策备忘 | 不离开；里程碑关闭即冻结 |
 | `evaluation/` | 评测体系（契约、台账、横评、验证记录） | 评测/benchmark/e2e/persona 横评相关材料 | 契约类可长期 living |
-| `ops/` | 发布与合规运营材料 | 商店上架、隐私政策等对外合规文本 | 长期 living |
+| `ops/` | 发布与合规运营材料 | 发布操作手册、商店上架、隐私政策等对外合规文本 | 长期 living |
 | `assets/` | 工具生成物（架构图、可视化产物） | archify 等工具输出 | 随工具重生成覆盖 |
 | `superpowers/` | superpowers 工作流自有命名空间（plans/specs） | 由 superpowers 技能自动写入 | 工具自管，手工文档勿入 |
 
@@ -199,6 +199,7 @@
 
 | 文档 | 关注点 |
 |---|---|
+| [ops/npm-release-runbook.md](ops/npm-release-runbook.zh-CN.md) | npm 发布流程：谁点什么、脚本各阶段、决定「已发布」的 registry 回拉，以及运行中途停下时怎么办 |
 | [ops/extension-privacy.md](ops/extension-privacy.zh-CN.md) | Session Bridge 扩展隐私政策 |
 | [ops/extension-webstore-submission.md](ops/extension-webstore-submission.zh-CN.md) | Chrome Web Store 上架材料与现行 dsh UI 安装交接（ADR-21 通道 B） |
 | [ops/external-pr-workflow.md](ops/external-pr-workflow.zh-CN.md) | 公开 issue→PR→review→merge 台账；另载外部 PR（含自动化机器人）分诊/核验/裁决规则 |

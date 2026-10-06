@@ -17,4 +17,6 @@ ts/dsh-runtime/node_modules/
 py/gotry.egg-info/
 shell/gotry-state/
 .npmrc.publish
+.release-expected.json
+.release-verified.json
 dist/

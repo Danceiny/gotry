@@ -30,10 +30,10 @@ XHS_COOKIES=             # Xiaohongshu Cookie-Editor JSON
 - **⚠️ rc.15 release record (2026-08-29, codified by #50③ as the standard release action)**:
   - The web session token (`.npmrc.publish`, path A) can log in and whoami, but **publish PUT is blocked by account-level 2FA (EOTP → web second confirmation)**; the npm logs also gave a deprecation warning — direct publish with bypass-2FA tokens is being tightened (<https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>, target 2027-01).
   - The path actually walked = **`npm publish` under a PTY terminal** (expect-wrapped PTY since rc.10) → otplib pops web authorization → **founder clicks Approve once in the browser** → PUT auto-retries to success. **"Release = one browser approve, clicked by the founder" is the standard action from here on** (synced to the AGENTS.md release gate)
-- **Every future release**: `TAG=latest ./scripts/publish-npm.sh` (dist-tag must be passed explicitly, #50①: the old default rc.5 once pushed new packages to a stale channel); credentials use the path A web session — `--otp=<recovery code>` is rejected by npm, and the granular bypass token (path B) is on npm's tightening track; neither is a main path
+- **Every future release**: `TAG=latest ./scripts/publish-npm.sh` (dist-tag must be passed explicitly, #50①: the old default rc.5 once pushed new packages to a stale channel); credentials use the path A web session — `--otp=<recovery code>` is rejected by npm, and the granular bypass token (path B) is on npm's tightening track; neither is a main path. **Click count (corrects the rc.15 "one approve" line above)**: the script revokes the web session after a successful release, so a release costs two approves — the login and the publish — and each dist-tag write one more
 - **dist-tag maintenance (#50②, executed 2026-09-02)**: within a founder instruction window, using the `.env` NPM_TOKEN (granular), ran `npm dist-tag add @danceiny/gotry@0.0.1-rc.16 rc --registry=https://registry.npmjs.org/` successfully — `rc` moved from the stranded rc.7 to rc.16; **but the DELETE dist-tag endpoint returns 403 for this token** (direct curl recheck also 403; a granular token has no delete permission) → the stray `rc.5` was repointed via the add channel to `0.0.1-rc.5` for self-consistency, and `rc.11–rc.14` each point to their same-named versions; fully deleting the five aliases requires one founder login on the npmjs web UI (package → Settings → manage dist-tags). **Runbook split into two tiers**: repointing (add) can be done directly with a token; deletion must use the web UI
 - **Deletion channel exhaustion verified (2026-09-08, rc.20 wrap-up retest, do not retry)**: agent side, four routes all 403/405 — ① the `.env` granular token via CLI and direct curl DELETE both 403 (the error message explicitly states "Granular access tokens that bypass two-factor authentication may not perform this action", i.e., the dist-tag face of npm's 2026-07-31 tightening policy); ② the old granular token in `~/.npmrc` 401 (expired); ③ the leftover `.npmrc.publish` token in the main worktree (whoami=danceiny valid, actually granular form `npm_`×40, not a web session) still 403 on DELETE — **granular token validity ≠ delete permission**; ④ the registry dist-tags collection-wide PUT endpoint 405 (not open). **Whether a web session token can pass DELETE is untested** (a session cannot be established without founder browser authorization); the script side already ships `./scripts/publish-npm.sh login` (final state, exempt from the TAG gate) + an `rmtag` subcommand; if rmtag still 403s after login, the npmjs web UI is authoritative (package → Settings → manage dist-tags)
-- **Path A (recommended)**: `./scripts/publish-npm.sh login` → click Approve once in the browser → the session token is written only to .npmrc.publish → run the script again to publish
+- **Path A (recommended)**: `./scripts/publish-npm.sh login` → click Approve once in the browser → the session token is written only to .npmrc.publish → run the script again to publish (a publish run with no session does this login itself)
 - Path B (**being tightened, not a main path**): create a granular token on the npmjs web (allow bypass 2FA + packages read-write) → store as NPM_TOKEN in .env — npm policy target 2027-01 bans bypass-2FA direct publish; the deprecation warning was already seen in the rc.15 release logs
 
 ### Historical Token Note
@@ -49,7 +49,7 @@ On 2026-08-22/24 there was a legacy classic token written into `.env`'s `NPM_TOK
 | `npm publish` | ❌ 403 | a classic token has no 2FA capability; needs a web session or a bypass token |
 
 Policy original text: <https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>
-The token restriction on direct publish targets 2027-01; the main path = **path A web session (one browser approve by the founder at release)**; the granular bypass token (path B) is still usable but on the retirement track; mid-term migration to path C OIDC.
+The token restriction on direct publish targets 2027-01; the main path = **path A web session (browser approves by the founder at release: the login and the publish)**; the granular bypass token (path B) is still usable but on the retirement track; mid-term migration to path C OIDC.
 
 ### Path A: Web Session (Simplest, 10 Seconds, No Token Generation Needed)
 
@@ -62,7 +62,7 @@ npm login --auth-type=web --registry=https://registry.npmjs.org/
 # after you click → my session is established → immediately npm publish (the session carries 2FA authorization)
 ```
 
-The link is valid for about 5 minutes; if it expires I just regenerate — zero cost.
+The link is valid for about 7 minutes; if it expires nothing is lost and I regenerate it, but the founder's click is wasted — so confirm the founder is at the browser before starting.
 
 ### Path B: Granular Access Token (One-and-Done, ~60 Seconds)
 
@@ -81,9 +81,10 @@ After the package's first publish, associate the GitHub repo + workflow on the n
 ### Publish Script (Ready)
 
 ```sh
-TAG=latest ./scripts/publish-npm.sh                    # dist-tag must be explicit (#50①); credentials prefer the .npmrc.publish session, fall back to NPM_TOKEN in .env
-NPM_TOKEN=npm_xxx TAG=latest ./scripts/publish-npm.sh  # or inject a token ad hoc
+TAG=latest ./scripts/publish-npm.sh   # dist-tag must be explicit (#50①); credentials prefer the .npmrc.publish session, fall back to NPM_TOKEN in .env
 ```
+
+The fallback reads only `NPM_TOKEN` from `.env`; an environment variable of the same name is ignored. The whole procedure — preflight, the two approves, the registry pull-back, the GitHub Release — is in [ops/npm-release-runbook.md](ops/npm-release-runbook.md).
 
 ---
 

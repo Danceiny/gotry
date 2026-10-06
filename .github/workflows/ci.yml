@@ -9,6 +9,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # 手动触发:给 tag 提交补一份自己的 CI 证明。main 上连续合并会让 push CI 被下面的 concurrency 取消,
+  # rc.28 的 tag 提交就这样没有自己的检查(发布预检因此要找「同树的已合并 PR 头」兜底)。
+  # 用法:gh workflow run CI --ref <tag>(tag 须已含本触发器,即此后新打的 tag)
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

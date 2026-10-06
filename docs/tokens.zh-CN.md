@@ -30,10 +30,10 @@ XHS_COOKIES=             # 小红书 Cookie-Editor JSON
 - **⚠️ rc.15 发布实录（2026-08-29，#50③ 固化为标准发布动作）**：
   - web 会话 token（`.npmrc.publish`，路径 A）可登录、可 whoami，但 **publish PUT 被账号级 2FA 拦截（EOTP→网页二次确认）**；npm 日志同时给出 deprecation 警告——bypass-2FA token 的 direct publish 正被收紧（<https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>，target 2027-01）。
   - 实走通路径 = **PTY 终端下 `npm publish`**（rc.10 起为 expect 包 PTY）→ otplib 弹网页授权 → **founder 浏览器点一次 Approve** → PUT 自动重试成功。**「发布 = 一次浏览器 approve，由 founder 点击」自此为标准动作**（已同步 AGENTS.md 发布闸）
-- **以后每次发布**： `TAG=latest ./scripts/publish-npm.sh`（dist-tag 必须显式传，#50①：旧默认 rc.5 曾把新包发到陈旧通道）；凭据走路径 A web 会话——`--otp=<恢复码>` 已被 npm 拒收，granular bypass token（路径 B）在 npm 收紧通道上，均不作主路径
+- **以后每次发布**： `TAG=latest ./scripts/publish-npm.sh`（dist-tag 必须显式传，#50①：旧默认 rc.5 曾把新包发到陈旧通道）；凭据走路径 A web 会话——`--otp=<恢复码>` 已被 npm 拒收，granular bypass token（路径 B）在 npm 收紧通道上，均不作主路径。**点击次数（更正上面 rc.15 的「一次 approve」）**：脚本在发布成功后会撤销 web 会话，所以一次发布要点两次批准——登录一次、发布一次——每次 dist-tag 写操作再一次
 - **dist-tag 维护（#50②，2026-09-02 已执行）**：founder 指令窗内经 `.env` NPM_TOKEN（granular）执行 `npm dist-tag add @danceiny/gotry@0.0.1-rc.16 rc --registry=https://registry.npmjs.org/` 成功——`rc` 由滞留 rc.7 迁至 rc.16；**但 DELETE dist-tag 端点对该 token 403**（curl 直连复核同 403，granular token 无删除权）→ 杂散 `rc.5` 以 add 通道改指 `0.0.1-rc.5` 自洽，`rc.11–rc.14` 各指同名版本；五别名彻底删除需 npmjs web UI 一次 founder 登录（package → Settings → manage dist-tags）。**runbook 拆两档**：改指（add）token 可直做；删除必须 web UI
 - **删除通道穷尽验证（2026-09-08，rc.20 收尾复测，勿再重试）**：agent 侧四路全 403/405——①`.env` granular token 走 CLI 与 curl 直连 DELETE 同 403（报文明示「Granular access tokens that bypass two-factor authentication may not perform this action」，即 npm 2026-07-31 收紧政策的 dist-tag 面）；②`~/.npmrc` 旧 granular token 401（已失效）；③主 worktree 遗留 `.npmrc.publish` token（whoami=danceiny 有效，实为 granular 形态 `npm_`×40，非 web 会话）对 DELETE 仍 403——**granular token 有效性≠删除权**；④registry dist-tags 集合整体 PUT 端点 405（不开放）。**web 会话 token 能否过 DELETE 未实测**（无 founder 浏览器授权建不了会话）；脚本面已配套 `./scripts/publish-npm.sh login`（终态，豁免 TAG 闸）+ `rmtag` 子命令，login 后 rmtag 若仍 403，则以 npmjs web UI 为准（package → Settings → manage dist-tags）
-- **路径 A（推荐）**： `./scripts/publish-npm.sh login` → 浏览器点一次 Approve → 会话 token 只写 .npmrc.publish → 再跑一次脚本即发
+- **路径 A（推荐）**： `./scripts/publish-npm.sh login` → 浏览器点一次 Approve → 会话 token 只写 .npmrc.publish → 再跑一次脚本即发（没有会话时，发布这一次运行会自己先做这次登录）
 - 路径 B（**收紧中，不作主路径**）： npmjs 网页建 granular token（允许 bypass 2FA + packages read-write）→ 存 .env 的 NPM_TOKEN——npm 政策 target 2027-01 禁 bypass-2FA direct publish，rc.15 发布日志已见 deprecation 警告
 
 ### 历史 token 备注
@@ -49,7 +49,7 @@ XHS_COOKIES=             # 小红书 Cookie-Editor JSON
 | `npm publish` | ❌ 403 | classic token 无 2FA 能力；需 web 会话或 bypass token |
 
 政策原文：<https://github.blog/changelog/2026-07-31-restricting-npm-bypass-2fa-granular-access-tokens/>
-direct publish 的 token 限制 target 2027-01；主路径 = **路径 A web 会话（发布时 founder 一次浏览器 approve）**；Granular bypass token（路径 B）仍可用但已在退役轨道，中期迁移到路径 C OIDC。
+direct publish 的 token 限制 target 2027-01；主路径 = **路径 A web 会话（发布时 founder 浏览器 approve：登录与发布各一次）**；Granular bypass token（路径 B）仍可用但已在退役轨道，中期迁移到路径 C OIDC。
 
 ### 路径 A：web 会话（最简，10 秒，无需生成任何 token）
 
@@ -62,7 +62,7 @@ npm login --auth-type=web --registry=https://registry.npmjs.org/
 # 你点完 → 我这边会话建立 → 立即 npm publish(会话自带 2FA 授权)
 ```
 
-链接时效约 5 分钟；过期我重新生成就行，零成本。
+链接时效约 7 分钟；过期了什么都不会丢，我重新生成就行，但 founder 的那次点击就白费了——所以启动前先确认 founder 已在浏览器前。
 
 ### 路径 B：Granular Access Token（一劳永逸，约 60 秒）
 
@@ -82,9 +82,10 @@ npm login --auth-type=web --registry=https://registry.npmjs.org/
 ### 发布脚本（已就位）
 
 ```sh
-TAG=latest ./scripts/publish-npm.sh                    # dist-tag 必须显式传(#50①);凭据优先用 .npmrc.publish 会话,回退 .env 的 NPM_TOKEN
-NPM_TOKEN=npm_xxx TAG=latest ./scripts/publish-npm.sh  # 或临时注入 token
+TAG=latest ./scripts/publish-npm.sh   # dist-tag 必须显式传(#50①);凭据优先用 .npmrc.publish 会话,回退 .env 的 NPM_TOKEN
 ```
+
+回退只读 `.env` 里的 `NPM_TOKEN`；同名环境变量不会被读取。完整流程——预检、两次批准、registry 回拉、GitHub Release——见 [ops/npm-release-runbook.md](ops/npm-release-runbook.zh-CN.md)。
 
 ---
 
