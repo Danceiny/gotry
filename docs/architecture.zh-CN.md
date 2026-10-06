@@ -49,7 +49,7 @@ GoTry 是覆盖「一次出发到下一次出发」的证据优先旅行 Agent�
 |---|---|---|
 | 规划与判定 | 动机访谈、可行性、行程构建和多选闸；算术与约束求解留在代码中。 | §3–§5；[工具契约](tools.zh-CN.md) |
 | 证据检索 | 酒店、航班、火车、天气、地图、网页、视频和用户会话来源返回带来源与新鲜度的 typed observation；miss、挑战、畸形响应和传输失败保持不同语义。 | [数据源](data-sources.zh-CN.md)；[会话 RFC](rfc/user-session-data-rfc.zh-CN.md) |
-| 产物 | 工单与行程 Markdown／HTML 可列出并作为源码阅读；生成只消费注册事实，预览与显式选择的本地复核是独立宿主能力。 | [产物事实闸](#819-可下单事实单一数据源--产物事实闸)；[Lavish 契约](design/lavish-local.zh-CN.md) |
+| 产物 | 原生网页工作台可列出、搜索账本、工单及工作区产物，渲染结果显示原生文件交付卡；生成只消费注册事实，源码读取、原生预览与显式选择的本地复核是独立宿主能力。 | [原生网页入口](adr-expansions.zh-CN.md#826-原生网页配置与产物入口)；[产物事实闸](#819-可下单事实单一数据源--产物事实闸)；[Lavish 契约](design/lavish-local.zh-CN.md) |
 | 记忆与连续性 | 动机、偏好、愿望池、同行人、时间线和后台工单按显式归属与溯源规则持久化。 | [记忆设计](design/memory-design.zh-CN.md)；ADR-15 |
 | Booking Copilot | 内嵌 planner 针对既有预订工作台提出 typed 只读动作；搜索结果、报价、CheckAvail、Checkout 与订单状态仍由宿主掌握。 | §1.4；ADR-23；D-29 |
 | 运维与外部事件 | Doctor、通道健康、指标与有界外部事件信封只暴露诊断或 inert 接缝，不静默改路由、写入或激活传感器。 | [外部事件接缝](design/external-event-seam.zh-CN.md)；§3 |
@@ -198,6 +198,7 @@ Option      = { id, move(services×transfers×缓冲×红眼×tz), stay?(晚数/
 | 23 | embedded Booking Copilot 安全边界与 BFF request identity binding（单一 booking.surface 契约） | [§8.23](adr-expansions.zh-CN.md#823-adr-23embedded-booking-copilot-安全边界与-bff-request-identity-binding) | 出现离页自动写/支付必须进入 M5 WriteGate proposal/ADR 后续实现；出现多写者/跨 host 触发 ADR-15/16 复审；~~所有消费方迁移 v2 后再退 v1~~（**已触发 2026-09-05**：#133 收敛为单一契约，v1 退役，文件转正为无后缀 canonical 名） | `schemas/booking.surface.schema.json`；`ts/src/booking-surface/`（contracts/runtime/server/startup 等）；run-all 证明面 |
 | 24 | turn 预算：确定性路由 → converge 或持久 handoff，由原生归属任务执行 | [§8.24](adr-expansions.zh-CN.md#824-adr-24turn-预算--路由--wall-clock-双出口（turn-policy-/-turn-deadline）) | 路由误分成为系统性问题时复审路由；中断的原生任务需要自动重启时复审持久恢复。 | `ts/src/turn-policy.ts`；`ts/src/turn-deadline.ts`；`ts/src/turn-handoff-job.ts`；`scripts/run-all-tests.sh` §45 |
 | 25 | 通道健康面与动态路由建议（issue #106/#107/#108，D-7/D-8/D-9 采纳 2026-09-03）：工具面保持平铺（ADR-18 判定不动）、解译器不做隐藏改道；通道注册表单一数据来源生成 persona 卡/工具描述/doctor 行；检索 verdict≠hit 时结果内注入 `routing` 有序建议（可用性>证据级>效率字典序，健康态过滤），契约在失败现场教学；配额五分类（user-session/user-key/anonymous-trial/free-public/static）冻结归属语义；calendar 默认不挂载（D-9） | 解译器自动改道（拒绝：模型以为调 A 实际走 B，破坏调用可审计性）/静态反转优先级（拒绝：每个新用户先付扩展安装成本）/只靠 prose 教义（拒绝：prose 腐坏，普通模型读不动） | routing 建议误配成系统性问题时先修注册表数据；出现跨通道比价聚合产品裁决时与 ADR-18 一起复审；正式 key 池（产品统一申请）待 M3 真实 cohort 规模复审 | `ts/capabilities/channel-registry.ts` `channel-health.ts`；`docs/design/tool-orchestration-design.md`；run-all §50；smoke（flyai needs-setup→routing） |
+| 26 | 原生网页配置与产物入口 | [§8.26](adr-expansions.zh-CN.md#826-原生网页配置与产物入口) | 凭据存储或会话文件系统归属变化时复审。 | `ts/src/gotry-web-api.ts`；`ts/src/artifact-delivery.ts`；`client/client.js`；网页 API 与浏览器回归 |
 
 逐决策正文已迁至关注面权威文档 [adr-expansions.zh-CN.md](adr-expansions.zh-CN.md),与其 ADR 行同改。
 

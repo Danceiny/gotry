@@ -65,19 +65,29 @@ const extensionLine = output => output.split('\n').find(line => /(?:✅|⚠️|�
 
 // Use a real terminal so an implementation that only prints instructions, or
 // echoes the secret before entering raw mode, cannot pass this regression.
-function terminal(homeDir, answer, key, extra = {}) {
+function terminal(homeDir, answer, key, extra = {}, interruptSignal) {
   const pty = createRequire(join(repo, 'ts', 'package.json'))('node-pty')
   return new Promise((resolve, reject) => {
-    const child = pty.spawn(command, [...prefix, 'doctor', '--fix'], { cwd: root, env: { ...envFor(homeDir), ...extra }, cols: 160, rows: 30 })
-    let output = '', answered = false, submitted = false
-    const timer = setTimeout(() => { child.kill(); reject(new Error('terminal timeout: ' + output)) }, 15_000)
+    // Direct bootstrap isolates the interrupted doctor owner from the outer
+    // synchronous CLI dispatcher, which shares the terminal process group.
+    const child = pty.spawn(interruptSignal ? process.execPath : command,
+      [...(interruptSignal ? [join(pkg, 'bin', 'gotry-bootstrap.js')] : prefix), 'doctor', '--fix'],
+      { cwd: root, env: { ...envFor(homeDir), ...extra }, cols: 160, rows: 30 })
+    let output = '', answered = false, submitted = false, interrupted = false
+    const interruptTimer = interruptSignal ? setInterval(() => {
+      if (!interrupted && existsSync(join(homeDir, 'verifier-pid'))) {
+        interrupted = true
+        process.kill(child.pid, interruptSignal)
+      }
+    }, 20) : undefined
+    const timer = setTimeout(() => { clearInterval(interruptTimer); child.kill(); reject(new Error('terminal timeout: ' + output)) }, 15_000)
     const collect = chunk => {
       output += chunk
       if (!answered && output.includes('现在配置 FlyAI')) { answered = true; child.write(answer + '\r') }
       if (!submitted && output.includes('  key: ')) { submitted = true; child.write(key + '\r') }
     }
     child.onData(collect)
-    child.onExit(({ exitCode }) => { clearTimeout(timer); resolve({ code: exitCode, output, answered, submitted }) })
+    child.onExit(({ exitCode }) => { clearTimeout(timer); clearInterval(interruptTimer); resolve({ code: exitCode, output, answered, submitted }) })
   })
 }
 
@@ -179,5 +189,32 @@ try {
     const ci = await terminal(home('ci-terminal'), 'y', key, { CI: '1' })
     assert.equal(ci.answered, false, 'CI must not prompt even when given a terminal')
     console.log('real terminal guided setup, hidden key, decline/cancel/failure, healthy and CI boundaries: OK')
+
+    const hangingVerifier = join(root, 'hanging-verifier')
+    writeFileSync(hangingVerifier, `#!${process.execPath}
+require('node:fs').writeFileSync(require('node:path').join(process.env.HOME, 'verifier-pid'), String(process.pid))
+setInterval(() => {}, 1000)
+`, { mode: 0o700 })
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+      const interruptedHome = home('interrupted-' + signal)
+      mkdirSync(join(interruptedHome, '.flyai'), { mode: 0o700 })
+      writeFileSync(join(interruptedHome, '.flyai', 'config.json'), prior, { mode: 0o600 })
+      const report = join(pkg, 'gotry-state', 'doctor-report.md')
+      const beforeReport = existsSync(report) ? readFileSync(report, 'utf8') : undefined
+      let verifierPid
+      try {
+        const result = await terminal(interruptedHome, 'y', key, { GOTRY_FLYAI_CLI_BIN: hangingVerifier }, signal)
+        verifierPid = Number(readFileSync(join(interruptedHome, 'verifier-pid'), 'utf8'))
+        assert.equal(result.code, 128 + (signal === 'SIGINT' ? 2 : 15), 'doctor must propagate interrupted setup')
+        assert.equal(readFileSync(join(interruptedHome, '.flyai', 'config.json'), 'utf8'), prior)
+        assert.equal(existsSync(report) ? readFileSync(report, 'utf8') : undefined, beforeReport, 'interrupted doctor must not continue writing a report')
+        assert.throws(() => process.kill(verifierPid, 0), { code: 'ESRCH' })
+        assert.doesNotMatch(result.output, new RegExp(key))
+      } finally {
+        verifierPid ??= existsSync(join(interruptedHome, 'verifier-pid')) ? Number(readFileSync(join(interruptedHome, 'verifier-pid'), 'utf8')) : undefined
+        if (verifierPid) { try { process.kill(-verifierPid, 'SIGKILL') } catch { /* already gone */ } }
+      }
+    }
+    console.log('real terminal interrupted doctor preserves credentials/report and exits 130/143: OK')
   }
 } finally { rmSync(root, { recursive: true, force: true }) }

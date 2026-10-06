@@ -105,3 +105,13 @@ Explicitly rejected alternatives: a standalone chat booking page; replacing v1 w
 Re-review triggers: expand Tier 0 routing vocabulary when misclassification becomes systematic; revisit durable cross-process scheduling if interrupted native jobs need automatic recovery. The current native registry lasts only as long as its owning host/agent; a saved ticket alone is never proof of active work.
 
 Explicitly rejected alternatives: any constant gate that kills the turn at the deadline (fixed or LLM-dynamically-generated — same shape, same trajectory failure mode); LLM routing (loses on consistency/reproducibility/cost three ways; if future signals prove insufficient, earn authorization via loopx RFC S4's L1 shadow→L2 advisory shadow-comparison path, not granted by default); handoff reusing the loop work-order format (async-collect false failure); thresholds handed over to the dsh host (violates the gotry/dsh layering).
+
+#### 8.26 Native Web configuration and artifact access
+
+**Adopted:** the Web client contributes a GoTry configuration page to the native Plugins surface and an artifacts page to the native right Sidebar. It reuses DSH form, secret-input, navigation, and preview components. File delivery uses the native `deliverables/presented` protocol underlying `present`; a successful bounded render must reference a real file before declaring it.
+
+FlyAI Web and terminal setup share the official CLI configuration file and verification receipt. The authenticated Connection API owns browser admission; credential input never enters model tools, conversation logs, configuration YAML, or responses. Only a successful read-only candidate verification permits a serialized save; cancellation, environment overrides, concurrent configuration changes, and failed persistence preserve the previous configuration. Session identities resolve to Host-owned workspace roots; clients cannot submit arbitrary roots.
+
+Alternatives: a separate configuration application duplicates the host UI and authentication; a second key store makes terminal and Web behavior diverge; conversation-only artifact cards leave historical files undiscoverable without a model call.
+
+Execution anchors: `ts/src/gotry-web-api.ts`, `ts/src/artifact-delivery.ts`, `client/client.js`, and the isolated API/browser regressions. Re-review when credential storage or Session filesystem ownership changes.

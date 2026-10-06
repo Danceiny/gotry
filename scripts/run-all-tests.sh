@@ -79,6 +79,8 @@ echo "=== 6. 插件 smoke(注册/execute/红线断言) ==="
 echo
 echo "=== 6b. 产物视图能力与 Host 合同(客户端导出/运行时 block 卡片/路径护栏/版本更新,全离线) ==="
 (cd ts && npx tsx scripts/artifact-client-contract-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/artifact-delivery-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/gotry-web-client-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/artifacts-capability-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/dsh-artifact-e2e.ts) || FAIL=1
 
@@ -117,6 +119,7 @@ echo
 echo "=== 7b. flyai 能力层(离线假 CLI,4 断言:Sentinel 非业务形状→error/空 itemList→miss/命中→hit/exit≠0→error;issue #24) ==="
 (cd ts && npx tsx scripts/flyai-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/flyai-setup-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/gotry-web-api-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/flyai-setup-tool-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/flyai-tool-registration-contract-tests.ts) || FAIL=1
 

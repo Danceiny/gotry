@@ -12,6 +12,174 @@ window.__ModuleLoader__.load({
     var module = { exports: {} }
     var exports = module.exports
     var React = require('react')
+    var UI = require('@deepseek-ai/dsh-client-ui-primitives')
+
+    var webLocale = {
+      en: {
+        title: 'GoTry', description: 'Travel data sources and saved itineraries', flyai: 'FlyAI',
+        loading: 'Loading…', unavailable: 'Configuration is unavailable. Retry to read its current state.',
+        readOnly: 'The current key comes from the launch environment, or this platform cannot safely store it here.',
+        key: 'API Key', keyHint: 'Paste the key from the FlyAI console. It never enters the conversation.',
+        configured: 'A key is configured', anonymous: 'Anonymous trial · shared quota', verified: 'Current configuration verified',
+        unverified: 'Configured · verification required', debug: 'Debug endpoint', console: 'Open FlyAI console',
+        save: 'Verify and save', saving: 'Verifying…', saveFailed: 'The new key was not saved; the previous configuration is retained.',
+        saved: 'Verified and saved.', clear: 'Clear local key', cleared: 'Local key cleared. Anonymous trial is now active.',
+        retry: 'Refresh status', source: 'Source', config: 'Local configuration', env: 'Environment variable',
+        'env-debug': 'Debug environment variable', none: 'Shared trial',
+        artifacts: 'GoTry artifacts', artifactsHint: 'Browse saved itineraries and planning deliveries',
+        search: 'Search artifacts', searchPlaceholder: 'Title or filename', refresh: 'Refresh',
+        empty: 'No saved artifacts in this workspace.', noMatches: 'No matching artifacts.', noSession: 'Open a conversation to browse its workspace.',
+        previous: 'Previous', next: 'Next', html: 'Open HTML preview', open: 'Open preview',
+        htmlHint: 'HTML previews may run the document’s scripts.', failed: 'Could not read the current state. Please retry.',
+      },
+      zh: {
+        title: 'GoTry', description: '旅行数据源与已保存行程', flyai: 'FlyAI（飞猪）',
+        loading: '正在读取…', unavailable: '配置暂时不可用，请重新读取当前状态。',
+        readOnly: '当前 Key 来自启动环境变量，或此平台无法在这里安全保存。',
+        key: 'API Key', keyHint: '粘贴飞猪控制台中的 Key，凭据不会进入对话。',
+        configured: '已配置 Key', anonymous: '匿名试用 · 共享额度', verified: '当前配置已验证',
+        unverified: '已配置 · 尚未验证通过', debug: '调试服务地址', console: '打开飞猪控制台',
+        save: '验证并保存', saving: '正在验证…', saveFailed: '新 Key 未保存，旧配置已保留。',
+        saved: '验证通过，已保存。', clear: '清除本机 Key', cleared: '本机 Key 已清除，已恢复匿名试用。',
+        retry: '重新读取状态', source: '来源', config: '本机配置', env: '环境变量',
+        'env-debug': '调试环境变量', none: '共享试用',
+        artifacts: 'GoTry 产物', artifactsHint: '查看已保存行程和规划交付物',
+        search: '搜索产物', searchPlaceholder: '标题或文件名', refresh: '刷新',
+        empty: '这个工作区尚无已保存产物。', noMatches: '没有匹配的产物。', noSession: '打开一个对话后即可查看其工作区产物。',
+        previous: '上一页', next: '下一页', html: '打开 HTML 预览', open: '打开预览',
+        htmlHint: 'HTML 预览可能运行文档中的脚本。', failed: '无法读取当前状态，请重试。',
+      },
+    }
+
+    async function webRequest(path, options) {
+      var response = await fetch('api/gotry/' + path, Object.assign({ credentials: 'same-origin' }, options))
+      var value = await response.json()
+      if (!value || typeof value !== 'object') throw new Error('Invalid Web response')
+      if (!response.ok || value.ok === false) throw new Error(value.error || 'Request failed')
+      return value
+    }
+
+    function FlyaiSettings(props) {
+      var t = props.t
+      var state = React.useState(null), status = state[0], setStatus = state[1]
+      var draft = React.useState(''), key = draft[0], setKey = draft[1]
+      var noticeState = React.useState(''), notice = noticeState[0], setNotice = noticeState[1]
+      var errorState = React.useState(''), error = errorState[0], setError = errorState[1]
+      var busyState = React.useState(false), busy = busyState[0], setBusy = busyState[1]
+      var reloadState = React.useState(0), reload = reloadState[0], setReload = reloadState[1]
+      var lifetime = React.useRef(null), activeRequest = React.useRef(false)
+      React.useEffect(function () {
+        var controller = new AbortController()
+        lifetime.current = controller
+        setError('')
+        webRequest('flyai', { signal: controller.signal }).then(function (value) {
+          if (!controller.signal.aborted) setStatus(value)
+        }).catch(function () { if (!controller.signal.aborted) setError(t('failed')) })
+        return function () { controller.abort(); lifetime.current = null }
+      }, [reload])
+      async function write(action) {
+        if (activeRequest.current || !lifetime.current || !status?.writable) return
+        var controller = lifetime.current
+        activeRequest.current = true
+        setBusy(true); setError(''); setNotice('')
+        var candidate = key
+        setKey('')
+        try {
+          var value = await webRequest('flyai/write', { method: 'POST', signal: controller.signal,
+            headers: { 'content-type': 'application/json' }, body: JSON.stringify(action === 'save' ? { action: action, key: candidate } : { action: action }) })
+          if (!controller.signal.aborted) { setStatus(value); setNotice(t(action === 'save' ? 'saved' : 'cleared')) }
+        } catch (failure) {
+          if (!controller.signal.aborted) setError(failure.message || t('saveFailed'))
+        } finally {
+          activeRequest.current = false
+          if (!controller.signal.aborted) setBusy(false)
+        }
+      }
+      if (props.view === 'summary') return t('description')
+      var disabled = busy || !status?.writable
+      var stateLabel = !status ? t('loading') : !status.configured ? t('anonymous') : status.verified ? t('verified') : t('unverified')
+      return element('section', { 'data-gotry-flyai-settings': '', style: { display: 'grid', gap: '16px', maxWidth: '640px' } }, [
+        element('h3', { key: 'heading', style: { margin: 0 } }, t('flyai')),
+        element('div', { key: 'status', role: 'status', 'data-gotry-flyai-status': '', style: { display: 'grid', gap: '6px' } }, [
+          element(UI.Tag, { key: 'badge', tone: status?.verified ? 'success' : 'neutral' }, stateLabel),
+          status ? element('span', { key: 'source', style: { fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' } }, t('source') + '：' + t(status.source)) : null,
+          status?.endpointDebug ? element('span', { key: 'debug' }, t('debug') + '：' + status.endpoint) : null,
+        ]),
+        element('a', { key: 'console', href: 'https://flyai.open.fliggy.com/console', target: '_blank', rel: 'noopener noreferrer' }, t('console')),
+        element(UI.SettingsForm, { key: 'form', labels: { unavailable: t('loading'), readOnly: t('readOnly'), saveFailed: t('saveFailed'), save: t('save'), saving: t('saving') },
+          state: { available: Boolean(status), writable: Boolean(status?.writable), dirty: key.trim().length > 0, invalid: false, saving: busy, failed: false },
+          onSave: function () { void write('save') }, onDiscard: function () { setKey('') } }, [
+          element(UI.SettingsSecretField, { key: 'key', id: 'gotry-flyai-key', label: t('key'), hint: t('keyHint'), text: key,
+            configured: Boolean(status?.configured), stateLabel: t(status?.configured ? 'configured' : 'anonymous'), disabled: disabled,
+            onEdit: function (value) { setKey(value); setError(''); setNotice('') } }),
+        ]),
+        error ? element('p', { key: 'error', role: 'alert', style: { margin: 0, color: 'var(--dsw-alias-state-error-primary)' } }, error) : null,
+        notice ? element('p', { key: 'notice', role: 'status', style: { margin: 0 } }, notice) : null,
+        element('div', { key: 'actions', style: { display: 'flex', gap: '8px', flexWrap: 'wrap' } }, [
+          element(UI.Button, { key: 'retry', type: 'button', variant: 'outline', disabled: busy,
+            onClick: function () { setReload(function (value) { return value + 1 }) } }, t('retry')),
+          status?.configured && status.writable ? element(UI.Button, { key: 'clear', type: 'button', disabled: busy,
+            onClick: function () { void write('clear') } }, t('clear')) : null,
+        ]),
+      ])
+    }
+
+    function ArtifactBrowser(props) {
+      var t = props.t, info = props.useTabInfo(), sessionId = props.sessionId
+      var cwd = props.useSessions(function (sessions) { return sessions.byId[sessionId]?.cwd })
+      var state = React.useState(null), result = state[0], setResult = state[1]
+      var queryState = React.useState(''), search = queryState[0], setSearch = queryState[1]
+      var pageState = React.useState(0), offset = pageState[0], setOffset = pageState[1]
+      var refreshState = React.useState(0), refresh = refreshState[0], setRefresh = refreshState[1]
+      var busyState = React.useState(false), busy = busyState[0], setBusy = busyState[1]
+      var errorState = React.useState(''), error = errorState[0], setError = errorState[1]
+      React.useEffect(function () {
+        if (!sessionId || !info.tab.visible) return
+        var controller = new AbortController()
+        setBusy(true); setError('')
+        var query = new URLSearchParams({ sessionId: sessionId, search: search, offset: String(offset), limit: '20' })
+        webRequest('artifacts?' + query, { signal: controller.signal }).then(function (value) {
+          if (!controller.signal.aborted) setResult(value)
+        }).catch(function () { if (!controller.signal.aborted) setError(t('failed')) })
+          .finally(function () { if (!controller.signal.aborted) setBusy(false) })
+        return function () { controller.abort() }
+      }, [sessionId, info.tab.visible, search, offset, refresh])
+      function open(path) {
+        var normalized = String(path).replace(/\\/g, '/')
+        var root = String(cwd || '').replace(/\\/g, '/').replace(/\/$/, '')
+        var relative = root && normalized.startsWith(root + '/') ? normalized.slice(root.length + 1) : normalized
+        info.tab.actions.openResource('dsh-resource://file/session/' + encodeURIComponent(sessionId) + '/' + relative.split('/').map(encodeURIComponent).join('/'))
+      }
+      var entries = result?.artifacts || []
+      return element('section', { 'data-gotry-artifacts-browser': '', style: { padding: '16px', display: 'grid', alignContent: 'start', gap: '12px', height: '100%', overflow: 'auto', boxSizing: 'border-box', minWidth: 0 } }, [
+        element('div', { key: 'controls', style: { display: 'flex', gap: '8px', alignItems: 'center', minWidth: 0 } }, [
+          element(UI.Input, { key: 'search', 'aria-label': t('search'), placeholder: t('searchPlaceholder'), value: search,
+            style: { minWidth: 0, width: '100%' }, onChange: function (event) { setSearch(event.target.value); setOffset(0) } }),
+          element(UI.Button, { key: 'refresh', size: 'sm', disabled: busy || !sessionId,
+            onClick: function () { setRefresh(function (value) { return value + 1 }) } }, busy ? t('loading') : t('refresh')),
+        ]),
+        error ? element('p', { key: 'error', role: 'alert' }, error) : null,
+        !sessionId ? element('p', { key: 'no-session' }, t('noSession')) : !busy && entries.length === 0 ? element('p', { key: 'empty' }, t(search ? 'noMatches' : 'empty')) : null,
+        element('div', { key: 'list', 'aria-busy': busy, style: { display: 'grid', gap: '8px' } }, entries.map(function (entry) {
+          var html = /\.html?$/i.test(entry.path)
+          return element(UI.Button, { key: entry.path, variant: 'outline', 'data-gotry-artifact-entry': entry.path,
+            title: html ? t('htmlHint') : entry.path, onClick: function () { open(entry.path) },
+            style: { width: '100%', height: 'auto', padding: '12px', textAlign: 'left', justifyContent: 'flex-start', minWidth: 0 } }, [
+            element(UI.FileTypeIcon, { key: 'icon', path: entry.path }),
+            element('span', { key: 'body', style: { display: 'grid', gap: '4px', minWidth: 0, flex: 1 } }, [
+              element('span', { key: 'title', style: { overflowWrap: 'anywhere' } }, entry.title),
+              element('span', { key: 'meta', style: { fontSize: '11px', color: 'var(--dsw-alias-label-tertiary)', overflowWrap: 'anywhere' } },
+                [entry.status, entry.updated ? new Date(entry.updated).toLocaleString() : '', html ? t('html') : t('open')].filter(Boolean).join(' · ')),
+            ]),
+          ])
+        })),
+        result?.total > 0 ? element('div', { key: 'pagination', style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' } }, [
+          element(UI.Button, { key: 'previous', size: 'sm', disabled: busy || offset === 0, onClick: function () { setOffset(Math.max(0, offset - 20)) } }, t('previous')),
+          element('span', { key: 'count', role: 'status', style: { fontSize: '12px' } }, (entries.length ? offset + 1 : 0) + '–' + (offset + entries.length) + ' / ' + result.total),
+          element(UI.Button, { key: 'next', size: 'sm', disabled: busy || !result.truncated, onClick: function () { setOffset(result.nextOffset) } }, t('next')),
+        ]) : null,
+      ])
+    }
 
     function element(type, props, children) {
       return React.createElement(type, props, ...(Array.isArray(children) ? children : [children]))
@@ -192,6 +360,21 @@ window.__ModuleLoader__.load({
         })
         scope.slots.inject('tool.call.toolview', function () {
           return scope.slots.register({ name: 'tool.call.toolview', key: 'gotry_artifacts_read' }, ArtifactToolView)
+        })
+      })
+      ctx.inject(['slots', 'locale'], function (scope) {
+        var ns = 'gotry.web'
+        var t = scope.locale.bind(ns)
+        scope.effect(function () { return scope.locale.register(ns, webLocale) })
+        scope.slots.inject('plugins.item', function () {
+          return scope.slots.register({ name: 'plugins.item', id: 'gotry', order: 50, label: function () { return t('title') }, locale: ns }, FlyaiSettings)
+        })
+        scope.inject(['sidebarRightTabs'], function (sidebar) {
+          sidebar.effect(function () { return sidebar.sidebarRightTabs.register({ id: '@danceiny/gotry:artifacts', kind: 'gotry-artifacts',
+            title: function () { return t('artifacts') }, guide: [{ id: 'gotry-artifacts', order: 15, title: function () { return t('artifacts') }, description: function () { return t('artifactsHint') } }] }) })
+          sidebar.slots.inject('sidebar.right.pane.tab', function () {
+            return sidebar.slots.register({ name: 'sidebar.right.pane.tab', key: '@danceiny/gotry:artifacts', locale: ns }, ArtifactBrowser)
+          })
         })
       })
     }

@@ -227,7 +227,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     items.push({
       id: 'flyai', label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪)', status: 'degraded',
       detail: `未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)${flyaiQuotaNote}。影响面:共享池额度小,频繁会话易触顶;达限本会话内 gotry_flyai_search(机票/酒店/票务/AI/万豪 8 类)失败,改走 gotry_session_search 账号会话通道。`,
-      fix: '运行 `npx @danceiny/gotry setup flyai`：① 打开 https://flyai.open.fliggy.com/console 登录并复制 API Key；② 在终端隐藏粘贴并回车；③ 自动验证并保存。也可运行 `npx @danceiny/gotry doctor --fix` 按提示配置',
+      fix: 'Web 打开「插件 → GoTry → FlyAI」验证并保存；或运行 `npx @danceiny/gotry setup flyai`：① 打开 https://flyai.open.fliggy.com/console 复制 API Key；② 在终端隐藏粘贴；③ 验证后保存。也可运行 `npx @danceiny/gotry doctor --fix` 按提示配置',
     })
   } else {
     const keySha = sha256Hex(flyaiResolved.key!)
@@ -250,7 +250,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
       items.push({
         id: 'flyai', label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪)', status: 'degraded',
         detail: `${reason}(${sourceText};endpoint ${displayEndpoint(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})——非空不等于鉴权通过`,
-        fix: '运行 `npx @danceiny/gotry setup flyai` 重新验证后保存；`npx @danceiny/gotry setup flyai --clear` 回退匿名',
+        fix: 'Web 打开「插件 → GoTry → FlyAI」重新验证；或运行 `npx @danceiny/gotry setup flyai`；`npx @danceiny/gotry setup flyai --clear` 回退匿名',
       })
     }
   }
@@ -261,7 +261,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     ? { id: 'sidebar', label: 'dsh-better-sidebar(侧栏工作台)', status: 'ok', detail: '已安装——web UI 右侧工作台可预览产物与 doctor 报告(gotry-state/doctor-report.md)' }
     : {
         id: 'sidebar', label: 'dsh-better-sidebar(侧栏工作台)', status: 'missing',
-        detail: '未安装——dsh web 无右侧工作台,产物与 doctor 报告只能在对话里看(gotry_artifacts_list)',
+        detail: '未安装此增强组件——Web 自带 GoTry 产物页与原生预览；可选补装以增强文件浏览',
         fix: 'npx @danceiny/gotry doctor --fix',
       })
 

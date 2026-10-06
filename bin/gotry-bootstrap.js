@@ -53,6 +53,7 @@
  * 自渲。wizard 子命令退化为「离线健康探活等待」,只输出 stdout,不挡用户。
  */
 
+import { verifyFlyaiCandidate } from './gotry-flyai-verification.js'
 import { spawn } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -339,7 +340,7 @@ async function runSetupFlyai() {
   if (verify.verdict !== 'hit') {
     say(`[gotry-setup] ✗ 验证未通过(${verify.verdict}):${verify.error ?? ''}`)
     say('  配置未改动(失败不覆盖原有效设置)。核对 key 后重试,或 `--clear` 回退匿名。')
-    return 1
+    return verify.exitCode ?? 1
   }
 
   const before = readFlyaiConfigObject()
@@ -446,73 +447,26 @@ function hiddenInput(prompt) {
  * 子进程 env scrub FLYAI_API_KEY/DEBUG_FLYAI_API_KEY 后注入候选。
  * 返回 {verdict,error}。
  */
-function verifyCandidateKeyInline(candidate) {
-  const GOTRY_FLYAI_CLI = process.env.GOTRY_FLYAI_CLI_BIN ?? ''
-  const cliBin = GOTRY_FLYAI_CLI || 'npx'
-  const prefix = GOTRY_FLYAI_CLI ? [] : ['-y', '@fly-ai/flyai-cli@1.0.16']
-  const env = { ...process.env }
-  delete env.FLYAI_API_KEY
-  delete env.DEBUG_FLYAI_API_KEY
-  env.FLYAI_API_KEY = candidate
-  const date = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10)
-  const args = [...prefix, 'search-flight', '--origin', '上海', '--destination', '丽江', '--dep-date', date]
-  const configuredTimeout = Number(process.env.GOTRY_FLYAI_VERIFY_TIMEOUT_MS ?? 20_000)
-  const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? Math.min(configuredTimeout, 60_000) : 20_000
-  return new Promise((resolve) => {
-    let stdout = ''
-    let stderr = ''
-    let timedOut = false
-    let settled = false
-    const child = spawn(cliBin, args, {
-      env, stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
-    })
-    const finish = (v) => {
-      if (settled) return
-      settled = true
-      resolve(v)
+async function verifyCandidateKeyInline(candidate) {
+  const controller = new AbortController()
+  let interrupted
+  const listeners = new Map()
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    const listener = () => {
+      interrupted ??= signal
+      controller.abort()
     }
-    const killGroup = (signal) => {
-      if (process.platform !== 'win32' && child.pid) {
-        try { process.kill(-child.pid, signal); return } catch { /* fall through */ }
-      }
-      try { child.kill(signal) } catch { /* ignore */ }
-    }
-    const timer = setTimeout(() => { timedOut = true; killGroup('SIGKILL') }, timeoutMs)
-    child.stdout?.on('data', d => { stdout += d.toString() })
-    child.stderr?.on('data', d => { stderr += d.toString() })
-    child.on('error', (e) => { clearTimeout(timer); finish({ verdict: 'error', error: e.message }) })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      const combined = `${stderr}\n${stdout}`
-      if (timedOut) return finish({ verdict: 'timeout', error: `验证调用超时 ${timeoutMs}ms` })
-      if (/Invalid API key|HTTP\s*401|\b401\b/.test(combined)) {
-        return finish({ verdict: 'auth-error', error: '401 Invalid API key' })
-      }
-      if (/HTTP\s*403|\b403\b/.test(combined)) {
-        return finish({ verdict: 'forbidden', error: 'HTTP 403：无访问权限，请核对控制台权限。' })
-      }
-      if (/Trial limit reached/.test(combined)) {
-        return finish({ verdict: 'needs-setup', error: 'Trial limit reached(候选 key 未被识别为正式 key?)' })
-      }
-      if (/HTTP\s*429|\b429\b/.test(combined)) {
-        return finish({ verdict: 'rate-limited', error: '普通限流,稍后重试' })
-      }
-      if (code !== 0) {
-        // Upstream diagnostics can echo credentials or a private debug URL.
-        return finish({ verdict: 'error', error: `验证进程失败（exit ${code}）；请检查网络与服务状态。` })
-      }
-      try {
-        const envelope = JSON.parse(stdout)
-        if (Array.isArray(envelope?.data?.itemList)) {
-          return finish({ verdict: 'hit', count: envelope.data.itemList.length })
-        }
-        return finish({ verdict: 'error', error: '响应缺 data.itemList' })
-      } catch {
-        return finish({ verdict: 'error', error: '响应不是合法 JSON' })
-      }
-    })
-  })
+    listeners.set(signal, listener)
+    process.on(signal, listener)
+  }
+  try {
+    const result = await verifyFlyaiCandidate(candidate, { signal: controller.signal })
+    return interrupted
+      ? { ...result, verdict: 'cancelled', exitCode: 128 + (interrupted === 'SIGINT' ? 2 : 15) }
+      : result
+  } finally {
+    for (const [signal, listener] of listeners) process.off(signal, listener)
+  }
 }
 
 
@@ -935,7 +889,7 @@ async function doctorChecks() {
   let flyaiFix
   if (!flyaiResolved.key) {
     flyaiDetail = '未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)。影响面:共享池额度小,频繁会话易触顶;达限本会话内 gotry_flyai_search(机票/酒店/票务/AI/万豪 8 类)失败,改走 gotry_session_search 账号会话通道。'
-    flyaiFix = '运行 `npx @danceiny/gotry setup flyai`：① 打开 https://flyai.open.fliggy.com/console 登录并复制 API Key；② 在终端隐藏粘贴并回车；③ 自动验证并保存。也可运行 `npx @danceiny/gotry doctor --fix` 按提示配置'
+    flyaiFix = 'Web 打开「插件 → GoTry → FlyAI」验证并保存；或运行 `npx @danceiny/gotry setup flyai`：① 打开 https://flyai.open.fliggy.com/console 复制 API Key；② 在终端隐藏粘贴；③ 验证后保存。也可运行 `npx @danceiny/gotry doctor --fix` 按提示配置'
   } else {
     const keySha = sha256Inline(flyaiResolved.key)
     const receiptMatches = flyaiReceipt
@@ -950,16 +904,16 @@ async function doctorChecks() {
       flyaiDetail = `已验证 ${flyaiReceipt.at}(${sourceNote};endpoint ${displayEndpointInline(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})`
     } else if (flyaiReceipt && flyaiReceipt.keySha256 === keySha && flyaiReceipt.verdict !== 'verified') {
       flyaiDetail = `已配置未通过验证(${flyaiReceipt.verdict}@ ${flyaiReceipt.at};${sourceNote};endpoint ${displayEndpointInline(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})——非空不等于鉴权通过`
-      flyaiFix = '运行 `npx @danceiny/gotry setup flyai` 重新验证；`npx @danceiny/gotry setup flyai --clear` 回退匿名'
+      flyaiFix = 'Web 打开「插件 → GoTry → FlyAI」重新验证；或运行 `npx @danceiny/gotry setup flyai`；`npx @danceiny/gotry setup flyai --clear` 回退匿名'
     } else {
       flyaiDetail = `已配置,未验证(${sourceNote};endpoint ${displayEndpointInline(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})`
-      flyaiFix = '运行 `npx @danceiny/gotry setup flyai`，按提示隐藏粘贴 API Key，验证后自动保存'
+      flyaiFix = 'Web 打开「插件 → GoTry → FlyAI」验证并保存；或运行 `npx @danceiny/gotry setup flyai`，按提示隐藏粘贴 API Key'
     }
   }
   items.push({ label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪 8 类)', ok: flyaiLevel === 'ok', level: flyaiLevel, detail: flyaiDetail, fix: flyaiFix })
   // sidebar(状态面与 setupSidebar 的落盘复核同一口径)
   const sbOk = sidebarInstalled()
-  items.push({ label: 'dsh-better-sidebar(侧栏工作台)', ok: sbOk, level: sbOk ? 'ok' : 'missing', detail: sbOk ? '已安装——web UI 右侧工作台可预览产物与 doctor 报告(gotry-state/doctor-report.md)' : '未安装——dsh web 无右侧工作台,产物与 doctor 报告只能在对话里看(gotry_artifacts_list)', fix: sbOk ? undefined : 'npx @danceiny/gotry doctor --fix' })
+  items.push({ label: 'dsh-better-sidebar(侧栏工作台)', ok: sbOk, level: sbOk ? 'ok' : 'missing', detail: sbOk ? '已安装——web UI 右侧工作台可预览产物与 doctor 报告(gotry-state/doctor-report.md)' : '未安装此增强组件——Web 自带 GoTry 产物页与原生预览；可选补装以增强文件浏览', fix: sbOk ? undefined : 'npx @danceiny/gotry doctor --fix' })
   // dsh-calendar(setup 状态面;默认不挂载=ok 是合法态,opt-in 未配置才 degraded)
   const calState = readCalendarState()
   const calOn = calState?.enabled === true
@@ -1086,6 +1040,7 @@ async function runDoctor() {
       const answer = await readOneLine(process.stdin)
       if (/^y(?:es)?$/i.test(answer.trim())) {
         const setupCode = await runSetupFlyai()
+        if (setupCode === 130 || setupCode === 143) return setupCode
         if (setupCode !== 0) say('[gotry-doctor] FlyAI 配置未完成；可重跑 `npx @danceiny/gotry setup flyai`。')
       } else {
         say('[gotry-doctor] 已跳过 FlyAI 配置；稍后运行 `npx @danceiny/gotry setup flyai`。')
