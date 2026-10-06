@@ -35,6 +35,10 @@ Run `npx @danceiny/gotry@0.2.0-rc.30 web` (Node ≥ 22.15). Once `latest` points
 
 The handoff regression and isolated browser checks use synthetic model and planner responses with real native jobs, managed processes, notifications and file presentation. Installed real-session acceptance for #647 still requires loading the fix; the original unexecuted ticket remains unexecuted.
 
+### Published
+
+Published to npm on 2026-10-06 as `@danceiny/gotry@0.2.0-rc.30` with `TAG=latest ./scripts/publish-npm.sh` (tag passed explicitly, #50①), then pulled back from the registry: `npm view` shows `latest` → `0.2.0-rc.30` (shasum `6a9cd57e7ec3361909fb91e0037ed180297a91e6`, 547 files) — the shasum `npm pack --dry-run` predicted from the tagged tree before publishing — and the downloaded tarball hashes to it. On a clean machine (fresh HOME and npm cache, official registry only, no LLM key) `npx @danceiny/gotry@0.2.0-rc.30` passes end to end: `doctor` prints its report, the dist entry loads the `gotry-tools` plugin, `web` boots (token URL 303 → 200, no token 401), and a one-shot without credentials fails with the host's missing-credential message rather than a stack trace. GitHub Release: [v0.2.0-rc.30](https://github.com/Danceiny/gotry/releases/tag/v0.2.0-rc.30). The compatibility `rc` tag is still on `0.0.1-rc.20`.
+
 ---
 
 ## v0.2.0-rc.29 · 2026-10-06
