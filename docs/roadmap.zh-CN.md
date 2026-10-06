@@ -20,7 +20,7 @@
 
 | 关注面 | 当前位置 | 权威来源 |
 |---|---|---|
-| 已发布包 | npm `latest` 指向 `0.2.0-rc.28`；兼容用 `rc` tag 仍指向 `0.0.1-rc.20`。源码 `main` 可能领先两者。 | [`release-notes.zh-CN.md`](release-notes.zh-CN.md) 与 [CHANGELOG](../CHANGELOG.md) |
+| 已发布包 | npm `latest` 指向 `0.2.0-rc.29`；兼容用 `rc` tag 仍指向 `0.0.1-rc.20`。源码 `main` 可能领先两者。 | [`release-notes.zh-CN.md`](release-notes.zh-CN.md) 与 [CHANGELOG](../CHANGELOG.md) |
 | 产品里程碑 | M3 证据仍开放。Web 产品与确定性 scorer 已存在；真实 50–200 人种子用户结果集尚未满足退出门。 | [#22](https://github.com/Danceiny/gotry/issues/22) |
 | 评测 | 确定性契约与校验器已存在。未取得准入且完整的 cohort 前，不声明 official score 或 uplift。 | [`evaluation/evaluation-foundation.zh-CN.md`](evaluation/evaluation-foundation.zh-CN.md) |
 | 记忆 | M4 collector 与 scorer 只属于工程支持；仍需带 source review 的真实 `observed_private` 回访 cohort。 | [`architecture.zh-CN.md` §10 D-19](architecture.zh-CN.md#101-未清偿工作面)、[#20](https://github.com/Danceiny/gotry/issues/20)（已按「推迟」关闭） |
