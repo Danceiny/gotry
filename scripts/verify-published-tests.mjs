@@ -51,6 +51,16 @@ assert.throws(() => parseArgs(['1', '2']), /at most one version/); checks++
 assert.throws(() => parseArgs(['--wait', '-1']), /--wait/); checks++
 assert.throws(() => parseArgs(['--poll', '0']), /--poll/); checks++
 
+// how it was published: the click path unless the workflow's verify job says it was that run
+const RUN = 'https://github.com/Danceiny/gotry/actions/runs/123456789'
+eq([parseArgs([]).publishedBy, parseArgs([]).runUrl], ['', ''], 'no route flags by default')
+eq([parseArgs(['--published-by', 'workflow', '--run-url', RUN]).publishedBy, parseArgs(['--published-by', 'workflow', '--run-url', RUN]).runUrl], ['workflow', RUN], 'the workflow route takes its run URL')
+eq(parseArgs(['--published-by', 'script']).publishedBy, 'script', 'the click route needs no URL')
+assert.throws(() => parseArgs(['--published-by', 'workflow']), /needs the run URL/); checks++
+assert.throws(() => parseArgs(['--published-by', 'workflow', '--run-url', 'https://example.com/actions/runs/1']), /needs the run URL/); checks++
+assert.throws(() => parseArgs(['--run-url', RUN]), /only goes with the workflow route/); checks++
+assert.throws(() => parseArgs(['--published-by', 'manual']), /must be "script" or "workflow"/); checks++
+
 // ---- the CLI against a fake registry ----
 const NAME = '@scope/pkg'
 const VERSION = '1.0.0'
@@ -124,6 +134,23 @@ r = await cli([...base, '--json', receiptPath])
 const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'))
 eq([receipt.schema, receipt.ok, receipt.cleanRoom, receipt.version, receipt.tag], ['gotry_release_verified_v1', true, false, VERSION, 'latest'], 'the receipt says it was registry-only')
 eq(receipt.registry.distTags, { latest: VERSION }, 'the receipt carries the dist-tags the registry reported')
+eq(receipt.publishedBy, { route: 'script' }, 'a receipt with no route flags records the click path')
+
+// the workflow's verify job records that it was the workflow, and which run
+reset()
+expectRecord()
+r = await cli([...base, '--json', receiptPath, '--published-by', 'workflow', '--run-url', RUN])
+eq(r.code, 0, r.out)
+eq(JSON.parse(readFileSync(receiptPath, 'utf8')).publishedBy, { route: 'workflow', runUrl: RUN }, 'the receipt names the workflow run that published it')
+
+// a bad route is a usage error before anything is checked: no registry request, no receipt
+reset()
+expectRecord()
+rmSync(receiptPath, { force: true })
+r = await cli([...base, '--json', receiptPath, '--published-by', 'workflow'])
+eq(r.code, 2, `the workflow route without its run URL exits 2\n${r.out}`)
+ok(r.out.includes('needs the run URL') && r.out.includes('--published-by script|workflow'), 'the usage error says what is missing')
+ok(!existsSync(receiptPath) && state.hits === 0, 'a refused route neither queries the registry nor writes a receipt')
 
 // without a record it still verifies the registry's own consistency, and says it skipped the build comparison
 reset()

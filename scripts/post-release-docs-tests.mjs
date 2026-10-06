@@ -73,13 +73,22 @@ const plan = (files, r = receipt(), date = DATE) => planEdits(files, r, date)
 const changedPaths = (p) => p.report.filter((x) => x.changed).map((x) => x.path).sort()
 
 // ---- arguments ----
-eq(parseArgs([]), { receipt: '', root: parseArgs([]).root, date: '', check: false }, 'defaults')
+const RUN = 'https://github.com/Danceiny/gotry/actions/runs/123456789'
+eq(parseArgs([]), { receipt: '', root: parseArgs([]).root, date: '', check: false, publishedBy: '', runUrl: '' }, 'defaults')
 eq(parseArgs(['--check', '--date', '2026-01-02', '--receipt', 'r.json']).check, true)
 eq(parseArgs(['--date', '2026-01-02']).date, '2026-01-02')
 throws(() => parseArgs(['--date', 'yesterday']), /YYYY-MM-DD/)
 throws(() => parseArgs(['--receipt']), /needs a value/)
 throws(() => parseArgs(['--receipt', '--check']), /needs a value/)
 throws(() => parseArgs(['--nope']), /unknown argument/)
+eq(parseArgs(['--published-by', 'workflow', '--run-url', RUN]).runUrl, RUN, 'the workflow route takes its run URL')
+eq(parseArgs(['--published-by', 'script']).publishedBy, 'script', 'the click route needs no URL')
+throws(() => parseArgs(['--published-by', 'workflow']), /needs the run URL/)
+throws(() => parseArgs(['--published-by', 'workflow', '--run-url', 'https://example.com/actions/runs/1']), /needs the run URL/)
+throws(() => parseArgs(['--published-by', 'workflow', '--run-url', `${RUN})\n[x](http://evil`]), /needs the run URL/)
+throws(() => parseArgs(['--run-url', RUN]), /only goes with the workflow route/)
+throws(() => parseArgs(['--published-by', 'script', '--run-url', RUN]), /only goes with the workflow route/)
+throws(() => parseArgs(['--published-by', 'manual']), /must be "script" or "workflow"/)
 
 // ---- only a full, passing pull-back may reach the docs ----
 assertReceipt(receipt()); checks++
@@ -92,6 +101,15 @@ throws(() => assertReceipt(receipt({ registry: { fileCount: 1 } })), /lacks vers
 throws(() => plan(docs(), receipt({ ok: false })), /failed pull-back/)
 throws(() => plan(docs(), receipt(), ''), /no usable publish date/)
 throws(() => plan(docs(), receipt(), 'soon'), /no usable publish date/)
+// the route a receipt records must be well-formed: it becomes a docs link
+assertReceipt(receipt({ publishedBy: { route: 'script' } })); checks++
+assertReceipt(receipt({ publishedBy: { route: 'workflow', runUrl: RUN } })); checks++
+throws(() => assertReceipt(receipt({ publishedBy: null })), /publishedBy\.route must be/)
+throws(() => assertReceipt(receipt({ publishedBy: { route: '' } })), /publishedBy\.route must be/)
+throws(() => assertReceipt(receipt({ publishedBy: { route: 'manual' } })), /publishedBy\.route must be/)
+throws(() => assertReceipt(receipt({ publishedBy: { route: 'workflow' } })), /needs the run URL/)
+throws(() => assertReceipt(receipt({ publishedBy: { route: 'workflow', runUrl: 'javascript:alert(1)' } })), /needs the run URL/)
+throws(() => assertReceipt(receipt({ publishedBy: { route: 'script', runUrl: RUN } })), /only goes with the workflow route/)
 
 // ---- a release to `latest` moves every baseline and adds the Published sections ----
 {
@@ -145,6 +163,32 @@ throws(() => plan(docs(), receipt(), 'soon'), /no usable publish date/)
   ok(!second.errors, 'second run recognises its own output')
   eq(changedPaths(second), [], 'a second run changes nothing')
   eq(second.files, first.files, 'and the content is identical')
+}
+
+// ---- the Published sentence names the route that published, and never the other one ----
+{
+  const enLine = (files) => files['docs/release-notes.md'].split('\n').find((l) => l.startsWith('Published to npm on'))
+  const zhLine = (files) => files['docs/release-notes.zh-CN.md'].split('\n').find((l) => l.startsWith(`${DATE} `))
+  const click = plan(docs()).files
+  const viaScript = plan(docs(), receipt({ publishedBy: { route: 'script' } })).files
+  const viaWorkflow = plan(docs(), receipt({ publishedBy: { route: 'workflow', runUrl: RUN } })).files
+
+  ok(enLine(click).includes('with `TAG=latest ./scripts/publish-npm.sh` (tag passed explicitly, #50①)') && !enLine(click).includes('npm-publish.yml'), 'a receipt without the field reads as the click path (English)')
+  ok(zhLine(click).includes('以 `TAG=latest ./scripts/publish-npm.sh`（dist-tag 显式传入，#50①）发布') && !zhLine(click).includes('npm-publish.yml'), 'a receipt without the field reads as the click path (Chinese)')
+  eq(viaScript, click, 'an explicit script route is the same as no field')
+
+  ok(enLine(viaWorkflow).includes(`by the \`npm-publish.yml\` workflow ([run](${RUN})) through npm Trusted Publishing (dist-tag \`latest\` passed explicitly, #50①)`), 'the workflow route names the run (English)')
+  ok(zhLine(viaWorkflow).includes(`由 \`npm-publish.yml\` 工作流（[运行记录](${RUN})）经 npm Trusted Publishing 发布 \`${NAME}@${NEW}\`（dist-tag \`latest\` 显式传入，#50①）`), 'the workflow route names the run (Chinese)')
+  ok(!enLine(viaWorkflow).includes('publish-npm.sh') && !zhLine(viaWorkflow).includes('publish-npm.sh'), 'a workflow release never claims the click-path command')
+  // only the lead differs: the pull-back facts that follow are the same sentence either way
+  eq(enLine(viaWorkflow).split(', then pulled back from the registry:')[1], enLine(click).split(', then pulled back from the registry:')[1], 'the English pull-back facts are untouched by the route')
+  eq(zhLine(viaWorkflow).split('，并从 registry 回拉校验：')[1], zhLine(click).split('，并从 registry 回拉校验：')[1], 'the Chinese pull-back facts are untouched by the route')
+  ok(enLine(viaWorkflow).includes(`(${RUN})`) && zhLine(viaWorkflow).includes(`(${RUN})`), 'both languages carry the same run link')
+  // the route changes the release-notes sentence only: the baselines are the same facts
+  for (const path of Object.keys(click)) if (!path.includes('release-notes')) eq(viaWorkflow[path], click[path], `${path} does not depend on the route`)
+
+  const again = plan(viaWorkflow, receipt({ publishedBy: { route: 'workflow', runUrl: RUN } }))
+  ok(!again.errors && changedPaths(again).length === 0, 'a second run on a workflow release changes nothing')
 }
 
 // ---- a hand-written Published section is never overwritten ----
@@ -282,6 +326,44 @@ writeFileSync(receiptFile, `${JSON.stringify(receipt())}\n`)
   cli(root2, ['--receipt', receiptFile, '--date', '2026-12-25'])
   ok(readFileSync(join(root2, 'docs/release-notes.md'), 'utf8').includes('Published to npm on 2026-12-25'), '--date overrides the receipt date')
   ok(plan(before).files['docs/release-notes.md'].includes(`Published to npm on ${DATE}`), 'the receipt date is the default')
+}
+{
+  // the route flags speak for a receipt written before it recorded one: the rc.29 tag's receipt cannot know it was a workflow run
+  const before = docs()
+  const written = (root) => readFileSync(join(root, 'docs/release-notes.md'), 'utf8')
+  const viaFlags = join(tmp, 'route-flags')
+  write(viaFlags, before)
+  const f1 = cli(viaFlags, ['--receipt', receiptFile, '--published-by', 'workflow', '--run-url', RUN])
+  eq(f1.status, 0, f1.out)
+  ok(written(viaFlags).includes(`by the \`npm-publish.yml\` workflow ([run](${RUN}))`) && !written(viaFlags).includes('publish-npm.sh'), 'the flags put the workflow route and its run link into the docs')
+  eq(readAll(viaFlags, Object.keys(before)), plan(before, receipt({ publishedBy: { route: 'workflow', runUrl: RUN } })).files, 'and the files hold exactly the planned content')
+
+  // without flags a receipt that records the route is believed as written
+  const recorded = join(tmp, 'receipt-workflow.json')
+  writeFileSync(recorded, `${JSON.stringify(receipt({ publishedBy: { route: 'workflow', runUrl: RUN } }))}\n`)
+  const viaReceipt = join(tmp, 'route-receipt')
+  write(viaReceipt, before)
+  eq(cli(viaReceipt, ['--receipt', recorded]).status, 0, 'a receipt that records the workflow route plans')
+  eq(written(viaReceipt), written(viaFlags), 'and reads the same as the flags would have made it')
+
+  // a receipt without the field, and no flags, is the click path: that is what every earlier release was
+  const viaDefault = join(tmp, 'route-default')
+  write(viaDefault, before)
+  cli(viaDefault, ['--receipt', receiptFile])
+  ok(written(viaDefault).includes('with `TAG=latest ./scripts/publish-npm.sh`') && !written(viaDefault).includes('npm-publish.yml'), 'no flags and no recorded route keeps the click wording')
+
+  // an explicit route flag overrides a recorded one (the operator knows which route ran)
+  const viaScript = join(tmp, 'route-script')
+  write(viaScript, before)
+  cli(viaScript, ['--receipt', recorded, '--published-by', 'script'])
+  ok(written(viaScript).includes('with `TAG=latest ./scripts/publish-npm.sh`') && !written(viaScript).includes('npm-publish.yml'), 'an explicit script flag beats a recorded workflow route')
+
+  // bad route flags never reach the docs
+  const refused = join(tmp, 'route-refused')
+  write(refused, before)
+  const bad = cli(refused, ['--receipt', receiptFile, '--published-by', 'workflow'])
+  ok(bad.status === 2 && /needs the run URL/.test(bad.out) && /usage: node scripts\/post-release-docs\.mjs/.test(bad.out) && !/\n\s+at /.test(bad.out), 'the workflow route without its run URL is refused with usage')
+  eq(readAll(refused, Object.keys(before)), before, 'and nothing was written')
 }
 {
   // registry-only, failed, absent and corrupt receipts never touch the docs

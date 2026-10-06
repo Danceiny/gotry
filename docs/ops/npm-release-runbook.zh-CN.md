@@ -76,7 +76,7 @@ node scripts/post-release-docs.mjs --receipt <publish-tree>/.release-verified.js
 node scripts/check-docs-i18n.mjs && node scripts/check-doc-readability.mjs
 ```
 
-脚本会给两份 release-notes 加上「已发布」段；若是发布到 `latest`，还会改写 README、user-guide 与 roadmap 里的版本基线。每一对文档要么一起改、要么都不改，再跑一次不会有变化，`--check` 只报告待办而不写入。提交改动的文件（发布到 `latest` 时是八个），开 docs PR，然后用 `git worktree remove --force <publish-tree>` 删掉发布树。
+脚本会给两份 release-notes 加上「已发布」段；若是发布到 `latest`，还会改写 README、user-guide 与 roadmap 里的版本基线。每一对文档要么一起改、要么都不改，再跑一次不会有变化，`--check` 只报告待办而不写入。「已发布」那句话按回执里 `publishedBy` 记录的路径来写：默认是点击路径；回执若说明是工作流发布的，就改为链接那次运行。字段出现之前写出的回执说不出这一点（rc.29 tag 自带的工作流就是如此）；此时传 `--published-by workflow --run-url https://github.com/<owner>/<repo>/actions/runs/<id>` 来说明，命令行参数优先于回执。提交改动的文件（发布到 `latest` 时是八个），开 docs PR，然后用 `git worktree remove --force <publish-tree>` 删掉发布树。
 
 ## 5. 中途停下时
 
@@ -133,4 +133,4 @@ gh workflow run npm-publish.yml --ref v<version> -f dist_tag=latest -f dry_run=f
 | 换票成功但 registry 拒绝写入 | allowed actions 缺 `npm publish` | 在 npmjs.com 勾选 |
 | provenance 声明被拒绝 | package.json 的 `repository.url` 没指向本仓库，或仓库不是公开的 | 修正它，或改走 §2（那条路径不带 provenance） |
 
-不变的是预检、回拉规则与文档后续。真实运行之后，用 `gh run download <run-id> -n release-receipt -D <dir>` 取回回执，再在 §4 用 `--receipt <dir>/.release-verified.json` 继续。不同的是：预检的 CI 证明会跳过工作流自己的 `Release: …` 检查运行；持有身份的作业从不运行检出之后才安装的任何东西；也不再有会过期的批准链接。发布步骤之前失败的运行什么也没发布。verify 步骤失败时，可以用「Re-run failed jobs」单独重跑它，它复用 gate 的 tarball，不会再次发布。
+不变的是预检、回拉规则与文档后续。真实运行之后，用 `gh run download <run-id> -n release-receipt -D <dir>` 取回回执，再在 §4 用 `--receipt <dir>/.release-verified.json` 继续；verify 作业会把路径与运行链接记进这份回执，文档因此会写明是工作流发布的。不同的是：预检的 CI 证明会跳过工作流自己的 `Release: …` 检查运行；持有身份的作业从不运行检出之后才安装的任何东西；也不再有会过期的批准链接。发布步骤之前失败的运行什么也没发布。verify 步骤失败时，可以用「Re-run failed jobs」单独重跑它，它复用 gate 的 tarball，不会再次发布。
