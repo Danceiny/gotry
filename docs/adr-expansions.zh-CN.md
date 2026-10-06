@@ -100,6 +100,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：
 - `settleTurnHandoffTicket` 原子写 `<id>.deliverable.md` + 工单 status settled/failed（settledAt/deliverableFile/error）。终态幂等：已结算工单复诵交付物与 `gotry_turn_handoff_terminal.v1` JSON（succeeded exit 0 / failed exit 2），零重算零再花；failed 交付物是诚实失败说明（「没有完成，请重新发起，无部分结果可交付」）。
 - 复访面：产品路径注册只读工具 `gotry_turn_handoff_list`——用户回问「规划好了吗」时模型查工单状态，settled 附交付物摘录（≤600 字，全文在同目录 .deliverable.md），禁止编造不存在的交付物。
 - 调度：产品通过原生 DSH jobs 和受管 subprocess 启动一次式收集器，提供按会话隔离的跟踪、取消和完成通知。工单记录 `open`／`running`／`settled`／`failed` 及原生 job id；宿主重启会重置原生编号，因此活跃匹配必须同时核对工单标签、归属、任务类型及编号，匹配失败的运行记录如实报告中断。产品子会话沿用原工作目录和已配置 profile，将有界前序证据作为数据传入，不得递归 handoff；旧工单仍按隔离模式收集。只把 stdout 作为规划结果，只有 stderr、空输出、启动失败和超时均如实失败。超时／取消先发送 TERM，并等待 wrapper 清理其子进程，再按有界宽限强制 KILL；收集器及宿主的宽限均大于 wrapper 的 5 秒 TERM 与 1 秒 KILL 等待。完成通知给出交付物的准确路径并要求原生 `present`，handoff 交付物同时纳入 `gotry_artifacts_list` 和裸工单 id 阅读。人工 `--all` 仍只扫描待启动工单，不重复运行中的任务。
+- 直接命令退出与原生受管进程范围退出是不同的事实：适配器在命令成功或报错后都等待后者；范围观察失败时，请求终止并明确报告未能确认清理，不能把失败状态解释为进程已经停稳。
 
 复审触发：路由误分成系统性问题时先扩 Tier 0 词表；原生任务中断后需要自动恢复时，再设计跨进程的持久调度。当前原生注册表依赖所属宿主／代理生命周期，保存工单本身绝不构成后台活跃证据。
 

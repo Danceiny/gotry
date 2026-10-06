@@ -68,10 +68,25 @@ export async function startTurnHandoffJob(
               const plannerTimeout = Number(process.env.GOTRY_HANDOFF_PLANNER_TIMEOUT_MS)
               const timeout = Number.isSafeInteger(plannerTimeout) && plannerTimeout > 0 ? plannerTimeout : 900_000
               timer = setTimeout(() => handle!.terminate(), timeout + 12_000)
-              const outcome = await handle.done
-              // Direct exit and drained pipes do not prove that native Linux
-              // scopes (or other managed ranges) have no surviving descendants.
-              await handle.waitForExit()
+              const direct = await handle.done.then(
+                outcome => ({ ok: true as const, outcome }),
+                error => ({ ok: false as const, error }),
+              )
+              // Direct success or failure does not prove managed-range exit.
+              if (!direct.ok) handle.terminate()
+              try { await handle.waitForExit() }
+              catch (cleanupError) {
+                handle.terminate()
+                const cleanupDiagnostic = cleanupError instanceof Error ? cleanupError.message : 'unknown cleanup error'
+                const cleanupReason = `managed-range cleanup could not be confirmed: ${cleanupDiagnostic}`
+                if (!direct.ok) {
+                  const diagnostic = direct.error instanceof Error ? direct.error.message : 'planning failed'
+                  throw new AggregateError([direct.error, cleanupError], `${diagnostic}; ${cleanupReason}`)
+                }
+                throw new Error(cleanupReason, { cause: cleanupError })
+              }
+              if (!direct.ok) throw direct.error
+              const outcome = direct.outcome
               const path = join(stateRoot, 'gotry-state', 'turn-handoffs', `${ticket.id}.json`)
               const settled = JSON.parse(await readFile(path, 'utf8')) as TurnHandoffTicket
               if (cancelled) throw new Error('planning cancelled')

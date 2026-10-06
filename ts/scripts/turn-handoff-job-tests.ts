@@ -69,36 +69,60 @@ try {
 
   // The native API separates direct exit from managed-range quiescence.
   // A cancelled collector can exit while the host still owns a live child.
-  const actualSpawn = subprocess.spawn
-  let releaseDirect!: () => void
-  let releaseRange!: () => void
-  let rangeWaited = false
-  const directExited = new Promise<{ exitCode: number; signal: null }>(resolve => { releaseDirect = () => resolve({ exitCode: 0, signal: null }) })
-  const rangeExited = new Promise<void>(resolve => { releaseRange = resolve })
-  subprocess.spawn = () => ({
-    stdin: undefined, stdout: undefined, stderr: undefined, control: undefined,
-    done: directExited, collected: {}, terminate() {}, terminateForHostExit() {},
-    async waitForExit() { rangeWaited = true; await rangeExited; return true },
-  })
-  let heldJobId: ReturnType<typeof JobId> | undefined
-  try {
-    const heldTicket = await writeTurnHandoffTicket(root, 'direct exit before range quiescence', { workspaceCwd: root })
-    const held = await startTurnHandoffJob(ctx, heldTicket, owner, root)
-    heldJobId = JobId(held.jobId!)
-    jobs.kill(heldJobId, owner.id)
-    releaseDirect()
-    const waitBy = Date.now() + 2000
-    while (!rangeWaited && jobs.list(owner.id).find(job => job.id === heldJobId)?.status === 'stopping' && Date.now() < waitBy) {
-      await new Promise(resolve => setTimeout(resolve, 10))
+  for (const mode of ['cancel', 'direct-error', 'cleanup-error'] as const) {
+    const actualSpawn = subprocess.spawn
+    let settleDirect!: () => void
+    let releaseRange!: () => void
+    let rangeWaited = false
+    let terminationRequested = false
+    const directExited = new Promise<{ exitCode: number; signal: null }>((resolve, reject) => {
+      settleDirect = () => mode !== 'direct-error' ? resolve({ exitCode: 0, signal: null }) : reject(new Error('synthetic collector direct failure'))
+    })
+    const rangeExited = new Promise<void>(resolve => { releaseRange = resolve })
+    subprocess.spawn = () => ({
+      stdin: undefined, stdout: undefined, stderr: undefined, control: undefined,
+      done: directExited, collected: {}, terminate() { terminationRequested = true }, terminateForHostExit() {},
+      async waitForExit() {
+        rangeWaited = true
+        if (mode === 'cleanup-error') throw new Error('synthetic range observation failure')
+        await rangeExited
+        return true
+      },
+    })
+    let heldJobId: ReturnType<typeof JobId> | undefined
+    let heldTicketId: string | undefined
+    try {
+      const heldTicket = await writeTurnHandoffTicket(root, `${mode}: direct exit before range quiescence`, { workspaceCwd: root })
+      heldTicketId = heldTicket.id
+      const held = await startTurnHandoffJob(ctx, heldTicket, owner, root)
+      heldJobId = JobId(held.jobId!)
+      if (mode === 'cancel') jobs.kill(heldJobId, owner.id)
+      settleDirect()
+      if (mode === 'cleanup-error') {
+        assert.equal((await jobs.wait(heldJobId, 10_000, owner.id)).status, 'failed')
+        assert.equal(terminationRequested, true, 'cleanup observation failure must still request termination')
+        assert.match((await listTurnHandoffTickets(root)).find(item => item.id === heldTicket.id)!.error!, /managed-range cleanup could not be confirmed.*synthetic range observation failure/, 'cleanup failure is explicit, never a stopped-process claim')
+        continue
+      }
+      const activeStatus = mode === 'cancel' ? 'stopping' : 'running'
+      const waitBy = Date.now() + 2000
+      while (!rangeWaited && jobs.list(owner.id).find(job => job.id === heldJobId)?.status === activeStatus && Date.now() < waitBy) {
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+      assert.equal(rangeWaited, true, `${mode}: direct exit must join the host-owned process range`)
+      assert.equal(jobs.list(owner.id).find(job => job.id === heldJobId)?.status, activeStatus, `${mode}: native outcome cannot settle while the managed range is live`)
+      assert.equal((await listTurnHandoffTickets(root)).find(item => item.id === heldTicket.id)!.status, 'running', `${mode}: durable settlement waits for managed-range quiescence too`)
+      assert.equal(terminationRequested, true, `${mode}: cleanup must be initiated`)
+    } finally {
+      settleDirect()
+      releaseRange()
+      if (heldJobId) await jobs.wait(heldJobId, 10_000, owner.id)
+      subprocess.spawn = actualSpawn
     }
-    assert.equal(rangeWaited, true, 'direct exit must join the host-owned process range')
-    assert.equal(jobs.list(owner.id).find(job => job.id === heldJobId)?.status, 'stopping', 'native cancellation cannot settle while the managed range is live')
-    assert.equal((await listTurnHandoffTickets(root)).find(item => item.id === heldTicket.id)!.status, 'running', 'durable settlement waits for managed-range quiescence too')
-  } finally {
-    releaseDirect()
-    releaseRange()
-    if (heldJobId) await jobs.wait(heldJobId, 10_000, owner.id)
-    subprocess.spawn = actualSpawn
+    if (mode === 'direct-error') {
+      assert.equal(jobs.list(owner.id).find(job => job.id === heldJobId)?.status, 'failed')
+      assert.match((await listTurnHandoffTickets(root)).find(item => item.id === heldTicketId)!.error!, /synthetic collector direct failure/, 'keep the direct diagnostic after cleanup')
+    }
   }
 
   writeFileSync(planner, `setTimeout(()=>console.log('late'),60000)`)
