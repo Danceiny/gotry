@@ -22,10 +22,15 @@ import { EventEmitter } from 'node:events'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname, delimiter } from 'node:path'
-import { runDoctorChecks } from '../capabilities/doctor.ts'
+import { pathToFileURL } from 'node:url'
+import { runDoctorChecks as diagnose } from '../capabilities/doctor.ts'
 
 const repoRoot = join(import.meta.dirname, '..', '..')
 const bootstrap = join(repoRoot, 'bin', 'gotry-bootstrap.js')
+const offlinePreload = pathToFileURL(join(repoRoot, 'scripts', 'doctor-test-isolation.mjs')).href
+process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ?? ''} --import=${offlinePreload}`.trim()
+process.env.GOTRY_TEST_DOCTOR_PORT = '0'
+const runDoctorChecks = (opts: Parameters<typeof diagnose>[0] = {}) => diagnose({ ...opts, extensionPorts: [] })
 
 // runOnboardingFix 返回元素形状(动态 import 的 .js 模块无类型,显式标注以过 noImplicitAny)
 interface OnboardingFixResult {
@@ -186,7 +191,7 @@ console.log('9. calendar 子命令(setup 状态面 on/off/status + doctor 三态
   assert.ok(!r.stdout.includes('[gotry-doctor]'), 'summary 模式零 header(stdout 静默)')
   assert.match(r.stderr, /\[gotry\] doctor: \d+ 项待处理/, '隔离 HOME 有缺失项 → 一行摘要进 stderr')
   assert.match(r.stderr, /gotry_doctor/, '摘要带对话内指路')
-  assert.match(r.stderr, /扩展=缺/, '缺失项人话=缺(降级类=半可用)')
+  assert.match(r.stderr, /扩展=待确认/, '没有安装或连接证据时，摘要显示待确认')
 }
 console.log('10. 启动一次性 doctor 摘要(--summary:stderr 一行/零写盘/恒 exit 0)OK')
 
@@ -422,6 +427,7 @@ console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_O
   const fixture = mkdtempSync(join(tmpdir(), 'gotry-onboard-pkg-'))
   mkdirSync(join(fixture, 'bin'), { recursive: true })
   copyFileSync(bootstrap, join(fixture, 'bin', 'gotry-bootstrap.js'))
+  copyFileSync(join(repoRoot, 'bin', 'gotry-extension-status.js'), join(fixture, 'bin', 'gotry-extension-status.js'))
   copyFileSync(join(repoRoot, 'package.json'), join(fixture, 'package.json'))
   const vendorDir = join(fixture, 'ts', 'dsh-runtime', 'vendor')
   mkdirSync(vendorDir, { recursive: true })
@@ -682,6 +688,7 @@ function buildPkgFixture(tmpRoot: string) {
   writeFileSync(join(pkgRoot, 'package.json'), `${JSON.stringify({ name: 'gotry', version: '0.0.1-test', type: 'module' })}\n`)
   copyFileSync(join(repoRoot, 'bin', 'gotry-inner.js'), join(pkgBin, 'gotry-inner.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-bootstrap.js'), join(pkgBin, 'gotry-bootstrap.js'))
+  copyFileSync(join(repoRoot, 'bin', 'gotry-extension-status.js'), join(pkgBin, 'gotry-extension-status.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-runtime-resolution.js'), join(pkgBin, 'gotry-runtime-resolution.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-process-liveness.js'), join(pkgBin, 'gotry-process-liveness.js'))
   copyFileSync(join(repoRoot, 'cordis.gotry-patch.yml'), join(pkgRoot, 'cordis.gotry-patch.yml'))
@@ -752,8 +759,8 @@ type FixtureChild = ReturnType<typeof spawn>
 const closedFixtures = new WeakSet<FixtureChild>()
 
 function spawnInner(fixture: ReturnType<typeof buildPkgFixture>, opts: { tty: boolean; env?: Record<string, string> }) {
-  // NODE_OPTIONS:TTY 路径挂 fixture-local preload;非 TTY 路径清空(移除 tsx loader,temp 包无 tsx 会崩)。
-  const nodeOptions = opts.tty ? `--require ${fixture.preloadPath}` : ''
+  // 保留离线诊断 preload，但移除父进程 tsx loader；临时包没有 tsx。
+  const nodeOptions = `--import=${offlinePreload}${opts.tty ? ` --require ${fixture.preloadPath}` : ''}`
   const child = spawn(process.execPath, [join(fixture.pkgBin, 'gotry-inner.js'), 'web', '--no-open'], {
     env: {
       ...process.env,

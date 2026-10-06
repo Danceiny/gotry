@@ -1,6 +1,6 @@
 /**
  * doctor 能力层测试(离线,注入 repoRoot/homeDir/env,零安装零网络写路径):
- *  1. 空 tmp 环境 → agent-reach=missing / 扩展=missing / flyai=degraded(无 key)/ LLM key 恒 ok 且不进 broken
+ *  1. 空 tmp 环境 → agent-reach=missing / 扩展=degraded(连接未确认) / flyai=degraded(无 key)/ LLM key 恒 ok 且不进 broken
  *  2. 补齐假 .venv 双文件 → agent-reach=ok;只补 python → degraded(半可用态被显式区分)
  *  3. FLYAI_API_KEY 仅注入 → flyai=degraded(未验证);匹配验证回执 → flyai=ok
  *  4. nodeOk 边界(22.14/22.15/23.0)
@@ -27,10 +27,15 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { runDoctorChecks, renderDoctorReportMd, nodeOk, probeStdout, scopeKeyFor, createRepairApprovalGate, runDoctorRepair, type DoctorItem, type DoctorReport, type DoctorRepairOptions, type DoctorRepairApproval } from '../capabilities/doctor.ts'
+import { runDoctorChecks as diagnose, renderDoctorReportMd, nodeOk, probeStdout, scopeKeyFor, createRepairApprovalGate, runDoctorRepair, type DoctorItem, type DoctorReport, type DoctorRepairOptions, type DoctorRepairApproval } from '../capabilities/doctor.ts'
 import { endpointFingerprint, maskFlyaiKey, resolveFlyaiEndpoint, sha256Hex, writeFlyaiVerification } from '../capabilities/flyai-config.ts'
 import { apply } from '../src/index.ts'
 import type { Context } from '@deepseek-ai/cordis'
+
+const runDoctorChecks = (opts: Parameters<typeof diagnose>[0] = {}) => diagnose({ ...opts, extensionPorts: [] })
+// The registered model tool calls diagnose internally rather than this wrapper.
+// Isolate its HTTP diagnostic seam too, without changing the product config.
+await import(new URL('../../scripts/doctor-test-isolation.mjs', import.meta.url).href)
 
 const tmp = await mkdtemp(join(tmpdir(), 'gotry-doctor-test-'))
 const emptyRepo = join(tmp, 'repo-empty')
@@ -44,11 +49,10 @@ const byId = (id: string) => r1.items.find(i => i.id === id)
 assert.ok(byId('agent-reach'), 'agent-reach 项存在')
 assert.equal(byId('agent-reach')!.status, 'missing', `空仓 agent-reach=missing,实际 ${byId('agent-reach')!.status}`)
 assert.match(byId('agent-reach')!.fix ?? '', /npx @danceiny\/gotry doctor --fix/, 'missing 项带精确补装指引')
-assert.equal(byId('extension')!.status, 'missing', '空 home 扩展=missing')
-// #559 B 步:扩展 missing 必须显式说明「哪些工具不可用、哪些不受影响」
-assert.match(byId('extension')!.detail, /影响面/, '扩展 missing detail 必带影响面行(issue #559 B 步)')
-assert.match(byId('extension')!.detail, /gotry_session_search/, '扩展 missing detail 必显挂的工具名')
-assert.match(byId('extension')!.detail, /其它工具/, '扩展 missing detail 必显「其它不受影响」')
+assert.equal(byId('extension')!.status, 'degraded', '空 home 无法断言扩展未安装')
+assert.match(byId('extension')!.detail, /影响面/, '扩展 detail 必说明影响面')
+assert.match(byId('extension')!.fix ?? '', /chrome:\/\/extensions/, '扩展未确认时可检查浏览器安装/启用状态')
+assert.match(byId('extension')!.detail, /其它工具/, '扩展 detail 必说明其它工具不受影响')
 assert.equal(byId('flyai')!.status, 'degraded', '无 key flyai=degraded(有共享试用,非缺失)')
 // #559 B 步:无 key flyai 必须显式说明「匿名共享额度」影响面
 assert.match(byId('flyai')!.detail, /影响面/, 'flyai 无 key detail 必带影响面行(issue #559 B 步)')
@@ -168,6 +172,33 @@ console.log('5b. npm 提升布局解析链(map-tools/ask-user 误报修复)OK')
   await rm(vend, { recursive: true, force: true })
 }
 console.log('5c. 随包 vendor 布局(map-tools tarball 分发面)OK')
+
+// #651: the model-facing diagnostic must recognize the same Chrome Store
+// installation as the CLI without requiring the local unpacked directory.
+{
+  const home = join(tmp, 'chrome-store-home')
+  const browserRoot = process.platform === 'darwin'
+    ? join(home, 'Library', 'Application Support', 'Google', 'Chrome')
+    : process.platform === 'win32'
+      ? join(home, 'AppData', 'Local', 'Google', 'Chrome', 'User Data')
+      : join(home, '.config', 'google-chrome')
+  const profile = join(browserRoot, 'Profile 3')
+  const id = 'oeajpiccmonococjcegddlooeeohlbgd'
+  const manifest = join(profile, 'Extensions', id, '0.2.0.27_0', 'manifest.json')
+  await mkdir(dirname(manifest), { recursive: true })
+  await writeFile(manifest, JSON.stringify({ manifest_version: 3, version: '0.2.0.27', name: 'Stai Travel Bridge' }))
+  const prefs = join(profile, 'Secure Preferences')
+  await writeFile(prefs, JSON.stringify({ extensions: { settings: { [id]: { disable_reasons: [] } } } }))
+  const report = await runDoctorChecks({ repoRoot: emptyRepo, homeDir: home, env: {} })
+  const extension = report.items.find(item => item.id === 'extension')!
+  assert.equal(extension.status, 'degraded')
+  assert.match(extension.detail, /已安装/)
+  assert.match(report.summary, /Stai Travel Bridge 扩展\(待确认\)/)
+  await writeFile(prefs, JSON.stringify({ extensions: { settings: { [id]: { state: 0 } } } }))
+  const disabled = (await runDoctorChecks({ repoRoot: emptyRepo, homeDir: home, env: {} })).items.find(item => item.id === 'extension')!
+  assert.match(disabled.detail, /已安装.*停用/)
+}
+console.log('5d. Chrome 商店安装与停用状态，工具层不误报 missing/ready OK')
 
 // 6. MCP 工具面:gotry_doctor 注册 + isolated stateRoot 报告落盘
 const smokeRoot = await mkdtemp(join(tmpdir(), 'gotry-doctor-state-'))

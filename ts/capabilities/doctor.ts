@@ -20,6 +20,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { checkExtensionStatus } from '../../bin/gotry-extension-status.js'
 import { readLatestChannelEvents } from './channel-health.ts'
 import {
   displayEndpoint,
@@ -57,6 +58,8 @@ export interface DoctorOptions {
   env?: NodeJS.ProcessEnv
   /** 状态根(读通道健康事件 channel-health.jsonl;缺省不读) */
   stateRoot?: string
+  /** 只读桥探测端口；隔离检查可传 []，不访问真实会话桥。 */
+  extensionPorts?: readonly number[]
 }
 
 /** hbcli 已知安装位(与 capabilities/hbcli.ts hbcliBinCandidates 同清单) */
@@ -136,17 +139,8 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     ? { id: 'node', label: 'Node 运行时', status: 'ok', detail: `Node ${nodeVersion}(≥22.15)` }
     : { id: 'node', label: 'Node 运行时', status: 'missing', detail: `Node ${nodeVersion} 过旧(gotry 需 ≥22.15)`, fix: '升级 Node.js 至 22.15+(https://nodejs.org)' })
 
-  // 1. Stai Travel Bridge 扩展(账号会话通道的传输层;装在哪由 bootstrap setup 管理)
-  //    D-24 自适应(#117):离线只能探测本地 unpacked 通道;商店版无本地文件面——
-  //    missing detail 明示「商店版用户可忽略本项」,不再把商店版用户误导成本地通道缺失
-  const extManifest = join(home, '.gotry', 'extension', 'manifest.json')
-  items.push(existsSync(extManifest)
-    ? { id: 'extension', label: 'Stai Travel Bridge 扩展', status: 'ok', detail: `已就位(本地通道:${extManifest})` }
-    : {
-        id: 'extension', label: 'Stai Travel Bridge 扩展', status: 'missing',
-        detail: '本地通道未落位(~/.gotry/extension/manifest.json 不存在)。影响面:gotry_session_search / gotry_session_login(账号会话通道)不可用;携程机票/酒店实时检索、12306 余票、Dida 实时报价都依赖此通道。其它工具(机票 FlyAI、酒店 hbcli、地图、天气等)不受影响。若你已从 Chrome 商店安装(自动更新,商店版 ID oeajpicc…),本项可忽略——会话检索可用性以运行时为准(gotry_session_search 的 verdict)。若未安装:应用商店一键装即可',
-        fix: '在 Chrome 应用商店一键安装(自动更新): https://chromewebstore.google.com/detail/gotry-session-bridge/oeajpiccmonococjcegddlooeeohlbgd',
-      })
+  // 1. CLI 与工具层共用只读检测：安装、落位、连接是不同证据。
+  items.push({ id: 'extension', label: 'Stai Travel Bridge 扩展', ...await checkExtensionStatus({ homeDir: home, env, ports: opts.extensionPorts }) })
 
   // 2. agent-reach(网页/社媒读取;.venv 装在包内,与 agent-reach.ts venvPython 同位)
   const venvPython = join(repoRoot, '.venv/bin/python')
@@ -233,7 +227,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     items.push({
       id: 'flyai', label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪)', status: 'degraded',
       detail: `未配置 key——匿名试用中(共享额度易达限;达限报 Trial limit reached)${flyaiQuotaNote}。影响面:共享池额度小,频繁会话易触顶;达限本会话内 gotry_flyai_search(机票/酒店/票务/AI/万豪 8 类)失败,改走 gotry_session_search 账号会话通道。`,
-      fix: '本机运行 `gotry setup flyai`(隐藏输入,候选 key 先 scrub-env 验证后保存);打开 https://flyai.open.fliggy.com/console，登录后复制 API Key',
+      fix: '运行 `npx @danceiny/gotry setup flyai`：① 打开 https://flyai.open.fliggy.com/console 登录并复制 API Key；② 在终端隐藏粘贴并回车；③ 自动验证并保存。也可运行 `npx @danceiny/gotry doctor --fix` 按提示配置',
     })
   } else {
     const keySha = sha256Hex(flyaiResolved.key!)
@@ -256,7 +250,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
       items.push({
         id: 'flyai', label: 'FlyAI(飞猪官方检索:机/火/酒/景/关键词/AI/万豪)', status: 'degraded',
         detail: `${reason}(${sourceText};endpoint ${displayEndpoint(flyaiEndpoint.url)}${flyaiEndpoint.debug ? '(DEBUG)' : ''})——非空不等于鉴权通过`,
-        fix: '本机运行 `gotry setup flyai` 重新验证后保存;`gotry setup flyai --clear` 回退匿名',
+        fix: '运行 `npx @danceiny/gotry setup flyai` 重新验证后保存；`npx @danceiny/gotry setup flyai --clear` 回退匿名',
       })
     }
   }
@@ -358,7 +352,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
   const broken = items.filter(i => i.status !== 'ok' && i.id !== 'llm-key')
   const summary = broken.length === 0
     ? `体检通过:${items.length} 项全部就绪(可选依赖齐,LLM key 归 dsh 宿主管)。`
-    : `体检发现 ${broken.length} 项待处理:${broken.map(i => `${i.label}(${i.status === 'missing' ? '未装' : '半可用'})`).join('、')}。补装:终端跑 npx @danceiny/gotry doctor --fix,或按各项 fix 指引逐项处理。`
+    : `体检发现 ${broken.length} 项待处理:${broken.map(i => `${i.label}(${i.status === 'missing' ? '未装' : i.id === 'extension' ? '待确认' : '半可用'})`).join('、')}。补装:终端跑 npx @danceiny/gotry doctor --fix,或按各项 fix 指引逐项处理。`
   return { ok: broken.length === 0, items, summary }
 }
 

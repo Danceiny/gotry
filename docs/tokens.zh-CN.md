@@ -134,7 +134,9 @@ TAG=latest ./scripts/publish-npm.sh   # dist-tag 必须显式传(#50①);凭据�
 
 ## 飞猪 FlyAI（官方 agent 通道；匿名试用额度**共享易达限**，2026-09-02 勘误）
 
-`npx -y @fly-ai/flyai-cli search-flight --origin 上海 --destination 丽江 --dep-date 2026-10-01` 即出真实票价。8 工具全只读（机/火/酒/POI/万豪/关键词/AI 语义）。**2026-09-02 迪拜 session 实况：匿名试用额度是共享池，达限后一律 429 "Trial limit reached"**——gotry 侧已归类 `needs-setup`（报错带申请指引，不再当检索失败盲重试）。稳定用法 = 到 <flyai.open.fliggy.com> 控制台申请正式 API Key，配 `FLYAI_API_KEY` 环境变量；`npx @danceiny/gotry doctor` 会显示 key 配置状态。无 key 期间机/火/酒检索以 `gotry_session_search`（账号会话）为主。
+FlyAI 提供八类只读检索。匿名试用使用共享池；`Trial limit reached` 归类为 `needs-setup`，鉴权或额度失败不重试。
+
+配置个人密钥，运行 `npx @danceiny/gotry setup flyai`。打开 [FlyAI 控制台](https://flyai.open.fliggy.com/console)，登录后复制 API Key，粘贴到终端的隐藏输入框。GoTry 先做只读查询验证，通过后保存到 `~/.flyai/config.json`；验证失败保留原凭据。请勿把密钥粘贴到聊天里。查看状态运行 `npx @danceiny/gotry setup flyai --status`；清除已存密钥运行 `npx @danceiny/gotry setup flyai --clear`。已有 `FLYAI_API_KEY` 或 `DEBUG_FLYAI_API_KEY` 环境覆盖仍优先于文件，状态会显示实际生效来源。浏览器扩展已连接时，可选账号会话检索。
 
 ---
 

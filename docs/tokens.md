@@ -134,7 +134,9 @@ Get a new key: <https://platform.deepseek.com/api_keys> → Create new key → p
 
 ## Fliggy FlyAI (飞猪) (Official Agent Channel; Anonymous Trial Quota Is a **Shared Pool, Easily Exhausted**, 2026-09-02 Erratum)
 
-`npx -y @fly-ai/flyai-cli search-flight --origin 上海 --destination 丽江 --dep-date 2026-10-01` returns real fares. All 8 tools are read-only (flights/trains/hotels/POI/Marriott/keywords/AI semantic). **2026-09-02 Dubai session reality: the anonymous trial quota is a shared pool; once exhausted, always 429 "Trial limit reached"** — the gotry side already classifies this as `needs-setup` (the error carries application guidance, no longer blindly retried as a search failure). Stable usage = apply for a formal API Key at the <flyai.open.fliggy.com> console, configure the `FLYAI_API_KEY` environment variable; `npx @danceiny/gotry doctor` shows the key configuration status. During the no-key period, flight/train/hotel search primarily uses `gotry_session_search` (account session).
+FlyAI provides eight read-only search kinds. Its anonymous trial uses a shared pool; `Trial limit reached` is reported as `needs-setup`, without retrying an authentication or quota failure.
+
+For a personal key, run `npx @danceiny/gotry setup flyai`. Open the [FlyAI console](https://flyai.open.fliggy.com/console), sign in, copy your API Key, and paste it into the hidden terminal prompt. GoTry verifies it with a read-only query before saving to `~/.flyai/config.json`; failed verification preserves existing credentials. Do not paste keys into chat. Inspect with `npx @danceiny/gotry setup flyai --status`; clear the saved key with `npx @danceiny/gotry setup flyai --clear`. Existing `FLYAI_API_KEY` or `DEBUG_FLYAI_API_KEY` environment overrides remain higher priority than the file, and status reports the effective source. Account-session search remains an alternative when its browser extension is connected.
 
 ---
 
