@@ -35,6 +35,10 @@
 
 handoff 回归与隔离浏览器检查使用合成模型和 planner 响应，实际执行原生任务、受管进程、通知与文件展示。#647 的安装后真实会话验收仍需加载修复；原未执行工单保持未执行。
 
+### 已发布
+
+2026-10-06 以 `TAG=latest ./scripts/publish-npm.sh`（dist-tag 显式传入，#50①）发布 `@danceiny/gotry@0.2.0-rc.30`，并从 registry 回拉校验：`npm view` 显示 `latest` → `0.2.0-rc.30`（shasum `6a9cd57e7ec3361909fb91e0037ed180297a91e6`，547 个文件），与发布前由已打 tag 的源码树经 `npm pack --dry-run` 预测的 shasum 一致，下载的 tarball 字节哈希同样吻合。在干净机器上（全新 HOME 与 npm 缓存、仅官方 registry、无 LLM key）`npx @danceiny/gotry@0.2.0-rc.30` 端到端通过：`doctor` 打印报告，dist 入口能加载 `gotry-tools` 插件，`web` 可启动（带 token 的 URL 303 → 200，无 token 为 401），无凭证的一次性任务以宿主的缺凭证提示失败，而不是抛出堆栈。GitHub Release：[v0.2.0-rc.30](https://github.com/Danceiny/gotry/releases/tag/v0.2.0-rc.30)。兼容用 `rc` tag 仍指向 `0.0.1-rc.20`。
+
 ---
 
 ## v0.2.0-rc.29 · 2026-10-06
