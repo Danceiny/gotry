@@ -139,8 +139,16 @@ export function classifyPublish({ status, output, dryRun }) {
   return { ok, exchanged, published, failures, hints }
 }
 
+/**
+ * npm reads an argument like "bundle/x.tgz" as a GitHub shorthand (user/repo) and tries to clone it over ssh — the
+ * rc.29 rehearsal died on exactly that before the OIDC exchange began. Only a leading "./", "../" or "/" makes it a file.
+ */
+export function fileSpec(path) {
+  return /^(?:\.{1,2}\/|\/)/.test(path) ? path : `./${path}`
+}
+
 export function runPublish({ tarball, tag, dryRun = false, registry = '', run = spawnSync, log = console.log, summaryFile = process.env.GITHUB_STEP_SUMMARY || '' }) {
-  const args = ['publish', tarball, '--tag', tag, '--access', 'public', '--loglevel', 'verbose']
+  const args = ['publish', fileSpec(tarball), '--tag', tag, '--access', 'public', '--loglevel', 'verbose']
   if (dryRun) args.push('--dry-run')
   if (registry) args.push('--registry', registry)
   const r = run('npm', args, { encoding: 'utf8', maxBuffer: 64 << 20 })

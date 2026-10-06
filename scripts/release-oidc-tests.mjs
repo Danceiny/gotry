@@ -12,7 +12,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { NPM_AUDIENCE, classifyPublish, decodeClaims, fetchIdToken, judgeClaims, parseArgs, renderClaims, runClaims, runPublish, trustedPublisherSettings } from './release-oidc.mjs'
+import { NPM_AUDIENCE, classifyPublish, decodeClaims, fetchIdToken, fileSpec, judgeClaims, parseArgs, renderClaims, runClaims, runPublish, trustedPublisherSettings } from './release-oidc.mjs'
 
 let checks = 0
 const ok = (cond, msg) => { assert.ok(cond, msg); checks++ }
@@ -136,6 +136,16 @@ const EXCHANGED = 'npm http fetch POST 200 https://registry.npmjs.org/-/npm/v1/o
   ok(v.ok && !v.exchanged, 'published with some other credential: ok, but visibly not through OIDC')
 }
 
+// ---- a tarball path npm cannot mistake for a git shorthand ----
+// the rc.29 rehearsal passed "bundle/x.tgz"; npm read it as the GitHub repo bundle/x.tgz and tried to clone it over ssh
+eq(fileSpec('bundle/danceiny-gotry-0.2.0-rc.29.tgz'), './bundle/danceiny-gotry-0.2.0-rc.29.tgz', 'a bare relative path gets a ./')
+eq(fileSpec('t.tgz'), './t.tgz', 'so does a bare file name')
+eq(fileSpec('./bundle/x.tgz'), './bundle/x.tgz', './ is left alone')
+eq(fileSpec('../x.tgz'), '../x.tgz', '../ is left alone')
+eq(fileSpec('/runner/work/gotry/bundle/x.tgz'), '/runner/work/gotry/bundle/x.tgz', 'an absolute path is left alone')
+eq(fileSpec('.hidden/x.tgz'), './.hidden/x.tgz', 'a dot-directory is not mistaken for ./')
+ok(/^(?:\.{1,2}\/|\/)/.test(fileSpec('a/b.tgz')) && /^(?:\.{1,2}\/|\/)/.test(fileSpec('b.tgz')), 'every result starts like npm\'s own file-spec test')
+
 // ---- running npm ----
 {
   const lines = []
@@ -144,7 +154,7 @@ const EXCHANGED = 'npm http fetch POST 200 https://registry.npmjs.org/-/npm/v1/o
   const summary = join(dir, 'summary.md')
   const run = (cmd, args) => { calls.push([cmd, ...args]); return { status: 0, stdout: '', stderr: `${EXCHANGED}npm notice (dry-run)` } }
   eq(runPublish({ tarball: 'bundle/danceiny-gotry-0.2.0-rc.29.tgz', tag: 'latest', dryRun: true, run, log: (l) => lines.push(l), summaryFile: summary }), 0)
-  eq(calls, [['npm', 'publish', 'bundle/danceiny-gotry-0.2.0-rc.29.tgz', '--tag', 'latest', '--access', 'public', '--loglevel', 'verbose', '--dry-run']], 'the exact command: the tarball, an explicit tag, public access, verbose so the exchange verdict exists')
+  eq(calls, [['npm', 'publish', './bundle/danceiny-gotry-0.2.0-rc.29.tgz', '--tag', 'latest', '--access', 'public', '--loglevel', 'verbose', '--dry-run']], 'the exact command: the tarball as an unambiguous file path, an explicit tag, public access, verbose so the exchange verdict exists')
   ok(lines.some((l) => l.startsWith('REHEARSAL OK')), 'the rehearsal says what it proved')
   ok(/rehearsal\) — OK/.test(readFileSync(summary, 'utf8')) && /worked/.test(readFileSync(summary, 'utf8')), 'and writes a step summary')
 
