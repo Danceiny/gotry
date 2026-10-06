@@ -297,6 +297,12 @@ function writeProductFixture(root: string, options: { writeTerminalOutput: boole
   mkdirSync(tsSrcDir, { recursive: true })
   mkdirSync(tsCapabilitiesDir, { recursive: true })
   mkdirSync(join(dshDir, 'lib'), { recursive: true })
+  // Resolve the newly mounted native presentation entry without loading tools
+  // in this process-lifecycle-only fake DSH.
+  const presentDir = join(root, 'node_modules', '@deepseek-ai', 'dsh-tool-present')
+  mkdirSync(presentDir, { recursive: true })
+  writeFileSync(join(presentDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-tool-present', main: 'index.js' }))
+  writeFileSync(join(presentDir, 'index.js'), 'module.exports = {}\n')
 
   for (const file of ['gotry-inner.js', 'gotry-bootstrap.js', 'gotry-runtime-resolution.js', 'gotry-process-liveness.js']) {
     copyFileSync(join(repoRoot, 'bin', file), join(binDir, file))

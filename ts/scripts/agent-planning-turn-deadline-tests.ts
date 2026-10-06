@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
+import { ToolRuntime, defineTool } from '@deepseek-ai/dsh-tools'
+import { createScope } from '@deepseek-ai/dsh-scope'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import {
   installTurnDeadline,
   TURN_DEADLINE_EXHAUSTED,
@@ -24,7 +27,7 @@ type PostListener = (exec: FakeExecution, result: Result, next: () => Promise<Po
 type SessionEventListener = (session: { id: string }, event: Record<string, unknown> & { type: string }) => void
 type SessionDisposedListener = (session: { id: string }) => void
 type FakeAgent = { id: string; ctx: { tools: { restrict(filter: { deny: string[] }): () => void } } }
-type FakeExecution = { token: symbol; agent?: FakeAgent }
+type FakeExecution = { token: symbol; name?: string; agent?: FakeAgent }
 
 const success = (): Result => ({ isError: false, value: null, content: [] })
 const handlers = new Map<string, unknown[]>()
@@ -166,7 +169,7 @@ const turnEvent = (id: string, type: 'turn/start' | 'turn/end') => sessionEvent(
     const text = result.content[0]?.text ?? ''
     assert.match(text, /TURN_DEADLINE_HANDOFF/)
     assert.match(text, /th-/, 'result names the persisted ticket id')
-    assert.match(text, /约 1 小时/, 'ETA label mirrors the S5 promise')
+    assert.match(text, /queued|not started/i, 'a persisted ticket alone must not claim a running worker')
   }
   // 同步抑制已生效
   assert.deepEqual(restricted.at(-1), { agentId: agent.id, deny: ['gotry_alpha', 'gotry_beta'] })
@@ -224,6 +227,131 @@ function deepPlanningNoise(): string {
 }
 
 sessionDisposed({ id: 'agent-handoff' })
+
+// A deadline must let the pending output write complete and keep native present
+// available. Start exactly one tracked job even if the model makes another call.
+{
+  const hooks = new Map<string, any>()
+  let started = 0
+  let denied: string[] = []
+  const agent = { id: 'delivery',
+    session: { id: 'delivery', header: { cwd: handoffRoot }, snapshotEvents: () => [
+      { type: 'tool/call', data: { name: 'ask_user_question', callId: 'question' } },
+      { type: 'tool/result', data: { message: { source: { kind: 'tool', callId: 'question' }, content: [{ text: 'China working hours 9-18 CST' }] } } },
+      { type: 'tool/result', data: { message: { source: { kind: 'tool', callId: 'other' }, content: [{ text: 'large evidence '.repeat(3000) }] } } },
+    ] },
+    ctx: { tools: { restrict: (filter: { deny: string[] }) => { denied = filter.deny; return () => {} } } } }
+  const deliveryCtx = {
+    tools: { schemas: () => [{ name: 'write' }, { name: 'present' }, { name: 'search' }] },
+    on: (name: string, hook: unknown) => { hooks.set(name, hook) },
+  } as unknown as Context
+  installTurnDeadline(deliveryCtx, {
+    stateRoot: handoffRoot, now: clock.now,
+    startHandoff: async (ticket) => {
+      assert.equal(written, true, 'output finishes before the worker starts')
+      assert.ok(ticket.context?.includes('9-18 CST'), 'retain early clarification answers despite large recent evidence')
+      started++; return { ...ticket, status: 'running', jobId: 'gotry-planning-1' }
+    },
+  })
+  hooks.get('session/event')({ id: agent.id }, { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: deepMessageForDelivery() }] } })
+  clock.advance(240_001)
+  let written = false
+  const draft = join(handoffRoot, 'exploration.md')
+  const pending = { token: Symbol(), name: 'write', agent }
+  const result = await hooks.get('tools/execute')(pending, async () => { writeFileSync(draft, '# Exploration'); written = true; return success() })
+  const post = await hooks.get('tools/post-execute')(pending, result, async () => ({ kind: 'accept' }))
+  assert.equal(written, true, 'pending output write must really execute')
+  assert.equal(readFileSync(draft, 'utf8'), '# Exploration')
+  assert.equal(result.isError, false, 'write result must remain truthful')
+  assert.ok(!denied.includes('present'), 'native deliverable publication stays available')
+  assert.equal(started, 1, 'handoff starts a tracked job')
+  await hooks.get('tools/execute')({ token: Symbol(), name: 'present', agent }, async () => success())
+  assert.equal(started, 1, 'present must not queue another planner')
+  const text = JSON.stringify(post.additionalContexts)
+  assert.match(text, /gotry-planning-1/, 'handoff names the actual native job')
+  assert.match(text, /present/, 'successful writes must be presented before final reply')
+  let repeatedWrite = false
+  await hooks.get('tools/execute')({ token: Symbol(), name: 'write', agent }, async () => { repeatedWrite = true; return success() })
+  assert.equal(repeatedWrite, false, 'only the pending draft write gets the deadline exception')
+  assert.equal(started, 1, 'repeated finalization must not dispatch another worker')
+}
+
+function deepMessageForDelivery() { return '12月初有个阿联酋国庆，我打算借机 IRW远程办公（还有5天额度）+请假+放假 回国玩一趟，主要去东北，比如长春泡澡啊啥的，可以看看一些东北风光啥的（没去过），我女朋友从南京过去，请帮我探索一个可行的具体规划' }
 rmSync(handoffRoot, { recursive: true, force: true })
+
+// Real DSH registry coverage: inherited and agent-scoped output writes must
+// finish before deadline restrictions hide inherited registrations.
+for (const [registration, writeFailure] of [['global', false], ['scoped', false], ['global', true], ['scoped', true]] as const) {
+  const root = mkdtempSync(join(tmpdir(), 'gotry-write-registry-'))
+  const runtimeCtx = new Context()
+  runtimeCtx.provide('systemPrompt', { tools() {} })
+  const tools = new ToolRuntime(runtimeCtx)
+  let time = 0
+  const mutableAgent = { id: registration, ctx: runtimeCtx, session: { id: registration, header: { cwd: root }, snapshotEvents: () => [] } }
+  const agent = mutableAgent as unknown as Agent
+  const scope = createScope(runtimeCtx, agent)
+  mutableAgent.ctx = scope.ctx
+  installTurnDeadline(runtimeCtx, { stateRoot: root, now: () => time, fixedPolicy: { softMs: 5, hardMs: 10, exit: 'handoff' } })
+  const draft = join(root, 'draft.md')
+  let writes = 0
+  ;(registration === 'global' ? tools : scope.ctx.tools).register(defineTool({
+    name: 'write', description: 'Write the draft', parameters: {}, output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: 'saved' }] },
+    async execute() { writes++; if (writeFailure) throw new Error('disk write failed'); writeFileSync(draft, 'saved draft'); return { saved: true } },
+  }))
+  try {
+    assert.ok(tools.get('write', agent), 'write is visible before deadline dispatch')
+    runtimeCtx.emit('session/event', agent.session, { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'plan my trip' }] } } as never)
+    time = 11
+    const call = () => tools.execute({ name: 'write', agent, arguments: {}, callId: 'draft' as never, signal: new AbortController().signal })
+    const result = await call()
+    assert.equal(result.isError, writeFailure, `${registration} pending write keeps its actual registry outcome: ${JSON.stringify(result)}`)
+    if (writeFailure) {
+      assert.equal(existsSync(draft), false)
+      assert.match(JSON.stringify(result), /disk write failed/)
+    } else assert.equal(readFileSync(draft, 'utf8'), 'saved draft')
+    assert.match(JSON.stringify(result.additionalContexts), /queued/, 'registry post-execute carries handoff guidance')
+    await call()
+    assert.equal(writes, 1, 'only the pending write receives the exception')
+  } finally {
+    await scope.dispose()
+    await runtimeCtx.fiber.dispose()
+    rmSync(root, { recursive: true, force: true })
+  }
+}
+
+// Long earlier prose and recent large search output cannot evict a mandatory
+// answer. If user input itself exceeds the bounded snapshot, fail visibly.
+for (const overflow of [false, true]) {
+  const root = mkdtempSync(join(tmpdir(), 'gotry-handoff-context-'))
+  const hooks = new Map<string, any>()
+  let captured: import('../src/turn-deadline.ts').TurnHandoffTicket | undefined
+  const agent = { id: 'constraints', ctx: { tools: { restrict: () => () => {} } }, session: {
+    id: 'constraints', header: { cwd: root }, snapshotEvents: () => [
+      { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'earlier prose '.repeat(overflow ? 6000 : 600) }] } },
+      { type: 'tool/call', data: { name: 'ask_user_question', callId: 'access' } },
+      { type: 'tool/result', data: { message: { source: { kind: 'tool', callId: 'access' }, content: [{ type: 'text', text: 'MUST_KEEP_WHEELCHAIR_ACCESS_AND_NO_STAIRS' }] } } },
+      { type: 'tool/result', data: { message: { source: { kind: 'tool', callId: 'search' }, content: [{ type: 'text', text: 'recent search '.repeat(2000) }] } } },
+    ],
+  } }
+  const localCtx = { tools: { schemas: () => [] }, on: (name: string, hook: unknown) => hooks.set(name, hook) } as unknown as Context
+  let time = 0
+  installTurnDeadline(localCtx, { stateRoot: root, now: () => time, fixedPolicy: { softMs: 5, hardMs: 10, exit: 'handoff' },
+    startHandoff: async ticket => { captured = ticket; return ticket } })
+  try {
+    hooks.get('session/event')({ id: agent.id }, { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'plan my trip' }] } })
+    time = 11
+    await hooks.get('tools/execute')({ token: Symbol(), name: 'search', agent }, async () => success())
+    if (overflow) {
+      assert.equal(captured, undefined, 'do not start planning after silently losing user constraints')
+      const ticketFile = readdirSync(join(root, 'gotry-state', 'turn-handoffs')).find(name => name.endsWith('.json'))!
+      const ticket = JSON.parse(readFileSync(join(root, 'gotry-state', 'turn-handoffs', ticketFile), 'utf8'))
+      assert.equal(ticket.status, 'failed')
+      assert.match(ticket.error, /context|answers|constraints/i)
+    } else {
+      assert.ok(captured?.context?.includes('MUST_KEEP_WHEELCHAIR_ACCESS_AND_NO_STAIRS'), 'mandatory answer survives large surrounding output')
+      assert.ok(captured!.context!.length < 90_000, 'context remains bounded')
+    }
+  } finally { rmSync(root, { recursive: true, force: true }) }
+}
 
 console.log('agent turn deadline tests: OK (routing→converge/handoff exits, ticket persistence, plugin-message discipline, lifecycle)')

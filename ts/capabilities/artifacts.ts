@@ -31,7 +31,7 @@ import { isAbsolute, join, resolve, sep } from 'node:path'
 import { openLedgerIfExists } from '../src/state-ledger.ts'
 
 export interface ArtifactEntry {
-  source: 'async-run' | 'cwd-file'
+  source: 'async-run' | 'cwd-file' | 'turn-handoff'
   id: string
   title: string
   path: string
@@ -56,6 +56,8 @@ export interface ArtifactReadView {
 
 export interface ListArtifactsOptions {
   stateRoot: string
+  /** Host-owned handoff storage can differ from the existing async state. */
+  handoffRoot?: string
   cwd?: string
   limit?: number
   /** Zero-based nonnegative integer; values outside the eligible set return an empty page with the known total. */
@@ -266,6 +268,28 @@ async function listCwdArtifacts(cwd: string): Promise<ArtifactEntry[]> {
   return entries
 }
 
+/** Durable handoff outputs live outside async/, including honest failure notes. */
+async function listHandoffArtifacts(root: string): Promise<ArtifactEntry[]> {
+  const dir = join(root, 'gotry-state', 'turn-handoffs')
+  const names = await readdir(dir).catch(() => [] as string[])
+  const entries: ArtifactEntry[] = []
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue
+    try {
+      const ticket = JSON.parse(await readFile(join(dir, name), 'utf8'))
+      if (ticket.schema !== 'gotry_turn_handoff.v1' || name !== `${ticket.id}.json`
+        || !['settled', 'failed'].includes(ticket.status) || ticket.deliverableFile !== `${ticket.id}.deliverable.md`) continue
+      const path = await realpath(join(dir, ticket.deliverableFile))
+      if (!underRoot(path, root) || hasDeniedSegment(path)) continue
+      const info = await stat(path)
+      if (!info.isFile()) continue
+      entries.push({ source: 'turn-handoff', id: ticket.id, title: String(ticket.objective ?? ticket.id),
+        path, status: ticket.status, updated: new Date(info.mtimeMs).toISOString(), bytes: info.size })
+    } catch { /* A corrupt or missing output cannot be advertised as a file. */ }
+  }
+  return entries
+}
+
 export async function listArtifacts(opts: ListArtifactsOptions): Promise<ListArtifactsResult> {
   const limit = clampLimit(opts.limit)
   const offset = normalizeOffset(opts.offset, 'offset')
@@ -274,6 +298,8 @@ export async function listArtifacts(opts: ListArtifactsOptions): Promise<ListArt
   const cwd = opts.cwd ? resolve(opts.cwd) : process.cwd()
   const canonicalRoot = await realpath(root).catch(() => root)
   const canonicalCwd = await realpath(cwd).catch(() => cwd)
+  const handoffRoot = rootOf(opts.handoffRoot ?? opts.cwd ?? opts.stateRoot)
+  const canonicalHandoffRoot = await realpath(handoffRoot).catch(() => handoffRoot)
 
   // 1) collect all eligible entries per source, without per-source limits —
   //    pageSize is applied to the merged/deduped/sorted set so older cwd files
@@ -281,6 +307,8 @@ export async function listArtifacts(opts: ListArtifactsOptions): Promise<ListArt
   const collected: ArtifactEntry[] = [
     ...listRunsFromLedger(canonicalRoot, 'local'),
     ...(await listDeliverableFiles(canonicalRoot)),
+    ...(await listHandoffArtifacts(canonicalRoot)),
+    ...(canonicalHandoffRoot !== canonicalRoot ? await listHandoffArtifacts(canonicalHandoffRoot) : []),
     ...(await listCwdArtifacts(canonicalCwd)),
   ]
 
@@ -318,6 +346,7 @@ export async function listArtifacts(opts: ListArtifactsOptions): Promise<ListArt
     offset,
     roots: [canonicalRoot, canonicalCwd],
   }
+  if (!result.roots.includes(canonicalHandoffRoot)) result.roots.push(canonicalHandoffRoot)
   if (hasMore) result.nextOffset = start + page.length
   if (needle !== '') result.search = needle
   return result
@@ -332,6 +361,7 @@ export async function listArtifacts(opts: ListArtifactsOptions): Promise<ListArt
  */
 export async function readArtifact(opts: {
   stateRoot: string
+  handoffRoot?: string
   cwd?: string
   path: string
   offset?: number
@@ -341,6 +371,8 @@ export async function readArtifact(opts: {
   const cwd = opts.cwd ? resolve(opts.cwd) : process.cwd()
   const canonicalRoot = await realpath(root).catch(() => root)
   const canonicalCwd = await realpath(cwd).catch(() => cwd)
+  const handoffRoot = rootOf(opts.handoffRoot ?? opts.cwd ?? opts.stateRoot)
+  const canonicalHandoffRoot = await realpath(handoffRoot).catch(() => handoffRoot)
   const raw = String(opts.path ?? '').trim()
   if (!raw) return { ok: false, error: 'path 必填(来自 gotry_artifacts_list 的 path,或异步工单 id)' }
 
@@ -357,10 +389,13 @@ export async function readArtifact(opts: {
       text = run.deliverable
       filePath = asyncDeliverablePath(root, raw)
     } else {
-      const p = asyncDeliverablePath(root, raw)
+      const handoff = /^th-[a-z0-9-]+$/i.test(raw)
+        ? [join(handoffRoot, 'gotry-state', 'turn-handoffs', `${raw}.deliverable.md`),
+          join(root, 'gotry-state', 'turn-handoffs', `${raw}.deliverable.md`)] : []
+      const p = handoff.find(path => existsSync(path)) ?? asyncDeliverablePath(root, raw)
       const canonical = await realpath(p).catch(() => null)
       if (canonical) {
-        if (!underRoot(canonical, canonicalRoot) || hasDeniedSegment(canonical)) {
+        if (!(underRoot(canonical, canonicalRoot) || underRoot(canonical, canonicalHandoffRoot)) || hasDeniedSegment(canonical)) {
           return { ok: false, error: `路径越界:${raw}`, hint: `只读 ${root} 与 dsh 工作目录内的文本产物` }
         }
         const ext = canonical.slice(canonical.lastIndexOf('.') + 1).toLowerCase()
@@ -384,7 +419,7 @@ export async function readArtifact(opts: {
     // 路径(realpath 后的 cwd),而 macOS 上 /var 与 /private/var 这类符号链接会让
     // canonical 路径不匹配字面 cwd,导致 list→read 串联断裂。边界权威仍是下方
     // realpath 后的 canonical 复检,这里放宽不改变可读集合。
-    const inScope = (p: string) => (underRoot(p, cwd) || underRoot(p, root) || underRoot(p, canonicalCwd) || underRoot(p, canonicalRoot)) && !hasDeniedSegment(p)
+    const inScope = (p: string) => (underRoot(p, cwd) || underRoot(p, root) || underRoot(p, canonicalCwd) || underRoot(p, canonicalRoot) || underRoot(p, handoffRoot) || underRoot(p, canonicalHandoffRoot)) && !hasDeniedSegment(p)
     // Prefer an existing candidate so a cwd miss does not mask a valid state-root file.
     const allowed = candidates.find(p => inScope(p) && existsSync(p)) ?? candidates.find(inScope)
     if (!allowed) {
@@ -394,7 +429,7 @@ export async function readArtifact(opts: {
     if (!canonical) {
       return { ok: false, error: `文件不存在:${raw}`, hint: '先 gotry_artifacts_list 看在册产物' }
     }
-    if (!(underRoot(canonical, canonicalCwd) || underRoot(canonical, canonicalRoot)) || hasDeniedSegment(canonical)) {
+    if (!(underRoot(canonical, canonicalCwd) || underRoot(canonical, canonicalRoot) || underRoot(canonical, canonicalHandoffRoot)) || hasDeniedSegment(canonical)) {
       return { ok: false, error: `路径越界:${raw}`, hint: `只读 ${root} 与 dsh 工作目录内的文本产物` }
     }
     const ext = canonical.slice(canonical.lastIndexOf('.') + 1).toLowerCase()

@@ -16,7 +16,7 @@ One row per module/suite: role, current status, and the verification section tha
 | `ts/src/model.ts` | door-to-door full-cost arithmetic (pure functions, single-candidate form) | ✅ |
 | `ts/src/engine.ts` `journey.ts` | the old two solve surfaces (pure oracles, golden comparison) | **deprecated** |
 | `ts/src/index.ts` `bridge.ts` | dsh plugin (pure TS unified solve + hbcli bridge + process guardrails, latency metering) | ✅ smoke |
-| `ts/src/turn-policy.ts` `turn-deadline.ts` | Agent per-turn "routing + wall-clock dual exits": deterministic classification (quick/sync/deep, zero LLM) → TurnPolicy; schema synchronously suppressed past the hard threshold; converge=EXHAUSTED / handoff=file `gotry_turn_handoff.v1` work order + ETA announcement; benchmark pins a fixed policy | ✅ run-all §45 |
+| `ts/src/turn-policy.ts` `turn-deadline.ts` `turn-handoff-job.ts` | Deterministic turn routing and deadlines; pending draft writes keep their actual outcome, native presentation survives convergence, and durable handoffs use owned DSH jobs or remain queued without an executor. Collector outcomes and artifacts are revisitable. | ✅ run-all §45 |
 | `py/gotry_feasibility/unified.py` | Python oracle (**historical comparison only after v0.0.1-rc.2**, no longer referenced by the product runtime) | retained |
 | `py/gotry_demo/` | **deleted 2026-08-22** (D-7 tail debt: the demo plan generator once called the deprecated journey.solve_journey; artifact docs/milestones/demo-plan-2026-07-17.md remains in git history) | — |
 | `ts/scripts/replay.ts` `replay-async.ts` | **acceptance fixtures**: real conversation replay (13 turns → 3 turns) and async form | ✅ |

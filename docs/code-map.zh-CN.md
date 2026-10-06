@@ -16,7 +16,7 @@
 | `ts/src/model.ts` | 门到门全成本算术（纯函数，单候选形态） | ✅ |
 | `ts/src/engine.ts` `journey.ts` | 旧两套求解面（纯 oracle，金标准对照） | **deprecated** |
 | `ts/src/index.ts` `bridge.ts` | dsh 插件（纯 TS unified 求解 + hbcli 桥 + 进程护栏，延迟计量） | ✅ smoke |
-| `ts/src/turn-policy.ts` `turn-deadline.ts` | Agent 每轮「路由 + wall-clock 双出口」：确定性分类（quick/sync/deep，零 LLM）→ TurnPolicy；越硬阈同步抑制 schema，converge=EXHAUSTED / handoff=落 `gotry_turn_handoff.v1` 工单+ETA 告知；benchmark 钉固定 policy | ✅ run-all §45 |
+| `ts/src/turn-policy.ts` `turn-deadline.ts` `turn-handoff-job.ts` | 确定性轮次路由与期限；当前探索稿写入保留实际结果，收尾时仍可原生展示；持久 handoff 经归属的 DSH 任务执行，无执行器则保持排队；收集结果与产物可重新读取。 | ✅ run-all §45 |
 | `py/gotry_feasibility/unified.py` | Python oracle（v0.0.1-rc.2 后**仅历史对照**，不再被产品运行时引用） | 保留 |
 | `py/gotry_demo/` | **已删 2026-08-22**（D-7 尾债：demo 规划书生成器曾调废弃 journey.solve_journey；产物 docs/milestones/demo-plan-2026-07-17.md 留 git 历史） | — |
 | `ts/scripts/replay.ts` `replay-async.ts` | **验收夹具**：真实对话重放（13 轮→3 轮）与异步形态 | ✅ |

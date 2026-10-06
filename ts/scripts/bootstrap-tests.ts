@@ -674,6 +674,11 @@ function buildPkgFixture(tmpRoot: string) {
   mkdirSync(pkgBin, { recursive: true })
   mkdirSync(pkgDist, { recursive: true })
   mkdirSync(join(dshDir, 'lib'), { recursive: true })
+  // The real patch now resolves native present before invoking this fake DSH.
+  const presentDir = join(pkgRoot, 'node_modules', '@deepseek-ai', 'dsh-tool-present')
+  mkdirSync(presentDir, { recursive: true })
+  writeFileSync(join(presentDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-tool-present', main: 'index.js' }))
+  writeFileSync(join(presentDir, 'index.js'), 'module.exports = {}\n')
   writeFileSync(join(pkgRoot, 'package.json'), `${JSON.stringify({ name: 'gotry', version: '0.0.1-test', type: 'module' })}\n`)
   copyFileSync(join(repoRoot, 'bin', 'gotry-inner.js'), join(pkgBin, 'gotry-inner.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-bootstrap.js'), join(pkgBin, 'gotry-bootstrap.js'))

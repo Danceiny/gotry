@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { listTurnHandoffTickets, settleTurnHandoffTicket, writeTurnHandoffTicket } from '../src/turn-deadline.ts'
+import { listTurnHandoffTickets, settleTurnHandoffTicket, writeTicketJson, writeTurnHandoffTicket } from '../src/turn-deadline.ts'
 
 const TS_DIR = join(import.meta.dirname, '..')
 const TSX = join(TS_DIR, 'node_modules', 'tsx', 'dist', 'cli.mjs')
@@ -54,11 +54,18 @@ process.exit(3)
 const emptyPlanner = join(planners, 'empty.mjs')
 writeFileSync(emptyPlanner, `import { appendFileSync } from 'node:fs'
 appendFileSync(${JSON.stringify(plannerCalls)}, 'call empty\\n')
+console.error('Diagnostics alone are not a completed plan')
 `)
 
 const calls = () => (existsSync(plannerCalls) ? readFileSync(plannerCalls, 'utf-8').trim().split('\n') : [])
 
 try {
+  const owned = await writeTurnHandoffTicket(root, 'already running')
+  await writeTicketJson(root, { ...owned, status: 'running', jobId: 'gotry-planning-live' })
+  assert.equal(runCollector([owned.id, root], { GOTRY_HANDOFF_PLANNER_BIN: okPlanner }).status, 1,
+    'manual collection must refuse a live owned ticket')
+  assert.equal(calls().length, 0, 'refusal must not dispatch a duplicate planner')
+  rmSync(join(root, 'gotry-state', 'turn-handoffs', `${owned.id}.json`))
   // 1) 缺单 → exit 1
   assert.equal(runCollector(['th-missing', root]).status, 1)
 

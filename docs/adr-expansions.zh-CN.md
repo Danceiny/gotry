@@ -90,7 +90,7 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：
 
 - **路由层**（`ts/src/turn-policy.ts`）：每个 user/message（source.kind=user；plugin/skill 注入不参与）确定性分类 quick / sync-planning / deep-planning。纯函数、零 LLM、零 IO——控制面判定必须确定性（责任铁律；ADR-9 同型先例）；路由器不能花它要分配的资源；LLM 路由会破坏评测可复现（§45 离线 E2E 零真 LLM）。v1 规则输入只有 Tier 0（日期跨度提取器+约束词表+消息长度）；`loop.ts` 的 `isComplex` 是 S5 循环架构的访谈后复核，不在产品路径（唯一调用者是 replay 脚本），且对轨迹首消息判 false，**不进此层**。误分有界：最坏结局是「本可当面答的被转后台」（下一轮可救），所以路由器只需够用不需完美。
 - **分配层**：分类 → `TurnPolicy={softMs,hardMs,exit}`。阈值表是数据不是代码（评测/部署换表不换执行器）：quick 120s/180s converge；sync-planning 300s/600s converge；deep-planning 120s/240s **handoff**（同步窗口只够摸底+落单）。
-- **执行层**（`ts/src/turn-deadline.ts`）：硬阈拒绝时**同步**抑制继承工具 schema（轨迹教训：延迟到 `step/end` 模型会在同 step 回环拒绝结果直到 token 截断），按 exit 返回：converge=`TURN_DEADLINE_EXHAUSTED`（用已有证据作答）；handoff=落 `gotry_turn_handoff.v1` 工单（`<stateRoot>/gotry-state/turn-handoffs/`，含用户原文/ETA=约1小时/status=open）并指令模型一句话告知「已转后台+预计时间+回访方式」。工单是**独立格式独立目录**：async-collect 对无 spec 的 state 会立即结算 failed（假失败），handoff 收集器是未来的 loopx agent tick——落单本身已是三态承诺的兑现（有据可查、可回访），不等收集器存在才有意义。
+- **执行层**（`ts/src/turn-deadline.ts`）：硬阈拒绝时抑制继承的研究工具 schema，并拦截后续作用域调用，保留原生 `present`。已经发起的 `write` 先以注册表的真实结果完成，再施加限制，通过执行后钩子附加交接说明，不能把失败写入说成文件已创建。深规划将 `gotry_turn_handoff.v1` 工单落在 `<stateRoot>/gotry-state/turn-handoffs/`，保留会话工作目录、归属、用户原文及完整的既有用户回答。用户回答超出 64000 字符的上下文容量时，工单明确失败，不启动规划器；只有工具证据可以在 18000 字符内摘录。产品通过 `turn-handoff-job.ts` 注册归属于本会话的 DSH 后台任务；只有已注册执行器才能称为运行中。缺少 jobs／subprocess 服务或处于一次式 headless 进程时，`open` 只表示待启动，不承诺完成时间。
 - **装配**：产品路径 `apply()` 默认装（路由+handoff 是产品行为）；benchmark opt-in 钉死 `{60s,120s,converge}` 固定 policy 保可复现。`GOTRY_TURN_DEADLINE_SOFT_MS`/`_HARD_MS` 仅 pin 数值不改出口；`GOTRY_TURN_HANDOFF_ROOT` 钉工单隔离根（source 模式 dsh cwd 是创始人真实数据目录 `ts/dsh-runtime`，测试必须钉，巡检状态纪律）。无 agent 的程序化调用不计，turn/session 终态释放状态与限制。CI 先打当前 SHA 的 tarball、在隔离 pnpm consumer 中解析 dsh peer closure，再把该安装入口交给同一 E2E，不借 root 开发树冒充发布形态。
 - **验证**（`run-all §45`）：`turn-policy-tests.ts` 表测（首条 fixture=轨迹用户原文，canonical deep case 必须命中——整个重设计的回归锚点）；`agent-planning-turn-deadline-tests.ts` Cordis 集成（converge/handoff 双出口、工单字段、plugin 消息纪律、生命周期）；E2E 以合成 deep 消息+relay 拖过硬阈，断言 handoff 结果、工单落隔离根、最终请求 text-only、非空 final。
 
@@ -99,9 +99,9 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：
 - `ts/scripts/turn-handoff-collect.ts`（单张 `<ticketId>` / `--all`，async-collect 的 turn-handoff 对位）加载 open 工单 → 以 `GOTRY_HANDOFF_CHILD=1` 派生 headless 规划会话（`bin/gotry-inner.js`，可经 `GOTRY_HANDOFF_PLANNER_BIN` 覆盖；递归防护：子会话唯一出口 converge + 长 leash（300s/900s），父进程的数值 pin 与工单根在子环境清除——前台转后台、后台必须产出交付物，不得再次 handoff）→ 捕获最终答复结算。
 - `settleTurnHandoffTicket` 原子写 `<id>.deliverable.md` + 工单 status settled/failed（settledAt/deliverableFile/error）。终态幂等：已结算工单复诵交付物与 `gotry_turn_handoff_terminal.v1` JSON（succeeded exit 0 / failed exit 2），零重算零再花；failed 交付物是诚实失败说明（「没有完成，请重新发起，无部分结果可交付」）。
 - 复访面：产品路径注册只读工具 `gotry_turn_handoff_list`——用户回问「规划好了吗」时模型查工单状态，settled 附交付物摘录（≤600 字，全文在同目录 .deliverable.md），禁止编造不存在的交付物。
-- 调度：收集器是一次式命令（cron/loopx tick/人工均可驱动，`--all` 扫全部 open）。v1 诚实边界：工单只携带用户原文，规划会话是全新上下文（fresh cwd/DSH_HOME），原会话已读的工作区/日历结论不随单迁移，由规划器按需重取。E2E 闭环：§45 的打包二进制 E2E 在 handoff 断言后以真二进制为 planner 跑收集器，断言 ticket open→settled、交付物含规划器 final。
+- 调度：产品通过原生 DSH jobs 和受管 subprocess 启动一次式收集器，提供按会话隔离的跟踪、取消和完成通知。工单记录 `open`／`running`／`settled`／`failed` 及原生 job id；宿主重启会重置原生编号，因此活跃匹配必须同时核对工单标签、归属、任务类型及编号，匹配失败的运行记录如实报告中断。产品子会话沿用原工作目录和已配置 profile，将有界前序证据作为数据传入，不得递归 handoff；旧工单仍按隔离模式收集。只把 stdout 作为规划结果，只有 stderr、空输出、启动失败和超时均如实失败。超时／取消先发送 TERM，并等待 wrapper 清理其子进程，再按有界宽限强制 KILL；收集器及宿主的宽限均大于 wrapper 的 5 秒 TERM 与 1 秒 KILL 等待。完成通知给出交付物的准确路径并要求原生 `present`，handoff 交付物同时纳入 `gotry_artifacts_list` 和裸工单 id 阅读。人工 `--all` 仍只扫描待启动工单，不重复运行中的任务。
+- 直接命令退出与原生受管进程范围退出是不同的事实：适配器在命令成功或报错后都等待后者；范围观察失败时，请求终止并明确报告未能确认清理，不能把失败状态解释为进程已经停稳。
 
-复审触发：路由误分成系统性问题（「该当面答的被转后台」可观测）时先扩 Tier 0 词表再考虑 Tier 2（结构化状态）；handoff 工单积压需要真实收集器时启动 loopx tick 设计；评测端 60s 太紧先调 env pin。
+复审触发：路由误分成系统性问题时先扩 Tier 0 词表；原生任务中断后需要自动恢复时，再设计跨进程的持久调度。当前原生注册表依赖所属宿主／代理生命周期，保存工单本身绝不构成后台活跃证据。
 
 明确拒绝的备选：到点杀 turn 的任何常数闸（固定或 LLM 动态生成——形态不变则轨迹失败模式不变）；LLM 路由（一致性/可复现/成本三输；若未来信号不足，走 loopx RFC S4 的 L1 shadow→L2 advisory 影子对比路径挣授权，不默认给）；handoff 复用 loop 工单格式（async-collect 假失败）；阈值交 dsh 宿主传（违反 gotry/dsh 分层）。
-
