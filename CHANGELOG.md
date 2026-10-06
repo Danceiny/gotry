@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-rc.30] - 2026-10-06
+
+### Fixed
+
+- 对齐后台执行状态与可打开交付物… (#648)
+- the pull-back receipt records which route published the version… (#644)
+- the OIDC publish step hands npm the tarball as a file path… (#645)
+
+### Documentation
+
+- rc.29 is published and pulled back… (#646)
+
 ## [0.2.0-rc.29] - 2026-10-06
 
 ### Fixed

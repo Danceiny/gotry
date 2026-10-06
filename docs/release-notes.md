@@ -8,7 +8,32 @@
 
 ## Unreleased
 
-- Deep-planning handoffs now preserve the pending draft write, start a native owned job in a persistent host, and remain queued otherwise. Completion or failure stays queryable; drafts and results use native presentation and artifact retrieval ([#647](https://github.com/Danceiny/gotry/issues/647)). Unreleased source change; installed real-session acceptance remains outstanding.
+---
+
+## v0.2.0-rc.30 · 2026-10-06
+
+**Why this release.** A deep-planning turn could hit its deadline, reject the draft write, and save only an open handoff ticket, while the final reply still promised a created file and a background planner ([#647](https://github.com/Danceiny/gotry/issues/647)). This release ties those promises to the actual write result and native job lifecycle, and makes the draft and final deliverable openable. The version remains paired with the extension manifest (`0.2.0.30`, enforced by `extension-tests`); the extension's behavior is unchanged.
+
+### What's New (since rc.29)
+
+**Fixes**
+
+- **Deadline handoffs preserve the real draft result** — the pending draft write runs once before the turn converges. A failed write stays a failure; the native `present` tool can display a file that was actually created.
+- **Background planning has an owned native job** — persistent hosts start a session-owned job and record its id. One-shot or executor-less launches remain queued. The planner keeps the original working directory, user answers and bounded evidence; repeated handoffs reuse the ticket. Startup failure, execution failure, timeout, cancellation and completion settle durably. Settlement waits for the full managed process range to exit; a cleanup-observation error explicitly reports that cleanup could not be confirmed. Stderr is not a successful planning deliverable.
+- **Drafts and results can be opened and found again** — native file cards and side-panel preview expose the actual files, and the final result can be listed or read through GoTry artifacts by its ticket id.
+
+**Release tooling (not in the npm package)**
+
+- **OIDC publishes the tarball as a file path ([#645](https://github.com/Danceiny/gotry/pull/645))** — npm receives an explicit relative file path rather than interpreting the bare path as a git shorthand before the identity exchange.
+- **Pull-back receipts preserve the publication route ([#644](https://github.com/Danceiny/gotry/pull/644))** — the docs follow-up records the workflow and its run URL when the workflow published the package.
+
+### Installation
+
+Run `npx @danceiny/gotry@0.2.0-rc.30 web` (Node ≥ 22.15). Once `latest` points to this version, `npx @danceiny/gotry web` is equivalent; pin the exact version if your registry mirror lags.
+
+### Acceptance boundary
+
+The handoff regression and isolated browser checks use synthetic model and planner responses with real native jobs, managed processes, notifications and file presentation. Installed real-session acceptance for #647 still requires loading the fix; the original unexecuted ticket remains unexecuted.
 
 ---
 
