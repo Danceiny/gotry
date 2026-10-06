@@ -11,6 +11,7 @@ import { JobId } from '@deepseek-ai/dsh-jobs'
 import { writeTurnHandoffTicket, writeTicketJson, listTurnHandoffTickets } from '../src/turn-deadline.ts'
 import { startTurnHandoffJob } from '../src/turn-handoff-job.ts'
 import { pathToFileURL } from 'node:url'
+import { execFileSync } from 'node:child_process'
 import { listArtifacts, readArtifact } from '../capabilities/artifacts.ts'
 import { apply } from '../src/index.ts'
 
@@ -66,6 +67,40 @@ try {
   assert.equal(cancelled.status, 'failed', 'cancellation must settle the durable ticket')
   assert.match(cancelled.error!, /cancelled/)
 
+  // The native API separates direct exit from managed-range quiescence.
+  // A cancelled collector can exit while the host still owns a live child.
+  const actualSpawn = subprocess.spawn
+  let releaseDirect!: () => void
+  let releaseRange!: () => void
+  let rangeWaited = false
+  const directExited = new Promise<{ exitCode: number; signal: null }>(resolve => { releaseDirect = () => resolve({ exitCode: 0, signal: null }) })
+  const rangeExited = new Promise<void>(resolve => { releaseRange = resolve })
+  subprocess.spawn = () => ({
+    stdin: undefined, stdout: undefined, stderr: undefined, control: undefined,
+    done: directExited, collected: {}, terminate() {}, terminateForHostExit() {},
+    async waitForExit() { rangeWaited = true; await rangeExited; return true },
+  })
+  let heldJobId: ReturnType<typeof JobId> | undefined
+  try {
+    const heldTicket = await writeTurnHandoffTicket(root, 'direct exit before range quiescence', { workspaceCwd: root })
+    const held = await startTurnHandoffJob(ctx, heldTicket, owner, root)
+    heldJobId = JobId(held.jobId!)
+    jobs.kill(heldJobId, owner.id)
+    releaseDirect()
+    const waitBy = Date.now() + 2000
+    while (!rangeWaited && jobs.list(owner.id).find(job => job.id === heldJobId)?.status === 'stopping' && Date.now() < waitBy) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.equal(rangeWaited, true, 'direct exit must join the host-owned process range')
+    assert.equal(jobs.list(owner.id).find(job => job.id === heldJobId)?.status, 'stopping', 'native cancellation cannot settle while the managed range is live')
+    assert.equal((await listTurnHandoffTickets(root)).find(item => item.id === heldTicket.id)!.status, 'running', 'durable settlement waits for managed-range quiescence too')
+  } finally {
+    releaseDirect()
+    releaseRange()
+    if (heldJobId) await jobs.wait(heldJobId, 10_000, owner.id)
+    subprocess.spawn = actualSpawn
+  }
+
   writeFileSync(planner, `setTimeout(()=>console.log('late'),60000)`)
   process.env.GOTRY_HANDOFF_PLANNER_TIMEOUT_MS = '50'
   const timeoutTicket = await writeTurnHandoffTicket(root, 'timeout', { workspaceCwd: root })
@@ -86,7 +121,8 @@ try {
       import {spawnOwnedChild,terminateOwnedChild} from ${JSON.stringify(lifecycle)};
       const {child,groupPid}=spawnOwnedChild(process.execPath,['-e',${JSON.stringify(childCode)}],{stdio:['ignore','inherit','inherit']});
       writeFileSync(${JSON.stringify(pidFile)},String(child.pid));
-      process.once('SIGTERM',()=>{void terminateOwnedChild({child,groupPid}).then(()=>process.exit(143))});
+      let stopping=false;
+      process.on('SIGTERM',()=>{if(stopping)return;stopping=true;void terminateOwnedChild({child,groupPid}).then(()=>process.exit(143))});
       setInterval(()=>{},1000);
     `)
     for (const mode of ['timeout', 'cancel'] as const) {
@@ -104,7 +140,9 @@ try {
       if (mode === 'cancel') jobs.kill(JobId(nestedJob.jobId!), owner.id)
       const terminal = await jobs.wait(JobId(nestedJob.jobId!), 15_000, owner.id)
       assert.equal(terminal.status, mode === 'cancel' ? 'killed' : 'failed')
-      assert.throws(() => process.kill(-pid, 0), { code: 'ESRCH' }, `${mode} cannot report terminal while the detached planner child is alive`)
+      const processRows = execFileSync('ps', ['-eo', 'pid=,ppid=,pgid=,stat='], { encoding: 'utf8', timeout: 2000 })
+        .split('\n').filter(line => Number(line.trim().split(/\s+/)[2]) === pid)
+      assert.throws(() => process.kill(-pid, 0), { code: 'ESRCH' }, `${mode} cannot report terminal while the detached planner child is alive; group members=${JSON.stringify(processRows)}`)
       const view = (await listTurnHandoffTickets(root)).find(item => item.id === nestedTicket.id)!
       assert.equal(view.status, 'failed')
       assert.match(view.error!, mode === 'cancel' ? /cancelled/ : /timed out/)
@@ -145,7 +183,7 @@ try {
   const rejected = await startTurnHandoffJob(ctx, queued, owner, root)
   assert.equal(rejected.status, 'failed')
   assert.ok(rejected.error)
-  console.log('native handoff job tests: OK (real registry/process, ownership, settlement, artifacts, idempotence, cancellation, controller rejection)')
+  console.log('native handoff job tests: OK (real registry/process, ownership, managed-range quiescence, settlement, artifacts, idempotence, cancellation, controller rejection)')
 } finally {
   delete process.env.GOTRY_HANDOFF_PLANNER_BIN
   delete process.env.GOTRY_HANDOFF_PLANNER_TIMEOUT_MS

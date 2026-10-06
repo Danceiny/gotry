@@ -69,6 +69,9 @@ export async function startTurnHandoffJob(
               const timeout = Number.isSafeInteger(plannerTimeout) && plannerTimeout > 0 ? plannerTimeout : 900_000
               timer = setTimeout(() => handle!.terminate(), timeout + 12_000)
               const outcome = await handle.done
+              // Direct exit and drained pipes do not prove that native Linux
+              // scopes (or other managed ranges) have no surviving descendants.
+              await handle.waitForExit()
               const path = join(stateRoot, 'gotry-state', 'turn-handoffs', `${ticket.id}.json`)
               const settled = JSON.parse(await readFile(path, 'utf8')) as TurnHandoffTicket
               if (cancelled) throw new Error('planning cancelled')
