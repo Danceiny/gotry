@@ -131,7 +131,13 @@ console.log('7. 扩展分发 github 通道(不可达基址即时降级 + 非法�
 
 // 8. doctor 子命令(2026-09-02 迪拜 session 复盘:可选依赖不撒手——doctor 统一
 //    显示状态 + 精确补装指引;LLM key 显式让渡;报告落 gotry-state/doctor-report.md)
-const c8 = runBootstrap(['doctor'], {})
+const doctorHome = mkdtempSync(join(tmpdir(), 'gotry-doctor-home-'))
+let c8: ReturnType<typeof runBootstrap>
+try {
+  c8 = runBootstrap(['doctor'], { HOME: doctorHome, FLYAI_API_KEY: '', DEBUG_FLYAI_API_KEY: '', STAICLI_HOME: join(doctorHome, '.staicli'), HOTELBYTE_TOKEN: '' })
+} finally {
+  rmSync(doctorHome, { recursive: true, force: true })
+}
 assert.ok(c8.out.includes('[gotry-doctor]'), '应输出 [gotry-doctor] 标签')
 assert.ok(c8.out.includes('Agent Reach'), '体检应含 agent-reach 项')
 assert.ok(c8.out.includes('hbcli'), '体检应含 hbcli 项')

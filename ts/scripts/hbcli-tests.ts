@@ -51,7 +51,7 @@ await writeFile(fallback, JSON.stringify({ meta: 'fake', stays: [{ id: 's1', not
 {
   const { writeFileSync, chmodSync } = await import('node:fs')
   const echoBin = join(tmp, 'hbcli-echo')
-  writeFileSync(echoBin, '#!/bin/sh\necho "ARGS:$@"; echo \'{}\' ')
+  writeFileSync(echoBin, '#!/bin/sh\necho "ARGS:$@"; echo \'{"list":[]}\' ')
   chmodSync(echoBin, 0o755)
   const re = await searchHotels({ destination: '普吉', adults: 2 }, { hbcliBin: echoBin })
   const argLine = JSON.stringify(re)

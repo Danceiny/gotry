@@ -115,6 +115,7 @@
     "ts/capabilities/opensky.ts",
     "ts/capabilities/flyai.ts",
     "ts/capabilities/flyai-config.ts",
+    "ts/capabilities/hbcli-config.ts",
     "ts/capabilities/session-search.ts",
     "ts/capabilities/session/",
     "extension/",

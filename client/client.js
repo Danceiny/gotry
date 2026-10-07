@@ -26,6 +26,15 @@ window.__ModuleLoader__.load({
         saved: 'Verified and saved.', clear: 'Clear local key', cleared: 'Local key cleared. Anonymous trial is now active.',
         retry: 'Refresh status', source: 'Source', config: 'Local configuration', env: 'Environment variable',
         'env-debug': 'Debug environment variable', none: 'Shared trial',
+        hbcli: 'HotelByte · sandbox', appKey: 'App Key', appSecret: 'App Secret',
+        hbHint: 'Use the credentials supplied with your sandbox account. They never enter the conversation.',
+        hbRegistration: 'Apply for a sandbox account', hbUnconfigured: 'Sandbox API credentials are not configured', hbConfigured: 'Sandbox API credentials configured',
+        hbReadOnly: 'Credentials come from the launch environment, or the local configuration cannot be safely written.',
+        hbSaveFailed: 'Credentials were not saved; the previous configuration is retained.',
+        hbSaved: 'Credentials saved and the read-only hotel query completed.', hbClear: 'Clear local sandbox credentials',
+        hbCleared: 'Local sandbox API credentials cleared.', hbNoSuppliers: 'Saved · no available suppliers configured',
+        hbNoSuppliersHint: 'HotelByte must enable suppliers for your account. This result does not mean the destination has no rooms.',
+        hbMiss: 'Query verified · no hotels in this check', hbProbeHint: 'Verification makes one read-only Shanghai hotel query for tomorrow, one night and two adults.',
         artifacts: 'GoTry artifacts', artifactsHint: 'Browse saved itineraries and planning deliveries',
         search: 'Search artifacts', searchPlaceholder: 'Title or filename', refresh: 'Refresh',
         empty: 'No saved artifacts in this workspace.', noMatches: 'No matching artifacts.', noSession: 'Open a conversation to browse its workspace.',
@@ -43,6 +52,15 @@ window.__ModuleLoader__.load({
         saved: '验证通过，已保存。', clear: '清除本机 Key', cleared: '本机 Key 已清除，已恢复匿名试用。',
         retry: '重新读取状态', source: '来源', config: '本机配置', env: '环境变量',
         'env-debug': '调试环境变量', none: '共享试用',
+        hbcli: 'HotelByte（沙箱）', appKey: 'App Key', appSecret: 'App Secret',
+        hbHint: '填写开通沙箱账号后取得的凭证，内容不会进入对话。',
+        hbRegistration: '申请沙箱账号', hbUnconfigured: '尚未配置沙箱 API 凭证', hbConfigured: '已配置沙箱 API 凭证',
+        hbReadOnly: '当前凭证来自启动环境变量，或本机配置无法安全写入。',
+        hbSaveFailed: '新凭证未保存，旧配置已保留。',
+        hbSaved: '凭证已保存，只读酒店查询已完成。', hbClear: '清除本机沙箱凭证',
+        hbCleared: '本机沙箱 API 凭证已清除。', hbNoSuppliers: '已保存 · 未配置可用供应商',
+        hbNoSuppliersHint: '请联系 HotelByte 开通当前账号的供应商。这次结果不能判断目的地无房。',
+        hbMiss: '查询通道已验证 · 本次未返回酒店', hbProbeHint: '验证会只读查询上海明天入住的一晚酒店，两位成人。',
         artifacts: 'GoTry 产物', artifactsHint: '查看已保存行程和规划交付物',
         search: '搜索产物', searchPlaceholder: '标题或文件名', refresh: '刷新',
         empty: '这个工作区尚无已保存产物。', noMatches: '没有匹配的产物。', noSession: '打开一个对话后即可查看其工作区产物。',
@@ -59,10 +77,12 @@ window.__ModuleLoader__.load({
       return value
     }
 
-    function FlyaiSettings(props) {
+    function SourceSettings(props) {
       var t = props.t
+      var hotelbyte = props.provider === 'hbcli', provider = hotelbyte ? 'hbcli' : 'flyai'
       var state = React.useState(null), status = state[0], setStatus = state[1]
       var draft = React.useState(''), key = draft[0], setKey = draft[1]
+      var secretDraft = React.useState(''), secret = secretDraft[0], setSecret = secretDraft[1]
       var noticeState = React.useState(''), notice = noticeState[0], setNotice = noticeState[1]
       var errorState = React.useState(''), error = errorState[0], setError = errorState[1]
       var busyState = React.useState(false), busy = busyState[0], setBusy = busyState[1]
@@ -72,7 +92,7 @@ window.__ModuleLoader__.load({
         var controller = new AbortController()
         lifetime.current = controller
         setError('')
-        webRequest('flyai', { signal: controller.signal }).then(function (value) {
+        webRequest(provider, { signal: controller.signal }).then(function (value) {
           if (!controller.signal.aborted) setStatus(value)
         }).catch(function () { if (!controller.signal.aborted) setError(t('failed')) })
         return function () { controller.abort(); lifetime.current = null }
@@ -82,14 +102,20 @@ window.__ModuleLoader__.load({
         var controller = lifetime.current
         activeRequest.current = true
         setBusy(true); setError(''); setNotice('')
-        var candidate = key
-        setKey('')
+        var candidate = key, candidateSecret = secret
+        setKey(''); setSecret('')
         try {
-          var value = await webRequest('flyai/write', { method: 'POST', signal: controller.signal,
-            headers: { 'content-type': 'application/json' }, body: JSON.stringify(action === 'save' ? { action: action, key: candidate } : { action: action }) })
-          if (!controller.signal.aborted) { setStatus(value); setNotice(t(action === 'save' ? 'saved' : 'cleared')) }
+          var payload = action === 'clear' ? { action: action } : hotelbyte
+            ? { action: action, appKey: candidate, appSecret: candidateSecret } : { action: action, key: candidate }
+          var value = await webRequest(provider + '/write', { method: 'POST', signal: controller.signal,
+            headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
+          if (!controller.signal.aborted) {
+            setStatus(value)
+            setNotice(hotelbyte && action === 'save' && value.verdict === 'no-suppliers' ? ''
+              : t(hotelbyte ? action === 'clear' ? 'hbCleared' : 'hbSaved' : action === 'save' ? 'saved' : 'cleared'))
+          }
         } catch (failure) {
-          if (!controller.signal.aborted) setError(failure.message || t('saveFailed'))
+          if (!controller.signal.aborted) setError(failure.message || t(hotelbyte ? 'hbSaveFailed' : 'saveFailed'))
         } finally {
           activeRequest.current = false
           if (!controller.signal.aborted) setBusy(false)
@@ -97,21 +123,32 @@ window.__ModuleLoader__.load({
       }
       if (props.view === 'summary') return t('description')
       var disabled = busy || !status?.writable
-      var stateLabel = !status ? t('loading') : !status.configured ? t('anonymous') : status.verified ? t('verified') : t('unverified')
-      return element('section', { 'data-gotry-flyai-settings': '', style: { display: 'grid', gap: '16px', maxWidth: '640px' } }, [
-        element('h3', { key: 'heading', style: { margin: 0 } }, t('flyai')),
-        element('div', { key: 'status', role: 'status', 'data-gotry-flyai-status': '', style: { display: 'grid', gap: '6px' } }, [
+      var stateLabel = !status ? t('loading') : !status.configured ? t(hotelbyte ? 'hbUnconfigured' : 'anonymous')
+        : hotelbyte && status.verdict === 'no-suppliers' ? t('hbNoSuppliers') : hotelbyte && status.verdict === 'miss' ? t('hbMiss')
+        : status.verified ? t('verified') : t('unverified')
+      var sectionProps = { style: { display: 'grid', gap: '16px', maxWidth: '640px' } }
+      sectionProps['data-gotry-' + provider + '-settings'] = ''
+      var statusProps = { key: 'status', role: 'status', style: { display: 'grid', gap: '6px' } }
+      statusProps['data-gotry-' + provider + '-status'] = ''
+      return element('section', sectionProps, [
+        element('h3', { key: 'heading', style: { margin: 0 } }, t(provider)),
+        element('div', statusProps, [
           element(UI.Tag, { key: 'badge', tone: status?.verified ? 'success' : 'neutral' }, stateLabel),
-          status ? element('span', { key: 'source', style: { fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' } }, t('source') + '：' + t(status.source)) : null,
+          status ? element('span', { key: 'source', style: { fontSize: '12px', color: 'var(--dsw-alias-label-tertiary)' } }, t('source') + '：' + t(hotelbyte && status.source === 'none' ? 'hbUnconfigured' : status.source)) : null,
           status?.endpointDebug ? element('span', { key: 'debug' }, t('debug') + '：' + status.endpoint) : null,
         ]),
-        element('a', { key: 'console', href: 'https://flyai.open.fliggy.com/console', target: '_blank', rel: 'noopener noreferrer' }, t('console')),
-        element(UI.SettingsForm, { key: 'form', labels: { unavailable: t('loading'), readOnly: t('readOnly'), saveFailed: t('saveFailed'), save: t('save'), saving: t('saving') },
-          state: { available: Boolean(status), writable: Boolean(status?.writable), dirty: key.trim().length > 0, invalid: false, saving: busy, failed: false },
-          onSave: function () { void write('save') }, onDiscard: function () { setKey('') } }, [
-          element(UI.SettingsSecretField, { key: 'key', id: 'gotry-flyai-key', label: t('key'), hint: t('keyHint'), text: key,
-            configured: Boolean(status?.configured), stateLabel: t(status?.configured ? 'configured' : 'anonymous'), disabled: disabled,
+        element('a', { key: 'console', href: hotelbyte ? 'https://hotelbyte.com/zh/guides/sandbox-verification' : 'https://flyai.open.fliggy.com/console', target: '_blank', rel: 'noopener noreferrer' }, t(hotelbyte ? 'hbRegistration' : 'console')),
+        hotelbyte ? element('p', { key: 'probe-hint', style: { margin: 0, fontSize: '12px' } }, t('hbProbeHint')) : null,
+        hotelbyte && status?.verdict === 'no-suppliers' ? element('p', { key: 'supplier-hint', role: 'status', style: { margin: 0 } }, t('hbNoSuppliersHint')) : null,
+        element(UI.SettingsForm, { key: 'form', labels: { unavailable: t('loading'), readOnly: t(hotelbyte ? 'hbReadOnly' : 'readOnly'), saveFailed: t(hotelbyte ? 'hbSaveFailed' : 'saveFailed'), save: t('save'), saving: t('saving') },
+          state: { available: Boolean(status), writable: Boolean(status?.writable), dirty: key.trim().length > 0 && (!hotelbyte || secret.trim().length > 0), invalid: false, saving: busy, failed: false },
+          onSave: function () { void write('save') }, onDiscard: function () { setKey(''); setSecret('') } }, [
+          element(UI.SettingsSecretField, { key: 'key', id: 'gotry-' + provider + '-key', label: t(hotelbyte ? 'appKey' : 'key'), hint: t(hotelbyte ? 'hbHint' : 'keyHint'), text: key,
+            configured: Boolean(status?.configured), stateLabel: t(status?.configured ? hotelbyte ? 'hbConfigured' : 'configured' : hotelbyte ? 'hbUnconfigured' : 'anonymous'), disabled: disabled,
             onEdit: function (value) { setKey(value); setError(''); setNotice('') } }),
+          hotelbyte ? element(UI.SettingsSecretField, { key: 'secret', id: 'gotry-hbcli-secret', label: t('appSecret'), text: secret,
+            configured: Boolean(status?.configured), stateLabel: t(status?.configured ? 'hbConfigured' : 'hbUnconfigured'), disabled: disabled,
+            onEdit: function (value) { setSecret(value); setError(''); setNotice('') } }) : null,
         ]),
         error ? element('p', { key: 'error', role: 'alert', style: { margin: 0, color: 'var(--dsw-alias-state-error-primary)' } }, error) : null,
         notice ? element('p', { key: 'notice', role: 'status', style: { margin: 0 } }, notice) : null,
@@ -119,8 +156,16 @@ window.__ModuleLoader__.load({
           element(UI.Button, { key: 'retry', type: 'button', variant: 'outline', disabled: busy,
             onClick: function () { setReload(function (value) { return value + 1 }) } }, t('retry')),
           status?.configured && status.writable ? element(UI.Button, { key: 'clear', type: 'button', disabled: busy,
-            onClick: function () { void write('clear') } }, t('clear')) : null,
+            onClick: function () { void write('clear') } }, t(hotelbyte ? 'hbClear' : 'clear')) : null,
         ]),
+      ])
+    }
+
+    function GoTrySettings(props) {
+      if (props.view === 'summary') return props.t('description')
+      return element('div', { style: { display: 'grid', gap: '32px' } }, [
+        element(SourceSettings, Object.assign({}, props, { key: 'flyai', provider: 'flyai' })),
+        element(SourceSettings, Object.assign({}, props, { key: 'hbcli', provider: 'hbcli' })),
       ])
     }
 
@@ -367,7 +412,7 @@ window.__ModuleLoader__.load({
         var t = scope.locale.bind(ns)
         scope.effect(function () { return scope.locale.register(ns, webLocale) })
         scope.slots.inject('plugins.item', function () {
-          return scope.slots.register({ name: 'plugins.item', id: 'gotry', order: 50, label: function () { return t('title') }, locale: ns }, FlyaiSettings)
+          return scope.slots.register({ name: 'plugins.item', id: 'gotry', order: 50, label: function () { return t('title') }, locale: ns }, GoTrySettings)
         })
         scope.inject(['sidebarRightTabs'], function (sidebar) {
           sidebar.effect(function () { return sidebar.sidebarRightTabs.register({ id: '@danceiny/gotry:artifacts', kind: 'gotry-artifacts',

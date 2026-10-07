@@ -9,12 +9,13 @@
 
 ## Why This Document Exists
 
-Three external capabilities in GoTry cannot be auto-installed by the bootstrap — they require the **user's own** action because they touch personal data (extension install + login), personal money (FlyAI key), or personal infrastructure (CalDAV username):
+External account capabilities in GoTry cannot be auto-configured by the bootstrap — they require the **user's own** action because they touch personal data (extension install + login), provider accounts (FlyAI and HotelByte credentials), or personal infrastructure (CalDAV username):
 
 | Capability | Why it is user-side | Where it is wired |
 |---|---|---|
 | Stai Travel Bridge extension | Per-browser Chrome install + extension ID identity pinning; the extension runs in the user's browser, not on the server | `extension/README.md`, `ts/capabilities/session/extension-bridge.ts` |
-| FlyAI key | Provider-side API key — never embedded into the npm package; the LLM cannot enter it on the user's behalf; the host CLI is the only write path | `ts/src/flyai-setup-tool.ts`, `ts/capabilities/flyai.ts` |
+| FlyAI key | Provider-side API key — never embedded into the npm package; the LLM cannot enter it on the user's behalf; credentials are entered through the local CLI or native Web settings | `ts/src/flyai-setup-tool.ts`, `ts/capabilities/flyai.ts` |
+| HotelByte credentials | A sandbox account and supplier scope must be provisioned by HotelByte; credentials are entered through native Web settings | `ts/capabilities/hbcli-config.ts`, `ts/src/gotry-web-api.ts` |
 | dsh-calendar | CalDAV username is a user-owned resource, mounted optionally via the setup state surface (D-9: optional dependencies enter the setup state, not env vars) | `ts/capabilities/doctor.ts`, `bin/gotry-bootstrap.js` |
 
 The first-touch prompts (capability layer / bootstrap / doctor) now end with a one-line **impact** statement: which tools become unavailable and which still work. This document is the followable expansion. If a setup path or impact changes, edit the runtime string **and** here in the same commit.
@@ -138,6 +139,18 @@ npx @danceiny/gotry setup flyai --clear
 - **Don't send the key in chat**: the runtime CLI deliberately hides input and the model-side tool (`gotry_flyai_setup`) refuses all credential parameters. This is a hard rule — verification logs only show sha256, masked key, source, and endpoint.
 
 ---
+
+### 2.1 Native Web configuration
+
+Open **Plugins → GoTry → FlyAI**. The console link, confidential input, **Verify and save**, status refresh, and clear action share the local configuration with the CLI. A rejected or cancelled candidate preserves the previous key; environment-provided credentials remain read-only.
+
+### 2.2 HotelByte sandbox credentials
+
+Open **Plugins → GoTry → HotelByte** and follow [Apply for a sandbox account](https://hotelbyte.com/zh/guides/sandbox-verification). HotelByte provisions the account and supplier scope. Enter the issued App Key and App Secret in the two confidential fields, then select **Verify and save**.
+
+Validation makes one read-only Shanghai hotel-list query for tomorrow, one night and two adults, using a temporary credential root. Accepted credentials are saved in the official hbcli `openapi:uat` entry; other authentication modes and environments are preserved. Failed or cancelled validation preserves the previous configuration. Credentials never enter conversation tools, response bodies, or subprocess arguments.
+
+A completed empty list is shown as a verified query with no hotels for that check. Business code `300010002` is shown as **Saved · no available suppliers configured**; it does not become a verified inventory query. Contact HotelByte to enable the account's suppliers. Refresh rereads the credential-bound verification receipt. Clear removes only the local sandbox API entry; credentials supplied by a launch token remain read-only.
 
 ## 3. dsh-calendar (Optional CalDAV Work-Window Reader)
 

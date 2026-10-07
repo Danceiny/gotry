@@ -90,6 +90,8 @@ npx tsx scripts/state-cli.ts forget --state-root <root> wish <wish_id>
 
 FlyAI 在 Web 中打开**插件 → GoTry → FlyAI**：点击控制台链接，将 Key 粘贴到密码输入框，再点**验证并保存**。页面显示实际生效来源与验证状态；候选 Key 验证失败或取消时保留旧 Key。网页与 `npx @danceiny/gotry setup flyai` 共用官方本机配置；同页可刷新状态或清除本机 Key。环境变量提供 Key 时，页面只读。交互式 `npx @danceiny/gotry doctor --fix` 也会在依赖补装后询问是否接着配置；拒绝时凭据不变。CI 和非交互运行不询问密钥。见[凭据获取与状态命令](tokens.zh-CN.md#飞猪-flyai官方-agent-通道匿名试用额度共享易达限2026-09-02-勘误)。
 
+源码版本的 HotelByte 同样在**插件 → GoTry**页配置；这项新增功能等待确认后的 npm 发布。点击沙箱申请链接，填写 App Key 和 App Secret，再点**验证并保存**。页面分别显示酒店查询完成和账号未开通供应商的状态。详见[HotelByte 配置指引](capability-onboarding.zh-CN.md#22-hotelbyte-沙箱凭证)。
+
 ## 首次启动 onboarding（`gotry web`，issue #258/#267）
 
 首次 `npx @danceiny/gotry web` 在交互式 TTY 启动时，如果 startup doctor 发现 gotry 能自动安装的可选能力（`hbcli` 二进制 / Agent-Reach `.venv` / dsh-better-sidebar），会**只问一次**："现在配置可选能力吗？(y/N)"。`y` 复用现有幂等的 `doctor --fix` 安装器（不建第二套）；`n` 立即继续启动 web。每项缺漏以三态之一回报，附具体原因——`installed`（本机已自动安装）/ `needs-user-action`（Chrome Web Store 扩展、`hbcli` 登录、FlyAI key、`dsh-calendar` profile 配置——永不冒充自动完成）/ `unavailable`（如随包 vendor 缺失需重装 gotry）。部分失败不挡 web；再跑不重装已健康项。重试命令：`npx @danceiny/gotry doctor --fix`。

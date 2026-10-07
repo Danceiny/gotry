@@ -156,6 +156,7 @@
 | [research/dsh-plugins-shortlist.md](research/dsh-plugins-shortlist.zh-CN.md) | dsh 社区插件选型调研（issue #9） |
 | [research/kimi-postmortem.md](research/kimi-postmortem.zh-CN.md) | Kimi 行程对话复盘：反例教材与地面真值提取 |
 | [research/karpo-deck-web-research.md](research/karpo-deck-web-research.zh-CN.md) | Karpo Deck Web 参考研究 → gotry 成品感借鉴决策（2026-09-22，一手=站点抓取，不开 issue） |
+| [research/hotel-retrieval-postmortem.md](research/hotel-retrieval-postmortem.zh-CN.md) | 酒店报价缺失复盘：供应商错误语义、业务类型断路器、扩展诊断与实时价格证据。 |
 
 ### milestones/（里程碑备忘，冻结）
 

@@ -52,7 +52,7 @@ function installRecordingFixture(tmp: string, name: string): { path: string; log
   const logPath = join(tmp, `${name}.argv.log`)
   const fixturePath = join(tmp, name)
   writeFileSync(logPath, `${NO_SPAWN_SENTINEL}\n`)
-  writeFileSync(fixturePath, `#!/bin/sh\necho "$@" > '${logPath}'\necho '{}'\nexit 0\n`)
+  writeFileSync(fixturePath, `#!/bin/sh\necho "$@" > '${logPath}'\necho '{"list":[]}'\nexit 0\n`)
   chmodSync(fixturePath, 0o755)
   return { path: fixturePath, logPath }
 }

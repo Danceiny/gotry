@@ -523,7 +523,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
   // 派生的后台规划会话:唯一出口 converge + 长 leash——前台转后台,后台
   // 必须产出最终交付物,不得再次 handoff(否则无限递归)。
   if (!rawBenchmarkEnvironmentConfigPath) {
-    registerGotryWebApi(ctx, config.stateRoot ?? '.')
+    registerGotryWebApi(ctx, config.stateRoot ?? '.', config.hbcliBin)
     registerArtifactDeliveries(ctx)
   }
   const handoffChild = process.env.GOTRY_HANDOFF_CHILD === '1'
@@ -1419,10 +1419,15 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       const resp = itp.result
       const dir = await ensureStateDir(config.stateRoot)
       const isLive = resp.via === 'hbcli-realtime'
-      const evidence = isLive ? resp.evidence : '[静态包:估算]'
+      const staticStays = (resp.hotels as { stays?: unknown[] } | null)?.stays
+      const hasEstimate = Array.isArray(staticStays) && staticStays.length > 0
+      const liveList = (resp.hotels as { list?: unknown[] } | null)?.list
+      const verdict = isLive ? (liveList?.length ? 'hit' : 'miss') : hasEstimate ? 'estimated' : 'error'
+      const evidence = hasEstimate ? '[静态包:估算]' : resp.evidence
       await recordLatency(join(dir, 'bridge-latency.jsonl'), Date.now() - started, `hotel_search:${resp.via}`).catch(() => {})
       const payload = {
-        ok: true,
+        ok: isLive || hasEstimate,
+        verdict,
         hotels: resp.hotels ?? null,
         evidence,
         destination: q.destination,
@@ -1430,6 +1435,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         latency_ms: Date.now() - started,
         summary: resp.summary,
         error: resp.error,
+        ...(verdict !== 'hit' ? await routingField('search-hotel', 'hbcli-hotel') : {}),
         ...(dateNotes.length ? { date_notes: dateNotes } : {}),
       } as never
       return JSON.parse(JSON.stringify(payload)) as never
@@ -1456,13 +1462,14 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         }
       }
       const h = r.hotels
-      const liveCount = Array.isArray(h) ? h.length : 0
+      const liveList = (h as { list?: unknown[] } | null)?.list
+      const liveCount = Array.isArray(liveList) ? liveList.length : 0
       // 静态包是 {meta, stays} 对象而非数组(issue #24:此前计数恒 0 → UI 显示「无结果」)
       const stays = !Array.isArray(h) && h && typeof h === 'object' ? (h as { stays?: unknown[] }).stays : undefined
       const staticCount = Array.isArray(stays) ? stays.length : 0
       const tag = r.via === 'hbcli-realtime'
-        ? (liveCount ? `实时 ${liveCount} 家` : '实时')
-        : staticCount ? `静态包 ${staticCount} 块` : (liveCount ? `${liveCount} 家` : '无结果')
+        ? `实时 ${liveCount} 家`
+        : staticCount ? `静态包 ${staticCount} 块` : '查询未完成'
       return {
         card: 'generic',
         title: `酒店:${r.destination ?? ''} ${tag}`,

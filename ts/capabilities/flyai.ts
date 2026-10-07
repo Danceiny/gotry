@@ -1127,7 +1127,9 @@ function parseHotelItems(items: unknown[]): ParsedItems<FlyaiHotelOption> {
     }
     const it = raw as RawItem
     const name = nonEmptyText(it.name)
-    const star = stringField(it, 'star')
+    // Unrated homestays may return whitespace (live Harbin response).
+    // Only this optional descriptive field permits blank text; types stay strict.
+    const star = typeof it.star === 'string' && !it.star.trim() ? undefined : stringField(it, 'star')
     const rawPrice = stringField(it, 'price')
     const rate = it.rate === undefined ? undefined : it.rate === null ? null : nonEmptyText(it.rate) ?? 'bad'
     const address = stringField(it, 'address')

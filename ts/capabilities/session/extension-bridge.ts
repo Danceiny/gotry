@@ -133,7 +133,7 @@ export interface ExtensionJobResult {
 
 export type SubmitOutcome =
   | { ok: true; result: ExtensionJobResult; origin?: string; clientId?: string }
-  | { ok: false; reason: 'bridge-unavailable' | 'extension-not-connected' | 'timeout'; summary: string }
+  | { ok: false; reason: 'bridge-unavailable' | 'extension-not-connected' | 'timeout'; summary: string; jobKind?: ExtensionJobKind; stage?: 'queued' | 'claimed' }
 
 export interface SessionJobHandle {
   submit(job: Omit<ExtensionJob, 'jobId'>, opts?: { timeoutMs?: number; extensionWaitMs?: number; preferredOrigin?: string; preferredClientId?: string }): Promise<SubmitOutcome>
@@ -668,7 +668,14 @@ export function createBridgeJobQueue(opts: BridgeJobQueueOptions = {}): BridgeJo
         const settle = armSettle(entry, resolve)
         entry.resolve = settle
         entry.timer = setTimeout(() => {
-          settle({ ok: false, reason: 'timeout', summary: `扩展未在 ${timeoutMs}ms 内回包(标签页无嗅探命中或扩展已停用)` })
+          const stage = entry.claimedOrigin === undefined ? 'queued' : 'claimed'
+          const task = full.kind === 'cookie-names' ? '登录态检查' : full.kind === 'search' ? '检索' : '登录页打开'
+          settle({
+            ok: false, reason: 'timeout', jobKind: full.kind, stage,
+            summary: stage === 'queued'
+              ? `扩展${task}等待领取超时（${timeoutMs}ms）；尚未执行，请检查扩展是否支持当前站点或正在处理其他作业`
+              : `扩展${task}已领取但未在 ${timeoutMs}ms 内回传；请检查扩展运行错误与桥连接`,
+          })
         }, timeoutMs)
         if (!dispatchToParked(entry)) queue.push(entry)
         // 扩展未上线:有界等待(桥刚拉起时扩展 ≤5s 即连上);宽限过仍无 → 立即 no-spend 失败,不空耗

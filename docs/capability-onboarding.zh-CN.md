@@ -9,12 +9,13 @@
 
 ## 为什么需要本文
 
-GoTry 里有三项外部能力**不能**由 bootstrap 自动装——它们触及**用户的个人数据**（扩展安装 + 登录）、**用户的个人资金**（FlyAI key）、**用户的个人基础设施**（CalDAV username）：
+GoTry 的外部账号能力**不能**由 bootstrap 自动配置——它们触及**用户的个人数据**（扩展安装 + 登录）、**用户的供应商账号**（FlyAI 与 HotelByte 凭证）、**用户的个人基础设施**（CalDAV username）：
 
 | 能力 | 为何用户侧 | 装在哪里 |
 |---|---|---|
 | Stai Travel Bridge 扩展 | 每浏览器 Chrome 一次性安装 + 扩展 ID 身份固定；扩展跑在用户浏览器里，不在服务端 | `extension/README.md`、`ts/capabilities/session/extension-bridge.ts` |
-| FlyAI key | 平台侧 API key——永不嵌入 npm 包；模型不能替用户输入；本机 CLI 是唯一写入面 | `ts/src/flyai-setup-tool.ts`、`ts/capabilities/flyai.ts` |
+| FlyAI key | 平台侧 API key——永不嵌入 npm 包；模型不能替用户输入；通过本机 CLI 或原生 Web 配置页输入凭证 | `ts/src/flyai-setup-tool.ts`、`ts/capabilities/flyai.ts` |
+| HotelByte 凭证 | 沙箱账号与供应商范围由 HotelByte 开通；通过原生 Web 配置页输入凭证 | `ts/capabilities/hbcli-config.ts`、`ts/src/gotry-web-api.ts` |
 | dsh-calendar | CalDAV username 是用户自有资源；D-9 拍板：可选依赖进 setup 状态管理，禁环境变量控制产品行为 | `ts/capabilities/doctor.ts`、`bin/gotry-bootstrap.js` |
 
 首次接触提示（能力层 / bootstrap / doctor）现在末尾都加一行**影响面**：哪些工具不可用、哪些仍可用。本文是那条提示的可跟随展开。任一路径或影响面变化时，**同 commit 同步修改运行时字符串与本文**。
@@ -137,6 +138,18 @@ npx @danceiny/gotry setup flyai --clear
 - **不要在聊天里发 key**：运行时 CLI 故意隐藏输入；模型侧工具（`gotry_flyai_setup`）拒绝一切凭据参数。这是硬规则——验证日志只显 sha256、掩码 key、来源、endpoint。
 
 ---
+
+### 2.1 原生 Web 配置
+
+打开**插件 → GoTry → FlyAI**。控制台链接、保密输入框、**验证并保存**、刷新和清除操作与 CLI 共用本机配置。候选 Key 验证失败或取消时保留旧 Key；环境变量提供凭证时保持只读。
+
+### 2.2 HotelByte 沙箱凭证
+
+打开**插件 → GoTry → HotelByte**，点击[申请沙箱账号](https://hotelbyte.com/zh/guides/sandbox-verification)。HotelByte 负责开通账号与供应商范围。在两个保密输入框中填写取得的 App Key 和 App Secret，再点**验证并保存**。
+
+验证使用临时凭证目录，只读查询上海明天入住的一晚酒店，两位成人。被接受的凭证保存到官方 hbcli 的 `openapi:uat` 条目，保留其他认证方式和环境。验证失败或取消时保留旧配置；凭证不进入对话工具、响应正文或子进程参数。
+
+明确空列表显示为查询通道已验证、本次无酒店。业务码 `300010002` 显示为**已保存 · 未配置可用供应商**，不算库存查询验证通过；需联系 HotelByte 开通当前账号的供应商。刷新重新读取与凭证绑定的验证回执；清除只删除本机沙箱 API 条目。启动 token 提供凭证时保持只读。
 
 ## 3. dsh-calendar（可选 CalDAV 工作窗口读取）
 

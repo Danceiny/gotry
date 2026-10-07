@@ -32,7 +32,7 @@ export interface HbcliCallOptions {
 export interface HbcliCallResult {
   /** 是否走了实时 hbcli */
   via: 'hbcli-realtime' | 'hbcli-cache' | 'hbcli-error'
-  /** hbcli 退码 0=成功 */
+  /** hbcli 进程退出码；零不代表 API 业务成功 */
   exitCode: number
   /** 解析后的 JSON(若 --json 模式输出可解析;否则为空) */
   result: unknown
@@ -98,6 +98,24 @@ async function attemptHbcli(
   let result: unknown = null
   if (jsonStr) {
     try { result = JSON.parse(jsonStr) } catch { /* 非 JSON 输出,留给调用方处理 */ }
+  }
+  // CLI exit status describes the process, not the API verdict. hbcli can exit
+  // zero with an API error envelope (for example an unconfigured supplier pool).
+  const code = (result as { code?: unknown } | null)?.code
+  const invalid = result === null
+  const upstreamFailure = code !== undefined && code !== 0 && code !== '0'
+  if (invalid || upstreamFailure) {
+    const msg = (result as { msg?: unknown; message?: unknown } | null)?.msg
+      ?? (result as { message?: unknown } | null)?.message
+    const detail = code === 300010002 || code === '300010002'
+      ? '当前账号没有可用供应商；库存查询未完成'
+      : typeof msg === 'string' ? msg.slice(0, 200) : 'API request failed'
+    return {
+      via: 'hbcli-error', exitCode: 0, result: null,
+      evidence: `[实时API:hbcli@error@${ts}]`,
+      stdout: r.stdout.slice(0, 2000), latencyMs,
+      error: invalid ? 'failed to parse hbcli output as JSON' : `hbcli upstream code ${String(code)}: ${detail}`,
+    }
   }
   return {
     via: 'hbcli-realtime', exitCode: 0, result,
@@ -177,7 +195,7 @@ export async function searchHotels(
   if (query.checkIn) hbArgs.push('--check-in', query.checkIn)
   if (query.checkOut) hbArgs.push('--check-out', query.checkOut)
   if (query.adults) hbArgs.push('--room-occupancies', JSON.stringify([{ adultCount: query.adults, childrenAges: [] }]))
-  const live = await callHbcliJson(hbArgs, opts)
+  let live = await callHbcliJson(hbArgs, opts)
   // 取消立即结束:不读静态包、不产出命中/无结果/估算,也不计上游故障
   if (opts.signal?.aborted || /abort/i.test(live.error ?? '')) {
     const ts = new Date().toISOString()
@@ -186,6 +204,15 @@ export async function searchHotels(
       via: 'hbcli-error', exitCode: live.exitCode, result: null,
       evidence: `[实时API:hbcli@abort@${ts}]`,
       latencyMs: live.latencyMs, error: `aborted by host signal${cleanupError}`, summary: `酒店「${query.destination}」检索已取消,未产生事实`,
+    }
+  }
+  const list = (live.result as { list?: unknown } | null)?.list
+  if (live.via === 'hbcli-realtime' && (!Array.isArray(list)
+    || list.some(item => item === null || typeof item !== 'object' || Array.isArray(item)))) {
+    live = {
+      ...live, via: 'hbcli-error', result: null,
+      evidence: `[实时API:hbcli@error@${new Date().toISOString()}]`,
+      error: 'invalid hotel-list response: expected list array of hotels; inventory not observed',
     }
   }
   if (live.via === 'hbcli-realtime') {
