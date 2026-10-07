@@ -145,7 +145,7 @@ assert.ok(!existsSync(join(symlinkTarget, 'config.json')), 'symlink target must 
 console.log('1c. symlink .flyai rejected without following target OK')
 
 // The TypeScript config writer shares the same compatibility rule; the
-// verification receipt writer remains separately strict on ~/.gotry.
+// verification receipts use the same safe directory migration.
 const tsConfigHome = mkdtempSync(join(sandbox, 'ts-config-'))
 writeOfficialFlyaiDir(tsConfigHome, 'device-ts')
 const tsSave = saveFlyaiKey('sk-ts-config-key-1234', { homeDir: tsConfigHome, env: {} })
@@ -220,15 +220,31 @@ assert.deepEqual(readFileSync(configPath(verifyFailHome)), verifyBefore)
 assert.ok(verifyFail.stdout.includes('配置未改动'))
 console.log('4. bad JSON + verifier failure preserve old config bytes/key OK')
 
+// Existing doctor/runtime state must be secured without losing its contents.
+const legacyHome = mkdtempSync(join(sandbox, 'legacy-receipt-'))
+mkdirSync(join(legacyHome, '.gotry'), { mode: 0o755 })
+chmodSync(join(legacyHome, '.gotry'), 0o755)
+writeFileSync(join(legacyHome, '.gotry', 'doctor-report.md'), 'existing report')
+const legacyRun = runPackageEntry(legacyHome, ['setup', 'flyai', '--stdin'], `${key}\n`)
+assert.equal(legacyRun.status, 0, legacyRun.stdout + legacyRun.stderr)
+assert.equal(mode(join(legacyHome, '.gotry')), 0o700)
+assert.equal(mode(receiptPath(legacyHome)), 0o600)
+assert.equal(readFileSync(join(legacyHome, '.gotry', 'doctor-report.md'), 'utf8'), 'existing report')
+console.log('5a. existing 0755 state directory secured without losing contents OK')
+
 // 5. receipt write failure is visible and rolls back the newly attempted key.
 const receiptFailHome = mkdtempSync(join(sandbox, 'receipt-fail-'))
 writeConfig(receiptFailHome, { FLYAI_API_KEY: oldKey, keep: 'yes' })
-mkdirSync(join(receiptFailHome, '.gotry'), { mode: 0o755 })
-chmodSync(join(receiptFailHome, '.gotry'), 0o755)
+const receiptTarget = join(receiptFailHome, 'outside-state')
+mkdirSync(receiptTarget, { mode: 0o755 })
+chmodSync(receiptTarget, 0o755)
+symlinkSync(receiptTarget, join(receiptFailHome, '.gotry'), 'dir')
 const receiptFail = run(receiptFailHome, ['setup', 'flyai', '--stdin'], `${key}\n`)
 assert.notEqual(receiptFail.status, 0)
 assert.ok(receiptFail.stdout.includes('验证回执写入失败'))
 assert.equal(JSON.parse(readFileSync(configPath(receiptFailHome), 'utf8')).FLYAI_API_KEY, oldKey)
+assert.equal(mode(receiptTarget), 0o755)
+assert.ok(!existsSync(join(receiptTarget, 'flyai-verification.json')))
 console.log('5. receipt write failure reports non-success and preserves old key OK')
 
 // The verifier may echo its input credentials. Public diagnostics must not.
