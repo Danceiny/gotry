@@ -164,24 +164,24 @@ function verifySecureModeInline(dir, file) {
 
 /**
  * 官方 CLI 首次运行可能先创建 ~/.flyai 为 0755(并写入 0600 device-id)。
- * 仅对当前用户拥有、且本身不是 symlink 的 .flyai 目录收紧权限；.gotry
- * 仍由 atomicWriteJsonInline 严格要求预先存在时就是 0700，不走此兼容路径。
+ * 仅对当前用户拥有、且本身不是 symlink 的目录收紧权限。
+ * 回执所在 .gotry 同样兼容 doctor/runtime 创建的既有 0755 目录。
  */
-function prepareFlyaiConfigDirInline() {
-  const dir = dirname(flyaiConfigFile())
+function preparePrivateDirInline(file = flyaiConfigFile()) {
+  const dir = dirname(file)
   try {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     const entry = lstatSync(dir)
-    if (entry.isSymbolicLink()) return { ok: false, error: '.flyai 目录是符号链接,拒绝写入' }
-    if (!entry.isDirectory()) return { ok: false, error: '.flyai 路径不是目录,拒绝写入' }
+    if (entry.isSymbolicLink()) return { ok: false, error: '配置目录是符号链接,拒绝写入' }
+    if (!entry.isDirectory()) return { ok: false, error: '配置路径不是目录,拒绝写入' }
     if (typeof process.getuid === 'function' && entry.uid !== process.getuid()) {
-      return { ok: false, error: '.flyai 目录不属于当前用户,拒绝写入' }
+      return { ok: false, error: '配置目录不属于当前用户,拒绝写入' }
     }
     if ((entry.mode & 0o777) !== 0o700) chmodSync(dir, 0o700)
     const after = lstatSync(dir)
-    if (after.isSymbolicLink() || !after.isDirectory()) return { ok: false, error: '.flyai 目录状态发生变化,拒绝写入' }
-    if (typeof process.getuid === 'function' && after.uid !== process.getuid()) return { ok: false, error: '.flyai 目录所有者发生变化,拒绝写入' }
-    return verifySecureModeInline(dir, flyaiConfigFile())
+    if (after.isSymbolicLink() || !after.isDirectory()) return { ok: false, error: '配置目录状态发生变化,拒绝写入' }
+    if (typeof process.getuid === 'function' && after.uid !== process.getuid()) return { ok: false, error: '配置目录所有者发生变化,拒绝写入' }
+    return verifySecureModeInline(dir, file)
   } catch (e) {
     return { ok: false, error: e.message }
   }
@@ -291,7 +291,7 @@ async function runSetupFlyai() {
       if (Object.keys(next).length === 0) {
         rmSync(flyaiConfigFile(), { force: true })
       } else {
-        const configDir = prepareFlyaiConfigDirInline()
+        const configDir = preparePrivateDirInline()
         if (!configDir.ok) { say(`[gotry-setup] 清除写入失败,旧配置保留:${configDir.error}`); return 1 }
         const w = atomicWriteJsonInline(flyaiConfigFile(), next)
         if (!w.ok) { say(`[gotry-setup] 清除写入失败,旧配置保留:${w.error}`); return 1 }
@@ -349,7 +349,7 @@ async function runSetupFlyai() {
     return 1
   }
   const hadConfigFile = existsSync(flyaiConfigFile())
-  const configDir = prepareFlyaiConfigDirInline()
+  const configDir = preparePrivateDirInline()
   if (!configDir.ok) {
     say(`[gotry-setup] ✗ 配置目录不安全,旧配置保留:${configDir.error}`)
     return 1
@@ -380,7 +380,8 @@ async function runSetupFlyai() {
     endpointDebug: epAfter.debug,
     at: new Date().toISOString(),
   }
-  const receiptWrite = atomicWriteJsonInline(flyaiVerificationFile(), receipt)
+  const receiptDir = preparePrivateDirInline(flyaiVerificationFile())
+  const receiptWrite = receiptDir.ok ? atomicWriteJsonInline(flyaiVerificationFile(), receipt) : receiptDir
   if (!receiptWrite.ok) {
     const rollback = hadConfigFile
       ? atomicWriteJsonInline(flyaiConfigFile(), before.data)
