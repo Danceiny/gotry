@@ -271,6 +271,7 @@ echo "NUDGE SKELETON TESTS OK(0..1 匹配/muted 排除/可关闭/lark 缺 key �
 echo
 echo "=== 25. 会话数据面 P1-P2(ReadGuard/携程解析/节律闸 + #21 字段 fixture scorer/双源合同/waiting-attach no-spend + live FlyAI/会话;GOTRY_SESSION_LIVE=0 关闭全部 live 端点) ==="
 (cd ts && npx tsx scripts/session-benchmark.ts) || FAIL=1
+(cd ts && npx tsx scripts/ctrip-city-tests.ts) || FAIL=1
 (cd ts && GOTRY_SESSION_LIVE="${GOTRY_SESSION_LIVE:-0}" npx tsx scripts/session-tests.ts) || FAIL=1
 
 echo

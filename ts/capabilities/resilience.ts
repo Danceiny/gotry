@@ -166,7 +166,7 @@ export interface BreakerAttemptToken {
  */
 export class CircuitBreaker {
   private consecutiveFailures = 0
-  private openedAt = 0
+  private openedAt: number | null = null
   private generation = 0
   private nextTokenId = 0
   private probeToken: BreakerAttemptToken | null = null
@@ -182,16 +182,16 @@ export class CircuitBreaker {
   }
 
   state(): BreakerState {
-    if (this.openedAt > 0 && this.now() - this.openedAt >= this.o.openMs) return 'half-open'
-    if (this.openedAt > 0) return 'open'
+    if (this.openedAt !== null && this.now() - this.openedAt >= this.o.openMs) return 'half-open'
+    if (this.openedAt !== null) return 'open'
     return 'closed'
   }
 
   /** 发起一次调用前问闸:open 回 {allowed:false}(调用方须返回显式降级观察,不重试) */
-  canAttempt(): { allowed: boolean; state: BreakerState; token?: BreakerAttemptToken } {
+  canAttempt(): { allowed: boolean; state: BreakerState; token?: BreakerAttemptToken; retryAfterMs?: number } {
     const s = this.state()
     if (s === 'closed') return { allowed: true, state: s, token: this.makeToken(false) }
-    if (s === 'open') return { allowed: false, state: s }
+    if (s === 'open') return { allowed: false, state: s, retryAfterMs: Math.max(0, Math.min(this.o.openMs, this.o.openMs - (this.now() - this.openedAt!))) }
     // half-open:单探测语义——已有探测在途拒其余并发
     if (this.probeToken) return { allowed: false, state: s }
     this.generation += 1
@@ -214,7 +214,7 @@ export class CircuitBreaker {
   onSuccess(token?: BreakerAttemptToken): void {
     if (!this.owns(token)) return
     this.consecutiveFailures = 0
-    this.openedAt = 0
+    this.openedAt = null
     if (token?.probe === true || (!token && this.probeToken !== null)) {
       this.probeToken = null
       this.generation += 1
@@ -226,7 +226,7 @@ export class CircuitBreaker {
     if (!this.owns(token)) return
     if (token?.probe === true || (!token && this.probeToken !== null)) this.probeToken = null
     this.consecutiveFailures += 1
-    if (this.openedAt > 0 || this.consecutiveFailures >= this.threshold()) {
+    if (this.openedAt !== null || this.consecutiveFailures >= this.threshold()) {
       this.openedAt = this.now()
       this.generation += 1
     }

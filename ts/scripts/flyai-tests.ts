@@ -28,6 +28,13 @@ import { apply, type Config } from '../src/index.ts'
 import { factsFromFlyai, factsFromHotel, type FlightFact } from '../src/bookable-facts.ts'
 
 const tmp = await mkdtemp(join(tmpdir(), 'flyai-test-'))
+const originalTestFlyaiEnv = Object.fromEntries(['HOME', 'FLYAI_API_KEY', 'DEBUG_FLYAI_API_KEY', 'DEBUG_FLYAI_MCP_URL'].map(name => [name, process.env[name]]))
+// All adapter and interpreter calls use a fake CLI and synthetic config.
+process.env.HOME = tmp
+process.env.FLYAI_API_KEY = 'flyai-test-fixture-key'
+delete process.env.DEBUG_FLYAI_API_KEY
+process.env.DEBUG_FLYAI_MCP_URL = 'https://flyai-test-fixture.invalid/mcp'
+try {
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`
 }
@@ -47,6 +54,64 @@ async function fakeCliStreams(name: string, code: number, stdout: string, stderr
 const base = { kind: 'flight' as const, origin: '上海', destination: '丽江', depDate: '2026-10-01' }
 const trainBase = { kind: 'train' as const, origin: '上海', destination: '大理', depDate: '2026-10-01' }
 const hotelBase = { kind: 'hotel' as const, destName: '大理', checkInDate: '2026-10-01', checkOutDate: '2026-10-03' }
+
+// Upstream error envelopes can contain an itemList; nonzero status must win
+// over otherwise-valid inventory, without inferring outage or unsupported route.
+for (const kind of ['flight', 'ai'] as const) {
+  const statusBin = await fakeCli(`business-status-${kind}`, 0, JSON.stringify({ status: 1001, message: 'search unavailable for this request', data: { itemList: [] } }))
+  const business = await flyaiSearch({ ...base, kind, query: 'fixture query', cliBin: statusBin })
+  assert.equal(business.ok, false, 'nonzero business status is fail-closed, even with an itemList')
+  assert.equal(business.verdict, 'error', 'unknown business status cannot claim inventory or unsupported route')
+  assert.equal(business.retryable, false, 'business status must not trigger retry')
+  assert.equal(business.upstreamHealth, 'unknown', 'business status is not upstream outage evidence')
+  assert.equal(business.options, undefined, 'business error cannot expose inventory')
+  if (kind === 'flight') assert.deepEqual(factsFromFlyai({ kind, origin: '上海', destination: '丽江', date: base.depDate }, business, new Date().toISOString()), [], 'business error cannot create negative inventory facts')
+}
+const businessNumericMessageBin = await fakeCliStreams('business-numeric-message', 1, '', 'business error 500: route preference invalid')
+const businessNumericMessage = await flyaiSearch({ ...base, cliBin: businessNumericMessageBin })
+assert.equal(businessNumericMessage.retryable, false, 'bare business code 500 is not an HTTP status')
+assert.equal(businessNumericMessage.upstreamHealth, 'unknown', 'bare business code does not prove outage')
+console.log('0. Nonzero status with itemList and bare business codes fail closed without outage inference OK')
+const aiQuotedFailureBin = await fakeCli('ai-quoted-http-failure', 0, JSON.stringify({ status: 0, data: { answer: 'HTTP 500 explains a server error; SentinelBlockException explains throttling.' } }))
+const aiQuotedFailure = await flyaiSearch({ kind: 'ai', query: 'fixture query', cliBin: aiQuotedFailureBin })
+assert.equal(aiQuotedFailure.verdict, 'hit', 'successful AI data quoting an error is not an actual upstream failure')
+assert.equal(aiQuotedFailure.upstreamHealth, 'healthy')
+
+const envelopeBoundaryResults: unknown[] = []
+for (const [label, kind, payload] of [
+  ['prefix-flight', 'flight', '{"message":"connected"}\n{"status":0,"data":{"itemList":[]}}'],
+  ['prefix-ai', 'ai', '{"message":"connected"}\n{"status":0,"data":"actual AI response"}'],
+  ['missing-ai-data', 'ai', '{"status":0,"message":"success"}'],
+  ['null-ai-data', 'ai', '{"status":0,"message":"success","data":null}'],
+  ['prefix-business', 'flight', '{"message":"connected"}\n{"status":1,"data":{"itemList":[]},"message":"搜索机票低价行业失败"}'],
+  ['prefix-error', 'flight', '{"message":"connected"}\n{"error":{"code":-32603,"message":"opaque error"},"data":{"itemList":[]}}'],
+] as const) {
+  const bin = await fakeCli(label, 0, payload)
+  const response = await flyaiSearch({ ...base, kind, query: 'fixture query', cliBin: bin })
+  envelopeBoundaryResults.push([label, response.ok, response.verdict, response.upstreamHealth, response.retryable])
+}
+assert.deepEqual(envelopeBoundaryResults, [
+  ['prefix-flight', true, 'miss', 'healthy', false],
+  ['prefix-ai', true, 'hit', 'healthy', false],
+  ['missing-ai-data', false, 'error', 'unknown', false],
+  ['null-ai-data', true, 'miss', 'healthy', false],
+  ['prefix-business', false, 'error', 'unknown', false],
+  ['prefix-error', false, 'error', 'unknown', false],
+], 'benign JSON prefix logs are skipped; AI data must exist; structured errors take precedence')
+
+const opaqueBusinessBin = await fakeCli('opaque-business-receipt', 0, '{"status":1,"data":null,"message":"搜索机票低价行业失败"}')
+const opaqueBusinessInterpreter = makeProductionInterpreter({ breakers: new Map(), sleep: async () => {} })
+for (let i = 0; i < 4; i += 1) {
+  const out = await opaqueBusinessInterpreter({ effect: 'FLYAI_SEARCH', params: { ...base, cliBin: opaqueBusinessBin } })
+  assert.equal(out.trace.declined, undefined, 'opaque business status never triggers a false outage lock')
+  assert.equal(out.trace.attempts, 1, 'opaque business status is never retried')
+  const result = out.result as Awaited<ReturnType<typeof flyaiSearch>>
+  assert.equal(result.ok, false, 'opaque business status stays a query failure')
+  assert.equal(result.upstreamHealth, 'unknown', 'opaque business status is not outage evidence')
+  assert.equal(result.error, '搜索机票低价行业失败', 'preserve the vendor business error without translating it to no inventory or unsupported route')
+  assert.deepEqual(factsFromFlyai({ kind: 'flight', origin: base.origin, destination: base.destination, date: base.depDate }, result, new Date().toISOString()), [], 'opaque business failure creates no inventory fact')
+}
+console.log('0b. JSON prefix logs, AI data presence and opaque vendor business failure remain bounded and truthful OK')
 
 async function registeredSearch(q: Parameters<typeof flyaiSearch>[0]): Promise<Awaited<ReturnType<typeof flyaiSearch>>> {
   const registeredFlyai = makeProductionInterpreter({ breakers: new Map(), sleep: async () => {} })
@@ -359,6 +424,10 @@ const s = await flyaiSearch({ ...base, cliBin: sentinelBin, timeoutMs: 5000 })
 assert.equal(s.ok, false, 'Sentinel 形状应 ok=false')
 assert.equal(s.verdict, 'error', `Sentinel 形状应判 error,实际 ${s.verdict}`)
 assert.equal(s.retryable, false, 'Sentinel 不得标记 retryable')
+assert.equal(s.upstreamHealth, 'unhealthy', 'explicit Sentinel contributes upstream health failure')
+const aiSentinel = await flyaiSearch({ kind: 'ai', query: 'fixture query', cliBin: sentinelBin })
+assert.equal(aiSentinel.upstreamHealth, 'unhealthy', 'AI Sentinel uses the same health classification')
+assert.equal(aiSentinel.retryable, false, 'AI Sentinel must not retry')
 assert.match(s.error ?? '', /sentinel/i, `error 应保留 sentinel 字样(供上层限流识别),实际 ${s.error}`)
 assert.match(s.evidence, /\[实时API:flyai@error@/, 'error 证据链标注')
 console.log('1. Sentinel 非业务形状 → error(非静默 miss)OK')
@@ -368,6 +437,7 @@ const missBin = await fakeCli('flyai-miss', 0, '{"data":{"itemList":[]}}')
 const m = await flyaiSearch({ ...base, cliBin: missBin, timeoutMs: 5000 })
 assert.equal(m.ok, true, '业务空形状 ok=true')
 assert.equal(m.verdict, 'miss', `空 itemList 应判 miss,实际 ${m.verdict}`)
+assert.equal(m.upstreamHealth, 'healthy', 'valid empty inventory proves successful upstream response')
 assert.match(m.evidence, /0\/0 flight options/, 'miss 证据链 0/0')
 console.log('2. 业务空形状 → miss(0/0)OK')
 
@@ -377,6 +447,7 @@ const malformed = await registeredSearch({ ...base, cliBin: malformedBin, timeou
 assert.equal(malformed.ok, false, '全 malformed transport item 不应报告成功')
 assert.equal(malformed.verdict, 'error', '非空全 malformed transport item 应判 error')
 assert.equal(malformed.retryable, false, 'malformed 不得标记 retryable')
+assert.equal(malformed.upstreamHealth, 'unknown', 'malformed inventory is fail-closed without inferring outage')
 assert.match(malformed.error ?? '', /malformed|valid typed transport/i, 'error 应保留 transport shape 原因')
 assert.match(malformed.evidence, /flyai@error@.*flight itemList/i, 'evidence 应保留结构化 flight itemList 错误')
 assert.deepEqual(
@@ -612,15 +683,22 @@ assert.match(t.setup ?? '', /请勿.*重试|勿.*重试|不要重试/, 'setup �
 assert.match(t.error ?? '', /429|Trial limit/i, 'error 保留上游 429 原话')
 assert.match(t.evidence, /\[实时API:flyai@error@/, '证据链标注')
 assert.equal(t.retryable, false, 'trial 429 不得标记 retryable')
+assert.equal(t.upstreamHealth, 'unknown', 'trial exhaustion is configuration state, not outage')
 
 const ordinaryRateBin = await fakeCliStreams('flyai-ordinary-rate', 1, '', 'MCP HTTP 429: rate limited; retry later')
 const ordinaryRate = await flyaiSearch({ ...base, cliBin: ordinaryRateBin, timeoutMs: 5000 })
 assert.equal(ordinaryRate.verdict, 'rate-limited', '普通 429 应保持 rate-limited')
 assert.equal(ordinaryRate.retryable, true, '普通 429 应标记 retryable')
+assert.equal(ordinaryRate.upstreamHealth, 'unhealthy', 'ordinary HTTP429 contributes upstream health failure')
 const networkBin = await fakeCliStreams('flyai-network-transient', 1, '', 'fetch failed: ECONNRESET')
 const networkTransient = await flyaiSearch({ ...base, cliBin: networkBin, timeoutMs: 5000 })
 assert.equal(networkTransient.verdict, 'error', '网络错误保持结构化 error')
 assert.equal(networkTransient.retryable, true, '普通网络错误应标记 retryable')
+assert.equal(networkTransient.upstreamHealth, 'unhealthy', 'explicit transport errors contribute health failure')
+const jsonHttpFailureBin = await fakeCli('flyai-json-http500', 0, JSON.stringify({ error: { message: 'MCP HTTP 500 upstream temporary failure' } }))
+const jsonHttpFailure = await flyaiSearch({ ...base, cliBin: jsonHttpFailureBin })
+assert.equal(jsonHttpFailure.upstreamHealth, 'unhealthy', 'JSON HTTP failure is classified even on exit zero')
+assert.equal(jsonHttpFailure.retryable, true)
 
 // 15. 真实 CLI 进程边界:config/env key 与 DEBUG endpoint 敏感段不能进入 error/raw/AI 输出。
 //     这里仍用本地 fixture CLI，但走 adapter 的真实 HOME/env 解析路径，不触碰用户配置。
@@ -676,6 +754,7 @@ try {
   assert.equal(envLeak.keySource, 'env', 'env key 应覆盖 config 来源')
   assert.equal(envLeak.verdict, 'auth-error', 'HTTP 401 应保持 auth-error')
   assert.equal(envLeak.retryable, false, 'HTTP 401 不得标记 retryable')
+  assert.equal(envLeak.upstreamHealth, 'unknown', 'auth failures do not imply global outage')
   assert.ok(!envLeakText.includes(envKey), 'env key 不得进入 error/raw 输出')
   assert.ok(!envLeakText.includes('alice:password'), 'env error 不得包含 endpoint userinfo')
   assert.ok(!envLeakText.includes('token=debug-query'), 'env error 不得包含 endpoint query')
@@ -689,6 +768,7 @@ try {
   const forbidden = await flyaiSearch({ ...base, cliBin: forbiddenBin, timeoutMs: 5000 })
   assert.equal(forbidden.verdict, 'forbidden', 'HTTP 403 应保持 forbidden')
   assert.equal(forbidden.retryable, false, 'HTTP 403 不得标记 retryable')
+  assert.equal(forbidden.upstreamHealth, 'unknown', 'forbidden is authorization state, not outage')
 
   const aiLeakBin = await fakeCli(
     'flyai-ai-leak',
@@ -762,5 +842,11 @@ assert.equal(replayAi.aiData, '杭州西湖景区精选推荐')
 assert.match(replayAi.systemMessage ?? '', /体验模式/)
 console.log('16. Official CLI 1.0.16 captured-shape replay → 8 类（含 AI bounded data string）OK')
 
-await rm(tmp, { recursive: true, force: true })
 console.log('FLYAI TESTS: transport/hotel completeness + error contract OK(离线假 CLI:Sentinel→error / 空 itemList→miss / flight+train+hotel mixed→整体 error 且不落事实 / typed 字段校验 / 完整 flight+train+hotel→hit / exit≠0→error / 429→needs-setup / transient retryable / 敏感信息脱敏)')
+} finally {
+  for (const [name, value] of Object.entries(originalTestFlyaiEnv)) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+  await rm(tmp, { recursive: true, force: true })
+}

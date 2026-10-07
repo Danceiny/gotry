@@ -41,8 +41,8 @@ issue #16「多渠道比价与外部依赖隔离」提出三件事：
 ```
 效应值(纯数据):  { effect: string, params: unknown }          // GotryEffect
 解译产物:          { result: 渠道自有 observation | null,       // EffectOutcome(不重包,ADR-13 面不受扰)
-                     trace:  { attempts, backoffMs, breaker, declined?, evidence[] } }
-拒绝面(平铺):     declinedObservation(): { ok:false, verdict:'error', summary, evidence }
+                     trace:  { attempts, backoffMs, breaker, declined?, retryAfterMs?, evidence[] } }
+拒绝面(平铺):     declinedObservation(): { ok:false, verdict:'error', summary, evidence, retryAfterMs? }
 ```
 
 - **宿主取消**：取消返回 `result: null` 与 `trace.declined: 'aborted'`。平铺结果明确显示检索已取消，不误报未登记效应，也不伪造空查询结果。取消停止重试，不增加失败计数。
@@ -60,6 +60,7 @@ issue #16「多渠道比价与外部依赖隔离」提出三件事：
   一次计数，重试耗尽才计）→open（零执行成本拒绝，不抛错）→ 冷却满 → half-open 单
   探测（成功→closed 清零；失败→重开冷却重启）。状态是**进程内瞬态**（同 session
   节律闸先例），不落盘成持久资产；测试用注入时钟/即时 sleep 完全确定性。
+- **FlyAI 健康与隔离**：重试资格与断路器健康是适配器的两项独立观察。只有明确传输故障、HTTP 5xx、普通 HTTP 429 和 Sentinel 限流计入上游失败。输入、鉴权、禁止访问、试用补配、取消、业务错误、畸形响应和未分类退码保持可见失败，不增加或清零故障计数；半开时的中性结果只释放自身探测。有效命中或空 `miss` 证明健康响应，清零计数。非零业务状态或错误信封优先于内嵌条目列表，不变成库存事实，也不推断航线不受支持。选择响应时跳过只有普通日志消息的 JSON CLI 前缀；AI 成功要求存在 `data` 字段，`null` 等明确空数据仍然有效。断路器按检索种类与完整归一化 endpoint、生效凭据身份隔离，进程 Map 只保存不可逆哈希；明文 key、endpoint 敏感段与故障域指纹不进入 trace。开闸拒绝提供有界剩余 `retryAfterMs` 与等待指引；半开探测在途时不猜完成时间。
 - **重试语义**：只重试「瞬时类」失败（超时/网络断/socket）；上游明确说「不」的失败
   （FlyAI Sentinel 限流、429 试用额度达限）与 ENOENT 类必败失败永不重试——重试是放大器不是修复器。
 
@@ -67,7 +68,7 @@ issue #16「多渠道比价与外部依赖隔离」提出三件事：
 
 | 效应 | 渠道 | 重试 | 断路器 | 节律/授权 | 依据 |
 |---|---|---|---|---|---|
-| `FLYAI_SEARCH` | cli | 明确瞬时类最多 2 次／500ms 起 | 3 连错／开 60s | – | 普通 429、上游网络和 HTTP 5xx 可重试一次；鉴权、禁止访问、试用达限、Sentinel、畸形响应和本地终止不重试。非零退出码本身不决定策略。 |
+| `FLYAI_SEARCH` | cli | 明确瞬时类最多 2 次／500ms 起 | 同检索种类与 endpoint／凭据身份的 3 次连续上游健康故障／开 60s | – | 普通 HTTP 429、明确传输故障和 HTTP 5xx 可重试一次；Sentinel 计入保护，但不重试。业务、鉴权、配置、畸形响应和本地终止失败是中性结果。非零退出码或裸业务码本身不决定上游健康。 |
 | `HBCLI_HOTEL_SEARCH` | cli | 仅 timeout 2 次/300ms 起 | 3 连错/开 60s | – | hbcli 契约「候选路径是切换不是重试」只覆盖 ENOENT 类；timeout（上游冷启动建后端 session 可超 30s）重试 1 次即恢复（2026-09-02 迪拜 session 实况） |
 | `HBCLI_HOTEL_RATES` | cli | 仅 timeout 2 次/300ms 起 | 3 连错/开 60s | – | 同 HBCLI 族（timeout-only）；价格面**无静态降级 fail-closed**（不估算房价，与 bookable-facts 证据分级同口径） |
 | `HBCLI_CHECK_AVAIL` | cli | 仅 timeout 2 次/300ms 起 | 3 连错/开 60s | – | 同上；验价不可用即诚实失败（预订链下单前置，M0） |
@@ -96,7 +97,7 @@ issue #16「多渠道比价与外部依赖隔离」提出三件事：
 ## 5. 测试与锚点
 
 `ts/scripts/effect-tests.ts`（run-all §37，纯离线）：注册表封闭性/退避封顶链与记账/
-断路三态（时钟注入）/Sentinel 不重试但计熔断/熔断零执行拒绝+冷却单探测恢复/mock 夹
+断路三态（注入时钟，含零时间戳）／FlyAI 业务、鉴权与配置失败中性处理／检索种类与 endpoint、凭据隔离／Sentinel 不重试但计熔断／有界冷却拒绝、中性探测释放与健康空响应恢复／mock 夹
 具回放/SESSION 红线（永不重试不熔断）/真实 handler 静态包降级冒烟（自定义不存在 bin，
 零网络）。
 

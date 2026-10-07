@@ -14,10 +14,12 @@
  * 页面照常生效(下单/支付面 URL 仍被物理拦截)。
  */
 
-/** 城市码表(**实测校准 2026-09-03**:每条 id 均经 hotels.ctrip.com list 页
+import { resolveCtripHotelCity, hotelResolutionHint, type HotelCityResolution } from '../ctrip-city.ts'
+
+/** 离线兼容缓存(**实测校准 2026-09-03**:每条 id 均经 hotels.ctrip.com list 页
  * <title> 验证——探测法曾纠出 104=平遥县(传猜成都)等 5 处错猜,表内只收
  * 验证过的 id;词表外 unresolved 逐字保留,调用方可显式传 cityId 覆盖) */
-const HOTEL_CITY_CODES: Record<string, string> = {
+export const HOTEL_CITY_CODES: Record<string, string> = {
   上海: '2', 北京: '1', 广州: '32', 深圳: '30', 成都: '28',
   杭州: '17', 南京: '12', 苏州: '14', 无锡: '13', 扬州: '15', 镇江: '16',
   青岛: '7', 厦门: '25', 珠海: '31', 三亚: '43', 海口: '42',
@@ -32,6 +34,7 @@ export interface AdapterEntry {
   url?: string
   /** 词表外城市逐字保留(调用方提示:web 搜携程酒店 list 页取 city id 后带 cityId 重试) */
   unresolved?: string[]
+  error?: string
 }
 
 export interface HotelEntryQuery {
@@ -39,6 +42,7 @@ export interface HotelEntryQuery {
   to: string
   /** 显式城市 id(携程/trip.com 酒店 list 页 URL 的 city= 数字;覆盖码表) */
   cityId?: number | string
+  country?: string
   /** YYYY-MM-DD */
   checkIn?: string
   /** YYYY-MM-DD(与 checkIn 成对) */
@@ -46,14 +50,23 @@ export interface HotelEntryQuery {
   adults?: number
 }
 
+export async function resolveHotelEntryUrl(q: HotelEntryQuery,
+  resolve: (query: string, country?: string) => Promise<HotelCityResolution> = resolveCtripHotelCity): Promise<AdapterEntry> {
+  if (q.cityId !== undefined) return buildHotelEntryUrl(q)
+  const result = await resolve(q.to, q.country)
+  if (!result.ok) return { ok: false, unresolved: [q.to], error: hotelResolutionHint(q.to, result) }
+  return buildHotelEntryUrl({ ...q, cityId: result.city.id })
+}
+
 export function buildHotelEntryUrl(q: HotelEntryQuery): AdapterEntry {
   const unresolved: string[] = []
-  const cityId = String(q.cityId ?? '').trim() || HOTEL_CITY_CODES[q.to.trim()]
+  const candidate = q.cityId === undefined ? HOTEL_CITY_CODES[q.to.trim()] : String(q.cityId).trim()
+  const cityId = candidate && /^[1-9]\d{0,9}$/.test(candidate) ? candidate : undefined
   if (!cityId) unresolved.push(q.to)
   if (unresolved.length > 0) {
     return { ok: false, unresolved }
   }
-  const params = new URLSearchParams({ city: cityId })
+  const params = new URLSearchParams({ city: cityId! })
   if (q.checkIn) params.set('checkin', q.checkIn)
   if (q.checkOut) params.set('checkout', q.checkOut)
   if (q.adults && q.adults > 0) params.set('adult', String(q.adults))

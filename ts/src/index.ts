@@ -1859,8 +1859,8 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       'Search on the USER\'S OWN browser session (Ctrip kind="flight"(default)/"hotel"; 12306 kind="train" — public query face, no login needed). '
       + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'Transport: Stai Travel Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
-      + 'kind="flight": from/to 中文城市名 + date YYYY-MM-DD — sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
-      + 'kind="hotel": to=目的地中文, cityId? = the numeric city= in a hotels.ctrip.com list URL (web-search it when the destination is outside the built-in city table), checkIn?/checkOut? (YYYY-MM-DD), adults?; hotel prices are the user\'s real logged-in prices. Evidence [会话:ctrip-hotel@ts]. '
+      + 'kind="flight": from/to city or airport names (Chinese/English) + date YYYY-MM-DD; unknown names resolve from supplier metadata, ambiguous names require confirmation; optional fromCityCode/toCityCode are explicit Ctrip three-letter codes — sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
+      + 'kind="hotel": to=destination name, country? for same-name disambiguation; cityId? = explicit numeric city= from a Ctrip hotel list URL; otherwise resolves from the hotel destination service, checkIn?/checkOut? (YYYY-MM-DD), adults?; hotel prices are the user\'s real logged-in prices. Evidence [会话:ctrip-hotel@ts]. '
       + 'kind="dida": Dida supplier-portal realtime hotel rates on the employee\'s own logged-in session (hotel-be portal integration line) — no from/to needed; the portal find page\'s own requests are sniffed passively. Rates carry ratePlanId/referenceNo for the server-side booking chain. Evidence [会话:dida-portal@ts]. '
       + 'kind="train": from/to/date(YYYY-MM-DD) + fromStationTelecode?/toStationTelecode? (three-letter codes in the kyfw query URL, for cities outside the built-in table) — 12306 left-ticket query (public face): train codes, times, durations, seat availability; the list API carries NO prices (prices live on the 12306 page). Evidence [会话:train-12306@ts]. '
       + 'verdict needs-login = call gotry_session_login (opens the Ctrip login entry in the user\'s own foreground tab — no terminal, no credentials through GoTry); '
@@ -1873,10 +1873,13 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     // execute 内归一后走原条件闸,结构化报错不崩。flyai 因 kind required 仍在宿主权即拒。
     parameters: {
       kind: { type: 'string', enum: ['flight', 'hotel', 'train', 'dida'], description: '默认 flight 机票;hotel 携程酒店(用户登录态真实价);train 12306 余票(公开面);dida 供应商门户实时价(员工登录态)' },
-      from: { type: 'string', description: '出发城市中文(词表内),如 上海——kind=flight|train 必填' },
+      from: { type: 'string', description: '出发城市名（机票支持中英文及机场名，自动解析），如 上海——kind=flight|train 必填' },
       to: { type: 'string', description: '到达城市中文——kind=flight|train 必填;kind=hotel 时为目的地(必填)' },
       date: { type: 'string', description: '出发日期 YYYY-MM-DD——kind=flight|train 必填,须为今天或未来' },
-      cityId: { type: 'integer', description: '携程酒店 city= 数字,仅 kind=hotel;目的地码表外时 web 搜 hotels.ctrip.com list URL 取 city=' },
+      fromCityCode: { type: 'string', description: '显式携程出发城市／机场三字码，仅 kind=flight；同名城市确认后使用' },
+      toCityCode: { type: 'string', description: '显式携程到达城市／机场三字码，仅 kind=flight；同名城市确认后使用' },
+      cityId: { type: 'integer', description: '显式携程酒店 city= 数字，仅 kind=hotel；未提供时自动解析酒店目的地，不能使用机票城市码' },
+      country: { type: 'string', description: '目的地国家中英文，仅 kind=hotel；用于同名城市消歧，例如 阿联酋' },
       checkIn: { type: 'string', description: '入住日 YYYY-MM-DD,仅 kind=hotel 可选' },
       checkOut: { type: 'string', description: '退房日 YYYY-MM-DD,仅 kind=hotel 可选' },
       adults: { type: 'integer', description: '成人数,仅 kind=hotel 可选' },
@@ -1887,7 +1890,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
     async execute(args, _exec) {
       const selectedKind = resolveSessionSearchKind(args)
       if (!selectedKind.ok) return { ok: false, summary: selectedKind.reason } as const
-      const q = { ...unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; cityId?: number | string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string }>(args), kind: selectedKind.kind }
+      const q = { ...unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; fromCityCode?: string; toCityCode?: string; cityId?: number | string; country?: string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string }>(args), kind: selectedKind.kind }
       const runSessionEffect = seams.effect ?? interpretEffect
       // ---- Dida 供应商门户(2026-09-09 实装;hotel-be portal integration 迁移线)----
       if (q.kind === 'dida') {
@@ -1955,12 +1958,12 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       }
       if (q.kind === 'hotel') {
         if (!q.to) {
-          return { ok: false, summary: 'kind=hotel 需要 to(目的地中文;城市码表外带 cityId=携程酒店 list 页 URL 里的 city= 数字)' } as const
+          return { ok: false, summary: 'kind=hotel 需要 to（目的地名称）；自动解析城市，同名城市可带 country 或确认后的 cityId' } as const
         }
         const itp = await runSessionEffect({
           effect: 'SESSION_HOTEL_SEARCH',
           params: {
-            to: q.to, cityId: q.cityId, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults,
+            to: q.to, country: q.country, cityId: q.cityId, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults,
             auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
           },
         })
@@ -1986,14 +1989,14 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
         })) as Record<string, never>
       }
       if (!q.from || !q.to || !q.date) {
-        return { ok: false, summary: '需要 from/to(中文城市名,词表内)与 date(YYYY-MM-DD);酒店/火车检索分别用 kind=hotel / kind=train' } as const
+        return { ok: false, summary: '需要 from/to（城市或机场名）与 date（YYYY-MM-DD）;酒店/火车检索分别用 kind=hotel / kind=train' } as const
       }
       // 效应解译层(ADR-18):SESSION 通道策略=永不重试/不熔断,节律闸在渠道内;
       // 解译器只做分发与证据拼装,verdict 语义(risk 型 needs-login/challenged)原样透传
       const itp = await runSessionEffect({
         effect: 'SESSION_FLIGHT_SEARCH',
         params: {
-          from: q.from, to: q.to, date: q.date,
+          from: q.from, to: q.to, date: q.date, fromCityCode: q.fromCityCode, toCityCode: q.toCityCode,
           // ADR-15 收尾:ReadGuard 审计在生产工具路径同样落盘(此前仅测试传隔离 stateRoot 才有 JSONL)
           auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
         },
