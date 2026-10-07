@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * gotry 外部依赖自举(founder 2026-08-29 指令:安装 gotry 时按上游本身的方式装好外部依赖):
- *   hbcli(hotelbyte-cli)  → npm 优先(staicli@npmjs;Node ≥ 20),原生二进制 install.sh 兜底
+ *   hbcli(hotelbyte-cli)  → 官方版本钉扎的原生 install.sh(npm 发布暂落后)
  *   agent-reach            → 官方 pip 安装 git+ upstream(包内 .venv,与 z3-solver 同址原则)
  *   flyai                  → 无需安装(npx 每次自拉 @fly-ai/flyai-cli)
  *   dsh-better-sidebar     → dsh 宿主层插件市场组件(dshmarket.com #1 UI,18.9 万周装):
@@ -62,6 +62,7 @@ import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { checkExtensionStatus } from './gotry-extension-status.js'
+import { HBCLI_RELEASE_VERSION, HBCLI_INSTALL_CMD } from './gotry-hbcli-release.js'
 
 // ── FlyAI 凭据面(纯 JS 内联;与 ts/capabilities/flyai-config.ts 成对维护,
 // 口径以官方 @fly-ai/flyai-cli 1.0.16 解包事实为准。bootstrap 由 inner 以
@@ -481,9 +482,6 @@ const WIZARD_DRY_RUN = process.argv.includes('--dry-run')
 const EXT_FROM_ARG = (process.argv.find((a) => a.startsWith('--extension-from=')) ?? '').split('=')[1]
 const EXTENSION_FROM = EXT_FROM_ARG === 'github' || EXT_FROM_ARG === 'bundled' ? EXT_FROM_ARG : process.env.GOTRY_EXTENSION_SOURCE === 'github' ? 'github' : 'bundled'
 
-// hbcli 安装通道:npm 优先(staicli@npmjs 双轨;显式 registry 防 bnpm 404),install.sh 兜底
-const HBCLI_NPM_INSTALL_CMD = 'npm install -g staicli --registry=https://registry.npmjs.org/'
-const HBCLI_INSTALL_CMD = HBCLI_NPM_INSTALL_CMD
 const REACH_INSTALL_URL = 'git+https://github.com/Panniantong/Agent-Reach.git'
 
 let activeInstallerChild = null
@@ -632,11 +630,8 @@ function classifyHbcliWhoami(out) {
 
 const say = (s) => console.log(s)
 
-/** hbcli 最低版本(可用 GOTRY_MIN_HBCLI_VERSION 覆盖)。
- * 0.0.3 修了 portal-ticket fallback bug(issue #142):低于该版本的 hbcli
- * 会把 literal "stored-ticket" 当 bearer 发到 hotel-be,让 trade.* /
- * search/checkAvail 等 @permission: openapi 端点全部 401。 */
-const MIN_HBCLI_VERSION = process.env.GOTRY_MIN_HBCLI_VERSION ?? '0.0.3'
+/** hbcli 最低版本(可用 GOTRY_MIN_HBCLI_VERSION 覆盖)，与工具层 doctor 共用发布基线。 */
+const MIN_HBCLI_VERSION = process.env.GOTRY_MIN_HBCLI_VERSION ?? HBCLI_RELEASE_VERSION
 
 function parseVersion(v) {
   const m = String(v || '').match(/(\d+)\.(\d+)\.(\d+)/)
@@ -664,38 +659,53 @@ async function hbcliVersion(bin) {
   })
 }
 
-async function setupHbcli() {
-  say(`[gotry-setup] hbcli(hotelbyte-cli,可选酒店实时源;需 ≥ v${MIN_HBCLI_VERSION},低于会踩 issue #142 的 401)`)
-  const candidates = ['hbcli', join(homedir(), '.local/bin/hbcli'), join(homedir(), '.staicli/current/hbcli')]
-  const present = candidates.some((p) => existsSync(p)) && (await probe(candidates[0], ['version']) || await probe(candidates[1], ['version']) || await probe(candidates[2], ['version']))
-  const credFile = join(homedir(), '.staicli', 'credentials.json')
-  if (present) {
-    const hit = candidates.find((p) => existsSync(p)) || 'hbcli'
-    const v = await hbcliVersion(hit)
-    if (v && !versionAtLeast(v, MIN_HBCLI_VERSION)) {
-      say(`  ✗ 版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——@permission: openapi 端点(trade.* / search/checkAvail)会 401(issue #142)`)
-      say(`    升级: npm install -g staicli --registry=https://registry.npmjs.org/`)
-      return { ok: CHECK_ONLY ? true : false }
+async function setupHbcli(opts = {}) {
+  const home = opts.homeDir ?? homedir()
+  const staicliHome = opts.homeDir ? join(home, '.staicli') : process.env.STAICLI_HOME ?? join(home, '.staicli')
+  const checkOnly = opts.checkOnly ?? CHECK_ONLY
+  say(`[gotry-setup] hbcli(hotelbyte-cli,可选酒店实时源;需 ≥ v${MIN_HBCLI_VERSION})`)
+  const candidates = ['hbcli', join(home, '.local/bin/hbcli'), join(home, '.staicli/current/hbcli')]
+  const findInstalled = async () => {
+    for (const bin of candidates) {
+      const version = await hbcliVersion(bin)
+      if (version) return { bin, version }
     }
-    say(`  ✓ 已安装(v${v ? v.join('.') : '?'})`)
+    return null
+  }
+  const present = await findInstalled()
+  const credFile = join(staicliHome, 'credentials.json')
+  if (present && versionAtLeast(present.version, MIN_HBCLI_VERSION)) {
+    say(`  ✓ 已安装(v${present.version.join('.')})`)
     if (existsSync(credFile)) say('  ✓ 凭证已配置(自检: hbcli auth whoami)')
     else say('  ✗ 凭证未配置——酒店检索将用内置静态包(非实时),账号配置见下方指引')
-    if (CHECK_ONLY) say('  (--check-only 只报告,不安装)')
+    if (checkOnly) say('  (--check-only 只报告,不安装)')
     return { ok: true }
   }
-  if (CHECK_ONLY) { say('  ✗ 未安装(--check-only 只报告)'); return { ok: true } }
-  say(`  安装中(npm,staicli@npmjs): ${HBCLI_INSTALL_CMD}`)
-  const r = await run('bash', ['-c', HBCLI_INSTALL_CMD], { timeoutMs: 120_000 })
-  if (!r.ok) { say(`  ✗ 安装失败(${r.error})——不影响 gotry,酒店检索将用内置静态包;可稍后重试: npx @danceiny/gotry setup`); return { ok: false } }
-  const binDir = join(homedir(), '.local/bin')
-  if (!process.env.PATH.split(':').includes(binDir)) {
+  if (present) say(`  ✗ 版本过旧(v${present.version.join('.')} < v${MIN_HBCLI_VERSION})`)
+  else say('  ✗ 未安装或无法读取版本')
+  if (checkOnly) { say('  (--check-only 只报告,不安装)'); return { ok: true } }
+  say(`  ${present ? '升级' : '安装'}中(官方 staicli v${HBCLI_RELEASE_VERSION}): ${HBCLI_INSTALL_CMD}`)
+  const attemptInstall = opts.attemptInstall ?? ((command) => run('bash', ['-o', 'pipefail', '-c', command], {
+    timeoutMs: 120_000,
+    env: { ...process.env, HOME: home, STAICLI_HOME: staicliHome },
+  }))
+  const r = await attemptInstall(HBCLI_INSTALL_CMD)
+  if (!r.ok) { say(`  ✗ 安装失败(${r.error})——不影响 gotry,酒店检索将用内置静态包;可稍后重试: npx @danceiny/gotry doctor --fix`); return { ok: false, error: r.error } }
+  const installed = await findInstalled()
+  if (!installed || !versionAtLeast(installed.version, MIN_HBCLI_VERSION)) {
+    const error = `安装后当前候选路径仍未找到 hbcli ≥ v${MIN_HBCLI_VERSION}；检查 PATH 是否优先命中了旧版，以及 ${join(home, '.local/bin/hbcli')}`
+    say(`  ✗ ${error}`)
+    return { ok: false, error }
+  }
+  const binDir = join(home, '.local/bin')
+  if (!(process.env.PATH ?? '').split(':').includes(binDir)) {
     say(`  ⚠ ${binDir} 不在当前 PATH —— gotry 工具已内建候选路径回退,无需手动处理;其他程序可用: export PATH="${binDir}:$PATH"`)
   }
-  say('  ✓ 安装完成——账号配置(未配时酒店检索自动用静态包,非实时):')
-  say('    · 快速试用(官方沙箱演示账号): hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo')
-  say('    · 正式接入: 向 HotelByte 申请专属 appKey/appSecret 后用同一命令替换')
-  say('    · 门户账号(权限更大,酒店搜索无必要): hbcli auth login --username <email>')
-  say('  自检: hbcli auth whoami(api_key.configured=true 即就位)')
+  say(`  ✓ 安装完成(v${installed.version.join('.')})——已有凭证保留；账号配置:`)
+  say('    · 打开 插件 → GoTry → HotelByte，申请沙箱账号并验证保存 App Key/App Secret')
+  say('    · 申请入口: https://hotelbyte.com/zh/guides/sandbox-verification')
+  say('    · CLI 配置: hbcli auth set-credentials --app-key <appKey> --app-secret <appSecret>')
+  say('  自检: hbcli auth whoami；实际酒店搜索仍需账号开通可用供应商')
   return { ok: true }
 }
 
@@ -857,7 +867,7 @@ async function doctorChecks() {
   const reachOk = existsSync(reachBin)
   const reachLevel = reachOk ? 'ok' : existsSync(venvPython) ? 'degraded' : 'missing'
   items.push({ label: 'Agent Reach(网页/社媒读取)', ok: reachOk, level: reachLevel, detail: reachOk ? `已安装(${reachBin})` : reachLevel === 'degraded' ? '.venv 在但缺 agent-reach 包——gotry_agent_reach / gotry_web_search 读页会失败' : '未装配——gotry_agent_reach / gotry_web_search(读网页)/ gotry_video_subtitle / gotry_github_search 全部不可用', fix: reachOk ? undefined : 'npx @danceiny/gotry doctor --fix' })
-  // hbcli(裸名靠 PATH 探测;绝对路径 existsSync;版本 < MIN_HBCLI_VERSION 视为 missing,见 issue #142)
+  // hbcli(裸名靠 PATH 探测;绝对路径 existsSync;版本 < MIN_HBCLI_VERSION 需要升级)
   let hbBin = ''
   for (const p of ['hbcli', join(homedir(), '.local/bin/hbcli'), join(homedir(), '.staicli/current/hbcli')]) {
     if (p === 'hbcli') { if (await probe(p, ['version'])) { hbBin = 'hbcli(PATH)'; break } } else if (existsSync(p)) { hbBin = p; break }
@@ -865,7 +875,7 @@ async function doctorChecks() {
   if (hbBin) {
     const v = await hbcliVersion(hbBin)
     if (v && !versionAtLeast(v, MIN_HBCLI_VERSION)) {
-      items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——trade.* / search/checkAvail 会 401(issue #142)`, fix: 'npm install -g staicli --registry=https://registry.npmjs.org/' })
+      items.push({ label: 'hbcli(酒店实时源)', ok: false, level: 'missing', detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——请升级到支持当前认证与酒店配置的版本`, fix: HBCLI_INSTALL_CMD })
     } else {
       // 凭证按 whoami 的 JSON 三档判定,不再看退出码(#623:whoami 无凭证也退 0,旧判法恒报「凭证有效」)
       const cred = classifyHbcliWhoami(await probeStdout(hbBin === 'hbcli(PATH)' ? 'hbcli' : hbBin, ['--json', 'auth', 'whoami']))
@@ -874,7 +884,7 @@ async function doctorChecks() {
         detail: cred.ok
           ? `已安装且凭证有效(${hbBin}, v${v ? v.join('.') : '?'}${cred.customer ? ',customer 档在用(客户邮箱验证码登录)' : ''})`
           : '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)',
-        fix: cred.ok ? undefined : 'hbcli auth customer-send-code --email you@mail.com 收码后 hbcli auth customer-login --email you@mail.com --code <收件码>(客户邮箱验证码登录,新邮箱即注册,需 npm staicli ≥ 0.0.4);B 端租户注册走 hbcli auth register(先 auth send-code);或 hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)',
+        fix: cred.ok ? undefined : 'hbcli auth customer-send-code --email you@mail.com 收码后 hbcli auth customer-login --email you@mail.com --code <收件码>(客户邮箱验证码登录,新邮箱即注册);B 端租户注册走 hbcli auth register(先 auth send-code);或在 插件 → GoTry → HotelByte 配置沙箱 App Key/App Secret',
       })
     }
   } else {
@@ -1131,8 +1141,7 @@ function classifyDoctorGap(item, opts = {}) {
   const autoSupported = doctorFixAutoSupported(platform)
   if (label.startsWith('Agent Reach')) return installerEnabled('reach', env) && autoSupported ? 'auto' : 'unavailable'
   // hbcli:二进制缺失(missing)= auto(setupHbcli 装;win32 → unavailable,上游无 win 安装面);
-  // 凭证未配(degraded)= user-action(平台无关);旧版本(missing,安装器不自动升级)= auto 分桶
-  // 但安装会失败 → 结果兜底 unavailable,诚实不冒充。
+  // 凭证未配(degraded)= user-action(平台无关);旧版本(missing)= auto，同安装器升级后复检。
   if (label.startsWith('hbcli')) {
     if (item.level === 'degraded') return 'user-action'
     return installerEnabled('hbcli', env) && autoSupported ? 'auto' : 'unavailable'
@@ -1754,7 +1763,7 @@ if (process.argv[1] && process.argv[1].endsWith('gotry-bootstrap.js')) {
 }
 
 export {
-  setupSidebar, sidebarInstalled,
+  setupHbcli, setupSidebar, sidebarInstalled,
   classifyDoctorGap, buildOnboardingPlan, onboardingSkipReason,
   runOnboardingFix, promptOnboarding, renderClassifiedPlan, runOnboarding, orchestrateWebLaunch,
   doctorFixAutoSupported, platformAutoUnavailableReason, installerEnabled,

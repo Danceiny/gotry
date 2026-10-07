@@ -324,7 +324,7 @@ export async function checkAvail(
  * ~/.staicli/credentials.json)——hbcli 侧 customer 档是最低优先级凭据(无
  * portal/API-key 凭据时才生效),登录不劫持既有凭据。本层不透出 token 值
  * (CLI 只回 token_saved,凭据留在 CLI 仓内,不进 gotry 会话/日志)。
- * auth 命令族要求 hbcli 带 register 支持(npm 0.0.4 起;0.0.3 报 unknown
+ * auth 命令族要求 hbcli 带 register 支持(官方原生 0.0.4 起;0.0.3 报 unknown
  * command,经 hbcli-error 面优雅失败)。
  */
 export async function customerSendCode(

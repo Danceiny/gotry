@@ -145,6 +145,8 @@ npx @danceiny/gotry setup flyai --clear
 
 ### 2.2 HotelByte 沙箱凭证
 
+GoTry 要求 **hbcli 0.0.4 或更高版本**，这是[当前官方稳定发布](https://github.com/hotelbyte-com/docs/releases/tag/staicli-v0.0.4)。`npx @danceiny/gotry doctor --fix` 通过该发布的官方原生安装器安装或升级，并复查实际二进制版本。npm 的 `staicli@latest` 仍指向 0.0.3，因此不作为升级入口。当前版或更高版本以及已有凭证均保留。若旧 npm 二进制在 `PATH` 中优先命中，请把 `~/.local/bin` 放在前面，再运行 doctor。
+
 打开**插件 → GoTry → HotelByte**，点击[申请沙箱账号](https://hotelbyte.com/zh/guides/sandbox-verification)。HotelByte 负责开通账号与供应商范围。在两个保密输入框中填写取得的 App Key 和 App Secret，再点**验证并保存**。
 
 验证使用临时凭证目录，只读查询上海明天入住的一晚酒店，两位成人。被接受的凭证保存到官方 hbcli 的 `openapi:uat` 条目，保留其他认证方式和环境。验证失败或取消时保留旧配置；凭证不进入对话工具、响应正文或子进程参数。

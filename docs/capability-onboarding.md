@@ -146,6 +146,8 @@ Open **Plugins → GoTry → FlyAI**. The console link, confidential input, **Ve
 
 ### 2.2 HotelByte sandbox credentials
 
+GoTry requires **hbcli 0.0.4 or newer**, the [current official stable release](https://github.com/hotelbyte-com/docs/releases/tag/staicli-v0.0.4). `npx @danceiny/gotry doctor --fix` installs or upgrades through that release's official native installer and rechecks the binary version. npm's `staicli@latest` still resolves to 0.0.3, so it is not the upgrade path. Current or newer binaries and existing credentials are preserved. If an older npm binary takes precedence in `PATH`, put `~/.local/bin` first and rerun doctor.
+
 Open **Plugins → GoTry → HotelByte** and follow [Apply for a sandbox account](https://hotelbyte.com/zh/guides/sandbox-verification). HotelByte provisions the account and supplier scope. Enter the issued App Key and App Secret in the two confidential fields, then select **Verify and save**.
 
 Validation makes one read-only Shanghai hotel-list query for tomorrow, one night and two adults, using a temporary credential root. Accepted credentials are saved in the official hbcli `openapi:uat` entry; other authentication modes and environments are preserved. Failed or cancelled validation preserves the previous configuration. Credentials never enter conversation tools, response bodies, or subprocess arguments.
