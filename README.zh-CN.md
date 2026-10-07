@@ -155,7 +155,7 @@ npx @danceiny/gotry "我想从深圳休整两天,预算 3000"   # headless 一�
 ## 状态与路线图
 当前边界：确定性规划与有证据边界的只读能力已经可用；预订与真实用户验收仍不属于当前交付声明。见[架构权威文档](docs/architecture.zh-CN.md)与[路线图](docs/roadmap.zh-CN.md)。
 
-npm `latest`：**v0.2.0-rc.30**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。外部 W2A 事件仍是合同层、默认 inert；尚无真实 sensor 桥或 consumer 激活。
+npm `latest`：**v0.2.0-rc.31**。未到 1.0：核心链路已端到端可用；评测仍停留在确定性合同与校验器阶段，无外部分数、无 uplift 声明。外部 W2A 事件仍是合同层、默认 inert；尚无真实 sensor 桥或 consumer 激活。
 
 **今天可用**
 
@@ -211,7 +211,7 @@ AI agent：[`AGENTS.md`](AGENTS.zh-CN.md) 是绑定契约——入场先清扫�
 
 **Built with**: DeepSeek Harness 0.2.0-rc.2 (root-pinned) · Cordis · Z3 (WASM) · loopx (pipx) · hotelbyte-cli · Agent-Reach v1.5.0 · OpenFlights · TypeScript
 
-**版本基线：`v0.2.0-rc.30`（npm `latest`）。** 验证闸：`scripts/run-all-tests.sh`；发布流程：`scripts/publish-npm.sh`。
+**版本基线：`v0.2.0-rc.31`（npm `latest`）。** 验证闸：`scripts/run-all-tests.sh`；发布流程：`scripts/publish-npm.sh`。
 
 <a href="https://www.star-history.com/?repos=danceiny%2Fgotry&type=date&legend=top-left">
  <picture>

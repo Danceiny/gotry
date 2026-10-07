@@ -28,6 +28,10 @@ Run `npx @danceiny/gotry@0.2.0-rc.31 web` (Node ≥ 22.15). Once `latest` points
 
 Full-stack regression and installed-package browser checks cover saving, rejected-key preservation, clearing, artifact browsing and native delivery with isolated state and controlled upstream responses. These checks do not establish acceptance with a real FlyAI account. Publication is established only by a passing registry pull-back receipt.
 
+### Published
+
+Published to npm on 2026-10-07 as `@danceiny/gotry@0.2.0-rc.31` with `TAG=latest ./scripts/publish-npm.sh` (tag passed explicitly, #50①), then pulled back from the registry: `npm view` shows `latest` → `0.2.0-rc.31` (shasum `60a42e3d4b96575fa36ffc8397037c15902f0bf9`, 558 files) — the shasum `npm pack --dry-run` predicted from the tagged tree before publishing — and the downloaded tarball hashes to it. On a clean machine (fresh HOME and npm cache, official registry only, no LLM key) `npx @danceiny/gotry@0.2.0-rc.31` passes end to end: `doctor` prints its report, the dist entry loads the `gotry-tools` plugin, `web` boots (token URL 303 → 200, no token 401), and a one-shot without credentials fails with the host's missing-credential message rather than a stack trace. GitHub Release: [v0.2.0-rc.31](https://github.com/Danceiny/gotry/releases/tag/v0.2.0-rc.31). The compatibility `rc` tag is still on `0.0.1-rc.20`.
+
 ---
 
 ## v0.2.0-rc.30 · 2026-10-06
