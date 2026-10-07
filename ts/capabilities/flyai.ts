@@ -32,7 +32,7 @@
 import { closeSync, openSync, readFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { resolveFlyaiEndpoint, resolveFlyaiKey, type FlyaiKeySource } from './flyai-config.ts'
+import { normalizeEndpoint, resolveFlyaiEndpoint, resolveFlyaiKey, sha256Hex, type FlyaiKeySource } from './flyai-config.ts'
 import { spawnBounded } from './spawn-bounded.ts'
 
 export type FlyaiKind =
@@ -239,6 +239,8 @@ export interface FlyaiResult {
   verdict: FlyaiVerdict
   /** true = 已识别的上游普通网络/HTTP 5xx/429 瞬时失败，可交给 effect 层退避重试 */
   retryable?: boolean
+  /** 独立于重试：只在明确上游故障时计熔断；unknown 不增失败，也不宣称恢复。 */
+  upstreamHealth?: 'healthy' | 'unhealthy' | 'unknown'
   /** 存在时表示请求未得到可判定的上游响应，应 fail-closed 且只执行一次。 */
   localTermination?: FlyaiLocalTermination
   kind: FlyaiKind
@@ -411,7 +413,7 @@ export function parseFlyaiItemList(stdout: string): unknown[] {
 }
 
 /** 解析 stdout 中首个完整 JSON 对象(不限 itemList;ai-search 用) */
-export function parseFlyaiJsonEnvelope(stdout: string): Record<string, unknown> {
+export function parseFlyaiJsonEnvelope(stdout: string, accepts: (envelope: Record<string, unknown>) => boolean = () => true): Record<string, unknown> {
   let start = -1
   let depth = 0
   let inString = false
@@ -435,7 +437,12 @@ export function parseFlyaiJsonEnvelope(stdout: string): Record<string, unknown> 
       depth -= 1
       if (depth === 0) {
         const candidate = stdout.slice(start, index + 1)
-        try { return JSON.parse(candidate) as Record<string, unknown> } catch { start = -1; depth = 0 }
+        try {
+          const parsed = JSON.parse(candidate) as Record<string, unknown>
+          if (accepts(parsed)) return parsed
+        } catch { /* prefix logs may contain balanced non-JSON braces */ }
+        start = -1
+        depth = 0
       }
     }
   }
@@ -749,6 +756,15 @@ const KIND_LABEL: Record<FlyaiKind, string> = {
   keyword: 'keyword', ai: 'ai', 'marriott-hotel': 'marriott hotel', 'marriott-package': 'marriott package',
 }
 
+/** 每种检索 × 生效 endpoint/key 隔离；Map 中只留下不可逆指纹。 */
+export function flyaiBreakerScope(kind: unknown): string {
+  const key = resolveFlyaiKey()
+  const endpoint = resolveFlyaiEndpoint().url
+  const identity = sha256Hex(JSON.stringify([normalizeEndpoint(endpoint) ?? endpoint, key.key ?? null]))
+  const safeKind = typeof kind === 'string' && Object.hasOwn(KIND_LABEL, kind) ? kind : 'invalid-kind'
+  return `${safeKind}:${identity}`
+}
+
 /**
  * FlyAI 官方只读检索(8 命令)— 任何失败走降级;不抛错。
  */
@@ -758,9 +774,9 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
   const envContext = await runtimeEnvNote()
   const envNote = envContext.note
   const sensitive = envContext.sensitive
-  const safe = <T extends FlyaiResult>(result: T): T => safeFlyaiResult(result, sensitive)
+  const safe = (result: FlyaiResult): FlyaiResult => safeFlyaiResult({ upstreamHealth: 'unknown', retryable: false, ...result }, sensitive)
   const built = buildCliArgs(q)
-  if (built.error) return { ...badArg(q.kind, built.error, ts), ...envNote }
+  if (built.error) return safe({ ...badArg(q.kind, built.error, ts), ...envNote })
 
   const prefix = q.cliPrefixArgs ?? ['-y', '@fly-ai/flyai-cli@1.0.16']
   const r = await sh(q.cliBin ?? 'npx', [...prefix, ...built.args!], {
@@ -769,7 +785,6 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
     signal: q.signal,
   })
   const latencyMs = Date.now() - started
-  const combined = `${r.stderr}\n${r.stdout}`
 
   if (r.cancelled) {
     return safe({
@@ -797,37 +812,55 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
     return safe(localTerminationResult(q.kind, r.localTermination, r, latencyMs, ts, envNote))
   }
 
-  if (r.error || r.code !== 0 || /HTTP\s*(4\d\d|5\d\d)/.test(combined)) {
+  if (r.error || r.code !== 0 || explicitUpstreamFailure(r.stderr)) {
     return safe(classifyUpstreamFailure(q.kind, r, latencyMs, ts, envNote))
+  }
+
+  // Validate the response envelope before accepting inventory for any kind.
+  // A business status is not an HTTP status; successful data is never scanned
+  // for fault words (for example an AI answer quoting an HTTP error).
+  let envelope: Record<string, unknown>
+  try {
+    envelope = parseFlyaiJsonEnvelope(r.stdout, candidate => ['data', 'status', 'error'].some(key => Object.hasOwn(candidate, key))
+      || explicitUpstreamFailure(nonEmptyText(candidate.message) ?? ''))
+  } catch (e) {
+    if (explicitUpstreamFailure(r.stdout)) return safe(classifyUpstreamFailure(q.kind, r, latencyMs, ts, envNote))
+    const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)
+    return safe({
+      kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'error',
+      evidence: `[实时API:flyai@error@${ts}] parse failed: ${raw}`,
+      error: `failed to parse flyai output (${(e as Error).message}): ${raw}`,
+    })
+  }
+  const systemMessage = nonEmptyText(envelope.systemMessage)
+  const envelopeFailure = `${nonEmptyText(envelope.message) ?? ''}\n${envelope.error == null ? '' : JSON.stringify(envelope.error)}`
+  if (explicitUpstreamFailure(envelopeFailure)) {
+    return safe(classifyUpstreamFailure(q.kind, { ...r, stdout: envelopeFailure }, latencyMs, ts, envNote))
+  }
+  if ((envelope.status !== undefined && envelope.status !== 0) || envelope.error != null) {
+    return safe({
+      kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'error',
+      evidence: `[实时API:flyai@error@${ts}] upstream response status=${String(envelope.status ?? 'unknown')}`,
+      error: nonEmptyText(envelope.message) ?? 'FlyAI upstream response rejected the query',
+      ...(systemMessage ? { systemMessage } : {}),
+    })
   }
 
   // ai-search:data 是自由形状,不走 itemList。
   if (q.kind === 'ai') {
-    let envelope: Record<string, unknown>
-    try {
-      envelope = parseFlyaiJsonEnvelope(r.stdout)
-    } catch (e) {
-      const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)
+    if (!Object.hasOwn(envelope, 'data')) {
       return safe({
         kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'error',
-        evidence: `[实时API:flyai@error@${ts}] parse failed: ${raw}`,
-        error: `failed to parse flyai ai output (${(e as Error).message}): ${raw}`,
-      })
-    }
-    const systemMessage = nonEmptyText(envelope.systemMessage)
-    if (envelope.status !== undefined && envelope.status !== 0) {
-      return safe({
-        kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'error',
-        evidence: `[实时API:flyai@error@${ts}] ai status=${String(envelope.status)}`,
-        error: nonEmptyText(envelope.message) ?? 'ai-search upstream failure',
+        evidence: `[实时API:flyai@error@${ts}] malformed ai response: missing data`,
+        error: 'FlyAI ai response malformed: missing data member',
         ...(systemMessage ? { systemMessage } : {}),
       })
     }
     const aiData = envelope.data
-    const empty = aiData === undefined || aiData === null || aiData === ''
+    const empty = aiData === null || aiData === ''
       || (Array.isArray(aiData) && aiData.length === 0)
     return safe(JSON.parse(JSON.stringify({
-      kind: q.kind, ...envNote, latencyMs, ok: true, via: 'flyai',
+      kind: q.kind, ...envNote, latencyMs, ok: true, via: 'flyai', upstreamHealth: 'healthy',
       verdict: empty ? 'miss' : 'hit',
       ...(empty ? {} : { aiData }),
       ...(systemMessage ? { systemMessage } : {}),
@@ -835,22 +868,10 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
     })) as FlyaiResult)
   }
 
-  let items: unknown[]
-  try {
-    items = parseFlyaiItemList(r.stdout) as RawItem[]
-  } catch (e) {
+  const data = envelope.data as { itemList?: unknown } | null
+  if (!Array.isArray(data?.itemList)) {
     const raw = r.stdout.replace(/\s+/g, ' ').slice(0, 160)
-    // Sentinel 限流:exit 0,stdout 为 {"message":"SentinelBlockException…"}
-    if (/Sentinel/i.test(raw)) {
-      return safe({
-        kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'error',
-        retryable: false,
-        evidence: `[实时API:flyai@error@${ts}] sentinel: ${raw}`,
-        error: `FlyAI Sentinel 限流:${raw}`,
-        setup: '平台 Sentinel 限流(恢复窗口未公开)——稍后重试,或改走 gotry_session_search(账号会话)。',
-      })
-    }
-    const reason = (e as Error).message
+    const reason = 'no complete FlyAI itemList JSON object'
     return safe({
       kind: q.kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict: 'error',
       retryable: false,
@@ -859,7 +880,17 @@ export async function flyaiSearch(q: FlyaiQuery): Promise<FlyaiResult> {
     })
   }
 
-  return safe(parseItemListResult(q.kind, items, latencyMs, ts, envNote, r.stdout))
+  return safe(parseItemListResult(q.kind, data.itemList, latencyMs, ts, envNote, r.stdout))
+}
+
+// Explicit protocol/transport evidence only. Bare business codes and generic
+// words such as "network" or "timeout" do not diagnose an upstream outage.
+const HTTP_FAILURE = /\bHTTP(?:\/[\d.]+)?\s*[:=]?\s*([45]\d\d)\b/i
+const TRANSPORT_FAILURE = /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|ECONNABORTED|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN)\b|socket hang up|fetch failed|network (?:error|failure|unreachable)|(?:request|connection) (?:timed out|timeout|reset|refused)/i
+
+function explicitUpstreamFailure(text: string): boolean {
+  return HTTP_FAILURE.test(text) || TRANSPORT_FAILURE.test(text)
+    || /Invalid API key|Trial limit reached|SentinelBlockException/i.test(text)
 }
 
 /** 当前进程 key 来源/endpoint 覆盖(仅展示,与 spawn 实际生效同源) */
@@ -886,39 +917,47 @@ function classifyUpstreamFailure(
 ): FlyaiResult {
   const upstream = `${r.stderr}\n${r.stdout}`.replace(/\s+/g, ' ').trim()
   const tag = (verdict: FlyaiVerdict, evidence: string, extra: Partial<FlyaiResult>): FlyaiResult =>
-    ({ kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict, evidence, ...extra })
+    ({ kind, ...envNote, latencyMs, ok: false, via: 'flyai-error', verdict, upstreamHealth: 'unknown', evidence, ...extra })
+  const httpStatus = Number(HTTP_FAILURE.exec(upstream)?.[1])
 
-  if (/Invalid API key|HTTP\s*401|\b401\b/.test(upstream)) {
+  if (/Invalid API key/i.test(upstream) || httpStatus === 401) {
     return tag('auth-error', `[实时API:flyai@error@${ts}] 401 invalid api key`, {
       retryable: false,
       error: `FlyAI 鉴权失败(401):${upstream.slice(0, 160)}`,
       setup: '当前 key 无效或已吊销——在本机终端运行 `gotry setup flyai` 重新设置并验证(模型无法替你输入 key);`gotry setup flyai --clear` 可清除错误 key,清除后仍可匿名试用。',
     })
   }
-  if (/HTTP\s*403|\b403\b/.test(upstream)) {
+  if (httpStatus === 403) {
     return tag('forbidden', `[实时API:flyai@error@${ts}] 403 forbidden`, {
       retryable: false,
       error: `FlyAI 拒绝访问(403):${upstream.slice(0, 160)}`,
       setup: '上游 403:核对该 key 的权限范围与控制台状态;如 endpoint 被 DEBUG_FLYAI_MCP_URL 覆盖,请确认指向。',
     })
   }
-  if (/Trial limit reached/.test(upstream)) {
+  if (/Trial limit reached/i.test(upstream)) {
     return tag('needs-setup', `[实时API:flyai@error@${ts}] trial quota exhausted`, {
       retryable: false,
       error: `FlyAI 匿名试用额度已用尽:${upstream.slice(0, 160)}`,
       setup: '打开 https://flyai.open.fliggy.com/console，登录后复制 API Key,本机运行 `gotry setup flyai` 配置并验证;本会话请勿盲重试 gotry_flyai_search,机/火/酒改走 gotry_session_search。',
     })
   }
-  if (/HTTP\s*429|\b429\b/.test(upstream)) {
+  if (/SentinelBlockException/i.test(upstream)) {
+    return tag('error', `[实时API:flyai@error@${ts}] sentinel`, {
+      retryable: false, upstreamHealth: 'unhealthy',
+      error: `FlyAI Sentinel 限流:${upstream.slice(0, 160)}`,
+      setup: '平台 Sentinel 限流（恢复窗口未公开）；稍后重试，或改走 gotry_session_search（账号会话）。',
+    })
+  }
+  if (httpStatus === 429) {
     return tag('rate-limited', `[实时API:flyai@error@${ts}] 429 rate limited`, {
-      retryable: true,
+      retryable: true, upstreamHealth: 'unhealthy',
       error: `FlyAI 普通限流(非试用达限):${upstream.slice(0, 160)}`,
       setup: '上游普通限流:稍候再查,勿高频连发;仍 429 请稍后或换 gotry_session_search。',
     })
   }
-  if (/timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ECONNABORTED|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN|socket|network|fetch failed|HTTP\s*5\d\d|\b5\d\d\b/i.test(upstream)) {
+  if (TRANSPORT_FAILURE.test(upstream) || httpStatus >= 500) {
     return tag('error', `[实时API:flyai@error@${ts}] transient upstream`, {
-      retryable: true,
+      retryable: true, upstreamHealth: 'unhealthy',
       error: `FlyAI 瞬时网络/上游错误:${upstream.slice(0, 160)}`,
       setup: '网络抖动或上游 5xx:稍后重试;持续失败请检查本机网络或改走 gotry_session_search。',
     })
@@ -982,7 +1021,7 @@ function parseItemListResult(
   const count = parsed.options.length
   const verdict: FlyaiVerdict = count > 0 ? 'hit' : 'miss'
   const evidence = `[实时API:flyai@${ts}] ${count}/${items.length} ${KIND_LABEL[kind]} options`
-  const common = { kind, ...envNote, latencyMs, ok: true, via: 'flyai' as const, verdict, evidence, ...(systemMessage ? { systemMessage } : {}) }
+  const common = { kind, ...envNote, latencyMs, ok: true, via: 'flyai' as const, upstreamHealth: 'healthy' as const, verdict, evidence, ...(systemMessage ? { systemMessage } : {}) }
 
   switch (kind) {
     case 'flight':

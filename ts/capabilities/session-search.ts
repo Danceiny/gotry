@@ -17,8 +17,8 @@ import { extensionCookieNames, extensionSearchJob, classifyBridgeFailure, needsE
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { buildEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type BatchSearchShape, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
-import { buildHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
+import { resolveFlightEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type BatchSearchShape, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
+import { resolveHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, validateTrainQueryResponseUrl, TRAIN_SITE_HOST, type SessionTrainOption, type TrainQueryParseOutcome, type TrainResponseBinding } from './session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, parseDidaSearchCache, parseDidaRecommendHotels, parseDidaPrices, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
 import { EXTENSION_STORE_URL, type SessionJobHandle, type SniffBodies } from './session/extension-bridge.ts'
@@ -54,6 +54,8 @@ export interface SessionSearchResult {
 export interface SessionFlightQuery {
   from: string
   to: string
+  fromCityCode?: string
+  toCityCode?: string
   /** YYYY-MM-DD */
   date: string
   /** 隔离 profile 目录(测试必传;默认 /tmp 专用目录) */
@@ -143,6 +145,7 @@ export interface SessionHotelQuery {
   to: string
   /** 显式城市 id(携程/trip.com 酒店 list 页 URL 的 city= 数字;覆盖码表) */
   cityId?: number | string
+  country?: string
   /** YYYY-MM-DD */
   checkIn?: string
   /** YYYY-MM-DD(与 checkIn 成对) */
@@ -202,13 +205,14 @@ export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionH
   if (Date.now() - last < MIN_INTERVAL_MS) {
     return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
   }
-  lastCallAt.set(site, Date.now())
-
-  const entry = buildHotelEntryUrl({ to: q.to, cityId: q.cityId, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults })
+  const entry = await resolveHotelEntryUrl({ to: q.to, country: q.country, cityId: q.cityId, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults })
   if (!entry.ok || !entry.url) {
-    return err('error', hotelCityUnresolvedHint(entry.unresolved ?? [q.to]))
+    return err('error', entry.error ?? hotelCityUnresolvedHint(entry.unresolved ?? [q.to]))
   }
 
+  const resolvedLast = lastCallAt.get(site) ?? 0
+  if (Date.now() - resolvedLast < MIN_INTERVAL_MS) return err('cooldown', `rate limit: min ${MIN_INTERVAL_MS}ms`)
+  lastCallAt.set(site, Date.now())
   const mode = resolveTransportMode(q.profileDir)
 
   if (mode === 'extension') {
@@ -757,13 +761,15 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
   if (Date.now() - last < MIN_INTERVAL_MS) {
     return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
   }
-  lastCallAt.set(site, Date.now())
-
-  const entry = buildEntryUrl(q.from, q.to, q.date)
+  const entry = await resolveFlightEntryUrl(q.from, q.to, q.date, { fromCode: q.fromCityCode, toCode: q.toCityCode })
   if (!entry.ok || !entry.url) {
-    return err('error', `unresolved entry: ${(entry.unresolved ?? []).join('/')} 不在城市码表`)
+    return err('error', entry.error ?? '城市解析失败，请确认城市或机场码；不能据此判断航线覆盖')
   }
 
+  // Resolution never consumes inventory pacing; recheck after asynchronous lookup.
+  const resolvedLast = lastCallAt.get(site) ?? 0
+  if (Date.now() - resolvedLast < MIN_INTERVAL_MS) return err('cooldown', `rate limit: min ${MIN_INTERVAL_MS}ms`)
+  lastCallAt.set(site, Date.now())
   const mode = resolveTransportMode(q.profileDir)
 
   if (mode === 'extension') {

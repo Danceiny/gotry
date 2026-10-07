@@ -42,8 +42,8 @@ issue #16, "multi-channel price comparison and external-dependency isolation", a
 ```
 Effect value (pure data):  { effect: string, params: unknown }          // GotryEffect
 Interpreted outcome:        { result: channel-native observation | null, // EffectOutcome (no re-wrapping; the ADR-13 surface stays undisturbed)
-                              trace:  { attempts, backoffMs, breaker, declined?, evidence[] } }
-Rejection surface (flat):   declinedObservation(): { ok:false, verdict:'error', summary, evidence }
+                              trace:  { attempts, backoffMs, breaker, declined?, retryAfterMs?, evidence[] } }
+Rejection surface (flat):   declinedObservation(): { ok:false, verdict:'error', summary, evidence, retryAfterMs? }
 ```
 
 - **Host cancellation**: a cancelled dispatch returns `result: null` and `trace.declined: 'aborted'`. The flat observation explicitly says the search was cancelled; it does not diagnose an unknown effect or fabricate an empty result. Cancellation stops retries and leaves failure counts unchanged.
@@ -61,6 +61,7 @@ Rejection surface (flat):   declinedObservation(): { ok:false, verdict:'error', 
   counted only after retries are exhausted) → open (zero-execution rejection, no error thrown) → cooldown elapsed → half-open single
   probe (success → closed and reset to zero; failure → open again, cooldown restarts). The state is an **in-process transient** (precedent:
   the session cadence gate), not persisted as a durable asset; tests are fully deterministic with an injected clock/immediate sleep.
+- **FlyAI health and isolation**: retry eligibility and breaker health are separate adapter observations. Only explicit transport faults, HTTP 5xx, ordinary HTTP 429 and Sentinel throttling count as upstream failures. Input, authentication, forbidden, trial setup, cancellation, business errors, malformed responses and unclassified exits remain visible failures without increasing or resetting the fault count; a neutral half-open result releases only its own probe. A valid hit or empty `miss` proves a healthy response and resets the count. Nonzero business status or an error envelope takes precedence over any embedded item list and never becomes an inventory fact or an inferred unsupported route. Benign message-only JSON CLI logs are skipped when selecting the response; AI success requires a `data` member, with explicit empty data such as `null` still accepted. Breakers are partitioned by search kind and the full normalized endpoint plus active credential identity, using an irreversible hash in the process map; raw keys, endpoint secrets and scope fingerprints do not enter traces. Open rejections expose the bounded remaining `retryAfterMs` and a wait instruction; an in-flight half-open probe does not invent a completion estimate.
 - **Retry semantics**: only "transient-class" failures are retried (timeouts/network breaks/socket); failures where the upstream clearly says "no"
   (FlyAI Sentinel rate limiting, 429 trial-quota exhaustion) and ENOENT-class doomed failures are never retried — retry is an amplifier, not a fixer.
 
@@ -68,7 +69,7 @@ Rejection surface (flat):   declinedObservation(): { ok:false, verdict:'error', 
 
 | Effect | Channel | Retry | Breaker | Cadence/Authorization | Rationale |
 |---|---|---|---|---|---|
-| `FLYAI_SEARCH` | cli | Explicit transient class: 2 attempts / 500ms start | 3 consecutive errors / open 60s | – | Ordinary 429 and upstream network/HTTP 5xx may retry once; authentication, forbidden, trial quota, Sentinel, malformed responses and local termination never retry. A nonzero exit alone does not decide the policy. |
+| `FLYAI_SEARCH` | cli | Explicit transient class: 2 attempts / 500ms start | 3 consecutive upstream health failures / open 60s, per kind and endpoint/credential identity | – | Ordinary HTTP 429 and explicit transport/HTTP 5xx may retry once; Sentinel counts for protection but never retries. Business, auth, configuration, malformed and local termination failures are neutral. A nonzero exit or bare business code alone does not decide upstream health. |
 | `HBCLI_HOTEL_SEARCH` | cli | timeout only, 2 times / starting 300ms | 3 consecutive errors / open 60s | – | the hbcli contract "candidate paths are switching, not retrying" covers only ENOENT-class; timeout (upstream cold-start building the backend session can exceed 30s) recovers with 1 retry (2026-09-02 Dubai session live record) |
 | `HBCLI_HOTEL_RATES` | cli | timeout only, 2 times / starting 300ms | 3 consecutive errors / open 60s | – | same HBCLI family (timeout-only); the price surface **has no static degradation — fail-closed** (no fare estimation, same caliber as the bookable-facts evidence grading) |
 | `HBCLI_CHECK_AVAIL` | cli | timeout only, 2 times / starting 300ms | 3 consecutive errors / open 60s | – | same as above; price-verification unavailable means honest failure (a booking-chain order precondition, M0) |
@@ -97,7 +98,7 @@ but have no backoff/breaker/mock fixtures yet).
 ## 5. Tests and anchors
 
 `ts/scripts/effect-tests.ts` (run-all §37, purely offline): registry closedness / backoff-cap chain and accounting /
-breaker three states (clock injection) / Sentinel not retried but breaker counted / breaker zero-execution rejection + cooldown single-probe recovery / mock fixture
+breaker three states (clock injection, including epoch zero) / neutral FlyAI business/auth/configuration failures / kind and endpoint/credential isolation / Sentinel not retried but breaker counted / bounded cooldown rejection + neutral-probe release and healthy empty-response recovery / mock fixture
 replay / SESSION red line (never retry, no breaker) / real-handler static-package degradation smoke (custom nonexistent bin,
 zero network).
 

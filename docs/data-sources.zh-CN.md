@@ -238,6 +238,7 @@ TREK 是自托管协作旅行规划器，数据面成熟度最高，可借鉴的
 ### 会话数据面 P1（RFC §4,2026-08-28）
 
 - `capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard（方法×URL 双因子 + 驼峰复合写词，写请求物理 abort + 审计，fail-closed）+ 携程机票适配器（batchSearch 嗅探→结构化）+ 节律闸（同站 ≥30s）；证据链新标注 `[会话:ctrip-flight@ts]` 生效；run-all §24。live 会话检索需 headful（headless 下携程只回壳页，实测）。
+- **携程城市解析**：生产机票入口通过公开 `SearchBoxRecommend` 城市目录解析城市／机场名称，未命中再走精确匹配的自动补全；酒店入口独立使用 `getHotelKeywords` 城市候选。旧小表仅保留为纯函数兼容夹具，不再作为生产覆盖范围门禁。机票城市码和酒店 ID 属于不同命名空间，同名城市须确认国家或提供明确的供应商城市码／ID。元数据查询有界、无凭据、只读；拦截或畸形响应报告解析暂不可用，不能据此判断无库存或不支持目的地。解析失败不消耗库存检索节律额度。确定性回归覆盖 `ts/scripts/ctrip-city-tests.ts` 及会话／扩展套件；当前供应商元数据已验证迪拜、香港、上海，不代表实时库存验证。
 - 登录态为存在前提（founder 纠偏 2026-08-28）：persistent 专用 profile 降为测试/后备（实测：匿名窗口无人会登录，History/Cookies 双 0 行）；**2026-08-30 传输层定案（founder「逐连接权限框根本无法使用」）：扩展桥升 PRIMARY**——`extension/` Stai Travel Bridge（MV3 一次性安装，manifest 固定 key=扩展 ID）在自身标签页被动嗅探站点自身请求（扩展零写行为），`session/extension-bridge.ts` 回环桥（node:http 零新依赖，origin 白名单）长轮询配对；系统弹窗每会话 0 次，cookie 只读名字值即弃，cdp 降为 `GOTRY_SESSION_TRANSPORT=cdp` 显式诊断后备（不静默回退）；run-all §38 全离线合同。
 - 多个可信扩展同时轮询同一桥时，票据名字预检与紧接着的检索绑定到领取预检作业的 Origin 和后台进程客户端标识；另一客户端不能领取检索或提交该作业的回包。标识随机生成、仅在后台进程存活期间有效：进程重启后，绑定的检索在时限内失败，不会切到另一 Chrome 配置。未上报标识的旧版扩展仍按 Origin 路由。跨次检索和默认产品路径仍须按 D-13 做真实核验（tracker [#272](https://github.com/Danceiny/gotry/issues/272) 已于 2026-10-05 按「推迟」关闭）。
 

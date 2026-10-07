@@ -30,6 +30,14 @@ import {
 } from '../capabilities/effect.ts'
 
 const sleep0 = async () => {} // 回退即时放行(确定性,不真睡)
+// Every FlyAI test resolves only synthetic configuration, never the user's key.
+const flyaiTestHome = await mkdtemp(join(tmpdir(), 'effect-flyai-home-'))
+const originalFlyaiEnv = Object.fromEntries(['HOME', 'FLYAI_API_KEY', 'DEBUG_FLYAI_API_KEY', 'DEBUG_FLYAI_MCP_URL'].map(name => [name, process.env[name]]))
+process.env.HOME = flyaiTestHome
+process.env.FLYAI_API_KEY = 'effect-fixture-key'
+delete process.env.DEBUG_FLYAI_API_KEY
+process.env.DEBUG_FLYAI_MCP_URL = 'https://flyai-fixture.invalid/mcp'
+try {
 let clock = 1_000_000
 const now = () => clock
 
@@ -180,6 +188,19 @@ br.onFailure()
 assert.equal(br.state(), 'open', '探测失败 → 重新 open(冷却重启)')
 console.log('3. 断路器三态(closed→open→half-open 单探测→双向收敛)OK')
 
+// A valid injected clock can start at epoch zero; opening must not depend on
+// a truthy timestamp, and remaining cooldown must stay bounded if time rolls back.
+let zeroClock = 0
+const epochBreaker = new CircuitBreaker({ failureThreshold: 1, openMs: 60_000, now: () => zeroClock })
+epochBreaker.onFailure()
+assert.equal(epochBreaker.canAttempt().allowed, false, 'failure at epoch zero must open the breaker')
+assert.equal(epochBreaker.canAttempt().retryAfterMs, 60_000)
+zeroClock = -1_000
+assert.equal(epochBreaker.canAttempt().retryAfterMs, 60_000, 'clock rollback cannot exceed the configured cooldown')
+zeroClock = 60_000
+assert.equal(epochBreaker.canAttempt().allowed, true, 'exact cooldown boundary admits a single probe')
+assert.equal(epochBreaker.canAttempt().retryAfterMs, undefined, 'in-flight probe has no invented completion estimate')
+
 // 3a. 半开探测所有权：旧 closed 调用的取消/完成不能释放或修改新一代探测。
 const raceClock = { value: 100 }
 const raceNow = () => raceClock.value
@@ -289,8 +310,50 @@ console.log('4. 生产解译器×瞬时失败:重试后成功 + trace 记账 OK'
 // ---------------------------------------------------------------------------
 // 5. FlyAI×Sentinel:不重试,但连续失败计入熔断
 // ---------------------------------------------------------------------------
+// A failure observation is not evidence of an outage. Business/auth/input/
+// malformed failures stay visible without opening or retrying the breaker.
+for (const result of [
+  { verdict: 'error', error: 'upstream business status 1001', upstreamHealth: 'unknown' },
+  { verdict: 'auth-error', upstreamHealth: 'unknown' },
+  { verdict: 'forbidden', upstreamHealth: 'unknown' },
+  { verdict: 'needs-setup', upstreamHealth: 'unknown' },
+  { verdict: 'cancelled', localTermination: 'signal', upstreamHealth: 'unknown' },
+  { verdict: 'error', error: 'malformed itemList', upstreamHealth: 'unknown' },
+  { verdict: 'error', error: 'invalid argument', upstreamHealth: 'unknown' },
+  { verdict: 'error', error: 'unclassified legacy failure' },
+]) {
+  let calls = 0
+  const neutral = makeProductionInterpreter({
+    breakers: new Map(), sleep: sleep0,
+    handlers: { FLYAI_SEARCH: async () => { calls += 1; return { ok: false, via: 'flyai-error', kind: 'flight', latencyMs: 1, evidence: 'fixture failure', retryable: false, ...result } } },
+  })
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const out = await neutral({ effect: 'FLYAI_SEARCH', params: { kind: 'flight', origin: '北京' } })
+    assert.equal(out.trace.declined, undefined, `${result.verdict}/${result.error ?? ''} must not open breaker`)
+    assert.equal(out.trace.attempts, 1, 'neutral failure must not retry')
+    assert.equal((out.result as { ok?: boolean }).ok, false, 'neutral failure stays a visible failure')
+  }
+  assert.equal(calls, 4, 'all neutral requests reach the adapter')
+}
+console.log('5a. FlyAI business/auth/setup/input/malformed/cancelled failures are breaker-neutral OK')
+
+const streakResults = [
+  { ok: false, upstreamHealth: 'unhealthy', retryable: false },
+  { ok: false, upstreamHealth: 'unknown', retryable: false },
+  { ok: false, upstreamHealth: 'unhealthy', retryable: false },
+  { ok: false, upstreamHealth: 'unhealthy', retryable: false },
+]
+const streakInterpreter = makeProductionInterpreter({
+  breakers: new Map(), sleep: sleep0,
+  handlers: { FLYAI_SEARCH: async () => streakResults.shift() },
+})
+for (let i = 0; i < 4; i += 1) await streakInterpreter({ effect: 'FLYAI_SEARCH', params: { kind: 'flight' } })
+const streakBlocked = await streakInterpreter({ effect: 'FLYAI_SEARCH', params: { kind: 'flight' } })
+assert.equal(streakBlocked.trace.declined, 'circuit-open', 'neutral failure cannot falsely reset consecutive upstream faults')
+
 const sentinelResult = {
   ok: false, via: 'flyai-error', verdict: 'error', kind: 'flight', latencyMs: 5,
+  upstreamHealth: 'unhealthy', retryable: false,
   evidence: '[实时API:flyai@error@ts] parse failed(SentinelBlockException)',
   error: 'failed to parse flyai output as JSON (incomplete FlyAI JSON object): {"message":"SentinelBlockException"}',
 }
@@ -314,6 +377,27 @@ const itp4th = await ipS({ effect: 'FLYAI_SEARCH', params: q })
 assert.equal(itp4th.trace.declined, 'circuit-open', '第 4 次:熔断中零执行成本拒绝')
 assert.equal(itp4th.result, null)
 assert.equal(sentinelCalls, 3, '熔断后不再打上游')
+assert.equal(itp4th.trace.retryAfterMs, 60_000, 'open rejection exposes bounded remaining cooldown')
+clock += 1_000
+const cooling = await ipS({ effect: 'FLYAI_SEARCH', params: q })
+assert.equal(cooling.trace.retryAfterMs, 59_000, 'cooldown decreases with elapsed time')
+const coolingObservation = declinedObservation('FLYAI_SEARCH', cooling.trace)
+assert.equal(coolingObservation.retryAfterMs, 59_000, 'flat failure preserves actionable cooldown')
+assert.match(coolingObservation.summary, /59/, 'user feedback includes remaining seconds')
+assert.doesNotMatch(coolingObservation.summary, /不支持|unsupported|无航班/, 'outage is not route/inventory evidence')
+
+const hotelIndependent = await ipS({ effect: 'FLYAI_SEARCH', params: { kind: 'hotel', destName: '北京' } })
+assert.equal(hotelIndependent.trace.attempts, 1, 'flight breaker cannot disable hotel searches')
+process.env.FLYAI_API_KEY = 'corrected-fixture-key'
+const correctedKey = await ipS({ effect: 'FLYAI_SEARCH', params: q })
+assert.equal(correctedKey.trace.attempts, 1, 'corrected key starts an independent breaker')
+process.env.FLYAI_API_KEY = 'effect-fixture-key'
+process.env.DEBUG_FLYAI_MCP_URL = 'https://flyai-fixture.invalid/mcp?token=changed-secret'
+const changedEndpoint = await ipS({ effect: 'FLYAI_SEARCH', params: q })
+assert.equal(changedEndpoint.trace.attempts, 1, 'endpoint query changes start an independent breaker')
+const scopeText = JSON.stringify([...flyaiBreakers.keys()]) + JSON.stringify(changedEndpoint.trace)
+assert.doesNotMatch(scopeText, /effect-fixture-key|corrected-fixture-key|changed-secret|https:/, 'breaker keys and traces contain no credential/endpoint plaintext')
+process.env.DEBUG_FLYAI_MCP_URL = 'https://flyai-fixture.invalid/mcp'
 console.log('5. FlyAI×Sentinel:永不重试 + 连环失败触发熔断保护配额 OK')
 
 // #517: adapter-owned local termination is explicit terminal state. The
@@ -340,8 +424,8 @@ const classifiedTransient = makeProductionInterpreter({
     FLYAI_SEARCH: async () => {
       classifiedTransientCalls += 1
       return classifiedTransientCalls === 1
-        ? { ok: false, via: 'flyai-error', verdict: 'error', retryable: true, kind: 'flight', latencyMs: 1, evidence: 'HTTP 500' }
-        : { ok: true, via: 'flyai', verdict: 'miss', kind: 'flight', latencyMs: 1, evidence: 'empty itemList', options: [] }
+        ? { ok: false, via: 'flyai-error', verdict: 'error', retryable: true, upstreamHealth: 'unhealthy', kind: 'flight', latencyMs: 1, evidence: 'HTTP 500' }
+        : { ok: true, via: 'flyai', verdict: 'miss', upstreamHealth: 'healthy', kind: 'flight', latencyMs: 1, evidence: 'empty itemList', options: [] }
     },
   },
 })
@@ -357,13 +441,20 @@ const declined = declinedObservation('FLYAI_SEARCH', itp4th.trace)
 assert.equal(declined.ok, false)
 assert.match(declined.summary, /断路器开启/, '拒绝面指引「不要立即重试」,不伪装成 miss')
 clock += 120_000 // 冷却满(FlyAI 60s)→ half-open
+const neutralProbe = makeProductionInterpreter({
+  sleep: sleep0, breakers: flyaiBreakers, now,
+  handlers: { FLYAI_SEARCH: async () => ({ ok: false, verdict: 'error', upstreamHealth: 'unknown', retryable: false, evidence: 'unknown business failure' }) },
+})
+const neutralProbeOutcome = await neutralProbe({ effect: 'FLYAI_SEARCH', params: q })
+assert.equal(neutralProbeOutcome.trace.breaker, 'half-open', 'neutral probe cannot claim upstream recovery')
 const ipOk = makeProductionInterpreter({
   sleep: sleep0, breakers: flyaiBreakers, now, // 复用同一断路器 Map——状态在 Map 里存活
-  handlers: { FLYAI_SEARCH: async () => ({ ok: true, via: 'flyai', verdict: 'hit', kind: 'flight', latencyMs: 1, evidence: 'e', options: [] }) },
+  handlers: { FLYAI_SEARCH: async () => ({ ok: true, via: 'flyai', verdict: 'miss', upstreamHealth: 'healthy', kind: 'flight', latencyMs: 1, evidence: 'e', options: [] }) },
 })
 const itp6 = await ipOk({ effect: 'FLYAI_SEARCH', params: { kind: 'flight' } })
 assert.equal(itp6.trace.breaker, 'closed', 'half-open 单探测成功 → closed 恢复')
 assert.ok(itp6.result != null && !itp6.trace.declined)
+assert.equal((itp6.result as { verdict?: string }).verdict, 'miss', 'valid empty response recovers the breaker without inventing inventory')
 console.log('6. 断路拒绝面(结构化/零执行)+ 冷却后单探测恢复 closed OK')
 
 // ---------------------------------------------------------------------------
@@ -591,3 +682,10 @@ assert.equal(outMockBad.trace.declined, 'unknown-effect', '未登记夹具 → �
 console.log('12d. mock 夹具回放/未登记拒绝(新效应同语义)OK')
 
 console.log('EFFECT INTERPRETER TESTS: 12/12 OK(effect_interpreter.v1:注册表封闭/退避链/断路三态/Sentinel 不重试/mock 夹具/SESSION 红线/真实降级/M0 预订链读效应/HBCLI timeout 重试/D-23 六渠道入表,纯离线)')
+} finally {
+  for (const [name, value] of Object.entries(originalFlyaiEnv)) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+  await rm(flyaiTestHome, { recursive: true, force: true })
+}

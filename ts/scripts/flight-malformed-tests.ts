@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     const expectVerdict = async (label: string, body: string, title: string, expected: 'hit' | 'miss' | 'error' | 'challenged', extra?: (r: Awaited<ReturnType<typeof sessionFlightSearch>>) => void): Promise<void> => {
       __resetRateLimiterForTest()
       testCase = { body, title }
-      const r = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 5_000 })
+      const r = await sessionFlightSearch({ from: '上海', to: '丽江', fromCityCode: 'SHA', toCityCode: 'LJG', date: '2026-12-01', timeoutMs: 5_000 })
       await check(label, () => {
         assert.equal(r.verdict, expected, `verdict 期望 ${expected},实 ${r.verdict} (${r.error ?? ''})`)
         if (extra) extra(r)

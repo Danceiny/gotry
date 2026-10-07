@@ -773,7 +773,7 @@ async function main(): Promise<void> {
       __resetRateLimiterForTest()
       const cookiePoll = claimOnce(lane.port, null)
       await waitForParkedCount(lane.port, 1)
-      const search = sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000 })
+      const search = sessionFlightSearch({ from: '上海', to: '丽江', fromCityCode: 'SHA', toCityCode: 'LJG', date: '2026-12-01', timeoutMs: 3_000 })
       const cookieClaim = await cookiePoll
       assert.equal(cookieClaim.job?.kind, 'cookie-names')
 
@@ -827,7 +827,7 @@ async function main(): Promise<void> {
       __resetRateLimiterForTest()
       const cookiePoll = claimOnce(lane.port, null, undefined, ['ctrip-flight'], EXTENSION_ORIGIN, clientA)
       await waitForParkedCount(lane.port, 1)
-      const search = sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000, auditPath: shapeAudit })
+      const search = sessionFlightSearch({ from: '上海', to: '丽江', fromCityCode: 'SHA', toCityCode: 'LJG', date: '2026-12-01', timeoutMs: 3_000, auditPath: shapeAudit })
       const cookieClaim = await cookiePoll
       assert.equal(cookieClaim.job?.kind, 'cookie-names')
       otherPoll = claimOnce(lane.port, (job) => {
@@ -894,7 +894,7 @@ async function main(): Promise<void> {
     })()
     try {
       __resetRateLimiterForTest()
-      const result = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000 })
+      const result = await sessionFlightSearch({ from: '上海', to: '丽江', fromCityCode: 'SHA', toCityCode: 'LJG', date: '2026-12-01', timeoutMs: 3_000 })
       assert.equal(result.verdict, 'error')
       assert.equal(result.transportShape, 'sniff_timeout')
       assert.match(result.error ?? '', /嗅探超时|未收到.*回包/)
@@ -931,7 +931,7 @@ async function main(): Promise<void> {
       })()
       try {
         __resetRateLimiterForTest()
-        const result = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01', timeoutMs: 3_000 })
+        const result = await sessionFlightSearch({ from: '上海', to: '丽江', fromCityCode: 'SHA', toCityCode: 'LJG', date: '2026-12-01', timeoutMs: 3_000 })
         assert.equal(result.verdict, 'error')
         assert.equal(result.transportShape, failedKind === 'search' ? 'search_job_unavailable' : 'precheck_unavailable')
         assert.doesNotMatch(JSON.stringify(result), /PRIVATE_ROUTE_DATE_COOKIE_VALUE/)
@@ -954,12 +954,17 @@ async function main(): Promise<void> {
     const blockers: Array<{ close: () => Promise<void> }> = []
     try {
       for (const port of [8791, 8792, 8793, 8794, 8795]) {
-        const s = createServer().listen(port, '127.0.0.1')
-        await new Promise<void>((r) => s.once('listening', () => r()))
-        blockers.push({ close: () => new Promise<void>((r) => s.close(() => r())) })
+        const s = createServer()
+        const owned = await new Promise<boolean>((resolve, reject) => {
+          s.once('listening', () => resolve(true))
+          s.once('error', (error: NodeJS.ErrnoException) => error.code === 'EADDRINUSE' ? resolve(false) : reject(error))
+          s.listen(port, '127.0.0.1')
+        })
+        // An active user bridge already occupies this port; never stop it.
+        if (owned) blockers.push({ close: () => new Promise<void>((r) => s.close(() => r())) })
       }
       await __resetSessionBridgeForTest()
-      const r = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-12-01' })
+      const r = await sessionFlightSearch({ from: '上海', to: '丽江', fromCityCode: 'SHA', toCityCode: 'LJG', date: '2026-12-01' })
       assert.equal(r.verdict, 'error', `端口池全占应 error(环境故障),实 ${r.verdict}:${r.error}`)
       assert.ok(r.error?.includes('端口池'), '错误面必须点明端口池环境问题')
       assert.ok(!r.error?.includes('一次性安装'), 'error 路径不应诱导用户去装扩展')

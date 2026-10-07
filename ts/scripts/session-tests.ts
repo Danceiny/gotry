@@ -150,6 +150,9 @@ assert(e1.ok === true && e1.url === 'https://flights.ctrip.com/online/list/onewa
 const e2 = buildEntryUrl('乌兰巴托', '丽江', '2026-10-01')
 assert(e2.ok === false && e2.unresolved?.[0] === '乌兰巴托', '词表外城市 unresolved 逐字保留(不猜)')
 assert(buildEntryUrl('上海', '丽江', '十月一号').ok === false, '非法日期拒绝')
+const internationalEntry = buildEntryUrl('迪拜', '香港', '2026-12-01', { fromCode: 'DXB', toCode: 'HKG' })
+assert(internationalEntry.ok && internationalEntry.url?.includes('oneway-dxb-hkg') === true, '显式供应商城市码不受内置表限制')
+assert(!buildEntryUrl('迪拜', '香港', '2026-12-01', { fromCode: '../dxb', toCode: 'HKG' }).ok, '显式城市码拒绝 URL 注入')
 
 // D. DOM 提交件过滤
 console.log('D. isSubmitText(DOM 提交件黑名单)')
@@ -160,9 +163,9 @@ assert(!isSubmitText('搜索') && !isSubmitText('筛选'), '搜索/筛选 不误
 console.log('E. 节律闸(≥30s 间隔)')
 __resetRateLimiterForTest()
 const r1 = await sessionFlightSearch({ from: '乌兰巴托', to: '丽江', date: '2026-10-01' })
-const r2 = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2026-10-01' })
+const r2 = await sessionFlightSearch({ from: '另一个未知城市', to: '丽江', date: '2026-10-01' })
 assert(r1.verdict === 'error' && /unresolved/.test(r1.error ?? ''), '首次调用:词表外 → error(unresolved)')
-assert(r2.verdict === 'cooldown', '30s 内二次调用 → cooldown,不发起导航')
+assert(r2.verdict === 'error', '城市解析失败不占用库存检索节律额度，不误报 cooldown')
 __resetRateLimiterForTest()
 
 // F. transport 失败分类 + live FlyAI 官方通道
@@ -565,8 +568,8 @@ console.log('K. 酒店适配器(buildHotelEntryUrl/走形解析/形状嗅探/城
   __resetRateLimiterForTest()
   const e1 = await sessionHotelSearch({ to: '不在码表的城市' })
   assert(e1.ok === false && e1.verdict === 'error' && /city=/.test(e1.error ?? ''), '未收录城市 → error + cityId 指引', e1)
-  const e2 = await sessionHotelSearch({ to: '上海' })
-  assert(e2.ok === false && e2.verdict === 'cooldown', '节律闸:同站点 30s 内第二调 → cooldown(不发起导航)', e2)
+  const e2 = await sessionHotelSearch({ to: '另一个未知酒店城市' })
+  assert(e2.ok === false && e2.verdict === 'error', '酒店城市解析失败不占用库存节律额度', e2)
 }
 
 

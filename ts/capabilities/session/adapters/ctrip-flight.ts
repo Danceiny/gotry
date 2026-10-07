@@ -7,8 +7,10 @@
  * 只读:适配器不含任何提交/预订语义;URL 直开即零 DOM 交互。
  */
 
-/** 城市三字码表(小起步集;词表外 unresolved 逐字保留,不做开放式猜测——ADR-12 同款边界) */
-const CITY_CODES: Record<string, string> = {
+import { resolveCtripFlightCity, cityResolutionHint, type CityResolution } from '../ctrip-city.ts'
+
+/** 离线起步缓存；未命中由编排层查询供应商城市数据，不推断航线覆盖。 */
+export const CITY_CODES: Record<string, string> = {
   上海: 'sha', 北京: 'bjs', 广州: 'can', 深圳: 'szx', 成都: 'ctu', 昆明: 'kmg',
   大理: 'dlu', 丽江: 'ljg', 西安: 'sia', 杭州: 'hgh', 三亚: 'syx', 厦门: 'xmn',
   重庆: 'cqg', 青岛: 'taa', 长沙: 'csx', 武汉: 'wuh', 南京: 'nkg', 郑州: 'cgo',
@@ -20,12 +22,30 @@ export interface AdapterEntry {
   url?: string
   /** 词表外城市逐字保留(调用方降级无日期/无线路搜索) */
   unresolved?: string[]
+  error?: string
 }
 
-export function buildEntryUrl(from: string, to: string, depDate: string): AdapterEntry {
+/** Resolve unknown names against current supplier metadata before inventory navigation. */
+export async function resolveFlightEntryUrl(from: string, to: string, depDate: string,
+  codes: { fromCode?: string; toCode?: string } = {},
+  resolve: (query: string) => Promise<CityResolution> = resolveCtripFlightCity): Promise<AdapterEntry> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(depDate)) return { ok: false, unresolved: [depDate], error: '出发日期需要 YYYY-MM-DD' }
+  for (const c of [codes.fromCode, codes.toCode]) if (c !== undefined && !/^[a-z]{3}$/i.test(c)) return { ok: false, error: '城市／机场码必须是三个英文字母' }
+  const resolveCode = async (name: string, explicit?: string) => {
+    const known = explicit ?? (/^[a-z]{3}$/i.test(name.trim()) ? name.trim() : undefined)
+    if (known) return { code: known }
+    const result = await resolve(name)
+    return result.ok ? { code: result.city.code } : { error: cityResolutionHint(name, result) }
+  }
+  const [origin, destination] = await Promise.all([resolveCode(from, codes.fromCode), resolveCode(to, codes.toCode)])
+  if (!origin.code || !destination.code) return { ok: false, unresolved: [!origin.code ? from : '', !destination.code ? to : ''].filter(Boolean), error: [origin.error, destination.error].filter(Boolean).join('；') }
+  return buildEntryUrl(from, to, depDate, { fromCode: origin.code, toCode: destination.code })
+}
+
+export function buildEntryUrl(from: string, to: string, depDate: string, codes: { fromCode?: string; toCode?: string } = {}): AdapterEntry {
   const unresolved: string[] = []
-  const fromCode = CITY_CODES[from]
-  const toCode = CITY_CODES[to]
+  const fromCode = codes.fromCode === undefined ? CITY_CODES[from.trim()] : /^[a-z]{3}$/i.test(codes.fromCode) ? codes.fromCode.toLowerCase() : undefined
+  const toCode = codes.toCode === undefined ? CITY_CODES[to.trim()] : /^[a-z]{3}$/i.test(codes.toCode) ? codes.toCode.toLowerCase() : undefined
   if (!fromCode) unresolved.push(from)
   if (!toCode) unresolved.push(to)
   if (unresolved.length > 0 || !/^\d{4}-\d{2}-\d{2}$/.test(depDate)) {

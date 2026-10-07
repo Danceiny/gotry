@@ -30,7 +30,7 @@ import {
   type RetryPolicy,
   type RetryablePredicate,
 } from './resilience.ts'
-import { flyaiSearch, type FlyaiQuery } from './flyai.ts'
+import { flyaiBreakerScope, flyaiSearch, type FlyaiQuery } from './flyai.ts'
 import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
 import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery, type SessionDidaQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
@@ -202,6 +202,10 @@ interface ChannelSpec {
   isRetryable?: RetryablePredicate
   /** 参与「失败」判定的形态(断路器计数与 declined 面共用) */
   isFailure: (result: unknown) => boolean
+  /** 缺少上游健康证据时不增失败，也不清零；半开时仅释放探测所有权。 */
+  isNeutral?: (result: unknown, error: unknown) => boolean
+  /** 细分共享故障域；返回值仅用于进程内 Map，不进入 trace。 */
+  breakerScope?: (params: unknown) => string
 }
 
 const defaultIsFailure = (r: unknown): boolean => (r as { ok?: unknown } | null)?.ok === false
@@ -223,8 +227,8 @@ const HBCLI_RETRY: RetryPolicy = { maxAttempts: 2, baseDelayMs: 300, maxDelayMs:
 
 /**
  * 渠道韧性策略表(权威面;docs/design/effect-interpreter.md §3 同表逐行有依据):
- *   - FLYAI:瞬时代码级错误重试 1 次;连续 3 次 error(含 Sentinel)熔断 60s 保护配额;
- *     试用额度达限(429)归 needs-setup,永不重试;
+ *   - FLYAI:明确瞬时故障重试 1 次；同 kind/endpoint/key 连续 3 次明确
+ *     上游健康故障（含 Sentinel）熔断 60s；业务、配置与未知失败不计熔断；
  *   - HBCLI:仅 timeout 类失败重试 1 次(冷启动建后端 session 可超时,重试即恢复);
  *     ENOENT/退码类永不重试(上游契约「候选路径是切换不是重试」),熔断同上;
  *     RATES/CHECK_AVAIL 同族,且价格面无静态降级(fail-closed,不估算房价——
@@ -249,7 +253,12 @@ const SPECS: Record<EffectName, ChannelSpec> = {
       // Only explicit transient classification permits retry; terminal failures stay final.
       return result?.retryable === true
     },
-    isFailure: defaultIsFailure,
+    isFailure: r => (r as { upstreamHealth?: string } | null)?.upstreamHealth === 'unhealthy',
+    isNeutral: r => {
+      const health = (r as { upstreamHealth?: string } | null)?.upstreamHealth
+      return health !== 'healthy' && health !== 'unhealthy'
+    },
+    breakerScope: p => flyaiBreakerScope((p as { kind?: unknown } | null)?.kind),
   },
   HBCLI_HOTEL_SEARCH: {
     channel: 'cli',
@@ -389,6 +398,8 @@ export interface EffectTrace {
   breaker: BreakerState | 'off'
   /** 非 null 时 result 恒 null(结构化拒绝面,不抛错) */
   declined?: 'circuit-open' | 'unknown-effect' | 'aborted'
+  /** 熔断冷却剩余时间，范围为 0 到本渠道 openMs；在途半开探测不猜等待时间。 */
+  retryAfterMs?: number
   /** 解译层横切证据行([效应:<NAME>@ts] …) */
   evidence: string[]
 }
@@ -402,16 +413,19 @@ export interface EffectOutcome<R = unknown> {
 export type EffectInterpreter = (fx: GotryEffect) => Promise<EffectOutcome>
 
 /** 断路/未注册时的平铺失败观察(ADR-13 ToolFailure 兼容形态,工具层可直接返回) */
-export function declinedObservation(effect: string, trace: EffectTrace): { ok: false; verdict: 'error'; summary: string; evidence: string } {
+export function declinedObservation(effect: string, trace: EffectTrace): { ok: false; verdict: 'error'; summary: string; evidence: string; retryAfterMs?: number } {
   return {
     ok: false,
     verdict: 'error',
     summary: trace.declined === 'aborted'
       ? `${effect} 检索已取消，未产生新的查询结果。`
       : trace.declined === 'circuit-open'
-      ? `${effect} 通道被断路器开启保护(连续失败达到阈值,冷却中)——不要立即重试,换其他工具或稍后再试;原因见 trace 证据链`
+      ? trace.breaker === 'half-open'
+        ? `${effect} 通道的恢复探测正在进行；等待当前探测结果后再查询，或使用其他工具。`
+        : `${effect} 通道被断路器开启保护（连续上游故障达到阈值，冷却中）；${typeof trace.retryAfterMs === 'number' ? `约 ${Math.ceil(trace.retryAfterMs / 1_000)} 秒后可发起恢复探测` : '稍后可发起恢复探测'}，当前可使用其他工具。`
       : `${effect} 未登记效应(effect_interpreter.v1 注册表外,生产解译器拒绝)`,
     evidence: trace.evidence.join(';'),
+    ...(trace.retryAfterMs !== undefined ? { retryAfterMs: trace.retryAfterMs } : {}),
   }
 }
 
@@ -454,15 +468,17 @@ export function makeProductionInterpreter(opts: ProductionInterpreterOptions = {
     }
     const br = (() => {
       if (!spec.breaker) return null
-      const existing = breakers.get(fx.effect)
+      const key = spec.breakerScope ? `${fx.effect}:${spec.breakerScope(fx.params)}` : fx.effect
+      const existing = breakers.get(key)
       if (existing) return existing
       const created = new CircuitBreaker({ ...spec.breaker, ...(opts.now ? { now: opts.now } : {}) })
-      breakers.set(fx.effect, created)
+      breakers.set(key, created)
       return created
     })()
     const gate = br?.canAttempt() ?? { allowed: true, state: 'closed' as const, token: undefined }
     if (!gate.allowed) {
-      const trace: EffectTrace = { effect: fx.effect, channel: spec.channel, attempts: 0, backoffMs: 0, breaker: gate.state, declined: 'circuit-open', evidence: [`[效应:${fx.effect}@${ts}] breaker=${gate.state} 拒绝(冷却中,不重试)`] }
+      const retryAfterMs = 'retryAfterMs' in gate ? gate.retryAfterMs : undefined
+      const trace: EffectTrace = { effect: fx.effect, channel: spec.channel, attempts: 0, backoffMs: 0, breaker: gate.state, declined: 'circuit-open', ...(retryAfterMs !== undefined ? { retryAfterMs } : {}), evidence: [`[效应:${fx.effect}@${ts}] breaker=${gate.state} 拒绝${retryAfterMs !== undefined ? ` retryAfterMs=${retryAfterMs}` : '（恢复探测在途）'}`] }
       return { result: null, trace }
     }
     const policy: RetryPolicy | null = spec.retry
@@ -484,8 +500,13 @@ export function makeProductionInterpreter(opts: ProductionInterpreterOptions = {
       }
       return { result: null, trace: abortedTrace }
     }
-    const failed = outcome.error != null || spec.isFailure(outcome.result)
-    if (br) failed ? br.onFailure(gate.token) : br.onSuccess(gate.token)
+    const neutral = spec.isNeutral?.(outcome.result, outcome.error) === true
+    const failed = !neutral && (outcome.error != null || spec.isFailure(outcome.result))
+    if (br) {
+      if (neutral) br.releaseProbe(gate.token)
+      else if (failed) br.onFailure(gate.token)
+      else br.onSuccess(gate.token)
+    }
     const breakerState: BreakerState | 'off' = br?.state() ?? 'off'
     const evidence = [`[效应:${fx.effect}@${ts}] attempts=${outcome.attempts} backoff=${outcome.backoffMs}ms breaker=${breakerState}`]
     return {
