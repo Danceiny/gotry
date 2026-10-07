@@ -12,11 +12,16 @@ import {
   removeFlyaiVerification, resolveFlyaiEndpoint, resolveFlyaiKey, saveFlyaiKey,
   sha256Hex, writeFlyaiVerification,
 } from '../capabilities/flyai-config.ts'
+import {
+  hbcliCredentialPath, hbcliSetupStatus, readHbcliCredentials, removeHbcliVerification,
+  verifyHbcliCandidate, withHbcliCredentials, withoutHbcliCredentials, writeHbcliCredentials, writeHbcliVerification,
+} from '../capabilities/hbcli-config.ts'
 
 interface WebOptions {
   stateRoot: string
   homeDir?: string
   env?: NodeJS.ProcessEnv
+  hbcliBin?: string
   workspaceForSession: (sessionId: string) => Promise<string | undefined>
 }
 
@@ -47,6 +52,7 @@ async function readInput(request: Request): Promise<Record<string, unknown> | Re
 export function createGotryWebHandlers(options: WebOptions) {
   const homeDir = options.homeDir ?? homedir(), env = options.env ?? process.env
   const paths = { homeDir, env }, configPath = flyaiConfigPath(homeDir)
+  const hbPaths = { homeDir, env, hbcliBin: options.hbcliBin }
   let mutations: Promise<unknown> = Promise.resolve()
   const status = () => {
     const current = resolveFlyaiKey(paths), endpoint = resolveFlyaiEndpoint(paths), receipt = readFlyaiVerification(homeDir)
@@ -92,7 +98,48 @@ export function createGotryWebHandlers(options: WebOptions) {
     }
     return json(status())
   }
+  async function mutateHbcli(input: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
+    if (signal.aborted) return rejection('操作已取消。', 409)
+    if (!hbcliSetupStatus(hbPaths).writable) return rejection('当前凭证来自环境变量，或本机配置不可安全写入。', 409)
+    const before = readHbcliCredentials(hbPaths)
+    if (!before.ok) return rejection('原配置损坏，已保留原文件，请先修复。', 409)
+    if (input.action === 'clear') {
+      if (!writeHbcliCredentials(withoutHbcliCredentials(before.data), hbPaths)) return rejection('无法清除配置，请检查本机文件及权限。', 409)
+      removeHbcliVerification(homeDir)
+      return json(hbcliSetupStatus(hbPaths))
+    }
+    const appKey = typeof input.appKey === 'string' ? input.appKey.trim() : ''
+    const appSecret = typeof input.appSecret === 'string' ? input.appSecret.trim() : ''
+    if ([appKey, appSecret].some(value => !value || value.length > 2048 || /[\r\n\0]/.test(value))) return rejection('请填写 HotelByte 提供的 App Key 和 App Secret。')
+    const verified = await verifyHbcliCandidate(appKey, appSecret, hbPaths, signal)
+    if (signal.aborted || verified.verdict === 'error' || verified.verdict === 'cancelled') {
+      return json({ ok: false, error: verified.error ?? '验证已取消，旧配置保留。' }, 422)
+    }
+    const current = readHbcliCredentials(hbPaths)
+    if (!hbcliSetupStatus(hbPaths).writable || !current.ok || current.bytes !== before.bytes) return rejection('配置在验证期间发生变化，请重新读取后再试。', 409)
+    const next = withHbcliCredentials(before.data, appKey, appSecret)
+    if (!writeHbcliCredentials(next, hbPaths)) return rejection('安全保存失败，旧配置保留，请检查本机权限。', 409)
+    if (!writeHbcliVerification(next, verified.verdict, hbPaths)) {
+      const restored = before.bytes === undefined
+        ? (() => { try { rmSync(hbcliCredentialPath(hbPaths)); return true } catch { return false } })()
+        : writeHbcliCredentials(before.data, hbPaths)
+      return rejection(restored ? '验证回执保存失败，旧配置已恢复。' : '验证回执保存失败，请检查本机文件。', 409)
+    }
+    return json(hbcliSetupStatus(hbPaths))
+  }
   return {
+    async hbcli(request: Request): Promise<Response> {
+      if (request.method === 'GET') return json(hbcliSetupStatus(hbPaths))
+      if (request.method !== 'POST') return rejection('不支持此操作。', 405)
+      const input = await readInput(request)
+      if (input instanceof Response) return input
+      if (!['save', 'clear'].includes(String(input.action))
+        || Object.keys(input).some(key => !['action', 'appKey', 'appSecret'].includes(key))
+        || (input.action === 'clear' && ('appKey' in input || 'appSecret' in input))) return rejection('请求无效。')
+      const operation = mutations.then(() => mutateHbcli(input, request.signal)).catch(() => rejection('操作失败，未能确认保存，请重新读取状态。', 500))
+      mutations = operation.then(() => undefined)
+      return operation
+    },
     async flyai(request: Request): Promise<Response> {
       if (request.method === 'GET') return json(status())
       if (request.method !== 'POST') return rejection('不支持此操作。', 405)
@@ -121,11 +168,11 @@ export function createGotryWebHandlers(options: WebOptions) {
   }
 }
 
-export function registerGotryWebApi(ctx: Context, stateRoot: string): void {
+export function registerGotryWebApi(ctx: Context, stateRoot: string, hbcliBin?: string): void {
   if (typeof ctx.inject !== 'function') return
   ctx.inject(['connection', 'sessions'], scope => {
     const connection = scope.get('connection') as HostConnectionHandle
-    const handlers = createGotryWebHandlers({ stateRoot, workspaceForSession: async sessionId => {
+    const handlers = createGotryWebHandlers({ stateRoot, hbcliBin, workspaceForSession: async sessionId => {
       const id = sessionId as Parameters<typeof scope.sessions.get>[0]
       const live = scope.sessions.get(id)?.header
       const stored = live ? undefined : await scope.get('sessionPersistence')?.stat(sessionId)
@@ -135,6 +182,8 @@ export function registerGotryWebApi(ctx: Context, stateRoot: string): void {
     // it. Exact routes have one body mode, so reads and bounded writes differ.
     scope.effect(() => connection.fetch.register({ path: '/api/gotry/flyai', methods: ['GET'], requestBody: 'buffered', fetch: handlers.flyai }))
     scope.effect(() => connection.fetch.register({ path: '/api/gotry/flyai/write', methods: ['POST'], requestBody: 'streaming', fetch: handlers.flyai }))
+    scope.effect(() => connection.fetch.register({ path: '/api/gotry/hbcli', methods: ['GET'], requestBody: 'buffered', fetch: handlers.hbcli }))
+    scope.effect(() => connection.fetch.register({ path: '/api/gotry/hbcli/write', methods: ['POST'], requestBody: 'streaming', fetch: handlers.hbcli }))
     scope.effect(() => connection.fetch.register({ path: '/api/gotry/artifacts', methods: ['GET'], requestBody: 'buffered', fetch: handlers.artifacts }))
   })
 }

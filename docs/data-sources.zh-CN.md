@@ -21,7 +21,7 @@
 
 ### 需要用户本人动手的设置面（参考）
 
-有三项能力 bootstrap 不能自动装——触及**用户个人数据**（扩展安装 + 登录）、**用户个人资金**（FlyAI key）、**用户个人基础设施**（CalDAV username）。能力层提示字符串（本文 §2 / §3 / §6 / §8）在失败瞬间带一行**影响面**；三者的可跟随展开 + 验证命令集中在 [`capability-onboarding.md`](capability-onboarding.md)。任一设置路径或影响面变化时，**同 commit 同步修改运行时字符串与该文档**。
+账号与个人基础设施配置需要用户本人输入。能力层提示在失败瞬间带一行**影响面**；可跟随的设置说明与验证命令集中在[能力配置指引](capability-onboarding.zh-CN.md)。任一设置路径或影响面变化时，同一提交同步修改运行时字符串与该文档。
 
 ---
 
@@ -32,7 +32,7 @@
 | **航线通航性** | ✅ OpenFlights 骨架 168 枢纽对（ODbL，`data/openflights-skeleton.json`） | 静态（月级） | `[骨架:openflights]` | 保持；扩枢纽集；Amadeus 已关停不回 |
 | **航班班次/时刻** | ⚠️ 静态包 `data/flights_2026.json`（公开渠道调研，5 段链）+ FlyAI 官方免费通道（`capabilities/flyai.ts`，已落地 P1,2026-08-28）+ 会话通道（`session-search.ts` + 携程适配器，扩展桥 PRIMARY）；OpenFlights 骨架作为通航性金标准 | 实时（FlyAI / 会话）/ 静态（降级） | `[实时API:flyai@ts]` / `[会话:ctrip-flight@ts]` / `[骨架:openflights]` / `[静态包:估算]` | 票价：见 M5（airline price 路径），当前路径 = FlyAI + 会话（扩展桥）交叉验证；**aviationstack 已不在路径**（从校验层移出，免费层 + 官方接口已覆盖原目标） |
 | **航班实时观测** | ✅ OpenSky 已接（`capabilities/opensky.ts` + `gotry_flight_verify` 工具；`/api/states/all` 当前 ADS-B 全球观测，~400 credits/天） | 实时 | `[实时API:opensky]` | ✅ 已落地（2026-08-22） |
-| **酒店库存/报价** | ✅ hbcli 桥（实时——2026-08-30 全流程 E2E 实测通道/鉴权/搜索编排全通，run-all §7d）+ 飞猪 `search-hotel`（打码价保真）+ 静态包按目的地过滤回退 | 实时/静态 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` / `[静态包:估算]` | 保持；UAT 目的地/库存数据补齐后 hotel-list 即回实时（通道已证）；OTA 工具面平铺（无主/降级路由，按查询取用） |
+| **酒店库存/报价** | hbcli 桥、FlyAI 酒店检索、携程会话通道与按目的地过滤的静态估算；实时库存取决于当前账号及可用供应商。 | 实时／静态 | `[实时API:hbcli@ts]` / `[实时API:flyai@ts]` / `[会话:ctrip-hotel@ts]` / `[静态包:估算]` | 每次查询单独验证；OTA 工具继续按查询选择。 |
 | **酒店点评/评分** | ✅ **复用 hotel-be Anything**（内含酒店 + 城市/区域混合 candidate）；M4 Google Place scale-up 路径为闸后置（geography 仓个人 key + 配额封顶），残余 → 已推迟（跟踪 issue [#345](https://github.com/Danceiny/gotry/issues/345) 已于 2026-10-05 按「推迟」关闭；first review/photo pull trigger 未到时不实现，触发后另开 issue） | Any（hit/miss），M4：geography | `hbcli-anything` | M3：DONE（founder 校准 Anything 复用）；M4：Google Place scale-up 路径（geography GetPlaceReviews） |
 | **POI/地点搜索** | ✅ Anything（混合 城市+酒店+place 候选） + OSM 兜底（`dsh-map-tools` 内嵌 Nominatim/Photon 免费回退，`ts/scripts/map-tools-vendor-package-proof.ts` 已 vendored 证） | Any | `hbcli-anything` / M4 `osm-nominatim` | M3：DONE；TREK 同款，免费兜底 |
 | **天气/季节性** | ✅ Open-Meteo 已接（`capabilities/weather.ts`：预报≤16 天+历史气候基线；免费无 key；工具 `gotry_weather_check`）；地理编码双源：Open-Meteo（主，人口/行政级排序防同名小地压主城）+ OSM Nominatim（中文兜底——open-meteo 中文名覆盖有洞，issue #24 实测「普吉岛」0 结果） | 实时 | `[实时API:open-meteo@ts]` / 兜底 `[实时API:nominatim@ts]` | 保持；WMO 码已映射中文 |
@@ -41,6 +41,8 @@
 | **时区** | v2 flight pack 使用显式 IANA zone 与 local date 解析 UTC instant；`Intl.DateTimeFormat` 是运行时权威，未知 zone 与 DST gap/overlap 在边界拒收，UTC instant 用于 elapsed duration 与 home-zone work-window 投影。静态 v1 的 numeric offset 继续兼容；该确定性契约不代表 live schedules，prices，availability 或 inventory | 动态（运行时常量）+静态 v1 | `[运行时权威:Intl.DateTimeFormat]`（v2） / `[静态包:估算]`（v1 数值） | v2 显式 IANA；v1 保持兼容 |
 | **汇率** | ❌ 无（全 CNY 硬编码）；**multi-currency FX 仍属触发后置**——中国出境首发当前以 CNY 出价结算路径为主；当**首条真实非 CNY 供应商报价、用户预算或目的地需求**出现时启动实现（见 [#344](https://github.com/Danceiny/gotry/issues/344)）；触发前不调用任何浮动汇率源。类型化 Money/FX fact 合同 seam 已于 2026-10-02 落地（#344 契约切片，创始人授权提前启动，默认关闭）：金额＝币种＋最小单位整数；FX 事实携带 rate＋provider＋provenance＋as_of（估值时点）＋fetched_at，全字段必填，未知/缺失一律 fail-closed 不猜汇率；跨币种比较/聚合必须同一估值时点（混时点带证据显式拒绝）；主源＋降级仅接口与数据形状、注册表冻结为空——仍是零活体源（`ts/capabilities/fx-contract.ts`，run-all §71） | — | — | 多币种 FX（Exchangerate.host 等免费层或 hotel-be） |
 | **签证/入境** | ✅ 政策事实生产端 v1（2026-09-05，issue #141）：C 档中国领事服务网（cs.mfa.gov.cn）国家指南树，礼貌抓取（永不重试+断路器护站）→ 签证入境章节抽取 → `PolicyFact(as_of + D+30 review_by + 来源证据链)`落账 | 静态快照抓取 | `[实时API:cs-mfa@ts]` | Timatic/Sherpa° 后议（founder 拍板 C 档免费权威源先行） |
+
+酒店观测必须有有效回包结构；进程退出码为零不能覆盖 API 业务错误。缺失列表、坏回包和传输超时都是失败的观测，不能证明零库存，也不能产生酒店负面事实。明确空列表才是查询完成后的无结果；静态估算保留独立证据标签。原生 HotelByte 配置见[能力配置指引](capability-onboarding.zh-CN.md#22-hotelbyte-沙箱凭证)。
 
 ### 2.1 离线行政区划 atlas（机制就绪、默认关闭——[#342](https://github.com/Danceiny/gotry/issues/342)）
 

@@ -27,6 +27,9 @@ export const HOTEL_CITY_CODES: Record<string, string> = {
   贵阳: '38', 拉萨: '41', 乌鲁木齐: '39', 太原: '105', 长春: '158', 南通: '82',
   敦煌: '11', 舟山: '19', 张家界: '27', 黄山市: '23', 九江: '24', 武夷山: '26',
   迪拜: '220',
+  // Verified against the official list page and its displayed destination/date
+  // controls on 2026-10-07; https://hotels.ctrip.com/hotels/list?city=5
+  哈尔滨: '5',
 }
 
 export interface AdapterEntry {
@@ -248,4 +251,35 @@ export function parseCtripHotelList(body: string, opts: { maxItems?: number } = 
   }
   walk(raw, 0, new Set())
   return out
+}
+
+/** Only an explicit empty hotel array proves a miss; parser failure proves nothing. */
+export function classifyCtripHotelList(body: string): {
+  shape: 'parsed' | 'recognized-empty' | 'malformed' | 'unrecognized'
+  hotels: SessionHotelOption[]
+} {
+  let raw: unknown
+  try { raw = JSON.parse(body) } catch { return { shape: 'malformed', hotels: [] } }
+  const envelope = raw as { code?: unknown; success?: unknown; ok?: unknown; ResponseStatus?: { Ack?: unknown } } | null
+  if (envelope?.success === false || envelope?.ok === false
+    || (envelope?.code !== undefined && envelope.code !== 0 && envelope.code !== '0')
+    || /^(failure|error)$/i.test(String(envelope?.ResponseStatus?.Ack ?? ''))) {
+    return { shape: 'unrecognized', hotels: [] }
+  }
+  const hotels = parseCtripHotelList(body)
+  if (hotels.length > 0) return { shape: 'parsed', hotels }
+  let emptyList = false
+  let unparsedItems = false
+  const inspectHotelLists = (node: unknown, depth: number): void => {
+    if (depth > 12 || node === null || typeof node !== 'object') return
+    for (const [key, value] of Object.entries(node)) {
+      if (['hotelList', 'hotelMatchInfos'].includes(key) && Array.isArray(value)) {
+        if (value.length === 0) emptyList = true
+        else unparsedItems = true
+      }
+      inspectHotelLists(value, depth + 1)
+    }
+  }
+  inspectHotelLists(raw, 0)
+  return { shape: emptyList && !unparsedItems ? 'recognized-empty' : 'unrecognized', hotels: [] }
 }

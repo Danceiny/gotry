@@ -156,6 +156,7 @@ Readability is not polish; it is a usability metric of documentation. Rules:
 | [research/dsh-plugins-shortlist.md](research/dsh-plugins-shortlist.md) | dsh community plugin selection survey (issue #9) |
 | [research/kimi-postmortem.md](research/kimi-postmortem.md) | Kimi itinerary conversation postmortem: counter-example textbook and ground-truth extraction |
 | [research/karpo-deck-web-research.md](research/karpo-deck-web-research.md) | Karpo Deck Web reference study → gotry finished-product borrowing decisions (2026-09-22; primary = site fetch, no issue opened) |
+| [research/hotel-retrieval-postmortem.md](research/hotel-retrieval-postmortem.md) | Missing hotel quotes: supplier error semantics, per-kind breakers, extension diagnostics, and live price evidence. |
 
 ### milestones/ (milestone memos, frozen)
 

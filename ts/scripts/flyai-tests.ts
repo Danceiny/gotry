@@ -842,6 +842,23 @@ assert.equal(replayAi.aiData, '杭州西湖景区精选推荐')
 assert.match(replayAi.systemMessage ?? '', /体验模式/)
 console.log('16. Official CLI 1.0.16 captured-shape replay → 8 类（含 AI bounded data string）OK')
 
+// 17. Live Harbin response (2026-10-07): an unrated homestay has star=" ".
+// Its valid quote must survive alongside rated hotels; core fields stay strict.
+const unratedHotelCli = await fakeCli('hotel-unrated', 0, JSON.stringify({ data: { itemList: [
+  { name: '哈尔滨中央大街索菲亚美居酒店', star: '高档型', price: '¥546' },
+  { name: '哈尔滨木子淼的家乐居民宿(中央大街步行街店)', star: ' ', price: '¥301' },
+] } }))
+const unratedHotels = await registeredSearch({ ...hotelBase, cliBin: unratedHotelCli, timeoutMs: 5000 })
+assert.equal(unratedHotels.verdict, 'hit', '空白的可选星级不应拒绝整批真实酒店报价')
+assert.equal(unratedHotels.hotels?.length, 2, '保留两条报价，不能丢弃未评级酒店')
+assert.equal(unratedHotels.hotels?.[1]?.star, undefined, '空白星级作为未评级，不编造评级')
+assert.equal(unratedHotels.hotels?.[1]?.price, 301, '未评级酒店的原始数值价格保留')
+for (const item of [{ name: '酒店', star: 3, price: '¥301' }, { name: ' ', star: ' ', price: '¥301' }, { name: '酒店', star: ' ', price: ' ' }]) {
+  const invalid = await replayOfficialShape(`invalid-unrated-${JSON.stringify(item).length}`, hotelBase, item)
+  assert.equal(invalid.verdict, 'error', '非字符串星级或空白核心字段仍拒绝')
+}
+console.log('17. Unrated hotel whitespace star → all valid quotes retained; invalid types/core fields still rejected OK')
+
 console.log('FLYAI TESTS: transport/hotel completeness + error contract OK(离线假 CLI:Sentinel→error / 空 itemList→miss / flight+train+hotel mixed→整体 error 且不落事实 / typed 字段校验 / 完整 flight+train+hotel→hit / exit≠0→error / 429→needs-setup / transient retryable / 敏感信息脱敏)')
 } finally {
   for (const [name, value] of Object.entries(originalTestFlyaiEnv)) {

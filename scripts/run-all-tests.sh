@@ -113,6 +113,7 @@ echo "=== 6j. Session-link 契约层(#580,Phase E:HMAC 签名 token(schema 闭�
 echo
 echo "=== 7. hbcli 能力层(hotelbyte-cli 调用 + 降级封装 + ENOENT 人话化 + 候选路径,7 断言) ==="
 (cd ts && npx tsx scripts/hbcli-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/hotel-result-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/spawn-bounded-abort-tests.ts) || FAIL=1
 
 echo
@@ -120,6 +121,7 @@ echo "=== 7b. flyai 能力层(离线假 CLI,4 断言:Sentinel 非业务形状→
 (cd ts && npx tsx scripts/flyai-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/flyai-setup-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/gotry-web-api-tests.ts) || FAIL=1
+(cd ts && npx tsx scripts/hbcli-web-setup-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/flyai-setup-tool-tests.ts) || FAIL=1
 (cd ts && npx tsx scripts/flyai-tool-registration-contract-tests.ts) || FAIL=1
 

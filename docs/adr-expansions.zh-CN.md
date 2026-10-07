@@ -112,6 +112,8 @@ Booking Copilot 是既有工作台内的 BFF-only embedded read-action 面：
 
 FlyAI 网页与终端配置共用官方 CLI 配置文件和验证回执。已认证的 Connection API 负责浏览器准入；凭据输入不进入模型工具、对话日志、配置 YAML 或响应。候选 Key 的只读验证通过后才可串行保存；取消、环境变量覆盖、配置并发变化或持久化失败时保留旧配置。会话标识由宿主解析为其工作目录，客户端不能提交任意根目录。
 
+HotelByte 复用同一原生入口与官方 hbcli 凭证存储。供应商未开通的回包允许保存候选凭证，但库存状态仍为未验证，必须与完成的酒店查询区分。配置流程见[能力配置指引](capability-onboarding.zh-CN.md#22-hotelbyte-沙箱凭证)。
+
 备选取舍：独立配置应用重复宿主界面与认证；第二套 Key 存储使终端与网页行为分叉；仅提供对话产物卡片，历史文件仍须调用模型才能发现。
 
 执行锚点：`ts/src/gotry-web-api.ts`、`ts/src/artifact-delivery.ts`、`client/client.js` 及隔离的 API／浏览器回归。凭据存储或会话文件系统归属变化时复审。

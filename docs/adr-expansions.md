@@ -112,6 +112,8 @@ Explicitly rejected alternatives: any constant gate that kills the turn at the d
 
 FlyAI Web and terminal setup share the official CLI configuration file and verification receipt. The authenticated Connection API owns browser admission; credential input never enters model tools, conversation logs, configuration YAML, or responses. Only a successful read-only candidate verification permits a serialized save; cancellation, environment overrides, concurrent configuration changes, and failed persistence preserve the previous configuration. Session identities resolve to Host-owned workspace roots; clients cannot submit arbitrary roots.
 
+HotelByte uses the same native surface and official hbcli credential store. A supplier-provisioning response may save the candidate with an unverified inventory status; it must remain distinct from a completed hotel query. The configuration flow is specified in [capability onboarding](capability-onboarding.md#22-hotelbyte-sandbox-credentials).
+
 Alternatives: a separate configuration application duplicates the host UI and authentication; a second key store makes terminal and Web behavior diverge; conversation-only artifact cards leave historical files undiscoverable without a model call.
 
 Execution anchors: `ts/src/gotry-web-api.ts`, `ts/src/artifact-delivery.ts`, `client/client.js`, and the isolated API/browser regressions. Re-review when credential storage or Session filesystem ownership changes.

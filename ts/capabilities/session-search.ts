@@ -18,7 +18,7 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { resolveFlightEntryUrl, NETWORK_HINTS, parseBatchSearchResult, LOGIN_COOKIE_NAMES, SITE_DOMAIN, type BatchSearchShape, type SessionFlightOption } from './session/adapters/ctrip-flight.ts'
-import { resolveHotelEntryUrl, parseCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
+import { resolveHotelEntryUrl, classifyCtripHotelList, HOTEL_SITE_HOST, type SessionHotelOption } from './session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, validateTrainQueryResponseUrl, TRAIN_SITE_HOST, type SessionTrainOption, type TrainQueryParseOutcome, type TrainResponseBinding } from './session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, parseDidaSearchCache, parseDidaRecommendHotels, parseDidaPrices, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
 import { EXTENSION_STORE_URL, type SessionJobHandle, type SniffBodies } from './session/extension-bridge.ts'
@@ -243,10 +243,15 @@ export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionH
     }
     const title = r.title
     const head = r.body.slice(0, 5000)
-    if (CHALLENGE_RE.test(title + head)) {
+    if (r.challenge === true || CHALLENGE_RE.test(title + head)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
-    const hotels = parseCtripHotelList(r.body)
+    if (r.timedOut || !r.body) return err('error', '酒店页嗅探超时，未取得报价；本次不能判断无房，请换用其他酒店通道')
+    const parsed = classifyCtripHotelList(r.body)
+    if (parsed.shape === 'malformed' || parsed.shape === 'unrecognized') {
+      return err('error', `酒店回包无法识别（${parsed.shape}），库存查询未完成；本次不能判断无房`)
+    }
+    const hotels = parsed.hotels
     const verdict: SessionVerdict = hotels.length > 0 ? 'hit' : 'miss'
     return {
       ok: true,
@@ -297,7 +302,12 @@ export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionH
     if (CHALLENGE_RE.test(title + headHtml)) {
       return err('challenged', `风控/验证码命中(title=${title.slice(0, 60)});按红线不重试不绕过,交还用户`)
     }
-    const hotels = parseCtripHotelList(body)
+    if (!body) return err('error', '酒店页嗅探超时，未取得报价；本次不能判断无房，请换用其他酒店通道')
+    const parsed = classifyCtripHotelList(body)
+    if (parsed.shape === 'malformed' || parsed.shape === 'unrecognized') {
+      return err('error', `酒店回包无法识别（${parsed.shape}），库存查询未完成；本次不能判断无房`)
+    }
+    const hotels = parsed.hotels
     const verdict: SessionVerdict = hotels.length > 0 ? 'hit' : 'miss'
     return {
       ok: true,
