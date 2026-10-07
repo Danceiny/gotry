@@ -28,6 +28,10 @@
 
 全栈回归与安装包浏览器检查在隔离状态和受控上游响应下覆盖保存、拒绝无效密钥并保留旧配置、清除、文件浏览与原生交付。这些检查不代表真实 FlyAI 账号验收通过。发布完成须以通过注册表回拉校验的回执为证。
 
+### 已发布
+
+2026-10-07 以 `TAG=latest ./scripts/publish-npm.sh`（dist-tag 显式传入，#50①）发布 `@danceiny/gotry@0.2.0-rc.31`，并从 registry 回拉校验：`npm view` 显示 `latest` → `0.2.0-rc.31`（shasum `60a42e3d4b96575fa36ffc8397037c15902f0bf9`，558 个文件），与发布前由已打 tag 的源码树经 `npm pack --dry-run` 预测的 shasum 一致，下载的 tarball 字节哈希同样吻合。在干净机器上（全新 HOME 与 npm 缓存、仅官方 registry、无 LLM key）`npx @danceiny/gotry@0.2.0-rc.31` 端到端通过：`doctor` 打印报告，dist 入口能加载 `gotry-tools` 插件，`web` 可启动（带 token 的 URL 303 → 200，无 token 为 401），无凭证的一次性任务以宿主的缺凭证提示失败，而不是抛出堆栈。GitHub Release：[v0.2.0-rc.31](https://github.com/Danceiny/gotry/releases/tag/v0.2.0-rc.31)。兼容用 `rc` tag 仍指向 `0.0.1-rc.20`。
+
 ---
 
 ## v0.2.0-rc.30 · 2026-10-06

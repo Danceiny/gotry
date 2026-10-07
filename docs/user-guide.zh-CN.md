@@ -13,7 +13,7 @@ npx @danceiny/gotry web
 # LLM key 由 dsh 宿主 UI 配置,gotry CLI 不出声
 ```
 
-> 任何 npm 兼容 registry（npmjs / npmmirror / 公司内部镜像）都能跑这条命令；镜像 `latest` 滞后时钉精确版本即可（如 `npx @danceiny/gotry@0.2.0-rc.30 web`）。注意：**在 gotry 仓库目录内**请改用源码入口 `./gotry web`——仓内裸名 npx 会被 npm exec 误判为「本地已装」，报 `sh: gotry: command not found`。
+> 任何 npm 兼容 registry（npmjs / npmmirror / 公司内部镜像）都能跑这条命令；镜像 `latest` 滞后时钉精确版本即可（如 `npx @danceiny/gotry@0.2.0-rc.31 web`）。注意：**在 gotry 仓库目录内**请改用源码入口 `./gotry web`——仓内裸名 npx 会被 npm exec 误判为「本地已装」，报 `sh: gotry: command not found`。
 
 **源码（开发者）**：
 
