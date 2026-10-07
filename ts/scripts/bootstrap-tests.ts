@@ -436,6 +436,7 @@ console.log('18. onboarding CLI 跳过(非 TTY / CI / GOTRY_SETUP_SKIP / GOTRY_O
   copyFileSync(join(repoRoot, 'bin', 'gotry-flyai-verification.js'), join(fixture, 'bin', 'gotry-flyai-verification.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-process-liveness.js'), join(fixture, 'bin', 'gotry-process-liveness.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-extension-status.js'), join(fixture, 'bin', 'gotry-extension-status.js'))
+  copyFileSync(join(repoRoot, 'bin', 'gotry-hbcli-release.js'), join(fixture, 'bin', 'gotry-hbcli-release.js'))
   copyFileSync(join(repoRoot, 'package.json'), join(fixture, 'package.json'))
   const vendorDir = join(fixture, 'ts', 'dsh-runtime', 'vendor')
   mkdirSync(vendorDir, { recursive: true })
@@ -698,6 +699,7 @@ function buildPkgFixture(tmpRoot: string) {
   copyFileSync(join(repoRoot, 'bin', 'gotry-bootstrap.js'), join(pkgBin, 'gotry-bootstrap.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-flyai-verification.js'), join(pkgBin, 'gotry-flyai-verification.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-extension-status.js'), join(pkgBin, 'gotry-extension-status.js'))
+  copyFileSync(join(repoRoot, 'bin', 'gotry-hbcli-release.js'), join(pkgBin, 'gotry-hbcli-release.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-runtime-resolution.js'), join(pkgBin, 'gotry-runtime-resolution.js'))
   copyFileSync(join(repoRoot, 'bin', 'gotry-process-liveness.js'), join(pkgBin, 'gotry-process-liveness.js'))
   copyFileSync(join(repoRoot, 'cordis.gotry-patch.yml'), join(pkgRoot, 'cordis.gotry-patch.yml'))
@@ -1455,9 +1457,10 @@ console.log('23. result 通道排他写入(预存文件不被覆盖 + symlink �
   assert.deepEqual(unit(''), { ok: true, customer: false }, '空输出同属不可解析,保守视为有效')
   assert.deepEqual(unit(null), { ok: false, customer: false }, '取不到输出(非零退出/超时/spawn 失败)→ 未确认')
 
-  const fakeHbcli = (whoamiArm: string): string =>
-    `#!/bin/sh\ncase "$*" in\n  *--version*) echo '0.0.4';;\n  *version*) echo '0.0.4';;\n  *whoami*) ${whoamiArm};;\nesac\n`
-  const cases: Array<{ name: string; arm: string; expect: 'ok' | 'degraded'; customer?: boolean }> = [
+  const fakeHbcli = (whoamiArm: string, version = '0.0.4'): string =>
+    `#!/bin/sh\ncase "$*" in\n  *--version*) echo '${version}';;\n  *version*) echo '${version}';;\n  *whoami*) ${whoamiArm};;\nesac\n`
+  const cases: Array<{ name: string; arm: string; expect: 'ok' | 'degraded' | 'missing'; customer?: boolean; version?: string }> = [
+    { name: 'old-version', version: '0.0.3', arm: `echo '${allFalse.replace('"api_key":{"configured":false}', '"api_key":{"configured":true}')}'`, expect: 'missing' },
     { name: 'allfalse', arm: `echo '${allFalse}'`, expect: 'degraded' },
     { name: 'customer', arm: `echo '${allFalse.replace('"customer":{"configured":false}', '"customer":{"configured":true}')}'`, expect: 'ok', customer: true },
     { name: 'apikey', arm: `echo '${allFalse.replace('"api_key":{"configured":false}', '"api_key":{"configured":true}')}'`, expect: 'ok' },
@@ -1473,13 +1476,13 @@ console.log('23. result 通道排他写入(预存文件不被覆盖 + symlink �
         const binDir = join(root, 'bin'); const home = join(root, 'home')
         mkdirSync(binDir); mkdirSync(home)
         symlinkSync(process.execPath, join(binDir, 'node'))
-        writeFileSync(join(binDir, 'hbcli'), fakeHbcli(c.arm), { mode: 0o755 })
+        writeFileSync(join(binDir, 'hbcli'), fakeHbcli(c.arm, c.version), { mode: 0o755 })
 
         // CLI 面
         const cli = runBootstrap(['doctor'], { HOME: home, PATH: binDir, FLYAI_API_KEY: '' })
         const line = cli.out.split('\n').find((l) => l.includes('hbcli(酒店实时源)'))
         assert.ok(line, `${c.name}: CLI doctor 应输出 hbcli 行\n${cli.out}`)
-        const cliLevel = line.includes('已安装且凭证有效') ? 'ok' : line.includes('二进制在,但凭证未配置/失效') ? 'degraded' : 'other'
+        const cliLevel = line.includes('已安装且凭证有效') ? 'ok' : line.includes('二进制在,但凭证未配置/失效') ? 'degraded' : line.includes('版本过旧') ? 'missing' : 'other'
         assert.equal(cliLevel, c.expect, `${c.name}: CLI doctor 的 hbcli 结论应为 ${c.expect}\n${line}`)
         if (c.customer) assert.ok(line.includes('customer 档在用'), `${c.name}: CLI 应标注 customer 档在用\n${line}`)
 
@@ -1489,6 +1492,10 @@ console.log('23. result 通道排他写入(预存文件不被覆盖 + symlink �
         process.env.PATH = prevPath
         assert.equal(tool.status, c.expect, `${c.name}: 工具层 doctor 的 hbcli 结论应为 ${c.expect},实际 ${tool.status}`)
         assert.equal(cliLevel, tool.status, `${c.name}: CLI 与工具层必须同结论(两份实现不得漂移)`)
+        if (c.expect === 'missing') {
+          assert.match(cli.out, /staicli-v0\.0\.4\/install\.sh/, 'CLI 应提供当前官方版本的安装入口')
+          assert.match(tool.fix ?? '', /staicli-v0\.0\.4\/install\.sh/, '工具层应提供相同升级入口')
+        }
       } finally {
         process.env.PATH = prevPath
         try { rmSync(root, { recursive: true, force: true }) } catch { /* ignore */ }
@@ -1499,6 +1506,6 @@ console.log('23. result 通道排他写入(预存文件不被覆盖 + symlink �
     try { rmSync(emptyRepo, { recursive: true, force: true }) } catch { /* ignore */ }
   }
 }
-console.log('24. hbcli 凭证判定(CLI doctor 按 whoami 三档 JSON 判,不看退出码;与工具层 doctor 对拍 5 夹具同结论:全 false=degraded / customer·api_key=ok / 非 JSON=保守 ok / 非零退出=degraded)OK')
+console.log('24. hbcli 版本与凭证判定(CLI↔工具层 6 夹具同结论:旧版=missing / 全 false=degraded / customer·api_key=ok / 非 JSON=保守 ok / 非零退出=degraded)OK')
 
 console.log('BOOTSTRAP TESTS: 26/26 OK(扩展就位 + 跳过开关 / wizard --dry-run / wizard 真实 / 扩展分发通道 / doctor 体检面 / calendar setup 状态面 / 显式跳过 + auto 跳过 + 单项跳过 / 启动摘要 / sidebar 落盘状态复核 / onboarding 分类+计划+env opt-out+跳过原因+yes+partial-failure+幂等+prompt+CLI 跳过+--scan / 编排缝 orchestrateWebLaunch × 6 / prompt waiter failure deterministic process-group reap / waiter 原始错误 + cleanup timeout/failure handled / 临时安装包 spawned inner 21a TTY-eligible 真实 prompt→n→web + 摘要抑制 + 无残留 / 21b non-TTY 零 prompt / 21c POSIX 信号清理 SIGTERM→清 result+patch 目录 + 无残留子进程 / 21f yes-path installer 子树信号清理 / 21g yes-path timeout installer 子树清理 / 21d timeout 诊断 + 无残留 / 21e dsh-lifecycle 信号转发 / win32 平台边界 / result 通道排他写入 / hbcli 凭证判定 CLI↔工具层对拍)')

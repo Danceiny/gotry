@@ -21,6 +21,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { checkExtensionStatus } from '../../bin/gotry-extension-status.js'
+import { HBCLI_RELEASE_VERSION, HBCLI_INSTALL_CMD } from '../../bin/gotry-hbcli-release.js'
 import { readLatestChannelEvents } from './channel-health.ts'
 import {
   displayEndpoint,
@@ -121,10 +122,8 @@ export function nodeOk(version: string): boolean {
   return Number(maj) > 22 || (Number(maj) === 22 && Number(min) >= 15)
 }
 
-/** hbcli 最低版本(可用 GOTRY_MIN_HBCLI_VERSION 覆盖)。0.0.3 修了 portal-ticket
- * fallback bug(issue #142)——低于该版本的 hbcli 会把 literal "stored-ticket"
- * 当 bearer 发到 hotel-be,让 trade.* / search/checkAvail 全部 401。 */
-const MIN_HBCLI_VERSION = process.env.GOTRY_MIN_HBCLI_VERSION ?? '0.0.3'
+/** hbcli 最低版本(可用 GOTRY_MIN_HBCLI_VERSION 覆盖)，与 CLI doctor 共用发布基线。 */
+const MIN_HBCLI_VERSION = process.env.GOTRY_MIN_HBCLI_VERSION ?? HBCLI_RELEASE_VERSION
 
 /** 单项检查:全部只读、永不抛错;env/homeDir/repoRoot 可注入(测试确定性) */
 export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorReport> {
@@ -163,7 +162,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
 
   // 3. hbcli(酒店实时源;静态包自动降级,缺了不致命)
   //    裸名 'hbcli' 靠 PATH 解析(existsSync 对裸名是 cwd 相对,无意义)——先探测再落位
-  //    版本 < MIN_HBCLI_VERSION 视为 missing(issue #142:portal-ticket fallback 401)
+  //    版本 < MIN_HBCLI_VERSION 视为 missing，修复走版本钉扎的官方安装器
   let hbPresent = ''
   for (const p of hbcliCandidates(home)) {
     if (p !== 'hbcli' && existsSync(p)) { hbPresent = p; break }
@@ -175,8 +174,8 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
     if (v && !versionAtLeast(v, MIN_HBCLI_VERSION)) {
       items.push({
         id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'missing',
-        detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——trade.* / search/checkAvail 会 401(issue #142)`,
-        fix: 'npm install -g staicli --registry=https://registry.npmjs.org/',
+        detail: `版本过旧(v${v.join('.')} < v${MIN_HBCLI_VERSION})——请升级到支持当前认证与酒店配置的版本`,
+        fix: HBCLI_INSTALL_CMD,
       })
     } else {
       // 凭证判定按 whoami 输出解析(三档 api_key/portal/customer 任一 configured
@@ -199,7 +198,7 @@ export async function runDoctorChecks(opts: DoctorOptions = {}): Promise<DoctorR
         : {
             id: 'hbcli', label: 'hbcli(酒店实时源)', status: 'degraded',
             detail: '二进制在,但凭证未配置/失效——酒店检索将降级静态包(非实时)',
-            fix: 'hbcli auth customer-send-code --email you@mail.com 收码后 hbcli auth customer-login --email you@mail.com --code <收件码>(客户邮箱验证码登录,新邮箱即注册,需 npm staicli ≥ 0.0.4);B 端租户注册走 hbcli auth register(先 auth send-code);或 hbcli auth set-credentials --app-key hotelbyte_api_demo --app-secret hotelbyte_api_demo(快速试用沙箱;正式 key 向 HotelByte 申请)',
+            fix: 'hbcli auth customer-send-code --email you@mail.com 收码后 hbcli auth customer-login --email you@mail.com --code <收件码>(客户邮箱验证码登录,新邮箱即注册);B 端租户注册走 hbcli auth register(先 auth send-code);或在 插件 → GoTry → HotelByte 配置沙箱 App Key/App Secret',
           })
     }
   } else {

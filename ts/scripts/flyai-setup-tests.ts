@@ -42,7 +42,7 @@ chmodSync(fakeVerifier, 0o700)
 // that the npm package exposes for `gotry setup ...` dispatch.
 const packageFixture = join(sandbox, 'package-shaped')
 mkdirSync(join(packageFixture, 'bin'), { recursive: true })
-for (const file of ['gotry-inner.js', 'gotry-bootstrap.js', 'gotry-flyai-verification.js', 'gotry-extension-status.js', 'gotry-process-liveness.js', 'gotry-runtime-resolution.js']) {
+for (const file of ['gotry-inner.js', 'gotry-bootstrap.js', 'gotry-hbcli-release.js', 'gotry-flyai-verification.js', 'gotry-extension-status.js', 'gotry-process-liveness.js', 'gotry-runtime-resolution.js']) {
   copyFileSync(join(repoRoot, 'bin', file), join(packageFixture, 'bin', file))
 }
 writeFileSync(join(packageFixture, 'package.json'), JSON.stringify({ type: 'module', version: 'test' }) + '\n')

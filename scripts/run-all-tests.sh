@@ -137,7 +137,11 @@ echo "=== 7f. hbcli live opt-in 隔离证明(可发现 fixture + blocked network
 (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hbcli-live-optin-tests.ts) || FAIL=1
 
 echo
-echo "=== 7e. hbcli release-contract(staicli@0.0.3 actual tarball bytes + packaged help/parser; test-only, no supplier request) ==="
+echo "=== 7g. hbcli 升级(官方 0.0.4 基线、旧版升级与安装后复检；可选 HBCLI_RELEASE_BINARY 校验实际发布文件，隔离凭证、零供应商请求) ==="
+(cd ts && npx tsx scripts/hbcli-upgrade-tests.ts) || FAIL=1
+
+echo
+echo "=== 7e. hbcli historical release-contract(staicli@0.0.3 actual tarball bytes + packaged help/parser; test-only, no supplier request) ==="
 if [ -n "${STAICLI_TARBALL:-}" ]; then
   (cd ts && GOTRY_SESSION_LIVE=0 GOTRY_HBCLI_LIVE=0 GOTRY_HOTELBYTE_SKILLS_LIVE=0 npx tsx scripts/hbcli-release-contract-tests.ts "$STAICLI_TARBALL") || FAIL=1
 else
