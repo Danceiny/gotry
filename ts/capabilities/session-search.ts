@@ -22,7 +22,8 @@ import { resolveHotelEntryUrl, classifyCtripHotelList, HOTEL_SITE_HOST, type Ses
 import { buildTrainEntryUrl, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, validateTrainQueryResponseUrl, TRAIN_SITE_HOST, type SessionTrainOption, type TrainQueryParseOutcome, type TrainResponseBinding } from './session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, parseDidaSearchCache, parseDidaRecommendHotels, parseDidaPrices, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
 import { EXTENSION_STORE_URL, type SessionJobHandle, type SniffBodies } from './session/extension-bridge.ts'
-import { runFlightGuiSearch } from './session/gui-flight.ts'
+import { runFlightGuiSearch, type GuiCalendarDay } from './session/gui-flight.ts'
+import { runHotelGuiSearch } from './session/gui-hotel.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
 export type SessionFlightTransportShape = BatchSearchShape | 'sniff_timeout' | 'challenge_page' | 'precheck_unavailable' | 'needs_login' | 'search_job_unavailable'
@@ -50,6 +51,10 @@ export interface SessionSearchResult {
   /** needs-extension 时给出 Chrome Web Store URL —— dsh UI 应直接渲成可点链接(浏览器自己当安装器,gotry 不插手) */
   installUrl?: string
   installAction?: 'add-to-chrome'
+  /** 低价日历(GUI 车道匿名可用;#662:该航线哪些日期有票/低价) */
+  calendar?: GuiCalendarDay[]
+  /** GUI 检索后站点落到的 list 页真实 URL(#663 URL 教师) */
+  listUrl?: string
 }
 
 export interface SessionFlightQuery {
@@ -167,11 +172,13 @@ export interface SessionHotelQuery {
 
 export interface SessionHotelResult {
   ok: boolean
-  via: 'session-ctrip-hotel' | 'session-ctrip-hotel-error'
+  via: 'session-ctrip-hotel' | 'session-ctrip-hotel-error' | 'session-ctrip-hotel-gui' | 'session-ctrip-hotel-gui-error'
   evidence: string
   latencyMs: number
   verdict: SessionVerdict
   hotels?: SessionHotelOption[]
+  /** GUI 检索后站点落到的 list 页真实 URL */
+  listUrl?: string
   error?: string
   /** needs-extension 时给出 Chrome Web Store URL(dsh UI 渲成可点链接) */
   installUrl?: string
@@ -186,6 +193,36 @@ export function hotelCityUnresolvedHint(cities: string[]): string {
 /** 机票城市三字码未收录时的人话指引(纯函数,测试锚点;码表只是缓存,主链路=显式码逃生口) */
 export function flightCityUnresolvedHint(cities: string[]): string {
   return `城市 ${cities.join('/')} 不在携程机票三字码表(缓存)——web 搜「flights.ctrip.com ${cities[0] ?? ''} 机票」从 list 页 URL 取三字码(形如 oneway-hkg-dxb),带 fromCityCode/toCityCode 重试;或改走 gotry_web_search`
+}
+
+/**
+ * 携程酒店 GUI 车道(2026-10-14,#664 首片):gotry 隔离匿名窗口驱动 hotels.ctrip.com
+ * 表单(目的地=站点自动补全,cityId 码表退出主链路),结果复用 ctrip-hotel 三态分类器。
+ * 节律闸与 bridge 酒店道同站同桶('ctrip-hotel');匿名公开价,恒标 anonymous。
+ */
+export async function sessionHotelGuiSearch(q: SessionHotelQuery): Promise<SessionHotelResult> {
+  const started = Date.now()
+  const ts = new Date().toISOString()
+  const err = (verdict: SessionVerdict, error: string): SessionHotelResult => ({
+    ok: false, via: 'session-ctrip-hotel-error', evidence: `[会话:ctrip-hotel-gui@error@${ts}] ${error}`, latencyMs: Date.now() - started, verdict, error,
+  })
+
+  const last = lastCallAt.get('ctrip-hotel') ?? 0
+  if (Date.now() - last < MIN_INTERVAL_MS) {
+    return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
+  }
+  lastCallAt.set('ctrip-hotel', Date.now())
+
+  if (!q.checkIn || !q.checkOut) {
+    return err('error', 'GUI 车道需要 checkIn/checkOut(YYYY-MM-DD,成对)')
+  }
+  const r = await runHotelGuiSearch({ to: q.to, checkIn: q.checkIn, checkOut: q.checkOut, ...(q.timeoutMs ? { timeoutMs: q.timeoutMs } : {}) })
+  return {
+    ok: r.ok, via: r.via, evidence: r.evidence, latencyMs: r.latencyMs, verdict: r.verdict,
+    ...(r.hotels ? { hotels: r.hotels } : {}),
+    ...(r.listUrl ? { listUrl: r.listUrl } : {}),
+    ...(r.error ? { error: r.error } : {}),
+  }
 }
 
 export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionHotelResult> {
@@ -779,13 +816,12 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
   if (Date.now() - last < MIN_INTERVAL_MS) {
     return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
   }
-  // 往返(诚实边界):bridge 车道走 URL 直开,往返 list 页 URL 形状未实测校准——
-  // 不猜 URL;GUI 车道(ui=gui)由站点表单原生承担往返。静态参数检查,零解析成本。
-  if (q.backDate) {
-    return err('error', 'bridge 车道暂不支持往返(URL 形状未实测校准,不猜)——gotry_session_search 传 ui="gui" 走 GUI 车道(站点表单原生往返,匿名公开价)')
+  // 往返(2026-10-14 解锁,#663):URL 形状由 GUI 车道教师实测定稿——
+  // round-{code}0-{code}0?depdate=去_回&cabin=y_s(curl 200+往返 title 实证)。
+  if (q.backDate && !(q.date < q.backDate)) {
+    return err('error', `回程日期(${q.backDate})须晚于去程(${q.date})`)
   }
-
-  const entry = await resolveFlightEntryUrl(q.from, q.to, q.date, { fromCode: q.fromCityCode, toCode: q.toCityCode })
+  const entry = await resolveFlightEntryUrl(q.from, q.to, q.date, { fromCode: q.fromCityCode, toCode: q.toCityCode }, undefined, q.backDate)
   if (!entry.ok || !entry.url) {
     return err('error', entry.error ?? '城市解析失败，请确认城市或机场码；不能据此判断航线覆盖')
   }
@@ -950,6 +986,8 @@ export async function sessionFlightGuiSearch(q: SessionFlightQuery): Promise<Ses
     ok: r.ok, via: r.via, evidence: r.evidence, latencyMs: r.latencyMs,
     verdict: r.verdict,
     ...(r.options ? { options: r.options } : {}),
+    ...(r.calendar && r.calendar.length > 0 ? { calendar: r.calendar } : {}),
+    ...(r.listUrl ? { listUrl: r.listUrl } : {}),
     ...(r.error ? { error: r.error } : {}),
   }
 }

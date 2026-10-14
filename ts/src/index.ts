@@ -1894,7 +1894,7 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       fromStationTelecode: { type: 'string', description: '出发站三位电报码,仅 kind=train;城市码表外时填(kyfw 查询页 URL 里)' },
       toStationTelecode: { type: 'string', description: '到达站三位电报码,仅 kind=train,同上' },
       backDate: { type: 'string', description: '回程日期 YYYY-MM-DD,仅 kind=flight;存在即往返检索——须 ui=gui(GUI 车道站点表单原生往返;bridge 车道不知往返 URL 形状,不猜)' },
-      ui: { type: 'string', enum: ['bridge', 'gui'], description: '仅 kind=flight:bridge(默认,用户登录态被动嗅探)|gui(gotry 隔离匿名窗口驱动 PC 表单,往返/任意城市原生,匿名公开价)' },
+      ui: { type: 'string', enum: ['bridge', 'gui'], description: 'kind=flight|hotel:bridge(默认,用户登录态被动嗅探)|gui(gotry 隔离匿名窗口驱动 PC 表单——flight 往返/任意城市原生+低价日历;hotel 任意目的地原生(cityId 码表不在主链路);匿名公开价)' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args, _exec) {
@@ -1971,13 +1971,13 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
           return { ok: false, summary: 'kind=hotel 需要 to（目的地名称）；自动解析城市，同名城市可带 country 或确认后的 cityId' } as const
         }
         const itp = await runSessionEffect({
-          effect: 'SESSION_HOTEL_SEARCH',
+          effect: q.ui === 'gui' ? 'SESSION_HOTEL_GUI_SEARCH' : 'SESSION_HOTEL_SEARCH',
           params: {
             to: q.to, country: q.country, cityId: q.cityId, checkIn: q.checkIn, checkOut: q.checkOut, adults: q.adults,
             auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
           },
         })
-        if (!itp.result) return declinedObservation('SESSION_HOTEL_SEARCH', itp.trace)
+        if (!itp.result) return declinedObservation(q.ui === 'gui' ? 'SESSION_HOTEL_GUI_SEARCH' : 'SESSION_HOTEL_SEARCH', itp.trace)
         const r = itp.result
         await noteChannel('session:ctrip-hotel', r.verdict)
         // D-26(issue #118):exact-date 会话酒店 hit/miss 落账(摸底无档期不落;cooldown 是节律闸非结论,不落)
@@ -2024,8 +2024,11 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       await appendFacts(config.stateRoot ?? '.', factsFromSession({ origin: q.from, destination: q.to, date: q.date }, r, new Date().toISOString(), avMapS?.city_alias))
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.flightNo} ${o.airline} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
       const lane = q.ui === 'gui' ? `GUI 车道(携程,匿名公开价${q.backDate ? ',往返' : ''})` : '会话检索(携程,用户本人登录态)'
+      const cal = (r.calendar ?? []).slice(0, 14).map(d => `${d.date} ${d.price !== undefined ? `¥${d.price}` : (d.priceRaw ?? '?')}`)
+      const calBlock = cal.length > 0 ? `\n低价日历(匿名公开价,该航线哪些日期有票):\n${cal.join(' | ')}` : ''
+      const urlBlock = q.ui === 'gui' && r.listUrl ? `\nlistUrl(站点真实形状,#663 URL 教师):${r.listUrl.slice(0, 160)}` : ''
       const summary = r.verdict === 'hit'
-        ? `${q.from}→${q.to} ${q.date} ${lane} 前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
+        ? `${q.from}→${q.to} ${q.date} ${lane}${(r.options ?? []).length > 0 ? ` 行情前 ${top.length} 条:\n${top.join('\n')}` : ''}${calBlock}${urlBlock}\n${r.evidence}`
         : `会话检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
       return JSON.parse(JSON.stringify({
         ...r, summary,

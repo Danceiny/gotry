@@ -35,7 +35,8 @@ export interface AdapterEntry {
 /** Resolve unknown names against current supplier metadata before inventory navigation. */
 export async function resolveFlightEntryUrl(from: string, to: string, depDate: string,
   codes: { fromCode?: string; toCode?: string } = {},
-  resolve: (query: string) => Promise<CityResolution> = resolveCtripFlightCity): Promise<AdapterEntry> {
+  resolve: (query: string) => Promise<CityResolution> = resolveCtripFlightCity,
+  backDate?: string): Promise<AdapterEntry> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(depDate)) return { ok: false, unresolved: [depDate], error: '出发日期需要 YYYY-MM-DD' }
   for (const c of [codes.fromCode, codes.toCode]) if (c !== undefined && !/^[a-z]{3}$/i.test(c)) return { ok: false, error: '城市／机场码必须是三个英文字母' }
   const resolveCode = async (name: string, explicit?: string) => {
@@ -46,18 +47,25 @@ export async function resolveFlightEntryUrl(from: string, to: string, depDate: s
   }
   const [origin, destination] = await Promise.all([resolveCode(from, codes.fromCode), resolveCode(to, codes.toCode)])
   if (!origin.code || !destination.code) return { ok: false, unresolved: [!origin.code ? from : '', !destination.code ? to : ''].filter(Boolean), error: [origin.error, destination.error].filter(Boolean).join('；') }
-  return buildEntryUrl(from, to, depDate, { fromCode: origin.code, toCode: destination.code })
+  return buildEntryUrl(from, to, depDate, { fromCode: origin.code, toCode: destination.code }, backDate)
 }
 
-export function buildEntryUrl(from: string, to: string, depDate: string, codes: { fromCode?: string; toCode?: string } = {}): AdapterEntry {
+export function buildEntryUrl(from: string, to: string, depDate: string, codes: { fromCode?: string; toCode?: string } = {}, backDate?: string): AdapterEntry {
   const unresolved: string[] = []
   // 显式码优先(形状合格才采纳),词表只是缓存——任何城市都可经显式码成行。
   const fromCode = codes.fromCode === undefined ? CITY_CODES[from.trim()] : /^[a-z]{3}$/i.test(codes.fromCode) ? codes.fromCode.toLowerCase() : undefined
   const toCode = codes.toCode === undefined ? CITY_CODES[to.trim()] : /^[a-z]{3}$/i.test(codes.toCode) ? codes.toCode.toLowerCase() : undefined
   if (!fromCode) unresolved.push(from)
   if (!toCode) unresolved.push(to)
-  if (unresolved.length > 0 || !/^\d{4}-\d{2}-\d{2}$/.test(depDate)) {
-    return { ok: false, unresolved: unresolved.length > 0 ? unresolved : [depDate] }
+  const badDate = !/^\d{4}-\d{2}-\d{2}$/.test(depDate)
+    || (backDate !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(backDate) || backDate <= depDate))
+  if (unresolved.length > 0 || badDate) {
+    return { ok: false, unresolved: unresolved.length > 0 ? unresolved : [badDate ? (backDate !== undefined && backDate <= depDate ? backDate : depDate) : depDate], ...(backDate !== undefined && backDate <= depDate ? { error: `回程(${backDate})须晚于去程(${depDate})` } : {}) }
+  }
+  // 往返形状(2026-10-14 GUI URL 教师实测定稿):round-{code}0-{code}0?depdate=去_回&cabin=y_s
+  // ——此前 roundtrip-{3字码}?depdate&retdate 的猜测形状实测 302,已废弃。
+  if (backDate) {
+    return { ok: true, url: `https://flights.ctrip.com/online/list/round-${fromCode}0-${toCode}0?depdate=${depDate}_${backDate}&cabin=y_s&adult=1&child=0&infant=0` }
   }
   return { ok: true, url: `https://flights.ctrip.com/online/list/oneway-${fromCode}-${toCode}?depdate=${depDate}` }
 }

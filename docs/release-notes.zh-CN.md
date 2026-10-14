@@ -6,6 +6,22 @@
 
 ---
 
+## v0.2.0-rc.32 · 2026-10-14
+
+**为什么发这版。** 飞猪低价索引对无数据的「航线×日期」组合确定性失败（香港→长春 12-06 三连败而 12-05 成功），而携程会话面答不了「这条线哪天有票」——城市码表卡着主链路、往返没有已验证的 URL。本版把携程 GUI 车道做完整为产品能力：gotry 在隔离匿名窗口里驱动站点自己的检索表单、读站点自己的回包（[#661](https://github.com/Danceiny/gotry/issues/661)–[#664](https://github.com/Danceiny/gotry/issues/664)）。
+
+### 新内容（自 rc.31）
+
+- **任意航线的低价日历答案（ui="gui"）**——GUI 车道绑定站点低价日历接口（匿名 batchSearch 只回 `needUserLogin` 探测）：`gotry_session_search kind=flight ui="gui"` 直接返回有价日（香港→迪拜往返 live 实证 388 个有价日、¥3662 起），并回传站点规范 list URL。结果恒标匿名，绝不冒充登录态价。
+- **bridge 车道往返解锁**——GUI「URL 教师」带回往返真实形状（`round-{code}0-{code}0?depdate=去_回&cabin=y_s…`，curl 200 实证），默认 bridge 通道的 `kind=flight backDate=…` 就此可用；此前的诚实拒绝移除。
+- **酒店 GUI 首片**——`kind=hotel ui="gui"` 全链路驱动 hotels.ctrip.com 表单（目的地走站点自动补全，cityId 码表退出主链路）；匿名酒店列表强制跳登录，现返回结构化 `needs-login` 判语与下一步教学。自动登录仍是硬红线。
+- **机票通道加固**——飞猪业务错误信封（如「搜索机票低价行业失败」）上浮上游原文而非「parse failed」；香港/迪拜实测入城市缓存；doctor 引导测试接受已验证 key 态（机器态依赖假红修复）。
+- **随版收编**——官方 hbcli 0.0.4 依赖、供应商城市解析与 FlyAI 故障隔离（rc.31 线上内容）。
+
+### 安装
+
+`npx @danceiny/gotry@0.2.0-rc.32 web`（Node ≥ 22.15）。`latest` 指向本版后 `npx @danceiny/gotry web` 等价；镜像滞后时请钉精确版本。
+
 ## Unreleased
 
 ---

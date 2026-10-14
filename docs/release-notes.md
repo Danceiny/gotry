@@ -6,6 +6,22 @@
 
 ---
 
+## v0.2.0-rc.32 · 2026-10-14
+
+**Why this release.** The FlyAI low-price index deterministically fails on route×date combos with no data (HK→Changchun 12-06 fails 3/3 while 12-05 succeeds), and the Ctrip session surface could not answer "which dates have fares" — the city code table gated the main path and roundtrip had no verified URL. This release completes the Ctrip GUI lane as a product capability: gotry drives the site's own search form in an isolated anonymous window and reads the site's own responses ([#661](https://github.com/Danceiny/gotry/issues/661)–[#664](https://github.com/Danceiny/gotry/issues/664)).
+
+### What's New (since rc.31)
+
+- **Price-calendar answers for any route (ui="gui")** — the GUI lane binds the site's low-price calendar API (the anonymous batchSearch only returns a `needUserLogin` probe): `gotry_session_search kind=flight ui="gui"` now returns priced days (live-verified HKG→DXB roundtrip: 388 priced days, from ¥3662) plus the site's own canonical list URL. Every verdict stays anonymous-labeled; never logged-in prices.
+- **Roundtrip unlocked on the bridge lane** — the GUI "URL teacher" captured the real roundtrip shape (`round-{code}0-{code}0?depdate=去_回&cabin=y_s…`, curl-verified 200), so `kind=flight backDate=…` works on the default bridge transport too; the previous honest refusal is retired.
+- **Hotel GUI slice** — `kind=hotel ui="gui"` drives the hotels.ctrip.com form end-to-end (destination via the site's autocomplete, cityId table off the main path); the anonymous hotel list force-redirects to passport login, which now returns a structured `needs-login` verdict with next-step teaching. Login automation remains a hard red line.
+- **Flight-channel hardening** — FlyAI business-error envelopes (e.g. `搜索机票低价行业失败`) surface the upstream message instead of "parse failed"; HKG/DXB enter the calibrated city cache; the doctor bootstrap test accepts the verified-key state (machine-dependent false red fixed).
+- **Housekeeping** — official hbcli 0.0.4 required, supplier-city resolution and FlyAI outage isolation from rc.31's line are included.
+
+### Installation
+
+Run `npx @danceiny/gotry@0.2.0-rc.32 web` (Node ≥ 22.15). Once `latest` points to this version, `npx @danceiny/gotry web` is equivalent; pin the exact version if your registry mirror lags.
+
 ## Unreleased
 
 ---

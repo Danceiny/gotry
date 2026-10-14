@@ -17,12 +17,12 @@ if (process.env.GOTRY_GUI_LIVE !== '1') {
 
 console.log(`live #1 单程 上海→丽江 ${dep}`)
 const r1 = await sessionFlightGuiSearch({ from: '上海', to: '丽江', date: dep, timeoutMs: 120_000 })
-console.log(JSON.stringify({ ok: r1.ok, verdict: r1.verdict, options: r1.options?.length, evidence: r1.evidence, error: r1.error?.slice(0, 900) }, null, 2))
+console.log(JSON.stringify({ ok: r1.ok, verdict: r1.verdict, options: r1.options?.length, calendar: r1.calendar?.length, calendarHead: r1.calendar?.slice(0, 5), listUrl: r1.listUrl, evidence: r1.evidence, error: r1.error?.slice(0, 900) }, null, 2))
 if (r1.verdict === 'hit') console.log('  首条:', JSON.stringify(r1.options?.[0]))
 
 if (process.argv[2] === 'oneway') process.exit(0)
 console.log(`live #2 往返 香港→迪拜 ${dep} / ${back}(等 31s 节律)`)
 await new Promise(r => setTimeout(r, 31_000))
 const r2 = await sessionFlightGuiSearch({ from: '香港', to: '迪拜', date: dep, backDate: back, timeoutMs: 120_000 })
-console.log(JSON.stringify({ ok: r2.ok, verdict: r2.verdict, options: r2.options?.length, evidence: r2.evidence, error: r2.error?.slice(0, 900) }, null, 2))
+console.log(JSON.stringify({ ok: r2.ok, verdict: r2.verdict, options: r2.options?.length, calendar: r2.calendar?.length, calendarHead: r2.calendar?.slice(0, 5), listUrl: r2.listUrl, evidence: r2.evidence, error: r2.error?.slice(0, 900) }, null, 2))
 if (r2.verdict === 'hit') console.log('  首条:', JSON.stringify(r2.options?.[0]))

@@ -32,7 +32,7 @@ import {
 } from './resilience.ts'
 import { flyaiBreakerScope, flyaiSearch, type FlyaiQuery } from './flyai.ts'
 import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
-import { sessionFlightSearch, sessionFlightGuiSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery, type SessionDidaQuery } from './session-search.ts'
+import { sessionFlightSearch, sessionFlightGuiSearch, sessionHotelGuiSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery, type SessionDidaQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
 import { verifyFlight, type FlightLiveQuery } from './opensky.ts'
 import { anythingSearch, type AnythingQuery } from './anything.ts'
@@ -156,6 +156,8 @@ const DEFAULT_HANDLERS = {
   SESSION_FLIGHT_GUI_SEARCH: (p: SessionFlightQuery) => sessionFlightGuiSearch(p),
   /** 用户本人登录态会话酒店检索(2026-09-03 实装;同浏览器解译通道,风控红线同款) */
   SESSION_HOTEL_SEARCH: (p: SessionHotelQuery) => sessionHotelSearch(p),
+  /** 携程酒店 GUI 车道(2026-10-14 实装,#664;匿名窗口驱动表单,cityId 码表退出主链路) */
+  SESSION_HOTEL_GUI_SEARCH: (p: SessionHotelQuery) => sessionHotelGuiSearch(p),
   /** 12306 余票会话检索(2026-09-03 实装;公开查询面,无登录闸;同浏览器解译通道) */
   SESSION_TRAIN_SEARCH: (p: SessionTrainQuery) => sessionTrainSearch(p),
   /** Dida 供应商门户实时价会话检索(2026-09-09 实装;hotel-be portal integration 迁移线) */
@@ -298,6 +300,12 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     isFailure: defaultIsFailure,
   },
   SESSION_HOTEL_SEARCH: {
+    channel: 'browser',
+    retry: null,
+    breaker: null,
+    isFailure: defaultIsFailure,
+  },
+  SESSION_HOTEL_GUI_SEARCH: {
     channel: 'browser',
     retry: null,
     breaker: null,
