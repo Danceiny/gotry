@@ -432,6 +432,19 @@ assert.match(s.error ?? '', /sentinel/i, `error 应保留 sentinel 字样(供上
 assert.match(s.evidence, /\[实时API:flyai@error@/, 'error 证据链标注')
 console.log('1. Sentinel 非业务形状 → error(非静默 miss)OK')
 
+// 1b. 业务错误信封(status≠0,data=null)→ 上游失败而非 parse failed(实测 2026-10-14:
+// 低价索引无该航线×日期数据时上游返回此形状,exit 0 且同参确定性复现;香港→长春 12-06
+// 三连败、北京→长春 12-05 成功、同日上海→丽江成功——上游数据缺口,重试无益)。
+const bizErrBin = await fakeCli('flyai-biz-error', 0, '{"data":null,"message":"搜索机票低价行业失败","status":1,"systemMessage":null}')
+const bizErr = await flyaiSearch({ ...base, cliBin: bizErrBin, timeoutMs: 5000 })
+assert.equal(bizErr.ok, false, '业务错误信封 ok=false')
+assert.equal(bizErr.verdict, 'error', `业务错误信封判 error,实际 ${bizErr.verdict}`)
+assert.equal(bizErr.retryable, false, '确定性业务失败不标 retryable')
+assert.match(bizErr.error ?? '', /搜索机票低价行业失败/, `error 上浮上游 message 原文,实际 ${bizErr.error}`)
+assert.doesNotMatch(bizErr.error ?? '', /parse failed/, '不得误报 parse failed')
+assert.match(bizErr.evidence, /upstream response status=1/, '证据链带上游状态')
+console.log('1b. 业务错误信封(status≠0)→ 上游 message 上浮,非 parse failed OK')
+
 // 2. 业务空形状 → miss(上游正常,确无航班)
 const missBin = await fakeCli('flyai-miss', 0, '{"data":{"itemList":[]}}')
 const m = await flyaiSearch({ ...base, cliBin: missBin, timeoutMs: 5000 })

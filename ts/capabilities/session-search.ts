@@ -22,6 +22,7 @@ import { resolveHotelEntryUrl, classifyCtripHotelList, HOTEL_SITE_HOST, type Ses
 import { buildTrainEntryUrl, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, validateTrainQueryResponseUrl, TRAIN_SITE_HOST, type SessionTrainOption, type TrainQueryParseOutcome, type TrainResponseBinding } from './session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, parseDidaSearchCache, parseDidaRecommendHotels, parseDidaPrices, DIDA_NETWORK_HINTS, DIDA_SITE_HOST, DIDA_SITE_DOMAIN, DIDA_LOGIN_COOKIE_NAMES, type SessionDidaRateOption } from './session/adapters/dida-portal.ts'
 import { EXTENSION_STORE_URL, type SessionJobHandle, type SniffBodies } from './session/extension-bridge.ts'
+import { runFlightGuiSearch } from './session/gui-flight.ts'
 
 export type SessionVerdict = 'hit' | 'miss' | 'error' | 'challenged' | 'cooldown' | 'needs-login' | 'needs-attach' | 'needs-extension'
 export type SessionFlightTransportShape = BatchSearchShape | 'sniff_timeout' | 'challenge_page' | 'precheck_unavailable' | 'needs_login' | 'search_job_unavailable'
@@ -38,7 +39,7 @@ function flightBridgeFailureSummary(kind: BridgeFailureKind): string {
 
 export interface SessionSearchResult {
   ok: boolean
-  via: 'session-ctrip-flight' | 'session-ctrip-flight-error'
+  via: 'session-ctrip-flight' | 'session-ctrip-flight-error' | 'session-ctrip-flight-gui' | 'session-ctrip-flight-gui-error'
   evidence: string
   latencyMs: number
   verdict: SessionVerdict
@@ -58,6 +59,8 @@ export interface SessionFlightQuery {
   toCityCode?: string
   /** YYYY-MM-DD */
   date: string
+  /** 回程日期:存在即往返检索——bridge 车道不知往返 URL 形状(诚实边界,报错指路 GUI);GUI 车道原生支持 */
+  backDate?: string
   /** 隔离 profile 目录(测试必传;默认 /tmp 专用目录) */
   profileDir?: string
   headless?: boolean
@@ -178,6 +181,11 @@ export interface SessionHotelResult {
 /** 酒店城市码表未收录时的人话指引(纯函数,测试锚点) */
 export function hotelCityUnresolvedHint(cities: string[]): string {
   return `城市 ${cities.join('/')} 不在携程酒店城市码表——先 web 搜「hotels.ctrip.com ${cities[0] ?? ''} 酒店」拿到 list 页 URL 里的 city= 数字,带 cityId 重试`
+}
+
+/** 机票城市三字码未收录时的人话指引(纯函数,测试锚点;码表只是缓存,主链路=显式码逃生口) */
+export function flightCityUnresolvedHint(cities: string[]): string {
+  return `城市 ${cities.join('/')} 不在携程机票三字码表(缓存)——web 搜「flights.ctrip.com ${cities[0] ?? ''} 机票」从 list 页 URL 取三字码(形如 oneway-hkg-dxb),带 fromCityCode/toCityCode 重试;或改走 gotry_web_search`
 }
 
 export async function sessionHotelSearch(q: SessionHotelQuery): Promise<SessionHotelResult> {
@@ -771,6 +779,12 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
   if (Date.now() - last < MIN_INTERVAL_MS) {
     return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
   }
+  // 往返(诚实边界):bridge 车道走 URL 直开,往返 list 页 URL 形状未实测校准——
+  // 不猜 URL;GUI 车道(ui=gui)由站点表单原生承担往返。静态参数检查,零解析成本。
+  if (q.backDate) {
+    return err('error', 'bridge 车道暂不支持往返(URL 形状未实测校准,不猜)——gotry_session_search 传 ui="gui" 走 GUI 车道(站点表单原生往返,匿名公开价)')
+  }
+
   const entry = await resolveFlightEntryUrl(q.from, q.to, q.date, { fromCode: q.fromCityCode, toCode: q.toCityCode })
   if (!entry.ok || !entry.url) {
     return err('error', entry.error ?? '城市解析失败，请确认城市或机场码；不能据此判断航线覆盖')
@@ -905,5 +919,37 @@ export async function sessionFlightSearch(q: SessionFlightQuery): Promise<Sessio
     return err('error', e instanceof Error ? e.message.slice(0, 200) : String(e))
   } finally {
     await t.close()
+  }
+}
+
+/**
+ * 携程机票 GUI 车道(2026-10-14,创始人指示):gotry 自己的隔离匿名 headful 窗口,
+ * 驱动 PC 检索表单(往返/任意城市原生支持——城市解析=站点自动补全,码表退居缓存),
+ * 结果从站点自己的 batchSearch 回包解析。节律闸与 bridge 同站同桶('ctrip-flight')。
+ * 写面红线:动作白名单+提交件黑名单+readback 硬闸(gui-flight.ts 契约)。
+ */
+export async function sessionFlightGuiSearch(q: SessionFlightQuery): Promise<SessionSearchResult> {
+  const started = Date.now()
+  const ts = new Date().toISOString()
+  const err = (verdict: SessionVerdict, error: string): SessionSearchResult => ({
+    ok: false, via: 'session-ctrip-flight-error', evidence: `[会话:ctrip-flight-gui@error@${ts}] ${error}`, latencyMs: Date.now() - started, verdict, error,
+  })
+
+  const last = lastCallAt.get('ctrip-flight') ?? 0
+  if (Date.now() - last < MIN_INTERVAL_MS) {
+    return err('cooldown', `rate limit: last call ${Date.now() - last}ms ago, min ${MIN_INTERVAL_MS}ms`)
+  }
+  lastCallAt.set('ctrip-flight', Date.now())
+
+  if (q.backDate && !(q.date < q.backDate)) {
+    return err('error', `回程日期(${q.backDate})须晚于去程(${q.date})`)
+  }
+
+  const r = await runFlightGuiSearch({ from: q.from, to: q.to, date: q.date, ...(q.backDate ? { backDate: q.backDate } : {}), ...(q.timeoutMs ? { timeoutMs: q.timeoutMs } : {}) })
+  return {
+    ok: r.ok, via: r.via, evidence: r.evidence, latencyMs: r.latencyMs,
+    verdict: r.verdict,
+    ...(r.options ? { options: r.options } : {}),
+    ...(r.error ? { error: r.error } : {}),
   }
 }

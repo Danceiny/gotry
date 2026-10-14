@@ -237,6 +237,12 @@ TREK 是自托管协作旅行规划器，数据面成熟度最高，可借鉴的
 - 未明：收费/配额/企业门槛（README 未披露，`FLYAI_API_KEY` 可选增强）。接入形态：`capabilities/flyai.ts` **已落地（P1,2026-08-28）**——spawn CLI 管道层，session-tests F 节 live 断言。
 - **限流实测（2026-08-28 下午）**：高频调用后返 `SentinelBlockException by fly-ai-search`（CLI exit=0、stdout 非业务 JSON）——配额未文档化，恢复窗口未知；flyai.ts 已把该形态纳入结构化 error（带 stdout 片段），测试/smoke 按「hit 或 sentinel 降级」双合法终态。**2026-08-29 缺口修复（Issue #24）**：该限流输出是合法 JSON，曾走 `data?.itemList ?? []` 被吞成 0/0 静默 miss——现按形状判别（无 `data.itemList` 即 error），离线回归见 run-all §7b；工具层 summary 三分支（hit/miss/error）+过去日期显式提示。
 
+### FlyAI 业务错误信封 + 携程机票城市码表降级 + GUI 车道（2026-10-14）
+
+- **FlyAI 业务错误信封（实测校准）**：低价索引对无数据的「航线×日期」组合确定性返回 `{"data":null,"message":"搜索机票低价行业失败","status":1}`（CLI exit 0）——实测矩阵（2026-10-14）：香港→长春 12-06 三连败，北京→长春 12-01/07/13 失败而 12-05 成功，同日上海→丽江／上海→长春／香港→上海 均成功——上游数据缺口（非鉴权/配额/Sentinel，重试无益）。回归 `flyai-tests 1b` 冻结该形状：上游 message 原文上浮、证据链带 `upstream response status=`、绝不误报「parse failed」。
+- **城市三字码表降级为缓存**（创始人定调：「码表只能做性能优化，根本就不应该做主链路」）：`buildEntryUrl` 接受显式 `fromCityCode`/`toCityCode`（工具面与火车电报码逃生口同构）；词表外城市返回教学指引而非死胡同。香港=hkg／迪拜=dxb 经实测校准入缓存（list 页 200+title 自证 vs 非法组合 302）。
+- **GUI 车道**（`session/gui-flight.ts`，创始人指示「直接新开 tab 打开 ctrip 的页面操作 gui」）：gotry 自己的隔离匿名 headful Chrome（playwright-core，零新依赖；Python browser-use 维持否决）只驱动携程 PC **检索设置面**——动作闭集＋提交件黑名单＋逐字段 readback 硬闸（绝不静默搜错城市/日期）；结果只从站点自己的 API 回包读取。构造性覆盖往返（`backDate`）与任意城市（站点自动补全解析城市）。证据链 `[会话:ctrip-flight-gui@ts]`，恒标 `anonymous:true`；节律闸与 bridge 同站同桶。24 轮 live 校准验证表单全链路真实生效（骨架屏就绪闸、标签邻接城市框、月边界日历状态机、几何搜索按钮）；结果绑定是待收尾的一公里——新版 PC 匿名 batchSearch 回 `needUserLogin` 探测而低价日历 API 匿名有数据 → [#661](https://github.com/Danceiny/gotry/issues/661)（绑定）、[#662](https://github.com/Danceiny/gotry/issues/662)（低价日历能力）、[#663](https://github.com/Danceiny/gotry/issues/663)（多程＋URL 教师）、[#664](https://github.com/Danceiny/gotry/issues/664)（车道泛化）。bridge 车道对 `backDate` 诚实拒绝（往返 list URL 形状未校准——不猜）并指路 `ui="gui"`。
+
 ### 会话数据面 P1（RFC §4,2026-08-28）
 
 - `capabilities/session-search.ts` + `session/{transport,read-guard,adapters/ctrip-flight}` 落地——ReadGuard（方法×URL 双因子 + 驼峰复合写词，写请求物理 abort + 审计，fail-closed）+ 携程机票适配器（batchSearch 嗅探→结构化）+ 节律闸（同站 ≥30s）；证据链新标注 `[会话:ctrip-flight@ts]` 生效；run-all §24。live 会话检索需 headful（headless 下携程只回壳页，实测）。

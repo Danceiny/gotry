@@ -32,7 +32,7 @@ import {
 } from './resilience.ts'
 import { flyaiBreakerScope, flyaiSearch, type FlyaiQuery } from './flyai.ts'
 import { checkAvail, hotelRates, searchHotels } from './hbcli.ts'
-import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery, type SessionDidaQuery } from './session-search.ts'
+import { sessionFlightSearch, sessionFlightGuiSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, type SessionFlightQuery, type SessionHotelQuery, type SessionTrainQuery, type SessionDidaQuery } from './session-search.ts'
 import { geocodePlace, getClimate, getForecast, type WeatherPoint } from './weather.ts'
 import { verifyFlight, type FlightLiveQuery } from './opensky.ts'
 import { anythingSearch, type AnythingQuery } from './anything.ts'
@@ -152,6 +152,8 @@ const DEFAULT_HANDLERS = {
     checkAvail({ ratePkgId: p.ratePkgId }, { hbcliBin: p.hbcliBin, timeoutMs: p.timeoutMs }),
   /** 用户本人登录态会话检索(浏览器解译通道:扩展桥默认 + cdp 显式后备;ReadGuard+节律闸) */
   SESSION_FLIGHT_SEARCH: (p: SessionFlightQuery) => sessionFlightSearch(p),
+  /** 携程机票 GUI 车道(2026-10-14 实装;gotry 隔离匿名窗口驱动 PC 表单,往返/任意城市原生;匿名公开价) */
+  SESSION_FLIGHT_GUI_SEARCH: (p: SessionFlightQuery) => sessionFlightGuiSearch(p),
   /** 用户本人登录态会话酒店检索(2026-09-03 实装;同浏览器解译通道,风控红线同款) */
   SESSION_HOTEL_SEARCH: (p: SessionHotelQuery) => sessionHotelSearch(p),
   /** 12306 余票会话检索(2026-09-03 实装;公开查询面,无登录闸;同浏览器解译通道) */
@@ -284,6 +286,12 @@ const SPECS: Record<EffectName, ChannelSpec> = {
     isFailure: r => (r as { via?: string }).via === 'hbcli-error',
   },
   SESSION_FLIGHT_SEARCH: {
+    channel: 'browser',
+    retry: null,
+    breaker: null,
+    isFailure: defaultIsFailure,
+  },
+  SESSION_FLIGHT_GUI_SEARCH: {
     channel: 'browser',
     retry: null,
     breaker: null,

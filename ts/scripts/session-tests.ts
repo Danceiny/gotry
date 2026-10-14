@@ -22,7 +22,8 @@ import { buildEntryUrl, parseBatchSearch, parseBatchSearchResult } from '../capa
 import { buildHotelEntryUrl, parseCtripHotelList, looksLikeHotelListBody } from '../capabilities/session/adapters/ctrip-hotel.ts'
 import { buildTrainEntryUrl, hasRecognizedAvailableSeat, parseLeftTicketQuery, parseLeftTicketQueryResult, resolveTrainQueryTelecodes, STATION_TELECODES, validateTrainQueryResponseUrl } from '../capabilities/session/adapters/rail-12306.ts'
 import { buildDidaEntryUrl, parseDidaRates, parseDidaSearchCache, looksLikeDidaRatesBody } from '../capabilities/session/adapters/dida-portal.ts'
-import { sessionFlightSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, didaLoginHint, __resetRateLimiterForTest, __setTrainSessionTransportForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
+import { sessionFlightSearch, sessionFlightGuiSearch, sessionHotelSearch, sessionTrainSearch, sessionDidaSearch, trainStationUnresolvedHint, hotelCityUnresolvedHint, flightCityUnresolvedHint, didaLoginHint, __resetRateLimiterForTest, __setTrainSessionTransportForTest, classifyTransportFailure } from '../capabilities/session-search.ts'
+import { planFlightGuiActions, assertGuiPlanSafe, runFlightGuiSearch, __setGuiDriverForTest, type GuiPage } from '../capabilities/session/gui-flight.ts'
 import { flyaiSearch } from '../capabilities/flyai.ts'
 import { createConsentGate, type ApprovalSeam, type ConsentDecision, type SessionAccess } from '../capabilities/session-consent.ts'
 import { sessionLogin, pollTicketNames, LOGIN_TARGETS } from '../capabilities/session-login.ts'
@@ -153,6 +154,13 @@ assert(buildEntryUrl('上海', '丽江', '十月一号').ok === false, '非法�
 const internationalEntry = buildEntryUrl('迪拜', '香港', '2026-12-01', { fromCode: 'DXB', toCode: 'HKG' })
 assert(internationalEntry.ok && internationalEntry.url?.includes('oneway-dxb-hkg') === true, '显式供应商城市码不受内置表限制')
 assert(!buildEntryUrl('迪拜', '香港', '2026-12-01', { fromCode: '../dxb', toCode: 'HKG' }).ok, '显式城市码拒绝 URL 注入')
+// 实测校准抽查(2026-10-14 list 页实证:合法组合 200+title 航线名,非法组合 302)
+const e3 = buildEntryUrl('香港', '迪拜', '2026-12-06')
+assert(e3.ok === true && e3.url === 'https://flights.ctrip.com/online/list/oneway-hkg-dxb?depdate=2026-12-06', '香港/迪拜=实测校准入缓存表(hkg/dxb)', e3)
+const e4 = buildEntryUrl('乌兰巴托', '丽江', '2026-10-01', { fromCode: 'ubn' })
+assert(e4.ok === true && e4.url === 'https://flights.ctrip.com/online/list/oneway-ubn-ljg?depdate=2026-10-01', '显式三字码逃生口(形状合格即成行)', e4)
+assert(buildEntryUrl('乌兰巴托', '丽江', '2026-10-01', { fromCode: 'UBN!' }).ok === false, '显式码形状不合格不得进 URL')
+assert(flightCityUnresolvedHint(['乌兰巴托']).includes('fromCityCode'), '机票 unresolved 指引带显式码逃生口')
 
 // D. DOM 提交件过滤
 console.log('D. isSubmitText(DOM 提交件黑名单)')
@@ -177,7 +185,10 @@ let fr: Awaited<ReturnType<typeof flyaiSearch>> | null = null
 if (process.env.GOTRY_SESSION_LIVE === '0') {
   console.log('  SKIP - GOTRY_SESSION_LIVE=0(离线门禁不调用 FlyAI 外部实时端点)')
 } else {
-  fr = await flyaiSearch({ kind: 'flight', origin: '上海', destination: '丽江', depDate: '2026-10-01' })
+  // 滚动未来日期(硬编码日期跨日假红的教训:过去日期会被上游「出发日期非法」业务失败拒绝)
+  const roll = new Date(Date.now() + 30 * 24 * 3600 * 1000)
+  const rollingDepDate = `${roll.getFullYear()}-${String(roll.getMonth() + 1).padStart(2, '0')}-${String(roll.getDate()).padStart(2, '0')}`
+  fr = await flyaiSearch({ kind: 'flight', origin: '上海', destination: '丽江', depDate: rollingDepDate })
   const sentinelBlocked = fr.verdict === 'error' && /sentinel|block|trial limit/i.test(fr.error ?? '')
   if (sentinelBlocked) {
     console.log('  WARN - 飞猪上游限流(Sentinel 2026-08-28 / trial-limit 429 2026-08-31 实测,配额未文档化)——降级合同验证通过,跳过 hit 断言')
@@ -884,6 +895,87 @@ console.log('M. Dida 门户(entry 守域 + 信封走形 + 闸面)')
   const q2 = await sessionDidaSearch({})
   assert(q2.ok === false && q2.verdict === 'cooldown', '节律闸:30s 内二调 → cooldown', q2)
   assert(typeof didaLoginHint() === 'string' && /自动登录/.test(didaLoginHint()), '登录指引指向 hotel-be portal 跳板(账密永不经 gotry)')
+}
+
+// L. 携程机票 GUI 车道(2026-10-14):规划器/安全白名单/假 driver 全流程/readback 硬闸
+{
+  console.log('L. GUI 车道(规划器 + 安全闸 + 假 driver)')
+  const planOw = planFlightGuiActions({ from: '上海', to: '丽江', date: '2027-05-02' })
+  assert(!planOw.some(a => a.t === 'clickTripTab') && !planOw.some(a => a.t === 'setDate' && a.which === 'back'), '单程规划:无往返 tab/回程日期')
+  const planRt = planFlightGuiActions({ from: '香港', to: '迪拜', date: '2026-12-06', backDate: '2026-12-13' })
+  assert(planRt.some(a => a.t === 'clickTripTab' && a.trip === 'roundtrip') && planRt.some(a => a.t === 'setDate' && a.which === 'back'), '往返规划:往返 tab + 回程日期(不知 URL 形状也能搜)')
+  const rb = planRt.find(a => a.t === 'readback')
+  assert(!!rb && rb.t === 'readback' && rb.expect.back === '2026-12-13', 'readback 期望含回程日期')
+
+  // 安全白名单:闭集外/提交件文本/非固定入口/坏日期/坏按键全拒
+  assert(!assertGuiPlanSafe([{ t: 'goto', url: 'https://evil.example.com/' }]).ok, '安全闸:非固定入口 URL 拒绝')
+  assert(!assertGuiPlanSafe([{ t: 'typeCity', which: 'from', text: '立即下单' }]).ok, '安全闸:城市位提交件文本拒绝(写面红线)')
+  assert(!assertGuiPlanSafe([{ t: 'setDate', which: 'dep', ymd: '十二月六号' }]).ok, '安全闸:非 YMD 日期拒绝')
+  assert(!assertGuiPlanSafe([{ t: 'press', key: 'Meta' }]).ok, '安全闸:按键白名单外拒绝')
+  assert(assertGuiPlanSafe(planRt).ok, '合法规划全过')
+
+  // 假 driver:表单内存模型 + 可编程回包
+  const FIXTURE = JSON.stringify({ data: { flightItineraryList: [{
+    flightSegments: [{ airlineName: 'Spring Airlines', duration: 215, flightList: [{ flightNo: '9C6617', departureAirportName: '浦东', arrivalAirportName: '三义', departureDateTime: '2027-05-02 17:05:00', arrivalDateTime: '2027-05-02 20:40:00' }] }],
+    priceList: [{ adultPrice: 1790 }],
+  }] } })
+  const makeFakeDriver = (opts: { apiBody?: string | null; challenge?: boolean; formOverride?: Record<string, string> } = {}) => {
+    const state = { clickedSearch: false, form: { from: '', to: '', dep: '', back: '' } as Record<string, string> }
+    const page: GuiPage = {
+      async goto() {},
+      async clickTripTab() {},
+      async typeCity(which, text) { state.form[which] = text },
+      async pickSuggest(which, text) { state.form[which] = `${text}(SHA)` /* 站点补全归一化形态 */ },
+      async setDate(which, ymd) { state.form[which === 'dep' ? 'dep' : 'back'] = ymd },
+      async press() {},
+      async clickSearch() { state.clickedSearch = true },
+      async visibleFormText() { return Object.values({ ...state.form, ...opts.formOverride }).concat(['上海', '丽江']).join(' | ') },
+      async cityFieldValues() { const f = { ...state.form, ...opts.formOverride }; return { from: f.from ?? '', to: f.to ?? '' } },
+      async pageText() { return opts.challenge ? '请输入验证码 拖动滑块' : '机票预订' },
+      async waitForApiBody() { return opts.apiBody === undefined ? { url: 'https://flights.ctrip.com/international/search/api/search/batchSearch', body: FIXTURE } : opts.apiBody ? { url: 'x', body: opts.apiBody } : null },
+    }
+    return { driver: { open: async () => page, close: async () => {} }, state }
+  }
+
+  __setGuiDriverForTest(() => makeFakeDriver().driver)
+  const g1 = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02' })
+  assert(g1.ok === true && g1.verdict === 'hit' && g1.anonymous === true && (g1.options?.length ?? 0) === 1, '假 driver 全流程 → hit(anonymous 标注)', g1)
+  assert(/\[会话:ctrip-flight-gui@/.test(g1.evidence) && /transport=gui/.test(g1.evidence), 'GUI 证据链 [会话:ctrip-flight-gui@ts]')
+  assert(g1.options?.[0]?.flightNo === '9C6617' && g1.options?.[0]?.price === 1790, '既有 batchSearch 解析器复用(结构化选项)')
+
+  const rbDriver = makeFakeDriver({ formOverride: { dep: '2027-05-03' } }) // 日期被「改回」→ readback 必须拦
+  __setGuiDriverForTest(() => rbDriver.driver)
+  const g2 = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02' })
+  assert(g2.ok === false && g2.verdict === 'error' && /readback 硬闸/.test(g2.error ?? ''), 'readback 硬闸:日期不符 → 终止,不发起搜索', g2)
+  assert(rbDriver.state.clickedSearch === false, 'readback 拦截后搜索按钮零点击(绝不搜错日期)')
+  const cityDriver = makeFakeDriver({ formOverride: { from: '北京(BJS)' } }) // 城市打进别的框(live 实测形态)
+  __setGuiDriverForTest(() => cityDriver.driver)
+  const g2b = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02' })
+  assert(g2b.ok === false && /出发城市框未确认/.test(g2b.error ?? '') && cityDriver.state.clickedSearch === false, 'readback 逐字段:城市框错位(全局框假阳)→ 终止', g2b)
+
+  __setGuiDriverForTest(() => makeFakeDriver({ challenge: true }).driver)
+  const g3 = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02' })
+  assert(g3.ok === false && g3.verdict === 'challenged', '风控页 → challenged(不重试不绕过)', g3)
+
+  __setGuiDriverForTest(() => makeFakeDriver({ apiBody: null }).driver)
+  const g4 = await runFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02' })
+  assert(g4.ok === false && g4.verdict === 'error' && /嗅探超时/.test(g4.error ?? ''), '回包超时 → 结构化 error', g4)
+
+  // 编排面:节律闸同站同桶 + 回程日期校验
+  __resetRateLimiterForTest()
+  __setGuiDriverForTest(() => makeFakeDriver().driver)
+  const s1 = await sessionFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02' })
+  assert(s1.ok === true && s1.verdict === 'hit', 'sessionFlightGuiSearch 编排 → hit')
+  const s2 = await sessionFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02' })
+  assert(s2.ok === false && s2.verdict === 'cooldown', 'GUI 与 bridge 同站同桶:30s 内二调 → cooldown')
+  __resetRateLimiterForTest()
+  const s3 = await sessionFlightGuiSearch({ from: '上海', to: '丽江', date: '2027-05-02', backDate: '2027-05-01' })
+  assert(s3.ok === false && s3.verdict === 'error' && /回程日期/.test(s3.error ?? ''), '回程早于去程 → 参数闸拒绝')
+  // bridge 车道往返诚实边界:不知 URL 形状,报错指路 ui=gui
+  __resetRateLimiterForTest()
+  const s4 = await sessionFlightSearch({ from: '上海', to: '丽江', date: '2027-05-02', backDate: '2027-05-09' })
+  assert(s4.ok === false && s4.verdict === 'error' && /ui="gui"/.test(s4.error ?? ''), 'bridge 往返 → 诚实报错指路 GUI 车道', s4)
+  __setGuiDriverForTest(null)
 }
 
 if (process.env.GOTRY_SESSION_TEST_FORCE_FAILURE === '1') {

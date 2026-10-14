@@ -1866,7 +1866,8 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       'Search on the USER\'S OWN browser session (Ctrip kind="flight"(default)/"hotel"; 12306 kind="train" — public query face, no login needed). '
       + 'Consent gate: the FIRST call in a session asks the user via the runtime approval card; once granted it holds for the session, a refusal revokes it for the session (no repeat prompting). '
       + 'Transport: Stai Travel Bridge browser extension (one-time install) — the agent side never talks to Chrome debugging, ZERO system dialogs; read-only by construction (the extension never issues requests; it only passively forwards the site\'s own search responses; agent NEVER touches credentials/captcha; on captcha it stops and returns challenged). '
-      + 'kind="flight": from/to city or airport names (Chinese/English) + date YYYY-MM-DD; unknown names resolve from supplier metadata, ambiguous names require confirmation; optional fromCityCode/toCityCode are explicit Ctrip three-letter codes — sniffs the site search API for structured options. Evidence [会话:ctrip-flight@ts]. '
+      + 'kind="flight": from/to city or airport names (Chinese/English) + date YYYY-MM-DD; unknown names resolve from supplier metadata, ambiguous names require confirmation; optional fromCityCode/toCityCode are explicit Ctrip three-letter codes — sniffs the site search API for structured options. '
+      + 'ui?="bridge" (default; the user\'s own logged-in session, real member prices) | "gui" (gotry opens its OWN isolated anonymous Chrome window and drives the Ctrip PC search form — roundtrip via backDate? and ANY city by construction: the site\'s own autocomplete resolves cities; anonymous public prices, NOT logged-in prices; verdicts carry anonymous=true; result-binding iteration tracked in #661). Evidence [会话:ctrip-flight@ts] / [会话:ctrip-flight-gui@ts]. '
       + 'kind="hotel": to=destination name, country? for same-name disambiguation; cityId? = explicit numeric city= from a Ctrip hotel list URL; otherwise resolves from the hotel destination service, checkIn?/checkOut? (YYYY-MM-DD), adults?; hotel prices are the user\'s real logged-in prices. Evidence [会话:ctrip-hotel@ts]. '
       + 'kind="dida": Dida supplier-portal realtime hotel rates on the employee\'s own logged-in session (hotel-be portal integration line) — no from/to needed; the portal find page\'s own requests are sniffed passively. Rates carry ratePlanId/referenceNo for the server-side booking chain. Evidence [会话:dida-portal@ts]. '
       + 'kind="train": from/to/date(YYYY-MM-DD) + fromStationTelecode?/toStationTelecode? (three-letter codes in the kyfw query URL, for cities outside the built-in table) — 12306 left-ticket query (public face): train codes, times, durations, seat availability; the list API carries NO prices (prices live on the 12306 page). Evidence [会话:train-12306@ts]. '
@@ -1892,12 +1893,14 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       adults: { type: 'integer', description: '成人数,仅 kind=hotel 可选' },
       fromStationTelecode: { type: 'string', description: '出发站三位电报码,仅 kind=train;城市码表外时填(kyfw 查询页 URL 里)' },
       toStationTelecode: { type: 'string', description: '到达站三位电报码,仅 kind=train,同上' },
+      backDate: { type: 'string', description: '回程日期 YYYY-MM-DD,仅 kind=flight;存在即往返检索——须 ui=gui(GUI 车道站点表单原生往返;bridge 车道不知往返 URL 形状,不猜)' },
+      ui: { type: 'string', enum: ['bridge', 'gui'], description: '仅 kind=flight:bridge(默认,用户登录态被动嗅探)|gui(gotry 隔离匿名窗口驱动 PC 表单,往返/任意城市原生,匿名公开价)' },
     },
     output: { schema: { type: 'json' }, render: (_a, v) => [{ type: 'text', text: String((v as { summary?: string }).summary ?? JSON.stringify(v).slice(0, 600)) }] },
     async execute(args, _exec) {
       const selectedKind = resolveSessionSearchKind(args)
       if (!selectedKind.ok) return { ok: false, summary: selectedKind.reason } as const
-      const q = { ...unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; fromCityCode?: string; toCityCode?: string; cityId?: number | string; country?: string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string }>(args), kind: selectedKind.kind }
+      const q = { ...unwrapQuery<{ kind?: string; from?: string; to?: string; date?: string; fromCityCode?: string; toCityCode?: string; cityId?: number | string; country?: string; checkIn?: string; checkOut?: string; adults?: number; fromStationTelecode?: string; toStationTelecode?: string; backDate?: string; ui?: string }>(args), kind: selectedKind.kind }
       const runSessionEffect = seams.effect ?? interpretEffect
       // ---- Dida 供应商门户(2026-09-09 实装;hotel-be portal integration 迁移线)----
       if (q.kind === 'dida') {
@@ -2000,10 +2003,15 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       }
       // 效应解译层(ADR-18):SESSION 通道策略=永不重试/不熔断,节律闸在渠道内;
       // 解译器只做分发与证据拼装,verdict 语义(risk 型 needs-login/challenged)原样透传
+      // GUI 车道(2026-10-14):ui=gui → gotry 隔离匿名窗口驱动 PC 表单(往返 backDate/任意城市原生)。
+      if (q.ui !== undefined && q.ui !== 'bridge' && q.ui !== 'gui') {
+        return { ok: false, summary: 'kind=flight 的 ui 只接受 bridge(默认,登录态被动嗅探)|gui(隔离匿名窗口驱动表单)' } as const
+      }
       const itp = await runSessionEffect({
-        effect: 'SESSION_FLIGHT_SEARCH',
+        effect: q.ui === 'gui' ? 'SESSION_FLIGHT_GUI_SEARCH' : 'SESSION_FLIGHT_SEARCH',
         params: {
           from: q.from, to: q.to, date: q.date, fromCityCode: q.fromCityCode, toCityCode: q.toCityCode,
+          ...(q.backDate ? { backDate: q.backDate } : {}),
           // ADR-15 收尾:ReadGuard 审计在生产工具路径同样落盘(此前仅测试传隔离 stateRoot 才有 JSONL)
           auditPath: join(config.stateRoot ?? '.', 'gotry-state', 'session-incidents.jsonl'),
         },
@@ -2015,8 +2023,9 @@ export function apply(ctx: Context, config: Config, seams: ApplyTestSeams = {}):
       const avMapS = await loadAirlineAirportMap()
       await appendFacts(config.stateRoot ?? '.', factsFromSession({ origin: q.from, destination: q.to, date: q.date }, r, new Date().toISOString(), avMapS?.city_alias))
       const top = (r.options ?? []).slice(0, 8).map(o => `${o.flightNo} ${o.airline} ${o.depDateTime.slice(11, 16)}→${o.arrDateTime.slice(11, 16)} ¥${o.price}`)
+      const lane = q.ui === 'gui' ? `GUI 车道(携程,匿名公开价${q.backDate ? ',往返' : ''})` : '会话检索(携程,用户本人登录态)'
       const summary = r.verdict === 'hit'
-        ? `${q.from}→${q.to} ${q.date} 会话检索(携程,用户本人登录态)前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
+        ? `${q.from}→${q.to} ${q.date} ${lane} 前 ${top.length} 条:\n${top.join('\n')}\n${r.evidence}`
         : `会话检索未取回(${r.verdict}):${r.error ?? ''} ${r.evidence}`
       return JSON.parse(JSON.stringify({
         ...r, summary,
