@@ -142,7 +142,10 @@ assert.ok(c8.out.includes('[gotry-doctor]'), '应输出 [gotry-doctor] 标签')
 assert.ok(c8.out.includes('Agent Reach'), '体检应含 agent-reach 项')
 assert.ok(c8.out.includes('hbcli'), '体检应含 hbcli 项')
 assert.ok(c8.out.includes('FlyAI(飞猪官方检索'), '体检应含 flyai 项')
-assert.ok(c8.out.includes('匿名试用') || c8.out.includes('已配置,未验证'), '体检应明确 FlyAI 当前未验证/匿名降级面')
+// FlyAI 面三合法态(doctor.ts #521:configured≠verified):匿名试用 / 已配置,未验证 / 已验证。
+// 机器态依赖断言:本机配置并验证过 key 的环境(如 founder 机)doctor 输出「已验证 …」,
+// 两态断言会把健康态误判为红(2026-10-14 发版门禁实测)。
+assert.ok(c8.out.includes('匿名试用') || c8.out.includes('已配置,未验证') || c8.out.includes('已验证'), '体检应明确 FlyAI 当前状态(匿名试用/已配置,未验证/已验证)')
 assert.ok(c8.out.includes('LLM key'), '体检应含 LLM key 让渡说明(doctor 不管 key)')
 assert.ok(c8.out.includes('dsh-map-tools'), '体检应含 dsh-map-tools 项(#139;与 ts/capabilities/doctor.ts 两面成对)')
 assert.ok(c8.out.includes('dsh-tool-ask-user'), '体检应含 dsh-tool-ask-user 项(与 ts/capabilities/doctor.ts 两面成对)')

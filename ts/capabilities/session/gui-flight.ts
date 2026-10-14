@@ -26,7 +26,7 @@
  * 测试注入:__setGuiDriverForTest(离线全流程假 driver;默认 playwright 实现)。
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Page } from 'playwright-core'
@@ -34,6 +34,11 @@ import { isSubmitText } from './read-guard.ts'
 import { NETWORK_HINTS, parseBatchSearchResult, type SessionFlightOption } from './adapters/ctrip-flight.ts'
 
 export const FLIGHT_GUI_HOME = 'https://flights.ctrip.com/'
+/**
+ * 低价日历接口(live 校准 2026-10-14):新版 PC 匿名 batchSearch 只回 needUserLogin
+ * 配置探测(无行程数据),而该日历接口匿名有数据——GUI 车道的结果绑定面(#661)。
+ */
+export const CALENDAR_HINT = /FlightIntlAndInlandLowestPriceSearch/
 const YMD = /^\d{4}-\d{2}-\d{2}$/
 /** 挑战页特征(与桥车道同口径:验证/确认中文词) */
 const GUI_CHALLENGE_RE = /验证|校验|拖动滑块|请输入验证码/
@@ -64,11 +69,13 @@ export interface GuiFlightQuery {
 /** 纯函数:查询 → 动作序列(离线测试锚点;执行前必须过 assertGuiPlanSafe) */
 export function planFlightGuiActions(q: GuiFlightQuery): GuiAction[] {
   const expect = { from: q.from, to: q.to, dep: q.date, ...(q.backDate ? { back: q.backDate } : {}) }
-  const rtTab: GuiAction[] = q.backDate ? [{ t: 'clickTripTab', trip: 'roundtrip' }] : []
+  // live 校准(2026-10-14 pre-search 截图):该表单默认即「往返」态(双日期框预填)——
+  // 单程必须显式点「单程」,否则按非法日期对(回<去)搜索且日历面板挂在回程框上。
+  const tripTab: GuiAction[] = [{ t: 'clickTripTab', trip: q.backDate ? 'roundtrip' : 'oneway' }]
   const backDate: GuiAction[] = q.backDate ? [{ t: 'setDate', which: 'back', ymd: q.backDate }] : []
   return [
     { t: 'goto', url: FLIGHT_GUI_HOME },
-    ...rtTab,
+    ...tripTab,
     { t: 'typeCity', which: 'from', text: q.from },
     { t: 'pickSuggest', which: 'from', text: q.from },
     { t: 'typeCity', which: 'to', text: q.to },
@@ -146,9 +153,25 @@ export interface GuiPage {
   cityFieldValues(): Promise<{ from: string; to: string }>
   /** 挑战页检测(title+页面前 3KB 文本) */
   pageText(): Promise<string>
-  waitForApiBody(timeoutMs: number): Promise<{ url: string; body: string } | null>
+  /** 当前页 URL(#663 URL 教师:GUI 检索后回传 list 页真实形状) */
+  currentUrl(): Promise<string>
+  /** 等待结果回包:行程 batchSearch(优先)或低价日历(匿名可用);两者都到或超时结算 */
+  waitForApiCapture(timeoutMs: number): Promise<GuiApiCapture | null>
   /** 最近 API 请求 URL(超时诊断;可选) */
   recentApiUrls?(): Promise<string[]>
+}
+
+/** 双槽捕获:itinerary=含 flightItineraryList 的 batchSearch;calendar=低价日历(匿名可用) */
+export interface GuiApiCapture {
+  itinerary?: { url: string; body: string }
+  calendar?: { url: string; body: string }
+}
+
+/** 低价日历单日条目(parser 按实测形状产出;绝不发明价格) */
+export interface GuiCalendarDay {
+  date: string
+  price?: number
+  priceRaw?: string
 }
 
 export interface GuiDriver {
@@ -165,6 +188,10 @@ export interface GuiFlightResult {
   latencyMs: number
   verdict: GuiFlightVerdict
   options?: SessionFlightOption[]
+  /** 低价日历(匿名可用;#662:该航线哪些日期有票/低价) */
+  calendar?: GuiCalendarDay[]
+  /** 检索后站点自己落到的 list 页 URL(#663 URL 教师:真实形状回传,不猜) */
+  listUrl?: string
   error?: string
   /** 匿名公开面:显式标注,不冒充登录态价格 */
   anonymous: true
@@ -206,7 +233,8 @@ export async function runFlightGuiSearch(q: GuiFlightQuery): Promise<GuiFlightRe
     return fail((e as Error).message.slice(0, 1200))
   }
 
-  let apiBody: { url: string; body: string } | null = null
+  let apiBody: GuiApiCapture | null = null
+  let listUrl = ''
   try {
     for (const a of plan) {
       const remain = budget - (Date.now() - started)
@@ -251,33 +279,119 @@ export async function runFlightGuiSearch(q: GuiFlightQuery): Promise<GuiFlightRe
           if (GUI_CHALLENGE_RE.test(text)) {
             return fail('风控/验证码命中;按红线不重试不绕过,交还用户', 'challenged')
           }
-          apiBody = await step(page.waitForApiBody(Math.min(remain - 500, 18_000)), '等待 batchSearch 回包')
-          if (!apiBody) {
+          apiBody = await step(page.waitForApiCapture(Math.min(remain - 500, 18_000)), '等待结果回包(batchSearch/低价日历)')
+          if (!apiBody || (!apiBody.itinerary && !apiBody.calendar)) {
             const recent = page.recentApiUrls ? (await page.recentApiUrls().catch(() => [])) : []
-            return fail(`batchSearch 嗅探超时:页面未收到可解析回包;本次检索未完成${recent.length ? ` ‖recent-apis: ${recent.slice(-8).join(' ; ').slice(0, 600)}` : ''}`)
+            return fail(`结果回包嗅探超时:batchSearch(行程)与低价日历均未收到;本次检索未完成${recent.length ? ` ‖recent-apis: ${recent.slice(-8).join(' ; ').slice(0, 600)}` : ''}`)
           }
           break
         }
       }
     }
+    listUrl = await page.currentUrl().catch(() => '')
   } catch (e) {
     return fail(`${(e as Error).message.slice(0, 500)}${trace.length ? ` ‖trace: ${trace.join(' ; ').slice(0, 400)}` : ''}`)
   } finally {
     await driver.close().catch(() => {})
   }
 
-  if (!apiBody) return fail('内部不变量失败:apiBody 空(awaitApi 未结算)')
-  const parsed = parseBatchSearchResult(apiBody.body)
-  if (parsed.verdict === 'error') {
-    return fail(`batchSearch 响应形状异常(${parsed.shape};非合法空响应)body头:${apiBody.body.replace(/\s+/g, ' ').slice(0, 500)}`)
+  dumpCapture(apiBody, listUrl)
+  // 结算优先级:行程 batchSearch(登录态/部分构建)> 低价日历(匿名可用,#661 绑定面)
+  if (apiBody?.itinerary) {
+    const parsed = parseBatchSearchResult(apiBody.itinerary.body)
+    if (parsed.verdict === 'error') {
+      return fail(`batchSearch 响应形状异常(${parsed.shape};非合法空响应)body头:${apiBody.itinerary.body.replace(/\s+/g, ' ').slice(0, 500)}`)
+    }
+    const verdict: GuiFlightVerdict = parsed.verdict === 'hit' ? 'hit' : 'miss'
+    const calendar = apiBody.calendar ? parseLowestPriceCalendar(apiBody.calendar.body) : undefined
+    return {
+      ok: verdict === 'hit', via: 'session-ctrip-flight-gui', latencyMs: Date.now() - started, verdict,
+      ...(verdict === 'hit' ? { options: parsed.options } : {}),
+      ...(calendar && calendar.length > 0 ? { calendar } : {}),
+      ...(listUrl ? { listUrl } : {}),
+      evidence: `[会话:ctrip-flight-gui@${ts}] ${trip} 匿名 GUI 面检索:${parsed.options.length} 条(transport=gui shape=${parsed.shape}${calendar?.length ? `;calendar=${calendar.length}天` : ''})`,
+      ...base,
+    }
   }
-  const verdict: GuiFlightVerdict = parsed.verdict === 'hit' ? 'hit' : 'miss'
-  return {
-    ok: verdict === 'hit', via: 'session-ctrip-flight-gui', latencyMs: Date.now() - started, verdict,
-    ...(verdict === 'hit' ? { options: parsed.options } : {}),
-    evidence: `[会话:ctrip-flight-gui@${ts}] ${trip} 匿名 GUI 面检索:${parsed.options.length} 条(transport=gui shape=${parsed.shape})`,
-    ...base,
+  if (apiBody?.calendar) {
+    const calendar = parseLowestPriceCalendar(apiBody.calendar.body)
+    if (calendar.length === 0) {
+      return fail(`低价日历回包形状未识别(body头:${apiBody.calendar.body.replace(/\s+/g, ' ').slice(0, 300)};GOTRY_GUI_DUMP 可落盘原样供校准)`)
+    }
+    return {
+      ok: true, via: 'session-ctrip-flight-gui', latencyMs: Date.now() - started, verdict: 'hit',
+      calendar, ...(listUrl ? { listUrl } : {}),
+      evidence: `[会话:ctrip-flight-gui@${ts}] ${trip} 匿名 GUI 面·低价日历:${calendar.length} 天(行程明细需登录态,见 #661;日历为匿名公开价)`,
+      ...base,
+    }
   }
+  return fail('内部不变量失败:apiBody 双槽皆空(awaitApi 已结算)')
+}
+
+/**
+ * 低价日历解析(#662):按 live 实测形状产出 date/price;形状未识别返回空数组
+ * (fail-closed,绝不发明价格)。形状锚定见 session-tests §L fixture。
+ */
+export function parseLowestPriceCalendar(body: string): GuiCalendarDay[] {
+  let raw: unknown
+  try {
+    raw = JSON.parse(body)
+  } catch {
+    return []
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return []
+  // live 实测(2026-10-14,香港/上海 GUI 捕获):顶层 priceList 数组(responseStatus.Ack
+  // 信封);兼容 data.* 形态。条目键按实测锚定,未识别=空(fail-closed)。
+  const scopes: Array<Record<string, unknown>> = [raw as Record<string, unknown>]
+  const data = (raw as { data?: unknown }).data
+  if (data !== null && typeof data === 'object' && !Array.isArray(data)) scopes.push(data as Record<string, unknown>)
+  for (const key of ['priceList', 'priceCalendar', 'calendarList', 'lowPriceList', 'flightLowPrice']) {
+    const list = scopes.map(scope => scope[key]).find(v => Array.isArray(v))
+    if (!list) continue
+    const days: GuiCalendarDay[] = []
+    for (const item of list) {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) continue
+      const it = item as Record<string, unknown>
+      // live 实测锚点(2026-10-14):departDate = .NET /Date(ms+0800)/;price>0 才是可售低价
+      const date = netDateToYmd(it.departDate) ?? (typeof it.date === 'string' ? it.date.trim() : '')
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue
+      if (typeof it.price !== 'number' || !Number.isFinite(it.price) || it.price <= 0) continue
+      days.push({ date, price: it.price })
+    }
+    if (days.length > 0) {
+      // 往返回包含去/回两程日历(同日双价,live 实测)——按日聚合取最低,evidence 可追溯。
+      const byDate = new Map<string, GuiCalendarDay>()
+      for (const d of days) {
+        const prev = byDate.get(d.date)
+        if (!prev || (d.price ?? Infinity) < (prev.price ?? Infinity)) byDate.set(d.date, d)
+      }
+      return [...byDate.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    }
+  }
+  return []
+}
+
+/** /Date(1791993600000+0800)/ → YYYY-MM-DD(按 +0800 面向用户的日历日) */
+function netDateToYmd(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const match = /^\/Date\((\d+)(?:[+-]\d{4})?\)\/$/.exec(value.trim())
+  if (!match) return undefined
+  const ms = Number(match[1])
+  if (!Number.isFinite(ms)) return undefined
+  const d = new Date(ms + 8 * 3600 * 1000) // 日历面向 +0800 时区
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+}
+
+/** 校准/漂移诊断钩子:GOTRY_GUI_DUMP=<dir> 落盘原始回包与 listUrl(不含任何账号面) */
+function dumpCapture(capture: GuiApiCapture | null, listUrl: string): void {
+  const dir = process.env.GOTRY_GUI_DUMP
+  if (!dir || !capture) return
+  try {
+    mkdirSync(dir, { recursive: true })
+    if (capture.itinerary) writeFileSync(join(dir, 'itinerary.json'), capture.itinerary.body)
+    if (capture.calendar) writeFileSync(join(dir, 'calendar.json'), capture.calendar.body)
+    if (listUrl) writeFileSync(join(dir, 'page-url.txt'), listUrl)
+  } catch { /* best effort */ }
 }
 
 async function withDeadline<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
@@ -375,34 +489,60 @@ const CLICK_FORM_SEARCH = `(() => {
     target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
     target.click()
     return true }
-  // 几何判据:日期框正下方、cursor:pointer、宽度≥60px 的最大块(live 校准:按钮为
-  // 无语义 styled div,文本非「搜索」叶子)——浅而大的可点块即表单提交钮
+  // 几何判据 v2(live 校准 2026-10-14:按钮在表单行右端的无语义 styled div,文本非
+  // 「搜索」叶子;首版「下方最大块」会误中低价推广卡——SHA→TGO fuzzy 跳页实测):
+  // ①行右端:cx 在日期框右侧 500px 内、cy 与行对齐,宽 60–320、高 ≥40,取最近;
+  // ②次选:日期框正下方 250px 内的窄块(兼容改版)。绝不取大横幅(宽>320)。
   const dateRect = dateEl.getBoundingClientRect()
-  let best = null, bestArea = 0
+  let rowBtn = null, rowDist = 1e9
+  let belowBtn = null, belowDist = 1e9
   for (const e of Array.from(document.querySelectorAll('*'))) {
     if (e === dateEl || !e.offsetParent || e.contains(dateEl)) continue
     const r = e.getBoundingClientRect()
-    if (r.width < 60 || r.height < 24) continue
+    if (r.width < 60 || r.width > 320 || r.height < 40) continue
+    if (getComputedStyle(e).cursor !== 'pointer') continue
     const cx = r.left + r.width / 2
     const cy = r.top + r.height / 2
-    if (cy < dateRect.bottom || cy > dateRect.bottom + 600) continue
-    if (cx < dateRect.left - 80 || cx > dateRect.right + 400) continue
-    if (getComputedStyle(e).cursor !== 'pointer') continue
-    const area = r.width * r.height
-    if (area > bestArea) { best = e; bestArea = area }
+    if (cx >= dateRect.right - 20 && cx <= dateRect.right + 500
+      && cy >= dateRect.top - 60 && cy <= dateRect.bottom + 120) {
+      const d = Math.abs(cy - (dateRect.top + dateRect.height / 2)) + (cx - dateRect.right) * 0.2
+      if (d < rowDist) { rowBtn = e; rowDist = d }
+    }
+    if (cy >= dateRect.bottom && cy <= dateRect.bottom + 250
+      && cx >= dateRect.left - 80 && cx <= dateRect.right + 200) {
+      const d = cy - dateRect.bottom
+      if (d < belowDist) { belowBtn = e; belowDist = d }
+    }
   }
+  const best = rowBtn || belowBtn
   if (best) return click(best)
   const ptr = Array.from(document.querySelectorAll('*'))
     .filter(e => e.offsetParent && getComputedStyle(e).cursor === 'pointer' && e.textContent && e.textContent.trim().length <= 6)
     .slice(0, 10).map(e => ({ t: (e.textContent || '').trim(), tag: e.tagName, cls: String(e.className).slice(0, 40) }))
   throw new Error('搜索按钮未找到(日期框下方几何窗口内无 pointer 大块)pointer 候选:' + JSON.stringify(ptr))
 })()`
+/** 校准采集版(GOTRY_GUI_DUMP 时 driver 落盘):行内全部 pointer 候选(文本/标签/类名/矩形) */
+const CLICK_FORM_SEARCH_CANDIDATES = `(() => {
+  const els = Array.from(document.querySelectorAll('input')).filter(e => e.offsetParent)
+  const dateEl = els.find(e => /y{2,4}[-/]m{1,2}|日期|date/i.test(e.placeholder || '') || /^\\d{4}-\\d{2}-\\d{2}/.test(e.value || ''))
+  if (!dateEl) return JSON.stringify({ err: 'no dateEl' })
+  const dateRect = dateEl.getBoundingClientRect()
+  const cands = Array.from(document.querySelectorAll('*'))
+    .filter(e => e.offsetParent && getComputedStyle(e).cursor === 'pointer')
+    .map(e => { const r = e.getBoundingClientRect()
+      return { t: (e.textContent || '').trim().slice(0, 24), tag: e.tagName, cls: String(e.className).slice(0, 60),
+        x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) } })
+    .filter(c => c.w >= 20 && c.h >= 12)
+    .slice(0, 100)
+  return JSON.stringify({ dateRect: { x: Math.round(dateRect.left), y: Math.round(dateRect.top), w: Math.round(dateRect.width), h: Math.round(dateRect.height) }, cands })
+})()`
+
 /**
  * 日历单元格(live 校准 2026-10-14):channel/domestic 日历同屏双月(「2026年10月」「2026年11月」),
  * 日号格不匹配通用选择器——改走文档顺序状态机:叶子元素流里,目标月标题(YYYY年M月)之后、
  * 下一个月标题之前,文本恰为日号的第一个元素即目标格;aria-label/title 含完整日期者优先。
  */
-const CLICK_DATE_CELL = (ymd: string): string => {
+const CLICK_DATE_CELL = (ymd: string, anchorYmd?: string): string => {
   const day = String(Number(ymd.slice(8, 10)))
   const ymCn = `${ymd.slice(0, 4)}年${Number(ymd.slice(5, 7))}月`
   return `(() => {
@@ -418,10 +558,26 @@ const CLICK_DATE_CELL = (ymd: string): string => {
     const ariaHit = dayLeaves.find(e =>
       ((e.getAttribute('aria-label') || '') + (e.getAttribute('title') || '')).includes('${ymd}'))
     if (ariaHit) return clickEl(ariaHit)
-    // 捷径:候选日号中父级非 disabled 的恰一个 → 直接点(面板同屏双月,过去月禁用)
+    // 捷径:候选日号中父级非 disabled 的恰一个 → 直接点(过去月禁用时天然消歧)
     const enabled = dayLeaves.filter(e => !/disabled/.test(String(e.parentElement && e.parentElement.className)))
     if (enabled.length === 1) return clickEl(enabled[0])
-    // 月边界状态机:月标题去空白后精确匹配(标题可能带空白/拆分文本节点)
+    // 几何月消歧(live 校准 2026-10-14 往返回程:双月面板两个同日号都可点,月标题元素
+    // 不可寻):日号格按 x 聚簇=月列,以「今天」锚定第 0 列=当前月,目标月偏移选列。
+    const rect = (e) => e.getBoundingClientRect()
+    const xs = enabled.map(e => rect(e).left + rect(e).width / 2).sort((a, b) => a - b)
+    if (xs.length >= 2 && xs[xs.length - 1] - xs[0] > 120) {
+      const split = (xs[0] + xs[xs.length - 1]) / 2
+      const left = enabled.filter(e => rect(e).left + rect(e).width / 2 < split)
+      const right = enabled.filter(e => rect(e).left + rect(e).width / 2 >= split)
+      const anchor = ${anchorYmd ? `{ y: ${Number(anchorYmd.slice(0, 4))}, m: ${Number(anchorYmd.slice(5, 7))} }` : 'null'}
+      const now = new Date()
+      const ay = anchor ? anchor.y : now.getFullYear()
+      const am = anchor ? anchor.m : now.getMonth() + 1
+      const delta = (${Number(ymd.slice(0, 4))} * 12 + ${Number(ymd.slice(5, 7))}) - (ay * 12 + am)
+      const pick = delta <= 0 ? left[0] : delta === 1 ? right[0] : null
+      if (pick) return clickEl(pick)
+    }
+    // 兜底:月边界状态机(月标题去空白精确匹配;标题可能拆分文本节点)
     const norm = (s) => s.replace(/\\s+/g, '')
     let inTargetMonth = false
     for (const e of all) {
@@ -442,8 +598,10 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
   })
   const page: Page = ctx.pages()[0] ?? (await ctx.newPage())
 
-  // batchSearch 命中即 resolving(监听在 context 生命期常挂;waitForApiBody 只注册等待者)
-  let apiWaiter: ((v: { url: string; body: string } | null) => void) | null = null
+  // 双槽捕获:行程 batchSearch(优先)与低价日历(#661);监听常挂,waitForApiCapture 注册等待者
+  const capture: GuiApiCapture = {}
+  let apiWaiter: ((v: GuiApiCapture | null) => void) | null = null
+  let itinerarySeen = false
   const recentUrls: string[] = []
   page.on('request', r => {
     const u = r.url()
@@ -453,23 +611,33 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
     }
   })
   page.on('response', async r => {
-    if (!apiWaiter) return
     const url = r.url()
-    if (!NETWORK_HINTS.some((re: RegExp) => re.test(url))) return
+    const isItineraryHint = NETWORK_HINTS.some((re: RegExp) => re.test(url))
+    const isCalendarHint = CALENDAR_HINT.test(url)
+    if (!isItineraryHint && !isCalendarHint) return
     try {
       const body = await r.text()
-      // 同 URL 会先发配置预检回包(needUserLogin 探测,无行程数据)——只结算真结果
-      if (!body.includes('flightItineraryList')) return
-      const resolve = apiWaiter
-      apiWaiter = null
-      resolve?.({ url, body })
-    } catch { /* 回包体已释放;保留等待者等下一个命中 */ }
+      if (isCalendarHint) {
+        capture.calendar = { url, body }
+      } else if (body.includes('flightItineraryList')) {
+        // 同 URL 会先发配置预检回包(needUserLogin 探测,无行程数据)——只收真结果
+        capture.itinerary = { url, body }
+        itinerarySeen = true
+      }
+      // 行程一到位即早结算(最富数据);否则等日历或超时
+      if (itinerarySeen && apiWaiter) {
+        const resolve = apiWaiter
+        apiWaiter = null
+        resolve?.({ ...capture })
+      }
+    } catch { /* 回包体已释放 */ }
   })
 
   return {
     async open(): Promise<GuiPage> {
       const sleep = (ms: number): Promise<void> => page.waitForTimeout(ms)
       const visibleInput = (i: number) => page.locator('input:visible').nth(i)
+      let lastDepYmd = ''
       const cityValues = async (): Promise<{ from: string; to: string }> =>
         JSON.parse(String(await page.evaluate<string>(CITY_FIELD_VALUES).catch(() => '{"from":"","to":""}'))) as { from: string; to: string }
       return {
@@ -541,6 +709,7 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
           throw new Error(`城市补全未选中:${which} 框实际「${(which === 'from' ? values.from : values.to).slice(0, 30)}」(期望含 ${text} 且归一化为 (三字码);href=${href});城市框实证:${ctxDump.slice(0, 900)}`)
         },
         async setDate(which, ymd) {
+          if (which === 'dep') lastDepYmd = ymd
           const idx = await page.evaluate<number>(DATE_INPUT_IDX(which))
           const input = visibleInput(idx)
           await input.click({ timeout: 5000 })
@@ -556,7 +725,7 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
           }, ymd).catch(() => false)
           if (typed) { await sleep(400); return }
           // 策略②:日历单元格(aria/title 含完整日期优先;否则面板可见目标月时按日号)
-          const clicked = await page.evaluate<boolean>(CLICK_DATE_CELL(ymd)).catch(() => false)
+          const clicked = await page.evaluate<boolean>(CLICK_DATE_CELL(ymd, which === 'back' ? lastDepYmd : undefined)).catch(() => false)
           if (!clicked) {
             await page.screenshot({ path: `/tmp/gotry-gui-date-${which}-${Date.now()}.png` }).catch(() => {})
             // 实证诊断:日号叶子(任意可见性)+ 月标题叶子的真实形状,供下一轮校准
@@ -579,6 +748,14 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
         },
         async press(key) { await page.keyboard.press(key) },
         async clickSearch() {
+          await page.keyboard.press('Escape').catch(() => {})
+          await sleep(500)
+          const dumpDir = process.env.GOTRY_GUI_DUMP
+          if (dumpDir) {
+            const cands = String(await page.evaluate<string>(CLICK_FORM_SEARCH_CANDIDATES).catch(() => '{"err":"eval-fail"}'))
+            try { mkdirSync(dumpDir, { recursive: true }); writeFileSync(join(dumpDir, 'search-candidates.json'), cands) } catch { /* best effort */ }
+            await page.screenshot({ path: join(dumpDir, 'pre-search.png') }).catch(() => {})
+          }
           await page.evaluate<void>(CLICK_FORM_SEARCH)
         },
         async visibleFormText() {
@@ -592,11 +769,14 @@ async function createPlaywrightDriver(): Promise<GuiDriver> {
           const text = String(await page.evaluate<string>('document.body.innerText.slice(0, 3000)').catch(() => ''))
           return title + text
         },
-        async waitForApiBody(timeoutMs) {
+        async currentUrl() {
+          return page.url()
+        },
+        async waitForApiCapture(timeoutMs) {
           return new Promise(resolve => {
             const timer = setTimeout(() => {
               apiWaiter = null
-              resolve(null)
+              resolve(capture.itinerary || capture.calendar ? { ...capture } : null)
             }, timeoutMs)
             apiWaiter = v => { clearTimeout(timer); resolve(v) }
           })
