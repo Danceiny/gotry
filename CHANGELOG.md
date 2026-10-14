@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-rc.32] - 2026-10-14
+
+### Added
+
+- GUI 车道完整化——日历结果绑定/往返解锁/酒店首片(#661-664)… (c5d44c6)
+- 携程机票 GUI 车道(ui=gui)+ 城市缓存实测校准 + 飞猪业务错误信封回归锁… (#665)
+
+### Fixed
+
+- require official hbcli 0.0.4 and upgrade old installs… (#659)
+- preserve query failures and add HotelByte web setup… (#658)
+- resolve supplier cities and isolate FlyAI outage protection… (#657)
+- secure existing state directory before saving verification receipt… (#656)
+
+### Documentation
+
+- align version baselines with verified rc.31 publish… (#655)
+
 ## [0.2.0-rc.31] - 2026-10-06
 
 ### Added
