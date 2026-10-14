@@ -9,12 +9,19 @@
 
 import { resolveCtripFlightCity, cityResolutionHint, type CityResolution } from '../ctrip-city.ts'
 
-/** 离线起步缓存；未命中由编排层查询供应商城市数据，不推断航线覆盖。 */
+/**
+ * 离线起步缓存;未命中由编排层查询供应商城市数据(ctrip-city.ts),不推断航线覆盖。
+ * 码表只做性能优化,不在主链路上(显式码/供应商解析是正路)。
+ * 实测校准(2026-10-14):香港=hkg/迪拜=dxb 经 list 页实证——合法组合 HTTP 200 且
+ * title 含航线名(「中国香港(HKG)到迪拜(阿联酋)(DXB)机票预订」),非法组合 302 跳
+ * international/search(该 200/302 判别式即真数据校准手段)。
+ */
 export const CITY_CODES: Record<string, string> = {
   上海: 'sha', 北京: 'bjs', 广州: 'can', 深圳: 'szx', 成都: 'ctu', 昆明: 'kmg',
   大理: 'dlu', 丽江: 'ljg', 西安: 'sia', 杭州: 'hgh', 三亚: 'syx', 厦门: 'xmn',
   重庆: 'cqg', 青岛: 'taa', 长沙: 'csx', 武汉: 'wuh', 南京: 'nkg', 郑州: 'cgo',
   贵阳: 'kwe', 桂林: 'kwl', 西双版纳: 'jhg', 香格里拉: 'dig',
+  香港: 'hkg', 迪拜: 'dxb',
 }
 
 export interface AdapterEntry {
@@ -44,6 +51,7 @@ export async function resolveFlightEntryUrl(from: string, to: string, depDate: s
 
 export function buildEntryUrl(from: string, to: string, depDate: string, codes: { fromCode?: string; toCode?: string } = {}): AdapterEntry {
   const unresolved: string[] = []
+  // 显式码优先(形状合格才采纳),词表只是缓存——任何城市都可经显式码成行。
   const fromCode = codes.fromCode === undefined ? CITY_CODES[from.trim()] : /^[a-z]{3}$/i.test(codes.fromCode) ? codes.fromCode.toLowerCase() : undefined
   const toCode = codes.toCode === undefined ? CITY_CODES[to.trim()] : /^[a-z]{3}$/i.test(codes.toCode) ? codes.toCode.toLowerCase() : undefined
   if (!fromCode) unresolved.push(from)
