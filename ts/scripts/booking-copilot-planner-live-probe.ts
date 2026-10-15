@@ -72,6 +72,7 @@ try {
       DEEPSEEK_API_KEY: apiKey,
       DEEPSEEK_BASE_URL: baseUrl,
       DEEPSEEK_MODEL: model,
+      ...(process.env.DEEPSEEK_PROVIDER ? { DEEPSEEK_PROVIDER: process.env.DEEPSEEK_PROVIDER } : {}),
     },
     // Match the UAT deployment deadline (planner-model-plane.yaml turnTimeoutMs).
     turnTimeoutMs: 45_000,
